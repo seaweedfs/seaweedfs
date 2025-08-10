@@ -58,7 +58,8 @@ func isGenerationCompatible(actualGeneration, requestedGeneration uint32) bool {
 // VolumeEcShardsGenerate generates the .ecx and .ec00 ~ .ec13 files
 func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_server_pb.VolumeEcShardsGenerateRequest) (*volume_server_pb.VolumeEcShardsGenerateResponse, error) {
 
-	glog.V(0).Infof("VolumeEcShardsGenerate: %v", req)
+	glog.V(0).Infof("VolumeEcShardsGenerate volume %d generation %d collection %s", 
+		req.VolumeId, req.Generation, req.Collection)
 
 	v := vs.store.GetVolume(needle.VolumeId(req.VolumeId))
 	if v == nil {
@@ -176,7 +177,8 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 // VolumeEcShardsCopy copy the .ecx and some ec data slices
 func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_server_pb.VolumeEcShardsCopyRequest) (*volume_server_pb.VolumeEcShardsCopyResponse, error) {
 
-	glog.V(0).Infof("VolumeEcShardsCopy: %v", req)
+	glog.V(0).Infof("VolumeEcShardsCopy volume %d generation %d shards %v from %s collection %s", 
+		req.VolumeId, req.Generation, req.ShardIds, req.SourceDataNode, req.Collection)
 
 	var location *storage.DiskLocation
 
@@ -342,15 +344,16 @@ func checkEcVolumeStatus(bName string, location *storage.DiskLocation) (hasEcxFi
 
 func (vs *VolumeServer) VolumeEcShardsMount(ctx context.Context, req *volume_server_pb.VolumeEcShardsMountRequest) (*volume_server_pb.VolumeEcShardsMountResponse, error) {
 
-	glog.V(0).Infof("VolumeEcShardsMount: %v", req)
+	glog.V(0).Infof("VolumeEcShardsMount volume %d generation %d shards %v collection %s", 
+		req.VolumeId, req.Generation, req.ShardIds, req.Collection)
 
 	for _, shardId := range req.ShardIds {
 		err := vs.store.MountEcShards(req.Collection, needle.VolumeId(req.VolumeId), erasure_coding.ShardId(shardId), req.Generation)
 
 		if err != nil {
-			glog.Errorf("ec shard mount %v: %v", req, err)
+			glog.Errorf("ec shard mount %d.%d generation %d: %v", req.VolumeId, shardId, req.Generation, err)
 		} else {
-			glog.V(2).Infof("ec shard mount %v", req)
+			glog.V(2).Infof("ec shard mount %d.%d generation %d success", req.VolumeId, shardId, req.Generation)
 		}
 
 		if err != nil {
@@ -363,15 +366,16 @@ func (vs *VolumeServer) VolumeEcShardsMount(ctx context.Context, req *volume_ser
 
 func (vs *VolumeServer) VolumeEcShardsUnmount(ctx context.Context, req *volume_server_pb.VolumeEcShardsUnmountRequest) (*volume_server_pb.VolumeEcShardsUnmountResponse, error) {
 
-	glog.V(0).Infof("VolumeEcShardsUnmount: %v", req)
+	glog.V(0).Infof("VolumeEcShardsUnmount volume %d generation %d shards %v", 
+		req.VolumeId, req.Generation, req.ShardIds)
 
 	for _, shardId := range req.ShardIds {
 		err := vs.store.UnmountEcShards(needle.VolumeId(req.VolumeId), erasure_coding.ShardId(shardId), req.Generation)
 
 		if err != nil {
-			glog.Errorf("ec shard unmount %v: %v", req, err)
+			glog.Errorf("ec shard unmount %d.%d generation %d: %v", req.VolumeId, shardId, req.Generation, err)
 		} else {
-			glog.V(2).Infof("ec shard unmount %v", req)
+			glog.V(2).Infof("ec shard unmount %d.%d generation %d success", req.VolumeId, shardId, req.Generation)
 		}
 
 		if err != nil {
@@ -386,7 +390,7 @@ func (vs *VolumeServer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardRea
 
 	ecVolume, found := vs.store.FindEcVolume(needle.VolumeId(req.VolumeId))
 	if !found {
-		return fmt.Errorf("VolumeEcShardRead not found ec volume id %d", req.VolumeId)
+		return fmt.Errorf("VolumeEcShardRead not found ec volume id %d (requested generation %d)", req.VolumeId, req.Generation)
 	}
 
 	// Validate generation matches with mixed-version compatibility
@@ -397,7 +401,7 @@ func (vs *VolumeServer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardRea
 	}
 	ecShard, found := ecVolume.FindEcVolumeShard(erasure_coding.ShardId(req.ShardId))
 	if !found {
-		return fmt.Errorf("not found ec shard %d.%d", req.VolumeId, req.ShardId)
+		return fmt.Errorf("not found ec shard %d.%d generation %d", req.VolumeId, req.ShardId, ecVolume.Generation)
 	}
 
 	if req.FileKey != 0 {

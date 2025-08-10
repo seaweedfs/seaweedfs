@@ -162,7 +162,7 @@ func (t *Topology) RegisterEcShards(ecShardInfos *erasure_coding.EcVolumeInfo, d
 }
 
 func (t *Topology) UnRegisterEcShards(ecShardInfos *erasure_coding.EcVolumeInfo, dn *DataNode) {
-	glog.Infof("removing ec shard info:%+v", ecShardInfos)
+	glog.Infof("removing ec shard info volume %d generation %d shards %v", ecShardInfos.VolumeId, ecShardInfos.Generation, ecShardInfos.ShardIds())
 	t.ecShardMapLock.Lock()
 	defer t.ecShardMapLock.Unlock()
 

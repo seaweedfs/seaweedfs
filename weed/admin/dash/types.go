@@ -209,6 +209,9 @@ type EcShardWithInfo struct {
 	ShardCount    int    `json:"shard_count"`    // Number of shards this server has for this volume
 	IsComplete    bool   `json:"is_complete"`    // True if this volume has all 14 shards
 	MissingShards []int  `json:"missing_shards"` // List of missing shard IDs
+
+	// Generation information
+	Generation uint32 `json:"generation"` // EC volume generation
 }
 
 // EcVolumeDetailsData represents the data for the EC volume details page
@@ -230,6 +233,12 @@ type EcVolumeDetailsData struct {
 	FileCount        uint64  `json:"file_count"`         // Total file count
 	DeleteCount      uint64  `json:"delete_count"`       // Deleted file count
 	GarbageRatio     float64 `json:"garbage_ratio"`      // Deletion ratio (0.0-1.0)
+
+	// Generation information
+	Generations        []uint32            `json:"generations"`         // All generations present for this volume
+	ActiveGeneration   uint32              `json:"active_generation"`   // Currently active generation
+	GenerationShards   map[uint32][]uint32 `json:"generation_shards"`   // Generation -> list of shard IDs
+	GenerationComplete map[uint32]bool     `json:"generation_complete"` // Generation -> completion status
 
 	// Sorting
 	SortBy    string `json:"sort_by"`
@@ -502,6 +511,11 @@ type EcVolumeWithShards struct {
 	Servers        []string       `json:"servers"`
 	Racks          []string       `json:"racks"`
 	ModifiedTime   int64          `json:"modified_time"`
+
+	// Generation information
+	Generations            []uint32 `json:"generations"`              // All generations present for this volume
+	ActiveGeneration       uint32   `json:"active_generation"`        // Currently active generation
+	HasMultipleGenerations bool     `json:"has_multiple_generations"` // True if volume has multiple generations
 }
 
 // ClusterEcVolumesData represents the response for clustered EC volumes view

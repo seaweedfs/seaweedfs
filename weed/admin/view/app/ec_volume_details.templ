@@ -101,6 +101,38 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                             </td>
                         </tr>
                         <tr>
+                            <td><strong>Active Generation:</strong></td>
+                            <td>
+                                if data.ActiveGeneration > 0 {
+                                    <span class="badge bg-success">{fmt.Sprintf("G%d", data.ActiveGeneration)}</span>
+                                } else {
+                                    <span class="badge bg-primary">G0</span>
+                                }
+                                if len(data.Generations) > 1 {
+                                    <span class="ms-1 badge bg-warning">
+                                        <i class="fas fa-layer-group me-1"></i>Multi-Gen
+                                    </span>
+                                }
+                            </td>
+                        </tr>
+                        if len(data.Generations) > 1 {
+                            <tr>
+                                <td><strong>All Generations:</strong></td>
+                                <td>
+                                    for i, gen := range data.Generations {
+                                        if i > 0 { 
+                                            <span class="me-1"></span>
+                                        }
+                                        if gen == data.ActiveGeneration {
+                                            <span class="badge bg-success">G{fmt.Sprintf("%d", gen)} (Active)</span>
+                                        } else {
+                                            <span class="badge bg-secondary">G{fmt.Sprintf("%d", gen)}</span>
+                                        }
+                                    }
+                                </td>
+                            </tr>
+                        }
+                        <tr>
                             <td><strong>Last Updated:</strong></td>
                             <td>
                                 <span class="text-muted">{data.LastUpdated.Format("2006-01-02 15:04:05")}</span>
@@ -219,21 +251,52 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                         </div>
                     </div>
                     
-                    <!-- Shard Distribution Visualization -->
+                    <!-- Generation-aware Shard Distribution -->
                     <div class="mt-3">
-                        <h6>Present Shards:</h6>
-                        <div class="d-flex flex-wrap gap-1">
-                            for _, shard := range data.Shards {
-                                <span class="badge bg-success me-1 mb-1">{fmt.Sprintf("%02d", shard.ShardID)}</span>
+                        if len(data.Generations) > 1 {
+                            <!-- Multiple generations - show by generation -->
+                            for _, gen := range data.Generations {
+                                <div class="mb-2">
+                                    <h6 class="mb-1">
+                                        if gen == data.ActiveGeneration {
+                                            <span class="badge bg-success me-1">G{fmt.Sprintf("%d", gen)} (Active)</span>
+                                        } else {
+                                            <span class="badge bg-secondary me-1">G{fmt.Sprintf("%d", gen)}</span>
+                                        }
+                                        {fmt.Sprintf("%d/14 shards", len(data.GenerationShards[gen]))}
+                                        if data.GenerationComplete[gen] {
+                                            <i class="fas fa-check-circle text-success ms-1"></i>
+                                        } else {
+                                            <i class="fas fa-exclamation-triangle text-warning ms-1"></i>
+                                        }
+                                    </h6>
+                                    <div class="d-flex flex-wrap gap-1">
+                                        for _, shardID := range data.GenerationShards[gen] {
+                                            if gen == data.ActiveGeneration {
+                                                <span class="badge bg-success me-1 mb-1">{fmt.Sprintf("%02d", shardID)}</span>
+                                            } else {
+                                                <span class="badge bg-secondary me-1 mb-1">{fmt.Sprintf("%02d", shardID)}</span>
+                                            }
+                                        }
+                                    </div>
+                                </div>
                             }
-                        </div>
-                        if len(data.MissingShards) > 0 {
-                            <h6 class="mt-2">Missing Shards:</h6>
+                        } else {
+                            <!-- Single generation - show all shards -->
+                            <h6>Present Shards:</h6>
                             <div class="d-flex flex-wrap gap-1">
-                                for _, shardID := range data.MissingShards {
-                                    <span class="badge bg-secondary me-1 mb-1">{fmt.Sprintf("%02d", shardID)}</span>
+                                for _, shard := range data.Shards {
+                                    <span class="badge bg-success me-1 mb-1">{fmt.Sprintf("%02d", shard.ShardID)}</span>
                                 }
                             </div>
+                            if len(data.MissingShards) > 0 {
+                                <h6 class="mt-2">Missing Shards:</h6>
+                                <div class="d-flex flex-wrap gap-1">
+                                    for _, shardID := range data.MissingShards {
+                                        <span class="badge bg-secondary me-1 mb-1">{fmt.Sprintf("%02d", shardID)}</span>
+                                    }
+                                </div>
+                            }
                         }
                     </div>
                 </div>
@@ -310,6 +373,7 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                                         }
                                     </a>
                                 </th>
+                                <th class="text-dark">Generation</th>
                                 <th class="text-dark">Disk Type</th>
                                 <th class="text-dark">Shard Size</th>
                                 <th class="text-dark">Actions</th>
@@ -331,6 +395,14 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                                         </td>
                                         <td>
                                             <span class="badge bg-secondary text-white">{shard.Rack}</span>
+                                        </td>
+                                        <td>
+                                            if shard.Generation == data.ActiveGeneration {
+                                                <span class="badge bg-success">G{fmt.Sprintf("%d", shard.Generation)}</span>
+                                                <i class="fas fa-star text-warning ms-1" title="Active Generation"></i>
+                                            } else {
+                                                <span class="badge bg-secondary">G{fmt.Sprintf("%d", shard.Generation)}</span>
+                                            }
                                         </td>
                                         <td>
                                             <span class="text-dark">{shard.DiskType}</span>

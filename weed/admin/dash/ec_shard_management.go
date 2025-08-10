@@ -280,20 +280,35 @@ func (s *AdminServer) GetClusterEcVolumes(page int, pageSize int, sortBy string,
 								// Initialize volume data if needed
 								if volumeData[volumeId] == nil {
 									volumeData[volumeId] = &EcVolumeWithShards{
-										VolumeID:       volumeId,
-										Collection:     ecShardInfo.Collection,
-										TotalShards:    0,
-										IsComplete:     false,
-										MissingShards:  []int{},
-										ShardLocations: make(map[int]string),
-										ShardSizes:     make(map[int]int64),
-										DataCenters:    []string{},
-										Servers:        []string{},
-										Racks:          []string{},
+										VolumeID:               volumeId,
+										Collection:             ecShardInfo.Collection,
+										TotalShards:            0,
+										IsComplete:             false,
+										MissingShards:          []int{},
+										ShardLocations:         make(map[int]string),
+										ShardSizes:             make(map[int]int64),
+										DataCenters:            []string{},
+										Servers:                []string{},
+										Racks:                  []string{},
+										Generations:            []uint32{},
+										ActiveGeneration:       0,
+										HasMultipleGenerations: false,
 									}
 								}
 
 								volume := volumeData[volumeId]
+
+								// Track generation information
+								generationExists := false
+								for _, existingGen := range volume.Generations {
+									if existingGen == ecShardInfo.Generation {
+										generationExists = true
+										break
+									}
+								}
+								if !generationExists {
+									volume.Generations = append(volume.Generations, ecShardInfo.Generation)
+								}
 
 								// Track data centers and servers
 								dcExists := false
@@ -384,6 +399,33 @@ func (s *AdminServer) GetClusterEcVolumes(page int, pageSize int, sortBy string,
 			}
 		}
 	}
+
+	// Get active generation information from master for each volume
+	err = s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		for volumeId, volume := range volumeData {
+			// Look up active generation
+			resp, lookupErr := client.LookupEcVolume(context.Background(), &master_pb.LookupEcVolumeRequest{
+				VolumeId: volumeId,
+			})
+			if lookupErr == nil && resp != nil {
+				volume.ActiveGeneration = resp.ActiveGeneration
+			}
+
+			// Sort generations and check for multiple generations
+			if len(volume.Generations) > 1 {
+				// Sort generations (oldest first)
+				for i := 0; i < len(volume.Generations); i++ {
+					for j := i + 1; j < len(volume.Generations); j++ {
+						if volume.Generations[i] > volume.Generations[j] {
+							volume.Generations[i], volume.Generations[j] = volume.Generations[j], volume.Generations[i]
+						}
+					}
+				}
+				volume.HasMultipleGenerations = true
+			}
+		}
+		return nil // Don't fail if lookup fails
+	})
 
 	// Calculate completeness for each volume
 	completeVolumes := 0
@@ -628,6 +670,7 @@ func (s *AdminServer) GetEcVolumeDetails(volumeID uint32, sortBy string, sortOrd
 												ModifiedTime: 0, // Not available in current API
 												EcIndexBits:  ecShardInfo.EcIndexBits,
 												ShardCount:   getShardCount(ecShardInfo.EcIndexBits),
+												Generation:   ecShardInfo.Generation, // Include generation information
 											}
 											shards = append(shards, ecShard)
 										}
@@ -741,6 +784,50 @@ func (s *AdminServer) GetEcVolumeDetails(volumeID uint32, sortBy string, sortOrd
 		}
 	}
 
+	// Analyze generation information
+	generationMap := make(map[uint32]bool)
+	generationShards := make(map[uint32][]uint32)
+	generationComplete := make(map[uint32]bool)
+
+	// Collect all generations and group shards by generation
+	for _, shard := range shards {
+		generationMap[shard.Generation] = true
+		generationShards[shard.Generation] = append(generationShards[shard.Generation], shard.ShardID)
+	}
+
+	// Convert generation map to sorted slice
+	var generations []uint32
+	for gen := range generationMap {
+		generations = append(generations, gen)
+	}
+
+	// Sort generations (oldest first)
+	for i := 0; i < len(generations); i++ {
+		for j := i + 1; j < len(generations); j++ {
+			if generations[i] > generations[j] {
+				generations[i], generations[j] = generations[j], generations[i]
+			}
+		}
+	}
+
+	// Check completion status for each generation
+	for gen, shardIDs := range generationShards {
+		generationComplete[gen] = len(shardIDs) == erasure_coding.TotalShardsCount
+	}
+
+	// Get active generation from master
+	var activeGeneration uint32
+	err = s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		// Use LookupEcVolume to get active generation
+		resp, lookupErr := client.LookupEcVolume(context.Background(), &master_pb.LookupEcVolumeRequest{
+			VolumeId: volumeID,
+		})
+		if lookupErr == nil && resp != nil {
+			activeGeneration = resp.ActiveGeneration
+		}
+		return nil // Don't fail if lookup fails, just use generation 0 as default
+	})
+
 	data := &EcVolumeDetailsData{
 		VolumeID:      volumeID,
 		Collection:    collection,
@@ -758,6 +845,12 @@ func (s *AdminServer) GetEcVolumeDetails(volumeID uint32, sortBy string, sortOrd
 		FileCount:        volumeHealth.FileCount,
 		DeleteCount:      volumeHealth.DeleteCount,
 		GarbageRatio:     volumeHealth.GarbageRatio,
+
+		// Generation information
+		Generations:        generations,
+		ActiveGeneration:   activeGeneration,
+		GenerationShards:   generationShards,
+		GenerationComplete: generationComplete,
 
 		SortBy:    sortBy,
 		SortOrder: sortOrder,

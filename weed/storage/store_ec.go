@@ -61,7 +61,7 @@ func (s *Store) CollectErasureCodingHeartbeat() *master_pb.Heartbeat {
 func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, generation uint32) error {
 	for diskId, location := range s.Locations {
 		if ecVolume, err := location.LoadEcShard(collection, vid, shardId, generation); err == nil {
-			glog.V(0).Infof("MountEcShards %d.%d on disk ID %d", vid, shardId, diskId)
+			glog.V(0).Infof("MountEcShards %d.%d generation %d on disk ID %d", vid, shardId, generation, diskId)
 
 			var shardBits erasure_coding.ShardBits
 
@@ -82,7 +82,7 @@ func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId er
 		}
 	}
 
-	return fmt.Errorf("MountEcShards %d.%d not found on disk", vid, shardId)
+	return fmt.Errorf("MountEcShards %d.%d generation %d not found on disk", vid, shardId, generation)
 }
 
 func (s *Store) UnmountEcShards(vid needle.VolumeId, shardId erasure_coding.ShardId, generation uint32) error {
@@ -105,12 +105,12 @@ func (s *Store) UnmountEcShards(vid needle.VolumeId, shardId erasure_coding.Shar
 	location := s.Locations[diskId]
 
 	if deleted := location.UnloadEcShard(vid, shardId); deleted {
-		glog.V(0).Infof("UnmountEcShards %d.%d", vid, shardId)
+		glog.V(0).Infof("UnmountEcShards %d.%d generation %d", vid, shardId, generation)
 		s.DeletedEcShardsChan <- message
 		return nil
 	}
 
-	return fmt.Errorf("UnmountEcShards %d.%d not found on disk", vid, shardId)
+	return fmt.Errorf("UnmountEcShards %d.%d generation %d not found on disk", vid, shardId, generation)
 }
 
 func (s *Store) findEcShard(vid needle.VolumeId, shardId erasure_coding.ShardId) (diskId uint32, shard *erasure_coding.EcVolumeShard, found bool) {
@@ -164,7 +164,7 @@ func (s *Store) ReadEcShardNeedle(vid needle.VolumeId, n *needle.Needle, onReadS
 				onReadSizeFn(size)
 			}
 
-			glog.V(3).Infof("read ec volume %d offset %d size %d intervals:%+v", vid, offset.ToActualOffset(), size, intervals)
+			glog.V(3).Infof("read ec volume %d generation %d offset %d size %d intervals:%+v", vid, localEcVolume.Generation, offset.ToActualOffset(), size, intervals)
 
 			if len(intervals) > 1 {
 				glog.V(3).Infof("ReadEcShardNeedle needle id %s intervals:%+v", n.String(), intervals)
@@ -185,7 +185,7 @@ func (s *Store) ReadEcShardNeedle(vid needle.VolumeId, n *needle.Needle, onReadS
 			return len(bytes), nil
 		}
 	}
-	return 0, fmt.Errorf("ec shard %d not found", vid)
+	return 0, fmt.Errorf("ec volume %d not found", vid)
 }
 
 func (s *Store) readEcShardIntervals(vid needle.VolumeId, needleId types.NeedleId, ecVolume *erasure_coding.EcVolume, intervals []erasure_coding.Interval) (data []byte, is_deleted bool, err error) {
@@ -218,7 +218,7 @@ func (s *Store) readOneEcShardInterval(needleId types.NeedleId, ecVolume *erasur
 		var readSize int
 		if readSize, err = shard.ReadAt(data, actualOffset); err != nil {
 			if readSize != int(interval.Size) {
-				glog.V(0).Infof("read local ec shard %d.%d offset %d: %v", ecVolume.VolumeId, shardId, actualOffset, err)
+				glog.V(0).Infof("read local ec shard %d.%d generation %d offset %d: %v", ecVolume.VolumeId, shardId, ecVolume.Generation, actualOffset, err)
 				return
 			}
 		}
@@ -233,7 +233,7 @@ func (s *Store) readOneEcShardInterval(needleId types.NeedleId, ecVolume *erasur
 			if err == nil {
 				return
 			}
-			glog.V(0).Infof("clearing ec shard %d.%d locations: %v", ecVolume.VolumeId, shardId, err)
+			glog.V(0).Infof("clearing ec shard %d.%d generation %d locations: %v", ecVolume.VolumeId, shardId, ecVolume.Generation, err)
 		}
 
 		// try reading by recovering from other shards
@@ -241,7 +241,7 @@ func (s *Store) readOneEcShardInterval(needleId types.NeedleId, ecVolume *erasur
 		if err == nil {
 			return
 		}
-		glog.V(0).Infof("recover ec shard %d.%d : %v", ecVolume.VolumeId, shardId, err)
+		glog.V(0).Infof("recover ec shard %d.%d generation %d : %v", ecVolume.VolumeId, shardId, ecVolume.Generation, err)
 	}
 	return
 }
@@ -317,16 +317,16 @@ func (s *Store) cachedLookupEcShardLocations(ecVolume *erasure_coding.EcVolume) 
 func (s *Store) readRemoteEcShardInterval(sourceDataNodes []pb.ServerAddress, needleId types.NeedleId, vid needle.VolumeId, shardId erasure_coding.ShardId, buf []byte, offset int64, generation uint32) (n int, is_deleted bool, err error) {
 
 	if len(sourceDataNodes) == 0 {
-		return 0, false, fmt.Errorf("failed to find ec shard %d.%d", vid, shardId)
+		return 0, false, fmt.Errorf("failed to find ec shard %d.%d generation %d", vid, shardId, generation)
 	}
 
 	for _, sourceDataNode := range sourceDataNodes {
-		glog.V(3).Infof("read remote ec shard %d.%d from %s", vid, shardId, sourceDataNode)
+		glog.V(3).Infof("read remote ec shard %d.%d generation %d from %s", vid, shardId, generation, sourceDataNode)
 		n, is_deleted, err = s.doReadRemoteEcShardInterval(sourceDataNode, needleId, vid, shardId, buf, offset, generation)
 		if err == nil {
 			return
 		}
-		glog.V(1).Infof("read remote ec shard %d.%d from %s: %v", vid, shardId, sourceDataNode, err)
+		glog.V(1).Infof("read remote ec shard %d.%d generation %d from %s: %v", vid, shardId, generation, sourceDataNode, err)
 	}
 
 	return
