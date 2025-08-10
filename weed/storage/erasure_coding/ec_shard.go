@@ -23,11 +23,12 @@ type EcVolumeShard struct {
 	ecdFile     *os.File
 	ecdFileSize int64
 	DiskType    types.DiskType
+	Generation  uint32 // generation for metrics labeling
 }
 
 func NewEcVolumeShard(diskType types.DiskType, dirname string, collection string, id needle.VolumeId, shardId ShardId, generation uint32) (v *EcVolumeShard, e error) {
 
-	v = &EcVolumeShard{dir: dirname, Collection: collection, VolumeId: id, ShardId: shardId, DiskType: diskType}
+	v = &EcVolumeShard{dir: dirname, Collection: collection, VolumeId: id, ShardId: shardId, DiskType: diskType, Generation: generation}
 
 	baseFileName := v.FileNameWithGeneration(generation)
 
@@ -51,11 +52,13 @@ func NewEcVolumeShard(diskType types.DiskType, dirname string, collection string
 }
 
 func (shard *EcVolumeShard) Mount() {
-	stats.VolumeServerVolumeGauge.WithLabelValues(shard.Collection, "ec_shards").Inc()
+	generationLabel := fmt.Sprintf("%d", shard.Generation)
+	stats.VolumeServerVolumeGauge.WithLabelValues(shard.Collection, "ec_shards", generationLabel).Inc()
 }
 
 func (shard *EcVolumeShard) Unmount() {
-	stats.VolumeServerVolumeGauge.WithLabelValues(shard.Collection, "ec_shards").Dec()
+	generationLabel := fmt.Sprintf("%d", shard.Generation)
+	stats.VolumeServerVolumeGauge.WithLabelValues(shard.Collection, "ec_shards", generationLabel).Dec()
 }
 
 func (shard *EcVolumeShard) Size() int64 {

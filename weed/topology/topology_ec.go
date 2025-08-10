@@ -6,6 +6,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
@@ -346,6 +347,71 @@ func (t *Topology) LookupEcShardsWithFallback(vid needle.VolumeId, requestedGene
 
 	glog.V(2).Infof("LookupEcShardsWithFallback: volume %d not found in any generation", vid)
 	return nil, 0, false
+}
+
+// UpdateEcGenerationMetrics updates prometheus metrics with current EC volume generation information
+func (t *Topology) UpdateEcGenerationMetrics() {
+	t.ecShardMapLock.RLock()
+	defer t.ecShardMapLock.RUnlock()
+
+	t.ecActiveGenerationMapLock.RLock()
+	defer t.ecActiveGenerationMapLock.RUnlock()
+
+	// Count volumes and shards by collection, generation, and active status
+	volumeCountsByCollection := make(map[string]map[uint32]map[bool]int)
+	shardCountsByCollection := make(map[string]map[uint32]map[bool]int)
+
+	// Initialize counting maps
+	for key, ecShardLocs := range t.ecShardMap {
+		collection := ecShardLocs.Collection
+		generation := key.Generation
+
+		if volumeCountsByCollection[collection] == nil {
+			volumeCountsByCollection[collection] = make(map[uint32]map[bool]int)
+		}
+		if volumeCountsByCollection[collection][generation] == nil {
+			volumeCountsByCollection[collection][generation] = make(map[bool]int)
+		}
+		if shardCountsByCollection[collection] == nil {
+			shardCountsByCollection[collection] = make(map[uint32]map[bool]int)
+		}
+		if shardCountsByCollection[collection][generation] == nil {
+			shardCountsByCollection[collection][generation] = make(map[bool]int)
+		}
+
+		// Check if this generation is active for this volume
+		activeGeneration, hasActiveGen := t.ecActiveGenerationMap[key.VolumeId]
+		isActive := hasActiveGen && activeGeneration == generation
+
+		// Count this volume
+		volumeCountsByCollection[collection][generation][isActive]++
+
+		// Count shards in this volume
+		shardCount := len(ecShardLocs.Locations)
+		shardCountsByCollection[collection][generation][isActive] += shardCount
+	}
+
+	// Update volume metrics
+	for collection, generationMap := range volumeCountsByCollection {
+		for generation, activeMap := range generationMap {
+			generationLabel := fmt.Sprintf("%d", generation)
+			for isActive, count := range activeMap {
+				activeLabel := fmt.Sprintf("%t", isActive)
+				stats.MasterEcVolumeGenerationGauge.WithLabelValues(collection, generationLabel, activeLabel).Set(float64(count))
+			}
+		}
+	}
+
+	// Update shard metrics
+	for collection, generationMap := range shardCountsByCollection {
+		for generation, activeMap := range generationMap {
+			generationLabel := fmt.Sprintf("%d", generation)
+			for isActive, count := range activeMap {
+				activeLabel := fmt.Sprintf("%t", isActive)
+				stats.MasterEcShardGenerationGauge.WithLabelValues(collection, generationLabel, activeLabel).Set(float64(count))
+			}
+		}
+	}
 }
 
 // ValidateEcGenerationReadiness checks if an EC generation has sufficient shards for activation

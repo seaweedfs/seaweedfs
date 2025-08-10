@@ -24,21 +24,31 @@ import (
 
 func (s *Store) CollectErasureCodingHeartbeat() *master_pb.Heartbeat {
 	var ecShardMessages []*master_pb.VolumeEcShardInformationMessage
-	collectionEcShardSize := make(map[string]int64)
+	// Track sizes by collection+generation combination
+	collectionGenerationEcShardSize := make(map[string]map[uint32]int64)
 	for diskId, location := range s.Locations {
 		location.ecVolumesLock.RLock()
 		for _, ecShards := range location.ecVolumes {
 			ecShardMessages = append(ecShardMessages, ecShards.ToVolumeEcShardInformationMessage(uint32(diskId))...)
 
+			// Initialize collection map if needed
+			if collectionGenerationEcShardSize[ecShards.Collection] == nil {
+				collectionGenerationEcShardSize[ecShards.Collection] = make(map[uint32]int64)
+			}
+
 			for _, ecShard := range ecShards.Shards {
-				collectionEcShardSize[ecShards.Collection] += ecShard.Size()
+				collectionGenerationEcShardSize[ecShards.Collection][ecShards.Generation] += ecShard.Size()
 			}
 		}
 		location.ecVolumesLock.RUnlock()
 	}
 
-	for col, size := range collectionEcShardSize {
-		stats.VolumeServerDiskSizeGauge.WithLabelValues(col, "ec").Set(float64(size))
+	// Update metrics with generation labels
+	for col, generationSizes := range collectionGenerationEcShardSize {
+		for generation, size := range generationSizes {
+			generationLabel := fmt.Sprintf("%d", generation)
+			stats.VolumeServerDiskSizeGauge.WithLabelValues(col, "ec", generationLabel).Set(float64(size))
+		}
 	}
 
 	return &master_pb.Heartbeat{

@@ -359,11 +359,11 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	}
 
 	for col, size := range collectionVolumeSize {
-		stats.VolumeServerDiskSizeGauge.WithLabelValues(col, "normal").Set(float64(size))
+		stats.VolumeServerDiskSizeGauge.WithLabelValues(col, "normal", "0").Set(float64(size))
 	}
 
 	for col, deletedBytes := range collectionVolumeDeletedBytes {
-		stats.VolumeServerDiskSizeGauge.WithLabelValues(col, "deleted_bytes").Set(float64(deletedBytes))
+		stats.VolumeServerDiskSizeGauge.WithLabelValues(col, "deleted_bytes", "0").Set(float64(deletedBytes))
 	}
 
 	for col, types := range collectionVolumeReadOnlyCount {
