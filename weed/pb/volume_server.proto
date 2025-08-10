@@ -440,6 +440,7 @@ message VolumeEcShardReadRequest {
     int64 offset = 3;
     int64 size = 4;
     uint64 file_key = 5;
+    uint32 generation = 6; // generation to read from, defaults to 0
 }
 message VolumeEcShardReadResponse {
     bytes data = 1;

@@ -3567,6 +3567,7 @@ type VolumeEcShardReadRequest struct {
 	Offset        int64                  `protobuf:"varint,3,opt,name=offset,proto3" json:"offset,omitempty"`
 	Size          int64                  `protobuf:"varint,4,opt,name=size,proto3" json:"size,omitempty"`
 	FileKey       uint64                 `protobuf:"varint,5,opt,name=file_key,json=fileKey,proto3" json:"file_key,omitempty"`
+	Generation    uint32                 `protobuf:"varint,6,opt,name=generation,proto3" json:"generation,omitempty"` // generation to read from, defaults to 0
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3632,6 +3633,13 @@ func (x *VolumeEcShardReadRequest) GetSize() int64 {
 func (x *VolumeEcShardReadRequest) GetFileKey() uint64 {
 	if x != nil {
 		return x.FileKey
+	}
+	return 0
+}
+
+func (x *VolumeEcShardReadRequest) GetGeneration() uint32 {
+	if x != nil {
+		return x.Generation
 	}
 	return 0
 }
@@ -6404,13 +6412,16 @@ const file_volume_server_proto_rawDesc = "" +
 	"\n" +
 	"generation\x18\x04 \x01(\rR\n" +
 	"generation\"\x1f\n" +
-	"\x1dVolumeEcShardsUnmountResponse\"\x99\x01\n" +
+	"\x1dVolumeEcShardsUnmountResponse\"\xb9\x01\n" +
 	"\x18VolumeEcShardReadRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x19\n" +
 	"\bshard_id\x18\x02 \x01(\rR\ashardId\x12\x16\n" +
 	"\x06offset\x18\x03 \x01(\x03R\x06offset\x12\x12\n" +
 	"\x04size\x18\x04 \x01(\x03R\x04size\x12\x19\n" +
-	"\bfile_key\x18\x05 \x01(\x04R\afileKey\"N\n" +
+	"\bfile_key\x18\x05 \x01(\x04R\afileKey\x12\x1e\n" +
+	"\n" +
+	"generation\x18\x06 \x01(\rR\n" +
+	"generation\"N\n" +
 	"\x19VolumeEcShardReadResponse\x12\x12\n" +
 	"\x04data\x18\x01 \x01(\fR\x04data\x12\x1d\n" +
 	"\n" +
