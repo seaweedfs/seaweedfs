@@ -216,7 +216,8 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		}
 	}
 
-	stats.VolumeServerVolumeGauge.WithLabelValues(v.Collection, "volume", "0").Inc()
+	compactionRevisionLabel := fmt.Sprintf("%d", v.CompactionRevision)
+	stats.VolumeServerVolumeGauge.WithLabelValues(v.Collection, "volume", compactionRevisionLabel).Inc()
 
 	if err == nil {
 		hasLoadedVolume = true
