@@ -12,9 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
-	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
-	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
@@ -25,16 +23,12 @@ const (
 
 	// Configuration file names (protobuf binary)
 	MaintenanceConfigFile     = "maintenance.pb"
-	VacuumTaskConfigFile      = "task_vacuum.pb"
 	ECTaskConfigFile          = "task_erasure_coding.pb"
-	BalanceTaskConfigFile     = "task_balance.pb"
 	ReplicationTaskConfigFile = "task_replication.pb"
 
 	// JSON reference files
 	MaintenanceConfigJSONFile     = "maintenance.json"
-	VacuumTaskConfigJSONFile      = "task_vacuum.json"
 	ECTaskConfigJSONFile          = "task_erasure_coding.json"
-	BalanceTaskConfigJSONFile     = "task_balance.json"
 	ReplicationTaskConfigJSONFile = "task_replication.json"
 
 	// Task persistence subdirectories and settings
@@ -262,92 +256,6 @@ func (cp *ConfigPersistence) RestoreConfig(filename, backupName string) error {
 	return nil
 }
 
-// SaveVacuumTaskConfig saves vacuum task configuration to protobuf file
-func (cp *ConfigPersistence) SaveVacuumTaskConfig(config *VacuumTaskConfig) error {
-	return cp.saveTaskConfig(VacuumTaskConfigFile, config)
-}
-
-// SaveVacuumTaskPolicy saves complete vacuum task policy to protobuf file
-func (cp *ConfigPersistence) SaveVacuumTaskPolicy(policy *worker_pb.TaskPolicy) error {
-	return cp.saveTaskConfig(VacuumTaskConfigFile, policy)
-}
-
-// LoadVacuumTaskConfig loads vacuum task configuration from protobuf file
-func (cp *ConfigPersistence) LoadVacuumTaskConfig() (*VacuumTaskConfig, error) {
-	// Load as TaskPolicy and extract vacuum config
-	if taskPolicy, err := cp.LoadVacuumTaskPolicy(); err == nil && taskPolicy != nil {
-		if vacuumConfig := taskPolicy.GetVacuumConfig(); vacuumConfig != nil {
-			return vacuumConfig, nil
-		}
-	}
-
-	// Return default config if no valid config found
-	return &VacuumTaskConfig{
-		GarbageThreshold:   0.3,
-		MinVolumeAgeHours:  24,
-		MinIntervalSeconds: 7 * 24 * 60 * 60, // 7 days
-	}, nil
-}
-
-// LoadVacuumTaskPolicy loads complete vacuum task policy from protobuf file
-func (cp *ConfigPersistence) LoadVacuumTaskPolicy() (*worker_pb.TaskPolicy, error) {
-	if cp.dataDir == "" {
-		// Return default policy if no data directory
-		return &worker_pb.TaskPolicy{
-			Enabled:               true,
-			MaxConcurrent:         2,
-			RepeatIntervalSeconds: 24 * 3600, // 24 hours in seconds
-			CheckIntervalSeconds:  6 * 3600,  // 6 hours in seconds
-			TaskConfig: &worker_pb.TaskPolicy_VacuumConfig{
-				VacuumConfig: &worker_pb.VacuumTaskConfig{
-					GarbageThreshold:   0.3,
-					MinVolumeAgeHours:  24,
-					MinIntervalSeconds: 7 * 24 * 60 * 60, // 7 days
-				},
-			},
-		}, nil
-	}
-
-	confDir := filepath.Join(cp.dataDir, ConfigSubdir)
-	configPath := filepath.Join(confDir, VacuumTaskConfigFile)
-
-	// Check if file exists
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		// Return default policy if file doesn't exist
-		return &worker_pb.TaskPolicy{
-			Enabled:               true,
-			MaxConcurrent:         2,
-			RepeatIntervalSeconds: 24 * 3600, // 24 hours in seconds
-			CheckIntervalSeconds:  6 * 3600,  // 6 hours in seconds
-			TaskConfig: &worker_pb.TaskPolicy_VacuumConfig{
-				VacuumConfig: &worker_pb.VacuumTaskConfig{
-					GarbageThreshold:   0.3,
-					MinVolumeAgeHours:  24,
-					MinIntervalSeconds: 7 * 24 * 60 * 60, // 7 days
-				},
-			},
-		}, nil
-	}
-
-	// Read file
-	configData, err := os.ReadFile(configPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read vacuum task config file: %w", err)
-	}
-
-	// Try to unmarshal as TaskPolicy
-	var policy worker_pb.TaskPolicy
-	if err := proto.Unmarshal(configData, &policy); err == nil {
-		// Validate that it's actually a TaskPolicy with vacuum config
-		if policy.GetVacuumConfig() != nil {
-			glog.V(1).Infof("Loaded vacuum task policy from %s", configPath)
-			return &policy, nil
-		}
-	}
-
-	return nil, fmt.Errorf("failed to unmarshal vacuum task configuration")
-}
-
 // SaveErasureCodingTaskConfig saves EC task configuration to protobuf file
 func (cp *ConfigPersistence) SaveErasureCodingTaskConfig(config *ErasureCodingTaskConfig) error {
 	return cp.saveTaskConfig(ECTaskConfigFile, config)
@@ -435,89 +343,6 @@ func (cp *ConfigPersistence) LoadErasureCodingTaskPolicy() (*worker_pb.TaskPolic
 	}
 
 	return nil, fmt.Errorf("failed to unmarshal EC task configuration")
-}
-
-// SaveBalanceTaskConfig saves balance task configuration to protobuf file
-func (cp *ConfigPersistence) SaveBalanceTaskConfig(config *BalanceTaskConfig) error {
-	return cp.saveTaskConfig(BalanceTaskConfigFile, config)
-}
-
-// SaveBalanceTaskPolicy saves complete balance task policy to protobuf file
-func (cp *ConfigPersistence) SaveBalanceTaskPolicy(policy *worker_pb.TaskPolicy) error {
-	return cp.saveTaskConfig(BalanceTaskConfigFile, policy)
-}
-
-// LoadBalanceTaskConfig loads balance task configuration from protobuf file
-func (cp *ConfigPersistence) LoadBalanceTaskConfig() (*BalanceTaskConfig, error) {
-	// Load as TaskPolicy and extract balance config
-	if taskPolicy, err := cp.LoadBalanceTaskPolicy(); err == nil && taskPolicy != nil {
-		if balanceConfig := taskPolicy.GetBalanceConfig(); balanceConfig != nil {
-			return balanceConfig, nil
-		}
-	}
-
-	// Return default config if no valid config found
-	return &BalanceTaskConfig{
-		ImbalanceThreshold: 0.1,
-		MinServerCount:     2,
-	}, nil
-}
-
-// LoadBalanceTaskPolicy loads complete balance task policy from protobuf file
-func (cp *ConfigPersistence) LoadBalanceTaskPolicy() (*worker_pb.TaskPolicy, error) {
-	if cp.dataDir == "" {
-		// Return default policy if no data directory
-		return &worker_pb.TaskPolicy{
-			Enabled:               true,
-			MaxConcurrent:         1,
-			RepeatIntervalSeconds: 6 * 3600,  // 6 hours in seconds
-			CheckIntervalSeconds:  12 * 3600, // 12 hours in seconds
-			TaskConfig: &worker_pb.TaskPolicy_BalanceConfig{
-				BalanceConfig: &worker_pb.BalanceTaskConfig{
-					ImbalanceThreshold: 0.1,
-					MinServerCount:     2,
-				},
-			},
-		}, nil
-	}
-
-	confDir := filepath.Join(cp.dataDir, ConfigSubdir)
-	configPath := filepath.Join(confDir, BalanceTaskConfigFile)
-
-	// Check if file exists
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		// Return default policy if file doesn't exist
-		return &worker_pb.TaskPolicy{
-			Enabled:               true,
-			MaxConcurrent:         1,
-			RepeatIntervalSeconds: 6 * 3600,  // 6 hours in seconds
-			CheckIntervalSeconds:  12 * 3600, // 12 hours in seconds
-			TaskConfig: &worker_pb.TaskPolicy_BalanceConfig{
-				BalanceConfig: &worker_pb.BalanceTaskConfig{
-					ImbalanceThreshold: 0.1,
-					MinServerCount:     2,
-				},
-			},
-		}, nil
-	}
-
-	// Read file
-	configData, err := os.ReadFile(configPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read balance task config file: %w", err)
-	}
-
-	// Try to unmarshal as TaskPolicy
-	var policy worker_pb.TaskPolicy
-	if err := proto.Unmarshal(configData, &policy); err == nil {
-		// Validate that it's actually a TaskPolicy with balance config
-		if policy.GetBalanceConfig() != nil {
-			glog.V(1).Infof("Loaded balance task policy from %s", configPath)
-			return &policy, nil
-		}
-	}
-
-	return nil, fmt.Errorf("failed to unmarshal balance task configuration")
 }
 
 // SaveReplicationTaskConfig saves replication task configuration to protobuf file
@@ -673,23 +498,6 @@ func buildPolicyFromTaskConfigs() *worker_pb.MaintenancePolicy {
 		TaskPolicies:                 make(map[string]*worker_pb.TaskPolicy),
 	}
 
-	// Load vacuum task configuration
-	if vacuumConfig := vacuum.LoadConfigFromPersistence(nil); vacuumConfig != nil {
-		policy.TaskPolicies["vacuum"] = &worker_pb.TaskPolicy{
-			Enabled:               vacuumConfig.Enabled,
-			MaxConcurrent:         int32(vacuumConfig.MaxConcurrent),
-			RepeatIntervalSeconds: int32(vacuumConfig.ScanIntervalSeconds),
-			CheckIntervalSeconds:  int32(vacuumConfig.ScanIntervalSeconds),
-			TaskConfig: &worker_pb.TaskPolicy_VacuumConfig{
-				VacuumConfig: &worker_pb.VacuumTaskConfig{
-					GarbageThreshold:   float64(vacuumConfig.GarbageThreshold),
-					MinVolumeAgeHours:  int32(vacuumConfig.MinVolumeAgeSeconds / 3600), // Convert seconds to hours
-					MinIntervalSeconds: int32(vacuumConfig.MinIntervalSeconds),
-				},
-			},
-		}
-	}
-
 	// Load erasure coding task configuration
 	if ecConfig := erasure_coding.LoadConfigFromPersistence(nil); ecConfig != nil {
 		policy.TaskPolicies["erasure_coding"] = &worker_pb.TaskPolicy{
@@ -703,22 +511,6 @@ func buildPolicyFromTaskConfigs() *worker_pb.MaintenancePolicy {
 					QuietForSeconds:  int32(ecConfig.QuietForSeconds),
 					MinVolumeSizeMb:  int32(ecConfig.MinSizeMB),
 					CollectionFilter: ecConfig.CollectionFilter,
-				},
-			},
-		}
-	}
-
-	// Load balance task configuration
-	if balanceConfig := balance.LoadConfigFromPersistence(nil); balanceConfig != nil {
-		policy.TaskPolicies["balance"] = &worker_pb.TaskPolicy{
-			Enabled:               balanceConfig.Enabled,
-			MaxConcurrent:         int32(balanceConfig.MaxConcurrent),
-			RepeatIntervalSeconds: int32(balanceConfig.ScanIntervalSeconds),
-			CheckIntervalSeconds:  int32(balanceConfig.ScanIntervalSeconds),
-			TaskConfig: &worker_pb.TaskPolicy_BalanceConfig{
-				BalanceConfig: &worker_pb.BalanceTaskConfig{
-					ImbalanceThreshold: float64(balanceConfig.ImbalanceThreshold),
-					MinServerCount:     int32(balanceConfig.MinServerCount),
 				},
 			},
 		}

@@ -9,15 +9,12 @@ import (
 // Uses O(1) indexed lookup for optimal performance on large clusters.
 //
 // This is a shared utility function used by multiple task detection algorithms
-// (balance, vacuum, etc.) to locate volumes efficiently.
+// to locate volumes efficiently.
 //
 // Example usage:
 //
-//	// In balance task: find source disk for a volume that needs to be moved
+//	// Find source disk for a volume that needs to be processed
 //	sourceDisk, found := base.FindVolumeDisk(topology, volumeID, collection, sourceServer)
-//
-//	// In vacuum task: find disk containing volume that needs cleanup
-//	diskID, exists := base.FindVolumeDisk(topology, volumeID, collection, serverID)
 func FindVolumeDisk(activeTopology *topology.ActiveTopology, volumeID uint32, collection string, serverID string) (uint32, bool) {
 	if activeTopology == nil {
 		return 0, false

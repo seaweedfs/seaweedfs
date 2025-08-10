@@ -17,9 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/layout"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
-	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
-	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
@@ -235,10 +233,6 @@ func (h *MaintenanceHandlers) UpdateTaskConfig(c *gin.Context) {
 	// Create a new config instance based on task type and apply schema defaults
 	var config TaskConfig
 	switch taskType {
-	case types.TaskTypeVacuum:
-		config = &vacuum.Config{}
-	case types.TaskTypeBalance:
-		config = &balance.Config{}
 	case types.TaskTypeErasureCoding:
 		config = &erasure_coding.Config{}
 	default:
@@ -285,20 +279,10 @@ func (h *MaintenanceHandlers) UpdateTaskConfig(c *gin.Context) {
 
 	// Debug logging - show parsed config values
 	switch taskType {
-	case types.TaskTypeVacuum:
-		if vacuumConfig, ok := config.(*vacuum.Config); ok {
-			glog.V(1).Infof("Parsed vacuum config - GarbageThreshold: %f, MinVolumeAgeSeconds: %d, MinIntervalSeconds: %d",
-				vacuumConfig.GarbageThreshold, vacuumConfig.MinVolumeAgeSeconds, vacuumConfig.MinIntervalSeconds)
-		}
 	case types.TaskTypeErasureCoding:
 		if ecConfig, ok := config.(*erasure_coding.Config); ok {
 			glog.V(1).Infof("Parsed EC config - FullnessRatio: %f, QuietForSeconds: %d, MinSizeMB: %d, CollectionFilter: '%s'",
 				ecConfig.FullnessRatio, ecConfig.QuietForSeconds, ecConfig.MinSizeMB, ecConfig.CollectionFilter)
-		}
-	case types.TaskTypeBalance:
-		if balanceConfig, ok := config.(*balance.Config); ok {
-			glog.V(1).Infof("Parsed balance config - Enabled: %v, MaxConcurrent: %d, ScanIntervalSeconds: %d, ImbalanceThreshold: %f, MinServerCount: %d",
-				balanceConfig.Enabled, balanceConfig.MaxConcurrent, balanceConfig.ScanIntervalSeconds, balanceConfig.ImbalanceThreshold, balanceConfig.MinServerCount)
 		}
 	}
 
@@ -580,12 +564,8 @@ func (h *MaintenanceHandlers) saveTaskConfigToProtobuf(taskType types.TaskType, 
 
 	// Save using task-specific methods
 	switch taskType {
-	case types.TaskTypeVacuum:
-		return configPersistence.SaveVacuumTaskPolicy(taskPolicy)
 	case types.TaskTypeErasureCoding:
 		return configPersistence.SaveErasureCodingTaskPolicy(taskPolicy)
-	case types.TaskTypeBalance:
-		return configPersistence.SaveBalanceTaskPolicy(taskPolicy)
 	default:
 		return fmt.Errorf("unsupported task type for protobuf persistence: %s", taskType)
 	}

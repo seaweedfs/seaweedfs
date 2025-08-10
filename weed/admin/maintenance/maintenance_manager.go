@@ -8,9 +8,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
-	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
-	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 )
 
 // buildPolicyFromTaskConfigs loads task configurations from separate files and builds a MaintenancePolicy
@@ -20,23 +18,6 @@ func buildPolicyFromTaskConfigs() *worker_pb.MaintenancePolicy {
 		DefaultRepeatIntervalSeconds: 6 * 3600,  // 6 hours in seconds
 		DefaultCheckIntervalSeconds:  12 * 3600, // 12 hours in seconds
 		TaskPolicies:                 make(map[string]*worker_pb.TaskPolicy),
-	}
-
-	// Load vacuum task configuration
-	if vacuumConfig := vacuum.LoadConfigFromPersistence(nil); vacuumConfig != nil {
-		policy.TaskPolicies["vacuum"] = &worker_pb.TaskPolicy{
-			Enabled:               vacuumConfig.Enabled,
-			MaxConcurrent:         int32(vacuumConfig.MaxConcurrent),
-			RepeatIntervalSeconds: int32(vacuumConfig.ScanIntervalSeconds),
-			CheckIntervalSeconds:  int32(vacuumConfig.ScanIntervalSeconds),
-			TaskConfig: &worker_pb.TaskPolicy_VacuumConfig{
-				VacuumConfig: &worker_pb.VacuumTaskConfig{
-					GarbageThreshold:   float64(vacuumConfig.GarbageThreshold),
-					MinVolumeAgeHours:  int32(vacuumConfig.MinVolumeAgeSeconds / 3600), // Convert seconds to hours
-					MinIntervalSeconds: int32(vacuumConfig.MinIntervalSeconds),
-				},
-			},
-		}
 	}
 
 	// Load erasure coding task configuration
@@ -52,22 +33,6 @@ func buildPolicyFromTaskConfigs() *worker_pb.MaintenancePolicy {
 					QuietForSeconds:  int32(ecConfig.QuietForSeconds),
 					MinVolumeSizeMb:  int32(ecConfig.MinSizeMB),
 					CollectionFilter: ecConfig.CollectionFilter,
-				},
-			},
-		}
-	}
-
-	// Load balance task configuration
-	if balanceConfig := balance.LoadConfigFromPersistence(nil); balanceConfig != nil {
-		policy.TaskPolicies["balance"] = &worker_pb.TaskPolicy{
-			Enabled:               balanceConfig.Enabled,
-			MaxConcurrent:         int32(balanceConfig.MaxConcurrent),
-			RepeatIntervalSeconds: int32(balanceConfig.ScanIntervalSeconds),
-			CheckIntervalSeconds:  int32(balanceConfig.ScanIntervalSeconds),
-			TaskConfig: &worker_pb.TaskPolicy_BalanceConfig{
-				BalanceConfig: &worker_pb.BalanceTaskConfig{
-					ImbalanceThreshold: float64(balanceConfig.ImbalanceThreshold),
-					MinServerCount:     int32(balanceConfig.MinServerCount),
 				},
 			},
 		}

@@ -11,9 +11,7 @@ import (
 type TaskType string
 
 const (
-	TaskTypeVacuum        TaskType = "vacuum"
 	TaskTypeErasureCoding TaskType = "erasure_coding"
-	TaskTypeBalance       TaskType = "balance"
 	TaskTypeReplication   TaskType = "replication"
 )
 
