@@ -66,14 +66,17 @@ func (fs *FilerServer) copy(ctx context.Context, w http.ResponseWriter, r *http.
 	newName = util.Nvl(newName, oldName)
 	finalDstPath := util.FullPath(newDir).Child(newName)
 
-	// Check if destination exists (future enhancement: handle overwrite logic)
-	_, err = fs.filer.FindEntry(ctx, util.FullPath(strings.TrimRight(dst, "/")))
-	if err != nil && err != filer_pb.ErrNotFound {
-		err = fmt.Errorf("failed to get dst entry '%s', err: %s", dst, err)
+	// Check if destination file already exists
+	// TODO: add an overwrite parameter to allow overwriting
+	if dstEntry, err := fs.filer.FindEntry(ctx, finalDstPath); err != nil && err != filer_pb.ErrNotFound {
+		err = fmt.Errorf("failed to check destination entry %s: %v", finalDstPath, err)
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
+	} else if dstEntry != nil {
+		err = fmt.Errorf("destination file %s already exists", finalDstPath)
+		writeJsonError(w, r, http.StatusConflict, err)
+		return
 	}
-	// Note: Could add overwrite protection logic here if needed
 
 	// Copy the file content and chunks
 	newEntry, err := fs.copyEntry(ctx, srcEntry, finalDstPath, so)
@@ -97,14 +100,20 @@ func (fs *FilerServer) copy(ctx context.Context, w http.ResponseWriter, r *http.
 // copyEntry creates a new entry with copied content and chunks
 func (fs *FilerServer) copyEntry(ctx context.Context, srcEntry *filer.Entry, dstPath util.FullPath, so *operation.StorageOption) (*filer.Entry, error) {
 	// Create the base entry structure
+	// Note: For hard links, we copy the actual content but NOT the HardLinkId/HardLinkCounter
+	// This creates an independent copy rather than another hard link to the same content
 	newEntry := &filer.Entry{
-		FullPath:        dstPath,
-		Attr:            srcEntry.Attr,
-		Extended:        srcEntry.Extended,
-		HardLinkCounter: srcEntry.HardLinkCounter,
-		HardLinkId:      srcEntry.HardLinkId,
-		Remote:          srcEntry.Remote,
-		Quota:           srcEntry.Quota,
+		FullPath: dstPath,
+		Attr:     srcEntry.Attr,
+		Extended: srcEntry.Extended,
+		Remote:   srcEntry.Remote,
+		Quota:    srcEntry.Quota,
+		// Intentionally NOT copying HardLinkId and HardLinkCounter to create independent copy
+	}
+
+	// Log if we're copying a hard link so we can track this behavior
+	if len(srcEntry.HardLinkId) > 0 {
+		glog.V(2).InfofCtx(ctx, "FilerServer.copyEntry: copying hard link %s (nlink=%d) as independent file", srcEntry.FullPath, srcEntry.HardLinkCounter)
 	}
 
 	// Handle small files stored in Content field
@@ -116,7 +125,7 @@ func (fs *FilerServer) copyEntry(ctx context.Context, srcEntry *filer.Entry, dst
 		return newEntry, nil
 	}
 
-	// Handle files stored as chunks
+	// Handle files stored as chunks (including resolved hard link content)
 	if len(srcEntry.GetChunks()) > 0 {
 		newChunks, err := fs.copyChunks(ctx, srcEntry.GetChunks(), so)
 		if err != nil {
@@ -127,7 +136,10 @@ func (fs *FilerServer) copyEntry(ctx context.Context, srcEntry *filer.Entry, dst
 		return newEntry, nil
 	}
 
-	// Empty file case
+	// Empty file case (or hard link with no content - should not happen if hard link was properly resolved)
+	if len(srcEntry.HardLinkId) > 0 {
+		glog.WarningfCtx(ctx, "FilerServer.copyEntry: hard link %s appears to have no content - this may indicate an issue with hard link resolution", srcEntry.FullPath)
+	}
 	glog.V(2).InfofCtx(ctx, "FilerServer.copyEntry: empty file, no content or chunks to copy")
 	return newEntry, nil
 }
