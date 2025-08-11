@@ -1,7 +1,7 @@
 # SeaweedFS Admin Integration Test Makefile
 # Tests the admin server and worker functionality using official weed commands
 
-.PHONY: help build build-and-restart restart-workers start stop restart logs clean status test admin-ui worker-logs master-logs admin-logs vacuum-test vacuum-demo vacuum-status vacuum-data vacuum-data-high vacuum-data-low vacuum-continuous vacuum-clean vacuum-help
+.PHONY: help build build-and-restart restart-workers restart-admin start stop restart logs clean status test admin-ui worker-logs master-logs admin-logs vacuum-test vacuum-demo vacuum-status vacuum-data vacuum-data-high vacuum-data-low vacuum-continuous vacuum-clean vacuum-help file-generation-test file-deletion-test all-file-tests
 .DEFAULT_GOAL := help
 
 COMPOSE_FILE := docker-compose-ec-test.yml
@@ -34,16 +34,22 @@ restart-workers: ## Restart all workers to reconnect to admin server
 	@docker-compose -f $(COMPOSE_FILE) restart worker1 worker2 worker3
 	@echo "✅ Workers restarted and will reconnect to admin server"
 
+restart-admin: ## Restart admin server (useful after deadlock fixes)
+	@echo "🔄 Restarting admin server..."
+	@docker-compose -f $(COMPOSE_FILE) restart admin
+	@echo "✅ Admin server restarted"
+	@echo "🌐 Admin UI: http://localhost:23646/"
+
 help: ## Show this help message
 	@echo "SeaweedFS Admin Integration Test"
 	@echo "================================"
 	@echo "Tests admin server task distribution to workers using official weed commands"
 	@echo ""
 	@echo "🏗️  Cluster Management:"
-	@grep -E '^(start|stop|restart|clean|status|build):.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
+	@grep -E '^(start|stop|restart|restart-admin|restart-workers|clean|status|build):.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
 	@echo ""
 	@echo "🧪 Testing:"
-	@grep -E '^(test|demo|validate|quick-test):.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
+	@grep -E '^(test|demo|validate|quick-test|file-.*-test|all-file-tests):.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
 	@echo ""
 	@echo "🗑️  Vacuum Testing:"
 	@grep -E '^vacuum-.*:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -56,8 +62,11 @@ help: ## Show this help message
 	@echo ""
 	@echo "🚀 Quick Start:"
 	@echo "  make start           # Start cluster"
-	@echo "  make vacuum-test     # Test regular vacuum tasks"
-	@echo "  make ec-vacuum-test  # Test EC vacuum tasks"
+	@echo "  make vacuum-test        # Test regular vacuum tasks"
+	@echo "  make ec-vacuum-test     # Test EC vacuum tasks"
+	@echo "  make file-generation-test # Test file generation (600 files)"
+	@echo "  make file-deletion-test   # Test file deletion (300 files)"
+	@echo "  make all-file-tests       # Run both file tests"
 	@echo "  make vacuum-help     # Regular vacuum guide"
 	@echo "  make ec-vacuum-help  # EC vacuum guide"
 	@echo ""
@@ -324,6 +333,55 @@ vacuum-clean: ## Clean up vacuum test data (removes all volumes!)
 	@echo "✅ Clean up complete. Fresh volumes ready for testing."
 
 # EC Vacuum Testing Targets
+file-generation-test: ## Run the file generation test (600 files of 100KB to volume 1)
+	@echo "🧪 Running File Generation Test"
+	@echo "==============================="
+	@echo "1️⃣ Ensuring cluster is running..."
+	@docker-compose -f $(COMPOSE_FILE) up -d
+	@echo "2️⃣ Waiting for cluster to be ready..."
+	@sleep 10
+	@echo "3️⃣ Running file generation test..."
+	@go test -v . -run TestFileGeneration
+	@echo "✅ File generation test completed!"
+	@echo "💡 This test generates 600 files of 100KB each to volume 1 with hardcoded cookie"
+
+file-deletion-test: ## Run the file deletion test (delete 300 files from volume 1)
+	@echo "🧪 Running File Deletion Test"
+	@echo "============================="
+	@echo "1️⃣ Ensuring cluster is running..."
+	@docker-compose -f $(COMPOSE_FILE) up -d
+	@echo "2️⃣ Waiting for cluster to be ready..."
+	@sleep 10
+	@echo "3️⃣ Running file deletion test..."
+	@go test -v . -run TestFileDeletion
+	@echo "✅ File deletion test completed!"
+	@echo "💡 This test generates 600 files then deletes exactly 300 of them"
+
+all-file-tests: ## Run both file generation and deletion tests
+	@echo "🧪 Running All File Tests"
+	@echo "========================="
+	@echo "1️⃣ Ensuring cluster is running..."
+	@docker-compose -f $(COMPOSE_FILE) up -d
+	@echo "2️⃣ Waiting for cluster to be ready..."
+	@sleep 10
+	@echo "3️⃣ Running file generation test..."
+	@go test -v . -run TestFileGeneration
+	@echo "4️⃣ Running file deletion test..."
+	@go test -v . -run TestFileDeletion
+	@echo "✅ All file tests completed!"
+
+ec-vacuum-go-test: ## Run the Go-based EC vacuum integration test with detailed file ID tracking (legacy)
+	@echo "🧪 Running EC Vacuum Go Integration Test"
+	@echo "========================================"
+	@echo "1️⃣ Ensuring cluster is running..."
+	@docker-compose -f $(COMPOSE_FILE) up -d
+	@echo "2️⃣ Waiting for cluster to be ready..."
+	@sleep 10
+	@echo "3️⃣ Running Go test with file ID tracking..."
+	@go test -v . -run TestECVolumeVacuum
+	@echo "✅ EC Vacuum Go test completed!"
+	@echo "💡 This test shows which file IDs are written and deleted"
+
 ec-vacuum-test: ## Generate EC volumes and test EC vacuum functionality
 	@echo "🧪 SeaweedFS EC Vacuum Task Testing"
 	@echo "===================================="
