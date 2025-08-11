@@ -871,6 +871,7 @@ func (s *AdminServer) getEcVolumeHealthMetrics(volumeID uint32) (*EcVolumeHealth
 		}
 
 		if resp.TopologyInfo != nil {
+			serverSet := make(map[string]struct{})
 			for _, dc := range resp.TopologyInfo.DataCenterInfos {
 				for _, rack := range dc.RackInfos {
 					for _, node := range rack.DataNodeInfos {
@@ -878,14 +879,15 @@ func (s *AdminServer) getEcVolumeHealthMetrics(volumeID uint32) (*EcVolumeHealth
 							// Check if this node has EC shards for our volume
 							for _, ecShardInfo := range diskInfo.EcShardInfos {
 								if ecShardInfo.Id == volumeID {
-									servers = append(servers, node.Id)
-									goto nextNode // Found shards on this node, move to next node
+									serverSet[node.Id] = struct{}{}
 								}
 							}
 						}
 					}
-				nextNode:
 				}
+			}
+			for server := range serverSet {
+				servers = append(servers, server)
 			}
 		}
 		return nil
