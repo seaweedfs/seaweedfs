@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -265,7 +266,21 @@ func (store *TikvStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPat
 				break
 			}
 
-			// Only increment counter after successful processing
+			// Check TTL expiration before calling eachEntryFunc (similar to Redis stores)
+			if entry.TtlSec > 0 {
+				if entry.Crtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
+					// Entry is expired, delete it and continue without counting toward limit
+					if deleteErr := store.DeleteEntry(ctx, entry.FullPath); deleteErr != nil {
+						glog.V(0).InfofCtx(ctx, "failed to delete expired entry %s: %v", entry.FullPath, deleteErr)
+					}
+					if err := iter.Next(); err != nil {
+						break
+					}
+					continue
+				}
+			}
+
+			// Only increment counter for non-expired entries
 			i++
 
 			if err := iter.Next(); !eachEntryFunc(entry) || err != nil {
