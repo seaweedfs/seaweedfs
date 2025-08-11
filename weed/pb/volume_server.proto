@@ -91,6 +91,8 @@ service VolumeServer {
     }
     rpc VolumeEcShardsInfo (VolumeEcShardsInfoRequest) returns (VolumeEcShardsInfoResponse) {
     }
+    rpc VolumeEcDeletionInfo (VolumeEcDeletionInfoRequest) returns (VolumeEcDeletionInfoResponse) {
+    }
 
     // tiered storage
     rpc VolumeTierMoveDatToRemote (VolumeTierMoveDatToRemoteRequest) returns (stream VolumeTierMoveDatToRemoteResponse) {
@@ -476,6 +478,17 @@ message EcShardInfo {
     uint32 shard_id = 1;
     int64 size = 2;
     string collection = 3;
+}
+
+message VolumeEcDeletionInfoRequest {
+    uint32 volume_id = 1;
+    string collection = 2;
+    uint32 generation = 3; // generation of EC volume, defaults to 0
+}
+message VolumeEcDeletionInfoResponse {
+    uint64 deleted_bytes = 1;
+    uint64 deleted_count = 2;
+    repeated uint64 deleted_needle_ids = 3; // list of deleted needle IDs for debugging
 }
 
 message ReadVolumeFileStatusRequest {

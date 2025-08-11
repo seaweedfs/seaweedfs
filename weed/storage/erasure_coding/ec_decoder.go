@@ -150,6 +150,12 @@ func iterateEcjFile(baseFileName string, processNeedleFn func(key types.NeedleId
 
 }
 
+// IterateEcjFile iterates through deleted needle IDs in an EC journal file
+// This is the public interface for reading .ecj files
+func IterateEcjFile(baseFileName string, processNeedleFn func(key types.NeedleId) error) error {
+	return iterateEcjFile(baseFileName, processNeedleFn)
+}
+
 // WriteDatFile generates .dat from .ec00 ~ .ec09 files
 func WriteDatFile(baseFileName string, datFileSize int64, shardFileNames []string) error {
 

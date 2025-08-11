@@ -490,6 +490,84 @@ func (vs *VolumeServer) VolumeEcBlobDelete(ctx context.Context, req *volume_serv
 	return resp, nil
 }
 
+// VolumeEcDeletionInfo gets deletion information for an EC volume by reading .ecj and .ecx files
+func (vs *VolumeServer) VolumeEcDeletionInfo(ctx context.Context, req *volume_server_pb.VolumeEcDeletionInfoRequest) (*volume_server_pb.VolumeEcDeletionInfoResponse, error) {
+	glog.V(0).Infof("VolumeEcDeletionInfo: volume=%d, collection='%s', generation=%d", req.VolumeId, req.Collection, req.Generation)
+
+	resp := &volume_server_pb.VolumeEcDeletionInfoResponse{}
+
+	// Find the EC volume
+	ecVolume, found := vs.store.FindEcVolume(needle.VolumeId(req.VolumeId))
+	if !found {
+		return nil, fmt.Errorf("EC volume %d not found", req.VolumeId)
+	}
+
+	// Validate generation if specified
+	if req.Generation != 0 && req.Generation != ecVolume.Generation {
+		glog.V(1).Infof("Generation mismatch for volume %d: requested %d, found %d", req.VolumeId, req.Generation, ecVolume.Generation)
+		return nil, fmt.Errorf("EC volume %d generation mismatch: requested %d, found %d",
+			req.VolumeId, req.Generation, ecVolume.Generation)
+	}
+
+	// Use generation-aware filenames
+	indexBaseFileName := ecVolume.IndexBaseFileName()
+	glog.V(0).Infof("Volume %d: using indexBaseFileName='%s'", req.VolumeId, indexBaseFileName)
+
+	// Get total deleted bytes and needle IDs using existing EC functions
+	var deletedBytes uint64 = 0
+	var deletedCount uint64 = 0
+	var deletedNeedleIds []uint64
+
+	// Get the total EC volume size for average needle size estimation
+	totalVolumeSize := ecVolume.Size()
+	glog.V(0).Infof("Volume %d: total size=%d bytes", req.VolumeId, totalVolumeSize)
+
+	// Read all deleted needle IDs from .ecj file
+	err := erasure_coding.IterateEcjFile(indexBaseFileName, func(needleId types.NeedleId) error {
+		deletedCount++
+		deletedNeedleIds = append(deletedNeedleIds, uint64(needleId))
+		return nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to read EC journal file for volume %d: %v", req.VolumeId, err)
+	}
+
+	glog.V(0).Infof("Volume %d: found %d deleted needles, total volume size: %d bytes", req.VolumeId, deletedCount, totalVolumeSize)
+
+	// Estimate deleted bytes based on volume size and needle count
+	// For EC volumes, use proportional estimation since individual needle sizes may not be available
+	if deletedCount > 0 && totalVolumeSize > 0 {
+		// Assume average needle size based on total data shards vs all shards ratio
+		// EC volumes store original data across data shards, so estimate based on that
+		dataShardSize := totalVolumeSize * uint64(erasure_coding.DataShardsCount) / uint64(erasure_coding.TotalShardsCount)
+
+		// Rough estimation: assume 1KB average per needle (conservative)
+		// This can be improved with better heuristics in the future
+		estimatedBytesPerNeedle := uint64(1024) // 1KB average
+		if dataShardSize > 0 {
+			// If we have data shard info, use more sophisticated estimation
+			estimatedBytesPerNeedle = dataShardSize / 100 // Assume ~100 needles per data shard on average
+			if estimatedBytesPerNeedle < 512 {
+				estimatedBytesPerNeedle = 512 // Minimum 512 bytes per needle
+			}
+		}
+
+		deletedBytes = deletedCount * estimatedBytesPerNeedle
+		glog.V(1).Infof("EC volume %d: estimated %d deleted bytes from %d needles (avg %d bytes/needle)",
+			req.VolumeId, deletedBytes, deletedCount, estimatedBytesPerNeedle)
+	}
+
+	resp.DeletedBytes = deletedBytes
+	resp.DeletedCount = deletedCount
+	resp.DeletedNeedleIds = deletedNeedleIds
+
+	glog.V(1).Infof("EC volume %d deletion info: %d deleted needles, %d deleted bytes",
+		req.VolumeId, deletedCount, deletedBytes)
+
+	return resp, nil
+}
+
 // VolumeEcShardsToVolume generates the .idx, .dat files from .ecx, .ecj and .ec01 ~ .ec14 files
 func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_server_pb.VolumeEcShardsToVolumeRequest) (*volume_server_pb.VolumeEcShardsToVolumeResponse, error) {
 

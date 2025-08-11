@@ -152,64 +152,102 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                 </div>
                 <div class="card-body">
                     <!-- Storage Metrics -->
-                    if data.TotalSize > 0 {
+                    if data.TotalSize > 0 || data.DeletedByteCount > 0 || data.DeleteCount > 0 {
                         <div class="row mb-3">
-                            <div class="col-6">
-                                <div class="text-center">
-                                    <div class="h4 mb-0 font-weight-bold text-success">
-                                        {bytesToHumanReadableUint64(data.TotalSize - data.DeletedByteCount)}
-                                    </div>
-                                    <small class="text-muted">Active Bytes</small>
-                                </div>
-                            </div>
-                            <div class="col-6">
-                                <div class="text-center">
-                                    <div class="h4 mb-0 font-weight-bold text-danger">
-                                        {bytesToHumanReadableUint64(data.DeletedByteCount)}
-                                    </div>
-                                    <small class="text-muted">Deleted Bytes</small>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- File Metrics -->
-                        <div class="row mb-3">
-                            <div class="col-6">
-                                <div class="text-center">
-                                    <div class="h5 mb-0 text-primary">
-                                        {fmt.Sprintf("%d", data.FileCount - data.DeleteCount)}
-                                    </div>
-                                    <small class="text-muted">Active Files</small>
-                                </div>
-                            </div>
-                            <div class="col-6">
-                                <div class="text-center">
-                                    <div class="h5 mb-0 text-warning">
-                                        {fmt.Sprintf("%d", data.DeleteCount)}
-                                    </div>
-                                    <small class="text-muted">Deleted Files</small>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Garbage Ratio for EC Vacuum -->
-                        <div class="row mb-3">
-                            <div class="col-12">
-                                <div class="text-center">
-                                    <div class="h4 mb-0 font-weight-bold" style={"color: " + getGarbageRatioColor(data.GarbageRatio)}>
-                                        {fmt.Sprintf("%.1f%%", data.GarbageRatio * 100)}
-                                    </div>
-                                    <small class="text-muted">Garbage Ratio</small>
-                                    if data.GarbageRatio >= 0.3 {
-                                        <div class="mt-1">
-                                            <span class="badge bg-warning">
-                                                <i class="fas fa-broom me-1"></i>EC Vacuum Candidate
-                                            </span>
+                            if data.TotalSize > 0 {
+                                <div class="col-6">
+                                    <div class="text-center">
+                                        <div class="h4 mb-0 font-weight-bold text-success">
+                                            {bytesToHumanReadableUint64(data.TotalSize - data.DeletedByteCount)}
                                         </div>
-                                    }
+                                        <small class="text-muted">Active Bytes</small>
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="text-center">
+                                        <div class="h4 mb-0 font-weight-bold text-danger">
+                                            {bytesToHumanReadableUint64(data.DeletedByteCount)}
+                                        </div>
+                                        <small class="text-muted">Deleted Bytes</small>
+                                    </div>
+                                </div>
+                            } else {
+                                <!-- EC-only volume - show deletion info differently -->
+                                <div class="col-12">
+                                    <div class="text-center">
+                                        <div class="h4 mb-0 font-weight-bold text-warning">
+                                            {fmt.Sprintf("%d", data.DeleteCount)}
+                                        </div>
+                                        <small class="text-muted">Deleted Needles (EC-only volume)</small>
+                                        if data.DeleteCount > 0 {
+                                            <div class="mt-1">
+                                                <small class="text-info">
+                                                    <i class="fas fa-info-circle me-1"></i>
+                                                    Deletion info from .ecj files
+                                                </small>
+                                            </div>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                        </div>
+
+                        <!-- File Metrics - only show for regular volumes -->
+                        if data.TotalSize > 0 {
+                            <div class="row mb-3">
+                                <div class="col-6">
+                                    <div class="text-center">
+                                        <div class="h5 mb-0 text-primary">
+                                            {fmt.Sprintf("%d", data.FileCount - data.DeleteCount)}
+                                        </div>
+                                        <small class="text-muted">Active Files</small>
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="text-center">
+                                        <div class="h5 mb-0 text-warning">
+                                            {fmt.Sprintf("%d", data.DeleteCount)}
+                                        </div>
+                                        <small class="text-muted">Deleted Files</small>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
+
+                            <!-- Garbage Ratio for EC Vacuum -->
+                            <div class="row mb-3">
+                                <div class="col-12">
+                                    <div class="text-center">
+                                        <div class="h4 mb-0 font-weight-bold" style={"color: " + getGarbageRatioColor(data.GarbageRatio)}>
+                                            {fmt.Sprintf("%.1f%%", data.GarbageRatio * 100)}
+                                        </div>
+                                        <small class="text-muted">Garbage Ratio</small>
+                                        if data.GarbageRatio >= 0.3 {
+                                            <div class="mt-1">
+                                                <span class="badge bg-warning">
+                                                    <i class="fas fa-broom me-1"></i>EC Vacuum Candidate
+                                                </span>
+                                            </div>
+                                        }
+                                    </div>
+                                </div>
+                            </div>
+                        } else if data.DeleteCount > 0 {
+                            <!-- For EC-only volumes, show a note about EC vacuum eligibility -->
+                            <div class="row mb-3">
+                                <div class="col-12">
+                                    <div class="text-center">
+                                        <div class="mt-2">
+                                            <span class="badge bg-info">
+                                                <i class="fas fa-broom me-1"></i>EC Vacuum Eligible
+                                            </span>
+                                            <div class="mt-1">
+                                                <small class="text-muted">Volume has {fmt.Sprintf("%d", data.DeleteCount)} deleted needles</small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        }
                     } else {
                         <div class="text-center text-muted py-3">
                             <i class="fas fa-info-circle mb-2"></i>

@@ -55,6 +55,7 @@ const (
 	VolumeServer_VolumeEcBlobDelete_FullMethodName          = "/volume_server_pb.VolumeServer/VolumeEcBlobDelete"
 	VolumeServer_VolumeEcShardsToVolume_FullMethodName      = "/volume_server_pb.VolumeServer/VolumeEcShardsToVolume"
 	VolumeServer_VolumeEcShardsInfo_FullMethodName          = "/volume_server_pb.VolumeServer/VolumeEcShardsInfo"
+	VolumeServer_VolumeEcDeletionInfo_FullMethodName        = "/volume_server_pb.VolumeServer/VolumeEcDeletionInfo"
 	VolumeServer_VolumeTierMoveDatToRemote_FullMethodName   = "/volume_server_pb.VolumeServer/VolumeTierMoveDatToRemote"
 	VolumeServer_VolumeTierMoveDatFromRemote_FullMethodName = "/volume_server_pb.VolumeServer/VolumeTierMoveDatFromRemote"
 	VolumeServer_VolumeServerStatus_FullMethodName          = "/volume_server_pb.VolumeServer/VolumeServerStatus"
@@ -108,6 +109,7 @@ type VolumeServerClient interface {
 	VolumeEcBlobDelete(ctx context.Context, in *VolumeEcBlobDeleteRequest, opts ...grpc.CallOption) (*VolumeEcBlobDeleteResponse, error)
 	VolumeEcShardsToVolume(ctx context.Context, in *VolumeEcShardsToVolumeRequest, opts ...grpc.CallOption) (*VolumeEcShardsToVolumeResponse, error)
 	VolumeEcShardsInfo(ctx context.Context, in *VolumeEcShardsInfoRequest, opts ...grpc.CallOption) (*VolumeEcShardsInfoResponse, error)
+	VolumeEcDeletionInfo(ctx context.Context, in *VolumeEcDeletionInfoRequest, opts ...grpc.CallOption) (*VolumeEcDeletionInfoResponse, error)
 	// tiered storage
 	VolumeTierMoveDatToRemote(ctx context.Context, in *VolumeTierMoveDatToRemoteRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[VolumeTierMoveDatToRemoteResponse], error)
 	VolumeTierMoveDatFromRemote(ctx context.Context, in *VolumeTierMoveDatFromRemoteRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[VolumeTierMoveDatFromRemoteResponse], error)
@@ -555,6 +557,16 @@ func (c *volumeServerClient) VolumeEcShardsInfo(ctx context.Context, in *VolumeE
 	return out, nil
 }
 
+func (c *volumeServerClient) VolumeEcDeletionInfo(ctx context.Context, in *VolumeEcDeletionInfoRequest, opts ...grpc.CallOption) (*VolumeEcDeletionInfoResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(VolumeEcDeletionInfoResponse)
+	err := c.cc.Invoke(ctx, VolumeServer_VolumeEcDeletionInfo_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *volumeServerClient) VolumeTierMoveDatToRemote(ctx context.Context, in *VolumeTierMoveDatToRemoteRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[VolumeTierMoveDatToRemoteResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[8], VolumeServer_VolumeTierMoveDatToRemote_FullMethodName, cOpts...)
@@ -705,6 +717,7 @@ type VolumeServerServer interface {
 	VolumeEcBlobDelete(context.Context, *VolumeEcBlobDeleteRequest) (*VolumeEcBlobDeleteResponse, error)
 	VolumeEcShardsToVolume(context.Context, *VolumeEcShardsToVolumeRequest) (*VolumeEcShardsToVolumeResponse, error)
 	VolumeEcShardsInfo(context.Context, *VolumeEcShardsInfoRequest) (*VolumeEcShardsInfoResponse, error)
+	VolumeEcDeletionInfo(context.Context, *VolumeEcDeletionInfoRequest) (*VolumeEcDeletionInfoResponse, error)
 	// tiered storage
 	VolumeTierMoveDatToRemote(*VolumeTierMoveDatToRemoteRequest, grpc.ServerStreamingServer[VolumeTierMoveDatToRemoteResponse]) error
 	VolumeTierMoveDatFromRemote(*VolumeTierMoveDatFromRemoteRequest, grpc.ServerStreamingServer[VolumeTierMoveDatFromRemoteResponse]) error
@@ -833,6 +846,9 @@ func (UnimplementedVolumeServerServer) VolumeEcShardsToVolume(context.Context, *
 }
 func (UnimplementedVolumeServerServer) VolumeEcShardsInfo(context.Context, *VolumeEcShardsInfoRequest) (*VolumeEcShardsInfoResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method VolumeEcShardsInfo not implemented")
+}
+func (UnimplementedVolumeServerServer) VolumeEcDeletionInfo(context.Context, *VolumeEcDeletionInfoRequest) (*VolumeEcDeletionInfoResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method VolumeEcDeletionInfo not implemented")
 }
 func (UnimplementedVolumeServerServer) VolumeTierMoveDatToRemote(*VolumeTierMoveDatToRemoteRequest, grpc.ServerStreamingServer[VolumeTierMoveDatToRemoteResponse]) error {
 	return status.Errorf(codes.Unimplemented, "method VolumeTierMoveDatToRemote not implemented")
@@ -1467,6 +1483,24 @@ func _VolumeServer_VolumeEcShardsInfo_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _VolumeServer_VolumeEcDeletionInfo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VolumeEcDeletionInfoRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VolumeServerServer).VolumeEcDeletionInfo(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VolumeServer_VolumeEcDeletionInfo_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VolumeServerServer).VolumeEcDeletionInfo(ctx, req.(*VolumeEcDeletionInfoRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _VolumeServer_VolumeTierMoveDatToRemote_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(VolumeTierMoveDatToRemoteRequest)
 	if err := stream.RecvMsg(m); err != nil {
@@ -1708,6 +1742,10 @@ var VolumeServer_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "VolumeEcShardsInfo",
 			Handler:    _VolumeServer_VolumeEcShardsInfo_Handler,
+		},
+		{
+			MethodName: "VolumeEcDeletionInfo",
+			Handler:    _VolumeServer_VolumeEcDeletionInfo_Handler,
 		},
 		{
 			MethodName: "VolumeServerStatus",

@@ -915,26 +915,61 @@ func (s *AdminServer) getVolumeHealthFromServer(server string, volumeID uint32) 
 	var healthInfo *EcVolumeHealthInfo
 
 	err := s.WithVolumeServerClient(pb.ServerAddress(server), func(client volume_server_pb.VolumeServerClient) error {
+		var collection string = "" // Default collection name
+		var totalSize uint64 = 0
+		var fileCount uint64 = 0
+
 		// Try to get volume file status (which may include original volume metrics)
+		// This will fail for EC-only volumes, so we handle that gracefully
 		resp, err := client.ReadVolumeFileStatus(context.Background(), &volume_server_pb.ReadVolumeFileStatusRequest{
 			VolumeId: volumeID,
 		})
 		if err != nil {
-			return err
+			glog.V(2).Infof("ReadVolumeFileStatus failed for EC volume %d on server %s (expected for EC-only volumes): %v", volumeID, server, err)
+			// For EC-only volumes, we don't have original volume metrics, but we can still get deletion info
+		} else if resp.VolumeInfo != nil {
+			// Extract metrics from regular volume info if available
+			totalSize = uint64(resp.VolumeInfo.DatFileSize)
+			fileCount = resp.FileCount
+			collection = resp.Collection
 		}
 
-		// Extract health metrics from volume info
-		if resp.VolumeInfo != nil {
-			totalSize := uint64(resp.VolumeInfo.DatFileSize)
+		// Always try to get EC deletion information using the new gRPC endpoint
+		deletionResp, deletionErr := client.VolumeEcDeletionInfo(context.Background(), &volume_server_pb.VolumeEcDeletionInfoRequest{
+			VolumeId:   volumeID,
+			Collection: collection,
+			Generation: 0, // Use default generation for backward compatibility
+		})
+
+		if deletionErr != nil {
+			glog.V(1).Infof("Failed to get EC deletion info for volume %d on server %s: %v", volumeID, server, deletionErr)
+			// If we have some info from ReadVolumeFileStatus, still create healthInfo with that
 			if totalSize > 0 {
 				healthInfo = &EcVolumeHealthInfo{
 					TotalSize:        totalSize,
-					DeletedByteCount: 0, // EC volumes don't track deletions in VolumeInfo
-					FileCount:        resp.FileCount,
-					DeleteCount:      0, // Not available in current API
+					DeletedByteCount: 0,
+					FileCount:        fileCount,
+					DeleteCount:      0,
 					GarbageRatio:     0.0,
 				}
 			}
+		} else if deletionResp != nil {
+			// Create health info with deletion data
+			healthInfo = &EcVolumeHealthInfo{
+				TotalSize:        totalSize, // May be 0 for EC-only volumes
+				DeletedByteCount: deletionResp.DeletedBytes,
+				FileCount:        fileCount,
+				DeleteCount:      deletionResp.DeletedCount,
+				GarbageRatio:     0.0,
+			}
+
+			// Calculate garbage ratio if we have total size
+			if healthInfo.TotalSize > 0 {
+				healthInfo.GarbageRatio = float64(healthInfo.DeletedByteCount) / float64(healthInfo.TotalSize)
+			}
+
+			glog.V(1).Infof("EC volume %d on server %s: %d deleted bytes, %d deleted needles, total size: %d bytes",
+				volumeID, server, healthInfo.DeletedByteCount, healthInfo.DeleteCount, healthInfo.TotalSize)
 		}
 
 		return nil

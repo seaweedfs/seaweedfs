@@ -6,9 +6,14 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // NewMaintenanceScanner creates a new maintenance scanner
@@ -477,34 +482,27 @@ func (ms *MaintenanceScanner) collectECVolumeDelationsFromAllServers(volumeId ui
 		}
 
 		// Merge deletion information, avoiding double counting
+		newNeedles := 0
 		for needle := range serverDeletedNeedles {
 			if !deletedNeedles[needle] {
 				deletedNeedles[needle] = true
-				// We can't get exact size per needle without more complex analysis,
-				// so we'll use the server's reported total as a conservative estimate
-				// This could be enhanced with proper .ecj parsing
+				newNeedles++
 			}
 		}
 
-		// For now, sum the deleted bytes from all servers
-		// Note: This might double-count if the same needle is deleted across shards,
-		// but it provides a reasonable upper bound estimate
-		totalDeletedBytes += serverDeletedBytes
-
-		glog.V(3).Infof("Server %s reported %d deleted bytes for EC volume %d", server, serverDeletedBytes, volumeId)
-	}
-
-	// Apply conservative adjustment to account for potential double counting
-	// Since deletions are tracked per shard but affect the whole needle,
-	// we should not simply sum all deleted bytes from all servers
-	if len(servers) > 1 && totalDeletedBytes > 0 {
-		// Conservative approach: assume some overlap and reduce the total
-		adjustmentFactor := float64(len(deletedNeedles)) / float64(len(servers))
-		if adjustmentFactor < 1.0 {
-			totalDeletedBytes = int64(float64(totalDeletedBytes) * adjustmentFactor)
-			glog.V(3).Infof("Applied conservative adjustment factor %.2f to EC volume %d deleted bytes", adjustmentFactor, volumeId)
+		// Only add bytes for needles that are actually new to avoid double counting
+		// Assume bytes are evenly distributed per needle for deduplication
+		if len(serverDeletedNeedles) > 0 && serverDeletedBytes > 0 {
+			avgBytesPerNeedle := float64(serverDeletedBytes) / float64(len(serverDeletedNeedles))
+			totalDeletedBytes += int64(float64(newNeedles) * avgBytesPerNeedle)
 		}
+
+		glog.V(3).Infof("Server %s reported %d deleted bytes, %d needles (%d new) for EC volume %d",
+			server, serverDeletedBytes, len(serverDeletedNeedles), newNeedles, volumeId)
 	}
+
+	glog.V(2).Infof("EC volume %d total: %d unique deleted needles, %d estimated deleted bytes from %d servers",
+		volumeId, len(deletedNeedles), totalDeletedBytes, len(servers))
 
 	return totalDeletedBytes, nil
 }
@@ -557,17 +555,46 @@ func (ms *MaintenanceScanner) getServerECVolumeDeletions(volumeId uint32, collec
 	//     return totalDeleted, deletedNeedleMap, nil
 	// })
 
-	// For now, implement a conservative heuristic approach
+	// Use the new VolumeEcDeletionInfo gRPC endpoint to get accurate deletion data
+	var deletedBytes int64 = 0
 	deletedNeedles := make(map[string]bool)
 
-	// Very conservative estimate to avoid false positives
-	// This will be replaced with proper .ecj/.ecx analysis
-	conservativeEstimate := int64(1024) // 1KB conservative estimate per server
+	glog.V(0).Infof("Making gRPC call to server %s for volume %d collection %s", server, volumeId, collection)
 
-	glog.V(4).Infof("Applied conservative deletion estimate for EC volume %d on server %s: %d bytes (heuristic mode)",
-		volumeId, server, conservativeEstimate)
+	err := operation.WithVolumeServerClient(false, pb.ServerAddress(server),
+		grpc.WithTransportCredentials(insecure.NewCredentials()), func(client volume_server_pb.VolumeServerClient) error {
+			glog.V(0).Infof("Connected to volume server %s, calling VolumeEcDeletionInfo", server)
+			resp, err := client.VolumeEcDeletionInfo(context.Background(), &volume_server_pb.VolumeEcDeletionInfoRequest{
+				VolumeId:   volumeId,
+				Collection: collection,
+				Generation: 0, // Use default generation for backward compatibility
+			})
+			if err != nil {
+				glog.V(0).Infof("VolumeEcDeletionInfo call failed for server %s: %v", server, err)
+				return err
+			}
 
-	return conservativeEstimate, deletedNeedles, nil
+			deletedBytes = int64(resp.DeletedBytes)
+
+			// Convert deleted needle IDs to map for duplicate tracking
+			for _, needleId := range resp.DeletedNeedleIds {
+				deletedNeedles[fmt.Sprintf("%d", needleId)] = true
+			}
+
+			glog.V(0).Infof("Got EC deletion info for volume %d on server %s: %d bytes, %d needles",
+				volumeId, server, deletedBytes, len(resp.DeletedNeedleIds))
+
+			return nil
+		})
+
+	if err != nil {
+		glog.V(0).Infof("Failed to get EC deletion info for volume %d on server %s, using conservative estimate: %v", volumeId, server, err)
+		// Fallback to conservative estimate if gRPC call fails
+		deletedBytes = int64(1024) // 1KB conservative estimate
+	}
+
+	glog.V(0).Infof("Returning from getServerECVolumeDeletions: %d bytes, %d needles", deletedBytes, len(deletedNeedles))
+	return deletedBytes, deletedNeedles, nil
 }
 
 // convertToTaskMetrics converts existing volume metrics to task system format
