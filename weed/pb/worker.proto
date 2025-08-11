@@ -292,39 +292,18 @@ message TaskPolicy {
   
   // Typed task-specific configuration (replaces generic map)
   oneof task_config {
-    VacuumTaskConfig vacuum_config = 5;
-    ErasureCodingTaskConfig erasure_coding_config = 6;
-    BalanceTaskConfig balance_config = 7;
-    ReplicationTaskConfig replication_config = 8;
+    EcVacuumTaskConfig ec_vacuum_config = 5;
   }
 }
 
 // Task-specific configuration messages
 
-// VacuumTaskConfig contains vacuum-specific configuration
-message VacuumTaskConfig {
-  double garbage_threshold = 1;     // Minimum garbage ratio to trigger vacuum (0.0-1.0)
-  int32 min_volume_age_hours = 2;   // Minimum age before vacuum is considered
-  int32 min_interval_seconds = 3;   // Minimum time between vacuum operations on the same volume
-}
-
-// ErasureCodingTaskConfig contains EC-specific configuration
-message ErasureCodingTaskConfig {
-  double fullness_ratio = 1;        // Minimum fullness ratio to trigger EC (0.0-1.0)
-  int32 quiet_for_seconds = 2;      // Minimum quiet time before EC
-  int32 min_volume_size_mb = 3;     // Minimum volume size for EC
-  string collection_filter = 4;     // Only process volumes from specific collections
-}
-
-// BalanceTaskConfig contains balance-specific configuration
-message BalanceTaskConfig {
-  double imbalance_threshold = 1;   // Threshold for triggering rebalancing (0.0-1.0)
-  int32 min_server_count = 2;       // Minimum number of servers required for balancing
-}
-
-// ReplicationTaskConfig contains replication-specific configuration
-message ReplicationTaskConfig {
-  int32 target_replica_count = 1;   // Target number of replicas
+// EcVacuumTaskConfig contains EC vacuum-specific configuration
+message EcVacuumTaskConfig {
+  double deletion_threshold = 1;       // Minimum deletion ratio to trigger vacuum (0.0-1.0)
+  int32 min_volume_age_seconds = 2;    // Minimum age before considering vacuum (in seconds)
+  string collection_filter = 3;        // Only vacuum EC volumes in this collection (empty = all)
+  int32 min_size_mb = 4;              // Minimum original EC volume size to consider (in MB)
 }
 
 // ========== Task Persistence Messages ==========

@@ -154,8 +154,14 @@ func (c *Config) ToTaskPolicy() *worker_pb.TaskPolicy {
 		MaxConcurrent:         int32(c.MaxConcurrent),
 		RepeatIntervalSeconds: int32(c.ScanIntervalSeconds),
 		CheckIntervalSeconds:  int32(c.ScanIntervalSeconds),
-		// Note: EC vacuum specific config would go in TaskConfig field
-		// For now using basic policy until protobuf definitions are added
+		TaskConfig: &worker_pb.TaskPolicy_EcVacuumConfig{
+			EcVacuumConfig: &worker_pb.EcVacuumTaskConfig{
+				DeletionThreshold:   c.DeletionThreshold,
+				MinVolumeAgeSeconds: int32(c.MinVolumeAgeSeconds),
+				CollectionFilter:    c.CollectionFilter,
+				MinSizeMb:           int32(c.MinSizeMB),
+			},
+		},
 	}
 }
 
@@ -170,9 +176,14 @@ func (c *Config) FromTaskPolicy(policy *worker_pb.TaskPolicy) error {
 	c.MaxConcurrent = int(policy.MaxConcurrent)
 	c.ScanIntervalSeconds = int(policy.RepeatIntervalSeconds)
 
-	// Note: EC vacuum-specific fields would be loaded from TaskConfig field
-	// For now using defaults until protobuf definitions are added
-	// Keep existing values if not specified in policy
+	// Load EC vacuum-specific fields from TaskConfig field
+	if ecVacuumConfig := policy.GetEcVacuumConfig(); ecVacuumConfig != nil {
+		c.DeletionThreshold = ecVacuumConfig.DeletionThreshold
+		c.MinVolumeAgeSeconds = int(ecVacuumConfig.MinVolumeAgeSeconds)
+		c.CollectionFilter = ecVacuumConfig.CollectionFilter
+		c.MinSizeMB = int(ecVacuumConfig.MinSizeMb)
+	}
+	// If no EcVacuumConfig found, keep existing values (defaults)
 
 	return nil
 }
