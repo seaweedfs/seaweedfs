@@ -7,9 +7,9 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -213,36 +213,20 @@ func (fs *FilerServer) copyChunks(ctx context.Context, srcChunks []*filer_pb.Fil
 		return nil, fmt.Errorf("failed to lookup volume locations: %w", err)
 	}
 
-	// Parallel chunk copying with concurrency control
+	// Parallel chunk copying with concurrency control using errgroup
 	const maxConcurrentChunks = 8 // Match SeaweedFS standard for parallel operations
-	executor := util.NewLimitedConcurrentExecutor(maxConcurrentChunks)
 
 	// Pre-allocate result slice to maintain order
 	newChunks := make([]*filer_pb.FileChunk, len(srcChunks))
 
-	// Error handling
-	var wg sync.WaitGroup
-	var firstErr error
-	var errMutex sync.Mutex
+	// Use errgroup for cleaner concurrency management
+	g, gCtx := errgroup.WithContext(ctx)
+	g.SetLimit(maxConcurrentChunks) // Limit concurrent goroutines
 
 	glog.V(2).InfofCtx(ctx, "FilerServer.copyChunks: starting parallel copy of %d chunks with max concurrency %d", len(srcChunks), maxConcurrentChunks)
 
+	// Launch goroutines for each chunk
 	for i, srcChunk := range srcChunks {
-		// Check for context cancellation
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-		}
-
-		// Check if we already have an error
-		errMutex.Lock()
-		if firstErr != nil {
-			errMutex.Unlock()
-			break
-		}
-		errMutex.Unlock()
-
 		// Get pre-looked-up locations for this chunk
 		volumeId := srcChunk.Fid.VolumeId
 		locations, ok := volumeLocationsMap[volumeId]
@@ -250,53 +234,31 @@ func (fs *FilerServer) copyChunks(ctx context.Context, srcChunks []*filer_pb.Fil
 			return nil, fmt.Errorf("no locations found for volume %d", volumeId)
 		}
 
-		wg.Add(1)
+		// Capture loop variables for goroutine closure
 		chunkIndex := i
 		chunk := srcChunk
+		chunkLocations := locations
 
-		executor.Execute(func() {
-			defer wg.Done()
-
-			// Check for context cancellation within goroutine
-			select {
-			case <-ctx.Done():
-				errMutex.Lock()
-				if firstErr == nil {
-					firstErr = ctx.Err()
-				}
-				errMutex.Unlock()
-				return
-			default:
-			}
-
-			glog.V(3).InfofCtx(ctx, "FilerServer.copyChunks: copying chunk %d/%d, size=%d", chunkIndex+1, len(srcChunks), chunk.Size)
+		g.Go(func() error {
+			glog.V(3).InfofCtx(gCtx, "FilerServer.copyChunks: copying chunk %d/%d, size=%d", chunkIndex+1, len(srcChunks), chunk.Size)
 
 			// Use streaming copy to avoid loading entire chunk into memory
-			newChunk, err := fs.streamCopyChunk(ctx, chunk, so, client, locations)
+			newChunk, err := fs.streamCopyChunk(gCtx, chunk, so, client, chunkLocations)
 			if err != nil {
-				errMutex.Lock()
-				if firstErr == nil {
-					firstErr = fmt.Errorf("failed to copy chunk %d (%s): %w", chunkIndex+1, chunk.GetFileIdString(), err)
-				}
-				errMutex.Unlock()
-				return
+				return fmt.Errorf("failed to copy chunk %d (%s): %w", chunkIndex+1, chunk.GetFileIdString(), err)
 			}
 
 			// Store result at correct index to maintain order
 			newChunks[chunkIndex] = newChunk
 
-			glog.V(4).InfofCtx(ctx, "FilerServer.copyChunks: successfully copied chunk %d/%d", chunkIndex+1, len(srcChunks))
+			glog.V(4).InfofCtx(gCtx, "FilerServer.copyChunks: successfully copied chunk %d/%d", chunkIndex+1, len(srcChunks))
+			return nil
 		})
 	}
 
-	// Wait for all chunks to complete
-	wg.Wait()
-
-	// Check for errors
-	errMutex.Lock()
-	defer errMutex.Unlock()
-	if firstErr != nil {
-		return nil, firstErr
+	// Wait for all chunks to complete and return first error (if any)
+	if err := g.Wait(); err != nil {
+		return nil, err
 	}
 
 	// Verify all chunks were copied (shouldn't happen if no errors, but safety check)
