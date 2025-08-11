@@ -448,17 +448,7 @@ func (cr *s3ChunkedReader) Read(buf []byte) (n int, err error) {
 			// - HTTP headers indicate unsigned streaming (STREAMING-UNSIGNED-PAYLOAD-TRAILER)
 			// - But chunk data contains chunk-signature headers (normally only for signed streaming)
 			// This causes a nil pointer dereference when trying to verify signatures without credentials
-			if cr.cred == nil {
-				// For unsigned streaming, we should not verify chunk signatures even if they are present
-				// This fixes the bug where AWS SDKs send chunk signatures with unsigned streaming headers
-				glog.V(3).Infof("Skipping chunk signature verification for unsigned streaming")
-				cr.chunkSHA256Writer.Reset()
-				if cr.lastChunk {
-					cr.state = eofChunk
-				} else {
-					cr.state = readChunkHeader
-				}
-			} else {
+			if cr.cred != nil {
 				// Normal signed streaming - verify the chunk signature
 				// Calculate the hashed chunk.
 				hashedChunk := hex.EncodeToString(cr.chunkSHA256Writer.Sum(nil))
@@ -472,12 +462,18 @@ func (cr *s3ChunkedReader) Read(buf []byte) (n int, err error) {
 				// Newly calculated signature becomes the seed for the next chunk
 				// this follows the chaining.
 				cr.seedSignature = newSignature
-				cr.chunkSHA256Writer.Reset()
-				if cr.lastChunk {
-					cr.state = eofChunk
-				} else {
-					cr.state = readChunkHeader
-				}
+			} else {
+				// For unsigned streaming, we should not verify chunk signatures even if they are present
+				// This fixes the bug where AWS SDKs send chunk signatures with unsigned streaming headers
+				glog.V(3).Infof("Skipping chunk signature verification for unsigned streaming")
+			}
+
+			// Common cleanup and state transition for both signed and unsigned streaming
+			cr.chunkSHA256Writer.Reset()
+			if cr.lastChunk {
+				cr.state = eofChunk
+			} else {
+				cr.state = readChunkHeader
 			}
 		case eofChunk:
 			return n, io.EOF
