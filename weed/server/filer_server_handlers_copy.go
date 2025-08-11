@@ -65,14 +65,14 @@ func (fs *FilerServer) copy(ctx context.Context, w http.ResponseWriter, r *http.
 	finalDstPath := dstPath
 
 	// Check if destination is a directory
-	dstEntry, findErr := fs.filer.FindEntry(ctx, dstPath)
+	dstPathEntry, findErr := fs.filer.FindEntry(ctx, dstPath)
 	if findErr != nil && findErr != filer_pb.ErrNotFound {
 		err = fmt.Errorf("failed to check destination path %s: %w", dstPath, findErr)
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
 	}
 
-	if findErr == nil && dstEntry.IsDirectory() {
+	if findErr == nil && dstPathEntry.IsDirectory() {
 		finalDstPath = dstPath.Child(oldName)
 	} else {
 		newDir, newName := dstPath.DirAndName()
@@ -119,10 +119,22 @@ func (fs *FilerServer) copyEntry(ctx context.Context, srcEntry *filer.Entry, dst
 	newEntry := &filer.Entry{
 		FullPath: dstPath,
 		Attr:     srcEntry.Attr,
-		Extended: srcEntry.Extended,
-		Remote:   srcEntry.Remote,
 		Quota:    srcEntry.Quota,
 		// Intentionally NOT copying HardLinkId and HardLinkCounter to create independent copy
+	}
+
+	// Deep copy Extended fields to ensure independence
+	if srcEntry.Extended != nil {
+		newEntry.Extended = make(map[string][]byte, len(srcEntry.Extended))
+		for k, v := range srcEntry.Extended {
+			newEntry.Extended[k] = append([]byte(nil), v...)
+		}
+	}
+
+	// Deep copy Remote field to ensure independence
+	if srcEntry.Remote != nil {
+		remoteCopy := *srcEntry.Remote
+		newEntry.Remote = &remoteCopy
 	}
 
 	// Log if we're copying a hard link so we can track this behavior
@@ -165,11 +177,24 @@ func (fs *FilerServer) copyChunks(ctx context.Context, srcChunks []*filer_pb.Fil
 	// Create HTTP client once for reuse across all chunk copies
 	client := &http.Client{Timeout: 30 * time.Second}
 
+	// Optimize: Batch volume lookup for all chunks to reduce RPC calls
+	volumeLocationsMap, err := fs.batchLookupVolumeLocations(ctx, srcChunks)
+	if err != nil {
+		return nil, fmt.Errorf("failed to lookup volume locations: %w", err)
+	}
+
 	for i, srcChunk := range srcChunks {
 		glog.V(3).InfofCtx(ctx, "FilerServer.copyChunks: copying chunk %d/%d, size=%d", i+1, len(srcChunks), srcChunk.Size)
 
+		// Get pre-looked-up locations for this chunk
+		volumeId := srcChunk.Fid.VolumeId
+		locations, ok := volumeLocationsMap[volumeId]
+		if !ok || len(locations) == 0 {
+			return nil, fmt.Errorf("no locations found for volume %d", volumeId)
+		}
+
 		// Use streaming copy to avoid loading entire chunk into memory
-		newChunk, err := fs.streamCopyChunk(ctx, srcChunk, so, client)
+		newChunk, err := fs.streamCopyChunk(ctx, srcChunk, so, client, locations)
 		if err != nil {
 			return nil, fmt.Errorf("failed to copy chunk %s: %w", srcChunk.GetFileIdString(), err)
 		}
@@ -180,21 +205,40 @@ func (fs *FilerServer) copyChunks(ctx context.Context, srcChunks []*filer_pb.Fil
 	return newChunks, nil
 }
 
-// streamCopyChunk copies a chunk using streaming to minimize memory usage
-func (fs *FilerServer) streamCopyChunk(ctx context.Context, srcChunk *filer_pb.FileChunk, so *operation.StorageOption, client *http.Client) (*filer_pb.FileChunk, error) {
-	// Look up volume server for source chunk
-	volumeId := srcChunk.Fid.VolumeId
-	lookupResult, err := operation.LookupVolumeIds(fs.filer.GetMaster, fs.grpcDialOption, []string{fmt.Sprintf("%d", volumeId)})
+// batchLookupVolumeLocations performs a single batched lookup for all unique volume IDs in the chunks
+func (fs *FilerServer) batchLookupVolumeLocations(ctx context.Context, chunks []*filer_pb.FileChunk) (map[uint32][]operation.Location, error) {
+	// Collect unique volume IDs
+	volumeIdSet := make(map[uint32]bool)
+	for _, chunk := range chunks {
+		volumeIdSet[chunk.Fid.VolumeId] = true
+	}
+
+	// Convert to slice of strings for the lookup call
+	var volumeIdStrs []string
+	for volumeId := range volumeIdSet {
+		volumeIdStrs = append(volumeIdStrs, fmt.Sprintf("%d", volumeId))
+	}
+
+	// Perform single batched lookup
+	lookupResult, err := operation.LookupVolumeIds(fs.filer.GetMaster, fs.grpcDialOption, volumeIdStrs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to lookup volume %d: %w", volumeId, err)
+		return nil, fmt.Errorf("failed to lookup volumes: %w", err)
 	}
 
-	volumeIdStr := fmt.Sprintf("%d", volumeId)
-	volumeLocations, ok := lookupResult[volumeIdStr]
-	if !ok || len(volumeLocations.Locations) == 0 {
-		return nil, fmt.Errorf("no locations found for volume %d", volumeId)
+	// Convert result to map of volumeId -> locations
+	volumeLocationsMap := make(map[uint32][]operation.Location)
+	for volumeId := range volumeIdSet {
+		volumeIdStr := fmt.Sprintf("%d", volumeId)
+		if volumeLocations, ok := lookupResult[volumeIdStr]; ok && len(volumeLocations.Locations) > 0 {
+			volumeLocationsMap[volumeId] = volumeLocations.Locations
+		}
 	}
 
+	return volumeLocationsMap, nil
+}
+
+// streamCopyChunk copies a chunk using streaming to minimize memory usage
+func (fs *FilerServer) streamCopyChunk(ctx context.Context, srcChunk *filer_pb.FileChunk, so *operation.StorageOption, client *http.Client, locations []operation.Location) (*filer_pb.FileChunk, error) {
 	// Assign a new file ID for destination
 	fileId, urlLocation, auth, err := fs.assignNewFileInfo(ctx, so)
 	if err != nil {
@@ -202,7 +246,6 @@ func (fs *FilerServer) streamCopyChunk(ctx context.Context, srcChunk *filer_pb.F
 	}
 
 	// Try all available locations for source chunk until one succeeds
-	locations := volumeLocations.Locations
 	fileIdString := srcChunk.GetFileIdString()
 	var lastErr error
 
