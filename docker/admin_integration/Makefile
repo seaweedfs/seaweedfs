@@ -376,7 +376,7 @@ ec-vacuum-status: ## Check EC volume status and garbage ratios
 ec-vacuum-continuous: ## Generate continuous EC garbage for testing
 	@echo "🔄 Generating continuous EC garbage for vacuum testing..."
 	@echo "Running 3 rounds with 60-second intervals..."
-	@for i in {1..3}; do \
+	@for i in $$(seq 1 3); do \
 		echo "Round $$i: Generating large files..."; \
 		docker-compose -f $(COMPOSE_FILE) exec vacuum-tester go run create_vacuum_test_data.go -phase=generate -files=15 -size=4000; \
 		echo "Waiting 90 seconds for EC encoding..."; \
