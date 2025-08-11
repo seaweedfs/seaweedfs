@@ -158,6 +158,7 @@ func init() {
 	filerSftpOptions.clientAliveCountMax = cmdFiler.Flag.Int("sftp.clientAliveCountMax", 3, "maximum number of missed keep-alive messages before disconnecting")
 	filerSftpOptions.userStoreFile = cmdFiler.Flag.String("sftp.userStoreFile", "", "path to JSON file containing user credentials and permissions")
 	filerSftpOptions.dataCenter = cmdFiler.Flag.String("sftp.dataCenter", "", "prefer to read and write to volumes in this data center")
+	filerSftpOptions.bindIp = cmdFiler.Flag.String("sftp.ip.bind", "", "ip address to bind to. If empty, default to same as -ip.bind option.")
 	filerSftpOptions.localSocket = cmdFiler.Flag.String("sftp.localSocket", "", "default to /tmp/seaweedfs-sftp-<port>.sock")
 }
 
@@ -258,6 +259,9 @@ func runFiler(cmd *Command, args []string) bool {
 
 	if *filerStartSftp {
 		filerSftpOptions.filer = &filerAddress
+		if *filerSftpOptions.bindIp == "" {
+			filerSftpOptions.bindIp = f.bindIp
+		}
 		if *f.dataCenter != "" && *filerSftpOptions.dataCenter == "" {
 			filerSftpOptions.dataCenter = f.dataCenter
 		}
