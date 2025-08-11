@@ -87,7 +87,7 @@ func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId er
 
 func (s *Store) UnmountEcShards(vid needle.VolumeId, shardId erasure_coding.ShardId, generation uint32) error {
 
-	diskId, ecShard, found := s.findEcShard(vid, shardId)
+	diskId, ecShard, found := s.findEcShardWithGeneration(vid, shardId, generation)
 	if !found {
 		return nil
 	}
@@ -116,6 +116,15 @@ func (s *Store) UnmountEcShards(vid needle.VolumeId, shardId erasure_coding.Shar
 func (s *Store) findEcShard(vid needle.VolumeId, shardId erasure_coding.ShardId) (diskId uint32, shard *erasure_coding.EcVolumeShard, found bool) {
 	for diskId, location := range s.Locations {
 		if v, found := location.FindEcShard(vid, shardId); found {
+			return uint32(diskId), v, found
+		}
+	}
+	return 0, nil, false
+}
+
+func (s *Store) findEcShardWithGeneration(vid needle.VolumeId, shardId erasure_coding.ShardId, generation uint32) (diskId uint32, shard *erasure_coding.EcVolumeShard, found bool) {
+	for diskId, location := range s.Locations {
+		if v, found := location.FindEcShardWithGeneration(vid, shardId, generation); found {
 			return uint32(diskId), v, found
 		}
 	}
