@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -180,9 +181,11 @@ func (fs *FilerServer) copyEntry(ctx context.Context, srcEntry *filer.Entry, dst
 	return newEntry, nil
 }
 
-// copyChunks creates new chunks by copying data from source chunks using streaming approach
+// copyChunks creates new chunks by copying data from source chunks using parallel streaming approach
 func (fs *FilerServer) copyChunks(ctx context.Context, srcChunks []*filer_pb.FileChunk, so *operation.StorageOption) ([]*filer_pb.FileChunk, error) {
-	var newChunks []*filer_pb.FileChunk
+	if len(srcChunks) == 0 {
+		return nil, nil
+	}
 
 	// Create HTTP client once for reuse across all chunk copies
 	client := &http.Client{Timeout: 30 * time.Second}
@@ -193,25 +196,106 @@ func (fs *FilerServer) copyChunks(ctx context.Context, srcChunks []*filer_pb.Fil
 		return nil, fmt.Errorf("failed to lookup volume locations: %w", err)
 	}
 
+	// Parallel chunk copying with concurrency control
+	const maxConcurrentChunks = 8 // Match SeaweedFS standard for parallel operations
+	executor := util.NewLimitedConcurrentExecutor(maxConcurrentChunks)
+	
+	// Pre-allocate result slice to maintain order
+	newChunks := make([]*filer_pb.FileChunk, len(srcChunks))
+	
+	// Error handling
+	var wg sync.WaitGroup
+	var firstErr error
+	var errMutex sync.Mutex
+	
+	// Context cancellation channel
+	done := make(chan struct{})
+	
+	glog.V(2).InfofCtx(ctx, "FilerServer.copyChunks: starting parallel copy of %d chunks with max concurrency %d", len(srcChunks), maxConcurrentChunks)
+	
 	for i, srcChunk := range srcChunks {
-		glog.V(3).InfofCtx(ctx, "FilerServer.copyChunks: copying chunk %d/%d, size=%d", i+1, len(srcChunks), srcChunk.Size)
-
+		// Check for context cancellation
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+		
+		// Check if we already have an error
+		errMutex.Lock()
+		if firstErr != nil {
+			errMutex.Unlock()
+			break
+		}
+		errMutex.Unlock()
+		
 		// Get pre-looked-up locations for this chunk
 		volumeId := srcChunk.Fid.VolumeId
 		locations, ok := volumeLocationsMap[volumeId]
 		if !ok || len(locations) == 0 {
 			return nil, fmt.Errorf("no locations found for volume %d", volumeId)
 		}
-
-		// Use streaming copy to avoid loading entire chunk into memory
-		newChunk, err := fs.streamCopyChunk(ctx, srcChunk, so, client, locations)
-		if err != nil {
-			return nil, fmt.Errorf("failed to copy chunk %s: %w", srcChunk.GetFileIdString(), err)
-		}
-
-		newChunks = append(newChunks, newChunk)
+		
+		wg.Add(1)
+		chunkIndex := i
+		chunk := srcChunk
+		
+		executor.Execute(func() {
+			defer wg.Done()
+			
+			// Check for context cancellation within goroutine
+			select {
+			case <-ctx.Done():
+				errMutex.Lock()
+				if firstErr == nil {
+					firstErr = ctx.Err()
+				}
+				errMutex.Unlock()
+				return
+			case <-done:
+				return
+			default:
+			}
+			
+			glog.V(3).InfofCtx(ctx, "FilerServer.copyChunks: copying chunk %d/%d, size=%d", chunkIndex+1, len(srcChunks), chunk.Size)
+			
+			// Use streaming copy to avoid loading entire chunk into memory
+			newChunk, err := fs.streamCopyChunk(ctx, chunk, so, client, locations)
+			if err != nil {
+				errMutex.Lock()
+				if firstErr == nil {
+					firstErr = fmt.Errorf("failed to copy chunk %d (%s): %w", chunkIndex+1, chunk.GetFileIdString(), err)
+				}
+				errMutex.Unlock()
+				return
+			}
+			
+			// Store result at correct index to maintain order
+			newChunks[chunkIndex] = newChunk
+			
+			glog.V(4).InfofCtx(ctx, "FilerServer.copyChunks: successfully copied chunk %d/%d", chunkIndex+1, len(srcChunks))
+		})
 	}
-
+	
+	// Wait for all chunks to complete
+	wg.Wait()
+	close(done)
+	
+	// Check for errors
+	errMutex.Lock()
+	defer errMutex.Unlock()
+	if firstErr != nil {
+		return nil, firstErr
+	}
+	
+	// Verify all chunks were copied (shouldn't happen if no errors, but safety check)
+	for i, chunk := range newChunks {
+		if chunk == nil {
+			return nil, fmt.Errorf("chunk %d was not copied (internal error)", i)
+		}
+	}
+	
+	glog.V(2).InfofCtx(ctx, "FilerServer.copyChunks: successfully completed parallel copy of %d chunks", len(srcChunks))
 	return newChunks, nil
 }
 
