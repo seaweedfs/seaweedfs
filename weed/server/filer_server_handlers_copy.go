@@ -103,7 +103,7 @@ func (fs *FilerServer) copy(ctx context.Context, w http.ResponseWriter, r *http.
 		return
 	}
 
-	if createErr := fs.filer.CreateEntry(ctx, newEntry, false, false, nil, false, fs.filer.MaxFilenameLength); createErr != nil {
+	if createErr := fs.filer.CreateEntry(ctx, newEntry, true, false, nil, false, fs.filer.MaxFilenameLength); createErr != nil {
 		err = fmt.Errorf("failed to create copied entry from '%s' to '%s': %w", src, dst, createErr)
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
@@ -222,21 +222,23 @@ func (fs *FilerServer) copyChunks(ctx context.Context, srcChunks []*filer_pb.Fil
 	g, gCtx := errgroup.WithContext(ctx)
 	g.SetLimit(maxConcurrentChunks) // Limit concurrent goroutines
 
-	glog.V(2).InfofCtx(ctx, "FilerServer.copyChunks: starting parallel copy of %d chunks with max concurrency %d", len(srcChunks), maxConcurrentChunks)
-
-	// Launch goroutines for each chunk
-	for i, srcChunk := range srcChunks {
-		// Get pre-looked-up locations for this chunk
-		volumeId := srcChunk.Fid.VolumeId
+	// Validate that all chunk locations are available before starting any concurrent work
+	for _, chunk := range srcChunks {
+		volumeId := chunk.Fid.VolumeId
 		locations, ok := volumeLocationsMap[volumeId]
 		if !ok || len(locations) == 0 {
 			return nil, fmt.Errorf("no locations found for volume %d", volumeId)
 		}
+	}
 
+	glog.V(2).InfofCtx(ctx, "FilerServer.copyChunks: starting parallel copy of %d chunks with max concurrency %d", len(srcChunks), maxConcurrentChunks)
+
+	// Launch goroutines for each chunk
+	for i, srcChunk := range srcChunks {
 		// Capture loop variables for goroutine closure
 		chunkIndex := i
 		chunk := srcChunk
-		chunkLocations := locations
+		chunkLocations := volumeLocationsMap[srcChunk.Fid.VolumeId]
 
 		g.Go(func() error {
 			glog.V(3).InfofCtx(gCtx, "FilerServer.copyChunks: copying chunk %d/%d, size=%d", chunkIndex+1, len(srcChunks), chunk.Size)
@@ -350,6 +352,9 @@ func (fs *FilerServer) createManifestChunk(ctx context.Context, dataChunks []*fi
 		return nil, fmt.Errorf("failed to marshal manifest: %w", err)
 	}
 
+	// Create HTTP client once for reuse
+	client := &http.Client{}
+	
 	// Save the manifest data as a new chunk
 	saveFunc := func(reader io.Reader, name string, offset int64, tsNs int64) (chunk *filer_pb.FileChunk, err error) {
 		// Assign a new file ID
@@ -359,7 +364,6 @@ func (fs *FilerServer) createManifestChunk(ctx context.Context, dataChunks []*fi
 		}
 
 		// Upload the manifest data
-		client := &http.Client{}
 		err = fs.uploadData(ctx, reader, urlLocation, string(auth), client)
 		if err != nil {
 			return nil, fmt.Errorf("failed to upload manifest data: %w", err)
