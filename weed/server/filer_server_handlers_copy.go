@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/protobuf/proto"
@@ -205,7 +204,7 @@ func (fs *FilerServer) copyChunks(ctx context.Context, srcChunks []*filer_pb.Fil
 	}
 
 	// Create HTTP client once for reuse across all chunk copies
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{}
 
 	// Optimize: Batch volume lookup for all chunks to reduce RPC calls
 	volumeLocationsMap, err := fs.batchLookupVolumeLocations(ctx, srcChunks)
@@ -360,7 +359,7 @@ func (fs *FilerServer) createManifestChunk(ctx context.Context, dataChunks []*fi
 		}
 
 		// Upload the manifest data
-		client := &http.Client{Timeout: 30 * time.Second}
+		client := &http.Client{}
 		err = fs.uploadData(ctx, reader, urlLocation, string(auth), client)
 		if err != nil {
 			return nil, fmt.Errorf("failed to upload manifest data: %w", err)
