@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -533,7 +532,7 @@ func storeFilePathsToFile(filePaths []string, filename string) error {
 		return fmt.Errorf("failed to marshal file paths: %v", err)
 	}
 
-	err = ioutil.WriteFile(filename, jsonData, 0644)
+	err = os.WriteFile(filename, jsonData, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to write file paths to file: %v", err)
 	}
@@ -547,7 +546,7 @@ func loadFilePathsFromFile(filename string) ([]string, error) {
 		return nil, fmt.Errorf("file paths storage file does not exist: %s", filename)
 	}
 
-	data, err := ioutil.ReadFile(filename)
+	data, err := os.ReadFile(filename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read file paths file: %v", err)
 	}
