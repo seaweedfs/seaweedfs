@@ -271,10 +271,11 @@ func (t *ErasureCodingTask) copyFileFromSource(ext, localPath string) error {
 	return operation.WithVolumeServerClient(false, pb.ServerAddress(t.server), grpc.WithInsecure(),
 		func(client volume_server_pb.VolumeServerClient) error {
 			stream, err := client.CopyFile(context.Background(), &volume_server_pb.CopyFileRequest{
-				VolumeId:   t.volumeID,
-				Collection: t.collection,
-				Ext:        ext,
-				StopOffset: uint64(math.MaxInt64),
+				VolumeId:           t.volumeID,
+				Collection:         t.collection,
+				Ext:                ext,
+				StopOffset:         uint64(math.MaxInt64),
+				CompactionRevision: math.MaxUint32, // Bypass compaction revision check to handle volumes compacted after task creation
 			})
 			if err != nil {
 				return fmt.Errorf("failed to initiate file copy: %v", err)
