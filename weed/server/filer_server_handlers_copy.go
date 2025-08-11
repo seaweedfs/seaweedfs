@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/protobuf/proto"
@@ -204,7 +205,7 @@ func (fs *FilerServer) copyChunks(ctx context.Context, srcChunks []*filer_pb.Fil
 	}
 
 	// Create HTTP client once for reuse across all chunk copies
-	client := &http.Client{}
+	client := &http.Client{Timeout: 60 * time.Second}
 
 	// Optimize: Batch volume lookup for all chunks to reduce RPC calls
 	volumeLocationsMap, err := fs.batchLookupVolumeLocations(ctx, srcChunks)
@@ -353,8 +354,8 @@ func (fs *FilerServer) createManifestChunk(ctx context.Context, dataChunks []*fi
 	}
 
 	// Create HTTP client once for reuse
-	client := &http.Client{}
-	
+	client := &http.Client{Timeout: 60 * time.Second}
+
 	// Save the manifest data as a new chunk
 	saveFunc := func(reader io.Reader, name string, offset int64, tsNs int64) (chunk *filer_pb.FileChunk, err error) {
 		// Assign a new file ID
@@ -385,7 +386,6 @@ func (fs *FilerServer) createManifestChunk(ctx context.Context, dataChunks []*fi
 
 	// Set manifest-specific properties
 	manifestChunk.IsChunkManifest = true
-	manifestChunk.Offset = originalManifest.Offset
 	manifestChunk.Size = originalManifest.Size
 
 	return manifestChunk, nil
