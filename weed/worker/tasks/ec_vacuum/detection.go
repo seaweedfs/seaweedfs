@@ -39,13 +39,14 @@ func Detection(metrics []*wtypes.VolumeHealthMetrics, info *wtypes.ClusterInfo, 
 	glog.V(2).Infof("EC vacuum detection: found %d EC volumes in metrics", len(ecVolumeInfo))
 
 	for volumeID, ecInfo := range ecVolumeInfo {
-		// Apply filters
+		// Calculate deletion ratio first for logging
+		deletionRatio := calculateDeletionRatio(ecInfo)
+
+		// Apply filters and track why volumes don't qualify
 		if !shouldVacuumEcVolume(ecInfo, ecVacuumConfig, now) {
 			continue
 		}
 
-		// Calculate deletion ratio
-		deletionRatio := calculateDeletionRatio(ecInfo)
 		if deletionRatio < ecVacuumConfig.DeletionThreshold {
 			glog.V(3).Infof("EC volume %d deletion ratio %.3f below threshold %.3f",
 				volumeID, deletionRatio, ecVacuumConfig.DeletionThreshold)
@@ -82,6 +83,31 @@ func Detection(metrics []*wtypes.VolumeHealthMetrics, info *wtypes.ClusterInfo, 
 	}
 
 	glog.V(1).Infof("EC vacuum detection: found %d EC volumes needing vacuum", len(results))
+
+	// Show detailed criteria for volumes that didn't qualify (similar to erasure coding detection)
+	if len(results) == 0 && len(ecVolumeInfo) > 0 {
+		glog.V(1).Infof("EC vacuum detection: No tasks created for %d volumes", len(ecVolumeInfo))
+
+		// Show details for first few EC volumes
+		count := 0
+		for volumeID, ecInfo := range ecVolumeInfo {
+			if count >= 3 { // Limit to first 3 volumes to avoid spam
+				break
+			}
+
+			deletionRatio := calculateDeletionRatio(ecInfo)
+			sizeMB := float64(ecInfo.Size) / (1024 * 1024)
+			deletedMB := deletionRatio * sizeMB
+			ageRequired := time.Duration(ecVacuumConfig.MinVolumeAgeHours) * time.Hour
+
+			glog.Infof("EC VACUUM: Volume %d: deleted=%.1fMB, ratio=%.1f%% (need ≥%.1f%%), age=%s (need ≥%s), size=%.1fMB (need ≥%dMB)",
+				volumeID, deletedMB, deletionRatio*100, ecVacuumConfig.DeletionThreshold*100,
+				ecInfo.Age.Truncate(time.Minute), ageRequired.Truncate(time.Minute),
+				sizeMB, ecVacuumConfig.MinSizeMB)
+			count++
+		}
+	}
+
 	return results, nil
 }
 
