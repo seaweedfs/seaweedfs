@@ -189,7 +189,9 @@ func (fs *FilerServer) streamCopyChunk(ctx context.Context, srcChunk *filer_pb.F
 		return nil, fmt.Errorf("failed to lookup volume %d: %w", volumeId, err)
 	}
 
-	if len(lookupResult) == 0 || len(lookupResult[fmt.Sprintf("%d", volumeId)].Locations) == 0 {
+	volumeIdStr := fmt.Sprintf("%d", volumeId)
+	volumeLocations, ok := lookupResult[volumeIdStr]
+	if !ok || len(volumeLocations.Locations) == 0 {
 		return nil, fmt.Errorf("no locations found for volume %d", volumeId)
 	}
 
@@ -200,7 +202,7 @@ func (fs *FilerServer) streamCopyChunk(ctx context.Context, srcChunk *filer_pb.F
 	}
 
 	// Try all available locations for source chunk until one succeeds
-	locations := lookupResult[fmt.Sprintf("%d", volumeId)].Locations
+	locations := volumeLocations.Locations
 	fileIdString := srcChunk.GetFileIdString()
 	var lastErr error
 
