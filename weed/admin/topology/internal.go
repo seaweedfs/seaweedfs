@@ -84,8 +84,23 @@ func (at *ActiveTopology) isDiskAvailableForVolume(disk *activeDisk, taskType Ta
 		return false
 	}
 
-	// Check for volume-specific conflicts
+	// Check for volume-specific conflicts in ALL task states:
+	// 1. Pending tasks (queued but not yet started)
+	for _, task := range disk.pendingTasks {
+		if at.areTasksConflicting(task, taskType, volumeID) {
+			return false
+		}
+	}
+
+	// 2. Assigned/Active tasks (currently running)
 	for _, task := range disk.assignedTasks {
+		if at.areTasksConflicting(task, taskType, volumeID) {
+			return false
+		}
+	}
+
+	// 3. Recent tasks (just completed - avoid immediate re-scheduling on same volume)
+	for _, task := range disk.recentTasks {
 		if at.areTasksConflicting(task, taskType, volumeID) {
 			return false
 		}
