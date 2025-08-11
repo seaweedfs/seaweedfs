@@ -225,9 +225,6 @@ func (fs *FilerServer) copyChunks(ctx context.Context, srcChunks []*filer_pb.Fil
 	var firstErr error
 	var errMutex sync.Mutex
 
-	// Context cancellation channel
-	done := make(chan struct{})
-
 	glog.V(2).InfofCtx(ctx, "FilerServer.copyChunks: starting parallel copy of %d chunks with max concurrency %d", len(srcChunks), maxConcurrentChunks)
 
 	for i, srcChunk := range srcChunks {
@@ -269,8 +266,6 @@ func (fs *FilerServer) copyChunks(ctx context.Context, srcChunks []*filer_pb.Fil
 				}
 				errMutex.Unlock()
 				return
-			case <-done:
-				return
 			default:
 			}
 
@@ -296,7 +291,6 @@ func (fs *FilerServer) copyChunks(ctx context.Context, srcChunks []*filer_pb.Fil
 
 	// Wait for all chunks to complete
 	wg.Wait()
-	close(done)
 
 	// Check for errors
 	errMutex.Lock()
@@ -356,8 +350,8 @@ func (fs *FilerServer) copyChunksWithManifest(ctx context.Context, srcChunks []*
 		glog.V(4).InfofCtx(ctx, "FilerServer.copyChunksWithManifest: resolved manifest chunk %s to %d data chunks",
 			manifestChunk.GetFileIdString(), len(resolvedChunks))
 
-		// Copy all the resolved data chunks
-		newResolvedChunks, err := fs.copyChunks(ctx, resolvedChunks, so)
+		// Copy all the resolved data chunks (use recursive copyChunksWithManifest to handle nested manifests)
+		newResolvedChunks, err := fs.copyChunksWithManifest(ctx, resolvedChunks, so)
 		if err != nil {
 			return nil, fmt.Errorf("failed to copy resolved chunks from manifest %s: %w", manifestChunk.GetFileIdString(), err)
 		}
@@ -462,16 +456,23 @@ func (fs *FilerServer) uploadData(ctx context.Context, reader io.Reader, urlLoca
 
 // batchLookupVolumeLocations performs a single batched lookup for all unique volume IDs in the chunks
 func (fs *FilerServer) batchLookupVolumeLocations(ctx context.Context, chunks []*filer_pb.FileChunk) (map[uint32][]operation.Location, error) {
-	// Collect unique volume IDs
-	volumeIdSet := make(map[uint32]bool)
+	// Collect unique volume IDs and their string representations to avoid repeated conversions
+	volumeIdMap := make(map[uint32]string)
 	for _, chunk := range chunks {
-		volumeIdSet[chunk.Fid.VolumeId] = true
+		vid := chunk.Fid.VolumeId
+		if _, found := volumeIdMap[vid]; !found {
+			volumeIdMap[vid] = fmt.Sprintf("%d", vid)
+		}
+	}
+
+	if len(volumeIdMap) == 0 {
+		return make(map[uint32][]operation.Location), nil
 	}
 
 	// Convert to slice of strings for the lookup call
-	var volumeIdStrs []string
-	for volumeId := range volumeIdSet {
-		volumeIdStrs = append(volumeIdStrs, fmt.Sprintf("%d", volumeId))
+	volumeIdStrs := make([]string, 0, len(volumeIdMap))
+	for _, vidStr := range volumeIdMap {
+		volumeIdStrs = append(volumeIdStrs, vidStr)
 	}
 
 	// Perform single batched lookup
@@ -482,8 +483,7 @@ func (fs *FilerServer) batchLookupVolumeLocations(ctx context.Context, chunks []
 
 	// Convert result to map of volumeId -> locations
 	volumeLocationsMap := make(map[uint32][]operation.Location)
-	for volumeId := range volumeIdSet {
-		volumeIdStr := fmt.Sprintf("%d", volumeId)
+	for volumeId, volumeIdStr := range volumeIdMap {
 		if volumeLocations, ok := lookupResult[volumeIdStr]; ok && len(volumeLocations.Locations) > 0 {
 			volumeLocationsMap[volumeId] = volumeLocations.Locations
 		}
