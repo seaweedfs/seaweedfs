@@ -414,13 +414,9 @@ func (s *AdminServer) GetClusterEcVolumes(page int, pageSize int, sortBy string,
 			// Sort generations and check for multiple generations
 			if len(volume.Generations) > 1 {
 				// Sort generations (oldest first)
-				for i := 0; i < len(volume.Generations); i++ {
-					for j := i + 1; j < len(volume.Generations); j++ {
-						if volume.Generations[i] > volume.Generations[j] {
-							volume.Generations[i], volume.Generations[j] = volume.Generations[j], volume.Generations[i]
-						}
-					}
-				}
+				sort.Slice(volume.Generations, func(i, j int) bool {
+					return volume.Generations[i] < volume.Generations[j]
+				})
 				volume.HasMultipleGenerations = true
 			}
 		}
