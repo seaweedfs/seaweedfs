@@ -440,23 +440,44 @@ func (cr *s3ChunkedReader) Read(buf []byte) (n int, err error) {
 				continue
 			}
 		case verifyChunk:
-			// Calculate the hashed chunk.
-			hashedChunk := hex.EncodeToString(cr.chunkSHA256Writer.Sum(nil))
-			// Calculate the chunk signature.
-			newSignature := cr.getChunkSignature(hashedChunk)
-			if !compareSignatureV4(cr.chunkSignature, newSignature) {
-				// Chunk signature doesn't match we return signature does not match.
-				cr.err = errors.New(s3err.ErrMsgChunkSignatureMismatch)
-				return 0, cr.err
-			}
-			// Newly calculated signature becomes the seed for the next chunk
-			// this follows the chaining.
-			cr.seedSignature = newSignature
-			cr.chunkSHA256Writer.Reset()
-			if cr.lastChunk {
-				cr.state = eofChunk
+			// Check if we have credentials for signature verification
+			// This handles the case where we have unsigned streaming (no cred) but chunks contain signatures
+			//
+			// BUG FIX for GitHub issue #6847:
+			// Some AWS SDK versions (Java 3.7.412+, .NET 4.0.0-preview.6+) send mixed format:
+			// - HTTP headers indicate unsigned streaming (STREAMING-UNSIGNED-PAYLOAD-TRAILER)
+			// - But chunk data contains chunk-signature headers (normally only for signed streaming)
+			// This causes a nil pointer dereference when trying to verify signatures without credentials
+			if cr.cred == nil {
+				// For unsigned streaming, we should not verify chunk signatures even if they are present
+				// This fixes the bug where AWS SDKs send chunk signatures with unsigned streaming headers
+				glog.V(3).Infof("Skipping chunk signature verification for unsigned streaming")
+				cr.chunkSHA256Writer.Reset()
+				if cr.lastChunk {
+					cr.state = eofChunk
+				} else {
+					cr.state = readChunkHeader
+				}
 			} else {
-				cr.state = readChunkHeader
+				// Normal signed streaming - verify the chunk signature
+				// Calculate the hashed chunk.
+				hashedChunk := hex.EncodeToString(cr.chunkSHA256Writer.Sum(nil))
+				// Calculate the chunk signature.
+				newSignature := cr.getChunkSignature(hashedChunk)
+				if !compareSignatureV4(cr.chunkSignature, newSignature) {
+					// Chunk signature doesn't match we return signature does not match.
+					cr.err = errors.New(s3err.ErrMsgChunkSignatureMismatch)
+					return 0, cr.err
+				}
+				// Newly calculated signature becomes the seed for the next chunk
+				// this follows the chaining.
+				cr.seedSignature = newSignature
+				cr.chunkSHA256Writer.Reset()
+				if cr.lastChunk {
+					cr.state = eofChunk
+				} else {
+					cr.state = readChunkHeader
+				}
 			}
 		case eofChunk:
 			return n, io.EOF
