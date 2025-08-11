@@ -118,8 +118,13 @@ func (fs *FilerServer) copyEntry(ctx context.Context, srcEntry *filer.Entry, dst
 	// This creates an independent copy rather than another hard link to the same content
 	newEntry := &filer.Entry{
 		FullPath: dstPath,
-		Attr:     srcEntry.Attr,
-		Quota:    srcEntry.Quota,
+		// Deep copy Attr field to ensure slice independence (GroupNames, Md5)
+		Attr: func(a filer.Attr) filer.Attr {
+			a.GroupNames = append([]string(nil), a.GroupNames...)
+			a.Md5 = append([]byte(nil), a.Md5...)
+			return a
+		}(srcEntry.Attr),
+		Quota: srcEntry.Quota,
 		// Intentionally NOT copying HardLinkId and HardLinkCounter to create independent copy
 	}
 
@@ -134,11 +139,11 @@ func (fs *FilerServer) copyEntry(ctx context.Context, srcEntry *filer.Entry, dst
 	// Deep copy Remote field to ensure independence
 	if srcEntry.Remote != nil {
 		newEntry.Remote = &filer_pb.RemoteEntry{
-			StorageName:        srcEntry.Remote.StorageName,
-			LastLocalSyncTsNs:  srcEntry.Remote.LastLocalSyncTsNs,
-			RemoteETag:         srcEntry.Remote.RemoteETag,
-			RemoteMtime:        srcEntry.Remote.RemoteMtime,
-			RemoteSize:         srcEntry.Remote.RemoteSize,
+			StorageName:       srcEntry.Remote.StorageName,
+			LastLocalSyncTsNs: srcEntry.Remote.LastLocalSyncTsNs,
+			RemoteETag:        srcEntry.Remote.RemoteETag,
+			RemoteMtime:       srcEntry.Remote.RemoteMtime,
+			RemoteSize:        srcEntry.Remote.RemoteSize,
 		}
 	}
 
