@@ -381,6 +381,43 @@ func (mm *MaintenanceManager) GetConfig() *MaintenanceConfig {
 
 // GetStats returns maintenance statistics
 func (mm *MaintenanceManager) GetStats() *MaintenanceStats {
+	// Quick check if scan is in progress - return cached/fast stats to prevent hanging
+	mm.mutex.RLock()
+	scanInProgress := mm.scanInProgress
+	mm.mutex.RUnlock()
+
+	if scanInProgress {
+		glog.V(2).Infof("Scan in progress, returning fast stats to prevent hanging")
+		// Return basic stats without calling potentially blocking operations
+		stats := &MaintenanceStats{
+			TotalTasks:      0,
+			TasksByStatus:   make(map[MaintenanceTaskStatus]int),
+			TasksByType:     make(map[MaintenanceTaskType]int),
+			ActiveWorkers:   0,
+			CompletedToday:  0,
+			FailedToday:     0,
+			AverageTaskTime: 0,
+			LastScanTime:    time.Now().Add(-time.Minute), // Assume recent scan
+		}
+
+		mm.mutex.RLock()
+		// Calculate next scan time based on current error state
+		scanInterval := time.Duration(mm.config.ScanIntervalSeconds) * time.Second
+		nextScanInterval := scanInterval
+		if mm.errorCount > 0 {
+			nextScanInterval = mm.backoffDelay
+			maxInterval := scanInterval * 10
+			if nextScanInterval > maxInterval {
+				nextScanInterval = maxInterval
+			}
+		}
+		stats.NextScanTime = time.Now().Add(nextScanInterval)
+		mm.mutex.RUnlock()
+
+		return stats
+	}
+
+	// Normal path - get full stats from queue
 	stats := mm.queue.GetStats()
 
 	mm.mutex.RLock()

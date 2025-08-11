@@ -76,9 +76,14 @@ func (ms *MaintenanceScanner) getVolumeHealthMetrics() ([]*VolumeHealthMetrics, 
 	var metrics []*VolumeHealthMetrics
 
 	glog.V(1).Infof("Collecting volume health metrics from master")
+
+	// Add timeout protection to prevent hanging
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
 	err := ms.adminClient.WithMasterClient(func(client master_pb.SeaweedClient) error {
 
-		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		resp, err := client.VolumeList(ctx, &master_pb.VolumeListRequest{})
 		if err != nil {
 			return err
 		}
@@ -229,8 +234,12 @@ func (ms *MaintenanceScanner) enrichVolumeMetrics(metrics *[]*VolumeHealthMetric
 func (ms *MaintenanceScanner) getECVolumeSet() map[uint32]bool {
 	ecVolumeSet := make(map[uint32]bool)
 
+	// Add timeout protection to prevent hanging
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	err := ms.adminClient.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		resp, err := client.VolumeList(ctx, &master_pb.VolumeListRequest{})
 		if err != nil {
 			return err
 		}
@@ -267,8 +276,12 @@ func (ms *MaintenanceScanner) createECVolumeMetric(volumeID uint32) *VolumeHealt
 	var metric *VolumeHealthMetrics
 	var serverWithShards string
 
+	// Add timeout protection to prevent hanging
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	err := ms.adminClient.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		resp, err := client.VolumeList(ctx, &master_pb.VolumeListRequest{})
 		if err != nil {
 			return err
 		}
@@ -401,8 +414,12 @@ func (ms *MaintenanceScanner) enrichECVolumeWithDeletionInfo(metric *VolumeHealt
 func (ms *MaintenanceScanner) findServersWithECShards(volumeId uint32) ([]string, error) {
 	var serversWithShards []string
 
+	// Add timeout protection to prevent hanging
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	err := ms.adminClient.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		resp, err := client.VolumeList(ctx, &master_pb.VolumeListRequest{})
 		if err != nil {
 			return err
 		}
