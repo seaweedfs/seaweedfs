@@ -47,7 +47,7 @@ func (fs *FilerServer) copy(ctx context.Context, w http.ResponseWriter, r *http.
 
 	srcEntry, err := fs.filer.FindEntry(ctx, srcPath)
 	if err != nil {
-		err = fmt.Errorf("failed to get src entry '%s', err: %s", src, err)
+		err = fmt.Errorf("failed to get src entry '%s': %w", src, err)
 		writeJsonError(w, r, http.StatusBadRequest, err)
 		return
 	}
@@ -62,14 +62,28 @@ func (fs *FilerServer) copy(ctx context.Context, w http.ResponseWriter, r *http.
 	}
 
 	_, oldName := srcPath.DirAndName()
-	newDir, newName := dstPath.DirAndName()
-	newName = util.Nvl(newName, oldName)
-	finalDstPath := util.FullPath(newDir).Child(newName)
+	finalDstPath := dstPath
+
+	// Check if destination is a directory
+	dstEntry, findErr := fs.filer.FindEntry(ctx, dstPath)
+	if findErr != nil && findErr != filer_pb.ErrNotFound {
+		err = fmt.Errorf("failed to check destination path %s: %w", dstPath, findErr)
+		writeJsonError(w, r, http.StatusInternalServerError, err)
+		return
+	}
+
+	if findErr == nil && dstEntry.IsDirectory() {
+		finalDstPath = dstPath.Child(oldName)
+	} else {
+		newDir, newName := dstPath.DirAndName()
+		newName = util.Nvl(newName, oldName)
+		finalDstPath = util.FullPath(newDir).Child(newName)
+	}
 
 	// Check if destination file already exists
 	// TODO: add an overwrite parameter to allow overwriting
 	if dstEntry, err := fs.filer.FindEntry(ctx, finalDstPath); err != nil && err != filer_pb.ErrNotFound {
-		err = fmt.Errorf("failed to check destination entry %s: %v", finalDstPath, err)
+		err = fmt.Errorf("failed to check destination entry %s: %w", finalDstPath, err)
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
 	} else if dstEntry != nil {
@@ -81,13 +95,13 @@ func (fs *FilerServer) copy(ctx context.Context, w http.ResponseWriter, r *http.
 	// Copy the file content and chunks
 	newEntry, err := fs.copyEntry(ctx, srcEntry, finalDstPath, so)
 	if err != nil {
-		err = fmt.Errorf("failed to copy entry from '%s' to '%s', err: %s", src, dst, err)
+		err = fmt.Errorf("failed to copy entry from '%s' to '%s': %w", src, dst, err)
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
 	}
 
 	if createErr := fs.filer.CreateEntry(ctx, newEntry, false, false, nil, false, fs.filer.MaxFilenameLength); createErr != nil {
-		err = fmt.Errorf("failed to create copied entry from '%s' to '%s', err: %s", src, dst, createErr)
+		err = fmt.Errorf("failed to create copied entry from '%s' to '%s': %w", src, dst, createErr)
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
 	}
@@ -129,7 +143,7 @@ func (fs *FilerServer) copyEntry(ctx context.Context, srcEntry *filer.Entry, dst
 	if len(srcEntry.GetChunks()) > 0 {
 		newChunks, err := fs.copyChunks(ctx, srcEntry.GetChunks(), so)
 		if err != nil {
-			return nil, fmt.Errorf("failed to copy chunks: %v", err)
+			return nil, fmt.Errorf("failed to copy chunks: %w", err)
 		}
 		newEntry.Chunks = newChunks
 		glog.V(2).InfofCtx(ctx, "FilerServer.copyEntry: copied %d chunks", len(newChunks))
@@ -157,7 +171,7 @@ func (fs *FilerServer) copyChunks(ctx context.Context, srcChunks []*filer_pb.Fil
 		// Use streaming copy to avoid loading entire chunk into memory
 		newChunk, err := fs.streamCopyChunk(ctx, srcChunk, so, client)
 		if err != nil {
-			return nil, fmt.Errorf("failed to copy chunk %s: %v", srcChunk.GetFileIdString(), err)
+			return nil, fmt.Errorf("failed to copy chunk %s: %w", srcChunk.GetFileIdString(), err)
 		}
 
 		newChunks = append(newChunks, newChunk)
@@ -172,7 +186,7 @@ func (fs *FilerServer) streamCopyChunk(ctx context.Context, srcChunk *filer_pb.F
 	volumeId := srcChunk.Fid.VolumeId
 	lookupResult, err := operation.LookupVolumeIds(fs.filer.GetMaster, fs.grpcDialOption, []string{fmt.Sprintf("%d", volumeId)})
 	if err != nil {
-		return nil, fmt.Errorf("failed to lookup volume %d: %v", volumeId, err)
+		return nil, fmt.Errorf("failed to lookup volume %d: %w", volumeId, err)
 	}
 
 	if len(lookupResult) == 0 || len(lookupResult[fmt.Sprintf("%d", volumeId)].Locations) == 0 {
@@ -182,7 +196,7 @@ func (fs *FilerServer) streamCopyChunk(ctx context.Context, srcChunk *filer_pb.F
 	// Assign a new file ID for destination
 	fileId, urlLocation, auth, err := fs.assignNewFileInfo(ctx, so)
 	if err != nil {
-		return nil, fmt.Errorf("failed to assign new file ID: %v", err)
+		return nil, fmt.Errorf("failed to assign new file ID: %w", err)
 	}
 
 	// Try all available locations for source chunk until one succeeds
@@ -215,7 +229,7 @@ func (fs *FilerServer) streamCopyChunk(ctx context.Context, srcChunk *filer_pb.F
 	}
 
 	// All locations failed
-	return nil, fmt.Errorf("failed to stream copy chunk from any location: %v", lastErr)
+	return nil, fmt.Errorf("failed to stream copy chunk from any location: %w", lastErr)
 }
 
 // performStreamCopy performs the actual streaming copy from source URL to destination URL
@@ -242,6 +256,7 @@ func (fs *FilerServer) performStreamCopy(ctx context.Context, srcUrl, dstUrl, au
 	if err != nil {
 		return fmt.Errorf("failed to create destination request: %v", err)
 	}
+	dstReq.ContentLength = int64(expectedSize)
 
 	// Set authorization header if provided
 	if auth != "" {
@@ -258,7 +273,10 @@ func (fs *FilerServer) performStreamCopy(ctx context.Context, srcUrl, dstUrl, au
 
 	if dstResp.StatusCode != http.StatusCreated && dstResp.StatusCode != http.StatusOK {
 		// Read error response body for more details
-		body, _ := io.ReadAll(dstResp.Body)
+		body, readErr := io.ReadAll(dstResp.Body)
+		if readErr != nil {
+			return fmt.Errorf("destination returned status %d, and failed to read body: %w", dstResp.StatusCode, readErr)
+		}
 		return fmt.Errorf("destination returned status %d: %s", dstResp.StatusCode, string(body))
 	}
 
