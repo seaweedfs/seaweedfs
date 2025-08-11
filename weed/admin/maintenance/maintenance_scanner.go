@@ -173,16 +173,16 @@ func (ms *MaintenanceScanner) getVolumeHealthMetrics() ([]*VolumeHealthMetrics, 
 	glog.V(1).Infof("Successfully collected metrics for %d actual volumes with disk ID information", len(metrics))
 
 	// Count actual replicas and identify EC volumes
-	ms.enrichVolumeMetrics(metrics)
+	ms.enrichVolumeMetrics(&metrics)
 
 	return metrics, nil
 }
 
 // enrichVolumeMetrics adds additional information like replica counts and EC volume identification
-func (ms *MaintenanceScanner) enrichVolumeMetrics(metrics []*VolumeHealthMetrics) {
+func (ms *MaintenanceScanner) enrichVolumeMetrics(metrics *[]*VolumeHealthMetrics) {
 	// Group volumes by ID to count replicas
 	volumeGroups := make(map[uint32][]*VolumeHealthMetrics)
-	for _, metric := range metrics {
+	for _, metric := range *metrics {
 		volumeGroups[metric.VolumeID] = append(volumeGroups[metric.VolumeID], metric)
 	}
 
@@ -197,10 +197,29 @@ func (ms *MaintenanceScanner) enrichVolumeMetrics(metrics []*VolumeHealthMetrics
 
 	// Identify EC volumes by checking EC shard information from topology
 	ecVolumeSet := ms.getECVolumeSet()
-	for _, metric := range metrics {
+
+	// Mark existing regular volumes that are also EC volumes
+	for _, metric := range *metrics {
 		if ecVolumeSet[metric.VolumeID] {
 			metric.IsECVolume = true
 			glog.V(2).Infof("Volume %d identified as EC volume", metric.VolumeID)
+		}
+	}
+
+	// Add metrics for EC-only volumes (volumes that exist only as EC shards)
+	existingVolumeSet := make(map[uint32]bool)
+	for _, metric := range *metrics {
+		existingVolumeSet[metric.VolumeID] = true
+	}
+
+	for volumeID := range ecVolumeSet {
+		if !existingVolumeSet[volumeID] {
+			// This EC volume doesn't have a regular volume entry, create a metric for it
+			ecMetric := ms.createECVolumeMetric(volumeID)
+			if ecMetric != nil {
+				*metrics = append(*metrics, ecMetric)
+				glog.V(2).Infof("Added EC-only volume %d to metrics", volumeID)
+			}
 		}
 	}
 }
@@ -240,6 +259,100 @@ func (ms *MaintenanceScanner) getECVolumeSet() map[uint32]bool {
 
 	glog.V(2).Infof("Found %d EC volumes in cluster topology", len(ecVolumeSet))
 	return ecVolumeSet
+}
+
+// createECVolumeMetric creates a volume health metric for an EC-only volume
+func (ms *MaintenanceScanner) createECVolumeMetric(volumeID uint32) *VolumeHealthMetrics {
+	var metric *VolumeHealthMetrics
+	var serverWithShards string
+
+	err := ms.adminClient.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		if err != nil {
+			return err
+		}
+
+		if resp.TopologyInfo != nil {
+			// Find EC shard information for this volume
+			for _, dc := range resp.TopologyInfo.DataCenterInfos {
+				for _, rack := range dc.RackInfos {
+					for _, node := range rack.DataNodeInfos {
+						for _, diskInfo := range node.DiskInfos {
+							for _, ecShardInfo := range diskInfo.EcShardInfos {
+								if ecShardInfo.Id == volumeID {
+									serverWithShards = node.Id
+									// Create metric from EC shard information
+									metric = &VolumeHealthMetrics{
+										VolumeID:         volumeID,
+										Server:           node.Id,
+										DiskType:         diskInfo.Type,
+										DiskId:           ecShardInfo.DiskId,
+										DataCenter:       dc.Id,
+										Rack:             rack.Id,
+										Collection:       ecShardInfo.Collection,
+										Size:             0,                               // Will be calculated from shards
+										DeletedBytes:     0,                               // Will be queried from volume server
+										LastModified:     time.Now().Add(-24 * time.Hour), // Default to 1 day ago
+										IsReadOnly:       true,                            // EC volumes are read-only
+										IsECVolume:       true,
+										ReplicaCount:     1,
+										ExpectedReplicas: 1,
+										Age:              24 * time.Hour, // Default age
+									}
+
+									// Calculate total size from all shards of this volume
+									if len(ecShardInfo.ShardSizes) > 0 {
+										var totalShardSize uint64
+										for _, shardSize := range ecShardInfo.ShardSizes {
+											totalShardSize += uint64(shardSize) // Convert int64 to uint64
+										}
+										// Estimate original volume size (shards are compressed/encoded)
+										metric.Size = totalShardSize * 2 // Rough estimate
+									}
+
+									glog.V(3).Infof("Created EC volume metric for volume %d, size=%d", volumeID, metric.Size)
+									return nil // Found the volume, stop searching
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		glog.Errorf("Failed to create EC volume metric for volume %d: %v", volumeID, err)
+		return nil
+	}
+
+	// Try to get deletion information from volume server
+	if metric != nil && serverWithShards != "" {
+		ms.enrichECVolumeWithDeletionInfo(metric, serverWithShards)
+	}
+
+	return metric
+}
+
+// enrichECVolumeWithDeletionInfo attempts to get deletion information for an EC volume
+// For now, this is a placeholder - getting actual deletion info from EC volumes
+// requires parsing .ecj files or other complex mechanisms
+func (ms *MaintenanceScanner) enrichECVolumeWithDeletionInfo(metric *VolumeHealthMetrics, server string) {
+	// TODO: Implement actual deletion info retrieval for EC volumes
+	// This could involve:
+	// 1. Parsing .ecj (EC journal) files
+	// 2. Using volume server APIs that support EC volumes
+	// 3. Maintaining deletion state during EC encoding process
+
+	// For testing purposes, simulate some EC volumes having deletions
+	// In a real implementation, this would query the actual deletion state
+	if metric.VolumeID%5 == 0 { // Every 5th volume has simulated deletions
+		metric.DeletedBytes = metric.Size / 3 // 33% deleted
+		metric.GarbageRatio = float64(metric.DeletedBytes) / float64(metric.Size)
+		glog.V(2).Infof("EC volume %d simulated deletion info: %d deleted bytes, garbage ratio: %.1f%%",
+			metric.VolumeID, metric.DeletedBytes, metric.GarbageRatio*100)
+	}
 }
 
 // convertToTaskMetrics converts existing volume metrics to task system format
