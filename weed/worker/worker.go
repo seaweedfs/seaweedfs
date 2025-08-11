@@ -14,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
+	"google.golang.org/grpc"
 
 	// Import task packages to trigger their auto-registration
 	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/ec_vacuum"
@@ -444,6 +445,12 @@ func (w *Worker) executeTask(task *types.TaskInput) {
 		w.completeTask(task.ID, false, fmt.Sprintf("failed to create task for %s: %v", task.Type, err))
 		glog.Errorf("Worker %s failed to create task %s type %v: %v", w.id, task.ID, task.Type, err)
 		return
+	}
+
+	// Pass worker's gRPC dial option to task if it supports it
+	if grpcTask, ok := taskInstance.(interface{ SetGrpcDialOption(grpc.DialOption) }); ok {
+		grpcTask.SetGrpcDialOption(w.config.GrpcDialOption)
+		glog.V(2).Infof("Set gRPC dial option for task %s", task.ID)
 	}
 
 	// Task execution uses the new unified Task interface
