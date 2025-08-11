@@ -1,7 +1,6 @@
 package weed_server
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -14,7 +13,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 func (fs *FilerServer) copy(ctx context.Context, w http.ResponseWriter, r *http.Request, so *operation.StorageOption) {
@@ -138,11 +136,14 @@ func (fs *FilerServer) copyEntry(ctx context.Context, srcEntry *filer.Entry, dst
 func (fs *FilerServer) copyChunks(ctx context.Context, srcChunks []*filer_pb.FileChunk, so *operation.StorageOption) ([]*filer_pb.FileChunk, error) {
 	var newChunks []*filer_pb.FileChunk
 
+	// Create HTTP client once for reuse across all chunk copies
+	client := &http.Client{Timeout: 30 * time.Second}
+
 	for i, srcChunk := range srcChunks {
 		glog.V(3).InfofCtx(ctx, "FilerServer.copyChunks: copying chunk %d/%d, size=%d", i+1, len(srcChunks), srcChunk.Size)
 
 		// Use streaming copy to avoid loading entire chunk into memory
-		newChunk, err := fs.streamCopyChunk(ctx, srcChunk, so)
+		newChunk, err := fs.streamCopyChunk(ctx, srcChunk, so, client)
 		if err != nil {
 			return nil, fmt.Errorf("failed to copy chunk %s: %v", srcChunk.GetFileIdString(), err)
 		}
@@ -153,52 +154,8 @@ func (fs *FilerServer) copyChunks(ctx context.Context, srcChunks []*filer_pb.Fil
 	return newChunks, nil
 }
 
-// readChunkData reads the actual data from a chunk with retry on multiple locations
-func (fs *FilerServer) readChunkData(ctx context.Context, chunk *filer_pb.FileChunk) ([]byte, error) {
-	// Look up volume server for this chunk
-	volumeId := chunk.Fid.VolumeId
-	lookupResult, err := operation.LookupVolumeIds(fs.filer.GetMaster, fs.grpcDialOption, []string{fmt.Sprintf("%d", volumeId)})
-	if err != nil {
-		return nil, fmt.Errorf("failed to lookup volume %d: %v", volumeId, err)
-	}
-
-	if len(lookupResult) == 0 || len(lookupResult[fmt.Sprintf("%d", volumeId)].Locations) == 0 {
-		return nil, fmt.Errorf("no locations found for volume %d", volumeId)
-	}
-
-	// Try all available locations until one succeeds
-	locations := lookupResult[fmt.Sprintf("%d", volumeId)].Locations
-	fileId := chunk.GetFileIdString()
-	var lastErr error
-
-	for i, location := range locations {
-		url := fmt.Sprintf("http://%s/%s", location.Url, fileId)
-		glog.V(4).InfofCtx(ctx, "FilerServer.readChunkData: attempting read from %s (attempt %d/%d)", url, i+1, len(locations))
-
-		data, _, err := util_http.Get(url)
-		if err != nil {
-			lastErr = err
-			glog.V(2).InfofCtx(ctx, "FilerServer.readChunkData: failed to read from %s: %v", url, err)
-			continue
-		}
-
-		// Verify size matches expectation
-		if uint64(len(data)) != chunk.Size {
-			lastErr = fmt.Errorf("chunk size mismatch: expected %d, got %d", chunk.Size, len(data))
-			glog.V(2).InfofCtx(ctx, "FilerServer.readChunkData: size mismatch from %s: %v", url, lastErr)
-			continue
-		}
-
-		glog.V(4).InfofCtx(ctx, "FilerServer.readChunkData: successfully read %d bytes from %s", len(data), url)
-		return data, nil
-	}
-
-	// All locations failed
-	return nil, fmt.Errorf("failed to read chunk data from any location: %v", lastErr)
-}
-
 // streamCopyChunk copies a chunk using streaming to minimize memory usage
-func (fs *FilerServer) streamCopyChunk(ctx context.Context, srcChunk *filer_pb.FileChunk, so *operation.StorageOption) (*filer_pb.FileChunk, error) {
+func (fs *FilerServer) streamCopyChunk(ctx context.Context, srcChunk *filer_pb.FileChunk, so *operation.StorageOption, client *http.Client) (*filer_pb.FileChunk, error) {
 	// Look up volume server for source chunk
 	volumeId := srcChunk.Fid.VolumeId
 	lookupResult, err := operation.LookupVolumeIds(fs.filer.GetMaster, fs.grpcDialOption, []string{fmt.Sprintf("%d", volumeId)})
@@ -226,7 +183,7 @@ func (fs *FilerServer) streamCopyChunk(ctx context.Context, srcChunk *filer_pb.F
 		glog.V(4).InfofCtx(ctx, "FilerServer.streamCopyChunk: attempting streaming copy from %s to %s (attempt %d/%d)", srcUrl, urlLocation, i+1, len(locations))
 
 		// Perform streaming copy using HTTP client
-		err := fs.performStreamCopy(ctx, srcUrl, urlLocation, string(auth), srcChunk.Size)
+		err := fs.performStreamCopy(ctx, srcUrl, urlLocation, string(auth), srcChunk.Size, client)
 		if err != nil {
 			lastErr = err
 			glog.V(2).InfofCtx(ctx, "FilerServer.streamCopyChunk: failed streaming copy from %s: %v", srcUrl, err)
@@ -250,7 +207,7 @@ func (fs *FilerServer) streamCopyChunk(ctx context.Context, srcChunk *filer_pb.F
 }
 
 // performStreamCopy performs the actual streaming copy from source URL to destination URL
-func (fs *FilerServer) performStreamCopy(ctx context.Context, srcUrl, dstUrl, auth string, expectedSize uint64) error {
+func (fs *FilerServer) performStreamCopy(ctx context.Context, srcUrl, dstUrl, auth string, expectedSize uint64, client *http.Client) error {
 	// Create HTTP request to read from source
 	req, err := http.NewRequestWithContext(ctx, "GET", srcUrl, nil)
 	if err != nil {
@@ -258,7 +215,6 @@ func (fs *FilerServer) performStreamCopy(ctx context.Context, srcUrl, dstUrl, au
 	}
 
 	// Perform source request
-	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to read from source: %v", err)
@@ -296,42 +252,4 @@ func (fs *FilerServer) performStreamCopy(ctx context.Context, srcUrl, dstUrl, au
 
 	glog.V(4).InfofCtx(ctx, "FilerServer.performStreamCopy: successfully streamed data from %s to %s", srcUrl, dstUrl)
 	return nil
-}
-
-// writeChunkData writes data to a new chunk
-func (fs *FilerServer) writeChunkData(ctx context.Context, data []byte, offset int64, so *operation.StorageOption) (*filer_pb.FileChunk, error) {
-	// Assign a new file ID
-	fileId, urlLocation, auth, err := fs.assignNewFileInfo(ctx, so)
-	if err != nil {
-		return nil, fmt.Errorf("failed to assign new file ID: %v", err)
-	}
-
-	glog.V(4).InfofCtx(ctx, "FilerServer.writeChunkData: writing %d bytes to %s", len(data), urlLocation)
-
-	// Create uploader and upload the data
-	uploader, err := operation.NewUploader()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create uploader: %v", err)
-	}
-
-	uploadOption := &operation.UploadOption{
-		UploadUrl: urlLocation,
-		Filename:  "",
-		MimeType:  "application/octet-stream",
-		Jwt:       auth,
-	}
-
-	uploadResult, err, _ := uploader.Upload(ctx, bytes.NewReader(data), uploadOption)
-	if err != nil {
-		return nil, fmt.Errorf("failed to upload chunk data to %s: %v", urlLocation, err)
-	}
-
-	if uploadResult.Error != "" {
-		return nil, fmt.Errorf("upload error: %s", uploadResult.Error)
-	}
-
-	// Create the chunk metadata using the helper method
-	newChunk := uploadResult.ToPbFileChunk(fileId, offset, time.Now().UnixNano())
-
-	return newChunk, nil
 }
