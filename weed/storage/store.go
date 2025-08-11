@@ -366,17 +366,17 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		uuidList = append(uuidList, loc.DirectoryUuid)
 	}
 
-	// Update metrics with compaction revision labels
+	// Update metrics with compaction revision labels (separate from EC generation metrics)
 	for col, revisionSizes := range collectionRevisionVolumeSize {
 		for compactionRevision, size := range revisionSizes {
-			compactionRevisionLabel := fmt.Sprintf("%d", compactionRevision)
+			compactionRevisionLabel := fmt.Sprintf("rev_%d", compactionRevision) // prefix to distinguish from EC generation
 			stats.VolumeServerDiskSizeGauge.WithLabelValues(col, "normal", compactionRevisionLabel).Set(float64(size))
 		}
 	}
 
 	for col, revisionDeletedBytes := range collectionRevisionVolumeDeletedBytes {
 		for compactionRevision, deletedBytes := range revisionDeletedBytes {
-			compactionRevisionLabel := fmt.Sprintf("%d", compactionRevision)
+			compactionRevisionLabel := fmt.Sprintf("rev_%d", compactionRevision) // prefix to distinguish from EC generation
 			stats.VolumeServerDiskSizeGauge.WithLabelValues(col, "deleted_bytes", compactionRevisionLabel).Set(float64(deletedBytes))
 		}
 	}
