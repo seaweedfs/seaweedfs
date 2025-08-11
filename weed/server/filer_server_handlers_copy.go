@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -8,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"google.golang.org/protobuf/proto"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -164,12 +167,26 @@ func (fs *FilerServer) copyEntry(ctx context.Context, srcEntry *filer.Entry, dst
 
 	// Handle files stored as chunks (including resolved hard link content)
 	if len(srcEntry.GetChunks()) > 0 {
-		newChunks, err := fs.copyChunks(ctx, srcEntry.GetChunks(), so)
-		if err != nil {
-			return nil, fmt.Errorf("failed to copy chunks: %w", err)
+		srcChunks := srcEntry.GetChunks()
+
+		// Check if any chunks are manifest chunks - these require special handling
+		if filer.HasChunkManifest(srcChunks) {
+			glog.V(2).InfofCtx(ctx, "FilerServer.copyEntry: handling manifest chunks")
+			newChunks, err := fs.copyChunksWithManifest(ctx, srcChunks, so)
+			if err != nil {
+				return nil, fmt.Errorf("failed to copy chunks with manifest: %w", err)
+			}
+			newEntry.Chunks = newChunks
+			glog.V(2).InfofCtx(ctx, "FilerServer.copyEntry: copied manifest chunks, count=%d", len(newChunks))
+		} else {
+			// Regular chunks without manifest - copy directly
+			newChunks, err := fs.copyChunks(ctx, srcChunks, so)
+			if err != nil {
+				return nil, fmt.Errorf("failed to copy chunks: %w", err)
+			}
+			newEntry.Chunks = newChunks
+			glog.V(2).InfofCtx(ctx, "FilerServer.copyEntry: copied regular chunks, count=%d", len(newChunks))
 		}
-		newEntry.Chunks = newChunks
-		glog.V(2).InfofCtx(ctx, "FilerServer.copyEntry: copied %d chunks", len(newChunks))
 		return newEntry, nil
 	}
 
@@ -199,20 +216,20 @@ func (fs *FilerServer) copyChunks(ctx context.Context, srcChunks []*filer_pb.Fil
 	// Parallel chunk copying with concurrency control
 	const maxConcurrentChunks = 8 // Match SeaweedFS standard for parallel operations
 	executor := util.NewLimitedConcurrentExecutor(maxConcurrentChunks)
-	
+
 	// Pre-allocate result slice to maintain order
 	newChunks := make([]*filer_pb.FileChunk, len(srcChunks))
-	
+
 	// Error handling
 	var wg sync.WaitGroup
 	var firstErr error
 	var errMutex sync.Mutex
-	
+
 	// Context cancellation channel
 	done := make(chan struct{})
-	
+
 	glog.V(2).InfofCtx(ctx, "FilerServer.copyChunks: starting parallel copy of %d chunks with max concurrency %d", len(srcChunks), maxConcurrentChunks)
-	
+
 	for i, srcChunk := range srcChunks {
 		// Check for context cancellation
 		select {
@@ -220,7 +237,7 @@ func (fs *FilerServer) copyChunks(ctx context.Context, srcChunks []*filer_pb.Fil
 			return nil, ctx.Err()
 		default:
 		}
-		
+
 		// Check if we already have an error
 		errMutex.Lock()
 		if firstErr != nil {
@@ -228,21 +245,21 @@ func (fs *FilerServer) copyChunks(ctx context.Context, srcChunks []*filer_pb.Fil
 			break
 		}
 		errMutex.Unlock()
-		
+
 		// Get pre-looked-up locations for this chunk
 		volumeId := srcChunk.Fid.VolumeId
 		locations, ok := volumeLocationsMap[volumeId]
 		if !ok || len(locations) == 0 {
 			return nil, fmt.Errorf("no locations found for volume %d", volumeId)
 		}
-		
+
 		wg.Add(1)
 		chunkIndex := i
 		chunk := srcChunk
-		
+
 		executor.Execute(func() {
 			defer wg.Done()
-			
+
 			// Check for context cancellation within goroutine
 			select {
 			case <-ctx.Done():
@@ -256,9 +273,9 @@ func (fs *FilerServer) copyChunks(ctx context.Context, srcChunks []*filer_pb.Fil
 				return
 			default:
 			}
-			
+
 			glog.V(3).InfofCtx(ctx, "FilerServer.copyChunks: copying chunk %d/%d, size=%d", chunkIndex+1, len(srcChunks), chunk.Size)
-			
+
 			// Use streaming copy to avoid loading entire chunk into memory
 			newChunk, err := fs.streamCopyChunk(ctx, chunk, so, client, locations)
 			if err != nil {
@@ -269,34 +286,178 @@ func (fs *FilerServer) copyChunks(ctx context.Context, srcChunks []*filer_pb.Fil
 				errMutex.Unlock()
 				return
 			}
-			
+
 			// Store result at correct index to maintain order
 			newChunks[chunkIndex] = newChunk
-			
+
 			glog.V(4).InfofCtx(ctx, "FilerServer.copyChunks: successfully copied chunk %d/%d", chunkIndex+1, len(srcChunks))
 		})
 	}
-	
+
 	// Wait for all chunks to complete
 	wg.Wait()
 	close(done)
-	
+
 	// Check for errors
 	errMutex.Lock()
 	defer errMutex.Unlock()
 	if firstErr != nil {
 		return nil, firstErr
 	}
-	
+
 	// Verify all chunks were copied (shouldn't happen if no errors, but safety check)
 	for i, chunk := range newChunks {
 		if chunk == nil {
 			return nil, fmt.Errorf("chunk %d was not copied (internal error)", i)
 		}
 	}
-	
+
 	glog.V(2).InfofCtx(ctx, "FilerServer.copyChunks: successfully completed parallel copy of %d chunks", len(srcChunks))
 	return newChunks, nil
+}
+
+// copyChunksWithManifest handles copying chunks that include manifest chunks
+func (fs *FilerServer) copyChunksWithManifest(ctx context.Context, srcChunks []*filer_pb.FileChunk, so *operation.StorageOption) ([]*filer_pb.FileChunk, error) {
+	if len(srcChunks) == 0 {
+		return nil, nil
+	}
+
+	glog.V(2).InfofCtx(ctx, "FilerServer.copyChunksWithManifest: processing %d chunks (some are manifests)", len(srcChunks))
+
+	// Separate manifest chunks from regular data chunks
+	manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(srcChunks)
+
+	var newChunks []*filer_pb.FileChunk
+
+	// First, copy all non-manifest chunks directly
+	if len(nonManifestChunks) > 0 {
+		glog.V(3).InfofCtx(ctx, "FilerServer.copyChunksWithManifest: copying %d non-manifest chunks", len(nonManifestChunks))
+		newNonManifestChunks, err := fs.copyChunks(ctx, nonManifestChunks, so)
+		if err != nil {
+			return nil, fmt.Errorf("failed to copy non-manifest chunks: %w", err)
+		}
+		newChunks = append(newChunks, newNonManifestChunks...)
+	}
+
+	// Process each manifest chunk separately
+	for i, manifestChunk := range manifestChunks {
+		glog.V(3).InfofCtx(ctx, "FilerServer.copyChunksWithManifest: processing manifest chunk %d/%d", i+1, len(manifestChunks))
+
+		// Resolve the manifest chunk to get the actual data chunks it references
+		lookupFileIdFn := func(ctx context.Context, fileId string) (urls []string, err error) {
+			return fs.filer.MasterClient.GetLookupFileIdFunction()(ctx, fileId)
+		}
+
+		resolvedChunks, err := filer.ResolveOneChunkManifest(ctx, lookupFileIdFn, manifestChunk)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve manifest chunk %s: %w", manifestChunk.GetFileIdString(), err)
+		}
+
+		glog.V(4).InfofCtx(ctx, "FilerServer.copyChunksWithManifest: resolved manifest chunk %s to %d data chunks",
+			manifestChunk.GetFileIdString(), len(resolvedChunks))
+
+		// Copy all the resolved data chunks
+		newResolvedChunks, err := fs.copyChunks(ctx, resolvedChunks, so)
+		if err != nil {
+			return nil, fmt.Errorf("failed to copy resolved chunks from manifest %s: %w", manifestChunk.GetFileIdString(), err)
+		}
+
+		// Create a new manifest chunk that references the copied data chunks
+		newManifestChunk, err := fs.createManifestChunk(ctx, newResolvedChunks, manifestChunk, so)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create new manifest chunk: %w", err)
+		}
+
+		newChunks = append(newChunks, newManifestChunk)
+
+		glog.V(4).InfofCtx(ctx, "FilerServer.copyChunksWithManifest: created new manifest chunk %s for %d resolved chunks",
+			newManifestChunk.GetFileIdString(), len(newResolvedChunks))
+	}
+
+	glog.V(2).InfofCtx(ctx, "FilerServer.copyChunksWithManifest: completed copying %d total chunks (%d manifest, %d regular)",
+		len(newChunks), len(manifestChunks), len(nonManifestChunks))
+
+	return newChunks, nil
+}
+
+// createManifestChunk creates a new manifest chunk that references the provided data chunks
+func (fs *FilerServer) createManifestChunk(ctx context.Context, dataChunks []*filer_pb.FileChunk, originalManifest *filer_pb.FileChunk, so *operation.StorageOption) (*filer_pb.FileChunk, error) {
+	// Create the manifest data structure
+	filer_pb.BeforeEntrySerialization(dataChunks)
+
+	manifestData := &filer_pb.FileChunkManifest{
+		Chunks: dataChunks,
+	}
+
+	// Serialize the manifest
+	data, err := proto.Marshal(manifestData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal manifest: %w", err)
+	}
+
+	// Save the manifest data as a new chunk
+	saveFunc := func(reader io.Reader, name string, offset int64, tsNs int64) (chunk *filer_pb.FileChunk, err error) {
+		// Assign a new file ID
+		fileId, urlLocation, auth, assignErr := fs.assignNewFileInfo(ctx, so)
+		if assignErr != nil {
+			return nil, fmt.Errorf("failed to assign file ID for manifest: %w", assignErr)
+		}
+
+		// Upload the manifest data
+		client := &http.Client{Timeout: 30 * time.Second}
+		err = fs.uploadData(ctx, reader, urlLocation, string(auth), client)
+		if err != nil {
+			return nil, fmt.Errorf("failed to upload manifest data: %w", err)
+		}
+
+		// Create the chunk metadata
+		chunk = &filer_pb.FileChunk{
+			FileId: fileId,
+			Offset: offset,
+			Size:   uint64(len(data)),
+		}
+		return chunk, nil
+	}
+
+	manifestChunk, err := saveFunc(bytes.NewReader(data), "", originalManifest.Offset, 0)
+	if err != nil {
+		return nil, fmt.Errorf("failed to save manifest chunk: %w", err)
+	}
+
+	// Set manifest-specific properties
+	manifestChunk.IsChunkManifest = true
+	manifestChunk.Offset = originalManifest.Offset
+	manifestChunk.Size = originalManifest.Size
+
+	return manifestChunk, nil
+}
+
+// uploadData uploads data to a volume server
+func (fs *FilerServer) uploadData(ctx context.Context, reader io.Reader, urlLocation, auth string, client *http.Client) error {
+	req, err := http.NewRequestWithContext(ctx, "PUT", urlLocation, reader)
+	if err != nil {
+		return fmt.Errorf("failed to create upload request: %w", err)
+	}
+
+	if auth != "" {
+		req.Header.Set("Authorization", "Bearer "+auth)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to upload data: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return fmt.Errorf("upload failed with status %d, and failed to read response: %w", resp.StatusCode, readErr)
+		}
+		return fmt.Errorf("upload failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
 }
 
 // batchLookupVolumeLocations performs a single batched lookup for all unique volume IDs in the chunks
