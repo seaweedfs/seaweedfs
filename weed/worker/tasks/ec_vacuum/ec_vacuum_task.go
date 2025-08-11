@@ -357,13 +357,17 @@ func (t *EcVacuumTask) cleanupOldEcShards() error {
 		time.Sleep(t.cleanupGracePeriod)
 	}
 
-	// Step 2: Safety check - verify new generation is actually active
-	if err := t.verifyNewGenerationActive(); err != nil {
-		t.LogWarning("Skipping cleanup due to safety check failure", map[string]interface{}{
-			"error":  err.Error(),
-			"action": "manual cleanup may be needed",
+	// Step 2: Enhanced safety checks - multiple layers of verification
+	if err := t.performSafetyChecks(); err != nil {
+		t.LogError("CRITICAL SAFETY FAILURE - Aborting cleanup to prevent data loss", map[string]interface{}{
+			"error":               err.Error(),
+			"volume_id":           t.volumeID,
+			"source_generation":   t.sourceGeneration,
+			"target_generation":   t.targetGeneration,
+			"action":              "manual verification required before cleanup",
+			"safety_check_failed": true,
 		})
-		return nil // Don't fail the task, but log the issue
+		return fmt.Errorf("safety checks failed: %w", err)
 	}
 
 	// Step 3: Unmount and delete old generation shards from each node
@@ -395,36 +399,6 @@ func (t *EcVacuumTask) cleanupOldEcShards() error {
 	return nil
 }
 
-// verifyNewGenerationActive checks with master that the new generation is active
-func (t *EcVacuumTask) verifyNewGenerationActive() error {
-	if t.masterAddress == "" {
-		t.LogWarning("Cannot verify generation activation - master address not set", map[string]interface{}{
-			"note": "skipping safety check",
-		})
-		return nil // Skip verification if we don't have master access
-	}
-
-	return operation.WithMasterServerClient(false, t.masterAddress, t.grpcDialOption, func(client master_pb.SeaweedClient) error {
-		resp, err := client.LookupEcVolume(context.Background(), &master_pb.LookupEcVolumeRequest{
-			VolumeId: t.volumeID,
-		})
-		if err != nil {
-			return fmt.Errorf("failed to lookup EC volume from master: %w", err)
-		}
-
-		if resp.ActiveGeneration != t.targetGeneration {
-			return fmt.Errorf("safety check failed: master active generation is %d, expected %d",
-				resp.ActiveGeneration, t.targetGeneration)
-		}
-
-		t.LogInfo("Safety check passed - new generation is active", map[string]interface{}{
-			"volume_id":         t.volumeID,
-			"active_generation": resp.ActiveGeneration,
-		})
-		return nil
-	})
-}
-
 // cleanupOldShardsFromNode unmounts and deletes old generation shards from a specific node
 func (t *EcVacuumTask) cleanupOldShardsFromNode(node pb.ServerAddress, shardBits erasure_coding.ShardBits) error {
 	return operation.WithVolumeServerClient(false, node, t.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
@@ -436,6 +410,11 @@ func (t *EcVacuumTask) cleanupOldShardsFromNode(node pb.ServerAddress, shardBits
 			"source_generation": t.sourceGeneration,
 			"shard_ids":         shardIds,
 		})
+
+		// Final safety check: Double-check we're not deleting the active generation
+		if err := t.finalSafetyCheck(); err != nil {
+			return fmt.Errorf("FINAL SAFETY CHECK FAILED on node %s: %w", node, err)
+		}
 
 		// Step 1: Unmount old generation shards
 		_, unmountErr := client.VolumeEcShardsUnmount(context.Background(), &volume_server_pb.VolumeEcShardsUnmountRequest{
@@ -449,6 +428,13 @@ func (t *EcVacuumTask) cleanupOldShardsFromNode(node pb.ServerAddress, shardBits
 				"node":  node,
 				"error": unmountErr.Error(),
 				"note":  "this is normal if shards were already unmounted",
+			})
+		} else {
+			t.LogInfo("✅ Successfully unmounted old generation shards", map[string]interface{}{
+				"node":              node,
+				"volume_id":         t.volumeID,
+				"source_generation": t.sourceGeneration,
+				"shard_count":       len(shardIds),
 			})
 		}
 
