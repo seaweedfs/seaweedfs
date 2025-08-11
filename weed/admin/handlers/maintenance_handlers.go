@@ -62,8 +62,8 @@ func (h *MaintenanceHandlers) ShowTaskDetail(c *gin.Context) {
 
 // ShowMaintenanceQueue displays the maintenance queue page
 func (h *MaintenanceHandlers) ShowMaintenanceQueue(c *gin.Context) {
-	// Add timeout to prevent hanging
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+	// Reduce timeout since we fixed the deadlock issue
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
 
 	// Use a channel to handle timeout for data retrieval
