@@ -84,10 +84,24 @@ func (at *ActiveTopology) isDiskAvailable(disk *activeDisk, taskType TaskType) b
 
 // areTaskTypesConflicting checks if two task types conflict
 func (at *ActiveTopology) areTaskTypesConflicting(existing, new TaskType) bool {
-	// Define conflicting task types dynamically
-	// For now, assume no task types conflict (can be made configurable later)
+	// Define conflicting task types to prevent dangerous concurrent operations
+	// These conflicts prevent race conditions and data integrity issues
 	conflictMap := map[TaskType][]TaskType{
-		// No conflicts defined currently - this can be made configurable per task
+		// Vacuum conflicts with balance and erasure coding (and ec_vacuum)
+		TaskType("vacuum"): {TaskType("balance"), TaskType("erasure_coding"), TaskType("ec_vacuum")},
+		
+		// Balance conflicts with vacuum and erasure coding operations
+		TaskType("balance"): {TaskType("vacuum"), TaskType("erasure_coding"), TaskType("ec_vacuum")},
+		
+		// Erasure coding conflicts with vacuum and balance operations
+		TaskType("erasure_coding"): {TaskType("vacuum"), TaskType("balance"), TaskType("ec_vacuum")},
+		
+		// EC vacuum conflicts with all other maintenance operations on same volume
+		TaskType("ec_vacuum"): {TaskType("vacuum"), TaskType("balance"), TaskType("erasure_coding")},
+		
+		// Replication generally should not conflict with read-only operations
+		// but should conflict with destructive operations
+		TaskType("replication"): {TaskType("vacuum"), TaskType("balance")},
 	}
 
 	if conflicts, exists := conflictMap[existing]; exists {
