@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path"
 	"regexp"
@@ -122,6 +123,11 @@ func (l *DiskLocation) loadEcShards(shards []string, collection string, vid need
 		shardId, err := strconv.ParseInt(path.Ext(shard)[3:], 10, 64)
 		if err != nil {
 			return fmt.Errorf("failed to parse ec shard name %v: %w", shard, err)
+		}
+
+		// Bounds check for uint8 (ShardId)
+		if shardId < 0 || shardId > int64(math.MaxUint8) {
+			return fmt.Errorf("ec shard id %v out of bounds for uint8 in shard name %v", shardId, shard)
 		}
 
 		_, err = l.LoadEcShard(collection, vid, erasure_coding.ShardId(shardId), generation)
