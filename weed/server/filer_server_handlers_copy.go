@@ -133,8 +133,13 @@ func (fs *FilerServer) copyEntry(ctx context.Context, srcEntry *filer.Entry, dst
 
 	// Deep copy Remote field to ensure independence
 	if srcEntry.Remote != nil {
-		remoteCopy := *srcEntry.Remote
-		newEntry.Remote = &remoteCopy
+		newEntry.Remote = &filer_pb.RemoteEntry{
+			StorageName:        srcEntry.Remote.StorageName,
+			LastLocalSyncTsNs:  srcEntry.Remote.LastLocalSyncTsNs,
+			RemoteETag:         srcEntry.Remote.RemoteETag,
+			RemoteMtime:        srcEntry.Remote.RemoteMtime,
+			RemoteSize:         srcEntry.Remote.RemoteSize,
+		}
 	}
 
 	// Log if we're copying a hard link so we can track this behavior
