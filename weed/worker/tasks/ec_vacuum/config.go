@@ -12,10 +12,10 @@ import (
 // Config extends BaseConfig with EC vacuum specific settings
 type Config struct {
 	base.BaseConfig
-	DeletionThreshold float64 `json:"deletion_threshold"`   // Minimum deletion ratio to trigger vacuum
-	MinVolumeAgeHours int     `json:"min_volume_age_hours"` // Minimum age before considering vacuum
-	CollectionFilter  string  `json:"collection_filter"`    // Filter by collection
-	MinSizeMB         int     `json:"min_size_mb"`          // Minimum original volume size
+	DeletionThreshold   float64 `json:"deletion_threshold"`     // Minimum deletion ratio to trigger vacuum
+	MinVolumeAgeSeconds int     `json:"min_volume_age_seconds"` // Minimum age before considering vacuum (in seconds)
+	CollectionFilter    string  `json:"collection_filter"`      // Filter by collection
+	MinSizeMB           int     `json:"min_size_mb"`            // Minimum original volume size
 }
 
 // NewDefaultConfig creates a new default EC vacuum configuration
@@ -26,10 +26,10 @@ func NewDefaultConfig() *Config {
 			ScanIntervalSeconds: 24 * 60 * 60, // 24 hours
 			MaxConcurrent:       1,
 		},
-		DeletionThreshold: 0.3, // 30% deletions trigger vacuum
-		MinVolumeAgeHours: 72,  // 3 days minimum age
-		CollectionFilter:  "",  // No filter by default
-		MinSizeMB:         100, // 100MB minimum size
+		DeletionThreshold:   0.3,          // 30% deletions trigger vacuum
+		MinVolumeAgeSeconds: 72 * 60 * 60, // 3 days minimum age (72 hours in seconds)
+		CollectionFilter:    "",           // No filter by default
+		MinSizeMB:           100,          // 100MB minimum size
 	}
 }
 
@@ -98,12 +98,12 @@ func GetConfigSpec() base.ConfigSpec {
 				CSSClasses:   "form-control",
 			},
 			{
-				Name:         "min_volume_age_hours",
-				JSONName:     "min_volume_age_hours",
+				Name:         "min_volume_age_seconds",
+				JSONName:     "min_volume_age_seconds",
 				Type:         config.FieldTypeInterval,
-				DefaultValue: 72,
-				MinValue:     24,
-				MaxValue:     30 * 24, // 30 days
+				DefaultValue: 72 * 60 * 60,      // 72 hours in seconds
+				MinValue:     24 * 60 * 60,      // 24 hours in seconds
+				MaxValue:     30 * 24 * 60 * 60, // 30 days in seconds
 				Required:     true,
 				DisplayName:  "Minimum Volume Age",
 				Description:  "Minimum age before considering EC volume for vacuum",

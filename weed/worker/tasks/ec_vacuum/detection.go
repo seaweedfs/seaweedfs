@@ -63,9 +63,9 @@ func Detection(metrics []*wtypes.VolumeHealthMetrics, info *wtypes.ClusterInfo, 
 			Server:     ecInfo.PrimaryNode,
 			Collection: ecInfo.Collection,
 			Priority:   wtypes.TaskPriorityLow, // EC vacuum is not urgent
-			Reason: fmt.Sprintf("EC volume needs vacuum: deletion_ratio=%.1f%% (>%.1f%%), age=%.1fh (>%dh), size=%.1fMB (>%dMB)",
+			Reason: fmt.Sprintf("EC volume needs vacuum: deletion_ratio=%.1f%% (>%.1f%%), age=%.1fh (>%.1fh), size=%.1fMB (>%dMB)",
 				deletionRatio*100, ecVacuumConfig.DeletionThreshold*100,
-				ecInfo.Age.Hours(), ecVacuumConfig.MinVolumeAgeHours,
+				ecInfo.Age.Hours(), (time.Duration(ecVacuumConfig.MinVolumeAgeSeconds) * time.Second).Hours(),
 				float64(ecInfo.Size)/(1024*1024), ecVacuumConfig.MinSizeMB),
 			ScheduleAt: now,
 		}
@@ -98,12 +98,18 @@ func Detection(metrics []*wtypes.VolumeHealthMetrics, info *wtypes.ClusterInfo, 
 			deletionRatio := calculateDeletionRatio(ecInfo)
 			sizeMB := float64(ecInfo.Size) / (1024 * 1024)
 			deletedMB := deletionRatio * sizeMB
-			ageRequired := time.Duration(ecVacuumConfig.MinVolumeAgeHours) * time.Hour
+			ageRequired := time.Duration(ecVacuumConfig.MinVolumeAgeSeconds) * time.Second
 
-			glog.Infof("EC VACUUM: Volume %d: deleted=%.1fMB, ratio=%.1f%% (need ≥%.1f%%), age=%s (need ≥%s), size=%.1fMB (need ≥%dMB)",
+			// Check shard availability
+			totalShards := 0
+			for _, shardBits := range ecInfo.ShardNodes {
+				totalShards += shardBits.ShardIdCount()
+			}
+
+			glog.Infof("EC VACUUM: Volume %d: deleted=%.1fMB, ratio=%.1f%% (need ≥%.1f%%), age=%s (need ≥%s), size=%.1fMB (need ≥%dMB), shards=%d (need ≥%d)",
 				volumeID, deletedMB, deletionRatio*100, ecVacuumConfig.DeletionThreshold*100,
 				ecInfo.Age.Truncate(time.Minute), ageRequired.Truncate(time.Minute),
-				sizeMB, ecVacuumConfig.MinSizeMB)
+				sizeMB, ecVacuumConfig.MinSizeMB, totalShards, erasure_coding.DataShardsCount)
 			count++
 		}
 	}
@@ -173,9 +179,10 @@ func collectEcVolumeInfo(metrics []*wtypes.VolumeHealthMetrics) map[uint32]*EcVo
 // shouldVacuumEcVolume determines if an EC volume should be considered for vacuum
 func shouldVacuumEcVolume(ecInfo *EcVolumeInfo, config *Config, now time.Time) bool {
 	// Check minimum age
-	if ecInfo.Age < time.Duration(config.MinVolumeAgeHours)*time.Hour {
-		glog.V(3).Infof("EC volume %d too young: age=%.1fh < %dh",
-			ecInfo.VolumeID, ecInfo.Age.Hours(), config.MinVolumeAgeHours)
+	minAge := time.Duration(config.MinVolumeAgeSeconds) * time.Second
+	if ecInfo.Age < minAge {
+		glog.V(3).Infof("EC volume %d too young: age=%.1fh < %.1fh",
+			ecInfo.VolumeID, ecInfo.Age.Hours(), minAge.Hours())
 		return false
 	}
 
