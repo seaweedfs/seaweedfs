@@ -575,10 +575,9 @@ func (mq *MaintenanceQueue) getRepeatPreventionInterval(taskType MaintenanceTask
 
 // GetTasks returns tasks with optional filtering
 func (mq *MaintenanceQueue) GetTasks(status MaintenanceTaskStatus, taskType MaintenanceTaskType, limit int) []*MaintenanceTask {
+	// Create a copy of task slice while holding the lock for minimal time
 	mq.mutex.RLock()
-	defer mq.mutex.RUnlock()
-
-	var tasks []*MaintenanceTask
+	tasksCopy := make([]*MaintenanceTask, 0, len(mq.tasks))
 	for _, task := range mq.tasks {
 		if status != "" && task.Status != status {
 			continue
@@ -586,29 +585,34 @@ func (mq *MaintenanceQueue) GetTasks(status MaintenanceTaskStatus, taskType Main
 		if taskType != "" && task.Type != taskType {
 			continue
 		}
-		tasks = append(tasks, task)
-		if limit > 0 && len(tasks) >= limit {
+		// Create a shallow copy to avoid data races
+		taskCopy := *task
+		tasksCopy = append(tasksCopy, &taskCopy)
+		if limit > 0 && len(tasksCopy) >= limit {
 			break
 		}
 	}
+	mq.mutex.RUnlock()
 
-	// Sort by creation time (newest first)
-	sort.Slice(tasks, func(i, j int) bool {
-		return tasks[i].CreatedAt.After(tasks[j].CreatedAt)
+	// Sort after releasing the lock to prevent deadlocks
+	sort.Slice(tasksCopy, func(i, j int) bool {
+		return tasksCopy[i].CreatedAt.After(tasksCopy[j].CreatedAt)
 	})
 
-	return tasks
+	return tasksCopy
 }
 
 // GetWorkers returns all registered workers
 func (mq *MaintenanceQueue) GetWorkers() []*MaintenanceWorker {
 	mq.mutex.RLock()
-	defer mq.mutex.RUnlock()
-
-	var workers []*MaintenanceWorker
+	workers := make([]*MaintenanceWorker, 0, len(mq.workers))
 	for _, worker := range mq.workers {
-		workers = append(workers, worker)
+		// Create a shallow copy to avoid data races
+		workerCopy := *worker
+		workers = append(workers, &workerCopy)
 	}
+	mq.mutex.RUnlock()
+
 	return workers
 }
 
