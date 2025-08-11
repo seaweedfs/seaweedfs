@@ -301,7 +301,7 @@ func (ms *MaintenanceScanner) createECVolumeMetric(volumeID uint32) *VolumeHealt
 										Age:              24 * time.Hour, // Default age
 									}
 
-																																																				// Calculate total size from all shards of this volume
+									// Calculate total size from all shards of this volume
 									if len(ecShardInfo.ShardSizes) > 0 {
 										var totalShardSize uint64
 										for _, shardSize := range ecShardInfo.ShardSizes {
