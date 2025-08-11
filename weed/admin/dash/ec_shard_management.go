@@ -798,13 +798,9 @@ func (s *AdminServer) GetEcVolumeDetails(volumeID uint32, sortBy string, sortOrd
 	}
 
 	// Sort generations (oldest first)
-	for i := 0; i < len(generations); i++ {
-		for j := i + 1; j < len(generations); j++ {
-			if generations[i] > generations[j] {
-				generations[i], generations[j] = generations[j], generations[i]
-			}
-		}
-	}
+	sort.Slice(generations, func(i, j int) bool {
+		return generations[i] < generations[j]
+	})
 
 	// Check completion status for each generation
 	for gen, shardIDs := range generationShards {
