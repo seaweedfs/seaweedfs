@@ -7,6 +7,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
@@ -300,14 +301,18 @@ func (ms *MaintenanceScanner) createECVolumeMetric(volumeID uint32) *VolumeHealt
 										Age:              24 * time.Hour, // Default age
 									}
 
-									// Calculate total size from all shards of this volume
+																																																				// Calculate total size from all shards of this volume
 									if len(ecShardInfo.ShardSizes) > 0 {
 										var totalShardSize uint64
 										for _, shardSize := range ecShardInfo.ShardSizes {
 											totalShardSize += uint64(shardSize) // Convert int64 to uint64
 										}
-										// Estimate original volume size (shards are compressed/encoded)
-										metric.Size = totalShardSize * 2 // Rough estimate
+										// Estimate original volume size from the data shards
+										// Assumes shard sizes are roughly equal
+										avgShardSize := totalShardSize / uint64(len(ecShardInfo.ShardSizes))
+										metric.Size = avgShardSize * uint64(erasure_coding.DataShardsCount)
+									} else {
+										metric.Size = 0 // No shards, no size
 									}
 
 									glog.V(3).Infof("Created EC volume metric for volume %d, size=%d", volumeID, metric.Size)
