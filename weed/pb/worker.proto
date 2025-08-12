@@ -292,11 +292,20 @@ message TaskPolicy {
   
   // Typed task-specific configuration (replaces generic map)
   oneof task_config {
-    EcVacuumTaskConfig ec_vacuum_config = 5;
+    ErasureCodingTaskConfig erasure_coding_config = 5;
+    EcVacuumTaskConfig ec_vacuum_config = 6;
   }
 }
 
 // Task-specific configuration messages
+
+// ErasureCodingTaskConfig contains EC-specific configuration
+message ErasureCodingTaskConfig {
+  double fullness_ratio = 1;        // Minimum fullness ratio to trigger EC (0.0-1.0)
+  int32 quiet_for_seconds = 2;      // Minimum quiet time before EC
+  int32 min_volume_size_mb = 3;     // Minimum volume size for EC
+  string collection_filter = 4;     // Only process volumes from specific collections
+}
 
 // EcVacuumTaskConfig contains EC vacuum-specific configuration
 message EcVacuumTaskConfig {
