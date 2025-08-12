@@ -167,7 +167,8 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 				maintenanceApi.GET("/tasks/:id", h.adminServer.GetMaintenanceTask)
 				maintenanceApi.GET("/tasks/:id/detail", h.adminServer.GetMaintenanceTaskDetailAPI)
 				maintenanceApi.POST("/tasks/:id/cancel", h.adminServer.CancelMaintenanceTask)
-				maintenanceApi.POST("/tasks/:taskId/retry", h.maintenanceHandlers.RetryTask)
+				maintenanceApi.POST("/tasks/:id/retry", h.maintenanceHandlers.RetryTask)
+
 				maintenanceApi.GET("/workers", h.adminServer.GetMaintenanceWorkersAPI)
 				maintenanceApi.GET("/workers/:id", h.adminServer.GetMaintenanceWorker)
 				maintenanceApi.GET("/workers/:id/logs", h.adminServer.GetWorkerLogs)
@@ -294,7 +295,7 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 				maintenanceApi.GET("/tasks/:id", h.adminServer.GetMaintenanceTask)
 				maintenanceApi.GET("/tasks/:id/detail", h.adminServer.GetMaintenanceTaskDetailAPI)
 				maintenanceApi.POST("/tasks/:id/cancel", h.adminServer.CancelMaintenanceTask)
-				maintenanceApi.POST("/tasks/:taskId/retry", h.maintenanceHandlers.RetryTask)
+				maintenanceApi.POST("/tasks/:id/retry", h.maintenanceHandlers.RetryTask)
 				maintenanceApi.GET("/workers", h.adminServer.GetMaintenanceWorkersAPI)
 				maintenanceApi.GET("/workers/:id", h.adminServer.GetMaintenanceWorker)
 				maintenanceApi.GET("/workers/:id/logs", h.adminServer.GetWorkerLogs)

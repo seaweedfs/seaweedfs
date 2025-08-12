@@ -471,7 +471,7 @@ func (h *MaintenanceHandlers) UpdateMaintenanceConfig(c *gin.Context) {
 
 // RetryTask manually retries a maintenance task
 func (h *MaintenanceHandlers) RetryTask(c *gin.Context) {
-	taskID := c.Param("taskId")
+	taskID := c.Param("id")
 	if taskID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Task ID is required"})
 		return
