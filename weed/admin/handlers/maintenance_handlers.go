@@ -38,26 +38,53 @@ func (h *MaintenanceHandlers) ShowTaskDetail(c *gin.Context) {
 	taskID := c.Param("id")
 	glog.Infof("DEBUG ShowTaskDetail: Starting for task ID: %s", taskID)
 
-	taskDetail, err := h.adminServer.GetMaintenanceTaskDetail(taskID)
-	if err != nil {
-		glog.Errorf("DEBUG ShowTaskDetail: error getting task detail for %s: %v", taskID, err)
-		c.String(http.StatusNotFound, "Task not found: %s (Error: %v)", taskID, err)
+	// Add timeout to prevent indefinite hangs when worker is unresponsive
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+
+	// Use a channel to handle timeout for task detail retrieval
+	type result struct {
+		taskDetail *maintenance.TaskDetailData
+		err        error
+	}
+	resultChan := make(chan result, 1)
+
+	go func() {
+		taskDetail, err := h.adminServer.GetMaintenanceTaskDetail(taskID)
+		resultChan <- result{taskDetail: taskDetail, err: err}
+	}()
+
+	select {
+	case res := <-resultChan:
+		if res.err != nil {
+			glog.Errorf("DEBUG ShowTaskDetail: error getting task detail for %s: %v", taskID, res.err)
+			c.String(http.StatusNotFound, "Task not found: %s (Error: %v)", taskID, res.err)
+			return
+		}
+
+		glog.Infof("DEBUG ShowTaskDetail: got task detail for %s, task type: %s, status: %s", taskID, res.taskDetail.Task.Type, res.taskDetail.Task.Status)
+
+		c.Header("Content-Type", "text/html")
+		taskDetailComponent := app.TaskDetail(res.taskDetail)
+		layoutComponent := layout.Layout(c, taskDetailComponent)
+		err := layoutComponent.Render(ctx, c.Writer)
+		if err != nil {
+			glog.Errorf("DEBUG ShowTaskDetail: render error: %v", err)
+			c.String(http.StatusInternalServerError, "Failed to render template: %v", err)
+			return
+		}
+
+		glog.Infof("DEBUG ShowTaskDetail: template rendered successfully for task %s", taskID)
+
+	case <-ctx.Done():
+		glog.Warningf("ShowTaskDetail: timeout waiting for task detail data for task %s", taskID)
+		c.JSON(http.StatusRequestTimeout, gin.H{
+			"error":      "Request timeout - task detail retrieval took too long. This may indicate the worker is unresponsive or stuck.",
+			"suggestion": "Try refreshing the page or check if the worker executing this task is responsive. If the task is stuck, it may need to be cancelled manually.",
+			"task_id":    taskID,
+		})
 		return
 	}
-
-	glog.Infof("DEBUG ShowTaskDetail: got task detail for %s, task type: %s, status: %s", taskID, taskDetail.Task.Type, taskDetail.Task.Status)
-
-	c.Header("Content-Type", "text/html")
-	taskDetailComponent := app.TaskDetail(taskDetail)
-	layoutComponent := layout.Layout(c, taskDetailComponent)
-	err = layoutComponent.Render(c.Request.Context(), c.Writer)
-	if err != nil {
-		glog.Errorf("DEBUG ShowTaskDetail: render error: %v", err)
-		c.String(http.StatusInternalServerError, "Failed to render template: %v", err)
-		return
-	}
-
-	glog.Infof("DEBUG ShowTaskDetail: template rendered successfully for task %s", taskID)
 }
 
 // ShowMaintenanceQueue displays the maintenance queue page
