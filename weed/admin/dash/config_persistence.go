@@ -22,14 +22,12 @@ const (
 	ConfigSubdir = "conf"
 
 	// Configuration file names (protobuf binary)
-	MaintenanceConfigFile     = "maintenance.pb"
-	ECTaskConfigFile          = "task_erasure_coding.pb"
-	ReplicationTaskConfigFile = "task_replication.pb"
+	MaintenanceConfigFile = "maintenance.pb"
+	ECTaskConfigFile      = "task_erasure_coding.pb"
 
 	// JSON reference files
-	MaintenanceConfigJSONFile     = "maintenance.json"
-	ECTaskConfigJSONFile          = "task_erasure_coding.json"
-	ReplicationTaskConfigJSONFile = "task_replication.json"
+	MaintenanceConfigJSONFile = "maintenance.json"
+	ECTaskConfigJSONFile      = "task_erasure_coding.json"
 
 	// Task persistence subdirectories and settings
 	TasksSubdir       = "tasks"
@@ -43,10 +41,8 @@ const (
 
 // Task configuration types
 type (
-	VacuumTaskConfig        = worker_pb.VacuumTaskConfig
 	ErasureCodingTaskConfig = worker_pb.ErasureCodingTaskConfig
-	BalanceTaskConfig       = worker_pb.BalanceTaskConfig
-	ReplicationTaskConfig   = worker_pb.ReplicationTaskConfig
+	EcVacuumTaskConfig      = worker_pb.EcVacuumTaskConfig
 )
 
 // isValidTaskID validates that a task ID is safe for use in file paths
@@ -343,27 +339,6 @@ func (cp *ConfigPersistence) LoadErasureCodingTaskPolicy() (*worker_pb.TaskPolic
 	}
 
 	return nil, fmt.Errorf("failed to unmarshal EC task configuration")
-}
-
-// SaveReplicationTaskConfig saves replication task configuration to protobuf file
-func (cp *ConfigPersistence) SaveReplicationTaskConfig(config *ReplicationTaskConfig) error {
-	return cp.saveTaskConfig(ReplicationTaskConfigFile, config)
-}
-
-// LoadReplicationTaskConfig loads replication task configuration from protobuf file
-func (cp *ConfigPersistence) LoadReplicationTaskConfig() (*ReplicationTaskConfig, error) {
-	var config ReplicationTaskConfig
-	err := cp.loadTaskConfig(ReplicationTaskConfigFile, &config)
-	if err != nil {
-		// Return default config if file doesn't exist
-		if os.IsNotExist(err) {
-			return &ReplicationTaskConfig{
-				TargetReplicaCount: 1,
-			}, nil
-		}
-		return nil, err
-	}
-	return &config, nil
 }
 
 // saveTaskConfig is a generic helper for saving task configurations with both protobuf and JSON reference

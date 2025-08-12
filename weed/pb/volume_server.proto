@@ -306,6 +306,7 @@ message ReceiveFileInfo {
     bool is_ec_volume = 4;
     uint32 shard_id = 5;
     uint64 file_size = 6;
+    uint32 generation = 7; // generation for EC volume file naming, defaults to 0
 }
 
 message ReceiveFileResponse {

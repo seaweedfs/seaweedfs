@@ -454,8 +454,8 @@ func (vs *VolumeServer) ReceiveFile(stream volume_server_pb.VolumeServer_Receive
 		case *volume_server_pb.ReceiveFileRequest_Info:
 			// First message contains file info
 			fileInfo = data.Info
-			glog.V(1).Infof("ReceiveFile: volume %d, ext %s, collection %s, shard %d, size %d",
-				fileInfo.VolumeId, fileInfo.Ext, fileInfo.Collection, fileInfo.ShardId, fileInfo.FileSize)
+			glog.V(1).Infof("ReceiveFile: volume %d, ext %s, collection %s, shard %d, size %d, generation %d",
+				fileInfo.VolumeId, fileInfo.Ext, fileInfo.Collection, fileInfo.ShardId, fileInfo.FileSize, fileInfo.Generation)
 
 			// Create file path based on file info
 			if fileInfo.IsEcVolume {
@@ -477,9 +477,24 @@ func (vs *VolumeServer) ReceiveFile(stream volume_server_pb.VolumeServer_Receive
 					})
 				}
 
-				// Create EC shard file path
-				baseFileName := erasure_coding.EcShardBaseFileName(fileInfo.Collection, int(fileInfo.VolumeId))
-				filePath = util.Join(targetLocation.Directory, baseFileName+fileInfo.Ext)
+				// Create generation-aware EC shard file path
+				// Use index directory for index files (.ecx, .ecj, .vif), data directory for shard files
+				var baseDir string
+				if fileInfo.Ext == ".ecx" || fileInfo.Ext == ".ecj" || fileInfo.Ext == ".vif" {
+					baseDir = targetLocation.IdxDirectory
+				} else {
+					baseDir = targetLocation.Directory
+				}
+
+				baseFileName := erasure_coding.EcShardFileNameWithGeneration(
+					fileInfo.Collection,
+					baseDir,
+					int(fileInfo.VolumeId),
+					fileInfo.Generation,
+				)
+				filePath = baseFileName + fileInfo.Ext
+
+				glog.V(1).Infof("ReceiveFile: creating generation-aware EC file %s", filePath)
 			} else {
 				// Regular volume file
 				v := vs.store.GetVolume(needle.VolumeId(fileInfo.VolumeId))

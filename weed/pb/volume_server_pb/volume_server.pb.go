@@ -2064,6 +2064,7 @@ type ReceiveFileInfo struct {
 	IsEcVolume    bool                   `protobuf:"varint,4,opt,name=is_ec_volume,json=isEcVolume,proto3" json:"is_ec_volume,omitempty"`
 	ShardId       uint32                 `protobuf:"varint,5,opt,name=shard_id,json=shardId,proto3" json:"shard_id,omitempty"`
 	FileSize      uint64                 `protobuf:"varint,6,opt,name=file_size,json=fileSize,proto3" json:"file_size,omitempty"`
+	Generation    uint32                 `protobuf:"varint,7,opt,name=generation,proto3" json:"generation,omitempty"` // generation for EC volume file naming, defaults to 0
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2136,6 +2137,13 @@ func (x *ReceiveFileInfo) GetShardId() uint32 {
 func (x *ReceiveFileInfo) GetFileSize() uint64 {
 	if x != nil {
 		return x.FileSize
+	}
+	return 0
+}
+
+func (x *ReceiveFileInfo) GetGeneration() uint32 {
+	if x != nil {
+		return x.Generation
 	}
 	return 0
 }
@@ -6415,7 +6423,7 @@ const file_volume_server_proto_rawDesc = "" +
 	"\x12ReceiveFileRequest\x127\n" +
 	"\x04info\x18\x01 \x01(\v2!.volume_server_pb.ReceiveFileInfoH\x00R\x04info\x12#\n" +
 	"\ffile_content\x18\x02 \x01(\fH\x00R\vfileContentB\x06\n" +
-	"\x04data\"\xba\x01\n" +
+	"\x04data\"\xda\x01\n" +
 	"\x0fReceiveFileInfo\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x10\n" +
 	"\x03ext\x18\x02 \x01(\tR\x03ext\x12\x1e\n" +
@@ -6425,7 +6433,10 @@ const file_volume_server_proto_rawDesc = "" +
 	"\fis_ec_volume\x18\x04 \x01(\bR\n" +
 	"isEcVolume\x12\x19\n" +
 	"\bshard_id\x18\x05 \x01(\rR\ashardId\x12\x1b\n" +
-	"\tfile_size\x18\x06 \x01(\x04R\bfileSize\"P\n" +
+	"\tfile_size\x18\x06 \x01(\x04R\bfileSize\x12\x1e\n" +
+	"\n" +
+	"generation\x18\a \x01(\rR\n" +
+	"generation\"P\n" +
 	"\x13ReceiveFileResponse\x12#\n" +
 	"\rbytes_written\x18\x01 \x01(\x04R\fbytesWritten\x12\x14\n" +
 	"\x05error\x18\x02 \x01(\tR\x05error\"`\n" +
