@@ -53,7 +53,7 @@ func NewEcVacuumTask(id string, volumeID uint32, collection string, sourceNodes 
 		volumeID:           volumeID,
 		collection:         collection,
 		sourceNodes:        sourceNodes,
-		cleanupGracePeriod: 1 * time.Minute, // 1 minute grace period for faster cleanup
+		cleanupGracePeriod: 1 * time.Minute,    // 1 minute grace period for faster cleanup
 		logic:              NewEcVacuumLogic(), // Initialize business logic
 		// sourceGeneration and targetGeneration will be determined during execution
 	}
@@ -83,13 +83,13 @@ func (t *EcVacuumTask) Execute(ctx context.Context, params *worker_pb.TaskParams
 	t.targetGeneration = plan.TargetGeneration
 
 	t.LogInfo("Vacuum plan created successfully", map[string]interface{}{
-		"volume_id":              plan.VolumeID,
-		"collection":             plan.Collection,
-		"source_generation":      plan.CurrentGeneration,
-		"target_generation":      plan.TargetGeneration,
-		"cleanup_generations":    plan.GenerationsToCleanup,
-		"nodes_involved":         len(plan.SourceDistribution.Nodes),
-		"safety_checks":          len(plan.SafetyChecks),
+		"volume_id":           plan.VolumeID,
+		"collection":          plan.Collection,
+		"source_generation":   plan.CurrentGeneration,
+		"target_generation":   plan.TargetGeneration,
+		"cleanup_generations": plan.GenerationsToCleanup,
+		"nodes_involved":      len(plan.SourceDistribution.Nodes),
+		"safety_checks":       len(plan.SafetyChecks),
 	})
 
 	// Validate the plan is safe to execute
