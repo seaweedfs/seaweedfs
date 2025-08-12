@@ -598,8 +598,7 @@ func (t *EcVacuumTask) distributeNewEcShards() error {
 
 	targetBaseFileName := filepath.Join(t.tempDir, fmt.Sprintf("%s_%d_g%d", t.collection, t.volumeID, t.targetGeneration))
 
-	// Step 1: Find best server for shared index files (.vif, .ecj)
-	// Note: .ecx files are skipped per user guidance - they can be regenerated
+	// Step 1: Find best server for shared index files (.vif, .ecj, .ecx)
 	var indexServer pb.ServerAddress
 	for serverAddr := range t.sourceNodes {
 		// Use the first server as index server
@@ -609,8 +608,7 @@ func (t *EcVacuumTask) distributeNewEcShards() error {
 		break
 	}
 
-	// Step 2: Distribute index files (.vif, .ecj) to index server only (shared files)
-	// Note: .ecx files are skipped per user guidance - they can be regenerated
+	// Step 2: Distribute index files (.vif, .ecj, .ecx) to index server only (shared files)
 	if indexServer != "" {
 		err := t.distributeIndexFiles(indexServer, targetBaseFileName)
 		if err != nil {
@@ -665,17 +663,18 @@ func (t *EcVacuumTask) distributeNewEcShards() error {
 	return nil
 }
 
-// distributeIndexFiles distributes index files (.vif, .ecj) to a server with dedicated index folder
+// distributeIndexFiles distributes index files (.vif, .ecj, .ecx) to a server with dedicated index folder
 func (t *EcVacuumTask) distributeIndexFiles(indexServer pb.ServerAddress, targetBaseFileName string) error {
 	t.LogInfo("Distributing index files to index server", map[string]interface{}{
 		"index_server":      indexServer,
 		"target_generation": t.targetGeneration,
 	})
 
-	// List of index files to distribute (note: .ecx files are skipped)
+	// List of index files to distribute
 	indexFiles := []string{
 		targetBaseFileName + ".vif", // Volume info file
 		targetBaseFileName + ".ecj", // Empty deletion journal for new generation
+		targetBaseFileName + ".ecx", // EC index file - required for mounting
 	}
 
 	return operation.WithVolumeServerClient(false, indexServer, t.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
