@@ -568,3 +568,8 @@ func (mm *MaintenanceManager) UpdateTaskProgress(taskID string, progress float64
 func (mm *MaintenanceManager) UpdateWorkerHeartbeat(workerID string) {
 	mm.queue.UpdateWorkerHeartbeat(workerID)
 }
+
+// RetryTask manually retries a failed or pending task
+func (mm *MaintenanceManager) RetryTask(taskID string) error {
+	return mm.queue.RetryTask(taskID)
+}

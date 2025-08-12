@@ -98,39 +98,46 @@ templ MaintenanceQueue(data *maintenance.MaintenanceQueueData) {
                                             <th>Worker</th>
                                             <th>Duration</th>
                                             <th>Completed</th>
+                                            <th>Actions</th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         for _, task := range data.Tasks {
                                             if string(task.Status) == "completed" || string(task.Status) == "failed" || string(task.Status) == "cancelled" {
                                                 if string(task.Status) == "failed" {
-                                                    <tr class="table-danger clickable-row" data-task-id={task.ID} onclick="navigateToTask(this)" style="cursor: pointer;">
-                                                        <td>
+                                                    <tr class="table-danger">
+                                                        <td onclick="navigateToTask(this)" style="cursor: pointer;" data-task-id={task.ID}>
                                                             @TaskTypeIcon(task.Type)
                                                             {string(task.Type)}
                                                         </td>
-                                                        <td>@StatusBadge(task.Status)</td>
-                                                        <td>{fmt.Sprintf("%d", task.VolumeID)}</td>
-                                                        <td>
+                                                        <td onclick="navigateToTask(this)" style="cursor: pointer;" data-task-id={task.ID}>@StatusBadge(task.Status)</td>
+                                                        <td onclick="navigateToTask(this)" style="cursor: pointer;" data-task-id={task.ID}>{fmt.Sprintf("%d", task.VolumeID)}</td>
+                                                        <td onclick="navigateToTask(this)" style="cursor: pointer;" data-task-id={task.ID}>
                                                             if task.WorkerID != "" {
                                                                 <small>{task.WorkerID}</small>
                                                             } else {
                                                                 <span class="text-muted">-</span>
                                                             }
                                                         </td>
-                                                        <td>
+                                                        <td onclick="navigateToTask(this)" style="cursor: pointer;" data-task-id={task.ID}>
                                                             if task.StartedAt != nil && task.CompletedAt != nil {
                                                                 {formatDuration(task.CompletedAt.Sub(*task.StartedAt))}
                                                             } else {
                                                                 <span class="text-muted">-</span>
                                                             }
                                                         </td>
-                                                        <td>
+                                                        <td onclick="navigateToTask(this)" style="cursor: pointer;" data-task-id={task.ID}>
                                                             if task.CompletedAt != nil {
                                                                 {task.CompletedAt.Format("2006-01-02 15:04")}
                                                             } else {
                                                                 <span class="text-muted">-</span>
                                                             }
+                                                        </td>
+                                                        <td>
+                                                            <button type="button" class="btn btn-sm btn-warning" onclick="retryTask('{task.ID}')" title="Retry Failed Task">
+                                                                <i class="fas fa-redo me-1"></i>
+                                                                Retry
+                                                            </button>
                                                         </td>
                                                     </tr>
                                                 } else {
@@ -161,6 +168,9 @@ templ MaintenanceQueue(data *maintenance.MaintenanceQueueData) {
                                                             } else {
                                                                 <span class="text-muted">-</span>
                                                             }
+                                                        </td>
+                                                        <td>
+                                                            <span class="text-muted">-</span>
                                                         </td>
                                                     </tr>
                                                 }
@@ -203,21 +213,28 @@ templ MaintenanceQueue(data *maintenance.MaintenanceQueueData) {
                                             <th>Server</th>
                                             <th>Reason</th>
                                             <th>Created</th>
+                                            <th>Actions</th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         for _, task := range data.Tasks {
                                             if string(task.Status) == "pending" {
-                                                <tr class="clickable-row" data-task-id={task.ID} onclick="navigateToTask(this)" style="cursor: pointer;">
-                                                    <td>
+                                                <tr>
+                                                    <td onclick="navigateToTask(this)" style="cursor: pointer;" data-task-id={task.ID}>
                                                         @TaskTypeIcon(task.Type)
                                                         {string(task.Type)}
                                                     </td>
-                                                    <td>@PriorityBadge(task.Priority)</td>
-                                                    <td>{fmt.Sprintf("%d", task.VolumeID)}</td>
-                                                    <td><small>{task.Server}</small></td>
-                                                    <td><small>{task.Reason}</small></td>
-                                                    <td>{task.CreatedAt.Format("2006-01-02 15:04")}</td>
+                                                    <td onclick="navigateToTask(this)" style="cursor: pointer;" data-task-id={task.ID}>@PriorityBadge(task.Priority)</td>
+                                                    <td onclick="navigateToTask(this)" style="cursor: pointer;" data-task-id={task.ID}>{fmt.Sprintf("%d", task.VolumeID)}</td>
+                                                    <td onclick="navigateToTask(this)" style="cursor: pointer;" data-task-id={task.ID}><small>{task.Server}</small></td>
+                                                    <td onclick="navigateToTask(this)" style="cursor: pointer;" data-task-id={task.ID}><small>{task.Reason}</small></td>
+                                                    <td onclick="navigateToTask(this)" style="cursor: pointer;" data-task-id={task.ID}>{task.CreatedAt.Format("2006-01-02 15:04")}</td>
+                                                    <td>
+                                                        <button type="button" class="btn btn-sm btn-warning" onclick="retryTask('{task.ID}')" title="Retry Task">
+                                                            <i class="fas fa-redo me-1"></i>
+                                                            Retry
+                                                        </button>
+                                                    </td>
                                                 </tr>
                                             }
                                         }
@@ -341,6 +358,33 @@ templ MaintenanceQueue(data *maintenance.MaintenanceQueueData) {
             if (taskId) {
                 window.location.href = '/maintenance/tasks/' + taskId;
             }
+        };
+
+        window.retryTask = function(taskId) {
+            console.log("retryTask called for task:", taskId);
+            
+            if (!confirm('Are you sure you want to retry this task?')) {
+                return;
+            }
+            
+            fetch('/api/maintenance/tasks/' + taskId + '/retry', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Task retried successfully: ' + data.message);
+                    setTimeout(() => window.location.reload(), 1000);
+                } else {
+                    alert('Failed to retry task: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(error => {
+                alert('Error retrying task: ' + error.message);
+            });
         };
     </script>
 }

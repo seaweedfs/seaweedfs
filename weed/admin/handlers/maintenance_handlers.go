@@ -469,6 +469,32 @@ func (h *MaintenanceHandlers) UpdateMaintenanceConfig(c *gin.Context) {
 	c.Redirect(http.StatusSeeOther, "/maintenance/config")
 }
 
+// RetryTask manually retries a maintenance task
+func (h *MaintenanceHandlers) RetryTask(c *gin.Context) {
+	taskID := c.Param("taskId")
+	if taskID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Task ID is required"})
+		return
+	}
+
+	manager := h.adminServer.GetMaintenanceManager()
+	if manager == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Maintenance manager not available"})
+		return
+	}
+
+	err := manager.RetryTask(taskID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": fmt.Sprintf("Task %s has been queued for retry", taskID),
+	})
+}
+
 // Helper methods that delegate to AdminServer
 
 func (h *MaintenanceHandlers) getMaintenanceQueueData() (*maintenance.MaintenanceQueueData, error) {

@@ -639,7 +639,59 @@ func generateTaskID() string {
 	return fmt.Sprintf("%s-%04d", string(b), timestamp)
 }
 
-// CleanupOldTasks removes old completed and failed tasks
+// RetryTask manually retries a failed or pending task
+func (mq *MaintenanceQueue) RetryTask(taskID string) error {
+	mq.mutex.Lock()
+	defer mq.mutex.Unlock()
+
+	task, exists := mq.tasks[taskID]
+	if !exists {
+		return fmt.Errorf("task %s not found", taskID)
+	}
+
+	// Only allow retry for failed or pending tasks
+	if task.Status != TaskStatusFailed && task.Status != TaskStatusPending {
+		return fmt.Errorf("task %s cannot be retried (status: %s)", taskID, task.Status)
+	}
+
+	// Reset task for retry
+	now := time.Now()
+	task.Status = TaskStatusPending
+	task.WorkerID = ""
+	task.StartedAt = nil
+	task.CompletedAt = nil
+	task.Error = ""
+	task.ScheduledAt = now // Schedule immediately
+	task.Progress = 0
+
+	// Add to assignment history if it was previously assigned
+	if len(task.AssignmentHistory) > 0 {
+		lastAssignment := task.AssignmentHistory[len(task.AssignmentHistory)-1]
+		if lastAssignment.UnassignedAt == nil {
+			unassignedTime := now
+			lastAssignment.UnassignedAt = &unassignedTime
+			lastAssignment.Reason = "Manual retry requested"
+		}
+	}
+
+	// Remove from current pending list if already there to avoid duplicates
+	for i, pendingTask := range mq.pendingTasks {
+		if pendingTask.ID == taskID {
+			mq.pendingTasks = append(mq.pendingTasks[:i], mq.pendingTasks[i+1:]...)
+			break
+		}
+	}
+
+	// Add back to pending queue
+	mq.pendingTasks = append(mq.pendingTasks, task)
+	
+	// Save task state
+	mq.saveTaskState(task)
+
+	glog.Infof("Task manually retried: %s (%s) for volume %d", taskID, task.Type, task.VolumeID)
+	return nil
+}
+
 func (mq *MaintenanceQueue) CleanupOldTasks(retention time.Duration) int {
 	mq.mutex.Lock()
 	defer mq.mutex.Unlock()
