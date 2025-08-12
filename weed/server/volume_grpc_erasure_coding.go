@@ -607,14 +607,6 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 		return nil, fmt.Errorf("WriteIdxFileFromEcIndex %s: %v", v.IndexBaseFileName(), err)
 	}
 
-	// mount the volume so it can be found by VolumeEcShardsGenerate
-	err = vs.store.MountVolume(needle.VolumeId(req.VolumeId))
-	if err != nil {
-		return nil, fmt.Errorf("failed to mount volume %d after EC decode: %v", req.VolumeId, err)
-	}
-
-	glog.V(1).Infof("VolumeEcShardsToVolume: successfully decoded and mounted volume %d", req.VolumeId)
-
 	return &volume_server_pb.VolumeEcShardsToVolumeResponse{}, nil
 }
 
