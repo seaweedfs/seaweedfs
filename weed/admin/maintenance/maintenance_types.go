@@ -232,15 +232,6 @@ func GetRepeatInterval(mp *MaintenancePolicy, taskType MaintenanceTaskType) int 
 	return int(policy.RepeatIntervalSeconds)
 }
 
-// GetVacuumTaskConfig returns the vacuum task configuration
-func GetVacuumTaskConfig(mp *MaintenancePolicy, taskType MaintenanceTaskType) *worker_pb.VacuumTaskConfig {
-	policy := GetTaskPolicy(mp, taskType)
-	if policy == nil {
-		return nil
-	}
-	return policy.GetVacuumConfig()
-}
-
 // GetErasureCodingTaskConfig returns the erasure coding task configuration
 func GetErasureCodingTaskConfig(mp *MaintenancePolicy, taskType MaintenanceTaskType) *worker_pb.ErasureCodingTaskConfig {
 	policy := GetTaskPolicy(mp, taskType)
@@ -250,35 +241,7 @@ func GetErasureCodingTaskConfig(mp *MaintenancePolicy, taskType MaintenanceTaskT
 	return policy.GetErasureCodingConfig()
 }
 
-// GetBalanceTaskConfig returns the balance task configuration
-func GetBalanceTaskConfig(mp *MaintenancePolicy, taskType MaintenanceTaskType) *worker_pb.BalanceTaskConfig {
-	policy := GetTaskPolicy(mp, taskType)
-	if policy == nil {
-		return nil
-	}
-	return policy.GetBalanceConfig()
-}
-
-// GetReplicationTaskConfig returns the replication task configuration
-func GetReplicationTaskConfig(mp *MaintenancePolicy, taskType MaintenanceTaskType) *worker_pb.ReplicationTaskConfig {
-	policy := GetTaskPolicy(mp, taskType)
-	if policy == nil {
-		return nil
-	}
-	return policy.GetReplicationConfig()
-}
-
-// Note: GetTaskConfig was removed - use typed getters: GetVacuumTaskConfig, GetErasureCodingTaskConfig, GetBalanceTaskConfig, or GetReplicationTaskConfig
-
-// SetVacuumTaskConfig sets the vacuum task configuration
-func SetVacuumTaskConfig(mp *MaintenancePolicy, taskType MaintenanceTaskType, config *worker_pb.VacuumTaskConfig) {
-	policy := GetTaskPolicy(mp, taskType)
-	if policy != nil {
-		policy.TaskConfig = &worker_pb.TaskPolicy_VacuumConfig{
-			VacuumConfig: config,
-		}
-	}
-}
+// Note: GetTaskConfig was removed - use typed getter: GetErasureCodingTaskConfig
 
 // SetErasureCodingTaskConfig sets the erasure coding task configuration
 func SetErasureCodingTaskConfig(mp *MaintenancePolicy, taskType MaintenanceTaskType, config *worker_pb.ErasureCodingTaskConfig) {
@@ -290,28 +253,8 @@ func SetErasureCodingTaskConfig(mp *MaintenancePolicy, taskType MaintenanceTaskT
 	}
 }
 
-// SetBalanceTaskConfig sets the balance task configuration
-func SetBalanceTaskConfig(mp *MaintenancePolicy, taskType MaintenanceTaskType, config *worker_pb.BalanceTaskConfig) {
-	policy := GetTaskPolicy(mp, taskType)
-	if policy != nil {
-		policy.TaskConfig = &worker_pb.TaskPolicy_BalanceConfig{
-			BalanceConfig: config,
-		}
-	}
-}
-
-// SetReplicationTaskConfig sets the replication task configuration
-func SetReplicationTaskConfig(mp *MaintenancePolicy, taskType MaintenanceTaskType, config *worker_pb.ReplicationTaskConfig) {
-	policy := GetTaskPolicy(mp, taskType)
-	if policy != nil {
-		policy.TaskConfig = &worker_pb.TaskPolicy_ReplicationConfig{
-			ReplicationConfig: config,
-		}
-	}
-}
-
-// SetTaskConfig sets a configuration value for a task type (legacy method - use typed setters above)
-// Note: SetTaskConfig was removed - use typed setters: SetVacuumTaskConfig, SetErasureCodingTaskConfig, SetBalanceTaskConfig, or SetReplicationTaskConfig
+// SetTaskConfig sets a configuration value for a task type (legacy method - use typed setter above)
+// Note: SetTaskConfig was removed - use typed setter: SetErasureCodingTaskConfig
 
 // MaintenanceWorker represents a worker instance
 type MaintenanceWorker struct {

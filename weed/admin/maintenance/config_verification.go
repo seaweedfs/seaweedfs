@@ -30,35 +30,8 @@ func VerifyProtobufConfig() error {
 		return fmt.Errorf("expected global max concurrent to be 4, got %d", config.Policy.GlobalMaxConcurrent)
 	}
 
-	// Verify task policies
-	vacuumPolicy := config.Policy.TaskPolicies["vacuum"]
-	if vacuumPolicy == nil {
-		return fmt.Errorf("expected vacuum policy to be configured")
-	}
-
-	if !vacuumPolicy.Enabled {
-		return fmt.Errorf("expected vacuum policy to be enabled")
-	}
-
-	// Verify typed configuration access
-	vacuumConfig := vacuumPolicy.GetVacuumConfig()
-	if vacuumConfig == nil {
-		return fmt.Errorf("expected vacuum config to be accessible")
-	}
-
-	if vacuumConfig.GarbageThreshold != 0.3 {
-		return fmt.Errorf("expected garbage threshold to be 0.3, got %f", vacuumConfig.GarbageThreshold)
-	}
-
-	// Verify helper functions work
-	if !IsTaskEnabled(config.Policy, "vacuum") {
-		return fmt.Errorf("expected vacuum task to be enabled via helper function")
-	}
-
-	maxConcurrent := GetMaxConcurrent(config.Policy, "vacuum")
-	if maxConcurrent != 2 {
-		return fmt.Errorf("expected vacuum max concurrent to be 2, got %d", maxConcurrent)
-	}
+	// Note: Task policies are now only configured for implemented task types
+	// Vacuum, balance, and replication task configs have been removed
 
 	// Verify erasure coding configuration
 	ecPolicy := config.Policy.TaskPolicies["erasure_coding"]
@@ -108,13 +81,15 @@ func CreateCustomConfig() *worker_pb.MaintenanceConfig {
 		Policy: &worker_pb.MaintenancePolicy{
 			GlobalMaxConcurrent: 8,
 			TaskPolicies: map[string]*worker_pb.TaskPolicy{
-				"custom_vacuum": {
+				"custom_erasure_coding": {
 					Enabled:       true,
-					MaxConcurrent: 4,
-					TaskConfig: &worker_pb.TaskPolicy_VacuumConfig{
-						VacuumConfig: &worker_pb.VacuumTaskConfig{
-							GarbageThreshold:  0.5,
-							MinVolumeAgeHours: 48,
+					MaxConcurrent: 2,
+					TaskConfig: &worker_pb.TaskPolicy_ErasureCodingConfig{
+						ErasureCodingConfig: &worker_pb.ErasureCodingTaskConfig{
+							FullnessRatio:    0.95,
+							QuietForSeconds:  1800,
+							MinVolumeSizeMb:  200,
+							CollectionFilter: "",
 						},
 					},
 				},
