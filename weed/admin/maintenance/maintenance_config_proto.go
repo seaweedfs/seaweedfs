@@ -30,8 +30,12 @@ func DefaultMaintenanceConfigProto() *worker_pb.MaintenanceConfig {
 		MaxRetries:             3,
 		CleanupIntervalSeconds: 24 * 60 * 60,     // 24 hours
 		TaskRetentionSeconds:   7 * 24 * 60 * 60, // 7 days
-		// Policy field will be populated dynamically from separate task configuration files
-		Policy: nil,
+		Policy: &worker_pb.MaintenancePolicy{
+			GlobalMaxConcurrent:          4,
+			DefaultRepeatIntervalSeconds: 24 * 60 * 60, // 24 hours
+			DefaultCheckIntervalSeconds:  60 * 60,      // 1 hour
+			TaskPolicies:                 make(map[string]*worker_pb.TaskPolicy),
+		},
 	}
 }
 
@@ -40,30 +44,7 @@ func (mcm *MaintenanceConfigManager) GetConfig() *worker_pb.MaintenanceConfig {
 	return mcm.config
 }
 
-// Type-safe configuration accessors
-
-// GetErasureCodingConfig returns EC-specific configuration for a task type
-func (mcm *MaintenanceConfigManager) GetErasureCodingConfig(taskType string) *worker_pb.ErasureCodingTaskConfig {
-	if policy := mcm.getTaskPolicy(taskType); policy != nil {
-		if ecConfig := policy.GetErasureCodingConfig(); ecConfig != nil {
-			return ecConfig
-		}
-	}
-	// Return defaults if not configured
-	return &worker_pb.ErasureCodingTaskConfig{
-		FullnessRatio:    0.95,
-		QuietForSeconds:  3600,
-		MinVolumeSizeMb:  100,
-		CollectionFilter: "",
-	}
-}
-
-// Typed convenience methods for getting task configurations
-
-// GetErasureCodingTaskConfigForType returns erasure coding configuration for a specific task type
-func (mcm *MaintenanceConfigManager) GetErasureCodingTaskConfigForType(taskType string) *worker_pb.ErasureCodingTaskConfig {
-	return GetErasureCodingTaskConfig(mcm.config.Policy, MaintenanceTaskType(taskType))
-}
+// Generic configuration accessors - tasks manage their own specific configs
 
 // Helper methods
 

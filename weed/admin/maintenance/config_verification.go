@@ -30,24 +30,8 @@ func VerifyProtobufConfig() error {
 		return fmt.Errorf("expected global max concurrent to be 4, got %d", config.Policy.GlobalMaxConcurrent)
 	}
 
-	// Note: Task policies are now only configured for implemented task types
-	// Vacuum, balance, and replication task configs have been removed
-
-	// Verify erasure coding configuration
-	ecPolicy := config.Policy.TaskPolicies["erasure_coding"]
-	if ecPolicy == nil {
-		return fmt.Errorf("expected EC policy to be configured")
-	}
-
-	ecConfig := ecPolicy.GetErasureCodingConfig()
-	if ecConfig == nil {
-		return fmt.Errorf("expected EC config to be accessible")
-	}
-
-	// Verify configurable EC fields only
-	if ecConfig.FullnessRatio <= 0 || ecConfig.FullnessRatio > 1 {
-		return fmt.Errorf("expected EC config to have valid fullness ratio (0-1), got %f", ecConfig.FullnessRatio)
-	}
+	// Note: Task policies are now generic - each task manages its own configuration
+	// The maintenance system no longer knows about specific task types
 
 	return nil
 }
@@ -79,21 +63,10 @@ func CreateCustomConfig() *worker_pb.MaintenanceConfig {
 		ScanIntervalSeconds: 60 * 60, // 1 hour
 		MaxRetries:          5,
 		Policy: &worker_pb.MaintenancePolicy{
-			GlobalMaxConcurrent: 8,
-			TaskPolicies: map[string]*worker_pb.TaskPolicy{
-				"custom_erasure_coding": {
-					Enabled:       true,
-					MaxConcurrent: 2,
-					TaskConfig: &worker_pb.TaskPolicy_ErasureCodingConfig{
-						ErasureCodingConfig: &worker_pb.ErasureCodingTaskConfig{
-							FullnessRatio:    0.95,
-							QuietForSeconds:  1800,
-							MinVolumeSizeMb:  200,
-							CollectionFilter: "",
-						},
-					},
-				},
-			},
+			GlobalMaxConcurrent:          8,
+			DefaultRepeatIntervalSeconds: 7200, // 2 hours
+			DefaultCheckIntervalSeconds:  1800, // 30 minutes
+			TaskPolicies:                 make(map[string]*worker_pb.TaskPolicy),
 		},
 	}
 }

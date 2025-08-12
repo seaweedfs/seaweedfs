@@ -232,29 +232,8 @@ func GetRepeatInterval(mp *MaintenancePolicy, taskType MaintenanceTaskType) int 
 	return int(policy.RepeatIntervalSeconds)
 }
 
-// GetErasureCodingTaskConfig returns the erasure coding task configuration
-func GetErasureCodingTaskConfig(mp *MaintenancePolicy, taskType MaintenanceTaskType) *worker_pb.ErasureCodingTaskConfig {
-	policy := GetTaskPolicy(mp, taskType)
-	if policy == nil {
-		return nil
-	}
-	return policy.GetErasureCodingConfig()
-}
-
-// Note: GetTaskConfig was removed - use typed getter: GetErasureCodingTaskConfig
-
-// SetErasureCodingTaskConfig sets the erasure coding task configuration
-func SetErasureCodingTaskConfig(mp *MaintenancePolicy, taskType MaintenanceTaskType, config *worker_pb.ErasureCodingTaskConfig) {
-	policy := GetTaskPolicy(mp, taskType)
-	if policy != nil {
-		policy.TaskConfig = &worker_pb.TaskPolicy_ErasureCodingConfig{
-			ErasureCodingConfig: config,
-		}
-	}
-}
-
-// SetTaskConfig sets a configuration value for a task type (legacy method - use typed setter above)
-// Note: SetTaskConfig was removed - use typed setter: SetErasureCodingTaskConfig
+// Note: Task-specific configuration getters/setters removed.
+// Each task type should manage its own configuration through the generic TaskPolicy interface.
 
 // MaintenanceWorker represents a worker instance
 type MaintenanceWorker struct {
