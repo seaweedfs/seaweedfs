@@ -47,23 +47,23 @@ func (m *MockMasterClientForSafety) LookupEcVolume(ctx context.Context, req *mas
 	if m.shouldFailLookup {
 		return nil, fmt.Errorf("simulated lookup failure")
 	}
-	
+
 	vol, exists := m.volumes[req.VolumeId]
 	if !exists {
 		return nil, fmt.Errorf("volume %d not found", req.VolumeId)
 	}
-	
+
 	resp := &master_pb.LookupEcVolumeResponse{
 		VolumeId:         req.VolumeId,
 		ActiveGeneration: vol.activeGeneration,
 	}
-	
+
 	// Return shards for requested generation
 	targetGeneration := req.Generation
 	if targetGeneration == 0 {
 		targetGeneration = vol.activeGeneration
 	}
-	
+
 	if shardCount, exists := vol.generations[targetGeneration]; exists {
 		for i := 0; i < shardCount; i++ {
 			resp.ShardIdLocations = append(resp.ShardIdLocations, &master_pb.LookupEcVolumeResponse_EcShardIdLocation{
@@ -73,7 +73,7 @@ func (m *MockMasterClientForSafety) LookupEcVolume(ctx context.Context, req *mas
 			})
 		}
 	}
-	
+
 	return resp, nil
 }
 
@@ -172,18 +172,18 @@ func (m *MockMasterClientForSafety) ActivateEcGeneration(ctx context.Context, re
 func TestSafetyCheckMasterConnectivity(t *testing.T) {
 	t.Run("connectivity_success", func(t *testing.T) {
 		task := createSafetyTestTask()
-		
+
 		// This would require mocking the operation.WithMasterServerClient function
 		// For unit testing, we focus on the logic rather than the full integration
-		
+
 		// Test that missing master address fails appropriately
 		task.masterAddress = ""
 		err := task.performSafetyChecks()
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "master address not set")
-		
+
 		t.Logf("✅ Safety check correctly fails when master address is missing")
-		
+
 		// Use task to avoid unused variable warning
 		_ = task
 	})
@@ -193,11 +193,11 @@ func TestSafetyCheckMasterConnectivity(t *testing.T) {
 func TestSafetyCheckActiveGeneration(t *testing.T) {
 	t.Run("correct_active_generation", func(t *testing.T) {
 		task := createSafetyTestTask()
-		
+
 		// Test the logic directly
 		expectedActive := task.targetGeneration
 		actualActive := uint32(1) // Simulate correct active generation
-		
+
 		if actualActive != expectedActive {
 			err := fmt.Errorf("CRITICAL: master active generation is %d, expected %d - ABORTING CLEANUP",
 				actualActive, expectedActive)
@@ -207,14 +207,14 @@ func TestSafetyCheckActiveGeneration(t *testing.T) {
 			t.Logf("✅ Active generation check passed: %d == %d", actualActive, expectedActive)
 		}
 	})
-	
+
 	t.Run("wrong_active_generation", func(t *testing.T) {
 		task := createSafetyTestTask()
-		
+
 		// Test the logic for wrong active generation
 		expectedActive := task.targetGeneration
 		actualActive := uint32(0) // Wrong active generation
-		
+
 		if actualActive != expectedActive {
 			err := fmt.Errorf("CRITICAL: master active generation is %d, expected %d - ABORTING CLEANUP",
 				actualActive, expectedActive)
@@ -229,10 +229,10 @@ func TestSafetyCheckActiveGeneration(t *testing.T) {
 func TestSafetyCheckOldGenerationInactive(t *testing.T) {
 	t.Run("old_generation_still_active", func(t *testing.T) {
 		task := createSafetyTestTask()
-		
+
 		// Test the logic for old generation still being active
 		actualActive := task.sourceGeneration // Old generation is still active!
-		
+
 		if actualActive == task.sourceGeneration {
 			err := fmt.Errorf("CRITICAL: old generation %d is still active - ABORTING CLEANUP to prevent data loss",
 				task.sourceGeneration)
@@ -241,15 +241,15 @@ func TestSafetyCheckOldGenerationInactive(t *testing.T) {
 			t.Logf("🛡️  CRITICAL SAFETY: Prevented deletion of active generation %d", actualActive)
 		}
 	})
-	
+
 	t.Run("old_generation_inactive", func(t *testing.T) {
 		task := createSafetyTestTask()
-		
+
 		// Test the logic for old generation properly inactive
 		actualActive := task.targetGeneration // New generation is active
-		
+
 		if actualActive != task.sourceGeneration {
-			t.Logf("✅ Safety check passed: old generation %d is inactive, active is %d", 
+			t.Logf("✅ Safety check passed: old generation %d is inactive, active is %d",
 				task.sourceGeneration, actualActive)
 		}
 	})
@@ -259,10 +259,10 @@ func TestSafetyCheckOldGenerationInactive(t *testing.T) {
 func TestSafetyCheckNewGenerationReadiness(t *testing.T) {
 	t.Run("insufficient_shards", func(t *testing.T) {
 		task := createSafetyTestTask()
-		
+
 		// Test insufficient shard count
 		shardCount := 5 // Only 5 shards, need at least 10
-		
+
 		if shardCount < 10 {
 			err := fmt.Errorf("CRITICAL: new generation %d has only %d shards (need ≥10) - ABORTING CLEANUP",
 				task.targetGeneration, shardCount)
@@ -271,17 +271,17 @@ func TestSafetyCheckNewGenerationReadiness(t *testing.T) {
 			t.Logf("🛡️  CRITICAL SAFETY: Prevented cleanup with insufficient shards: %d < 10", shardCount)
 		}
 	})
-	
+
 	t.Run("sufficient_shards", func(t *testing.T) {
 		task := createSafetyTestTask()
-		
+
 		// Test sufficient shard count
 		shardCount := 14 // All shards present
-		
+
 		if shardCount >= 10 {
 			t.Logf("✅ Safety check passed: new generation has %d shards (≥10 required)", shardCount)
 		}
-		
+
 		// Use task to avoid unused variable warning
 		_ = task
 	})
@@ -291,10 +291,10 @@ func TestSafetyCheckNewGenerationReadiness(t *testing.T) {
 func TestSafetyCheckNoActiveOperations(t *testing.T) {
 	t.Run("grace_period_logic", func(t *testing.T) {
 		task := createSafetyTestTask()
-		
+
 		// Verify grace period is reasonable
 		assert.Equal(t, 5*time.Minute, task.cleanupGracePeriod, "Grace period should be 5 minutes")
-		
+
 		// Test that grace period logic passes
 		// In a real scenario, this would check for active operations
 		t.Logf("✅ Grace period check: %v should be sufficient for operation quiescence", task.cleanupGracePeriod)
@@ -305,7 +305,7 @@ func TestSafetyCheckNoActiveOperations(t *testing.T) {
 func TestComprehensiveSafetyChecks(t *testing.T) {
 	t.Run("all_safety_checks_pass", func(t *testing.T) {
 		task := createSafetyTestTask()
-		
+
 		// Test that all safety checks are designed to prevent data loss
 		safetyChecks := []struct {
 			name     string
@@ -327,7 +327,7 @@ func TestComprehensiveSafetyChecks(t *testing.T) {
 				critical: true,
 			},
 			{
-				name: "Old generation inactive", 
+				name: "Old generation inactive",
 				checkFn: func() bool {
 					return true // Simulate passing
 				},
@@ -348,7 +348,7 @@ func TestComprehensiveSafetyChecks(t *testing.T) {
 				critical: false,
 			},
 		}
-		
+
 		allPassed := true
 		for _, check := range safetyChecks {
 			if !check.checkFn() {
@@ -362,13 +362,13 @@ func TestComprehensiveSafetyChecks(t *testing.T) {
 				t.Logf("✅ Safety check passed: %s", check.name)
 			}
 		}
-		
+
 		if allPassed {
 			t.Logf("🛡️  ALL SAFETY CHECKS PASSED - Cleanup would be approved")
 		} else {
 			t.Logf("🛡️  SAFETY CHECKS FAILED - Cleanup would be prevented")
 		}
-		
+
 		assert.True(t, allPassed, "All safety checks should pass in normal scenario")
 	})
 }
@@ -377,12 +377,12 @@ func TestComprehensiveSafetyChecks(t *testing.T) {
 func TestFinalSafetyCheck(t *testing.T) {
 	t.Run("prevents_deletion_of_active_generation", func(t *testing.T) {
 		task := createSafetyTestTask()
-		
+
 		// Test the core logic of the final safety check
 		// Simulate scenario where active generation equals source generation (dangerous!)
 		sourceGeneration := task.sourceGeneration
 		simulatedActiveGeneration := task.sourceGeneration // Same as source - dangerous!
-		
+
 		if simulatedActiveGeneration == sourceGeneration {
 			err := fmt.Errorf("ABORT: active generation is %d (same as source %d) - PREVENTING DELETION",
 				simulatedActiveGeneration, sourceGeneration)
@@ -391,16 +391,16 @@ func TestFinalSafetyCheck(t *testing.T) {
 			t.Logf("🛡️  FINAL SAFETY: Prevented deletion of active generation %d", simulatedActiveGeneration)
 		}
 	})
-	
+
 	t.Run("allows_deletion_of_inactive_generation", func(t *testing.T) {
 		task := createSafetyTestTask()
-		
+
 		// Test normal scenario where active generation is different from source
 		sourceGeneration := task.sourceGeneration
 		simulatedActiveGeneration := task.targetGeneration // Different from source - safe
-		
+
 		if simulatedActiveGeneration != sourceGeneration {
-			t.Logf("✅ Final safety check passed: active=%d != source=%d", 
+			t.Logf("✅ Final safety check passed: active=%d != source=%d",
 				simulatedActiveGeneration, sourceGeneration)
 		}
 	})
@@ -410,23 +410,23 @@ func TestFinalSafetyCheck(t *testing.T) {
 func TestSafetyCheckErrorHandling(t *testing.T) {
 	t.Run("network_failure_handling", func(t *testing.T) {
 		task := createSafetyTestTask()
-		
+
 		// Test that network failures prevent cleanup
 		simulatedNetworkError := fmt.Errorf("connection refused")
-		
+
 		assert.Error(t, simulatedNetworkError)
 		t.Logf("🛡️  Network error correctly prevents cleanup: %v", simulatedNetworkError)
-		
+
 		// Use task to avoid unused variable warning
 		_ = task
 	})
-	
+
 	t.Run("master_unavailable_handling", func(t *testing.T) {
 		task := createSafetyTestTask()
-		
+
 		// Test that master unavailability prevents cleanup
 		task.masterAddress = "" // No master address
-		
+
 		err := task.performSafetyChecks()
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "master address not set")
@@ -439,9 +439,9 @@ func createSafetyTestTask() *EcVacuumTask {
 	sourceNodes := map[pb.ServerAddress]erasure_coding.ShardBits{
 		"server1:8080": erasure_coding.ShardBits(0x3FFF), // All 14 shards
 	}
-	
-	task := NewEcVacuumTask("safety-test", 123, "test", sourceNodes, 0)
+
+	task := NewEcVacuumTask("safety-test", 123, "test", sourceNodes)
 	task.masterAddress = "master:9333" // Set master address for testing
-	
+
 	return task
 }

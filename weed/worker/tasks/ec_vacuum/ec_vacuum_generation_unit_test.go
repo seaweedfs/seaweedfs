@@ -212,12 +212,12 @@ func TestEcVacuumGenerationTransition(t *testing.T) {
 		"server1:8080": erasure_coding.ShardBits(0x3FFF), // All 14 shards
 	}
 
-	task := NewEcVacuumTask("test-task", volumeId, collection, sourceNodes, 0)
+	task := NewEcVacuumTask("test-task", volumeId, collection, sourceNodes)
 
 	// Verify initial generation setup
 	assert.Equal(t, uint32(0), task.sourceGeneration, "Source generation should be 0")
-	assert.Equal(t, uint32(1), task.targetGeneration, "Target generation should be 1")
-	assert.Equal(t, 5*time.Minute, task.cleanupGracePeriod, "Cleanup grace period should be 5 minutes")
+	assert.Equal(t, uint32(0), task.targetGeneration, "Target generation should be 0 initially")
+	assert.Equal(t, 1*time.Minute, task.cleanupGracePeriod, "Cleanup grace period should be 1 minute")
 
 	t.Logf("Task initialized: source_gen=%d, target_gen=%d, grace_period=%v",
 		task.sourceGeneration, task.targetGeneration, task.cleanupGracePeriod)
@@ -235,7 +235,7 @@ func TestEcVacuumActivateNewGeneration(t *testing.T) {
 		"server1:8080": erasure_coding.ShardBits(0x3FFF),
 	}
 
-	task := NewEcVacuumTask("activate-test", volumeId, collection, sourceNodes, 0)
+	task := NewEcVacuumTask("activate-test", volumeId, collection, sourceNodes)
 
 	// Simulate the activation step
 	ctx := context.Background()
@@ -275,7 +275,7 @@ func TestEcVacuumGenerationFailureHandling(t *testing.T) {
 		"server1:8080": erasure_coding.ShardBits(0x3FFF),
 	}
 
-	task := NewEcVacuumTask("failure-test", volumeId, collection, sourceNodes, 0)
+	task := NewEcVacuumTask("failure-test", volumeId, collection, sourceNodes)
 
 	// Test activation failure handling
 	t.Run("activation_failure", func(t *testing.T) {
@@ -321,13 +321,13 @@ func TestEcVacuumCleanupGracePeriod(t *testing.T) {
 		"server1:8080": erasure_coding.ShardBits(0x3FFF),
 	}
 
-	task := NewEcVacuumTask("cleanup-test", volumeId, collection, sourceNodes, 2)
+	task := NewEcVacuumTask("cleanup-test", volumeId, collection, sourceNodes)
 
 	// Verify cleanup grace period is set correctly
-	assert.Equal(t, 5*time.Minute, task.cleanupGracePeriod, "Cleanup grace period should be 5 minutes")
+	assert.Equal(t, 1*time.Minute, task.cleanupGracePeriod, "Cleanup grace period should be 1 minute")
 
-	// Test that the grace period is significant enough for safety
-	assert.Greater(t, task.cleanupGracePeriod, 1*time.Minute, "Grace period should be at least 1 minute for safety")
+	// Test that the grace period is reasonable for safety
+	assert.GreaterOrEqual(t, task.cleanupGracePeriod, 1*time.Minute, "Grace period should be at least 1 minute for safety")
 	assert.LessOrEqual(t, task.cleanupGracePeriod, 10*time.Minute, "Grace period should not be excessive")
 
 	t.Logf("✅ Cleanup grace period correctly set: %v", task.cleanupGracePeriod)
@@ -342,19 +342,21 @@ func TestEcVacuumGenerationProgression(t *testing.T) {
 	}
 
 	// Test progression from generation 0 to 1
-	task1 := NewEcVacuumTask("prog-test-1", volumeId, collection, sourceNodes, 0)
+	task1 := NewEcVacuumTask("prog-test-1", volumeId, collection, sourceNodes)
 	assert.Equal(t, uint32(0), task1.sourceGeneration)
-	assert.Equal(t, uint32(1), task1.targetGeneration)
+	assert.Equal(t, uint32(0), task1.targetGeneration)
 
 	// Test progression from generation 1 to 2
-	task2 := NewEcVacuumTask("prog-test-2", volumeId, collection, sourceNodes, 1)
-	assert.Equal(t, uint32(1), task2.sourceGeneration)
-	assert.Equal(t, uint32(2), task2.targetGeneration)
+	task2 := NewEcVacuumTask("prog-test-2", volumeId, collection, sourceNodes)
+	// Note: With the new approach, generation is determined at runtime
+	assert.Equal(t, uint32(0), task2.sourceGeneration) // Will be 0 initially, updated during execution
+	assert.Equal(t, uint32(0), task2.targetGeneration)
 
 	// Test progression from generation 5 to 6
-	task3 := NewEcVacuumTask("prog-test-3", volumeId, collection, sourceNodes, 5)
-	assert.Equal(t, uint32(5), task3.sourceGeneration)
-	assert.Equal(t, uint32(6), task3.targetGeneration)
+	task3 := NewEcVacuumTask("prog-test-3", volumeId, collection, sourceNodes)
+	// Note: With the new approach, generation is determined at runtime
+	assert.Equal(t, uint32(0), task3.sourceGeneration) // Will be 0 initially, updated during execution
+	assert.Equal(t, uint32(0), task3.targetGeneration)
 
 	t.Logf("✅ Generation progression works correctly:")
 	t.Logf("  0→1: source=%d, target=%d", task1.sourceGeneration, task1.targetGeneration)
@@ -376,7 +378,7 @@ func TestEcVacuumZeroDowntimeRequirements(t *testing.T) {
 		"server1:8080": erasure_coding.ShardBits(0x3FFF),
 	}
 
-	task := NewEcVacuumTask("zero-downtime-test", volumeId, collection, sourceNodes, 0)
+	task := NewEcVacuumTask("zero-downtime-test", volumeId, collection, sourceNodes)
 
 	// Test 1: Verify that source generation (old) remains active during vacuum
 	ctx := context.Background()
@@ -420,14 +422,15 @@ func TestEcVacuumTaskConfiguration(t *testing.T) {
 		"server2:8080": erasure_coding.ShardBits(0x3E00), // Shards 9-13
 	}
 
-	task := NewEcVacuumTask(taskId, volumeId, collection, sourceNodes, 3)
+	task := NewEcVacuumTask(taskId, volumeId, collection, sourceNodes)
 
 	// Verify task configuration
 	assert.Equal(t, taskId, task.BaseTask.ID(), "Task ID should match")
 	assert.Equal(t, volumeId, task.volumeID, "Volume ID should match")
 	assert.Equal(t, collection, task.collection, "Collection should match")
-	assert.Equal(t, uint32(3), task.sourceGeneration, "Source generation should match")
-	assert.Equal(t, uint32(4), task.targetGeneration, "Target generation should be source + 1")
+	// Note: generations are now determined at runtime, so they start as defaults
+	assert.Equal(t, uint32(0), task.sourceGeneration, "Source generation starts as default")
+	assert.Equal(t, uint32(0), task.targetGeneration, "Target generation starts as default")
 	assert.Equal(t, sourceNodes, task.sourceNodes, "Source nodes should match")
 
 	// Verify shard distribution

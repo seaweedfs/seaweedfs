@@ -120,13 +120,25 @@ func RegisterEcVacuumTask() {
 					params.VolumeId, shardDistribution)
 			}
 
-			return NewEcVacuumTask(
+			glog.Infof("EC vacuum task for volume %d will determine generation during execution", params.VolumeId)
+
+			task := NewEcVacuumTask(
 				fmt.Sprintf("ec_vacuum-%d", params.VolumeId),
 				params.VolumeId,
 				params.Collection,
 				sourceNodes,
-				0, // default to generation 0 (current generation to vacuum)
-			), nil
+			)
+
+			// If task has a topology-linked TaskID, store it for lifecycle management
+			if params.TaskId != "" {
+				task.SetTopologyTaskID(params.TaskId)
+				glog.V(2).Infof("EC vacuum task linked to topology task ID: %s", params.TaskId)
+			}
+
+			// Cleanup planning is now done during detection phase with topology access
+			// The task will query master directly when needed for detailed generation info
+
+			return task, nil
 		},
 		DetectionFunc:  Detection,
 		ScanInterval:   24 * time.Hour, // Default scan every 24 hours

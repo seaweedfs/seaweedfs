@@ -58,8 +58,19 @@ func Detection(metrics []*wtypes.VolumeHealthMetrics, info *wtypes.ClusterInfo, 
 		// Generate task ID for ActiveTopology integration
 		taskID := fmt.Sprintf("ec_vacuum_vol_%d_%d", volumeID, now.Unix())
 
-		// Create task sources from shard information
+		// Register storage impact with ActiveTopology if available
+		if info.ActiveTopology != nil {
+			regErr := registerEcVacuumWithTopology(info.ActiveTopology, taskID, volumeID, ecInfo)
+			if regErr != nil {
+				glog.Warningf("Failed to register EC vacuum task with topology for volume %d: %v", volumeID, regErr)
+				continue // Skip this volume if topology registration fails
+			}
+			glog.V(2).Infof("Successfully registered EC vacuum task %s with ActiveTopology for volume %d", taskID, volumeID)
+		}
+
+		// Create task sources from shard information with generation info
 		var sources []*worker_pb.TaskSource
+
 		for serverAddr, shardBits := range ecInfo.ShardNodes {
 			shardIds := make([]uint32, 0, shardBits.ShardIdCount())
 			for i := 0; i < erasure_coding.TotalShardsCount; i++ {
@@ -73,13 +84,14 @@ func Detection(metrics []*wtypes.VolumeHealthMetrics, info *wtypes.ClusterInfo, 
 					VolumeId:      volumeID,
 					ShardIds:      shardIds,
 					EstimatedSize: ecInfo.Size / uint64(len(ecInfo.ShardNodes)), // Rough estimate per server
+					Generation:    ecInfo.CurrentGeneration,                     // Use the current generation from EcVolumeInfo
 				})
 			}
 		}
 
 		// Create TypedParams for EC vacuum task
 		typedParams := &worker_pb.TaskParams{
-			TaskId:     taskID,
+			TaskId:     taskID, // Link to ActiveTopology pending task
 			VolumeId:   volumeID,
 			Collection: ecInfo.Collection,
 			VolumeSize: ecInfo.Size,
@@ -94,6 +106,8 @@ func Detection(metrics []*wtypes.VolumeHealthMetrics, info *wtypes.ClusterInfo, 
 				},
 			},
 		}
+
+		// Cleanup planning is now simplified - done during execution via master query
 
 		result := &wtypes.TaskDetectionResult{
 			TaskID:     taskID,
@@ -159,14 +173,16 @@ func Detection(metrics []*wtypes.VolumeHealthMetrics, info *wtypes.ClusterInfo, 
 
 // EcVolumeInfo contains information about an EC volume
 type EcVolumeInfo struct {
-	VolumeID     uint32
-	Collection   string
-	Size         uint64
-	CreatedAt    time.Time
-	Age          time.Duration
-	PrimaryNode  string
-	ShardNodes   map[pb.ServerAddress]erasure_coding.ShardBits
-	DeletionInfo DeletionInfo
+	VolumeID             uint32
+	Collection           string
+	Size                 uint64
+	CreatedAt            time.Time
+	Age                  time.Duration
+	PrimaryNode          string
+	ShardNodes           map[pb.ServerAddress]erasure_coding.ShardBits
+	DeletionInfo         DeletionInfo
+	CurrentGeneration    uint32   // Current generation of EC shards
+	AvailableGenerations []uint32 // All discovered generations for this volume
 }
 
 // DeletionInfo contains deletion statistics for an EC volume
@@ -194,13 +210,15 @@ func collectEcVolumeInfo(metrics []*wtypes.VolumeHealthMetrics, info *wtypes.Clu
 
 		// Create EC volume info from metrics
 		ecVolumes[metric.VolumeID] = &EcVolumeInfo{
-			VolumeID:    metric.VolumeID,
-			Collection:  metric.Collection,
-			Size:        metric.Size,
-			CreatedAt:   time.Now().Add(-metric.Age),
-			Age:         metric.Age,
-			PrimaryNode: metric.Server,
-			ShardNodes:  make(map[pb.ServerAddress]erasure_coding.ShardBits), // Will be populated if needed
+			VolumeID:             metric.VolumeID,
+			Collection:           metric.Collection,
+			Size:                 metric.Size,
+			CreatedAt:            time.Now().Add(-metric.Age),
+			Age:                  metric.Age,
+			PrimaryNode:          metric.Server,
+			ShardNodes:           make(map[pb.ServerAddress]erasure_coding.ShardBits), // Will be populated if needed
+			CurrentGeneration:    0,                                                   // Will be determined from topology
+			AvailableGenerations: []uint32{},                                          // Will be populated from topology
 			DeletionInfo: DeletionInfo{
 				TotalEntries:   int64(metric.Size / 1024), // Rough estimate
 				DeletedEntries: int64(metric.DeletedBytes / 1024),
@@ -249,6 +267,26 @@ func populateShardInfo(ecVolumes map[uint32]*EcVolumeInfo, activeTopology *topol
 								ecVolumeInfo.ShardNodes = make(map[pb.ServerAddress]erasure_coding.ShardBits)
 							}
 
+							// Track generation information
+							generation := ecShardInfo.Generation
+
+							// Update current generation (use the highest found)
+							if generation > ecVolumeInfo.CurrentGeneration {
+								ecVolumeInfo.CurrentGeneration = generation
+							}
+
+							// Add to available generations if not already present
+							found := false
+							for _, existingGen := range ecVolumeInfo.AvailableGenerations {
+								if existingGen == generation {
+									found = true
+									break
+								}
+							}
+							if !found {
+								ecVolumeInfo.AvailableGenerations = append(ecVolumeInfo.AvailableGenerations, generation)
+							}
+
 							// Add shards from this node
 							serverAddr := pb.ServerAddress(node.Id)
 							if _, exists := ecVolumeInfo.ShardNodes[serverAddr]; !exists {
@@ -265,8 +303,8 @@ func populateShardInfo(ecVolumes map[uint32]*EcVolumeInfo, activeTopology *topol
 								}
 							}
 
-							glog.V(2).Infof("EC volume %d: found shards %v on server %s (EcIndexBits=0x%x)",
-								volumeID, actualShards, node.Id, ecIndexBits)
+							glog.V(2).Infof("EC volume %d generation %d: found shards %v on server %s (EcIndexBits=0x%x)",
+								volumeID, generation, actualShards, node.Id, ecIndexBits)
 						}
 					}
 				}
@@ -288,7 +326,8 @@ func populateShardInfo(ecVolumes map[uint32]*EcVolumeInfo, activeTopology *topol
 				shardDistribution[string(serverAddr)] = shards
 			}
 		}
-		glog.V(1).Infof("EC volume %d shard distribution: %+v", volumeID, shardDistribution)
+		glog.V(1).Infof("EC volume %d: current_generation=%d, available_generations=%v, shard_distribution=%+v",
+			volumeID, ecInfo.CurrentGeneration, ecInfo.AvailableGenerations, shardDistribution)
 	}
 }
 
@@ -393,4 +432,55 @@ func estimateDeletionFromShardDistribution(ecInfo *EcVolumeInfo) float64 {
 
 	// Default conservative estimate
 	return 0.1
+}
+
+// registerEcVacuumWithTopology registers the EC vacuum task with ActiveTopology for capacity tracking
+func registerEcVacuumWithTopology(activeTopology *topology.ActiveTopology, taskID string, volumeID uint32, ecInfo *EcVolumeInfo) error {
+	// Convert shard information to TaskSourceSpec for topology tracking
+	var sources []topology.TaskSourceSpec
+
+	// Add all existing EC shard locations as sources (these will be cleaned up)
+	for serverAddr := range ecInfo.ShardNodes {
+		// Use the existing EC shard cleanup impact calculation
+		cleanupImpact := topology.CalculateECShardCleanupImpact(int64(ecInfo.Size))
+
+		sources = append(sources, topology.TaskSourceSpec{
+			ServerID:      string(serverAddr),
+			DiskID:        0, // Default disk (topology system will resolve)
+			CleanupType:   topology.CleanupECShards,
+			StorageImpact: &cleanupImpact,
+		})
+	}
+
+	// EC vacuum creates new generation on same nodes (destinations same as sources but for new generation)
+	// Create destinations for the new generation (positive storage impact)
+	var destinations []topology.TaskDestinationSpec
+	newGenerationImpact := topology.CalculateECShardStorageImpact(int32(erasure_coding.TotalShardsCount), int64(ecInfo.Size))
+
+	for serverAddr := range ecInfo.ShardNodes {
+		destinations = append(destinations, topology.TaskDestinationSpec{
+			ServerID:      string(serverAddr),
+			DiskID:        0, // Default disk (topology system will resolve)
+			StorageImpact: &newGenerationImpact,
+		})
+	}
+
+	// Register the task with topology for capacity tracking
+	err := activeTopology.AddPendingTask(topology.TaskSpec{
+		TaskID:       taskID,
+		TaskType:     topology.TaskType("ec_vacuum"),
+		VolumeID:     volumeID,
+		VolumeSize:   int64(ecInfo.Size),
+		Sources:      sources,
+		Destinations: destinations,
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to add pending EC vacuum task to topology: %w", err)
+	}
+
+	glog.V(2).Infof("Registered EC vacuum task %s with topology: %d sources, %d destinations",
+		taskID, len(sources), len(destinations))
+
+	return nil
 }
