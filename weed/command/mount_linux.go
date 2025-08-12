@@ -136,18 +136,18 @@ func parseInfoFile(r io.Reader) ([]*Info, error) {
 	return out, nil
 }
 
-func checkMountPointAvailable(dir string) bool {
+func checkMountPointAvailable(dir string, ignoreMounted bool) bool {
 	mountPoint := dir
 	if mountPoint != "/" && strings.HasSuffix(mountPoint, "/") {
 		mountPoint = mountPoint[0 : len(mountPoint)-1]
 	}
 
-	if mounted, err := mounted(mountPoint); err != nil || mounted {
-		if err != nil {
-			glog.Errorf("check %s: %v", mountPoint, err)
-		}
+	mounted, err := mounted(mountPoint)
+
+	if err != nil {
+		glog.Errorf("check %s: %v", mountPoint, err)
 		return false
 	}
 
-	return true
+	return !mounted || ignoreMounted
 }
