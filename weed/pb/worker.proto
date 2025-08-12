@@ -142,6 +142,7 @@ message TaskSource {
   uint32 volume_id = 5;                   // Volume ID (for volume operations)
   repeated uint32 shard_ids = 6;          // Shard IDs (for EC shard operations)
   uint64 estimated_size = 7;              // Estimated size to be processed
+  uint32 generation = 8;                  // Generation number (for EC operations)
 }
 
 // TaskTarget represents a unified target location for any task type

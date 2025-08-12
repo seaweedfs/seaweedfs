@@ -1155,6 +1155,7 @@ type TaskSource struct {
 	VolumeId      uint32                 `protobuf:"varint,5,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`                // Volume ID (for volume operations)
 	ShardIds      []uint32               `protobuf:"varint,6,rep,packed,name=shard_ids,json=shardIds,proto3" json:"shard_ids,omitempty"`         // Shard IDs (for EC shard operations)
 	EstimatedSize uint64                 `protobuf:"varint,7,opt,name=estimated_size,json=estimatedSize,proto3" json:"estimated_size,omitempty"` // Estimated size to be processed
+	Generation    uint32                 `protobuf:"varint,8,opt,name=generation,proto3" json:"generation,omitempty"`                            // Generation number (for EC operations)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1234,6 +1235,13 @@ func (x *TaskSource) GetShardIds() []uint32 {
 func (x *TaskSource) GetEstimatedSize() uint64 {
 	if x != nil {
 		return x.EstimatedSize
+	}
+	return 0
+}
+
+func (x *TaskSource) GetGeneration() uint32 {
+	if x != nil {
+		return x.Generation
 	}
 	return 0
 }
@@ -3291,7 +3299,7 @@ const file_worker_proto_rawDesc = "" +
 	"\vworking_dir\x18\x04 \x01(\tR\n" +
 	"workingDir\x12#\n" +
 	"\rmaster_client\x18\x05 \x01(\tR\fmasterClient\x12%\n" +
-	"\x0ecleanup_source\x18\x06 \x01(\bR\rcleanupSource\"\xcf\x01\n" +
+	"\x0ecleanup_source\x18\x06 \x01(\bR\rcleanupSource\"\xef\x01\n" +
 	"\n" +
 	"TaskSource\x12\x12\n" +
 	"\x04node\x18\x01 \x01(\tR\x04node\x12\x17\n" +
@@ -3301,7 +3309,10 @@ const file_worker_proto_rawDesc = "" +
 	"dataCenter\x12\x1b\n" +
 	"\tvolume_id\x18\x05 \x01(\rR\bvolumeId\x12\x1b\n" +
 	"\tshard_ids\x18\x06 \x03(\rR\bshardIds\x12%\n" +
-	"\x0eestimated_size\x18\a \x01(\x04R\restimatedSize\"\xcf\x01\n" +
+	"\x0eestimated_size\x18\a \x01(\x04R\restimatedSize\x12\x1e\n" +
+	"\n" +
+	"generation\x18\b \x01(\rR\n" +
+	"generation\"\xcf\x01\n" +
 	"\n" +
 	"TaskTarget\x12\x12\n" +
 	"\x04node\x18\x01 \x01(\tR\x04node\x12\x17\n" +
