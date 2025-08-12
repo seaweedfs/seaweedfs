@@ -134,7 +134,7 @@ templ MaintenanceQueue(data *maintenance.MaintenanceQueueData) {
                                                             }
                                                         </td>
                                                         <td>
-                                                            <button type="button" class="btn btn-sm btn-warning" onclick="retryTask('{task.ID}')" title="Retry Failed Task">
+                                                            <button type="button" class="btn btn-sm btn-warning" data-task-id={task.ID} onclick="retryTask(this.getAttribute('data-task-id'))" title="Retry Failed Task">
                                                                 <i class="fas fa-redo me-1"></i>
                                                                 Retry
                                                             </button>
@@ -230,7 +230,7 @@ templ MaintenanceQueue(data *maintenance.MaintenanceQueueData) {
                                                     <td onclick="navigateToTask(this)" style="cursor: pointer;" data-task-id={task.ID}><small>{task.Reason}</small></td>
                                                     <td onclick="navigateToTask(this)" style="cursor: pointer;" data-task-id={task.ID}>{task.CreatedAt.Format("2006-01-02 15:04")}</td>
                                                     <td>
-                                                        <button type="button" class="btn btn-sm btn-warning" onclick="retryTask('{task.ID}')" title="Retry Task">
+                                                        <button type="button" class="btn btn-sm btn-warning" data-task-id={task.ID} onclick="retryTask(this.getAttribute('data-task-id'))" title="Retry Task">
                                                             <i class="fas fa-redo me-1"></i>
                                                             Retry
                                                         </button>
