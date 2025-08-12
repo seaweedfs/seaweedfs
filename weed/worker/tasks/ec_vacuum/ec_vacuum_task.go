@@ -64,31 +64,22 @@ func (t *EcVacuumTask) GetTopologyTaskID() string {
 	return t.topologyTaskID
 }
 
-// determineGenerations queries the master to find the actual source and target generations
-func (t *EcVacuumTask) determineGenerations() error {
-	// Use sensible default master address (can be overridden via task parameters)
-	masterAddress := "localhost:9333"
-	t.masterAddress = pb.ServerAddress(masterAddress)
+// Execute performs the EC vacuum operation
+func (t *EcVacuumTask) Execute(ctx context.Context, params *worker_pb.TaskParams) error {
+	// Initialize generations from TaskSource (determined during detection phase)
+	if len(params.Sources) > 0 && params.Sources[0].Generation > 0 {
+		t.sourceGeneration = params.Sources[0].Generation
+		t.targetGeneration = t.sourceGeneration + 1
+	} else {
+		// Fallback to safe defaults for backward compatibility
+		t.sourceGeneration = 0
+		t.targetGeneration = 1
+	}
 
-	// Use generation info from TaskSource parameters (already determined during detection)
-	// Default to safe values for backward compatibility
-	t.sourceGeneration = 0
-	t.targetGeneration = 1
-
-	t.LogInfo("Using simplified generation detection (generation info available in TaskSource)", map[string]interface{}{
+	t.LogInfo("Generations determined from TaskSource", map[string]interface{}{
 		"source_generation": t.sourceGeneration,
 		"target_generation": t.targetGeneration,
 	})
-
-	return nil
-}
-
-// Execute performs the EC vacuum operation
-func (t *EcVacuumTask) Execute(ctx context.Context, params *worker_pb.TaskParams) error {
-	// Step 0: Determine the source and target generations (simplified - uses defaults)
-	if err := t.determineGenerations(); err != nil {
-		return fmt.Errorf("failed to determine generations: %w", err)
-	}
 
 	// Log task information
 	logFields := map[string]interface{}{
