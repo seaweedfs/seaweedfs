@@ -49,11 +49,76 @@ func RegisterEcVacuumTask() {
 			}
 
 			// Parse source nodes from task parameters
+			glog.Infof("Creating EC vacuum task for volume %d with %d sources", params.VolumeId, len(params.Sources))
+
+			// Log raw source data for debugging
+			for i, source := range params.Sources {
+				glog.Infof("Raw source %d: node=%s, shardIds=%v", i, source.Node, source.ShardIds)
+			}
+
 			sourceNodes := make(map[pb.ServerAddress]erasure_coding.ShardBits)
 
-			// For now, we'll collect source nodes during execution since the exact
-			// EC shard distribution is determined dynamically during detection
-			// The task will discover and collect all shards during execution
+			// Populate source nodes from the task parameters
+			for _, source := range params.Sources {
+				if source.Node == "" {
+					continue
+				}
+
+				serverAddr := pb.ServerAddress(source.Node)
+				var shardBits erasure_coding.ShardBits
+
+				// Convert shard IDs to ShardBits
+				for _, shardId := range source.ShardIds {
+					if shardId < erasure_coding.TotalShardsCount {
+						shardBits = shardBits.AddShardId(erasure_coding.ShardId(shardId))
+					}
+				}
+
+				if shardBits.ShardIdCount() > 0 {
+					sourceNodes[serverAddr] = shardBits
+				}
+			}
+
+			// Verify we have source nodes
+			if len(sourceNodes) == 0 {
+				return nil, fmt.Errorf("no valid source nodes found for EC vacuum task: sources=%d", len(params.Sources))
+			}
+
+			// Log detailed shard distribution for debugging
+			shardDistribution := make(map[string][]int)
+			for serverAddr, shardBits := range sourceNodes {
+				shardDistribution[string(serverAddr)] = make([]int, 0)
+				for shardId := 0; shardId < erasure_coding.TotalShardsCount; shardId++ {
+					if shardBits.HasShardId(erasure_coding.ShardId(shardId)) {
+						shardDistribution[string(serverAddr)] = append(shardDistribution[string(serverAddr)], shardId)
+					}
+				}
+			}
+
+			// Validate that we have all required data shards
+			allShards := make(map[int]bool)
+			for _, shardBits := range sourceNodes {
+				for i := 0; i < erasure_coding.TotalShardsCount; i++ {
+					if shardBits.HasShardId(erasure_coding.ShardId(i)) {
+						allShards[i] = true
+					}
+				}
+			}
+
+			missingShards := make([]int, 0)
+			for i := 0; i < erasure_coding.DataShardsCount; i++ {
+				if !allShards[i] {
+					missingShards = append(missingShards, i)
+				}
+			}
+
+			if len(missingShards) > 0 {
+				glog.Warningf("EC vacuum task for volume %d has missing data shards %v - this should not happen! Distribution: %+v",
+					params.VolumeId, missingShards, shardDistribution)
+			} else {
+				glog.Infof("EC vacuum task created for volume %d with complete data shards. Distribution: %+v",
+					params.VolumeId, shardDistribution)
+			}
 
 			return NewEcVacuumTask(
 				fmt.Sprintf("ec_vacuum-%d", params.VolumeId),

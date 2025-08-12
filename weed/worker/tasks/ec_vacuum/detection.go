@@ -88,20 +88,20 @@ func Detection(metrics []*wtypes.VolumeHealthMetrics, info *wtypes.ClusterInfo, 
 				VacuumParams: &worker_pb.VacuumTaskParams{
 					GarbageThreshold: deletionRatio,
 					ForceVacuum:      false,
-					BatchSize:        1000,        // Default batch size
-					WorkingDir:       "/data/ec_vacuum",  // Default base directory - worker may use BaseWorkingDir/ec_vacuum instead
-					VerifyChecksum:   true,        // Enable checksum verification for safety
+					BatchSize:        1000,              // Default batch size
+					WorkingDir:       "/data/ec_vacuum", // Default base directory - worker may use BaseWorkingDir/ec_vacuum instead
+					VerifyChecksum:   true,              // Enable checksum verification for safety
 				},
 			},
 		}
 
 		result := &wtypes.TaskDetectionResult{
-			TaskID:      taskID,
-			TaskType:    wtypes.TaskType("ec_vacuum"),
-			VolumeID:    volumeID,
-			Server:      ecInfo.PrimaryNode,
-			Collection:  ecInfo.Collection,
-			Priority:    wtypes.TaskPriorityLow, // EC vacuum is not urgent
+			TaskID:     taskID,
+			TaskType:   wtypes.TaskType("ec_vacuum"),
+			VolumeID:   volumeID,
+			Server:     ecInfo.PrimaryNode,
+			Collection: ecInfo.Collection,
+			Priority:   wtypes.TaskPriorityLow, // EC vacuum is not urgent
 			Reason: fmt.Sprintf("EC volume needs vacuum: deletion_ratio=%.1f%% (>%.1f%%), age=%.1fh (>%.1fh), size=%.1fMB (>%dMB)",
 				deletionRatio*100, ecVacuumConfig.DeletionThreshold*100,
 				ecInfo.Age.Hours(), (time.Duration(ecVacuumConfig.MinVolumeAgeSeconds) * time.Second).Hours(),
@@ -255,13 +255,18 @@ func populateShardInfo(ecVolumes map[uint32]*EcVolumeInfo, activeTopology *topol
 								ecVolumeInfo.ShardNodes[serverAddr] = erasure_coding.ShardBits(0)
 							}
 
-							// Add all shards on this disk for this volume
-							for i := 0; i < len(ecShardInfo.ShardSizes); i++ {
-								ecVolumeInfo.ShardNodes[serverAddr] = ecVolumeInfo.ShardNodes[serverAddr].AddShardId(erasure_coding.ShardId(i))
+							// Add shards based on actual EcIndexBits, not ShardSizes length
+							ecIndexBits := ecShardInfo.EcIndexBits
+							actualShards := make([]int, 0)
+							for i := 0; i < erasure_coding.TotalShardsCount; i++ {
+								if (ecIndexBits & (1 << uint(i))) != 0 {
+									ecVolumeInfo.ShardNodes[serverAddr] = ecVolumeInfo.ShardNodes[serverAddr].AddShardId(erasure_coding.ShardId(i))
+									actualShards = append(actualShards, i)
+								}
 							}
 
-							glog.V(3).Infof("EC volume %d: found %d shards on server %s",
-								volumeID, len(ecShardInfo.ShardSizes), node.Id)
+							glog.V(2).Infof("EC volume %d: found shards %v on server %s (EcIndexBits=0x%x)",
+								volumeID, actualShards, node.Id, ecIndexBits)
 						}
 					}
 				}
@@ -271,12 +276,19 @@ func populateShardInfo(ecVolumes map[uint32]*EcVolumeInfo, activeTopology *topol
 
 	// Log shard distribution summary
 	for volumeID, ecInfo := range ecVolumes {
-		totalShards := 0
-		for _, shardBits := range ecInfo.ShardNodes {
-			totalShards += shardBits.ShardIdCount()
+		shardDistribution := make(map[string][]int)
+		for serverAddr, shardBits := range ecInfo.ShardNodes {
+			shards := make([]int, 0)
+			for i := 0; i < erasure_coding.TotalShardsCount; i++ {
+				if shardBits.HasShardId(erasure_coding.ShardId(i)) {
+					shards = append(shards, i)
+				}
+			}
+			if len(shards) > 0 {
+				shardDistribution[string(serverAddr)] = shards
+			}
 		}
-		glog.V(2).Infof("EC volume %d: total shards=%d across %d servers",
-			volumeID, totalShards, len(ecInfo.ShardNodes))
+		glog.V(1).Infof("EC volume %d shard distribution: %+v", volumeID, shardDistribution)
 	}
 }
 
@@ -305,15 +317,26 @@ func shouldVacuumEcVolume(ecInfo *EcVolumeInfo, config *Config, now time.Time) b
 		return false
 	}
 
-	// Check if we have enough shards for vacuum operation
-	totalShards := 0
+	// Check if we have all required data shards (0-9) for vacuum operation
+	availableDataShards := make(map[int]bool)
 	for _, shardBits := range ecInfo.ShardNodes {
-		totalShards += shardBits.ShardIdCount()
+		for i := 0; i < erasure_coding.DataShardsCount; i++ {
+			if shardBits.HasShardId(erasure_coding.ShardId(i)) {
+				availableDataShards[i] = true
+			}
+		}
 	}
 
-	if totalShards < erasure_coding.DataShardsCount {
-		glog.V(3).Infof("EC volume %d insufficient shards for vacuum: have=%d, need=%d",
-			ecInfo.VolumeID, totalShards, erasure_coding.DataShardsCount)
+	missingDataShards := make([]int, 0)
+	for i := 0; i < erasure_coding.DataShardsCount; i++ {
+		if !availableDataShards[i] {
+			missingDataShards = append(missingDataShards, i)
+		}
+	}
+
+	if len(missingDataShards) > 0 {
+		glog.V(1).Infof("EC volume %d incomplete for vacuum: missing data shards %v (need shards 0-%d)",
+			ecInfo.VolumeID, missingDataShards, erasure_coding.DataShardsCount-1)
 		return false
 	}
 

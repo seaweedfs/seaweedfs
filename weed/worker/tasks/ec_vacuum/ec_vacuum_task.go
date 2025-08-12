@@ -136,10 +136,16 @@ func (t *EcVacuumTask) collectEcShardsToWorker() (pb.ServerAddress, error) {
 		}
 	}
 
+	// Validate we found a target node
+	if targetNode == "" || maxShardCount == 0 {
+		return "", fmt.Errorf("no valid target node found: sourceNodes=%d, maxShardCount=%d", len(t.sourceNodes), maxShardCount)
+	}
+
 	t.LogInfo("Selected target node for shard collection", map[string]interface{}{
-		"target_node":   targetNode,
-		"existing_bits": existingEcIndexBits,
-		"shard_count":   maxShardCount,
+		"target_node":     targetNode,
+		"existing_bits":   existingEcIndexBits,
+		"shard_count":     maxShardCount,
+		"existing_shards": existingEcIndexBits.ShardIds(),
 	})
 
 	// Copy missing shards to target node
@@ -195,6 +201,41 @@ func (t *EcVacuumTask) collectEcShardsToWorker() (pb.ServerAddress, error) {
 
 		existingEcIndexBits = existingEcIndexBits.Plus(needToCopyBits)
 	}
+
+	// Validate that we have all required data shards (0-9) for decoding
+	missingDataShards := make([]int, 0)
+	for shardId := 0; shardId < erasure_coding.DataShardsCount; shardId++ {
+		if !existingEcIndexBits.HasShardId(erasure_coding.ShardId(shardId)) {
+			missingDataShards = append(missingDataShards, shardId)
+		}
+	}
+
+	if len(missingDataShards) > 0 {
+		// Log all available shards across all source nodes for debugging
+		allAvailableShards := make(map[int][]string)
+		for node, shardBits := range t.sourceNodes {
+			for shardId := 0; shardId < erasure_coding.TotalShardsCount; shardId++ {
+				if shardBits.HasShardId(erasure_coding.ShardId(shardId)) {
+					allAvailableShards[shardId] = append(allAvailableShards[shardId], string(node))
+				}
+			}
+		}
+
+		t.LogInfo("ERROR: Missing required data shards for decoding", map[string]interface{}{
+			"volume_id":            t.volumeID,
+			"missing_shards":       missingDataShards,
+			"collected_shards":     existingEcIndexBits.ShardIds(),
+			"all_available_shards": allAvailableShards,
+		})
+
+		return "", fmt.Errorf("missing required data shards %v for EC volume %d decoding", missingDataShards, t.volumeID)
+	}
+
+	t.LogInfo("Successfully collected all required data shards", map[string]interface{}{
+		"volume_id":        t.volumeID,
+		"target_node":      targetNode,
+		"collected_shards": existingEcIndexBits.ShardIds(),
+	})
 
 	return targetNode, nil
 }
