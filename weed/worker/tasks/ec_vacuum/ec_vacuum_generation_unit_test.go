@@ -237,6 +237,10 @@ func TestEcVacuumActivateNewGeneration(t *testing.T) {
 
 	task := NewEcVacuumTask("activate-test", volumeId, collection, sourceNodes)
 
+	// Set generations manually for this test (normally done by Execute via task parameters)
+	task.sourceGeneration = 0
+	task.targetGeneration = 1
+
 	// Simulate the activation step
 	ctx := context.Background()
 

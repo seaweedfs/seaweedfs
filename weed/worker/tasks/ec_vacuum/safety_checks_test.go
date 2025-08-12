@@ -293,7 +293,7 @@ func TestSafetyCheckNoActiveOperations(t *testing.T) {
 		task := createSafetyTestTask()
 
 		// Verify grace period is reasonable
-		assert.Equal(t, 5*time.Minute, task.cleanupGracePeriod, "Grace period should be 5 minutes")
+		assert.Equal(t, 1*time.Minute, task.cleanupGracePeriod, "Grace period should be 1 minute")
 
 		// Test that grace period logic passes
 		// In a real scenario, this would check for active operations
