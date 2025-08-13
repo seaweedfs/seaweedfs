@@ -39,8 +39,8 @@ type EcVacuumTask struct {
 	sourceNodes        map[pb.ServerAddress]erasure_coding.ShardBits
 	tempDir            string
 	grpcDialOption     grpc.DialOption
-	adminAddress       string           // admin server address for API calls
 	masterAddress      pb.ServerAddress // master server address for activation RPC
+	adminAddress       string           // admin server address for API calls
 	cleanupGracePeriod time.Duration    // grace period before cleaning up old generation (1 minute default)
 	topologyTaskID     string           // links to ActiveTopology task for capacity tracking
 
@@ -146,7 +146,7 @@ func (t *EcVacuumTask) Execute(ctx context.Context, params *worker_pb.TaskParams
 		return fmt.Errorf("failed to collect EC shards: %w", err)
 	}
 
-	// Step 3: Decode EC shards into normal volume on worker (skips deleted entries automatically)
+	// Step 3: Decode EC shards into normal volume on worker (properly filters out deleted entries using merged .ecj)
 	if err := t.decodeEcShardsToVolume(); err != nil {
 		return fmt.Errorf("failed to decode EC shards to volume: %w", err)
 	}
@@ -356,7 +356,7 @@ func (t *EcVacuumTask) copyFileFromVolumeServer(client volume_server_pb.VolumeSe
 	return nil
 }
 
-// decodeEcShardsToVolume decodes EC shards into a normal volume on worker, automatically skipping deleted entries
+// decodeEcShardsToVolume decodes EC shards into a normal volume on worker, properly filtering deleted entries using merged .ecj file
 func (t *EcVacuumTask) decodeEcShardsToVolume() error {
 	t.LogInfo("Decoding EC shards to normal volume on worker", map[string]interface{}{
 		"volume_id": t.volumeID,
@@ -397,22 +397,18 @@ func (t *EcVacuumTask) decodeEcShardsToVolume() error {
 		return fmt.Errorf("failed to find dat file size: %w", err)
 	}
 
-	// Step 5: Write .dat file from EC data shards (this automatically skips deleted entries)
-	err = erasure_coding.WriteDatFile(baseFileName, datFileSize, shardFileNames)
+	// Step 5: Reconstruct and vacuum volume data (reuses existing functions + compaction logic)
+	err = erasure_coding.WriteDatFileAndVacuum(baseFileName, shardFileNames)
 	if err != nil {
-		return fmt.Errorf("failed to write dat file: %w", err)
+		return fmt.Errorf("failed to reconstruct and vacuum volume: %w", err)
 	}
 
-	// Step 6: Write .idx file from .ecx and merged .ecj files (skips deleted entries)
-	err = erasure_coding.WriteIdxFileFromEcIndex(baseFileName)
-	if err != nil {
-		return fmt.Errorf("failed to write idx file from ec index: %w", err)
-	}
-
-	t.LogInfo("Successfully decoded EC shards to normal volume", map[string]interface{}{
-		"dat_file": datFileName,
-		"idx_file": idxFileName,
-		"dat_size": datFileSize,
+	t.LogInfo("Successfully decoded EC shards to filtered normal volume", map[string]interface{}{
+		"dat_file":                 datFileName,
+		"idx_file":                 idxFileName,
+		"original_dat_size":        datFileSize,
+		"deleted_entries_filtered": true,
+		"note":                     "deleted needles physically removed from volume",
 	})
 
 	return nil
