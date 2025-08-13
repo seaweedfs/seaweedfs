@@ -425,6 +425,7 @@ func createECTaskParams(multiPlan *topology.MultiDestinationPlan) *worker_pb.Era
 	return &worker_pb.ErasureCodingTaskParams{
 		DataShards:   erasure_coding.DataShardsCount,   // Standard data shards
 		ParityShards: erasure_coding.ParityShardsCount, // Standard parity shards
+		Generation:   0,                                // Always use generation 0 for EC encoding
 	}
 }
 

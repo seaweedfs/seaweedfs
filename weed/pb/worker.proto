@@ -134,6 +134,7 @@ message ErasureCodingTaskParams {
   string working_dir = 4;                 // Working directory for EC processing
   string master_client = 5;               // Master server address
   bool cleanup_source = 6;                // Whether to cleanup source volume after EC
+  uint32 generation = 7;                  // Generation number for EC shards (0=default, >0=generational)
 }
 
 // TaskSource represents a unified source location for any task type
@@ -309,6 +310,7 @@ message ErasureCodingTaskConfig {
   int32 quiet_for_seconds = 2;      // Minimum quiet time before EC
   int32 min_volume_size_mb = 3;     // Minimum volume size for EC
   string collection_filter = 4;     // Only process volumes from specific collections
+  uint32 generation = 5;            // Generation number for EC shards (0=default, >0=generational)
 }
 
 // EcVacuumTaskConfig contains EC vacuum-specific configuration

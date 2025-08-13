@@ -1069,6 +1069,7 @@ type ErasureCodingTaskParams struct {
 	WorkingDir         string                 `protobuf:"bytes,4,opt,name=working_dir,json=workingDir,proto3" json:"working_dir,omitempty"`                            // Working directory for EC processing
 	MasterClient       string                 `protobuf:"bytes,5,opt,name=master_client,json=masterClient,proto3" json:"master_client,omitempty"`                      // Master server address
 	CleanupSource      bool                   `protobuf:"varint,6,opt,name=cleanup_source,json=cleanupSource,proto3" json:"cleanup_source,omitempty"`                  // Whether to cleanup source volume after EC
+	Generation         uint32                 `protobuf:"varint,7,opt,name=generation,proto3" json:"generation,omitempty"`                                             // Generation number for EC shards (0=default, >0=generational)
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -1143,6 +1144,13 @@ func (x *ErasureCodingTaskParams) GetCleanupSource() bool {
 		return x.CleanupSource
 	}
 	return false
+}
+
+func (x *ErasureCodingTaskParams) GetGeneration() uint32 {
+	if x != nil {
+		return x.Generation
+	}
+	return 0
 }
 
 // TaskSource represents a unified source location for any task type
@@ -2504,6 +2512,7 @@ type ErasureCodingTaskConfig struct {
 	QuietForSeconds  int32                  `protobuf:"varint,2,opt,name=quiet_for_seconds,json=quietForSeconds,proto3" json:"quiet_for_seconds,omitempty"`   // Minimum quiet time before EC
 	MinVolumeSizeMb  int32                  `protobuf:"varint,3,opt,name=min_volume_size_mb,json=minVolumeSizeMb,proto3" json:"min_volume_size_mb,omitempty"` // Minimum volume size for EC
 	CollectionFilter string                 `protobuf:"bytes,4,opt,name=collection_filter,json=collectionFilter,proto3" json:"collection_filter,omitempty"`   // Only process volumes from specific collections
+	Generation       uint32                 `protobuf:"varint,5,opt,name=generation,proto3" json:"generation,omitempty"`                                      // Generation number for EC shards (0=default, >0=generational)
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -2564,6 +2573,13 @@ func (x *ErasureCodingTaskConfig) GetCollectionFilter() string {
 		return x.CollectionFilter
 	}
 	return ""
+}
+
+func (x *ErasureCodingTaskConfig) GetGeneration() uint32 {
+	if x != nil {
+		return x.Generation
+	}
+	return 0
 }
 
 // EcVacuumTaskConfig contains EC vacuum-specific configuration
@@ -3388,7 +3404,7 @@ const file_worker_proto_rawDesc = "" +
 	"batch_size\x18\x03 \x01(\x05R\tbatchSize\x12\x1f\n" +
 	"\vworking_dir\x18\x04 \x01(\tR\n" +
 	"workingDir\x12'\n" +
-	"\x0fverify_checksum\x18\x05 \x01(\bR\x0everifyChecksum\"\xfe\x01\n" +
+	"\x0fverify_checksum\x18\x05 \x01(\bR\x0everifyChecksum\"\x9e\x02\n" +
 	"\x17ErasureCodingTaskParams\x120\n" +
 	"\x14estimated_shard_size\x18\x01 \x01(\x04R\x12estimatedShardSize\x12\x1f\n" +
 	"\vdata_shards\x18\x02 \x01(\x05R\n" +
@@ -3397,7 +3413,10 @@ const file_worker_proto_rawDesc = "" +
 	"\vworking_dir\x18\x04 \x01(\tR\n" +
 	"workingDir\x12#\n" +
 	"\rmaster_client\x18\x05 \x01(\tR\fmasterClient\x12%\n" +
-	"\x0ecleanup_source\x18\x06 \x01(\bR\rcleanupSource\"\xef\x01\n" +
+	"\x0ecleanup_source\x18\x06 \x01(\bR\rcleanupSource\x12\x1e\n" +
+	"\n" +
+	"generation\x18\a \x01(\rR\n" +
+	"generation\"\xef\x01\n" +
 	"\n" +
 	"TaskSource\x12\x12\n" +
 	"\x04node\x18\x01 \x01(\tR\x04node\x12\x17\n" +
@@ -3540,12 +3559,15 @@ const file_worker_proto_rawDesc = "" +
 	"\x16check_interval_seconds\x18\x04 \x01(\x05R\x14checkIntervalSeconds\x12X\n" +
 	"\x15erasure_coding_config\x18\x05 \x01(\v2\".worker_pb.ErasureCodingTaskConfigH\x00R\x13erasureCodingConfig\x12I\n" +
 	"\x10ec_vacuum_config\x18\x06 \x01(\v2\x1d.worker_pb.EcVacuumTaskConfigH\x00R\x0eecVacuumConfigB\r\n" +
-	"\vtask_config\"\xc6\x01\n" +
+	"\vtask_config\"\xe6\x01\n" +
 	"\x17ErasureCodingTaskConfig\x12%\n" +
 	"\x0efullness_ratio\x18\x01 \x01(\x01R\rfullnessRatio\x12*\n" +
 	"\x11quiet_for_seconds\x18\x02 \x01(\x05R\x0fquietForSeconds\x12+\n" +
 	"\x12min_volume_size_mb\x18\x03 \x01(\x05R\x0fminVolumeSizeMb\x12+\n" +
-	"\x11collection_filter\x18\x04 \x01(\tR\x10collectionFilter\"\xc5\x01\n" +
+	"\x11collection_filter\x18\x04 \x01(\tR\x10collectionFilter\x12\x1e\n" +
+	"\n" +
+	"generation\x18\x05 \x01(\rR\n" +
+	"generation\"\xc5\x01\n" +
 	"\x12EcVacuumTaskConfig\x12-\n" +
 	"\x12deletion_threshold\x18\x01 \x01(\x01R\x11deletionThreshold\x123\n" +
 	"\x16min_volume_age_seconds\x18\x02 \x01(\x05R\x13minVolumeAgeSeconds\x12+\n" +

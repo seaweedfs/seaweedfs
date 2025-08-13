@@ -511,6 +511,7 @@ func (t *ErasureCodingTask) sendShardFileToDestination(destServer, filePath, sha
 						IsEcVolume: true,
 						ShardId:    shardId,
 						FileSize:   uint64(fileInfo.Size()),
+						Generation: 0, // EC encoding always uses generation 0
 					},
 				},
 			})
@@ -590,6 +591,7 @@ func (t *ErasureCodingTask) mountEcShards() error {
 					VolumeId:   t.volumeID,
 					Collection: t.collection,
 					ShardIds:   shardIds,
+					Generation: 0, // EC encoding always uses generation 0
 				})
 				return mountErr
 			})
