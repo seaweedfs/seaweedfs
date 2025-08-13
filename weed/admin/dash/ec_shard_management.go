@@ -956,7 +956,7 @@ func (s *AdminServer) getVolumeHealthFromServer(server string, volumeID uint32) 
 		} else if deletionResp != nil {
 			// Create health info with deletion data
 			healthInfo = &EcVolumeHealthInfo{
-				TotalSize:        totalSize, // May be 0 for EC-only volumes
+				TotalSize:        deletionResp.TotalSize, // Get total size from EC deletion info
 				DeletedByteCount: deletionResp.DeletedBytes,
 				FileCount:        fileCount,
 				DeleteCount:      deletionResp.DeletedCount,

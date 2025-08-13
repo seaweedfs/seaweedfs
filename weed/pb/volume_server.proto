@@ -490,6 +490,7 @@ message VolumeEcDeletionInfoResponse {
     uint64 deleted_bytes = 1;
     uint64 deleted_count = 2;
     repeated uint64 deleted_needle_ids = 3; // list of deleted needle IDs for debugging
+    uint64 total_size = 4; // total size of the EC volume in bytes
 }
 
 message ReadVolumeFileStatusRequest {

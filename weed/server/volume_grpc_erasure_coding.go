@@ -561,9 +561,10 @@ func (vs *VolumeServer) VolumeEcDeletionInfo(ctx context.Context, req *volume_se
 	resp.DeletedBytes = deletedBytes
 	resp.DeletedCount = deletedCount
 	resp.DeletedNeedleIds = deletedNeedleIds
+	resp.TotalSize = totalVolumeSize
 
-	glog.V(1).Infof("EC volume %d deletion info: %d deleted needles, %d deleted bytes",
-		req.VolumeId, deletedCount, deletedBytes)
+	glog.V(1).Infof("EC volume %d deletion info: %d deleted needles, %d deleted bytes, %d total bytes",
+		req.VolumeId, deletedCount, deletedBytes, totalVolumeSize)
 
 	return resp, nil
 }

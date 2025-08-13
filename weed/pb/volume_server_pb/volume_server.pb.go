@@ -4125,6 +4125,7 @@ type VolumeEcDeletionInfoResponse struct {
 	DeletedBytes     uint64                 `protobuf:"varint,1,opt,name=deleted_bytes,json=deletedBytes,proto3" json:"deleted_bytes,omitempty"`
 	DeletedCount     uint64                 `protobuf:"varint,2,opt,name=deleted_count,json=deletedCount,proto3" json:"deleted_count,omitempty"`
 	DeletedNeedleIds []uint64               `protobuf:"varint,3,rep,packed,name=deleted_needle_ids,json=deletedNeedleIds,proto3" json:"deleted_needle_ids,omitempty"` // list of deleted needle IDs for debugging
+	TotalSize        uint64                 `protobuf:"varint,4,opt,name=total_size,json=totalSize,proto3" json:"total_size,omitempty"`                               // total size of the EC volume in bytes
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -4178,6 +4179,13 @@ func (x *VolumeEcDeletionInfoResponse) GetDeletedNeedleIds() []uint64 {
 		return x.DeletedNeedleIds
 	}
 	return nil
+}
+
+func (x *VolumeEcDeletionInfoResponse) GetTotalSize() uint64 {
+	if x != nil {
+		return x.TotalSize
+	}
+	return 0
 }
 
 type ReadVolumeFileStatusRequest struct {
@@ -6602,11 +6610,13 @@ const file_volume_server_proto_rawDesc = "" +
 	"collection\x12\x1e\n" +
 	"\n" +
 	"generation\x18\x03 \x01(\rR\n" +
-	"generation\"\x96\x01\n" +
+	"generation\"\xb5\x01\n" +
 	"\x1cVolumeEcDeletionInfoResponse\x12#\n" +
 	"\rdeleted_bytes\x18\x01 \x01(\x04R\fdeletedBytes\x12#\n" +
 	"\rdeleted_count\x18\x02 \x01(\x04R\fdeletedCount\x12,\n" +
-	"\x12deleted_needle_ids\x18\x03 \x03(\x04R\x10deletedNeedleIds\":\n" +
+	"\x12deleted_needle_ids\x18\x03 \x03(\x04R\x10deletedNeedleIds\x12\x1d\n" +
+	"\n" +
+	"total_size\x18\x04 \x01(\x04R\ttotalSize\":\n" +
 	"\x1bReadVolumeFileStatusRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\"\xe3\x03\n" +
 	"\x1cReadVolumeFileStatusResponse\x12\x1b\n" +
