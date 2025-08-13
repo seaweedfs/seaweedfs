@@ -94,7 +94,7 @@ func GrpcDial(ctx context.Context, address string, waitForReady bool, opts ...gr
 			options = append(options, opt)
 		}
 	}
-	return grpc.DialContext(ctx, address, options...)
+	return grpc.NewClient(address, options...)
 }
 
 func getOrCreateConnection(address string, waitForReady bool, opts ...grpc.DialOption) (*versionedGrpcClient, error) {

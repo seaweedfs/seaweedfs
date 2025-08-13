@@ -8,6 +8,9 @@ option go_package = "github.com/seaweedfs/seaweedfs/weed/pb/worker_pb";
 service WorkerService {
   // WorkerStream maintains a bidirectional stream for worker communication
   rpc WorkerStream(stream WorkerMessage) returns (stream AdminMessage);
+  
+  // GetMasterAddresses returns master server addresses for worker tasks
+  rpc GetMasterAddresses(GetMasterAddressesRequest) returns (GetMasterAddressesResponse);
 }
 
 // WorkerMessage represents messages from worker to admin
@@ -385,4 +388,15 @@ message TaskStateFile {
   MaintenanceTaskData task = 1;
   int64 last_updated = 2;
   string admin_version = 3;
+}
+
+// GetMasterAddressesRequest sent by worker to get master server addresses
+message GetMasterAddressesRequest {
+  string worker_id = 1; // Worker identification
+}
+
+// GetMasterAddressesResponse returns master addresses to worker
+message GetMasterAddressesResponse {
+  repeated string master_addresses = 1; // List of available master addresses
+  string primary_master = 2; // Primary master address (if applicable)
 } 

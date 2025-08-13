@@ -25,6 +25,12 @@ import (
 	"google.golang.org/grpc"
 )
 
+// Compile-time interface compliance checks
+var (
+	_ types.TaskWithGrpcDial     = (*EcVacuumTask)(nil)
+	_ types.TaskWithAdminAddress = (*EcVacuumTask)(nil)
+)
+
 // EcVacuumTask represents an EC vacuum task that collects, decodes, and re-encodes EC volumes
 type EcVacuumTask struct {
 	*base.BaseTask
@@ -33,6 +39,7 @@ type EcVacuumTask struct {
 	sourceNodes        map[pb.ServerAddress]erasure_coding.ShardBits
 	tempDir            string
 	grpcDialOption     grpc.DialOption
+	adminAddress       string           // admin server address for API calls
 	masterAddress      pb.ServerAddress // master server address for activation RPC
 	cleanupGracePeriod time.Duration    // grace period before cleaning up old generation (1 minute default)
 	topologyTaskID     string           // links to ActiveTopology task for capacity tracking
@@ -1172,6 +1179,11 @@ func (t *EcVacuumTask) SetGrpcDialOption(option grpc.DialOption) {
 	t.grpcDialOption = option
 }
 
+// SetAdminAddress sets the admin server address for API calls
+func (t *EcVacuumTask) SetAdminAddress(address string) {
+	t.adminAddress = address
+}
+
 // SetMasterAddress sets the master server address for generation activation
 func (t *EcVacuumTask) SetMasterAddress(address pb.ServerAddress) {
 	t.masterAddress = address
@@ -1180,4 +1192,57 @@ func (t *EcVacuumTask) SetMasterAddress(address pb.ServerAddress) {
 // SetCleanupGracePeriod sets the grace period before cleaning up old generation
 func (t *EcVacuumTask) SetCleanupGracePeriod(period time.Duration) {
 	t.cleanupGracePeriod = period
+}
+
+// fetchMasterAddressFromAdmin gets master addresses from admin server
+func (t *EcVacuumTask) fetchMasterAddressFromAdmin() error {
+	// Use admin address provided by worker
+	if t.adminAddress == "" {
+		return fmt.Errorf("admin server address not provided by worker - cannot fetch master addresses")
+	}
+
+	// Convert admin HTTP address to gRPC address (HTTP port + 10000)
+	grpcAddress := pb.ServerToGrpcAddress(t.adminAddress)
+
+	t.LogInfo("Fetching master address from admin server", map[string]interface{}{
+		"admin_address": grpcAddress,
+	})
+
+	// Create gRPC connection to admin server
+	conn, err := grpc.NewClient(grpcAddress, t.grpcDialOption)
+	if err != nil {
+		return fmt.Errorf("failed to connect to admin server at %s: %w", grpcAddress, err)
+	}
+	defer conn.Close()
+
+	// Create worker service client
+	client := worker_pb.NewWorkerServiceClient(conn)
+
+	// Call GetMasterAddresses API
+	resp, err := client.GetMasterAddresses(context.Background(), &worker_pb.GetMasterAddressesRequest{
+		WorkerId: t.ID(), // Use task ID as worker ID for logging
+	})
+	if err != nil {
+		return fmt.Errorf("failed to get master addresses from admin: %w", err)
+	}
+
+	if len(resp.MasterAddresses) == 0 {
+		return fmt.Errorf("no master addresses returned from admin server")
+	}
+
+	// Use primary master if available, otherwise first address
+	masterAddress := resp.PrimaryMaster
+	if masterAddress == "" && len(resp.MasterAddresses) > 0 {
+		masterAddress = resp.MasterAddresses[0]
+	}
+
+	t.masterAddress = pb.ServerAddress(masterAddress)
+
+	t.LogInfo("Successfully obtained master address from admin server", map[string]interface{}{
+		"master_address":    masterAddress,
+		"available_masters": resp.MasterAddresses,
+		"primary_master":    resp.PrimaryMaster,
+	})
+
+	return nil
 }

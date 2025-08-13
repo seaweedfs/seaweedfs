@@ -14,7 +14,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
-	"google.golang.org/grpc"
 
 	// Import task packages to trigger their auto-registration
 	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/ec_vacuum"
@@ -448,9 +447,15 @@ func (w *Worker) executeTask(task *types.TaskInput) {
 	}
 
 	// Pass worker's gRPC dial option to task if it supports it
-	if grpcTask, ok := taskInstance.(interface{ SetGrpcDialOption(grpc.DialOption) }); ok {
+	if grpcTask, ok := taskInstance.(types.TaskWithGrpcDial); ok {
 		grpcTask.SetGrpcDialOption(w.config.GrpcDialOption)
 		glog.V(2).Infof("Set gRPC dial option for task %s", task.ID)
+	}
+
+	// Pass worker's admin server address to task if it supports it
+	if adminTask, ok := taskInstance.(types.TaskWithAdminAddress); ok {
+		adminTask.SetAdminAddress(w.config.AdminServer)
+		glog.V(2).Infof("Set admin server address for task %s", task.ID)
 	}
 
 	// Task execution uses the new unified Task interface
