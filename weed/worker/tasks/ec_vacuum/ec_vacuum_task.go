@@ -135,6 +135,25 @@ func (t *EcVacuumTask) Execute(ctx context.Context, params *worker_pb.TaskParams
 
 	t.LogInfo("Starting EC vacuum task with runtime generation detection", logFields)
 
+	// Step 0.5: Get master address early for generation activation
+	if t.masterAddress == "" {
+		if err := t.fetchMasterAddressFromAdmin(); err != nil {
+			t.LogWarning("Failed to get master address - generation activation will be manual", map[string]interface{}{
+				"error":             err.Error(),
+				"volume_id":         t.volumeID,
+				"target_generation": t.targetGeneration,
+				"note":              "Task will continue but activation must be done manually",
+			})
+			// Continue execution - this is not fatal, just means manual activation required
+		} else {
+			t.LogInfo("Master address obtained for automatic generation activation", map[string]interface{}{
+				"master_address":    t.masterAddress,
+				"volume_id":         t.volumeID,
+				"target_generation": t.targetGeneration,
+			})
+		}
+	}
+
 	// Step 1: Create temporary working directory
 	if err := t.createTempDir(); err != nil {
 		return fmt.Errorf("failed to create temp directory: %w", err)

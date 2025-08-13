@@ -11,11 +11,9 @@ import (
 
 // performSafetyChecks performs comprehensive safety verification before cleanup
 func (t *EcVacuumTask) performSafetyChecks() error {
-	// Get master address from admin server if not already set
+	// Master address should have been fetched early in execution
 	if t.masterAddress == "" {
-		if err := t.fetchMasterAddressFromAdmin(); err != nil {
-			return fmt.Errorf("CRITICAL: cannot perform safety checks - failed to get master address: %w", err)
-		}
+		return fmt.Errorf("CRITICAL: cannot perform safety checks - master address not available (should have been fetched during task initialization)")
 	}
 
 	// Safety Check 1: Verify master connectivity and volume existence
