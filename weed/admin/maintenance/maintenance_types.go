@@ -249,13 +249,14 @@ type MaintenanceWorker struct {
 
 // MaintenanceQueue manages the task queue and worker coordination
 type MaintenanceQueue struct {
-	tasks        map[string]*MaintenanceTask
-	workers      map[string]*MaintenanceWorker
-	pendingTasks []*MaintenanceTask
-	mutex        sync.RWMutex
-	policy       *MaintenancePolicy
-	integration  *MaintenanceIntegration
-	persistence  TaskPersistence // Interface for task persistence
+	tasks           map[string]*MaintenanceTask
+	workers         map[string]*MaintenanceWorker
+	pendingTasks    []*MaintenanceTask
+	mutex           sync.RWMutex
+	policy          *MaintenancePolicy
+	integration     *MaintenanceIntegration
+	persistence     TaskPersistence       // Interface for task persistence
+	persistenceChan chan *MaintenanceTask // Channel for async persistence
 }
 
 // MaintenanceScanner analyzes the cluster and generates maintenance tasks

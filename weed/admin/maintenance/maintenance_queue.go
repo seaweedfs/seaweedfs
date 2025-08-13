@@ -12,11 +12,16 @@ import (
 // NewMaintenanceQueue creates a new maintenance queue
 func NewMaintenanceQueue(policy *MaintenancePolicy) *MaintenanceQueue {
 	queue := &MaintenanceQueue{
-		tasks:        make(map[string]*MaintenanceTask),
-		workers:      make(map[string]*MaintenanceWorker),
-		pendingTasks: make([]*MaintenanceTask, 0),
-		policy:       policy,
+		tasks:           make(map[string]*MaintenanceTask),
+		workers:         make(map[string]*MaintenanceWorker),
+		pendingTasks:    make([]*MaintenanceTask, 0),
+		policy:          policy,
+		persistenceChan: make(chan *MaintenanceTask, 1000), // Buffer for async persistence
 	}
+
+	// Start persistence worker goroutine
+	go queue.persistenceWorker()
+
 	return queue
 }
 
@@ -39,15 +44,17 @@ func (mq *MaintenanceQueue) LoadTasksFromPersistence() error {
 		return nil
 	}
 
-	mq.mutex.Lock()
-	defer mq.mutex.Unlock()
-
 	glog.Infof("Loading tasks from persistence...")
 
+	// Load tasks without holding lock to prevent deadlock
 	tasks, err := mq.persistence.LoadAllTaskStates()
 	if err != nil {
 		return fmt.Errorf("failed to load task states: %w", err)
 	}
+
+	// Only acquire lock for the in-memory operations
+	mq.mutex.Lock()
+	defer mq.mutex.Unlock()
 
 	glog.Infof("DEBUG LoadTasksFromPersistence: Found %d tasks in persistence", len(tasks))
 
@@ -104,11 +111,36 @@ func (mq *MaintenanceQueue) LoadTasksFromPersistence() error {
 	return nil
 }
 
-// saveTaskState saves a task to persistent storage
+// persistenceWorker handles async persistence operations
+func (mq *MaintenanceQueue) persistenceWorker() {
+	for task := range mq.persistenceChan {
+		if mq.persistence != nil {
+			if err := mq.persistence.SaveTaskState(task); err != nil {
+				glog.Errorf("Failed to save task state for %s: %v", task.ID, err)
+			}
+		}
+	}
+	glog.V(1).Infof("Persistence worker shut down")
+}
+
+// Close gracefully shuts down the maintenance queue
+func (mq *MaintenanceQueue) Close() {
+	if mq.persistenceChan != nil {
+		close(mq.persistenceChan)
+		glog.V(1).Infof("Maintenance queue persistence channel closed")
+	}
+}
+
+// saveTaskState saves a task to persistent storage asynchronously
 func (mq *MaintenanceQueue) saveTaskState(task *MaintenanceTask) {
-	if mq.persistence != nil {
-		if err := mq.persistence.SaveTaskState(task); err != nil {
-			glog.Errorf("Failed to save task state for %s: %v", task.ID, err)
+	if mq.persistence != nil && mq.persistenceChan != nil {
+		// Create a copy to avoid race conditions
+		taskCopy := *task
+		select {
+		case mq.persistenceChan <- &taskCopy:
+			// Successfully queued for async persistence
+		default:
+			glog.Warningf("Persistence channel full, task state may be lost: %s", task.ID)
 		}
 	}
 }
@@ -684,7 +716,7 @@ func (mq *MaintenanceQueue) RetryTask(taskID string) error {
 
 	// Add back to pending queue
 	mq.pendingTasks = append(mq.pendingTasks, task)
-	
+
 	// Save task state
 	mq.saveTaskState(task)
 
