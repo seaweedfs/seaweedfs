@@ -258,9 +258,15 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 // the shard should not be mounted before calling this.
 func (vs *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_server_pb.VolumeEcShardsDeleteRequest) (*volume_server_pb.VolumeEcShardsDeleteResponse, error) {
 
-	bName := erasure_coding.EcShardBaseFileName(req.Collection, int(req.VolumeId))
+	// Use generation-aware base filename if generation is specified
+	var bName string
+	if req.Generation > 0 {
+		bName = erasure_coding.EcShardBaseFileNameWithGeneration(req.Collection, int(req.VolumeId), req.Generation)
+	} else {
+		bName = erasure_coding.EcShardBaseFileName(req.Collection, int(req.VolumeId))
+	}
 
-	glog.V(0).Infof("ec volume %s shard delete %v", bName, req.ShardIds)
+	glog.V(0).Infof("ec volume %s shard delete %v generation %d", bName, req.ShardIds, req.Generation)
 
 	for _, location := range vs.store.Locations {
 		if err := deleteEcShardIdsForEachLocation(bName, location, req.ShardIds); err != nil {

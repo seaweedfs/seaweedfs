@@ -1110,28 +1110,17 @@ func (t *EcVacuumTask) deleteGenerationFilesFromNode(client volume_server_pb.Vol
 		VolumeId:   t.volumeID,
 		Collection: t.collection,
 		ShardIds:   allShardIds,
+		Generation: generation, // Pass generation for proper file cleanup
 	})
 
 	if err != nil {
 		// Log warning but don't fail - the unmount should have made files safe for cleanup
-		t.LogWarning("VolumeEcShardsDelete returned error - this is expected for generation > 0", map[string]interface{}{
+		t.LogWarning("VolumeEcShardsDelete returned error", map[string]interface{}{
 			"volume_id":  t.volumeID,
 			"generation": generation,
 			"error":      err.Error(),
-			"note":       "Generation > 0 files need manual cleanup or volume server extension",
+			"note":       "File deletion failed but files were unmounted",
 		})
-
-		// For generation > 0, the files are unmounted but not deleted
-		// This is a known limitation - the volume server would need to be extended
-		// to support generation-aware file deletion in VolumeEcShardsDelete
-		if generation > 0 {
-			t.LogInfo("Generation > 0 file cleanup limitation", map[string]interface{}{
-				"volume_id":  t.volumeID,
-				"generation": generation,
-				"status":     "unmounted_but_not_deleted",
-				"note":       "Files are unmounted from memory but remain on disk until manual cleanup",
-			})
-		}
 
 		// Don't return error - unmounting is the primary safety requirement
 		return nil

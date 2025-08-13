@@ -3285,6 +3285,7 @@ type VolumeEcShardsDeleteRequest struct {
 	VolumeId      uint32                 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
 	Collection    string                 `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"`
 	ShardIds      []uint32               `protobuf:"varint,3,rep,packed,name=shard_ids,json=shardIds,proto3" json:"shard_ids,omitempty"`
+	Generation    uint32                 `protobuf:"varint,4,opt,name=generation,proto3" json:"generation,omitempty"` // Generation support for EC vacuum cleanup
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3338,6 +3339,13 @@ func (x *VolumeEcShardsDeleteRequest) GetShardIds() []uint32 {
 		return x.ShardIds
 	}
 	return nil
+}
+
+func (x *VolumeEcShardsDeleteRequest) GetGeneration() uint32 {
+	if x != nil {
+		return x.Generation
+	}
+	return 0
 }
 
 type VolumeEcShardsDeleteResponse struct {
@@ -6538,13 +6546,16 @@ const file_volume_server_proto_rawDesc = "" +
 	"\n" +
 	"generation\x18\t \x01(\rR\n" +
 	"generation\"\x1c\n" +
-	"\x1aVolumeEcShardsCopyResponse\"w\n" +
+	"\x1aVolumeEcShardsCopyResponse\"\x97\x01\n" +
 	"\x1bVolumeEcShardsDeleteRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x1e\n" +
 	"\n" +
 	"collection\x18\x02 \x01(\tR\n" +
 	"collection\x12\x1b\n" +
-	"\tshard_ids\x18\x03 \x03(\rR\bshardIds\"\x1e\n" +
+	"\tshard_ids\x18\x03 \x03(\rR\bshardIds\x12\x1e\n" +
+	"\n" +
+	"generation\x18\x04 \x01(\rR\n" +
+	"generation\"\x1e\n" +
 	"\x1cVolumeEcShardsDeleteResponse\"\x96\x01\n" +
 	"\x1aVolumeEcShardsMountRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x1e\n" +
