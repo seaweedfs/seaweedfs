@@ -215,6 +215,7 @@ func min(x, y int64) int64 {
 
 // WriteDatFileAndVacuum reconstructs volume from EC shards and then vacuums deleted needles
 // This reuses existing WriteDatFile and volume compaction logic to achieve the same result more cleanly
+// Creates cleaned volume files (without generation) that are ready for generational EC encoding
 func WriteDatFileAndVacuum(baseFileName string, shardFileNames []string) error {
 	// Step 1: Use existing WriteDatFile to reconstruct the full volume
 	datFileSize, err := FindDatFileSize(baseFileName, baseFileName)
@@ -243,9 +244,11 @@ func WriteDatFileAndVacuum(baseFileName string, shardFileNames []string) error {
 		return fmt.Errorf("failed to read volume version: %w", err)
 	}
 
+	// Create cleaned volume files (without generation suffix)
+	// These will later be copied to generation-aware names by encodeVolumeToEcShards()
 	return copyDataBasedOnIndexFileForEcVacuum(
 		tempDatFile, tempIdxFile, // source files (with deleted entries)
-		baseFileName+".dat", baseFileName+".idx", // destination files (cleaned)
+		baseFileName+".dat", baseFileName+".idx", // destination files (cleaned, ready for generational encoding)
 		version,
 	)
 }

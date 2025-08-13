@@ -403,12 +403,13 @@ func (t *EcVacuumTask) decodeEcShardsToVolume() error {
 		return fmt.Errorf("failed to reconstruct and vacuum volume: %w", err)
 	}
 
-	t.LogInfo("Successfully decoded EC shards to filtered normal volume", map[string]interface{}{
+	t.LogInfo("Successfully decoded EC shards to cleaned volume", map[string]interface{}{
 		"dat_file":                 datFileName,
 		"idx_file":                 idxFileName,
 		"original_dat_size":        datFileSize,
 		"deleted_entries_filtered": true,
-		"note":                     "deleted needles physically removed from volume",
+		"note":                     "cleaned volume ready for generational EC encoding",
+		"next_step":                "will create generation-aware EC shards",
 	})
 
 	return nil
