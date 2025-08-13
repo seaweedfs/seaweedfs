@@ -230,9 +230,9 @@ func WriteDatFileAndVacuum(baseFileName string, shardFileNames []string) error {
 	}
 	defer os.Remove(tempDatFile) // cleanup temp file
 
-	// Step 2: Create index file with deleted entries marked (existing function)
+	// Step 2: Create index file with deleted entries marked (use actual .ecx/.ecj files directly)
 	tempIdxFile := baseFileName + ".tmp.idx"
-	err = WriteIdxFileFromEcIndex(baseFileName + ".tmp")
+	err = WriteIdxFileFromEcIndex(baseFileName) // Use actual .ecx/.ecj files directly
 	if err != nil {
 		return fmt.Errorf("failed to create index file: %w", err)
 	}
