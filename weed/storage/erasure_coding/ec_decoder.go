@@ -16,22 +16,26 @@ import (
 
 // write .idx file from .ecx and .ecj files
 func WriteIdxFileFromEcIndex(baseFileName string) (err error) {
+	return WriteIdxFileFromEcIndexToTarget(baseFileName, baseFileName)
+}
 
-	ecxFile, openErr := os.OpenFile(baseFileName+".ecx", os.O_RDONLY, 0644)
+// WriteIdxFileFromEcIndexToTarget writes .idx file from .ecx and .ecj files with separate source and target
+func WriteIdxFileFromEcIndexToTarget(sourceBaseName, targetBaseName string) (err error) {
+	ecxFile, openErr := os.OpenFile(sourceBaseName+".ecx", os.O_RDONLY, 0644)
 	if openErr != nil {
-		return fmt.Errorf("cannot open ec index %s.ecx: %v", baseFileName, openErr)
+		return fmt.Errorf("cannot open ec index %s.ecx: %v", sourceBaseName, openErr)
 	}
 	defer ecxFile.Close()
 
-	idxFile, openErr := os.OpenFile(baseFileName+".idx", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	idxFile, openErr := os.OpenFile(targetBaseName+".idx", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if openErr != nil {
-		return fmt.Errorf("cannot open %s.idx: %v", baseFileName, openErr)
+		return fmt.Errorf("cannot open %s.idx: %v", targetBaseName, openErr)
 	}
 	defer idxFile.Close()
 
 	io.Copy(idxFile, ecxFile)
 
-	err = iterateEcjFile(baseFileName, func(key types.NeedleId) error {
+	err = iterateEcjFile(sourceBaseName, func(key types.NeedleId) error {
 
 		bytes := needle_map.ToBytes(key, types.Offset{}, types.TombstoneFileSize)
 		idxFile.Write(bytes)
@@ -224,7 +228,8 @@ func WriteDatFileAndVacuum(baseFileName string, shardFileNames []string) error {
 	}
 
 	tempDatFile := baseFileName + ".tmp.dat"
-	err = WriteDatFile(tempDatFile, datFileSize, shardFileNames)
+	tempBaseName := baseFileName + ".tmp" // WriteDatFile expects base name without .dat extension
+	err = WriteDatFile(tempBaseName, datFileSize, shardFileNames)
 	if err != nil {
 		return fmt.Errorf("failed to reconstruct volume with WriteDatFile: %w", err)
 	}
@@ -232,7 +237,7 @@ func WriteDatFileAndVacuum(baseFileName string, shardFileNames []string) error {
 
 	// Step 2: Create index file with deleted entries marked (use actual .ecx/.ecj files directly)
 	tempIdxFile := baseFileName + ".tmp.idx"
-	err = WriteIdxFileFromEcIndex(baseFileName) // Use actual .ecx/.ecj files directly
+	err = WriteIdxFileFromEcIndexToTarget(baseFileName, tempBaseName) // Read from actual files, create temp idx
 	if err != nil {
 		return fmt.Errorf("failed to create index file: %w", err)
 	}
