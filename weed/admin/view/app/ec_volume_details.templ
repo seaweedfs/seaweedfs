@@ -158,7 +158,12 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                                 <div class="col-6">
                                     <div class="text-center">
                                         <div class="h4 mb-0 font-weight-bold text-success">
-                                            {bytesToHumanReadableUint64(data.TotalSize - data.DeletedByteCount)}
+                                            {bytesToHumanReadableUint64(func() uint64 {
+                                                if data.DeletedByteCount > data.TotalSize {
+                                                    return 0
+                                                }
+                                                return data.TotalSize - data.DeletedByteCount
+                                            }())}
                                         </div>
                                         <small class="text-muted">Active Bytes</small>
                                     </div>
@@ -198,7 +203,12 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                                 <div class="col-6">
                                     <div class="text-center">
                                         <div class="h5 mb-0 text-primary">
-                                            {fmt.Sprintf("%d", data.FileCount - data.DeleteCount)}
+                                            {fmt.Sprintf("%d", func() uint64 {
+                                                if data.DeleteCount > data.FileCount {
+                                                    return 0
+                                                }
+                                                return data.FileCount - data.DeleteCount
+                                            }())}
                                         </div>
                                         <small class="text-muted">Active Files</small>
                                     </div>
