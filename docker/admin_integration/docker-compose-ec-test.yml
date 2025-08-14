@@ -98,16 +98,42 @@ services:
     networks:
       - seaweed_net
 
-  filer:
+  filer1:
     image: chrislusf/seaweedfs:local
     ports:
       - "8888:8888"
       - "18888:18888"
-    command: "filer -master=master:9333 -ip=filer"
+    command: "filer -master=master:9333 -ip=filer1"
     depends_on:
       - master
     volumes:
-      - ./data/filer:/data
+      - ./data/filer1:/data
+    networks:
+      - seaweed_net
+
+  filer2:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - "8889:8888"
+      - "18889:18888"
+    command: "filer -master=master:9333 -ip=filer2"
+    depends_on:
+      - master
+    volumes:
+      - ./data/filer2:/data
+    networks:
+      - seaweed_net
+
+  filer3:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - "8890:8888"
+      - "18890:18888"
+    command: "filer -master=master:9333 -ip=filer3"
+    depends_on:
+      - master
+    volumes:
+      - ./data/filer3:/data
     networks:
       - seaweed_net
 
@@ -119,7 +145,7 @@ services:
     command: "-v=2 admin -port=23646 -masters=master:9333 -dataDir=/data"
     depends_on:
       - master
-      - filer
+      - filer1
     volumes:
       - ./data/admin:/data
     networks:
@@ -180,7 +206,7 @@ services:
       "
     depends_on:
       - master
-      - filer
+      - filer1
       - admin
     networks:
       - seaweed_net
@@ -210,7 +236,7 @@ services:
     depends_on:
       - master
       - admin
-      - filer
+      - filer1
     networks:
       - seaweed_net
 
@@ -229,7 +255,7 @@ services:
     depends_on:
       - master
       - admin
-      - filer
+      - filer1
     volumes:
       - .:/testing
     working_dir: /testing
