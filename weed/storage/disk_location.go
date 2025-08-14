@@ -115,6 +115,11 @@ func volumeIdFromFileName(filename string) (needle.VolumeId, string, error) {
 }
 
 func parseCollectionVolumeId(base string) (collection string, vid needle.VolumeId, err error) {
+	// Remove generation suffix first (e.g., "1_g1" -> "1")
+	if gIndex := strings.LastIndex(base, "_g"); gIndex >= 0 {
+		base = base[:gIndex]
+	}
+
 	i := strings.LastIndex(base, "_")
 	if i > 0 {
 		collection, base = base[0:i], base[i+1:]
