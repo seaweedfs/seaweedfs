@@ -769,7 +769,7 @@ func (s *AdminServer) GetEcVolumeDetails(volumeID uint32, sortBy string, sortOrd
 	// Get EC volume health metrics (deletion information)
 	volumeHealth, err := s.getEcVolumeHealthMetrics(volumeID)
 	if err != nil {
-		glog.V(1).Infof("Failed to get EC volume health metrics for volume %d: %v", volumeID, err)
+		glog.V(0).Infof("ERROR: Failed to get EC volume health metrics for volume %d: %v", volumeID, err)
 		// Don't fail the request, just use default values
 		volumeHealth = &EcVolumeHealthInfo{
 			TotalSize:        0,
@@ -853,6 +853,7 @@ func (s *AdminServer) GetEcVolumeDetails(volumeID uint32, sortBy string, sortOrd
 
 // getEcVolumeHealthMetrics retrieves health metrics for an EC volume
 func (s *AdminServer) getEcVolumeHealthMetrics(volumeID uint32) (*EcVolumeHealthInfo, error) {
+	glog.V(0).Infof("DEBUG: getEcVolumeHealthMetrics called for volume %d", volumeID)
 	// Get list of servers that have shards for this EC volume
 	var servers []string
 
@@ -889,16 +890,18 @@ func (s *AdminServer) getEcVolumeHealthMetrics(volumeID uint32) (*EcVolumeHealth
 		return nil, fmt.Errorf("failed to get topology info: %v", err)
 	}
 
+	glog.V(0).Infof("DEBUG: Found %d servers with EC shards for volume %d: %v", len(servers), volumeID, servers)
 	if len(servers) == 0 {
 		return nil, fmt.Errorf("no servers found with EC shards for volume %d", volumeID)
 	}
 
 	// Aggregate health metrics from ALL servers that have EC shards
 	var aggregatedHealth *EcVolumeHealthInfo
-	var maxTotalSize uint64
-	var maxFileCount uint64
-	var maxDeletedBytes uint64
-	var maxDeletedCount uint64
+	var totalSize uint64
+	var totalFileCount uint64
+	var totalDeletedBytes uint64
+	var totalDeletedCount uint64
+	validServers := 0
 
 	for _, server := range servers {
 		healthInfo, err := s.getVolumeHealthFromServer(server, volumeID)
@@ -906,20 +909,16 @@ func (s *AdminServer) getEcVolumeHealthMetrics(volumeID uint32) (*EcVolumeHealth
 			glog.V(2).Infof("Failed to get volume health from server %s for volume %d: %v", server, volumeID, err)
 			continue // Try next server
 		}
+		glog.V(0).Infof("DEBUG: getVolumeHealthFromServer returned for %s: healthInfo=%v", server, healthInfo != nil)
 		if healthInfo != nil {
-			// Use the maximum values across servers
-			if healthInfo.TotalSize > maxTotalSize {
-				maxTotalSize = healthInfo.TotalSize
-			}
-			if healthInfo.FileCount > maxFileCount {
-				maxFileCount = healthInfo.FileCount
-			}
-			if healthInfo.DeletedByteCount > maxDeletedBytes {
-				maxDeletedBytes = healthInfo.DeletedByteCount
-			}
-			if healthInfo.DeleteCount > maxDeletedCount {
-				maxDeletedCount = healthInfo.DeleteCount
-			}
+			// Sum the values across all servers (each server contributes its shard data)
+			totalSize += healthInfo.TotalSize
+			totalFileCount += healthInfo.FileCount
+			totalDeletedBytes += healthInfo.DeletedByteCount
+			totalDeletedCount += healthInfo.DeleteCount
+			validServers++
+
+			glog.V(0).Infof("DEBUG: Added server %s data: size=%d, files=%d, deleted_bytes=%d", server, healthInfo.TotalSize, healthInfo.FileCount, healthInfo.DeletedByteCount)
 
 			// Store first non-nil health info as template for aggregated result
 			if aggregatedHealth == nil {
@@ -929,16 +928,21 @@ func (s *AdminServer) getEcVolumeHealthMetrics(volumeID uint32) (*EcVolumeHealth
 	}
 
 	// If we got aggregated data, finalize it
-	if aggregatedHealth != nil {
-		aggregatedHealth.TotalSize = maxTotalSize
-		aggregatedHealth.FileCount = maxFileCount
-		aggregatedHealth.DeletedByteCount = maxDeletedBytes
-		aggregatedHealth.DeleteCount = maxDeletedCount
+	glog.V(0).Infof("DEBUG: Aggregation check - aggregatedHealth=%v, validServers=%d", aggregatedHealth != nil, validServers)
+	if aggregatedHealth != nil && validServers > 0 {
+		// Use summed totals from all servers
+		aggregatedHealth.TotalSize = totalSize
+		aggregatedHealth.FileCount = totalFileCount
+		aggregatedHealth.DeletedByteCount = totalDeletedBytes
+		aggregatedHealth.DeleteCount = totalDeletedCount
 
 		// Calculate garbage ratio from aggregated data
 		if aggregatedHealth.TotalSize > 0 {
 			aggregatedHealth.GarbageRatio = float64(aggregatedHealth.DeletedByteCount) / float64(aggregatedHealth.TotalSize)
 		}
+
+		glog.V(0).Infof("SUCCESS: Aggregated EC volume %d from %d servers: %d total bytes -> %d MB",
+			volumeID, validServers, totalSize, totalSize/1024/1024)
 
 		return aggregatedHealth, nil
 	}
@@ -1009,7 +1013,7 @@ func (s *AdminServer) getVolumeHealthFromServer(server string, volumeID uint32) 
 				volumeID, server, healthInfo.DeletedByteCount, healthInfo.DeleteCount, healthInfo.TotalSize)
 		}
 
-		return nil
+		return nil // Return from WithVolumeServerClient callback - healthInfo is captured by closure
 	})
 
 	return healthInfo, err
