@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
-	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 	"io"
 	"mime"
 	"net/http"
@@ -18,12 +16,16 @@ import (
 	"sync/atomic"
 	"time"
 
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
+	"github.com/seaweedfs/seaweedfs/weed/util/mem"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/images"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -197,7 +199,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	// glog.V(4).Infoln("read bytes", count, "error", err)
 	if err != nil || count < 0 {
 		glog.V(3).Infof("read %s isNormalVolume %v error: %v", r.URL.Path, hasVolume, err)
-		if err == storage.ErrorNotFound || err == storage.ErrorDeleted {
+		if err == storage.ErrorNotFound || err == storage.ErrorDeleted || errors.Is(err, erasure_coding.NotFoundError) {
 			NotFound(w)
 		} else {
 			InternalError(w)
