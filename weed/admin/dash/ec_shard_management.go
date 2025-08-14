@@ -893,8 +893,13 @@ func (s *AdminServer) getEcVolumeHealthMetrics(volumeID uint32) (*EcVolumeHealth
 		return nil, fmt.Errorf("no servers found with EC shards for volume %d", volumeID)
 	}
 
-	// Try to get volume file status from servers that have EC shards
-	// The volume health metrics should be stored with the EC volume metadata
+	// Aggregate health metrics from ALL servers that have EC shards
+	var aggregatedHealth *EcVolumeHealthInfo
+	var maxTotalSize uint64
+	var maxFileCount uint64
+	var maxDeletedBytes uint64
+	var maxDeletedCount uint64
+
 	for _, server := range servers {
 		healthInfo, err := s.getVolumeHealthFromServer(server, volumeID)
 		if err != nil {
@@ -902,8 +907,40 @@ func (s *AdminServer) getEcVolumeHealthMetrics(volumeID uint32) (*EcVolumeHealth
 			continue // Try next server
 		}
 		if healthInfo != nil {
-			return healthInfo, nil
+			// Use the maximum values across servers
+			if healthInfo.TotalSize > maxTotalSize {
+				maxTotalSize = healthInfo.TotalSize
+			}
+			if healthInfo.FileCount > maxFileCount {
+				maxFileCount = healthInfo.FileCount
+			}
+			if healthInfo.DeletedByteCount > maxDeletedBytes {
+				maxDeletedBytes = healthInfo.DeletedByteCount
+			}
+			if healthInfo.DeleteCount > maxDeletedCount {
+				maxDeletedCount = healthInfo.DeleteCount
+			}
+
+			// Store first non-nil health info as template for aggregated result
+			if aggregatedHealth == nil {
+				aggregatedHealth = &EcVolumeHealthInfo{}
+			}
 		}
+	}
+
+	// If we got aggregated data, finalize it
+	if aggregatedHealth != nil {
+		aggregatedHealth.TotalSize = maxTotalSize
+		aggregatedHealth.FileCount = maxFileCount
+		aggregatedHealth.DeletedByteCount = maxDeletedBytes
+		aggregatedHealth.DeleteCount = maxDeletedCount
+
+		// Calculate garbage ratio from aggregated data
+		if aggregatedHealth.TotalSize > 0 {
+			aggregatedHealth.GarbageRatio = float64(aggregatedHealth.DeletedByteCount) / float64(aggregatedHealth.TotalSize)
+		}
+
+		return aggregatedHealth, nil
 	}
 
 	// If we can't get the original metrics, try to calculate from EC shards
