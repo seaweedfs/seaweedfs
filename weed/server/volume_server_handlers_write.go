@@ -88,10 +88,15 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 
 	ecVolume, hasEcVolume := vs.store.FindEcVolume(volumeId)
 
+	glog.Infof("🔍 DELETE REQUEST: volume %d, needle %d, hasEcVolume=%t", volumeId, n.Id, hasEcVolume)
+
 	if hasEcVolume {
+		glog.Infof("🎯 ROUTING TO EC DELETION: volume %d, needle %d", volumeId, n.Id)
 		count, err := vs.store.DeleteEcShardNeedle(ecVolume, n, cookie)
 		writeDeleteResult(err, count, w, r)
 		return
+	} else {
+		glog.Infof("🎯 ROUTING TO REGULAR DELETION: volume %d, needle %d", volumeId, n.Id)
 	}
 
 	_, ok := vs.store.ReadVolumeNeedle(volumeId, n, nil, nil)

@@ -469,7 +469,7 @@ func (vs *VolumeServer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardRea
 
 func (vs *VolumeServer) VolumeEcBlobDelete(ctx context.Context, req *volume_server_pb.VolumeEcBlobDeleteRequest) (*volume_server_pb.VolumeEcBlobDeleteResponse, error) {
 
-	glog.V(0).Infof("VolumeEcBlobDelete: %v", req)
+	glog.Infof("🔍 GRPC EC BLOB DELETE: volume %d, needle %d", req.VolumeId, req.FileKey)
 
 	resp := &volume_server_pb.VolumeEcBlobDeleteResponse{}
 
@@ -481,14 +481,18 @@ func (vs *VolumeServer) VolumeEcBlobDelete(ctx context.Context, req *volume_serv
 				return nil, fmt.Errorf("locate in local ec volume: %w", err)
 			}
 			if size.IsDeleted() {
+				glog.Infof("✅ GRPC EC DELETE: needle %d already deleted", req.FileKey)
 				return resp, nil
 			}
 
+			glog.Infof("📝 GRPC EC DELETE: recording needle %d in .ecj", req.FileKey)
 			err = localEcVolume.DeleteNeedleFromEcx(types.NeedleId(req.FileKey))
 			if err != nil {
+				glog.Errorf("❌ GRPC EC DELETE: failed to record needle %d: %v", req.FileKey, err)
 				return nil, err
 			}
 
+			glog.Infof("✅ GRPC EC DELETE: successfully recorded needle %d", req.FileKey)
 			break
 		}
 	}
