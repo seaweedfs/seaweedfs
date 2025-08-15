@@ -103,7 +103,7 @@ services:
     ports:
       - "8888:8888"
       - "18888:18888"
-    command: "filer -master=master:9333 -ip=filer1"
+    command: "-v=2 filer -master=master:9333 -ip=filer1"
     depends_on:
       - master
     volumes:
@@ -116,7 +116,7 @@ services:
     ports:
       - "8889:8888"
       - "18889:18888"
-    command: "filer -master=master:9333 -ip=filer2"
+    command: "-v=2 filer -master=master:9333 -ip=filer2"
     depends_on:
       - master
     volumes:
@@ -129,7 +129,7 @@ services:
     ports:
       - "8890:8888"
       - "18890:18888"
-    command: "filer -master=master:9333 -ip=filer3"
+    command: "-v=2 filer -master=master:9333 -ip=filer3"
     depends_on:
       - master
     volumes:
