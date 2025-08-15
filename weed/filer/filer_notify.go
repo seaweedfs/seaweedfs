@@ -3,11 +3,12 @@ package filer
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 	"io"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 
 	"google.golang.org/protobuf/proto"
 
