@@ -8,14 +8,9 @@ import (
 )
 
 // TaskType represents the type of maintenance task
+// Task types are now dynamically registered by individual task packages
+// No hardcoded constants - use registry functions to discover available tasks
 type TaskType string
-
-const (
-	TaskTypeVacuum        TaskType = "vacuum"
-	TaskTypeErasureCoding TaskType = "erasure_coding"
-	TaskTypeBalance       TaskType = "balance"
-	TaskTypeReplication   TaskType = "replication"
-)
 
 // TaskStatus represents the status of a maintenance task
 type TaskStatus string
@@ -94,4 +89,42 @@ type ClusterReplicationTask struct {
 	FileSize        int64             `json:"file_size"`
 	CreatedAt       time.Time         `json:"created_at"`
 	Metadata        map[string]string `json:"metadata,omitempty"`
+}
+
+// TaskTypeRegistry provides dynamic access to registered task types
+// This avoids hardcoded constants and allows tasks to be self-contained
+type TaskTypeRegistry interface {
+	GetAllTaskTypes() []TaskType
+	IsTaskTypeRegistered(taskType TaskType) bool
+	GetTaskTypeByName(name string) (TaskType, bool)
+}
+
+// GetAvailableTaskTypes returns all dynamically registered task types
+// This function will be implemented by importing a registry package that
+// collects task types from all registered task packages
+var GetAvailableTaskTypes func() []TaskType
+
+// IsTaskTypeAvailable checks if a task type is registered and available
+var IsTaskTypeAvailable func(TaskType) bool
+
+// GetTaskType converts a string to TaskType if it's registered
+var GetTaskType func(string) (TaskType, bool)
+
+// Common task type accessor functions that will be set by the registry
+// These allow other packages to get task types without hardcoded constants
+
+// GetErasureCodingTaskType returns the erasure coding task type if registered
+func GetErasureCodingTaskType() (TaskType, bool) {
+	if GetTaskType != nil {
+		return GetTaskType("erasure_coding")
+	}
+	return "", false
+}
+
+// GetReplicationTaskType returns the replication task type if registered
+func GetReplicationTaskType() (TaskType, bool) {
+	if GetTaskType != nil {
+		return GetTaskType("replication")
+	}
+	return "", false
 }

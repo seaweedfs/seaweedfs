@@ -68,7 +68,7 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 
 			result := &types.TaskDetectionResult{
 				TaskID:     taskID, // Link to ActiveTopology pending task
-				TaskType:   types.TaskTypeErasureCoding,
+				TaskType:   types.TaskType("erasure_coding"),
 				VolumeID:   metric.VolumeID,
 				Server:     metric.Server,
 				Collection: metric.Collection,
@@ -168,7 +168,7 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 
 				err = clusterInfo.ActiveTopology.AddPendingTask(topology.TaskSpec{
 					TaskID:       taskID,
-					TaskType:     topology.TaskTypeErasureCoding,
+					TaskType:     topology.TaskType("erasure_coding"),
 					VolumeID:     metric.VolumeID,
 					VolumeSize:   int64(metric.Size),
 					Sources:      sources,
@@ -279,7 +279,7 @@ func planECDestinations(activeTopology *topology.ActiveTopology, metric *types.V
 	// For EC, we typically need 1 volume slot per shard, so use minimum capacity of 1
 	// For EC, we need at least 1 available volume slot on a disk to consider it for placement.
 	// Note: We don't exclude the source server since the original volume will be deleted after EC conversion
-	availableDisks := activeTopology.GetDisksWithEffectiveCapacity(topology.TaskTypeErasureCoding, "", 1)
+	availableDisks := activeTopology.GetDisksWithEffectiveCapacity(topology.TaskType("erasure_coding"), "", 1)
 	if len(availableDisks) < erasure_coding.MinTotalDisks {
 		return nil, fmt.Errorf("insufficient disks for EC placement: need %d, have %d (considering pending/active tasks)", erasure_coding.MinTotalDisks, len(availableDisks))
 	}
@@ -322,7 +322,7 @@ func planECDestinations(activeTopology *topology.ActiveTopology, metric *types.V
 		metric.VolumeID, metric.Size, expectedShardSize, len(plans), len(rackCount), len(dcCount), totalEffectiveCapacity)
 
 	// Log storage impact for EC task (source only - EC has multiple targets handled individually)
-	sourceChange, _ := topology.CalculateTaskStorageImpact(topology.TaskTypeErasureCoding, int64(metric.Size))
+	sourceChange, _ := topology.CalculateTaskStorageImpact(topology.TaskType("erasure_coding"), int64(metric.Size))
 	glog.V(2).Infof("EC task capacity management: source_reserves_with_zero_impact={VolumeSlots:%d, ShardSlots:%d}, %d_targets_will_receive_shards, estimated_size=%d",
 		sourceChange.VolumeSlots, sourceChange.ShardSlots, len(plans), metric.Size)
 	glog.V(2).Infof("EC source reserves capacity but with zero StorageSlotChange impact")
@@ -425,6 +425,7 @@ func createECTaskParams(multiPlan *topology.MultiDestinationPlan) *worker_pb.Era
 	return &worker_pb.ErasureCodingTaskParams{
 		DataShards:   erasure_coding.DataShardsCount,   // Standard data shards
 		ParityShards: erasure_coding.ParityShardsCount, // Standard parity shards
+		Generation:   0,                                // Always use generation 0 for EC encoding
 	}
 }
 

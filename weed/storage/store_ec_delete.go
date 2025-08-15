@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -14,6 +15,8 @@ import (
 )
 
 func (s *Store) DeleteEcShardNeedle(ecVolume *erasure_coding.EcVolume, n *needle.Needle, cookie types.Cookie) (int64, error) {
+
+	glog.Infof("🚀 EC DELETE SHARD NEEDLE: starting deletion for needle %d volume %d", n.Id, ecVolume.VolumeId)
 
 	count, err := s.ReadEcShardNeedle(ecVolume.VolumeId, n, nil)
 
@@ -27,6 +30,16 @@ func (s *Store) DeleteEcShardNeedle(ecVolume *erasure_coding.EcVolume, n *needle
 
 	if err = s.doDeleteNeedleFromAtLeastOneRemoteEcShards(ecVolume, n.Id); err != nil {
 		return 0, err
+	}
+
+	// Record the deletion locally in the .ecj journal file
+	glog.Infof("🔍 EC DELETION: Recording needle %d in volume %d generation %d",
+		n.Id, ecVolume.VolumeId, ecVolume.Generation)
+	if err = ecVolume.DeleteNeedleFromEcx(n.Id); err != nil {
+		glog.Errorf("❌ Failed to record EC deletion in journal for needle %d: %v", n.Id, err)
+		// Continue even if journal write fails - the remote deletion succeeded
+	} else {
+		glog.Infof("✅ EC deletion recording completed for needle %d", n.Id)
 	}
 
 	return int64(count), nil

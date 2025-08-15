@@ -631,3 +631,36 @@ func findClientAddress(ctx context.Context) string {
 	}
 	return pr.Addr.String()
 }
+
+// GetMasterAddresses returns master server addresses to worker
+func (s *WorkerGrpcServer) GetMasterAddresses(ctx context.Context, req *worker_pb.GetMasterAddressesRequest) (*worker_pb.GetMasterAddressesResponse, error) {
+	glog.V(1).Infof("Worker %s requesting master addresses", req.WorkerId)
+
+	// Get master addresses from admin server
+	if s.adminServer.masterClient == nil {
+		return nil, fmt.Errorf("admin server has no master client configured")
+	}
+
+	// Get current master leader and all master addresses
+	masterAddresses := s.adminServer.masterClient.GetMasters(ctx)
+	if len(masterAddresses) == 0 {
+		return nil, fmt.Errorf("no master addresses available")
+	}
+
+	// Try to get the current leader
+	leader := s.adminServer.masterClient.GetMaster(ctx)
+
+	// Convert pb.ServerAddress slice to string slice
+	masterAddressStrings := make([]string, len(masterAddresses))
+	for i, addr := range masterAddresses {
+		masterAddressStrings[i] = string(addr)
+	}
+
+	response := &worker_pb.GetMasterAddressesResponse{
+		MasterAddresses: masterAddressStrings,
+		PrimaryMaster:   string(leader),
+	}
+
+	glog.V(1).Infof("Returning %d master addresses to worker %s, leader: %s", len(masterAddresses), req.WorkerId, leader)
+	return response, nil
+}

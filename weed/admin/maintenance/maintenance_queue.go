@@ -12,11 +12,16 @@ import (
 // NewMaintenanceQueue creates a new maintenance queue
 func NewMaintenanceQueue(policy *MaintenancePolicy) *MaintenanceQueue {
 	queue := &MaintenanceQueue{
-		tasks:        make(map[string]*MaintenanceTask),
-		workers:      make(map[string]*MaintenanceWorker),
-		pendingTasks: make([]*MaintenanceTask, 0),
-		policy:       policy,
+		tasks:           make(map[string]*MaintenanceTask),
+		workers:         make(map[string]*MaintenanceWorker),
+		pendingTasks:    make([]*MaintenanceTask, 0),
+		policy:          policy,
+		persistenceChan: make(chan *MaintenanceTask, 1000), // Buffer for async persistence
 	}
+
+	// Start persistence worker goroutine
+	go queue.persistenceWorker()
+
 	return queue
 }
 
@@ -39,15 +44,17 @@ func (mq *MaintenanceQueue) LoadTasksFromPersistence() error {
 		return nil
 	}
 
-	mq.mutex.Lock()
-	defer mq.mutex.Unlock()
-
 	glog.Infof("Loading tasks from persistence...")
 
+	// Load tasks without holding lock to prevent deadlock
 	tasks, err := mq.persistence.LoadAllTaskStates()
 	if err != nil {
 		return fmt.Errorf("failed to load task states: %w", err)
 	}
+
+	// Only acquire lock for the in-memory operations
+	mq.mutex.Lock()
+	defer mq.mutex.Unlock()
 
 	glog.Infof("DEBUG LoadTasksFromPersistence: Found %d tasks in persistence", len(tasks))
 
@@ -104,11 +111,36 @@ func (mq *MaintenanceQueue) LoadTasksFromPersistence() error {
 	return nil
 }
 
-// saveTaskState saves a task to persistent storage
+// persistenceWorker handles async persistence operations
+func (mq *MaintenanceQueue) persistenceWorker() {
+	for task := range mq.persistenceChan {
+		if mq.persistence != nil {
+			if err := mq.persistence.SaveTaskState(task); err != nil {
+				glog.Errorf("Failed to save task state for %s: %v", task.ID, err)
+			}
+		}
+	}
+	glog.V(1).Infof("Persistence worker shut down")
+}
+
+// Close gracefully shuts down the maintenance queue
+func (mq *MaintenanceQueue) Close() {
+	if mq.persistenceChan != nil {
+		close(mq.persistenceChan)
+		glog.V(1).Infof("Maintenance queue persistence channel closed")
+	}
+}
+
+// saveTaskState saves a task to persistent storage asynchronously
 func (mq *MaintenanceQueue) saveTaskState(task *MaintenanceTask) {
-	if mq.persistence != nil {
-		if err := mq.persistence.SaveTaskState(task); err != nil {
-			glog.Errorf("Failed to save task state for %s: %v", task.ID, err)
+	if mq.persistence != nil && mq.persistenceChan != nil {
+		// Create a copy to avoid race conditions
+		taskCopy := *task
+		select {
+		case mq.persistenceChan <- &taskCopy:
+			// Successfully queued for async persistence
+		default:
+			glog.Warningf("Persistence channel full, task state may be lost: %s", task.ID)
 		}
 	}
 }
@@ -272,7 +304,7 @@ func (mq *MaintenanceQueue) GetNextTask(workerID string, capabilities []Maintena
 
 	// If no task found, return nil
 	if selectedTask == nil {
-		glog.V(2).Infof("No suitable tasks available for worker %s (checked %d pending tasks)", workerID, len(mq.pendingTasks))
+		glog.V(3).Infof("No suitable tasks available for worker %s (checked %d pending tasks)", workerID, len(mq.pendingTasks))
 		return nil
 	}
 
@@ -575,10 +607,9 @@ func (mq *MaintenanceQueue) getRepeatPreventionInterval(taskType MaintenanceTask
 
 // GetTasks returns tasks with optional filtering
 func (mq *MaintenanceQueue) GetTasks(status MaintenanceTaskStatus, taskType MaintenanceTaskType, limit int) []*MaintenanceTask {
+	// Create a copy of task slice while holding the lock for minimal time
 	mq.mutex.RLock()
-	defer mq.mutex.RUnlock()
-
-	var tasks []*MaintenanceTask
+	tasksCopy := make([]*MaintenanceTask, 0, len(mq.tasks))
 	for _, task := range mq.tasks {
 		if status != "" && task.Status != status {
 			continue
@@ -586,29 +617,34 @@ func (mq *MaintenanceQueue) GetTasks(status MaintenanceTaskStatus, taskType Main
 		if taskType != "" && task.Type != taskType {
 			continue
 		}
-		tasks = append(tasks, task)
-		if limit > 0 && len(tasks) >= limit {
+		// Create a shallow copy to avoid data races
+		taskCopy := *task
+		tasksCopy = append(tasksCopy, &taskCopy)
+		if limit > 0 && len(tasksCopy) >= limit {
 			break
 		}
 	}
+	mq.mutex.RUnlock()
 
-	// Sort by creation time (newest first)
-	sort.Slice(tasks, func(i, j int) bool {
-		return tasks[i].CreatedAt.After(tasks[j].CreatedAt)
+	// Sort after releasing the lock to prevent deadlocks
+	sort.Slice(tasksCopy, func(i, j int) bool {
+		return tasksCopy[i].CreatedAt.After(tasksCopy[j].CreatedAt)
 	})
 
-	return tasks
+	return tasksCopy
 }
 
 // GetWorkers returns all registered workers
 func (mq *MaintenanceQueue) GetWorkers() []*MaintenanceWorker {
 	mq.mutex.RLock()
-	defer mq.mutex.RUnlock()
-
-	var workers []*MaintenanceWorker
+	workers := make([]*MaintenanceWorker, 0, len(mq.workers))
 	for _, worker := range mq.workers {
-		workers = append(workers, worker)
+		// Create a shallow copy to avoid data races
+		workerCopy := *worker
+		workers = append(workers, &workerCopy)
 	}
+	mq.mutex.RUnlock()
+
 	return workers
 }
 
@@ -635,7 +671,59 @@ func generateTaskID() string {
 	return fmt.Sprintf("%s-%04d", string(b), timestamp)
 }
 
-// CleanupOldTasks removes old completed and failed tasks
+// RetryTask manually retries a failed or pending task
+func (mq *MaintenanceQueue) RetryTask(taskID string) error {
+	mq.mutex.Lock()
+	defer mq.mutex.Unlock()
+
+	task, exists := mq.tasks[taskID]
+	if !exists {
+		return fmt.Errorf("task %s not found", taskID)
+	}
+
+	// Only allow retry for failed or pending tasks
+	if task.Status != TaskStatusFailed && task.Status != TaskStatusPending {
+		return fmt.Errorf("task %s cannot be retried (status: %s)", taskID, task.Status)
+	}
+
+	// Reset task for retry
+	now := time.Now()
+	task.Status = TaskStatusPending
+	task.WorkerID = ""
+	task.StartedAt = nil
+	task.CompletedAt = nil
+	task.Error = ""
+	task.ScheduledAt = now // Schedule immediately
+	task.Progress = 0
+
+	// Add to assignment history if it was previously assigned
+	if len(task.AssignmentHistory) > 0 {
+		lastAssignment := task.AssignmentHistory[len(task.AssignmentHistory)-1]
+		if lastAssignment.UnassignedAt == nil {
+			unassignedTime := now
+			lastAssignment.UnassignedAt = &unassignedTime
+			lastAssignment.Reason = "Manual retry requested"
+		}
+	}
+
+	// Remove from current pending list if already there to avoid duplicates
+	for i, pendingTask := range mq.pendingTasks {
+		if pendingTask.ID == taskID {
+			mq.pendingTasks = append(mq.pendingTasks[:i], mq.pendingTasks[i+1:]...)
+			break
+		}
+	}
+
+	// Add back to pending queue
+	mq.pendingTasks = append(mq.pendingTasks, task)
+
+	// Save task state
+	mq.saveTaskState(task)
+
+	glog.Infof("Task manually retried: %s (%s) for volume %d", taskID, task.Type, task.VolumeID)
+	return nil
+}
+
 func (mq *MaintenanceQueue) CleanupOldTasks(retention time.Duration) int {
 	mq.mutex.Lock()
 	defer mq.mutex.Unlock()

@@ -203,16 +203,16 @@ func (at *ActiveTopology) AddPendingTask(spec TaskSpec) error {
 
 // calculateSourceStorageImpact calculates storage impact for sources based on task type and cleanup type
 func (at *ActiveTopology) calculateSourceStorageImpact(taskType TaskType, cleanupType SourceCleanupType, volumeSize int64) StorageSlotChange {
-	switch taskType {
-	case TaskTypeErasureCoding:
+	switch string(taskType) {
+	case "erasure_coding":
 		switch cleanupType {
 		case CleanupVolumeReplica:
-			impact, _ := CalculateTaskStorageImpact(TaskTypeErasureCoding, volumeSize)
+			impact, _ := CalculateTaskStorageImpact(taskType, volumeSize)
 			return impact
 		case CleanupECShards:
 			return CalculateECShardCleanupImpact(volumeSize)
 		default:
-			impact, _ := CalculateTaskStorageImpact(TaskTypeErasureCoding, volumeSize)
+			impact, _ := CalculateTaskStorageImpact(taskType, volumeSize)
 			return impact
 		}
 	default:
