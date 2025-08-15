@@ -142,3 +142,25 @@ This tool reproduces the core problem from the original issue:
 - **File inconsistencies** (caught by verification steps)
 
 The key difference is this tool focuses on the filer metadata layer rather than the full CSI driver + mount stack, making it easier to isolate and debug the race condition.
+
+## Debugging Findings
+
+### Multi-Filer vs Single-Filer Connection Issue
+
+**Problem**: When using multiple filers with independent stores (non-shared backend), the benchmark may fail with errors like:
+- `update entry with chunks failed: rpc error: code = Unknown desc = not found /benchmark/file_X: filer: no entry is found in filer store`
+- `CreateEntry /benchmark/file_X: /benchmark should be a directory`
+
+**Root Cause**: The issue is NOT missing metadata events, but rather the benchmark's round-robin load balancing across filers:
+
+1. **File Creation**: Benchmark creates `file_X` on `filer1`
+2. **Chunk Updates**: Benchmark tries to update `file_X` on `filer2` or `filer3`
+3. **Error**: `filer2`/`filer3` don't have `file_X` in their local store yet (metadata sync delay)
+
+**Verification**: Running with single filer connection (`-filers localhost:18888`) while 3 filers are running shows **NO missed events**, confirming metadata synchronization works correctly.
+
+**Solutions**:
+- Ensure `/benchmark` directory exists on ALL filers before starting
+- Use file affinity (same filer for create/update operations)
+- Add retry logic for cross-filer operations
+- Add small delays to allow metadata sync between operations
