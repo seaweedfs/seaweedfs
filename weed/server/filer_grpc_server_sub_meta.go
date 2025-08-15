@@ -170,6 +170,16 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 				time.Sleep(1127 * time.Millisecond)
 				continue
 			}
+			// If no persisted entries were read for this day, check the next day for logs
+			nextDayTs := util.GetNextDayTsNano(lastReadTime.UnixNano())
+			position := log_buffer.NewMessagePosition(nextDayTs, -2)
+			found, err := fs.filer.HasPersistedLogFiles(position)
+			if err != nil {
+				return fmt.Errorf("checking persisted log files: %w", err)
+			}
+			if found {
+				lastReadTime = position
+			}
 		}
 
 		glog.V(0).Infof("read in memory %v local subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
