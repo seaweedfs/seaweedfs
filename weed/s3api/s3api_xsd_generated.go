@@ -1074,6 +1074,7 @@ type ListAllMyBucketsResponse struct {
 }
 
 type ListAllMyBucketsResult struct {
+	XMLName xml.Name             `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListAllMyBucketsResult"`
 	Owner   CanonicalUser        `xml:"Owner"`
 	Buckets ListAllMyBucketsList `xml:"Buckets"`
 }
