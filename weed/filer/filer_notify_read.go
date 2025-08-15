@@ -307,6 +307,7 @@ func (iter *LogFileQueueIterator) getNext(v *OrderedLogVisitor) (logEntry *filer
 			if collectErr := v.logFileEntryCollector.collectMore(v); collectErr != nil && collectErr != io.EOF {
 				return nil, collectErr
 			}
+			next = iter.q.Peek() // Re-peek after collectMore
 		}
 		// skip the file if the next entry is before the startTsNs
 		if next != nil && next.TsNs <= iter.startTsNs {
