@@ -221,6 +221,10 @@ func (c *LogFileEntryCollector) collectMore(v *OrderedLogVisitor) (err error) {
 			continue
 		}
 		filerId := getFilerId(hourMinuteEntry.Name())
+		if filerId == "" {
+			glog.Warningf("Invalid log file name format: %s", hourMinuteEntry.Name())
+			continue // Skip files with invalid format
+		}
 		iter, found := v.perFilerIteratorMap[filerId]
 		if !found {
 			iter = newLogFileQueueIterator(c.f.MasterClient, util.NewQueue[*LogFileEntry](), c.startTsNs, c.stopTsNs)
