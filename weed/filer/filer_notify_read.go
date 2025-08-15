@@ -245,7 +245,7 @@ func (c *LogFileEntryCollector) collectMore(v *OrderedLogVisitor) (err error) {
 			if nextErr == io.EOF {
 				// do nothing since the filer has no more log entries
 			} else {
-				return fmt.Errorf("failed to get next log entry for %v: %w", entryName, err)
+				return fmt.Errorf("failed to get next log entry for %v: %w", entryName, nextErr)
 			}
 		} else {
 			heap.Push(v.pq, &LogEntryItem{
