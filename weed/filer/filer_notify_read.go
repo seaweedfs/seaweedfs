@@ -161,7 +161,7 @@ func NewLogFileEntryCollector(f *Filer, startPosition log_buffer.MessagePosition
 	startHourMinute := fmt.Sprintf("%02d-%02d", startPosition.Hour(), startPosition.Minute())
 	var stopDate, stopHourMinute string
 	if stopTsNs != 0 {
-		stopTime := time.Unix(0, stopTsNs+24*60*60*int64(time.Nanosecond)).UTC()
+		stopTime := time.Unix(0, stopTsNs+24*60*60*int64(time.Second)).UTC()
 		stopDate = fmt.Sprintf("%04d-%02d-%02d", stopTime.Year(), stopTime.Month(), stopTime.Day())
 		stopHourMinute = fmt.Sprintf("%02d-%02d", stopTime.Hour(), stopTime.Minute())
 	}
