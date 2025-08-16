@@ -82,6 +82,51 @@ docker-status: ## Show Docker service status
 docker-shell: ## Open interactive shell in test container
 	./tests/docker-test-helper.sh shell
 
+# RDMA Simulation Targets
+rdma-sim-build: ## Build RDMA simulation environment
+	@echo "🚀 Building RDMA simulation environment..."
+	docker-compose -f docker-compose.rdma-sim.yml build
+	@echo "✅ RDMA simulation images built"
+
+rdma-sim-start: ## Start RDMA simulation environment
+	@echo "🚀 Starting RDMA simulation environment..."
+	docker-compose -f docker-compose.rdma-sim.yml up -d
+	@echo "✅ RDMA simulation environment started"
+
+rdma-sim-test: ## Run RDMA simulation tests
+	@echo "🧪 Running RDMA simulation tests..."
+	docker-compose -f docker-compose.rdma-sim.yml run --rm integration-tests-rdma
+	@echo "✅ RDMA simulation tests complete"
+
+rdma-sim-stop: ## Stop RDMA simulation environment
+	@echo "🛑 Stopping RDMA simulation environment..."
+	docker-compose -f docker-compose.rdma-sim.yml down
+	@echo "✅ RDMA simulation environment stopped"
+
+rdma-sim-clean: ## Clean RDMA simulation environment
+	@echo "🧹 Cleaning RDMA simulation environment..."
+	docker-compose -f docker-compose.rdma-sim.yml down -v --remove-orphans
+	docker system prune -f
+	@echo "✅ RDMA simulation cleanup complete"
+
+rdma-sim-status: ## Check RDMA simulation status
+	@echo "📊 RDMA simulation status:"
+	docker-compose -f docker-compose.rdma-sim.yml ps
+	@echo ""
+	@echo "🔍 RDMA device status:"
+	docker-compose -f docker-compose.rdma-sim.yml exec rdma-simulation /opt/rdma-sim/test-rdma.sh || true
+
+rdma-sim-shell: ## Open shell in RDMA simulation container
+	@echo "🐚 Opening RDMA simulation shell..."
+	docker-compose -f docker-compose.rdma-sim.yml exec rdma-simulation /bin/bash
+
+rdma-sim-logs: ## Show RDMA simulation logs
+	docker-compose -f docker-compose.rdma-sim.yml logs
+
+rdma-sim-ucx: ## Show UCX information in simulation
+	@echo "📋 UCX information in simulation:"
+	docker-compose -f docker-compose.rdma-sim.yml exec rdma-simulation /opt/rdma-sim/ucx-info.sh
+
 # Development Targets
 dev-setup: ## Set up development environment
 	@echo "🛠️  Setting up development environment..."
