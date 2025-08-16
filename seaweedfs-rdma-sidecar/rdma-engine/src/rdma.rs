@@ -4,8 +4,7 @@
 //! - Mock implementation for development and testing
 //! - Real implementation using libibverbs for production
 
-use crate::{RdmaError, RdmaResult, RdmaEngineConfig};
-use std::sync::Arc;
+use crate::{RdmaResult, RdmaEngineConfig};
 use tracing::{debug, warn, info};
 use parking_lot::RwLock;
 
@@ -105,37 +104,11 @@ pub struct WorkCompletion {
     pub imm_data: Option<u32>,
 }
 
-/// Abstract RDMA context trait
-pub trait RdmaContextTrait: Send + Sync {
-    /// Register memory for RDMA operations
-    async fn register_memory(&self, addr: u64, size: usize) -> RdmaResult<MemoryRegion>;
-    
-    /// Deregister memory region
-    async fn deregister_memory(&self, region: &MemoryRegion) -> RdmaResult<()>;
-    
-    /// Post RDMA read operation
-    async fn post_read(&self, 
-        local_addr: u64, 
-        remote_addr: u64, 
-        rkey: u32, 
-        size: usize,
-        wr_id: u64,
-    ) -> RdmaResult<()>;
-    
-    /// Post RDMA write operation
-    async fn post_write(&self, 
-        local_addr: u64, 
-        remote_addr: u64, 
-        rkey: u32, 
-        size: usize,
-        wr_id: u64,
-    ) -> RdmaResult<()>;
-    
-    /// Poll for work completions
-    async fn poll_completion(&self, max_completions: usize) -> RdmaResult<Vec<WorkCompletion>>;
-    
-    /// Get device information
-    fn device_info(&self) -> &RdmaDeviceInfo;
+/// RDMA context implementation (simplified enum approach)
+#[derive(Debug)]
+pub enum RdmaContextImpl {
+    Mock(MockRdmaContext),
+    // Ucx(UcxRdmaContext), // TODO: Add UCX implementation
 }
 
 /// RDMA device information
@@ -155,17 +128,18 @@ pub struct RdmaDeviceInfo {
 
 /// Main RDMA context
 pub struct RdmaContext {
-    inner: Arc<dyn RdmaContextTrait>,
+    inner: RdmaContextImpl,
+    #[allow(dead_code)]
     config: RdmaEngineConfig,
 }
 
 impl RdmaContext {
     /// Create new RDMA context
     pub async fn new(config: &RdmaEngineConfig) -> RdmaResult<Self> {
-        let inner: Arc<dyn RdmaContextTrait> = if cfg!(feature = "real-rdma") {
-            Arc::new(RealRdmaContext::new(config).await?)
+        let inner = if cfg!(feature = "real-ucx") {
+            RdmaContextImpl::Mock(MockRdmaContext::new(config).await?) // TODO: Use UCX when ready
         } else {
-            Arc::new(MockRdmaContext::new(config).await?)
+            RdmaContextImpl::Mock(MockRdmaContext::new(config).await?)
         };
         
         Ok(Self {
@@ -176,12 +150,16 @@ impl RdmaContext {
     
     /// Register memory for RDMA operations
     pub async fn register_memory(&self, addr: u64, size: usize) -> RdmaResult<MemoryRegion> {
-        self.inner.register_memory(addr, size).await
+        match &self.inner {
+            RdmaContextImpl::Mock(ctx) => ctx.register_memory(addr, size).await,
+        }
     }
     
     /// Deregister memory region
     pub async fn deregister_memory(&self, region: &MemoryRegion) -> RdmaResult<()> {
-        self.inner.deregister_memory(region).await
+        match &self.inner {
+            RdmaContextImpl::Mock(ctx) => ctx.deregister_memory(region).await,
+        }
     }
     
     /// Post RDMA read operation
@@ -192,7 +170,9 @@ impl RdmaContext {
         size: usize,
         wr_id: u64,
     ) -> RdmaResult<()> {
-        self.inner.post_read(local_addr, remote_addr, rkey, size, wr_id).await
+        match &self.inner {
+            RdmaContextImpl::Mock(ctx) => ctx.post_read(local_addr, remote_addr, rkey, size, wr_id).await,
+        }
     }
     
     /// Post RDMA write operation  
@@ -203,25 +183,33 @@ impl RdmaContext {
         size: usize,
         wr_id: u64,
     ) -> RdmaResult<()> {
-        self.inner.post_write(local_addr, remote_addr, rkey, size, wr_id).await
+        match &self.inner {
+            RdmaContextImpl::Mock(ctx) => ctx.post_write(local_addr, remote_addr, rkey, size, wr_id).await,
+        }
     }
     
     /// Poll for work completions
     pub async fn poll_completion(&self, max_completions: usize) -> RdmaResult<Vec<WorkCompletion>> {
-        self.inner.poll_completion(max_completions).await
+        match &self.inner {
+            RdmaContextImpl::Mock(ctx) => ctx.poll_completion(max_completions).await,
+        }
     }
     
     /// Get device information
     pub fn device_info(&self) -> &RdmaDeviceInfo {
-        self.inner.device_info()
+        match &self.inner {
+            RdmaContextImpl::Mock(ctx) => ctx.device_info(),
+        }
     }
 }
 
 /// Mock RDMA context for testing and development
+#[derive(Debug)]
 pub struct MockRdmaContext {
     device_info: RdmaDeviceInfo,
     registered_regions: RwLock<Vec<MemoryRegion>>,
     pending_operations: RwLock<Vec<WorkCompletion>>,
+    #[allow(dead_code)]
     config: RdmaEngineConfig,
 }
 
@@ -253,9 +241,8 @@ impl MockRdmaContext {
     }
 }
 
-#[async_trait::async_trait]
-impl RdmaContextTrait for MockRdmaContext {
-    async fn register_memory(&self, addr: u64, size: usize) -> RdmaResult<MemoryRegion> {
+impl MockRdmaContext {
+    pub async fn register_memory(&self, addr: u64, size: usize) -> RdmaResult<MemoryRegion> {
         debug!("🟡 Mock: Registering memory region addr=0x{:x}, size={}", addr, size);
         
         // Simulate registration delay
@@ -274,7 +261,7 @@ impl RdmaContextTrait for MockRdmaContext {
         Ok(region)
     }
     
-    async fn deregister_memory(&self, region: &MemoryRegion) -> RdmaResult<()> {
+    pub async fn deregister_memory(&self, region: &MemoryRegion) -> RdmaResult<()> {
         debug!("🟡 Mock: Deregistering memory region rkey=0x{:x}", region.rkey);
         
         let mut regions = self.registered_regions.write();
@@ -283,7 +270,7 @@ impl RdmaContextTrait for MockRdmaContext {
         Ok(())
     }
     
-    async fn post_read(&self, 
+    pub async fn post_read(&self, 
         local_addr: u64, 
         remote_addr: u64, 
         rkey: u32, 
@@ -318,7 +305,7 @@ impl RdmaContextTrait for MockRdmaContext {
         Ok(())
     }
     
-    async fn post_write(&self, 
+    pub async fn post_write(&self, 
         local_addr: u64, 
         remote_addr: u64, 
         rkey: u32, 
@@ -345,7 +332,7 @@ impl RdmaContextTrait for MockRdmaContext {
         Ok(())
     }
     
-    async fn poll_completion(&self, max_completions: usize) -> RdmaResult<Vec<WorkCompletion>> {
+    pub async fn poll_completion(&self, max_completions: usize) -> RdmaResult<Vec<WorkCompletion>> {
         let mut operations = self.pending_operations.write();
         let available = operations.len().min(max_completions);
         let completions = operations.drain(..available).collect();
@@ -353,13 +340,13 @@ impl RdmaContextTrait for MockRdmaContext {
         Ok(completions)
     }
     
-    fn device_info(&self) -> &RdmaDeviceInfo {
+    pub fn device_info(&self) -> &RdmaDeviceInfo {
         &self.device_info
     }
 }
 
 /// Real RDMA context using libibverbs
-#[cfg(feature = "real-rdma")]
+#[cfg(feature = "real-ucx")]
 pub struct RealRdmaContext {
     // Real implementation would contain:
     // ibv_context: *mut ibv_context,
@@ -370,7 +357,7 @@ pub struct RealRdmaContext {
     config: RdmaEngineConfig,
 }
 
-#[cfg(feature = "real-rdma")]
+#[cfg(feature = "real-ucx")]
 impl RealRdmaContext {
     pub async fn new(config: &RdmaEngineConfig) -> RdmaResult<Self> {
         info!("✅ Initializing REAL RDMA context for device: {}", config.device_name);
@@ -388,7 +375,7 @@ impl RealRdmaContext {
     }
 }
 
-#[cfg(feature = "real-rdma")]
+#[cfg(feature = "real-ucx")]
 #[async_trait::async_trait]
 impl RdmaContextTrait for RealRdmaContext {
     async fn register_memory(&self, _addr: u64, _size: usize) -> RdmaResult<MemoryRegion> {

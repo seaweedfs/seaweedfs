@@ -84,7 +84,7 @@ async fn main() -> anyhow::Result<()> {
     info!("   Debug Mode: {}", args.debug);
     
     // Load configuration
-    let mut config = RdmaEngineConfig {
+    let config = RdmaEngineConfig {
         device_name: args.device,
         port: args.port,
         max_sessions: args.max_sessions,

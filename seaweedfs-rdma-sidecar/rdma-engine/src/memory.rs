@@ -155,22 +155,23 @@ impl MemoryPool {
         buffer.in_use = true;
         
         // Update allocation tracking
-        {
+        let new_total = {
             let mut total = self.total_allocated.write();
             *total += pool_size;
-        }
+            *total
+        };
         
         {
             let mut stats = self.stats.write();
             stats.cache_misses += 1;
             stats.active_allocations += 1;
-            if *total > stats.peak_memory_usage {
-                stats.peak_memory_usage = *total;
+            if new_total > stats.peak_memory_usage {
+                stats.peak_memory_usage = new_total;
             }
         }
         
         debug!("🆕 Allocated new buffer: size={}, total_allocated={}", 
-               pool_size, total_allocated + pool_size);
+               pool_size, new_total);
         
         Ok(Arc::new(RwLock::new(buffer)))
     }
@@ -195,7 +196,7 @@ impl MemoryPool {
             
             if pool.len() < self.max_pool_size {
                 // Reset buffer state and return to pool
-                if let Ok(mut buf) = Arc::try_unwrap(buffer) {
+                if let Ok(buf) = Arc::try_unwrap(buffer) {
                     let mut buf = buf.into_inner();
                     buf.in_use = false;
                     buf.data.fill(0); // Clear data for security
@@ -235,7 +236,6 @@ impl MemoryPool {
         {
             let mut pools = self.pools.write();
             for (size, pool) in pools.iter_mut() {
-                let original_len = pool.len();
                 pool.retain(|buffer| {
                     if buffer.age() > max_age && !buffer.in_use {
                         cleaned_count += 1;
@@ -300,6 +300,7 @@ impl Default for MemoryConfig {
 }
 
 /// Memory-mapped region
+#[allow(dead_code)]
 struct MmapRegion {
     mmap: MmapMut,
     size: usize,
@@ -307,6 +308,7 @@ struct MmapRegion {
 }
 
 /// HugePage memory region
+#[allow(dead_code)]
 struct HugePageRegion {
     addr: *mut u8,
     size: usize,
@@ -523,17 +525,23 @@ impl RdmaBuffer {
         }
     }
     
-    /// Get buffer as slice
-    pub fn as_slice(&self) -> &[u8] {
+    /// Get buffer as Vec (copy to avoid lifetime issues)
+    pub fn to_vec(&self) -> Vec<u8> {
         match self {
             Self::Pool { buffer, .. } => {
-                buffer.read().as_slice()
+                buffer.read().as_slice().to_vec()
             }
             Self::Mmap { addr, size } => {
-                unsafe { std::slice::from_raw_parts(*addr as *const u8, *size) }
+                unsafe { 
+                    let slice = std::slice::from_raw_parts(*addr as *const u8, *size);
+                    slice.to_vec()
+                }
             }
             Self::HugePage { addr, size } => {
-                unsafe { std::slice::from_raw_parts(*addr as *const u8, *size) }
+                unsafe { 
+                    let slice = std::slice::from_raw_parts(*addr as *const u8, *size);
+                    slice.to_vec()
+                }
             }
         }
     }

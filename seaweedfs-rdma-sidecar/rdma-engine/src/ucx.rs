@@ -13,7 +13,7 @@ use libc::{c_char, c_int, c_void, size_t};
 use libloading::{Library, Symbol};
 use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::ffi::{CStr, CString};
+use std::ffi::CStr;
 use std::ptr;
 use std::sync::Arc;
 use tracing::{debug, info, warn, error};

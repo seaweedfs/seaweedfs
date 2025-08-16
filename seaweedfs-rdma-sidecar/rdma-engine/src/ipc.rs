@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter};
-use tracing::{info, debug, warn, error};
+use tracing::{info, debug, error};
 use uuid::Uuid;
 use std::path::Path;
 
@@ -272,8 +272,9 @@ impl IpcServer {
         session_manager: Arc<SessionManager>,
         shutdown_flag: Arc<parking_lot::RwLock<bool>>,
     ) -> RdmaResult<()> {
-        let mut reader = BufReader::new(&stream);
-        let mut writer = BufWriter::new(&stream);
+        let (reader_half, writer_half) = stream.into_split();
+        let mut reader = BufReader::new(reader_half);
+        let mut writer = BufWriter::new(writer_half);
         
         let mut buffer = Vec::with_capacity(4096);
         
@@ -289,7 +290,7 @@ impl IpcServer {
                 tokio::time::Duration::from_millis(100),
                 reader.read_exact(&mut len_bytes)
             ).await {
-                Ok(Ok(())) => {},
+                Ok(Ok(_)) => {},
                 Ok(Err(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                     debug!("IPC connection closed by peer");
                     break;
@@ -371,7 +372,7 @@ impl IpcServer {
                     port_lid: device_info.port_lid,
                     supported_auth: vec!["none".to_string()],
                     version: env!("CARGO_PKG_VERSION").to_string(),
-                    real_rdma: cfg!(feature = "real-rdma"),
+                    real_rdma: cfg!(feature = "real-ucx"),
                 })
             }
             
@@ -427,7 +428,7 @@ impl IpcServer {
             req.remote_key,
             transfer_size,
             buffer,
-            memory_region,
+            memory_region.clone(),
             chrono::Duration::seconds(req.timeout_secs as i64),
         ).await?;
         

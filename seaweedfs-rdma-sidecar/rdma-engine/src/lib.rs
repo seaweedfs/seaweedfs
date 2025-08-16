@@ -102,7 +102,7 @@ impl RdmaEngine {
         tracing::info!("Starting RDMA engine server on {}", self.config.ipc_socket_path);
         
         // Start IPC server
-        let mut ipc_server = ipc::IpcServer::new(
+        let ipc_server = ipc::IpcServer::new(
             &self.config.ipc_socket_path,
             self.rdma_context.clone(),
             self.session_manager.clone(),

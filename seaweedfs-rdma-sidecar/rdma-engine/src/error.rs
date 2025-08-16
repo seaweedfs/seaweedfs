@@ -1,6 +1,6 @@
 //! Error types and handling for the RDMA engine
 
-use std::fmt;
+// use std::fmt;  // Unused for now
 use thiserror::Error;
 
 /// Result type alias for RDMA operations
