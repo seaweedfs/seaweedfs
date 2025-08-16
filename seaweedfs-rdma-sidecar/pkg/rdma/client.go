@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/sirupsen/logrus"
 	"seaweedfs-rdma-sidecar/pkg/ipc"
+
+	"github.com/sirupsen/logrus"
 )
 
 // Client provides high-level RDMA operations
@@ -271,7 +272,7 @@ func (c *Client) Ping(ctx context.Context) (time.Duration, error) {
 
 	totalLatency := time.Since(start)
 	serverRtt := time.Duration(pong.ServerRttNs)
-	
+
 	c.logger.WithFields(logrus.Fields{
 		"total_latency": totalLatency,
 		"server_rtt":    serverRtt,

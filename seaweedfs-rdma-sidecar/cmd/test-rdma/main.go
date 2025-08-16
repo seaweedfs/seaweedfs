@@ -7,20 +7,21 @@ import (
 	"os"
 	"time"
 
+	"seaweedfs-rdma-sidecar/pkg/rdma"
+
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
-	"seaweedfs-rdma-sidecar/pkg/rdma"
 )
 
 var (
-	socketPath   string
-	debug        bool
-	timeout      time.Duration
-	volumeID     uint32
-	needleID     uint64
-	cookie       uint32
-	offset       uint64
-	size         uint64
+	socketPath string
+	debug      bool
+	timeout    time.Duration
+	volumeID   uint32
+	needleID   uint64
+	cookie     uint32
+	offset     uint64
+	size       uint64
 )
 
 func main() {

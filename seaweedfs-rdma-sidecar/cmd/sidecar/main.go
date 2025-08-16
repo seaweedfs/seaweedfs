@@ -10,9 +10,10 @@ import (
 	"syscall"
 	"time"
 
+	"seaweedfs-rdma-sidecar/pkg/rdma"
+
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
-	"seaweedfs-rdma-sidecar/pkg/rdma"
 )
 
 var (
@@ -91,10 +92,10 @@ func runSidecar(cmd *cobra.Command, args []string) error {
 	}
 
 	mux := http.NewServeMux()
-	
+
 	// Health check endpoint
 	mux.HandleFunc("/health", sidecar.healthHandler)
-	
+
 	// RDMA operations endpoints
 	mux.HandleFunc("/rdma/read", sidecar.rdmaReadHandler)
 	mux.HandleFunc("/rdma/capabilities", sidecar.capabilitiesHandler)
@@ -203,7 +204,7 @@ func (s *Sidecar) capabilitiesHandler(w http.ResponseWriter, r *http.Request) {
 		"port_lid": %d,
 		"supported_auth": %v
 	}`, caps.Version, caps.DeviceName, caps.VendorId, caps.MaxSessions,
-		caps.MaxTransferSize, caps.ActiveSessions, caps.RealRdma, 
+		caps.MaxTransferSize, caps.ActiveSessions, caps.RealRdma,
 		caps.PortGid, caps.PortLid, caps.SupportedAuth)
 }
 

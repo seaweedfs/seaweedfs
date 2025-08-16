@@ -177,7 +177,7 @@ func (c *Client) readResponse(ctx context.Context, conn net.Conn) (*IpcMessage, 
 // Ping sends a ping message to test connectivity
 func (c *Client) Ping(ctx context.Context, clientID *string) (*PongResponse, error) {
 	msg := NewPingMessage(clientID)
-	
+
 	response, err := c.SendMessage(ctx, msg)
 	if err != nil {
 		return nil, err
@@ -209,7 +209,7 @@ func (c *Client) Ping(ctx context.Context, clientID *string) (*PongResponse, err
 // GetCapabilities requests engine capabilities
 func (c *Client) GetCapabilities(ctx context.Context, clientID *string) (*GetCapabilitiesResponse, error) {
 	msg := NewGetCapabilitiesMessage(clientID)
-	
+
 	response, err := c.SendMessage(ctx, msg)
 	if err != nil {
 		return nil, err
@@ -241,7 +241,7 @@ func (c *Client) GetCapabilities(ctx context.Context, clientID *string) (*GetCap
 // StartRead initiates an RDMA read operation
 func (c *Client) StartRead(ctx context.Context, req *StartReadRequest) (*StartReadResponse, error) {
 	msg := NewStartReadMessage(req)
-	
+
 	response, err := c.SendMessage(ctx, msg)
 	if err != nil {
 		return nil, err
@@ -273,7 +273,7 @@ func (c *Client) StartRead(ctx context.Context, req *StartReadRequest) (*StartRe
 // CompleteRead completes an RDMA read operation
 func (c *Client) CompleteRead(ctx context.Context, sessionID string, success bool, bytesTransferred uint64, clientCrc *uint32) (*CompleteReadResponse, error) {
 	msg := NewCompleteReadMessage(sessionID, success, bytesTransferred, clientCrc, nil)
-	
+
 	response, err := c.SendMessage(ctx, msg)
 	if err != nil {
 		return nil, err

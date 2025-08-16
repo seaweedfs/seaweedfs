@@ -18,7 +18,7 @@ const (
 	MsgPing            = "Ping"
 )
 
-// Response message types  
+// Response message types
 const (
 	MsgStartReadResponse       = "StartReadResponse"
 	MsgCompleteReadResponse    = "CompleteReadResponse"
@@ -29,25 +29,25 @@ const (
 
 // StartReadRequest corresponds to Rust StartReadRequest
 type StartReadRequest struct {
-	VolumeID     uint32  `msgpack:"volume_id"`
-	NeedleID     uint64  `msgpack:"needle_id"`
-	Cookie       uint32  `msgpack:"cookie"`
-	Offset       uint64  `msgpack:"offset"`
-	Size         uint64  `msgpack:"size"`
-	RemoteAddr   uint64  `msgpack:"remote_addr"`
-	RemoteKey    uint32  `msgpack:"remote_key"`
-	TimeoutSecs  uint64  `msgpack:"timeout_secs"`
-	AuthToken    *string `msgpack:"auth_token,omitempty"`
+	VolumeID    uint32  `msgpack:"volume_id"`
+	NeedleID    uint64  `msgpack:"needle_id"`
+	Cookie      uint32  `msgpack:"cookie"`
+	Offset      uint64  `msgpack:"offset"`
+	Size        uint64  `msgpack:"size"`
+	RemoteAddr  uint64  `msgpack:"remote_addr"`
+	RemoteKey   uint32  `msgpack:"remote_key"`
+	TimeoutSecs uint64  `msgpack:"timeout_secs"`
+	AuthToken   *string `msgpack:"auth_token,omitempty"`
 }
 
 // StartReadResponse corresponds to Rust StartReadResponse
 type StartReadResponse struct {
-	SessionID     string `msgpack:"session_id"`
-	LocalAddr     uint64 `msgpack:"local_addr"`
-	LocalKey      uint32 `msgpack:"local_key"`
-	TransferSize  uint64 `msgpack:"transfer_size"`
-	ExpectedCrc   uint32 `msgpack:"expected_crc"`
-	ExpiresAtNs   uint64 `msgpack:"expires_at_ns"`
+	SessionID    string `msgpack:"session_id"`
+	LocalAddr    uint64 `msgpack:"local_addr"`
+	LocalKey     uint32 `msgpack:"local_key"`
+	TransferSize uint64 `msgpack:"transfer_size"`
+	ExpectedCrc  uint32 `msgpack:"expected_crc"`
+	ExpiresAtNs  uint64 `msgpack:"expires_at_ns"`
 }
 
 // CompleteReadRequest corresponds to Rust CompleteReadRequest
@@ -73,16 +73,16 @@ type GetCapabilitiesRequest struct {
 
 // GetCapabilitiesResponse corresponds to Rust GetCapabilitiesResponse
 type GetCapabilitiesResponse struct {
-	DeviceName       string   `msgpack:"device_name"`
-	VendorId         uint32   `msgpack:"vendor_id"`
-	MaxTransferSize  uint64   `msgpack:"max_transfer_size"`
-	MaxSessions      usize    `msgpack:"max_sessions"`
-	ActiveSessions   usize    `msgpack:"active_sessions"`
-	PortGid          string   `msgpack:"port_gid"`
-	PortLid          uint16   `msgpack:"port_lid"`
-	SupportedAuth    []string `msgpack:"supported_auth"`
-	Version          string   `msgpack:"version"`
-	RealRdma         bool     `msgpack:"real_rdma"`
+	DeviceName      string   `msgpack:"device_name"`
+	VendorId        uint32   `msgpack:"vendor_id"`
+	MaxTransferSize uint64   `msgpack:"max_transfer_size"`
+	MaxSessions     usize    `msgpack:"max_sessions"`
+	ActiveSessions  usize    `msgpack:"active_sessions"`
+	PortGid         string   `msgpack:"port_gid"`
+	PortLid         uint16   `msgpack:"port_lid"`
+	SupportedAuth   []string `msgpack:"supported_auth"`
+	Version         string   `msgpack:"version"`
+	RealRdma        bool     `msgpack:"real_rdma"`
 }
 
 // usize corresponds to Rust's usize type (platform dependent, but typically uint64 on 64-bit systems)
@@ -94,7 +94,7 @@ type PingRequest struct {
 	ClientID    *string `msgpack:"client_id,omitempty"`
 }
 
-// PongResponse corresponds to Rust PongResponse  
+// PongResponse corresponds to Rust PongResponse
 type PongResponse struct {
 	ClientTimestampNs uint64 `msgpack:"client_timestamp_ns"`
 	ServerTimestampNs uint64 `msgpack:"server_timestamp_ns"`
