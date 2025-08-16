@@ -21,8 +21,8 @@ use tracing_subscriber::{EnvFilter, fmt::layer, prelude::*};
     version = env!("CARGO_PKG_VERSION")
 )]
 struct Args {
-    /// RDMA device name (e.g., mlx5_0)
-    #[arg(short, long, default_value = "mlx5_0")]
+    /// UCX device name preference (e.g., mlx5_0, or 'auto' for UCX auto-selection)
+    #[arg(short, long, default_value = "auto")]
     device: String,
     
     /// RDMA port number
@@ -74,9 +74,9 @@ async fn main() -> anyhow::Result<()> {
         .with(filter)
         .init();
     
-    info!("🚀 Starting SeaweedFS RDMA Engine Server");
+    info!("🚀 Starting SeaweedFS UCX RDMA Engine Server");
     info!("   Version: {}", env!("CARGO_PKG_VERSION"));
-    info!("   Device: {}", args.device);
+    info!("   UCX Device Preference: {}", args.device);
     info!("   Port: {}", args.port);
     info!("   Max Sessions: {}", args.max_sessions);
     info!("   Buffer Size: {} bytes", args.buffer_size);

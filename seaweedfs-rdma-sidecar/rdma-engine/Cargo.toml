@@ -15,9 +15,10 @@ name = "rdma_engine"
 path = "src/lib.rs"
 
 [dependencies]
-# RDMA will be implemented via direct FFI to libibverbs
-# For now we use mock implementation with feature flags
+# UCX (Unified Communication X) for high-performance networking
+# Much better than direct libibverbs - provides unified API across transports
 libc = "0.2"
+libloading = "0.8"  # Dynamic loading of UCX libraries
 
 # Async runtime and networking
 tokio = { version = "1.0", features = ["full"] }
@@ -57,9 +58,9 @@ criterion = "0.5"
 tempfile = "3.0"
 
 [features]
-default = ["mock-rdma"]
-mock-rdma = []
-real-rdma = []  # Will be implemented via direct FFI
+default = ["mock-ucx"]
+mock-ucx = []
+real-ucx = []  # UCX integration for production RDMA
 
 [profile.release]
 opt-level = 3

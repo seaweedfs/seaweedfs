@@ -25,6 +25,7 @@
 use std::sync::Arc;
 use anyhow::Result;
 
+pub mod ucx;
 pub mod rdma;
 pub mod ipc;
 pub mod session;

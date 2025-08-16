@@ -1,6 +1,6 @@
-# RDMA Engine for SeaweedFS
+# UCX-based RDMA Engine for SeaweedFS
 
-High-performance Rust-based RDMA engine for SeaweedFS that accelerates data transfers using InfiniBand/RoCE hardware.
+High-performance Rust-based communication engine for SeaweedFS using [UCX (Unified Communication X)](https://github.com/openucx/ucx) framework that provides optimized data transfers across multiple transports including RDMA (InfiniBand/RoCE), TCP, and shared memory.
 
 ## 🚀 **Complete Rust RDMA Sidecar Scaffolded!**
 
