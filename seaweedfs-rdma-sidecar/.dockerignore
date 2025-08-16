@@ -1,0 +1,65 @@
+# Git
+.git
+.gitignore
+.gitmodules
+
+# Documentation
+*.md
+docs/
+
+# Development files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Build artifacts
+bin/
+target/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Go specific
+vendor/
+*.test
+*.prof
+go.work
+go.work.sum
+
+# Rust specific  
+Cargo.lock
+rdma-engine/target/
+*.pdb
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Test files
+tests/
+scripts/
+*.log
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# IDE and editor files
+*.sublime-*
+.vscode/
+.idea/

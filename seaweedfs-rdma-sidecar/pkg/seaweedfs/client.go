@@ -7,16 +7,17 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/sirupsen/logrus"
 	"seaweedfs-rdma-sidecar/pkg/rdma"
+
+	"github.com/sirupsen/logrus"
 )
 
 // SeaweedFSRDMAClient provides SeaweedFS-specific RDMA operations
 type SeaweedFSRDMAClient struct {
-	rdmaClient     *rdma.Client
-	logger         *logrus.Logger
+	rdmaClient      *rdma.Client
+	logger          *logrus.Logger
 	volumeServerURL string
-	enabled        bool
+	enabled         bool
 }
 
 // Config holds configuration for the SeaweedFS RDMA client
@@ -193,7 +194,7 @@ func (c *SeaweedFSRDMAClient) httpFallback(ctx context.Context, req *NeedleReadR
 	}
 
 	// Build URL for volume server read
-	url := fmt.Sprintf("%s/%d,%s,%d", c.volumeServerURL, req.VolumeID, 
+	url := fmt.Sprintf("%s/%d,%s,%d", c.volumeServerURL, req.VolumeID,
 		fmt.Sprintf("%x", req.NeedleID), req.Cookie)
 
 	if req.Offset > 0 || req.Size > 0 {
@@ -254,7 +255,7 @@ func (c *SeaweedFSRDMAClient) GetStats() map[string]interface{} {
 	stats := make(map[string]interface{})
 	stats["enabled"] = c.enabled
 	stats["connected"] = c.IsEnabled()
-	
+
 	if c.IsEnabled() {
 		caps := c.rdmaClient.GetCapabilities()
 		stats["capabilities"] = map[string]interface{}{
@@ -266,7 +267,7 @@ func (c *SeaweedFSRDMAClient) GetStats() map[string]interface{} {
 			"real_rdma":         caps.RealRdma,
 		}
 	}
-	
+
 	return stats
 }
 

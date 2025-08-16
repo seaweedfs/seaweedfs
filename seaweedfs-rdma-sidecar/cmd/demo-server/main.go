@@ -12,9 +12,10 @@ import (
 	"syscall"
 	"time"
 
+	"seaweedfs-rdma-sidecar/pkg/seaweedfs"
+
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
-	"seaweedfs-rdma-sidecar/pkg/seaweedfs"
 )
 
 var (
@@ -214,7 +215,7 @@ curl "http://localhost:%d/health"
         </pre>
     </div>
 </body>
-</html>`, 
+</html>`,
 		map[bool]string{true: "enabled", false: "disabled"}[s.rdmaClient.IsEnabled()],
 		map[bool]string{true: "RDMA Enabled ✅", false: "RDMA Disabled (HTTP Fallback Only) ⚠️"}[s.rdmaClient.IsEnabled()],
 		port, port, port)
