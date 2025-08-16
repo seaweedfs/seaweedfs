@@ -1,5 +1,5 @@
 # Multi-stage build for Rust RDMA Engine
-FROM rust:1.75-slim as builder
+FROM rust:1.80-slim AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
@@ -7,13 +7,16 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     libudev-dev \
     build-essential \
+    libc6-dev \
+    linux-libc-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Set work directory
 WORKDIR /app
 
 # Copy Rust project files
-COPY rdma-engine/Cargo.toml rdma-engine/Cargo.lock ./
+COPY rdma-engine/Cargo.toml ./
+COPY rdma-engine/Cargo.lock ./
 COPY rdma-engine/src ./src
 
 # Build the release binary

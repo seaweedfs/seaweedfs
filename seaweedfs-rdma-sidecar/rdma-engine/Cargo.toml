@@ -45,7 +45,7 @@ bytes = "1.0"
 parking_lot = "0.12"  # Fast mutexes
 
 # IPC and networking
-nix = "0.27"  # Unix domain sockets and system calls
+nix = { version = "0.27", features = ["mman"] }  # Unix domain sockets and system calls
 async-trait = "0.1"  # Async traits
 
 # Configuration

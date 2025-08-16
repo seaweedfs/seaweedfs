@@ -25,7 +25,7 @@ Thumbs.db
 
 # Build artifacts
 bin/
-target/
+# target/ (commented out for Docker build)
 *.exe
 *.dll
 *.so
@@ -40,7 +40,7 @@ go.work.sum
 
 # Rust specific  
 Cargo.lock
-rdma-engine/target/
+# rdma-engine/target/ (commented out for Docker build)
 *.pdb
 
 # Docker

@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # SeaweedFS Master Server
   seaweedfs-master:
@@ -44,14 +42,15 @@ services:
   rdma-engine:
     build:
       context: .
-      dockerfile: Dockerfile.rdma-engine
+      dockerfile: Dockerfile.rdma-engine.simple
     container_name: rdma-engine
     environment:
       - RUST_LOG=debug
       - RDMA_SOCKET_PATH=/tmp/rdma-engine.sock
     volumes:
       - rdma-socket:/tmp
-      - /dev/hugepages:/dev/hugepages
+      # Note: hugepages mount commented out to avoid host system requirements
+      # - /dev/hugepages:/dev/hugepages
     # Privileged mode for RDMA access (in production, use specific capabilities)
     privileged: true
     networks:

@@ -1,0 +1,32 @@
+# Simplified Dockerfile for Rust RDMA Engine (using pre-built binary)
+FROM debian:bookworm-slim
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    libssl3 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create app user
+RUN useradd -m -u 1001 appuser
+
+# Set work directory
+WORKDIR /app
+
+# Copy pre-built binary from local build
+COPY ./rdma-engine/target/release/rdma-engine-server .
+
+# Change ownership
+RUN chown -R appuser:appuser /app
+USER appuser
+
+# Create socket directory
+RUN mkdir -p /tmp
+
+# Health check
+HEALTHCHECK --interval=5s --timeout=3s --start-period=10s --retries=3 \
+    CMD test -S /tmp/rdma-engine.sock
+
+# Default command
+CMD ["./rdma-engine-server", "--debug"]

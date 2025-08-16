@@ -374,18 +374,21 @@ impl RdmaMemoryManager {
         #[cfg(target_os = "linux")]
         {
             use nix::sys::mman::{mmap, MapFlags, ProtFlags};
-            use std::ptr;
             
             // Round up to hugepage boundary
             let aligned_size = (size + self.config.hugepage_size - 1) & !(self.config.hugepage_size - 1);
             
             let addr = unsafe {
+                // For anonymous mapping, we can use -1 as the file descriptor
+                use std::os::fd::BorrowedFd;
+                let fake_fd = BorrowedFd::borrow_raw(-1); // Anonymous mapping uses -1
+                
                 mmap(
-                    ptr::null_mut(),
-                    aligned_size,
+                    None, // ptr::null_mut() -> None
+                    std::num::NonZero::new(aligned_size).unwrap(), // aligned_size -> NonZero<usize>
                     ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
                     MapFlags::MAP_PRIVATE | MapFlags::MAP_ANONYMOUS | MapFlags::MAP_HUGETLB,
-                    -1,
+                    Some(&fake_fd), // Use borrowed FD for -1 wrapped in Some
                     0,
                 )
             };
