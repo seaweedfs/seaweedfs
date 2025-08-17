@@ -316,11 +316,36 @@ func (s *DemoServer) readHandler(w http.ResponseWriter, r *http.Request) {
 	// Parse parameters
 	query := r.URL.Query()
 	volumeServer := query.Get("volume_server")
-	volumeID, _ := strconv.ParseUint(query.Get("volume"), 10, 32)
-	needleID, _ := strconv.ParseUint(query.Get("needle"), 10, 64)
-	cookie, _ := strconv.ParseUint(query.Get("cookie"), 10, 32)
-	offset, _ := strconv.ParseUint(query.Get("offset"), 10, 64)
-	size, _ := strconv.ParseUint(query.Get("size"), 10, 64)
+	
+	volumeID, err := strconv.ParseUint(query.Get("volume"), 10, 32)
+	if err != nil {
+		http.Error(w, "invalid 'volume' parameter", http.StatusBadRequest)
+		return
+	}
+	
+	needleID, err := strconv.ParseUint(query.Get("needle"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid 'needle' parameter", http.StatusBadRequest)
+		return
+	}
+	
+	cookie, err := strconv.ParseUint(query.Get("cookie"), 10, 32)
+	if err != nil {
+		http.Error(w, "invalid 'cookie' parameter", http.StatusBadRequest)
+		return
+	}
+	
+	offset, err := strconv.ParseUint(query.Get("offset"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid 'offset' parameter", http.StatusBadRequest)
+		return
+	}
+	
+	size, err := strconv.ParseUint(query.Get("size"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid 'size' parameter", http.StatusBadRequest)
+		return
+	}
 
 	if volumeServer == "" {
 		http.Error(w, "volume_server parameter is required", http.StatusBadRequest)
@@ -436,8 +461,14 @@ func (s *DemoServer) benchmarkHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Parse parameters
 	query := r.URL.Query()
-	iterations, _ := strconv.Atoi(query.Get("iterations"))
-	size, _ := strconv.ParseUint(query.Get("size"), 10, 64)
+	iterations, err := strconv.Atoi(query.Get("iterations"))
+	if err != nil {
+		iterations = 10 // default value
+	}
+	size, err := strconv.ParseUint(query.Get("size"), 10, 64)
+	if err != nil {
+		size = 4096 // default value
+	}
 
 	if iterations <= 0 {
 		iterations = 10

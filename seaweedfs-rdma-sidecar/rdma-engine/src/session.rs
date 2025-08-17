@@ -159,7 +159,7 @@ impl RdmaSession {
 /// Session manager for handling multiple concurrent RDMA sessions
 pub struct SessionManager {
     /// Active sessions
-    sessions: RwLock<HashMap<String, Arc<RdmaSession>>>,
+    sessions: Arc<RwLock<HashMap<String, Arc<RdmaSession>>>>,
     /// Maximum number of concurrent sessions
     max_sessions: usize,
     /// Default session timeout
@@ -170,7 +170,7 @@ pub struct SessionManager {
     /// Shutdown flag
     shutdown_flag: Arc<RwLock<bool>>,
     /// Statistics
-    stats: RwLock<SessionManagerStats>,
+    stats: Arc<RwLock<SessionManagerStats>>,
 }
 
 /// Session manager statistics
@@ -200,12 +200,12 @@ impl SessionManager {
         stats.started_at = Some(Instant::now());
         
         Self {
-            sessions: RwLock::new(HashMap::new()),
+            sessions: Arc::new(RwLock::new(HashMap::new())),
             max_sessions,
             default_timeout,
             cleanup_task: RwLock::new(None),
             shutdown_flag: Arc::new(RwLock::new(false)),
-            stats: RwLock::new(stats),
+            stats: Arc::new(RwLock::new(stats)),
         }
     }
     
@@ -348,8 +348,56 @@ impl SessionManager {
     
     /// Start background cleanup task
     pub async fn start_cleanup_task(&self) {
-        info!("📋 Session cleanup task initialized (simplified version)");
-        // TODO: Implement full cleanup task when needed
+        info!("📋 Session cleanup task initialized");
+        
+        let sessions = Arc::clone(&self.sessions);
+        let shutdown_flag = Arc::clone(&self.shutdown_flag);
+        let stats = Arc::clone(&self.stats);
+        
+        let task = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(30)); // Check every 30 seconds
+            
+            loop {
+                interval.tick().await;
+                
+                // Check shutdown flag
+                if *shutdown_flag.read() {
+                    debug!("🛑 Session cleanup task shutting down");
+                    break;
+                }
+                
+                let now = Instant::now();
+                let mut expired_sessions = Vec::new();
+                
+                // Find expired sessions
+                {
+                    let sessions_guard = sessions.read();
+                    for (session_id, session) in sessions_guard.iter() {
+                        if now > session.expires_at {
+                            expired_sessions.push(session_id.clone());
+                        }
+                    }
+                }
+                
+                // Remove expired sessions
+                if !expired_sessions.is_empty() {
+                    let mut sessions_guard = sessions.write();
+                    let mut stats_guard = stats.write();
+                    
+                    for session_id in expired_sessions {
+                        if let Some(session) = sessions_guard.remove(&session_id) {
+                            info!("🗑️  Cleaned up expired session: {} (volume={}, needle={})", 
+                                 session_id, session.volume_id, session.needle_id);
+                            stats_guard.total_sessions_expired += 1;
+                        }
+                    }
+                    
+                    debug!("📊 Active sessions: {}", sessions_guard.len());
+                }
+            }
+        });
+        
+        *self.cleanup_task.write() = Some(task);
     }
     
     /// Shutdown session manager

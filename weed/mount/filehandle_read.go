@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sort"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -98,19 +99,25 @@ func (fh *FileHandle) tryRDMARead(ctx context.Context, fileSize int64, buff []by
 		return 0, 0, fmt.Errorf("no chunks available for RDMA read")
 	}
 
-	// Find the chunk that contains our offset
+	// Find the chunk that contains our offset using binary search
 	var targetChunk *filer_pb.FileChunk
 	var chunkOffset int64
-	currentOffset := int64(0)
-
-	for _, chunk := range chunks {
-		chunkEnd := currentOffset + int64(chunk.Size)
-		if offset >= currentOffset && offset < chunkEnd {
-			targetChunk = chunk
-			chunkOffset = offset - currentOffset
-			break
-		}
-		currentOffset = chunkEnd
+	
+	// Pre-calculate cumulative offsets for efficient binary search
+	cumulativeOffsets := make([]int64, len(chunks)+1)
+	for i, chunk := range chunks {
+		cumulativeOffsets[i+1] = cumulativeOffsets[i] + int64(chunk.Size)
+	}
+	
+	// Use binary search to find the chunk containing the offset
+	chunkIndex := sort.Search(len(chunks), func(i int) bool {
+		return offset < cumulativeOffsets[i+1]
+	})
+	
+	// Verify the chunk actually contains our offset
+	if chunkIndex < len(chunks) && offset >= cumulativeOffsets[chunkIndex] {
+		targetChunk = chunks[chunkIndex]
+		chunkOffset = offset - cumulativeOffsets[chunkIndex]
 	}
 
 	if targetChunk == nil {

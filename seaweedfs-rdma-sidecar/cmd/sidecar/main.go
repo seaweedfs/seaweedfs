@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -23,6 +24,34 @@ var (
 	debug        bool
 	timeout      time.Duration
 )
+
+// Response structs for JSON encoding
+type HealthResponse struct {
+	Status              string `json:"status"`
+	RdmaEngineConnected bool   `json:"rdma_engine_connected"`
+	RdmaEngineLatency   string `json:"rdma_engine_latency"`
+	Timestamp           string `json:"timestamp"`
+}
+
+type CapabilitiesResponse struct {
+	Version         string   `json:"version"`
+	DeviceName      string   `json:"device_name"`
+	VendorId        uint32   `json:"vendor_id"`
+	MaxSessions     uint32   `json:"max_sessions"`
+	MaxTransferSize uint64   `json:"max_transfer_size"`
+	ActiveSessions  uint32   `json:"active_sessions"`
+	RealRdma        bool     `json:"real_rdma"`
+	PortGid         string   `json:"port_gid"`
+	PortLid         uint16   `json:"port_lid"`
+	SupportedAuth   []string `json:"supported_auth"`
+}
+
+type PingResponse struct {
+	Success       bool   `json:"success"`
+	EngineLatency string `json:"engine_latency"`
+	TotalLatency  string `json:"total_latency"`
+	Timestamp     string `json:"timestamp"`
+}
 
 func main() {
 	var rootCmd = &cobra.Command{
@@ -171,12 +200,13 @@ func (s *Sidecar) healthHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{
-		"status": "healthy",
-		"rdma_engine_connected": true,
-		"rdma_engine_latency": "%v",
-		"timestamp": "%s"
-	}`, latency, time.Now().Format(time.RFC3339))
+	response := HealthResponse{
+		Status:              "healthy",
+		RdmaEngineConnected: true,
+		RdmaEngineLatency:   latency.String(),
+		Timestamp:           time.Now().Format(time.RFC3339),
+	}
+	json.NewEncoder(w).Encode(response)
 }
 
 // RDMA capabilities handler
@@ -193,20 +223,19 @@ func (s *Sidecar) capabilitiesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{
-		"version": "%s",
-		"device_name": "%s",
-		"vendor_id": %d,
-		"max_sessions": %d,
-		"max_transfer_size": %d,
-		"active_sessions": %d,
-		"real_rdma": %t,
-		"port_gid": "%s",
-		"port_lid": %d,
-		"supported_auth": %v
-	}`, caps.Version, caps.DeviceName, caps.VendorId, caps.MaxSessions,
-		caps.MaxTransferSize, caps.ActiveSessions, caps.RealRdma,
-		caps.PortGid, caps.PortLid, caps.SupportedAuth)
+	response := CapabilitiesResponse{
+		Version:         caps.Version,
+		DeviceName:      caps.DeviceName,
+		VendorId:        caps.VendorId,
+		MaxSessions:     caps.MaxSessions,
+		MaxTransferSize: caps.MaxTransferSize,
+		ActiveSessions:  caps.ActiveSessions,
+		RealRdma:        caps.RealRdma,
+		PortGid:         caps.PortGid,
+		PortLid:         caps.PortLid,
+		SupportedAuth:   caps.SupportedAuth,
+	}
+	json.NewEncoder(w).Encode(response)
 }
 
 // RDMA ping handler
@@ -230,12 +259,13 @@ func (s *Sidecar) pingHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{
-		"success": true,
-		"engine_latency": "%v",
-		"total_latency": "%v",
-		"timestamp": "%s"
-	}`, latency, totalLatency, time.Now().Format(time.RFC3339))
+	response := PingResponse{
+		Success:       true,
+		EngineLatency: latency.String(),
+		TotalLatency:  totalLatency.String(),
+		Timestamp:     time.Now().Format(time.RFC3339),
+	}
+	json.NewEncoder(w).Encode(response)
 }
 
 // RDMA read handler - uses GET method with query parameters for RESTful read operations
