@@ -31,11 +31,12 @@ type Config struct {
 
 // NeedleReadRequest represents a SeaweedFS needle read request
 type NeedleReadRequest struct {
-	VolumeID uint32
-	NeedleID uint64
-	Cookie   uint32
-	Offset   uint64
-	Size     uint64
+	VolumeID      uint32
+	NeedleID      uint64
+	Cookie        uint32
+	Offset        uint64
+	Size          uint64
+	VolumeServer  string // Override volume server URL for this request
 }
 
 // NeedleReadResponse represents the result of a needle read
@@ -180,12 +181,18 @@ func (c *SeaweedFSRDMAClient) ReadNeedleRange(ctx context.Context, volumeID uint
 
 // httpFallback performs HTTP fallback read from SeaweedFS volume server
 func (c *SeaweedFSRDMAClient) httpFallback(ctx context.Context, req *NeedleReadRequest) ([]byte, error) {
-	if c.volumeServerURL == "" {
-		return nil, fmt.Errorf("no volume server URL configured for HTTP fallback")
+	// Use volume server from request, fallback to configured URL
+	volumeServerURL := req.VolumeServer
+	if volumeServerURL == "" {
+		volumeServerURL = c.volumeServerURL
+	}
+	
+	if volumeServerURL == "" {
+		return nil, fmt.Errorf("no volume server URL provided in request or configured")
 	}
 
 	// Build URL for volume server read
-	url := fmt.Sprintf("%s/%d,%s,%d", c.volumeServerURL, req.VolumeID,
+	url := fmt.Sprintf("%s/%d,%s,%d", volumeServerURL, req.VolumeID,
 		fmt.Sprintf("%x", req.NeedleID), req.Cookie)
 
 	if req.Offset > 0 || req.Size > 0 {

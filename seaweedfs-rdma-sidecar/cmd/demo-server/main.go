@@ -295,11 +295,17 @@ func (s *DemoServer) readHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Parse parameters
 	query := r.URL.Query()
+	volumeServer := query.Get("volume_server")
 	volumeID, _ := strconv.ParseUint(query.Get("volume"), 10, 32)
 	needleID, _ := strconv.ParseUint(query.Get("needle"), 10, 64)
 	cookie, _ := strconv.ParseUint(query.Get("cookie"), 10, 32)
 	offset, _ := strconv.ParseUint(query.Get("offset"), 10, 64)
 	size, _ := strconv.ParseUint(query.Get("size"), 10, 64)
+
+	if volumeServer == "" {
+		http.Error(w, "volume_server parameter is required", http.StatusBadRequest)
+		return
+	}
 
 	if volumeID == 0 || needleID == 0 {
 		http.Error(w, "volume and needle parameters are required", http.StatusBadRequest)
@@ -315,11 +321,12 @@ func (s *DemoServer) readHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.logger.WithFields(logrus.Fields{
-		"volume_id": volumeID,
-		"needle_id": needleID,
-		"cookie":    fmt.Sprintf("0x%x", cookie),
-		"offset":    offset,
-		"size":      size,
+		"volume_server": volumeServer,
+		"volume_id":     volumeID,
+		"needle_id":     needleID,
+		"cookie":        fmt.Sprintf("0x%x", cookie),
+		"offset":        offset,
+		"size":          size,
 	}).Info("📖 Processing needle read request")
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
@@ -327,11 +334,12 @@ func (s *DemoServer) readHandler(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 	req := &seaweedfs.NeedleReadRequest{
-		VolumeID: uint32(volumeID),
-		NeedleID: needleID,
-		Cookie:   uint32(cookie),
-		Offset:   offset,
-		Size:     size,
+		VolumeID:     uint32(volumeID),
+		NeedleID:     needleID,
+		Cookie:       uint32(cookie),
+		Offset:       offset,
+		Size:         size,
+		VolumeServer: volumeServer,
 	}
 
 	resp, err := s.rdmaClient.ReadNeedle(ctx, req)

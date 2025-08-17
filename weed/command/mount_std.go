@@ -253,6 +253,13 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		UidGidMapper:       uidGidMapper,
 		DisableXAttr:       *option.disableXAttr,
 		IsMacOs:            runtime.GOOS == "darwin",
+		// RDMA acceleration options
+		RdmaEnabled:       *option.rdmaEnabled,
+		RdmaSidecarAddr:   *option.rdmaSidecarAddr,
+		RdmaFallback:      *option.rdmaFallback,
+		RdmaReadOnly:      *option.rdmaReadOnly,
+		RdmaMaxConcurrent: *option.rdmaMaxConcurrent,
+		RdmaTimeoutMs:     *option.rdmaTimeoutMs,
 	})
 
 	// create mount root

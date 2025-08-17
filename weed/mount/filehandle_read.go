@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strconv"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -64,6 +66,17 @@ func (fh *FileHandle) readFromChunksWithContext(ctx context.Context, buff []byte
 		return int64(totalRead), 0, nil
 	}
 
+	// Try RDMA acceleration first if available
+	if fh.wfs.rdmaClient != nil && fh.wfs.option.RdmaEnabled {
+		totalRead, ts, err := fh.tryRDMARead(ctx, fileSize, buff, offset, entry)
+		if err == nil {
+			glog.V(4).Infof("RDMA read successful for %s [%d,%d] %d", fileFullPath, offset, offset+int64(totalRead), totalRead)
+			return int64(totalRead), ts, nil
+		}
+		glog.V(4).Infof("RDMA read failed for %s, falling back to HTTP: %v", fileFullPath, err)
+	}
+
+	// Fall back to normal chunk reading
 	totalRead, ts, err := fh.entryChunkGroup.ReadDataAt(ctx, fileSize, buff, offset)
 
 	if err != nil && err != io.EOF {
@@ -74,6 +87,109 @@ func (fh *FileHandle) readFromChunksWithContext(ctx context.Context, buff []byte
 
 	return int64(totalRead), ts, err
 }
+
+// tryRDMARead attempts to read file data using RDMA acceleration
+func (fh *FileHandle) tryRDMARead(ctx context.Context, fileSize int64, buff []byte, offset int64, entry *LockedEntry) (int64, int64, error) {
+	// For now, we'll try to read the chunks directly using RDMA
+	// This is a simplified approach - in a full implementation, we'd need to
+	// handle chunk boundaries, multiple chunks, etc.
+	
+	chunks := entry.GetEntry().Chunks
+	if len(chunks) == 0 {
+		return 0, 0, fmt.Errorf("no chunks available for RDMA read")
+	}
+
+	// Find the chunk that contains our offset
+	var targetChunk *filer_pb.FileChunk
+	var chunkOffset int64
+	currentOffset := int64(0)
+	
+	for _, chunk := range chunks {
+		chunkEnd := currentOffset + int64(chunk.Size)
+		if offset >= currentOffset && offset < chunkEnd {
+			targetChunk = chunk
+			chunkOffset = offset - currentOffset
+			break
+		}
+		currentOffset = chunkEnd
+	}
+
+	if targetChunk == nil {
+		return 0, 0, fmt.Errorf("no chunk found for offset %d", offset)
+	}
+
+	// Parse the chunk's file ID
+	volumeID, needleID, cookie, err := fh.parseFileId(targetChunk.FileId)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to parse chunk fileId %s: %w", targetChunk.FileId, err)
+	}
+
+	// Calculate how much to read from this chunk
+	remainingInChunk := int64(targetChunk.Size) - chunkOffset
+	readSize := min(int64(len(buff)), remainingInChunk)
+
+	glog.V(4).Infof("RDMA read attempt: chunk=%s, volume=%d, needle=%x, cookie=%d, chunkOffset=%d, readSize=%d",
+		targetChunk.FileId, volumeID, needleID, cookie, chunkOffset, readSize)
+
+	// Try RDMA read
+	data, isRDMA, err := fh.wfs.rdmaClient.ReadNeedle(ctx, volumeID, needleID, cookie, uint64(chunkOffset), uint64(readSize))
+	if err != nil {
+		return 0, 0, fmt.Errorf("RDMA read failed: %w", err)
+	}
+
+	if !isRDMA {
+		return 0, 0, fmt.Errorf("RDMA not available for chunk")
+	}
+
+	// Copy data to buffer
+	copied := copy(buff, data)
+	return int64(copied), targetChunk.ModifiedTsNs, nil
+}
+
+// parseFileId parses a SeaweedFS fileId into volume, needle, and cookie
+func (fh *FileHandle) parseFileId(fileId string) (volumeID uint32, needleID uint64, cookie uint32, err error) {
+	parts := strings.Split(fileId, ",")
+	if len(parts) != 2 {
+		return 0, 0, 0, fmt.Errorf("invalid fileId format: %s", fileId)
+	}
+
+	// Parse volume ID
+	vol, err := strconv.ParseUint(parts[0], 10, 32)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("invalid volume ID: %s", parts[0])
+	}
+	volumeID = uint32(vol)
+
+	// Parse needle ID and cookie from the second part
+	needleParts := strings.Split(parts[1], "_")
+	if len(needleParts) < 1 {
+		return 0, 0, 0, fmt.Errorf("invalid needle format: %s", parts[1])
+	}
+
+	// Extract needle ID (hex) and cookie
+	needleStr := needleParts[0]
+	if len(needleStr) > 8 {
+		// Extract cookie from the end (last 8 hex chars)
+		cookieStr := needleStr[len(needleStr)-8:]
+		needleStr = needleStr[:len(needleStr)-8]
+		
+		cookieVal, err := strconv.ParseUint(cookieStr, 16, 32)
+		if err != nil {
+			return 0, 0, 0, fmt.Errorf("invalid cookie: %s", cookieStr)
+		}
+		cookie = uint32(cookieVal)
+	}
+
+	needleVal, err := strconv.ParseUint(needleStr, 16, 64)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("invalid needle ID: %s", needleStr)
+	}
+	needleID = needleVal
+
+	return volumeID, needleID, cookie, nil
+}
+
+
 
 func (fh *FileHandle) downloadRemoteEntry(entry *LockedEntry) error {
 

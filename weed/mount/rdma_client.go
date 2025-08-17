@@ -8,10 +8,12 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
 // RDMAMountClient provides RDMA acceleration for SeaweedFS mount operations
@@ -22,12 +24,25 @@ type RDMAMountClient struct {
 	timeout       time.Duration
 	semaphore     chan struct{}
 	
+	// Volume lookup
+	lookupFileIdFn  wdclient.LookupFileIdFunctionType
+	volumeCache     map[uint32]*VolumeLocation
+	cacheMutex      sync.RWMutex
+	cacheTTL        time.Duration
+	
 	// Statistics
 	totalRequests   int64
 	successfulReads int64
 	failedReads     int64
 	totalBytesRead  int64
 	totalLatencyNs  int64
+}
+
+// VolumeLocation represents a cached volume location
+type VolumeLocation struct {
+	VolumeID    uint32
+	CachedAt    time.Time
+	BestAddress string // HTTP URL of the best volume server
 }
 
 // RDMAReadRequest represents a request to read data via RDMA
@@ -61,15 +76,18 @@ type RDMAHealthResponse struct {
 }
 
 // NewRDMAMountClient creates a new RDMA client for mount operations
-func NewRDMAMountClient(sidecarAddr string, maxConcurrent int, timeoutMs int) (*RDMAMountClient, error) {
+func NewRDMAMountClient(sidecarAddr string, lookupFileIdFn wdclient.LookupFileIdFunctionType, maxConcurrent int, timeoutMs int) (*RDMAMountClient, error) {
 	client := &RDMAMountClient{
-		sidecarAddr:   sidecarAddr,
-		maxConcurrent: maxConcurrent,
-		timeout:       time.Duration(timeoutMs) * time.Millisecond,
+		sidecarAddr:    sidecarAddr,
+		maxConcurrent:  maxConcurrent,
+		timeout:        time.Duration(timeoutMs) * time.Millisecond,
 		httpClient: &http.Client{
 			Timeout: time.Duration(timeoutMs) * time.Millisecond,
 		},
-		semaphore: make(chan struct{}, maxConcurrent),
+		semaphore:      make(chan struct{}, maxConcurrent),
+		lookupFileIdFn: lookupFileIdFn,
+		volumeCache:    make(map[uint32]*VolumeLocation),
+		cacheTTL:       5 * time.Minute, // Cache volume locations for 5 minutes
 	}
 
 	// Test connectivity and RDMA availability
@@ -81,6 +99,63 @@ func NewRDMAMountClient(sidecarAddr string, maxConcurrent int, timeoutMs int) (*
 		sidecarAddr, maxConcurrent, client.timeout)
 
 	return client, nil
+}
+
+// lookupVolumeLocation finds the best volume server for a given volume ID
+func (c *RDMAMountClient) lookupVolumeLocation(ctx context.Context, volumeID uint32, needleID uint64, cookie uint32) (string, error) {
+	// Check cache first
+	c.cacheMutex.RLock()
+	if cached, exists := c.volumeCache[volumeID]; exists {
+		if time.Since(cached.CachedAt) < c.cacheTTL {
+			c.cacheMutex.RUnlock()
+			return cached.BestAddress, nil
+		}
+	}
+	c.cacheMutex.RUnlock()
+
+	// Cache miss or expired, lookup using the provided function
+	glog.V(4).Infof("Looking up volume %d from lookup function", volumeID)
+	
+	// Create a file ID for lookup (format: volumeId,needleId,cookie)
+	fileId := fmt.Sprintf("%d,%x,%d", volumeID, needleID, cookie)
+	
+	targetUrls, err := c.lookupFileIdFn(ctx, fileId)
+	if err != nil {
+		return "", fmt.Errorf("failed to lookup volume %d: %w", volumeID, err)
+	}
+
+	if len(targetUrls) == 0 {
+		return "", fmt.Errorf("no locations found for volume %d", volumeID)
+	}
+
+	// Choose the first URL and extract the server address
+	targetUrl := targetUrls[0]
+	// Extract server address from URL like "http://server:port/fileId"
+	parts := strings.Split(targetUrl, "/")
+	if len(parts) < 3 {
+		return "", fmt.Errorf("invalid target URL format: %s", targetUrl)
+	}
+	bestAddress := fmt.Sprintf("http://%s", parts[2])
+
+	// Update cache
+	c.cacheMutex.Lock()
+	c.volumeCache[volumeID] = &VolumeLocation{
+		VolumeID:    volumeID,
+		CachedAt:    time.Now(),
+		BestAddress: bestAddress,
+	}
+	c.cacheMutex.Unlock()
+
+	glog.V(4).Infof("Volume %d located at %s", volumeID, bestAddress)
+	return bestAddress, nil
+}
+
+// invalidateVolumeCache removes a volume from the cache (useful when reads fail)
+func (c *RDMAMountClient) invalidateVolumeCache(volumeID uint32) {
+	c.cacheMutex.Lock()
+	delete(c.volumeCache, volumeID)
+	c.cacheMutex.Unlock()
+	glog.V(4).Infof("Invalidated cache for volume %d", volumeID)
 }
 
 // healthCheck verifies that the RDMA sidecar is available and functioning
@@ -138,9 +213,16 @@ func (c *RDMAMountClient) ReadNeedle(ctx context.Context, volumeID uint32, needl
 	atomic.AddInt64(&c.totalRequests, 1)
 	startTime := time.Now()
 
-	// Prepare request URL
-	reqURL := fmt.Sprintf("http://%s/read?volume=%d&needle=%d&cookie=%d&offset=%d&size=%d",
-		c.sidecarAddr, volumeID, needleID, cookie, offset, size)
+	// Lookup volume location
+	volumeServer, err := c.lookupVolumeLocation(ctx, volumeID, needleID, cookie)
+	if err != nil {
+		atomic.AddInt64(&c.failedReads, 1)
+		return nil, false, fmt.Errorf("failed to lookup volume %d: %w", volumeID, err)
+	}
+
+	// Prepare request URL with volume_server parameter
+	reqURL := fmt.Sprintf("http://%s/read?volume=%d&needle=%d&cookie=%d&offset=%d&size=%d&volume_server=%s",
+		c.sidecarAddr, volumeID, needleID, cookie, offset, size, volumeServer)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
 	if err != nil {
