@@ -7,12 +7,12 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
@@ -227,11 +227,11 @@ func (c *RDMAMountClient) ReadNeedle(ctx context.Context, volumeID uint32, needl
 		glog.V(4).Infof("🔥 Using zero-copy temp file: %s", tempFilePath)
 
 		// Allocate buffer for temp file read
-		expectedSize := size
-		if expectedSize == 0 {
-			expectedSize = 1024 * 1024 // Default 1MB
+		var bufferSize uint64 = 1024 * 1024 // Default 1MB
+		if size > 0 {
+			bufferSize = size
 		}
-		buffer := make([]byte, expectedSize)
+		buffer := make([]byte, bufferSize)
 
 		n, err := c.readFromTempFile(tempFilePath, buffer)
 		if err != nil {
@@ -270,19 +270,22 @@ func (c *RDMAMountClient) ReadNeedleWithFallback(ctx context.Context, volumeID u
 		return data, isRDMA, nil
 	}
 
+	// Store RDMA error for proper reporting
+	rdmaErr := err
+
 	// Log RDMA failure
-	glog.V(2).Infof("RDMA read failed for volume=%d, needle=%d: %v, falling back to HTTP", volumeID, needleID, err)
+	glog.V(2).Infof("RDMA read failed for volume=%d, needle=%d: %v, falling back to HTTP", volumeID, needleID, rdmaErr)
 
 	// Fall back to HTTP if provided
 	if httpFallback != nil {
 		data, err := httpFallback()
 		if err != nil {
-			return nil, false, fmt.Errorf("both RDMA and HTTP fallback failed: RDMA=%v, HTTP=%v", err, err)
+			return nil, false, fmt.Errorf("both RDMA and HTTP fallback failed: RDMA=%v, HTTP=%v", rdmaErr, err)
 		}
 		return data, false, nil
 	}
 
-	return nil, false, err
+	return nil, false, rdmaErr
 }
 
 // GetStats returns current RDMA client statistics
@@ -317,8 +320,8 @@ func (c *RDMAMountClient) GetStats() map[string]interface{} {
 
 // Close shuts down the RDMA client and releases resources
 func (c *RDMAMountClient) Close() error {
-	// Close semaphore channel
-	close(c.semaphore)
+	// No need to close semaphore channel; closing it may cause panics if goroutines are still using it.
+	// The semaphore will be garbage collected when the client is no longer referenced.
 
 	// Log final statistics
 	stats := c.GetStats()
@@ -334,45 +337,18 @@ func (c *RDMAMountClient) IsHealthy() bool {
 }
 
 // ParseFileId extracts volume ID, needle ID, and cookie from a SeaweedFS file ID
+// Uses existing SeaweedFS parsing logic to ensure compatibility
 func ParseFileId(fileId string) (volumeID uint32, needleID uint64, cookie uint32, err error) {
-	// Parse file ID format: "volumeId,needleIdCookie"
-	// Example: "3,01637037d6"
-	parts := strings.Split(fileId, ",")
-	if len(parts) != 2 {
-		return 0, 0, 0, fmt.Errorf("invalid file ID format: %s", fileId)
-	}
-
-	// Parse volume ID
-	vol, err := strconv.ParseUint(parts[0], 10, 32)
+	// Use existing SeaweedFS file ID parsing
+	fid, err := needle.ParseFileIdFromString(fileId)
 	if err != nil {
-		return 0, 0, 0, fmt.Errorf("invalid volume ID: %s", parts[0])
+		return 0, 0, 0, fmt.Errorf("failed to parse file ID %s: %w", fileId, err)
 	}
-	volumeID = uint32(vol)
-
-	// Parse needle ID and cookie (combined hex string)
-	needleCookieHex := parts[1]
-	if len(needleCookieHex) < 8 {
-		return 0, 0, 0, fmt.Errorf("invalid needle ID format: %s", needleCookieHex)
-	}
-
-	// Last 8 hex characters are the cookie
-	cookieHex := needleCookieHex[len(needleCookieHex)-8:]
-	needleHex := needleCookieHex[:len(needleCookieHex)-8]
-
-	// Parse needle ID
-	needle, err := strconv.ParseUint(needleHex, 16, 64)
-	if err != nil {
-		return 0, 0, 0, fmt.Errorf("invalid needle ID: %s", needleHex)
-	}
-	needleID = needle
-
-	// Parse cookie
-	cook, err := strconv.ParseUint(cookieHex, 16, 32)
-	if err != nil {
-		return 0, 0, 0, fmt.Errorf("invalid cookie: %s", cookieHex)
-	}
-	cookie = uint32(cook)
-
+	
+	volumeID = uint32(fid.VolumeId)
+	needleID = uint64(fid.Key)
+	cookie = uint32(fid.Cookie)
+	
 	return volumeID, needleID, cookie, nil
 }
 

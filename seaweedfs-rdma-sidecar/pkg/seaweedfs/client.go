@@ -259,13 +259,13 @@ func (c *SeaweedFSRDMAClient) httpFallback(ctx context.Context, req *NeedleReadR
 	volumeId := needle.VolumeId(req.VolumeID)
 	needleId := types.NeedleId(req.NeedleID)
 	cookie := types.Cookie(req.Cookie)
-	
+
 	fileId := &needle.FileId{
 		VolumeId: volumeId,
 		Key:      needleId,
 		Cookie:   cookie,
 	}
-	
+
 	url := fmt.Sprintf("%s/%s", volumeServerURL, fileId.String())
 
 	if req.Offset > 0 || req.Size > 0 {

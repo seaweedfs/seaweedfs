@@ -152,13 +152,15 @@ func (fh *FileHandle) parseFileId(fileId string) (volumeID uint32, needleID uint
 	if err != nil {
 		return 0, 0, 0, fmt.Errorf("failed to parse file ID %s: %w", fileId, err)
 	}
-	
+
 	volumeID = uint32(fid.VolumeId)
 	needleID = uint64(fid.Key)
 	cookie = uint32(fid.Cookie)
-	
+
 	return volumeID, needleID, cookie, nil
 }
+
+
 
 func (fh *FileHandle) downloadRemoteEntry(entry *LockedEntry) error {
 
