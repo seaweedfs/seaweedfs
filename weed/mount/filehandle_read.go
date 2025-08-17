@@ -9,7 +9,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
 
 func (fh *FileHandle) lockForRead(startOffset int64, size int) {
@@ -122,7 +121,7 @@ func (fh *FileHandle) tryRDMARead(ctx context.Context, fileSize int64, buff []by
 	}
 
 	// Parse the chunk's file ID
-	volumeID, needleID, cookie, err := parseFileId(targetChunk.FileId)
+	volumeID, needleID, cookie, err := ParseFileId(targetChunk.FileId)
 	if err != nil {
 		return 0, 0, fmt.Errorf("failed to parse chunk fileId %s: %w", targetChunk.FileId, err)
 	}
@@ -147,22 +146,6 @@ func (fh *FileHandle) tryRDMARead(ctx context.Context, fileSize int64, buff []by
 	// Copy data to buffer
 	copied := copy(buff, data)
 	return int64(copied), targetChunk.ModifiedTsNs, nil
-}
-
-// parseFileId parses a SeaweedFS fileId into volume, needle, and cookie
-// This is a shared utility function that can be used by RDMA and other mount components
-func parseFileId(fileId string) (volumeID uint32, needleID uint64, cookie uint32, err error) {
-	// Use existing SeaweedFS file ID parsing
-	fid, err := needle.ParseFileIdFromString(fileId)
-	if err != nil {
-		return 0, 0, 0, fmt.Errorf("failed to parse file ID %s: %w", fileId, err)
-	}
-
-	volumeID = uint32(fid.VolumeId)
-	needleID = uint64(fid.Key)
-	cookie = uint32(fid.Cookie)
-
-	return volumeID, needleID, cookie, nil
 }
 
 func (fh *FileHandle) downloadRemoteEntry(entry *LockedEntry) error {
