@@ -148,6 +148,7 @@ func (c *SeaweedFSRDMAClient) IsEnabled() bool {
 // ReadNeedle reads a needle using RDMA fast path or HTTP fallback
 func (c *SeaweedFSRDMAClient) ReadNeedle(ctx context.Context, req *NeedleReadRequest) (*NeedleReadResponse, error) {
 	start := time.Now()
+	var rdmaErr error
 
 	// Try RDMA fast path first
 	if c.IsEnabled() {
@@ -169,6 +170,7 @@ func (c *SeaweedFSRDMAClient) ReadNeedle(ctx context.Context, req *NeedleReadReq
 		resp, err := c.rdmaClient.Read(ctx, rdmaReq)
 		if err != nil {
 			c.logger.WithError(err).Warn("⚠️  RDMA read failed, falling back to HTTP")
+			rdmaErr = err
 		} else {
 			c.logger.WithFields(logrus.Fields{
 				"volume_id":     req.VolumeID,
@@ -221,7 +223,10 @@ func (c *SeaweedFSRDMAClient) ReadNeedle(ctx context.Context, req *NeedleReadReq
 
 	data, err := c.httpFallback(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("both RDMA and HTTP failed: %w", err)
+		if rdmaErr != nil {
+			return nil, fmt.Errorf("both RDMA and HTTP fallback failed: RDMA=%v, HTTP=%v", rdmaErr, err)
+		}
+		return nil, fmt.Errorf("HTTP fallback failed: %w", err)
 	}
 
 	return &NeedleReadResponse{
