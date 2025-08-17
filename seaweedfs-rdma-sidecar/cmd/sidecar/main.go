@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -298,16 +299,20 @@ func parseUint32(s string, defaultValue uint32) uint32 {
 	if s == "" {
 		return defaultValue
 	}
-	var value uint32
-	fmt.Sscanf(s, "%d", &value)
-	return value
+	val, err := strconv.ParseUint(s, 10, 32)
+	if err != nil {
+		return defaultValue
+	}
+	return uint32(val)
 }
 
 func parseUint64(s string, defaultValue uint64) uint64 {
 	if s == "" {
 		return defaultValue
 	}
-	var value uint64
-	fmt.Sscanf(s, "%d", &value)
-	return value
+	val, err := strconv.ParseUint(s, 10, 64)
+	if err != nil {
+		return defaultValue
+	}
+	return val
 }

@@ -178,7 +178,7 @@ services:
         sleep 30 &&
         echo 'Starting SeaweedFS mount with RDMA acceleration...' &&
         mkdir -p /mnt/seaweedfs &&
-        /usr/local/bin/weed mount -filer=seaweedfs-filer:8888 -dir=/mnt/seaweedfs -allowOthers=true -debug
+        /usr/local/bin/weed mount -filer=${FILER_ADDR} -dir=${MOUNT_POINT} -allowOthers=true -rdma.enabled=${RDMA_ENABLED} -rdma.sidecar=${RDMA_SIDECAR_ADDR} -rdma.fallback=${RDMA_FALLBACK} -rdma.maxConcurrent=${RDMA_MAX_CONCURRENT} -rdma.timeoutMs=${RDMA_TIMEOUT_MS} -debug=${DEBUG}
       "
     depends_on:
       seaweedfs-filer:

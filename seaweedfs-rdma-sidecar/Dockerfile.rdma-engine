@@ -52,9 +52,10 @@ USER appuser
 # Expose any needed ports (none for this service as it uses Unix sockets)
 # EXPOSE 18515
 
-# Health check
+# Health check - check if the process is running and any socket exists in /tmp/rdma
+# This is more robust than hardcoding a specific socket path
 HEALTHCHECK --interval=5s --timeout=3s --start-period=10s --retries=3 \
-    CMD test -S /tmp/rdma-engine.sock
+    CMD pgrep rdma-engine-server >/dev/null && test -d /tmp/rdma && test "$(find /tmp/rdma -name '*.sock' | wc -l)" -gt 0
 
 # Default command
 CMD ["./rdma-engine-server", "--debug"]
