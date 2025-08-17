@@ -25,6 +25,9 @@ var (
 	enableRDMA      bool
 	enableZeroCopy  bool
 	tempDir         string
+	enablePooling   bool
+	maxConnections  int
+	maxIdleTime     time.Duration
 	debug           bool
 )
 
@@ -44,6 +47,9 @@ the RDMA fast path with HTTP fallback capabilities.`,
 	rootCmd.Flags().BoolVarP(&enableRDMA, "enable-rdma", "e", true, "Enable RDMA acceleration")
 	rootCmd.Flags().BoolVarP(&enableZeroCopy, "enable-zerocopy", "z", true, "Enable zero-copy optimization via temp files")
 	rootCmd.Flags().StringVarP(&tempDir, "temp-dir", "t", "/tmp/rdma-cache", "Temp directory for zero-copy files")
+	rootCmd.Flags().BoolVar(&enablePooling, "enable-pooling", true, "Enable RDMA connection pooling")
+	rootCmd.Flags().IntVar(&maxConnections, "max-connections", 10, "Maximum connections in RDMA pool")
+	rootCmd.Flags().DurationVar(&maxIdleTime, "max-idle-time", 5*time.Minute, "Maximum idle time for pooled connections")
 	rootCmd.Flags().BoolVarP(&debug, "debug", "d", false, "Enable debug logging")
 
 	if err := rootCmd.Execute(); err != nil {
@@ -72,6 +78,9 @@ func runServer(cmd *cobra.Command, args []string) error {
 		"enable_rdma":       enableRDMA,
 		"enable_zerocopy":   enableZeroCopy,
 		"temp_dir":          tempDir,
+		"enable_pooling":    enablePooling,
+		"max_connections":   maxConnections,
+		"max_idle_time":     maxIdleTime,
 		"debug":             debug,
 	}).Info("🚀 Starting SeaweedFS RDMA Demo Server")
 
@@ -84,6 +93,9 @@ func runServer(cmd *cobra.Command, args []string) error {
 		Logger:          logger,
 		TempDir:         tempDir,
 		UseZeroCopy:     enableZeroCopy,
+		EnablePooling:   enablePooling,
+		MaxConnections:  maxConnections,
+		MaxIdleTime:     maxIdleTime,
 	}
 
 	rdmaClient, err := seaweedfs.NewSeaweedFSRDMAClient(config)
@@ -391,7 +403,7 @@ func (s *DemoServer) readHandler(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Temp-File", resp.TempFilePath)
 		w.Header().Set("X-Source", resp.Source)
 		w.Header().Set("X-RDMA-Used", fmt.Sprintf("%t", resp.IsRDMA))
-		
+
 		// For zero-copy, return minimal JSON response and let client read from temp file
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(result)

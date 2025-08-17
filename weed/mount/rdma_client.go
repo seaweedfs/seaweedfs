@@ -53,7 +53,7 @@ type RDMAReadResponse struct {
 	DataSize  int    `json:"data_size"`
 	SessionID string `json:"session_id,omitempty"`
 	ErrorMsg  string `json:"error,omitempty"`
-	
+
 	// Zero-copy optimization fields
 	UseTempFile bool   `json:"use_temp_file"`
 	TempFile    string `json:"temp_file"`
@@ -225,14 +225,14 @@ func (c *RDMAMountClient) ReadNeedle(ctx context.Context, volumeID uint32, needl
 	if useTempFile && tempFilePath != "" {
 		// Zero-copy path: read from temp file (page cache)
 		glog.V(4).Infof("🔥 Using zero-copy temp file: %s", tempFilePath)
-		
+
 		// Allocate buffer for temp file read
 		expectedSize := size
 		if expectedSize == 0 {
 			expectedSize = 1024 * 1024 // Default 1MB
 		}
 		buffer := make([]byte, expectedSize)
-		
+
 		n, err := c.readFromTempFile(tempFilePath, buffer)
 		if err != nil {
 			glog.V(2).Infof("Zero-copy failed, falling back to HTTP body: %v", err)
@@ -381,22 +381,22 @@ func (c *RDMAMountClient) readFromTempFile(tempFilePath string, buffer []byte) (
 	if tempFilePath == "" {
 		return 0, fmt.Errorf("empty temp file path")
 	}
-	
+
 	// Open temp file for reading
 	file, err := os.Open(tempFilePath)
 	if err != nil {
 		return 0, fmt.Errorf("failed to open temp file %s: %w", tempFilePath, err)
 	}
 	defer file.Close()
-	
+
 	// Read from temp file (this should be served from page cache)
 	n, err := file.Read(buffer)
 	if err != nil && err != io.EOF {
 		return n, fmt.Errorf("failed to read from temp file: %w", err)
 	}
-	
+
 	glog.V(4).Infof("🔥 Zero-copy read: %d bytes from temp file %s", n, tempFilePath)
-	
+
 	// Clean up temp file after reading
 	go func() {
 		if removeErr := os.Remove(tempFilePath); removeErr != nil {
@@ -405,6 +405,6 @@ func (c *RDMAMountClient) readFromTempFile(tempFilePath string, buffer []byte) (
 			glog.V(4).Infof("🧹 Cleaned up temp file %s", tempFilePath)
 		}
 	}()
-	
+
 	return n, nil
 }
