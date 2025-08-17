@@ -34,8 +34,6 @@ type RDMAMountClient struct {
 	totalLatencyNs  int64
 }
 
-
-
 // RDMAReadRequest represents a request to read data via RDMA
 type RDMAReadRequest struct {
 	VolumeID uint32 `json:"volume_id"`
@@ -94,9 +92,9 @@ func NewRDMAMountClient(sidecarAddr string, lookupFileIdFn wdclient.LookupFileId
 func (c *RDMAMountClient) lookupVolumeLocation(ctx context.Context, volumeID uint32, needleID uint64, cookie uint32) (string, error) {
 	// Create a file ID for lookup (format: volumeId,needleId,cookie)
 	fileId := fmt.Sprintf("%d,%x,%d", volumeID, needleID, cookie)
-	
+
 	glog.V(4).Infof("Looking up volume %d using fileId %s", volumeID, fileId)
-	
+
 	targetUrls, err := c.lookupFileIdFn(ctx, fileId)
 	if err != nil {
 		return "", fmt.Errorf("failed to lookup volume %d: %w", volumeID, err)
@@ -118,8 +116,6 @@ func (c *RDMAMountClient) lookupVolumeLocation(ctx context.Context, volumeID uin
 	glog.V(4).Infof("Volume %d located at %s", volumeID, bestAddress)
 	return bestAddress, nil
 }
-
-
 
 // healthCheck verifies that the RDMA sidecar is available and functioning
 func (c *RDMAMountClient) healthCheck() error {
