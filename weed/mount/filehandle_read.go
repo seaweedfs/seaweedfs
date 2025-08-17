@@ -4,12 +4,11 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"strconv"
-	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
 
 func (fh *FileHandle) lockForRead(startOffset int64, size int) {
@@ -93,7 +92,7 @@ func (fh *FileHandle) tryRDMARead(ctx context.Context, fileSize int64, buff []by
 	// For now, we'll try to read the chunks directly using RDMA
 	// This is a simplified approach - in a full implementation, we'd need to
 	// handle chunk boundaries, multiple chunks, etc.
-	
+
 	chunks := entry.GetEntry().Chunks
 	if len(chunks) == 0 {
 		return 0, 0, fmt.Errorf("no chunks available for RDMA read")
@@ -103,7 +102,7 @@ func (fh *FileHandle) tryRDMARead(ctx context.Context, fileSize int64, buff []by
 	var targetChunk *filer_pb.FileChunk
 	var chunkOffset int64
 	currentOffset := int64(0)
-	
+
 	for _, chunk := range chunks {
 		chunkEnd := currentOffset + int64(chunk.Size)
 		if offset >= currentOffset && offset < chunkEnd {
@@ -148,52 +147,18 @@ func (fh *FileHandle) tryRDMARead(ctx context.Context, fileSize int64, buff []by
 
 // parseFileId parses a SeaweedFS fileId into volume, needle, and cookie
 func (fh *FileHandle) parseFileId(fileId string) (volumeID uint32, needleID uint64, cookie uint32, err error) {
-	parts := strings.Split(fileId, ",")
-	if len(parts) != 2 {
-		return 0, 0, 0, fmt.Errorf("invalid fileId format: %s", fileId)
-	}
-
-	// Parse volume ID
-	vol, err := strconv.ParseUint(parts[0], 10, 32)
+	// Use existing SeaweedFS file ID parsing
+	fid, err := needle.ParseFileIdFromString(fileId)
 	if err != nil {
-		return 0, 0, 0, fmt.Errorf("invalid volume ID: %s", parts[0])
-	}
-	volumeID = uint32(vol)
-
-	// Parse needle ID and cookie from the hex string
-	// Format: needleIdHex + cookieHex (cookie is last 8 hex chars)
-	needleKeyCookie := parts[1]
-	
-	if len(needleKeyCookie) < 8 {
-		return 0, 0, 0, fmt.Errorf("invalid needle+cookie format: %s", needleKeyCookie)
+		return 0, 0, 0, fmt.Errorf("failed to parse file ID %s: %w", fileId, err)
 	}
 	
-	// Cookie is always the last 8 hex characters (4 bytes)
-	cookieHex := needleKeyCookie[len(needleKeyCookie)-8:]
-	needleHex := needleKeyCookie[:len(needleKeyCookie)-8]
+	volumeID = uint32(fid.VolumeId)
+	needleID = uint64(fid.Key)
+	cookie = uint32(fid.Cookie)
 	
-	// Parse needle ID
-	if needleHex == "" {
-		needleID = 0
-	} else {
-		needleVal, err := strconv.ParseUint(needleHex, 16, 64)
-		if err != nil {
-			return 0, 0, 0, fmt.Errorf("invalid needle ID: %s", needleHex)
-		}
-		needleID = needleVal
-	}
-	
-	// Parse cookie
-	cookieVal, err := strconv.ParseUint(cookieHex, 16, 32)
-	if err != nil {
-		return 0, 0, 0, fmt.Errorf("invalid cookie: %s", cookieHex)
-	}
-	cookie = uint32(cookieVal)
-
 	return volumeID, needleID, cookie, nil
 }
-
-
 
 func (fh *FileHandle) downloadRemoteEntry(entry *LockedEntry) error {
 

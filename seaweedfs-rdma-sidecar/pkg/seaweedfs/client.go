@@ -12,6 +12,8 @@ import (
 
 	"seaweedfs-rdma-sidecar/pkg/rdma"
 
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/sirupsen/logrus"
 )
 
@@ -253,36 +255,18 @@ func (c *SeaweedFSRDMAClient) httpFallback(ctx context.Context, req *NeedleReadR
 		return nil, fmt.Errorf("no volume server URL provided in request or configured")
 	}
 
-	// Build URL for volume server read
-	// Format: http://volumeserver/volumeId,needleIdAndCookieAsHex
-	// The needle ID and cookie are concatenated as bytes then hex-encoded
-	needleBytes := make([]byte, 8) // NeedleIdSize
-	cookieBytes := make([]byte, 4) // CookieSize
+	// Build URL using existing SeaweedFS file ID construction
+	volumeId := needle.VolumeId(req.VolumeID)
+	needleId := types.NeedleId(req.NeedleID)
+	cookie := types.Cookie(req.Cookie)
 	
-	// Convert needle ID to bytes (big endian)
-	needleBytes[0] = byte(req.NeedleID >> 56)
-	needleBytes[1] = byte(req.NeedleID >> 48)
-	needleBytes[2] = byte(req.NeedleID >> 40)
-	needleBytes[3] = byte(req.NeedleID >> 32)
-	needleBytes[4] = byte(req.NeedleID >> 24)
-	needleBytes[5] = byte(req.NeedleID >> 16)
-	needleBytes[6] = byte(req.NeedleID >> 8)
-	needleBytes[7] = byte(req.NeedleID)
-	
-	// Convert cookie to bytes (big endian)
-	cookieBytes[0] = byte(req.Cookie >> 24)
-	cookieBytes[1] = byte(req.Cookie >> 16)
-	cookieBytes[2] = byte(req.Cookie >> 8)
-	cookieBytes[3] = byte(req.Cookie)
-	
-	// Combine and hex encode, skipping leading zeros in needle
-	combined := append(needleBytes, cookieBytes...)
-	nonzeroIndex := 0
-	for ; nonzeroIndex < 8 && combined[nonzeroIndex] == 0; nonzeroIndex++ {
+	fileId := &needle.FileId{
+		VolumeId: volumeId,
+		Key:      needleId,
+		Cookie:   cookie,
 	}
-	needleKeyCookie := fmt.Sprintf("%x", combined[nonzeroIndex:])
 	
-	url := fmt.Sprintf("%s/%d,%s", volumeServerURL, req.VolumeID, needleKeyCookie)
+	url := fmt.Sprintf("%s/%s", volumeServerURL, fileId.String())
 
 	if req.Offset > 0 || req.Size > 0 {
 		url += fmt.Sprintf("?offset=%d&size=%d", req.Offset, req.Size)
