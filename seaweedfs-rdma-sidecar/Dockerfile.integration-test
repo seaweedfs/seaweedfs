@@ -1,0 +1,25 @@
+# Dockerfile for RDMA Mount Integration Tests
+FROM ubuntu:22.04
+
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    wget \
+    ca-certificates \
+    jq \
+    bc \
+    time \
+    util-linux \
+    coreutils \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create test directories
+RUN mkdir -p /usr/local/bin /test-results
+
+# Copy test scripts
+COPY scripts/run-integration-tests.sh /usr/local/bin/run-integration-tests.sh
+COPY scripts/test-rdma-mount.sh /usr/local/bin/test-rdma-mount.sh
+RUN chmod +x /usr/local/bin/*.sh
+
+# Default command
+CMD ["/usr/local/bin/run-integration-tests.sh"]

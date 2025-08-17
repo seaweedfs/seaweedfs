@@ -35,14 +35,14 @@ type MountOptions struct {
 	disableXAttr       *bool
 	extraOptions       []string
 	fuseCommandPid     int
-	
+
 	// RDMA acceleration options
-	rdmaEnabled        *bool
-	rdmaSidecarAddr    *string
-	rdmaFallback       *bool
-	rdmaReadOnly       *bool
-	rdmaMaxConcurrent  *int
-	rdmaTimeoutMs      *int
+	rdmaEnabled       *bool
+	rdmaSidecarAddr   *string
+	rdmaFallback      *bool
+	rdmaReadOnly      *bool
+	rdmaMaxConcurrent *int
+	rdmaTimeoutMs     *int
 }
 
 var (
