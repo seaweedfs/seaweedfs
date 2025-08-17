@@ -4,7 +4,10 @@ package seaweedfs
 import (
 	"context"
 	"fmt"
+	"io/ioutil"
 	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 
 	"seaweedfs-rdma-sidecar/pkg/rdma"
@@ -18,6 +21,10 @@ type SeaweedFSRDMAClient struct {
 	logger          *logrus.Logger
 	volumeServerURL string
 	enabled         bool
+	
+	// Zero-copy optimization
+	tempDir         string
+	useZeroCopy     bool
 }
 
 // Config holds configuration for the SeaweedFS RDMA client
@@ -27,6 +34,10 @@ type Config struct {
 	Enabled         bool
 	DefaultTimeout  time.Duration
 	Logger          *logrus.Logger
+	
+	// Zero-copy optimization
+	TempDir         string // Directory for temp files (default: /tmp/rdma-cache)
+	UseZeroCopy     bool   // Enable zero-copy via temp files
 }
 
 // NeedleReadRequest represents a SeaweedFS needle read request
@@ -46,6 +57,10 @@ type NeedleReadResponse struct {
 	Latency   time.Duration
 	Source    string // "rdma" or "http"
 	SessionID string
+	
+	// Zero-copy optimization fields
+	TempFilePath string // Path to temp file with data (for zero-copy)
+	UseTempFile  bool   // Whether to use temp file instead of Data
 }
 
 // NewSeaweedFSRDMAClient creates a new SeaweedFS RDMA client
@@ -65,11 +80,26 @@ func NewSeaweedFSRDMAClient(config *Config) (*SeaweedFSRDMAClient, error) {
 		rdmaClient = rdma.NewClient(rdmaConfig)
 	}
 
+	// Setup temp directory for zero-copy optimization
+	tempDir := config.TempDir
+	if tempDir == "" {
+		tempDir = "/tmp/rdma-cache"
+	}
+	
+	if config.UseZeroCopy {
+		if err := os.MkdirAll(tempDir, 0755); err != nil {
+			config.Logger.WithError(err).Warn("Failed to create temp directory, disabling zero-copy")
+			config.UseZeroCopy = false
+		}
+	}
+
 	return &SeaweedFSRDMAClient{
 		rdmaClient:      rdmaClient,
 		logger:          config.Logger,
 		volumeServerURL: config.VolumeServerURL,
 		enabled:         config.Enabled,
+		tempDir:         tempDir,
+		useZeroCopy:     config.UseZeroCopy,
 	}, nil
 }
 
@@ -136,6 +166,30 @@ func (c *SeaweedFSRDMAClient) ReadNeedle(ctx context.Context, req *NeedleReadReq
 				"transfer_rate": resp.TransferRate,
 				"latency":       time.Since(start),
 			}).Info("🚀 RDMA fast path successful")
+
+			// Try zero-copy optimization if enabled and data is large enough
+			if c.useZeroCopy && len(resp.Data) > 64*1024 { // 64KB threshold
+				tempFilePath, err := c.writeToTempFile(req, resp.Data)
+				if err != nil {
+					c.logger.WithError(err).Warn("Failed to write temp file, using regular response")
+					// Fall back to regular response
+				} else {
+					c.logger.WithFields(logrus.Fields{
+						"temp_file": tempFilePath,
+						"size":      len(resp.Data),
+					}).Info("🔥 Zero-copy temp file created")
+					
+					return &NeedleReadResponse{
+						Data:         nil, // Don't duplicate data in memory
+						IsRDMA:       true,
+						Latency:      time.Since(start),
+						Source:       "rdma-zerocopy",
+						SessionID:    resp.SessionID,
+						TempFilePath: tempFilePath,
+						UseTempFile:  true,
+					}, nil
+				}
+			}
 
 			return &NeedleReadResponse{
 				Data:      resp.Data,
@@ -284,4 +338,41 @@ func (c *SeaweedFSRDMAClient) GetStats() map[string]interface{} {
 	}
 
 	return stats
+}
+
+// writeToTempFile writes RDMA data to a temp file for zero-copy optimization
+func (c *SeaweedFSRDMAClient) writeToTempFile(req *NeedleReadRequest, data []byte) (string, error) {
+	// Create temp file with unique name based on needle info
+	fileName := fmt.Sprintf("vol%d_needle%x_cookie%d_offset%d_size%d.tmp", 
+		req.VolumeID, req.NeedleID, req.Cookie, req.Offset, req.Size)
+	tempFilePath := filepath.Join(c.tempDir, fileName)
+	
+	// Write data to temp file (this populates the page cache)
+	err := ioutil.WriteFile(tempFilePath, data, 0644)
+	if err != nil {
+		return "", fmt.Errorf("failed to write temp file: %w", err)
+	}
+	
+	c.logger.WithFields(logrus.Fields{
+		"temp_file": tempFilePath,
+		"size":      len(data),
+	}).Debug("📁 Temp file written to page cache")
+	
+	return tempFilePath, nil
+}
+
+// CleanupTempFile removes a temp file (called by mount client after use)
+func (c *SeaweedFSRDMAClient) CleanupTempFile(tempFilePath string) error {
+	if tempFilePath == "" {
+		return nil
+	}
+	
+	err := os.Remove(tempFilePath)
+	if err != nil && !os.IsNotExist(err) {
+		c.logger.WithError(err).WithField("temp_file", tempFilePath).Warn("Failed to cleanup temp file")
+		return err
+	}
+	
+	c.logger.WithField("temp_file", tempFilePath).Debug("🧹 Temp file cleaned up")
+	return nil
 }

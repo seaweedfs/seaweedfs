@@ -23,6 +23,8 @@ var (
 	rdmaSocket      string
 	volumeServerURL string
 	enableRDMA      bool
+	enableZeroCopy  bool
+	tempDir         string
 	debug           bool
 )
 
@@ -40,6 +42,8 @@ the RDMA fast path with HTTP fallback capabilities.`,
 	rootCmd.Flags().StringVarP(&rdmaSocket, "rdma-socket", "r", "/tmp/rdma-engine.sock", "Path to RDMA engine Unix socket")
 	rootCmd.Flags().StringVarP(&volumeServerURL, "volume-server", "v", "http://localhost:8080", "SeaweedFS volume server URL for HTTP fallback")
 	rootCmd.Flags().BoolVarP(&enableRDMA, "enable-rdma", "e", true, "Enable RDMA acceleration")
+	rootCmd.Flags().BoolVarP(&enableZeroCopy, "enable-zerocopy", "z", true, "Enable zero-copy optimization via temp files")
+	rootCmd.Flags().StringVarP(&tempDir, "temp-dir", "t", "/tmp/rdma-cache", "Temp directory for zero-copy files")
 	rootCmd.Flags().BoolVarP(&debug, "debug", "d", false, "Enable debug logging")
 
 	if err := rootCmd.Execute(); err != nil {
@@ -66,6 +70,8 @@ func runServer(cmd *cobra.Command, args []string) error {
 		"rdma_socket":       rdmaSocket,
 		"volume_server_url": volumeServerURL,
 		"enable_rdma":       enableRDMA,
+		"enable_zerocopy":   enableZeroCopy,
+		"temp_dir":          tempDir,
 		"debug":             debug,
 	}).Info("🚀 Starting SeaweedFS RDMA Demo Server")
 
@@ -76,6 +82,8 @@ func runServer(cmd *cobra.Command, args []string) error {
 		Enabled:         enableRDMA,
 		DefaultTimeout:  30 * time.Second,
 		Logger:          logger,
+		TempDir:         tempDir,
+		UseZeroCopy:     enableZeroCopy,
 	}
 
 	rdmaClient, err := seaweedfs.NewSeaweedFSRDMAClient(config)
@@ -363,17 +371,36 @@ func (s *DemoServer) readHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Return metadata and first few bytes
 	result := map[string]interface{}{
-		"success":    true,
-		"volume_id":  volumeID,
-		"needle_id":  needleID,
-		"cookie":     fmt.Sprintf("0x%x", cookie),
-		"is_rdma":    resp.IsRDMA,
-		"source":     resp.Source,
-		"session_id": resp.SessionID,
-		"duration":   duration.String(),
-		"data_size":  len(resp.Data),
-		"timestamp":  time.Now().Format(time.RFC3339),
+		"success":       true,
+		"volume_id":     volumeID,
+		"needle_id":     needleID,
+		"cookie":        fmt.Sprintf("0x%x", cookie),
+		"is_rdma":       resp.IsRDMA,
+		"source":        resp.Source,
+		"session_id":    resp.SessionID,
+		"duration":      duration.String(),
+		"data_size":     len(resp.Data),
+		"timestamp":     time.Now().Format(time.RFC3339),
+		"use_temp_file": resp.UseTempFile,
+		"temp_file":     resp.TempFilePath,
 	}
+
+	// Set headers for zero-copy optimization
+	if resp.UseTempFile && resp.TempFilePath != "" {
+		w.Header().Set("X-Use-Temp-File", "true")
+		w.Header().Set("X-Temp-File", resp.TempFilePath)
+		w.Header().Set("X-Source", resp.Source)
+		w.Header().Set("X-RDMA-Used", fmt.Sprintf("%t", resp.IsRDMA))
+		
+		// For zero-copy, return minimal JSON response and let client read from temp file
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(result)
+		return
+	}
+
+	// Regular response with data
+	w.Header().Set("X-Source", resp.Source)
+	w.Header().Set("X-RDMA-Used", fmt.Sprintf("%t", resp.IsRDMA))
 
 	// Include first 32 bytes as hex for verification
 	if len(resp.Data) > 0 {

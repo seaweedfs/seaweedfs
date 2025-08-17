@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -52,6 +53,10 @@ type RDMAReadResponse struct {
 	DataSize  int    `json:"data_size"`
 	SessionID string `json:"session_id,omitempty"`
 	ErrorMsg  string `json:"error,omitempty"`
+	
+	// Zero-copy optimization fields
+	UseTempFile bool   `json:"use_temp_file"`
+	TempFile    string `json:"temp_file"`
 }
 
 // RDMAHealthResponse represents the health status of the RDMA sidecar
@@ -211,8 +216,37 @@ func (c *RDMAMountClient) ReadNeedle(ctx context.Context, volumeID uint32, needl
 	isRDMA := strings.Contains(resp.Header.Get("X-Source"), "rdma") ||
 		resp.Header.Get("X-RDMA-Used") == "true"
 
-	// Read response data
-	data, err := io.ReadAll(resp.Body)
+	// Check for zero-copy temp file optimization
+	tempFilePath := resp.Header.Get("X-Temp-File")
+	useTempFile := resp.Header.Get("X-Use-Temp-File") == "true"
+
+	var data []byte
+
+	if useTempFile && tempFilePath != "" {
+		// Zero-copy path: read from temp file (page cache)
+		glog.V(4).Infof("🔥 Using zero-copy temp file: %s", tempFilePath)
+		
+		// Allocate buffer for temp file read
+		expectedSize := size
+		if expectedSize == 0 {
+			expectedSize = 1024 * 1024 // Default 1MB
+		}
+		buffer := make([]byte, expectedSize)
+		
+		n, err := c.readFromTempFile(tempFilePath, buffer)
+		if err != nil {
+			glog.V(2).Infof("Zero-copy failed, falling back to HTTP body: %v", err)
+			// Fall back to reading HTTP body
+			data, err = io.ReadAll(resp.Body)
+		} else {
+			data = buffer[:n]
+			glog.V(4).Infof("🔥 Zero-copy successful: %d bytes from page cache", n)
+		}
+	} else {
+		// Regular path: read from HTTP response body
+		data, err = io.ReadAll(resp.Body)
+	}
+
 	if err != nil {
 		atomic.AddInt64(&c.failedReads, 1)
 		return nil, false, fmt.Errorf("failed to read RDMA response: %w", err)
@@ -340,4 +374,37 @@ func ParseFileId(fileId string) (volumeID uint32, needleID uint64, cookie uint32
 	cookie = uint32(cook)
 
 	return volumeID, needleID, cookie, nil
+}
+
+// readFromTempFile performs zero-copy read from temp file using page cache
+func (c *RDMAMountClient) readFromTempFile(tempFilePath string, buffer []byte) (int, error) {
+	if tempFilePath == "" {
+		return 0, fmt.Errorf("empty temp file path")
+	}
+	
+	// Open temp file for reading
+	file, err := os.Open(tempFilePath)
+	if err != nil {
+		return 0, fmt.Errorf("failed to open temp file %s: %w", tempFilePath, err)
+	}
+	defer file.Close()
+	
+	// Read from temp file (this should be served from page cache)
+	n, err := file.Read(buffer)
+	if err != nil && err != io.EOF {
+		return n, fmt.Errorf("failed to read from temp file: %w", err)
+	}
+	
+	glog.V(4).Infof("🔥 Zero-copy read: %d bytes from temp file %s", n, tempFilePath)
+	
+	// Clean up temp file after reading
+	go func() {
+		if removeErr := os.Remove(tempFilePath); removeErr != nil {
+			glog.V(2).Infof("Failed to cleanup temp file %s: %v", tempFilePath, removeErr)
+		} else {
+			glog.V(4).Infof("🧹 Cleaned up temp file %s", tempFilePath)
+		}
+	}()
+	
+	return n, nil
 }
