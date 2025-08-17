@@ -38,11 +38,11 @@ type Config struct {
 	// Zero-copy optimization
 	TempDir     string // Directory for temp files (default: /tmp/rdma-cache)
 	UseZeroCopy bool   // Enable zero-copy via temp files
-	
+
 	// Connection pooling options
-	EnablePooling   bool          // Enable RDMA connection pooling (default: true)
-	MaxConnections  int           // Max connections in pool (default: 10)
-	MaxIdleTime     time.Duration // Max idle time before connection cleanup (default: 5min)
+	EnablePooling  bool          // Enable RDMA connection pooling (default: true)
+	MaxConnections int           // Max connections in pool (default: 10)
+	MaxIdleTime    time.Duration // Max idle time before connection cleanup (default: 5min)
 }
 
 // NeedleReadRequest represents a SeaweedFS needle read request

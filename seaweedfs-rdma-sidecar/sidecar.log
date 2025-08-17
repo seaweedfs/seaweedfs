@@ -1,0 +1,14 @@
+[36mINFO[0m[2025-08-17T11:43:21-07:00] 🚀 Starting SeaweedFS RDMA Demo Server         [36mdebug[0m=true [36menable_pooling[0m=true [36menable_rdma[0m=false [36menable_zerocopy[0m=true [36mmax_connections[0m=10 [36mmax_idle_time[0m=5m0s [36mport[0m=8081 [36mrdma_socket[0m=/tmp/rdma-engine.sock [36mtemp_dir[0m=/tmp/rdma-cache [36mvolume_server_url[0m="http://httpbin.org"
+[36mINFO[0m[2025-08-17T11:43:21-07:00] 🔄 RDMA disabled, using HTTP fallback only    
+[36mINFO[0m[2025-08-17T11:43:21-07:00] 🌐 Demo server starting                        [36mport[0m=8081
+[36mINFO[0m[2025-08-17T11:43:39-07:00] 📖 Processing needle read request              [36mcookie[0m=0x1 [36mneedle_id[0m=1 [36moffset[0m=0 [36msize[0m=1048576 [36mvolume_id[0m=1 [36mvolume_server[0m="http://httpbin.org"
+[37mDEBU[0m[2025-08-17T11:43:39-07:00] 🌐 Using HTTP fallback                         [37mneedle_id[0m=1 [37mreason[0m=rdma_unavailable [37mvolume_id[0m=1
+[37mDEBU[0m[2025-08-17T11:43:39-07:00] 📥 HTTP fallback request                       [37murl[0m="http://httpbin.org/1,1,1?offset=0&size=1048576"
+[31mERRO[0m[2025-08-17T11:43:40-07:00] ❌ Needle read failed                          [31merror[0m="both RDMA and HTTP failed: HTTP request failed with status: 404"
+[36mINFO[0m[2025-08-17T11:43:47-07:00] 📖 Processing needle read request              [36mcookie[0m=0x1 [36mneedle_id[0m=1 [36moffset[0m=0 [36msize[0m=1048576 [36mvolume_id[0m=1 [36mvolume_server[0m="http://httpbin.org"
+[37mDEBU[0m[2025-08-17T11:43:47-07:00] 🌐 Using HTTP fallback                         [37mneedle_id[0m=1 [37mreason[0m=rdma_unavailable [37mvolume_id[0m=1
+[37mDEBU[0m[2025-08-17T11:43:47-07:00] 📥 HTTP fallback request                       [37murl[0m="http://httpbin.org/1,1,1?offset=0&size=1048576"
+[31mERRO[0m[2025-08-17T11:43:47-07:00] ❌ Needle read failed                          [31merror[0m="both RDMA and HTTP failed: HTTP request failed with status: 404"
+[36mINFO[0m[2025-08-17T11:44:15-07:00] 📡 Received shutdown signal, gracefully shutting down... 
+[36mINFO[0m[2025-08-17T11:44:15-07:00] 🌐 HTTP server shutdown complete              
+[36mINFO[0m[2025-08-17T11:44:15-07:00] 🛑 Demo server shutdown complete              

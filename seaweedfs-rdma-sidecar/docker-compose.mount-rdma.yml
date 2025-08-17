@@ -129,6 +129,10 @@ services:
       --rdma-socket /tmp/rdma/rdma-engine.sock
       --volume-server http://seaweedfs-volume:8080
       --enable-rdma
+      --enable-zerocopy
+      --enable-pooling
+      --max-connections 10
+      --max-idle-time 5m
       --debug
     depends_on:
       rdma-engine:

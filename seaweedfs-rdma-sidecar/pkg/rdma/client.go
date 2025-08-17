@@ -14,11 +14,11 @@ import (
 
 // PooledConnection represents a pooled RDMA connection
 type PooledConnection struct {
-	ipcClient    *ipc.Client
-	lastUsed     time.Time
-	inUse        bool
-	sessionID    string
-	created      time.Time
+	ipcClient *ipc.Client
+	lastUsed  time.Time
+	inUse     bool
+	sessionID string
+	created   time.Time
 }
 
 // ConnectionPool manages a pool of RDMA connections
@@ -39,9 +39,9 @@ type Client struct {
 	capabilities   *ipc.GetCapabilitiesResponse
 	connected      bool
 	defaultTimeout time.Duration
-	
+
 	// Legacy single connection (for backward compatibility)
-	ipcClient      *ipc.Client
+	ipcClient *ipc.Client
 }
 
 // Config holds configuration for the RDMA client
@@ -49,11 +49,11 @@ type Config struct {
 	EngineSocketPath string
 	DefaultTimeout   time.Duration
 	Logger           *logrus.Logger
-	
+
 	// Connection pooling options
-	EnablePooling    bool          // Enable connection pooling (default: true)
-	MaxConnections   int           // Max connections in pool (default: 10)
-	MaxIdleTime      time.Duration // Max idle time before connection cleanup (default: 5min)
+	EnablePooling  bool          // Enable connection pooling (default: true)
+	MaxConnections int           // Max connections in pool (default: 10)
+	MaxIdleTime    time.Duration // Max idle time before connection cleanup (default: 5min)
 }
 
 // ReadRequest represents a SeaweedFS needle read request
@@ -85,7 +85,7 @@ func NewConnectionPool(enginePath string, maxConnections int, maxIdleTime time.D
 	if maxIdleTime <= 0 {
 		maxIdleTime = 5 * time.Minute // Default
 	}
-	
+
 	return &ConnectionPool{
 		connections:    make([]*PooledConnection, 0, maxConnections),
 		maxConnections: maxConnections,
@@ -99,7 +99,7 @@ func NewConnectionPool(enginePath string, maxConnections int, maxIdleTime time.D
 func (p *ConnectionPool) getConnection(ctx context.Context) (*PooledConnection, error) {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
-	
+
 	// Look for an available connection
 	for _, conn := range p.connections {
 		if !conn.inUse && time.Since(conn.lastUsed) < p.maxIdleTime {
@@ -109,14 +109,14 @@ func (p *ConnectionPool) getConnection(ctx context.Context) (*PooledConnection, 
 			return conn, nil
 		}
 	}
-	
+
 	// Create new connection if under limit
 	if len(p.connections) < p.maxConnections {
 		ipcClient := ipc.NewClient(p.enginePath, p.logger)
 		if err := ipcClient.Connect(ctx); err != nil {
 			return nil, fmt.Errorf("failed to create new pooled connection: %w", err)
 		}
-		
+
 		conn := &PooledConnection{
 			ipcClient: ipcClient,
 			lastUsed:  time.Now(),
@@ -124,16 +124,16 @@ func (p *ConnectionPool) getConnection(ctx context.Context) (*PooledConnection, 
 			sessionID: fmt.Sprintf("pool-%d-%d", len(p.connections), time.Now().Unix()),
 			created:   time.Now(),
 		}
-		
+
 		p.connections = append(p.connections, conn)
 		p.logger.WithFields(logrus.Fields{
 			"session_id": conn.sessionID,
 			"pool_size":  len(p.connections),
 		}).Info("🚀 Created new pooled RDMA connection")
-		
+
 		return conn, nil
 	}
-	
+
 	// Pool is full, wait for an available connection
 	return nil, fmt.Errorf("connection pool exhausted (max: %d)", p.maxConnections)
 }
@@ -142,10 +142,10 @@ func (p *ConnectionPool) getConnection(ctx context.Context) (*PooledConnection, 
 func (p *ConnectionPool) releaseConnection(conn *PooledConnection) {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
-	
+
 	conn.inUse = false
 	conn.lastUsed = time.Now()
-	
+
 	p.logger.WithField("session_id", conn.sessionID).Debug("🔄 Released RDMA connection back to pool")
 }
 
@@ -153,10 +153,10 @@ func (p *ConnectionPool) releaseConnection(conn *PooledConnection) {
 func (p *ConnectionPool) cleanup() {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
-	
+
 	now := time.Now()
 	activeConnections := make([]*PooledConnection, 0, len(p.connections))
-	
+
 	for _, conn := range p.connections {
 		if conn.inUse || now.Sub(conn.lastUsed) < p.maxIdleTime {
 			activeConnections = append(activeConnections, conn)
@@ -169,7 +169,7 @@ func (p *ConnectionPool) cleanup() {
 			}).Debug("🧹 Cleaned up idle RDMA connection")
 		}
 	}
-	
+
 	p.connections = activeConnections
 }
 
@@ -177,7 +177,7 @@ func (p *ConnectionPool) cleanup() {
 func (p *ConnectionPool) Close() {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
-	
+
 	for _, conn := range p.connections {
 		conn.ipcClient.Disconnect()
 	}
@@ -201,14 +201,14 @@ func NewClient(config *Config) *Client {
 		enginePath:     config.EngineSocketPath,
 		defaultTimeout: config.DefaultTimeout,
 	}
-	
+
 	// Initialize connection pooling if enabled (default: true)
 	enablePooling := config.EnablePooling
 	if config.MaxConnections == 0 && config.MaxIdleTime == 0 {
 		// Default to enabled if not explicitly configured
 		enablePooling = true
 	}
-	
+
 	if enablePooling {
 		client.pool = NewConnectionPool(
 			config.EngineSocketPath,
@@ -216,10 +216,10 @@ func NewClient(config *Config) *Client {
 			config.MaxIdleTime,
 			config.Logger,
 		)
-		
+
 		// Start cleanup goroutine
 		go client.startCleanupRoutine()
-		
+
 		config.Logger.WithFields(logrus.Fields{
 			"max_connections": client.pool.maxConnections,
 			"max_idle_time":   client.pool.maxIdleTime,
