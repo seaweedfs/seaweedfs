@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -23,13 +22,10 @@ type RDMAMountClient struct {
 	maxConcurrent int
 	timeout       time.Duration
 	semaphore     chan struct{}
-	
+
 	// Volume lookup
-	lookupFileIdFn  wdclient.LookupFileIdFunctionType
-	volumeCache     map[uint32]*VolumeLocation
-	cacheMutex      sync.RWMutex
-	cacheTTL        time.Duration
-	
+	lookupFileIdFn wdclient.LookupFileIdFunctionType
+
 	// Statistics
 	totalRequests   int64
 	successfulReads int64
@@ -38,12 +34,7 @@ type RDMAMountClient struct {
 	totalLatencyNs  int64
 }
 
-// VolumeLocation represents a cached volume location
-type VolumeLocation struct {
-	VolumeID    uint32
-	CachedAt    time.Time
-	BestAddress string // HTTP URL of the best volume server
-}
+
 
 // RDMAReadRequest represents a request to read data via RDMA
 type RDMAReadRequest struct {
@@ -56,13 +47,13 @@ type RDMAReadRequest struct {
 
 // RDMAReadResponse represents the response from an RDMA read operation
 type RDMAReadResponse struct {
-	Success     bool   `json:"success"`
-	IsRDMA      bool   `json:"is_rdma"`
-	Source      string `json:"source"`
-	Duration    string `json:"duration"`
-	DataSize    int    `json:"data_size"`
-	SessionID   string `json:"session_id,omitempty"`
-	ErrorMsg    string `json:"error,omitempty"`
+	Success   bool   `json:"success"`
+	IsRDMA    bool   `json:"is_rdma"`
+	Source    string `json:"source"`
+	Duration  string `json:"duration"`
+	DataSize  int    `json:"data_size"`
+	SessionID string `json:"session_id,omitempty"`
+	ErrorMsg  string `json:"error,omitempty"`
 }
 
 // RDMAHealthResponse represents the health status of the RDMA sidecar
@@ -78,16 +69,14 @@ type RDMAHealthResponse struct {
 // NewRDMAMountClient creates a new RDMA client for mount operations
 func NewRDMAMountClient(sidecarAddr string, lookupFileIdFn wdclient.LookupFileIdFunctionType, maxConcurrent int, timeoutMs int) (*RDMAMountClient, error) {
 	client := &RDMAMountClient{
-		sidecarAddr:    sidecarAddr,
-		maxConcurrent:  maxConcurrent,
-		timeout:        time.Duration(timeoutMs) * time.Millisecond,
+		sidecarAddr:   sidecarAddr,
+		maxConcurrent: maxConcurrent,
+		timeout:       time.Duration(timeoutMs) * time.Millisecond,
 		httpClient: &http.Client{
 			Timeout: time.Duration(timeoutMs) * time.Millisecond,
 		},
 		semaphore:      make(chan struct{}, maxConcurrent),
 		lookupFileIdFn: lookupFileIdFn,
-		volumeCache:    make(map[uint32]*VolumeLocation),
-		cacheTTL:       5 * time.Minute, // Cache volume locations for 5 minutes
 	}
 
 	// Test connectivity and RDMA availability
@@ -103,21 +92,10 @@ func NewRDMAMountClient(sidecarAddr string, lookupFileIdFn wdclient.LookupFileId
 
 // lookupVolumeLocation finds the best volume server for a given volume ID
 func (c *RDMAMountClient) lookupVolumeLocation(ctx context.Context, volumeID uint32, needleID uint64, cookie uint32) (string, error) {
-	// Check cache first
-	c.cacheMutex.RLock()
-	if cached, exists := c.volumeCache[volumeID]; exists {
-		if time.Since(cached.CachedAt) < c.cacheTTL {
-			c.cacheMutex.RUnlock()
-			return cached.BestAddress, nil
-		}
-	}
-	c.cacheMutex.RUnlock()
-
-	// Cache miss or expired, lookup using the provided function
-	glog.V(4).Infof("Looking up volume %d from lookup function", volumeID)
-	
 	// Create a file ID for lookup (format: volumeId,needleId,cookie)
 	fileId := fmt.Sprintf("%d,%x,%d", volumeID, needleID, cookie)
+	
+	glog.V(4).Infof("Looking up volume %d using fileId %s", volumeID, fileId)
 	
 	targetUrls, err := c.lookupFileIdFn(ctx, fileId)
 	if err != nil {
@@ -137,26 +115,11 @@ func (c *RDMAMountClient) lookupVolumeLocation(ctx context.Context, volumeID uin
 	}
 	bestAddress := fmt.Sprintf("http://%s", parts[2])
 
-	// Update cache
-	c.cacheMutex.Lock()
-	c.volumeCache[volumeID] = &VolumeLocation{
-		VolumeID:    volumeID,
-		CachedAt:    time.Now(),
-		BestAddress: bestAddress,
-	}
-	c.cacheMutex.Unlock()
-
 	glog.V(4).Infof("Volume %d located at %s", volumeID, bestAddress)
 	return bestAddress, nil
 }
 
-// invalidateVolumeCache removes a volume from the cache (useful when reads fail)
-func (c *RDMAMountClient) invalidateVolumeCache(volumeID uint32) {
-	c.cacheMutex.Lock()
-	delete(c.volumeCache, volumeID)
-	c.cacheMutex.Unlock()
-	glog.V(4).Infof("Invalidated cache for volume %d", volumeID)
-}
+
 
 // healthCheck verifies that the RDMA sidecar is available and functioning
 func (c *RDMAMountClient) healthCheck() error {
@@ -249,8 +212,8 @@ func (c *RDMAMountClient) ReadNeedle(ctx context.Context, volumeID uint32, needl
 
 	// Check if response indicates RDMA was used
 	contentType := resp.Header.Get("Content-Type")
-	isRDMA := strings.Contains(resp.Header.Get("X-Source"), "rdma") || 
-		     resp.Header.Get("X-RDMA-Used") == "true"
+	isRDMA := strings.Contains(resp.Header.Get("X-Source"), "rdma") ||
+		resp.Header.Get("X-RDMA-Used") == "true"
 
 	// Read response data
 	data, err := io.ReadAll(resp.Body)
@@ -309,16 +272,16 @@ func (c *RDMAMountClient) GetStats() map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"sidecar_addr":      c.sidecarAddr,
-		"max_concurrent":    c.maxConcurrent,
-		"timeout_ms":        int(c.timeout / time.Millisecond),
-		"total_requests":    totalRequests,
-		"successful_reads":  successfulReads,
-		"failed_reads":      failedReads,
-		"success_rate_pct":  fmt.Sprintf("%.1f", successRate),
-		"total_bytes_read":  totalBytesRead,
-		"avg_latency_ns":    avgLatencyNs,
-		"avg_latency_ms":    fmt.Sprintf("%.3f", float64(avgLatencyNs)/1000000),
+		"sidecar_addr":     c.sidecarAddr,
+		"max_concurrent":   c.maxConcurrent,
+		"timeout_ms":       int(c.timeout / time.Millisecond),
+		"total_requests":   totalRequests,
+		"successful_reads": successfulReads,
+		"failed_reads":     failedReads,
+		"success_rate_pct": fmt.Sprintf("%.1f", successRate),
+		"total_bytes_read": totalBytesRead,
+		"avg_latency_ns":   avgLatencyNs,
+		"avg_latency_ms":   fmt.Sprintf("%.3f", float64(avgLatencyNs)/1000000),
 	}
 }
 
@@ -326,11 +289,11 @@ func (c *RDMAMountClient) GetStats() map[string]interface{} {
 func (c *RDMAMountClient) Close() error {
 	// Close semaphore channel
 	close(c.semaphore)
-	
+
 	// Log final statistics
 	stats := c.GetStats()
 	glog.Infof("RDMA mount client closing: %+v", stats)
-	
+
 	return nil
 }
 

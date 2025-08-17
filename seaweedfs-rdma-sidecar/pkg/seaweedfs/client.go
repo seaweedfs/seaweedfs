@@ -31,12 +31,12 @@ type Config struct {
 
 // NeedleReadRequest represents a SeaweedFS needle read request
 type NeedleReadRequest struct {
-	VolumeID      uint32
-	NeedleID      uint64
-	Cookie        uint32
-	Offset        uint64
-	Size          uint64
-	VolumeServer  string // Override volume server URL for this request
+	VolumeID     uint32
+	NeedleID     uint64
+	Cookie       uint32
+	Offset       uint64
+	Size         uint64
+	VolumeServer string // Override volume server URL for this request
 }
 
 // NeedleReadResponse represents the result of a needle read
@@ -186,7 +186,7 @@ func (c *SeaweedFSRDMAClient) httpFallback(ctx context.Context, req *NeedleReadR
 	if volumeServerURL == "" {
 		volumeServerURL = c.volumeServerURL
 	}
-	
+
 	if volumeServerURL == "" {
 		return nil, fmt.Errorf("no volume server URL provided in request or configured")
 	}
