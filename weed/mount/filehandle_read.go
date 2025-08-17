@@ -102,7 +102,7 @@ func (fh *FileHandle) tryRDMARead(ctx context.Context, fileSize int64, buff []by
 	// Find the chunk that contains our offset using binary search
 	var targetChunk *filer_pb.FileChunk
 	var chunkOffset int64
-	
+
 	// Get cached cumulative offsets for efficient binary search
 	cumulativeOffsets := fh.getCumulativeOffsets(chunks)
 
@@ -122,7 +122,7 @@ func (fh *FileHandle) tryRDMARead(ctx context.Context, fileSize int64, buff []by
 	}
 
 	// Parse the chunk's file ID
-	volumeID, needleID, cookie, err := fh.parseFileId(targetChunk.FileId)
+	volumeID, needleID, cookie, err := parseFileId(targetChunk.FileId)
 	if err != nil {
 		return 0, 0, fmt.Errorf("failed to parse chunk fileId %s: %w", targetChunk.FileId, err)
 	}
@@ -150,7 +150,8 @@ func (fh *FileHandle) tryRDMARead(ctx context.Context, fileSize int64, buff []by
 }
 
 // parseFileId parses a SeaweedFS fileId into volume, needle, and cookie
-func (fh *FileHandle) parseFileId(fileId string) (volumeID uint32, needleID uint64, cookie uint32, err error) {
+// This is a shared utility function that can be used by RDMA and other mount components
+func parseFileId(fileId string) (volumeID uint32, needleID uint64, cookie uint32, err error) {
 	// Use existing SeaweedFS file ID parsing
 	fid, err := needle.ParseFileIdFromString(fileId)
 	if err != nil {

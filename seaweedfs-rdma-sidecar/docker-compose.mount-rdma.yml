@@ -91,14 +91,15 @@ services:
     environment:
       - RUST_LOG=debug
       - RDMA_SOCKET_PATH=/tmp/rdma/rdma-engine.sock
-      - RDMA_DEVICE=mock
-      - RDMA_PORT=1
+      - RDMA_DEVICE=auto
+      - RDMA_PORT=18515
       - RDMA_GID_INDEX=0
+      - DEBUG=true
     command: >
       ./rdma-engine-server
-      --ipc-socket /tmp/rdma/rdma-engine.sock
-      --device auto
-      --port 18515
+      --ipc-socket ${RDMA_SOCKET_PATH}
+      --device ${RDMA_DEVICE}
+      --port ${RDMA_PORT}
       --debug
     healthcheck:
       test: ["CMD", "sh", "-c", "pgrep rdma-engine-server >/dev/null && test -S /tmp/rdma/rdma-engine.sock"]
@@ -122,17 +123,23 @@ services:
     environment:
       - RDMA_SOCKET_PATH=/tmp/rdma/rdma-engine.sock
       - VOLUME_SERVER_URL=http://seaweedfs-volume:8080
+      - SIDECAR_PORT=8081
+      - ENABLE_RDMA=true
+      - ENABLE_ZEROCOPY=true
+      - ENABLE_POOLING=true
+      - MAX_CONNECTIONS=10
+      - MAX_IDLE_TIME=5m
       - DEBUG=true
     command: >
       ./demo-server
-      --port 8081
-      --rdma-socket /tmp/rdma/rdma-engine.sock
-      --volume-server http://seaweedfs-volume:8080
+      --port ${SIDECAR_PORT}
+      --rdma-socket ${RDMA_SOCKET_PATH}
+      --volume-server ${VOLUME_SERVER_URL}
       --enable-rdma
       --enable-zerocopy
       --enable-pooling
-      --max-connections 10
-      --max-idle-time 5m
+      --max-connections ${MAX_CONNECTIONS}
+      --max-idle-time ${MAX_IDLE_TIME}
       --debug
     depends_on:
       rdma-engine:
