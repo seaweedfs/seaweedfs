@@ -160,31 +160,35 @@ func (fh *FileHandle) parseFileId(fileId string) (volumeID uint32, needleID uint
 	}
 	volumeID = uint32(vol)
 
-	// Parse needle ID and cookie from the second part
-	needleParts := strings.Split(parts[1], "_")
-	if len(needleParts) < 1 {
-		return 0, 0, 0, fmt.Errorf("invalid needle format: %s", parts[1])
+	// Parse needle ID and cookie from the hex string
+	// Format: needleIdHex + cookieHex (cookie is last 8 hex chars)
+	needleKeyCookie := parts[1]
+	
+	if len(needleKeyCookie) < 8 {
+		return 0, 0, 0, fmt.Errorf("invalid needle+cookie format: %s", needleKeyCookie)
 	}
-
-	// Extract needle ID (hex) and cookie
-	needleStr := needleParts[0]
-	if len(needleStr) > 8 {
-		// Extract cookie from the end (last 8 hex chars)
-		cookieStr := needleStr[len(needleStr)-8:]
-		needleStr = needleStr[:len(needleStr)-8]
-		
-		cookieVal, err := strconv.ParseUint(cookieStr, 16, 32)
+	
+	// Cookie is always the last 8 hex characters (4 bytes)
+	cookieHex := needleKeyCookie[len(needleKeyCookie)-8:]
+	needleHex := needleKeyCookie[:len(needleKeyCookie)-8]
+	
+	// Parse needle ID
+	if needleHex == "" {
+		needleID = 0
+	} else {
+		needleVal, err := strconv.ParseUint(needleHex, 16, 64)
 		if err != nil {
-			return 0, 0, 0, fmt.Errorf("invalid cookie: %s", cookieStr)
+			return 0, 0, 0, fmt.Errorf("invalid needle ID: %s", needleHex)
 		}
-		cookie = uint32(cookieVal)
+		needleID = needleVal
 	}
-
-	needleVal, err := strconv.ParseUint(needleStr, 16, 64)
+	
+	// Parse cookie
+	cookieVal, err := strconv.ParseUint(cookieHex, 16, 32)
 	if err != nil {
-		return 0, 0, 0, fmt.Errorf("invalid needle ID: %s", needleStr)
+		return 0, 0, 0, fmt.Errorf("invalid cookie: %s", cookieHex)
 	}
-	needleID = needleVal
+	cookie = uint32(cookieVal)
 
 	return volumeID, needleID, cookie, nil
 }
