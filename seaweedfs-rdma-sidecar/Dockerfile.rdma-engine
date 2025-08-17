@@ -43,10 +43,11 @@ COPY --from=builder /app/target/release/rdma-engine-server .
 
 # Change ownership
 RUN chown -R appuser:appuser /app
-USER appuser
 
-# Create socket directory
-RUN mkdir -p /tmp
+# Create socket directory with proper permissions (before switching user)
+RUN mkdir -p /tmp/rdma && chown -R appuser:appuser /tmp/rdma
+
+USER appuser
 
 # Expose any needed ports (none for this service as it uses Unix sockets)
 # EXPOSE 18515

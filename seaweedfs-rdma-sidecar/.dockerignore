@@ -24,7 +24,7 @@ ehthumbs.db
 Thumbs.db
 
 # Build artifacts
-bin/
+# bin/ (commented out for Docker build - needed for mount container)
 # target/ (commented out for Docker build)
 *.exe
 *.dll
@@ -50,7 +50,7 @@ docker-compose*.yml
 
 # Test files (tests/ needed for integration test container)
 # tests/
-scripts/
+# scripts/ (commented out for Docker build - needed for mount container)
 *.log
 
 # Temporary files

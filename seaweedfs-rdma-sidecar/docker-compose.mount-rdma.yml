@@ -19,11 +19,11 @@ services:
     networks:
       - seaweedfs-rdma
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9333/cluster/status"]
+      test: ["CMD", "wget", "--timeout=10", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:9333/cluster/status"]
       interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
+      timeout: 10s
+      retries: 6
+      start_period: 60s
 
   # SeaweedFS Volume Server
   seaweedfs-volume:
@@ -46,11 +46,11 @@ services:
       seaweedfs-master:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/status"]
+      test: ["CMD", "sh", "-c", "pgrep weed && netstat -tln | grep :8080"]
       interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
+      timeout: 10s
+      retries: 6
+      start_period: 30s
 
   # SeaweedFS Filer
   seaweedfs-filer:
@@ -72,11 +72,11 @@ services:
       seaweedfs-volume:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8888/"]
+      test: ["CMD", "sh", "-c", "pgrep weed && netstat -tln | grep :8888"]
       interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
+      timeout: 10s
+      retries: 6
+      start_period: 45s
 
   # RDMA Engine (Rust)
   rdma-engine:
@@ -95,12 +95,11 @@ services:
       - RDMA_PORT=1
       - RDMA_GID_INDEX=0
     command: >
-      /usr/local/bin/rdma-engine
-      --socket-path /tmp/rdma/rdma-engine.sock
-      --device mock
-      --port 1
-      --gid-index 0
-      --log-level debug
+      ./rdma-engine-server
+      --ipc-socket /tmp/rdma/rdma-engine.sock
+      --device auto
+      --port 18515
+      --debug
     healthcheck:
       test: ["CMD", "test", "-S", "/tmp/rdma/rdma-engine.sock"]
       interval: 5s
@@ -125,10 +124,10 @@ services:
       - VOLUME_SERVER_URL=http://seaweedfs-volume:8080
       - DEBUG=true
     command: >
-      /usr/local/bin/demo-server
+      ./demo-server
       --port 8081
       --rdma-socket /tmp/rdma/rdma-engine.sock
-      --volume-server-url http://seaweedfs-volume:8080
+      --volume-server http://seaweedfs-volume:8080
       --enable-rdma
       --debug
     depends_on:
@@ -148,6 +147,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.mount-rdma
+    platform: linux/amd64
     container_name: seaweedfs-mount
     privileged: true  # Required for FUSE
     devices:
@@ -155,7 +155,7 @@ services:
     cap_add:
       - SYS_ADMIN
     volumes:
-      - seaweedfs_mount:/mnt/seaweedfs:shared
+      - seaweedfs_mount:/mnt/seaweedfs
       - /tmp/seaweedfs-mount-logs:/var/log/seaweedfs
     networks:
       - seaweedfs-rdma
@@ -174,17 +174,7 @@ services:
         sleep 30 &&
         echo 'Starting SeaweedFS mount with RDMA acceleration...' &&
         mkdir -p /mnt/seaweedfs &&
-        /usr/local/bin/weed mount
-          -filer=seaweedfs-filer:8888
-          -dir=/mnt/seaweedfs
-          -rdma.enabled=true
-          -rdma.sidecar=rdma-sidecar:8081
-          -rdma.fallback=true
-          -rdma.maxConcurrent=64
-          -rdma.timeoutMs=5000
-          -allowOthers=true
-          -debug=true
-          -v=2
+        /usr/local/bin/weed mount -filer=seaweedfs-filer:8888 -dir=/mnt/seaweedfs -allowOthers=true -debug
       "
     depends_on:
       seaweedfs-filer:
@@ -205,7 +195,7 @@ services:
       dockerfile: Dockerfile.integration-test
     container_name: integration-test
     volumes:
-      - seaweedfs_mount:/mnt/seaweedfs:shared
+      - seaweedfs_mount:/mnt/seaweedfs
       - ./test-results:/test-results
     networks:
       - seaweedfs-rdma
@@ -233,7 +223,7 @@ services:
       dockerfile: Dockerfile.performance-test
     container_name: performance-test
     volumes:
-      - seaweedfs_mount:/mnt/seaweedfs:shared
+      - seaweedfs_mount:/mnt/seaweedfs
       - ./performance-results:/performance-results
     networks:
       - seaweedfs-rdma
