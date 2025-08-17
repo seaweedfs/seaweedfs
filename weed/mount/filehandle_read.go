@@ -102,12 +102,9 @@ func (fh *FileHandle) tryRDMARead(ctx context.Context, fileSize int64, buff []by
 	// Find the chunk that contains our offset using binary search
 	var targetChunk *filer_pb.FileChunk
 	var chunkOffset int64
-
-	// Pre-calculate cumulative offsets for efficient binary search
-	cumulativeOffsets := make([]int64, len(chunks)+1)
-	for i, chunk := range chunks {
-		cumulativeOffsets[i+1] = cumulativeOffsets[i] + int64(chunk.Size)
-	}
+	
+	// Get cached cumulative offsets for efficient binary search
+	cumulativeOffsets := fh.getCumulativeOffsets(chunks)
 
 	// Use binary search to find the chunk containing the offset
 	chunkIndex := sort.Search(len(chunks), func(i int) bool {

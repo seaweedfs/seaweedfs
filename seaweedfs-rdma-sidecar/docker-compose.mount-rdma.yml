@@ -101,7 +101,7 @@ services:
       --port 18515
       --debug
     healthcheck:
-      test: ["CMD", "test", "-S", "/tmp/rdma/rdma-engine.sock"]
+      test: ["CMD", "sh", "-c", "pgrep rdma-engine-server >/dev/null && test -S /tmp/rdma/rdma-engine.sock"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -172,26 +172,7 @@ services:
       - RDMA_MAX_CONCURRENT=64
       - RDMA_TIMEOUT_MS=5000
       - DEBUG=true
-    command: >
-      sh -c "
-        echo 'Waiting for services to be ready...' &&
-        
-        # Wait for filer to be ready
-        until wget --timeout=5 --quiet --tries=1 --spider http://seaweedfs-filer:8888/; do
-          echo 'Waiting for filer...';
-          sleep 2;
-        done &&
-        
-        # Wait for RDMA sidecar to be ready
-        until wget --timeout=5 --quiet --tries=1 --spider http://rdma-sidecar:8081/health; do
-          echo 'Waiting for RDMA sidecar...';
-          sleep 2;
-        done &&
-        
-        echo 'All services ready! Starting SeaweedFS mount with RDMA acceleration...' &&
-        mkdir -p /mnt/seaweedfs &&
-        /usr/local/bin/weed mount -filer=${FILER_ADDR} -dir=${MOUNT_POINT} -allowOthers=true -rdma.enabled=${RDMA_ENABLED} -rdma.sidecar=${RDMA_SIDECAR_ADDR} -rdma.fallback=${RDMA_FALLBACK} -rdma.maxConcurrent=${RDMA_MAX_CONCURRENT} -rdma.timeoutMs=${RDMA_TIMEOUT_MS} -debug=${DEBUG}
-      "
+    command: /usr/local/bin/mount-helper.sh
     depends_on:
       seaweedfs-filer:
         condition: service_healthy
