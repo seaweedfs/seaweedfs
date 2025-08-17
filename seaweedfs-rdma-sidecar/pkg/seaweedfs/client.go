@@ -4,6 +4,7 @@ package seaweedfs
 import (
 	"context"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"os"
@@ -290,26 +291,10 @@ func (c *SeaweedFSRDMAClient) httpFallback(ctx context.Context, req *NeedleReadR
 		return nil, fmt.Errorf("HTTP request failed with status: %d", resp.StatusCode)
 	}
 
-	// Read response data
-	data := make([]byte, 0, 1024*1024) // Pre-allocate 1MB
-	buffer := make([]byte, 32*1024)    // 32KB buffer
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-		}
-
-		n, err := resp.Body.Read(buffer)
-		if n > 0 {
-			data = append(data, buffer[:n]...)
-		}
-		if err != nil {
-			if err.Error() == "EOF" {
-				break
-			}
-			return nil, fmt.Errorf("failed to read HTTP response: %w", err)
-		}
+	// Read response data - io.ReadAll handles context cancellation and timeouts correctly
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read HTTP response body: %w", err)
 	}
 
 	c.logger.WithFields(logrus.Fields{

@@ -417,12 +417,29 @@ func (c *Client) Read(ctx context.Context, req *ReadRequest) (*ReadResponse, err
 		"server_crc":    completeResp.ServerCrc,
 	}).Info("✅ RDMA read completed successfully")
 
-	// For the mock implementation, we'll return placeholder data
-	// In the real implementation, this would be the actual RDMA transferred data
+	// MOCK DATA IMPLEMENTATION - FOR DEVELOPMENT/TESTING ONLY
+	// 
+	// This section generates placeholder data for the mock RDMA implementation.
+	// In a production RDMA implementation, this should be replaced with:
+	//
+	// 1. The actual data transferred via RDMA from the remote memory region
+	// 2. Data validation using checksums/CRC from the RDMA completion
+	// 3. Proper error handling for RDMA transfer failures
+	// 4. Memory region cleanup and deregistration
+	//
+	// TODO for real RDMA implementation:
+	// - Replace mockData with actual RDMA buffer contents
+	// - Validate data integrity using server CRC: completeResp.ServerCrc
+	// - Handle partial transfers and retry logic
+	// - Implement proper memory management for RDMA regions
+	//
+	// Current mock behavior: Generates a simple pattern (0,1,2...255,0,1,2...)
+	// This allows testing of the integration pipeline without real hardware
 	mockData := make([]byte, startResp.TransferSize)
 	for i := range mockData {
-		mockData[i] = byte(i % 256) // Simple pattern for testing
+		mockData[i] = byte(i % 256) // Simple repeating pattern for verification
 	}
+	// END MOCK DATA IMPLEMENTATION
 
 	return &ReadResponse{
 		Data:         mockData,

@@ -238,9 +238,9 @@ func (s *Sidecar) pingHandler(w http.ResponseWriter, r *http.Request) {
 	}`, latency, totalLatency, time.Now().Format(time.RFC3339))
 }
 
-// RDMA read handler
+// RDMA read handler - uses GET method with query parameters for RESTful read operations
 func (s *Sidecar) rdmaReadHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
+	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}

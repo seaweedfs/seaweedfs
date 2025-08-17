@@ -6,11 +6,16 @@
 use crate::{RdmaError, RdmaResult, rdma::RdmaContext, session::SessionManager};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tracing::{info, debug, error};
 use uuid::Uuid;
 use std::path::Path;
+
+/// Atomic counter for generating unique work request IDs
+/// This ensures no hash collisions that could cause incorrect completion handling
+static NEXT_WR_ID: AtomicU64 = AtomicU64::new(1);
 
 /// IPC message types between Go sidecar and Rust RDMA engine
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -432,8 +437,9 @@ impl IpcServer {
             chrono::Duration::seconds(req.timeout_secs as i64),
         ).await?;
         
-        // Perform RDMA read
-        let wr_id = session_id.hash_code() as u64;
+        // Perform RDMA read with unique work request ID
+        // Use atomic counter to avoid hash collisions that could cause incorrect completion handling
+        let wr_id = NEXT_WR_ID.fetch_add(1, Ordering::Relaxed);
         rdma_context.post_read(
             local_addr,
             req.remote_addr,
@@ -499,21 +505,7 @@ impl IpcServer {
     }
 }
 
-/// Extension trait for hashing strings
-trait HashCode {
-    fn hash_code(&self) -> u32;
-}
 
-impl HashCode for String {
-    fn hash_code(&self) -> u32 {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        
-        let mut hasher = DefaultHasher::new();
-        self.hash(&mut hasher);
-        hasher.finish() as u32
-    }
-}
 
 #[cfg(test)]
 mod tests {
