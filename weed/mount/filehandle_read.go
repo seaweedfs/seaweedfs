@@ -160,8 +160,6 @@ func (fh *FileHandle) parseFileId(fileId string) (volumeID uint32, needleID uint
 	return volumeID, needleID, cookie, nil
 }
 
-
-
 func (fh *FileHandle) downloadRemoteEntry(entry *LockedEntry) error {
 
 	fileFullPath := fh.FullPath()
