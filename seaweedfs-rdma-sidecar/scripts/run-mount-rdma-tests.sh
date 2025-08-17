@@ -75,7 +75,17 @@ build_images() {
     
     # Copy binary for Docker builds
     mkdir -p bin
-    cp ../weed bin/
+    if [[ -f "../weed" ]]; then
+        cp ../weed bin/
+    elif [[ -f "../bin/weed" ]]; then
+        cp ../bin/weed bin/
+    elif [[ -f "../build/weed" ]]; then
+        cp ../build/weed bin/
+    else
+        echo "Error: Cannot find weed binary"
+        find .. -name "weed" -type f
+        exit 1
+    fi
     
     # Build RDMA sidecar
     echo "Building RDMA sidecar..."

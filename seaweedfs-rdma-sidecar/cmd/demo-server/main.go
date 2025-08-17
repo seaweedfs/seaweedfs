@@ -78,7 +78,10 @@ func runServer(cmd *cobra.Command, args []string) error {
 		Logger:          logger,
 	}
 
-	rdmaClient := seaweedfs.NewSeaweedFSRDMAClient(config)
+	rdmaClient, err := seaweedfs.NewSeaweedFSRDMAClient(config)
+	if err != nil {
+		return fmt.Errorf("failed to create RDMA client: %w", err)
+	}
 
 	// Start RDMA client
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -235,17 +238,22 @@ func (s *DemoServer) healthHandler(w http.ResponseWriter, r *http.Request) {
 		"status":    "healthy",
 		"timestamp": time.Now().Format(time.RFC3339),
 		"rdma": map[string]interface{}{
-			"enabled":   s.rdmaClient.IsEnabled(),
+			"enabled":   false,
 			"connected": false,
 		},
 	}
 
-	if s.rdmaClient.IsEnabled() {
-		if err := s.rdmaClient.HealthCheck(ctx); err != nil {
-			s.logger.WithError(err).Warn("RDMA health check failed")
-			health["rdma"].(map[string]interface{})["error"] = err.Error()
-		} else {
-			health["rdma"].(map[string]interface{})["connected"] = true
+	if s.rdmaClient != nil {
+		health["rdma"].(map[string]interface{})["enabled"] = s.rdmaClient.IsEnabled()
+		health["rdma"].(map[string]interface{})["type"] = "local"
+
+		if s.rdmaClient.IsEnabled() {
+			if err := s.rdmaClient.HealthCheck(ctx); err != nil {
+				s.logger.WithError(err).Warn("RDMA health check failed")
+				health["rdma"].(map[string]interface{})["error"] = err.Error()
+			} else {
+				health["rdma"].(map[string]interface{})["connected"] = true
+			}
 		}
 	}
 
@@ -260,7 +268,18 @@ func (s *DemoServer) statsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stats := s.rdmaClient.GetStats()
+	var stats map[string]interface{}
+
+	if s.rdmaClient != nil {
+		stats = s.rdmaClient.GetStats()
+		stats["client_type"] = "local"
+	} else {
+		stats = map[string]interface{}{
+			"client_type": "none",
+			"error":       "no RDMA client available",
+		}
+	}
+
 	stats["timestamp"] = time.Now().Format(time.RFC3339)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -316,6 +335,7 @@ func (s *DemoServer) readHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp, err := s.rdmaClient.ReadNeedle(ctx, req)
+
 	if err != nil {
 		s.logger.WithError(err).Error("❌ Needle read failed")
 		http.Error(w, fmt.Sprintf("Read failed: %v", err), http.StatusInternalServerError)

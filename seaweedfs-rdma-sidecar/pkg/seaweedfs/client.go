@@ -48,7 +48,7 @@ type NeedleReadResponse struct {
 }
 
 // NewSeaweedFSRDMAClient creates a new SeaweedFS RDMA client
-func NewSeaweedFSRDMAClient(config *Config) *SeaweedFSRDMAClient {
+func NewSeaweedFSRDMAClient(config *Config) (*SeaweedFSRDMAClient, error) {
 	if config.Logger == nil {
 		config.Logger = logrus.New()
 		config.Logger.SetLevel(logrus.InfoLevel)
@@ -69,7 +69,7 @@ func NewSeaweedFSRDMAClient(config *Config) *SeaweedFSRDMAClient {
 		logger:          config.Logger,
 		volumeServerURL: config.VolumeServerURL,
 		enabled:         config.Enabled,
-	}
+	}, nil
 }
 
 // Start initializes the RDMA client connection
@@ -82,20 +82,11 @@ func (c *SeaweedFSRDMAClient) Start(ctx context.Context) error {
 	c.logger.Info("🚀 Starting SeaweedFS RDMA client...")
 
 	if err := c.rdmaClient.Connect(ctx); err != nil {
-		c.logger.WithError(err).Warn("⚠️  Failed to connect to RDMA engine, falling back to HTTP")
-		c.enabled = false
-		return nil // Not a fatal error
+		c.logger.WithError(err).Error("❌ Failed to connect to RDMA engine")
+		return fmt.Errorf("failed to connect to RDMA engine: %w", err)
 	}
 
-	caps := c.rdmaClient.GetCapabilities()
-	c.logger.WithFields(logrus.Fields{
-		"version":           caps.Version,
-		"device_name":       caps.DeviceName,
-		"max_sessions":      caps.MaxSessions,
-		"max_transfer_size": caps.MaxTransferSize,
-		"real_rdma":         caps.RealRdma,
-	}).Info("✅ SeaweedFS RDMA client started successfully")
-
+	c.logger.Info("✅ SeaweedFS RDMA client started successfully")
 	return nil
 }
 
@@ -242,41 +233,48 @@ func (c *SeaweedFSRDMAClient) httpFallback(ctx context.Context, req *NeedleReadR
 	}
 
 	c.logger.WithFields(logrus.Fields{
-		"volume_id":  req.VolumeID,
-		"needle_id":  req.NeedleID,
-		"bytes_read": len(data),
+		"volume_id": req.VolumeID,
+		"needle_id": req.NeedleID,
+		"data_size": len(data),
 	}).Debug("📥 HTTP fallback successful")
 
 	return data, nil
 }
 
-// GetStats returns RDMA client statistics
-func (c *SeaweedFSRDMAClient) GetStats() map[string]interface{} {
-	stats := make(map[string]interface{})
-	stats["enabled"] = c.enabled
-	stats["connected"] = c.IsEnabled()
+// HealthCheck verifies that the RDMA client is healthy
+func (c *SeaweedFSRDMAClient) HealthCheck(ctx context.Context) error {
+	if !c.enabled {
+		return fmt.Errorf("RDMA is disabled")
+	}
 
-	if c.IsEnabled() {
-		caps := c.rdmaClient.GetCapabilities()
-		stats["capabilities"] = map[string]interface{}{
-			"version":           caps.Version,
-			"device_name":       caps.DeviceName,
-			"max_sessions":      caps.MaxSessions,
-			"active_sessions":   caps.ActiveSessions,
-			"max_transfer_size": caps.MaxTransferSize,
-			"real_rdma":         caps.RealRdma,
-		}
+	if c.rdmaClient == nil {
+		return fmt.Errorf("RDMA client not initialized")
+	}
+
+	if !c.rdmaClient.IsConnected() {
+		return fmt.Errorf("RDMA client not connected")
+	}
+
+	// Try a ping to the RDMA engine
+	_, err := c.rdmaClient.Ping(ctx)
+	return err
+}
+
+// GetStats returns statistics about the RDMA client
+func (c *SeaweedFSRDMAClient) GetStats() map[string]interface{} {
+	stats := map[string]interface{}{
+		"enabled":           c.enabled,
+		"volume_server_url": c.volumeServerURL,
+		"rdma_socket_path":  "",
+	}
+
+	if c.rdmaClient != nil {
+		stats["connected"] = c.rdmaClient.IsConnected()
+		// Note: Capabilities method may not be available, skip for now
+	} else {
+		stats["connected"] = false
+		stats["error"] = "RDMA client not initialized"
 	}
 
 	return stats
-}
-
-// HealthCheck performs a health check on the RDMA connection
-func (c *SeaweedFSRDMAClient) HealthCheck(ctx context.Context) error {
-	if !c.IsEnabled() {
-		return fmt.Errorf("RDMA not enabled or not connected")
-	}
-
-	_, err := c.rdmaClient.Ping(ctx)
-	return err
 }
