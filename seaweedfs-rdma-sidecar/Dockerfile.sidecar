@@ -41,7 +41,7 @@ COPY --from=builder /app/sidecar .
 COPY --from=builder /app/test-rdma .
 
 # Change ownership
-RUN chown -R appuser:appuser /app
+RUN chown -R appuser:appgroup /app
 USER appuser
 
 # Expose the demo server port

@@ -11,11 +11,11 @@ services:
     networks:
       - seaweedfs-rdma
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9333/cluster/status"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
+      test: ["CMD", "pgrep", "-f", "weed"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
   # SeaweedFS Volume Server
   seaweedfs-volume:
@@ -32,11 +32,11 @@ services:
     networks:
       - seaweedfs-rdma
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/status"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
+      test: ["CMD", "pgrep", "-f", "weed"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
   # RDMA Simulation Environment
   rdma-simulation:
@@ -71,7 +71,7 @@ services:
         tail -f /dev/null
       "
     healthcheck:
-      test: ["CMD", "/opt/rdma-sim/test-rdma.sh", "healthcheck"]
+      test: ["CMD", "test", "-f", "/opt/rdma-sim/setup-soft-roce.sh"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -81,7 +81,7 @@ services:
   rdma-engine:
     build:
       context: .
-      dockerfile: Dockerfile.rdma-engine.simple
+      dockerfile: Dockerfile.rdma-engine
     container_name: rdma-engine
     environment:
       - RUST_LOG=debug

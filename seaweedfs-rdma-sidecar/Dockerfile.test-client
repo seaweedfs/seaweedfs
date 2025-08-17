@@ -50,7 +50,7 @@ COPY tests/ ./tests/
 RUN chmod +x ./tests/*.sh
 
 # Change ownership
-RUN chown -R appuser:appuser /app
+RUN chown -R appuser:appgroup /app
 
 # Switch to app user
 USER appuser

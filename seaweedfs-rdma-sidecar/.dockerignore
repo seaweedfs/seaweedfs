@@ -48,8 +48,8 @@ Dockerfile*
 docker-compose*.yml
 .dockerignore
 
-# Test files
-tests/
+# Test files (tests/ needed for integration test container)
+# tests/
 scripts/
 *.log
 
