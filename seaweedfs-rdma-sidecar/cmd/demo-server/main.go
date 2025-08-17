@@ -316,35 +316,43 @@ func (s *DemoServer) readHandler(w http.ResponseWriter, r *http.Request) {
 	// Parse parameters
 	query := r.URL.Query()
 	volumeServer := query.Get("volume_server")
-	
+
 	volumeID, err := strconv.ParseUint(query.Get("volume"), 10, 32)
 	if err != nil {
 		http.Error(w, "invalid 'volume' parameter", http.StatusBadRequest)
 		return
 	}
-	
+
 	needleID, err := strconv.ParseUint(query.Get("needle"), 10, 64)
 	if err != nil {
 		http.Error(w, "invalid 'needle' parameter", http.StatusBadRequest)
 		return
 	}
-	
+
 	cookie, err := strconv.ParseUint(query.Get("cookie"), 10, 32)
 	if err != nil {
 		http.Error(w, "invalid 'cookie' parameter", http.StatusBadRequest)
 		return
 	}
-	
-	offset, err := strconv.ParseUint(query.Get("offset"), 10, 64)
-	if err != nil {
-		http.Error(w, "invalid 'offset' parameter", http.StatusBadRequest)
-		return
+
+	var offset uint64
+	if offsetStr := query.Get("offset"); offsetStr != "" {
+		var parseErr error
+		offset, parseErr = strconv.ParseUint(offsetStr, 10, 64)
+		if parseErr != nil {
+			http.Error(w, "invalid 'offset' parameter", http.StatusBadRequest)
+			return
+		}
 	}
-	
-	size, err := strconv.ParseUint(query.Get("size"), 10, 64)
-	if err != nil {
-		http.Error(w, "invalid 'size' parameter", http.StatusBadRequest)
-		return
+
+	var size uint64
+	if sizeStr := query.Get("size"); sizeStr != "" {
+		var parseErr error
+		size, parseErr = strconv.ParseUint(sizeStr, 10, 64)
+		if parseErr != nil {
+			http.Error(w, "invalid 'size' parameter", http.StatusBadRequest)
+			return
+		}
 	}
 
 	if volumeServer == "" {
