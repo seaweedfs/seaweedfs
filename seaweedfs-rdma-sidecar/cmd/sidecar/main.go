@@ -325,15 +325,15 @@ func (s *Sidecar) rdmaReadHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // Helper functions for parsing parameters
-func parseUint32(s string, defaultValue uint32) uint32 {
+func parseUint32(s string, defaultValue uint32) (uint32, error) {
 	if s == "" {
-		return defaultValue
+		return defaultValue, nil
 	}
 	val, err := strconv.ParseUint(s, 10, 32)
 	if err != nil {
-		return defaultValue
+		return 0, fmt.Errorf("invalid uint32 value: %q", s)
 	}
-	return uint32(val)
+	return uint32(val), nil
 }
 
 func parseUint64(s string, defaultValue uint64) uint64 {
