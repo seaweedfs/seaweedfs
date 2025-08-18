@@ -96,7 +96,7 @@ func (s *DemoServer) rdmaReadHandler(w http.ResponseWriter, r *http.Request) {
     
     // 🚀 SIMPLE: Use the provided volume server address
     // No complex lookup logic needed!
-    resp, err := s.rdmaClient.ReadFromVolumeServer(ctx, req.VolumeServer, req.VolumeID, req.NeedleID, req.Cookie, req.Offset, req.Size)
+    resp, err := s.rdmaClient.ReadFromVolumeServer(r.Context(), req.VolumeServer, req.VolumeID, req.NeedleID, req.Cookie, req.Offset, req.Size)
     
     if err != nil {
         http.Error(w, fmt.Sprintf("RDMA read failed: %v", err), http.StatusInternalServerError)
