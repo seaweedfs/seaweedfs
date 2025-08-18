@@ -262,8 +262,6 @@ func (c *RDMAMountClient) ReadNeedle(ctx context.Context, volumeID uint32, needl
 	return data, isRDMA, nil
 }
 
-
-
 // GetStats returns current RDMA client statistics
 func (c *RDMAMountClient) GetStats() map[string]interface{} {
 	totalRequests := atomic.LoadInt64(&c.totalRequests)
