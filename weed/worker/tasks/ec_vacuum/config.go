@@ -86,12 +86,12 @@ func GetConfigSpec() base.ConfigSpec {
 				JSONName:     "deletion_threshold",
 				Type:         config.FieldTypeFloat,
 				DefaultValue: 0.3,
-				MinValue:     0.1,
-				MaxValue:     0.8,
+				MinValue:     0.0, // No minimum limit - allows any value including 0
+				MaxValue:     1.0, // Allow up to 100%
 				Required:     true,
 				DisplayName:  "Deletion Threshold",
 				Description:  "Minimum ratio of deletions to trigger vacuum",
-				HelpText:     "EC volumes with this ratio of deleted content will be vacuumed",
+				HelpText:     "EC volumes with this ratio of deleted content will be vacuumed (0.0 = any deletions, 1.0 = 100% deleted)",
 				Placeholder:  "0.3 (30%)",
 				Unit:         config.UnitNone,
 				InputType:    "number",
