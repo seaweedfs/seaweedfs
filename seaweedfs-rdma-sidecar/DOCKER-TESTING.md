@@ -190,7 +190,7 @@ docker-compose restart [service-name]
 
 ```bash
 # Check socket permissions
-docker-compose exec rdma-engine ls -la /tmp/rdma-engine.sock
+docker-compose exec rdma-engine ls -la /tmp/rdma/rdma-engine.sock
 
 # Check RDMA engine logs
 ./tests/docker-test-helper.sh logs rdma-engine
