@@ -261,14 +261,14 @@ func TestSafetyCheckNewGenerationReadiness(t *testing.T) {
 		task := createSafetyTestTask()
 
 		// Test insufficient shard count
-		shardCount := 5 // Only 5 shards, need at least 10
+		shardCount := 5 // Only 5 shards, need at least DataShardsCount
 
-		if shardCount < 10 {
-			err := fmt.Errorf("CRITICAL: new generation %d has only %d shards (need ≥10) - ABORTING CLEANUP",
-				task.targetGeneration, shardCount)
+		if shardCount < erasure_coding.DataShardsCount {
+			err := fmt.Errorf("CRITICAL: new generation %d has only %d shards (need ≥%d) - ABORTING CLEANUP",
+				task.targetGeneration, shardCount, erasure_coding.DataShardsCount)
 			assert.Error(t, err)
 			assert.Contains(t, err.Error(), "ABORTING CLEANUP")
-			t.Logf("🛡️  CRITICAL SAFETY: Prevented cleanup with insufficient shards: %d < 10", shardCount)
+			t.Logf("🛡️  CRITICAL SAFETY: Prevented cleanup with insufficient shards: %d < %d", shardCount, erasure_coding.DataShardsCount)
 		}
 	})
 
@@ -278,8 +278,8 @@ func TestSafetyCheckNewGenerationReadiness(t *testing.T) {
 		// Test sufficient shard count
 		shardCount := 14 // All shards present
 
-		if shardCount >= 10 {
-			t.Logf("✅ Safety check passed: new generation has %d shards (≥10 required)", shardCount)
+		if shardCount >= erasure_coding.DataShardsCount {
+			t.Logf("✅ Safety check passed: new generation has %d shards (≥%d required)", shardCount, erasure_coding.DataShardsCount)
 		}
 
 		// Use task to avoid unused variable warning

@@ -34,7 +34,7 @@ func RegisterEcVacuumTask() {
 		Type:         types.TaskType("ec_vacuum"),
 		Name:         "ec_vacuum",
 		DisplayName:  "EC Vacuum",
-		Description:  "Cleans up deleted data from erasure coded volumes",
+		Description:  "Cleans up deleted data from erasure coded volumes with intelligent multi-generation handling",
 		Icon:         "fas fa-broom text-warning",
 		Capabilities: []string{"ec_vacuum", "data_cleanup"},
 

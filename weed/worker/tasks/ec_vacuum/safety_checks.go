@@ -7,6 +7,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 )
 
 // performSafetyChecks performs comprehensive safety verification before cleanup
@@ -135,16 +136,16 @@ func (t *EcVacuumTask) verifyNewGenerationReadiness() error {
 		}
 
 		shardCount := len(resp.ShardIdLocations)
-		if shardCount < 10 { // Need at least 10 data shards for safety
-			return fmt.Errorf("CRITICAL: new generation %d has only %d shards (need ≥10) - ABORTING CLEANUP",
-				t.targetGeneration, shardCount)
+		if shardCount < erasure_coding.DataShardsCount { // Need at least DataShardsCount data shards for safety
+			return fmt.Errorf("CRITICAL: new generation %d has only %d shards (need ≥%d) - ABORTING CLEANUP",
+				t.targetGeneration, shardCount, erasure_coding.DataShardsCount)
 		}
 
 		t.LogInfo("✅ Safety Check 4: New generation has sufficient shards", map[string]interface{}{
 			"volume_id":         t.volumeID,
 			"target_generation": t.targetGeneration,
 			"shard_count":       shardCount,
-			"minimum_required":  10,
+			"minimum_required":  erasure_coding.DataShardsCount,
 		})
 		return nil
 	})
@@ -162,32 +163,4 @@ func (t *EcVacuumTask) verifyNoActiveOperations() error {
 		"assumption":        "grace period ensures operation quiescence",
 	})
 	return nil
-}
-
-// finalSafetyCheck performs one last verification before each unmount operation
-func (t *EcVacuumTask) finalSafetyCheck() error {
-	if t.masterAddress == "" {
-		// If we don't have master access, we can't do this check
-		// but other safety checks should have already passed
-		return nil
-	}
-
-	return operation.WithMasterServerClient(false, t.masterAddress, t.grpcDialOption, func(client master_pb.SeaweedClient) error {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		resp, err := client.LookupEcVolume(ctx, &master_pb.LookupEcVolumeRequest{
-			VolumeId: t.volumeID,
-		})
-		if err != nil {
-			return fmt.Errorf("final safety lookup failed: %w", err)
-		}
-
-		if resp.ActiveGeneration == t.sourceGeneration {
-			return fmt.Errorf("ABORT: active generation is %d (same as source %d) - PREVENTING DELETION",
-				resp.ActiveGeneration, t.sourceGeneration)
-		}
-
-		return nil
-	})
 }

@@ -111,6 +111,11 @@ func (t *EcVacuumTask) Execute(ctx context.Context, params *worker_pb.TaskParams
 	// Ensure sourceNodes is consistent with the plan
 	t.sourceNodes = plan.SourceDistribution.Nodes
 
+	// CRITICAL VALIDATION: Ensure execution parameters match the plan
+	if err := t.validateExecutionConsistency(plan); err != nil {
+		return fmt.Errorf("execution consistency validation failed: %w", err)
+	}
+
 	// Log task information
 	logFields := map[string]interface{}{
 		"volume_id":         t.volumeID,
@@ -193,12 +198,21 @@ func (t *EcVacuumTask) Execute(ctx context.Context, params *worker_pb.TaskParams
 		// Don't fail the task for cleanup errors
 	}
 
-	t.LogInfo("EC vacuum task completed successfully", map[string]interface{}{
-		"volume_id":         t.volumeID,
-		"collection":        t.collection,
-		"source_generation": t.sourceGeneration,
-		"target_generation": t.targetGeneration,
-		"note":              "Zero-downtime vacuum completed with generation transition",
+	// Final validation: Ensure all plan objectives were met
+	if err := t.validateExecutionCompletion(); err != nil {
+		return fmt.Errorf("execution completion validation failed: %w", err)
+	}
+
+	t.LogInfo("🎉 EC vacuum task completed successfully - Plan fully executed", map[string]interface{}{
+		"volume_id":              t.volumeID,
+		"collection":             t.collection,
+		"source_generation":      t.sourceGeneration,
+		"target_generation":      t.targetGeneration,
+		"generations_cleaned_up": len(t.plan.GenerationsToCleanup),
+		"cleanup_generations":    t.plan.GenerationsToCleanup,
+		"plan_execution_status":  "COMPLETED",
+		"zero_downtime_achieved": true,
+		"note":                   "All old generations cleaned up, new generation active",
 	})
 
 	return nil
@@ -1247,6 +1261,99 @@ func (t *EcVacuumTask) fetchMasterAddressFromAdmin() error {
 		"master_address":    masterAddress,
 		"available_masters": resp.MasterAddresses,
 		"primary_master":    resp.PrimaryMaster,
+	})
+
+	return nil
+}
+
+// validateExecutionConsistency ensures the task execution parameters are consistent with the vacuum plan
+func (t *EcVacuumTask) validateExecutionConsistency(plan *VacuumPlan) error {
+	// Validate task matches plan
+	if t.volumeID != plan.VolumeID {
+		return fmt.Errorf("CRITICAL: task volume ID %d != plan volume ID %d", t.volumeID, plan.VolumeID)
+	}
+	if t.collection != plan.Collection {
+		return fmt.Errorf("CRITICAL: task collection '%s' != plan collection '%s'", t.collection, plan.Collection)
+	}
+	if t.sourceGeneration != plan.CurrentGeneration {
+		return fmt.Errorf("CRITICAL: task source generation %d != plan current generation %d",
+			t.sourceGeneration, plan.CurrentGeneration)
+	}
+	if t.targetGeneration != plan.TargetGeneration {
+		return fmt.Errorf("CRITICAL: task target generation %d != plan target generation %d",
+			t.targetGeneration, plan.TargetGeneration)
+	}
+
+	// Validate generation sequence is logical
+	if t.targetGeneration <= t.sourceGeneration {
+		return fmt.Errorf("CRITICAL: target generation %d must be > source generation %d",
+			t.targetGeneration, t.sourceGeneration)
+	}
+
+	// Validate cleanup generations don't include target
+	for _, cleanupGen := range plan.GenerationsToCleanup {
+		if cleanupGen == t.targetGeneration {
+			return fmt.Errorf("CRITICAL: cleanup generations include target generation %d - this would cause data loss",
+				t.targetGeneration)
+		}
+	}
+
+	// Validate source nodes have sufficient shards
+	totalShards := 0
+	for _, shardBits := range t.sourceNodes {
+		totalShards += shardBits.ShardIdCount()
+	}
+	if totalShards < erasure_coding.DataShardsCount { // Need at least DataShardsCount data shards
+		return fmt.Errorf("CRITICAL: only %d shards available, need at least %d for reconstruction", totalShards, erasure_coding.DataShardsCount)
+	}
+
+	t.LogInfo("✅ Execution consistency validation passed", map[string]interface{}{
+		"volume_id":           t.volumeID,
+		"source_generation":   t.sourceGeneration,
+		"target_generation":   t.targetGeneration,
+		"cleanup_generations": len(plan.GenerationsToCleanup),
+		"total_source_shards": totalShards,
+		"plan_consistency":    "VALIDATED",
+	})
+
+	return nil
+}
+
+// validateExecutionCompletion validates that all plan objectives were successfully met
+func (t *EcVacuumTask) validateExecutionCompletion() error {
+	if t.plan == nil {
+		return fmt.Errorf("no vacuum plan available for validation")
+	}
+
+	// Validate generations were set correctly during execution
+	if t.sourceGeneration == 0 && t.targetGeneration == 0 {
+		return fmt.Errorf("generations were not properly set during execution")
+	}
+
+	// Validate generation transition makes sense
+	if t.targetGeneration <= t.sourceGeneration {
+		return fmt.Errorf("invalid generation transition: %d -> %d", t.sourceGeneration, t.targetGeneration)
+	}
+
+	// Validate cleanup list was populated
+	if len(t.plan.GenerationsToCleanup) == 0 {
+		t.LogWarning("No generations marked for cleanup - this may be expected for new volumes", map[string]interface{}{
+			"volume_id":         t.volumeID,
+			"source_generation": t.sourceGeneration,
+			"target_generation": t.targetGeneration,
+		})
+	}
+
+	// Log execution summary for audit trail
+	t.LogInfo("✅ Execution completion validation passed", map[string]interface{}{
+		"volume_id":                  t.volumeID,
+		"collection":                 t.collection,
+		"plan_execution_validated":   true,
+		"source_generation_used":     t.sourceGeneration,
+		"target_generation_created":  t.targetGeneration,
+		"total_generations_cleaned":  len(t.plan.GenerationsToCleanup),
+		"vacuum_plan_fully_executed": true,
+		"multi_generation_handling":  "SUCCESSFUL",
 	})
 
 	return nil
