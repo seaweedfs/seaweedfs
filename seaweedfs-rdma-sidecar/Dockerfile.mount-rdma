@@ -1,0 +1,40 @@
+# Dockerfile for SeaweedFS Mount with RDMA support
+FROM ubuntu:22.04
+
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    fuse3 \
+    curl \
+    wget \
+    ca-certificates \
+    procps \
+    util-linux \
+    jq \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create necessary directories
+RUN mkdir -p /usr/local/bin /mnt/seaweedfs /var/log/seaweedfs
+
+# Copy SeaweedFS binary (will be built from context)
+COPY bin/weed /usr/local/bin/weed
+RUN chmod +x /usr/local/bin/weed
+
+# Copy mount helper scripts
+COPY scripts/mount-helper.sh /usr/local/bin/mount-helper.sh
+RUN chmod +x /usr/local/bin/mount-helper.sh
+
+# Create mount point
+RUN mkdir -p /mnt/seaweedfs
+
+# Set up FUSE permissions
+RUN echo 'user_allow_other' >> /etc/fuse.conf
+
+# Health check script
+COPY scripts/mount-health-check.sh /usr/local/bin/mount-health-check.sh
+RUN chmod +x /usr/local/bin/mount-health-check.sh
+
+# Expose mount point as volume
+VOLUME ["/mnt/seaweedfs"]
+
+# Default command
+CMD ["/usr/local/bin/mount-helper.sh"]

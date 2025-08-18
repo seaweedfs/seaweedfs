@@ -1,0 +1,55 @@
+# Multi-stage build for Go Sidecar
+FROM golang:1.24-alpine AS builder
+
+# Install build dependencies
+RUN apk add --no-cache git ca-certificates tzdata
+
+# Set work directory
+WORKDIR /app
+
+# Copy go mod files
+COPY go.mod go.sum ./
+
+# Download dependencies
+RUN go mod download
+
+# Copy source code
+COPY cmd/ ./cmd/
+COPY pkg/ ./pkg/
+
+# Build the binaries
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o demo-server ./cmd/demo-server
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o sidecar ./cmd/sidecar
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o test-rdma ./cmd/test-rdma
+
+# Runtime stage
+FROM alpine:3.18
+
+# Install runtime dependencies
+RUN apk --no-cache add ca-certificates curl jq
+
+# Create app user
+RUN addgroup -g 1001 appgroup && \
+    adduser -D -s /bin/sh -u 1001 -G appgroup appuser
+
+# Set work directory
+WORKDIR /app
+
+# Copy binaries from builder stage
+COPY --from=builder /app/demo-server .
+COPY --from=builder /app/sidecar .
+COPY --from=builder /app/test-rdma .
+
+# Change ownership
+RUN chown -R appuser:appgroup /app
+USER appuser
+
+# Expose the demo server port
+EXPOSE 8081
+
+# Health check
+HEALTHCHECK --interval=10s --timeout=5s --start-period=15s --retries=3 \
+    CMD curl -f http://localhost:8081/health || exit 1
+
+# Default command (demo server)
+CMD ["./demo-server", "--port", "8081", "--enable-rdma", "--debug"]

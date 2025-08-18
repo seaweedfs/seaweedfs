@@ -351,7 +351,7 @@ func (iam *IdentityAccessManagement) doesPresignedSignatureMatch(hashedPayload s
 	extractedSignedHeaders := make(http.Header)
 	for _, header := range signedHeaders {
 		if header == "host" {
-			extractedSignedHeaders[header] = []string{r.Host}
+			extractedSignedHeaders[header] = []string{extractHostHeader(r)}
 			continue
 		}
 		if values := r.Header[http.CanonicalHeaderKey(header)]; len(values) > 0 {
