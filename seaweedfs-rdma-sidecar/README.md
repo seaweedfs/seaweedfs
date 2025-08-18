@@ -363,19 +363,6 @@ cargo run --features real-ucx
 3. **Add Rust handler** in `rdma-engine/src/ipc.rs`
 4. **Update tests** in both languages
 
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Run tests (`go test ./... && cd rdma-engine && cargo test`)
-4. Commit changes (`git commit -m 'Add amazing feature'`)
-5. Push to branch (`git push origin feature/amazing-feature`)
-6. Open a Pull Request
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
 ## 🙏 Acknowledgments
 
 - **[UCX Project](https://github.com/openucx/ucx)** - Unified Communication X framework
