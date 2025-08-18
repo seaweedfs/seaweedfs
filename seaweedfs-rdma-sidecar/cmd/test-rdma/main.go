@@ -38,7 +38,11 @@ This tool allows you to test various RDMA operations including:
 	}
 
 	// Global flags
-	rootCmd.PersistentFlags().StringVarP(&socketPath, "socket", "s", "/tmp/rdma-engine.sock", "Path to RDMA engine Unix socket")
+	defaultSocketPath := os.Getenv("RDMA_SOCKET_PATH")
+	if defaultSocketPath == "" {
+		defaultSocketPath = "/tmp/rdma-engine.sock"
+	}
+	rootCmd.PersistentFlags().StringVarP(&socketPath, "socket", "s", defaultSocketPath, "Path to RDMA engine Unix socket (env: RDMA_SOCKET_PATH)")
 	rootCmd.PersistentFlags().BoolVarP(&debug, "debug", "d", false, "Enable debug logging")
 	rootCmd.PersistentFlags().DurationVarP(&timeout, "timeout", "t", 30*time.Second, "Operation timeout")
 

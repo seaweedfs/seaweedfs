@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -357,7 +356,7 @@ func (c *SeaweedFSRDMAClient) writeToTempFile(req *NeedleReadRequest, data []byt
 	tempFilePath := filepath.Join(c.tempDir, fileName)
 
 	// Write data to temp file (this populates the page cache)
-	err := ioutil.WriteFile(tempFilePath, data, 0644)
+	err := os.WriteFile(tempFilePath, data, 0644)
 	if err != nil {
 		return "", fmt.Errorf("failed to write temp file: %w", err)
 	}

@@ -215,8 +215,8 @@ func (s *DemoServer) homeHandler(w http.ResponseWriter, r *http.Request) {
 
         <div class="endpoint">
             <h3>📖 Read Needle</h3>
-            <p><a href="/read?volume=1&needle=12345&cookie=305419896&size=1024">/read</a> - Read a needle with RDMA fast path</p>
-            <p><strong>Parameters:</strong> volume, needle, cookie, offset (optional), size (optional)</p>
+            <p><a href="/read?volume=1&needle=12345&cookie=305419896&size=1024&volume_server=http://localhost:8080">/read</a> - Read a needle with RDMA fast path</p>
+            <p><strong>Parameters:</strong> volume, needle, cookie, volume_server, offset (optional), size (optional)</p>
         </div>
 
         <div class="endpoint">
@@ -228,7 +228,7 @@ func (s *DemoServer) homeHandler(w http.ResponseWriter, r *http.Request) {
         <h2>📝 Example Usage</h2>
         <pre>
 # Read a needle
-curl "http://localhost:%d/read?volume=1&needle=12345&cookie=305419896&size=1024"
+curl "http://localhost:%d/read?volume=1&needle=12345&cookie=305419896&size=1024&volume_server=http://localhost:8080"
 
 # Run benchmark
 curl "http://localhost:%d/benchmark?iterations=5&size=2048"
