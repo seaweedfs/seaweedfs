@@ -159,7 +159,7 @@ impl RdmaSession {
 /// Session manager for handling multiple concurrent RDMA sessions
 pub struct SessionManager {
     /// Active sessions
-    sessions: Arc<RwLock<HashMap<String, Arc<RdmaSession>>>>,
+    sessions: Arc<RwLock<HashMap<String, Arc<RwLock<RdmaSession>>>>>,
     /// Maximum number of concurrent sessions
     max_sessions: usize,
     /// Default session timeout
@@ -221,7 +221,7 @@ impl SessionManager {
         buffer: Vec<u8>,
         memory_region: MemoryRegion,
         timeout: chrono::Duration,
-    ) -> RdmaResult<Arc<RdmaSession>> {
+    ) -> RdmaResult<Arc<RwLock<RdmaSession>>> {
         // Check session limit
         {
             let sessions = self.sessions.read();
@@ -239,9 +239,9 @@ impl SessionManager {
             }
         }
         
-        let timeout_duration = Duration::from_secs(timeout.num_seconds().max(1) as u64);
+        let timeout_duration = Duration::from_millis(timeout.num_milliseconds().max(1) as u64);
         
-        let session = Arc::new(RdmaSession::new(
+        let session = Arc::new(RwLock::new(RdmaSession::new(
             session_id.clone(),
             volume_id,
             needle_id,
@@ -251,7 +251,7 @@ impl SessionManager {
             buffer,
             memory_region,
             timeout_duration,
-        ));
+        )));
         
         // Store session
         {
@@ -272,11 +272,11 @@ impl SessionManager {
     }
     
     /// Get session by ID
-    pub async fn get_session(&self, session_id: &str) -> RdmaResult<Arc<RdmaSession>> {
+    pub async fn get_session(&self, session_id: &str) -> RdmaResult<Arc<RwLock<RdmaSession>>> {
         let sessions = self.sessions.read();
         match sessions.get(session_id) {
             Some(session) => {
-                if session.is_expired() {
+                if session.read().is_expired() {
                     Err(RdmaError::SessionExpired { 
                         session_id: session_id.to_string() 
                     })
@@ -298,18 +298,19 @@ impl SessionManager {
         };
         
         if let Some(session) = session {
-            info!("🗑️ Removed session {}: stats={:?}", session_id, session.stats);
+            let session_data = session.read();
+            info!("🗑️ Removed session {}: stats={:?}", session_id, session_data.stats);
             
             // Update manager stats
             {
                 let mut stats = self.stats.write();
-                match session.state {
+                match session_data.state {
                     SessionState::Completed => stats.total_sessions_completed += 1,
                     SessionState::Failed => stats.total_sessions_failed += 1,
                     SessionState::Expired => stats.total_sessions_expired += 1,
                     _ => {}
                 }
-                stats.total_bytes_transferred += session.stats.bytes_transferred;
+                stats.total_bytes_transferred += session_data.stats.bytes_transferred;
             }
             
             Ok(())
@@ -338,7 +339,11 @@ impl SessionManager {
     /// Get session statistics
     pub async fn get_session_stats(&self, session_id: &str) -> RdmaResult<SessionStats> {
         let session = self.get_session(session_id).await?;
-        Ok(session.stats.clone())
+        let stats = {
+            let session_data = session.read();
+            session_data.stats.clone()
+        };
+        Ok(stats)
     }
     
     /// Get manager statistics
@@ -373,7 +378,7 @@ impl SessionManager {
                 {
                     let sessions_guard = sessions.read();
                     for (session_id, session) in sessions_guard.iter() {
-                        if now > session.expires_at {
+                        if now > session.read().expires_at {
                             expired_sessions.push(session_id.clone());
                         }
                     }
@@ -386,8 +391,9 @@ impl SessionManager {
                     
                     for session_id in expired_sessions {
                         if let Some(session) = sessions_guard.remove(&session_id) {
+                            let session_data = session.read();
                             info!("🗑️  Cleaned up expired session: {} (volume={}, needle={})", 
-                                 session_id, session.volume_id, session.needle_id);
+                                 session_id, session_data.volume_id, session_data.needle_id);
                             stats_guard.total_sessions_expired += 1;
                         }
                     }
@@ -465,11 +471,12 @@ mod tests {
             chrono::Duration::seconds(60),
         ).await.unwrap();
         
-        assert_eq!(session.id, "test-session");
-        assert_eq!(session.volume_id, 1);
-        assert_eq!(session.needle_id, 100);
-        assert_eq!(session.state, SessionState::Created);
-        assert!(!session.is_expired());
+        let session_data = session.read();
+        assert_eq!(session_data.id, "test-session");
+        assert_eq!(session_data.volume_id, 1);
+        assert_eq!(session_data.needle_id, 100);
+        assert_eq!(session_data.state, SessionState::Created);
+        assert!(!session_data.is_expired());
     }
     
     #[tokio::test]
@@ -565,11 +572,11 @@ mod tests {
             chrono::Duration::seconds(60),
         ).await.unwrap();
         
-        // Simulate some operations
+        // Simulate some operations - now using proper interior mutability
         {
-            let mut session = Arc::try_unwrap(session).unwrap_or_else(|arc| (*arc).clone());
-            session.record_operation(1024, 1000000); // 1KB in 1ms
-            session.record_operation(2048, 2000000); // 2KB in 2ms
+            let mut session_data = session.write();
+            session_data.record_operation(1024, 1000000); // 1KB in 1ms
+            session_data.record_operation(2048, 2000000); // 2KB in 2ms
         }
         
         let stats = manager.get_session_stats("stats-test").await.unwrap();
