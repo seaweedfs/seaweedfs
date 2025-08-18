@@ -53,8 +53,11 @@ func (c *RDMAMountClient) ReadNeedleFromServer(ctx context.Context, volumeServer
     }
     
     // POST request with volume server parameter
-    resp, err := c.httpClient.Post(reqURL, "application/json", requestBody)
-    // ... handle response
+    jsonBody, err := json.Marshal(requestBody)
+    if err != nil {
+        // ... handle error
+    }
+    resp, err := c.httpClient.Post(reqURL, "application/json", bytes.NewBuffer(jsonBody))
 }
 ```
 
