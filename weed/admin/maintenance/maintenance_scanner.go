@@ -329,11 +329,14 @@ func (ms *MaintenanceScanner) createECVolumeMetric(volumeID uint32) *VolumeHealt
 										// Assumes shard sizes are roughly equal
 										avgShardSize := totalShardSize / uint64(len(ecShardInfo.ShardSizes))
 										metric.Size = avgShardSize * uint64(erasure_coding.DataShardsCount)
+										glog.V(2).Infof("EC volume %d size calculated from %d shards: total=%d, avg=%d, estimated_original=%d",
+											volumeID, len(ecShardInfo.ShardSizes), totalShardSize, avgShardSize, metric.Size)
 									} else {
 										metric.Size = 0 // No shards, no size
+										glog.V(2).Infof("EC volume %d has no shard size information", volumeID)
 									}
 
-									glog.V(3).Infof("Created EC volume metric for volume %d, size=%d", volumeID, metric.Size)
+									glog.V(2).Infof("Created EC volume metric for volume %d, size=%d", volumeID, metric.Size)
 									return nil // Found the volume, stop searching
 								}
 							}
@@ -409,7 +412,12 @@ func (ms *MaintenanceScanner) enrichECVolumeWithDeletionInfo(metric *VolumeHealt
 
 	if totalDeletedBytes > 0 {
 		metric.DeletedBytes = uint64(totalDeletedBytes)
-		metric.GarbageRatio = float64(metric.DeletedBytes) / float64(metric.Size)
+		if metric.Size > 0 {
+			metric.GarbageRatio = float64(metric.DeletedBytes) / float64(metric.Size)
+		} else {
+			metric.GarbageRatio = 0.0 // Avoid division by zero
+			glog.V(1).Infof("EC volume %d has zero size - cannot calculate garbage ratio", metric.VolumeID)
+		}
 		glog.V(2).Infof("EC volume %d deletion info from %d servers: %d deleted bytes, garbage ratio: %.1f%%",
 			metric.VolumeID, len(serversWithShards), metric.DeletedBytes, metric.GarbageRatio*100)
 	}
