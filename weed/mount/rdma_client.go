@@ -388,14 +388,5 @@ func (c *RDMAMountClient) readFromTempFile(tempFilePath string, buffer []byte) (
 
 	glog.V(4).Infof("🔥 Zero-copy read: %d bytes from temp file %s", n, tempFilePath)
 
-	// Clean up temp file after reading
-	go func() {
-		if removeErr := os.Remove(tempFilePath); removeErr != nil {
-			glog.V(2).Infof("Failed to cleanup temp file %s: %v", tempFilePath, removeErr)
-		} else {
-			glog.V(4).Infof("🧹 Cleaned up temp file %s", tempFilePath)
-		}
-	}()
-
 	return n, nil
 }
