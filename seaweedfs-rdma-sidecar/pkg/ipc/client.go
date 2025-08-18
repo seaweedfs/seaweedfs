@@ -184,7 +184,14 @@ func (c *Client) Ping(ctx context.Context, clientID *string) (*PongResponse, err
 	}
 
 	if response.Type == MsgError {
-		errorResp := response.Data.(*ErrorResponse)
+		errorData, err := msgpack.Marshal(response.Data)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal engine error data: %w", err)
+		}
+		var errorResp ErrorResponse
+		if err := msgpack.Unmarshal(errorData, &errorResp); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal engine error response: %w", err)
+		}
 		return nil, fmt.Errorf("engine error: %s - %s", errorResp.Code, errorResp.Message)
 	}
 
