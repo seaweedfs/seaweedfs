@@ -231,6 +231,7 @@ func prepareDataToRecover(commandEnv *CommandEnv, rebuilder *EcNode, collection 
 					CopyEcjFile:    true,
 					CopyVifFile:    needEcxFile,
 					SourceDataNode: ecNodes[0].info.Id,
+					Generation:     0, // shell commands operate on existing (generation 0) volumes
 				})
 				return copyErr
 			})

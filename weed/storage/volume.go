@@ -248,7 +248,8 @@ func (v *Volume) doClose() {
 			glog.Warningf("Volume Close fail to sync volume %d", v.Id)
 		}
 		v.DataBackend = nil
-		stats.VolumeServerVolumeGauge.WithLabelValues(v.Collection, "volume").Dec()
+		compactionRevisionLabel := fmt.Sprintf("%d", v.CompactionRevision)
+		stats.VolumeServerVolumeGauge.WithLabelValues(v.Collection, "volume", compactionRevisionLabel).Dec()
 	}
 }
 

@@ -25,7 +25,7 @@ services:
     ports:
       - "8080:8080"
       - "18080:18080"
-    command: "volume -mserver=master:9333 -ip=volume1 -dir=/data -max=10"
+    command: "-v=2 volume -mserver=master:9333 -ip=volume1 -dir=/data -max=10"
     depends_on:
       - master
     volumes:
@@ -38,7 +38,7 @@ services:
     ports:
       - "8081:8080"
       - "18081:18080"
-    command: "volume -mserver=master:9333 -ip=volume2 -dir=/data -max=10"
+    command: "-v=2 volume -mserver=master:9333 -ip=volume2 -dir=/data -max=10"
     depends_on:
       - master
     volumes:
@@ -51,7 +51,7 @@ services:
     ports:
       - "8082:8080"
       - "18082:18080"
-    command: "volume -mserver=master:9333 -ip=volume3 -dir=/data -max=10"
+    command: "-v=2 volume -mserver=master:9333 -ip=volume3 -dir=/data -max=10"
     depends_on:
       - master
     volumes:
@@ -64,7 +64,7 @@ services:
     ports:
       - "8083:8080"
       - "18083:18080"
-    command: "volume -mserver=master:9333 -ip=volume4 -dir=/data -max=10"
+    command: "-v=2 volume -mserver=master:9333 -ip=volume4 -dir=/data -max=10"
     depends_on:
       - master
     volumes:
@@ -77,7 +77,7 @@ services:
     ports:
       - "8084:8080"
       - "18084:18080"
-    command: "volume -mserver=master:9333 -ip=volume5 -dir=/data -max=10"
+    command: "-v=2 volume -mserver=master:9333 -ip=volume5 -dir=/data -max=10"
     depends_on:
       - master
     volumes:
@@ -90,7 +90,7 @@ services:
     ports:
       - "8085:8080"
       - "18085:18080"
-    command: "volume -mserver=master:9333 -ip=volume6 -dir=/data -max=10"
+    command: "-v=2 volume -mserver=master:9333 -ip=volume6 -dir=/data -max=10"
     depends_on:
       - master
     volumes:
@@ -98,16 +98,42 @@ services:
     networks:
       - seaweed_net
 
-  filer:
+  filer1:
     image: chrislusf/seaweedfs:local
     ports:
       - "8888:8888"
       - "18888:18888"
-    command: "filer -master=master:9333 -ip=filer"
+    command: "-v=2 filer -master=master:9333 -ip=filer1"
     depends_on:
       - master
     volumes:
-      - ./data/filer:/data
+      - ./data/filer1:/data
+    networks:
+      - seaweed_net
+
+  filer2:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - "8889:8888"
+      - "18889:18888"
+    command: "-v=2 filer -master=master:9333 -ip=filer2"
+    depends_on:
+      - master
+    volumes:
+      - ./data/filer2:/data
+    networks:
+      - seaweed_net
+
+  filer3:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - "8890:8888"
+      - "18890:18888"
+    command: "-v=2 filer -master=master:9333 -ip=filer3"
+    depends_on:
+      - master
+    volumes:
+      - ./data/filer3:/data
     networks:
       - seaweed_net
 
@@ -119,7 +145,7 @@ services:
     command: "-v=2 admin -port=23646 -masters=master:9333 -dataDir=/data"
     depends_on:
       - master
-      - filer
+      - filer1
     volumes:
       - ./data/admin:/data
     networks:
@@ -127,7 +153,7 @@ services:
 
   worker1:
     image: chrislusf/seaweedfs:local
-    command: "-v=2 worker -admin=admin:23646 -capabilities=erasure_coding,vacuum -maxConcurrent=2"
+    command: "-v=2 worker -admin=admin:23646 -capabilities=erasure_coding,ec_vacuum -maxConcurrent=2"
     depends_on:
       - admin
     volumes:
@@ -139,7 +165,7 @@ services:
 
   worker2:
     image: chrislusf/seaweedfs:local
-    command: "-v=2 worker -admin=admin:23646 -capabilities=erasure_coding,vacuum -maxConcurrent=2"
+    command: "-v=2 worker -admin=admin:23646 -capabilities=erasure_coding,ec_vacuum -maxConcurrent=2"
     depends_on:
       - admin
     volumes:
@@ -151,7 +177,7 @@ services:
 
   worker3:
     image: chrislusf/seaweedfs:local
-    command: "-v=2 worker -admin=admin:23646 -capabilities=erasure_coding,vacuum -maxConcurrent=2"
+    command: "-v=2 worker -admin=admin:23646 -capabilities=erasure_coding,ec_vacuum -maxConcurrent=2"
     depends_on:
       - admin
     volumes:
@@ -180,7 +206,7 @@ services:
       "
     depends_on:
       - master
-      - filer
+      - filer1
       - admin
     networks:
       - seaweed_net
@@ -210,7 +236,7 @@ services:
     depends_on:
       - master
       - admin
-      - filer
+      - filer1
     networks:
       - seaweed_net
 
@@ -229,7 +255,7 @@ services:
     depends_on:
       - master
       - admin
-      - filer
+      - filer1
     volumes:
       - .:/testing
     working_dir: /testing

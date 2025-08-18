@@ -288,6 +288,7 @@ func oneServerCopyAndMountEcShardsFromSource(grpcDialOption grpc.DialOption,
 				CopyEcjFile:    true,
 				CopyVifFile:    true,
 				SourceDataNode: string(existingLocation),
+				Generation:     0, // shell commands operate on existing (generation 0) volumes
 			})
 			if copyErr != nil {
 				return fmt.Errorf("copy %d.%v %s => %s : %v\n", volumeId, shardIdsToCopy, existingLocation, targetServer.info.Id, copyErr)
@@ -299,6 +300,7 @@ func oneServerCopyAndMountEcShardsFromSource(grpcDialOption grpc.DialOption,
 			VolumeId:   uint32(volumeId),
 			Collection: collection,
 			ShardIds:   shardIdsToCopy,
+			Generation: 0, // shell commands operate on existing (generation 0) volumes
 		})
 		if mountErr != nil {
 			return fmt.Errorf("mount %d.%v on %s : %v\n", volumeId, shardIdsToCopy, targetServer.info.Id, mountErr)
@@ -441,8 +443,9 @@ func unmountEcShards(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, s
 
 	return operation.WithVolumeServerClient(false, sourceLocation, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 		_, deleteErr := volumeServerClient.VolumeEcShardsUnmount(context.Background(), &volume_server_pb.VolumeEcShardsUnmountRequest{
-			VolumeId: uint32(volumeId),
-			ShardIds: toBeUnmountedhardIds,
+			VolumeId:   uint32(volumeId),
+			ShardIds:   toBeUnmountedhardIds,
+			Generation: 0, // shell commands operate on existing (generation 0) volumes
 		})
 		return deleteErr
 	})
@@ -457,6 +460,7 @@ func mountEcShards(grpcDialOption grpc.DialOption, collection string, volumeId n
 			VolumeId:   uint32(volumeId),
 			Collection: collection,
 			ShardIds:   toBeMountedhardIds,
+			Generation: 0, // shell commands operate on existing (generation 0) volumes
 		})
 		return mountErr
 	})

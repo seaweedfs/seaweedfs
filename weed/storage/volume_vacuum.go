@@ -136,7 +136,8 @@ func (v *Volume) CommitCompact() error {
 		}
 	}
 	v.DataBackend = nil
-	stats.VolumeServerVolumeGauge.WithLabelValues(v.Collection, "volume").Dec()
+	compactionRevisionLabel := fmt.Sprintf("%d", v.CompactionRevision)
+	stats.VolumeServerVolumeGauge.WithLabelValues(v.Collection, "volume", compactionRevisionLabel).Dec()
 
 	var e error
 	if e = v.makeupDiff(v.FileName(".cpd"), v.FileName(".cpx"), v.FileName(".dat"), v.FileName(".idx")); e != nil {
