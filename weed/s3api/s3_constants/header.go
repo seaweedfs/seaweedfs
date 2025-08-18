@@ -64,6 +64,17 @@ const (
 	AmzCopySourceIfUnmodifiedSince = "X-Amz-Copy-Source-If-Unmodified-Since"
 
 	AmzMpPartsCount = "X-Amz-Mp-Parts-Count"
+
+	// S3 Server-Side Encryption with Customer-provided Keys (SSE-C)
+	AmzServerSideEncryptionCustomerAlgorithm = "X-Amz-Server-Side-Encryption-Customer-Algorithm"
+	AmzServerSideEncryptionCustomerKey       = "X-Amz-Server-Side-Encryption-Customer-Key"
+	AmzServerSideEncryptionCustomerKeyMD5    = "X-Amz-Server-Side-Encryption-Customer-Key-MD5"
+	AmzServerSideEncryptionContext           = "X-Amz-Server-Side-Encryption-Context"
+
+	// S3 SSE-C copy source headers
+	AmzCopySourceServerSideEncryptionCustomerAlgorithm = "X-Amz-Copy-Source-Server-Side-Encryption-Customer-Algorithm"
+	AmzCopySourceServerSideEncryptionCustomerKey       = "X-Amz-Copy-Source-Server-Side-Encryption-Customer-Key"
+	AmzCopySourceServerSideEncryptionCustomerKeyMD5    = "X-Amz-Copy-Source-Server-Side-Encryption-Customer-Key-MD5"
 )
 
 // Non-Standard S3 HTTP request constants

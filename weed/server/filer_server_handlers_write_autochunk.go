@@ -488,6 +488,14 @@ func SaveAmzMetaData(r *http.Request, existing map[string][]byte, isReplace bool
 		}
 	}
 
+	// Handle SSE-C headers
+	if algorithm := r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerAlgorithm); algorithm != "" {
+		metadata[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] = []byte(algorithm)
+	}
+	if keyMD5 := r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerKeyMD5); keyMD5 != "" {
+		metadata[s3_constants.AmzServerSideEncryptionCustomerKeyMD5] = []byte(strings.ToLower(keyMD5))
+	}
+
 	//acp-owner
 	acpOwner := r.Header.Get(s3_constants.ExtAmzOwnerKey)
 	if len(acpOwner) > 0 {

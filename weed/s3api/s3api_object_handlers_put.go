@@ -190,6 +190,33 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader io.Reader, destination string, bucket string) (etag string, code s3err.ErrorCode) {
 
+	// Handle SSE-C encryption if requested
+	customerKey, err := ParseSSECHeaders(r)
+	if err != nil {
+		glog.Errorf("SSE-C header validation failed: %v", err)
+		// Map custom errors to S3 error codes
+		switch err {
+		case ErrInvalidEncryptionAlgorithm:
+			return "", s3err.ErrInvalidEncryptionAlgorithm
+		case ErrInvalidEncryptionKey:
+			return "", s3err.ErrInvalidEncryptionKey
+		case ErrSSECustomerKeyMD5Mismatch:
+			return "", s3err.ErrSSECustomerKeyMD5Mismatch
+		default:
+			return "", s3err.ErrInvalidRequest
+		}
+	}
+
+	// Apply SSE-C encryption if customer key is provided
+	if customerKey != nil {
+		encryptedReader, encErr := CreateSSECEncryptedReader(dataReader, customerKey)
+		if encErr != nil {
+			glog.Errorf("Failed to create SSE-C encrypted reader: %v", encErr)
+			return "", s3err.ErrInternalError
+		}
+		dataReader = encryptedReader
+	}
+
 	hash := md5.New()
 	var body = io.TeeReader(dataReader, hash)
 
