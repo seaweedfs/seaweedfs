@@ -643,6 +643,21 @@ func (s3a *S3ApiServer) handleSSECResponse(r *http.Request, proxyResponse *http.
 			}
 		}
 
+		// Set correct Content-Length for SSE-C (only for full object requests)
+		// Range requests are complex with SSE-C because the entire object needs decryption
+		if proxyResponse.Header.Get("Content-Range") == "" {
+			// Full object request: subtract 16-byte IV from encrypted length
+			if contentLengthStr := proxyResponse.Header.Get("Content-Length"); contentLengthStr != "" {
+				if encryptedLength, err := strconv.ParseInt(contentLengthStr, 10, 64); err == nil {
+					originalLength := encryptedLength - 16
+					if originalLength >= 0 {
+						w.Header().Set("Content-Length", strconv.FormatInt(originalLength, 10))
+					}
+				}
+			}
+		}
+		// For range requests, let the actual bytes transferred determine the response length
+
 		// Add SSE-C response headers
 		w.Header().Set(s3_constants.AmzServerSideEncryptionCustomerAlgorithm, sseAlgorithm)
 		w.Header().Set(s3_constants.AmzServerSideEncryptionCustomerKeyMD5, sseKeyMD5)
