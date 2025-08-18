@@ -262,31 +262,7 @@ func (c *RDMAMountClient) ReadNeedle(ctx context.Context, volumeID uint32, needl
 	return data, isRDMA, nil
 }
 
-// ReadNeedleWithFallback attempts RDMA read with automatic HTTP fallback
-func (c *RDMAMountClient) ReadNeedleWithFallback(ctx context.Context, volumeID uint32, needleID uint64, cookie uint32, offset, size uint64, httpFallback func() ([]byte, error)) ([]byte, bool, error) {
-	// Try RDMA first
-	data, isRDMA, err := c.ReadNeedle(ctx, volumeID, needleID, cookie, offset, size)
-	if err == nil {
-		return data, isRDMA, nil
-	}
 
-	// Store RDMA error for proper reporting
-	rdmaErr := err
-
-	// Log RDMA failure
-	glog.V(2).Infof("RDMA read failed for volume=%d, needle=%d: %v, falling back to HTTP", volumeID, needleID, rdmaErr)
-
-	// Fall back to HTTP if provided
-	if httpFallback != nil {
-		data, err := httpFallback()
-		if err != nil {
-			return nil, false, fmt.Errorf("both RDMA and HTTP fallback failed: RDMA=%v, HTTP=%v", rdmaErr, err)
-		}
-		return data, false, nil
-	}
-
-	return nil, false, rdmaErr
-}
 
 // GetStats returns current RDMA client statistics
 func (c *RDMAMountClient) GetStats() map[string]interface{} {

@@ -116,7 +116,8 @@
 
 ### **Start Development Environment**
 ```bash
-cd /Users/chrislu/go/src/github.com/seaweedfs/seaweedfs/seaweedfs-rdma-sidecar
+# Navigate to your seaweedfs-rdma-sidecar directory
+cd /path/to/your/seaweedfs/seaweedfs-rdma-sidecar
 
 # Build components
 go build -o bin/demo-server ./cmd/demo-server

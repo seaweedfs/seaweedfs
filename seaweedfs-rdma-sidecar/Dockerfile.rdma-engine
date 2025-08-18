@@ -44,6 +44,9 @@ COPY --from=builder /app/target/release/rdma-engine-server .
 # Change ownership
 RUN chown -R appuser:appuser /app
 
+# Set default socket path (can be overridden)
+ENV RDMA_SOCKET_PATH=/tmp/rdma/rdma-engine.sock
+
 # Create socket directory with proper permissions (before switching user)
 RUN mkdir -p /tmp/rdma && chown -R appuser:appuser /tmp/rdma
 
@@ -52,10 +55,9 @@ USER appuser
 # Expose any needed ports (none for this service as it uses Unix sockets)
 # EXPOSE 18515
 
-# Health check - check if the process is running and any socket exists in /tmp/rdma
-# This is more robust than hardcoding a specific socket path
+# Health check - verify both process and socket using environment variable
 HEALTHCHECK --interval=5s --timeout=3s --start-period=10s --retries=3 \
-    CMD pgrep rdma-engine-server >/dev/null && test -d /tmp/rdma && test "$(find /tmp/rdma -name '*.sock' | wc -l)" -gt 0
+    CMD pgrep rdma-engine-server >/dev/null && test -S "$RDMA_SOCKET_PATH"
 
-# Default command
-CMD ["./rdma-engine-server", "--debug"]
+# Default command using environment variable
+CMD sh -c "./rdma-engine-server --debug --ipc-socket \"$RDMA_SOCKET_PATH\""
