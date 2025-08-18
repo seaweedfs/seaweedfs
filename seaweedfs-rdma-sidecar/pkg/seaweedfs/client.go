@@ -375,12 +375,27 @@ func (c *SeaweedFSRDMAClient) CleanupTempFile(tempFilePath string) error {
 		return nil
 	}
 
-	err := os.Remove(tempFilePath)
+	// Validate that tempFilePath is within c.tempDir
+	absTempDir, err := filepath.Abs(c.tempDir)
+	if err != nil {
+		return fmt.Errorf("failed to resolve temp dir: %w", err)
+	}
+	absFilePath, err := filepath.Abs(tempFilePath)
+	if err != nil {
+		return fmt.Errorf("failed to resolve temp file path: %w", err)
+	}
+	// Ensure absFilePath is within absTempDir
+	if !strings.HasPrefix(absFilePath, absTempDir+string(os.PathSeparator)) && absFilePath != absTempDir {
+		c.logger.WithField("temp_file", tempFilePath).Warn("Attempted cleanup of file outside temp dir")
+		return fmt.Errorf("invalid temp file path")
+	}
+
+	err = os.Remove(absFilePath)
 	if err != nil && !os.IsNotExist(err) {
-		c.logger.WithError(err).WithField("temp_file", tempFilePath).Warn("Failed to cleanup temp file")
+		c.logger.WithError(err).WithField("temp_file", absFilePath).Warn("Failed to cleanup temp file")
 		return err
 	}
 
-	c.logger.WithField("temp_file", tempFilePath).Debug("🧹 Temp file cleaned up")
+	c.logger.WithField("temp_file", absFilePath).Debug("🧹 Temp file cleaned up")
 	return nil
 }
