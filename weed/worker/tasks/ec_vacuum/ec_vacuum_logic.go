@@ -45,6 +45,7 @@ type VacuumPlan struct {
 }
 
 // DetermineGenerationsFromParams extracts generation information from task parameters
+// Now supports multiple generations and finds the most complete one for vacuum
 func (logic *EcVacuumLogic) DetermineGenerationsFromParams(params *worker_pb.TaskParams) (sourceGen, targetGen uint32, err error) {
 	if params == nil {
 		return 0, 0, fmt.Errorf("task parameters cannot be nil")
@@ -55,29 +56,27 @@ func (logic *EcVacuumLogic) DetermineGenerationsFromParams(params *worker_pb.Tas
 		return 0, 1, nil
 	}
 
-	// Use generation from first source (all sources should have same generation)
-	if params.Sources[0].Generation > 0 {
-		sourceGen = params.Sources[0].Generation
-		targetGen = sourceGen + 1
-	} else {
-		// Generation 0 case
-		sourceGen = 0
-		targetGen = 1
+	// Group sources by generation and analyze completeness
+	generationAnalysis, err := logic.AnalyzeGenerationCompleteness(params)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to analyze generation completeness: %w", err)
 	}
 
-	// Validate consistency - all sources should have the same generation
-	for i, source := range params.Sources {
-		if source.Generation != sourceGen {
-			return 0, 0, fmt.Errorf("inconsistent generations in sources: source[0]=%d, source[%d]=%d",
-				sourceGen, i, source.Generation)
-		}
+	// Find the most complete generation that can be used for reconstruction
+	mostCompleteGen, found := logic.FindMostCompleteGeneration(generationAnalysis)
+	if !found {
+		return 0, 0, fmt.Errorf("no generation has sufficient shards for reconstruction")
 	}
 
-	return sourceGen, targetGen, nil
+	// Target generation is max(all generations) + 1
+	maxGen := logic.FindMaxGeneration(generationAnalysis)
+	targetGen = maxGen + 1
+
+	return mostCompleteGen, targetGen, nil
 }
 
-// ParseSourceNodes extracts source node information from task parameters
-func (logic *EcVacuumLogic) ParseSourceNodes(params *worker_pb.TaskParams) (map[pb.ServerAddress]erasure_coding.ShardBits, error) {
+// ParseSourceNodes extracts source node information from task parameters for a specific generation
+func (logic *EcVacuumLogic) ParseSourceNodes(params *worker_pb.TaskParams, targetGeneration uint32) (map[pb.ServerAddress]erasure_coding.ShardBits, error) {
 	if params == nil {
 		return nil, fmt.Errorf("task parameters cannot be nil")
 	}
@@ -85,7 +84,7 @@ func (logic *EcVacuumLogic) ParseSourceNodes(params *worker_pb.TaskParams) (map[
 	sourceNodes := make(map[pb.ServerAddress]erasure_coding.ShardBits)
 
 	for _, source := range params.Sources {
-		if source.Node == "" {
+		if source.Node == "" || source.Generation != targetGeneration {
 			continue
 		}
 
@@ -105,7 +104,7 @@ func (logic *EcVacuumLogic) ParseSourceNodes(params *worker_pb.TaskParams) (map[
 	}
 
 	if len(sourceNodes) == 0 {
-		return nil, fmt.Errorf("no valid source nodes found: sources=%d", len(params.Sources))
+		return nil, fmt.Errorf("no valid source nodes found for generation %d: sources=%d", targetGeneration, len(params.Sources))
 	}
 
 	return sourceNodes, nil
@@ -113,14 +112,14 @@ func (logic *EcVacuumLogic) ParseSourceNodes(params *worker_pb.TaskParams) (map[
 
 // CreateVacuumPlan creates a comprehensive plan for the EC vacuum operation
 func (logic *EcVacuumLogic) CreateVacuumPlan(volumeID uint32, collection string, params *worker_pb.TaskParams) (*VacuumPlan, error) {
-	// Extract generations
+	// Extract generations and analyze completeness
 	sourceGen, targetGen, err := logic.DetermineGenerationsFromParams(params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to determine generations: %w", err)
 	}
 
-	// Parse source nodes
-	sourceNodes, err := logic.ParseSourceNodes(params)
+	// Parse source nodes from the selected generation
+	sourceNodes, err := logic.ParseSourceNodes(params, sourceGen)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse source nodes: %w", err)
 	}
@@ -137,8 +136,18 @@ func (logic *EcVacuumLogic) CreateVacuumPlan(volumeID uint32, collection string,
 		Nodes:      sourceNodes, // Same nodes, new generation
 	}
 
-	// Determine what to cleanup (simplified: just source generation)
-	generationsToCleanup := []uint32{sourceGen}
+	// Get all available generations for cleanup calculation
+	generationAnalysis, err := logic.AnalyzeGenerationCompleteness(params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to analyze generations for cleanup: %w", err)
+	}
+
+	// All generations except target should be cleaned up
+	var allGenerations []uint32
+	for generation := range generationAnalysis {
+		allGenerations = append(allGenerations, generation)
+	}
+	generationsToCleanup := logic.CalculateCleanupGenerations(sourceGen, targetGen, allGenerations)
 
 	// Generate safety checks
 	safetyChecks := logic.generateSafetyChecks(sourceDistribution, targetGen)
@@ -241,6 +250,100 @@ type CleanupImpact struct {
 	EstimatedSizeFreed   uint64
 	NodesAffected        int
 	ShardsToDelete       int
+}
+
+// GenerationAnalysis represents the analysis of shard completeness per generation
+type GenerationAnalysis struct {
+	Generation     uint32
+	ShardBits      erasure_coding.ShardBits
+	ShardCount     int
+	Nodes          map[pb.ServerAddress]erasure_coding.ShardBits
+	CanReconstruct bool // Whether this generation has enough shards for reconstruction
+}
+
+// AnalyzeGenerationCompleteness analyzes each generation's shard completeness
+func (logic *EcVacuumLogic) AnalyzeGenerationCompleteness(params *worker_pb.TaskParams) (map[uint32]*GenerationAnalysis, error) {
+	if params == nil {
+		return nil, fmt.Errorf("task parameters cannot be nil")
+	}
+
+	generationMap := make(map[uint32]*GenerationAnalysis)
+
+	// Group sources by generation
+	for _, source := range params.Sources {
+		if source.Node == "" {
+			continue
+		}
+
+		generation := source.Generation
+		if _, exists := generationMap[generation]; !exists {
+			generationMap[generation] = &GenerationAnalysis{
+				Generation: generation,
+				ShardBits:  erasure_coding.ShardBits(0),
+				Nodes:      make(map[pb.ServerAddress]erasure_coding.ShardBits),
+			}
+		}
+
+		analysis := generationMap[generation]
+		serverAddr := pb.ServerAddress(source.Node)
+		var shardBits erasure_coding.ShardBits
+
+		// Convert shard IDs to ShardBits
+		for _, shardId := range source.ShardIds {
+			if shardId < erasure_coding.TotalShardsCount {
+				shardBits = shardBits.AddShardId(erasure_coding.ShardId(shardId))
+			}
+		}
+
+		if shardBits.ShardIdCount() > 0 {
+			analysis.Nodes[serverAddr] = shardBits
+			analysis.ShardBits = analysis.ShardBits.Plus(shardBits)
+		}
+	}
+
+	// Calculate completeness for each generation
+	for _, analysis := range generationMap {
+		analysis.ShardCount = analysis.ShardBits.ShardIdCount()
+		analysis.CanReconstruct = analysis.ShardCount >= erasure_coding.DataShardsCount
+	}
+
+	return generationMap, nil
+}
+
+// FindMostCompleteGeneration finds the generation with the most complete set of shards
+// that can be used for reconstruction
+func (logic *EcVacuumLogic) FindMostCompleteGeneration(generationMap map[uint32]*GenerationAnalysis) (uint32, bool) {
+	var bestGeneration uint32
+	var bestShardCount int
+	found := false
+
+	for generation, analysis := range generationMap {
+		// Only consider generations that can reconstruct
+		if !analysis.CanReconstruct {
+			continue
+		}
+
+		// Prefer the generation with the most shards, or if tied, the highest generation number
+		if !found || analysis.ShardCount > bestShardCount ||
+			(analysis.ShardCount == bestShardCount && generation > bestGeneration) {
+			bestGeneration = generation
+			bestShardCount = analysis.ShardCount
+			found = true
+		}
+	}
+
+	return bestGeneration, found
+}
+
+// FindMaxGeneration finds the highest generation number among all available generations
+func (logic *EcVacuumLogic) FindMaxGeneration(generationMap map[uint32]*GenerationAnalysis) uint32 {
+	var maxGen uint32
+	for generation := range generationMap {
+		if generation > maxGen {
+			maxGen = generation
+		}
+	}
+	return maxGen
 }
 
 // countShardsToDelete counts how many shard files will be deleted
