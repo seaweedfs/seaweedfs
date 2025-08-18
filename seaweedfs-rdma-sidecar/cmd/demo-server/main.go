@@ -15,6 +15,7 @@ import (
 
 	"seaweedfs-rdma-sidecar/pkg/seaweedfs"
 
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
@@ -217,8 +218,8 @@ func (s *DemoServer) homeHandler(w http.ResponseWriter, r *http.Request) {
 
         <div class="endpoint">
             <h3>📖 Read Needle</h3>
-            <p><a href="/read?volume=1&needle=12345&cookie=305419896&size=1024&volume_server=http://localhost:8080">/read</a> - Read a needle with RDMA fast path</p>
-            <p><strong>Parameters:</strong> volume, needle, cookie, volume_server, offset (optional), size (optional)</p>
+            <p><a href="/read?file_id=3,01637037d6&size=1024&volume_server=http://localhost:8080">/read</a> - Read a needle with RDMA fast path</p>
+            <p><strong>Parameters:</strong> file_id OR (volume, needle, cookie), volume_server, offset (optional), size (optional)</p>
         </div>
 
         <div class="endpoint">
@@ -229,7 +230,10 @@ func (s *DemoServer) homeHandler(w http.ResponseWriter, r *http.Request) {
 
         <h2>📝 Example Usage</h2>
         <pre>
-# Read a needle (decimal cookie)
+# Read a needle using file ID (recommended)
+curl "http://localhost:%d/read?file_id=3,01637037d6&size=1024&volume_server=http://localhost:8080"
+
+# Read a needle using individual parameters (legacy)
 curl "http://localhost:%d/read?volume=1&needle=12345&cookie=305419896&size=1024&volume_server=http://localhost:8080"
 
 # Read a needle (hex cookie)
@@ -318,35 +322,53 @@ func (s *DemoServer) readHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse parameters
+	// Parse parameters - support both file_id and individual parameters for backward compatibility
 	query := r.URL.Query()
 	volumeServer := query.Get("volume_server")
-
-	volumeID, err := strconv.ParseUint(query.Get("volume"), 10, 32)
-	if err != nil {
-		http.Error(w, "invalid 'volume' parameter", http.StatusBadRequest)
-		return
-	}
-
-	needleID, err := strconv.ParseUint(query.Get("needle"), 10, 64)
-	if err != nil {
-		http.Error(w, "invalid 'needle' parameter", http.StatusBadRequest)
-		return
-	}
-
-	// Parse cookie parameter - support both decimal and hexadecimal formats
-	cookieStr := query.Get("cookie")
-	var cookie uint64
-	if strings.HasPrefix(strings.ToLower(cookieStr), "0x") {
-		// Parse as hexadecimal (remove "0x" prefix)
-		cookie, err = strconv.ParseUint(cookieStr[2:], 16, 32)
+	fileID := query.Get("file_id")
+	
+	var volumeID, cookie uint64
+	var needleID uint64
+	var err error
+	
+	if fileID != "" {
+		// Use file ID format (e.g., "3,01637037d6")
+		// Extract individual components using existing SeaweedFS parsing
+		fid, parseErr := needle.ParseFileIdFromString(fileID)
+		if parseErr != nil {
+			http.Error(w, fmt.Sprintf("invalid 'file_id' parameter: %v", parseErr), http.StatusBadRequest)
+			return
+		}
+		volumeID = uint64(fid.VolumeId)
+		needleID = uint64(fid.Key)
+		cookie = uint64(fid.Cookie)
 	} else {
-		// Parse as decimal (default)
-		cookie, err = strconv.ParseUint(cookieStr, 10, 32)
-	}
-	if err != nil {
-		http.Error(w, "invalid 'cookie' parameter (expected decimal or hex with 0x prefix)", http.StatusBadRequest)
-		return
+		// Use individual parameters (backward compatibility)
+		volumeID, err = strconv.ParseUint(query.Get("volume"), 10, 32)
+		if err != nil {
+			http.Error(w, "invalid 'volume' parameter", http.StatusBadRequest)
+			return
+		}
+
+		needleID, err = strconv.ParseUint(query.Get("needle"), 10, 64)
+		if err != nil {
+			http.Error(w, "invalid 'needle' parameter", http.StatusBadRequest)
+			return
+		}
+
+		// Parse cookie parameter - support both decimal and hexadecimal formats
+		cookieStr := query.Get("cookie")
+		if strings.HasPrefix(strings.ToLower(cookieStr), "0x") {
+			// Parse as hexadecimal (remove "0x" prefix)
+			cookie, err = strconv.ParseUint(cookieStr[2:], 16, 32)
+		} else {
+			// Parse as decimal (default)
+			cookie, err = strconv.ParseUint(cookieStr, 10, 32)
+		}
+		if err != nil {
+			http.Error(w, "invalid 'cookie' parameter (expected decimal or hex with 0x prefix)", http.StatusBadRequest)
+			return
+		}
 	}
 
 	var offset uint64
@@ -389,14 +411,18 @@ func (s *DemoServer) readHandler(w http.ResponseWriter, r *http.Request) {
 		size = 4096 // Default size
 	}
 
-	s.logger.WithFields(logrus.Fields{
+	logFields := logrus.Fields{
 		"volume_server": volumeServer,
 		"volume_id":     volumeID,
 		"needle_id":     needleID,
 		"cookie":        fmt.Sprintf("0x%x", cookie),
 		"offset":        offset,
 		"size":          size,
-	}).Info("📖 Processing needle read request")
+	}
+	if fileID != "" {
+		logFields["file_id"] = fileID
+	}
+	s.logger.WithFields(logFields).Info("📖 Processing needle read request")
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()

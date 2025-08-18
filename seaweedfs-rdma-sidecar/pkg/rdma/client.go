@@ -9,6 +9,7 @@ import (
 
 	"seaweedfs-rdma-sidecar/pkg/ipc"
 
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/sirupsen/logrus"
 )
 
@@ -462,6 +463,40 @@ func (c *Client) ReadRange(ctx context.Context, volumeID uint32, needleID uint64
 		Size:     size,
 	}
 	return c.Read(ctx, req)
+}
+
+// ReadFileRange performs an RDMA read using SeaweedFS file ID format
+func (c *Client) ReadFileRange(ctx context.Context, fileID string, offset, size uint64) (*ReadResponse, error) {
+	// Parse file ID (e.g., "3,01637037d6" -> volume=3, needle=0x01637037d6, cookie extracted)
+	volumeID, needleID, cookie, err := parseFileID(fileID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid file ID %s: %w", fileID, err)
+	}
+	
+	req := &ReadRequest{
+		VolumeID: volumeID,
+		NeedleID: needleID,
+		Cookie:   cookie,
+		Offset:   offset,
+		Size:     size,
+	}
+	return c.Read(ctx, req)
+}
+
+// parseFileID extracts volume ID, needle ID, and cookie from a SeaweedFS file ID
+// Uses existing SeaweedFS parsing logic to ensure compatibility
+func parseFileID(fileId string) (volumeID uint32, needleID uint64, cookie uint32, err error) {
+	// Use existing SeaweedFS file ID parsing
+	fid, err := needle.ParseFileIdFromString(fileId)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("failed to parse file ID %s: %w", fileId, err)
+	}
+
+	volumeID = uint32(fid.VolumeId)
+	needleID = uint64(fid.Key)
+	cookie = uint32(fid.Cookie)
+
+	return volumeID, needleID, cookie, nil
 }
 
 // ReadFull performs an RDMA read for an entire needle

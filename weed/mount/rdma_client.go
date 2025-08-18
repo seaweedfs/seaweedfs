@@ -185,9 +185,12 @@ func (c *RDMAMountClient) ReadNeedle(ctx context.Context, volumeID uint32, needl
 		return nil, false, fmt.Errorf("failed to lookup volume %d: %w", volumeID, err)
 	}
 
-	// Prepare request URL with volume_server parameter
-	reqURL := fmt.Sprintf("http://%s/read?volume=%d&needle=%d&cookie=%d&offset=%d&size=%d&volume_server=%s",
-		c.sidecarAddr, volumeID, needleID, cookie, offset, size, volumeServer)
+	// Construct file ID for request (more natural SeaweedFS format)
+	fileID := fmt.Sprintf("%d,%x,%d", volumeID, needleID, cookie)
+	
+	// Prepare request URL with file_id parameter (simpler than individual components)
+	reqURL := fmt.Sprintf("http://%s/read?file_id=%s&offset=%d&size=%d&volume_server=%s",
+		c.sidecarAddr, fileID, offset, size, volumeServer)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
 	if err != nil {

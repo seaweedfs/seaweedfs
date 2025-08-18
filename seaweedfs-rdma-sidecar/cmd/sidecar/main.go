@@ -277,25 +277,46 @@ func (s *Sidecar) rdmaReadHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Parse query parameters
 	query := r.URL.Query()
-	volumeID := parseUint32(query.Get("volume_id"), 1)
-	needleID := parseUint64(query.Get("needle_id"), 100)
-	cookie := parseUint32(query.Get("cookie"), 0x12345678)
-	offset := parseUint64(query.Get("offset"), 0)
-	size := parseUint64(query.Get("size"), 4096)
+	
+	// Get file ID (e.g., "3,01637037d6") - this is the natural SeaweedFS identifier
+	fileID := query.Get("file_id")
+	if fileID == "" {
+		http.Error(w, "missing 'file_id' parameter", http.StatusBadRequest)
+		return
+	}
+	
+	// Parse optional offset and size parameters
+	offset := uint64(0) // default value
+	if offsetStr := query.Get("offset"); offsetStr != "" {
+		val, err := strconv.ParseUint(offsetStr, 10, 64)
+		if err != nil {
+			http.Error(w, "invalid 'offset' parameter", http.StatusBadRequest)
+			return
+		}
+		offset = val
+	}
+	
+	size := uint64(4096) // default value
+	if sizeStr := query.Get("size"); sizeStr != "" {
+		val, err := strconv.ParseUint(sizeStr, 10, 64)
+		if err != nil {
+			http.Error(w, "invalid 'size' parameter", http.StatusBadRequest)
+			return
+		}
+		size = val
+	}
 
 	s.logger.WithFields(logrus.Fields{
-		"volume_id": volumeID,
-		"needle_id": needleID,
-		"cookie":    fmt.Sprintf("0x%x", cookie),
-		"offset":    offset,
-		"size":      size,
+		"file_id": fileID,
+		"offset":  offset,
+		"size":    size,
 	}).Info("📖 Processing RDMA read request")
 
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
 	start := time.Now()
-	resp, err := s.rdmaClient.ReadRange(ctx, volumeID, needleID, cookie, offset, size)
+	resp, err := s.rdmaClient.ReadFileRange(ctx, fileID, offset, size)
 	duration := time.Since(start)
 
 	if err != nil {
@@ -305,8 +326,7 @@ func (s *Sidecar) rdmaReadHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.logger.WithFields(logrus.Fields{
-		"volume_id":     volumeID,
-		"needle_id":     needleID,
+		"file_id":       fileID,
 		"bytes_read":    resp.BytesRead,
 		"duration":      duration,
 		"transfer_rate": resp.TransferRate,
@@ -322,27 +342,4 @@ func (s *Sidecar) rdmaReadHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Write the data
 	w.Write(resp.Data)
-}
-
-// Helper functions for parsing parameters
-func parseUint32(s string, defaultValue uint32) (uint32, error) {
-	if s == "" {
-		return defaultValue, nil
-	}
-	val, err := strconv.ParseUint(s, 10, 32)
-	if err != nil {
-		return 0, fmt.Errorf("invalid uint32 value: %q", s)
-	}
-	return uint32(val), nil
-}
-
-func parseUint64(s string, defaultValue uint64) uint64 {
-	if s == "" {
-		return defaultValue
-	}
-	val, err := strconv.ParseUint(s, 10, 64)
-	if err != nil {
-		return defaultValue
-	}
-	return val
 }
