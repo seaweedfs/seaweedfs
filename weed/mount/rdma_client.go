@@ -354,8 +354,6 @@ func (c *RDMAMountClient) IsHealthy() bool {
 	return err == nil
 }
 
-
-
 // readFromTempFile performs zero-copy read from temp file using page cache
 func (c *RDMAMountClient) readFromTempFile(tempFilePath string, buffer []byte) (int, error) {
 	if tempFilePath == "" {

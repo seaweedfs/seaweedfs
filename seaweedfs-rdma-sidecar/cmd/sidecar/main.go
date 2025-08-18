@@ -277,14 +277,14 @@ func (s *Sidecar) rdmaReadHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Parse query parameters
 	query := r.URL.Query()
-	
+
 	// Get file ID (e.g., "3,01637037d6") - this is the natural SeaweedFS identifier
 	fileID := query.Get("file_id")
 	if fileID == "" {
 		http.Error(w, "missing 'file_id' parameter", http.StatusBadRequest)
 		return
 	}
-	
+
 	// Parse optional offset and size parameters
 	offset := uint64(0) // default value
 	if offsetStr := query.Get("offset"); offsetStr != "" {
@@ -295,7 +295,7 @@ func (s *Sidecar) rdmaReadHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		offset = val
 	}
-	
+
 	size := uint64(4096) // default value
 	if sizeStr := query.Get("size"); sizeStr != "" {
 		val, err := strconv.ParseUint(sizeStr, 10, 64)

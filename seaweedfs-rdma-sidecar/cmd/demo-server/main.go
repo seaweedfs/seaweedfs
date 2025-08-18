@@ -326,11 +326,11 @@ func (s *DemoServer) readHandler(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	volumeServer := query.Get("volume_server")
 	fileID := query.Get("file_id")
-	
+
 	var volumeID, cookie uint64
 	var needleID uint64
 	var err error
-	
+
 	if fileID != "" {
 		// Use file ID format (e.g., "3,01637037d6")
 		// Extract individual components using existing SeaweedFS parsing
