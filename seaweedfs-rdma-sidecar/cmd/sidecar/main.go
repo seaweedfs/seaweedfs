@@ -240,7 +240,7 @@ func (s *Sidecar) capabilitiesHandler(w http.ResponseWriter, r *http.Request) {
 
 // RDMA ping handler
 func (s *Sidecar) pingHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
+	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
