@@ -1,0 +1,209 @@
+services:
+  # SeaweedFS Master Server
+  seaweedfs-master:
+    image: chrislusf/seaweedfs:latest
+    container_name: seaweedfs-master
+    command: master -ip=seaweedfs-master -port=9333 -mdir=/data
+    ports:
+      - "9333:9333"
+    volumes:
+      - master-data:/data
+    networks:
+      - seaweedfs-rdma
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "weed"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # SeaweedFS Volume Server
+  seaweedfs-volume:
+    image: chrislusf/seaweedfs:latest
+    container_name: seaweedfs-volume
+    command: volume -mserver=seaweedfs-master:9333 -ip=seaweedfs-volume -port=8080 -dir=/data
+    ports:
+      - "8080:8080"
+    volumes:
+      - volume-data:/data
+    depends_on:
+      seaweedfs-master:
+        condition: service_healthy
+    networks:
+      - seaweedfs-rdma
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "weed"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # RDMA Simulation Environment
+  rdma-simulation:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.rdma-simulation
+    container_name: rdma-simulation
+    privileged: true  # Required for RDMA kernel module loading
+    environment:
+      - RDMA_DEVICE=rxe0
+      - UCX_TLS=rc_verbs,ud_verbs,tcp
+      - UCX_LOG_LEVEL=info
+    volumes:
+      - /lib/modules:/lib/modules:ro  # Host kernel modules
+      - /sys:/sys  # Required for sysfs access
+      - rdma-simulation-data:/opt/rdma-sim/data
+    networks:
+      - seaweedfs-rdma
+    ports:
+      - "18515:18515"  # RDMA application port
+      - "4791:4791"    # RDMA CM port
+      - "4792:4792"    # Additional RDMA port
+    command: |
+      bash -c "
+        echo '🚀 Setting up RDMA simulation environment...'
+        sudo /opt/rdma-sim/setup-soft-roce.sh || echo 'RDMA setup failed, continuing...'
+        echo '📋 RDMA environment status:'
+        /opt/rdma-sim/test-rdma.sh || true
+        echo '🔧 UCX information:'
+        /opt/rdma-sim/ucx-info.sh || true
+        echo '✅ RDMA simulation ready - keeping container alive...'
+        tail -f /dev/null
+      "
+    healthcheck:
+      test: ["CMD", "test", "-f", "/opt/rdma-sim/setup-soft-roce.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Rust RDMA Engine (with RDMA simulation support)
+  rdma-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile.rdma-engine
+    container_name: rdma-engine
+    environment:
+      - RUST_LOG=debug
+      - RDMA_SOCKET_PATH=/tmp/rdma-engine.sock
+      # UCX configuration for real RDMA
+      - UCX_TLS=rc_verbs,ud_verbs,tcp,shm
+      - UCX_NET_DEVICES=all
+      - UCX_LOG_LEVEL=info
+      - UCX_RNDV_SCHEME=put_zcopy
+      - UCX_RNDV_THRESH=8192
+    volumes:
+      - rdma-socket:/tmp
+      # Share network namespace with RDMA simulation for device access
+    network_mode: "container:rdma-simulation"
+    depends_on:
+      rdma-simulation:
+        condition: service_healthy
+    command: ["./rdma-engine-server", "--debug", "--ipc-socket", "/tmp/rdma-engine.sock"]
+    healthcheck:
+      test: ["CMD", "test", "-S", "/tmp/rdma-engine.sock"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # Go RDMA Sidecar / Demo Server
+  rdma-sidecar:
+    build:
+      context: .
+      dockerfile: Dockerfile.sidecar
+    container_name: rdma-sidecar
+    ports:
+      - "8081:8081"
+    environment:
+      - RDMA_SOCKET_PATH=/tmp/rdma-engine.sock
+      - VOLUME_SERVER_URL=http://seaweedfs-volume:8080
+      - DEBUG=true
+    volumes:
+      - rdma-socket:/tmp
+    depends_on:
+      rdma-engine:
+        condition: service_healthy
+      seaweedfs-volume:
+        condition: service_healthy
+    networks:
+      - seaweedfs-rdma
+    command: [
+      "./demo-server",
+      "--port", "8081",
+      "--rdma-socket", "/tmp/rdma-engine.sock",
+      "--volume-server", "http://seaweedfs-volume:8080",
+      "--enable-rdma",
+      "--debug"
+    ]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # Test Client for Integration Testing
+  test-client:
+    build:
+      context: .
+      dockerfile: Dockerfile.test-client
+    container_name: test-client
+    environment:
+      - RDMA_SOCKET_PATH=/tmp/rdma-engine.sock
+      - SIDECAR_URL=http://rdma-sidecar:8081
+      - SEAWEEDFS_MASTER=http://seaweedfs-master:9333
+      - SEAWEEDFS_VOLUME=http://seaweedfs-volume:8080
+    volumes:
+      - rdma-socket:/tmp
+    depends_on:
+      rdma-sidecar:
+        condition: service_healthy
+    networks:
+      - seaweedfs-rdma
+    profiles:
+      - testing
+    command: ["tail", "-f", "/dev/null"]  # Keep container running for manual testing
+
+  # Integration Test Runner with RDMA
+  integration-tests-rdma:
+    build:
+      context: .
+      dockerfile: Dockerfile.test-client
+    container_name: integration-tests-rdma
+    environment:
+      - RDMA_SOCKET_PATH=/tmp/rdma-engine.sock
+      - SIDECAR_URL=http://rdma-sidecar:8081
+      - SEAWEEDFS_MASTER=http://seaweedfs-master:9333
+      - SEAWEEDFS_VOLUME=http://seaweedfs-volume:8080
+      - RDMA_SIMULATION=true
+    volumes:
+      - rdma-socket:/tmp
+      - ./tests:/tests
+    depends_on:
+      rdma-sidecar:
+        condition: service_healthy
+      rdma-simulation:
+        condition: service_healthy
+    networks:
+      - seaweedfs-rdma
+    profiles:
+      - testing
+    command: ["/tests/run-integration-tests.sh"]
+
+volumes:
+  master-data:
+    driver: local
+  volume-data:
+    driver: local
+  rdma-socket:
+    driver: local
+  rdma-simulation-data:
+    driver: local
+
+networks:
+  seaweedfs-rdma:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

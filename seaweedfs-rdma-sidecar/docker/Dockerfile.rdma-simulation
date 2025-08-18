@@ -1,0 +1,77 @@
+# RDMA Simulation Container with Soft-RoCE (RXE)
+# This container enables software RDMA over regular Ethernet
+
+FROM ubuntu:22.04
+
+# Install RDMA and networking tools
+RUN apt-get update && apt-get install -y \
+    # System utilities
+    sudo \
+    # RDMA core libraries
+    libibverbs1 \
+    libibverbs-dev \
+    librdmacm1 \
+    librdmacm-dev \
+    rdma-core \
+    ibverbs-utils \
+    infiniband-diags \
+    # Network tools  
+    iproute2 \
+    iputils-ping \
+    net-tools \
+    # Build tools
+    build-essential \
+    pkg-config \
+    cmake \
+    # UCX dependencies
+    libnuma1 \
+    libnuma-dev \
+    # UCX library (pre-built) - try to install but don't fail if not available
+    # libucx0 \
+    # libucx-dev \
+    # Debugging tools
+    strace \
+    gdb \
+    valgrind \
+    # Utilities
+    curl \
+    wget \
+    vim \
+    htop \
+    && rm -rf /var/lib/apt/lists/*
+
+# Try to install UCX tools (optional, may not be available in all repositories)
+RUN apt-get update && \
+    (apt-get install -y ucx-tools || echo "UCX tools not available in repository") && \
+    rm -rf /var/lib/apt/lists/*
+
+# Create rdmauser for security (avoid conflict with system rdma group)
+RUN useradd -m -s /bin/bash -G sudo,rdma rdmauser && \
+    echo "rdmauser ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+# Create directories for RDMA setup
+RUN mkdir -p /opt/rdma-sim /var/log/rdma
+
+# Copy RDMA simulation scripts
+COPY docker/scripts/setup-soft-roce.sh /opt/rdma-sim/
+COPY docker/scripts/test-rdma.sh /opt/rdma-sim/
+COPY docker/scripts/ucx-info.sh /opt/rdma-sim/
+
+# Make scripts executable
+RUN chmod +x /opt/rdma-sim/*.sh
+
+# Set working directory
+WORKDIR /opt/rdma-sim
+
+# Switch to rdmauser
+USER rdmauser
+
+# Default command
+CMD ["/bin/bash"]
+
+# Health check for RDMA devices
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD /opt/rdma-sim/test-rdma.sh || exit 1
+
+# Expose common RDMA ports
+EXPOSE 18515 4791 4792
