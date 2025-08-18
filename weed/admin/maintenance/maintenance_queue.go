@@ -438,6 +438,19 @@ func (mq *MaintenanceQueue) CompleteTask(taskID string, error string) {
 			taskID, task.Type, task.WorkerID, duration, task.VolumeID)
 	}
 
+	// CRITICAL FIX: Remove completed/failed tasks from pending queue to prevent infinite loops
+	// This must happen for both successful completion and permanent failure (not retries)
+	if task.Status == TaskStatusCompleted || (task.Status == TaskStatusFailed && task.RetryCount >= task.MaxRetries) {
+		// Remove from pending tasks to prevent stuck scheduling loops
+		for i, pendingTask := range mq.pendingTasks {
+			if pendingTask.ID == taskID {
+				mq.pendingTasks = append(mq.pendingTasks[:i], mq.pendingTasks[i+1:]...)
+				glog.V(2).Infof("Removed completed/failed task %s from pending queue", taskID)
+				break
+			}
+		}
+	}
+
 	// Update worker
 	if task.WorkerID != "" {
 		if worker, exists := mq.workers[task.WorkerID]; exists {
@@ -461,6 +474,10 @@ func (mq *MaintenanceQueue) CompleteTask(taskID string, error string) {
 			go mq.cleanupCompletedTasks()
 		}
 	}
+
+	// ADDITIONAL SAFETY: Clean up stale tasks from pending queue
+	// This ensures no completed/failed tasks remain in the pending queue
+	go mq.cleanupStalePendingTasks()
 }
 
 // UpdateTaskProgress updates the progress of a running task
@@ -744,6 +761,33 @@ func (mq *MaintenanceQueue) CleanupOldTasks(retention time.Duration) int {
 	return removed
 }
 
+// cleanupStalePendingTasks removes completed/failed tasks from the pending queue
+// This prevents infinite loops caused by stale tasks that should not be scheduled
+func (mq *MaintenanceQueue) cleanupStalePendingTasks() {
+	mq.mutex.Lock()
+	defer mq.mutex.Unlock()
+
+	removed := 0
+	newPendingTasks := make([]*MaintenanceTask, 0, len(mq.pendingTasks))
+
+	for _, task := range mq.pendingTasks {
+		// Keep only tasks that should legitimately be in the pending queue
+		if task.Status == TaskStatusPending {
+			newPendingTasks = append(newPendingTasks, task)
+		} else {
+			// Remove stale tasks (completed, failed, assigned, in-progress)
+			glog.V(2).Infof("Removing stale task %s (status: %s) from pending queue", task.ID, task.Status)
+			removed++
+		}
+	}
+
+	mq.pendingTasks = newPendingTasks
+
+	if removed > 0 {
+		glog.Infof("Cleaned up %d stale tasks from pending queue", removed)
+	}
+}
+
 // RemoveStaleWorkers removes workers that haven't sent heartbeat recently
 func (mq *MaintenanceQueue) RemoveStaleWorkers(timeout time.Duration) int {
 	mq.mutex.Lock()
@@ -843,7 +887,22 @@ func (mq *MaintenanceQueue) workerCanHandle(taskType MaintenanceTaskType, capabi
 
 // canScheduleTaskNow determines if a task can be scheduled using task schedulers or fallback logic
 func (mq *MaintenanceQueue) canScheduleTaskNow(task *MaintenanceTask) bool {
-	glog.V(2).Infof("Checking if task %s (type: %s) can be scheduled", task.ID, task.Type)
+	glog.V(2).Infof("Checking if task %s (type: %s, status: %s) can be scheduled", task.ID, task.Type, task.Status)
+
+	// CRITICAL SAFETY CHECK: Never schedule completed or permanently failed tasks
+	// This prevents infinite loops from stale tasks in pending queue
+	if task.Status == TaskStatusCompleted {
+		glog.Errorf("SAFETY GUARD: Task %s is already completed but still in pending queue - this should not happen!", task.ID)
+		return false
+	}
+	if task.Status == TaskStatusFailed && task.RetryCount >= task.MaxRetries {
+		glog.Errorf("SAFETY GUARD: Task %s has permanently failed but still in pending queue - this should not happen!", task.ID)
+		return false
+	}
+	if task.Status == TaskStatusAssigned || task.Status == TaskStatusInProgress {
+		glog.V(2).Infof("Task %s is already assigned/in-progress (status: %s) - skipping", task.ID, task.Status)
+		return false
+	}
 
 	// TEMPORARY FIX: Skip integration task scheduler which is being overly restrictive
 	// Use fallback logic directly for now

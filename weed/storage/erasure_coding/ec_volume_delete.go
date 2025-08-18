@@ -27,6 +27,7 @@ var (
 
 func (ev *EcVolume) DeleteNeedleFromEcx(needleId types.NeedleId) (err error) {
 
+	glog.Errorf("🔥 DELETE NEEDLE FROM ECX: volume %d generation %d needle %d", ev.VolumeId, ev.Generation, needleId)
 	_, _, err = SearchNeedleFromSortedIndex(ev.ecxFile, ev.ecxFileSize, needleId, MarkNeedleDeleted)
 
 	if err != nil {
