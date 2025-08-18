@@ -242,6 +242,10 @@ func (c *RDMAMountClient) ReadNeedle(ctx context.Context, volumeID uint32, needl
 			data = buffer[:n]
 			glog.V(4).Infof("🔥 Zero-copy successful: %d bytes from page cache", n)
 		}
+		
+		// Important: Cleanup temp file after reading (consumer responsibility)
+		// This prevents accumulation of temp files in /tmp/rdma-cache
+		go c.cleanupTempFile(tempFilePath)
 	} else {
 		// Regular path: read from HTTP response body
 		data, err = io.ReadAll(resp.Body)
@@ -260,6 +264,42 @@ func (c *RDMAMountClient) ReadNeedle(ctx context.Context, volumeID uint32, needl
 		volumeID, needleID, size, duration, isRDMA, contentType)
 
 	return data, isRDMA, nil
+}
+
+// cleanupTempFile requests cleanup of a temp file from the sidecar
+func (c *RDMAMountClient) cleanupTempFile(tempFilePath string) {
+	if tempFilePath == "" {
+		return
+	}
+
+	// Give the page cache a brief moment to be utilized before cleanup
+	// This preserves the zero-copy performance window
+	time.Sleep(100 * time.Millisecond)
+
+	// Call sidecar cleanup endpoint
+	cleanupURL := fmt.Sprintf("http://%s/cleanup?temp_file=%s", c.sidecarAddr, url.QueryEscape(tempFilePath))
+	
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	
+	req, err := http.NewRequestWithContext(ctx, "DELETE", cleanupURL, nil)
+	if err != nil {
+		glog.V(2).Infof("Failed to create cleanup request for %s: %v", tempFilePath, err)
+		return
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		glog.V(2).Infof("Failed to cleanup temp file %s: %v", tempFilePath, err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusOK {
+		glog.V(4).Infof("🧹 Temp file cleaned up: %s", tempFilePath)
+	} else {
+		glog.V(2).Infof("Cleanup failed for %s: status %s", tempFilePath, resp.Status)
+	}
 }
 
 // GetStats returns current RDMA client statistics
