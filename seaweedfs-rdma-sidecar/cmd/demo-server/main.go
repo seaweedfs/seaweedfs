@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -329,9 +330,18 @@ func (s *DemoServer) readHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cookie, err := strconv.ParseUint(query.Get("cookie"), 10, 32)
+	// Parse cookie parameter - support both decimal and hexadecimal formats
+	cookieStr := query.Get("cookie")
+	var cookie uint64
+	if strings.HasPrefix(strings.ToLower(cookieStr), "0x") {
+		// Parse as hexadecimal (remove "0x" prefix)
+		cookie, err = strconv.ParseUint(cookieStr[2:], 16, 32)
+	} else {
+		// Parse as decimal (default)
+		cookie, err = strconv.ParseUint(cookieStr, 10, 32)
+	}
 	if err != nil {
-		http.Error(w, "invalid 'cookie' parameter", http.StatusBadRequest)
+		http.Error(w, "invalid 'cookie' parameter (expected decimal or hex with 0x prefix)", http.StatusBadRequest)
 		return
 	}
 
