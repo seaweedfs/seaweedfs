@@ -228,8 +228,11 @@ func (s *DemoServer) homeHandler(w http.ResponseWriter, r *http.Request) {
 
         <h2>📝 Example Usage</h2>
         <pre>
-# Read a needle
+# Read a needle (decimal cookie)
 curl "http://localhost:%d/read?volume=1&needle=12345&cookie=305419896&size=1024&volume_server=http://localhost:8080"
+
+# Read a needle (hex cookie)
+curl "http://localhost:%d/read?volume=1&needle=12345&cookie=0x12345678&size=1024&volume_server=http://localhost:8080"
 
 # Run benchmark
 curl "http://localhost:%d/benchmark?iterations=5&size=2048"
