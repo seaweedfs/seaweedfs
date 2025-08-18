@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -242,7 +243,7 @@ func (c *RDMAMountClient) ReadNeedle(ctx context.Context, volumeID uint32, needl
 			data = buffer[:n]
 			glog.V(4).Infof("🔥 Zero-copy successful: %d bytes from page cache", n)
 		}
-		
+
 		// Important: Cleanup temp file after reading (consumer responsibility)
 		// This prevents accumulation of temp files in /tmp/rdma-cache
 		go c.cleanupTempFile(tempFilePath)
@@ -278,10 +279,10 @@ func (c *RDMAMountClient) cleanupTempFile(tempFilePath string) {
 
 	// Call sidecar cleanup endpoint
 	cleanupURL := fmt.Sprintf("http://%s/cleanup?temp_file=%s", c.sidecarAddr, url.QueryEscape(tempFilePath))
-	
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	
+
 	req, err := http.NewRequestWithContext(ctx, "DELETE", cleanupURL, nil)
 	if err != nil {
 		glog.V(2).Infof("Failed to create cleanup request for %s: %v", tempFilePath, err)
