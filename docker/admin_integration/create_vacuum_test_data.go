@@ -15,7 +15,7 @@ import (
 
 var (
 	master      = flag.String("master", "master:9333", "SeaweedFS master server address")
-	filer       = flag.String("filer", "filer:8888", "SeaweedFS filer server address")
+	filer       = flag.String("filer", "filer1:8888", "SeaweedFS filer server address")
 	phase       = flag.String("phase", "", "Phase to execute: generate, delete, status (for EC vacuum testing)")
 	fileCount   = flag.Int("files", 20, "Number of files to create")
 	deleteRatio = flag.Float64("delete", 0.4, "Ratio of files to delete (0.0-1.0)")
