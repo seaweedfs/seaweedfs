@@ -133,7 +133,7 @@ curl http://localhost:8081/health
 curl http://localhost:8081/stats
 
 # Test RDMA read
-curl "http://localhost:8081/read?volume=1&needle=123&cookie=456&offset=0&size=1024&volume_server=http://httpbin.org/get"
+curl "http://localhost:8081/read?volume=1&needle=123&cookie=456&offset=0&size=1024&volume_server=http://localhost:8080"
 ```
 
 ---

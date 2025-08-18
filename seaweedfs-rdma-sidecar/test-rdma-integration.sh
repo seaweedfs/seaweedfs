@@ -84,7 +84,7 @@ fi
 
 # Test read endpoint (will fallback to HTTP)
 echo "📖 Testing read endpoint..."
-RESPONSE=$(curl -s "http://localhost:8081/read?volume=1&needle=123&cookie=456&offset=0&size=1024&volume_server=http://httpbin.org/get")
+RESPONSE=$(curl -s "http://localhost:8081/read?volume=1&needle=123&cookie=456&offset=0&size=1024&volume_server=http://localhost:8080")
 if echo "$RESPONSE" | jq . > /dev/null; then
     echo "✅ Read endpoint working!"
     echo "   Response structure valid JSON"
