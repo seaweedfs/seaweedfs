@@ -124,6 +124,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 	mux.HandleFunc("/stats", server.statsHandler)
 	mux.HandleFunc("/read", server.readHandler)
 	mux.HandleFunc("/benchmark", server.benchmarkHandler)
+	mux.HandleFunc("/cleanup", server.cleanupHandler)
 
 	httpServer := &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),
@@ -245,7 +246,7 @@ curl "http://localhost:%d/health"
 </html>`,
 		map[bool]string{true: "enabled", false: "disabled"}[s.rdmaClient.IsEnabled()],
 		map[bool]string{true: "RDMA Enabled ✅", false: "RDMA Disabled (HTTP Fallback Only) ⚠️"}[s.rdmaClient.IsEnabled()],
-		port, port, port)
+		port, port, port, port)
 }
 
 // healthHandler checks server and RDMA health
@@ -378,6 +379,8 @@ func (s *DemoServer) readHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Note: cookie and size can have defaults for demo purposes when user provides empty values,
+	// but invalid parsing is caught above with proper error responses
 	if cookie == 0 {
 		cookie = 0x12345678 // Default cookie for demo
 	}
@@ -482,13 +485,25 @@ func (s *DemoServer) benchmarkHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Parse parameters
 	query := r.URL.Query()
-	iterations, err := strconv.Atoi(query.Get("iterations"))
-	if err != nil {
-		iterations = 10 // default value
+
+	iterations := 10 // default value
+	if iterationsStr := query.Get("iterations"); iterationsStr != "" {
+		var parseErr error
+		iterations, parseErr = strconv.Atoi(iterationsStr)
+		if parseErr != nil {
+			http.Error(w, "invalid 'iterations' parameter", http.StatusBadRequest)
+			return
+		}
 	}
-	size, err := strconv.ParseUint(query.Get("size"), 10, 64)
-	if err != nil {
-		size = 4096 // default value
+
+	size := uint64(4096) // default value
+	if sizeStr := query.Get("size"); sizeStr != "" {
+		var parseErr error
+		size, parseErr = strconv.ParseUint(sizeStr, 10, 64)
+		if parseErr != nil {
+			http.Error(w, "invalid 'size' parameter", http.StatusBadRequest)
+			return
+		}
 	}
 
 	if iterations <= 0 {
@@ -582,4 +597,41 @@ func (s *DemoServer) benchmarkHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
+}
+
+// cleanupHandler handles temp file cleanup requests from mount clients
+func (s *DemoServer) cleanupHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Get temp file path from query parameters
+	tempFilePath := r.URL.Query().Get("temp_file")
+	if tempFilePath == "" {
+		http.Error(w, "missing 'temp_file' parameter", http.StatusBadRequest)
+		return
+	}
+
+	s.logger.WithField("temp_file", tempFilePath).Debug("🗑️ Processing cleanup request")
+
+	// Use the RDMA client's cleanup method (which delegates to seaweedfs client)
+	err := s.rdmaClient.CleanupTempFile(tempFilePath)
+	if err != nil {
+		s.logger.WithError(err).WithField("temp_file", tempFilePath).Warn("Failed to cleanup temp file")
+		http.Error(w, fmt.Sprintf("cleanup failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	s.logger.WithField("temp_file", tempFilePath).Debug("🧹 Temp file cleanup successful")
+
+	// Return success response
+	w.Header().Set("Content-Type", "application/json")
+	response := map[string]interface{}{
+		"success":   true,
+		"message":   "temp file cleaned up successfully",
+		"temp_file": tempFilePath,
+		"timestamp": time.Now().Format(time.RFC3339),
+	}
+	json.NewEncoder(w).Encode(response)
 }

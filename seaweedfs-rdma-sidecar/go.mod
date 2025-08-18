@@ -42,13 +42,9 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-// Local development replace directive
-// This replace directive is necessary for monorepo development where the sidecar
-// is built alongside the main SeaweedFS code. It allows the sidecar to use the
-// exact same SeaweedFS types and functions as the parent project.
+// For local development, this replace directive is required to build the sidecar
+// against the parent SeaweedFS module in this monorepo.
 //
-// For CI/CD or external builds:
-// - Ensure the SeaweedFS repository is checked out as a sibling directory
-// - Or modify this directive to point to the correct relative path
-// - Or use a versioned dependency when SeaweedFS publishes modules
+// To build this module, ensure the main SeaweedFS repository is checked out
+// as a sibling directory to this `seaweedfs-rdma-sidecar` directory.
 replace github.com/seaweedfs/seaweedfs => ../
