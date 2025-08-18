@@ -223,7 +223,14 @@ func (c *Client) GetCapabilities(ctx context.Context, clientID *string) (*GetCap
 	}
 
 	if response.Type == MsgError {
-		errorResp := response.Data.(*ErrorResponse)
+		errorData, err := msgpack.Marshal(response.Data)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal engine error data: %w", err)
+		}
+		var errorResp ErrorResponse
+		if err := msgpack.Unmarshal(errorData, &errorResp); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal engine error response: %w", err)
+		}
 		return nil, fmt.Errorf("engine error: %s - %s", errorResp.Code, errorResp.Message)
 	}
 
@@ -255,7 +262,14 @@ func (c *Client) StartRead(ctx context.Context, req *StartReadRequest) (*StartRe
 	}
 
 	if response.Type == MsgError {
-		errorResp := response.Data.(*ErrorResponse)
+		errorData, err := msgpack.Marshal(response.Data)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal engine error data: %w", err)
+		}
+		var errorResp ErrorResponse
+		if err := msgpack.Unmarshal(errorData, &errorResp); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal engine error response: %w", err)
+		}
 		return nil, fmt.Errorf("engine error: %s - %s", errorResp.Code, errorResp.Message)
 	}
 
@@ -287,7 +301,14 @@ func (c *Client) CompleteRead(ctx context.Context, sessionID string, success boo
 	}
 
 	if response.Type == MsgError {
-		errorResp := response.Data.(*ErrorResponse)
+		errorData, err := msgpack.Marshal(response.Data)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal engine error data: %w", err)
+		}
+		var errorResp ErrorResponse
+		if err := msgpack.Unmarshal(errorData, &errorResp); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal engine error response: %w", err)
+		}
 		return nil, fmt.Errorf("engine error: %s - %s", errorResp.Code, errorResp.Message)
 	}
 

@@ -55,9 +55,12 @@ func (c *RDMAMountClient) ReadNeedleFromServer(ctx context.Context, volumeServer
     // POST request with volume server parameter
     jsonBody, err := json.Marshal(requestBody)
     if err != nil {
-        // ... handle error
+        return nil, false, fmt.Errorf("failed to marshal request body: %w", err)
     }
     resp, err := c.httpClient.Post(reqURL, "application/json", bytes.NewBuffer(jsonBody))
+    if err != nil {
+        return nil, false, fmt.Errorf("http post to sidecar: %w", err)
+    }
 }
 ```
 

@@ -63,10 +63,8 @@ test_build_verification() {
     # Check SeaweedFS binary
     if [[ -f "../weed/weed" ]]; then
         echo "✅ SeaweedFS with RDMA support exists"
-    elif [[ -f "/Users/chrislu/go/src/github.com/seaweedfs/seaweedfs/weed/weed" ]]; then
-        echo "✅ SeaweedFS with RDMA support exists (alternate path)"
     else
-        echo "❌ SeaweedFS binary missing"
+        echo "❌ SeaweedFS binary missing (expected at ../weed/weed)"
         return 1
     fi
     
@@ -253,8 +251,6 @@ test_performance_characteristics() {
 main() {
     echo -e "${BLUE}🚀 Starting complete optimization test suite...${NC}"
     echo ""
-    
-    cd /Users/chrislu/go/src/github.com/seaweedfs/seaweedfs/seaweedfs-rdma-sidecar
     
     # Run all tests
     run_test "Build Verification" "test_build_verification"

@@ -9,9 +9,9 @@ BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-# Configuration
-SEAWEEDFS_DIR="/Users/chrislu/go/src/github.com/seaweedfs/seaweedfs"
-SIDECAR_DIR="/Users/chrislu/go/src/github.com/seaweedfs/seaweedfs/seaweedfs-rdma-sidecar"
+# Configuration - assumes script is run from seaweedfs-rdma-sidecar directory
+SEAWEEDFS_DIR="$(realpath ..)"
+SIDECAR_DIR="$(pwd)"
 MOUNT_POINT="/tmp/seaweedfs-rdma-mount"
 FILER_ADDR="localhost:8888"
 SIDECAR_ADDR="localhost:8081"
