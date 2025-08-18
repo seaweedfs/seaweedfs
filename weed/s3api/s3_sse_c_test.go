@@ -218,21 +218,228 @@ func TestSSECEncryptionDecryption(t *testing.T) {
 
 func TestSSECMetadataExtraction(t *testing.T) {
 	req := &http.Request{Header: make(http.Header)}
-
+	
 	req.Header.Set(s3_constants.AmzServerSideEncryptionCustomerAlgorithm, "AES256")
 	req.Header.Set(s3_constants.AmzServerSideEncryptionCustomerKeyMD5, "somemd5hash")
-
+	
 	metadata := GetSSECMetadataFromHeaders(req)
-
+	
 	if len(metadata) != 2 {
 		t.Errorf("Expected 2 metadata entries, got %d", len(metadata))
 	}
-
+	
 	if string(metadata[s3_constants.AmzServerSideEncryptionCustomerAlgorithm]) != "AES256" {
 		t.Error("Algorithm metadata not extracted correctly")
 	}
-
+	
 	if string(metadata[s3_constants.AmzServerSideEncryptionCustomerKeyMD5]) != "somemd5hash" {
 		t.Error("Key MD5 metadata not extracted correctly")
+	}
+}
+
+func TestSSECValidateKeyForObject(t *testing.T) {
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i)
+	}
+	
+	keyMD5 := fmt.Sprintf("%x", md5.Sum(key))
+	customerKey := &SSECustomerKey{
+		Algorithm: "AES256",
+		Key:       key,
+		KeyMD5:    strings.ToLower(keyMD5),
+	}
+	
+	// Test matching key
+	err := ValidateSSECKeyForObject(customerKey, keyMD5)
+	if err != nil {
+		t.Errorf("Expected validation to pass for matching key, got error: %v", err)
+	}
+	
+	// Test mismatched key
+	wrongMD5 := "wrongmd5hash"
+	err = ValidateSSECKeyForObject(customerKey, wrongMD5)
+	if err != ErrSSECustomerKeyMD5Mismatch {
+		t.Errorf("Expected ErrSSECustomerKeyMD5Mismatch, got: %v", err)
+	}
+	
+	// Test nil customer key with encrypted object
+	err = ValidateSSECKeyForObject(nil, keyMD5)
+	if err != ErrSSECustomerKeyMissing {
+		t.Errorf("Expected ErrSSECustomerKeyMissing, got: %v", err)
+	}
+	
+	// Test customer key with non-encrypted object
+	err = ValidateSSECKeyForObject(customerKey, "")
+	if err != ErrSSECustomerKeyNotNeeded {
+		t.Errorf("Expected ErrSSECustomerKeyNotNeeded, got: %v", err)
+	}
+	
+	// Test nil customer key with non-encrypted object (should pass)
+	err = ValidateSSECKeyForObject(nil, "")
+	if err != nil {
+		t.Errorf("Expected no error for nil key with non-encrypted object, got: %v", err)
+	}
+}
+
+func TestSSECIsSSECRequest(t *testing.T) {
+	// Test with SSE-C headers
+	req := &http.Request{Header: make(http.Header)}
+	req.Header.Set(s3_constants.AmzServerSideEncryptionCustomerAlgorithm, "AES256")
+	
+	if !IsSSECRequest(req) {
+		t.Error("Expected IsSSECRequest to return true when SSE-C headers are present")
+	}
+	
+	// Test without SSE-C headers
+	req2 := &http.Request{Header: make(http.Header)}
+	if IsSSECRequest(req2) {
+		t.Error("Expected IsSSECRequest to return false when no SSE-C headers are present")
+	}
+}
+
+func TestSSECIsSSECEncrypted(t *testing.T) {
+	// Test with SSE-C metadata
+	metadata := map[string][]byte{
+		s3_constants.AmzServerSideEncryptionCustomerAlgorithm: []byte("AES256"),
+		s3_constants.AmzServerSideEncryptionCustomerKeyMD5:    []byte("somehash"),
+	}
+	
+	if !IsSSECEncrypted(metadata) {
+		t.Error("Expected IsSSECEncrypted to return true when SSE-C metadata is present")
+	}
+	
+	// Test without SSE-C metadata
+	emptyMetadata := map[string][]byte{}
+	if IsSSECEncrypted(emptyMetadata) {
+		t.Error("Expected IsSSECEncrypted to return false when no SSE-C metadata is present")
+	}
+	
+	// Test with partial SSE-C metadata
+	partialMetadata := map[string][]byte{
+		s3_constants.AmzServerSideEncryptionCustomerAlgorithm: []byte("AES256"),
+	}
+	if IsSSECEncrypted(partialMetadata) {
+		t.Error("Expected IsSSECEncrypted to return false when only partial SSE-C metadata is present")
+	}
+}
+
+func TestSSECGetStoredKeyMD5(t *testing.T) {
+	// Test with stored key MD5
+	metadata := map[string][]byte{
+		s3_constants.AmzServerSideEncryptionCustomerKeyMD5: []byte("testhash"),
+	}
+	
+	keyMD5 := GetStoredKeyMD5(metadata)
+	if keyMD5 != "testhash" {
+		t.Errorf("Expected 'testhash', got '%s'", keyMD5)
+	}
+	
+	// Test without stored key MD5
+	emptyMetadata := map[string][]byte{}
+	keyMD5 = GetStoredKeyMD5(emptyMetadata)
+	if keyMD5 != "" {
+		t.Errorf("Expected empty string, got '%s'", keyMD5)
+	}
+}
+
+// Test encryption with different data sizes (similar to s3tests)
+func TestSSECEncryptionVariousSizes(t *testing.T) {
+	sizes := []int{1, 13, 1024, 1024 * 1024} // 1B, 13B, 1KB, 1MB
+	
+	for _, size := range sizes {
+		t.Run(fmt.Sprintf("size_%d", size), func(t *testing.T) {
+			// Create customer key
+			key := make([]byte, 32)
+			for i := range key {
+				key[i] = byte(i + size) // Make key unique per test
+			}
+			
+			customerKey := &SSECustomerKey{
+				Algorithm: "AES256",
+				Key:       key,
+				KeyMD5:    fmt.Sprintf("%x", md5.Sum(key)),
+			}
+			
+			// Create test data of specified size
+			testData := make([]byte, size)
+			for i := range testData {
+				testData[i] = byte('A' + (i % 26)) // Pattern of A-Z
+			}
+			
+			// Encrypt
+			dataReader := bytes.NewReader(testData)
+			encryptedReader, err := CreateSSECEncryptedReader(dataReader, customerKey)
+			if err != nil {
+				t.Fatalf("Failed to create encrypted reader: %v", err)
+			}
+			
+			encryptedData, err := io.ReadAll(encryptedReader)
+			if err != nil {
+				t.Fatalf("Failed to read encrypted data: %v", err)
+			}
+			
+			// Verify IV is present and data is encrypted
+			if len(encryptedData) < AESBlockSize {
+				t.Fatalf("Encrypted data too short, missing IV")
+			}
+			
+			if len(encryptedData) != size+AESBlockSize {
+				t.Errorf("Expected encrypted data length %d, got %d", size+AESBlockSize, len(encryptedData))
+			}
+			
+			// Decrypt
+			encryptedReader2 := bytes.NewReader(encryptedData)
+			decryptedReader, err := CreateSSECDecryptedReader(encryptedReader2, customerKey)
+			if err != nil {
+				t.Fatalf("Failed to create decrypted reader: %v", err)
+			}
+			
+			decryptedData, err := io.ReadAll(decryptedReader)
+			if err != nil {
+				t.Fatalf("Failed to read decrypted data: %v", err)
+			}
+			
+			// Verify decrypted data matches original
+			if !bytes.Equal(decryptedData, testData) {
+				t.Errorf("Decrypted data doesn't match original for size %d", size)
+			}
+		})
+	}
+}
+
+func TestSSECEncryptionWithNilKey(t *testing.T) {
+	testData := []byte("test data")
+	dataReader := bytes.NewReader(testData)
+	
+	// Test encryption with nil key (should pass through)
+	encryptedReader, err := CreateSSECEncryptedReader(dataReader, nil)
+	if err != nil {
+		t.Fatalf("Failed to create encrypted reader with nil key: %v", err)
+	}
+	
+	result, err := io.ReadAll(encryptedReader)
+	if err != nil {
+		t.Fatalf("Failed to read from pass-through reader: %v", err)
+	}
+	
+	if !bytes.Equal(result, testData) {
+		t.Error("Data should pass through unchanged when key is nil")
+	}
+	
+	// Test decryption with nil key (should pass through)
+	dataReader2 := bytes.NewReader(testData)
+	decryptedReader, err := CreateSSECDecryptedReader(dataReader2, nil)
+	if err != nil {
+		t.Fatalf("Failed to create decrypted reader with nil key: %v", err)
+	}
+	
+	result2, err := io.ReadAll(decryptedReader)
+	if err != nil {
+		t.Fatalf("Failed to read from pass-through reader: %v", err)
+	}
+	
+	if !bytes.Equal(result2, testData) {
+		t.Error("Data should pass through unchanged when key is nil")
 	}
 }
