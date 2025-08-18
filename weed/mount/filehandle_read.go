@@ -120,21 +120,15 @@ func (fh *FileHandle) tryRDMARead(ctx context.Context, fileSize int64, buff []by
 		return 0, 0, fmt.Errorf("no chunk found for offset %d", offset)
 	}
 
-	// Parse the chunk's file ID
-	volumeID, needleID, cookie, err := ParseFileId(targetChunk.FileId)
-	if err != nil {
-		return 0, 0, fmt.Errorf("failed to parse chunk fileId %s: %w", targetChunk.FileId, err)
-	}
-
 	// Calculate how much to read from this chunk
 	remainingInChunk := int64(targetChunk.Size) - chunkOffset
 	readSize := min(int64(len(buff)), remainingInChunk)
 
-	glog.V(4).Infof("RDMA read attempt: chunk=%s, volume=%d, needle=%x, cookie=%d, chunkOffset=%d, readSize=%d",
-		targetChunk.FileId, volumeID, needleID, cookie, chunkOffset, readSize)
+	glog.V(4).Infof("RDMA read attempt: chunk=%s (fileId=%s), chunkOffset=%d, readSize=%d",
+		targetChunk.FileId, targetChunk.FileId, chunkOffset, readSize)
 
-	// Try RDMA read
-	data, isRDMA, err := fh.wfs.rdmaClient.ReadNeedle(ctx, volumeID, needleID, cookie, uint64(chunkOffset), uint64(readSize))
+	// Try RDMA read using file ID directly (more efficient)
+	data, isRDMA, err := fh.wfs.rdmaClient.ReadNeedle(ctx, targetChunk.FileId, uint64(chunkOffset), uint64(readSize))
 	if err != nil {
 		return 0, 0, fmt.Errorf("RDMA read failed: %w", err)
 	}

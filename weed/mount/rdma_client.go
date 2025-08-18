@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
@@ -94,20 +93,17 @@ func NewRDMAMountClient(sidecarAddr string, lookupFileIdFn wdclient.LookupFileId
 	return client, nil
 }
 
-// lookupVolumeLocation finds the best volume server for a given volume ID
-func (c *RDMAMountClient) lookupVolumeLocation(ctx context.Context, volumeID uint32, needleID uint64, cookie uint32) (string, error) {
-	// Create a file ID for lookup (format: volumeId,needleId,cookie)
-	fileId := fmt.Sprintf("%d,%x,%d", volumeID, needleID, cookie)
+// lookupVolumeLocationByFileID finds the best volume server for a given file ID
+func (c *RDMAMountClient) lookupVolumeLocationByFileID(ctx context.Context, fileID string) (string, error) {
+	glog.V(4).Infof("Looking up volume location for file ID %s", fileID)
 
-	glog.V(4).Infof("Looking up volume %d using fileId %s", volumeID, fileId)
-
-	targetUrls, err := c.lookupFileIdFn(ctx, fileId)
+	targetUrls, err := c.lookupFileIdFn(ctx, fileID)
 	if err != nil {
-		return "", fmt.Errorf("failed to lookup volume %d: %w", volumeID, err)
+		return "", fmt.Errorf("failed to lookup volume for file %s: %w", fileID, err)
 	}
 
 	if len(targetUrls) == 0 {
-		return "", fmt.Errorf("no locations found for volume %d", volumeID)
+		return "", fmt.Errorf("no locations found for file %s", fileID)
 	}
 
 	// Choose the first URL and extract the server address
@@ -119,8 +115,15 @@ func (c *RDMAMountClient) lookupVolumeLocation(ctx context.Context, volumeID uin
 	}
 	bestAddress := fmt.Sprintf("http://%s", parts[2])
 
-	glog.V(4).Infof("Volume %d located at %s", volumeID, bestAddress)
+	glog.V(4).Infof("File %s located at %s", fileID, bestAddress)
 	return bestAddress, nil
+}
+
+// lookupVolumeLocation finds the best volume server for a given volume ID (legacy method)
+func (c *RDMAMountClient) lookupVolumeLocation(ctx context.Context, volumeID uint32, needleID uint64, cookie uint32) (string, error) {
+	// Create a file ID for lookup (format: volumeId,needleId,cookie)
+	fileID := fmt.Sprintf("%d,%x,%d", volumeID, needleID, cookie)
+	return c.lookupVolumeLocationByFileID(ctx, fileID)
 }
 
 // healthCheck verifies that the RDMA sidecar is available and functioning
@@ -166,7 +169,7 @@ func (c *RDMAMountClient) healthCheck() error {
 }
 
 // ReadNeedle reads data from a specific needle using RDMA acceleration
-func (c *RDMAMountClient) ReadNeedle(ctx context.Context, volumeID uint32, needleID uint64, cookie uint32, offset, size uint64) ([]byte, bool, error) {
+func (c *RDMAMountClient) ReadNeedle(ctx context.Context, fileID string, offset, size uint64) ([]byte, bool, error) {
 	// Acquire semaphore for concurrency control
 	select {
 	case c.semaphore <- struct{}{}:
@@ -178,16 +181,13 @@ func (c *RDMAMountClient) ReadNeedle(ctx context.Context, volumeID uint32, needl
 	atomic.AddInt64(&c.totalRequests, 1)
 	startTime := time.Now()
 
-	// Lookup volume location
-	volumeServer, err := c.lookupVolumeLocation(ctx, volumeID, needleID, cookie)
+	// Lookup volume location using file ID directly
+	volumeServer, err := c.lookupVolumeLocationByFileID(ctx, fileID)
 	if err != nil {
 		atomic.AddInt64(&c.failedReads, 1)
-		return nil, false, fmt.Errorf("failed to lookup volume %d: %w", volumeID, err)
+		return nil, false, fmt.Errorf("failed to lookup volume for file %s: %w", fileID, err)
 	}
 
-	// Construct file ID for request (more natural SeaweedFS format)
-	fileID := fmt.Sprintf("%d,%x,%d", volumeID, needleID, cookie)
-	
 	// Prepare request URL with file_id parameter (simpler than individual components)
 	reqURL := fmt.Sprintf("http://%s/read?file_id=%s&offset=%d&size=%d&volume_server=%s",
 		c.sidecarAddr, fileID, offset, size, volumeServer)
@@ -264,8 +264,8 @@ func (c *RDMAMountClient) ReadNeedle(ctx context.Context, volumeID uint32, needl
 	atomic.AddInt64(&c.totalBytesRead, int64(len(data)))
 
 	// Log successful operation
-	glog.V(4).Infof("RDMA read completed: volume=%d, needle=%d, size=%d, duration=%v, rdma=%v, contentType=%s",
-		volumeID, needleID, size, duration, isRDMA, contentType)
+	glog.V(4).Infof("RDMA read completed: fileID=%s, size=%d, duration=%v, rdma=%v, contentType=%s",
+		fileID, size, duration, isRDMA, contentType)
 
 	return data, isRDMA, nil
 }
@@ -354,21 +354,7 @@ func (c *RDMAMountClient) IsHealthy() bool {
 	return err == nil
 }
 
-// ParseFileId extracts volume ID, needle ID, and cookie from a SeaweedFS file ID
-// Uses existing SeaweedFS parsing logic to ensure compatibility
-func ParseFileId(fileId string) (volumeID uint32, needleID uint64, cookie uint32, err error) {
-	// Use existing SeaweedFS file ID parsing
-	fid, err := needle.ParseFileIdFromString(fileId)
-	if err != nil {
-		return 0, 0, 0, fmt.Errorf("failed to parse file ID %s: %w", fileId, err)
-	}
 
-	volumeID = uint32(fid.VolumeId)
-	needleID = uint64(fid.Key)
-	cookie = uint32(fid.Cookie)
-
-	return volumeID, needleID, cookie, nil
-}
 
 // readFromTempFile performs zero-copy read from temp file using page cache
 func (c *RDMAMountClient) readFromTempFile(tempFilePath string, buffer []byte) (int, error) {
