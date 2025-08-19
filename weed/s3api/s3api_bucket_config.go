@@ -39,9 +39,11 @@ type BucketConfig struct {
 // Cache entries are automatically updated/invalidated through metadata subscription events,
 // so TTL serves as a safety fallback rather than the primary consistency mechanism
 type BucketConfigCache struct {
-	cache map[string]*BucketConfig
-	mutex sync.RWMutex
-	ttl   time.Duration // Safety fallback TTL; real-time consistency maintained via events
+	cache         map[string]*BucketConfig
+	negativeCache map[string]time.Time // Cache for non-existent buckets
+	mutex         sync.RWMutex
+	ttl           time.Duration // Safety fallback TTL; real-time consistency maintained via events
+	negativeTTL   time.Duration // TTL for negative cache entries
 }
 
 // BucketMetadata represents the complete metadata for a bucket
@@ -92,9 +94,16 @@ func (bm *BucketMetadata) HasTags() bool {
 // TTL can be set to a longer duration since cache consistency is maintained
 // through real-time metadata subscription events rather than TTL expiration
 func NewBucketConfigCache(ttl time.Duration) *BucketConfigCache {
+	negativeTTL := ttl / 4 // Negative cache TTL is shorter than positive cache
+	if negativeTTL < 30*time.Second {
+		negativeTTL = 30 * time.Second // Minimum 30 seconds for negative cache
+	}
+
 	return &BucketConfigCache{
-		cache: make(map[string]*BucketConfig),
-		ttl:   ttl,
+		cache:         make(map[string]*BucketConfig),
+		negativeCache: make(map[string]time.Time),
+		ttl:           ttl,
+		negativeTTL:   negativeTTL,
 	}
 }
 
@@ -139,11 +148,49 @@ func (bcc *BucketConfigCache) Clear() {
 	defer bcc.mutex.Unlock()
 
 	bcc.cache = make(map[string]*BucketConfig)
+	bcc.negativeCache = make(map[string]time.Time)
+}
+
+// IsNegativelyCached checks if a bucket is in the negative cache (doesn't exist)
+func (bcc *BucketConfigCache) IsNegativelyCached(bucket string) bool {
+	bcc.mutex.RLock()
+	defer bcc.mutex.RUnlock()
+
+	if cachedTime, exists := bcc.negativeCache[bucket]; exists {
+		// Check if the negative cache entry is still valid
+		if time.Since(cachedTime) < bcc.negativeTTL {
+			return true
+		}
+		// Entry expired, remove it
+		delete(bcc.negativeCache, bucket)
+	}
+	return false
+}
+
+// SetNegativeCache marks a bucket as non-existent in the negative cache
+func (bcc *BucketConfigCache) SetNegativeCache(bucket string) {
+	bcc.mutex.Lock()
+	defer bcc.mutex.Unlock()
+
+	bcc.negativeCache[bucket] = time.Now()
+}
+
+// RemoveNegativeCache removes a bucket from the negative cache
+func (bcc *BucketConfigCache) RemoveNegativeCache(bucket string) {
+	bcc.mutex.Lock()
+	defer bcc.mutex.Unlock()
+
+	delete(bcc.negativeCache, bucket)
 }
 
 // getBucketConfig retrieves bucket configuration with caching
 func (s3a *S3ApiServer) getBucketConfig(bucket string) (*BucketConfig, s3err.ErrorCode) {
-	// Try cache first
+	// Check negative cache first
+	if s3a.bucketConfigCache.IsNegativelyCached(bucket) {
+		return nil, s3err.ErrNoSuchBucket
+	}
+
+	// Try positive cache
 	if config, found := s3a.bucketConfigCache.Get(bucket); found {
 		return config, s3err.ErrNone
 	}
@@ -152,7 +199,8 @@ func (s3a *S3ApiServer) getBucketConfig(bucket string) (*BucketConfig, s3err.Err
 	entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) {
-			// Bucket doesn't exist
+			// Bucket doesn't exist - set negative cache
+			s3a.bucketConfigCache.SetNegativeCache(bucket)
 			return nil, s3err.ErrNoSuchBucket
 		}
 		glog.Errorf("getBucketConfig: failed to get bucket entry for %s: %v", bucket, err)
@@ -494,8 +542,13 @@ func parseAndCachePublicReadStatus(acl []byte) bool {
 
 // getBucketMetadata retrieves bucket metadata as a structured object with caching
 func (s3a *S3ApiServer) getBucketMetadata(bucket string) (*BucketMetadata, error) {
-	// Try to get from cache first
 	if s3a.bucketConfigCache != nil {
+		// Check negative cache first
+		if s3a.bucketConfigCache.IsNegativelyCached(bucket) {
+			return nil, fmt.Errorf("bucket directory not found %s", bucket)
+		}
+
+		// Try to get from positive cache
 		if config, found := s3a.bucketConfigCache.Get(bucket); found {
 			// Extract metadata from cached config
 			if metadata, err := s3a.extractMetadataFromConfig(config); err == nil {
@@ -555,9 +608,20 @@ func (s3a *S3ApiServer) loadBucketMetadataFromFiler(bucket string) (*BucketMetad
 	// Get bucket directory entry to access its content
 	entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
 	if err != nil {
+		// Check if this is a "not found" error
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			// Set negative cache for non-existent bucket
+			if s3a.bucketConfigCache != nil {
+				s3a.bucketConfigCache.SetNegativeCache(bucket)
+			}
+		}
 		return nil, fmt.Errorf("error retrieving bucket directory %s: %w", bucket, err)
 	}
 	if entry == nil {
+		// Set negative cache for non-existent bucket
+		if s3a.bucketConfigCache != nil {
+			s3a.bucketConfigCache.SetNegativeCache(bucket)
+		}
 		return nil, fmt.Errorf("bucket directory not found %s", bucket)
 	}
 
@@ -644,6 +708,7 @@ func (s3a *S3ApiServer) setBucketMetadata(bucket string, metadata *BucketMetadat
 	// Invalidate cache after successful update
 	if err == nil && s3a.bucketConfigCache != nil {
 		s3a.bucketConfigCache.Remove(bucket)
+		s3a.bucketConfigCache.RemoveNegativeCache(bucket) // Remove from negative cache too
 	}
 
 	return err
