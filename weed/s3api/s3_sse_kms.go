@@ -20,6 +20,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
+// Compiled regex patterns for KMS key validation
+var (
+	uuidRegex = regexp.MustCompile(`^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$`)
+	arnRegex  = regexp.MustCompile(`^arn:aws:kms:[a-z0-9-]+:\d{12}:(key|alias)/.+$`)
+)
+
 // SSEKMSKey contains the metadata for an SSE-KMS encrypted object
 type SSEKMSKey struct {
 	KeyID             string            // The KMS key ID used
@@ -223,13 +229,8 @@ func isValidKMSKeyID(keyID string) bool {
 	// 4. Alias ARN: arn:aws:kms:region:account:alias/my-key
 
 	if strings.HasPrefix(keyID, "arn:aws:kms:") {
-		// ARN format validation - must have exactly 6 parts
-		parts := strings.Split(keyID, ":")
-		if len(parts) != 6 {
-			return false
-		}
-		resource := parts[5]
-		return (strings.HasPrefix(resource, "key/") && len(resource) > 4) || (strings.HasPrefix(resource, "alias/") && len(resource) > 6)
+		// ARN format validation using compiled regex
+		return arnRegex.MatchString(keyID)
 	}
 
 	if strings.HasPrefix(keyID, "alias/") {
@@ -238,8 +239,7 @@ func isValidKMSKeyID(keyID string) bool {
 	}
 
 	// UUID format validation
-	uuidRegex := `^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$`
-	if match, _ := regexp.MatchString(uuidRegex, keyID); match {
+	if uuidRegex.MatchString(keyID) {
 		return true
 	}
 
