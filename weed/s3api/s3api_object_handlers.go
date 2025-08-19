@@ -619,9 +619,11 @@ func (s3a *S3ApiServer) handleSSECResponse(r *http.Request, proxyResponse *http.
 		}
 
 		// SSE-C MD5 is base64 and case-sensitive
-		if customerKey.KeyMD5 != sseKeyMD5 {
-			s3err.WriteErrorResponse(w, r, s3err.ErrSSECustomerKeyMD5Mismatch)
-			return http.StatusBadRequest, 0
+if customerKey.KeyMD5 != sseKeyMD5 {
+			// For GET/HEAD requests, AWS S3 returns 403 Forbidden for a key mismatch.
+			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+			return http.StatusForbidden, 0
+		}
 		}
 
 		// SSE-C encrypted objects do not support HTTP Range requests because the 16-byte IV
