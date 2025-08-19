@@ -58,8 +58,29 @@ start-server: check-deps
 	@set +e; \
 	if pgrep -f "weed.*server" > /dev/null 2>&1 || pgrep -f "weed_binary" > /dev/null 2>&1; then \
 		echo "⚠️  SeaweedFS server already running, stopping first..."; \
-		$(MAKE) stop-server 2>/dev/null || true; \
+		echo "Stopping existing server processes..."; \
+		if [ -f weed-server.pid ]; then \
+			PID=$$(cat weed-server.pid 2>/dev/null || echo ""); \
+			if [ -n "$$PID" ] && ps -p $$PID > /dev/null 2>&1; then \
+				echo "Terminating process $$PID..."; \
+				kill -TERM $$PID 2>/dev/null || true; \
+				for i in 1 2 3 4 5; do \
+					if ! ps -p $$PID > /dev/null 2>&1; then break; fi; \
+					echo "Waiting for process to terminate... ($$i/5)"; \
+					sleep 1; \
+				done; \
+				if ps -p $$PID > /dev/null 2>&1; then \
+					echo "Force killing process $$PID..."; \
+					kill -KILL $$PID 2>/dev/null || true; \
+					sleep 1; \
+				fi; \
+			fi; \
+			rm -f weed-server.pid 2>/dev/null || true; \
+		fi; \
+		pkill -f "weed.*server" 2>/dev/null || true; \
+		pkill -f "weed_binary" 2>/dev/null || true; \
 		sleep 3; \
+		echo "✅ Existing server stopped"; \
 	fi; \
 	mkdir -p ./test-volume-data; \
 	echo "Starting server with S3 API on port $(S3_PORT)..."; \
@@ -78,7 +99,14 @@ start-server: check-deps
 			echo "=== Server logs ==="; \
 			cat weed-test.log 2>/dev/null || echo "No log file available"; \
 			echo "=== End of server logs ==="; \
-			$(MAKE) stop-server 2>/dev/null || true; \
+			echo "Cleaning up failed server..."; \
+			if [ -f weed-server.pid ]; then \
+				PID=$$(cat weed-server.pid 2>/dev/null || echo ""); \
+				if [ -n "$$PID" ]; then kill -KILL $$PID 2>/dev/null || true; fi; \
+				rm -f weed-server.pid 2>/dev/null || true; \
+			fi; \
+			pkill -f "weed.*server" 2>/dev/null || true; \
+			pkill -f "weed_binary" 2>/dev/null || true; \
 			exit 1; \
 		fi; \
 		echo "Waiting for server to start... ($$i/30)"; \
@@ -140,6 +168,33 @@ test-sse-c-comprehensive: check-deps
 	@go test -v -timeout=$(TEST_TIMEOUT) . || (echo "❌ Test execution failed, environment:" && env | grep -E "(GO|PATH|HOME)" && exit 1)
 	@echo "✅ Comprehensive SSE-C tests completed"
 
+# Internal function to stop server (avoid nested make calls)
+define stop_server_internal
+	echo "Stopping SeaweedFS server..."; \
+	if [ -f weed-server.pid ]; then \
+		PID=$$(cat weed-server.pid 2>/dev/null || echo ""); \
+		if [ -n "$$PID" ] && ps -p $$PID > /dev/null 2>&1; then \
+			echo "Terminating process $$PID..."; \
+			kill -TERM $$PID 2>/dev/null || true; \
+			for i in 1 2 3 4 5; do \
+				if ! ps -p $$PID > /dev/null 2>&1; then break; fi; \
+				echo "Waiting for process to terminate... ($$i/5)"; \
+				sleep 1; \
+			done; \
+			if ps -p $$PID > /dev/null 2>&1; then \
+				echo "Force killing process $$PID..."; \
+				kill -KILL $$PID 2>/dev/null || true; \
+				sleep 1; \
+			fi; \
+		fi; \
+		rm -f weed-server.pid 2>/dev/null || true; \
+	fi; \
+	pkill -f "weed.*server" 2>/dev/null || true; \
+	pkill -f "weed_binary" 2>/dev/null || true; \
+	sleep 1; \
+	echo "✅ Server stopped"
+endef
+
 # Run tests with automatic server management
 test-with-server: start-server
 	@echo "Running SSE-C tests with managed server..."
@@ -149,7 +204,11 @@ test-with-server: start-server
 	echo "Server process status: $$(ps -p $$(cat weed-server.pid 2>/dev/null || echo 0) -o pid,command 2>/dev/null || echo 'Process not found')"; \
 	echo "Port check: $$(curl -s http://localhost:$(S3_PORT) >/dev/null 2>&1 && echo 'Server responding' || echo 'Server not responding')"; \
 	echo "=== Running Tests ==="; \
-	trap "echo 'Trap triggered, cleaning up...'; $(MAKE) stop-server 2>/dev/null || true; exit 0" EXIT INT TERM; \
+	cleanup_server() { \
+		echo "Trap triggered, cleaning up..."; \
+		$(call stop_server_internal); \
+	}; \
+	trap "cleanup_server; exit 0" EXIT INT TERM; \
 	$(MAKE) test-sse-c-comprehensive; \
 	TEST_RESULT=$$?; \
 	echo "=== Test Results ==="; \
@@ -167,7 +226,7 @@ test-with-server: start-server
 		echo "✅ Tests passed successfully"; \
 	fi; \
 	echo "=== Cleanup ==="; \
-	$(MAKE) stop-server 2>/dev/null || true; \
+	$(call stop_server_internal); \
 	echo "✅ Server management completed"; \
 	exit $$TEST_RESULT
 
