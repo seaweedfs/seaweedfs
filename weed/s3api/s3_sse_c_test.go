@@ -246,10 +246,11 @@ func TestSSECEncryptionVariousSizes(t *testing.T) {
 				key[i] = byte(i + size) // Make key unique per test
 			}
 
+			md5sumDyn := md5.Sum(key)
 			customerKey := &SSECustomerKey{
 				Algorithm: "AES256",
 				Key:       key,
-				KeyMD5:    fmt.Sprintf("%x", md5.Sum(key)),
+				KeyMD5:    base64.StdEncoding.EncodeToString(md5sumDyn[:]),
 			}
 
 			// Create test data of specified size
