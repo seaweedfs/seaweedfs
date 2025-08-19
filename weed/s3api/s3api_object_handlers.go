@@ -328,7 +328,10 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		destUrl = s3a.toFilerUrl(bucket, object)
 	}
 
-	s3a.proxyToFiler(w, r, destUrl, false, passThroughResponse)
+	s3a.proxyToFiler(w, r, destUrl, false, func(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64) {
+		// Handle SSE-C decryption if needed
+		return s3a.handleSSECResponse(r, proxyResponse, w)
+	})
 }
 
 func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request) {
@@ -423,7 +426,10 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 		destUrl = s3a.toFilerUrl(bucket, object)
 	}
 
-	s3a.proxyToFiler(w, r, destUrl, false, passThroughResponse)
+	s3a.proxyToFiler(w, r, destUrl, false, func(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64) {
+		// Handle SSE-C validation for HEAD requests
+		return s3a.handleSSECResponse(r, proxyResponse, w)
+	})
 }
 
 func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, destUrl string, isWrite bool, responseFn func(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64)) {
@@ -555,6 +561,29 @@ func restoreCORSHeaders(w http.ResponseWriter, capturedCORSHeaders map[string]st
 	}
 }
 
+// writeFinalResponse handles the common response writing logic shared between
+// passThroughResponse and handleSSECResponse
+func writeFinalResponse(w http.ResponseWriter, proxyResponse *http.Response, bodyReader io.Reader, capturedCORSHeaders map[string]string) (statusCode int, bytesTransferred int64) {
+	// Restore CORS headers that were set by middleware
+	restoreCORSHeaders(w, capturedCORSHeaders)
+
+	if proxyResponse.Header.Get("Content-Range") != "" && proxyResponse.StatusCode == 200 {
+		statusCode = http.StatusPartialContent
+	} else {
+		statusCode = proxyResponse.StatusCode
+	}
+	w.WriteHeader(statusCode)
+
+	// Stream response data
+	buf := mem.Allocate(128 * 1024)
+	defer mem.Free(buf)
+	bytesTransferred, err := io.CopyBuffer(w, bodyReader, buf)
+	if err != nil {
+		glog.V(1).Infof("response read %d bytes: %v", bytesTransferred, err)
+	}
+	return statusCode, bytesTransferred
+}
+
 func passThroughResponse(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64) {
 	// Capture existing CORS headers that may have been set by middleware
 	capturedCORSHeaders := captureCORSHeaders(w, corsHeaders)
@@ -564,23 +593,100 @@ func passThroughResponse(proxyResponse *http.Response, w http.ResponseWriter) (s
 		w.Header()[k] = v
 	}
 
-	// Restore CORS headers that were set by middleware
-	restoreCORSHeaders(w, capturedCORSHeaders)
+	return writeFinalResponse(w, proxyResponse, proxyResponse.Body, capturedCORSHeaders)
+}
 
-	if proxyResponse.Header.Get("Content-Range") != "" && proxyResponse.StatusCode == 200 {
-		w.WriteHeader(http.StatusPartialContent)
-		statusCode = http.StatusPartialContent
-	} else {
-		statusCode = proxyResponse.StatusCode
-	}
-	w.WriteHeader(statusCode)
-	buf := mem.Allocate(128 * 1024)
-	defer mem.Free(buf)
-	bytesTransferred, err := io.CopyBuffer(w, proxyResponse.Body, buf)
+// handleSSECResponse handles SSE-C decryption and response processing
+func (s3a *S3ApiServer) handleSSECResponse(r *http.Request, proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64) {
+	// Check if the object has SSE-C metadata
+	sseAlgorithm := proxyResponse.Header.Get(s3_constants.AmzServerSideEncryptionCustomerAlgorithm)
+	sseKeyMD5 := proxyResponse.Header.Get(s3_constants.AmzServerSideEncryptionCustomerKeyMD5)
+	isObjectEncrypted := sseAlgorithm != "" && sseKeyMD5 != ""
+
+	// Parse SSE-C headers from request once (avoid duplication)
+	customerKey, err := ParseSSECHeaders(r)
 	if err != nil {
-		glog.V(1).Infof("passthrough response read %d bytes: %v", bytesTransferred, err)
+		errCode := MapSSECErrorToS3Error(err)
+		s3err.WriteErrorResponse(w, r, errCode)
+		return http.StatusBadRequest, 0
 	}
-	return statusCode, bytesTransferred
+
+	if isObjectEncrypted {
+		// This object was encrypted with SSE-C, validate customer key
+		if customerKey == nil {
+			s3err.WriteErrorResponse(w, r, s3err.ErrSSECustomerKeyMissing)
+			return http.StatusBadRequest, 0
+		}
+
+		// SSE-C MD5 is base64 and case-sensitive
+		if customerKey.KeyMD5 != sseKeyMD5 {
+			// For GET/HEAD requests, AWS S3 returns 403 Forbidden for a key mismatch.
+			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+			return http.StatusForbidden, 0
+		}
+
+		// SSE-C encrypted objects do not support HTTP Range requests because the 16-byte IV
+		// is required at the beginning of the stream for proper decryption
+		if r.Header.Get("Range") != "" {
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
+			return http.StatusRequestedRangeNotSatisfiable, 0
+		}
+
+		// Create decrypted reader
+		decryptedReader, decErr := CreateSSECDecryptedReader(proxyResponse.Body, customerKey)
+		if decErr != nil {
+			glog.Errorf("Failed to create SSE-C decrypted reader: %v", decErr)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return http.StatusInternalServerError, 0
+		}
+
+		// Capture existing CORS headers that may have been set by middleware
+		capturedCORSHeaders := captureCORSHeaders(w, corsHeaders)
+
+		// Copy headers from proxy response (excluding body-related headers that might change)
+		for k, v := range proxyResponse.Header {
+			if k != "Content-Length" && k != "Content-Encoding" {
+				w.Header()[k] = v
+			}
+		}
+
+		// Set correct Content-Length for SSE-C (only for full object requests)
+		// Range requests are complex with SSE-C because the entire object needs decryption
+		if proxyResponse.Header.Get("Content-Range") == "" {
+			// Full object request: subtract 16-byte IV from encrypted length
+			if contentLengthStr := proxyResponse.Header.Get("Content-Length"); contentLengthStr != "" {
+				encryptedLength, err := strconv.ParseInt(contentLengthStr, 10, 64)
+				if err != nil {
+					glog.Errorf("Invalid Content-Length header for SSE-C object: %v", err)
+					s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+					return http.StatusInternalServerError, 0
+				}
+				originalLength := encryptedLength - 16
+				if originalLength < 0 {
+					glog.Errorf("Encrypted object length (%d) is less than IV size (16 bytes)", encryptedLength)
+					s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+					return http.StatusInternalServerError, 0
+				}
+				w.Header().Set("Content-Length", strconv.FormatInt(originalLength, 10))
+			}
+		}
+		// For range requests, let the actual bytes transferred determine the response length
+
+		// Add SSE-C response headers
+		w.Header().Set(s3_constants.AmzServerSideEncryptionCustomerAlgorithm, sseAlgorithm)
+		w.Header().Set(s3_constants.AmzServerSideEncryptionCustomerKeyMD5, sseKeyMD5)
+
+		return writeFinalResponse(w, proxyResponse, decryptedReader, capturedCORSHeaders)
+	} else {
+		// Object is not encrypted, but check if customer provided SSE-C headers unnecessarily
+		if customerKey != nil {
+			s3err.WriteErrorResponse(w, r, s3err.ErrSSECustomerKeyNotNeeded)
+			return http.StatusBadRequest, 0
+		}
+
+		// Normal pass-through response
+		return passThroughResponse(proxyResponse, w)
+	}
 }
 
 // addObjectLockHeadersToResponse extracts object lock metadata from entry Extended attributes

@@ -409,4 +409,6 @@ jobs:
         with:
           name: s3-versioning-stress-logs
           path: test/s3/versioning/weed-test*.log
-          retention-days: 7 
+          retention-days: 7
+
+  # Removed SSE-C integration tests and compatibility job

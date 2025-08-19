@@ -116,6 +116,13 @@ const (
 	ErrInvalidRetentionPeriod
 	ErrObjectLockConfigurationNotFoundError
 	ErrInvalidUnorderedWithDelimiter
+
+	// SSE-C related errors
+	ErrInvalidEncryptionAlgorithm
+	ErrInvalidEncryptionKey
+	ErrSSECustomerKeyMD5Mismatch
+	ErrSSECustomerKeyMissing
+	ErrSSECustomerKeyNotNeeded
 )
 
 // Error message constants for checksum validation
@@ -469,6 +476,33 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrInvalidUnorderedWithDelimiter: {
 		Code:           "InvalidArgument",
 		Description:    "Unordered listing cannot be used with delimiter",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+
+	// SSE-C related error mappings
+	ErrInvalidEncryptionAlgorithm: {
+		Code:           "InvalidEncryptionAlgorithmError",
+		Description:    "The encryption algorithm specified is not valid.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrInvalidEncryptionKey: {
+		Code:           "InvalidArgument",
+		Description:    "Invalid encryption key. Encryption key must be 256-bit AES256.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrSSECustomerKeyMD5Mismatch: {
+		Code:           "InvalidArgument",
+		Description:    "The provided customer encryption key MD5 does not match the key.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrSSECustomerKeyMissing: {
+		Code:           "InvalidArgument",
+		Description:    "Requests specifying Server Side Encryption with Customer provided keys must provide the customer key.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrSSECustomerKeyNotNeeded: {
+		Code:           "InvalidArgument",
+		Description:    "The object was not encrypted with customer provided keys.",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
 }
