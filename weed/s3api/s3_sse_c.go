@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/md5"
@@ -38,14 +39,6 @@ type SSECustomerKey struct {
 	Algorithm string
 	Key       []byte
 	KeyMD5    string
-}
-
-// SSECEncryptedReader wraps an io.Reader to provide SSE-C encryption
-type SSECEncryptedReader struct {
-	reader io.Reader
-	cipher cipher.Stream
-	iv     []byte
-	first  bool
 }
 
 // SSECDecryptedReader wraps an io.Reader to provide SSE-C decryption
@@ -147,12 +140,9 @@ func CreateSSECEncryptedReader(r io.Reader, customerKey *SSECustomerKey) (io.Rea
 	// Create CTR mode cipher
 	stream := cipher.NewCTR(block, iv)
 
-	return &SSECEncryptedReader{
-		reader: r,
-		cipher: stream,
-		iv:     iv,
-		first:  true,
-	}, nil
+	// The encrypted stream is the IV followed by the encrypted data.
+	// We can model this with an io.MultiReader and cipher.StreamReader.
+	return io.MultiReader(bytes.NewReader(iv), &cipher.StreamReader{S: stream, R: r}), nil
 }
 
 // CreateSSECDecryptedReader creates a new decrypted reader for SSE-C
@@ -167,34 +157,6 @@ func CreateSSECDecryptedReader(r io.Reader, customerKey *SSECustomerKey) (io.Rea
 		cipher:      nil, // Will be initialized when we read the IV
 		first:       true,
 	}, nil
-}
-
-// Read implements io.Reader for SSECEncryptedReader
-func (r *SSECEncryptedReader) Read(p []byte) (n int, err error) {
-	if r.first {
-		// Prepend IV to the encrypted data
-		r.first = false
-		if len(p) < len(r.iv) {
-			copy(p, r.iv[:len(p)])
-			return len(p), nil
-		}
-		copy(p, r.iv)
-
-		// Read and encrypt the rest
-		remaining := p[len(r.iv):]
-		n, err = r.reader.Read(remaining)
-		if n > 0 {
-			r.cipher.XORKeyStream(remaining[:n], remaining[:n])
-		}
-		return n + len(r.iv), err
-	}
-
-	// Encrypt data
-	n, err = r.reader.Read(p)
-	if n > 0 {
-		r.cipher.XORKeyStream(p[:n], p[:n])
-	}
-	return n, err
 }
 
 // Read implements io.Reader for SSECDecryptedReader

@@ -332,3 +332,72 @@ func TestSSECEncryptionWithNilKey(t *testing.T) {
 		t.Error("Data should pass through unchanged when key is nil")
 	}
 }
+
+// TestSSECEncryptionSmallBuffers tests the fix for the critical bug where small buffers
+// could corrupt the data stream when reading in chunks smaller than the IV size
+func TestSSECEncryptionSmallBuffers(t *testing.T) {
+	testData := []byte("This is a test message for small buffer reads")
+
+	// Create customer key
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i)
+	}
+
+	customerKey := &SSECustomerKey{
+		Algorithm: "AES256",
+		Key:       key,
+		KeyMD5:    fmt.Sprintf("%x", md5.Sum(key)),
+	}
+
+	// Create encrypted reader
+	dataReader := bytes.NewReader(testData)
+	encryptedReader, err := CreateSSECEncryptedReader(dataReader, customerKey)
+	if err != nil {
+		t.Fatalf("Failed to create encrypted reader: %v", err)
+	}
+
+	// Read with very small buffers (smaller than IV size of 16 bytes)
+	var encryptedData []byte
+	smallBuffer := make([]byte, 5) // Much smaller than 16-byte IV
+
+	for {
+		n, err := encryptedReader.Read(smallBuffer)
+		if n > 0 {
+			encryptedData = append(encryptedData, smallBuffer[:n]...)
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Error reading encrypted data: %v", err)
+		}
+	}
+
+	// Verify the encrypted data starts with 16-byte IV
+	if len(encryptedData) < 16 {
+		t.Fatalf("Encrypted data too short, expected at least 16 bytes for IV, got %d", len(encryptedData))
+	}
+
+	// Expected total size: 16 bytes (IV) + len(testData)
+	expectedSize := 16 + len(testData)
+	if len(encryptedData) != expectedSize {
+		t.Errorf("Expected encrypted data size %d, got %d", expectedSize, len(encryptedData))
+	}
+
+	// Decrypt and verify
+	encryptedReader2 := bytes.NewReader(encryptedData)
+	decryptedReader, err := CreateSSECDecryptedReader(encryptedReader2, customerKey)
+	if err != nil {
+		t.Fatalf("Failed to create decrypted reader: %v", err)
+	}
+
+	decryptedData, err := io.ReadAll(decryptedReader)
+	if err != nil {
+		t.Fatalf("Failed to read decrypted data: %v", err)
+	}
+
+	if !bytes.Equal(decryptedData, testData) {
+		t.Errorf("Decrypted data doesn't match original.\nOriginal: %s\nDecrypted: %s", testData, decryptedData)
+	}
+}
