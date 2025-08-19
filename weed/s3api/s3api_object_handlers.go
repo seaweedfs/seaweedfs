@@ -561,15 +561,9 @@ func restoreCORSHeaders(w http.ResponseWriter, capturedCORSHeaders map[string]st
 	}
 }
 
-func passThroughResponse(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64) {
-	// Capture existing CORS headers that may have been set by middleware
-	capturedCORSHeaders := captureCORSHeaders(w, corsHeaders)
-
-	// Copy headers from proxy response
-	for k, v := range proxyResponse.Header {
-		w.Header()[k] = v
-	}
-
+// writeFinalResponse handles the common response writing logic shared between
+// passThroughResponse and handleSSECResponse
+func writeFinalResponse(w http.ResponseWriter, proxyResponse *http.Response, bodyReader io.Reader, capturedCORSHeaders map[string]string) (statusCode int, bytesTransferred int64) {
 	// Restore CORS headers that were set by middleware
 	restoreCORSHeaders(w, capturedCORSHeaders)
 
@@ -579,13 +573,27 @@ func passThroughResponse(proxyResponse *http.Response, w http.ResponseWriter) (s
 		statusCode = proxyResponse.StatusCode
 	}
 	w.WriteHeader(statusCode)
+
+	// Stream response data
 	buf := mem.Allocate(128 * 1024)
 	defer mem.Free(buf)
-	bytesTransferred, err := io.CopyBuffer(w, proxyResponse.Body, buf)
+	bytesTransferred, err := io.CopyBuffer(w, bodyReader, buf)
 	if err != nil {
-		glog.V(1).Infof("passthrough response read %d bytes: %v", bytesTransferred, err)
+		glog.V(1).Infof("response read %d bytes: %v", bytesTransferred, err)
 	}
 	return statusCode, bytesTransferred
+}
+
+func passThroughResponse(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64) {
+	// Capture existing CORS headers that may have been set by middleware
+	capturedCORSHeaders := captureCORSHeaders(w, corsHeaders)
+
+	// Copy headers from proxy response
+	for k, v := range proxyResponse.Header {
+		w.Header()[k] = v
+	}
+
+	return writeFinalResponse(w, proxyResponse, proxyResponse.Body, capturedCORSHeaders)
 }
 
 // handleSSECResponse handles SSE-C decryption and response processing
@@ -652,24 +660,7 @@ func (s3a *S3ApiServer) handleSSECResponse(r *http.Request, proxyResponse *http.
 		w.Header().Set(s3_constants.AmzServerSideEncryptionCustomerAlgorithm, sseAlgorithm)
 		w.Header().Set(s3_constants.AmzServerSideEncryptionCustomerKeyMD5, sseKeyMD5)
 
-		// Restore CORS headers that were set by middleware
-		restoreCORSHeaders(w, capturedCORSHeaders)
-
-		if proxyResponse.Header.Get("Content-Range") != "" && proxyResponse.StatusCode == 200 {
-			statusCode = http.StatusPartialContent
-		} else {
-			statusCode = proxyResponse.StatusCode
-		}
-		w.WriteHeader(statusCode)
-
-		// Stream decrypted data
-		buf := mem.Allocate(128 * 1024)
-		defer mem.Free(buf)
-		bytesTransferred, err = io.CopyBuffer(w, decryptedReader, buf)
-		if err != nil {
-			glog.V(1).Infof("SSE-C decrypted response read %d bytes: %v", bytesTransferred, err)
-		}
-		return statusCode, bytesTransferred
+		return writeFinalResponse(w, proxyResponse, decryptedReader, capturedCORSHeaders)
 	} else {
 		// Object is not encrypted, but check if customer provided SSE-C headers unnecessarily
 		if customerKey != nil {
