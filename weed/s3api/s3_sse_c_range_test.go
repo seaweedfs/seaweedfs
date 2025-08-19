@@ -15,6 +15,7 @@ import (
 
 // ResponseRecorder that also implements http.Flusher
 type recorderFlusher struct{ *httptest.ResponseRecorder }
+
 func (r recorderFlusher) Flush() {}
 
 // TestSSECRangeRequestsNotSupported verifies that HTTP Range requests are rejected
