@@ -574,7 +574,6 @@ func passThroughResponse(proxyResponse *http.Response, w http.ResponseWriter) (s
 	restoreCORSHeaders(w, capturedCORSHeaders)
 
 	if proxyResponse.Header.Get("Content-Range") != "" && proxyResponse.StatusCode == 200 {
-		w.WriteHeader(http.StatusPartialContent)
 		statusCode = http.StatusPartialContent
 	} else {
 		statusCode = proxyResponse.StatusCode
@@ -657,7 +656,6 @@ func (s3a *S3ApiServer) handleSSECResponse(r *http.Request, proxyResponse *http.
 		restoreCORSHeaders(w, capturedCORSHeaders)
 
 		if proxyResponse.Header.Get("Content-Range") != "" && proxyResponse.StatusCode == 200 {
-			w.WriteHeader(http.StatusPartialContent)
 			statusCode = http.StatusPartialContent
 		} else {
 			statusCode = proxyResponse.StatusCode
