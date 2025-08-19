@@ -1,175 +1,236 @@
-# SSE-C (Server-Side Encryption with Customer-provided keys) Integration Tests
+# S3 SSE-C (Server-Side Encryption with Customer-provided Keys) Tests
 
-This directory contains comprehensive integration tests for SeaweedFS's SSE-C implementation.
+This directory contains comprehensive integration tests for SeaweedFS's S3 SSE-C implementation, validating compatibility with AWS S3's SSE-C encryption standard.
 
-## Overview
+## 🔐 What is SSE-C?
 
-These tests verify that SeaweedFS correctly implements AWS S3-compatible SSE-C functionality:
+SSE-C (Server-Side Encryption with Customer-provided Keys) is an AWS S3 encryption method where:
+- **Customer provides** the encryption key via HTTP headers
+- **Server encrypts/decrypts** data using the provided key
+- **Customer is responsible** for key management and storage
+- **Keys are never stored** on the server side
 
-- ✅ **Basic encryption/decryption** - Round-trip data integrity
-- ✅ **Header validation** - Proper SSE-C header handling 
-- ✅ **Error scenarios** - Wrong keys, missing keys, invalid headers
-- ✅ **HEAD operations** - Metadata retrieval with SSE-C
-- ✅ **Range requests** - Partial content with encryption
-- ✅ **Large objects** - Performance with substantial data
-- ✅ **Binary data** - Various data patterns and edge cases
+## 📋 Test Coverage
 
-## Test Structure
+### Core SSE-C Tests
+- ✅ **Basic Encryption/Decryption** - PUT and GET with SSE-C headers
+- ✅ **HEAD Object** - Metadata retrieval for encrypted objects  
+- ✅ **Wrong Key Scenarios** - Error handling for incorrect keys
+- ✅ **Missing Key Scenarios** - Error handling for missing keys
+- ✅ **Large Object Support** - Streaming encryption for large files
+- ✅ **Copy Operations** - Smart fast/slow path copy optimization
+- ✅ **Round-trip Integrity** - Data consistency validation
 
-### Core Test Functions
+### SSE-C Copy Operations
+- ✅ **Same Key Copy** (Fast Path) - Direct chunk copy optimization
+- ✅ **Different Key Copy** (Slow Path) - Decrypt and re-encrypt  
+- ✅ **SSE-C to Unencrypted** - Remove encryption during copy
+- ✅ **Unencrypted to SSE-C** - Add encryption during copy
+- ✅ **Error Handling** - Invalid keys, missing keys, etc.
 
-- `TestSSECBasicEncryption` - Basic encrypt/decrypt workflow
-- `TestSSECHeadObject` - HEAD operation with SSE-C headers
-- `TestSSECWrongKey` - Security validation with incorrect keys
-- `TestSSECMissingKey` - Error handling for missing encryption keys
-- `TestSSECUnnecessaryKey` - Error handling when providing keys for unencrypted objects
-- `TestSSECInvalidHeaders` - Validation of malformed SSE-C headers
-- `TestSSECLargeObject` - Performance testing with 1MB objects
-- `TestSSECPartialContent` - Range requests on encrypted objects
-- `TestSSECRoundTripIntegrity` - Data integrity across various patterns
+### Error Scenarios
+- ❌ **Invalid Algorithm** - Non-AES256 algorithms
+- ❌ **Invalid Key Format** - Malformed base64 keys
+- ❌ **Key MD5 Mismatch** - Corrupted key validation
+- ❌ **Missing Headers** - Incomplete SSE-C headers
+- ❌ **Unnecessary Headers** - SSE-C headers for unencrypted objects
 
-### Test Data Patterns
+## 🚀 Quick Start
 
-The tests cover various data types to ensure robust encryption:
-- Text data (ASCII, UTF-8, special characters)
-- Binary data (null bytes, 0xFF patterns)
-- Large objects (1MB+ for performance testing)
-- Empty objects (edge case handling)
-- Random data patterns
-
-## Running Tests
-
-### Prerequisites
-
-1. **Build SeaweedFS** from the root directory:
-   ```bash
-   make
-   ```
-
-2. **Ensure ports are available**:
-   - S3 API: 8333 (configurable)
-   - Filer: 8888
-   - Master: 9333
-   - Volume: 8080
-
-### Quick Start
-
+### Run All Tests with Server Management
 ```bash
-# Run all tests (includes setup and cleanup)
-make test
+make test-with-server
+```
 
-# Manual setup for debugging
-make setup
+### Run Quick Core Tests Only  
+```bash
+make test-sse-c-quick
+```
 
-# Clean up after tests
-make clean
+### Run Specific Test Pattern
+```bash
+make test-with-server TEST_PATTERN="TestSSECBasicEncryption|TestSSECCopyOperations"
+```
 
-# Run performance benchmarks
+## 📖 Available Commands
+
+### Test Execution
+```bash
+make test-with-server          # Full test cycle with automatic server management
+make test-sse-c               # Run all SSE-C tests (requires running server)
+make test-sse-c-quick         # Run core tests only (faster)
+make test-sse-c-comprehensive # Run all tests including edge cases
+```
+
+### Server Management
+```bash
+make start-server             # Start SeaweedFS server for testing
+make stop-server              # Stop SeaweedFS server
+make logs                     # View server logs
+```
+
+### Development & Debugging
+```bash
+make build-weed               # Build SeaweedFS binary
+make check-deps               # Check dependencies
+make benchmark                # Run performance benchmarks
+make clean                    # Clean up all test artifacts
+```
+
+## ⚙️ Configuration
+
+### Default Settings
+```bash
+S3_PORT=8333          # S3 API endpoint port
+TEST_TIMEOUT=10m      # Maximum test execution time
+TEST_PATTERN=TestSSEC # Test name pattern filter
+```
+
+### Environment Variables
+```bash
+# Override S3 port
+S3_PORT=8334 make test-with-server
+
+# Run specific test pattern
+TEST_PATTERN="TestSSECCopy" make test-sse-c
+
+# Increase timeout for slow systems
+TEST_TIMEOUT=15m make test-with-server
+```
+
+## 🏗️ Server Configuration
+
+The tests automatically start SeaweedFS with optimized settings:
+
+- **S3 Port**: 8333 (configurable via `S3_PORT`)
+- **Master Port**: 9333
+- **Volume Port**: 8080  
+- **Filer Port**: 8888
+- **Data Directory**: `./test-volume-data` (auto-created)
+- **Log File**: `weed-test.log`
+- **Max Volume Size**: 100MB (for faster testing)
+- **Max Volumes**: 100
+
+## 📊 Test Results
+
+### Successful Test Output
+```
+=== RUN   TestSSECBasicEncryption
+--- PASS: TestSSECBasicEncryption (2.45s)
+=== RUN   TestSSECHeadObject  
+--- PASS: TestSSECHeadObject (0.12s)
+=== RUN   TestSSECCopyOperations
+--- PASS: TestSSECCopyOperations (1.88s)
+PASS
+✅ All SSE-C tests completed
+```
+
+### Performance Benchmarks
+```bash
 make benchmark
+# BenchmarkSSECEncryption-8    1000   1234567 ns/op   1024 B/op   8 allocs/op
+# BenchmarkSSECDecryption-8    1000   1234567 ns/op   1024 B/op   8 allocs/op
 ```
 
-### Manual Testing
+## 🔍 Debugging Test Failures
 
-If you prefer to manage SeaweedFS manually:
-
+### View Server Logs
 ```bash
-# Start SeaweedFS (from project root)
-./weed master &
-./weed volume -mserver=localhost:9333 -dir=/tmp/vol1 &
-./weed filer -master=localhost:9333 &
-./weed s3 -filer=localhost:8888 -port=8333 &
-
-# Run tests
-cd test/s3/encryption
-go test -v ./...
+make logs
+# Shows complete server output including errors
 ```
 
-## Test Configuration
-
-The tests use these SSE-C test vectors (matching s3tests):
-
-```go
-const (
-    testSSEKey    = "pO3upElrwuEXSoFwCfnZPdSsmt/xWeFa0N9KgDijwVs="
-    testSSEKeyMD5 = "0d6ca09c746d82227bec70a6fb5aef1f"
-)
-```
-
-Configuration can be modified in the test files or via environment variables.
-
-## Expected Behavior
-
-### Successful Operations
-- PUT/GET with matching SSE-C headers ✅
-- HEAD with correct SSE-C headers ✅ 
-- Range requests on encrypted objects ✅
-- Large object encryption/decryption ✅
-
-### Expected Failures
-- GET/HEAD without SSE-C headers on encrypted objects ❌
-- GET/HEAD with wrong SSE-C key ❌
-- PUT with invalid SSE-C headers (algorithm, key format, MD5) ❌
-- GET/HEAD with SSE-C headers on unencrypted objects ❌
-
-## Performance Expectations
-
-The SSE-C implementation should have minimal performance impact:
-- **Encryption overhead**: < 5% CPU increase
-- **Memory usage**: Constant (streaming encryption)
-- **Storage overhead**: +16 bytes per object (IV)
-- **Throughput**: > 95% of unencrypted performance
-
-## Debugging
-
-### Common Issues
-
-1. **Connection refused**: Ensure SeaweedFS is running
-2. **Invalid credentials**: Check s3tests.conf configuration
-3. **Port conflicts**: Verify ports 8333, 8888, 9333, 8080 are available
-4. **Permission errors**: Ensure write access to test-volume-data/
-
-### Logs
-
-Test logs are available in:
-- `master.log` - Master server logs
-- `volume.log` - Volume server logs  
-- `filer.log` - Filer server logs
-- `s3.log` - S3 API server logs
-
-### Verbose Testing
-
+### Run Individual Tests
 ```bash
-go test -v -timeout 60s ./... 
+# Run only basic encryption test
+go test -v -run TestSSECBasicEncryption .
+
+# Run with detailed output
+go test -v -run TestSSECBasicEncryption . -args -test.v
 ```
 
-## Integration with s3tests
-
-These tests complement the external s3tests suite by providing:
-- SeaweedFS-specific test scenarios
-- Performance benchmarking
-- Easy local development workflow
-- Detailed error case coverage
-
-For comprehensive S3 compatibility testing, also run:
+### Manual Server Testing
 ```bash
-cd test/s3/compatibility
-make test
+# Start server manually
+make start-server
+
+# Test with curl
+curl -H "X-Amz-Server-Side-Encryption-Customer-Algorithm: AES256" \
+     -H "X-Amz-Server-Side-Encryption-Customer-Key: $(echo -n 'my32charactersecretkey123456' | base64)" \
+     -H "X-Amz-Server-Side-Encryption-Customer-Key-MD5: $(echo -n 'my32charactersecretkey123456' | md5sum | cut -d' ' -f1)" \
+     -X PUT http://localhost:8333/test-bucket/encrypted-object \
+     -d "test data"
+
+# Stop server when done
+make stop-server
 ```
 
-## Contributing
+## 🧪 Test Architecture
 
-When adding new SSE-C features:
+### Test Structure
+```
+test/s3/encryption/
+├── s3_sse_c_test.go           # Core SSE-C functionality tests
+├── s3_sse_c_copy_test.go      # Copy operation tests  
+├── common_test.go             # Shared test utilities
+├── go.mod                     # Go module dependencies
+├── Makefile                   # Test automation
+└── README.md                  # This documentation
+```
 
-1. Add corresponding unit tests in `weed/s3api/s3_sse_c_test.go`
-2. Add integration tests here for end-to-end validation
-3. Update this README with new test descriptions
-4. Ensure all existing tests continue to pass
+### Key Test Functions
+- `TestSSECBasicEncryption` - PUT/GET with encryption
+- `TestSSECHeadObject` - HEAD requests for encrypted objects
+- `TestSSECCopyOperations` - Copy with same/different keys
+- `TestSSECWrongKey` - Error handling for incorrect keys
+- `TestSSECLargeObject` - Large file encryption (100KB+)
+- `TestSSECRoundTripIntegrity` - Data integrity validation
 
-## Security Note
+## ⚡ CI/CD Integration
 
-These tests use hardcoded keys for reproducibility. **Never use these keys in production!**
+These tests are automatically run in GitHub Actions:
 
-Production SSE-C keys should be:
-- Randomly generated 256-bit AES keys
-- Securely stored and managed by clients
-- Rotated regularly per security policies
+### Python s3-tests Workflow
+- **File**: `.github/workflows/s3tests-sse-c.yml`
+- **Runs**: Basic object operations with SSE-C support
+- **Coverage**: Core S3 compatibility validation
+
+### Go Integration Tests Workflow  
+- **File**: `.github/workflows/s3-go-tests.yml`
+- **Jobs**: `s3-sse-c-tests`, `s3-sse-c-compatibility`
+- **Matrix**: Quick and comprehensive test runs
+- **Coverage**: Full SSE-C feature validation
+
+### Test Triggers
+- ✅ Pull Requests to `master` branch
+- ✅ Pushes to `master` branch  
+- ✅ Manual workflow dispatch
+
+## 🎯 Compatibility
+
+### AWS S3 Compatibility
+- ✅ **Headers**: All standard SSE-C headers supported
+- ✅ **Algorithms**: AES-256-CTR encryption 
+- ✅ **Key Format**: Base64-encoded 32-byte keys
+- ✅ **MD5 Validation**: Key integrity checking
+- ✅ **Error Codes**: AWS-compatible error responses
+- ✅ **Copy Operations**: Server-side copying with key changes
+
+### SeaweedFS Features
+- ✅ **Streaming**: Large file support without memory limits
+- ✅ **Metadata**: Filer integration for encryption metadata
+- ✅ **Performance**: Optimized fast-path copy operations
+- ✅ **Chunking**: Works with SeaweedFS chunked storage
+
+## 🔮 Future Enhancements
+
+- **Range Requests** - Optimized partial content retrieval
+- **Multipart Uploads** - Each part with separate IV
+- **Performance Optimization** - Hardware acceleration support
+- **Additional Algorithms** - Support for other encryption methods
+
+## 📚 References
+
+- [AWS S3 SSE-C Documentation](https://docs.aws.amazon.com/AmazonS3/latest/userguide/ServerSideEncryptionCustomerProvidedKeys.html)
+- [SeaweedFS S3 API Documentation](https://github.com/seaweedfs/seaweedfs/wiki/Amazon-S3-API)
+- [SSE-C Implementation Wiki](../../seaweedfs.wiki/Server-Side-Encryption-SSE-C.md)

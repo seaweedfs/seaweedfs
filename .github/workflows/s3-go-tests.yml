@@ -409,4 +409,119 @@ jobs:
         with:
           name: s3-versioning-stress-logs
           path: test/s3/versioning/weed-test*.log
-          retention-days: 7 
+          retention-days: 7
+
+  s3-sse-c-tests:
+    name: S3 SSE-C Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        test-type: ["quick", "comprehensive"]
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false
+
+      - name: Run S3 SSE-C Tests - ${{ matrix.test-type }}
+        timeout-minutes: 25
+        working-directory: test/s3/encryption
+        run: |
+          set -x
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          df -h
+          echo "=== Starting SSE-C Tests ==="
+          
+          # Run tests with automatic server management
+          # The test-with-server target handles server startup/shutdown automatically
+          if [ "${{ matrix.test-type }}" = "quick" ]; then
+            # Override TEST_PATTERN for quick tests only
+            make test-with-server TEST_PATTERN="TestSSECBasicEncryption|TestSSECHeadObject|TestSSECCopyOperations"
+          else
+            # Run all SSE-C tests including copy operations
+            make test-with-server
+          fi
+
+      - name: Show server logs on failure
+        if: failure()
+        working-directory: test/s3/encryption
+        run: |
+          echo "=== Server Logs ==="
+          if [ -f weed-test.log ]; then
+            echo "Last 100 lines of server logs:"
+            tail -100 weed-test.log
+          else
+            echo "No server log file found"
+          fi
+          
+          echo "=== Test Environment ==="
+          ps aux | grep -E "(weed|test)" || true
+          netstat -tlnp | grep -E "(8333|9333|8080)" || true
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s3-sse-c-test-logs-${{ matrix.test-type }}
+          path: test/s3/encryption/weed-test*.log
+          retention-days: 3
+
+  s3-sse-c-compatibility:
+    name: S3 SSE-C Compatibility Test
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false
+
+      - name: Run Core SSE-C Test (AWS S3 compatible)
+        timeout-minutes: 15
+        working-directory: test/s3/encryption
+        run: |
+          set -x
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          
+          # Run the SSE-C compatibility test that validates AWS S3 compatibility
+          make test-with-server || {
+            echo "❌ Test failed, checking logs..."
+            if [ -f weed-test.log ]; then
+              echo "=== Server logs ==="
+              tail -100 weed-test.log
+            fi
+            echo "=== Process information ==="
+            ps aux | grep -E "(weed|test)" || true
+            exit 1
+          }
+
+      - name: Upload server logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s3-sse-c-compatibility-logs
+          path: test/s3/encryption/weed-test*.log
+          retention-days: 3
