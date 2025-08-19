@@ -114,7 +114,7 @@ go test ./weed/s3api/s3_sse_c_test.go ./weed/s3api/s3_sse_c.go -v
 ```bash
 # Generate a 256-bit key
 KEY=$(openssl rand -base64 32)
-KEY_MD5=$(echo -n "$KEY" | base64 -d | md5sum | cut -d' ' -f1)
+KEY_MD5=$(echo -n "$KEY" | base64 -d | openssl dgst -md5 -binary | base64)
 
 # Upload object with SSE-C
 curl -X PUT "http://localhost:8333/bucket/object" \
