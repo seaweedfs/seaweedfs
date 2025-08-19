@@ -119,6 +119,68 @@ type KMSConfig struct {
 	Config   map[string]interface{} `json:"config"`   // Provider-specific configuration
 }
 
+// configAdapter adapts KMSConfig.Config to util.Configuration interface
+type configAdapter struct {
+	config map[string]interface{}
+}
+
+func (c *configAdapter) GetString(key string) string {
+	if val, ok := c.config[key]; ok {
+		if str, ok := val.(string); ok {
+			return str
+		}
+	}
+	return ""
+}
+
+func (c *configAdapter) GetBool(key string) bool {
+	if val, ok := c.config[key]; ok {
+		if b, ok := val.(bool); ok {
+			return b
+		}
+	}
+	return false
+}
+
+func (c *configAdapter) GetInt(key string) int {
+	if val, ok := c.config[key]; ok {
+		if i, ok := val.(int); ok {
+			return i
+		}
+		if f, ok := val.(float64); ok {
+			return int(f)
+		}
+	}
+	return 0
+}
+
+func (c *configAdapter) GetStringSlice(key string) []string {
+	if val, ok := c.config[key]; ok {
+		if slice, ok := val.([]string); ok {
+			return slice
+		}
+		if interfaceSlice, ok := val.([]interface{}); ok {
+			result := make([]string, len(interfaceSlice))
+			for i, v := range interfaceSlice {
+				if str, ok := v.(string); ok {
+					result[i] = str
+				}
+			}
+			return result
+		}
+	}
+	return nil
+}
+
+func (c *configAdapter) SetDefault(key string, value interface{}) {
+	if c.config == nil {
+		c.config = make(map[string]interface{})
+	}
+	if _, exists := c.config[key]; !exists {
+		c.config[key] = value
+	}
+}
+
 // GlobalKMSProvider holds the global KMS provider instance
 var (
 	globalKMSProvider KMSProvider
@@ -131,7 +193,13 @@ func InitializeGlobalKMS(config *KMSConfig) error {
 		return fmt.Errorf("KMS configuration is required")
 	}
 
-	provider, err := GetProvider(config.Provider, nil)
+	// Adapt the config to util.Configuration interface
+	var providerConfig util.Configuration
+	if config.Config != nil {
+		providerConfig = &configAdapter{config: config.Config}
+	}
+
+	provider, err := GetProvider(config.Provider, providerConfig)
 	if err != nil {
 		return err
 	}
