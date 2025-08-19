@@ -12,6 +12,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
+func base64MD5(b []byte) string {
+	s := md5.Sum(b)
+	return base64.StdEncoding.EncodeToString(s[:])
+}
+
 func TestSSECHeaderValidation(t *testing.T) {
 	// Test valid SSE-C headers
 	req := &http.Request{Header: make(http.Header)}
@@ -116,14 +121,14 @@ func TestSSECHeaderValidationErrors(t *testing.T) {
 			name:      "invalid algorithm",
 			algorithm: "AES128",
 			key:       base64.StdEncoding.EncodeToString(make([]byte, 32)),
-			keyMD5:    func() string { s := md5.Sum(make([]byte, 32)); return base64.StdEncoding.EncodeToString(s[:]) }(),
+			keyMD5:    base64MD5(make([]byte, 32)),
 			wantErr:   ErrInvalidEncryptionAlgorithm,
 		},
 		{
 			name:      "invalid key length",
 			algorithm: "AES256",
 			key:       base64.StdEncoding.EncodeToString(make([]byte, 16)),
-			keyMD5:    func() string { s := md5.Sum(make([]byte, 16)); return base64.StdEncoding.EncodeToString(s[:]) }(),
+			keyMD5:    base64MD5(make([]byte, 16)),
 			wantErr:   ErrInvalidEncryptionKey,
 		},
 		{

@@ -140,8 +140,12 @@ func CreateSSECEncryptedReader(r io.Reader, customerKey *SSECustomerKey) (io.Rea
 	// Create CTR mode cipher
 	stream := cipher.NewCTR(block, iv)
 
-	// The encrypted stream is the IV followed by the encrypted data.
-	// We can model this with an io.MultiReader and cipher.StreamReader.
+	// The encrypted stream is the IV (initialization vector) followed by the encrypted data.
+	// The IV is randomly generated for each encryption operation and must be unique and unpredictable.
+	// This is critical for the security of AES-CTR mode: reusing an IV with the same key breaks confidentiality.
+	// By prepending the IV to the ciphertext, the decryptor can extract the IV to initialize the cipher.
+	// Note: AES-CTR provides confidentiality only; use an additional MAC if integrity is required.
+	// We model this with an io.MultiReader (IV first) and a cipher.StreamReader (encrypted payload).
 	return io.MultiReader(bytes.NewReader(iv), &cipher.StreamReader{S: stream, R: r}), nil
 }
 

@@ -656,12 +656,19 @@ if customerKey.KeyMD5 != sseKeyMD5 {
 		if proxyResponse.Header.Get("Content-Range") == "" {
 			// Full object request: subtract 16-byte IV from encrypted length
 			if contentLengthStr := proxyResponse.Header.Get("Content-Length"); contentLengthStr != "" {
-				if encryptedLength, err := strconv.ParseInt(contentLengthStr, 10, 64); err == nil {
-					originalLength := encryptedLength - 16
-					if originalLength >= 0 {
-						w.Header().Set("Content-Length", strconv.FormatInt(originalLength, 10))
-					}
+				encryptedLength, err := strconv.ParseInt(contentLengthStr, 10, 64)
+				if err != nil {
+					glog.Errorf("Invalid Content-Length header for SSE-C object: %v", err)
+					s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+					return http.StatusInternalServerError, 0
 				}
+				originalLength := encryptedLength - 16
+				if originalLength < 0 {
+					glog.Errorf("Encrypted object length (%d) is less than IV size (16 bytes)", encryptedLength)
+					s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+					return http.StatusInternalServerError, 0
+				}
+				w.Header().Set("Content-Length", strconv.FormatInt(originalLength, 10))
 			}
 		}
 		// For range requests, let the actual bytes transferred determine the response length

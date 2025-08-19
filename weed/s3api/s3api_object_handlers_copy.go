@@ -599,7 +599,8 @@ func processMetadataBytes(reqHeader http.Header, existing map[string][]byte, rep
 // copyChunks replicates chunks from source entry to destination entry
 func (s3a *S3ApiServer) copyChunks(entry *filer_pb.Entry, dstPath string) ([]*filer_pb.FileChunk, error) {
 	dstChunks := make([]*filer_pb.FileChunk, len(entry.GetChunks()))
-	executor := util.NewLimitedConcurrentExecutor(4) // Limit to 4 concurrent operations
+	const defaultChunkCopyConcurrency = 4
+	executor := util.NewLimitedConcurrentExecutor(defaultChunkCopyConcurrency) // Limit to configurable concurrent operations
 	errChan := make(chan error, len(entry.GetChunks()))
 
 	for i, chunk := range entry.GetChunks() {
@@ -785,7 +786,8 @@ func (s3a *S3ApiServer) copyChunksForRange(entry *filer_pb.Entry, startOffset, e
 
 	// Copy the relevant chunks using a specialized method for range copies
 	dstChunks := make([]*filer_pb.FileChunk, len(relevantChunks))
-	executor := util.NewLimitedConcurrentExecutor(4)
+	const defaultChunkCopyConcurrency = 4
+	executor := util.NewLimitedConcurrentExecutor(defaultChunkCopyConcurrency)
 	errChan := make(chan error, len(relevantChunks))
 
 	// Create a map to track original chunks for each relevant chunk
@@ -1046,7 +1048,8 @@ func (s3a *S3ApiServer) copyChunksWithSSEC(entry *filer_pb.Entry, r *http.Reques
 // copyChunksWithReencryption handles the slow path: decrypt source and re-encrypt for destination
 func (s3a *S3ApiServer) copyChunksWithReencryption(entry *filer_pb.Entry, copySourceKey *SSECustomerKey, destKey *SSECustomerKey, dstPath string) ([]*filer_pb.FileChunk, error) {
 	dstChunks := make([]*filer_pb.FileChunk, len(entry.GetChunks()))
-	executor := util.NewLimitedConcurrentExecutor(4) // Limit to 4 concurrent operations
+	const defaultChunkCopyConcurrency = 4
+	executor := util.NewLimitedConcurrentExecutor(defaultChunkCopyConcurrency) // Limit to configurable concurrent operations
 	errChan := make(chan error, len(entry.GetChunks()))
 
 	for i, chunk := range entry.GetChunks() {
