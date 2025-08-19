@@ -148,8 +148,11 @@ func ParseSSEKMSHeaders(r *http.Request) (*SSEKMSKey, error) {
 	sseAlgorithm := r.Header.Get(s3_constants.AmzServerSideEncryption)
 
 	// Check if SSE-KMS is requested
+	if sseAlgorithm == "" {
+		return nil, nil // No SSE headers present
+	}
 	if sseAlgorithm != "aws:kms" {
-		return nil, nil // No SSE-KMS headers present
+		return nil, fmt.Errorf("invalid SSE algorithm: %s", sseAlgorithm)
 	}
 
 	keyID := r.Header.Get(s3_constants.AmzServerSideEncryptionAwsKmsKeyId)
@@ -173,11 +176,18 @@ func ParseSSEKMSHeaders(r *http.Request) (*SSEKMSKey, error) {
 	// Parse bucket key enabled flag
 	bucketKeyEnabled := strings.ToLower(bucketKeyEnabledHeader) == "true"
 
-	return &SSEKMSKey{
+	sseKey := &SSEKMSKey{
 		KeyID:             keyID,
 		EncryptionContext: encryptionContext,
 		BucketKeyEnabled:  bucketKeyEnabled,
-	}, nil
+	}
+
+	// Validate the parsed key
+	if err := ValidateSSEKMSKey(sseKey); err != nil {
+		return nil, err
+	}
+
+	return sseKey, nil
 }
 
 // ValidateSSEKMSKey validates an SSE-KMS key configuration
@@ -186,13 +196,8 @@ func ValidateSSEKMSKey(sseKey *SSEKMSKey) error {
 		return fmt.Errorf("SSE-KMS key is required")
 	}
 
-	// Validate KMS key ID format
-	if sseKey.KeyID == "" {
-		return fmt.Errorf("KMS key ID is required")
-	}
-
-	// Basic key ID format validation
-	if !isValidKMSKeyID(sseKey.KeyID) {
+	// An empty key ID is valid and means the default KMS key should be used.
+	if sseKey.KeyID != "" && !isValidKMSKeyID(sseKey.KeyID) {
 		return fmt.Errorf("invalid KMS key ID format: %s", sseKey.KeyID)
 	}
 
@@ -202,6 +207,11 @@ func ValidateSSEKMSKey(sseKey *SSEKMSKey) error {
 // isValidKMSKeyID performs basic validation of KMS key identifiers
 func isValidKMSKeyID(keyID string) bool {
 	if keyID == "" {
+		return false
+	}
+
+	// Key IDs should not contain spaces or other invalid characters
+	if strings.Contains(keyID, " ") || strings.Contains(keyID, "\t") || strings.Contains(keyID, "\n") {
 		return false
 	}
 
