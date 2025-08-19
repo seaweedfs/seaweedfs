@@ -492,8 +492,54 @@ func parseAndCachePublicReadStatus(acl []byte) bool {
 	return false
 }
 
-// getBucketMetadata retrieves bucket metadata as a structured object
+// getBucketMetadata retrieves bucket metadata as a structured object with caching
 func (s3a *S3ApiServer) getBucketMetadata(bucket string) (*BucketMetadata, error) {
+	// Try to get from cache first
+	if s3a.bucketConfigCache != nil {
+		if config, found := s3a.bucketConfigCache.Get(bucket); found {
+			// Extract metadata from cached config
+			if metadata, err := s3a.extractMetadataFromConfig(config); err == nil {
+				return metadata, nil
+			}
+			// If extraction fails, fall through to direct load
+		}
+	}
+
+	// Load directly from filer
+	return s3a.loadBucketMetadataFromFiler(bucket)
+}
+
+// extractMetadataFromConfig extracts BucketMetadata from cached BucketConfig
+func (s3a *S3ApiServer) extractMetadataFromConfig(config *BucketConfig) (*BucketMetadata, error) {
+	if config == nil || config.Entry == nil {
+		return NewBucketMetadata(), nil
+	}
+
+	// Parse metadata from entry content if available
+	if len(config.Entry.Content) > 0 {
+		var protoMetadata s3_pb.BucketMetadata
+		if err := proto.Unmarshal(config.Entry.Content, &protoMetadata); err == nil {
+			// Convert protobuf to structured metadata
+			metadata := &BucketMetadata{
+				Tags:       protoMetadata.Tags,
+				CORS:       corsConfigFromProto(protoMetadata.Cors),
+				Encryption: protoMetadata.Encryption,
+			}
+			return metadata, nil
+		}
+	}
+
+	// Fallback: create metadata from cached CORS config
+	metadata := NewBucketMetadata()
+	if config.CORS != nil {
+		metadata.CORS = config.CORS
+	}
+
+	return metadata, nil
+}
+
+// loadBucketMetadataFromFiler loads bucket metadata directly from the filer
+func (s3a *S3ApiServer) loadBucketMetadataFromFiler(bucket string) (*BucketMetadata, error) {
 	// Validate bucket name to prevent path traversal attacks
 	if bucket == "" || strings.Contains(bucket, "/") || strings.Contains(bucket, "\\") ||
 		strings.Contains(bucket, "..") || strings.Contains(bucket, "~") {
@@ -594,6 +640,12 @@ func (s3a *S3ApiServer) setBucketMetadata(bucket string, metadata *BucketMetadat
 		_, err = client.UpdateEntry(context.Background(), request)
 		return err
 	})
+
+	// Invalidate cache after successful update
+	if err == nil && s3a.bucketConfigCache != nil {
+		s3a.bucketConfigCache.Remove(bucket)
+	}
+
 	return err
 }
 
