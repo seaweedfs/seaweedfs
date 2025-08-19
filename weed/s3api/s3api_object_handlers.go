@@ -618,7 +618,7 @@ func (s3a *S3ApiServer) handleSSECResponse(r *http.Request, proxyResponse *http.
 			return http.StatusBadRequest, 0
 		}
 
-		if customerKey.KeyMD5 != strings.ToLower(sseKeyMD5) {
+		if !strings.EqualFold(customerKey.KeyMD5, sseKeyMD5) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrSSECustomerKeyMD5Mismatch)
 			return http.StatusBadRequest, 0
 		}
