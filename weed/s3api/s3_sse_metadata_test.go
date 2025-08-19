@@ -88,7 +88,7 @@ func TestSSEKMSIsEncrypted(t *testing.T) {
 			metadata: map[string][]byte{
 				s3_constants.AmzEncryptedDataKey: []byte("encrypted-key"),
 			},
-			expected: true,
+			expected: false, // Only encrypted data key without algorithm header should not be considered SSE-KMS
 		},
 		{
 			name: "Other encryption type (SSE-C)",

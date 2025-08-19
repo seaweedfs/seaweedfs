@@ -393,12 +393,12 @@ func (p *LocalKMSProvider) CreateKey(description string, aliases []string) (*Loc
 	defer p.mu.Unlock()
 
 	p.keys[keyID] = key
-	for i, alias := range aliases {
+	for _, alias := range aliases {
 		// Ensure alias has proper format
 		if !strings.HasPrefix(alias, "alias/") {
-			aliases[i] = "alias/" + alias
+			alias = "alias/" + alias
 		}
-		p.keys[aliases[i]] = key
+		p.keys[alias] = key
 	}
 
 	return key, nil

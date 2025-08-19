@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -232,8 +233,9 @@ func isValidKMSKeyID(keyID string) bool {
 		return len(keyID) > 6 // "alias/" + at least one character
 	}
 
-	// UUID format validation (simplified)
-	if len(keyID) == 36 && strings.Count(keyID, "-") == 4 {
+	// UUID format validation
+	uuidRegex := `^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$`
+	if match, _ := regexp.MatchString(uuidRegex, keyID); match {
 		return true
 	}
 
@@ -329,12 +331,9 @@ func IsSSEKMSEncrypted(metadata map[string][]byte) bool {
 		return false
 	}
 
-	// Check for SSE-KMS specific metadata keys
+	// The canonical way to identify an SSE-KMS encrypted object is by this header.
 	if sseAlgorithm, exists := metadata[s3_constants.AmzServerSideEncryption]; exists {
 		return string(sseAlgorithm) == "aws:kms"
-	}
-	if _, exists := metadata[s3_constants.AmzEncryptedDataKey]; exists {
-		return true
 	}
 
 	return false
