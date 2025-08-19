@@ -2,8 +2,8 @@ package kms
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"strings"
 	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -110,23 +110,7 @@ func (r *ProviderRegistry) CloseAll() error {
 	// Clear the instances map
 	r.instances = make(map[string]KMSProvider)
 	
-	if len(allErrors) == 0 {
-		return nil
-	}
-	if len(allErrors) == 1 {
-		return allErrors[0]
-	}
-	
-	// Join all errors into a single error
-	var errMsg strings.Builder
-	errMsg.WriteString("multiple KMS provider close errors: ")
-	for i, err := range allErrors {
-		if i > 0 {
-			errMsg.WriteString("; ")
-		}
-		errMsg.WriteString(err.Error())
-	}
-	return fmt.Errorf("%s", errMsg.String())
+	return errors.Join(allErrors...)
 }
 
 // KMSConfig represents the configuration for KMS
