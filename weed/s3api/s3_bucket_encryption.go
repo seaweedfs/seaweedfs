@@ -198,17 +198,18 @@ func (s3a *S3ApiServer) GetBucketEncryptionConfig(bucket string) (*s3_pb.Encrypt
 
 // getEncryptionConfiguration retrieves encryption configuration with caching
 func (s3a *S3ApiServer) getEncryptionConfiguration(bucket string) (*s3_pb.EncryptionConfiguration, s3err.ErrorCode) {
-	// Get existing metadata
-	_, _, encryptionConfig, err := s3a.getBucketEncryptionMetadata(bucket)
+	// Get metadata using structured API
+	metadata, err := s3a.GetBucketMetadata(bucket)
 	if err != nil {
-		if err.Error() == "no encryption configuration found" {
-			return nil, s3err.ErrNoSuchBucketEncryptionConfiguration
-		}
 		glog.Errorf("getEncryptionConfiguration: failed to get bucket metadata for bucket %s: %v", bucket, err)
 		return nil, s3err.ErrInternalError
 	}
 
-	return encryptionConfig, s3err.ErrNone
+	if metadata.Encryption == nil {
+		return nil, s3err.ErrNoSuchBucketEncryptionConfiguration
+	}
+
+	return metadata.Encryption, s3err.ErrNone
 }
 
 // updateEncryptionConfiguration updates the encryption configuration for a bucket
@@ -226,23 +227,21 @@ func (s3a *S3ApiServer) updateEncryptionConfiguration(bucket string, encryptionC
 
 // removeEncryptionConfiguration removes the encryption configuration for a bucket
 func (s3a *S3ApiServer) removeEncryptionConfiguration(bucket string) s3err.ErrorCode {
-	// Get existing metadata
-	existingTags, existingCors, existingEncryption, err := s3a.getBucketEncryptionMetadata(bucket)
+	// Check if encryption configuration exists
+	metadata, err := s3a.GetBucketMetadata(bucket)
 	if err != nil {
-		if err.Error() == "no encryption configuration found" {
-			return s3err.ErrNoSuchBucketEncryptionConfiguration
-		}
 		glog.Errorf("removeEncryptionConfiguration: failed to get bucket metadata for bucket %s: %v", bucket, err)
 		return s3err.ErrInternalError
 	}
 
-	if existingEncryption == nil {
+	if metadata.Encryption == nil {
 		return s3err.ErrNoSuchBucketEncryptionConfiguration
 	}
 
-	// Store metadata without encryption config
-	if err := s3a.setBucketEncryptionMetadata(bucket, existingTags, existingCors, nil); err != nil {
-		glog.Errorf("removeEncryptionConfiguration: failed to remove encryption config from bucket content for bucket %s: %v", bucket, err)
+	// Update using structured API
+	err = s3a.ClearBucketEncryption(bucket)
+	if err != nil {
+		glog.Errorf("removeEncryptionConfiguration: failed to remove encryption config for bucket %s: %v", bucket, err)
 		return s3err.ErrInternalError
 	}
 
