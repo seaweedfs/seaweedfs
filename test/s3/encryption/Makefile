@@ -144,15 +144,29 @@ test-sse-c-comprehensive: check-deps
 test-with-server: start-server
 	@echo "Running SSE-C tests with managed server..."
 	@set +e; \
-	trap "$(MAKE) stop-server 2>/dev/null || true; exit 0" EXIT INT TERM; \
+	echo "=== Pre-test Verification ==="; \
+	echo "Server PID: $$(cat weed-server.pid 2>/dev/null || echo 'No PID file')"; \
+	echo "Server process status: $$(ps -p $$(cat weed-server.pid 2>/dev/null || echo 0) -o pid,command 2>/dev/null || echo 'Process not found')"; \
+	echo "Port check: $$(curl -s http://localhost:$(S3_PORT) >/dev/null 2>&1 && echo 'Server responding' || echo 'Server not responding')"; \
+	echo "=== Running Tests ==="; \
+	trap "echo 'Trap triggered, cleaning up...'; $(MAKE) stop-server 2>/dev/null || true; exit 0" EXIT INT TERM; \
 	$(MAKE) test-sse-c-comprehensive; \
 	TEST_RESULT=$$?; \
+	echo "=== Test Results ==="; \
+	echo "Test exit code: $$TEST_RESULT"; \
 	if [ $$TEST_RESULT -ne 0 ]; then \
-		echo "❌ Tests failed (exit code: $$TEST_RESULT), showing server logs:"; \
+		echo "❌ Tests failed, diagnostic information:"; \
+		echo "=== Server Process Status ==="; \
+		ps aux | grep -E "(weed|test)" | grep -v grep || echo "No weed processes found"; \
+		echo "=== Network Status ==="; \
+		netstat -ln | grep ":$(S3_PORT)" || echo "Port $(S3_PORT) not listening"; \
 		echo "=== Last 50 lines of server logs ==="; \
 		tail -50 weed-test.log 2>/dev/null || echo "No log file available"; \
 		echo "=== End of server logs ==="; \
+	else \
+		echo "✅ Tests passed successfully"; \
 	fi; \
+	echo "=== Cleanup ==="; \
 	$(MAKE) stop-server 2>/dev/null || true; \
 	echo "✅ Server management completed"; \
 	exit $$TEST_RESULT
