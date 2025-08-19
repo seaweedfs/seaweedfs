@@ -38,7 +38,11 @@ The SSE-C implementation follows a transparent encryption/decryption pattern:
 
 #### 4. S3 API Integration
 - **PUT Object Handler**: Encrypts data streams transparently
+<<<<<<< HEAD
 - **GET Object Handler**: Decrypts data streams transparently
+=======
+- **GET Object Handler**: Decrypts data streams transparently  
+>>>>>>> 2714b7095 (S3 API: Add SSE-C (#7143))
 - **HEAD Object Handler**: Validates keys and returns appropriate headers
 - **Metadata Storage**: Integrates with existing `SaveAmzMetaData` function
 

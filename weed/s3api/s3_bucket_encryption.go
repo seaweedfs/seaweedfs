@@ -258,24 +258,24 @@ func (s3a *S3ApiServer) removeEncryptionConfiguration(bucket string) s3err.Error
 
 // getBucketEncryptionMetadata retrieves bucket metadata including encryption configuration
 func (s3a *S3ApiServer) getBucketEncryptionMetadata(bucket string) (map[string]string, *s3_pb.CORSConfiguration, *s3_pb.EncryptionConfiguration, error) {
-	// Convert CORS from internal type to protobuf type
-	tags, corsConfigInternal, encryptionConfig, err := s3a.getBucketMetadataWithEncryption(bucket)
+	// Get bucket metadata using the new structured API
+	metadata, err := s3a.GetBucketMetadata(bucket)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
 	// Convert internal CORS to protobuf CORS
 	var corsConfig *s3_pb.CORSConfiguration
-	if corsConfigInternal != nil {
-		corsConfig = corsConfigToProto(corsConfigInternal)
+	if metadata.CORS != nil {
+		corsConfig = corsConfigToProto(metadata.CORS)
 	}
 
 	// If no encryption config, return error to indicate missing configuration
-	if encryptionConfig == nil {
-		return tags, corsConfig, nil, fmt.Errorf("no encryption configuration found")
+	if metadata.Encryption == nil {
+		return metadata.Tags, corsConfig, nil, fmt.Errorf("no encryption configuration found")
 	}
 
-	return tags, corsConfig, encryptionConfig, nil
+	return metadata.Tags, corsConfig, metadata.Encryption, nil
 }
 
 // setBucketEncryptionMetadata stores bucket metadata including encryption configuration
@@ -286,7 +286,14 @@ func (s3a *S3ApiServer) setBucketEncryptionMetadata(bucket string, tags map[stri
 		corsConfigInternal = corsConfigFromProto(corsConfig)
 	}
 
-	return s3a.setBucketMetadataWithEncryption(bucket, tags, corsConfigInternal, encryptionConfig)
+	// Create metadata struct and save
+	metadata := &BucketMetadata{
+		Tags:       tags,
+		CORS:       corsConfigInternal,
+		Encryption: encryptionConfig,
+	}
+
+	return s3a.SetBucketMetadata(bucket, metadata)
 }
 
 // IsDefaultEncryptionEnabled checks if default encryption is enabled for a bucket
