@@ -28,7 +28,8 @@ func TestSSECRangeRequestsNotSupported(t *testing.T) {
 	for i := range key {
 		key[i] = byte(i)
 	}
-	keyMD5 := base64.StdEncoding.EncodeToString(md5.Sum(key)[:])
+	s := md5.Sum(key)
+	keyMD5 := base64.StdEncoding.EncodeToString(s[:])
 
 	req.Header.Set(s3_constants.AmzServerSideEncryptionCustomerKey, base64.StdEncoding.EncodeToString(key))
 	req.Header.Set(s3_constants.AmzServerSideEncryptionCustomerKeyMD5, keyMD5)

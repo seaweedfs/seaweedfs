@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -117,14 +116,14 @@ func TestSSECHeaderValidationErrors(t *testing.T) {
 			name:      "invalid algorithm",
 			algorithm: "AES128",
 			key:       base64.StdEncoding.EncodeToString(make([]byte, 32)),
-			keyMD5:    base64.StdEncoding.EncodeToString(md5.Sum(make([]byte, 32))[:]),
+			keyMD5:    func() string { s := md5.Sum(make([]byte, 32)); return base64.StdEncoding.EncodeToString(s[:]) }(),
 			wantErr:   ErrInvalidEncryptionAlgorithm,
 		},
 		{
 			name:      "invalid key length",
 			algorithm: "AES256",
 			key:       base64.StdEncoding.EncodeToString(make([]byte, 16)),
-			keyMD5:    base64.StdEncoding.EncodeToString(md5.Sum(make([]byte, 16))[:]),
+			keyMD5:    func() string { s := md5.Sum(make([]byte, 16)); return base64.StdEncoding.EncodeToString(s[:]) }(),
 			wantErr:   ErrInvalidEncryptionKey,
 		},
 		{
@@ -172,10 +171,11 @@ func TestSSECEncryptionDecryption(t *testing.T) {
 		key[i] = byte(i)
 	}
 
+	md5sumKey := md5.Sum(key)
 	customerKey := &SSECustomerKey{
 		Algorithm: "AES256",
 		Key:       key,
-		KeyMD5:    base64.StdEncoding.EncodeToString(md5.Sum(key)[:]),
+		KeyMD5:    base64.StdEncoding.EncodeToString(md5sumKey[:]),
 	}
 
 	// Test data
@@ -346,10 +346,11 @@ func TestSSECEncryptionSmallBuffers(t *testing.T) {
 		key[i] = byte(i)
 	}
 
+	md5sumKey3 := md5.Sum(key)
 	customerKey := &SSECustomerKey{
 		Algorithm: "AES256",
 		Key:       key,
-		KeyMD5:    base64.StdEncoding.EncodeToString(md5.Sum(key)[:]),
+		KeyMD5:    base64.StdEncoding.EncodeToString(md5sumKey3[:]),
 	}
 
 	// Create encrypted reader
