@@ -4,10 +4,8 @@ import (
 	"bytes"
 	"crypto/md5"
 	"encoding/base64"
-	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -30,7 +28,7 @@ func TestSSECRangeRequestsNotSupported(t *testing.T) {
 	for i := range key {
 		key[i] = byte(i)
 	}
-	keyMD5 := fmt.Sprintf("%x", md5.Sum(key))
+	keyMD5 := base64.StdEncoding.EncodeToString(md5.Sum(key)[:])
 
 	req.Header.Set(s3_constants.AmzServerSideEncryptionCustomerKey, base64.StdEncoding.EncodeToString(key))
 	req.Header.Set(s3_constants.AmzServerSideEncryptionCustomerKeyMD5, keyMD5)
@@ -54,7 +52,7 @@ func TestSSECRangeRequestsNotSupported(t *testing.T) {
 
 	// Set SSE-C metadata headers that would be returned by the filer for encrypted objects
 	proxyResponse.Header.Set(s3_constants.AmzServerSideEncryptionCustomerAlgorithm, "AES256")
-	proxyResponse.Header.Set(s3_constants.AmzServerSideEncryptionCustomerKeyMD5, strings.ToUpper(keyMD5))
+	proxyResponse.Header.Set(s3_constants.AmzServerSideEncryptionCustomerKeyMD5, keyMD5)
 
 	// Verify that the object appears encrypted based on metadata
 	sseAlgorithm := proxyResponse.Header.Get(s3_constants.AmzServerSideEncryptionCustomerAlgorithm)

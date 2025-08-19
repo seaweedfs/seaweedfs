@@ -23,7 +23,8 @@ func TestSSECHeaderValidation(t *testing.T) {
 	}
 
 	keyBase64 := base64.StdEncoding.EncodeToString(key)
-	keyMD5 := fmt.Sprintf("%x", md5.Sum(key))
+	md5sum := md5.Sum(key)
+	keyMD5 := base64.StdEncoding.EncodeToString(md5sum[:])
 
 	req.Header.Set(s3_constants.AmzServerSideEncryptionCustomerAlgorithm, "AES256")
 	req.Header.Set(s3_constants.AmzServerSideEncryptionCustomerKey, keyBase64)
@@ -53,8 +54,8 @@ func TestSSECHeaderValidation(t *testing.T) {
 		t.Error("Key doesn't match original")
 	}
 
-	if customerKey.KeyMD5 != strings.ToLower(keyMD5) {
-		t.Errorf("Expected key MD5 %s, got %s", strings.ToLower(keyMD5), customerKey.KeyMD5)
+	if customerKey.KeyMD5 != keyMD5 {
+		t.Errorf("Expected key MD5 %s, got %s", keyMD5, customerKey.KeyMD5)
 	}
 }
 
@@ -68,7 +69,8 @@ func TestSSECCopySourceHeaders(t *testing.T) {
 	}
 
 	keyBase64 := base64.StdEncoding.EncodeToString(key)
-	keyMD5 := fmt.Sprintf("%x", md5.Sum(key))
+	md5sum2 := md5.Sum(key)
+	keyMD5 := base64.StdEncoding.EncodeToString(md5sum2[:])
 
 	req.Header.Set(s3_constants.AmzCopySourceServerSideEncryptionCustomerAlgorithm, "AES256")
 	req.Header.Set(s3_constants.AmzCopySourceServerSideEncryptionCustomerKey, keyBase64)
@@ -115,21 +117,21 @@ func TestSSECHeaderValidationErrors(t *testing.T) {
 			name:      "invalid algorithm",
 			algorithm: "AES128",
 			key:       base64.StdEncoding.EncodeToString(make([]byte, 32)),
-			keyMD5:    fmt.Sprintf("%x", md5.Sum(make([]byte, 32))),
+			keyMD5:    base64.StdEncoding.EncodeToString(md5.Sum(make([]byte, 32))[:]),
 			wantErr:   ErrInvalidEncryptionAlgorithm,
 		},
 		{
 			name:      "invalid key length",
 			algorithm: "AES256",
 			key:       base64.StdEncoding.EncodeToString(make([]byte, 16)),
-			keyMD5:    fmt.Sprintf("%x", md5.Sum(make([]byte, 16))),
+			keyMD5:    base64.StdEncoding.EncodeToString(md5.Sum(make([]byte, 16))[:]),
 			wantErr:   ErrInvalidEncryptionKey,
 		},
 		{
 			name:      "mismatched MD5",
 			algorithm: "AES256",
 			key:       base64.StdEncoding.EncodeToString(make([]byte, 32)),
-			keyMD5:    "wrongmd5",
+			keyMD5:    "wrong==md5",
 			wantErr:   ErrSSECustomerKeyMD5Mismatch,
 		},
 		{
@@ -173,7 +175,7 @@ func TestSSECEncryptionDecryption(t *testing.T) {
 	customerKey := &SSECustomerKey{
 		Algorithm: "AES256",
 		Key:       key,
-		KeyMD5:    fmt.Sprintf("%x", md5.Sum(key)),
+		KeyMD5:    base64.StdEncoding.EncodeToString(md5.Sum(key)[:]),
 	}
 
 	// Test data
@@ -347,7 +349,7 @@ func TestSSECEncryptionSmallBuffers(t *testing.T) {
 	customerKey := &SSECustomerKey{
 		Algorithm: "AES256",
 		Key:       key,
-		KeyMD5:    fmt.Sprintf("%x", md5.Sum(key)),
+		KeyMD5:    base64.StdEncoding.EncodeToString(md5.Sum(key)[:]),
 	}
 
 	// Create encrypted reader

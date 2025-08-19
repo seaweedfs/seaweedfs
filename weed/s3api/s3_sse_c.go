@@ -78,16 +78,17 @@ func validateAndParseSSECHeaders(algorithm, key, keyMD5 string) (*SSECustomerKey
 		return nil, ErrInvalidEncryptionKey
 	}
 
-	// Validate key MD5
-	expectedMD5 := fmt.Sprintf("%x", md5.Sum(keyBytes))
-	if strings.ToLower(keyMD5) != expectedMD5 {
+	// Validate key MD5 (base64-encoded MD5 of the raw key bytes; case-sensitive)
+	sum := md5.Sum(keyBytes)
+	expectedMD5 := base64.StdEncoding.EncodeToString(sum[:])
+	if keyMD5 != expectedMD5 {
 		return nil, ErrSSECustomerKeyMD5Mismatch
 	}
 
 	return &SSECustomerKey{
 		Algorithm: algorithm,
 		Key:       keyBytes,
-		KeyMD5:    strings.ToLower(keyMD5),
+		KeyMD5:    keyMD5,
 	}, nil
 }
 
@@ -211,9 +212,9 @@ func CanDirectCopySSEC(srcMetadata map[string][]byte, copySourceKey *SSECustomer
 
 	// Case 2: Source encrypted, same key for decryption and destination -> Direct copy
 	if srcEncrypted && copySourceKey != nil && destKey != nil {
-		// Same key if MD5 matches
-		return strings.EqualFold(copySourceKey.KeyMD5, srcKeyMD5) &&
-			strings.EqualFold(destKey.KeyMD5, srcKeyMD5)
+		// Same key if MD5 matches exactly (base64 encoding is case-sensitive)
+		return copySourceKey.KeyMD5 == srcKeyMD5 &&
+			destKey.KeyMD5 == srcKeyMD5
 	}
 
 	// All other cases require decrypt/re-encrypt
@@ -237,7 +238,7 @@ func DetermineSSECCopyStrategy(srcMetadata map[string][]byte, copySourceKey *SSE
 		if copySourceKey == nil {
 			return SSECCopyReencrypt, ErrSSECustomerKeyMissing
 		}
-		if !strings.EqualFold(copySourceKey.KeyMD5, srcKeyMD5) {
+		if copySourceKey.KeyMD5 != srcKeyMD5 {
 			return SSECCopyReencrypt, ErrSSECustomerKeyMD5Mismatch
 		}
 	} else if copySourceKey != nil {
