@@ -306,23 +306,6 @@ func AddSSEKMSResponseHeaders(w http.ResponseWriter, sseKey *SSEKMSKey) {
 	}
 }
 
-// GetSSEKMSFromMetadata extracts SSE-KMS information from object metadata
-func GetSSEKMSFromMetadata(metadata map[string][]byte) (*SSEKMSKey, error) {
-	// Check if this is an SSE-KMS encrypted object
-	sseAlgorithm, exists := metadata[s3_constants.AmzServerSideEncryption]
-	if !exists || string(sseAlgorithm) != "aws:kms" {
-		return nil, nil // Not an SSE-KMS object
-	}
-
-	// Extract SSE-KMS metadata
-	sseMetadataBytes, exists := metadata[s3_constants.AmzEncryptedDataKey]
-	if !exists {
-		return nil, fmt.Errorf("SSE-KMS object missing encrypted data key metadata")
-	}
-
-	return DeserializeSSEKMSMetadata(sseMetadataBytes)
-}
-
 // IsSSEKMSRequest checks if the request contains SSE-KMS headers
 func IsSSEKMSRequest(r *http.Request) bool {
 	// If SSE-C headers are present, this is not an SSE-KMS request (they are mutually exclusive)

@@ -8,7 +8,6 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/cors"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
@@ -247,46 +246,6 @@ func (s3a *S3ApiServer) removeEncryptionConfiguration(bucket string) s3err.Error
 
 	// Cache will be updated automatically via metadata subscription
 	return s3err.ErrNone
-}
-
-// getBucketEncryptionMetadata retrieves bucket metadata including encryption configuration
-func (s3a *S3ApiServer) getBucketEncryptionMetadata(bucket string) (map[string]string, *s3_pb.CORSConfiguration, *s3_pb.EncryptionConfiguration, error) {
-	// Get bucket metadata using the new structured API
-	metadata, err := s3a.GetBucketMetadata(bucket)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-
-	// Convert internal CORS to protobuf CORS
-	var corsConfig *s3_pb.CORSConfiguration
-	if metadata.CORS != nil {
-		corsConfig = corsConfigToProto(metadata.CORS)
-	}
-
-	// If no encryption config, return error to indicate missing configuration
-	if metadata.Encryption == nil {
-		return metadata.Tags, corsConfig, nil, fmt.Errorf("no encryption configuration found")
-	}
-
-	return metadata.Tags, corsConfig, metadata.Encryption, nil
-}
-
-// setBucketEncryptionMetadata stores bucket metadata including encryption configuration
-func (s3a *S3ApiServer) setBucketEncryptionMetadata(bucket string, tags map[string]string, corsConfig *s3_pb.CORSConfiguration, encryptionConfig *s3_pb.EncryptionConfiguration) error {
-	// Convert protobuf CORS to internal CORS
-	var corsConfigInternal *cors.CORSConfiguration
-	if corsConfig != nil {
-		corsConfigInternal = corsConfigFromProto(corsConfig)
-	}
-
-	// Create metadata struct and save
-	metadata := &BucketMetadata{
-		Tags:       tags,
-		CORS:       corsConfigInternal,
-		Encryption: encryptionConfig,
-	}
-
-	return s3a.SetBucketMetadata(bucket, metadata)
 }
 
 // IsDefaultEncryptionEnabled checks if default encryption is enabled for a bucket

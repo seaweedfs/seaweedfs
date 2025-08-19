@@ -8,42 +8,12 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/kms"
-	"github.com/seaweedfs/seaweedfs/weed/kms/local"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
-// setupTestKMS initializes a local KMS provider for testing
-func setupTestKMS(t *testing.T) (string, func()) {
-	// Initialize local KMS provider directly
-	provider, err := local.NewLocalKMSProvider(nil)
-	if err != nil {
-		t.Fatalf("Failed to create local KMS provider: %v", err)
-	}
-
-	// Set it as the global provider (simulate InitializeGlobalKMS)
-	kms.SetGlobalKMSForTesting(provider)
-
-	// Create a test key
-	localProvider := provider.(*local.LocalKMSProvider)
-	testKey, err := localProvider.CreateKey("Test key for SSE-KMS", []string{"test-key"})
-	if err != nil {
-		t.Fatalf("Failed to create test key: %v", err)
-	}
-
-	// Cleanup function
-	cleanup := func() {
-		kms.SetGlobalKMSForTesting(nil) // Clear global KMS
-		if err := provider.Close(); err != nil {
-			t.Logf("Warning: Failed to close KMS provider: %v", err)
-		}
-	}
-
-	return testKey.KeyID, cleanup
-}
-
 func TestSSEKMSEncryptionDecryption(t *testing.T) {
-	keyID, cleanup := setupTestKMS(t)
-	defer cleanup()
+	kmsKey := SetupTestKMS(t)
+	defer kmsKey.Cleanup()
 
 	// Test data
 	testData := "Hello, SSE-KMS world! This is a test of envelope encryption."
@@ -53,14 +23,14 @@ func TestSSEKMSEncryptionDecryption(t *testing.T) {
 	encryptionContext := BuildEncryptionContext("test-bucket", "test-object", false)
 
 	// Encrypt the data
-	encryptedReader, sseKey, err := CreateSSEKMSEncryptedReader(testReader, keyID, encryptionContext)
+	encryptedReader, sseKey, err := CreateSSEKMSEncryptedReader(testReader, kmsKey.KeyID, encryptionContext)
 	if err != nil {
 		t.Fatalf("Failed to create encrypted reader: %v", err)
 	}
 
 	// Verify SSE key metadata
-	if sseKey.KeyID != keyID {
-		t.Errorf("Expected key ID %s, got %s", keyID, sseKey.KeyID)
+	if sseKey.KeyID != kmsKey.KeyID {
+		t.Errorf("Expected key ID %s, got %s", kmsKey.KeyID, sseKey.KeyID)
 	}
 
 	if len(sseKey.EncryptedDataKey) == 0 {
@@ -309,8 +279,8 @@ func TestKMSErrorMapping(t *testing.T) {
 
 // TestLargeDataEncryption tests encryption/decryption of larger data streams
 func TestSSEKMSLargeDataEncryption(t *testing.T) {
-	keyID, cleanup := setupTestKMS(t)
-	defer cleanup()
+	kmsKey := SetupTestKMS(t)
+	defer kmsKey.Cleanup()
 
 	// Create a larger test dataset (1MB)
 	testData := strings.Repeat("This is a test of SSE-KMS with larger data streams. ", 20000)
@@ -320,7 +290,7 @@ func TestSSEKMSLargeDataEncryption(t *testing.T) {
 	encryptionContext := BuildEncryptionContext("large-bucket", "large-object", false)
 
 	// Encrypt the data
-	encryptedReader, sseKey, err := CreateSSEKMSEncryptedReader(testReader, keyID, encryptionContext)
+	encryptedReader, sseKey, err := CreateSSEKMSEncryptedReader(testReader, kmsKey.KeyID, encryptionContext)
 	if err != nil {
 		t.Fatalf("Failed to create encrypted reader: %v", err)
 	}
