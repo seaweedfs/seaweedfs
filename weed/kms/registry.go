@@ -109,7 +109,7 @@ func (r *ProviderRegistry) CloseAll() error {
 
 	// Clear the instances map
 	r.instances = make(map[string]KMSProvider)
-	
+
 	return errors.Join(allErrors...)
 }
 
