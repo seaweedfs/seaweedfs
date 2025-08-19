@@ -223,9 +223,13 @@ func isValidKMSKeyID(keyID string) bool {
 	// 4. Alias ARN: arn:aws:kms:region:account:alias/my-key
 
 	if strings.HasPrefix(keyID, "arn:aws:kms:") {
-		// ARN format validation
+		// ARN format validation - must have exactly 6 parts
 		parts := strings.Split(keyID, ":")
-		return len(parts) >= 6 && (strings.Contains(keyID, ":key/") || strings.Contains(keyID, ":alias/"))
+		if len(parts) != 6 {
+			return false
+		}
+		resource := parts[5]
+		return (strings.HasPrefix(resource, "key/") && len(resource) > 4) || (strings.HasPrefix(resource, "alias/") && len(resource) > 6)
 	}
 
 	if strings.HasPrefix(keyID, "alias/") {

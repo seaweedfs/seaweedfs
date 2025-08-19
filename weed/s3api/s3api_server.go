@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
@@ -51,6 +52,8 @@ type S3ApiServer struct {
 	bucketRegistry    *BucketRegistry
 	credentialManager *credential.CredentialManager
 	bucketConfigCache *BucketConfigCache
+	bucketMetadataLocks map[string]*sync.RWMutex
+	bucketMetadataLocksMutex sync.RWMutex
 }
 
 func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer *S3ApiServer, err error) {
@@ -89,6 +92,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		cb:                NewCircuitBreaker(option),
 		credentialManager: iam.credentialManager,
 		bucketConfigCache: NewBucketConfigCache(60 * time.Minute), // Increased TTL since cache is now event-driven
+		bucketMetadataLocks: make(map[string]*sync.RWMutex),
 	}
 
 	if option.Config != "" {

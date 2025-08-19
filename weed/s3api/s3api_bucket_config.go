@@ -609,8 +609,39 @@ func (s3a *S3ApiServer) SetBucketMetadata(bucket string, metadata *BucketMetadat
 	return s3a.setBucketMetadata(bucket, metadata)
 }
 
+// getBucketMetadataLock gets or creates a mutex for the specified bucket
+func (s3a *S3ApiServer) getBucketMetadataLock(bucket string) *sync.RWMutex {
+	s3a.bucketMetadataLocksMutex.RLock()
+	lock, exists := s3a.bucketMetadataLocks[bucket]
+	s3a.bucketMetadataLocksMutex.RUnlock()
+	
+	if exists {
+		return lock
+	}
+	
+	// Need to create a new lock
+	s3a.bucketMetadataLocksMutex.Lock()
+	defer s3a.bucketMetadataLocksMutex.Unlock()
+	
+	// Double-check in case another goroutine created it while we were waiting
+	if lock, exists := s3a.bucketMetadataLocks[bucket]; exists {
+		return lock
+	}
+	
+	// Create new lock
+	lock = &sync.RWMutex{}
+	s3a.bucketMetadataLocks[bucket] = lock
+	return lock
+}
+
 // UpdateBucketMetadata updates specific parts of bucket metadata while preserving others
+// This function is thread-safe and prevents race conditions during concurrent metadata updates
 func (s3a *S3ApiServer) UpdateBucketMetadata(bucket string, update func(*BucketMetadata) error) error {
+	// Get bucket-specific lock to prevent race conditions
+	lock := s3a.getBucketMetadataLock(bucket)
+	lock.Lock()
+	defer lock.Unlock()
+	
 	// Get current metadata
 	metadata, err := s3a.GetBucketMetadata(bucket)
 	if err != nil {
