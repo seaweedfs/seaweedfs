@@ -614,20 +614,20 @@ func (s3a *S3ApiServer) getBucketMetadataLock(bucket string) *sync.RWMutex {
 	s3a.bucketMetadataLocksMutex.RLock()
 	lock, exists := s3a.bucketMetadataLocks[bucket]
 	s3a.bucketMetadataLocksMutex.RUnlock()
-	
+
 	if exists {
 		return lock
 	}
-	
+
 	// Need to create a new lock
 	s3a.bucketMetadataLocksMutex.Lock()
 	defer s3a.bucketMetadataLocksMutex.Unlock()
-	
+
 	// Double-check in case another goroutine created it while we were waiting
 	if lock, exists := s3a.bucketMetadataLocks[bucket]; exists {
 		return lock
 	}
-	
+
 	// Create new lock
 	lock = &sync.RWMutex{}
 	s3a.bucketMetadataLocks[bucket] = lock
@@ -641,7 +641,7 @@ func (s3a *S3ApiServer) UpdateBucketMetadata(bucket string, update func(*BucketM
 	lock := s3a.getBucketMetadataLock(bucket)
 	lock.Lock()
 	defer lock.Unlock()
-	
+
 	// Get current metadata
 	metadata, err := s3a.GetBucketMetadata(bucket)
 	if err != nil {

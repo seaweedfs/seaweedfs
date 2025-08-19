@@ -329,7 +329,7 @@ func IsSSEKMSRequest(r *http.Request) bool {
 	if r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerAlgorithm) != "" {
 		return false
 	}
-	
+
 	sseAlgorithm := r.Header.Get(s3_constants.AmzServerSideEncryption)
 	return sseAlgorithm == "aws:kms" || r.Header.Get(s3_constants.AmzServerSideEncryptionAwsKmsKeyId) != ""
 }
