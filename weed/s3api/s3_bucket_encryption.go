@@ -214,14 +214,14 @@ func (s3a *S3ApiServer) getEncryptionConfiguration(bucket string) (*s3_pb.Encryp
 // updateEncryptionConfiguration updates the encryption configuration for a bucket
 func (s3a *S3ApiServer) updateEncryptionConfiguration(bucket string, encryptionConfig *s3_pb.EncryptionConfiguration) s3err.ErrorCode {
 	// Get existing metadata
-	existingTags, existingCors, _, err := s3a.getBucketEncryptionMetadata(bucket)
+	existingTags, existingCors, err := s3a.getBucketMetadata(bucket)
 	if err != nil {
 		glog.Errorf("updateEncryptionConfiguration: failed to get bucket metadata for bucket %s: %v", bucket, err)
 		return s3err.ErrInternalError
 	}
 
 	// Store updated metadata
-	if err := s3a.setBucketEncryptionMetadata(bucket, existingTags, existingCors, encryptionConfig); err != nil {
+	if err := s3a.setBucketMetadataWithEncryption(bucket, existingTags, existingCors, encryptionConfig); err != nil {
 		glog.Errorf("updateEncryptionConfiguration: failed to persist encryption config to bucket content for bucket %s: %v", bucket, err)
 		return s3err.ErrInternalError
 	}
