@@ -285,3 +285,67 @@ func GetStoredKeyMD5(metadata map[string][]byte) string {
 	}
 	return ""
 }
+
+// GetSourceSSECInfo extracts SSE-C information from source object metadata
+func GetSourceSSECInfo(metadata map[string][]byte) (algorithm string, keyMD5 string, isEncrypted bool) {
+	if alg, exists := metadata[s3_constants.AmzServerSideEncryptionCustomerAlgorithm]; exists {
+		algorithm = string(alg)
+	}
+	if md5, exists := metadata[s3_constants.AmzServerSideEncryptionCustomerKeyMD5]; exists {
+		keyMD5 = string(md5)
+	}
+	isEncrypted = algorithm != "" && keyMD5 != ""
+	return
+}
+
+// CanDirectCopySSEC determines if we can directly copy chunks without decrypt/re-encrypt
+func CanDirectCopySSEC(srcMetadata map[string][]byte, copySourceKey *SSECustomerKey, destKey *SSECustomerKey) bool {
+	_, srcKeyMD5, srcEncrypted := GetSourceSSECInfo(srcMetadata)
+
+	// Case 1: Source unencrypted, destination unencrypted -> Direct copy
+	if !srcEncrypted && destKey == nil {
+		return true
+	}
+
+	// Case 2: Source encrypted, same key for decryption and destination -> Direct copy
+	if srcEncrypted && copySourceKey != nil && destKey != nil {
+		// Same key if MD5 matches
+		return strings.ToLower(copySourceKey.KeyMD5) == strings.ToLower(srcKeyMD5) &&
+			strings.ToLower(destKey.KeyMD5) == strings.ToLower(srcKeyMD5)
+	}
+
+	// All other cases require decrypt/re-encrypt
+	return false
+}
+
+// SSECCopyStrategy represents the strategy for copying SSE-C objects
+type SSECCopyStrategy int
+
+const (
+	SSECCopyDirect    SSECCopyStrategy = iota // Direct chunk copy (fast)
+	SSECCopyReencrypt                         // Decrypt and re-encrypt (slow)
+)
+
+// DetermineSSECCopyStrategy determines the optimal copy strategy
+func DetermineSSECCopyStrategy(srcMetadata map[string][]byte, copySourceKey *SSECustomerKey, destKey *SSECustomerKey) (SSECCopyStrategy, error) {
+	_, srcKeyMD5, srcEncrypted := GetSourceSSECInfo(srcMetadata)
+
+	// Validate source key if source is encrypted
+	if srcEncrypted {
+		if copySourceKey == nil {
+			return SSECCopyReencrypt, ErrSSECustomerKeyMissing
+		}
+		if !strings.EqualFold(copySourceKey.KeyMD5, srcKeyMD5) {
+			return SSECCopyReencrypt, ErrSSECustomerKeyMD5Mismatch
+		}
+	} else if copySourceKey != nil {
+		// Source not encrypted but copy source key provided
+		return SSECCopyReencrypt, ErrSSECustomerKeyNotNeeded
+	}
+
+	if CanDirectCopySSEC(srcMetadata, copySourceKey, destKey) {
+		return SSECCopyDirect, nil
+	}
+
+	return SSECCopyReencrypt, nil
+}
