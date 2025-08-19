@@ -105,8 +105,7 @@ Comprehensive test suite covers:
 
 Run tests with:
 ```bash
-go test ./weed/s3api/s3_sse_c_test.go ./weed/s3api/s3_sse_c.go -v
-```
+go test -v ./weed/s3api
 
 ## Usage Example
 
