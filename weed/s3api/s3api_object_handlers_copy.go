@@ -1030,12 +1030,12 @@ func (s3a *S3ApiServer) copyChunksWithSSEC(entry *filer_pb.Entry, r *http.Reques
 	glog.V(2).Infof("SSE-C copy strategy for %s: %v", r.URL.Path, strategy)
 
 	switch strategy {
-	case SSECCopyDirect:
+	case SSECCopyStrategyDirect:
 		// FAST PATH: Direct chunk copy
 		glog.V(2).Infof("Using fast path: direct chunk copy for %s", r.URL.Path)
 		return s3a.copyChunks(entry, r.URL.Path)
 
-	case SSECCopyReencrypt:
+	case SSECCopyStrategyDecryptEncrypt:
 		// SLOW PATH: Decrypt and re-encrypt
 		glog.V(2).Infof("Using slow path: decrypt/re-encrypt for %s", r.URL.Path)
 		return s3a.copyChunksWithReencryption(entry, copySourceKey, destKey, r.URL.Path)

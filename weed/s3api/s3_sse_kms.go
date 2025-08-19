@@ -307,6 +307,51 @@ func GetSSEKMSFromMetadata(metadata map[string][]byte) (*SSEKMSKey, error) {
 	return DeserializeSSEKMSMetadata(sseMetadataBytes)
 }
 
+// IsSSEKMSRequest checks if the request contains SSE-KMS headers
+func IsSSEKMSRequest(r *http.Request) bool {
+	sseAlgorithm := r.Header.Get(s3_constants.AmzServerSideEncryption)
+	return sseAlgorithm == "aws:kms" || r.Header.Get(s3_constants.AmzServerSideEncryptionAwsKmsKeyId) != ""
+}
+
+// IsSSEKMSEncrypted checks if the metadata indicates SSE-KMS encryption
+func IsSSEKMSEncrypted(metadata map[string][]byte) bool {
+	if metadata == nil {
+		return false
+	}
+
+	// Check for SSE-KMS specific metadata keys
+	if sseAlgorithm, exists := metadata[s3_constants.AmzServerSideEncryption]; exists {
+		return string(sseAlgorithm) == "aws:kms"
+	}
+	if _, exists := metadata[s3_constants.AmzEncryptedDataKey]; exists {
+		return true
+	}
+
+	return false
+}
+
+// IsAnySSEEncrypted checks if metadata indicates any type of SSE encryption
+func IsAnySSEEncrypted(metadata map[string][]byte) bool {
+	if metadata == nil {
+		return false
+	}
+
+	// Check for any SSE type
+	if IsSSECEncrypted(metadata) {
+		return true
+	}
+	if IsSSEKMSEncrypted(metadata) {
+		return true
+	}
+
+	// Check for SSE-S3
+	if sseAlgorithm, exists := metadata[s3_constants.AmzServerSideEncryption]; exists {
+		return string(sseAlgorithm) == "AES256"
+	}
+
+	return false
+}
+
 // MapKMSErrorToS3Error maps KMS errors to appropriate S3 error codes
 func MapKMSErrorToS3Error(err error) s3err.ErrorCode {
 	if err == nil {

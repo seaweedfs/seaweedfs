@@ -318,3 +318,65 @@ func (s3a *S3ApiServer) GetDefaultEncryptionHeaders(bucket string) map[string]st
 
 	return headers
 }
+
+// IsDefaultEncryptionEnabled checks if default encryption is enabled for a configuration
+func IsDefaultEncryptionEnabled(config *s3_pb.EncryptionConfiguration) bool {
+	return config != nil && config.SseAlgorithm != ""
+}
+
+// GetDefaultEncryptionHeaders generates default encryption headers from configuration
+func GetDefaultEncryptionHeaders(config *s3_pb.EncryptionConfiguration) map[string]string {
+	if config == nil || config.SseAlgorithm == "" {
+		return nil
+	}
+
+	headers := make(map[string]string)
+	headers["X-Amz-Server-Side-Encryption"] = config.SseAlgorithm
+
+	if config.SseAlgorithm == "aws:kms" && config.KmsKeyId != "" {
+		headers["X-Amz-Server-Side-Encryption-Aws-Kms-Key-Id"] = config.KmsKeyId
+	}
+
+	return headers
+}
+
+// encryptionConfigFromXMLBytes parses XML bytes to encryption configuration
+func encryptionConfigFromXMLBytes(xmlBytes []byte) (*s3_pb.EncryptionConfiguration, error) {
+	var xmlConfig ServerSideEncryptionConfiguration
+	if err := xml.Unmarshal(xmlBytes, &xmlConfig); err != nil {
+		return nil, err
+	}
+
+	// Validate the configuration
+	if len(xmlConfig.Rules) == 0 {
+		return nil, fmt.Errorf("encryption configuration must have at least one rule")
+	}
+
+	rule := xmlConfig.Rules[0]
+	if rule.ApplyServerSideEncryptionByDefault.SSEAlgorithm == "" {
+		return nil, fmt.Errorf("encryption algorithm is required")
+	}
+
+	// Validate algorithm
+	validAlgorithms := map[string]bool{
+		"AES256":  true,
+		"aws:kms": true,
+	}
+
+	if !validAlgorithms[rule.ApplyServerSideEncryptionByDefault.SSEAlgorithm] {
+		return nil, fmt.Errorf("unsupported encryption algorithm: %s", rule.ApplyServerSideEncryptionByDefault.SSEAlgorithm)
+	}
+
+	config := encryptionConfigFromXML(&xmlConfig)
+	return config, nil
+}
+
+// encryptionConfigToXMLBytes converts encryption configuration to XML bytes
+func encryptionConfigToXMLBytes(config *s3_pb.EncryptionConfiguration) ([]byte, error) {
+	if config == nil {
+		return nil, fmt.Errorf("encryption configuration is nil")
+	}
+
+	xmlConfig := encryptionConfigToXML(config)
+	return xml.Marshal(xmlConfig)
+}

@@ -16,6 +16,16 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
+// SSECCopyStrategy represents different strategies for copying SSE-C objects
+type SSECCopyStrategy int
+
+const (
+	// SSECCopyStrategyDirect indicates the object can be copied directly without decryption
+	SSECCopyStrategyDirect SSECCopyStrategy = iota
+	// SSECCopyStrategyDecryptEncrypt indicates the object must be decrypted then re-encrypted
+	SSECCopyStrategyDecryptEncrypt
+)
+
 const (
 	// SSE-C constants
 	SSECustomerAlgorithmAES256 = "AES256"
@@ -51,6 +61,23 @@ type SSECDecryptedReader struct {
 // IsSSECRequest checks if the request contains SSE-C headers
 func IsSSECRequest(r *http.Request) bool {
 	return r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerAlgorithm) != ""
+}
+
+// IsSSECEncrypted checks if the metadata indicates SSE-C encryption
+func IsSSECEncrypted(metadata map[string][]byte) bool {
+	if metadata == nil {
+		return false
+	}
+
+	// Check for SSE-C specific metadata keys
+	if _, exists := metadata[s3_constants.AmzServerSideEncryptionCustomerAlgorithm]; exists {
+		return true
+	}
+	if _, exists := metadata[s3_constants.AmzServerSideEncryptionCustomerKeyMD5]; exists {
+		return true
+	}
+
+	return false
 }
 
 // validateAndParseSSECHeaders does the core validation and parsing logic
@@ -224,13 +251,7 @@ func CanDirectCopySSEC(srcMetadata map[string][]byte, copySourceKey *SSECustomer
 	return false
 }
 
-// SSECCopyStrategy represents the strategy for copying SSE-C objects
-type SSECCopyStrategy int
-
-const (
-	SSECCopyDirect    SSECCopyStrategy = iota // Direct chunk copy (fast)
-	SSECCopyReencrypt                         // Decrypt and re-encrypt (slow)
-)
+// Note: SSECCopyStrategy is defined above
 
 // DetermineSSECCopyStrategy determines the optimal copy strategy
 func DetermineSSECCopyStrategy(srcMetadata map[string][]byte, copySourceKey *SSECustomerKey, destKey *SSECustomerKey) (SSECCopyStrategy, error) {
@@ -239,21 +260,21 @@ func DetermineSSECCopyStrategy(srcMetadata map[string][]byte, copySourceKey *SSE
 	// Validate source key if source is encrypted
 	if srcEncrypted {
 		if copySourceKey == nil {
-			return SSECCopyReencrypt, ErrSSECustomerKeyMissing
+			return SSECCopyStrategyDecryptEncrypt, ErrSSECustomerKeyMissing
 		}
 		if copySourceKey.KeyMD5 != srcKeyMD5 {
-			return SSECCopyReencrypt, ErrSSECustomerKeyMD5Mismatch
+			return SSECCopyStrategyDecryptEncrypt, ErrSSECustomerKeyMD5Mismatch
 		}
 	} else if copySourceKey != nil {
 		// Source not encrypted but copy source key provided
-		return SSECCopyReencrypt, ErrSSECustomerKeyNotNeeded
+		return SSECCopyStrategyDecryptEncrypt, ErrSSECustomerKeyNotNeeded
 	}
 
 	if CanDirectCopySSEC(srcMetadata, copySourceKey, destKey) {
-		return SSECCopyDirect, nil
+		return SSECCopyStrategyDirect, nil
 	}
 
-	return SSECCopyReencrypt, nil
+	return SSECCopyStrategyDecryptEncrypt, nil
 }
 
 // MapSSECErrorToS3Error maps SSE-C custom errors to S3 API error codes
