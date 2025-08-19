@@ -55,50 +55,66 @@ check-deps: build-weed
 # Start SeaweedFS server
 start-server: check-deps
 	@echo "Starting SeaweedFS server for SSE-C testing..."
-	@if pgrep -f "weed.*server" > /dev/null; then \
+	@set +e; \
+	if pgrep -f "weed.*server" > /dev/null 2>&1 || pgrep -f "weed_binary" > /dev/null 2>&1; then \
 		echo "⚠️  SeaweedFS server already running, stopping first..."; \
-		$(MAKE) stop-server; \
-		sleep 2; \
-	fi
-	@mkdir -p ./test-volume-data
-	@echo "Starting server with S3 API on port $(S3_PORT)..."
-	@$(WEED_BINARY) server -s3 -s3.port=$(S3_PORT) -filer -master.volumeSizeLimitMB=100 -volume.max=100 -dir=./test-volume-data > weed-test.log 2>&1 & echo $$! > weed-server.pid
-	@echo "⏳ Waiting for server to start..."
-	@for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do \
-		if curl -s http://localhost:$(S3_PORT) >/dev/null 2>&1; then \
+		$(MAKE) stop-server 2>/dev/null || true; \
+		sleep 3; \
+	fi; \
+	mkdir -p ./test-volume-data; \
+	echo "Starting server with S3 API on port $(S3_PORT)..."; \
+	$(WEED_BINARY) server -s3 -s3.port=$(S3_PORT) -filer -master.volumeSizeLimitMB=100 -volume.max=100 -dir=./test-volume-data > weed-test.log 2>&1 & \
+	echo $$! > weed-server.pid; \
+	echo "⏳ Waiting for server to start..."; \
+	SERVER_READY=false; \
+	for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do \
+		if curl -s -f http://localhost:$(S3_PORT) >/dev/null 2>&1; then \
 			echo "✅ Server is ready on port $(S3_PORT)"; \
+			SERVER_READY=true; \
 			break; \
 		fi; \
 		if [ $$i -eq 30 ]; then \
 			echo "❌ Server failed to start within 30 seconds"; \
 			echo "=== Server logs ==="; \
-			cat weed-test.log; \
-			$(MAKE) stop-server; \
+			cat weed-test.log 2>/dev/null || echo "No log file available"; \
+			echo "=== End of server logs ==="; \
+			$(MAKE) stop-server 2>/dev/null || true; \
 			exit 1; \
 		fi; \
 		echo "Waiting for server to start... ($$i/30)"; \
 		sleep 1; \
-	done
+	done; \
+	if [ "$$SERVER_READY" != "true" ]; then \
+		echo "❌ Server startup verification failed"; \
+		exit 1; \
+	fi
 
 # Stop SeaweedFS server
 stop-server:
 	@echo "Stopping SeaweedFS server..."
-	@if [ -f weed-server.pid ]; then \
-		PID=$$(cat weed-server.pid); \
-		if ps -p $$PID > /dev/null 2>&1; then \
+	@set +e; \
+	if [ -f weed-server.pid ]; then \
+		PID=$$(cat weed-server.pid 2>/dev/null || echo ""); \
+		if [ -n "$$PID" ] && ps -p $$PID > /dev/null 2>&1; then \
 			echo "Terminating process $$PID..."; \
 			kill -TERM $$PID 2>/dev/null || true; \
-			sleep 2; \
+			for i in 1 2 3 4 5; do \
+				if ! ps -p $$PID > /dev/null 2>&1; then break; fi; \
+				echo "Waiting for process to terminate... ($$i/5)"; \
+				sleep 1; \
+			done; \
 			if ps -p $$PID > /dev/null 2>&1; then \
 				echo "Force killing process $$PID..."; \
 				kill -KILL $$PID 2>/dev/null || true; \
+				sleep 1; \
 			fi; \
 		fi; \
-		rm -f weed-server.pid; \
-	fi
-	@pkill -f "weed.*server" 2>/dev/null || true
-	@sleep 1
-	@echo "✅ Server stopped"
+		rm -f weed-server.pid 2>/dev/null || true; \
+	fi; \
+	pkill -f "weed.*server" 2>/dev/null || true; \
+	pkill -f "weed_binary" 2>/dev/null || true; \
+	sleep 1; \
+	echo "✅ Server stopped"
 
 # Core SSE-C tests (quick)
 test-sse-c-quick: check-deps
@@ -115,16 +131,31 @@ test-sse-c: check-deps
 # Comprehensive SSE-C tests (all features)
 test-sse-c-comprehensive: check-deps
 	@echo "Running comprehensive S3 SSE-C tests..."
-	@go test -v -timeout=$(TEST_TIMEOUT) .
+	@echo "=== Test Environment Info ==="
+	@echo "Working directory: $$(pwd)"
+	@echo "Go version: $$(go version)"
+	@echo "Available test files:"
+	@ls -la *.go 2>/dev/null || echo "No Go files found"
+	@echo "=== Starting Tests ==="
+	@go test -v -timeout=$(TEST_TIMEOUT) . || (echo "❌ Test execution failed, environment:" && env | grep -E "(GO|PATH|HOME)" && exit 1)
 	@echo "✅ Comprehensive SSE-C tests completed"
 
 # Run tests with automatic server management
 test-with-server: start-server
 	@echo "Running SSE-C tests with managed server..."
-	@trap "$(MAKE) stop-server" EXIT; \
-	$(MAKE) test-sse-c-comprehensive || (echo "❌ Tests failed, showing server logs:" && echo "=== Last 50 lines of server logs ===" && tail -50 weed-test.log && echo "=== End of server logs ===" && exit 1)
-	@$(MAKE) stop-server
-	@echo "✅ Tests completed and server stopped"
+	@set +e; \
+	trap "$(MAKE) stop-server 2>/dev/null || true; exit 0" EXIT INT TERM; \
+	$(MAKE) test-sse-c-comprehensive; \
+	TEST_RESULT=$$?; \
+	if [ $$TEST_RESULT -ne 0 ]; then \
+		echo "❌ Tests failed (exit code: $$TEST_RESULT), showing server logs:"; \
+		echo "=== Last 50 lines of server logs ==="; \
+		tail -50 weed-test.log 2>/dev/null || echo "No log file available"; \
+		echo "=== End of server logs ==="; \
+	fi; \
+	$(MAKE) stop-server 2>/dev/null || true; \
+	echo "✅ Server management completed"; \
+	exit $$TEST_RESULT
 
 # Show server logs
 logs:
@@ -154,3 +185,4 @@ benchmark: check-deps
 # Legacy targets for backward compatibility
 test: test-with-server
 setup: start-server
+
