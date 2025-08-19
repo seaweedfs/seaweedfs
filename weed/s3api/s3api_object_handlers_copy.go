@@ -166,20 +166,10 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		dstChunks, err := s3a.copyChunksWithSSEC(entry, r)
 		if err != nil {
 			glog.Errorf("CopyObjectHandler copy chunks with SSE-C error: %v", err)
-			// Map SSE-C errors to appropriate S3 error codes
-			var errCode s3err.ErrorCode
-			switch err {
-			case ErrInvalidEncryptionAlgorithm:
-				errCode = s3err.ErrInvalidEncryptionAlgorithm
-			case ErrInvalidEncryptionKey:
-				errCode = s3err.ErrInvalidEncryptionKey
-			case ErrSSECustomerKeyMD5Mismatch:
-				errCode = s3err.ErrSSECustomerKeyMD5Mismatch
-			case ErrSSECustomerKeyMissing:
-				errCode = s3err.ErrSSECustomerKeyMissing
-			case ErrSSECustomerKeyNotNeeded:
-				errCode = s3err.ErrSSECustomerKeyNotNeeded
-			default:
+			// Use shared error mapping helper
+			errCode := MapSSECErrorToS3Error(err)
+			// For copy operations, if the error is not recognized, use InternalError
+			if errCode == s3err.ErrInvalidRequest {
 				errCode = s3err.ErrInternalError
 			}
 			s3err.WriteErrorResponse(w, r, errCode)

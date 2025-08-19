@@ -594,27 +594,18 @@ func (s3a *S3ApiServer) handleSSECResponse(r *http.Request, proxyResponse *http.
 	// Check if the object has SSE-C metadata
 	sseAlgorithm := proxyResponse.Header.Get(s3_constants.AmzServerSideEncryptionCustomerAlgorithm)
 	sseKeyMD5 := proxyResponse.Header.Get(s3_constants.AmzServerSideEncryptionCustomerKeyMD5)
+	isObjectEncrypted := sseAlgorithm != "" && sseKeyMD5 != ""
 
-	if sseAlgorithm != "" && sseKeyMD5 != "" {
+	// Parse SSE-C headers from request once (avoid duplication)
+	customerKey, err := ParseSSECHeaders(r)
+	if err != nil {
+		errCode := MapSSECErrorToS3Error(err)
+		s3err.WriteErrorResponse(w, r, errCode)
+		return http.StatusBadRequest, 0
+	}
+
+	if isObjectEncrypted {
 		// This object was encrypted with SSE-C, validate customer key
-		customerKey, err := ParseSSECHeaders(r)
-		if err != nil {
-			// Map custom errors to S3 error codes
-			var errCode s3err.ErrorCode
-			switch err {
-			case ErrInvalidEncryptionAlgorithm:
-				errCode = s3err.ErrInvalidEncryptionAlgorithm
-			case ErrInvalidEncryptionKey:
-				errCode = s3err.ErrInvalidEncryptionKey
-			case ErrSSECustomerKeyMD5Mismatch:
-				errCode = s3err.ErrSSECustomerKeyMD5Mismatch
-			default:
-				errCode = s3err.ErrInvalidRequest
-			}
-			s3err.WriteErrorResponse(w, r, errCode)
-			return http.StatusBadRequest, 0
-		}
-
 		if customerKey == nil {
 			s3err.WriteErrorResponse(w, r, s3err.ErrSSECustomerKeyMissing)
 			return http.StatusBadRequest, 0
@@ -682,25 +673,7 @@ func (s3a *S3ApiServer) handleSSECResponse(r *http.Request, proxyResponse *http.
 		}
 		return statusCode, bytesTransferred
 	} else {
-		// Check if customer provided SSE-C headers for non-encrypted object
-		customerKey, err := ParseSSECHeaders(r)
-		if err != nil {
-			// Map custom errors to S3 error codes
-			var errCode s3err.ErrorCode
-			switch err {
-			case ErrInvalidEncryptionAlgorithm:
-				errCode = s3err.ErrInvalidEncryptionAlgorithm
-			case ErrInvalidEncryptionKey:
-				errCode = s3err.ErrInvalidEncryptionKey
-			case ErrSSECustomerKeyMD5Mismatch:
-				errCode = s3err.ErrSSECustomerKeyMD5Mismatch
-			default:
-				errCode = s3err.ErrInvalidRequest
-			}
-			s3err.WriteErrorResponse(w, r, errCode)
-			return http.StatusBadRequest, 0
-		}
-
+		// Object is not encrypted, but check if customer provided SSE-C headers unnecessarily
 		if customerKey != nil {
 			s3err.WriteErrorResponse(w, r, s3err.ErrSSECustomerKeyNotNeeded)
 			return http.StatusBadRequest, 0

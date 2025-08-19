@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
 const (
@@ -125,26 +126,6 @@ func ParseSSECCopySourceHeaders(r *http.Request) (*SSECustomerKey, error) {
 	return validateAndParseSSECHeaders(algorithm, key, keyMD5)
 }
 
-// ValidateSSECKeyForObject validates that the provided SSE-C key matches the object's stored key MD5
-func ValidateSSECKeyForObject(customerKey *SSECustomerKey, storedKeyMD5 string) error {
-	if customerKey == nil {
-		if storedKeyMD5 != "" {
-			return ErrSSECustomerKeyMissing
-		}
-		return nil
-	}
-
-	if storedKeyMD5 == "" {
-		return ErrSSECustomerKeyNotNeeded
-	}
-
-	if customerKey.KeyMD5 != strings.ToLower(storedKeyMD5) {
-		return ErrSSECustomerKeyMD5Mismatch
-	}
-
-	return nil
-}
-
 // CreateSSECEncryptedReader creates a new encrypted reader for SSE-C
 func CreateSSECEncryptedReader(r io.Reader, customerKey *SSECustomerKey) (io.Reader, error) {
 	if customerKey == nil {
@@ -245,47 +226,6 @@ func (r *SSECDecryptedReader) Read(p []byte) (n int, err error) {
 	return n, err
 }
 
-// GetSSECMetadataFromHeaders extracts SSE-C metadata for storage
-func GetSSECMetadataFromHeaders(r *http.Request) map[string][]byte {
-	metadata := make(map[string][]byte)
-
-	if algorithm := r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerAlgorithm); algorithm != "" {
-		metadata[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] = []byte(algorithm)
-	}
-
-	if keyMD5 := r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerKeyMD5); keyMD5 != "" {
-		metadata[s3_constants.AmzServerSideEncryptionCustomerKeyMD5] = []byte(strings.ToLower(keyMD5))
-	}
-
-	return metadata
-}
-
-// AddSSECResponseHeaders adds SSE-C headers to the response
-func AddSSECResponseHeaders(w http.ResponseWriter, metadata map[string][]byte) {
-	if algorithm, exists := metadata[s3_constants.AmzServerSideEncryptionCustomerAlgorithm]; exists {
-		w.Header().Set(s3_constants.AmzServerSideEncryptionCustomerAlgorithm, string(algorithm))
-	}
-
-	if keyMD5, exists := metadata[s3_constants.AmzServerSideEncryptionCustomerKeyMD5]; exists {
-		w.Header().Set(s3_constants.AmzServerSideEncryptionCustomerKeyMD5, string(keyMD5))
-	}
-}
-
-// IsSSECEncrypted checks if the object metadata indicates SSE-C encryption
-func IsSSECEncrypted(metadata map[string][]byte) bool {
-	_, hasAlgorithm := metadata[s3_constants.AmzServerSideEncryptionCustomerAlgorithm]
-	_, hasKeyMD5 := metadata[s3_constants.AmzServerSideEncryptionCustomerKeyMD5]
-	return hasAlgorithm && hasKeyMD5
-}
-
-// GetStoredKeyMD5 extracts the stored key MD5 from object metadata
-func GetStoredKeyMD5(metadata map[string][]byte) string {
-	if keyMD5Bytes, exists := metadata[s3_constants.AmzServerSideEncryptionCustomerKeyMD5]; exists {
-		return string(keyMD5Bytes)
-	}
-	return ""
-}
-
 // GetSourceSSECInfo extracts SSE-C information from source object metadata
 func GetSourceSSECInfo(metadata map[string][]byte) (algorithm string, keyMD5 string, isEncrypted bool) {
 	if alg, exists := metadata[s3_constants.AmzServerSideEncryptionCustomerAlgorithm]; exists {
@@ -310,8 +250,8 @@ func CanDirectCopySSEC(srcMetadata map[string][]byte, copySourceKey *SSECustomer
 	// Case 2: Source encrypted, same key for decryption and destination -> Direct copy
 	if srcEncrypted && copySourceKey != nil && destKey != nil {
 		// Same key if MD5 matches
-		return strings.ToLower(copySourceKey.KeyMD5) == strings.ToLower(srcKeyMD5) &&
-			strings.ToLower(destKey.KeyMD5) == strings.ToLower(srcKeyMD5)
+		return strings.EqualFold(copySourceKey.KeyMD5, srcKeyMD5) &&
+			strings.EqualFold(destKey.KeyMD5, srcKeyMD5)
 	}
 
 	// All other cases require decrypt/re-encrypt
@@ -348,4 +288,22 @@ func DetermineSSECCopyStrategy(srcMetadata map[string][]byte, copySourceKey *SSE
 	}
 
 	return SSECCopyReencrypt, nil
+}
+
+// MapSSECErrorToS3Error maps SSE-C custom errors to S3 API error codes
+func MapSSECErrorToS3Error(err error) s3err.ErrorCode {
+	switch err {
+	case ErrInvalidEncryptionAlgorithm:
+		return s3err.ErrInvalidEncryptionAlgorithm
+	case ErrInvalidEncryptionKey:
+		return s3err.ErrInvalidEncryptionKey
+	case ErrSSECustomerKeyMD5Mismatch:
+		return s3err.ErrSSECustomerKeyMD5Mismatch
+	case ErrSSECustomerKeyMissing:
+		return s3err.ErrSSECustomerKeyMissing
+	case ErrSSECustomerKeyNotNeeded:
+		return s3err.ErrSSECustomerKeyNotNeeded
+	default:
+		return s3err.ErrInvalidRequest
+	}
 }

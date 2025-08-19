@@ -194,17 +194,9 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	customerKey, err := ParseSSECHeaders(r)
 	if err != nil {
 		glog.Errorf("SSE-C header validation failed: %v", err)
-		// Map custom errors to S3 error codes
-		switch err {
-		case ErrInvalidEncryptionAlgorithm:
-			return "", s3err.ErrInvalidEncryptionAlgorithm
-		case ErrInvalidEncryptionKey:
-			return "", s3err.ErrInvalidEncryptionKey
-		case ErrSSECustomerKeyMD5Mismatch:
-			return "", s3err.ErrSSECustomerKeyMD5Mismatch
-		default:
-			return "", s3err.ErrInvalidRequest
-		}
+		// Use shared error mapping helper
+		errCode := MapSSECErrorToS3Error(err)
+		return "", errCode
 	}
 
 	// Apply SSE-C encryption if customer key is provided
