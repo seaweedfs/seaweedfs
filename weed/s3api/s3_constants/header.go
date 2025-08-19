@@ -71,10 +71,22 @@ const (
 	AmzServerSideEncryptionCustomerKeyMD5    = "X-Amz-Server-Side-Encryption-Customer-Key-MD5"
 	AmzServerSideEncryptionContext           = "X-Amz-Server-Side-Encryption-Context"
 
+	// S3 Server-Side Encryption with KMS (SSE-KMS)
+	AmzServerSideEncryption                 = "X-Amz-Server-Side-Encryption"
+	AmzServerSideEncryptionAwsKmsKeyId      = "X-Amz-Server-Side-Encryption-Aws-Kms-Key-Id"
+	AmzServerSideEncryptionBucketKeyEnabled = "X-Amz-Server-Side-Encryption-Bucket-Key-Enabled"
+
 	// S3 SSE-C copy source headers
 	AmzCopySourceServerSideEncryptionCustomerAlgorithm = "X-Amz-Copy-Source-Server-Side-Encryption-Customer-Algorithm"
 	AmzCopySourceServerSideEncryptionCustomerKey       = "X-Amz-Copy-Source-Server-Side-Encryption-Customer-Key"
 	AmzCopySourceServerSideEncryptionCustomerKeyMD5    = "X-Amz-Copy-Source-Server-Side-Encryption-Customer-Key-MD5"
+)
+
+// Metadata keys for internal storage
+const (
+	// SSE-KMS metadata keys
+	AmzEncryptedDataKey      = "x-amz-encrypted-data-key"
+	AmzEncryptionContextMeta = "x-amz-encryption-context"
 )
 
 // Non-Standard S3 HTTP request constants
