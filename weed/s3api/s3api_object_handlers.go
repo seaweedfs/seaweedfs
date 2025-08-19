@@ -623,6 +623,13 @@ func (s3a *S3ApiServer) handleSSECResponse(r *http.Request, proxyResponse *http.
 			return http.StatusBadRequest, 0
 		}
 
+		// SSE-C encrypted objects do not support HTTP Range requests because the 16-byte IV
+		// is required at the beginning of the stream for proper decryption
+		if r.Header.Get("Range") != "" {
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
+			return http.StatusRequestedRangeNotSatisfiable, 0
+		}
+
 		// Create decrypted reader
 		decryptedReader, decErr := CreateSSECDecryptedReader(proxyResponse.Body, customerKey)
 		if decErr != nil {
