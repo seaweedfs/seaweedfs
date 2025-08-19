@@ -347,6 +347,11 @@ func encryptionConfigFromXMLBytes(xmlBytes []byte) (*s3_pb.EncryptionConfigurati
 		return nil, err
 	}
 
+	// Validate namespace - should be empty or the standard AWS namespace
+	if xmlConfig.XMLName.Space != "" && xmlConfig.XMLName.Space != "http://s3.amazonaws.com/doc/2006-03-01/" {
+		return nil, fmt.Errorf("invalid XML namespace: %s", xmlConfig.XMLName.Space)
+	}
+
 	// Validate the configuration
 	if len(xmlConfig.Rules) == 0 {
 		return nil, fmt.Errorf("encryption configuration must have at least one rule")

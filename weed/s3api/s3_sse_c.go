@@ -60,6 +60,12 @@ type SSECDecryptedReader struct {
 
 // IsSSECRequest checks if the request contains SSE-C headers
 func IsSSECRequest(r *http.Request) bool {
+	// If SSE-KMS headers are present, this is not an SSE-C request (they are mutually exclusive)
+	sseAlgorithm := r.Header.Get(s3_constants.AmzServerSideEncryption)
+	if sseAlgorithm == "aws:kms" || r.Header.Get(s3_constants.AmzServerSideEncryptionAwsKmsKeyId) != "" {
+		return false
+	}
+	
 	return r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerAlgorithm) != ""
 }
 

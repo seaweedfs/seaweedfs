@@ -321,6 +321,11 @@ func GetSSEKMSFromMetadata(metadata map[string][]byte) (*SSEKMSKey, error) {
 
 // IsSSEKMSRequest checks if the request contains SSE-KMS headers
 func IsSSEKMSRequest(r *http.Request) bool {
+	// If SSE-C headers are present, this is not an SSE-KMS request (they are mutually exclusive)
+	if r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerAlgorithm) != "" {
+		return false
+	}
+	
 	sseAlgorithm := r.Header.Get(s3_constants.AmzServerSideEncryption)
 	return sseAlgorithm == "aws:kms" || r.Header.Get(s3_constants.AmzServerSideEncryptionAwsKmsKeyId) != ""
 }
