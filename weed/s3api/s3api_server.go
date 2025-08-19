@@ -6,7 +6,6 @@ import (
 	"net"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
@@ -43,17 +42,15 @@ type S3ApiServerOption struct {
 
 type S3ApiServer struct {
 	s3_pb.UnimplementedSeaweedS3Server
-	option                   *S3ApiServerOption
-	iam                      *IdentityAccessManagement
-	cb                       *CircuitBreaker
-	randomClientId           int32
-	filerGuard               *security.Guard
-	client                   util_http_client.HTTPClientInterface
-	bucketRegistry           *BucketRegistry
-	credentialManager        *credential.CredentialManager
-	bucketConfigCache        *BucketConfigCache
-	bucketMetadataLocks      map[string]*sync.RWMutex
-	bucketMetadataLocksMutex sync.RWMutex
+	option            *S3ApiServerOption
+	iam               *IdentityAccessManagement
+	cb                *CircuitBreaker
+	randomClientId    int32
+	filerGuard        *security.Guard
+	client            util_http_client.HTTPClientInterface
+	bucketRegistry    *BucketRegistry
+	credentialManager *credential.CredentialManager
+	bucketConfigCache *BucketConfigCache
 }
 
 func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer *S3ApiServer, err error) {
@@ -85,14 +82,13 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	iam = NewIdentityAccessManagementWithStore(option, explicitStore)
 
 	s3ApiServer = &S3ApiServer{
-		option:              option,
-		iam:                 iam,
-		randomClientId:      util.RandomInt32(),
-		filerGuard:          security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec),
-		cb:                  NewCircuitBreaker(option),
-		credentialManager:   iam.credentialManager,
-		bucketConfigCache:   NewBucketConfigCache(60 * time.Minute), // Increased TTL since cache is now event-driven
-		bucketMetadataLocks: make(map[string]*sync.RWMutex),
+		option:            option,
+		iam:               iam,
+		randomClientId:    util.RandomInt32(),
+		filerGuard:        security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec),
+		cb:                NewCircuitBreaker(option),
+		credentialManager: iam.credentialManager,
+		bucketConfigCache: NewBucketConfigCache(60 * time.Minute), // Increased TTL since cache is now event-driven
 	}
 
 	if option.Config != "" {
