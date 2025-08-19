@@ -1,17 +1,14 @@
 package s3api
 
 import (
-	"context"
-	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
-	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/cors"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
@@ -34,11 +31,49 @@ type ApplyServerSideEncryptionByDefault struct {
 	KMSMasterKeyID string `xml:"KMSMasterKeyID,omitempty"`
 }
 
-// BucketEncryptionConfig represents the internal bucket encryption configuration
-type BucketEncryptionConfig struct {
-	SSEAlgorithm     string `json:"sseAlgorithm"`     // "AES256" or "aws:kms"
-	KMSKeyID         string `json:"kmsKeyId"`         // KMS key ID (optional for aws:kms)
-	BucketKeyEnabled bool   `json:"bucketKeyEnabled"` // S3 Bucket Keys optimization
+// encryptionConfigToProto converts EncryptionConfiguration to protobuf format
+func encryptionConfigToProto(config *s3_pb.EncryptionConfiguration) *s3_pb.EncryptionConfiguration {
+	if config == nil {
+		return nil
+	}
+	return &s3_pb.EncryptionConfiguration{
+		SseAlgorithm:     config.SseAlgorithm,
+		KmsKeyId:         config.KmsKeyId,
+		BucketKeyEnabled: config.BucketKeyEnabled,
+	}
+}
+
+// encryptionConfigFromXML converts XML ServerSideEncryptionConfiguration to protobuf
+func encryptionConfigFromXML(xmlConfig *ServerSideEncryptionConfiguration) *s3_pb.EncryptionConfiguration {
+	if xmlConfig == nil || len(xmlConfig.Rules) == 0 {
+		return nil
+	}
+
+	rule := xmlConfig.Rules[0] // AWS S3 supports only one rule
+	return &s3_pb.EncryptionConfiguration{
+		SseAlgorithm:     rule.ApplyServerSideEncryptionByDefault.SSEAlgorithm,
+		KmsKeyId:         rule.ApplyServerSideEncryptionByDefault.KMSMasterKeyID,
+		BucketKeyEnabled: rule.BucketKeyEnabled != nil && *rule.BucketKeyEnabled,
+	}
+}
+
+// encryptionConfigToXML converts protobuf EncryptionConfiguration to XML
+func encryptionConfigToXML(config *s3_pb.EncryptionConfiguration) *ServerSideEncryptionConfiguration {
+	if config == nil {
+		return nil
+	}
+
+	return &ServerSideEncryptionConfiguration{
+		Rules: []ServerSideEncryptionRule{
+			{
+				ApplyServerSideEncryptionByDefault: ApplyServerSideEncryptionByDefault{
+					SSEAlgorithm:   config.SseAlgorithm,
+					KMSMasterKeyID: config.KmsKeyId,
+				},
+				BucketKeyEnabled: &config.BucketKeyEnabled,
+			},
+		},
+	}
 }
 
 // Default encryption algorithms
@@ -52,28 +87,21 @@ func (s3a *S3ApiServer) GetBucketEncryption(w http.ResponseWriter, r *http.Reque
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 
 	// Load bucket encryption configuration
-	config, err := s3a.loadBucketEncryptionConfig(bucket)
-	if err != nil {
-		if err == ErrBucketEncryptionNotFound {
+	config, errCode := s3a.getEncryptionConfiguration(bucket)
+	if errCode != s3err.ErrNone {
+		if errCode == s3err.ErrNoSuchBucketEncryptionConfiguration {
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucketEncryptionConfiguration)
 			return
 		}
-		glog.Errorf("Failed to load bucket encryption config for %s: %v", bucket, err)
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
 
-	// Convert internal config to S3 XML response
-	response := &ServerSideEncryptionConfiguration{
-		Rules: []ServerSideEncryptionRule{
-			{
-				ApplyServerSideEncryptionByDefault: ApplyServerSideEncryptionByDefault{
-					SSEAlgorithm:   config.SSEAlgorithm,
-					KMSMasterKeyID: config.KMSKeyID,
-				},
-				BucketKeyEnabled: &config.BucketKeyEnabled,
-			},
-		},
+	// Convert protobuf config to S3 XML response
+	response := encryptionConfigToXML(config)
+	if response == nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucketEncryptionConfiguration)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/xml")
@@ -97,20 +125,20 @@ func (s3a *S3ApiServer) PutBucketEncryption(w http.ResponseWriter, r *http.Reque
 	}
 	defer r.Body.Close()
 
-	var config ServerSideEncryptionConfiguration
-	if err := xml.Unmarshal(body, &config); err != nil {
+	var xmlConfig ServerSideEncryptionConfiguration
+	if err := xml.Unmarshal(body, &xmlConfig); err != nil {
 		glog.Errorf("Failed to parse bucket encryption configuration: %v", err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedXML)
 		return
 	}
 
 	// Validate the configuration
-	if len(config.Rules) == 0 {
+	if len(xmlConfig.Rules) == 0 {
 		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedXML)
 		return
 	}
 
-	rule := config.Rules[0] // AWS S3 supports only one rule
+	rule := xmlConfig.Rules[0] // AWS S3 supports only one rule
 
 	// Validate SSE algorithm
 	if rule.ApplyServerSideEncryptionByDefault.SSEAlgorithm != EncryptionTypeAES256 &&
@@ -128,17 +156,13 @@ func (s3a *S3ApiServer) PutBucketEncryption(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	// Convert to internal configuration format
-	bucketConfig := &BucketEncryptionConfig{
-		SSEAlgorithm:     rule.ApplyServerSideEncryptionByDefault.SSEAlgorithm,
-		KMSKeyID:         rule.ApplyServerSideEncryptionByDefault.KMSMasterKeyID,
-		BucketKeyEnabled: rule.BucketKeyEnabled != nil && *rule.BucketKeyEnabled,
-	}
+	// Convert XML to protobuf configuration
+	encryptionConfig := encryptionConfigFromXML(&xmlConfig)
 
-	// Save the configuration
-	if err := s3a.saveBucketEncryptionConfig(bucket, bucketConfig); err != nil {
-		glog.Errorf("Failed to save bucket encryption config for %s: %v", bucket, err)
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+	// Update the bucket configuration
+	errCode := s3a.updateEncryptionConfiguration(bucket, encryptionConfig)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
 
@@ -149,13 +173,9 @@ func (s3a *S3ApiServer) PutBucketEncryption(w http.ResponseWriter, r *http.Reque
 func (s3a *S3ApiServer) DeleteBucketEncryption(w http.ResponseWriter, r *http.Request) {
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 
-	if err := s3a.deleteBucketEncryptionConfig(bucket); err != nil {
-		if err == ErrBucketEncryptionNotFound {
-			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucketEncryptionConfiguration)
-			return
-		}
-		glog.Errorf("Failed to delete bucket encryption config for %s: %v", bucket, err)
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+	errCode := s3a.removeEncryptionConfiguration(bucket)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
 
@@ -163,99 +183,110 @@ func (s3a *S3ApiServer) DeleteBucketEncryption(w http.ResponseWriter, r *http.Re
 }
 
 // GetBucketEncryptionConfig retrieves the bucket encryption configuration for internal use
-func (s3a *S3ApiServer) GetBucketEncryptionConfig(bucket string) (*BucketEncryptionConfig, error) {
-	return s3a.loadBucketEncryptionConfig(bucket)
-}
-
-// Storage layer functions for bucket encryption configuration
-
-var ErrBucketEncryptionNotFound = fmt.Errorf("bucket encryption configuration not found")
-
-// loadBucketEncryptionConfig loads the encryption configuration for a bucket
-func (s3a *S3ApiServer) loadBucketEncryptionConfig(bucket string) (*BucketEncryptionConfig, error) {
-	var config *BucketEncryptionConfig
-
-	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		request := &filer_pb.LookupDirectoryEntryRequest{
-			Directory: fmt.Sprintf("/.seaweedfs/buckets/%s", bucket),
-			Name:      "encryption",
+func (s3a *S3ApiServer) GetBucketEncryptionConfig(bucket string) (*s3_pb.EncryptionConfiguration, error) {
+	config, errCode := s3a.getEncryptionConfiguration(bucket)
+	if errCode != s3err.ErrNone {
+		if errCode == s3err.ErrNoSuchBucketEncryptionConfiguration {
+			return nil, fmt.Errorf("no encryption configuration found")
 		}
-
-		response, err := client.LookupDirectoryEntry(context.Background(), request)
-		if err != nil {
-			return err
-		}
-
-		if response.Entry == nil || response.Entry.Content == nil {
-			return ErrBucketEncryptionNotFound
-		}
-
-		var cfg BucketEncryptionConfig
-		if err := json.Unmarshal(response.Entry.Content, &cfg); err != nil {
-			return fmt.Errorf("failed to unmarshal bucket encryption config: %v", err)
-		}
-
-		config = &cfg
-		return nil
-	})
-
-	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			return nil, ErrBucketEncryptionNotFound
-		}
-		return nil, err
+		return nil, fmt.Errorf("failed to get encryption configuration")
 	}
-
 	return config, nil
 }
 
-// saveBucketEncryptionConfig saves the encryption configuration for a bucket
-func (s3a *S3ApiServer) saveBucketEncryptionConfig(bucket string, config *BucketEncryptionConfig) error {
-	// Serialize the configuration
-	configData, err := json.Marshal(config)
+// Internal methods following the bucket configuration pattern
+
+// getEncryptionConfiguration retrieves encryption configuration with caching
+func (s3a *S3ApiServer) getEncryptionConfiguration(bucket string) (*s3_pb.EncryptionConfiguration, s3err.ErrorCode) {
+	// Get existing metadata
+	_, _, encryptionConfig, err := s3a.getBucketEncryptionMetadata(bucket)
 	if err != nil {
-		return fmt.Errorf("failed to marshal bucket encryption config: %v", err)
+		if err.Error() == "no encryption configuration found" {
+			return nil, s3err.ErrNoSuchBucketEncryptionConfiguration
+		}
+		glog.Errorf("getEncryptionConfiguration: failed to get bucket metadata for bucket %s: %v", bucket, err)
+		return nil, s3err.ErrInternalError
 	}
 
-	// Save to filer
-	return s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		// Ensure the bucket metadata directory exists
-		bucketDir := fmt.Sprintf("/.seaweedfs/buckets/%s", bucket)
-
-		_, err := client.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
-			Directory: bucketDir,
-			Entry: &filer_pb.Entry{
-				Name:        "encryption",
-				IsDirectory: false,
-				Content:     configData,
-				Attributes: &filer_pb.FuseAttributes{
-					Mtime:    time.Now().Unix(),
-					FileMode: 0644,
-					FileSize: uint64(len(configData)),
-				},
-			},
-		})
-
-		return err
-	})
+	return encryptionConfig, s3err.ErrNone
 }
 
-// deleteBucketEncryptionConfig deletes the encryption configuration for a bucket
-func (s3a *S3ApiServer) deleteBucketEncryptionConfig(bucket string) error {
-	return s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		request := &filer_pb.DeleteEntryRequest{
-			Directory:    fmt.Sprintf("/.seaweedfs/buckets/%s", bucket),
-			Name:         "encryption",
-			IsDeleteData: true,
-		}
+// updateEncryptionConfiguration updates the encryption configuration for a bucket
+func (s3a *S3ApiServer) updateEncryptionConfiguration(bucket string, encryptionConfig *s3_pb.EncryptionConfiguration) s3err.ErrorCode {
+	// Get existing metadata
+	existingTags, existingCors, _, err := s3a.getBucketEncryptionMetadata(bucket)
+	if err != nil {
+		glog.Errorf("updateEncryptionConfiguration: failed to get bucket metadata for bucket %s: %v", bucket, err)
+		return s3err.ErrInternalError
+	}
 
-		_, err := client.DeleteEntry(context.Background(), request)
-		if err != nil && strings.Contains(err.Error(), "not found") {
-			return ErrBucketEncryptionNotFound
-		}
+	// Store updated metadata
+	if err := s3a.setBucketEncryptionMetadata(bucket, existingTags, existingCors, encryptionConfig); err != nil {
+		glog.Errorf("updateEncryptionConfiguration: failed to persist encryption config to bucket content for bucket %s: %v", bucket, err)
+		return s3err.ErrInternalError
+	}
 
-		return err
-	})
+	// Cache will be updated automatically via metadata subscription
+	return s3err.ErrNone
+}
+
+// removeEncryptionConfiguration removes the encryption configuration for a bucket
+func (s3a *S3ApiServer) removeEncryptionConfiguration(bucket string) s3err.ErrorCode {
+	// Get existing metadata
+	existingTags, existingCors, existingEncryption, err := s3a.getBucketEncryptionMetadata(bucket)
+	if err != nil {
+		if err.Error() == "no encryption configuration found" {
+			return s3err.ErrNoSuchBucketEncryptionConfiguration
+		}
+		glog.Errorf("removeEncryptionConfiguration: failed to get bucket metadata for bucket %s: %v", bucket, err)
+		return s3err.ErrInternalError
+	}
+
+	if existingEncryption == nil {
+		return s3err.ErrNoSuchBucketEncryptionConfiguration
+	}
+
+	// Store metadata without encryption config
+	if err := s3a.setBucketEncryptionMetadata(bucket, existingTags, existingCors, nil); err != nil {
+		glog.Errorf("removeEncryptionConfiguration: failed to remove encryption config from bucket content for bucket %s: %v", bucket, err)
+		return s3err.ErrInternalError
+	}
+
+	// Cache will be updated automatically via metadata subscription
+	return s3err.ErrNone
+}
+
+// getBucketEncryptionMetadata retrieves bucket metadata including encryption configuration
+func (s3a *S3ApiServer) getBucketEncryptionMetadata(bucket string) (map[string]string, *s3_pb.CORSConfiguration, *s3_pb.EncryptionConfiguration, error) {
+	// Convert CORS from internal type to protobuf type
+	tags, corsConfigInternal, encryptionConfig, err := s3a.getBucketMetadataWithEncryption(bucket)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	// Convert internal CORS to protobuf CORS
+	var corsConfig *s3_pb.CORSConfiguration
+	if corsConfigInternal != nil {
+		corsConfig = corsConfigToProto(corsConfigInternal)
+	}
+
+	// If no encryption config, return error to indicate missing configuration
+	if encryptionConfig == nil {
+		return tags, corsConfig, nil, fmt.Errorf("no encryption configuration found")
+	}
+
+	return tags, corsConfig, encryptionConfig, nil
+}
+
+// setBucketEncryptionMetadata stores bucket metadata including encryption configuration
+func (s3a *S3ApiServer) setBucketEncryptionMetadata(bucket string, tags map[string]string, corsConfig *s3_pb.CORSConfiguration, encryptionConfig *s3_pb.EncryptionConfiguration) error {
+	// Convert protobuf CORS to internal CORS
+	var corsConfigInternal *cors.CORSConfiguration
+	if corsConfig != nil {
+		corsConfigInternal = corsConfigFromProto(corsConfig)
+	}
+
+	return s3a.setBucketMetadataWithEncryption(bucket, tags, corsConfigInternal, encryptionConfig)
 }
 
 // IsDefaultEncryptionEnabled checks if default encryption is enabled for a bucket
@@ -264,7 +295,7 @@ func (s3a *S3ApiServer) IsDefaultEncryptionEnabled(bucket string) bool {
 	if err != nil || config == nil {
 		return false
 	}
-	return config.SSEAlgorithm != ""
+	return config.SseAlgorithm != ""
 }
 
 // GetDefaultEncryptionHeaders returns the default encryption headers for a bucket
@@ -275,10 +306,10 @@ func (s3a *S3ApiServer) GetDefaultEncryptionHeaders(bucket string) map[string]st
 	}
 
 	headers := make(map[string]string)
-	headers[s3_constants.AmzServerSideEncryption] = config.SSEAlgorithm
+	headers[s3_constants.AmzServerSideEncryption] = config.SseAlgorithm
 
-	if config.SSEAlgorithm == EncryptionTypeKMS && config.KMSKeyID != "" {
-		headers[s3_constants.AmzServerSideEncryptionAwsKmsKeyId] = config.KMSKeyID
+	if config.SseAlgorithm == EncryptionTypeKMS && config.KmsKeyId != "" {
+		headers[s3_constants.AmzServerSideEncryptionAwsKmsKeyId] = config.KmsKeyId
 	}
 
 	if config.BucketKeyEnabled {

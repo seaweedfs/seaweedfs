@@ -468,47 +468,58 @@ func parseAndCachePublicReadStatus(acl []byte) bool {
 
 // getBucketMetadata retrieves bucket metadata from bucket directory content using protobuf
 func (s3a *S3ApiServer) getBucketMetadata(bucket string) (map[string]string, *cors.CORSConfiguration, error) {
+	tags, corsConfig, _, err := s3a.getBucketMetadataWithEncryption(bucket)
+	return tags, corsConfig, err
+}
+
+// getBucketMetadataWithEncryption retrieves bucket metadata including encryption configuration
+func (s3a *S3ApiServer) getBucketMetadataWithEncryption(bucket string) (map[string]string, *cors.CORSConfiguration, *s3_pb.EncryptionConfiguration, error) {
 	// Validate bucket name to prevent path traversal attacks
 	if bucket == "" || strings.Contains(bucket, "/") || strings.Contains(bucket, "\\") ||
 		strings.Contains(bucket, "..") || strings.Contains(bucket, "~") {
-		return nil, nil, fmt.Errorf("invalid bucket name: %s", bucket)
+		return nil, nil, nil, fmt.Errorf("invalid bucket name: %s", bucket)
 	}
 
 	// Clean the bucket name further to prevent any potential path traversal
 	bucket = filepath.Clean(bucket)
 	if bucket == "." || bucket == ".." {
-		return nil, nil, fmt.Errorf("invalid bucket name: %s", bucket)
+		return nil, nil, nil, fmt.Errorf("invalid bucket name: %s", bucket)
 	}
 
 	// Get bucket directory entry to access its content
 	entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
 	if err != nil {
-		return nil, nil, fmt.Errorf("error retrieving bucket directory %s: %w", bucket, err)
+		return nil, nil, nil, fmt.Errorf("error retrieving bucket directory %s: %w", bucket, err)
 	}
 	if entry == nil {
-		return nil, nil, fmt.Errorf("bucket directory not found %s", bucket)
+		return nil, nil, nil, fmt.Errorf("bucket directory not found %s", bucket)
 	}
 
 	// If no content, return empty metadata
 	if len(entry.Content) == 0 {
-		return make(map[string]string), nil, nil
+		return make(map[string]string), nil, nil, nil
 	}
 
 	// Unmarshal metadata from protobuf
 	var protoMetadata s3_pb.BucketMetadata
 	if err := proto.Unmarshal(entry.Content, &protoMetadata); err != nil {
-		glog.Errorf("getBucketMetadata: failed to unmarshal protobuf metadata for bucket %s: %v", bucket, err)
-		return make(map[string]string), nil, nil // Return empty metadata on error, don't fail
+		glog.Errorf("getBucketMetadataWithEncryption: failed to unmarshal protobuf metadata for bucket %s: %v", bucket, err)
+		return make(map[string]string), nil, nil, nil // Return empty metadata on error, don't fail
 	}
 
 	// Convert protobuf CORS to standard CORS
 	corsConfig := corsConfigFromProto(protoMetadata.Cors)
 
-	return protoMetadata.Tags, corsConfig, nil
+	return protoMetadata.Tags, corsConfig, protoMetadata.Encryption, nil
 }
 
 // setBucketMetadata stores bucket metadata in bucket directory content using protobuf
 func (s3a *S3ApiServer) setBucketMetadata(bucket string, tags map[string]string, corsConfig *cors.CORSConfiguration) error {
+	return s3a.setBucketMetadataWithEncryption(bucket, tags, corsConfig, nil)
+}
+
+// setBucketMetadataWithEncryption stores bucket metadata including encryption configuration
+func (s3a *S3ApiServer) setBucketMetadataWithEncryption(bucket string, tags map[string]string, corsConfig *cors.CORSConfiguration, encryptionConfig *s3_pb.EncryptionConfiguration) error {
 	// Validate bucket name to prevent path traversal attacks
 	if bucket == "" || strings.Contains(bucket, "/") || strings.Contains(bucket, "\\") ||
 		strings.Contains(bucket, "..") || strings.Contains(bucket, "~") {
@@ -523,8 +534,9 @@ func (s3a *S3ApiServer) setBucketMetadata(bucket string, tags map[string]string,
 
 	// Create protobuf metadata
 	protoMetadata := &s3_pb.BucketMetadata{
-		Tags: tags,
-		Cors: corsConfigToProto(corsConfig),
+		Tags:       tags,
+		Cors:       corsConfigToProto(corsConfig),
+		Encryption: encryptionConfig,
 	}
 
 	// Marshal metadata to protobuf
