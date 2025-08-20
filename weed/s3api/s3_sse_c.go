@@ -110,7 +110,7 @@ func validateAndParseSSECHeaders(algorithm, key, keyMD5 string) (*SSECustomerKey
 	glog.V(4).Infof("SSE-C MD5 validation: provided='%s', expected='%s', keyBytes=%x", keyMD5, expectedMD5, keyBytes)
 
 	if keyMD5 != expectedMD5 {
-		glog.Errorf("SSE-C MD5 mismatch: provided='%s', expected='%s', keyBytes=%x, sum=%x", keyMD5, expectedMD5, keyBytes, sum)
+		glog.Errorf("SSE-C MD5 mismatch: provided='%s', expected='%s'", keyMD5, expectedMD5)
 		return nil, ErrSSECustomerKeyMD5Mismatch
 	}
 
