@@ -87,6 +87,17 @@ const (
 	// SSE-KMS metadata keys
 	AmzEncryptedDataKey      = "x-amz-encrypted-data-key"
 	AmzEncryptionContextMeta = "x-amz-encryption-context"
+
+	// SeaweedFS internal metadata keys for encryption
+	SeaweedFSSSEKMSKey = "sse-kms-key" // Key for storing serialized SSE-KMS metadata
+	SeaweedFSSSES3Key  = "sse-s3-key"  // Key for storing serialized SSE-S3 metadata
+	SeaweedFSSSEIV     = "sse-c-iv"    // Key for storing SSE-C IV
+)
+
+// SeaweedFS internal headers for filer communication
+const (
+	SeaweedFSSSEKMSKeyHeader = "X-SeaweedFS-SSE-KMS-Key" // Header for passing SSE-KMS metadata to filer
+	SeaweedFSSSEIVHeader     = "X-SeaweedFS-SSE-IV"      // Header for passing SSE-C IV to filer
 )
 
 // Non-Standard S3 HTTP request constants

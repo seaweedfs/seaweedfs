@@ -11,6 +11,7 @@ import (
 	"net/http"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -128,7 +129,7 @@ func (scm *StreamingCopyManager) createEncryptionSpec(entry *filer_pb.Entry, r *
 	} else if state.SrcSSEKMS {
 		spec.SourceType = EncryptionTypeSSEKMS
 		// Extract SSE-KMS key from metadata
-		if keyData, exists := entry.Extended["sse-kms-key"]; exists {
+		if keyData, exists := entry.Extended[s3_constants.SeaweedFSSSEKMSKey]; exists {
 			sseKey, err := DeserializeSSEKMSMetadata(keyData)
 			if err != nil {
 				return nil, fmt.Errorf("deserialize SSE-KMS metadata: %w", err)
@@ -138,7 +139,7 @@ func (scm *StreamingCopyManager) createEncryptionSpec(entry *filer_pb.Entry, r *
 	} else if state.SrcSSES3 {
 		spec.SourceType = EncryptionTypeSSES3
 		// Extract SSE-S3 key from metadata
-		if keyData, exists := entry.Extended["sse-s3-key"]; exists {
+		if keyData, exists := entry.Extended[s3_constants.SeaweedFSSSES3Key]; exists {
 			// TODO: This should use a proper SSE-S3 key manager from S3ApiServer
 			// For now, create a temporary key manager to handle deserialization
 			tempKeyManager := NewSSES3KeyManager()

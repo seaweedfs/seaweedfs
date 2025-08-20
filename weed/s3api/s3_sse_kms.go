@@ -445,8 +445,44 @@ func BuildEncryptionContext(bucketName, objectKey string, useBucketKey bool) map
 	return kms.BuildS3EncryptionContext(bucketName, objectKey, useBucketKey)
 }
 
-// SerializeSSEKMSMetadata serializes SSE-KMS metadata for storage
+// parseEncryptionContext parses the user-provided encryption context from base64 JSON
+func parseEncryptionContext(contextHeader string) (map[string]string, error) {
+	if contextHeader == "" {
+		return nil, nil
+	}
+
+	// Decode base64
+	contextBytes, err := base64.StdEncoding.DecodeString(contextHeader)
+	if err != nil {
+		return nil, fmt.Errorf("invalid base64 encoding in encryption context: %w", err)
+	}
+
+	// Parse JSON
+	var context map[string]string
+	if err := json.Unmarshal(contextBytes, &context); err != nil {
+		return nil, fmt.Errorf("invalid JSON in encryption context: %w", err)
+	}
+
+	// Validate context keys and values
+	for k, v := range context {
+		if k == "" || v == "" {
+			return nil, fmt.Errorf("encryption context keys and values cannot be empty")
+		}
+		// AWS KMS has limits on context key/value length (256 chars each)
+		if len(k) > 256 || len(v) > 256 {
+			return nil, fmt.Errorf("encryption context key or value too long (max 256 characters)")
+		}
+	}
+
+	return context, nil
+}
+
+// SerializeSSEKMSMetadata serializes SSE-KMS metadata for storage in object metadata
 func SerializeSSEKMSMetadata(sseKey *SSEKMSKey) ([]byte, error) {
+	if sseKey == nil {
+		return nil, fmt.Errorf("SSE-KMS key cannot be nil")
+	}
+
 	metadata := &SSEKMSMetadata{
 		Algorithm:         "aws:kms",
 		KeyID:             sseKey.KeyID,
@@ -455,28 +491,48 @@ func SerializeSSEKMSMetadata(sseKey *SSEKMSKey) ([]byte, error) {
 		BucketKeyEnabled:  sseKey.BucketKeyEnabled,
 	}
 
-	return json.Marshal(metadata)
+	data, err := json.Marshal(metadata)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal SSE-KMS metadata: %w", err)
+	}
+
+	glog.V(4).Infof("Serialized SSE-KMS metadata: keyID=%s, bucketKey=%t", sseKey.KeyID, sseKey.BucketKeyEnabled)
+	return data, nil
 }
 
-// DeserializeSSEKMSMetadata deserializes SSE-KMS metadata from storage
+// DeserializeSSEKMSMetadata deserializes SSE-KMS metadata from storage and reconstructs the SSE-KMS key
 func DeserializeSSEKMSMetadata(data []byte) (*SSEKMSKey, error) {
+	if len(data) == 0 {
+		return nil, fmt.Errorf("empty SSE-KMS metadata")
+	}
+
 	var metadata SSEKMSMetadata
 	if err := json.Unmarshal(data, &metadata); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal SSE-KMS metadata: %v", err)
+		return nil, fmt.Errorf("failed to unmarshal SSE-KMS metadata: %w", err)
+	}
+
+	// Validate algorithm
+	if metadata.Algorithm != "aws:kms" {
+		return nil, fmt.Errorf("invalid SSE-KMS algorithm: %s", metadata.Algorithm)
 	}
 
 	// Decode the encrypted data key
 	encryptedDataKey, err := base64.StdEncoding.DecodeString(metadata.EncryptedDataKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode encrypted data key: %v", err)
+		return nil, fmt.Errorf("failed to decode encrypted data key: %w", err)
 	}
 
-	return &SSEKMSKey{
+	sseKey := &SSEKMSKey{
 		KeyID:             metadata.KeyID,
 		EncryptedDataKey:  encryptedDataKey,
 		EncryptionContext: metadata.EncryptionContext,
 		BucketKeyEnabled:  metadata.BucketKeyEnabled,
-	}, nil
+		// Note: IV is not stored in metadata as it's generated during encryption
+		// and is typically stored separately or embedded in the ciphertext
+	}
+
+	glog.V(4).Infof("Deserialized SSE-KMS metadata: keyID=%s, bucketKey=%t", sseKey.KeyID, sseKey.BucketKeyEnabled)
+	return sseKey, nil
 }
 
 // AddSSEKMSResponseHeaders adds SSE-KMS response headers to an HTTP response
