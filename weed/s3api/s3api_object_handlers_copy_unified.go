@@ -116,33 +116,8 @@ func (s3a *S3ApiServer) executeEncryptCopy(entry *filer_pb.Entry, r *http.Reques
 	}
 
 	if state.DstSSEKMS {
-		// Use existing SSE-KMS copy logic
-		chunks, err := s3a.copyChunksWithSSEKMS(entry, r, dstBucket)
-
-		// Create SSE-KMS metadata for destination
-		var dstMetadata map[string][]byte
-		if err == nil {
-			// Parse SSE-KMS destination parameters for metadata storage
-			destKeyID, encryptionContext, bucketKeyEnabled, parseErr := ParseSSEKMSCopyHeaders(r)
-			if parseErr == nil && destKeyID != "" {
-				// Create SSE-KMS key structure for serialization
-				sseKey := &SSEKMSKey{
-					KeyID:             destKeyID,
-					EncryptionContext: encryptionContext,
-					BucketKeyEnabled:  bucketKeyEnabled,
-				}
-
-				// Serialize metadata for storage
-				if kmsMetadata, serializeErr := SerializeSSEKMSMetadata(sseKey); serializeErr == nil {
-					dstMetadata = make(map[string][]byte)
-					dstMetadata[s3_constants.SeaweedFSSSEKMSKey] = kmsMetadata
-					glog.V(3).Infof("Generated SSE-KMS metadata for plain→SSE-KMS copy: keyID=%s", destKeyID)
-				} else {
-					glog.Errorf("Failed to serialize SSE-KMS metadata for plain→SSE-KMS copy: %v", serializeErr)
-				}
-			}
-		}
-
+		// Use existing SSE-KMS copy logic - metadata is now generated internally
+		chunks, dstMetadata, err := s3a.copyChunksWithSSEKMS(entry, r, dstBucket)
 		return chunks, dstMetadata, err
 	}
 
@@ -164,8 +139,8 @@ func (s3a *S3ApiServer) executeDecryptCopy(entry *filer_pb.Entry, r *http.Reques
 
 	if state.SrcSSEKMS {
 		// Use existing SSE-KMS copy logic with no destination encryption
-		chunks, err := s3a.copyChunksWithSSEKMS(entry, r, "")
-		return chunks, nil, err
+		chunks, dstMetadata, err := s3a.copyChunksWithSSEKMS(entry, r, "")
+		return chunks, dstMetadata, err
 	}
 
 	if state.SrcSSES3 {
@@ -191,32 +166,8 @@ func (s3a *S3ApiServer) executeReencryptCopy(entry *filer_pb.Entry, r *http.Requ
 	}
 
 	if state.SrcSSEKMS && state.DstSSEKMS {
-		chunks, err := s3a.copyChunksWithSSEKMS(entry, r, dstBucket)
-
-		// Create SSE-KMS metadata for destination if re-encryption occurred
-		var dstMetadata map[string][]byte
-		if err == nil {
-			// Parse SSE-KMS destination parameters for metadata storage
-			destKeyID, encryptionContext, bucketKeyEnabled, parseErr := ParseSSEKMSCopyHeaders(r)
-			if parseErr == nil && destKeyID != "" {
-				// Create SSE-KMS key structure for serialization
-				sseKey := &SSEKMSKey{
-					KeyID:             destKeyID,
-					EncryptionContext: encryptionContext,
-					BucketKeyEnabled:  bucketKeyEnabled,
-				}
-
-				// Serialize metadata for storage
-				if kmsMetadata, serializeErr := SerializeSSEKMSMetadata(sseKey); serializeErr == nil {
-					dstMetadata = make(map[string][]byte)
-					dstMetadata[s3_constants.SeaweedFSSSEKMSKey] = kmsMetadata
-					glog.V(3).Infof("Generated SSE-KMS metadata for copy destination: keyID=%s", destKeyID)
-				} else {
-					glog.Errorf("Failed to serialize SSE-KMS metadata for copy: %v", serializeErr)
-				}
-			}
-		}
-
+		// Use existing SSE-KMS copy logic - metadata is now generated internally
+		chunks, dstMetadata, err := s3a.copyChunksWithSSEKMS(entry, r, dstBucket)
 		return chunks, dstMetadata, err
 	}
 
@@ -249,7 +200,9 @@ func (s3a *S3ApiServer) executeReencryptCopy(entry *filer_pb.Entry, r *http.Requ
 
 	if state.SrcSSEKMS && state.DstSSEC {
 		// SSE-KMS → SSE-C: use existing cross-encryption logic
-		chunks, err := s3a.copyChunksWithSSEKMS(entry, r, dstBucket) // This will handle the transition
+		chunks, dstMetadata, err := s3a.copyChunksWithSSEKMS(entry, r, dstBucket) // This will handle the transition
+		// For SSE-KMS → SSE-C, we ignore the SSE-KMS destination metadata since destination is SSE-C
+		_ = dstMetadata
 		return chunks, nil, err
 	}
 

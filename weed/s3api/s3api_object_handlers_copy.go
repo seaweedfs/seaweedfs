@@ -1261,16 +1261,18 @@ func (s3a *S3ApiServer) copyChunkWithReencryption(chunk *filer_pb.FileChunk, cop
 }
 
 // copyChunksWithSSEKMS handles SSE-KMS aware copying with smart fast/slow path selection
-func (s3a *S3ApiServer) copyChunksWithSSEKMS(entry *filer_pb.Entry, r *http.Request, bucket string) ([]*filer_pb.FileChunk, error) {
+// Returns chunks and destination metadata like SSE-C for consistency
+func (s3a *S3ApiServer) copyChunksWithSSEKMS(entry *filer_pb.Entry, r *http.Request, bucket string) ([]*filer_pb.FileChunk, map[string][]byte, error) {
 	// Parse SSE-KMS headers from copy request
 	destKeyID, encryptionContext, bucketKeyEnabled, err := ParseSSEKMSCopyHeaders(r)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// If no SSE-KMS headers and source is not SSE-KMS encrypted, use regular copy
 	if destKeyID == "" && !IsSSEKMSEncrypted(entry.Extended) {
-		return s3a.copyChunks(entry, r.URL.Path)
+		chunks, err := s3a.copyChunks(entry, r.URL.Path)
+		return chunks, nil, err
 	}
 
 	// Apply bucket default encryption if no explicit key specified
@@ -1287,7 +1289,7 @@ func (s3a *S3ApiServer) copyChunksWithSSEKMS(entry *filer_pb.Entry, r *http.Requ
 	// Determine copy strategy
 	strategy, err := DetermineSSEKMSCopyStrategy(entry.Extended, destKeyID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	glog.V(2).Infof("SSE-KMS copy strategy for %s: %v", r.URL.Path, strategy)
@@ -1296,7 +1298,27 @@ func (s3a *S3ApiServer) copyChunksWithSSEKMS(entry *filer_pb.Entry, r *http.Requ
 	case SSEKMSCopyStrategyDirect:
 		// FAST PATH: Direct chunk copy (same key or both unencrypted)
 		glog.V(2).Infof("Using fast path: direct chunk copy for %s", r.URL.Path)
-		return s3a.copyChunks(entry, r.URL.Path)
+		chunks, err := s3a.copyChunks(entry, r.URL.Path)
+		// For direct copy, generate destination metadata if we're encrypting to SSE-KMS
+		var dstMetadata map[string][]byte
+		if destKeyID != "" {
+			dstMetadata = make(map[string][]byte)
+			if encryptionContext == nil {
+				encryptionContext = BuildEncryptionContext(bucket, r.URL.Path, bucketKeyEnabled)
+			}
+			sseKey := &SSEKMSKey{
+				KeyID:             destKeyID,
+				EncryptionContext: encryptionContext,
+				BucketKeyEnabled:  bucketKeyEnabled,
+			}
+			if kmsMetadata, serializeErr := SerializeSSEKMSMetadata(sseKey); serializeErr == nil {
+				dstMetadata[s3_constants.SeaweedFSSSEKMSKey] = kmsMetadata
+				glog.V(3).Infof("Generated SSE-KMS metadata for direct copy: keyID=%s", destKeyID)
+			} else {
+				glog.Errorf("Failed to serialize SSE-KMS metadata for direct copy: %v", serializeErr)
+			}
+		}
+		return chunks, dstMetadata, err
 
 	case SSEKMSCopyStrategyDecryptEncrypt:
 		// SLOW PATH: Decrypt source and re-encrypt for destination
@@ -1304,12 +1326,13 @@ func (s3a *S3ApiServer) copyChunksWithSSEKMS(entry *filer_pb.Entry, r *http.Requ
 		return s3a.copyChunksWithSSEKMSReencryption(entry, destKeyID, encryptionContext, bucketKeyEnabled, r.URL.Path, bucket)
 
 	default:
-		return nil, fmt.Errorf("unknown SSE-KMS copy strategy: %v", strategy)
+		return nil, nil, fmt.Errorf("unknown SSE-KMS copy strategy: %v", strategy)
 	}
 }
 
 // copyChunksWithSSEKMSReencryption handles the slow path: decrypt source and re-encrypt for destination
-func (s3a *S3ApiServer) copyChunksWithSSEKMSReencryption(entry *filer_pb.Entry, destKeyID string, encryptionContext map[string]string, bucketKeyEnabled bool, dstPath, bucket string) ([]*filer_pb.FileChunk, error) {
+// Returns chunks and destination metadata like SSE-C for consistency
+func (s3a *S3ApiServer) copyChunksWithSSEKMSReencryption(entry *filer_pb.Entry, destKeyID string, encryptionContext map[string]string, bucketKeyEnabled bool, dstPath, bucket string) ([]*filer_pb.FileChunk, map[string][]byte, error) {
 	var dstChunks []*filer_pb.FileChunk
 
 	// Extract and deserialize source SSE-KMS metadata
@@ -1318,20 +1341,48 @@ func (s3a *S3ApiServer) copyChunksWithSSEKMSReencryption(entry *filer_pb.Entry, 
 		var err error
 		sourceSSEKey, err = DeserializeSSEKMSMetadata(keyData)
 		if err != nil {
-			return nil, fmt.Errorf("failed to deserialize source SSE-KMS metadata: %w", err)
+			return nil, nil, fmt.Errorf("failed to deserialize source SSE-KMS metadata: %w", err)
 		}
 		glog.V(3).Infof("Extracted source SSE-KMS key: keyID=%s, bucketKey=%t", sourceSSEKey.KeyID, sourceSSEKey.BucketKeyEnabled)
 	}
 
+	// Process chunks
 	for _, chunk := range entry.GetChunks() {
 		dstChunk, err := s3a.copyChunkWithSSEKMSReencryption(chunk, sourceSSEKey, destKeyID, encryptionContext, bucketKeyEnabled, dstPath, bucket)
 		if err != nil {
-			return nil, fmt.Errorf("copy chunk with SSE-KMS re-encryption: %w", err)
+			return nil, nil, fmt.Errorf("copy chunk with SSE-KMS re-encryption: %w", err)
 		}
 		dstChunks = append(dstChunks, dstChunk)
 	}
 
-	return dstChunks, nil
+	// Generate destination metadata for SSE-KMS encryption (consistent with SSE-C pattern)
+	dstMetadata := make(map[string][]byte)
+	if destKeyID != "" {
+		// Build encryption context if not provided
+		if encryptionContext == nil {
+			encryptionContext = BuildEncryptionContext(bucket, dstPath, bucketKeyEnabled)
+		}
+
+		// Create SSE-KMS key structure for destination metadata
+		sseKey := &SSEKMSKey{
+			KeyID:             destKeyID,
+			EncryptionContext: encryptionContext,
+			BucketKeyEnabled:  bucketKeyEnabled,
+			// Note: EncryptedDataKey will be generated during actual encryption
+			// IV is also generated per chunk during encryption
+		}
+
+		// Serialize SSE-KMS metadata for storage
+		kmsMetadata, err := SerializeSSEKMSMetadata(sseKey)
+		if err != nil {
+			return nil, nil, fmt.Errorf("serialize destination SSE-KMS metadata: %w", err)
+		}
+
+		dstMetadata[s3_constants.SeaweedFSSSEKMSKey] = kmsMetadata
+		glog.V(3).Infof("Generated destination SSE-KMS metadata: keyID=%s, bucketKey=%t", destKeyID, bucketKeyEnabled)
+	}
+
+	return dstChunks, dstMetadata, nil
 }
 
 // copyChunkWithSSEKMSReencryption copies a single chunk with SSE-KMS decrypt/re-encrypt
@@ -1380,7 +1431,8 @@ func (s3a *S3ApiServer) copyChunkWithSSEKMSReencryption(chunk *filer_pb.FileChun
 
 	// Re-encrypt if destination should be SSE-KMS encrypted
 	if destKeyID != "" {
-		// Build encryption context for destination
+		// Encryption context should already be provided by the caller
+		// But ensure we have a fallback for robustness
 		if encryptionContext == nil {
 			encryptionContext = BuildEncryptionContext(bucket, dstPath, bucketKeyEnabled)
 		}
