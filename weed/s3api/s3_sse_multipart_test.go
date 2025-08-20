@@ -302,9 +302,9 @@ func TestMultipartSSEMixedScenarios(t *testing.T) {
 			t.Fatalf("Failed to read encrypted empty data: %v", err)
 		}
 
-		// Should still have IV
-		if len(encryptedData) < AESBlockSize {
-			t.Error("Empty part should still contain IV")
+		// With IV now in metadata, empty data encrypts to empty data
+		if len(encryptedData) != 0 {
+			t.Errorf("Empty part should encrypt to empty data, got %d bytes", len(encryptedData))
 		}
 
 		// Decrypt and verify

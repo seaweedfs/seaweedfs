@@ -6,15 +6,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
-const (
-	// SSE-C adds 16 bytes for IV
-	SSECEncryptionOverhead = 16
-	// SSE-KMS typically adds minimal overhead (just metadata)
-	SSEKMSEncryptionOverhead = 0
-	// SSE-S3 adds minimal overhead
-	SSES3EncryptionOverhead = 0
-)
-
 // CopySizeCalculator handles size calculations for different copy scenarios
 type CopySizeCalculator struct {
 	srcSize      int64
@@ -64,18 +55,16 @@ func (calc *CopySizeCalculator) CalculateTargetSize() int64 {
 		return calc.srcSize
 
 	case !calc.srcEncrypted && calc.dstEncrypted:
-		// Plain → Encrypted: add encryption overhead
-		return calc.srcSize + calc.getEncryptionOverhead(calc.dstType)
+		// Plain → Encrypted: no overhead since IV is in metadata
+		return calc.srcSize
 
 	case calc.srcEncrypted && !calc.dstEncrypted:
-		// Encrypted → Plain: subtract encryption overhead
-		return calc.srcSize - calc.getEncryptionOverhead(calc.srcType)
+		// Encrypted → Plain: no overhead since IV is in metadata
+		return calc.srcSize
 
 	case calc.srcEncrypted && calc.dstEncrypted:
-		// Encrypted → Encrypted: adjust for different overhead
-		srcOverhead := calc.getEncryptionOverhead(calc.srcType)
-		dstOverhead := calc.getEncryptionOverhead(calc.dstType)
-		return calc.srcSize - srcOverhead + dstOverhead
+		// Encrypted → Encrypted: no overhead since IV is in metadata
+		return calc.srcSize
 
 	default:
 		return calc.srcSize
@@ -84,30 +73,14 @@ func (calc *CopySizeCalculator) CalculateTargetSize() int64 {
 
 // CalculateActualSize calculates the actual unencrypted size of the content
 func (calc *CopySizeCalculator) CalculateActualSize() int64 {
-	if calc.srcEncrypted {
-		return calc.srcSize - calc.getEncryptionOverhead(calc.srcType)
-	}
+	// With IV in metadata, encrypted and unencrypted sizes are the same
 	return calc.srcSize
 }
 
 // CalculateEncryptedSize calculates the encrypted size for the given encryption type
 func (calc *CopySizeCalculator) CalculateEncryptedSize(encType EncryptionType) int64 {
-	actualSize := calc.CalculateActualSize()
-	return actualSize + calc.getEncryptionOverhead(encType)
-}
-
-// getEncryptionOverhead returns the overhead bytes for each encryption type
-func (calc *CopySizeCalculator) getEncryptionOverhead(encType EncryptionType) int64 {
-	switch encType {
-	case EncryptionTypeSSEC:
-		return SSECEncryptionOverhead
-	case EncryptionTypeSSEKMS:
-		return SSEKMSEncryptionOverhead
-	case EncryptionTypeSSES3:
-		return SSES3EncryptionOverhead
-	default:
-		return 0
-	}
+	// With IV in metadata, encrypted size equals actual size
+	return calc.CalculateActualSize()
 }
 
 // getSourceEncryptionType determines the encryption type of the source object
@@ -237,9 +210,8 @@ func CalculateOptimizedSizes(entry *filer_pb.Entry, r *http.Request, strategy Un
 	}
 
 	// Calculate encryption overhead for the target
-	if info.TargetType != EncryptionTypeNone {
-		result.EncryptionOverhead = calc.getEncryptionOverhead(info.TargetType)
-	}
+	// With IV in metadata, all encryption overhead is 0
+	result.EncryptionOverhead = 0
 
 	// Adjust based on strategy
 	switch strategy {
