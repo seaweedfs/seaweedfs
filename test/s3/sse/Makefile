@@ -24,9 +24,15 @@ GREEN := \033[0;32m
 YELLOW := \033[1;33m
 NC := \033[0m # No Color
 
-.PHONY: all test clean start-seaweedfs stop-seaweedfs check-binary help
+.PHONY: all test clean start-seaweedfs stop-seaweedfs check-binary build-weed help help-extended test-with-server test-quick-with-server test-metadata-persistence
 
 all: test-basic
+
+# Build SeaweedFS binary (GitHub Actions compatible)
+build-weed:
+	@echo "Building SeaweedFS binary..."
+	@cd $(SEAWEEDFS_ROOT)/weed && go install -buildvcs=false
+	@echo "✅ SeaweedFS binary built successfully"
 
 help:
 	@echo "SeaweedFS S3 SSE Integration Tests"
@@ -269,3 +275,63 @@ test-metadata-persistence: check-binary
 	@$(MAKE) stop-seaweedfs
 	@echo "$(GREEN)SSE metadata persistence tests completed successfully!$(NC)"
 	@echo "$(GREEN)✅ These tests would have caught the filer metadata storage bug!$(NC)"
+
+# GitHub Actions compatible test-with-server target that handles server lifecycle
+test-with-server: build-weed
+	@echo "🚀 Starting SSE integration tests with automated server management..."
+	@trap 'make stop-seaweedfs || true' EXIT; \
+	echo "Starting SeaweedFS cluster..."; \
+	if make start-seaweedfs > weed-test.log 2>&1; then \
+		echo "✅ SeaweedFS cluster started successfully"; \
+		echo "Running SSE integration tests..."; \
+		if [ -n "$(TEST_PATTERN)" ]; then \
+			echo "🔍 Running tests matching pattern: $(TEST_PATTERN)"; \
+			go test -v -timeout=$(TEST_TIMEOUT) -run "$(TEST_PATTERN)" || exit 1; \
+		else \
+			echo "🔍 Running all SSE integration tests"; \
+			make test || exit 1; \
+		fi; \
+		echo "✅ All tests completed successfully"; \
+	else \
+		echo "❌ Failed to start SeaweedFS cluster"; \
+		echo "=== Server startup logs ==="; \
+		tail -50 weed-test.log; \
+		exit 1; \
+	fi
+
+# GitHub Actions compatible quick test subset
+test-quick-with-server: build-weed
+	@echo "🚀 Starting quick SSE tests with automated server management..."
+	@trap 'make stop-seaweedfs || true' EXIT; \
+	echo "Starting SeaweedFS cluster..."; \
+	if make start-seaweedfs > weed-test.log 2>&1; then \
+		echo "✅ SeaweedFS cluster started successfully"; \
+		echo "Running quick SSE integration tests..."; \
+		go test -v -timeout=$(TEST_TIMEOUT) -run "TestSSECIntegrationBasic|TestSSEKMSIntegrationBasic|TestSimpleSSECIntegration" || exit 1; \
+		echo "✅ Quick tests completed successfully"; \
+	else \
+		echo "❌ Failed to start SeaweedFS cluster"; \
+		echo "=== Server startup logs ==="; \
+		tail -50 weed-test.log; \
+		exit 1; \
+	fi
+
+# Help target - extended version
+help-extended:
+	@echo "Available targets:"
+	@echo "  test                    - Run all SSE integration tests (requires running server)"
+	@echo "  test-with-server        - Run all tests with automatic server management (GitHub Actions compatible)"
+	@echo "  test-quick-with-server  - Run quick tests with automatic server management"
+	@echo "  test-ssec               - Run only SSE-C tests"  
+	@echo "  test-ssekms             - Run only SSE-KMS tests"
+	@echo "  test-copy               - Run only copy operation tests"
+	@echo "  test-multipart          - Run only multipart upload tests"
+	@echo "  benchmark               - Run performance benchmarks"
+	@echo "  perf                    - Run performance tests with various data sizes"
+	@echo "  test-metadata-persistence - Test metadata persistence (catches filer bugs)"
+	@echo "  build-weed              - Build SeaweedFS binary"
+	@echo "  check-binary            - Check if SeaweedFS binary exists"
+	@echo "  start-seaweedfs         - Start SeaweedFS cluster"
+	@echo "  stop-seaweedfs          - Stop SeaweedFS cluster"
+	@echo "  clean                   - Clean up test artifacts"
+	@echo "  debug-logs              - Show recent logs from all services"

@@ -1,0 +1,343 @@
+name: "S3 SSE Tests"
+
+on:
+  pull_request:
+    paths:
+      - 'weed/s3api/s3_sse_*.go'
+      - 'weed/s3api/s3api_object_handlers_put.go'
+      - 'weed/s3api/s3api_object_handlers_copy*.go'
+      - 'weed/server/filer_server_handlers_*.go'
+      - 'weed/kms/**'
+      - 'test/s3/sse/**'
+      - '.github/workflows/s3-sse-tests.yml'
+  push:
+    branches: [ master, main ]
+    paths:
+      - 'weed/s3api/s3_sse_*.go'
+      - 'weed/s3api/s3api_object_handlers_put.go'
+      - 'weed/s3api/s3api_object_handlers_copy*.go'
+      - 'weed/server/filer_server_handlers_*.go'
+      - 'weed/kms/**'
+      - 'test/s3/sse/**'
+  
+concurrency:
+  group: ${{ github.head_ref }}/s3-sse-tests
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: weed
+
+jobs:
+  s3-sse-integration-tests:
+    name: S3 SSE Integration Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        test-type: ["quick", "comprehensive"]
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false
+
+      - name: Run S3 SSE Integration Tests - ${{ matrix.test-type }}
+        timeout-minutes: 25
+        working-directory: test/s3/sse
+        run: |
+          set -x
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          df -h
+          echo "=== Starting SSE Tests ==="
+          
+          # Run tests with automatic server management
+          # The test-with-server target handles server startup/shutdown automatically
+          if [ "${{ matrix.test-type }}" = "quick" ]; then
+            # Override TEST_PATTERN for quick tests only
+            make test-with-server TEST_PATTERN="TestSSECIntegrationBasic|TestSSEKMSIntegrationBasic|TestSimpleSSECIntegration"
+          else
+            # Run all SSE integration tests
+            make test-with-server
+          fi
+
+      - name: Show server logs on failure
+        if: failure()
+        working-directory: test/s3/sse
+        run: |
+          echo "=== Server Logs ==="
+          if [ -f weed-test.log ]; then
+            echo "Last 100 lines of server logs:"
+            tail -100 weed-test.log
+          else
+            echo "No server log file found"
+          fi
+          
+          echo "=== Test Environment ==="
+          ps aux | grep -E "(weed|test)" || true
+          netstat -tlnp | grep -E "(8333|9333|8080|8888)" || true
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s3-sse-test-logs-${{ matrix.test-type }}
+          path: test/s3/sse/weed-test*.log
+          retention-days: 3
+
+  s3-sse-compatibility:
+    name: S3 SSE Compatibility Test
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false
+
+      - name: Run Core SSE Compatibility Test (AWS S3 equivalent)
+        timeout-minutes: 15
+        working-directory: test/s3/sse
+        run: |
+          set -x
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          
+          # Run the specific tests that validate AWS S3 SSE compatibility
+          make test-with-server TEST_PATTERN="TestSSECIntegrationBasic|TestSSEKMSIntegrationBasic" || {
+            echo "❌ SSE compatibility test failed, checking logs..."
+            if [ -f weed-test.log ]; then
+              echo "=== Server logs ==="
+              tail -100 weed-test.log
+            fi
+            echo "=== Process information ==="
+            ps aux | grep -E "(weed|test)" || true
+            exit 1
+          }
+
+      - name: Upload server logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s3-sse-compatibility-logs
+          path: test/s3/sse/weed-test*.log
+          retention-days: 3
+
+  s3-sse-metadata-persistence:
+    name: S3 SSE Metadata Persistence Test
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false
+
+      - name: Run SSE Metadata Persistence Test
+        timeout-minutes: 15
+        working-directory: test/s3/sse
+        run: |
+          set -x
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          
+          # Run the specific test that would catch filer metadata storage bugs
+          # This test validates that encryption metadata survives the full PUT/GET cycle
+          make test-metadata-persistence || {
+            echo "❌ SSE metadata persistence test failed, checking logs..."
+            if [ -f weed-test.log ]; then
+              echo "=== Server logs ==="
+              tail -100 weed-test.log
+            fi
+            echo "=== Process information ==="
+            ps aux | grep -E "(weed|test)" || true
+            exit 1
+          }
+
+      - name: Upload server logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s3-sse-metadata-persistence-logs
+          path: test/s3/sse/weed-test*.log
+          retention-days: 3
+
+  s3-sse-copy-operations:
+    name: S3 SSE Copy Operations Test  
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false
+
+      - name: Run SSE Copy Operations Tests
+        timeout-minutes: 20
+        working-directory: test/s3/sse
+        run: |
+          set -x
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          
+          # Run tests that validate SSE copy operations and cross-encryption scenarios
+          make test-with-server TEST_PATTERN=".*Copy.*Integration" || {
+            echo "❌ SSE copy operations test failed, checking logs..."
+            if [ -f weed-test.log ]; then
+              echo "=== Server logs ==="
+              tail -100 weed-test.log
+            fi
+            echo "=== Process information ==="
+            ps aux | grep -E "(weed|test)" || true
+            exit 1
+          }
+
+      - name: Upload server logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s3-sse-copy-operations-logs
+          path: test/s3/sse/weed-test*.log
+          retention-days: 3
+
+  s3-sse-multipart:
+    name: S3 SSE Multipart Upload Test
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false
+
+      - name: Run SSE Multipart Upload Tests
+        timeout-minutes: 20
+        working-directory: test/s3/sse
+        run: |
+          set -x
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          
+          # Run tests that validate SSE with multipart uploads
+          make test-with-server TEST_PATTERN=".*Multipart.*Integration" || {
+            echo "❌ SSE multipart upload test failed, checking logs..."
+            if [ -f weed-test.log ]; then
+              echo "=== Server logs ==="
+              tail -100 weed-test.log
+            fi
+            echo "=== Process information ==="
+            ps aux | grep -E "(weed|test)" || true
+            exit 1
+          }
+
+      - name: Upload server logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s3-sse-multipart-logs
+          path: test/s3/sse/weed-test*.log
+          retention-days: 3
+
+  s3-sse-performance:
+    name: S3 SSE Performance Test
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    # Only run performance tests on master branch pushes to avoid overloading PR testing
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false
+
+      - name: Run S3 SSE Performance Tests
+        timeout-minutes: 30
+        working-directory: test/s3/sse
+        run: |
+          set -x
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          
+          # Run performance tests with various data sizes
+          make perf || {
+            echo "❌ SSE performance test failed, checking logs..."
+            if [ -f weed-test.log ]; then
+              echo "=== Server logs ==="
+              tail -200 weed-test.log
+            fi
+            make clean
+            exit 1
+          }
+          make clean
+
+      - name: Upload performance test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s3-sse-performance-logs
+          path: test/s3/sse/weed-test*.log
+          retention-days: 7
