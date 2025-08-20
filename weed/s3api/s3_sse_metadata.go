@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 )
 
@@ -121,11 +122,12 @@ func GetSSEKMSMetadata(metadata map[string][]byte) (iv []byte, keyID string, enc
 		}
 	}
 
-	// Parse context (simplified JSON parsing)
-	if _, exists := metadata[MetaSSEKMSContext]; exists {
+	// Parse context from JSON
+	if contextBytes, exists := metadata[MetaSSEKMSContext]; exists {
 		context = make(map[string]string)
-		// TODO: Implement proper JSON parsing if needed
-		// For now, we'll keep it simple
+		if err := json.Unmarshal(contextBytes, &context); err != nil {
+			return nil, "", nil, nil, fmt.Errorf("failed to parse KMS context JSON: %w", err)
+		}
 	}
 
 	return iv, keyID, encryptedKey, context, nil
