@@ -586,9 +586,14 @@ func DeserializeSSEKMSMetadata(data []byte) (*SSEKMSKey, error) {
 		return nil, fmt.Errorf("failed to unmarshal SSE-KMS metadata: %w", err)
 	}
 
-	// Validate algorithm
-	if metadata.Algorithm != "aws:kms" {
+	// Validate algorithm - be lenient with missing/empty algorithm for backward compatibility
+	if metadata.Algorithm != "" && metadata.Algorithm != "aws:kms" {
 		return nil, fmt.Errorf("invalid SSE-KMS algorithm: %s", metadata.Algorithm)
+	}
+	
+	// Set default algorithm if empty
+	if metadata.Algorithm == "" {
+		metadata.Algorithm = "aws:kms"
 	}
 
 	// Decode the encrypted data key
