@@ -98,15 +98,31 @@ func (s3a *S3ApiServer) rotateSSEKMSMetadataOnly(entry *filer_pb.Entry, srcKeyID
 
 // rotateSSECChunks re-encrypts all chunks with new SSE-C key
 func (s3a *S3ApiServer) rotateSSECChunks(entry *filer_pb.Entry, sourceKey, destKey *SSECustomerKey) ([]*filer_pb.FileChunk, error) {
+	// Get IV from entry metadata
+	iv, err := GetIVFromMetadata(entry.Extended)
+	if err != nil {
+		return nil, fmt.Errorf("get IV from metadata: %w", err)
+	}
+
 	var rotatedChunks []*filer_pb.FileChunk
 
 	for _, chunk := range entry.GetChunks() {
-		rotatedChunk, err := s3a.rotateSSECChunk(chunk, sourceKey, destKey)
+		rotatedChunk, err := s3a.rotateSSECChunk(chunk, sourceKey, destKey, iv)
 		if err != nil {
 			return nil, fmt.Errorf("rotate SSE-C chunk: %w", err)
 		}
 		rotatedChunks = append(rotatedChunks, rotatedChunk)
 	}
+
+	// Generate new IV for the destination and store it in entry metadata
+	encryptedReader, newIV, err := CreateSSECEncryptedReader(bytes.NewReader([]byte{}), destKey)
+	if err != nil {
+		return nil, fmt.Errorf("generate new IV: %w", err)
+	}
+	_ = encryptedReader // We only need the IV
+
+	// Update entry metadata with new IV
+	StoreIVInMetadata(entry.Extended, newIV)
 
 	return rotatedChunks, nil
 }
@@ -133,7 +149,7 @@ func (s3a *S3ApiServer) rotateSSEKMSChunks(entry *filer_pb.Entry, srcKeyID, dstK
 }
 
 // rotateSSECChunk rotates a single SSE-C encrypted chunk
-func (s3a *S3ApiServer) rotateSSECChunk(chunk *filer_pb.FileChunk, sourceKey, destKey *SSECustomerKey) (*filer_pb.FileChunk, error) {
+func (s3a *S3ApiServer) rotateSSECChunk(chunk *filer_pb.FileChunk, sourceKey, destKey *SSECustomerKey, iv []byte) (*filer_pb.FileChunk, error) {
 	// Create new chunk with same properties
 	newChunk := &filer_pb.FileChunk{
 		Offset:       chunk.Offset,
@@ -165,8 +181,8 @@ func (s3a *S3ApiServer) rotateSSECChunk(chunk *filer_pb.FileChunk, sourceKey, de
 		return nil, fmt.Errorf("download chunk data: %w", err)
 	}
 
-	// Decrypt with source key
-	decryptedReader, err := CreateSSECDecryptedReader(bytes.NewReader(encryptedData), sourceKey)
+	// Decrypt with source key using provided IV
+	decryptedReader, err := CreateSSECDecryptedReader(bytes.NewReader(encryptedData), sourceKey, iv)
 	if err != nil {
 		return nil, fmt.Errorf("create decrypted reader: %w", err)
 	}
@@ -177,10 +193,12 @@ func (s3a *S3ApiServer) rotateSSECChunk(chunk *filer_pb.FileChunk, sourceKey, de
 	}
 
 	// Re-encrypt with destination key
-	encryptedReader, err := CreateSSECEncryptedReader(bytes.NewReader(decryptedData), destKey)
+	encryptedReader, _, err := CreateSSECEncryptedReader(bytes.NewReader(decryptedData), destKey)
 	if err != nil {
 		return nil, fmt.Errorf("create encrypted reader: %w", err)
 	}
+
+	// Note: IV will be handled at the entry level by the calling function
 
 	reencryptedData, err := io.ReadAll(encryptedReader)
 	if err != nil {
