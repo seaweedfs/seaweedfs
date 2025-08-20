@@ -24,7 +24,7 @@ GREEN := \033[0;32m
 YELLOW := \033[1;33m
 NC := \033[0m # No Color
 
-.PHONY: all test clean start-seaweedfs stop-seaweedfs check-binary build-weed help help-extended test-with-server test-quick-with-server test-metadata-persistence
+.PHONY: all test clean start-seaweedfs stop-seaweedfs start-seaweedfs-ci check-binary build-weed help help-extended test-with-server test-quick-with-server test-metadata-persistence
 
 all: test-basic
 
@@ -70,10 +70,11 @@ check-binary:
 
 start-seaweedfs: check-binary
 	@echo "$(YELLOW)Starting SeaweedFS server for SSE testing...$(NC)"
-	@pkill -f "weed master" || true
-	@pkill -f "weed volume" || true
-	@pkill -f "weed filer" || true
-	@pkill -f "weed s3" || true
+	@# Use more specific process cleanup that doesn't interfere with CI
+	@pgrep -f "weed master.*-port=$(MASTER_PORT)" | head -10 | xargs -r kill -TERM || true
+	@pgrep -f "weed volume.*-port=$(VOLUME_PORT)" | head -10 | xargs -r kill -TERM || true
+	@pgrep -f "weed filer.*-port=$(FILER_PORT)" | head -10 | xargs -r kill -TERM || true
+	@pgrep -f "weed s3.*-port=$(S3_PORT)" | head -10 | xargs -r kill -TERM || true
 	@sleep 2
 	
 	# Create necessary directories
@@ -124,10 +125,11 @@ start-seaweedfs: check-binary
 
 stop-seaweedfs:
 	@echo "$(YELLOW)Stopping SeaweedFS server...$(NC)"
-	@pkill -f "weed master" || true
-	@pkill -f "weed volume" || true
-	@pkill -f "weed filer" || true
-	@pkill -f "weed s3" || true
+	@# Use more specific process cleanup that doesn't interfere with CI
+	@pgrep -f "weed master.*-port=$(MASTER_PORT)" | head -10 | xargs -r kill -TERM || true
+	@pgrep -f "weed volume.*-port=$(VOLUME_PORT)" | head -10 | xargs -r kill -TERM || true
+	@pgrep -f "weed filer.*-port=$(FILER_PORT)" | head -10 | xargs -r kill -TERM || true
+	@pgrep -f "weed s3.*-port=$(S3_PORT)" | head -10 | xargs -r kill -TERM || true
 	@sleep 2
 	@echo "$(GREEN)SeaweedFS server stopped$(NC)"
 
@@ -279,25 +281,98 @@ test-metadata-persistence: check-binary
 # GitHub Actions compatible test-with-server target that handles server lifecycle
 test-with-server: build-weed
 	@echo "🚀 Starting SSE integration tests with automated server management..."
-	@trap 'make stop-seaweedfs || true' EXIT; \
-	echo "Starting SeaweedFS cluster..."; \
-	if make start-seaweedfs > weed-test.log 2>&1; then \
+	@echo "Cleaning up any existing test processes..."
+	@# Clean up more carefully to avoid CI interference
+	@pgrep -f "weed.*-port=$(MASTER_PORT)" | head -5 | xargs -r kill -TERM || true
+	@pgrep -f "weed.*-port=$(VOLUME_PORT)" | head -5 | xargs -r kill -TERM || true
+	@pgrep -f "weed.*-port=$(FILER_PORT)" | head -5 | xargs -r kill -TERM || true
+	@pgrep -f "weed.*-port=$(S3_PORT)" | head -5 | xargs -r kill -TERM || true
+	@sleep 2
+	@echo "Starting SeaweedFS cluster..."
+	@# Start server components with better logging
+	@if $(MAKE) start-seaweedfs-ci > weed-test.log 2>&1; then \
 		echo "✅ SeaweedFS cluster started successfully"; \
 		echo "Running SSE integration tests..."; \
+		trap 'make stop-seaweedfs || true' EXIT; \
 		if [ -n "$(TEST_PATTERN)" ]; then \
 			echo "🔍 Running tests matching pattern: $(TEST_PATTERN)"; \
-			go test -v -timeout=$(TEST_TIMEOUT) -run "$(TEST_PATTERN)" || exit 1; \
+			cd $(SEAWEEDFS_ROOT) && go test -v -timeout=$(TEST_TIMEOUT) -run "$(TEST_PATTERN)" ./test/s3/sse || exit 1; \
 		else \
 			echo "🔍 Running all SSE integration tests"; \
-			make test || exit 1; \
+			cd $(SEAWEEDFS_ROOT) && go test -v -timeout=$(TEST_TIMEOUT) -run "TestSSE.*Integration" ./test/s3/sse || exit 1; \
 		fi; \
 		echo "✅ All tests completed successfully"; \
+		make stop-seaweedfs || true; \
 	else \
 		echo "❌ Failed to start SeaweedFS cluster"; \
 		echo "=== Server startup logs ==="; \
-		tail -50 weed-test.log; \
+		tail -100 weed-test.log 2>/dev/null || echo "No startup log available"; \
+		echo "=== System information ==="; \
+		ps aux | grep -E "weed|make" | grep -v grep || echo "No relevant processes found"; \
 		exit 1; \
 	fi
+
+# CI-safe server startup that avoids process conflicts
+start-seaweedfs-ci: check-binary
+	@echo "$(YELLOW)Starting SeaweedFS server for CI testing...$(NC)"
+	
+	# Create necessary directories
+	@mkdir -p /tmp/seaweedfs-test-sse-master
+	@mkdir -p /tmp/seaweedfs-test-sse-volume
+	@mkdir -p /tmp/seaweedfs-test-sse-filer
+	
+	# Start master server with volume size limit and explicit gRPC port
+	@echo "Starting master server..."
+	@nohup $(SEAWEEDFS_BINARY) master -port=$(MASTER_PORT) -port.grpc=$$(( $(MASTER_PORT) + 10000 )) -mdir=/tmp/seaweedfs-test-sse-master -volumeSizeLimitMB=$(VOLUME_MAX_SIZE_MB) -ip=127.0.0.1 > /tmp/seaweedfs-sse-master.log 2>&1 &
+	@sleep 3
+	
+	# Start volume server with master HTTP port and increased capacity
+	@echo "Starting volume server..."
+	@nohup $(SEAWEEDFS_BINARY) volume -port=$(VOLUME_PORT) -mserver=127.0.0.1:$(MASTER_PORT) -dir=/tmp/seaweedfs-test-sse-volume -max=$(VOLUME_MAX_COUNT) -ip=127.0.0.1 > /tmp/seaweedfs-sse-volume.log 2>&1 &
+	@sleep 5
+	
+	# Start filer server (using standard SeaweedFS gRPC port convention: HTTP port + 10000)
+	@echo "Starting filer server..."
+	@nohup $(SEAWEEDFS_BINARY) filer -port=$(FILER_PORT) -port.grpc=$$(( $(FILER_PORT) + 10000 )) -master=127.0.0.1:$(MASTER_PORT) -dataCenter=defaultDataCenter -ip=127.0.0.1 > /tmp/seaweedfs-sse-filer.log 2>&1 &
+	@sleep 3
+	
+	# Create S3 configuration with SSE-KMS support
+	@echo '{"identities":[{"name":"$(ACCESS_KEY)","credentials":[{"accessKey":"$(ACCESS_KEY)","secretKey":"$(SECRET_KEY)"}],"actions":["Admin","Read","Write"]}],"kms":{"type":"local","configs":{"keyId":"test-key-123","encryptionContext":{},"bucketKey":false}}}' > /tmp/seaweedfs-sse-s3.json
+	
+	# Start S3 server with KMS configuration
+	@echo "Starting S3 server..."
+	@nohup $(SEAWEEDFS_BINARY) s3 -port=$(S3_PORT) -filer=127.0.0.1:$(FILER_PORT) -config=/tmp/seaweedfs-sse-s3.json -ip.bind=127.0.0.1 > /tmp/seaweedfs-sse-s3.log 2>&1 &
+	@sleep 5
+	
+	# Wait for S3 service to be ready
+	@echo "$(YELLOW)Waiting for S3 service to be ready...$(NC)"
+	@for i in $$(seq 1 30); do \
+		if curl -s -f http://127.0.0.1:$(S3_PORT) > /dev/null 2>&1; then \
+			echo "$(GREEN)S3 service is ready$(NC)"; \
+			break; \
+		fi; \
+		if [ $$i -eq 30 ]; then \
+			echo "$(RED)S3 service failed to start within 30 seconds$(NC)"; \
+			echo "Master log:"; tail -20 /tmp/seaweedfs-sse-master.log || true; \
+			echo "Volume log:"; tail -20 /tmp/seaweedfs-sse-volume.log || true; \
+			echo "Filer log:"; tail -20 /tmp/seaweedfs-sse-filer.log || true; \
+			echo "S3 log:"; tail -20 /tmp/seaweedfs-sse-s3.log || true; \
+			exit 1; \
+		fi; \
+		echo "Waiting for S3 service... ($$i/30)"; \
+		sleep 1; \
+	done
+	
+	# Additional wait for filer gRPC to be ready
+	@echo "$(YELLOW)Waiting for filer gRPC to be ready...$(NC)"
+	@sleep 2
+	@echo "$(GREEN)SeaweedFS server started successfully for SSE testing$(NC)"
+	@echo "Master: http://localhost:$(MASTER_PORT)"
+	@echo "Volume: http://localhost:$(VOLUME_PORT)"
+	@echo "Filer: http://localhost:$(FILER_PORT)"
+	@echo "S3: http://localhost:$(S3_PORT)"
+	@echo "Volume Max Size: $(VOLUME_MAX_SIZE_MB)MB"
+	@echo "SSE-KMS Support: Enabled"
 
 # GitHub Actions compatible quick test subset
 test-quick-with-server: build-weed
@@ -332,6 +407,7 @@ help-extended:
 	@echo "  build-weed              - Build SeaweedFS binary"
 	@echo "  check-binary            - Check if SeaweedFS binary exists"
 	@echo "  start-seaweedfs         - Start SeaweedFS cluster"
+	@echo "  start-seaweedfs-ci      - Start SeaweedFS cluster (CI-safe version)"
 	@echo "  stop-seaweedfs          - Stop SeaweedFS cluster"
 	@echo "  clean                   - Clean up test artifacts"
 	@echo "  debug-logs              - Show recent logs from all services"
