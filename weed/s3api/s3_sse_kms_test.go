@@ -52,9 +52,9 @@ func TestSSEKMSEncryptionDecryption(t *testing.T) {
 		t.Error("Encrypted data should be different from original data")
 	}
 
-	// The encrypted data should be longer (IV + encrypted content)
-	if len(encryptedData) <= len(testData) {
-		t.Error("Encrypted data should be longer than original data (includes IV)")
+	// The encrypted data should be same size as original (IV is stored in metadata, not in stream)
+	if len(encryptedData) != len(testData) {
+		t.Errorf("Encrypted data should be same size as original: expected %d, got %d", len(testData), len(encryptedData))
 	}
 
 	// Decrypt the data

@@ -1,7 +1,6 @@
 package s3api
 
 import (
-	"bytes"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -126,15 +125,9 @@ func CreateSSEKMSEncryptedReaderWithBucketKey(r io.Reader, keyID string, encrypt
 		BucketKeyEnabled:  bucketKeyEnabled,
 	}
 
-	// Create encrypted reader that wraps the input stream
-	streamReader := &cipher.StreamReader{S: stream, R: r}
-
-	// Create composite reader: IV + encrypted content
-	// This ensures the output stream contains IV followed by encrypted data
-	encryptedReader := io.MultiReader(
-		bytes.NewReader(iv),
-		streamReader,
-	)
+	// The IV is stored in SSE key metadata, so the encrypted stream does not need to prepend the IV
+	// This ensures correct Content-Length for clients
+	encryptedReader := &cipher.StreamReader{S: stream, R: r}
 
 	// Store IV in the SSE key for metadata storage
 	sseKey.IV = iv
@@ -377,12 +370,11 @@ func CreateSSEKMSDecryptedReader(r io.Reader, sseKey *SSEKMSKey) (io.Reader, err
 		return nil, fmt.Errorf("KMS key ID mismatch: expected %s, got %s", sseKey.KeyID, decryptResp.KeyID)
 	}
 
-	// Read the IV from the beginning of the encrypted data stream
-	// The encrypted data should be in format: IV + encrypted_content
-	iv := make([]byte, 16) // AES block size
-	if _, err := io.ReadFull(r, iv); err != nil {
-		return nil, fmt.Errorf("failed to read IV from encrypted data: %v", err)
+	// Use the IV from the SSE key metadata
+	if len(sseKey.IV) != 16 {
+		return nil, fmt.Errorf("invalid IV length in SSE key: expected 16 bytes, got %d", len(sseKey.IV))
 	}
+	iv := sseKey.IV
 
 	// Create AES cipher with the decrypted data key
 	block, err := aes.NewCipher(decryptResp.Plaintext)
@@ -590,7 +582,7 @@ func DeserializeSSEKMSMetadata(data []byte) (*SSEKMSKey, error) {
 	if metadata.Algorithm != "" && metadata.Algorithm != "aws:kms" {
 		return nil, fmt.Errorf("invalid SSE-KMS algorithm: %s", metadata.Algorithm)
 	}
-	
+
 	// Set default algorithm if empty
 	if metadata.Algorithm == "" {
 		metadata.Algorithm = "aws:kms"

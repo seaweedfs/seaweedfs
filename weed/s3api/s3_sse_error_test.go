@@ -314,9 +314,9 @@ func TestSSEEmptyDataHandling(t *testing.T) {
 			t.Fatalf("Failed to read encrypted empty data: %v", err)
 		}
 
-		// Should still have IV even for empty data
-		if len(encryptedData) < AESBlockSize {
-			t.Error("Encrypted empty data should still contain IV")
+		// Empty data should produce empty encrypted data (IV is stored in metadata)
+		if len(encryptedData) != 0 {
+			t.Errorf("Encrypted empty data should be empty, got %d bytes", len(encryptedData))
 		}
 
 		// Decrypt and verify

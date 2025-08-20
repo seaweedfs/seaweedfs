@@ -1,7 +1,6 @@
 package s3api
 
 import (
-	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/md5"
@@ -166,35 +165,23 @@ func CreateSSECEncryptedReader(r io.Reader, customerKey *SSECustomerKey) (io.Rea
 	// Create CTR mode cipher
 	stream := cipher.NewCTR(block, iv)
 
-	// Create encrypted reader that wraps the input stream
-	streamReader := &cipher.StreamReader{S: stream, R: r}
-
-	// Create composite reader: IV + encrypted content
-	// This ensures the output stream contains IV followed by encrypted data
-	encryptedReader := io.MultiReader(
-		bytes.NewReader(iv),
-		streamReader,
-	)
+	// The IV is stored in metadata, so the encrypted stream does not need to prepend the IV
+	// This ensures correct Content-Length for clients
+	encryptedReader := &cipher.StreamReader{S: stream, R: r}
 
 	return encryptedReader, iv, nil
 }
 
 // CreateSSECDecryptedReader creates a new decrypted reader for SSE-C
-// The input reader should contain IV + encrypted content
-func CreateSSECDecryptedReader(r io.Reader, customerKey *SSECustomerKey, expectedIV []byte) (io.Reader, error) {
+// The IV comes from metadata, not from the encrypted data stream
+func CreateSSECDecryptedReader(r io.Reader, customerKey *SSECustomerKey, iv []byte) (io.Reader, error) {
 	if customerKey == nil {
 		return r, nil
 	}
 
-	// Read the IV from the beginning of the encrypted data stream
-	iv := make([]byte, AESBlockSize)
-	if _, err := io.ReadFull(r, iv); err != nil {
-		return nil, fmt.Errorf("failed to read IV from encrypted data: %v", err)
-	}
-
-	// Verify IV matches expected IV if provided
-	if expectedIV != nil && !bytes.Equal(iv, expectedIV) {
-		return nil, fmt.Errorf("IV mismatch: encrypted data IV does not match expected IV")
+	// IV must be provided from metadata
+	if len(iv) != AESBlockSize {
+		return nil, fmt.Errorf("invalid IV length: expected %d bytes, got %d", AESBlockSize, len(iv))
 	}
 
 	// Create AES cipher
@@ -203,7 +190,7 @@ func CreateSSECDecryptedReader(r io.Reader, customerKey *SSECustomerKey, expecte
 		return nil, fmt.Errorf("failed to create AES cipher: %v", err)
 	}
 
-	// Create CTR mode cipher using the IV read from the stream
+	// Create CTR mode cipher using the IV from metadata
 	stream := cipher.NewCTR(block, iv)
 
 	return &cipher.StreamReader{S: stream, R: r}, nil
