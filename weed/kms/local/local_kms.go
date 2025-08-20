@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -91,7 +92,7 @@ func (p *LocalKMSProvider) createDefaultKey() (*LocalKey, error) {
 	}
 	keyMaterial := make([]byte, 32) // 256-bit key
 	if _, err := io.ReadFull(rand.Reader, keyMaterial); err != nil {
-		return nil, fmt.Errorf("failed to generate key material: %v", err)
+		return nil, fmt.Errorf("failed to generate key material: %w", err)
 	}
 
 	key := &LocalKey{
@@ -311,10 +312,10 @@ func (p *LocalKMSProvider) encryptDataKey(dataKey []byte, masterKey *LocalKey, e
 	}
 
 	// Prepare additional authenticated data (AAD) from the encryption context
-	// json.Marshal provides a stable representation for maps
+	// Use deterministic marshaling to ensure consistent AAD
 	var aad []byte
 	if len(encryptionContext) > 0 {
-		aad, _ = json.Marshal(encryptionContext)
+		aad = marshalEncryptionContextDeterministic(encryptionContext)
 	}
 
 	// Encrypt using AES-GCM
@@ -347,7 +348,7 @@ func (p *LocalKMSProvider) decryptDataKey(metadata *encryptedDataKeyMetadata, ma
 	// Prepare additional authenticated data (AAD)
 	var aad []byte
 	if len(metadata.EncryptionContext) > 0 {
-		aad, _ = json.Marshal(metadata.EncryptionContext)
+		aad = marshalEncryptionContextDeterministic(metadata.EncryptionContext)
 	}
 
 	// Decrypt using AES-GCM
@@ -435,4 +436,32 @@ func (p *LocalKMSProvider) CreateKey(description string, aliases []string) (*Loc
 	}
 
 	return key, nil
+}
+
+// marshalEncryptionContextDeterministic creates a deterministic byte representation of encryption context
+// This ensures that the same encryption context always produces the same AAD for AES-GCM
+func marshalEncryptionContextDeterministic(encryptionContext map[string]string) []byte {
+	if len(encryptionContext) == 0 {
+		return nil
+	}
+
+	// Sort keys to ensure deterministic output
+	keys := make([]string, 0, len(encryptionContext))
+	for k := range encryptionContext {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	// Build deterministic representation
+	var buf strings.Builder
+	buf.WriteString("{")
+	for i, k := range keys {
+		if i > 0 {
+			buf.WriteString(",")
+		}
+		buf.WriteString(fmt.Sprintf(`"%s":"%s"`, k, encryptionContext[k]))
+	}
+	buf.WriteString("}")
+
+	return []byte(buf.String())
 }
