@@ -187,7 +187,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		dstEntry.Chunks = nil
 	} else {
 		// Use unified copy strategy approach
-		dstChunks, copyErr := s3a.executeUnifiedCopyStrategy(entry, r, dstBucket, srcObject, dstObject)
+		dstChunks, dstMetadata, copyErr := s3a.executeUnifiedCopyStrategy(entry, r, dstBucket, srcObject, dstObject)
 		if copyErr != nil {
 			glog.Errorf("CopyObjectHandler unified copy error: %v", copyErr)
 			// Map errors to appropriate S3 errors
@@ -197,6 +197,14 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		}
 
 		dstEntry.Chunks = dstChunks
+
+		// Apply destination-specific metadata (e.g., SSE-C IV and headers)
+		if dstMetadata != nil {
+			for k, v := range dstMetadata {
+				dstEntry.Extended[k] = v
+			}
+			glog.V(2).Infof("Applied %d destination metadata entries for copy: %s", len(dstMetadata), r.URL.Path)
+		}
 	}
 
 	// Check if destination bucket has versioning configured
@@ -1081,22 +1089,23 @@ func (s3a *S3ApiServer) downloadChunkData(srcUrl string, offset, size int64) ([]
 }
 
 // copyChunksWithSSEC handles SSE-C aware copying with smart fast/slow path selection
-func (s3a *S3ApiServer) copyChunksWithSSEC(entry *filer_pb.Entry, r *http.Request) ([]*filer_pb.FileChunk, error) {
+// Returns chunks and destination metadata that should be applied to the destination entry
+func (s3a *S3ApiServer) copyChunksWithSSEC(entry *filer_pb.Entry, r *http.Request) ([]*filer_pb.FileChunk, map[string][]byte, error) {
 	// Parse SSE-C headers
 	copySourceKey, err := ParseSSECCopySourceHeaders(r)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	destKey, err := ParseSSECHeaders(r)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Determine copy strategy
 	strategy, err := DetermineSSECCopyStrategy(entry.Extended, copySourceKey, destKey)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	glog.V(2).Infof("SSE-C copy strategy for %s: %v", r.URL.Path, strategy)
@@ -1105,36 +1114,34 @@ func (s3a *S3ApiServer) copyChunksWithSSEC(entry *filer_pb.Entry, r *http.Reques
 	case SSECCopyStrategyDirect:
 		// FAST PATH: Direct chunk copy
 		glog.V(2).Infof("Using fast path: direct chunk copy for %s", r.URL.Path)
-		return s3a.copyChunks(entry, r.URL.Path)
+		chunks, err := s3a.copyChunks(entry, r.URL.Path)
+		return chunks, nil, err
 
 	case SSECCopyStrategyDecryptEncrypt:
 		// SLOW PATH: Decrypt and re-encrypt
 		glog.V(2).Infof("Using slow path: decrypt/re-encrypt for %s", r.URL.Path)
 		chunks, destIV, err := s3a.copyChunksWithReencryption(entry, copySourceKey, destKey, r.URL.Path)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
-		// Store the destination IV and SSE-C headers in entry metadata for proper SSE-C support
+		// Create destination metadata with IV and SSE-C headers
+		dstMetadata := make(map[string][]byte)
 		if destKey != nil && len(destIV) > 0 {
-			if entry.Extended == nil {
-				entry.Extended = make(map[string][]byte)
-			}
-
 			// Store the IV
-			StoreIVInMetadata(entry.Extended, destIV)
+			StoreIVInMetadata(dstMetadata, destIV)
 
 			// Store SSE-C algorithm and key MD5 for proper metadata
-			entry.Extended[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] = []byte("AES256")
-			entry.Extended[s3_constants.AmzServerSideEncryptionCustomerKeyMD5] = []byte(destKey.KeyMD5)
+			dstMetadata[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] = []byte("AES256")
+			dstMetadata[s3_constants.AmzServerSideEncryptionCustomerKeyMD5] = []byte(destKey.KeyMD5)
 
-			glog.V(2).Infof("Stored IV and SSE-C metadata in entry for copy: %s", r.URL.Path)
+			glog.V(2).Infof("Prepared IV and SSE-C metadata for destination copy: %s", r.URL.Path)
 		}
 
-		return chunks, nil
+		return chunks, dstMetadata, nil
 
 	default:
-		return nil, fmt.Errorf("unknown SSE-C copy strategy: %v", strategy)
+		return nil, nil, fmt.Errorf("unknown SSE-C copy strategy: %v", strategy)
 	}
 }
 

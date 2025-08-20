@@ -11,7 +11,8 @@ import (
 )
 
 // executeUnifiedCopyStrategy executes the appropriate copy strategy based on encryption state
-func (s3a *S3ApiServer) executeUnifiedCopyStrategy(entry *filer_pb.Entry, r *http.Request, dstBucket, srcObject, dstObject string) ([]*filer_pb.FileChunk, error) {
+// Returns chunks and destination metadata that should be applied to the destination entry
+func (s3a *S3ApiServer) executeUnifiedCopyStrategy(entry *filer_pb.Entry, r *http.Request, dstBucket, srcObject, dstObject string) ([]*filer_pb.FileChunk, map[string][]byte, error) {
 	// Detect encryption state
 	srcPath := fmt.Sprintf("/%s/%s", r.Header.Get("X-Amz-Copy-Source-Bucket"), srcObject)
 	dstPath := fmt.Sprintf("/%s/%s", dstBucket, dstObject)
@@ -33,7 +34,7 @@ func (s3a *S3ApiServer) executeUnifiedCopyStrategy(entry *filer_pb.Entry, r *htt
 	// Determine copy strategy
 	strategy, err := DetermineUnifiedCopyStrategy(state, entry.Extended, r)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	glog.V(2).Infof("Unified copy strategy for %s → %s: %v", srcPath, dstPath, strategy)
@@ -47,7 +48,8 @@ func (s3a *S3ApiServer) executeUnifiedCopyStrategy(entry *filer_pb.Entry, r *htt
 	// Execute strategy
 	switch strategy {
 	case CopyStrategyDirect:
-		return s3a.copyChunks(entry, dstPath)
+		chunks, err := s3a.copyChunks(entry, dstPath)
+		return chunks, nil, err
 
 	case CopyStrategyKeyRotation:
 		return s3a.executeKeyRotation(entry, r, state)
@@ -62,7 +64,7 @@ func (s3a *S3ApiServer) executeUnifiedCopyStrategy(entry *filer_pb.Entry, r *htt
 		return s3a.executeReencryptCopy(entry, r, state, dstBucket, dstPath)
 
 	default:
-		return nil, fmt.Errorf("unknown unified copy strategy: %v", strategy)
+		return nil, nil, fmt.Errorf("unknown unified copy strategy: %v", strategy)
 	}
 }
 
@@ -87,18 +89,18 @@ func (s3a *S3ApiServer) mapCopyErrorToS3Error(err error) s3err.ErrorCode {
 }
 
 // executeKeyRotation handles key rotation for same-object copies
-func (s3a *S3ApiServer) executeKeyRotation(entry *filer_pb.Entry, r *http.Request, state *EncryptionState) ([]*filer_pb.FileChunk, error) {
+func (s3a *S3ApiServer) executeKeyRotation(entry *filer_pb.Entry, r *http.Request, state *EncryptionState) ([]*filer_pb.FileChunk, map[string][]byte, error) {
 	// For key rotation, we only need to update metadata, not re-copy chunks
 	// This is a significant optimization for same-object key changes
 
 	if state.SrcSSEC && state.DstSSEC {
-		// SSE-C key rotation - return existing chunks, metadata will be updated by caller
-		return entry.GetChunks(), nil
+		// SSE-C key rotation - need to handle new key/IV, use reencrypt logic
+		return s3a.executeReencryptCopy(entry, r, state, "", "")
 	}
 
 	if state.SrcSSEKMS && state.DstSSEKMS {
 		// SSE-KMS key rotation - return existing chunks, metadata will be updated by caller
-		return entry.GetChunks(), nil
+		return entry.GetChunks(), nil, nil
 	}
 
 	// Fallback to reencrypt if we can't do metadata-only rotation
@@ -106,7 +108,7 @@ func (s3a *S3ApiServer) executeKeyRotation(entry *filer_pb.Entry, r *http.Reques
 }
 
 // executeEncryptCopy handles plain → encrypted copies
-func (s3a *S3ApiServer) executeEncryptCopy(entry *filer_pb.Entry, r *http.Request, state *EncryptionState, dstBucket, dstPath string) ([]*filer_pb.FileChunk, error) {
+func (s3a *S3ApiServer) executeEncryptCopy(entry *filer_pb.Entry, r *http.Request, state *EncryptionState, dstBucket, dstPath string) ([]*filer_pb.FileChunk, map[string][]byte, error) {
 	if state.DstSSEC {
 		// Use existing SSE-C copy logic
 		return s3a.copyChunksWithSSEC(entry, r)
@@ -114,19 +116,21 @@ func (s3a *S3ApiServer) executeEncryptCopy(entry *filer_pb.Entry, r *http.Reques
 
 	if state.DstSSEKMS {
 		// Use existing SSE-KMS copy logic
-		return s3a.copyChunksWithSSEKMS(entry, r, dstBucket)
+		chunks, err := s3a.copyChunksWithSSEKMS(entry, r, dstBucket)
+		return chunks, nil, err
 	}
 
 	if state.DstSSES3 {
 		// Use streaming copy for SSE-S3 encryption
-		return s3a.executeStreamingReencryptCopy(entry, r, state, dstPath)
+		chunks, err := s3a.executeStreamingReencryptCopy(entry, r, state, dstPath)
+		return chunks, nil, err
 	}
 
-	return nil, fmt.Errorf("unknown target encryption type")
+	return nil, nil, fmt.Errorf("unknown target encryption type")
 }
 
 // executeDecryptCopy handles encrypted → plain copies
-func (s3a *S3ApiServer) executeDecryptCopy(entry *filer_pb.Entry, r *http.Request, state *EncryptionState, dstPath string) ([]*filer_pb.FileChunk, error) {
+func (s3a *S3ApiServer) executeDecryptCopy(entry *filer_pb.Entry, r *http.Request, state *EncryptionState, dstPath string) ([]*filer_pb.FileChunk, map[string][]byte, error) {
 	if state.SrcSSEC {
 		// Use existing SSE-C copy logic with no destination encryption
 		return s3a.copyChunksWithSSEC(entry, r)
@@ -134,22 +138,25 @@ func (s3a *S3ApiServer) executeDecryptCopy(entry *filer_pb.Entry, r *http.Reques
 
 	if state.SrcSSEKMS {
 		// Use existing SSE-KMS copy logic with no destination encryption
-		return s3a.copyChunksWithSSEKMS(entry, r, "")
+		chunks, err := s3a.copyChunksWithSSEKMS(entry, r, "")
+		return chunks, nil, err
 	}
 
 	if state.SrcSSES3 {
 		// Use streaming copy for SSE-S3 decryption
-		return s3a.executeStreamingReencryptCopy(entry, r, state, dstPath)
+		chunks, err := s3a.executeStreamingReencryptCopy(entry, r, state, dstPath)
+		return chunks, nil, err
 	}
 
-	return nil, fmt.Errorf("unknown source encryption type")
+	return nil, nil, fmt.Errorf("unknown source encryption type")
 }
 
 // executeReencryptCopy handles encrypted → encrypted copies with different keys/methods
-func (s3a *S3ApiServer) executeReencryptCopy(entry *filer_pb.Entry, r *http.Request, state *EncryptionState, dstBucket, dstPath string) ([]*filer_pb.FileChunk, error) {
+func (s3a *S3ApiServer) executeReencryptCopy(entry *filer_pb.Entry, r *http.Request, state *EncryptionState, dstBucket, dstPath string) ([]*filer_pb.FileChunk, map[string][]byte, error) {
 	// Check if we should use streaming copy for better performance
 	if s3a.shouldUseStreamingCopy(entry, state) {
-		return s3a.executeStreamingReencryptCopy(entry, r, state, dstPath)
+		chunks, err := s3a.executeStreamingReencryptCopy(entry, r, state, dstPath)
+		return chunks, nil, err
 	}
 
 	// Fallback to chunk-by-chunk approach for compatibility
@@ -158,7 +165,8 @@ func (s3a *S3ApiServer) executeReencryptCopy(entry *filer_pb.Entry, r *http.Requ
 	}
 
 	if state.SrcSSEKMS && state.DstSSEKMS {
-		return s3a.copyChunksWithSSEKMS(entry, r, dstBucket)
+		chunks, err := s3a.copyChunksWithSSEKMS(entry, r, dstBucket)
+		return chunks, nil, err
 	}
 
 	if state.SrcSSEC && state.DstSSEKMS {
@@ -168,16 +176,18 @@ func (s3a *S3ApiServer) executeReencryptCopy(entry *filer_pb.Entry, r *http.Requ
 
 	if state.SrcSSEKMS && state.DstSSEC {
 		// SSE-KMS → SSE-C: use existing cross-encryption logic
-		return s3a.copyChunksWithSSEKMS(entry, r, dstBucket) // This will handle the transition
+		chunks, err := s3a.copyChunksWithSSEKMS(entry, r, dstBucket) // This will handle the transition
+		return chunks, nil, err
 	}
 
 	// Handle SSE-S3 cross-encryption scenarios
 	if state.SrcSSES3 || state.DstSSES3 {
 		// Any scenario involving SSE-S3 uses streaming copy
-		return s3a.executeStreamingReencryptCopy(entry, r, state, dstPath)
+		chunks, err := s3a.executeStreamingReencryptCopy(entry, r, state, dstPath)
+		return chunks, nil, err
 	}
 
-	return nil, fmt.Errorf("unsupported cross-encryption scenario: src=%v, dst=%v",
+	return nil, nil, fmt.Errorf("unsupported cross-encryption scenario: src=%v, dst=%v",
 		s3a.getEncryptionTypeString(state.SrcSSEC, state.SrcSSEKMS, state.SrcSSES3),
 		s3a.getEncryptionTypeString(state.DstSSEC, state.DstSSEKMS, state.DstSSES3))
 }
