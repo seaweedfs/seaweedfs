@@ -47,7 +47,7 @@ func TestSimpleSSECIntegration(t *testing.T) {
 	})
 
 	bucketName := "test-debug-bucket"
-	objectKey := fmt.Sprintf("test-object-final-%d", time.Now().UnixNano())
+	objectKey := fmt.Sprintf("test-object-prefixed-%d", time.Now().UnixNano())
 
 	// Generate SSE-C key
 	key := make([]byte, 32)

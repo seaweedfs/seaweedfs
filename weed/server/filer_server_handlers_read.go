@@ -192,8 +192,9 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 
 	// print out the header from extended properties
 	for k, v := range entry.Extended {
-		if !strings.HasPrefix(k, "xattr-") {
+		if !strings.HasPrefix(k, "xattr-") && !strings.HasPrefix(k, "x-seaweedfs-") {
 			// "xattr-" prefix is set in filesys.XATTR_PREFIX
+			// "x-seaweedfs-" prefix is for internal metadata that should not become HTTP headers
 			w.Header().Set(k, string(v))
 		}
 	}
@@ -231,12 +232,6 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		kmsBase64 := base64.StdEncoding.EncodeToString(sseKMSKey)
 		w.Header().Set(s3_constants.SeaweedFSSSEKMSKeyHeader, kmsBase64)
 	}
-
-	// Remove any problematic SSE headers that might be automatically copied
-	// The "sse-c-iv" key in Extended metadata should not become an HTTP header
-	w.Header().Del("Sse-C-Iv")
-	w.Header().Del("sse-c-iv")
-	w.Header().Del("SSE-C-IV")
 
 	SetEtag(w, etag)
 

@@ -105,10 +105,10 @@ func validateAndParseSSECHeaders(algorithm, key, keyMD5 string) (*SSECustomerKey
 	// Validate key MD5 (base64-encoded MD5 of the raw key bytes; case-sensitive)
 	sum := md5.Sum(keyBytes)
 	expectedMD5 := base64.StdEncoding.EncodeToString(sum[:])
-	
+
 	// Debug logging for MD5 validation
 	glog.V(4).Infof("SSE-C MD5 validation: provided='%s', expected='%s', keyBytes=%x", keyMD5, expectedMD5, keyBytes)
-	
+
 	if keyMD5 != expectedMD5 {
 		glog.Errorf("SSE-C MD5 mismatch: provided='%s', expected='%s', keyBytes=%x, sum=%x", keyMD5, expectedMD5, keyBytes, sum)
 		return nil, ErrSSECustomerKeyMD5Mismatch
