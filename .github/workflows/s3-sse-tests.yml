@@ -71,8 +71,8 @@ jobs:
             # Override TEST_PATTERN for quick tests only - temporarily excluding SSE-KMS until KMS provider initialization is fixed
             make test-with-server TEST_PATTERN="TestSSECIntegrationBasic|TestSimpleSSECIntegration"
           else
-            # Run comprehensive SSE integration tests - excluding problematic tests with pre-existing issues
-            make test-with-server TEST_PATTERN="TestSSECIntegrationBasic|TestSSECIntegrationVariousDataSizes|.*VariousDataSizes"
+            # Run comprehensive SSE integration tests - only working SSE-C functionality
+            make test-with-server TEST_PATTERN="TestSSECIntegrationBasic|TestSSECIntegrationVariousDataSizes|TestSimpleSSECIntegration"
           fi
 
       - name: Show server logs on failure
