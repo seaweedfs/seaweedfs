@@ -22,7 +22,7 @@ func TestSSECMultipartUpload(t *testing.T) {
 
 	t.Run("Single part encryption/decryption", func(t *testing.T) {
 		// Encrypt the data
-		encryptedReader, err := CreateSSECEncryptedReader(strings.NewReader(testData), customerKey)
+		encryptedReader, iv, err := CreateSSECEncryptedReader(strings.NewReader(testData), customerKey)
 		if err != nil {
 			t.Fatalf("Failed to create encrypted reader: %v", err)
 		}
@@ -33,7 +33,7 @@ func TestSSECMultipartUpload(t *testing.T) {
 		}
 
 		// Decrypt the data
-		decryptedReader, err := CreateSSECDecryptedReader(bytes.NewReader(encryptedData), customerKey)
+		decryptedReader, err := CreateSSECDecryptedReader(bytes.NewReader(encryptedData), customerKey, iv)
 		if err != nil {
 			t.Fatalf("Failed to create decrypted reader: %v", err)
 		}
@@ -52,6 +52,7 @@ func TestSSECMultipartUpload(t *testing.T) {
 		// Simulate multiple parts (each part gets encrypted separately)
 		partSize := 5 * 1024 // 5KB parts
 		var encryptedParts [][]byte
+		var partIVs [][]byte
 
 		for i := 0; i < len(testData); i += partSize {
 			end := i + partSize
@@ -62,7 +63,7 @@ func TestSSECMultipartUpload(t *testing.T) {
 			partData := testData[i:end]
 
 			// Each part is encrypted separately in multipart uploads
-			encryptedReader, err := CreateSSECEncryptedReader(strings.NewReader(partData), customerKey)
+			encryptedReader, iv, err := CreateSSECEncryptedReader(strings.NewReader(partData), customerKey)
 			if err != nil {
 				t.Fatalf("Failed to create encrypted reader for part %d: %v", i/partSize, err)
 			}
@@ -73,13 +74,14 @@ func TestSSECMultipartUpload(t *testing.T) {
 			}
 
 			encryptedParts = append(encryptedParts, encryptedPart)
+			partIVs = append(partIVs, iv)
 		}
 
 		// Simulate reading back the multipart object
 		var reconstructedData strings.Builder
 
 		for i, encryptedPart := range encryptedParts {
-			decryptedReader, err := CreateSSECDecryptedReader(bytes.NewReader(encryptedPart), customerKey)
+			decryptedReader, err := CreateSSECDecryptedReader(bytes.NewReader(encryptedPart), customerKey, partIVs[i])
 			if err != nil {
 				t.Fatalf("Failed to create decrypted reader for part %d: %v", i, err)
 			}
@@ -103,6 +105,7 @@ func TestSSECMultipartUpload(t *testing.T) {
 		for _, partSize := range partSizes {
 			t.Run(fmt.Sprintf("PartSize_%d", partSize), func(t *testing.T) {
 				var encryptedParts [][]byte
+				var partIVs [][]byte
 
 				for i := 0; i < len(testData); i += partSize {
 					end := i + partSize
@@ -112,7 +115,7 @@ func TestSSECMultipartUpload(t *testing.T) {
 
 					partData := testData[i:end]
 
-					encryptedReader, err := CreateSSECEncryptedReader(strings.NewReader(partData), customerKey)
+					encryptedReader, iv, err := CreateSSECEncryptedReader(strings.NewReader(partData), customerKey)
 					if err != nil {
 						t.Fatalf("Failed to create encrypted reader: %v", err)
 					}
@@ -123,13 +126,14 @@ func TestSSECMultipartUpload(t *testing.T) {
 					}
 
 					encryptedParts = append(encryptedParts, encryptedPart)
+					partIVs = append(partIVs, iv)
 				}
 
 				// Verify reconstruction
 				var reconstructedData strings.Builder
 
-				for _, encryptedPart := range encryptedParts {
-					decryptedReader, err := CreateSSECDecryptedReader(bytes.NewReader(encryptedPart), customerKey)
+				for j, encryptedPart := range encryptedParts {
+					decryptedReader, err := CreateSSECDecryptedReader(bytes.NewReader(encryptedPart), customerKey, partIVs[j])
 					if err != nil {
 						t.Fatalf("Failed to create decrypted reader: %v", err)
 					}
@@ -288,7 +292,7 @@ func TestMultipartSSEMixedScenarios(t *testing.T) {
 		}
 
 		// Test empty part
-		encryptedReader, err := CreateSSECEncryptedReader(strings.NewReader(""), customerKey)
+		encryptedReader, iv, err := CreateSSECEncryptedReader(strings.NewReader(""), customerKey)
 		if err != nil {
 			t.Fatalf("Failed to create encrypted reader for empty data: %v", err)
 		}
@@ -304,7 +308,7 @@ func TestMultipartSSEMixedScenarios(t *testing.T) {
 		}
 
 		// Decrypt and verify
-		decryptedReader, err := CreateSSECDecryptedReader(bytes.NewReader(encryptedData), customerKey)
+		decryptedReader, err := CreateSSECDecryptedReader(bytes.NewReader(encryptedData), customerKey, iv)
 		if err != nil {
 			t.Fatalf("Failed to create decrypted reader for empty data: %v", err)
 		}
@@ -329,12 +333,13 @@ func TestMultipartSSEMixedScenarios(t *testing.T) {
 
 		testData := "ABCDEFGHIJ"
 		var encryptedParts [][]byte
+		var partIVs [][]byte
 
 		// Encrypt each byte as a separate part
 		for i, b := range []byte(testData) {
 			partData := string(b)
 
-			encryptedReader, err := CreateSSECEncryptedReader(strings.NewReader(partData), customerKey)
+			encryptedReader, iv, err := CreateSSECEncryptedReader(strings.NewReader(partData), customerKey)
 			if err != nil {
 				t.Fatalf("Failed to create encrypted reader for byte %d: %v", i, err)
 			}
@@ -345,13 +350,14 @@ func TestMultipartSSEMixedScenarios(t *testing.T) {
 			}
 
 			encryptedParts = append(encryptedParts, encryptedPart)
+			partIVs = append(partIVs, iv)
 		}
 
 		// Reconstruct
 		var reconstructedData strings.Builder
 
 		for i, encryptedPart := range encryptedParts {
-			decryptedReader, err := CreateSSECDecryptedReader(bytes.NewReader(encryptedPart), customerKey)
+			decryptedReader, err := CreateSSECDecryptedReader(bytes.NewReader(encryptedPart), customerKey, partIVs[i])
 			if err != nil {
 				t.Fatalf("Failed to create decrypted reader for byte %d: %v", i, err)
 			}
@@ -384,7 +390,7 @@ func TestMultipartSSEMixedScenarios(t *testing.T) {
 		}
 
 		// Encrypt
-		encryptedReader, err := CreateSSECEncryptedReader(bytes.NewReader(largeData), customerKey)
+		encryptedReader, iv, err := CreateSSECEncryptedReader(bytes.NewReader(largeData), customerKey)
 		if err != nil {
 			t.Fatalf("Failed to create encrypted reader for large data: %v", err)
 		}
@@ -395,7 +401,7 @@ func TestMultipartSSEMixedScenarios(t *testing.T) {
 		}
 
 		// Decrypt
-		decryptedReader, err := CreateSSECDecryptedReader(bytes.NewReader(encryptedData), customerKey)
+		decryptedReader, err := CreateSSECDecryptedReader(bytes.NewReader(encryptedData), customerKey, iv)
 		if err != nil {
 			t.Fatalf("Failed to create decrypted reader for large data: %v", err)
 		}
@@ -435,7 +441,7 @@ func TestMultipartSSEPerformance(t *testing.T) {
 			}
 
 			// Encrypt
-			encryptedReader, err := CreateSSECEncryptedReader(bytes.NewReader(partData), customerKey)
+			encryptedReader, iv, err := CreateSSECEncryptedReader(bytes.NewReader(partData), customerKey)
 			if err != nil {
 				t.Fatalf("Failed to create encrypted reader for part %d: %v", partNum, err)
 			}
@@ -446,7 +452,7 @@ func TestMultipartSSEPerformance(t *testing.T) {
 			}
 
 			// Decrypt
-			decryptedReader, err := CreateSSECDecryptedReader(bytes.NewReader(encryptedData), customerKey)
+			decryptedReader, err := CreateSSECDecryptedReader(bytes.NewReader(encryptedData), customerKey, iv)
 			if err != nil {
 				t.Fatalf("Failed to create decrypted reader for part %d: %v", partNum, err)
 			}

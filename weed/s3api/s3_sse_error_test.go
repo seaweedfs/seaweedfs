@@ -18,7 +18,7 @@ func TestSSECWrongKeyDecryption(t *testing.T) {
 	originalKey := GenerateTestSSECKey(1)
 	testData := "Hello, SSE-C world!"
 
-	encryptedReader, err := CreateSSECEncryptedReader(strings.NewReader(testData), &SSECustomerKey{
+	encryptedReader, iv, err := CreateSSECEncryptedReader(strings.NewReader(testData), &SSECustomerKey{
 		Algorithm: "AES256",
 		Key:       originalKey.Key,
 		KeyMD5:    originalKey.KeyMD5,
@@ -39,7 +39,7 @@ func TestSSECWrongKeyDecryption(t *testing.T) {
 		Algorithm: "AES256",
 		Key:       wrongKey.Key,
 		KeyMD5:    wrongKey.KeyMD5,
-	})
+	}, iv)
 	if err != nil {
 		t.Fatalf("Failed to create decrypted reader: %v", err)
 	}
@@ -266,7 +266,7 @@ func TestSSEEmptyDataHandling(t *testing.T) {
 		}
 
 		// Encrypt empty data
-		encryptedReader, err := CreateSSECEncryptedReader(strings.NewReader(""), customerKey)
+		encryptedReader, iv, err := CreateSSECEncryptedReader(strings.NewReader(""), customerKey)
 		if err != nil {
 			t.Fatalf("Failed to create encrypted reader for empty data: %v", err)
 		}
@@ -276,13 +276,13 @@ func TestSSEEmptyDataHandling(t *testing.T) {
 			t.Fatalf("Failed to read encrypted empty data: %v", err)
 		}
 
-		// Should still have IV even for empty data
-		if len(encryptedData) < AESBlockSize {
-			t.Error("Encrypted empty data should still contain IV")
+		// Should have IV for empty data
+		if len(iv) != AESBlockSize {
+			t.Error("IV should be present even for empty data")
 		}
 
 		// Decrypt and verify
-		decryptedReader, err := CreateSSECDecryptedReader(bytes.NewReader(encryptedData), customerKey)
+		decryptedReader, err := CreateSSECDecryptedReader(bytes.NewReader(encryptedData), customerKey, iv)
 		if err != nil {
 			t.Fatalf("Failed to create decrypted reader for empty data: %v", err)
 		}
@@ -357,7 +357,7 @@ func TestSSEConcurrentAccess(t *testing.T) {
 			testData := fmt.Sprintf("test data %d", id)
 
 			// Encrypt
-			encryptedReader, err := CreateSSECEncryptedReader(strings.NewReader(testData), customerKey)
+			encryptedReader, iv, err := CreateSSECEncryptedReader(strings.NewReader(testData), customerKey)
 			if err != nil {
 				errors <- fmt.Errorf("goroutine %d encrypt error: %v", id, err)
 				return
@@ -370,7 +370,7 @@ func TestSSEConcurrentAccess(t *testing.T) {
 			}
 
 			// Decrypt
-			decryptedReader, err := CreateSSECDecryptedReader(bytes.NewReader(encryptedData), customerKey)
+			decryptedReader, err := CreateSSECDecryptedReader(bytes.NewReader(encryptedData), customerKey, iv)
 			if err != nil {
 				errors <- fmt.Errorf("goroutine %d decrypt error: %v", id, err)
 				return

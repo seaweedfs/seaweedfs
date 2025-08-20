@@ -307,7 +307,7 @@ func TestSSECopyWithCorruptedSource(t *testing.T) {
 	testData := "Hello, corruption test!"
 
 	// Encrypt data
-	encryptedReader, err := CreateSSECEncryptedReader(strings.NewReader(testData), ssecCustomerKey)
+	encryptedReader, iv, err := CreateSSECEncryptedReader(strings.NewReader(testData), ssecCustomerKey)
 	if err != nil {
 		t.Fatalf("Failed to create encrypted reader: %v", err)
 	}
@@ -326,7 +326,7 @@ func TestSSECopyWithCorruptedSource(t *testing.T) {
 	}
 
 	// Try to decrypt corrupted data
-	decryptedReader, err := CreateSSECDecryptedReader(bytes.NewReader(corruptedData), ssecCustomerKey)
+	decryptedReader, err := CreateSSECDecryptedReader(bytes.NewReader(corruptedData), ssecCustomerKey, iv)
 	if err != nil {
 		t.Fatalf("Failed to create decrypted reader for corrupted data: %v", err)
 	}
