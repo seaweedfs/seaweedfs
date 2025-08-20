@@ -24,7 +24,7 @@ GREEN := \033[0;32m
 YELLOW := \033[1;33m
 NC := \033[0m # No Color
 
-.PHONY: all test clean start-seaweedfs stop-seaweedfs start-seaweedfs-ci check-binary build-weed help help-extended test-with-server test-quick-with-server test-metadata-persistence
+.PHONY: all test clean start-seaweedfs stop-seaweedfs stop-seaweedfs-safe start-seaweedfs-ci check-binary build-weed help help-extended test-with-server test-quick-with-server test-metadata-persistence
 
 all: test-basic
 
@@ -132,6 +132,26 @@ stop-seaweedfs:
 	@pgrep -f "weed s3.*-port=$(S3_PORT)" | head -10 | xargs -r kill -TERM || true
 	@sleep 2
 	@echo "$(GREEN)SeaweedFS server stopped$(NC)"
+
+# CI-safe server stop that's more conservative
+stop-seaweedfs-safe:
+	@echo "$(YELLOW)Safely stopping SeaweedFS server...$(NC)"
+	@# Use port-based cleanup which is safer in CI
+	@if command -v lsof >/dev/null 2>&1; then \
+		echo "Using lsof for port-based cleanup..."; \
+		lsof -ti :$(MASTER_PORT) 2>/dev/null | head -5 | while read pid; do kill -TERM $$pid 2>/dev/null || true; done; \
+		lsof -ti :$(VOLUME_PORT) 2>/dev/null | head -5 | while read pid; do kill -TERM $$pid 2>/dev/null || true; done; \
+		lsof -ti :$(FILER_PORT) 2>/dev/null | head -5 | while read pid; do kill -TERM $$pid 2>/dev/null || true; done; \
+		lsof -ti :$(S3_PORT) 2>/dev/null | head -5 | while read pid; do kill -TERM $$pid 2>/dev/null || true; done; \
+	else \
+		echo "lsof not available, using netstat approach..."; \
+		netstat -tlnp 2>/dev/null | grep :$(MASTER_PORT) | awk '{print $$7}' | cut -d/ -f1 | head -5 | while read pid; do [ "$$pid" != "-" ] && kill -TERM $$pid 2>/dev/null || true; done; \
+		netstat -tlnp 2>/dev/null | grep :$(VOLUME_PORT) | awk '{print $$7}' | cut -d/ -f1 | head -5 | while read pid; do [ "$$pid" != "-" ] && kill -TERM $$pid 2>/dev/null || true; done; \
+		netstat -tlnp 2>/dev/null | grep :$(FILER_PORT) | awk '{print $$7}' | cut -d/ -f1 | head -5 | while read pid; do [ "$$pid" != "-" ] && kill -TERM $$pid 2>/dev/null || true; done; \
+		netstat -tlnp 2>/dev/null | grep :$(S3_PORT) | awk '{print $$7}' | cut -d/ -f1 | head -5 | while read pid; do [ "$$pid" != "-" ] && kill -TERM $$pid 2>/dev/null || true; done; \
+	fi
+	@sleep 2
+	@echo "$(GREEN)SeaweedFS server safely stopped$(NC)"
 
 clean:
 	@echo "$(YELLOW)Cleaning up SSE test artifacts...$(NC)"
@@ -281,19 +301,12 @@ test-metadata-persistence: check-binary
 # GitHub Actions compatible test-with-server target that handles server lifecycle
 test-with-server: build-weed
 	@echo "🚀 Starting SSE integration tests with automated server management..."
-	@echo "Cleaning up any existing test processes..."
-	@# Clean up more carefully to avoid CI interference
-	@pgrep -f "weed.*-port=$(MASTER_PORT)" | head -5 | xargs -r kill -TERM || true
-	@pgrep -f "weed.*-port=$(VOLUME_PORT)" | head -5 | xargs -r kill -TERM || true
-	@pgrep -f "weed.*-port=$(FILER_PORT)" | head -5 | xargs -r kill -TERM || true
-	@pgrep -f "weed.*-port=$(S3_PORT)" | head -5 | xargs -r kill -TERM || true
-	@sleep 2
 	@echo "Starting SeaweedFS cluster..."
-	@# Start server components with better logging
+	@# Use the CI-safe startup directly without aggressive cleanup
 	@if $(MAKE) start-seaweedfs-ci > weed-test.log 2>&1; then \
 		echo "✅ SeaweedFS cluster started successfully"; \
 		echo "Running SSE integration tests..."; \
-		trap 'make stop-seaweedfs || true' EXIT; \
+		trap 'make stop-seaweedfs-safe || true' EXIT; \
 		if [ -n "$(TEST_PATTERN)" ]; then \
 			echo "🔍 Running tests matching pattern: $(TEST_PATTERN)"; \
 			cd $(SEAWEEDFS_ROOT) && go test -v -timeout=$(TEST_TIMEOUT) -run "$(TEST_PATTERN)" ./test/s3/sse || exit 1; \
@@ -302,7 +315,7 @@ test-with-server: build-weed
 			cd $(SEAWEEDFS_ROOT) && go test -v -timeout=$(TEST_TIMEOUT) -run "TestSSE.*Integration" ./test/s3/sse || exit 1; \
 		fi; \
 		echo "✅ All tests completed successfully"; \
-		make stop-seaweedfs || true; \
+		make stop-seaweedfs-safe || true; \
 	else \
 		echo "❌ Failed to start SeaweedFS cluster"; \
 		echo "=== Server startup logs ==="; \
@@ -320,6 +333,9 @@ start-seaweedfs-ci: check-binary
 	@mkdir -p /tmp/seaweedfs-test-sse-master
 	@mkdir -p /tmp/seaweedfs-test-sse-volume
 	@mkdir -p /tmp/seaweedfs-test-sse-filer
+	
+	# Clean up any old server logs
+	@rm -f /tmp/seaweedfs-sse-*.log || true
 	
 	# Start master server with volume size limit and explicit gRPC port
 	@echo "Starting master server..."
@@ -409,5 +425,6 @@ help-extended:
 	@echo "  start-seaweedfs         - Start SeaweedFS cluster"
 	@echo "  start-seaweedfs-ci      - Start SeaweedFS cluster (CI-safe version)"
 	@echo "  stop-seaweedfs          - Stop SeaweedFS cluster"
+	@echo "  stop-seaweedfs-safe     - Stop SeaweedFS cluster (CI-safe version)"
 	@echo "  clean                   - Clean up test artifacts"
 	@echo "  debug-logs              - Show recent logs from all services"
