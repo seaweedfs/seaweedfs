@@ -261,26 +261,44 @@ func (p *LocalKMSProvider) Close() error {
 	return nil
 }
 
-// getKey retrieves a key by ID or alias
+// getKey retrieves a key by ID or alias, creating it on-demand if it doesn't exist
 func (p *LocalKMSProvider) getKey(keyIdentifier string) (*LocalKey, error) {
 	p.mu.RLock()
-	defer p.mu.RUnlock()
 
 	// Try direct lookup first
 	if key, exists := p.keys[keyIdentifier]; exists {
+		p.mu.RUnlock()
 		return key, nil
 	}
 
 	// Try with default key if no identifier provided
 	if keyIdentifier == "" && p.defaultKeyID != "" {
 		if key, exists := p.keys[p.defaultKeyID]; exists {
+			p.mu.RUnlock()
 			return key, nil
 		}
 	}
 
+	p.mu.RUnlock()
+
+	// Key doesn't exist - create it on-demand for local KMS
+	// This makes the local provider user-friendly for testing and development
+	if keyIdentifier != "" {
+		glog.V(1).Infof("Creating on-demand local KMS key: %s", keyIdentifier)
+		key, err := p.CreateKeyWithID(keyIdentifier, fmt.Sprintf("Auto-created local KMS key: %s", keyIdentifier))
+		if err != nil {
+			return nil, &kms.KMSError{
+				Code:    kms.ErrCodeKMSInternalFailure,
+				Message: fmt.Sprintf("Failed to create on-demand key %s: %v", keyIdentifier, err),
+				KeyID:   keyIdentifier,
+			}
+		}
+		return key, nil
+	}
+
 	return nil, &kms.KMSError{
 		Code:    kms.ErrCodeNotFoundException,
-		Message: fmt.Sprintf("Key not found: %s", keyIdentifier),
+		Message: fmt.Sprintf("Key not found and cannot create key with empty identifier"),
 		KeyID:   keyIdentifier,
 	}
 }

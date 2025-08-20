@@ -65,6 +65,26 @@ func (s3a *S3ApiServer) createMultipartUpload(r *http.Request, input *s3.CreateM
 			entry.Attributes.Mime = *input.ContentType
 		}
 
+		// Store SSE-KMS information from create-multipart-upload headers
+		// This allows upload-part operations to inherit encryption settings
+		if IsSSEKMSRequest(r) {
+			keyID := r.Header.Get(s3_constants.AmzServerSideEncryptionAwsKmsKeyId)
+			bucketKeyEnabled := strings.ToLower(r.Header.Get(s3_constants.AmzServerSideEncryptionBucketKeyEnabled)) == "true"
+
+			// Store SSE-KMS configuration for parts to inherit
+			entry.Extended["sse-kms-key-id"] = []byte(keyID)
+			if bucketKeyEnabled {
+				entry.Extended["sse-kms-bucket-key-enabled"] = []byte("true")
+			}
+
+			// Store encryption context if provided
+			if contextHeader := r.Header.Get(s3_constants.AmzServerSideEncryptionContext); contextHeader != "" {
+				entry.Extended["sse-kms-encryption-context"] = []byte(contextHeader)
+			}
+
+			glog.V(3).Infof("createMultipartUpload: stored SSE-KMS settings for upload %s with keyID %s", uploadIdString, keyID)
+		}
+
 		// Extract and store object lock metadata from request headers
 		// This ensures object lock settings from create_multipart_upload are preserved
 		if err := s3a.extractObjectLockMetadataFromRequest(r, entry); err != nil {
@@ -273,6 +293,19 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 					versionEntry.Extended[k] = v
 				}
 			}
+
+			// Preserve SSE-KMS metadata from the first part (if any)
+			// SSE-KMS metadata is stored in individual parts, not the upload directory
+			if len(completedPartNumbers) > 0 && len(partEntries[completedPartNumbers[0]]) > 0 {
+				firstPartEntry := partEntries[completedPartNumbers[0]][0]
+				if firstPartEntry.Extended != nil {
+					// Copy SSE-KMS metadata from the first part
+					if kmsMetadata, exists := firstPartEntry.Extended[s3_constants.SeaweedFSSSEKMSKey]; exists {
+						versionEntry.Extended[s3_constants.SeaweedFSSSEKMSKey] = kmsMetadata
+						glog.V(3).Infof("completeMultipartUpload: preserved SSE-KMS metadata from first part (versioned)")
+					}
+				}
+			}
 			if pentry.Attributes.Mime != "" {
 				versionEntry.Attributes.Mime = pentry.Attributes.Mime
 			} else if mime != "" {
@@ -322,6 +355,19 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 					entry.Extended[k] = v
 				}
 			}
+
+			// Preserve SSE-KMS metadata from the first part (if any)
+			// SSE-KMS metadata is stored in individual parts, not the upload directory
+			if len(completedPartNumbers) > 0 && len(partEntries[completedPartNumbers[0]]) > 0 {
+				firstPartEntry := partEntries[completedPartNumbers[0]][0]
+				if firstPartEntry.Extended != nil {
+					// Copy SSE-KMS metadata from the first part
+					if kmsMetadata, exists := firstPartEntry.Extended[s3_constants.SeaweedFSSSEKMSKey]; exists {
+						entry.Extended[s3_constants.SeaweedFSSSEKMSKey] = kmsMetadata
+						glog.V(3).Infof("completeMultipartUpload: preserved SSE-KMS metadata from first part (suspended versioning)")
+					}
+				}
+			}
 			if pentry.Attributes.Mime != "" {
 				entry.Attributes.Mime = pentry.Attributes.Mime
 			} else if mime != "" {
@@ -360,6 +406,19 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			for k, v := range pentry.Extended {
 				if k != "key" {
 					entry.Extended[k] = v
+				}
+			}
+
+			// Preserve SSE-KMS metadata from the first part (if any)
+			// SSE-KMS metadata is stored in individual parts, not the upload directory
+			if len(completedPartNumbers) > 0 && len(partEntries[completedPartNumbers[0]]) > 0 {
+				firstPartEntry := partEntries[completedPartNumbers[0]][0]
+				if firstPartEntry.Extended != nil {
+					// Copy SSE-KMS metadata from the first part
+					if kmsMetadata, exists := firstPartEntry.Extended[s3_constants.SeaweedFSSSEKMSKey]; exists {
+						entry.Extended[s3_constants.SeaweedFSSSEKMSKey] = kmsMetadata
+						glog.V(3).Infof("completeMultipartUpload: preserved SSE-KMS metadata from first part")
+					}
 				}
 			}
 			if pentry.Attributes.Mime != "" {

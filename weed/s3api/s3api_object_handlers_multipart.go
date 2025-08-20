@@ -301,6 +301,32 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 
 	glog.V(2).Infof("PutObjectPartHandler %s %s %04d", bucket, uploadID, partID)
 
+	// Retrieve SSE-KMS settings from upload directory and apply them
+	if uploadEntry, err := s3a.getEntry(s3a.genUploadsFolder(bucket), uploadID); err == nil {
+		if uploadEntry.Extended != nil {
+			// Check if this upload uses SSE-KMS
+			if keyIDBytes, exists := uploadEntry.Extended["sse-kms-key-id"]; exists {
+				keyID := string(keyIDBytes)
+
+				// Add SSE-KMS headers to the request for putToFiler to process
+				r.Header.Set(s3_constants.AmzServerSideEncryption, "aws:kms")
+				r.Header.Set(s3_constants.AmzServerSideEncryptionAwsKmsKeyId, keyID)
+
+				// Add bucket key setting if stored
+				if bucketKeyBytes, exists := uploadEntry.Extended["sse-kms-bucket-key-enabled"]; exists && string(bucketKeyBytes) == "true" {
+					r.Header.Set(s3_constants.AmzServerSideEncryptionBucketKeyEnabled, "true")
+				}
+
+				// Add encryption context if stored
+				if contextBytes, exists := uploadEntry.Extended["sse-kms-encryption-context"]; exists {
+					r.Header.Set(s3_constants.AmzServerSideEncryptionContext, string(contextBytes))
+				}
+
+				glog.V(3).Infof("PutObjectPartHandler: inherited SSE-KMS settings from upload %s, keyID %s", uploadID, keyID)
+			}
+		}
+	}
+
 	uploadUrl := s3a.genPartUploadUrl(bucket, uploadID, partID)
 
 	if partID == 1 && r.Header.Get("Content-Type") == "" {

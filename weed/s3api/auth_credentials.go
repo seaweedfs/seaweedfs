@@ -594,27 +594,8 @@ func (iam *IdentityAccessManagement) initializeLocalKMS(kmsConfig map[string]int
 		}
 
 		// Create the test keys that our tests expect with specific keyIDs
-		localProvider, ok := provider.(*local.LocalKMSProvider)
-		if ok {
-			// Create test keys that match what our tests use (with exact keyIDs)
-			testKeySpecs := []struct {
-				KeyID       string
-				Description string
-			}{
-				{"test-key-123", "Test key for SSE-KMS integration tests"},
-				{"test-multipart-key", "Test key for SSE-KMS multipart upload tests"},
-				{"another-test-key", "Additional test key for SSE-KMS"},
-				{"test-key-size-tests", "Test key for SSE-KMS various data sizes tests"},
-			}
-
-			for _, spec := range testKeySpecs {
-				if err := iam.createTestKey(localProvider, spec.KeyID, spec.Description); err != nil {
-					glog.Warningf("Failed to create test key %s: %v", spec.KeyID, err)
-				} else {
-					glog.V(1).Infof("Created test KMS key: %s", spec.KeyID)
-				}
-			}
-		}
+		// Note: Local KMS provider now creates keys on-demand
+		// No need to pre-create test keys in production code
 
 		glog.V(1).Infof("Local KMS provider created successfully")
 		return provider, nil
@@ -631,17 +612,6 @@ func (iam *IdentityAccessManagement) initializeLocalKMS(kmsConfig map[string]int
 		return fmt.Errorf("failed to initialize global KMS: %v", err)
 	}
 
-	glog.V(0).Infof("✅ KMS provider initialized successfully with test keys - SSE-KMS is now available")
-	return nil
-}
-
-// createTestKey creates a key with a specific keyID in the local KMS provider
-func (iam *IdentityAccessManagement) createTestKey(localProvider *local.LocalKMSProvider, keyID, description string) error {
-	// Use the new CreateKeyWithID method to create keys with specific keyIDs for testing
-	_, err := localProvider.CreateKeyWithID(keyID, description)
-	if err != nil {
-		return fmt.Errorf("failed to create test key with ID %s: %v", keyID, err)
-	}
-
+	glog.V(0).Infof("✅ KMS provider initialized successfully - SSE-KMS is now available")
 	return nil
 }
