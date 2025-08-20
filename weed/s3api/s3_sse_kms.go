@@ -224,17 +224,18 @@ func (s3a *S3ApiServer) CreateSSEKMSEncryptedReaderForBucket(r io.Reader, bucket
 	var err error
 
 	if bucketKeyEnabled {
-		// Use S3 Bucket Keys optimization with per-bucket caching
-		// TODO: Get bucket cache from bucket configuration system
-		var bucketCache *BucketKMSCache
-		// For now, create a temporary cache to demonstrate the concept
-		bucketCache = NewBucketKMSCache(bucketName, BucketKeyCacheTTL)
-
-		dataKeyResp, err = getBucketDataKey(bucketName, keyID, encryptionContext, bucketCache)
+		// Use S3 Bucket Keys optimization with persistent per-bucket caching
+		bucketCache, err := s3a.getBucketKMSCache(bucketName)
 		if err != nil {
-			// Fall back to per-object key generation if bucket key fails
-			glog.V(2).Infof("Bucket key generation failed for bucket %s, falling back to per-object key: %v", bucketName, err)
+			glog.V(2).Infof("Failed to get bucket KMS cache for %s, falling back to per-object key: %v", bucketName, err)
 			bucketKeyEnabled = false
+		} else {
+			dataKeyResp, err = getBucketDataKey(bucketName, keyID, encryptionContext, bucketCache)
+			if err != nil {
+				// Fall back to per-object key generation if bucket key fails
+				glog.V(2).Infof("Bucket key generation failed for bucket %s, falling back to per-object key: %v", bucketName, err)
+				bucketKeyEnabled = false
+			}
 		}
 	}
 
@@ -288,23 +289,64 @@ func (s3a *S3ApiServer) CreateSSEKMSEncryptedReaderForBucket(r io.Reader, bucket
 	return &cipher.StreamReader{S: stream, R: r}, sseKey, nil
 }
 
+// getBucketKMSCache gets or creates the persistent KMS cache for a bucket
+func (s3a *S3ApiServer) getBucketKMSCache(bucketName string) (*BucketKMSCache, error) {
+	// Get bucket configuration
+	bucketConfig, errCode := s3a.getBucketConfig(bucketName)
+	if errCode != s3err.ErrNone {
+		if errCode == s3err.ErrNoSuchBucket {
+			return nil, fmt.Errorf("bucket %s does not exist", bucketName)
+		}
+		return nil, fmt.Errorf("failed to get bucket config: %v", errCode)
+	}
+
+	// Initialize KMS cache if it doesn't exist
+	if bucketConfig.KMSKeyCache == nil {
+		bucketConfig.KMSKeyCache = NewBucketKMSCache(bucketName, BucketKeyCacheTTL)
+		glog.V(3).Infof("Initialized new KMS cache for bucket %s", bucketName)
+	}
+
+	return bucketConfig.KMSKeyCache, nil
+}
+
 // CleanupBucketKMSCache performs cleanup of expired KMS keys for a specific bucket
-// This is a placeholder function that demonstrates the bucket-specific cleanup concept
 func (s3a *S3ApiServer) CleanupBucketKMSCache(bucketName string) int {
-	// TODO: Integrate with actual bucket configuration system
-	// For now, return 0 as a placeholder
-	glog.V(3).Infof("Bucket KMS cache cleanup requested for bucket %s (not implemented yet)", bucketName)
-	return 0
+	bucketCache, err := s3a.getBucketKMSCache(bucketName)
+	if err != nil {
+		glog.V(3).Infof("Could not get KMS cache for bucket %s: %v", bucketName, err)
+		return 0
+	}
+
+	cleaned := bucketCache.CleanupExpired()
+	if cleaned > 0 {
+		glog.V(2).Infof("Cleaned up %d expired KMS keys for bucket %s", cleaned, bucketName)
+	}
+	return cleaned
 }
 
 // CleanupAllBucketKMSCaches performs cleanup of expired KMS keys for all buckets
 func (s3a *S3ApiServer) CleanupAllBucketKMSCaches() int {
 	totalCleaned := 0
 
-	// This would need to iterate through all bucket configs in the cache
-	// Implementation depends on how bucket configs are stored in S3ApiServer
-	// For now, this is a placeholder
-	glog.V(2).Infof("Cleaned up %d expired KMS keys across all bucket caches", totalCleaned)
+	// Access the bucket config cache safely
+	if s3a.bucketConfigCache != nil {
+		s3a.bucketConfigCache.mutex.RLock()
+		bucketNames := make([]string, 0, len(s3a.bucketConfigCache.cache))
+		for bucketName := range s3a.bucketConfigCache.cache {
+			bucketNames = append(bucketNames, bucketName)
+		}
+		s3a.bucketConfigCache.mutex.RUnlock()
+
+		// Clean up each bucket's KMS cache
+		for _, bucketName := range bucketNames {
+			cleaned := s3a.CleanupBucketKMSCache(bucketName)
+			totalCleaned += cleaned
+		}
+	}
+
+	if totalCleaned > 0 {
+		glog.V(2).Infof("Cleaned up %d expired KMS keys across %d bucket caches", totalCleaned, len(s3a.bucketConfigCache.cache))
+	}
 	return totalCleaned
 }
 
