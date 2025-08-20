@@ -118,3 +118,4 @@ docker/admin_integration/weed-local
 /seaweedfs-rdma-sidecar/bin
 /test/s3/encryption/filerldb2
 /test/s3/sse/filerldb2
+test/s3/sse/weed-test.log

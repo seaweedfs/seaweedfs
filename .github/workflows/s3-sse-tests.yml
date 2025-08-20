@@ -68,11 +68,11 @@ jobs:
           # Run tests with automatic server management
           # The test-with-server target handles server startup/shutdown automatically
           if [ "${{ matrix.test-type }}" = "quick" ]; then
-            # Override TEST_PATTERN for quick tests only - temporarily excluding SSE-KMS until KMS provider initialization is fixed
-            make test-with-server TEST_PATTERN="TestSSECIntegrationBasic|TestSimpleSSECIntegration"
+            # Quick tests - basic SSE-C and SSE-KMS functionality
+            make test-with-server TEST_PATTERN="TestSSECIntegrationBasic|TestSSEKMSIntegrationBasic|TestSimpleSSECIntegration"
           else
-            # Run comprehensive SSE integration tests - only working SSE-C functionality
-            make test-with-server TEST_PATTERN="TestSSECIntegrationBasic|TestSSECIntegrationVariousDataSizes|TestSimpleSSECIntegration"
+            # Comprehensive tests - SSE-C/KMS functionality, excluding copy operations (pre-existing SSE-C issues)
+            make test-with-server TEST_PATTERN="TestSSECIntegrationBasic|TestSSECIntegrationVariousDataSizes|TestSSEKMSIntegrationBasic|TestSSEKMSIntegrationVariousDataSizes|.*Multipart.*Integration|TestSimpleSSECIntegration"
           fi
 
       - name: Show server logs on failure
@@ -272,13 +272,9 @@ jobs:
           uname -a
           free -h
           
-          # Skip multipart tests due to pre-existing SSE-C and SSE-KMS initialization issues
-          echo "⏭️  Skipping multipart upload tests due to known pre-existing issues:"
-          echo "   - SSE-C multipart uploads: HTTP 500 errors (pre-existing functionality gap)"  
-          echo "   - SSE-KMS multipart uploads: Missing metadata due to KMS provider not initialized"
-          echo "   - These will be re-enabled once the underlying issues are resolved"
-          exit 0
-          # make test-with-server TEST_PATTERN=".*Multipart.*Integration" || {
+          # Run multipart tests - SSE-KMS should now work with KMS provider initialization fix
+          echo "🚀 Running multipart upload tests (SSE-KMS now supported)..."
+          make test-with-server TEST_PATTERN=".*Multipart.*Integration" || {
             echo "❌ SSE multipart upload test failed, checking logs..."
             if [ -f weed-test.log ]; then
               echo "=== Server logs ==="

@@ -446,6 +446,35 @@ func (p *LocalKMSProvider) CreateKey(description string, aliases []string) (*Loc
 	return key, nil
 }
 
+// CreateKeyWithID creates a key with a specific keyID (for testing only)
+func (p *LocalKMSProvider) CreateKeyWithID(keyID, description string) (*LocalKey, error) {
+	keyMaterial := make([]byte, 32)
+	if _, err := io.ReadFull(rand.Reader, keyMaterial); err != nil {
+		return nil, fmt.Errorf("failed to generate key material: %w", err)
+	}
+
+	key := &LocalKey{
+		KeyID:       keyID,
+		ARN:         fmt.Sprintf("arn:aws:kms:local:000000000000:key/%s", keyID),
+		Description: description,
+		KeyMaterial: keyMaterial,
+		KeyUsage:    kms.KeyUsageEncryptDecrypt,
+		KeyState:    kms.KeyStateEnabled,
+		Origin:      kms.KeyOriginAWS,
+		CreatedAt:   time.Now(),
+		Aliases:     []string{}, // No aliases by default
+		Metadata:    make(map[string]string),
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Register key with the exact keyID provided
+	p.keys[keyID] = key
+
+	return key, nil
+}
+
 // marshalEncryptionContextDeterministic creates a deterministic byte representation of encryption context
 // This ensures that the same encryption context always produces the same AAD for AES-GCM
 func marshalEncryptionContextDeterministic(encryptionContext map[string]string) ([]byte, error) {
