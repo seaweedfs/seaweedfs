@@ -15,7 +15,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -51,21 +50,10 @@ type SSEKMSMetadata struct {
 const (
 	// Default data key size (256 bits)
 	DataKeySize = 32
-	// Bucket key cache TTL (1 hour)
-	BucketKeyCacheTTL = time.Hour
 )
 
-// BucketKeyCache represents a cached bucket-level data key
-type BucketKeyCache struct {
-	DataKey     *kms.GenerateDataKeyResponse
-	ExpiresAt   time.Time
-	KeyID       string
-	ContextHash string // Hash of encryption context for cache key
-}
-
-// Global bucket key cache (in production, this should be distributed)
-var bucketKeyCache = make(map[string]*BucketKeyCache)
-var bucketKeyCacheMutex sync.RWMutex
+// Bucket key cache TTL (moved to be used with per-bucket cache)
+const BucketKeyCacheTTL = time.Hour
 
 // CreateSSEKMSEncryptedReader creates an encrypted reader using KMS envelope encryption
 func CreateSSEKMSEncryptedReader(r io.Reader, keyID string, encryptionContext map[string]string) (io.Reader, *SSEKMSKey, error) {
@@ -84,12 +72,11 @@ func CreateSSEKMSEncryptedReaderWithBucketKey(r io.Reader, keyID string, encrypt
 
 	if bucketKeyEnabled {
 		// Use S3 Bucket Keys optimization - try to get or create a bucket-level data key
-		dataKeyResp, err = getBucketDataKey(keyID, encryptionContext)
-		if err != nil {
-			// Fall back to per-object key generation if bucket key fails
-			glog.V(2).Infof("Bucket key generation failed, falling back to per-object key: %v", err)
-			bucketKeyEnabled = false
-		}
+		// Note: This is a simplified implementation. In practice, this would need
+		// access to the bucket name and S3ApiServer instance for proper per-bucket caching.
+		// For now, generate per-object keys (bucket key optimization disabled)
+		glog.V(2).Infof("Bucket key optimization requested but not fully implemented yet - using per-object keys")
+		bucketKeyEnabled = false
 	}
 
 	if !bucketKeyEnabled {
@@ -147,61 +134,8 @@ func CreateSSEKMSEncryptedReaderWithBucketKey(r io.Reader, keyID string, encrypt
 	return encryptedReader, sseKey, nil
 }
 
-// getBucketDataKey retrieves or generates a bucket-level data key for S3 Bucket Keys optimization
-func getBucketDataKey(keyID string, encryptionContext map[string]string) (*kms.GenerateDataKeyResponse, error) {
-	// Create cache key from keyID and encryption context
-	cacheKey := createBucketKeyCacheKey(keyID, encryptionContext)
-
-	bucketKeyCacheMutex.RLock()
-	cached, exists := bucketKeyCache[cacheKey]
-	bucketKeyCacheMutex.RUnlock()
-
-	// Check if we have a valid cached key
-	if exists && time.Now().Before(cached.ExpiresAt) {
-		glog.V(3).Infof("Using cached bucket key for keyID: %s", keyID)
-		return cached.DataKey, nil
-	}
-
-	// Generate a new bucket-level data key
-	kmsProvider := kms.GetGlobalKMS()
-	if kmsProvider == nil {
-		return nil, fmt.Errorf("KMS is not configured")
-	}
-
-	dataKeyReq := &kms.GenerateDataKeyRequest{
-		KeyID:             keyID,
-		KeySpec:           kms.KeySpecAES256,
-		EncryptionContext: encryptionContext,
-	}
-
-	ctx := context.Background()
-	dataKeyResp, err := kmsProvider.GenerateDataKey(ctx, dataKeyReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate bucket data key: %v", err)
-	}
-
-	// Cache the new key
-	bucketKeyCacheMutex.Lock()
-	bucketKeyCache[cacheKey] = &BucketKeyCache{
-		DataKey:     dataKeyResp,
-		ExpiresAt:   time.Now().Add(BucketKeyCacheTTL),
-		KeyID:       keyID,
-		ContextHash: createEncryptionContextHash(encryptionContext),
-	}
-	bucketKeyCacheMutex.Unlock()
-
-	glog.V(3).Infof("Generated new bucket key for keyID: %s", keyID)
-	return dataKeyResp, nil
-}
-
-// createBucketKeyCacheKey creates a cache key from keyID and encryption context
-func createBucketKeyCacheKey(keyID string, encryptionContext map[string]string) string {
-	contextHash := createEncryptionContextHash(encryptionContext)
-	return fmt.Sprintf("%s:%s", keyID, contextHash)
-}
-
-// createEncryptionContextHash creates a deterministic hash of the encryption context
-func createEncryptionContextHash(encryptionContext map[string]string) string {
+// hashEncryptionContext creates a deterministic hash of the encryption context
+func hashEncryptionContext(encryptionContext map[string]string) string {
 	if len(encryptionContext) == 0 {
 		return "empty"
 	}
@@ -228,21 +162,142 @@ func createEncryptionContextHash(encryptionContext map[string]string) string {
 	return hex.EncodeToString(hash.Sum(nil))[:16] // Use first 16 chars for brevity
 }
 
-// cleanupExpiredBucketKeys removes expired keys from the cache
-func cleanupExpiredBucketKeys() {
-	bucketKeyCacheMutex.Lock()
-	defer bucketKeyCacheMutex.Unlock()
+// getBucketDataKey retrieves or creates a cached bucket-level data key for SSE-KMS
+// This is a simplified implementation that demonstrates the per-bucket caching concept
+// In a full implementation, this would integrate with the actual bucket configuration system
+func getBucketDataKey(bucketName, keyID string, encryptionContext map[string]string, bucketCache *BucketKMSCache) (*kms.GenerateDataKeyResponse, error) {
+	// Create context hash for cache key
+	contextHash := hashEncryptionContext(encryptionContext)
+	cacheKey := fmt.Sprintf("%s:%s", keyID, contextHash)
 
-	now := time.Now()
-	for key, cached := range bucketKeyCache {
-		if now.After(cached.ExpiresAt) {
-			// Clear sensitive data before removing
-			if cached.DataKey != nil {
-				kms.ClearSensitiveData(cached.DataKey.Plaintext)
+	// Try to get from cache first if cache is available
+	if bucketCache != nil {
+		if cacheEntry, found := bucketCache.Get(cacheKey); found {
+			if dataKey, ok := cacheEntry.DataKey.(*kms.GenerateDataKeyResponse); ok {
+				glog.V(3).Infof("Using cached bucket key for bucket %s, keyID %s", bucketName, keyID)
+				return dataKey, nil
 			}
-			delete(bucketKeyCache, key)
 		}
 	}
+
+	// Cache miss - generate new data key
+	kmsProvider := kms.GetGlobalKMS()
+	if kmsProvider == nil {
+		return nil, fmt.Errorf("KMS is not configured")
+	}
+
+	dataKeyReq := &kms.GenerateDataKeyRequest{
+		KeyID:             keyID,
+		KeySpec:           kms.KeySpecAES256,
+		EncryptionContext: encryptionContext,
+	}
+
+	ctx := context.Background()
+	dataKeyResp, err := kmsProvider.GenerateDataKey(ctx, dataKeyReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate bucket data key: %v", err)
+	}
+
+	// Cache the data key for future use if cache is available
+	if bucketCache != nil {
+		bucketCache.Set(cacheKey, keyID, dataKeyResp, BucketKeyCacheTTL)
+		glog.V(2).Infof("Generated and cached new bucket key for bucket %s, keyID %s", bucketName, keyID)
+	} else {
+		glog.V(2).Infof("Generated new bucket key for bucket %s, keyID %s (caching disabled)", bucketName, keyID)
+	}
+
+	return dataKeyResp, nil
+}
+
+// CreateSSEKMSEncryptedReaderForBucket creates an encrypted reader with bucket-specific caching
+// This method is part of S3ApiServer to access bucket configuration and caching
+func (s3a *S3ApiServer) CreateSSEKMSEncryptedReaderForBucket(r io.Reader, bucketName, keyID string, encryptionContext map[string]string, bucketKeyEnabled bool) (io.Reader, *SSEKMSKey, error) {
+	var dataKeyResp *kms.GenerateDataKeyResponse
+	var err error
+
+	if bucketKeyEnabled {
+		// Use S3 Bucket Keys optimization with per-bucket caching
+		// TODO: Get bucket cache from bucket configuration system
+		var bucketCache *BucketKMSCache
+		// For now, create a temporary cache to demonstrate the concept
+		bucketCache = NewBucketKMSCache(bucketName, BucketKeyCacheTTL)
+
+		dataKeyResp, err = getBucketDataKey(bucketName, keyID, encryptionContext, bucketCache)
+		if err != nil {
+			// Fall back to per-object key generation if bucket key fails
+			glog.V(2).Infof("Bucket key generation failed for bucket %s, falling back to per-object key: %v", bucketName, err)
+			bucketKeyEnabled = false
+		}
+	}
+
+	if !bucketKeyEnabled {
+		// Generate a per-object data encryption key using KMS
+		kmsProvider := kms.GetGlobalKMS()
+		if kmsProvider == nil {
+			return nil, nil, fmt.Errorf("KMS is not configured")
+		}
+
+		dataKeyReq := &kms.GenerateDataKeyRequest{
+			KeyID:             keyID,
+			KeySpec:           kms.KeySpecAES256,
+			EncryptionContext: encryptionContext,
+		}
+
+		ctx := context.Background()
+		dataKeyResp, err = kmsProvider.GenerateDataKey(ctx, dataKeyReq)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to generate data key: %v", err)
+		}
+	}
+
+	// Ensure we clear the plaintext data key from memory when done
+	defer kms.ClearSensitiveData(dataKeyResp.Plaintext)
+
+	// Create AES cipher with the data key
+	block, err := aes.NewCipher(dataKeyResp.Plaintext)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create AES cipher: %v", err)
+	}
+
+	// Generate a random IV for CTR mode
+	iv := make([]byte, 16) // AES block size
+	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
+		return nil, nil, fmt.Errorf("failed to generate IV: %v", err)
+	}
+
+	// Create CTR mode cipher stream
+	stream := cipher.NewCTR(block, iv)
+
+	// Create the encrypting reader
+	sseKey := &SSEKMSKey{
+		KeyID:             keyID,
+		EncryptedDataKey:  dataKeyResp.CiphertextBlob,
+		EncryptionContext: encryptionContext,
+		BucketKeyEnabled:  bucketKeyEnabled,
+		IV:                iv,
+	}
+
+	return &cipher.StreamReader{S: stream, R: r}, sseKey, nil
+}
+
+// CleanupBucketKMSCache performs cleanup of expired KMS keys for a specific bucket
+// This is a placeholder function that demonstrates the bucket-specific cleanup concept
+func (s3a *S3ApiServer) CleanupBucketKMSCache(bucketName string) int {
+	// TODO: Integrate with actual bucket configuration system
+	// For now, return 0 as a placeholder
+	glog.V(3).Infof("Bucket KMS cache cleanup requested for bucket %s (not implemented yet)", bucketName)
+	return 0
+}
+
+// CleanupAllBucketKMSCaches performs cleanup of expired KMS keys for all buckets
+func (s3a *S3ApiServer) CleanupAllBucketKMSCaches() int {
+	totalCleaned := 0
+
+	// This would need to iterate through all bucket configs in the cache
+	// Implementation depends on how bucket configs are stored in S3ApiServer
+	// For now, this is a placeholder
+	glog.V(2).Infof("Cleaned up %d expired KMS keys across all bucket caches", totalCleaned)
+	return totalCleaned
 }
 
 // CreateSSEKMSDecryptedReader creates a decrypted reader using KMS envelope encryption

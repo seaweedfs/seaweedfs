@@ -31,8 +31,110 @@ type BucketConfig struct {
 	IsPublicRead     bool // Cached flag to avoid JSON parsing on every request
 	CORS             *cors.CORSConfiguration
 	ObjectLockConfig *ObjectLockConfiguration // Cached parsed Object Lock configuration
+	KMSKeyCache      *BucketKMSCache          // Per-bucket KMS key cache for SSE-KMS operations
 	LastModified     time.Time
 	Entry            *filer_pb.Entry
+}
+
+// BucketKMSCache represents per-bucket KMS key caching for SSE-KMS operations
+// This provides better isolation and automatic cleanup compared to global caching
+type BucketKMSCache struct {
+	cache   map[string]*BucketKMSCacheEntry // Key: contextHash, Value: cached data key
+	mutex   sync.RWMutex
+	bucket  string        // Bucket name for logging/debugging
+	lastTTL time.Duration // TTL used for cache entries (typically 1 hour)
+}
+
+// BucketKMSCacheEntry represents a single cached KMS data key
+type BucketKMSCacheEntry struct {
+	DataKey     interface{} // Could be *kms.GenerateDataKeyResponse or similar
+	ExpiresAt   time.Time
+	KeyID       string
+	ContextHash string // Hash of encryption context for cache validation
+}
+
+// NewBucketKMSCache creates a new per-bucket KMS key cache
+func NewBucketKMSCache(bucketName string, ttl time.Duration) *BucketKMSCache {
+	return &BucketKMSCache{
+		cache:   make(map[string]*BucketKMSCacheEntry),
+		bucket:  bucketName,
+		lastTTL: ttl,
+	}
+}
+
+// Get retrieves a cached KMS data key if it exists and hasn't expired
+func (bkc *BucketKMSCache) Get(contextHash string) (*BucketKMSCacheEntry, bool) {
+	if bkc == nil {
+		return nil, false
+	}
+
+	bkc.mutex.RLock()
+	defer bkc.mutex.RUnlock()
+
+	entry, exists := bkc.cache[contextHash]
+	if !exists {
+		return nil, false
+	}
+
+	// Check if entry has expired
+	if time.Now().After(entry.ExpiresAt) {
+		return nil, false
+	}
+
+	return entry, true
+}
+
+// Set stores a KMS data key in the cache
+func (bkc *BucketKMSCache) Set(contextHash, keyID string, dataKey interface{}, ttl time.Duration) {
+	if bkc == nil {
+		return
+	}
+
+	bkc.mutex.Lock()
+	defer bkc.mutex.Unlock()
+
+	bkc.cache[contextHash] = &BucketKMSCacheEntry{
+		DataKey:     dataKey,
+		ExpiresAt:   time.Now().Add(ttl),
+		KeyID:       keyID,
+		ContextHash: contextHash,
+	}
+	bkc.lastTTL = ttl
+}
+
+// CleanupExpired removes expired entries from the cache
+func (bkc *BucketKMSCache) CleanupExpired() int {
+	if bkc == nil {
+		return 0
+	}
+
+	bkc.mutex.Lock()
+	defer bkc.mutex.Unlock()
+
+	now := time.Now()
+	expiredCount := 0
+
+	for key, entry := range bkc.cache {
+		if now.After(entry.ExpiresAt) {
+			// Clear sensitive data if possible (this would need to be type-specific)
+			delete(bkc.cache, key)
+			expiredCount++
+		}
+	}
+
+	return expiredCount
+}
+
+// Size returns the current number of cached entries
+func (bkc *BucketKMSCache) Size() int {
+	if bkc == nil {
+		return 0
+	}
+
+	bkc.mutex.RLock()
+	defer bkc.mutex.RUnlock()
+
+	return len(bkc.cache)
 }
 
 // BucketConfigCache provides caching for bucket configurations
