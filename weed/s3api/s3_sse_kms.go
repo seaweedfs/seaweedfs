@@ -116,6 +116,11 @@ func CreateSSEKMSEncryptedReaderWithBucketKey(r io.Reader, keyID string, encrypt
 	}
 
 	// Generate a random IV for CTR mode
+	// Note: AES-CTR is used for object data encryption (not AES-GCM) because:
+	// 1. CTR mode supports streaming encryption for large objects
+	// 2. CTR mode supports range requests (seek to arbitrary positions)
+	// 3. This matches AWS S3 and other S3-compatible implementations
+	// The KMS data key encryption (separate layer) uses AES-GCM for authentication
 	iv := make([]byte, 16) // AES block size
 	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
 		return nil, nil, fmt.Errorf("failed to generate IV: %v", err)
@@ -286,6 +291,7 @@ func CreateSSEKMSDecryptedReader(r io.Reader, sseKey *SSEKMSKey) (io.Reader, err
 	}
 
 	// Create CTR mode cipher stream for decryption
+	// Note: AES-CTR is used for object data decryption to match the encryption mode
 	stream := cipher.NewCTR(block, iv)
 
 	// Return the decrypted reader
