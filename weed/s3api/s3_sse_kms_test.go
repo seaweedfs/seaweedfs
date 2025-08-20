@@ -127,6 +127,11 @@ func TestSSEKMSKeyValidation(t *testing.T) {
 			keyID:     "",
 			wantValid: false,
 		},
+		{
+			name:      "Invalid - internal spaces",
+			keyID:     "invalid key id",
+			wantValid: false,
+		},
 	}
 
 	for _, tt := range tests {
