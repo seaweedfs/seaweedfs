@@ -452,53 +452,32 @@ func ValidateSSEKMSKey(sseKey *SSEKMSKey) error {
 	return nil
 }
 
-// isValidKMSKeyID performs basic validation of KMS key identifiers
-// Note: caller should ensure keyID is not empty before calling this function
+// isValidKMSKeyID performs basic validation of KMS key identifiers.
+// Following Minio's approach: be permissive and accept any reasonable key format.
+// Only reject keys with leading/trailing spaces or other obvious issues.
 func isValidKMSKeyID(keyID string) bool {
-	// Key IDs should not contain spaces or other invalid characters
-	if strings.Contains(keyID, " ") || strings.Contains(keyID, "\t") || strings.Contains(keyID, "\n") {
+	// Reject empty keys
+	if keyID == "" {
 		return false
 	}
-
-	// AWS KMS key ID formats:
-	// 1. Key ID: 1234abcd-12ab-34cd-56ef-1234567890ab
-	// 2. Key ARN: arn:aws:kms:region:account:key/1234abcd-12ab-34cd-56ef-1234567890ab
-	// 3. Alias: alias/my-key
-	// 4. Alias ARN: arn:aws:kms:region:account:alias/my-key
-
-	if strings.HasPrefix(keyID, "arn:aws:kms:") {
-		// ARN format validation using compiled regex
-		return arnRegex.MatchString(keyID)
+	
+	// Following Minio's validation: reject keys with leading/trailing spaces
+	if strings.HasPrefix(keyID, " ") || strings.HasSuffix(keyID, " ") {
+		return false
 	}
-
-	if strings.HasPrefix(keyID, "alias/") {
-		// Alias format validation
-		return len(keyID) > 6 // "alias/" + at least one character
+	
+	// Also reject keys with internal spaces (common sense validation)
+	if strings.Contains(keyID, " ") {
+		return false
 	}
-
-	// UUID format validation
-	if uuidRegex.MatchString(keyID) {
-		return true
+	
+	// Reject keys with control characters or newlines
+	if strings.ContainsAny(keyID, "\t\n\r\x00") {
+		return false
 	}
-
-	// For non-standard key IDs (local KMS, custom implementations), 
-	// perform basic format validation: reasonable length and character set
-	if len(keyID) >= 3 && len(keyID) <= 100 {
-		// Allow alphanumeric characters, hyphens, underscores, and forward slashes
-		// This covers most reasonable key identifier formats
-		for _, r := range keyID {
-			if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
-				(r >= '0' && r <= '9') || r == '-' || r == '_' || r == '/') {
-				return false
-			}
-		}
-		
-		// Reject keys that start or end with separators
-		if keyID[0] == '-' || keyID[0] == '_' || keyID[0] == '/' ||
-			keyID[len(keyID)-1] == '-' || keyID[len(keyID)-1] == '_' || keyID[len(keyID)-1] == '/' {
-			return false
-		}
-		
+	
+	// Accept any reasonable length key (be permissive for various KMS providers)
+	if len(keyID) > 0 && len(keyID) <= 500 {
 		return true
 	}
 	

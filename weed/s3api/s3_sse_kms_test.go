@@ -103,13 +103,28 @@ func TestSSEKMSKeyValidation(t *testing.T) {
 		},
 
 		{
-			name:      "Invalid format",
+			name:      "Valid test key format",
 			keyID:     "invalid-key-format",
+			wantValid: true, // Now valid - following Minio's permissive approach
+		},
+		{
+			name:      "Valid short key",
+			keyID:     "12345678-1234",
+			wantValid: true, // Now valid - following Minio's permissive approach
+		},
+		{
+			name:      "Invalid - leading space",
+			keyID:     " leading-space",
 			wantValid: false,
 		},
 		{
-			name:      "Short UUID",
-			keyID:     "12345678-1234",
+			name:      "Invalid - trailing space",
+			keyID:     "trailing-space ",
+			wantValid: false,
+		},
+		{
+			name:      "Invalid - empty",
+			keyID:     "",
 			wantValid: false,
 		},
 	}
@@ -358,13 +373,13 @@ func TestValidateSSEKMSKey(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "invalid key ID format",
+			name: "valid flexible key ID format",
 			sseKey: &SSEKMSKey{
 				KeyID:             "invalid-format",
 				EncryptionContext: map[string]string{},
 				BucketKeyEnabled:  false,
 			},
-			wantErr: true,
+			wantErr: false, // Now valid - following Minio's permissive approach
 		},
 	}
 
