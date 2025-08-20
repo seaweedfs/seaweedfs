@@ -452,16 +452,26 @@ func marshalEncryptionContextDeterministic(encryptionContext map[string]string) 
 	}
 	sort.Strings(keys)
 
-	// Build deterministic representation
+	// Build deterministic representation with proper JSON escaping
 	var buf strings.Builder
 	buf.WriteString("{")
 	for i, k := range keys {
 		if i > 0 {
 			buf.WriteString(",")
 		}
-		buf.WriteString(fmt.Sprintf(`"%s":"%s"`, k, encryptionContext[k]))
+		// Marshal key and value to get proper JSON string escaping
+		keyBytes, _ := json.Marshal(k)
+		valueBytes, _ := json.Marshal(encryptionContext[k])
+		buf.Write(keyBytes)
+		buf.WriteString(":")
+		buf.Write(valueBytes)
 	}
 	buf.WriteString("}")
 
 	return []byte(buf.String())
+}
+
+// MarshalEncryptionContextDeterministicForTest exposes marshalEncryptionContextDeterministic for testing
+func MarshalEncryptionContextDeterministicForTest(encryptionContext map[string]string) []byte {
+	return marshalEncryptionContextDeterministic(encryptionContext)
 }

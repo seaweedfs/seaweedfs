@@ -69,15 +69,12 @@ func StoreSSEKMSMetadata(metadata map[string][]byte, iv []byte, keyID string, en
 		metadata[MetaSSEKMSEncryptedKey] = []byte(base64.StdEncoding.EncodeToString(encryptedKey))
 	}
 	if len(context) > 0 {
-		// Store context as JSON-like string for simplicity
-		contextStr := ""
-		for k, v := range context {
-			if contextStr != "" {
-				contextStr += ","
-			}
-			contextStr += fmt.Sprintf(`"%s":"%s"`, k, v)
+		// Marshal context to JSON to handle special characters correctly
+		contextBytes, err := json.Marshal(context)
+		if err == nil {
+			metadata[MetaSSEKMSContext] = contextBytes
 		}
-		metadata[MetaSSEKMSContext] = []byte("{" + contextStr + "}")
+		// Note: json.Marshal for map[string]string should never fail, but we handle it gracefully
 	}
 }
 
