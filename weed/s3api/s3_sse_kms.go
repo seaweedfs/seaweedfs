@@ -460,27 +460,27 @@ func isValidKMSKeyID(keyID string) bool {
 	if keyID == "" {
 		return false
 	}
-	
+
 	// Following Minio's validation: reject keys with leading/trailing spaces
 	if strings.HasPrefix(keyID, " ") || strings.HasSuffix(keyID, " ") {
 		return false
 	}
-	
+
 	// Also reject keys with internal spaces (common sense validation)
 	if strings.Contains(keyID, " ") {
 		return false
 	}
-	
+
 	// Reject keys with control characters or newlines
 	if strings.ContainsAny(keyID, "\t\n\r\x00") {
 		return false
 	}
-	
+
 	// Accept any reasonable length key (be permissive for various KMS providers)
 	if len(keyID) > 0 && len(keyID) <= 500 {
 		return true
 	}
-	
+
 	return false
 }
 

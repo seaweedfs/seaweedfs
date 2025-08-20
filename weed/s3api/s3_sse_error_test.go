@@ -60,9 +60,9 @@ func TestSSEKMSKeyNotFound(t *testing.T) {
 	// Note: The local KMS provider creates keys on-demand by design.
 	// This test validates that when on-demand creation fails or is disabled,
 	// appropriate errors are returned.
-	
+
 	// Test with an invalid key ID that would fail even on-demand creation
-	invalidKeyID := ""  // Empty key ID should fail
+	invalidKeyID := "" // Empty key ID should fail
 	encryptionContext := BuildEncryptionContext("test-bucket", "test-object", false)
 
 	_, _, err := CreateSSEKMSEncryptedReader(strings.NewReader("test data"), invalidKeyID, encryptionContext)
