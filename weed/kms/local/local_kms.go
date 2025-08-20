@@ -79,8 +79,8 @@ func NewLocalKMSProvider(config util.Configuration) (kms.KMSProvider, error) {
 
 // loadConfig loads configuration from the provided config
 func (p *LocalKMSProvider) loadConfig(config util.Configuration) error {
-	// This would typically load from a configuration file or environment variables
-	// For now, we'll create a simple default configuration
+	// TODO: This is a placeholder for loading configuration from files or environment variables
+	// Default key creation is handled by NewLocalKMSProvider if no keys are loaded
 	return nil
 }
 
