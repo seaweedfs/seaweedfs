@@ -604,6 +604,7 @@ func (iam *IdentityAccessManagement) initializeLocalKMS(kmsConfig map[string]int
 				{"test-key-123", "Test key for SSE-KMS integration tests"},
 				{"test-multipart-key", "Test key for SSE-KMS multipart upload tests"},
 				{"another-test-key", "Additional test key for SSE-KMS"},
+				{"test-key-size-tests", "Test key for SSE-KMS various data sizes tests"},
 			}
 
 			for _, spec := range testKeySpecs {
