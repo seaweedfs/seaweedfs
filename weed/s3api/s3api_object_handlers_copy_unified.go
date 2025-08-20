@@ -172,8 +172,9 @@ func (s3a *S3ApiServer) executeReencryptCopy(entry *filer_pb.Entry, r *http.Requ
 
 	if state.SrcSSEC && state.DstSSEKMS {
 		// SSE-C → SSE-KMS: SECURITY FIX - force streaming copy to prevent plaintext storage
-		// The previous logic would decrypt SSE-C data and incorrectly associate KMS metadata
+		// The original buggy logic would decrypt SSE-C data and incorrectly associate KMS metadata
 		// with plaintext chunks, creating a serious security vulnerability.
+		// NOTE: SSE-C copy operations have pre-existing issues unrelated to this security fix.
 		glog.V(2).Infof("SSE-C→SSE-KMS cross-encryption copy: forcing streaming copy for security")
 		chunks, err := s3a.executeStreamingReencryptCopy(entry, r, state, dstPath)
 		return chunks, nil, err

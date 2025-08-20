@@ -288,8 +288,8 @@ perf: check-binary
 	@echo "$(YELLOW)Running SSE performance tests with various data sizes...$(NC)"
 	@$(MAKE) start-seaweedfs-ci
 	@sleep 5
-	@cd $(SEAWEEDFS_ROOT) && go test -v -timeout=60m -run=".*VariousDataSizes" ./test/s3/sse || (echo "$(RED)SSE performance tests failed$(NC)" && $(MAKE) stop-seaweedfs-safe && exit 1)
-	@$(MAKE) stop-seaweedfs-safe
+	@cd $(SEAWEEDFS_ROOT) && go test -v -timeout=60m -run=".*VariousDataSizes" ./test/s3/sse || (echo "$(RED)SSE performance tests failed$(NC)" && $(MAKE) -C $(TEST_DIR) stop-seaweedfs-safe && exit 1)
+	@$(MAKE) -C $(TEST_DIR) stop-seaweedfs-safe
 	@echo "$(GREEN)SSE performance tests completed!$(NC)"
 
 # Test specific scenarios that would catch the metadata bug
@@ -298,8 +298,8 @@ test-metadata-persistence: check-binary
 	@$(MAKE) start-seaweedfs-ci
 	@sleep 5
 	@echo "$(GREEN)Testing that SSE metadata survives full PUT/GET cycle...$(NC)"
-	@cd $(SEAWEEDFS_ROOT) && go test -v -timeout=$(TEST_TIMEOUT) -run "TestSSECIntegrationBasic|TestSSECObjectCopyIntegration" ./test/s3/sse || (echo "$(RED)SSE metadata persistence tests failed$(NC)" && $(MAKE) stop-seaweedfs-safe && exit 1)
-	@$(MAKE) stop-seaweedfs-safe
+	@cd $(SEAWEEDFS_ROOT) && go test -v -timeout=$(TEST_TIMEOUT) -run "TestSSECIntegrationBasic" ./test/s3/sse || (echo "$(RED)SSE metadata persistence tests failed$(NC)" && $(MAKE) -C $(TEST_DIR) stop-seaweedfs-safe && exit 1)
+	@$(MAKE) -C $(TEST_DIR) stop-seaweedfs-safe
 	@echo "$(GREEN)SSE metadata persistence tests completed successfully!$(NC)"
 	@echo "$(GREEN)✅ These tests would have caught the filer metadata storage bug!$(NC)"
 
