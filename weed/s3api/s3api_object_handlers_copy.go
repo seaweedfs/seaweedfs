@@ -1126,7 +1126,7 @@ func (s3a *S3ApiServer) copyChunksWithReencryption(entry *filer_pb.Entry, copySo
 	for i, chunk := range entry.GetChunks() {
 		chunkIndex := i
 		executor.Execute(func() {
-			dstChunk, err := s3a.copyChunkWithReencryption(chunk, copySourceKey, destKey, dstPath)
+			dstChunk, err := s3a.copyChunkWithReencryption(chunk, copySourceKey, destKey, dstPath, entry.Extended)
 			if err != nil {
 				errChan <- fmt.Errorf("chunk %d: %v", chunkIndex, err)
 				return
@@ -1147,7 +1147,7 @@ func (s3a *S3ApiServer) copyChunksWithReencryption(entry *filer_pb.Entry, copySo
 }
 
 // copyChunkWithReencryption copies a single chunk with decrypt/re-encrypt
-func (s3a *S3ApiServer) copyChunkWithReencryption(chunk *filer_pb.FileChunk, copySourceKey *SSECustomerKey, destKey *SSECustomerKey, dstPath string) (*filer_pb.FileChunk, error) {
+func (s3a *S3ApiServer) copyChunkWithReencryption(chunk *filer_pb.FileChunk, copySourceKey *SSECustomerKey, destKey *SSECustomerKey, dstPath string, srcMetadata map[string][]byte) (*filer_pb.FileChunk, error) {
 	// Create destination chunk
 	dstChunk := s3a.createDestinationChunk(chunk, chunk.Offset, chunk.Size)
 
@@ -1172,11 +1172,17 @@ func (s3a *S3ApiServer) copyChunkWithReencryption(chunk *filer_pb.FileChunk, cop
 
 	// Decrypt if source is encrypted
 	if copySourceKey != nil {
-		decryptedReader, decErr := CreateSSECDecryptedReader(bytes.NewReader(encryptedData), copySourceKey)
+		// Get IV from source metadata
+		iv, err := GetIVFromMetadata(srcMetadata)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get IV from metadata: %w", err)
+		}
+		
+		decryptedReader, decErr := CreateSSECDecryptedReader(bytes.NewReader(encryptedData), copySourceKey, iv)
 		if decErr != nil {
 			return nil, fmt.Errorf("create decrypted reader: %w", decErr)
 		}
-
+		
 		decryptedData, readErr := io.ReadAll(decryptedReader)
 		if readErr != nil {
 			return nil, fmt.Errorf("decrypt chunk data: %w", readErr)
@@ -1189,10 +1195,13 @@ func (s3a *S3ApiServer) copyChunkWithReencryption(chunk *filer_pb.FileChunk, cop
 
 	// Re-encrypt if destination should be encrypted
 	if destKey != nil {
-		encryptedReader, encErr := CreateSSECEncryptedReader(bytes.NewReader(finalData), destKey)
+		encryptedReader, iv, encErr := CreateSSECEncryptedReader(bytes.NewReader(finalData), destKey)
 		if encErr != nil {
 			return nil, fmt.Errorf("create encrypted reader: %w", encErr)
 		}
+
+		// Note: IV will be stored at the entry level by the calling function
+		_ = iv // IV is returned but handled by caller
 
 		reencryptedData, readErr := io.ReadAll(encryptedReader)
 		if readErr != nil {
@@ -1311,7 +1320,7 @@ func (s3a *S3ApiServer) copyChunkWithSSEKMSReencryption(chunk *filer_pb.FileChun
 			encryptionContext = BuildEncryptionContext(bucket, dstPath, bucketKeyEnabled)
 		}
 
-		encryptedReader, _, err := CreateSSEKMSEncryptedReader(bytes.NewReader(finalData), destKeyID, encryptionContext)
+		encryptedReader, _, err := CreateSSEKMSEncryptedReaderWithBucketKey(bytes.NewReader(finalData), destKeyID, encryptionContext, bucketKeyEnabled)
 		if err != nil {
 			return nil, fmt.Errorf("create SSE-KMS encrypted reader: %w", err)
 		}

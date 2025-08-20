@@ -301,7 +301,7 @@ func (scm *StreamingCopyManager) createEncryptionReader(reader io.Reader, encSpe
 
 	case EncryptionTypeSSEKMS:
 		if sseKey, ok := encSpec.DestinationKey.(*SSEKMSKey); ok {
-			encryptedReader, updatedKey, err := CreateSSEKMSEncryptedReader(reader, sseKey.KeyID, sseKey.EncryptionContext)
+			encryptedReader, updatedKey, err := CreateSSEKMSEncryptedReaderWithBucketKey(reader, sseKey.KeyID, sseKey.EncryptionContext, sseKey.BucketKeyEnabled)
 			if err != nil {
 				return nil, err
 			}

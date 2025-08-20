@@ -5,13 +5,17 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/kms"
@@ -46,26 +50,60 @@ type SSEKMSMetadata struct {
 const (
 	// Default data key size (256 bits)
 	DataKeySize = 32
+	// Bucket key cache TTL (1 hour)
+	BucketKeyCacheTTL = time.Hour
 )
+
+// BucketKeyCache represents a cached bucket-level data key
+type BucketKeyCache struct {
+	DataKey     *kms.GenerateDataKeyResponse
+	ExpiresAt   time.Time
+	KeyID       string
+	ContextHash string // Hash of encryption context for cache key
+}
+
+// Global bucket key cache (in production, this should be distributed)
+var bucketKeyCache = make(map[string]*BucketKeyCache)
+var bucketKeyCacheMutex sync.RWMutex
 
 // CreateSSEKMSEncryptedReader creates an encrypted reader using KMS envelope encryption
 func CreateSSEKMSEncryptedReader(r io.Reader, keyID string, encryptionContext map[string]string) (io.Reader, *SSEKMSKey, error) {
+	return CreateSSEKMSEncryptedReaderWithBucketKey(r, keyID, encryptionContext, false)
+}
+
+// CreateSSEKMSEncryptedReaderWithBucketKey creates an encrypted reader with optional S3 Bucket Keys optimization
+func CreateSSEKMSEncryptedReaderWithBucketKey(r io.Reader, keyID string, encryptionContext map[string]string, bucketKeyEnabled bool) (io.Reader, *SSEKMSKey, error) {
 	kmsProvider := kms.GetGlobalKMS()
 	if kmsProvider == nil {
 		return nil, nil, fmt.Errorf("KMS is not configured")
 	}
 
-	// Generate a data encryption key using KMS
-	dataKeyReq := &kms.GenerateDataKeyRequest{
-		KeyID:             keyID,
-		KeySpec:           kms.KeySpecAES256,
-		EncryptionContext: encryptionContext,
+	var dataKeyResp *kms.GenerateDataKeyResponse
+	var err error
+
+	if bucketKeyEnabled {
+		// Use S3 Bucket Keys optimization - try to get or create a bucket-level data key
+		dataKeyResp, err = getBucketDataKey(keyID, encryptionContext)
+		if err != nil {
+			// Fall back to per-object key generation if bucket key fails
+			glog.V(2).Infof("Bucket key generation failed, falling back to per-object key: %v", err)
+			bucketKeyEnabled = false
+		}
 	}
 
-	ctx := context.Background()
-	dataKeyResp, err := kmsProvider.GenerateDataKey(ctx, dataKeyReq)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to generate data key: %v", err)
+	if !bucketKeyEnabled {
+		// Generate a per-object data encryption key using KMS
+		dataKeyReq := &kms.GenerateDataKeyRequest{
+			KeyID:             keyID,
+			KeySpec:           kms.KeySpecAES256,
+			EncryptionContext: encryptionContext,
+		}
+
+		ctx := context.Background()
+		dataKeyResp, err = kmsProvider.GenerateDataKey(ctx, dataKeyReq)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to generate data key: %v", err)
+		}
 	}
 
 	// Ensure we clear the plaintext data key from memory when done
@@ -91,7 +129,7 @@ func CreateSSEKMSEncryptedReader(r io.Reader, keyID string, encryptionContext ma
 		KeyID:             dataKeyResp.KeyID,
 		EncryptedDataKey:  dataKeyResp.CiphertextBlob,
 		EncryptionContext: encryptionContext,
-		BucketKeyEnabled:  false, // TODO: Implement S3 Bucket Keys optimization
+		BucketKeyEnabled:  bucketKeyEnabled,
 	}
 
 	// Return encrypted reader and SSE key with IV for metadata storage
@@ -102,6 +140,111 @@ func CreateSSEKMSEncryptedReader(r io.Reader, keyID string, encryptionContext ma
 	sseKey.IV = iv
 
 	return encryptedReader, sseKey, nil
+}
+
+// getBucketDataKey retrieves or generates a bucket-level data key for S3 Bucket Keys optimization
+func getBucketDataKey(keyID string, encryptionContext map[string]string) (*kms.GenerateDataKeyResponse, error) {
+	// Create cache key from keyID and encryption context
+	cacheKey := createBucketKeyCacheKey(keyID, encryptionContext)
+
+	bucketKeyCacheMutex.RLock()
+	cached, exists := bucketKeyCache[cacheKey]
+	bucketKeyCacheMutex.RUnlock()
+
+	// Check if we have a valid cached key
+	if exists && time.Now().Before(cached.ExpiresAt) {
+		glog.V(3).Infof("Using cached bucket key for keyID: %s", keyID)
+		return cached.DataKey, nil
+	}
+
+	// Generate a new bucket-level data key
+	kmsProvider := kms.GetGlobalKMS()
+	if kmsProvider == nil {
+		return nil, fmt.Errorf("KMS is not configured")
+	}
+
+	dataKeyReq := &kms.GenerateDataKeyRequest{
+		KeyID:             keyID,
+		KeySpec:           kms.KeySpecAES256,
+		EncryptionContext: encryptionContext,
+	}
+
+	ctx := context.Background()
+	dataKeyResp, err := kmsProvider.GenerateDataKey(ctx, dataKeyReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate bucket data key: %v", err)
+	}
+
+	// Cache the new key
+	bucketKeyCacheMutex.Lock()
+	bucketKeyCache[cacheKey] = &BucketKeyCache{
+		DataKey:     dataKeyResp,
+		ExpiresAt:   time.Now().Add(BucketKeyCacheTTL),
+		KeyID:       keyID,
+		ContextHash: createEncryptionContextHash(encryptionContext),
+	}
+	bucketKeyCacheMutex.Unlock()
+
+	glog.V(3).Infof("Generated new bucket key for keyID: %s", keyID)
+	return dataKeyResp, nil
+}
+
+// createBucketKeyCacheKey creates a cache key from keyID and encryption context
+func createBucketKeyCacheKey(keyID string, encryptionContext map[string]string) string {
+	contextHash := createEncryptionContextHash(encryptionContext)
+	return fmt.Sprintf("%s:%s", keyID, contextHash)
+}
+
+// createEncryptionContextHash creates a deterministic hash of the encryption context
+func createEncryptionContextHash(encryptionContext map[string]string) string {
+	if len(encryptionContext) == 0 {
+		return "empty"
+	}
+
+	// Create a deterministic representation of the context
+	hash := sha256.New()
+
+	// Sort keys to ensure deterministic hash
+	keys := make([]string, 0, len(encryptionContext))
+	for k := range encryptionContext {
+		keys = append(keys, k)
+	}
+
+	// Simple sort (for small maps)
+	for i := 0; i < len(keys); i++ {
+		for j := i + 1; j < len(keys); j++ {
+			if keys[i] > keys[j] {
+				keys[i], keys[j] = keys[j], keys[i]
+			}
+		}
+	}
+
+	// Hash the sorted key-value pairs
+	for _, k := range keys {
+		hash.Write([]byte(k))
+		hash.Write([]byte("="))
+		hash.Write([]byte(encryptionContext[k]))
+		hash.Write([]byte(";"))
+	}
+
+	return hex.EncodeToString(hash.Sum(nil))[:16] // Use first 16 chars for brevity
+}
+
+// cleanupExpiredBucketKeys removes expired keys from the cache
+func cleanupExpiredBucketKeys() {
+	bucketKeyCacheMutex.Lock()
+	defer bucketKeyCacheMutex.Unlock()
+
+	now := time.Now()
+	for key, cached := range bucketKeyCache {
+		if now.After(cached.ExpiresAt) {
+			// Clear sensitive data before removing
+			if cached.DataKey != nil {
+				kms.ClearSensitiveData(cached.DataKey.Plaintext)
+			}
+			delete(bucketKeyCache, key)
+		}
+	}
 }
 
 // CreateSSEKMSDecryptedReader creates a decrypted reader using KMS envelope encryption

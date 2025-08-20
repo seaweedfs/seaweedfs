@@ -190,30 +190,7 @@ func CreateSSECDecryptedReader(r io.Reader, customerKey *SSECustomerKey, iv []by
 	return &cipher.StreamReader{S: stream, R: r}, nil
 }
 
-// CreateSSECDecryptedReaderWithIVFromStream creates a decrypted reader that reads IV from stream (for tests)
-// This is a temporary compatibility function for existing tests
-func CreateSSECDecryptedReaderWithIVFromStream(r io.Reader, customerKey *SSECustomerKey) (io.Reader, error) {
-	if customerKey == nil {
-		return r, nil
-	}
 
-	// Read IV from the beginning of the stream (legacy format)
-	iv := make([]byte, AESBlockSize)
-	if _, err := io.ReadFull(r, iv); err != nil {
-		return nil, fmt.Errorf("failed to read IV from stream: %v", err)
-	}
-
-	// Create AES cipher
-	block, err := aes.NewCipher(customerKey.Key)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create AES cipher: %v", err)
-	}
-
-	// Create CTR mode cipher with the IV
-	stream := cipher.NewCTR(block, iv)
-
-	return &cipher.StreamReader{S: stream, R: r}, nil
-}
 
 // GetSourceSSECInfo extracts SSE-C information from source object metadata
 func GetSourceSSECInfo(metadata map[string][]byte) (algorithm string, keyMD5 string, isEncrypted bool) {
