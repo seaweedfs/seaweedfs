@@ -139,7 +139,10 @@ func (scm *StreamingCopyManager) createEncryptionSpec(entry *filer_pb.Entry, r *
 		spec.SourceType = EncryptionTypeSSES3
 		// Extract SSE-S3 key from metadata
 		if keyData, exists := entry.Extended["sse-s3-key"]; exists {
-			sseKey, err := DeserializeSSES3Metadata(keyData)
+			// TODO: This should use a proper SSE-S3 key manager from S3ApiServer
+			// For now, create a temporary key manager to handle deserialization
+			tempKeyManager := NewSSES3KeyManager()
+			sseKey, err := DeserializeSSES3Metadata(keyData, tempKeyManager)
 			if err != nil {
 				return nil, fmt.Errorf("deserialize SSE-S3 metadata: %w", err)
 			}

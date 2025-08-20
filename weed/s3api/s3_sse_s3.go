@@ -4,6 +4,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"io"
 	mathrand "math/rand"
@@ -119,17 +120,41 @@ func SerializeSSES3Metadata(key *SSES3Key) ([]byte, error) {
 	return []byte(serialized), nil
 }
 
-// DeserializeSSES3Metadata deserializes SSE-S3 metadata from storage
-func DeserializeSSES3Metadata(data []byte) (*SSES3Key, error) {
-	// This is a simplified deserialization
-	// In a production system, this would properly parse JSON and retrieve
-	// the actual encryption key from a secure key management system
+// DeserializeSSES3Metadata deserializes SSE-S3 metadata from storage and retrieves the actual key
+func DeserializeSSES3Metadata(data []byte, keyManager *SSES3KeyManager) (*SSES3Key, error) {
+	if len(data) == 0 {
+		return nil, fmt.Errorf("empty SSE-S3 metadata")
+	}
 
-	// For now, we'll generate a new key (this is not correct for production)
-	// In reality, we'd use the keyId to retrieve the actual key
-	key, err := GenerateSSES3Key()
+	// Parse the JSON metadata to extract keyId
+	var metadata map[string]string
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return nil, fmt.Errorf("failed to parse SSE-S3 metadata: %w", err)
+	}
+
+	keyID, exists := metadata["keyId"]
+	if !exists {
+		return nil, fmt.Errorf("keyId not found in SSE-S3 metadata")
+	}
+
+	algorithm, exists := metadata["algorithm"]
+	if !exists {
+		algorithm = "AES256" // Default algorithm
+	}
+
+	// Retrieve the actual key using the keyId
+	if keyManager == nil {
+		return nil, fmt.Errorf("key manager is required for SSE-S3 key retrieval")
+	}
+
+	key, err := keyManager.GetOrCreateKey(keyID)
 	if err != nil {
-		return nil, fmt.Errorf("generate SSE-S3 key: %w", err)
+		return nil, fmt.Errorf("failed to retrieve SSE-S3 key with ID %s: %w", keyID, err)
+	}
+
+	// Verify the algorithm matches
+	if key.Algorithm != algorithm {
+		return nil, fmt.Errorf("algorithm mismatch: expected %s, got %s", algorithm, key.Algorithm)
 	}
 
 	return key, nil
@@ -223,11 +248,11 @@ func ProcessSSES3Request(r *http.Request) (map[string][]byte, error) {
 }
 
 // GetSSES3KeyFromMetadata extracts SSE-S3 key from object metadata
-func GetSSES3KeyFromMetadata(metadata map[string][]byte) (*SSES3Key, error) {
+func GetSSES3KeyFromMetadata(metadata map[string][]byte, keyManager *SSES3KeyManager) (*SSES3Key, error) {
 	keyData, exists := metadata["sse-s3-key"]
 	if !exists {
 		return nil, fmt.Errorf("SSE-S3 key not found in metadata")
 	}
 
-	return DeserializeSSES3Metadata(keyData)
+	return DeserializeSSES3Metadata(keyData, keyManager)
 }

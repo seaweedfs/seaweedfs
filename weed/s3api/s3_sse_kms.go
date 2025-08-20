@@ -455,8 +455,10 @@ func IsSSEKMSRequest(r *http.Request) bool {
 		return false
 	}
 
+	// According to AWS S3 specification, SSE-KMS is only valid when the encryption header
+	// is explicitly set to "aws:kms". The KMS key ID header alone is not sufficient.
 	sseAlgorithm := r.Header.Get(s3_constants.AmzServerSideEncryption)
-	return sseAlgorithm == "aws:kms" || r.Header.Get(s3_constants.AmzServerSideEncryptionAwsKmsKeyId) != ""
+	return sseAlgorithm == "aws:kms"
 }
 
 // IsSSEKMSEncrypted checks if the metadata indicates SSE-KMS encryption
