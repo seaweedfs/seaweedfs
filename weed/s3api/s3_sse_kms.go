@@ -214,14 +214,7 @@ func createEncryptionContextHash(encryptionContext map[string]string) string {
 		keys = append(keys, k)
 	}
 
-	// Simple sort (for small maps)
-	for i := 0; i < len(keys); i++ {
-		for j := i + 1; j < len(keys); j++ {
-			if keys[i] > keys[j] {
-				keys[i], keys[j] = keys[j], keys[i]
-			}
-		}
-	}
+	sort.Strings(keys)
 
 	// Hash the sorted key-value pairs
 	for _, k := range keys {
