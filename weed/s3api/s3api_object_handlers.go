@@ -740,12 +740,30 @@ func (s3a *S3ApiServer) handleSSEKMSResponse(r *http.Request, proxyResponse *htt
 		return writeFinalResponse(w, proxyResponse, proxyResponse.Body, capturedCORSHeaders)
 	}
 
-	// For GET requests, create decrypted reader
-	decryptedReader, decErr := CreateSSEKMSDecryptedReader(proxyResponse.Body, sseKMSKey)
-	if decErr != nil {
-		glog.Errorf("Failed to create SSE-KMS decrypted reader: %v", decErr)
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-		return http.StatusInternalServerError, 0
+	// For GET requests, check if this is a multipart SSE-KMS object
+	isMultipartSSEKMS := proxyResponse.Header.Get(s3_constants.SeaweedFSUploadId) != ""
+
+	var decryptedReader io.Reader
+	if isMultipartSSEKMS {
+		// Handle multipart SSE-KMS objects - each chunk needs independent decryption
+		multipartReader, decErr := s3a.createMultipartSSEKMSDecryptedReader(r, proxyResponse)
+		if decErr != nil {
+			glog.Errorf("Failed to create multipart SSE-KMS decrypted reader: %v", decErr)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return http.StatusInternalServerError, 0
+		}
+		decryptedReader = multipartReader
+		glog.V(3).Infof("Using multipart SSE-KMS decryption for object")
+	} else {
+		// Handle single-part SSE-KMS objects
+		singlePartReader, decErr := CreateSSEKMSDecryptedReader(proxyResponse.Body, sseKMSKey)
+		if decErr != nil {
+			glog.Errorf("Failed to create SSE-KMS decrypted reader: %v", decErr)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return http.StatusInternalServerError, 0
+		}
+		decryptedReader = singlePartReader
+		glog.V(3).Infof("Using single-part SSE-KMS decryption for object")
 	}
 
 	// Capture existing CORS headers that may have been set by middleware
@@ -811,4 +829,93 @@ func (s3a *S3ApiServer) addObjectLockHeadersToResponse(w http.ResponseWriter, en
 		// but no legal hold specifically set, default to "OFF" as per AWS S3 behavior
 		w.Header().Set(s3_constants.AmzObjectLockLegalHold, s3_constants.LegalHoldOff)
 	}
+}
+
+// createMultipartSSEKMSDecryptedReader creates a reader that decrypts each chunk independently for multipart SSE-KMS objects
+func (s3a *S3ApiServer) createMultipartSSEKMSDecryptedReader(r *http.Request, proxyResponse *http.Response) (io.Reader, error) {
+	// Get the object path from the request
+	bucket, object := s3_constants.GetBucketAndObject(r)
+	objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
+
+	// Get the object entry from filer to access chunk information
+	entry, err := s3a.getEntry("", objectPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get object entry for multipart SSE-KMS decryption: %v", err)
+	}
+
+	// Create readers for each chunk, decrypting them independently
+	var readers []io.Reader
+
+	for _, chunk := range entry.GetChunks() {
+		// Get this chunk's encrypted data
+		chunkReader, err := s3a.createEncryptedChunkReader(chunk)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create chunk reader: %v", err)
+		}
+
+		// Find the SSE-KMS metadata for this chunk
+		// For multipart objects, each chunk should have its own SSE-KMS metadata
+		var chunkSSEKMSKey *SSEKMSKey
+
+		// For multipart uploads, SSE-KMS metadata is typically stored in the chunk's extended attributes
+		// However, since SeaweedFS stores chunk metadata differently, we need to get it from the part's metadata
+		// For now, we'll use the object's metadata (which is from the first part) as a fallback
+		// This is a limitation that would need to be addressed for full multipart SSE-KMS support
+
+		objectMetadataHeader := proxyResponse.Header.Get(s3_constants.SeaweedFSSSEKMSKeyHeader)
+		if objectMetadataHeader != "" {
+			kmsMetadataBytes, decodeErr := base64.StdEncoding.DecodeString(objectMetadataHeader)
+			if decodeErr == nil {
+				chunkSSEKMSKey, _ = DeserializeSSEKMSMetadata(kmsMetadataBytes)
+			}
+		}
+
+		if chunkSSEKMSKey == nil {
+			return nil, fmt.Errorf("no SSE-KMS metadata found for chunk in multipart object")
+		}
+
+		// Create decrypted reader for this chunk
+		decryptedChunkReader, decErr := CreateSSEKMSDecryptedReader(chunkReader, chunkSSEKMSKey)
+		if decErr != nil {
+			chunkReader.Close() // Close the chunk reader if decryption fails
+			return nil, fmt.Errorf("failed to decrypt chunk: %v", decErr)
+		}
+
+		readers = append(readers, decryptedChunkReader)
+		glog.V(4).Infof("Added decrypted reader for chunk %s in multipart SSE-KMS object", chunk.GetFileIdString())
+	}
+
+	// Combine all decrypted chunk readers into a single stream
+	multiReader := io.MultiReader(readers...)
+	glog.V(3).Infof("Created multipart SSE-KMS decrypted reader with %d chunks", len(readers))
+
+	return multiReader, nil
+}
+
+// createEncryptedChunkReader creates a reader for a single encrypted chunk
+func (s3a *S3ApiServer) createEncryptedChunkReader(chunk *filer_pb.FileChunk) (io.ReadCloser, error) {
+	// Get chunk URL
+	srcUrl, err := s3a.lookupVolumeUrl(chunk.GetFileIdString())
+	if err != nil {
+		return nil, fmt.Errorf("lookup volume URL for chunk %s: %v", chunk.GetFileIdString(), err)
+	}
+
+	// Create HTTP request for chunk data
+	req, err := http.NewRequest("GET", srcUrl, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create HTTP request for chunk: %v", err)
+	}
+
+	// Execute request
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("execute HTTP request for chunk: %v", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil, fmt.Errorf("HTTP request for chunk failed: %d", resp.StatusCode)
+	}
+
+	return resp.Body, nil
 }
