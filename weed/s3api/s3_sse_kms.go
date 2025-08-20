@@ -409,11 +409,8 @@ func ValidateSSEKMSKey(sseKey *SSEKMSKey) error {
 }
 
 // isValidKMSKeyID performs basic validation of KMS key identifiers
+// Note: caller should ensure keyID is not empty before calling this function
 func isValidKMSKeyID(keyID string) bool {
-	if keyID == "" {
-		return false
-	}
-
 	// Key IDs should not contain spaces or other invalid characters
 	if strings.Contains(keyID, " ") || strings.Contains(keyID, "\t") || strings.Contains(keyID, "\n") {
 		return false
