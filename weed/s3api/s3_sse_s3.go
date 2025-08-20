@@ -73,8 +73,7 @@ func CreateSSES3EncryptedReader(reader io.Reader, key *SSES3Key) (io.Reader, []b
 	// Create CTR mode cipher
 	stream := cipher.NewCTR(block, iv)
 
-	// Return encrypted reader and IV separately
-	// The IV will be stored in metadata, not in the data stream
+	// Return encrypted reader and IV separately for metadata storage
 	encryptedReader := &cipher.StreamReader{S: stream, R: reader}
 
 	return encryptedReader, iv, nil

@@ -1177,12 +1177,12 @@ func (s3a *S3ApiServer) copyChunkWithReencryption(chunk *filer_pb.FileChunk, cop
 		if err != nil {
 			return nil, fmt.Errorf("failed to get IV from metadata: %w", err)
 		}
-		
+
 		decryptedReader, decErr := CreateSSECDecryptedReader(bytes.NewReader(encryptedData), copySourceKey, iv)
 		if decErr != nil {
 			return nil, fmt.Errorf("create decrypted reader: %w", decErr)
 		}
-		
+
 		decryptedData, readErr := io.ReadAll(decryptedReader)
 		if readErr != nil {
 			return nil, fmt.Errorf("decrypt chunk data: %w", readErr)

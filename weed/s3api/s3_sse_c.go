@@ -165,8 +165,7 @@ func CreateSSECEncryptedReader(r io.Reader, customerKey *SSECustomerKey) (io.Rea
 	// Create CTR mode cipher
 	stream := cipher.NewCTR(block, iv)
 
-	// Return encrypted reader and IV separately
-	// The IV will be stored in metadata, not prepended to the data stream
+	// Return encrypted reader and IV separately for metadata storage
 	encryptedReader := &cipher.StreamReader{S: stream, R: r}
 
 	return encryptedReader, iv, nil
@@ -189,8 +188,6 @@ func CreateSSECDecryptedReader(r io.Reader, customerKey *SSECustomerKey, iv []by
 
 	return &cipher.StreamReader{S: stream, R: r}, nil
 }
-
-
 
 // GetSourceSSECInfo extracts SSE-C information from source object metadata
 func GetSourceSSECInfo(metadata map[string][]byte) (algorithm string, keyMD5 string, isEncrypted bool) {

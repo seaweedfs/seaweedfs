@@ -133,7 +133,6 @@ func CreateSSEKMSEncryptedReaderWithBucketKey(r io.Reader, keyID string, encrypt
 	}
 
 	// Return encrypted reader and SSE key with IV for metadata storage
-	// The IV will be stored in metadata, not prepended to the data stream
 	encryptedReader := &cipher.StreamReader{S: stream, R: r}
 
 	// Store IV in the SSE key for metadata storage
