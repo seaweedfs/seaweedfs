@@ -360,22 +360,32 @@ start-seaweedfs-ci: check-binary
 	@nohup $(SEAWEEDFS_BINARY) s3 -port=$(S3_PORT) -filer=127.0.0.1:$(FILER_PORT) -config=/tmp/seaweedfs-sse-s3.json -ip.bind=127.0.0.1 > /tmp/seaweedfs-sse-s3.log 2>&1 &
 	@sleep 5
 	
-	# Wait for S3 service to be ready
+	# Wait for S3 service to be ready - use port-based checking for reliability
 	@echo "$(YELLOW)Waiting for S3 service to be ready...$(NC)"
-	@for i in $$(seq 1 30); do \
-		if curl -s -f http://127.0.0.1:$(S3_PORT) > /dev/null 2>&1; then \
-			echo "$(GREEN)S3 service is ready$(NC)"; \
+	@for i in $$(seq 1 20); do \
+		if netstat -an 2>/dev/null | grep -q ":$(S3_PORT).*LISTEN" || \
+		   ss -an 2>/dev/null | grep -q ":$(S3_PORT).*LISTEN" || \
+		   lsof -i :$(S3_PORT) >/dev/null 2>&1; then \
+			echo "$(GREEN)S3 service is listening on port $(S3_PORT)$(NC)"; \
+			sleep 1; \
 			break; \
 		fi; \
-		if [ $$i -eq 30 ]; then \
-			echo "$(RED)S3 service failed to start within 30 seconds$(NC)"; \
-			echo "Master log:"; tail -20 /tmp/seaweedfs-sse-master.log || true; \
-			echo "Volume log:"; tail -20 /tmp/seaweedfs-sse-volume.log || true; \
-			echo "Filer log:"; tail -20 /tmp/seaweedfs-sse-filer.log || true; \
-			echo "S3 log:"; tail -20 /tmp/seaweedfs-sse-s3.log || true; \
+		if [ $$i -eq 20 ]; then \
+			echo "$(RED)S3 service failed to start within 20 seconds$(NC)"; \
+			echo "=== Detailed Logs ==="; \
+			echo "Master log:"; tail -30 /tmp/seaweedfs-sse-master.log || true; \
+			echo "Volume log:"; tail -30 /tmp/seaweedfs-sse-volume.log || true; \
+			echo "Filer log:"; tail -30 /tmp/seaweedfs-sse-filer.log || true; \
+			echo "S3 log:"; tail -30 /tmp/seaweedfs-sse-s3.log || true; \
+			echo "=== Port Status ==="; \
+			netstat -an 2>/dev/null | grep ":$(S3_PORT)" || \
+			ss -an 2>/dev/null | grep ":$(S3_PORT)" || \
+			echo "No port listening on $(S3_PORT)"; \
+			echo "=== Process Status ==="; \
+			ps aux | grep -E "weed.*s3.*$(S3_PORT)" | grep -v grep || echo "No S3 process found"; \
 			exit 1; \
 		fi; \
-		echo "Waiting for S3 service... ($$i/30)"; \
+		echo "Waiting for S3 service... ($$i/20)"; \
 		sleep 1; \
 	done
 	
