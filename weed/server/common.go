@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"google.golang.org/grpc/metadata"
@@ -270,8 +271,14 @@ func handleStaticResources2(r *mux.Router) {
 }
 
 func AdjustPassthroughHeaders(w http.ResponseWriter, r *http.Request, filename string) {
-	// Note: PassThroughHeaders constant is not defined, so this function currently does nothing
-	// except call adjustHeaderContentDisposition. SSE headers are handled explicitly in read handler.
+	// Apply S3 passthrough headers from query parameters
+	// AWS S3 supports overriding response headers via query parameters like:
+	// ?response-cache-control=no-cache&response-content-type=application/json
+	for queryParam, headerValue := range r.URL.Query() {
+		if normalizedHeader, ok := s3_constants.PassThroughHeaders[strings.ToLower(queryParam)]; ok && len(headerValue) > 0 {
+			w.Header().Set(normalizedHeader, headerValue[0])
+		}
+	}
 	adjustHeaderContentDisposition(w, r, filename)
 }
 func adjustHeaderContentDisposition(w http.ResponseWriter, r *http.Request, filename string) {
