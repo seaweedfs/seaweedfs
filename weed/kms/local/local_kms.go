@@ -21,9 +21,10 @@ import (
 // LocalKMSProvider implements a local, in-memory KMS for development and testing
 // WARNING: This is NOT suitable for production use - keys are stored in memory
 type LocalKMSProvider struct {
-	mu           sync.RWMutex
-	keys         map[string]*LocalKey
-	defaultKeyID string
+	mu                   sync.RWMutex
+	keys                 map[string]*LocalKey
+	defaultKeyID         string
+	enableOnDemandCreate bool // Whether to create keys on-demand for missing key IDs
 }
 
 // LocalKey represents a key stored in the local KMS
@@ -54,7 +55,8 @@ func init() {
 // NewLocalKMSProvider creates a new local KMS provider
 func NewLocalKMSProvider(config util.Configuration) (kms.KMSProvider, error) {
 	provider := &LocalKMSProvider{
-		keys: make(map[string]*LocalKey),
+		keys:                 make(map[string]*LocalKey),
+		enableOnDemandCreate: true, // Default to true for development/testing convenience
 	}
 
 	// Load configuration if provided
@@ -79,8 +81,12 @@ func NewLocalKMSProvider(config util.Configuration) (kms.KMSProvider, error) {
 
 // loadConfig loads configuration from the provided config
 func (p *LocalKMSProvider) loadConfig(config util.Configuration) error {
-	// TODO: This is a placeholder for loading configuration from files or environment variables
-	// Default key creation is handled by NewLocalKMSProvider if no keys are loaded
+	// Configure on-demand key creation behavior
+	// Default is already set in NewLocalKMSProvider, this allows override
+	p.enableOnDemandCreate = config.GetBool("enableOnDemandCreate")
+
+	// TODO: Load pre-existing keys from configuration
+	// For now, rely on default key creation in constructor
 	return nil
 }
 
@@ -281,9 +287,8 @@ func (p *LocalKMSProvider) getKey(keyIdentifier string) (*LocalKey, error) {
 
 	p.mu.RUnlock()
 
-	// Key doesn't exist - create it on-demand for local KMS
-	// This makes the local provider user-friendly for testing and development
-	if keyIdentifier != "" {
+	// Key doesn't exist - create on-demand if enabled and key identifier is reasonable
+	if keyIdentifier != "" && p.enableOnDemandCreate && p.isReasonableKeyIdentifier(keyIdentifier) {
 		glog.V(1).Infof("Creating on-demand local KMS key: %s", keyIdentifier)
 		key, err := p.CreateKeyWithID(keyIdentifier, fmt.Sprintf("Auto-created local KMS key: %s", keyIdentifier))
 		if err != nil {
@@ -298,9 +303,34 @@ func (p *LocalKMSProvider) getKey(keyIdentifier string) (*LocalKey, error) {
 
 	return nil, &kms.KMSError{
 		Code:    kms.ErrCodeNotFoundException,
-		Message: fmt.Sprintf("Key not found and cannot create key with empty identifier"),
+		Message: fmt.Sprintf("Key not found: %s", keyIdentifier),
 		KeyID:   keyIdentifier,
 	}
+}
+
+// isReasonableKeyIdentifier determines if a key identifier is reasonable for on-demand creation
+func (p *LocalKMSProvider) isReasonableKeyIdentifier(keyIdentifier string) bool {
+	// Basic validation: reasonable length and character set
+	if len(keyIdentifier) < 3 || len(keyIdentifier) > 100 {
+		return false
+	}
+
+	// Allow alphanumeric characters, hyphens, underscores, and forward slashes
+	// This covers most reasonable key identifier formats without being overly restrictive
+	for _, r := range keyIdentifier {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '-' || r == '_' || r == '/') {
+			return false
+		}
+	}
+
+	// Reject keys that start or end with separators
+	if keyIdentifier[0] == '-' || keyIdentifier[0] == '_' || keyIdentifier[0] == '/' ||
+		keyIdentifier[len(keyIdentifier)-1] == '-' || keyIdentifier[len(keyIdentifier)-1] == '_' || keyIdentifier[len(keyIdentifier)-1] == '/' {
+		return false
+	}
+
+	return true
 }
 
 // encryptedDataKeyMetadata represents the metadata stored with encrypted data keys
