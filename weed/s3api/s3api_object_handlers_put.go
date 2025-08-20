@@ -214,7 +214,9 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 
 	// Handle SSE-KMS encryption if requested
 	var sseKMSKey *SSEKMSKey
+	glog.V(4).Infof("putToFiler: checking for SSE-KMS request. Headers: SSE=%s, KeyID=%s", r.Header.Get(s3_constants.AmzServerSideEncryption), r.Header.Get(s3_constants.AmzServerSideEncryptionAwsKmsKeyId))
 	if IsSSEKMSRequest(r) {
+		glog.V(3).Infof("putToFiler: SSE-KMS request detected, processing encryption")
 		// Parse SSE-KMS headers
 		keyID := r.Header.Get(s3_constants.AmzServerSideEncryptionAwsKmsKeyId)
 		bucketKeyEnabled := strings.ToLower(r.Header.Get(s3_constants.AmzServerSideEncryptionBucketKeyEnabled)) == "true"
@@ -300,6 +302,8 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		proxyReq.Header.Set(s3_constants.SeaweedFSSSEKMSKeyHeader, base64.StdEncoding.EncodeToString(kmsMetadata))
 
 		glog.V(3).Infof("putToFiler: storing SSE-KMS metadata for object %s with keyID %s", uploadUrl, sseKMSKey.KeyID)
+	} else {
+		glog.V(4).Infof("putToFiler: no SSE-KMS encryption detected")
 	}
 
 	// ensure that the Authorization header is overriding any previous

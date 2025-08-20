@@ -44,7 +44,7 @@ func (fs *FilerServer) mergeChunks(ctx context.Context, so *operation.StorageOpt
 	if mergeErr != nil {
 		return nil, mergeErr
 	}
-	mergedChunks, _, _, mergeErr, _ = fs.uploadReaderToChunks(ctx, chunkedFileReader, chunkOffset, int32(fs.option.MaxMB*1024*1024), "", "", true, so)
+	mergedChunks, _, _, mergeErr, _ = fs.uploadReaderToChunks(ctx, nil, chunkedFileReader, chunkOffset, int32(fs.option.MaxMB*1024*1024), "", "", true, so)
 	if mergeErr != nil {
 		return
 	}

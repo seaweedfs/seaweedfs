@@ -302,9 +302,12 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 	glog.V(2).Infof("PutObjectPartHandler %s %s %04d", bucket, uploadID, partID)
 
 	// Retrieve SSE-KMS settings from upload directory and apply them
+	glog.Infof("PutObjectPartHandler: attempting to retrieve upload entry for bucket %s, uploadID %s", bucket, uploadID)
 	if uploadEntry, err := s3a.getEntry(s3a.genUploadsFolder(bucket), uploadID); err == nil {
+		glog.Infof("PutObjectPartHandler: upload entry found, Extended metadata: %v", uploadEntry.Extended != nil)
 		if uploadEntry.Extended != nil {
 			// Check if this upload uses SSE-KMS
+			glog.Infof("PutObjectPartHandler: checking for SSE-KMS key in extended metadata")
 			if keyIDBytes, exists := uploadEntry.Extended[s3_constants.SeaweedFSSSEKMSKeyID]; exists {
 				keyID := string(keyIDBytes)
 
@@ -322,9 +325,11 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 					r.Header.Set(s3_constants.AmzServerSideEncryptionContext, string(contextBytes))
 				}
 
-				glog.V(3).Infof("PutObjectPartHandler: inherited SSE-KMS settings from upload %s, keyID %s", uploadID, keyID)
+				glog.Infof("PutObjectPartHandler: inherited SSE-KMS settings from upload %s, keyID %s", uploadID, keyID)
 			}
 		}
+	} else {
+		glog.Infof("PutObjectPartHandler: failed to retrieve upload entry: %v", err)
 	}
 
 	uploadUrl := s3a.genPartUploadUrl(bucket, uploadID, partID)

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/md5"
+	"encoding/base64"
 	"fmt"
 	"hash"
 	"io"
@@ -17,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -46,11 +48,12 @@ func (fs *FilerServer) uploadRequestToChunks(ctx context.Context, w http.Respons
 		chunkOffset = offsetInt
 	}
 
-	return fs.uploadReaderToChunks(ctx, reader, chunkOffset, chunkSize, fileName, contentType, isAppend, so)
+	return fs.uploadReaderToChunks(ctx, r, reader, chunkOffset, chunkSize, fileName, contentType, isAppend, so)
 }
 
-func (fs *FilerServer) uploadReaderToChunks(ctx context.Context, reader io.Reader, startOffset int64, chunkSize int32, fileName, contentType string, isAppend bool, so *operation.StorageOption) (fileChunks []*filer_pb.FileChunk, md5Hash hash.Hash, chunkOffset int64, uploadErr error, smallContent []byte) {
+func (fs *FilerServer) uploadReaderToChunks(ctx context.Context, r *http.Request, reader io.Reader, startOffset int64, chunkSize int32, fileName, contentType string, isAppend bool, so *operation.StorageOption) (fileChunks []*filer_pb.FileChunk, md5Hash hash.Hash, chunkOffset int64, uploadErr error, smallContent []byte) {
 
+	glog.V(4).InfofCtx(ctx, "uploadReaderToChunks called for fileName: %s", fileName)
 	md5Hash = md5.New()
 	chunkOffset = startOffset
 	var partReader = io.NopCloser(io.TeeReader(reader, md5Hash))
@@ -98,6 +101,7 @@ func (fs *FilerServer) uploadReaderToChunks(ctx context.Context, reader io.Reade
 		}
 		if chunkOffset == 0 && !isAppend {
 			if dataSize < fs.option.SaveToFilerLimit {
+				glog.V(4).InfofCtx(ctx, "uploadReaderToChunks: using small content path for %s (dataSize: %d)", fileName, dataSize)
 				chunkOffset += dataSize
 				smallContent = make([]byte, dataSize)
 				bytesBuffer.Read(smallContent)
@@ -118,7 +122,8 @@ func (fs *FilerServer) uploadReaderToChunks(ctx context.Context, reader io.Reade
 				wg.Done()
 			}()
 
-			chunks, toChunkErr := fs.dataToChunk(ctx, fileName, contentType, buf.Bytes(), offset, so)
+			glog.V(4).InfofCtx(ctx, "About to call dataToChunkWithSSE for %s at offset %d", fileName, offset)
+			chunks, toChunkErr := fs.dataToChunkWithSSE(ctx, r, fileName, contentType, buf.Bytes(), offset, so)
 			if toChunkErr != nil {
 				uploadErrLock.Lock()
 				if uploadErr == nil {
@@ -193,6 +198,10 @@ func (fs *FilerServer) doUpload(ctx context.Context, urlLocation string, limited
 }
 
 func (fs *FilerServer) dataToChunk(ctx context.Context, fileName, contentType string, data []byte, chunkOffset int64, so *operation.StorageOption) ([]*filer_pb.FileChunk, error) {
+	return fs.dataToChunkWithSSE(ctx, nil, fileName, contentType, data, chunkOffset, so)
+}
+
+func (fs *FilerServer) dataToChunkWithSSE(ctx context.Context, r *http.Request, fileName, contentType string, data []byte, chunkOffset int64, so *operation.StorageOption) ([]*filer_pb.FileChunk, error) {
 	dataReader := util.NewBytesReader(data)
 
 	// retry to assign a different file id
@@ -235,5 +244,38 @@ func (fs *FilerServer) dataToChunk(ctx context.Context, fileName, contentType st
 	if uploadResult.Size == 0 {
 		return nil, nil
 	}
-	return []*filer_pb.FileChunk{uploadResult.ToPbFileChunk(fileId, chunkOffset, time.Now().UnixNano())}, nil
+
+	// Extract SSE metadata from request headers if available
+	var sseType filer_pb.SSEType = filer_pb.SSEType_NONE
+	var sseKmsMetadata []byte
+
+	if r != nil {
+		// Check for SSE-KMS
+		glog.V(4).InfofCtx(ctx, "dataToChunkWithSSE: checking for SSE-KMS header. Found: %v", r.Header.Get(s3_constants.SeaweedFSSSEKMSKeyHeader) != "")
+		if sseKMSHeader := r.Header.Get(s3_constants.SeaweedFSSSEKMSKeyHeader); sseKMSHeader != "" {
+			glog.V(3).InfofCtx(ctx, "dataToChunkWithSSE: SSE-KMS header found, processing")
+			sseType = filer_pb.SSEType_SSE_KMS
+			if kmsData, err := base64.StdEncoding.DecodeString(sseKMSHeader); err == nil {
+				sseKmsMetadata = kmsData
+				glog.V(3).InfofCtx(ctx, "Storing SSE-KMS metadata in chunk %s", fileId)
+			} else {
+				glog.ErrorfCtx(ctx, "Failed to decode SSE-KMS metadata for chunk %s: %v", fileId, err)
+			}
+		} else if r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerAlgorithm) != "" {
+			// SSE-C is already handled via CipherKey in UploadResult
+			sseType = filer_pb.SSEType_SSE_C
+		} else {
+			glog.V(4).InfofCtx(ctx, "dataToChunkWithSSE: No SSE headers found")
+		}
+	}
+
+	// Create chunk with SSE metadata if available
+	var chunk *filer_pb.FileChunk
+	if sseType != filer_pb.SSEType_NONE {
+		chunk = uploadResult.ToPbFileChunkWithSSE(fileId, chunkOffset, time.Now().UnixNano(), sseType, sseKmsMetadata)
+	} else {
+		chunk = uploadResult.ToPbFileChunk(fileId, chunkOffset, time.Now().UnixNano())
+	}
+
+	return []*filer_pb.FileChunk{chunk}, nil
 }

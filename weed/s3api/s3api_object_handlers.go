@@ -853,25 +853,35 @@ func (s3a *S3ApiServer) createMultipartSSEKMSDecryptedReader(r *http.Request, pr
 			return nil, fmt.Errorf("failed to create chunk reader: %v", err)
 		}
 
-		// Find the SSE-KMS metadata for this chunk
-		// For multipart objects, each chunk should have its own SSE-KMS metadata
+		// Get SSE-KMS metadata for this chunk
 		var chunkSSEKMSKey *SSEKMSKey
 
-		// For multipart uploads, SSE-KMS metadata is typically stored in the chunk's extended attributes
-		// However, since SeaweedFS stores chunk metadata differently, we need to get it from the part's metadata
-		// For now, we'll use the object's metadata (which is from the first part) as a fallback
-		// This is a limitation that would need to be addressed for full multipart SSE-KMS support
+		// Check if this chunk has per-chunk SSE-KMS metadata (new architecture)
+		if chunk.GetSseType() == filer_pb.SSEType_SSE_KMS && len(chunk.GetSseKmsMetadata()) > 0 {
+			// Use the per-chunk SSE-KMS metadata
+			kmsKey, err := DeserializeSSEKMSMetadata(chunk.GetSseKmsMetadata())
+			if err != nil {
+				glog.Errorf("Failed to deserialize per-chunk SSE-KMS metadata for chunk %s: %v", chunk.GetFileIdString(), err)
+			} else {
+				chunkSSEKMSKey = kmsKey
+				glog.Infof("Using per-chunk SSE-KMS metadata for chunk %s", chunk.GetFileIdString())
+			}
+		}
 
-		objectMetadataHeader := proxyResponse.Header.Get(s3_constants.SeaweedFSSSEKMSKeyHeader)
-		if objectMetadataHeader != "" {
-			kmsMetadataBytes, decodeErr := base64.StdEncoding.DecodeString(objectMetadataHeader)
-			if decodeErr == nil {
-				chunkSSEKMSKey, _ = DeserializeSSEKMSMetadata(kmsMetadataBytes)
+		// Fallback to object-level metadata (legacy support)
+		if chunkSSEKMSKey == nil {
+			objectMetadataHeader := proxyResponse.Header.Get(s3_constants.SeaweedFSSSEKMSKeyHeader)
+			if objectMetadataHeader != "" {
+				kmsMetadataBytes, decodeErr := base64.StdEncoding.DecodeString(objectMetadataHeader)
+				if decodeErr == nil {
+					chunkSSEKMSKey, _ = DeserializeSSEKMSMetadata(kmsMetadataBytes)
+					glog.Infof("Using fallback object-level SSE-KMS metadata for chunk %s", chunk.GetFileIdString())
+				}
 			}
 		}
 
 		if chunkSSEKMSKey == nil {
-			return nil, fmt.Errorf("no SSE-KMS metadata found for chunk in multipart object")
+			return nil, fmt.Errorf("no SSE-KMS metadata found for chunk %s in multipart object", chunk.GetFileIdString())
 		}
 
 		// Create decrypted reader for this chunk
