@@ -311,7 +311,7 @@ test-with-server: build-weed
 	@if $(MAKE) start-seaweedfs-ci > weed-test.log 2>&1; then \
 		echo "✅ SeaweedFS cluster started successfully"; \
 		echo "Running SSE integration tests..."; \
-		trap 'make stop-seaweedfs-safe || true' EXIT; \
+		trap '$(MAKE) -C $(TEST_DIR) stop-seaweedfs-safe || true' EXIT; \
 		if [ -n "$(TEST_PATTERN)" ]; then \
 			echo "🔍 Running tests matching pattern: $(TEST_PATTERN)"; \
 			cd $(SEAWEEDFS_ROOT) && go test -v -timeout=$(TEST_TIMEOUT) -run "$(TEST_PATTERN)" ./test/s3/sse || exit 1; \
@@ -320,7 +320,7 @@ test-with-server: build-weed
 			cd $(SEAWEEDFS_ROOT) && go test -v -timeout=$(TEST_TIMEOUT) -run "TestSSE.*Integration" ./test/s3/sse || exit 1; \
 		fi; \
 		echo "✅ All tests completed successfully"; \
-		make stop-seaweedfs-safe || true; \
+		$(MAKE) -C $(TEST_DIR) stop-seaweedfs-safe || true; \
 	else \
 		echo "❌ Failed to start SeaweedFS cluster"; \
 		echo "=== Server startup logs ==="; \
