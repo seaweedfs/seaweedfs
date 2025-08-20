@@ -219,6 +219,25 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		w.Header().Set(s3_constants.AmzTagCount, strconv.Itoa(tagCount))
 	}
 
+	// Set SSE metadata headers for S3 API consumption
+	if sseIV, exists := entry.Extended[s3_constants.SeaweedFSSSEIV]; exists {
+		// Convert binary IV to base64 for HTTP header
+		ivBase64 := base64.StdEncoding.EncodeToString(sseIV)
+		w.Header().Set(s3_constants.SeaweedFSSSEIVHeader, ivBase64)
+	}
+
+	if sseKMSKey, exists := entry.Extended[s3_constants.SeaweedFSSSEKMSKey]; exists {
+		// Convert binary KMS metadata to base64 for HTTP header
+		kmsBase64 := base64.StdEncoding.EncodeToString(sseKMSKey)
+		w.Header().Set(s3_constants.SeaweedFSSSEKMSKeyHeader, kmsBase64)
+	}
+
+	// Remove any problematic SSE headers that might be automatically copied
+	// The "sse-c-iv" key in Extended metadata should not become an HTTP header
+	w.Header().Del("Sse-C-Iv")
+	w.Header().Del("sse-c-iv")
+	w.Header().Del("SSE-C-IV")
+
 	SetEtag(w, etag)
 
 	filename := entry.Name()

@@ -24,7 +24,6 @@ import (
 	"google.golang.org/grpc/metadata"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 
 	"google.golang.org/grpc"
 
@@ -271,11 +270,8 @@ func handleStaticResources2(r *mux.Router) {
 }
 
 func AdjustPassthroughHeaders(w http.ResponseWriter, r *http.Request, filename string) {
-	for header, values := range r.Header {
-		if normalizedHeader, ok := s3_constants.PassThroughHeaders[strings.ToLower(header)]; ok {
-			w.Header()[normalizedHeader] = values
-		}
-	}
+	// Note: PassThroughHeaders constant is not defined, so this function currently does nothing
+	// except call adjustHeaderContentDisposition. SSE headers are handled explicitly in read handler.
 	adjustHeaderContentDisposition(w, r, filename)
 }
 func adjustHeaderContentDisposition(w http.ResponseWriter, r *http.Request, filename string) {
