@@ -1312,8 +1312,19 @@ func (s3a *S3ApiServer) copyChunksWithSSEKMS(entry *filer_pb.Entry, r *http.Requ
 func (s3a *S3ApiServer) copyChunksWithSSEKMSReencryption(entry *filer_pb.Entry, destKeyID string, encryptionContext map[string]string, bucketKeyEnabled bool, dstPath, bucket string) ([]*filer_pb.FileChunk, error) {
 	var dstChunks []*filer_pb.FileChunk
 
+	// Extract and deserialize source SSE-KMS metadata
+	var sourceSSEKey *SSEKMSKey
+	if keyData, exists := entry.Extended[s3_constants.SeaweedFSSSEKMSKey]; exists {
+		var err error
+		sourceSSEKey, err = DeserializeSSEKMSMetadata(keyData)
+		if err != nil {
+			return nil, fmt.Errorf("failed to deserialize source SSE-KMS metadata: %w", err)
+		}
+		glog.V(3).Infof("Extracted source SSE-KMS key: keyID=%s, bucketKey=%t", sourceSSEKey.KeyID, sourceSSEKey.BucketKeyEnabled)
+	}
+
 	for _, chunk := range entry.GetChunks() {
-		dstChunk, err := s3a.copyChunkWithSSEKMSReencryption(chunk, destKeyID, encryptionContext, bucketKeyEnabled, dstPath, bucket)
+		dstChunk, err := s3a.copyChunkWithSSEKMSReencryption(chunk, sourceSSEKey, destKeyID, encryptionContext, bucketKeyEnabled, dstPath, bucket)
 		if err != nil {
 			return nil, fmt.Errorf("copy chunk with SSE-KMS re-encryption: %w", err)
 		}
@@ -1324,7 +1335,7 @@ func (s3a *S3ApiServer) copyChunksWithSSEKMSReencryption(entry *filer_pb.Entry, 
 }
 
 // copyChunkWithSSEKMSReencryption copies a single chunk with SSE-KMS decrypt/re-encrypt
-func (s3a *S3ApiServer) copyChunkWithSSEKMSReencryption(chunk *filer_pb.FileChunk, destKeyID string, encryptionContext map[string]string, bucketKeyEnabled bool, dstPath, bucket string) (*filer_pb.FileChunk, error) {
+func (s3a *S3ApiServer) copyChunkWithSSEKMSReencryption(chunk *filer_pb.FileChunk, sourceSSEKey *SSEKMSKey, destKeyID string, encryptionContext map[string]string, bucketKeyEnabled bool, dstPath, bucket string) (*filer_pb.FileChunk, error) {
 	// Create destination chunk
 	dstChunk := s3a.createDestinationChunk(chunk, chunk.Offset, chunk.Size)
 
@@ -1347,10 +1358,25 @@ func (s3a *S3ApiServer) copyChunkWithSSEKMSReencryption(chunk *filer_pb.FileChun
 
 	var finalData []byte
 
-	// For SSE-KMS, chunks are not individually encrypted - the entire object is encrypted
-	// So we just use the chunk data as-is for now
-	// TODO: Implement proper SSE-KMS chunk-level handling if needed
-	finalData = chunkData
+	// Decrypt source data if it's SSE-KMS encrypted
+	if sourceSSEKey != nil {
+		// For SSE-KMS, the encrypted chunk data contains IV + encrypted content
+		// Use the source SSE key to decrypt the chunk data
+		decryptedReader, err := CreateSSEKMSDecryptedReader(bytes.NewReader(chunkData), sourceSSEKey)
+		if err != nil {
+			return nil, fmt.Errorf("create SSE-KMS decrypted reader: %w", err)
+		}
+
+		decryptedData, err := io.ReadAll(decryptedReader)
+		if err != nil {
+			return nil, fmt.Errorf("decrypt chunk data: %w", err)
+		}
+		finalData = decryptedData
+		glog.V(4).Infof("Decrypted chunk data: %d bytes → %d bytes", len(chunkData), len(finalData))
+	} else {
+		// Source is not SSE-KMS encrypted, use data as-is
+		finalData = chunkData
+	}
 
 	// Re-encrypt if destination should be SSE-KMS encrypted
 	if destKeyID != "" {
@@ -1368,12 +1394,13 @@ func (s3a *S3ApiServer) copyChunkWithSSEKMSReencryption(chunk *filer_pb.FileChun
 		if err != nil {
 			return nil, fmt.Errorf("re-encrypt chunk data: %w", err)
 		}
+
+		// Store original decrypted data size for logging
+		originalSize := len(finalData)
 		finalData = reencryptedData
+		glog.V(4).Infof("Re-encrypted chunk data: %d bytes → %d bytes", originalSize, len(finalData))
 
-		// For SSE-KMS, metadata is stored at the entry level, not chunk level
-		// The chunk-level metadata will be handled by the calling function
-
-		// Update chunk size
+		// Update chunk size to include IV and encryption overhead
 		dstChunk.Size = uint64(len(finalData))
 	}
 
@@ -1382,5 +1409,19 @@ func (s3a *S3ApiServer) copyChunkWithSSEKMSReencryption(chunk *filer_pb.FileChun
 		return nil, fmt.Errorf("upload processed chunk data: %w", err)
 	}
 
+	glog.V(3).Infof("Successfully processed SSE-KMS chunk re-encryption: src_key=%s, dst_key=%s, size=%d→%d",
+		getKeyIDString(sourceSSEKey), destKeyID, len(chunkData), len(finalData))
+
 	return dstChunk, nil
+}
+
+// getKeyIDString safely gets the KeyID from an SSEKMSKey, handling nil cases
+func getKeyIDString(key *SSEKMSKey) string {
+	if key == nil {
+		return "none"
+	}
+	if key.KeyID == "" {
+		return "default"
+	}
+	return key.KeyID
 }
