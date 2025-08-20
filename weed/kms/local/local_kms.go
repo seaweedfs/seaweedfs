@@ -470,8 +470,3 @@ func marshalEncryptionContextDeterministic(encryptionContext map[string]string) 
 
 	return []byte(buf.String())
 }
-
-// MarshalEncryptionContextDeterministicForTest exposes marshalEncryptionContextDeterministic for testing
-func MarshalEncryptionContextDeterministicForTest(encryptionContext map[string]string) []byte {
-	return marshalEncryptionContextDeterministic(encryptionContext)
-}
