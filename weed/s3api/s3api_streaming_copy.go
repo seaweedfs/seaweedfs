@@ -2,11 +2,16 @@ package s3api
 
 import (
 	"context"
+	"crypto/md5"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"hash"
 	"io"
 	"net/http"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // StreamingCopySpec defines the specification for streaming copy operations
@@ -325,20 +330,102 @@ func (scm *StreamingCopyManager) createEncryptionReader(reader io.Reader, encSpe
 
 // createDecompressionReader creates a decompression reader
 func (scm *StreamingCopyManager) createDecompressionReader(reader io.Reader, compSpec *CompressionSpec) (io.Reader, error) {
-	// TODO: Implement decompression based on compression type
-	return reader, nil
+	if !compSpec.NeedsDecompression {
+		return reader, nil
+	}
+
+	switch compSpec.CompressionType {
+	case "gzip":
+		// Use SeaweedFS's streaming gzip decompression
+		pr, pw := io.Pipe()
+		go func() {
+			defer pw.Close()
+			_, err := util.GunzipStream(pw, reader)
+			if err != nil {
+				pw.CloseWithError(fmt.Errorf("gzip decompression failed: %v", err))
+			}
+		}()
+		return pr, nil
+	default:
+		// Unknown compression type, return as-is
+		return reader, nil
+	}
 }
 
 // createCompressionReader creates a compression reader
 func (scm *StreamingCopyManager) createCompressionReader(reader io.Reader, compSpec *CompressionSpec) (io.Reader, error) {
-	// TODO: Implement compression based on compression type
-	return reader, nil
+	if !compSpec.NeedsCompression {
+		return reader, nil
+	}
+
+	switch compSpec.CompressionType {
+	case "gzip":
+		// Use SeaweedFS's streaming gzip compression
+		pr, pw := io.Pipe()
+		go func() {
+			defer pw.Close()
+			_, err := util.GzipStream(pw, reader)
+			if err != nil {
+				pw.CloseWithError(fmt.Errorf("gzip compression failed: %v", err))
+			}
+		}()
+		return pr, nil
+	default:
+		// Unknown compression type, return as-is
+		return reader, nil
+	}
+}
+
+// HashReader wraps an io.Reader to calculate MD5 and SHA256 hashes
+type HashReader struct {
+	reader     io.Reader
+	md5Hash    hash.Hash
+	sha256Hash hash.Hash
+}
+
+// NewHashReader creates a new hash calculating reader
+func NewHashReader(reader io.Reader) *HashReader {
+	return &HashReader{
+		reader:     reader,
+		md5Hash:    md5.New(),
+		sha256Hash: sha256.New(),
+	}
+}
+
+// Read implements io.Reader and calculates hashes as data flows through
+func (hr *HashReader) Read(p []byte) (n int, err error) {
+	n, err = hr.reader.Read(p)
+	if n > 0 {
+		// Update both hashes with the data read
+		hr.md5Hash.Write(p[:n])
+		hr.sha256Hash.Write(p[:n])
+	}
+	return n, err
+}
+
+// MD5Sum returns the current MD5 hash
+func (hr *HashReader) MD5Sum() []byte {
+	return hr.md5Hash.Sum(nil)
+}
+
+// SHA256Sum returns the current SHA256 hash
+func (hr *HashReader) SHA256Sum() []byte {
+	return hr.sha256Hash.Sum(nil)
+}
+
+// MD5Hex returns the MD5 hash as a hex string
+func (hr *HashReader) MD5Hex() string {
+	return hex.EncodeToString(hr.MD5Sum())
+}
+
+// SHA256Hex returns the SHA256 hash as a hex string
+func (hr *HashReader) SHA256Hex() string {
+	return hex.EncodeToString(hr.SHA256Sum())
 }
 
 // createHashReader creates a hash calculation reader
 func (scm *StreamingCopyManager) createHashReader(reader io.Reader) io.Reader {
-	// TODO: Implement hash calculation reader (MD5, SHA256, etc.)
-	return reader
+	return NewHashReader(reader)
 }
 
 // streamToDestination streams the processed data to the destination
