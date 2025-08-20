@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"bytes"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -632,8 +633,23 @@ func (s3a *S3ApiServer) handleSSECResponse(r *http.Request, proxyResponse *http.
 			return http.StatusRequestedRangeNotSatisfiable, 0
 		}
 
-		// Create decrypted reader
-		decryptedReader, decErr := CreateSSECDecryptedReader(proxyResponse.Body, customerKey)
+		// Get IV from proxy response headers (stored during upload)
+		ivBase64 := proxyResponse.Header.Get("X-SeaweedFS-SSE-IV")
+		if ivBase64 == "" {
+			glog.Errorf("SSE-C encrypted object missing IV in metadata")
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return http.StatusInternalServerError, 0
+		}
+		
+		iv, err := base64.StdEncoding.DecodeString(ivBase64)
+		if err != nil {
+			glog.Errorf("Failed to decode IV from metadata: %v", err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return http.StatusInternalServerError, 0
+		}
+
+		// Create decrypted reader with IV from metadata
+		decryptedReader, decErr := CreateSSECDecryptedReader(proxyResponse.Body, customerKey, iv)
 		if decErr != nil {
 			glog.Errorf("Failed to create SSE-C decrypted reader: %v", decErr)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -651,23 +667,12 @@ func (s3a *S3ApiServer) handleSSECResponse(r *http.Request, proxyResponse *http.
 		}
 
 		// Set correct Content-Length for SSE-C (only for full object requests)
-		// Range requests are complex with SSE-C because the entire object needs decryption
+		// With IV stored in metadata, the encrypted length equals the original length
 		if proxyResponse.Header.Get("Content-Range") == "" {
-			// Full object request: subtract 16-byte IV from encrypted length
+			// Full object request: encrypted length equals original length (IV not in stream)
 			if contentLengthStr := proxyResponse.Header.Get("Content-Length"); contentLengthStr != "" {
-				encryptedLength, err := strconv.ParseInt(contentLengthStr, 10, 64)
-				if err != nil {
-					glog.Errorf("Invalid Content-Length header for SSE-C object: %v", err)
-					s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-					return http.StatusInternalServerError, 0
-				}
-				originalLength := encryptedLength - 16
-				if originalLength < 0 {
-					glog.Errorf("Encrypted object length (%d) is less than IV size (16 bytes)", encryptedLength)
-					s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-					return http.StatusInternalServerError, 0
-				}
-				w.Header().Set("Content-Length", strconv.FormatInt(originalLength, 10))
+				// Content-Length is already correct since IV is stored in metadata, not in data stream
+				w.Header().Set("Content-Length", contentLengthStr)
 			}
 		}
 		// For range requests, let the actual bytes transferred determine the response length
