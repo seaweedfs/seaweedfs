@@ -72,14 +72,14 @@ func (s3a *S3ApiServer) createMultipartUpload(r *http.Request, input *s3.CreateM
 			bucketKeyEnabled := strings.ToLower(r.Header.Get(s3_constants.AmzServerSideEncryptionBucketKeyEnabled)) == "true"
 
 			// Store SSE-KMS configuration for parts to inherit
-			entry.Extended["sse-kms-key-id"] = []byte(keyID)
+			entry.Extended[s3_constants.SeaweedFSSSEKMSKeyID] = []byte(keyID)
 			if bucketKeyEnabled {
-				entry.Extended["sse-kms-bucket-key-enabled"] = []byte("true")
+				entry.Extended[s3_constants.SeaweedFSSSEKMSBucketKeyEnabled] = []byte("true")
 			}
 
 			// Store encryption context if provided
 			if contextHeader := r.Header.Get(s3_constants.AmzServerSideEncryptionContext); contextHeader != "" {
-				entry.Extended["sse-kms-encryption-context"] = []byte(contextHeader)
+				entry.Extended[s3_constants.SeaweedFSSSEKMSEncryptionContext] = []byte(contextHeader)
 			}
 
 			glog.V(3).Infof("createMultipartUpload: stored SSE-KMS settings for upload %s with keyID %s", uploadIdString, keyID)

@@ -92,6 +92,12 @@ const (
 	SeaweedFSSSEKMSKey = "x-seaweedfs-sse-kms-key" // Key for storing serialized SSE-KMS metadata
 	SeaweedFSSSES3Key  = "x-seaweedfs-sse-s3-key"  // Key for storing serialized SSE-S3 metadata
 	SeaweedFSSSEIV     = "x-seaweedfs-sse-c-iv"    // Key for storing SSE-C IV
+
+	// Multipart upload metadata keys for SSE-KMS
+	SeaweedFSSSEKMSKeyID             = "sse-kms-key-id"             // Key ID for multipart upload SSE-KMS inheritance
+	SeaweedFSSSEKMSEncryption        = "sse-kms-encryption"         // Encryption type for multipart upload SSE-KMS inheritance
+	SeaweedFSSSEKMSBucketKeyEnabled  = "sse-kms-bucket-key-enabled" // Bucket key setting for multipart upload SSE-KMS inheritance
+	SeaweedFSSSEKMSEncryptionContext = "sse-kms-encryption-context" // Encryption context for multipart upload SSE-KMS inheritance
 )
 
 // SeaweedFS internal headers for filer communication

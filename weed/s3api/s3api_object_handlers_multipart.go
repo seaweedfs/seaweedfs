@@ -305,7 +305,7 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 	if uploadEntry, err := s3a.getEntry(s3a.genUploadsFolder(bucket), uploadID); err == nil {
 		if uploadEntry.Extended != nil {
 			// Check if this upload uses SSE-KMS
-			if keyIDBytes, exists := uploadEntry.Extended["sse-kms-key-id"]; exists {
+			if keyIDBytes, exists := uploadEntry.Extended[s3_constants.SeaweedFSSSEKMSKeyID]; exists {
 				keyID := string(keyIDBytes)
 
 				// Add SSE-KMS headers to the request for putToFiler to process
@@ -313,12 +313,12 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 				r.Header.Set(s3_constants.AmzServerSideEncryptionAwsKmsKeyId, keyID)
 
 				// Add bucket key setting if stored
-				if bucketKeyBytes, exists := uploadEntry.Extended["sse-kms-bucket-key-enabled"]; exists && string(bucketKeyBytes) == "true" {
+				if bucketKeyBytes, exists := uploadEntry.Extended[s3_constants.SeaweedFSSSEKMSBucketKeyEnabled]; exists && string(bucketKeyBytes) == "true" {
 					r.Header.Set(s3_constants.AmzServerSideEncryptionBucketKeyEnabled, "true")
 				}
 
 				// Add encryption context if stored
-				if contextBytes, exists := uploadEntry.Extended["sse-kms-encryption-context"]; exists {
+				if contextBytes, exists := uploadEntry.Extended[s3_constants.SeaweedFSSSEKMSEncryptionContext]; exists {
 					r.Header.Set(s3_constants.AmzServerSideEncryptionContext, string(contextBytes))
 				}
 
