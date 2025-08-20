@@ -7,7 +7,6 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
@@ -172,30 +171,12 @@ func (s3a *S3ApiServer) executeReencryptCopy(entry *filer_pb.Entry, r *http.Requ
 	}
 
 	if state.SrcSSEC && state.DstSSEKMS {
-		// SSE-C → SSE-KMS: use existing cross-encryption logic
-		chunks, dstMetadata, err := s3a.copyChunksWithSSEC(entry, r)
-
-		// Add SSE-KMS metadata for the destination
-		if err == nil {
-			destKeyID, encryptionContext, bucketKeyEnabled, parseErr := ParseSSEKMSCopyHeaders(r)
-			if parseErr == nil && destKeyID != "" {
-				sseKey := &SSEKMSKey{
-					KeyID:             destKeyID,
-					EncryptionContext: encryptionContext,
-					BucketKeyEnabled:  bucketKeyEnabled,
-				}
-
-				if kmsMetadata, serializeErr := SerializeSSEKMSMetadata(sseKey); serializeErr == nil {
-					if dstMetadata == nil {
-						dstMetadata = make(map[string][]byte)
-					}
-					dstMetadata[s3_constants.SeaweedFSSSEKMSKey] = kmsMetadata
-					glog.V(3).Infof("Generated SSE-KMS metadata for SSE-C→SSE-KMS copy: keyID=%s", destKeyID)
-				}
-			}
-		}
-
-		return chunks, dstMetadata, err
+		// SSE-C → SSE-KMS: SECURITY FIX - force streaming copy to prevent plaintext storage
+		// The previous logic would decrypt SSE-C data and incorrectly associate KMS metadata
+		// with plaintext chunks, creating a serious security vulnerability.
+		glog.V(2).Infof("SSE-C→SSE-KMS cross-encryption copy: forcing streaming copy for security")
+		chunks, err := s3a.executeStreamingReencryptCopy(entry, r, state, dstPath)
+		return chunks, nil, err
 	}
 
 	if state.SrcSSEKMS && state.DstSSEC {

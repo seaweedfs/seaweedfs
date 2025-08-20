@@ -481,25 +481,17 @@ func isValidKMSKeyID(keyID string) bool {
 	}
 
 	// For local KMS and testing, allow reasonable key ID formats
-	// Accept test keys like "test-key-123" but reject clearly invalid formats
+	// Accept test keys like "test-key-123", "mytestkey", "1234567890" etc.
 	if len(keyID) >= 8 { // Minimum reasonable length
-		// Check for valid characters and reasonable format
-		hasAlpha := false
-		hasDigit := false
+		// Check for valid characters
 		for _, r := range keyID {
 			if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
 				(r >= '0' && r <= '9') || r == '-' || r == '_') {
 				return false
 			}
-			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
-				hasAlpha = true
-			}
-			if r >= '0' && r <= '9' {
-				hasDigit = true
-			}
 		}
-		// Require both letters and numbers for reasonable test keys
-		if hasAlpha && hasDigit && !strings.HasSuffix(keyID, "-") && !strings.HasPrefix(keyID, "-") {
+		// Check for invalid prefix/suffix (simplified validation)
+		if !strings.HasSuffix(keyID, "-") && !strings.HasPrefix(keyID, "-") {
 			return true
 		}
 	}
