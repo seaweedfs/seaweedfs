@@ -3,6 +3,7 @@ package s3api
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"fmt"
 	"io"
 	"net/http"
@@ -1109,7 +1110,28 @@ func (s3a *S3ApiServer) copyChunksWithSSEC(entry *filer_pb.Entry, r *http.Reques
 	case SSECCopyStrategyDecryptEncrypt:
 		// SLOW PATH: Decrypt and re-encrypt
 		glog.V(2).Infof("Using slow path: decrypt/re-encrypt for %s", r.URL.Path)
-		return s3a.copyChunksWithReencryption(entry, copySourceKey, destKey, r.URL.Path)
+		chunks, destIV, err := s3a.copyChunksWithReencryption(entry, copySourceKey, destKey, r.URL.Path)
+		if err != nil {
+			return nil, err
+		}
+
+		// Store the destination IV and SSE-C headers in entry metadata for proper SSE-C support
+		if destKey != nil && len(destIV) > 0 {
+			if entry.Extended == nil {
+				entry.Extended = make(map[string][]byte)
+			}
+
+			// Store the IV
+			StoreIVInMetadata(entry.Extended, destIV)
+
+			// Store SSE-C algorithm and key MD5 for proper metadata
+			entry.Extended[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] = []byte("AES256")
+			entry.Extended[s3_constants.AmzServerSideEncryptionCustomerKeyMD5] = []byte(destKey.KeyMD5)
+
+			glog.V(2).Infof("Stored IV and SSE-C metadata in entry for copy: %s", r.URL.Path)
+		}
+
+		return chunks, nil
 
 	default:
 		return nil, fmt.Errorf("unknown SSE-C copy strategy: %v", strategy)
@@ -1117,16 +1139,26 @@ func (s3a *S3ApiServer) copyChunksWithSSEC(entry *filer_pb.Entry, r *http.Reques
 }
 
 // copyChunksWithReencryption handles the slow path: decrypt source and re-encrypt for destination
-func (s3a *S3ApiServer) copyChunksWithReencryption(entry *filer_pb.Entry, copySourceKey *SSECustomerKey, destKey *SSECustomerKey, dstPath string) ([]*filer_pb.FileChunk, error) {
+// Returns the destination chunks and the IV used for encryption (if any)
+func (s3a *S3ApiServer) copyChunksWithReencryption(entry *filer_pb.Entry, copySourceKey *SSECustomerKey, destKey *SSECustomerKey, dstPath string) ([]*filer_pb.FileChunk, []byte, error) {
 	dstChunks := make([]*filer_pb.FileChunk, len(entry.GetChunks()))
 	const defaultChunkCopyConcurrency = 4
 	executor := util.NewLimitedConcurrentExecutor(defaultChunkCopyConcurrency) // Limit to configurable concurrent operations
 	errChan := make(chan error, len(entry.GetChunks()))
 
+	// Generate a single IV for the destination object (if destination is encrypted)
+	var destIV []byte
+	if destKey != nil {
+		destIV = make([]byte, AESBlockSize)
+		if _, err := io.ReadFull(rand.Reader, destIV); err != nil {
+			return nil, nil, fmt.Errorf("failed to generate destination IV: %w", err)
+		}
+	}
+
 	for i, chunk := range entry.GetChunks() {
 		chunkIndex := i
 		executor.Execute(func() {
-			dstChunk, err := s3a.copyChunkWithReencryption(chunk, copySourceKey, destKey, dstPath, entry.Extended)
+			dstChunk, err := s3a.copyChunkWithReencryption(chunk, copySourceKey, destKey, dstPath, entry.Extended, destIV)
 			if err != nil {
 				errChan <- fmt.Errorf("chunk %d: %v", chunkIndex, err)
 				return
@@ -1139,15 +1171,15 @@ func (s3a *S3ApiServer) copyChunksWithReencryption(entry *filer_pb.Entry, copySo
 	// Wait for all operations to complete and check for errors
 	for i := 0; i < len(entry.GetChunks()); i++ {
 		if err := <-errChan; err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
-	return dstChunks, nil
+	return dstChunks, destIV, nil
 }
 
 // copyChunkWithReencryption copies a single chunk with decrypt/re-encrypt
-func (s3a *S3ApiServer) copyChunkWithReencryption(chunk *filer_pb.FileChunk, copySourceKey *SSECustomerKey, destKey *SSECustomerKey, dstPath string, srcMetadata map[string][]byte) (*filer_pb.FileChunk, error) {
+func (s3a *S3ApiServer) copyChunkWithReencryption(chunk *filer_pb.FileChunk, copySourceKey *SSECustomerKey, destKey *SSECustomerKey, dstPath string, srcMetadata map[string][]byte, destIV []byte) (*filer_pb.FileChunk, error) {
 	// Create destination chunk
 	dstChunk := s3a.createDestinationChunk(chunk, chunk.Offset, chunk.Size)
 
@@ -1173,12 +1205,13 @@ func (s3a *S3ApiServer) copyChunkWithReencryption(chunk *filer_pb.FileChunk, cop
 	// Decrypt if source is encrypted
 	if copySourceKey != nil {
 		// Get IV from source metadata
-		iv, err := GetIVFromMetadata(srcMetadata)
+		srcIV, err := GetIVFromMetadata(srcMetadata)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get IV from metadata: %w", err)
 		}
 
-		decryptedReader, decErr := CreateSSECDecryptedReader(bytes.NewReader(encryptedData), copySourceKey, iv)
+		// Use counter offset based on chunk position in the original object
+		decryptedReader, decErr := CreateSSECDecryptedReaderWithOffset(bytes.NewReader(encryptedData), copySourceKey, srcIV, uint64(chunk.Offset))
 		if decErr != nil {
 			return nil, fmt.Errorf("create decrypted reader: %w", decErr)
 		}
@@ -1195,13 +1228,12 @@ func (s3a *S3ApiServer) copyChunkWithReencryption(chunk *filer_pb.FileChunk, cop
 
 	// Re-encrypt if destination should be encrypted
 	if destKey != nil {
-		encryptedReader, iv, encErr := CreateSSECEncryptedReader(bytes.NewReader(finalData), destKey)
+		// Use the provided destination IV with counter offset based on chunk position
+		// This ensures all chunks of the same object use the same IV with different counters
+		encryptedReader, encErr := CreateSSECEncryptedReaderWithOffset(bytes.NewReader(finalData), destKey, destIV, uint64(chunk.Offset))
 		if encErr != nil {
 			return nil, fmt.Errorf("create encrypted reader: %w", encErr)
 		}
-
-		// Note: IV will be stored at the entry level by the calling function
-		_ = iv // IV is returned but handled by caller
 
 		reencryptedData, readErr := io.ReadAll(encryptedReader)
 		if readErr != nil {

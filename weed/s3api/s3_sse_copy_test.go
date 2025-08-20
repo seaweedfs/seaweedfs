@@ -31,7 +31,7 @@ func TestSSECObjectCopy(t *testing.T) {
 	testData := "Hello, SSE-C copy world!"
 
 	// Encrypt with source key
-	encryptedReader, err := CreateSSECEncryptedReader(strings.NewReader(testData), sourceCustomerKey)
+	encryptedReader, iv, err := CreateSSECEncryptedReader(strings.NewReader(testData), sourceCustomerKey)
 	if err != nil {
 		t.Fatalf("Failed to create encrypted reader: %v", err)
 	}
@@ -42,7 +42,10 @@ func TestSSECObjectCopy(t *testing.T) {
 	}
 
 	// Test copy strategy determination
-	sourceMetadata := CreateTestMetadataWithSSEC(sourceKey)
+	sourceMetadata := make(map[string][]byte)
+	StoreIVInMetadata(sourceMetadata, iv)
+	sourceMetadata[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] = []byte("AES256")
+	sourceMetadata[s3_constants.AmzServerSideEncryptionCustomerKeyMD5] = []byte(sourceKey.KeyMD5)
 
 	t.Run("Same key copy (direct copy)", func(t *testing.T) {
 		strategy, err := DetermineSSECCopyStrategy(sourceMetadata, sourceCustomerKey, sourceCustomerKey)
@@ -83,13 +86,13 @@ func TestSSECObjectCopy(t *testing.T) {
 	// Test actual copy operation (decrypt with source key, encrypt with dest key)
 	t.Run("Full copy operation", func(t *testing.T) {
 		// Decrypt with source key
-		decryptedReader, err := CreateSSECDecryptedReader(bytes.NewReader(encryptedData), sourceCustomerKey)
+		decryptedReader, err := CreateSSECDecryptedReader(bytes.NewReader(encryptedData), sourceCustomerKey, iv)
 		if err != nil {
 			t.Fatalf("Failed to create decrypted reader: %v", err)
 		}
 
 		// Re-encrypt with destination key
-		reEncryptedReader, err := CreateSSECEncryptedReader(decryptedReader, destCustomerKey)
+		reEncryptedReader, destIV, err := CreateSSECEncryptedReader(decryptedReader, destCustomerKey)
 		if err != nil {
 			t.Fatalf("Failed to create re-encrypted reader: %v", err)
 		}
@@ -100,7 +103,7 @@ func TestSSECObjectCopy(t *testing.T) {
 		}
 
 		// Verify we can decrypt with destination key
-		finalDecryptedReader, err := CreateSSECDecryptedReader(bytes.NewReader(reEncryptedData), destCustomerKey)
+		finalDecryptedReader, err := CreateSSECDecryptedReader(bytes.NewReader(reEncryptedData), destCustomerKey, destIV)
 		if err != nil {
 			t.Fatalf("Failed to create final decrypted reader: %v", err)
 		}
@@ -187,7 +190,7 @@ func TestSSECToSSEKMSCopy(t *testing.T) {
 	testData := "Hello, cross-encryption copy world!"
 
 	// Encrypt with SSE-C
-	encryptedReader, err := CreateSSECEncryptedReader(strings.NewReader(testData), ssecCustomerKey)
+	encryptedReader, ssecIV, err := CreateSSECEncryptedReader(strings.NewReader(testData), ssecCustomerKey)
 	if err != nil {
 		t.Fatalf("Failed to create SSE-C encrypted reader: %v", err)
 	}
@@ -198,7 +201,7 @@ func TestSSECToSSEKMSCopy(t *testing.T) {
 	}
 
 	// Decrypt SSE-C data
-	decryptedReader, err := CreateSSECDecryptedReader(bytes.NewReader(encryptedData), ssecCustomerKey)
+	decryptedReader, err := CreateSSECDecryptedReader(bytes.NewReader(encryptedData), ssecCustomerKey, ssecIV)
 	if err != nil {
 		t.Fatalf("Failed to create SSE-C decrypted reader: %v", err)
 	}
@@ -266,7 +269,7 @@ func TestSSEKMSToSSECCopy(t *testing.T) {
 	}
 
 	// Re-encrypt with SSE-C
-	reEncryptedReader, err := CreateSSECEncryptedReader(decryptedReader, ssecCustomerKey)
+	reEncryptedReader, reEncryptedIV, err := CreateSSECEncryptedReader(decryptedReader, ssecCustomerKey)
 	if err != nil {
 		t.Fatalf("Failed to create SSE-C encrypted reader: %v", err)
 	}
@@ -277,7 +280,7 @@ func TestSSEKMSToSSECCopy(t *testing.T) {
 	}
 
 	// Decrypt with SSE-C
-	finalDecryptedReader, err := CreateSSECDecryptedReader(bytes.NewReader(reEncryptedData), ssecCustomerKey)
+	finalDecryptedReader, err := CreateSSECDecryptedReader(bytes.NewReader(reEncryptedData), ssecCustomerKey, reEncryptedIV)
 	if err != nil {
 		t.Fatalf("Failed to create SSE-C decrypted reader: %v", err)
 	}

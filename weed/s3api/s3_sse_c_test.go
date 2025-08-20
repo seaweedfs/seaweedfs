@@ -188,7 +188,7 @@ func TestSSECEncryptionDecryption(t *testing.T) {
 
 	// Create encrypted reader
 	dataReader := bytes.NewReader(testData)
-	encryptedReader, err := CreateSSECEncryptedReader(dataReader, customerKey)
+	encryptedReader, iv, err := CreateSSECEncryptedReader(dataReader, customerKey)
 	if err != nil {
 		t.Fatalf("Failed to create encrypted reader: %v", err)
 	}
@@ -206,7 +206,7 @@ func TestSSECEncryptionDecryption(t *testing.T) {
 
 	// Create decrypted reader
 	encryptedReader2 := bytes.NewReader(encryptedData)
-	decryptedReader, err := CreateSSECDecryptedReader(encryptedReader2, customerKey)
+	decryptedReader, err := CreateSSECDecryptedReader(encryptedReader2, customerKey, iv)
 	if err != nil {
 		t.Fatalf("Failed to create decrypted reader: %v", err)
 	}
@@ -266,7 +266,7 @@ func TestSSECEncryptionVariousSizes(t *testing.T) {
 
 			// Encrypt
 			dataReader := bytes.NewReader(testData)
-			encryptedReader, err := CreateSSECEncryptedReader(dataReader, customerKey)
+			encryptedReader, iv, err := CreateSSECEncryptedReader(dataReader, customerKey)
 			if err != nil {
 				t.Fatalf("Failed to create encrypted reader: %v", err)
 			}
@@ -287,7 +287,7 @@ func TestSSECEncryptionVariousSizes(t *testing.T) {
 
 			// Decrypt
 			encryptedReader2 := bytes.NewReader(encryptedData)
-			decryptedReader, err := CreateSSECDecryptedReader(encryptedReader2, customerKey)
+			decryptedReader, err := CreateSSECDecryptedReader(encryptedReader2, customerKey, iv)
 			if err != nil {
 				t.Fatalf("Failed to create decrypted reader: %v", err)
 			}
@@ -310,7 +310,7 @@ func TestSSECEncryptionWithNilKey(t *testing.T) {
 	dataReader := bytes.NewReader(testData)
 
 	// Test encryption with nil key (should pass through)
-	encryptedReader, err := CreateSSECEncryptedReader(dataReader, nil)
+	encryptedReader, iv, err := CreateSSECEncryptedReader(dataReader, nil)
 	if err != nil {
 		t.Fatalf("Failed to create encrypted reader with nil key: %v", err)
 	}
@@ -326,7 +326,7 @@ func TestSSECEncryptionWithNilKey(t *testing.T) {
 
 	// Test decryption with nil key (should pass through)
 	dataReader2 := bytes.NewReader(testData)
-	decryptedReader, err := CreateSSECDecryptedReader(dataReader2, nil)
+	decryptedReader, err := CreateSSECDecryptedReader(dataReader2, nil, iv)
 	if err != nil {
 		t.Fatalf("Failed to create decrypted reader with nil key: %v", err)
 	}
@@ -361,7 +361,7 @@ func TestSSECEncryptionSmallBuffers(t *testing.T) {
 
 	// Create encrypted reader
 	dataReader := bytes.NewReader(testData)
-	encryptedReader, err := CreateSSECEncryptedReader(dataReader, customerKey)
+	encryptedReader, iv, err := CreateSSECEncryptedReader(dataReader, customerKey)
 	if err != nil {
 		t.Fatalf("Failed to create encrypted reader: %v", err)
 	}
@@ -396,7 +396,7 @@ func TestSSECEncryptionSmallBuffers(t *testing.T) {
 
 	// Decrypt and verify
 	encryptedReader2 := bytes.NewReader(encryptedData)
-	decryptedReader, err := CreateSSECDecryptedReader(encryptedReader2, customerKey)
+	decryptedReader, err := CreateSSECDecryptedReader(encryptedReader2, customerKey, iv)
 	if err != nil {
 		t.Fatalf("Failed to create decrypted reader: %v", err)
 	}

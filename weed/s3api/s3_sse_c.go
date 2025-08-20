@@ -189,6 +189,72 @@ func CreateSSECDecryptedReader(r io.Reader, customerKey *SSECustomerKey, iv []by
 	return &cipher.StreamReader{S: stream, R: r}, nil
 }
 
+// CreateSSECEncryptedReaderWithOffset creates an encrypted reader with a specific counter offset
+// This is used for chunk-level encryption where each chunk needs a different counter position
+func CreateSSECEncryptedReaderWithOffset(r io.Reader, customerKey *SSECustomerKey, iv []byte, counterOffset uint64) (io.Reader, error) {
+	if customerKey == nil {
+		return r, nil
+	}
+
+	// Create AES cipher
+	block, err := aes.NewCipher(customerKey.Key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create AES cipher: %v", err)
+	}
+
+	// Create CTR mode cipher with offset
+	stream := createCTRStreamWithOffset(block, iv, counterOffset)
+
+	return &cipher.StreamReader{S: stream, R: r}, nil
+}
+
+// CreateSSECDecryptedReaderWithOffset creates a decrypted reader with a specific counter offset
+func CreateSSECDecryptedReaderWithOffset(r io.Reader, customerKey *SSECustomerKey, iv []byte, counterOffset uint64) (io.Reader, error) {
+	if customerKey == nil {
+		return r, nil
+	}
+
+	// Create AES cipher
+	block, err := aes.NewCipher(customerKey.Key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create AES cipher: %v", err)
+	}
+
+	// Create CTR mode cipher with offset
+	stream := createCTRStreamWithOffset(block, iv, counterOffset)
+
+	return &cipher.StreamReader{S: stream, R: r}, nil
+}
+
+// createCTRStreamWithOffset creates a CTR stream positioned at a specific counter offset
+func createCTRStreamWithOffset(block cipher.Block, iv []byte, counterOffset uint64) cipher.Stream {
+	// Create a copy of the IV to avoid modifying the original
+	offsetIV := make([]byte, len(iv))
+	copy(offsetIV, iv)
+
+	// Calculate the counter offset in blocks (AES block size is 16 bytes)
+	blockOffset := counterOffset / 16
+
+	// Add the block offset to the counter portion of the IV
+	// In AES-CTR, the last 8 bytes of the IV are typically used as the counter
+	addCounterToIV(offsetIV, blockOffset)
+
+	return cipher.NewCTR(block, offsetIV)
+}
+
+// addCounterToIV adds a counter value to the IV (treating last 8 bytes as big-endian counter)
+func addCounterToIV(iv []byte, counter uint64) {
+	// Use the last 8 bytes as a big-endian counter
+	for i := 7; i >= 0; i-- {
+		carry := counter & 0xff
+		iv[len(iv)-8+i] += byte(carry)
+		if iv[len(iv)-8+i] >= byte(carry) {
+			break // No overflow
+		}
+		counter >>= 8
+	}
+}
+
 // GetSourceSSECInfo extracts SSE-C information from source object metadata
 func GetSourceSSECInfo(metadata map[string][]byte) (algorithm string, keyMD5 string, isEncrypted bool) {
 	if alg, exists := metadata[s3_constants.AmzServerSideEncryptionCustomerAlgorithm]; exists {

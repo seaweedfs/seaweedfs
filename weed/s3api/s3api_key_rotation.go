@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"bytes"
+	"crypto/rand"
 	"fmt"
 	"io"
 	"net/http"
@@ -115,14 +116,18 @@ func (s3a *S3ApiServer) rotateSSECChunks(entry *filer_pb.Entry, sourceKey, destK
 	}
 
 	// Generate new IV for the destination and store it in entry metadata
-	encryptedReader, newIV, err := CreateSSECEncryptedReader(bytes.NewReader([]byte{}), destKey)
-	if err != nil {
+	newIV := make([]byte, AESBlockSize)
+	if _, err := io.ReadFull(rand.Reader, newIV); err != nil {
 		return nil, fmt.Errorf("generate new IV: %w", err)
 	}
-	_ = encryptedReader // We only need the IV
 
-	// Update entry metadata with new IV
+	// Update entry metadata with new IV and SSE-C headers
+	if entry.Extended == nil {
+		entry.Extended = make(map[string][]byte)
+	}
 	StoreIVInMetadata(entry.Extended, newIV)
+	entry.Extended[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] = []byte("AES256")
+	entry.Extended[s3_constants.AmzServerSideEncryptionCustomerKeyMD5] = []byte(destKey.KeyMD5)
 
 	return rotatedChunks, nil
 }
