@@ -573,15 +573,15 @@ func (s3a *S3ApiServer) extractMetadataFromConfig(config *BucketConfig) (*Bucket
 		var protoMetadata s3_pb.BucketMetadata
 		if err := proto.Unmarshal(config.Entry.Content, &protoMetadata); err != nil {
 			glog.Errorf("extractMetadataFromConfig: failed to unmarshal protobuf metadata for bucket %s: %v", config.Name, err)
-		} else {
-			// Convert protobuf to structured metadata
-			metadata := &BucketMetadata{
-				Tags:       protoMetadata.Tags,
-				CORS:       corsConfigFromProto(protoMetadata.Cors),
-				Encryption: protoMetadata.Encryption,
-			}
-			return metadata, nil
+			return nil, err
 		}
+		// Convert protobuf to structured metadata
+		metadata := &BucketMetadata{
+			Tags:       protoMetadata.Tags,
+			CORS:       corsConfigFromProto(protoMetadata.Cors),
+			Encryption: protoMetadata.Encryption,
+		}
+		return metadata, nil
 	}
 
 	// Fallback: create metadata from cached CORS config
@@ -636,7 +636,7 @@ func (s3a *S3ApiServer) loadBucketMetadataFromFiler(bucket string) (*BucketMetad
 	var protoMetadata s3_pb.BucketMetadata
 	if err := proto.Unmarshal(entry.Content, &protoMetadata); err != nil {
 		glog.Errorf("getBucketMetadata: failed to unmarshal protobuf metadata for bucket %s: %v", bucket, err)
-		return NewBucketMetadata(), nil // Return empty metadata on error, don't fail
+		return nil, fmt.Errorf("failed to unmarshal bucket metadata for %s: %w", bucket, err)
 	}
 
 	// Convert protobuf CORS to standard CORS

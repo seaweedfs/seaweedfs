@@ -290,10 +290,10 @@ func GetDefaultEncryptionHeaders(config *s3_pb.EncryptionConfiguration) map[stri
 	}
 
 	headers := make(map[string]string)
-	headers["X-Amz-Server-Side-Encryption"] = config.SseAlgorithm
+	headers[s3_constants.AmzServerSideEncryption] = config.SseAlgorithm
 
 	if config.SseAlgorithm == "aws:kms" && config.KmsKeyId != "" {
-		headers["X-Amz-Server-Side-Encryption-Aws-Kms-Key-Id"] = config.KmsKeyId
+		headers[s3_constants.AmzServerSideEncryptionAwsKmsKeyId] = config.KmsKeyId
 	}
 
 	return headers
