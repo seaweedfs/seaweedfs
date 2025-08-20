@@ -381,3 +381,98 @@ func MapKMSErrorToS3Error(err error) s3err.ErrorCode {
 		return s3err.ErrInternalError
 	}
 }
+
+// SSEKMSCopyStrategy represents different strategies for copying SSE-KMS encrypted objects
+type SSEKMSCopyStrategy int
+
+const (
+	// SSEKMSCopyStrategyDirect - Direct chunk copy (same key, no re-encryption needed)
+	SSEKMSCopyStrategyDirect SSEKMSCopyStrategy = iota
+	// SSEKMSCopyStrategyDecryptEncrypt - Decrypt source and re-encrypt for destination
+	SSEKMSCopyStrategyDecryptEncrypt
+)
+
+// String returns string representation of the strategy
+func (s SSEKMSCopyStrategy) String() string {
+	switch s {
+	case SSEKMSCopyStrategyDirect:
+		return "Direct"
+	case SSEKMSCopyStrategyDecryptEncrypt:
+		return "DecryptEncrypt"
+	default:
+		return "Unknown"
+	}
+}
+
+// GetSourceSSEKMSInfo extracts SSE-KMS information from source object metadata
+func GetSourceSSEKMSInfo(metadata map[string][]byte) (keyID string, isEncrypted bool) {
+	if sseAlgorithm, exists := metadata[s3_constants.AmzServerSideEncryption]; exists && string(sseAlgorithm) == "aws:kms" {
+		if kmsKeyID, exists := metadata[s3_constants.AmzServerSideEncryptionAwsKmsKeyId]; exists {
+			return string(kmsKeyID), true
+		}
+		return "", true // SSE-KMS with default key
+	}
+	return "", false
+}
+
+// CanDirectCopySSEKMS determines if we can directly copy chunks without decrypt/re-encrypt
+func CanDirectCopySSEKMS(srcMetadata map[string][]byte, destKeyID string) bool {
+	srcKeyID, srcEncrypted := GetSourceSSEKMSInfo(srcMetadata)
+
+	// Case 1: Source unencrypted, destination unencrypted -> Direct copy
+	if !srcEncrypted && destKeyID == "" {
+		return true
+	}
+
+	// Case 2: Source encrypted with same KMS key as destination -> Direct copy
+	if srcEncrypted && destKeyID != "" {
+		// Same key if key IDs match (empty means default key)
+		return srcKeyID == destKeyID
+	}
+
+	// All other cases require decrypt/re-encrypt
+	return false
+}
+
+// DetermineSSEKMSCopyStrategy determines the optimal copy strategy for SSE-KMS
+func DetermineSSEKMSCopyStrategy(srcMetadata map[string][]byte, destKeyID string) (SSEKMSCopyStrategy, error) {
+	if CanDirectCopySSEKMS(srcMetadata, destKeyID) {
+		return SSEKMSCopyStrategyDirect, nil
+	}
+	return SSEKMSCopyStrategyDecryptEncrypt, nil
+}
+
+// ParseSSEKMSCopyHeaders parses SSE-KMS headers from copy request
+func ParseSSEKMSCopyHeaders(r *http.Request) (destKeyID string, encryptionContext map[string]string, bucketKeyEnabled bool, err error) {
+	// Check if this is an SSE-KMS request
+	if !IsSSEKMSRequest(r) {
+		return "", nil, false, nil
+	}
+
+	// Get destination KMS key ID
+	destKeyID = r.Header.Get(s3_constants.AmzServerSideEncryptionAwsKmsKeyId)
+
+	// Validate key ID if provided
+	if destKeyID != "" && !isValidKMSKeyID(destKeyID) {
+		return "", nil, false, fmt.Errorf("invalid KMS key ID: %s", destKeyID)
+	}
+
+	// Parse encryption context if provided
+	if contextHeader := r.Header.Get(s3_constants.AmzServerSideEncryptionContext); contextHeader != "" {
+		contextBytes, decodeErr := base64.StdEncoding.DecodeString(contextHeader)
+		if decodeErr != nil {
+			return "", nil, false, fmt.Errorf("invalid encryption context encoding: %v", decodeErr)
+		}
+
+		if unmarshalErr := json.Unmarshal(contextBytes, &encryptionContext); unmarshalErr != nil {
+			return "", nil, false, fmt.Errorf("invalid encryption context JSON: %v", unmarshalErr)
+		}
+	}
+
+	// Parse bucket key enabled flag
+	if bucketKeyHeader := r.Header.Get(s3_constants.AmzServerSideEncryptionBucketKeyEnabled); bucketKeyHeader != "" {
+		bucketKeyEnabled = strings.ToLower(bucketKeyHeader) == "true"
+	}
+
+	return destKeyID, encryptionContext, bucketKeyEnabled, nil
+}

@@ -3,8 +3,11 @@ package s3api
 import (
 	"bytes"
 	"io"
+	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
 // TestSSECObjectCopy tests copying SSE-C encrypted objects with different keys
@@ -336,4 +339,287 @@ func TestSSECopyWithCorruptedSource(t *testing.T) {
 	if string(decryptedData) == testData {
 		t.Error("Decrypted corrupted data should not match original")
 	}
+}
+
+// TestSSEKMSCopyStrategy tests SSE-KMS copy strategy determination
+func TestSSEKMSCopyStrategy(t *testing.T) {
+	tests := []struct {
+		name             string
+		srcMetadata      map[string][]byte
+		destKeyID        string
+		expectedStrategy SSEKMSCopyStrategy
+	}{
+		{
+			name:             "Unencrypted to unencrypted",
+			srcMetadata:      map[string][]byte{},
+			destKeyID:        "",
+			expectedStrategy: SSEKMSCopyStrategyDirect,
+		},
+		{
+			name: "Same KMS key",
+			srcMetadata: map[string][]byte{
+				s3_constants.AmzServerSideEncryption:            []byte("aws:kms"),
+				s3_constants.AmzServerSideEncryptionAwsKmsKeyId: []byte("test-key-123"),
+			},
+			destKeyID:        "test-key-123",
+			expectedStrategy: SSEKMSCopyStrategyDirect,
+		},
+		{
+			name: "Different KMS keys",
+			srcMetadata: map[string][]byte{
+				s3_constants.AmzServerSideEncryption:            []byte("aws:kms"),
+				s3_constants.AmzServerSideEncryptionAwsKmsKeyId: []byte("test-key-123"),
+			},
+			destKeyID:        "test-key-456",
+			expectedStrategy: SSEKMSCopyStrategyDecryptEncrypt,
+		},
+		{
+			name: "Encrypted to unencrypted",
+			srcMetadata: map[string][]byte{
+				s3_constants.AmzServerSideEncryption:            []byte("aws:kms"),
+				s3_constants.AmzServerSideEncryptionAwsKmsKeyId: []byte("test-key-123"),
+			},
+			destKeyID:        "",
+			expectedStrategy: SSEKMSCopyStrategyDecryptEncrypt,
+		},
+		{
+			name:             "Unencrypted to encrypted",
+			srcMetadata:      map[string][]byte{},
+			destKeyID:        "test-key-123",
+			expectedStrategy: SSEKMSCopyStrategyDecryptEncrypt,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			strategy, err := DetermineSSEKMSCopyStrategy(tt.srcMetadata, tt.destKeyID)
+			if err != nil {
+				t.Fatalf("DetermineSSEKMSCopyStrategy failed: %v", err)
+			}
+			if strategy != tt.expectedStrategy {
+				t.Errorf("Expected strategy %v, got %v", tt.expectedStrategy, strategy)
+			}
+		})
+	}
+}
+
+// TestSSEKMSCopyHeaders tests SSE-KMS copy header parsing
+func TestSSEKMSCopyHeaders(t *testing.T) {
+	tests := []struct {
+		name              string
+		headers           map[string]string
+		expectedKeyID     string
+		expectedContext   map[string]string
+		expectedBucketKey bool
+		expectError       bool
+	}{
+		{
+			name:              "No SSE-KMS headers",
+			headers:           map[string]string{},
+			expectedKeyID:     "",
+			expectedContext:   nil,
+			expectedBucketKey: false,
+			expectError:       false,
+		},
+		{
+			name: "SSE-KMS with key ID",
+			headers: map[string]string{
+				s3_constants.AmzServerSideEncryption:            "aws:kms",
+				s3_constants.AmzServerSideEncryptionAwsKmsKeyId: "test-key-123",
+			},
+			expectedKeyID:     "test-key-123",
+			expectedContext:   nil,
+			expectedBucketKey: false,
+			expectError:       false,
+		},
+		{
+			name: "SSE-KMS with all options",
+			headers: map[string]string{
+				s3_constants.AmzServerSideEncryption:                 "aws:kms",
+				s3_constants.AmzServerSideEncryptionAwsKmsKeyId:      "test-key-123",
+				s3_constants.AmzServerSideEncryptionContext:          "eyJ0ZXN0IjoidmFsdWUifQ==", // base64 of {"test":"value"}
+				s3_constants.AmzServerSideEncryptionBucketKeyEnabled: "true",
+			},
+			expectedKeyID:     "test-key-123",
+			expectedContext:   map[string]string{"test": "value"},
+			expectedBucketKey: true,
+			expectError:       false,
+		},
+		{
+			name: "Invalid key ID",
+			headers: map[string]string{
+				s3_constants.AmzServerSideEncryption:            "aws:kms",
+				s3_constants.AmzServerSideEncryptionAwsKmsKeyId: "invalid key id",
+			},
+			expectError: true,
+		},
+		{
+			name: "Invalid encryption context",
+			headers: map[string]string{
+				s3_constants.AmzServerSideEncryption:        "aws:kms",
+				s3_constants.AmzServerSideEncryptionContext: "invalid-base64!",
+			},
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, _ := http.NewRequest("PUT", "/test", nil)
+			for k, v := range tt.headers {
+				req.Header.Set(k, v)
+			}
+
+			keyID, context, bucketKey, err := ParseSSEKMSCopyHeaders(req)
+
+			if tt.expectError {
+				if err == nil {
+					t.Error("Expected error but got none")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			if keyID != tt.expectedKeyID {
+				t.Errorf("Expected keyID %s, got %s", tt.expectedKeyID, keyID)
+			}
+
+			if !mapsEqual(context, tt.expectedContext) {
+				t.Errorf("Expected context %v, got %v", tt.expectedContext, context)
+			}
+
+			if bucketKey != tt.expectedBucketKey {
+				t.Errorf("Expected bucketKey %v, got %v", tt.expectedBucketKey, bucketKey)
+			}
+		})
+	}
+}
+
+// TestSSEKMSDirectCopy tests direct copy scenarios
+func TestSSEKMSDirectCopy(t *testing.T) {
+	tests := []struct {
+		name        string
+		srcMetadata map[string][]byte
+		destKeyID   string
+		canDirect   bool
+	}{
+		{
+			name:        "Both unencrypted",
+			srcMetadata: map[string][]byte{},
+			destKeyID:   "",
+			canDirect:   true,
+		},
+		{
+			name: "Same key ID",
+			srcMetadata: map[string][]byte{
+				s3_constants.AmzServerSideEncryption:            []byte("aws:kms"),
+				s3_constants.AmzServerSideEncryptionAwsKmsKeyId: []byte("test-key-123"),
+			},
+			destKeyID: "test-key-123",
+			canDirect: true,
+		},
+		{
+			name: "Different key IDs",
+			srcMetadata: map[string][]byte{
+				s3_constants.AmzServerSideEncryption:            []byte("aws:kms"),
+				s3_constants.AmzServerSideEncryptionAwsKmsKeyId: []byte("test-key-123"),
+			},
+			destKeyID: "test-key-456",
+			canDirect: false,
+		},
+		{
+			name: "Source encrypted, dest unencrypted",
+			srcMetadata: map[string][]byte{
+				s3_constants.AmzServerSideEncryption:            []byte("aws:kms"),
+				s3_constants.AmzServerSideEncryptionAwsKmsKeyId: []byte("test-key-123"),
+			},
+			destKeyID: "",
+			canDirect: false,
+		},
+		{
+			name:        "Source unencrypted, dest encrypted",
+			srcMetadata: map[string][]byte{},
+			destKeyID:   "test-key-123",
+			canDirect:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			canDirect := CanDirectCopySSEKMS(tt.srcMetadata, tt.destKeyID)
+			if canDirect != tt.canDirect {
+				t.Errorf("Expected canDirect %v, got %v", tt.canDirect, canDirect)
+			}
+		})
+	}
+}
+
+// TestGetSourceSSEKMSInfo tests extraction of SSE-KMS info from metadata
+func TestGetSourceSSEKMSInfo(t *testing.T) {
+	tests := []struct {
+		name              string
+		metadata          map[string][]byte
+		expectedKeyID     string
+		expectedEncrypted bool
+	}{
+		{
+			name:              "No encryption",
+			metadata:          map[string][]byte{},
+			expectedKeyID:     "",
+			expectedEncrypted: false,
+		},
+		{
+			name: "SSE-KMS with key ID",
+			metadata: map[string][]byte{
+				s3_constants.AmzServerSideEncryption:            []byte("aws:kms"),
+				s3_constants.AmzServerSideEncryptionAwsKmsKeyId: []byte("test-key-123"),
+			},
+			expectedKeyID:     "test-key-123",
+			expectedEncrypted: true,
+		},
+		{
+			name: "SSE-KMS without key ID (default key)",
+			metadata: map[string][]byte{
+				s3_constants.AmzServerSideEncryption: []byte("aws:kms"),
+			},
+			expectedKeyID:     "",
+			expectedEncrypted: true,
+		},
+		{
+			name: "Non-KMS encryption",
+			metadata: map[string][]byte{
+				s3_constants.AmzServerSideEncryption: []byte("AES256"),
+			},
+			expectedKeyID:     "",
+			expectedEncrypted: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			keyID, encrypted := GetSourceSSEKMSInfo(tt.metadata)
+			if keyID != tt.expectedKeyID {
+				t.Errorf("Expected keyID %s, got %s", tt.expectedKeyID, keyID)
+			}
+			if encrypted != tt.expectedEncrypted {
+				t.Errorf("Expected encrypted %v, got %v", tt.expectedEncrypted, encrypted)
+			}
+		})
+	}
+}
+
+// Helper function to compare maps
+func mapsEqual(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if b[k] != v {
+			return false
+		}
+	}
+	return true
 }
