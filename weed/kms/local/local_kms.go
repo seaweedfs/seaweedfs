@@ -440,6 +440,7 @@ func (p *LocalKMSProvider) CreateKey(description string, aliases []string) (*Loc
 
 // marshalEncryptionContextDeterministic creates a deterministic byte representation of encryption context
 // This ensures that the same encryption context always produces the same AAD for AES-GCM
+// Returns nil if marshaling fails, which will cause encryption operations to fail safely
 func marshalEncryptionContextDeterministic(encryptionContext map[string]string) []byte {
 	if len(encryptionContext) == 0 {
 		return nil
@@ -460,8 +461,16 @@ func marshalEncryptionContextDeterministic(encryptionContext map[string]string) 
 			buf.WriteString(",")
 		}
 		// Marshal key and value to get proper JSON string escaping
-		keyBytes, _ := json.Marshal(k)
-		valueBytes, _ := json.Marshal(encryptionContext[k])
+		keyBytes, err := json.Marshal(k)
+		if err != nil {
+			glog.Errorf("Failed to marshal encryption context key '%s': %v", k, err)
+			return nil
+		}
+		valueBytes, err := json.Marshal(encryptionContext[k])
+		if err != nil {
+			glog.Errorf("Failed to marshal encryption context value for key '%s': %v", k, err)
+			return nil
+		}
 		buf.Write(keyBytes)
 		buf.WriteString(":")
 		buf.Write(valueBytes)

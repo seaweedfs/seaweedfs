@@ -515,7 +515,7 @@ func MapKMSErrorToS3Error(err error) s3err.ErrorCode {
 	case kms.ErrCodeKeyUnavailable:
 		return s3err.ErrKMSDisabled
 	case kms.ErrCodeInvalidKeyUsage:
-		return s3err.ErrKMSKeyNotFound
+		return s3err.ErrKMSAccessDenied
 	case kms.ErrCodeInvalidCiphertext:
 		return s3err.ErrKMSInvalidCiphertext
 	default:
