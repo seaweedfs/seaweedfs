@@ -640,7 +640,7 @@ func (s3a *S3ApiServer) handleSSECResponse(r *http.Request, proxyResponse *http.
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return http.StatusInternalServerError, 0
 		}
-		
+
 		iv, err := base64.StdEncoding.DecodeString(ivBase64)
 		if err != nil {
 			glog.Errorf("Failed to decode IV from metadata: %v", err)
