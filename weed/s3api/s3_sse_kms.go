@@ -1,7 +1,6 @@
 package s3api
 
 import (
-	"bytes"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -32,6 +31,7 @@ type SSEKMSKey struct {
 	EncryptedDataKey  []byte            // The encrypted data encryption key
 	EncryptionContext map[string]string // The encryption context used
 	BucketKeyEnabled  bool              // Whether S3 Bucket Keys are enabled
+	IV                []byte            // The initialization vector for encryption
 }
 
 // SSEKMSMetadata represents the metadata stored with SSE-KMS objects
@@ -94,12 +94,12 @@ func CreateSSEKMSEncryptedReader(r io.Reader, keyID string, encryptionContext ma
 		BucketKeyEnabled:  false, // TODO: Implement S3 Bucket Keys optimization
 	}
 
-	// The encrypted stream format: [IV][EncryptedData]
-	// Similar to SSE-C, we prepend the IV to the encrypted data stream
-	encryptedReader := io.MultiReader(
-		bytes.NewReader(iv),
-		&cipher.StreamReader{S: stream, R: r},
-	)
+	// Return encrypted reader and SSE key with IV for metadata storage
+	// The IV will be stored in metadata, not prepended to the data stream
+	encryptedReader := &cipher.StreamReader{S: stream, R: r}
+
+	// Store IV in the SSE key for metadata storage
+	sseKey.IV = iv
 
 	return encryptedReader, sseKey, nil
 }
@@ -131,11 +131,11 @@ func CreateSSEKMSDecryptedReader(r io.Reader, sseKey *SSEKMSKey) (io.Reader, err
 		return nil, fmt.Errorf("KMS key ID mismatch: expected %s, got %s", sseKey.KeyID, decryptResp.KeyID)
 	}
 
-	// Read the IV from the beginning of the stream
-	iv := make([]byte, 16) // AES block size
-	if _, err := io.ReadFull(r, iv); err != nil {
-		return nil, fmt.Errorf("failed to read IV: %v", err)
+	// Use the IV from the SSE key metadata
+	if len(sseKey.IV) != 16 {
+		return nil, fmt.Errorf("invalid IV length: expected 16 bytes, got %d", len(sseKey.IV))
 	}
+	iv := sseKey.IV
 
 	// Create AES cipher with the decrypted data key
 	block, err := aes.NewCipher(decryptResp.Plaintext)

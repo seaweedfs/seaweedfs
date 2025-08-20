@@ -1,7 +1,6 @@
 package s3api
 
 import (
-	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/md5"
@@ -50,14 +49,6 @@ type SSECustomerKey struct {
 	KeyMD5    string
 }
 
-// SSECDecryptedReader wraps an io.Reader to provide SSE-C decryption
-type SSECDecryptedReader struct {
-	reader      io.Reader
-	cipher      cipher.Stream
-	customerKey *SSECustomerKey
-	first       bool
-}
-
 // IsSSECRequest checks if the request contains SSE-C headers
 func IsSSECRequest(r *http.Request) bool {
 	// If SSE-KMS headers are present, this is not an SSE-C request (they are mutually exclusive)
@@ -65,7 +56,7 @@ func IsSSECRequest(r *http.Request) bool {
 	if sseAlgorithm == "aws:kms" || r.Header.Get(s3_constants.AmzServerSideEncryptionAwsKmsKeyId) != "" {
 		return false
 	}
-	
+
 	return r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerAlgorithm) != ""
 }
 
@@ -153,7 +144,36 @@ func ParseSSECCopySourceHeaders(r *http.Request) (*SSECustomerKey, error) {
 }
 
 // CreateSSECEncryptedReader creates a new encrypted reader for SSE-C
-func CreateSSECEncryptedReader(r io.Reader, customerKey *SSECustomerKey) (io.Reader, error) {
+// Returns the encrypted reader and the IV for metadata storage
+func CreateSSECEncryptedReader(r io.Reader, customerKey *SSECustomerKey) (io.Reader, []byte, error) {
+	if customerKey == nil {
+		return r, nil, nil
+	}
+
+	// Create AES cipher
+	block, err := aes.NewCipher(customerKey.Key)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create AES cipher: %v", err)
+	}
+
+	// Generate random IV
+	iv := make([]byte, AESBlockSize)
+	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
+		return nil, nil, fmt.Errorf("failed to generate IV: %v", err)
+	}
+
+	// Create CTR mode cipher
+	stream := cipher.NewCTR(block, iv)
+
+	// Return encrypted reader and IV separately
+	// The IV will be stored in metadata, not prepended to the data stream
+	encryptedReader := &cipher.StreamReader{S: stream, R: r}
+
+	return encryptedReader, iv, nil
+}
+
+// CreateSSECDecryptedReader creates a new decrypted reader for SSE-C using IV from metadata
+func CreateSSECDecryptedReader(r io.Reader, customerKey *SSECustomerKey, iv []byte) (io.Reader, error) {
 	if customerKey == nil {
 		return r, nil
 	}
@@ -164,65 +184,35 @@ func CreateSSECEncryptedReader(r io.Reader, customerKey *SSECustomerKey) (io.Rea
 		return nil, fmt.Errorf("failed to create AES cipher: %v", err)
 	}
 
-	// Generate random IV
-	iv := make([]byte, AESBlockSize)
-	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
-		return nil, fmt.Errorf("failed to generate IV: %v", err)
-	}
-
-	// Create CTR mode cipher
+	// Create CTR mode cipher with the provided IV
 	stream := cipher.NewCTR(block, iv)
 
-	// The encrypted stream is the IV (initialization vector) followed by the encrypted data.
-	// The IV is randomly generated for each encryption operation and must be unique and unpredictable.
-	// This is critical for the security of AES-CTR mode: reusing an IV with the same key breaks confidentiality.
-	// By prepending the IV to the ciphertext, the decryptor can extract the IV to initialize the cipher.
-	// Note: AES-CTR provides confidentiality only; use an additional MAC if integrity is required.
-	// We model this with an io.MultiReader (IV first) and a cipher.StreamReader (encrypted payload).
-	return io.MultiReader(bytes.NewReader(iv), &cipher.StreamReader{S: stream, R: r}), nil
+	return &cipher.StreamReader{S: stream, R: r}, nil
 }
 
-// CreateSSECDecryptedReader creates a new decrypted reader for SSE-C
-func CreateSSECDecryptedReader(r io.Reader, customerKey *SSECustomerKey) (io.Reader, error) {
+// CreateSSECDecryptedReaderWithIVFromStream creates a decrypted reader that reads IV from stream (for tests)
+// This is a temporary compatibility function for existing tests
+func CreateSSECDecryptedReaderWithIVFromStream(r io.Reader, customerKey *SSECustomerKey) (io.Reader, error) {
 	if customerKey == nil {
 		return r, nil
 	}
 
-	return &SSECDecryptedReader{
-		reader:      r,
-		customerKey: customerKey,
-		cipher:      nil, // Will be initialized when we read the IV
-		first:       true,
-	}, nil
-}
-
-// Read implements io.Reader for SSECDecryptedReader
-func (r *SSECDecryptedReader) Read(p []byte) (n int, err error) {
-	if r.first {
-		// First read: extract IV and initialize cipher
-		r.first = false
-		iv := make([]byte, AESBlockSize)
-
-		// Read IV from the beginning of the data
-		_, err = io.ReadFull(r.reader, iv)
-		if err != nil {
-			return 0, fmt.Errorf("failed to read IV: %v", err)
-		}
-
-		// Create cipher with the extracted IV
-		block, err := aes.NewCipher(r.customerKey.Key)
-		if err != nil {
-			return 0, fmt.Errorf("failed to create AES cipher: %v", err)
-		}
-		r.cipher = cipher.NewCTR(block, iv)
+	// Read IV from the beginning of the stream (legacy format)
+	iv := make([]byte, AESBlockSize)
+	if _, err := io.ReadFull(r, iv); err != nil {
+		return nil, fmt.Errorf("failed to read IV from stream: %v", err)
 	}
 
-	// Decrypt data
-	n, err = r.reader.Read(p)
-	if n > 0 {
-		r.cipher.XORKeyStream(p[:n], p[:n])
+	// Create AES cipher
+	block, err := aes.NewCipher(customerKey.Key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create AES cipher: %v", err)
 	}
-	return n, err
+
+	// Create CTR mode cipher with the IV
+	stream := cipher.NewCTR(block, iv)
+
+	return &cipher.StreamReader{S: stream, R: r}, nil
 }
 
 // GetSourceSSECInfo extracts SSE-C information from source object metadata

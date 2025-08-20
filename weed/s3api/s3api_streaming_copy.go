@@ -27,6 +27,8 @@ type EncryptionSpec struct {
 	DestinationKey  interface{} // SSECustomerKey or SSEKMSKey
 	SourceType      EncryptionType
 	DestinationType EncryptionType
+	SourceMetadata  map[string][]byte // Source metadata for IV extraction
+	DestinationIV   []byte            // Generated IV for destination
 }
 
 // CompressionSpec defines compression parameters for streaming
@@ -107,6 +109,7 @@ func (scm *StreamingCopyManager) createEncryptionSpec(entry *filer_pb.Entry, r *
 	spec := &EncryptionSpec{
 		NeedsDecryption: state.IsSourceEncrypted(),
 		NeedsEncryption: state.IsTargetEncrypted(),
+		SourceMetadata:  entry.Extended, // Pass source metadata for IV extraction
 	}
 
 	// Set source encryption details
@@ -245,7 +248,12 @@ func (scm *StreamingCopyManager) createDecryptionReader(reader io.Reader, encSpe
 	switch encSpec.SourceType {
 	case EncryptionTypeSSEC:
 		if sourceKey, ok := encSpec.SourceKey.(*SSECustomerKey); ok {
-			return CreateSSECDecryptedReader(reader, sourceKey)
+			// Get IV from metadata
+			iv, err := GetIVFromMetadata(encSpec.SourceMetadata)
+			if err != nil {
+				return nil, fmt.Errorf("get IV from metadata: %w", err)
+			}
+			return CreateSSECDecryptedReader(reader, sourceKey, iv)
 		}
 		return nil, fmt.Errorf("invalid SSE-C source key type")
 
@@ -257,7 +265,12 @@ func (scm *StreamingCopyManager) createDecryptionReader(reader io.Reader, encSpe
 
 	case EncryptionTypeSSES3:
 		if sseKey, ok := encSpec.SourceKey.(*SSES3Key); ok {
-			return CreateSSES3DecryptedReader(reader, sseKey)
+			// Get IV from metadata
+			iv, err := GetIVFromMetadata(encSpec.SourceMetadata)
+			if err != nil {
+				return nil, fmt.Errorf("get IV from metadata: %w", err)
+			}
+			return CreateSSES3DecryptedReader(reader, sseKey, iv)
 		}
 		return nil, fmt.Errorf("invalid SSE-S3 source key type")
 
@@ -271,20 +284,37 @@ func (scm *StreamingCopyManager) createEncryptionReader(reader io.Reader, encSpe
 	switch encSpec.DestinationType {
 	case EncryptionTypeSSEC:
 		if destKey, ok := encSpec.DestinationKey.(*SSECustomerKey); ok {
-			return CreateSSECEncryptedReader(reader, destKey)
+			encryptedReader, iv, err := CreateSSECEncryptedReader(reader, destKey)
+			if err != nil {
+				return nil, err
+			}
+			// Store IV in destination metadata (this would need to be handled by caller)
+			encSpec.DestinationIV = iv
+			return encryptedReader, nil
 		}
 		return nil, fmt.Errorf("invalid SSE-C destination key type")
 
 	case EncryptionTypeSSEKMS:
 		if sseKey, ok := encSpec.DestinationKey.(*SSEKMSKey); ok {
-			encryptedReader, _, err := CreateSSEKMSEncryptedReader(reader, sseKey.KeyID, sseKey.EncryptionContext)
-			return encryptedReader, err
+			encryptedReader, updatedKey, err := CreateSSEKMSEncryptedReader(reader, sseKey.KeyID, sseKey.EncryptionContext)
+			if err != nil {
+				return nil, err
+			}
+			// Store IV from the updated key
+			encSpec.DestinationIV = updatedKey.IV
+			return encryptedReader, nil
 		}
 		return nil, fmt.Errorf("invalid SSE-KMS destination key type")
 
 	case EncryptionTypeSSES3:
 		if sseKey, ok := encSpec.DestinationKey.(*SSES3Key); ok {
-			return CreateSSES3EncryptedReader(reader, sseKey)
+			encryptedReader, iv, err := CreateSSES3EncryptedReader(reader, sseKey)
+			if err != nil {
+				return nil, err
+			}
+			// Store IV for metadata
+			encSpec.DestinationIV = iv
+			return encryptedReader, nil
 		}
 		return nil, fmt.Errorf("invalid SSE-S3 destination key type")
 

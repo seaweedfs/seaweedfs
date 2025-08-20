@@ -56,104 +56,42 @@ func GenerateSSES3Key() (*SSES3Key, error) {
 }
 
 // CreateSSES3EncryptedReader creates an encrypted reader for SSE-S3
-func CreateSSES3EncryptedReader(reader io.Reader, key *SSES3Key) (io.Reader, error) {
+// Returns the encrypted reader and the IV for metadata storage
+func CreateSSES3EncryptedReader(reader io.Reader, key *SSES3Key) (io.Reader, []byte, error) {
 	// Create AES cipher
 	block, err := aes.NewCipher(key.Key)
 	if err != nil {
-		return nil, fmt.Errorf("create AES cipher: %w", err)
+		return nil, nil, fmt.Errorf("create AES cipher: %w", err)
 	}
 
 	// Generate random IV
 	iv := make([]byte, aes.BlockSize)
 	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
-		return nil, fmt.Errorf("generate IV: %w", err)
+		return nil, nil, fmt.Errorf("generate IV: %w", err)
 	}
 
 	// Create CTR mode cipher
 	stream := cipher.NewCTR(block, iv)
 
-	// Create encrypted reader that includes IV at the beginning
-	return &sses3EncryptedReader{
-		reader: reader,
-		stream: stream,
-		iv:     iv,
-		ivSent: false,
-	}, nil
+	// Return encrypted reader and IV separately
+	// The IV will be stored in metadata, not in the data stream
+	encryptedReader := &cipher.StreamReader{S: stream, R: reader}
+
+	return encryptedReader, iv, nil
 }
 
-// CreateSSES3DecryptedReader creates a decrypted reader for SSE-S3
-func CreateSSES3DecryptedReader(reader io.Reader, key *SSES3Key) (io.Reader, error) {
+// CreateSSES3DecryptedReader creates a decrypted reader for SSE-S3 using IV from metadata
+func CreateSSES3DecryptedReader(reader io.Reader, key *SSES3Key, iv []byte) (io.Reader, error) {
 	// Create AES cipher
 	block, err := aes.NewCipher(key.Key)
 	if err != nil {
 		return nil, fmt.Errorf("create AES cipher: %w", err)
 	}
 
-	return &sses3DecryptedReader{
-		reader: reader,
-		block:  block,
-		ivRead: false,
-	}, nil
-}
+	// Create CTR mode cipher with the provided IV
+	stream := cipher.NewCTR(block, iv)
 
-// sses3EncryptedReader implements io.Reader for SSE-S3 encryption
-type sses3EncryptedReader struct {
-	reader io.Reader
-	stream cipher.Stream
-	iv     []byte
-	ivSent bool
-}
-
-func (r *sses3EncryptedReader) Read(p []byte) (int, error) {
-	// First, send the IV if not already sent
-	if !r.ivSent {
-		if len(p) < len(r.iv) {
-			return 0, fmt.Errorf("buffer too small for IV")
-		}
-		copy(p, r.iv)
-		r.ivSent = true
-		return len(r.iv), nil
-	}
-
-	// Read from source
-	n, err := r.reader.Read(p)
-	if n > 0 {
-		// Encrypt the data in place
-		r.stream.XORKeyStream(p[:n], p[:n])
-	}
-
-	return n, err
-}
-
-// sses3DecryptedReader implements io.Reader for SSE-S3 decryption
-type sses3DecryptedReader struct {
-	reader io.Reader
-	block  cipher.Block
-	stream cipher.Stream
-	ivRead bool
-}
-
-func (r *sses3DecryptedReader) Read(p []byte) (int, error) {
-	// First, read the IV if not already read
-	if !r.ivRead {
-		iv := make([]byte, aes.BlockSize)
-		if _, err := io.ReadFull(r.reader, iv); err != nil {
-			return 0, fmt.Errorf("read IV: %w", err)
-		}
-
-		// Create CTR mode cipher with the IV
-		r.stream = cipher.NewCTR(r.block, iv)
-		r.ivRead = true
-	}
-
-	// Read encrypted data
-	n, err := r.reader.Read(p)
-	if n > 0 {
-		// Decrypt the data in place
-		r.stream.XORKeyStream(p[:n], p[:n])
-	}
-
-	return n, err
+	return &cipher.StreamReader{S: stream, R: reader}, nil
 }
 
 // GetSSES3Headers returns the headers for SSE-S3 encrypted objects
