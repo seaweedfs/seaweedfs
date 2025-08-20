@@ -162,83 +162,83 @@ clean:
 
 test-basic: check-binary
 	@echo "$(YELLOW)Running basic S3 SSE integration tests...$(NC)"
-	@$(MAKE) start-seaweedfs
+	@$(MAKE) start-seaweedfs-ci
 	@sleep 5
 	@echo "$(GREEN)Starting basic SSE tests...$(NC)"
-	@cd $(SEAWEEDFS_ROOT) && go test -v -timeout=$(TEST_TIMEOUT) -run "TestSSECIntegrationBasic|TestSSEKMSIntegrationBasic" ./test/s3/sse || (echo "$(RED)Basic SSE tests failed$(NC)" && $(MAKE) stop-seaweedfs && exit 1)
-	@$(MAKE) stop-seaweedfs
+	@cd $(SEAWEEDFS_ROOT) && go test -v -timeout=$(TEST_TIMEOUT) -run "TestSSECIntegrationBasic|TestSSEKMSIntegrationBasic" ./test/s3/sse || (echo "$(RED)Basic SSE tests failed$(NC)" && $(MAKE) stop-seaweedfs-safe && exit 1)
+	@$(MAKE) stop-seaweedfs-safe
 	@echo "$(GREEN)Basic SSE tests completed successfully!$(NC)"
 
 test: test-basic
 	@echo "$(YELLOW)Running all S3 SSE integration tests...$(NC)"
-	@$(MAKE) start-seaweedfs
+	@$(MAKE) start-seaweedfs-ci
 	@sleep 5
 	@echo "$(GREEN)Starting comprehensive SSE tests...$(NC)"
-	@cd $(SEAWEEDFS_ROOT) && go test -v -timeout=$(TEST_TIMEOUT) -run "TestSSE.*Integration" ./test/s3/sse || (echo "$(RED)SSE tests failed$(NC)" && $(MAKE) stop-seaweedfs && exit 1)
-	@$(MAKE) stop-seaweedfs
+	@cd $(SEAWEEDFS_ROOT) && go test -v -timeout=$(TEST_TIMEOUT) -run "TestSSE.*Integration" ./test/s3/sse || (echo "$(RED)SSE tests failed$(NC)" && $(MAKE) stop-seaweedfs-safe && exit 1)
+	@$(MAKE) stop-seaweedfs-safe
 	@echo "$(GREEN)All SSE integration tests completed successfully!$(NC)"
 
 test-ssec: check-binary
 	@echo "$(YELLOW)Running SSE-C integration tests...$(NC)"
-	@$(MAKE) start-seaweedfs
+	@$(MAKE) start-seaweedfs-ci
 	@sleep 5
 	@echo "$(GREEN)Starting SSE-C tests...$(NC)"
-	@cd $(SEAWEEDFS_ROOT) && go test -v -timeout=$(TEST_TIMEOUT) -run "TestSSEC.*Integration" ./test/s3/sse || (echo "$(RED)SSE-C tests failed$(NC)" && $(MAKE) stop-seaweedfs && exit 1)
-	@$(MAKE) stop-seaweedfs
+	@cd $(SEAWEEDFS_ROOT) && go test -v -timeout=$(TEST_TIMEOUT) -run "TestSSEC.*Integration" ./test/s3/sse || (echo "$(RED)SSE-C tests failed$(NC)" && $(MAKE) stop-seaweedfs-safe && exit 1)
+	@$(MAKE) stop-seaweedfs-safe
 	@echo "$(GREEN)SSE-C tests completed successfully!$(NC)"
 
 test-ssekms: check-binary
 	@echo "$(YELLOW)Running SSE-KMS integration tests...$(NC)"
-	@$(MAKE) start-seaweedfs
+	@$(MAKE) start-seaweedfs-ci
 	@sleep 5
 	@echo "$(GREEN)Starting SSE-KMS tests...$(NC)"
-	@cd $(SEAWEEDFS_ROOT) && go test -v -timeout=$(TEST_TIMEOUT) -run "TestSSEKMS.*Integration" ./test/s3/sse || (echo "$(RED)SSE-KMS tests failed$(NC)" && $(MAKE) stop-seaweedfs && exit 1)
-	@$(MAKE) stop-seaweedfs
+	@cd $(SEAWEEDFS_ROOT) && go test -v -timeout=$(TEST_TIMEOUT) -run "TestSSEKMS.*Integration" ./test/s3/sse || (echo "$(RED)SSE-KMS tests failed$(NC)" && $(MAKE) stop-seaweedfs-safe && exit 1)
+	@$(MAKE) stop-seaweedfs-safe
 	@echo "$(GREEN)SSE-KMS tests completed successfully!$(NC)"
 
 test-copy: check-binary
 	@echo "$(YELLOW)Running SSE copy operation tests...$(NC)"
-	@$(MAKE) start-seaweedfs
+	@$(MAKE) start-seaweedfs-ci
 	@sleep 5
 	@echo "$(GREEN)Starting SSE copy tests...$(NC)"
-	@cd $(SEAWEEDFS_ROOT) && go test -v -timeout=$(TEST_TIMEOUT) -run ".*CopyIntegration" ./test/s3/sse || (echo "$(RED)SSE copy tests failed$(NC)" && $(MAKE) stop-seaweedfs && exit 1)
-	@$(MAKE) stop-seaweedfs
+	@cd $(SEAWEEDFS_ROOT) && go test -v -timeout=$(TEST_TIMEOUT) -run ".*CopyIntegration" ./test/s3/sse || (echo "$(RED)SSE copy tests failed$(NC)" && $(MAKE) stop-seaweedfs-safe && exit 1)
+	@$(MAKE) stop-seaweedfs-safe
 	@echo "$(GREEN)SSE copy tests completed successfully!$(NC)"
 
 test-multipart: check-binary
 	@echo "$(YELLOW)Running SSE multipart upload tests...$(NC)"
-	@$(MAKE) start-seaweedfs
+	@$(MAKE) start-seaweedfs-ci
 	@sleep 5
 	@echo "$(GREEN)Starting SSE multipart tests...$(NC)"
-	@cd $(SEAWEEDFS_ROOT) && go test -v -timeout=$(TEST_TIMEOUT) -run "TestSSEMultipartUploadIntegration" ./test/s3/sse || (echo "$(RED)SSE multipart tests failed$(NC)" && $(MAKE) stop-seaweedfs && exit 1)
-	@$(MAKE) stop-seaweedfs
+	@cd $(SEAWEEDFS_ROOT) && go test -v -timeout=$(TEST_TIMEOUT) -run "TestSSEMultipartUploadIntegration" ./test/s3/sse || (echo "$(RED)SSE multipart tests failed$(NC)" && $(MAKE) stop-seaweedfs-safe && exit 1)
+	@$(MAKE) stop-seaweedfs-safe
 	@echo "$(GREEN)SSE multipart tests completed successfully!$(NC)"
 
 test-errors: check-binary
 	@echo "$(YELLOW)Running SSE error condition tests...$(NC)"
-	@$(MAKE) start-seaweedfs
+	@$(MAKE) start-seaweedfs-ci
 	@sleep 5
 	@echo "$(GREEN)Starting SSE error tests...$(NC)"
-	@cd $(SEAWEEDFS_ROOT) && go test -v -timeout=$(TEST_TIMEOUT) -run "TestSSEErrorConditions" ./test/s3/sse || (echo "$(RED)SSE error tests failed$(NC)" && $(MAKE) stop-seaweedfs && exit 1)
-	@$(MAKE) stop-seaweedfs
+	@cd $(SEAWEEDFS_ROOT) && go test -v -timeout=$(TEST_TIMEOUT) -run "TestSSEErrorConditions" ./test/s3/sse || (echo "$(RED)SSE error tests failed$(NC)" && $(MAKE) stop-seaweedfs-safe && exit 1)
+	@$(MAKE) stop-seaweedfs-safe
 	@echo "$(GREEN)SSE error tests completed successfully!$(NC)"
 
 test-quick: check-binary
 	@echo "$(YELLOW)Running quick SSE tests...$(NC)"
-	@$(MAKE) start-seaweedfs
+	@$(MAKE) start-seaweedfs-ci
 	@sleep 5
 	@echo "$(GREEN)Starting quick SSE tests...$(NC)"
-	@cd $(SEAWEEDFS_ROOT) && go test -v -timeout=5m -run "TestSSECIntegrationBasic|TestSSEKMSIntegrationBasic" ./test/s3/sse || (echo "$(RED)Quick SSE tests failed$(NC)" && $(MAKE) stop-seaweedfs && exit 1)
-	@$(MAKE) stop-seaweedfs
+	@cd $(SEAWEEDFS_ROOT) && go test -v -timeout=5m -run "TestSSECIntegrationBasic|TestSSEKMSIntegrationBasic" ./test/s3/sse || (echo "$(RED)Quick SSE tests failed$(NC)" && $(MAKE) stop-seaweedfs-safe && exit 1)
+	@$(MAKE) stop-seaweedfs-safe
 	@echo "$(GREEN)Quick SSE tests completed successfully!$(NC)"
 
 benchmark: check-binary
 	@echo "$(YELLOW)Running SSE performance benchmarks...$(NC)"
-	@$(MAKE) start-seaweedfs
+	@$(MAKE) start-seaweedfs-ci
 	@sleep 5
 	@echo "$(GREEN)Starting SSE benchmarks...$(NC)"
-	@cd $(SEAWEEDFS_ROOT) && go test -v -timeout=30m -bench=. -run=Benchmark ./test/s3/sse || (echo "$(RED)SSE benchmarks failed$(NC)" && $(MAKE) stop-seaweedfs && exit 1)
-	@$(MAKE) stop-seaweedfs
+	@cd $(SEAWEEDFS_ROOT) && go test -v -timeout=30m -bench=. -run=Benchmark ./test/s3/sse || (echo "$(RED)SSE benchmarks failed$(NC)" && $(MAKE) stop-seaweedfs-safe && exit 1)
+	@$(MAKE) stop-seaweedfs-safe
 	@echo "$(GREEN)SSE benchmarks completed!$(NC)"
 
 # Debug targets
@@ -272,29 +272,29 @@ ci-test: test-quick
 # Stress test
 stress: check-binary
 	@echo "$(YELLOW)Running SSE stress tests...$(NC)"
-	@$(MAKE) start-seaweedfs
+	@$(MAKE) start-seaweedfs-ci
 	@sleep 5
-	@cd $(SEAWEEDFS_ROOT) && go test -v -timeout=60m -run="TestSSE.*Integration" -count=5 ./test/s3/sse || (echo "$(RED)SSE stress tests failed$(NC)" && $(MAKE) stop-seaweedfs && exit 1)
-	@$(MAKE) stop-seaweedfs
+	@cd $(SEAWEEDFS_ROOT) && go test -v -timeout=60m -run="TestSSE.*Integration" -count=5 ./test/s3/sse || (echo "$(RED)SSE stress tests failed$(NC)" && $(MAKE) stop-seaweedfs-safe && exit 1)
+	@$(MAKE) stop-seaweedfs-safe
 	@echo "$(GREEN)SSE stress tests completed!$(NC)"
 
 # Performance test with various data sizes
 perf: check-binary
 	@echo "$(YELLOW)Running SSE performance tests with various data sizes...$(NC)"
-	@$(MAKE) start-seaweedfs
+	@$(MAKE) start-seaweedfs-ci
 	@sleep 5
-	@cd $(SEAWEEDFS_ROOT) && go test -v -timeout=60m -run=".*VariousDataSizes" ./test/s3/sse || (echo "$(RED)SSE performance tests failed$(NC)" && $(MAKE) stop-seaweedfs && exit 1)
-	@$(MAKE) stop-seaweedfs
+	@cd $(SEAWEEDFS_ROOT) && go test -v -timeout=60m -run=".*VariousDataSizes" ./test/s3/sse || (echo "$(RED)SSE performance tests failed$(NC)" && $(MAKE) stop-seaweedfs-safe && exit 1)
+	@$(MAKE) stop-seaweedfs-safe
 	@echo "$(GREEN)SSE performance tests completed!$(NC)"
 
 # Test specific scenarios that would catch the metadata bug
 test-metadata-persistence: check-binary
 	@echo "$(YELLOW)Running SSE metadata persistence tests (would catch filer metadata bugs)...$(NC)"
-	@$(MAKE) start-seaweedfs
+	@$(MAKE) start-seaweedfs-ci
 	@sleep 5
 	@echo "$(GREEN)Testing that SSE metadata survives full PUT/GET cycle...$(NC)"
-	@cd $(SEAWEEDFS_ROOT) && go test -v -timeout=$(TEST_TIMEOUT) -run "TestSSECIntegrationBasic|TestSSEKMSIntegrationBasic.*CopyIntegration" ./test/s3/sse || (echo "$(RED)SSE metadata persistence tests failed$(NC)" && $(MAKE) stop-seaweedfs && exit 1)
-	@$(MAKE) stop-seaweedfs
+	@cd $(SEAWEEDFS_ROOT) && go test -v -timeout=$(TEST_TIMEOUT) -run "TestSSECIntegrationBasic|TestSSEKMSIntegrationBasic.*CopyIntegration" ./test/s3/sse || (echo "$(RED)SSE metadata persistence tests failed$(NC)" && $(MAKE) stop-seaweedfs-safe && exit 1)
+	@$(MAKE) stop-seaweedfs-safe
 	@echo "$(GREEN)SSE metadata persistence tests completed successfully!$(NC)"
 	@echo "$(GREEN)✅ These tests would have caught the filer metadata storage bug!$(NC)"
 
@@ -393,13 +393,14 @@ start-seaweedfs-ci: check-binary
 # GitHub Actions compatible quick test subset
 test-quick-with-server: build-weed
 	@echo "🚀 Starting quick SSE tests with automated server management..."
-	@trap 'make stop-seaweedfs || true' EXIT; \
+	@trap 'make stop-seaweedfs-safe || true' EXIT; \
 	echo "Starting SeaweedFS cluster..."; \
-	if make start-seaweedfs > weed-test.log 2>&1; then \
+	if make start-seaweedfs-ci > weed-test.log 2>&1; then \
 		echo "✅ SeaweedFS cluster started successfully"; \
 		echo "Running quick SSE integration tests..."; \
-		go test -v -timeout=$(TEST_TIMEOUT) -run "TestSSECIntegrationBasic|TestSSEKMSIntegrationBasic|TestSimpleSSECIntegration" || exit 1; \
+		cd $(SEAWEEDFS_ROOT) && go test -v -timeout=$(TEST_TIMEOUT) -run "TestSSECIntegrationBasic|TestSSEKMSIntegrationBasic|TestSimpleSSECIntegration" ./test/s3/sse || exit 1; \
 		echo "✅ Quick tests completed successfully"; \
+		make stop-seaweedfs-safe || true; \
 	else \
 		echo "❌ Failed to start SeaweedFS cluster"; \
 		echo "=== Server startup logs ==="; \
