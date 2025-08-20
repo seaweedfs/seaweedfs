@@ -21,6 +21,50 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// assertDataEqual compares two byte slices using MD5 hashes and provides a concise error message
+func assertDataEqual(t *testing.T, expected, actual []byte, msgAndArgs ...interface{}) {
+	if len(expected) == len(actual) && bytes.Equal(expected, actual) {
+		return // Data matches, no need to fail
+	}
+
+	expectedMD5 := md5.Sum(expected)
+	actualMD5 := md5.Sum(actual)
+
+	// Create preview of first 1K bytes for debugging
+	previewSize := 1024
+	if len(expected) < previewSize {
+		previewSize = len(expected)
+	}
+	expectedPreview := expected[:previewSize]
+
+	actualPreviewSize := previewSize
+	if len(actual) < actualPreviewSize {
+		actualPreviewSize = len(actual)
+	}
+	actualPreview := actual[:actualPreviewSize]
+
+	// Format the assertion failure message
+	msg := fmt.Sprintf("Data mismatch:\nExpected length: %d, MD5: %x\nActual length: %d, MD5: %x\nExpected preview (first %d bytes): %x\nActual preview (first %d bytes): %x",
+		len(expected), expectedMD5, len(actual), actualMD5,
+		len(expectedPreview), expectedPreview, len(actualPreview), actualPreview)
+
+	if len(msgAndArgs) > 0 {
+		if format, ok := msgAndArgs[0].(string); ok {
+			msg = fmt.Sprintf(format, msgAndArgs[1:]...) + "\n" + msg
+		}
+	}
+
+	t.Error(msg)
+}
+
+// min returns the minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 // S3SSETestConfig holds configuration for S3 SSE integration tests
 type S3SSETestConfig struct {
 	Endpoint      string
@@ -205,7 +249,7 @@ func TestSSECIntegrationBasic(t *testing.T) {
 		// Verify decrypted content matches original
 		retrievedData, err := io.ReadAll(resp.Body)
 		require.NoError(t, err, "Failed to read retrieved data")
-		assert.Equal(t, testData, retrievedData, "Decrypted data does not match original")
+		assertDataEqual(t, testData, retrievedData, "Decrypted data does not match original")
 
 		// Verify SSE headers are present
 		assert.Equal(t, "AES256", aws.ToString(resp.SSECustomerAlgorithm))
@@ -278,7 +322,7 @@ func TestSSECIntegrationVariousDataSizes(t *testing.T) {
 			// Verify content matches
 			retrievedData, err := io.ReadAll(resp.Body)
 			require.NoError(t, err, "Failed to read retrieved data of size %d", size)
-			assert.Equal(t, testData, retrievedData, "Data mismatch for size %d", size)
+			assertDataEqual(t, testData, retrievedData, "Data mismatch for size %d", size)
 
 			// Verify content length is correct (this would have caught the IV-in-stream bug!)
 			assert.Equal(t, int64(size), aws.ToInt64(resp.ContentLength),
@@ -325,7 +369,7 @@ func TestSSEKMSIntegrationBasic(t *testing.T) {
 		// Verify decrypted content matches original
 		retrievedData, err := io.ReadAll(resp.Body)
 		require.NoError(t, err, "Failed to read retrieved data")
-		assert.Equal(t, testData, retrievedData, "Decrypted data does not match original")
+		assertDataEqual(t, testData, retrievedData, "Decrypted data does not match original")
 
 		// Verify SSE-KMS headers are present
 		assert.Equal(t, types.ServerSideEncryptionAwsKms, resp.ServerSideEncryption)
@@ -385,7 +429,7 @@ func TestSSEKMSIntegrationVariousDataSizes(t *testing.T) {
 			// Verify content matches
 			retrievedData, err := io.ReadAll(resp.Body)
 			require.NoError(t, err, "Failed to read retrieved KMS data of size %d", size)
-			assert.Equal(t, testData, retrievedData, "Data mismatch for KMS size %d", size)
+			assertDataEqual(t, testData, retrievedData, "Data mismatch for KMS size %d", size)
 
 			// Verify content length is correct
 			assert.Equal(t, int64(size), aws.ToInt64(resp.ContentLength),
@@ -453,7 +497,7 @@ func TestSSECObjectCopyIntegration(t *testing.T) {
 		// Verify content matches original
 		retrievedData, err := io.ReadAll(resp.Body)
 		require.NoError(t, err, "Failed to read copied data")
-		assert.Equal(t, testData, retrievedData, "Copied data does not match original")
+		assertDataEqual(t, testData, retrievedData, "Copied data does not match original")
 	})
 
 	t.Run("Copy SSE-C to plain", func(t *testing.T) {
@@ -483,7 +527,7 @@ func TestSSECObjectCopyIntegration(t *testing.T) {
 		// Verify content matches original
 		retrievedData, err := io.ReadAll(resp.Body)
 		require.NoError(t, err, "Failed to read plain copied data")
-		assert.Equal(t, testData, retrievedData, "Plain copied data does not match original")
+		assertDataEqual(t, testData, retrievedData, "Plain copied data does not match original")
 	})
 }
 
@@ -537,7 +581,7 @@ func TestSSEKMSObjectCopyIntegration(t *testing.T) {
 		// Verify content matches original
 		retrievedData, err := io.ReadAll(resp.Body)
 		require.NoError(t, err, "Failed to read copied KMS data")
-		assert.Equal(t, testData, retrievedData, "Copied KMS data does not match original")
+		assertDataEqual(t, testData, retrievedData, "Copied KMS data does not match original")
 
 		// Verify new key ID is used
 		assert.Equal(t, destKeyID, aws.ToString(resp.SSEKMSKeyId))
@@ -637,7 +681,7 @@ func TestSSEMultipartUploadIntegration(t *testing.T) {
 
 		// Verify data matches concatenated parts
 		expectedData := append(part1Data, part2Data...)
-		assert.Equal(t, expectedData, retrievedData, "Multipart data does not match original")
+		assertDataEqual(t, expectedData, retrievedData, "Multipart data does not match original")
 		assert.Equal(t, int64(len(expectedData)), aws.ToInt64(resp.ContentLength),
 			"Multipart content length mismatch")
 	})
@@ -715,7 +759,15 @@ func TestSSEMultipartUploadIntegration(t *testing.T) {
 
 		// Verify data matches concatenated parts
 		expectedData := append(part1Data, part2Data...)
-		assert.Equal(t, expectedData, retrievedData, "Multipart KMS data does not match original")
+		
+		// Debug: Print some information about the sizes and first few bytes
+		t.Logf("Expected data size: %d, Retrieved data size: %d", len(expectedData), len(retrievedData))
+		if len(expectedData) > 0 && len(retrievedData) > 0 {
+			t.Logf("Expected first 32 bytes: %x", expectedData[:min(32, len(expectedData))])
+			t.Logf("Retrieved first 32 bytes: %x", retrievedData[:min(32, len(retrievedData))])
+		}
+		
+		assertDataEqual(t, expectedData, retrievedData, "Multipart KMS data does not match original")
 
 		// Verify KMS metadata
 		assert.Equal(t, types.ServerSideEncryptionAwsKms, resp.ServerSideEncryption)
