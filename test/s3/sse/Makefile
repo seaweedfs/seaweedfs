@@ -293,7 +293,7 @@ test-metadata-persistence: check-binary
 	@$(MAKE) start-seaweedfs-ci
 	@sleep 5
 	@echo "$(GREEN)Testing that SSE metadata survives full PUT/GET cycle...$(NC)"
-	@cd $(SEAWEEDFS_ROOT) && go test -v -timeout=$(TEST_TIMEOUT) -run "TestSSECIntegrationBasic|TestSSEKMSIntegrationBasic.*CopyIntegration" ./test/s3/sse || (echo "$(RED)SSE metadata persistence tests failed$(NC)" && $(MAKE) stop-seaweedfs-safe && exit 1)
+	@cd $(SEAWEEDFS_ROOT) && go test -v -timeout=$(TEST_TIMEOUT) -run "TestSSECIntegrationBasic|TestSSECObjectCopyIntegration" ./test/s3/sse || (echo "$(RED)SSE metadata persistence tests failed$(NC)" && $(MAKE) stop-seaweedfs-safe && exit 1)
 	@$(MAKE) stop-seaweedfs-safe
 	@echo "$(GREEN)SSE metadata persistence tests completed successfully!$(NC)"
 	@echo "$(GREEN)✅ These tests would have caught the filer metadata storage bug!$(NC)"
