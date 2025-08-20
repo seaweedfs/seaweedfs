@@ -210,12 +210,6 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		}
 		dataReader = encryptedReader
 		sseIV = iv
-		
-		// Store SSE-C metadata headers for the filer
-		proxyReq.Header.Set(s3_constants.AmzServerSideEncryptionCustomerAlgorithm, "AES256")
-		proxyReq.Header.Set(s3_constants.AmzServerSideEncryptionCustomerKeyMD5, customerKey.KeyMD5)
-		// Store IV in a custom header that the filer can use to store in entry metadata
-		proxyReq.Header.Set("X-SeaweedFS-SSE-IV", base64.StdEncoding.EncodeToString(sseIV))
 	}
 
 	hash := md5.New()
@@ -250,6 +244,14 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	if amzAccountId != "" {
 		proxyReq.Header.Set(s3_constants.ExtAmzOwnerKey, amzAccountId)
 		glog.V(2).Infof("putToFiler: setting owner header %s for object %s", amzAccountId, uploadUrl)
+	}
+
+	// Set SSE-C metadata headers for the filer if encryption was applied
+	if customerKey != nil && len(sseIV) > 0 {
+		proxyReq.Header.Set(s3_constants.AmzServerSideEncryptionCustomerAlgorithm, "AES256")
+		proxyReq.Header.Set(s3_constants.AmzServerSideEncryptionCustomerKeyMD5, customerKey.KeyMD5)
+		// Store IV in a custom header that the filer can use to store in entry metadata
+		proxyReq.Header.Set("X-SeaweedFS-SSE-IV", base64.StdEncoding.EncodeToString(sseIV))
 	}
 
 	// ensure that the Authorization header is overriding any previous
