@@ -44,6 +44,21 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 
 	glog.V(3).Infof("CopyObjectHandler %s %s (version: %s) => %s %s", srcBucket, srcObject, srcVersionId, dstBucket, dstObject)
 
+	// Validate copy source and destination
+	if err := ValidateCopySource(cpSrcPath, srcBucket, srcObject); err != nil {
+		glog.V(2).Infof("CopyObjectHandler validation error: %v", err)
+		errCode := MapCopyValidationError(err)
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
+	if err := ValidateCopyDestination(dstBucket, dstObject); err != nil {
+		glog.V(2).Infof("CopyObjectHandler validation error: %v", err)
+		errCode := MapCopyValidationError(err)
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
 	replaceMeta, replaceTagging := replaceDirective(r.Header)
 
 	if (srcBucket == dstBucket && srcObject == dstObject || cpSrcPath == "") && (replaceMeta || replaceTagging) {
@@ -129,6 +144,14 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Validate encryption parameters
+	if err := ValidateCopyEncryption(entry.Extended, r.Header); err != nil {
+		glog.V(2).Infof("CopyObjectHandler encryption validation error: %v", err)
+		errCode := MapCopyValidationError(err)
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
 	// Create new entry for destination
 	dstEntry := &filer_pb.Entry{
 		Attributes: &filer_pb.FuseAttributes{
@@ -162,38 +185,14 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		// Just copy the entry structure without chunks for zero-size files
 		dstEntry.Chunks = nil
 	} else {
-		// Determine which encryption type to handle
-		var dstChunks []*filer_pb.FileChunk
-		var copyErr error
-
-		// Check for SSE-KMS (either in request or source object)
-		if IsSSEKMSRequest(r) || IsSSEKMSEncrypted(entry.Extended) {
-			// Handle SSE-KMS copy with smart fast/slow path selection
-			dstChunks, copyErr = s3a.copyChunksWithSSEKMS(entry, r, dstBucket)
-			if copyErr != nil {
-				glog.Errorf("CopyObjectHandler copy chunks with SSE-KMS error: %v", copyErr)
-				// Map KMS errors to appropriate S3 errors
-				errCode := MapKMSErrorToS3Error(copyErr)
-				if errCode == s3err.ErrInvalidRequest {
-					errCode = s3err.ErrInternalError
-				}
-				s3err.WriteErrorResponse(w, r, errCode)
-				return
-			}
-		} else {
-			// Handle SSE-C copy with smart fast/slow path selection
-			dstChunks, copyErr = s3a.copyChunksWithSSEC(entry, r)
-			if copyErr != nil {
-				glog.Errorf("CopyObjectHandler copy chunks with SSE-C error: %v", copyErr)
-				// Use shared error mapping helper
-				errCode := MapSSECErrorToS3Error(copyErr)
-				// For copy operations, if the error is not recognized, use InternalError
-				if errCode == s3err.ErrInvalidRequest {
-					errCode = s3err.ErrInternalError
-				}
-				s3err.WriteErrorResponse(w, r, errCode)
-				return
-			}
+		// Use unified copy strategy approach
+		dstChunks, copyErr := s3a.executeUnifiedCopyStrategy(entry, r, dstBucket, srcObject, dstObject)
+		if copyErr != nil {
+			glog.Errorf("CopyObjectHandler unified copy error: %v", copyErr)
+			// Map errors to appropriate S3 errors
+			errCode := s3a.mapCopyErrorToS3Error(copyErr)
+			s3err.WriteErrorResponse(w, r, errCode)
+			return
 		}
 
 		dstEntry.Chunks = dstChunks

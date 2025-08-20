@@ -476,3 +476,132 @@ func ParseSSEKMSCopyHeaders(r *http.Request) (destKeyID string, encryptionContex
 
 	return destKeyID, encryptionContext, bucketKeyEnabled, nil
 }
+
+// UnifiedCopyStrategy represents all possible copy strategies across encryption types
+type UnifiedCopyStrategy int
+
+const (
+	// CopyStrategyDirect - Direct chunk copy (no encryption changes)
+	CopyStrategyDirect UnifiedCopyStrategy = iota
+	// CopyStrategyEncrypt - Encrypt during copy (plain → encrypted)
+	CopyStrategyEncrypt
+	// CopyStrategyDecrypt - Decrypt during copy (encrypted → plain)
+	CopyStrategyDecrypt
+	// CopyStrategyReencrypt - Decrypt and re-encrypt (different keys/methods)
+	CopyStrategyReencrypt
+	// CopyStrategyKeyRotation - Same object, different key (metadata-only update)
+	CopyStrategyKeyRotation
+)
+
+// String returns string representation of the unified strategy
+func (s UnifiedCopyStrategy) String() string {
+	switch s {
+	case CopyStrategyDirect:
+		return "Direct"
+	case CopyStrategyEncrypt:
+		return "Encrypt"
+	case CopyStrategyDecrypt:
+		return "Decrypt"
+	case CopyStrategyReencrypt:
+		return "Reencrypt"
+	case CopyStrategyKeyRotation:
+		return "KeyRotation"
+	default:
+		return "Unknown"
+	}
+}
+
+// EncryptionState represents the encryption state of source and destination
+type EncryptionState struct {
+	SrcSSEC    bool
+	SrcSSEKMS  bool
+	SrcSSES3   bool
+	DstSSEC    bool
+	DstSSEKMS  bool
+	DstSSES3   bool
+	SameObject bool
+}
+
+// IsSourceEncrypted returns true if source has any encryption
+func (e *EncryptionState) IsSourceEncrypted() bool {
+	return e.SrcSSEC || e.SrcSSEKMS || e.SrcSSES3
+}
+
+// IsTargetEncrypted returns true if target should be encrypted
+func (e *EncryptionState) IsTargetEncrypted() bool {
+	return e.DstSSEC || e.DstSSEKMS || e.DstSSES3
+}
+
+// DetermineUnifiedCopyStrategy determines the optimal copy strategy for all encryption types
+func DetermineUnifiedCopyStrategy(state *EncryptionState, srcMetadata map[string][]byte, r *http.Request) (UnifiedCopyStrategy, error) {
+	// Key rotation: same object with different encryption
+	if state.SameObject && state.IsSourceEncrypted() && state.IsTargetEncrypted() {
+		// Check if it's actually a key change
+		if state.SrcSSEC && state.DstSSEC {
+			// SSE-C key rotation - need to compare keys
+			return CopyStrategyKeyRotation, nil
+		}
+		if state.SrcSSEKMS && state.DstSSEKMS {
+			// SSE-KMS key rotation - need to compare key IDs
+			srcKeyID, _ := GetSourceSSEKMSInfo(srcMetadata)
+			dstKeyID := r.Header.Get(s3_constants.AmzServerSideEncryptionAwsKmsKeyId)
+			if srcKeyID != dstKeyID {
+				return CopyStrategyKeyRotation, nil
+			}
+		}
+	}
+
+	// Direct copy: no encryption changes
+	if !state.IsSourceEncrypted() && !state.IsTargetEncrypted() {
+		return CopyStrategyDirect, nil
+	}
+
+	// Same encryption type and key
+	if state.SrcSSEKMS && state.DstSSEKMS {
+		srcKeyID, _ := GetSourceSSEKMSInfo(srcMetadata)
+		dstKeyID := r.Header.Get(s3_constants.AmzServerSideEncryptionAwsKmsKeyId)
+		if srcKeyID == dstKeyID {
+			return CopyStrategyDirect, nil
+		}
+	}
+
+	if state.SrcSSEC && state.DstSSEC {
+		// For SSE-C, we'd need to compare the actual keys, but we can't do that securely
+		// So we assume different keys and use reencrypt strategy
+		return CopyStrategyReencrypt, nil
+	}
+
+	// Encrypt: plain → encrypted
+	if !state.IsSourceEncrypted() && state.IsTargetEncrypted() {
+		return CopyStrategyEncrypt, nil
+	}
+
+	// Decrypt: encrypted → plain
+	if state.IsSourceEncrypted() && !state.IsTargetEncrypted() {
+		return CopyStrategyDecrypt, nil
+	}
+
+	// Reencrypt: different encryption types or keys
+	if state.IsSourceEncrypted() && state.IsTargetEncrypted() {
+		return CopyStrategyReencrypt, nil
+	}
+
+	return CopyStrategyDirect, nil
+}
+
+// DetectEncryptionState analyzes the source metadata and request headers to determine encryption state
+func DetectEncryptionState(srcMetadata map[string][]byte, r *http.Request, srcPath, dstPath string) *EncryptionState {
+	state := &EncryptionState{
+		SrcSSEC:    IsSSECEncrypted(srcMetadata),
+		SrcSSEKMS:  IsSSEKMSEncrypted(srcMetadata),
+		SrcSSES3:   IsSSES3EncryptedInternal(srcMetadata),
+		DstSSEC:    IsSSECRequest(r),
+		DstSSEKMS:  IsSSEKMSRequest(r),
+		DstSSES3:   IsSSES3RequestInternal(r),
+		SameObject: srcPath == dstPath,
+	}
+
+	return state
+}
+
+// Helper functions for SSE-C detection are in s3_sse_c.go
