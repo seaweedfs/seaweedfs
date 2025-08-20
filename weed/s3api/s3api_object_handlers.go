@@ -330,8 +330,8 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	s3a.proxyToFiler(w, r, destUrl, false, func(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64) {
-		// Handle SSE-C decryption if needed
-		return s3a.handleSSECResponse(r, proxyResponse, w)
+		// Handle SSE decryption (both SSE-C and SSE-KMS) if needed
+		return s3a.handleSSEResponse(r, proxyResponse, w)
 	})
 }
 
@@ -428,8 +428,8 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	s3a.proxyToFiler(w, r, destUrl, false, func(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64) {
-		// Handle SSE-C validation for HEAD requests
-		return s3a.handleSSECResponse(r, proxyResponse, w)
+		// Handle SSE validation (both SSE-C and SSE-KMS) for HEAD requests
+		return s3a.handleSSEResponse(r, proxyResponse, w)
 	})
 }
 
@@ -692,6 +692,84 @@ func (s3a *S3ApiServer) handleSSECResponse(r *http.Request, proxyResponse *http.
 		// Normal pass-through response
 		return passThroughResponse(proxyResponse, w)
 	}
+}
+
+// handleSSEResponse handles both SSE-C and SSE-KMS decryption/validation and response processing
+func (s3a *S3ApiServer) handleSSEResponse(r *http.Request, proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64) {
+	// Check for SSE-KMS metadata first
+	kmsMetadataHeader := proxyResponse.Header.Get(s3_constants.SeaweedFSSSEKMSKeyHeader)
+	if kmsMetadataHeader != "" {
+		// This object was encrypted with SSE-KMS
+		return s3a.handleSSEKMSResponse(r, proxyResponse, w, kmsMetadataHeader)
+	}
+
+	// Fall back to SSE-C handling
+	return s3a.handleSSECResponse(r, proxyResponse, w)
+}
+
+// handleSSEKMSResponse handles SSE-KMS decryption and response processing
+func (s3a *S3ApiServer) handleSSEKMSResponse(r *http.Request, proxyResponse *http.Response, w http.ResponseWriter, kmsMetadataHeader string) (statusCode int, bytesTransferred int64) {
+	// Deserialize SSE-KMS metadata
+	kmsMetadataBytes, err := base64.StdEncoding.DecodeString(kmsMetadataHeader)
+	if err != nil {
+		glog.Errorf("Failed to decode SSE-KMS metadata: %v", err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return http.StatusInternalServerError, 0
+	}
+
+	sseKMSKey, err := DeserializeSSEKMSMetadata(kmsMetadataBytes)
+	if err != nil {
+		glog.Errorf("Failed to deserialize SSE-KMS metadata: %v", err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return http.StatusInternalServerError, 0
+	}
+
+	// For HEAD requests, we don't need to decrypt the body, just add response headers
+	if r.Method == "HEAD" {
+		// Capture existing CORS headers that may have been set by middleware
+		capturedCORSHeaders := captureCORSHeaders(w, corsHeaders)
+
+		// Copy headers from proxy response
+		for k, v := range proxyResponse.Header {
+			w.Header()[k] = v
+		}
+
+		// Add SSE-KMS response headers
+		AddSSEKMSResponseHeaders(w, sseKMSKey)
+
+		return writeFinalResponse(w, proxyResponse, proxyResponse.Body, capturedCORSHeaders)
+	}
+
+	// For GET requests, create decrypted reader
+	decryptedReader, decErr := CreateSSEKMSDecryptedReader(proxyResponse.Body, sseKMSKey)
+	if decErr != nil {
+		glog.Errorf("Failed to create SSE-KMS decrypted reader: %v", decErr)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return http.StatusInternalServerError, 0
+	}
+
+	// Capture existing CORS headers that may have been set by middleware
+	capturedCORSHeaders := captureCORSHeaders(w, corsHeaders)
+
+	// Copy headers from proxy response (excluding body-related headers that might change)
+	for k, v := range proxyResponse.Header {
+		if k != "Content-Length" && k != "Content-Encoding" {
+			w.Header()[k] = v
+		}
+	}
+
+	// Set correct Content-Length for SSE-KMS
+	if proxyResponse.Header.Get("Content-Range") == "" {
+		// For full object requests, encrypted length equals original length
+		if contentLengthStr := proxyResponse.Header.Get("Content-Length"); contentLengthStr != "" {
+			w.Header().Set("Content-Length", contentLengthStr)
+		}
+	}
+
+	// Add SSE-KMS response headers
+	AddSSEKMSResponseHeaders(w, sseKMSKey)
+
+	return writeFinalResponse(w, proxyResponse, decryptedReader, capturedCORSHeaders)
 }
 
 // addObjectLockHeadersToResponse extracts object lock metadata from entry Extended attributes

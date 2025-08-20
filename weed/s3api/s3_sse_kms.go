@@ -45,6 +45,7 @@ type SSEKMSMetadata struct {
 	EncryptedDataKey  string            `json:"encryptedDataKey"`  // Base64-encoded encrypted data key
 	EncryptionContext map[string]string `json:"encryptionContext"` // Encryption context
 	BucketKeyEnabled  bool              `json:"bucketKeyEnabled"`  // S3 Bucket Key optimization
+	IV                string            `json:"iv"`                // Base64-encoded initialization vector
 }
 
 const (
@@ -548,6 +549,7 @@ func SerializeSSEKMSMetadata(sseKey *SSEKMSKey) ([]byte, error) {
 		EncryptedDataKey:  base64.StdEncoding.EncodeToString(sseKey.EncryptedDataKey),
 		EncryptionContext: sseKey.EncryptionContext,
 		BucketKeyEnabled:  sseKey.BucketKeyEnabled,
+		IV:                base64.StdEncoding.EncodeToString(sseKey.IV), // Store IV for decryption
 	}
 
 	data, err := json.Marshal(metadata)
@@ -586,13 +588,21 @@ func DeserializeSSEKMSMetadata(data []byte) (*SSEKMSKey, error) {
 		return nil, fmt.Errorf("failed to decode encrypted data key: %w", err)
 	}
 
+	// Decode the IV
+	var iv []byte
+	if metadata.IV != "" {
+		iv, err = base64.StdEncoding.DecodeString(metadata.IV)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode IV: %w", err)
+		}
+	}
+
 	sseKey := &SSEKMSKey{
 		KeyID:             metadata.KeyID,
 		EncryptedDataKey:  encryptedDataKey,
 		EncryptionContext: metadata.EncryptionContext,
 		BucketKeyEnabled:  metadata.BucketKeyEnabled,
-		// Note: IV is not stored in metadata as it's generated during encryption
-		// and is typically stored separately or embedded in the ciphertext
+		IV:                iv, // Restore IV for decryption
 	}
 
 	glog.V(4).Infof("Deserialized SSE-KMS metadata: keyID=%s, bucketKey=%t", sseKey.KeyID, sseKey.BucketKeyEnabled)
