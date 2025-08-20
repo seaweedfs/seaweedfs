@@ -14,6 +14,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/kms"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/cors"
@@ -116,7 +117,8 @@ func (bkc *BucketKMSCache) CleanupExpired() int {
 
 	for key, entry := range bkc.cache {
 		if now.After(entry.ExpiresAt) {
-			// Clear sensitive data if possible (this would need to be type-specific)
+			// Clear sensitive data before removing from cache
+			bkc.clearSensitiveData(entry)
 			delete(bkc.cache, key)
 			expiredCount++
 		}
@@ -135,6 +137,37 @@ func (bkc *BucketKMSCache) Size() int {
 	defer bkc.mutex.RUnlock()
 
 	return len(bkc.cache)
+}
+
+// clearSensitiveData securely clears sensitive data from a cache entry
+func (bkc *BucketKMSCache) clearSensitiveData(entry *BucketKMSCacheEntry) {
+	if dataKeyResp, ok := entry.DataKey.(*kms.GenerateDataKeyResponse); ok {
+		// Zero out the plaintext data key to prevent it from lingering in memory
+		if dataKeyResp.Plaintext != nil {
+			for i := range dataKeyResp.Plaintext {
+				dataKeyResp.Plaintext[i] = 0
+			}
+			dataKeyResp.Plaintext = nil
+		}
+	}
+}
+
+// Clear clears all cached KMS entries, securely zeroing sensitive data first
+func (bkc *BucketKMSCache) Clear() {
+	if bkc == nil {
+		return
+	}
+
+	bkc.mutex.Lock()
+	defer bkc.mutex.Unlock()
+
+	// Clear sensitive data from all entries before deletion
+	for _, entry := range bkc.cache {
+		bkc.clearSensitiveData(entry)
+	}
+
+	// Clear the cache map
+	bkc.cache = make(map[string]*BucketKMSCacheEntry)
 }
 
 // BucketConfigCache provides caching for bucket configurations
