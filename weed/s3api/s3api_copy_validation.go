@@ -144,9 +144,9 @@ func validateEncryptionCompatibility(headers http.Header) error {
 
 // validateSSECCopyHeaderCompleteness validates that all required SSE-C copy headers are present
 func validateSSECCopyHeaderCompleteness(headers http.Header) error {
-	algorithm := headers.Get("X-Amz-Server-Side-Encryption-Copy-Customer-Algorithm")
-	key := headers.Get("X-Amz-Server-Side-Encryption-Copy-Customer-Key")
-	keyMD5 := headers.Get("X-Amz-Server-Side-Encryption-Copy-Customer-Key-MD5")
+	algorithm := headers.Get(s3_constants.AmzCopySourceServerSideEncryptionCustomerAlgorithm)
+	key := headers.Get(s3_constants.AmzCopySourceServerSideEncryptionCustomerKey)
+	keyMD5 := headers.Get(s3_constants.AmzCopySourceServerSideEncryptionCustomerKeyMD5)
 
 	if algorithm == "" {
 		return &CopyValidationError{
@@ -220,9 +220,9 @@ func validateSSECHeaderCompleteness(headers http.Header) error {
 
 // Helper functions for header detection
 func hasSSECCopyHeaders(headers http.Header) bool {
-	return headers.Get("X-Amz-Server-Side-Encryption-Copy-Customer-Algorithm") != "" ||
-		headers.Get("X-Amz-Server-Side-Encryption-Copy-Customer-Key") != "" ||
-		headers.Get("X-Amz-Server-Side-Encryption-Copy-Customer-Key-MD5") != ""
+	return headers.Get(s3_constants.AmzCopySourceServerSideEncryptionCustomerAlgorithm) != "" ||
+		headers.Get(s3_constants.AmzCopySourceServerSideEncryptionCustomerKey) != "" ||
+		headers.Get(s3_constants.AmzCopySourceServerSideEncryptionCustomerKeyMD5) != ""
 }
 
 func hasSSECHeaders(headers http.Header) bool {
