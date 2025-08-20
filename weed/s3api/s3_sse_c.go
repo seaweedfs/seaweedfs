@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/md5"
@@ -165,16 +166,35 @@ func CreateSSECEncryptedReader(r io.Reader, customerKey *SSECustomerKey) (io.Rea
 	// Create CTR mode cipher
 	stream := cipher.NewCTR(block, iv)
 
-	// Return encrypted reader and IV separately for metadata storage
-	encryptedReader := &cipher.StreamReader{S: stream, R: r}
+	// Create encrypted reader that wraps the input stream
+	streamReader := &cipher.StreamReader{S: stream, R: r}
+
+	// Create composite reader: IV + encrypted content
+	// This ensures the output stream contains IV followed by encrypted data
+	encryptedReader := io.MultiReader(
+		bytes.NewReader(iv),
+		streamReader,
+	)
 
 	return encryptedReader, iv, nil
 }
 
-// CreateSSECDecryptedReader creates a new decrypted reader for SSE-C using IV from metadata
-func CreateSSECDecryptedReader(r io.Reader, customerKey *SSECustomerKey, iv []byte) (io.Reader, error) {
+// CreateSSECDecryptedReader creates a new decrypted reader for SSE-C
+// The input reader should contain IV + encrypted content
+func CreateSSECDecryptedReader(r io.Reader, customerKey *SSECustomerKey, expectedIV []byte) (io.Reader, error) {
 	if customerKey == nil {
 		return r, nil
+	}
+
+	// Read the IV from the beginning of the encrypted data stream
+	iv := make([]byte, AESBlockSize)
+	if _, err := io.ReadFull(r, iv); err != nil {
+		return nil, fmt.Errorf("failed to read IV from encrypted data: %v", err)
+	}
+
+	// Verify IV matches expected IV if provided
+	if expectedIV != nil && !bytes.Equal(iv, expectedIV) {
+		return nil, fmt.Errorf("IV mismatch: encrypted data IV does not match expected IV")
 	}
 
 	// Create AES cipher
@@ -183,7 +203,7 @@ func CreateSSECDecryptedReader(r io.Reader, customerKey *SSECustomerKey, iv []by
 		return nil, fmt.Errorf("failed to create AES cipher: %v", err)
 	}
 
-	// Create CTR mode cipher with the provided IV
+	// Create CTR mode cipher using the IV read from the stream
 	stream := cipher.NewCTR(block, iv)
 
 	return &cipher.StreamReader{S: stream, R: r}, nil
