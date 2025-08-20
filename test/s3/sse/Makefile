@@ -14,6 +14,10 @@ SECRET_KEY ?= some_secret_key1
 VOLUME_MAX_SIZE_MB ?= 50
 VOLUME_MAX_COUNT ?= 100
 
+# SSE-KMS configuration
+KMS_KEY_ID ?= test-key-123
+KMS_TYPE ?= local
+
 # Test directory
 TEST_DIR := $(shell pwd)
 SEAWEEDFS_ROOT := $(shell cd ../../../ && pwd)
@@ -70,11 +74,12 @@ check-binary:
 
 start-seaweedfs: check-binary
 	@echo "$(YELLOW)Starting SeaweedFS server for SSE testing...$(NC)"
-	@# Use more specific process cleanup that doesn't interfere with CI
-	@pgrep -f "weed master.*-port=$(MASTER_PORT)" | head -10 | xargs -r kill -TERM || true
-	@pgrep -f "weed volume.*-port=$(VOLUME_PORT)" | head -10 | xargs -r kill -TERM || true
-	@pgrep -f "weed filer.*-port=$(FILER_PORT)" | head -10 | xargs -r kill -TERM || true
-	@pgrep -f "weed s3.*-port=$(S3_PORT)" | head -10 | xargs -r kill -TERM || true
+	@# Use port-based cleanup for consistency and safety
+	@echo "Cleaning up any existing processes..."
+	@lsof -ti :$(MASTER_PORT) | xargs -r kill -TERM || true
+	@lsof -ti :$(VOLUME_PORT) | xargs -r kill -TERM || true
+	@lsof -ti :$(FILER_PORT) | xargs -r kill -TERM || true
+	@lsof -ti :$(S3_PORT) | xargs -r kill -TERM || true
 	@sleep 2
 	
 	# Create necessary directories
@@ -95,7 +100,7 @@ start-seaweedfs: check-binary
 	@sleep 3
 	
 	# Create S3 configuration with SSE-KMS support
-	@echo '{"identities":[{"name":"$(ACCESS_KEY)","credentials":[{"accessKey":"$(ACCESS_KEY)","secretKey":"$(SECRET_KEY)"}],"actions":["Admin","Read","Write"]}],"kms":{"type":"local","configs":{"keyId":"test-key-123","encryptionContext":{},"bucketKey":false}}}' > /tmp/seaweedfs-sse-s3.json
+	@printf '{"identities":[{"name":"%s","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","Write"]}],"kms":{"type":"%s","configs":{"keyId":"%s","encryptionContext":{},"bucketKey":false}}}' "$(ACCESS_KEY)" "$(ACCESS_KEY)" "$(SECRET_KEY)" "$(KMS_TYPE)" "$(KMS_KEY_ID)" > /tmp/seaweedfs-sse-s3.json
 	
 	# Start S3 server with KMS configuration
 	@nohup $(SEAWEEDFS_BINARY) s3 -port=$(S3_PORT) -filer=127.0.0.1:$(FILER_PORT) -config=/tmp/seaweedfs-sse-s3.json -ip.bind=127.0.0.1 > /tmp/seaweedfs-sse-s3.log 2>&1 &
@@ -125,11 +130,11 @@ start-seaweedfs: check-binary
 
 stop-seaweedfs:
 	@echo "$(YELLOW)Stopping SeaweedFS server...$(NC)"
-	@# Use more specific process cleanup that doesn't interfere with CI
-	@pgrep -f "weed master.*-port=$(MASTER_PORT)" | head -10 | xargs -r kill -TERM || true
-	@pgrep -f "weed volume.*-port=$(VOLUME_PORT)" | head -10 | xargs -r kill -TERM || true
-	@pgrep -f "weed filer.*-port=$(FILER_PORT)" | head -10 | xargs -r kill -TERM || true
-	@pgrep -f "weed s3.*-port=$(S3_PORT)" | head -10 | xargs -r kill -TERM || true
+	@# Use port-based cleanup for consistency and safety
+	@lsof -ti :$(MASTER_PORT) | xargs -r kill -TERM || true
+	@lsof -ti :$(VOLUME_PORT) | xargs -r kill -TERM || true
+	@lsof -ti :$(FILER_PORT) | xargs -r kill -TERM || true
+	@lsof -ti :$(S3_PORT) | xargs -r kill -TERM || true
 	@sleep 2
 	@echo "$(GREEN)SeaweedFS server stopped$(NC)"
 
@@ -353,7 +358,7 @@ start-seaweedfs-ci: check-binary
 	@sleep 3
 	
 	# Create S3 configuration with SSE-KMS support
-	@echo '{"identities":[{"name":"$(ACCESS_KEY)","credentials":[{"accessKey":"$(ACCESS_KEY)","secretKey":"$(SECRET_KEY)"}],"actions":["Admin","Read","Write"]}],"kms":{"type":"local","configs":{"keyId":"test-key-123","encryptionContext":{},"bucketKey":false}}}' > /tmp/seaweedfs-sse-s3.json
+	@printf '{"identities":[{"name":"%s","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","Write"]}],"kms":{"type":"%s","configs":{"keyId":"%s","encryptionContext":{},"bucketKey":false}}}' "$(ACCESS_KEY)" "$(ACCESS_KEY)" "$(SECRET_KEY)" "$(KMS_TYPE)" "$(KMS_KEY_ID)" > /tmp/seaweedfs-sse-s3.json
 	
 	# Start S3 server with KMS configuration
 	@echo "Starting S3 server..."
@@ -439,3 +444,11 @@ help-extended:
 	@echo "  stop-seaweedfs-safe     - Stop SeaweedFS cluster (CI-safe version)"
 	@echo "  clean                   - Clean up test artifacts"
 	@echo "  debug-logs              - Show recent logs from all services"
+	@echo ""
+	@echo "Environment Variables:"
+	@echo "  ACCESS_KEY              - S3 access key (default: some_access_key1)"
+	@echo "  SECRET_KEY              - S3 secret key (default: some_secret_key1)"
+	@echo "  KMS_KEY_ID              - KMS key ID for SSE-KMS (default: test-key-123)"
+	@echo "  KMS_TYPE                - KMS type (default: local)"
+	@echo "  VOLUME_MAX_SIZE_MB      - Volume maximum size in MB (default: 50)"
+	@echo "  TEST_TIMEOUT            - Test timeout (default: 15m)"
