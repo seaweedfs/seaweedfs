@@ -115,7 +115,7 @@ func CreateTestMetadataWithSSEC(keyPair *TestKeyPair) map[string][]byte {
 	for i := range iv {
 		iv[i] = byte(i)
 	}
-	metadata["x-amz-encryption-iv"] = iv
+	StoreIVInMetadata(metadata, iv)
 	return metadata
 }
 

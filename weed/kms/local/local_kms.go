@@ -289,50 +289,77 @@ type encryptedDataKeyMetadata struct {
 	KeyID             string            `json:"keyId"`
 	EncryptionContext map[string]string `json:"encryptionContext"`
 	EncryptedData     []byte            `json:"encryptedData"`
-	IV                []byte            `json:"iv"`
+	Nonce             []byte            `json:"nonce"` // Renamed from IV to be more explicit about AES-GCM usage
 }
 
-// encryptDataKey encrypts a data key using the master key
+// encryptDataKey encrypts a data key using the master key with AES-GCM for authenticated encryption
 func (p *LocalKMSProvider) encryptDataKey(dataKey []byte, masterKey *LocalKey, encryptionContext map[string]string) ([]byte, error) {
 	block, err := aes.NewCipher(masterKey.KeyMaterial)
 	if err != nil {
 		return nil, err
 	}
 
-	// Generate a random IV
-	iv := make([]byte, aes.BlockSize)
-	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
 		return nil, err
 	}
 
-	// Encrypt using AES-CTR
-	stream := cipher.NewCTR(block, iv)
-	encryptedData := make([]byte, len(dataKey))
-	stream.XORKeyStream(encryptedData, dataKey)
+	// Generate a random nonce
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, err
+	}
+
+	// Prepare additional authenticated data (AAD) from the encryption context
+	// json.Marshal provides a stable representation for maps
+	var aad []byte
+	if len(encryptionContext) > 0 {
+		aad, _ = json.Marshal(encryptionContext)
+	}
+
+	// Encrypt using AES-GCM
+	encryptedData := gcm.Seal(nil, nonce, dataKey, aad)
 
 	// Create metadata structure
 	metadata := &encryptedDataKeyMetadata{
 		KeyID:             masterKey.KeyID,
 		EncryptionContext: encryptionContext,
 		EncryptedData:     encryptedData,
-		IV:                iv,
+		Nonce:             nonce,
 	}
 
 	// Serialize metadata to JSON
 	return json.Marshal(metadata)
 }
 
-// decryptDataKey decrypts a data key using the master key
+// decryptDataKey decrypts a data key using the master key with AES-GCM for authenticated decryption
 func (p *LocalKMSProvider) decryptDataKey(metadata *encryptedDataKeyMetadata, masterKey *LocalKey) ([]byte, error) {
 	block, err := aes.NewCipher(masterKey.KeyMaterial)
 	if err != nil {
 		return nil, err
 	}
 
-	// Decrypt using AES-CTR
-	stream := cipher.NewCTR(block, metadata.IV)
-	dataKey := make([]byte, len(metadata.EncryptedData))
-	stream.XORKeyStream(dataKey, metadata.EncryptedData)
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+
+	// Prepare additional authenticated data (AAD)
+	var aad []byte
+	if len(metadata.EncryptionContext) > 0 {
+		aad, _ = json.Marshal(metadata.EncryptionContext)
+	}
+
+	// Decrypt using AES-GCM
+	nonce := metadata.Nonce
+	if len(nonce) != gcm.NonceSize() {
+		return nil, fmt.Errorf("invalid nonce size: expected %d, got %d", gcm.NonceSize(), len(nonce))
+	}
+
+	dataKey, err := gcm.Open(nil, nonce, metadata.EncryptedData, aad)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt with GCM: %w", err)
+	}
 
 	return dataKey, nil
 }
