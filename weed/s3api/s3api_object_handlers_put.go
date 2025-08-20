@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"crypto/md5"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -200,13 +201,21 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	}
 
 	// Apply SSE-C encryption if customer key is provided
+	var sseIV []byte
 	if customerKey != nil {
-		encryptedReader, encErr := CreateSSECEncryptedReader(dataReader, customerKey)
+		encryptedReader, iv, encErr := CreateSSECEncryptedReader(dataReader, customerKey)
 		if encErr != nil {
 			glog.Errorf("Failed to create SSE-C encrypted reader: %v", encErr)
 			return "", s3err.ErrInternalError
 		}
 		dataReader = encryptedReader
+		sseIV = iv
+		
+		// Store SSE-C metadata headers for the filer
+		proxyReq.Header.Set(s3_constants.AmzServerSideEncryptionCustomerAlgorithm, "AES256")
+		proxyReq.Header.Set(s3_constants.AmzServerSideEncryptionCustomerKeyMD5, customerKey.KeyMD5)
+		// Store IV in a custom header that the filer can use to store in entry metadata
+		proxyReq.Header.Set("X-SeaweedFS-SSE-IV", base64.StdEncoding.EncodeToString(sseIV))
 	}
 
 	hash := md5.New()
