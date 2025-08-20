@@ -85,7 +85,10 @@ func (p *LocalKMSProvider) loadConfig(config util.Configuration) error {
 
 // createDefaultKey creates a default master key for the local KMS
 func (p *LocalKMSProvider) createDefaultKey() (*LocalKey, error) {
-	keyID := generateKeyID()
+	keyID, err := generateKeyID()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate key ID: %w", err)
+	}
 	keyMaterial := make([]byte, 32) // 256-bit key
 	if _, err := io.ReadFull(rand.Reader, keyMaterial); err != nil {
 		return nil, fmt.Errorf("failed to generate key material: %v", err)
@@ -357,20 +360,23 @@ func (p *LocalKMSProvider) encryptionContextMatches(ctx1, ctx2 map[string]string
 }
 
 // generateKeyID generates a random key ID
-func generateKeyID() string {
+func generateKeyID() (string, error) {
 	// Generate a UUID-like key ID
 	b := make([]byte, 16)
 	if _, err := io.ReadFull(rand.Reader, b); err != nil {
-		panic(err) // This should never happen
+		return "", fmt.Errorf("failed to generate random bytes for key ID: %w", err)
 	}
 
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
-		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
 }
 
 // CreateKey creates a new key in the local KMS (for testing)
 func (p *LocalKMSProvider) CreateKey(description string, aliases []string) (*LocalKey, error) {
-	keyID := generateKeyID()
+	keyID, err := generateKeyID()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate key ID: %w", err)
+	}
 	keyMaterial := make([]byte, 32)
 	if _, err := io.ReadFull(rand.Reader, keyMaterial); err != nil {
 		return nil, err

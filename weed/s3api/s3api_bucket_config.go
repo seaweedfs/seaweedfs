@@ -571,7 +571,9 @@ func (s3a *S3ApiServer) extractMetadataFromConfig(config *BucketConfig) (*Bucket
 	// Parse metadata from entry content if available
 	if len(config.Entry.Content) > 0 {
 		var protoMetadata s3_pb.BucketMetadata
-		if err := proto.Unmarshal(config.Entry.Content, &protoMetadata); err == nil {
+		if err := proto.Unmarshal(config.Entry.Content, &protoMetadata); err != nil {
+			glog.Errorf("extractMetadataFromConfig: failed to unmarshal protobuf metadata for bucket %s: %v", config.Name, err)
+		} else {
 			// Convert protobuf to structured metadata
 			metadata := &BucketMetadata{
 				Tags:       protoMetadata.Tags,
