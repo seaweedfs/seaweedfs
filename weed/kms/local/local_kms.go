@@ -315,7 +315,11 @@ func (p *LocalKMSProvider) encryptDataKey(dataKey []byte, masterKey *LocalKey, e
 	// Use deterministic marshaling to ensure consistent AAD
 	var aad []byte
 	if len(encryptionContext) > 0 {
-		aad = marshalEncryptionContextDeterministic(encryptionContext)
+		var err error
+		aad, err = marshalEncryptionContextDeterministic(encryptionContext)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal encryption context for AAD: %w", err)
+		}
 	}
 
 	// Encrypt using AES-GCM
@@ -348,7 +352,11 @@ func (p *LocalKMSProvider) decryptDataKey(metadata *encryptedDataKeyMetadata, ma
 	// Prepare additional authenticated data (AAD)
 	var aad []byte
 	if len(metadata.EncryptionContext) > 0 {
-		aad = marshalEncryptionContextDeterministic(metadata.EncryptionContext)
+		var err error
+		aad, err = marshalEncryptionContextDeterministic(metadata.EncryptionContext)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal encryption context for AAD: %w", err)
+		}
 	}
 
 	// Decrypt using AES-GCM
@@ -440,10 +448,9 @@ func (p *LocalKMSProvider) CreateKey(description string, aliases []string) (*Loc
 
 // marshalEncryptionContextDeterministic creates a deterministic byte representation of encryption context
 // This ensures that the same encryption context always produces the same AAD for AES-GCM
-// Returns nil if marshaling fails, which will cause encryption operations to fail safely
-func marshalEncryptionContextDeterministic(encryptionContext map[string]string) []byte {
+func marshalEncryptionContextDeterministic(encryptionContext map[string]string) ([]byte, error) {
 	if len(encryptionContext) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	// Sort keys to ensure deterministic output
@@ -463,13 +470,11 @@ func marshalEncryptionContextDeterministic(encryptionContext map[string]string) 
 		// Marshal key and value to get proper JSON string escaping
 		keyBytes, err := json.Marshal(k)
 		if err != nil {
-			glog.Errorf("Failed to marshal encryption context key '%s': %v", k, err)
-			return nil
+			return nil, fmt.Errorf("failed to marshal encryption context key '%s': %w", k, err)
 		}
 		valueBytes, err := json.Marshal(encryptionContext[k])
 		if err != nil {
-			glog.Errorf("Failed to marshal encryption context value for key '%s': %v", k, err)
-			return nil
+			return nil, fmt.Errorf("failed to marshal encryption context value for key '%s': %w", k, err)
 		}
 		buf.Write(keyBytes)
 		buf.WriteString(":")
@@ -477,5 +482,5 @@ func marshalEncryptionContextDeterministic(encryptionContext map[string]string) 
 	}
 	buf.WriteString("}")
 
-	return []byte(buf.String())
+	return []byte(buf.String()), nil
 }

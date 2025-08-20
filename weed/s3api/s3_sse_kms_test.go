@@ -101,11 +101,7 @@ func TestSSEKMSKeyValidation(t *testing.T) {
 			keyID:     "arn:aws:kms:us-east-1:123456789012:alias/my-test-key",
 			wantValid: true,
 		},
-		{
-			name:      "Empty key ID",
-			keyID:     "",
-			wantValid: false,
-		},
+
 		{
 			name:      "Invalid format",
 			keyID:     "invalid-key-format",
@@ -320,4 +316,64 @@ func TestSSEKMSLargeDataEncryption(t *testing.T) {
 	}
 
 	t.Logf("Successfully encrypted/decrypted %d bytes of data", len(testData))
+}
+
+// TestValidateSSEKMSKey tests the ValidateSSEKMSKey function, which correctly handles empty key IDs
+func TestValidateSSEKMSKey(t *testing.T) {
+	tests := []struct {
+		name    string
+		sseKey  *SSEKMSKey
+		wantErr bool
+	}{
+		{
+			name:    "nil SSE-KMS key",
+			sseKey:  nil,
+			wantErr: true,
+		},
+		{
+			name: "empty key ID (valid - represents default KMS key)",
+			sseKey: &SSEKMSKey{
+				KeyID:             "",
+				EncryptionContext: map[string]string{"test": "value"},
+				BucketKeyEnabled:  false,
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid UUID key ID",
+			sseKey: &SSEKMSKey{
+				KeyID:             "12345678-1234-1234-1234-123456789012",
+				EncryptionContext: map[string]string{"test": "value"},
+				BucketKeyEnabled:  true,
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid alias",
+			sseKey: &SSEKMSKey{
+				KeyID:             "alias/my-test-key",
+				EncryptionContext: map[string]string{},
+				BucketKeyEnabled:  false,
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid key ID format",
+			sseKey: &SSEKMSKey{
+				KeyID:             "invalid-format",
+				EncryptionContext: map[string]string{},
+				BucketKeyEnabled:  false,
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateSSEKMSKey(tt.sseKey)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateSSEKMSKey() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
 }

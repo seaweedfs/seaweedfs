@@ -831,7 +831,22 @@ func (s3a *S3ApiServer) SetBucketMetadata(bucket string, metadata *BucketMetadat
 }
 
 // UpdateBucketMetadata updates specific parts of bucket metadata while preserving others
-// Uses last-write-wins approach since bucket configuration updates are infrequent
+//
+// DISTRIBUTED SYSTEM DESIGN NOTE:
+// This function implements a read-modify-write pattern with "last write wins" semantics.
+// In the rare case of concurrent updates to different parts of bucket metadata
+// (e.g., simultaneous tag and CORS updates), the last write may overwrite previous changes.
+//
+// This is an acceptable trade-off because:
+//  1. Bucket metadata updates are infrequent in typical S3 usage
+//  2. Traditional locking doesn't work in distributed systems across multiple nodes
+//  3. The complexity of distributed consensus (e.g., Raft) for metadata updates would
+//     be disproportionate to the low frequency of bucket configuration changes
+//  4. Most bucket operations (tags, CORS, encryption) are typically configured once
+//     during setup rather than being frequently modified
+//
+// If stronger consistency is required, consider implementing optimistic concurrency
+// control with version numbers or ETags at the storage layer.
 func (s3a *S3ApiServer) UpdateBucketMetadata(bucket string, update func(*BucketMetadata) error) error {
 	// Get current metadata
 	metadata, err := s3a.GetBucketMetadata(bucket)
