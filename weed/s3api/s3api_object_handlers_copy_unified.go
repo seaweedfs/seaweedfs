@@ -19,8 +19,6 @@ func (s3a *S3ApiServer) executeUnifiedCopyStrategy(entry *filer_pb.Entry, r *htt
 	state := DetectEncryptionStateWithEntry(entry, r, srcPath, dstPath)
 
 	// Debug logging for encryption state
-	glog.Infof("🔍 Encryption state detected: SrcSSEC=%t, SrcSSEKMS=%t, DstSSEC=%t, DstSSEKMS=%t",
-		state.SrcSSEC, state.SrcSSEKMS, state.DstSSEC, state.DstSSEKMS)
 
 	// Apply bucket default encryption if no explicit encryption specified
 	if !state.IsTargetEncrypted() {

@@ -344,7 +344,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 				sseObject = true
 				// Temporarily remove Range header to get full encrypted data from filer
 				r.Header.Del("Range")
-				glog.Infof("🔍 Detected SSE range request - removing Range header for filer, will apply range after decryption")
+
 			}
 		}
 	}
@@ -353,7 +353,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		// Restore the original Range header for SSE processing
 		if sseObject && originalRangeHeader != "" {
 			r.Header.Set("Range", originalRangeHeader)
-			glog.Infof("🔍 Restored Range header for SSE processing: %s", originalRangeHeader)
+
 		}
 
 		// Add SSE metadata headers based on object metadata before SSE processing
@@ -676,7 +676,7 @@ func (s3a *S3ApiServer) handleSSECResponse(r *http.Request, proxyResponse *http.
 			}
 
 			if sseCChunks >= 1 {
-				glog.Infof("🔍 SSE-C GET: Detected chunked SSE-C object with %d total chunks, %d SSE-C chunks, using per-chunk decryption", len(entry.GetChunks()), sseCChunks)
+
 				// Handle chunked SSE-C objects - each chunk needs independent decryption
 				multipartReader, decErr := s3a.createMultipartSSECDecryptedReader(r, proxyResponse)
 				if decErr != nil {
@@ -696,7 +696,7 @@ func (s3a *S3ApiServer) handleSSECResponse(r *http.Request, proxyResponse *http.
 				// Set proper headers for range requests
 				rangeHeader := r.Header.Get("Range")
 				if rangeHeader != "" {
-					glog.Infof("🔍 SSE-C: Processing range header for response: %s", rangeHeader)
+
 					// Parse range header (e.g., "bytes=0-99")
 					if len(rangeHeader) > 6 && rangeHeader[:6] == "bytes=" {
 						rangeSpec := rangeHeader[6:]
@@ -714,7 +714,7 @@ func (s3a *S3ApiServer) handleSSECResponse(r *http.Request, proxyResponse *http.
 								// Specific range - set proper Content-Length and Content-Range headers
 								rangeLength := endOffset - startOffset + 1
 								totalSize := proxyResponse.Header.Get("Content-Length")
-								glog.Infof("🔍 SSE-C: Setting range headers - Content-Length: %d, range: %d-%d", rangeLength, startOffset, endOffset)
+
 								w.Header().Set("Content-Length", strconv.FormatInt(rangeLength, 10))
 								w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%s", startOffset, endOffset, totalSize))
 								// writeFinalResponse will set status to 206 if Content-Range is present
@@ -726,7 +726,7 @@ func (s3a *S3ApiServer) handleSSECResponse(r *http.Request, proxyResponse *http.
 				return writeFinalResponse(w, proxyResponse, multipartReader, capturedCORSHeaders)
 			} else if len(entry.GetChunks()) == 0 && len(entry.Content) > 0 {
 				// Small content SSE-C object stored directly in entry.Content
-				glog.Infof("🔍 SSE-C GET: Detected small content SSE-C object (%d bytes), using traditional single-object decryption", len(entry.Content))
+
 				// Fall through to traditional single-object SSE-C handling below
 			}
 		}
@@ -809,41 +809,31 @@ func (s3a *S3ApiServer) handleSSEResponse(r *http.Request, proxyResponse *http.R
 		actualObjectType = s3a.detectPrimarySSEType(objectEntry)
 	}
 
-	glog.Infof("🔍 SSE routing: clientExpectsSSEC=%t, kmsMetadataHeader=%t, sseAlgorithm=%s, actualObjectType=%s",
-		clientExpectsSSEC, kmsMetadataHeader != "", sseAlgorithm, actualObjectType)
-
 	// Route based on ACTUAL object type (from chunks) rather than conflicting headers
 	if actualObjectType == "SSE-C" && clientExpectsSSEC {
 		// Object is SSE-C and client expects SSE-C → SSE-C handler
-		glog.Infof("🔍 Routing to SSE-C handler (object is SSE-C, client expects SSE-C)")
 		return s3a.handleSSECResponse(r, proxyResponse, w)
 	} else if actualObjectType == "SSE-KMS" && !clientExpectsSSEC {
 		// Object is SSE-KMS and client doesn't expect SSE-C → SSE-KMS handler
-		glog.Infof("🔍 Routing to SSE-KMS handler (object is SSE-KMS, client expects standard GET)")
 		return s3a.handleSSEKMSResponse(r, proxyResponse, w, kmsMetadataHeader)
 	} else if actualObjectType == "None" && !clientExpectsSSEC {
 		// Object is unencrypted and client doesn't expect SSE-C → pass through
-		glog.Infof("🔍 Routing to pass through (object is unencrypted, client expects standard GET)")
 		return passThroughResponse(proxyResponse, w)
 	} else if actualObjectType == "SSE-C" && !clientExpectsSSEC {
 		// Object is SSE-C but client doesn't provide SSE-C headers → Error
-		glog.Errorf("🔍 Client doesn't provide SSE-C headers but object is SSE-C")
 		s3err.WriteErrorResponse(w, r, s3err.ErrSSECustomerKeyMissing)
 		return http.StatusBadRequest, 0
 	} else if actualObjectType == "SSE-KMS" && clientExpectsSSEC {
 		// Object is SSE-KMS but client provides SSE-C headers → Error
-		glog.Errorf("🔍 Client provides SSE-C headers but object is SSE-KMS")
 		s3err.WriteErrorResponse(w, r, s3err.ErrSSECustomerKeyMissing)
 		return http.StatusBadRequest, 0
 	} else if actualObjectType == "None" && clientExpectsSSEC {
 		// Object is unencrypted but client provides SSE-C headers → Error
-		glog.Errorf("🔍 Client provides SSE-C headers but object is unencrypted")
 		s3err.WriteErrorResponse(w, r, s3err.ErrSSECustomerKeyMissing)
 		return http.StatusBadRequest, 0
 	}
 
 	// Fallback for edge cases - use original logic with header-based detection
-	glog.Infof("🔍 Using fallback routing logic")
 	if clientExpectsSSEC && sseAlgorithm != "" {
 		return s3a.handleSSECResponse(r, proxyResponse, w)
 	} else if !clientExpectsSSEC && kmsMetadataHeader != "" {
@@ -1007,43 +997,35 @@ func (s3a *S3ApiServer) addSSEHeadersToResponse(proxyResponse *http.Response, en
 	// Determine the primary encryption type by examining chunks (most reliable)
 	primarySSEType := s3a.detectPrimarySSEType(entry)
 
-	glog.Infof("🔍 Detected primary SSE type: %s", primarySSEType)
-
 	// Only set headers for the PRIMARY encryption type
 	switch primarySSEType {
 	case "SSE-C":
 		// Add only SSE-C headers
 		if algorithmBytes, exists := entry.Extended[s3_constants.AmzServerSideEncryptionCustomerAlgorithm]; exists && len(algorithmBytes) > 0 {
 			proxyResponse.Header.Set(s3_constants.AmzServerSideEncryptionCustomerAlgorithm, string(algorithmBytes))
-			glog.Infof("🔍 SET SSE-C Algorithm header: %s", string(algorithmBytes))
 		}
 
 		if keyMD5Bytes, exists := entry.Extended[s3_constants.AmzServerSideEncryptionCustomerKeyMD5]; exists && len(keyMD5Bytes) > 0 {
 			proxyResponse.Header.Set(s3_constants.AmzServerSideEncryptionCustomerKeyMD5, string(keyMD5Bytes))
-			glog.Infof("🔍 SET SSE-C KeyMD5 header: %s", string(keyMD5Bytes))
 		}
 
 		if ivBytes, exists := entry.Extended[s3_constants.SeaweedFSSSEIV]; exists && len(ivBytes) > 0 {
 			ivBase64 := base64.StdEncoding.EncodeToString(ivBytes)
 			proxyResponse.Header.Set(s3_constants.SeaweedFSSSEIVHeader, ivBase64)
-			glog.Infof("🔍 SET SeaweedFS SSE-C IV header (base64 encoded)")
 		}
 
 	case "SSE-KMS":
 		// Add only SSE-KMS headers
 		if sseAlgorithm, exists := entry.Extended[s3_constants.AmzServerSideEncryption]; exists && len(sseAlgorithm) > 0 {
 			proxyResponse.Header.Set(s3_constants.AmzServerSideEncryption, string(sseAlgorithm))
-			glog.Infof("🔍 SET SSE Algorithm header: %s", string(sseAlgorithm))
 		}
 
 		if kmsKeyID, exists := entry.Extended[s3_constants.AmzServerSideEncryptionAwsKmsKeyId]; exists && len(kmsKeyID) > 0 {
 			proxyResponse.Header.Set(s3_constants.AmzServerSideEncryptionAwsKmsKeyId, string(kmsKeyID))
-			glog.Infof("🔍 SET SSE-KMS KeyID header: %s", string(kmsKeyID))
 		}
 
 	default:
 		// Unencrypted or unknown - don't set any SSE headers
-		glog.Infof("🔍 No SSE headers set for unencrypted/unknown object")
 	}
 
 	glog.V(3).Infof("addSSEHeadersToResponse: processed %d extended metadata entries", len(entry.Extended))
@@ -1056,8 +1038,6 @@ func (s3a *S3ApiServer) detectPrimarySSEType(entry *filer_pb.Entry) string {
 		hasSSEC := entry.Extended[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] != nil
 		hasSSEKMS := entry.Extended[s3_constants.AmzServerSideEncryption] != nil
 
-		glog.Infof("🔍 Single object analysis: hasSSEC=%t, hasSSEKMS=%t", hasSSEC, hasSSEKMS)
-
 		if hasSSEC && !hasSSEKMS {
 			return "SSE-C"
 		} else if hasSSEKMS && !hasSSEC {
@@ -1067,11 +1047,9 @@ func (s3a *S3ApiServer) detectPrimarySSEType(entry *filer_pb.Entry) string {
 			// Use content to determine actual encryption state
 			if len(entry.Content) > 0 {
 				// smallContent - check if it's encrypted (heuristic: random-looking data)
-				glog.Infof("🔍 Mixed headers with smallContent - analyzing content pattern")
 				return "SSE-C" // Default to SSE-C for mixed case
 			} else {
 				// No content, both headers - default to SSE-C
-				glog.Infof("🔍 Mixed headers, no content - defaulting to SSE-C")
 				return "SSE-C"
 			}
 		}
@@ -1090,8 +1068,6 @@ func (s3a *S3ApiServer) detectPrimarySSEType(entry *filer_pb.Entry) string {
 			ssekmsChunks++
 		}
 	}
-
-	glog.Infof("🔍 Chunk analysis: %d SSE-C, %d SSE-KMS chunks", ssecChunks, ssekmsChunks)
 
 	// Primary type is the one with more chunks
 	if ssecChunks > ssekmsChunks {
@@ -1265,7 +1241,6 @@ func (m *MultipartSSEReader) Close() error {
 
 // Read implements the io.Reader interface for SSERangeReader
 func (r *SSERangeReader) Read(p []byte) (n int, err error) {
-	glog.Infof("🔍 SSERangeReader.Read: offset=%d, remaining=%d, skipped=%d, bufSize=%d", r.offset, r.remaining, r.skipped, len(p))
 
 	// If we need to skip bytes and haven't skipped enough yet
 	if r.skipped < r.offset {
@@ -1274,10 +1249,7 @@ func (r *SSERangeReader) Read(p []byte) (n int, err error) {
 		skipRead, skipErr := r.reader.Read(skipBuf)
 		r.skipped += int64(skipRead)
 
-		glog.Infof("🔍 SSERangeReader.Read: skipped %d bytes, total skipped: %d", skipRead, r.skipped)
-
 		if skipErr != nil {
-			glog.Errorf("🔍 SSERangeReader.Read: skip error: %v", skipErr)
 			return 0, skipErr
 		}
 
@@ -1289,7 +1261,6 @@ func (r *SSERangeReader) Read(p []byte) (n int, err error) {
 
 	// If we have a remaining limit and it's reached
 	if r.remaining == 0 {
-		glog.Infof("🔍 SSERangeReader.Read: remaining=0, returning EOF")
 		return 0, io.EOF
 	}
 
@@ -1299,15 +1270,11 @@ func (r *SSERangeReader) Read(p []byte) (n int, err error) {
 		readSize = int(r.remaining)
 	}
 
-	glog.V(4).Infof("🔍 SSERangeReader.Read: reading %d bytes (remaining: %d)", readSize, r.remaining)
-
 	// Read the data
 	n, err = r.reader.Read(p[:readSize])
 	if r.remaining > 0 {
 		r.remaining -= int64(n)
 	}
-
-	glog.Infof("🔍 SSERangeReader.Read: read %d bytes, remaining: %d, error: %v", n, r.remaining, err)
 
 	return n, err
 }
@@ -1341,7 +1308,6 @@ func (s3a *S3ApiServer) createMultipartSSECDecryptedReader(r *http.Request, prox
 	var startOffset, endOffset int64 = 0, -1
 	rangeHeader := r.Header.Get("Range")
 	if rangeHeader != "" {
-		glog.Infof("🔍 SSE-C Range request: %s", rangeHeader)
 		// Parse range header (e.g., "bytes=0-99")
 		if len(rangeHeader) > 6 && rangeHeader[:6] == "bytes=" {
 			rangeSpec := rangeHeader[6:]
@@ -1353,7 +1319,6 @@ func (s3a *S3ApiServer) createMultipartSSECDecryptedReader(r *http.Request, prox
 				if parts[1] != "" {
 					endOffset, _ = strconv.ParseInt(parts[1], 10, 64)
 				}
-				glog.Infof("🔍 SSE-C Range parsed: start=%d, end=%d", startOffset, endOffset)
 			}
 		}
 	}
@@ -1378,14 +1343,10 @@ func (s3a *S3ApiServer) createMultipartSSECDecryptedReader(r *http.Request, prox
 		}
 	}
 
-	glog.Infof("🔍 SSE-C Range optimization: need %d/%d chunks for range %s", len(neededChunks), len(chunks), rangeHeader)
-
 	// Create readers for only the needed chunks
 	var readers []io.Reader
 
-	for i, chunk := range neededChunks {
-		glog.Infof("🔍 SSE-C GET: Processing SSE-C chunk %d/%d: fileId=%s, offset=%d, size=%d, sse_type=%d",
-			i+1, len(neededChunks), chunk.GetFileIdString(), chunk.GetOffset(), chunk.GetSize(), chunk.GetSseType())
+	for _, chunk := range neededChunks {
 
 		// Get this chunk's encrypted data
 		chunkReader, err := s3a.createEncryptedChunkReader(chunk)
@@ -1412,11 +1373,8 @@ func (s3a *S3ApiServer) createMultipartSSECDecryptedReader(r *http.Request, prox
 				var chunkIV []byte
 				if ssecMetadata.PartOffset > 0 {
 					chunkIV = calculateIVWithOffset(iv, ssecMetadata.PartOffset)
-					glog.Infof("🔍 SSE-C GET: Calculated offset IV for chunk %s: baseIV=%x, offset=%d, chunkIV=%x",
-						chunk.GetFileIdString(), iv[:8], ssecMetadata.PartOffset, chunkIV[:8])
 				} else {
 					chunkIV = iv
-					glog.Infof("🔍 SSE-C GET: Using base IV for chunk %s: %x", chunk.GetFileIdString(), iv[:8])
 				}
 
 				decryptedReader, decErr := CreateSSECDecryptedReader(chunkReader, customerKey, chunkIV)
@@ -1440,7 +1398,6 @@ func (s3a *S3ApiServer) createMultipartSSECDecryptedReader(r *http.Request, prox
 	if rangeHeader != "" && startOffset >= 0 {
 		if endOffset == -1 {
 			// Open-ended range (e.g., "bytes=100-")
-			glog.Infof("🔍 SSE-C: Creating range reader from offset %d to end", startOffset)
 			return &SSERangeReader{
 				reader:    multiReader,
 				offset:    startOffset,
@@ -1449,7 +1406,6 @@ func (s3a *S3ApiServer) createMultipartSSECDecryptedReader(r *http.Request, prox
 		} else {
 			// Specific range (e.g., "bytes=0-99")
 			rangeLength := endOffset - startOffset + 1
-			glog.Infof("🔍 SSE-C: Creating range reader for range %d-%d (%d bytes)", startOffset, endOffset, rangeLength)
 			return &SSERangeReader{
 				reader:    multiReader,
 				offset:    startOffset,

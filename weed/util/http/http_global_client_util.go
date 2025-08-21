@@ -379,18 +379,14 @@ func ReadUrlAsStreamAuthenticated(ctx context.Context, fileUrl, jwt string, ciph
 }
 
 func readEncryptedUrl(ctx context.Context, fileUrl, jwt string, cipherKey []byte, isContentCompressed bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) (bool, error) {
-	glog.InfofCtx(ctx, "🔍 readEncryptedUrl: fileUrl=%s, offset=%d, size=%d, isFullChunk=%v", fileUrl, offset, size, isFullChunk)
 	encryptedData, retryable, err := GetAuthenticated(fileUrl, jwt)
 	if err != nil {
-		glog.ErrorfCtx(ctx, "🔍 readEncryptedUrl: fetch failed: %v", err)
 		return retryable, fmt.Errorf("fetch %s: %v", fileUrl, err)
 	}
 	decryptedData, err := util.Decrypt(encryptedData, util.CipherKey(cipherKey))
 	if err != nil {
-		glog.ErrorfCtx(ctx, "🔍 readEncryptedUrl: decrypt failed: %v", err)
 		return false, fmt.Errorf("decrypt %s: %v", fileUrl, err)
 	}
-	glog.InfofCtx(ctx, "🔍 readEncryptedUrl: encryptedSize=%d, decryptedSize=%d", len(encryptedData), len(decryptedData))
 	if isContentCompressed {
 		decryptedData, err = util.DecompressData(decryptedData)
 		if err != nil {
@@ -398,16 +394,12 @@ func readEncryptedUrl(ctx context.Context, fileUrl, jwt string, cipherKey []byte
 		}
 	}
 	if len(decryptedData) < int(offset)+size {
-		glog.Errorf("🔍 readEncryptedUrl: insufficient data for range request: fileUrl=%s, decryptedSize=%d, requestedRange=[%d,%d), totalRequested=%d",
-			fileUrl, len(decryptedData), offset, int(offset)+size-1, int(offset)+size)
 		return false, fmt.Errorf("read decrypted %s size %d [%d, %d)", fileUrl, len(decryptedData), offset, int(offset)+size)
 	}
 	if isFullChunk {
-		glog.InfofCtx(ctx, "🔍 readEncryptedUrl: returning full chunk of size %d", len(decryptedData))
 		fn(decryptedData)
 	} else {
 		sliceEnd := int(offset) + size
-		glog.InfofCtx(ctx, "🔍 readEncryptedUrl: returning range [%d:%d] from decrypted size %d", offset, sliceEnd, len(decryptedData))
 		fn(decryptedData[int(offset):sliceEnd])
 	}
 	return false, nil

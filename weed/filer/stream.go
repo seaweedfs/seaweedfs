@@ -128,8 +128,6 @@ func PrepareStreamContentWithThrottler(ctx context.Context, masterClient wdclien
 			urlStrings := fileId2Url[chunkView.FileId]
 			start := time.Now()
 			jwt := jwtFunc(chunkView.FileId)
-			glog.InfofCtx(ctx, "🔍 Streaming chunk: fileId=%s, isFullChunk=%v, offsetInChunk=%d, viewSize=%d, chunkSize=%d, viewOffset=%d",
-				chunkView.FileId, chunkView.IsFullChunk(), chunkView.OffsetInChunk, chunkView.ViewSize, chunkView.ChunkSize, chunkView.ViewOffset)
 			err := retriedStreamFetchChunkData(ctx, writer, urlStrings, jwt, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.OffsetInChunk, int(chunkView.ViewSize))
 			offset += int64(chunkView.ViewSize)
 			remaining -= int64(chunkView.ViewSize)

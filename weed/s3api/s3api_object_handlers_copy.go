@@ -189,7 +189,6 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 					k == s3_constants.SeaweedFSSSEKMSEncryptionContext ||
 					k == s3_constants.SeaweedFSSSEKMSBaseIV {
 					skipHeader = true
-					glog.Infof("🔍 SKIP SSE-KMS header in cross-encryption copy: %s", k)
 				}
 			}
 
@@ -199,7 +198,6 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 					k == s3_constants.AmzServerSideEncryptionCustomerKeyMD5 ||
 					k == s3_constants.SeaweedFSSSEIV {
 					skipHeader = true
-					glog.Infof("🔍 SKIP SSE-C header in cross-encryption copy: %s", k)
 				}
 			}
 
@@ -217,7 +215,6 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 					k == s3_constants.SeaweedFSSSEKMSBaseIV ||
 					k == s3_constants.SeaweedFSSSEIV {
 					skipHeader = true
-					glog.Infof("🔍 SKIP encryption header for unencrypted destination: %s", k)
 				}
 			}
 		}
@@ -1297,9 +1294,6 @@ func (s3a *S3ApiServer) copyMultipartSSEKMSChunk(chunk *filer_pb.FileChunk, dest
 		return nil, fmt.Errorf("failed to deserialize SSE-KMS metadata: %w", err)
 	}
 
-	glog.Infof("🔍 Source SSE-KMS chunk metadata: keyID=%s, chunkOffset=%d, bucketKey=%t",
-		sourceSSEKey.KeyID, sourceSSEKey.ChunkOffset, sourceSSEKey.BucketKeyEnabled)
-
 	// Decrypt the chunk data using the source metadata
 	decryptedReader, decErr := CreateSSEKMSDecryptedReader(bytes.NewReader(encryptedData), sourceSSEKey)
 	if decErr != nil {
@@ -1551,15 +1545,12 @@ func (s3a *S3ApiServer) copyMultipartCrossEncryption(entry *filer_pb.Entry, r *h
 	// Clear any previous encryption metadata to avoid routing conflicts
 	if state.SrcSSEKMS && state.DstSSEC {
 		// SSE-KMS → SSE-C: Remove SSE-KMS headers
-		glog.Infof("🔍 Clearing SSE-KMS metadata for SSE-C destination")
 		// These will be excluded from dstMetadata, effectively removing them
 	} else if state.SrcSSEC && state.DstSSEKMS {
 		// SSE-C → SSE-KMS: Remove SSE-C headers
-		glog.Infof("🔍 Clearing SSE-C metadata for SSE-KMS destination")
 		// These will be excluded from dstMetadata, effectively removing them
 	} else if !state.DstSSEC && !state.DstSSEKMS {
 		// Encrypted → Unencrypted: Remove all encryption metadata
-		glog.Infof("🔍 Clearing all encryption metadata for unencrypted destination")
 		// These will be excluded from dstMetadata, effectively removing them
 	}
 
@@ -1660,7 +1651,6 @@ func (s3a *S3ApiServer) copyCrossEncryptionChunk(chunk *filer_pb.FileChunk, sour
 		if len(finalData) < previewLen {
 			previewLen = len(finalData)
 		}
-		glog.Infof("🔍 Decrypted SSE-C chunk: %d bytes → %d bytes, first %d bytes: %x, IV: %x", len(encryptedData), len(finalData), previewLen, finalData[:previewLen], chunkIV)
 
 	} else if chunk.GetSseType() == filer_pb.SSEType_SSE_KMS {
 		// Decrypt SSE-KMS source
@@ -1687,7 +1677,6 @@ func (s3a *S3ApiServer) copyCrossEncryptionChunk(chunk *filer_pb.FileChunk, sour
 		if len(finalData) < previewLen {
 			previewLen = len(finalData)
 		}
-		glog.Infof("🔍 Decrypted SSE-KMS chunk: %d bytes → %d bytes, first %d bytes: %x", len(encryptedData), len(finalData), previewLen, finalData[:previewLen])
 
 	} else {
 		// Source is unencrypted
@@ -1721,7 +1710,6 @@ func (s3a *S3ApiServer) copyCrossEncryptionChunk(chunk *filer_pb.FileChunk, sour
 		if len(finalData) < previewLen {
 			previewLen = len(finalData)
 		}
-		glog.Infof("🔍 Re-encrypted chunk with SSE-C: %d bytes, first %d bytes: %x, IV: %x", len(finalData), previewLen, finalData[:previewLen], iv)
 
 	} else if state.DstSSEKMS && destKMSKeyID != "" {
 		// Encrypt with SSE-KMS
