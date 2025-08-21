@@ -170,8 +170,8 @@ func TestGetObjectWithSSEKMS(t *testing.T) {
 	AssertSSEKMSHeaders(t, w, kmsKey.KeyID)
 }
 
-// TestSSECRangeRequestRejection tests that range requests are properly rejected for SSE-C
-func TestSSECRangeRequestRejection(t *testing.T) {
+// TestSSECRangeRequestSupport tests that range requests are now supported for SSE-C
+func TestSSECRangeRequestSupport(t *testing.T) {
 	keyPair := GenerateTestSSECKey(1)
 
 	// Create HTTP request with Range header
@@ -189,9 +189,7 @@ func TestSSECRangeRequestRejection(t *testing.T) {
 	proxyResponse.Header().Set(s3_constants.AmzServerSideEncryptionCustomerKeyMD5, keyPair.KeyMD5)
 	proxyResponse.Header().Set("Content-Length", "1000")
 
-	// Test handleSSECResponse directly (this would normally be called by the S3 handler)
-	// Note: This would need the actual handleSSECResponse implementation to work
-	// For now, just test the detection logic
+	// Test the detection logic - these should all still work
 
 	// Should detect as SSE-C request
 	if !IsSSECRequest(req) {
@@ -203,8 +201,8 @@ func TestSSECRangeRequestRejection(t *testing.T) {
 		t.Error("Range header should be present")
 	}
 
-	// The combination should trigger rejection in the actual handler
-	// (This would be verified by calling the actual handler and checking for 416 status)
+	// The combination should now be allowed and handled by the filer layer
+	// Range requests with SSE-C are now supported since IV is stored in metadata
 }
 
 // TestSSEHeaderConflicts tests conflicting SSE headers

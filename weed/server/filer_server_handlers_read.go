@@ -237,7 +237,11 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 
 	filename := entry.Name()
 	AdjustPassthroughHeaders(w, r, filename)
-	totalSize := int64(entry.Size())
+
+	// For range processing, use the original content size, not the encrypted size
+	// entry.Size() returns max(chunk_sizes, file_size) where chunk_sizes include encryption overhead
+	// For SSE objects, we need the original unencrypted size for proper range validation
+	totalSize := int64(entry.FileSize)
 
 	if r.Method == http.MethodHead {
 		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))

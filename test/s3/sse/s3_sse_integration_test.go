@@ -987,6 +987,154 @@ func BenchmarkSSECThroughput(b *testing.B) {
 	}
 }
 
+// TestSSECRangeRequests tests SSE-C with HTTP Range requests
+func TestSSECRangeRequests(t *testing.T) {
+	ctx := context.Background()
+	client, err := createS3Client(ctx, defaultConfig)
+	require.NoError(t, err, "Failed to create S3 client")
+
+	bucketName, err := createTestBucket(ctx, client, defaultConfig.BucketPrefix+"ssec-range-")
+	require.NoError(t, err, "Failed to create test bucket")
+	defer cleanupTestBucket(ctx, client, bucketName)
+
+	sseKey := generateSSECKey()
+	// Create test data that's large enough for meaningful range tests
+	testData := generateTestData(2048) // 2KB
+	objectKey := "test-range-object"
+
+	// Upload with SSE-C
+	_, err = client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:               aws.String(bucketName),
+		Key:                  aws.String(objectKey),
+		Body:                 bytes.NewReader(testData),
+		SSECustomerAlgorithm: aws.String("AES256"),
+		SSECustomerKey:       aws.String(sseKey.KeyB64),
+		SSECustomerKeyMD5:    aws.String(sseKey.KeyMD5),
+	})
+	require.NoError(t, err, "Failed to upload SSE-C object")
+
+	// Test various range requests
+	testCases := []struct {
+		name  string
+		start int64
+		end   int64
+	}{
+		{"First 100 bytes", 0, 99},
+		{"Middle 100 bytes", 500, 599},
+		{"Last 100 bytes", int64(len(testData) - 100), int64(len(testData) - 1)},
+		{"Single byte", 42, 42},
+		{"Cross boundary", 15, 17}, // Test AES block boundary crossing
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Get range with SSE-C
+			resp, err := client.GetObject(ctx, &s3.GetObjectInput{
+				Bucket:               aws.String(bucketName),
+				Key:                  aws.String(objectKey),
+				Range:                aws.String(fmt.Sprintf("bytes=%d-%d", tc.start, tc.end)),
+				SSECustomerAlgorithm: aws.String("AES256"),
+				SSECustomerKey:       aws.String(sseKey.KeyB64),
+				SSECustomerKeyMD5:    aws.String(sseKey.KeyMD5),
+			})
+			require.NoError(t, err, "Failed to get range %d-%d from SSE-C object", tc.start, tc.end)
+			defer resp.Body.Close()
+
+			// Range requests should return partial content status
+			// Note: AWS SDK Go v2 doesn't expose HTTP status code directly in GetObject response
+			// The fact that we get a successful response with correct range data indicates 206 status
+
+			// Read the range data
+			rangeData, err := io.ReadAll(resp.Body)
+			require.NoError(t, err, "Failed to read range data")
+
+			// Verify content matches expected range
+			expectedLength := tc.end - tc.start + 1
+			expectedData := testData[tc.start : tc.start+expectedLength]
+			assertDataEqual(t, expectedData, rangeData, "Range data mismatch for %s", tc.name)
+
+			// Verify content length header
+			assert.Equal(t, expectedLength, aws.ToInt64(resp.ContentLength), "Content length mismatch for %s", tc.name)
+
+			// Verify SSE headers are present
+			assert.Equal(t, "AES256", aws.ToString(resp.SSECustomerAlgorithm))
+			assert.Equal(t, sseKey.KeyMD5, aws.ToString(resp.SSECustomerKeyMD5))
+		})
+	}
+}
+
+// TestSSEKMSRangeRequests tests SSE-KMS with HTTP Range requests
+func TestSSEKMSRangeRequests(t *testing.T) {
+	ctx := context.Background()
+	client, err := createS3Client(ctx, defaultConfig)
+	require.NoError(t, err, "Failed to create S3 client")
+
+	bucketName, err := createTestBucket(ctx, client, defaultConfig.BucketPrefix+"ssekms-range-")
+	require.NoError(t, err, "Failed to create test bucket")
+	defer cleanupTestBucket(ctx, client, bucketName)
+
+	kmsKeyID := "test-range-key"
+	// Create test data that's large enough for meaningful range tests
+	testData := generateTestData(2048) // 2KB
+	objectKey := "test-kms-range-object"
+
+	// Upload with SSE-KMS
+	_, err = client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:               aws.String(bucketName),
+		Key:                  aws.String(objectKey),
+		Body:                 bytes.NewReader(testData),
+		ServerSideEncryption: types.ServerSideEncryptionAwsKms,
+		SSEKMSKeyId:          aws.String(kmsKeyID),
+	})
+	require.NoError(t, err, "Failed to upload SSE-KMS object")
+
+	// Test various range requests
+	testCases := []struct {
+		name  string
+		start int64
+		end   int64
+	}{
+		{"First 100 bytes", 0, 99},
+		{"Middle 100 bytes", 500, 599},
+		{"Last 100 bytes", int64(len(testData) - 100), int64(len(testData) - 1)},
+		{"Single byte", 42, 42},
+		{"Cross boundary", 15, 17}, // Test AES block boundary crossing
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Get range with SSE-KMS (no additional headers needed for GET)
+			resp, err := client.GetObject(ctx, &s3.GetObjectInput{
+				Bucket: aws.String(bucketName),
+				Key:    aws.String(objectKey),
+				Range:  aws.String(fmt.Sprintf("bytes=%d-%d", tc.start, tc.end)),
+			})
+			require.NoError(t, err, "Failed to get range %d-%d from SSE-KMS object", tc.start, tc.end)
+			defer resp.Body.Close()
+
+			// Range requests should return partial content status
+			// Note: AWS SDK Go v2 doesn't expose HTTP status code directly in GetObject response
+			// The fact that we get a successful response with correct range data indicates 206 status
+
+			// Read the range data
+			rangeData, err := io.ReadAll(resp.Body)
+			require.NoError(t, err, "Failed to read range data")
+
+			// Verify content matches expected range
+			expectedLength := tc.end - tc.start + 1
+			expectedData := testData[tc.start : tc.start+expectedLength]
+			assertDataEqual(t, expectedData, rangeData, "Range data mismatch for %s", tc.name)
+
+			// Verify content length header
+			assert.Equal(t, expectedLength, aws.ToInt64(resp.ContentLength), "Content length mismatch for %s", tc.name)
+
+			// Verify SSE headers are present
+			assert.Equal(t, types.ServerSideEncryptionAwsKms, resp.ServerSideEncryption)
+			assert.Equal(t, kmsKeyID, aws.ToString(resp.SSEKMSKeyId))
+		})
+	}
+}
+
 // BenchmarkSSEKMSThroughput benchmarks SSE-KMS throughput
 func BenchmarkSSEKMSThroughput(b *testing.B) {
 	ctx := context.Background()

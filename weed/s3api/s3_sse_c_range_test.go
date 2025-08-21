@@ -18,9 +18,9 @@ type recorderFlusher struct{ *httptest.ResponseRecorder }
 
 func (r recorderFlusher) Flush() {}
 
-// TestSSECRangeRequestsNotSupported verifies that HTTP Range requests are rejected
-// for SSE-C encrypted objects because the IV is required at the beginning of the stream
-func TestSSECRangeRequestsNotSupported(t *testing.T) {
+// TestSSECRangeRequestsSupported verifies that HTTP Range requests are now supported
+// for SSE-C encrypted objects since the IV is stored in metadata and CTR mode allows seeking
+func TestSSECRangeRequestsSupported(t *testing.T) {
 	// Create a request with Range header and valid SSE-C headers
 	req := httptest.NewRequest(http.MethodGet, "/b/o", nil)
 	req.Header.Set("Range", "bytes=10-20")
@@ -48,16 +48,19 @@ func TestSSECRangeRequestsNotSupported(t *testing.T) {
 	proxyResponse.Header.Set(s3_constants.AmzServerSideEncryptionCustomerAlgorithm, "AES256")
 	proxyResponse.Header.Set(s3_constants.AmzServerSideEncryptionCustomerKeyMD5, keyMD5)
 
-	// Call the function under test
-	s3a := &S3ApiServer{}
+	// Call the function under test - should no longer reject range requests
+	s3a := &S3ApiServer{
+		option: &S3ApiServerOption{
+			BucketsPath: "/buckets",
+		},
+	}
 	rec := httptest.NewRecorder()
 	w := recorderFlusher{rec}
 	statusCode, _ := s3a.handleSSECResponse(req, proxyResponse, w)
 
-	if statusCode != http.StatusRequestedRangeNotSatisfiable {
-		t.Fatalf("expected status %d, got %d", http.StatusRequestedRangeNotSatisfiable, statusCode)
-	}
-	if rec.Result().StatusCode != http.StatusRequestedRangeNotSatisfiable {
-		t.Fatalf("writer status expected %d, got %d", http.StatusRequestedRangeNotSatisfiable, rec.Result().StatusCode)
+	// Range requests should now be allowed to proceed (will be handled by filer layer)
+	// The exact status code depends on the object existence and filer response
+	if statusCode == http.StatusRequestedRangeNotSatisfiable {
+		t.Fatalf("Range requests should no longer be rejected for SSE-C objects, got status %d", statusCode)
 	}
 }

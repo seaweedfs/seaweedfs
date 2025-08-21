@@ -330,7 +330,32 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		destUrl = s3a.toFilerUrl(bucket, object)
 	}
 
+	// Check if this is a range request to an SSE object and modify the approach
+	originalRangeHeader := r.Header.Get("Range")
+	var sseObject = false
+
+	// Pre-check if this object is SSE encrypted to avoid filer range conflicts
+	if originalRangeHeader != "" {
+		bucket, object := s3_constants.GetBucketAndObject(r)
+		objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
+		if objectEntry, err := s3a.getEntry("", objectPath); err == nil {
+			primarySSEType := s3a.detectPrimarySSEType(objectEntry)
+			if primarySSEType == "SSE-C" || primarySSEType == "SSE-KMS" {
+				sseObject = true
+				// Temporarily remove Range header to get full encrypted data from filer
+				r.Header.Del("Range")
+				glog.Infof("🔍 Detected SSE range request - removing Range header for filer, will apply range after decryption")
+			}
+		}
+	}
+
 	s3a.proxyToFiler(w, r, destUrl, false, func(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64) {
+		// Restore the original Range header for SSE processing
+		if sseObject && originalRangeHeader != "" {
+			r.Header.Set("Range", originalRangeHeader)
+			glog.Infof("🔍 Restored Range header for SSE processing: %s", originalRangeHeader)
+		}
+
 		// Add SSE metadata headers based on object metadata before SSE processing
 		bucket, object := s3_constants.GetBucketAndObject(r)
 		objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
@@ -634,12 +659,9 @@ func (s3a *S3ApiServer) handleSSECResponse(r *http.Request, proxyResponse *http.
 			return http.StatusForbidden, 0
 		}
 
-		// SSE-C encrypted objects do not support HTTP Range requests because the 16-byte IV
-		// is required at the beginning of the stream for proper decryption
-		if r.Header.Get("Range") != "" {
-			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
-			return http.StatusRequestedRangeNotSatisfiable, 0
-		}
+		// SSE-C encrypted objects support HTTP Range requests
+		// The IV is stored in metadata and CTR mode allows seeking to any offset
+		// Range requests will be handled by the filer layer with proper offset-based decryption
 
 		// Check if this is a chunked or small content SSE-C object
 		bucket, object := s3_constants.GetBucketAndObject(r)
@@ -669,6 +691,36 @@ func (s3a *S3ApiServer) handleSSECResponse(r *http.Request, proxyResponse *http.
 				// Copy headers from proxy response
 				for k, v := range proxyResponse.Header {
 					w.Header()[k] = v
+				}
+
+				// Set proper headers for range requests
+				rangeHeader := r.Header.Get("Range")
+				if rangeHeader != "" {
+					glog.Infof("🔍 SSE-C: Processing range header for response: %s", rangeHeader)
+					// Parse range header (e.g., "bytes=0-99")
+					if len(rangeHeader) > 6 && rangeHeader[:6] == "bytes=" {
+						rangeSpec := rangeHeader[6:]
+						parts := strings.Split(rangeSpec, "-")
+						if len(parts) == 2 {
+							startOffset, endOffset := int64(0), int64(-1)
+							if parts[0] != "" {
+								startOffset, _ = strconv.ParseInt(parts[0], 10, 64)
+							}
+							if parts[1] != "" {
+								endOffset, _ = strconv.ParseInt(parts[1], 10, 64)
+							}
+
+							if endOffset >= startOffset {
+								// Specific range - set proper Content-Length and Content-Range headers
+								rangeLength := endOffset - startOffset + 1
+								totalSize := proxyResponse.Header.Get("Content-Length")
+								glog.Infof("🔍 SSE-C: Setting range headers - Content-Length: %d, range: %d-%d", rangeLength, startOffset, endOffset)
+								w.Header().Set("Content-Length", strconv.FormatInt(rangeLength, 10))
+								w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%s", startOffset, endOffset, totalSize))
+								// writeFinalResponse will set status to 206 if Content-Range is present
+							}
+						}
+					}
 				}
 
 				return writeFinalResponse(w, proxyResponse, multipartReader, capturedCORSHeaders)
@@ -1176,6 +1228,14 @@ type MultipartSSEReader struct {
 	readers     []io.Reader
 }
 
+// SSERangeReader applies range logic to an underlying reader
+type SSERangeReader struct {
+	reader    io.Reader
+	offset    int64 // bytes to skip from the beginning
+	remaining int64 // bytes remaining to read (-1 for unlimited)
+	skipped   int64 // bytes already skipped
+}
+
 // NewMultipartSSEReader creates a new multipart reader that can properly close all underlying readers
 func NewMultipartSSEReader(readers []io.Reader) *MultipartSSEReader {
 	return &MultipartSSEReader{
@@ -1203,6 +1263,55 @@ func (m *MultipartSSEReader) Close() error {
 	return lastErr
 }
 
+// Read implements the io.Reader interface for SSERangeReader
+func (r *SSERangeReader) Read(p []byte) (n int, err error) {
+	glog.Infof("🔍 SSERangeReader.Read: offset=%d, remaining=%d, skipped=%d, bufSize=%d", r.offset, r.remaining, r.skipped, len(p))
+
+	// If we need to skip bytes and haven't skipped enough yet
+	if r.skipped < r.offset {
+		skipNeeded := r.offset - r.skipped
+		skipBuf := make([]byte, min(int64(len(p)), skipNeeded))
+		skipRead, skipErr := r.reader.Read(skipBuf)
+		r.skipped += int64(skipRead)
+
+		glog.Infof("🔍 SSERangeReader.Read: skipped %d bytes, total skipped: %d", skipRead, r.skipped)
+
+		if skipErr != nil {
+			glog.Errorf("🔍 SSERangeReader.Read: skip error: %v", skipErr)
+			return 0, skipErr
+		}
+
+		// If we still need to skip more, recurse
+		if r.skipped < r.offset {
+			return r.Read(p)
+		}
+	}
+
+	// If we have a remaining limit and it's reached
+	if r.remaining == 0 {
+		glog.Infof("🔍 SSERangeReader.Read: remaining=0, returning EOF")
+		return 0, io.EOF
+	}
+
+	// Calculate how much to read
+	readSize := len(p)
+	if r.remaining > 0 && int64(readSize) > r.remaining {
+		readSize = int(r.remaining)
+	}
+
+	glog.V(4).Infof("🔍 SSERangeReader.Read: reading %d bytes (remaining: %d)", readSize, r.remaining)
+
+	// Read the data
+	n, err = r.reader.Read(p[:readSize])
+	if r.remaining > 0 {
+		r.remaining -= int64(n)
+	}
+
+	glog.Infof("🔍 SSERangeReader.Read: read %d bytes, remaining: %d, error: %v", n, r.remaining, err)
+
+	return n, err
+}
+
 // createMultipartSSECDecryptedReader creates a decrypted reader for multipart SSE-C objects
 // Each chunk has its own IV and encryption key from the original multipart parts
 func (s3a *S3ApiServer) createMultipartSSECDecryptedReader(r *http.Request, proxyResponse *http.Response) (io.Reader, error) {
@@ -1228,12 +1337,55 @@ func (s3a *S3ApiServer) createMultipartSSECDecryptedReader(r *http.Request, prox
 		return chunks[i].GetOffset() < chunks[j].GetOffset()
 	})
 
-	// Create readers for each chunk, decrypting them independently
+	// Check for Range header to optimize chunk processing
+	var startOffset, endOffset int64 = 0, -1
+	rangeHeader := r.Header.Get("Range")
+	if rangeHeader != "" {
+		glog.Infof("🔍 SSE-C Range request: %s", rangeHeader)
+		// Parse range header (e.g., "bytes=0-99")
+		if len(rangeHeader) > 6 && rangeHeader[:6] == "bytes=" {
+			rangeSpec := rangeHeader[6:]
+			parts := strings.Split(rangeSpec, "-")
+			if len(parts) == 2 {
+				if parts[0] != "" {
+					startOffset, _ = strconv.ParseInt(parts[0], 10, 64)
+				}
+				if parts[1] != "" {
+					endOffset, _ = strconv.ParseInt(parts[1], 10, 64)
+				}
+				glog.Infof("🔍 SSE-C Range parsed: start=%d, end=%d", startOffset, endOffset)
+			}
+		}
+	}
+
+	// Filter chunks to only those needed for the range request
+	var neededChunks []*filer_pb.FileChunk
+	for _, chunk := range chunks {
+		chunkStart := chunk.GetOffset()
+		chunkEnd := chunkStart + int64(chunk.GetSize()) - 1
+
+		// Check if this chunk overlaps with the requested range
+		if endOffset == -1 {
+			// No end specified, take all chunks from startOffset
+			if chunkEnd >= startOffset {
+				neededChunks = append(neededChunks, chunk)
+			}
+		} else {
+			// Specific range: check for overlap
+			if chunkStart <= endOffset && chunkEnd >= startOffset {
+				neededChunks = append(neededChunks, chunk)
+			}
+		}
+	}
+
+	glog.Infof("🔍 SSE-C Range optimization: need %d/%d chunks for range %s", len(neededChunks), len(chunks), rangeHeader)
+
+	// Create readers for only the needed chunks
 	var readers []io.Reader
 
-	for i, chunk := range chunks {
+	for i, chunk := range neededChunks {
 		glog.Infof("🔍 SSE-C GET: Processing SSE-C chunk %d/%d: fileId=%s, offset=%d, size=%d, sse_type=%d",
-			i+1, len(entry.GetChunks()), chunk.GetFileIdString(), chunk.GetOffset(), chunk.GetSize(), chunk.GetSseType())
+			i+1, len(neededChunks), chunk.GetFileIdString(), chunk.GetOffset(), chunk.GetSize(), chunk.GetSseType())
 
 		// Get this chunk's encrypted data
 		chunkReader, err := s3a.createEncryptedChunkReader(chunk)
@@ -1282,5 +1434,29 @@ func (s3a *S3ApiServer) createMultipartSSECDecryptedReader(r *http.Request, prox
 		}
 	}
 
-	return NewMultipartSSEReader(readers), nil
+	multiReader := NewMultipartSSEReader(readers)
+
+	// Apply range logic if a range was requested
+	if rangeHeader != "" && startOffset >= 0 {
+		if endOffset == -1 {
+			// Open-ended range (e.g., "bytes=100-")
+			glog.Infof("🔍 SSE-C: Creating range reader from offset %d to end", startOffset)
+			return &SSERangeReader{
+				reader:    multiReader,
+				offset:    startOffset,
+				remaining: -1, // Read until EOF
+			}, nil
+		} else {
+			// Specific range (e.g., "bytes=0-99")
+			rangeLength := endOffset - startOffset + 1
+			glog.Infof("🔍 SSE-C: Creating range reader for range %d-%d (%d bytes)", startOffset, endOffset, rangeLength)
+			return &SSERangeReader{
+				reader:    multiReader,
+				offset:    startOffset,
+				remaining: rangeLength,
+			}, nil
+		}
+	}
+
+	return multiReader, nil
 }
