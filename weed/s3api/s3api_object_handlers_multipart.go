@@ -366,7 +366,7 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 				}
 
 				// Pass the base IV to putToFiler via header
-				r.Header.Set("X-SeaweedFS-SSE-KMS-Base-IV", base64.StdEncoding.EncodeToString(baseIV))
+				r.Header.Set(s3_constants.SeaweedFSSSEKMSBaseIVHeader, base64.StdEncoding.EncodeToString(baseIV))
 
 				glog.Infof("PutObjectPartHandler: inherited SSE-KMS settings from upload %s, keyID %s - letting putToFiler handle encryption", uploadID, keyID)
 			}

@@ -243,7 +243,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		var sseKey *SSEKMSKey
 		var encErr error
 
-		baseIVHeader := r.Header.Get("X-SeaweedFS-SSE-KMS-Base-IV")
+		baseIVHeader := r.Header.Get(s3_constants.SeaweedFSSSEKMSBaseIVHeader)
 		if baseIVHeader != "" {
 			// Decode the base IV from the header
 			baseIV, decodeErr := base64.StdEncoding.DecodeString(baseIVHeader)

@@ -103,8 +103,9 @@ const (
 
 // SeaweedFS internal headers for filer communication
 const (
-	SeaweedFSSSEKMSKeyHeader = "X-SeaweedFS-SSE-KMS-Key" // Header for passing SSE-KMS metadata to filer
-	SeaweedFSSSEIVHeader     = "X-SeaweedFS-SSE-IV"      // Header for passing SSE-C IV to filer
+	SeaweedFSSSEKMSKeyHeader    = "X-SeaweedFS-SSE-KMS-Key"     // Header for passing SSE-KMS metadata to filer
+	SeaweedFSSSEIVHeader        = "X-SeaweedFS-SSE-IV"          // Header for passing SSE-C IV to filer
+	SeaweedFSSSEKMSBaseIVHeader = "X-SeaweedFS-SSE-KMS-Base-IV" // Header for passing base IV for multipart SSE-KMS
 )
 
 // Non-Standard S3 HTTP request constants
