@@ -172,51 +172,18 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 
 		// If we're doing cross-encryption, skip conflicting headers
 		if len(entry.GetChunks()) > 0 {
-			// Detect if this is a cross-encryption copy by checking request headers
+			// Detect source and destination encryption types
 			srcHasSSEC := IsSSECEncrypted(entry.Extended)
 			srcHasSSEKMS := IsSSEKMSEncrypted(entry.Extended)
+			srcHasSSES3 := IsSSES3EncryptedInternal(entry.Extended)
 			dstWantsSSEC := IsSSECRequest(r)
 			dstWantsSSEKMS := IsSSEKMSRequest(r)
+			dstWantsSSES3 := IsSSES3RequestInternal(r)
 
-			// SSE-KMS → SSE-C: skip ALL SSE-KMS headers
-			if srcHasSSEKMS && dstWantsSSEC {
-				if k == s3_constants.AmzServerSideEncryption ||
-					k == s3_constants.AmzServerSideEncryptionAwsKmsKeyId ||
-					k == s3_constants.SeaweedFSSSEKMSKey ||
-					k == s3_constants.SeaweedFSSSEKMSKeyID ||
-					k == s3_constants.SeaweedFSSSEKMSEncryption ||
-					k == s3_constants.SeaweedFSSSEKMSBucketKeyEnabled ||
-					k == s3_constants.SeaweedFSSSEKMSEncryptionContext ||
-					k == s3_constants.SeaweedFSSSEKMSBaseIV {
-					skipHeader = true
-				}
-			}
-
-			// SSE-C → SSE-KMS: skip ALL SSE-C headers
-			if srcHasSSEC && dstWantsSSEKMS {
-				if k == s3_constants.AmzServerSideEncryptionCustomerAlgorithm ||
-					k == s3_constants.AmzServerSideEncryptionCustomerKeyMD5 ||
-					k == s3_constants.SeaweedFSSSEIV {
-					skipHeader = true
-				}
-			}
-
-			// Encrypted → Unencrypted: skip ALL encryption headers
-			if (srcHasSSEKMS || srcHasSSEC) && !dstWantsSSEC && !dstWantsSSEKMS {
-				if k == s3_constants.AmzServerSideEncryption ||
-					k == s3_constants.AmzServerSideEncryptionAwsKmsKeyId ||
-					k == s3_constants.AmzServerSideEncryptionCustomerAlgorithm ||
-					k == s3_constants.AmzServerSideEncryptionCustomerKeyMD5 ||
-					k == s3_constants.SeaweedFSSSEKMSKey ||
-					k == s3_constants.SeaweedFSSSEKMSKeyID ||
-					k == s3_constants.SeaweedFSSSEKMSEncryption ||
-					k == s3_constants.SeaweedFSSSEKMSBucketKeyEnabled ||
-					k == s3_constants.SeaweedFSSSEKMSEncryptionContext ||
-					k == s3_constants.SeaweedFSSSEKMSBaseIV ||
-					k == s3_constants.SeaweedFSSSEIV {
-					skipHeader = true
-				}
-			}
+			// Use helper function to determine if header should be skipped
+			skipHeader = shouldSkipEncryptionHeader(k, 
+				srcHasSSEC, srcHasSSEKMS, srcHasSSES3,
+				dstWantsSSEC, dstWantsSSEKMS, dstWantsSSES3)
 		}
 
 		if !skipHeader {
@@ -2200,4 +2167,74 @@ func getKeyIDString(key *SSEKMSKey) string {
 		return "default"
 	}
 	return key.KeyID
+}
+
+// shouldSkipEncryptionHeader determines if a header should be skipped when copying extended attributes
+// based on the source and destination encryption types. This consolidates the repetitive logic for
+// filtering encryption-related headers during copy operations.
+func shouldSkipEncryptionHeader(headerKey string, 
+	srcSSEC, srcSSEKMS, srcSSES3 bool,
+	dstSSEC, dstSSEKMS, dstSSES3 bool) bool {
+
+	// Define header type groups for easier management
+	isSSECHeader := headerKey == s3_constants.AmzServerSideEncryptionCustomerAlgorithm ||
+		headerKey == s3_constants.AmzServerSideEncryptionCustomerKeyMD5 ||
+		headerKey == s3_constants.SeaweedFSSSEIV
+
+	isSSEKMSHeader := headerKey == s3_constants.AmzServerSideEncryption ||
+		headerKey == s3_constants.AmzServerSideEncryptionAwsKmsKeyId ||
+		headerKey == s3_constants.SeaweedFSSSEKMSKey ||
+		headerKey == s3_constants.SeaweedFSSSEKMSKeyID ||
+		headerKey == s3_constants.SeaweedFSSSEKMSEncryption ||
+		headerKey == s3_constants.SeaweedFSSSEKMSBucketKeyEnabled ||
+		headerKey == s3_constants.SeaweedFSSSEKMSEncryptionContext ||
+		headerKey == s3_constants.SeaweedFSSSEKMSBaseIV
+
+	isSSES3Header := headerKey == s3_constants.SeaweedFSSSES3Key ||
+		headerKey == s3_constants.SeaweedFSSSES3Encryption ||
+		headerKey == s3_constants.SeaweedFSSSES3BaseIV ||
+		headerKey == s3_constants.SeaweedFSSSES3KeyData
+
+	// If it's not an encryption header, don't skip it
+	if !isSSECHeader && !isSSEKMSHeader && !isSSES3Header {
+		return false
+	}
+
+	// Skip SSE-KMS headers when copying from SSE-KMS to SSE-C
+	if srcSSEKMS && dstSSEC && isSSEKMSHeader {
+		return true
+	}
+
+	// Skip SSE-C headers when copying from SSE-C to SSE-KMS
+	if srcSSEC && dstSSEKMS && isSSECHeader {
+		return true
+	}
+
+	// Skip SSE-KMS headers when copying from SSE-KMS to SSE-S3
+	if srcSSEKMS && dstSSES3 && isSSEKMSHeader {
+		return true
+	}
+
+	// Skip SSE-S3 headers when copying from SSE-S3 to SSE-KMS
+	if srcSSES3 && dstSSEKMS && isSSES3Header {
+		return true
+	}
+
+	// Skip SSE-C headers when copying from SSE-C to SSE-S3
+	if srcSSEC && dstSSES3 && isSSECHeader {
+		return true
+	}
+
+	// Skip SSE-S3 headers when copying from SSE-S3 to SSE-C
+	if srcSSES3 && dstSSEC && isSSES3Header {
+		return true
+	}
+
+	// Skip all encryption headers when copying from encrypted to unencrypted
+	if (srcSSEC || srcSSEKMS || srcSSES3) && !dstSSEC && !dstSSEKMS && !dstSSES3 {
+		return isSSECHeader || isSSEKMSHeader || isSSES3Header
+	}
+
+	// Default: don't skip the header
+	return false
 }
