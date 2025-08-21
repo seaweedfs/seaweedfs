@@ -1527,8 +1527,8 @@ func (s3a *S3ApiServer) copyMultipartSSECChunk(chunk *filer_pb.FileChunk, copySo
 // This unified function supports: SSE-C↔SSE-KMS, SSE-C→Plain, SSE-KMS→Plain
 func (s3a *S3ApiServer) copyMultipartCrossEncryption(entry *filer_pb.Entry, r *http.Request, state *EncryptionState, dstBucket, dstPath string) ([]*filer_pb.FileChunk, map[string][]byte, error) {
 	glog.Infof("copyMultipartCrossEncryption called: %s→%s, path=%s",
-		s3a.getEncryptionTypeString(state.SrcSSEC, state.SrcSSEKMS, false),
-		s3a.getEncryptionTypeString(state.DstSSEC, state.DstSSEKMS, false), dstPath)
+		getEncryptionTypeString(state.SrcSSEC, state.SrcSSEKMS, false),
+		getEncryptionTypeString(state.DstSSEC, state.DstSSEKMS, false), dstPath)
 
 	var dstChunks []*filer_pb.FileChunk
 
@@ -1600,7 +1600,19 @@ func (s3a *S3ApiServer) copyMultipartCrossEncryption(entry *filer_pb.Entry, r *h
 	} else if state.SrcSSEC && state.DstSSEKMS {
 		// SSE-C → SSE-KMS: Remove SSE-C headers
 		// These will be excluded from dstMetadata, effectively removing them
-	} else if !state.DstSSEC && !state.DstSSEKMS {
+	} else if state.SrcSSES3 && state.DstSSEC {
+		// SSE-S3 → SSE-C: Remove SSE-S3 headers
+		// These will be excluded from dstMetadata, effectively removing them
+	} else if state.SrcSSES3 && state.DstSSEKMS {
+		// SSE-S3 → SSE-KMS: Remove SSE-S3 headers
+		// These will be excluded from dstMetadata, effectively removing them
+	} else if state.SrcSSEC && state.DstSSES3 {
+		// SSE-C → SSE-S3: Remove SSE-C headers
+		// These will be excluded from dstMetadata, effectively removing them
+	} else if state.SrcSSEKMS && state.DstSSES3 {
+		// SSE-KMS → SSE-S3: Remove SSE-KMS headers
+		// These will be excluded from dstMetadata, effectively removing them
+	} else if !state.DstSSEC && !state.DstSSEKMS && !state.DstSSES3 {
 		// Encrypted → Unencrypted: Remove all encryption metadata
 		// These will be excluded from dstMetadata, effectively removing them
 	}
@@ -1760,17 +1772,13 @@ func (s3a *S3ApiServer) copyCrossEncryptionChunk(chunk *filer_pb.FileChunk, sour
 			return nil, fmt.Errorf("failed to deserialize SSE-S3 metadata: %w", err)
 		}
 
-		// Get the IV from the chunk metadata (for multipart objects, this is calculated with offset)
+		// For SSE-S3, the IV is embedded in the serialized metadata
+		// We need to extract it from the SSE-S3 key structure
 		var chunkIV []byte
-		if ivData, exists := chunk.SseMetadata["iv"]; exists {
-			decodedIV, decodeErr := base64.StdEncoding.DecodeString(string(ivData))
-			if decodeErr == nil {
-				chunkIV = decodedIV
-			} else {
-				return nil, fmt.Errorf("failed to decode SSE-S3 chunk IV: %w", decodeErr)
-			}
+		if sseS3Key.IV != nil {
+			chunkIV = sseS3Key.IV
 		} else {
-			return nil, fmt.Errorf("SSE-S3 chunk missing IV metadata")
+			return nil, fmt.Errorf("SSE-S3 chunk missing IV in metadata")
 		}
 
 		decryptedReader, decErr := CreateSSES3DecryptedReader(bytes.NewReader(encryptedData), sseS3Key, chunkIV)
@@ -1848,6 +1856,51 @@ func (s3a *S3ApiServer) copyCrossEncryptionChunk(chunk *filer_pb.FileChunk, sour
 		dstChunk.SseType = filer_pb.SSEType_SSE_KMS
 		dstChunk.SseKmsMetadata = kmsMetadata
 
+		previewLen := 16
+		if len(finalData) < previewLen {
+			previewLen = len(finalData)
+		}
+
+		glog.V(4).Infof("Re-encrypted chunk with SSE-KMS")
+
+	} else if state.DstSSES3 {
+		// Encrypt with SSE-S3
+		keyManager := GetSSES3KeyManager()
+		sseS3Key, err := keyManager.GetOrCreateKey("")
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate SSE-S3 key for chunk copy: %w", err)
+		}
+
+		encryptedReader, iv, encErr := CreateSSES3EncryptedReader(bytes.NewReader(finalData), sseS3Key)
+		if encErr != nil {
+			return nil, fmt.Errorf("create SSE-S3 encrypted reader: %w", encErr)
+		}
+
+		reencryptedData, readErr := io.ReadAll(encryptedReader)
+		if readErr != nil {
+			return nil, fmt.Errorf("re-encrypt with SSE-S3: %w", readErr)
+		}
+		finalData = reencryptedData
+
+		// Store key in manager
+		keyManager.StoreKey(sseS3Key)
+
+		// For SSE-S3, we need to include the IV in the serialized metadata
+		// Update the SSE-S3 key to include the IV before serializing
+		sseS3Key.IV = iv
+		s3Metadata, err := SerializeSSES3Metadata(sseS3Key)
+		if err != nil {
+			return nil, fmt.Errorf("serialize SSE-S3 metadata with IV: %w", err)
+		}
+
+		dstChunk.SseType = filer_pb.SSEType_SSE_S3
+		dstChunk.SseKmsMetadata = s3Metadata
+
+		previewLen := 16
+		if len(finalData) < previewLen {
+			previewLen = len(finalData)
+		}
+
 		glog.V(4).Infof("Re-encrypted chunk with SSE-KMS")
 	}
 	// For unencrypted destination, finalData remains as decrypted plaintext
@@ -1867,7 +1920,7 @@ func (s3a *S3ApiServer) copyCrossEncryptionChunk(chunk *filer_pb.FileChunk, sour
 }
 
 // getEncryptionTypeString returns a string representation of encryption type for logging
-func (s3a *S3ApiServer) getEncryptionTypeString(isSSEC, isSSEKMS, isSSES3 bool) string {
+func getEncryptionTypeString(isSSEC, isSSEKMS, isSSES3 bool) string {
 	if isSSEC {
 		return "SSE-C"
 	} else if isSSEKMS {

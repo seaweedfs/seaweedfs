@@ -4,6 +4,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -24,6 +25,7 @@ type SSES3Key struct {
 	Key       []byte
 	KeyID     string
 	Algorithm string
+	IV        []byte // Initialization Vector for this key
 }
 
 // IsSSES3RequestInternal checks if the request specifies SSE-S3 encryption
@@ -112,12 +114,18 @@ func SerializeSSES3Metadata(key *SSES3Key) ([]byte, error) {
 		"keyId":     key.KeyID,
 	}
 
-	// In a production system, this would be more sophisticated
-	// For now, we'll use a simple JSON-like format
-	serialized := fmt.Sprintf(`{"algorithm":"%s","keyId":"%s"}`,
-		metadata["algorithm"], metadata["keyId"])
+	// Include IV if present (needed for chunk-level decryption)
+	if key.IV != nil {
+		metadata["iv"] = base64.StdEncoding.EncodeToString(key.IV)
+	}
 
-	return []byte(serialized), nil
+	// Use JSON for proper serialization
+	data, err := json.Marshal(metadata)
+	if err != nil {
+		return nil, fmt.Errorf("marshal SSE-S3 metadata: %w", err)
+	}
+
+	return data, nil
 }
 
 // DeserializeSSES3Metadata deserializes SSE-S3 metadata from storage and retrieves the actual key
@@ -155,6 +163,15 @@ func DeserializeSSES3Metadata(data []byte, keyManager *SSES3KeyManager) (*SSES3K
 	// Verify the algorithm matches
 	if key.Algorithm != algorithm {
 		return nil, fmt.Errorf("algorithm mismatch: expected %s, got %s", algorithm, key.Algorithm)
+	}
+
+	// Restore IV if present in metadata (for chunk-level decryption)
+	if ivStr, exists := metadata["iv"]; exists {
+		iv, err := base64.StdEncoding.DecodeString(ivStr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode IV: %w", err)
+		}
+		key.IV = iv
 	}
 
 	return key, nil
@@ -263,12 +280,12 @@ func CreateSSES3EncryptedReaderWithBaseIV(reader io.Reader, key *SSES3Key, baseI
 	if err != nil {
 		return nil, nil, fmt.Errorf("create AES cipher: %w", err)
 	}
-	
+
 	// For multipart uploads, we use the same base IV but may need to calculate offset-specific IV
 	// For now, we use the base IV directly for simplicity (can be enhanced later for offset-based IVs)
 	iv := make([]byte, aes.BlockSize)
 	copy(iv, baseIV)
-	
+
 	stream := cipher.NewCTR(block, iv)
 	encryptedReader := &cipher.StreamReader{S: stream, R: reader}
 	return encryptedReader, iv, nil

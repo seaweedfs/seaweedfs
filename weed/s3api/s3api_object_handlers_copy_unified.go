@@ -7,6 +7,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
@@ -124,8 +125,8 @@ func (s3a *S3ApiServer) executeEncryptCopy(entry *filer_pb.Entry, r *http.Reques
 
 	if state.DstSSES3 {
 		// Use streaming copy for SSE-S3 encryption
-		chunks, err := s3a.executeStreamingReencryptCopy(entry, r, state, dstPath)
-		return chunks, nil, err
+		chunks, dstMetadata, err := s3a.executeStreamingReencryptCopy(entry, r, state, dstPath)
+		return chunks, dstMetadata, err
 	}
 
 	return nil, nil, fmt.Errorf("unknown target encryption type")
@@ -141,8 +142,8 @@ func (s3a *S3ApiServer) executeDecryptCopy(entry *filer_pb.Entry, r *http.Reques
 
 	if state.SrcSSES3 {
 		// Use streaming copy for SSE-S3 decryption
-		chunks, err := s3a.executeStreamingReencryptCopy(entry, r, state, dstPath)
-		return chunks, nil, err
+		chunks, dstMetadata, err := s3a.executeStreamingReencryptCopy(entry, r, state, dstPath)
+		return chunks, dstMetadata, err
 	}
 
 	return nil, nil, fmt.Errorf("unknown source encryption type")
@@ -152,8 +153,8 @@ func (s3a *S3ApiServer) executeDecryptCopy(entry *filer_pb.Entry, r *http.Reques
 func (s3a *S3ApiServer) executeReencryptCopy(entry *filer_pb.Entry, r *http.Request, state *EncryptionState, dstBucket, dstPath string) ([]*filer_pb.FileChunk, map[string][]byte, error) {
 	// Check if we should use streaming copy for better performance
 	if s3a.shouldUseStreamingCopy(entry, state) {
-		chunks, err := s3a.executeStreamingReencryptCopy(entry, r, state, dstPath)
-		return chunks, nil, err
+		chunks, dstMetadata, err := s3a.executeStreamingReencryptCopy(entry, r, state, dstPath)
+		return chunks, dstMetadata, err
 	}
 
 	// Fallback to chunk-by-chunk approach for compatibility
@@ -182,8 +183,8 @@ func (s3a *S3ApiServer) executeReencryptCopy(entry *filer_pb.Entry, r *http.Requ
 	// Handle SSE-S3 cross-encryption scenarios
 	if state.SrcSSES3 || state.DstSSES3 {
 		// Any scenario involving SSE-S3 uses streaming copy
-		chunks, err := s3a.executeStreamingReencryptCopy(entry, r, state, dstPath)
-		return chunks, nil, err
+		chunks, dstMetadata, err := s3a.executeStreamingReencryptCopy(entry, r, state, dstPath)
+		return chunks, dstMetadata, err
 	}
 
 	return nil, nil, fmt.Errorf("unsupported cross-encryption scenario")
@@ -219,8 +220,8 @@ func (s3a *S3ApiServer) shouldUseStreamingCopy(entry *filer_pb.Entry, state *Enc
 
 	// Use streaming for cross-encryption scenarios (for single-part objects only)
 	if state.IsSourceEncrypted() && state.IsTargetEncrypted() {
-		srcType := s3a.getEncryptionTypeString(state.SrcSSEC, state.SrcSSEKMS, state.SrcSSES3)
-		dstType := s3a.getEncryptionTypeString(state.DstSSEC, state.DstSSEKMS, state.DstSSES3)
+		srcType := getEncryptionTypeString(state.SrcSSEC, state.SrcSSEKMS, state.SrcSSES3)
+		dstType := getEncryptionTypeString(state.DstSSEC, state.DstSSEKMS, state.DstSSES3)
 		if srcType != dstType {
 			return true
 		}
@@ -240,10 +241,36 @@ func (s3a *S3ApiServer) shouldUseStreamingCopy(entry *filer_pb.Entry, state *Enc
 }
 
 // executeStreamingReencryptCopy performs streaming re-encryption copy
-func (s3a *S3ApiServer) executeStreamingReencryptCopy(entry *filer_pb.Entry, r *http.Request, state *EncryptionState, dstPath string) ([]*filer_pb.FileChunk, error) {
+func (s3a *S3ApiServer) executeStreamingReencryptCopy(entry *filer_pb.Entry, r *http.Request, state *EncryptionState, dstPath string) ([]*filer_pb.FileChunk, map[string][]byte, error) {
 	// Create streaming copy manager
 	streamingManager := NewStreamingCopyManager(s3a)
 
-	// Execute streaming copy
-	return streamingManager.ExecuteStreamingCopy(context.Background(), entry, r, dstPath, state)
+	// Execute streaming copy and get the encryption spec to access the keys used
+	chunks, encSpec, err := streamingManager.ExecuteStreamingCopyWithSpec(context.Background(), entry, r, dstPath, state)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Create destination metadata for SSE-S3 if needed
+	var dstMetadata map[string][]byte
+	if state.DstSSES3 && encSpec != nil && encSpec.DestinationKey != nil {
+		dstMetadata = make(map[string][]byte)
+		if sseS3Key, ok := encSpec.DestinationKey.(*SSES3Key); ok {
+			// Use the same key that was used for encryption
+			keyManager := GetSSES3KeyManager()
+			keyManager.StoreKey(sseS3Key)
+
+			// Include the IV that was generated during encryption
+			if encSpec.DestinationIV != nil {
+				sseS3Key.IV = encSpec.DestinationIV
+			}
+
+			if keyData, serErr := SerializeSSES3Metadata(sseS3Key); serErr == nil {
+				dstMetadata[s3_constants.SeaweedFSSSES3Key] = keyData
+				dstMetadata[s3_constants.AmzServerSideEncryption] = []byte("AES256")
+			}
+		}
+	}
+
+	return chunks, dstMetadata, nil
 }

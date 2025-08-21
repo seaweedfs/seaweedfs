@@ -61,16 +61,22 @@ func NewStreamingCopyManager(s3a *S3ApiServer) *StreamingCopyManager {
 
 // ExecuteStreamingCopy performs a streaming copy operation
 func (scm *StreamingCopyManager) ExecuteStreamingCopy(ctx context.Context, entry *filer_pb.Entry, r *http.Request, dstPath string, state *EncryptionState) ([]*filer_pb.FileChunk, error) {
+	chunks, _, err := scm.ExecuteStreamingCopyWithSpec(ctx, entry, r, dstPath, state)
+	return chunks, err
+}
+
+// ExecuteStreamingCopyWithSpec performs a streaming copy operation and returns the encryption spec
+func (scm *StreamingCopyManager) ExecuteStreamingCopyWithSpec(ctx context.Context, entry *filer_pb.Entry, r *http.Request, dstPath string, state *EncryptionState) ([]*filer_pb.FileChunk, *EncryptionSpec, error) {
 	// Create streaming copy specification
 	spec, err := scm.createStreamingSpec(entry, r, state)
 	if err != nil {
-		return nil, fmt.Errorf("create streaming spec: %w", err)
+		return nil, nil, fmt.Errorf("create streaming spec: %w", err)
 	}
 
 	// Create source reader from entry
 	sourceReader, err := scm.createSourceReader(entry)
 	if err != nil {
-		return nil, fmt.Errorf("create source reader: %w", err)
+		return nil, nil, fmt.Errorf("create source reader: %w", err)
 	}
 	defer sourceReader.Close()
 
@@ -79,11 +85,16 @@ func (scm *StreamingCopyManager) ExecuteStreamingCopy(ctx context.Context, entry
 	// Create processing pipeline
 	processedReader, err := scm.createProcessingPipeline(spec)
 	if err != nil {
-		return nil, fmt.Errorf("create processing pipeline: %w", err)
+		return nil, nil, fmt.Errorf("create processing pipeline: %w", err)
 	}
 
 	// Stream to destination
-	return scm.streamToDestination(ctx, processedReader, spec, dstPath)
+	chunks, err := scm.streamToDestination(ctx, processedReader, spec, dstPath)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return chunks, spec.EncryptionSpec, nil
 }
 
 // createStreamingSpec creates a streaming specification based on copy parameters

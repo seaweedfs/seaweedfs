@@ -27,6 +27,7 @@ const (
 	SSEType_NONE    SSEType = 0 // No server-side encryption
 	SSEType_SSE_C   SSEType = 1 // Server-Side Encryption with Customer-Provided Keys
 	SSEType_SSE_KMS SSEType = 2 // Server-Side Encryption with KMS-Managed Keys
+	SSEType_SSE_S3  SSEType = 3 // Server-Side Encryption with S3-Managed Keys
 )
 
 // Enum value maps for SSEType.
@@ -35,11 +36,13 @@ var (
 		0: "NONE",
 		1: "SSE_C",
 		2: "SSE_KMS",
+		3: "SSE_S3",
 	}
 	SSEType_value = map[string]int32{
 		"NONE":    0,
 		"SSE_C":   1,
 		"SSE_KMS": 2,
+		"SSE_S3":  3,
 	}
 )
 
@@ -4749,11 +4752,13 @@ const file_filer_proto_rawDesc = "" +
 	"\x05owner\x18\x04 \x01(\tR\x05owner\"<\n" +
 	"\x14TransferLocksRequest\x12$\n" +
 	"\x05locks\x18\x01 \x03(\v2\x0e.filer_pb.LockR\x05locks\"\x17\n" +
-	"\x15TransferLocksResponse*+\n" +
+	"\x15TransferLocksResponse*7\n" +
 	"\aSSEType\x12\b\n" +
 	"\x04NONE\x10\x00\x12\t\n" +
 	"\x05SSE_C\x10\x01\x12\v\n" +
-	"\aSSE_KMS\x10\x022\xf7\x10\n" +
+	"\aSSE_KMS\x10\x02\x12\n" +
+	"\n" +
+	"\x06SSE_S3\x10\x032\xf7\x10\n" +
 	"\fSeaweedFiler\x12g\n" +
 	"\x14LookupDirectoryEntry\x12%.filer_pb.LookupDirectoryEntryRequest\x1a&.filer_pb.LookupDirectoryEntryResponse\"\x00\x12N\n" +
 	"\vListEntries\x12\x1c.filer_pb.ListEntriesRequest\x1a\x1d.filer_pb.ListEntriesResponse\"\x000\x01\x12L\n" +

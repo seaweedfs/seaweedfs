@@ -286,7 +286,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		// Check if this is a multipart upload with pre-existing key
 		sseS3KeyHeader := r.Header.Get(s3_constants.SeaweedFSSSES3Key)
 		baseIVHeader := r.Header.Get(s3_constants.SeaweedFSSSEIVHeader)
-		
+
 		if sseS3KeyHeader != "" {
 			// Multipart upload: use the provided SSE-S3 key
 			keyData, decodeErr := base64.StdEncoding.DecodeString(sseS3KeyHeader)
@@ -294,13 +294,13 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 				glog.Errorf("Failed to decode SSE-S3 key header: %v", decodeErr)
 				return "", s3err.ErrInternalError, ""
 			}
-			
+
 			key, err = DeserializeSSES3Metadata(keyData, keyManager)
 			if err != nil {
 				glog.Errorf("Failed to deserialize SSE-S3 key for multipart: %v", err)
 				return "", s3err.ErrInternalError, ""
 			}
-			
+
 			// Use the provided base IV for multipart consistency
 			if baseIVHeader != "" {
 				baseIV, decodeErr := base64.StdEncoding.DecodeString(baseIVHeader)
@@ -328,7 +328,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 				dataReader = encryptedReader
 				sseS3IV = iv
 			}
-			
+
 			glog.V(4).Infof("SSE-S3 multipart encryption applied with key ID: %s", key.KeyID)
 		} else {
 			// Single-part upload: generate new SSE-S3 key
