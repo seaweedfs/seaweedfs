@@ -900,8 +900,8 @@ func TestDebugSSEMultipart(t *testing.T) {
 		t.Logf("Data matches completely!")
 	}
 
-	// Always fail to see the debug output
-	t.Fatalf("Debug test - check logs for divergence analysis")
+	// Test completed successfully
+	t.Logf("SSE comparison test completed - data matches completely!")
 }
 
 // TestSSEErrorConditions tests various error conditions in SSE
