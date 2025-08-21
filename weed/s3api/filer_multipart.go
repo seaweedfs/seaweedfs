@@ -48,6 +48,7 @@ func (s3a *S3ApiServer) createMultipartUpload(r *http.Request, input *s3.CreateM
 
 	uploadIdString = uploadIdString + "_" + strings.ReplaceAll(uuid.New().String(), "-", "")
 
+	var criticalError error
 	if err := s3a.mkdir(s3a.genUploadsFolder(*input.Bucket), uploadIdString, func(entry *filer_pb.Entry) {
 		if entry.Extended == nil {
 			entry.Extended = make(map[string][]byte)
@@ -88,12 +89,13 @@ func (s3a *S3ApiServer) createMultipartUpload(r *http.Request, input *s3.CreateM
 			// Chunks within each part will use this base IV with their within-part offset
 			baseIV := make([]byte, 16)
 			if _, err := rand.Read(baseIV); err != nil {
-				glog.Errorf("Failed to generate base IV for multipart upload %s: %v", uploadIdString, err)
-			} else {
-				// Store base IV as base64 encoded string to avoid HTTP header issues
-				entry.Extended[s3_constants.SeaweedFSSSEKMSBaseIV] = []byte(base64.StdEncoding.EncodeToString(baseIV))
-				glog.V(4).Infof("Generated base IV %x for multipart upload %s", baseIV[:8], uploadIdString)
+				glog.Errorf("Failed to generate base IV for SSE-KMS multipart upload %s: %v", uploadIdString, err)
+				criticalError = fmt.Errorf("failed to generate secure IV for SSE-KMS multipart upload: %v", err)
+				return
 			}
+			// Store base IV as base64 encoded string to avoid HTTP header issues
+			entry.Extended[s3_constants.SeaweedFSSSEKMSBaseIV] = []byte(base64.StdEncoding.EncodeToString(baseIV))
+			glog.V(4).Infof("Generated base IV %x for SSE-KMS multipart upload %s", baseIV[:8], uploadIdString)
 
 			glog.V(3).Infof("createMultipartUpload: stored SSE-KMS settings for upload %s with keyID %s", uploadIdString, keyID)
 		}
@@ -109,28 +111,32 @@ func (s3a *S3ApiServer) createMultipartUpload(r *http.Request, input *s3.CreateM
 			baseIV := make([]byte, 16)
 			if _, err := rand.Read(baseIV); err != nil {
 				glog.Errorf("Failed to generate base IV for SSE-S3 multipart upload %s: %v", uploadIdString, err)
-			} else {
-				// Store base IV as base64 encoded string to avoid HTTP header issues
-				entry.Extended[s3_constants.SeaweedFSSSES3BaseIV] = []byte(base64.StdEncoding.EncodeToString(baseIV))
-				glog.V(4).Infof("Generated base IV %x for SSE-S3 multipart upload %s", baseIV[:8], uploadIdString)
+				criticalError = fmt.Errorf("failed to generate secure IV for SSE-S3 multipart upload: %v", err)
+				return
 			}
+			// Store base IV as base64 encoded string to avoid HTTP header issues
+			entry.Extended[s3_constants.SeaweedFSSSES3BaseIV] = []byte(base64.StdEncoding.EncodeToString(baseIV))
+			glog.V(4).Infof("Generated base IV %x for SSE-S3 multipart upload %s", baseIV[:8], uploadIdString)
 
 			// Generate and store SSE-S3 key for parts to inherit
 			keyManager := GetSSES3KeyManager()
 			sseS3Key, err := keyManager.GetOrCreateKey("")
 			if err != nil {
 				glog.Errorf("Failed to generate SSE-S3 key for multipart upload %s: %v", uploadIdString, err)
-			} else {
-				// Serialize and store the SSE-S3 key for parts to inherit
-				if keyData, serErr := SerializeSSES3Metadata(sseS3Key); serErr == nil {
-					entry.Extended[s3_constants.SeaweedFSSSES3KeyData] = []byte(base64.StdEncoding.EncodeToString(keyData))
-					// Store key in manager for later retrieval
-					keyManager.StoreKey(sseS3Key)
-					glog.V(4).Infof("Stored SSE-S3 key %s for multipart upload %s", sseS3Key.KeyID, uploadIdString)
-				} else {
-					glog.Errorf("Failed to serialize SSE-S3 key for multipart upload %s: %v", uploadIdString, serErr)
-				}
+				criticalError = fmt.Errorf("failed to generate SSE-S3 key for multipart upload: %v", err)
+				return
 			}
+			// Serialize and store the SSE-S3 key for parts to inherit
+			keyData, serErr := SerializeSSES3Metadata(sseS3Key)
+			if serErr != nil {
+				glog.Errorf("Failed to serialize SSE-S3 key for multipart upload %s: %v", uploadIdString, serErr)
+				criticalError = fmt.Errorf("failed to serialize SSE-S3 key for multipart upload: %v", serErr)
+				return
+			}
+			entry.Extended[s3_constants.SeaweedFSSSES3KeyData] = []byte(base64.StdEncoding.EncodeToString(keyData))
+			// Store key in manager for later retrieval
+			keyManager.StoreKey(sseS3Key)
+			glog.V(4).Infof("Stored SSE-S3 key %s for multipart upload %s", sseS3Key.KeyID, uploadIdString)
 
 			glog.V(3).Infof("createMultipartUpload: stored SSE-S3 settings for upload %s", uploadIdString)
 		}
@@ -143,6 +149,12 @@ func (s3a *S3ApiServer) createMultipartUpload(r *http.Request, input *s3.CreateM
 		}
 	}); err != nil {
 		glog.Errorf("NewMultipartUpload error: %v", err)
+		return nil, s3err.ErrInternalError
+	}
+
+	// Check for critical errors during SSE-S3 initialization
+	if criticalError != nil {
+		glog.Errorf("SSE-S3 multipart upload initialization failed: %v", criticalError)
 		return nil, s3err.ErrInternalError
 	}
 
