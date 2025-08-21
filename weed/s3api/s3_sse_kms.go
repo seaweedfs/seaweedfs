@@ -523,38 +523,6 @@ func ValidateSSEKMSKey(sseKey *SSEKMSKey) error {
 	return nil
 }
 
-// isValidKMSKeyID performs basic validation of KMS key identifiers.
-// Following Minio's approach: be permissive and accept any reasonable key format.
-// Only reject keys with leading/trailing spaces or other obvious issues.
-func isValidKMSKeyID(keyID string) bool {
-	// Reject empty keys
-	if keyID == "" {
-		return false
-	}
-
-	// Following Minio's validation: reject keys with leading/trailing spaces
-	if strings.HasPrefix(keyID, " ") || strings.HasSuffix(keyID, " ") {
-		return false
-	}
-
-	// Also reject keys with internal spaces (common sense validation)
-	if strings.Contains(keyID, " ") {
-		return false
-	}
-
-	// Reject keys with control characters or newlines
-	if strings.ContainsAny(keyID, "\t\n\r\x00") {
-		return false
-	}
-
-	// Accept any reasonable length key (be permissive for various KMS providers)
-	if len(keyID) > 0 && len(keyID) <= 500 {
-		return true
-	}
-
-	return false
-}
-
 // BuildEncryptionContext creates the encryption context for S3 objects
 func BuildEncryptionContext(bucketName, objectKey string, useBucketKey bool) map[string]string {
 	return kms.BuildS3EncryptionContext(bucketName, objectKey, useBucketKey)
@@ -703,7 +671,7 @@ func calculateIVWithOffset(baseIV []byte, offset int64) []byte {
 		}
 	}
 
-	glog.Infof("calculateIVWithOffset: baseIV=%x, offset=%d, blockOffset=%d, calculatedIV=%x",
+	glog.V(4).Infof("calculateIVWithOffset: baseIV=%x, offset=%d, blockOffset=%d, calculatedIV=%x",
 		baseIV, offset, originalBlockOffset, iv)
 	return iv
 }
