@@ -40,6 +40,7 @@ func IsSSES3RequestInternal(r *http.Request) bool {
 	}
 
 	return result
+	return r.Header.Get(s3_constants.AmzServerSideEncryption) == SSES3Algorithm
 }
 
 // IsSSES3EncryptedInternal checks if the object metadata indicates SSE-S3 encryption
@@ -135,6 +136,12 @@ func SerializeSSES3Metadata(key *SSES3Key) ([]byte, error) {
 	}
 
 	return data, nil
+	// In a production system, this would be more sophisticated
+	// For now, we'll use a simple JSON-like format
+	serialized := fmt.Sprintf(`{"algorithm":"%s","keyId":"%s"}`,
+		metadata["algorithm"], metadata["keyId"])
+
+	return []byte(serialized), nil
 }
 
 // DeserializeSSES3Metadata deserializes SSE-S3 metadata from storage and retrieves the actual key
@@ -266,8 +273,8 @@ func ProcessSSES3Request(r *http.Request) (map[string][]byte, error) {
 
 	// Return metadata
 	metadata := map[string][]byte{
-			s3_constants.AmzServerSideEncryption: []byte(SSES3Algorithm),
-	s3_constants.SeaweedFSSSES3Key:       keyData,
+		s3_constants.AmzServerSideEncryption: []byte(SSES3Algorithm),
+		s3_constants.SeaweedFSSSES3Key:       keyData,
 	}
 
 	return metadata, nil
