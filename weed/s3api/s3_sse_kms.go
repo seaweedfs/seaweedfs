@@ -707,6 +707,65 @@ func calculateIVWithOffset(baseIV []byte, offset int64) []byte {
 	return iv
 }
 
+// SSECMetadata represents SSE-C metadata for per-chunk storage (unified with SSE-KMS approach)
+type SSECMetadata struct {
+	Algorithm  string `json:"algorithm"`  // SSE-C algorithm (always "AES256")
+	IV         string `json:"iv"`         // Base64-encoded initialization vector for this chunk
+	KeyMD5     string `json:"keyMD5"`     // MD5 of the customer-provided key
+	PartOffset int64  `json:"partOffset"` // Offset within original multipart part (for IV calculation)
+}
+
+// SerializeSSECMetadata serializes SSE-C metadata for storage in chunk metadata
+func SerializeSSECMetadata(iv []byte, keyMD5 string, partOffset int64) ([]byte, error) {
+	if len(iv) != 16 {
+		return nil, fmt.Errorf("invalid IV length: expected 16, got %d", len(iv))
+	}
+
+	metadata := &SSECMetadata{
+		Algorithm:  "AES256",
+		IV:         base64.StdEncoding.EncodeToString(iv),
+		KeyMD5:     keyMD5,
+		PartOffset: partOffset,
+	}
+
+	data, err := json.Marshal(metadata)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal SSE-C metadata: %w", err)
+	}
+
+	glog.V(4).Infof("Serialized SSE-C metadata: keyMD5=%s, partOffset=%d", keyMD5, partOffset)
+	return data, nil
+}
+
+// DeserializeSSECMetadata deserializes SSE-C metadata from chunk storage
+func DeserializeSSECMetadata(data []byte) (*SSECMetadata, error) {
+	if len(data) == 0 {
+		return nil, fmt.Errorf("empty SSE-C metadata")
+	}
+
+	var metadata SSECMetadata
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal SSE-C metadata: %w", err)
+	}
+
+	// Validate algorithm
+	if metadata.Algorithm != "AES256" {
+		return nil, fmt.Errorf("invalid SSE-C algorithm: %s", metadata.Algorithm)
+	}
+
+	// Validate IV
+	if metadata.IV == "" {
+		return nil, fmt.Errorf("missing IV in SSE-C metadata")
+	}
+
+	if _, err := base64.StdEncoding.DecodeString(metadata.IV); err != nil {
+		return nil, fmt.Errorf("invalid base64 IV in SSE-C metadata: %w", err)
+	}
+
+	glog.V(4).Infof("Deserialized SSE-C metadata: keyMD5=%s, partOffset=%d", metadata.KeyMD5, metadata.PartOffset)
+	return &metadata, nil
+}
+
 // AddSSEKMSResponseHeaders adds SSE-KMS response headers to an HTTP response
 func AddSSEKMSResponseHeaders(w http.ResponseWriter, sseKey *SSEKMSKey) {
 	w.Header().Set(s3_constants.AmzServerSideEncryption, "aws:kms")

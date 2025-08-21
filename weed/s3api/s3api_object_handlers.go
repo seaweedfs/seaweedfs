@@ -634,10 +634,44 @@ func (s3a *S3ApiServer) handleSSECResponse(r *http.Request, proxyResponse *http.
 			return http.StatusRequestedRangeNotSatisfiable, 0
 		}
 
-		// Get IV from proxy response headers (stored during upload)
+		// Check if this is a multipart SSE-C object that needs per-chunk decryption
+		bucket, object := s3_constants.GetBucketAndObject(r)
+		objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
+		if entry, err := s3a.getEntry("", objectPath); err == nil {
+			// Check for multipart SSE-C
+			sseCChunks := 0
+			for _, chunk := range entry.GetChunks() {
+				if chunk.GetSseType() == filer_pb.SSEType_SSE_C {
+					sseCChunks++
+				}
+			}
+
+			if sseCChunks > 1 {
+				glog.Infof("Detected multipart SSE-C object with %d chunks, using per-chunk decryption", sseCChunks)
+				// Handle multipart SSE-C objects - each chunk needs independent decryption
+				multipartReader, decErr := s3a.createMultipartSSECDecryptedReader(r, proxyResponse)
+				if decErr != nil {
+					glog.Errorf("Failed to create multipart SSE-C decrypted reader: %v", decErr)
+					s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+					return http.StatusInternalServerError, 0
+				}
+
+				// Capture existing CORS headers
+				capturedCORSHeaders := captureCORSHeaders(w, corsHeaders)
+
+				// Copy headers from proxy response
+				for k, v := range proxyResponse.Header {
+					w.Header()[k] = v
+				}
+
+				return writeFinalResponse(w, proxyResponse, multipartReader, capturedCORSHeaders)
+			}
+		}
+
+		// Single-part SSE-C object: Get IV from proxy response headers (stored during upload)
 		ivBase64 := proxyResponse.Header.Get("X-SeaweedFS-SSE-IV")
 		if ivBase64 == "" {
-			glog.Errorf("SSE-C encrypted object missing IV in metadata")
+			glog.Errorf("SSE-C encrypted single-part object missing IV in metadata")
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return http.StatusInternalServerError, 0
 		}
@@ -742,14 +776,15 @@ func (s3a *S3ApiServer) handleSSEKMSResponse(r *http.Request, proxyResponse *htt
 	}
 
 	// For GET requests, check if this is a multipart SSE-KMS object
-	// We need to check the object structure to determine if it's multipart SSE-KMS
+	// We need to check the object structure to determine if it's multipart encrypted
 	isMultipartSSEKMS := false
+
 	if sseKMSKey != nil {
 		// Get the object entry to check chunk structure
 		bucket, object := s3_constants.GetBucketAndObject(r)
 		objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
 		if entry, err := s3a.getEntry("", objectPath); err == nil {
-			// Check if we have multiple chunks with SSE-KMS metadata
+			// Check for multipart SSE-KMS
 			sseKMSChunks := 0
 			for _, chunk := range entry.GetChunks() {
 				if chunk.GetSseType() == filer_pb.SSEType_SSE_KMS && len(chunk.GetSseKmsMetadata()) > 0 {
@@ -757,7 +792,8 @@ func (s3a *S3ApiServer) handleSSEKMSResponse(r *http.Request, proxyResponse *htt
 				}
 			}
 			isMultipartSSEKMS = sseKMSChunks > 1
-			glog.Infof("SSE-KMS object detection: chunks=%d, sseKMSChunks=%d, isMultipart=%t",
+
+			glog.Infof("SSE-KMS object detection: chunks=%d, sseKMSChunks=%d, isMultipartSSEKMS=%t",
 				len(entry.GetChunks()), sseKMSChunks, isMultipartSSEKMS)
 		}
 	}
@@ -970,4 +1006,86 @@ func (s3a *S3ApiServer) createEncryptedChunkReader(chunk *filer_pb.FileChunk) (i
 	}
 
 	return resp.Body, nil
+}
+
+// createMultipartSSECDecryptedReader creates a decrypted reader for multipart SSE-C objects
+// Each chunk has its own IV and encryption key from the original multipart parts
+func (s3a *S3ApiServer) createMultipartSSECDecryptedReader(r *http.Request, proxyResponse *http.Response) (io.Reader, error) {
+	// Parse SSE-C headers from the request for decryption key
+	customerKey, err := ParseSSECHeaders(r)
+	if err != nil {
+		return nil, fmt.Errorf("invalid SSE-C headers for multipart decryption: %v", err)
+	}
+
+	// Get the object path from the request
+	bucket, object := s3_constants.GetBucketAndObject(r)
+	objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
+
+	// Get the object entry from filer to access chunk information
+	entry, err := s3a.getEntry("", objectPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get object entry for multipart SSE-C decryption: %v", err)
+	}
+
+	// Sort chunks by offset to ensure correct order
+	chunks := entry.GetChunks()
+	sort.Slice(chunks, func(i, j int) bool {
+		return chunks[i].GetOffset() < chunks[j].GetOffset()
+	})
+
+	// Create readers for each chunk, decrypting them independently
+	var readers []io.Reader
+
+	for i, chunk := range chunks {
+		glog.Infof("Processing SSE-C chunk %d/%d: fileId=%s, offset=%d, size=%d, sse_type=%d",
+			i+1, len(entry.GetChunks()), chunk.GetFileIdString(), chunk.GetOffset(), chunk.GetSize(), chunk.GetSseType())
+
+		// Get this chunk's encrypted data
+		chunkReader, err := s3a.createEncryptedChunkReader(chunk)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create chunk reader: %v", err)
+		}
+
+		if chunk.GetSseType() == filer_pb.SSEType_SSE_C {
+			// For SSE-C chunks, extract the IV from the stored per-chunk metadata (unified approach)
+			if len(chunk.GetSseKmsMetadata()) > 0 {
+				// Deserialize the SSE-C metadata stored in the unified metadata field
+				ssecMetadata, decErr := DeserializeSSECMetadata(chunk.GetSseKmsMetadata())
+				if decErr != nil {
+					return nil, fmt.Errorf("failed to deserialize SSE-C metadata for chunk %s: %v", chunk.GetFileIdString(), decErr)
+				}
+
+				// Decode the IV from the metadata
+				iv, ivErr := base64.StdEncoding.DecodeString(ssecMetadata.IV)
+				if ivErr != nil {
+					return nil, fmt.Errorf("failed to decode IV for SSE-C chunk %s: %v", chunk.GetFileIdString(), ivErr)
+				}
+
+				// Calculate the correct IV for this chunk using within-part offset
+				var chunkIV []byte
+				if ssecMetadata.PartOffset > 0 {
+					chunkIV = calculateIVWithOffset(iv, ssecMetadata.PartOffset)
+					glog.V(4).Infof("Calculated offset IV for SSE-C chunk %s: baseIV=%x, offset=%d, chunkIV=%x",
+						chunk.GetFileIdString(), iv[:8], ssecMetadata.PartOffset, chunkIV[:8])
+				} else {
+					chunkIV = iv
+					glog.V(4).Infof("Using base IV for SSE-C chunk %s: %x", chunk.GetFileIdString(), iv[:8])
+				}
+
+				decryptedReader, decErr := CreateSSECDecryptedReader(chunkReader, customerKey, chunkIV)
+				if decErr != nil {
+					return nil, fmt.Errorf("failed to create SSE-C decrypted reader for chunk %s: %v", chunk.GetFileIdString(), decErr)
+				}
+				readers = append(readers, decryptedReader)
+				glog.Infof("Created SSE-C decrypted reader for chunk %s using stored metadata", chunk.GetFileIdString())
+			} else {
+				return nil, fmt.Errorf("SSE-C chunk %s missing required metadata", chunk.GetFileIdString())
+			}
+		} else {
+			// Non-SSE-C chunk, use as-is
+			readers = append(readers, chunkReader)
+		}
+	}
+
+	return io.MultiReader(readers...), nil
 }
