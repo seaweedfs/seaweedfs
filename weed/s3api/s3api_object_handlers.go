@@ -962,19 +962,13 @@ func (s3a *S3ApiServer) createMultipartSSEKMSDecryptedReader(r *http.Request, pr
 			return nil, fmt.Errorf("failed to decrypt chunk: %v", decErr)
 		}
 
-		// Read chunk data fully to ensure proper concatenation
-		decryptedData, readErr := io.ReadAll(decryptedChunkReader)
-		chunkReader.Close() // Close the original reader
-		if readErr != nil {
-			return nil, fmt.Errorf("failed to read decrypted chunk %s: %v", chunk.GetFileIdString(), readErr)
-		}
-
-		readers = append(readers, bytes.NewReader(decryptedData))
-		glog.V(4).Infof("Added decrypted reader for chunk %s in multipart SSE-KMS object", chunk.GetFileIdString())
+		// Use the streaming decrypted reader directly instead of reading into memory
+		readers = append(readers, decryptedChunkReader)
+		glog.V(4).Infof("Added streaming decrypted reader for chunk %s in multipart SSE-KMS object", chunk.GetFileIdString())
 	}
 
-	// Combine all decrypted chunk readers into a single stream
-	multiReader := io.MultiReader(readers...)
+	// Combine all decrypted chunk readers into a single stream with proper resource management
+	multiReader := NewMultipartSSEReader(readers)
 	glog.V(3).Infof("Created multipart SSE-KMS decrypted reader with %d chunks", len(readers))
 
 	return multiReader, nil
@@ -1006,6 +1000,39 @@ func (s3a *S3ApiServer) createEncryptedChunkReader(chunk *filer_pb.FileChunk) (i
 	}
 
 	return resp.Body, nil
+}
+
+// MultipartSSEReader wraps multiple readers and ensures all underlying readers are properly closed
+type MultipartSSEReader struct {
+	multiReader io.Reader
+	readers     []io.Reader
+}
+
+// NewMultipartSSEReader creates a new multipart reader that can properly close all underlying readers
+func NewMultipartSSEReader(readers []io.Reader) *MultipartSSEReader {
+	return &MultipartSSEReader{
+		multiReader: io.MultiReader(readers...),
+		readers:     readers,
+	}
+}
+
+// Read implements the io.Reader interface
+func (m *MultipartSSEReader) Read(p []byte) (n int, err error) {
+	return m.multiReader.Read(p)
+}
+
+// Close implements the io.Closer interface and closes all underlying readers that support closing
+func (m *MultipartSSEReader) Close() error {
+	var lastErr error
+	for i, reader := range m.readers {
+		if closer, ok := reader.(io.Closer); ok {
+			if err := closer.Close(); err != nil {
+				glog.V(2).Infof("Error closing reader %d: %v", i, err)
+				lastErr = err // Keep track of the last error, but continue closing others
+			}
+		}
+	}
+	return lastErr
 }
 
 // createMultipartSSECDecryptedReader creates a decrypted reader for multipart SSE-C objects
@@ -1087,5 +1114,5 @@ func (s3a *S3ApiServer) createMultipartSSECDecryptedReader(r *http.Request, prox
 		}
 	}
 
-	return io.MultiReader(readers...), nil
+	return NewMultipartSSEReader(readers), nil
 }
