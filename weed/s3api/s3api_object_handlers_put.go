@@ -191,10 +191,6 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader io.Reader, destination string, bucket string) (etag string, code s3err.ErrorCode) {
 
-	// Debug: Check if SSE-KMS header is present
-	sseKMSHeaderValue := r.Header.Get(s3_constants.SeaweedFSSSEKMSKeyHeader)
-	glog.Errorf("S3 DEBUG: putToFiler called. SSE-KMS header present: %v, length: %d, uploadUrl: %s", sseKMSHeaderValue != "", len(sseKMSHeaderValue), uploadUrl)
-
 	// Handle SSE-C encryption if requested
 	customerKey, err := ParseSSECHeaders(r)
 	if err != nil {

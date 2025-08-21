@@ -256,6 +256,9 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 					CipherKey:    chunk.CipherKey,
 					ETag:         chunk.ETag,
 					IsCompressed: chunk.IsCompressed,
+					// Preserve SSE metadata during multipart completion
+					SseType:        chunk.SseType,
+					SseKmsMetadata: chunk.SseKmsMetadata,
 				}
 				finalParts = append(finalParts, p)
 				offset += int64(chunk.Size)

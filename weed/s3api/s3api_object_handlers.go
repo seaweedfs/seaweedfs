@@ -750,9 +750,7 @@ func (s3a *S3ApiServer) handleSSEKMSResponse(r *http.Request, proxyResponse *htt
 		if entry, err := s3a.getEntry("", objectPath); err == nil {
 			// Check if we have multiple chunks with SSE-KMS metadata
 			sseKMSChunks := 0
-			for i, chunk := range entry.GetChunks() {
-				glog.Errorf("CHUNK DEBUG %d: sseType=%d, metadataLen=%d, fileId=%s",
-					i, chunk.GetSseType(), len(chunk.GetSseKmsMetadata()), chunk.GetFileIdString())
+			for _, chunk := range entry.GetChunks() {
 				if chunk.GetSseType() == filer_pb.SSEType_SSE_KMS && len(chunk.GetSseKmsMetadata()) > 0 {
 					sseKMSChunks++
 				}
