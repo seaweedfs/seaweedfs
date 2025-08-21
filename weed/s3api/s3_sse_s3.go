@@ -11,6 +11,7 @@ import (
 	mathrand "math/rand"
 	"net/http"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
@@ -30,7 +31,15 @@ type SSES3Key struct {
 
 // IsSSES3RequestInternal checks if the request specifies SSE-S3 encryption
 func IsSSES3RequestInternal(r *http.Request) bool {
-	return r.Header.Get(s3_constants.AmzServerSideEncryption) == SSES3Algorithm
+	sseHeader := r.Header.Get(s3_constants.AmzServerSideEncryption)
+	result := sseHeader == SSES3Algorithm
+
+	// Debug: log header detection for any SSE-S3 requests
+	if sseHeader != "" || result {
+		glog.Infof("SSE-S3 detection: method=%s, header=%q, expected=%q, result=%t, copySource=%q", r.Method, sseHeader, SSES3Algorithm, result, r.Header.Get("X-Amz-Copy-Source"))
+	}
+
+	return result
 }
 
 // IsSSES3EncryptedInternal checks if the object metadata indicates SSE-S3 encryption

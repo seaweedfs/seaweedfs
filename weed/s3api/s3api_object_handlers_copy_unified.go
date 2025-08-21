@@ -124,9 +124,9 @@ func (s3a *S3ApiServer) executeEncryptCopy(entry *filer_pb.Entry, r *http.Reques
 	}
 
 	if state.DstSSES3 {
-		// Use streaming copy for SSE-S3 encryption
-		chunks, dstMetadata, err := s3a.executeStreamingReencryptCopy(entry, r, state, dstPath)
-		return chunks, dstMetadata, err
+		// Use chunk-by-chunk copy for SSE-S3 encryption
+		glog.V(2).Infof("Plain→SSE-S3 copy: using unified multipart copy")
+		return s3a.copyMultipartCrossEncryption(entry, r, state, dstBucket, dstPath)
 	}
 
 	return nil, nil, fmt.Errorf("unknown target encryption type")
@@ -141,9 +141,9 @@ func (s3a *S3ApiServer) executeDecryptCopy(entry *filer_pb.Entry, r *http.Reques
 	}
 
 	if state.SrcSSES3 {
-		// Use streaming copy for SSE-S3 decryption
-		chunks, dstMetadata, err := s3a.executeStreamingReencryptCopy(entry, r, state, dstPath)
-		return chunks, dstMetadata, err
+		// Use chunk-by-chunk copy for SSE-S3 decryption
+		glog.V(2).Infof("SSE-S3→Plain copy: using unified multipart copy")
+		return s3a.copyMultipartCrossEncryption(entry, r, state, "", dstPath)
 	}
 
 	return nil, nil, fmt.Errorf("unknown source encryption type")
@@ -180,11 +180,10 @@ func (s3a *S3ApiServer) executeReencryptCopy(entry *filer_pb.Entry, r *http.Requ
 		return s3a.copyMultipartCrossEncryption(entry, r, state, dstBucket, dstPath)
 	}
 
-	// Handle SSE-S3 cross-encryption scenarios
+	// Handle SSE-S3 cross-encryption scenarios using the proven chunk-by-chunk approach
 	if state.SrcSSES3 || state.DstSSES3 {
-		// Any scenario involving SSE-S3 uses streaming copy
-		chunks, dstMetadata, err := s3a.executeStreamingReencryptCopy(entry, r, state, dstPath)
-		return chunks, dstMetadata, err
+		glog.V(2).Infof("SSE-S3 cross-encryption copy: using unified multipart copy")
+		return s3a.copyMultipartCrossEncryption(entry, r, state, dstBucket, dstPath)
 	}
 
 	return nil, nil, fmt.Errorf("unsupported cross-encryption scenario")
@@ -192,6 +191,13 @@ func (s3a *S3ApiServer) executeReencryptCopy(entry *filer_pb.Entry, r *http.Requ
 
 // shouldUseStreamingCopy determines if streaming copy should be used
 func (s3a *S3ApiServer) shouldUseStreamingCopy(entry *filer_pb.Entry, state *EncryptionState) bool {
+	// Disable streaming copy for cross-SSE scenarios involving SSE-S3 for now
+	// The chunk-by-chunk approach has proven more reliable for cross-encryption
+	if state.SrcSSES3 || state.DstSSES3 {
+		glog.V(3).Infof("SSE-S3 cross-encryption detected, using chunk-by-chunk approach for reliability")
+		return false
+	}
+
 	// Use streaming copy for large files or when beneficial
 	fileSize := entry.Attributes.FileSize
 
@@ -229,11 +235,6 @@ func (s3a *S3ApiServer) shouldUseStreamingCopy(entry *filer_pb.Entry, state *Enc
 
 	// Use streaming for compressed files
 	if isCompressedEntry(entry) {
-		return true
-	}
-
-	// Use streaming for SSE-S3 scenarios (always)
-	if state.SrcSSES3 || state.DstSSES3 {
 		return true
 	}
 

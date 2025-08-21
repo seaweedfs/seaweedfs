@@ -308,6 +308,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 				dstEntry.Extended[k] = v
 			}
 			glog.V(2).Infof("Applied %d destination metadata entries for copy: %s", len(dstMetadata), r.URL.Path)
+
 		}
 	}
 
@@ -1527,8 +1528,8 @@ func (s3a *S3ApiServer) copyMultipartSSECChunk(chunk *filer_pb.FileChunk, copySo
 // This unified function supports: SSE-C↔SSE-KMS, SSE-C→Plain, SSE-KMS→Plain
 func (s3a *S3ApiServer) copyMultipartCrossEncryption(entry *filer_pb.Entry, r *http.Request, state *EncryptionState, dstBucket, dstPath string) ([]*filer_pb.FileChunk, map[string][]byte, error) {
 	glog.Infof("copyMultipartCrossEncryption called: %s→%s, path=%s",
-		getEncryptionTypeString(state.SrcSSEC, state.SrcSSEKMS, false),
-		getEncryptionTypeString(state.DstSSEC, state.DstSSEKMS, false), dstPath)
+		getEncryptionTypeString(state.SrcSSEC, state.SrcSSEKMS, state.SrcSSES3),
+		getEncryptionTypeString(state.DstSSEC, state.DstSSEKMS, state.DstSSES3), dstPath)
 
 	var dstChunks []*filer_pb.FileChunk
 
@@ -1646,6 +1647,7 @@ func (s3a *S3ApiServer) copyMultipartCrossEncryption(entry *filer_pb.Entry, r *h
 			glog.Errorf("❌ Failed to serialize SSE-KMS metadata: %v", serErr)
 		}
 	} else if state.DstSSES3 {
+
 		// For SSE-S3 destination, create SSE-S3 metadata
 		keyManager := GetSSES3KeyManager()
 		sseS3Key, err := keyManager.GetOrCreateKey("")
