@@ -192,8 +192,9 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 
 	// print out the header from extended properties
 	for k, v := range entry.Extended {
-		if !strings.HasPrefix(k, "xattr-") {
+		if !strings.HasPrefix(k, "xattr-") && !strings.HasPrefix(k, "x-seaweedfs-") {
 			// "xattr-" prefix is set in filesys.XATTR_PREFIX
+			// "x-seaweedfs-" prefix is for internal metadata that should not become HTTP headers
 			w.Header().Set(k, string(v))
 		}
 	}
@@ -219,11 +220,28 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		w.Header().Set(s3_constants.AmzTagCount, strconv.Itoa(tagCount))
 	}
 
+	// Set SSE metadata headers for S3 API consumption
+	if sseIV, exists := entry.Extended[s3_constants.SeaweedFSSSEIV]; exists {
+		// Convert binary IV to base64 for HTTP header
+		ivBase64 := base64.StdEncoding.EncodeToString(sseIV)
+		w.Header().Set(s3_constants.SeaweedFSSSEIVHeader, ivBase64)
+	}
+
+	if sseKMSKey, exists := entry.Extended[s3_constants.SeaweedFSSSEKMSKey]; exists {
+		// Convert binary KMS metadata to base64 for HTTP header
+		kmsBase64 := base64.StdEncoding.EncodeToString(sseKMSKey)
+		w.Header().Set(s3_constants.SeaweedFSSSEKMSKeyHeader, kmsBase64)
+	}
+
 	SetEtag(w, etag)
 
 	filename := entry.Name()
 	AdjustPassthroughHeaders(w, r, filename)
-	totalSize := int64(entry.Size())
+
+	// For range processing, use the original content size, not the encrypted size
+	// entry.Size() returns max(chunk_sizes, file_size) where chunk_sizes include encryption overhead
+	// For SSE objects, we need the original unencrypted size for proper range validation
+	totalSize := int64(entry.FileSize)
 
 	if r.Method == http.MethodHead {
 		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))

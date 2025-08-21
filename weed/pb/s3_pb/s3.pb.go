@@ -334,9 +334,10 @@ func (x *CORSConfiguration) GetCorsRules() []*CORSRule {
 }
 
 type BucketMetadata struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Tags          map[string]string      `protobuf:"bytes,1,rep,name=tags,proto3" json:"tags,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	Cors          *CORSConfiguration     `protobuf:"bytes,2,opt,name=cors,proto3" json:"cors,omitempty"`
+	state         protoimpl.MessageState   `protogen:"open.v1"`
+	Tags          map[string]string        `protobuf:"bytes,1,rep,name=tags,proto3" json:"tags,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Cors          *CORSConfiguration       `protobuf:"bytes,2,opt,name=cors,proto3" json:"cors,omitempty"`
+	Encryption    *EncryptionConfiguration `protobuf:"bytes,3,opt,name=encryption,proto3" json:"encryption,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -385,6 +386,73 @@ func (x *BucketMetadata) GetCors() *CORSConfiguration {
 	return nil
 }
 
+func (x *BucketMetadata) GetEncryption() *EncryptionConfiguration {
+	if x != nil {
+		return x.Encryption
+	}
+	return nil
+}
+
+type EncryptionConfiguration struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	SseAlgorithm     string                 `protobuf:"bytes,1,opt,name=sse_algorithm,json=sseAlgorithm,proto3" json:"sse_algorithm,omitempty"`                // "AES256" or "aws:kms"
+	KmsKeyId         string                 `protobuf:"bytes,2,opt,name=kms_key_id,json=kmsKeyId,proto3" json:"kms_key_id,omitempty"`                          // KMS key ID (optional for aws:kms)
+	BucketKeyEnabled bool                   `protobuf:"varint,3,opt,name=bucket_key_enabled,json=bucketKeyEnabled,proto3" json:"bucket_key_enabled,omitempty"` // S3 Bucket Keys optimization
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *EncryptionConfiguration) Reset() {
+	*x = EncryptionConfiguration{}
+	mi := &file_s3_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EncryptionConfiguration) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EncryptionConfiguration) ProtoMessage() {}
+
+func (x *EncryptionConfiguration) ProtoReflect() protoreflect.Message {
+	mi := &file_s3_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EncryptionConfiguration.ProtoReflect.Descriptor instead.
+func (*EncryptionConfiguration) Descriptor() ([]byte, []int) {
+	return file_s3_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *EncryptionConfiguration) GetSseAlgorithm() string {
+	if x != nil {
+		return x.SseAlgorithm
+	}
+	return ""
+}
+
+func (x *EncryptionConfiguration) GetKmsKeyId() string {
+	if x != nil {
+		return x.KmsKeyId
+	}
+	return ""
+}
+
+func (x *EncryptionConfiguration) GetBucketKeyEnabled() bool {
+	if x != nil {
+		return x.BucketKeyEnabled
+	}
+	return false
+}
+
 var File_s3_proto protoreflect.FileDescriptor
 
 const file_s3_proto_rawDesc = "" +
@@ -414,13 +482,21 @@ const file_s3_proto_rawDesc = "" +
 	"\x02id\x18\x06 \x01(\tR\x02id\"J\n" +
 	"\x11CORSConfiguration\x125\n" +
 	"\n" +
-	"cors_rules\x18\x01 \x03(\v2\x16.messaging_pb.CORSRuleR\tcorsRules\"\xba\x01\n" +
+	"cors_rules\x18\x01 \x03(\v2\x16.messaging_pb.CORSRuleR\tcorsRules\"\x81\x02\n" +
 	"\x0eBucketMetadata\x12:\n" +
 	"\x04tags\x18\x01 \x03(\v2&.messaging_pb.BucketMetadata.TagsEntryR\x04tags\x123\n" +
-	"\x04cors\x18\x02 \x01(\v2\x1f.messaging_pb.CORSConfigurationR\x04cors\x1a7\n" +
+	"\x04cors\x18\x02 \x01(\v2\x1f.messaging_pb.CORSConfigurationR\x04cors\x12E\n" +
+	"\n" +
+	"encryption\x18\x03 \x01(\v2%.messaging_pb.EncryptionConfigurationR\n" +
+	"encryption\x1a7\n" +
 	"\tTagsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x012_\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x8a\x01\n" +
+	"\x17EncryptionConfiguration\x12#\n" +
+	"\rsse_algorithm\x18\x01 \x01(\tR\fsseAlgorithm\x12\x1c\n" +
+	"\n" +
+	"kms_key_id\x18\x02 \x01(\tR\bkmsKeyId\x12,\n" +
+	"\x12bucket_key_enabled\x18\x03 \x01(\bR\x10bucketKeyEnabled2_\n" +
 	"\tSeaweedS3\x12R\n" +
 	"\tConfigure\x12 .messaging_pb.S3ConfigureRequest\x1a!.messaging_pb.S3ConfigureResponse\"\x00BI\n" +
 	"\x10seaweedfs.clientB\aS3ProtoZ,github.com/seaweedfs/seaweedfs/weed/pb/s3_pbb\x06proto3"
@@ -437,7 +513,7 @@ func file_s3_proto_rawDescGZIP() []byte {
 	return file_s3_proto_rawDescData
 }
 
-var file_s3_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
+var file_s3_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_s3_proto_goTypes = []any{
 	(*S3ConfigureRequest)(nil),      // 0: messaging_pb.S3ConfigureRequest
 	(*S3ConfigureResponse)(nil),     // 1: messaging_pb.S3ConfigureResponse
@@ -446,25 +522,27 @@ var file_s3_proto_goTypes = []any{
 	(*CORSRule)(nil),                // 4: messaging_pb.CORSRule
 	(*CORSConfiguration)(nil),       // 5: messaging_pb.CORSConfiguration
 	(*BucketMetadata)(nil),          // 6: messaging_pb.BucketMetadata
-	nil,                             // 7: messaging_pb.S3CircuitBreakerConfig.BucketsEntry
-	nil,                             // 8: messaging_pb.S3CircuitBreakerOptions.ActionsEntry
-	nil,                             // 9: messaging_pb.BucketMetadata.TagsEntry
+	(*EncryptionConfiguration)(nil), // 7: messaging_pb.EncryptionConfiguration
+	nil,                             // 8: messaging_pb.S3CircuitBreakerConfig.BucketsEntry
+	nil,                             // 9: messaging_pb.S3CircuitBreakerOptions.ActionsEntry
+	nil,                             // 10: messaging_pb.BucketMetadata.TagsEntry
 }
 var file_s3_proto_depIdxs = []int32{
-	3, // 0: messaging_pb.S3CircuitBreakerConfig.global:type_name -> messaging_pb.S3CircuitBreakerOptions
-	7, // 1: messaging_pb.S3CircuitBreakerConfig.buckets:type_name -> messaging_pb.S3CircuitBreakerConfig.BucketsEntry
-	8, // 2: messaging_pb.S3CircuitBreakerOptions.actions:type_name -> messaging_pb.S3CircuitBreakerOptions.ActionsEntry
-	4, // 3: messaging_pb.CORSConfiguration.cors_rules:type_name -> messaging_pb.CORSRule
-	9, // 4: messaging_pb.BucketMetadata.tags:type_name -> messaging_pb.BucketMetadata.TagsEntry
-	5, // 5: messaging_pb.BucketMetadata.cors:type_name -> messaging_pb.CORSConfiguration
-	3, // 6: messaging_pb.S3CircuitBreakerConfig.BucketsEntry.value:type_name -> messaging_pb.S3CircuitBreakerOptions
-	0, // 7: messaging_pb.SeaweedS3.Configure:input_type -> messaging_pb.S3ConfigureRequest
-	1, // 8: messaging_pb.SeaweedS3.Configure:output_type -> messaging_pb.S3ConfigureResponse
-	8, // [8:9] is the sub-list for method output_type
-	7, // [7:8] is the sub-list for method input_type
-	7, // [7:7] is the sub-list for extension type_name
-	7, // [7:7] is the sub-list for extension extendee
-	0, // [0:7] is the sub-list for field type_name
+	3,  // 0: messaging_pb.S3CircuitBreakerConfig.global:type_name -> messaging_pb.S3CircuitBreakerOptions
+	8,  // 1: messaging_pb.S3CircuitBreakerConfig.buckets:type_name -> messaging_pb.S3CircuitBreakerConfig.BucketsEntry
+	9,  // 2: messaging_pb.S3CircuitBreakerOptions.actions:type_name -> messaging_pb.S3CircuitBreakerOptions.ActionsEntry
+	4,  // 3: messaging_pb.CORSConfiguration.cors_rules:type_name -> messaging_pb.CORSRule
+	10, // 4: messaging_pb.BucketMetadata.tags:type_name -> messaging_pb.BucketMetadata.TagsEntry
+	5,  // 5: messaging_pb.BucketMetadata.cors:type_name -> messaging_pb.CORSConfiguration
+	7,  // 6: messaging_pb.BucketMetadata.encryption:type_name -> messaging_pb.EncryptionConfiguration
+	3,  // 7: messaging_pb.S3CircuitBreakerConfig.BucketsEntry.value:type_name -> messaging_pb.S3CircuitBreakerOptions
+	0,  // 8: messaging_pb.SeaweedS3.Configure:input_type -> messaging_pb.S3ConfigureRequest
+	1,  // 9: messaging_pb.SeaweedS3.Configure:output_type -> messaging_pb.S3ConfigureResponse
+	9,  // [9:10] is the sub-list for method output_type
+	8,  // [8:9] is the sub-list for method input_type
+	8,  // [8:8] is the sub-list for extension type_name
+	8,  // [8:8] is the sub-list for extension extendee
+	0,  // [0:8] is the sub-list for field type_name
 }
 
 func init() { file_s3_proto_init() }
@@ -478,7 +556,7 @@ func file_s3_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_s3_proto_rawDesc), len(file_s3_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   10,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"crypto/md5"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -200,13 +201,70 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	}
 
 	// Apply SSE-C encryption if customer key is provided
+	var sseIV []byte
 	if customerKey != nil {
-		encryptedReader, encErr := CreateSSECEncryptedReader(dataReader, customerKey)
+		encryptedReader, iv, encErr := CreateSSECEncryptedReader(dataReader, customerKey)
 		if encErr != nil {
 			glog.Errorf("Failed to create SSE-C encrypted reader: %v", encErr)
 			return "", s3err.ErrInternalError
 		}
 		dataReader = encryptedReader
+		sseIV = iv
+	}
+
+	// Handle SSE-KMS encryption if requested
+	var sseKMSKey *SSEKMSKey
+	glog.V(4).Infof("putToFiler: checking for SSE-KMS request. Headers: SSE=%s, KeyID=%s", r.Header.Get(s3_constants.AmzServerSideEncryption), r.Header.Get(s3_constants.AmzServerSideEncryptionAwsKmsKeyId))
+	if IsSSEKMSRequest(r) {
+		glog.V(3).Infof("putToFiler: SSE-KMS request detected, processing encryption")
+		// Parse SSE-KMS headers
+		keyID := r.Header.Get(s3_constants.AmzServerSideEncryptionAwsKmsKeyId)
+		bucketKeyEnabled := strings.ToLower(r.Header.Get(s3_constants.AmzServerSideEncryptionBucketKeyEnabled)) == "true"
+
+		// Build encryption context
+		bucket, object := s3_constants.GetBucketAndObject(r)
+		encryptionContext := BuildEncryptionContext(bucket, object, bucketKeyEnabled)
+
+		// Add any user-provided encryption context
+		if contextHeader := r.Header.Get(s3_constants.AmzServerSideEncryptionContext); contextHeader != "" {
+			userContext, err := parseEncryptionContext(contextHeader)
+			if err != nil {
+				glog.Errorf("Failed to parse encryption context: %v", err)
+				return "", s3err.ErrInvalidRequest
+			}
+			// Merge user context with default context
+			for k, v := range userContext {
+				encryptionContext[k] = v
+			}
+		}
+
+		// Check if a base IV is provided (for multipart uploads)
+		var encryptedReader io.Reader
+		var sseKey *SSEKMSKey
+		var encErr error
+
+		baseIVHeader := r.Header.Get(s3_constants.SeaweedFSSSEKMSBaseIVHeader)
+		if baseIVHeader != "" {
+			// Decode the base IV from the header
+			baseIV, decodeErr := base64.StdEncoding.DecodeString(baseIVHeader)
+			if decodeErr != nil || len(baseIV) != 16 {
+				glog.Errorf("Invalid base IV in header: %v", decodeErr)
+				return "", s3err.ErrInternalError
+			}
+			// Use the provided base IV for multipart upload consistency
+			encryptedReader, sseKey, encErr = CreateSSEKMSEncryptedReaderWithBaseIV(dataReader, keyID, encryptionContext, bucketKeyEnabled, baseIV)
+			glog.V(4).Infof("Using provided base IV %x for SSE-KMS encryption", baseIV[:8])
+		} else {
+			// Generate a new IV for single-part uploads
+			encryptedReader, sseKey, encErr = CreateSSEKMSEncryptedReaderWithBucketKey(dataReader, keyID, encryptionContext, bucketKeyEnabled)
+		}
+
+		if encErr != nil {
+			glog.Errorf("Failed to create SSE-KMS encrypted reader: %v", encErr)
+			return "", s3err.ErrInternalError
+		}
+		dataReader = encryptedReader
+		sseKMSKey = sseKey
 	}
 
 	hash := md5.New()
@@ -241,6 +299,30 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	if amzAccountId != "" {
 		proxyReq.Header.Set(s3_constants.ExtAmzOwnerKey, amzAccountId)
 		glog.V(2).Infof("putToFiler: setting owner header %s for object %s", amzAccountId, uploadUrl)
+	}
+
+	// Set SSE-C metadata headers for the filer if encryption was applied
+	if customerKey != nil && len(sseIV) > 0 {
+		proxyReq.Header.Set(s3_constants.AmzServerSideEncryptionCustomerAlgorithm, "AES256")
+		proxyReq.Header.Set(s3_constants.AmzServerSideEncryptionCustomerKeyMD5, customerKey.KeyMD5)
+		// Store IV in a custom header that the filer can use to store in entry metadata
+		proxyReq.Header.Set(s3_constants.SeaweedFSSSEIVHeader, base64.StdEncoding.EncodeToString(sseIV))
+	}
+
+	// Set SSE-KMS metadata headers for the filer if KMS encryption was applied
+	if sseKMSKey != nil {
+		// Serialize SSE-KMS metadata for storage
+		kmsMetadata, err := SerializeSSEKMSMetadata(sseKMSKey)
+		if err != nil {
+			glog.Errorf("Failed to serialize SSE-KMS metadata: %v", err)
+			return "", s3err.ErrInternalError
+		}
+		// Store serialized KMS metadata in a custom header that the filer can use
+		proxyReq.Header.Set(s3_constants.SeaweedFSSSEKMSKeyHeader, base64.StdEncoding.EncodeToString(kmsMetadata))
+
+		glog.V(3).Infof("putToFiler: storing SSE-KMS metadata for object %s with keyID %s", uploadUrl, sseKMSKey.KeyID)
+	} else {
+		glog.V(4).Infof("putToFiler: no SSE-KMS encryption detected")
 	}
 
 	// ensure that the Authorization header is overriding any previous

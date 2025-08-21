@@ -1,7 +1,6 @@
 package s3api
 
 import (
-	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/md5"
@@ -12,8 +11,19 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+)
+
+// SSECCopyStrategy represents different strategies for copying SSE-C objects
+type SSECCopyStrategy int
+
+const (
+	// SSECCopyStrategyDirect indicates the object can be copied directly without decryption
+	SSECCopyStrategyDirect SSECCopyStrategy = iota
+	// SSECCopyStrategyDecryptEncrypt indicates the object must be decrypted then re-encrypted
+	SSECCopyStrategyDecryptEncrypt
 )
 
 const (
@@ -40,17 +50,32 @@ type SSECustomerKey struct {
 	KeyMD5    string
 }
 
-// SSECDecryptedReader wraps an io.Reader to provide SSE-C decryption
-type SSECDecryptedReader struct {
-	reader      io.Reader
-	cipher      cipher.Stream
-	customerKey *SSECustomerKey
-	first       bool
-}
-
 // IsSSECRequest checks if the request contains SSE-C headers
 func IsSSECRequest(r *http.Request) bool {
+	// If SSE-KMS headers are present, this is not an SSE-C request (they are mutually exclusive)
+	sseAlgorithm := r.Header.Get(s3_constants.AmzServerSideEncryption)
+	if sseAlgorithm == "aws:kms" || r.Header.Get(s3_constants.AmzServerSideEncryptionAwsKmsKeyId) != "" {
+		return false
+	}
+
 	return r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerAlgorithm) != ""
+}
+
+// IsSSECEncrypted checks if the metadata indicates SSE-C encryption
+func IsSSECEncrypted(metadata map[string][]byte) bool {
+	if metadata == nil {
+		return false
+	}
+
+	// Check for SSE-C specific metadata keys
+	if _, exists := metadata[s3_constants.AmzServerSideEncryptionCustomerAlgorithm]; exists {
+		return true
+	}
+	if _, exists := metadata[s3_constants.AmzServerSideEncryptionCustomerKeyMD5]; exists {
+		return true
+	}
+
+	return false
 }
 
 // validateAndParseSSECHeaders does the core validation and parsing logic
@@ -80,7 +105,12 @@ func validateAndParseSSECHeaders(algorithm, key, keyMD5 string) (*SSECustomerKey
 	// Validate key MD5 (base64-encoded MD5 of the raw key bytes; case-sensitive)
 	sum := md5.Sum(keyBytes)
 	expectedMD5 := base64.StdEncoding.EncodeToString(sum[:])
+
+	// Debug logging for MD5 validation
+	glog.V(4).Infof("SSE-C MD5 validation: provided='%s', expected='%s', keyBytes=%x", keyMD5, expectedMD5, keyBytes)
+
 	if keyMD5 != expectedMD5 {
+		glog.Errorf("SSE-C MD5 mismatch: provided='%s', expected='%s'", keyMD5, expectedMD5)
 		return nil, ErrSSECustomerKeyMD5Mismatch
 	}
 
@@ -120,7 +150,61 @@ func ParseSSECCopySourceHeaders(r *http.Request) (*SSECustomerKey, error) {
 }
 
 // CreateSSECEncryptedReader creates a new encrypted reader for SSE-C
-func CreateSSECEncryptedReader(r io.Reader, customerKey *SSECustomerKey) (io.Reader, error) {
+// Returns the encrypted reader and the IV for metadata storage
+func CreateSSECEncryptedReader(r io.Reader, customerKey *SSECustomerKey) (io.Reader, []byte, error) {
+	if customerKey == nil {
+		return r, nil, nil
+	}
+
+	// Create AES cipher
+	block, err := aes.NewCipher(customerKey.Key)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create AES cipher: %v", err)
+	}
+
+	// Generate random IV
+	iv := make([]byte, AESBlockSize)
+	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
+		return nil, nil, fmt.Errorf("failed to generate IV: %v", err)
+	}
+
+	// Create CTR mode cipher
+	stream := cipher.NewCTR(block, iv)
+
+	// The IV is stored in metadata, so the encrypted stream does not need to prepend the IV
+	// This ensures correct Content-Length for clients
+	encryptedReader := &cipher.StreamReader{S: stream, R: r}
+
+	return encryptedReader, iv, nil
+}
+
+// CreateSSECDecryptedReader creates a new decrypted reader for SSE-C
+// The IV comes from metadata, not from the encrypted data stream
+func CreateSSECDecryptedReader(r io.Reader, customerKey *SSECustomerKey, iv []byte) (io.Reader, error) {
+	if customerKey == nil {
+		return r, nil
+	}
+
+	// IV must be provided from metadata
+	if len(iv) != AESBlockSize {
+		return nil, fmt.Errorf("invalid IV length: expected %d bytes, got %d", AESBlockSize, len(iv))
+	}
+
+	// Create AES cipher
+	block, err := aes.NewCipher(customerKey.Key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create AES cipher: %v", err)
+	}
+
+	// Create CTR mode cipher using the IV from metadata
+	stream := cipher.NewCTR(block, iv)
+
+	return &cipher.StreamReader{S: stream, R: r}, nil
+}
+
+// CreateSSECEncryptedReaderWithOffset creates an encrypted reader with a specific counter offset
+// This is used for chunk-level encryption where each chunk needs a different counter position
+func CreateSSECEncryptedReaderWithOffset(r io.Reader, customerKey *SSECustomerKey, iv []byte, counterOffset uint64) (io.Reader, error) {
 	if customerKey == nil {
 		return r, nil
 	}
@@ -131,65 +215,57 @@ func CreateSSECEncryptedReader(r io.Reader, customerKey *SSECustomerKey) (io.Rea
 		return nil, fmt.Errorf("failed to create AES cipher: %v", err)
 	}
 
-	// Generate random IV
-	iv := make([]byte, AESBlockSize)
-	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
-		return nil, fmt.Errorf("failed to generate IV: %v", err)
-	}
+	// Create CTR mode cipher with offset
+	stream := createCTRStreamWithOffset(block, iv, counterOffset)
 
-	// Create CTR mode cipher
-	stream := cipher.NewCTR(block, iv)
-
-	// The encrypted stream is the IV (initialization vector) followed by the encrypted data.
-	// The IV is randomly generated for each encryption operation and must be unique and unpredictable.
-	// This is critical for the security of AES-CTR mode: reusing an IV with the same key breaks confidentiality.
-	// By prepending the IV to the ciphertext, the decryptor can extract the IV to initialize the cipher.
-	// Note: AES-CTR provides confidentiality only; use an additional MAC if integrity is required.
-	// We model this with an io.MultiReader (IV first) and a cipher.StreamReader (encrypted payload).
-	return io.MultiReader(bytes.NewReader(iv), &cipher.StreamReader{S: stream, R: r}), nil
+	return &cipher.StreamReader{S: stream, R: r}, nil
 }
 
-// CreateSSECDecryptedReader creates a new decrypted reader for SSE-C
-func CreateSSECDecryptedReader(r io.Reader, customerKey *SSECustomerKey) (io.Reader, error) {
+// CreateSSECDecryptedReaderWithOffset creates a decrypted reader with a specific counter offset
+func CreateSSECDecryptedReaderWithOffset(r io.Reader, customerKey *SSECustomerKey, iv []byte, counterOffset uint64) (io.Reader, error) {
 	if customerKey == nil {
 		return r, nil
 	}
 
-	return &SSECDecryptedReader{
-		reader:      r,
-		customerKey: customerKey,
-		cipher:      nil, // Will be initialized when we read the IV
-		first:       true,
-	}, nil
+	// Create AES cipher
+	block, err := aes.NewCipher(customerKey.Key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create AES cipher: %v", err)
+	}
+
+	// Create CTR mode cipher with offset
+	stream := createCTRStreamWithOffset(block, iv, counterOffset)
+
+	return &cipher.StreamReader{S: stream, R: r}, nil
 }
 
-// Read implements io.Reader for SSECDecryptedReader
-func (r *SSECDecryptedReader) Read(p []byte) (n int, err error) {
-	if r.first {
-		// First read: extract IV and initialize cipher
-		r.first = false
-		iv := make([]byte, AESBlockSize)
+// createCTRStreamWithOffset creates a CTR stream positioned at a specific counter offset
+func createCTRStreamWithOffset(block cipher.Block, iv []byte, counterOffset uint64) cipher.Stream {
+	// Create a copy of the IV to avoid modifying the original
+	offsetIV := make([]byte, len(iv))
+	copy(offsetIV, iv)
 
-		// Read IV from the beginning of the data
-		_, err = io.ReadFull(r.reader, iv)
-		if err != nil {
-			return 0, fmt.Errorf("failed to read IV: %v", err)
+	// Calculate the counter offset in blocks (AES block size is 16 bytes)
+	blockOffset := counterOffset / 16
+
+	// Add the block offset to the counter portion of the IV
+	// In AES-CTR, the last 8 bytes of the IV are typically used as the counter
+	addCounterToIV(offsetIV, blockOffset)
+
+	return cipher.NewCTR(block, offsetIV)
+}
+
+// addCounterToIV adds a counter value to the IV (treating last 8 bytes as big-endian counter)
+func addCounterToIV(iv []byte, counter uint64) {
+	// Use the last 8 bytes as a big-endian counter
+	for i := 7; i >= 0; i-- {
+		carry := counter & 0xff
+		iv[len(iv)-8+i] += byte(carry)
+		if iv[len(iv)-8+i] >= byte(carry) {
+			break // No overflow
 		}
-
-		// Create cipher with the extracted IV
-		block, err := aes.NewCipher(r.customerKey.Key)
-		if err != nil {
-			return 0, fmt.Errorf("failed to create AES cipher: %v", err)
-		}
-		r.cipher = cipher.NewCTR(block, iv)
+		counter >>= 8
 	}
-
-	// Decrypt data
-	n, err = r.reader.Read(p)
-	if n > 0 {
-		r.cipher.XORKeyStream(p[:n], p[:n])
-	}
-	return n, err
 }
 
 // GetSourceSSECInfo extracts SSE-C information from source object metadata
@@ -224,13 +300,7 @@ func CanDirectCopySSEC(srcMetadata map[string][]byte, copySourceKey *SSECustomer
 	return false
 }
 
-// SSECCopyStrategy represents the strategy for copying SSE-C objects
-type SSECCopyStrategy int
-
-const (
-	SSECCopyDirect    SSECCopyStrategy = iota // Direct chunk copy (fast)
-	SSECCopyReencrypt                         // Decrypt and re-encrypt (slow)
-)
+// Note: SSECCopyStrategy is defined above
 
 // DetermineSSECCopyStrategy determines the optimal copy strategy
 func DetermineSSECCopyStrategy(srcMetadata map[string][]byte, copySourceKey *SSECustomerKey, destKey *SSECustomerKey) (SSECCopyStrategy, error) {
@@ -239,21 +309,21 @@ func DetermineSSECCopyStrategy(srcMetadata map[string][]byte, copySourceKey *SSE
 	// Validate source key if source is encrypted
 	if srcEncrypted {
 		if copySourceKey == nil {
-			return SSECCopyReencrypt, ErrSSECustomerKeyMissing
+			return SSECCopyStrategyDecryptEncrypt, ErrSSECustomerKeyMissing
 		}
 		if copySourceKey.KeyMD5 != srcKeyMD5 {
-			return SSECCopyReencrypt, ErrSSECustomerKeyMD5Mismatch
+			return SSECCopyStrategyDecryptEncrypt, ErrSSECustomerKeyMD5Mismatch
 		}
 	} else if copySourceKey != nil {
 		// Source not encrypted but copy source key provided
-		return SSECCopyReencrypt, ErrSSECustomerKeyNotNeeded
+		return SSECCopyStrategyDecryptEncrypt, ErrSSECustomerKeyNotNeeded
 	}
 
 	if CanDirectCopySSEC(srcMetadata, copySourceKey, destKey) {
-		return SSECCopyDirect, nil
+		return SSECCopyStrategyDirect, nil
 	}
 
-	return SSECCopyReencrypt, nil
+	return SSECCopyStrategyDecryptEncrypt, nil
 }
 
 // MapSSECErrorToS3Error maps SSE-C custom errors to S3 API error codes

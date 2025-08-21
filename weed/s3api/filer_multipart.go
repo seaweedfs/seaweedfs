@@ -2,6 +2,8 @@ package s3api
 
 import (
 	"cmp"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/xml"
 	"fmt"
@@ -63,6 +65,37 @@ func (s3a *S3ApiServer) createMultipartUpload(r *http.Request, input *s3.CreateM
 		}
 		if input.ContentType != nil {
 			entry.Attributes.Mime = *input.ContentType
+		}
+
+		// Store SSE-KMS information from create-multipart-upload headers
+		// This allows upload-part operations to inherit encryption settings
+		if IsSSEKMSRequest(r) {
+			keyID := r.Header.Get(s3_constants.AmzServerSideEncryptionAwsKmsKeyId)
+			bucketKeyEnabled := strings.ToLower(r.Header.Get(s3_constants.AmzServerSideEncryptionBucketKeyEnabled)) == "true"
+
+			// Store SSE-KMS configuration for parts to inherit
+			entry.Extended[s3_constants.SeaweedFSSSEKMSKeyID] = []byte(keyID)
+			if bucketKeyEnabled {
+				entry.Extended[s3_constants.SeaweedFSSSEKMSBucketKeyEnabled] = []byte("true")
+			}
+
+			// Store encryption context if provided
+			if contextHeader := r.Header.Get(s3_constants.AmzServerSideEncryptionContext); contextHeader != "" {
+				entry.Extended[s3_constants.SeaweedFSSSEKMSEncryptionContext] = []byte(contextHeader)
+			}
+
+			// Generate and store a base IV for this multipart upload
+			// Chunks within each part will use this base IV with their within-part offset
+			baseIV := make([]byte, 16)
+			if _, err := rand.Read(baseIV); err != nil {
+				glog.Errorf("Failed to generate base IV for multipart upload %s: %v", uploadIdString, err)
+			} else {
+				// Store base IV as base64 encoded string to avoid HTTP header issues
+				entry.Extended[s3_constants.SeaweedFSSSEKMSBaseIV] = []byte(base64.StdEncoding.EncodeToString(baseIV))
+				glog.V(4).Infof("Generated base IV %x for multipart upload %s", baseIV[:8], uploadIdString)
+			}
+
+			glog.V(3).Infof("createMultipartUpload: stored SSE-KMS settings for upload %s with keyID %s", uploadIdString, keyID)
 		}
 
 		// Extract and store object lock metadata from request headers
@@ -227,7 +260,44 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedPartEntryMismatch).Inc()
 				continue
 			}
+
+			// Track within-part offset for SSE-KMS IV calculation
+			var withinPartOffset int64 = 0
+
 			for _, chunk := range entry.GetChunks() {
+				// Update SSE metadata with correct within-part offset (unified approach for KMS and SSE-C)
+				sseKmsMetadata := chunk.SseKmsMetadata
+
+				if chunk.SseType == filer_pb.SSEType_SSE_KMS && len(chunk.SseKmsMetadata) > 0 {
+					// Deserialize, update offset, and re-serialize SSE-KMS metadata
+					if kmsKey, err := DeserializeSSEKMSMetadata(chunk.SseKmsMetadata); err == nil {
+						kmsKey.ChunkOffset = withinPartOffset
+						if updatedMetadata, serErr := SerializeSSEKMSMetadata(kmsKey); serErr == nil {
+							sseKmsMetadata = updatedMetadata
+							glog.V(4).Infof("Updated SSE-KMS metadata for chunk in part %d: withinPartOffset=%d", partNumber, withinPartOffset)
+						}
+					}
+				} else if chunk.SseType == filer_pb.SSEType_SSE_C {
+					// For SSE-C chunks, create per-chunk metadata using the part's IV
+					if ivData, exists := entry.Extended[s3_constants.SeaweedFSSSEIV]; exists {
+						// Get keyMD5 from entry metadata if available
+						var keyMD5 string
+						if keyMD5Data, keyExists := entry.Extended[s3_constants.AmzServerSideEncryptionCustomerKeyMD5]; keyExists {
+							keyMD5 = string(keyMD5Data)
+						}
+
+						// Create SSE-C metadata with the part's IV and this chunk's within-part offset
+						if ssecMetadata, serErr := SerializeSSECMetadata(ivData, keyMD5, withinPartOffset); serErr == nil {
+							sseKmsMetadata = ssecMetadata // Reuse the same field for unified handling
+							glog.V(4).Infof("Created SSE-C metadata for chunk in part %d: withinPartOffset=%d", partNumber, withinPartOffset)
+						} else {
+							glog.Errorf("Failed to serialize SSE-C metadata for chunk in part %d: %v", partNumber, serErr)
+						}
+					} else {
+						glog.Errorf("SSE-C chunk in part %d missing IV in entry metadata", partNumber)
+					}
+				}
+
 				p := &filer_pb.FileChunk{
 					FileId:       chunk.GetFileIdString(),
 					Offset:       offset,
@@ -236,9 +306,13 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 					CipherKey:    chunk.CipherKey,
 					ETag:         chunk.ETag,
 					IsCompressed: chunk.IsCompressed,
+					// Preserve SSE metadata with updated within-part offset
+					SseType:        chunk.SseType,
+					SseKmsMetadata: sseKmsMetadata,
 				}
 				finalParts = append(finalParts, p)
 				offset += int64(chunk.Size)
+				withinPartOffset += int64(chunk.Size)
 			}
 			found = true
 		}
@@ -271,6 +345,19 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			for k, v := range pentry.Extended {
 				if k != "key" {
 					versionEntry.Extended[k] = v
+				}
+			}
+
+			// Preserve SSE-KMS metadata from the first part (if any)
+			// SSE-KMS metadata is stored in individual parts, not the upload directory
+			if len(completedPartNumbers) > 0 && len(partEntries[completedPartNumbers[0]]) > 0 {
+				firstPartEntry := partEntries[completedPartNumbers[0]][0]
+				if firstPartEntry.Extended != nil {
+					// Copy SSE-KMS metadata from the first part
+					if kmsMetadata, exists := firstPartEntry.Extended[s3_constants.SeaweedFSSSEKMSKey]; exists {
+						versionEntry.Extended[s3_constants.SeaweedFSSSEKMSKey] = kmsMetadata
+						glog.V(3).Infof("completeMultipartUpload: preserved SSE-KMS metadata from first part (versioned)")
+					}
 				}
 			}
 			if pentry.Attributes.Mime != "" {
@@ -322,6 +409,19 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 					entry.Extended[k] = v
 				}
 			}
+
+			// Preserve SSE-KMS metadata from the first part (if any)
+			// SSE-KMS metadata is stored in individual parts, not the upload directory
+			if len(completedPartNumbers) > 0 && len(partEntries[completedPartNumbers[0]]) > 0 {
+				firstPartEntry := partEntries[completedPartNumbers[0]][0]
+				if firstPartEntry.Extended != nil {
+					// Copy SSE-KMS metadata from the first part
+					if kmsMetadata, exists := firstPartEntry.Extended[s3_constants.SeaweedFSSSEKMSKey]; exists {
+						entry.Extended[s3_constants.SeaweedFSSSEKMSKey] = kmsMetadata
+						glog.V(3).Infof("completeMultipartUpload: preserved SSE-KMS metadata from first part (suspended versioning)")
+					}
+				}
+			}
 			if pentry.Attributes.Mime != "" {
 				entry.Attributes.Mime = pentry.Attributes.Mime
 			} else if mime != "" {
@@ -360,6 +460,19 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			for k, v := range pentry.Extended {
 				if k != "key" {
 					entry.Extended[k] = v
+				}
+			}
+
+			// Preserve SSE-KMS metadata from the first part (if any)
+			// SSE-KMS metadata is stored in individual parts, not the upload directory
+			if len(completedPartNumbers) > 0 && len(partEntries[completedPartNumbers[0]]) > 0 {
+				firstPartEntry := partEntries[completedPartNumbers[0]][0]
+				if firstPartEntry.Extended != nil {
+					// Copy SSE-KMS metadata from the first part
+					if kmsMetadata, exists := firstPartEntry.Extended[s3_constants.SeaweedFSSSEKMSKey]; exists {
+						entry.Extended[s3_constants.SeaweedFSSSEKMSKey] = kmsMetadata
+						glog.V(3).Infof("completeMultipartUpload: preserved SSE-KMS metadata from first part")
+					}
 				}
 			}
 			if pentry.Attributes.Mime != "" {
