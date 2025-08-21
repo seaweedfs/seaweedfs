@@ -1,0 +1,1 @@
+Test data for single object SSE-C

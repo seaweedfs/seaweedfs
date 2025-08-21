@@ -641,11 +641,11 @@ func (s3a *S3ApiServer) handleSSECResponse(r *http.Request, proxyResponse *http.
 			return http.StatusRequestedRangeNotSatisfiable, 0
 		}
 
-		// Check if this is a multipart SSE-C object that needs per-chunk decryption
+		// Check if this is a chunked or small content SSE-C object
 		bucket, object := s3_constants.GetBucketAndObject(r)
 		objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
 		if entry, err := s3a.getEntry("", objectPath); err == nil {
-			// Check for multipart SSE-C
+			// Check for SSE-C chunks
 			sseCChunks := 0
 			for _, chunk := range entry.GetChunks() {
 				if chunk.GetSseType() == filer_pb.SSEType_SSE_C {
@@ -655,7 +655,7 @@ func (s3a *S3ApiServer) handleSSECResponse(r *http.Request, proxyResponse *http.
 
 			if sseCChunks >= 1 {
 				glog.Infof("🔍 SSE-C GET: Detected chunked SSE-C object with %d total chunks, %d SSE-C chunks, using per-chunk decryption", len(entry.GetChunks()), sseCChunks)
-				// Handle chunked SSE-C objects - each chunk needs independent decryption (including single chunk objects)
+				// Handle chunked SSE-C objects - each chunk needs independent decryption
 				multipartReader, decErr := s3a.createMultipartSSECDecryptedReader(r, proxyResponse)
 				if decErr != nil {
 					glog.Errorf("Failed to create multipart SSE-C decrypted reader: %v", decErr)
@@ -672,6 +672,10 @@ func (s3a *S3ApiServer) handleSSECResponse(r *http.Request, proxyResponse *http.
 				}
 
 				return writeFinalResponse(w, proxyResponse, multipartReader, capturedCORSHeaders)
+			} else if len(entry.GetChunks()) == 0 && len(entry.Content) > 0 {
+				// Small content SSE-C object stored directly in entry.Content
+				glog.Infof("🔍 SSE-C GET: Detected small content SSE-C object (%d bytes), using traditional single-object decryption", len(entry.Content))
+				// Fall through to traditional single-object SSE-C handling below
 			}
 		}
 
@@ -968,8 +972,9 @@ func (s3a *S3ApiServer) addSSEHeadersToResponse(proxyResponse *http.Response, en
 		}
 
 		if ivBytes, exists := entry.Extended[s3_constants.SeaweedFSSSEIV]; exists && len(ivBytes) > 0 {
-			proxyResponse.Header.Set("X-SeaweedFS-SSE-IV", string(ivBytes))
-			glog.Infof("🔍 SET SeaweedFS SSE-IV header")
+			ivBase64 := base64.StdEncoding.EncodeToString(ivBytes)
+			proxyResponse.Header.Set("X-SeaweedFS-SSE-IV", ivBase64)
+			glog.Infof("🔍 SET SeaweedFS SSE-IV header (base64 encoded)")
 		}
 
 	case "SSE-KMS":

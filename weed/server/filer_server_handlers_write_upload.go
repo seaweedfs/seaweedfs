@@ -55,7 +55,7 @@ func (fs *FilerServer) uploadRequestToChunks(ctx context.Context, w http.Respons
 
 func (fs *FilerServer) uploadReaderToChunks(ctx context.Context, r *http.Request, reader io.Reader, startOffset int64, chunkSize int32, fileName, contentType string, isAppend bool, so *operation.StorageOption) (fileChunks []*filer_pb.FileChunk, md5Hash hash.Hash, chunkOffset int64, uploadErr error, smallContent []byte) {
 
-	glog.V(4).InfofCtx(ctx, "uploadReaderToChunks called for fileName: %s", fileName)
+	glog.InfofCtx(ctx, "🔍 uploadReaderToChunks: started for %s (chunkSize: %d, SaveToFilerLimit: %d, isAppend: %t)", fileName, chunkSize, fs.option.SaveToFilerLimit, isAppend)
 	md5Hash = md5.New()
 	chunkOffset = startOffset
 	var partReader = io.NopCloser(io.TeeReader(reader, md5Hash))
@@ -103,7 +103,7 @@ func (fs *FilerServer) uploadReaderToChunks(ctx context.Context, r *http.Request
 		}
 		if chunkOffset == 0 && !isAppend {
 			if dataSize < fs.option.SaveToFilerLimit {
-				glog.V(4).InfofCtx(ctx, "uploadReaderToChunks: using small content path for %s (dataSize: %d)", fileName, dataSize)
+				glog.InfofCtx(ctx, "🔍 uploadReaderToChunks: using small content path for %s (dataSize: %d, SaveToFilerLimit: %d)", fileName, dataSize, fs.option.SaveToFilerLimit)
 				chunkOffset += dataSize
 				smallContent = make([]byte, dataSize)
 				bytesBuffer.Read(smallContent)
@@ -113,6 +113,7 @@ func (fs *FilerServer) uploadReaderToChunks(ctx context.Context, r *http.Request
 				break
 			}
 		} else {
+			glog.InfofCtx(ctx, "🔍 uploadReaderToChunks: using chunking path for %s (dataSize: %d >= SaveToFilerLimit: %d or isAppend: %t)", fileName, dataSize, fs.option.SaveToFilerLimit, isAppend)
 			stats.FilerHandlerCounter.WithLabelValues(stats.AutoChunk).Inc()
 		}
 
@@ -124,7 +125,7 @@ func (fs *FilerServer) uploadReaderToChunks(ctx context.Context, r *http.Request
 				wg.Done()
 			}()
 
-			glog.V(4).InfofCtx(ctx, "About to call dataToChunkWithSSE for %s at offset %d", fileName, offset)
+			glog.InfofCtx(ctx, "🔍 About to call dataToChunkWithSSE for %s at offset %d", fileName, offset)
 			chunks, toChunkErr := fs.dataToChunkWithSSE(ctx, r, fileName, contentType, buf.Bytes(), offset, so)
 			if toChunkErr != nil {
 				uploadErrLock.Lock()
@@ -252,6 +253,13 @@ func (fs *FilerServer) dataToChunkWithSSE(ctx context.Context, r *http.Request, 
 	var sseKmsMetadata []byte
 
 	if r != nil {
+		glog.InfofCtx(ctx, "🔍 dataToChunkWithSSE: checking headers for chunk %s. SSE-C Algorithm: '%s', SSE-C KeyMD5: '%s', SSE-KMS: '%s', SeaweedFS-SSE-IV: '%s'",
+			fileId,
+			r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerAlgorithm),
+			r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerKeyMD5),
+			r.Header.Get(s3_constants.SeaweedFSSSEKMSKeyHeader),
+			r.Header.Get(s3_constants.SeaweedFSSSEIVHeader))
+
 		// Check for SSE-KMS
 		sseKMSHeaderValue := r.Header.Get(s3_constants.SeaweedFSSSEKMSKeyHeader)
 		if sseKMSHeaderValue != "" {
@@ -287,7 +295,7 @@ func (fs *FilerServer) dataToChunkWithSSE(ctx context.Context, r *http.Request, 
 					}
 					if ssecMetadata, serErr := json.Marshal(ssecMetadataStruct); serErr == nil {
 						sseKmsMetadata = ssecMetadata
-						glog.V(4).InfofCtx(ctx, "Created unified SSE-C metadata for chunk %s at offset %d", fileId, chunkOffset)
+						glog.InfofCtx(ctx, "🔍 Created unified SSE-C metadata for chunk %s at offset %d", fileId, chunkOffset)
 					} else {
 						glog.V(1).InfofCtx(ctx, "Failed to serialize SSE-C metadata for chunk %s: %v", fileId, serErr)
 					}
@@ -298,7 +306,7 @@ func (fs *FilerServer) dataToChunkWithSSE(ctx context.Context, r *http.Request, 
 				glog.V(4).InfofCtx(ctx, "SSE-C chunk %s missing IV or KeyMD5 header", fileId)
 			}
 		} else {
-			glog.V(4).InfofCtx(ctx, "dataToChunkWithSSE: No SSE headers found")
+			glog.InfofCtx(ctx, "🔍 dataToChunkWithSSE: No SSE headers found for chunk %s", fileId)
 		}
 	}
 
