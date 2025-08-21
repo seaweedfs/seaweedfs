@@ -36,6 +36,7 @@ type SSEKMSKey struct {
 	EncryptionContext map[string]string // The encryption context used
 	BucketKeyEnabled  bool              // Whether S3 Bucket Keys are enabled
 	IV                []byte            // The initialization vector for encryption
+	ChunkOffset       int64             // Offset of this chunk within the original part (for IV calculation)
 }
 
 // SSEKMSMetadata represents the metadata stored with SSE-KMS objects
@@ -46,6 +47,7 @@ type SSEKMSMetadata struct {
 	EncryptionContext map[string]string `json:"encryptionContext"` // Encryption context
 	BucketKeyEnabled  bool              `json:"bucketKeyEnabled"`  // S3 Bucket Key optimization
 	IV                string            `json:"iv"`                // Base64-encoded initialization vector
+	PartOffset        int64             `json:"partOffset"`        // Offset within original multipart part (for IV calculation)
 }
 
 const (
@@ -131,6 +133,65 @@ func CreateSSEKMSEncryptedReaderWithBucketKey(r io.Reader, keyID string, encrypt
 	encryptedReader := &cipher.StreamReader{S: stream, R: r}
 
 	// Store IV in the SSE key for metadata storage
+	sseKey.IV = iv
+
+	return encryptedReader, sseKey, nil
+}
+
+// CreateSSEKMSEncryptedReaderWithBaseIV creates an SSE-KMS encrypted reader using a provided base IV
+// This is used for multipart uploads where all chunks need to use the same base IV
+func CreateSSEKMSEncryptedReaderWithBaseIV(r io.Reader, keyID string, encryptionContext map[string]string, bucketKeyEnabled bool, baseIV []byte) (io.Reader, *SSEKMSKey, error) {
+	if len(baseIV) != 16 {
+		return nil, nil, fmt.Errorf("base IV must be exactly 16 bytes, got %d", len(baseIV))
+	}
+
+	kmsProvider := kms.GetGlobalKMS()
+	if kmsProvider == nil {
+		return nil, nil, fmt.Errorf("KMS is not configured")
+	}
+
+	// Create a new data key for the object
+	generateDataKeyReq := &kms.GenerateDataKeyRequest{
+		KeyID:             keyID,
+		KeySpec:           kms.KeySpecAES256,
+		EncryptionContext: encryptionContext,
+	}
+
+	ctx := context.Background()
+	dataKeyResp, err := kmsProvider.GenerateDataKey(ctx, generateDataKeyReq)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to generate data key: %v", err)
+	}
+
+	// Ensure we clear the plaintext data key from memory when done
+	defer kms.ClearSensitiveData(dataKeyResp.Plaintext)
+
+	// Create AES cipher with the plaintext data key
+	block, err := aes.NewCipher(dataKeyResp.Plaintext)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create AES cipher: %v", err)
+	}
+
+	// Use the provided base IV instead of generating a new one
+	iv := make([]byte, 16)
+	copy(iv, baseIV)
+
+	// Create CTR mode cipher stream
+	stream := cipher.NewCTR(block, iv)
+
+	// Create the SSE-KMS metadata with the provided base IV
+	sseKey := &SSEKMSKey{
+		KeyID:             dataKeyResp.KeyID,
+		EncryptedDataKey:  dataKeyResp.CiphertextBlob,
+		EncryptionContext: encryptionContext,
+		BucketKeyEnabled:  bucketKeyEnabled,
+	}
+
+	// The IV is stored in SSE key metadata, so the encrypted stream does not need to prepend the IV
+	// This ensures correct Content-Length for clients
+	encryptedReader := &cipher.StreamReader{S: stream, R: r}
+
+	// Store the base IV in the SSE key for metadata storage
 	sseKey.IV = iv
 
 	return encryptedReader, sseKey, nil
@@ -371,11 +432,20 @@ func CreateSSEKMSDecryptedReader(r io.Reader, sseKey *SSEKMSKey) (io.Reader, err
 		return nil, fmt.Errorf("KMS key ID mismatch: expected %s, got %s", sseKey.KeyID, decryptResp.KeyID)
 	}
 
-	// Use the IV from the SSE key metadata
+	// Use the IV from the SSE key metadata, calculating offset if this is a chunked part
 	if len(sseKey.IV) != 16 {
 		return nil, fmt.Errorf("invalid IV length in SSE key: expected 16 bytes, got %d", len(sseKey.IV))
 	}
-	iv := sseKey.IV
+
+	// Calculate the correct IV for this chunk's offset within the original part
+	var iv []byte
+	if sseKey.ChunkOffset > 0 {
+		iv = calculateIVWithOffset(sseKey.IV, sseKey.ChunkOffset)
+		glog.Infof("Using calculated IV with offset %d for chunk decryption", sseKey.ChunkOffset)
+	} else {
+		iv = sseKey.IV
+		glog.Infof("Using base IV for chunk decryption (offset=0)")
+	}
 
 	// Create AES cipher with the decrypted data key
 	block, err := aes.NewCipher(decryptResp.Plaintext)
@@ -534,6 +604,7 @@ func SerializeSSEKMSMetadata(sseKey *SSEKMSKey) ([]byte, error) {
 		EncryptionContext: sseKey.EncryptionContext,
 		BucketKeyEnabled:  sseKey.BucketKeyEnabled,
 		IV:                base64.StdEncoding.EncodeToString(sseKey.IV), // Store IV for decryption
+		PartOffset:        sseKey.ChunkOffset,                           // Store within-part offset
 	}
 
 	data, err := json.Marshal(metadata)
@@ -586,11 +657,54 @@ func DeserializeSSEKMSMetadata(data []byte) (*SSEKMSKey, error) {
 		EncryptedDataKey:  encryptedDataKey,
 		EncryptionContext: metadata.EncryptionContext,
 		BucketKeyEnabled:  metadata.BucketKeyEnabled,
-		IV:                iv, // Restore IV for decryption
+		IV:                iv,                  // Restore IV for decryption
+		ChunkOffset:       metadata.PartOffset, // Use stored within-part offset
 	}
 
 	glog.V(4).Infof("Deserialized SSE-KMS metadata: keyID=%s, bucketKey=%t", sseKey.KeyID, sseKey.BucketKeyEnabled)
 	return sseKey, nil
+}
+
+// calculateIVWithOffset calculates the correct IV for a chunk at a given offset within the original data stream
+// This is necessary for AES-CTR mode when data is split into multiple chunks
+func calculateIVWithOffset(baseIV []byte, offset int64) []byte {
+	if len(baseIV) != 16 {
+		glog.Errorf("Invalid base IV length: expected 16, got %d", len(baseIV))
+		return baseIV // Return original IV as fallback
+	}
+
+	// Create a copy of the base IV to avoid modifying the original
+	iv := make([]byte, 16)
+	copy(iv, baseIV)
+
+	// Calculate the block offset (AES block size is 16 bytes)
+	blockOffset := offset / 16
+	glog.Infof("calculateIVWithOffset DEBUG: offset=%d, blockOffset=%d (0x%x)",
+		offset, blockOffset, blockOffset)
+
+	// Add the block offset to the IV counter (last 8 bytes, big-endian)
+	// This matches how AES-CTR mode increments the counter
+	// Process from least significant byte (index 15) to most significant byte (index 8)
+	originalBlockOffset := blockOffset
+	carry := uint64(0)
+	for i := 15; i >= 8; i-- {
+		sum := uint64(iv[i]) + uint64(blockOffset&0xFF) + carry
+		oldByte := iv[i]
+		iv[i] = byte(sum & 0xFF)
+		carry = sum >> 8
+		blockOffset = blockOffset >> 8
+		glog.Infof("calculateIVWithOffset DEBUG: i=%d, oldByte=0x%02x, newByte=0x%02x, carry=%d, blockOffset=0x%x",
+			i, oldByte, iv[i], carry, blockOffset)
+
+		// If no more blockOffset bits and no carry, we can stop early
+		if blockOffset == 0 && carry == 0 {
+			break
+		}
+	}
+
+	glog.Infof("calculateIVWithOffset: baseIV=%x, offset=%d, blockOffset=%d, calculatedIV=%x",
+		baseIV, offset, originalBlockOffset, iv)
+	return iv
 }
 
 // AddSSEKMSResponseHeaders adds SSE-KMS response headers to an HTTP response

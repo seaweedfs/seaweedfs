@@ -2,6 +2,8 @@ package s3api
 
 import (
 	"cmp"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/xml"
 	"fmt"
@@ -80,6 +82,17 @@ func (s3a *S3ApiServer) createMultipartUpload(r *http.Request, input *s3.CreateM
 			// Store encryption context if provided
 			if contextHeader := r.Header.Get(s3_constants.AmzServerSideEncryptionContext); contextHeader != "" {
 				entry.Extended[s3_constants.SeaweedFSSSEKMSEncryptionContext] = []byte(contextHeader)
+			}
+
+			// Generate and store a base IV for this multipart upload
+			// Chunks within each part will use this base IV with their within-part offset
+			baseIV := make([]byte, 16)
+			if _, err := rand.Read(baseIV); err != nil {
+				glog.Errorf("Failed to generate base IV for multipart upload %s: %v", uploadIdString, err)
+			} else {
+				// Store base IV as base64 encoded string to avoid HTTP header issues
+				entry.Extended[s3_constants.SeaweedFSSSEKMSBaseIV] = []byte(base64.StdEncoding.EncodeToString(baseIV))
+				glog.V(4).Infof("Generated base IV %x for multipart upload %s", baseIV[:8], uploadIdString)
 			}
 
 			glog.V(3).Infof("createMultipartUpload: stored SSE-KMS settings for upload %s with keyID %s", uploadIdString, keyID)
@@ -247,7 +260,24 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedPartEntryMismatch).Inc()
 				continue
 			}
+
+			// Track within-part offset for SSE-KMS IV calculation
+			var withinPartOffset int64 = 0
+
 			for _, chunk := range entry.GetChunks() {
+				// Update SSE-KMS metadata with correct within-part offset
+				sseKmsMetadata := chunk.SseKmsMetadata
+				if chunk.SseType == filer_pb.SSEType_SSE_KMS && len(chunk.SseKmsMetadata) > 0 {
+					// Deserialize, update offset, and re-serialize
+					if kmsKey, err := DeserializeSSEKMSMetadata(chunk.SseKmsMetadata); err == nil {
+						kmsKey.ChunkOffset = withinPartOffset
+						if updatedMetadata, serErr := SerializeSSEKMSMetadata(kmsKey); serErr == nil {
+							sseKmsMetadata = updatedMetadata
+							glog.V(4).Infof("Updated SSE-KMS metadata for chunk in part %d: withinPartOffset=%d", partNumber, withinPartOffset)
+						}
+					}
+				}
+
 				p := &filer_pb.FileChunk{
 					FileId:       chunk.GetFileIdString(),
 					Offset:       offset,
@@ -256,12 +286,13 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 					CipherKey:    chunk.CipherKey,
 					ETag:         chunk.ETag,
 					IsCompressed: chunk.IsCompressed,
-					// Preserve SSE metadata during multipart completion
+					// Preserve SSE metadata with updated within-part offset
 					SseType:        chunk.SseType,
-					SseKmsMetadata: chunk.SseKmsMetadata,
+					SseKmsMetadata: sseKmsMetadata,
 				}
 				finalParts = append(finalParts, p)
 				offset += int64(chunk.Size)
+				withinPartOffset += int64(chunk.Size)
 			}
 			found = true
 		}

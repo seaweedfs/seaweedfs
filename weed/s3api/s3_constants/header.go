@@ -98,6 +98,7 @@ const (
 	SeaweedFSSSEKMSEncryption        = "sse-kms-encryption"         // Encryption type for multipart upload SSE-KMS inheritance
 	SeaweedFSSSEKMSBucketKeyEnabled  = "sse-kms-bucket-key-enabled" // Bucket key setting for multipart upload SSE-KMS inheritance
 	SeaweedFSSSEKMSEncryptionContext = "sse-kms-encryption-context" // Encryption context for multipart upload SSE-KMS inheritance
+	SeaweedFSSSEKMSBaseIV            = "sse-kms-base-iv"            // Base IV for multipart upload SSE-KMS (for IV offset calculation)
 )
 
 // SeaweedFS internal headers for filer communication

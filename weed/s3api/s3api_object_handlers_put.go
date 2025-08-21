@@ -238,8 +238,27 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 			}
 		}
 
-		// Create SSE-KMS encrypted reader
-		encryptedReader, sseKey, encErr := CreateSSEKMSEncryptedReaderWithBucketKey(dataReader, keyID, encryptionContext, bucketKeyEnabled)
+		// Check if a base IV is provided (for multipart uploads)
+		var encryptedReader io.Reader
+		var sseKey *SSEKMSKey
+		var encErr error
+
+		baseIVHeader := r.Header.Get("X-SeaweedFS-SSE-KMS-Base-IV")
+		if baseIVHeader != "" {
+			// Decode the base IV from the header
+			baseIV, decodeErr := base64.StdEncoding.DecodeString(baseIVHeader)
+			if decodeErr != nil || len(baseIV) != 16 {
+				glog.Errorf("Invalid base IV in header: %v", decodeErr)
+				return "", s3err.ErrInternalError
+			}
+			// Use the provided base IV for multipart upload consistency
+			encryptedReader, sseKey, encErr = CreateSSEKMSEncryptedReaderWithBaseIV(dataReader, keyID, encryptionContext, bucketKeyEnabled, baseIV)
+			glog.V(4).Infof("Using provided base IV %x for SSE-KMS encryption", baseIV[:8])
+		} else {
+			// Generate a new IV for single-part uploads
+			encryptedReader, sseKey, encErr = CreateSSEKMSEncryptedReaderWithBucketKey(dataReader, keyID, encryptionContext, bucketKeyEnabled)
+		}
+
 		if encErr != nil {
 			glog.Errorf("Failed to create SSE-KMS encrypted reader: %v", encErr)
 			return "", s3err.ErrInternalError

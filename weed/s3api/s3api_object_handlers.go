@@ -891,9 +891,10 @@ func (s3a *S3ApiServer) createMultipartSSEKMSDecryptedReader(r *http.Request, pr
 			if err != nil {
 				glog.Errorf("Failed to deserialize per-chunk SSE-KMS metadata for chunk %s: %v", chunk.GetFileIdString(), err)
 			} else {
+				// ChunkOffset is already set from the stored metadata (PartOffset)
 				chunkSSEKMSKey = kmsKey
-				glog.Infof("Using per-chunk SSE-KMS metadata for chunk %s: keyID=%s, IV=%x",
-					chunk.GetFileIdString(), kmsKey.KeyID, kmsKey.IV[:8]) // First 8 bytes of IV for debug
+				glog.Infof("Using per-chunk SSE-KMS metadata for chunk %s: keyID=%s, IV=%x, partOffset=%d",
+					chunk.GetFileIdString(), kmsKey.KeyID, kmsKey.IV[:8], kmsKey.ChunkOffset)
 			}
 		}
 
@@ -903,8 +904,13 @@ func (s3a *S3ApiServer) createMultipartSSEKMSDecryptedReader(r *http.Request, pr
 			if objectMetadataHeader != "" {
 				kmsMetadataBytes, decodeErr := base64.StdEncoding.DecodeString(objectMetadataHeader)
 				if decodeErr == nil {
-					chunkSSEKMSKey, _ = DeserializeSSEKMSMetadata(kmsMetadataBytes)
-					glog.Infof("Using fallback object-level SSE-KMS metadata for chunk %s", chunk.GetFileIdString())
+					kmsKey, _ := DeserializeSSEKMSMetadata(kmsMetadataBytes)
+					if kmsKey != nil {
+						// For object-level metadata (legacy), use absolute file offset as fallback
+						kmsKey.ChunkOffset = chunk.GetOffset()
+						chunkSSEKMSKey = kmsKey
+					}
+					glog.Infof("Using fallback object-level SSE-KMS metadata for chunk %s with offset %d", chunk.GetFileIdString(), chunk.GetOffset())
 				}
 			}
 		}

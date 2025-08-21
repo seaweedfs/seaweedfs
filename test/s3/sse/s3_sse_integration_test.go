@@ -759,20 +759,149 @@ func TestSSEMultipartUploadIntegration(t *testing.T) {
 
 		// Verify data matches concatenated parts
 		expectedData := append(part1Data, part2Data...)
-		
+
 		// Debug: Print some information about the sizes and first few bytes
 		t.Logf("Expected data size: %d, Retrieved data size: %d", len(expectedData), len(retrievedData))
 		if len(expectedData) > 0 && len(retrievedData) > 0 {
 			t.Logf("Expected first 32 bytes: %x", expectedData[:min(32, len(expectedData))])
 			t.Logf("Retrieved first 32 bytes: %x", retrievedData[:min(32, len(retrievedData))])
 		}
-		
+
 		assertDataEqual(t, expectedData, retrievedData, "Multipart KMS data does not match original")
 
 		// Verify KMS metadata
 		assert.Equal(t, types.ServerSideEncryptionAwsKms, resp.ServerSideEncryption)
 		assert.Equal(t, kmsKeyID, aws.ToString(resp.SSEKMSKeyId))
 	})
+}
+
+// TestDebugSSEMultipart helps debug the multipart SSE-KMS data mismatch
+func TestDebugSSEMultipart(t *testing.T) {
+	ctx := context.Background()
+	client, err := createS3Client(ctx, defaultConfig)
+	require.NoError(t, err, "Failed to create S3 client")
+
+	bucketName, err := createTestBucket(ctx, client, defaultConfig.BucketPrefix+"debug-multipart-")
+	require.NoError(t, err, "Failed to create test bucket")
+	defer cleanupTestBucket(ctx, client, bucketName)
+
+	objectKey := "debug-multipart-object"
+	kmsKeyID := "test-multipart-key"
+
+	// Create multipart upload
+	createResp, err := client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
+		Bucket:               aws.String(bucketName),
+		Key:                  aws.String(objectKey),
+		ServerSideEncryption: types.ServerSideEncryptionAwsKms,
+		SSEKMSKeyId:          aws.String(kmsKeyID),
+	})
+	require.NoError(t, err, "Failed to create SSE-KMS multipart upload")
+
+	uploadID := aws.ToString(createResp.UploadId)
+
+	// Upload two parts - exactly like the failing test
+	partSize := 5 * 1024 * 1024                 // 5MB
+	part1Data := generateTestData(partSize)     // 5MB
+	part2Data := generateTestData(partSize / 2) // 2.5MB
+
+	// Upload part 1
+	part1Resp, err := client.UploadPart(ctx, &s3.UploadPartInput{
+		Bucket:     aws.String(bucketName),
+		Key:        aws.String(objectKey),
+		PartNumber: aws.Int32(1),
+		UploadId:   aws.String(uploadID),
+		Body:       bytes.NewReader(part1Data),
+	})
+	require.NoError(t, err, "Failed to upload part 1")
+
+	// Upload part 2
+	part2Resp, err := client.UploadPart(ctx, &s3.UploadPartInput{
+		Bucket:     aws.String(bucketName),
+		Key:        aws.String(objectKey),
+		PartNumber: aws.Int32(2),
+		UploadId:   aws.String(uploadID),
+		Body:       bytes.NewReader(part2Data),
+	})
+	require.NoError(t, err, "Failed to upload part 2")
+
+	// Complete multipart upload
+	_, err = client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
+		Bucket:   aws.String(bucketName),
+		Key:      aws.String(objectKey),
+		UploadId: aws.String(uploadID),
+		MultipartUpload: &types.CompletedMultipartUpload{
+			Parts: []types.CompletedPart{
+				{ETag: part1Resp.ETag, PartNumber: aws.Int32(1)},
+				{ETag: part2Resp.ETag, PartNumber: aws.Int32(2)},
+			},
+		},
+	})
+	require.NoError(t, err, "Failed to complete multipart upload")
+
+	// Retrieve the object
+	resp, err := client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err, "Failed to retrieve object")
+	defer resp.Body.Close()
+
+	retrievedData, err := io.ReadAll(resp.Body)
+	require.NoError(t, err, "Failed to read retrieved data")
+
+	// Expected data
+	expectedData := append(part1Data, part2Data...)
+
+	t.Logf("=== DATA COMPARISON DEBUG ===")
+	t.Logf("Expected size: %d, Retrieved size: %d", len(expectedData), len(retrievedData))
+
+	// Find exact point of divergence
+	divergePoint := -1
+	minLen := len(expectedData)
+	if len(retrievedData) < minLen {
+		minLen = len(retrievedData)
+	}
+
+	for i := 0; i < minLen; i++ {
+		if expectedData[i] != retrievedData[i] {
+			divergePoint = i
+			break
+		}
+	}
+
+	if divergePoint >= 0 {
+		t.Logf("Data diverges at byte %d (0x%x)", divergePoint, divergePoint)
+		t.Logf("Expected: 0x%02x, Retrieved: 0x%02x", expectedData[divergePoint], retrievedData[divergePoint])
+
+		// Show context around divergence point
+		start := divergePoint - 10
+		if start < 0 {
+			start = 0
+		}
+		end := divergePoint + 10
+		if end > minLen {
+			end = minLen
+		}
+
+		t.Logf("Context [%d:%d]:", start, end)
+		t.Logf("Expected:  %x", expectedData[start:end])
+		t.Logf("Retrieved: %x", retrievedData[start:end])
+
+		// Identify chunk boundaries
+		if divergePoint >= 4194304 {
+			t.Logf("Divergence is in chunk 2 or 3 (after 4MB boundary)")
+		}
+		if divergePoint >= 5242880 {
+			t.Logf("Divergence is in chunk 3 (part 2, after 5MB boundary)")
+		}
+	} else if len(expectedData) != len(retrievedData) {
+		t.Logf("Data lengths differ but common part matches")
+	} else {
+		t.Logf("Data matches completely!")
+	}
+
+	// Always fail to see the debug output
+	t.Fatalf("Debug test - check logs for divergence analysis")
 }
 
 // TestSSEErrorConditions tests various error conditions in SSE
