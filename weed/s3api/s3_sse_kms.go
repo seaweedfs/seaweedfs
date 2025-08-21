@@ -680,7 +680,7 @@ func calculateIVWithOffset(baseIV []byte, offset int64) []byte {
 
 	// Calculate the block offset (AES block size is 16 bytes)
 	blockOffset := offset / 16
-	glog.Infof("calculateIVWithOffset DEBUG: offset=%d, blockOffset=%d (0x%x)",
+	glog.V(4).Infof("calculateIVWithOffset DEBUG: offset=%d, blockOffset=%d (0x%x)",
 		offset, blockOffset, blockOffset)
 
 	// Add the block offset to the IV counter (last 8 bytes, big-endian)
@@ -694,7 +694,7 @@ func calculateIVWithOffset(baseIV []byte, offset int64) []byte {
 		iv[i] = byte(sum & 0xFF)
 		carry = sum >> 8
 		blockOffset = blockOffset >> 8
-		glog.Infof("calculateIVWithOffset DEBUG: i=%d, oldByte=0x%02x, newByte=0x%02x, carry=%d, blockOffset=0x%x",
+		glog.V(4).Infof("calculateIVWithOffset DEBUG: i=%d, oldByte=0x%02x, newByte=0x%02x, carry=%d, blockOffset=0x%x",
 			i, oldByte, iv[i], carry, blockOffset)
 
 		// If no more blockOffset bits and no carry, we can stop early
