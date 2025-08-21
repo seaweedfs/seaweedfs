@@ -36,7 +36,7 @@ func IsSSES3RequestInternal(r *http.Request) bool {
 
 	// Debug: log header detection for any SSE-S3 requests
 	if sseHeader != "" || result {
-		glog.Infof("SSE-S3 detection: method=%s, header=%q, expected=%q, result=%t, copySource=%q", r.Method, sseHeader, SSES3Algorithm, result, r.Header.Get("X-Amz-Copy-Source"))
+		glog.V(4).Infof("SSE-S3 detection: method=%s, header=%q, expected=%q, result=%t, copySource=%q", r.Method, sseHeader, SSES3Algorithm, result, r.Header.Get("X-Amz-Copy-Source"))
 	}
 
 	return result
@@ -290,18 +290,59 @@ func GetSSES3KeyFromMetadata(metadata map[string][]byte, keyManager *SSES3KeyMan
 }
 
 // CreateSSES3EncryptedReaderWithBaseIV creates an encrypted reader using a base IV for multipart upload consistency
-func CreateSSES3EncryptedReaderWithBaseIV(reader io.Reader, key *SSES3Key, baseIV []byte) (io.Reader, []byte, error) {
+func CreateSSES3EncryptedReaderWithBaseIV(reader io.Reader, key *SSES3Key, baseIV []byte, offset int64) (io.Reader, []byte, error) {
 	block, err := aes.NewCipher(key.Key)
 	if err != nil {
 		return nil, nil, fmt.Errorf("create AES cipher: %w", err)
 	}
 
-	// For multipart uploads, we use the same base IV but may need to calculate offset-specific IV
-	// For now, we use the base IV directly for simplicity (can be enhanced later for offset-based IVs)
-	iv := make([]byte, aes.BlockSize)
-	copy(iv, baseIV)
+	// Calculate the proper IV with offset to ensure unique IV per chunk/part
+	// This prevents the severe security vulnerability of IV reuse in CTR mode
+	iv := calculateSSES3IVWithOffset(baseIV, offset)
 
 	stream := cipher.NewCTR(block, iv)
 	encryptedReader := &cipher.StreamReader{S: stream, R: reader}
 	return encryptedReader, iv, nil
+}
+
+// calculateSSES3IVWithOffset calculates a unique IV by combining a base IV with an offset
+// This ensures each chunk/part uses a unique IV, preventing CTR mode IV reuse vulnerabilities
+func calculateSSES3IVWithOffset(baseIV []byte, offset int64) []byte {
+	if len(baseIV) != 16 {
+		glog.Errorf("Invalid base IV length: expected 16, got %d", len(baseIV))
+		return baseIV // Return original IV as fallback
+	}
+
+	// Create a copy of the base IV to avoid modifying the original
+	iv := make([]byte, 16)
+	copy(iv, baseIV)
+
+	// Calculate the block offset (AES block size is 16 bytes)
+	blockOffset := offset / 16
+	glog.V(4).Infof("calculateSSES3IVWithOffset DEBUG: offset=%d, blockOffset=%d (0x%x)",
+		offset, blockOffset, blockOffset)
+
+	// Add the block offset to the IV counter (last 8 bytes, big-endian)
+	// This matches how AES-CTR mode increments the counter
+	// Process from least significant byte (index 15) to most significant byte (index 8)
+	originalBlockOffset := blockOffset
+	carry := uint64(0)
+	for i := 15; i >= 8; i-- {
+		sum := uint64(iv[i]) + uint64(blockOffset&0xFF) + carry
+		oldByte := iv[i]
+		iv[i] = byte(sum & 0xFF)
+		carry = sum >> 8
+		blockOffset = blockOffset >> 8
+		glog.V(4).Infof("calculateSSES3IVWithOffset DEBUG: i=%d, oldByte=0x%02x, newByte=0x%02x, carry=%d, blockOffset=0x%x",
+			i, oldByte, iv[i], carry, blockOffset)
+
+		// If no more blockOffset bits and no carry, we can stop early
+		if blockOffset == 0 && carry == 0 {
+			break
+		}
+	}
+
+	glog.V(4).Infof("calculateSSES3IVWithOffset: baseIV=%x, offset=%d, blockOffset=%d, calculatedIV=%x",
+		baseIV, offset, originalBlockOffset, iv)
+	return iv
 }

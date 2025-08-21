@@ -375,6 +375,17 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 					r.Header.Set(s3_constants.SeaweedFSSSEKMSBaseIVHeader, base64.StdEncoding.EncodeToString(baseIV))
 
 					glog.Infof("PutObjectPartHandler: inherited SSE-KMS settings from upload %s, keyID %s - letting putToFiler handle encryption", uploadID, keyID)
+				} else {
+					// Check if this upload uses SSE-S3
+					glog.Infof("PutObjectPartHandler: checking for SSE-S3 settings in extended metadata")
+					if encryptionTypeBytes, exists := uploadEntry.Extended[s3_constants.SeaweedFSSSES3Encryption]; exists && string(encryptionTypeBytes) == "AES256" {
+						glog.Infof("PutObjectPartHandler: found SSE-S3 encryption type, setting up headers")
+						
+						// Set SSE-S3 headers to indicate server-side encryption
+						r.Header.Set(s3_constants.AmzServerSideEncryption, "AES256")
+						
+						glog.Infof("PutObjectPartHandler: inherited SSE-S3 settings from upload %s - letting putToFiler handle encryption", uploadID)
+					}
 				}
 			}
 		} else {

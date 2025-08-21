@@ -296,9 +296,8 @@ func (fs *FilerServer) dataToChunkWithSSE(ctx context.Context, r *http.Request, 
 			}
 		} else if r.Header.Get(s3_constants.SeaweedFSSSES3Key) != "" {
 			// SSE-S3: Server-side encryption with server-managed keys
-			// For now, we don't set a specific SSE type at chunk level for SSE-S3
-			// because SSE-S3 is handled at the object level, but we can add future support here
-			sseType = filer_pb.SSEType_NONE // SSE-S3 uses object-level encryption, not chunk-level
+			// Set the correct SSE type for SSE-S3 chunks to maintain proper tracking
+			sseType = filer_pb.SSEType_SSE_S3
 
 			// Get SSE-S3 metadata from headers
 			sseS3Header := r.Header.Get(s3_constants.SeaweedFSSSES3Key)
