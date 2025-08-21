@@ -4759,11 +4759,6 @@ const file_filer_proto_rawDesc = "" +
 	"\aSSE_KMS\x10\x02\x12\n" +
 	"\n" +
 	"\x06SSE_S3\x10\x032\xf7\x10\n" +
-	"\x15TransferLocksResponse*+\n" +
-	"\aSSEType\x12\b\n" +
-	"\x04NONE\x10\x00\x12\t\n" +
-	"\x05SSE_C\x10\x01\x12\v\n" +
-	"\aSSE_KMS\x10\x022\xf7\x10\n" +
 	"\fSeaweedFiler\x12g\n" +
 	"\x14LookupDirectoryEntry\x12%.filer_pb.LookupDirectoryEntryRequest\x1a&.filer_pb.LookupDirectoryEntryResponse\"\x00\x12N\n" +
 	"\vListEntries\x12\x1c.filer_pb.ListEntriesRequest\x1a\x1d.filer_pb.ListEntriesResponse\"\x000\x01\x12L\n" +
