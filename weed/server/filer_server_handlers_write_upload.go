@@ -58,6 +58,14 @@ func (fs *FilerServer) uploadReaderToChunks(ctx context.Context, r *http.Request
 	chunkOffset = startOffset
 	var partReader = io.NopCloser(io.TeeReader(reader, md5Hash))
 
+	// For SSE-KMS requests, don't chunk multipart parts to preserve encryption boundaries
+	if r != nil && r.Header.Get(s3_constants.AmzServerSideEncryption) == "aws:kms" {
+		// Use a very large chunk size (1GB) to effectively disable chunking for SSE-KMS
+		// This ensures each multipart part remains as a single chunk
+		chunkSize = 1024 * 1024 * 1024 // 1GB
+		glog.V(4).InfofCtx(ctx, "SSE-KMS detected, using large chunk size (%d) to prevent rechunking", chunkSize)
+	}
+
 	var wg sync.WaitGroup
 	var bytesBufferCounter int64 = 4
 	bytesBufferLimitChan := make(chan struct{}, bytesBufferCounter)

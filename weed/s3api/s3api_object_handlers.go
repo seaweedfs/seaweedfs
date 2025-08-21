@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -861,10 +862,16 @@ func (s3a *S3ApiServer) createMultipartSSEKMSDecryptedReader(r *http.Request, pr
 		return nil, fmt.Errorf("failed to get object entry for multipart SSE-KMS decryption: %v", err)
 	}
 
+	// Sort chunks by offset to ensure correct order
+	chunks := entry.GetChunks()
+	sort.Slice(chunks, func(i, j int) bool {
+		return chunks[i].GetOffset() < chunks[j].GetOffset()
+	})
+
 	// Create readers for each chunk, decrypting them independently
 	var readers []io.Reader
 
-	for i, chunk := range entry.GetChunks() {
+	for i, chunk := range chunks {
 		glog.Infof("Processing chunk %d/%d: fileId=%s, offset=%d, size=%d, sse_type=%d",
 			i+1, len(entry.GetChunks()), chunk.GetFileIdString(), chunk.GetOffset(), chunk.GetSize(), chunk.GetSseType())
 
@@ -913,7 +920,14 @@ func (s3a *S3ApiServer) createMultipartSSEKMSDecryptedReader(r *http.Request, pr
 			return nil, fmt.Errorf("failed to decrypt chunk: %v", decErr)
 		}
 
-		readers = append(readers, decryptedChunkReader)
+		// Read chunk data fully to ensure proper concatenation
+		decryptedData, readErr := io.ReadAll(decryptedChunkReader)
+		chunkReader.Close() // Close the original reader
+		if readErr != nil {
+			return nil, fmt.Errorf("failed to read decrypted chunk %s: %v", chunk.GetFileIdString(), readErr)
+		}
+
+		readers = append(readers, bytes.NewReader(decryptedData))
 		glog.V(4).Infof("Added decrypted reader for chunk %s in multipart SSE-KMS object", chunk.GetFileIdString())
 	}
 
