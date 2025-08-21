@@ -266,8 +266,8 @@ func ProcessSSES3Request(r *http.Request) (map[string][]byte, error) {
 
 	// Return metadata
 	metadata := map[string][]byte{
-		s3_constants.AmzServerSideEncryption: []byte(SSES3Algorithm),
-		s3_constants.SeaweedFSSSES3Key:       keyData,
+			s3_constants.AmzServerSideEncryption: []byte(SSES3Algorithm),
+	s3_constants.SeaweedFSSSES3Key:       keyData,
 	}
 
 	return metadata, nil
