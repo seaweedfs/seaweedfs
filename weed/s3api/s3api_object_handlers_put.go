@@ -281,26 +281,71 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	if IsSSES3RequestInternal(r) {
 		glog.V(3).Infof("putToFiler: SSE-S3 request detected, processing encryption")
 		
-		// Generate or retrieve SSE-S3 key
-		keyManager := GetSSES3KeyManager()
-		key, err := keyManager.GetOrCreateKey("")
-		if err != nil {
-			glog.Errorf("Failed to get SSE-S3 key: %v", err)
-			return "", s3err.ErrInternalError, ""
+		// Check if this is a multipart upload part with pre-shared key and base IV
+		keyDataHeader := r.Header.Get(s3_constants.SeaweedFSSSES3KeyDataHeader)
+		baseIVHeader := r.Header.Get(s3_constants.SeaweedFSSSES3BaseIVHeader)
+		
+		if keyDataHeader != "" && baseIVHeader != "" {
+			// Multipart upload: use provided key data and base IV with offset calculation
+			glog.V(4).Infof("putToFiler: SSE-S3 multipart part detected, using provided key and base IV")
+			
+			// Decode the key data
+			keyData, decodeErr := base64.StdEncoding.DecodeString(keyDataHeader)
+			if decodeErr != nil {
+				glog.Errorf("Failed to decode SSE-S3 key data for multipart part: %v", decodeErr)
+				return "", s3err.ErrInternalError, ""
+			}
+			
+			// Deserialize the SSE-S3 key
+			keyManager := GetSSES3KeyManager()
+			key, deserializeErr := DeserializeSSES3Metadata(keyData, keyManager)
+			if deserializeErr != nil {
+				glog.Errorf("Failed to deserialize SSE-S3 key for multipart part: %v", deserializeErr)
+				return "", s3err.ErrInternalError, ""
+			}
+			sseS3Key = key
+			
+			// Decode the base IV
+			baseIV, decodeErr := base64.StdEncoding.DecodeString(baseIVHeader)
+			if decodeErr != nil || len(baseIV) != 16 {
+				glog.Errorf("Invalid base IV in SSE-S3 header: %v", decodeErr)
+				return "", s3err.ErrInternalError, ""
+			}
+			
+			// Use the provided base IV and offset for multipart upload consistency
+			// For parts, we use offset 0 since each part starts at its own beginning
+			encryptedReader, _, encErr := CreateSSES3EncryptedReaderWithBaseIV(dataReader, sseS3Key, baseIV, 0)
+			if encErr != nil {
+				glog.Errorf("Failed to create SSE-S3 encrypted reader for multipart part: %v", encErr)
+				return "", s3err.ErrInternalError, ""
+			}
+			
+			dataReader = encryptedReader
+			glog.V(4).Infof("Using provided base IV %x for SSE-S3 multipart encryption", baseIV[:8])
+		} else {
+			// Single-part upload: generate new key and IV
+			glog.V(4).Infof("putToFiler: SSE-S3 single-part upload, generating new key")
+			
+			keyManager := GetSSES3KeyManager()
+			key, err := keyManager.GetOrCreateKey("")
+			if err != nil {
+				glog.Errorf("Failed to get SSE-S3 key: %v", err)
+				return "", s3err.ErrInternalError, ""
+			}
+			sseS3Key = key
+			
+			// Create encrypted reader
+			encryptedReader, _, encErr := CreateSSES3EncryptedReader(dataReader, sseS3Key)
+			if encErr != nil {
+				glog.Errorf("Failed to create SSE-S3 encrypted reader: %v", encErr)
+				return "", s3err.ErrInternalError, ""
+			}
+			
+			dataReader = encryptedReader
+			
+			// Store the key for later use
+			keyManager.StoreKey(sseS3Key)
 		}
-		sseS3Key = key
-		
-		// Create encrypted reader
-		encryptedReader, _, encErr := CreateSSES3EncryptedReader(dataReader, sseS3Key)
-		if encErr != nil {
-			glog.Errorf("Failed to create SSE-S3 encrypted reader: %v", encErr)
-			return "", s3err.ErrInternalError, ""
-		}
-		
-		dataReader = encryptedReader
-		
-		// Store the key for later use
-		keyManager.StoreKey(sseS3Key)
 		
 		// Prepare SSE-S3 metadata for later header setting
 		var metaErr error

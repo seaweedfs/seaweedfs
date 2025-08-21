@@ -111,6 +111,8 @@ const (
 	SeaweedFSSSEKMSKeyHeader    = "X-SeaweedFS-SSE-KMS-Key"     // Header for passing SSE-KMS metadata to filer
 	SeaweedFSSSEIVHeader        = "X-SeaweedFS-SSE-IV"          // Header for passing SSE-C IV to filer (SSE-C only)
 	SeaweedFSSSEKMSBaseIVHeader = "X-SeaweedFS-SSE-KMS-Base-IV" // Header for passing base IV for multipart SSE-KMS
+	SeaweedFSSSES3BaseIVHeader  = "X-SeaweedFS-SSE-S3-Base-IV"  // Header for passing base IV for multipart SSE-S3
+	SeaweedFSSSES3KeyDataHeader = "X-SeaweedFS-SSE-S3-Key-Data" // Header for passing key data for multipart SSE-S3
 )
 
 // Non-Standard S3 HTTP request constants

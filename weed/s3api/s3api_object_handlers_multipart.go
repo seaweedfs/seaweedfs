@@ -384,6 +384,36 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 						// Set SSE-S3 headers to indicate server-side encryption
 						r.Header.Set(s3_constants.AmzServerSideEncryption, "AES256")
 						
+						// Retrieve and set base IV for consistent multipart encryption
+						var baseIV []byte
+						if baseIVBytes, exists := uploadEntry.Extended[s3_constants.SeaweedFSSSES3BaseIV]; exists {
+							// Decode the base64 encoded base IV
+							decodedIV, decodeErr := base64.StdEncoding.DecodeString(string(baseIVBytes))
+							if decodeErr == nil && len(decodedIV) == 16 {
+								baseIV = decodedIV
+								glog.V(4).Infof("Using stored base IV %x for SSE-S3 multipart upload %s", baseIV[:8], uploadID)
+							} else {
+								glog.Errorf("Failed to decode base IV for SSE-S3 multipart upload %s: %v", uploadID, decodeErr)
+							}
+						}
+						
+						// Retrieve and set key data for consistent multipart encryption
+						if keyDataBytes, exists := uploadEntry.Extended[s3_constants.SeaweedFSSSES3KeyData]; exists {
+							// Key data is already base64 encoded, pass it directly
+							keyDataStr := string(keyDataBytes)
+							r.Header.Set(s3_constants.SeaweedFSSSES3KeyDataHeader, keyDataStr)
+							glog.V(4).Infof("Using stored key data for SSE-S3 multipart upload %s", uploadID)
+						} else {
+							glog.Errorf("No SSE-S3 key data found for multipart upload %s - this will cause encryption failure", uploadID)
+						}
+						
+						if len(baseIV) == 0 {
+							glog.Errorf("No valid base IV found for SSE-S3 multipart upload %s - this will cause encryption inconsistency", uploadID)
+						} else {
+							// Pass the base IV to putToFiler via header for offset calculation
+							r.Header.Set(s3_constants.SeaweedFSSSES3BaseIVHeader, base64.StdEncoding.EncodeToString(baseIV))
+						}
+						
 						glog.Infof("PutObjectPartHandler: inherited SSE-S3 settings from upload %s - letting putToFiler handle encryption", uploadID)
 					}
 				}
