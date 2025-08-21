@@ -358,6 +358,32 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		glog.V(3).Infof("putToFiler: prepared SSE-S3 metadata for object %s", uploadUrl)
 	}
 
+	// Apply bucket default encryption if no explicit encryption was provided
+	// This implements AWS S3 behavior where bucket default encryption automatically applies
+	if customerKey == nil && sseKMSKey == nil && sseS3Key == nil {
+		glog.V(4).Infof("putToFiler: no explicit encryption detected, checking for bucket default encryption")
+		
+		// We need to pass pointers so the function can modify dataReader and SSE variables
+		var sseS3IV []byte
+		applyErr := s3a.applyBucketDefaultEncryption(bucket, r, &dataReader, &sseS3Key, &sseS3IV, &sseKMSKey)
+		if applyErr != nil {
+			glog.Errorf("Failed to apply bucket default encryption: %v", applyErr)
+			return "", s3err.ErrInternalError, ""
+		}
+		
+		// If SSE-S3 was applied by bucket default, prepare metadata
+		if sseS3Key != nil {
+			var metaErr error
+			sseS3Metadata, metaErr = SerializeSSES3Metadata(sseS3Key)
+			if metaErr != nil {
+				glog.Errorf("Failed to serialize SSE-S3 metadata for bucket default encryption: %v", metaErr)
+				return "", s3err.ErrInternalError, ""
+			}
+		}
+	} else {
+		glog.V(4).Infof("putToFiler: explicit encryption already applied, skipping bucket default encryption")
+	}
+
 	hash := md5.New()
 	var body = io.TeeReader(dataReader, hash)
 
