@@ -40,7 +40,6 @@ func IsSSES3RequestInternal(r *http.Request) bool {
 	}
 
 	return result
-	return r.Header.Get(s3_constants.AmzServerSideEncryption) == SSES3Algorithm
 }
 
 // IsSSES3EncryptedInternal checks if the object metadata indicates SSE-S3 encryption

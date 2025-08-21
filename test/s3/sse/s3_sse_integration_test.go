@@ -1485,32 +1485,6 @@ func TestSSES3BucketDefaultEncryption(t *testing.T) {
 		assertDataEqual(t, testData, downloadedData, "Downloaded data doesn't match original")
 	})
 
-	t.Run("Explicit Encryption Overrides Default", func(t *testing.T) {
-		testData := []byte("This object has explicit no-encryption despite bucket default.")
-		objectKey := "test-explicit-no-encryption.txt"
-
-		// Upload object with explicit request to not use encryption
-		// Note: AWS S3 doesn't allow overriding bucket default encryption with no encryption
-		// So we'll test with a different explicit encryption type if supported
-
-		// For now, just verify the bucket default still applies
-		_, err := client.PutObject(ctx, &s3.PutObjectInput{
-			Bucket: aws.String(bucketName),
-			Key:    aws.String(objectKey),
-			Body:   bytes.NewReader(testData),
-		})
-		require.NoError(t, err, "Failed to upload object")
-
-		// Verify it still got encrypted with bucket default
-		resp, err := client.HeadObject(ctx, &s3.HeadObjectInput{
-			Bucket: aws.String(bucketName),
-			Key:    aws.String(objectKey),
-		})
-		require.NoError(t, err, "Failed to HEAD object")
-
-		assert.Equal(t, types.ServerSideEncryptionAes256, resp.ServerSideEncryption, "Bucket default encryption should still apply")
-	})
-
 	t.Run("Get Bucket Encryption Configuration", func(t *testing.T) {
 		// Verify we can retrieve the bucket encryption configuration
 		resp, err := client.GetBucketEncryption(ctx, &s3.GetBucketEncryptionInput{

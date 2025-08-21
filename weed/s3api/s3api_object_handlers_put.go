@@ -237,10 +237,10 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		// Add any user-provided encryption context
 		if contextHeader := r.Header.Get(s3_constants.AmzServerSideEncryptionContext); contextHeader != "" {
 			userContext, err := parseEncryptionContext(contextHeader)
-					if err != nil {
-			glog.Errorf("Failed to parse encryption context: %v", err)
-			return "", s3err.ErrInvalidRequest, ""
-		}
+			if err != nil {
+				glog.Errorf("Failed to parse encryption context: %v", err)
+				return "", s3err.ErrInvalidRequest, ""
+			}
 			// Merge user context with default context
 			for k, v := range userContext {
 				encryptionContext[k] = v
