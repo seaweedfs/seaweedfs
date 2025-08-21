@@ -95,15 +95,52 @@ func (s3a *S3ApiServer) createMultipartUpload(r *http.Request, input *s3.CreateM
 				glog.V(4).Infof("Generated base IV %x for multipart upload %s", baseIV[:8], uploadIdString)
 			}
 
-			glog.V(3).Infof("createMultipartUpload: stored SSE-KMS settings for upload %s with keyID %s", uploadIdString, keyID)
+					glog.V(3).Infof("createMultipartUpload: stored SSE-KMS settings for upload %s with keyID %s", uploadIdString, keyID)
+	}
+
+	// Store SSE-S3 encryption settings for parts to inherit
+	// This allows upload-part operations to inherit SSE-S3 encryption settings
+	if IsSSES3RequestInternal(r) {
+		// Store SSE-S3 configuration for parts to inherit
+		entry.Extended[s3_constants.SeaweedFSSSES3Encryption] = []byte("AES256")
+
+		// Generate and store a base IV for this multipart upload
+		// Parts within this upload will use this base IV with their within-part offset
+		baseIV := make([]byte, 16)
+		if _, err := rand.Read(baseIV); err != nil {
+			glog.Errorf("Failed to generate base IV for SSE-S3 multipart upload %s: %v", uploadIdString, err)
+		} else {
+			// Store base IV as base64 encoded string to avoid HTTP header issues
+			entry.Extended[s3_constants.SeaweedFSSSES3BaseIV] = []byte(base64.StdEncoding.EncodeToString(baseIV))
+			glog.V(4).Infof("Generated base IV %x for SSE-S3 multipart upload %s", baseIV[:8], uploadIdString)
 		}
 
-		// Extract and store object lock metadata from request headers
-		// This ensures object lock settings from create_multipart_upload are preserved
-		if err := s3a.extractObjectLockMetadataFromRequest(r, entry); err != nil {
-			glog.Errorf("createMultipartUpload: failed to extract object lock metadata: %v", err)
-			// Don't fail the upload - this matches AWS behavior for invalid metadata
+		// Generate and store SSE-S3 key for parts to inherit
+		keyManager := GetSSES3KeyManager()
+		sseS3Key, err := keyManager.GetOrCreateKey("")
+		if err != nil {
+			glog.Errorf("Failed to generate SSE-S3 key for multipart upload %s: %v", uploadIdString, err)
+		} else {
+			// Serialize and store the SSE-S3 key for parts to inherit
+			if keyData, serErr := SerializeSSES3Metadata(sseS3Key); serErr == nil {
+				entry.Extended[s3_constants.SeaweedFSSSES3KeyData] = []byte(base64.StdEncoding.EncodeToString(keyData))
+				// Store key in manager for later retrieval
+				keyManager.StoreKey(sseS3Key)
+				glog.V(4).Infof("Stored SSE-S3 key %s for multipart upload %s", sseS3Key.KeyID, uploadIdString)
+			} else {
+				glog.Errorf("Failed to serialize SSE-S3 key for multipart upload %s: %v", uploadIdString, serErr)
+			}
 		}
+
+		glog.V(3).Infof("createMultipartUpload: stored SSE-S3 settings for upload %s", uploadIdString)
+	}
+
+	// Extract and store object lock metadata from request headers
+	// This ensures object lock settings from create_multipart_upload are preserved
+	if err := s3a.extractObjectLockMetadataFromRequest(r, entry); err != nil {
+		glog.Errorf("createMultipartUpload: failed to extract object lock metadata: %v", err)
+		// Don't fail the upload - this matches AWS behavior for invalid metadata
+	}
 	}); err != nil {
 		glog.Errorf("NewMultipartUpload error: %v", err)
 		return nil, s3err.ErrInternalError

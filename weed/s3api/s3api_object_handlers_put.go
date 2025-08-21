@@ -15,6 +15,7 @@ import (
 	"github.com/pquerna/cachecontrol/cacheobject"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/security"
@@ -172,7 +173,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 				dataReader = mimeDetect(r, dataReader)
 			}
 
-			etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader, "", bucket)
+			etag, errCode, sseType := s3a.putToFiler(r, uploadUrl, dataReader, "", bucket)
 
 			if errCode != s3err.ErrNone {
 				s3err.WriteErrorResponse(w, r, errCode)
@@ -181,6 +182,11 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 			// No version ID header for never-configured versioning
 			setEtag(w, etag)
+
+			// Set SSE response headers based on encryption type used
+			if sseType == "SSE-S3" {
+				w.Header().Set(s3_constants.AmzServerSideEncryption, "AES256")
+			}
 		}
 	}
 	stats_collect.RecordBucketActiveTime(bucket)
@@ -189,7 +195,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 	writeSuccessResponseEmpty(w, r)
 }
 
-func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader io.Reader, destination string, bucket string) (etag string, code s3err.ErrorCode) {
+func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader io.Reader, destination string, bucket string) (etag string, code s3err.ErrorCode, sseType string) {
 
 	// Handle SSE-C encryption if requested
 	customerKey, err := ParseSSECHeaders(r)
@@ -197,7 +203,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		glog.Errorf("SSE-C header validation failed: %v", err)
 		// Use shared error mapping helper
 		errCode := MapSSECErrorToS3Error(err)
-		return "", errCode
+		return "", errCode, ""
 	}
 
 	// Apply SSE-C encryption if customer key is provided
@@ -206,7 +212,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		encryptedReader, iv, encErr := CreateSSECEncryptedReader(dataReader, customerKey)
 		if encErr != nil {
 			glog.Errorf("Failed to create SSE-C encrypted reader: %v", encErr)
-			return "", s3err.ErrInternalError
+			return "", s3err.ErrInternalError, ""
 		}
 		dataReader = encryptedReader
 		sseIV = iv
@@ -230,7 +236,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 			userContext, err := parseEncryptionContext(contextHeader)
 			if err != nil {
 				glog.Errorf("Failed to parse encryption context: %v", err)
-				return "", s3err.ErrInvalidRequest
+				return "", s3err.ErrInvalidRequest, ""
 			}
 			// Merge user context with default context
 			for k, v := range userContext {
@@ -249,7 +255,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 			baseIV, decodeErr := base64.StdEncoding.DecodeString(baseIVHeader)
 			if decodeErr != nil || len(baseIV) != 16 {
 				glog.Errorf("Invalid base IV in header: %v", decodeErr)
-				return "", s3err.ErrInternalError
+				return "", s3err.ErrInternalError, ""
 			}
 			// Use the provided base IV for multipart upload consistency
 			encryptedReader, sseKey, encErr = CreateSSEKMSEncryptedReaderWithBaseIV(dataReader, keyID, encryptionContext, bucketKeyEnabled, baseIV)
@@ -261,10 +267,101 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 
 		if encErr != nil {
 			glog.Errorf("Failed to create SSE-KMS encrypted reader: %v", encErr)
-			return "", s3err.ErrInternalError
+			return "", s3err.ErrInternalError, ""
 		}
 		dataReader = encryptedReader
 		sseKMSKey = sseKey
+	}
+
+	// Handle SSE-S3 encryption if requested
+	var sseS3Key *SSES3Key
+	var sseS3IV []byte
+	if IsSSES3RequestInternal(r) {
+		glog.V(3).Infof("putToFiler: SSE-S3 request detected, processing encryption")
+
+		var key *SSES3Key
+		var err error
+		keyManager := GetSSES3KeyManager()
+
+		// Check if this is a multipart upload with pre-existing key
+		sseS3KeyHeader := r.Header.Get(s3_constants.SeaweedFSSSES3Key)
+		baseIVHeader := r.Header.Get(s3_constants.SeaweedFSSSEIVHeader)
+		
+		if sseS3KeyHeader != "" {
+			// Multipart upload: use the provided SSE-S3 key
+			keyData, decodeErr := base64.StdEncoding.DecodeString(sseS3KeyHeader)
+			if decodeErr != nil {
+				glog.Errorf("Failed to decode SSE-S3 key header: %v", decodeErr)
+				return "", s3err.ErrInternalError, ""
+			}
+			
+			key, err = DeserializeSSES3Metadata(keyData, keyManager)
+			if err != nil {
+				glog.Errorf("Failed to deserialize SSE-S3 key for multipart: %v", err)
+				return "", s3err.ErrInternalError, ""
+			}
+			
+			// Use the provided base IV for multipart consistency
+			if baseIVHeader != "" {
+				baseIV, decodeErr := base64.StdEncoding.DecodeString(baseIVHeader)
+				if decodeErr == nil && len(baseIV) == 16 {
+					// Create encrypted reader with the provided base IV
+					encryptedReader, iv, encErr := CreateSSES3EncryptedReaderWithBaseIV(dataReader, key, baseIV)
+					if encErr != nil {
+						glog.Errorf("Failed to create SSE-S3 encrypted reader with base IV: %v", encErr)
+						return "", s3err.ErrInternalError, ""
+					}
+					dataReader = encryptedReader
+					sseS3IV = iv
+					glog.V(4).Infof("Using provided base IV %x for SSE-S3 multipart encryption", baseIV[:8])
+				} else {
+					glog.Errorf("Invalid base IV in header for SSE-S3 multipart: %v", decodeErr)
+					return "", s3err.ErrInternalError, ""
+				}
+			} else {
+				// No base IV provided, use standard encryption
+				encryptedReader, iv, encErr := CreateSSES3EncryptedReader(dataReader, key)
+				if encErr != nil {
+					glog.Errorf("Failed to create SSE-S3 encrypted reader: %v", encErr)
+					return "", s3err.ErrInternalError, ""
+				}
+				dataReader = encryptedReader
+				sseS3IV = iv
+			}
+			
+			glog.V(4).Infof("SSE-S3 multipart encryption applied with key ID: %s", key.KeyID)
+		} else {
+			// Single-part upload: generate new SSE-S3 key
+			key, err = keyManager.GetOrCreateKey("")
+			if err != nil {
+				glog.Errorf("Failed to generate SSE-S3 key: %v", err)
+				return "", s3err.ErrInternalError, ""
+			}
+
+			// Create encrypted reader
+			encryptedReader, iv, encErr := CreateSSES3EncryptedReader(dataReader, key)
+			if encErr != nil {
+				glog.Errorf("Failed to create SSE-S3 encrypted reader: %v", encErr)
+				return "", s3err.ErrInternalError, ""
+			}
+
+			dataReader = encryptedReader
+			sseS3IV = iv
+			glog.V(4).Infof("SSE-S3 single-part encryption applied with key ID: %s", key.KeyID)
+		}
+
+		sseS3Key = key
+		// Store key in manager for later retrieval
+		keyManager.StoreKey(key)
+	}
+
+	// Apply bucket default encryption if no explicit encryption was specified
+	if customerKey == nil && sseKMSKey == nil && sseS3Key == nil {
+		glog.V(4).Infof("putToFiler: checking bucket default encryption for bucket %s", bucket)
+		if err := s3a.applyBucketDefaultEncryption(bucket, r, &dataReader, &sseS3Key, &sseS3IV, &sseKMSKey); err != nil {
+			glog.V(2).Infof("putToFiler: skipping bucket default encryption for %s: %v", bucket, err)
+			// Don't fail the upload if default encryption can't be applied - this matches AWS behavior
+		}
 	}
 
 	hash := md5.New()
@@ -274,7 +371,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 
 	if err != nil {
 		glog.Errorf("NewRequest %s: %v", uploadUrl, err)
-		return "", s3err.ErrInternalError
+		return "", s3err.ErrInternalError, ""
 	}
 
 	proxyReq.Header.Set("X-Forwarded-For", r.RemoteAddr)
@@ -315,7 +412,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		kmsMetadata, err := SerializeSSEKMSMetadata(sseKMSKey)
 		if err != nil {
 			glog.Errorf("Failed to serialize SSE-KMS metadata: %v", err)
-			return "", s3err.ErrInternalError
+			return "", s3err.ErrInternalError, ""
 		}
 		// Store serialized KMS metadata in a custom header that the filer can use
 		proxyReq.Header.Set(s3_constants.SeaweedFSSSEKMSKeyHeader, base64.StdEncoding.EncodeToString(kmsMetadata))
@@ -323,6 +420,27 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		glog.V(3).Infof("putToFiler: storing SSE-KMS metadata for object %s with keyID %s", uploadUrl, sseKMSKey.KeyID)
 	} else {
 		glog.V(4).Infof("putToFiler: no SSE-KMS encryption detected")
+	}
+
+	// Set SSE-S3 metadata headers for the filer if S3 encryption was applied
+	if sseS3Key != nil && len(sseS3IV) > 0 {
+		// Serialize SSE-S3 metadata for storage
+		s3Metadata, err := SerializeSSES3Metadata(sseS3Key)
+		if err != nil {
+			glog.Errorf("Failed to serialize SSE-S3 metadata: %v", err)
+			return "", s3err.ErrInternalError, ""
+		}
+
+		// Store serialized S3 metadata and IV in custom headers that the filer can use
+		proxyReq.Header.Set(s3_constants.SeaweedFSSSES3Key, base64.StdEncoding.EncodeToString(s3Metadata))
+		proxyReq.Header.Set(s3_constants.SeaweedFSSSEIVHeader, base64.StdEncoding.EncodeToString(sseS3IV))
+
+		// Set the standard S3 encryption header
+		proxyReq.Header.Set(s3_constants.AmzServerSideEncryption, SSES3Algorithm)
+
+		glog.V(3).Infof("putToFiler: storing SSE-S3 metadata for object %s with keyID %s", uploadUrl, sseS3Key.KeyID)
+	} else {
+		glog.V(4).Infof("putToFiler: no SSE-S3 encryption detected")
 	}
 
 	// ensure that the Authorization header is overriding any previous
@@ -333,9 +451,9 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	if postErr != nil {
 		glog.Errorf("post to filer: %v", postErr)
 		if strings.Contains(postErr.Error(), s3err.ErrMsgPayloadChecksumMismatch) {
-			return "", s3err.ErrInvalidDigest
+			return "", s3err.ErrInvalidDigest, ""
 		}
-		return "", s3err.ErrInternalError
+		return "", s3err.ErrInternalError, ""
 	}
 	defer resp.Body.Close()
 
@@ -344,21 +462,32 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	resp_body, ra_err := io.ReadAll(resp.Body)
 	if ra_err != nil {
 		glog.Errorf("upload to filer response read %d: %v", resp.StatusCode, ra_err)
-		return etag, s3err.ErrInternalError
+		return etag, s3err.ErrInternalError, ""
 	}
 	var ret weed_server.FilerPostResult
 	unmarshal_err := json.Unmarshal(resp_body, &ret)
 	if unmarshal_err != nil {
 		glog.Errorf("failing to read upload to %s : %v", uploadUrl, string(resp_body))
-		return "", s3err.ErrInternalError
+		return "", s3err.ErrInternalError, ""
 	}
 	if ret.Error != "" {
 		glog.Errorf("upload to filer error: %v", ret.Error)
-		return "", filerErrorToS3Error(ret.Error)
+		return "", filerErrorToS3Error(ret.Error), ""
 	}
 
 	stats_collect.RecordBucketActiveTime(bucket)
-	return etag, s3err.ErrNone
+
+	// Determine which SSE type was used for response headers
+	var usedSSEType string
+	if customerKey != nil {
+		usedSSEType = "SSE-C"
+	} else if sseKMSKey != nil {
+		usedSSEType = "SSE-KMS"
+	} else if sseS3Key != nil {
+		usedSSEType = "SSE-S3"
+	}
+
+	return etag, s3err.ErrNone, usedSSEType
 }
 
 func setEtag(w http.ResponseWriter, etag string) {
@@ -425,7 +554,7 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 		dataReader = mimeDetect(r, dataReader)
 	}
 
-	etag, errCode = s3a.putToFiler(r, uploadUrl, dataReader, "", bucket)
+	etag, errCode, _ = s3a.putToFiler(r, uploadUrl, dataReader, "", bucket)
 	if errCode != s3err.ErrNone {
 		glog.Errorf("putSuspendedVersioningObject: failed to upload object: %v", errCode)
 		return "", errCode
@@ -567,7 +696,7 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 
 	glog.V(2).Infof("putVersionedObject: uploading %s/%s version %s to %s", bucket, object, versionId, versionUploadUrl)
 
-	etag, errCode = s3a.putToFiler(r, versionUploadUrl, body, "", bucket)
+	etag, errCode, _ = s3a.putToFiler(r, versionUploadUrl, body, "", bucket)
 	if errCode != s3err.ErrNone {
 		glog.Errorf("putVersionedObject: failed to upload version: %v", errCode)
 		return "", "", errCode
@@ -705,6 +834,95 @@ func (s3a *S3ApiServer) extractObjectLockMetadataFromRequest(r *http.Request, en
 			// Don't fail the upload if default retention can't be applied - this matches AWS behavior
 		}
 	}
+
+	return nil
+}
+
+// applyBucketDefaultEncryption applies bucket default encryption settings to a new object
+// This implements AWS S3 behavior where bucket default encryption automatically applies to new objects
+// when no explicit encryption headers are provided in the upload request
+func (s3a *S3ApiServer) applyBucketDefaultEncryption(bucket string, r *http.Request, dataReader *io.Reader, sseS3Key **SSES3Key, sseS3IV *[]byte, sseKMSKey **SSEKMSKey) error {
+	// Check if bucket has default encryption configured
+	encryptionConfig, err := s3a.GetBucketEncryptionConfig(bucket)
+	if err != nil || encryptionConfig == nil {
+		// No default encryption configured, this is fine
+		return nil
+	}
+
+	if encryptionConfig.SseAlgorithm == "" {
+		// No encryption algorithm specified
+		return nil
+	}
+
+	glog.V(3).Infof("applyBucketDefaultEncryption: applying default encryption %s for bucket %s", encryptionConfig.SseAlgorithm, bucket)
+
+	switch encryptionConfig.SseAlgorithm {
+	case EncryptionTypeAES256:
+		// Apply SSE-S3 (AES256) encryption
+		return s3a.applySSES3DefaultEncryption(dataReader, sseS3Key, sseS3IV)
+
+	case EncryptionTypeKMS:
+		// Apply SSE-KMS encryption
+		return s3a.applySSEKMSDefaultEncryption(bucket, r, dataReader, sseKMSKey, encryptionConfig)
+
+	default:
+		return fmt.Errorf("unsupported default encryption algorithm: %s", encryptionConfig.SseAlgorithm)
+	}
+}
+
+// applySSES3DefaultEncryption applies SSE-S3 encryption as bucket default
+func (s3a *S3ApiServer) applySSES3DefaultEncryption(dataReader *io.Reader, sseS3Key **SSES3Key, sseS3IV *[]byte) error {
+	// Generate SSE-S3 key
+	keyManager := GetSSES3KeyManager()
+	key, err := keyManager.GetOrCreateKey("")
+	if err != nil {
+		return fmt.Errorf("failed to generate SSE-S3 key for default encryption: %v", err)
+	}
+
+	// Create encrypted reader
+	encryptedReader, iv, encErr := CreateSSES3EncryptedReader(*dataReader, key)
+	if encErr != nil {
+		return fmt.Errorf("failed to create SSE-S3 encrypted reader for default encryption: %v", encErr)
+	}
+
+	// Update the data reader and SSE-S3 variables
+	*dataReader = encryptedReader
+	*sseS3Key = key
+	*sseS3IV = iv
+
+	// Store key in manager for later retrieval
+	keyManager.StoreKey(key)
+	glog.V(3).Infof("applySSES3DefaultEncryption: applied SSE-S3 default encryption with key ID: %s", key.KeyID)
+
+	return nil
+}
+
+// applySSEKMSDefaultEncryption applies SSE-KMS encryption as bucket default
+func (s3a *S3ApiServer) applySSEKMSDefaultEncryption(bucket string, r *http.Request, dataReader *io.Reader, sseKMSKey **SSEKMSKey, encryptionConfig *s3_pb.EncryptionConfiguration) error {
+	// Use the KMS key ID from bucket configuration, or default if not specified
+	keyID := encryptionConfig.KmsKeyId
+	if keyID == "" {
+		keyID = "alias/aws/s3" // AWS default KMS key for S3
+	}
+
+	// Check if bucket key is enabled in configuration
+	bucketKeyEnabled := encryptionConfig.BucketKeyEnabled
+
+	// Build encryption context for KMS
+	bucket, object := s3_constants.GetBucketAndObject(r)
+	encryptionContext := BuildEncryptionContext(bucket, object, bucketKeyEnabled)
+
+	// Create SSE-KMS encrypted reader
+	encryptedReader, sseKey, encErr := CreateSSEKMSEncryptedReaderWithBucketKey(*dataReader, keyID, encryptionContext, bucketKeyEnabled)
+	if encErr != nil {
+		return fmt.Errorf("failed to create SSE-KMS encrypted reader for default encryption: %v", encErr)
+	}
+
+	// Update the data reader and SSE-KMS variables
+	*dataReader = encryptedReader
+	*sseKMSKey = sseKey
+
+	glog.V(3).Infof("applySSEKMSDefaultEncryption: applied SSE-KMS default encryption with key ID: %s", keyID)
 
 	return nil
 }

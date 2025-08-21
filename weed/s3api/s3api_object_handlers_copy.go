@@ -175,8 +175,10 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 			// Detect if this is a cross-encryption copy by checking request headers
 			srcHasSSEC := IsSSECEncrypted(entry.Extended)
 			srcHasSSEKMS := IsSSEKMSEncrypted(entry.Extended)
+			srcHasSSES3 := IsSSES3EncryptedInternal(entry.Extended)
 			dstWantsSSEC := IsSSECRequest(r)
 			dstWantsSSEKMS := IsSSEKMSRequest(r)
+			dstWantsSSES3 := IsSSES3RequestInternal(r)
 
 			// SSE-KMS → SSE-C: skip ALL SSE-KMS headers
 			if srcHasSSEKMS && dstWantsSSEC {
@@ -201,8 +203,55 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 				}
 			}
 
+			// SSE-S3 → SSE-C: skip ALL SSE-S3 headers
+			if srcHasSSES3 && dstWantsSSEC {
+				if k == s3_constants.AmzServerSideEncryption ||
+					k == s3_constants.SeaweedFSSSES3Key ||
+					k == s3_constants.SeaweedFSSSES3Encryption ||
+					k == s3_constants.SeaweedFSSSES3BaseIV ||
+					k == s3_constants.SeaweedFSSSES3KeyData ||
+					k == s3_constants.SeaweedFSSSEIV {
+					skipHeader = true
+				}
+			}
+
+			// SSE-S3 → SSE-KMS: skip ALL SSE-S3 headers
+			if srcHasSSES3 && dstWantsSSEKMS {
+				if k == s3_constants.AmzServerSideEncryption ||
+					k == s3_constants.SeaweedFSSSES3Key ||
+					k == s3_constants.SeaweedFSSSES3Encryption ||
+					k == s3_constants.SeaweedFSSSES3BaseIV ||
+					k == s3_constants.SeaweedFSSSES3KeyData ||
+					k == s3_constants.SeaweedFSSSEIV {
+					skipHeader = true
+				}
+			}
+
+			// SSE-C → SSE-S3: skip ALL SSE-C headers
+			if srcHasSSEC && dstWantsSSES3 {
+				if k == s3_constants.AmzServerSideEncryptionCustomerAlgorithm ||
+					k == s3_constants.AmzServerSideEncryptionCustomerKeyMD5 ||
+					k == s3_constants.SeaweedFSSSEIV {
+					skipHeader = true
+				}
+			}
+
+			// SSE-KMS → SSE-S3: skip ALL SSE-KMS headers
+			if srcHasSSEKMS && dstWantsSSES3 {
+				if k == s3_constants.AmzServerSideEncryption ||
+					k == s3_constants.AmzServerSideEncryptionAwsKmsKeyId ||
+					k == s3_constants.SeaweedFSSSEKMSKey ||
+					k == s3_constants.SeaweedFSSSEKMSKeyID ||
+					k == s3_constants.SeaweedFSSSEKMSEncryption ||
+					k == s3_constants.SeaweedFSSSEKMSBucketKeyEnabled ||
+					k == s3_constants.SeaweedFSSSEKMSEncryptionContext ||
+					k == s3_constants.SeaweedFSSSEKMSBaseIV {
+					skipHeader = true
+				}
+			}
+
 			// Encrypted → Unencrypted: skip ALL encryption headers
-			if (srcHasSSEKMS || srcHasSSEC) && !dstWantsSSEC && !dstWantsSSEKMS {
+			if (srcHasSSEKMS || srcHasSSEC || srcHasSSES3) && !dstWantsSSEC && !dstWantsSSEKMS && !dstWantsSSES3 {
 				if k == s3_constants.AmzServerSideEncryption ||
 					k == s3_constants.AmzServerSideEncryptionAwsKmsKeyId ||
 					k == s3_constants.AmzServerSideEncryptionCustomerAlgorithm ||
@@ -1527,6 +1576,8 @@ func (s3a *S3ApiServer) copyMultipartCrossEncryption(entry *filer_pb.Entry, r *h
 			copiedChunk, err = s3a.copyCrossEncryptionChunk(chunk, sourceSSECKey, destSSECKey, destKMSKeyID, destKMSEncryptionContext, destKMSBucketKeyEnabled, dstPath, dstBucket, state)
 		} else if chunk.GetSseType() == filer_pb.SSEType_SSE_KMS {
 			copiedChunk, err = s3a.copyCrossEncryptionChunk(chunk, nil, destSSECKey, destKMSKeyID, destKMSEncryptionContext, destKMSBucketKeyEnabled, dstPath, dstBucket, state)
+		} else if chunk.GetSseType() == filer_pb.SSEType_SSE_S3 {
+			copiedChunk, err = s3a.copyCrossEncryptionChunk(chunk, nil, destSSECKey, destKMSKeyID, destKMSEncryptionContext, destKMSBucketKeyEnabled, dstPath, dstBucket, state)
 		} else {
 			// Unencrypted chunk, copy directly
 			copiedChunk, err = s3a.copySingleChunk(chunk, dstPath)
@@ -1581,6 +1632,25 @@ func (s3a *S3ApiServer) copyMultipartCrossEncryption(entry *filer_pb.Entry, r *h
 			glog.Infof("✅ Created SSE-KMS object-level metadata")
 		} else {
 			glog.Errorf("❌ Failed to serialize SSE-KMS metadata: %v", serErr)
+		}
+	} else if state.DstSSES3 {
+		// For SSE-S3 destination, create SSE-S3 metadata
+		keyManager := GetSSES3KeyManager()
+		sseS3Key, err := keyManager.GetOrCreateKey("")
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to generate SSE-S3 key for copy: %w", err)
+		}
+
+		// Store key in manager
+		keyManager.StoreKey(sseS3Key)
+
+		// Serialize SSE-S3 metadata
+		if keyData, serErr := SerializeSSES3Metadata(sseS3Key); serErr == nil {
+			dstMetadata[s3_constants.SeaweedFSSSES3Key] = keyData
+			dstMetadata[s3_constants.AmzServerSideEncryption] = []byte("AES256")
+			glog.Infof("✅ Created object-level SSE-S3 metadata for copy compatibility")
+		} else {
+			glog.Errorf("❌ Failed to serialize SSE-S3 metadata: %v", serErr)
 		}
 	}
 	// For unencrypted destination, no metadata needed (dstMetadata remains empty)
@@ -1671,6 +1741,46 @@ func (s3a *S3ApiServer) copyCrossEncryptionChunk(chunk *filer_pb.FileChunk, sour
 		decryptedData, readErr := io.ReadAll(decryptedReader)
 		if readErr != nil {
 			return nil, fmt.Errorf("decrypt SSE-KMS chunk data: %w", readErr)
+		}
+		finalData = decryptedData
+		previewLen := 16
+		if len(finalData) < previewLen {
+			previewLen = len(finalData)
+		}
+
+	} else if chunk.GetSseType() == filer_pb.SSEType_SSE_S3 {
+		// Decrypt SSE-S3 source
+		if len(chunk.GetSseKmsMetadata()) == 0 {
+			return nil, fmt.Errorf("SSE-S3 chunk missing per-chunk metadata")
+		}
+
+		keyManager := GetSSES3KeyManager()
+		sseS3Key, err := DeserializeSSES3Metadata(chunk.GetSseKmsMetadata(), keyManager)
+		if err != nil {
+			return nil, fmt.Errorf("failed to deserialize SSE-S3 metadata: %w", err)
+		}
+
+		// Get the IV from the chunk metadata (for multipart objects, this is calculated with offset)
+		var chunkIV []byte
+		if ivData, exists := chunk.SseMetadata["iv"]; exists {
+			decodedIV, decodeErr := base64.StdEncoding.DecodeString(string(ivData))
+			if decodeErr == nil {
+				chunkIV = decodedIV
+			} else {
+				return nil, fmt.Errorf("failed to decode SSE-S3 chunk IV: %w", decodeErr)
+			}
+		} else {
+			return nil, fmt.Errorf("SSE-S3 chunk missing IV metadata")
+		}
+
+		decryptedReader, decErr := CreateSSES3DecryptedReader(bytes.NewReader(encryptedData), sseS3Key, chunkIV)
+		if decErr != nil {
+			return nil, fmt.Errorf("create SSE-S3 decrypted reader: %w", decErr)
+		}
+
+		decryptedData, readErr := io.ReadAll(decryptedReader)
+		if readErr != nil {
+			return nil, fmt.Errorf("decrypt SSE-S3 chunk data: %w", readErr)
 		}
 		finalData = decryptedData
 		previewLen := 16

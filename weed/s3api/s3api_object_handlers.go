@@ -340,7 +340,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
 		if objectEntry, err := s3a.getEntry("", objectPath); err == nil {
 			primarySSEType := s3a.detectPrimarySSEType(objectEntry)
-			if primarySSEType == "SSE-C" || primarySSEType == "SSE-KMS" {
+			if primarySSEType == "SSE-C" || primarySSEType == "SSE-KMS" || primarySSEType == "SSE-S3" {
 				sseObject = true
 				// Temporarily remove Range header to get full encrypted data from filer
 				r.Header.Del("Range")
@@ -816,6 +816,9 @@ func (s3a *S3ApiServer) handleSSEResponse(r *http.Request, proxyResponse *http.R
 	} else if actualObjectType == "SSE-KMS" && !clientExpectsSSEC {
 		// Object is SSE-KMS and client doesn't expect SSE-C → SSE-KMS handler
 		return s3a.handleSSEKMSResponse(r, proxyResponse, w, kmsMetadataHeader)
+	} else if actualObjectType == "SSE-S3" && !clientExpectsSSEC {
+		// Object is SSE-S3 and client doesn't expect SSE-C → SSE-S3 handler
+		return s3a.handleSSES3Response(r, proxyResponse, w)
 	} else if actualObjectType == "None" && !clientExpectsSSEC {
 		// Object is unencrypted and client doesn't expect SSE-C → pass through
 		return passThroughResponse(proxyResponse, w)
@@ -825,6 +828,10 @@ func (s3a *S3ApiServer) handleSSEResponse(r *http.Request, proxyResponse *http.R
 		return http.StatusBadRequest, 0
 	} else if actualObjectType == "SSE-KMS" && clientExpectsSSEC {
 		// Object is SSE-KMS but client provides SSE-C headers → Error
+		s3err.WriteErrorResponse(w, r, s3err.ErrSSECustomerKeyMissing)
+		return http.StatusBadRequest, 0
+	} else if actualObjectType == "SSE-S3" && clientExpectsSSEC {
+		// Object is SSE-S3 but client provides SSE-C headers → Error
 		s3err.WriteErrorResponse(w, r, s3err.ErrSSECustomerKeyMissing)
 		return http.StatusBadRequest, 0
 	} else if actualObjectType == "None" && clientExpectsSSEC {
@@ -1024,6 +1031,16 @@ func (s3a *S3ApiServer) addSSEHeadersToResponse(proxyResponse *http.Response, en
 			proxyResponse.Header.Set(s3_constants.AmzServerSideEncryptionAwsKmsKeyId, string(kmsKeyID))
 		}
 
+	case "SSE-S3":
+		// Add SSE-S3 headers
+		proxyResponse.Header.Set(s3_constants.AmzServerSideEncryption, "AES256")
+
+		// Set IV header if available for single-part objects
+		if ivBytes, exists := entry.Extended[s3_constants.SeaweedFSSSEIV]; exists && len(ivBytes) > 0 {
+			ivBase64 := base64.StdEncoding.EncodeToString(ivBytes)
+			proxyResponse.Header.Set(s3_constants.SeaweedFSSSEIVHeader, ivBase64)
+		}
+
 	default:
 		// Unencrypted or unknown - don't set any SSE headers
 	}
@@ -1035,23 +1052,17 @@ func (s3a *S3ApiServer) addSSEHeadersToResponse(proxyResponse *http.Response, en
 func (s3a *S3ApiServer) detectPrimarySSEType(entry *filer_pb.Entry) string {
 	if len(entry.GetChunks()) == 0 {
 		// No chunks - check object-level metadata only (single objects or smallContent)
-		hasSSEC := entry.Extended[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] != nil
-		hasSSEKMS := entry.Extended[s3_constants.AmzServerSideEncryption] != nil
+		_, hasSSEC := entry.Extended[s3_constants.AmzServerSideEncryptionCustomerAlgorithm]
+		_, hasSSEKMS := entry.Extended[s3_constants.AmzServerSideEncryptionAwsKmsKeyId]
+		_, hasSSES3Key := entry.Extended[s3_constants.SeaweedFSSSES3Key]
+		_, hasServerSideEncryption := entry.Extended[s3_constants.AmzServerSideEncryption]
 
-		if hasSSEC && !hasSSEKMS {
+		if hasSSEC {
 			return "SSE-C"
-		} else if hasSSEKMS && !hasSSEC {
+		} else if hasSSEKMS {
 			return "SSE-KMS"
-		} else if hasSSEC && hasSSEKMS {
-			// Both present - this should only happen during cross-encryption copies
-			// Use content to determine actual encryption state
-			if len(entry.Content) > 0 {
-				// smallContent - check if it's encrypted (heuristic: random-looking data)
-				return "SSE-C" // Default to SSE-C for mixed case
-			} else {
-				// No content, both headers - default to SSE-C
-				return "SSE-C"
-			}
+		} else if hasSSES3Key || (hasServerSideEncryption && string(entry.Extended[s3_constants.AmzServerSideEncryption]) == "AES256" && !hasSSEC && !hasSSEKMS) {
+			return "SSE-S3"
 		}
 		return "None"
 	}
@@ -1069,6 +1080,17 @@ func (s3a *S3ApiServer) detectPrimarySSEType(entry *filer_pb.Entry) string {
 		}
 	}
 
+	// Check for SSE-S3 at object level (no chunk-level SSE-S3 type yet)
+	_, hasSSES3Key := entry.Extended[s3_constants.SeaweedFSSSES3Key]
+	sseValue, hasServerSideEncryption := entry.Extended[s3_constants.AmzServerSideEncryption]
+	if hasSSES3Key || (hasServerSideEncryption && string(sseValue) == "AES256") {
+		// If there are any chunks and they seem to be encrypted (have SSE metadata),
+		// but no specific chunk-level SSE type, assume SSE-S3
+		if len(entry.GetChunks()) > 0 && ssecChunks == 0 && ssekmsChunks == 0 {
+			return "SSE-S3"
+		}
+	}
+
 	// Primary type is the one with more chunks
 	if ssecChunks > ssekmsChunks {
 		return "SSE-C"
@@ -1077,6 +1099,11 @@ func (s3a *S3ApiServer) detectPrimarySSEType(entry *filer_pb.Entry) string {
 	} else if ssecChunks > 0 {
 		// Equal number, prefer SSE-C (shouldn't happen in practice)
 		return "SSE-C"
+	}
+
+	// Check for SSE-S3 with chunks that have no specific SSE type (fallback)
+	if hasSSES3Key || (hasServerSideEncryption && string(sseValue) == "AES256") {
+		return "SSE-S3"
 	}
 
 	return "None"
@@ -1411,6 +1438,336 @@ func (s3a *S3ApiServer) createMultipartSSECDecryptedReader(r *http.Request, prox
 				offset:    startOffset,
 				remaining: rangeLength,
 			}, nil
+		}
+	}
+
+	return multiReader, nil
+}
+
+// handleSSES3Response handles SSE-S3 decryption and response processing
+func (s3a *S3ApiServer) handleSSES3Response(r *http.Request, proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64) {
+	// For HEAD requests, we don't need to decrypt the body, just add response headers
+	if r.Method == "HEAD" {
+		// Capture existing CORS headers that may have been set by middleware
+		capturedCORSHeaders := captureCORSHeaders(w, corsHeaders)
+
+		// Copy headers from proxy response (includes SSE-S3 headers)
+		for k, v := range proxyResponse.Header {
+			w.Header()[k] = v
+		}
+
+		return writeFinalResponse(w, proxyResponse, proxyResponse.Body, capturedCORSHeaders)
+	}
+
+	// For GET requests, get the object entry to check structure
+	bucket, object := s3_constants.GetBucketAndObject(r)
+	objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
+	entry, err := s3a.getEntry("", objectPath)
+	if err != nil {
+		glog.Errorf("SSE-S3: Failed to get object entry: %v", err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return http.StatusInternalServerError, 0
+	}
+
+	// Check if this is a multipart SSE-S3 object or single-part
+	if len(entry.GetChunks()) > 0 {
+		// Multipart SSE-S3 object - each chunk needs decryption
+		multipartReader, decErr := s3a.createMultipartSSES3DecryptedReader(r, proxyResponse, entry)
+		if decErr != nil {
+			glog.Errorf("Failed to create multipart SSE-S3 decrypted reader: %v", decErr)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return http.StatusInternalServerError, 0
+		}
+
+		// Capture existing CORS headers that may have been set by middleware
+		capturedCORSHeaders := captureCORSHeaders(w, corsHeaders)
+
+		// Copy headers from proxy response
+		for k, v := range proxyResponse.Header {
+			w.Header()[k] = v
+		}
+
+		// Set proper headers for range requests (similar to SSE-C)
+		rangeHeader := r.Header.Get("Range")
+		if rangeHeader != "" {
+			// Parse range header (e.g., "bytes=0-99")
+			if len(rangeHeader) > 6 && rangeHeader[:6] == "bytes=" {
+				rangeSpec := rangeHeader[6:]
+				parts := strings.Split(rangeSpec, "-")
+				if len(parts) == 2 {
+					startOffset, endOffset := int64(0), int64(-1)
+					if parts[0] != "" {
+						startOffset, _ = strconv.ParseInt(parts[0], 10, 64)
+					}
+					if parts[1] != "" {
+						endOffset, _ = strconv.ParseInt(parts[1], 10, 64)
+					}
+
+					if endOffset >= startOffset {
+						// Specific range - set proper Content-Length and Content-Range headers
+						rangeLength := endOffset - startOffset + 1
+						totalSize := proxyResponse.Header.Get("Content-Length")
+
+						w.Header().Set("Content-Length", strconv.FormatInt(rangeLength, 10))
+						w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%s", startOffset, endOffset, totalSize))
+						// writeFinalResponse will set status to 206 if Content-Range is present
+					} else if endOffset == -1 && startOffset > 0 {
+						// Open-ended range - calculate remaining bytes from startOffset to end
+						totalSizeStr := proxyResponse.Header.Get("Content-Length")
+						if totalSize, err := strconv.ParseInt(totalSizeStr, 10, 64); err == nil {
+							remainingLength := totalSize - startOffset
+							w.Header().Set("Content-Length", strconv.FormatInt(remainingLength, 10))
+							w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%s", startOffset, totalSize-1, totalSizeStr))
+						}
+					}
+				}
+			}
+		}
+
+		return writeFinalResponse(w, proxyResponse, multipartReader, capturedCORSHeaders)
+	} else if len(entry.Content) > 0 {
+		// Small content SSE-S3 object stored directly in entry.Content
+		// Get SSE-S3 key from metadata
+		keyManager := GetSSES3KeyManager()
+		sseS3Key, keyErr := GetSSES3KeyFromMetadata(entry.Extended, keyManager)
+		if keyErr != nil {
+			glog.Errorf("SSE-S3: Failed to get encryption key from metadata: %v", keyErr)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return http.StatusInternalServerError, 0
+		}
+
+		// Get IV from metadata
+		ivBase64 := proxyResponse.Header.Get(s3_constants.SeaweedFSSSEIVHeader)
+		if ivBase64 == "" {
+			glog.Errorf("SSE-S3: Encrypted single-part object missing IV in metadata")
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return http.StatusInternalServerError, 0
+		}
+
+		iv, err := base64.StdEncoding.DecodeString(ivBase64)
+		if err != nil {
+			glog.Errorf("SSE-S3: Failed to decode IV from metadata: %v", err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return http.StatusInternalServerError, 0
+		}
+
+		// Create decrypted reader with IV from metadata
+		decryptedReader, decErr := CreateSSES3DecryptedReader(proxyResponse.Body, sseS3Key, iv)
+		if decErr != nil {
+			glog.Errorf("SSE-S3: Failed to create decrypted reader: %v", decErr)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return http.StatusInternalServerError, 0
+		}
+
+		// Handle range requests for single-part objects
+		rangeHeader := r.Header.Get("Range")
+		var finalReader io.Reader = decryptedReader
+		if rangeHeader != "" {
+			// Parse range header (e.g., "bytes=0-99")
+			if len(rangeHeader) > 6 && rangeHeader[:6] == "bytes=" {
+				rangeSpec := rangeHeader[6:]
+				parts := strings.Split(rangeSpec, "-")
+				if len(parts) == 2 {
+					startOffset, endOffset := int64(0), int64(-1)
+					if parts[0] != "" {
+						startOffset, _ = strconv.ParseInt(parts[0], 10, 64)
+					}
+					if parts[1] != "" {
+						endOffset, _ = strconv.ParseInt(parts[1], 10, 64)
+					}
+
+					// Create range reader for single-part object
+					if startOffset >= 0 {
+						if endOffset >= startOffset {
+							// Specific range: bytes=start-end
+							rangeLength := endOffset - startOffset + 1
+							finalReader = &SSERangeReader{
+								reader:    decryptedReader,
+								offset:    startOffset,
+								remaining: rangeLength,
+							}
+						} else if endOffset == -1 && startOffset >= 0 {
+							// Open-ended range: bytes=start- (from start to end of file)
+							finalReader = &SSERangeReader{
+								reader:    decryptedReader,
+								offset:    startOffset,
+								remaining: -1, // Read to end
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// Capture existing CORS headers that may have been set by middleware
+		capturedCORSHeaders := captureCORSHeaders(w, corsHeaders)
+
+		// Copy headers from proxy response
+		for k, v := range proxyResponse.Header {
+			w.Header()[k] = v
+		}
+
+		// Set proper headers for range requests (single-part objects)
+		if rangeHeader != "" {
+			// Parse range header (e.g., "bytes=0-99")
+			if len(rangeHeader) > 6 && rangeHeader[:6] == "bytes=" {
+				rangeSpec := rangeHeader[6:]
+				parts := strings.Split(rangeSpec, "-")
+				if len(parts) == 2 {
+					startOffset, endOffset := int64(0), int64(-1)
+					if parts[0] != "" {
+						startOffset, _ = strconv.ParseInt(parts[0], 10, 64)
+					}
+					if parts[1] != "" {
+						endOffset, _ = strconv.ParseInt(parts[1], 10, 64)
+					}
+
+					if endOffset >= startOffset {
+						// Specific range - set proper Content-Length and Content-Range headers
+						rangeLength := endOffset - startOffset + 1
+						totalSize := proxyResponse.Header.Get("Content-Length")
+
+						w.Header().Set("Content-Length", strconv.FormatInt(rangeLength, 10))
+						w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%s", startOffset, endOffset, totalSize))
+						// writeFinalResponse will set status to 206 if Content-Range is present
+					} else if endOffset == -1 && startOffset > 0 {
+						// Open-ended range - calculate remaining bytes from startOffset to end
+						totalSizeStr := proxyResponse.Header.Get("Content-Length")
+						if totalSize, err := strconv.ParseInt(totalSizeStr, 10, 64); err == nil {
+							remainingLength := totalSize - startOffset
+							w.Header().Set("Content-Length", strconv.FormatInt(remainingLength, 10))
+							w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%s", startOffset, totalSize-1, totalSizeStr))
+						}
+					}
+				}
+			}
+		}
+
+		return writeFinalResponse(w, proxyResponse, finalReader, capturedCORSHeaders)
+	}
+
+	// Fallback: pass through for unencrypted or unknown structure
+	return passThroughResponse(proxyResponse, w)
+}
+
+// createMultipartSSES3DecryptedReader creates a reader that decrypts each chunk independently for multipart SSE-S3 objects
+func (s3a *S3ApiServer) createMultipartSSES3DecryptedReader(r *http.Request, proxyResponse *http.Response, entry *filer_pb.Entry) (io.Reader, error) {
+	// Get SSE-S3 key manager
+	keyManager := GetSSES3KeyManager()
+
+	// Get SSE-S3 key from object metadata
+	sseS3Key, err := GetSSES3KeyFromMetadata(entry.Extended, keyManager)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get SSE-S3 key: %v", err)
+	}
+
+	// For now, use a simplified approach similar to SSE-C but with server-managed keys
+	// This is a basic implementation that can be enhanced later
+
+	// Get range information if present
+	rangeHeader := r.Header.Get("Range")
+
+	// Get chunks that are needed for the request
+	chunks := entry.GetChunks()
+	var neededChunks []*filer_pb.FileChunk
+
+	if rangeHeader != "" && len(rangeHeader) > 6 && rangeHeader[:6] == "bytes=" {
+		// Parse range and filter chunks
+		rangeSpec := rangeHeader[6:]
+		parts := strings.Split(rangeSpec, "-")
+		if len(parts) == 2 {
+			var startOffset, endOffset int64 = 0, -1
+			if parts[0] != "" {
+				startOffset, _ = strconv.ParseInt(parts[0], 10, 64)
+			}
+			if parts[1] != "" {
+				endOffset, _ = strconv.ParseInt(parts[1], 10, 64)
+			}
+
+			// Filter chunks to include only those needed for the range
+			for _, chunk := range chunks {
+				chunkStart := chunk.GetOffset()
+				chunkEnd := chunkStart + int64(chunk.GetSize()) - 1
+
+				// Include chunk if it overlaps with the requested range
+				if (endOffset == -1 || chunkStart <= endOffset) && (chunkEnd >= startOffset) {
+					neededChunks = append(neededChunks, chunk)
+				}
+			}
+		} else {
+			neededChunks = chunks
+		}
+	} else {
+		neededChunks = chunks
+	}
+
+	// Create readers for needed chunks
+	var readers []io.Reader
+
+	for _, chunk := range neededChunks {
+		// Get this chunk's encrypted data
+		chunkReader, err := s3a.createEncryptedChunkReader(chunk)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create chunk reader: %v", err)
+		}
+
+		// For SSE-S3, get the IV from object metadata
+		// SSE-S3 uses a single IV for the entire object, with offset-based calculation for chunks
+		var chunkIV []byte
+		if ivBytes, exists := entry.Extended[s3_constants.SeaweedFSSSEIV]; exists && len(ivBytes) > 0 {
+			// Use stored base IV and calculate offset-specific IV for continuous stream decryption
+			baseIV := ivBytes
+			// For SSE-S3, we need to calculate the IV as if this chunk is part of a continuous stream
+			// that started encryption from offset 0 with the base IV
+			chunkIV = calculateIVWithOffset(baseIV, chunk.GetOffset())
+		} else {
+			return nil, fmt.Errorf("SSE-S3 chunk missing IV metadata")
+		}
+
+		// Create decrypted reader for this chunk
+		decryptedReader, decErr := CreateSSES3DecryptedReader(chunkReader, sseS3Key, chunkIV)
+		if decErr != nil {
+			return nil, fmt.Errorf("failed to create SSE-S3 decrypted reader for chunk: %v", decErr)
+		}
+
+		readers = append(readers, decryptedReader)
+	}
+
+	// Combine all decrypted chunk readers using the proper multipart reader
+	multiReader := NewMultipartSSEReader(readers)
+
+	// Apply range logic if needed
+	if rangeHeader != "" && len(rangeHeader) > 6 && rangeHeader[:6] == "bytes=" {
+		rangeSpec := rangeHeader[6:]
+		parts := strings.Split(rangeSpec, "-")
+		if len(parts) == 2 {
+			startOffset, endOffset := int64(0), int64(-1)
+			if parts[0] != "" {
+				startOffset, _ = strconv.ParseInt(parts[0], 10, 64)
+			}
+			if parts[1] != "" {
+				endOffset, _ = strconv.ParseInt(parts[1], 10, 64)
+			}
+
+			// Create range reader for both specific ranges and open-ended ranges
+			if startOffset >= 0 {
+				if endOffset >= startOffset {
+					// Specific range: bytes=start-end
+					rangeLength := endOffset - startOffset + 1
+					return &SSERangeReader{
+						reader:    multiReader,
+						offset:    startOffset,
+						remaining: rangeLength,
+					}, nil
+				} else if endOffset == -1 && startOffset >= 0 {
+					// Open-ended range: bytes=start- (from start to end of file)
+					return &SSERangeReader{
+						reader:    multiReader,
+						offset:    startOffset,
+						remaining: -1, // Read to end
+					}, nil
+				}
+			}
 		}
 	}
 

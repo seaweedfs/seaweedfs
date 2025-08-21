@@ -376,6 +376,56 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 
 					glog.Infof("PutObjectPartHandler: inherited SSE-KMS settings from upload %s, keyID %s - letting putToFiler handle encryption", uploadID, keyID)
 				}
+
+				// Check for SSE-S3 settings in the upload entry
+				if encryptionBytes, exists := uploadEntry.Extended[s3_constants.SeaweedFSSSES3Encryption]; exists && string(encryptionBytes) == "AES256" {
+					glog.V(3).Infof("PutObjectPartHandler: found SSE-S3 settings for upload %s", uploadID)
+
+					// Retrieve the base IV for this multipart upload
+					var baseIV []byte
+					if baseIVBytes, exists := uploadEntry.Extended[s3_constants.SeaweedFSSSES3BaseIV]; exists {
+						// Decode the base64 encoded base IV
+						decodedIV, decodeErr := base64.StdEncoding.DecodeString(string(baseIVBytes))
+						if decodeErr == nil && len(decodedIV) == 16 {
+							baseIV = decodedIV
+							glog.V(4).Infof("Using stored base IV %x for SSE-S3 multipart upload %s", baseIV[:8], uploadID)
+						} else {
+							glog.Errorf("Failed to decode base IV for SSE-S3 multipart upload %s: %v", uploadID, decodeErr)
+						}
+					}
+
+					// Retrieve the SSE-S3 key data for this multipart upload
+					if keyDataBytes, exists := uploadEntry.Extended[s3_constants.SeaweedFSSSES3KeyData]; exists {
+						// Decode the base64 encoded key data
+						decodedKeyData, decodeErr := base64.StdEncoding.DecodeString(string(keyDataBytes))
+						if decodeErr == nil {
+							// Deserialize the SSE-S3 key
+							keyManager := GetSSES3KeyManager()
+							sseS3Key, keyErr := DeserializeSSES3Metadata(decodedKeyData, keyManager)
+							if keyErr == nil {
+								// Store key in manager for this request
+								keyManager.StoreKey(sseS3Key)
+
+								// Add SSE-S3 headers to the request for putToFiler to handle encryption
+								r.Header.Set(s3_constants.AmzServerSideEncryption, "AES256")
+
+								// Pass the serialized key and base IV to putToFiler via headers
+								r.Header.Set(s3_constants.SeaweedFSSSES3Key, base64.StdEncoding.EncodeToString(decodedKeyData))
+								if len(baseIV) > 0 {
+									r.Header.Set(s3_constants.SeaweedFSSSEIVHeader, base64.StdEncoding.EncodeToString(baseIV))
+								}
+
+								glog.Infof("PutObjectPartHandler: inherited SSE-S3 settings from upload %s, keyID %s - letting putToFiler handle encryption", uploadID, sseS3Key.KeyID)
+							} else {
+								glog.Errorf("Failed to deserialize SSE-S3 key for multipart upload %s: %v", uploadID, keyErr)
+							}
+						} else {
+							glog.Errorf("Failed to decode SSE-S3 key data for multipart upload %s: %v", uploadID, decodeErr)
+						}
+					} else {
+						glog.Errorf("SSE-S3 key data not found for multipart upload %s", uploadID)
+					}
+				}
 			}
 		} else {
 			glog.Infof("PutObjectPartHandler: failed to retrieve upload entry: %v", err)
@@ -389,7 +439,7 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 	}
 	destination := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
 
-	etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader, destination, bucket)
+	etag, errCode, _ := s3a.putToFiler(r, uploadUrl, dataReader, destination, bucket)
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return

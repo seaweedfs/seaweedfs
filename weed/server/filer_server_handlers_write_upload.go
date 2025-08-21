@@ -294,6 +294,24 @@ func (fs *FilerServer) dataToChunkWithSSE(ctx context.Context, r *http.Request, 
 			} else {
 				glog.V(4).InfofCtx(ctx, "SSE-C chunk %s missing IV or KeyMD5 header", fileId)
 			}
+		} else if r.Header.Get(s3_constants.SeaweedFSSSES3Key) != "" {
+			// SSE-S3: Server-side encryption with server-managed keys
+			// For now, we don't set a specific SSE type at chunk level for SSE-S3
+			// because SSE-S3 is handled at the object level, but we can add future support here
+			sseType = filer_pb.SSEType_NONE // SSE-S3 uses object-level encryption, not chunk-level
+
+			// Get SSE-S3 metadata from headers
+			sseS3Header := r.Header.Get(s3_constants.SeaweedFSSSES3Key)
+			if sseS3Header != "" {
+				if s3Data, err := base64.StdEncoding.DecodeString(sseS3Header); err == nil {
+					// For SSE-S3, we could store metadata at chunk level for future enhancements
+					// For now, keep it simple and let the object-level metadata handle it
+					glog.V(4).InfofCtx(ctx, "Processing SSE-S3 metadata for chunk %s at offset %d", fileId, chunkOffset)
+					_ = s3Data // Keep for potential future use
+				} else {
+					glog.V(1).InfofCtx(ctx, "Failed to decode SSE-S3 metadata for chunk %s: %v", fileId, err)
+				}
+			}
 		} else {
 		}
 	}

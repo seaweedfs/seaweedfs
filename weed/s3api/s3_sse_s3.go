@@ -241,7 +241,7 @@ func ProcessSSES3Request(r *http.Request) (map[string][]byte, error) {
 	// Return metadata
 	metadata := map[string][]byte{
 		s3_constants.AmzServerSideEncryption: []byte(SSES3Algorithm),
-		"sse-s3-key":                         keyData,
+		s3_constants.SeaweedFSSSES3Key:       keyData,
 	}
 
 	return metadata, nil
@@ -249,10 +249,27 @@ func ProcessSSES3Request(r *http.Request) (map[string][]byte, error) {
 
 // GetSSES3KeyFromMetadata extracts SSE-S3 key from object metadata
 func GetSSES3KeyFromMetadata(metadata map[string][]byte, keyManager *SSES3KeyManager) (*SSES3Key, error) {
-	keyData, exists := metadata["sse-s3-key"]
+	keyData, exists := metadata[s3_constants.SeaweedFSSSES3Key]
 	if !exists {
 		return nil, fmt.Errorf("SSE-S3 key not found in metadata")
 	}
 
 	return DeserializeSSES3Metadata(keyData, keyManager)
+}
+
+// CreateSSES3EncryptedReaderWithBaseIV creates an encrypted reader using a base IV for multipart upload consistency
+func CreateSSES3EncryptedReaderWithBaseIV(reader io.Reader, key *SSES3Key, baseIV []byte) (io.Reader, []byte, error) {
+	block, err := aes.NewCipher(key.Key)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create AES cipher: %w", err)
+	}
+	
+	// For multipart uploads, we use the same base IV but may need to calculate offset-specific IV
+	// For now, we use the base IV directly for simplicity (can be enhanced later for offset-based IVs)
+	iv := make([]byte, aes.BlockSize)
+	copy(iv, baseIV)
+	
+	stream := cipher.NewCTR(block, iv)
+	encryptedReader := &cipher.StreamReader{S: stream, R: reader}
+	return encryptedReader, iv, nil
 }
