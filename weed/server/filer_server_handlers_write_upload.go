@@ -251,15 +251,17 @@ func (fs *FilerServer) dataToChunkWithSSE(ctx context.Context, r *http.Request, 
 
 	if r != nil {
 		// Check for SSE-KMS
-		glog.V(4).InfofCtx(ctx, "dataToChunkWithSSE: checking for SSE-KMS header. Found: %v", r.Header.Get(s3_constants.SeaweedFSSSEKMSKeyHeader) != "")
-		if sseKMSHeader := r.Header.Get(s3_constants.SeaweedFSSSEKMSKeyHeader); sseKMSHeader != "" {
-			glog.V(3).InfofCtx(ctx, "dataToChunkWithSSE: SSE-KMS header found, processing")
+		sseKMSHeaderValue := r.Header.Get(s3_constants.SeaweedFSSSEKMSKeyHeader)
+		// Use Error level to ensure this shows up
+		glog.ErrorfCtx(ctx, "FILER DEBUG: dataToChunkWithSSE called. SSE-KMS header present: %v, length: %d, fileId: %s", sseKMSHeaderValue != "", len(sseKMSHeaderValue), fileId)
+		if sseKMSHeaderValue != "" {
+			glog.ErrorfCtx(ctx, "FILER PROCESSING: SSE-KMS header found, processing fileId=%s", fileId)
 			sseType = filer_pb.SSEType_SSE_KMS
-			if kmsData, err := base64.StdEncoding.DecodeString(sseKMSHeader); err == nil {
+			if kmsData, err := base64.StdEncoding.DecodeString(sseKMSHeaderValue); err == nil {
 				sseKmsMetadata = kmsData
-				glog.V(3).InfofCtx(ctx, "Storing SSE-KMS metadata in chunk %s", fileId)
+				glog.ErrorfCtx(ctx, "FILER SUCCESS: Storing SSE-KMS metadata in chunk %s, metadataLen=%d", fileId, len(sseKmsMetadata))
 			} else {
-				glog.ErrorfCtx(ctx, "Failed to decode SSE-KMS metadata for chunk %s: %v", fileId, err)
+				glog.ErrorfCtx(ctx, "FILER ERROR: Failed to decode SSE-KMS metadata for chunk %s: %v", fileId, err)
 			}
 		} else if r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerAlgorithm) != "" {
 			// SSE-C is already handled via CipherKey in UploadResult

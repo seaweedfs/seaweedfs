@@ -2,6 +2,8 @@ package s3api
 
 import (
 	"crypto/sha1"
+	"encoding/base64"
+	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -311,21 +313,36 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 			if keyIDBytes, exists := uploadEntry.Extended[s3_constants.SeaweedFSSSEKMSKeyID]; exists {
 				keyID := string(keyIDBytes)
 
-				// Add SSE-KMS headers to the request for putToFiler to process
+				// Build SSE-KMS metadata for this part
+				bucketKeyEnabled := false
+				if bucketKeyBytes, exists := uploadEntry.Extended[s3_constants.SeaweedFSSSEKMSBucketKeyEnabled]; exists && string(bucketKeyBytes) == "true" {
+					bucketKeyEnabled = true
+				}
+
+				var encryptionContext map[string]string
+				if contextBytes, exists := uploadEntry.Extended[s3_constants.SeaweedFSSSEKMSEncryptionContext]; exists {
+					// Parse the stored encryption context
+					if err := json.Unmarshal(contextBytes, &encryptionContext); err != nil {
+						glog.Errorf("Failed to parse encryption context for upload %s: %v", uploadID, err)
+						encryptionContext = BuildEncryptionContext(bucket, object, bucketKeyEnabled)
+					}
+				} else {
+					encryptionContext = BuildEncryptionContext(bucket, object, bucketKeyEnabled)
+				}
+
+				// Add SSE-KMS headers to the request for putToFiler to handle encryption
 				r.Header.Set(s3_constants.AmzServerSideEncryption, "aws:kms")
 				r.Header.Set(s3_constants.AmzServerSideEncryptionAwsKmsKeyId, keyID)
-
-				// Add bucket key setting if stored
-				if bucketKeyBytes, exists := uploadEntry.Extended[s3_constants.SeaweedFSSSEKMSBucketKeyEnabled]; exists && string(bucketKeyBytes) == "true" {
+				if bucketKeyEnabled {
 					r.Header.Set(s3_constants.AmzServerSideEncryptionBucketKeyEnabled, "true")
 				}
-
-				// Add encryption context if stored
-				if contextBytes, exists := uploadEntry.Extended[s3_constants.SeaweedFSSSEKMSEncryptionContext]; exists {
-					r.Header.Set(s3_constants.AmzServerSideEncryptionContext, string(contextBytes))
+				if len(encryptionContext) > 0 {
+					if contextJSON, err := json.Marshal(encryptionContext); err == nil {
+						r.Header.Set(s3_constants.AmzServerSideEncryptionContext, base64.StdEncoding.EncodeToString(contextJSON))
+					}
 				}
 
-				glog.Infof("PutObjectPartHandler: inherited SSE-KMS settings from upload %s, keyID %s", uploadID, keyID)
+				glog.Infof("PutObjectPartHandler: inherited SSE-KMS settings from upload %s, keyID %s - letting putToFiler handle encryption", uploadID, keyID)
 			}
 		}
 	} else {

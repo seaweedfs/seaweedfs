@@ -741,7 +741,27 @@ func (s3a *S3ApiServer) handleSSEKMSResponse(r *http.Request, proxyResponse *htt
 	}
 
 	// For GET requests, check if this is a multipart SSE-KMS object
-	isMultipartSSEKMS := proxyResponse.Header.Get(s3_constants.SeaweedFSUploadId) != ""
+	// We need to check the object structure to determine if it's multipart SSE-KMS
+	isMultipartSSEKMS := false
+	if sseKMSKey != nil {
+		// Get the object entry to check chunk structure
+		bucket, object := s3_constants.GetBucketAndObject(r)
+		objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
+		if entry, err := s3a.getEntry("", objectPath); err == nil {
+			// Check if we have multiple chunks with SSE-KMS metadata
+			sseKMSChunks := 0
+			for i, chunk := range entry.GetChunks() {
+				glog.Errorf("CHUNK DEBUG %d: sseType=%d, metadataLen=%d, fileId=%s",
+					i, chunk.GetSseType(), len(chunk.GetSseKmsMetadata()), chunk.GetFileIdString())
+				if chunk.GetSseType() == filer_pb.SSEType_SSE_KMS && len(chunk.GetSseKmsMetadata()) > 0 {
+					sseKMSChunks++
+				}
+			}
+			isMultipartSSEKMS = sseKMSChunks > 1
+			glog.Infof("SSE-KMS object detection: chunks=%d, sseKMSChunks=%d, isMultipart=%t",
+				len(entry.GetChunks()), sseKMSChunks, isMultipartSSEKMS)
+		}
+	}
 
 	var decryptedReader io.Reader
 	if isMultipartSSEKMS {
@@ -846,7 +866,10 @@ func (s3a *S3ApiServer) createMultipartSSEKMSDecryptedReader(r *http.Request, pr
 	// Create readers for each chunk, decrypting them independently
 	var readers []io.Reader
 
-	for _, chunk := range entry.GetChunks() {
+	for i, chunk := range entry.GetChunks() {
+		glog.Infof("Processing chunk %d/%d: fileId=%s, offset=%d, size=%d, sse_type=%d",
+			i+1, len(entry.GetChunks()), chunk.GetFileIdString(), chunk.GetOffset(), chunk.GetSize(), chunk.GetSseType())
+
 		// Get this chunk's encrypted data
 		chunkReader, err := s3a.createEncryptedChunkReader(chunk)
 		if err != nil {
@@ -864,7 +887,8 @@ func (s3a *S3ApiServer) createMultipartSSEKMSDecryptedReader(r *http.Request, pr
 				glog.Errorf("Failed to deserialize per-chunk SSE-KMS metadata for chunk %s: %v", chunk.GetFileIdString(), err)
 			} else {
 				chunkSSEKMSKey = kmsKey
-				glog.Infof("Using per-chunk SSE-KMS metadata for chunk %s", chunk.GetFileIdString())
+				glog.Infof("Using per-chunk SSE-KMS metadata for chunk %s: keyID=%s, IV=%x",
+					chunk.GetFileIdString(), kmsKey.KeyID, kmsKey.IV[:8]) // First 8 bytes of IV for debug
 			}
 		}
 
