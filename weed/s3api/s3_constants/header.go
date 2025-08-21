@@ -93,18 +93,18 @@ const (
 	SeaweedFSSSES3Key  = "x-seaweedfs-sse-s3-key"  // Key for storing serialized SSE-S3 metadata
 	SeaweedFSSSEIV     = "x-seaweedfs-sse-c-iv"    // Key for storing SSE-C IV
 
-	// Multipart upload metadata keys for SSE-KMS
-	SeaweedFSSSEKMSKeyID             = "sse-kms-key-id"             // Key ID for multipart upload SSE-KMS inheritance
-	SeaweedFSSSEKMSEncryption        = "sse-kms-encryption"         // Encryption type for multipart upload SSE-KMS inheritance
-	SeaweedFSSSEKMSBucketKeyEnabled  = "sse-kms-bucket-key-enabled" // Bucket key setting for multipart upload SSE-KMS inheritance
-	SeaweedFSSSEKMSEncryptionContext = "sse-kms-encryption-context" // Encryption context for multipart upload SSE-KMS inheritance
-	SeaweedFSSSEKMSBaseIV            = "sse-kms-base-iv"            // Base IV for multipart upload SSE-KMS (for IV offset calculation)
+	// Multipart upload metadata keys for SSE-KMS (consistent with internal metadata key pattern)
+	SeaweedFSSSEKMSKeyID             = "x-seaweedfs-sse-kms-key-id"             // Key ID for multipart upload SSE-KMS inheritance
+	SeaweedFSSSEKMSEncryption        = "x-seaweedfs-sse-kms-encryption"         // Encryption type for multipart upload SSE-KMS inheritance
+	SeaweedFSSSEKMSBucketKeyEnabled  = "x-seaweedfs-sse-kms-bucket-key-enabled" // Bucket key setting for multipart upload SSE-KMS inheritance
+	SeaweedFSSSEKMSEncryptionContext = "x-seaweedfs-sse-kms-encryption-context" // Encryption context for multipart upload SSE-KMS inheritance
+	SeaweedFSSSEKMSBaseIV            = "x-seaweedfs-sse-kms-base-iv"            // Base IV for multipart upload SSE-KMS (for IV offset calculation)
 )
 
 // SeaweedFS internal headers for filer communication
 const (
 	SeaweedFSSSEKMSKeyHeader    = "X-SeaweedFS-SSE-KMS-Key"     // Header for passing SSE-KMS metadata to filer
-	SeaweedFSSSEIVHeader        = "X-SeaweedFS-SSE-IV"          // Header for passing SSE-C IV to filer
+	SeaweedFSSSEIVHeader        = "X-SeaweedFS-SSE-IV"          // Header for passing SSE-C IV to filer (SSE-C only)
 	SeaweedFSSSEKMSBaseIVHeader = "X-SeaweedFS-SSE-KMS-Base-IV" // Header for passing base IV for multipart SSE-KMS
 )
 

@@ -680,7 +680,7 @@ func (s3a *S3ApiServer) handleSSECResponse(r *http.Request, proxyResponse *http.
 		}
 
 		// Single-part SSE-C object: Get IV from proxy response headers (stored during upload)
-		ivBase64 := proxyResponse.Header.Get("X-SeaweedFS-SSE-IV")
+		ivBase64 := proxyResponse.Header.Get(s3_constants.SeaweedFSSSEIVHeader)
 		if ivBase64 == "" {
 			glog.Errorf("SSE-C encrypted single-part object missing IV in metadata")
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -973,8 +973,8 @@ func (s3a *S3ApiServer) addSSEHeadersToResponse(proxyResponse *http.Response, en
 
 		if ivBytes, exists := entry.Extended[s3_constants.SeaweedFSSSEIV]; exists && len(ivBytes) > 0 {
 			ivBase64 := base64.StdEncoding.EncodeToString(ivBytes)
-			proxyResponse.Header.Set("X-SeaweedFS-SSE-IV", ivBase64)
-			glog.Infof("🔍 SET SeaweedFS SSE-IV header (base64 encoded)")
+			proxyResponse.Header.Set(s3_constants.SeaweedFSSSEIVHeader, ivBase64)
+			glog.Infof("🔍 SET SeaweedFS SSE-C IV header (base64 encoded)")
 		}
 
 	case "SSE-KMS":
