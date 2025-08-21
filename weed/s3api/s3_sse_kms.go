@@ -19,6 +19,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/kms"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
@@ -1085,6 +1086,68 @@ func DetectEncryptionState(srcMetadata map[string][]byte, r *http.Request, srcPa
 	}
 
 	return state
+}
+
+// DetectEncryptionStateWithEntry analyzes the source entry and request headers to determine encryption state
+// This version can detect multipart encrypted objects by examining chunks
+func DetectEncryptionStateWithEntry(entry *filer_pb.Entry, r *http.Request, srcPath, dstPath string) *EncryptionState {
+	state := &EncryptionState{
+		SrcSSEC:    IsSSECEncryptedWithEntry(entry),
+		SrcSSEKMS:  IsSSEKMSEncryptedWithEntry(entry),
+		SrcSSES3:   IsSSES3EncryptedInternal(entry.Extended),
+		DstSSEC:    IsSSECRequest(r),
+		DstSSEKMS:  IsSSEKMSRequest(r),
+		DstSSES3:   IsSSES3RequestInternal(r),
+		SameObject: srcPath == dstPath,
+	}
+
+	return state
+}
+
+// IsSSEKMSEncryptedWithEntry detects SSE-KMS encryption from entry (including multipart objects)
+func IsSSEKMSEncryptedWithEntry(entry *filer_pb.Entry) bool {
+	if entry == nil {
+		return false
+	}
+
+	// Check object-level metadata first
+	if IsSSEKMSEncrypted(entry.Extended) {
+		return true
+	}
+
+	// Check for multipart SSE-KMS by examining chunks
+	if len(entry.GetChunks()) > 0 {
+		for _, chunk := range entry.GetChunks() {
+			if chunk.GetSseType() == filer_pb.SSEType_SSE_KMS {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// IsSSECEncryptedWithEntry detects SSE-C encryption from entry (including multipart objects)
+func IsSSECEncryptedWithEntry(entry *filer_pb.Entry) bool {
+	if entry == nil {
+		return false
+	}
+
+	// Check object-level metadata first
+	if IsSSECEncrypted(entry.Extended) {
+		return true
+	}
+
+	// Check for multipart SSE-C by examining chunks
+	if len(entry.GetChunks()) > 0 {
+		for _, chunk := range entry.GetChunks() {
+			if chunk.GetSseType() == filer_pb.SSEType_SSE_C {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // Helper functions for SSE-C detection are in s3_sse_c.go

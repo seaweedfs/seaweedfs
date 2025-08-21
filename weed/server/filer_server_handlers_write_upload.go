@@ -15,6 +15,8 @@ import (
 
 	"slices"
 
+	"encoding/json"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -261,8 +263,40 @@ func (fs *FilerServer) dataToChunkWithSSE(ctx context.Context, r *http.Request, 
 				glog.V(1).InfofCtx(ctx, "Failed to decode SSE-KMS metadata for chunk %s: %v", fileId, err)
 			}
 		} else if r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerAlgorithm) != "" {
-			// SSE-C is already handled via CipherKey in UploadResult
+			// SSE-C: Create per-chunk metadata for unified handling
 			sseType = filer_pb.SSEType_SSE_C
+
+			// Get SSE-C metadata from headers to create unified per-chunk metadata
+			sseIVHeader := r.Header.Get(s3_constants.SeaweedFSSSEIVHeader)
+			keyMD5Header := r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerKeyMD5)
+
+			if sseIVHeader != "" && keyMD5Header != "" {
+				// Decode IV from header
+				if ivData, err := base64.StdEncoding.DecodeString(sseIVHeader); err == nil {
+					// Create SSE-C metadata with chunk offset = chunkOffset for proper IV calculation
+					ssecMetadataStruct := struct {
+						Algorithm  string `json:"algorithm"`
+						IV         string `json:"iv"`
+						KeyMD5     string `json:"keyMD5"`
+						PartOffset int64  `json:"partOffset"`
+					}{
+						Algorithm:  "AES256",
+						IV:         base64.StdEncoding.EncodeToString(ivData),
+						KeyMD5:     keyMD5Header,
+						PartOffset: chunkOffset,
+					}
+					if ssecMetadata, serErr := json.Marshal(ssecMetadataStruct); serErr == nil {
+						sseKmsMetadata = ssecMetadata
+						glog.V(4).InfofCtx(ctx, "Created unified SSE-C metadata for chunk %s at offset %d", fileId, chunkOffset)
+					} else {
+						glog.V(1).InfofCtx(ctx, "Failed to serialize SSE-C metadata for chunk %s: %v", fileId, serErr)
+					}
+				} else {
+					glog.V(1).InfofCtx(ctx, "Failed to decode SSE-C IV for chunk %s: %v", fileId, err)
+				}
+			} else {
+				glog.V(4).InfofCtx(ctx, "SSE-C chunk %s missing IV or KeyMD5 header", fileId)
+			}
 		} else {
 			glog.V(4).InfofCtx(ctx, "dataToChunkWithSSE: No SSE headers found")
 		}

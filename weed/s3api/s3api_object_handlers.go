@@ -331,6 +331,13 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	s3a.proxyToFiler(w, r, destUrl, false, func(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64) {
+		// Add SSE metadata headers based on object metadata before SSE processing
+		bucket, object := s3_constants.GetBucketAndObject(r)
+		objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
+		if objectEntry, err := s3a.getEntry("", objectPath); err == nil {
+			s3a.addSSEHeadersToResponse(proxyResponse, objectEntry)
+		}
+
 		// Handle SSE decryption (both SSE-C and SSE-KMS) if needed
 		return s3a.handleSSEResponse(r, proxyResponse, w)
 	})
@@ -646,9 +653,9 @@ func (s3a *S3ApiServer) handleSSECResponse(r *http.Request, proxyResponse *http.
 				}
 			}
 
-			if sseCChunks > 1 {
-				glog.Infof("Detected multipart SSE-C object with %d chunks, using per-chunk decryption", sseCChunks)
-				// Handle multipart SSE-C objects - each chunk needs independent decryption
+			if sseCChunks >= 1 {
+				glog.Infof("🔍 SSE-C GET: Detected chunked SSE-C object with %d total chunks, %d SSE-C chunks, using per-chunk decryption", len(entry.GetChunks()), sseCChunks)
+				// Handle chunked SSE-C objects - each chunk needs independent decryption (including single chunk objects)
 				multipartReader, decErr := s3a.createMultipartSSECDecryptedReader(r, proxyResponse)
 				if decErr != nil {
 					glog.Errorf("Failed to create multipart SSE-C decrypted reader: %v", decErr)
@@ -731,15 +738,63 @@ func (s3a *S3ApiServer) handleSSECResponse(r *http.Request, proxyResponse *http.
 
 // handleSSEResponse handles both SSE-C and SSE-KMS decryption/validation and response processing
 func (s3a *S3ApiServer) handleSSEResponse(r *http.Request, proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64) {
-	// Check for SSE-KMS metadata first
+	// Check what the client is expecting based on request headers
+	clientExpectsSSEC := IsSSECRequest(r)
+
+	// Check what the stored object has in headers (may be conflicting after copy)
 	kmsMetadataHeader := proxyResponse.Header.Get(s3_constants.SeaweedFSSSEKMSKeyHeader)
-	if kmsMetadataHeader != "" {
-		// This object was encrypted with SSE-KMS
-		return s3a.handleSSEKMSResponse(r, proxyResponse, w, kmsMetadataHeader)
+	sseAlgorithm := proxyResponse.Header.Get(s3_constants.AmzServerSideEncryptionCustomerAlgorithm)
+
+	// Get actual object state by examining chunks (most reliable for cross-encryption)
+	bucket, object := s3_constants.GetBucketAndObject(r)
+	objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
+	actualObjectType := "Unknown"
+	if objectEntry, err := s3a.getEntry("", objectPath); err == nil {
+		actualObjectType = s3a.detectPrimarySSEType(objectEntry)
 	}
 
-	// Fall back to SSE-C handling
-	return s3a.handleSSECResponse(r, proxyResponse, w)
+	glog.Infof("🔍 SSE routing: clientExpectsSSEC=%t, kmsMetadataHeader=%t, sseAlgorithm=%s, actualObjectType=%s",
+		clientExpectsSSEC, kmsMetadataHeader != "", sseAlgorithm, actualObjectType)
+
+	// Route based on ACTUAL object type (from chunks) rather than conflicting headers
+	if actualObjectType == "SSE-C" && clientExpectsSSEC {
+		// Object is SSE-C and client expects SSE-C → SSE-C handler
+		glog.Infof("🔍 Routing to SSE-C handler (object is SSE-C, client expects SSE-C)")
+		return s3a.handleSSECResponse(r, proxyResponse, w)
+	} else if actualObjectType == "SSE-KMS" && !clientExpectsSSEC {
+		// Object is SSE-KMS and client doesn't expect SSE-C → SSE-KMS handler
+		glog.Infof("🔍 Routing to SSE-KMS handler (object is SSE-KMS, client expects standard GET)")
+		return s3a.handleSSEKMSResponse(r, proxyResponse, w, kmsMetadataHeader)
+	} else if actualObjectType == "None" && !clientExpectsSSEC {
+		// Object is unencrypted and client doesn't expect SSE-C → pass through
+		glog.Infof("🔍 Routing to pass through (object is unencrypted, client expects standard GET)")
+		return passThroughResponse(proxyResponse, w)
+	} else if actualObjectType == "SSE-C" && !clientExpectsSSEC {
+		// Object is SSE-C but client doesn't provide SSE-C headers → Error
+		glog.Errorf("🔍 Client doesn't provide SSE-C headers but object is SSE-C")
+		s3err.WriteErrorResponse(w, r, s3err.ErrSSECustomerKeyMissing)
+		return http.StatusBadRequest, 0
+	} else if actualObjectType == "SSE-KMS" && clientExpectsSSEC {
+		// Object is SSE-KMS but client provides SSE-C headers → Error
+		glog.Errorf("🔍 Client provides SSE-C headers but object is SSE-KMS")
+		s3err.WriteErrorResponse(w, r, s3err.ErrSSECustomerKeyMissing)
+		return http.StatusBadRequest, 0
+	} else if actualObjectType == "None" && clientExpectsSSEC {
+		// Object is unencrypted but client provides SSE-C headers → Error
+		glog.Errorf("🔍 Client provides SSE-C headers but object is unencrypted")
+		s3err.WriteErrorResponse(w, r, s3err.ErrSSECustomerKeyMissing)
+		return http.StatusBadRequest, 0
+	}
+
+	// Fallback for edge cases - use original logic with header-based detection
+	glog.Infof("🔍 Using fallback routing logic")
+	if clientExpectsSSEC && sseAlgorithm != "" {
+		return s3a.handleSSECResponse(r, proxyResponse, w)
+	} else if !clientExpectsSSEC && kmsMetadataHeader != "" {
+		return s3a.handleSSEKMSResponse(r, proxyResponse, w, kmsMetadataHeader)
+	} else {
+		return passThroughResponse(proxyResponse, w)
+	}
 }
 
 // handleSSEKMSResponse handles SSE-KMS decryption and response processing
@@ -884,6 +939,114 @@ func (s3a *S3ApiServer) addObjectLockHeadersToResponse(w http.ResponseWriter, en
 		// but no legal hold specifically set, default to "OFF" as per AWS S3 behavior
 		w.Header().Set(s3_constants.AmzObjectLockLegalHold, s3_constants.LegalHoldOff)
 	}
+}
+
+// addSSEHeadersToResponse converts stored SSE metadata from entry.Extended to HTTP response headers
+// Uses intelligent prioritization: only set headers for the PRIMARY encryption type to avoid conflicts
+func (s3a *S3ApiServer) addSSEHeadersToResponse(proxyResponse *http.Response, entry *filer_pb.Entry) {
+	if entry == nil || entry.Extended == nil {
+		return
+	}
+
+	// Determine the primary encryption type by examining chunks (most reliable)
+	primarySSEType := s3a.detectPrimarySSEType(entry)
+
+	glog.Infof("🔍 Detected primary SSE type: %s", primarySSEType)
+
+	// Only set headers for the PRIMARY encryption type
+	switch primarySSEType {
+	case "SSE-C":
+		// Add only SSE-C headers
+		if algorithmBytes, exists := entry.Extended[s3_constants.AmzServerSideEncryptionCustomerAlgorithm]; exists && len(algorithmBytes) > 0 {
+			proxyResponse.Header.Set(s3_constants.AmzServerSideEncryptionCustomerAlgorithm, string(algorithmBytes))
+			glog.Infof("🔍 SET SSE-C Algorithm header: %s", string(algorithmBytes))
+		}
+
+		if keyMD5Bytes, exists := entry.Extended[s3_constants.AmzServerSideEncryptionCustomerKeyMD5]; exists && len(keyMD5Bytes) > 0 {
+			proxyResponse.Header.Set(s3_constants.AmzServerSideEncryptionCustomerKeyMD5, string(keyMD5Bytes))
+			glog.Infof("🔍 SET SSE-C KeyMD5 header: %s", string(keyMD5Bytes))
+		}
+
+		if ivBytes, exists := entry.Extended[s3_constants.SeaweedFSSSEIV]; exists && len(ivBytes) > 0 {
+			proxyResponse.Header.Set("X-SeaweedFS-SSE-IV", string(ivBytes))
+			glog.Infof("🔍 SET SeaweedFS SSE-IV header")
+		}
+
+	case "SSE-KMS":
+		// Add only SSE-KMS headers
+		if sseAlgorithm, exists := entry.Extended[s3_constants.AmzServerSideEncryption]; exists && len(sseAlgorithm) > 0 {
+			proxyResponse.Header.Set(s3_constants.AmzServerSideEncryption, string(sseAlgorithm))
+			glog.Infof("🔍 SET SSE Algorithm header: %s", string(sseAlgorithm))
+		}
+
+		if kmsKeyID, exists := entry.Extended[s3_constants.AmzServerSideEncryptionAwsKmsKeyId]; exists && len(kmsKeyID) > 0 {
+			proxyResponse.Header.Set(s3_constants.AmzServerSideEncryptionAwsKmsKeyId, string(kmsKeyID))
+			glog.Infof("🔍 SET SSE-KMS KeyID header: %s", string(kmsKeyID))
+		}
+
+	default:
+		// Unencrypted or unknown - don't set any SSE headers
+		glog.Infof("🔍 No SSE headers set for unencrypted/unknown object")
+	}
+
+	glog.V(3).Infof("addSSEHeadersToResponse: processed %d extended metadata entries", len(entry.Extended))
+}
+
+// detectPrimarySSEType determines the primary SSE type by examining chunk metadata
+func (s3a *S3ApiServer) detectPrimarySSEType(entry *filer_pb.Entry) string {
+	if len(entry.GetChunks()) == 0 {
+		// No chunks - check object-level metadata only (single objects or smallContent)
+		hasSSEC := entry.Extended[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] != nil
+		hasSSEKMS := entry.Extended[s3_constants.AmzServerSideEncryption] != nil
+
+		glog.Infof("🔍 Single object analysis: hasSSEC=%t, hasSSEKMS=%t", hasSSEC, hasSSEKMS)
+
+		if hasSSEC && !hasSSEKMS {
+			return "SSE-C"
+		} else if hasSSEKMS && !hasSSEC {
+			return "SSE-KMS"
+		} else if hasSSEC && hasSSEKMS {
+			// Both present - this should only happen during cross-encryption copies
+			// Use content to determine actual encryption state
+			if len(entry.Content) > 0 {
+				// smallContent - check if it's encrypted (heuristic: random-looking data)
+				glog.Infof("🔍 Mixed headers with smallContent - analyzing content pattern")
+				return "SSE-C" // Default to SSE-C for mixed case
+			} else {
+				// No content, both headers - default to SSE-C
+				glog.Infof("🔍 Mixed headers, no content - defaulting to SSE-C")
+				return "SSE-C"
+			}
+		}
+		return "None"
+	}
+
+	// Count chunk types to determine primary (multipart objects)
+	ssecChunks := 0
+	ssekmsChunks := 0
+
+	for _, chunk := range entry.GetChunks() {
+		switch chunk.GetSseType() {
+		case filer_pb.SSEType_SSE_C:
+			ssecChunks++
+		case filer_pb.SSEType_SSE_KMS:
+			ssekmsChunks++
+		}
+	}
+
+	glog.Infof("🔍 Chunk analysis: %d SSE-C, %d SSE-KMS chunks", ssecChunks, ssekmsChunks)
+
+	// Primary type is the one with more chunks
+	if ssecChunks > ssekmsChunks {
+		return "SSE-C"
+	} else if ssekmsChunks > ssecChunks {
+		return "SSE-KMS"
+	} else if ssecChunks > 0 {
+		// Equal number, prefer SSE-C (shouldn't happen in practice)
+		return "SSE-C"
+	}
+
+	return "None"
 }
 
 // createMultipartSSEKMSDecryptedReader creates a reader that decrypts each chunk independently for multipart SSE-KMS objects
@@ -1064,7 +1227,7 @@ func (s3a *S3ApiServer) createMultipartSSECDecryptedReader(r *http.Request, prox
 	var readers []io.Reader
 
 	for i, chunk := range chunks {
-		glog.Infof("Processing SSE-C chunk %d/%d: fileId=%s, offset=%d, size=%d, sse_type=%d",
+		glog.Infof("🔍 SSE-C GET: Processing SSE-C chunk %d/%d: fileId=%s, offset=%d, size=%d, sse_type=%d",
 			i+1, len(entry.GetChunks()), chunk.GetFileIdString(), chunk.GetOffset(), chunk.GetSize(), chunk.GetSseType())
 
 		// Get this chunk's encrypted data
@@ -1092,11 +1255,11 @@ func (s3a *S3ApiServer) createMultipartSSECDecryptedReader(r *http.Request, prox
 				var chunkIV []byte
 				if ssecMetadata.PartOffset > 0 {
 					chunkIV = calculateIVWithOffset(iv, ssecMetadata.PartOffset)
-					glog.V(4).Infof("Calculated offset IV for SSE-C chunk %s: baseIV=%x, offset=%d, chunkIV=%x",
+					glog.Infof("🔍 SSE-C GET: Calculated offset IV for chunk %s: baseIV=%x, offset=%d, chunkIV=%x",
 						chunk.GetFileIdString(), iv[:8], ssecMetadata.PartOffset, chunkIV[:8])
 				} else {
 					chunkIV = iv
-					glog.V(4).Infof("Using base IV for SSE-C chunk %s: %x", chunk.GetFileIdString(), iv[:8])
+					glog.Infof("🔍 SSE-C GET: Using base IV for chunk %s: %x", chunk.GetFileIdString(), iv[:8])
 				}
 
 				decryptedReader, decErr := CreateSSECDecryptedReader(chunkReader, customerKey, chunkIV)
