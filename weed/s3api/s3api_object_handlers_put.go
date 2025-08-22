@@ -217,7 +217,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	}
 	dataReader = encryptedReader
 
-		// Handle SSE-S3 encryption if requested  
+		// Handle SSE-S3 encryption if requested
 	var sseS3Key *SSES3Key
 	var sseS3Metadata []byte
 	encryptedReader, sseS3Key, sseS3Metadata, sseErrorCode = s3a.handleSSES3Encryption(r, dataReader, partOffset)

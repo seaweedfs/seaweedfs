@@ -114,6 +114,10 @@ func GetSSES3Headers() map[string]string {
 
 // SerializeSSES3Metadata serializes SSE-S3 metadata for storage
 func SerializeSSES3Metadata(key *SSES3Key) ([]byte, error) {
+	if err := ValidateSSES3Key(key); err != nil {
+		return nil, err
+	}
+
 	// For SSE-S3, we typically don't store the actual key in metadata
 	// Instead, we store a key ID or reference that can be used to retrieve the key
 	// from a secure key management system
