@@ -246,7 +246,7 @@ func (fs *FilerServer) dataToChunkWithSSE(ctx context.Context, r *http.Request, 
 
 	// Extract SSE metadata from request headers if available
 	var sseType filer_pb.SSEType = filer_pb.SSEType_NONE
-	var sseKmsMetadata []byte
+	var sseMetadata []byte
 
 	if r != nil {
 
@@ -255,7 +255,7 @@ func (fs *FilerServer) dataToChunkWithSSE(ctx context.Context, r *http.Request, 
 		if sseKMSHeaderValue != "" {
 			sseType = filer_pb.SSEType_SSE_KMS
 			if kmsData, err := base64.StdEncoding.DecodeString(sseKMSHeaderValue); err == nil {
-				sseKmsMetadata = kmsData
+				sseMetadata = kmsData
 				glog.V(4).InfofCtx(ctx, "Storing SSE-KMS metadata for chunk %s at offset %d", fileId, chunkOffset)
 			} else {
 				glog.V(1).InfofCtx(ctx, "Failed to decode SSE-KMS metadata for chunk %s: %v", fileId, err)
@@ -284,7 +284,7 @@ func (fs *FilerServer) dataToChunkWithSSE(ctx context.Context, r *http.Request, 
 						PartOffset: chunkOffset,
 					}
 					if ssecMetadata, serErr := json.Marshal(ssecMetadataStruct); serErr == nil {
-						sseKmsMetadata = ssecMetadata
+						sseMetadata = ssecMetadata
 					} else {
 						glog.V(1).InfofCtx(ctx, "Failed to serialize SSE-C metadata for chunk %s: %v", fileId, serErr)
 					}
@@ -305,7 +305,7 @@ func (fs *FilerServer) dataToChunkWithSSE(ctx context.Context, r *http.Request, 
 				if s3Data, err := base64.StdEncoding.DecodeString(sseS3Header); err == nil {
 					// For SSE-S3, store metadata at chunk level for consistency with SSE-KMS/SSE-C
 					glog.V(4).InfofCtx(ctx, "Storing SSE-S3 metadata for chunk %s at offset %d", fileId, chunkOffset)
-					sseKmsMetadata = s3Data
+					sseMetadata = s3Data
 				} else {
 					glog.V(1).InfofCtx(ctx, "Failed to decode SSE-S3 metadata for chunk %s: %v", fileId, err)
 				}
@@ -316,7 +316,7 @@ func (fs *FilerServer) dataToChunkWithSSE(ctx context.Context, r *http.Request, 
 	// Create chunk with SSE metadata if available
 	var chunk *filer_pb.FileChunk
 	if sseType != filer_pb.SSEType_NONE {
-		chunk = uploadResult.ToPbFileChunkWithSSE(fileId, chunkOffset, time.Now().UnixNano(), sseType, sseKmsMetadata)
+		chunk = uploadResult.ToPbFileChunkWithSSE(fileId, chunkOffset, time.Now().UnixNano(), sseType, sseMetadata)
 	} else {
 		chunk = uploadResult.ToPbFileChunk(fileId, chunkOffset, time.Now().UnixNano())
 	}
