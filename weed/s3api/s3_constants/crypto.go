@@ -26,4 +26,7 @@ const (
 	// KMS validation limits based on AWS KMS service constraints
 	MaxKMSEncryptionContextPairs = 10  // Maximum number of encryption context key-value pairs
 	MaxKMSKeyIDLength            = 500 // Maximum length for KMS key identifiers
+
+	// S3 multipart upload limits based on AWS S3 service constraints
+	MaxS3MultipartParts = 10000 // Maximum number of parts in a multipart upload (1-10,000)
 )

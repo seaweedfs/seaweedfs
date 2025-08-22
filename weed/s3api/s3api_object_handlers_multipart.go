@@ -29,7 +29,6 @@ const (
 	maxObjectListSizeLimit = 1000  // Limit number of objects in a listObjectsResponse.
 	maxUploadsList         = 10000 // Limit number of uploads in a listUploadsResponse.
 	maxPartsList           = 10000 // Limit number of parts in a listPartsResponse.
-	globalMaxPartID        = 100000
 )
 
 // NewMultipartUploadHandler - New multipart upload.
@@ -290,8 +289,8 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidPart)
 		return
 	}
-	if partID > globalMaxPartID {
-		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMaxParts)
+	if partID > s3_constants.MaxS3MultipartParts {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidPart)
 		return
 	}
 	if partID < 1 {
