@@ -185,7 +185,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 			// Set SSE response headers based on encryption type used
 			if sseType == "SSE-S3" {
-				w.Header().Set(s3_constants.AmzServerSideEncryption, "AES256")
+				w.Header().Set(s3_constants.AmzServerSideEncryption, s3_constants.SSEAlgorithmAES256)
 			}
 		}
 	}
@@ -202,8 +202,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	if partNumber > 0 {
 		// Using a large multiplier to ensure block offsets for different parts do not overlap.
 		// S3 part size limit is 5GB, so this provides a large safety margin.
-		const partOffsetMultiplier = int64(1) << 33 // 8GB, larger than max part size
-		partOffset = int64(partNumber-1) * partOffsetMultiplier
+		partOffset = int64(partNumber-1) * s3_constants.PartOffsetMultiplier
 		glog.V(4).Infof("putToFiler: calculated partOffset=%d for partNumber=%d", partOffset, partNumber)
 	}
 

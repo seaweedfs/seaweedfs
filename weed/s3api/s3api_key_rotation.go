@@ -116,7 +116,7 @@ func (s3a *S3ApiServer) rotateSSECChunks(entry *filer_pb.Entry, sourceKey, destK
 	}
 
 	// Generate new IV for the destination and store it in entry metadata
-	newIV := make([]byte, AESBlockSize)
+	newIV := make([]byte, s3_constants.AESBlockSize)
 	if _, err := io.ReadFull(rand.Reader, newIV); err != nil {
 		return nil, fmt.Errorf("generate new IV: %w", err)
 	}

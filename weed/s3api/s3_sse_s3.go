@@ -17,7 +17,7 @@ import (
 
 // SSE-S3 uses AES-256 encryption with server-managed keys
 const (
-	SSES3Algorithm = "AES256"
+	SSES3Algorithm = s3_constants.SSEAlgorithmAES256
 	SSES3KeySize   = 32 // 256 bits
 )
 
@@ -135,12 +135,6 @@ func SerializeSSES3Metadata(key *SSES3Key) ([]byte, error) {
 	}
 
 	return data, nil
-	// In a production system, this would be more sophisticated
-	// For now, we'll use a simple JSON-like format
-	serialized := fmt.Sprintf(`{"algorithm":"%s","keyId":"%s"}`,
-		metadata["algorithm"], metadata["keyId"])
-
-	return []byte(serialized), nil
 }
 
 // DeserializeSSES3Metadata deserializes SSE-S3 metadata from storage and retrieves the actual key
@@ -162,7 +156,7 @@ func DeserializeSSES3Metadata(data []byte, keyManager *SSES3KeyManager) (*SSES3K
 
 	algorithm, exists := metadata["algorithm"]
 	if !exists {
-		algorithm = "AES256" // Default algorithm
+		algorithm = s3_constants.SSEAlgorithmAES256 // Default algorithm
 	}
 
 	// Retrieve the actual key using the keyId

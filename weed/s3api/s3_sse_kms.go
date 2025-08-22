@@ -142,8 +142,8 @@ func CreateSSEKMSEncryptedReaderWithBucketKey(r io.Reader, keyID string, encrypt
 // CreateSSEKMSEncryptedReaderWithBaseIV creates an SSE-KMS encrypted reader using a provided base IV
 // This is used for multipart uploads where all chunks need to use the same base IV
 func CreateSSEKMSEncryptedReaderWithBaseIV(r io.Reader, keyID string, encryptionContext map[string]string, bucketKeyEnabled bool, baseIV []byte) (io.Reader, *SSEKMSKey, error) {
-	if len(baseIV) != 16 {
-		return nil, nil, fmt.Errorf("base IV must be exactly 16 bytes, got %d", len(baseIV))
+	if len(baseIV) != s3_constants.AESBlockSize {
+		return nil, nil, fmt.Errorf("base IV must be exactly %d bytes, got %d", s3_constants.AESBlockSize, len(baseIV))
 	}
 
 	kmsProvider := kms.GetGlobalKMS()
@@ -201,8 +201,8 @@ func CreateSSEKMSEncryptedReaderWithBaseIV(r io.Reader, keyID string, encryption
 // CreateSSEKMSEncryptedReaderWithBaseIVAndOffset creates an SSE-KMS encrypted reader using a provided base IV and offset
 // This is used for multipart uploads where all chunks need unique IVs to prevent IV reuse vulnerabilities
 func CreateSSEKMSEncryptedReaderWithBaseIVAndOffset(r io.Reader, keyID string, encryptionContext map[string]string, bucketKeyEnabled bool, baseIV []byte, offset int64) (io.Reader, *SSEKMSKey, error) {
-	if len(baseIV) != 16 {
-		return nil, nil, fmt.Errorf("base IV must be exactly 16 bytes, got %d", len(baseIV))
+	if len(baseIV) != s3_constants.AESBlockSize {
+		return nil, nil, fmt.Errorf("base IV must be exactly %d bytes, got %d", s3_constants.AESBlockSize, len(baseIV))
 	}
 
 	kmsProvider := kms.GetGlobalKMS()
@@ -490,8 +490,8 @@ func CreateSSEKMSDecryptedReader(r io.Reader, sseKey *SSEKMSKey) (io.Reader, err
 	}
 
 	// Use the IV from the SSE key metadata, calculating offset if this is a chunked part
-	if len(sseKey.IV) != 16 {
-		return nil, fmt.Errorf("invalid IV length in SSE key: expected 16 bytes, got %d", len(sseKey.IV))
+	if len(sseKey.IV) != s3_constants.AESBlockSize {
+		return nil, fmt.Errorf("invalid IV length in SSE key: expected %d bytes, got %d", s3_constants.AESBlockSize, len(sseKey.IV))
 	}
 
 	// Calculate the correct IV for this chunk's offset within the original part
@@ -526,7 +526,7 @@ func ParseSSEKMSHeaders(r *http.Request) (*SSEKMSKey, error) {
 	if sseAlgorithm == "" {
 		return nil, nil // No SSE headers present
 	}
-	if sseAlgorithm != "aws:kms" {
+	if sseAlgorithm != s3_constants.SSEAlgorithmKMS {
 		return nil, fmt.Errorf("invalid SSE algorithm: %s", sseAlgorithm)
 	}
 
@@ -623,7 +623,7 @@ func SerializeSSEKMSMetadata(sseKey *SSEKMSKey) ([]byte, error) {
 	}
 
 	metadata := &SSEKMSMetadata{
-		Algorithm:         "aws:kms",
+		Algorithm:         s3_constants.SSEAlgorithmKMS,
 		KeyID:             sseKey.KeyID,
 		EncryptedDataKey:  base64.StdEncoding.EncodeToString(sseKey.EncryptedDataKey),
 		EncryptionContext: sseKey.EncryptionContext,
@@ -653,13 +653,13 @@ func DeserializeSSEKMSMetadata(data []byte) (*SSEKMSKey, error) {
 	}
 
 	// Validate algorithm - be lenient with missing/empty algorithm for backward compatibility
-	if metadata.Algorithm != "" && metadata.Algorithm != "aws:kms" {
+	if metadata.Algorithm != "" && metadata.Algorithm != s3_constants.SSEAlgorithmKMS {
 		return nil, fmt.Errorf("invalid SSE-KMS algorithm: %s", metadata.Algorithm)
 	}
 
 	// Set default algorithm if empty
 	if metadata.Algorithm == "" {
-		metadata.Algorithm = "aws:kms"
+		metadata.Algorithm = s3_constants.SSEAlgorithmKMS
 	}
 
 	// Decode the encrypted data key
@@ -700,12 +700,12 @@ type SSECMetadata struct {
 
 // SerializeSSECMetadata serializes SSE-C metadata for storage in chunk metadata
 func SerializeSSECMetadata(iv []byte, keyMD5 string, partOffset int64) ([]byte, error) {
-	if len(iv) != 16 {
-		return nil, fmt.Errorf("invalid IV length: expected 16, got %d", len(iv))
+	if len(iv) != s3_constants.AESBlockSize {
+		return nil, fmt.Errorf("invalid IV length: expected %d, got %d", s3_constants.AESBlockSize, len(iv))
 	}
 
 	metadata := &SSECMetadata{
-		Algorithm:  "AES256",
+		Algorithm:  s3_constants.SSEAlgorithmAES256,
 		IV:         base64.StdEncoding.EncodeToString(iv),
 		KeyMD5:     keyMD5,
 		PartOffset: partOffset,
@@ -732,7 +732,7 @@ func DeserializeSSECMetadata(data []byte) (*SSECMetadata, error) {
 	}
 
 	// Validate algorithm
-	if metadata.Algorithm != "AES256" {
+	if metadata.Algorithm != s3_constants.SSEAlgorithmAES256 {
 		return nil, fmt.Errorf("invalid SSE-C algorithm: %s", metadata.Algorithm)
 	}
 
@@ -751,7 +751,7 @@ func DeserializeSSECMetadata(data []byte) (*SSECMetadata, error) {
 
 // AddSSEKMSResponseHeaders adds SSE-KMS response headers to an HTTP response
 func AddSSEKMSResponseHeaders(w http.ResponseWriter, sseKey *SSEKMSKey) {
-	w.Header().Set(s3_constants.AmzServerSideEncryption, "aws:kms")
+	w.Header().Set(s3_constants.AmzServerSideEncryption, s3_constants.SSEAlgorithmKMS)
 	w.Header().Set(s3_constants.AmzServerSideEncryptionAwsKmsKeyId, sseKey.KeyID)
 
 	if len(sseKey.EncryptionContext) > 0 {
@@ -780,7 +780,7 @@ func IsSSEKMSRequest(r *http.Request) bool {
 	// According to AWS S3 specification, SSE-KMS is only valid when the encryption header
 	// is explicitly set to "aws:kms". The KMS key ID header alone is not sufficient.
 	sseAlgorithm := r.Header.Get(s3_constants.AmzServerSideEncryption)
-	return sseAlgorithm == "aws:kms"
+	return sseAlgorithm == s3_constants.SSEAlgorithmKMS
 }
 
 // IsSSEKMSEncrypted checks if the metadata indicates SSE-KMS encryption
@@ -791,7 +791,7 @@ func IsSSEKMSEncrypted(metadata map[string][]byte) bool {
 
 	// The canonical way to identify an SSE-KMS encrypted object is by this header.
 	if sseAlgorithm, exists := metadata[s3_constants.AmzServerSideEncryption]; exists {
-		return string(sseAlgorithm) == "aws:kms"
+		return string(sseAlgorithm) == s3_constants.SSEAlgorithmKMS
 	}
 
 	return false
@@ -813,7 +813,7 @@ func IsAnySSEEncrypted(metadata map[string][]byte) bool {
 
 	// Check for SSE-S3
 	if sseAlgorithm, exists := metadata[s3_constants.AmzServerSideEncryption]; exists {
-		return string(sseAlgorithm) == "AES256"
+		return string(sseAlgorithm) == s3_constants.SSEAlgorithmAES256
 	}
 
 	return false
@@ -872,7 +872,7 @@ func (s SSEKMSCopyStrategy) String() string {
 
 // GetSourceSSEKMSInfo extracts SSE-KMS information from source object metadata
 func GetSourceSSEKMSInfo(metadata map[string][]byte) (keyID string, isEncrypted bool) {
-	if sseAlgorithm, exists := metadata[s3_constants.AmzServerSideEncryption]; exists && string(sseAlgorithm) == "aws:kms" {
+	if sseAlgorithm, exists := metadata[s3_constants.AmzServerSideEncryption]; exists && string(sseAlgorithm) == s3_constants.SSEAlgorithmKMS {
 		if kmsKeyID, exists := metadata[s3_constants.AmzServerSideEncryptionAwsKmsKeyId]; exists {
 			return string(kmsKeyID), true
 		}

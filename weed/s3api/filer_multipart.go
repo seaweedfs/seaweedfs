@@ -87,7 +87,7 @@ func (s3a *S3ApiServer) createMultipartUpload(r *http.Request, input *s3.CreateM
 
 			// Generate and store a base IV for this multipart upload
 			// Chunks within each part will use this base IV with their within-part offset
-			baseIV := make([]byte, 16)
+			baseIV := make([]byte, s3_constants.AESBlockSize)
 			if _, err := rand.Read(baseIV); err != nil {
 				glog.Errorf("Failed to generate base IV for SSE-KMS multipart upload %s: %v", uploadIdString, err)
 				criticalError = fmt.Errorf("failed to generate secure IV for SSE-KMS multipart upload: %v", err)
@@ -104,11 +104,11 @@ func (s3a *S3ApiServer) createMultipartUpload(r *http.Request, input *s3.CreateM
 		// This allows upload-part operations to inherit SSE-S3 encryption settings
 		if IsSSES3RequestInternal(r) {
 			// Store SSE-S3 configuration for parts to inherit
-			entry.Extended[s3_constants.SeaweedFSSSES3Encryption] = []byte("AES256")
+			entry.Extended[s3_constants.SeaweedFSSSES3Encryption] = []byte(s3_constants.SSEAlgorithmAES256)
 
 			// Generate and store a base IV for this multipart upload
 			// Parts within this upload will use this base IV with their within-part offset
-			baseIV := make([]byte, 16)
+			baseIV := make([]byte, s3_constants.AESBlockSize)
 			if _, err := rand.Read(baseIV); err != nil {
 				glog.Errorf("Failed to generate base IV for SSE-S3 multipart upload %s: %v", uploadIdString, err)
 				criticalError = fmt.Errorf("failed to generate secure IV for SSE-S3 multipart upload: %v", err)

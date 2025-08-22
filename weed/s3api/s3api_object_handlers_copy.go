@@ -1395,7 +1395,7 @@ func (s3a *S3ApiServer) copyMultipartSSECChunk(chunk *filer_pb.FileChunk, copySo
 	// Re-encrypt if destination should be encrypted
 	if destKey != nil {
 		// Generate new IV for this chunk
-		newIV := make([]byte, AESBlockSize)
+		newIV := make([]byte, s3_constants.AESBlockSize)
 		if _, err := rand.Read(newIV); err != nil {
 			return nil, nil, fmt.Errorf("generate IV: %w", err)
 		}
@@ -1826,7 +1826,7 @@ func (s3a *S3ApiServer) copyChunksWithReencryption(entry *filer_pb.Entry, copySo
 	// Generate a single IV for the destination object (if destination is encrypted)
 	var destIV []byte
 	if destKey != nil {
-		destIV = make([]byte, AESBlockSize)
+		destIV = make([]byte, s3_constants.AESBlockSize)
 		if _, err := io.ReadFull(rand.Reader, destIV); err != nil {
 			return nil, nil, fmt.Errorf("failed to generate destination IV: %w", err)
 		}

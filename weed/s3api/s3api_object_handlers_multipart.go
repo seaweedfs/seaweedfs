@@ -378,11 +378,11 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 				} else {
 					// Check if this upload uses SSE-S3
 					glog.Infof("PutObjectPartHandler: checking for SSE-S3 settings in extended metadata")
-					if encryptionTypeBytes, exists := uploadEntry.Extended[s3_constants.SeaweedFSSSES3Encryption]; exists && string(encryptionTypeBytes) == "AES256" {
+					if encryptionTypeBytes, exists := uploadEntry.Extended[s3_constants.SeaweedFSSSES3Encryption]; exists && string(encryptionTypeBytes) == s3_constants.SSEAlgorithmAES256 {
 						glog.Infof("PutObjectPartHandler: found SSE-S3 encryption type, setting up headers")
 						
 						// Set SSE-S3 headers to indicate server-side encryption
-						r.Header.Set(s3_constants.AmzServerSideEncryption, "AES256")
+						r.Header.Set(s3_constants.AmzServerSideEncryption, s3_constants.SSEAlgorithmAES256)
 						
 						// Retrieve and set base IV for consistent multipart encryption
 						var baseIV []byte
