@@ -200,31 +200,20 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	// This is critical for CTR mode encryption security
 	partOffset := calculatePartOffset(partNumber)
 
-	// Handle SSE-C encryption if requested
-	var customerKey *SSECustomerKey
-	var sseIV []byte
-	encryptedReader, customerKey, sseIV, sseErrorCode := s3a.handleSSECEncryption(r, dataReader)
+	// Handle all SSE encryption types in a unified manner to eliminate repetitive dataReader assignments
+	sseResult, sseErrorCode := s3a.handleAllSSEEncryption(r, dataReader, partOffset)
 	if sseErrorCode != s3err.ErrNone {
 		return "", sseErrorCode, ""
 	}
-	dataReader = encryptedReader
-
-	// Handle SSE-KMS encryption if requested
-	var sseKMSKey *SSEKMSKey
-	encryptedReader, sseKMSKey, sseKMSMetadata, sseErrorCode := s3a.handleSSEKMSEncryption(r, dataReader, partOffset)
-	if sseErrorCode != s3err.ErrNone {
-		return "", sseErrorCode, ""
-	}
-	dataReader = encryptedReader
-
-		// Handle SSE-S3 encryption if requested
-	var sseS3Key *SSES3Key
-	var sseS3Metadata []byte
-	encryptedReader, sseS3Key, sseS3Metadata, sseErrorCode = s3a.handleSSES3Encryption(r, dataReader, partOffset)
-	if sseErrorCode != s3err.ErrNone {
-		return "", sseErrorCode, ""
-	}
-	dataReader = encryptedReader
+	
+	// Extract results from unified SSE handling
+	dataReader = sseResult.DataReader
+	customerKey := sseResult.CustomerKey
+	sseIV := sseResult.SSEIV
+	sseKMSKey := sseResult.SSEKMSKey
+	sseKMSMetadata := sseResult.SSEKMSMetadata
+	sseS3Key := sseResult.SSES3Key
+	sseS3Metadata := sseResult.SSES3Metadata
 
 	// Apply bucket default encryption if no explicit encryption was provided
 	// This implements AWS S3 behavior where bucket default encryption automatically applies
@@ -345,17 +334,8 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 
 	stats_collect.RecordBucketActiveTime(bucket)
 
-	// Determine which SSE type was used for response headers
-	var usedSSEType string
-	if customerKey != nil {
-		usedSSEType = "SSE-C"
-	} else if sseKMSKey != nil {
-		usedSSEType = "SSE-KMS"
-	} else if sseS3Key != nil {
-		usedSSEType = "SSE-S3"
-	}
-
-	return etag, s3err.ErrNone, usedSSEType
+	// Return the SSE type determined by the unified handler
+	return etag, s3err.ErrNone, sseResult.SSEType
 }
 
 func setEtag(w http.ResponseWriter, etag string) {

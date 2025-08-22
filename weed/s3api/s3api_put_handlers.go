@@ -188,10 +188,10 @@ func (s3a *S3ApiServer) handleSSES3Encryption(r *http.Request, dataReader io.Rea
 		// Store IV on the key object for later decryption
 		sseS3Key.IV = iv
 		
-		dataReader = encryptedReader
-		
 		// Store the key for later use
 		keyManager.StoreKey(sseS3Key)
+		
+		dataReader = encryptedReader
 	}
 	
 	// Prepare SSE-S3 metadata for later header setting
@@ -202,4 +202,50 @@ func (s3a *S3ApiServer) handleSSES3Encryption(r *http.Request, dataReader io.Rea
 	
 	glog.V(3).Infof("handleSSES3Encryption: prepared SSE-S3 metadata for object")
 	return dataReader, sseS3Key, sseS3Metadata, s3err.ErrNone
+}
+
+// handleAllSSEEncryption processes all SSE types in sequence and returns the final encrypted reader
+// This eliminates repetitive dataReader assignments and centralizes SSE processing
+func (s3a *S3ApiServer) handleAllSSEEncryption(r *http.Request, dataReader io.Reader, partOffset int64) (*PutToFilerEncryptionResult, s3err.ErrorCode) {
+	result := &PutToFilerEncryptionResult{
+		DataReader: dataReader,
+	}
+	
+	// Handle SSE-C encryption first
+	encryptedReader, customerKey, sseIV, errCode := s3a.handleSSECEncryption(r, result.DataReader)
+	if errCode != s3err.ErrNone {
+		return nil, errCode
+	}
+	result.DataReader = encryptedReader
+	result.CustomerKey = customerKey
+	result.SSEIV = sseIV
+	
+	// Handle SSE-KMS encryption  
+	encryptedReader, sseKMSKey, sseKMSMetadata, errCode := s3a.handleSSEKMSEncryption(r, result.DataReader, partOffset)
+	if errCode != s3err.ErrNone {
+		return nil, errCode
+	}
+	result.DataReader = encryptedReader
+	result.SSEKMSKey = sseKMSKey
+	result.SSEKMSMetadata = sseKMSMetadata
+	
+	// Handle SSE-S3 encryption
+	encryptedReader, sseS3Key, sseS3Metadata, errCode := s3a.handleSSES3Encryption(r, result.DataReader, partOffset)
+	if errCode != s3err.ErrNone {
+		return nil, errCode
+	}
+	result.DataReader = encryptedReader
+	result.SSES3Key = sseS3Key
+	result.SSES3Metadata = sseS3Metadata
+	
+	// Set SSE type for response headers
+	if customerKey != nil {
+		result.SSEType = "SSE-C"
+	} else if sseKMSKey != nil {
+		result.SSEType = "SSE-KMS"
+	} else if sseS3Key != nil {
+		result.SSEType = "SSE-S3"
+	}
+	
+	return result, s3err.ErrNone
 }
