@@ -1020,10 +1020,9 @@ func mapValidationErrorToS3Error(err error) s3err.ErrorCode {
 }
 
 // EntryGetter interface for dependency injection in tests
+// Simplified to only mock the data access dependency
 type EntryGetter interface {
 	getEntry(parentDirectoryPath, entryName string) (*filer_pb.Entry, error)
-	getObjectETag(entry *filer_pb.Entry) string
-	etagMatches(headerValue, objectETag string) bool
 }
 
 // S3ApiServer implements EntryGetter interface
@@ -1052,8 +1051,9 @@ func (s3a *S3ApiServer) etagMatches(headerValue, objectETag string) bool {
 	return false
 }
 
-// checkConditionalHeadersWithGetter is a testable version that accepts an EntryGetter
-func checkConditionalHeadersWithGetter(getter EntryGetter, r *http.Request, bucket, object string) s3err.ErrorCode {
+// checkConditionalHeadersWithGetter is a testable method that accepts a simple EntryGetter
+// Uses the production getObjectETag and etagMatches methods to ensure testing of real logic
+func (s3a *S3ApiServer) checkConditionalHeadersWithGetter(getter EntryGetter, r *http.Request, bucket, object string) s3err.ErrorCode {
 	ifMatch := r.Header.Get(s3_constants.IfMatch)
 	ifNoneMatch := r.Header.Get(s3_constants.IfNoneMatch)
 	ifModifiedSince := r.Header.Get(s3_constants.IfModifiedSince)
@@ -1101,8 +1101,10 @@ func checkConditionalHeadersWithGetter(getter EntryGetter, r *http.Request, buck
 		// If `ifMatch` is "*", the condition is met if the object exists.
 		// Otherwise, we need to check the ETag.
 		if ifMatch != "*" {
-			objectETag := getter.getObjectETag(entry)
-			if !getter.etagMatches(ifMatch, objectETag) {
+			// Use production getObjectETag method
+			objectETag := s3a.getObjectETag(entry)
+			// Use production etagMatches method  
+			if !s3a.etagMatches(ifMatch, objectETag) {
 				glog.V(3).Infof("checkConditionalHeaders: If-Match failed for object %s/%s - expected ETag %s, got %s", bucket, object, ifMatch, objectETag)
 				return s3err.ErrPreconditionFailed
 			}
@@ -1129,8 +1131,10 @@ func checkConditionalHeadersWithGetter(getter EntryGetter, r *http.Request, buck
 				glog.V(3).Infof("checkConditionalHeaders: If-None-Match=* failed - object %s/%s exists", bucket, object)
 				return s3err.ErrPreconditionFailed
 			}
-			objectETag := getter.getObjectETag(entry)
-			if getter.etagMatches(ifNoneMatch, objectETag) {
+			// Use production getObjectETag method
+			objectETag := s3a.getObjectETag(entry)
+			// Use production etagMatches method
+			if s3a.etagMatches(ifNoneMatch, objectETag) {
 				glog.V(3).Infof("checkConditionalHeaders: If-None-Match failed - ETag matches %s", objectETag)
 				return s3err.ErrPreconditionFailed
 			}
@@ -1157,11 +1161,12 @@ func checkConditionalHeadersWithGetter(getter EntryGetter, r *http.Request, buck
 
 // checkConditionalHeaders is the production method that uses the S3ApiServer as EntryGetter
 func (s3a *S3ApiServer) checkConditionalHeaders(r *http.Request, bucket, object string) s3err.ErrorCode {
-	return checkConditionalHeadersWithGetter(s3a, r, bucket, object)
+	return s3a.checkConditionalHeadersWithGetter(s3a, r, bucket, object)
 }
 
-// checkConditionalHeadersForReadsWithGetter is a testable version for read operations
-func checkConditionalHeadersForReadsWithGetter(getter EntryGetter, r *http.Request, bucket, object string) s3err.ErrorCode {
+// checkConditionalHeadersForReadsWithGetter is a testable method for read operations
+// Uses the production getObjectETag and etagMatches methods to ensure testing of real logic
+func (s3a *S3ApiServer) checkConditionalHeadersForReadsWithGetter(getter EntryGetter, r *http.Request, bucket, object string) s3err.ErrorCode {
 	ifMatch := r.Header.Get(s3_constants.IfMatch)
 	ifNoneMatch := r.Header.Get(s3_constants.IfNoneMatch)
 	ifModifiedSince := r.Header.Get(s3_constants.IfModifiedSince)
@@ -1219,8 +1224,10 @@ func checkConditionalHeadersForReadsWithGetter(getter EntryGetter, r *http.Reque
 		// If `ifMatch` is "*", the condition is met if the object exists.
 		// Otherwise, we need to check the ETag.
 		if ifMatch != "*" {
-			objectETag := getter.getObjectETag(entry)
-			if !getter.etagMatches(ifMatch, objectETag) {
+			// Use production getObjectETag method
+			objectETag := s3a.getObjectETag(entry)
+			// Use production etagMatches method
+			if !s3a.etagMatches(ifMatch, objectETag) {
 				glog.V(3).Infof("checkConditionalHeadersForReads: If-Match failed for object %s/%s - expected ETag %s, got %s", bucket, object, ifMatch, objectETag)
 				return s3err.ErrPreconditionFailed
 			}
@@ -1244,8 +1251,10 @@ func checkConditionalHeadersForReadsWithGetter(getter EntryGetter, r *http.Reque
 			glog.V(3).Infof("checkConditionalHeadersForReads: If-None-Match=* failed - object %s/%s exists", bucket, object)
 			return s3err.ErrNotModified
 		}
-		objectETag := getter.getObjectETag(entry)
-		if getter.etagMatches(ifNoneMatch, objectETag) {
+		// Use production getObjectETag method
+		objectETag := s3a.getObjectETag(entry)
+		// Use production etagMatches method
+		if s3a.etagMatches(ifNoneMatch, objectETag) {
 			glog.V(3).Infof("checkConditionalHeadersForReads: If-None-Match failed - ETag matches %s", objectETag)
 			return s3err.ErrNotModified
 		}
@@ -1267,5 +1276,5 @@ func checkConditionalHeadersForReadsWithGetter(getter EntryGetter, r *http.Reque
 
 // checkConditionalHeadersForReads is the production method that uses the S3ApiServer as EntryGetter
 func (s3a *S3ApiServer) checkConditionalHeadersForReads(r *http.Request, bucket, object string) s3err.ErrorCode {
-	return checkConditionalHeadersForReadsWithGetter(s3a, r, bucket, object)
+	return s3a.checkConditionalHeadersForReadsWithGetter(s3a, r, bucket, object)
 }
