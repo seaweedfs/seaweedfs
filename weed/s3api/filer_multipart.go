@@ -130,7 +130,7 @@ func (s3a *S3ApiServer) createMultipartUpload(r *http.Request, input *s3.CreateM
 			keyData, serErr := SerializeSSES3Metadata(sseS3Key)
 			if serErr != nil {
 				glog.Errorf("Failed to serialize SSE-S3 key for multipart upload %s: %v", uploadIdString, serErr)
-				criticalError = fmt.Errorf("failed to serialize SSE-S3 key for multipart upload: %v", serErr)
+				criticalError = fmt.Errorf("failed to serialize SSE-S3 metadata for multipart upload: %v", serErr)
 				return
 			}
 			entry.Extended[s3_constants.SeaweedFSSSES3KeyData] = []byte(base64.StdEncoding.EncodeToString(keyData))
