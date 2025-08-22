@@ -402,7 +402,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	glog.V(3).Infof("CopyObjectPartHandler %s %s => %s part %d upload %s", srcBucket, srcObject, dstBucket, partID, uploadID)
 
 	// check partID with maximum part ID for multipart objects
-	if partID > s3_constants.MaxS3MultipartParts {
+	if partID >= s3_constants.MaxS3MultipartParts {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidPart)
 		return
 	}
