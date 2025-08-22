@@ -119,76 +119,93 @@ func (s3a *S3ApiServer) handleSSEKMSEncryption(r *http.Request, dataReader io.Re
 	return encryptedReader, sseKey, sseKMSMetadata, s3err.ErrNone
 }
 
+// handleSSES3MultipartEncryption handles multipart upload logic for SSE-S3 encryption
+func (s3a *S3ApiServer) handleSSES3MultipartEncryption(r *http.Request, dataReader io.Reader, partOffset int64) (io.Reader, *SSES3Key, s3err.ErrorCode) {
+	keyDataHeader := r.Header.Get(s3_constants.SeaweedFSSSES3KeyDataHeader)
+	baseIVHeader := r.Header.Get(s3_constants.SeaweedFSSSES3BaseIVHeader)
+
+	glog.V(4).Infof("handleSSES3MultipartEncryption: using provided key and base IV for multipart part")
+
+	// Decode the key data
+	keyData, decodeErr := base64.StdEncoding.DecodeString(keyDataHeader)
+	if decodeErr != nil {
+		return nil, nil, s3err.ErrInternalError
+	}
+
+	// Deserialize the SSE-S3 key
+	keyManager := GetSSES3KeyManager()
+	key, deserializeErr := DeserializeSSES3Metadata(keyData, keyManager)
+	if deserializeErr != nil {
+		return nil, nil, s3err.ErrInternalError
+	}
+
+	// Decode the base IV
+	baseIV, decodeErr := base64.StdEncoding.DecodeString(baseIVHeader)
+	if decodeErr != nil || len(baseIV) != s3_constants.AESBlockSize {
+		return nil, nil, s3err.ErrInternalError
+	}
+
+	// Use the provided base IV with unique part offset for multipart upload consistency
+	encryptedReader, _, encErr := CreateSSES3EncryptedReaderWithBaseIV(dataReader, key, baseIV, partOffset)
+	if encErr != nil {
+		return nil, nil, s3err.ErrInternalError
+	}
+
+	glog.V(4).Infof("handleSSES3MultipartEncryption: using provided base IV %x", baseIV[:8])
+	return encryptedReader, key, s3err.ErrNone
+}
+
+// handleSSES3SinglePartEncryption handles single-part upload logic for SSE-S3 encryption
+func (s3a *S3ApiServer) handleSSES3SinglePartEncryption(dataReader io.Reader) (io.Reader, *SSES3Key, s3err.ErrorCode) {
+	glog.V(4).Infof("handleSSES3SinglePartEncryption: generating new key for single-part upload")
+
+	keyManager := GetSSES3KeyManager()
+	key, err := keyManager.GetOrCreateKey("")
+	if err != nil {
+		return nil, nil, s3err.ErrInternalError
+	}
+
+	// Create encrypted reader
+	encryptedReader, iv, encErr := CreateSSES3EncryptedReader(dataReader, key)
+	if encErr != nil {
+		return nil, nil, s3err.ErrInternalError
+	}
+
+	// Store IV on the key object for later decryption
+	key.IV = iv
+
+	// Store the key for later use
+	keyManager.StoreKey(key)
+
+	return encryptedReader, key, s3err.ErrNone
+}
+
 // handleSSES3Encryption processes SSE-S3 encryption for the data reader
 func (s3a *S3ApiServer) handleSSES3Encryption(r *http.Request, dataReader io.Reader, partOffset int64) (io.Reader, *SSES3Key, []byte, s3err.ErrorCode) {
-	// Handle SSE-S3 encryption if requested
 	if !IsSSES3RequestInternal(r) {
 		return dataReader, nil, nil, s3err.ErrNone
 	}
 
 	glog.V(3).Infof("handleSSES3Encryption: SSE-S3 request detected, processing encryption")
 
+	var encryptedReader io.Reader
 	var sseS3Key *SSES3Key
+	var errCode s3err.ErrorCode
 
-	// Check if key data and base IV are provided (for multipart uploads)
+	// Check if this is multipart upload (key data and base IV provided)
 	keyDataHeader := r.Header.Get(s3_constants.SeaweedFSSSES3KeyDataHeader)
 	baseIVHeader := r.Header.Get(s3_constants.SeaweedFSSSES3BaseIVHeader)
 
 	if keyDataHeader != "" && baseIVHeader != "" {
-		// Multipart upload: use provided key data and base IV with offset calculation
-		glog.V(4).Infof("handleSSES3Encryption: SSE-S3 multipart part detected, using provided key and base IV")
-
-		// Decode the key data
-		keyData, decodeErr := base64.StdEncoding.DecodeString(keyDataHeader)
-		if decodeErr != nil {
-			return nil, nil, nil, s3err.ErrInternalError
-		}
-
-		// Deserialize the SSE-S3 key
-		keyManager := GetSSES3KeyManager()
-		key, deserializeErr := DeserializeSSES3Metadata(keyData, keyManager)
-		if deserializeErr != nil {
-			return nil, nil, nil, s3err.ErrInternalError
-		}
-		sseS3Key = key
-
-		// Decode the base IV
-		baseIV, decodeErr := base64.StdEncoding.DecodeString(baseIVHeader)
-		if decodeErr != nil || len(baseIV) != 16 {
-			return nil, nil, nil, s3err.ErrInternalError
-		}
-
-		// Use the provided base IV with unique part offset for multipart upload consistency
-		encryptedReader, _, encErr := CreateSSES3EncryptedReaderWithBaseIV(dataReader, sseS3Key, baseIV, partOffset)
-		if encErr != nil {
-			return nil, nil, nil, s3err.ErrInternalError
-		}
-
-		dataReader = encryptedReader
-		glog.V(4).Infof("Using provided base IV %x for SSE-S3 multipart encryption", baseIV[:8])
+		// Multipart upload: use provided key and base IV
+		encryptedReader, sseS3Key, errCode = s3a.handleSSES3MultipartEncryption(r, dataReader, partOffset)
 	} else {
 		// Single-part upload: generate new key and IV
-		glog.V(4).Infof("handleSSES3Encryption: SSE-S3 single-part upload, generating new key")
+		encryptedReader, sseS3Key, errCode = s3a.handleSSES3SinglePartEncryption(dataReader)
+	}
 
-		keyManager := GetSSES3KeyManager()
-		key, err := keyManager.GetOrCreateKey("")
-		if err != nil {
-			return nil, nil, nil, s3err.ErrInternalError
-		}
-		sseS3Key = key
-
-		// Create encrypted reader
-		encryptedReader, iv, encErr := CreateSSES3EncryptedReader(dataReader, sseS3Key)
-		if encErr != nil {
-			return nil, nil, nil, s3err.ErrInternalError
-		}
-		// Store IV on the key object for later decryption
-		sseS3Key.IV = iv
-
-		// Store the key for later use
-		keyManager.StoreKey(sseS3Key)
-
-		dataReader = encryptedReader
+	if errCode != s3err.ErrNone {
+		return nil, nil, nil, errCode
 	}
 
 	// Prepare SSE-S3 metadata for later header setting
@@ -198,7 +215,7 @@ func (s3a *S3ApiServer) handleSSES3Encryption(r *http.Request, dataReader io.Rea
 	}
 
 	glog.V(3).Infof("handleSSES3Encryption: prepared SSE-S3 metadata for object")
-	return dataReader, sseS3Key, sseS3Metadata, s3err.ErrNone
+	return encryptedReader, sseS3Key, sseS3Metadata, s3err.ErrNone
 }
 
 // handleAllSSEEncryption processes all SSE types in sequence and returns the final encrypted reader
