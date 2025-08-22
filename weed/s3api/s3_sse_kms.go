@@ -426,7 +426,7 @@ func CreateSSEKMSDecryptedReader(r io.Reader, sseKey *SSEKMSKey) (io.Reader, err
 		glog.Infof("Using calculated IV with offset %d for chunk decryption", sseKey.ChunkOffset)
 	} else {
 		iv = sseKey.IV
-		glog.Infof("Using base IV for chunk decryption (offset=0)")
+		// glog.Infof("Using base IV for chunk decryption (offset=0)")
 	}
 
 	// Create AES cipher with the decrypted data key
