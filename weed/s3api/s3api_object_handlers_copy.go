@@ -2171,8 +2171,8 @@ func getKeyIDString(key *SSEKMSKey) string {
 
 // EncryptionHeaderContext holds encryption type information and header classifications
 type EncryptionHeaderContext struct {
-	SrcSSEC, SrcSSEKMS, SrcSSES3 bool
-	DstSSEC, DstSSEKMS, DstSSES3 bool
+	SrcSSEC, SrcSSEKMS, SrcSSES3                bool
+	DstSSEC, DstSSEKMS, DstSSES3                bool
 	IsSSECHeader, IsSSEKMSHeader, IsSSES3Header bool
 }
 
@@ -2181,9 +2181,9 @@ func newEncryptionHeaderContext(headerKey string, srcSSEC, srcSSEKMS, srcSSES3, 
 	return &EncryptionHeaderContext{
 		SrcSSEC: srcSSEC, SrcSSEKMS: srcSSEKMS, SrcSSES3: srcSSES3,
 		DstSSEC: dstSSEC, DstSSEKMS: dstSSEKMS, DstSSES3: dstSSES3,
-		IsSSECHeader: isSSECHeader(headerKey),
+		IsSSECHeader:   isSSECHeader(headerKey),
 		IsSSEKMSHeader: isSSEKMSHeader(headerKey, srcSSEKMS, dstSSEKMS),
-		IsSSES3Header: isSSES3Header(headerKey, srcSSES3, dstSSES3),
+		IsSSES3Header:  isSSES3Header(headerKey, srcSSES3, dstSSES3),
 	}
 }
 
@@ -2221,32 +2221,32 @@ func (ctx *EncryptionHeaderContext) shouldSkipCrossEncryptionHeader() bool {
 	if ctx.SrcSSEC && ctx.DstSSEKMS && ctx.IsSSECHeader {
 		return true
 	}
-	
-	// SSE-KMS to SSE-C: skip SSE-KMS headers  
+
+	// SSE-KMS to SSE-C: skip SSE-KMS headers
 	if ctx.SrcSSEKMS && ctx.DstSSEC && ctx.IsSSEKMSHeader {
 		return true
 	}
-	
+
 	// SSE-C to SSE-S3: skip SSE-C headers
 	if ctx.SrcSSEC && ctx.DstSSES3 && ctx.IsSSECHeader {
 		return true
 	}
-	
+
 	// SSE-S3 to SSE-C: skip SSE-S3 headers
 	if ctx.SrcSSES3 && ctx.DstSSEC && ctx.IsSSES3Header {
 		return true
 	}
-	
+
 	// SSE-KMS to SSE-S3: skip SSE-KMS headers
 	if ctx.SrcSSEKMS && ctx.DstSSES3 && ctx.IsSSEKMSHeader {
 		return true
 	}
-	
+
 	// SSE-S3 to SSE-KMS: skip SSE-S3 headers
 	if ctx.SrcSSES3 && ctx.DstSSEKMS && ctx.IsSSES3Header {
 		return true
 	}
-	
+
 	return false
 }
 
@@ -2256,7 +2256,7 @@ func (ctx *EncryptionHeaderContext) shouldSkipEncryptedToUnencryptedHeader() boo
 	hasSourceEncryption := ctx.SrcSSEC || ctx.SrcSSEKMS || ctx.SrcSSES3
 	hasDestinationEncryption := ctx.DstSSEC || ctx.DstSSEKMS || ctx.DstSSES3
 	isAnyEncryptionHeader := ctx.IsSSECHeader || ctx.IsSSEKMSHeader || ctx.IsSSES3Header
-	
+
 	return hasSourceEncryption && !hasDestinationEncryption && isAnyEncryptionHeader
 }
 
@@ -2269,22 +2269,22 @@ func shouldSkipEncryptionHeader(headerKey string,
 
 	// Create context to reduce complexity and improve testability
 	ctx := newEncryptionHeaderContext(headerKey, srcSSEC, srcSSEKMS, srcSSES3, dstSSEC, dstSSEKMS, dstSSES3)
-	
+
 	// If it's not an encryption header, don't skip it
 	if !ctx.IsSSECHeader && !ctx.IsSSEKMSHeader && !ctx.IsSSES3Header {
 		return false
 	}
-	
+
 	// Handle cross-encryption scenarios (different encryption types)
 	if ctx.shouldSkipCrossEncryptionHeader() {
 		return true
 	}
-	
+
 	// Handle encrypted to unencrypted scenarios
 	if ctx.shouldSkipEncryptedToUnencryptedHeader() {
 		return true
 	}
-	
+
 	// Default: don't skip the header
 	return false
 }

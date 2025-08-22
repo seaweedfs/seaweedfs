@@ -684,16 +684,16 @@ func maxInt(a, b int) int {
 // MultipartEncryptionConfig holds pre-prepared encryption configuration to avoid error handling in callbacks
 type MultipartEncryptionConfig struct {
 	// SSE-KMS configuration
-	IsSSEKMS              bool
-	KMSKeyID              string
-	BucketKeyEnabled      bool
-	EncryptionContext     string
-	KMSBaseIVEncoded      string
+	IsSSEKMS          bool
+	KMSKeyID          string
+	BucketKeyEnabled  bool
+	EncryptionContext string
+	KMSBaseIVEncoded  string
 
 	// SSE-S3 configuration
-	IsSSES3               bool
-	S3BaseIVEncoded       string
-	S3KeyDataEncoded      string
+	IsSSES3          bool
+	S3BaseIVEncoded  string
+	S3KeyDataEncoded string
 }
 
 // prepareMultipartEncryptionConfig prepares encryption configuration with proper error handling
@@ -735,14 +735,14 @@ func (s3a *S3ApiServer) prepareMultipartEncryptionConfig(r *http.Request, upload
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate SSE-S3 key for multipart upload: %v", err)
 		}
-		
+
 		keyData, serErr := SerializeSSES3Metadata(sseS3Key)
 		if serErr != nil {
 			return nil, fmt.Errorf("failed to serialize SSE-S3 metadata for multipart upload: %v", serErr)
 		}
-		
+
 		config.S3KeyDataEncoded = base64.StdEncoding.EncodeToString(keyData)
-		
+
 		// Store key in manager for later retrieval
 		keyManager.StoreKey(sseS3Key)
 		glog.V(4).Infof("Stored SSE-S3 key %s for multipart upload %s", sseS3Key.KeyID, uploadIdString)
