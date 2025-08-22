@@ -118,47 +118,24 @@ func CreateSSEKMSEncryptedReaderWithBaseIV(r io.Reader, keyID string, encryption
 		return nil, nil, err
 	}
 
-	kmsProvider := kms.GetGlobalKMS()
-	if kmsProvider == nil {
-		return nil, nil, fmt.Errorf("KMS is not configured")
-	}
-
-	// Create a new data key for the object
-	generateDataKeyReq := &kms.GenerateDataKeyRequest{
-		KeyID:             keyID,
-		KeySpec:           kms.KeySpecAES256,
-		EncryptionContext: encryptionContext,
-	}
-
-	ctx := context.Background()
-	dataKeyResp, err := kmsProvider.GenerateDataKey(ctx, generateDataKeyReq)
+	// Generate data key using common utility
+	dataKeyResult, err := generateKMSDataKey(keyID, encryptionContext)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to generate data key: %v", err)
+		return nil, nil, err
 	}
-
+	
 	// Ensure we clear the plaintext data key from memory when done
-	defer kms.ClearSensitiveData(dataKeyResp.Plaintext)
-
-	// Create AES cipher with the plaintext data key
-	block, err := aes.NewCipher(dataKeyResp.Plaintext)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create AES cipher: %v", err)
-	}
+	defer clearKMSDataKey(dataKeyResult)
 
 	// Use the provided base IV instead of generating a new one
-	iv := make([]byte, 16)
+	iv := make([]byte, s3_constants.AESBlockSize)
 	copy(iv, baseIV)
 
 	// Create CTR mode cipher stream
-	stream := cipher.NewCTR(block, iv)
+	stream := cipher.NewCTR(dataKeyResult.Block, iv)
 
-	// Create the SSE-KMS metadata with the provided base IV
-	sseKey := &SSEKMSKey{
-		KeyID:             dataKeyResp.KeyID,
-		EncryptedDataKey:  dataKeyResp.CiphertextBlob,
-		EncryptionContext: encryptionContext,
-		BucketKeyEnabled:  bucketKeyEnabled,
-	}
+	// Create the SSE-KMS metadata using utility function
+	sseKey := createSSEKMSKey(dataKeyResult, encryptionContext, bucketKeyEnabled, iv, 0)
 
 	// The IV is stored in SSE key metadata, so the encrypted stream does not need to prepend the IV
 	// This ensures correct Content-Length for clients
@@ -177,47 +154,23 @@ func CreateSSEKMSEncryptedReaderWithBaseIVAndOffset(r io.Reader, keyID string, e
 		return nil, nil, err
 	}
 
-	kmsProvider := kms.GetGlobalKMS()
-	if kmsProvider == nil {
-		return nil, nil, fmt.Errorf("KMS is not configured")
-	}
-
-	// Create a new data key for the object
-	generateDataKeyReq := &kms.GenerateDataKeyRequest{
-		KeyID:             keyID,
-		KeySpec:           kms.KeySpecAES256,
-		EncryptionContext: encryptionContext,
-	}
-
-	dataKeyResp, err := kmsProvider.GenerateDataKey(context.Background(), generateDataKeyReq)
+	// Generate data key using common utility
+	dataKeyResult, err := generateKMSDataKey(keyID, encryptionContext)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to generate SSE-KMS data key: %v", err)
+		return nil, nil, err
 	}
-
+	
 	// Ensure we clear the plaintext data key from memory when done
-	defer kms.ClearSensitiveData(dataKeyResp.Plaintext)
-
-	// Create AES cipher with the plaintext data key
-	block, err := aes.NewCipher(dataKeyResp.Plaintext)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create AES cipher: %v", err)
-	}
+	defer clearKMSDataKey(dataKeyResult)
 
 	// Calculate unique IV using base IV and offset to prevent IV reuse in multipart uploads
 	iv := calculateIVWithOffset(baseIV, offset)
 
 	// Create CTR mode cipher stream
-	stream := cipher.NewCTR(block, iv)
+	stream := cipher.NewCTR(dataKeyResult.Block, iv)
 
-	// Create the SSE-KMS metadata with the calculated IV
-	sseKey := &SSEKMSKey{
-		KeyID:             dataKeyResp.KeyID,
-		EncryptedDataKey:  dataKeyResp.CiphertextBlob,
-		EncryptionContext: encryptionContext,
-		BucketKeyEnabled:  bucketKeyEnabled,
-		IV:                iv,
-		ChunkOffset:       offset,
-	}
+	// Create the SSE-KMS metadata using utility function
+	sseKey := createSSEKMSKey(dataKeyResult, encryptionContext, bucketKeyEnabled, iv, offset)
 
 	// The IV is stored in SSE key metadata, so the encrypted stream does not need to prepend the IV
 	// This ensures correct Content-Length for clients
