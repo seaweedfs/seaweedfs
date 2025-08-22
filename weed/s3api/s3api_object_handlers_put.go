@@ -173,7 +173,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 				dataReader = mimeDetect(r, dataReader)
 			}
 
-			etag, errCode, sseType := s3a.putToFiler(r, uploadUrl, dataReader, "", bucket)
+			etag, errCode, sseType := s3a.putToFiler(r, uploadUrl, dataReader, "", bucket, 1)
 
 			if errCode != s3err.ErrNone {
 				s3err.WriteErrorResponse(w, r, errCode)
@@ -195,7 +195,17 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 	writeSuccessResponseEmpty(w, r)
 }
 
-func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader io.Reader, destination string, bucket string) (etag string, code s3err.ErrorCode, sseType string) {
+func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader io.Reader, destination string, bucket string, partNumber int) (etag string, code s3err.ErrorCode, sseType string) {
+	// Calculate unique offset for each part to prevent IV reuse in multipart uploads
+	// This is critical for CTR mode encryption security
+	var partOffset int64
+	if partNumber > 0 {
+		// Using a large multiplier to ensure block offsets for different parts do not overlap.
+		// S3 part size limit is 5GB, so this provides a large safety margin.
+		const partOffsetMultiplier = int64(1) << 33 // 8GB, larger than max part size
+		partOffset = int64(partNumber-1) * partOffsetMultiplier
+		glog.V(4).Infof("putToFiler: calculated partOffset=%d for partNumber=%d", partOffset, partNumber)
+	}
 
 	// Handle SSE-C encryption if requested
 	customerKey, err := ParseSSECHeaders(r)
@@ -260,8 +270,9 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 				glog.Errorf("Invalid base IV in header: %v", decodeErr)
 				return "", s3err.ErrInternalError, ""
 			}
-			// Use the provided base IV for multipart upload consistency
-			encryptedReader, sseKey, encErr = CreateSSEKMSEncryptedReaderWithBaseIV(dataReader, keyID, encryptionContext, bucketKeyEnabled, baseIV)
+			// Use the provided base IV with unique part offset for multipart upload consistency
+			// Each part gets a unique offset to prevent IV reuse (critical for CTR mode security)
+			encryptedReader, sseKey, encErr = CreateSSEKMSEncryptedReaderWithBaseIVAndOffset(dataReader, keyID, encryptionContext, bucketKeyEnabled, baseIV, partOffset)
 			glog.V(4).Infof("Using provided base IV %x for SSE-KMS encryption", baseIV[:8])
 		} else {
 			// Generate a new IV for single-part uploads
@@ -312,9 +323,9 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 				return "", s3err.ErrInternalError, ""
 			}
 			
-			// Use the provided base IV and offset for multipart upload consistency
-			// For parts, we use offset 0 since each part starts at its own beginning
-			encryptedReader, _, encErr := CreateSSES3EncryptedReaderWithBaseIV(dataReader, sseS3Key, baseIV, 0)
+			// Use the provided base IV with unique part offset for multipart upload consistency
+			// Each part gets a unique offset to prevent IV reuse (critical for CTR mode security)
+			encryptedReader, _, encErr := CreateSSES3EncryptedReaderWithBaseIV(dataReader, sseS3Key, baseIV, partOffset)
 			if encErr != nil {
 				glog.Errorf("Failed to create SSE-S3 encrypted reader for multipart part: %v", encErr)
 				return "", s3err.ErrInternalError, ""
@@ -561,7 +572,7 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 		dataReader = mimeDetect(r, dataReader)
 	}
 
-	etag, errCode, _ = s3a.putToFiler(r, uploadUrl, dataReader, "", bucket)
+	etag, errCode, _ = s3a.putToFiler(r, uploadUrl, dataReader, "", bucket, 1)
 	if errCode != s3err.ErrNone {
 		glog.Errorf("putSuspendedVersioningObject: failed to upload object: %v", errCode)
 		return "", errCode
@@ -703,7 +714,7 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 
 	glog.V(2).Infof("putVersionedObject: uploading %s/%s version %s to %s", bucket, object, versionId, versionUploadUrl)
 
-	etag, errCode, _ = s3a.putToFiler(r, versionUploadUrl, body, "", bucket)
+	etag, errCode, _ = s3a.putToFiler(r, versionUploadUrl, body, "", bucket, 1)
 	if errCode != s3err.ErrNone {
 		glog.Errorf("putVersionedObject: failed to upload version: %v", errCode)
 		return "", "", errCode

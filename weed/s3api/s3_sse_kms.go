@@ -198,6 +198,62 @@ func CreateSSEKMSEncryptedReaderWithBaseIV(r io.Reader, keyID string, encryption
 	return encryptedReader, sseKey, nil
 }
 
+// CreateSSEKMSEncryptedReaderWithBaseIVAndOffset creates an SSE-KMS encrypted reader using a provided base IV and offset
+// This is used for multipart uploads where all chunks need unique IVs to prevent IV reuse vulnerabilities
+func CreateSSEKMSEncryptedReaderWithBaseIVAndOffset(r io.Reader, keyID string, encryptionContext map[string]string, bucketKeyEnabled bool, baseIV []byte, offset int64) (io.Reader, *SSEKMSKey, error) {
+	if len(baseIV) != 16 {
+		return nil, nil, fmt.Errorf("base IV must be exactly 16 bytes, got %d", len(baseIV))
+	}
+
+	kmsProvider := kms.GetGlobalKMS()
+	if kmsProvider == nil {
+		return nil, nil, fmt.Errorf("KMS is not configured")
+	}
+
+	// Create a new data key for the object
+	generateDataKeyReq := &kms.GenerateDataKeyRequest{
+		KeyID:             keyID,
+		KeySpec:           kms.KeySpecAES256,
+		EncryptionContext: encryptionContext,
+	}
+
+	dataKeyResp, err := kmsProvider.GenerateDataKey(context.Background(), generateDataKeyReq)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to generate SSE-KMS data key: %v", err)
+	}
+
+	// Ensure we clear the plaintext data key from memory when done
+	defer kms.ClearSensitiveData(dataKeyResp.Plaintext)
+
+	// Create AES cipher with the plaintext data key
+	block, err := aes.NewCipher(dataKeyResp.Plaintext)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create AES cipher: %v", err)
+	}
+
+	// Calculate unique IV using base IV and offset to prevent IV reuse in multipart uploads
+	iv := calculateIVWithOffset(baseIV, offset)
+
+	// Create CTR mode cipher stream
+	stream := cipher.NewCTR(block, iv)
+
+	// Create the SSE-KMS metadata with the calculated IV
+	sseKey := &SSEKMSKey{
+		KeyID:             dataKeyResp.KeyID,
+		EncryptedDataKey:  dataKeyResp.CiphertextBlob,
+		EncryptionContext: encryptionContext,
+		BucketKeyEnabled:  bucketKeyEnabled,
+		IV:                iv,
+		ChunkOffset:       offset,
+	}
+
+	// The IV is stored in SSE key metadata, so the encrypted stream does not need to prepend the IV
+	// This ensures correct Content-Length for clients
+	encryptedReader := &cipher.StreamReader{S: stream, R: r}
+
+	return encryptedReader, sseKey, nil
+}
+
 // hashEncryptionContext creates a deterministic hash of the encryption context
 func hashEncryptionContext(encryptionContext map[string]string) string {
 	if len(encryptionContext) == 0 {
