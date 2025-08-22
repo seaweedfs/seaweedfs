@@ -63,6 +63,11 @@ func (loader *ConfigLoader) LoadConfigurations() error {
 		return fmt.Errorf("failed to set default KMS provider: %w", err)
 	}
 
+	// Initialize global KMS provider for backwards compatibility
+	if err := loader.initializeGlobalKMSProvider(); err != nil {
+		glog.Warningf("Failed to initialize global KMS provider: %v", err)
+	}
+
 	// Load bucket-specific KMS configurations
 	if bucketsConfig, exists := kmsConfig["buckets"]; exists {
 		if buckets, ok := bucketsConfig.(map[string]interface{}); ok {
@@ -214,6 +219,43 @@ func (loader *ConfigLoader) setDefaultProvider() error {
 			glog.V(1).Infof("Set default KMS provider to: %s", providerName)
 		}
 	}
+	return nil
+}
+
+// initializeGlobalKMSProvider initializes the global KMS provider for backwards compatibility
+func (loader *ConfigLoader) initializeGlobalKMSProvider() error {
+	// Get the default provider from the manager
+	defaultProviderName := ""
+	kmsConfig := loader.viper.GetStringMap("kms")
+	if defaultProvider, exists := kmsConfig["default_provider"]; exists {
+		if providerName, ok := defaultProvider.(string); ok {
+			defaultProviderName = providerName
+		}
+	}
+
+	if defaultProviderName == "" {
+		// If no default provider, try to use the first available provider
+		providers := loader.manager.ListKMSProviders()
+		if len(providers) > 0 {
+			defaultProviderName = providers[0]
+		}
+	}
+
+	if defaultProviderName == "" {
+		glog.V(2).Infof("No KMS providers configured, skipping global KMS initialization")
+		return nil
+	}
+
+	// Get the provider from the manager
+	provider, err := loader.manager.GetKMSProviderByName(defaultProviderName)
+	if err != nil {
+		return fmt.Errorf("failed to get KMS provider %s: %w", defaultProviderName, err)
+	}
+
+	// Set as global KMS provider
+	SetGlobalKMSForTesting(provider) // Using this function since it has the right signature
+	glog.V(1).Infof("Initialized global KMS provider: %s", defaultProviderName)
+	
 	return nil
 }
 
