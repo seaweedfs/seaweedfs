@@ -66,14 +66,6 @@ func CreateSSEKMSEncryptedReader(r io.Reader, keyID string, encryptionContext ma
 
 // CreateSSEKMSEncryptedReaderWithBucketKey creates an encrypted reader with optional S3 Bucket Keys optimization
 func CreateSSEKMSEncryptedReaderWithBucketKey(r io.Reader, keyID string, encryptionContext map[string]string, bucketKeyEnabled bool) (io.Reader, *SSEKMSKey, error) {
-	kmsProvider := kms.GetGlobalKMS()
-	if kmsProvider == nil {
-		return nil, nil, fmt.Errorf("KMS is not configured")
-	}
-
-	var dataKeyResp *kms.GenerateDataKeyResponse
-	var err error
-
 	if bucketKeyEnabled {
 		// Use S3 Bucket Keys optimization - try to get or create a bucket-level data key
 		// Note: This is a simplified implementation. In practice, this would need
@@ -83,29 +75,14 @@ func CreateSSEKMSEncryptedReaderWithBucketKey(r io.Reader, keyID string, encrypt
 		bucketKeyEnabled = false
 	}
 
-	if !bucketKeyEnabled {
-		// Generate a per-object data encryption key using KMS
-		dataKeyReq := &kms.GenerateDataKeyRequest{
-			KeyID:             keyID,
-			KeySpec:           kms.KeySpecAES256,
-			EncryptionContext: encryptionContext,
-		}
-
-		ctx := context.Background()
-		dataKeyResp, err = kmsProvider.GenerateDataKey(ctx, dataKeyReq)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to generate data key: %v", err)
-		}
-	}
-
-	// Ensure we clear the plaintext data key from memory when done
-	defer kms.ClearSensitiveData(dataKeyResp.Plaintext)
-
-	// Create AES cipher with the data key
-	block, err := aes.NewCipher(dataKeyResp.Plaintext)
+	// Generate data key using common utility
+	dataKeyResult, err := generateKMSDataKey(keyID, encryptionContext)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create AES cipher: %v", err)
+		return nil, nil, err
 	}
+	
+	// Ensure we clear the plaintext data key from memory when done
+	defer clearKMSDataKey(dataKeyResult)
 
 	// Generate a random IV for CTR mode
 	// Note: AES-CTR is used for object data encryption (not AES-GCM) because:
@@ -113,21 +90,16 @@ func CreateSSEKMSEncryptedReaderWithBucketKey(r io.Reader, keyID string, encrypt
 	// 2. CTR mode supports range requests (seek to arbitrary positions)
 	// 3. This matches AWS S3 and other S3-compatible implementations
 	// The KMS data key encryption (separate layer) uses AES-GCM for authentication
-	iv := make([]byte, 16) // AES block size
+	iv := make([]byte, s3_constants.AESBlockSize)
 	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
 		return nil, nil, fmt.Errorf("failed to generate IV: %v", err)
 	}
 
 	// Create CTR mode cipher stream
-	stream := cipher.NewCTR(block, iv)
+	stream := cipher.NewCTR(dataKeyResult.Block, iv)
 
-	// Create the SSE-KMS metadata
-	sseKey := &SSEKMSKey{
-		KeyID:             dataKeyResp.KeyID,
-		EncryptedDataKey:  dataKeyResp.CiphertextBlob,
-		EncryptionContext: encryptionContext,
-		BucketKeyEnabled:  bucketKeyEnabled,
-	}
+	// Create the SSE-KMS metadata using utility function
+	sseKey := createSSEKMSKey(dataKeyResult, encryptionContext, bucketKeyEnabled, iv, 0)
 
 	// The IV is stored in SSE key metadata, so the encrypted stream does not need to prepend the IV
 	// This ensures correct Content-Length for clients
