@@ -1,0 +1,32 @@
+# S3 API Server Configuration with OpenBao KMS Integration
+# Used for SSE integration testing
+
+####################################################
+# Key Management Service (KMS) for Server-Side Encryption
+####################################################
+# KMS providers for SSE-KMS and SSE-S3 encryption
+
+[kms]
+default_provider = "openbao-test"
+
+# OpenBao KMS Provider for testing
+[kms.providers.openbao-test]
+type = "openbao"
+address = "http://openbao:8200"
+token = "root-token-for-testing"
+transit_path = "transit"
+cache_enabled = true
+cache_ttl = "1h"
+
+# Test bucket-specific KMS assignments
+[kms.buckets.test-sse-kms-basic]
+provider = "openbao-test"
+
+[kms.buckets.test-sse-kms-multipart]
+provider = "openbao-test"
+
+[kms.buckets.test-sse-kms-copy]
+provider = "openbao-test"
+
+[kms.buckets.test-sse-kms-range]
+provider = "openbao-test"

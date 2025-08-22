@@ -17,6 +17,9 @@ VOLUME_MAX_COUNT ?= 100
 # SSE-KMS configuration
 KMS_KEY_ID ?= test-key-123
 KMS_TYPE ?= local
+OPENBAO_ADDR ?= http://127.0.0.1:8200
+OPENBAO_TOKEN ?= root-token-for-testing
+DOCKER_COMPOSE ?= docker-compose
 
 # Test directory
 TEST_DIR := $(shell pwd)
@@ -28,7 +31,7 @@ GREEN := \033[0;32m
 YELLOW := \033[1;33m
 NC := \033[0m # No Color
 
-.PHONY: all test clean start-seaweedfs stop-seaweedfs stop-seaweedfs-safe start-seaweedfs-ci check-binary build-weed help help-extended test-with-server test-quick-with-server test-metadata-persistence
+.PHONY: all test clean start-seaweedfs stop-seaweedfs stop-seaweedfs-safe start-seaweedfs-ci check-binary build-weed help help-extended test-with-server test-quick-with-server test-metadata-persistence setup-openbao test-with-kms test-ssekms-integration clean-kms start-full-stack stop-full-stack
 
 all: test-basic
 
@@ -50,6 +53,13 @@ help:
 	@echo "  test-multipart - Run SSE multipart upload tests"
 	@echo "  test-errors   - Run SSE error condition tests"
 	@echo "  benchmark     - Run SSE performance benchmarks"
+	@echo "  KMS Integration:"
+	@echo "  setup-openbao - Set up OpenBao KMS for testing"
+	@echo "  test-with-kms - Run full SSE integration with real KMS"
+	@echo "  test-ssekms-integration - Run SSE-KMS with OpenBao only"
+	@echo "  start-full-stack - Start SeaweedFS + OpenBao with Docker"
+	@echo "  stop-full-stack - Stop Docker services"
+	@echo "  clean-kms     - Clean up KMS test environment"
 	@echo "  start-seaweedfs - Start SeaweedFS server for testing"
 	@echo "  stop-seaweedfs - Stop SeaweedFS server"
 	@echo "  clean         - Clean up test artifacts"
@@ -452,3 +462,72 @@ help-extended:
 	@echo "  KMS_TYPE                - KMS type (default: local)"
 	@echo "  VOLUME_MAX_SIZE_MB      - Volume maximum size in MB (default: 50)"
 	@echo "  TEST_TIMEOUT            - Test timeout (default: 15m)"
+
+####################################################
+# KMS Integration Testing with OpenBao
+####################################################
+
+setup-openbao:
+	@echo "$(YELLOW)Setting up OpenBao for SSE-KMS testing...$(NC)"
+	@$(DOCKER_COMPOSE) up -d openbao
+	@sleep 10
+	@echo "$(YELLOW)Configuring OpenBao...$(NC)"
+	@OPENBAO_ADDR=$(OPENBAO_ADDR) OPENBAO_TOKEN=$(OPENBAO_TOKEN) ./setup_openbao_sse.sh
+	@echo "$(GREEN)✅ OpenBao setup complete!$(NC)"
+
+start-full-stack: setup-openbao
+	@echo "$(YELLOW)Starting full SeaweedFS + KMS stack...$(NC)"
+	@$(DOCKER_COMPOSE) up -d
+	@echo "$(YELLOW)Waiting for services to be ready...$(NC)"
+	@sleep 15
+	@echo "$(GREEN)✅ Full stack running!$(NC)"
+	@echo "OpenBao: $(OPENBAO_ADDR)"
+	@echo "S3 API: http://localhost:$(S3_PORT)"
+
+stop-full-stack:
+	@echo "$(YELLOW)Stopping full stack...$(NC)"
+	@$(DOCKER_COMPOSE) down
+	@echo "$(GREEN)✅ Full stack stopped$(NC)"
+
+test-with-kms: start-full-stack
+	@echo "$(YELLOW)Running SSE integration tests with real KMS...$(NC)"
+	@sleep 5  # Extra time for KMS initialization
+	@cd $(SEAWEEDFS_ROOT) && go test -v -timeout=$(TEST_TIMEOUT) ./test/s3/sse -run "SSE.*Integration" || (echo "$(RED)Tests failed$(NC)" && make stop-full-stack && exit 1)
+	@echo "$(GREEN)✅ All KMS integration tests passed!$(NC)"
+	@make stop-full-stack
+
+test-ssekms-integration: start-full-stack  
+	@echo "$(YELLOW)Running SSE-KMS integration tests with OpenBao...$(NC)"
+	@sleep 5  # Extra time for KMS initialization
+	@cd $(SEAWEEDFS_ROOT) && go test -v -timeout=$(TEST_TIMEOUT) ./test/s3/sse -run "TestSSEKMS.*Integration" || (echo "$(RED)SSE-KMS tests failed$(NC)" && make stop-full-stack && exit 1)
+	@echo "$(GREEN)✅ SSE-KMS integration tests passed!$(NC)"
+	@make stop-full-stack
+
+clean-kms:
+	@echo "$(YELLOW)Cleaning up KMS test environment...$(NC)"
+	@$(DOCKER_COMPOSE) down -v --remove-orphans || true
+	@docker system prune -f || true
+	@echo "$(GREEN)✅ KMS environment cleaned up!$(NC)"
+
+status-kms:
+	@echo "$(YELLOW)KMS Environment Status:$(NC)"
+	@$(DOCKER_COMPOSE) ps
+	@echo ""
+	@echo "$(YELLOW)OpenBao Health:$(NC)"
+	@curl -s $(OPENBAO_ADDR)/v1/sys/health | jq '.' || echo "OpenBao not accessible"
+	@echo ""
+	@echo "$(YELLOW)S3 API Status:$(NC)"
+	@curl -s http://localhost:$(S3_PORT) || echo "S3 API not accessible"
+
+# Quick test with just basic KMS functionality
+test-kms-quick: setup-openbao
+	@echo "$(YELLOW)Running quick KMS functionality test...$(NC)"
+	@cd ../../../test/kms && make dev-test
+	@echo "$(GREEN)✅ Quick KMS test passed!$(NC)"
+
+# Development targets
+dev-kms: setup-openbao
+	@echo "$(GREEN)Development environment ready$(NC)"
+	@echo "OpenBao: $(OPENBAO_ADDR)"
+	@echo "Token: $(OPENBAO_TOKEN)"
+	@echo "Use 'make test-ssekms-integration' to run tests"
