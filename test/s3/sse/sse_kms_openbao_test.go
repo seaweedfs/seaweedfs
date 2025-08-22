@@ -3,6 +3,7 @@ package sse_test
 import (
 	"bytes"
 	"context"
+	"io"
 	"testing"
 	"time"
 
@@ -52,8 +53,7 @@ func TestSSEKMSOpenBaoIntegration(t *testing.T) {
 		defer getResp.Body.Close()
 
 		// Verify content matches (this proves encryption/decryption worked)
-		retrievedData := make([]byte, len(testData))
-		_, err = getResp.Body.Read(retrievedData)
+		retrievedData, err := io.ReadAll(getResp.Body)
 		require.NoError(t, err, "Failed to read retrieved data")
 		assert.Equal(t, testData, retrievedData, "Decrypted data should match original")
 
@@ -95,8 +95,7 @@ func TestSSEKMSOpenBaoIntegration(t *testing.T) {
 				require.NoError(t, err, "Failed to retrieve object encrypted with key %s", tc.keyID)
 				defer getResp.Body.Close()
 
-				retrievedData := make([]byte, len(testData))
-				_, err = getResp.Body.Read(retrievedData)
+				retrievedData, err := io.ReadAll(getResp.Body)
 				require.NoError(t, err, "Failed to read data for key %s", tc.keyID)
 
 				// Verify data integrity (proves real encryption/decryption occurred)
@@ -130,10 +129,8 @@ func TestSSEKMSOpenBaoIntegration(t *testing.T) {
 		require.NoError(t, err, "Failed to retrieve large SSE-KMS object")
 		defer getResp.Body.Close()
 
-		retrievedData := make([]byte, len(testData))
-		n, err := getResp.Body.Read(retrievedData)
+		retrievedData, err := io.ReadAll(getResp.Body)
 		require.NoError(t, err, "Failed to read large data")
-		require.Equal(t, len(testData), n, "Should read all data")
 
 		// Use MD5 comparison for large data
 		assertDataEqual(t, testData, retrievedData, "Large encrypted data should match original")
