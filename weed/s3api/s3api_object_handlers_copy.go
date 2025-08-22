@@ -1726,11 +1726,11 @@ func (s3a *S3ApiServer) copyCrossEncryptionChunk(chunk *filer_pb.FileChunk, sour
 // getEncryptionTypeString returns a string representation of encryption type for logging
 func (s3a *S3ApiServer) getEncryptionTypeString(isSSEC, isSSEKMS, isSSES3 bool) string {
 	if isSSEC {
-		return "SSE-C"
+		return s3_constants.SSETypeC
 	} else if isSSEKMS {
-		return "SSE-KMS"
+		return s3_constants.SSETypeKMS
 	} else if isSSES3 {
-		return "SSE-S3"
+		return s3_constants.SSETypeS3
 	}
 	return "Plain"
 }

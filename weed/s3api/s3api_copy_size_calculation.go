@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
 // CopySizeCalculator handles size calculations for different copy scenarios
@@ -174,11 +175,11 @@ func (e EncryptionType) String() string {
 	case EncryptionTypeNone:
 		return "None"
 	case EncryptionTypeSSEC:
-		return "SSE-C"
+		return s3_constants.SSETypeC
 	case EncryptionTypeSSEKMS:
-		return "SSE-KMS"
+		return s3_constants.SSETypeKMS
 	case EncryptionTypeSSES3:
-		return "SSE-S3"
+		return s3_constants.SSETypeS3
 	default:
 		return "Unknown"
 	}

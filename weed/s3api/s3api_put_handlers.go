@@ -240,11 +240,11 @@ func (s3a *S3ApiServer) handleAllSSEEncryption(r *http.Request, dataReader io.Re
 	
 	// Set SSE type for response headers
 	if customerKey != nil {
-		result.SSEType = "SSE-C"
+		result.SSEType = s3_constants.SSETypeC
 	} else if sseKMSKey != nil {
-		result.SSEType = "SSE-KMS"
+		result.SSEType = s3_constants.SSETypeKMS
 	} else if sseS3Key != nil {
-		result.SSEType = "SSE-S3"
+		result.SSEType = s3_constants.SSETypeS3
 	}
 	
 	return result, s3err.ErrNone

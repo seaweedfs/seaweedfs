@@ -184,7 +184,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			setEtag(w, etag)
 
 			// Set SSE response headers based on encryption type used
-			if sseType == "SSE-S3" {
+			if sseType == s3_constants.SSETypeS3 {
 				w.Header().Set(s3_constants.AmzServerSideEncryption, s3_constants.SSEAlgorithmAES256)
 			}
 		}

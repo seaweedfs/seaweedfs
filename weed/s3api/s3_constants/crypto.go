@@ -10,6 +10,11 @@ const (
 	SSEAlgorithmAES256 = "AES256"
 	SSEAlgorithmKMS    = "aws:kms"
 
+	// SSE type identifiers for response headers and internal processing
+	SSETypeC   = "SSE-C"
+	SSETypeKMS = "SSE-KMS"
+	SSETypeS3  = "SSE-S3"
+
 	// S3 multipart upload limits and offsets
 	S3MaxPartSize = 5 * 1024 * 1024 * 1024 // 5GB - AWS S3 maximum part size limit
 
