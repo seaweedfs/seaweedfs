@@ -23,8 +23,7 @@ func TestSSEKMSOpenBaoIntegration(t *testing.T) {
 	client, err := createS3Client(ctx, defaultConfig)
 	require.NoError(t, err, "Failed to create S3 client")
 
-	bucketName := generateUniqueBucketName("sse-kms-openbao")
-	err = createTestBucket(ctx, client, bucketName)
+	bucketName, err := createTestBucket(ctx, client, defaultConfig.BucketPrefix+"sse-kms-openbao-")
 	require.NoError(t, err, "Failed to create test bucket")
 	defer cleanupTestBucket(ctx, client, bucketName)
 
@@ -151,8 +150,7 @@ func TestSSEKMSOpenBaoAvailability(t *testing.T) {
 	client, err := createS3Client(ctx, defaultConfig)
 	require.NoError(t, err, "Failed to create S3 client")
 
-	bucketName := generateUniqueBucketName("sse-kms-availability")
-	err = createTestBucket(ctx, client, bucketName)
+	bucketName, err := createTestBucket(ctx, client, defaultConfig.BucketPrefix+"sse-kms-availability-")
 	require.NoError(t, err, "Failed to create test bucket")
 	defer cleanupTestBucket(ctx, client, bucketName)
 
