@@ -11,8 +11,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
-// TODO: If needed, re-implement TestPutObjectRetention with proper setup for buckets, objects, and versioning.
-
 func TestValidateRetention(t *testing.T) {
 	tests := []struct {
 		name        string
