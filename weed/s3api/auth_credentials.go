@@ -2,7 +2,7 @@ package s3api
 
 import (
 	"context"
-	"encoding/json"
+
 	"fmt"
 	"net/http"
 	"os"
@@ -14,12 +14,19 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/kms"
-	"github.com/seaweedfs/seaweedfs/weed/kms/local"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
-	"github.com/seaweedfs/seaweedfs/weed/util"
+
+	"github.com/spf13/viper"
+
+	// Import KMS providers to register them
+	_ "github.com/seaweedfs/seaweedfs/weed/kms/aws"
+	// _ "github.com/seaweedfs/seaweedfs/weed/kms/azure"  // TODO: Fix Azure SDK compatibility issues
+	_ "github.com/seaweedfs/seaweedfs/weed/kms/gcp"
+	_ "github.com/seaweedfs/seaweedfs/weed/kms/local"
+	_ "github.com/seaweedfs/seaweedfs/weed/kms/openbao"
 	"google.golang.org/grpc"
 )
 
@@ -546,72 +553,44 @@ func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromCredentialManager
 	return iam.loadS3ApiConfiguration(s3ApiConfiguration)
 }
 
-// initializeKMSFromConfig parses JSON configuration and initializes KMS provider if present
+// initializeKMSFromConfig loads KMS configuration from TOML format
 func (iam *IdentityAccessManagement) initializeKMSFromConfig(configContent []byte) error {
-	// Parse JSON to extract KMS configuration
-	var config map[string]interface{}
-	if err := json.Unmarshal(configContent, &config); err != nil {
-		return fmt.Errorf("failed to parse config JSON: %v", err)
-	}
-
-	// Check if KMS configuration exists
-	kmsConfig, exists := config["kms"]
-	if !exists {
-		glog.V(2).Infof("No KMS configuration found in S3 config - SSE-KMS will not be available")
+	if err := iam.initializeKMSFromTOML(configContent); err == nil {
+		glog.V(1).Infof("Successfully loaded KMS configuration from TOML format")
 		return nil
 	}
 
-	kmsConfigMap, ok := kmsConfig.(map[string]interface{})
-	if !ok {
-		return fmt.Errorf("invalid KMS configuration format")
-	}
-
-	// Extract KMS type (default to "local" for testing)
-	kmsType, ok := kmsConfigMap["type"].(string)
-	if !ok || kmsType == "" {
-		kmsType = "local"
-	}
-
-	glog.V(1).Infof("Initializing KMS provider: type=%s", kmsType)
-
-	// Initialize KMS provider based on type
-	switch kmsType {
-	case "local":
-		return iam.initializeLocalKMS(kmsConfigMap)
-	default:
-		return fmt.Errorf("unsupported KMS provider type: %s", kmsType)
-	}
+	glog.V(2).Infof("No KMS configuration found in S3 config - SSE-KMS will not be available")
+	return nil
 }
 
-// initializeLocalKMS initializes the local KMS provider for development/testing
-func (iam *IdentityAccessManagement) initializeLocalKMS(kmsConfig map[string]interface{}) error {
-	// Register local KMS provider factory if not already registered
-	kms.RegisterProvider("local", func(config util.Configuration) (kms.KMSProvider, error) {
-		// Create local KMS provider
-		provider, err := local.NewLocalKMSProvider(config)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create local KMS provider: %v", err)
-		}
+// initializeKMSFromTOML loads KMS configuration from TOML format
+func (iam *IdentityAccessManagement) initializeKMSFromTOML(configContent []byte) error {
+	// Create a temporary file to use with viper (viper doesn't support reading TOML from bytes directly)
+	tempFile, err := os.CreateTemp("", "s3_config_*.toml")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %v", err)
+	}
+	defer os.Remove(tempFile.Name())
+	defer tempFile.Close()
 
-		// Create the test keys that our tests expect with specific keyIDs
-		// Note: Local KMS provider now creates keys on-demand
-		// No need to pre-create test keys in production code
+	if _, err := tempFile.Write(configContent); err != nil {
+		return fmt.Errorf("failed to write temp file: %v", err)
+	}
+	tempFile.Close()
 
-		glog.V(1).Infof("Local KMS provider created successfully")
-		return provider, nil
-	})
-
-	// Create KMS configuration
-	kmsConfigObj := &kms.KMSConfig{
-		Provider: "local",
-		Config:   nil, // Local provider uses defaults
+	// Use viper to parse the TOML file
+	v := viper.New()
+	v.SetConfigFile(tempFile.Name())
+	if err := v.ReadInConfig(); err != nil {
+		return fmt.Errorf("failed to read TOML config: %v", err)
 	}
 
-	// Initialize global KMS
-	if err := kms.InitializeGlobalKMS(kmsConfigObj); err != nil {
-		return fmt.Errorf("failed to initialize global KMS: %v", err)
+	// Check if KMS section exists
+	if !v.IsSet("kms") {
+		return fmt.Errorf("no KMS section found")
 	}
 
-	glog.V(0).Infof("✅ KMS provider initialized successfully - SSE-KMS is now available")
-	return nil
+	// Use our KMS config loader
+	return kms.LoadKMSFromFilerToml(v)
 }

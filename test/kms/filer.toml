@@ -1,0 +1,85 @@
+# SeaweedFS Filer Configuration for KMS Integration Testing
+
+[leveldb2]
+# Use LevelDB for simple testing
+enabled = true
+dir = "/data/filerdb"
+
+# KMS Configuration for Integration Testing
+[kms]
+# Default KMS provider
+default_provider = "openbao-test"
+
+# KMS provider configurations
+[kms.providers]
+
+# OpenBao provider for integration testing
+[kms.providers.openbao-test]
+type = "openbao"
+address = "http://openbao:8200"
+token = "root-token-for-testing"
+transit_path = "transit"
+tls_skip_verify = true
+request_timeout = 30
+cache_enabled = true
+cache_ttl = "5m"  # Shorter TTL for testing
+max_cache_size = 100
+
+# Alternative Vault provider (for compatibility testing)
+[kms.providers.vault-test]
+type = "vault"
+address = "http://vault:8200"
+token = "root-token-for-testing"
+transit_path = "transit"
+tls_skip_verify = true
+request_timeout = 30
+cache_enabled = true
+cache_ttl = "5m"
+max_cache_size = 100
+
+# Local KMS provider (for comparison/fallback)
+[kms.providers.local-test]
+type = "local"
+enableOnDemandCreate = true
+cache_enabled = false  # Local doesn't need caching
+
+# Simulated AWS KMS provider (for testing AWS integration patterns)
+[kms.providers.aws-localstack]
+type = "aws"
+region = "us-east-1"
+endpoint = "http://localstack:4566"  # LocalStack endpoint
+access_key = "test"
+secret_key = "test"
+tls_skip_verify = true
+connect_timeout = 10
+request_timeout = 30
+max_retries = 3
+cache_enabled = true
+cache_ttl = "10m"
+
+# Bucket-specific KMS provider assignments for testing
+[kms.buckets]
+
+# Test bucket using OpenBao
+[kms.buckets.test-openbao]
+provider = "openbao-test"
+
+# Test bucket using Vault (compatibility)
+[kms.buckets.test-vault]
+provider = "vault-test"
+
+# Test bucket using local KMS
+[kms.buckets.test-local]
+provider = "local-test"
+
+# Test bucket using simulated AWS KMS
+[kms.buckets.test-aws]
+provider = "aws-localstack"
+
+# High security test bucket
+[kms.buckets.secure-data]
+provider = "openbao-test"
+
+# Performance test bucket
+[kms.buckets.perf-test]
+provider = "openbao-test"
