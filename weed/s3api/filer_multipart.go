@@ -48,7 +48,13 @@ func (s3a *S3ApiServer) createMultipartUpload(r *http.Request, input *s3.CreateM
 
 	uploadIdString = uploadIdString + "_" + strings.ReplaceAll(uuid.New().String(), "-", "")
 
-	var criticalError error
+	// Prepare encryption settings before directory creation to allow proper error handling
+	encryptionConfig, err := s3a.prepareMultipartEncryptionConfig(r, uploadIdString)
+	if err != nil {
+		_, errorCode := handleMultipartInternalError("prepare encryption configuration", err)
+		return nil, errorCode
+	}
+
 	if err := s3a.mkdir(s3a.genUploadsFolder(*input.Bucket), uploadIdString, func(entry *filer_pb.Entry) {
 		if entry.Extended == nil {
 			entry.Extended = make(map[string][]byte)
@@ -68,78 +74,8 @@ func (s3a *S3ApiServer) createMultipartUpload(r *http.Request, input *s3.CreateM
 			entry.Attributes.Mime = *input.ContentType
 		}
 
-		// Store SSE-KMS information from create-multipart-upload headers
-		// This allows upload-part operations to inherit encryption settings
-		if IsSSEKMSRequest(r) {
-			keyID := r.Header.Get(s3_constants.AmzServerSideEncryptionAwsKmsKeyId)
-			bucketKeyEnabled := strings.ToLower(r.Header.Get(s3_constants.AmzServerSideEncryptionBucketKeyEnabled)) == "true"
-
-			// Store SSE-KMS configuration for parts to inherit
-			entry.Extended[s3_constants.SeaweedFSSSEKMSKeyID] = []byte(keyID)
-			if bucketKeyEnabled {
-				entry.Extended[s3_constants.SeaweedFSSSEKMSBucketKeyEnabled] = []byte("true")
-			}
-
-			// Store encryption context if provided
-			if contextHeader := r.Header.Get(s3_constants.AmzServerSideEncryptionContext); contextHeader != "" {
-				entry.Extended[s3_constants.SeaweedFSSSEKMSEncryptionContext] = []byte(contextHeader)
-			}
-
-			// Generate and store a base IV for this multipart upload
-			// Chunks within each part will use this base IV with their within-part offset
-			baseIV := make([]byte, s3_constants.AESBlockSize)
-			if _, err := rand.Read(baseIV); err != nil {
-				glog.Errorf("Failed to generate base IV for SSE-KMS multipart upload %s: %v", uploadIdString, err)
-				criticalError = fmt.Errorf("failed to generate secure IV for SSE-KMS multipart upload: %v", err)
-				return
-			}
-			// Store base IV as base64 encoded string to avoid HTTP header issues
-			entry.Extended[s3_constants.SeaweedFSSSEKMSBaseIV] = []byte(base64.StdEncoding.EncodeToString(baseIV))
-			glog.V(4).Infof("Generated base IV %x for SSE-KMS multipart upload %s", baseIV[:8], uploadIdString)
-
-			glog.V(3).Infof("createMultipartUpload: stored SSE-KMS settings for upload %s with keyID %s", uploadIdString, keyID)
-		}
-
-		// Store SSE-S3 encryption settings for parts to inherit
-		// This allows upload-part operations to inherit SSE-S3 encryption settings
-		if IsSSES3RequestInternal(r) {
-			// Store SSE-S3 configuration for parts to inherit
-			entry.Extended[s3_constants.SeaweedFSSSES3Encryption] = []byte(s3_constants.SSEAlgorithmAES256)
-
-			// Generate and store a base IV for this multipart upload
-			// Parts within this upload will use this base IV with their within-part offset
-			baseIV := make([]byte, s3_constants.AESBlockSize)
-			if _, err := rand.Read(baseIV); err != nil {
-				glog.Errorf("Failed to generate base IV for SSE-S3 multipart upload %s: %v", uploadIdString, err)
-				criticalError = fmt.Errorf("failed to generate secure IV for SSE-S3 multipart upload: %v", err)
-				return
-			}
-			// Store base IV as base64 encoded string to avoid HTTP header issues
-			entry.Extended[s3_constants.SeaweedFSSSES3BaseIV] = []byte(base64.StdEncoding.EncodeToString(baseIV))
-			glog.V(4).Infof("Generated base IV %x for SSE-S3 multipart upload %s", baseIV[:8], uploadIdString)
-
-			// Generate and store SSE-S3 key for parts to inherit
-			keyManager := GetSSES3KeyManager()
-			sseS3Key, err := keyManager.GetOrCreateKey("")
-			if err != nil {
-				glog.Errorf("Failed to generate SSE-S3 key for multipart upload %s: %v", uploadIdString, err)
-				criticalError = fmt.Errorf("failed to generate SSE-S3 key for multipart upload: %v", err)
-				return
-			}
-			// Serialize and store the SSE-S3 key for parts to inherit
-			keyData, serErr := SerializeSSES3Metadata(sseS3Key)
-			if serErr != nil {
-				glog.Errorf("Failed to serialize SSE-S3 key for multipart upload %s: %v", uploadIdString, serErr)
-				criticalError = fmt.Errorf("failed to serialize SSE-S3 metadata for multipart upload: %v", serErr)
-				return
-			}
-			entry.Extended[s3_constants.SeaweedFSSSES3KeyData] = []byte(base64.StdEncoding.EncodeToString(keyData))
-			// Store key in manager for later retrieval
-			keyManager.StoreKey(sseS3Key)
-			glog.V(4).Infof("Stored SSE-S3 key %s for multipart upload %s", sseS3Key.KeyID, uploadIdString)
-
-			glog.V(3).Infof("createMultipartUpload: stored SSE-S3 settings for upload %s", uploadIdString)
-		}
+		// Apply pre-prepared encryption configuration
+		s3a.applyMultipartEncryptionConfig(entry, encryptionConfig)
 
 		// Extract and store object lock metadata from request headers
 		// This ensures object lock settings from create_multipart_upload are preserved
@@ -149,12 +85,6 @@ func (s3a *S3ApiServer) createMultipartUpload(r *http.Request, input *s3.CreateM
 		}
 	}); err != nil {
 		_, errorCode := handleMultipartInternalError("create multipart upload directory", err)
-		return nil, errorCode
-	}
-
-	// Check for critical errors during SSE-S3 initialization
-	if criticalError != nil {
-		_, errorCode := handleMultipartInternalError("initialize SSE-S3 multipart upload", criticalError)
 		return nil, errorCode
 	}
 
@@ -741,4 +671,99 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// MultipartEncryptionConfig holds pre-prepared encryption configuration to avoid error handling in callbacks
+type MultipartEncryptionConfig struct {
+	// SSE-KMS configuration
+	IsSSEKMS              bool
+	KMSKeyID              string
+	BucketKeyEnabled      bool
+	EncryptionContext     string
+	KMSBaseIVEncoded      string
+
+	// SSE-S3 configuration
+	IsSSES3               bool
+	S3BaseIVEncoded       string
+	S3KeyDataEncoded      string
+}
+
+// prepareMultipartEncryptionConfig prepares encryption configuration with proper error handling
+// This eliminates the need for criticalError variable in callback functions
+func (s3a *S3ApiServer) prepareMultipartEncryptionConfig(r *http.Request, uploadIdString string) (*MultipartEncryptionConfig, error) {
+	config := &MultipartEncryptionConfig{}
+
+	// Prepare SSE-KMS configuration
+	if IsSSEKMSRequest(r) {
+		config.IsSSEKMS = true
+		config.KMSKeyID = r.Header.Get(s3_constants.AmzServerSideEncryptionAwsKmsKeyId)
+		config.BucketKeyEnabled = strings.ToLower(r.Header.Get(s3_constants.AmzServerSideEncryptionBucketKeyEnabled)) == "true"
+		config.EncryptionContext = r.Header.Get(s3_constants.AmzServerSideEncryptionContext)
+
+		// Generate and encode base IV with proper error handling
+		baseIV := make([]byte, s3_constants.AESBlockSize)
+		if _, err := rand.Read(baseIV); err != nil {
+			return nil, fmt.Errorf("failed to generate secure IV for SSE-KMS multipart upload: %v", err)
+		}
+		config.KMSBaseIVEncoded = base64.StdEncoding.EncodeToString(baseIV)
+		glog.V(4).Infof("Generated base IV %x for SSE-KMS multipart upload %s", baseIV[:8], uploadIdString)
+	}
+
+	// Prepare SSE-S3 configuration
+	if IsSSES3RequestInternal(r) {
+		config.IsSSES3 = true
+
+		// Generate and encode base IV with proper error handling
+		baseIV := make([]byte, s3_constants.AESBlockSize)
+		if _, err := rand.Read(baseIV); err != nil {
+			return nil, fmt.Errorf("failed to generate secure IV for SSE-S3 multipart upload: %v", err)
+		}
+		config.S3BaseIVEncoded = base64.StdEncoding.EncodeToString(baseIV)
+		glog.V(4).Infof("Generated base IV %x for SSE-S3 multipart upload %s", baseIV[:8], uploadIdString)
+
+		// Generate and serialize SSE-S3 key with proper error handling
+		keyManager := GetSSES3KeyManager()
+		sseS3Key, err := keyManager.GetOrCreateKey("")
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate SSE-S3 key for multipart upload: %v", err)
+		}
+		
+		keyData, serErr := SerializeSSES3Metadata(sseS3Key)
+		if serErr != nil {
+			return nil, fmt.Errorf("failed to serialize SSE-S3 metadata for multipart upload: %v", serErr)
+		}
+		
+		config.S3KeyDataEncoded = base64.StdEncoding.EncodeToString(keyData)
+		
+		// Store key in manager for later retrieval
+		keyManager.StoreKey(sseS3Key)
+		glog.V(4).Infof("Stored SSE-S3 key %s for multipart upload %s", sseS3Key.KeyID, uploadIdString)
+	}
+
+	return config, nil
+}
+
+// applyMultipartEncryptionConfig applies pre-prepared encryption configuration to filer entry
+// This function is guaranteed not to fail since all error-prone operations were done during preparation
+func (s3a *S3ApiServer) applyMultipartEncryptionConfig(entry *filer_pb.Entry, config *MultipartEncryptionConfig) {
+	// Apply SSE-KMS configuration
+	if config.IsSSEKMS {
+		entry.Extended[s3_constants.SeaweedFSSSEKMSKeyID] = []byte(config.KMSKeyID)
+		if config.BucketKeyEnabled {
+			entry.Extended[s3_constants.SeaweedFSSSEKMSBucketKeyEnabled] = []byte("true")
+		}
+		if config.EncryptionContext != "" {
+			entry.Extended[s3_constants.SeaweedFSSSEKMSEncryptionContext] = []byte(config.EncryptionContext)
+		}
+		entry.Extended[s3_constants.SeaweedFSSSEKMSBaseIV] = []byte(config.KMSBaseIVEncoded)
+		glog.V(3).Infof("applyMultipartEncryptionConfig: applied SSE-KMS settings with keyID %s", config.KMSKeyID)
+	}
+
+	// Apply SSE-S3 configuration
+	if config.IsSSES3 {
+		entry.Extended[s3_constants.SeaweedFSSSES3Encryption] = []byte(s3_constants.SSEAlgorithmAES256)
+		entry.Extended[s3_constants.SeaweedFSSSES3BaseIV] = []byte(config.S3BaseIVEncoded)
+		entry.Extended[s3_constants.SeaweedFSSSES3KeyData] = []byte(config.S3KeyDataEncoded)
+		glog.V(3).Infof("applyMultipartEncryptionConfig: applied SSE-S3 settings")
+	}
 }
