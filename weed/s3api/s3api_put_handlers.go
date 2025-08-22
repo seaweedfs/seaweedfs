@@ -26,6 +26,11 @@ type PutToFilerEncryptionResult struct {
 // calculatePartOffset calculates unique offset for each part to prevent IV reuse in multipart uploads
 // AWS S3 part numbers must start from 1, never 0 or negative
 func calculatePartOffset(partNumber int) int64 {
+	// AWS S3 part numbers must start from 1, never 0 or negative
+	if partNumber < 1 {
+		glog.Errorf("Invalid partNumber: %d. Must be >= 1.", partNumber)
+		return 0
+	}
 	// Using a large multiplier to ensure block offsets for different parts do not overlap.
 	// S3 part size limit is 5GB, so this provides a large safety margin.
 	partOffset := int64(partNumber-1) * s3_constants.PartOffsetMultiplier
