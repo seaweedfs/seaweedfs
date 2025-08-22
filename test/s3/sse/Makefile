@@ -362,20 +362,24 @@ start-seaweedfs-ci: check-binary
 	@nohup $(SEAWEEDFS_BINARY) volume -port=$(VOLUME_PORT) -mserver=127.0.0.1:$(MASTER_PORT) -dir=/tmp/seaweedfs-test-sse-volume -max=$(VOLUME_MAX_COUNT) -ip=127.0.0.1 > /tmp/seaweedfs-sse-volume.log 2>&1 &
 	@sleep 5
 	
-	# Create S3 TOML configuration with KMS (Local provider) for embedded S3
+	# Create S3 JSON configuration with KMS (Local provider) for embedded S3
 	@{ \
-		echo "[kms]"; \
-		echo "default_provider = \"local-dev\""; \
-		echo ""; \
-		echo "[kms.providers.local-dev]"; \
-		echo "type = \"local\""; \
-		echo "# WARNING: Only for tests"; \
-		echo "enableOnDemandCreate = true"; \
-	} > /tmp/seaweedfs-s3.toml
+		echo "{"; \
+		echo "  \"kms\": {"; \
+		echo "    \"default_provider\": \"local-dev\","; \
+		echo "    \"providers\": {"; \
+		echo "      \"local-dev\": {"; \
+		echo "        \"type\": \"local\","; \
+		echo "        \"enableOnDemandCreate\": true"; \
+		echo "      }"; \
+		echo "    }"; \
+		echo "  }"; \
+		echo "}"; \
+	} > /tmp/seaweedfs-s3.json
 	
-	# Start filer server with embedded S3 using the TOML config
+	# Start filer server with embedded S3 using the JSON config
 	@echo "Starting filer server with embedded S3..."
-	@AWS_ACCESS_KEY_ID=$(ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) nohup $(SEAWEEDFS_BINARY) filer -port=$(FILER_PORT) -port.grpc=$$(( $(FILER_PORT) + 10000 )) -master=127.0.0.1:$(MASTER_PORT) -dataCenter=defaultDataCenter -ip=127.0.0.1 -s3 -s3.port=$(S3_PORT) -s3.config=/tmp/seaweedfs-s3.toml > /tmp/seaweedfs-sse-filer.log 2>&1 &
+	@AWS_ACCESS_KEY_ID=$(ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) nohup $(SEAWEEDFS_BINARY) filer -port=$(FILER_PORT) -port.grpc=$$(( $(FILER_PORT) + 10000 )) -master=127.0.0.1:$(MASTER_PORT) -dataCenter=defaultDataCenter -ip=127.0.0.1 -s3 -s3.port=$(S3_PORT) -s3.config=/tmp/seaweedfs-s3.json > /tmp/seaweedfs-sse-filer.log 2>&1 &
 	@sleep 5
 	
 	# Wait for S3 service to be ready - use port-based checking for reliability

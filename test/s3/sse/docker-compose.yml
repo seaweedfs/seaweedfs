@@ -80,13 +80,13 @@ services:
       - -ip=seaweedfs-filer
       - -s3
       - -s3.port=8333
-      - -s3.config=/etc/seaweedfs/s3.toml
+      - -s3.config=/etc/seaweedfs/s3.json
     depends_on:
       - seaweedfs-master
       - seaweedfs-volume
       - openbao
     volumes:
-      - ./s3_kms.toml:/etc/seaweedfs/s3.toml
+      - ./s3_kms.json:/etc/seaweedfs/s3.json
       - seaweedfs-filer-data:/data
     networks:
       - seaweedfs-sse-test

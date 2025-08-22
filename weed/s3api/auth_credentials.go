@@ -3,6 +3,8 @@ package s3api
 import (
 	"context"
 
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -149,9 +151,14 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 	if option.Config != "" {
 		glog.V(3).Infof("loading static config file %s", option.Config)
 		if err := iam.loadS3ApiConfigurationFromFile(option.Config); err != nil {
-			glog.Fatalf("fail to load config file %s: %v", option.Config, err)
+			glog.Warningf("fail to load config file %s: %v", option.Config, err)
 		}
-		configLoaded = true
+		// Only mark as loaded if identities were actually loaded
+		iam.m.RLock()
+		if len(iam.identities) > 0 {
+			configLoaded = true
+		}
+		iam.m.RUnlock()
 	} else {
 		glog.V(3).Infof("no static config file specified... loading config from credential manager")
 		if err := iam.loadS3ApiConfigurationFromFiler(option); err != nil {
@@ -555,8 +562,9 @@ func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromCredentialManager
 
 // initializeKMSFromConfig loads KMS configuration from TOML format
 func (iam *IdentityAccessManagement) initializeKMSFromConfig(configContent []byte) error {
-	if err := iam.initializeKMSFromTOML(configContent); err == nil {
-		glog.V(1).Infof("Successfully loaded KMS configuration from TOML format")
+	// JSON-only KMS configuration
+	if err := iam.initializeKMSFromJSON(configContent); err == nil {
+		glog.V(1).Infof("Successfully loaded KMS configuration from JSON format")
 		return nil
 	}
 
@@ -564,33 +572,38 @@ func (iam *IdentityAccessManagement) initializeKMSFromConfig(configContent []byt
 	return nil
 }
 
-// initializeKMSFromTOML loads KMS configuration from TOML format
-func (iam *IdentityAccessManagement) initializeKMSFromTOML(configContent []byte) error {
-	// Create a temporary file to use with viper (viper doesn't support reading TOML from bytes directly)
-	tempFile, err := os.CreateTemp("", "s3_config_*.toml")
-	if err != nil {
-		return fmt.Errorf("failed to create temp file: %v", err)
+// initializeKMSFromJSON loads KMS configuration from JSON format when provided in the same file
+func (iam *IdentityAccessManagement) initializeKMSFromJSON(configContent []byte) error {
+	// Parse as generic JSON and extract optional "kms" block
+	var m map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(configContent), &m); err != nil {
+		return err
 	}
-	defer os.Remove(tempFile.Name())
-	defer tempFile.Close()
-
-	if _, err := tempFile.Write(configContent); err != nil {
-		return fmt.Errorf("failed to write temp file: %v", err)
-	}
-	tempFile.Close()
-
-	// Use viper to parse the TOML file
-	v := viper.New()
-	v.SetConfigFile(tempFile.Name())
-	if err := v.ReadInConfig(); err != nil {
-		return fmt.Errorf("failed to read TOML config: %v", err)
-	}
-
-	// Check if KMS section exists
-	if !v.IsSet("kms") {
+	kmsVal, ok := m["kms"]
+	if !ok {
 		return fmt.Errorf("no KMS section found")
 	}
 
-	// Use our KMS config loader
+	// Marshal the kms section back to bytes and feed to kms.ConfigLoader via viper-like adapter
+	kmsBytes, err := json.Marshal(kmsVal)
+	if err != nil {
+		return fmt.Errorf("failed to marshal kms section: %v", err)
+	}
+
+	// Use a minimal viper-like adapter for JSON
+	v := viper.New()
+	tmp, err := os.CreateTemp("", "s3_kms_*.json")
+	if err != nil {
+		return fmt.Errorf("failed to create temp kms json: %v", err)
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(kmsBytes); err != nil {
+		return fmt.Errorf("failed to write temp kms json: %v", err)
+	}
+	tmp.Close()
+	v.SetConfigFile(tmp.Name())
+	if err := v.ReadInConfig(); err != nil {
+		return fmt.Errorf("failed to read kms json: %v", err)
+	}
 	return kms.LoadKMSFromFilerToml(v)
 }

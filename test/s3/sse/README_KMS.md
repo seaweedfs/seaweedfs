@@ -101,20 +101,26 @@ The setup automatically creates these encryption keys in OpenBao:
 
 ## ⚙️ Configuration
 
-### S3 KMS Configuration (`s3_kms.toml`)
-```toml
-[kms]
-default_provider = "openbao-test"
-
-[kms.providers.openbao-test]
-type = "openbao"
-address = "http://openbao:8200"
-token = "root-token-for-testing"
-transit_path = "transit"
-
-# Per-bucket KMS assignments
-[kms.buckets.test-sse-kms-basic]
-provider = "openbao-test"
+### S3 KMS Configuration (`s3_kms.json`)
+```json
+{
+  "kms": {
+    "default_provider": "openbao-test",
+    "providers": {
+      "openbao-test": {
+        "type": "openbao",
+        "address": "http://openbao:8200",
+        "token": "root-token-for-testing",
+        "transit_path": "transit"
+      }
+    },
+    "buckets": {
+      "test-sse-kms-basic": {
+        "provider": "openbao-test"
+      }
+    }
+  }
+}
 ```
 
 ### Docker Compose Services
