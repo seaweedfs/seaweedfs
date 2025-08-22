@@ -34,8 +34,8 @@ func IsSSES3RequestInternal(r *http.Request) bool {
 	sseHeader := r.Header.Get(s3_constants.AmzServerSideEncryption)
 	result := sseHeader == SSES3Algorithm
 
-	// Debug: log header detection for any SSE-S3 requests
-	if sseHeader != "" || result {
+	// Debug: log header detection for SSE-S3 requests
+	if result {
 		glog.V(4).Infof("SSE-S3 detection: method=%s, header=%q, expected=%q, result=%t, copySource=%q", r.Method, sseHeader, SSES3Algorithm, result, r.Header.Get("X-Amz-Copy-Source"))
 	}
 
