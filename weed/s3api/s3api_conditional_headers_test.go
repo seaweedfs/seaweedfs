@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -43,11 +44,11 @@ func TestConditionalHeadersWithExistingObjects(t *testing.T) {
 	t.Run("IfNoneMatch_ObjectExists", func(t *testing.T) {
 		// Test case 1: If-None-Match=* when object exists (should fail)
 		t.Run("Asterisk_ShouldFail", func(t *testing.T) {
-			s3a := createTestableS3Server(testObject)
+			getter := createMockEntryGetter(testObject)
 			req := createTestPutRequest(bucket, object, "test content")
 			req.Header.Set(s3_constants.IfNoneMatch, "*")
 
-			errCode := s3a.checkConditionalHeaders(req, bucket, object)
+			errCode := checkConditionalHeadersWithGetter(getter, req, bucket, object)
 			if errCode != s3err.ErrPreconditionFailed {
 				t.Errorf("Expected ErrPreconditionFailed when object exists with If-None-Match=*, got %v", errCode)
 			}
@@ -55,11 +56,11 @@ func TestConditionalHeadersWithExistingObjects(t *testing.T) {
 
 		// Test case 2: If-None-Match with matching ETag (should fail)
 		t.Run("MatchingETag_ShouldFail", func(t *testing.T) {
-			s3a := createTestableS3Server(testObject)
+			getter := createMockEntryGetter(testObject)
 			req := createTestPutRequest(bucket, object, "test content")
 			req.Header.Set(s3_constants.IfNoneMatch, "\"abc123\"")
 
-			errCode := s3a.checkConditionalHeaders(req, bucket, object)
+			errCode := checkConditionalHeadersWithGetter(getter, req, bucket, object)
 			if errCode != s3err.ErrPreconditionFailed {
 				t.Errorf("Expected ErrPreconditionFailed when ETag matches, got %v", errCode)
 			}
@@ -67,11 +68,11 @@ func TestConditionalHeadersWithExistingObjects(t *testing.T) {
 
 		// Test case 3: If-None-Match with non-matching ETag (should succeed)
 		t.Run("NonMatchingETag_ShouldSucceed", func(t *testing.T) {
-			s3a := createTestableS3Server(testObject)
+			getter := createMockEntryGetter(testObject)
 			req := createTestPutRequest(bucket, object, "test content")
 			req.Header.Set(s3_constants.IfNoneMatch, "\"xyz789\"")
 
-			errCode := s3a.checkConditionalHeaders(req, bucket, object)
+			errCode := checkConditionalHeadersWithGetter(getter, req, bucket, object)
 			if errCode != s3err.ErrNone {
 				t.Errorf("Expected ErrNone when ETag doesn't match, got %v", errCode)
 			}
@@ -79,11 +80,11 @@ func TestConditionalHeadersWithExistingObjects(t *testing.T) {
 
 		// Test case 4: If-None-Match with multiple ETags, one matching (should fail)
 		t.Run("MultipleETags_OneMatches_ShouldFail", func(t *testing.T) {
-			s3a := createTestableS3Server(testObject)
+			getter := createMockEntryGetter(testObject)
 			req := createTestPutRequest(bucket, object, "test content")
 			req.Header.Set(s3_constants.IfNoneMatch, "\"xyz789\", \"abc123\", \"def456\"")
 
-			errCode := s3a.checkConditionalHeaders(req, bucket, object)
+			errCode := checkConditionalHeadersWithGetter(getter, req, bucket, object)
 			if errCode != s3err.ErrPreconditionFailed {
 				t.Errorf("Expected ErrPreconditionFailed when one ETag matches, got %v", errCode)
 			}
@@ -91,11 +92,11 @@ func TestConditionalHeadersWithExistingObjects(t *testing.T) {
 
 		// Test case 5: If-None-Match with multiple ETags, none matching (should succeed)
 		t.Run("MultipleETags_NoneMatch_ShouldSucceed", func(t *testing.T) {
-			s3a := createTestableS3Server(testObject)
+			getter := createMockEntryGetter(testObject)
 			req := createTestPutRequest(bucket, object, "test content")
 			req.Header.Set(s3_constants.IfNoneMatch, "\"xyz789\", \"def456\", \"ghi123\"")
 
-			errCode := s3a.checkConditionalHeaders(req, bucket, object)
+			errCode := checkConditionalHeadersWithGetter(getter, req, bucket, object)
 			if errCode != s3err.ErrNone {
 				t.Errorf("Expected ErrNone when no ETags match, got %v", errCode)
 			}
@@ -106,11 +107,11 @@ func TestConditionalHeadersWithExistingObjects(t *testing.T) {
 	t.Run("IfMatch_ObjectExists", func(t *testing.T) {
 		// Test case 1: If-Match with matching ETag (should succeed)
 		t.Run("MatchingETag_ShouldSucceed", func(t *testing.T) {
-			s3a := createTestableS3Server(testObject)
+			getter := createMockEntryGetter(testObject)
 			req := createTestPutRequest(bucket, object, "test content")
 			req.Header.Set(s3_constants.IfMatch, "\"abc123\"")
 
-			errCode := s3a.checkConditionalHeaders(req, bucket, object)
+			errCode := checkConditionalHeadersWithGetter(getter, req, bucket, object)
 			if errCode != s3err.ErrNone {
 				t.Errorf("Expected ErrNone when ETag matches, got %v", errCode)
 			}
@@ -118,11 +119,11 @@ func TestConditionalHeadersWithExistingObjects(t *testing.T) {
 
 		// Test case 2: If-Match with non-matching ETag (should fail)
 		t.Run("NonMatchingETag_ShouldFail", func(t *testing.T) {
-			s3a := createTestableS3Server(testObject)
+			getter := createMockEntryGetter(testObject)
 			req := createTestPutRequest(bucket, object, "test content")
 			req.Header.Set(s3_constants.IfMatch, "\"xyz789\"")
 
-			errCode := s3a.checkConditionalHeaders(req, bucket, object)
+			errCode := checkConditionalHeadersWithGetter(getter, req, bucket, object)
 			if errCode != s3err.ErrPreconditionFailed {
 				t.Errorf("Expected ErrPreconditionFailed when ETag doesn't match, got %v", errCode)
 			}
@@ -130,11 +131,11 @@ func TestConditionalHeadersWithExistingObjects(t *testing.T) {
 
 		// Test case 3: If-Match with multiple ETags, one matching (should succeed)
 		t.Run("MultipleETags_OneMatches_ShouldSucceed", func(t *testing.T) {
-			s3a := createTestableS3Server(testObject)
+			getter := createMockEntryGetter(testObject)
 			req := createTestPutRequest(bucket, object, "test content")
 			req.Header.Set(s3_constants.IfMatch, "\"xyz789\", \"abc123\"")
 
-			errCode := s3a.checkConditionalHeaders(req, bucket, object)
+			errCode := checkConditionalHeadersWithGetter(getter, req, bucket, object)
 			if errCode != s3err.ErrNone {
 				t.Errorf("Expected ErrNone when one ETag matches, got %v", errCode)
 			}
@@ -142,11 +143,11 @@ func TestConditionalHeadersWithExistingObjects(t *testing.T) {
 
 		// Test case 4: If-Match with wildcard * (should succeed if object exists)
 		t.Run("Wildcard_ShouldSucceed", func(t *testing.T) {
-			s3a := createTestableS3Server(testObject)
+			getter := createMockEntryGetter(testObject)
 			req := createTestPutRequest(bucket, object, "test content")
 			req.Header.Set(s3_constants.IfMatch, "*")
 
-			errCode := s3a.checkConditionalHeaders(req, bucket, object)
+			errCode := checkConditionalHeadersWithGetter(getter, req, bucket, object)
 			if errCode != s3err.ErrNone {
 				t.Errorf("Expected ErrNone when If-Match=* and object exists, got %v", errCode)
 			}
@@ -157,12 +158,12 @@ func TestConditionalHeadersWithExistingObjects(t *testing.T) {
 	t.Run("IfModifiedSince_ObjectExists", func(t *testing.T) {
 		// Test case 1: If-Modified-Since with date before object modification (should succeed)
 		t.Run("DateBefore_ShouldSucceed", func(t *testing.T) {
-			s3a := createTestableS3Server(testObject)
+			getter := createMockEntryGetter(testObject)
 			req := createTestPutRequest(bucket, object, "test content")
 			dateBeforeModification := time.Date(2024, 6, 14, 12, 0, 0, 0, time.UTC)
 			req.Header.Set(s3_constants.IfModifiedSince, dateBeforeModification.Format(time.RFC1123))
 
-			errCode := s3a.checkConditionalHeaders(req, bucket, object)
+			errCode := checkConditionalHeadersWithGetter(getter, req, bucket, object)
 			if errCode != s3err.ErrNone {
 				t.Errorf("Expected ErrNone when object was modified after date, got %v", errCode)
 			}
@@ -170,12 +171,12 @@ func TestConditionalHeadersWithExistingObjects(t *testing.T) {
 
 		// Test case 2: If-Modified-Since with date after object modification (should fail)
 		t.Run("DateAfter_ShouldFail", func(t *testing.T) {
-			s3a := createTestableS3Server(testObject)
+			getter := createMockEntryGetter(testObject)
 			req := createTestPutRequest(bucket, object, "test content")
 			dateAfterModification := time.Date(2024, 6, 16, 12, 0, 0, 0, time.UTC)
 			req.Header.Set(s3_constants.IfModifiedSince, dateAfterModification.Format(time.RFC1123))
 
-			errCode := s3a.checkConditionalHeaders(req, bucket, object)
+			errCode := checkConditionalHeadersWithGetter(getter, req, bucket, object)
 			if errCode != s3err.ErrPreconditionFailed {
 				t.Errorf("Expected ErrPreconditionFailed when object wasn't modified since date, got %v", errCode)
 			}
@@ -183,12 +184,12 @@ func TestConditionalHeadersWithExistingObjects(t *testing.T) {
 
 		// Test case 3: If-Modified-Since with exact modification date (should fail - not after)
 		t.Run("ExactDate_ShouldFail", func(t *testing.T) {
-			s3a := createTestableS3Server(testObject)
+			getter := createMockEntryGetter(testObject)
 			req := createTestPutRequest(bucket, object, "test content")
 			exactDate := time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC)
 			req.Header.Set(s3_constants.IfModifiedSince, exactDate.Format(time.RFC1123))
 
-			errCode := s3a.checkConditionalHeaders(req, bucket, object)
+			errCode := checkConditionalHeadersWithGetter(getter, req, bucket, object)
 			if errCode != s3err.ErrPreconditionFailed {
 				t.Errorf("Expected ErrPreconditionFailed when object modification time equals header date, got %v", errCode)
 			}
@@ -199,12 +200,12 @@ func TestConditionalHeadersWithExistingObjects(t *testing.T) {
 	t.Run("IfUnmodifiedSince_ObjectExists", func(t *testing.T) {
 		// Test case 1: If-Unmodified-Since with date after object modification (should succeed)
 		t.Run("DateAfter_ShouldSucceed", func(t *testing.T) {
-			s3a := createTestableS3Server(testObject)
+			getter := createMockEntryGetter(testObject)
 			req := createTestPutRequest(bucket, object, "test content")
 			dateAfterModification := time.Date(2024, 6, 16, 12, 0, 0, 0, time.UTC)
 			req.Header.Set(s3_constants.IfUnmodifiedSince, dateAfterModification.Format(time.RFC1123))
 
-			errCode := s3a.checkConditionalHeaders(req, bucket, object)
+			errCode := checkConditionalHeadersWithGetter(getter, req, bucket, object)
 			if errCode != s3err.ErrNone {
 				t.Errorf("Expected ErrNone when object wasn't modified after date, got %v", errCode)
 			}
@@ -212,12 +213,12 @@ func TestConditionalHeadersWithExistingObjects(t *testing.T) {
 
 		// Test case 2: If-Unmodified-Since with date before object modification (should fail)
 		t.Run("DateBefore_ShouldFail", func(t *testing.T) {
-			s3a := createTestableS3Server(testObject)
+			getter := createMockEntryGetter(testObject)
 			req := createTestPutRequest(bucket, object, "test content")
 			dateBeforeModification := time.Date(2024, 6, 14, 12, 0, 0, 0, time.UTC)
 			req.Header.Set(s3_constants.IfUnmodifiedSince, dateBeforeModification.Format(time.RFC1123))
 
-			errCode := s3a.checkConditionalHeaders(req, bucket, object)
+			errCode := checkConditionalHeadersWithGetter(getter, req, bucket, object)
 			if errCode != s3err.ErrPreconditionFailed {
 				t.Errorf("Expected ErrPreconditionFailed when object was modified after date, got %v", errCode)
 			}
@@ -255,12 +256,12 @@ func TestConditionalHeadersForReads(t *testing.T) {
 	t.Run("ConditionalReads_ObjectExists", func(t *testing.T) {
 		// Test If-None-Match with existing object (should return 304 Not Modified)
 		t.Run("IfNoneMatch_ObjectExists_ShouldReturn304", func(t *testing.T) {
-			s3a := createTestableS3Server(existingObject)
+			getter := createMockEntryGetter(existingObject)
 
 			req := createTestGetRequest(bucket, object)
 			req.Header.Set(s3_constants.IfNoneMatch, "\"read123\"")
 
-			errCode := s3a.checkConditionalHeadersForReads(req, bucket, object)
+			errCode := checkConditionalHeadersForReadsWithGetter(getter, req, bucket, object)
 			if errCode != s3err.ErrNotModified {
 				t.Errorf("Expected ErrNotModified when If-None-Match matches, got %v", errCode)
 			}
@@ -268,12 +269,12 @@ func TestConditionalHeadersForReads(t *testing.T) {
 
 		// Test If-None-Match=* with existing object (should return 304 Not Modified)
 		t.Run("IfNoneMatchAsterisk_ObjectExists_ShouldReturn304", func(t *testing.T) {
-			s3a := createTestableS3Server(existingObject)
+			getter := createMockEntryGetter(existingObject)
 
 			req := createTestGetRequest(bucket, object)
 			req.Header.Set(s3_constants.IfNoneMatch, "*")
 
-			errCode := s3a.checkConditionalHeadersForReads(req, bucket, object)
+			errCode := checkConditionalHeadersForReadsWithGetter(getter, req, bucket, object)
 			if errCode != s3err.ErrNotModified {
 				t.Errorf("Expected ErrNotModified when If-None-Match=* with existing object, got %v", errCode)
 			}
@@ -281,12 +282,12 @@ func TestConditionalHeadersForReads(t *testing.T) {
 
 		// Test If-None-Match with non-matching ETag (should succeed)
 		t.Run("IfNoneMatch_NonMatchingETag_ShouldSucceed", func(t *testing.T) {
-			s3a := createTestableS3Server(existingObject)
+			getter := createMockEntryGetter(existingObject)
 
 			req := createTestGetRequest(bucket, object)
 			req.Header.Set(s3_constants.IfNoneMatch, "\"different-etag\"")
 
-			errCode := s3a.checkConditionalHeadersForReads(req, bucket, object)
+			errCode := checkConditionalHeadersForReadsWithGetter(getter, req, bucket, object)
 			if errCode != s3err.ErrNone {
 				t.Errorf("Expected ErrNone when If-None-Match doesn't match, got %v", errCode)
 			}
@@ -294,12 +295,12 @@ func TestConditionalHeadersForReads(t *testing.T) {
 
 		// Test If-Match with matching ETag (should succeed)
 		t.Run("IfMatch_MatchingETag_ShouldSucceed", func(t *testing.T) {
-			s3a := createTestableS3Server(existingObject)
+			getter := createMockEntryGetter(existingObject)
 
 			req := createTestGetRequest(bucket, object)
 			req.Header.Set(s3_constants.IfMatch, "\"read123\"")
 
-			errCode := s3a.checkConditionalHeadersForReads(req, bucket, object)
+			errCode := checkConditionalHeadersForReadsWithGetter(getter, req, bucket, object)
 			if errCode != s3err.ErrNone {
 				t.Errorf("Expected ErrNone when If-Match matches, got %v", errCode)
 			}
@@ -307,12 +308,12 @@ func TestConditionalHeadersForReads(t *testing.T) {
 
 		// Test If-Match with non-matching ETag (should return 412 Precondition Failed)
 		t.Run("IfMatch_NonMatchingETag_ShouldReturn412", func(t *testing.T) {
-			s3a := createTestableS3Server(existingObject)
+			getter := createMockEntryGetter(existingObject)
 
 			req := createTestGetRequest(bucket, object)
 			req.Header.Set(s3_constants.IfMatch, "\"different-etag\"")
 
-			errCode := s3a.checkConditionalHeadersForReads(req, bucket, object)
+			errCode := checkConditionalHeadersForReadsWithGetter(getter, req, bucket, object)
 			if errCode != s3err.ErrPreconditionFailed {
 				t.Errorf("Expected ErrPreconditionFailed when If-Match doesn't match, got %v", errCode)
 			}
@@ -320,12 +321,12 @@ func TestConditionalHeadersForReads(t *testing.T) {
 
 		// Test If-Match=* with existing object (should succeed)
 		t.Run("IfMatchAsterisk_ObjectExists_ShouldSucceed", func(t *testing.T) {
-			s3a := createTestableS3Server(existingObject)
+			getter := createMockEntryGetter(existingObject)
 
 			req := createTestGetRequest(bucket, object)
 			req.Header.Set(s3_constants.IfMatch, "*")
 
-			errCode := s3a.checkConditionalHeadersForReads(req, bucket, object)
+			errCode := checkConditionalHeadersForReadsWithGetter(getter, req, bucket, object)
 			if errCode != s3err.ErrNone {
 				t.Errorf("Expected ErrNone when If-Match=* with existing object, got %v", errCode)
 			}
@@ -333,12 +334,12 @@ func TestConditionalHeadersForReads(t *testing.T) {
 
 		// Test If-Modified-Since (object modified after date - should succeed)
 		t.Run("IfModifiedSince_ObjectModifiedAfter_ShouldSucceed", func(t *testing.T) {
-			s3a := createTestableS3Server(existingObject)
+			getter := createMockEntryGetter(existingObject)
 
 			req := createTestGetRequest(bucket, object)
 			req.Header.Set(s3_constants.IfModifiedSince, "Sat, 14 Jun 2024 12:00:00 GMT") // Before object mtime
 
-			errCode := s3a.checkConditionalHeadersForReads(req, bucket, object)
+			errCode := checkConditionalHeadersForReadsWithGetter(getter, req, bucket, object)
 			if errCode != s3err.ErrNone {
 				t.Errorf("Expected ErrNone when object modified after If-Modified-Since date, got %v", errCode)
 			}
@@ -346,12 +347,12 @@ func TestConditionalHeadersForReads(t *testing.T) {
 
 		// Test If-Modified-Since (object not modified since date - should return 304)
 		t.Run("IfModifiedSince_ObjectNotModified_ShouldReturn304", func(t *testing.T) {
-			s3a := createTestableS3Server(existingObject)
+			getter := createMockEntryGetter(existingObject)
 
 			req := createTestGetRequest(bucket, object)
 			req.Header.Set(s3_constants.IfModifiedSince, "Sun, 16 Jun 2024 12:00:00 GMT") // After object mtime
 
-			errCode := s3a.checkConditionalHeadersForReads(req, bucket, object)
+			errCode := checkConditionalHeadersForReadsWithGetter(getter, req, bucket, object)
 			if errCode != s3err.ErrNotModified {
 				t.Errorf("Expected ErrNotModified when object not modified since If-Modified-Since date, got %v", errCode)
 			}
@@ -359,12 +360,12 @@ func TestConditionalHeadersForReads(t *testing.T) {
 
 		// Test If-Unmodified-Since (object not modified since date - should succeed)
 		t.Run("IfUnmodifiedSince_ObjectNotModified_ShouldSucceed", func(t *testing.T) {
-			s3a := createTestableS3Server(existingObject)
+			getter := createMockEntryGetter(existingObject)
 
 			req := createTestGetRequest(bucket, object)
 			req.Header.Set(s3_constants.IfUnmodifiedSince, "Sun, 16 Jun 2024 12:00:00 GMT") // After object mtime
 
-			errCode := s3a.checkConditionalHeadersForReads(req, bucket, object)
+			errCode := checkConditionalHeadersForReadsWithGetter(getter, req, bucket, object)
 			if errCode != s3err.ErrNone {
 				t.Errorf("Expected ErrNone when object not modified since If-Unmodified-Since date, got %v", errCode)
 			}
@@ -372,12 +373,12 @@ func TestConditionalHeadersForReads(t *testing.T) {
 
 		// Test If-Unmodified-Since (object modified since date - should return 412)
 		t.Run("IfUnmodifiedSince_ObjectModified_ShouldReturn412", func(t *testing.T) {
-			s3a := createTestableS3Server(existingObject)
+			getter := createMockEntryGetter(existingObject)
 
 			req := createTestGetRequest(bucket, object)
 			req.Header.Set(s3_constants.IfUnmodifiedSince, "Fri, 14 Jun 2024 12:00:00 GMT") // Before object mtime
 
-			errCode := s3a.checkConditionalHeadersForReads(req, bucket, object)
+			errCode := checkConditionalHeadersForReadsWithGetter(getter, req, bucket, object)
 			if errCode != s3err.ErrPreconditionFailed {
 				t.Errorf("Expected ErrPreconditionFailed when object modified since If-Unmodified-Since date, got %v", errCode)
 			}
@@ -388,12 +389,12 @@ func TestConditionalHeadersForReads(t *testing.T) {
 	t.Run("ConditionalReads_ObjectNotExists", func(t *testing.T) {
 		// Test If-None-Match with non-existent object (should succeed)
 		t.Run("IfNoneMatch_ObjectNotExists_ShouldSucceed", func(t *testing.T) {
-			s3a := createTestableS3Server(nil) // No object
+			getter := createMockEntryGetter(nil) // No object
 
 			req := createTestGetRequest(bucket, object)
 			req.Header.Set(s3_constants.IfNoneMatch, "\"any-etag\"")
 
-			errCode := s3a.checkConditionalHeadersForReads(req, bucket, object)
+			errCode := checkConditionalHeadersForReadsWithGetter(getter, req, bucket, object)
 			if errCode != s3err.ErrNone {
 				t.Errorf("Expected ErrNone when object doesn't exist with If-None-Match, got %v", errCode)
 			}
@@ -401,12 +402,12 @@ func TestConditionalHeadersForReads(t *testing.T) {
 
 		// Test If-Match with non-existent object (should return 412)
 		t.Run("IfMatch_ObjectNotExists_ShouldReturn412", func(t *testing.T) {
-			s3a := createTestableS3Server(nil) // No object
+			getter := createMockEntryGetter(nil) // No object
 
 			req := createTestGetRequest(bucket, object)
 			req.Header.Set(s3_constants.IfMatch, "\"any-etag\"")
 
-			errCode := s3a.checkConditionalHeadersForReads(req, bucket, object)
+			errCode := checkConditionalHeadersForReadsWithGetter(getter, req, bucket, object)
 			if errCode != s3err.ErrPreconditionFailed {
 				t.Errorf("Expected ErrPreconditionFailed when object doesn't exist with If-Match, got %v", errCode)
 			}
@@ -414,12 +415,12 @@ func TestConditionalHeadersForReads(t *testing.T) {
 
 		// Test If-Modified-Since with non-existent object (should succeed)
 		t.Run("IfModifiedSince_ObjectNotExists_ShouldSucceed", func(t *testing.T) {
-			s3a := createTestableS3Server(nil) // No object
+			getter := createMockEntryGetter(nil) // No object
 
 			req := createTestGetRequest(bucket, object)
 			req.Header.Set(s3_constants.IfModifiedSince, "Sat, 15 Jun 2024 12:00:00 GMT")
 
-			errCode := s3a.checkConditionalHeadersForReads(req, bucket, object)
+			errCode := checkConditionalHeadersForReadsWithGetter(getter, req, bucket, object)
 			if errCode != s3err.ErrNone {
 				t.Errorf("Expected ErrNone when object doesn't exist with If-Modified-Since, got %v", errCode)
 			}
@@ -427,12 +428,12 @@ func TestConditionalHeadersForReads(t *testing.T) {
 
 		// Test If-Unmodified-Since with non-existent object (should return 412)
 		t.Run("IfUnmodifiedSince_ObjectNotExists_ShouldReturn412", func(t *testing.T) {
-			s3a := createTestableS3Server(nil) // No object
+			getter := createMockEntryGetter(nil) // No object
 
 			req := createTestGetRequest(bucket, object)
 			req.Header.Set(s3_constants.IfUnmodifiedSince, "Sat, 15 Jun 2024 12:00:00 GMT")
 
-			errCode := s3a.checkConditionalHeadersForReads(req, bucket, object)
+			errCode := checkConditionalHeadersForReadsWithGetter(getter, req, bucket, object)
 			if errCode != s3err.ErrPreconditionFailed {
 				t.Errorf("Expected ErrPreconditionFailed when object doesn't exist with If-Unmodified-Since, got %v", errCode)
 			}
@@ -465,10 +466,11 @@ func TestConditionalHeadersWithNonExistentObjects(t *testing.T) {
 	t.Run("IfNoneMatch_ObjectDoesNotExist", func(t *testing.T) {
 		// Test case 1: If-None-Match=* when object doesn't exist (should return ErrNone)
 		t.Run("Asterisk_ShouldSucceed", func(t *testing.T) {
+			getter := createMockEntryGetter(nil) // No object exists
 			req := createTestPutRequest(bucket, object, "test content")
 			req.Header.Set(s3_constants.IfNoneMatch, "*")
 
-			errCode := s3a.checkConditionalHeaders(req, bucket, object)
+			errCode := checkConditionalHeadersWithGetter(getter, req, bucket, object)
 			if errCode != s3err.ErrNone {
 				t.Errorf("Expected ErrNone when object doesn't exist, got %v", errCode)
 			}
@@ -476,10 +478,11 @@ func TestConditionalHeadersWithNonExistentObjects(t *testing.T) {
 
 		// Test case 2: If-None-Match with specific ETag when object doesn't exist
 		t.Run("SpecificETag_ShouldSucceed", func(t *testing.T) {
+			getter := createMockEntryGetter(nil) // No object exists
 			req := createTestPutRequest(bucket, object, "test content")
 			req.Header.Set(s3_constants.IfNoneMatch, "\"some-etag\"")
 
-			errCode := s3a.checkConditionalHeaders(req, bucket, object)
+			errCode := checkConditionalHeadersWithGetter(getter, req, bucket, object)
 			if errCode != s3err.ErrNone {
 				t.Errorf("Expected ErrNone when object doesn't exist, got %v", errCode)
 			}
@@ -490,10 +493,11 @@ func TestConditionalHeadersWithNonExistentObjects(t *testing.T) {
 	t.Run("IfMatch_ObjectDoesNotExist", func(t *testing.T) {
 		// Test case 1: If-Match with specific ETag when object doesn't exist (should fail - critical bug fix)
 		t.Run("SpecificETag_ShouldFail", func(t *testing.T) {
+			getter := createMockEntryGetter(nil) // No object exists
 			req := createTestPutRequest(bucket, object, "test content")
 			req.Header.Set(s3_constants.IfMatch, "\"some-etag\"")
 
-			errCode := s3a.checkConditionalHeaders(req, bucket, object)
+			errCode := checkConditionalHeadersWithGetter(getter, req, bucket, object)
 			if errCode != s3err.ErrPreconditionFailed {
 				t.Errorf("Expected ErrPreconditionFailed when object doesn't exist with If-Match header, got %v", errCode)
 			}
@@ -501,10 +505,11 @@ func TestConditionalHeadersWithNonExistentObjects(t *testing.T) {
 
 		// Test case 2: If-Match with wildcard * when object doesn't exist (should fail)
 		t.Run("Wildcard_ShouldFail", func(t *testing.T) {
+			getter := createMockEntryGetter(nil) // No object exists
 			req := createTestPutRequest(bucket, object, "test content")
 			req.Header.Set(s3_constants.IfMatch, "*")
 
-			errCode := s3a.checkConditionalHeaders(req, bucket, object)
+			errCode := checkConditionalHeadersWithGetter(getter, req, bucket, object)
 			if errCode != s3err.ErrPreconditionFailed {
 				t.Errorf("Expected ErrPreconditionFailed when object doesn't exist with If-Match=*, got %v", errCode)
 			}
@@ -515,10 +520,11 @@ func TestConditionalHeadersWithNonExistentObjects(t *testing.T) {
 	t.Run("DateFormatValidation", func(t *testing.T) {
 		// Test case 1: Valid If-Modified-Since date format
 		t.Run("IfModifiedSince_ValidFormat", func(t *testing.T) {
+			getter := createMockEntryGetter(nil) // No object exists
 			req := createTestPutRequest(bucket, object, "test content")
 			req.Header.Set(s3_constants.IfModifiedSince, time.Now().Format(time.RFC1123))
 
-			errCode := s3a.checkConditionalHeaders(req, bucket, object)
+			errCode := checkConditionalHeadersWithGetter(getter, req, bucket, object)
 			if errCode != s3err.ErrNone {
 				t.Errorf("Expected ErrNone with valid date format, got %v", errCode)
 			}
@@ -526,10 +532,11 @@ func TestConditionalHeadersWithNonExistentObjects(t *testing.T) {
 
 		// Test case 2: Invalid If-Modified-Since date format
 		t.Run("IfModifiedSince_InvalidFormat", func(t *testing.T) {
+			getter := createMockEntryGetter(nil) // No object exists
 			req := createTestPutRequest(bucket, object, "test content")
 			req.Header.Set(s3_constants.IfModifiedSince, "invalid-date")
 
-			errCode := s3a.checkConditionalHeaders(req, bucket, object)
+			errCode := checkConditionalHeadersWithGetter(getter, req, bucket, object)
 			if errCode != s3err.ErrInvalidRequest {
 				t.Errorf("Expected ErrInvalidRequest for invalid date format, got %v", errCode)
 			}
@@ -537,10 +544,11 @@ func TestConditionalHeadersWithNonExistentObjects(t *testing.T) {
 
 		// Test case 3: Invalid If-Unmodified-Since date format
 		t.Run("IfUnmodifiedSince_InvalidFormat", func(t *testing.T) {
+			getter := createMockEntryGetter(nil) // No object exists
 			req := createTestPutRequest(bucket, object, "test content")
 			req.Header.Set(s3_constants.IfUnmodifiedSince, "invalid-date")
 
-			errCode := s3a.checkConditionalHeaders(req, bucket, object)
+			errCode := checkConditionalHeadersWithGetter(getter, req, bucket, object)
 			if errCode != s3err.ErrInvalidRequest {
 				t.Errorf("Expected ErrInvalidRequest for invalid date format, got %v", errCode)
 			}
@@ -549,10 +557,11 @@ func TestConditionalHeadersWithNonExistentObjects(t *testing.T) {
 
 	// Test no conditional headers
 	t.Run("NoConditionalHeaders", func(t *testing.T) {
+		getter := createMockEntryGetter(nil) // No object exists
 		req := createTestPutRequest(bucket, object, "test content")
 		// Don't set any conditional headers
 
-		errCode := s3a.checkConditionalHeaders(req, bucket, object)
+		errCode := checkConditionalHeadersWithGetter(getter, req, bucket, object)
 		if errCode != s3err.ErrNone {
 			t.Errorf("Expected ErrNone when no conditional headers, got %v", errCode)
 		}
@@ -656,46 +665,50 @@ func NewS3ApiServerForTest() *S3ApiServer {
 	}
 }
 
-// TestableS3ApiServer extends S3ApiServer to allow dependency injection for testing
-type TestableS3ApiServer struct {
-	*S3ApiServer
-	mockGetEntry func(parentDirectoryPath, entryName string) (*filer_pb.Entry, error)
+// MockEntryGetter implements the EntryGetter interface for testing
+// This allows us to test the REAL production conditional headers logic with mocked dependencies
+type MockEntryGetter struct {
+	mockEntry *filer_pb.Entry
 }
 
-// Override getEntry to use injected mock function if available
-func (t *TestableS3ApiServer) getEntry(parentDirectoryPath, entryName string) (*filer_pb.Entry, error) {
-	if t.mockGetEntry != nil {
-		return t.mockGetEntry(parentDirectoryPath, entryName)
+// Implement EntryGetter interface
+func (m *MockEntryGetter) getEntry(parentDirectoryPath, entryName string) (*filer_pb.Entry, error) {
+	if m.mockEntry != nil {
+		return m.mockEntry, nil
 	}
-	return t.S3ApiServer.getEntry(parentDirectoryPath, entryName)
+	return nil, filer_pb.ErrNotFound
 }
 
-// createTestableS3Server creates a testable S3ApiServer that uses REAL production code
-// but allows mocking of the getEntry dependency
-func createTestableS3Server(mockEntry *filer_pb.Entry) *TestableS3ApiServer {
-	s3a := &S3ApiServer{
-		option: &S3ApiServerOption{
-			BucketsPath: "/buckets",
-		},
+func (m *MockEntryGetter) getObjectETag(entry *filer_pb.Entry) string {
+	// Try to get ETag from Extended attributes first
+	if etagBytes, hasETag := entry.Extended[s3_constants.ExtETagKey]; hasETag {
+		return string(etagBytes)
 	}
-	
-	testable := &TestableS3ApiServer{
-		S3ApiServer: s3a,
-	}
-	
-	// Mock only the getEntry dependency
-	testable.mockGetEntry = func(parentDirectoryPath, entryName string) (*filer_pb.Entry, error) {
-		if mockEntry != nil {
-			// Debug: Print what we're returning
-			fmt.Printf("DEBUG: Mocked getEntry returning object with ETag: %s\n", string(mockEntry.Extended[s3_constants.ExtETagKey]))
-			return mockEntry, nil
+	// Fallback: return a simple mock ETag
+	return "\"mock-etag\""
+}
+
+func (m *MockEntryGetter) etagMatches(headerValue, objectETag string) bool {
+	// Clean the object ETag
+	objectETag = strings.Trim(objectETag, `"`)
+
+	// Split header value by commas to handle multiple ETags
+	etags := strings.Split(headerValue, ",")
+	for _, etag := range etags {
+		etag = strings.TrimSpace(etag)
+		etag = strings.Trim(etag, `"`)
+		if etag == objectETag {
+			return true
 		}
-		// Debug: Print that we're returning not found
-		fmt.Printf("DEBUG: Mocked getEntry returning ErrNotFound\n")
-		return nil, filer_pb.ErrNotFound
 	}
-	
-	return testable
+	return false
+}
+
+// createMockEntryGetter creates a mock EntryGetter for testing
+func createMockEntryGetter(mockEntry *filer_pb.Entry) *MockEntryGetter {
+	return &MockEntryGetter{
+		mockEntry: mockEntry,
+	}
 }
 
 // TestConditionalHeadersMultipartUpload tests conditional headers with multipart uploads
@@ -725,7 +738,7 @@ func TestConditionalHeadersMultipartUpload(t *testing.T) {
 
 	// Test CompleteMultipartUpload with If-None-Match: * (should fail when object exists)
 	t.Run("CompleteMultipartUpload_IfNoneMatchAsterisk_ObjectExists_ShouldFail", func(t *testing.T) {
-		s3a := createTestableS3Server(existingObject)
+		getter := createMockEntryGetter(existingObject)
 
 		// Create a mock CompleteMultipartUpload request with If-None-Match: *
 		req := &http.Request{
@@ -737,7 +750,7 @@ func TestConditionalHeadersMultipartUpload(t *testing.T) {
 		}
 		req.Header.Set(s3_constants.IfNoneMatch, "*")
 
-		errCode := s3a.checkConditionalHeaders(req, bucket, object)
+		errCode := checkConditionalHeadersWithGetter(getter, req, bucket, object)
 		if errCode != s3err.ErrPreconditionFailed {
 			t.Errorf("Expected ErrPreconditionFailed when object exists with If-None-Match=*, got %v", errCode)
 		}
@@ -745,7 +758,7 @@ func TestConditionalHeadersMultipartUpload(t *testing.T) {
 
 	// Test CompleteMultipartUpload with If-None-Match: * (should succeed when object doesn't exist)
 	t.Run("CompleteMultipartUpload_IfNoneMatchAsterisk_ObjectNotExists_ShouldSucceed", func(t *testing.T) {
-		s3a := createTestableS3Server(nil) // No existing object
+		getter := createMockEntryGetter(nil) // No existing object
 
 		req := &http.Request{
 			Method: "POST",
@@ -756,7 +769,7 @@ func TestConditionalHeadersMultipartUpload(t *testing.T) {
 		}
 		req.Header.Set(s3_constants.IfNoneMatch, "*")
 
-		errCode := s3a.checkConditionalHeaders(req, bucket, object)
+		errCode := checkConditionalHeadersWithGetter(getter, req, bucket, object)
 		if errCode != s3err.ErrNone {
 			t.Errorf("Expected ErrNone when object doesn't exist with If-None-Match=*, got %v", errCode)
 		}
@@ -764,7 +777,7 @@ func TestConditionalHeadersMultipartUpload(t *testing.T) {
 
 	// Test CompleteMultipartUpload with If-Match (should succeed when ETag matches)
 	t.Run("CompleteMultipartUpload_IfMatch_ETagMatches_ShouldSucceed", func(t *testing.T) {
-		s3a := createTestableS3Server(existingObject)
+		getter := createMockEntryGetter(existingObject)
 
 		req := &http.Request{
 			Method: "POST",
@@ -775,7 +788,7 @@ func TestConditionalHeadersMultipartUpload(t *testing.T) {
 		}
 		req.Header.Set(s3_constants.IfMatch, "\"existing123\"")
 
-		errCode := s3a.checkConditionalHeaders(req, bucket, object)
+		errCode := checkConditionalHeadersWithGetter(getter, req, bucket, object)
 		if errCode != s3err.ErrNone {
 			t.Errorf("Expected ErrNone when ETag matches, got %v", errCode)
 		}
@@ -783,7 +796,7 @@ func TestConditionalHeadersMultipartUpload(t *testing.T) {
 
 	// Test CompleteMultipartUpload with If-Match (should fail when object doesn't exist)
 	t.Run("CompleteMultipartUpload_IfMatch_ObjectNotExists_ShouldFail", func(t *testing.T) {
-		s3a := createTestableS3Server(nil) // No existing object
+		getter := createMockEntryGetter(nil) // No existing object
 
 		req := &http.Request{
 			Method: "POST",
@@ -794,7 +807,7 @@ func TestConditionalHeadersMultipartUpload(t *testing.T) {
 		}
 		req.Header.Set(s3_constants.IfMatch, "\"any-etag\"")
 
-		errCode := s3a.checkConditionalHeaders(req, bucket, object)
+		errCode := checkConditionalHeadersWithGetter(getter, req, bucket, object)
 		if errCode != s3err.ErrPreconditionFailed {
 			t.Errorf("Expected ErrPreconditionFailed when object doesn't exist with If-Match, got %v", errCode)
 		}
@@ -802,7 +815,7 @@ func TestConditionalHeadersMultipartUpload(t *testing.T) {
 
 	// Test CompleteMultipartUpload with If-Match wildcard (should succeed when object exists)
 	t.Run("CompleteMultipartUpload_IfMatchWildcard_ObjectExists_ShouldSucceed", func(t *testing.T) {
-		s3a := createTestableS3Server(existingObject)
+		getter := createMockEntryGetter(existingObject)
 
 		req := &http.Request{
 			Method: "POST",
@@ -813,7 +826,7 @@ func TestConditionalHeadersMultipartUpload(t *testing.T) {
 		}
 		req.Header.Set(s3_constants.IfMatch, "*")
 
-		errCode := s3a.checkConditionalHeaders(req, bucket, object)
+		errCode := checkConditionalHeadersWithGetter(getter, req, bucket, object)
 		if errCode != s3err.ErrNone {
 			t.Errorf("Expected ErrNone when object exists with If-Match=*, got %v", errCode)
 		}
