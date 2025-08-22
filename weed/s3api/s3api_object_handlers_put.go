@@ -335,11 +335,13 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 			sseS3Key = key
 			
 			// Create encrypted reader
-			encryptedReader, _, encErr := CreateSSES3EncryptedReader(dataReader, sseS3Key)
+			encryptedReader, iv, encErr := CreateSSES3EncryptedReader(dataReader, sseS3Key)
 			if encErr != nil {
 				glog.Errorf("Failed to create SSE-S3 encrypted reader: %v", encErr)
 				return "", s3err.ErrInternalError, ""
 			}
+			// Store IV on the key object for later decryption
+			sseS3Key.IV = iv
 			
 			dataReader = encryptedReader
 			
