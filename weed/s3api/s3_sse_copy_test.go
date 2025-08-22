@@ -320,9 +320,9 @@ func TestSSECopyWithCorruptedSource(t *testing.T) {
 	// Corrupt the encrypted data
 	corruptedData := make([]byte, len(encryptedData))
 	copy(corruptedData, encryptedData)
-	if len(corruptedData) > AESBlockSize {
+	if len(corruptedData) > s3_constants.AESBlockSize {
 		// Corrupt a byte after the IV
-		corruptedData[AESBlockSize] ^= 0xFF
+		corruptedData[s3_constants.AESBlockSize] ^= 0xFF
 	}
 
 	// Try to decrypt corrupted data

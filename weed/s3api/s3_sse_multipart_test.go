@@ -306,8 +306,8 @@ func TestMultipartSSEMixedScenarios(t *testing.T) {
 		if len(encryptedData) != 0 {
 			t.Errorf("Expected empty encrypted data for empty part, got %d bytes", len(encryptedData))
 		}
-		if len(iv) != AESBlockSize {
-			t.Errorf("Expected IV of size %d, got %d", AESBlockSize, len(iv))
+		if len(iv) != s3_constants.AESBlockSize {
+			t.Errorf("Expected IV of size %d, got %d", s3_constants.AESBlockSize, len(iv))
 		}
 
 		// Decrypt and verify
