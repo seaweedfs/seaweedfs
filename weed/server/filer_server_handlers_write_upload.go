@@ -303,10 +303,9 @@ func (fs *FilerServer) dataToChunkWithSSE(ctx context.Context, r *http.Request, 
 			sseS3Header := r.Header.Get(s3_constants.SeaweedFSSSES3Key)
 			if sseS3Header != "" {
 				if s3Data, err := base64.StdEncoding.DecodeString(sseS3Header); err == nil {
-					// For SSE-S3, we could store metadata at chunk level for future enhancements
-					// For now, keep it simple and let the object-level metadata handle it
-					glog.V(4).InfofCtx(ctx, "Processing SSE-S3 metadata for chunk %s at offset %d", fileId, chunkOffset)
-					_ = s3Data // Keep for potential future use
+					// For SSE-S3, store metadata at chunk level for consistency with SSE-KMS/SSE-C
+					glog.V(4).InfofCtx(ctx, "Storing SSE-S3 metadata for chunk %s at offset %d", fileId, chunkOffset)
+					sseKmsMetadata = s3Data
 				} else {
 					glog.V(1).InfofCtx(ctx, "Failed to decode SSE-S3 metadata for chunk %s: %v", fileId, err)
 				}
