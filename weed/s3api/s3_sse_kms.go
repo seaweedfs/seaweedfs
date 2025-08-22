@@ -482,8 +482,8 @@ func ParseSSEKMSHeaders(r *http.Request) (*SSEKMSKey, error) {
 		BucketKeyEnabled:  bucketKeyEnabled,
 	}
 
-	// Validate the parsed key
-	if err := ValidateSSEKMSKey(sseKey); err != nil {
+	// Validate the parsed key including key ID format
+	if err := ValidateSSEKMSKeyInternal(sseKey); err != nil {
 		return nil, err
 	}
 

@@ -2172,7 +2172,7 @@ func getKeyIDString(key *SSEKMSKey) string {
 // shouldSkipEncryptionHeader determines if a header should be skipped when copying extended attributes
 // based on the source and destination encryption types. This consolidates the repetitive logic for
 // filtering encryption-related headers during copy operations.
-func shouldSkipEncryptionHeader(headerKey string, 
+func shouldSkipEncryptionHeader(headerKey string,
 	srcSSEC, srcSSEKMS, srcSSES3 bool,
 	dstSSEC, dstSSEKMS, dstSSES3 bool) bool {
 
@@ -2180,7 +2180,7 @@ func shouldSkipEncryptionHeader(headerKey string,
 	isSSECHeader := headerKey == s3_constants.AmzServerSideEncryptionCustomerAlgorithm ||
 		headerKey == s3_constants.AmzServerSideEncryptionCustomerKeyMD5 ||
 		headerKey == s3_constants.SeaweedFSSSEIV
-	
+
 	isSSEKMSHeader := (headerKey == s3_constants.AmzServerSideEncryption && (srcSSEKMS || dstSSEKMS)) ||
 		headerKey == s3_constants.AmzServerSideEncryptionAwsKmsKeyId ||
 		headerKey == s3_constants.SeaweedFSSSEKMSKey ||
@@ -2189,7 +2189,7 @@ func shouldSkipEncryptionHeader(headerKey string,
 		headerKey == s3_constants.SeaweedFSSSEKMSBucketKeyEnabled ||
 		headerKey == s3_constants.SeaweedFSSSEKMSEncryptionContext ||
 		headerKey == s3_constants.SeaweedFSSSEKMSBaseIV
-	
+
 	isSSES3Header := (headerKey == s3_constants.AmzServerSideEncryption && (srcSSES3 || dstSSES3)) ||
 		headerKey == s3_constants.SeaweedFSSSES3Key ||
 		headerKey == s3_constants.SeaweedFSSSES3Encryption ||
