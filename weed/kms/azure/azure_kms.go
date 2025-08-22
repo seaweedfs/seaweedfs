@@ -163,10 +163,16 @@ func (p *AzureKMSProvider) GenerateDataKey(ctx context.Context, req *seaweedkms.
 		actualKeyID = *encryptResult.KID
 	}
 
+	// Create standardized envelope format for consistent API behavior
+	envelopeBlob, err := seaweedkms.CreateEnvelope("azure", actualKeyID, string(encryptResult.Result), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create ciphertext envelope: %w", err)
+	}
+
 	response := &seaweedkms.GenerateDataKeyResponse{
 		KeyID:          actualKeyID,
 		Plaintext:      dataKey,
-		CiphertextBlob: encryptResult.Result,
+		CiphertextBlob: envelopeBlob, // Store in standardized envelope format
 	}
 
 	glog.V(4).Infof("Azure KMS: Generated and encrypted data key using key %s", actualKeyID)
@@ -183,24 +189,24 @@ func (p *AzureKMSProvider) Decrypt(ctx context.Context, req *seaweedkms.DecryptR
 		return nil, fmt.Errorf("CiphertextBlob cannot be empty")
 	}
 
-	// For Azure Key Vault, we need to store the key ID with the encrypted blob
-	// since Azure doesn't automatically identify which key to use
-	// This is a simplified implementation - in production, you might store key metadata separately
-
-	// For now, we'll extract the key ID from the encryption context
-	keyID := ""
-	if len(req.EncryptionContext) > 0 {
-		keyID = req.EncryptionContext["azure:key:id"]
+	// Parse the ciphertext envelope to extract key information
+	envelope, err := seaweedkms.ParseEnvelope(req.CiphertextBlob)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse ciphertext envelope: %w", err)
 	}
 
+	keyID := envelope.KeyID
 	if keyID == "" {
-		return nil, fmt.Errorf("Azure Key Vault requires key ID in encryption context as 'azure:key:id'")
+		return nil, fmt.Errorf("envelope missing key ID")
 	}
+
+	// Convert string back to bytes
+	ciphertext := []byte(envelope.Ciphertext)
 
 	// Prepare decryption parameters
 	decryptParams := azkeys.KeyOperationParameters{
 		Algorithm: azkeys.EncryptionAlgorithmRSAOAEP256, // Must match encryption algorithm
-		Value:     req.CiphertextBlob,
+		Value:     ciphertext,
 	}
 
 	// Call Azure Key Vault to decrypt the data key

@@ -203,10 +203,16 @@ func (p *OpenBaoKMSProvider) GenerateDataKey(ctx context.Context, req *seaweedkm
 		return nil, fmt.Errorf("invalid ciphertext format from OpenBao/Vault")
 	}
 
+	// Create standardized envelope format for consistent API behavior
+	envelopeBlob, err := seaweedkms.CreateEnvelope("openbao", req.KeyID, ciphertext, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create ciphertext envelope: %w", err)
+	}
+
 	response := &seaweedkms.GenerateDataKeyResponse{
 		KeyID:          req.KeyID,
 		Plaintext:      dataKey,
-		CiphertextBlob: []byte(ciphertext), // Store Vault ciphertext format
+		CiphertextBlob: envelopeBlob, // Store in standardized envelope format
 	}
 
 	glog.V(4).Infof("OpenBao KMS: Generated and encrypted data key using key %s", req.KeyID)
@@ -223,39 +229,32 @@ func (p *OpenBaoKMSProvider) Decrypt(ctx context.Context, req *seaweedkms.Decryp
 		return nil, fmt.Errorf("CiphertextBlob cannot be empty")
 	}
 
-	// For OpenBao/Vault, we need to extract the key ID from the ciphertext or encryption context
-	keyID := ""
-	if len(req.EncryptionContext) > 0 {
-		keyID = req.EncryptionContext["openbao:key:name"]
-		if keyID == "" {
-			keyID = req.EncryptionContext["vault:key:name"] // Compatibility alias
-		}
+	// Parse the ciphertext envelope to extract key information
+	envelope, err := seaweedkms.ParseEnvelope(req.CiphertextBlob)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse ciphertext envelope: %w", err)
 	}
 
+	keyID := envelope.KeyID
 	if keyID == "" {
-		return nil, fmt.Errorf("OpenBao/Vault requires key ID in encryption context as 'openbao:key:name'")
+		return nil, fmt.Errorf("envelope missing key ID")
 	}
+
+	// Use the ciphertext from envelope
+	ciphertext := envelope.Ciphertext
 
 	// Prepare decryption data
 	decryptData := map[string]interface{}{
-		"ciphertext": string(req.CiphertextBlob),
+		"ciphertext": ciphertext,
 	}
 
-	// Add encryption context if provided (excluding the key name)
+	// Add encryption context if provided
 	if len(req.EncryptionContext) > 0 {
-		contextCopy := make(map[string]string)
-		for k, v := range req.EncryptionContext {
-			if k != "openbao:key:name" && k != "vault:key:name" {
-				contextCopy[k] = v
-			}
+		contextJSON, err := json.Marshal(req.EncryptionContext)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal encryption context: %w", err)
 		}
-		if len(contextCopy) > 0 {
-			contextJSON, err := json.Marshal(contextCopy)
-			if err != nil {
-				return nil, fmt.Errorf("failed to marshal encryption context: %w", err)
-			}
-			decryptData["context"] = base64.StdEncoding.EncodeToString(contextJSON)
-		}
+		decryptData["context"] = base64.StdEncoding.EncodeToString(contextJSON)
 	}
 
 	// Call OpenBao/Vault Transit decrypt endpoint

@@ -240,7 +240,13 @@ func TestOpenBaoKMSProvider_Integration(t *testing.T) {
 		assert.Equal(t, "test-key-1", resp.KeyID)
 		assert.Len(t, resp.Plaintext, 32) // 256 bits
 		assert.NotEmpty(t, resp.CiphertextBlob)
-		assert.True(t, strings.HasPrefix(string(resp.CiphertextBlob), "vault:"))
+
+		// Verify the response is in standardized envelope format
+		envelope, err := kms.ParseEnvelope(resp.CiphertextBlob)
+		assert.NoError(t, err)
+		assert.Equal(t, "openbao", envelope.Provider)
+		assert.Equal(t, "test-key-1", envelope.KeyID)
+		assert.True(t, strings.HasPrefix(envelope.Ciphertext, "vault:")) // Raw OpenBao format inside envelope
 	})
 
 	t.Run("DecryptDataKey", func(t *testing.T) {

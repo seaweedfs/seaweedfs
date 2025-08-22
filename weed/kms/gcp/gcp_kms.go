@@ -146,10 +146,16 @@ func (p *GCPKMSProvider) GenerateDataKey(ctx context.Context, req *seaweedkms.Ge
 		return nil, p.convertGCPError(err, req.KeyID)
 	}
 
+	// Create standardized envelope format for consistent API behavior
+	envelopeBlob, err := seaweedkms.CreateEnvelope("gcp", encryptResp.Name, string(encryptResp.Ciphertext), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create ciphertext envelope: %w", err)
+	}
+
 	response := &seaweedkms.GenerateDataKeyResponse{
 		KeyID:          encryptResp.Name, // GCP returns the full resource name
 		Plaintext:      dataKey,
-		CiphertextBlob: encryptResp.Ciphertext,
+		CiphertextBlob: envelopeBlob, // Store in standardized envelope format
 	}
 
 	glog.V(4).Infof("GCP KMS: Generated and encrypted data key using key %s", req.KeyID)
@@ -166,39 +172,30 @@ func (p *GCPKMSProvider) Decrypt(ctx context.Context, req *seaweedkms.DecryptReq
 		return nil, fmt.Errorf("CiphertextBlob cannot be empty")
 	}
 
-	// For GCP KMS, we need to determine which key to use for decryption
-	// Since GCP can automatically detect the key from the ciphertext, we can use a generic approach
-	// However, if specific key is required, it can be passed in encryption context
-	keyName := ""
-	if len(req.EncryptionContext) > 0 {
-		keyName = req.EncryptionContext["gcp:key:name"]
+	// Parse the ciphertext envelope to extract key information
+	envelope, err := seaweedkms.ParseEnvelope(req.CiphertextBlob)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse ciphertext envelope: %w", err)
 	}
 
-	// If no specific key provided, we need to make an assumption or require it
-	// For now, we'll require the key name in the encryption context
+	keyName := envelope.KeyID
 	if keyName == "" {
-		return nil, fmt.Errorf("GCP KMS requires key name in encryption context as 'gcp:key:name'")
+		return nil, fmt.Errorf("envelope missing key ID")
 	}
+
+	// Convert string back to bytes
+	ciphertext := []byte(envelope.Ciphertext)
 
 	// Build the decryption request
 	decryptReq := &kmspb.DecryptRequest{
 		Name:       keyName,
-		Ciphertext: req.CiphertextBlob,
+		Ciphertext: ciphertext,
 	}
 
 	// Add additional authenticated data from encryption context
 	if len(req.EncryptionContext) > 0 {
-		// Remove the key name from context and convert the rest to AAD
-		contextCopy := make(map[string]string)
-		for k, v := range req.EncryptionContext {
-			if k != "gcp:key:name" {
-				contextCopy[k] = v
-			}
-		}
-		if len(contextCopy) > 0 {
-			aad := p.encryptionContextToAAD(contextCopy)
-			decryptReq.AdditionalAuthenticatedData = []byte(aad)
-		}
+		aad := p.encryptionContextToAAD(req.EncryptionContext)
+		decryptReq.AdditionalAuthenticatedData = []byte(aad)
 	}
 
 	// Call GCP KMS to decrypt the data key
