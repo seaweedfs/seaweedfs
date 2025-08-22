@@ -3,6 +3,7 @@ package s3api
 import (
 	"bytes"
 	"net/http"
+	"net/url"
 	"testing"
 	"time"
 
@@ -610,4 +611,126 @@ func (mock *MockS3ApiServer) checkConditionalHeaders(r *http.Request, bucket, ob
 	}
 
 	return s3err.ErrNone
+}
+
+// TestConditionalHeadersMultipartUpload tests conditional headers with multipart uploads
+// This verifies AWS S3 compatibility where conditional headers only apply to CompleteMultipartUpload
+func TestConditionalHeadersMultipartUpload(t *testing.T) {
+	bucket := "test-bucket"
+	object := "/test-multipart-object"
+
+	// Mock existing object to test conditional headers against
+	existingObject := &filer_pb.Entry{
+		Name: "test-multipart-object",
+		Extended: map[string][]byte{
+			s3_constants.ExtETagKey: []byte("\"existing123\""),
+		},
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime:    time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC).Unix(),
+			FileSize: 2048,
+		},
+		Chunks: []*filer_pb.FileChunk{
+			{
+				FileId: "existing-file-id",
+				Offset: 0,
+				Size:   2048,
+			},
+		},
+	}
+
+	// Test CompleteMultipartUpload with If-None-Match: * (should fail when object exists)
+	t.Run("CompleteMultipartUpload_IfNoneMatchAsterisk_ObjectExists_ShouldFail", func(t *testing.T) {
+		s3a := createMockS3ServerWithObject(existingObject)
+
+		// Create a mock CompleteMultipartUpload request with If-None-Match: *
+		req := &http.Request{
+			Method: "POST",
+			Header: make(http.Header),
+			URL: &url.URL{
+				RawQuery: "uploadId=test-upload-id",
+			},
+		}
+		req.Header.Set(s3_constants.IfNoneMatch, "*")
+
+		errCode := s3a.checkConditionalHeaders(req, bucket, object)
+		if errCode != s3err.ErrPreconditionFailed {
+			t.Errorf("Expected ErrPreconditionFailed when object exists with If-None-Match=*, got %v", errCode)
+		}
+	})
+
+	// Test CompleteMultipartUpload with If-None-Match: * (should succeed when object doesn't exist)
+	t.Run("CompleteMultipartUpload_IfNoneMatchAsterisk_ObjectNotExists_ShouldSucceed", func(t *testing.T) {
+		s3a := createMockS3ServerWithObject(nil) // No existing object
+
+		req := &http.Request{
+			Method: "POST",
+			Header: make(http.Header),
+			URL: &url.URL{
+				RawQuery: "uploadId=test-upload-id",
+			},
+		}
+		req.Header.Set(s3_constants.IfNoneMatch, "*")
+
+		errCode := s3a.checkConditionalHeaders(req, bucket, object)
+		if errCode != s3err.ErrNone {
+			t.Errorf("Expected ErrNone when object doesn't exist with If-None-Match=*, got %v", errCode)
+		}
+	})
+
+	// Test CompleteMultipartUpload with If-Match (should succeed when ETag matches)
+	t.Run("CompleteMultipartUpload_IfMatch_ETagMatches_ShouldSucceed", func(t *testing.T) {
+		s3a := createMockS3ServerWithObject(existingObject)
+
+		req := &http.Request{
+			Method: "POST",
+			Header: make(http.Header),
+			URL: &url.URL{
+				RawQuery: "uploadId=test-upload-id",
+			},
+		}
+		req.Header.Set(s3_constants.IfMatch, "\"existing123\"")
+
+		errCode := s3a.checkConditionalHeaders(req, bucket, object)
+		if errCode != s3err.ErrNone {
+			t.Errorf("Expected ErrNone when ETag matches, got %v", errCode)
+		}
+	})
+
+	// Test CompleteMultipartUpload with If-Match (should fail when object doesn't exist)
+	t.Run("CompleteMultipartUpload_IfMatch_ObjectNotExists_ShouldFail", func(t *testing.T) {
+		s3a := createMockS3ServerWithObject(nil) // No existing object
+
+		req := &http.Request{
+			Method: "POST",
+			Header: make(http.Header),
+			URL: &url.URL{
+				RawQuery: "uploadId=test-upload-id",
+			},
+		}
+		req.Header.Set(s3_constants.IfMatch, "\"any-etag\"")
+
+		errCode := s3a.checkConditionalHeaders(req, bucket, object)
+		if errCode != s3err.ErrPreconditionFailed {
+			t.Errorf("Expected ErrPreconditionFailed when object doesn't exist with If-Match, got %v", errCode)
+		}
+	})
+
+	// Test CompleteMultipartUpload with If-Match wildcard (should succeed when object exists)
+	t.Run("CompleteMultipartUpload_IfMatchWildcard_ObjectExists_ShouldSucceed", func(t *testing.T) {
+		s3a := createMockS3ServerWithObject(existingObject)
+
+		req := &http.Request{
+			Method: "POST",
+			Header: make(http.Header),
+			URL: &url.URL{
+				RawQuery: "uploadId=test-upload-id",
+			},
+		}
+		req.Header.Set(s3_constants.IfMatch, "*")
+
+		errCode := s3a.checkConditionalHeaders(req, bucket, object)
+		if errCode != s3err.ErrNone {
+			t.Errorf("Expected ErrNone when object exists with If-Match=*, got %v", errCode)
+		}
+	})
 }

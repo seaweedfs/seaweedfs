@@ -114,6 +114,14 @@ func (s3a *S3ApiServer) CompleteMultipartUploadHandler(w http.ResponseWriter, r 
 		return
 	}
 
+	// Check conditional headers before completing multipart upload
+	// This implements AWS S3 behavior where conditional headers apply to CompleteMultipartUpload
+	if errCode := s3a.checkConditionalHeaders(r, bucket, object); errCode != s3err.ErrNone {
+		glog.V(3).Infof("CompleteMultipartUploadHandler: Conditional header check failed for %s/%s", bucket, object)
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
 	response, errCode := s3a.completeMultipartUpload(r, &s3.CompleteMultipartUploadInput{
 		Bucket:   aws.String(bucket),
 		Key:      objectKey(aws.String(object)),
