@@ -57,6 +57,12 @@ const (
 	AmzObjectLockRetainUntilDate = "X-Amz-Object-Lock-Retain-Until-Date"
 	AmzObjectLockLegalHold       = "X-Amz-Object-Lock-Legal-Hold"
 
+	// S3 conditional headers
+	IfMatch           = "If-Match"
+	IfNoneMatch       = "If-None-Match"
+	IfModifiedSince   = "If-Modified-Since"
+	IfUnmodifiedSince = "If-Unmodified-Since"
+
 	// S3 conditional copy headers
 	AmzCopySourceIfMatch           = "X-Amz-Copy-Source-If-Match"
 	AmzCopySourceIfNoneMatch       = "X-Amz-Copy-Source-If-None-Match"
