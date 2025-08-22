@@ -710,8 +710,9 @@ func (s3a *S3ApiServer) prepareMultipartEncryptionConfig(r *http.Request, upload
 
 		// Generate and encode base IV with proper error handling
 		baseIV := make([]byte, s3_constants.AESBlockSize)
-		if _, err := rand.Read(baseIV); err != nil {
-			return nil, fmt.Errorf("failed to generate secure IV for SSE-KMS multipart upload: %v", err)
+		n, err := rand.Read(baseIV)
+		if err != nil || n != len(baseIV) {
+			return nil, fmt.Errorf("failed to generate secure IV for SSE-KMS multipart upload: %v (read %d/%d bytes)", err, n, len(baseIV))
 		}
 		config.KMSBaseIVEncoded = base64.StdEncoding.EncodeToString(baseIV)
 		glog.V(4).Infof("Generated base IV %x for SSE-KMS multipart upload %s", baseIV[:8], uploadIdString)
@@ -723,8 +724,9 @@ func (s3a *S3ApiServer) prepareMultipartEncryptionConfig(r *http.Request, upload
 
 		// Generate and encode base IV with proper error handling
 		baseIV := make([]byte, s3_constants.AESBlockSize)
-		if _, err := rand.Read(baseIV); err != nil {
-			return nil, fmt.Errorf("failed to generate secure IV for SSE-S3 multipart upload: %v", err)
+		n, err := rand.Read(baseIV)
+		if err != nil || n != len(baseIV) {
+			return nil, fmt.Errorf("failed to generate secure IV for SSE-S3 multipart upload: %v (read %d/%d bytes)", err, n, len(baseIV))
 		}
 		config.S3BaseIVEncoded = base64.StdEncoding.EncodeToString(baseIV)
 		glog.V(4).Infof("Generated base IV %x for SSE-S3 multipart upload %s", baseIV[:8], uploadIdString)

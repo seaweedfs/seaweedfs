@@ -5,6 +5,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"fmt"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/kms"
 )
@@ -21,6 +22,27 @@ func generateKMSDataKey(keyID string, encryptionContext map[string]string) (*KMS
 	// Validate keyID to prevent injection attacks and malformed requests to KMS service
 	if !isValidKMSKeyID(keyID) {
 		return nil, fmt.Errorf("invalid KMS key ID format: key ID must be non-empty, without spaces or control characters")
+	}
+
+	// Validate encryption context to prevent malformed requests to KMS service
+	if encryptionContext != nil {
+		for key, value := range encryptionContext {
+			// Validate context keys and values for basic security
+			if strings.TrimSpace(key) == "" {
+				return nil, fmt.Errorf("invalid encryption context: keys cannot be empty or whitespace-only")
+			}
+			if strings.ContainsAny(key, "\x00\n\r\t") || strings.ContainsAny(value, "\x00\n\r\t") {
+				return nil, fmt.Errorf("invalid encryption context: keys and values cannot contain control characters")
+			}
+			// AWS KMS has limits on key/value lengths
+			if len(key) > 2048 || len(value) > 2048 {
+				return nil, fmt.Errorf("invalid encryption context: keys and values must be ≤ 2048 characters (key=%d, value=%d)", len(key), len(value))
+			}
+		}
+		// AWS KMS has a limit on the total number of context pairs
+		if len(encryptionContext) > 10 {
+			return nil, fmt.Errorf("invalid encryption context: cannot exceed 10 key-value pairs, got %d", len(encryptionContext))
+		}
 	}
 
 	// Get KMS provider
