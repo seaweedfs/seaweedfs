@@ -255,7 +255,7 @@ func (loader *ConfigLoader) initializeGlobalKMSProvider() error {
 	// Set as global KMS provider
 	SetGlobalKMSForTesting(provider) // Using this function since it has the right signature
 	glog.V(1).Infof("Initialized global KMS provider: %s", defaultProviderName)
-	
+
 	return nil
 }
 

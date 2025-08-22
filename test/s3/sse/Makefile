@@ -389,9 +389,9 @@ start-seaweedfs-ci: check-binary
 		echo "}"; \
 	} > /tmp/seaweedfs-s3.json
 	
-	# Start filer server with embedded S3 using the JSON config
+	# Start filer server with embedded S3 using the JSON config (with verbose logging)
 	@echo "Starting filer server with embedded S3..."
-	@AWS_ACCESS_KEY_ID=$(ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) nohup $(SEAWEEDFS_BINARY) filer -port=$(FILER_PORT) -port.grpc=$$(( $(FILER_PORT) + 10000 )) -master=127.0.0.1:$(MASTER_PORT) -dataCenter=defaultDataCenter -ip=127.0.0.1 -s3 -s3.port=$(S3_PORT) -s3.config=/tmp/seaweedfs-s3.json > /tmp/seaweedfs-sse-filer.log 2>&1 &
+	@AWS_ACCESS_KEY_ID=$(ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) GLOG_v=4 nohup $(SEAWEEDFS_BINARY) filer -port=$(FILER_PORT) -port.grpc=$$(( $(FILER_PORT) + 10000 )) -master=127.0.0.1:$(MASTER_PORT) -dataCenter=defaultDataCenter -ip=127.0.0.1 -s3 -s3.port=$(S3_PORT) -s3.config=/tmp/seaweedfs-s3.json > /tmp/seaweedfs-sse-filer.log 2>&1 &
 	@sleep 5
 	
 	# Wait for S3 service to be ready - use port-based checking for reliability

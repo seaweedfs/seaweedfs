@@ -215,6 +215,9 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 		}
 	}
 
+	// Check KMS provider status for debugging
+	glog.Warningf("DEBUG: Global KMS provider status during IAM init: %v (nil=%v)", kms.GetGlobalKMS(), kms.GetGlobalKMS() == nil)
+
 	return iam
 }
 
@@ -584,8 +587,11 @@ func (iam *IdentityAccessManagement) initializeKMSFromJSON(configContent []byte)
 		return fmt.Errorf("no KMS section found")
 	}
 
-	// Marshal the kms section back to bytes and feed to kms.ConfigLoader via viper-like adapter
-	kmsBytes, err := json.Marshal(kmsVal)
+	// Marshal the kms section back to bytes, wrapped in a "kms" object for viper
+	wrappedKms := map[string]interface{}{
+		"kms": kmsVal,
+	}
+	kmsBytes, err := json.Marshal(wrappedKms)
 	if err != nil {
 		return fmt.Errorf("failed to marshal kms section: %v", err)
 	}
