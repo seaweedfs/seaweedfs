@@ -364,8 +364,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		glog.V(4).Infof("putToFiler: no explicit encryption detected, checking for bucket default encryption")
 		
 		// We need to pass pointers so the function can modify dataReader and SSE variables
-		var sseS3IV []byte
-		applyErr := s3a.applyBucketDefaultEncryption(bucket, r, &dataReader, &sseS3Key, &sseS3IV, &sseKMSKey)
+		applyErr := s3a.applyBucketDefaultEncryption(bucket, r, &dataReader, &sseS3Key, &sseKMSKey)
 		if applyErr != nil {
 			glog.Errorf("Failed to apply bucket default encryption: %v", applyErr)
 			return "", s3err.ErrInternalError, ""
@@ -847,7 +846,7 @@ func (s3a *S3ApiServer) extractObjectLockMetadataFromRequest(r *http.Request, en
 // applyBucketDefaultEncryption applies bucket default encryption settings to a new object
 // This implements AWS S3 behavior where bucket default encryption automatically applies to new objects
 // when no explicit encryption headers are provided in the upload request
-func (s3a *S3ApiServer) applyBucketDefaultEncryption(bucket string, r *http.Request, dataReader *io.Reader, sseS3Key **SSES3Key, sseS3IV *[]byte, sseKMSKey **SSEKMSKey) error {
+func (s3a *S3ApiServer) applyBucketDefaultEncryption(bucket string, r *http.Request, dataReader *io.Reader, sseS3Key **SSES3Key, sseKMSKey **SSEKMSKey) error {
 	// Check if bucket has default encryption configured
 	encryptionConfig, err := s3a.GetBucketEncryptionConfig(bucket)
 	if err != nil || encryptionConfig == nil {
@@ -865,7 +864,7 @@ func (s3a *S3ApiServer) applyBucketDefaultEncryption(bucket string, r *http.Requ
 	switch encryptionConfig.SseAlgorithm {
 	case EncryptionTypeAES256:
 		// Apply SSE-S3 (AES256) encryption
-		return s3a.applySSES3DefaultEncryption(dataReader, sseS3Key, sseS3IV)
+		return s3a.applySSES3DefaultEncryption(dataReader, sseS3Key)
 
 	case EncryptionTypeKMS:
 		// Apply SSE-KMS encryption
@@ -877,7 +876,7 @@ func (s3a *S3ApiServer) applyBucketDefaultEncryption(bucket string, r *http.Requ
 }
 
 // applySSES3DefaultEncryption applies SSE-S3 encryption as bucket default
-func (s3a *S3ApiServer) applySSES3DefaultEncryption(dataReader *io.Reader, sseS3Key **SSES3Key, sseS3IV *[]byte) error {
+func (s3a *S3ApiServer) applySSES3DefaultEncryption(dataReader *io.Reader, sseS3Key **SSES3Key) error {
 	// Generate SSE-S3 key
 	keyManager := GetSSES3KeyManager()
 	key, err := keyManager.GetOrCreateKey("")
@@ -890,11 +889,13 @@ func (s3a *S3ApiServer) applySSES3DefaultEncryption(dataReader *io.Reader, sseS3
 	if encErr != nil {
 		return fmt.Errorf("failed to create SSE-S3 encrypted reader for default encryption: %v", encErr)
 	}
+	
+	// Store IV on the key object for later decryption
+	key.IV = iv
 
 	// Update the data reader and SSE-S3 variables
 	*dataReader = encryptedReader
 	*sseS3Key = key
-	*sseS3IV = iv
 
 	// Store key in manager for later retrieval
 	keyManager.StoreKey(key)
