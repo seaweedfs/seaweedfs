@@ -102,6 +102,7 @@ const (
 	ErrAuthNotSetup
 	ErrNotImplemented
 	ErrPreconditionFailed
+	ErrNotModified
 
 	ErrExistingObjectIsDirectory
 	ErrExistingObjectIsFile
@@ -450,6 +451,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Code:           "PreconditionFailed",
 		Description:    "At least one of the pre-conditions you specified did not hold",
 		HTTPStatusCode: http.StatusPreconditionFailed,
+	},
+	ErrNotModified: {
+		Code:           "NotModified",
+		Description:    "The object was not modified since the specified time",
+		HTTPStatusCode: http.StatusNotModified,
 	},
 	ErrExistingObjectIsDirectory: {
 		Code:           "ExistingObjectIsDirectory",
