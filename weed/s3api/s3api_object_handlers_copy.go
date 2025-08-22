@@ -181,7 +181,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 			dstWantsSSES3 := IsSSES3RequestInternal(r)
 
 			// Use helper function to determine if header should be skipped
-			skipHeader = shouldSkipEncryptionHeader(k, 
+			skipHeader = shouldSkipEncryptionHeader(k,
 				srcHasSSEC, srcHasSSEKMS, srcHasSSES3,
 				dstWantsSSEC, dstWantsSSEKMS, dstWantsSSES3)
 		}

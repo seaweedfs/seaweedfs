@@ -17,22 +17,17 @@ func calculateIVWithOffset(baseIV []byte, offset int64) []byte {
 
 	// Calculate the block offset (AES block size is 16 bytes)
 	blockOffset := offset / 16
-	glog.V(4).Infof("calculateIVWithOffset DEBUG: offset=%d, blockOffset=%d (0x%x)",
-		offset, blockOffset, blockOffset)
+	originalBlockOffset := blockOffset
 
 	// Add the block offset to the IV counter (last 8 bytes, big-endian)
 	// This matches how AES-CTR mode increments the counter
 	// Process from least significant byte (index 15) to most significant byte (index 8)
-	originalBlockOffset := blockOffset
 	carry := uint64(0)
 	for i := 15; i >= 8; i-- {
 		sum := uint64(iv[i]) + uint64(blockOffset&0xFF) + carry
-		oldByte := iv[i]
 		iv[i] = byte(sum & 0xFF)
 		carry = sum >> 8
 		blockOffset = blockOffset >> 8
-		glog.V(4).Infof("calculateIVWithOffset DEBUG: i=%d, oldByte=0x%02x, newByte=0x%02x, carry=%d, blockOffset=0x%x",
-			i, oldByte, iv[i], carry, blockOffset)
 
 		// If no more blockOffset bits and no carry, we can stop early
 		if blockOffset == 0 && carry == 0 {
@@ -40,7 +35,8 @@ func calculateIVWithOffset(baseIV []byte, offset int64) []byte {
 		}
 	}
 
-	glog.V(4).Infof("calculateIVWithOffset: baseIV=%x, offset=%d, blockOffset=%d, calculatedIV=%x",
+	// Single consolidated debug log to avoid performance impact in high-throughput scenarios
+	glog.V(4).Infof("calculateIVWithOffset: baseIV=%x, offset=%d, blockOffset=%d, derivedIV=%x",
 		baseIV, offset, originalBlockOffset, iv)
 	return iv
 }

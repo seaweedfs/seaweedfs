@@ -283,8 +283,9 @@ func GetSSES3KeyFromMetadata(metadata map[string][]byte, keyManager *SSES3KeyMan
 	return DeserializeSSES3Metadata(keyData, keyManager)
 }
 
-// CreateSSES3EncryptedReaderWithBaseIV creates an encrypted reader using a base IV for multipart upload consistency
-func CreateSSES3EncryptedReaderWithBaseIV(reader io.Reader, key *SSES3Key, baseIV []byte, offset int64) (io.Reader, []byte, error) {
+// CreateSSES3EncryptedReaderWithBaseIV creates an encrypted reader using a base IV for multipart upload consistency.
+// The returned IV is the offset-derived IV, calculated from the input baseIV and offset.
+func CreateSSES3EncryptedReaderWithBaseIV(reader io.Reader, key *SSES3Key, baseIV []byte, offset int64) (io.Reader, []byte /* derivedIV */, error) {
 	block, err := aes.NewCipher(key.Key)
 	if err != nil {
 		return nil, nil, fmt.Errorf("create AES cipher: %w", err)
