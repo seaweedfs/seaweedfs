@@ -88,15 +88,8 @@ func (s3a *S3ApiServer) touch(parentDirectoryPath string, entryName string, entr
 }
 
 func (s3a *S3ApiServer) getEntry(parentDirectoryPath, entryName string) (entry *filer_pb.Entry, err error) {
-	fmt.Printf("DEBUG: Production getEntry called with path: %s, name: %s\n", parentDirectoryPath, entryName)
 	fullPath := util.NewFullPath(parentDirectoryPath, entryName)
-	entry, err = filer_pb.GetEntry(context.Background(), s3a, fullPath)
-	if err != nil {
-		fmt.Printf("DEBUG: Production getEntry returning error: %v\n", err)
-	} else {
-		fmt.Printf("DEBUG: Production getEntry returning entry\n")
-	}
-	return entry, err
+	return filer_pb.GetEntry(context.Background(), s3a, fullPath)
 }
 
 func (s3a *S3ApiServer) updateEntry(parentDirectoryPath string, newEntry *filer_pb.Entry) error {

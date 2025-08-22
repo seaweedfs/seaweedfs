@@ -1019,8 +1019,6 @@ func mapValidationErrorToS3Error(err error) s3err.ErrorCode {
 	return s3err.ErrInvalidRequest
 }
 
-
-
 // EntryGetter interface for dependency injection in tests
 type EntryGetter interface {
 	getEntry(parentDirectoryPath, entryName string) (*filer_pb.Entry, error)
@@ -1271,5 +1269,3 @@ func checkConditionalHeadersForReadsWithGetter(getter EntryGetter, r *http.Reque
 func (s3a *S3ApiServer) checkConditionalHeadersForReads(r *http.Request, bucket, object string) s3err.ErrorCode {
 	return checkConditionalHeadersForReadsWithGetter(s3a, r, bucket, object)
 }
-
-
