@@ -294,6 +294,10 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMaxParts)
 		return
 	}
+	if partID < 1 {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidPart)
+		return
+	}
 
 	dataReader, s3ErrCode := getRequestDataReader(s3a, r)
 	if s3ErrCode != s3err.ErrNone {
