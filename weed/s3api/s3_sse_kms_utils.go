@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/kms"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
 // KMSDataKeyResult holds the result of data key generation
@@ -40,8 +41,8 @@ func generateKMSDataKey(keyID string, encryptionContext map[string]string) (*KMS
 			}
 		}
 		// AWS KMS has a limit on the total number of context pairs
-		if len(encryptionContext) > 10 {
-			return nil, fmt.Errorf("invalid encryption context: cannot exceed 10 key-value pairs, got %d", len(encryptionContext))
+		if len(encryptionContext) > s3_constants.MaxKMSEncryptionContextPairs {
+			return nil, fmt.Errorf("invalid encryption context: cannot exceed %d key-value pairs, got %d", s3_constants.MaxKMSEncryptionContextPairs, len(encryptionContext))
 		}
 	}
 

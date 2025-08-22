@@ -22,4 +22,8 @@ const (
 	// Using 8GB offset between parts (larger than max part size) to prevent IV collisions
 	// Critical for CTR mode encryption security in multipart uploads
 	PartOffsetMultiplier = int64(1) << 33 // 8GB per part offset
+
+	// KMS validation limits based on AWS KMS service constraints
+	MaxKMSEncryptionContextPairs = 10  // Maximum number of encryption context key-value pairs
+	MaxKMSKeyIDLength           = 500  // Maximum length for KMS key identifiers
 )

@@ -35,7 +35,7 @@ func isValidKMSKeyID(keyID string) bool {
 	}
 
 	// Accept any reasonable length key (be permissive for various KMS providers)
-	if len(keyID) > 0 && len(keyID) <= 500 {
+	if len(keyID) > 0 && len(keyID) <= s3_constants.MaxKMSKeyIDLength {
 		return true
 	}
 
