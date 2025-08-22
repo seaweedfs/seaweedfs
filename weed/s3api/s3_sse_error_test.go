@@ -275,7 +275,7 @@ func TestSSEEmptyDataHandling(t *testing.T) {
 		}
 
 		// Should have IV for empty data
-		if len(iv) != AESBlockSize {
+		if len(iv) != s3_constants.AESBlockSize {
 			t.Error("IV should be present even for empty data")
 		}
 

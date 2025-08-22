@@ -27,6 +27,7 @@ const (
 	SSEType_NONE    SSEType = 0 // No server-side encryption
 	SSEType_SSE_C   SSEType = 1 // Server-Side Encryption with Customer-Provided Keys
 	SSEType_SSE_KMS SSEType = 2 // Server-Side Encryption with KMS-Managed Keys
+	SSEType_SSE_S3  SSEType = 3 // Server-Side Encryption with S3-Managed Keys
 )
 
 // Enum value maps for SSEType.
@@ -35,11 +36,13 @@ var (
 		0: "NONE",
 		1: "SSE_C",
 		2: "SSE_KMS",
+		3: "SSE_S3",
 	}
 	SSEType_value = map[string]int32{
 		"NONE":    0,
 		"SSE_C":   1,
 		"SSE_KMS": 2,
+		"SSE_S3":  3,
 	}
 )
 
@@ -636,7 +639,7 @@ type FileChunk struct {
 	IsCompressed    bool                   `protobuf:"varint,10,opt,name=is_compressed,json=isCompressed,proto3" json:"is_compressed,omitempty"`
 	IsChunkManifest bool                   `protobuf:"varint,11,opt,name=is_chunk_manifest,json=isChunkManifest,proto3" json:"is_chunk_manifest,omitempty"` // content is a list of FileChunks
 	SseType         SSEType                `protobuf:"varint,12,opt,name=sse_type,json=sseType,proto3,enum=filer_pb.SSEType" json:"sse_type,omitempty"`     // Server-side encryption type
-	SseKmsMetadata  []byte                 `protobuf:"bytes,13,opt,name=sse_kms_metadata,json=sseKmsMetadata,proto3" json:"sse_kms_metadata,omitempty"`     // Serialized SSE-KMS metadata for this chunk
+	SseMetadata     []byte                 `protobuf:"bytes,13,opt,name=sse_metadata,json=sseMetadata,proto3" json:"sse_metadata,omitempty"`                // Serialized SSE metadata for this chunk (SSE-C, SSE-KMS, or SSE-S3)
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -755,9 +758,9 @@ func (x *FileChunk) GetSseType() SSEType {
 	return SSEType_NONE
 }
 
-func (x *FileChunk) GetSseKmsMetadata() []byte {
+func (x *FileChunk) GetSseMetadata() []byte {
 	if x != nil {
-		return x.SseKmsMetadata
+		return x.SseMetadata
 	}
 	return nil
 }
@@ -4437,7 +4440,7 @@ const file_filer_proto_rawDesc = "" +
 	"\x15is_from_other_cluster\x18\x05 \x01(\bR\x12isFromOtherCluster\x12\x1e\n" +
 	"\n" +
 	"signatures\x18\x06 \x03(\x05R\n" +
-	"signatures\"\xce\x03\n" +
+	"signatures\"\xc7\x03\n" +
 	"\tFileChunk\x12\x17\n" +
 	"\afile_id\x18\x01 \x01(\tR\x06fileId\x12\x16\n" +
 	"\x06offset\x18\x02 \x01(\x03R\x06offset\x12\x12\n" +
@@ -4453,8 +4456,8 @@ const file_filer_proto_rawDesc = "" +
 	"\ris_compressed\x18\n" +
 	" \x01(\bR\fisCompressed\x12*\n" +
 	"\x11is_chunk_manifest\x18\v \x01(\bR\x0fisChunkManifest\x12,\n" +
-	"\bsse_type\x18\f \x01(\x0e2\x11.filer_pb.SSETypeR\asseType\x12(\n" +
-	"\x10sse_kms_metadata\x18\r \x01(\fR\x0esseKmsMetadata\"@\n" +
+	"\bsse_type\x18\f \x01(\x0e2\x11.filer_pb.SSETypeR\asseType\x12!\n" +
+	"\fsse_metadata\x18\r \x01(\fR\vsseMetadata\"@\n" +
 	"\x11FileChunkManifest\x12+\n" +
 	"\x06chunks\x18\x01 \x03(\v2\x13.filer_pb.FileChunkR\x06chunks\"X\n" +
 	"\x06FileId\x12\x1b\n" +
@@ -4749,11 +4752,13 @@ const file_filer_proto_rawDesc = "" +
 	"\x05owner\x18\x04 \x01(\tR\x05owner\"<\n" +
 	"\x14TransferLocksRequest\x12$\n" +
 	"\x05locks\x18\x01 \x03(\v2\x0e.filer_pb.LockR\x05locks\"\x17\n" +
-	"\x15TransferLocksResponse*+\n" +
+	"\x15TransferLocksResponse*7\n" +
 	"\aSSEType\x12\b\n" +
 	"\x04NONE\x10\x00\x12\t\n" +
 	"\x05SSE_C\x10\x01\x12\v\n" +
-	"\aSSE_KMS\x10\x022\xf7\x10\n" +
+	"\aSSE_KMS\x10\x02\x12\n" +
+	"\n" +
+	"\x06SSE_S3\x10\x032\xf7\x10\n" +
 	"\fSeaweedFiler\x12g\n" +
 	"\x14LookupDirectoryEntry\x12%.filer_pb.LookupDirectoryEntryRequest\x1a&.filer_pb.LookupDirectoryEntryResponse\"\x00\x12N\n" +
 	"\vListEntries\x12\x1c.filer_pb.ListEntriesRequest\x1a\x1d.filer_pb.ListEntriesResponse\"\x000\x01\x12L\n" +

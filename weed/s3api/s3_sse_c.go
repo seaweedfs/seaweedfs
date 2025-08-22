@@ -28,9 +28,8 @@ const (
 
 const (
 	// SSE-C constants
-	SSECustomerAlgorithmAES256 = "AES256"
+	SSECustomerAlgorithmAES256 = s3_constants.SSEAlgorithmAES256
 	SSECustomerKeySize         = 32 // 256 bits
-	AESBlockSize               = 16 // AES block size in bytes
 )
 
 // SSE-C related errors
@@ -163,7 +162,7 @@ func CreateSSECEncryptedReader(r io.Reader, customerKey *SSECustomerKey) (io.Rea
 	}
 
 	// Generate random IV
-	iv := make([]byte, AESBlockSize)
+	iv := make([]byte, s3_constants.AESBlockSize)
 	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
 		return nil, nil, fmt.Errorf("failed to generate IV: %v", err)
 	}
@@ -186,8 +185,8 @@ func CreateSSECDecryptedReader(r io.Reader, customerKey *SSECustomerKey, iv []by
 	}
 
 	// IV must be provided from metadata
-	if len(iv) != AESBlockSize {
-		return nil, fmt.Errorf("invalid IV length: expected %d bytes, got %d", AESBlockSize, len(iv))
+	if err := ValidateIV(iv, "IV"); err != nil {
+		return nil, fmt.Errorf("invalid IV from metadata: %w", err)
 	}
 
 	// Create AES cipher

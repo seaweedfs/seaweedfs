@@ -340,7 +340,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
 		if objectEntry, err := s3a.getEntry("", objectPath); err == nil {
 			primarySSEType := s3a.detectPrimarySSEType(objectEntry)
-			if primarySSEType == "SSE-C" || primarySSEType == "SSE-KMS" {
+			if primarySSEType == s3_constants.SSETypeC || primarySSEType == s3_constants.SSETypeKMS {
 				sseObject = true
 				// Temporarily remove Range header to get full encrypted data from filer
 				r.Header.Del("Range")
@@ -810,20 +810,20 @@ func (s3a *S3ApiServer) handleSSEResponse(r *http.Request, proxyResponse *http.R
 	}
 
 	// Route based on ACTUAL object type (from chunks) rather than conflicting headers
-	if actualObjectType == "SSE-C" && clientExpectsSSEC {
+	if actualObjectType == s3_constants.SSETypeC && clientExpectsSSEC {
 		// Object is SSE-C and client expects SSE-C → SSE-C handler
 		return s3a.handleSSECResponse(r, proxyResponse, w)
-	} else if actualObjectType == "SSE-KMS" && !clientExpectsSSEC {
+	} else if actualObjectType == s3_constants.SSETypeKMS && !clientExpectsSSEC {
 		// Object is SSE-KMS and client doesn't expect SSE-C → SSE-KMS handler
 		return s3a.handleSSEKMSResponse(r, proxyResponse, w, kmsMetadataHeader)
 	} else if actualObjectType == "None" && !clientExpectsSSEC {
 		// Object is unencrypted and client doesn't expect SSE-C → pass through
 		return passThroughResponse(proxyResponse, w)
-	} else if actualObjectType == "SSE-C" && !clientExpectsSSEC {
+	} else if actualObjectType == s3_constants.SSETypeC && !clientExpectsSSEC {
 		// Object is SSE-C but client doesn't provide SSE-C headers → Error
 		s3err.WriteErrorResponse(w, r, s3err.ErrSSECustomerKeyMissing)
 		return http.StatusBadRequest, 0
-	} else if actualObjectType == "SSE-KMS" && clientExpectsSSEC {
+	} else if actualObjectType == s3_constants.SSETypeKMS && clientExpectsSSEC {
 		// Object is SSE-KMS but client provides SSE-C headers → Error
 		s3err.WriteErrorResponse(w, r, s3err.ErrSSECustomerKeyMissing)
 		return http.StatusBadRequest, 0
@@ -888,7 +888,7 @@ func (s3a *S3ApiServer) handleSSEKMSResponse(r *http.Request, proxyResponse *htt
 			// Check for multipart SSE-KMS
 			sseKMSChunks := 0
 			for _, chunk := range entry.GetChunks() {
-				if chunk.GetSseType() == filer_pb.SSEType_SSE_KMS && len(chunk.GetSseKmsMetadata()) > 0 {
+				if chunk.GetSseType() == filer_pb.SSEType_SSE_KMS && len(chunk.GetSseMetadata()) > 0 {
 					sseKMSChunks++
 				}
 			}
@@ -999,7 +999,7 @@ func (s3a *S3ApiServer) addSSEHeadersToResponse(proxyResponse *http.Response, en
 
 	// Only set headers for the PRIMARY encryption type
 	switch primarySSEType {
-	case "SSE-C":
+	case s3_constants.SSETypeC:
 		// Add only SSE-C headers
 		if algorithmBytes, exists := entry.Extended[s3_constants.AmzServerSideEncryptionCustomerAlgorithm]; exists && len(algorithmBytes) > 0 {
 			proxyResponse.Header.Set(s3_constants.AmzServerSideEncryptionCustomerAlgorithm, string(algorithmBytes))
@@ -1014,7 +1014,7 @@ func (s3a *S3ApiServer) addSSEHeadersToResponse(proxyResponse *http.Response, en
 			proxyResponse.Header.Set(s3_constants.SeaweedFSSSEIVHeader, ivBase64)
 		}
 
-	case "SSE-KMS":
+	case s3_constants.SSETypeKMS:
 		// Add only SSE-KMS headers
 		if sseAlgorithm, exists := entry.Extended[s3_constants.AmzServerSideEncryption]; exists && len(sseAlgorithm) > 0 {
 			proxyResponse.Header.Set(s3_constants.AmzServerSideEncryption, string(sseAlgorithm))
@@ -1039,18 +1039,18 @@ func (s3a *S3ApiServer) detectPrimarySSEType(entry *filer_pb.Entry) string {
 		hasSSEKMS := entry.Extended[s3_constants.AmzServerSideEncryption] != nil
 
 		if hasSSEC && !hasSSEKMS {
-			return "SSE-C"
+			return s3_constants.SSETypeC
 		} else if hasSSEKMS && !hasSSEC {
-			return "SSE-KMS"
+			return s3_constants.SSETypeKMS
 		} else if hasSSEC && hasSSEKMS {
 			// Both present - this should only happen during cross-encryption copies
 			// Use content to determine actual encryption state
 			if len(entry.Content) > 0 {
 				// smallContent - check if it's encrypted (heuristic: random-looking data)
-				return "SSE-C" // Default to SSE-C for mixed case
+				return s3_constants.SSETypeC // Default to SSE-C for mixed case
 			} else {
 				// No content, both headers - default to SSE-C
-				return "SSE-C"
+				return s3_constants.SSETypeC
 			}
 		}
 		return "None"
@@ -1071,12 +1071,12 @@ func (s3a *S3ApiServer) detectPrimarySSEType(entry *filer_pb.Entry) string {
 
 	// Primary type is the one with more chunks
 	if ssecChunks > ssekmsChunks {
-		return "SSE-C"
+		return s3_constants.SSETypeC
 	} else if ssekmsChunks > ssecChunks {
-		return "SSE-KMS"
+		return s3_constants.SSETypeKMS
 	} else if ssecChunks > 0 {
 		// Equal number, prefer SSE-C (shouldn't happen in practice)
-		return "SSE-C"
+		return s3_constants.SSETypeC
 	}
 
 	return "None"
@@ -1117,9 +1117,9 @@ func (s3a *S3ApiServer) createMultipartSSEKMSDecryptedReader(r *http.Request, pr
 		var chunkSSEKMSKey *SSEKMSKey
 
 		// Check if this chunk has per-chunk SSE-KMS metadata (new architecture)
-		if chunk.GetSseType() == filer_pb.SSEType_SSE_KMS && len(chunk.GetSseKmsMetadata()) > 0 {
+		if chunk.GetSseType() == filer_pb.SSEType_SSE_KMS && len(chunk.GetSseMetadata()) > 0 {
 			// Use the per-chunk SSE-KMS metadata
-			kmsKey, err := DeserializeSSEKMSMetadata(chunk.GetSseKmsMetadata())
+			kmsKey, err := DeserializeSSEKMSMetadata(chunk.GetSseMetadata())
 			if err != nil {
 				glog.Errorf("Failed to deserialize per-chunk SSE-KMS metadata for chunk %s: %v", chunk.GetFileIdString(), err)
 			} else {
@@ -1356,9 +1356,9 @@ func (s3a *S3ApiServer) createMultipartSSECDecryptedReader(r *http.Request, prox
 
 		if chunk.GetSseType() == filer_pb.SSEType_SSE_C {
 			// For SSE-C chunks, extract the IV from the stored per-chunk metadata (unified approach)
-			if len(chunk.GetSseKmsMetadata()) > 0 {
+			if len(chunk.GetSseMetadata()) > 0 {
 				// Deserialize the SSE-C metadata stored in the unified metadata field
-				ssecMetadata, decErr := DeserializeSSECMetadata(chunk.GetSseKmsMetadata())
+				ssecMetadata, decErr := DeserializeSSECMetadata(chunk.GetSseMetadata())
 				if decErr != nil {
 					return nil, fmt.Errorf("failed to deserialize SSE-C metadata for chunk %s: %v", chunk.GetFileIdString(), decErr)
 				}

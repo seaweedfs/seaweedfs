@@ -4,18 +4,20 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	mathrand "math/rand"
 	"net/http"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
 // SSE-S3 uses AES-256 encryption with server-managed keys
 const (
-	SSES3Algorithm = "AES256"
+	SSES3Algorithm = s3_constants.SSEAlgorithmAES256
 	SSES3KeySize   = 32 // 256 bits
 )
 
@@ -24,11 +26,20 @@ type SSES3Key struct {
 	Key       []byte
 	KeyID     string
 	Algorithm string
+	IV        []byte // Initialization Vector for this key
 }
 
 // IsSSES3RequestInternal checks if the request specifies SSE-S3 encryption
 func IsSSES3RequestInternal(r *http.Request) bool {
-	return r.Header.Get(s3_constants.AmzServerSideEncryption) == SSES3Algorithm
+	sseHeader := r.Header.Get(s3_constants.AmzServerSideEncryption)
+	result := sseHeader == SSES3Algorithm
+
+	// Debug: log header detection for SSE-S3 requests
+	if result {
+		glog.V(4).Infof("SSE-S3 detection: method=%s, header=%q, expected=%q, result=%t, copySource=%q", r.Method, sseHeader, SSES3Algorithm, result, r.Header.Get("X-Amz-Copy-Source"))
+	}
+
+	return result
 }
 
 // IsSSES3EncryptedInternal checks if the object metadata indicates SSE-S3 encryption
@@ -103,6 +114,10 @@ func GetSSES3Headers() map[string]string {
 
 // SerializeSSES3Metadata serializes SSE-S3 metadata for storage
 func SerializeSSES3Metadata(key *SSES3Key) ([]byte, error) {
+	if err := ValidateSSES3Key(key); err != nil {
+		return nil, err
+	}
+
 	// For SSE-S3, we typically don't store the actual key in metadata
 	// Instead, we store a key ID or reference that can be used to retrieve the key
 	// from a secure key management system
@@ -112,12 +127,18 @@ func SerializeSSES3Metadata(key *SSES3Key) ([]byte, error) {
 		"keyId":     key.KeyID,
 	}
 
-	// In a production system, this would be more sophisticated
-	// For now, we'll use a simple JSON-like format
-	serialized := fmt.Sprintf(`{"algorithm":"%s","keyId":"%s"}`,
-		metadata["algorithm"], metadata["keyId"])
+	// Include IV if present (needed for chunk-level decryption)
+	if key.IV != nil {
+		metadata["iv"] = base64.StdEncoding.EncodeToString(key.IV)
+	}
 
-	return []byte(serialized), nil
+	// Use JSON for proper serialization
+	data, err := json.Marshal(metadata)
+	if err != nil {
+		return nil, fmt.Errorf("marshal SSE-S3 metadata: %w", err)
+	}
+
+	return data, nil
 }
 
 // DeserializeSSES3Metadata deserializes SSE-S3 metadata from storage and retrieves the actual key
@@ -139,7 +160,7 @@ func DeserializeSSES3Metadata(data []byte, keyManager *SSES3KeyManager) (*SSES3K
 
 	algorithm, exists := metadata["algorithm"]
 	if !exists {
-		algorithm = "AES256" // Default algorithm
+		algorithm = s3_constants.SSEAlgorithmAES256 // Default algorithm
 	}
 
 	// Retrieve the actual key using the keyId
@@ -155,6 +176,15 @@ func DeserializeSSES3Metadata(data []byte, keyManager *SSES3KeyManager) (*SSES3K
 	// Verify the algorithm matches
 	if key.Algorithm != algorithm {
 		return nil, fmt.Errorf("algorithm mismatch: expected %s, got %s", algorithm, key.Algorithm)
+	}
+
+	// Restore IV if present in metadata (for chunk-level decryption)
+	if ivStr, exists := metadata["iv"]; exists {
+		iv, err := base64.StdEncoding.DecodeString(ivStr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode IV: %w", err)
+		}
+		key.IV = iv
 	}
 
 	return key, nil
@@ -241,7 +271,7 @@ func ProcessSSES3Request(r *http.Request) (map[string][]byte, error) {
 	// Return metadata
 	metadata := map[string][]byte{
 		s3_constants.AmzServerSideEncryption: []byte(SSES3Algorithm),
-		"sse-s3-key":                         keyData,
+		s3_constants.SeaweedFSSSES3Key:       keyData,
 	}
 
 	return metadata, nil
@@ -249,10 +279,38 @@ func ProcessSSES3Request(r *http.Request) (map[string][]byte, error) {
 
 // GetSSES3KeyFromMetadata extracts SSE-S3 key from object metadata
 func GetSSES3KeyFromMetadata(metadata map[string][]byte, keyManager *SSES3KeyManager) (*SSES3Key, error) {
-	keyData, exists := metadata["sse-s3-key"]
+	keyData, exists := metadata[s3_constants.SeaweedFSSSES3Key]
 	if !exists {
 		return nil, fmt.Errorf("SSE-S3 key not found in metadata")
 	}
 
 	return DeserializeSSES3Metadata(keyData, keyManager)
+}
+
+// CreateSSES3EncryptedReaderWithBaseIV creates an encrypted reader using a base IV for multipart upload consistency.
+// The returned IV is the offset-derived IV, calculated from the input baseIV and offset.
+func CreateSSES3EncryptedReaderWithBaseIV(reader io.Reader, key *SSES3Key, baseIV []byte, offset int64) (io.Reader, []byte /* derivedIV */, error) {
+	// Validate key to prevent panics and security issues
+	if key == nil {
+		return nil, nil, fmt.Errorf("SSES3Key is nil")
+	}
+	if key.Key == nil || len(key.Key) != SSES3KeySize {
+		return nil, nil, fmt.Errorf("invalid SSES3Key: must be %d bytes, got %d", SSES3KeySize, len(key.Key))
+	}
+	if err := ValidateSSES3Key(key); err != nil {
+		return nil, nil, err
+	}
+
+	block, err := aes.NewCipher(key.Key)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create AES cipher: %w", err)
+	}
+
+	// Calculate the proper IV with offset to ensure unique IV per chunk/part
+	// This prevents the severe security vulnerability of IV reuse in CTR mode
+	iv := calculateIVWithOffset(baseIV, offset)
+
+	stream := cipher.NewCTR(block, iv)
+	encryptedReader := &cipher.StreamReader{S: stream, R: reader}
+	return encryptedReader, iv, nil
 }

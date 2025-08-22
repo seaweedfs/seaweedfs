@@ -81,8 +81,8 @@ const (
 	EncryptionTypeKMS    = "aws:kms"
 )
 
-// GetBucketEncryption handles GET bucket encryption requests
-func (s3a *S3ApiServer) GetBucketEncryption(w http.ResponseWriter, r *http.Request) {
+// GetBucketEncryptionHandler handles GET bucket encryption requests
+func (s3a *S3ApiServer) GetBucketEncryptionHandler(w http.ResponseWriter, r *http.Request) {
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 
 	// Load bucket encryption configuration
@@ -111,8 +111,8 @@ func (s3a *S3ApiServer) GetBucketEncryption(w http.ResponseWriter, r *http.Reque
 	}
 }
 
-// PutBucketEncryption handles PUT bucket encryption requests
-func (s3a *S3ApiServer) PutBucketEncryption(w http.ResponseWriter, r *http.Request) {
+// PutBucketEncryptionHandler handles PUT bucket encryption requests
+func (s3a *S3ApiServer) PutBucketEncryptionHandler(w http.ResponseWriter, r *http.Request) {
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 
 	// Read and parse the request body
@@ -168,8 +168,8 @@ func (s3a *S3ApiServer) PutBucketEncryption(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusOK)
 }
 
-// DeleteBucketEncryption handles DELETE bucket encryption requests
-func (s3a *S3ApiServer) DeleteBucketEncryption(w http.ResponseWriter, r *http.Request) {
+// DeleteBucketEncryptionHandler handles DELETE bucket encryption requests
+func (s3a *S3ApiServer) DeleteBucketEncryptionHandler(w http.ResponseWriter, r *http.Request) {
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 
 	errCode := s3a.removeEncryptionConfiguration(bucket)

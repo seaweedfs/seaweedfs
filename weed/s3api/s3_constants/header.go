@@ -99,6 +99,11 @@ const (
 	SeaweedFSSSEKMSBucketKeyEnabled  = "x-seaweedfs-sse-kms-bucket-key-enabled" // Bucket key setting for multipart upload SSE-KMS inheritance
 	SeaweedFSSSEKMSEncryptionContext = "x-seaweedfs-sse-kms-encryption-context" // Encryption context for multipart upload SSE-KMS inheritance
 	SeaweedFSSSEKMSBaseIV            = "x-seaweedfs-sse-kms-base-iv"            // Base IV for multipart upload SSE-KMS (for IV offset calculation)
+
+	// Multipart upload metadata keys for SSE-S3
+	SeaweedFSSSES3Encryption = "x-seaweedfs-sse-s3-encryption" // Encryption type for multipart upload SSE-S3 inheritance
+	SeaweedFSSSES3BaseIV     = "x-seaweedfs-sse-s3-base-iv"    // Base IV for multipart upload SSE-S3 (for IV offset calculation)
+	SeaweedFSSSES3KeyData    = "x-seaweedfs-sse-s3-key-data"   // Encrypted key data for multipart upload SSE-S3 inheritance
 )
 
 // SeaweedFS internal headers for filer communication
@@ -106,6 +111,8 @@ const (
 	SeaweedFSSSEKMSKeyHeader    = "X-SeaweedFS-SSE-KMS-Key"     // Header for passing SSE-KMS metadata to filer
 	SeaweedFSSSEIVHeader        = "X-SeaweedFS-SSE-IV"          // Header for passing SSE-C IV to filer (SSE-C only)
 	SeaweedFSSSEKMSBaseIVHeader = "X-SeaweedFS-SSE-KMS-Base-IV" // Header for passing base IV for multipart SSE-KMS
+	SeaweedFSSSES3BaseIVHeader  = "X-SeaweedFS-SSE-S3-Base-IV"  // Header for passing base IV for multipart SSE-S3
+	SeaweedFSSSES3KeyDataHeader = "X-SeaweedFS-SSE-S3-Key-Data" // Header for passing key data for multipart SSE-S3
 )
 
 // Non-Standard S3 HTTP request constants
