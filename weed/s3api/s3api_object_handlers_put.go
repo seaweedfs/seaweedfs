@@ -220,8 +220,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	if customerKey != nil {
 		encryptedReader, iv, encErr := CreateSSECEncryptedReader(dataReader, customerKey)
 		if encErr != nil {
-			glog.Errorf("Failed to create SSE-C encrypted reader: %v", encErr)
-			return "", s3err.ErrInternalError, ""
+			return handleSSEInternalError("SSE-C", "create encrypted reader", encErr)
 		}
 		dataReader = encryptedReader
 		sseIV = iv
@@ -247,8 +246,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		if contextHeader := r.Header.Get(s3_constants.AmzServerSideEncryptionContext); contextHeader != "" {
 			userContext, err := parseEncryptionContext(contextHeader)
 			if err != nil {
-				glog.Errorf("Failed to parse encryption context: %v", err)
-				return "", s3err.ErrInvalidRequest, ""
+				return handlePutToFilerError("parse encryption context", err, s3err.ErrInvalidRequest)
 			}
 			// Merge user context with default context
 			for k, v := range userContext {
@@ -266,8 +264,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 			// Decode the base IV from the header
 			baseIV, decodeErr := base64.StdEncoding.DecodeString(baseIVHeader)
 			if decodeErr != nil || len(baseIV) != 16 {
-				glog.Errorf("Invalid base IV in header: %v", decodeErr)
-				return "", s3err.ErrInternalError, ""
+				return handleSSEInternalError("SSE-KMS", "decode base IV from header", decodeErr)
 			}
 			// Use the provided base IV with unique part offset for multipart upload consistency
 			// Each part gets a unique offset to prevent IV reuse (critical for CTR mode security)
@@ -279,8 +276,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		}
 
 		if encErr != nil {
-			glog.Errorf("Failed to create SSE-KMS encrypted reader: %v", encErr)
-			return "", s3err.ErrInternalError, ""
+			return handleSSEInternalError("SSE-KMS", "create encrypted reader", encErr)
 		}
 		dataReader = encryptedReader
 		sseKMSKey = sseKey
@@ -302,32 +298,28 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 			// Decode the key data
 			keyData, decodeErr := base64.StdEncoding.DecodeString(keyDataHeader)
 			if decodeErr != nil {
-				glog.Errorf("Failed to decode SSE-S3 key data for multipart part: %v", decodeErr)
-				return "", s3err.ErrInternalError, ""
+				return handleSSEInternalError("SSE-S3", "decode key data for multipart part", decodeErr)
 			}
 			
 			// Deserialize the SSE-S3 key
 			keyManager := GetSSES3KeyManager()
 			key, deserializeErr := DeserializeSSES3Metadata(keyData, keyManager)
 			if deserializeErr != nil {
-				glog.Errorf("Failed to deserialize SSE-S3 key for multipart part: %v", deserializeErr)
-				return "", s3err.ErrInternalError, ""
+				return handleSSEInternalError("SSE-S3", "deserialize key for multipart part", deserializeErr)
 			}
 			sseS3Key = key
 			
 			// Decode the base IV
 			baseIV, decodeErr := base64.StdEncoding.DecodeString(baseIVHeader)
 			if decodeErr != nil || len(baseIV) != 16 {
-				glog.Errorf("Invalid base IV in SSE-S3 header: %v", decodeErr)
-				return "", s3err.ErrInternalError, ""
+				return handleSSEInternalError("SSE-S3", "decode base IV from header", decodeErr)
 			}
 			
 			// Use the provided base IV with unique part offset for multipart upload consistency
 			// Each part gets a unique offset to prevent IV reuse (critical for CTR mode security)
 			encryptedReader, _, encErr := CreateSSES3EncryptedReaderWithBaseIV(dataReader, sseS3Key, baseIV, partOffset)
 			if encErr != nil {
-				glog.Errorf("Failed to create SSE-S3 encrypted reader for multipart part: %v", encErr)
-				return "", s3err.ErrInternalError, ""
+				return handleSSEInternalError("SSE-S3", "create encrypted reader for multipart part", encErr)
 			}
 			
 			dataReader = encryptedReader
@@ -339,16 +331,14 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 			keyManager := GetSSES3KeyManager()
 			key, err := keyManager.GetOrCreateKey("")
 			if err != nil {
-				glog.Errorf("Failed to get SSE-S3 key: %v", err)
-				return "", s3err.ErrInternalError, ""
+				return handleSSEInternalError("SSE-S3", "get or create key", err)
 			}
 			sseS3Key = key
 			
-			// Create encrypted reader
+						// Create encrypted reader
 			encryptedReader, iv, encErr := CreateSSES3EncryptedReader(dataReader, sseS3Key)
 			if encErr != nil {
-				glog.Errorf("Failed to create SSE-S3 encrypted reader: %v", encErr)
-				return "", s3err.ErrInternalError, ""
+				return handleSSEInternalError("SSE-S3", "create encrypted reader", encErr)
 			}
 			// Store IV on the key object for later decryption
 			sseS3Key.IV = iv
@@ -359,13 +349,12 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 			keyManager.StoreKey(sseS3Key)
 		}
 		
-		// Prepare SSE-S3 metadata for later header setting
-		var metaErr error
-		sseS3Metadata, metaErr = SerializeSSES3Metadata(sseS3Key)
-		if metaErr != nil {
-			glog.Errorf("Failed to serialize SSE-S3 metadata: %v", metaErr)
-			return "", s3err.ErrInternalError, ""
-		}
+			// Prepare SSE-S3 metadata for later header setting
+	var metaErr error
+	sseS3Metadata, metaErr = SerializeSSES3Metadata(sseS3Key)
+	if metaErr != nil {
+		return handleSSEInternalError("SSE-S3", "serialize metadata", metaErr)
+	}
 		
 		glog.V(3).Infof("putToFiler: prepared SSE-S3 metadata for object %s", uploadUrl)
 	}

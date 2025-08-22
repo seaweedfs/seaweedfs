@@ -148,14 +148,14 @@ func (s3a *S3ApiServer) createMultipartUpload(r *http.Request, input *s3.CreateM
 			// Don't fail the upload - this matches AWS behavior for invalid metadata
 		}
 	}); err != nil {
-		glog.Errorf("NewMultipartUpload error: %v", err)
-		return nil, s3err.ErrInternalError
+		_, errorCode := handleMultipartInternalError("create multipart upload directory", err)
+		return nil, errorCode
 	}
 
 	// Check for critical errors during SSE-S3 initialization
 	if criticalError != nil {
-		glog.Errorf("SSE-S3 multipart upload initialization failed: %v", criticalError)
-		return nil, s3err.ErrInternalError
+		_, errorCode := handleMultipartInternalError("initialize SSE-S3 multipart upload", criticalError)
+		return nil, errorCode
 	}
 
 	output = &InitiateMultipartUploadResult{

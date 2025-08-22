@@ -3,6 +3,7 @@ package s3api
 import (
 	"fmt"
 	"strings"
+
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
