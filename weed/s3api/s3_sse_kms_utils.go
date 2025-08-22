@@ -18,6 +18,11 @@ type KMSDataKeyResult struct {
 // generateKMSDataKey generates a new data encryption key using KMS
 // This function encapsulates the common pattern used across all SSE-KMS functions
 func generateKMSDataKey(keyID string, encryptionContext map[string]string) (*KMSDataKeyResult, error) {
+	// Validate keyID to prevent injection attacks and malformed requests to KMS service
+	if !isValidKMSKeyID(keyID) {
+		return nil, fmt.Errorf("invalid KMS key ID format: key ID must be non-empty, without spaces or control characters")
+	}
+
 	// Get KMS provider
 	kmsProvider := kms.GetGlobalKMS()
 	if kmsProvider == nil {

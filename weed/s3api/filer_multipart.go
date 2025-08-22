@@ -48,12 +48,8 @@ func (s3a *S3ApiServer) createMultipartUpload(r *http.Request, input *s3.CreateM
 
 	uploadIdString = uploadIdString + "_" + strings.ReplaceAll(uuid.New().String(), "-", "")
 
-	// Prepare encryption settings before directory creation to allow proper error handling
-	encryptionConfig, err := s3a.prepareMultipartEncryptionConfig(r, uploadIdString)
-	if err != nil {
-		_, errorCode := handleMultipartInternalError("prepare encryption configuration", err)
-		return nil, errorCode
-	}
+	// Prepare error handling outside callback scope
+	var encryptionError error
 
 	if err := s3a.mkdir(s3a.genUploadsFolder(*input.Bucket), uploadIdString, func(entry *filer_pb.Entry) {
 		if entry.Extended == nil {
@@ -74,7 +70,13 @@ func (s3a *S3ApiServer) createMultipartUpload(r *http.Request, input *s3.CreateM
 			entry.Attributes.Mime = *input.ContentType
 		}
 
-		// Apply pre-prepared encryption configuration
+		// Prepare and apply encryption configuration within directory creation
+		// This ensures encryption resources are only allocated if directory creation succeeds
+		encryptionConfig, prepErr := s3a.prepareMultipartEncryptionConfig(r, uploadIdString)
+		if prepErr != nil {
+			encryptionError = prepErr
+			return // Exit callback, letting mkdir handle the error
+		}
 		s3a.applyMultipartEncryptionConfig(entry, encryptionConfig)
 
 		// Extract and store object lock metadata from request headers
@@ -85,6 +87,12 @@ func (s3a *S3ApiServer) createMultipartUpload(r *http.Request, input *s3.CreateM
 		}
 	}); err != nil {
 		_, errorCode := handleMultipartInternalError("create multipart upload directory", err)
+		return nil, errorCode
+	}
+
+	// Check for encryption configuration errors that occurred within the callback
+	if encryptionError != nil {
+		_, errorCode := handleMultipartInternalError("prepare encryption configuration", encryptionError)
 		return nil, errorCode
 	}
 
