@@ -1103,7 +1103,7 @@ func (s3a *S3ApiServer) checkConditionalHeadersWithGetter(getter EntryGetter, r 
 		if ifMatch != "*" {
 			// Use production getObjectETag method
 			objectETag := s3a.getObjectETag(entry)
-			// Use production etagMatches method  
+			// Use production etagMatches method
 			if !s3a.etagMatches(ifMatch, objectETag) {
 				glog.V(3).Infof("checkConditionalHeaders: If-Match failed for object %s/%s - expected ETag %s, got %s", bucket, object, ifMatch, objectETag)
 				return s3err.ErrPreconditionFailed
