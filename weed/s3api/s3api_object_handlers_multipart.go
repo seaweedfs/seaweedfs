@@ -289,7 +289,7 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidPart)
 		return
 	}
-	if partID > s3_constants.MaxS3MultipartParts {
+	if partID >= s3_constants.MaxS3MultipartParts {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidPart)
 		return
 	}
