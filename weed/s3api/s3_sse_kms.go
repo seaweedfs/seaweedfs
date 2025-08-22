@@ -142,8 +142,8 @@ func CreateSSEKMSEncryptedReaderWithBucketKey(r io.Reader, keyID string, encrypt
 // CreateSSEKMSEncryptedReaderWithBaseIV creates an SSE-KMS encrypted reader using a provided base IV
 // This is used for multipart uploads where all chunks need to use the same base IV
 func CreateSSEKMSEncryptedReaderWithBaseIV(r io.Reader, keyID string, encryptionContext map[string]string, bucketKeyEnabled bool, baseIV []byte) (io.Reader, *SSEKMSKey, error) {
-	if len(baseIV) != s3_constants.AESBlockSize {
-		return nil, nil, fmt.Errorf("base IV must be exactly %d bytes, got %d", s3_constants.AESBlockSize, len(baseIV))
+	if err := ValidateIV(baseIV, "base IV"); err != nil {
+		return nil, nil, err
 	}
 
 	kmsProvider := kms.GetGlobalKMS()
@@ -201,8 +201,8 @@ func CreateSSEKMSEncryptedReaderWithBaseIV(r io.Reader, keyID string, encryption
 // CreateSSEKMSEncryptedReaderWithBaseIVAndOffset creates an SSE-KMS encrypted reader using a provided base IV and offset
 // This is used for multipart uploads where all chunks need unique IVs to prevent IV reuse vulnerabilities
 func CreateSSEKMSEncryptedReaderWithBaseIVAndOffset(r io.Reader, keyID string, encryptionContext map[string]string, bucketKeyEnabled bool, baseIV []byte, offset int64) (io.Reader, *SSEKMSKey, error) {
-	if len(baseIV) != s3_constants.AESBlockSize {
-		return nil, nil, fmt.Errorf("base IV must be exactly %d bytes, got %d", s3_constants.AESBlockSize, len(baseIV))
+	if err := ValidateIV(baseIV, "base IV"); err != nil {
+		return nil, nil, err
 	}
 
 	kmsProvider := kms.GetGlobalKMS()
@@ -490,8 +490,8 @@ func CreateSSEKMSDecryptedReader(r io.Reader, sseKey *SSEKMSKey) (io.Reader, err
 	}
 
 	// Use the IV from the SSE key metadata, calculating offset if this is a chunked part
-	if len(sseKey.IV) != s3_constants.AESBlockSize {
-		return nil, fmt.Errorf("invalid IV length in SSE key: expected %d bytes, got %d", s3_constants.AESBlockSize, len(sseKey.IV))
+	if err := ValidateIV(sseKey.IV, "SSE key IV"); err != nil {
+		return nil, fmt.Errorf("invalid IV in SSE key: %w", err)
 	}
 
 	// Calculate the correct IV for this chunk's offset within the original part
@@ -566,9 +566,9 @@ func ParseSSEKMSHeaders(r *http.Request) (*SSEKMSKey, error) {
 }
 
 // ValidateSSEKMSKey validates an SSE-KMS key configuration
-func ValidateSSEKMSKey(sseKey *SSEKMSKey) error {
-	if sseKey == nil {
-		return fmt.Errorf("SSE-KMS key is required")
+func ValidateSSEKMSKeyInternal(sseKey *SSEKMSKey) error {
+	if err := ValidateSSEKMSKey(sseKey); err != nil {
+		return err
 	}
 
 	// An empty key ID is valid and means the default KMS key should be used.
@@ -618,8 +618,8 @@ func parseEncryptionContext(contextHeader string) (map[string]string, error) {
 
 // SerializeSSEKMSMetadata serializes SSE-KMS metadata for storage in object metadata
 func SerializeSSEKMSMetadata(sseKey *SSEKMSKey) ([]byte, error) {
-	if sseKey == nil {
-		return nil, fmt.Errorf("SSE-KMS key cannot be nil")
+	if err := ValidateSSEKMSKey(sseKey); err != nil {
+		return nil, err
 	}
 
 	metadata := &SSEKMSMetadata{
@@ -700,8 +700,8 @@ type SSECMetadata struct {
 
 // SerializeSSECMetadata serializes SSE-C metadata for storage in chunk metadata
 func SerializeSSECMetadata(iv []byte, keyMD5 string, partOffset int64) ([]byte, error) {
-	if len(iv) != s3_constants.AESBlockSize {
-		return nil, fmt.Errorf("invalid IV length: expected %d, got %d", s3_constants.AESBlockSize, len(iv))
+	if err := ValidateIV(iv, "IV"); err != nil {
+		return nil, err
 	}
 
 	metadata := &SSECMetadata{

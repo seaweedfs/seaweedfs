@@ -1,6 +1,10 @@
 package s3api
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+)
 
 // isValidKMSKeyID performs basic validation of KMS key identifiers.
 // Following Minio's approach: be permissive and accept any reasonable key format.
@@ -35,4 +39,36 @@ func isValidKMSKeyID(keyID string) bool {
 	}
 
 	return false
+}
+
+// ValidateIV validates that an initialization vector has the correct length for AES encryption
+func ValidateIV(iv []byte, name string) error {
+	if len(iv) != s3_constants.AESBlockSize {
+		return fmt.Errorf("invalid %s length: expected %d bytes, got %d", name, s3_constants.AESBlockSize, len(iv))
+	}
+	return nil
+}
+
+// ValidateSSEKMSKey validates that an SSE-KMS key is not nil and has required fields
+func ValidateSSEKMSKey(sseKey *SSEKMSKey) error {
+	if sseKey == nil {
+		return fmt.Errorf("SSE-KMS key cannot be nil")
+	}
+	return nil
+}
+
+// ValidateSSECKey validates that an SSE-C key is not nil
+func ValidateSSECKey(customerKey *SSECustomerKey) error {
+	if customerKey == nil {
+		return fmt.Errorf("SSE-C customer key cannot be nil")
+	}
+	return nil
+}
+
+// ValidateSSES3Key validates that an SSE-S3 key is not nil
+func ValidateSSES3Key(sseKey *SSES3Key) error {
+	if sseKey == nil {
+		return fmt.Errorf("SSE-S3 key cannot be nil")
+	}
+	return nil
 }

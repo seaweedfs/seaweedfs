@@ -185,8 +185,8 @@ func CreateSSECDecryptedReader(r io.Reader, customerKey *SSECustomerKey, iv []by
 	}
 
 	// IV must be provided from metadata
-	if len(iv) != s3_constants.AESBlockSize {
-		return nil, fmt.Errorf("invalid IV length: expected %d bytes, got %d", s3_constants.AESBlockSize, len(iv))
+	if err := ValidateIV(iv, "IV"); err != nil {
+		return nil, fmt.Errorf("invalid IV from metadata: %w", err)
 	}
 
 	// Create AES cipher
