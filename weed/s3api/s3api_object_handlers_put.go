@@ -72,7 +72,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Check conditional headers (If-None-Match)
+	// Check conditional headers
 	if errCode := s3a.checkConditionalHeaders(r, bucket, object); errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
@@ -1067,12 +1067,16 @@ func (s3a *S3ApiServer) checkConditionalHeaders(r *http.Request, bucket, object 
 			glog.V(3).Infof("checkConditionalHeaders: If-Match failed - object %s/%s does not exist", bucket, object)
 			return s3err.ErrPreconditionFailed
 		}
-		objectETag := s3a.getObjectETag(entry)
-		if !s3a.etagMatches(ifMatch, objectETag) {
-			glog.V(3).Infof("checkConditionalHeaders: If-Match failed - expected %s, got %s", ifMatch, objectETag)
-			return s3err.ErrPreconditionFailed
+		// If `ifMatch` is "*", the condition is met if the object exists.
+		// Otherwise, we need to check the ETag.
+		if ifMatch != "*" {
+			objectETag := s3a.getObjectETag(entry)
+			if !s3a.etagMatches(ifMatch, objectETag) {
+				glog.V(3).Infof("checkConditionalHeaders: If-Match failed for object %s/%s - expected ETag %s, got %s", bucket, object, ifMatch, objectETag)
+				return s3err.ErrPreconditionFailed
+			}
 		}
-		glog.V(3).Infof("checkConditionalHeaders: If-Match passed - ETag %s matches", objectETag)
+		glog.V(3).Infof("checkConditionalHeaders: If-Match passed for object %s/%s", bucket, object)
 	}
 
 	// 2. Check If-Unmodified-Since
@@ -1124,7 +1128,7 @@ func (s3a *S3ApiServer) checkConditionalHeaders(r *http.Request, bucket, object 
 func (s3a *S3ApiServer) getObjectETag(entry *filer_pb.Entry) string {
 	// Try to get ETag from Extended attributes first
 	if etagBytes, hasETag := entry.Extended[s3_constants.ExtETagKey]; hasETag {
-		return strings.Trim(string(etagBytes), `"`)
+		return string(etagBytes)
 	}
 	// Fallback: calculate ETag from chunks
 	return s3a.calculateETagFromChunks(entry.Chunks)
