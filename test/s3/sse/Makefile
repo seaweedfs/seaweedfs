@@ -362,17 +362,20 @@ start-seaweedfs-ci: check-binary
 	@nohup $(SEAWEEDFS_BINARY) volume -port=$(VOLUME_PORT) -mserver=127.0.0.1:$(MASTER_PORT) -dir=/tmp/seaweedfs-test-sse-volume -max=$(VOLUME_MAX_COUNT) -ip=127.0.0.1 > /tmp/seaweedfs-sse-volume.log 2>&1 &
 	@sleep 5
 	
-	# Start filer server (using standard SeaweedFS gRPC port convention: HTTP port + 10000)
-	@echo "Starting filer server..."
-	@nohup $(SEAWEEDFS_BINARY) filer -port=$(FILER_PORT) -port.grpc=$$(( $(FILER_PORT) + 10000 )) -master=127.0.0.1:$(MASTER_PORT) -dataCenter=defaultDataCenter -ip=127.0.0.1 > /tmp/seaweedfs-sse-filer.log 2>&1 &
-	@sleep 3
+	# Create S3 TOML configuration with KMS (Local provider) for embedded S3
+	@{ \
+		echo "[kms]"; \
+		echo "default_provider = \"local-dev\""; \
+		echo ""; \
+		echo "[kms.providers.local-dev]"; \
+		echo "type = \"local\""; \
+		echo "# WARNING: Only for tests"; \
+		echo "enableOnDemandCreate = true"; \
+	} > /tmp/seaweedfs-s3.toml
 	
-	# Create S3 configuration with SSE-KMS support
-	@printf '{"identities":[{"name":"%s","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","Write"]}],"kms":{"type":"%s","configs":{"keyId":"%s","encryptionContext":{},"bucketKey":false}}}' "$(ACCESS_KEY)" "$(ACCESS_KEY)" "$(SECRET_KEY)" "$(KMS_TYPE)" "$(KMS_KEY_ID)" > /tmp/seaweedfs-sse-s3.json
-	
-	# Start S3 server with KMS configuration
-	@echo "Starting S3 server..."
-	@nohup $(SEAWEEDFS_BINARY) s3 -port=$(S3_PORT) -filer=127.0.0.1:$(FILER_PORT) -config=/tmp/seaweedfs-sse-s3.json -ip.bind=127.0.0.1 > /tmp/seaweedfs-sse-s3.log 2>&1 &
+	# Start filer server with embedded S3 using the TOML config
+	@echo "Starting filer server with embedded S3..."
+	@AWS_ACCESS_KEY_ID=$(ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) nohup $(SEAWEEDFS_BINARY) filer -port=$(FILER_PORT) -port.grpc=$$(( $(FILER_PORT) + 10000 )) -master=127.0.0.1:$(MASTER_PORT) -dataCenter=defaultDataCenter -ip=127.0.0.1 -s3 -s3.port=$(S3_PORT) -s3.config=/tmp/seaweedfs-s3.toml > /tmp/seaweedfs-sse-filer.log 2>&1 &
 	@sleep 5
 	
 	# Wait for S3 service to be ready - use port-based checking for reliability
@@ -391,13 +394,12 @@ start-seaweedfs-ci: check-binary
 			echo "Master log:"; tail -30 /tmp/seaweedfs-sse-master.log || true; \
 			echo "Volume log:"; tail -30 /tmp/seaweedfs-sse-volume.log || true; \
 			echo "Filer log:"; tail -30 /tmp/seaweedfs-sse-filer.log || true; \
-			echo "S3 log:"; tail -30 /tmp/seaweedfs-sse-s3.log || true; \
 			echo "=== Port Status ==="; \
 			netstat -an 2>/dev/null | grep ":$(S3_PORT)" || \
 			ss -an 2>/dev/null | grep ":$(S3_PORT)" || \
 			echo "No port listening on $(S3_PORT)"; \
 			echo "=== Process Status ==="; \
-			ps aux | grep -E "weed.*s3.*$(S3_PORT)" | grep -v grep || echo "No S3 process found"; \
+			ps aux | grep -E "weed.*(filer|s3).*$(S3_PORT)" | grep -v grep || echo "No S3 process found"; \
 			exit 1; \
 		fi; \
 		echo "Waiting for S3 service... ($$i/20)"; \
