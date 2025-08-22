@@ -46,6 +46,12 @@ var (
 	ErrDefaultRetentionYearsOutOfRange       = errors.New("default retention years must be between 0 and 100")
 )
 
+// hasExplicitEncryption checks if any explicit encryption was provided in the request.
+// This helper improves readability and makes the encryption check condition more explicit.
+func hasExplicitEncryption(customerKey *SSECustomerKey, sseKMSKey *SSEKMSKey, sseS3Key *SSES3Key) bool {
+	return customerKey != nil || sseKMSKey != nil || sseS3Key != nil
+}
+
 // BucketDefaultEncryptionResult holds the result of bucket default encryption processing
 type BucketDefaultEncryptionResult struct {
 	DataReader io.Reader
@@ -224,7 +230,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 
 	// Apply bucket default encryption if no explicit encryption was provided
 	// This implements AWS S3 behavior where bucket default encryption automatically applies
-	if customerKey == nil && sseKMSKey == nil && sseS3Key == nil {
+	if !hasExplicitEncryption(customerKey, sseKMSKey, sseS3Key) {
 		glog.V(4).Infof("putToFiler: no explicit encryption detected, checking for bucket default encryption")
 
 		// Apply bucket default encryption and get the result
