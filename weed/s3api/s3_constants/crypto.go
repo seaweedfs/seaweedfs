@@ -25,5 +25,5 @@ const (
 
 	// KMS validation limits based on AWS KMS service constraints
 	MaxKMSEncryptionContextPairs = 10  // Maximum number of encryption context key-value pairs
-	MaxKMSKeyIDLength           = 500  // Maximum length for KMS key identifiers
+	MaxKMSKeyIDLength            = 500 // Maximum length for KMS key identifiers
 )

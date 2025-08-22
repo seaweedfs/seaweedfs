@@ -212,7 +212,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	if sseErrorCode != s3err.ErrNone {
 		return "", sseErrorCode, ""
 	}
-	
+
 	// Extract results from unified SSE handling
 	dataReader = sseResult.DataReader
 	customerKey := sseResult.CustomerKey
@@ -226,19 +226,19 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	// This implements AWS S3 behavior where bucket default encryption automatically applies
 	if customerKey == nil && sseKMSKey == nil && sseS3Key == nil {
 		glog.V(4).Infof("putToFiler: no explicit encryption detected, checking for bucket default encryption")
-		
+
 		// Apply bucket default encryption and get the result
 		encryptionResult, applyErr := s3a.applyBucketDefaultEncryption(bucket, r, dataReader)
 		if applyErr != nil {
 			glog.Errorf("Failed to apply bucket default encryption: %v", applyErr)
 			return "", s3err.ErrInternalError, ""
 		}
-		
+
 		// Update variables based on the result
 		dataReader = encryptionResult.DataReader
 		sseS3Key = encryptionResult.SSES3Key
 		sseKMSKey = encryptionResult.SSEKMSKey
-		
+
 		// If SSE-S3 was applied by bucket default, prepare metadata (if not already done)
 		if sseS3Key != nil && len(sseS3Metadata) == 0 {
 			var metaErr error
@@ -745,7 +745,7 @@ func (s3a *S3ApiServer) applySSES3DefaultEncryption(dataReader io.Reader) (*Buck
 	if encErr != nil {
 		return nil, fmt.Errorf("failed to create SSE-S3 encrypted reader for default encryption: %v", encErr)
 	}
-	
+
 	// Store IV on the key object for later decryption
 	key.IV = iv
 
