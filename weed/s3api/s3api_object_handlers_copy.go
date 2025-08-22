@@ -2177,33 +2177,24 @@ func shouldSkipEncryptionHeader(headerKey string,
 	dstSSEC, dstSSEKMS, dstSSES3 bool) bool {
 
 	// Define header type groups for easier management
-	// First, identify shared headers that are used by multiple SSE types
-	isSharedSSEHeader := headerKey == s3_constants.AmzServerSideEncryption
-	
-	// SSE-C specific headers
-	isSSECOnlyHeader := headerKey == s3_constants.AmzServerSideEncryptionCustomerAlgorithm ||
+	isSSECHeader := headerKey == s3_constants.AmzServerSideEncryptionCustomerAlgorithm ||
 		headerKey == s3_constants.AmzServerSideEncryptionCustomerKeyMD5 ||
 		headerKey == s3_constants.SeaweedFSSSEIV
-
-	// SSE-KMS specific headers (excluding shared headers)
-	isSSEKMSOnlyHeader := headerKey == s3_constants.AmzServerSideEncryptionAwsKmsKeyId ||
+	
+	isSSEKMSHeader := (headerKey == s3_constants.AmzServerSideEncryption && (srcSSEKMS || dstSSEKMS)) ||
+		headerKey == s3_constants.AmzServerSideEncryptionAwsKmsKeyId ||
 		headerKey == s3_constants.SeaweedFSSSEKMSKey ||
 		headerKey == s3_constants.SeaweedFSSSEKMSKeyID ||
 		headerKey == s3_constants.SeaweedFSSSEKMSEncryption ||
 		headerKey == s3_constants.SeaweedFSSSEKMSBucketKeyEnabled ||
 		headerKey == s3_constants.SeaweedFSSSEKMSEncryptionContext ||
 		headerKey == s3_constants.SeaweedFSSSEKMSBaseIV
-
-	// SSE-S3 specific headers (excluding shared headers)  
-	isSSES3OnlyHeader := headerKey == s3_constants.SeaweedFSSSES3Key ||
+	
+	isSSES3Header := (headerKey == s3_constants.AmzServerSideEncryption && (srcSSES3 || dstSSES3)) ||
+		headerKey == s3_constants.SeaweedFSSSES3Key ||
 		headerKey == s3_constants.SeaweedFSSSES3Encryption ||
 		headerKey == s3_constants.SeaweedFSSSES3BaseIV ||
 		headerKey == s3_constants.SeaweedFSSSES3KeyData
-	
-	// Convenience groupings for backward compatibility and cleaner logic
-	isSSECHeader := isSSECOnlyHeader
-	isSSEKMSHeader := isSSEKMSOnlyHeader || (isSharedSSEHeader && (srcSSEKMS || dstSSEKMS))
-	isSSES3Header := isSSES3OnlyHeader || (isSharedSSEHeader && (srcSSES3 || dstSSES3))
 
 	// If it's not an encryption header, don't skip it
 	if !isSSECHeader && !isSSEKMSHeader && !isSSES3Header {
