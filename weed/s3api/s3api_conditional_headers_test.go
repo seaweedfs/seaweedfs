@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"bytes"
+	"fmt"
 	"net/http"
 	"net/url"
 	"testing"
@@ -222,6 +223,232 @@ func TestConditionalHeadersWithExistingObjects(t *testing.T) {
 			}
 		})
 	})
+}
+
+// TestConditionalHeadersForReads tests conditional headers for read operations (GET, HEAD)
+// This implements AWS S3 conditional reads behavior where different conditions return different status codes
+// See: https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-reads.html
+func TestConditionalHeadersForReads(t *testing.T) {
+	bucket := "test-bucket"
+	object := "/test-read-object"
+
+	// Mock existing object to test conditional headers against
+	existingObject := &filer_pb.Entry{
+		Name: "test-read-object",
+		Extended: map[string][]byte{
+			s3_constants.ExtETagKey: []byte("\"read123\""),
+		},
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime:    time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC).Unix(),
+			FileSize: 1024,
+		},
+		Chunks: []*filer_pb.FileChunk{
+			{
+				FileId: "read-file-id",
+				Offset: 0,
+				Size:   1024,
+			},
+		},
+	}
+
+	// Test conditional reads with existing object
+	t.Run("ConditionalReads_ObjectExists", func(t *testing.T) {
+		// Test If-None-Match with existing object (should return 304 Not Modified)
+		t.Run("IfNoneMatch_ObjectExists_ShouldReturn304", func(t *testing.T) {
+			s3a := createMockS3ServerWithObject(existingObject)
+
+			req := createTestGetRequest(bucket, object)
+			req.Header.Set(s3_constants.IfNoneMatch, "\"read123\"")
+
+			errCode := s3a.checkConditionalHeadersForReads(req, bucket, object)
+			if errCode != s3err.ErrNotModified {
+				t.Errorf("Expected ErrNotModified when If-None-Match matches, got %v", errCode)
+			}
+		})
+
+		// Test If-None-Match=* with existing object (should return 304 Not Modified)
+		t.Run("IfNoneMatchAsterisk_ObjectExists_ShouldReturn304", func(t *testing.T) {
+			s3a := createMockS3ServerWithObject(existingObject)
+
+			req := createTestGetRequest(bucket, object)
+			req.Header.Set(s3_constants.IfNoneMatch, "*")
+
+			errCode := s3a.checkConditionalHeadersForReads(req, bucket, object)
+			if errCode != s3err.ErrNotModified {
+				t.Errorf("Expected ErrNotModified when If-None-Match=* with existing object, got %v", errCode)
+			}
+		})
+
+		// Test If-None-Match with non-matching ETag (should succeed)
+		t.Run("IfNoneMatch_NonMatchingETag_ShouldSucceed", func(t *testing.T) {
+			s3a := createMockS3ServerWithObject(existingObject)
+
+			req := createTestGetRequest(bucket, object)
+			req.Header.Set(s3_constants.IfNoneMatch, "\"different-etag\"")
+
+			errCode := s3a.checkConditionalHeadersForReads(req, bucket, object)
+			if errCode != s3err.ErrNone {
+				t.Errorf("Expected ErrNone when If-None-Match doesn't match, got %v", errCode)
+			}
+		})
+
+		// Test If-Match with matching ETag (should succeed)
+		t.Run("IfMatch_MatchingETag_ShouldSucceed", func(t *testing.T) {
+			s3a := createMockS3ServerWithObject(existingObject)
+
+			req := createTestGetRequest(bucket, object)
+			req.Header.Set(s3_constants.IfMatch, "\"read123\"")
+
+			errCode := s3a.checkConditionalHeadersForReads(req, bucket, object)
+			if errCode != s3err.ErrNone {
+				t.Errorf("Expected ErrNone when If-Match matches, got %v", errCode)
+			}
+		})
+
+		// Test If-Match with non-matching ETag (should return 412 Precondition Failed)
+		t.Run("IfMatch_NonMatchingETag_ShouldReturn412", func(t *testing.T) {
+			s3a := createMockS3ServerWithObject(existingObject)
+
+			req := createTestGetRequest(bucket, object)
+			req.Header.Set(s3_constants.IfMatch, "\"different-etag\"")
+
+			errCode := s3a.checkConditionalHeadersForReads(req, bucket, object)
+			if errCode != s3err.ErrPreconditionFailed {
+				t.Errorf("Expected ErrPreconditionFailed when If-Match doesn't match, got %v", errCode)
+			}
+		})
+
+		// Test If-Match=* with existing object (should succeed)
+		t.Run("IfMatchAsterisk_ObjectExists_ShouldSucceed", func(t *testing.T) {
+			s3a := createMockS3ServerWithObject(existingObject)
+
+			req := createTestGetRequest(bucket, object)
+			req.Header.Set(s3_constants.IfMatch, "*")
+
+			errCode := s3a.checkConditionalHeadersForReads(req, bucket, object)
+			if errCode != s3err.ErrNone {
+				t.Errorf("Expected ErrNone when If-Match=* with existing object, got %v", errCode)
+			}
+		})
+
+		// Test If-Modified-Since (object modified after date - should succeed)
+		t.Run("IfModifiedSince_ObjectModifiedAfter_ShouldSucceed", func(t *testing.T) {
+			s3a := createMockS3ServerWithObject(existingObject)
+
+			req := createTestGetRequest(bucket, object)
+			req.Header.Set(s3_constants.IfModifiedSince, "Sat, 14 Jun 2024 12:00:00 GMT") // Before object mtime
+
+			errCode := s3a.checkConditionalHeadersForReads(req, bucket, object)
+			if errCode != s3err.ErrNone {
+				t.Errorf("Expected ErrNone when object modified after If-Modified-Since date, got %v", errCode)
+			}
+		})
+
+		// Test If-Modified-Since (object not modified since date - should return 304)
+		t.Run("IfModifiedSince_ObjectNotModified_ShouldReturn304", func(t *testing.T) {
+			s3a := createMockS3ServerWithObject(existingObject)
+
+			req := createTestGetRequest(bucket, object)
+			req.Header.Set(s3_constants.IfModifiedSince, "Sun, 16 Jun 2024 12:00:00 GMT") // After object mtime
+
+			errCode := s3a.checkConditionalHeadersForReads(req, bucket, object)
+			if errCode != s3err.ErrNotModified {
+				t.Errorf("Expected ErrNotModified when object not modified since If-Modified-Since date, got %v", errCode)
+			}
+		})
+
+		// Test If-Unmodified-Since (object not modified since date - should succeed)
+		t.Run("IfUnmodifiedSince_ObjectNotModified_ShouldSucceed", func(t *testing.T) {
+			s3a := createMockS3ServerWithObject(existingObject)
+
+			req := createTestGetRequest(bucket, object)
+			req.Header.Set(s3_constants.IfUnmodifiedSince, "Sun, 16 Jun 2024 12:00:00 GMT") // After object mtime
+
+			errCode := s3a.checkConditionalHeadersForReads(req, bucket, object)
+			if errCode != s3err.ErrNone {
+				t.Errorf("Expected ErrNone when object not modified since If-Unmodified-Since date, got %v", errCode)
+			}
+		})
+
+		// Test If-Unmodified-Since (object modified since date - should return 412)
+		t.Run("IfUnmodifiedSince_ObjectModified_ShouldReturn412", func(t *testing.T) {
+			s3a := createMockS3ServerWithObject(existingObject)
+
+			req := createTestGetRequest(bucket, object)
+			req.Header.Set(s3_constants.IfUnmodifiedSince, "Fri, 14 Jun 2024 12:00:00 GMT") // Before object mtime
+
+			errCode := s3a.checkConditionalHeadersForReads(req, bucket, object)
+			if errCode != s3err.ErrPreconditionFailed {
+				t.Errorf("Expected ErrPreconditionFailed when object modified since If-Unmodified-Since date, got %v", errCode)
+			}
+		})
+	})
+
+	// Test conditional reads with non-existent object
+	t.Run("ConditionalReads_ObjectNotExists", func(t *testing.T) {
+		// Test If-None-Match with non-existent object (should succeed)
+		t.Run("IfNoneMatch_ObjectNotExists_ShouldSucceed", func(t *testing.T) {
+			s3a := createMockS3ServerWithObject(nil) // No object
+
+			req := createTestGetRequest(bucket, object)
+			req.Header.Set(s3_constants.IfNoneMatch, "\"any-etag\"")
+
+			errCode := s3a.checkConditionalHeadersForReads(req, bucket, object)
+			if errCode != s3err.ErrNone {
+				t.Errorf("Expected ErrNone when object doesn't exist with If-None-Match, got %v", errCode)
+			}
+		})
+
+		// Test If-Match with non-existent object (should return 412)
+		t.Run("IfMatch_ObjectNotExists_ShouldReturn412", func(t *testing.T) {
+			s3a := createMockS3ServerWithObject(nil) // No object
+
+			req := createTestGetRequest(bucket, object)
+			req.Header.Set(s3_constants.IfMatch, "\"any-etag\"")
+
+			errCode := s3a.checkConditionalHeadersForReads(req, bucket, object)
+			if errCode != s3err.ErrPreconditionFailed {
+				t.Errorf("Expected ErrPreconditionFailed when object doesn't exist with If-Match, got %v", errCode)
+			}
+		})
+
+		// Test If-Modified-Since with non-existent object (should succeed)
+		t.Run("IfModifiedSince_ObjectNotExists_ShouldSucceed", func(t *testing.T) {
+			s3a := createMockS3ServerWithObject(nil) // No object
+
+			req := createTestGetRequest(bucket, object)
+			req.Header.Set(s3_constants.IfModifiedSince, "Sat, 15 Jun 2024 12:00:00 GMT")
+
+			errCode := s3a.checkConditionalHeadersForReads(req, bucket, object)
+			if errCode != s3err.ErrNone {
+				t.Errorf("Expected ErrNone when object doesn't exist with If-Modified-Since, got %v", errCode)
+			}
+		})
+
+		// Test If-Unmodified-Since with non-existent object (should return 412)
+		t.Run("IfUnmodifiedSince_ObjectNotExists_ShouldReturn412", func(t *testing.T) {
+			s3a := createMockS3ServerWithObject(nil) // No object
+
+			req := createTestGetRequest(bucket, object)
+			req.Header.Set(s3_constants.IfUnmodifiedSince, "Sat, 15 Jun 2024 12:00:00 GMT")
+
+			errCode := s3a.checkConditionalHeadersForReads(req, bucket, object)
+			if errCode != s3err.ErrPreconditionFailed {
+				t.Errorf("Expected ErrPreconditionFailed when object doesn't exist with If-Unmodified-Since, got %v", errCode)
+			}
+		})
+	})
+}
+
+// Helper function to create a GET request for testing
+func createTestGetRequest(bucket, object string) *http.Request {
+	return &http.Request{
+		Method: "GET",
+		Header: make(http.Header),
+		URL: &url.URL{
+			Path: fmt.Sprintf("/%s%s", bucket, object),
+		},
+	}
 }
 
 // TestConditionalHeadersWithNonExistentObjects tests the original scenarios (object doesn't exist)
@@ -607,6 +834,98 @@ func (mock *MockS3ApiServer) checkConditionalHeaders(r *http.Request, bucket, ob
 			if !objectModTime.After(modTime) {
 				return s3err.ErrPreconditionFailed
 			}
+		}
+	}
+
+	return s3err.ErrNone
+}
+
+// checkConditionalHeadersForReads - EXACT COPY of corrected production code for read operations
+func (mock *MockS3ApiServer) checkConditionalHeadersForReads(r *http.Request, bucket, object string) s3err.ErrorCode {
+	ifMatch := r.Header.Get(s3_constants.IfMatch)
+	ifNoneMatch := r.Header.Get(s3_constants.IfNoneMatch)
+	ifModifiedSince := r.Header.Get(s3_constants.IfModifiedSince)
+	ifUnmodifiedSince := r.Header.Get(s3_constants.IfUnmodifiedSince)
+
+	// If no conditional headers are present, proceed.
+	if ifMatch == "" && ifNoneMatch == "" && ifModifiedSince == "" && ifUnmodifiedSince == "" {
+		return s3err.ErrNone
+	}
+
+	// Validate date formats first, even if the object doesn't exist.
+	var modTime, unmodTime time.Time
+	var err error
+
+	if ifModifiedSince != "" {
+		modTime, err = time.Parse(time.RFC1123, ifModifiedSince)
+		if err != nil {
+			return s3err.ErrInvalidRequest
+		}
+	}
+
+	if ifUnmodifiedSince != "" {
+		unmodTime, err = time.Parse(time.RFC1123, ifUnmodifiedSince)
+		if err != nil {
+			return s3err.ErrInvalidRequest
+		}
+	}
+
+	// Get object entry for conditional checks.
+	bucketDir := mock.option.BucketsPath + "/" + bucket
+	entry, entryErr := mock.getEntry(bucketDir, object)
+	objectExists := entryErr == nil
+
+	// If object doesn't exist, fail for If-Match and If-Unmodified-Since
+	if !objectExists {
+		if ifMatch != "" {
+			return s3err.ErrPreconditionFailed
+		}
+		if ifUnmodifiedSince != "" {
+			return s3err.ErrPreconditionFailed
+		}
+		// If-None-Match and If-Modified-Since succeed when object doesn't exist
+		return s3err.ErrNone
+	}
+
+	// Object exists - check all conditions
+	// The evaluation order follows AWS S3 behavior for consistency.
+
+	// 1. Check If-Match (412 Precondition Failed if fails)
+	if ifMatch != "" {
+		// If `ifMatch` is "*", the condition is met if the object exists.
+		// Otherwise, we need to check the ETag.
+		if ifMatch != "*" {
+			objectETag := mock.getObjectETag(entry)
+			if !mock.etagMatches(ifMatch, objectETag) {
+				return s3err.ErrPreconditionFailed
+			}
+		}
+	}
+
+	// 2. Check If-Unmodified-Since (412 Precondition Failed if fails)
+	if ifUnmodifiedSince != "" {
+		objectModTime := time.Unix(entry.Attributes.Mtime, 0)
+		if objectModTime.After(unmodTime) {
+			return s3err.ErrPreconditionFailed
+		}
+	}
+
+	// 3. Check If-None-Match (304 Not Modified if fails)
+	if ifNoneMatch != "" {
+		if ifNoneMatch == "*" {
+			return s3err.ErrNotModified
+		}
+		objectETag := mock.getObjectETag(entry)
+		if mock.etagMatches(ifNoneMatch, objectETag) {
+			return s3err.ErrNotModified
+		}
+	}
+
+	// 4. Check If-Modified-Since (304 Not Modified if fails)
+	if ifModifiedSince != "" {
+		objectModTime := time.Unix(entry.Attributes.Mtime, 0)
+		if !objectModTime.After(modTime) {
+			return s3err.ErrNotModified
 		}
 	}
 

@@ -1124,6 +1124,113 @@ func (s3a *S3ApiServer) checkConditionalHeaders(r *http.Request, bucket, object 
 	return s3err.ErrNone
 }
 
+// checkConditionalHeadersForReads checks conditional headers for read operations (GET, HEAD)
+// Implements AWS S3 behavior where different conditions return different status codes
+// See: https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-reads.html
+func (s3a *S3ApiServer) checkConditionalHeadersForReads(r *http.Request, bucket, object string) s3err.ErrorCode {
+	ifMatch := r.Header.Get(s3_constants.IfMatch)
+	ifNoneMatch := r.Header.Get(s3_constants.IfNoneMatch)
+	ifModifiedSince := r.Header.Get(s3_constants.IfModifiedSince)
+	ifUnmodifiedSince := r.Header.Get(s3_constants.IfUnmodifiedSince)
+
+	// If no conditional headers are present, proceed.
+	if ifMatch == "" && ifNoneMatch == "" && ifModifiedSince == "" && ifUnmodifiedSince == "" {
+		return s3err.ErrNone
+	}
+
+	// Validate date formats first, even if the object doesn't exist.
+	var modTime, unmodTime time.Time
+	var err error
+
+	if ifModifiedSince != "" {
+		modTime, err = time.Parse(time.RFC1123, ifModifiedSince)
+		if err != nil {
+			glog.V(3).Infof("checkConditionalHeadersForReads: Invalid If-Modified-Since format: %v", err)
+			return s3err.ErrInvalidRequest
+		}
+	}
+
+	if ifUnmodifiedSince != "" {
+		unmodTime, err = time.Parse(time.RFC1123, ifUnmodifiedSince)
+		if err != nil {
+			glog.V(3).Infof("checkConditionalHeadersForReads: Invalid If-Unmodified-Since format: %v", err)
+			return s3err.ErrInvalidRequest
+		}
+	}
+
+	// Get object entry for conditional checks.
+	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	entry, entryErr := s3a.getEntry(bucketDir, object)
+	objectExists := entryErr == nil
+
+	// If object doesn't exist, fail for If-Match and If-Unmodified-Since
+	if !objectExists {
+		if ifMatch != "" {
+			glog.V(3).Infof("checkConditionalHeadersForReads: If-Match failed - object %s/%s does not exist", bucket, object)
+			return s3err.ErrPreconditionFailed
+		}
+		if ifUnmodifiedSince != "" {
+			glog.V(3).Infof("checkConditionalHeadersForReads: If-Unmodified-Since failed - object %s/%s does not exist", bucket, object)
+			return s3err.ErrPreconditionFailed
+		}
+		// If-None-Match and If-Modified-Since succeed when object doesn't exist
+		return s3err.ErrNone
+	}
+
+	// Object exists - check all conditions
+	// The evaluation order follows AWS S3 behavior for consistency.
+
+	// 1. Check If-Match (412 Precondition Failed if fails)
+	if ifMatch != "" {
+		// If `ifMatch` is "*", the condition is met if the object exists.
+		// Otherwise, we need to check the ETag.
+		if ifMatch != "*" {
+			objectETag := s3a.getObjectETag(entry)
+			if !s3a.etagMatches(ifMatch, objectETag) {
+				glog.V(3).Infof("checkConditionalHeadersForReads: If-Match failed for object %s/%s - expected ETag %s, got %s", bucket, object, ifMatch, objectETag)
+				return s3err.ErrPreconditionFailed
+			}
+		}
+		glog.V(3).Infof("checkConditionalHeadersForReads: If-Match passed for object %s/%s", bucket, object)
+	}
+
+	// 2. Check If-Unmodified-Since (412 Precondition Failed if fails)
+	if ifUnmodifiedSince != "" {
+		objectModTime := time.Unix(entry.Attributes.Mtime, 0)
+		if objectModTime.After(unmodTime) {
+			glog.V(3).Infof("checkConditionalHeadersForReads: If-Unmodified-Since failed - object modified after %s", ifUnmodifiedSince)
+			return s3err.ErrPreconditionFailed
+		}
+		glog.V(3).Infof("checkConditionalHeadersForReads: If-Unmodified-Since passed - object not modified since %s", ifUnmodifiedSince)
+	}
+
+	// 3. Check If-None-Match (304 Not Modified if fails)
+	if ifNoneMatch != "" {
+		if ifNoneMatch == "*" {
+			glog.V(3).Infof("checkConditionalHeadersForReads: If-None-Match=* failed - object %s/%s exists", bucket, object)
+			return s3err.ErrNotModified
+		}
+		objectETag := s3a.getObjectETag(entry)
+		if s3a.etagMatches(ifNoneMatch, objectETag) {
+			glog.V(3).Infof("checkConditionalHeadersForReads: If-None-Match failed - ETag matches %s", objectETag)
+			return s3err.ErrNotModified
+		}
+		glog.V(3).Infof("checkConditionalHeadersForReads: If-None-Match passed - ETag %s doesn't match %s", objectETag, ifNoneMatch)
+	}
+
+	// 4. Check If-Modified-Since (304 Not Modified if fails)
+	if ifModifiedSince != "" {
+		objectModTime := time.Unix(entry.Attributes.Mtime, 0)
+		if !objectModTime.After(modTime) {
+			glog.V(3).Infof("checkConditionalHeadersForReads: If-Modified-Since failed - object not modified since %s", ifModifiedSince)
+			return s3err.ErrNotModified
+		}
+		glog.V(3).Infof("checkConditionalHeadersForReads: If-Modified-Since passed - object modified after %s", ifModifiedSince)
+	}
+
+	return s3err.ErrNone
+}
+
 // getObjectETag retrieves the ETag for an object entry
 func (s3a *S3ApiServer) getObjectETag(entry *filer_pb.Entry) string {
 	// Try to get ETag from Extended attributes first

@@ -246,6 +246,13 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		return // Directory object request was handled
 	}
 
+	// Check conditional headers for read operations
+	if errCode := s3a.checkConditionalHeadersForReads(r, bucket, object); errCode != s3err.ErrNone {
+		glog.V(3).Infof("GetObjectHandler: Conditional header check failed for %s/%s with error %v", bucket, object, errCode)
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
 	// Check for specific version ID in query parameters
 	versionId := r.URL.Query().Get("versionId")
 
@@ -376,6 +383,13 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	// Handle directory objects with shared logic
 	if s3a.handleDirectoryObjectRequest(w, r, bucket, object, "HeadObjectHandler") {
 		return // Directory object request was handled
+	}
+
+	// Check conditional headers for read operations
+	if errCode := s3a.checkConditionalHeadersForReads(r, bucket, object); errCode != s3err.ErrNone {
+		glog.V(3).Infof("HeadObjectHandler: Conditional header check failed for %s/%s with error %v", bucket, object, errCode)
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
 	}
 
 	// Check for specific version ID in query parameters
