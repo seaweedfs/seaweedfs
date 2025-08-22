@@ -1,3 +1,5 @@
+//go:build azurekms
+
 package azure
 
 import (
