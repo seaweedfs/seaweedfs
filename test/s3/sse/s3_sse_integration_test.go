@@ -1855,3 +1855,413 @@ func TestCrossSSECopy(t *testing.T) {
 		assertDataEqual(t, testData, downloadedData)
 	})
 }
+
+// REGRESSION TESTS FOR CRITICAL BUGS FIXED
+// These tests specifically target the IV storage bugs that were fixed
+
+// TestSSES3IVStorageRegression tests that IVs are properly stored for explicit SSE-S3 uploads
+// This test would have caught the critical bug where IVs were discarded in putToFiler
+func TestSSES3IVStorageRegression(t *testing.T) {
+	ctx := context.Background()
+	client, err := createS3Client(ctx, defaultConfig)
+	require.NoError(t, err, "Failed to create S3 client")
+
+	bucketName, err := createTestBucket(ctx, client, "sse-s3-iv-regression")
+	require.NoError(t, err, "Failed to create test bucket")
+	defer cleanupTestBucket(ctx, client, bucketName)
+
+	t.Run("Explicit SSE-S3 IV Storage and Retrieval", func(t *testing.T) {
+		testData := []byte("This tests the critical IV storage bug that was fixed - the IV must be stored on the key object for decryption to work.")
+		objectKey := "explicit-sse-s3-iv-test.txt"
+
+		// Upload with explicit SSE-S3 header (this used to discard the IV)
+		putResp, err := client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket:               aws.String(bucketName),
+			Key:                  aws.String(objectKey),
+			Body:                 bytes.NewReader(testData),
+			ServerSideEncryption: types.ServerSideEncryptionAes256,
+		})
+		require.NoError(t, err, "Failed to upload explicit SSE-S3 object")
+
+		// Verify PUT response has SSE-S3 headers
+		assert.Equal(t, types.ServerSideEncryptionAes256, putResp.ServerSideEncryption, "PUT response should indicate SSE-S3")
+
+		// Critical test: Download and decrypt the object
+		// This would have FAILED with the original bug because IV was discarded
+		getResp, err := client.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(objectKey),
+		})
+		require.NoError(t, err, "Failed to download explicit SSE-S3 object")
+
+		// Verify GET response has SSE-S3 headers
+		assert.Equal(t, types.ServerSideEncryptionAes256, getResp.ServerSideEncryption, "GET response should indicate SSE-S3")
+
+		// This is the critical test - verify data can be decrypted correctly
+		downloadedData, err := io.ReadAll(getResp.Body)
+		require.NoError(t, err, "Failed to read decrypted data")
+		getResp.Body.Close()
+
+		// This assertion would have FAILED with the original bug
+		assertDataEqual(t, testData, downloadedData, "CRITICAL: Decryption failed - IV was not stored properly")
+	})
+
+	t.Run("Multiple Explicit SSE-S3 Objects", func(t *testing.T) {
+		// Test multiple objects to ensure each gets its own unique IV
+		numObjects := 5
+		testDataSet := make([][]byte, numObjects)
+		objectKeys := make([]string, numObjects)
+
+		// Upload multiple objects with explicit SSE-S3
+		for i := 0; i < numObjects; i++ {
+			testDataSet[i] = []byte(fmt.Sprintf("Test data for object %d - verifying unique IV storage", i))
+			objectKeys[i] = fmt.Sprintf("explicit-sse-s3-multi-%d.txt", i)
+
+			_, err := client.PutObject(ctx, &s3.PutObjectInput{
+				Bucket:               aws.String(bucketName),
+				Key:                  aws.String(objectKeys[i]),
+				Body:                 bytes.NewReader(testDataSet[i]),
+				ServerSideEncryption: types.ServerSideEncryptionAes256,
+			})
+			require.NoError(t, err, "Failed to upload explicit SSE-S3 object %d", i)
+		}
+
+		// Download and verify each object decrypts correctly
+		for i := 0; i < numObjects; i++ {
+			getResp, err := client.GetObject(ctx, &s3.GetObjectInput{
+				Bucket: aws.String(bucketName),
+				Key:    aws.String(objectKeys[i]),
+			})
+			require.NoError(t, err, "Failed to download explicit SSE-S3 object %d", i)
+
+			downloadedData, err := io.ReadAll(getResp.Body)
+			require.NoError(t, err, "Failed to read decrypted data for object %d", i)
+			getResp.Body.Close()
+
+			assertDataEqual(t, testDataSet[i], downloadedData, "Decryption failed for object %d - IV not unique/stored", i)
+		}
+	})
+}
+
+// TestSSES3BucketDefaultIVStorageRegression tests bucket default SSE-S3 IV storage
+// This test would have caught the critical bug where IVs were not stored on key objects in bucket defaults
+func TestSSES3BucketDefaultIVStorageRegression(t *testing.T) {
+	ctx := context.Background()
+	client, err := createS3Client(ctx, defaultConfig)
+	require.NoError(t, err, "Failed to create S3 client")
+
+	bucketName, err := createTestBucket(ctx, client, "sse-s3-default-iv-regression")
+	require.NoError(t, err, "Failed to create test bucket")
+	defer cleanupTestBucket(ctx, client, bucketName)
+
+	// Set bucket default encryption to SSE-S3
+	_, err = client.PutBucketEncryption(ctx, &s3.PutBucketEncryptionInput{
+		Bucket: aws.String(bucketName),
+		ServerSideEncryptionConfiguration: &types.ServerSideEncryptionConfiguration{
+			Rules: []types.ServerSideEncryptionRule{
+				{
+					ApplyServerSideEncryptionByDefault: &types.ServerSideEncryptionByDefault{
+						SSEAlgorithm: types.ServerSideEncryptionAes256,
+					},
+				},
+			},
+		},
+	})
+	require.NoError(t, err, "Failed to set bucket default SSE-S3 encryption")
+
+	t.Run("Bucket Default SSE-S3 IV Storage", func(t *testing.T) {
+		testData := []byte("This tests the bucket default SSE-S3 IV storage bug - IV must be stored on key object for decryption.")
+		objectKey := "bucket-default-sse-s3-iv-test.txt"
+
+		// Upload WITHOUT encryption headers - should use bucket default SSE-S3
+		// This used to fail because applySSES3DefaultEncryption didn't store IV on key
+		putResp, err := client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(objectKey),
+			Body:   bytes.NewReader(testData),
+			// No ServerSideEncryption specified - should use bucket default
+		})
+		require.NoError(t, err, "Failed to upload object for bucket default SSE-S3")
+
+		// Verify bucket default encryption was applied
+		assert.Equal(t, types.ServerSideEncryptionAes256, putResp.ServerSideEncryption, "PUT response should show bucket default SSE-S3")
+
+		// Critical test: Download and decrypt the object
+		// This would have FAILED with the original bug because IV wasn't stored on key object
+		getResp, err := client.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(objectKey),
+		})
+		require.NoError(t, err, "Failed to download bucket default SSE-S3 object")
+
+		// Verify GET response shows SSE-S3 was applied
+		assert.Equal(t, types.ServerSideEncryptionAes256, getResp.ServerSideEncryption, "GET response should show SSE-S3")
+
+		// This is the critical test - verify decryption works
+		downloadedData, err := io.ReadAll(getResp.Body)
+		require.NoError(t, err, "Failed to read decrypted data")
+		getResp.Body.Close()
+
+		// This assertion would have FAILED with the original bucket default bug
+		assertDataEqual(t, testData, downloadedData, "CRITICAL: Bucket default SSE-S3 decryption failed - IV not stored on key object")
+	})
+
+	t.Run("Multiple Bucket Default Objects", func(t *testing.T) {
+		// Test multiple objects with bucket default encryption
+		numObjects := 3
+		testDataSet := make([][]byte, numObjects)
+		objectKeys := make([]string, numObjects)
+
+		// Upload multiple objects without encryption headers
+		for i := 0; i < numObjects; i++ {
+			testDataSet[i] = []byte(fmt.Sprintf("Bucket default test data %d - verifying IV storage works", i))
+			objectKeys[i] = fmt.Sprintf("bucket-default-multi-%d.txt", i)
+
+			_, err := client.PutObject(ctx, &s3.PutObjectInput{
+				Bucket: aws.String(bucketName),
+				Key:    aws.String(objectKeys[i]),
+				Body:   bytes.NewReader(testDataSet[i]),
+				// No encryption headers - bucket default should apply
+			})
+			require.NoError(t, err, "Failed to upload bucket default object %d", i)
+		}
+
+		// Verify each object was encrypted and can be decrypted
+		for i := 0; i < numObjects; i++ {
+			getResp, err := client.GetObject(ctx, &s3.GetObjectInput{
+				Bucket: aws.String(bucketName),
+				Key:    aws.String(objectKeys[i]),
+			})
+			require.NoError(t, err, "Failed to download bucket default object %d", i)
+
+			// Verify SSE-S3 was applied by bucket default
+			assert.Equal(t, types.ServerSideEncryptionAes256, getResp.ServerSideEncryption, "Object %d should be SSE-S3 encrypted", i)
+
+			downloadedData, err := io.ReadAll(getResp.Body)
+			require.NoError(t, err, "Failed to read decrypted data for object %d", i)
+			getResp.Body.Close()
+
+			assertDataEqual(t, testDataSet[i], downloadedData, "Bucket default SSE-S3 decryption failed for object %d", i)
+		}
+	})
+}
+
+// TestSSES3EdgeCaseRegression tests edge cases that could cause IV storage issues
+func TestSSES3EdgeCaseRegression(t *testing.T) {
+	ctx := context.Background()
+	client, err := createS3Client(ctx, defaultConfig)
+	require.NoError(t, err, "Failed to create S3 client")
+
+	bucketName, err := createTestBucket(ctx, client, "sse-s3-edge-regression")
+	require.NoError(t, err, "Failed to create test bucket")
+	defer cleanupTestBucket(ctx, client, bucketName)
+
+	t.Run("Empty Object SSE-S3", func(t *testing.T) {
+		// Test edge case: empty objects with SSE-S3 (IV storage still required)
+		objectKey := "empty-sse-s3-object"
+
+		_, err := client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket:               aws.String(bucketName),
+			Key:                  aws.String(objectKey),
+			Body:                 bytes.NewReader([]byte{}),
+			ServerSideEncryption: types.ServerSideEncryptionAes256,
+		})
+		require.NoError(t, err, "Failed to upload empty SSE-S3 object")
+
+		// Verify empty object can be retrieved (IV must be stored even for empty objects)
+		getResp, err := client.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(objectKey),
+		})
+		require.NoError(t, err, "Failed to download empty SSE-S3 object")
+
+		downloadedData, err := io.ReadAll(getResp.Body)
+		require.NoError(t, err, "Failed to read empty decrypted data")
+		getResp.Body.Close()
+
+		assert.Equal(t, []byte{}, downloadedData, "Empty object content mismatch")
+		assert.Equal(t, types.ServerSideEncryptionAes256, getResp.ServerSideEncryption, "Empty object should be SSE-S3 encrypted")
+	})
+
+	t.Run("Large Object SSE-S3", func(t *testing.T) {
+		// Test large objects to ensure IV storage works for chunked uploads
+		largeData := generateTestData(1024 * 1024) // 1MB
+		objectKey := "large-sse-s3-object"
+
+		_, err := client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket:               aws.String(bucketName),
+			Key:                  aws.String(objectKey),
+			Body:                 bytes.NewReader(largeData),
+			ServerSideEncryption: types.ServerSideEncryptionAes256,
+		})
+		require.NoError(t, err, "Failed to upload large SSE-S3 object")
+
+		// Verify large object can be decrypted (IV must be stored properly)
+		getResp, err := client.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(objectKey),
+		})
+		require.NoError(t, err, "Failed to download large SSE-S3 object")
+
+		downloadedData, err := io.ReadAll(getResp.Body)
+		require.NoError(t, err, "Failed to read large decrypted data")
+		getResp.Body.Close()
+
+		assertDataEqual(t, largeData, downloadedData, "Large object decryption failed - IV storage issue")
+		assert.Equal(t, types.ServerSideEncryptionAes256, getResp.ServerSideEncryption, "Large object should be SSE-S3 encrypted")
+	})
+}
+
+// TestSSES3ErrorHandlingRegression tests error handling improvements that were added
+func TestSSES3ErrorHandlingRegression(t *testing.T) {
+	ctx := context.Background()
+	client, err := createS3Client(ctx, defaultConfig)
+	require.NoError(t, err, "Failed to create S3 client")
+
+	bucketName, err := createTestBucket(ctx, client, "sse-s3-error-regression")
+	require.NoError(t, err, "Failed to create test bucket")
+	defer cleanupTestBucket(ctx, client, bucketName)
+
+	t.Run("SSE-S3 With Other Valid Operations", func(t *testing.T) {
+		// Ensure SSE-S3 works with other S3 operations (metadata, tagging, etc.)
+		testData := []byte("Testing SSE-S3 with metadata and other operations")
+		objectKey := "sse-s3-with-metadata"
+
+		// Upload with SSE-S3 and metadata
+		_, err := client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket:               aws.String(bucketName),
+			Key:                  aws.String(objectKey),
+			Body:                 bytes.NewReader(testData),
+			ServerSideEncryption: types.ServerSideEncryptionAes256,
+			Metadata: map[string]string{
+				"test-key": "test-value",
+				"purpose":  "regression-test",
+			},
+		})
+		require.NoError(t, err, "Failed to upload SSE-S3 object with metadata")
+
+		// HEAD request to verify metadata and encryption
+		headResp, err := client.HeadObject(ctx, &s3.HeadObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(objectKey),
+		})
+		require.NoError(t, err, "Failed to HEAD SSE-S3 object")
+
+		assert.Equal(t, types.ServerSideEncryptionAes256, headResp.ServerSideEncryption, "HEAD should show SSE-S3")
+		assert.Equal(t, "test-value", headResp.Metadata["test-key"], "Metadata should be preserved")
+		assert.Equal(t, "regression-test", headResp.Metadata["purpose"], "Metadata should be preserved")
+
+		// GET to verify decryption still works with metadata
+		getResp, err := client.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(objectKey),
+		})
+		require.NoError(t, err, "Failed to GET SSE-S3 object")
+
+		downloadedData, err := io.ReadAll(getResp.Body)
+		require.NoError(t, err, "Failed to read decrypted data")
+		getResp.Body.Close()
+
+		assertDataEqual(t, testData, downloadedData, "SSE-S3 with metadata decryption failed")
+		assert.Equal(t, types.ServerSideEncryptionAes256, getResp.ServerSideEncryption, "GET should show SSE-S3")
+		assert.Equal(t, "test-value", getResp.Metadata["test-key"], "GET metadata should be preserved")
+	})
+}
+
+// TestSSES3FunctionalityCompletion tests that SSE-S3 feature is now fully functional
+func TestSSES3FunctionalityCompletion(t *testing.T) {
+	ctx := context.Background()
+	client, err := createS3Client(ctx, defaultConfig)
+	require.NoError(t, err, "Failed to create S3 client")
+
+	bucketName, err := createTestBucket(ctx, client, "sse-s3-completion")
+	require.NoError(t, err, "Failed to create test bucket")
+	defer cleanupTestBucket(ctx, client, bucketName)
+
+	t.Run("All SSE-S3 Scenarios Work", func(t *testing.T) {
+		scenarios := []struct {
+			name        string
+			setupBucket func() error
+			encryption  *types.ServerSideEncryption
+			expectSSES3 bool
+		}{
+			{
+				name:        "Explicit SSE-S3 Header",
+				setupBucket: func() error { return nil },
+				encryption:  &[]types.ServerSideEncryption{types.ServerSideEncryptionAes256}[0],
+				expectSSES3: true,
+			},
+			{
+				name: "Bucket Default SSE-S3",
+				setupBucket: func() error {
+					_, err := client.PutBucketEncryption(ctx, &s3.PutBucketEncryptionInput{
+						Bucket: aws.String(bucketName),
+						ServerSideEncryptionConfiguration: &types.ServerSideEncryptionConfiguration{
+							Rules: []types.ServerSideEncryptionRule{
+								{
+									ApplyServerSideEncryptionByDefault: &types.ServerSideEncryptionByDefault{
+										SSEAlgorithm: types.ServerSideEncryptionAes256,
+									},
+								},
+							},
+						},
+					})
+					return err
+				},
+				encryption:  nil,
+				expectSSES3: true,
+			},
+		}
+
+		for i, scenario := range scenarios {
+			t.Run(scenario.name, func(t *testing.T) {
+				// Setup bucket if needed
+				err := scenario.setupBucket()
+				require.NoError(t, err, "Failed to setup bucket for scenario %s", scenario.name)
+
+				testData := []byte(fmt.Sprintf("Test data for scenario: %s", scenario.name))
+				objectKey := fmt.Sprintf("completion-test-%d", i)
+
+				// Upload object
+				putInput := &s3.PutObjectInput{
+					Bucket: aws.String(bucketName),
+					Key:    aws.String(objectKey),
+					Body:   bytes.NewReader(testData),
+				}
+				if scenario.encryption != nil {
+					putInput.ServerSideEncryption = *scenario.encryption
+				}
+
+				putResp, err := client.PutObject(ctx, putInput)
+				require.NoError(t, err, "Failed to upload object for scenario %s", scenario.name)
+
+				if scenario.expectSSES3 {
+					assert.Equal(t, types.ServerSideEncryptionAes256, putResp.ServerSideEncryption, "Should use SSE-S3 for %s", scenario.name)
+				}
+
+				// Download and verify
+				getResp, err := client.GetObject(ctx, &s3.GetObjectInput{
+					Bucket: aws.String(bucketName),
+					Key:    aws.String(objectKey),
+				})
+				require.NoError(t, err, "Failed to download object for scenario %s", scenario.name)
+
+				if scenario.expectSSES3 {
+					assert.Equal(t, types.ServerSideEncryptionAes256, getResp.ServerSideEncryption, "Should return SSE-S3 for %s", scenario.name)
+				}
+
+				downloadedData, err := io.ReadAll(getResp.Body)
+				require.NoError(t, err, "Failed to read data for scenario %s", scenario.name)
+				getResp.Body.Close()
+
+				// This is the ultimate test - decryption must work
+				assertDataEqual(t, testData, downloadedData, "Decryption failed for scenario %s", scenario.name)
+
+				// Clean up bucket encryption for next scenario
+				client.DeleteBucketEncryption(ctx, &s3.DeleteBucketEncryptionInput{
+					Bucket: aws.String(bucketName),
+				})
+			})
+		}
+	})
+}
