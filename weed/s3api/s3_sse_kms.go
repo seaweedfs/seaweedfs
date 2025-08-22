@@ -80,7 +80,7 @@ func CreateSSEKMSEncryptedReaderWithBucketKey(r io.Reader, keyID string, encrypt
 	if err != nil {
 		return nil, nil, err
 	}
-	
+
 	// Ensure we clear the plaintext data key from memory when done
 	defer clearKMSDataKey(dataKeyResult)
 
@@ -123,7 +123,7 @@ func CreateSSEKMSEncryptedReaderWithBaseIV(r io.Reader, keyID string, encryption
 	if err != nil {
 		return nil, nil, err
 	}
-	
+
 	// Ensure we clear the plaintext data key from memory when done
 	defer clearKMSDataKey(dataKeyResult)
 
@@ -159,7 +159,7 @@ func CreateSSEKMSEncryptedReaderWithBaseIVAndOffset(r io.Reader, keyID string, e
 	if err != nil {
 		return nil, nil, err
 	}
-	
+
 	// Ensure we clear the plaintext data key from memory when done
 	defer clearKMSDataKey(dataKeyResult)
 
