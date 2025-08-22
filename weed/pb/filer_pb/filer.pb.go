@@ -639,7 +639,7 @@ type FileChunk struct {
 	IsCompressed    bool                   `protobuf:"varint,10,opt,name=is_compressed,json=isCompressed,proto3" json:"is_compressed,omitempty"`
 	IsChunkManifest bool                   `protobuf:"varint,11,opt,name=is_chunk_manifest,json=isChunkManifest,proto3" json:"is_chunk_manifest,omitempty"` // content is a list of FileChunks
 	SseType         SSEType                `protobuf:"varint,12,opt,name=sse_type,json=sseType,proto3,enum=filer_pb.SSEType" json:"sse_type,omitempty"`     // Server-side encryption type
-	SseKmsMetadata  []byte                 `protobuf:"bytes,13,opt,name=sse_kms_metadata,json=sseKmsMetadata,proto3" json:"sse_kms_metadata,omitempty"`     // Serialized SSE-KMS metadata for this chunk
+	SseMetadata     []byte                 `protobuf:"bytes,13,opt,name=sse_metadata,json=sseMetadata,proto3" json:"sse_metadata,omitempty"`                // Serialized SSE metadata for this chunk (SSE-C, SSE-KMS, or SSE-S3)
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -758,9 +758,9 @@ func (x *FileChunk) GetSseType() SSEType {
 	return SSEType_NONE
 }
 
-func (x *FileChunk) GetSseKmsMetadata() []byte {
+func (x *FileChunk) GetSseMetadata() []byte {
 	if x != nil {
-		return x.SseKmsMetadata
+		return x.SseMetadata
 	}
 	return nil
 }
@@ -4440,7 +4440,7 @@ const file_filer_proto_rawDesc = "" +
 	"\x15is_from_other_cluster\x18\x05 \x01(\bR\x12isFromOtherCluster\x12\x1e\n" +
 	"\n" +
 	"signatures\x18\x06 \x03(\x05R\n" +
-	"signatures\"\xce\x03\n" +
+	"signatures\"\xc7\x03\n" +
 	"\tFileChunk\x12\x17\n" +
 	"\afile_id\x18\x01 \x01(\tR\x06fileId\x12\x16\n" +
 	"\x06offset\x18\x02 \x01(\x03R\x06offset\x12\x12\n" +
@@ -4456,8 +4456,8 @@ const file_filer_proto_rawDesc = "" +
 	"\ris_compressed\x18\n" +
 	" \x01(\bR\fisCompressed\x12*\n" +
 	"\x11is_chunk_manifest\x18\v \x01(\bR\x0fisChunkManifest\x12,\n" +
-	"\bsse_type\x18\f \x01(\x0e2\x11.filer_pb.SSETypeR\asseType\x12(\n" +
-	"\x10sse_kms_metadata\x18\r \x01(\fR\x0esseKmsMetadata\"@\n" +
+	"\bsse_type\x18\f \x01(\x0e2\x11.filer_pb.SSETypeR\asseType\x12!\n" +
+	"\fsse_metadata\x18\r \x01(\fR\vsseMetadata\"@\n" +
 	"\x11FileChunkManifest\x12+\n" +
 	"\x06chunks\x18\x01 \x03(\v2\x13.filer_pb.FileChunkR\x06chunks\"X\n" +
 	"\x06FileId\x12\x1b\n" +

@@ -888,7 +888,7 @@ func (s3a *S3ApiServer) handleSSEKMSResponse(r *http.Request, proxyResponse *htt
 			// Check for multipart SSE-KMS
 			sseKMSChunks := 0
 			for _, chunk := range entry.GetChunks() {
-				if chunk.GetSseType() == filer_pb.SSEType_SSE_KMS && len(chunk.GetSseKmsMetadata()) > 0 {
+				if chunk.GetSseType() == filer_pb.SSEType_SSE_KMS && len(chunk.GetSseMetadata()) > 0 {
 					sseKMSChunks++
 				}
 			}
@@ -1117,9 +1117,9 @@ func (s3a *S3ApiServer) createMultipartSSEKMSDecryptedReader(r *http.Request, pr
 		var chunkSSEKMSKey *SSEKMSKey
 
 		// Check if this chunk has per-chunk SSE-KMS metadata (new architecture)
-		if chunk.GetSseType() == filer_pb.SSEType_SSE_KMS && len(chunk.GetSseKmsMetadata()) > 0 {
+		if chunk.GetSseType() == filer_pb.SSEType_SSE_KMS && len(chunk.GetSseMetadata()) > 0 {
 			// Use the per-chunk SSE-KMS metadata
-			kmsKey, err := DeserializeSSEKMSMetadata(chunk.GetSseKmsMetadata())
+			kmsKey, err := DeserializeSSEKMSMetadata(chunk.GetSseMetadata())
 			if err != nil {
 				glog.Errorf("Failed to deserialize per-chunk SSE-KMS metadata for chunk %s: %v", chunk.GetFileIdString(), err)
 			} else {
@@ -1356,9 +1356,9 @@ func (s3a *S3ApiServer) createMultipartSSECDecryptedReader(r *http.Request, prox
 
 		if chunk.GetSseType() == filer_pb.SSEType_SSE_C {
 			// For SSE-C chunks, extract the IV from the stored per-chunk metadata (unified approach)
-			if len(chunk.GetSseKmsMetadata()) > 0 {
+			if len(chunk.GetSseMetadata()) > 0 {
 				// Deserialize the SSE-C metadata stored in the unified metadata field
-				ssecMetadata, decErr := DeserializeSSECMetadata(chunk.GetSseKmsMetadata())
+				ssecMetadata, decErr := DeserializeSSECMetadata(chunk.GetSseMetadata())
 				if decErr != nil {
 					return nil, fmt.Errorf("failed to deserialize SSE-C metadata for chunk %s: %v", chunk.GetFileIdString(), decErr)
 				}

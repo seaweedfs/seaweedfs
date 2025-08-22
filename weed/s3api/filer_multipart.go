@@ -253,11 +253,11 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 
 			for _, chunk := range entry.GetChunks() {
 				// Update SSE metadata with correct within-part offset (unified approach for KMS and SSE-C)
-				sseKmsMetadata := chunk.SseKmsMetadata
+				sseKmsMetadata := chunk.SseMetadata
 
-				if chunk.SseType == filer_pb.SSEType_SSE_KMS && len(chunk.SseKmsMetadata) > 0 {
+				if chunk.SseType == filer_pb.SSEType_SSE_KMS && len(chunk.SseMetadata) > 0 {
 					// Deserialize, update offset, and re-serialize SSE-KMS metadata
-					if kmsKey, err := DeserializeSSEKMSMetadata(chunk.SseKmsMetadata); err == nil {
+					if kmsKey, err := DeserializeSSEKMSMetadata(chunk.SseMetadata); err == nil {
 						kmsKey.ChunkOffset = withinPartOffset
 						if updatedMetadata, serErr := SerializeSSEKMSMetadata(kmsKey); serErr == nil {
 							sseKmsMetadata = updatedMetadata
@@ -295,7 +295,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 					IsCompressed: chunk.IsCompressed,
 					// Preserve SSE metadata with updated within-part offset
 					SseType:        chunk.SseType,
-					SseKmsMetadata: sseKmsMetadata,
+					SseMetadata: sseKmsMetadata,
 				}
 				finalParts = append(finalParts, p)
 				offset += int64(chunk.Size)

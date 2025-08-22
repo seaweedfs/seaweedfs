@@ -67,7 +67,7 @@ func (uploadResult *UploadResult) ToPbFileChunk(fileId string, offset int64, tsN
 }
 
 // ToPbFileChunkWithSSE creates a FileChunk with SSE metadata
-func (uploadResult *UploadResult) ToPbFileChunkWithSSE(fileId string, offset int64, tsNs int64, sseType filer_pb.SSEType, sseKmsMetadata []byte) *filer_pb.FileChunk {
+func (uploadResult *UploadResult) ToPbFileChunkWithSSE(fileId string, offset int64, tsNs int64, sseType filer_pb.SSEType, sseMetadata []byte) *filer_pb.FileChunk {
 	fid, _ := filer_pb.ToFileIdObject(fileId)
 	chunk := &filer_pb.FileChunk{
 		FileId:       fileId,
@@ -82,8 +82,8 @@ func (uploadResult *UploadResult) ToPbFileChunkWithSSE(fileId string, offset int
 
 	// Add SSE metadata if provided
 	chunk.SseType = sseType
-	if len(sseKmsMetadata) > 0 {
-		chunk.SseKmsMetadata = sseKmsMetadata
+	if len(sseMetadata) > 0 {
+		chunk.SseMetadata = sseMetadata
 	}
 
 	return chunk

@@ -1251,12 +1251,12 @@ func (s3a *S3ApiServer) copyMultipartSSEKMSChunk(chunk *filer_pb.FileChunk, dest
 	var finalData []byte
 
 	// Decrypt source data using stored SSE-KMS metadata (same pattern as SSE-C)
-	if len(chunk.GetSseKmsMetadata()) == 0 {
+	if len(chunk.GetSseMetadata()) == 0 {
 		return nil, fmt.Errorf("SSE-KMS chunk missing per-chunk metadata")
 	}
 
 	// Deserialize the SSE-KMS metadata (reusing unified metadata structure)
-	sourceSSEKey, err := DeserializeSSEKMSMetadata(chunk.GetSseKmsMetadata())
+	sourceSSEKey, err := DeserializeSSEKMSMetadata(chunk.GetSseMetadata())
 	if err != nil {
 		return nil, fmt.Errorf("failed to deserialize SSE-KMS metadata: %w", err)
 	}
@@ -1304,7 +1304,7 @@ func (s3a *S3ApiServer) copyMultipartSSEKMSChunk(chunk *filer_pb.FileChunk, dest
 
 		// Set the SSE type and metadata on destination chunk (unified approach)
 		dstChunk.SseType = filer_pb.SSEType_SSE_KMS
-		dstChunk.SseKmsMetadata = kmsMetadata
+		dstChunk.SseMetadata = kmsMetadata
 
 		glog.V(4).Infof("Re-encrypted multipart SSE-KMS chunk: %d bytes → %d bytes", len(finalData)-len(reencryptedData)+len(finalData), len(finalData))
 	}
@@ -1351,12 +1351,12 @@ func (s3a *S3ApiServer) copyMultipartSSECChunk(chunk *filer_pb.FileChunk, copySo
 	// Decrypt if source is encrypted
 	if copySourceKey != nil {
 		// Get the per-chunk SSE-C metadata
-		if len(chunk.GetSseKmsMetadata()) == 0 {
+		if len(chunk.GetSseMetadata()) == 0 {
 			return nil, nil, fmt.Errorf("SSE-C chunk missing per-chunk metadata")
 		}
 
 		// Deserialize the SSE-C metadata
-		ssecMetadata, err := DeserializeSSECMetadata(chunk.GetSseKmsMetadata())
+		ssecMetadata, err := DeserializeSSECMetadata(chunk.GetSseMetadata())
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to deserialize SSE-C metadata: %w", err)
 		}
@@ -1422,7 +1422,7 @@ func (s3a *S3ApiServer) copyMultipartSSECChunk(chunk *filer_pb.FileChunk, copySo
 
 		// Set the SSE type and metadata on destination chunk
 		dstChunk.SseType = filer_pb.SSEType_SSE_C
-		dstChunk.SseKmsMetadata = ssecMetadata // Use unified metadata field
+		dstChunk.SseMetadata = ssecMetadata // Use unified metadata field
 
 		glog.V(4).Infof("Re-encrypted multipart SSE-C chunk: %d bytes → %d bytes", len(finalData)-len(reencryptedData)+len(finalData), len(finalData))
 	}
@@ -1523,8 +1523,8 @@ func (s3a *S3ApiServer) copyMultipartCrossEncryption(entry *filer_pb.Entry, r *h
 
 	if state.DstSSEC && destSSECKey != nil {
 		// For SSE-C destination, use first chunk's IV for compatibility
-		if len(dstChunks) > 0 && dstChunks[0].GetSseType() == filer_pb.SSEType_SSE_C && len(dstChunks[0].GetSseKmsMetadata()) > 0 {
-			if ssecMetadata, err := DeserializeSSECMetadata(dstChunks[0].GetSseKmsMetadata()); err == nil {
+		if len(dstChunks) > 0 && dstChunks[0].GetSseType() == filer_pb.SSEType_SSE_C && len(dstChunks[0].GetSseMetadata()) > 0 {
+			if ssecMetadata, err := DeserializeSSECMetadata(dstChunks[0].GetSseMetadata()); err == nil {
 				if iv, ivErr := base64.StdEncoding.DecodeString(ssecMetadata.IV); ivErr == nil {
 					StoreIVInMetadata(dstMetadata, iv)
 					dstMetadata[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] = []byte("AES256")
@@ -1582,11 +1582,11 @@ func (s3a *S3ApiServer) copyCrossEncryptionChunk(chunk *filer_pb.FileChunk, sour
 	// Step 1: Decrypt source data
 	if chunk.GetSseType() == filer_pb.SSEType_SSE_C {
 		// Decrypt SSE-C source
-		if len(chunk.GetSseKmsMetadata()) == 0 {
+		if len(chunk.GetSseMetadata()) == 0 {
 			return nil, fmt.Errorf("SSE-C chunk missing per-chunk metadata")
 		}
 
-		ssecMetadata, err := DeserializeSSECMetadata(chunk.GetSseKmsMetadata())
+		ssecMetadata, err := DeserializeSSECMetadata(chunk.GetSseMetadata())
 		if err != nil {
 			return nil, fmt.Errorf("failed to deserialize SSE-C metadata: %w", err)
 		}
@@ -1621,11 +1621,11 @@ func (s3a *S3ApiServer) copyCrossEncryptionChunk(chunk *filer_pb.FileChunk, sour
 
 	} else if chunk.GetSseType() == filer_pb.SSEType_SSE_KMS {
 		// Decrypt SSE-KMS source
-		if len(chunk.GetSseKmsMetadata()) == 0 {
+		if len(chunk.GetSseMetadata()) == 0 {
 			return nil, fmt.Errorf("SSE-KMS chunk missing per-chunk metadata")
 		}
 
-		sourceSSEKey, err := DeserializeSSEKMSMetadata(chunk.GetSseKmsMetadata())
+		sourceSSEKey, err := DeserializeSSEKMSMetadata(chunk.GetSseMetadata())
 		if err != nil {
 			return nil, fmt.Errorf("failed to deserialize SSE-KMS metadata: %w", err)
 		}
@@ -1671,7 +1671,7 @@ func (s3a *S3ApiServer) copyCrossEncryptionChunk(chunk *filer_pb.FileChunk, sour
 		}
 
 		dstChunk.SseType = filer_pb.SSEType_SSE_C
-		dstChunk.SseKmsMetadata = ssecMetadata
+		dstChunk.SseMetadata = ssecMetadata
 
 		previewLen := 16
 		if len(finalData) < previewLen {
@@ -1703,7 +1703,7 @@ func (s3a *S3ApiServer) copyCrossEncryptionChunk(chunk *filer_pb.FileChunk, sour
 		}
 
 		dstChunk.SseType = filer_pb.SSEType_SSE_KMS
-		dstChunk.SseKmsMetadata = kmsMetadata
+		dstChunk.SseMetadata = kmsMetadata
 
 		glog.V(4).Infof("Re-encrypted chunk with SSE-KMS")
 	}
@@ -1757,7 +1757,7 @@ func (s3a *S3ApiServer) copyChunksWithSSEC(entry *filer_pb.Entry, r *http.Reques
 	isMultipartSSEC := false
 	sseCChunks := 0
 	for i, chunk := range entry.GetChunks() {
-		glog.V(4).Infof("Chunk %d: sseType=%d, hasMetadata=%t", i, chunk.GetSseType(), len(chunk.GetSseKmsMetadata()) > 0)
+		glog.V(4).Infof("Chunk %d: sseType=%d, hasMetadata=%t", i, chunk.GetSseType(), len(chunk.GetSseMetadata()) > 0)
 		if chunk.GetSseType() == filer_pb.SSEType_SSE_C {
 			sseCChunks++
 		}
@@ -1945,7 +1945,7 @@ func (s3a *S3ApiServer) copyChunksWithSSEKMS(entry *filer_pb.Entry, r *http.Requ
 	isMultipartSSEKMS := false
 	sseKMSChunks := 0
 	for i, chunk := range entry.GetChunks() {
-		glog.V(4).Infof("Chunk %d: sseType=%d, hasKMSMetadata=%t", i, chunk.GetSseType(), len(chunk.GetSseKmsMetadata()) > 0)
+		glog.V(4).Infof("Chunk %d: sseType=%d, hasKMSMetadata=%t", i, chunk.GetSseType(), len(chunk.GetSseMetadata()) > 0)
 		if chunk.GetSseType() == filer_pb.SSEType_SSE_KMS {
 			sseKMSChunks++
 		}
