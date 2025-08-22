@@ -362,7 +362,7 @@ start-seaweedfs-ci: check-binary
 	@nohup $(SEAWEEDFS_BINARY) volume -port=$(VOLUME_PORT) -mserver=127.0.0.1:$(MASTER_PORT) -dir=/tmp/seaweedfs-test-sse-volume -max=$(VOLUME_MAX_COUNT) -ip=127.0.0.1 > /tmp/seaweedfs-sse-volume.log 2>&1 &
 	@sleep 5
 	
-	# Create S3 JSON configuration with KMS (Local provider) and basic identity for embedded S3
+	# Create S3 JSON configuration with basic identity (test identities first)
 	@{ \
 		echo "{"; \
 		echo "  \"identities\": ["; \
@@ -376,16 +376,7 @@ start-seaweedfs-ci: check-binary
 		echo "      ],"; \
 		echo "      \"actions\": [\"Admin\", \"Read\", \"Write\"]"; \
 		echo "    }"; \
-		echo "  ],"; \
-		echo "  \"kms\": {"; \
-		echo "    \"default_provider\": \"local-dev\","; \
-		echo "    \"providers\": {"; \
-		echo "      \"local-dev\": {"; \
-		echo "        \"type\": \"local\","; \
-		echo "        \"enableOnDemandCreate\": true"; \
-		echo "      }"; \
-		echo "    }"; \
-		echo "  }"; \
+		echo "  ]"; \
 		echo "}"; \
 	} > /tmp/seaweedfs-s3.json
 	
