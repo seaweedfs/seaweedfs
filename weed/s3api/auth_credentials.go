@@ -147,7 +147,7 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 	if option.Config != "" {
 		glog.V(3).Infof("loading static config file %s", option.Config)
 		if err := iam.loadS3ApiConfigurationFromFile(option.Config); err != nil {
-			glog.Warningf("fail to load config file %s: %v", option.Config, err)
+			glog.Fatalf("fail to load config file %s: %v", option.Config, err)
 		}
 		// Only mark as loaded if identities were actually loaded
 		iam.m.RLock()
