@@ -2,6 +2,7 @@ package aws
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"strings"
@@ -160,10 +161,16 @@ func (p *AWSKMSProvider) GenerateDataKey(ctx context.Context, req *seaweedkms.Ge
 		actualKeyID = *result.KeyId
 	}
 
+	// Create standardized envelope format for consistent API behavior
+	envelopeBlob, err := seaweedkms.CreateEnvelope("aws", actualKeyID, base64.StdEncoding.EncodeToString(result.CiphertextBlob), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create ciphertext envelope: %w", err)
+	}
+
 	response := &seaweedkms.GenerateDataKeyResponse{
 		KeyID:          actualKeyID,
 		Plaintext:      result.Plaintext,
-		CiphertextBlob: result.CiphertextBlob,
+		CiphertextBlob: envelopeBlob, // Store in standardized envelope format
 	}
 
 	glog.V(4).Infof("AWS KMS: Generated data key for key ID %s (actual: %s)", req.KeyID, actualKeyID)
@@ -180,9 +187,24 @@ func (p *AWSKMSProvider) Decrypt(ctx context.Context, req *seaweedkms.DecryptReq
 		return nil, fmt.Errorf("CiphertextBlob cannot be empty")
 	}
 
+	// Parse the ciphertext envelope to extract key information
+	envelope, err := seaweedkms.ParseEnvelope(req.CiphertextBlob)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse ciphertext envelope: %w", err)
+	}
+
+	if envelope.Provider != "aws" {
+		return nil, fmt.Errorf("invalid provider in envelope: expected 'aws', got '%s'", envelope.Provider)
+	}
+
+	ciphertext, err := base64.StdEncoding.DecodeString(envelope.Ciphertext)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode ciphertext from envelope: %w", err)
+	}
+
 	// Build KMS request
 	kmsReq := &kms.DecryptInput{
-		CiphertextBlob: req.CiphertextBlob,
+		CiphertextBlob: ciphertext,
 	}
 
 	// Add encryption context if provided
