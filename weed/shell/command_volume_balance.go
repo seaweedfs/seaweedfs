@@ -167,16 +167,9 @@ func (c *commandVolumeBalance) balanceVolumeServers(diskTypes []types.DiskType, 
 func (c *commandVolumeBalance) balanceVolumeServersByDiskType(diskType types.DiskType, volumeReplicas map[uint32][]*VolumeReplica, nodes []*Node, collectionPattern *regexp.Regexp, collectionName string) error {
 	for _, n := range nodes {
 		n.selectVolumes(func(v *master_pb.VolumeInformationMessage) bool {
-			if collectionName != "ALL_COLLECTIONS" {
-				if collectionPattern == nil {
-					// Fallback to exact match if no pattern provided
-					if v.Collection != collectionName {
-						return false
-					}
-				} else {
-					if !collectionPattern.MatchString(v.Collection) {
-						return false
-					}
+			if collectionPattern != nil {
+				if !collectionPattern.MatchString(v.Collection) {
+					return false
 				}
 			}
 			if v.DiskType != string(diskType) {
