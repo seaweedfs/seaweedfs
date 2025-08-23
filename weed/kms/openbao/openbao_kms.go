@@ -334,7 +334,7 @@ func (p *OpenBaoKMSProvider) DescribeKey(ctx context.Context, req *seaweedkms.De
 	response.KeyState = seaweedkms.KeyStateEnabled
 
 	// Keys in OpenBao/Vault transit are service-managed
-	response.Origin = seaweedkms.KeyOriginAWS // Using AWS as closest equivalent
+	response.Origin = seaweedkms.KeyOriginOpenBao
 
 	glog.V(4).Infof("OpenBao KMS: Described key %s (state: %s)", req.KeyID, response.KeyState)
 	return response, nil

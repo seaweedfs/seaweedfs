@@ -287,7 +287,7 @@ func (p *AzureKMSProvider) DescribeKey(ctx context.Context, req *seaweedkms.Desc
 	}
 
 	// Azure Key Vault keys are managed by Azure
-	response.Origin = seaweedkms.KeyOriginAWS // Using AWS as closest equivalent for "service-managed"
+	response.Origin = seaweedkms.KeyOriginAzure
 
 	glog.V(4).Infof("Azure KMS: Described key %s (state: %s)", req.KeyID, response.KeyState)
 	return response, nil

@@ -153,9 +153,9 @@ func IsKMSEnabled() bool {
 	return GetGlobalKMS() != nil
 }
 
-// SetGlobalKMSForTesting sets the global KMS provider for testing purposes
-// This should only be used in tests
-func SetGlobalKMSForTesting(provider KMSProvider) {
+// SetGlobalKMSProvider sets the global KMS provider.
+// This is mainly for backward compatibility.
+func SetGlobalKMSProvider(provider KMSProvider) {
 	globalKMSMutex.Lock()
 	defer globalKMSMutex.Unlock()
 

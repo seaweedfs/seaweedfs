@@ -256,7 +256,7 @@ func (p *GCPKMSProvider) DescribeKey(ctx context.Context, req *seaweedkms.Descri
 	}
 
 	// GCP KMS keys are managed by Google Cloud
-	response.Origin = seaweedkms.KeyOriginAWS // Using AWS as closest equivalent for "service-managed"
+	response.Origin = seaweedkms.KeyOriginGCP
 
 	glog.V(4).Infof("GCP KMS: Described key %s (state: %s)", req.KeyID, response.KeyState)
 	return response, nil
