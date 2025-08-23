@@ -2,7 +2,6 @@ package topology
 
 import (
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -81,8 +80,11 @@ func TestVolumeGrowth_ReservationBasedAllocation(t *testing.T) {
 		}
 
 		// Simulate successful volume creation
-		diskUsage := dn.diskUsages.getOrCreateDisk(types.HardDriveType)
-		atomic.AddInt64(&diskUsage.volumeCount, 1)
+		disk := dn.children[NodeId(types.HardDriveType.String())].(*Disk)
+		deltaDiskUsage := &DiskUsageCounts{
+			volumeCount: 1,
+		}
+		disk.UpAdjustDiskUsageDelta(types.HardDriveType, deltaDiskUsage)
 
 		// Release reservation after successful creation
 		reservation.releaseAllReservations()
@@ -154,8 +156,11 @@ func TestVolumeGrowth_ConcurrentAllocationPreventsRaceCondition(t *testing.T) {
 				if reservation != nil {
 					reservation.releaseAllReservations()
 					// Simulate volume creation by incrementing count
-					diskUsage := dn.diskUsages.getOrCreateDisk(types.HardDriveType)
-					atomic.AddInt64(&diskUsage.volumeCount, 1)
+					disk := dn.children[NodeId(types.HardDriveType.String())].(*Disk)
+					deltaDiskUsage := &DiskUsageCounts{
+						volumeCount: 1,
+					}
+					disk.UpAdjustDiskUsageDelta(types.HardDriveType, deltaDiskUsage)
 				}
 			}
 			mu.Unlock()

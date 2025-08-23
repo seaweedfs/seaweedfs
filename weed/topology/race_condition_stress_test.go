@@ -85,8 +85,10 @@ func TestRaceConditionStress(t *testing.T) {
 			// Simulate successful volume creation
 			for _, server := range servers {
 				disk := server.children[NodeId(types.HardDriveType.String())].(*Disk)
-				diskUsage := disk.diskUsages.getOrCreateDisk(types.HardDriveType)
-				atomic.AddInt64(&diskUsage.volumeCount, 1)
+				deltaDiskUsage := &DiskUsageCounts{
+					volumeCount: 1,
+				}
+				disk.UpAdjustDiskUsageDelta(types.HardDriveType, deltaDiskUsage)
 				atomic.AddInt64(&totalVolumesCreated, 1)
 			}
 
