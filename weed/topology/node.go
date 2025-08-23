@@ -255,25 +255,41 @@ func (n *NodeImpl) AvailableSpaceForReservation(option *VolumeGrowOption) int64 
 
 // TryReserveCapacity attempts to atomically reserve capacity for volume creation
 func (n *NodeImpl) TryReserveCapacity(diskType types.DiskType, count int64) (reservationId string, success bool) {
-	// Clean up any expired reservations first (older than 5 minutes)
-	n.capacityReservations.cleanExpiredReservations(5 * time.Minute)
+	const reservationTimeout = 5 * time.Minute
 
-	// Create a dummy option to check available space
+	n.capacityReservations.Lock()
+	defer n.capacityReservations.Unlock()
+
+	// Clean up any expired reservations first
+	now := time.Now()
+	for id, reservation := range n.capacityReservations.reservations {
+		if now.Sub(reservation.createdAt) > reservationTimeout {
+			delete(n.capacityReservations.reservations, id)
+			glog.V(1).Infof("Cleaned up expired capacity reservation: %s", id)
+		}
+	}
+
+	// Check for available space
 	option := &VolumeGrowOption{DiskType: diskType}
-	availableSpace := n.AvailableSpaceForReservation(option)
+	var reservedCount int64
+	for _, reservation := range n.capacityReservations.reservations {
+		if reservation.diskType == diskType {
+			reservedCount += reservation.count
+		}
+	}
+	availableSpace := n.AvailableSpaceFor(option) - reservedCount
 
 	if availableSpace >= count {
-		reservationId = n.capacityReservations.addReservation(diskType, count)
-
-		// Double-check after reservation to handle potential race conditions
-		if n.AvailableSpaceForReservation(option) >= 0 {
-			glog.V(1).Infof("Reserved %d capacity for diskType %s on node %s: %s", count, diskType, n.Id(), reservationId)
-			return reservationId, true
-		} else {
-			// If we've over-reserved, release and fail
-			n.capacityReservations.removeReservation(reservationId)
-			return "", false
+		// Add new reservation
+		reservationId = fmt.Sprintf("%s-%d-%d-%d", diskType, count, time.Now().UnixNano(), rand.Int64())
+		n.capacityReservations.reservations[reservationId] = &CapacityReservation{
+			reservationId: reservationId,
+			diskType:      diskType,
+			count:         count,
+			createdAt:     time.Now(),
 		}
+		glog.V(1).Infof("Reserved %d capacity for diskType %s on node %s: %s", count, diskType, n.Id(), reservationId)
+		return reservationId, true
 	}
 
 	return "", false
