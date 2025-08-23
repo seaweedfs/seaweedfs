@@ -8,73 +8,67 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-func TestHasFreeDiskLocationWithLowDiskSpace(t *testing.T) {
-	// Test that hasFreeDiskLocation returns false when disk space is low
-	// This addresses the issue where volumes are allocated then immediately deleted
-	// when max=0 and minFreeSpace is set
-
-	minFreeSpace := util.MinFreeSpace{Type: util.AsPercent, Percent: 40, Raw: "40"}
-
-	// Create a disk location with low disk space
+func TestHasFreeDiskLocation(t *testing.T) {
 	diskLocation := &DiskLocation{
 		Directory:              "/test/",
 		DirectoryUuid:          "1234",
 		IdxDirectory:           "/test/",
 		DiskType:               types.HddType,
-		MaxVolumeCount:         10,  // Allow 10 volumes
-		OriginalMaxVolumeCount: 0,   // max=0 case
-		MinFreeSpace:           minFreeSpace,
-		isDiskSpaceLow:         true, // Simulate low disk space
-	}
-
-	store := &Store{
-		Locations: []*DiskLocation{diskLocation},
-	}
-
-	// Test: when disk space is low, hasFreeDiskLocation should return false
-	// even if volume count is below max
-	result := store.hasFreeDiskLocation(diskLocation)
-	
-	if result {
-		t.Errorf("Expected hasFreeDiskLocation to return false when disk space is low, but got true")
-	}
-
-	// Test: when disk space is normal, hasFreeDiskLocation should work as before
-	diskLocation.isDiskSpaceLow = false
-	result = store.hasFreeDiskLocation(diskLocation)
-	
-	if !result {
-		t.Errorf("Expected hasFreeDiskLocation to return true when disk space is normal and volume count is below max, but got false")
-	}
-}
-
-func TestHasFreeDiskLocationVolumeCount(t *testing.T) {
-	// Test the original volume count logic still works
-	minFreeSpace := util.MinFreeSpace{Type: util.AsPercent, Percent: 10, Raw: "10"}
-
-	diskLocation := &DiskLocation{
-		Directory:              "/test/",
-		DirectoryUuid:          "1234", 
-		IdxDirectory:           "/test/",
-		DiskType:               types.HddType,
-		MaxVolumeCount:         2,  // Allow only 2 volumes
 		OriginalMaxVolumeCount: 0,
-		MinFreeSpace:           minFreeSpace,
-		isDiskSpaceLow:         false, // Normal disk space
+		volumes:                make(map[needle.VolumeId]*Volume),
 	}
-	diskLocation.volumes = make(map[needle.VolumeId]*Volume)
-	
 	store := &Store{
 		Locations: []*DiskLocation{diskLocation},
 	}
 
-	// Should return true when volume count is below max
-	result := store.hasFreeDiskLocation(diskLocation)
-	if !result {
-		t.Errorf("Expected hasFreeDiskLocation to return true when volume count (0) < max (2), but got false")
-	}
+	t.Run("low disk space prevents allocation", func(t *testing.T) {
+		// setup
+		diskLocation.isDiskSpaceLow = true
+		diskLocation.MaxVolumeCount = 10
+		diskLocation.MinFreeSpace = util.MinFreeSpace{Type: util.AsPercent, Percent: 40, Raw: "40"}
+		defer func() { diskLocation.isDiskSpaceLow = false }() // teardown
 
-	// Add volumes to reach the limit
-	// Note: We can't easily create real volumes in a unit test, so we'll mock the VolumesLen
-	// For now, we'll test the disk space logic which is the main issue
+		// act
+		result := store.hasFreeDiskLocation(diskLocation)
+
+		// assert
+		if result {
+			t.Errorf("Expected hasFreeDiskLocation to return false when disk space is low, but got true")
+		}
+	})
+
+	t.Run("normal disk space and available volume count allows allocation", func(t *testing.T) {
+		// setup
+		diskLocation.isDiskSpaceLow = false
+		diskLocation.MaxVolumeCount = 10
+		diskLocation.MinFreeSpace = util.MinFreeSpace{Type: util.AsPercent, Percent: 40, Raw: "40"}
+		diskLocation.volumes = make(map[needle.VolumeId]*Volume)
+
+		// act
+		result := store.hasFreeDiskLocation(diskLocation)
+
+		// assert
+		if !result {
+			t.Errorf("Expected hasFreeDiskLocation to return true when disk space is normal and volume count is below max, but got false")
+		}
+	})
+
+	t.Run("volume count at max prevents allocation", func(t *testing.T) {
+		// setup
+		diskLocation.isDiskSpaceLow = false
+		diskLocation.MaxVolumeCount = 2
+		diskLocation.MinFreeSpace = util.MinFreeSpace{Type: util.AsPercent, Percent: 10, Raw: "10"}
+		diskLocation.volumes = make(map[needle.VolumeId]*Volume)
+		diskLocation.volumes[1] = &Volume{}
+		diskLocation.volumes[2] = &Volume{}
+		defer func() { diskLocation.volumes = make(map[needle.VolumeId]*Volume) }() // teardown
+
+		// act
+		result := store.hasFreeDiskLocation(diskLocation)
+
+		// assert
+		if result {
+			t.Errorf("Expected hasFreeDiskLocation to return false when volume count (%d) == max (%d), but got true", len(diskLocation.volumes), diskLocation.MaxVolumeCount)
+		}
+	})
 }
