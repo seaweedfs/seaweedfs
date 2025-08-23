@@ -211,9 +211,6 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 		}
 	}
 
-	// Check KMS provider status for debugging
-	glog.Warningf("DEBUG: Global KMS provider status during IAM init: %v (nil=%v)", kms.GetGlobalKMS(), kms.GetGlobalKMS() == nil)
-
 	return iam
 }
 
