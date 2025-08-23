@@ -56,6 +56,13 @@ func TestHasFreeDiskLocation(t *testing.T) {
 			currentVolumes: 100,
 			expected:       true,
 		},
+		{
+			name:           "max volume count is 0 but low disk space prevents allocation",
+			isDiskSpaceLow: true,
+			maxVolumeCount: 0,
+			currentVolumes: 100,
+			expected:       false,
+		},
 	}
 
 	for _, tc := range testCases {
