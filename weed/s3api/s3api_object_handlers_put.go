@@ -1191,12 +1191,6 @@ func (s3a *S3ApiServer) checkConditionalHeaders(r *http.Request, bucket, object 
 	return s3a.checkConditionalHeadersWithGetter(s3a, r, bucket, object)
 }
 
-// ConditionalHeaderResult holds the result of conditional header checking
-type ConditionalHeaderResult struct {
-	ErrorCode s3err.ErrorCode
-	ETag      string // ETag of the object (for 304 responses)
-}
-
 // checkConditionalHeadersForReadsWithGetter is a testable method for read operations
 // Uses the production getObjectETag and etagMatches methods to ensure testing of real logic
 func (s3a *S3ApiServer) checkConditionalHeadersForReadsWithGetter(getter EntryGetter, r *http.Request, bucket, object string) ConditionalHeaderResult {

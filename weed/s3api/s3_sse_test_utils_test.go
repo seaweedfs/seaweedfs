@@ -69,7 +69,7 @@ func SetupTestKMS(t *testing.T) *TestSSEKMSKey {
 	}
 
 	// Set it as the global provider
-	kms.SetGlobalKMSForTesting(provider)
+	kms.SetGlobalKMSProvider(provider)
 
 	// Create a test key
 	localProvider := provider.(*local.LocalKMSProvider)
@@ -80,7 +80,7 @@ func SetupTestKMS(t *testing.T) *TestSSEKMSKey {
 
 	// Cleanup function
 	cleanup := func() {
-		kms.SetGlobalKMSForTesting(nil) // Clear global KMS
+		kms.SetGlobalKMSProvider(nil) // Clear global KMS
 		if err := provider.Close(); err != nil {
 			t.Logf("Warning: Failed to close KMS provider: %v", err)
 		}
