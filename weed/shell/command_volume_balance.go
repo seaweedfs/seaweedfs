@@ -127,12 +127,8 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 			return err
 		}
 		for _, col := range collections {
-			// Create exact match pattern for this collection
-			exactPattern, err := regexp.Compile("^" + regexp.QuoteMeta(col) + "$")
-			if err != nil {
-				return fmt.Errorf("failed to create exact pattern for collection '%s': %v", col, err)
-			}
-			if err = c.balanceVolumeServers(diskTypes, volumeReplicas, volumeServers, exactPattern, col); err != nil {
+			// Use direct string comparison for exact match (more efficient than regex)
+			if err = c.balanceVolumeServers(diskTypes, volumeReplicas, volumeServers, nil, col); err != nil {
 				return err
 			}
 		}
@@ -167,9 +163,17 @@ func (c *commandVolumeBalance) balanceVolumeServers(diskTypes []types.DiskType, 
 func (c *commandVolumeBalance) balanceVolumeServersByDiskType(diskType types.DiskType, volumeReplicas map[uint32][]*VolumeReplica, nodes []*Node, collectionPattern *regexp.Regexp, collectionName string) error {
 	for _, n := range nodes {
 		n.selectVolumes(func(v *master_pb.VolumeInformationMessage) bool {
-			if collectionPattern != nil {
-				if !collectionPattern.MatchString(v.Collection) {
-					return false
+			if collectionName != "ALL_COLLECTIONS" {
+				if collectionPattern != nil {
+					// Use regex pattern matching
+					if !collectionPattern.MatchString(v.Collection) {
+						return false
+					}
+				} else {
+					// Use exact string matching (for EACH_COLLECTION)
+					if v.Collection != collectionName {
+						return false
+					}
 				}
 			}
 			if v.DiskType != string(diskType) {
