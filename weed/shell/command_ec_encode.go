@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"sort"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -411,6 +412,7 @@ func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, collectionPattern strin
 	for collection := range collectionSet {
 		matchedCollections = append(matchedCollections, collection)
 	}
+	sort.Strings(matchedCollections)
 
 	// Print summary statistics in verbose mode or when no volumes selected
 	if verbose || len(vids) == 0 {
