@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"regexp"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 
@@ -95,13 +94,7 @@ func (c *commandVolumeTierDownload) Do(args []string, commandEnv *CommandEnv, wr
 
 func collectRemoteVolumes(topoInfo *master_pb.TopologyInfo, collectionPattern string) (vids []needle.VolumeId, err error) {
 	// compile regex pattern for collection matching
-	var collectionRegex *regexp.Regexp
-	if collectionPattern == "" {
-		// empty pattern matches empty collection
-		collectionRegex, err = regexp.Compile("^$")
-	} else {
-		collectionRegex, err = regexp.Compile(collectionPattern)
-	}
+	collectionRegex, err := compileCollectionPattern(collectionPattern)
 	if err != nil {
 		return nil, fmt.Errorf("invalid collection pattern '%s': %v", collectionPattern, err)
 	}

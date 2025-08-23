@@ -158,12 +158,7 @@ func (c *commandVolumeBalance) balanceVolumeServersByDiskType(diskType types.Dis
 	useRegex := collection != "ALL_COLLECTIONS" && collection != "EACH_COLLECTION"
 
 	if useRegex {
-		if collection == "" {
-			// empty pattern matches empty collection
-			collectionRegex, err = regexp.Compile("^$")
-		} else {
-			collectionRegex, err = regexp.Compile(collection)
-		}
+		collectionRegex, err = compileCollectionPattern(collection)
 		if err != nil {
 			return fmt.Errorf("invalid collection pattern '%s': %v", collection, err)
 		}

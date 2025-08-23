@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"regexp"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -277,13 +276,7 @@ func generateEcShards(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, 
 
 func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, collectionPattern string, sourceDiskType *types.DiskType, fullPercentage float64, quietPeriod time.Duration, verbose bool) (vids []needle.VolumeId, matchedCollections []string, err error) {
 	// compile regex pattern for collection matching
-	var collectionRegex *regexp.Regexp
-	if collectionPattern == "" {
-		// empty pattern matches empty collection
-		collectionRegex, err = regexp.Compile("^$")
-	} else {
-		collectionRegex, err = regexp.Compile(collectionPattern)
-	}
+	collectionRegex, err := compileCollectionPattern(collectionPattern)
 	if err != nil {
 		return nil, nil, fmt.Errorf("invalid collection pattern '%s': %v", collectionPattern, err)
 	}
