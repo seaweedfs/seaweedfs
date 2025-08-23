@@ -202,11 +202,7 @@ func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind 
 
 // hasFreeDiskLocation checks if a disk location has free space
 func (s *Store) hasFreeDiskLocation(location *DiskLocation) bool {
-	// Check if disk space is low first
-	if location.isDiskSpaceLow {
-		return false
-	}
-	return int64(location.VolumesLen()) < int64(location.MaxVolumeCount)
+	return !location.isDiskSpaceLow && int64(location.VolumesLen()) < int64(location.MaxVolumeCount)
 }
 
 func (s *Store) VolumeInfos() (allStats []*VolumeInfo) {
