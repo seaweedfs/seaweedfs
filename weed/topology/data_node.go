@@ -30,6 +30,7 @@ func NewDataNode(id string) *DataNode {
 	dn.nodeType = "DataNode"
 	dn.diskUsages = newDiskUsages()
 	dn.children = make(map[NodeId]Node)
+	dn.capacityReservations = newCapacityReservations()
 	dn.NodeImpl.value = dn
 	return dn
 }

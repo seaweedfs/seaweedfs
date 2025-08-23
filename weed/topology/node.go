@@ -2,6 +2,7 @@ package topology
 
 import (
 	"errors"
+	"fmt"
 	"math/rand/v2"
 	"strings"
 	"sync"
@@ -16,6 +17,78 @@ import (
 )
 
 type NodeId string
+
+// CapacityReservation represents a temporary reservation of capacity
+type CapacityReservation struct {
+	reservationId string
+	diskType      types.DiskType
+	count         int64
+	createdAt     time.Time
+}
+
+// CapacityReservations manages capacity reservations for a node
+type CapacityReservations struct {
+	sync.RWMutex
+	reservations map[string]*CapacityReservation
+}
+
+func newCapacityReservations() *CapacityReservations {
+	return &CapacityReservations{
+		reservations: make(map[string]*CapacityReservation),
+	}
+}
+
+func (cr *CapacityReservations) addReservation(diskType types.DiskType, count int64) string {
+	cr.Lock()
+	defer cr.Unlock()
+
+	reservationId := fmt.Sprintf("%s-%d-%d", diskType, count, time.Now().UnixNano())
+	cr.reservations[reservationId] = &CapacityReservation{
+		reservationId: reservationId,
+		diskType:      diskType,
+		count:         count,
+		createdAt:     time.Now(),
+	}
+	return reservationId
+}
+
+func (cr *CapacityReservations) removeReservation(reservationId string) bool {
+	cr.Lock()
+	defer cr.Unlock()
+
+	if _, exists := cr.reservations[reservationId]; exists {
+		delete(cr.reservations, reservationId)
+		return true
+	}
+	return false
+}
+
+func (cr *CapacityReservations) getReservedCount(diskType types.DiskType) int64 {
+	cr.RLock()
+	defer cr.RUnlock()
+
+	var total int64
+	for _, reservation := range cr.reservations {
+		if reservation.diskType == diskType {
+			total += reservation.count
+		}
+	}
+	return total
+}
+
+func (cr *CapacityReservations) cleanExpiredReservations(expirationDuration time.Duration) {
+	cr.Lock()
+	defer cr.Unlock()
+
+	now := time.Now()
+	for id, reservation := range cr.reservations {
+		if now.Sub(reservation.createdAt) > expirationDuration {
+			delete(cr.reservations, id)
+			glog.V(1).Infof("Cleaned up expired capacity reservation: %s", id)
+		}
+	}
+}
+
 type Node interface {
 	Id() NodeId
 	String() string
@@ -24,6 +97,11 @@ type Node interface {
 	UpAdjustDiskUsageDelta(diskType types.DiskType, diskUsage *DiskUsageCounts)
 	UpAdjustMaxVolumeId(vid needle.VolumeId)
 	GetDiskUsages() *DiskUsages
+
+	// Capacity reservation methods for avoiding race conditions
+	TryReserveCapacity(diskType types.DiskType, count int64) (reservationId string, success bool)
+	ReleaseReservedCapacity(reservationId string)
+	AvailableSpaceForReservation(option *VolumeGrowOption) int64
 
 	GetMaxVolumeId() needle.VolumeId
 	SetParent(Node)
@@ -52,6 +130,9 @@ type NodeImpl struct {
 	//for rack, data center, topology
 	nodeType string
 	value    interface{}
+
+	// capacity reservations to prevent race conditions during volume creation
+	capacityReservations *CapacityReservations
 }
 
 func (n *NodeImpl) GetDiskUsages() *DiskUsages {
@@ -163,6 +244,48 @@ func (n *NodeImpl) AvailableSpaceFor(option *VolumeGrowOption) int64 {
 		freeVolumeSlotCount = freeVolumeSlotCount - ecShardCount/erasure_coding.DataShardsCount - 1
 	}
 	return freeVolumeSlotCount
+}
+
+// AvailableSpaceForReservation returns available space considering existing reservations
+func (n *NodeImpl) AvailableSpaceForReservation(option *VolumeGrowOption) int64 {
+	baseAvailable := n.AvailableSpaceFor(option)
+	reservedCount := n.capacityReservations.getReservedCount(option.DiskType)
+	return baseAvailable - reservedCount
+}
+
+// TryReserveCapacity attempts to atomically reserve capacity for volume creation
+func (n *NodeImpl) TryReserveCapacity(diskType types.DiskType, count int64) (reservationId string, success bool) {
+	// Clean up any expired reservations first (older than 5 minutes)
+	n.capacityReservations.cleanExpiredReservations(5 * time.Minute)
+
+	// Create a dummy option to check available space
+	option := &VolumeGrowOption{DiskType: diskType}
+	availableSpace := n.AvailableSpaceForReservation(option)
+
+	if availableSpace >= count {
+		reservationId = n.capacityReservations.addReservation(diskType, count)
+
+		// Double-check after reservation to handle potential race conditions
+		if n.AvailableSpaceForReservation(option) >= 0 {
+			glog.V(1).Infof("Reserved %d capacity for diskType %s on node %s: %s", count, diskType, n.Id(), reservationId)
+			return reservationId, true
+		} else {
+			// If we've over-reserved, release and fail
+			n.capacityReservations.removeReservation(reservationId)
+			return "", false
+		}
+	}
+
+	return "", false
+}
+
+// ReleaseReservedCapacity releases a previously reserved capacity
+func (n *NodeImpl) ReleaseReservedCapacity(reservationId string) {
+	if n.capacityReservations.removeReservation(reservationId) {
+		glog.V(1).Infof("Released capacity reservation on node %s: %s", n.Id(), reservationId)
+	} else {
+		glog.V(1).Infof("Attempted to release non-existent reservation on node %s: %s", n.Id(), reservationId)
+	}
 }
 func (n *NodeImpl) SetParent(node Node) {
 	n.parent = node
