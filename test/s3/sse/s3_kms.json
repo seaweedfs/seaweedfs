@@ -1,0 +1,41 @@
+{
+  "identities": [
+    {
+      "name": "admin",
+      "credentials": [
+        {
+          "accessKey": "some_access_key1",
+          "secretKey": "some_secret_key1"
+        }
+      ],
+      "actions": ["Admin", "Read", "Write"]
+    }
+  ],
+  "kms": {
+    "default_provider": "openbao-test",
+    "providers": {
+      "openbao-test": {
+        "type": "openbao",
+        "address": "http://openbao:8200",
+        "token": "root-token-for-testing",
+        "transit_path": "transit",
+        "cache_enabled": true,
+        "cache_ttl": "1h"
+      }
+    },
+    "buckets": {
+      "test-sse-kms-basic": {
+        "provider": "openbao-test"
+      },
+      "test-sse-kms-multipart": {
+        "provider": "openbao-test"
+      },
+      "test-sse-kms-copy": {
+        "provider": "openbao-test"
+      },
+      "test-sse-kms-range": {
+        "provider": "openbao-test"
+      }
+    }
+  }
+}

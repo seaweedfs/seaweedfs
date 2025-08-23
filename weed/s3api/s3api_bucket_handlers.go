@@ -225,6 +225,9 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Clean up bucket-related caches and locks after successful deletion
+	s3a.invalidateBucketConfigCache(bucket)
+
 	s3err.WriteEmptyResponse(w, r, http.StatusNoContent)
 }
 

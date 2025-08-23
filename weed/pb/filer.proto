@@ -142,6 +142,13 @@ message EventNotification {
     repeated int32 signatures = 6;
 }
 
+enum SSEType {
+    NONE = 0;    // No server-side encryption
+    SSE_C = 1;   // Server-Side Encryption with Customer-Provided Keys  
+    SSE_KMS = 2; // Server-Side Encryption with KMS-Managed Keys
+    SSE_S3 = 3;  // Server-Side Encryption with S3-Managed Keys
+}
+
 message FileChunk {
     string file_id = 1; // to be deprecated
     int64 offset = 2;
@@ -154,6 +161,8 @@ message FileChunk {
     bytes cipher_key = 9;
     bool is_compressed = 10;
     bool is_chunk_manifest = 11; // content is a list of FileChunks
+    SSEType sse_type = 12;           // Server-side encryption type
+    bytes sse_metadata = 13;         // Serialized SSE metadata for this chunk (SSE-C, SSE-KMS, or SSE-S3)
 }
 
 message FileChunkManifest {

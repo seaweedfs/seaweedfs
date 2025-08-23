@@ -623,7 +623,6 @@ func (w *Worker) registerWorker() {
 
 // connectionMonitorLoop monitors connection status
 func (w *Worker) connectionMonitorLoop() {
-	glog.V(1).Infof("🔍 CONNECTION MONITOR STARTED: Worker %s connection monitor loop started", w.id)
 	ticker := time.NewTicker(30 * time.Second) // Check every 30 seconds
 	defer ticker.Stop()
 

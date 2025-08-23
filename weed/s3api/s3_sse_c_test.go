@@ -188,7 +188,7 @@ func TestSSECEncryptionDecryption(t *testing.T) {
 
 	// Create encrypted reader
 	dataReader := bytes.NewReader(testData)
-	encryptedReader, err := CreateSSECEncryptedReader(dataReader, customerKey)
+	encryptedReader, iv, err := CreateSSECEncryptedReader(dataReader, customerKey)
 	if err != nil {
 		t.Fatalf("Failed to create encrypted reader: %v", err)
 	}
@@ -206,7 +206,7 @@ func TestSSECEncryptionDecryption(t *testing.T) {
 
 	// Create decrypted reader
 	encryptedReader2 := bytes.NewReader(encryptedData)
-	decryptedReader, err := CreateSSECDecryptedReader(encryptedReader2, customerKey)
+	decryptedReader, err := CreateSSECDecryptedReader(encryptedReader2, customerKey, iv)
 	if err != nil {
 		t.Fatalf("Failed to create decrypted reader: %v", err)
 	}
@@ -266,7 +266,7 @@ func TestSSECEncryptionVariousSizes(t *testing.T) {
 
 			// Encrypt
 			dataReader := bytes.NewReader(testData)
-			encryptedReader, err := CreateSSECEncryptedReader(dataReader, customerKey)
+			encryptedReader, iv, err := CreateSSECEncryptedReader(dataReader, customerKey)
 			if err != nil {
 				t.Fatalf("Failed to create encrypted reader: %v", err)
 			}
@@ -276,18 +276,14 @@ func TestSSECEncryptionVariousSizes(t *testing.T) {
 				t.Fatalf("Failed to read encrypted data: %v", err)
 			}
 
-			// Verify IV is present and data is encrypted
-			if len(encryptedData) < AESBlockSize {
-				t.Fatalf("Encrypted data too short, missing IV")
-			}
-
-			if len(encryptedData) != size+AESBlockSize {
-				t.Errorf("Expected encrypted data length %d, got %d", size+AESBlockSize, len(encryptedData))
+			// Verify encrypted data has same size as original (IV is stored in metadata, not in stream)
+			if len(encryptedData) != size {
+				t.Errorf("Expected encrypted data length %d (same as original), got %d", size, len(encryptedData))
 			}
 
 			// Decrypt
 			encryptedReader2 := bytes.NewReader(encryptedData)
-			decryptedReader, err := CreateSSECDecryptedReader(encryptedReader2, customerKey)
+			decryptedReader, err := CreateSSECDecryptedReader(encryptedReader2, customerKey, iv)
 			if err != nil {
 				t.Fatalf("Failed to create decrypted reader: %v", err)
 			}
@@ -310,7 +306,7 @@ func TestSSECEncryptionWithNilKey(t *testing.T) {
 	dataReader := bytes.NewReader(testData)
 
 	// Test encryption with nil key (should pass through)
-	encryptedReader, err := CreateSSECEncryptedReader(dataReader, nil)
+	encryptedReader, iv, err := CreateSSECEncryptedReader(dataReader, nil)
 	if err != nil {
 		t.Fatalf("Failed to create encrypted reader with nil key: %v", err)
 	}
@@ -326,7 +322,7 @@ func TestSSECEncryptionWithNilKey(t *testing.T) {
 
 	// Test decryption with nil key (should pass through)
 	dataReader2 := bytes.NewReader(testData)
-	decryptedReader, err := CreateSSECDecryptedReader(dataReader2, nil)
+	decryptedReader, err := CreateSSECDecryptedReader(dataReader2, nil, iv)
 	if err != nil {
 		t.Fatalf("Failed to create decrypted reader with nil key: %v", err)
 	}
@@ -361,7 +357,7 @@ func TestSSECEncryptionSmallBuffers(t *testing.T) {
 
 	// Create encrypted reader
 	dataReader := bytes.NewReader(testData)
-	encryptedReader, err := CreateSSECEncryptedReader(dataReader, customerKey)
+	encryptedReader, iv, err := CreateSSECEncryptedReader(dataReader, customerKey)
 	if err != nil {
 		t.Fatalf("Failed to create encrypted reader: %v", err)
 	}
@@ -383,20 +379,19 @@ func TestSSECEncryptionSmallBuffers(t *testing.T) {
 		}
 	}
 
-	// Verify the encrypted data starts with 16-byte IV
-	if len(encryptedData) < 16 {
-		t.Fatalf("Encrypted data too short, expected at least 16 bytes for IV, got %d", len(encryptedData))
+	// Verify we have some encrypted data (IV is in metadata, not in stream)
+	if len(encryptedData) == 0 && len(testData) > 0 {
+		t.Fatal("Expected encrypted data but got none")
 	}
 
-	// Expected total size: 16 bytes (IV) + len(testData)
-	expectedSize := 16 + len(testData)
-	if len(encryptedData) != expectedSize {
-		t.Errorf("Expected encrypted data size %d, got %d", expectedSize, len(encryptedData))
+	// Expected size: same as original data (IV is stored in metadata, not in stream)
+	if len(encryptedData) != len(testData) {
+		t.Errorf("Expected encrypted data size %d (same as original), got %d", len(testData), len(encryptedData))
 	}
 
 	// Decrypt and verify
 	encryptedReader2 := bytes.NewReader(encryptedData)
-	decryptedReader, err := CreateSSECDecryptedReader(encryptedReader2, customerKey)
+	decryptedReader, err := CreateSSECDecryptedReader(encryptedReader2, customerKey, iv)
 	if err != nil {
 		t.Fatalf("Failed to create decrypted reader: %v", err)
 	}

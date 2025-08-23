@@ -41,6 +41,6 @@ spec:
           servicePort: {{ .Values.s3.port }}
 {{- end }}
 {{- if .Values.s3.ingress.host }}
-    host: {{ .Values.s3.ingress.host }}
+    host: {{ .Values.s3.ingress.host | quote }}
 {{- end }}
 {{- end }}

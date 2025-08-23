@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -12,10 +13,18 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/kms"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+
+	// Import KMS providers to register them
+	_ "github.com/seaweedfs/seaweedfs/weed/kms/aws"
+	// _ "github.com/seaweedfs/seaweedfs/weed/kms/azure"  // TODO: Fix Azure SDK compatibility issues
+	_ "github.com/seaweedfs/seaweedfs/weed/kms/gcp"
+	_ "github.com/seaweedfs/seaweedfs/weed/kms/local"
+	_ "github.com/seaweedfs/seaweedfs/weed/kms/openbao"
 	"google.golang.org/grpc"
 )
 
@@ -140,6 +149,9 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 		if err := iam.loadS3ApiConfigurationFromFile(option.Config); err != nil {
 			glog.Fatalf("fail to load config file %s: %v", option.Config, err)
 		}
+		// Mark as loaded since an explicit config file was provided
+		// This prevents fallback to environment variables even if no identities were loaded
+		// (e.g., config file contains only KMS settings)
 		configLoaded = true
 	} else {
 		glog.V(3).Infof("no static config file specified... loading config from credential manager")
@@ -210,6 +222,12 @@ func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFile(fileName str
 		glog.Warningf("fail to read %s : %v", fileName, readErr)
 		return fmt.Errorf("fail to read %s : %v", fileName, readErr)
 	}
+
+	// Initialize KMS if configuration contains KMS settings
+	if err := iam.initializeKMSFromConfig(content); err != nil {
+		glog.Warningf("KMS initialization failed: %v", err)
+	}
+
 	return iam.LoadS3ApiConfigurationFromBytes(content)
 }
 
@@ -534,4 +552,32 @@ func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromCredentialManager
 	}
 
 	return iam.loadS3ApiConfiguration(s3ApiConfiguration)
+}
+
+// initializeKMSFromConfig loads KMS configuration from TOML format
+func (iam *IdentityAccessManagement) initializeKMSFromConfig(configContent []byte) error {
+	// JSON-only KMS configuration
+	if err := iam.initializeKMSFromJSON(configContent); err == nil {
+		glog.V(1).Infof("Successfully loaded KMS configuration from JSON format")
+		return nil
+	}
+
+	glog.V(2).Infof("No KMS configuration found in S3 config - SSE-KMS will not be available")
+	return nil
+}
+
+// initializeKMSFromJSON loads KMS configuration from JSON format when provided in the same file
+func (iam *IdentityAccessManagement) initializeKMSFromJSON(configContent []byte) error {
+	// Parse as generic JSON and extract optional "kms" block
+	var m map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(configContent))), &m); err != nil {
+		return err
+	}
+	kmsVal, ok := m["kms"]
+	if !ok {
+		return fmt.Errorf("no KMS section found")
+	}
+
+	// Load KMS configuration directly from the parsed JSON data
+	return kms.LoadKMSFromConfig(kmsVal)
 }

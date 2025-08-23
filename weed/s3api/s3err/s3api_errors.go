@@ -102,6 +102,7 @@ const (
 	ErrAuthNotSetup
 	ErrNotImplemented
 	ErrPreconditionFailed
+	ErrNotModified
 
 	ErrExistingObjectIsDirectory
 	ErrExistingObjectIsFile
@@ -123,6 +124,15 @@ const (
 	ErrSSECustomerKeyMD5Mismatch
 	ErrSSECustomerKeyMissing
 	ErrSSECustomerKeyNotNeeded
+
+	// SSE-KMS related errors
+	ErrKMSKeyNotFound
+	ErrKMSAccessDenied
+	ErrKMSDisabled
+	ErrKMSInvalidCiphertext
+
+	// Bucket encryption errors
+	ErrNoSuchBucketEncryptionConfiguration
 )
 
 // Error message constants for checksum validation
@@ -442,6 +452,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Description:    "At least one of the pre-conditions you specified did not hold",
 		HTTPStatusCode: http.StatusPreconditionFailed,
 	},
+	ErrNotModified: {
+		Code:           "NotModified",
+		Description:    "The object was not modified since the specified time",
+		HTTPStatusCode: http.StatusNotModified,
+	},
 	ErrExistingObjectIsDirectory: {
 		Code:           "ExistingObjectIsDirectory",
 		Description:    "Existing Object is a directory.",
@@ -504,6 +519,35 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Code:           "InvalidArgument",
 		Description:    "The object was not encrypted with customer provided keys.",
 		HTTPStatusCode: http.StatusBadRequest,
+	},
+
+	// SSE-KMS error responses
+	ErrKMSKeyNotFound: {
+		Code:           "KMSKeyNotFoundException",
+		Description:    "The specified KMS key does not exist.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrKMSAccessDenied: {
+		Code:           "KMSAccessDeniedException",
+		Description:    "Access denied to the specified KMS key.",
+		HTTPStatusCode: http.StatusForbidden,
+	},
+	ErrKMSDisabled: {
+		Code:           "KMSKeyDisabledException",
+		Description:    "The specified KMS key is disabled.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrKMSInvalidCiphertext: {
+		Code:           "InvalidCiphertext",
+		Description:    "The provided ciphertext is invalid or corrupted.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+
+	// Bucket encryption error responses
+	ErrNoSuchBucketEncryptionConfiguration: {
+		Code:           "ServerSideEncryptionConfigurationNotFoundError",
+		Description:    "The server side encryption configuration was not found.",
+		HTTPStatusCode: http.StatusNotFound,
 	},
 }
 

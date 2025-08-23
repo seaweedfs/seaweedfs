@@ -1,0 +1,23 @@
+{
+  "identities": [
+    {
+      "name": "admin",
+      "credentials": [
+        {
+          "accessKey": "ACCESS_KEY_PLACEHOLDER",
+          "secretKey": "SECRET_KEY_PLACEHOLDER"
+        }
+      ],
+      "actions": ["Admin", "Read", "Write"]
+    }
+  ],
+  "kms": {
+    "default_provider": "local-dev",
+    "providers": {
+      "local-dev": {
+        "type": "local",
+        "enableOnDemandCreate": true
+      }
+    }
+  }
+}

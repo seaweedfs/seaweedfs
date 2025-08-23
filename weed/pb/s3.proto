@@ -53,4 +53,11 @@ message CORSConfiguration {
 message BucketMetadata {
     map<string, string> tags = 1;
     CORSConfiguration cors = 2;
+    EncryptionConfiguration encryption = 3;
+}
+
+message EncryptionConfiguration {
+    string sse_algorithm = 1; // "AES256" or "aws:kms"
+    string kms_key_id = 2; // KMS key ID (optional for aws:kms)
+    bool bucket_key_enabled = 3; // S3 Bucket Keys optimization
 }

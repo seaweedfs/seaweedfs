@@ -3,6 +3,7 @@ package weed_server
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -333,6 +334,37 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 			if k == "Response-Content-Disposition" {
 				entry.Extended["Content-Disposition"] = []byte(v[0])
 			}
+		}
+	}
+
+	// Process SSE metadata headers sent by S3 API and store in entry extended metadata
+	if sseIVHeader := r.Header.Get(s3_constants.SeaweedFSSSEIVHeader); sseIVHeader != "" {
+		// Decode base64-encoded IV and store in metadata
+		if ivData, err := base64.StdEncoding.DecodeString(sseIVHeader); err == nil {
+			entry.Extended[s3_constants.SeaweedFSSSEIV] = ivData
+			glog.V(4).Infof("Stored SSE-C IV metadata for %s", entry.FullPath)
+		} else {
+			glog.Errorf("Failed to decode SSE-C IV header for %s: %v", entry.FullPath, err)
+		}
+	}
+
+	// Store SSE-C algorithm and key MD5 for proper S3 API response headers
+	if sseAlgorithm := r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerAlgorithm); sseAlgorithm != "" {
+		entry.Extended[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] = []byte(sseAlgorithm)
+		glog.V(4).Infof("Stored SSE-C algorithm metadata for %s", entry.FullPath)
+	}
+	if sseKeyMD5 := r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerKeyMD5); sseKeyMD5 != "" {
+		entry.Extended[s3_constants.AmzServerSideEncryptionCustomerKeyMD5] = []byte(sseKeyMD5)
+		glog.V(4).Infof("Stored SSE-C key MD5 metadata for %s", entry.FullPath)
+	}
+
+	if sseKMSHeader := r.Header.Get(s3_constants.SeaweedFSSSEKMSKeyHeader); sseKMSHeader != "" {
+		// Decode base64-encoded KMS metadata and store
+		if kmsData, err := base64.StdEncoding.DecodeString(sseKMSHeader); err == nil {
+			entry.Extended[s3_constants.SeaweedFSSSEKMSKey] = kmsData
+			glog.V(4).Infof("Stored SSE-KMS metadata for %s", entry.FullPath)
+		} else {
+			glog.Errorf("Failed to decode SSE-KMS metadata header for %s: %v", entry.FullPath, err)
 		}
 	}
 
