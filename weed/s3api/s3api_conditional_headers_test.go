@@ -276,7 +276,7 @@ func TestConditionalHeadersForReads(t *testing.T) {
 
 			s3a := NewS3ApiServerForTest()
 			errCode := s3a.checkConditionalHeadersForReadsWithGetter(getter, req, bucket, object)
-			if errCode != s3err.ErrNotModified {
+			if errCode.ErrorCode != s3err.ErrNotModified {
 				t.Errorf("Expected ErrNotModified when If-None-Match matches, got %v", errCode)
 			}
 		})
@@ -290,7 +290,7 @@ func TestConditionalHeadersForReads(t *testing.T) {
 
 			s3a := NewS3ApiServerForTest()
 			errCode := s3a.checkConditionalHeadersForReadsWithGetter(getter, req, bucket, object)
-			if errCode != s3err.ErrNotModified {
+			if errCode.ErrorCode != s3err.ErrNotModified {
 				t.Errorf("Expected ErrNotModified when If-None-Match=* with existing object, got %v", errCode)
 			}
 		})
@@ -304,7 +304,7 @@ func TestConditionalHeadersForReads(t *testing.T) {
 
 			s3a := NewS3ApiServerForTest()
 			errCode := s3a.checkConditionalHeadersForReadsWithGetter(getter, req, bucket, object)
-			if errCode != s3err.ErrNone {
+			if errCode.ErrorCode != s3err.ErrNone {
 				t.Errorf("Expected ErrNone when If-None-Match doesn't match, got %v", errCode)
 			}
 		})
@@ -318,7 +318,7 @@ func TestConditionalHeadersForReads(t *testing.T) {
 
 			s3a := NewS3ApiServerForTest()
 			errCode := s3a.checkConditionalHeadersForReadsWithGetter(getter, req, bucket, object)
-			if errCode != s3err.ErrNone {
+			if errCode.ErrorCode != s3err.ErrNone {
 				t.Errorf("Expected ErrNone when If-Match matches, got %v", errCode)
 			}
 		})
@@ -332,7 +332,7 @@ func TestConditionalHeadersForReads(t *testing.T) {
 
 			s3a := NewS3ApiServerForTest()
 			errCode := s3a.checkConditionalHeadersForReadsWithGetter(getter, req, bucket, object)
-			if errCode != s3err.ErrPreconditionFailed {
+			if errCode.ErrorCode != s3err.ErrPreconditionFailed {
 				t.Errorf("Expected ErrPreconditionFailed when If-Match doesn't match, got %v", errCode)
 			}
 		})
@@ -346,7 +346,7 @@ func TestConditionalHeadersForReads(t *testing.T) {
 
 			s3a := NewS3ApiServerForTest()
 			errCode := s3a.checkConditionalHeadersForReadsWithGetter(getter, req, bucket, object)
-			if errCode != s3err.ErrNone {
+			if errCode.ErrorCode != s3err.ErrNone {
 				t.Errorf("Expected ErrNone when If-Match=* with existing object, got %v", errCode)
 			}
 		})
@@ -360,7 +360,7 @@ func TestConditionalHeadersForReads(t *testing.T) {
 
 			s3a := NewS3ApiServerForTest()
 			errCode := s3a.checkConditionalHeadersForReadsWithGetter(getter, req, bucket, object)
-			if errCode != s3err.ErrNone {
+			if errCode.ErrorCode != s3err.ErrNone {
 				t.Errorf("Expected ErrNone when object modified after If-Modified-Since date, got %v", errCode)
 			}
 		})
@@ -374,7 +374,7 @@ func TestConditionalHeadersForReads(t *testing.T) {
 
 			s3a := NewS3ApiServerForTest()
 			errCode := s3a.checkConditionalHeadersForReadsWithGetter(getter, req, bucket, object)
-			if errCode != s3err.ErrNotModified {
+			if errCode.ErrorCode != s3err.ErrNotModified {
 				t.Errorf("Expected ErrNotModified when object not modified since If-Modified-Since date, got %v", errCode)
 			}
 		})
@@ -388,7 +388,7 @@ func TestConditionalHeadersForReads(t *testing.T) {
 
 			s3a := NewS3ApiServerForTest()
 			errCode := s3a.checkConditionalHeadersForReadsWithGetter(getter, req, bucket, object)
-			if errCode != s3err.ErrNone {
+			if errCode.ErrorCode != s3err.ErrNone {
 				t.Errorf("Expected ErrNone when object not modified since If-Unmodified-Since date, got %v", errCode)
 			}
 		})
@@ -402,7 +402,7 @@ func TestConditionalHeadersForReads(t *testing.T) {
 
 			s3a := NewS3ApiServerForTest()
 			errCode := s3a.checkConditionalHeadersForReadsWithGetter(getter, req, bucket, object)
-			if errCode != s3err.ErrPreconditionFailed {
+			if errCode.ErrorCode != s3err.ErrPreconditionFailed {
 				t.Errorf("Expected ErrPreconditionFailed when object modified since If-Unmodified-Since date, got %v", errCode)
 			}
 		})
@@ -419,7 +419,7 @@ func TestConditionalHeadersForReads(t *testing.T) {
 
 			s3a := NewS3ApiServerForTest()
 			errCode := s3a.checkConditionalHeadersForReadsWithGetter(getter, req, bucket, object)
-			if errCode != s3err.ErrNone {
+			if errCode.ErrorCode != s3err.ErrNone {
 				t.Errorf("Expected ErrNone when object doesn't exist with If-None-Match, got %v", errCode)
 			}
 		})
@@ -433,7 +433,7 @@ func TestConditionalHeadersForReads(t *testing.T) {
 
 			s3a := NewS3ApiServerForTest()
 			errCode := s3a.checkConditionalHeadersForReadsWithGetter(getter, req, bucket, object)
-			if errCode != s3err.ErrPreconditionFailed {
+			if errCode.ErrorCode != s3err.ErrPreconditionFailed {
 				t.Errorf("Expected ErrPreconditionFailed when object doesn't exist with If-Match, got %v", errCode)
 			}
 		})
@@ -447,7 +447,7 @@ func TestConditionalHeadersForReads(t *testing.T) {
 
 			s3a := NewS3ApiServerForTest()
 			errCode := s3a.checkConditionalHeadersForReadsWithGetter(getter, req, bucket, object)
-			if errCode != s3err.ErrNone {
+			if errCode.ErrorCode != s3err.ErrNone {
 				t.Errorf("Expected ErrNone when object doesn't exist with If-Modified-Since, got %v", errCode)
 			}
 		})
@@ -461,7 +461,7 @@ func TestConditionalHeadersForReads(t *testing.T) {
 
 			s3a := NewS3ApiServerForTest()
 			errCode := s3a.checkConditionalHeadersForReadsWithGetter(getter, req, bucket, object)
-			if errCode != s3err.ErrPreconditionFailed {
+			if errCode.ErrorCode != s3err.ErrPreconditionFailed {
 				t.Errorf("Expected ErrPreconditionFailed when object doesn't exist with If-Unmodified-Since, got %v", errCode)
 			}
 		})
