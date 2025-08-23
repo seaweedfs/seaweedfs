@@ -324,11 +324,14 @@ func (p *OpenBaoKMSProvider) DescribeKey(ctx context.Context, req *seaweedkms.De
 	if keyType, ok := secret.Data["type"].(string); ok {
 		if keyType == "aes256-gcm96" || keyType == "aes128-gcm96" || keyType == "chacha20-poly1305" {
 			response.KeyUsage = seaweedkms.KeyUsageEncryptDecrypt
+		} else {
+			// Default to data key generation if not an encrypt/decrypt type
+			response.KeyUsage = seaweedkms.KeyUsageGenerateDataKey
 		}
+	} else {
+		// If type is missing, default to data key generation
+		response.KeyUsage = seaweedkms.KeyUsageGenerateDataKey
 	}
-
-	// Check if key can be used for data key generation (most keys support this)
-	response.KeyUsage = seaweedkms.KeyUsageGenerateDataKey
 
 	// OpenBao/Vault keys are enabled by default (no disabled state in transit)
 	response.KeyState = seaweedkms.KeyStateEnabled
