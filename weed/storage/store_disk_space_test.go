@@ -4,71 +4,77 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
-	"github.com/seaweedfs/seaweedfs/weed/storage/types"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func TestHasFreeDiskLocation(t *testing.T) {
-	diskLocation := &DiskLocation{
-		Directory:              "/test/",
-		DirectoryUuid:          "1234",
-		IdxDirectory:           "/test/",
-		DiskType:               types.HddType,
-		OriginalMaxVolumeCount: 0,
-		volumes:                make(map[needle.VolumeId]*Volume),
+	testCases := []struct {
+		name           string
+		isDiskSpaceLow bool
+		maxVolumeCount int32
+		currentVolumes int
+		expected       bool
+	}{
+		{
+			name:           "low disk space prevents allocation",
+			isDiskSpaceLow: true,
+			maxVolumeCount: 10,
+			currentVolumes: 5,
+			expected:       false,
+		},
+		{
+			name:           "normal disk space and available volume count allows allocation",
+			isDiskSpaceLow: false,
+			maxVolumeCount: 10,
+			currentVolumes: 5,
+			expected:       true,
+		},
+		{
+			name:           "volume count at max prevents allocation",
+			isDiskSpaceLow: false,
+			maxVolumeCount: 2,
+			currentVolumes: 2,
+			expected:       false,
+		},
+		{
+			name:           "volume count over max prevents allocation",
+			isDiskSpaceLow: false,
+			maxVolumeCount: 2,
+			currentVolumes: 3,
+			expected:       false,
+		},
+		{
+			name:           "volume count just under max allows allocation",
+			isDiskSpaceLow: false,
+			maxVolumeCount: 2,
+			currentVolumes: 1,
+			expected:       true,
+		},
 	}
-	store := &Store{
-		Locations: []*DiskLocation{diskLocation},
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// setup
+			diskLocation := &DiskLocation{
+				volumes:        make(map[needle.VolumeId]*Volume),
+				isDiskSpaceLow: tc.isDiskSpaceLow,
+				MaxVolumeCount: tc.maxVolumeCount,
+			}
+			for i := 0; i < tc.currentVolumes; i++ {
+				diskLocation.volumes[needle.VolumeId(i+1)] = &Volume{}
+			}
+
+			store := &Store{
+				Locations: []*DiskLocation{diskLocation},
+			}
+
+			// act
+			result := store.hasFreeDiskLocation(diskLocation)
+
+			// assert
+			if result != tc.expected {
+				t.Errorf("Expected hasFreeDiskLocation() = %v; want %v for volumes:%d/%d, lowSpace:%v",
+					result, tc.expected, len(diskLocation.volumes), diskLocation.MaxVolumeCount, diskLocation.isDiskSpaceLow)
+			}
+		})
 	}
-
-	t.Run("low disk space prevents allocation", func(t *testing.T) {
-		// setup
-		diskLocation.isDiskSpaceLow = true
-		diskLocation.MaxVolumeCount = 10
-		diskLocation.MinFreeSpace = util.MinFreeSpace{Type: util.AsPercent, Percent: 40, Raw: "40"}
-		defer func() { diskLocation.isDiskSpaceLow = false }() // teardown
-
-		// act
-		result := store.hasFreeDiskLocation(diskLocation)
-
-		// assert
-		if result {
-			t.Errorf("Expected hasFreeDiskLocation to return false when disk space is low, but got true")
-		}
-	})
-
-	t.Run("normal disk space and available volume count allows allocation", func(t *testing.T) {
-		// setup
-		diskLocation.isDiskSpaceLow = false
-		diskLocation.MaxVolumeCount = 10
-		diskLocation.MinFreeSpace = util.MinFreeSpace{Type: util.AsPercent, Percent: 40, Raw: "40"}
-		diskLocation.volumes = make(map[needle.VolumeId]*Volume)
-
-		// act
-		result := store.hasFreeDiskLocation(diskLocation)
-
-		// assert
-		if !result {
-			t.Errorf("Expected hasFreeDiskLocation to return true when disk space is normal and volume count is below max, but got false")
-		}
-	})
-
-	t.Run("volume count at max prevents allocation", func(t *testing.T) {
-		// setup
-		diskLocation.isDiskSpaceLow = false
-		diskLocation.MaxVolumeCount = 2
-		diskLocation.MinFreeSpace = util.MinFreeSpace{Type: util.AsPercent, Percent: 10, Raw: "10"}
-		diskLocation.volumes = make(map[needle.VolumeId]*Volume)
-		diskLocation.volumes[1] = &Volume{}
-		diskLocation.volumes[2] = &Volume{}
-		defer func() { diskLocation.volumes = make(map[needle.VolumeId]*Volume) }() // teardown
-
-		// act
-		result := store.hasFreeDiskLocation(diskLocation)
-
-		// assert
-		if result {
-			t.Errorf("Expected hasFreeDiskLocation to return false when volume count (%d) == max (%d), but got true", len(diskLocation.volumes), diskLocation.MaxVolumeCount)
-		}
-	})
 }
