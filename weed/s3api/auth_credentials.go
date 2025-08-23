@@ -14,12 +14,17 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/kms"
-	"github.com/seaweedfs/seaweedfs/weed/kms/local"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
-	"github.com/seaweedfs/seaweedfs/weed/util"
+
+	// Import KMS providers to register them
+	_ "github.com/seaweedfs/seaweedfs/weed/kms/aws"
+	// _ "github.com/seaweedfs/seaweedfs/weed/kms/azure"  // TODO: Fix Azure SDK compatibility issues
+	_ "github.com/seaweedfs/seaweedfs/weed/kms/gcp"
+	_ "github.com/seaweedfs/seaweedfs/weed/kms/local"
+	_ "github.com/seaweedfs/seaweedfs/weed/kms/openbao"
 	"google.golang.org/grpc"
 )
 
@@ -144,6 +149,9 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 		if err := iam.loadS3ApiConfigurationFromFile(option.Config); err != nil {
 			glog.Fatalf("fail to load config file %s: %v", option.Config, err)
 		}
+		// Mark as loaded since an explicit config file was provided
+		// This prevents fallback to environment variables even if no identities were loaded
+		// (e.g., config file contains only KMS settings)
 		configLoaded = true
 	} else {
 		glog.V(3).Infof("no static config file specified... loading config from credential manager")
@@ -546,72 +554,30 @@ func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromCredentialManager
 	return iam.loadS3ApiConfiguration(s3ApiConfiguration)
 }
 
-// initializeKMSFromConfig parses JSON configuration and initializes KMS provider if present
+// initializeKMSFromConfig loads KMS configuration from TOML format
 func (iam *IdentityAccessManagement) initializeKMSFromConfig(configContent []byte) error {
-	// Parse JSON to extract KMS configuration
-	var config map[string]interface{}
-	if err := json.Unmarshal(configContent, &config); err != nil {
-		return fmt.Errorf("failed to parse config JSON: %v", err)
-	}
-
-	// Check if KMS configuration exists
-	kmsConfig, exists := config["kms"]
-	if !exists {
-		glog.V(2).Infof("No KMS configuration found in S3 config - SSE-KMS will not be available")
+	// JSON-only KMS configuration
+	if err := iam.initializeKMSFromJSON(configContent); err == nil {
+		glog.V(1).Infof("Successfully loaded KMS configuration from JSON format")
 		return nil
 	}
 
-	kmsConfigMap, ok := kmsConfig.(map[string]interface{})
-	if !ok {
-		return fmt.Errorf("invalid KMS configuration format")
-	}
-
-	// Extract KMS type (default to "local" for testing)
-	kmsType, ok := kmsConfigMap["type"].(string)
-	if !ok || kmsType == "" {
-		kmsType = "local"
-	}
-
-	glog.V(1).Infof("Initializing KMS provider: type=%s", kmsType)
-
-	// Initialize KMS provider based on type
-	switch kmsType {
-	case "local":
-		return iam.initializeLocalKMS(kmsConfigMap)
-	default:
-		return fmt.Errorf("unsupported KMS provider type: %s", kmsType)
-	}
+	glog.V(2).Infof("No KMS configuration found in S3 config - SSE-KMS will not be available")
+	return nil
 }
 
-// initializeLocalKMS initializes the local KMS provider for development/testing
-func (iam *IdentityAccessManagement) initializeLocalKMS(kmsConfig map[string]interface{}) error {
-	// Register local KMS provider factory if not already registered
-	kms.RegisterProvider("local", func(config util.Configuration) (kms.KMSProvider, error) {
-		// Create local KMS provider
-		provider, err := local.NewLocalKMSProvider(config)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create local KMS provider: %v", err)
-		}
-
-		// Create the test keys that our tests expect with specific keyIDs
-		// Note: Local KMS provider now creates keys on-demand
-		// No need to pre-create test keys in production code
-
-		glog.V(1).Infof("Local KMS provider created successfully")
-		return provider, nil
-	})
-
-	// Create KMS configuration
-	kmsConfigObj := &kms.KMSConfig{
-		Provider: "local",
-		Config:   nil, // Local provider uses defaults
+// initializeKMSFromJSON loads KMS configuration from JSON format when provided in the same file
+func (iam *IdentityAccessManagement) initializeKMSFromJSON(configContent []byte) error {
+	// Parse as generic JSON and extract optional "kms" block
+	var m map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(configContent))), &m); err != nil {
+		return err
+	}
+	kmsVal, ok := m["kms"]
+	if !ok {
+		return fmt.Errorf("no KMS section found")
 	}
 
-	// Initialize global KMS
-	if err := kms.InitializeGlobalKMS(kmsConfigObj); err != nil {
-		return fmt.Errorf("failed to initialize global KMS: %v", err)
-	}
-
-	glog.V(0).Infof("✅ KMS provider initialized successfully - SSE-KMS is now available")
-	return nil
+	// Load KMS configuration directly from the parsed JSON data
+	return kms.LoadKMSFromConfig(kmsVal)
 }

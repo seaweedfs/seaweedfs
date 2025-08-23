@@ -17,6 +17,9 @@ VOLUME_MAX_COUNT ?= 100
 # SSE-KMS configuration
 KMS_KEY_ID ?= test-key-123
 KMS_TYPE ?= local
+OPENBAO_ADDR ?= http://127.0.0.1:8200
+OPENBAO_TOKEN ?= root-token-for-testing
+DOCKER_COMPOSE ?= docker-compose
 
 # Test directory
 TEST_DIR := $(shell pwd)
@@ -28,7 +31,7 @@ GREEN := \033[0;32m
 YELLOW := \033[1;33m
 NC := \033[0m # No Color
 
-.PHONY: all test clean start-seaweedfs stop-seaweedfs stop-seaweedfs-safe start-seaweedfs-ci check-binary build-weed help help-extended test-with-server test-quick-with-server test-metadata-persistence
+.PHONY: all test clean start-seaweedfs stop-seaweedfs stop-seaweedfs-safe start-seaweedfs-ci check-binary build-weed help help-extended test-with-server test-quick-with-server test-metadata-persistence setup-openbao test-with-kms test-ssekms-integration clean-kms start-full-stack stop-full-stack
 
 all: test-basic
 
@@ -50,6 +53,13 @@ help:
 	@echo "  test-multipart - Run SSE multipart upload tests"
 	@echo "  test-errors   - Run SSE error condition tests"
 	@echo "  benchmark     - Run SSE performance benchmarks"
+	@echo "  KMS Integration:"
+	@echo "  setup-openbao - Set up OpenBao KMS for testing"
+	@echo "  test-with-kms - Run full SSE integration with real KMS"
+	@echo "  test-ssekms-integration - Run SSE-KMS with OpenBao only"
+	@echo "  start-full-stack - Start SeaweedFS + OpenBao with Docker"
+	@echo "  stop-full-stack - Stop Docker services"
+	@echo "  clean-kms     - Clean up KMS test environment"
 	@echo "  start-seaweedfs - Start SeaweedFS server for testing"
 	@echo "  stop-seaweedfs - Stop SeaweedFS server"
 	@echo "  clean         - Clean up test artifacts"
@@ -352,17 +362,14 @@ start-seaweedfs-ci: check-binary
 	@nohup $(SEAWEEDFS_BINARY) volume -port=$(VOLUME_PORT) -mserver=127.0.0.1:$(MASTER_PORT) -dir=/tmp/seaweedfs-test-sse-volume -max=$(VOLUME_MAX_COUNT) -ip=127.0.0.1 > /tmp/seaweedfs-sse-volume.log 2>&1 &
 	@sleep 5
 	
-	# Start filer server (using standard SeaweedFS gRPC port convention: HTTP port + 10000)
-	@echo "Starting filer server..."
-	@nohup $(SEAWEEDFS_BINARY) filer -port=$(FILER_PORT) -port.grpc=$$(( $(FILER_PORT) + 10000 )) -master=127.0.0.1:$(MASTER_PORT) -dataCenter=defaultDataCenter -ip=127.0.0.1 > /tmp/seaweedfs-sse-filer.log 2>&1 &
-	@sleep 3
+	# Create S3 JSON configuration with KMS (Local provider) and basic identity for embedded S3
+	@sed -e 's/ACCESS_KEY_PLACEHOLDER/$(ACCESS_KEY)/g' \
+	     -e 's/SECRET_KEY_PLACEHOLDER/$(SECRET_KEY)/g' \
+	     s3-config-template.json > /tmp/seaweedfs-s3.json
 	
-	# Create S3 configuration with SSE-KMS support
-	@printf '{"identities":[{"name":"%s","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","Write"]}],"kms":{"type":"%s","configs":{"keyId":"%s","encryptionContext":{},"bucketKey":false}}}' "$(ACCESS_KEY)" "$(ACCESS_KEY)" "$(SECRET_KEY)" "$(KMS_TYPE)" "$(KMS_KEY_ID)" > /tmp/seaweedfs-sse-s3.json
-	
-	# Start S3 server with KMS configuration
-	@echo "Starting S3 server..."
-	@nohup $(SEAWEEDFS_BINARY) s3 -port=$(S3_PORT) -filer=127.0.0.1:$(FILER_PORT) -config=/tmp/seaweedfs-sse-s3.json -ip.bind=127.0.0.1 > /tmp/seaweedfs-sse-s3.log 2>&1 &
+	# Start filer server with embedded S3 using the JSON config (with verbose logging)
+	@echo "Starting filer server with embedded S3..."
+	@AWS_ACCESS_KEY_ID=$(ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) GLOG_v=4 nohup $(SEAWEEDFS_BINARY) filer -port=$(FILER_PORT) -port.grpc=$$(( $(FILER_PORT) + 10000 )) -master=127.0.0.1:$(MASTER_PORT) -dataCenter=defaultDataCenter -ip=127.0.0.1 -s3 -s3.port=$(S3_PORT) -s3.config=/tmp/seaweedfs-s3.json > /tmp/seaweedfs-sse-filer.log 2>&1 &
 	@sleep 5
 	
 	# Wait for S3 service to be ready - use port-based checking for reliability
@@ -381,13 +388,12 @@ start-seaweedfs-ci: check-binary
 			echo "Master log:"; tail -30 /tmp/seaweedfs-sse-master.log || true; \
 			echo "Volume log:"; tail -30 /tmp/seaweedfs-sse-volume.log || true; \
 			echo "Filer log:"; tail -30 /tmp/seaweedfs-sse-filer.log || true; \
-			echo "S3 log:"; tail -30 /tmp/seaweedfs-sse-s3.log || true; \
 			echo "=== Port Status ==="; \
 			netstat -an 2>/dev/null | grep ":$(S3_PORT)" || \
 			ss -an 2>/dev/null | grep ":$(S3_PORT)" || \
 			echo "No port listening on $(S3_PORT)"; \
 			echo "=== Process Status ==="; \
-			ps aux | grep -E "weed.*s3.*$(S3_PORT)" | grep -v grep || echo "No S3 process found"; \
+			ps aux | grep -E "weed.*(filer|s3).*$(S3_PORT)" | grep -v grep || echo "No S3 process found"; \
 			exit 1; \
 		fi; \
 		echo "Waiting for S3 service... ($$i/20)"; \
@@ -452,3 +458,72 @@ help-extended:
 	@echo "  KMS_TYPE                - KMS type (default: local)"
 	@echo "  VOLUME_MAX_SIZE_MB      - Volume maximum size in MB (default: 50)"
 	@echo "  TEST_TIMEOUT            - Test timeout (default: 15m)"
+
+####################################################
+# KMS Integration Testing with OpenBao
+####################################################
+
+setup-openbao:
+	@echo "$(YELLOW)Setting up OpenBao for SSE-KMS testing...$(NC)"
+	@$(DOCKER_COMPOSE) up -d openbao
+	@sleep 10
+	@echo "$(YELLOW)Configuring OpenBao...$(NC)"
+	@OPENBAO_ADDR=$(OPENBAO_ADDR) OPENBAO_TOKEN=$(OPENBAO_TOKEN) ./setup_openbao_sse.sh
+	@echo "$(GREEN)✅ OpenBao setup complete!$(NC)"
+
+start-full-stack: setup-openbao
+	@echo "$(YELLOW)Starting full SeaweedFS + KMS stack...$(NC)"
+	@$(DOCKER_COMPOSE) up -d
+	@echo "$(YELLOW)Waiting for services to be ready...$(NC)"
+	@sleep 15
+	@echo "$(GREEN)✅ Full stack running!$(NC)"
+	@echo "OpenBao: $(OPENBAO_ADDR)"
+	@echo "S3 API: http://localhost:$(S3_PORT)"
+
+stop-full-stack:
+	@echo "$(YELLOW)Stopping full stack...$(NC)"
+	@$(DOCKER_COMPOSE) down
+	@echo "$(GREEN)✅ Full stack stopped$(NC)"
+
+test-with-kms: start-full-stack
+	@echo "$(YELLOW)Running SSE integration tests with real KMS...$(NC)"
+	@sleep 5  # Extra time for KMS initialization
+	@cd $(SEAWEEDFS_ROOT) && go test -v -timeout=$(TEST_TIMEOUT) ./test/s3/sse -run "SSE.*Integration" || (echo "$(RED)Tests failed$(NC)" && make stop-full-stack && exit 1)
+	@echo "$(GREEN)✅ All KMS integration tests passed!$(NC)"
+	@make stop-full-stack
+
+test-ssekms-integration: start-full-stack  
+	@echo "$(YELLOW)Running SSE-KMS integration tests with OpenBao...$(NC)"
+	@sleep 5  # Extra time for KMS initialization
+	@cd $(SEAWEEDFS_ROOT) && go test -v -timeout=$(TEST_TIMEOUT) ./test/s3/sse -run "TestSSEKMS.*Integration" || (echo "$(RED)SSE-KMS tests failed$(NC)" && make stop-full-stack && exit 1)
+	@echo "$(GREEN)✅ SSE-KMS integration tests passed!$(NC)"
+	@make stop-full-stack
+
+clean-kms:
+	@echo "$(YELLOW)Cleaning up KMS test environment...$(NC)"
+	@$(DOCKER_COMPOSE) down -v --remove-orphans || true
+	@docker system prune -f || true
+	@echo "$(GREEN)✅ KMS environment cleaned up!$(NC)"
+
+status-kms:
+	@echo "$(YELLOW)KMS Environment Status:$(NC)"
+	@$(DOCKER_COMPOSE) ps
+	@echo ""
+	@echo "$(YELLOW)OpenBao Health:$(NC)"
+	@curl -s $(OPENBAO_ADDR)/v1/sys/health | jq '.' || echo "OpenBao not accessible"
+	@echo ""
+	@echo "$(YELLOW)S3 API Status:$(NC)"
+	@curl -s http://localhost:$(S3_PORT) || echo "S3 API not accessible"
+
+# Quick test with just basic KMS functionality
+test-kms-quick: setup-openbao
+	@echo "$(YELLOW)Running quick KMS functionality test...$(NC)"
+	@cd ../../../test/kms && make dev-test
+	@echo "$(GREEN)✅ Quick KMS test passed!$(NC)"
+
+# Development targets
+dev-kms: setup-openbao
+	@echo "$(GREEN)Development environment ready$(NC)"
+	@echo "OpenBao: $(OPENBAO_ADDR)"
+	@echo "Token: $(OPENBAO_TOKEN)"
+	@echo "Use 'make test-ssekms-integration' to run tests"

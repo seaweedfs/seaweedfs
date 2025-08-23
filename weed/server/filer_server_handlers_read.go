@@ -227,6 +227,14 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		w.Header().Set(s3_constants.SeaweedFSSSEIVHeader, ivBase64)
 	}
 
+	// Set SSE-C algorithm and key MD5 headers for S3 API response
+	if sseAlgorithm, exists := entry.Extended[s3_constants.AmzServerSideEncryptionCustomerAlgorithm]; exists {
+		w.Header().Set(s3_constants.AmzServerSideEncryptionCustomerAlgorithm, string(sseAlgorithm))
+	}
+	if sseKeyMD5, exists := entry.Extended[s3_constants.AmzServerSideEncryptionCustomerKeyMD5]; exists {
+		w.Header().Set(s3_constants.AmzServerSideEncryptionCustomerKeyMD5, string(sseKeyMD5))
+	}
+
 	if sseKMSKey, exists := entry.Extended[s3_constants.SeaweedFSSSEKMSKey]; exists {
 		// Convert binary KMS metadata to base64 for HTTP header
 		kmsBase64 := base64.StdEncoding.EncodeToString(sseKMSKey)

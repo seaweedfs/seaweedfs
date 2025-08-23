@@ -43,8 +43,9 @@ type LocalKey struct {
 
 // LocalKMSConfig contains configuration for the local KMS provider
 type LocalKMSConfig struct {
-	DefaultKeyID string               `json:"defaultKeyId"`
-	Keys         map[string]*LocalKey `json:"keys"`
+	DefaultKeyID         string               `json:"defaultKeyId"`
+	Keys                 map[string]*LocalKey `json:"keys"`
+	EnableOnDemandCreate bool                 `json:"enableOnDemandCreate"`
 }
 
 func init() {
@@ -81,12 +82,16 @@ func NewLocalKMSProvider(config util.Configuration) (kms.KMSProvider, error) {
 
 // loadConfig loads configuration from the provided config
 func (p *LocalKMSProvider) loadConfig(config util.Configuration) error {
-	// Configure on-demand key creation behavior
-	// Default is already set in NewLocalKMSProvider, this allows override
+	if config == nil {
+		return nil
+	}
+
 	p.enableOnDemandCreate = config.GetBool("enableOnDemandCreate")
 
-	// TODO: Load pre-existing keys from configuration
+	// TODO: Load pre-existing keys from configuration if provided
 	// For now, rely on default key creation in constructor
+
+	glog.V(2).Infof("Local KMS: enableOnDemandCreate = %v", p.enableOnDemandCreate)
 	return nil
 }
 
@@ -108,7 +113,7 @@ func (p *LocalKMSProvider) createDefaultKey() (*LocalKey, error) {
 		KeyMaterial: keyMaterial,
 		KeyUsage:    kms.KeyUsageEncryptDecrypt,
 		KeyState:    kms.KeyStateEnabled,
-		Origin:      kms.KeyOriginAWS,
+		Origin:      kms.KeyOriginLocal,
 		CreatedAt:   time.Now(),
 		Aliases:     []string{"alias/seaweedfs-default"},
 		Metadata:    make(map[string]string),
@@ -473,7 +478,7 @@ func (p *LocalKMSProvider) CreateKey(description string, aliases []string) (*Loc
 		KeyMaterial: keyMaterial,
 		KeyUsage:    kms.KeyUsageEncryptDecrypt,
 		KeyState:    kms.KeyStateEnabled,
-		Origin:      kms.KeyOriginAWS,
+		Origin:      kms.KeyOriginLocal,
 		CreatedAt:   time.Now(),
 		Aliases:     aliases,
 		Metadata:    make(map[string]string),
@@ -508,7 +513,7 @@ func (p *LocalKMSProvider) CreateKeyWithID(keyID, description string) (*LocalKey
 		KeyMaterial: keyMaterial,
 		KeyUsage:    kms.KeyUsageEncryptDecrypt,
 		KeyState:    kms.KeyStateEnabled,
-		Origin:      kms.KeyOriginAWS,
+		Origin:      kms.KeyOriginLocal,
 		CreatedAt:   time.Now(),
 		Aliases:     []string{}, // No aliases by default
 		Metadata:    make(map[string]string),

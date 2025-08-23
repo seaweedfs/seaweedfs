@@ -121,6 +121,8 @@ require (
 )
 
 require (
+	cloud.google.com/go/kms v1.22.0
+	github.com/Azure/azure-sdk-for-go/sdk/keyvault/azkeys v0.10.0
 	github.com/Jille/raft-grpc-transport v1.6.1
 	github.com/ThreeDotsLabs/watermill v1.4.7
 	github.com/a-h/templ v0.3.924
@@ -140,6 +142,7 @@ require (
 	github.com/hanwen/go-fuse/v2 v2.8.0
 	github.com/hashicorp/raft v1.7.3
 	github.com/hashicorp/raft-boltdb/v2 v2.3.1
+	github.com/hashicorp/vault/api v1.20.0
 	github.com/minio/crc64nvme v1.1.0
 	github.com/orcaman/concurrent-map/v2 v2.0.1
 	github.com/parquet-go/parquet-go v0.25.1
@@ -163,12 +166,20 @@ require (
 require github.com/k0kubun/colorstring v0.0.0-20150214042306-9440f1994b88 // indirect
 
 require (
+	cloud.google.com/go/longrunning v0.6.7 // indirect
 	cloud.google.com/go/pubsub/v2 v2.0.0 // indirect
+	github.com/Azure/azure-sdk-for-go/sdk/keyvault/internal v0.7.1 // indirect
 	github.com/cenkalti/backoff/v3 v3.2.2 // indirect
+	github.com/hashicorp/go-rootcerts v1.0.2 // indirect
+	github.com/hashicorp/go-secure-stdlib/parseutil v0.1.6 // indirect
+	github.com/hashicorp/go-secure-stdlib/strutil v0.1.2 // indirect
+	github.com/hashicorp/go-sockaddr v1.0.2 // indirect
+	github.com/hashicorp/hcl v1.0.1-vault-7 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/lithammer/shortuuid/v3 v3.0.7 // indirect
+	github.com/ryanuber/go-glob v1.0.0 // indirect
 )
 
 require (
@@ -179,8 +190,8 @@ require (
 	cloud.google.com/go/iam v1.5.2 // indirect
 	cloud.google.com/go/monitoring v1.24.2 // indirect
 	filippo.io/edwards25519 v1.1.0 // indirect
-	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.18.1 // indirect
-	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.10.1 // indirect
+	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.18.1
+	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.10.1
 	github.com/Azure/azure-sdk-for-go/sdk/internal v1.11.1 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.6.1 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azfile v1.5.1 // indirect

@@ -96,6 +96,10 @@ const (
 	KeyOriginAWS      KeyOrigin = "AWS_KMS"
 	KeyOriginExternal KeyOrigin = "EXTERNAL"
 	KeyOriginCloudHSM KeyOrigin = "AWS_CLOUDHSM"
+	KeyOriginAzure    KeyOrigin = "AZURE_KEY_VAULT"
+	KeyOriginGCP      KeyOrigin = "GCP_KMS"
+	KeyOriginOpenBao  KeyOrigin = "OPENBAO"
+	KeyOriginLocal    KeyOrigin = "LOCAL"
 )
 
 // KMSError represents an error from the KMS service
