@@ -35,7 +35,7 @@ func (c *commandEcDecode) Help() string {
 	ec.decode [-collection=""] [-volumeId=<volume_id>]
 
 	The -collection parameter supports regular expressions for pattern matching:
-	  - Use exact match: ec.decode -collection="mybucket"
+	  - Use exact match: ec.decode -collection="^mybucket$"
 	  - Match multiple buckets: ec.decode -collection="bucket.*"
 	  - Match all collections: ec.decode -collection=".*"
 

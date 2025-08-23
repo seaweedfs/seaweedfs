@@ -55,7 +55,7 @@ func (c *commandEcEncode) Help() string {
 	have 4 corrupted shard files.
 
 	The -collection parameter supports regular expressions for pattern matching:
-	  - Use exact match: ec.encode -collection="mybucket"
+	  - Use exact match: ec.encode -collection="^mybucket$"
 	  - Match multiple buckets: ec.encode -collection="bucket.*"
 	  - Match all collections: ec.encode -collection=".*"
 

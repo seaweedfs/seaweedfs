@@ -34,7 +34,7 @@ func (c *commandVolumeTierDownload) Help() string {
 	volume.tier.download [-collection=""] -volumeId=<volume_id>
 
 	The -collection parameter supports regular expressions for pattern matching:
-	  - Use exact match: volume.tier.download -collection="mybucket"
+	  - Use exact match: volume.tier.download -collection="^mybucket$"
 	  - Match multiple buckets: volume.tier.download -collection="bucket.*"
 	  - Match all collections: volume.tier.download -collection=".*"
 

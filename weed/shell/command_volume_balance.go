@@ -45,7 +45,7 @@ func (c *commandVolumeBalance) Help() string {
 	  - ALL_COLLECTIONS: balance across all collections
 	  - EACH_COLLECTION: balance each collection separately
 	  - Regular expressions for pattern matching:
-	    * Use exact match: volume.balance -collection="mybucket"
+	    * Use exact match: volume.balance -collection="^mybucket$"
 	    * Match multiple buckets: volume.balance -collection="bucket.*"
 	    * Match all user collections: volume.balance -collection="user-.*"
 
