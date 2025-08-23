@@ -43,8 +43,9 @@ type LocalKey struct {
 
 // LocalKMSConfig contains configuration for the local KMS provider
 type LocalKMSConfig struct {
-	DefaultKeyID string               `json:"defaultKeyId"`
-	Keys         map[string]*LocalKey `json:"keys"`
+	DefaultKeyID         string               `json:"defaultKeyId"`
+	Keys                 map[string]*LocalKey `json:"keys"`
+	EnableOnDemandCreate bool                 `json:"enableOnDemandCreate"`
 }
 
 func init() {
@@ -81,12 +82,48 @@ func NewLocalKMSProvider(config util.Configuration) (kms.KMSProvider, error) {
 
 // loadConfig loads configuration from the provided config
 func (p *LocalKMSProvider) loadConfig(config util.Configuration) error {
-	// Configure on-demand key creation behavior
-	// Default is already set in NewLocalKMSProvider, this allows override
-	p.enableOnDemandCreate = config.GetBool("enableOnDemandCreate")
+	// If config is nil, keep defaults
+	if config == nil {
+		return nil
+	}
 
-	// TODO: Load pre-existing keys from configuration
+	// Try to extract the raw configuration map and marshal/unmarshal it
+	var configMap map[string]interface{}
+
+	// Handle different config types
+	// Check if this is a configAdapter with our GetConfigMap method
+	type ConfigMapGetter interface {
+		GetConfigMap() map[string]interface{}
+	}
+
+	if configGetter, ok := config.(ConfigMapGetter); ok {
+		configMap = configGetter.GetConfigMap()
+	}
+
+	if configMap == nil {
+		// Fallback to using the util.Configuration interface
+		p.enableOnDemandCreate = config.GetBool("enableOnDemandCreate")
+		return nil
+	}
+
+	// Marshal to JSON and unmarshal to our struct for type safety
+	configBytes, err := json.Marshal(configMap)
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %v", err)
+	}
+
+	var localConfig LocalKMSConfig
+	if err := json.Unmarshal(configBytes, &localConfig); err != nil {
+		return fmt.Errorf("failed to unmarshal local KMS config: %v", err)
+	}
+
+	// Apply configuration
+	p.enableOnDemandCreate = localConfig.EnableOnDemandCreate
+
+	// TODO: Load pre-existing keys from configuration if provided
 	// For now, rely on default key creation in constructor
+
+	glog.V(2).Infof("Local KMS: enableOnDemandCreate = %v", p.enableOnDemandCreate)
 	return nil
 }
 

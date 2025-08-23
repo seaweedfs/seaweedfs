@@ -42,6 +42,11 @@ type configAdapter struct {
 	config map[string]interface{}
 }
 
+// GetConfigMap returns the underlying configuration map for direct access
+func (c *configAdapter) GetConfigMap() map[string]interface{} {
+	return c.config
+}
+
 func (c *configAdapter) GetString(key string) string {
 	if val, ok := c.config[key]; ok {
 		if str, ok := val.(string); ok {
