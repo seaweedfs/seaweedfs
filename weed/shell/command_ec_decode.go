@@ -34,6 +34,11 @@ func (c *commandEcDecode) Help() string {
 
 	ec.decode [-collection=""] [-volumeId=<volume_id>]
 
+	The -collection parameter supports regular expressions for pattern matching:
+	  - Use exact match: ec.decode -collection="^mybucket$"
+	  - Match multiple buckets: ec.decode -collection="bucket.*"
+	  - Match all collections: ec.decode -collection=".*"
+
 `
 }
 
@@ -67,8 +72,11 @@ func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	}
 
 	// apply to all volumes in the collection
-	volumeIds := collectEcShardIds(topologyInfo, *collection)
-	fmt.Printf("ec encode volumes: %v\n", volumeIds)
+	volumeIds, err := collectEcShardIds(topologyInfo, *collection)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("ec decode volumes: %v\n", volumeIds)
 	for _, vid := range volumeIds {
 		if err = doEcDecode(commandEnv, topologyInfo, *collection, vid); err != nil {
 			return err
@@ -240,13 +248,18 @@ func lookupVolumeIds(commandEnv *CommandEnv, volumeIds []string) (volumeIdLocati
 	return resp.VolumeIdLocations, nil
 }
 
-func collectEcShardIds(topoInfo *master_pb.TopologyInfo, selectedCollection string) (vids []needle.VolumeId) {
+func collectEcShardIds(topoInfo *master_pb.TopologyInfo, collectionPattern string) (vids []needle.VolumeId, err error) {
+	// compile regex pattern for collection matching
+	collectionRegex, err := compileCollectionPattern(collectionPattern)
+	if err != nil {
+		return nil, fmt.Errorf("invalid collection pattern '%s': %v", collectionPattern, err)
+	}
 
 	vidMap := make(map[uint32]bool)
 	eachDataNode(topoInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
 		if diskInfo, found := dn.DiskInfos[string(types.HardDriveType)]; found {
 			for _, v := range diskInfo.EcShardInfos {
-				if v.Collection == selectedCollection {
+				if collectionRegex.MatchString(v.Collection) {
 					vidMap[v.Id] = true
 				}
 			}
