@@ -299,6 +299,100 @@ func LoadKMSFromFilerToml(v ViperConfig) error {
 	return loader.ValidateConfiguration()
 }
 
+// LoadKMSFromConfig loads KMS configuration directly from parsed JSON data
+func LoadKMSFromConfig(kmsConfig interface{}) error {
+	kmsMap, ok := kmsConfig.(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("invalid KMS configuration format")
+	}
+
+	// Create a direct config adapter that doesn't use Viper
+	// Wrap the KMS config under a "kms" key as expected by LoadConfigurations
+	wrappedConfig := map[string]interface{}{
+		"kms": kmsMap,
+	}
+	adapter := &directConfigAdapter{config: wrappedConfig}
+	loader := NewConfigLoader(adapter)
+
+	if err := loader.LoadConfigurations(); err != nil {
+		return err
+	}
+
+	return loader.ValidateConfiguration()
+}
+
+// directConfigAdapter implements ViperConfig interface for direct map access
+type directConfigAdapter struct {
+	config map[string]interface{}
+}
+
+func (d *directConfigAdapter) GetStringMap(key string) map[string]interface{} {
+	if val, exists := d.config[key]; exists {
+		if mapVal, ok := val.(map[string]interface{}); ok {
+			return mapVal
+		}
+	}
+	return make(map[string]interface{})
+}
+
+func (d *directConfigAdapter) GetString(key string) string {
+	if val, exists := d.config[key]; exists {
+		if strVal, ok := val.(string); ok {
+			return strVal
+		}
+	}
+	return ""
+}
+
+func (d *directConfigAdapter) GetBool(key string) bool {
+	if val, exists := d.config[key]; exists {
+		if boolVal, ok := val.(bool); ok {
+			return boolVal
+		}
+	}
+	return false
+}
+
+func (d *directConfigAdapter) GetInt(key string) int {
+	if val, exists := d.config[key]; exists {
+		switch v := val.(type) {
+		case int:
+			return v
+		case float64:
+			return int(v)
+		}
+	}
+	return 0
+}
+
+func (d *directConfigAdapter) GetStringSlice(key string) []string {
+	if val, exists := d.config[key]; exists {
+		if sliceVal, ok := val.([]interface{}); ok {
+			result := make([]string, len(sliceVal))
+			for i, item := range sliceVal {
+				if strItem, ok := item.(string); ok {
+					result[i] = strItem
+				}
+			}
+			return result
+		}
+		if strSlice, ok := val.([]string); ok {
+			return strSlice
+		}
+	}
+	return []string{}
+}
+
+func (d *directConfigAdapter) SetDefault(key string, value interface{}) {
+	// For direct config adapter, we don't need to set defaults
+	// as the configuration is already parsed
+}
+
+func (d *directConfigAdapter) IsSet(key string) bool {
+	_, exists := d.config[key]
+	return exists
+}
+
 // Helper functions
 
 func getBoolFromConfig(config map[string]interface{}, key string, defaultValue bool) bool {

@@ -520,8 +520,7 @@ func TestKMSManager_WithOpenBao(t *testing.T) {
 
 		// Test decryption through manager
 		decResp, err := manager.DecryptForBucket(ctx, "test-bucket", resp.CiphertextBlob, map[string]string{
-			"openbao:key:name": "test-key-1",
-			"bucket":           "test-bucket",
+			"bucket": "test-bucket",
 		})
 		require.NoError(t, err)
 		assert.Equal(t, resp.Plaintext, decResp.Plaintext)

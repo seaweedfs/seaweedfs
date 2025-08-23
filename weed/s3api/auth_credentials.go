@@ -2,8 +2,6 @@ package s3api
 
 import (
 	"context"
-
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -20,8 +18,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
-
-	"github.com/spf13/viper"
 
 	// Import KMS providers to register them
 	_ "github.com/seaweedfs/seaweedfs/weed/kms/aws"
@@ -579,7 +575,7 @@ func (iam *IdentityAccessManagement) initializeKMSFromConfig(configContent []byt
 func (iam *IdentityAccessManagement) initializeKMSFromJSON(configContent []byte) error {
 	// Parse as generic JSON and extract optional "kms" block
 	var m map[string]any
-	if err := json.Unmarshal(bytes.TrimSpace(configContent), &m); err != nil {
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(configContent))), &m); err != nil {
 		return err
 	}
 	kmsVal, ok := m["kms"]
@@ -587,29 +583,6 @@ func (iam *IdentityAccessManagement) initializeKMSFromJSON(configContent []byte)
 		return fmt.Errorf("no KMS section found")
 	}
 
-	// Marshal the kms section back to bytes, wrapped in a "kms" object for viper
-	wrappedKms := map[string]interface{}{
-		"kms": kmsVal,
-	}
-	kmsBytes, err := json.Marshal(wrappedKms)
-	if err != nil {
-		return fmt.Errorf("failed to marshal kms section: %v", err)
-	}
-
-	// Use a minimal viper-like adapter for JSON
-	v := viper.New()
-	tmp, err := os.CreateTemp("", "s3_kms_*.json")
-	if err != nil {
-		return fmt.Errorf("failed to create temp kms json: %v", err)
-	}
-	defer os.Remove(tmp.Name())
-	if _, err := tmp.Write(kmsBytes); err != nil {
-		return fmt.Errorf("failed to write temp kms json: %v", err)
-	}
-	tmp.Close()
-	v.SetConfigFile(tmp.Name())
-	if err := v.ReadInConfig(); err != nil {
-		return fmt.Errorf("failed to read kms json: %v", err)
-	}
-	return kms.LoadKMSFromFilerToml(v)
+	// Load KMS configuration directly from the parsed JSON data
+	return kms.LoadKMSFromConfig(kmsVal)
 }
