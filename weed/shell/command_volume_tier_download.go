@@ -33,6 +33,11 @@ func (c *commandVolumeTierDownload) Help() string {
 	volume.tier.download [-collection=""]
 	volume.tier.download [-collection=""] -volumeId=<volume_id>
 
+	The -collection parameter supports regular expressions for pattern matching:
+	  - Use exact match: volume.tier.download -collection="^mybucket$"
+	  - Match multiple buckets: volume.tier.download -collection="bucket.*"
+	  - Match all collections: volume.tier.download -collection=".*"
+
 	e.g.:
 	volume.tier.download -volumeId=7
 
@@ -73,7 +78,7 @@ func (c *commandVolumeTierDownload) Do(args []string, commandEnv *CommandEnv, wr
 
 	// apply to all volumes in the collection
 	// reusing collectVolumeIdsForEcEncode for now
-	volumeIds := collectRemoteVolumes(topologyInfo, *collection)
+	volumeIds, err := collectRemoteVolumes(topologyInfo, *collection)
 	if err != nil {
 		return err
 	}
@@ -87,13 +92,18 @@ func (c *commandVolumeTierDownload) Do(args []string, commandEnv *CommandEnv, wr
 	return nil
 }
 
-func collectRemoteVolumes(topoInfo *master_pb.TopologyInfo, selectedCollection string) (vids []needle.VolumeId) {
+func collectRemoteVolumes(topoInfo *master_pb.TopologyInfo, collectionPattern string) (vids []needle.VolumeId, err error) {
+	// compile regex pattern for collection matching
+	collectionRegex, err := compileCollectionPattern(collectionPattern)
+	if err != nil {
+		return nil, fmt.Errorf("invalid collection pattern '%s': %v", collectionPattern, err)
+	}
 
 	vidMap := make(map[uint32]bool)
 	eachDataNode(topoInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
 		for _, diskInfo := range dn.DiskInfos {
 			for _, v := range diskInfo.VolumeInfos {
-				if v.Collection == selectedCollection && v.RemoteStorageKey != "" && v.RemoteStorageName != "" {
+				if collectionRegex.MatchString(v.Collection) && v.RemoteStorageKey != "" && v.RemoteStorageName != "" {
 					vidMap[v.Id] = true
 				}
 			}
