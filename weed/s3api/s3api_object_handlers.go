@@ -247,9 +247,16 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Check conditional headers for read operations
-	if errCode := s3a.checkConditionalHeadersForReads(r, bucket, object); errCode != s3err.ErrNone {
-		glog.V(3).Infof("GetObjectHandler: Conditional header check failed for %s/%s with error %v", bucket, object, errCode)
-		s3err.WriteErrorResponse(w, r, errCode)
+	result := s3a.checkConditionalHeadersForReads(r, bucket, object)
+	if result.ErrorCode != s3err.ErrNone {
+		glog.V(3).Infof("GetObjectHandler: Conditional header check failed for %s/%s with error %v", bucket, object, result.ErrorCode)
+
+		// For 304 Not Modified responses, include the ETag header
+		if result.ErrorCode == s3err.ErrNotModified && result.ETag != "" {
+			w.Header().Set("ETag", result.ETag)
+		}
+
+		s3err.WriteErrorResponse(w, r, result.ErrorCode)
 		return
 	}
 
@@ -386,9 +393,16 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Check conditional headers for read operations
-	if errCode := s3a.checkConditionalHeadersForReads(r, bucket, object); errCode != s3err.ErrNone {
-		glog.V(3).Infof("HeadObjectHandler: Conditional header check failed for %s/%s with error %v", bucket, object, errCode)
-		s3err.WriteErrorResponse(w, r, errCode)
+	result := s3a.checkConditionalHeadersForReads(r, bucket, object)
+	if result.ErrorCode != s3err.ErrNone {
+		glog.V(3).Infof("HeadObjectHandler: Conditional header check failed for %s/%s with error %v", bucket, object, result.ErrorCode)
+
+		// For 304 Not Modified responses, include the ETag header
+		if result.ErrorCode == s3err.ErrNotModified && result.ETag != "" {
+			w.Header().Set("ETag", result.ETag)
+		}
+
+		s3err.WriteErrorResponse(w, r, result.ErrorCode)
 		return
 	}
 
