@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -39,6 +40,14 @@ func (c *commandVolumeBalance) Help() string {
 	return `balance all volumes among volume servers
 
 	volume.balance [-collection ALL_COLLECTIONS|EACH_COLLECTION|<collection_name>] [-force] [-dataCenter=<data_center_name>] [-racks=rack_name_one,rack_name_two] [-nodes=192.168.0.1:8080,192.168.0.2:8080]
+
+	The -collection parameter supports:
+	  - ALL_COLLECTIONS: balance across all collections
+	  - EACH_COLLECTION: balance each collection separately
+	  - Regular expressions for pattern matching:
+	    * Use exact match: volume.balance -collection="mybucket"
+	    * Match multiple buckets: volume.balance -collection="bucket.*"
+	    * Match all user collections: volume.balance -collection="user-.*"
 
 	Algorithm:
 
@@ -143,12 +152,34 @@ func (c *commandVolumeBalance) balanceVolumeServers(diskTypes []types.DiskType, 
 }
 
 func (c *commandVolumeBalance) balanceVolumeServersByDiskType(diskType types.DiskType, volumeReplicas map[uint32][]*VolumeReplica, nodes []*Node, collection string) error {
+	// compile regex pattern for collection matching (skip for special keywords)
+	var collectionRegex *regexp.Regexp
+	var err error
+	useRegex := collection != "ALL_COLLECTIONS" && collection != "EACH_COLLECTION"
+
+	if useRegex {
+		if collection == "" {
+			// empty pattern matches empty collection
+			collectionRegex, err = regexp.Compile("^$")
+		} else {
+			collectionRegex, err = regexp.Compile(collection)
+		}
+		if err != nil {
+			return fmt.Errorf("invalid collection pattern '%s': %v", collection, err)
+		}
+	}
 
 	for _, n := range nodes {
 		n.selectVolumes(func(v *master_pb.VolumeInformationMessage) bool {
 			if collection != "ALL_COLLECTIONS" {
-				if v.Collection != collection {
-					return false
+				if useRegex {
+					if !collectionRegex.MatchString(v.Collection) {
+						return false
+					}
+				} else {
+					if v.Collection != collection {
+						return false
+					}
 				}
 			}
 			if v.DiskType != string(diskType) {
