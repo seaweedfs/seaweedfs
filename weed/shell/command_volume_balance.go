@@ -127,52 +127,54 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 			return err
 		}
 		for _, col := range collections {
-			if err = c.balanceVolumeServers(diskTypes, volumeReplicas, volumeServers, col); err != nil {
+			// Create exact match pattern for this collection
+			exactPattern, err := regexp.Compile("^" + regexp.QuoteMeta(col) + "$")
+			if err != nil {
+				return fmt.Errorf("failed to create exact pattern for collection '%s': %v", col, err)
+			}
+			if err = c.balanceVolumeServers(diskTypes, volumeReplicas, volumeServers, exactPattern, col); err != nil {
 				return err
 			}
 		}
+	} else if *collection == "ALL_COLLECTIONS" {
+		// Pass nil pattern for all collections
+		if err = c.balanceVolumeServers(diskTypes, volumeReplicas, volumeServers, nil, *collection); err != nil {
+			return err
+		}
 	} else {
-		if err = c.balanceVolumeServers(diskTypes, volumeReplicas, volumeServers, *collection); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func (c *commandVolumeBalance) balanceVolumeServers(diskTypes []types.DiskType, volumeReplicas map[uint32][]*VolumeReplica, nodes []*Node, collection string) error {
-
-	for _, diskType := range diskTypes {
-		if err := c.balanceVolumeServersByDiskType(diskType, volumeReplicas, nodes, collection); err != nil {
-			return err
-		}
-	}
-	return nil
-
-}
-
-func (c *commandVolumeBalance) balanceVolumeServersByDiskType(diskType types.DiskType, volumeReplicas map[uint32][]*VolumeReplica, nodes []*Node, collection string) error {
-	// compile regex pattern for collection matching (skip for special keywords)
-	var collectionRegex *regexp.Regexp
-	var err error
-	useRegex := collection != "ALL_COLLECTIONS" && collection != "EACH_COLLECTION"
-
-	if useRegex {
-		collectionRegex, err = compileCollectionPattern(collection)
+		// Compile user-provided pattern
+		collectionPattern, err := compileCollectionPattern(*collection)
 		if err != nil {
-			return fmt.Errorf("invalid collection pattern '%s': %v", collection, err)
+			return fmt.Errorf("invalid collection pattern '%s': %v", *collection, err)
+		}
+		if err = c.balanceVolumeServers(diskTypes, volumeReplicas, volumeServers, collectionPattern, *collection); err != nil {
+			return err
 		}
 	}
 
+	return nil
+}
+
+func (c *commandVolumeBalance) balanceVolumeServers(diskTypes []types.DiskType, volumeReplicas map[uint32][]*VolumeReplica, nodes []*Node, collectionPattern *regexp.Regexp, collectionName string) error {
+	for _, diskType := range diskTypes {
+		if err := c.balanceVolumeServersByDiskType(diskType, volumeReplicas, nodes, collectionPattern, collectionName); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *commandVolumeBalance) balanceVolumeServersByDiskType(diskType types.DiskType, volumeReplicas map[uint32][]*VolumeReplica, nodes []*Node, collectionPattern *regexp.Regexp, collectionName string) error {
 	for _, n := range nodes {
 		n.selectVolumes(func(v *master_pb.VolumeInformationMessage) bool {
-			if collection != "ALL_COLLECTIONS" {
-				if useRegex {
-					if !collectionRegex.MatchString(v.Collection) {
+			if collectionName != "ALL_COLLECTIONS" {
+				if collectionPattern == nil {
+					// Fallback to exact match if no pattern provided
+					if v.Collection != collectionName {
 						return false
 					}
 				} else {
-					if v.Collection != collection {
+					if !collectionPattern.MatchString(v.Collection) {
 						return false
 					}
 				}
