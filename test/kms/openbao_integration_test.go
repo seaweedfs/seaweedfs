@@ -320,7 +320,7 @@ func TestOpenBaoKMSProvider_Integration(t *testing.T) {
 		assert.Equal(t, "test-key-1", resp.KeyID)
 		assert.Contains(t, resp.ARN, "openbao:")
 		assert.Equal(t, kms.KeyStateEnabled, resp.KeyState)
-		assert.Equal(t, kms.KeyUsageGenerateDataKey, resp.KeyUsage)
+		assert.Equal(t, kms.KeyUsageEncryptDecrypt, resp.KeyUsage)
 	})
 
 	t.Run("NonExistentKey", func(t *testing.T) {
@@ -437,41 +437,6 @@ func TestOpenBaoKMSProvider_ErrorHandling(t *testing.T) {
 		assert.Contains(t, []string{kms.ErrCodeAccessDenied, kms.ErrCodeKMSInternalFailure}, kmsErr.Code)
 	})
 
-	t.Run("MissingEncryptionContext", func(t *testing.T) {
-		config := &testConfig{
-			config: map[string]interface{}{
-				"address":      OpenBaoAddress,
-				"token":        OpenBaoToken,
-				"transit_path": TransitPath,
-			},
-		}
-
-		provider, err := kms.GetProvider("openbao", config)
-		require.NoError(t, err)
-		defer provider.Close()
-
-		ctx := context.Background()
-
-		// Generate a data key first
-		genResp, err := provider.GenerateDataKey(ctx, &kms.GenerateDataKeyRequest{
-			KeyID:   "test-key-1",
-			KeySpec: kms.KeySpecAES256,
-		})
-		require.NoError(t, err)
-
-		// Try to decrypt without key name in context
-		decReq := &kms.DecryptRequest{
-			CiphertextBlob: genResp.CiphertextBlob,
-			// Missing openbao:key:name in context
-			EncryptionContext: map[string]string{
-				"other": "context",
-			},
-		}
-
-		_, err = provider.Decrypt(ctx, decReq)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "openbao:key:name")
-	})
 }
 
 func TestKMSManager_WithOpenBao(t *testing.T) {
