@@ -5,6 +5,7 @@ package azure
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -148,9 +149,21 @@ func (p *AzureKMSProvider) GenerateDataKey(ctx context.Context, req *seaweedkms.
 	glog.V(4).Infof("Azure KMS: Encrypting data key using key %s", req.KeyID)
 
 	// Prepare encryption parameters
-	encryptParams := azkeys.KeyOperationParameters{
-		Algorithm: azkeys.EncryptionAlgorithmRSAOAEP256, // Default encryption algorithm
+	algorithm := azkeys.JSONWebKeyEncryptionAlgorithmRSAOAEP256
+	encryptParams := azkeys.KeyOperationsParameters{
+		Algorithm: &algorithm, // Default encryption algorithm
 		Value:     dataKey,
+	}
+
+	// Add encryption context as Additional Authenticated Data (AAD) if provided
+	if len(req.EncryptionContext) > 0 {
+		// Marshal encryption context to JSON for deterministic AAD
+		aadBytes, err := json.Marshal(req.EncryptionContext)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal encryption context: %w", err)
+		}
+		encryptParams.AAD = aadBytes
+		glog.V(4).Infof("Azure KMS: Using encryption context as AAD for key %s", req.KeyID)
 	}
 
 	// Call Azure Key Vault to encrypt the data key
@@ -162,7 +175,7 @@ func (p *AzureKMSProvider) GenerateDataKey(ctx context.Context, req *seaweedkms.
 	// Get the actual key ID from the response
 	actualKeyID := req.KeyID
 	if encryptResult.KID != nil {
-		actualKeyID = *encryptResult.KID
+		actualKeyID = string(*encryptResult.KID)
 	}
 
 	// Create standardized envelope format for consistent API behavior
@@ -206,9 +219,21 @@ func (p *AzureKMSProvider) Decrypt(ctx context.Context, req *seaweedkms.DecryptR
 	ciphertext := []byte(envelope.Ciphertext)
 
 	// Prepare decryption parameters
-	decryptParams := azkeys.KeyOperationParameters{
-		Algorithm: azkeys.EncryptionAlgorithmRSAOAEP256, // Must match encryption algorithm
+	decryptAlgorithm := azkeys.JSONWebKeyEncryptionAlgorithmRSAOAEP256
+	decryptParams := azkeys.KeyOperationsParameters{
+		Algorithm: &decryptAlgorithm, // Must match encryption algorithm
 		Value:     ciphertext,
+	}
+
+	// Add encryption context as Additional Authenticated Data (AAD) if provided
+	if len(req.EncryptionContext) > 0 {
+		// Marshal encryption context to JSON for deterministic AAD (must match encryption)
+		aadBytes, err := json.Marshal(req.EncryptionContext)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal encryption context: %w", err)
+		}
+		decryptParams.AAD = aadBytes
+		glog.V(4).Infof("Azure KMS: Using encryption context as AAD for decryption of key %s", keyID)
 	}
 
 	// Call Azure Key Vault to decrypt the data key
@@ -221,7 +246,7 @@ func (p *AzureKMSProvider) Decrypt(ctx context.Context, req *seaweedkms.DecryptR
 	// Get the actual key ID from the response
 	actualKeyID := keyID
 	if decryptResult.KID != nil {
-		actualKeyID = *decryptResult.KID
+		actualKeyID = string(*decryptResult.KID)
 	}
 
 	response := &seaweedkms.DecryptResponse{
@@ -262,15 +287,15 @@ func (p *AzureKMSProvider) DescribeKey(ctx context.Context, req *seaweedkms.Desc
 
 	// Set ARN-like identifier for Azure
 	if key.KID != nil {
-		response.ARN = *key.KID
-		response.KeyID = *key.KID
+		response.ARN = string(*key.KID)
+		response.KeyID = string(*key.KID)
 	}
 
 	// Set key usage based on key operations
-	if key.KeyOperations != nil && len(key.KeyOperations) > 0 {
+	if key.KeyOps != nil && len(key.KeyOps) > 0 {
 		// Azure keys can have multiple operations, check if encrypt/decrypt are supported
-		for _, op := range key.KeyOperations {
-			if op == azkeys.KeyOperationEncrypt || op == azkeys.KeyOperationDecrypt {
+		for _, op := range key.KeyOps {
+			if op != nil && (*op == string(azkeys.JSONWebKeyOperationEncrypt) || *op == string(azkeys.JSONWebKeyOperationDecrypt)) {
 				response.KeyUsage = seaweedkms.KeyUsageEncryptDecrypt
 				break
 			}
@@ -278,8 +303,8 @@ func (p *AzureKMSProvider) DescribeKey(ctx context.Context, req *seaweedkms.Desc
 	}
 
 	// Set key state based on enabled status
-	if key.Attributes != nil {
-		if key.Attributes.Enabled != nil && *key.Attributes.Enabled {
+	if result.Attributes != nil {
+		if result.Attributes.Enabled != nil && *result.Attributes.Enabled {
 			response.KeyState = seaweedkms.KeyStateEnabled
 		} else {
 			response.KeyState = seaweedkms.KeyStateDisabled
