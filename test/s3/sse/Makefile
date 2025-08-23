@@ -363,31 +363,9 @@ start-seaweedfs-ci: check-binary
 	@sleep 5
 	
 	# Create S3 JSON configuration with KMS (Local provider) and basic identity for embedded S3
-	@{ \
-		echo '{'; \
-		echo '  "identities": ['; \
-		echo '    {'; \
-		echo '      "name": "admin",'; \
-		echo '      "credentials": ['; \
-		echo '        {'; \
-		echo '          "accessKey": "$(ACCESS_KEY)",'; \
-		echo '          "secretKey": "$(SECRET_KEY)"'; \
-		echo '        }'; \
-		echo '      ],'; \
-		echo '      "actions": ["Admin", "Read", "Write"]'; \
-		echo '    }'; \
-		echo '  ],'; \
-		echo '  "kms": {'; \
-		echo '    "default_provider": "local-dev",'; \
-		echo '    "providers": {'; \
-		echo '      "local-dev": {'; \
-		echo '        "type": "local",'; \
-		echo '        "enableOnDemandCreate": true'; \
-		echo '      }'; \
-		echo '    }'; \
-		echo '  }'; \
-		echo '}'; \
-	} > /tmp/seaweedfs-s3.json
+	@sed -e 's/ACCESS_KEY_PLACEHOLDER/$(ACCESS_KEY)/g' \
+	     -e 's/SECRET_KEY_PLACEHOLDER/$(SECRET_KEY)/g' \
+	     s3-config-template.json > /tmp/seaweedfs-s3.json
 	
 	# Start filer server with embedded S3 using the JSON config (with verbose logging)
 	@echo "Starting filer server with embedded S3..."
