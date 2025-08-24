@@ -59,15 +59,15 @@ type JWKS struct {
 
 // JWK represents a JSON Web Key
 type JWK struct {
-	Kty string   `json:"kty"` // Key Type (RSA, EC, etc.)
-	Kid string   `json:"kid"` // Key ID
-	Use string   `json:"use"` // Usage (sig for signature)
-	Alg string   `json:"alg"` // Algorithm (RS256, etc.)
-	N   string   `json:"n"`   // RSA public key modulus
-	E   string   `json:"e"`   // RSA public key exponent
-	X   string   `json:"x"`   // EC public key x coordinate
-	Y   string   `json:"y"`   // EC public key y coordinate
-	Crv string   `json:"crv"` // EC curve
+	Kty string `json:"kty"` // Key Type (RSA, EC, etc.)
+	Kid string `json:"kid"` // Key ID
+	Use string `json:"use"` // Usage (sig for signature)
+	Alg string `json:"alg"` // Algorithm (RS256, etc.)
+	N   string `json:"n"`   // RSA public key modulus
+	E   string `json:"e"`   // RSA public key exponent
+	X   string `json:"x"`   // EC public key x coordinate
+	Y   string `json:"y"`   // EC public key y coordinate
+	Crv string `json:"crv"` // EC curve
 }
 
 // NewOIDCProvider creates a new OIDC provider

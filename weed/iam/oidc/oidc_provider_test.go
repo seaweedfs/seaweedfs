@@ -262,7 +262,7 @@ func TestOIDCProviderUserInfo(t *testing.T) {
 			t.Skip("UserInfo endpoint integration not yet implemented - skipping user info test")
 			return
 		}
-		
+
 		require.NoError(t, err)
 		require.NotNil(t, identity)
 		assert.Equal(t, "user123", identity.UserID)
