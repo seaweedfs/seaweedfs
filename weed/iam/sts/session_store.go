@@ -27,10 +27,10 @@ func NewMemorySessionStore() *MemorySessionStore {
 	}
 }
 
-// StoreSession stores session information in memory
-func (m *MemorySessionStore) StoreSession(ctx context.Context, sessionId string, session *SessionInfo) error {
+// StoreSession stores session information in memory (filerAddress ignored for memory store)
+func (m *MemorySessionStore) StoreSession(ctx context.Context, filerAddress string, sessionId string, session *SessionInfo) error {
 	if sessionId == "" {
-		return fmt.Errorf("session ID cannot be empty")
+		return fmt.Errorf(ErrSessionIDCannotBeEmpty)
 	}
 
 	if session == nil {
@@ -44,10 +44,10 @@ func (m *MemorySessionStore) StoreSession(ctx context.Context, sessionId string,
 	return nil
 }
 
-// GetSession retrieves session information from memory
-func (m *MemorySessionStore) GetSession(ctx context.Context, sessionId string) (*SessionInfo, error) {
+// GetSession retrieves session information from memory (filerAddress ignored for memory store)
+func (m *MemorySessionStore) GetSession(ctx context.Context, filerAddress string, sessionId string) (*SessionInfo, error) {
 	if sessionId == "" {
-		return nil, fmt.Errorf("session ID cannot be empty")
+		return nil, fmt.Errorf(ErrSessionIDCannotBeEmpty)
 	}
 
 	m.mutex.RLock()
@@ -66,10 +66,10 @@ func (m *MemorySessionStore) GetSession(ctx context.Context, sessionId string) (
 	return session, nil
 }
 
-// RevokeSession revokes a session from memory
-func (m *MemorySessionStore) RevokeSession(ctx context.Context, sessionId string) error {
+// RevokeSession revokes a session from memory (filerAddress ignored for memory store)
+func (m *MemorySessionStore) RevokeSession(ctx context.Context, filerAddress string, sessionId string) error {
 	if sessionId == "" {
-		return fmt.Errorf("session ID cannot be empty")
+		return fmt.Errorf(ErrSessionIDCannotBeEmpty)
 	}
 
 	m.mutex.Lock()
@@ -79,8 +79,8 @@ func (m *MemorySessionStore) RevokeSession(ctx context.Context, sessionId string
 	return nil
 }
 
-// CleanupExpiredSessions removes expired sessions from memory
-func (m *MemorySessionStore) CleanupExpiredSessions(ctx context.Context) error {
+// CleanupExpiredSessions removes expired sessions from memory (filerAddress ignored for memory store)
+func (m *MemorySessionStore) CleanupExpiredSessions(ctx context.Context, filerAddress string) error {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
@@ -94,10 +94,10 @@ func (m *MemorySessionStore) CleanupExpiredSessions(ctx context.Context) error {
 	return nil
 }
 
-// ExpireSessionForTesting manually expires a session for testing purposes
-func (m *MemorySessionStore) ExpireSessionForTesting(ctx context.Context, sessionId string) error {
+// ExpireSessionForTesting manually expires a session for testing purposes (filerAddress ignored for memory store)
+func (m *MemorySessionStore) ExpireSessionForTesting(ctx context.Context, filerAddress string, sessionId string) error {
 	if sessionId == "" {
-		return fmt.Errorf("session ID cannot be empty")
+		return fmt.Errorf(ErrSessionIDCannotBeEmpty)
 	}
 
 	m.mutex.Lock()
@@ -117,42 +117,35 @@ func (m *MemorySessionStore) ExpireSessionForTesting(ctx context.Context, sessio
 
 // FilerSessionStore implements SessionStore using SeaweedFS filer
 type FilerSessionStore struct {
-	filerGrpcAddress string
-	grpcDialOption   grpc.DialOption
-	basePath         string
+	grpcDialOption grpc.DialOption
+	basePath       string
 }
 
 // NewFilerSessionStore creates a new filer-based session store
 func NewFilerSessionStore(config map[string]interface{}) (*FilerSessionStore, error) {
 	store := &FilerSessionStore{
-		basePath: "/seaweedfs/iam/sessions", // Default path for session storage
+		basePath: DefaultSessionBasePath, // Use constant default
 	}
 
-	// Parse configuration
+	// Parse configuration - only basePath and other settings, NOT filerAddress
 	if config != nil {
-		if filerAddr, ok := config["filerAddress"].(string); ok {
-			store.filerGrpcAddress = filerAddr
-		}
-		if basePath, ok := config["basePath"].(string); ok {
+		if basePath, ok := config[ConfigFieldBasePath].(string); ok && basePath != "" {
 			store.basePath = strings.TrimSuffix(basePath, "/")
 		}
 	}
 
-	// Validate configuration
-	if store.filerGrpcAddress == "" {
-		return nil, fmt.Errorf("filer address is required for FilerSessionStore")
-	}
-
-	glog.V(2).Infof("Initialized FilerSessionStore with filer %s, basePath %s",
-		store.filerGrpcAddress, store.basePath)
+	glog.V(2).Infof("Initialized FilerSessionStore with basePath %s", store.basePath)
 
 	return store, nil
 }
 
 // StoreSession stores session information in filer
-func (f *FilerSessionStore) StoreSession(ctx context.Context, sessionId string, session *SessionInfo) error {
+func (f *FilerSessionStore) StoreSession(ctx context.Context, filerAddress string, sessionId string, session *SessionInfo) error {
+	if filerAddress == "" {
+		return fmt.Errorf(ErrFilerAddressRequired)
+	}
 	if sessionId == "" {
-		return fmt.Errorf("session ID cannot be empty")
+		return fmt.Errorf(ErrSessionIDCannotBeEmpty)
 	}
 	if session == nil {
 		return fmt.Errorf("session cannot be nil")
@@ -167,7 +160,7 @@ func (f *FilerSessionStore) StoreSession(ctx context.Context, sessionId string, 
 	sessionPath := f.getSessionPath(sessionId)
 
 	// Store in filer
-	return f.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	return f.withFilerClient(filerAddress, func(client filer_pb.SeaweedFilerClient) error {
 		request := &filer_pb.CreateEntryRequest{
 			Directory: f.basePath,
 			Entry: &filer_pb.Entry{
@@ -195,13 +188,16 @@ func (f *FilerSessionStore) StoreSession(ctx context.Context, sessionId string, 
 }
 
 // GetSession retrieves session information from filer
-func (f *FilerSessionStore) GetSession(ctx context.Context, sessionId string) (*SessionInfo, error) {
+func (f *FilerSessionStore) GetSession(ctx context.Context, filerAddress string, sessionId string) (*SessionInfo, error) {
+	if filerAddress == "" {
+		return nil, fmt.Errorf(ErrFilerAddressRequired)
+	}
 	if sessionId == "" {
-		return nil, fmt.Errorf("session ID cannot be empty")
+		return nil, fmt.Errorf(ErrSessionIDCannotBeEmpty)
 	}
 
 	var sessionData []byte
-	err := f.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err := f.withFilerClient(filerAddress, func(client filer_pb.SeaweedFilerClient) error {
 		request := &filer_pb.LookupDirectoryEntryRequest{
 			Directory: f.basePath,
 			Name:      f.getSessionFileName(sessionId),
@@ -234,7 +230,7 @@ func (f *FilerSessionStore) GetSession(ctx context.Context, sessionId string) (*
 	// Check if session has expired
 	if time.Now().After(session.ExpiresAt) {
 		// Clean up expired session
-		_ = f.RevokeSession(ctx, sessionId)
+		_ = f.RevokeSession(ctx, filerAddress, sessionId)
 		return nil, fmt.Errorf("session has expired")
 	}
 
@@ -242,12 +238,15 @@ func (f *FilerSessionStore) GetSession(ctx context.Context, sessionId string) (*
 }
 
 // RevokeSession revokes a session from filer
-func (f *FilerSessionStore) RevokeSession(ctx context.Context, sessionId string) error {
+func (f *FilerSessionStore) RevokeSession(ctx context.Context, filerAddress string, sessionId string) error {
+	if filerAddress == "" {
+		return fmt.Errorf(ErrFilerAddressRequired)
+	}
 	if sessionId == "" {
-		return fmt.Errorf("session ID cannot be empty")
+		return fmt.Errorf(ErrSessionIDCannotBeEmpty)
 	}
 
-	return f.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	return f.withFilerClient(filerAddress, func(client filer_pb.SeaweedFilerClient) error {
 		request := &filer_pb.DeleteEntryRequest{
 			Directory:            f.basePath,
 			Name:                 f.getSessionFileName(sessionId),
@@ -280,11 +279,15 @@ func (f *FilerSessionStore) RevokeSession(ctx context.Context, sessionId string)
 }
 
 // CleanupExpiredSessions removes expired sessions from filer
-func (f *FilerSessionStore) CleanupExpiredSessions(ctx context.Context) error {
+func (f *FilerSessionStore) CleanupExpiredSessions(ctx context.Context, filerAddress string) error {
+	if filerAddress == "" {
+		return fmt.Errorf(ErrFilerAddressRequired)
+	}
+	
 	now := time.Now()
 	expiredCount := 0
 
-	err := f.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err := f.withFilerClient(filerAddress, func(client filer_pb.SeaweedFilerClient) error {
 		// List all entries in the session directory
 		request := &filer_pb.ListEntriesRequest{
 			Directory:          f.basePath,
@@ -345,20 +348,14 @@ func (f *FilerSessionStore) CleanupExpiredSessions(ctx context.Context) error {
 
 // Helper methods
 
-// SetFilerClient sets the filer client connection details
-func (f *FilerSessionStore) SetFilerClient(filerAddress string, grpcDialOption grpc.DialOption) {
-	f.filerGrpcAddress = filerAddress
-	f.grpcDialOption = grpcDialOption
-}
-
 // withFilerClient executes a function with a filer client
-func (f *FilerSessionStore) withFilerClient(fn func(client filer_pb.SeaweedFilerClient) error) error {
-	if f.filerGrpcAddress == "" {
-		return fmt.Errorf("filer address not configured")
+func (f *FilerSessionStore) withFilerClient(filerAddress string, fn func(client filer_pb.SeaweedFilerClient) error) error {
+	if filerAddress == "" {
+		return fmt.Errorf(ErrFilerAddressRequired)
 	}
 
 	// Use the pb.WithGrpcFilerClient helper similar to existing SeaweedFS code
-	return pb.WithGrpcFilerClient(false, 0, pb.ServerAddress(f.filerGrpcAddress), f.grpcDialOption, fn)
+	return pb.WithGrpcFilerClient(false, 0, pb.ServerAddress(filerAddress), f.grpcDialOption, fn)
 }
 
 // getSessionPath returns the full path for a session

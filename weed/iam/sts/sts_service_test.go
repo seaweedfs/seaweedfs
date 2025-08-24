@@ -67,6 +67,7 @@ func TestSTSServiceInitialization(t *testing.T) {
 // TestAssumeRoleWithWebIdentity tests role assumption with OIDC tokens
 func TestAssumeRoleWithWebIdentity(t *testing.T) {
 	service := setupTestSTSService(t)
+	testFilerAddress := "localhost:8888" // Dummy filer address for testing
 
 	tests := []struct {
 		name             string
@@ -121,7 +122,7 @@ func TestAssumeRoleWithWebIdentity(t *testing.T) {
 				DurationSeconds:  tt.durationSeconds,
 			}
 
-			response, err := service.AssumeRoleWithWebIdentity(ctx, request)
+			response, err := service.AssumeRoleWithWebIdentity(ctx, testFilerAddress, request)
 
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -155,6 +156,7 @@ func TestAssumeRoleWithWebIdentity(t *testing.T) {
 // TestAssumeRoleWithLDAP tests role assumption with LDAP credentials
 func TestAssumeRoleWithLDAP(t *testing.T) {
 	service := setupTestSTSService(t)
+	testFilerAddress := "localhost:8888" // Dummy filer address for testing
 
 	tests := []struct {
 		name        string
@@ -194,7 +196,7 @@ func TestAssumeRoleWithLDAP(t *testing.T) {
 				ProviderName:    "test-ldap",
 			}
 
-			response, err := service.AssumeRoleWithCredentials(ctx, request)
+			response, err := service.AssumeRoleWithCredentials(ctx, testFilerAddress, request)
 
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -212,6 +214,7 @@ func TestAssumeRoleWithLDAP(t *testing.T) {
 func TestSessionTokenValidation(t *testing.T) {
 	service := setupTestSTSService(t)
 	ctx := context.Background()
+	testFilerAddress := "localhost:8888" // Dummy filer address for testing
 
 	// First, create a session
 	request := &AssumeRoleWithWebIdentityRequest{
@@ -220,7 +223,7 @@ func TestSessionTokenValidation(t *testing.T) {
 		RoleSessionName:  "test-session",
 	}
 
-	response, err := service.AssumeRoleWithWebIdentity(ctx, request)
+	response, err := service.AssumeRoleWithWebIdentity(ctx, testFilerAddress, request)
 	require.NoError(t, err)
 	require.NotNil(t, response)
 
@@ -250,7 +253,7 @@ func TestSessionTokenValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			session, err := service.ValidateSessionToken(ctx, tt.token)
+			session, err := service.ValidateSessionToken(ctx, testFilerAddress, tt.token)
 
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -269,6 +272,7 @@ func TestSessionTokenValidation(t *testing.T) {
 func TestSessionRevocation(t *testing.T) {
 	service := setupTestSTSService(t)
 	ctx := context.Background()
+	testFilerAddress := "localhost:8888" // Dummy filer address for testing
 
 	// Create a session first
 	request := &AssumeRoleWithWebIdentityRequest{
@@ -277,22 +281,22 @@ func TestSessionRevocation(t *testing.T) {
 		RoleSessionName:  "test-session",
 	}
 
-	response, err := service.AssumeRoleWithWebIdentity(ctx, request)
+	response, err := service.AssumeRoleWithWebIdentity(ctx, testFilerAddress, request)
 	require.NoError(t, err)
 
 	sessionToken := response.Credentials.SessionToken
 
 	// Verify token is valid before revocation
-	session, err := service.ValidateSessionToken(ctx, sessionToken)
+	session, err := service.ValidateSessionToken(ctx, testFilerAddress, sessionToken)
 	assert.NoError(t, err)
 	assert.NotNil(t, session)
 
 	// Revoke the session
-	err = service.RevokeSession(ctx, sessionToken)
+	err = service.RevokeSession(ctx, testFilerAddress, sessionToken)
 	assert.NoError(t, err)
 
 	// Verify token is no longer valid after revocation
-	session, err = service.ValidateSessionToken(ctx, sessionToken)
+	session, err = service.ValidateSessionToken(ctx, testFilerAddress, sessionToken)
 	assert.Error(t, err)
 	assert.Nil(t, session)
 }

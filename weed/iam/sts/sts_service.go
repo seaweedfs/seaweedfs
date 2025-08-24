@@ -162,17 +162,17 @@ type SessionInfo struct {
 
 // SessionStore defines the interface for storing session information
 type SessionStore interface {
-	// StoreSession stores session information
-	StoreSession(ctx context.Context, sessionId string, session *SessionInfo) error
+	// StoreSession stores session information (filerAddress ignored for memory stores)
+	StoreSession(ctx context.Context, filerAddress string, sessionId string, session *SessionInfo) error
 
-	// GetSession retrieves session information
-	GetSession(ctx context.Context, sessionId string) (*SessionInfo, error)
+	// GetSession retrieves session information (filerAddress ignored for memory stores)
+	GetSession(ctx context.Context, filerAddress string, sessionId string) (*SessionInfo, error)
 
-	// RevokeSession revokes a session
-	RevokeSession(ctx context.Context, sessionId string) error
+	// RevokeSession revokes a session (filerAddress ignored for memory stores)
+	RevokeSession(ctx context.Context, filerAddress string, sessionId string) error
 
-	// CleanupExpiredSessions removes expired sessions
-	CleanupExpiredSessions(ctx context.Context) error
+	// CleanupExpiredSessions removes expired sessions (filerAddress ignored for memory stores)
+	CleanupExpiredSessions(ctx context.Context, filerAddress string) error
 }
 
 // NewSTSService creates a new STS service
@@ -300,7 +300,7 @@ func (s *STSService) RegisterProvider(provider providers.IdentityProvider) error
 }
 
 // AssumeRoleWithWebIdentity assumes a role using a web identity token (OIDC)
-func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *AssumeRoleWithWebIdentityRequest) (*AssumeRoleResponse, error) {
+func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, filerAddress string, request *AssumeRoleWithWebIdentityRequest) (*AssumeRoleResponse, error) {
 	if !s.initialized {
 		return nil, fmt.Errorf(ErrSTSServiceNotInitialized)
 	}
@@ -361,7 +361,7 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *Ass
 	}
 
 	// 6. Store session information
-	if err := s.sessionStore.StoreSession(ctx, sessionId, session); err != nil {
+	if err := s.sessionStore.StoreSession(ctx, filerAddress, sessionId, session); err != nil {
 		return nil, fmt.Errorf("failed to store session: %w", err)
 	}
 
@@ -379,7 +379,7 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *Ass
 }
 
 // AssumeRoleWithCredentials assumes a role using username/password credentials
-func (s *STSService) AssumeRoleWithCredentials(ctx context.Context, request *AssumeRoleWithCredentialsRequest) (*AssumeRoleResponse, error) {
+func (s *STSService) AssumeRoleWithCredentials(ctx context.Context, filerAddress string, request *AssumeRoleWithCredentialsRequest) (*AssumeRoleResponse, error) {
 	if !s.initialized {
 		return nil, fmt.Errorf("STS service not initialized")
 	}
@@ -447,7 +447,7 @@ func (s *STSService) AssumeRoleWithCredentials(ctx context.Context, request *Ass
 	}
 
 	// 7. Store session information
-	if err := s.sessionStore.StoreSession(ctx, sessionId, session); err != nil {
+	if err := s.sessionStore.StoreSession(ctx, filerAddress, sessionId, session); err != nil {
 		return nil, fmt.Errorf("failed to store session: %w", err)
 	}
 
@@ -465,7 +465,7 @@ func (s *STSService) AssumeRoleWithCredentials(ctx context.Context, request *Ass
 }
 
 // ValidateSessionToken validates a session token and returns session information
-func (s *STSService) ValidateSessionToken(ctx context.Context, sessionToken string) (*SessionInfo, error) {
+func (s *STSService) ValidateSessionToken(ctx context.Context, filerAddress string, sessionToken string) (*SessionInfo, error) {
 	if !s.initialized {
 		return nil, fmt.Errorf(ErrSTSServiceNotInitialized)
 	}
@@ -481,7 +481,7 @@ func (s *STSService) ValidateSessionToken(ctx context.Context, sessionToken stri
 	}
 
 	// Retrieve session from store using session ID from claims
-	session, err := s.sessionStore.GetSession(ctx, claims.SessionId)
+	session, err := s.sessionStore.GetSession(ctx, filerAddress, claims.SessionId)
 	if err != nil {
 		return nil, fmt.Errorf(ErrSessionValidationFailed, err)
 	}
@@ -495,7 +495,7 @@ func (s *STSService) ValidateSessionToken(ctx context.Context, sessionToken stri
 }
 
 // RevokeSession revokes an active session
-func (s *STSService) RevokeSession(ctx context.Context, sessionToken string) error {
+func (s *STSService) RevokeSession(ctx context.Context, filerAddress string, sessionToken string) error {
 	if !s.initialized {
 		return fmt.Errorf("STS service not initialized")
 	}
@@ -511,7 +511,7 @@ func (s *STSService) RevokeSession(ctx context.Context, sessionToken string) err
 	}
 
 	// Remove session from store using session ID from claims
-	err = s.sessionStore.RevokeSession(ctx, claims.SessionId)
+	err = s.sessionStore.RevokeSession(ctx, filerAddress, claims.SessionId)
 	if err != nil {
 		return fmt.Errorf("failed to revoke session: %w", err)
 	}
@@ -679,7 +679,7 @@ func (s *STSService) validateAssumeRoleWithCredentialsRequest(request *AssumeRol
 }
 
 // ExpireSessionForTesting manually expires a session for testing purposes
-func (s *STSService) ExpireSessionForTesting(ctx context.Context, sessionToken string) error {
+func (s *STSService) ExpireSessionForTesting(ctx context.Context, filerAddress string, sessionToken string) error {
 	if !s.initialized {
 		return fmt.Errorf("STS service not initialized")
 	}
@@ -696,7 +696,7 @@ func (s *STSService) ExpireSessionForTesting(ctx context.Context, sessionToken s
 
 	// Check if session store supports manual expiration (for MemorySessionStore)
 	if memStore, ok := s.sessionStore.(*MemorySessionStore); ok {
-		return memStore.ExpireSessionForTesting(ctx, sessionId)
+		return memStore.ExpireSessionForTesting(ctx, filerAddress, sessionId)
 	}
 
 	// For other session stores, we could implement similar functionality

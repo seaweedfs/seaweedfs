@@ -13,6 +13,7 @@ import (
 // can be used and validated by other STS instances in a distributed environment
 func TestCrossInstanceTokenUsage(t *testing.T) {
 	ctx := context.Background()
+	testFilerAddress := "localhost:8888" // Dummy filer address for testing
 
 	// Common configuration that would be shared across all instances in production
 	sharedConfig := &STSConfig{
@@ -99,7 +100,7 @@ func TestCrossInstanceTokenUsage(t *testing.T) {
 		}
 
 		// Instance A processes assume role request
-		responseFromA, err := instanceA.AssumeRoleWithWebIdentity(ctx, assumeRequest)
+		responseFromA, err := instanceA.AssumeRoleWithWebIdentity(ctx, testFilerAddress, assumeRequest)
 		require.NoError(t, err, "Instance A should process assume role")
 
 		sessionToken := responseFromA.Credentials.SessionToken
@@ -113,14 +114,14 @@ func TestCrossInstanceTokenUsage(t *testing.T) {
 		assert.NotNil(t, responseFromA.AssumedRoleUser, "Should have assumed role user")
 
 		// Step 2: Use session token on Instance B (different instance)
-		sessionInfoFromB, err := instanceB.ValidateSessionToken(ctx, sessionToken)
+		sessionInfoFromB, err := instanceB.ValidateSessionToken(ctx, testFilerAddress, sessionToken)
 		require.NoError(t, err, "Instance B should validate session token from Instance A")
 
 		assert.Equal(t, assumeRequest.RoleSessionName, sessionInfoFromB.SessionName)
 		assert.Equal(t, assumeRequest.RoleArn, sessionInfoFromB.RoleArn)
 
 		// Step 3: Use same session token on Instance C (yet another instance)
-		sessionInfoFromC, err := instanceC.ValidateSessionToken(ctx, sessionToken)
+		sessionInfoFromC, err := instanceC.ValidateSessionToken(ctx, testFilerAddress, sessionToken)
 		require.NoError(t, err, "Instance C should validate session token from Instance A")
 
 		// All instances should return identical session information
@@ -140,24 +141,24 @@ func TestCrossInstanceTokenUsage(t *testing.T) {
 			RoleSessionName:  "revocation-test-session",
 		}
 
-		response, err := instanceA.AssumeRoleWithWebIdentity(ctx, assumeRequest)
+		response, err := instanceA.AssumeRoleWithWebIdentity(ctx, testFilerAddress, assumeRequest)
 		require.NoError(t, err)
 		sessionToken := response.Credentials.SessionToken
 
 		// Verify token works on Instance B
-		_, err = instanceB.ValidateSessionToken(ctx, sessionToken)
+		_, err = instanceB.ValidateSessionToken(ctx, testFilerAddress, sessionToken)
 		require.NoError(t, err, "Token should be valid on Instance B initially")
 
 		// Revoke session on Instance C
-		err = instanceC.RevokeSession(ctx, sessionToken)
+		err = instanceC.RevokeSession(ctx, testFilerAddress, sessionToken)
 		require.NoError(t, err, "Instance C should be able to revoke session")
 
 		// Verify token is now invalid on Instance A (revoked by Instance C)
-		_, err = instanceA.ValidateSessionToken(ctx, sessionToken)
+		_, err = instanceA.ValidateSessionToken(ctx, testFilerAddress, sessionToken)
 		assert.Error(t, err, "Token should be invalid on Instance A after revocation")
 
 		// Verify token is also invalid on Instance B
-		_, err = instanceB.ValidateSessionToken(ctx, sessionToken)
+		_, err = instanceB.ValidateSessionToken(ctx, testFilerAddress, sessionToken)
 		assert.Error(t, err, "Token should be invalid on Instance B after revocation")
 	})
 
@@ -182,9 +183,9 @@ func TestCrossInstanceTokenUsage(t *testing.T) {
 		}
 
 		// Should work on any instance
-		responseA, errA := instanceA.AssumeRoleWithWebIdentity(ctx, assumeRequest)
-		responseB, errB := instanceB.AssumeRoleWithWebIdentity(ctx, assumeRequest)
-		responseC, errC := instanceC.AssumeRoleWithWebIdentity(ctx, assumeRequest)
+		responseA, errA := instanceA.AssumeRoleWithWebIdentity(ctx, testFilerAddress, assumeRequest)
+		responseB, errB := instanceB.AssumeRoleWithWebIdentity(ctx, testFilerAddress, assumeRequest)
+		responseC, errC := instanceC.AssumeRoleWithWebIdentity(ctx, testFilerAddress, assumeRequest)
 
 		require.NoError(t, errA, "Instance A should process OIDC token")
 		require.NoError(t, errB, "Instance B should process OIDC token")
@@ -200,6 +201,7 @@ func TestCrossInstanceTokenUsage(t *testing.T) {
 // TestSTSDistributedConfigurationRequirements tests the configuration requirements
 // for cross-instance token compatibility
 func TestSTSDistributedConfigurationRequirements(t *testing.T) {
+	_ = "localhost:8888" // Dummy filer address for testing (not used in these tests)
 
 	t.Run("same_signing_key_required", func(t *testing.T) {
 		// Instance A with signing key 1
@@ -319,6 +321,7 @@ func TestSTSDistributedConfigurationRequirements(t *testing.T) {
 // TestSTSRealWorldDistributedScenarios tests realistic distributed deployment scenarios
 func TestSTSRealWorldDistributedScenarios(t *testing.T) {
 	ctx := context.Background()
+	testFilerAddress := "prod-filer-cluster:8888" // Test filer address
 
 	t.Run("load_balanced_s3_gateway_scenario", func(t *testing.T) {
 		// Simulate real production scenario:
@@ -334,8 +337,7 @@ func TestSTSRealWorldDistributedScenarios(t *testing.T) {
 			SigningKey:       []byte("prod-signing-key-32-characters-lon"),
 			SessionStoreType: "filer",
 			SessionStoreConfig: map[string]interface{}{
-				"filerAddress": "prod-filer-cluster:8888",
-				"basePath":     "/seaweedfs/iam/sessions",
+				"basePath": "/seaweedfs/iam/sessions",
 			},
 			Providers: []*ProviderConfig{
 				{
@@ -374,7 +376,7 @@ func TestSTSRealWorldDistributedScenarios(t *testing.T) {
 			DurationSeconds:  int64ToPtr(7200), // 2 hours
 		}
 
-		stsResponse, err := gateway1.AssumeRoleWithWebIdentity(ctx, assumeRequest)
+		stsResponse, err := gateway1.AssumeRoleWithWebIdentity(ctx, testFilerAddress, assumeRequest)
 		require.NoError(t, err, "Gateway 1 should handle AssumeRole")
 
 		sessionToken := stsResponse.Credentials.SessionToken
@@ -383,13 +385,13 @@ func TestSTSRealWorldDistributedScenarios(t *testing.T) {
 
 		// Step 2: User makes S3 requests that hit different gateways via load balancer
 		// Simulate S3 request validation on Gateway 2
-		sessionInfo2, err := gateway2.ValidateSessionToken(ctx, sessionToken)
+		sessionInfo2, err := gateway2.ValidateSessionToken(ctx, testFilerAddress, sessionToken)
 		require.NoError(t, err, "Gateway 2 should validate session from Gateway 1")
 		assert.Equal(t, "user-production-session", sessionInfo2.SessionName)
 		assert.Equal(t, "arn:seaweed:iam::role/ProductionS3User", sessionInfo2.RoleArn)
 
 		// Simulate S3 request validation on Gateway 3
-		sessionInfo3, err := gateway3.ValidateSessionToken(ctx, sessionToken)
+		sessionInfo3, err := gateway3.ValidateSessionToken(ctx, testFilerAddress, sessionToken)
 		require.NoError(t, err, "Gateway 3 should validate session from Gateway 1")
 		assert.Equal(t, sessionInfo2.SessionId, sessionInfo3.SessionId, "Should be same session")
 
