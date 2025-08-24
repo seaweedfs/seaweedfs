@@ -30,10 +30,11 @@ const (
 
 // Default Values
 const (
-	DefaultTokenDuration    = 3600  // 1 hour in seconds
-	DefaultMaxSessionLength = 43200 // 12 hours in seconds
-	DefaultIssuer          = "seaweedfs-sts"
-	MinSigningKeyLength    = 16 // Minimum signing key length in bytes
+	DefaultTokenDuration      = 3600          // 1 hour in seconds
+	DefaultMaxSessionLength   = 43200         // 12 hours in seconds
+	DefaultIssuer            = "seaweedfs-sts"
+	DefaultStoreType         = StoreTypeFiler // Default store type for persistence
+	MinSigningKeyLength      = 16             // Minimum signing key length in bytes
 )
 
 // Configuration Field Names

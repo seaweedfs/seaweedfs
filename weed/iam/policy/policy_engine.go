@@ -186,7 +186,7 @@ func (e *PolicyEngine) validateConfig(config *PolicyEngineConfig) error {
 	}
 
 	if config.StoreType == "" {
-		config.StoreType = "memory" // Default to memory store
+		config.StoreType = "filer" // Default to filer store for persistence
 	}
 
 	return nil

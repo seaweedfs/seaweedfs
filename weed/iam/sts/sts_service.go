@@ -237,10 +237,10 @@ func (s *STSService) validateConfig(config *STSConfig) error {
 // createSessionStore creates a session store based on configuration
 func (s *STSService) createSessionStore(config *STSConfig) (SessionStore, error) {
 	switch config.SessionStoreType {
-	case "", StoreTypeMemory:
-		return NewMemorySessionStore(), nil
-	case StoreTypeFiler:
+	case "", DefaultStoreType:
 		return NewFilerSessionStore(config.SessionStoreConfig)
+	case StoreTypeMemory:
+		return NewMemorySessionStore(), nil
 	default:
 		return nil, fmt.Errorf(ErrUnsupportedStoreType, config.SessionStoreType)
 	}

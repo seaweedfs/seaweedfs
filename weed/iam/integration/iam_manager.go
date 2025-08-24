@@ -111,15 +111,15 @@ func (m *IAMManager) Initialize(config *IAMConfig) error {
 // createRoleStore creates a role store based on configuration
 func (m *IAMManager) createRoleStore(config *RoleStoreConfig) (RoleStore, error) {
 	if config == nil {
-		// Default to memory role store
-		return NewMemoryRoleStore(), nil
+		// Default to filer role store
+		return NewFilerRoleStore(nil)
 	}
 
 	switch config.StoreType {
-	case "", "memory":
-		return NewMemoryRoleStore(), nil
-	case "filer":
+	case "", "filer":
 		return NewFilerRoleStore(config.StoreConfig)
+	case "memory":
+		return NewMemoryRoleStore(), nil
 	default:
 		return nil, fmt.Errorf("unsupported role store type: %s", config.StoreType)
 	}

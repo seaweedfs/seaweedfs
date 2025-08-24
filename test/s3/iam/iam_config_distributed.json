@@ -4,7 +4,6 @@
     "maxSessionLength": 43200000000000,
     "issuer": "seaweedfs-sts",
     "signingKey": "dGVzdC1zaWduaW5nLWtleS0zMi1jaGFyYWN0ZXJzLWxvbmc=",
-    "sessionStoreType": "filer",
     "providers": [
       {
         "name": "keycloak-oidc",
@@ -34,12 +33,9 @@
     ]
   },
   "policy": {
-    "defaultEffect": "Deny",
-    "storeType": "filer"
+    "defaultEffect": "Deny"
   },
-  "roleStore": {
-    "storeType": "filer"
-  },
+  "roleStore": {},
 
   "roles": [
     {
