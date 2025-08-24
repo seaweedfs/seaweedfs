@@ -44,13 +44,14 @@ func (cr *CapacityReservations) addReservation(diskType types.DiskType, count in
 	cr.Lock()
 	defer cr.Unlock()
 
-	reservationId := fmt.Sprintf("%s-%d-%d-%d", diskType, count, time.Now().UnixNano(), rand.Int64())
-	cr.reservations[reservationId] = &CapacityReservation{
-		reservationId: reservationId,
-		diskType:      diskType,
-		count:         count,
-		createdAt:     time.Now(),
-	}
+ 	now := time.Now()
+ 	reservationId := fmt.Sprintf("%s-%d-%d-%d", diskType, count, now.UnixNano(), rand.Int64())
+ 	cr.reservations[reservationId] = &CapacityReservation{
+ 		reservationId: reservationId,
+ 		diskType:      diskType,
+ 		count:         count,
+ 		createdAt:     now,
+ 	}
 	cr.reservedCounts[diskType] += count
 	return reservationId
 }
