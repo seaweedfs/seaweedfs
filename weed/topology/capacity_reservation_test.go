@@ -1,6 +1,7 @@
 package topology
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -166,24 +167,25 @@ func TestNodeImpl_ConcurrentReservations(t *testing.T) {
 	diskUsage.maxVolumeCount = 10
 	diskUsage.volumeCount = 0 // 10 volumes free initially
 
-	// Test multiple concurrent reservations
-	var reservationIds []string
-	for i := 0; i < 10; i++ {
-		option := &VolumeGrowOption{DiskType: diskType}
-		availableBefore := dn.AvailableSpaceForReservation(option)
-		t.Logf("Iteration %d: Available before reservation: %d", i, availableBefore)
+	// Test concurrent reservations using goroutines
+	var wg sync.WaitGroup
+	var reservationIds sync.Map
+	concurrentRequests := 10
+	wg.Add(concurrentRequests)
 
-		if reservationId, success := dn.TryReserveCapacity(diskType, 1); success {
-			reservationIds = append(reservationIds, reservationId)
-			availableAfter := dn.AvailableSpaceForReservation(option)
-			t.Logf("Iteration %d: Successfully reserved %s, available after: %d", i, reservationId, availableAfter)
-		} else {
-			t.Errorf("Expected successful reservation %d (available: %d)", i+1, availableBefore)
-			break
-		}
+	for i := 0; i < concurrentRequests; i++ {
+		go func(i int) {
+			defer wg.Done()
+			if reservationId, success := dn.TryReserveCapacity(diskType, 1); success {
+				reservationIds.Store(reservationId, true)
+				t.Logf("goroutine %d: Successfully reserved %s", i, reservationId)
+			} else {
+				t.Errorf("goroutine %d: Expected successful reservation", i)
+			}
+		}(i)
 	}
 
-	t.Logf("Total reservations made: %d", len(reservationIds))
+	wg.Wait()
 
 	// Should have no more capacity
 	option := &VolumeGrowOption{DiskType: diskType}
@@ -201,9 +203,10 @@ func TestNodeImpl_ConcurrentReservations(t *testing.T) {
 	}
 
 	// Release all reservations
-	for _, id := range reservationIds {
-		dn.ReleaseReservedCapacity(id)
-	}
+	reservationIds.Range(func(key, value interface{}) bool {
+		dn.ReleaseReservedCapacity(key.(string))
+		return true
+	})
 
 	// Should have full capacity back
 	if available := dn.AvailableSpaceForReservation(option); available != 10 {
