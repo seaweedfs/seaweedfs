@@ -1,0 +1,318 @@
+package oidc
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/seaweedfs/seaweedfs/weed/iam/providers"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// TestOIDCProviderInitialization tests OIDC provider initialization
+func TestOIDCProviderInitialization(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  *OIDCConfig
+		wantErr bool
+	}{
+		{
+			name: "valid config",
+			config: &OIDCConfig{
+				Issuer:   "https://accounts.google.com",
+				ClientID: "test-client-id",
+				JWKSUri:  "https://www.googleapis.com/oauth2/v3/certs",
+			},
+			wantErr: false,
+		},
+		{
+			name: "missing issuer",
+			config: &OIDCConfig{
+				ClientID: "test-client-id",
+			},
+			wantErr: true,
+		},
+		{
+			name: "missing client id",
+			config: &OIDCConfig{
+				Issuer: "https://accounts.google.com",
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid issuer url",
+			config: &OIDCConfig{
+				Issuer:   "not-a-url",
+				ClientID: "test-client-id",
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := NewOIDCProvider("test-provider")
+
+			err := provider.Initialize(tt.config)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, "test-provider", provider.Name())
+			}
+		})
+	}
+}
+
+// TestOIDCProviderJWTValidation tests JWT token validation
+func TestOIDCProviderJWTValidation(t *testing.T) {
+	// Set up test server with JWKS endpoint
+	privateKey, publicKey := generateTestKeys(t)
+
+	jwks := map[string]interface{}{
+		"keys": []map[string]interface{}{
+			{
+				"kty": "RSA",
+				"kid": "test-key-id",
+				"use": "sig",
+				"alg": "RS256",
+				"n":   encodePublicKey(t, publicKey),
+				"e":   "AQAB",
+			},
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/openid_configuration" {
+			config := map[string]interface{}{
+				"issuer":   "http://" + r.Host,
+				"jwks_uri": "http://" + r.Host + "/jwks",
+			}
+			json.NewEncoder(w).Encode(config)
+		} else if r.URL.Path == "/jwks" {
+			json.NewEncoder(w).Encode(jwks)
+		}
+	}))
+	defer server.Close()
+
+	provider := NewOIDCProvider("test-oidc")
+	config := &OIDCConfig{
+		Issuer:   server.URL,
+		ClientID: "test-client",
+		JWKSUri:  server.URL + "/jwks",
+	}
+
+	err := provider.Initialize(config)
+	require.NoError(t, err)
+
+	t.Run("valid token", func(t *testing.T) {
+		// Create valid JWT token
+		token := createTestJWT(t, privateKey, jwt.MapClaims{
+			"iss":   server.URL,
+			"aud":   "test-client",
+			"sub":   "user123",
+			"exp":   time.Now().Add(time.Hour).Unix(),
+			"iat":   time.Now().Unix(),
+			"email": "user@example.com",
+			"name":  "Test User",
+		})
+
+		claims, err := provider.ValidateToken(context.Background(), token)
+		assert.NoError(t, err)
+		assert.Equal(t, "user123", claims.Subject)
+		assert.Equal(t, server.URL, claims.Issuer)
+
+		email, exists := claims.GetClaimString("email")
+		assert.True(t, exists)
+		assert.Equal(t, "user@example.com", email)
+	})
+
+	t.Run("expired token", func(t *testing.T) {
+		// Create expired JWT token
+		token := createTestJWT(t, privateKey, jwt.MapClaims{
+			"iss": server.URL,
+			"aud": "test-client",
+			"sub": "user123",
+			"exp": time.Now().Add(-time.Hour).Unix(), // Expired
+			"iat": time.Now().Add(-time.Hour * 2).Unix(),
+		})
+
+		_, err := provider.ValidateToken(context.Background(), token)
+		assert.Error(t, err)
+	})
+
+	t.Run("invalid signature", func(t *testing.T) {
+		// Create token with wrong key
+		wrongKey, _ := generateTestKeys(t)
+		token := createTestJWT(t, wrongKey, jwt.MapClaims{
+			"iss": server.URL,
+			"aud": "test-client",
+			"sub": "user123",
+			"exp": time.Now().Add(time.Hour).Unix(),
+			"iat": time.Now().Unix(),
+		})
+
+		_, err := provider.ValidateToken(context.Background(), token)
+		assert.Error(t, err)
+	})
+}
+
+// TestOIDCProviderAuthentication tests authentication flow
+func TestOIDCProviderAuthentication(t *testing.T) {
+	// Set up test OIDC provider
+	privateKey, publicKey := generateTestKeys(t)
+
+	server := setupOIDCTestServer(t, publicKey)
+	defer server.Close()
+
+	provider := NewOIDCProvider("test-oidc")
+	config := &OIDCConfig{
+		Issuer:   server.URL,
+		ClientID: "test-client",
+		JWKSUri:  server.URL + "/jwks",
+		RoleMapping: &providers.RoleMapping{
+			Rules: []providers.MappingRule{
+				{
+					Claim: "email",
+					Value: "*@example.com",
+					Role:  "arn:seaweed:iam::role/UserRole",
+				},
+				{
+					Claim: "groups",
+					Value: "admins",
+					Role:  "arn:seaweed:iam::role/AdminRole",
+				},
+			},
+			DefaultRole: "arn:seaweed:iam::role/GuestRole",
+		},
+	}
+
+	err := provider.Initialize(config)
+	require.NoError(t, err)
+
+	t.Run("successful authentication", func(t *testing.T) {
+		token := createTestJWT(t, privateKey, jwt.MapClaims{
+			"iss":    server.URL,
+			"aud":    "test-client",
+			"sub":    "user123",
+			"exp":    time.Now().Add(time.Hour).Unix(),
+			"iat":    time.Now().Unix(),
+			"email":  "user@example.com",
+			"name":   "Test User",
+			"groups": []string{"users", "developers"},
+		})
+
+		identity, err := provider.Authenticate(context.Background(), token)
+		assert.NoError(t, err)
+		assert.Equal(t, "user123", identity.UserID)
+		assert.Equal(t, "user@example.com", identity.Email)
+		assert.Equal(t, "Test User", identity.DisplayName)
+		assert.Equal(t, "test-oidc", identity.Provider)
+		assert.Contains(t, identity.Groups, "users")
+		assert.Contains(t, identity.Groups, "developers")
+	})
+
+	t.Run("authentication with invalid token", func(t *testing.T) {
+		_, err := provider.Authenticate(context.Background(), "invalid-token")
+		assert.Error(t, err)
+	})
+}
+
+// TestOIDCProviderUserInfo tests user info retrieval
+func TestOIDCProviderUserInfo(t *testing.T) {
+	// Set up test server with UserInfo endpoint
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/userinfo" {
+			userInfo := map[string]interface{}{
+				"sub":   r.URL.Query().Get("user_id"),
+				"email": "user@example.com",
+				"name":  "Test User",
+			}
+			json.NewEncoder(w).Encode(userInfo)
+		}
+	}))
+	defer server.Close()
+
+	provider := NewOIDCProvider("test-oidc")
+	config := &OIDCConfig{
+		Issuer:      server.URL,
+		ClientID:    "test-client",
+		UserInfoUri: server.URL + "/userinfo",
+	}
+
+	err := provider.Initialize(config)
+	require.NoError(t, err)
+
+	t.Run("get user info", func(t *testing.T) {
+		identity, err := provider.GetUserInfo(context.Background(), "user123")
+		assert.NoError(t, err)
+		assert.Equal(t, "user123", identity.UserID)
+		assert.Equal(t, "user@example.com", identity.Email)
+		assert.Equal(t, "Test User", identity.DisplayName)
+	})
+
+	t.Run("get user info with empty id", func(t *testing.T) {
+		_, err := provider.GetUserInfo(context.Background(), "")
+		assert.Error(t, err)
+	})
+}
+
+// Helper functions for testing
+
+func generateTestKeys(t *testing.T) (*rsa.PrivateKey, *rsa.PublicKey) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	return privateKey, &privateKey.PublicKey
+}
+
+func createTestJWT(t *testing.T, privateKey *rsa.PrivateKey, claims jwt.MapClaims) string {
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	token.Header["kid"] = "test-key-id"
+
+	tokenString, err := token.SignedString(privateKey)
+	require.NoError(t, err)
+	return tokenString
+}
+
+func encodePublicKey(t *testing.T, publicKey *rsa.PublicKey) string {
+	// This is a simplified version - real implementation would properly encode the public key
+	return "test-public-key-n-value"
+}
+
+func setupOIDCTestServer(t *testing.T, publicKey *rsa.PublicKey) *httptest.Server {
+	jwks := map[string]interface{}{
+		"keys": []map[string]interface{}{
+			{
+				"kty": "RSA",
+				"kid": "test-key-id",
+				"use": "sig",
+				"alg": "RS256",
+				"n":   encodePublicKey(t, publicKey),
+				"e":   "AQAB",
+			},
+		},
+	}
+
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/openid_configuration":
+			config := map[string]interface{}{
+				"issuer":   "http://" + r.Host,
+				"jwks_uri": "http://" + r.Host + "/jwks",
+			}
+			json.NewEncoder(w).Encode(config)
+		case "/jwks":
+			json.NewEncoder(w).Encode(jwks)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+}
