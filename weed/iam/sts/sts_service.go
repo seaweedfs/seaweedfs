@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/iam/providers"
 )
 
@@ -34,6 +35,24 @@ type STSConfig struct {
 	// SessionStore configuration
 	SessionStoreType   string                 `json:"sessionStoreType"` // memory, filer, redis
 	SessionStoreConfig map[string]interface{} `json:"sessionStoreConfig,omitempty"`
+
+	// Providers configuration - enables automatic provider loading
+	Providers []*ProviderConfig `json:"providers,omitempty"`
+}
+
+// ProviderConfig holds identity provider configuration
+type ProviderConfig struct {
+	// Name is the unique identifier for the provider
+	Name string `json:"name"`
+
+	// Type specifies the provider type (oidc, ldap, etc.)
+	Type string `json:"type"`
+
+	// Config contains provider-specific configuration
+	Config map[string]interface{} `json:"config"`
+
+	// Enabled indicates if this provider should be active
+	Enabled bool `json:"enabled"`
 }
 
 // AssumeRoleWithWebIdentityRequest represents a request to assume role with web identity
@@ -185,6 +204,11 @@ func (s *STSService) Initialize(config *STSConfig) error {
 	// Initialize token generator for JWT validation
 	s.tokenGenerator = NewTokenGenerator(config.SigningKey, config.Issuer)
 
+	// Load identity providers from configuration
+	if err := s.loadProvidersFromConfig(config); err != nil {
+		return fmt.Errorf("failed to load identity providers: %w", err)
+	}
+
 	s.initialized = true
 	return nil
 }
@@ -220,6 +244,39 @@ func (s *STSService) createSessionStore(config *STSConfig) (SessionStore, error)
 	default:
 		return nil, fmt.Errorf("unsupported session store type: %s", config.SessionStoreType)
 	}
+}
+
+// loadProvidersFromConfig loads identity providers from configuration
+func (s *STSService) loadProvidersFromConfig(config *STSConfig) error {
+	if config.Providers == nil || len(config.Providers) == 0 {
+		glog.V(2).Infof("No providers configured in STS config")
+		return nil
+	}
+
+	factory := NewProviderFactory()
+
+	// Load all providers from configuration
+	providersMap, err := factory.LoadProvidersFromConfig(config.Providers)
+	if err != nil {
+		return fmt.Errorf("failed to load providers from config: %w", err)
+	}
+
+	// Replace current providers with new ones
+	s.providers = providersMap
+
+	glog.V(1).Infof("Successfully loaded %d identity providers: %v",
+		len(s.providers), s.getProviderNames())
+
+	return nil
+}
+
+// getProviderNames returns list of loaded provider names
+func (s *STSService) getProviderNames() []string {
+	names := make([]string, 0, len(s.providers))
+	for name := range s.providers {
+		names = append(names, name)
+	}
+	return names
 }
 
 // IsInitialized returns whether the service is initialized

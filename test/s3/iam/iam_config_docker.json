@@ -1,29 +1,28 @@
 {
-  "sts": {
+    "sts": {
     "tokenDuration": 3600000000000,
     "maxSessionLength": 43200000000000,
-    "issuer": "seaweedfs-sts", 
-    "signingKey": "dGVzdC1zaWduaW5nLWtleS0zMi1jaGFyYWN0ZXJzLWxvbmc="
+    "issuer": "seaweedfs-sts",
+    "signingKey": "dGVzdC1zaWduaW5nLWtleS0zMi1jaGFyYWN0ZXJzLWxvbmc=",
+    "providers": [
+      {
+        "name": "keycloak-oidc",
+        "type": "oidc",
+        "enabled": true,
+        "config": {
+          "issuer": "http://keycloak:8080/realms/seaweedfs-test",
+          "clientId": "seaweedfs-s3",
+          "clientSecret": "seaweedfs-s3-secret",
+          "jwksUri": "http://keycloak:8080/realms/seaweedfs-test/protocol/openid-connect/certs",
+          "scopes": ["openid", "profile", "email", "roles"]
+        }
+      }
+    ]
   },
   "policy": {
     "defaultEffect": "Deny",
     "storeType": "memory"
   },
-  "providers": [
-    {
-      "name": "keycloak-oidc",
-      "type": "oidc",
-      "config": {
-        "issuer": "http://keycloak:8080/realms/seaweedfs-test",
-        "clientId": "seaweedfs-s3",
-        "clientSecret": "seaweedfs-s3-secret",
-        "redirectUri": "http://localhost:8333/auth/callback",
-        "scopes": ["openid", "profile", "email", "roles"],
-        "usernameClaim": "preferred_username",
-        "groupsClaim": "roles"
-      }
-    }
-  ],
   "roles": [
     {
       "roleName": "S3AdminRole",
