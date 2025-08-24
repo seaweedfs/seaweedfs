@@ -41,9 +41,9 @@ func TestPolicyEngineInitialization(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			engine := NewPolicyEngine()
-			
+
 			err := engine.Initialize(tt.config)
-			
+
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {
@@ -120,7 +120,7 @@ func TestPolicyDocumentValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := ValidatePolicyDocument(tt.policy)
-			
+
 			if tt.wantErr {
 				assert.Error(t, err)
 				if tt.errorMsg != "" {
@@ -136,26 +136,26 @@ func TestPolicyDocumentValidation(t *testing.T) {
 // TestPolicyEvaluation tests policy evaluation logic
 func TestPolicyEvaluation(t *testing.T) {
 	engine := setupTestPolicyEngine(t)
-	
+
 	// Add test policies
 	readPolicy := &PolicyDocument{
 		Version: "2012-10-17",
 		Statement: []Statement{
 			{
-				Sid:      "AllowS3Read",
-				Effect:   "Allow",
-				Action:   []string{"s3:GetObject", "s3:ListBucket"},
+				Sid:    "AllowS3Read",
+				Effect: "Allow",
+				Action: []string{"s3:GetObject", "s3:ListBucket"},
 				Resource: []string{
-					"arn:seaweed:s3:::public-bucket/*",   // For object operations
-					"arn:seaweed:s3:::public-bucket",     // For bucket operations
+					"arn:seaweed:s3:::public-bucket/*", // For object operations
+					"arn:seaweed:s3:::public-bucket",   // For bucket operations
 				},
 			},
 		},
 	}
-	
+
 	err := engine.AddPolicy("read-policy", readPolicy)
 	require.NoError(t, err)
-	
+
 	denyPolicy := &PolicyDocument{
 		Version: "2012-10-17",
 		Statement: []Statement{
@@ -167,7 +167,7 @@ func TestPolicyEvaluation(t *testing.T) {
 			},
 		},
 	}
-	
+
 	err = engine.AddPolicy("deny-policy", denyPolicy)
 	require.NoError(t, err)
 
@@ -225,10 +225,10 @@ func TestPolicyEvaluation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := engine.Evaluate(context.Background(), tt.context, tt.policies)
-			
+
 			assert.NoError(t, err)
 			assert.Equal(t, tt.want, result.Effect)
-			
+
 			// Verify evaluation details
 			assert.NotNil(t, result.EvaluationDetails)
 			assert.Equal(t, tt.context.Action, result.EvaluationDetails.Action)
@@ -240,7 +240,7 @@ func TestPolicyEvaluation(t *testing.T) {
 // TestConditionEvaluation tests policy conditions
 func TestConditionEvaluation(t *testing.T) {
 	engine := setupTestPolicyEngine(t)
-	
+
 	// Policy with IP address condition
 	conditionalPolicy := &PolicyDocument{
 		Version: "2012-10-17",
@@ -258,7 +258,7 @@ func TestConditionEvaluation(t *testing.T) {
 			},
 		},
 	}
-	
+
 	err := engine.AddPolicy("ip-conditional", conditionalPolicy)
 	require.NoError(t, err)
 
@@ -308,7 +308,7 @@ func TestConditionEvaluation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := engine.Evaluate(context.Background(), tt.context, []string{"ip-conditional"})
-			
+
 			assert.NoError(t, err)
 			assert.Equal(t, tt.want, result.Effect)
 		})
@@ -318,10 +318,10 @@ func TestConditionEvaluation(t *testing.T) {
 // TestResourceMatching tests resource ARN matching
 func TestResourceMatching(t *testing.T) {
 	tests := []struct {
-		name         string
-		policyResource string
+		name            string
+		policyResource  string
 		requestResource string
-		want         bool
+		want            bool
 	}{
 		{
 			name:            "exact match",
@@ -418,9 +418,9 @@ func setupTestPolicyEngine(t *testing.T) *PolicyEngine {
 		DefaultEffect: "Deny",
 		StoreType:     "memory",
 	}
-	
+
 	err := engine.Initialize(config)
 	require.NoError(t, err)
-	
+
 	return engine
 }

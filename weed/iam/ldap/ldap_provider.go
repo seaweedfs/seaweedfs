@@ -70,7 +70,7 @@ func (p *LDAPProvider) Initialize(config interface{}) error {
 	if config == nil {
 		return fmt.Errorf("config cannot be nil")
 	}
-	
+
 	ldapConfig, ok := config.(*LDAPConfig)
 	if !ok {
 		return fmt.Errorf("invalid config type for LDAP provider")
@@ -136,17 +136,17 @@ func (p *LDAPProvider) Authenticate(ctx context.Context, credentials string) (*p
 	}
 
 	username, password := parts[0], parts[1]
-	
+
 	// TODO: Implement actual LDAP authentication
 	// 1. Connect to LDAP server using bind credentials
 	// 2. Search for user using configured user filter
 	// 3. Attempt to bind with user credentials
 	// 4. Retrieve user attributes and group memberships
 	// 5. Map to ExternalIdentity structure
-	
+
 	_ = username // Avoid unused variable warning
 	_ = password // Avoid unused variable warning
-	
+
 	return nil, fmt.Errorf("LDAP authentication not implemented yet - requires LDAP client integration")
 }
 
@@ -166,7 +166,7 @@ func (p *LDAPProvider) GetUserInfo(ctx context.Context, userID string) (*provide
 	// 3. Retrieve configured attributes (email, displayName, etc.)
 	// 4. Retrieve group memberships using group filter
 	// 5. Map to ExternalIdentity structure
-	
+
 	return nil, fmt.Errorf("LDAP user info retrieval not implemented yet")
 }
 
@@ -195,10 +195,10 @@ func (p *LDAPProvider) ValidateToken(ctx context.Context, token string) (*provid
 	// 4. Attempt to bind with user credentials to validate password
 	// 5. Extract user claims (DN, attributes, group memberships)
 	// 6. Return TokenClaims with LDAP-specific information
-	
+
 	_ = username // Avoid unused variable warning
 	_ = password // Avoid unused variable warning
-	
+
 	return nil, fmt.Errorf("LDAP credential validation not implemented yet")
 }
 

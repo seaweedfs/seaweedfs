@@ -364,7 +364,7 @@ func (m *MockIdentityProvider) Authenticate(ctx context.Context, token string) (
 	if claims, exists := m.validTokens[token]; exists {
 		email, _ := claims.GetClaimString("email")
 		name, _ := claims.GetClaimString("name")
-		
+
 		return &providers.ExternalIdentity{
 			UserID:      claims.Subject,
 			Email:       email,
@@ -372,7 +372,7 @@ func (m *MockIdentityProvider) Authenticate(ctx context.Context, token string) (
 			Provider:    m.name,
 		}, nil
 	}
-	
+
 	// Handle LDAP credentials (username:password format)
 	if m.validCredentials != nil {
 		parts := strings.Split(token, ":")
@@ -388,7 +388,7 @@ func (m *MockIdentityProvider) Authenticate(ctx context.Context, token string) (
 			}
 		}
 	}
-	
+
 	return nil, fmt.Errorf("invalid token")
 }
 

@@ -59,7 +59,7 @@ func (p *OIDCProvider) Initialize(config interface{}) error {
 	if config == nil {
 		return fmt.Errorf("config cannot be nil")
 	}
-	
+
 	oidcConfig, ok := config.(*OIDCConfig)
 	if !ok {
 		return fmt.Errorf("invalid config type for OIDC provider")
@@ -114,7 +114,7 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, token string) (*provide
 	email, _ := claims.GetClaimString("email")
 	displayName, _ := claims.GetClaimString("name")
 	groups, _ := claims.GetClaimStringSlice("groups")
-	
+
 	return &providers.ExternalIdentity{
 		UserID:      claims.Subject,
 		Email:       email,
@@ -138,7 +138,7 @@ func (p *OIDCProvider) GetUserInfo(ctx context.Context, userID string) (*provide
 	// 1. Make HTTP request to UserInfo endpoint
 	// 2. Parse response and extract user claims
 	// 3. Map claims to ExternalIdentity structure
-	
+
 	return nil, fmt.Errorf("UserInfo endpoint integration not implemented yet")
 }
 
@@ -153,11 +153,11 @@ func (p *OIDCProvider) ValidateToken(ctx context.Context, token string) (*provid
 	}
 
 	// TODO: Implement actual JWT token validation
-	// 1. Parse JWT token 
+	// 1. Parse JWT token
 	// 2. Verify signature using JWKS from provider
 	// 3. Validate claims (iss, aud, exp, etc.)
 	// 4. Extract user claims
-	
+
 	return nil, fmt.Errorf("JWT validation not implemented yet - requires JWKS integration")
 }
 
@@ -167,7 +167,7 @@ func (p *OIDCProvider) mapClaimsToRoles(claims *providers.TokenClaims) []string 
 
 	// Get groups from claims
 	groups, _ := claims.GetClaimStringSlice("groups")
-	
+
 	// Basic role mapping based on groups
 	for _, group := range groups {
 		switch group {

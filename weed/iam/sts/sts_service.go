@@ -243,7 +243,7 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *Ass
 	if !s.initialized {
 		return nil, fmt.Errorf("STS service not initialized")
 	}
-	
+
 	if request == nil {
 		return nil, fmt.Errorf("request cannot be nil")
 	}
@@ -300,8 +300,8 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *Ass
 	// 7. Build and return response
 	assumedRoleUser := &AssumedRoleUser{
 		AssumedRoleId: request.RoleArn,
-		Arn:          GenerateAssumedRoleArn(request.RoleArn, request.RoleSessionName),
-		Subject:      externalIdentity.UserID,
+		Arn:           GenerateAssumedRoleArn(request.RoleArn, request.RoleSessionName),
+		Subject:       externalIdentity.UserID,
 	}
 
 	return &AssumeRoleResponse{
@@ -315,7 +315,7 @@ func (s *STSService) AssumeRoleWithCredentials(ctx context.Context, request *Ass
 	if !s.initialized {
 		return nil, fmt.Errorf("STS service not initialized")
 	}
-	
+
 	if request == nil {
 		return nil, fmt.Errorf("request cannot be nil")
 	}
@@ -379,8 +379,8 @@ func (s *STSService) AssumeRoleWithCredentials(ctx context.Context, request *Ass
 	// 8. Build and return response
 	assumedRoleUser := &AssumedRoleUser{
 		AssumedRoleId: request.RoleArn,
-		Arn:          GenerateAssumedRoleArn(request.RoleArn, request.RoleSessionName),
-		Subject:      externalIdentity.UserID,
+		Arn:           GenerateAssumedRoleArn(request.RoleArn, request.RoleSessionName),
+		Subject:       externalIdentity.UserID,
 	}
 
 	return &AssumeRoleResponse{
@@ -394,34 +394,34 @@ func (s *STSService) ValidateSessionToken(ctx context.Context, sessionToken stri
 	if !s.initialized {
 		return nil, fmt.Errorf("STS service not initialized")
 	}
-	
+
 	if sessionToken == "" {
 		return nil, fmt.Errorf("session token cannot be empty")
 	}
-	
+
 	// For now, use the session token as session ID directly
 	// In a full implementation, this would:
 	// 1. Parse JWT session token
 	// 2. Verify signature and expiration
 	// 3. Extract session ID from claims
-	
+
 	// Extract session ID (simplified - assuming token contains session ID directly)
 	sessionId := s.extractSessionIdFromToken(sessionToken)
 	if sessionId == "" {
 		return nil, fmt.Errorf("invalid session token format")
 	}
-	
+
 	// Retrieve session from store
 	session, err := s.sessionStore.GetSession(ctx, sessionId)
 	if err != nil {
 		return nil, fmt.Errorf("session validation failed: %w", err)
 	}
-	
+
 	// Additional validation can be added here
 	if session.ExpiresAt.Before(time.Now()) {
 		return nil, fmt.Errorf("session has expired")
 	}
-	
+
 	return session, nil
 }
 
@@ -430,23 +430,23 @@ func (s *STSService) RevokeSession(ctx context.Context, sessionToken string) err
 	if !s.initialized {
 		return fmt.Errorf("STS service not initialized")
 	}
-	
+
 	if sessionToken == "" {
 		return fmt.Errorf("session token cannot be empty")
 	}
-	
+
 	// Extract session ID from token
 	sessionId := s.extractSessionIdFromToken(sessionToken)
 	if sessionId == "" {
 		return fmt.Errorf("invalid session token format")
 	}
-	
+
 	// Remove session from store
 	err := s.sessionStore.RevokeSession(ctx, sessionId)
 	if err != nil {
 		return fmt.Errorf("failed to revoke session: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -457,22 +457,22 @@ func (s *STSService) validateAssumeRoleWithWebIdentityRequest(request *AssumeRol
 	if request.RoleArn == "" {
 		return fmt.Errorf("RoleArn is required")
 	}
-	
+
 	if request.WebIdentityToken == "" {
 		return fmt.Errorf("WebIdentityToken is required")
 	}
-	
+
 	if request.RoleSessionName == "" {
 		return fmt.Errorf("RoleSessionName is required")
 	}
-	
+
 	// Validate session duration if provided
 	if request.DurationSeconds != nil {
 		if *request.DurationSeconds < 900 || *request.DurationSeconds > 43200 { // 15min to 12 hours
 			return fmt.Errorf("DurationSeconds must be between 900 and 43200 seconds")
 		}
 	}
-	
+
 	return nil
 }
 
@@ -486,7 +486,7 @@ func (s *STSService) validateWebIdentityToken(ctx context.Context, token string)
 			return identity, provider, nil
 		}
 	}
-	
+
 	return nil, nil, fmt.Errorf("web identity token validation failed with all providers")
 }
 
@@ -497,27 +497,27 @@ func (s *STSService) validateRoleAssumption(roleArn string, identity *providers.
 	// 1. Role exists
 	// 2. Role trust policy allows assumption by this identity
 	// 3. Identity has permission to assume the role
-	
+
 	if roleArn == "" {
 		return fmt.Errorf("role ARN cannot be empty")
 	}
-	
+
 	if identity == nil {
 		return fmt.Errorf("identity cannot be nil")
 	}
-	
+
 	// Basic role ARN format validation
 	expectedPrefix := "arn:seaweed:iam::role/"
 	if len(roleArn) < len(expectedPrefix) || roleArn[:len(expectedPrefix)] != expectedPrefix {
 		return fmt.Errorf("invalid role ARN format: got %s, expected format: %s*", roleArn, expectedPrefix)
 	}
-	
+
 	// For testing, reject non-existent roles
 	roleName := extractRoleNameFromArn(roleArn)
 	if roleName == "NonExistentRole" {
 		return fmt.Errorf("role does not exist: %s", roleName)
 	}
-	
+
 	return nil
 }
 
@@ -526,7 +526,7 @@ func (s *STSService) calculateSessionDuration(durationSeconds *int64) time.Durat
 	if durationSeconds != nil {
 		return time.Duration(*durationSeconds) * time.Second
 	}
-	
+
 	// Use default from config
 	return s.config.TokenDuration
 }
@@ -536,7 +536,7 @@ func (s *STSService) extractSessionIdFromToken(sessionToken string) string {
 	// For simplified implementation, we need to map session tokens to session IDs
 	// The session token is stored as part of the credentials in the session
 	// So we need to search through sessions to find the matching token
-	
+
 	// For now, use the session token directly as session ID since we store them together
 	// In a full implementation, this would parse JWT and extract session ID from claims
 	if len(sessionToken) > 10 && sessionToken[:2] == "ST" {
@@ -544,12 +544,12 @@ func (s *STSService) extractSessionIdFromToken(sessionToken string) string {
 		// This is inefficient but works for testing
 		return s.findSessionIdByToken(sessionToken)
 	}
-	
+
 	// For test compatibility, also handle direct session IDs
 	if len(sessionToken) == 32 { // Typical session ID length
 		return sessionToken
 	}
-	
+
 	return ""
 }
 
@@ -558,22 +558,22 @@ func (s *STSService) findSessionIdByToken(sessionToken string) string {
 	// In a real implementation, we'd maintain a reverse index
 	// For testing, we can use the fact that our memory store can be searched
 	// This is a simplified approach - in production we'd use proper token->session mapping
-	
+
 	memStore, ok := s.sessionStore.(*MemorySessionStore)
 	if !ok {
 		return ""
 	}
-	
+
 	// Search through all sessions to find matching token
 	memStore.mutex.RLock()
 	defer memStore.mutex.RUnlock()
-	
+
 	for sessionId, session := range memStore.sessions {
 		if session.Credentials != nil && session.Credentials.SessionToken == sessionToken {
 			return sessionId
 		}
 	}
-	
+
 	return ""
 }
 
@@ -582,29 +582,29 @@ func (s *STSService) validateAssumeRoleWithCredentialsRequest(request *AssumeRol
 	if request.RoleArn == "" {
 		return fmt.Errorf("RoleArn is required")
 	}
-	
+
 	if request.Username == "" {
 		return fmt.Errorf("Username is required")
 	}
-	
+
 	if request.Password == "" {
 		return fmt.Errorf("Password is required")
 	}
-	
+
 	if request.RoleSessionName == "" {
 		return fmt.Errorf("RoleSessionName is required")
 	}
-	
+
 	if request.ProviderName == "" {
 		return fmt.Errorf("ProviderName is required")
 	}
-	
+
 	// Validate session duration if provided
 	if request.DurationSeconds != nil {
 		if *request.DurationSeconds < 900 || *request.DurationSeconds > 43200 { // 15min to 12 hours
 			return fmt.Errorf("DurationSeconds must be between 900 and 43200 seconds")
 		}
 	}
-	
+
 	return nil
 }

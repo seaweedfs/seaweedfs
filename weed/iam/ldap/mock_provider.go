@@ -11,7 +11,7 @@ import (
 // MockLDAPProvider is a mock implementation for testing
 type MockLDAPProvider struct {
 	*LDAPProvider
-	TestUsers   map[string]*providers.ExternalIdentity
+	TestUsers       map[string]*providers.ExternalIdentity
 	TestCredentials map[string]string // username -> password
 }
 
@@ -124,11 +124,11 @@ func (m *MockLDAPProvider) ValidateToken(ctx context.Context, token string) (*pr
 	return &providers.TokenClaims{
 		Subject: username,
 		Claims: map[string]interface{}{
-			"ldap_dn":     "CN=" + username + ",DC=test,DC=com",
-			"email":       identity.Email,
-			"name":        identity.DisplayName,
-			"groups":      identity.Groups,
-			"provider":    m.name,
+			"ldap_dn":  "CN=" + username + ",DC=test,DC=com",
+			"email":    identity.Email,
+			"name":     identity.DisplayName,
+			"groups":   identity.Groups,
+			"provider": m.name,
 		},
 	}, nil
 }
