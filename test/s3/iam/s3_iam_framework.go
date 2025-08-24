@@ -1,13 +1,13 @@
 package iam
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -576,6 +576,62 @@ func (f *S3IAMTestFramework) WaitForS3Service() error {
 	}
 
 	return fmt.Errorf("S3 service not available after %d retries", maxRetries)
+}
+
+// PutTestObject puts a test object in the specified bucket
+func (f *S3IAMTestFramework) PutTestObject(client *s3.S3, bucket, key, content string) error {
+	_, err := client.PutObject(&s3.PutObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+		Body:   strings.NewReader(content),
+	})
+	return err
+}
+
+// GetTestObject retrieves a test object from the specified bucket
+func (f *S3IAMTestFramework) GetTestObject(client *s3.S3, bucket, key string) (string, error) {
+	result, err := client.GetObject(&s3.GetObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return "", err
+	}
+	defer result.Body.Close()
+
+	content := strings.Builder{}
+	_, err = io.Copy(&content, result.Body)
+	if err != nil {
+		return "", err
+	}
+
+	return content.String(), nil
+}
+
+// ListTestObjects lists objects in the specified bucket
+func (f *S3IAMTestFramework) ListTestObjects(client *s3.S3, bucket string) ([]string, error) {
+	result, err := client.ListObjects(&s3.ListObjectsInput{
+		Bucket: aws.String(bucket),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var keys []string
+	for _, obj := range result.Contents {
+		keys = append(keys, *obj.Key)
+	}
+
+	return keys, nil
+}
+
+// DeleteTestObject deletes a test object from the specified bucket
+func (f *S3IAMTestFramework) DeleteTestObject(client *s3.S3, bucket, key string) error {
+	_, err := client.DeleteObject(&s3.DeleteObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+	return err
 }
 
 // WaitForS3Service waits for the S3 service to be available (simplified version)

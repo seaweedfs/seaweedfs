@@ -3,7 +3,6 @@ package iam
 import (
 	"os"
 	"testing"
-	"time"
 
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/stretchr/testify/assert"
