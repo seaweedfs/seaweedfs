@@ -242,40 +242,28 @@ func (s3opt *S3Options) startS3Server() bool {
 	var s3ApiServer *s3api.S3ApiServer
 	var s3ApiServer_err error
 
-	// Use enhanced S3 server with IAM if config is provided
+	// Create S3 server with optional advanced IAM integration
 	if *s3opt.iamConfig != "" {
 		glog.V(0).Infof("Starting S3 API Server with advanced IAM integration")
-		s3ApiServer, s3ApiServer_err = s3api.NewS3ApiServerWithIAM(router, &s3api.S3ApiServerOption{
-			Filer:                     filerAddress,
-			Port:                      *s3opt.port,
-			Config:                    *s3opt.config,
-			DomainName:                *s3opt.domainName,
-			AllowedOrigins:            strings.Split(*s3opt.allowedOrigins, ","),
-			BucketsPath:               filerBucketsPath,
-			GrpcDialOption:            grpcDialOption,
-			AllowEmptyFolder:          *s3opt.allowEmptyFolder,
-			AllowDeleteBucketNotEmpty: *s3opt.allowDeleteBucketNotEmpty,
-			LocalFilerSocket:          localFilerSocket,
-			DataCenter:                *s3opt.dataCenter,
-			FilerGroup:                filerGroup,
-		}, *s3opt.iamConfig)
 	} else {
-		// Use standard S3 server
-		s3ApiServer, s3ApiServer_err = s3api.NewS3ApiServer(router, &s3api.S3ApiServerOption{
-			Filer:                     filerAddress,
-			Port:                      *s3opt.port,
-			Config:                    *s3opt.config,
-			DomainName:                *s3opt.domainName,
-			AllowedOrigins:            strings.Split(*s3opt.allowedOrigins, ","),
-			BucketsPath:               filerBucketsPath,
-			GrpcDialOption:            grpcDialOption,
-			AllowEmptyFolder:          *s3opt.allowEmptyFolder,
-			AllowDeleteBucketNotEmpty: *s3opt.allowDeleteBucketNotEmpty,
-			LocalFilerSocket:          localFilerSocket,
-			DataCenter:                *s3opt.dataCenter,
-			FilerGroup:                filerGroup,
-		})
+		glog.V(0).Infof("Starting S3 API Server with standard IAM")
 	}
+	
+	s3ApiServer, s3ApiServer_err = s3api.NewS3ApiServer(router, &s3api.S3ApiServerOption{
+		Filer:                     filerAddress,
+		Port:                      *s3opt.port,
+		Config:                    *s3opt.config,
+		DomainName:                *s3opt.domainName,
+		AllowedOrigins:            strings.Split(*s3opt.allowedOrigins, ","),
+		BucketsPath:               filerBucketsPath,
+		GrpcDialOption:            grpcDialOption,
+		AllowEmptyFolder:          *s3opt.allowEmptyFolder,
+		AllowDeleteBucketNotEmpty: *s3opt.allowDeleteBucketNotEmpty,
+		LocalFilerSocket:          localFilerSocket,
+		DataCenter:                *s3opt.dataCenter,
+		FilerGroup:                filerGroup,
+		IamConfig:                 *s3opt.iamConfig, // Advanced IAM config (optional)
+	})
 	if s3ApiServer_err != nil {
 		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)
 	}
