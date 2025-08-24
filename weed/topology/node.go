@@ -127,6 +127,7 @@ type Node interface {
 	String() string
 	AvailableSpaceFor(option *VolumeGrowOption) int64
 	ReserveOneVolume(r int64, option *VolumeGrowOption) (*DataNode, error)
+	ReserveOneVolumeForReservation(r int64, option *VolumeGrowOption) (*DataNode, error)
 	UpAdjustDiskUsageDelta(diskType types.DiskType, diskUsage *DiskUsageCounts)
 	UpAdjustMaxVolumeId(vid needle.VolumeId)
 	GetDiskUsages() *DiskUsages
@@ -336,10 +337,24 @@ func (n *NodeImpl) GetValue() interface{} {
 }
 
 func (n *NodeImpl) ReserveOneVolume(r int64, option *VolumeGrowOption) (assignedNode *DataNode, err error) {
+	return n.reserveOneVolumeInternal(r, option, false)
+}
+
+// ReserveOneVolumeForReservation selects a node using reservation-aware capacity checks
+func (n *NodeImpl) ReserveOneVolumeForReservation(r int64, option *VolumeGrowOption) (assignedNode *DataNode, err error) {
+	return n.reserveOneVolumeInternal(r, option, true)
+}
+
+func (n *NodeImpl) reserveOneVolumeInternal(r int64, option *VolumeGrowOption, useReservations bool) (assignedNode *DataNode, err error) {
 	n.RLock()
 	defer n.RUnlock()
 	for _, node := range n.children {
-		freeSpace := node.AvailableSpaceFor(option)
+		var freeSpace int64
+		if useReservations {
+			freeSpace = node.AvailableSpaceForReservation(option)
+		} else {
+			freeSpace = node.AvailableSpaceFor(option)
+		}
 		// fmt.Println("r =", r, ", node =", node, ", freeSpace =", freeSpace)
 		if freeSpace <= 0 {
 			continue
@@ -347,7 +362,13 @@ func (n *NodeImpl) ReserveOneVolume(r int64, option *VolumeGrowOption) (assigned
 		if r >= freeSpace {
 			r -= freeSpace
 		} else {
-			if node.IsDataNode() && node.AvailableSpaceFor(option) > 0 {
+			var hasSpace bool
+			if useReservations {
+				hasSpace = node.IsDataNode() && node.AvailableSpaceForReservation(option) > 0
+			} else {
+				hasSpace = node.IsDataNode() && node.AvailableSpaceFor(option) > 0
+			}
+			if hasSpace {
 				// fmt.Println("vid =", vid, " assigned to node =", node, ", freeSpace =", node.FreeSpace())
 				dn := node.(*DataNode)
 				if dn.IsTerminating {
@@ -355,7 +376,11 @@ func (n *NodeImpl) ReserveOneVolume(r int64, option *VolumeGrowOption) (assigned
 				}
 				return dn, nil
 			}
-			assignedNode, err = node.ReserveOneVolume(r, option)
+			if useReservations {
+				assignedNode, err = node.ReserveOneVolumeForReservation(r, option)
+			} else {
+				assignedNode, err = node.ReserveOneVolume(r, option)
+			}
 			if err == nil {
 				return
 			}

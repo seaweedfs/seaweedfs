@@ -268,7 +268,7 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 	}
 	for _, rack := range otherRacks {
 		r := rand.Int64N(rack.AvailableSpaceForReservation(option))
-		if server, e := rack.ReserveOneVolume(r, option); e == nil {
+		if server, e := rack.ReserveOneVolumeForReservation(r, option); e == nil {
 			servers = append(servers, server)
 		} else {
 			return servers, nil, e
@@ -276,7 +276,7 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 	}
 	for _, datacenter := range otherDataCenters {
 		r := rand.Int64N(datacenter.AvailableSpaceForReservation(option))
-		if server, e := datacenter.ReserveOneVolume(r, option); e == nil {
+		if server, e := datacenter.ReserveOneVolumeForReservation(r, option); e == nil {
 			servers = append(servers, server)
 		} else {
 			return servers, nil, e
