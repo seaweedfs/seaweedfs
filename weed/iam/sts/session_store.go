@@ -94,6 +94,27 @@ func (m *MemorySessionStore) CleanupExpiredSessions(ctx context.Context) error {
 	return nil
 }
 
+// ExpireSessionForTesting manually expires a session for testing purposes
+func (m *MemorySessionStore) ExpireSessionForTesting(ctx context.Context, sessionId string) error {
+	if sessionId == "" {
+		return fmt.Errorf("session ID cannot be empty")
+	}
+
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	session, exists := m.sessions[sessionId]
+	if !exists {
+		return fmt.Errorf("session not found")
+	}
+
+	// Set expiration to 1 minute in the past to ensure it's expired
+	session.ExpiresAt = time.Now().Add(-1 * time.Minute)
+	m.sessions[sessionId] = session
+
+	return nil
+}
+
 // FilerSessionStore implements SessionStore using SeaweedFS filer
 type FilerSessionStore struct {
 	filerGrpcAddress string

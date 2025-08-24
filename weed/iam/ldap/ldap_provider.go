@@ -318,7 +318,7 @@ func (p *LDAPProvider) GetUserInfo(ctx context.Context, userID string) (*provide
 		BaseDN:       p.config.BaseDN,
 		Scope:        ScopeWholeSubtree,
 		DerefAliases: NeverDerefAliases,
-		SizeLimit:    1, // We only need one user
+		SizeLimit:    1,  // We only need one user
 		TimeLimit:    30, // 30 second timeout
 		TypesOnly:    false,
 		Filter:       userFilter,
@@ -407,7 +407,7 @@ func (p *LDAPProvider) ValidateToken(ctx context.Context, token string) (*provid
 		BaseDN:       p.config.BaseDN,
 		Scope:        ScopeWholeSubtree,
 		DerefAliases: NeverDerefAliases,
-		SizeLimit:    1, // We only need one user
+		SizeLimit:    1,  // We only need one user
 		TimeLimit:    30, // 30 second timeout
 		TypesOnly:    false,
 		Filter:       userFilter,

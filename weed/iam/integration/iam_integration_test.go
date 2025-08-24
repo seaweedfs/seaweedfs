@@ -271,10 +271,24 @@ func TestSessionExpiration(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, allowed)
 	
-	// TODO: Test actual expiration (would need time manipulation)
-	// For now, just verify the expiration time is set correctly
+	// Verify the expiration time is set correctly
 	assert.True(t, response.Credentials.Expiration.After(time.Now()))
 	assert.True(t, response.Credentials.Expiration.Before(time.Now().Add(16*time.Minute)))
+	
+	// Test actual session expiration
+	err = iamManager.ExpireSessionForTesting(ctx, sessionToken)
+	require.NoError(t, err)
+	
+	// Verify session is now expired and access is denied
+	allowed, err = iamManager.IsActionAllowed(ctx, &ActionRequest{
+		Principal:    response.AssumedRoleUser.Arn,
+		Action:       "s3:GetObject",
+		Resource:     "arn:seaweed:s3:::test-bucket/file.txt",
+		SessionToken: sessionToken,
+	})
+	require.Error(t, err)
+	assert.False(t, allowed)
+	assert.Contains(t, err.Error(), "session has expired")
 }
 
 // TestTrustPolicyValidation tests role trust policy validation

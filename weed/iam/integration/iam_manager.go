@@ -347,3 +347,12 @@ func indexOf(s, substr string) int {
 	}
 	return -1
 }
+
+// ExpireSessionForTesting manually expires a session for testing purposes
+func (m *IAMManager) ExpireSessionForTesting(ctx context.Context, sessionToken string) error {
+	if !m.initialized {
+		return fmt.Errorf("IAM manager not initialized")
+	}
+	
+	return m.stsService.ExpireSessionForTesting(ctx, sessionToken)
+}

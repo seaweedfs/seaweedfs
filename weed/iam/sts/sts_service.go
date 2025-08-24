@@ -608,3 +608,29 @@ func (s *STSService) validateAssumeRoleWithCredentialsRequest(request *AssumeRol
 
 	return nil
 }
+
+// ExpireSessionForTesting manually expires a session for testing purposes
+func (s *STSService) ExpireSessionForTesting(ctx context.Context, sessionToken string) error {
+	if !s.initialized {
+		return fmt.Errorf("STS service not initialized")
+	}
+
+	if sessionToken == "" {
+		return fmt.Errorf("session token cannot be empty")
+	}
+
+	// Extract session ID from token
+	sessionId := s.extractSessionIdFromToken(sessionToken)
+	if sessionId == "" {
+		return fmt.Errorf("invalid session token format")
+	}
+
+	// Check if session store supports manual expiration (for MemorySessionStore)
+	if memStore, ok := s.sessionStore.(*MemorySessionStore); ok {
+		return memStore.ExpireSessionForTesting(ctx, sessionId)
+	}
+
+	// For other session stores, we could implement similar functionality
+	// For now, just return an error indicating it's not supported
+	return fmt.Errorf("manual session expiration not supported for this session store type")
+}
