@@ -174,7 +174,7 @@ func NewFilerPolicyStore(config map[string]interface{}) (*FilerPolicyStore, erro
 		return nil, fmt.Errorf("filer address is required for FilerPolicyStore")
 	}
 
-	glog.V(2).Infof("Initialized FilerPolicyStore with filer %s, basePath %s", 
+	glog.V(2).Infof("Initialized FilerPolicyStore with filer %s, basePath %s",
 		store.filerGrpcAddress, store.basePath)
 
 	return store, nil

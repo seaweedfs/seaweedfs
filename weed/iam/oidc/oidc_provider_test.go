@@ -236,11 +236,37 @@ func TestOIDCProviderUserInfo(t *testing.T) {
 	// Set up test server with UserInfo endpoint
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/userinfo" {
+			// Check for Authorization header
+			authHeader := r.Header.Get("Authorization")
+			if !strings.HasPrefix(authHeader, "Bearer ") {
+				w.WriteHeader(http.StatusUnauthorized)
+				w.Write([]byte(`{"error": "unauthorized"}`))
+				return
+			}
+			
+			accessToken := strings.TrimPrefix(authHeader, "Bearer ")
+			
+			// Return 401 for explicitly invalid tokens
+			if accessToken == "invalid-token" {
+				w.WriteHeader(http.StatusUnauthorized)
+				w.Write([]byte(`{"error": "invalid_token"}`))
+				return
+			}
+			
+			// Mock user info response
 			userInfo := map[string]interface{}{
-				"sub":   r.URL.Query().Get("user_id"),
+				"sub":   "user123",
 				"email": "user@example.com",
 				"name":  "Test User",
+				"groups": []string{"users", "developers"},
 			}
+			
+			// Customize response based on token
+			if strings.Contains(accessToken, "admin") {
+				userInfo["groups"] = []string{"admins"}
+			}
+			
+			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(userInfo)
 		}
 	}))
@@ -256,15 +282,63 @@ func TestOIDCProviderUserInfo(t *testing.T) {
 	err := provider.Initialize(config)
 	require.NoError(t, err)
 
-	t.Run("get user info", func(t *testing.T) {
-		identity, err := provider.GetUserInfo(context.Background(), "user123")
-		if err != nil && strings.Contains(err.Error(), "not implemented yet") {
-			t.Skip("UserInfo endpoint integration not yet implemented - skipping user info test")
-			return
-		}
-
+	t.Run("get user info with access token", func(t *testing.T) {
+		// Test using access token (real UserInfo endpoint call)
+		identity, err := provider.GetUserInfoWithToken(context.Background(), "valid-access-token")
 		require.NoError(t, err)
 		require.NotNil(t, identity)
+		assert.Equal(t, "user123", identity.UserID)
+		assert.Equal(t, "user@example.com", identity.Email)
+		assert.Equal(t, "Test User", identity.DisplayName)
+		assert.Contains(t, identity.Groups, "users")
+		assert.Contains(t, identity.Groups, "developers")
+		assert.Equal(t, "test-oidc", identity.Provider)
+	})
+
+	t.Run("get admin user info", func(t *testing.T) {
+		// Test admin token response
+		identity, err := provider.GetUserInfoWithToken(context.Background(), "admin-access-token")
+		require.NoError(t, err)
+		require.NotNil(t, identity)
+		assert.Equal(t, "user123", identity.UserID)
+		assert.Contains(t, identity.Groups, "admins")
+	})
+
+	t.Run("get user info without token", func(t *testing.T) {
+		// Test without access token (should fail)
+		_, err := provider.GetUserInfoWithToken(context.Background(), "")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "access token cannot be empty")
+	})
+
+	t.Run("get user info with invalid token", func(t *testing.T) {
+		// Test with invalid access token (should get 401)
+		_, err := provider.GetUserInfoWithToken(context.Background(), "invalid-token")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "UserInfo endpoint returned status 401")
+	})
+
+	t.Run("get user info with custom claims mapping", func(t *testing.T) {
+		// Create provider with custom claims mapping
+		customProvider := NewOIDCProvider("test-custom-oidc")
+		customConfig := &OIDCConfig{
+			Issuer:      server.URL,
+			ClientID:    "test-client",
+			UserInfoUri: server.URL + "/userinfo",
+			ClaimsMapping: map[string]string{
+				"customEmail": "email",
+				"customName":  "name",
+			},
+		}
+		
+		err := customProvider.Initialize(customConfig)
+		require.NoError(t, err)
+		
+		identity, err := customProvider.GetUserInfoWithToken(context.Background(), "valid-access-token")
+		require.NoError(t, err)
+		require.NotNil(t, identity)
+		
+		// Standard claims should still work
 		assert.Equal(t, "user123", identity.UserID)
 		assert.Equal(t, "user@example.com", identity.Email)
 		assert.Equal(t, "Test User", identity.DisplayName)
@@ -316,12 +390,46 @@ func setupOIDCTestServer(t *testing.T, publicKey *rsa.PublicKey) *httptest.Serve
 		switch r.URL.Path {
 		case "/.well-known/openid_configuration":
 			config := map[string]interface{}{
-				"issuer":   "http://" + r.Host,
-				"jwks_uri": "http://" + r.Host + "/jwks",
+				"issuer":      "http://" + r.Host,
+				"jwks_uri":    "http://" + r.Host + "/jwks",
+				"userinfo_endpoint": "http://" + r.Host + "/userinfo",
 			}
 			json.NewEncoder(w).Encode(config)
 		case "/jwks":
 			json.NewEncoder(w).Encode(jwks)
+		case "/userinfo":
+			// Mock UserInfo endpoint
+			authHeader := r.Header.Get("Authorization")
+			if !strings.HasPrefix(authHeader, "Bearer ") {
+				w.WriteHeader(http.StatusUnauthorized)
+				w.Write([]byte(`{"error": "unauthorized"}`))
+				return
+			}
+			
+			accessToken := strings.TrimPrefix(authHeader, "Bearer ")
+			
+			// Return 401 for explicitly invalid tokens
+			if accessToken == "invalid-token" {
+				w.WriteHeader(http.StatusUnauthorized)
+				w.Write([]byte(`{"error": "invalid_token"}`))
+				return
+			}
+			
+			// Mock user info response based on access token
+			userInfo := map[string]interface{}{
+				"sub":   "user123",
+				"email": "user@example.com",
+				"name":  "Test User",
+				"groups": []string{"users", "developers"},
+			}
+			
+			// Customize response based on token
+			if strings.Contains(accessToken, "admin") {
+				userInfo["groups"] = []string{"admins"}
+			}
+			
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(userInfo)
 		default:
 			http.NotFound(w, r)
 		}

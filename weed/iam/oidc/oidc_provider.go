@@ -163,12 +163,75 @@ func (p *OIDCProvider) GetUserInfo(ctx context.Context, userID string) (*provide
 		return nil, fmt.Errorf("user ID cannot be empty")
 	}
 
-	// TODO: Implement UserInfo endpoint call
-	// 1. Make HTTP request to UserInfo endpoint
-	// 2. Parse response and extract user claims
-	// 3. Map claims to ExternalIdentity structure
+	// For now, we'll use a token-based approach since OIDC UserInfo typically requires a token
+	// In a real implementation, this would need an access token from the authentication flow
+	return p.getUserInfoWithToken(ctx, userID, "")
+}
 
-	return nil, fmt.Errorf("UserInfo endpoint integration not implemented yet")
+// GetUserInfoWithToken retrieves user information using an access token
+func (p *OIDCProvider) GetUserInfoWithToken(ctx context.Context, accessToken string) (*providers.ExternalIdentity, error) {
+	if !p.initialized {
+		return nil, fmt.Errorf("provider not initialized")
+	}
+
+	if accessToken == "" {
+		return nil, fmt.Errorf("access token cannot be empty")
+	}
+
+	return p.getUserInfoWithToken(ctx, "", accessToken)
+}
+
+// getUserInfoWithToken is the internal implementation for UserInfo endpoint calls
+func (p *OIDCProvider) getUserInfoWithToken(ctx context.Context, userID, accessToken string) (*providers.ExternalIdentity, error) {
+	// Determine UserInfo endpoint URL
+	userInfoUri := p.config.UserInfoUri
+	if userInfoUri == "" {
+		// Use standard OIDC discovery endpoint convention
+		userInfoUri = strings.TrimSuffix(p.config.Issuer, "/") + "/userinfo"
+	}
+
+	// Create HTTP request
+	req, err := http.NewRequestWithContext(ctx, "GET", userInfoUri, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create UserInfo request: %v", err)
+	}
+
+	// Set authorization header if access token is provided
+	if accessToken != "" {
+		req.Header.Set("Authorization", "Bearer "+accessToken)
+	}
+	req.Header.Set("Accept", "application/json")
+
+	// Make HTTP request
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call UserInfo endpoint: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Check response status
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("UserInfo endpoint returned status %d", resp.StatusCode)
+	}
+
+	// Parse JSON response
+	var userInfo map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&userInfo); err != nil {
+		return nil, fmt.Errorf("failed to decode UserInfo response: %v", err)
+	}
+
+	glog.V(4).Infof("Received UserInfo response: %+v", userInfo)
+
+	// Map UserInfo claims to ExternalIdentity
+	identity := p.mapUserInfoToIdentity(userInfo)
+
+	// If userID was provided but not found in claims, use it
+	if userID != "" && identity.UserID == "" {
+		identity.UserID = userID
+	}
+
+	glog.V(3).Infof("Retrieved user info from OIDC provider: %s", identity.UserID)
+	return identity, nil
 }
 
 // ValidateToken validates an OIDC JWT token
@@ -364,4 +427,83 @@ func (p *OIDCProvider) parseRSAKey(key *JWK) (*rsa.PublicKey, error) {
 	pubKey.N = new(big.Int).SetBytes(nBytes)
 
 	return pubKey, nil
+}
+
+// mapUserInfoToIdentity maps UserInfo response to ExternalIdentity
+func (p *OIDCProvider) mapUserInfoToIdentity(userInfo map[string]interface{}) *providers.ExternalIdentity {
+	identity := &providers.ExternalIdentity{
+		Provider:   p.name,
+		Attributes: make(map[string]string),
+	}
+
+	// Map standard OIDC claims
+	if sub, ok := userInfo["sub"].(string); ok {
+		identity.UserID = sub
+	}
+
+	if email, ok := userInfo["email"].(string); ok {
+		identity.Email = email
+	}
+
+	if name, ok := userInfo["name"].(string); ok {
+		identity.DisplayName = name
+	}
+
+	// Handle groups claim (can be array of strings or single string)
+	if groupsData, exists := userInfo["groups"]; exists {
+		switch groups := groupsData.(type) {
+		case []interface{}:
+			// Array of groups
+			for _, group := range groups {
+				if groupStr, ok := group.(string); ok {
+					identity.Groups = append(identity.Groups, groupStr)
+				}
+			}
+		case []string:
+			// Direct string array
+			identity.Groups = groups
+		case string:
+			// Single group as string
+			identity.Groups = []string{groups}
+		}
+	}
+
+	// Map configured custom claims
+	if p.config.ClaimsMapping != nil {
+		for identityField, oidcClaim := range p.config.ClaimsMapping {
+			if value, exists := userInfo[oidcClaim]; exists {
+				if strValue, ok := value.(string); ok {
+					switch identityField {
+					case "email":
+						if identity.Email == "" {
+							identity.Email = strValue
+						}
+					case "displayName":
+						if identity.DisplayName == "" {
+							identity.DisplayName = strValue
+						}
+					case "userID":
+						if identity.UserID == "" {
+							identity.UserID = strValue
+						}
+					default:
+						identity.Attributes[identityField] = strValue
+					}
+				}
+			}
+		}
+	}
+
+	// Store all additional claims as attributes
+	for key, value := range userInfo {
+		if key != "sub" && key != "email" && key != "name" && key != "groups" {
+			if strValue, ok := value.(string); ok {
+				identity.Attributes[key] = strValue
+			} else if jsonValue, err := json.Marshal(value); err == nil {
+				identity.Attributes[key] = string(jsonValue)
+			}
+		}
+	}
+
+	return identity
 }
