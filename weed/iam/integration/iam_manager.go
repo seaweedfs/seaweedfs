@@ -11,20 +11,20 @@ import (
 
 // IAMManager orchestrates all IAM components
 type IAMManager struct {
-	stsService    *sts.STSService
-	policyEngine  *policy.PolicyEngine
-	roleStore     RoleStore
-	initialized   bool
+	stsService   *sts.STSService
+	policyEngine *policy.PolicyEngine
+	roleStore    RoleStore
+	initialized  bool
 }
 
 // IAMConfig holds configuration for all IAM components
 type IAMConfig struct {
 	// STS service configuration
 	STS *sts.STSConfig `json:"sts"`
-	
+
 	// Policy engine configuration
 	Policy *policy.PolicyEngineConfig `json:"policy"`
-	
+
 	// Role store configuration
 	Roles *RoleStoreConfig `json:"roleStore"`
 }
@@ -42,16 +42,16 @@ type RoleStoreConfig struct {
 type RoleDefinition struct {
 	// RoleName is the name of the role
 	RoleName string `json:"roleName"`
-	
+
 	// RoleArn is the full ARN of the role
 	RoleArn string `json:"roleArn"`
-	
+
 	// TrustPolicy defines who can assume this role
 	TrustPolicy *policy.PolicyDocument `json:"trustPolicy"`
-	
+
 	// AttachedPolicies lists the policy names attached to this role
 	AttachedPolicies []string `json:"attachedPolicies"`
-	
+
 	// Description is an optional description of the role
 	Description string `json:"description,omitempty"`
 }
@@ -60,16 +60,16 @@ type RoleDefinition struct {
 type ActionRequest struct {
 	// Principal is the entity performing the action
 	Principal string `json:"principal"`
-	
+
 	// Action is the action being requested
 	Action string `json:"action"`
-	
+
 	// Resource is the resource being accessed
 	Resource string `json:"resource"`
-	
+
 	// SessionToken for temporary credential validation
 	SessionToken string `json:"sessionToken"`
-	
+
 	// RequestContext contains additional request information
 	RequestContext map[string]interface{} `json:"requestContext,omitempty"`
 }
@@ -84,26 +84,26 @@ func (m *IAMManager) Initialize(config *IAMConfig) error {
 	if config == nil {
 		return fmt.Errorf("config cannot be nil")
 	}
-	
+
 	// Initialize STS service
 	m.stsService = sts.NewSTSService()
 	if err := m.stsService.Initialize(config.STS); err != nil {
 		return fmt.Errorf("failed to initialize STS service: %w", err)
 	}
-	
+
 	// Initialize policy engine
 	m.policyEngine = policy.NewPolicyEngine()
 	if err := m.policyEngine.Initialize(config.Policy); err != nil {
 		return fmt.Errorf("failed to initialize policy engine: %w", err)
 	}
-	
+
 	// Initialize role store
 	roleStore, err := m.createRoleStore(config.Roles)
 	if err != nil {
 		return fmt.Errorf("failed to initialize role store: %w", err)
 	}
 	m.roleStore = roleStore
-	
+
 	m.initialized = true
 	return nil
 }
@@ -114,7 +114,7 @@ func (m *IAMManager) createRoleStore(config *RoleStoreConfig) (RoleStore, error)
 		// Default to memory role store
 		return NewMemoryRoleStore(), nil
 	}
-	
+
 	switch config.StoreType {
 	case "", "memory":
 		return NewMemoryRoleStore(), nil
@@ -130,7 +130,7 @@ func (m *IAMManager) RegisterIdentityProvider(provider providers.IdentityProvide
 	if !m.initialized {
 		return fmt.Errorf("IAM manager not initialized")
 	}
-	
+
 	return m.stsService.RegisterProvider(provider)
 }
 
@@ -139,7 +139,7 @@ func (m *IAMManager) CreatePolicy(ctx context.Context, name string, policyDoc *p
 	if !m.initialized {
 		return fmt.Errorf("IAM manager not initialized")
 	}
-	
+
 	return m.policyEngine.AddPolicy(name, policyDoc)
 }
 
@@ -148,27 +148,27 @@ func (m *IAMManager) CreateRole(ctx context.Context, roleName string, roleDef *R
 	if !m.initialized {
 		return fmt.Errorf("IAM manager not initialized")
 	}
-	
+
 	if roleName == "" {
 		return fmt.Errorf("role name cannot be empty")
 	}
-	
+
 	if roleDef == nil {
 		return fmt.Errorf("role definition cannot be nil")
 	}
-	
+
 	// Set role ARN if not provided
 	if roleDef.RoleArn == "" {
 		roleDef.RoleArn = fmt.Sprintf("arn:seaweed:iam::role/%s", roleName)
 	}
-	
+
 	// Validate trust policy
 	if roleDef.TrustPolicy != nil {
 		if err := policy.ValidateTrustPolicyDocument(roleDef.TrustPolicy); err != nil {
 			return fmt.Errorf("invalid trust policy: %w", err)
 		}
 	}
-	
+
 	// Store role definition
 	return m.roleStore.StoreRole(ctx, roleName, roleDef)
 }
@@ -178,21 +178,21 @@ func (m *IAMManager) AssumeRoleWithWebIdentity(ctx context.Context, request *sts
 	if !m.initialized {
 		return nil, fmt.Errorf("IAM manager not initialized")
 	}
-	
+
 	// Extract role name from ARN
 	roleName := extractRoleNameFromArn(request.RoleArn)
-	
+
 	// Get role definition
 	roleDef, err := m.roleStore.GetRole(ctx, roleName)
 	if err != nil {
 		return nil, fmt.Errorf("role not found: %s", roleName)
 	}
-	
+
 	// Validate trust policy before allowing STS to assume the role
 	if err := m.validateTrustPolicyForWebIdentity(ctx, roleDef, request.WebIdentityToken); err != nil {
 		return nil, fmt.Errorf("trust policy validation failed: %w", err)
 	}
-	
+
 	// Use STS service to assume the role
 	return m.stsService.AssumeRoleWithWebIdentity(ctx, request)
 }
@@ -202,21 +202,21 @@ func (m *IAMManager) AssumeRoleWithCredentials(ctx context.Context, request *sts
 	if !m.initialized {
 		return nil, fmt.Errorf("IAM manager not initialized")
 	}
-	
+
 	// Extract role name from ARN
 	roleName := extractRoleNameFromArn(request.RoleArn)
-	
+
 	// Get role definition
 	roleDef, err := m.roleStore.GetRole(ctx, roleName)
 	if err != nil {
 		return nil, fmt.Errorf("role not found: %s", roleName)
 	}
-	
+
 	// Validate trust policy
 	if err := m.validateTrustPolicyForCredentials(ctx, roleDef, request); err != nil {
 		return nil, fmt.Errorf("trust policy validation failed: %w", err)
 	}
-	
+
 	// Use STS service to assume the role
 	return m.stsService.AssumeRoleWithCredentials(ctx, request)
 }
@@ -226,25 +226,25 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 	if !m.initialized {
 		return false, fmt.Errorf("IAM manager not initialized")
 	}
-	
+
 	// Validate session token first
 	_, err := m.stsService.ValidateSessionToken(ctx, request.SessionToken)
 	if err != nil {
 		return false, fmt.Errorf("invalid session: %w", err)
 	}
-	
+
 	// Extract role name from principal ARN
 	roleName := extractRoleNameFromPrincipal(request.Principal)
 	if roleName == "" {
 		return false, fmt.Errorf("could not extract role from principal: %s", request.Principal)
 	}
-	
+
 	// Get role definition
 	roleDef, err := m.roleStore.GetRole(ctx, roleName)
 	if err != nil {
 		return false, fmt.Errorf("role not found: %s", roleName)
 	}
-	
+
 	// Create evaluation context
 	evalCtx := &policy.EvaluationContext{
 		Principal:      request.Principal,
@@ -252,13 +252,13 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 		Resource:       request.Resource,
 		RequestContext: request.RequestContext,
 	}
-	
+
 	// Evaluate policies attached to the role
 	result, err := m.policyEngine.Evaluate(ctx, evalCtx, roleDef.AttachedPolicies)
 	if err != nil {
 		return false, fmt.Errorf("policy evaluation failed: %w", err)
 	}
-	
+
 	return result.Effect == policy.EffectAllow, nil
 }
 
@@ -269,7 +269,7 @@ func (m *IAMManager) ValidateTrustPolicy(ctx context.Context, roleArn, provider,
 	if err != nil {
 		return false
 	}
-	
+
 	// Simple validation based on provider in trust policy
 	if roleDef.TrustPolicy != nil {
 		for _, statement := range roleDef.TrustPolicy.Statement {
@@ -284,7 +284,7 @@ func (m *IAMManager) ValidateTrustPolicy(ctx context.Context, roleArn, provider,
 			}
 		}
 	}
-	
+
 	return false
 }
 
@@ -293,13 +293,13 @@ func (m *IAMManager) validateTrustPolicyForWebIdentity(ctx context.Context, role
 	if roleDef.TrustPolicy == nil {
 		return fmt.Errorf("role has no trust policy")
 	}
-	
+
 	// For simplified implementation, we'll do basic validation
 	// In a full implementation, this would:
 	// 1. Parse the web identity token
 	// 2. Check issuer against trust policy
 	// 3. Validate conditions in trust policy
-	
+
 	// Check if trust policy allows web identity assumption
 	for _, statement := range roleDef.TrustPolicy.Statement {
 		if statement.Effect == "Allow" {
@@ -315,7 +315,7 @@ func (m *IAMManager) validateTrustPolicyForWebIdentity(ctx context.Context, role
 			}
 		}
 	}
-	
+
 	return fmt.Errorf("trust policy does not allow web identity assumption")
 }
 
@@ -324,7 +324,7 @@ func (m *IAMManager) validateTrustPolicyForCredentials(ctx context.Context, role
 	if roleDef.TrustPolicy == nil {
 		return fmt.Errorf("role has no trust policy")
 	}
-	
+
 	// Check if trust policy allows credential assumption for the specific provider
 	for _, statement := range roleDef.TrustPolicy.Statement {
 		if statement.Effect == "Allow" {
@@ -341,7 +341,7 @@ func (m *IAMManager) validateTrustPolicyForCredentials(ctx context.Context, role
 			}
 		}
 	}
-	
+
 	return fmt.Errorf("trust policy does not allow credential assumption for provider: %s", request.ProviderName)
 }
 
@@ -385,6 +385,6 @@ func (m *IAMManager) ExpireSessionForTesting(ctx context.Context, sessionToken s
 	if !m.initialized {
 		return fmt.Errorf("IAM manager not initialized")
 	}
-	
+
 	return m.stsService.ExpireSessionForTesting(ctx, sessionToken)
 }
