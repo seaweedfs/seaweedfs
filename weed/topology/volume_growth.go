@@ -295,10 +295,6 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 		for i, server := range servers {
 			reservationId, success := server.TryReserveCapacity(option.DiskType, 1)
 			if !success {
-				// Failed to reserve on this server, release all previous reservations
-				for j := 0; j < i; j++ {
-					servers[j].ReleaseReservedCapacity(reservation.reservationIds[j])
-				}
 				return servers, nil, fmt.Errorf("failed to reserve capacity on server %s", server.Id())
 			}
 			reservation.reservationIds[i] = reservationId
