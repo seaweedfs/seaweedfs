@@ -1,9 +1,10 @@
 package topology
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"slices"
 	"strings"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
 
 type DataCenter struct {
@@ -16,6 +17,7 @@ func NewDataCenter(id string) *DataCenter {
 	dc.nodeType = "DataCenter"
 	dc.diskUsages = newDiskUsages()
 	dc.children = make(map[NodeId]Node)
+	dc.capacityReservations = newCapacityReservations()
 	dc.NodeImpl.value = dc
 	return dc
 }
