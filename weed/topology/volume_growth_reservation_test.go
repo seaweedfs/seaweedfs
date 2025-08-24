@@ -2,6 +2,7 @@ package topology
 
 import (
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -133,9 +134,7 @@ func TestVolumeGrowth_ConcurrentAllocationPreventsRaceCondition(t *testing.T) {
 	// Simulate concurrent volume creation attempts
 	const concurrentRequests = 10
 	var wg sync.WaitGroup
-	var successCount int32
-	var failureCount int32
-	var mu sync.Mutex
+	var successCount, failureCount atomic.Int32
 
 	for i := 0; i < concurrentRequests; i++ {
 		wg.Add(1)
@@ -144,12 +143,11 @@ func TestVolumeGrowth_ConcurrentAllocationPreventsRaceCondition(t *testing.T) {
 
 			_, reservation, err := vg.findEmptySlotsForOneVolume(topo, option, true)
 
-			mu.Lock()
 			if err != nil {
-				failureCount++
+				failureCount.Add(1)
 				t.Logf("Request %d failed as expected: %v", requestId, err)
 			} else {
-				successCount++
+				successCount.Add(1)
 				t.Logf("Request %d succeeded, got reservation", requestId)
 
 				// Release the reservation to simulate completion
@@ -163,7 +161,6 @@ func TestVolumeGrowth_ConcurrentAllocationPreventsRaceCondition(t *testing.T) {
 					disk.UpAdjustDiskUsageDelta(types.HardDriveType, deltaDiskUsage)
 				}
 			}
-			mu.Unlock()
 		}(i)
 	}
 
@@ -171,12 +168,12 @@ func TestVolumeGrowth_ConcurrentAllocationPreventsRaceCondition(t *testing.T) {
 
 	// With reservation system, only 5 requests should succeed (capacity limit)
 	// The rest should fail due to insufficient capacity
-	if successCount != 5 {
-		t.Errorf("Expected exactly 5 successful reservations, got %d", successCount)
+	if successCount.Load() != 5 {
+		t.Errorf("Expected exactly 5 successful reservations, got %d", successCount.Load())
 	}
 
-	if failureCount != 5 {
-		t.Errorf("Expected exactly 5 failed reservations, got %d", failureCount)
+	if failureCount.Load() != 5 {
+		t.Errorf("Expected exactly 5 failed reservations, got %d", failureCount.Load())
 	}
 
 	// Verify final state
@@ -185,7 +182,7 @@ func TestVolumeGrowth_ConcurrentAllocationPreventsRaceCondition(t *testing.T) {
 		t.Errorf("Expected 0 available space after all allocations, got %d", finalAvailable)
 	}
 
-	t.Logf("Concurrent test completed: %d successes, %d failures", successCount, failureCount)
+	t.Logf("Concurrent test completed: %d successes, %d failures", successCount.Load(), failureCount.Load())
 }
 
 func TestVolumeGrowth_ReservationFailureRollback(t *testing.T) {
