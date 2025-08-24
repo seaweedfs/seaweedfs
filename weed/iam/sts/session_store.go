@@ -122,7 +122,7 @@ func NewFilerSessionStore(config map[string]interface{}) (*FilerSessionStore, er
 		return nil, fmt.Errorf("filer address is required for FilerSessionStore")
 	}
 
-	glog.V(2).Infof("Initialized FilerSessionStore with filer %s, basePath %s", 
+	glog.V(2).Infof("Initialized FilerSessionStore with filer %s, basePath %s",
 		store.filerGrpcAddress, store.basePath)
 
 	return store, nil

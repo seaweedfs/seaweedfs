@@ -2,8 +2,16 @@ package policy
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
+	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"google.golang.org/grpc"
 )
 
 // MemoryPolicyStore implements PolicyStore using in-memory storage
@@ -140,55 +148,233 @@ func copyPolicyDocument(original *PolicyDocument) *PolicyDocument {
 
 // FilerPolicyStore implements PolicyStore using SeaweedFS filer
 type FilerPolicyStore struct {
-	basePath string
-	// TODO: Add filer client when integrating with SeaweedFS
+	filerGrpcAddress string
+	grpcDialOption   grpc.DialOption
+	basePath         string
 }
 
 // NewFilerPolicyStore creates a new filer-based policy store
 func NewFilerPolicyStore(config map[string]interface{}) (*FilerPolicyStore, error) {
-	// TODO: Implement filer policy store
-	// 1. Parse configuration for filer connection details
-	// 2. Set up filer client
-	// 3. Configure base path for policy storage
+	store := &FilerPolicyStore{
+		basePath: "/seaweedfs/iam/policies", // Default path for policy storage
+	}
 
-	return nil, fmt.Errorf("filer policy store not implemented yet")
+	// Parse configuration
+	if config != nil {
+		if filerAddr, ok := config["filerAddress"].(string); ok {
+			store.filerGrpcAddress = filerAddr
+		}
+		if basePath, ok := config["basePath"].(string); ok {
+			store.basePath = strings.TrimSuffix(basePath, "/")
+		}
+	}
+
+	// Validate configuration
+	if store.filerGrpcAddress == "" {
+		return nil, fmt.Errorf("filer address is required for FilerPolicyStore")
+	}
+
+	glog.V(2).Infof("Initialized FilerPolicyStore with filer %s, basePath %s", 
+		store.filerGrpcAddress, store.basePath)
+
+	return store, nil
 }
 
 // StorePolicy stores a policy document in filer
 func (s *FilerPolicyStore) StorePolicy(ctx context.Context, name string, policy *PolicyDocument) error {
-	// TODO: Implement filer policy storage
-	// 1. Serialize policy to JSON
-	// 2. Store in filer at basePath/policies/name.json
-	// 3. Handle errors and retries
+	if name == "" {
+		return fmt.Errorf("policy name cannot be empty")
+	}
+	if policy == nil {
+		return fmt.Errorf("policy cannot be nil")
+	}
 
-	return fmt.Errorf("filer policy storage not implemented yet")
+	// Serialize policy to JSON
+	policyData, err := json.MarshalIndent(policy, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to serialize policy: %v", err)
+	}
+
+	policyPath := s.getPolicyPath(name)
+
+	// Store in filer
+	return s.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		request := &filer_pb.CreateEntryRequest{
+			Directory: s.basePath,
+			Entry: &filer_pb.Entry{
+				Name:        s.getPolicyFileName(name),
+				IsDirectory: false,
+				Attributes: &filer_pb.FuseAttributes{
+					Mtime:    time.Now().Unix(),
+					Crtime:   time.Now().Unix(),
+					FileMode: uint32(0600), // Read/write for owner only
+					Uid:      uint32(0),
+					Gid:      uint32(0),
+				},
+				Content: policyData,
+			},
+		}
+
+		glog.V(3).Infof("Storing policy %s at %s", name, policyPath)
+		_, err := client.CreateEntry(ctx, request)
+		if err != nil {
+			return fmt.Errorf("failed to store policy %s: %v", name, err)
+		}
+
+		return nil
+	})
 }
 
 // GetPolicy retrieves a policy document from filer
 func (s *FilerPolicyStore) GetPolicy(ctx context.Context, name string) (*PolicyDocument, error) {
-	// TODO: Implement filer policy retrieval
-	// 1. Read policy file from filer
-	// 2. Deserialize JSON to PolicyDocument
-	// 3. Handle not found cases
+	if name == "" {
+		return nil, fmt.Errorf("policy name cannot be empty")
+	}
 
-	return nil, fmt.Errorf("filer policy retrieval not implemented yet")
+	var policyData []byte
+	err := s.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		request := &filer_pb.LookupDirectoryEntryRequest{
+			Directory: s.basePath,
+			Name:      s.getPolicyFileName(name),
+		}
+
+		glog.V(3).Infof("Looking up policy %s", name)
+		response, err := client.LookupDirectoryEntry(ctx, request)
+		if err != nil {
+			return fmt.Errorf("policy not found: %v", err)
+		}
+
+		if response.Entry == nil {
+			return fmt.Errorf("policy not found")
+		}
+
+		policyData = response.Entry.Content
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	// Deserialize policy from JSON
+	var policy PolicyDocument
+	if err := json.Unmarshal(policyData, &policy); err != nil {
+		return nil, fmt.Errorf("failed to deserialize policy: %v", err)
+	}
+
+	return &policy, nil
 }
 
 // DeletePolicy deletes a policy document from filer
 func (s *FilerPolicyStore) DeletePolicy(ctx context.Context, name string) error {
-	// TODO: Implement filer policy deletion
-	// 1. Delete policy file from filer
-	// 2. Handle errors
+	if name == "" {
+		return fmt.Errorf("policy name cannot be empty")
+	}
 
-	return fmt.Errorf("filer policy deletion not implemented yet")
+	return s.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		request := &filer_pb.DeleteEntryRequest{
+			Directory:            s.basePath,
+			Name:                 s.getPolicyFileName(name),
+			IsDeleteData:         true,
+			IsRecursive:          false,
+			IgnoreRecursiveError: false,
+		}
+
+		glog.V(3).Infof("Deleting policy %s", name)
+		resp, err := client.DeleteEntry(ctx, request)
+		if err != nil {
+			// Ignore "not found" errors - policy may already be deleted
+			if strings.Contains(err.Error(), "not found") {
+				return nil
+			}
+			return fmt.Errorf("failed to delete policy %s: %v", name, err)
+		}
+
+		// Check response error
+		if resp.Error != "" {
+			// Ignore "not found" errors - policy may already be deleted
+			if strings.Contains(resp.Error, "not found") {
+				return nil
+			}
+			return fmt.Errorf("failed to delete policy %s: %s", name, resp.Error)
+		}
+
+		return nil
+	})
 }
 
 // ListPolicies lists all policy names in filer
 func (s *FilerPolicyStore) ListPolicies(ctx context.Context) ([]string, error) {
-	// TODO: Implement filer policy listing
-	// 1. List files in basePath/policies/
-	// 2. Extract policy names from filenames
-	// 3. Return sorted list
+	var policyNames []string
 
-	return nil, fmt.Errorf("filer policy listing not implemented yet")
+	err := s.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		// List all entries in the policy directory
+		request := &filer_pb.ListEntriesRequest{
+			Directory:          s.basePath,
+			Prefix:             "policy_",
+			StartFromFileName:  "",
+			InclusiveStartFrom: false,
+			Limit:              1000, // Process in batches of 1000
+		}
+
+		stream, err := client.ListEntries(ctx, request)
+		if err != nil {
+			return fmt.Errorf("failed to list policies: %v", err)
+		}
+
+		for {
+			resp, err := stream.Recv()
+			if err != nil {
+				break // End of stream or error
+			}
+
+			if resp.Entry == nil || resp.Entry.IsDirectory {
+				continue
+			}
+
+			// Extract policy name from filename
+			filename := resp.Entry.Name
+			if strings.HasPrefix(filename, "policy_") && strings.HasSuffix(filename, ".json") {
+				// Remove "policy_" prefix and ".json" suffix
+				policyName := strings.TrimSuffix(strings.TrimPrefix(filename, "policy_"), ".json")
+				policyNames = append(policyNames, policyName)
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return policyNames, nil
+}
+
+// Helper methods
+
+// SetFilerClient sets the filer client connection details
+func (s *FilerPolicyStore) SetFilerClient(filerAddress string, grpcDialOption grpc.DialOption) {
+	s.filerGrpcAddress = filerAddress
+	s.grpcDialOption = grpcDialOption
+}
+
+// withFilerClient executes a function with a filer client
+func (s *FilerPolicyStore) withFilerClient(fn func(client filer_pb.SeaweedFilerClient) error) error {
+	if s.filerGrpcAddress == "" {
+		return fmt.Errorf("filer address not configured")
+	}
+
+	// Use the pb.WithGrpcFilerClient helper similar to existing SeaweedFS code
+	return pb.WithGrpcFilerClient(false, 0, pb.ServerAddress(s.filerGrpcAddress), s.grpcDialOption, fn)
+}
+
+// getPolicyPath returns the full path for a policy
+func (s *FilerPolicyStore) getPolicyPath(policyName string) string {
+	return s.basePath + "/" + s.getPolicyFileName(policyName)
+}
+
+// getPolicyFileName returns the filename for a policy
+func (s *FilerPolicyStore) getPolicyFileName(policyName string) string {
+	return "policy_" + policyName + ".json"
 }

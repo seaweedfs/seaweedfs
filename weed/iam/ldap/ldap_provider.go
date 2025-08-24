@@ -426,7 +426,7 @@ func (p *LDAPProvider) getSearchAttributes() []string {
 // getUserGroups retrieves user groups using the configured group filter
 func (p *LDAPProvider) getUserGroups(conn *LDAPConn, userDN, username string) ([]string, error) {
 	// Try different group search approaches
-	
+
 	// 1. Search by member DN
 	groupFilter := fmt.Sprintf(p.config.GroupFilter, EscapeFilter(userDN))
 	groups, err := p.searchGroups(conn, groupFilter)
