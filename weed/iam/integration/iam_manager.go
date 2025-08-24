@@ -13,7 +13,7 @@ import (
 type IAMManager struct {
 	stsService    *sts.STSService
 	policyEngine  *policy.PolicyEngine
-	roles         map[string]*RoleDefinition
+	roleStore     RoleStore
 	initialized   bool
 }
 
@@ -24,6 +24,18 @@ type IAMConfig struct {
 	
 	// Policy engine configuration
 	Policy *policy.PolicyEngineConfig `json:"policy"`
+	
+	// Role store configuration
+	Roles *RoleStoreConfig `json:"roleStore"`
+}
+
+// RoleStoreConfig holds role store configuration
+type RoleStoreConfig struct {
+	// StoreType specifies the role store backend (memory, filer, etc.)
+	StoreType string `json:"storeType"`
+
+	// StoreConfig contains store-specific configuration
+	StoreConfig map[string]interface{} `json:"storeConfig,omitempty"`
 }
 
 // RoleDefinition defines a role with its trust policy and attached policies
@@ -64,9 +76,7 @@ type ActionRequest struct {
 
 // NewIAMManager creates a new IAM manager
 func NewIAMManager() *IAMManager {
-	return &IAMManager{
-		roles: make(map[string]*RoleDefinition),
-	}
+	return &IAMManager{}
 }
 
 // Initialize initializes the IAM manager with all components
@@ -87,8 +97,32 @@ func (m *IAMManager) Initialize(config *IAMConfig) error {
 		return fmt.Errorf("failed to initialize policy engine: %w", err)
 	}
 	
+	// Initialize role store
+	roleStore, err := m.createRoleStore(config.Roles)
+	if err != nil {
+		return fmt.Errorf("failed to initialize role store: %w", err)
+	}
+	m.roleStore = roleStore
+	
 	m.initialized = true
 	return nil
+}
+
+// createRoleStore creates a role store based on configuration
+func (m *IAMManager) createRoleStore(config *RoleStoreConfig) (RoleStore, error) {
+	if config == nil {
+		// Default to memory role store
+		return NewMemoryRoleStore(), nil
+	}
+	
+	switch config.StoreType {
+	case "", "memory":
+		return NewMemoryRoleStore(), nil
+	case "filer":
+		return NewFilerRoleStore(config.StoreConfig)
+	default:
+		return nil, fmt.Errorf("unsupported role store type: %s", config.StoreType)
+	}
 }
 
 // RegisterIdentityProvider registers an identity provider
@@ -136,9 +170,7 @@ func (m *IAMManager) CreateRole(ctx context.Context, roleName string, roleDef *R
 	}
 	
 	// Store role definition
-	m.roles[roleName] = roleDef
-	
-	return nil
+	return m.roleStore.StoreRole(ctx, roleName, roleDef)
 }
 
 // AssumeRoleWithWebIdentity assumes a role using web identity (OIDC)
@@ -151,8 +183,8 @@ func (m *IAMManager) AssumeRoleWithWebIdentity(ctx context.Context, request *sts
 	roleName := extractRoleNameFromArn(request.RoleArn)
 	
 	// Get role definition
-	roleDef, exists := m.roles[roleName]
-	if !exists {
+	roleDef, err := m.roleStore.GetRole(ctx, roleName)
+	if err != nil {
 		return nil, fmt.Errorf("role not found: %s", roleName)
 	}
 	
@@ -175,8 +207,8 @@ func (m *IAMManager) AssumeRoleWithCredentials(ctx context.Context, request *sts
 	roleName := extractRoleNameFromArn(request.RoleArn)
 	
 	// Get role definition
-	roleDef, exists := m.roles[roleName]
-	if !exists {
+	roleDef, err := m.roleStore.GetRole(ctx, roleName)
+	if err != nil {
 		return nil, fmt.Errorf("role not found: %s", roleName)
 	}
 	
@@ -208,8 +240,8 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 	}
 	
 	// Get role definition
-	roleDef, exists := m.roles[roleName]
-	if !exists {
+	roleDef, err := m.roleStore.GetRole(ctx, roleName)
+	if err != nil {
 		return false, fmt.Errorf("role not found: %s", roleName)
 	}
 	
@@ -233,8 +265,8 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 // ValidateTrustPolicy validates if a principal can assume a role (for testing)
 func (m *IAMManager) ValidateTrustPolicy(ctx context.Context, roleArn, provider, userID string) bool {
 	roleName := extractRoleNameFromArn(roleArn)
-	roleDef, exists := m.roles[roleName]
-	if !exists {
+	roleDef, err := m.roleStore.GetRole(ctx, roleName)
+	if err != nil {
 		return false
 	}
 	
