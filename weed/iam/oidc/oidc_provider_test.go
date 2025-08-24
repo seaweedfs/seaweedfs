@@ -243,29 +243,29 @@ func TestOIDCProviderUserInfo(t *testing.T) {
 				w.Write([]byte(`{"error": "unauthorized"}`))
 				return
 			}
-			
+
 			accessToken := strings.TrimPrefix(authHeader, "Bearer ")
-			
+
 			// Return 401 for explicitly invalid tokens
 			if accessToken == "invalid-token" {
 				w.WriteHeader(http.StatusUnauthorized)
 				w.Write([]byte(`{"error": "invalid_token"}`))
 				return
 			}
-			
+
 			// Mock user info response
 			userInfo := map[string]interface{}{
-				"sub":   "user123",
-				"email": "user@example.com",
-				"name":  "Test User",
+				"sub":    "user123",
+				"email":  "user@example.com",
+				"name":   "Test User",
 				"groups": []string{"users", "developers"},
 			}
-			
+
 			// Customize response based on token
 			if strings.Contains(accessToken, "admin") {
 				userInfo["groups"] = []string{"admins"}
 			}
-			
+
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(userInfo)
 		}
@@ -330,14 +330,14 @@ func TestOIDCProviderUserInfo(t *testing.T) {
 				"customName":  "name",
 			},
 		}
-		
+
 		err := customProvider.Initialize(customConfig)
 		require.NoError(t, err)
-		
+
 		identity, err := customProvider.GetUserInfoWithToken(context.Background(), "valid-access-token")
 		require.NoError(t, err)
 		require.NotNil(t, identity)
-		
+
 		// Standard claims should still work
 		assert.Equal(t, "user123", identity.UserID)
 		assert.Equal(t, "user@example.com", identity.Email)
@@ -390,8 +390,8 @@ func setupOIDCTestServer(t *testing.T, publicKey *rsa.PublicKey) *httptest.Serve
 		switch r.URL.Path {
 		case "/.well-known/openid_configuration":
 			config := map[string]interface{}{
-				"issuer":      "http://" + r.Host,
-				"jwks_uri":    "http://" + r.Host + "/jwks",
+				"issuer":            "http://" + r.Host,
+				"jwks_uri":          "http://" + r.Host + "/jwks",
 				"userinfo_endpoint": "http://" + r.Host + "/userinfo",
 			}
 			json.NewEncoder(w).Encode(config)
@@ -405,29 +405,29 @@ func setupOIDCTestServer(t *testing.T, publicKey *rsa.PublicKey) *httptest.Serve
 				w.Write([]byte(`{"error": "unauthorized"}`))
 				return
 			}
-			
+
 			accessToken := strings.TrimPrefix(authHeader, "Bearer ")
-			
+
 			// Return 401 for explicitly invalid tokens
 			if accessToken == "invalid-token" {
 				w.WriteHeader(http.StatusUnauthorized)
 				w.Write([]byte(`{"error": "invalid_token"}`))
 				return
 			}
-			
+
 			// Mock user info response based on access token
 			userInfo := map[string]interface{}{
-				"sub":   "user123",
-				"email": "user@example.com",
-				"name":  "Test User",
+				"sub":    "user123",
+				"email":  "user@example.com",
+				"name":   "Test User",
 				"groups": []string{"users", "developers"},
 			}
-			
+
 			// Customize response based on token
 			if strings.Contains(accessToken, "admin") {
 				userInfo["groups"] = []string{"admins"}
 			}
-			
+
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(userInfo)
 		default:

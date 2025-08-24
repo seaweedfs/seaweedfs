@@ -297,14 +297,75 @@ func (p *LDAPProvider) GetUserInfo(ctx context.Context, userID string) (*provide
 		return nil, fmt.Errorf("user ID cannot be empty")
 	}
 
-	// TODO: Implement LDAP user information retrieval
-	// 1. Connect to LDAP server
-	// 2. Search for user by userID using configured user filter
-	// 3. Retrieve configured attributes (email, displayName, etc.)
-	// 4. Retrieve group memberships using group filter
-	// 5. Map to ExternalIdentity structure
+	// Get connection from pool
+	conn, err := p.getConnection()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get LDAP connection: %v", err)
+	}
+	defer p.releaseConnection(conn)
 
-	return nil, fmt.Errorf("LDAP user info retrieval not implemented yet")
+	// Perform LDAP bind with service account if configured
+	if p.config.BindDN != "" && p.config.BindPass != "" {
+		err = conn.Bind(p.config.BindDN, p.config.BindPass)
+		if err != nil {
+			return nil, fmt.Errorf("failed to bind with service account: %v", err)
+		}
+	}
+
+	// Search for user by userID using configured user filter
+	userFilter := fmt.Sprintf(p.config.UserFilter, EscapeFilter(userID))
+	searchRequest := &LDAPSearchRequest{
+		BaseDN:       p.config.BaseDN,
+		Scope:        ScopeWholeSubtree,
+		DerefAliases: NeverDerefAliases,
+		SizeLimit:    1, // We only need one user
+		TimeLimit:    30, // 30 second timeout
+		TypesOnly:    false,
+		Filter:       userFilter,
+		Attributes:   p.getSearchAttributes(),
+	}
+
+	glog.V(3).Infof("Searching for user %s with filter: %s", userID, userFilter)
+	searchResult, err := conn.Search(searchRequest)
+	if err != nil {
+		return nil, fmt.Errorf("LDAP user search failed: %v", err)
+	}
+
+	if len(searchResult.Entries) == 0 {
+		return nil, fmt.Errorf("user not found in LDAP: %s", userID)
+	}
+
+	if len(searchResult.Entries) > 1 {
+		glog.V(2).Infof("Multiple entries found for user %s, using first one", userID)
+	}
+
+	userEntry := searchResult.Entries[0]
+	userDN := userEntry.DN
+
+	glog.V(3).Infof("Found LDAP user: %s with DN: %s", userID, userDN)
+
+	// Extract user attributes
+	attributes := make(map[string][]string)
+	for _, attr := range userEntry.Attributes {
+		attributes[attr.Name] = attr.Values
+	}
+
+	// Map to ExternalIdentity
+	identity := p.mapLDAPAttributes(userID, attributes)
+	identity.UserID = userID
+
+	// Get user groups if group filter is configured
+	if p.config.GroupFilter != "" {
+		groups, err := p.getUserGroups(conn, userDN, userID)
+		if err != nil {
+			glog.V(2).Infof("Failed to retrieve groups for user %s: %v", userID, err)
+		} else {
+			identity.Groups = groups
+		}
+	}
+
+	glog.V(3).Infof("Successfully retrieved user info for: %s", userID)
+	return identity, nil
 }
 
 // ValidateToken validates credentials (for LDAP, this is username/password)
@@ -325,18 +386,87 @@ func (p *LDAPProvider) ValidateToken(ctx context.Context, token string) (*provid
 
 	username, password := parts[0], parts[1]
 
-	// TODO: Implement LDAP credential validation
-	// 1. Connect to LDAP server
-	// 2. Authenticate with service account if configured
-	// 3. Search for user using configured user filter
-	// 4. Attempt to bind with user credentials to validate password
-	// 5. Extract user claims (DN, attributes, group memberships)
-	// 6. Return TokenClaims with LDAP-specific information
+	// Get connection from pool
+	conn, err := p.getConnection()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get LDAP connection: %v", err)
+	}
+	defer p.releaseConnection(conn)
 
-	_ = username // Avoid unused variable warning
-	_ = password // Avoid unused variable warning
+	// Perform LDAP bind with service account if configured
+	if p.config.BindDN != "" && p.config.BindPass != "" {
+		err = conn.Bind(p.config.BindDN, p.config.BindPass)
+		if err != nil {
+			return nil, fmt.Errorf("failed to bind with service account: %v", err)
+		}
+	}
 
-	return nil, fmt.Errorf("LDAP credential validation not implemented yet")
+	// Search for user using configured user filter
+	userFilter := fmt.Sprintf(p.config.UserFilter, EscapeFilter(username))
+	searchRequest := &LDAPSearchRequest{
+		BaseDN:       p.config.BaseDN,
+		Scope:        ScopeWholeSubtree,
+		DerefAliases: NeverDerefAliases,
+		SizeLimit:    1, // We only need one user
+		TimeLimit:    30, // 30 second timeout
+		TypesOnly:    false,
+		Filter:       userFilter,
+		Attributes:   p.getSearchAttributes(),
+	}
+
+	glog.V(3).Infof("Validating credentials for user %s with filter: %s", username, userFilter)
+	searchResult, err := conn.Search(searchRequest)
+	if err != nil {
+		return nil, fmt.Errorf("LDAP user search failed: %v", err)
+	}
+
+	if len(searchResult.Entries) == 0 {
+		return nil, fmt.Errorf("user not found in LDAP: %s", username)
+	}
+
+	if len(searchResult.Entries) > 1 {
+		glog.V(2).Infof("Multiple entries found for user %s, using first one", username)
+	}
+
+	userEntry := searchResult.Entries[0]
+	userDN := userEntry.DN
+
+	// Attempt to bind with user credentials to validate password
+	err = conn.Bind(userDN, password)
+	if err != nil {
+		return nil, fmt.Errorf("LDAP authentication failed for user %s: %v", username, err)
+	}
+
+	glog.V(3).Infof("LDAP credential validation successful for user: %s", username)
+
+	// Extract user claims (DN, attributes, group memberships)
+	attributes := make(map[string][]string)
+	for _, attr := range userEntry.Attributes {
+		attributes[attr.Name] = attr.Values
+	}
+
+	// Get user groups if group filter is configured
+	var groups []string
+	if p.config.GroupFilter != "" {
+		groups, err = p.getUserGroups(conn, userDN, username)
+		if err != nil {
+			glog.V(2).Infof("Failed to retrieve groups for user %s: %v", username, err)
+		}
+	}
+
+	// Return TokenClaims with LDAP-specific information
+	claims := &providers.TokenClaims{
+		Subject: username,
+		Issuer:  p.name,
+		Claims: map[string]interface{}{
+			"dn":         userDN,
+			"provider":   p.name,
+			"groups":     groups,
+			"attributes": attributes,
+		},
+	}
+
+	return claims, nil
 }
 
 // mapLDAPAttributes maps LDAP attributes to ExternalIdentity
