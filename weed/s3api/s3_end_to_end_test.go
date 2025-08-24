@@ -84,7 +84,7 @@ func TestS3EndToEndWithJWT(t *testing.T) {
 			tt.setupRole(ctx, iamManager)
 
 			// Assume role to get JWT token
-			response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
+			response, err := iamManager.AssumeRoleWithWebIdentity(ctx, "localhost:8888", &sts.AssumeRoleWithWebIdentityRequest{
 				RoleArn:          tt.roleArn,
 				WebIdentityToken: "valid-oidc-token",
 				RoleSessionName:  tt.sessionName,

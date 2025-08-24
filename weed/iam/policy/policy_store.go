@@ -156,7 +156,7 @@ type FilerPolicyStore struct {
 // NewFilerPolicyStore creates a new filer-based policy store
 func NewFilerPolicyStore(config map[string]interface{}) (*FilerPolicyStore, error) {
 	store := &FilerPolicyStore{
-		basePath: "/seaweedfs/iam/policies", // Default path for policy storage
+		basePath: "/etc/iam/policies", // Default path for policy storage - aligned with /etc/ convention
 	}
 
 	// Parse configuration

@@ -143,7 +143,7 @@ type FilerRoleStore struct {
 // NewFilerRoleStore creates a new filer-based role store
 func NewFilerRoleStore(config map[string]interface{}) (*FilerRoleStore, error) {
 	store := &FilerRoleStore{
-		basePath: "/seaweedfs/iam/roles", // Default path for role storage
+		basePath: "/etc/iam/roles", // Default path for role storage - aligned with /etc/ convention
 	}
 
 	// Parse configuration

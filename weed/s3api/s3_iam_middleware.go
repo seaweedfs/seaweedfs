@@ -16,15 +16,17 @@ import (
 
 // S3IAMIntegration provides IAM integration for S3 API
 type S3IAMIntegration struct {
-	iamManager *integration.IAMManager
-	enabled    bool
+	iamManager    *integration.IAMManager
+	filerAddress  string
+	enabled       bool
 }
 
 // NewS3IAMIntegration creates a new S3 IAM integration
-func NewS3IAMIntegration(iamManager *integration.IAMManager) *S3IAMIntegration {
+func NewS3IAMIntegration(iamManager *integration.IAMManager, filerAddress string) *S3IAMIntegration {
 	return &S3IAMIntegration{
-		iamManager: iamManager,
-		enabled:    iamManager != nil,
+		iamManager:   iamManager,
+		filerAddress: filerAddress,
+		enabled:      iamManager != nil,
 	}
 }
 
@@ -93,7 +95,7 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 	}
 
 	glog.V(0).Infof("AuthenticateJWT: calling IsActionAllowed for principal=%s", principalArn)
-	allowed, err := s3iam.iamManager.IsActionAllowed(ctx, testRequest)
+	allowed, err := s3iam.iamManager.IsActionAllowed(ctx, s3iam.filerAddress, testRequest)
 	glog.V(0).Infof("AuthenticateJWT: IsActionAllowed returned allowed=%t, err=%v", allowed, err)
 	if err != nil || !allowed {
 		glog.V(0).Infof("IAM validation failed for %s: %v", principalArn, err)
@@ -145,7 +147,7 @@ func (s3iam *S3IAMIntegration) AuthorizeAction(ctx context.Context, identity *IA
 	}
 
 	// Check if action is allowed using our policy engine
-	allowed, err := s3iam.iamManager.IsActionAllowed(ctx, actionRequest)
+	allowed, err := s3iam.iamManager.IsActionAllowed(ctx, s3iam.filerAddress, actionRequest)
 	if err != nil {
 		// Log the error but treat authentication/authorization failures as access denied
 		// rather than internal errors to provide better user experience
