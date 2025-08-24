@@ -7,7 +7,7 @@
     "sessionStoreType": "filer",
     "sessionStoreConfig": {
       "filerAddress": "localhost:8888",
-      "basePath": "/seaweedfs/iam/sessions"
+      "basePath": "/etc/iam/sessions"
     },
     "providers": [
       {
@@ -42,14 +42,14 @@
     "storeType": "filer",
     "storeConfig": {
       "filerAddress": "localhost:8888",
-      "basePath": "/seaweedfs/iam/policies"
+      "basePath": "/etc/iam/policies"
     }
   },
   "roleStore": {
     "storeType": "filer",
     "storeConfig": {
       "filerAddress": "localhost:8888",
-      "basePath": "/seaweedfs/iam/roles"
+      "basePath": "/etc/iam/roles"
     }
   },
 

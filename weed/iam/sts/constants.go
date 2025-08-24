@@ -21,11 +21,11 @@ const (
 	EffectDeny  = "Deny"
 )
 
-// Default Paths
+// Default Paths - aligned with filer /etc/ convention
 const (
-	DefaultSessionBasePath = "/seaweedfs/iam/sessions"
-	DefaultPolicyBasePath  = "/seaweedfs/iam/policies"
-	DefaultRoleBasePath    = "/seaweedfs/iam/roles"
+	DefaultSessionBasePath = "/etc/iam/sessions"
+	DefaultPolicyBasePath  = "/etc/iam/policies"
+	DefaultRoleBasePath    = "/etc/iam/roles"
 )
 
 // Default Values
