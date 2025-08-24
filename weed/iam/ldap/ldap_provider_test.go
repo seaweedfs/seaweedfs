@@ -307,7 +307,7 @@ func TestLDAPConnectionPool(t *testing.T) {
 		// Test that multiple concurrent requests work
 		// This would require actual LDAP server for full testing
 		pool := provider.getConnectionPool()
-		
+
 		// In CI environments where no LDAP server is available, pool might be nil
 		// Skip the test if we can't establish a connection
 		conn, err := provider.getConnection()
