@@ -283,7 +283,7 @@ func (f *FilerSessionStore) CleanupExpiredSessions(ctx context.Context, filerAdd
 	if filerAddress == "" {
 		return fmt.Errorf(ErrFilerAddressRequired)
 	}
-	
+
 	now := time.Now()
 	expiredCount := 0
 
