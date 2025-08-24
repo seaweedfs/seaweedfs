@@ -28,6 +28,12 @@ help: ## Show this help message
 	@echo ""
 	@echo "Targets:"
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@echo ""
+	@echo "Docker Compose Targets:"
+	@echo "  docker-test          Run tests with Docker Compose including Keycloak"
+	@echo "  docker-up            Start all services with Docker Compose"
+	@echo "  docker-down          Stop all Docker Compose services"
+	@echo "  docker-logs          Show logs from all services"
 
 test: clean setup start-services wait-for-services run-tests stop-services ## Run complete IAM integration test suite
 
@@ -196,47 +202,44 @@ install-deps: ## Install test dependencies
 	go get -u github.com/golang-jwt/jwt/v5
 
 # Docker support
-docker-test: ## Run tests in Docker container
+docker-test-legacy: ## Run tests in Docker container (legacy)
 	@echo "🐳 Running tests in Docker..."
 	docker build -f Dockerfile.test -t seaweedfs-s3-iam-test .
 	docker run --rm -v $(PWD)/../../../:/app seaweedfs-s3-iam-test
 
-.PHONY: test test-quick run-tests setup start-services stop-services wait-for-services clean logs status debug
-.PHONY: test-auth test-policy test-expiration test-multipart test-bucket-policy test-context test-presigned
-.PHONY: benchmark ci watch install-deps docker-test
-
-# Docker Compose support  
-docker-compose-up: ## Start all services with Docker Compose
-	@echo "🐳 Starting SeaweedFS services with Docker Compose..."
-	docker-compose -f docker-compose.test.yml up -d
+# Docker Compose support with Keycloak
+docker-up: ## Start all services with Docker Compose (including Keycloak)
+	@echo "🐳 Starting services with Docker Compose including Keycloak..."
+	@docker compose up -d
 	@echo "⏳ Waiting for services to be healthy..."
-	@docker-compose -f docker-compose.test.yml up --wait
+	@sleep 30
+	@echo "✅ Services should be ready"
 
-docker-compose-test: ## Run full test suite with Docker Compose
-	@echo "🧪 Running S3 IAM Integration Tests with Docker Compose..."
-	docker-compose -f docker-compose.test.yml up --build --abort-on-container-exit
-	docker-compose -f docker-compose.test.yml down
+docker-down: ## Stop all Docker Compose services
+	@echo "🐳 Stopping Docker Compose services..."
+	@docker compose down -v
+	@echo "✅ All services stopped"
 
-docker-compose-test-quick: ## Run tests with existing Docker Compose services
-	@echo "🧪 Running tests with existing Docker Compose services..."
-	docker-compose -f docker-compose.test.yml run --rm integration-tests
+docker-logs: ## Show logs from all services
+	@docker compose logs -f
 
-docker-compose-down: ## Stop and remove Docker Compose services
-	@echo "🛑 Stopping Docker Compose services..."
-	docker-compose -f docker-compose.test.yml down -v
+docker-test: docker-up ## Run tests with Docker Compose including Keycloak
+	@echo "🧪 Running Keycloak integration tests..."
+	@export KEYCLOAK_URL="http://localhost:8080" && \
+	 export S3_ENDPOINT="http://localhost:8333" && \
+	 sleep 10 && \
+	 go test -v -timeout $(TEST_TIMEOUT) -run "TestKeycloak" ./...
+	@echo "🐳 Stopping services after tests..."
+	@make docker-down
 
-docker-compose-logs: ## Show Docker Compose logs
-	@echo "📋 Docker Compose Logs:"
-	docker-compose -f docker-compose.test.yml logs
+docker-build: ## Build custom SeaweedFS image for Docker tests
+	@echo "🏗️ Building custom SeaweedFS image..."
+	@docker build -f Dockerfile.s3 -t seaweedfs-iam:latest ../../..
+	@echo "✅ Image built successfully"
 
-docker-compose-status: ## Show Docker Compose service status
-	@echo "📊 Docker Compose Status:"
-	docker-compose -f docker-compose.test.yml ps
+# All PHONY targets
+.PHONY: test test-quick run-tests setup start-services stop-services wait-for-services clean logs status debug
+.PHONY: test-auth test-policy test-expiration test-multipart test-bucket-policy test-context test-presigned  
+.PHONY: benchmark ci watch install-deps docker-test docker-up docker-down docker-logs docker-build
 
-docker-compose-clean: ## Clean up Docker Compose resources
-	@echo "🧹 Cleaning up Docker Compose resources..."
-	docker-compose -f docker-compose.test.yml down -v --rmi all
-	docker system prune -f
 
-.PHONY: docker-compose-up docker-compose-test docker-compose-test-quick docker-compose-down
-.PHONY: docker-compose-logs docker-compose-status docker-compose-clean

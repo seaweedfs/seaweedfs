@@ -1,13 +1,17 @@
 package iam
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -23,6 +27,12 @@ import (
 const (
 	TestS3Endpoint = "http://localhost:8333"
 	TestRegion     = "us-west-2"
+	
+	// Keycloak configuration
+	DefaultKeycloakURL    = "http://localhost:8080"
+	KeycloakRealm        = "seaweedfs-test"
+	KeycloakClientID     = "seaweedfs-s3"
+	KeycloakClientSecret = "seaweedfs-s3-secret"
 )
 
 // S3IAMTestFramework provides utilities for S3+IAM integration testing
@@ -33,6 +43,26 @@ type S3IAMTestFramework struct {
 	publicKey      *rsa.PublicKey
 	createdBuckets []string
 	ctx            context.Context
+	keycloakClient *KeycloakClient
+	useKeycloak    bool
+}
+
+// KeycloakClient handles authentication with Keycloak
+type KeycloakClient struct {
+	baseURL      string
+	realm        string
+	clientID     string
+	clientSecret string
+	httpClient   *http.Client
+}
+
+// KeycloakTokenResponse represents Keycloak token response
+type KeycloakTokenResponse struct {
+	AccessToken  string `json:"access_token"`
+	TokenType    string `json:"token_type"`
+	ExpiresIn    int    `json:"expires_in"`
+	RefreshToken string `json:"refresh_token,omitempty"`
+	Scope        string `json:"scope,omitempty"`
 }
 
 // NewS3IAMTestFramework creates a new test framework instance
@@ -43,16 +73,117 @@ func NewS3IAMTestFramework(t *testing.T) *S3IAMTestFramework {
 		createdBuckets: make([]string, 0),
 	}
 
-	// Generate RSA keys for JWT signing
-	var err error
-	framework.privateKey, err = rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-	framework.publicKey = &framework.privateKey.PublicKey
+	// Check if we should use Keycloak or mock OIDC
+	keycloakURL := os.Getenv("KEYCLOAK_URL")
+	if keycloakURL == "" {
+		keycloakURL = DefaultKeycloakURL
+	}
+	
+	// Test if Keycloak is available
+	framework.useKeycloak = framework.isKeycloakAvailable(keycloakURL)
+	
+	if framework.useKeycloak {
+		t.Logf("Using real Keycloak instance at %s", keycloakURL)
+		framework.keycloakClient = NewKeycloakClient(keycloakURL, KeycloakRealm, KeycloakClientID, KeycloakClientSecret)
+	} else {
+		t.Logf("Using mock OIDC server for testing")
+		// Generate RSA keys for JWT signing (mock mode)
+		var err error
+		framework.privateKey, err = rsa.GenerateKey(rand.Reader, 2048)
+		require.NoError(t, err)
+		framework.publicKey = &framework.privateKey.PublicKey
 
-	// Setup mock OIDC server
-	framework.setupMockOIDCServer()
+		// Setup mock OIDC server
+		framework.setupMockOIDCServer()
+	}
 
 	return framework
+}
+
+// NewKeycloakClient creates a new Keycloak client
+func NewKeycloakClient(baseURL, realm, clientID, clientSecret string) *KeycloakClient {
+	return &KeycloakClient{
+		baseURL:      baseURL,
+		realm:        realm,
+		clientID:     clientID,
+		clientSecret: clientSecret,
+		httpClient:   &http.Client{Timeout: 30 * time.Second},
+	}
+}
+
+// isKeycloakAvailable checks if Keycloak is running and accessible
+func (f *S3IAMTestFramework) isKeycloakAvailable(keycloakURL string) bool {
+	client := &http.Client{Timeout: 5 * time.Second}
+	healthURL := fmt.Sprintf("%s/health/ready", keycloakURL)
+	
+	resp, err := client.Get(healthURL)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	
+	return resp.StatusCode == 200
+}
+
+// AuthenticateUser authenticates a user with Keycloak and returns an access token
+func (kc *KeycloakClient) AuthenticateUser(username, password string) (*KeycloakTokenResponse, error) {
+	tokenURL := fmt.Sprintf("%s/realms/%s/protocol/openid-connect/token", kc.baseURL, kc.realm)
+	
+	data := url.Values{}
+	data.Set("grant_type", "password")
+	data.Set("client_id", kc.clientID)
+	data.Set("client_secret", kc.clientSecret)
+	data.Set("username", username)
+	data.Set("password", password)
+	data.Set("scope", "openid profile email")
+	
+	resp, err := kc.httpClient.PostForm(tokenURL, data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to authenticate with Keycloak: %w", err)
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("Keycloak authentication failed with status: %d", resp.StatusCode)
+	}
+	
+	var tokenResp KeycloakTokenResponse
+	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+		return nil, fmt.Errorf("failed to decode token response: %w", err)
+	}
+	
+	return &tokenResp, nil
+}
+
+// getKeycloakToken authenticates with Keycloak and returns a JWT token
+func (f *S3IAMTestFramework) getKeycloakToken(username string) (string, error) {
+	if f.keycloakClient == nil {
+		return "", fmt.Errorf("Keycloak client not initialized")
+	}
+	
+	// Map username to password for test users
+	password := f.getTestUserPassword(username)
+	if password == "" {
+		return "", fmt.Errorf("unknown test user: %s", username)
+	}
+	
+	tokenResp, err := f.keycloakClient.AuthenticateUser(username, password)
+	if err != nil {
+		return "", fmt.Errorf("failed to authenticate user %s: %w", username, err)
+	}
+	
+	return tokenResp.AccessToken, nil
+}
+
+// getTestUserPassword returns the password for test users
+func (f *S3IAMTestFramework) getTestUserPassword(username string) string {
+	userPasswords := map[string]string{
+		"admin-user": "admin123",
+		"read-user":  "read123", 
+		"write-user": "write123",
+	}
+	
+	return userPasswords[username]
 }
 
 // setupMockOIDCServer creates a mock OIDC server for testing
@@ -197,10 +328,21 @@ func (f *S3IAMTestFramework) generateSTSSessionToken(username, roleName string, 
 
 // CreateS3ClientWithJWT creates an S3 client authenticated with a JWT token for the specified role
 func (f *S3IAMTestFramework) CreateS3ClientWithJWT(username, roleName string) (*s3.S3, error) {
-	// Generate STS session token (not OIDC token)
-	token, err := f.generateSTSSessionToken(username, roleName, time.Hour)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate STS session token: %v", err)
+	var token string
+	var err error
+	
+	if f.useKeycloak {
+		// Use real Keycloak authentication
+		token, err = f.getKeycloakToken(username)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get Keycloak token: %v", err)
+		}
+	} else {
+		// Generate STS session token (mock mode)
+		token, err = f.generateSTSSessionToken(username, roleName, time.Hour)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate STS session token: %v", err)
+		}
 	}
 
 	// Create custom HTTP client with Bearer token transport
