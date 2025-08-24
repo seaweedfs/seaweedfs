@@ -22,7 +22,7 @@ import (
 func TestPresignedURLIAMValidation(t *testing.T) {
 	// Set up IAM system
 	iamManager := setupTestIAMManagerForPresigned(t)
-	s3iam := NewS3IAMIntegration(iamManager)
+	s3iam := NewS3IAMIntegration(iamManager, "localhost:8888")
 
 	// Create IAM with integration
 	iam := &IdentityAccessManagement{
@@ -35,7 +35,7 @@ func TestPresignedURLIAMValidation(t *testing.T) {
 	setupTestRolesForPresigned(ctx, iamManager)
 
 	// Get session token
-	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
+	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, "localhost:8888", &sts.AssumeRoleWithWebIdentityRequest{
 		RoleArn:          "arn:seaweed:iam::role/S3ReadOnlyRole",
 		WebIdentityToken: "valid-oidc-token",
 		RoleSessionName:  "presigned-test-session",
@@ -103,7 +103,7 @@ func TestPresignedURLIAMValidation(t *testing.T) {
 func TestPresignedURLGeneration(t *testing.T) {
 	// Set up IAM system
 	iamManager := setupTestIAMManagerForPresigned(t)
-	s3iam := NewS3IAMIntegration(iamManager)
+	s3iam := NewS3IAMIntegration(iamManager, "localhost:8888")
 	s3iam.enabled = true // Enable IAM integration
 	presignedManager := NewS3PresignedURLManager(s3iam)
 
@@ -111,7 +111,7 @@ func TestPresignedURLGeneration(t *testing.T) {
 	setupTestRolesForPresigned(ctx, iamManager)
 
 	// Get session token
-	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
+	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, "localhost:8888", &sts.AssumeRoleWithWebIdentityRequest{
 		RoleArn:          "arn:seaweed:iam::role/S3AdminRole",
 		WebIdentityToken: "valid-oidc-token",
 		RoleSessionName:  "presigned-gen-test-session",

@@ -22,7 +22,7 @@ import (
 func TestMultipartIAMValidation(t *testing.T) {
 	// Set up IAM system
 	iamManager := setupTestIAMManagerForMultipart(t)
-	s3iam := NewS3IAMIntegration(iamManager)
+	s3iam := NewS3IAMIntegration(iamManager, "localhost:8888")
 	s3iam.enabled = true
 
 	// Create IAM with integration
@@ -36,7 +36,7 @@ func TestMultipartIAMValidation(t *testing.T) {
 	setupTestRolesForMultipart(ctx, iamManager)
 
 	// Get session token
-	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
+	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, "localhost:8888", &sts.AssumeRoleWithWebIdentityRequest{
 		RoleArn:          "arn:seaweed:iam::role/S3WriteRole",
 		WebIdentityToken: "valid-oidc-token",
 		RoleSessionName:  "multipart-test-session",

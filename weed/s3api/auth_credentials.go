@@ -615,7 +615,7 @@ func (iam *IdentityAccessManagement) authenticateJWTWithIAM(r *http.Request) (*I
 	glog.V(0).Infof("authenticateJWTWithIAM: starting JWT authentication")
 	// Use IAM integration to authenticate JWT
 	iamIdentity, errCode := iam.iamIntegration.AuthenticateJWT(ctx, r)
-	glog.V(0).Infof("authenticateJWTWithIAM: AuthenticateJWT returned errCode=%s", errCode)
+	glog.V(0).Infof("authenticateJWTWithIAM: AuthenticateJWT returned errCode=%v", errCode)
 	if errCode != s3err.ErrNone {
 		return nil, errCode
 	}

@@ -37,7 +37,7 @@ func TestS3IAMMiddleware(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create S3 IAM integration
-	s3IAMIntegration := NewS3IAMIntegration(iamManager)
+	s3IAMIntegration := NewS3IAMIntegration(iamManager, "localhost:8888")
 
 	// Test that integration is created successfully
 	assert.NotNil(t, s3IAMIntegration)
@@ -50,7 +50,7 @@ func TestS3IAMMiddlewareJWTAuth(t *testing.T) {
 	t.Skip("JWT authentication test requires full IAM setup")
 
 	// Create IAM integration
-	s3iam := NewS3IAMIntegration(nil) // Disabled integration
+	s3iam := NewS3IAMIntegration(nil, "localhost:8888") // Disabled integration
 
 	// Create test request with JWT token
 	req := httptest.NewRequest("GET", "/test-bucket/test-object", http.NoBody)

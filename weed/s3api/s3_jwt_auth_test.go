@@ -24,7 +24,7 @@ func TestJWTAuthenticationFlow(t *testing.T) {
 	iamManager := setupTestIAMManager(t)
 
 	// Create IAM integration
-	s3iam := NewS3IAMIntegration(iamManager)
+	s3iam := NewS3IAMIntegration(iamManager, "localhost:8888")
 
 	// Create IAM server with integration
 	iamServer := setupIAMWithIntegration(t, iamManager, s3iam)
@@ -66,7 +66,7 @@ func TestJWTAuthenticationFlow(t *testing.T) {
 			tt.setupRole(ctx, iamManager)
 
 			// Assume role to get JWT
-			response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
+			response, err := iamManager.AssumeRoleWithWebIdentity(ctx, "localhost:8888", &sts.AssumeRoleWithWebIdentityRequest{
 				RoleArn:          tt.roleArn,
 				WebIdentityToken: "valid-oidc-token",
 				RoleSessionName:  "jwt-auth-test",
@@ -101,7 +101,7 @@ func TestJWTAuthenticationFlow(t *testing.T) {
 // TestJWTTokenValidation tests JWT token validation edge cases
 func TestJWTTokenValidation(t *testing.T) {
 	iamManager := setupTestIAMManager(t)
-	s3iam := NewS3IAMIntegration(iamManager)
+	s3iam := NewS3IAMIntegration(iamManager, "localhost:8888")
 	iamServer := setupIAMWithIntegration(t, iamManager, s3iam)
 
 	tests := []struct {
@@ -189,14 +189,14 @@ func TestRequestContextExtraction(t *testing.T) {
 // TestIPBasedPolicyEnforcement tests IP-based conditional policies
 func TestIPBasedPolicyEnforcement(t *testing.T) {
 	iamManager := setupTestIAMManager(t)
-	s3iam := NewS3IAMIntegration(iamManager)
+	s3iam := NewS3IAMIntegration(iamManager, "localhost:8888")
 	ctx := context.Background()
 
 	// Set up IP-restricted role
 	setupTestIPRestrictedRole(ctx, iamManager)
 
 	// Assume role
-	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
+	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, "localhost:8888", &sts.AssumeRoleWithWebIdentityRequest{
 		RoleArn:          "arn:seaweed:iam::role/S3IPRestrictedRole",
 		WebIdentityToken: "valid-oidc-token",
 		RoleSessionName:  "ip-test-session",

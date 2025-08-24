@@ -120,7 +120,7 @@ func TestS3MultipartUploadWithJWT(t *testing.T) {
 	setupS3WriteRole(ctx, iamManager)
 
 	// Assume role
-	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
+	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, "localhost:8888", &sts.AssumeRoleWithWebIdentityRequest{
 		RoleArn:          "arn:seaweed:iam::role/S3WriteRole",
 		WebIdentityToken: "valid-oidc-token",
 		RoleSessionName:  "multipart-test-session",
@@ -227,7 +227,7 @@ func TestS3PerformanceWithIAM(t *testing.T) {
 	setupS3ReadOnlyRole(ctx, iamManager)
 
 	// Assume role
-	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
+	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, "localhost:8888", &sts.AssumeRoleWithWebIdentityRequest{
 		RoleArn:          "arn:seaweed:iam::role/S3ReadOnlyRole",
 		WebIdentityToken: "valid-oidc-token",
 		RoleSessionName:  "performance-test-session",
@@ -313,7 +313,7 @@ func setupCompleteS3IAMSystem(t *testing.T) (http.Handler, *integration.IAMManag
 	require.NoError(t, err)
 
 	// Add IAM integration to the server
-	s3IAMIntegration := NewS3IAMIntegration(iamManager)
+	s3IAMIntegration := NewS3IAMIntegration(iamManager, "localhost:8888")
 	s3ApiServer.iam.SetIAMIntegration(s3IAMIntegration)
 
 	return router, iamManager
