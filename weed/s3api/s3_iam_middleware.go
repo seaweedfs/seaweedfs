@@ -2,10 +2,12 @@ package s3api
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"strings"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/iam/integration"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -28,28 +30,24 @@ func NewS3IAMIntegration(iamManager *integration.IAMManager) *S3IAMIntegration {
 
 // AuthenticateJWT authenticates JWT tokens using our STS service
 func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Request) (*IAMIdentity, s3err.ErrorCode) {
+	glog.V(0).Infof("AuthenticateJWT: enabled=%t", s3iam.enabled)
 	if !s3iam.enabled {
-		glog.V(3).Info("S3 IAM integration not enabled")
+		glog.V(0).Info("S3 IAM integration not enabled")
 		return nil, s3err.ErrNotImplemented
 	}
 
 	// Extract bearer token from Authorization header
 	authHeader := r.Header.Get("Authorization")
+	glog.V(0).Infof("AuthenticateJWT: authHeader='%s'", authHeader)
 	if !strings.HasPrefix(authHeader, "Bearer ") {
-		glog.V(3).Info("Invalid JWT authorization header format")
+		glog.V(0).Info("Invalid JWT authorization header format")
 		return nil, s3err.ErrAccessDenied
 	}
 
 	sessionToken := strings.TrimPrefix(authHeader, "Bearer ")
+	glog.V(0).Infof("AuthenticateJWT: sessionToken length=%d", len(sessionToken))
 	if sessionToken == "" {
-		glog.V(3).Info("Empty session token")
-		return nil, s3err.ErrAccessDenied
-	}
-
-	// For now, we'll trust any non-empty session token and create a generic session
-	// In a real implementation, this would validate the JWT signature and extract claims
-	if sessionToken == "expired-session-token" {
-		glog.V(3).Info("Session token is expired")
+		glog.V(0).Info("Empty session token")
 		return nil, s3err.ErrAccessDenied
 	}
 
@@ -59,24 +57,58 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 		return nil, s3err.ErrAccessDenied
 	}
 
-	// Create a mock session structure based on the token
-	// In production, this would extract actual role info from the JWT
-	session := &MockSessionInfo{
-		AssumedRoleUser: MockAssumedRoleUser{
-			AssumedRoleId: "ValidatedUser",
-			Arn:           "arn:seaweed:sts::assumed-role/ValidatedRole/SessionName",
-		},
+	// Parse JWT token to extract claims
+	tokenClaims, err := parseJWTToken(sessionToken)
+	if err != nil {
+		glog.V(3).Infof("Failed to parse JWT token: %v", err)
+		return nil, s3err.ErrAccessDenied
 	}
 
-	// Create IAM identity from session
+	// Extract role information from token claims
+	roleName, ok := tokenClaims["role_name"].(string)
+	if !ok || roleName == "" {
+		glog.V(3).Info("No role_name found in JWT token")
+		return nil, s3err.ErrAccessDenied
+	}
+
+	sessionName, ok := tokenClaims["session_name"].(string)
+	if !ok || sessionName == "" {
+		sessionName = "jwt-session" // Default fallback
+	}
+
+	subject, ok := tokenClaims["sub"].(string)
+	if !ok || subject == "" {
+		subject = "jwt-user" // Default fallback
+	}
+
+	// Build principal ARN from token claims
+	principalArn := fmt.Sprintf("arn:seaweed:sts::assumed-role/%s/%s", roleName, sessionName)
+
+	// Validate the session using our IAM system
+	testRequest := &integration.ActionRequest{
+		Principal:    principalArn,
+		Action:       "sts:ValidateSession",
+		Resource:     "*",
+		SessionToken: sessionToken,
+	}
+
+	glog.V(0).Infof("AuthenticateJWT: calling IsActionAllowed for principal=%s", principalArn)
+	allowed, err := s3iam.iamManager.IsActionAllowed(ctx, testRequest)
+	glog.V(0).Infof("AuthenticateJWT: IsActionAllowed returned allowed=%t, err=%v", allowed, err)
+	if err != nil || !allowed {
+		glog.V(0).Infof("IAM validation failed for %s: %v", principalArn, err)
+		return nil, s3err.ErrAccessDenied
+	}
+
+	// Create IAM identity from validated token
 	identity := &IAMIdentity{
-		Name:         session.AssumedRoleUser.AssumedRoleId,
-		Principal:    session.AssumedRoleUser.Arn,
+		Name:         subject,
+		Principal:    principalArn,
 		SessionToken: sessionToken,
 		Account: &Account{
-			DisplayName:  extractRoleNameFromPrincipal(session.AssumedRoleUser.Arn),
-			EmailAddress: extractRoleNameFromPrincipal(session.AssumedRoleUser.Arn) + "@seaweedfs.local",
-			Id:           extractRoleNameFromPrincipal(session.AssumedRoleUser.Arn),
+			DisplayName:  roleName,
+			EmailAddress: subject + "@seaweedfs.local",
+			Id:           subject,
 		},
 	}
 
@@ -86,6 +118,7 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 
 // AuthorizeAction authorizes actions using our policy engine
 func (s3iam *S3IAMIntegration) AuthorizeAction(ctx context.Context, identity *IAMIdentity, action Action, bucket string, objectKey string, r *http.Request) s3err.ErrorCode {
+	glog.V(0).Infof("AuthorizeAction called: enabled=%t, action=%s, bucket=%s, principal=%s", s3iam.enabled, action, bucket, identity.Principal)
 	if !s3iam.enabled {
 		glog.V(3).Info("S3 IAM integration not enabled, using fallback authorization")
 		return s3err.ErrNone // Fallback to existing authorization
@@ -259,6 +292,40 @@ func extractRoleNameFromPrincipal(principal string) string {
 	return principal // Return original if parsing fails
 }
 
+// parseJWTToken parses a JWT token and returns its claims without verification
+// Note: This is for extracting claims only. Verification is done by the IAM system.
+func parseJWTToken(tokenString string) (jwt.MapClaims, error) {
+	token, _, err := new(jwt.Parser).ParseUnverified(tokenString, jwt.MapClaims{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse JWT token: %v", err)
+	}
+
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return nil, fmt.Errorf("invalid token claims")
+	}
+
+	return claims, nil
+}
+
+// minInt returns the minimum of two integers
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// SetIAMIntegration adds advanced IAM integration to the S3ApiServer
+func (s3a *S3ApiServer) SetIAMIntegration(iamManager *integration.IAMManager) {
+	if s3a.iam != nil {
+		s3a.iam.iamIntegration = NewS3IAMIntegration(iamManager)
+		glog.V(0).Infof("IAM integration successfully set on S3ApiServer")
+	} else {
+		glog.Errorf("Cannot set IAM integration: s3a.iam is nil")
+	}
+}
+
 // EnhancedS3ApiServer extends S3ApiServer with IAM integration
 type EnhancedS3ApiServer struct {
 	*S3ApiServer
@@ -267,6 +334,9 @@ type EnhancedS3ApiServer struct {
 
 // NewEnhancedS3ApiServer creates an S3 API server with IAM integration
 func NewEnhancedS3ApiServer(baseServer *S3ApiServer, iamManager *integration.IAMManager) *EnhancedS3ApiServer {
+	// Set the IAM integration on the base server
+	baseServer.SetIAMIntegration(iamManager)
+
 	return &EnhancedS3ApiServer{
 		S3ApiServer:    baseServer,
 		iamIntegration: NewS3IAMIntegration(iamManager),
