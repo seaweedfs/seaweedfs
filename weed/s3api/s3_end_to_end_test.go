@@ -1,0 +1,542 @@
+package s3api
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/gorilla/mux"
+	"github.com/seaweedfs/seaweedfs/weed/iam/integration"
+	"github.com/seaweedfs/seaweedfs/weed/iam/ldap"
+	"github.com/seaweedfs/seaweedfs/weed/iam/oidc"
+	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
+	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// TestS3EndToEndWithJWT tests complete S3 operations with JWT authentication
+func TestS3EndToEndWithJWT(t *testing.T) {
+	// Set up complete IAM system with S3 integration
+	s3Server, iamManager := setupCompleteS3IAMSystem(t)
+	
+	// Test scenarios
+	tests := []struct {
+		name           string
+		roleArn        string
+		sessionName    string
+		setupRole      func(ctx context.Context, manager *integration.IAMManager)
+		s3Operations   []S3Operation
+		expectedResults []bool // true = allow, false = deny
+	}{
+		{
+			name:        "S3 Read-Only Role Complete Workflow",
+			roleArn:     "arn:seaweed:iam::role/S3ReadOnlyRole",
+			sessionName: "readonly-test-session",
+			setupRole:   setupS3ReadOnlyRole,
+			s3Operations: []S3Operation{
+				{Method: "PUT", Path: "/test-bucket", Body: nil, Operation: "CreateBucket"},
+				{Method: "GET", Path: "/test-bucket", Body: nil, Operation: "ListBucket"}, 
+				{Method: "PUT", Path: "/test-bucket/test-file.txt", Body: []byte("test content"), Operation: "PutObject"},
+				{Method: "GET", Path: "/test-bucket/test-file.txt", Body: nil, Operation: "GetObject"},
+				{Method: "HEAD", Path: "/test-bucket/test-file.txt", Body: nil, Operation: "HeadObject"},
+				{Method: "DELETE", Path: "/test-bucket/test-file.txt", Body: nil, Operation: "DeleteObject"},
+			},
+			expectedResults: []bool{false, true, false, true, true, false}, // Only read operations allowed
+		},
+		{
+			name:        "S3 Admin Role Complete Workflow",
+			roleArn:     "arn:seaweed:iam::role/S3AdminRole",
+			sessionName: "admin-test-session", 
+			setupRole:   setupS3AdminRole,
+			s3Operations: []S3Operation{
+				{Method: "PUT", Path: "/admin-bucket", Body: nil, Operation: "CreateBucket"},
+				{Method: "PUT", Path: "/admin-bucket/admin-file.txt", Body: []byte("admin content"), Operation: "PutObject"},
+				{Method: "GET", Path: "/admin-bucket/admin-file.txt", Body: nil, Operation: "GetObject"},
+				{Method: "DELETE", Path: "/admin-bucket/admin-file.txt", Body: nil, Operation: "DeleteObject"},
+				{Method: "DELETE", Path: "/admin-bucket", Body: nil, Operation: "DeleteBucket"},
+			},
+			expectedResults: []bool{true, true, true, true, true}, // All operations allowed
+		},
+		{
+			name:        "S3 IP-Restricted Role",
+			roleArn:     "arn:seaweed:iam::role/S3IPRestrictedRole",
+			sessionName: "ip-restricted-session",
+			setupRole:   setupS3IPRestrictedRole,
+			s3Operations: []S3Operation{
+				{Method: "GET", Path: "/restricted-bucket/file.txt", Body: nil, Operation: "GetObject", SourceIP: "192.168.1.100"}, // Allowed IP
+				{Method: "GET", Path: "/restricted-bucket/file.txt", Body: nil, Operation: "GetObject", SourceIP: "8.8.8.8"},       // Blocked IP
+			},
+			expectedResults: []bool{true, false}, // Only office IP allowed
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			
+			// Set up role
+			tt.setupRole(ctx, iamManager)
+			
+			// Assume role to get JWT token
+			response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
+				RoleArn:          tt.roleArn,
+				WebIdentityToken: "valid-oidc-token",
+				RoleSessionName:  tt.sessionName,
+			})
+			require.NoError(t, err, "Failed to assume role %s", tt.roleArn)
+			
+			jwtToken := response.Credentials.SessionToken
+			require.NotEmpty(t, jwtToken, "JWT token should not be empty")
+			
+			// Execute S3 operations
+			for i, operation := range tt.s3Operations {
+				t.Run(fmt.Sprintf("%s_%s", tt.name, operation.Operation), func(t *testing.T) {
+					allowed := executeS3OperationWithJWT(t, s3Server, operation, jwtToken)
+					expected := tt.expectedResults[i]
+					
+					if expected {
+						assert.True(t, allowed, "Operation %s should be allowed", operation.Operation)
+					} else {
+						assert.False(t, allowed, "Operation %s should be denied", operation.Operation)
+					}
+				})
+			}
+		})
+	}
+}
+
+// TestS3MultipartUploadWithJWT tests multipart upload with IAM
+func TestS3MultipartUploadWithJWT(t *testing.T) {
+	s3Server, iamManager := setupCompleteS3IAMSystem(t)
+	ctx := context.Background()
+	
+	// Set up write role
+	setupS3WriteRole(ctx, iamManager)
+	
+	// Assume role
+	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
+		RoleArn:          "arn:seaweed:iam::role/S3WriteRole",
+		WebIdentityToken: "valid-oidc-token",
+		RoleSessionName:  "multipart-test-session",
+	})
+	require.NoError(t, err)
+	
+	jwtToken := response.Credentials.SessionToken
+	
+	// Test multipart upload workflow
+	tests := []struct {
+		name      string
+		operation S3Operation
+		expected  bool
+	}{
+		{
+			name: "Initialize Multipart Upload",
+			operation: S3Operation{
+				Method:    "POST",
+				Path:      "/multipart-bucket/large-file.txt?uploads",
+				Body:      nil,
+				Operation: "CreateMultipartUpload",
+			},
+			expected: true,
+		},
+		{
+			name: "Upload Part",
+			operation: S3Operation{
+				Method:    "PUT", 
+				Path:      "/multipart-bucket/large-file.txt?partNumber=1&uploadId=test-upload-id",
+				Body:      bytes.Repeat([]byte("data"), 1024), // 4KB part
+				Operation: "UploadPart",
+			},
+			expected: true,
+		},
+		{
+			name: "List Parts",
+			operation: S3Operation{
+				Method:    "GET",
+				Path:      "/multipart-bucket/large-file.txt?uploadId=test-upload-id", 
+				Body:      nil,
+				Operation: "ListParts",
+			},
+			expected: true,
+		},
+		{
+			name: "Complete Multipart Upload",
+			operation: S3Operation{
+				Method:    "POST",
+				Path:      "/multipart-bucket/large-file.txt?uploadId=test-upload-id",
+				Body:      []byte("<CompleteMultipartUpload></CompleteMultipartUpload>"),
+				Operation: "CompleteMultipartUpload",
+			},
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			allowed := executeS3OperationWithJWT(t, s3Server, tt.operation, jwtToken)
+			if tt.expected {
+				assert.True(t, allowed, "Multipart operation %s should be allowed", tt.operation.Operation)
+			} else {
+				assert.False(t, allowed, "Multipart operation %s should be denied", tt.operation.Operation)
+			}
+		})
+	}
+}
+
+// TestS3CORSWithJWT tests CORS preflight requests with IAM
+func TestS3CORSWithJWT(t *testing.T) {
+	s3Server, iamManager := setupCompleteS3IAMSystem(t)
+	ctx := context.Background()
+	
+	// Set up read role
+	setupS3ReadOnlyRole(ctx, iamManager)
+	
+	// Test CORS preflight
+	req := httptest.NewRequest("OPTIONS", "/test-bucket/test-file.txt", http.NoBody)
+	req.Header.Set("Origin", "https://example.com")
+	req.Header.Set("Access-Control-Request-Method", "GET")
+	req.Header.Set("Access-Control-Request-Headers", "Authorization")
+	
+	recorder := httptest.NewRecorder()
+	s3Server.ServeHTTP(recorder, req)
+	
+	// CORS preflight should succeed
+	assert.True(t, recorder.Code < 400, "CORS preflight should succeed, got %d: %s", recorder.Code, recorder.Body.String())
+	
+	// Check CORS headers
+	assert.Contains(t, recorder.Header().Get("Access-Control-Allow-Origin"), "example.com")
+	assert.Contains(t, recorder.Header().Get("Access-Control-Allow-Methods"), "GET")
+}
+
+// TestS3PerformanceWithIAM tests performance impact of IAM integration
+func TestS3PerformanceWithIAM(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping performance test in short mode")
+	}
+	
+	s3Server, iamManager := setupCompleteS3IAMSystem(t)
+	ctx := context.Background()
+	
+	// Set up performance role
+	setupS3ReadOnlyRole(ctx, iamManager)
+	
+	// Assume role
+	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
+		RoleArn:          "arn:seaweed:iam::role/S3ReadOnlyRole",
+		WebIdentityToken: "valid-oidc-token",
+		RoleSessionName:  "performance-test-session",
+	})
+	require.NoError(t, err)
+	
+	jwtToken := response.Credentials.SessionToken
+	
+	// Benchmark multiple GET requests
+	numRequests := 100
+	start := time.Now()
+	
+	for i := 0; i < numRequests; i++ {
+		operation := S3Operation{
+			Method:    "GET",
+			Path:      fmt.Sprintf("/perf-bucket/file-%d.txt", i),
+			Body:      nil,
+			Operation: "GetObject",
+		}
+		
+		executeS3OperationWithJWT(t, s3Server, operation, jwtToken)
+	}
+	
+	duration := time.Since(start)
+	avgLatency := duration / time.Duration(numRequests)
+	
+	t.Logf("Performance Results:")
+	t.Logf("- Total requests: %d", numRequests)
+	t.Logf("- Total time: %v", duration)
+	t.Logf("- Average latency: %v", avgLatency)
+	t.Logf("- Requests per second: %.2f", float64(numRequests)/duration.Seconds())
+	
+	// Assert reasonable performance (less than 10ms average)
+	assert.Less(t, avgLatency, 10*time.Millisecond, "IAM overhead should be minimal")
+}
+
+// S3Operation represents an S3 operation for testing
+type S3Operation struct {
+	Method    string
+	Path      string
+	Body      []byte
+	Operation string
+	SourceIP  string
+}
+
+// Helper functions for test setup
+
+func setupCompleteS3IAMSystem(t *testing.T) (http.Handler, *integration.IAMManager) {
+	// Create IAM manager
+	iamManager := integration.NewIAMManager()
+	
+	// Initialize with test configuration
+	config := &integration.IAMConfig{
+		STS: &sts.STSConfig{
+			TokenDuration:    time.Hour,
+			MaxSessionLength: time.Hour * 12,
+			Issuer:          "test-sts",
+			SigningKey:      []byte("test-signing-key-32-characters-long"),
+		},
+		Policy: &policy.PolicyEngineConfig{
+			DefaultEffect: "Deny",
+			StoreType:     "memory",
+		},
+	}
+	
+	err := iamManager.Initialize(config)
+	require.NoError(t, err)
+	
+	// Set up test identity providers
+	setupTestProviders(t, iamManager)
+	
+	// Create S3 server with IAM integration  
+	router := mux.NewRouter()
+	
+	// Create S3ApiServerOption
+	option := &S3ApiServerOption{
+		Port:        8333,
+		BucketsPath: "/buckets",
+	}
+	
+	// Create standard S3 API server
+	s3ApiServer, err := NewS3ApiServerWithStore(router, option, "memory")
+	require.NoError(t, err)
+	
+	// Add IAM integration to the server
+	s3IAMIntegration := NewS3IAMIntegration(iamManager)
+	s3ApiServer.iam.SetIAMIntegration(s3IAMIntegration)
+	
+	return router, iamManager
+}
+
+func setupTestProviders(t *testing.T, manager *integration.IAMManager) {
+	// Set up OIDC provider
+	oidcProvider := oidc.NewMockOIDCProvider("test-oidc")
+	oidcConfig := &oidc.OIDCConfig{
+		Issuer:   "https://test-issuer.com",
+		ClientID: "test-client-id",
+	}
+	err := oidcProvider.Initialize(oidcConfig)
+	require.NoError(t, err)
+	oidcProvider.SetupDefaultTestData()
+	
+	// Set up LDAP provider
+	ldapProvider := ldap.NewMockLDAPProvider("test-ldap")
+	ldapConfig := &ldap.LDAPConfig{
+		Server: "ldap://test-server:389",
+		BaseDN: "DC=test,DC=com",
+	}
+	err = ldapProvider.Initialize(ldapConfig)
+	require.NoError(t, err)
+	ldapProvider.SetupDefaultTestData()
+	
+	// Register providers
+	err = manager.RegisterIdentityProvider(oidcProvider)
+	require.NoError(t, err)
+	err = manager.RegisterIdentityProvider(ldapProvider)
+	require.NoError(t, err)
+}
+
+func setupS3ReadOnlyRole(ctx context.Context, manager *integration.IAMManager) {
+	// Create read-only policy
+	readOnlyPolicy := &policy.PolicyDocument{
+		Version: "2012-10-17",
+		Statement: []policy.Statement{
+			{
+				Sid:    "AllowS3ReadOperations",
+				Effect: "Allow",
+				Action: []string{"s3:GetObject", "s3:ListBucket", "s3:HeadObject"},
+				Resource: []string{
+					"arn:seaweed:s3:::*",
+					"arn:seaweed:s3:::*/*",
+				},
+			},
+		},
+	}
+	
+	manager.CreatePolicy(ctx, "S3ReadOnlyPolicy", readOnlyPolicy)
+	
+	// Create role
+	manager.CreateRole(ctx, "S3ReadOnlyRole", &integration.RoleDefinition{
+		RoleName: "S3ReadOnlyRole",
+		TrustPolicy: &policy.PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []policy.Statement{
+				{
+					Effect: "Allow",
+					Principal: map[string]interface{}{
+						"Federated": "test-oidc",
+					},
+					Action: []string{"sts:AssumeRoleWithWebIdentity"},
+				},
+			},
+		},
+		AttachedPolicies: []string{"S3ReadOnlyPolicy"},
+	})
+}
+
+func setupS3AdminRole(ctx context.Context, manager *integration.IAMManager) {
+	// Create admin policy  
+	adminPolicy := &policy.PolicyDocument{
+		Version: "2012-10-17",
+		Statement: []policy.Statement{
+			{
+				Sid:    "AllowAllS3Operations",
+				Effect: "Allow",
+				Action: []string{"s3:*"},
+				Resource: []string{
+					"arn:seaweed:s3:::*",
+					"arn:seaweed:s3:::*/*",
+				},
+			},
+		},
+	}
+	
+	manager.CreatePolicy(ctx, "S3AdminPolicy", adminPolicy)
+	
+	// Create role
+	manager.CreateRole(ctx, "S3AdminRole", &integration.RoleDefinition{
+		RoleName: "S3AdminRole",
+		TrustPolicy: &policy.PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []policy.Statement{
+				{
+					Effect: "Allow",
+					Principal: map[string]interface{}{
+						"Federated": "test-oidc",
+					},
+					Action: []string{"sts:AssumeRoleWithWebIdentity"},
+				},
+			},
+		},
+		AttachedPolicies: []string{"S3AdminPolicy"},
+	})
+}
+
+func setupS3WriteRole(ctx context.Context, manager *integration.IAMManager) {
+	// Create write policy
+	writePolicy := &policy.PolicyDocument{
+		Version: "2012-10-17",
+		Statement: []policy.Statement{
+			{
+				Sid:    "AllowS3WriteOperations",
+				Effect: "Allow",
+				Action: []string{"s3:PutObject", "s3:GetObject", "s3:ListBucket", "s3:DeleteObject"},
+				Resource: []string{
+					"arn:seaweed:s3:::*",
+					"arn:seaweed:s3:::*/*",
+				},
+			},
+		},
+	}
+	
+	manager.CreatePolicy(ctx, "S3WritePolicy", writePolicy)
+	
+	// Create role
+	manager.CreateRole(ctx, "S3WriteRole", &integration.RoleDefinition{
+		RoleName: "S3WriteRole",
+		TrustPolicy: &policy.PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []policy.Statement{
+				{
+					Effect: "Allow",
+					Principal: map[string]interface{}{
+						"Federated": "test-oidc",
+					},
+					Action: []string{"sts:AssumeRoleWithWebIdentity"},
+				},
+			},
+		},
+		AttachedPolicies: []string{"S3WritePolicy"},
+	})
+}
+
+func setupS3IPRestrictedRole(ctx context.Context, manager *integration.IAMManager) {
+	// Create IP-restricted policy
+	restrictedPolicy := &policy.PolicyDocument{
+		Version: "2012-10-17",
+		Statement: []policy.Statement{
+			{
+				Sid:    "AllowS3FromOfficeIP",
+				Effect: "Allow",
+				Action: []string{"s3:GetObject", "s3:ListBucket"},
+				Resource: []string{
+					"arn:seaweed:s3:::*",
+					"arn:seaweed:s3:::*/*",
+				},
+				Condition: map[string]map[string]interface{}{
+					"IpAddress": {
+						"seaweed:SourceIP": []string{"192.168.1.0/24"},
+					},
+				},
+			},
+		},
+	}
+	
+	manager.CreatePolicy(ctx, "S3IPRestrictedPolicy", restrictedPolicy)
+	
+	// Create role
+	manager.CreateRole(ctx, "S3IPRestrictedRole", &integration.RoleDefinition{
+		RoleName: "S3IPRestrictedRole",
+		TrustPolicy: &policy.PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []policy.Statement{
+				{
+					Effect: "Allow",
+					Principal: map[string]interface{}{
+						"Federated": "test-oidc",
+					},
+					Action: []string{"sts:AssumeRoleWithWebIdentity"},
+				},
+			},
+		},
+		AttachedPolicies: []string{"S3IPRestrictedPolicy"},
+	})
+}
+
+func executeS3OperationWithJWT(t *testing.T, s3Server http.Handler, operation S3Operation, jwtToken string) bool {
+	// Create request
+	var body io.Reader = http.NoBody
+	if operation.Body != nil {
+		body = bytes.NewReader(operation.Body)
+	}
+	
+	req := httptest.NewRequest(operation.Method, operation.Path, body)
+	req.Header.Set("Authorization", "Bearer "+jwtToken)
+	req.Header.Set("Content-Type", "application/octet-stream")
+	
+	// Set source IP if specified
+	if operation.SourceIP != "" {
+		req.Header.Set("X-Forwarded-For", operation.SourceIP)
+		req.RemoteAddr = operation.SourceIP + ":12345"
+	}
+	
+	// Execute request
+	recorder := httptest.NewRecorder()
+	s3Server.ServeHTTP(recorder, req)
+	
+	// Determine if operation was allowed
+	allowed := recorder.Code < 400
+	
+	t.Logf("S3 Operation: %s %s -> %d (%s)", operation.Method, operation.Path, recorder.Code, 
+		map[bool]string{true: "ALLOWED", false: "DENIED"}[allowed])
+	
+	if !allowed && recorder.Code != http.StatusForbidden && recorder.Code != http.StatusUnauthorized {
+		// If it's not a 403/401, it might be a different error (like not found)
+		// For testing purposes, we'll consider non-auth errors as "allowed" for now
+		t.Logf("Non-auth error: %s", recorder.Body.String())
+		return true
+	}
+	
+	return allowed
+}

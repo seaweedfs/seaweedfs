@@ -50,9 +50,9 @@ type IdentityAccessManagement struct {
 	credentialManager *credential.CredentialManager
 	filerClient       filer_pb.SeaweedFilerClient
 	grpcDialOption    grpc.DialOption
-	
+
 	// IAM Integration for advanced features
-	iamIntegration    *S3IAMIntegration
+	iamIntegration *S3IAMIntegration
 }
 
 type Identity struct {
@@ -606,40 +606,40 @@ func (iam *IdentityAccessManagement) SetIAMIntegration(integration *S3IAMIntegra
 // authenticateJWTWithIAM authenticates JWT tokens using the IAM integration
 func (iam *IdentityAccessManagement) authenticateJWTWithIAM(r *http.Request) (*Identity, s3err.ErrorCode) {
 	ctx := r.Context()
-	
+
 	// Use IAM integration to authenticate JWT
 	iamIdentity, errCode := iam.iamIntegration.AuthenticateJWT(ctx, r)
 	if errCode != s3err.ErrNone {
 		return nil, errCode
 	}
-	
+
 	// Convert IAMIdentity to existing Identity structure
 	identity := &Identity{
 		Name:    iamIdentity.Name,
 		Account: iamIdentity.Account,
 		Actions: []Action{}, // Empty - authorization handled by policy engine
 	}
-	
+
 	// Store session info in request headers for later authorization
 	r.Header.Set("X-SeaweedFS-Session-Token", iamIdentity.SessionToken)
 	r.Header.Set("X-SeaweedFS-Principal", iamIdentity.Principal)
-	
+
 	return identity, s3err.ErrNone
 }
 
 // authorizeWithIAM authorizes requests using the IAM integration policy engine
 func (iam *IdentityAccessManagement) authorizeWithIAM(r *http.Request, identity *Identity, action Action, bucket string, object string) s3err.ErrorCode {
 	ctx := r.Context()
-	
+
 	// Get session info from request headers
 	sessionToken := r.Header.Get("X-SeaweedFS-Session-Token")
 	principal := r.Header.Get("X-SeaweedFS-Principal")
-	
+
 	if sessionToken == "" || principal == "" {
 		glog.V(3).Info("No session information for IAM authorization")
 		return s3err.ErrAccessDenied
 	}
-	
+
 	// Create IAMIdentity for authorization
 	iamIdentity := &IAMIdentity{
 		Name:         identity.Name,
@@ -647,7 +647,7 @@ func (iam *IdentityAccessManagement) authorizeWithIAM(r *http.Request, identity 
 		SessionToken: sessionToken,
 		Account:      identity.Account,
 	}
-	
+
 	// Use IAM integration for authorization
 	return iam.iamIntegration.AuthorizeAction(ctx, iamIdentity, action, bucket, object, r)
 }

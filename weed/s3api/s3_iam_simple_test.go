@@ -18,27 +18,27 @@ import (
 func TestS3IAMMiddleware(t *testing.T) {
 	// Create IAM manager
 	iamManager := integration.NewIAMManager()
-	
+
 	// Initialize with test configuration
 	config := &integration.IAMConfig{
 		STS: &sts.STSConfig{
 			TokenDuration:    time.Hour,
 			MaxSessionLength: time.Hour * 12,
-			Issuer:          "test-sts",
-			SigningKey:      []byte("test-signing-key-32-characters-long"),
+			Issuer:           "test-sts",
+			SigningKey:       []byte("test-signing-key-32-characters-long"),
 		},
 		Policy: &policy.PolicyEngineConfig{
 			DefaultEffect: "Deny",
 			StoreType:     "memory",
 		},
 	}
-	
+
 	err := iamManager.Initialize(config)
 	require.NoError(t, err)
-	
+
 	// Create S3 IAM integration
 	s3IAMIntegration := NewS3IAMIntegration(iamManager)
-	
+
 	// Test that integration is created successfully
 	assert.NotNil(t, s3IAMIntegration)
 	assert.True(t, s3IAMIntegration.enabled)
@@ -48,18 +48,18 @@ func TestS3IAMMiddleware(t *testing.T) {
 func TestS3IAMMiddlewareJWTAuth(t *testing.T) {
 	// Skip for now since it requires full setup
 	t.Skip("JWT authentication test requires full IAM setup")
-	
+
 	// Create IAM integration
 	s3iam := NewS3IAMIntegration(nil) // Disabled integration
-	
+
 	// Create test request with JWT token
 	req := httptest.NewRequest("GET", "/test-bucket/test-object", http.NoBody)
 	req.Header.Set("Authorization", "Bearer test-token")
-	
+
 	// Test authentication (should return not implemented when disabled)
 	ctx := context.Background()
 	identity, errCode := s3iam.AuthenticateJWT(ctx, req)
-	
+
 	assert.Nil(t, identity)
 	assert.NotEqual(t, errCode, 0) // Should return an error
 }
@@ -125,14 +125,14 @@ func TestMapS3ActionToIAMAction(t *testing.T) {
 			expected: "READ", // Will fallback to string representation
 		},
 		{
-			name:     "write action", 
+			name:     "write action",
 			s3Action: "WRITE",
 			expected: "WRITE",
 		},
 		{
 			name:     "list action",
 			s3Action: "LIST",
-			expected: "LIST", 
+			expected: "LIST",
 		},
 	}
 
@@ -233,7 +233,7 @@ func TestIAMIdentityIsAdmin(t *testing.T) {
 		Principal:    "arn:seaweed:sts::assumed-role/TestRole/session",
 		SessionToken: "test-token",
 	}
-	
+
 	// In our implementation, IsAdmin always returns false since admin status
 	// is determined by policies, not identity
 	result := identity.IsAdmin()
