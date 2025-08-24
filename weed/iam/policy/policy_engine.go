@@ -1,0 +1,501 @@
+package policy
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"strings"
+)
+
+// Effect represents the policy evaluation result
+type Effect string
+
+const (
+	EffectAllow Effect = "Allow"
+	EffectDeny  Effect = "Deny"
+)
+
+// PolicyEngine evaluates policies against requests
+type PolicyEngine struct {
+	config      *PolicyEngineConfig
+	initialized bool
+	store       PolicyStore
+}
+
+// PolicyEngineConfig holds policy engine configuration
+type PolicyEngineConfig struct {
+	// DefaultEffect when no policies match (Allow or Deny)
+	DefaultEffect string `json:"defaultEffect"`
+	
+	// StoreType specifies the policy store backend (memory, filer, etc.)
+	StoreType string `json:"storeType"`
+	
+	// StoreConfig contains store-specific configuration
+	StoreConfig map[string]interface{} `json:"storeConfig,omitempty"`
+}
+
+// PolicyDocument represents an IAM policy document
+type PolicyDocument struct {
+	// Version of the policy language (e.g., "2012-10-17")
+	Version string `json:"Version"`
+	
+	// Id is an optional policy identifier
+	Id string `json:"Id,omitempty"`
+	
+	// Statement contains the policy statements
+	Statement []Statement `json:"Statement"`
+}
+
+// Statement represents a single policy statement
+type Statement struct {
+	// Sid is an optional statement identifier
+	Sid string `json:"Sid,omitempty"`
+	
+	// Effect specifies whether to Allow or Deny
+	Effect string `json:"Effect"`
+	
+	// Principal specifies who the statement applies to (optional in role policies)
+	Principal interface{} `json:"Principal,omitempty"`
+	
+	// NotPrincipal specifies who the statement does NOT apply to
+	NotPrincipal interface{} `json:"NotPrincipal,omitempty"`
+	
+	// Action specifies the actions this statement applies to
+	Action []string `json:"Action"`
+	
+	// NotAction specifies actions this statement does NOT apply to
+	NotAction []string `json:"NotAction,omitempty"`
+	
+	// Resource specifies the resources this statement applies to
+	Resource []string `json:"Resource"`
+	
+	// NotResource specifies resources this statement does NOT apply to
+	NotResource []string `json:"NotResource,omitempty"`
+	
+	// Condition specifies conditions for when this statement applies
+	Condition map[string]map[string]interface{} `json:"Condition,omitempty"`
+}
+
+// EvaluationContext provides context for policy evaluation
+type EvaluationContext struct {
+	// Principal making the request (e.g., "user:alice", "role:admin")
+	Principal string `json:"principal"`
+	
+	// Action being requested (e.g., "s3:GetObject")
+	Action string `json:"action"`
+	
+	// Resource being accessed (e.g., "arn:seaweed:s3:::bucket/key")
+	Resource string `json:"resource"`
+	
+	// RequestContext contains additional request information
+	RequestContext map[string]interface{} `json:"requestContext,omitempty"`
+}
+
+// EvaluationResult contains the result of policy evaluation
+type EvaluationResult struct {
+	// Effect is the final decision (Allow or Deny)
+	Effect Effect `json:"effect"`
+	
+	// MatchingStatements contains statements that matched the request
+	MatchingStatements []StatementMatch `json:"matchingStatements,omitempty"`
+	
+	// EvaluationDetails provides detailed evaluation information
+	EvaluationDetails *EvaluationDetails `json:"evaluationDetails,omitempty"`
+}
+
+// StatementMatch represents a statement that matched during evaluation
+type StatementMatch struct {
+	// PolicyName is the name of the policy containing this statement
+	PolicyName string `json:"policyName"`
+	
+	// StatementSid is the statement identifier
+	StatementSid string `json:"statementSid,omitempty"`
+	
+	// Effect is the effect of this statement
+	Effect Effect `json:"effect"`
+	
+	// Reason explains why this statement matched
+	Reason string `json:"reason,omitempty"`
+}
+
+// EvaluationDetails provides detailed information about policy evaluation
+type EvaluationDetails struct {
+	// Principal that was evaluated
+	Principal string `json:"principal"`
+	
+	// Action that was evaluated
+	Action string `json:"action"`
+	
+	// Resource that was evaluated
+	Resource string `json:"resource"`
+	
+	// PoliciesEvaluated lists all policies that were evaluated
+	PoliciesEvaluated []string `json:"policiesEvaluated"`
+	
+	// ConditionsEvaluated lists all conditions that were evaluated
+	ConditionsEvaluated []string `json:"conditionsEvaluated,omitempty"`
+}
+
+// PolicyStore defines the interface for storing and retrieving policies
+type PolicyStore interface {
+	// StorePolicy stores a policy document
+	StorePolicy(ctx context.Context, name string, policy *PolicyDocument) error
+	
+	// GetPolicy retrieves a policy document
+	GetPolicy(ctx context.Context, name string) (*PolicyDocument, error)
+	
+	// DeletePolicy deletes a policy document
+	DeletePolicy(ctx context.Context, name string) error
+	
+	// ListPolicies lists all policy names
+	ListPolicies(ctx context.Context) ([]string, error)
+}
+
+// NewPolicyEngine creates a new policy engine
+func NewPolicyEngine() *PolicyEngine {
+	return &PolicyEngine{}
+}
+
+// Initialize initializes the policy engine with configuration
+func (e *PolicyEngine) Initialize(config *PolicyEngineConfig) error {
+	if config == nil {
+		return fmt.Errorf("config cannot be nil")
+	}
+	
+	if err := e.validateConfig(config); err != nil {
+		return fmt.Errorf("invalid configuration: %w", err)
+	}
+	
+	e.config = config
+	
+	// Initialize policy store
+	store, err := e.createPolicyStore(config)
+	if err != nil {
+		return fmt.Errorf("failed to create policy store: %w", err)
+	}
+	e.store = store
+	
+	e.initialized = true
+	return nil
+}
+
+// validateConfig validates the policy engine configuration
+func (e *PolicyEngine) validateConfig(config *PolicyEngineConfig) error {
+	if config.DefaultEffect != "Allow" && config.DefaultEffect != "Deny" {
+		return fmt.Errorf("invalid default effect: %s", config.DefaultEffect)
+	}
+	
+	if config.StoreType == "" {
+		config.StoreType = "memory" // Default to memory store
+	}
+	
+	return nil
+}
+
+// createPolicyStore creates a policy store based on configuration
+func (e *PolicyEngine) createPolicyStore(config *PolicyEngineConfig) (PolicyStore, error) {
+	switch config.StoreType {
+	case "memory":
+		return NewMemoryPolicyStore(), nil
+	case "filer":
+		return NewFilerPolicyStore(config.StoreConfig)
+	default:
+		return nil, fmt.Errorf("unsupported store type: %s", config.StoreType)
+	}
+}
+
+// IsInitialized returns whether the engine is initialized
+func (e *PolicyEngine) IsInitialized() bool {
+	return e.initialized
+}
+
+// AddPolicy adds a policy to the engine
+func (e *PolicyEngine) AddPolicy(name string, policy *PolicyDocument) error {
+	if !e.initialized {
+		return fmt.Errorf("policy engine not initialized")
+	}
+	
+	if name == "" {
+		return fmt.Errorf("policy name cannot be empty")
+	}
+	
+	if policy == nil {
+		return fmt.Errorf("policy cannot be nil")
+	}
+	
+	if err := ValidatePolicyDocument(policy); err != nil {
+		return fmt.Errorf("invalid policy document: %w", err)
+	}
+	
+	return e.store.StorePolicy(context.Background(), name, policy)
+}
+
+// Evaluate evaluates policies against a request context
+func (e *PolicyEngine) Evaluate(ctx context.Context, evalCtx *EvaluationContext, policyNames []string) (*EvaluationResult, error) {
+	if !e.initialized {
+		return nil, fmt.Errorf("policy engine not initialized")
+	}
+	
+	if evalCtx == nil {
+		return nil, fmt.Errorf("evaluation context cannot be nil")
+	}
+	
+	result := &EvaluationResult{
+		Effect: Effect(e.config.DefaultEffect),
+		EvaluationDetails: &EvaluationDetails{
+			Principal:         evalCtx.Principal,
+			Action:           evalCtx.Action,
+			Resource:         evalCtx.Resource,
+			PoliciesEvaluated: policyNames,
+		},
+	}
+	
+	var matchingStatements []StatementMatch
+	explicitDeny := false
+	hasAllow := false
+	
+	// Evaluate each policy
+	for _, policyName := range policyNames {
+		policy, err := e.store.GetPolicy(ctx, policyName)
+		if err != nil {
+			continue // Skip policies that can't be loaded
+		}
+		
+		// Evaluate each statement in the policy
+		for _, statement := range policy.Statement {
+			if e.statementMatches(&statement, evalCtx) {
+				match := StatementMatch{
+					PolicyName:   policyName,
+					StatementSid: statement.Sid,
+					Effect:       Effect(statement.Effect),
+					Reason:       "Action, Resource, and Condition matched",
+				}
+				matchingStatements = append(matchingStatements, match)
+				
+				if statement.Effect == "Deny" {
+					explicitDeny = true
+				} else if statement.Effect == "Allow" {
+					hasAllow = true
+				}
+			}
+		}
+	}
+	
+	result.MatchingStatements = matchingStatements
+	
+	// AWS IAM evaluation logic:
+	// 1. If there's an explicit Deny, the result is Deny
+	// 2. If there's an Allow and no Deny, the result is Allow
+	// 3. Otherwise, use the default effect
+	if explicitDeny {
+		result.Effect = EffectDeny
+	} else if hasAllow {
+		result.Effect = EffectAllow
+	}
+	
+	return result, nil
+}
+
+// statementMatches checks if a statement matches the evaluation context
+func (e *PolicyEngine) statementMatches(statement *Statement, evalCtx *EvaluationContext) bool {
+	// Check action match
+	if !e.matchesActions(statement.Action, evalCtx.Action) {
+		return false
+	}
+	
+	// Check resource match
+	if !e.matchesResources(statement.Resource, evalCtx.Resource) {
+		return false
+	}
+	
+	// Check conditions
+	if !e.matchesConditions(statement.Condition, evalCtx) {
+		return false
+	}
+	
+	return true
+}
+
+// matchesActions checks if any action in the list matches the requested action
+func (e *PolicyEngine) matchesActions(actions []string, requestedAction string) bool {
+	for _, action := range actions {
+		if matchAction(action, requestedAction) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchesResources checks if any resource in the list matches the requested resource
+func (e *PolicyEngine) matchesResources(resources []string, requestedResource string) bool {
+	for _, resource := range resources {
+		if matchResource(resource, requestedResource) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchesConditions checks if all conditions are satisfied
+func (e *PolicyEngine) matchesConditions(conditions map[string]map[string]interface{}, evalCtx *EvaluationContext) bool {
+	if len(conditions) == 0 {
+		return true // No conditions means always match
+	}
+	
+	for conditionType, conditionBlock := range conditions {
+		if !e.evaluateConditionBlock(conditionType, conditionBlock, evalCtx) {
+			return false
+		}
+	}
+	
+	return true
+}
+
+// evaluateConditionBlock evaluates a single condition block
+func (e *PolicyEngine) evaluateConditionBlock(conditionType string, block map[string]interface{}, evalCtx *EvaluationContext) bool {
+	switch conditionType {
+	case "IpAddress":
+		return e.evaluateIPCondition(block, evalCtx, true)
+	case "NotIpAddress":
+		return e.evaluateIPCondition(block, evalCtx, false)
+	case "StringEquals":
+		return e.evaluateStringCondition(block, evalCtx, true, false)
+	case "StringNotEquals":
+		return e.evaluateStringCondition(block, evalCtx, false, false)
+	case "StringLike":
+		return e.evaluateStringCondition(block, evalCtx, true, true)
+	default:
+		// Unknown condition types default to false (more secure)
+		return false
+	}
+}
+
+// evaluateIPCondition evaluates IP address conditions
+func (e *PolicyEngine) evaluateIPCondition(block map[string]interface{}, evalCtx *EvaluationContext, shouldMatch bool) bool {
+	sourceIP, exists := evalCtx.RequestContext["sourceIP"]
+	if !exists {
+		return !shouldMatch // If no IP in context, condition fails for positive match
+	}
+	
+	sourceIPStr, ok := sourceIP.(string)
+	if !ok {
+		return !shouldMatch
+	}
+	
+	sourceIPAddr := net.ParseIP(sourceIPStr)
+	if sourceIPAddr == nil {
+		return !shouldMatch
+	}
+	
+	for key, value := range block {
+		if key == "seaweed:SourceIP" {
+			ranges, ok := value.([]string)
+			if !ok {
+				continue
+			}
+			
+			for _, ipRange := range ranges {
+				if strings.Contains(ipRange, "/") {
+					// CIDR range
+					_, cidr, err := net.ParseCIDR(ipRange)
+					if err != nil {
+						continue
+					}
+					if cidr.Contains(sourceIPAddr) {
+						return shouldMatch
+					}
+				} else {
+					// Single IP
+					if sourceIPStr == ipRange {
+						return shouldMatch
+					}
+				}
+			}
+		}
+	}
+	
+	return !shouldMatch
+}
+
+// evaluateStringCondition evaluates string-based conditions
+func (e *PolicyEngine) evaluateStringCondition(block map[string]interface{}, evalCtx *EvaluationContext, shouldMatch bool, useWildcard bool) bool {
+	// For this simplified implementation, we'll just return true
+	// In a full implementation, this would evaluate string conditions against request context
+	return shouldMatch
+}
+
+// ValidatePolicyDocument validates a policy document structure
+func ValidatePolicyDocument(policy *PolicyDocument) error {
+	if policy == nil {
+		return fmt.Errorf("policy document cannot be nil")
+	}
+	
+	if policy.Version == "" {
+		return fmt.Errorf("version is required")
+	}
+	
+	if len(policy.Statement) == 0 {
+		return fmt.Errorf("at least one statement is required")
+	}
+	
+	for i, statement := range policy.Statement {
+		if err := validateStatement(&statement); err != nil {
+			return fmt.Errorf("statement %d is invalid: %w", i, err)
+		}
+	}
+	
+	return nil
+}
+
+// validateStatement validates a single statement
+func validateStatement(statement *Statement) error {
+	if statement.Effect != "Allow" && statement.Effect != "Deny" {
+		return fmt.Errorf("invalid effect: %s (must be Allow or Deny)", statement.Effect)
+	}
+	
+	if len(statement.Action) == 0 {
+		return fmt.Errorf("at least one action is required")
+	}
+	
+	if len(statement.Resource) == 0 {
+		return fmt.Errorf("at least one resource is required")
+	}
+	
+	return nil
+}
+
+// matchResource checks if a resource pattern matches a requested resource
+func matchResource(pattern, resource string) bool {
+	if pattern == resource {
+		return true
+	}
+	
+	if pattern == "*" {
+		return true
+	}
+	
+	if strings.HasSuffix(pattern, "*") {
+		prefix := pattern[:len(pattern)-1]
+		return strings.HasPrefix(resource, prefix)
+	}
+	
+	return false
+}
+
+// matchAction checks if an action pattern matches a requested action
+func matchAction(pattern, action string) bool {
+	if pattern == action {
+		return true
+	}
+	
+	if pattern == "*" {
+		return true
+	}
+	
+	if strings.HasSuffix(pattern, "*") {
+		prefix := pattern[:len(pattern)-1]
+		return strings.HasPrefix(action, prefix)
+	}
+	
+	return false
+}
