@@ -6,7 +6,7 @@
 all: test
 
 # Test configuration
-WEED_BINARY ?= ../../../weed
+WEED_BINARY ?= /Users/chrislu/go/bin/weed
 LOG_LEVEL ?= 2
 S3_PORT ?= 8333
 FILER_PORT ?= 8888
@@ -45,15 +45,14 @@ setup: ## Setup test environment
 start-services: ## Start SeaweedFS services for testing
 	@echo "🚀 Starting SeaweedFS services..."
 	@echo "Starting master server..."
-	@$(WEED_BINARY) master -port=$(MASTER_PORT) -v=$(LOG_LEVEL) \
-		-dataCenter=dc1 -rack=rack1 \
-		-dir=test-volume-data/m9333 > weed-master.log 2>&1 & \
+	@$(WEED_BINARY) master -port=$(MASTER_PORT) \
+		-mdir=test-volume-data/m9333 > weed-master.log 2>&1 & \
 		echo $$! > $(MASTER_PID_FILE)
 	
 	@sleep 2
 	
 	@echo "Starting volume server..."
-	@$(WEED_BINARY) volume -port=$(VOLUME_PORT) -v=$(LOG_LEVEL) \
+	@$(WEED_BINARY) volume -port=$(VOLUME_PORT) \
 		-dataCenter=dc1 -rack=rack1 \
 		-dir=test-volume-data \
 		-mserver=localhost:$(MASTER_PORT) > weed-volume.log 2>&1 & \
@@ -62,7 +61,7 @@ start-services: ## Start SeaweedFS services for testing
 	@sleep 2
 	
 	@echo "Starting filer server..."
-	@$(WEED_BINARY) filer -port=$(FILER_PORT) -v=$(LOG_LEVEL) \
+	@$(WEED_BINARY) filer -port=$(FILER_PORT) \
 		-defaultStoreDir=test-volume-data/filerldb2 \
 		-master=localhost:$(MASTER_PORT) > weed-filer.log 2>&1 & \
 		echo $$! > $(FILER_PID_FILE)
@@ -70,9 +69,10 @@ start-services: ## Start SeaweedFS services for testing
 	@sleep 2
 	
 	@echo "Starting S3 API server with IAM..."
-	@$(WEED_BINARY) s3 -port=$(S3_PORT) -v=$(LOG_LEVEL) \
+	@$(WEED_BINARY) s3 -port=$(S3_PORT) \
 		-filer=localhost:$(FILER_PORT) \
-		-config=test_config.json > weed-s3.log 2>&1 & \
+		-config=test_config.json \
+                -iam.config=$(shell pwd)/iam_config.json > weed-s3.log 2>&1 & \
 		echo $$! > $(S3_PID_FILE)
 	
 	@echo "✅ All services started"
@@ -204,3 +204,39 @@ docker-test: ## Run tests in Docker container
 .PHONY: test test-quick run-tests setup start-services stop-services wait-for-services clean logs status debug
 .PHONY: test-auth test-policy test-expiration test-multipart test-bucket-policy test-context test-presigned
 .PHONY: benchmark ci watch install-deps docker-test
+
+# Docker Compose support  
+docker-compose-up: ## Start all services with Docker Compose
+	@echo "🐳 Starting SeaweedFS services with Docker Compose..."
+	docker-compose -f docker-compose.test.yml up -d
+	@echo "⏳ Waiting for services to be healthy..."
+	@docker-compose -f docker-compose.test.yml up --wait
+
+docker-compose-test: ## Run full test suite with Docker Compose
+	@echo "🧪 Running S3 IAM Integration Tests with Docker Compose..."
+	docker-compose -f docker-compose.test.yml up --build --abort-on-container-exit
+	docker-compose -f docker-compose.test.yml down
+
+docker-compose-test-quick: ## Run tests with existing Docker Compose services
+	@echo "🧪 Running tests with existing Docker Compose services..."
+	docker-compose -f docker-compose.test.yml run --rm integration-tests
+
+docker-compose-down: ## Stop and remove Docker Compose services
+	@echo "🛑 Stopping Docker Compose services..."
+	docker-compose -f docker-compose.test.yml down -v
+
+docker-compose-logs: ## Show Docker Compose logs
+	@echo "📋 Docker Compose Logs:"
+	docker-compose -f docker-compose.test.yml logs
+
+docker-compose-status: ## Show Docker Compose service status
+	@echo "📊 Docker Compose Status:"
+	docker-compose -f docker-compose.test.yml ps
+
+docker-compose-clean: ## Clean up Docker Compose resources
+	@echo "🧹 Cleaning up Docker Compose resources..."
+	docker-compose -f docker-compose.test.yml down -v --rmi all
+	docker system prune -f
+
+.PHONY: docker-compose-up docker-compose-test docker-compose-test-quick docker-compose-down
+.PHONY: docker-compose-logs docker-compose-status docker-compose-clean
