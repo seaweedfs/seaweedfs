@@ -19,15 +19,15 @@ func NewProviderFactory() *ProviderFactory {
 // CreateProvider creates an identity provider from configuration
 func (f *ProviderFactory) CreateProvider(config *ProviderConfig) (providers.IdentityProvider, error) {
 	if config == nil {
-		return nil, fmt.Errorf("provider config cannot be nil")
+		return nil, fmt.Errorf(ErrConfigCannotBeNil)
 	}
 
 	if config.Name == "" {
-		return nil, fmt.Errorf("provider name cannot be empty")
+		return nil, fmt.Errorf(ErrProviderNameEmpty)
 	}
 
 	if config.Type == "" {
-		return nil, fmt.Errorf("provider type cannot be empty")
+		return nil, fmt.Errorf(ErrProviderTypeEmpty)
 	}
 
 	if !config.Enabled {
@@ -38,16 +38,16 @@ func (f *ProviderFactory) CreateProvider(config *ProviderConfig) (providers.Iden
 	glog.V(2).Infof("Creating provider: name=%s, type=%s", config.Name, config.Type)
 
 	switch config.Type {
-	case "oidc":
+	case ProviderTypeOIDC:
 		return f.createOIDCProvider(config)
-	case "ldap":
+	case ProviderTypeLDAP:
 		return f.createLDAPProvider(config)
-	case "saml":
+	case ProviderTypeSAML:
 		return f.createSAMLProvider(config)
-	case "mock":
+	case ProviderTypeMock:
 		return f.createMockProvider(config)
 	default:
-		return nil, fmt.Errorf("unsupported provider type: %s", config.Type)
+		return nil, fmt.Errorf(ErrUnsupportedProviderType, config.Type)
 	}
 }
 
@@ -106,33 +106,33 @@ func (f *ProviderFactory) convertToOIDCConfig(configMap map[string]interface{}) 
 	config := &oidc.OIDCConfig{}
 
 	// Required fields
-	if issuer, ok := configMap["issuer"].(string); ok {
+	if issuer, ok := configMap[ConfigFieldIssuer].(string); ok {
 		config.Issuer = issuer
 	} else {
-		return nil, fmt.Errorf("issuer is required for OIDC provider")
+		return nil, fmt.Errorf(ErrIssuerRequired)
 	}
 
-	if clientID, ok := configMap["clientId"].(string); ok {
+	if clientID, ok := configMap[ConfigFieldClientID].(string); ok {
 		config.ClientID = clientID
 	} else {
-		return nil, fmt.Errorf("clientId is required for OIDC provider")
+		return nil, fmt.Errorf(ErrClientIDRequired)
 	}
 
 	// Optional fields
-	if clientSecret, ok := configMap["clientSecret"].(string); ok {
+	if clientSecret, ok := configMap[ConfigFieldClientSecret].(string); ok {
 		config.ClientSecret = clientSecret
 	}
 
-	if jwksUri, ok := configMap["jwksUri"].(string); ok {
+	if jwksUri, ok := configMap[ConfigFieldJWKSUri].(string); ok {
 		config.JWKSUri = jwksUri
 	}
 
-	if userInfoUri, ok := configMap["userInfoUri"].(string); ok {
+	if userInfoUri, ok := configMap[ConfigFieldUserInfoUri].(string); ok {
 		config.UserInfoUri = userInfoUri
 	}
 
 	// Convert scopes array
-	if scopesInterface, ok := configMap["scopes"]; ok {
+	if scopesInterface, ok := configMap[ConfigFieldScopes]; ok {
 		if scopes, err := f.convertToStringSlice(scopesInterface); err == nil {
 			config.Scopes = scopes
 		}
@@ -260,12 +260,12 @@ func (f *ProviderFactory) ValidateProviderConfig(config *ProviderConfig) error {
 
 // validateOIDCConfig validates OIDC provider configuration
 func (f *ProviderFactory) validateOIDCConfig(config map[string]interface{}) error {
-	if _, ok := config["issuer"]; !ok {
-		return fmt.Errorf("OIDC provider requires 'issuer' field")
+	if _, ok := config[ConfigFieldIssuer]; !ok {
+		return fmt.Errorf("OIDC provider requires '%s' field", ConfigFieldIssuer)
 	}
-
-	if _, ok := config["clientId"]; !ok {
-		return fmt.Errorf("OIDC provider requires 'clientId' field")
+	
+	if _, ok := config[ConfigFieldClientID]; !ok {
+		return fmt.Errorf("OIDC provider requires '%s' field", ConfigFieldClientID)
 	}
 
 	return nil
@@ -291,5 +291,5 @@ func (f *ProviderFactory) validateMockConfig(config map[string]interface{}) erro
 
 // GetSupportedProviderTypes returns list of supported provider types
 func (f *ProviderFactory) GetSupportedProviderTypes() []string {
-	return []string{"oidc", "mock"}
+	return []string{ProviderTypeOIDC, ProviderTypeMock}
 }

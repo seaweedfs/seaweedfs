@@ -19,30 +19,30 @@ func TestCrossInstanceTokenUsage(t *testing.T) {
 		TokenDuration:    time.Hour,
 		MaxSessionLength: 12 * time.Hour,
 		Issuer:           "distributed-sts-cluster",                       // SAME across all instances
-		SigningKey:       []byte("shared-signing-key-32-characters-long"), // SAME across all instances
-		SessionStoreType: "memory",                                        // In production, this would be "filer" for true sharing
+		SigningKey:       []byte(TestSigningKey32Chars), // SAME across all instances
+		SessionStoreType: StoreTypeMemory,                                        // In production, this would be "filer" for true sharing
 		SessionStoreConfig: map[string]interface{}{
-			"filerAddress": "shared-filer:8888",
-			"basePath":     "/seaweedfs/iam/sessions",
+			ConfigFieldFilerAddress: "shared-filer:8888",
+			ConfigFieldBasePath:     DefaultSessionBasePath,
 		},
 		Providers: []*ProviderConfig{
 			{
 				Name:    "company-oidc",
-				Type:    "oidc",
+				Type:    ProviderTypeOIDC,
 				Enabled: true,
 				Config: map[string]interface{}{
-					"issuer":   "https://sso.company.com/realms/production",
-					"clientId": "seaweedfs-cluster",
-					"jwksUri":  "https://sso.company.com/realms/production/protocol/openid-connect/certs",
+					ConfigFieldIssuer:   "https://sso.company.com/realms/production",
+					ConfigFieldClientID: "seaweedfs-cluster",
+					ConfigFieldJWKSUri:  "https://sso.company.com/realms/production/protocol/openid-connect/certs",
 				},
 			},
 			{
 				Name:    "test-mock",
-				Type:    "mock",
+				Type:    ProviderTypeMock,
 				Enabled: true,
 				Config: map[string]interface{}{
-					"issuer":   "http://test-mock:9999",
-					"clientId": "test-client",
+					ConfigFieldIssuer:   "http://test-mock:9999",
+					ConfigFieldClientID: TestClientID,
 				},
 			},
 		},
@@ -65,10 +65,10 @@ func TestCrossInstanceTokenUsage(t *testing.T) {
 
 	// Test 1: Token generated on Instance A can be validated on Instance B & C
 	t.Run("cross_instance_token_validation", func(t *testing.T) {
-		// Generate session token on Instance A
-		sessionId := "cross-instance-session-123"
+				// Generate session token on Instance A
+		sessionId := TestSessionID
 		expiresAt := time.Now().Add(time.Hour)
-
+		
 		tokenFromA, err := instanceA.tokenGenerator.GenerateSessionToken(sessionId, expiresAt)
 		require.NoError(t, err, "Instance A should generate token")
 

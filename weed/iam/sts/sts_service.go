@@ -185,7 +185,7 @@ func NewSTSService() *STSService {
 // Initialize initializes the STS service with configuration
 func (s *STSService) Initialize(config *STSConfig) error {
 	if config == nil {
-		return fmt.Errorf("config cannot be nil")
+		return fmt.Errorf(ErrConfigCannotBeNil)
 	}
 
 	if err := s.validateConfig(config); err != nil {
@@ -216,19 +216,19 @@ func (s *STSService) Initialize(config *STSConfig) error {
 // validateConfig validates the STS configuration
 func (s *STSService) validateConfig(config *STSConfig) error {
 	if config.TokenDuration <= 0 {
-		return fmt.Errorf("token duration must be positive")
+		return fmt.Errorf(ErrInvalidTokenDuration)
 	}
 
 	if config.MaxSessionLength <= 0 {
-		return fmt.Errorf("max session length must be positive")
+		return fmt.Errorf(ErrInvalidMaxSessionLength)
 	}
 
 	if config.Issuer == "" {
-		return fmt.Errorf("issuer is required")
+		return fmt.Errorf(ErrIssuerRequired)
 	}
 
-	if len(config.SigningKey) < 16 {
-		return fmt.Errorf("signing key must be at least 16 bytes")
+	if len(config.SigningKey) < MinSigningKeyLength {
+		return fmt.Errorf(ErrSigningKeyTooShort, MinSigningKeyLength)
 	}
 
 	return nil
@@ -237,18 +237,18 @@ func (s *STSService) validateConfig(config *STSConfig) error {
 // createSessionStore creates a session store based on configuration
 func (s *STSService) createSessionStore(config *STSConfig) (SessionStore, error) {
 	switch config.SessionStoreType {
-	case "", "memory":
+	case "", StoreTypeMemory:
 		return NewMemorySessionStore(), nil
-	case "filer":
+	case StoreTypeFiler:
 		return NewFilerSessionStore(config.SessionStoreConfig)
 	default:
-		return nil, fmt.Errorf("unsupported session store type: %s", config.SessionStoreType)
+		return nil, fmt.Errorf(ErrUnsupportedStoreType, config.SessionStoreType)
 	}
 }
 
 // loadProvidersFromConfig loads identity providers from configuration
 func (s *STSService) loadProvidersFromConfig(config *STSConfig) error {
-	if config.Providers == nil || len(config.Providers) == 0 {
+	if len(config.Providers) == 0 {
 		glog.V(2).Infof("No providers configured in STS config")
 		return nil
 	}
@@ -287,12 +287,12 @@ func (s *STSService) IsInitialized() bool {
 // RegisterProvider registers an identity provider
 func (s *STSService) RegisterProvider(provider providers.IdentityProvider) error {
 	if provider == nil {
-		return fmt.Errorf("provider cannot be nil")
+		return fmt.Errorf(ErrProviderCannotBeNil)
 	}
 
 	name := provider.Name()
 	if name == "" {
-		return fmt.Errorf("provider name cannot be empty")
+		return fmt.Errorf(ErrProviderNameEmpty)
 	}
 
 	s.providers[name] = provider
@@ -302,7 +302,7 @@ func (s *STSService) RegisterProvider(provider providers.IdentityProvider) error
 // AssumeRoleWithWebIdentity assumes a role using a web identity token (OIDC)
 func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *AssumeRoleWithWebIdentityRequest) (*AssumeRoleResponse, error) {
 	if !s.initialized {
-		return nil, fmt.Errorf("STS service not initialized")
+		return nil, fmt.Errorf(ErrSTSServiceNotInitialized)
 	}
 
 	if request == nil {
@@ -467,23 +467,23 @@ func (s *STSService) AssumeRoleWithCredentials(ctx context.Context, request *Ass
 // ValidateSessionToken validates a session token and returns session information
 func (s *STSService) ValidateSessionToken(ctx context.Context, sessionToken string) (*SessionInfo, error) {
 	if !s.initialized {
-		return nil, fmt.Errorf("STS service not initialized")
+		return nil, fmt.Errorf(ErrSTSServiceNotInitialized)
 	}
 
 	if sessionToken == "" {
-		return nil, fmt.Errorf("session token cannot be empty")
+		return nil, fmt.Errorf(ErrSessionTokenCannotBeEmpty)
 	}
 
 	// Use token generator for proper JWT validation
 	claims, err := s.tokenGenerator.ValidateSessionToken(sessionToken)
 	if err != nil {
-		return nil, fmt.Errorf("invalid session token format: %w", err)
+		return nil, fmt.Errorf(ErrInvalidTokenFormat, err)
 	}
 
 	// Retrieve session from store using session ID from claims
 	session, err := s.sessionStore.GetSession(ctx, claims.SessionId)
 	if err != nil {
-		return nil, fmt.Errorf("session validation failed: %w", err)
+		return nil, fmt.Errorf(ErrSessionValidationFailed, err)
 	}
 
 	// Additional validation - check expiration

@@ -28,11 +28,11 @@ func NewTokenGenerator(signingKey []byte, issuer string) *TokenGenerator {
 // GenerateSessionToken creates a signed JWT session token
 func (t *TokenGenerator) GenerateSessionToken(sessionId string, expiresAt time.Time) (string, error) {
 	claims := jwt.MapClaims{
-		"iss":        t.issuer,
-		"sub":        sessionId,
-		"iat":        time.Now().Unix(),
-		"exp":        expiresAt.Unix(),
-		"token_type": "session",
+		JWTClaimIssuer:     t.issuer,
+		JWTClaimSubject:    sessionId,
+		JWTClaimIssuedAt:   time.Now().Unix(),
+		JWTClaimExpiration: expiresAt.Unix(),
+		JWTClaimTokenType:  TokenTypeSession,
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -49,33 +49,33 @@ func (t *TokenGenerator) ValidateSessionToken(tokenString string) (*SessionToken
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("invalid token: %w", err)
+		return nil, fmt.Errorf(ErrInvalidToken, err)
 	}
 
 	if !token.Valid {
-		return nil, fmt.Errorf("token is not valid")
+		return nil, fmt.Errorf(ErrTokenNotValid)
 	}
 
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if !ok {
-		return nil, fmt.Errorf("invalid token claims")
+		return nil, fmt.Errorf(ErrInvalidTokenClaims)
 	}
 
 	// Verify issuer
-	if iss, ok := claims["iss"].(string); !ok || iss != t.issuer {
-		return nil, fmt.Errorf("invalid issuer")
+	if iss, ok := claims[JWTClaimIssuer].(string); !ok || iss != t.issuer {
+		return nil, fmt.Errorf(ErrInvalidIssuer)
 	}
 
 	// Extract session ID
-	sessionId, ok := claims["sub"].(string)
+	sessionId, ok := claims[JWTClaimSubject].(string)
 	if !ok {
-		return nil, fmt.Errorf("missing session ID")
+		return nil, fmt.Errorf(ErrMissingSessionID)
 	}
 
 	return &SessionTokenClaims{
 		SessionId: sessionId,
-		ExpiresAt: time.Unix(int64(claims["exp"].(float64)), 0),
-		IssuedAt:  time.Unix(int64(claims["iat"].(float64)), 0),
+		ExpiresAt: time.Unix(int64(claims[JWTClaimExpiration].(float64)), 0),
+		IssuedAt:  time.Unix(int64(claims[JWTClaimIssuedAt].(float64)), 0),
 	}, nil
 }
 
