@@ -22,17 +22,17 @@ import (
 func TestJWTAuthenticationFlow(t *testing.T) {
 	// Set up IAM system
 	iamManager := setupTestIAMManager(t)
-	
+
 	// Create IAM integration
 	s3iam := NewS3IAMIntegration(iamManager)
-	
+
 	// Create IAM server with integration
 	iamServer := setupIAMWithIntegration(t, iamManager, s3iam)
-	
+
 	// Test scenarios
 	tests := []struct {
 		name           string
-		roleArn        string  
+		roleArn        string
 		setupRole      func(ctx context.Context, mgr *integration.IAMManager)
 		testOperations []JWTTestOperation
 	}{
@@ -61,10 +61,10 @@ func TestJWTAuthenticationFlow(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			
+
 			// Set up role
 			tt.setupRole(ctx, iamManager)
-			
+
 			// Assume role to get JWT
 			response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
 				RoleArn:          tt.roleArn,
@@ -72,9 +72,9 @@ func TestJWTAuthenticationFlow(t *testing.T) {
 				RoleSessionName:  "jwt-auth-test",
 			})
 			require.NoError(t, err)
-			
+
 			jwtToken := response.Credentials.SessionToken
-			
+
 			// Test each operation
 			for _, op := range tt.testOperations {
 				t.Run(string(op.Action), func(t *testing.T) {
@@ -82,7 +82,7 @@ func TestJWTAuthenticationFlow(t *testing.T) {
 					identity, errCode := testJWTAuthentication(t, iamServer, jwtToken)
 					require.Equal(t, s3err.ErrNone, errCode, "JWT authentication should succeed")
 					require.NotNil(t, identity)
-					
+
 					// Test authorization with appropriate role based on test case
 					var testRoleName string
 					if tt.name == "Read-Only JWT Authentication" {
@@ -103,7 +103,7 @@ func TestJWTTokenValidation(t *testing.T) {
 	iamManager := setupTestIAMManager(t)
 	s3iam := NewS3IAMIntegration(iamManager)
 	iamServer := setupIAMWithIntegration(t, iamManager, s3iam)
-	
+
 	tests := []struct {
 		name        string
 		token       string
@@ -115,7 +115,7 @@ func TestJWTTokenValidation(t *testing.T) {
 			expectedErr: s3err.ErrAccessDenied,
 		},
 		{
-			name:        "Invalid token format", 
+			name:        "Invalid token format",
 			token:       "invalid-token",
 			expectedErr: s3err.ErrAccessDenied,
 		},
@@ -129,7 +129,7 @@ func TestJWTTokenValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			identity, errCode := testJWTAuthentication(t, iamServer, tt.token)
-			
+
 			assert.Equal(t, tt.expectedErr, errCode)
 			assert.Nil(t, identity)
 		})
@@ -139,10 +139,10 @@ func TestJWTTokenValidation(t *testing.T) {
 // TestRequestContextExtraction tests context extraction for policy conditions
 func TestRequestContextExtraction(t *testing.T) {
 	tests := []struct {
-		name           string
-		setupRequest   func() *http.Request
-		expectedIP     string
-		expectedUA     string
+		name         string
+		setupRequest func() *http.Request
+		expectedIP   string
+		expectedUA   string
 	}{
 		{
 			name: "Standard request with IP",
@@ -156,7 +156,7 @@ func TestRequestContextExtraction(t *testing.T) {
 			expectedUA: "aws-sdk-go/1.0",
 		},
 		{
-			name: "Request with X-Real-IP", 
+			name: "Request with X-Real-IP",
 			setupRequest: func() *http.Request {
 				req := httptest.NewRequest("GET", "/test-bucket/test-file.txt", http.NoBody)
 				req.Header.Set("X-Real-IP", "10.0.0.1")
@@ -171,14 +171,14 @@ func TestRequestContextExtraction(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := tt.setupRequest()
-			
+
 			// Extract request context
 			context := extractRequestContext(req)
-			
+
 			if tt.expectedIP != "" {
 				assert.Equal(t, tt.expectedIP, context["sourceIP"])
 			}
-			
+
 			if tt.expectedUA != "" {
 				assert.Equal(t, tt.expectedUA, context["userAgent"])
 			}
@@ -191,10 +191,10 @@ func TestIPBasedPolicyEnforcement(t *testing.T) {
 	iamManager := setupTestIAMManager(t)
 	s3iam := NewS3IAMIntegration(iamManager)
 	ctx := context.Background()
-	
+
 	// Set up IP-restricted role
 	setupTestIPRestrictedRole(ctx, iamManager)
-	
+
 	// Assume role
 	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
 		RoleArn:          "arn:seaweed:iam::role/S3IPRestrictedRole",
@@ -202,7 +202,7 @@ func TestIPBasedPolicyEnforcement(t *testing.T) {
 		RoleSessionName:  "ip-test-session",
 	})
 	require.NoError(t, err)
-	
+
 	tests := []struct {
 		name        string
 		sourceIP    string
@@ -215,7 +215,7 @@ func TestIPBasedPolicyEnforcement(t *testing.T) {
 		},
 		{
 			name:        "Block from external IP",
-			sourceIP:    "8.8.8.8", 
+			sourceIP:    "8.8.8.8",
 			shouldAllow: false,
 		},
 		{
@@ -231,17 +231,17 @@ func TestIPBasedPolicyEnforcement(t *testing.T) {
 			req := httptest.NewRequest("GET", "/restricted-bucket/file.txt", http.NoBody)
 			req.Header.Set("Authorization", "Bearer "+response.Credentials.SessionToken)
 			req.Header.Set("X-Forwarded-For", tt.sourceIP)
-			
+
 			// Create IAM identity for testing
 			identity := &IAMIdentity{
 				Name:         "test-user",
 				Principal:    response.AssumedRoleUser.Arn,
 				SessionToken: response.Credentials.SessionToken,
 			}
-			
+
 			// Test authorization with IP condition
 			errCode := s3iam.AuthorizeAction(ctx, identity, s3_constants.ACTION_READ, "restricted-bucket", "file.txt", req)
-			
+
 			if tt.shouldAllow {
 				assert.Equal(t, s3err.ErrNone, errCode, "Should allow access from IP %s", tt.sourceIP)
 			} else {
@@ -264,27 +264,27 @@ type JWTTestOperation struct {
 func setupTestIAMManager(t *testing.T) *integration.IAMManager {
 	// Create IAM manager
 	manager := integration.NewIAMManager()
-	
+
 	// Initialize with test configuration
 	config := &integration.IAMConfig{
 		STS: &sts.STSConfig{
 			TokenDuration:    time.Hour,
 			MaxSessionLength: time.Hour * 12,
-			Issuer:          "test-sts",
-			SigningKey:      []byte("test-signing-key-32-characters-long"),
+			Issuer:           "test-sts",
+			SigningKey:       []byte("test-signing-key-32-characters-long"),
 		},
 		Policy: &policy.PolicyEngineConfig{
 			DefaultEffect: "Deny",
 			StoreType:     "memory",
 		},
 	}
-	
+
 	err := manager.Initialize(config)
 	require.NoError(t, err)
-	
+
 	// Set up test identity providers
 	setupTestIdentityProviders(t, manager)
-	
+
 	return manager
 }
 
@@ -298,7 +298,7 @@ func setupTestIdentityProviders(t *testing.T, manager *integration.IAMManager) {
 	err := oidcProvider.Initialize(oidcConfig)
 	require.NoError(t, err)
 	oidcProvider.SetupDefaultTestData()
-	
+
 	// Set up LDAP provider
 	ldapProvider := ldap.NewMockLDAPProvider("test-ldap")
 	ldapConfig := &ldap.LDAPConfig{
@@ -308,7 +308,7 @@ func setupTestIdentityProviders(t *testing.T, manager *integration.IAMManager) {
 	err = ldapProvider.Initialize(ldapConfig)
 	require.NoError(t, err)
 	ldapProvider.SetupDefaultTestData()
-	
+
 	// Register providers
 	err = manager.RegisterIdentityProvider(oidcProvider)
 	require.NoError(t, err)
@@ -321,10 +321,10 @@ func setupIAMWithIntegration(t *testing.T, iamManager *integration.IAMManager, s
 	iam := &IdentityAccessManagement{
 		isAuthEnabled: true,
 	}
-	
+
 	// Set IAM integration
 	iam.SetIAMIntegration(s3iam)
-	
+
 	return iam
 }
 
@@ -344,12 +344,12 @@ func setupTestReadOnlyRole(ctx context.Context, manager *integration.IAMManager)
 			},
 		},
 	}
-	
+
 	manager.CreatePolicy(ctx, "S3ReadOnlyPolicy", readPolicy)
-	
+
 	// Create role
 	manager.CreateRole(ctx, "S3ReadOnlyRole", &integration.RoleDefinition{
-		RoleName: "S3ReadOnlyRole", 
+		RoleName: "S3ReadOnlyRole",
 		TrustPolicy: &policy.PolicyDocument{
 			Version: "2012-10-17",
 			Statement: []policy.Statement{
@@ -364,7 +364,7 @@ func setupTestReadOnlyRole(ctx context.Context, manager *integration.IAMManager)
 		},
 		AttachedPolicies: []string{"S3ReadOnlyPolicy"},
 	})
-	
+
 	// Also create a TestReadRole for read-only authorization testing
 	manager.CreateRole(ctx, "TestReadRole", &integration.RoleDefinition{
 		RoleName: "TestReadRole",
@@ -400,9 +400,9 @@ func setupTestAdminRole(ctx context.Context, manager *integration.IAMManager) {
 			},
 		},
 	}
-	
+
 	manager.CreatePolicy(ctx, "S3AdminPolicy", adminPolicy)
-	
+
 	// Create role
 	manager.CreateRole(ctx, "S3AdminRole", &integration.RoleDefinition{
 		RoleName: "S3AdminRole",
@@ -420,8 +420,8 @@ func setupTestAdminRole(ctx context.Context, manager *integration.IAMManager) {
 		},
 		AttachedPolicies: []string{"S3AdminPolicy"},
 	})
-	
-	// Also create a TestAdminRole with admin policy for authorization testing  
+
+	// Also create a TestAdminRole with admin policy for authorization testing
 	manager.CreateRole(ctx, "TestAdminRole", &integration.RoleDefinition{
 		RoleName: "TestAdminRole",
 		TrustPolicy: &policy.PolicyDocument{
@@ -461,9 +461,9 @@ func setupTestIPRestrictedRole(ctx context.Context, manager *integration.IAMMana
 			},
 		},
 	}
-	
+
 	manager.CreatePolicy(ctx, "S3IPRestrictedPolicy", restrictedPolicy)
-	
+
 	// Create role
 	manager.CreateRole(ctx, "S3IPRestrictedRole", &integration.RoleDefinition{
 		RoleName: "S3IPRestrictedRole",
@@ -487,12 +487,12 @@ func testJWTAuthentication(t *testing.T, iam *IdentityAccessManagement, token st
 	// Create test request with JWT
 	req := httptest.NewRequest("GET", "/test-bucket/test-object", http.NoBody)
 	req.Header.Set("Authorization", "Bearer "+token)
-	
+
 	// Test authentication
 	if iam.iamIntegration == nil {
 		return nil, s3err.ErrNotImplemented
 	}
-	
+
 	return iam.authenticateJWTWithIAM(req)
 }
 
@@ -505,16 +505,16 @@ func testJWTAuthorizationWithRole(t *testing.T, iam *IdentityAccessManagement, i
 	req := httptest.NewRequest("GET", "/"+bucket+"/"+object, http.NoBody)
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("X-SeaweedFS-Session-Token", token)
-	
+
 	// Use a proper principal ARN format that matches what STS would generate
 	principalArn := "arn:seaweed:sts::assumed-role/" + roleName + "/test-session"
 	req.Header.Set("X-SeaweedFS-Principal", principalArn)
-	
+
 	// Test authorization
 	if iam.iamIntegration == nil {
 		return false
 	}
-	
+
 	errCode := iam.authorizeWithIAM(req, identity, action, bucket, object)
 	return errCode == s3err.ErrNone
 }

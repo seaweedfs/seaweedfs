@@ -30,23 +30,23 @@ func NewS3PresignedURLManager(s3iam *S3IAMIntegration) *S3PresignedURLManager {
 
 // PresignedURLRequest represents a request to generate a presigned URL
 type PresignedURLRequest struct {
-	Method       string            `json:"method"`       // HTTP method (GET, PUT, POST, DELETE)
-	Bucket       string            `json:"bucket"`       // S3 bucket name
-	ObjectKey    string            `json:"object_key"`   // S3 object key
-	Expiration   time.Duration     `json:"expiration"`   // URL expiration duration
+	Method       string            `json:"method"`        // HTTP method (GET, PUT, POST, DELETE)
+	Bucket       string            `json:"bucket"`        // S3 bucket name
+	ObjectKey    string            `json:"object_key"`    // S3 object key
+	Expiration   time.Duration     `json:"expiration"`    // URL expiration duration
 	SessionToken string            `json:"session_token"` // JWT session token for IAM
-	Headers      map[string]string `json:"headers"`      // Additional headers to sign
-	QueryParams  map[string]string `json:"query_params"` // Additional query parameters
+	Headers      map[string]string `json:"headers"`       // Additional headers to sign
+	QueryParams  map[string]string `json:"query_params"`  // Additional query parameters
 }
 
 // PresignedURLResponse represents the generated presigned URL
 type PresignedURLResponse struct {
-	URL            string            `json:"url"`              // The presigned URL
-	Method         string            `json:"method"`           // HTTP method
-	Headers        map[string]string `json:"headers"`          // Required headers
-	ExpiresAt      time.Time         `json:"expires_at"`       // URL expiration time
-	SignedHeaders  []string          `json:"signed_headers"`   // List of signed headers
-	CanonicalQuery string            `json:"canonical_query"`  // Canonical query string
+	URL            string            `json:"url"`             // The presigned URL
+	Method         string            `json:"method"`          // HTTP method
+	Headers        map[string]string `json:"headers"`         // Required headers
+	ExpiresAt      time.Time         `json:"expires_at"`      // URL expiration time
+	SignedHeaders  []string          `json:"signed_headers"`  // List of signed headers
+	CanonicalQuery string            `json:"canonical_query"` // Canonical query string
 }
 
 // ValidatePresignedURLWithIAM validates a presigned URL request using IAM policies
@@ -55,13 +55,13 @@ func (iam *IdentityAccessManagement) ValidatePresignedURLWithIAM(r *http.Request
 		// Fall back to standard validation
 		return s3err.ErrNone
 	}
-	
+
 	// Extract bucket and object from request
 	bucket, object := s3_constants.GetBucketAndObject(r)
-	
+
 	// Determine the S3 action from HTTP method and path
 	action := determineS3ActionFromRequest(r, bucket, object)
-	
+
 	// Check if the user has permission for this action
 	ctx := r.Context()
 	sessionToken := extractSessionTokenFromPresignedURL(r)
@@ -69,7 +69,7 @@ func (iam *IdentityAccessManagement) ValidatePresignedURLWithIAM(r *http.Request
 		// No session token in presigned URL - use standard auth
 		return s3err.ErrNone
 	}
-	
+
 	// Create IAM identity for authorization
 	// Use a proper ARN format for the principal
 	principalArn := fmt.Sprintf("arn:seaweed:sts::assumed-role/PresignedUser/%s", identity.Name)
@@ -79,7 +79,7 @@ func (iam *IdentityAccessManagement) ValidatePresignedURLWithIAM(r *http.Request
 		SessionToken: sessionToken,
 		Account:      identity.Account,
 	}
-	
+
 	// Authorize using IAM
 	errCode := iam.iamIntegration.AuthorizeAction(ctx, iamIdentity, action, bucket, object, r)
 	if errCode != s3err.ErrNone {
@@ -87,7 +87,7 @@ func (iam *IdentityAccessManagement) ValidatePresignedURLWithIAM(r *http.Request
 			iamIdentity.Principal, action, bucket, object)
 		return errCode
 	}
-	
+
 	glog.V(3).Infof("IAM authorization succeeded for presigned URL: principal=%s action=%s bucket=%s object=%s",
 		iamIdentity.Principal, action, bucket, object)
 	return s3err.ErrNone
@@ -98,7 +98,7 @@ func (pm *S3PresignedURLManager) GeneratePresignedURLWithIAM(ctx context.Context
 	if pm.s3iam == nil || !pm.s3iam.enabled {
 		return nil, fmt.Errorf("IAM integration not enabled")
 	}
-	
+
 	// Validate session token and get identity
 	// Use a proper ARN format for the principal
 	principalArn := fmt.Sprintf("arn:seaweed:sts::assumed-role/PresignedUser/presigned-session")
@@ -108,10 +108,10 @@ func (pm *S3PresignedURLManager) GeneratePresignedURLWithIAM(ctx context.Context
 		Name:         "presigned-user",
 		Account:      &AccountAdmin,
 	}
-	
+
 	// Determine S3 action from method
 	action := determineS3ActionFromMethodAndPath(req.Method, req.Bucket, req.ObjectKey)
-	
+
 	// Check IAM permissions before generating URL
 	authRequest := &http.Request{
 		Method: req.Method,
@@ -120,12 +120,12 @@ func (pm *S3PresignedURLManager) GeneratePresignedURLWithIAM(ctx context.Context
 	}
 	authRequest.Header.Set("Authorization", "Bearer "+req.SessionToken)
 	authRequest = authRequest.WithContext(ctx)
-	
+
 	errCode := pm.s3iam.AuthorizeAction(ctx, iamIdentity, action, req.Bucket, req.ObjectKey, authRequest)
 	if errCode != s3err.ErrNone {
 		return nil, fmt.Errorf("IAM authorization failed: user does not have permission for action %s on resource %s/%s", action, req.Bucket, req.ObjectKey)
 	}
-	
+
 	// Generate presigned URL with validated permissions
 	return pm.generatePresignedURL(req, baseURL, iamIdentity)
 }
@@ -134,49 +134,49 @@ func (pm *S3PresignedURLManager) GeneratePresignedURLWithIAM(ctx context.Context
 func (pm *S3PresignedURLManager) generatePresignedURL(req *PresignedURLRequest, baseURL string, identity *IAMIdentity) (*PresignedURLResponse, error) {
 	// Calculate expiration time
 	expiresAt := time.Now().Add(req.Expiration)
-	
+
 	// Build the base URL
 	urlPath := "/" + req.Bucket
 	if req.ObjectKey != "" {
 		urlPath += "/" + req.ObjectKey
 	}
-	
+
 	// Create query parameters for AWS signature v4
 	queryParams := make(map[string]string)
 	for k, v := range req.QueryParams {
 		queryParams[k] = v
 	}
-	
+
 	// Add AWS signature v4 parameters
 	queryParams["X-Amz-Algorithm"] = "AWS4-HMAC-SHA256"
 	queryParams["X-Amz-Credential"] = fmt.Sprintf("seaweedfs/%s/us-east-1/s3/aws4_request", expiresAt.Format("20060102"))
 	queryParams["X-Amz-Date"] = expiresAt.Format("20060102T150405Z")
 	queryParams["X-Amz-Expires"] = strconv.Itoa(int(req.Expiration.Seconds()))
 	queryParams["X-Amz-SignedHeaders"] = "host"
-	
+
 	// Add session token if available
 	if identity.SessionToken != "" {
 		queryParams["X-Amz-Security-Token"] = identity.SessionToken
 	}
-	
+
 	// Build canonical query string
 	canonicalQuery := buildCanonicalQuery(queryParams)
-	
+
 	// For now, we'll create a mock signature
 	// In production, this would use proper AWS signature v4 signing
 	mockSignature := generateMockSignature(req.Method, urlPath, canonicalQuery, identity.SessionToken)
 	queryParams["X-Amz-Signature"] = mockSignature
-	
+
 	// Build final URL
 	finalQuery := buildCanonicalQuery(queryParams)
 	fullURL := baseURL + urlPath + "?" + finalQuery
-	
+
 	// Prepare response
 	headers := make(map[string]string)
 	for k, v := range req.Headers {
 		headers[k] = v
 	}
-	
+
 	return &PresignedURLResponse{
 		URL:            fullURL,
 		Method:         req.Method,
@@ -228,12 +228,12 @@ func extractSessionTokenFromPresignedURL(r *http.Request) string {
 	if token := r.URL.Query().Get("X-Amz-Security-Token"); token != "" {
 		return token
 	}
-	
+
 	// Check for session token in other possible locations
 	if token := r.URL.Query().Get("SessionToken"); token != "" {
 		return token
 	}
-	
+
 	return ""
 }
 
@@ -243,7 +243,7 @@ func buildCanonicalQuery(params map[string]string) string {
 	for k := range params {
 		keys = append(keys, k)
 	}
-	
+
 	// Sort keys for canonical order
 	for i := 0; i < len(keys); i++ {
 		for j := i + 1; j < len(keys); j++ {
@@ -252,12 +252,12 @@ func buildCanonicalQuery(params map[string]string) string {
 			}
 		}
 	}
-	
+
 	var parts []string
 	for _, k := range keys {
 		parts = append(parts, fmt.Sprintf("%s=%s", url.QueryEscape(k), url.QueryEscape(params[k])))
 	}
-	
+
 	return strings.Join(parts, "&")
 }
 
@@ -273,34 +273,34 @@ func generateMockSignature(method, path, query, sessionToken string) string {
 // ValidatePresignedURLExpiration validates that a presigned URL hasn't expired
 func ValidatePresignedURLExpiration(r *http.Request) error {
 	query := r.URL.Query()
-	
+
 	// Get X-Amz-Date and X-Amz-Expires
 	dateStr := query.Get("X-Amz-Date")
 	expiresStr := query.Get("X-Amz-Expires")
-	
+
 	if dateStr == "" || expiresStr == "" {
 		return fmt.Errorf("missing required presigned URL parameters")
 	}
-	
+
 	// Parse date (always in UTC)
 	signedDate, err := time.Parse("20060102T150405Z", dateStr)
 	if err != nil {
 		return fmt.Errorf("invalid X-Amz-Date format: %v", err)
 	}
-	
+
 	// Parse expires
 	expires, err := strconv.Atoi(expiresStr)
 	if err != nil {
 		return fmt.Errorf("invalid X-Amz-Expires format: %v", err)
 	}
-	
+
 	// Check expiration - compare in UTC
 	expirationTime := signedDate.Add(time.Duration(expires) * time.Second)
 	now := time.Now().UTC()
 	if now.After(expirationTime) {
 		return fmt.Errorf("presigned URL has expired")
 	}
-	
+
 	return nil
 }
 
@@ -319,7 +319,7 @@ func DefaultPresignedURLSecurityPolicy() *PresignedURLSecurityPolicy {
 		MaxExpirationDuration: 7 * 24 * time.Hour, // 7 days max
 		AllowedMethods:        []string{"GET", "PUT", "POST", "HEAD"},
 		RequiredHeaders:       []string{},
-		IPWhitelist:           []string{}, // Empty means no IP restrictions
+		IPWhitelist:           []string{},             // Empty means no IP restrictions
 		MaxFileSize:           5 * 1024 * 1024 * 1024, // 5GB default
 	}
 }
@@ -330,7 +330,7 @@ func (policy *PresignedURLSecurityPolicy) ValidatePresignedURLRequest(req *Presi
 	if req.Expiration > policy.MaxExpirationDuration {
 		return fmt.Errorf("expiration duration %v exceeds maximum allowed %v", req.Expiration, policy.MaxExpirationDuration)
 	}
-	
+
 	// Check HTTP method
 	methodAllowed := false
 	for _, allowedMethod := range policy.AllowedMethods {
@@ -342,13 +342,13 @@ func (policy *PresignedURLSecurityPolicy) ValidatePresignedURLRequest(req *Presi
 	if !methodAllowed {
 		return fmt.Errorf("HTTP method %s is not allowed", req.Method)
 	}
-	
+
 	// Check required headers
 	for _, requiredHeader := range policy.RequiredHeaders {
 		if _, exists := req.Headers[requiredHeader]; !exists {
 			return fmt.Errorf("required header %s is missing", requiredHeader)
 		}
 	}
-	
+
 	return nil
 }

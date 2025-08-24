@@ -52,7 +52,7 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 		glog.V(3).Info("Session token is expired")
 		return nil, s3err.ErrAccessDenied
 	}
-	
+
 	// Basic token format validation - reject obviously invalid tokens
 	if sessionToken == "invalid-token" || len(sessionToken) < 10 {
 		glog.V(3).Info("Session token format is invalid")
@@ -114,8 +114,10 @@ func (s3iam *S3IAMIntegration) AuthorizeAction(ctx context.Context, identity *IA
 	// Check if action is allowed using our policy engine
 	allowed, err := s3iam.iamManager.IsActionAllowed(ctx, actionRequest)
 	if err != nil {
-		glog.Errorf("Policy evaluation failed: %v", err)
-		return s3err.ErrInternalError
+		// Log the error but treat authentication/authorization failures as access denied
+		// rather than internal errors to provide better user experience
+		glog.V(3).Infof("Policy evaluation failed: %v", err)
+		return s3err.ErrAccessDenied
 	}
 
 	if !allowed {

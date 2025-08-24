@@ -23,17 +23,17 @@ func TestPresignedURLIAMValidation(t *testing.T) {
 	// Set up IAM system
 	iamManager := setupTestIAMManagerForPresigned(t)
 	s3iam := NewS3IAMIntegration(iamManager)
-	
+
 	// Create IAM with integration
 	iam := &IdentityAccessManagement{
 		isAuthEnabled: true,
 	}
 	iam.SetIAMIntegration(s3iam)
-	
+
 	// Set up roles
 	ctx := context.Background()
 	setupTestRolesForPresigned(ctx, iamManager)
-	
+
 	// Get session token
 	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
 		RoleArn:          "arn:seaweed:iam::role/S3ReadOnlyRole",
@@ -41,9 +41,9 @@ func TestPresignedURLIAMValidation(t *testing.T) {
 		RoleSessionName:  "presigned-test-session",
 	})
 	require.NoError(t, err)
-	
+
 	sessionToken := response.Credentials.SessionToken
-	
+
 	tests := []struct {
 		name           string
 		method         string
@@ -60,7 +60,7 @@ func TestPresignedURLIAMValidation(t *testing.T) {
 		},
 		{
 			name:           "PUT object with read-only permissions (should fail)",
-			method:         "PUT", 
+			method:         "PUT",
 			path:           "/test-bucket/new-file.txt",
 			sessionToken:   sessionToken,
 			expectedResult: s3err.ErrAccessDenied,
@@ -85,13 +85,13 @@ func TestPresignedURLIAMValidation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create request with presigned URL parameters
 			req := createPresignedURLRequest(t, tt.method, tt.path, tt.sessionToken)
-			
+
 			// Create identity for testing
 			identity := &Identity{
-				Name: "test-user",
+				Name:    "test-user",
 				Account: &AccountAdmin,
 			}
-			
+
 			// Test validation
 			result := iam.ValidatePresignedURLWithIAM(req, identity)
 			assert.Equal(t, tt.expectedResult, result, "IAM validation result should match expected")
@@ -106,10 +106,10 @@ func TestPresignedURLGeneration(t *testing.T) {
 	s3iam := NewS3IAMIntegration(iamManager)
 	s3iam.enabled = true // Enable IAM integration
 	presignedManager := NewS3PresignedURLManager(s3iam)
-	
+
 	ctx := context.Background()
 	setupTestRolesForPresigned(ctx, iamManager)
-	
+
 	// Get session token
 	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
 		RoleArn:          "arn:seaweed:iam::role/S3AdminRole",
@@ -117,14 +117,14 @@ func TestPresignedURLGeneration(t *testing.T) {
 		RoleSessionName:  "presigned-gen-test-session",
 	})
 	require.NoError(t, err)
-	
+
 	sessionToken := response.Credentials.SessionToken
-	
+
 	tests := []struct {
-		name           string
-		request        *PresignedURLRequest
-		shouldSucceed  bool
-		expectedError  string
+		name          string
+		request       *PresignedURLRequest
+		shouldSucceed bool
+		expectedError string
 	}{
 		{
 			name: "Generate valid presigned GET URL",
@@ -176,7 +176,7 @@ func TestPresignedURLGeneration(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			response, err := presignedManager.GeneratePresignedURLWithIAM(ctx, tt.request, "http://localhost:8333")
-			
+
 			if tt.shouldSucceed {
 				assert.NoError(t, err, "Presigned URL generation should succeed")
 				if response != nil {
@@ -258,7 +258,7 @@ func TestPresignedURLExpiration(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			req := tt.setupRequest()
 			err := ValidatePresignedURLExpiration(req)
-			
+
 			if tt.expectedError == "" {
 				assert.NoError(t, err, "Validation should succeed")
 			} else {
@@ -277,11 +277,11 @@ func TestPresignedURLSecurityPolicy(t *testing.T) {
 		RequiredHeaders:       []string{"Content-Type"},
 		MaxFileSize:           1024 * 1024, // 1MB
 	}
-	
+
 	tests := []struct {
-		name           string
-		request        *PresignedURLRequest
-		expectedError  string
+		name          string
+		request       *PresignedURLRequest
+		expectedError string
 	}{
 		{
 			name: "Valid request",
@@ -332,7 +332,7 @@ func TestPresignedURLSecurityPolicy(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := policy.ValidatePresignedURLRequest(tt.request)
-			
+
 			if tt.expectedError == "" {
 				assert.NoError(t, err, "Policy validation should succeed")
 			} else {
@@ -416,27 +416,27 @@ func TestS3ActionDetermination(t *testing.T) {
 func setupTestIAMManagerForPresigned(t *testing.T) *integration.IAMManager {
 	// Create IAM manager
 	manager := integration.NewIAMManager()
-	
+
 	// Initialize with test configuration
 	config := &integration.IAMConfig{
 		STS: &sts.STSConfig{
 			TokenDuration:    time.Hour,
 			MaxSessionLength: time.Hour * 12,
-			Issuer:          "test-sts",
-			SigningKey:      []byte("test-signing-key-32-characters-long"),
+			Issuer:           "test-sts",
+			SigningKey:       []byte("test-signing-key-32-characters-long"),
 		},
 		Policy: &policy.PolicyEngineConfig{
 			DefaultEffect: "Deny",
 			StoreType:     "memory",
 		},
 	}
-	
+
 	err := manager.Initialize(config)
 	require.NoError(t, err)
-	
+
 	// Set up test identity providers
 	setupTestProvidersForPresigned(t, manager)
-	
+
 	return manager
 }
 
@@ -450,7 +450,7 @@ func setupTestProvidersForPresigned(t *testing.T, manager *integration.IAMManage
 	err := oidcProvider.Initialize(oidcConfig)
 	require.NoError(t, err)
 	oidcProvider.SetupDefaultTestData()
-	
+
 	// Set up LDAP provider
 	ldapProvider := ldap.NewMockLDAPProvider("test-ldap")
 	ldapConfig := &ldap.LDAPConfig{
@@ -460,7 +460,7 @@ func setupTestProvidersForPresigned(t *testing.T, manager *integration.IAMManage
 	err = ldapProvider.Initialize(ldapConfig)
 	require.NoError(t, err)
 	ldapProvider.SetupDefaultTestData()
-	
+
 	// Register providers
 	err = manager.RegisterIdentityProvider(oidcProvider)
 	require.NoError(t, err)
@@ -484,9 +484,9 @@ func setupTestRolesForPresigned(ctx context.Context, manager *integration.IAMMan
 			},
 		},
 	}
-	
+
 	manager.CreatePolicy(ctx, "S3ReadOnlyPolicy", readOnlyPolicy)
-	
+
 	// Create read-only role
 	manager.CreateRole(ctx, "S3ReadOnlyRole", &integration.RoleDefinition{
 		RoleName: "S3ReadOnlyRole",
@@ -504,7 +504,7 @@ func setupTestRolesForPresigned(ctx context.Context, manager *integration.IAMMan
 		},
 		AttachedPolicies: []string{"S3ReadOnlyPolicy"},
 	})
-	
+
 	// Create admin policy
 	adminPolicy := &policy.PolicyDocument{
 		Version: "2012-10-17",
@@ -520,9 +520,9 @@ func setupTestRolesForPresigned(ctx context.Context, manager *integration.IAMMan
 			},
 		},
 	}
-	
+
 	manager.CreatePolicy(ctx, "S3AdminPolicy", adminPolicy)
-	
+
 	// Create admin role
 	manager.CreateRole(ctx, "S3AdminRole", &integration.RoleDefinition{
 		RoleName: "S3AdminRole",
@@ -540,7 +540,7 @@ func setupTestRolesForPresigned(ctx context.Context, manager *integration.IAMMan
 		},
 		AttachedPolicies: []string{"S3AdminPolicy"},
 	})
-	
+
 	// Create a role for presigned URL users with admin permissions for testing
 	manager.CreateRole(ctx, "PresignedUser", &integration.RoleDefinition{
 		RoleName: "PresignedUser",
@@ -562,7 +562,7 @@ func setupTestRolesForPresigned(ctx context.Context, manager *integration.IAMMan
 
 func createPresignedURLRequest(t *testing.T, method, path, sessionToken string) *http.Request {
 	req := httptest.NewRequest(method, path, nil)
-	
+
 	// Add presigned URL parameters if session token is provided
 	if sessionToken != "" {
 		q := req.URL.Query()
@@ -572,6 +572,6 @@ func createPresignedURLRequest(t *testing.T, method, path, sessionToken string) 
 		q.Set("X-Amz-Expires", "3600")
 		req.URL.RawQuery = q.Encode()
 	}
-	
+
 	return req
 }

@@ -12,7 +12,7 @@ import (
 // TestBucketPolicyValidationBasics tests the core validation logic
 func TestBucketPolicyValidationBasics(t *testing.T) {
 	s3Server := &S3ApiServer{}
-	
+
 	tests := []struct {
 		name          string
 		policy        *policy.PolicyDocument
@@ -120,7 +120,7 @@ func TestBucketPolicyValidationBasics(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := s3Server.validateBucketPolicy(tt.policy, tt.bucket)
-			
+
 			if tt.expectedValid {
 				assert.NoError(t, err, "Policy should be valid")
 			} else {
@@ -136,7 +136,7 @@ func TestBucketPolicyValidationBasics(t *testing.T) {
 // TestBucketResourceValidation tests the resource ARN validation
 func TestBucketResourceValidation(t *testing.T) {
 	s3Server := &S3ApiServer{}
-	
+
 	tests := []struct {
 		name     string
 		resource string
@@ -207,11 +207,11 @@ func TestBucketPolicyJSONSerialization(t *testing.T) {
 			},
 		},
 	}
-	
+
 	// Test that policy can be marshaled and unmarshaled correctly
 	jsonData := marshalPolicy(t, policy)
 	assert.NotEmpty(t, jsonData, "JSON data should not be empty")
-	
+
 	// Verify the JSON contains expected elements
 	jsonStr := string(jsonData)
 	assert.Contains(t, jsonStr, "2012-10-17", "JSON should contain version")
