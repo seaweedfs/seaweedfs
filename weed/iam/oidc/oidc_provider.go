@@ -2,8 +2,17 @@ package oidc
 
 import (
 	"context"
+	"crypto/rsa"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"math/big"
+	"net/http"
+	"strings"
+	"time"
 
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/iam/providers"
 )
 
@@ -12,7 +21,8 @@ type OIDCProvider struct {
 	name        string
 	config      *OIDCConfig
 	initialized bool
-	jwksCache   interface{} // Will store JWKS keys
+	jwksCache   *JWKS
+	httpClient  *http.Client
 }
 
 // OIDCConfig holds OIDC provider configuration
@@ -42,10 +52,29 @@ type OIDCConfig struct {
 	ClaimsMapping map[string]string `json:"claimsMapping,omitempty"`
 }
 
+// JWKS represents JSON Web Key Set
+type JWKS struct {
+	Keys []JWK `json:"keys"`
+}
+
+// JWK represents a JSON Web Key
+type JWK struct {
+	Kty string   `json:"kty"` // Key Type (RSA, EC, etc.)
+	Kid string   `json:"kid"` // Key ID
+	Use string   `json:"use"` // Usage (sig for signature)
+	Alg string   `json:"alg"` // Algorithm (RS256, etc.)
+	N   string   `json:"n"`   // RSA public key modulus
+	E   string   `json:"e"`   // RSA public key exponent
+	X   string   `json:"x"`   // EC public key x coordinate
+	Y   string   `json:"y"`   // EC public key y coordinate
+	Crv string   `json:"crv"` // EC curve
+}
+
 // NewOIDCProvider creates a new OIDC provider
 func NewOIDCProvider(name string) *OIDCProvider {
 	return &OIDCProvider{
-		name: name,
+		name:       name,
+		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
@@ -152,13 +181,73 @@ func (p *OIDCProvider) ValidateToken(ctx context.Context, token string) (*provid
 		return nil, fmt.Errorf("token cannot be empty")
 	}
 
-	// TODO: Implement actual JWT token validation
-	// 1. Parse JWT token
-	// 2. Verify signature using JWKS from provider
-	// 3. Validate claims (iss, aud, exp, etc.)
-	// 4. Extract user claims
+	// Parse token without verification first to get header info
+	parsedToken, _, err := new(jwt.Parser).ParseUnverified(token, jwt.MapClaims{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse JWT token: %v", err)
+	}
 
-	return nil, fmt.Errorf("JWT validation not implemented yet - requires JWKS integration")
+	// Get key ID from header
+	kid, ok := parsedToken.Header["kid"].(string)
+	if !ok {
+		return nil, fmt.Errorf("missing key ID in JWT header")
+	}
+
+	// Get signing key from JWKS
+	publicKey, err := p.getPublicKey(ctx, kid)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get public key: %v", err)
+	}
+
+	// Parse and validate token with proper signature verification
+	claims := jwt.MapClaims{}
+	validatedToken, err := jwt.ParseWithClaims(token, claims, func(token *jwt.Token) (interface{}, error) {
+		// Verify signing method
+		switch token.Method.(type) {
+		case *jwt.SigningMethodRSA:
+			return publicKey, nil
+		default:
+			return nil, fmt.Errorf("unsupported signing method: %v", token.Header["alg"])
+		}
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to validate JWT token: %v", err)
+	}
+
+	if !validatedToken.Valid {
+		return nil, fmt.Errorf("JWT token is invalid")
+	}
+
+	// Validate required claims
+	issuer, ok := claims["iss"].(string)
+	if !ok || issuer != p.config.Issuer {
+		return nil, fmt.Errorf("invalid or missing issuer claim")
+	}
+
+	audience, ok := claims["aud"].(string)
+	if !ok || audience != p.config.ClientID {
+		return nil, fmt.Errorf("invalid or missing audience claim")
+	}
+
+	subject, ok := claims["sub"].(string)
+	if !ok {
+		return nil, fmt.Errorf("missing subject claim")
+	}
+
+	// Convert to our TokenClaims structure
+	tokenClaims := &providers.TokenClaims{
+		Subject: subject,
+		Issuer:  issuer,
+		Claims:  make(map[string]interface{}),
+	}
+
+	// Copy all claims
+	for key, value := range claims {
+		tokenClaims.Claims[key] = value
+	}
+
+	return tokenClaims, nil
 }
 
 // mapClaimsToRoles maps token claims to SeaweedFS roles
@@ -185,4 +274,94 @@ func (p *OIDCProvider) mapClaimsToRoles(claims *providers.TokenClaims) []string 
 	}
 
 	return roles
+}
+
+// getPublicKey retrieves the public key for the given key ID from JWKS
+func (p *OIDCProvider) getPublicKey(ctx context.Context, kid string) (interface{}, error) {
+	// Fetch JWKS if not cached or refresh if needed
+	if p.jwksCache == nil {
+		if err := p.fetchJWKS(ctx); err != nil {
+			return nil, fmt.Errorf("failed to fetch JWKS: %v", err)
+		}
+	}
+
+	// Find the key with matching kid
+	for _, key := range p.jwksCache.Keys {
+		if key.Kid == kid {
+			return p.parseJWK(&key)
+		}
+	}
+
+	return nil, fmt.Errorf("key with ID %s not found in JWKS", kid)
+}
+
+// fetchJWKS fetches the JWKS from the provider
+func (p *OIDCProvider) fetchJWKS(ctx context.Context) error {
+	jwksURL := p.config.JWKSUri
+	if jwksURL == "" {
+		jwksURL = strings.TrimSuffix(p.config.Issuer, "/") + "/.well-known/jwks.json"
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", jwksURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create JWKS request: %v", err)
+	}
+
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to fetch JWKS: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("JWKS endpoint returned status: %d", resp.StatusCode)
+	}
+
+	var jwks JWKS
+	if err := json.NewDecoder(resp.Body).Decode(&jwks); err != nil {
+		return fmt.Errorf("failed to decode JWKS response: %v", err)
+	}
+
+	p.jwksCache = &jwks
+	glog.V(3).Infof("Fetched JWKS with %d keys from %s", len(jwks.Keys), jwksURL)
+	return nil
+}
+
+// parseJWK converts a JWK to a public key
+func (p *OIDCProvider) parseJWK(key *JWK) (interface{}, error) {
+	switch key.Kty {
+	case "RSA":
+		return p.parseRSAKey(key)
+	default:
+		return nil, fmt.Errorf("unsupported key type: %s", key.Kty)
+	}
+}
+
+// parseRSAKey parses an RSA key from JWK
+func (p *OIDCProvider) parseRSAKey(key *JWK) (*rsa.PublicKey, error) {
+	// Decode the modulus (n)
+	nBytes, err := base64.RawURLEncoding.DecodeString(key.N)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode RSA modulus: %v", err)
+	}
+
+	// Decode the exponent (e)
+	eBytes, err := base64.RawURLEncoding.DecodeString(key.E)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode RSA exponent: %v", err)
+	}
+
+	// Convert exponent bytes to int
+	var exponent int
+	for _, b := range eBytes {
+		exponent = exponent*256 + int(b)
+	}
+
+	// Create RSA public key
+	pubKey := &rsa.PublicKey{
+		E: exponent,
+	}
+	pubKey.N = new(big.Int).SetBytes(nBytes)
+
+	return pubKey, nil
 }
