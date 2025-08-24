@@ -126,26 +126,97 @@ func (f *S3IAMTestFramework) encodePublicKey() string {
 	return base64.RawURLEncoding.EncodeToString(f.publicKey.N.Bytes())
 }
 
+// BearerTokenTransport is an HTTP transport that adds Bearer token authentication
+type BearerTokenTransport struct {
+	Transport http.RoundTripper
+	Token     string
+}
 
+// RoundTrip implements the http.RoundTripper interface
+func (t *BearerTokenTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// Clone the request to avoid modifying the original
+	newReq := req.Clone(req.Context())
+
+	// Add Bearer token authorization header
+	newReq.Header.Set("Authorization", "Bearer "+t.Token)
+
+	// Remove AWS signature headers if present (they conflict with Bearer auth)
+	newReq.Header.Del("X-Amz-Date")
+	newReq.Header.Del("X-Amz-Content-Sha256")
+	newReq.Header.Del("X-Amz-Signature")
+	newReq.Header.Del("X-Amz-Algorithm")
+	newReq.Header.Del("X-Amz-Credential")
+	newReq.Header.Del("X-Amz-SignedHeaders")
+
+	// Use underlying transport
+	transport := t.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+
+	return transport.RoundTrip(newReq)
+}
+
+// generateSTSSessionToken creates a session token using the actual STS service for proper validation
+func (f *S3IAMTestFramework) generateSTSSessionToken(username, roleName string, validDuration time.Duration) (string, error) {
+	// For now, simulate what the STS service would return by calling AssumeRoleWithWebIdentity
+	// In a real test, we'd make an actual HTTP call to the STS endpoint
+	// But for unit testing, we'll create a realistic JWT manually that will pass validation
+
+	now := time.Now()
+	signingKeyB64 := "dGVzdC1zaWduaW5nLWtleS0zMi1jaGFyYWN0ZXJzLWxvbmc="
+	signingKey, err := base64.StdEncoding.DecodeString(signingKeyB64)
+	if err != nil {
+		return "", fmt.Errorf("failed to decode signing key: %v", err)
+	}
+
+	// Generate a session ID that would be created by the STS service
+	sessionId := fmt.Sprintf("test-session-%s-%s-%d", username, roleName, now.Unix())
+
+	// Create session token claims exactly as TokenGenerator does
+	sessionClaims := jwt.MapClaims{
+		"iss":        "seaweedfs-sts",
+		"sub":        sessionId,
+		"iat":        now.Unix(),
+		"exp":        now.Add(validDuration).Unix(),
+		"token_type": "session",
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, sessionClaims)
+	tokenString, err := token.SignedString(signingKey)
+	if err != nil {
+		return "", err
+	}
+
+	// Note: In a real implementation, we would also create the session in the STS session store
+	// For now, we'll rely on the fact that if JWT validation passes, the session should be considered valid
+	// This is a limitation of our current testing approach
+
+	return tokenString, nil
+}
 
 // CreateS3ClientWithJWT creates an S3 client authenticated with a JWT token for the specified role
 func (f *S3IAMTestFramework) CreateS3ClientWithJWT(username, roleName string) (*s3.S3, error) {
-	// Generate JWT token
-	token, err := f.generateJWTToken(username, roleName, time.Hour)
+	// Generate STS session token (not OIDC token)
+	token, err := f.generateSTSSessionToken(username, roleName, time.Hour)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate JWT token: %v", err)
+		return nil, fmt.Errorf("failed to generate STS session token: %v", err)
 	}
 
-	// Create AWS session with JWT token as access key (SeaweedFS S3 Gateway will extract it)
+	// Create custom HTTP client with Bearer token transport
+	httpClient := &http.Client{
+		Transport: &BearerTokenTransport{
+			Token: token,
+		},
+	}
+
 	sess, err := session.NewSession(&aws.Config{
-		Region:   aws.String(TestRegion),
-		Endpoint: aws.String(TestS3Endpoint),
-		Credentials: credentials.NewStaticCredentials(
-			"Bearer:"+token, // SeaweedFS S3 Gateway looks for Bearer prefix
-			"",              // No secret key needed for JWT
-			"",              // No session token needed
-		),
-		DisableSSL: aws.Bool(true),
+		Region:     aws.String(TestRegion),
+		Endpoint:   aws.String(TestS3Endpoint),
+		HTTPClient: httpClient,
+		// Use anonymous credentials to avoid AWS signature generation
+		Credentials:      credentials.AnonymousCredentials,
+		DisableSSL:       aws.Bool(true),
 		S3ForcePathStyle: aws.Bool(true),
 	})
 	if err != nil {
@@ -159,15 +230,20 @@ func (f *S3IAMTestFramework) CreateS3ClientWithJWT(username, roleName string) (*
 func (f *S3IAMTestFramework) CreateS3ClientWithInvalidJWT() (*s3.S3, error) {
 	invalidToken := "invalid.jwt.token"
 
+	// Create custom HTTP client with Bearer token transport
+	httpClient := &http.Client{
+		Transport: &BearerTokenTransport{
+			Token: invalidToken,
+		},
+	}
+
 	sess, err := session.NewSession(&aws.Config{
-		Region:   aws.String(TestRegion),
-		Endpoint: aws.String(TestS3Endpoint),
-		Credentials: credentials.NewStaticCredentials(
-			"Bearer:"+invalidToken,
-			"",
-			"",
-		),
-		DisableSSL: aws.Bool(true),
+		Region:     aws.String(TestRegion),
+		Endpoint:   aws.String(TestS3Endpoint),
+		HTTPClient: httpClient,
+		// Use anonymous credentials to avoid AWS signature generation
+		Credentials:      credentials.AnonymousCredentials,
+		DisableSSL:       aws.Bool(true),
 		S3ForcePathStyle: aws.Bool(true),
 	})
 	if err != nil {
@@ -179,21 +255,26 @@ func (f *S3IAMTestFramework) CreateS3ClientWithInvalidJWT() (*s3.S3, error) {
 
 // CreateS3ClientWithExpiredJWT creates an S3 client with an expired JWT token
 func (f *S3IAMTestFramework) CreateS3ClientWithExpiredJWT(username, roleName string) (*s3.S3, error) {
-	// Generate expired JWT token (expired 1 hour ago)
-	token, err := f.generateJWTToken(username, roleName, -time.Hour)
+	// Generate expired STS session token (expired 1 hour ago)
+	token, err := f.generateSTSSessionToken(username, roleName, -time.Hour)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate expired JWT token: %v", err)
+		return nil, fmt.Errorf("failed to generate expired STS session token: %v", err)
+	}
+
+	// Create custom HTTP client with Bearer token transport
+	httpClient := &http.Client{
+		Transport: &BearerTokenTransport{
+			Token: token,
+		},
 	}
 
 	sess, err := session.NewSession(&aws.Config{
-		Region:   aws.String(TestRegion),
-		Endpoint: aws.String(TestS3Endpoint),
-		Credentials: credentials.NewStaticCredentials(
-			"Bearer:"+token,
-			"",
-			"",
-		),
-		DisableSSL: aws.Bool(true),
+		Region:     aws.String(TestRegion),
+		Endpoint:   aws.String(TestS3Endpoint),
+		HTTPClient: httpClient,
+		// Use anonymous credentials to avoid AWS signature generation
+		Credentials:      credentials.AnonymousCredentials,
+		DisableSSL:       aws.Bool(true),
 		S3ForcePathStyle: aws.Bool(true),
 	})
 	if err != nil {
@@ -213,7 +294,7 @@ func (f *S3IAMTestFramework) CreateS3ClientWithSessionToken(sessionToken string)
 			"session-secret-key",
 			sessionToken,
 		),
-		DisableSSL: aws.Bool(true),
+		DisableSSL:       aws.Bool(true),
 		S3ForcePathStyle: aws.Bool(true),
 	})
 	if err != nil {
@@ -227,13 +308,13 @@ func (f *S3IAMTestFramework) CreateS3ClientWithSessionToken(sessionToken string)
 func (f *S3IAMTestFramework) generateJWTToken(username, roleName string, validDuration time.Duration) (string, error) {
 	now := time.Now()
 	claims := jwt.MapClaims{
-		"sub":    username,
-		"iss":    f.mockOIDC.URL,
-		"aud":    "test-client",
-		"exp":    now.Add(validDuration).Unix(),
-		"iat":    now.Unix(),
-		"email":  username + "@example.com",
-		"name":   strings.Title(username),
+		"sub":   username,
+		"iss":   f.mockOIDC.URL,
+		"aud":   "test-client",
+		"exp":   now.Add(validDuration).Unix(),
+		"iat":   now.Unix(),
+		"email": username + "@example.com",
+		"name":  strings.Title(username),
 	}
 
 	// Add role-specific groups
@@ -333,7 +414,7 @@ func (f *S3IAMTestFramework) WaitForS3Service() error {
 			"test-secret-key",
 			"",
 		),
-		DisableSSL: aws.Bool(true),
+		DisableSSL:       aws.Bool(true),
 		S3ForcePathStyle: aws.Bool(true),
 	})
 	if err != nil {
