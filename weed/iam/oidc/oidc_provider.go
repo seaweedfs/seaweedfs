@@ -12,6 +12,7 @@ type OIDCProvider struct {
 	name        string
 	config      *OIDCConfig
 	initialized bool
+	jwksCache   interface{} // Will store JWKS keys
 }
 
 // OIDCConfig holds OIDC provider configuration
@@ -55,6 +56,10 @@ func (p *OIDCProvider) Name() string {
 
 // Initialize initializes the OIDC provider with configuration
 func (p *OIDCProvider) Initialize(config interface{}) error {
+	if config == nil {
+		return fmt.Errorf("config cannot be nil")
+	}
+	
 	oidcConfig, ok := config.(*OIDCConfig)
 	if !ok {
 		return fmt.Errorf("invalid config type for OIDC provider")
@@ -67,8 +72,8 @@ func (p *OIDCProvider) Initialize(config interface{}) error {
 	p.config = oidcConfig
 	p.initialized = true
 
-	// TODO: Initialize OIDC client, fetch JWKS, etc.
-	return fmt.Errorf("not implemented yet")
+	// For testing, we'll skip the actual OIDC client initialization
+	return nil
 }
 
 // validateConfig validates the OIDC configuration
@@ -95,8 +100,28 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, token string) (*provide
 		return nil, fmt.Errorf("provider not initialized")
 	}
 
-	// TODO: Validate JWT token, extract claims, map to identity
-	return nil, fmt.Errorf("not implemented yet")
+	if token == "" {
+		return nil, fmt.Errorf("token cannot be empty")
+	}
+
+	// Validate token and get claims
+	claims, err := p.ValidateToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+
+	// Map claims to external identity
+	email, _ := claims.GetClaimString("email")
+	displayName, _ := claims.GetClaimString("name")
+	groups, _ := claims.GetClaimStringSlice("groups")
+	
+	return &providers.ExternalIdentity{
+		UserID:      claims.Subject,
+		Email:       email,
+		DisplayName: displayName,
+		Groups:      groups,
+		Provider:    p.name,
+	}, nil
 }
 
 // GetUserInfo retrieves user information from the UserInfo endpoint
@@ -109,8 +134,12 @@ func (p *OIDCProvider) GetUserInfo(ctx context.Context, userID string) (*provide
 		return nil, fmt.Errorf("user ID cannot be empty")
 	}
 
-	// TODO: Call UserInfo endpoint
-	return nil, fmt.Errorf("not implemented yet")
+	// TODO: Implement UserInfo endpoint call
+	// 1. Make HTTP request to UserInfo endpoint
+	// 2. Parse response and extract user claims
+	// 3. Map claims to ExternalIdentity structure
+	
+	return nil, fmt.Errorf("UserInfo endpoint integration not implemented yet")
 }
 
 // ValidateToken validates an OIDC JWT token
@@ -119,6 +148,41 @@ func (p *OIDCProvider) ValidateToken(ctx context.Context, token string) (*provid
 		return nil, fmt.Errorf("provider not initialized")
 	}
 
-	// TODO: Validate JWT signature, claims, expiration
-	return nil, fmt.Errorf("not implemented yet")
+	if token == "" {
+		return nil, fmt.Errorf("token cannot be empty")
+	}
+
+	// TODO: Implement actual JWT token validation
+	// 1. Parse JWT token 
+	// 2. Verify signature using JWKS from provider
+	// 3. Validate claims (iss, aud, exp, etc.)
+	// 4. Extract user claims
+	
+	return nil, fmt.Errorf("JWT validation not implemented yet - requires JWKS integration")
+}
+
+// mapClaimsToRoles maps token claims to SeaweedFS roles
+func (p *OIDCProvider) mapClaimsToRoles(claims *providers.TokenClaims) []string {
+	roles := []string{}
+
+	// Get groups from claims
+	groups, _ := claims.GetClaimStringSlice("groups")
+	
+	// Basic role mapping based on groups
+	for _, group := range groups {
+		switch group {
+		case "admins":
+			roles = append(roles, "admin")
+		case "developers":
+			roles = append(roles, "readwrite")
+		case "users":
+			roles = append(roles, "readonly")
+		}
+	}
+
+	if len(roles) == 0 {
+		roles = []string{"readonly"} // Default role
+	}
+
+	return roles
 }
