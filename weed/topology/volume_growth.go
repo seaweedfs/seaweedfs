@@ -184,6 +184,26 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 	//find main datacenter and other data centers
 	rp := option.ReplicaPlacement
 
+	// Select appropriate functions based on useReservations flag
+	var availableSpaceFunc func(Node, *VolumeGrowOption) int64
+	var reserveOneVolumeFunc func(Node, int64, *VolumeGrowOption) (*DataNode, error)
+
+	if useReservations {
+		availableSpaceFunc = func(node Node, option *VolumeGrowOption) int64 {
+			return node.AvailableSpaceForReservation(option)
+		}
+		reserveOneVolumeFunc = func(node Node, r int64, option *VolumeGrowOption) (*DataNode, error) {
+			return node.ReserveOneVolumeForReservation(r, option)
+		}
+	} else {
+		availableSpaceFunc = func(node Node, option *VolumeGrowOption) int64 {
+			return node.AvailableSpaceFor(option)
+		}
+		reserveOneVolumeFunc = func(node Node, r int64, option *VolumeGrowOption) (*DataNode, error) {
+			return node.ReserveOneVolume(r, option)
+		}
+	}
+
 	// Ensure cleanup of partial reservations on error
 	defer func() {
 		if err != nil && reservation != nil {
@@ -197,14 +217,14 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 		if len(node.Children()) < rp.DiffRackCount+1 {
 			return fmt.Errorf("Only has %d racks, not enough for %d.", len(node.Children()), rp.DiffRackCount+1)
 		}
-		if node.AvailableSpaceForReservation(option) < int64(rp.DiffRackCount+rp.SameRackCount+1) {
-			return fmt.Errorf("Free:%d < Expected:%d", node.AvailableSpaceForReservation(option), rp.DiffRackCount+rp.SameRackCount+1)
+		if availableSpaceFunc(node, option) < int64(rp.DiffRackCount+rp.SameRackCount+1) {
+			return fmt.Errorf("Free:%d < Expected:%d", availableSpaceFunc(node, option), rp.DiffRackCount+rp.SameRackCount+1)
 		}
 		possibleRacksCount := 0
 		for _, rack := range node.Children() {
 			possibleDataNodesCount := 0
 			for _, n := range rack.Children() {
-				if n.AvailableSpaceForReservation(option) >= 1 {
+				if availableSpaceFunc(n, option) >= 1 {
 					possibleDataNodesCount++
 				}
 			}
@@ -226,8 +246,8 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 		if option.Rack != "" && node.IsRack() && node.Id() != NodeId(option.Rack) {
 			return fmt.Errorf("Not matching preferred rack:%s", option.Rack)
 		}
-		if node.AvailableSpaceForReservation(option) < int64(rp.SameRackCount+1) {
-			return fmt.Errorf("Free:%d < Expected:%d", node.AvailableSpaceForReservation(option), rp.SameRackCount+1)
+		if availableSpaceFunc(node, option) < int64(rp.SameRackCount+1) {
+			return fmt.Errorf("Free:%d < Expected:%d", availableSpaceFunc(node, option), rp.SameRackCount+1)
 		}
 		if len(node.Children()) < rp.SameRackCount+1 {
 			// a bit faster way to test free racks
@@ -235,7 +255,7 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 		}
 		possibleDataNodesCount := 0
 		for _, n := range node.Children() {
-			if n.AvailableSpaceForReservation(option) >= 1 {
+			if availableSpaceFunc(n, option) >= 1 {
 				possibleDataNodesCount++
 			}
 		}
@@ -253,8 +273,8 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 		if option.DataNode != "" && node.IsDataNode() && node.Id() != NodeId(option.DataNode) {
 			return fmt.Errorf("Not matching preferred data node:%s", option.DataNode)
 		}
-		if node.AvailableSpaceForReservation(option) < 1 {
-			return fmt.Errorf("Free:%d < Expected:%d", node.AvailableSpaceForReservation(option), 1)
+		if availableSpaceFunc(node, option) < 1 {
+			return fmt.Errorf("Free:%d < Expected:%d", availableSpaceFunc(node, option), 1)
 		}
 		return nil
 	})
@@ -267,16 +287,16 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 		servers = append(servers, server.(*DataNode))
 	}
 	for _, rack := range otherRacks {
-		r := rand.Int64N(rack.AvailableSpaceForReservation(option))
-		if server, e := rack.ReserveOneVolumeForReservation(r, option); e == nil {
+		r := rand.Int64N(availableSpaceFunc(rack, option))
+		if server, e := reserveOneVolumeFunc(rack, r, option); e == nil {
 			servers = append(servers, server)
 		} else {
 			return servers, nil, e
 		}
 	}
 	for _, datacenter := range otherDataCenters {
-		r := rand.Int64N(datacenter.AvailableSpaceForReservation(option))
-		if server, e := datacenter.ReserveOneVolumeForReservation(r, option); e == nil {
+		r := rand.Int64N(availableSpaceFunc(datacenter, option))
+		if server, e := reserveOneVolumeFunc(datacenter, r, option); e == nil {
 			servers = append(servers, server)
 		} else {
 			return servers, nil, e
