@@ -44,16 +44,7 @@ func (cr *CapacityReservations) addReservation(diskType types.DiskType, count in
 	cr.Lock()
 	defer cr.Unlock()
 
- 	now := time.Now()
- 	reservationId := fmt.Sprintf("%s-%d-%d-%d", diskType, count, now.UnixNano(), rand.Int64())
- 	cr.reservations[reservationId] = &CapacityReservation{
- 		reservationId: reservationId,
- 		diskType:      diskType,
- 		count:         count,
- 		createdAt:     now,
- 	}
-	cr.reservedCounts[diskType] += count
-	return reservationId
+	return cr.doAddReservation(diskType, count)
 }
 
 func (cr *CapacityReservations) removeReservation(reservationId string) bool {
@@ -84,6 +75,20 @@ func (cr *CapacityReservations) decrementCount(diskType types.DiskType, count in
 	}
 }
 
+// doAddReservation is a helper to add a reservation, assuming the lock is already held
+func (cr *CapacityReservations) doAddReservation(diskType types.DiskType, count int64) string {
+	now := time.Now()
+	reservationId := fmt.Sprintf("%s-%d-%d-%d", diskType, count, now.UnixNano(), rand.Int64())
+	cr.reservations[reservationId] = &CapacityReservation{
+		reservationId: reservationId,
+		diskType:      diskType,
+		count:         count,
+		createdAt:     now,
+	}
+	cr.reservedCounts[diskType] += count
+	return reservationId
+}
+
 // tryReserveAtomic atomically checks available space and reserves if possible
 func (cr *CapacityReservations) tryReserveAtomic(diskType types.DiskType, count int64, availableSpaceFunc func() int64) (reservationId string, success bool) {
 	cr.Lock()
@@ -95,16 +100,7 @@ func (cr *CapacityReservations) tryReserveAtomic(diskType types.DiskType, count 
 
 	if availableSpace >= count {
 		// Create and add reservation atomically
- 		now := time.Now()
- 		reservationId = fmt.Sprintf("%s-%d-%d-%d", diskType, count, now.UnixNano(), rand.Int64())
- 		cr.reservations[reservationId] = &CapacityReservation{
- 			reservationId: reservationId,
- 			diskType:      diskType,
- 			count:         count,
- 			createdAt:     now,
- 		}
-		cr.reservedCounts[diskType] += count
-		return reservationId, true
+		return cr.doAddReservation(diskType, count), true
 	}
 
 	return "", false
