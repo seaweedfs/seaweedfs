@@ -34,6 +34,36 @@ func (m *MockOIDCProvider) AddTestUser(userID string, identity *providers.Extern
 	m.TestUsers[userID] = identity
 }
 
+// Authenticate overrides the parent Authenticate method to use mock data
+func (m *MockOIDCProvider) Authenticate(ctx context.Context, token string) (*providers.ExternalIdentity, error) {
+	if !m.initialized {
+		return nil, fmt.Errorf("provider not initialized")
+	}
+
+	if token == "" {
+		return nil, fmt.Errorf("token cannot be empty")
+	}
+
+	// Validate token using mock validation
+	claims, err := m.ValidateToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+
+	// Map claims to external identity
+	email, _ := claims.GetClaimString("email")
+	displayName, _ := claims.GetClaimString("name")
+	groups, _ := claims.GetClaimStringSlice("groups")
+
+	return &providers.ExternalIdentity{
+		UserID:      claims.Subject,
+		Email:       email,
+		DisplayName: displayName,
+		Groups:      groups,
+		Provider:    m.name,
+	}, nil
+}
+
 // ValidateToken validates tokens using test data
 func (m *MockOIDCProvider) ValidateToken(ctx context.Context, token string) (*providers.TokenClaims, error) {
 	if !m.initialized {
@@ -102,8 +132,8 @@ func (m *MockOIDCProvider) GetUserInfo(ctx context.Context, userID string) (*pro
 
 // SetupDefaultTestData configures common test data
 func (m *MockOIDCProvider) SetupDefaultTestData() {
-	// Add default test tokens
-	m.AddTestToken("valid_token", &providers.TokenClaims{
+	// Create default token claims
+	defaultClaims := &providers.TokenClaims{
 		Subject:   "test-user-123",
 		Issuer:    "https://test-issuer.com",
 		Audience:  "test-client-id",
@@ -114,7 +144,12 @@ func (m *MockOIDCProvider) SetupDefaultTestData() {
 			"name":   "Test User",
 			"groups": []string{"developers"},
 		},
-	})
+	}
+	
+	// Add multiple token variants for compatibility
+	m.AddTestToken("valid_token", defaultClaims)
+	m.AddTestToken("valid-oidc-token", defaultClaims)  // For integration tests
+	m.AddTestToken("valid_test_token", defaultClaims) // For STS tests
 
 	// Add default test users
 	m.AddTestUser("test-user-123", &providers.ExternalIdentity{
