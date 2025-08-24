@@ -1,0 +1,84 @@
+{
+  "sts": {
+    "tokenDuration": 3600000000000,
+    "maxSessionLength": 43200000000000, 
+    "issuer": "seaweedfs-sts",
+    "signingKey": "dGVzdC1zaWduaW5nLWtleS0zMi1jaGFyYWN0ZXJzLWxvbmc="
+  },
+  "policy": {
+    "defaultEffect": "Deny",
+    "storeType": "memory"
+  },
+  "roles": [
+    {
+      "roleName": "TestAdminRole",
+      "roleArn": "arn:seaweed:iam::role/TestAdminRole",
+      "trustPolicy": {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "Federated": "test-oidc"
+            },
+            "Action": ["sts:AssumeRoleWithWebIdentity"]
+          }
+        ]
+      },
+      "attachedPolicies": ["S3AdminPolicy"],
+      "description": "Admin role for testing"
+    },
+    {
+      "roleName": "TestReadOnlyRole", 
+      "roleArn": "arn:seaweed:iam::role/TestReadOnlyRole",
+      "trustPolicy": {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "Federated": "test-oidc"
+            },
+            "Action": ["sts:AssumeRoleWithWebIdentity"]
+          }
+        ]
+      },
+      "attachedPolicies": ["S3ReadOnlyPolicy"],
+      "description": "Read-only role for testing"
+    }
+  ],
+  "policies": [
+    {
+      "name": "S3AdminPolicy",
+      "document": {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Action": "s3:*",
+            "Resource": "*"
+          }
+        ]
+      }
+    },
+    {
+      "name": "S3ReadOnlyPolicy",
+      "document": {
+        "Version": "2012-10-17", 
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Action": [
+              "s3:GetObject",
+              "s3:ListBucket"
+            ],
+            "Resource": [
+              "arn:seaweed:s3:::*",
+              "arn:seaweed:s3:::*/*"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
