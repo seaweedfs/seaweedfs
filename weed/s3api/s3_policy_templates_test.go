@@ -13,11 +13,11 @@ func TestS3PolicyTemplates(t *testing.T) {
 
 	t.Run("S3ReadOnlyPolicy", func(t *testing.T) {
 		policy := templates.GetS3ReadOnlyPolicy()
-		
+
 		require.NotNil(t, policy)
 		assert.Equal(t, "2012-10-17", policy.Version)
 		assert.Len(t, policy.Statement, 1)
-		
+
 		stmt := policy.Statement[0]
 		assert.Equal(t, "Allow", stmt.Effect)
 		assert.Equal(t, "S3ReadOnlyAccess", stmt.Sid)
@@ -25,18 +25,18 @@ func TestS3PolicyTemplates(t *testing.T) {
 		assert.Contains(t, stmt.Action, "s3:ListBucket")
 		assert.NotContains(t, stmt.Action, "s3:PutObject")
 		assert.NotContains(t, stmt.Action, "s3:DeleteObject")
-		
+
 		assert.Contains(t, stmt.Resource, "arn:seaweed:s3:::*")
 		assert.Contains(t, stmt.Resource, "arn:seaweed:s3:::*/*")
 	})
 
 	t.Run("S3WriteOnlyPolicy", func(t *testing.T) {
 		policy := templates.GetS3WriteOnlyPolicy()
-		
+
 		require.NotNil(t, policy)
 		assert.Equal(t, "2012-10-17", policy.Version)
 		assert.Len(t, policy.Statement, 1)
-		
+
 		stmt := policy.Statement[0]
 		assert.Equal(t, "Allow", stmt.Effect)
 		assert.Equal(t, "S3WriteOnlyAccess", stmt.Sid)
@@ -44,23 +44,23 @@ func TestS3PolicyTemplates(t *testing.T) {
 		assert.Contains(t, stmt.Action, "s3:CreateMultipartUpload")
 		assert.NotContains(t, stmt.Action, "s3:GetObject")
 		assert.NotContains(t, stmt.Action, "s3:DeleteObject")
-		
+
 		assert.Contains(t, stmt.Resource, "arn:seaweed:s3:::*")
 		assert.Contains(t, stmt.Resource, "arn:seaweed:s3:::*/*")
 	})
 
 	t.Run("S3AdminPolicy", func(t *testing.T) {
 		policy := templates.GetS3AdminPolicy()
-		
+
 		require.NotNil(t, policy)
 		assert.Equal(t, "2012-10-17", policy.Version)
 		assert.Len(t, policy.Statement, 1)
-		
+
 		stmt := policy.Statement[0]
 		assert.Equal(t, "Allow", stmt.Effect)
 		assert.Equal(t, "S3FullAccess", stmt.Sid)
 		assert.Contains(t, stmt.Action, "s3:*")
-		
+
 		assert.Contains(t, stmt.Resource, "arn:seaweed:s3:::*")
 		assert.Contains(t, stmt.Resource, "arn:seaweed:s3:::*/*")
 	})
@@ -72,18 +72,18 @@ func TestBucketSpecificPolicies(t *testing.T) {
 
 	t.Run("BucketSpecificReadPolicy", func(t *testing.T) {
 		policy := templates.GetBucketSpecificReadPolicy(bucketName)
-		
+
 		require.NotNil(t, policy)
 		assert.Equal(t, "2012-10-17", policy.Version)
 		assert.Len(t, policy.Statement, 1)
-		
+
 		stmt := policy.Statement[0]
 		assert.Equal(t, "Allow", stmt.Effect)
 		assert.Equal(t, "BucketSpecificReadAccess", stmt.Sid)
 		assert.Contains(t, stmt.Action, "s3:GetObject")
 		assert.Contains(t, stmt.Action, "s3:ListBucket")
 		assert.NotContains(t, stmt.Action, "s3:PutObject")
-		
+
 		expectedBucketArn := "arn:seaweed:s3:::" + bucketName
 		expectedObjectArn := "arn:seaweed:s3:::" + bucketName + "/*"
 		assert.Contains(t, stmt.Resource, expectedBucketArn)
@@ -92,18 +92,18 @@ func TestBucketSpecificPolicies(t *testing.T) {
 
 	t.Run("BucketSpecificWritePolicy", func(t *testing.T) {
 		policy := templates.GetBucketSpecificWritePolicy(bucketName)
-		
+
 		require.NotNil(t, policy)
 		assert.Equal(t, "2012-10-17", policy.Version)
 		assert.Len(t, policy.Statement, 1)
-		
+
 		stmt := policy.Statement[0]
 		assert.Equal(t, "Allow", stmt.Effect)
 		assert.Equal(t, "BucketSpecificWriteAccess", stmt.Sid)
 		assert.Contains(t, stmt.Action, "s3:PutObject")
 		assert.Contains(t, stmt.Action, "s3:CreateMultipartUpload")
 		assert.NotContains(t, stmt.Action, "s3:GetObject")
-		
+
 		expectedBucketArn := "arn:seaweed:s3:::" + bucketName
 		expectedObjectArn := "arn:seaweed:s3:::" + bucketName + "/*"
 		assert.Contains(t, stmt.Resource, expectedBucketArn)
@@ -117,7 +117,7 @@ func TestPathBasedAccessPolicy(t *testing.T) {
 	pathPrefix := "user123/documents"
 
 	policy := templates.GetPathBasedAccessPolicy(bucketName, pathPrefix)
-	
+
 	require.NotNil(t, policy)
 	assert.Equal(t, "2012-10-17", policy.Version)
 	assert.Len(t, policy.Statement, 2)
@@ -137,7 +137,7 @@ func TestPathBasedAccessPolicy(t *testing.T) {
 	assert.Contains(t, objectStmt.Action, "s3:GetObject")
 	assert.Contains(t, objectStmt.Action, "s3:PutObject")
 	assert.Contains(t, objectStmt.Action, "s3:DeleteObject")
-	
+
 	expectedObjectArn := "arn:seaweed:s3:::" + bucketName + "/" + pathPrefix + "/*"
 	assert.Contains(t, objectStmt.Resource, expectedObjectArn)
 }
@@ -147,22 +147,22 @@ func TestIPRestrictedPolicy(t *testing.T) {
 	allowedCIDRs := []string{"192.168.1.0/24", "10.0.0.0/8"}
 
 	policy := templates.GetIPRestrictedPolicy(allowedCIDRs)
-	
+
 	require.NotNil(t, policy)
 	assert.Equal(t, "2012-10-17", policy.Version)
 	assert.Len(t, policy.Statement, 1)
-	
+
 	stmt := policy.Statement[0]
 	assert.Equal(t, "Allow", stmt.Effect)
 	assert.Equal(t, "IPRestrictedS3Access", stmt.Sid)
 	assert.Contains(t, stmt.Action, "s3:*")
 	assert.NotNil(t, stmt.Condition)
-	
+
 	// Check IP condition structure
 	condition := stmt.Condition
 	ipAddress, exists := condition["IpAddress"]
 	assert.True(t, exists)
-	
+
 	sourceIp, exists := ipAddress["aws:SourceIp"]
 	assert.True(t, exists)
 	assert.Equal(t, allowedCIDRs, sourceIp)
@@ -170,15 +170,15 @@ func TestIPRestrictedPolicy(t *testing.T) {
 
 func TestTimeBasedAccessPolicy(t *testing.T) {
 	templates := NewS3PolicyTemplates()
-	startHour := 9  // 9 AM
-	endHour := 17   // 5 PM
+	startHour := 9 // 9 AM
+	endHour := 17  // 5 PM
 
 	policy := templates.GetTimeBasedAccessPolicy(startHour, endHour)
-	
+
 	require.NotNil(t, policy)
 	assert.Equal(t, "2012-10-17", policy.Version)
 	assert.Len(t, policy.Statement, 1)
-	
+
 	stmt := policy.Statement[0]
 	assert.Equal(t, "Allow", stmt.Effect)
 	assert.Equal(t, "TimeBasedS3Access", stmt.Sid)
@@ -186,7 +186,7 @@ func TestTimeBasedAccessPolicy(t *testing.T) {
 	assert.Contains(t, stmt.Action, "s3:PutObject")
 	assert.Contains(t, stmt.Action, "s3:ListBucket")
 	assert.NotNil(t, stmt.Condition)
-	
+
 	// Check time condition structure
 	condition := stmt.Condition
 	_, hasGreater := condition["DateGreaterThan"]
@@ -200,7 +200,7 @@ func TestMultipartUploadPolicyTemplate(t *testing.T) {
 	bucketName := "large-files"
 
 	policy := templates.GetMultipartUploadPolicy(bucketName)
-	
+
 	require.NotNil(t, policy)
 	assert.Equal(t, "2012-10-17", policy.Version)
 	assert.Len(t, policy.Statement, 2)
@@ -215,7 +215,7 @@ func TestMultipartUploadPolicyTemplate(t *testing.T) {
 	assert.Contains(t, multipartStmt.Action, "s3:AbortMultipartUpload")
 	assert.Contains(t, multipartStmt.Action, "s3:ListMultipartUploads")
 	assert.Contains(t, multipartStmt.Action, "s3:ListParts")
-	
+
 	expectedObjectArn := "arn:seaweed:s3:::" + bucketName + "/*"
 	assert.Contains(t, multipartStmt.Resource, expectedObjectArn)
 
@@ -224,7 +224,7 @@ func TestMultipartUploadPolicyTemplate(t *testing.T) {
 	assert.Equal(t, "Allow", listStmt.Effect)
 	assert.Equal(t, "ListBucketForMultipart", listStmt.Sid)
 	assert.Contains(t, listStmt.Action, "s3:ListBucket")
-	
+
 	expectedBucketArn := "arn:seaweed:s3:::" + bucketName
 	assert.Contains(t, listStmt.Resource, expectedBucketArn)
 }
@@ -234,26 +234,26 @@ func TestPresignedURLPolicy(t *testing.T) {
 	bucketName := "shared-files"
 
 	policy := templates.GetPresignedURLPolicy(bucketName)
-	
+
 	require.NotNil(t, policy)
 	assert.Equal(t, "2012-10-17", policy.Version)
 	assert.Len(t, policy.Statement, 1)
-	
+
 	stmt := policy.Statement[0]
 	assert.Equal(t, "Allow", stmt.Effect)
 	assert.Equal(t, "PresignedURLAccess", stmt.Sid)
 	assert.Contains(t, stmt.Action, "s3:GetObject")
 	assert.Contains(t, stmt.Action, "s3:PutObject")
 	assert.NotNil(t, stmt.Condition)
-	
+
 	expectedObjectArn := "arn:seaweed:s3:::" + bucketName + "/*"
 	assert.Contains(t, stmt.Resource, expectedObjectArn)
-	
+
 	// Check signature version condition
 	condition := stmt.Condition
 	stringEquals, exists := condition["StringEquals"]
 	assert.True(t, exists)
-	
+
 	signatureVersion, exists := stringEquals["s3:x-amz-signature-version"]
 	assert.True(t, exists)
 	assert.Equal(t, "AWS4-HMAC-SHA256", signatureVersion)
@@ -265,11 +265,11 @@ func TestTemporaryAccessPolicy(t *testing.T) {
 	expirationHours := 24
 
 	policy := templates.GetTemporaryAccessPolicy(bucketName, expirationHours)
-	
+
 	require.NotNil(t, policy)
 	assert.Equal(t, "2012-10-17", policy.Version)
 	assert.Len(t, policy.Statement, 1)
-	
+
 	stmt := policy.Statement[0]
 	assert.Equal(t, "Allow", stmt.Effect)
 	assert.Equal(t, "TemporaryS3Access", stmt.Sid)
@@ -277,12 +277,12 @@ func TestTemporaryAccessPolicy(t *testing.T) {
 	assert.Contains(t, stmt.Action, "s3:PutObject")
 	assert.Contains(t, stmt.Action, "s3:ListBucket")
 	assert.NotNil(t, stmt.Condition)
-	
+
 	// Check expiration condition
 	condition := stmt.Condition
 	dateLessThan, exists := condition["DateLessThan"]
 	assert.True(t, exists)
-	
+
 	currentTime, exists := dateLessThan["aws:CurrentTime"]
 	assert.True(t, exists)
 	assert.IsType(t, "", currentTime) // Should be a string timestamp
@@ -294,7 +294,7 @@ func TestContentTypeRestrictedPolicy(t *testing.T) {
 	allowedTypes := []string{"image/jpeg", "image/png", "video/mp4"}
 
 	policy := templates.GetContentTypeRestrictedPolicy(bucketName, allowedTypes)
-	
+
 	require.NotNil(t, policy)
 	assert.Equal(t, "2012-10-17", policy.Version)
 	assert.Len(t, policy.Statement, 2)
@@ -306,12 +306,12 @@ func TestContentTypeRestrictedPolicy(t *testing.T) {
 	assert.Contains(t, uploadStmt.Action, "s3:PutObject")
 	assert.Contains(t, uploadStmt.Action, "s3:CreateMultipartUpload")
 	assert.NotNil(t, uploadStmt.Condition)
-	
+
 	// Check content type condition
 	condition := uploadStmt.Condition
 	stringEquals, exists := condition["StringEquals"]
 	assert.True(t, exists)
-	
+
 	contentType, exists := stringEquals["s3:content-type"]
 	assert.True(t, exists)
 	assert.Equal(t, allowedTypes, contentType)
@@ -329,7 +329,7 @@ func TestDenyDeletePolicy(t *testing.T) {
 	templates := NewS3PolicyTemplates()
 
 	policy := templates.GetDenyDeletePolicy()
-	
+
 	require.NotNil(t, policy)
 	assert.Equal(t, "2012-10-17", policy.Version)
 	assert.Len(t, policy.Statement, 2)
@@ -358,9 +358,9 @@ func TestPolicyTemplateMetadata(t *testing.T) {
 
 	t.Run("GetAllPolicyTemplates", func(t *testing.T) {
 		allTemplates := templates.GetAllPolicyTemplates()
-		
+
 		assert.Greater(t, len(allTemplates), 10) // Should have many templates
-		
+
 		// Check that each template has required fields
 		for _, template := range allTemplates {
 			assert.NotEmpty(t, template.Name)
@@ -378,7 +378,7 @@ func TestPolicyTemplateMetadata(t *testing.T) {
 		require.NotNil(t, template)
 		assert.Equal(t, "S3ReadOnlyAccess", template.Name)
 		assert.Equal(t, "Basic Access", template.Category)
-		
+
 		// Test non-existing template
 		nonExistent := templates.GetPolicyTemplateByName("NonExistentTemplate")
 		assert.Nil(t, nonExistent)
@@ -387,11 +387,11 @@ func TestPolicyTemplateMetadata(t *testing.T) {
 	t.Run("GetPolicyTemplatesByCategory", func(t *testing.T) {
 		basicAccessTemplates := templates.GetPolicyTemplatesByCategory("Basic Access")
 		assert.GreaterOrEqual(t, len(basicAccessTemplates), 2)
-		
+
 		for _, template := range basicAccessTemplates {
 			assert.Equal(t, "Basic Access", template.Category)
 		}
-		
+
 		// Test non-existing category
 		emptyCategory := templates.GetPolicyTemplatesByCategory("NonExistentCategory")
 		assert.Empty(t, emptyCategory)
@@ -399,7 +399,7 @@ func TestPolicyTemplateMetadata(t *testing.T) {
 
 	t.Run("PolicyTemplateParameters", func(t *testing.T) {
 		allTemplates := templates.GetAllPolicyTemplates()
-		
+
 		// Find a template with parameters (like BucketSpecificRead)
 		var templateWithParams *PolicyTemplateDefinition
 		for _, template := range allTemplates {
@@ -408,10 +408,10 @@ func TestPolicyTemplateMetadata(t *testing.T) {
 				break
 			}
 		}
-		
+
 		require.NotNil(t, templateWithParams)
 		assert.Greater(t, len(templateWithParams.Parameters), 0)
-		
+
 		param := templateWithParams.Parameters[0]
 		assert.Equal(t, "bucketName", param.Name)
 		assert.Equal(t, "string", param.Type)
@@ -445,17 +445,17 @@ func TestFormatHourHelper(t *testing.T) {
 func TestPolicyTemplateCategories(t *testing.T) {
 	templates := NewS3PolicyTemplates()
 	allTemplates := templates.GetAllPolicyTemplates()
-	
+
 	// Extract all categories
 	categoryMap := make(map[string]int)
 	for _, template := range allTemplates {
 		categoryMap[template.Category]++
 	}
-	
+
 	// Expected categories
 	expectedCategories := []string{
 		"Basic Access",
-		"Administrative", 
+		"Administrative",
 		"Bucket-Specific",
 		"Path-Restricted",
 		"Security",
@@ -464,7 +464,7 @@ func TestPolicyTemplateCategories(t *testing.T) {
 		"Content Control",
 		"Data Protection",
 	}
-	
+
 	for _, expectedCategory := range expectedCategories {
 		count, exists := categoryMap[expectedCategory]
 		assert.True(t, exists, "Category %s should exist", expectedCategory)
@@ -475,23 +475,23 @@ func TestPolicyTemplateCategories(t *testing.T) {
 func TestPolicyValidation(t *testing.T) {
 	templates := NewS3PolicyTemplates()
 	allTemplates := templates.GetAllPolicyTemplates()
-	
+
 	// Test that all policies have valid structure
 	for _, template := range allTemplates {
 		t.Run("Policy_"+template.Name, func(t *testing.T) {
 			policy := template.Policy
-			
+
 			// Basic validation
 			assert.Equal(t, "2012-10-17", policy.Version)
 			assert.Greater(t, len(policy.Statement), 0)
-			
+
 			// Validate each statement
 			for i, stmt := range policy.Statement {
 				assert.NotEmpty(t, stmt.Effect, "Statement %d should have effect", i)
 				assert.Contains(t, []string{"Allow", "Deny"}, stmt.Effect, "Statement %d effect should be Allow or Deny", i)
 				assert.Greater(t, len(stmt.Action), 0, "Statement %d should have actions", i)
 				assert.Greater(t, len(stmt.Resource), 0, "Statement %d should have resources", i)
-				
+
 				// Check resource format
 				for _, resource := range stmt.Resource {
 					if resource != "*" {

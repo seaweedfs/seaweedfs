@@ -51,12 +51,12 @@ type MultipartUploadPolicy struct {
 type MultipartOperation string
 
 const (
-	MultipartOpInitiate  MultipartOperation = "initiate"
-	MultipartOpUploadPart    MultipartOperation = "upload_part"
-	MultipartOpComplete  MultipartOperation = "complete"
-	MultipartOpAbort     MultipartOperation = "abort"
-	MultipartOpList      MultipartOperation = "list"
-	MultipartOpListParts MultipartOperation = "list_parts"
+	MultipartOpInitiate   MultipartOperation = "initiate"
+	MultipartOpUploadPart MultipartOperation = "upload_part"
+	MultipartOpComplete   MultipartOperation = "complete"
+	MultipartOpAbort      MultipartOperation = "abort"
+	MultipartOpList       MultipartOperation = "list"
+	MultipartOpListParts  MultipartOperation = "list_parts"
 )
 
 // ValidateMultipartOperationWithIAM validates multipart operations using IAM policies

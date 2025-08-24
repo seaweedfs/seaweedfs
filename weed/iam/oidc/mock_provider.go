@@ -145,10 +145,10 @@ func (m *MockOIDCProvider) SetupDefaultTestData() {
 			"groups": []string{"developers"},
 		},
 	}
-	
+
 	// Add multiple token variants for compatibility
 	m.AddTestToken("valid_token", defaultClaims)
-	m.AddTestToken("valid-oidc-token", defaultClaims)  // For integration tests
+	m.AddTestToken("valid-oidc-token", defaultClaims) // For integration tests
 	m.AddTestToken("valid_test_token", defaultClaims) // For STS tests
 
 	// Add default test users

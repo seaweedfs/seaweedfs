@@ -429,7 +429,7 @@ func ValidatePolicyDocument(policy *PolicyDocument) error {
 	return ValidatePolicyDocumentWithType(policy, "resource")
 }
 
-// ValidateTrustPolicyDocument validates a trust policy document structure  
+// ValidateTrustPolicyDocument validates a trust policy document structure
 func ValidateTrustPolicyDocument(policy *PolicyDocument) error {
 	return ValidatePolicyDocumentWithType(policy, "trust")
 }
@@ -439,21 +439,21 @@ func ValidatePolicyDocumentWithType(policy *PolicyDocument, policyType string) e
 	if policy == nil {
 		return fmt.Errorf("policy document cannot be nil")
 	}
-	
+
 	if policy.Version == "" {
 		return fmt.Errorf("version is required")
 	}
-	
+
 	if len(policy.Statement) == 0 {
 		return fmt.Errorf("at least one statement is required")
 	}
-	
+
 	for i, statement := range policy.Statement {
 		if err := validateStatementWithType(&statement, policyType); err != nil {
 			return fmt.Errorf("statement %d is invalid: %w", i, err)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -467,11 +467,11 @@ func validateStatementWithType(statement *Statement, policyType string) error {
 	if statement.Effect != "Allow" && statement.Effect != "Deny" {
 		return fmt.Errorf("invalid effect: %s (must be Allow or Deny)", statement.Effect)
 	}
-	
+
 	if len(statement.Action) == 0 {
 		return fmt.Errorf("at least one action is required")
 	}
-	
+
 	// Trust policies don't require Resource field, but resource policies do
 	if policyType == "resource" {
 		if len(statement.Resource) == 0 {
@@ -482,21 +482,21 @@ func validateStatementWithType(statement *Statement, policyType string) error {
 		if statement.Principal == nil {
 			return fmt.Errorf("trust policy statement must have Principal field")
 		}
-		
+
 		// Trust policies typically have specific actions
 		validTrustActions := map[string]bool{
 			"sts:AssumeRole":                true,
 			"sts:AssumeRoleWithWebIdentity": true,
 			"sts:AssumeRoleWithCredentials": true,
 		}
-		
+
 		for _, action := range statement.Action {
 			if !validTrustActions[action] {
 				return fmt.Errorf("invalid action for trust policy: %s", action)
 			}
 		}
 	}
-	
+
 	return nil
 }
 

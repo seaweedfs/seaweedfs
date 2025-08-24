@@ -222,11 +222,11 @@ func (t *S3PolicyTemplates) GetTimeBasedAccessPolicy(startHour, endHour int) *po
 				},
 				Condition: map[string]map[string]interface{}{
 					"DateGreaterThan": map[string]interface{}{
-						"aws:CurrentTime": time.Now().Format("2006-01-02") + "T" + 
+						"aws:CurrentTime": time.Now().Format("2006-01-02") + "T" +
 							formatHour(startHour) + ":00:00Z",
 					},
 					"DateLessThan": map[string]interface{}{
-						"aws:CurrentTime": time.Now().Format("2006-01-02") + "T" + 
+						"aws:CurrentTime": time.Now().Format("2006-01-02") + "T" +
 							formatHour(endHour) + ":00:00Z",
 					},
 				},
@@ -297,7 +297,7 @@ func (t *S3PolicyTemplates) GetPresignedURLPolicy(bucketName string) *policy.Pol
 // GetTemporaryAccessPolicy returns a policy for temporary access with expiration
 func (t *S3PolicyTemplates) GetTemporaryAccessPolicy(bucketName string, expirationHours int) *policy.PolicyDocument {
 	expirationTime := time.Now().Add(time.Duration(expirationHours) * time.Hour)
-	
+
 	return &policy.PolicyDocument{
 		Version: "2012-10-17",
 		Statement: []policy.Statement{
@@ -416,11 +416,11 @@ func formatHour(hour int) string {
 
 // PolicyTemplateDefinition represents metadata about a policy template
 type PolicyTemplateDefinition struct {
-	Name        string                `json:"name"`
-	Description string                `json:"description"`
-	Category    string                `json:"category"`
-	UseCase     string                `json:"use_case"`
-	Parameters  []PolicyTemplateParam `json:"parameters,omitempty"`
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	Category    string                 `json:"category"`
+	UseCase     string                 `json:"use_case"`
+	Parameters  []PolicyTemplateParam  `json:"parameters,omitempty"`
 	Policy      *policy.PolicyDocument `json:"policy"`
 }
 
@@ -447,7 +447,7 @@ func (t *S3PolicyTemplates) GetAllPolicyTemplates() []PolicyTemplateDefinition {
 		{
 			Name:        "S3WriteOnlyAccess",
 			Description: "Provides write-only access to all S3 buckets and objects",
-			Category:    "Basic Access", 
+			Category:    "Basic Access",
 			UseCase:     "Data ingestion services, backup applications",
 			Policy:      t.GetS3WriteOnlyPolicy(),
 		},
