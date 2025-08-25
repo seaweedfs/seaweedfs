@@ -307,7 +307,7 @@ func setupCompleteS3IAMSystem(t *testing.T) (http.Handler, *integration.IAMManag
 
 	// Create S3 IAM integration for testing with error recovery
 	var s3IAMIntegration *S3IAMIntegration
-	
+
 	// Attempt to create IAM integration with panic recovery
 	func() {
 		defer func() {
@@ -318,11 +318,11 @@ func setupCompleteS3IAMSystem(t *testing.T) (http.Handler, *integration.IAMManag
 		}()
 		s3IAMIntegration = NewS3IAMIntegration(iamManager, "localhost:8888")
 	}()
-	
+
 	if s3IAMIntegration == nil {
 		t.Skip("Could not create S3 IAM integration")
 	}
-	
+
 	// Add a simple test endpoint that we can use to verify IAM functionality
 	router.HandleFunc("/test-auth", func(w http.ResponseWriter, r *http.Request) {
 		// Test JWT authentication
@@ -332,7 +332,7 @@ func setupCompleteS3IAMSystem(t *testing.T) (http.Handler, *integration.IAMManag
 			w.Write([]byte("Authentication failed"))
 			return
 		}
-		
+
 		// Map HTTP method to S3 action for more realistic testing
 		var action Action
 		switch r.Method {
@@ -347,7 +347,7 @@ func setupCompleteS3IAMSystem(t *testing.T) (http.Handler, *integration.IAMManag
 		default:
 			action = Action("s3:GetObject") // Default fallback
 		}
-		
+
 		// Test authorization with appropriate action
 		authErrCode := s3IAMIntegration.AuthorizeAction(r.Context(), identity, action, "test-bucket", "test-object", r)
 		if authErrCode != s3err.ErrNone {
@@ -355,7 +355,7 @@ func setupCompleteS3IAMSystem(t *testing.T) (http.Handler, *integration.IAMManag
 			w.Write([]byte("Authorization failed"))
 			return
 		}
-		
+
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("Success"))
 	}).Methods("GET", "PUT", "DELETE", "HEAD")
@@ -366,21 +366,21 @@ func setupCompleteS3IAMSystem(t *testing.T) (http.Handler, *integration.IAMManag
 			// Handle CORS preflight request
 			origin := r.Header.Get("Origin")
 			requestMethod := r.Header.Get("Access-Control-Request-Method")
-			
+
 			// Set CORS headers
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Methods", "GET, PUT, POST, DELETE, HEAD, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Amz-Date, X-Amz-Security-Token")
 			w.Header().Set("Access-Control-Max-Age", "3600")
-			
+
 			if requestMethod != "" {
 				w.Header().Add("Access-Control-Allow-Methods", requestMethod)
 			}
-			
+
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		
+
 		// For non-OPTIONS requests, return 404 since we don't have full S3 implementation
 		w.WriteHeader(http.StatusNotFound)
 		w.Write([]byte("Not found"))
@@ -432,9 +432,9 @@ func setupS3ReadOnlyRole(ctx context.Context, manager *integration.IAMManager) {
 				},
 			},
 			{
-				Sid:    "AllowSTSSessionValidation",
-				Effect: "Allow",
-				Action: []string{"sts:ValidateSession"},
+				Sid:      "AllowSTSSessionValidation",
+				Effect:   "Allow",
+				Action:   []string{"sts:ValidateSession"},
 				Resource: []string{"*"},
 			},
 		},
@@ -476,9 +476,9 @@ func setupS3AdminRole(ctx context.Context, manager *integration.IAMManager) {
 				},
 			},
 			{
-				Sid:    "AllowSTSSessionValidation",
-				Effect: "Allow",
-				Action: []string{"sts:ValidateSession"},
+				Sid:      "AllowSTSSessionValidation",
+				Effect:   "Allow",
+				Action:   []string{"sts:ValidateSession"},
 				Resource: []string{"*"},
 			},
 		},
@@ -520,9 +520,9 @@ func setupS3WriteRole(ctx context.Context, manager *integration.IAMManager) {
 				},
 			},
 			{
-				Sid:    "AllowSTSSessionValidation",
-				Effect: "Allow",
-				Action: []string{"sts:ValidateSession"},
+				Sid:      "AllowSTSSessionValidation",
+				Effect:   "Allow",
+				Action:   []string{"sts:ValidateSession"},
 				Resource: []string{"*"},
 			},
 		},
@@ -569,9 +569,9 @@ func setupS3IPRestrictedRole(ctx context.Context, manager *integration.IAMManage
 				},
 			},
 			{
-				Sid:    "AllowSTSSessionValidation",
-				Effect: "Allow",
-				Action: []string{"sts:ValidateSession"},
+				Sid:      "AllowSTSSessionValidation",
+				Effect:   "Allow",
+				Action:   []string{"sts:ValidateSession"},
 				Resource: []string{"*"},
 			},
 		},
