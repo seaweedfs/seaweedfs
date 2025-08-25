@@ -27,9 +27,9 @@ import (
 const (
 	TestS3Endpoint = "http://localhost:8333"
 	TestRegion     = "us-west-2"
-	
+
 	// Keycloak configuration
-	DefaultKeycloakURL    = "http://localhost:8080"
+	DefaultKeycloakURL   = "http://localhost:8080"
 	KeycloakRealm        = "seaweedfs-test"
 	KeycloakClientID     = "seaweedfs-s3"
 	KeycloakClientSecret = "seaweedfs-s3-secret"
@@ -78,10 +78,10 @@ func NewS3IAMTestFramework(t *testing.T) *S3IAMTestFramework {
 	if keycloakURL == "" {
 		keycloakURL = DefaultKeycloakURL
 	}
-	
+
 	// Test if Keycloak is available
 	framework.useKeycloak = framework.isKeycloakAvailable(keycloakURL)
-	
+
 	if framework.useKeycloak {
 		t.Logf("Using real Keycloak instance at %s", keycloakURL)
 		framework.keycloakClient = NewKeycloakClient(keycloakURL, KeycloakRealm, KeycloakClientID, KeycloakClientSecret)
@@ -115,20 +115,20 @@ func NewKeycloakClient(baseURL, realm, clientID, clientSecret string) *KeycloakC
 func (f *S3IAMTestFramework) isKeycloakAvailable(keycloakURL string) bool {
 	client := &http.Client{Timeout: 5 * time.Second}
 	healthURL := fmt.Sprintf("%s/health/ready", keycloakURL)
-	
+
 	resp, err := client.Get(healthURL)
 	if err != nil {
 		return false
 	}
 	defer resp.Body.Close()
-	
+
 	return resp.StatusCode == 200
 }
 
 // AuthenticateUser authenticates a user with Keycloak and returns an access token
 func (kc *KeycloakClient) AuthenticateUser(username, password string) (*KeycloakTokenResponse, error) {
 	tokenURL := fmt.Sprintf("%s/realms/%s/protocol/openid-connect/token", kc.baseURL, kc.realm)
-	
+
 	data := url.Values{}
 	data.Set("grant_type", "password")
 	data.Set("client_id", kc.clientID)
@@ -136,22 +136,22 @@ func (kc *KeycloakClient) AuthenticateUser(username, password string) (*Keycloak
 	data.Set("username", username)
 	data.Set("password", password)
 	data.Set("scope", "openid profile email")
-	
+
 	resp, err := kc.httpClient.PostForm(tokenURL, data)
 	if err != nil {
 		return nil, fmt.Errorf("failed to authenticate with Keycloak: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("Keycloak authentication failed with status: %d", resp.StatusCode)
 	}
-	
+
 	var tokenResp KeycloakTokenResponse
 	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
 		return nil, fmt.Errorf("failed to decode token response: %w", err)
 	}
-	
+
 	return &tokenResp, nil
 }
 
@@ -160,18 +160,18 @@ func (f *S3IAMTestFramework) getKeycloakToken(username string) (string, error) {
 	if f.keycloakClient == nil {
 		return "", fmt.Errorf("Keycloak client not initialized")
 	}
-	
+
 	// Map username to password for test users
 	password := f.getTestUserPassword(username)
 	if password == "" {
 		return "", fmt.Errorf("unknown test user: %s", username)
 	}
-	
+
 	tokenResp, err := f.keycloakClient.AuthenticateUser(username, password)
 	if err != nil {
 		return "", fmt.Errorf("failed to authenticate user %s: %w", username, err)
 	}
-	
+
 	return tokenResp.AccessToken, nil
 }
 
@@ -179,10 +179,10 @@ func (f *S3IAMTestFramework) getKeycloakToken(username string) (string, error) {
 func (f *S3IAMTestFramework) getTestUserPassword(username string) string {
 	userPasswords := map[string]string{
 		"admin-user": "admin123",
-		"read-user":  "read123", 
+		"read-user":  "read123",
 		"write-user": "write123",
 	}
-	
+
 	return userPasswords[username]
 }
 
@@ -304,27 +304,31 @@ func (f *S3IAMTestFramework) generateSTSSessionToken(username, roleName string, 
 	// Generate a session ID that would be created by the STS service
 	sessionId := fmt.Sprintf("test-session-%s-%s-%d", username, roleName, now.Unix())
 
-	// Create session token claims exactly as TokenGenerator does
+	// Create session token claims exactly matching STSSessionClaims struct
 	roleArn := fmt.Sprintf("arn:seaweed:iam::role/%s", roleName)
 	sessionName := fmt.Sprintf("test-session-%s", username)
 	principalArn := fmt.Sprintf("arn:seaweed:sts::assumed-role/%s/%s", roleName, sessionName)
-	
+
+	// Use jwt.MapClaims but with exact field names that STSSessionClaims expects
 	sessionClaims := jwt.MapClaims{
-		"iss":        "seaweedfs-sts",
-		"sub":        sessionId,
-		"iat":        now.Unix(),
-		"exp":        now.Add(validDuration).Unix(),
-		"nbf":        now.Unix(),
-		"typ":        "session",
-		"role":       roleArn,
-		"snam":       sessionName,
-		"principal":  principalArn,
-		"assumed":    principalArn,
-		"assumed_at": now.Format(time.RFC3339Nano),
-		"ext_uid":    username,
-		"idp":        "test-oidc",
-		"max_dur":    int64(validDuration.Seconds()),
-		"sid":        sessionId,
+		// RegisteredClaims fields
+		"iss": "seaweedfs-sts",
+		"sub": sessionId,
+		"iat": now.Unix(),
+		"exp": now.Add(validDuration).Unix(),
+		"nbf": now.Unix(),
+
+		// STSSessionClaims fields (using exact JSON tags from the struct)
+		"sid":        sessionId,                      // SessionId
+		"snam":       sessionName,                    // SessionName
+		"typ":        "session",                      // TokenType
+		"role":       roleArn,                        // RoleArn
+		"assumed":    principalArn,                   // AssumedRole
+		"principal":  principalArn,                   // Principal
+		"idp":        "test-oidc",                    // IdentityProvider
+		"ext_uid":    username,                       // ExternalUserId
+		"assumed_at": now.Format(time.RFC3339Nano),   // AssumedAt
+		"max_dur":    int64(validDuration.Seconds()), // MaxDuration
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, sessionClaims)
@@ -344,7 +348,7 @@ func (f *S3IAMTestFramework) generateSTSSessionToken(username, roleName string, 
 func (f *S3IAMTestFramework) CreateS3ClientWithJWT(username, roleName string) (*s3.S3, error) {
 	var token string
 	var err error
-	
+
 	if f.useKeycloak {
 		// Use real Keycloak authentication
 		token, err = f.getKeycloakToken(username)

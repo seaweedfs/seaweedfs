@@ -431,7 +431,7 @@ func (e *PolicyEngine) evaluateStringCondition(block map[string]interface{}, eva
 			}
 			continue
 		}
-		
+
 		// Convert context value to string slice
 		var contextStrings []string
 		switch v := contextValues.(type) {
@@ -449,7 +449,7 @@ func (e *PolicyEngine) evaluateStringCondition(block map[string]interface{}, eva
 			// Convert to string as fallback
 			contextStrings = []string{fmt.Sprintf("%v", v)}
 		}
-		
+
 		// Convert condition value to string slice
 		var expectedStrings []string
 		switch v := conditionValue.(type) {
@@ -468,7 +468,7 @@ func (e *PolicyEngine) evaluateStringCondition(block map[string]interface{}, eva
 		default:
 			expectedStrings = []string{fmt.Sprintf("%v", v)}
 		}
-		
+
 		// Evaluate the condition
 		conditionMet := false
 		for _, expected := range expectedStrings {
@@ -492,7 +492,7 @@ func (e *PolicyEngine) evaluateStringCondition(block map[string]interface{}, eva
 				break
 			}
 		}
-		
+
 		// For shouldMatch=true (StringEquals, StringLike): condition must be met
 		// For shouldMatch=false (StringNotEquals): condition must NOT be met
 		if shouldMatch && !conditionMet {
@@ -502,7 +502,7 @@ func (e *PolicyEngine) evaluateStringCondition(block map[string]interface{}, eva
 			return false
 		}
 	}
-	
+
 	return true
 }
 

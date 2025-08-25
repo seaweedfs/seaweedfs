@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/iam/providers"
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
@@ -227,27 +228,38 @@ func (m *IAMManager) AssumeRoleWithCredentials(ctx context.Context, request *sts
 
 // IsActionAllowed checks if a principal is allowed to perform an action on a resource
 func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest) (bool, error) {
+	glog.V(0).Infof("IsActionAllowed: starting validation for principal=%s, action=%s", request.Principal, request.Action)
+	
 	if !m.initialized {
+		glog.V(0).Info("IsActionAllowed: IAM manager not initialized")
 		return false, fmt.Errorf("IAM manager not initialized")
 	}
 
 	// Validate session token first
+	glog.V(0).Infof("IsActionAllowed: validating session token (length=%d)", len(request.SessionToken))
 	_, err := m.stsService.ValidateSessionToken(ctx, request.SessionToken)
 	if err != nil {
+		glog.V(0).Infof("IsActionAllowed: session token validation failed: %v", err)
 		return false, fmt.Errorf("invalid session: %w", err)
 	}
+	glog.V(0).Info("IsActionAllowed: session token validation successful")
 
 	// Extract role name from principal ARN
 	roleName := extractRoleNameFromPrincipal(request.Principal)
+	glog.V(0).Infof("IsActionAllowed: extracted role name=%s from principal=%s", roleName, request.Principal)
 	if roleName == "" {
+		glog.V(0).Infof("IsActionAllowed: could not extract role from principal: %s", request.Principal)
 		return false, fmt.Errorf("could not extract role from principal: %s", request.Principal)
 	}
 
 	// Get role definition
+	glog.V(0).Infof("IsActionAllowed: looking up role definition for role=%s", roleName)
 	roleDef, err := m.roleStore.GetRole(ctx, roleName)
 	if err != nil {
+		glog.V(0).Infof("IsActionAllowed: role lookup failed for role=%s: %v", roleName, err)
 		return false, fmt.Errorf("role not found: %s", roleName)
 	}
+	glog.V(0).Infof("IsActionAllowed: found role definition with %d attached policies", len(roleDef.AttachedPolicies))
 
 	// Create evaluation context
 	evalCtx := &policy.EvaluationContext{
@@ -258,11 +270,14 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 	}
 
 	// Evaluate policies attached to the role
+	glog.V(0).Infof("IsActionAllowed: evaluating policies: %v", roleDef.AttachedPolicies)
 	result, err := m.policyEngine.Evaluate(ctx, evalCtx, roleDef.AttachedPolicies)
 	if err != nil {
+		glog.V(0).Infof("IsActionAllowed: policy evaluation failed: %v", err)
 		return false, fmt.Errorf("policy evaluation failed: %w", err)
 	}
 
+	glog.V(0).Infof("IsActionAllowed: policy evaluation result - effect=%s, allowed=%t", result.Effect, result.Effect == policy.EffectAllow)
 	return result.Effect == policy.EffectAllow, nil
 }
 
@@ -306,7 +321,7 @@ func (m *IAMManager) validateTrustPolicyForWebIdentity(ctx context.Context, role
 
 	// Create evaluation context for trust policy validation
 	requestContext := make(map[string]interface{})
-	
+
 	// Add standard context values that trust policies might check
 	if idp, ok := tokenClaims["idp"].(string); ok {
 		requestContext["seaweed:TokenIssuer"] = idp
