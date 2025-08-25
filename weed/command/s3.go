@@ -243,7 +243,9 @@ func (s3opt *S3Options) startS3Server() bool {
 	var s3ApiServer_err error
 
 	// Create S3 server with optional advanced IAM integration
-	if *s3opt.iamConfig != "" {
+	var iamConfigPath string
+	if s3opt.iamConfig != nil && *s3opt.iamConfig != "" {
+		iamConfigPath = *s3opt.iamConfig
 		glog.V(0).Infof("Starting S3 API Server with advanced IAM integration")
 	} else {
 		glog.V(0).Infof("Starting S3 API Server with standard IAM")
@@ -262,7 +264,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		LocalFilerSocket:          localFilerSocket,
 		DataCenter:                *s3opt.dataCenter,
 		FilerGroup:                filerGroup,
-		IamConfig:                 *s3opt.iamConfig, // Advanced IAM config (optional)
+		IamConfig:                 iamConfigPath, // Advanced IAM config (optional)
 	})
 	if s3ApiServer_err != nil {
 		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)
