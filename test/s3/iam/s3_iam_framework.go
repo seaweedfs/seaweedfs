@@ -305,12 +305,26 @@ func (f *S3IAMTestFramework) generateSTSSessionToken(username, roleName string, 
 	sessionId := fmt.Sprintf("test-session-%s-%s-%d", username, roleName, now.Unix())
 
 	// Create session token claims exactly as TokenGenerator does
+	roleArn := fmt.Sprintf("arn:seaweed:iam::role/%s", roleName)
+	sessionName := fmt.Sprintf("test-session-%s", username)
+	principalArn := fmt.Sprintf("arn:seaweed:sts::assumed-role/%s/%s", roleName, sessionName)
+	
 	sessionClaims := jwt.MapClaims{
 		"iss":        "seaweedfs-sts",
 		"sub":        sessionId,
 		"iat":        now.Unix(),
 		"exp":        now.Add(validDuration).Unix(),
-		"token_type": "session",
+		"nbf":        now.Unix(),
+		"typ":        "session",
+		"role":       roleArn,
+		"snam":       sessionName,
+		"principal":  principalArn,
+		"assumed":    principalArn,
+		"assumed_at": now.Format(time.RFC3339Nano),
+		"ext_uid":    username,
+		"idp":        "test-oidc",
+		"max_dur":    int64(validDuration.Seconds()),
+		"sid":        sessionId,
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, sessionClaims)

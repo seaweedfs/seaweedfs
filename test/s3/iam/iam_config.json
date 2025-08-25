@@ -5,6 +5,15 @@
     "issuer": "seaweedfs-sts",
     "signingKey": "dGVzdC1zaWduaW5nLWtleS0zMi1jaGFyYWN0ZXJzLWxvbmc="
   },
+  "identityProviders": [
+    {
+      "name": "test-oidc",
+      "type": "mock",
+      "config": {
+        "issuer": "test-oidc-issuer"
+      }
+    }
+  ],
   "policy": {
     "defaultEffect": "Deny",
     "storeType": "memory"
@@ -57,6 +66,11 @@
             "Effect": "Allow",
             "Action": "s3:*",
             "Resource": "*"
+          },
+          {
+            "Effect": "Allow",
+            "Action": "sts:ValidateSession",
+            "Resource": "*"
           }
         ]
       }
@@ -76,6 +90,11 @@
               "arn:seaweed:s3:::*",
               "arn:seaweed:s3:::*/*"
             ]
+          },
+          {
+            "Effect": "Allow",
+            "Action": "sts:ValidateSession",
+            "Resource": "*"
           }
         ]
       }
