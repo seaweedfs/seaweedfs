@@ -54,6 +54,24 @@
       },
       "attachedPolicies": ["S3ReadOnlyPolicy"],
       "description": "Read-only role for testing"
+    },
+    {
+      "roleName": "TestWriteOnlyRole", 
+      "roleArn": "arn:seaweed:iam::role/TestWriteOnlyRole",
+      "trustPolicy": {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "Federated": "test-oidc"
+            },
+            "Action": ["sts:AssumeRoleWithWebIdentity"]
+          }
+        ]
+      },
+      "attachedPolicies": ["S3WriteOnlyPolicy"],
+      "description": "Write-only role for testing"
     }
   ],
   "policies": [
@@ -85,6 +103,37 @@
             "Action": [
               "s3:GetObject",
               "s3:ListBucket"
+            ],
+            "Resource": [
+              "arn:seaweed:s3:::*",
+              "arn:seaweed:s3:::*/*"
+            ]
+          },
+          {
+            "Effect": "Allow",
+            "Action": ["sts:ValidateSession"],
+            "Resource": ["*"]
+          }
+        ]
+      }
+    },
+    {
+      "name": "S3WriteOnlyPolicy",
+      "document": {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Action": [
+              "s3:PutObject",
+              "s3:PutObjectAcl",
+              "s3:DeleteObject",
+              "s3:DeleteObjectVersion",
+              "s3:InitiateMultipartUpload",
+              "s3:UploadPart", 
+              "s3:CompleteMultipartUpload",
+              "s3:AbortMultipartUpload",
+              "s3:ListMultipartUploadParts"
             ],
             "Resource": [
               "arn:seaweed:s3:::*",
