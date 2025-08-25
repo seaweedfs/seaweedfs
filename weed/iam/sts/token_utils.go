@@ -89,10 +89,7 @@ func (t *TokenGenerator) ValidateSessionToken(tokenString string) (*SessionToken
 
 // ValidateJWTWithClaims validates and extracts comprehensive session claims from a JWT token
 func (t *TokenGenerator) ValidateJWTWithClaims(tokenString string) (*STSSessionClaims, error) {
-	glog.V(0).Infof("ValidateJWTWithClaims: validating token with length=%d", len(tokenString))
-
 	token, err := jwt.ParseWithClaims(tokenString, &STSSessionClaims{}, func(token *jwt.Token) (interface{}, error) {
-		glog.V(0).Infof("ValidateJWTWithClaims: signing method=%v", token.Header["alg"])
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
@@ -100,42 +97,33 @@ func (t *TokenGenerator) ValidateJWTWithClaims(tokenString string) (*STSSessionC
 	})
 
 	if err != nil {
-		glog.V(0).Infof("ValidateJWTWithClaims: token parsing failed: %v", err)
 		return nil, fmt.Errorf(ErrInvalidToken, err)
 	}
 
 	if !token.Valid {
-		glog.V(0).Info("ValidateJWTWithClaims: token is not valid")
 		return nil, fmt.Errorf(ErrTokenNotValid)
 	}
 
 	claims, ok := token.Claims.(*STSSessionClaims)
 	if !ok {
-		glog.V(0).Infof("ValidateJWTWithClaims: failed to cast claims to STSSessionClaims, got type: %T", token.Claims)
 		return nil, fmt.Errorf(ErrInvalidTokenClaims)
 	}
 
-	glog.V(0).Infof("ValidateJWTWithClaims: parsed claims - issuer=%s, sessionId=%s", claims.Issuer, claims.SessionId)
-
 	// Validate issuer
 	if claims.Issuer != t.issuer {
-		glog.V(0).Infof("ValidateJWTWithClaims: issuer mismatch - expected=%s, got=%s", t.issuer, claims.Issuer)
 		return nil, fmt.Errorf(ErrInvalidIssuer)
 	}
 
 	// Validate that required fields are present
 	if claims.SessionId == "" {
-		glog.V(0).Info("ValidateJWTWithClaims: missing session ID")
 		return nil, fmt.Errorf(ErrMissingSessionID)
 	}
 
 	// Additional validation using the claims' own validation method
 	if !claims.IsValid() {
-		glog.V(0).Info("ValidateJWTWithClaims: claims validation failed")
 		return nil, fmt.Errorf(ErrTokenNotValid)
 	}
 
-	glog.V(0).Info("ValidateJWTWithClaims: validation successful")
 	return claims, nil
 }
 

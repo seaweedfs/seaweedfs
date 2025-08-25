@@ -442,13 +442,15 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 		glog.V(3).Infof("unsigned streaming upload")
 		return identity, s3err.ErrNone
 	case authTypeJWT:
-		glog.V(0).Infof("jwt auth type detected, iamIntegration != nil? %t", iam.iamIntegration != nil)
+		glog.V(3).Infof("jwt auth type detected, iamIntegration != nil? %t", iam.iamIntegration != nil)
 		r.Header.Set(s3_constants.AmzAuthType, "Jwt")
 		if iam.iamIntegration != nil {
-			return iam.authenticateJWTWithIAM(r)
+			identity, s3Err = iam.authenticateJWTWithIAM(r)
+			authType = "Jwt"
+		} else {
+			glog.V(0).Infof("IAM integration is nil, returning ErrNotImplemented")
+			return identity, s3err.ErrNotImplemented
 		}
-		glog.V(0).Infof("IAM integration is nil, returning ErrNotImplemented")
-		return identity, s3err.ErrNotImplemented
 	case authTypeAnonymous:
 		authType = "Anonymous"
 		if identity, found = iam.lookupAnonymous(); !found {
@@ -487,15 +489,12 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 	} else {
 		// Use enhanced authorization if IAM integration is available
 		sessionToken := r.Header.Get("X-SeaweedFS-Session-Token")
-		glog.V(0).Infof("Authorization check: iamIntegration != nil? %t, sessionToken != \"\"? %t, sessionToken=%s", iam.iamIntegration != nil, sessionToken != "", sessionToken)
 		if iam.iamIntegration != nil && sessionToken != "" {
-			glog.V(0).Infof("Using IAM authorization for action=%s, bucket=%s, object=%s", action, bucket, object)
 			if errCode := iam.authorizeWithIAM(r, identity, action, bucket, object); errCode != s3err.ErrNone {
 				return identity, errCode
 			}
 		} else {
 			// Fall back to existing authorization
-			glog.V(0).Infof("Using fallback authorization for action=%s, bucket=%s, object=%s", action, bucket, object)
 			if !identity.canDo(action, bucket, object) {
 				return identity, s3err.ErrAccessDenied
 			}
@@ -612,10 +611,8 @@ func (iam *IdentityAccessManagement) SetIAMIntegration(integration *S3IAMIntegra
 func (iam *IdentityAccessManagement) authenticateJWTWithIAM(r *http.Request) (*Identity, s3err.ErrorCode) {
 	ctx := r.Context()
 
-	glog.V(0).Infof("authenticateJWTWithIAM: starting JWT authentication")
 	// Use IAM integration to authenticate JWT
 	iamIdentity, errCode := iam.iamIntegration.AuthenticateJWT(ctx, r)
-	glog.V(0).Infof("authenticateJWTWithIAM: AuthenticateJWT returned errCode=%v", errCode)
 	if errCode != s3err.ErrNone {
 		return nil, errCode
 	}
@@ -631,7 +628,6 @@ func (iam *IdentityAccessManagement) authenticateJWTWithIAM(r *http.Request) (*I
 	r.Header.Set("X-SeaweedFS-Session-Token", iamIdentity.SessionToken)
 	r.Header.Set("X-SeaweedFS-Principal", iamIdentity.Principal)
 
-	glog.V(0).Infof("authenticateJWTWithIAM: successfully authenticated, sessionToken=%s, principal=%s", iamIdentity.SessionToken, iamIdentity.Principal)
 	return identity, s3err.ErrNone
 }
 

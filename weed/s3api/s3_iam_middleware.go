@@ -10,6 +10,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/iam/integration"
+	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
@@ -17,14 +18,21 @@ import (
 // S3IAMIntegration provides IAM integration for S3 API
 type S3IAMIntegration struct {
 	iamManager    *integration.IAMManager
+	stsService    *sts.STSService
 	filerAddress  string
 	enabled       bool
 }
 
 // NewS3IAMIntegration creates a new S3 IAM integration
 func NewS3IAMIntegration(iamManager *integration.IAMManager, filerAddress string) *S3IAMIntegration {
+	var stsService *sts.STSService
+	if iamManager != nil {
+		stsService = iamManager.GetSTSService()
+	}
+	
 	return &S3IAMIntegration{
 		iamManager:   iamManager,
+		stsService:   stsService,
 		filerAddress: filerAddress,
 		enabled:      iamManager != nil,
 	}
@@ -32,24 +40,18 @@ func NewS3IAMIntegration(iamManager *integration.IAMManager, filerAddress string
 
 // AuthenticateJWT authenticates JWT tokens using our STS service
 func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Request) (*IAMIdentity, s3err.ErrorCode) {
-	glog.V(0).Infof("AuthenticateJWT: enabled=%t", s3iam.enabled)
 	if !s3iam.enabled {
-		glog.V(0).Info("S3 IAM integration not enabled")
 		return nil, s3err.ErrNotImplemented
 	}
 
 	// Extract bearer token from Authorization header
 	authHeader := r.Header.Get("Authorization")
-	glog.V(0).Infof("AuthenticateJWT: authHeader='%s'", authHeader)
 	if !strings.HasPrefix(authHeader, "Bearer ") {
-		glog.V(0).Info("Invalid JWT authorization header format")
 		return nil, s3err.ErrAccessDenied
 	}
 
 	sessionToken := strings.TrimPrefix(authHeader, "Bearer ")
-	glog.V(0).Infof("AuthenticateJWT: sessionToken length=%d", len(sessionToken))
 	if sessionToken == "" {
-		glog.V(0).Info("Empty session token")
 		return nil, s3err.ErrAccessDenied
 	}
 
@@ -62,10 +64,9 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 	// Parse JWT token to extract claims
 	tokenClaims, err := parseJWTToken(sessionToken)
 	if err != nil {
-		glog.V(0).Infof("Failed to parse JWT token: %v", err)
+		glog.V(3).Infof("Failed to parse JWT token: %v", err)
 		return nil, s3err.ErrAccessDenied
 	}
-	glog.V(0).Infof("AuthenticateJWT: parsed JWT claims: %+v", tokenClaims)
 
 	// Extract role information from token claims
 	roleName, ok := tokenClaims["role"].(string)
@@ -96,19 +97,12 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 		principalArn = fmt.Sprintf("arn:seaweed:sts::assumed-role/%s/%s", roleNameOnly, sessionName)
 	}
 
-	// Validate the session using our IAM system
-	testRequest := &integration.ActionRequest{
-		Principal:    principalArn,
-		Action:       "sts:ValidateSession",
-		Resource:     "*",
-		SessionToken: sessionToken,
-	}
-
-	glog.V(0).Infof("AuthenticateJWT: calling IsActionAllowed for principal=%s", principalArn)
-	allowed, err := s3iam.iamManager.IsActionAllowed(ctx, testRequest)
-	glog.V(0).Infof("AuthenticateJWT: IsActionAllowed returned allowed=%t, err=%v", allowed, err)
-	if err != nil || !allowed {
-		glog.V(0).Infof("IAM validation failed for %s: %v", principalArn, err)
+	// Validate the JWT token directly using STS service (avoid circular dependency)
+	// Note: We don't call IsActionAllowed here because that would create a circular dependency
+	// Authentication should only validate the token, authorization happens later
+	sessionInfo, err := s3iam.stsService.ValidateSessionToken(ctx, sessionToken)
+	if err != nil {
+		glog.V(3).Infof("STS session validation failed: %v", err)
 		return nil, s3err.ErrAccessDenied
 	}
 
