@@ -303,3 +303,63 @@ help: ## Show this help message
 	@echo "  docker-down              Stop all Docker Compose services"
 	@echo "  docker-logs              Show logs from all services"
 
+
+# New test targets for previously skipped tests
+
+test-distributed: ## Run distributed IAM tests
+	@echo "🌐 Running distributed IAM tests..."
+	@export ENABLE_DISTRIBUTED_TESTS=true && go test -v -timeout $(TEST_TIMEOUT) -run "TestS3IAMDistributedTests" ./...
+
+test-performance: ## Run performance tests
+	@echo "🏁 Running performance tests..."
+	@export ENABLE_PERFORMANCE_TESTS=true && go test -v -timeout $(TEST_TIMEOUT) -run "TestS3IAMPerformanceTests" ./...
+
+test-stress: ## Run stress tests
+	@echo "💪 Running stress tests..."
+	@export ENABLE_STRESS_TESTS=true && ./run_stress_tests.sh
+
+test-versioning-stress: ## Run S3 versioning stress tests
+	@echo "📚 Running versioning stress tests..."
+	@cd ../versioning && ./enable_stress_tests.sh
+
+test-keycloak-full: docker-up ## Run complete Keycloak integration tests
+	@echo "🔐 Running complete Keycloak integration tests..."
+	@export KEYCLOAK_URL="http://localhost:8080" && \
+	 export S3_ENDPOINT="http://localhost:8333" && \
+	 sleep 15 && \
+	 go test -v -timeout $(TEST_TIMEOUT) -run "TestKeycloak" ./...
+	@make docker-down
+
+test-all-previously-skipped: ## Run all previously skipped tests
+	@echo "🎯 Running all previously skipped tests..."
+	@./run_all_tests.sh
+
+setup-all-tests: ## Setup environment for all tests (including Keycloak)
+	@echo "🚀 Setting up complete test environment..."
+	@./setup_all_tests.sh
+
+# Update help target
+help: ## Show this help message
+	@echo "SeaweedFS S3 IAM Integration Tests"
+	@echo ""
+	@echo "Usage:"
+	@echo "  make [target]"
+	@echo ""
+	@echo "Standard Targets:"
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-25s %s\n", $$1, $$2}' $(MAKEFILE_LIST) | head -20
+	@echo ""
+	@echo "New Test Targets (Previously Skipped):"
+	@echo "  test-distributed         Run distributed IAM tests"
+	@echo "  test-performance         Run performance tests"
+	@echo "  test-stress              Run stress tests"
+	@echo "  test-versioning-stress   Run S3 versioning stress tests"
+	@echo "  test-keycloak-full       Run complete Keycloak integration tests"
+	@echo "  test-all-previously-skipped  Run all previously skipped tests"
+	@echo "  setup-all-tests          Setup environment for all tests"
+	@echo ""
+	@echo "Docker Compose Targets:"
+	@echo "  docker-test              Run tests with Docker Compose including Keycloak"
+	@echo "  docker-up                Start all services with Docker Compose"
+	@echo "  docker-down              Stop all Docker Compose services"
+	@echo "  docker-logs              Show logs from all services"
+
