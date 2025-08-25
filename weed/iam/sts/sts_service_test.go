@@ -307,10 +307,11 @@ func setupTestSTSService(t *testing.T) *STSService {
 	service := NewSTSService()
 
 	config := &STSConfig{
-		TokenDuration:    time.Hour,
-		MaxSessionLength: time.Hour * 12,
-		Issuer:           "test-sts",
-		SigningKey:       []byte("test-signing-key-32-characters-long"),
+		TokenDuration:      time.Hour,
+		MaxSessionLength:   time.Hour * 12,
+		Issuer:            "test-sts",
+		SigningKey:        []byte("test-signing-key-32-characters-long"),
+		SessionStoreType:  "memory", // Use memory store for unit tests
 	}
 
 	err := service.Initialize(config)

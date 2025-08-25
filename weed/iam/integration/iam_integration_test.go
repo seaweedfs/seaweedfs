@@ -349,14 +349,18 @@ func setupIntegratedIAMSystem(t *testing.T) *IAMManager {
 	// Configure and initialize
 	config := &IAMConfig{
 		STS: &sts.STSConfig{
-			TokenDuration:    time.Hour,
-			MaxSessionLength: time.Hour * 12,
-			Issuer:          "test-sts",
-			SigningKey:      []byte("test-signing-key-32-characters-long"),
+			TokenDuration:      time.Hour,
+			MaxSessionLength:   time.Hour * 12,
+			Issuer:            "test-sts",
+			SigningKey:        []byte("test-signing-key-32-characters-long"),
+			SessionStoreType:  "memory", // Use memory for unit tests
 		},
 		Policy: &policy.PolicyEngineConfig{
 			DefaultEffect: "Deny",
-			StoreType:     "memory",
+			StoreType:     "memory", // Use memory for unit tests
+		},
+		Roles: &RoleStoreConfig{
+			StoreType: "memory", // Use memory for unit tests
 		},
 	}
 	

@@ -174,7 +174,7 @@ func (m *IAMManager) CreateRole(ctx context.Context, roleName string, roleDef *R
 }
 
 // AssumeRoleWithWebIdentity assumes a role using web identity (OIDC)
-func (m *IAMManager) AssumeRoleWithWebIdentity(ctx context.Context, filerAddress string, request *sts.AssumeRoleWithWebIdentityRequest) (*sts.AssumeRoleResponse, error) {
+func (m *IAMManager) AssumeRoleWithWebIdentity(ctx context.Context, request *sts.AssumeRoleWithWebIdentityRequest) (*sts.AssumeRoleResponse, error) {
 	if !m.initialized {
 		return nil, fmt.Errorf("IAM manager not initialized")
 	}
@@ -194,11 +194,11 @@ func (m *IAMManager) AssumeRoleWithWebIdentity(ctx context.Context, filerAddress
 	}
 
 	// Use STS service to assume the role
-	return m.stsService.AssumeRoleWithWebIdentity(ctx, filerAddress, request)
+	return m.stsService.AssumeRoleWithWebIdentity(ctx, request)
 }
 
 // AssumeRoleWithCredentials assumes a role using credentials (LDAP)
-func (m *IAMManager) AssumeRoleWithCredentials(ctx context.Context, filerAddress string, request *sts.AssumeRoleWithCredentialsRequest) (*sts.AssumeRoleResponse, error) {
+func (m *IAMManager) AssumeRoleWithCredentials(ctx context.Context, request *sts.AssumeRoleWithCredentialsRequest) (*sts.AssumeRoleResponse, error) {
 	if !m.initialized {
 		return nil, fmt.Errorf("IAM manager not initialized")
 	}
@@ -218,17 +218,17 @@ func (m *IAMManager) AssumeRoleWithCredentials(ctx context.Context, filerAddress
 	}
 
 	// Use STS service to assume the role
-	return m.stsService.AssumeRoleWithCredentials(ctx, filerAddress, request)
+	return m.stsService.AssumeRoleWithCredentials(ctx, request)
 }
 
 // IsActionAllowed checks if a principal is allowed to perform an action on a resource
-func (m *IAMManager) IsActionAllowed(ctx context.Context, filerAddress string, request *ActionRequest) (bool, error) {
+func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest) (bool, error) {
 	if !m.initialized {
 		return false, fmt.Errorf("IAM manager not initialized")
 	}
 
 	// Validate session token first
-	_, err := m.stsService.ValidateSessionToken(ctx, filerAddress, request.SessionToken)
+	_, err := m.stsService.ValidateSessionToken(ctx, request.SessionToken)
 	if err != nil {
 		return false, fmt.Errorf("invalid session: %w", err)
 	}
@@ -381,10 +381,10 @@ func indexOf(s, substr string) int {
 }
 
 // ExpireSessionForTesting manually expires a session for testing purposes
-func (m *IAMManager) ExpireSessionForTesting(ctx context.Context, filerAddress string, sessionToken string) error {
+func (m *IAMManager) ExpireSessionForTesting(ctx context.Context, sessionToken string) error {
 	if !m.initialized {
 		return fmt.Errorf("IAM manager not initialized")
 	}
 
-	return m.stsService.ExpireSessionForTesting(ctx, filerAddress, sessionToken)
+	return m.stsService.ExpireSessionForTesting(ctx, sessionToken)
 }

@@ -25,14 +25,21 @@ func NewTokenGenerator(signingKey []byte, issuer string) *TokenGenerator {
 	}
 }
 
-// GenerateSessionToken creates a signed JWT session token
+// GenerateSessionToken creates a signed JWT session token (legacy method for compatibility)
 func (t *TokenGenerator) GenerateSessionToken(sessionId string, expiresAt time.Time) (string, error) {
-	claims := jwt.MapClaims{
-		JWTClaimIssuer:     t.issuer,
-		JWTClaimSubject:    sessionId,
-		JWTClaimIssuedAt:   time.Now().Unix(),
-		JWTClaimExpiration: expiresAt.Unix(),
-		JWTClaimTokenType:  TokenTypeSession,
+	claims := NewSTSSessionClaims(sessionId, t.issuer, expiresAt)
+	return t.GenerateJWTWithClaims(claims)
+}
+
+// GenerateJWTWithClaims creates a signed JWT token with comprehensive session claims
+func (t *TokenGenerator) GenerateJWTWithClaims(claims *STSSessionClaims) (string, error) {
+	if claims == nil {
+		return "", fmt.Errorf("claims cannot be nil")
+	}
+
+	// Ensure issuer is set from token generator
+	if claims.Issuer == "" {
+		claims.Issuer = t.issuer
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -77,6 +84,46 @@ func (t *TokenGenerator) ValidateSessionToken(tokenString string) (*SessionToken
 		ExpiresAt: time.Unix(int64(claims[JWTClaimExpiration].(float64)), 0),
 		IssuedAt:  time.Unix(int64(claims[JWTClaimIssuedAt].(float64)), 0),
 	}, nil
+}
+
+// ValidateJWTWithClaims validates and extracts comprehensive session claims from a JWT token
+func (t *TokenGenerator) ValidateJWTWithClaims(tokenString string) (*STSSessionClaims, error) {
+	token, err := jwt.ParseWithClaims(tokenString, &STSSessionClaims{}, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return t.signingKey, nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf(ErrInvalidToken, err)
+	}
+
+	if !token.Valid {
+		return nil, fmt.Errorf(ErrTokenNotValid)
+	}
+
+	claims, ok := token.Claims.(*STSSessionClaims)
+	if !ok {
+		return nil, fmt.Errorf(ErrInvalidTokenClaims)
+	}
+
+	// Validate issuer
+	if claims.Issuer != t.issuer {
+		return nil, fmt.Errorf(ErrInvalidIssuer)
+	}
+
+	// Validate that required fields are present
+	if claims.SessionId == "" {
+		return nil, fmt.Errorf(ErrMissingSessionID)
+	}
+
+	// Additional validation using the claims' own validation method
+	if !claims.IsValid() {
+		return nil, fmt.Errorf(ErrTokenNotValid)
+	}
+
+	return claims, nil
 }
 
 // SessionTokenClaims represents parsed session token claims

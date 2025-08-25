@@ -21,11 +21,6 @@ func TestCrossInstanceTokenUsage(t *testing.T) {
 		MaxSessionLength: 12 * time.Hour,
 		Issuer:           "distributed-sts-cluster",                       // SAME across all instances
 		SigningKey:       []byte(TestSigningKey32Chars), // SAME across all instances
-		SessionStoreType: StoreTypeMemory,                                        // In production, this would be "filer" for true sharing
-		SessionStoreConfig: map[string]interface{}{
-			ConfigFieldFilerAddress: "shared-filer:8888",
-			ConfigFieldBasePath:     DefaultSessionBasePath,
-		},
 		Providers: []*ProviderConfig{
 			{
 				Name:    "company-oidc",
@@ -100,7 +95,7 @@ func TestCrossInstanceTokenUsage(t *testing.T) {
 		}
 
 		// Instance A processes assume role request
-		responseFromA, err := instanceA.AssumeRoleWithWebIdentity(ctx, testFilerAddress, assumeRequest)
+		responseFromA, err := instanceA.AssumeRoleWithWebIdentity(ctx, assumeRequest)
 		require.NoError(t, err, "Instance A should process assume role")
 
 		sessionToken := responseFromA.Credentials.SessionToken
@@ -114,14 +109,14 @@ func TestCrossInstanceTokenUsage(t *testing.T) {
 		assert.NotNil(t, responseFromA.AssumedRoleUser, "Should have assumed role user")
 
 		// Step 2: Use session token on Instance B (different instance)
-		sessionInfoFromB, err := instanceB.ValidateSessionToken(ctx, testFilerAddress, sessionToken)
+		sessionInfoFromB, err := instanceB.ValidateSessionToken(ctx, sessionToken)
 		require.NoError(t, err, "Instance B should validate session token from Instance A")
 
 		assert.Equal(t, assumeRequest.RoleSessionName, sessionInfoFromB.SessionName)
 		assert.Equal(t, assumeRequest.RoleArn, sessionInfoFromB.RoleArn)
 
 		// Step 3: Use same session token on Instance C (yet another instance)
-		sessionInfoFromC, err := instanceC.ValidateSessionToken(ctx, testFilerAddress, sessionToken)
+		sessionInfoFromC, err := instanceC.ValidateSessionToken(ctx, sessionToken)
 		require.NoError(t, err, "Instance C should validate session token from Instance A")
 
 		// All instances should return identical session information
@@ -141,7 +136,7 @@ func TestCrossInstanceTokenUsage(t *testing.T) {
 			RoleSessionName:  "revocation-test-session",
 		}
 
-		response, err := instanceA.AssumeRoleWithWebIdentity(ctx, testFilerAddress, assumeRequest)
+		response, err := instanceA.AssumeRoleWithWebIdentity(ctx, assumeRequest)
 		require.NoError(t, err)
 		sessionToken := response.Credentials.SessionToken
 
@@ -183,9 +178,9 @@ func TestCrossInstanceTokenUsage(t *testing.T) {
 		}
 
 		// Should work on any instance
-		responseA, errA := instanceA.AssumeRoleWithWebIdentity(ctx, testFilerAddress, assumeRequest)
-		responseB, errB := instanceB.AssumeRoleWithWebIdentity(ctx, testFilerAddress, assumeRequest)
-		responseC, errC := instanceC.AssumeRoleWithWebIdentity(ctx, testFilerAddress, assumeRequest)
+		responseA, errA := instanceA.AssumeRoleWithWebIdentity(ctx, assumeRequest)
+		responseB, errB := instanceB.AssumeRoleWithWebIdentity(ctx, assumeRequest)
+		responseC, errC := instanceC.AssumeRoleWithWebIdentity(ctx, assumeRequest)
 
 		require.NoError(t, errA, "Instance A should process OIDC token")
 		require.NoError(t, errB, "Instance B should process OIDC token")
@@ -376,7 +371,7 @@ func TestSTSRealWorldDistributedScenarios(t *testing.T) {
 			DurationSeconds:  int64ToPtr(7200), // 2 hours
 		}
 
-		stsResponse, err := gateway1.AssumeRoleWithWebIdentity(ctx, testFilerAddress, assumeRequest)
+		stsResponse, err := gateway1.AssumeRoleWithWebIdentity(ctx, assumeRequest)
 		require.NoError(t, err, "Gateway 1 should handle AssumeRole")
 
 		sessionToken := stsResponse.Credentials.SessionToken

@@ -10,11 +10,13 @@ import (
 )
 
 // STSService provides Security Token Service functionality
+// This service is now completely stateless - all session information is embedded
+// in JWT tokens, eliminating the need for session storage and enabling true
+// distributed operation without shared state
 type STSService struct {
 	config         *STSConfig
 	initialized    bool
 	providers      map[string]providers.IdentityProvider
-	sessionStore   SessionStore
 	tokenGenerator *TokenGenerator
 }
 
@@ -31,10 +33,6 @@ type STSConfig struct {
 
 	// SigningKey is used to sign session tokens
 	SigningKey []byte `json:"signingKey"`
-
-	// SessionStore configuration
-	SessionStoreType   string                 `json:"sessionStoreType"` // memory, filer, redis
-	SessionStoreConfig map[string]interface{} `json:"sessionStoreConfig,omitempty"`
 
 	// Providers configuration - enables automatic provider loading
 	Providers []*ProviderConfig `json:"providers,omitempty"`
@@ -144,11 +142,32 @@ type SessionInfo struct {
 	// RoleArn is the ARN of the assumed role
 	RoleArn string `json:"roleArn"`
 
+	// AssumedRoleUser contains information about the assumed role user
+	AssumedRoleUser string `json:"assumedRoleUser"`
+
+	// Principal is the principal ARN
+	Principal string `json:"principal"`
+
 	// Subject is the subject identifier from the identity provider
 	Subject string `json:"subject"`
 
-	// Provider is the identity provider used
+	// Provider is the identity provider used (legacy field)
 	Provider string `json:"provider"`
+
+	// IdentityProvider is the identity provider used
+	IdentityProvider string `json:"identityProvider"`
+
+	// ExternalUserId is the external user identifier from the provider
+	ExternalUserId string `json:"externalUserId"`
+
+	// ProviderIssuer is the issuer from the identity provider
+	ProviderIssuer string `json:"providerIssuer"`
+
+	// Policies are the policies associated with this session
+	Policies []string `json:"policies"`
+
+	// RequestContext contains additional request context for policy evaluation
+	RequestContext map[string]interface{} `json:"requestContext,omitempty"`
 
 	// CreatedAt is when the session was created
 	CreatedAt time.Time `json:"createdAt"`
@@ -194,14 +213,7 @@ func (s *STSService) Initialize(config *STSConfig) error {
 
 	s.config = config
 
-	// Initialize session store
-	sessionStore, err := s.createSessionStore(config)
-	if err != nil {
-		return fmt.Errorf("failed to initialize session store: %w", err)
-	}
-	s.sessionStore = sessionStore
-
-	// Initialize token generator for JWT validation
+	// Initialize token generator for stateless JWT operations
 	s.tokenGenerator = NewTokenGenerator(config.SigningKey, config.Issuer)
 
 	// Load identity providers from configuration
@@ -232,18 +244,6 @@ func (s *STSService) validateConfig(config *STSConfig) error {
 	}
 
 	return nil
-}
-
-// createSessionStore creates a session store based on configuration
-func (s *STSService) createSessionStore(config *STSConfig) (SessionStore, error) {
-	switch config.SessionStoreType {
-	case "", DefaultStoreType:
-		return NewFilerSessionStore(config.SessionStoreConfig)
-	case StoreTypeMemory:
-		return NewMemorySessionStore(), nil
-	default:
-		return nil, fmt.Errorf(ErrUnsupportedStoreType, config.SessionStoreType)
-	}
 }
 
 // loadProvidersFromConfig loads identity providers from configuration
@@ -300,7 +300,8 @@ func (s *STSService) RegisterProvider(provider providers.IdentityProvider) error
 }
 
 // AssumeRoleWithWebIdentity assumes a role using a web identity token (OIDC)
-func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, filerAddress string, request *AssumeRoleWithWebIdentityRequest) (*AssumeRoleResponse, error) {
+// This method is now completely stateless - all session information is embedded in the JWT token
+func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *AssumeRoleWithWebIdentityRequest) (*AssumeRoleResponse, error) {
 	if !s.initialized {
 		return nil, fmt.Errorf(ErrSTSServiceNotInitialized)
 	}
@@ -341,36 +342,27 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, filerAddress
 		return nil, fmt.Errorf("failed to generate credentials: %w", err)
 	}
 
-	// Generate proper JWT session token using our TokenGenerator
-	jwtToken, err := s.tokenGenerator.GenerateSessionToken(sessionId, expiresAt)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate JWT session token: %w", err)
-	}
-	credentials.SessionToken = jwtToken
-
-	// 5. Create session information
-	session := &SessionInfo{
-		SessionId:   sessionId,
-		SessionName: request.RoleSessionName,
-		RoleArn:     request.RoleArn,
-		Subject:     externalIdentity.UserID,
-		Provider:    provider.Name(),
-		CreatedAt:   time.Now(),
-		ExpiresAt:   expiresAt,
-		Credentials: credentials,
-	}
-
-	// 6. Store session information
-	if err := s.sessionStore.StoreSession(ctx, filerAddress, sessionId, session); err != nil {
-		return nil, fmt.Errorf("failed to store session: %w", err)
-	}
-
-	// 7. Build and return response
+	// 5. Create comprehensive JWT session token with all session information embedded
 	assumedRoleUser := &AssumedRoleUser{
 		AssumedRoleId: request.RoleArn,
 		Arn:           GenerateAssumedRoleArn(request.RoleArn, request.RoleSessionName),
 		Subject:       externalIdentity.UserID,
 	}
+
+	// Create rich JWT claims with all session information
+	sessionClaims := NewSTSSessionClaims(sessionId, s.config.Issuer, expiresAt).
+		WithRoleInfo(request.RoleArn, assumedRoleUser.Arn, assumedRoleUser.Arn).
+		WithIdentityProvider(provider.Name(), externalIdentity.UserID, "").
+		WithMaxDuration(sessionDuration)
+
+	// Generate self-contained JWT token with all session information
+	jwtToken, err := s.tokenGenerator.GenerateJWTWithClaims(sessionClaims)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate JWT session token: %w", err)
+	}
+	credentials.SessionToken = jwtToken
+
+	// 6. Build and return response (no session storage needed!)
 
 	return &AssumeRoleResponse{
 		Credentials:     credentials,
@@ -378,8 +370,9 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, filerAddress
 	}, nil
 }
 
-// AssumeRoleWithCredentials assumes a role using username/password credentials
-func (s *STSService) AssumeRoleWithCredentials(ctx context.Context, filerAddress string, request *AssumeRoleWithCredentialsRequest) (*AssumeRoleResponse, error) {
+// AssumeRoleWithCredentials assumes a role using username/password credentials  
+// This method is now completely stateless - all session information is embedded in the JWT token
+func (s *STSService) AssumeRoleWithCredentials(ctx context.Context, request *AssumeRoleWithCredentialsRequest) (*AssumeRoleResponse, error) {
 	if !s.initialized {
 		return nil, fmt.Errorf("STS service not initialized")
 	}
@@ -427,36 +420,27 @@ func (s *STSService) AssumeRoleWithCredentials(ctx context.Context, filerAddress
 		return nil, fmt.Errorf("failed to generate credentials: %w", err)
 	}
 
-	// Generate proper JWT session token using our TokenGenerator
-	jwtToken, err := s.tokenGenerator.GenerateSessionToken(sessionId, expiresAt)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate JWT session token: %w", err)
-	}
-	tempCredentials.SessionToken = jwtToken
-
-	// 6. Create session information
-	session := &SessionInfo{
-		SessionId:   sessionId,
-		SessionName: request.RoleSessionName,
-		RoleArn:     request.RoleArn,
-		Subject:     externalIdentity.UserID,
-		Provider:    provider.Name(),
-		CreatedAt:   time.Now(),
-		ExpiresAt:   expiresAt,
-		Credentials: tempCredentials,
-	}
-
-	// 7. Store session information
-	if err := s.sessionStore.StoreSession(ctx, filerAddress, sessionId, session); err != nil {
-		return nil, fmt.Errorf("failed to store session: %w", err)
-	}
-
-	// 8. Build and return response
+	// 6. Create comprehensive JWT session token with all session information embedded
 	assumedRoleUser := &AssumedRoleUser{
 		AssumedRoleId: request.RoleArn,
 		Arn:           GenerateAssumedRoleArn(request.RoleArn, request.RoleSessionName),
 		Subject:       externalIdentity.UserID,
 	}
+
+	// Create rich JWT claims with all session information
+	sessionClaims := NewSTSSessionClaims(sessionId, s.config.Issuer, expiresAt).
+		WithRoleInfo(request.RoleArn, assumedRoleUser.Arn, assumedRoleUser.Arn).
+		WithIdentityProvider(provider.Name(), externalIdentity.UserID, "").
+		WithMaxDuration(sessionDuration)
+
+	// Generate self-contained JWT token with all session information
+	jwtToken, err := s.tokenGenerator.GenerateJWTWithClaims(sessionClaims)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate JWT session token: %w", err)
+	}
+	tempCredentials.SessionToken = jwtToken
+
+	// 7. Build and return response (no session storage needed!)
 
 	return &AssumeRoleResponse{
 		Credentials:     tempCredentials,
@@ -465,7 +449,8 @@ func (s *STSService) AssumeRoleWithCredentials(ctx context.Context, filerAddress
 }
 
 // ValidateSessionToken validates a session token and returns session information
-func (s *STSService) ValidateSessionToken(ctx context.Context, filerAddress string, sessionToken string) (*SessionInfo, error) {
+// This method is now completely stateless - all session information is extracted from the JWT token
+func (s *STSService) ValidateSessionToken(ctx context.Context, sessionToken string) (*SessionInfo, error) {
 	if !s.initialized {
 		return nil, fmt.Errorf(ErrSTSServiceNotInitialized)
 	}
@@ -474,28 +459,22 @@ func (s *STSService) ValidateSessionToken(ctx context.Context, filerAddress stri
 		return nil, fmt.Errorf(ErrSessionTokenCannotBeEmpty)
 	}
 
-	// Use token generator for proper JWT validation
-	claims, err := s.tokenGenerator.ValidateSessionToken(sessionToken)
-	if err != nil {
-		return nil, fmt.Errorf(ErrInvalidTokenFormat, err)
-	}
-
-	// Retrieve session from store using session ID from claims
-	session, err := s.sessionStore.GetSession(ctx, filerAddress, claims.SessionId)
+	// Validate JWT and extract comprehensive session claims
+	claims, err := s.tokenGenerator.ValidateJWTWithClaims(sessionToken)
 	if err != nil {
 		return nil, fmt.Errorf(ErrSessionValidationFailed, err)
 	}
 
-	// Additional validation - check expiration
-	if session.ExpiresAt.Before(time.Now()) {
-		return nil, fmt.Errorf("session has expired")
-	}
-
-	return session, nil
+	// Convert JWT claims back to SessionInfo
+	// All session information is embedded in the JWT token itself
+	return claims.ToSessionInfo(), nil
 }
 
-// RevokeSession revokes an active session
-func (s *STSService) RevokeSession(ctx context.Context, filerAddress string, sessionToken string) error {
+// RevokeSession validates a session token (stateless operation)
+// Note: In a stateless JWT system, sessions cannot be revoked without a blacklist.
+// This method validates the token format but cannot actually revoke it.
+// For production use, consider implementing a token blacklist or use short-lived tokens.
+func (s *STSService) RevokeSession(ctx context.Context, sessionToken string) error {
 	if !s.initialized {
 		return fmt.Errorf("STS service not initialized")
 	}
@@ -504,18 +483,16 @@ func (s *STSService) RevokeSession(ctx context.Context, filerAddress string, ses
 		return fmt.Errorf("session token cannot be empty")
 	}
 
-	// Use token generator for proper JWT validation
-	claims, err := s.tokenGenerator.ValidateSessionToken(sessionToken)
+	// Validate JWT token format 
+	_, err := s.tokenGenerator.ValidateJWTWithClaims(sessionToken)
 	if err != nil {
 		return fmt.Errorf("invalid session token format: %w", err)
 	}
 
-	// Remove session from store using session ID from claims
-	err = s.sessionStore.RevokeSession(ctx, filerAddress, claims.SessionId)
-	if err != nil {
-		return fmt.Errorf("failed to revoke session: %w", err)
-	}
-
+	// In a stateless system, we cannot revoke JWT tokens without a blacklist
+	// The token will naturally expire based on its embedded expiration time
+	glog.V(1).Infof("Session revocation requested for stateless token - token will expire naturally at its embedded expiration time")
+	
 	return nil
 }
 
@@ -600,50 +577,19 @@ func (s *STSService) calculateSessionDuration(durationSeconds *int64) time.Durat
 	return s.config.TokenDuration
 }
 
-// extractSessionIdFromToken extracts session ID from session token
+// extractSessionIdFromToken extracts session ID from JWT session token
 func (s *STSService) extractSessionIdFromToken(sessionToken string) string {
-	// For simplified implementation, we need to map session tokens to session IDs
-	// The session token is stored as part of the credentials in the session
-	// So we need to search through sessions to find the matching token
-
-	// For now, use the session token directly as session ID since we store them together
-	// In a full implementation, this would parse JWT and extract session ID from claims
-	if len(sessionToken) > 10 && sessionToken[:2] == "ST" {
-		// Session token format - try to find the session by iterating
-		// This is inefficient but works for testing
-		return s.findSessionIdByToken(sessionToken)
-	}
-
-	// For test compatibility, also handle direct session IDs
-	if len(sessionToken) == 32 { // Typical session ID length
-		return sessionToken
-	}
-
-	return ""
-}
-
-// findSessionIdByToken finds session ID by session token (simplified implementation)
-func (s *STSService) findSessionIdByToken(sessionToken string) string {
-	// In a real implementation, we'd maintain a reverse index
-	// For testing, we can use the fact that our memory store can be searched
-	// This is a simplified approach - in production we'd use proper token->session mapping
-
-	memStore, ok := s.sessionStore.(*MemorySessionStore)
-	if !ok {
+	// Parse JWT and extract session ID from claims
+	claims, err := s.tokenGenerator.ValidateJWTWithClaims(sessionToken)
+	if err != nil {
+		// For test compatibility, also handle direct session IDs
+		if len(sessionToken) == 32 { // Typical session ID length
+			return sessionToken
+		}
 		return ""
 	}
 
-	// Search through all sessions to find matching token
-	memStore.mutex.RLock()
-	defer memStore.mutex.RUnlock()
-
-	for sessionId, session := range memStore.sessions {
-		if session.Credentials != nil && session.Credentials.SessionToken == sessionToken {
-			return sessionId
-		}
-	}
-
-	return ""
+	return claims.SessionId
 }
 
 // validateAssumeRoleWithCredentialsRequest validates the credentials request parameters
@@ -679,7 +625,7 @@ func (s *STSService) validateAssumeRoleWithCredentialsRequest(request *AssumeRol
 }
 
 // ExpireSessionForTesting manually expires a session for testing purposes
-func (s *STSService) ExpireSessionForTesting(ctx context.Context, filerAddress string, sessionToken string) error {
+func (s *STSService) ExpireSessionForTesting(ctx context.Context, sessionToken string) error {
 	if !s.initialized {
 		return fmt.Errorf("STS service not initialized")
 	}
@@ -688,18 +634,15 @@ func (s *STSService) ExpireSessionForTesting(ctx context.Context, filerAddress s
 		return fmt.Errorf("session token cannot be empty")
 	}
 
-	// Extract session ID from token
-	sessionId := s.extractSessionIdFromToken(sessionToken)
-	if sessionId == "" {
-		return fmt.Errorf("invalid session token format")
+	// Validate JWT token format 
+	_, err := s.tokenGenerator.ValidateJWTWithClaims(sessionToken)
+	if err != nil {
+		return fmt.Errorf("invalid session token format: %w", err)
 	}
 
-	// Check if session store supports manual expiration (for MemorySessionStore)
-	if memStore, ok := s.sessionStore.(*MemorySessionStore); ok {
-		return memStore.ExpireSessionForTesting(ctx, filerAddress, sessionId)
-	}
-
-	// For other session stores, we could implement similar functionality
-	// For now, just return an error indicating it's not supported
-	return fmt.Errorf("manual session expiration not supported for this session store type")
+	// In a stateless system, we cannot manually expire JWT tokens
+	// The token expiration is embedded in the token itself and handled by JWT validation
+	glog.V(1).Infof("Manual session expiration requested for stateless token - cannot expire JWT tokens manually")
+	
+	return fmt.Errorf("manual session expiration not supported in stateless JWT system")
 }

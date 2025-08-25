@@ -95,7 +95,7 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 	}
 
 	glog.V(0).Infof("AuthenticateJWT: calling IsActionAllowed for principal=%s", principalArn)
-	allowed, err := s3iam.iamManager.IsActionAllowed(ctx, s3iam.filerAddress, testRequest)
+	allowed, err := s3iam.iamManager.IsActionAllowed(ctx, testRequest)
 	glog.V(0).Infof("AuthenticateJWT: IsActionAllowed returned allowed=%t, err=%v", allowed, err)
 	if err != nil || !allowed {
 		glog.V(0).Infof("IAM validation failed for %s: %v", principalArn, err)
@@ -147,7 +147,7 @@ func (s3iam *S3IAMIntegration) AuthorizeAction(ctx context.Context, identity *IA
 	}
 
 	// Check if action is allowed using our policy engine
-	allowed, err := s3iam.iamManager.IsActionAllowed(ctx, s3iam.filerAddress, actionRequest)
+	allowed, err := s3iam.iamManager.IsActionAllowed(ctx, actionRequest)
 	if err != nil {
 		// Log the error but treat authentication/authorization failures as access denied
 		// rather than internal errors to provide better user experience
