@@ -1,7 +1,10 @@
 package iam
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go/service/s3"
@@ -43,7 +46,7 @@ func TestKeycloakAuthentication(t *testing.T) {
 		assert.NotEmpty(t, token, "JWT token should not be empty")
 
 		// Verify token can be used to create S3 client
-		s3Client, err := framework.CreateS3ClientWithJWT("admin-user", "S3AdminRole")
+		s3Client, err := framework.CreateS3ClientWithKeycloakToken(token)
 		require.NoError(t, err)
 		assert.NotNil(t, s3Client, "S3 client should be created successfully")
 
@@ -71,17 +74,42 @@ func TestKeycloakAuthentication(t *testing.T) {
 		require.NoError(t, err)
 		assert.NotEmpty(t, token, "JWT token should not be empty")
 
-		// Create S3 client with read-only user
-		s3Client, err := framework.CreateS3ClientWithJWT("read-user", "S3ReadOnlyRole")
-		require.NoError(t, err)
+		// Debug: decode token to verify it's for read-user
+		parts := strings.Split(token, ".")
+		if len(parts) >= 2 {
+			payload := parts[1]
+			// Add padding if needed
+			for len(payload)%4 != 0 {
+				payload += "="
+			}
+			decoded, err := base64.StdEncoding.DecodeString(payload)
+			if err == nil {
+				var claims map[string]interface{}
+				if json.Unmarshal(decoded, &claims) == nil {
+					t.Logf("Token username: %v", claims["preferred_username"])
+					t.Logf("Token roles: %v", claims["roles"])
+				}
+			}
+		}
 
-		// Test that read-only user can list buckets
-		_, err = s3Client.ListBuckets(&s3.ListBucketsInput{})
-		assert.NoError(t, err, "Read-only user should be able to list buckets")
+			// First test with direct HTTP request to verify OIDC authentication works
+	t.Logf("Testing with direct HTTP request...")
+	err = framework.TestKeycloakTokenDirectly(token)
+	require.NoError(t, err, "Direct HTTP test should succeed")
 
-		// Test that read-only user cannot create buckets
-		err = framework.CreateBucket(s3Client, testKeycloakBucket+"-readonly")
-		assert.Error(t, err, "Read-only user should not be able to create buckets")
+	// Create S3 client with Keycloak token
+	s3Client, err := framework.CreateS3ClientWithKeycloakToken(token)
+	require.NoError(t, err)
+
+	// Test that read-only user can list buckets
+	t.Logf("Testing ListBuckets with AWS SDK...")
+	_, err = s3Client.ListBuckets(&s3.ListBucketsInput{})
+	assert.NoError(t, err, "Read-only user should be able to list buckets")
+
+	// Test that read-only user cannot create buckets
+	t.Logf("Testing CreateBucket with AWS SDK...")
+	err = framework.CreateBucket(s3Client, testKeycloakBucket+"-readonly")
+	assert.Error(t, err, "Read-only user should not be able to create buckets")
 	})
 
 	t.Run("invalid_user_authentication", func(t *testing.T) {
@@ -110,7 +138,10 @@ func TestKeycloakTokenExpiration(t *testing.T) {
 	assert.Greater(t, tokenResp.ExpiresIn, 0, "Token should have expiration time")
 
 	// Test that token works initially
-	s3Client, err := framework.CreateS3ClientWithJWT("admin-user", "S3AdminRole")
+	token, err := framework.getKeycloakToken("admin-user")
+	require.NoError(t, err)
+
+	s3Client, err := framework.CreateS3ClientWithKeycloakToken(token)
 	require.NoError(t, err)
 
 	_, err = s3Client.ListBuckets(&s3.ListBucketsInput{})
@@ -158,8 +189,12 @@ func TestKeycloakRoleMapping(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.username, func(t *testing.T) {
-			// Create S3 client for the user
-			s3Client, err := framework.CreateS3ClientWithJWT(tc.username, tc.expectedRole)
+			// Get Keycloak token for the user
+			token, err := framework.getKeycloakToken(tc.username)
+			require.NoError(t, err)
+
+			// Create S3 client with Keycloak token
+			s3Client, err := framework.CreateS3ClientWithKeycloakToken(token)
 			require.NoError(t, err, tc.description)
 
 			// Test list buckets permission
@@ -192,7 +227,10 @@ func TestKeycloakS3Operations(t *testing.T) {
 	}
 
 	// Use admin user for comprehensive testing
-	s3Client, err := framework.CreateS3ClientWithJWT("admin-user", "S3AdminRole")
+	token, err := framework.getKeycloakToken("admin-user")
+	require.NoError(t, err)
+
+	s3Client, err := framework.CreateS3ClientWithKeycloakToken(token)
 	require.NoError(t, err)
 
 	bucketName := testKeycloakBucket + "-operations"

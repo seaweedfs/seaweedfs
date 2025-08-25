@@ -5,12 +5,50 @@
     "issuer": "seaweedfs-sts",
     "signingKey": "dGVzdC1zaWduaW5nLWtleS0zMi1jaGFyYWN0ZXJzLWxvbmc="
   },
-  "identityProviders": [
+  "providers": [
     {
       "name": "test-oidc",
       "type": "mock",
       "config": {
         "issuer": "test-oidc-issuer"
+      }
+    },
+    {
+      "name": "keycloak",
+      "type": "oidc",
+      "enabled": true,
+      "config": {
+        "issuer": "http://localhost:8080/realms/seaweedfs-test",
+        "clientId": "seaweedfs-s3",
+        "clientSecret": "seaweedfs-s3-secret",
+        "jwksUri": "http://localhost:8080/realms/seaweedfs-test/protocol/openid-connect/certs",
+        "userInfoUri": "http://localhost:8080/realms/seaweedfs-test/protocol/openid-connect/userinfo",
+        "scopes": ["openid", "profile", "email"],
+        "claimsMapping": {
+          "username": "preferred_username",
+          "email": "email",
+          "name": "name"
+        },
+        "roleMapping": {
+          "rules": [
+            {
+              "claim": "roles",
+              "value": "s3-admin",
+              "role": "arn:seaweed:iam::role/KeycloakAdminRole"
+            },
+            {
+              "claim": "roles", 
+              "value": "s3-read-only",
+              "role": "arn:seaweed:iam::role/KeycloakReadOnlyRole"
+            },
+            {
+              "claim": "roles",
+              "value": "s3-write-only", 
+              "role": "arn:seaweed:iam::role/KeycloakWriteOnlyRole"
+            }
+          ],
+          "defaultRole": "arn:seaweed:iam::role/KeycloakReadOnlyRole"
+        }
       }
     }
   ],
@@ -72,6 +110,60 @@
       },
       "attachedPolicies": ["S3WriteOnlyPolicy"],
       "description": "Write-only role for testing"
+    },
+    {
+      "roleName": "KeycloakAdminRole",
+      "roleArn": "arn:seaweed:iam::role/KeycloakAdminRole",
+      "trustPolicy": {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "Federated": "keycloak"
+            },
+            "Action": ["sts:AssumeRoleWithWebIdentity"]
+          }
+        ]
+      },
+      "attachedPolicies": ["S3AdminPolicy"],
+      "description": "Admin role for Keycloak users"
+    },
+    {
+      "roleName": "KeycloakReadOnlyRole",
+      "roleArn": "arn:seaweed:iam::role/KeycloakReadOnlyRole",
+      "trustPolicy": {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "Federated": "keycloak"
+            },
+            "Action": ["sts:AssumeRoleWithWebIdentity"]
+          }
+        ]
+      },
+      "attachedPolicies": ["S3ReadOnlyPolicy"],
+      "description": "Read-only role for Keycloak users"
+    },
+    {
+      "roleName": "KeycloakWriteOnlyRole",
+      "roleArn": "arn:seaweed:iam::role/KeycloakWriteOnlyRole",
+      "trustPolicy": {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "Federated": "keycloak"
+            },
+            "Action": ["sts:AssumeRoleWithWebIdentity"]
+          }
+        ]
+      },
+      "attachedPolicies": ["S3WriteOnlyPolicy"],
+      "description": "Write-only role for Keycloak users"
     }
   ],
   "policies": [

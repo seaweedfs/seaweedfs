@@ -10,6 +10,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/iam/integration"
+	"github.com/seaweedfs/seaweedfs/weed/iam/providers"
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -61,18 +62,36 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 		return nil, s3err.ErrAccessDenied
 	}
 
-	// Parse JWT token to extract claims
+	// Try to parse as STS session token first
 	tokenClaims, err := parseJWTToken(sessionToken)
 	if err != nil {
 		glog.V(3).Infof("Failed to parse JWT token: %v", err)
 		return nil, s3err.ErrAccessDenied
 	}
 
-	// Extract role information from token claims
+	// Check if this is an STS session token (has "role" claim)
 	roleName, ok := tokenClaims["role"].(string)
 	if !ok || roleName == "" {
-		glog.V(0).Info("No role found in JWT token")
-		return nil, s3err.ErrAccessDenied
+		// Not an STS session token, try to validate as OIDC token
+		identity, err := s3iam.validateOIDCToken(ctx, sessionToken)
+		if err != nil {
+			glog.V(0).Infof("Failed to validate as OIDC token: %v", err)
+			return nil, s3err.ErrAccessDenied
+		}
+
+		// Extract role from OIDC identity
+		if identity.RoleArn == "" {
+			glog.V(0).Info("No role found in OIDC token")
+			return nil, s3err.ErrAccessDenied
+		}
+
+		// Return IAM identity for OIDC token
+		return &IAMIdentity{
+			Name:         identity.UserID,
+			Principal:    identity.RoleArn,
+			SessionToken: sessionToken,
+			Account:      nil, // OIDC tokens don't have account info
+		}, s3err.ErrNone
 	}
 
 	sessionName, ok := tokenClaims["snam"].(string)
@@ -408,4 +427,69 @@ func (enhanced *EnhancedS3ApiServer) AuthorizeRequest(r *http.Request, identity 
 
 	// Use our IAM integration for authorization
 	return enhanced.iamIntegration.AuthorizeAction(ctx, iamIdentity, action, bucket, object, r)
+}
+
+// OIDCIdentity represents an identity validated through OIDC
+type OIDCIdentity struct {
+	UserID   string
+	RoleArn  string
+	Provider string
+}
+
+// validateOIDCToken validates an OIDC token using registered identity providers
+func (s3iam *S3IAMIntegration) validateOIDCToken(ctx context.Context, token string) (*OIDCIdentity, error) {
+	if s3iam.iamManager == nil {
+		return nil, fmt.Errorf("IAM manager not available")
+	}
+
+	// Get STS service to access identity providers
+	stsService := s3iam.iamManager.GetSTSService()
+	if stsService == nil {
+		return nil, fmt.Errorf("STS service not available")
+	}
+
+	// Try to validate token with each registered OIDC provider
+	providers := stsService.GetProviders()
+	for providerName, provider := range providers {
+		// Try to authenticate with this provider
+		externalIdentity, err := provider.Authenticate(ctx, token)
+		if err != nil {
+			glog.V(3).Infof("Provider %s failed to authenticate token: %v", providerName, err)
+			continue
+		}
+
+		// Extract role from external identity attributes
+		rolesAttr, exists := externalIdentity.Attributes["roles"]
+		if !exists || rolesAttr == "" {
+			glog.V(3).Infof("No roles found in external identity from provider %s", providerName)
+			continue
+		}
+
+		// Parse roles (stored as comma-separated string)
+		roles := strings.Split(rolesAttr, ",")
+		if len(roles) == 0 {
+			glog.V(3).Infof("Empty roles list from provider %s", providerName)
+			continue
+		}
+
+		// Use the first role as the primary role
+		roleArn := roles[0]
+
+		return &OIDCIdentity{
+			UserID:   externalIdentity.UserID,
+			RoleArn:  roleArn,
+			Provider: providerName,
+		}, nil
+	}
+
+	return nil, fmt.Errorf("token not valid for any registered OIDC provider")
+}
+
+// getProviderNames returns a list of provider names for debugging
+func getProviderNames(providers map[string]providers.IdentityProvider) []string {
+	names := make([]string, 0, len(providers))
+	for name := range providers {
+		names = append(names, name)
+	}
+	return names
 }

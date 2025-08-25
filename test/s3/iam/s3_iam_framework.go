@@ -114,9 +114,10 @@ func NewKeycloakClient(baseURL, realm, clientID, clientSecret string) *KeycloakC
 // isKeycloakAvailable checks if Keycloak is running and accessible
 func (f *S3IAMTestFramework) isKeycloakAvailable(keycloakURL string) bool {
 	client := &http.Client{Timeout: 5 * time.Second}
-	healthURL := fmt.Sprintf("%s/health/ready", keycloakURL)
+	// Use realms endpoint instead of health/ready for Keycloak v26+
+	realmsURL := fmt.Sprintf("%s/realms/master", keycloakURL)
 
-	resp, err := client.Get(healthURL)
+	resp, err := client.Get(realmsURL)
 	if err != nil {
 		return false
 	}
@@ -268,16 +269,40 @@ func (t *BearerTokenTransport) RoundTrip(req *http.Request) (*http.Response, err
 	// Clone the request to avoid modifying the original
 	newReq := req.Clone(req.Context())
 
-	// Add Bearer token authorization header
-	newReq.Header.Set("Authorization", "Bearer "+t.Token)
-
-	// Remove AWS signature headers if present (they conflict with Bearer auth)
+	// Remove ALL existing Authorization headers first to prevent conflicts
+	newReq.Header.Del("Authorization")
 	newReq.Header.Del("X-Amz-Date")
 	newReq.Header.Del("X-Amz-Content-Sha256")
 	newReq.Header.Del("X-Amz-Signature")
 	newReq.Header.Del("X-Amz-Algorithm")
 	newReq.Header.Del("X-Amz-Credential")
 	newReq.Header.Del("X-Amz-SignedHeaders")
+	newReq.Header.Del("X-Amz-Security-Token")
+
+	// Add Bearer token authorization header
+	newReq.Header.Set("Authorization", "Bearer "+t.Token)
+
+	// Debug: log the token being sent (first 50 chars) and subject
+	tokenPreview := t.Token
+	if len(tokenPreview) > 50 {
+		tokenPreview = tokenPreview[:50] + "..."
+	}
+
+	// Debug logging can be enabled if needed
+	// Extract subject from token for debugging
+	// parts := strings.Split(t.Token, ".")
+	// subject := "unknown"
+	// if len(parts) >= 2 {
+	//     if decoded, err := base64.RawURLEncoding.DecodeString(parts[1]); err == nil {
+	//         var claims map[string]interface{}
+	//         if json.Unmarshal(decoded, &claims) == nil {
+	//             if sub, ok := claims["sub"].(string); ok {
+	//                 subject = sub[:8] + "..." // First 8 chars of subject
+	//             }
+	//         }
+	//     }
+	// }
+	// fmt.Printf("DEBUG: Sending Bearer token (subject: %s): %s\n", subject, tokenPreview)
 
 	// Use underlying transport
 	transport := t.Transport
@@ -462,6 +487,79 @@ func (f *S3IAMTestFramework) CreateS3ClientWithSessionToken(sessionToken string)
 	}
 
 	return s3.New(sess), nil
+}
+
+// CreateS3ClientWithKeycloakToken creates an S3 client using a Keycloak JWT token
+func (f *S3IAMTestFramework) CreateS3ClientWithKeycloakToken(keycloakToken string) (*s3.S3, error) {
+	// Create a fresh HTTP transport with aggressive timeouts to prevent hanging
+	transport := &http.Transport{
+		DisableKeepAlives:     true, // Force new connections for each request
+		DisableCompression:    true, // Disable compression to simplify requests
+		MaxIdleConns:          0,    // No connection pooling
+		MaxIdleConnsPerHost:   0,    // No connection pooling per host
+		IdleConnTimeout:       1 * time.Second,
+		TLSHandshakeTimeout:   5 * time.Second,
+		ResponseHeaderTimeout: 10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+
+	// Create a custom HTTP client with aggressive timeouts
+	httpClient := &http.Client{
+		Timeout: 30 * time.Second, // Overall request timeout
+		Transport: &BearerTokenTransport{
+			Token:     keycloakToken,
+			Transport: transport,
+		},
+	}
+
+	sess, err := session.NewSession(&aws.Config{
+		Region:           aws.String(TestRegion),
+		Endpoint:         aws.String(TestS3Endpoint),
+		Credentials:      credentials.AnonymousCredentials,
+		DisableSSL:       aws.Bool(true),
+		S3ForcePathStyle: aws.Bool(true),
+		HTTPClient:       httpClient,
+		MaxRetries:       aws.Int(0), // No retries to avoid delays
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create AWS session: %v", err)
+	}
+
+	return s3.New(sess), nil
+}
+
+// TestKeycloakTokenDirectly tests a Keycloak token with direct HTTP request (bypassing AWS SDK)
+func (f *S3IAMTestFramework) TestKeycloakTokenDirectly(keycloakToken string) error {
+	// Create a simple HTTP client with timeout
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	// Create request to list buckets
+	req, err := http.NewRequest("GET", TestS3Endpoint, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %v", err)
+	}
+
+	// Add Bearer token
+	req.Header.Set("Authorization", "Bearer "+keycloakToken)
+	req.Header.Set("Host", "localhost:8333")
+
+	// Make request
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Read response
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response: %v", err)
+	}
+
+	fmt.Printf("Direct HTTP test - Status: %d, Body: %s\n", resp.StatusCode, string(body))
+	return nil
 }
 
 // generateJWTToken creates a JWT token for testing

@@ -299,6 +299,11 @@ func (s *STSService) RegisterProvider(provider providers.IdentityProvider) error
 	return nil
 }
 
+// GetProviders returns all registered identity providers
+func (s *STSService) GetProviders() map[string]providers.IdentityProvider {
+	return s.providers
+}
+
 // AssumeRoleWithWebIdentity assumes a role using a web identity token (OIDC)
 // This method is now completely stateless - all session information is embedded in the JWT token
 func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *AssumeRoleWithWebIdentityRequest) (*AssumeRoleResponse, error) {

@@ -144,11 +144,22 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, token string) (*provide
 	displayName, _ := claims.GetClaimString("name")
 	groups, _ := claims.GetClaimStringSlice("groups")
 
+	// Map claims to roles using configured role mapping
+	roles := p.mapClaimsToRolesWithConfig(claims)
+
+	// Create attributes map and add roles
+	attributes := make(map[string]string)
+	if len(roles) > 0 {
+		// Store roles as a comma-separated string in attributes
+		attributes["roles"] = strings.Join(roles, ",")
+	}
+
 	return &providers.ExternalIdentity{
 		UserID:      claims.Subject,
 		Email:       email,
 		DisplayName: displayName,
 		Groups:      groups,
+		Attributes:  attributes,
 		Provider:    p.name,
 	}, nil
 }
@@ -288,9 +299,18 @@ func (p *OIDCProvider) ValidateToken(ctx context.Context, token string) (*provid
 		return nil, fmt.Errorf("invalid or missing issuer claim")
 	}
 
-	audience, ok := claims["aud"].(string)
-	if !ok || audience != p.config.ClientID {
+	// Check audience claim (aud) or authorized party (azp) - Keycloak uses azp
+	var audience string
+	if aud, ok := claims["aud"].(string); ok {
+		audience = aud
+	} else if azp, ok := claims["azp"].(string); ok {
+		audience = azp
+	} else {
 		return nil, fmt.Errorf("invalid or missing audience claim")
+	}
+
+	if audience != p.config.ClientID {
+		return nil, fmt.Errorf("invalid audience claim: expected %s, got %s", p.config.ClientID, audience)
 	}
 
 	subject, ok := claims["sub"].(string)
@@ -313,7 +333,7 @@ func (p *OIDCProvider) ValidateToken(ctx context.Context, token string) (*provid
 	return tokenClaims, nil
 }
 
-// mapClaimsToRoles maps token claims to SeaweedFS roles
+// mapClaimsToRoles maps token claims to SeaweedFS roles (legacy method)
 func (p *OIDCProvider) mapClaimsToRoles(claims *providers.TokenClaims) []string {
 	roles := []string{}
 
@@ -334,6 +354,30 @@ func (p *OIDCProvider) mapClaimsToRoles(claims *providers.TokenClaims) []string 
 
 	if len(roles) == 0 {
 		roles = []string{"readonly"} // Default role
+	}
+
+	return roles
+}
+
+// mapClaimsToRolesWithConfig maps token claims to roles using configured role mapping
+func (p *OIDCProvider) mapClaimsToRolesWithConfig(claims *providers.TokenClaims) []string {
+	if p.config.RoleMapping == nil {
+		// Fallback to legacy mapping if no role mapping configured
+		return p.mapClaimsToRoles(claims)
+	}
+
+	roles := []string{}
+
+	// Apply role mapping rules
+	for _, rule := range p.config.RoleMapping.Rules {
+		if rule.Matches(claims) {
+			roles = append(roles, rule.Role)
+		}
+	}
+
+	// Use default role if no rules matched
+	if len(roles) == 0 && p.config.RoleMapping.DefaultRole != "" {
+		roles = []string{p.config.RoleMapping.DefaultRole}
 	}
 
 	return roles

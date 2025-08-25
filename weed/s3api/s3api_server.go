@@ -450,6 +450,28 @@ func loadIAMManagerFromConfig(configPath string) (*integration.IAMManager, error
 		return nil, fmt.Errorf("failed to initialize IAM manager: %w", err)
 	}
 
+	// Load identity providers
+	providerFactory := sts.NewProviderFactory()
+	for _, providerConfig := range configRoot.Providers {
+		provider, err := providerFactory.CreateProvider(&sts.ProviderConfig{
+			Name:    providerConfig["name"].(string),
+			Type:    providerConfig["type"].(string),
+			Enabled: true,
+			Config:  providerConfig["config"].(map[string]interface{}),
+		})
+		if err != nil {
+			glog.Warningf("Failed to create provider %s: %v", providerConfig["name"], err)
+			continue
+		}
+		if provider != nil {
+			if err := iamManager.RegisterIdentityProvider(provider); err != nil {
+				glog.Warningf("Failed to register provider %s: %v", providerConfig["name"], err)
+			} else {
+				glog.V(1).Infof("Registered identity provider: %s", providerConfig["name"])
+			}
+		}
+	}
+
 	// Load policies
 	for _, policyDef := range configRoot.Policies {
 		if err := iamManager.CreatePolicy(context.Background(), policyDef.Name, policyDef.Document); err != nil {
@@ -464,7 +486,7 @@ func loadIAMManagerFromConfig(configPath string) (*integration.IAMManager, error
 		}
 	}
 
-	glog.V(0).Infof("Loaded %d policies and %d roles from config", len(configRoot.Policies), len(configRoot.Roles))
+	glog.V(0).Infof("Loaded %d providers, %d policies and %d roles from config", len(configRoot.Providers), len(configRoot.Policies), len(configRoot.Roles))
 
 	return iamManager, nil
 }

@@ -145,6 +145,13 @@ func (f *ProviderFactory) convertToOIDCConfig(configMap map[string]interface{}) 
 		}
 	}
 
+	// Convert role mapping
+	if roleMappingInterface, ok := configMap["roleMapping"]; ok {
+		if roleMapping, err := f.convertToRoleMapping(roleMappingInterface); err == nil {
+			config.RoleMapping = roleMapping
+		}
+	}
+
 	glog.V(3).Infof("Converted OIDC config: issuer=%s, clientId=%s, jwksUri=%s",
 		config.Issuer, config.ClientID, config.JWKSUri)
 
@@ -225,6 +232,56 @@ func (f *ProviderFactory) LoadProvidersFromConfig(configs []*ProviderConfig) (ma
 	return providersMap, nil
 }
 
+// convertToRoleMapping converts interface{} to *providers.RoleMapping
+func (f *ProviderFactory) convertToRoleMapping(value interface{}) (*providers.RoleMapping, error) {
+	roleMappingMap, ok := value.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("roleMapping must be an object")
+	}
+
+	roleMapping := &providers.RoleMapping{}
+
+	// Convert rules
+	if rulesInterface, ok := roleMappingMap["rules"]; ok {
+		rulesSlice, ok := rulesInterface.([]interface{})
+		if !ok {
+			return nil, fmt.Errorf("rules must be an array")
+		}
+
+		rules := make([]providers.MappingRule, len(rulesSlice))
+		for i, ruleInterface := range rulesSlice {
+			ruleMap, ok := ruleInterface.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("rule must be an object")
+			}
+
+			rule := providers.MappingRule{}
+			if claim, ok := ruleMap["claim"].(string); ok {
+				rule.Claim = claim
+			}
+			if value, ok := ruleMap["value"].(string); ok {
+				rule.Value = value
+			}
+			if role, ok := ruleMap["role"].(string); ok {
+				rule.Role = role
+			}
+			if condition, ok := ruleMap["condition"].(string); ok {
+				rule.Condition = condition
+			}
+
+			rules[i] = rule
+		}
+		roleMapping.Rules = rules
+	}
+
+	// Convert default role
+	if defaultRole, ok := roleMappingMap["defaultRole"].(string); ok {
+		roleMapping.DefaultRole = defaultRole
+	}
+
+	return roleMapping, nil
+}
+
 // ValidateProviderConfig validates a provider configuration
 func (f *ProviderFactory) ValidateProviderConfig(config *ProviderConfig) error {
 	if config == nil {
@@ -263,7 +320,7 @@ func (f *ProviderFactory) validateOIDCConfig(config map[string]interface{}) erro
 	if _, ok := config[ConfigFieldIssuer]; !ok {
 		return fmt.Errorf("OIDC provider requires '%s' field", ConfigFieldIssuer)
 	}
-	
+
 	if _, ok := config[ConfigFieldClientID]; !ok {
 		return fmt.Errorf("OIDC provider requires '%s' field", ConfigFieldClientID)
 	}
