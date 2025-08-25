@@ -370,7 +370,7 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *Ass
 	}, nil
 }
 
-// AssumeRoleWithCredentials assumes a role using username/password credentials  
+// AssumeRoleWithCredentials assumes a role using username/password credentials
 // This method is now completely stateless - all session information is embedded in the JWT token
 func (s *STSService) AssumeRoleWithCredentials(ctx context.Context, request *AssumeRoleWithCredentialsRequest) (*AssumeRoleResponse, error) {
 	if !s.initialized {
@@ -483,7 +483,7 @@ func (s *STSService) RevokeSession(ctx context.Context, sessionToken string) err
 		return fmt.Errorf("session token cannot be empty")
 	}
 
-	// Validate JWT token format 
+	// Validate JWT token format
 	_, err := s.tokenGenerator.ValidateJWTWithClaims(sessionToken)
 	if err != nil {
 		return fmt.Errorf("invalid session token format: %w", err)
@@ -492,7 +492,7 @@ func (s *STSService) RevokeSession(ctx context.Context, sessionToken string) err
 	// In a stateless system, we cannot revoke JWT tokens without a blacklist
 	// The token will naturally expire based on its embedded expiration time
 	glog.V(1).Infof("Session revocation requested for stateless token - token will expire naturally at its embedded expiration time")
-	
+
 	return nil
 }
 
@@ -634,7 +634,7 @@ func (s *STSService) ExpireSessionForTesting(ctx context.Context, sessionToken s
 		return fmt.Errorf("session token cannot be empty")
 	}
 
-	// Validate JWT token format 
+	// Validate JWT token format
 	_, err := s.tokenGenerator.ValidateJWTWithClaims(sessionToken)
 	if err != nil {
 		return fmt.Errorf("invalid session token format: %w", err)
@@ -643,6 +643,6 @@ func (s *STSService) ExpireSessionForTesting(ctx context.Context, sessionToken s
 	// In a stateless system, we cannot manually expire JWT tokens
 	// The token expiration is embedded in the token itself and handled by JWT validation
 	glog.V(1).Infof("Manual session expiration requested for stateless token - cannot expire JWT tokens manually")
-	
+
 	return fmt.Errorf("manual session expiration not supported in stateless JWT system")
 }
