@@ -360,6 +360,32 @@ func setupCompleteS3IAMSystem(t *testing.T) (http.Handler, *integration.IAMManag
 		w.Write([]byte("Success"))
 	}).Methods("GET", "PUT", "DELETE", "HEAD")
 
+	// Add CORS preflight handler for S3 bucket/object paths
+	router.PathPrefix("/{bucket}").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "OPTIONS" {
+			// Handle CORS preflight request
+			origin := r.Header.Get("Origin")
+			requestMethod := r.Header.Get("Access-Control-Request-Method")
+			
+			// Set CORS headers
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Methods", "GET, PUT, POST, DELETE, HEAD, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Amz-Date, X-Amz-Security-Token")
+			w.Header().Set("Access-Control-Max-Age", "3600")
+			
+			if requestMethod != "" {
+				w.Header().Add("Access-Control-Allow-Methods", requestMethod)
+			}
+			
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		
+		// For non-OPTIONS requests, return 404 since we don't have full S3 implementation
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte("Not found"))
+	})
+
 	return router, iamManager
 }
 
