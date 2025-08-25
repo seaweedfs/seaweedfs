@@ -229,7 +229,7 @@ func (m *IAMManager) AssumeRoleWithCredentials(ctx context.Context, request *sts
 // IsActionAllowed checks if a principal is allowed to perform an action on a resource
 func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest) (bool, error) {
 	glog.V(0).Infof("IsActionAllowed: starting validation for principal=%s, action=%s", request.Principal, request.Action)
-	
+
 	if !m.initialized {
 		glog.V(0).Info("IsActionAllowed: IAM manager not initialized")
 		return false, fmt.Errorf("IAM manager not initialized")
