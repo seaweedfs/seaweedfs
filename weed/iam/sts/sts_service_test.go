@@ -68,7 +68,6 @@ func TestSTSServiceInitialization(t *testing.T) {
 func TestAssumeRoleWithWebIdentity(t *testing.T) {
 	service := setupTestSTSService(t)
 
-
 	tests := []struct {
 		name             string
 		roleArn          string
@@ -157,7 +156,6 @@ func TestAssumeRoleWithWebIdentity(t *testing.T) {
 func TestAssumeRoleWithLDAP(t *testing.T) {
 	service := setupTestSTSService(t)
 
-
 	tests := []struct {
 		name        string
 		roleArn     string
@@ -214,7 +212,6 @@ func TestAssumeRoleWithLDAP(t *testing.T) {
 func TestSessionTokenValidation(t *testing.T) {
 	service := setupTestSTSService(t)
 	ctx := context.Background()
-
 
 	// First, create a session
 	request := &AssumeRoleWithWebIdentityRequest{
@@ -273,7 +270,6 @@ func TestSessionRevocation(t *testing.T) {
 	service := setupTestSTSService(t)
 	ctx := context.Background()
 
-
 	// Create a session first
 	request := &AssumeRoleWithWebIdentityRequest{
 		RoleArn:          "arn:seaweed:iam::role/TestRole",
@@ -311,7 +307,6 @@ func setupTestSTSService(t *testing.T) *STSService {
 		MaxSessionLength: time.Hour * 12,
 		Issuer:           "test-sts",
 		SigningKey:       []byte("test-signing-key-32-characters-long"),
-
 	}
 
 	err := service.Initialize(config)
