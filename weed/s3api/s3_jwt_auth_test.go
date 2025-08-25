@@ -345,6 +345,12 @@ func setupTestReadOnlyRole(ctx context.Context, manager *integration.IAMManager)
 					"arn:seaweed:s3:::*/*",
 				},
 			},
+			{
+				Sid:    "AllowSTSSessionValidation",
+				Effect: "Allow",
+				Action: []string{"sts:ValidateSession"},
+				Resource: []string{"*"},
+			},
 		},
 	}
 
@@ -400,6 +406,12 @@ func setupTestAdminRole(ctx context.Context, manager *integration.IAMManager) {
 					"arn:seaweed:s3:::*",
 					"arn:seaweed:s3:::*/*",
 				},
+			},
+			{
+				Sid:    "AllowSTSSessionValidation",
+				Effect: "Allow",
+				Action: []string{"sts:ValidateSession"},
+				Resource: []string{"*"},
 			},
 		},
 	}
