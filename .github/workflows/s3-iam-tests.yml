@@ -80,7 +80,7 @@ jobs:
     timeout-minutes: 25
     strategy:
       matrix:
-        test-type: ["basic", "advanced", "policy-enforcement"]
+        test-type: ["basic", "advanced", "policy-enforcement", "keycloak-integration"]
         
     steps:
       - name: Check out code
@@ -129,6 +129,38 @@ jobs:
               make clean setup start-services wait-for-services
               go test -v -timeout 15m -run "TestS3IAMPolicyEnforcement|TestS3IAMBucketPolicy|TestS3IAMContextual" ./...
               ;;
+            "keycloak-integration")
+              echo "Running Keycloak integration tests..."
+              # Start Keycloak container
+              docker run -d \
+                --name keycloak \
+                -p 8080:8080 \
+                -e KEYCLOAK_ADMIN=admin \
+                -e KEYCLOAK_ADMIN_PASSWORD=admin \
+                -e KC_HTTP_ENABLED=true \
+                -e KC_HOSTNAME_STRICT=false \
+                -e KC_HOSTNAME_STRICT_HTTPS=false \
+                quay.io/keycloak/keycloak:26.0 \
+                start-dev
+              
+              # Wait for Keycloak
+              timeout 180 bash -c 'until curl -s http://localhost:8080/realms/master > /dev/null; do sleep 5; echo "Waiting for Keycloak..."; done'
+              
+              # Setup Keycloak realm and users
+              chmod +x setup_keycloak.sh
+              ./setup_keycloak.sh
+              
+              # Start SeaweedFS services
+              make clean setup start-services wait-for-services
+              
+              # Run Keycloak tests
+              export KEYCLOAK_URL="http://localhost:8080"
+              go test -v -timeout 15m -run "TestKeycloak" ./...
+              
+              # Cleanup Keycloak
+              docker stop keycloak || true
+              docker rm keycloak || true
+              ;;
           esac
           
           # Always cleanup
@@ -169,12 +201,7 @@ jobs:
     name: S3 IAM Keycloak Integration
     runs-on: ubuntu-22.04
     timeout-minutes: 30
-    # Only run on master branch pushes or when Keycloak-related files change
-    if: |
-      github.event_name == 'push' && github.ref == 'refs/heads/master' ||
-      contains(github.event.pull_request.changed_files, 'test/s3/iam/keycloak') ||
-      contains(github.event.pull_request.changed_files, 'test/s3/iam/docker-compose') ||
-      contains(github.event.pull_request.changed_files, 'test/s3/iam/s3_keycloak')
+    # Always run Keycloak integration tests
     
     steps:
       - name: Check out code
@@ -186,36 +213,49 @@ jobs:
           go-version-file: 'go.mod'
         id: go
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build SeaweedFS IAM Image
-        working-directory: test/s3/iam
+      - name: Install SeaweedFS
+        working-directory: weed
         run: |
-          echo "Building custom SeaweedFS image with IAM support..."
-          docker build -f Dockerfile.s3 -t seaweedfs-iam:latest ../../..
+          go install -buildvcs=false
 
-      - name: Start Keycloak and SeaweedFS Services
-        working-directory: test/s3/iam
+      - name: Start Keycloak with Docker
         run: |
-          echo "Starting services with Docker Compose..."
-          docker compose up -d
+          echo "Starting Keycloak container..."
+          docker run -d \
+            --name keycloak \
+            -p 8080:8080 \
+            -e KEYCLOAK_ADMIN=admin \
+            -e KEYCLOAK_ADMIN_PASSWORD=admin \
+            -e KC_HTTP_ENABLED=true \
+            -e KC_HOSTNAME_STRICT=false \
+            -e KC_HOSTNAME_STRICT_HTTPS=false \
+            quay.io/keycloak/keycloak:26.0 \
+            start-dev
           
           echo "Waiting for Keycloak to be ready..."
-          timeout 120 bash -c 'until curl -s http://localhost:8080/realms/seaweedfs-test/.well-known/openid-configuration > /dev/null; do sleep 5; done' || {
+          timeout 180 bash -c 'until curl -s http://localhost:8080/realms/master > /dev/null; do sleep 5; echo "Waiting for Keycloak..."; done' || {
             echo "Keycloak failed to start"
-            docker compose logs keycloak
+            docker logs keycloak
             exit 1
           }
           
-          echo "Waiting for SeaweedFS S3 API to be ready..."
-          timeout 60 bash -c 'until curl -s http://localhost:8333 > /dev/null 2>&1; do sleep 3; done' || {
-            echo "SeaweedFS S3 API failed to start"
-            docker compose logs s3
-            exit 1
-          }
+          echo "Keycloak is ready"
+
+      - name: Setup Keycloak Realm and Users
+        working-directory: test/s3/iam
+        run: |
+          echo "Setting up Keycloak realm and test users..."
+          chmod +x setup_keycloak.sh
+          ./setup_keycloak.sh
+
+      - name: Start SeaweedFS Services
+        working-directory: test/s3/iam
+        run: |
+          echo "Starting SeaweedFS services..."
+          export WEED_BINARY=$(which weed)
+          make clean setup start-services wait-for-services
           
-          echo "All services are ready"
+          echo "SeaweedFS services are ready"
 
       - name: Run Keycloak Integration Tests
         timeout-minutes: 20
@@ -228,45 +268,80 @@ jobs:
           export S3_ENDPOINT="http://localhost:8333"
           
           # Give services extra time to fully initialize
-          sleep 15
+          sleep 10
+          
+          # Verify services are accessible
+          echo "=== Verifying Service Accessibility ==="
+          curl -f http://localhost:8080/realms/master || {
+            echo "❌ Keycloak not accessible"
+            docker logs keycloak --tail=50
+            exit 1
+          }
+          
+          curl -f http://localhost:8333 || {
+            echo "❌ SeaweedFS S3 API not accessible"
+            cat weed-s3.log || true
+            exit 1
+          }
           
           # Run Keycloak-specific tests
+          echo "=== Running Keycloak Tests ==="
           go test -v -timeout 15m -run "TestKeycloak" ./... || {
             echo "❌ Keycloak integration tests failed"
             echo "=== Service Logs ==="
-            docker compose logs --tail=100
+            echo "--- Keycloak logs ---"
+            docker logs keycloak --tail=100
+            echo "--- SeaweedFS logs ---"
+            cat weed-s3.log 2>/dev/null || echo "No S3 log found"
+            cat weed-master.log 2>/dev/null || echo "No master log found"
+            cat weed-filer.log 2>/dev/null || echo "No filer log found"
             exit 1
           }
 
-      - name: Show Docker logs on failure
+      - name: Show service logs on failure
         if: failure()
         working-directory: test/s3/iam
         run: |
-          echo "=== Docker Compose Service Logs ==="
-          docker compose logs --tail=200
+          echo "=== Keycloak Container Logs ==="
+          docker logs keycloak --tail=200 || true
+          
+          echo "=== SeaweedFS Service Logs ==="
+          echo "--- S3 API Log ---"
+          tail -100 weed-s3.log 2>/dev/null || echo "No S3 log found"
+          echo "--- Master Log ---"
+          tail -100 weed-master.log 2>/dev/null || echo "No master log found"
+          echo "--- Filer Log ---"
+          tail -100 weed-filer.log 2>/dev/null || echo "No filer log found"
+          echo "--- Volume Log ---"
+          tail -100 weed-volume.log 2>/dev/null || echo "No volume log found"
           
           echo "=== Container Status ==="
-          docker compose ps
+          docker ps -a
           
           echo "=== Network Information ==="
-          docker network ls
-          curl -v http://localhost:8080/realms/seaweedfs-test/.well-known/openid-configuration || true
+          netstat -tlnp | grep -E "(8080|8333|8888|9333)" || true
+          curl -v http://localhost:8080/realms/master || true
           curl -v http://localhost:8333 || true
 
-      - name: Cleanup Docker Services
+      - name: Cleanup Services
         if: always()
         working-directory: test/s3/iam
         run: |
-          echo "Stopping Docker Compose services..."
-          docker compose down -v --remove-orphans
-          docker image prune -f
+          echo "Stopping SeaweedFS services..."
+          make stop-services || true
+          
+          echo "Stopping Keycloak container..."
+          docker stop keycloak || true
+          docker rm keycloak || true
 
-      - name: Upload Docker logs on failure
+      - name: Upload service logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: s3-iam-keycloak-logs
-          path: test/s3/iam/docker-*.log
+          path: |
+            test/s3/iam/weed-*.log
+            test/s3/iam/*.log
           retention-days: 5
 
   # Distributed IAM tests
