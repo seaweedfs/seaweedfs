@@ -20,7 +20,7 @@ func TestDistributedSTSService(t *testing.T) {
 		MaxSessionLength: 12 * time.Hour,
 		Issuer:           "distributed-sts-test",
 		SigningKey:       []byte("test-signing-key-32-characters-long"),
-		SessionStoreType: "memory", // For testing - would be "filer" in production
+
 		Providers: []*ProviderConfig{
 			{
 				Name:    "keycloak-oidc",

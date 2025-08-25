@@ -13,7 +13,7 @@ import (
 // can be used and validated by other STS instances in a distributed environment
 func TestCrossInstanceTokenUsage(t *testing.T) {
 	ctx := context.Background()
-	testFilerAddress := "localhost:8888" // Dummy filer address for testing
+ // Dummy filer address for testing
 
 	// Common configuration that would be shared across all instances in production
 	sharedConfig := &STSConfig{
@@ -141,19 +141,19 @@ func TestCrossInstanceTokenUsage(t *testing.T) {
 		sessionToken := response.Credentials.SessionToken
 
 		// Verify token works on Instance B
-		_, err = instanceB.ValidateSessionToken(ctx, testFilerAddress, sessionToken)
+		_, err = instanceB.ValidateSessionToken(ctx, sessionToken)
 		require.NoError(t, err, "Token should be valid on Instance B initially")
 
 		// Revoke session on Instance C
-		err = instanceC.RevokeSession(ctx, testFilerAddress, sessionToken)
+		err = instanceC.RevokeSession(ctx, sessionToken)
 		require.NoError(t, err, "Instance C should be able to revoke session")
 
 		// Verify token is now invalid on Instance A (revoked by Instance C)
-		_, err = instanceA.ValidateSessionToken(ctx, testFilerAddress, sessionToken)
+		_, err = instanceA.ValidateSessionToken(ctx, sessionToken)
 		assert.Error(t, err, "Token should be invalid on Instance A after revocation")
 
 		// Verify token is also invalid on Instance B
-		_, err = instanceB.ValidateSessionToken(ctx, testFilerAddress, sessionToken)
+		_, err = instanceB.ValidateSessionToken(ctx, sessionToken)
 		assert.Error(t, err, "Token should be invalid on Instance B after revocation")
 	})
 
@@ -287,7 +287,7 @@ func TestSTSDistributedConfigurationRequirements(t *testing.T) {
 			MaxSessionLength: 12 * time.Hour,
 			Issuer:           "production-sts-cluster",
 			SigningKey:       []byte("production-signing-key-32-chars-l"),
-			SessionStoreType: "memory",
+
 		}
 
 		// Create multiple instances with identical config
@@ -316,7 +316,7 @@ func TestSTSDistributedConfigurationRequirements(t *testing.T) {
 // TestSTSRealWorldDistributedScenarios tests realistic distributed deployment scenarios
 func TestSTSRealWorldDistributedScenarios(t *testing.T) {
 	ctx := context.Background()
-	testFilerAddress := "prod-filer-cluster:8888" // Test filer address
+
 
 	t.Run("load_balanced_s3_gateway_scenario", func(t *testing.T) {
 		// Simulate real production scenario:
@@ -330,10 +330,7 @@ func TestSTSRealWorldDistributedScenarios(t *testing.T) {
 			MaxSessionLength: 24 * time.Hour,
 			Issuer:           "seaweedfs-production-sts",
 			SigningKey:       []byte("prod-signing-key-32-characters-lon"),
-			SessionStoreType: "filer",
-			SessionStoreConfig: map[string]interface{}{
-				"basePath": "/seaweedfs/iam/sessions",
-			},
+
 			Providers: []*ProviderConfig{
 				{
 					Name:    "corporate-oidc",
@@ -380,13 +377,13 @@ func TestSTSRealWorldDistributedScenarios(t *testing.T) {
 
 		// Step 2: User makes S3 requests that hit different gateways via load balancer
 		// Simulate S3 request validation on Gateway 2
-		sessionInfo2, err := gateway2.ValidateSessionToken(ctx, testFilerAddress, sessionToken)
+		sessionInfo2, err := gateway2.ValidateSessionToken(ctx, sessionToken)
 		require.NoError(t, err, "Gateway 2 should validate session from Gateway 1")
 		assert.Equal(t, "user-production-session", sessionInfo2.SessionName)
 		assert.Equal(t, "arn:seaweed:iam::role/ProductionS3User", sessionInfo2.RoleArn)
 
 		// Simulate S3 request validation on Gateway 3
-		sessionInfo3, err := gateway3.ValidateSessionToken(ctx, testFilerAddress, sessionToken)
+		sessionInfo3, err := gateway3.ValidateSessionToken(ctx, sessionToken)
 		require.NoError(t, err, "Gateway 3 should validate session from Gateway 1")
 		assert.Equal(t, sessionInfo2.SessionId, sessionInfo3.SessionId, "Should be same session")
 
