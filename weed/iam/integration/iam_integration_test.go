@@ -63,7 +63,7 @@ func TestFullOIDCWorkflow(t *testing.T) {
 				RoleSessionName:  tt.sessionName,
 			}
 			
-			response, err := iamManager.AssumeRoleWithWebIdentity(ctx, "localhost:8888", assumeRequest)
+			response, err := iamManager.AssumeRoleWithWebIdentity(ctx, assumeRequest)
 			
 			if !tt.expectedAllow {
 				assert.Error(t, err)
@@ -78,7 +78,7 @@ func TestFullOIDCWorkflow(t *testing.T) {
 			
 			// Step 2: Test policy enforcement with assumed credentials
 			if tt.testAction != "" && tt.testResource != "" {
-				allowed, err := iamManager.IsActionAllowed(ctx, "localhost:8888", &ActionRequest{
+				allowed, err := iamManager.IsActionAllowed(ctx, &ActionRequest{
 					Principal:    response.AssumedRoleUser.Arn,
 					Action:       tt.testAction,
 					Resource:     tt.testResource,
@@ -139,7 +139,7 @@ func TestFullLDAPWorkflow(t *testing.T) {
 				ProviderName:    "test-ldap",
 			}
 			
-			response, err := iamManager.AssumeRoleWithCredentials(ctx, "localhost:8888", assumeRequest)
+			response, err := iamManager.AssumeRoleWithCredentials(ctx, assumeRequest)
 			
 			if !tt.expectedAllow {
 				assert.Error(t, err)
@@ -152,7 +152,7 @@ func TestFullLDAPWorkflow(t *testing.T) {
 			
 			// Step 2: Test policy enforcement
 			if tt.testAction != "" && tt.testResource != "" {
-				allowed, err := iamManager.IsActionAllowed(ctx, "localhost:8888", &ActionRequest{
+				allowed, err := iamManager.IsActionAllowed(ctx, &ActionRequest{
 					Principal:    response.AssumedRoleUser.Arn,
 					Action:       tt.testAction,
 					Resource:     tt.testResource,
@@ -178,7 +178,7 @@ func TestPolicyEnforcement(t *testing.T) {
 		RoleSessionName:  "policy-test-session",
 	}
 	
-	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, "localhost:8888", assumeRequest)
+	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, assumeRequest)
 	require.NoError(t, err)
 	
 	sessionToken := response.Credentials.SessionToken
@@ -230,7 +230,7 @@ func TestPolicyEnforcement(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			allowed, err := iamManager.IsActionAllowed(ctx, "localhost:8888", &ActionRequest{
+			allowed, err := iamManager.IsActionAllowed(ctx, &ActionRequest{
 				Principal:    principal,
 				Action:       tt.action,
 				Resource:     tt.resource,
@@ -256,13 +256,13 @@ func TestSessionExpiration(t *testing.T) {
 		DurationSeconds:  int64Ptr(900), // 15 minutes
 	}
 	
-	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, "localhost:8888", assumeRequest)
+	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, assumeRequest)
 	require.NoError(t, err)
 	
 	sessionToken := response.Credentials.SessionToken
 	
 	// Verify session is initially valid
-	allowed, err := iamManager.IsActionAllowed(ctx, "localhost:8888", &ActionRequest{
+	allowed, err := iamManager.IsActionAllowed(ctx, &ActionRequest{
 		Principal:    response.AssumedRoleUser.Arn,
 		Action:       "s3:GetObject",
 		Resource:     "arn:seaweed:s3:::test-bucket/file.txt",
@@ -276,11 +276,11 @@ func TestSessionExpiration(t *testing.T) {
 	assert.True(t, response.Credentials.Expiration.Before(time.Now().Add(16*time.Minute)))
 	
 	// Test actual session expiration
-	err = iamManager.ExpireSessionForTesting(ctx, "localhost:8888", sessionToken)
+	err = iamManager.ExpireSessionForTesting(ctx, sessionToken)
 	require.NoError(t, err)
 	
 	// Verify session is now expired and access is denied
-	allowed, err = iamManager.IsActionAllowed(ctx, "localhost:8888", &ActionRequest{
+	allowed, err = iamManager.IsActionAllowed(ctx, &ActionRequest{
 		Principal:    response.AssumedRoleUser.Arn,
 		Action:       "s3:GetObject",
 		Resource:     "arn:seaweed:s3:::test-bucket/file.txt",
@@ -353,7 +353,7 @@ func setupIntegratedIAMSystem(t *testing.T) *IAMManager {
 			MaxSessionLength:   time.Hour * 12,
 			Issuer:            "test-sts",
 			SigningKey:        []byte("test-signing-key-32-characters-long"),
-			SessionStoreType:  "memory", // Use memory for unit tests
+
 		},
 		Policy: &policy.PolicyEngineConfig{
 			DefaultEffect: "Deny",

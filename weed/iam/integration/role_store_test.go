@@ -92,7 +92,7 @@ func TestDistributedIAMManagerWithRoleStore(t *testing.T) {
 			MaxSessionLength:   43200,
 			Issuer:            "test-issuer",
 			SigningKey:        []byte("test-signing-key-32-characters-long"),
-			SessionStoreType:  "memory",
+
 		},
 		Policy: &policy.PolicyEngineConfig{
 			DefaultEffect: "Deny",
