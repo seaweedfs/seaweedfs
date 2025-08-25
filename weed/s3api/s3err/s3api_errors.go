@@ -84,6 +84,8 @@ const (
 	ErrMalformedDate
 	ErrMalformedPresignedDate
 	ErrMalformedCredentialDate
+	ErrMalformedPolicy
+	ErrInvalidPolicyDocument
 	ErrMissingSignHeadersTag
 	ErrMissingSignTag
 	ErrUnsignedHeaders
@@ -290,6 +292,16 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrMalformedXML: {
 		Code:           "MalformedXML",
 		Description:    "The XML you provided was not well-formed or did not validate against our published schema.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrMalformedPolicy: {
+		Code:           "MalformedPolicy",
+		Description:    "Policy has invalid resource.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrInvalidPolicyDocument: {
+		Code:           "InvalidPolicyDocument",
+		Description:    "The content of the policy document is invalid.",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
 	ErrAuthHeaderEmpty: {

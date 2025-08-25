@@ -60,8 +60,22 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 	var listBuckets ListAllMyBucketsList
 	for _, entry := range entries {
 		if entry.IsDirectory {
-			if identity != nil && !identity.canDo(s3_constants.ACTION_LIST, entry.Name, "") {
-				continue
+			// Check permissions for each bucket
+			if identity != nil {
+				// For JWT-authenticated users, use IAM authorization
+				sessionToken := r.Header.Get("X-SeaweedFS-Session-Token")
+				if s3a.iam.iamIntegration != nil && sessionToken != "" {
+					// Use IAM authorization for JWT users
+					errCode := s3a.iam.authorizeWithIAM(r, identity, s3_constants.ACTION_LIST, entry.Name, "")
+					if errCode != s3err.ErrNone {
+						continue
+					}
+				} else {
+					// Use legacy authorization for non-JWT users
+					if !identity.canDo(s3_constants.ACTION_LIST, entry.Name, "") {
+						continue
+					}
+				}
 			}
 			listBuckets.Bucket = append(listBuckets.Bucket, ListAllMyBucketsEntry{
 				Name:         entry.Name,

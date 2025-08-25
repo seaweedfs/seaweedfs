@@ -1,0 +1,33 @@
+# Multi-stage build for SeaweedFS S3 with IAM
+FROM golang:1.23-alpine AS builder
+
+# Install build dependencies
+RUN apk add --no-cache git make curl wget
+
+# Set working directory
+WORKDIR /app
+
+# Copy source code
+COPY . .
+
+# Build SeaweedFS with IAM integration
+RUN cd weed && go build -o /usr/local/bin/weed
+
+# Final runtime image
+FROM alpine:latest
+
+# Install runtime dependencies
+RUN apk add --no-cache ca-certificates wget curl
+
+# Copy weed binary
+COPY --from=builder /usr/local/bin/weed /usr/local/bin/weed
+
+# Create directories
+RUN mkdir -p /etc/seaweedfs /data
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD wget --quiet --tries=1 --spider http://localhost:8333/ || exit 1
+
+# Set entrypoint
+ENTRYPOINT ["/usr/local/bin/weed"]

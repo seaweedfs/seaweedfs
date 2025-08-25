@@ -1,0 +1,121 @@
+version: '3.8'
+
+services:
+  # Keycloak OIDC Provider
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0.7
+    container_name: keycloak-iam-test
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin123
+      KC_HTTP_PORT: 8080
+      KC_HOSTNAME_STRICT: false
+      KC_HOSTNAME_STRICT_HTTPS: false
+      KC_HTTP_ENABLED: true
+      KC_HEALTH_ENABLED: true
+    ports:
+      - "8080:8080"
+    command: 
+      - start-dev
+      - --import-realm
+    volumes:
+      - ./keycloak-realm.json:/opt/keycloak/data/import/realm.json:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - seaweedfs-iam
+
+  # SeaweedFS Master
+  seaweedfs-master:
+    image: chrislusf/seaweedfs:latest
+    container_name: seaweedfs-master-iam
+    ports:
+      - "9333:9333"
+      - "19333:19333"
+    command: master -ip=seaweedfs-master -mdir=/data -volumeSizeLimitMB=50
+    volumes:
+      - seaweedfs-master-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9333/cluster/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - seaweedfs-iam
+
+  # SeaweedFS Volume Server
+  seaweedfs-volume:
+    image: chrislusf/seaweedfs:latest
+    container_name: seaweedfs-volume-iam
+    ports:
+      - "8080:8080"
+    command: volume -ip=seaweedfs-volume -port=8080 -mserver=seaweedfs-master:9333 -dir=/data
+    volumes:
+      - seaweedfs-volume-data:/data
+    depends_on:
+      seaweedfs-master:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - seaweedfs-iam
+
+  # SeaweedFS Filer
+  seaweedfs-filer:
+    image: chrislusf/seaweedfs:latest
+    container_name: seaweedfs-filer-iam
+    ports:
+      - "8888:8888"
+      - "18888:18888"
+    command: filer -ip=seaweedfs-filer -master=seaweedfs-master:9333
+    depends_on:
+      seaweedfs-master:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8888/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - seaweedfs-iam
+
+  # SeaweedFS S3 Gateway with IAM
+  seaweedfs-s3:
+    build:
+      context: ../../..
+      dockerfile: test/s3/iam/Dockerfile.s3
+    container_name: seaweedfs-s3-iam
+    ports:
+      - "8333:8333"
+    environment:
+      - KEYCLOAK_URL=http://keycloak:8080
+    command: s3 -port=8333 -filer=seaweedfs-filer:8888 -iam.config=/etc/seaweedfs/iam_config.json
+    volumes:
+      - ./iam_config_docker.json:/etc/seaweedfs/iam_config.json:ro
+    depends_on:
+      keycloak:
+        condition: service_healthy
+      seaweedfs-filer:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8333/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - seaweedfs-iam
+
+volumes:
+  seaweedfs-master-data:
+  seaweedfs-volume-data:
+
+networks:
+  seaweedfs-iam:
+    driver: bridge

@@ -1,0 +1,138 @@
+{
+  "realm": "seaweedfs-test",
+  "enabled": true,
+  "displayName": "SeaweedFS Test Realm",
+  "accessTokenLifespan": 3600,
+  "accessTokenLifespanForImplicitFlow": 3600,
+  "ssoSessionIdleTimeout": 3600,
+  "ssoSessionMaxLifespan": 36000,
+  "clients": [
+    {
+      "clientId": "seaweedfs-s3",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "seaweedfs-s3-secret",
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "redirectUris": ["*"],
+      "webOrigins": ["*"],
+      "protocolMappers": [
+        {
+          "name": "role-mapper",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "config": {
+            "claim.name": "roles",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true"
+          }
+        },
+        {
+          "name": "username-mapper",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "config": {
+            "claim.name": "preferred_username",
+            "user.attribute": "username",
+            "jsonType.label": "String",
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "roles": {
+    "realm": [
+      {
+        "name": "s3-admin",
+        "description": "S3 Administrator role with full access"
+      },
+      {
+        "name": "s3-read-only",
+        "description": "S3 Read-only role"
+      },
+      {
+        "name": "s3-read-write",
+        "description": "S3 Read-write role"
+      }
+    ]
+  },
+  "users": [
+    {
+      "username": "admin-user",
+      "enabled": true,
+      "firstName": "Admin",
+      "lastName": "User",
+      "email": "admin@seaweedfs.test",
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "admin123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["s3-admin"],
+      "attributes": {
+        "department": ["engineering"],
+        "location": ["datacenter-1"]
+      }
+    },
+    {
+      "username": "read-user",
+      "enabled": true,
+      "firstName": "Read",
+      "lastName": "User",
+      "email": "read@seaweedfs.test",
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "read123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["s3-read-only"],
+      "attributes": {
+        "department": ["analytics"],
+        "location": ["datacenter-2"]
+      }
+    },
+    {
+      "username": "write-user",
+      "enabled": true,
+      "firstName": "Write",
+      "lastName": "User",
+      "email": "write@seaweedfs.test",
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "write123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["s3-read-write"],
+      "attributes": {
+        "department": ["operations"],
+        "location": ["datacenter-1"]
+      }
+    }
+  ],
+  "identityProviders": [],
+  "identityProviderMappers": [],
+  "requiredActions": [],
+  "browserFlow": "browser",
+  "registrationFlow": "registration",
+  "directGrantFlow": "direct grant",
+  "resetCredentialsFlow": "reset credentials",
+  "clientAuthenticationFlow": "clients"
+}
