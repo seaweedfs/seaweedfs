@@ -274,8 +274,6 @@ jobs:
     name: S3 IAM Distributed Tests
     runs-on: ubuntu-22.04
     timeout-minutes: 25
-    # Only run on master branch pushes to avoid overloading PR testing
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     
     steps:
       - name: Check out code
@@ -314,7 +312,8 @@ jobs:
           make wait-for-services
           
           # Run distributed-specific tests
-          go test -v -timeout 15m -run "TestDistributed|TestCrossInstance|TestPersistence" ./... || {
+          export ENABLE_DISTRIBUTED_TESTS=true
+          go test -v -timeout 15m -run "TestS3IAMDistributedTests" ./... || {
             echo "❌ Distributed tests failed, checking logs..."
             make logs
             exit 1
@@ -335,8 +334,6 @@ jobs:
     name: S3 IAM Performance Tests
     runs-on: ubuntu-22.04
     timeout-minutes: 30
-    # Only run on master branch pushes to avoid overloading PR testing
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     
     steps:
       - name: Check out code
@@ -365,9 +362,10 @@ jobs:
           
           make clean setup start-services wait-for-services
           
-          # Run performance benchmarks
-          echo "Running performance benchmarks..."
-          go test -bench=. -benchmem -timeout 20m ./... || {
+          # Run performance tests (benchmarks disabled for CI)
+          echo "Running performance tests..."
+          export ENABLE_PERFORMANCE_TESTS=true
+          go test -v -timeout 15m -run "TestS3IAMPerformanceTests" ./... || {
             echo "❌ Performance tests failed"
             make logs
             exit 1
