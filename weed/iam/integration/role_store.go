@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"google.golang.org/grpc"
@@ -119,9 +120,9 @@ func copyRoleDefinition(original *RoleDefinition) *RoleDefinition {
 	if original.TrustPolicy != nil {
 		// Use JSON marshaling for deep copy of the complex policy structure
 		trustPolicyData, _ := json.Marshal(original.TrustPolicy)
-		var trustPolicyCopy interface{}
+		var trustPolicyCopy policy.PolicyDocument
 		json.Unmarshal(trustPolicyData, &trustPolicyCopy)
-		// Note: This is a simplified copy. In production, implement proper deep copy for PolicyDocument
+		copied.TrustPolicy = &trustPolicyCopy
 	}
 
 	// Copy attached policies slice

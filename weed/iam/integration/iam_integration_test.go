@@ -275,20 +275,21 @@ func TestSessionExpiration(t *testing.T) {
 	assert.True(t, response.Credentials.Expiration.After(time.Now()))
 	assert.True(t, response.Credentials.Expiration.Before(time.Now().Add(16*time.Minute)))
 	
-	// Test actual session expiration
+	// Test session expiration behavior in stateless JWT system
+	// In a stateless system, manual expiration is not supported
 	err = iamManager.ExpireSessionForTesting(ctx, sessionToken)
-	require.NoError(t, err)
+	require.Error(t, err, "Manual session expiration should not be supported in stateless system")
+	assert.Contains(t, err.Error(), "manual session expiration not supported")
 	
-	// Verify session is now expired and access is denied
+	// Verify session is still valid (since it hasn't naturally expired)
 	allowed, err = iamManager.IsActionAllowed(ctx, &ActionRequest{
 		Principal:    response.AssumedRoleUser.Arn,
 		Action:       "s3:GetObject",
 		Resource:     "arn:seaweed:s3:::test-bucket/file.txt",
 		SessionToken: sessionToken,
 	})
-	require.Error(t, err)
-	assert.False(t, allowed)
-	assert.Contains(t, err.Error(), "session has expired")
+	require.NoError(t, err, "Session should still be valid in stateless system")
+	assert.True(t, allowed, "Access should still be allowed since token hasn't naturally expired")
 }
 
 // TestTrustPolicyValidation tests role trust policy validation
