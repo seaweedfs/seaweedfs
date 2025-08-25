@@ -105,16 +105,16 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		iamManager, err := loadIAMManagerFromConfig(option.IamConfig)
 		if err != nil {
 			glog.Errorf("Failed to load IAM configuration: %v", err)
-				} else {
+		} else {
 			// Create S3 IAM integration with the loaded IAM manager
 			s3iam := NewS3IAMIntegration(iamManager, string(option.Filer))
-			
+
 			// Set IAM integration in server
 			s3ApiServer.iamIntegration = s3iam
-			
+
 			// Set the integration in the traditional IAM for compatibility
 			iam.SetIAMIntegration(s3iam)
-			
+
 			glog.V(0).Infof("Advanced IAM system initialized successfully")
 		}
 	}
