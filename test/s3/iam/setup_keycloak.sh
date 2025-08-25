@@ -38,16 +38,26 @@ create_realm() {
     local token=$1
     echo "📝 Creating realm: $REALM_NAME"
     
-    curl -s -X POST "$KEYCLOAK_URL/admin/realms" \
-        -H "Authorization: Bearer $token" \
-        -H "Content-Type: application/json" \
-        -d '{
-            "realm": "'$REALM_NAME'",
+    local payload=$(jq -n \
+        --arg realm "$REALM_NAME" \
+        '{
+            "realm": $realm,
             "enabled": true,
             "displayName": "SeaweedFS Test Realm",
             "accessTokenLifespan": 3600,
             "sslRequired": "none"
-        }'
+        }')
+    
+    local response=$(curl -s -X POST "$KEYCLOAK_URL/admin/realms" \
+        -H "Authorization: Bearer $token" \
+        -H "Content-Type: application/json" \
+        -d "$payload")
+    
+    if [[ -n "$response" && "$response" != *"error"* ]]; then
+        echo "✅ Realm created successfully"
+    else
+        echo "⚠️  Realm creation response: $response"
+    fi
 }
 
 # Function to create client
@@ -55,21 +65,32 @@ create_client() {
     local token=$1
     echo "📝 Creating client: $CLIENT_ID"
     
-    curl -s -X POST "$KEYCLOAK_URL/admin/realms/$REALM_NAME/clients" \
-        -H "Authorization: Bearer $token" \
-        -H "Content-Type: application/json" \
-        -d '{
-            "clientId": "'$CLIENT_ID'",
+    local payload=$(jq -n \
+        --arg clientId "$CLIENT_ID" \
+        --arg secret "$CLIENT_SECRET" \
+        '{
+            "clientId": $clientId,
             "enabled": true,
             "publicClient": false,
-            "secret": "'$CLIENT_SECRET'",
+            "secret": $secret,
             "directAccessGrantsEnabled": true,
             "serviceAccountsEnabled": true,
             "standardFlowEnabled": true,
             "implicitFlowEnabled": false,
             "redirectUris": ["*"],
             "webOrigins": ["*"]
-        }'
+        }')
+    
+    local response=$(curl -s -X POST "$KEYCLOAK_URL/admin/realms/$REALM_NAME/clients" \
+        -H "Authorization: Bearer $token" \
+        -H "Content-Type: application/json" \
+        -d "$payload")
+    
+    if [[ -n "$response" && "$response" != *"error"* ]]; then
+        echo "✅ Client created successfully"
+    else
+        echo "⚠️  Client creation response: $response"
+    fi
 }
 
 # Function to create role
@@ -79,13 +100,25 @@ create_role() {
     local role_description=$3
     
     echo "📝 Creating role: $role_name"
-    curl -s -X POST "$KEYCLOAK_URL/admin/realms/$REALM_NAME/roles" \
+    
+    local payload=$(jq -n \
+        --arg name "$role_name" \
+        --arg description "$role_description" \
+        '{
+            "name": $name,
+            "description": $description
+        }')
+    
+    local response=$(curl -s -X POST "$KEYCLOAK_URL/admin/realms/$REALM_NAME/roles" \
         -H "Authorization: Bearer $token" \
         -H "Content-Type: application/json" \
-        -d '{
-            "name": "'$role_name'",
-            "description": "'$role_description'"
-        }'
+        -d "$payload")
+    
+    if [[ -n "$response" && "$response" != *"error"* ]]; then
+        echo "✅ Role '$role_name' created successfully"
+    else
+        echo "⚠️  Role creation response: $response"
+    fi
 }
 
 # Function to create user
@@ -101,22 +134,36 @@ create_user() {
     echo "📝 Creating user: $username"
     
     # Create user
-    curl -s -X POST "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users" \
-        -H "Authorization: Bearer $token" \
-        -H "Content-Type: application/json" \
-        -d '{
-            "username": "'$username'",
-            "email": "'$email'",
-            "firstName": "'$first_name'",
-            "lastName": "'$last_name'",
+    local user_payload=$(jq -n \
+        --arg username "$username" \
+        --arg email "$email" \
+        --arg firstName "$first_name" \
+        --arg lastName "$last_name" \
+        --arg password "$password" \
+        '{
+            "username": $username,
+            "email": $email,
+            "firstName": $firstName,
+            "lastName": $lastName,
             "enabled": true,
             "emailVerified": true,
             "credentials": [{
                 "type": "password",
-                "value": "'$password'",
+                "value": $password,
                 "temporary": false
             }]
-        }'
+        }')
+    
+    local user_response=$(curl -s -X POST "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users" \
+        -H "Authorization: Bearer $token" \
+        -H "Content-Type: application/json" \
+        -d "$user_payload")
+    
+    if [[ -n "$user_response" && "$user_response" != *"error"* ]]; then
+        echo "✅ User '$username' created successfully"
+    else
+        echo "⚠️  User creation response: $user_response"
+    fi
     
     # Get user ID
     local user_id=$(curl -s -H "Authorization: Bearer $token" \
