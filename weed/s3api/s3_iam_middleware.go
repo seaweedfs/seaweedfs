@@ -17,10 +17,10 @@ import (
 
 // S3IAMIntegration provides IAM integration for S3 API
 type S3IAMIntegration struct {
-	iamManager    *integration.IAMManager
-	stsService    *sts.STSService
-	filerAddress  string
-	enabled       bool
+	iamManager   *integration.IAMManager
+	stsService   *sts.STSService
+	filerAddress string
+	enabled      bool
 }
 
 // NewS3IAMIntegration creates a new S3 IAM integration
@@ -29,7 +29,7 @@ func NewS3IAMIntegration(iamManager *integration.IAMManager, filerAddress string
 	if iamManager != nil {
 		stsService = iamManager.GetSTSService()
 	}
-	
+
 	return &S3IAMIntegration{
 		iamManager:   iamManager,
 		stsService:   stsService,
@@ -100,7 +100,7 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 	// Validate the JWT token directly using STS service (avoid circular dependency)
 	// Note: We don't call IsActionAllowed here because that would create a circular dependency
 	// Authentication should only validate the token, authorization happens later
-	sessionInfo, err := s3iam.stsService.ValidateSessionToken(ctx, sessionToken)
+	_, err = s3iam.stsService.ValidateSessionToken(ctx, sessionToken)
 	if err != nil {
 		glog.V(3).Infof("STS session validation failed: %v", err)
 		return nil, s3err.ErrAccessDenied
