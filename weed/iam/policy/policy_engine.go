@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"path/filepath"
 	"strings"
 )
 
@@ -419,9 +420,90 @@ func (e *PolicyEngine) evaluateIPCondition(block map[string]interface{}, evalCtx
 
 // evaluateStringCondition evaluates string-based conditions
 func (e *PolicyEngine) evaluateStringCondition(block map[string]interface{}, evalCtx *EvaluationContext, shouldMatch bool, useWildcard bool) bool {
-	// For this simplified implementation, we'll just return true
-	// In a full implementation, this would evaluate string conditions against request context
-	return shouldMatch
+	// Iterate through all condition keys in the block
+	for conditionKey, conditionValue := range block {
+		// Get the context values for this condition key
+		contextValues, exists := evalCtx.RequestContext[conditionKey]
+		if !exists {
+			// If the context key doesn't exist, condition fails for positive match
+			if shouldMatch {
+				return false
+			}
+			continue
+		}
+		
+		// Convert context value to string slice
+		var contextStrings []string
+		switch v := contextValues.(type) {
+		case string:
+			contextStrings = []string{v}
+		case []string:
+			contextStrings = v
+		case []interface{}:
+			for _, item := range v {
+				if str, ok := item.(string); ok {
+					contextStrings = append(contextStrings, str)
+				}
+			}
+		default:
+			// Convert to string as fallback
+			contextStrings = []string{fmt.Sprintf("%v", v)}
+		}
+		
+		// Convert condition value to string slice
+		var expectedStrings []string
+		switch v := conditionValue.(type) {
+		case string:
+			expectedStrings = []string{v}
+		case []string:
+			expectedStrings = v
+		case []interface{}:
+			for _, item := range v {
+				if str, ok := item.(string); ok {
+					expectedStrings = append(expectedStrings, str)
+				} else {
+					expectedStrings = append(expectedStrings, fmt.Sprintf("%v", item))
+				}
+			}
+		default:
+			expectedStrings = []string{fmt.Sprintf("%v", v)}
+		}
+		
+		// Evaluate the condition
+		conditionMet := false
+		for _, expected := range expectedStrings {
+			for _, contextValue := range contextStrings {
+				if useWildcard {
+					// Use wildcard matching for StringLike conditions
+					matched, err := filepath.Match(expected, contextValue)
+					if err == nil && matched {
+						conditionMet = true
+						break
+					}
+				} else {
+					// Exact string matching for StringEquals/StringNotEquals
+					if expected == contextValue {
+						conditionMet = true
+						break
+					}
+				}
+			}
+			if conditionMet {
+				break
+			}
+		}
+		
+		// For shouldMatch=true (StringEquals, StringLike): condition must be met
+		// For shouldMatch=false (StringNotEquals): condition must NOT be met
+		if shouldMatch && !conditionMet {
+			return false
+		}
+		if !shouldMatch && conditionMet {
+			return false
+		}
+	}
+	
+	return true
 }
 
 // ValidatePolicyDocument validates a policy document structure
