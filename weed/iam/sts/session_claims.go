@@ -7,7 +7,7 @@ import (
 )
 
 // STSSessionClaims represents comprehensive session information embedded in JWT tokens
-// This eliminates the need for separate session storage by embedding all session 
+// This eliminates the need for separate session storage by embedding all session
 // metadata directly in the token itself - enabling true stateless operation
 type STSSessionClaims struct {
 	jwt.RegisteredClaims
@@ -26,16 +26,16 @@ type STSSessionClaims struct {
 	Policies []string `json:"pol,omitempty"` // policies (abbreviated)
 
 	// Identity provider information
-	IdentityProvider string `json:"idp"`         // identity_provider
-	ExternalUserId   string `json:"ext_uid"`     // external_user_id
-	ProviderIssuer   string `json:"prov_iss"`    // provider_issuer
+	IdentityProvider string `json:"idp"`      // identity_provider
+	ExternalUserId   string `json:"ext_uid"`  // external_user_id
+	ProviderIssuer   string `json:"prov_iss"` // provider_issuer
 
 	// Request context (optional, for policy evaluation)
 	RequestContext map[string]interface{} `json:"req_ctx,omitempty"`
 
 	// Session metadata
-	AssumedAt   time.Time `json:"assumed_at"`          // when role was assumed
-	MaxDuration int64     `json:"max_dur,omitempty"`   // maximum session duration in seconds
+	AssumedAt   time.Time `json:"assumed_at"`        // when role was assumed
+	MaxDuration int64     `json:"max_dur,omitempty"` // maximum session duration in seconds
 }
 
 // NewSTSSessionClaims creates new STS session claims with all required information

@@ -13,13 +13,13 @@ import (
 // can be used and validated by other STS instances in a distributed environment
 func TestCrossInstanceTokenUsage(t *testing.T) {
 	ctx := context.Background()
- // Dummy filer address for testing
+	// Dummy filer address for testing
 
 	// Common configuration that would be shared across all instances in production
 	sharedConfig := &STSConfig{
 		TokenDuration:    time.Hour,
 		MaxSessionLength: 12 * time.Hour,
-		Issuer:           "distributed-sts-cluster",                       // SAME across all instances
+		Issuer:           "distributed-sts-cluster",     // SAME across all instances
 		SigningKey:       []byte(TestSigningKey32Chars), // SAME across all instances
 		Providers: []*ProviderConfig{
 			{
@@ -61,10 +61,10 @@ func TestCrossInstanceTokenUsage(t *testing.T) {
 
 	// Test 1: Token generated on Instance A can be validated on Instance B & C
 	t.Run("cross_instance_token_validation", func(t *testing.T) {
-				// Generate session token on Instance A
+		// Generate session token on Instance A
 		sessionId := TestSessionID
 		expiresAt := time.Now().Add(time.Hour)
-		
+
 		tokenFromA, err := instanceA.tokenGenerator.GenerateSessionToken(sessionId, expiresAt)
 		require.NoError(t, err, "Instance A should generate token")
 
@@ -288,7 +288,6 @@ func TestSTSDistributedConfigurationRequirements(t *testing.T) {
 			MaxSessionLength: 12 * time.Hour,
 			Issuer:           "production-sts-cluster",
 			SigningKey:       []byte("production-signing-key-32-chars-l"),
-
 		}
 
 		// Create multiple instances with identical config
@@ -317,7 +316,6 @@ func TestSTSDistributedConfigurationRequirements(t *testing.T) {
 // TestSTSRealWorldDistributedScenarios tests realistic distributed deployment scenarios
 func TestSTSRealWorldDistributedScenarios(t *testing.T) {
 	ctx := context.Background()
-
 
 	t.Run("load_balanced_s3_gateway_scenario", func(t *testing.T) {
 		// Simulate real production scenario:
