@@ -439,6 +439,9 @@ func loadIAMManagerFromConfig(configPath string) (*integration.IAMManager, error
 	iamConfig := &integration.IAMConfig{
 		STS:    configRoot.STS,
 		Policy: configRoot.Policy,
+		Roles: &integration.RoleStoreConfig{
+			StoreType: "memory", // Use memory store for JSON config-based setup
+		},
 	}
 
 	// Initialize IAM manager

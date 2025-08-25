@@ -64,13 +64,13 @@
         "Statement": [
           {
             "Effect": "Allow",
-            "Action": "s3:*",
-            "Resource": "*"
+            "Action": ["s3:*"],
+            "Resource": ["*"]
           },
           {
             "Effect": "Allow",
-            "Action": "sts:ValidateSession",
-            "Resource": "*"
+            "Action": ["sts:ValidateSession"],
+            "Resource": ["*"]
           }
         ]
       }
@@ -93,8 +93,8 @@
           },
           {
             "Effect": "Allow",
-            "Action": "sts:ValidateSession",
-            "Resource": "*"
+            "Action": ["sts:ValidateSession"],
+            "Resource": ["*"]
           }
         ]
       }
