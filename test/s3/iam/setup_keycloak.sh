@@ -7,7 +7,7 @@ set -e
 
 KEYCLOAK_URL="${KEYCLOAK_URL:-http://localhost:8080}"
 ADMIN_USER="${KEYCLOAK_ADMIN:-admin}"
-ADMIN_PASSWORD="${KEYCLOAK_ADMIN_PASSWORD:-admin}"
+ADMIN_PASSWORD="${KEYCLOAK_ADMIN_PASSWORD:-admin123}"
 REALM_NAME="seaweedfs-test"
 CLIENT_ID="seaweedfs-s3"
 CLIENT_SECRET="seaweedfs-s3-secret"
