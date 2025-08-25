@@ -70,9 +70,38 @@ func (iam *IdentityAccessManagement) ValidatePresignedURLWithIAM(r *http.Request
 		return s3err.ErrNone
 	}
 
-	// Create IAM identity for authorization
-	// Use a proper ARN format for the principal
-	principalArn := fmt.Sprintf("arn:seaweed:sts::assumed-role/PresignedUser/%s", identity.Name)
+	// Parse JWT token to extract role and session information
+	tokenClaims, err := parseJWTToken(sessionToken)
+	if err != nil {
+		glog.V(3).Infof("Failed to parse JWT token in presigned URL: %v", err)
+		return s3err.ErrAccessDenied
+	}
+
+	// Extract role information from token claims
+	roleName, ok := tokenClaims["role"].(string)
+	if !ok || roleName == "" {
+		glog.V(3).Info("No role found in JWT token for presigned URL")
+		return s3err.ErrAccessDenied
+	}
+
+	sessionName, ok := tokenClaims["snam"].(string)
+	if !ok || sessionName == "" {
+		sessionName = "presigned-session" // Default fallback
+	}
+
+	// Use the principal ARN directly from token claims, or build it if not available
+	principalArn, ok := tokenClaims["principal"].(string)
+	if !ok || principalArn == "" {
+		// Fallback: extract role name from role ARN and build principal ARN
+		roleNameOnly := roleName
+		if strings.Contains(roleName, "/") {
+			parts := strings.Split(roleName, "/")
+			roleNameOnly = parts[len(parts)-1]
+		}
+		principalArn = fmt.Sprintf("arn:seaweed:sts::assumed-role/%s/%s", roleNameOnly, sessionName)
+	}
+
+	// Create IAM identity for authorization using extracted information
 	iamIdentity := &IAMIdentity{
 		Name:         identity.Name,
 		Principal:    principalArn,
