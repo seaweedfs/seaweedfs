@@ -13,8 +13,9 @@ type STSSessionClaims struct {
 	jwt.RegisteredClaims
 
 	// Session identification
-	SessionId string `json:"sid"` // session_id (abbreviated for smaller tokens)
-	TokenType string `json:"typ"` // token_type
+	SessionId   string `json:"sid"`  // session_id (abbreviated for smaller tokens)
+	SessionName string `json:"snam"` // session_name (abbreviated for smaller tokens)
+	TokenType   string `json:"typ"`  // token_type
 
 	// Role information
 	RoleArn     string `json:"role"`      // role_arn
@@ -64,6 +65,7 @@ func (c *STSSessionClaims) ToSessionInfo() *SessionInfo {
 
 	return &SessionInfo{
 		SessionId:        c.SessionId,
+		SessionName:      c.SessionName,
 		RoleArn:          c.RoleArn,
 		AssumedRoleUser:  c.AssumedRole,
 		Principal:        c.Principal,
@@ -142,5 +144,11 @@ func (c *STSSessionClaims) WithRequestContext(ctx map[string]interface{}) *STSSe
 // WithMaxDuration sets the maximum session duration
 func (c *STSSessionClaims) WithMaxDuration(duration time.Duration) *STSSessionClaims {
 	c.MaxDuration = int64(duration.Seconds())
+	return c
+}
+
+// WithSessionName sets the session name
+func (c *STSSessionClaims) WithSessionName(sessionName string) *STSSessionClaims {
+	c.SessionName = sessionName
 	return c
 }
