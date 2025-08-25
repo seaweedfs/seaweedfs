@@ -84,7 +84,7 @@ func TestS3EndToEndWithJWT(t *testing.T) {
 			tt.setupRole(ctx, iamManager)
 
 			// Assume role to get JWT token
-			response, err := iamManager.AssumeRoleWithWebIdentity(ctx, "localhost:8888", &sts.AssumeRoleWithWebIdentityRequest{
+			response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
 				RoleArn:          tt.roleArn,
 				WebIdentityToken: "valid-oidc-token",
 				RoleSessionName:  tt.sessionName,
@@ -120,7 +120,7 @@ func TestS3MultipartUploadWithJWT(t *testing.T) {
 	setupS3WriteRole(ctx, iamManager)
 
 	// Assume role
-	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, "localhost:8888", &sts.AssumeRoleWithWebIdentityRequest{
+	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
 		RoleArn:          "arn:seaweed:iam::role/S3WriteRole",
 		WebIdentityToken: "valid-oidc-token",
 		RoleSessionName:  "multipart-test-session",
@@ -227,7 +227,7 @@ func TestS3PerformanceWithIAM(t *testing.T) {
 	setupS3ReadOnlyRole(ctx, iamManager)
 
 	// Assume role
-	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, "localhost:8888", &sts.AssumeRoleWithWebIdentityRequest{
+	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
 		RoleArn:          "arn:seaweed:iam::role/S3ReadOnlyRole",
 		WebIdentityToken: "valid-oidc-token",
 		RoleSessionName:  "performance-test-session",
@@ -290,6 +290,9 @@ func setupCompleteS3IAMSystem(t *testing.T) (http.Handler, *integration.IAMManag
 		Policy: &policy.PolicyEngineConfig{
 			DefaultEffect: "Deny",
 			StoreType:     "memory",
+		},
+		Roles: &integration.RoleStoreConfig{
+			StoreType: "memory",
 		},
 	}
 

@@ -36,7 +36,7 @@ func TestMultipartIAMValidation(t *testing.T) {
 	setupTestRolesForMultipart(ctx, iamManager)
 
 	// Get session token
-	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, "localhost:8888", &sts.AssumeRoleWithWebIdentityRequest{
+	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
 		RoleArn:          "arn:seaweed:iam::role/S3WriteRole",
 		WebIdentityToken: "valid-oidc-token",
 		RoleSessionName:  "multipart-test-session",
@@ -467,6 +467,9 @@ func setupTestIAMManagerForMultipart(t *testing.T) *integration.IAMManager {
 		Policy: &policy.PolicyEngineConfig{
 			DefaultEffect: "Deny",
 			StoreType:     "memory",
+		},
+		Roles: &integration.RoleStoreConfig{
+			StoreType: "memory",
 		},
 	}
 

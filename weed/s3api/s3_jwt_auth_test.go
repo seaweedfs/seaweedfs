@@ -66,7 +66,7 @@ func TestJWTAuthenticationFlow(t *testing.T) {
 			tt.setupRole(ctx, iamManager)
 
 			// Assume role to get JWT
-			response, err := iamManager.AssumeRoleWithWebIdentity(ctx, "localhost:8888", &sts.AssumeRoleWithWebIdentityRequest{
+			response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
 				RoleArn:          tt.roleArn,
 				WebIdentityToken: "valid-oidc-token",
 				RoleSessionName:  "jwt-auth-test",
@@ -196,7 +196,7 @@ func TestIPBasedPolicyEnforcement(t *testing.T) {
 	setupTestIPRestrictedRole(ctx, iamManager)
 
 	// Assume role
-	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, "localhost:8888", &sts.AssumeRoleWithWebIdentityRequest{
+	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
 		RoleArn:          "arn:seaweed:iam::role/S3IPRestrictedRole",
 		WebIdentityToken: "valid-oidc-token",
 		RoleSessionName:  "ip-test-session",
@@ -276,6 +276,9 @@ func setupTestIAMManager(t *testing.T) *integration.IAMManager {
 		Policy: &policy.PolicyEngineConfig{
 			DefaultEffect: "Deny",
 			StoreType:     "memory",
+		},
+		Roles: &integration.RoleStoreConfig{
+			StoreType: "memory",
 		},
 	}
 

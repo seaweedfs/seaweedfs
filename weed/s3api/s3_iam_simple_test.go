@@ -31,6 +31,9 @@ func TestS3IAMMiddleware(t *testing.T) {
 			DefaultEffect: "Deny",
 			StoreType:     "memory",
 		},
+		Roles: &integration.RoleStoreConfig{
+			StoreType: "memory",
+		},
 	}
 
 	err := iamManager.Initialize(config)

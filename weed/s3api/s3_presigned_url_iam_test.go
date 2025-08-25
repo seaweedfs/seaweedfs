@@ -35,7 +35,7 @@ func TestPresignedURLIAMValidation(t *testing.T) {
 	setupTestRolesForPresigned(ctx, iamManager)
 
 	// Get session token
-	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, "localhost:8888", &sts.AssumeRoleWithWebIdentityRequest{
+	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
 		RoleArn:          "arn:seaweed:iam::role/S3ReadOnlyRole",
 		WebIdentityToken: "valid-oidc-token",
 		RoleSessionName:  "presigned-test-session",
@@ -111,7 +111,7 @@ func TestPresignedURLGeneration(t *testing.T) {
 	setupTestRolesForPresigned(ctx, iamManager)
 
 	// Get session token
-	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, "localhost:8888", &sts.AssumeRoleWithWebIdentityRequest{
+	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
 		RoleArn:          "arn:seaweed:iam::role/S3AdminRole",
 		WebIdentityToken: "valid-oidc-token",
 		RoleSessionName:  "presigned-gen-test-session",
@@ -428,6 +428,9 @@ func setupTestIAMManagerForPresigned(t *testing.T) *integration.IAMManager {
 		Policy: &policy.PolicyEngineConfig{
 			DefaultEffect: "Deny",
 			StoreType:     "memory",
+		},
+		Roles: &integration.RoleStoreConfig{
+			StoreType: "memory",
 		},
 	}
 
