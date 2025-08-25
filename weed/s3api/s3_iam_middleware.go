@@ -62,18 +62,19 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 	// Parse JWT token to extract claims
 	tokenClaims, err := parseJWTToken(sessionToken)
 	if err != nil {
-		glog.V(3).Infof("Failed to parse JWT token: %v", err)
+		glog.V(0).Infof("Failed to parse JWT token: %v", err)
 		return nil, s3err.ErrAccessDenied
 	}
+	glog.V(0).Infof("AuthenticateJWT: parsed JWT claims: %+v", tokenClaims)
 
 	// Extract role information from token claims
-	roleName, ok := tokenClaims["role_name"].(string)
+	roleName, ok := tokenClaims["role"].(string)
 	if !ok || roleName == "" {
-		glog.V(3).Info("No role_name found in JWT token")
+		glog.V(0).Info("No role found in JWT token")
 		return nil, s3err.ErrAccessDenied
 	}
 
-	sessionName, ok := tokenClaims["session_name"].(string)
+	sessionName, ok := tokenClaims["snam"].(string)
 	if !ok || sessionName == "" {
 		sessionName = "jwt-session" // Default fallback
 	}
@@ -83,8 +84,17 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 		subject = "jwt-user" // Default fallback
 	}
 
-	// Build principal ARN from token claims
-	principalArn := fmt.Sprintf("arn:seaweed:sts::assumed-role/%s/%s", roleName, sessionName)
+	// Use the principal ARN directly from token claims, or build it if not available
+	principalArn, ok := tokenClaims["principal"].(string)
+	if !ok || principalArn == "" {
+		// Fallback: extract role name from role ARN and build principal ARN
+		roleNameOnly := roleName
+		if strings.Contains(roleName, "/") {
+			parts := strings.Split(roleName, "/")
+			roleNameOnly = parts[len(parts)-1]
+		}
+		principalArn = fmt.Sprintf("arn:seaweed:sts::assumed-role/%s/%s", roleNameOnly, sessionName)
+	}
 
 	// Validate the session using our IAM system
 	testRequest := &integration.ActionRequest{

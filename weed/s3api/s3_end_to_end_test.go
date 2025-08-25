@@ -319,8 +319,23 @@ func setupCompleteS3IAMSystem(t *testing.T) (http.Handler, *integration.IAMManag
 			return
 		}
 		
-		// Test authorization
-		authErrCode := s3IAMIntegration.AuthorizeAction(r.Context(), identity, Action("Read"), "test-bucket", "test-object", r)
+		// Map HTTP method to S3 action for more realistic testing
+		var action Action
+		switch r.Method {
+		case "GET":
+			action = Action("s3:GetObject")
+		case "PUT":
+			action = Action("s3:PutObject")
+		case "DELETE":
+			action = Action("s3:DeleteObject")
+		case "HEAD":
+			action = Action("s3:HeadObject")
+		default:
+			action = Action("s3:GetObject") // Default fallback
+		}
+		
+		// Test authorization with appropriate action
+		authErrCode := s3IAMIntegration.AuthorizeAction(r.Context(), identity, action, "test-bucket", "test-object", r)
 		if authErrCode != s3err.ErrNone {
 			w.WriteHeader(http.StatusForbidden)
 			w.Write([]byte("Authorization failed"))
@@ -329,7 +344,7 @@ func setupCompleteS3IAMSystem(t *testing.T) (http.Handler, *integration.IAMManag
 		
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("Success"))
-	}).Methods("GET")
+	}).Methods("GET", "PUT", "DELETE", "HEAD")
 
 	return router, iamManager
 }
@@ -376,6 +391,12 @@ func setupS3ReadOnlyRole(ctx context.Context, manager *integration.IAMManager) {
 					"arn:seaweed:s3:::*/*",
 				},
 			},
+			{
+				Sid:    "AllowSTSSessionValidation",
+				Effect: "Allow",
+				Action: []string{"sts:ValidateSession"},
+				Resource: []string{"*"},
+			},
 		},
 	}
 
@@ -414,6 +435,12 @@ func setupS3AdminRole(ctx context.Context, manager *integration.IAMManager) {
 					"arn:seaweed:s3:::*/*",
 				},
 			},
+			{
+				Sid:    "AllowSTSSessionValidation",
+				Effect: "Allow",
+				Action: []string{"sts:ValidateSession"},
+				Resource: []string{"*"},
+			},
 		},
 	}
 
@@ -451,6 +478,12 @@ func setupS3WriteRole(ctx context.Context, manager *integration.IAMManager) {
 					"arn:seaweed:s3:::*",
 					"arn:seaweed:s3:::*/*",
 				},
+			},
+			{
+				Sid:    "AllowSTSSessionValidation",
+				Effect: "Allow",
+				Action: []string{"sts:ValidateSession"},
+				Resource: []string{"*"},
 			},
 		},
 	}
@@ -495,6 +528,12 @@ func setupS3IPRestrictedRole(ctx context.Context, manager *integration.IAMManage
 					},
 				},
 			},
+			{
+				Sid:    "AllowSTSSessionValidation",
+				Effect: "Allow",
+				Action: []string{"sts:ValidateSession"},
+				Resource: []string{"*"},
+			},
 		},
 	}
 
@@ -520,8 +559,8 @@ func setupS3IPRestrictedRole(ctx context.Context, manager *integration.IAMManage
 }
 
 func executeS3OperationWithJWT(t *testing.T, s3Server http.Handler, operation S3Operation, jwtToken string) bool {
-	// Use our simplified test endpoint for IAM validation
-	req := httptest.NewRequest("GET", "/test-auth", nil)
+	// Use our simplified test endpoint for IAM validation with the correct HTTP method
+	req := httptest.NewRequest(operation.Method, "/test-auth", nil)
 	req.Header.Set("Authorization", "Bearer "+jwtToken)
 	req.Header.Set("Content-Type", "application/octet-stream")
 
