@@ -345,6 +345,10 @@ main() {
 setup_iam_config() {
   echo -e "${BLUE}🔧 Setting up IAM configuration for detected environment${NC}"
   
+  # Change to script directory to ensure config files are found
+  local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  cd "$script_dir"
+  
   # Choose the appropriate config based on detected port
   local config_source
   if [[ "${KEYCLOAK_PORT}" == "8080" ]]; then
@@ -357,7 +361,7 @@ setup_iam_config() {
   
   # Verify source config exists
   if [[ ! -f "$config_source" ]]; then
-    echo -e "${RED}❌ Config file $config_source not found${NC}"
+    echo -e "${RED}❌ Config file $config_source not found in $script_dir${NC}"
     exit 1
   fi
   
