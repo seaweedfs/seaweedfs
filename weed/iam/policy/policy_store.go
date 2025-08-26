@@ -158,11 +158,18 @@ func NewFilerPolicyStore(config map[string]interface{}) (*FilerPolicyStore, erro
 		basePath: "/etc/iam/policies", // Default path for policy storage - aligned with /etc/ convention
 	}
 
-	// Parse configuration - only basePath and other settings, NOT filerAddress
+	// Parse configuration
 	if config != nil {
 		if basePath, ok := config["basePath"].(string); ok && basePath != "" {
 			store.basePath = strings.TrimSuffix(basePath, "/")
 		}
+
+		// Validate that filerAddress is provided in config - required for distributed setup
+		if _, ok := config["filerAddress"].(string); !ok {
+			return nil, fmt.Errorf("filer address is required in configuration for FilerPolicyStore")
+		}
+	} else {
+		return nil, fmt.Errorf("filer address is required in configuration for FilerPolicyStore")
 	}
 
 	glog.V(2).Infof("Initialized FilerPolicyStore with basePath %s", store.basePath)
