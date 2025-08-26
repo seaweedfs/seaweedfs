@@ -1,0 +1,59 @@
+name: S3 IAM Keycloak Integration
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'test/s3/iam/**'
+      - 'weed/**'
+      - 'go.mod'
+      - 'go.sum'
+
+jobs:
+  keycloak-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install dependencies
+        run: sudo apt-get update -y && sudo apt-get install -y jq
+
+      - name: Build weed binary
+        run: |
+          mkdir -p "$HOME/go/bin"
+          go build -o "$HOME/go/bin/weed" ./weed
+
+      - name: Configure Keycloak (repo script only)
+        env:
+          PATH: ${{ env.PATH }}:$HOME/go/bin
+        run: |
+          bash test/s3/iam/setup_keycloak.sh
+
+      - name: Start SeaweedFS services
+        env:
+          WEED_BINARY: ${{ github.workspace }}/weed
+        run: |
+          export WEED_BINARY="$HOME/go/bin/weed"
+          make -C test/s3/iam start-services wait-for-services
+
+      - name: Run Keycloak integration tests
+        env:
+          KEYCLOAK_URL: http://localhost:8080
+        run: |
+          go test -v -timeout 15m -run "TestKeycloak" ./...
+
+      - name: Stop services
+        if: always()
+        run: |
+          make -C test/s3/iam stop-services
+
+
