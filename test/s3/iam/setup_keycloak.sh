@@ -11,7 +11,7 @@ NC='\033[0m'
 
 KEYCLOAK_IMAGE="quay.io/keycloak/keycloak:26.0.7"
 CONTAINER_NAME="keycloak-iam-test"
-KEYCLOAK_PORT="8080"
+KEYCLOAK_PORT="8090"
 KEYCLOAK_URL="http://localhost:${KEYCLOAK_PORT}"
 
 # Realm and test fixtures expected by tests
@@ -23,18 +23,31 @@ ROLE_READONLY="s3-read-only"
 ROLE_WRITEONLY="s3-write-only"
 ROLE_READWRITE="s3-read-write"
 
-declare -A USERS
-USERS=(
-  [admin-user]=admin123
-  [read-user]=read123
-  [write-user]=readwrite123
-  [write-only-user]=writeonly123
-)
+# User credentials (compatible with older bash versions)
+get_user_password() {
+  case "$1" in
+    "admin-user") echo "admin123" ;;
+    "read-user") echo "read123" ;;
+    "write-user") echo "readwrite123" ;;
+    "write-only-user") echo "writeonly123" ;;
+    *) echo "" ;;
+  esac
+}
+
+# List of users to create
+USERS="admin-user read-user write-user write-only-user"
 
 echo -e "${BLUE}🔧 Setting up Keycloak realm and users for SeaweedFS S3 IAM testing...${NC}"
 echo "Keycloak URL: ${KEYCLOAK_URL}"
 
 ensure_container() {
+  # Check for any existing Keycloak container on port 8090
+  if docker ps --format '{{.Names}}\t{{.Ports}}' | grep -q ":8090->8080"; then
+    EXISTING_CONTAINER=$(docker ps --format '{{.Names}}\t{{.Ports}}' | grep ":8090->8080" | awk '{print $1}')
+    CONTAINER_NAME="$EXISTING_CONTAINER"
+    echo -e "${GREEN}✅ Using existing container '${CONTAINER_NAME}' on port 8090${NC}"
+    return 0
+  fi
   # Prefer any already running Keycloak container to avoid port conflicts
   if docker ps --format '{{.Names}}' | grep -q '^keycloak$'; then
     CONTAINER_NAME="keycloak"
@@ -75,20 +88,32 @@ wait_ready() {
 }
 
 kcadm() {
+  # Always authenticate before each command to ensure context
+  docker exec -i "${CONTAINER_NAME}" /opt/keycloak/bin/kcadm.sh config credentials --server "http://localhost:8080" --realm master --user admin --password admin123 >/dev/null 2>&1
   docker exec -i "${CONTAINER_NAME}" /opt/keycloak/bin/kcadm.sh "$@"
 }
 
 admin_login() {
-  kcadm config credentials --server "${KEYCLOAK_URL}" --realm master --user admin --password admin >/dev/null
+  # This is now handled by each kcadm() call
+  echo "Logging into http://localhost:8080 as user admin of realm master"
 }
 
 ensure_realm() {
-  if kcadm get realms | grep -q '"realm": *"'${REALM_NAME}'"'; then
+  if kcadm get realms | grep -q "${REALM_NAME}"; then
     echo -e "${GREEN}✅ Realm '${REALM_NAME}' already exists${NC}"
   else
     echo -e "${YELLOW}📝 Creating realm '${REALM_NAME}'...${NC}"
-    kcadm create realms -s realm="${REALM_NAME}" -s enabled=true >/dev/null
+    if kcadm create realms -s realm="${REALM_NAME}" -s enabled=true 2>/dev/null; then
     echo -e "${GREEN}✅ Realm created${NC}"
+    else
+      # Check if it exists now (might have been created by another process)
+      if kcadm get realms | grep -q "${REALM_NAME}"; then
+        echo -e "${GREEN}✅ Realm '${REALM_NAME}' already exists (created concurrently)${NC}"
+      else
+        echo -e "${RED}❌ Failed to create realm '${REALM_NAME}'${NC}"
+        return 1
+      fi
+    fi
   fi
 }
 
@@ -216,16 +241,16 @@ main() {
   ensure_role "${ROLE_WRITEONLY}"
   ensure_role "${ROLE_READWRITE}"
 
-  for u in "${!USERS[@]}"; do
-    ensure_user "$u" "${USERS[$u]}"
+  for u in $USERS; do
+    ensure_user "$u" "$(get_user_password "$u")"
   done
 
   assign_role admin-user  "${ROLE_ADMIN}"
   assign_role read-user   "${ROLE_READONLY}"
   assign_role write-user  "${ROLE_READWRITE}"
-  
-  # Also create a dedicated write-only user for testing
-  ensure_user write-only-user writeonly123
+
+  # Also create a dedicated write-only user for testing  
+  ensure_user write-only-user "$(get_user_password write-only-user)"
   assign_role write-only-user "${ROLE_WRITEONLY}"
 
   # Validate the setup by testing authentication and role inclusion
@@ -233,8 +258,8 @@ main() {
   sleep 2
   
   local validation_result=$(curl -s -w "%{http_code}" -X POST "http://localhost:${KEYCLOAK_PORT}/realms/${REALM_NAME}/protocol/openid-connect/token" \
-    -H "Content-Type: application/x-www-form-urlencoded" \
-    -d "grant_type=password" \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            -d "grant_type=password" \
     -d "client_id=${CLIENT_ID}" \
     -d "client_secret=${CLIENT_SECRET}" \
     -d "username=admin-user" \
