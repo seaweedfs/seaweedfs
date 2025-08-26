@@ -34,11 +34,11 @@ func TestMemoryRoleStore(t *testing.T) {
 		},
 	}
 
-	err := store.StoreRole(ctx, "TestRole", roleDef)
+	err := store.StoreRole(ctx, "", "TestRole", roleDef)
 	require.NoError(t, err)
 
 	// Test retrieving the role
-	retrievedRole, err := store.GetRole(ctx, "TestRole")
+	retrievedRole, err := store.GetRole(ctx, "", "TestRole")
 	require.NoError(t, err)
 	assert.Equal(t, "TestRole", retrievedRole.RoleName)
 	assert.Equal(t, "arn:seaweed:iam::role/TestRole", retrievedRole.RoleArn)
@@ -46,16 +46,16 @@ func TestMemoryRoleStore(t *testing.T) {
 	assert.Equal(t, []string{"TestPolicy"}, retrievedRole.AttachedPolicies)
 
 	// Test listing roles
-	roles, err := store.ListRoles(ctx)
+	roles, err := store.ListRoles(ctx, "")
 	require.NoError(t, err)
 	assert.Contains(t, roles, "TestRole")
 
 	// Test deleting the role
-	err = store.DeleteRole(ctx, "TestRole")
+	err = store.DeleteRole(ctx, "", "TestRole")
 	require.NoError(t, err)
 
 	// Verify role is deleted
-	_, err = store.GetRole(ctx, "TestRole")
+	_, err = store.GetRole(ctx, "", "TestRole")
 	assert.Error(t, err)
 }
 
@@ -114,7 +114,7 @@ func TestDistributedIAMManagerWithRoleStore(t *testing.T) {
 		AttachedPolicies: []string{"S3ReadOnlyPolicy"},
 	}
 
-	err = iamManager.CreateRole(ctx, "DistributedTestRole", roleDef)
+	err = iamManager.CreateRole(ctx, "", "DistributedTestRole", roleDef)
 	require.NoError(t, err)
 
 	// Test that role is accessible through the IAM manager

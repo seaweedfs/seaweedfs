@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/iam/oidc"
 	"github.com/seaweedfs/seaweedfs/weed/iam/ldap"
+	"github.com/seaweedfs/seaweedfs/weed/iam/oidc"
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 	"github.com/stretchr/testify/assert"
@@ -17,7 +17,7 @@ import (
 func TestFullOIDCWorkflow(t *testing.T) {
 	// Set up integrated IAM system
 	iamManager := setupIntegratedIAMSystem(t)
-	
+
 	tests := []struct {
 		name          string
 		roleArn       string
@@ -55,27 +55,27 @@ func TestFullOIDCWorkflow(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			
+
 			// Step 1: Attempt role assumption
 			assumeRequest := &sts.AssumeRoleWithWebIdentityRequest{
 				RoleArn:          tt.roleArn,
 				WebIdentityToken: tt.webToken,
 				RoleSessionName:  tt.sessionName,
 			}
-			
+
 			response, err := iamManager.AssumeRoleWithWebIdentity(ctx, assumeRequest)
-			
+
 			if !tt.expectedAllow {
 				assert.Error(t, err)
 				assert.Nil(t, response)
 				return
 			}
-			
+
 			// Should succeed if expectedAllow is true
 			require.NoError(t, err)
 			require.NotNil(t, response)
 			require.NotNil(t, response.Credentials)
-			
+
 			// Step 2: Test policy enforcement with assumed credentials
 			if tt.testAction != "" && tt.testResource != "" {
 				allowed, err := iamManager.IsActionAllowed(ctx, &ActionRequest{
@@ -84,7 +84,7 @@ func TestFullOIDCWorkflow(t *testing.T) {
 					Resource:     tt.testResource,
 					SessionToken: response.Credentials.SessionToken,
 				})
-				
+
 				require.NoError(t, err)
 				assert.True(t, allowed, "Action should be allowed by role policy")
 			}
@@ -95,7 +95,7 @@ func TestFullOIDCWorkflow(t *testing.T) {
 // TestFullLDAPWorkflow tests the complete LDAP → STS → Policy workflow
 func TestFullLDAPWorkflow(t *testing.T) {
 	iamManager := setupIntegratedIAMSystem(t)
-	
+
 	tests := []struct {
 		name          string
 		roleArn       string
@@ -129,7 +129,7 @@ func TestFullLDAPWorkflow(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			
+
 			// Step 1: Attempt role assumption with LDAP credentials
 			assumeRequest := &sts.AssumeRoleWithCredentialsRequest{
 				RoleArn:         tt.roleArn,
@@ -138,18 +138,18 @@ func TestFullLDAPWorkflow(t *testing.T) {
 				RoleSessionName: tt.sessionName,
 				ProviderName:    "test-ldap",
 			}
-			
+
 			response, err := iamManager.AssumeRoleWithCredentials(ctx, assumeRequest)
-			
+
 			if !tt.expectedAllow {
 				assert.Error(t, err)
 				assert.Nil(t, response)
 				return
 			}
-			
+
 			require.NoError(t, err)
 			require.NotNil(t, response)
-			
+
 			// Step 2: Test policy enforcement
 			if tt.testAction != "" && tt.testResource != "" {
 				allowed, err := iamManager.IsActionAllowed(ctx, &ActionRequest{
@@ -158,7 +158,7 @@ func TestFullLDAPWorkflow(t *testing.T) {
 					Resource:     tt.testResource,
 					SessionToken: response.Credentials.SessionToken,
 				})
-				
+
 				require.NoError(t, err)
 				assert.True(t, allowed)
 			}
@@ -169,7 +169,7 @@ func TestFullLDAPWorkflow(t *testing.T) {
 // TestPolicyEnforcement tests policy evaluation for various scenarios
 func TestPolicyEnforcement(t *testing.T) {
 	iamManager := setupIntegratedIAMSystem(t)
-	
+
 	// Create a session for testing
 	ctx := context.Background()
 	assumeRequest := &sts.AssumeRoleWithWebIdentityRequest{
@@ -177,19 +177,19 @@ func TestPolicyEnforcement(t *testing.T) {
 		WebIdentityToken: "valid-oidc-token",
 		RoleSessionName:  "policy-test-session",
 	}
-	
+
 	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, assumeRequest)
 	require.NoError(t, err)
-	
+
 	sessionToken := response.Credentials.SessionToken
 	principal := response.AssumedRoleUser.Arn
-	
+
 	tests := []struct {
-		name       string
-		action     string
-		resource   string
+		name        string
+		action      string
+		resource    string
 		shouldAllow bool
-		reason     string
+		reason      string
 	}{
 		{
 			name:        "allow read access",
@@ -236,7 +236,7 @@ func TestPolicyEnforcement(t *testing.T) {
 				Resource:     tt.resource,
 				SessionToken: sessionToken,
 			})
-			
+
 			require.NoError(t, err)
 			assert.Equal(t, tt.shouldAllow, allowed, tt.reason)
 		})
@@ -247,7 +247,7 @@ func TestPolicyEnforcement(t *testing.T) {
 func TestSessionExpiration(t *testing.T) {
 	iamManager := setupIntegratedIAMSystem(t)
 	ctx := context.Background()
-	
+
 	// Create a short-lived session
 	assumeRequest := &sts.AssumeRoleWithWebIdentityRequest{
 		RoleArn:          "arn:seaweed:iam::role/S3ReadOnlyRole",
@@ -255,12 +255,12 @@ func TestSessionExpiration(t *testing.T) {
 		RoleSessionName:  "expiration-test",
 		DurationSeconds:  int64Ptr(900), // 15 minutes
 	}
-	
+
 	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, assumeRequest)
 	require.NoError(t, err)
-	
+
 	sessionToken := response.Credentials.SessionToken
-	
+
 	// Verify session is initially valid
 	allowed, err := iamManager.IsActionAllowed(ctx, &ActionRequest{
 		Principal:    response.AssumedRoleUser.Arn,
@@ -270,17 +270,17 @@ func TestSessionExpiration(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.True(t, allowed)
-	
+
 	// Verify the expiration time is set correctly
 	assert.True(t, response.Credentials.Expiration.After(time.Now()))
 	assert.True(t, response.Credentials.Expiration.Before(time.Now().Add(16*time.Minute)))
-	
+
 	// Test session expiration behavior in stateless JWT system
 	// In a stateless system, manual expiration is not supported
 	err = iamManager.ExpireSessionForTesting(ctx, sessionToken)
 	require.Error(t, err, "Manual session expiration should not be supported in stateless system")
 	assert.Contains(t, err.Error(), "manual session expiration not supported")
-	
+
 	// Verify session is still valid (since it hasn't naturally expired)
 	allowed, err = iamManager.IsActionAllowed(ctx, &ActionRequest{
 		Principal:    response.AssumedRoleUser.Arn,
@@ -296,7 +296,7 @@ func TestSessionExpiration(t *testing.T) {
 func TestTrustPolicyValidation(t *testing.T) {
 	iamManager := setupIntegratedIAMSystem(t)
 	ctx := context.Background()
-	
+
 	tests := []struct {
 		name        string
 		roleArn     string
@@ -346,15 +346,14 @@ func TestTrustPolicyValidation(t *testing.T) {
 func setupIntegratedIAMSystem(t *testing.T) *IAMManager {
 	// Create IAM manager with all components
 	manager := NewIAMManager()
-	
+
 	// Configure and initialize
 	config := &IAMConfig{
 		STS: &sts.STSConfig{
-			TokenDuration:      time.Hour,
-			MaxSessionLength:   time.Hour * 12,
-			Issuer:            "test-sts",
-			SigningKey:        []byte("test-signing-key-32-characters-long"),
-
+			TokenDuration:    time.Hour,
+			MaxSessionLength: time.Hour * 12,
+			Issuer:           "test-sts",
+			SigningKey:       []byte("test-signing-key-32-characters-long"),
 		},
 		Policy: &policy.PolicyEngineConfig{
 			DefaultEffect: "Deny",
@@ -364,16 +363,16 @@ func setupIntegratedIAMSystem(t *testing.T) *IAMManager {
 			StoreType: "memory", // Use memory for unit tests
 		},
 	}
-	
+
 	err := manager.Initialize(config)
 	require.NoError(t, err)
-	
+
 	// Set up test providers
 	setupTestProviders(t, manager)
-	
+
 	// Set up test policies and roles
 	setupTestPoliciesAndRoles(t, manager)
-	
+
 	return manager
 }
 
@@ -387,8 +386,8 @@ func setupTestProviders(t *testing.T, manager *IAMManager) {
 	err := oidcProvider.Initialize(oidcConfig)
 	require.NoError(t, err)
 	oidcProvider.SetupDefaultTestData()
-	
-	// Set up LDAP provider  
+
+	// Set up LDAP provider
 	ldapProvider := ldap.NewMockLDAPProvider("test-ldap")
 	ldapConfig := &ldap.LDAPConfig{
 		Server: "ldap://test-server:389",
@@ -397,7 +396,7 @@ func setupTestProviders(t *testing.T, manager *IAMManager) {
 	err = ldapProvider.Initialize(ldapConfig)
 	require.NoError(t, err)
 	ldapProvider.SetupDefaultTestData()
-	
+
 	// Register providers
 	err = manager.RegisterIdentityProvider(oidcProvider)
 	require.NoError(t, err)
@@ -407,7 +406,7 @@ func setupTestProviders(t *testing.T, manager *IAMManager) {
 
 func setupTestPoliciesAndRoles(t *testing.T, manager *IAMManager) {
 	ctx := context.Background()
-	
+
 	// Create S3 read-only policy
 	s3ReadPolicy := &policy.PolicyDocument{
 		Version: "2012-10-17",
@@ -423,10 +422,10 @@ func setupTestPoliciesAndRoles(t *testing.T, manager *IAMManager) {
 			},
 		},
 	}
-	
-	err := manager.CreatePolicy(ctx, "S3ReadOnlyPolicy", s3ReadPolicy)
+
+	err := manager.CreatePolicy(ctx, "", "S3ReadOnlyPolicy", s3ReadPolicy)
 	require.NoError(t, err)
-	
+
 	// Create LDAP user policy
 	ldapUserPolicy := &policy.PolicyDocument{
 		Version: "2012-10-17",
@@ -441,12 +440,12 @@ func setupTestPoliciesAndRoles(t *testing.T, manager *IAMManager) {
 			},
 		},
 	}
-	
-	err = manager.CreatePolicy(ctx, "LDAPUserPolicy", ldapUserPolicy)
+
+	err = manager.CreatePolicy(ctx, "", "LDAPUserPolicy", ldapUserPolicy)
 	require.NoError(t, err)
-	
+
 	// Create roles with trust policies
-	err = manager.CreateRole(ctx, "S3ReadOnlyRole", &RoleDefinition{
+	err = manager.CreateRole(ctx, "", "S3ReadOnlyRole", &RoleDefinition{
 		RoleName: "S3ReadOnlyRole",
 		TrustPolicy: &policy.PolicyDocument{
 			Version: "2012-10-17",
@@ -463,8 +462,8 @@ func setupTestPoliciesAndRoles(t *testing.T, manager *IAMManager) {
 		AttachedPolicies: []string{"S3ReadOnlyPolicy"},
 	})
 	require.NoError(t, err)
-	
-	err = manager.CreateRole(ctx, "LDAPUserRole", &RoleDefinition{
+
+	err = manager.CreateRole(ctx, "", "LDAPUserRole", &RoleDefinition{
 		RoleName: "LDAPUserRole",
 		TrustPolicy: &policy.PolicyDocument{
 			Version: "2012-10-17",
