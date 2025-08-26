@@ -79,7 +79,7 @@ type JWK struct {
 func NewOIDCProvider(name string) *OIDCProvider {
 	return &OIDCProvider{
 		name:       name,
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: &http.Client{Timeout: 5 * time.Second}, // Reduced timeout for faster failures
 	}
 }
 
