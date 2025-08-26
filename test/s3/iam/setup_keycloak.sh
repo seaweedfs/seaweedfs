@@ -11,7 +11,7 @@ NC='\033[0m'
 
 KEYCLOAK_IMAGE="quay.io/keycloak/keycloak:26.0.7"
 CONTAINER_NAME="keycloak-iam-test"
-KEYCLOAK_PORT="8090"
+KEYCLOAK_PORT="8080"  # Default port
 KEYCLOAK_URL="http://localhost:${KEYCLOAK_PORT}"
 
 # Realm and test fixtures expected by tests
@@ -41,17 +41,37 @@ echo -e "${BLUE}🔧 Setting up Keycloak realm and users for SeaweedFS S3 IAM te
 echo "Keycloak URL: ${KEYCLOAK_URL}"
 
 ensure_container() {
-  # Check for any existing Keycloak container on port 8090
-  if docker ps --format '{{.Names}}\t{{.Ports}}' | grep -q ":8090->8080"; then
-    EXISTING_CONTAINER=$(docker ps --format '{{.Names}}\t{{.Ports}}' | grep ":8090->8080" | awk '{print $1}')
-    CONTAINER_NAME="$EXISTING_CONTAINER"
-    echo -e "${GREEN}✅ Using existing container '${CONTAINER_NAME}' on port 8090${NC}"
-    return 0
+  # Check for any existing Keycloak container and detect its port
+  local keycloak_containers=$(docker ps --format '{{.Names}}\t{{.Ports}}' | grep -E "(keycloak|quay.io/keycloak)")
+  
+  if [[ -n "$keycloak_containers" ]]; then
+    # Parse the first available Keycloak container
+    CONTAINER_NAME=$(echo "$keycloak_containers" | head -1 | awk '{print $1}')
+    
+    # Extract the external port from the port mapping using sed (compatible with older bash)
+    local port_mapping=$(echo "$keycloak_containers" | head -1 | awk '{print $2}')
+    local extracted_port=$(echo "$port_mapping" | sed -n 's/.*:\([0-9]*\)->8080.*/\1/p')
+    if [[ -n "$extracted_port" ]]; then
+      KEYCLOAK_PORT="$extracted_port"
+      KEYCLOAK_URL="http://localhost:${KEYCLOAK_PORT}"
+      echo -e "${GREEN}✅ Using existing container '${CONTAINER_NAME}' on port ${KEYCLOAK_PORT}${NC}"
+      return 0
+    fi
   fi
-  # Prefer any already running Keycloak container to avoid port conflicts
+  
+  # Fallback: check for specific container names  
   if docker ps --format '{{.Names}}' | grep -q '^keycloak$'; then
     CONTAINER_NAME="keycloak"
-    echo -e "${GREEN}✅ Using existing container '${CONTAINER_NAME}'${NC}"
+    # Try to detect port for 'keycloak' container using docker port command
+    local ports=$(docker port keycloak 8080 2>/dev/null | head -1)
+    if [[ -n "$ports" ]]; then
+      local extracted_port=$(echo "$ports" | sed -n 's/.*:\([0-9]*\)$/\1/p')
+      if [[ -n "$extracted_port" ]]; then
+        KEYCLOAK_PORT="$extracted_port"
+        KEYCLOAK_URL="http://localhost:${KEYCLOAK_PORT}"
+      fi
+    fi
+    echo -e "${GREEN}✅ Using existing container '${CONTAINER_NAME}' on port ${KEYCLOAK_PORT}${NC}"
     return 0
   fi
   if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
@@ -89,12 +109,27 @@ wait_ready() {
 
 kcadm() {
   # Always authenticate before each command to ensure context
-  docker exec -i "${CONTAINER_NAME}" /opt/keycloak/bin/kcadm.sh config credentials --server "http://localhost:8080" --realm master --user admin --password admin123 >/dev/null 2>&1
+  # Try different admin passwords that might be used in different environments
+  local admin_passwords=("admin123" "admin" "password")
+  local auth_success=false
+  
+  for pwd in "${admin_passwords[@]}"; do
+    if docker exec -i "${CONTAINER_NAME}" /opt/keycloak/bin/kcadm.sh config credentials --server "http://localhost:8080" --realm master --user admin --password "$pwd" >/dev/null 2>&1; then
+      auth_success=true
+      break
+    fi
+  done
+  
+  if [[ "$auth_success" == false ]]; then
+    echo -e "${RED}❌ Failed to authenticate with any known admin password${NC}"
+    return 1
+  fi
+  
   docker exec -i "${CONTAINER_NAME}" /opt/keycloak/bin/kcadm.sh "$@"
 }
 
 admin_login() {
-  # This is now handled by each kcadm() call
+  # This is now handled by each kcadm() call  
   echo "Logging into http://localhost:8080 as user admin of realm master"
 }
 
