@@ -153,7 +153,7 @@ func TestPolicyEvaluation(t *testing.T) {
 		},
 	}
 
-	err := engine.AddPolicy("read-policy", readPolicy)
+	err := engine.AddPolicy("", "read-policy", readPolicy)
 	require.NoError(t, err)
 
 	denyPolicy := &PolicyDocument{
@@ -168,7 +168,7 @@ func TestPolicyEvaluation(t *testing.T) {
 		},
 	}
 
-	err = engine.AddPolicy("deny-policy", denyPolicy)
+	err = engine.AddPolicy("", "deny-policy", denyPolicy)
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -224,7 +224,7 @@ func TestPolicyEvaluation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := engine.Evaluate(context.Background(), tt.context, tt.policies)
+			result, err := engine.Evaluate(context.Background(), "", tt.context, tt.policies)
 
 			assert.NoError(t, err)
 			assert.Equal(t, tt.want, result.Effect)
@@ -259,7 +259,7 @@ func TestConditionEvaluation(t *testing.T) {
 		},
 	}
 
-	err := engine.AddPolicy("ip-conditional", conditionalPolicy)
+	err := engine.AddPolicy("", "ip-conditional", conditionalPolicy)
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -307,7 +307,7 @@ func TestConditionEvaluation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := engine.Evaluate(context.Background(), tt.context, []string{"ip-conditional"})
+			result, err := engine.Evaluate(context.Background(), "", tt.context, []string{"ip-conditional"})
 
 			assert.NoError(t, err)
 			assert.Equal(t, tt.want, result.Effect)

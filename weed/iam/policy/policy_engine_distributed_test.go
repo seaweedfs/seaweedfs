@@ -59,23 +59,23 @@ func TestDistributedPolicyEngine(t *testing.T) {
 		}
 
 		// Store policy on instance 1
-		err := instance1.AddPolicy("TestPolicy", testPolicy)
+		err := instance1.AddPolicy("", "TestPolicy", testPolicy)
 		require.NoError(t, err, "Should be able to store policy on instance 1")
 
 		// For memory storage, each instance has separate storage
 		// In production with filer storage, all instances would share the same policies
 
 		// Verify policy exists on instance 1
-		storedPolicy1, err := instance1.store.GetPolicy(ctx, "TestPolicy")
+		storedPolicy1, err := instance1.store.GetPolicy(ctx, "", "TestPolicy")
 		require.NoError(t, err, "Policy should exist on instance 1")
 		assert.Equal(t, "2012-10-17", storedPolicy1.Version)
 		assert.Len(t, storedPolicy1.Statement, 2)
 
 		// For demonstration: store same policy on other instances
-		err = instance2.AddPolicy("TestPolicy", testPolicy)
+		err = instance2.AddPolicy("", "TestPolicy", testPolicy)
 		require.NoError(t, err, "Should be able to store policy on instance 2")
 
-		err = instance3.AddPolicy("TestPolicy", testPolicy)
+		err = instance3.AddPolicy("", "TestPolicy", testPolicy)
 		require.NoError(t, err, "Should be able to store policy on instance 3")
 	})
 
@@ -92,9 +92,9 @@ func TestDistributedPolicyEngine(t *testing.T) {
 		}
 
 		// Evaluate policy on all instances
-		result1, err1 := instance1.Evaluate(ctx, evalCtx, []string{"TestPolicy"})
-		result2, err2 := instance2.Evaluate(ctx, evalCtx, []string{"TestPolicy"})
-		result3, err3 := instance3.Evaluate(ctx, evalCtx, []string{"TestPolicy"})
+		result1, err1 := instance1.Evaluate(ctx, "", evalCtx, []string{"TestPolicy"})
+		result2, err2 := instance2.Evaluate(ctx, "", evalCtx, []string{"TestPolicy"})
+		result3, err3 := instance3.Evaluate(ctx, "", evalCtx, []string{"TestPolicy"})
 
 		require.NoError(t, err1, "Evaluation should succeed on instance 1")
 		require.NoError(t, err2, "Evaluation should succeed on instance 2")
@@ -124,9 +124,9 @@ func TestDistributedPolicyEngine(t *testing.T) {
 		}
 
 		// All instances should consistently apply deny precedence
-		result1, err1 := instance1.Evaluate(ctx, evalCtx, []string{"TestPolicy"})
-		result2, err2 := instance2.Evaluate(ctx, evalCtx, []string{"TestPolicy"})
-		result3, err3 := instance3.Evaluate(ctx, evalCtx, []string{"TestPolicy"})
+		result1, err1 := instance1.Evaluate(ctx, "", evalCtx, []string{"TestPolicy"})
+		result2, err2 := instance2.Evaluate(ctx, "", evalCtx, []string{"TestPolicy"})
+		result3, err3 := instance3.Evaluate(ctx, "", evalCtx, []string{"TestPolicy"})
 
 		require.NoError(t, err1)
 		require.NoError(t, err2)
@@ -151,9 +151,9 @@ func TestDistributedPolicyEngine(t *testing.T) {
 			Resource:  "arn:seaweed:filer::path/test",
 		}
 
-		result1, err1 := instance1.Evaluate(ctx, evalCtx, []string{"TestPolicy"})
-		result2, err2 := instance2.Evaluate(ctx, evalCtx, []string{"TestPolicy"})
-		result3, err3 := instance3.Evaluate(ctx, evalCtx, []string{"TestPolicy"})
+		result1, err1 := instance1.Evaluate(ctx, "", evalCtx, []string{"TestPolicy"})
+		result2, err2 := instance2.Evaluate(ctx, "", evalCtx, []string{"TestPolicy"})
+		result3, err3 := instance3.Evaluate(ctx, "", evalCtx, []string{"TestPolicy"})
 
 		require.NoError(t, err1)
 		require.NoError(t, err2)
@@ -201,8 +201,8 @@ func TestPolicyEngineConfigurationConsistency(t *testing.T) {
 			Resource:  "arn:seaweed:test:::resource",
 		}
 
-		result1, _ := instance1.Evaluate(context.Background(), evalCtx, []string{})
-		result2, _ := instance2.Evaluate(context.Background(), evalCtx, []string{})
+		result1, _ := instance1.Evaluate(context.Background(), "", evalCtx, []string{})
+		result2, _ := instance2.Evaluate(context.Background(), "", evalCtx, []string{})
 
 		// Results should be different due to different default effects
 		assert.NotEqual(t, result1.Effect, result2.Effect, "Different default effects should produce different results")
@@ -253,15 +253,15 @@ func TestPolicyStoreDistributed(t *testing.T) {
 		}
 
 		// Store policy in store1
-		err := store1.StorePolicy(ctx, "TestPolicy", policy)
+		err := store1.StorePolicy(ctx, "", "TestPolicy", policy)
 		require.NoError(t, err)
 
 		// Policy should exist in store1
-		_, err = store1.GetPolicy(ctx, "TestPolicy")
+		_, err = store1.GetPolicy(ctx, "", "TestPolicy")
 		assert.NoError(t, err, "Policy should exist in store1")
 
 		// Policy should NOT exist in store2 (different instance)
-		_, err = store2.GetPolicy(ctx, "TestPolicy")
+		_, err = store2.GetPolicy(ctx, "", "TestPolicy")
 		assert.Error(t, err, "Policy should not exist in store2")
 		assert.Contains(t, err.Error(), "not found", "Should be a not found error")
 	})
@@ -283,7 +283,7 @@ func TestPolicyStoreDistributed(t *testing.T) {
 		}
 
 		// Evaluate with non-existent policies
-		result, err := engine.Evaluate(ctx, evalCtx, []string{"NonExistentPolicy1", "NonExistentPolicy2"})
+		result, err := engine.Evaluate(ctx, "", evalCtx, []string{"NonExistentPolicy1", "NonExistentPolicy2"})
 		require.NoError(t, err, "Should not error on missing policies")
 
 		// Should use default effect when no policies can be loaded
@@ -355,7 +355,7 @@ func TestPolicyEvaluationPerformance(t *testing.T) {
 			},
 		}
 
-		err := engine.AddPolicy(fmt.Sprintf("Policy%d", i), policy)
+		err := engine.AddPolicy("", fmt.Sprintf("Policy%d", i), policy)
 		require.NoError(t, err)
 	}
 
@@ -374,7 +374,7 @@ func TestPolicyEvaluationPerformance(t *testing.T) {
 	// Measure evaluation time
 	start := time.Now()
 	for i := 0; i < 100; i++ {
-		_, err := engine.Evaluate(ctx, evalCtx, policyNames)
+		_, err := engine.Evaluate(ctx, "", evalCtx, policyNames)
 		require.NoError(t, err)
 	}
 	duration := time.Since(start)

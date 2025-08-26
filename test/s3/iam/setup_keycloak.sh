@@ -77,15 +77,21 @@ create_realm() {
             "sslRequired": "none"
         }')
     
-    local response=$(curl -s -X POST "$KEYCLOAK_URL/admin/realms" \
+    local http_code=$(curl -s -w "%{http_code}" -X POST "$KEYCLOAK_URL/admin/realms" \
         -H "Authorization: Bearer $token" \
         -H "Content-Type: application/json" \
-        -d "$payload")
+        -d "$payload" \
+        -o /tmp/realm_response.json)
     
-    if [[ -n "$response" && "$response" != *"error"* ]]; then
+    local response=$(cat /tmp/realm_response.json 2>/dev/null || echo "")
+    
+    if [[ "$http_code" == "201" ]]; then
         echo "✅ Realm created successfully"
+        return 0
     else
-        echo "⚠️  Realm creation response: $response"
+        echo "❌ Realm creation failed with HTTP $http_code"
+        echo "📋 Response: $response"
+        return 1
     fi
 }
 
@@ -110,15 +116,21 @@ create_client() {
             "webOrigins": ["*"]
         }')
     
-    local response=$(curl -s -X POST "$KEYCLOAK_URL/admin/realms/$REALM_NAME/clients" \
+    local http_code=$(curl -s -w "%{http_code}" -X POST "$KEYCLOAK_URL/admin/realms/$REALM_NAME/clients" \
         -H "Authorization: Bearer $token" \
         -H "Content-Type: application/json" \
-        -d "$payload")
+        -d "$payload" \
+        -o /tmp/client_response.json)
     
-    if [[ -n "$response" && "$response" != *"error"* ]]; then
+    local response=$(cat /tmp/client_response.json 2>/dev/null || echo "")
+    
+    if [[ "$http_code" == "201" ]]; then
         echo "✅ Client created successfully"
+        return 0
     else
-        echo "⚠️  Client creation response: $response"
+        echo "❌ Client creation failed with HTTP $http_code"
+        echo "📋 Response: $response"
+        return 1
     fi
 }
 
@@ -138,15 +150,21 @@ create_role() {
             "description": $description
         }')
     
-    local response=$(curl -s -X POST "$KEYCLOAK_URL/admin/realms/$REALM_NAME/roles" \
+    local http_code=$(curl -s -w "%{http_code}" -X POST "$KEYCLOAK_URL/admin/realms/$REALM_NAME/roles" \
         -H "Authorization: Bearer $token" \
         -H "Content-Type: application/json" \
-        -d "$payload")
+        -d "$payload" \
+        -o /tmp/role_response_$role_name.json)
     
-    if [[ -n "$response" && "$response" != *"error"* ]]; then
+    local response=$(cat /tmp/role_response_$role_name.json 2>/dev/null || echo "")
+    
+    if [[ "$http_code" == "201" ]]; then
         echo "✅ Role '$role_name' created successfully"
+        return 0
     else
-        echo "⚠️  Role creation response: $response"
+        echo "❌ Role '$role_name' creation failed with HTTP $http_code"
+        echo "📋 Response: $response"
+        return 1
     fi
 }
 
@@ -183,15 +201,20 @@ create_user() {
             }]
         }')
     
-    local user_response=$(curl -s -X POST "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users" \
+    local http_code=$(curl -s -w "%{http_code}" -X POST "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users" \
         -H "Authorization: Bearer $token" \
         -H "Content-Type: application/json" \
-        -d "$user_payload")
+        -d "$user_payload" \
+        -o /tmp/user_response_$username.json)
     
-    if [[ -n "$user_response" && "$user_response" != *"error"* ]]; then
+    local user_response=$(cat /tmp/user_response_$username.json 2>/dev/null || echo "")
+    
+    if [[ "$http_code" == "201" ]]; then
         echo "✅ User '$username' created successfully"
     else
-        echo "⚠️  User creation response: $user_response"
+        echo "❌ User '$username' creation failed with HTTP $http_code"
+        echo "📋 Response: $user_response"
+        return 1
     fi
     
     # Get user ID
@@ -258,27 +281,67 @@ main() {
     
     # Create realm if it doesn't exist
     if ! realm_exists "$ADMIN_TOKEN"; then
-        create_realm "$ADMIN_TOKEN"
+        if ! create_realm "$ADMIN_TOKEN"; then
+            echo "❌ Failed to create realm $REALM_NAME"
+            exit 1
+        fi
         sleep 2
+        
+        # Wait for realm to be fully available
+        echo "⏳ Waiting for realm to be fully initialized..."
+        timeout 60 bash -c "
+            while ! curl -fs $KEYCLOAK_URL/realms/$REALM_NAME/.well-known/openid-configuration >/dev/null 2>&1; do
+                echo '   ... waiting for realm endpoint'
+                sleep 3
+            done
+        " || {
+            echo "❌ Realm $REALM_NAME not accessible after creation"
+            exit 1
+        }
+        echo "✅ Realm is now accessible"
     else
         echo "✅ Realm $REALM_NAME already exists"
     fi
     
     # Create client
-    create_client "$ADMIN_TOKEN"
+    if ! create_client "$ADMIN_TOKEN"; then
+        echo "❌ Failed to create client $CLIENT_ID"
+        exit 1
+    fi
     sleep 1
     
     # Create roles
-    create_role "$ADMIN_TOKEN" "s3-admin" "SeaweedFS S3 Administrator"
-    create_role "$ADMIN_TOKEN" "s3-read-only" "SeaweedFS S3 Read-Only User"
-    create_role "$ADMIN_TOKEN" "s3-write-only" "SeaweedFS S3 Write-Only User"
-    create_role "$ADMIN_TOKEN" "s3-read-write" "SeaweedFS S3 Read-Write User"
+    if ! create_role "$ADMIN_TOKEN" "s3-admin" "SeaweedFS S3 Administrator"; then
+        echo "❌ Failed to create s3-admin role"
+        exit 1
+    fi
+    if ! create_role "$ADMIN_TOKEN" "s3-read-only" "SeaweedFS S3 Read-Only User"; then
+        echo "❌ Failed to create s3-read-only role"
+        exit 1
+    fi
+    if ! create_role "$ADMIN_TOKEN" "s3-write-only" "SeaweedFS S3 Write-Only User"; then
+        echo "❌ Failed to create s3-write-only role"
+        exit 1
+    fi
+    if ! create_role "$ADMIN_TOKEN" "s3-read-write" "SeaweedFS S3 Read-Write User"; then
+        echo "❌ Failed to create s3-read-write role"
+        exit 1
+    fi
     sleep 1
     
     # Create test users
-    create_user "$ADMIN_TOKEN" "admin-user" "admin123" "admin@seaweedfs.test" "Admin" "User" "s3-admin"
-    create_user "$ADMIN_TOKEN" "read-user" "read123" "read@seaweedfs.test" "Read" "User" "s3-read-only"
-    create_user "$ADMIN_TOKEN" "write-user" "write123" "write@seaweedfs.test" "Write" "User" "s3-write-only"
+    if ! create_user "$ADMIN_TOKEN" "admin-user" "admin123" "admin@seaweedfs.test" "Admin" "User" "s3-admin"; then
+        echo "❌ Failed to create admin-user"
+        exit 1
+    fi
+    if ! create_user "$ADMIN_TOKEN" "read-user" "read123" "read@seaweedfs.test" "Read" "User" "s3-read-only"; then
+        echo "❌ Failed to create read-user" 
+        exit 1
+    fi
+    if ! create_user "$ADMIN_TOKEN" "write-user" "write123" "write@seaweedfs.test" "Write" "User" "s3-write-only"; then
+        echo "❌ Failed to create write-user"
+        exit 1
+    fi
     
     echo "✅ Keycloak setup completed successfully!"
     echo "🔗 Realm: $KEYCLOAK_URL/realms/$REALM_NAME"
@@ -287,6 +350,9 @@ main() {
     echo "   - read-user (password: read123) - s3-read-only role"
     echo "   - write-user (password: write123) - s3-write-only role"
     echo "🔑 Client: $CLIENT_ID (secret: $CLIENT_SECRET)"
+    
+    # Cleanup temporary files
+    rm -f /tmp/realm_response.json /tmp/client_response.json /tmp/role_response_*.json /tmp/user_response_*.json
 }
 
 # Run main function
