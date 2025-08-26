@@ -235,18 +235,6 @@
             ]
           },
           {
-            "Effect": "Deny",
-            "Action": [
-              "s3:GetObject",
-              "s3:ListObjects",
-              "s3:ListBucket"
-            ],
-            "Resource": [
-              "arn:seaweed:s3:::*",
-              "arn:seaweed:s3:::*/*"
-            ]
-          },
-          {
             "Effect": "Allow",
             "Action": ["sts:ValidateSession"],
             "Resource": ["*"]

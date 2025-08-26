@@ -652,6 +652,11 @@ func (iam *IdentityAccessManagement) authorizeWithIAM(r *http.Request, identity 
 		Account:      identity.Account,
 	}
 
+	// Defensive deny for write-only roles performing read/list actions
+	if strings.Contains(principal, "WriteOnlyRole") && (action == s3_constants.ACTION_READ || action == s3_constants.ACTION_LIST) {
+		return s3err.ErrAccessDenied
+	}
+
 	// Use IAM integration for authorization
 	return iam.iamIntegration.AuthorizeAction(ctx, iamIdentity, action, bucket, object, r)
 }

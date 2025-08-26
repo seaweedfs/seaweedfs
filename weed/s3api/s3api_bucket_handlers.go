@@ -341,15 +341,18 @@ func (s3a *S3ApiServer) AuthWithPublicRead(handler http.HandlerFunc, action Acti
 		authType := getRequestAuthType(r)
 		isAnonymous := authType == authTypeAnonymous
 
+		// For anonymous requests, check if bucket allows public read
 		if isAnonymous {
 			isPublic := s3a.isBucketPublicRead(bucket)
-
 			if isPublic {
 				handler(w, r)
 				return
 			}
 		}
-		s3a.iam.Auth(handler, action)(w, r) // Fallback to normal IAM auth
+
+		// For all authenticated requests and anonymous requests to non-public buckets,
+		// use normal IAM auth to enforce policies
+		s3a.iam.Auth(handler, action)(w, r)
 	}
 }
 
