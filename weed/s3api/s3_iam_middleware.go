@@ -155,12 +155,6 @@ func (s3iam *S3IAMIntegration) AuthorizeAction(ctx context.Context, identity *IA
 		return s3err.ErrAccessDenied
 	}
 
-	// Special handling for write-only roles to enforce read restrictions
-	// This is a workaround for IAM policy evaluation issues with explicit deny statements
-	if strings.Contains(identity.Principal, "WriteOnlyRole") && (action == s3_constants.ACTION_READ || action == s3_constants.ACTION_LIST) {
-		return s3err.ErrAccessDenied
-	}
-
 	// Build resource ARN for the S3 operation
 	resourceArn := buildS3ResourceArn(bucket, objectKey)
 
