@@ -117,15 +117,26 @@ func NewKeycloakClient(baseURL, realm, clientID, clientSecret string) *KeycloakC
 func (f *S3IAMTestFramework) isKeycloakAvailable(keycloakURL string) bool {
 	client := &http.Client{Timeout: 5 * time.Second}
 	// Use realms endpoint instead of health/ready for Keycloak v26+
-	realmsURL := fmt.Sprintf("%s/realms/master", keycloakURL)
+	// First, verify master realm is reachable
+	masterURL := fmt.Sprintf("%s/realms/master", keycloakURL)
 
-	resp, err := client.Get(realmsURL)
+	resp, err := client.Get(masterURL)
 	if err != nil {
 		return false
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
 
-	return resp.StatusCode == 200
+	// Also ensure the specific test realm exists; otherwise fall back to mock
+	testRealmURL := fmt.Sprintf("%s/realms/%s", keycloakURL, KeycloakRealm)
+	resp2, err := client.Get(testRealmURL)
+	if err != nil {
+		return false
+	}
+	defer resp2.Body.Close()
+	return resp2.StatusCode == http.StatusOK
 }
 
 // AuthenticateUser authenticates a user with Keycloak and returns an access token

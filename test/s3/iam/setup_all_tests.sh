@@ -584,6 +584,12 @@ main() {
     # Setup Keycloak (optional)
     echo -e "\n${YELLOW}🔐 Setting up Keycloak...${NC}"
     if setup_keycloak; then
+        echo -e "${GREEN}✅ Keycloak container running${NC}"
+        # Configure realm, client, roles, and users idempotently
+        if [ -f "$TEST_DIR/setup_keycloak.sh" ]; then
+            echo -e "${YELLOW}🧩 Configuring Keycloak realm and test users...${NC}"
+            bash "$TEST_DIR/setup_keycloak.sh"
+        fi
         echo -e "${GREEN}✅ Keycloak setup successful${NC}"
     else
         echo -e "${YELLOW}⚠️ Keycloak setup failed or skipped${NC}"
