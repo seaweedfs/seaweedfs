@@ -170,8 +170,7 @@
       },
       "attachedPolicies": ["S3WriteOnlyPolicy"],
       "description": "Write-only role for Keycloak users"
-    }
-    ,
+    },
     {
       "roleName": "KeycloakReadWriteRole",
       "roleArn": "arn:seaweed:iam::role/KeycloakReadWriteRole",
@@ -267,8 +266,7 @@
           }
         ]
       }
-    }
-    ,
+    },
     {
       "name": "S3ReadWritePolicy",
       "document": {
