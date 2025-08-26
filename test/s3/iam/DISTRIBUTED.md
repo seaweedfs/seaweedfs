@@ -45,7 +45,7 @@ All S3 gateway instances share the same IAM state through the filer.
   "sts": {
     "tokenDuration": 3600000000000,
     "maxSessionLength": 43200000000000,
-    "issuer": "seaweedfs-sts", 
+    "issuer": "seaweedfs-sts",
     "signingKey": "base64-encoded-signing-key",
     "sessionStoreType": "filer",
     "sessionStoreConfig": {
@@ -64,7 +64,7 @@ All S3 gateway instances share the same IAM state through the filer.
   "roleStore": {
     "storeType": "filer",
     "storeConfig": {
-      "filerAddress": "localhost:8888", 
+      "filerAddress": "localhost:8888",
       "basePath": "/seaweedfs/iam/roles"
     }
   }

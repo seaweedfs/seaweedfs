@@ -128,38 +128,34 @@ func TestS3IAMDistributedTests(t *testing.T) {
 					if err := framework.CreateBucket(client, bucketName); err != nil {
 						errors <- err
 						continue
-
+					}
 					// Small delay to reduce server load
 					time.Sleep(100 * time.Millisecond)
-					}
 
 					// Put object
 					objectKey := "test-object.txt"
 					if err := framework.PutTestObject(client, bucketName, objectKey, fmt.Sprintf("content-%d-%d", goroutineID, j)); err != nil {
 						errors <- err
 						continue
-
+					}
 					// Small delay to reduce server load
 					time.Sleep(100 * time.Millisecond)
-					}
 
 					// Get object
 					if _, err := framework.GetTestObject(client, bucketName, objectKey); err != nil {
 						errors <- err
 						continue
-
+					}
 					// Small delay to reduce server load
 					time.Sleep(100 * time.Millisecond)
-					}
 
 					// Delete object
 					if err := framework.DeleteTestObject(client, bucketName, objectKey); err != nil {
 						errors <- err
 						continue
-
+					}
 					// Small delay to reduce server load
 					time.Sleep(100 * time.Millisecond)
-					}
 
 					// Delete bucket
 					if _, err := client.DeleteBucket(&s3.DeleteBucketInput{
@@ -167,10 +163,9 @@ func TestS3IAMDistributedTests(t *testing.T) {
 					}); err != nil {
 						errors <- err
 						continue
-
+					}
 					// Small delay to reduce server load
 					time.Sleep(100 * time.Millisecond)
-					}
 				}
 			}(i)
 		}
@@ -183,15 +178,15 @@ func TestS3IAMDistributedTests(t *testing.T) {
 		for err := range errors {
 			errorList = append(errorList, err)
 		}
-		
+
 		totalOperations := numGoroutines * numOperationsPerGoroutine
 		errorRate := float64(len(errorList)) / float64(totalOperations)
-		
+
 		if len(errorList) > 0 {
-			t.Logf("Concurrent operations: %d/%d operations failed (%.1f%% error rate). First error: %v", 
+			t.Logf("Concurrent operations: %d/%d operations failed (%.1f%% error rate). First error: %v",
 				len(errorList), totalOperations, errorRate*100, errorList[0])
 		}
-		
+
 		// Allow up to 50% error rate for concurrent stress testing
 		// This tests that the system handles concurrent load gracefully
 		if errorRate > 0.5 {

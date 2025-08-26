@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/mail"
-	"strings"
+	"path/filepath"
 	"time"
 )
 
@@ -210,15 +210,9 @@ func (r *MappingRule) Matches(claims *TokenClaims) bool {
 
 // matchValue checks if a value matches the rule value (with wildcard support)
 func (r *MappingRule) matchValue(value string) bool {
-	// Simple wildcard matching
-	if strings.Contains(r.Value, "*") {
-		// Convert wildcard to regex-like matching
-		pattern := strings.ReplaceAll(r.Value, "*", "")
-		if pattern == "" {
-			return true // "*" matches everything
-		}
-		return strings.Contains(value, pattern)
+	matched, err := filepath.Match(r.Value, value)
+	if err != nil {
+		return false
 	}
-
-	return value == r.Value
+	return matched
 }

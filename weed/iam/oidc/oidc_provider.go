@@ -18,11 +18,13 @@ import (
 
 // OIDCProvider implements OpenID Connect authentication
 type OIDCProvider struct {
-	name        string
-	config      *OIDCConfig
-	initialized bool
-	jwksCache   *JWKS
-	httpClient  *http.Client
+	name          string
+	config        *OIDCConfig
+	initialized   bool
+	jwksCache     *JWKS
+	httpClient    *http.Client
+	jwksFetchedAt time.Time
+	jwksTTL       time.Duration
 }
 
 // OIDCConfig holds OIDC provider configuration
@@ -50,6 +52,9 @@ type OIDCConfig struct {
 
 	// ClaimsMapping defines how to map OIDC claims to identity attributes
 	ClaimsMapping map[string]string `json:"claimsMapping,omitempty"`
+
+	// JWKSCacheTTLSeconds sets how long to cache JWKS before refresh (default 3600 seconds)
+	JWKSCacheTTLSeconds int `json:"jwksCacheTTLSeconds,omitempty"`
 }
 
 // JWKS represents JSON Web Key Set
@@ -100,6 +105,13 @@ func (p *OIDCProvider) Initialize(config interface{}) error {
 
 	p.config = oidcConfig
 	p.initialized = true
+
+	// Configure JWKS cache TTL
+	if oidcConfig.JWKSCacheTTLSeconds > 0 {
+		p.jwksTTL = time.Duration(oidcConfig.JWKSCacheTTLSeconds) * time.Second
+	} else {
+		p.jwksTTL = time.Hour
+	}
 
 	// For testing, we'll skip the actual OIDC client initialization
 	return nil
@@ -385,8 +397,8 @@ func (p *OIDCProvider) mapClaimsToRolesWithConfig(claims *providers.TokenClaims)
 
 // getPublicKey retrieves the public key for the given key ID from JWKS
 func (p *OIDCProvider) getPublicKey(ctx context.Context, kid string) (interface{}, error) {
-	// Fetch JWKS if not cached or refresh if needed
-	if p.jwksCache == nil {
+	// Fetch JWKS if not cached or refresh if expired
+	if p.jwksCache == nil || (!p.jwksFetchedAt.IsZero() && time.Since(p.jwksFetchedAt) > p.jwksTTL) {
 		if err := p.fetchJWKS(ctx); err != nil {
 			return nil, fmt.Errorf("failed to fetch JWKS: %v", err)
 		}
@@ -399,7 +411,16 @@ func (p *OIDCProvider) getPublicKey(ctx context.Context, kid string) (interface{
 		}
 	}
 
-	return nil, fmt.Errorf("key with ID %s not found in JWKS", kid)
+	// Key not found in cache. Refresh JWKS once to handle key rotation and retry.
+	if err := p.fetchJWKS(ctx); err != nil {
+		return nil, fmt.Errorf("failed to refresh JWKS after key miss: %v", err)
+	}
+	for _, key := range p.jwksCache.Keys {
+		if key.Kid == kid {
+			return p.parseJWK(&key)
+		}
+	}
+	return nil, fmt.Errorf("key with ID %s not found in JWKS after refresh", kid)
 }
 
 // fetchJWKS fetches the JWKS from the provider
@@ -430,6 +451,7 @@ func (p *OIDCProvider) fetchJWKS(ctx context.Context) error {
 	}
 
 	p.jwksCache = &jwks
+	p.jwksFetchedAt = time.Now()
 	glog.V(3).Infof("Fetched JWKS with %d keys from %s", len(jwks.Keys), jwksURL)
 	return nil
 }
