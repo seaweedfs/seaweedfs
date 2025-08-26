@@ -20,13 +20,15 @@ CLIENT_ID="seaweedfs-s3"
 CLIENT_SECRET="seaweedfs-s3-secret"
 ROLE_ADMIN="s3-admin"
 ROLE_READONLY="s3-read-only"
+ROLE_WRITEONLY="s3-write-only"
 ROLE_READWRITE="s3-read-write"
 
 declare -A USERS
 USERS=(
   [admin-user]=admin123
   [read-user]=read123
-  [write-user]=write123
+  [write-user]=readwrite123
+  [write-only-user]=writeonly123
 )
 
 echo -e "${BLUE}🔧 Setting up Keycloak realm and users for SeaweedFS S3 IAM testing...${NC}"
@@ -108,6 +110,9 @@ ensure_client() {
       -s secret="${CLIENT_SECRET}" >/dev/null
     echo -e "${GREEN}✅ Client created${NC}"
   fi
+  
+  # Create and configure role mapper for the client
+  configure_role_mapper "${CLIENT_ID}"
 }
 
 ensure_role() {
@@ -155,6 +160,48 @@ assign_role() {
   kcadm add-roles -r "${REALM_NAME}" --uid "${uid}" --rolename "${role}" >/dev/null
 }
 
+configure_role_mapper() {
+  local client_id="$1"
+  echo -e "${YELLOW}🔧 Configuring role mapper for client '${client_id}'...${NC}"
+  
+  # Get client's internal ID
+  local internal_id
+  internal_id=$(kcadm get clients -r "${REALM_NAME}" -q clientId="${client_id}" | jq -r '.[0].id // empty')
+  
+  if [[ -z "${internal_id}" ]]; then
+    echo -e "${RED}❌ Could not find client ${client_id} to configure role mapper${NC}"
+    return 1
+  fi
+  
+  # Check if a realm roles mapper already exists for this client
+  local existing_mapper
+  existing_mapper=$(kcadm get "clients/${internal_id}/protocol-mappers/models" -r "${REALM_NAME}" | jq -r '.[] | select(.name=="realm roles" and .protocolMapper=="oidc-usermodel-realm-role-mapper") | .id // empty')
+  
+  if [[ -n "${existing_mapper}" ]]; then
+    echo -e "${GREEN}✅ Realm roles mapper already exists${NC}"
+  else
+    echo -e "${YELLOW}📝 Creating realm roles mapper...${NC}"
+    
+    # Create protocol mapper for realm roles
+    kcadm create "clients/${internal_id}/protocol-mappers/models" -r "${REALM_NAME}" \
+      -s name="realm roles" \
+      -s protocol="openid-connect" \
+      -s protocolMapper="oidc-usermodel-realm-role-mapper" \
+      -s consentRequired=false \
+      -s 'config."multivalued"=true' \
+      -s 'config."userinfo.token.claim"=true' \
+      -s 'config."id.token.claim"=true' \
+      -s 'config."access.token.claim"=true' \
+      -s 'config."claim.name"=roles' \
+      -s 'config."jsonType.label"=String' >/dev/null || {
+        echo -e "${RED}❌ Failed to create realm roles mapper${NC}"
+        return 1
+      }
+    
+    echo -e "${GREEN}✅ Realm roles mapper created${NC}"
+  fi
+}
+
 main() {
   command -v docker >/dev/null || { echo -e "${RED}❌ Docker is required${NC}"; exit 1; }
   command -v jq >/dev/null || { echo -e "${RED}❌ jq is required${NC}"; exit 1; }
@@ -166,6 +213,7 @@ main() {
   ensure_client
   ensure_role "${ROLE_ADMIN}"
   ensure_role "${ROLE_READONLY}"
+  ensure_role "${ROLE_WRITEONLY}"
   ensure_role "${ROLE_READWRITE}"
 
   for u in "${!USERS[@]}"; do
@@ -175,9 +223,13 @@ main() {
   assign_role admin-user  "${ROLE_ADMIN}"
   assign_role read-user   "${ROLE_READONLY}"
   assign_role write-user  "${ROLE_READWRITE}"
+  
+  # Also create a dedicated write-only user for testing
+  ensure_user write-only-user writeonly123
+  assign_role write-only-user "${ROLE_WRITEONLY}"
 
-  # Validate the setup by testing one user authentication
-  echo -e "${YELLOW}🔍 Validating setup by testing admin-user authentication...${NC}"
+  # Validate the setup by testing authentication and role inclusion
+  echo -e "${YELLOW}🔍 Validating setup by testing admin-user authentication and role mapping...${NC}"
   sleep 2
   
   local validation_result=$(curl -s -w "%{http_code}" -X POST "http://localhost:${KEYCLOAK_PORT}/realms/${REALM_NAME}/protocol/openid-connect/token" \
@@ -192,6 +244,28 @@ main() {
   
   if [[ "${validation_result: -3}" == "200" ]]; then
     echo -e "${GREEN}✅ Authentication validation successful${NC}"
+    
+    # Extract and decode JWT token to check for roles
+    local access_token=$(cat /tmp/auth_test_response.json | jq -r '.access_token // empty')
+    if [[ -n "${access_token}" ]]; then
+      # Decode JWT payload (second part) and check for roles
+      local payload=$(echo "${access_token}" | cut -d'.' -f2)
+      # Add padding if needed for base64 decode
+      while [[ $((${#payload} % 4)) -ne 0 ]]; do
+        payload="${payload}="
+      done
+      
+      local decoded=$(echo "${payload}" | base64 -d 2>/dev/null || echo "{}")
+      local roles=$(echo "${decoded}" | jq -r '.roles // empty' 2>/dev/null || echo "")
+      
+      if [[ -n "${roles}" && "${roles}" != "null" ]]; then
+        echo -e "${GREEN}✅ JWT token includes roles: ${roles}${NC}"
+      else
+        echo -e "${YELLOW}⚠️  JWT token does not include 'roles' claim${NC}"
+        echo -e "${YELLOW}Decoded payload sample:${NC}"
+        echo "${decoded}" | jq '.' 2>/dev/null || echo "${decoded}"
+      fi
+    fi
   else
     echo -e "${RED}❌ Authentication validation failed with HTTP ${validation_result: -3}${NC}"
     echo -e "${YELLOW}Response body:${NC}"

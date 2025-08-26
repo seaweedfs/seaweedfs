@@ -198,9 +198,10 @@ func (f *S3IAMTestFramework) getKeycloakToken(username string) (string, error) {
 // getTestUserPassword returns the password for test users
 func (f *S3IAMTestFramework) getTestUserPassword(username string) string {
 	userPasswords := map[string]string{
-		"admin-user": "admin123",
-		"read-user":  "read123",
-		"write-user": "write123",
+		"admin-user":      "admin123",
+		"read-user":       "read123",
+		"write-user":      "readwrite123",
+		"write-only-user": "writeonly123",
 	}
 
 	return userPasswords[username]
