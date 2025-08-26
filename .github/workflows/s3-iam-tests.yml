@@ -241,50 +241,12 @@ jobs:
         run: |
           go install -buildvcs=false
 
-      - name: Start Keycloak with Docker
+      - name: Configure Keycloak (repo script only)
         run: |
-          echo "Starting Keycloak container..."
-          docker run -d \
-            --name keycloak \
-            -p 8080:8080 \
-            -e KC_BOOTSTRAP_ADMIN_USERNAME=admin \
-            -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin \
-            -e KC_HTTP_ENABLED=true \
-            -e KC_HOSTNAME_STRICT=false \
-            -e KC_HOSTNAME_STRICT_HTTPS=false \
-            quay.io/keycloak/keycloak:26.0 \
-            start-dev
-          
-          echo "Waiting for Keycloak to be ready..."
-          timeout 300 bash -c '
-            while true; do
-              if curl -s http://localhost:8080/health/ready > /dev/null 2>&1; then
-                echo "✅ Keycloak health check passed"
-                break
-              fi
-              if curl -s http://localhost:8080/realms/master > /dev/null 2>&1; then
-                echo "✅ Keycloak master realm accessible"
-                break
-              fi
-              echo "Waiting for Keycloak..."
-              sleep 5
-            done
-          ' || {
-            echo "Keycloak failed to start"
-            docker logs keycloak
-            exit 1
-          }
-          
-          echo "Keycloak is ready"
-
-      - name: Setup Keycloak Realm and Users
-        working-directory: test/s3/iam
-        run: |
-          echo "Setting up Keycloak realm and test users..."
+          echo "Configuring Keycloak via repo script..."
           sudo apt-get update -y
           sudo apt-get install -y jq
-          chmod +x setup_keycloak.sh
-          ./setup_keycloak.sh
+          bash test/s3/iam/setup_keycloak.sh
 
       - name: Start SeaweedFS Services
         working-directory: test/s3/iam
@@ -305,16 +267,8 @@ jobs:
           export KEYCLOAK_URL="http://localhost:8080"
           export S3_ENDPOINT="http://localhost:8333"
           
-          # Give services extra time to fully initialize
-          sleep 10
-
-          # Ensure the seaweedfs-test realm is available before running tests
-          echo "Waiting for seaweedfs-test realm to be available..."
-          timeout 120 bash -c 'until curl -fs http://localhost:8080/realms/seaweedfs-test/.well-known/openid-configuration > /dev/null; do echo "... waiting for realm"; sleep 3; done' || {
-            echo "❌ seaweedfs-test realm not available"
-            docker logs keycloak --tail=200 || true
-            exit 1
-          }
+          # Ensure the seaweedfs-test realm is available before running tests (repo script should have created it)
+          timeout 120 bash -c 'until curl -fs http://localhost:8080/realms/seaweedfs-test/.well-known/openid-configuration > /dev/null; do echo "... waiting for realm"; sleep 3; done'
           
           # Verify services are accessible
           echo "=== Verifying Service Accessibility ==="
