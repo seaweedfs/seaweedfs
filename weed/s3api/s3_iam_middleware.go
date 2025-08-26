@@ -90,7 +90,11 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 			Name:         identity.UserID,
 			Principal:    identity.RoleArn,
 			SessionToken: sessionToken,
-			Account:      nil, // OIDC tokens don't have account info
+			Account: &Account{
+				DisplayName:  identity.UserID,
+				EmailAddress: identity.UserID + "@oidc.local",
+				Id:           identity.UserID,
+			},
 		}, s3err.ErrNone
 	}
 

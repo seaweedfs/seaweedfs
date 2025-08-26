@@ -217,15 +217,7 @@
           {
             "Effect": "Allow",
             "Action": [
-              "s3:PutObject",
-              "s3:PutObjectAcl",
-              "s3:DeleteObject",
-              "s3:DeleteObjectVersion",
-              "s3:InitiateMultipartUpload",
-              "s3:UploadPart", 
-              "s3:CompleteMultipartUpload",
-              "s3:AbortMultipartUpload",
-              "s3:ListMultipartUploadParts"
+              "s3:*"
             ],
             "Resource": [
               "arn:seaweed:s3:::*",

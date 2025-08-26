@@ -231,10 +231,12 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 		return false, fmt.Errorf("IAM manager not initialized")
 	}
 
-	// Validate session token first
-	_, err := m.stsService.ValidateSessionToken(ctx, request.SessionToken)
-	if err != nil {
-		return false, fmt.Errorf("invalid session: %w", err)
+	// Validate session token first (skip for OIDC tokens which are already validated)
+	if !isOIDCToken(request.SessionToken) {
+		_, err := m.stsService.ValidateSessionToken(ctx, request.SessionToken)
+		if err != nil {
+			return false, fmt.Errorf("invalid session: %w", err)
+		}
 	}
 
 	// Extract role name from principal ARN
@@ -379,17 +381,24 @@ func extractRoleNameFromArn(roleArn string) string {
 	return ""
 }
 
-// extractRoleNameFromPrincipal extracts role name from assumed role principal ARN
+// extractRoleNameFromPrincipal extracts role name from principal ARN
 func extractRoleNameFromPrincipal(principal string) string {
-	// Expected format: arn:seaweed:sts::assumed-role/RoleName/SessionName
-	prefix := "arn:seaweed:sts::assumed-role/"
-	if len(principal) > len(prefix) && principal[:len(prefix)] == prefix {
-		remainder := principal[len(prefix):]
+	// Handle STS assumed role format: arn:seaweed:sts::assumed-role/RoleName/SessionName
+	stsPrefix := "arn:seaweed:sts::assumed-role/"
+	if len(principal) > len(stsPrefix) && principal[:len(stsPrefix)] == stsPrefix {
+		remainder := principal[len(stsPrefix):]
 		// Split on first '/' to get role name
 		if slashIndex := indexOf(remainder, "/"); slashIndex != -1 {
 			return remainder[:slashIndex]
 		}
 	}
+
+	// Handle IAM role format: arn:seaweed:iam::role/RoleName
+	iamPrefix := "arn:seaweed:iam::role/"
+	if len(principal) > len(iamPrefix) && principal[:len(iamPrefix)] == iamPrefix {
+		return principal[len(iamPrefix):]
+	}
+
 	return ""
 }
 
@@ -600,4 +609,16 @@ func (m *IAMManager) evaluateStringConditionForTrust(block map[string]interface{
 	}
 
 	return true
+}
+
+// isOIDCToken checks if a token is an OIDC JWT token (vs STS session token)
+func isOIDCToken(token string) bool {
+	// JWT tokens have three parts separated by dots and start with base64-encoded JSON
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return false
+	}
+
+	// JWT tokens typically start with "eyJ" (base64 encoded JSON starting with "{")
+	return strings.HasPrefix(token, "eyJ")
 }
