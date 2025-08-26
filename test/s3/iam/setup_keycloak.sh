@@ -101,9 +101,9 @@ ensure_client() {
       -s clientId="${CLIENT_ID}" \
       -s protocol=openid-connect \
       -s publicClient=false \
-      -s serviceAccountsEnabled=false \
+      -s serviceAccountsEnabled=true \
       -s directAccessGrantsEnabled=true \
-      -s standardFlowEnabled=false \
+      -s standardFlowEnabled=true \
       -s implicitFlowEnabled=false \
       -s secret="${CLIENT_SECRET}" >/dev/null
     echo -e "${GREEN}✅ Client created${NC}"
@@ -126,7 +126,14 @@ ensure_user() {
   uid=$(kcadm get users -r "${REALM_NAME}" -q username="${username}" | jq -r '.[0].id // empty')
   if [[ -z "${uid}" ]]; then
     echo -e "${YELLOW}📝 Creating user '${username}'...${NC}"
-    uid=$(kcadm create users -r "${REALM_NAME}" -s username="${username}" -s enabled=true -i)
+    uid=$(kcadm create users -r "${REALM_NAME}" \
+      -s username="${username}" \
+      -s enabled=true \
+      -s email="${username}@seaweedfs.test" \
+      -s emailVerified=true \
+      -s firstName="${username}" \
+      -s lastName="User" \
+      -i)
   else
     echo -e "${GREEN}✅ User '${username}' exists${NC}"
   fi
@@ -169,6 +176,30 @@ main() {
   assign_role read-user   "${ROLE_READONLY}"
   assign_role write-user  "${ROLE_READWRITE}"
 
+  # Validate the setup by testing one user authentication
+  echo -e "${YELLOW}🔍 Validating setup by testing admin-user authentication...${NC}"
+  sleep 2
+  
+  local validation_result=$(curl -s -w "%{http_code}" -X POST "http://localhost:${KEYCLOAK_PORT}/realms/${REALM_NAME}/protocol/openid-connect/token" \
+    -H "Content-Type: application/x-www-form-urlencoded" \
+    -d "grant_type=password" \
+    -d "client_id=${CLIENT_ID}" \
+    -d "client_secret=${CLIENT_SECRET}" \
+    -d "username=admin-user" \
+    -d "password=admin123" \
+    -d "scope=openid profile email" \
+    -o /tmp/auth_test_response.json)
+  
+  if [[ "${validation_result: -3}" == "200" ]]; then
+    echo -e "${GREEN}✅ Authentication validation successful${NC}"
+  else
+    echo -e "${RED}❌ Authentication validation failed with HTTP ${validation_result: -3}${NC}"
+    echo -e "${YELLOW}Response body:${NC}"
+    cat /tmp/auth_test_response.json 2>/dev/null || echo "No response body"
+    echo -e "${YELLOW}This may indicate a setup issue that needs to be resolved${NC}"
+  fi
+  rm -f /tmp/auth_test_response.json
+  
   echo -e "${GREEN}✅ Keycloak test realm '${REALM_NAME}' configured${NC}"
 }
 

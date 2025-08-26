@@ -158,7 +158,13 @@ func (kc *KeycloakClient) AuthenticateUser(username, password string) (*Keycloak
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("Keycloak authentication failed with status: %d", resp.StatusCode)
+		// Read the response body for debugging
+		body, readErr := io.ReadAll(resp.Body)
+		bodyStr := ""
+		if readErr == nil {
+			bodyStr = string(body)
+		}
+		return nil, fmt.Errorf("Keycloak authentication failed with status: %d, response: %s", resp.StatusCode, bodyStr)
 	}
 
 	var tokenResp KeycloakTokenResponse
