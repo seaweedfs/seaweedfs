@@ -2,13 +2,13 @@ package iam
 
 import (
 	"context"
-	"crypto/rand"
+	cryptorand "crypto/rand"
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
-	"math/rand"
+	mathrand "math/rand"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -91,7 +91,7 @@ func NewS3IAMTestFramework(t *testing.T) *S3IAMTestFramework {
 		t.Logf("Using mock OIDC server for testing")
 		// Generate RSA keys for JWT signing (mock mode)
 		var err error
-		framework.privateKey, err = rsa.GenerateKey(rand.Reader, 2048)
+		framework.privateKey, err = rsa.GenerateKey(cryptorand.Reader, 2048)
 		require.NoError(t, err)
 		framework.publicKey = &framework.privateKey.PublicKey
 
@@ -622,7 +622,7 @@ func (f *S3IAMTestFramework) GenerateUniqueBucketName(prefix string) string {
 	testName = strings.ReplaceAll(testName, "_", "-")
 
 	// Add random suffix to handle parallel tests
-	randomSuffix := rand.Intn(10000)
+	randomSuffix := mathrand.Intn(10000)
 
 	return fmt.Sprintf("%s-%s-%d", prefix, testName, randomSuffix)
 }
