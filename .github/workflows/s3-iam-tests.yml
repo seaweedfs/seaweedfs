@@ -304,11 +304,15 @@ jobs:
             exit 1
           }
           
-          curl -f http://localhost:8333 || {
+          # For IAM-enabled S3 API, we expect a 403 response when accessing without auth
+          # This indicates the server is running and IAM is working correctly
+          if curl -s http://localhost:8333 > /dev/null 2>&1; then
+            echo "✅ SeaweedFS S3 API is responding (IAM-protected endpoint)"
+          else
             echo "❌ SeaweedFS S3 API not accessible"
             cat weed-s3.log || true
             exit 1
-          }
+          fi
           
           # Run Keycloak-specific tests
           echo "=== Running Keycloak Tests ==="

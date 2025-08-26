@@ -602,7 +602,8 @@ main() {
     
     echo -e "\n${BLUE}🔍 Environment Status:${NC}"
     echo -e "  Keycloak: $(curl -s http://localhost:8080/health/ready > /dev/null 2>&1 && echo -e "${GREEN}✅ Running${NC}" || echo -e "${RED}❌ Not running${NC}")"
-    echo -e "  S3 API: $(curl -s http://localhost:8333 > /dev/null 2>&1 && echo -e "${GREEN}✅ Running${NC}" || echo -e "${RED}❌ Not running${NC}")"
+    # For IAM-enabled S3 API, any response (including 403) indicates the service is running
+    echo -e "  S3 API: $(curl -s http://localhost:8333 > /dev/null 2>&1 && echo -e "${GREEN}✅ Running (IAM-protected)${NC}" || echo -e "${RED}❌ Not running${NC}")"
     
     if ! curl -s http://localhost:8333 > /dev/null 2>&1; then
         echo -e "\n${YELLOW}💡 To start SeaweedFS services:${NC}"

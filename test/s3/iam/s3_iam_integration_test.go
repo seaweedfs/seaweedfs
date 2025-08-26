@@ -22,6 +22,10 @@ const (
 	testObjectData   = "Hello, SeaweedFS IAM Integration!"
 )
 
+var (
+	testBucket = testBucketPrefix
+)
+
 // TestS3IAMAuthentication tests S3 API authentication with IAM JWT tokens
 func TestS3IAMAuthentication(t *testing.T) {
 	framework := NewS3IAMTestFramework(t)
