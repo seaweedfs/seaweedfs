@@ -135,16 +135,29 @@ jobs:
               docker run -d \
                 --name keycloak \
                 -p 8080:8080 \
-                -e KEYCLOAK_ADMIN=admin \
-                -e KEYCLOAK_ADMIN_PASSWORD=admin \
+                -e KC_BOOTSTRAP_ADMIN_USERNAME=admin \
+                -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin \
                 -e KC_HTTP_ENABLED=true \
                 -e KC_HOSTNAME_STRICT=false \
                 -e KC_HOSTNAME_STRICT_HTTPS=false \
                 quay.io/keycloak/keycloak:26.0 \
                 start-dev
               
-              # Wait for Keycloak
-              timeout 180 bash -c 'until curl -s http://localhost:8080/realms/master > /dev/null; do sleep 5; echo "Waiting for Keycloak..."; done'
+              # Wait for Keycloak with better health checking
+              timeout 300 bash -c '
+                while true; do
+                  if curl -s http://localhost:8080/health/ready > /dev/null 2>&1; then
+                    echo "✅ Keycloak health check passed"
+                    break
+                  fi
+                  if curl -s http://localhost:8080/realms/master > /dev/null 2>&1; then
+                    echo "✅ Keycloak master realm accessible"
+                    break
+                  fi
+                  echo "Waiting for Keycloak..."
+                  sleep 5
+                done
+              '
               
               # Setup Keycloak realm and users
               chmod +x setup_keycloak.sh
@@ -224,8 +237,8 @@ jobs:
           docker run -d \
             --name keycloak \
             -p 8080:8080 \
-            -e KEYCLOAK_ADMIN=admin \
-            -e KEYCLOAK_ADMIN_PASSWORD=admin \
+            -e KC_BOOTSTRAP_ADMIN_USERNAME=admin \
+            -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin \
             -e KC_HTTP_ENABLED=true \
             -e KC_HOSTNAME_STRICT=false \
             -e KC_HOSTNAME_STRICT_HTTPS=false \
@@ -233,7 +246,20 @@ jobs:
             start-dev
           
           echo "Waiting for Keycloak to be ready..."
-          timeout 180 bash -c 'until curl -s http://localhost:8080/realms/master > /dev/null; do sleep 5; echo "Waiting for Keycloak..."; done' || {
+          timeout 300 bash -c '
+            while true; do
+              if curl -s http://localhost:8080/health/ready > /dev/null 2>&1; then
+                echo "✅ Keycloak health check passed"
+                break
+              fi
+              if curl -s http://localhost:8080/realms/master > /dev/null 2>&1; then
+                echo "✅ Keycloak master realm accessible"
+                break
+              fi
+              echo "Waiting for Keycloak..."
+              sleep 5
+            done
+          ' || {
             echo "Keycloak failed to start"
             docker logs keycloak
             exit 1

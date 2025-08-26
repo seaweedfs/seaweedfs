@@ -80,19 +80,17 @@ setup_keycloak() {
     docker stop keycloak-iam-test 2>/dev/null || true
     docker rm keycloak-iam-test 2>/dev/null || true
     
-    # Start new Keycloak container
+    # Start new Keycloak container with correct environment variables for 26.0
     docker run -d \
         --name keycloak-iam-test \
         -p $KEYCLOAK_PORT:8080 \
-        -e KEYCLOAK_ADMIN=admin \
-        -e KEYCLOAK_ADMIN_PASSWORD=admin123 \
-        -e KC_HTTP_PORT=8080 \
+        -e KC_BOOTSTRAP_ADMIN_USERNAME=admin \
+        -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin \
+        -e KC_HTTP_ENABLED=true \
         -e KC_HOSTNAME_STRICT=false \
         -e KC_HOSTNAME_STRICT_HTTPS=false \
-        -e KC_HTTP_ENABLED=true \
         -e KC_HEALTH_ENABLED=true \
-        -v "$TEST_DIR/keycloak-realm.json:/opt/keycloak/data/import/realm.json:ro" \
-        quay.io/keycloak/keycloak:26.0.7 start-dev --import-realm
+        quay.io/keycloak/keycloak:26.0 start-dev
     
     # Wait for Keycloak to be ready
     if check_service "Keycloak" "http://localhost:$KEYCLOAK_PORT/health/ready"; then

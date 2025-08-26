@@ -6,8 +6,9 @@
 set -e
 
 KEYCLOAK_URL="${KEYCLOAK_URL:-http://localhost:8080}"
-ADMIN_USER="${KEYCLOAK_ADMIN:-admin}"
-ADMIN_PASSWORD="${KEYCLOAK_ADMIN_PASSWORD:-admin123}"
+# Support both old and new Keycloak environment variable formats
+ADMIN_USER="${KC_BOOTSTRAP_ADMIN_USERNAME:-${KEYCLOAK_ADMIN:-admin}}"
+ADMIN_PASSWORD="${KC_BOOTSTRAP_ADMIN_PASSWORD:-${KEYCLOAK_ADMIN_PASSWORD:-admin123}}"
 REALM_NAME="seaweedfs-test"
 CLIENT_ID="seaweedfs-s3"
 CLIENT_SECRET="seaweedfs-s3-secret"
@@ -15,14 +16,42 @@ CLIENT_SECRET="seaweedfs-s3-secret"
 echo "🔧 Setting up Keycloak realm and users for SeaweedFS S3 IAM testing..."
 echo "Keycloak URL: $KEYCLOAK_URL"
 
-# Function to get admin access token
+# Function to get admin access token with retry logic
 get_admin_token() {
-    curl -s -X POST "$KEYCLOAK_URL/realms/master/protocol/openid-connect/token" \
-        -H "Content-Type: application/x-www-form-urlencoded" \
-        -d "username=$ADMIN_USER" \
-        -d "password=$ADMIN_PASSWORD" \
-        -d "grant_type=password" \
-        -d "client_id=admin-cli" | jq -r '.access_token'
+    local max_attempts=5
+    local attempt=1
+    
+    while [ $attempt -le $max_attempts ]; do
+        echo "🔑 Getting admin access token (attempt $attempt/$max_attempts)..."
+        
+        local response=$(curl -s -X POST "$KEYCLOAK_URL/realms/master/protocol/openid-connect/token" \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            -d "username=$ADMIN_USER" \
+            -d "password=$ADMIN_PASSWORD" \
+            -d "grant_type=password" \
+            -d "client_id=admin-cli" 2>/dev/null || echo '{"error":"curl_failed"}')
+        
+        local token=$(echo "$response" | jq -r '.access_token // empty' 2>/dev/null || echo "")
+        
+        if [ -n "$token" ] && [ "$token" != "null" ] && [ "$token" != "" ]; then
+            echo "✅ Successfully obtained admin token"
+            echo "$token"
+            return 0
+        fi
+        
+        echo "⚠️  Failed to get token (attempt $attempt). Response: $response"
+        
+        if [ $attempt -eq $max_attempts ]; then
+            echo "❌ Failed to get admin access token after $max_attempts attempts"
+            echo "🔍 Checking Keycloak status..."
+            curl -s "$KEYCLOAK_URL/realms/master" || echo "Keycloak master realm not accessible"
+            return 1
+        fi
+        
+        echo "⏳ Waiting 5 seconds before retry..."
+        sleep 5
+        attempt=$((attempt + 1))
+    done
 }
 
 # Function to check if realm exists
@@ -192,15 +221,31 @@ create_user() {
 main() {
     echo "🚀 Starting Keycloak setup..."
     
-    # Wait for Keycloak to be ready
+    # Wait for Keycloak to be ready with better health checking
     echo "⏳ Waiting for Keycloak to be ready..."
-    timeout 120 bash -c "until curl -s $KEYCLOAK_URL/realms/master > /dev/null; do sleep 2; done" || {
-        echo "❌ Keycloak is not ready after 120 seconds"
+    timeout 300 bash -c '
+        while true; do
+            # Try health endpoint first (if available)
+            if curl -s http://localhost:8080/health/ready > /dev/null 2>&1; then
+                echo "✅ Keycloak health check passed"
+                break
+            fi
+            
+            # Fallback to master realm check
+            if curl -s $KEYCLOAK_URL/realms/master > /dev/null 2>&1; then
+                echo "✅ Keycloak master realm accessible"
+                break
+            fi
+            
+            echo "Still waiting for Keycloak..."
+            sleep 5
+        done
+    ' || {
+        echo "❌ Keycloak is not ready after 300 seconds"
         exit 1
     }
     
     # Get admin token
-    echo "🔑 Getting admin access token..."
     ADMIN_TOKEN=$(get_admin_token)
     if [ -z "$ADMIN_TOKEN" ] || [ "$ADMIN_TOKEN" = "null" ]; then
         echo "❌ Failed to get admin access token"
