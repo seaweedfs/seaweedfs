@@ -538,10 +538,10 @@ func setupTestRolesForMultipart(ctx context.Context, manager *integration.IAMMan
 		},
 	}
 
-	manager.CreatePolicy(ctx, "S3WritePolicy", writePolicy)
+	manager.CreatePolicy(ctx, "", "S3WritePolicy", writePolicy)
 
 	// Create write role
-	manager.CreateRole(ctx, "S3WriteRole", &integration.RoleDefinition{
+	manager.CreateRole(ctx, "", "S3WriteRole", &integration.RoleDefinition{
 		RoleName: "S3WriteRole",
 		TrustPolicy: &policy.PolicyDocument{
 			Version: "2012-10-17",
@@ -559,7 +559,7 @@ func setupTestRolesForMultipart(ctx context.Context, manager *integration.IAMMan
 	})
 
 	// Create a role for multipart users
-	manager.CreateRole(ctx, "MultipartUser", &integration.RoleDefinition{
+	manager.CreateRole(ctx, "", "MultipartUser", &integration.RoleDefinition{
 		RoleName: "MultipartUser",
 		TrustPolicy: &policy.PolicyDocument{
 			Version: "2012-10-17",

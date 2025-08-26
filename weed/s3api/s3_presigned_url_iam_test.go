@@ -488,10 +488,10 @@ func setupTestRolesForPresigned(ctx context.Context, manager *integration.IAMMan
 		},
 	}
 
-	manager.CreatePolicy(ctx, "S3ReadOnlyPolicy", readOnlyPolicy)
+	manager.CreatePolicy(ctx, "", "S3ReadOnlyPolicy", readOnlyPolicy)
 
 	// Create read-only role
-	manager.CreateRole(ctx, "S3ReadOnlyRole", &integration.RoleDefinition{
+	manager.CreateRole(ctx, "", "S3ReadOnlyRole", &integration.RoleDefinition{
 		RoleName: "S3ReadOnlyRole",
 		TrustPolicy: &policy.PolicyDocument{
 			Version: "2012-10-17",
@@ -524,10 +524,10 @@ func setupTestRolesForPresigned(ctx context.Context, manager *integration.IAMMan
 		},
 	}
 
-	manager.CreatePolicy(ctx, "S3AdminPolicy", adminPolicy)
+	manager.CreatePolicy(ctx, "", "S3AdminPolicy", adminPolicy)
 
 	// Create admin role
-	manager.CreateRole(ctx, "S3AdminRole", &integration.RoleDefinition{
+	manager.CreateRole(ctx, "", "S3AdminRole", &integration.RoleDefinition{
 		RoleName: "S3AdminRole",
 		TrustPolicy: &policy.PolicyDocument{
 			Version: "2012-10-17",
@@ -545,7 +545,7 @@ func setupTestRolesForPresigned(ctx context.Context, manager *integration.IAMMan
 	})
 
 	// Create a role for presigned URL users with admin permissions for testing
-	manager.CreateRole(ctx, "PresignedUser", &integration.RoleDefinition{
+	manager.CreateRole(ctx, "", "PresignedUser", &integration.RoleDefinition{
 		RoleName: "PresignedUser",
 		TrustPolicy: &policy.PolicyDocument{
 			Version: "2012-10-17",

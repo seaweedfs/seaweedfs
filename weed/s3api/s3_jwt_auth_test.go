@@ -346,18 +346,18 @@ func setupTestReadOnlyRole(ctx context.Context, manager *integration.IAMManager)
 				},
 			},
 			{
-				Sid:    "AllowSTSSessionValidation",
-				Effect: "Allow",
-				Action: []string{"sts:ValidateSession"},
+				Sid:      "AllowSTSSessionValidation",
+				Effect:   "Allow",
+				Action:   []string{"sts:ValidateSession"},
 				Resource: []string{"*"},
 			},
 		},
 	}
 
-	manager.CreatePolicy(ctx, "S3ReadOnlyPolicy", readPolicy)
+	manager.CreatePolicy(ctx, "", "S3ReadOnlyPolicy", readPolicy)
 
 	// Create role
-	manager.CreateRole(ctx, "S3ReadOnlyRole", &integration.RoleDefinition{
+	manager.CreateRole(ctx, "", "S3ReadOnlyRole", &integration.RoleDefinition{
 		RoleName: "S3ReadOnlyRole",
 		TrustPolicy: &policy.PolicyDocument{
 			Version: "2012-10-17",
@@ -375,7 +375,7 @@ func setupTestReadOnlyRole(ctx context.Context, manager *integration.IAMManager)
 	})
 
 	// Also create a TestReadRole for read-only authorization testing
-	manager.CreateRole(ctx, "TestReadRole", &integration.RoleDefinition{
+	manager.CreateRole(ctx, "", "TestReadRole", &integration.RoleDefinition{
 		RoleName: "TestReadRole",
 		TrustPolicy: &policy.PolicyDocument{
 			Version: "2012-10-17",
@@ -408,18 +408,18 @@ func setupTestAdminRole(ctx context.Context, manager *integration.IAMManager) {
 				},
 			},
 			{
-				Sid:    "AllowSTSSessionValidation",
-				Effect: "Allow",
-				Action: []string{"sts:ValidateSession"},
+				Sid:      "AllowSTSSessionValidation",
+				Effect:   "Allow",
+				Action:   []string{"sts:ValidateSession"},
 				Resource: []string{"*"},
 			},
 		},
 	}
 
-	manager.CreatePolicy(ctx, "S3AdminPolicy", adminPolicy)
+	manager.CreatePolicy(ctx, "", "S3AdminPolicy", adminPolicy)
 
 	// Create role
-	manager.CreateRole(ctx, "S3AdminRole", &integration.RoleDefinition{
+	manager.CreateRole(ctx, "", "S3AdminRole", &integration.RoleDefinition{
 		RoleName: "S3AdminRole",
 		TrustPolicy: &policy.PolicyDocument{
 			Version: "2012-10-17",
@@ -437,7 +437,7 @@ func setupTestAdminRole(ctx context.Context, manager *integration.IAMManager) {
 	})
 
 	// Also create a TestAdminRole with admin policy for authorization testing
-	manager.CreateRole(ctx, "TestAdminRole", &integration.RoleDefinition{
+	manager.CreateRole(ctx, "", "TestAdminRole", &integration.RoleDefinition{
 		RoleName: "TestAdminRole",
 		TrustPolicy: &policy.PolicyDocument{
 			Version: "2012-10-17",
@@ -477,10 +477,10 @@ func setupTestIPRestrictedRole(ctx context.Context, manager *integration.IAMMana
 		},
 	}
 
-	manager.CreatePolicy(ctx, "S3IPRestrictedPolicy", restrictedPolicy)
+	manager.CreatePolicy(ctx, "", "S3IPRestrictedPolicy", restrictedPolicy)
 
 	// Create role
-	manager.CreateRole(ctx, "S3IPRestrictedRole", &integration.RoleDefinition{
+	manager.CreateRole(ctx, "", "S3IPRestrictedRole", &integration.RoleDefinition{
 		RoleName: "S3IPRestrictedRole",
 		TrustPolicy: &policy.PolicyDocument{
 			Version: "2012-10-17",

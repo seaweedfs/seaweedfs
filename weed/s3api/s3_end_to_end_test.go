@@ -440,10 +440,10 @@ func setupS3ReadOnlyRole(ctx context.Context, manager *integration.IAMManager) {
 		},
 	}
 
-	manager.CreatePolicy(ctx, "S3ReadOnlyPolicy", readOnlyPolicy)
+	manager.CreatePolicy(ctx, "", "S3ReadOnlyPolicy", readOnlyPolicy)
 
 	// Create role
-	manager.CreateRole(ctx, "S3ReadOnlyRole", &integration.RoleDefinition{
+	manager.CreateRole(ctx, "", "S3ReadOnlyRole", &integration.RoleDefinition{
 		RoleName: "S3ReadOnlyRole",
 		TrustPolicy: &policy.PolicyDocument{
 			Version: "2012-10-17",
@@ -484,10 +484,10 @@ func setupS3AdminRole(ctx context.Context, manager *integration.IAMManager) {
 		},
 	}
 
-	manager.CreatePolicy(ctx, "S3AdminPolicy", adminPolicy)
+	manager.CreatePolicy(ctx, "", "S3AdminPolicy", adminPolicy)
 
 	// Create role
-	manager.CreateRole(ctx, "S3AdminRole", &integration.RoleDefinition{
+	manager.CreateRole(ctx, "", "S3AdminRole", &integration.RoleDefinition{
 		RoleName: "S3AdminRole",
 		TrustPolicy: &policy.PolicyDocument{
 			Version: "2012-10-17",
@@ -528,10 +528,10 @@ func setupS3WriteRole(ctx context.Context, manager *integration.IAMManager) {
 		},
 	}
 
-	manager.CreatePolicy(ctx, "S3WritePolicy", writePolicy)
+	manager.CreatePolicy(ctx, "", "S3WritePolicy", writePolicy)
 
 	// Create role
-	manager.CreateRole(ctx, "S3WriteRole", &integration.RoleDefinition{
+	manager.CreateRole(ctx, "", "S3WriteRole", &integration.RoleDefinition{
 		RoleName: "S3WriteRole",
 		TrustPolicy: &policy.PolicyDocument{
 			Version: "2012-10-17",
@@ -577,10 +577,10 @@ func setupS3IPRestrictedRole(ctx context.Context, manager *integration.IAMManage
 		},
 	}
 
-	manager.CreatePolicy(ctx, "S3IPRestrictedPolicy", restrictedPolicy)
+	manager.CreatePolicy(ctx, "", "S3IPRestrictedPolicy", restrictedPolicy)
 
 	// Create role
-	manager.CreateRole(ctx, "S3IPRestrictedRole", &integration.RoleDefinition{
+	manager.CreateRole(ctx, "", "S3IPRestrictedRole", &integration.RoleDefinition{
 		RoleName: "S3IPRestrictedRole",
 		TrustPolicy: &policy.PolicyDocument{
 			Version: "2012-10-17",
