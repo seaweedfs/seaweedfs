@@ -511,7 +511,15 @@ func (f *S3IAMTestFramework) CreateS3ClientWithSessionToken(sessionToken string)
 
 // CreateS3ClientWithKeycloakToken creates an S3 client using a Keycloak JWT token
 func (f *S3IAMTestFramework) CreateS3ClientWithKeycloakToken(keycloakToken string) (*s3.S3, error) {
-	// Create a fresh HTTP transport with aggressive timeouts to prevent hanging
+	// Determine response header timeout based on environment
+	responseHeaderTimeout := 10 * time.Second
+	overallTimeout := 30 * time.Second
+	if os.Getenv("GITHUB_ACTIONS") == "true" {
+		responseHeaderTimeout = 30 * time.Second // Longer timeout for CI JWT validation
+		overallTimeout = 60 * time.Second
+	}
+
+	// Create a fresh HTTP transport with appropriate timeouts
 	transport := &http.Transport{
 		DisableKeepAlives:     true, // Force new connections for each request
 		DisableCompression:    true, // Disable compression to simplify requests
@@ -519,13 +527,13 @@ func (f *S3IAMTestFramework) CreateS3ClientWithKeycloakToken(keycloakToken strin
 		MaxIdleConnsPerHost:   0,    // No connection pooling per host
 		IdleConnTimeout:       1 * time.Second,
 		TLSHandshakeTimeout:   5 * time.Second,
-		ResponseHeaderTimeout: 10 * time.Second,
+		ResponseHeaderTimeout: responseHeaderTimeout, // Adjustable for CI environments
 		ExpectContinueTimeout: 1 * time.Second,
 	}
 
-	// Create a custom HTTP client with aggressive timeouts
+	// Create a custom HTTP client with appropriate timeouts
 	httpClient := &http.Client{
-		Timeout: 30 * time.Second, // Overall request timeout
+		Timeout: overallTimeout, // Overall request timeout (adjustable for CI)
 		Transport: &BearerTokenTransport{
 			Token:     keycloakToken,
 			Transport: transport,

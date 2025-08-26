@@ -79,7 +79,7 @@ type JWK struct {
 func NewOIDCProvider(name string) *OIDCProvider {
 	return &OIDCProvider{
 		name:       name,
-		httpClient: &http.Client{Timeout: 5 * time.Second}, // Reduced timeout for faster failures
+		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
@@ -384,7 +384,7 @@ func (p *OIDCProvider) mapClaimsToRoles(claims *providers.TokenClaims) []string 
 // mapClaimsToRolesWithConfig maps token claims to roles using configured role mapping
 func (p *OIDCProvider) mapClaimsToRolesWithConfig(claims *providers.TokenClaims) []string {
 	glog.V(3).Infof("mapClaimsToRolesWithConfig: RoleMapping is nil? %t", p.config.RoleMapping == nil)
-	
+
 	if p.config.RoleMapping == nil {
 		glog.V(2).Infof("No role mapping configured for provider %s, using legacy mapping", p.name)
 		// Fallback to legacy mapping if no role mapping configured
@@ -397,7 +397,7 @@ func (p *OIDCProvider) mapClaimsToRolesWithConfig(claims *providers.TokenClaims)
 	// Apply role mapping rules
 	for i, rule := range p.config.RoleMapping.Rules {
 		glog.V(3).Infof("Rule %d: claim=%s, value=%s, role=%s", i, rule.Claim, rule.Value, rule.Role)
-		
+
 		if rule.Matches(claims) {
 			glog.V(2).Infof("Rule %d matched! Adding role: %s", i, rule.Role)
 			roles = append(roles, rule.Role)
