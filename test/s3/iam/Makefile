@@ -75,7 +75,7 @@ start-services: ## Start SeaweedFS services for testing
 	@sleep 2
 	
 	@echo "Starting S3 API server with IAM..."
-	@$(WEED_BINARY) s3 -port=$(S3_PORT) \
+	@$(WEED_BINARY) -v=3 s3 -port=$(S3_PORT) \
 		-filer=localhost:$(FILER_PORT) \
 		-config=test_config.json \
                 -iam.config=$(shell pwd)/iam_config.json > weed-s3.log 2>&1 & \

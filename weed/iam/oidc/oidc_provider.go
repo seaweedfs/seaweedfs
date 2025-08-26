@@ -156,6 +156,16 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, token string) (*provide
 	displayName, _ := claims.GetClaimString("name")
 	groups, _ := claims.GetClaimStringSlice("groups")
 
+	// Debug: Log available claims
+	glog.V(3).Infof("Available claims: %+v", claims.Claims)
+	if rolesFromClaims, exists := claims.GetClaimStringSlice("roles"); exists {
+		glog.V(3).Infof("Roles claim found as string slice: %v", rolesFromClaims)
+	} else if roleFromClaims, exists := claims.GetClaimString("roles"); exists {
+		glog.V(3).Infof("Roles claim found as string: %s", roleFromClaims)
+	} else {
+		glog.V(3).Infof("No roles claim found in token")
+	}
+
 	// Map claims to roles using configured role mapping
 	roles := p.mapClaimsToRolesWithConfig(claims)
 
@@ -373,25 +383,36 @@ func (p *OIDCProvider) mapClaimsToRoles(claims *providers.TokenClaims) []string 
 
 // mapClaimsToRolesWithConfig maps token claims to roles using configured role mapping
 func (p *OIDCProvider) mapClaimsToRolesWithConfig(claims *providers.TokenClaims) []string {
+	glog.V(3).Infof("mapClaimsToRolesWithConfig: RoleMapping is nil? %t", p.config.RoleMapping == nil)
+	
 	if p.config.RoleMapping == nil {
+		glog.V(2).Infof("No role mapping configured for provider %s, using legacy mapping", p.name)
 		// Fallback to legacy mapping if no role mapping configured
 		return p.mapClaimsToRoles(claims)
 	}
 
+	glog.V(3).Infof("Applying %d role mapping rules", len(p.config.RoleMapping.Rules))
 	roles := []string{}
 
 	// Apply role mapping rules
-	for _, rule := range p.config.RoleMapping.Rules {
+	for i, rule := range p.config.RoleMapping.Rules {
+		glog.V(3).Infof("Rule %d: claim=%s, value=%s, role=%s", i, rule.Claim, rule.Value, rule.Role)
+		
 		if rule.Matches(claims) {
+			glog.V(2).Infof("Rule %d matched! Adding role: %s", i, rule.Role)
 			roles = append(roles, rule.Role)
+		} else {
+			glog.V(3).Infof("Rule %d did not match", i)
 		}
 	}
 
 	// Use default role if no rules matched
 	if len(roles) == 0 && p.config.RoleMapping.DefaultRole != "" {
+		glog.V(2).Infof("No rules matched, using default role: %s", p.config.RoleMapping.DefaultRole)
 		roles = []string{p.config.RoleMapping.DefaultRole}
 	}
 
+	glog.V(2).Infof("Role mapping result: %v", roles)
 	return roles
 }
 

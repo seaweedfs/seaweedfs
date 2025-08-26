@@ -6,6 +6,8 @@ import (
 	"net/mail"
 	"path/filepath"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
 // IdentityProvider defines the interface for external identity providers
@@ -189,22 +191,30 @@ type MappingRule struct {
 // Matches checks if a rule matches the given claims
 func (r *MappingRule) Matches(claims *TokenClaims) bool {
 	if r.Claim == "" || r.Value == "" {
+		glog.V(3).Infof("Rule invalid: claim=%s, value=%s", r.Claim, r.Value)
 		return false
 	}
 
 	claimValue, exists := claims.GetClaimString(r.Claim)
 	if !exists {
+		glog.V(3).Infof("Claim '%s' not found as string, trying as string slice", r.Claim)
 		// Try as string slice
 		if claimSlice, sliceExists := claims.GetClaimStringSlice(r.Claim); sliceExists {
+			glog.V(3).Infof("Claim '%s' found as string slice: %v", r.Claim, claimSlice)
 			for _, val := range claimSlice {
+				glog.V(3).Infof("Checking if '%s' matches rule value '%s'", val, r.Value)
 				if r.matchValue(val) {
+					glog.V(3).Infof("Match found: '%s' matches '%s'", val, r.Value)
 					return true
 				}
 			}
+		} else {
+			glog.V(3).Infof("Claim '%s' not found in any format", r.Claim)
 		}
 		return false
 	}
 
+	glog.V(3).Infof("Claim '%s' found as string: '%s'", r.Claim, claimValue)
 	return r.matchValue(claimValue)
 }
 
@@ -212,7 +222,9 @@ func (r *MappingRule) Matches(claims *TokenClaims) bool {
 func (r *MappingRule) matchValue(value string) bool {
 	matched, err := filepath.Match(r.Value, value)
 	if err != nil {
+		glog.V(3).Infof("Error matching '%s' against pattern '%s': %v", value, r.Value, err)
 		return false
 	}
+	glog.V(3).Infof("Pattern match result: '%s' matches '%s' = %t", value, r.Value, matched)
 	return matched
 }

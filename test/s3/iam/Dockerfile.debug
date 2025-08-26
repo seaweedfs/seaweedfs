@@ -1,0 +1,22 @@
+# Debug version of SeaweedFS with role mapping fixes
+FROM alpine:latest
+
+# Install required packages
+RUN apk add --no-cache \
+    ca-certificates \
+    curl \
+    wget \
+    bash
+
+# Copy the debug weed binary
+COPY weed-debug /usr/bin/weed
+RUN chmod +x /usr/bin/weed
+
+# Create working directory
+WORKDIR /data
+
+# Expose common ports
+EXPOSE 8080 8333 8888 9333 18080 18333 18888 19333
+
+# Default command
+CMD ["weed"]
