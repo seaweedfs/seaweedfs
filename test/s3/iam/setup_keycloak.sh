@@ -272,6 +272,7 @@ main() {
     create_role "$ADMIN_TOKEN" "s3-admin" "SeaweedFS S3 Administrator"
     create_role "$ADMIN_TOKEN" "s3-read-only" "SeaweedFS S3 Read-Only User"
     create_role "$ADMIN_TOKEN" "s3-write-only" "SeaweedFS S3 Write-Only User"
+    create_role "$ADMIN_TOKEN" "s3-read-write" "SeaweedFS S3 Read-Write User"
     sleep 1
     
     # Create test users

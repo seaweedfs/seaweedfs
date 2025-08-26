@@ -46,6 +46,11 @@
               "claim": "roles",
               "value": "s3-write-only", 
               "role": "arn:seaweed:iam::role/KeycloakWriteOnlyRole"
+            },
+            {
+              "claim": "roles",
+              "value": "s3-read-write",
+              "role": "arn:seaweed:iam::role/KeycloakReadWriteRole"
             }
           ],
           "defaultRole": "arn:seaweed:iam::role/KeycloakReadOnlyRole"
@@ -166,6 +171,25 @@
       "attachedPolicies": ["S3WriteOnlyPolicy"],
       "description": "Write-only role for Keycloak users"
     }
+    ,
+    {
+      "roleName": "KeycloakReadWriteRole",
+      "roleArn": "arn:seaweed:iam::role/KeycloakReadWriteRole",
+      "trustPolicy": {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "Federated": "keycloak"
+            },
+            "Action": ["sts:AssumeRoleWithWebIdentity"]
+          }
+        ]
+      },
+      "attachedPolicies": ["S3ReadWritePolicy"],
+      "description": "Read-write role for Keycloak users"
+    }
   ],
   "policies": [
     {
@@ -230,6 +254,30 @@
             "Action": [
               "s3:GetObject",
               "s3:ListBucket"
+            ],
+            "Resource": [
+              "arn:seaweed:s3:::*",
+              "arn:seaweed:s3:::*/*"
+            ]
+          },
+          {
+            "Effect": "Allow",
+            "Action": ["sts:ValidateSession"],
+            "Resource": ["*"]
+          }
+        ]
+      }
+    }
+    ,
+    {
+      "name": "S3ReadWritePolicy",
+      "document": {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Action": [
+              "s3:*"
             ],
             "Resource": [
               "arn:seaweed:s3:::*",
