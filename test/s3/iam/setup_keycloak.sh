@@ -8,7 +8,7 @@ set -e
 KEYCLOAK_URL="${KEYCLOAK_URL:-http://localhost:8080}"
 # Support both old and new Keycloak environment variable formats
 ADMIN_USER="${KC_BOOTSTRAP_ADMIN_USERNAME:-${KEYCLOAK_ADMIN:-admin}}"
-ADMIN_PASSWORD="${KC_BOOTSTRAP_ADMIN_PASSWORD:-${KEYCLOAK_ADMIN_PASSWORD:-admin123}}"
+ADMIN_PASSWORD="${KC_BOOTSTRAP_ADMIN_PASSWORD:-${KEYCLOAK_ADMIN_PASSWORD:-admin}}"
 REALM_NAME="seaweedfs-test"
 CLIENT_ID="seaweedfs-s3"
 CLIENT_SECRET="seaweedfs-s3-secret"
@@ -244,6 +244,10 @@ main() {
         echo "❌ Keycloak is not ready after 300 seconds"
         exit 1
     }
+    
+    # Additional wait for admin user to be fully set up
+    echo "⏳ Waiting for admin user to be fully initialized..."
+    sleep 10
     
     # Get admin token
     ADMIN_TOKEN=$(get_admin_token)
