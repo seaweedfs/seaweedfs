@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
@@ -612,6 +614,19 @@ func (f *S3IAMTestFramework) ExpireSessionForTesting(sessionToken string) error 
 	return nil
 }
 
+// GenerateUniqueBucketName generates a unique bucket name for testing
+func (f *S3IAMTestFramework) GenerateUniqueBucketName(prefix string) string {
+	// Use test name and timestamp to ensure uniqueness
+	testName := strings.ToLower(f.t.Name())
+	testName = strings.ReplaceAll(testName, "/", "-")
+	testName = strings.ReplaceAll(testName, "_", "-")
+
+	// Add random suffix to handle parallel tests
+	randomSuffix := rand.Intn(10000)
+
+	return fmt.Sprintf("%s-%s-%d", prefix, testName, randomSuffix)
+}
+
 // CreateBucket creates a bucket and tracks it for cleanup
 func (f *S3IAMTestFramework) CreateBucket(s3Client *s3.S3, bucketName string) error {
 	_, err := s3Client.CreateBucket(&s3.CreateBucketInput{
@@ -624,6 +639,51 @@ func (f *S3IAMTestFramework) CreateBucket(s3Client *s3.S3, bucketName string) er
 	// Track bucket for cleanup
 	f.createdBuckets = append(f.createdBuckets, bucketName)
 	return nil
+}
+
+// CreateBucketWithCleanup creates a bucket, cleaning up any existing bucket first
+func (f *S3IAMTestFramework) CreateBucketWithCleanup(s3Client *s3.S3, bucketName string) error {
+	// First try to create the bucket normally
+	_, err := s3Client.CreateBucket(&s3.CreateBucketInput{
+		Bucket: aws.String(bucketName),
+	})
+
+	if err != nil {
+		// If bucket already exists, clean it up first
+		if awsErr, ok := err.(awserr.Error); ok && awsErr.Code() == "BucketAlreadyExists" {
+			f.t.Logf("Bucket %s already exists, cleaning up first", bucketName)
+
+			// Empty the existing bucket
+			f.emptyBucket(s3Client, bucketName)
+
+			// Don't need to recreate - bucket already exists and is now empty
+		} else {
+			return err
+		}
+	}
+
+	// Track bucket for cleanup
+	f.createdBuckets = append(f.createdBuckets, bucketName)
+	return nil
+}
+
+// emptyBucket removes all objects from a bucket
+func (f *S3IAMTestFramework) emptyBucket(s3Client *s3.S3, bucketName string) {
+	// Delete all objects
+	listResult, err := s3Client.ListObjects(&s3.ListObjectsInput{
+		Bucket: aws.String(bucketName),
+	})
+	if err == nil {
+		for _, obj := range listResult.Contents {
+			_, err := s3Client.DeleteObject(&s3.DeleteObjectInput{
+				Bucket: aws.String(bucketName),
+				Key:    obj.Key,
+			})
+			if err != nil {
+				f.t.Logf("Warning: Failed to delete object %s/%s: %v", bucketName, *obj.Key, err)
+			}
+		}
+	}
 }
 
 // Cleanup cleans up test resources

@@ -15,11 +15,11 @@ import (
 )
 
 const (
-	testEndpoint   = "http://localhost:8333"
-	testRegion     = "us-west-2"
-	testBucket     = "test-iam-bucket"
-	testObjectKey  = "test-object.txt"
-	testObjectData = "Hello, SeaweedFS IAM Integration!"
+	testEndpoint     = "http://localhost:8333"
+	testRegion       = "us-west-2"
+	testBucketPrefix = "test-iam-bucket"
+	testObjectKey    = "test-object.txt"
+	testObjectData   = "Hello, SeaweedFS IAM Integration!"
 )
 
 // TestS3IAMAuthentication tests S3 API authentication with IAM JWT tokens
@@ -176,33 +176,22 @@ func TestS3IAMPolicyEnforcement(t *testing.T) {
 		require.NoError(t, err)
 
 		// Should NOT be able to read objects
-		// TODO: Fix IAM policy evaluation system - explicit deny statements are not being enforced
-		// This is a known issue where the policy engine allows read operations despite explicit deny
 		_, err = writeOnlyClient.GetObject(&s3.GetObjectInput{
 			Bucket: aws.String(testBucket),
 			Key:    aws.String(testObjectKey),
 		})
-		if err == nil {
-			t.Skip("KNOWN ISSUE: IAM policy evaluation system does not properly enforce explicit deny statements for write-only roles")
-		} else {
-			// If the error is properly returned, verify it's AccessDenied
-			if awsErr, ok := err.(awserr.Error); ok {
-				assert.Equal(t, "AccessDenied", awsErr.Code())
-			}
+		require.Error(t, err)
+		if awsErr, ok := err.(awserr.Error); ok {
+			assert.Equal(t, "AccessDenied", awsErr.Code())
 		}
 
 		// Should NOT be able to list objects
-		// TODO: Same IAM policy evaluation issue as above
 		_, err = writeOnlyClient.ListObjects(&s3.ListObjectsInput{
 			Bucket: aws.String(testBucket),
 		})
-		if err == nil {
-			t.Skip("KNOWN ISSUE: IAM policy evaluation system does not properly enforce explicit deny statements for list operations")
-		} else {
-			// If the error is properly returned, verify it's AccessDenied
-			if awsErr, ok := err.(awserr.Error); ok {
-				assert.Equal(t, "AccessDenied", awsErr.Code())
-			}
+		require.Error(t, err)
+		if awsErr, ok := err.(awserr.Error); ok {
+			assert.Equal(t, "AccessDenied", awsErr.Code())
 		}
 	})
 
@@ -547,12 +536,13 @@ func TestS3IAMPresignedURLIntegration(t *testing.T) {
 	adminClient, err := framework.CreateS3ClientWithJWT("admin-user", "TestAdminRole")
 	require.NoError(t, err)
 
-	err = framework.CreateBucket(adminClient, testBucket)
+	// Use static bucket name but with cleanup to handle conflicts
+	err = framework.CreateBucketWithCleanup(adminClient, testBucketPrefix)
 	require.NoError(t, err)
 
 	// Put test object
 	_, err = adminClient.PutObject(&s3.PutObjectInput{
-		Bucket: aws.String(testBucket),
+		Bucket: aws.String(testBucketPrefix),
 		Key:    aws.String(testObjectKey),
 		Body:   strings.NewReader(testObjectData),
 	})
@@ -565,7 +555,7 @@ func TestS3IAMPresignedURLIntegration(t *testing.T) {
 
 		// Test direct object access with JWT token (which is what JWT authentication supports)
 		_, err := adminClient.GetObject(&s3.GetObjectInput{
-			Bucket: aws.String(testBucket),
+			Bucket: aws.String(testBucketPrefix),
 			Key:    aws.String(testObjectKey),
 		})
 		require.NoError(t, err, "Direct object access with JWT should work")
