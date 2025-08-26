@@ -242,11 +242,13 @@ jobs:
           go install -buildvcs=false
 
       - name: Configure Keycloak (repo script only)
+        shell: bash
+        working-directory: .
         run: |
           echo "Configuring Keycloak via repo script..."
           sudo apt-get update -y
-          sudo apt-get install -y jq
-          bash test/s3/iam/setup_keycloak.sh
+          sudo apt-get install -y jq bash
+          /bin/bash test/s3/iam/setup_keycloak.sh
 
       - name: Start SeaweedFS Services
         working-directory: test/s3/iam
