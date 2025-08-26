@@ -160,6 +160,8 @@ jobs:
               '
               
               # Setup Keycloak realm and users
+              sudo apt-get update -y
+              sudo apt-get install -y jq
               chmod +x setup_keycloak.sh
               ./setup_keycloak.sh
               
@@ -271,6 +273,8 @@ jobs:
         working-directory: test/s3/iam
         run: |
           echo "Setting up Keycloak realm and test users..."
+          sudo apt-get update -y
+          sudo apt-get install -y jq
           chmod +x setup_keycloak.sh
           ./setup_keycloak.sh
 
