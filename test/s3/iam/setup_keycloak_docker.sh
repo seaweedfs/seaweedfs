@@ -97,6 +97,22 @@ MAPPER_CONFIG='{
 kcadm create clients/"$CLIENT_UUID"/protocol-mappers/models -r "$REALM_NAME" -b "$MAPPER_CONFIG" 2>/dev/null || echo "✅ Role mapper already exists"
 echo "✅ Realm roles mapper configured"
 
+# Configure audience mapper to ensure JWT tokens have correct audience claim
+echo "🔧 Configuring audience mapper for client '$CLIENT_ID'..."
+AUDIENCE_MAPPER_CONFIG='{
+  "protocol": "openid-connect",
+  "protocolMapper": "oidc-audience-mapper",
+  "name": "audience-mapper",
+  "config": {
+    "included.client.audience": "'$CLIENT_ID'",
+    "id.token.claim": "false",
+    "access.token.claim": "true"
+  }
+}'
+
+kcadm create clients/"$CLIENT_UUID"/protocol-mappers/models -r "$REALM_NAME" -b "$AUDIENCE_MAPPER_CONFIG" 2>/dev/null || echo "✅ Audience mapper already exists"
+echo "✅ Audience mapper configured"
+
 # Create realm roles
 echo "📝 Creating realm roles..."
 for role in "s3-admin" "s3-read-only" "s3-write-only" "s3-read-write"; do

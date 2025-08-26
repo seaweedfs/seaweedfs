@@ -262,6 +262,44 @@ configure_role_mapper() {
   fi
 }
 
+configure_audience_mapper() {
+  echo -e "${YELLOW}🔧 Configuring audience mapper for client '${CLIENT_ID}'...${NC}"
+  
+  # Get client's internal ID
+  local internal_id
+  internal_id=$(kcadm get clients -r "${REALM_NAME}" -q clientId="${CLIENT_ID}" | jq -r '.[0].id // empty')
+  
+  if [[ -z "${internal_id}" ]]; then
+    echo -e "${RED}❌ Could not find client ${CLIENT_ID} to configure audience mapper${NC}"
+    return 1
+  fi
+  
+  # Check if an audience mapper already exists for this client
+  local existing_mapper
+  existing_mapper=$(kcadm get "clients/${internal_id}/protocol-mappers/models" -r "${REALM_NAME}" | jq -r '.[] | select(.name=="audience-mapper" and .protocolMapper=="oidc-audience-mapper") | .id // empty')
+  
+  if [[ -n "${existing_mapper}" ]]; then
+    echo -e "${GREEN}✅ Audience mapper already exists${NC}"
+  else
+    echo -e "${YELLOW}📝 Creating audience mapper...${NC}"
+    
+    # Create protocol mapper for audience
+    kcadm create "clients/${internal_id}/protocol-mappers/models" -r "${REALM_NAME}" \
+      -s name="audience-mapper" \
+      -s protocol="openid-connect" \
+      -s protocolMapper="oidc-audience-mapper" \
+      -s consentRequired=false \
+      -s 'config."included.client.audience"='"${CLIENT_ID}" \
+      -s 'config."id.token.claim"=false' \
+      -s 'config."access.token.claim"=true' >/dev/null || {
+        echo -e "${RED}❌ Failed to create audience mapper${NC}"
+        return 1
+      }
+    
+    echo -e "${GREEN}✅ Audience mapper created${NC}"
+  fi
+}
+
 main() {
   command -v docker >/dev/null || { echo -e "${RED}❌ Docker is required${NC}"; exit 1; }
   command -v jq >/dev/null || { echo -e "${RED}❌ jq is required${NC}"; exit 1; }
@@ -273,6 +311,7 @@ main() {
   ensure_realm
   ensure_client
   configure_role_mapper
+  configure_audience_mapper
   ensure_role "${ROLE_ADMIN}"
   ensure_role "${ROLE_READONLY}"
   ensure_role "${ROLE_WRITEONLY}"
