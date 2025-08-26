@@ -139,17 +139,17 @@ type EvaluationDetails struct {
 
 // PolicyStore defines the interface for storing and retrieving policies
 type PolicyStore interface {
-	// StorePolicy stores a policy document
-	StorePolicy(ctx context.Context, name string, policy *PolicyDocument) error
+	// StorePolicy stores a policy document (filerAddress ignored for memory stores)
+	StorePolicy(ctx context.Context, filerAddress string, name string, policy *PolicyDocument) error
 
-	// GetPolicy retrieves a policy document
-	GetPolicy(ctx context.Context, name string) (*PolicyDocument, error)
+	// GetPolicy retrieves a policy document (filerAddress ignored for memory stores)
+	GetPolicy(ctx context.Context, filerAddress string, name string) (*PolicyDocument, error)
 
-	// DeletePolicy deletes a policy document
-	DeletePolicy(ctx context.Context, name string) error
+	// DeletePolicy deletes a policy document (filerAddress ignored for memory stores)
+	DeletePolicy(ctx context.Context, filerAddress string, name string) error
 
-	// ListPolicies lists all policy names
-	ListPolicies(ctx context.Context) ([]string, error)
+	// ListPolicies lists all policy names (filerAddress ignored for memory stores)
+	ListPolicies(ctx context.Context, filerAddress string) ([]string, error)
 }
 
 // NewPolicyEngine creates a new policy engine
@@ -210,8 +210,8 @@ func (e *PolicyEngine) IsInitialized() bool {
 	return e.initialized
 }
 
-// AddPolicy adds a policy to the engine
-func (e *PolicyEngine) AddPolicy(name string, policy *PolicyDocument) error {
+// AddPolicy adds a policy to the engine (filerAddress ignored for memory stores)
+func (e *PolicyEngine) AddPolicy(filerAddress string, name string, policy *PolicyDocument) error {
 	if !e.initialized {
 		return fmt.Errorf("policy engine not initialized")
 	}
@@ -228,11 +228,11 @@ func (e *PolicyEngine) AddPolicy(name string, policy *PolicyDocument) error {
 		return fmt.Errorf("invalid policy document: %w", err)
 	}
 
-	return e.store.StorePolicy(context.Background(), name, policy)
+	return e.store.StorePolicy(context.Background(), filerAddress, name, policy)
 }
 
-// Evaluate evaluates policies against a request context
-func (e *PolicyEngine) Evaluate(ctx context.Context, evalCtx *EvaluationContext, policyNames []string) (*EvaluationResult, error) {
+// Evaluate evaluates policies against a request context (filerAddress ignored for memory stores)
+func (e *PolicyEngine) Evaluate(ctx context.Context, filerAddress string, evalCtx *EvaluationContext, policyNames []string) (*EvaluationResult, error) {
 	if !e.initialized {
 		return nil, fmt.Errorf("policy engine not initialized")
 	}
@@ -257,7 +257,7 @@ func (e *PolicyEngine) Evaluate(ctx context.Context, evalCtx *EvaluationContext,
 
 	// Evaluate each policy
 	for _, policyName := range policyNames {
-		policy, err := e.store.GetPolicy(ctx, policyName)
+		policy, err := e.store.GetPolicy(ctx, filerAddress, policyName)
 		if err != nil {
 			continue // Skip policies that can't be loaded
 		}

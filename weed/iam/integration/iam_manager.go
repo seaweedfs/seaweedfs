@@ -139,16 +139,16 @@ func (m *IAMManager) RegisterIdentityProvider(provider providers.IdentityProvide
 }
 
 // CreatePolicy creates a new policy
-func (m *IAMManager) CreatePolicy(ctx context.Context, name string, policyDoc *policy.PolicyDocument) error {
+func (m *IAMManager) CreatePolicy(ctx context.Context, filerAddress string, name string, policyDoc *policy.PolicyDocument) error {
 	if !m.initialized {
 		return fmt.Errorf("IAM manager not initialized")
 	}
 
-	return m.policyEngine.AddPolicy(name, policyDoc)
+	return m.policyEngine.AddPolicy(filerAddress, name, policyDoc)
 }
 
 // CreateRole creates a new role with trust policy and attached policies
-func (m *IAMManager) CreateRole(ctx context.Context, roleName string, roleDef *RoleDefinition) error {
+func (m *IAMManager) CreateRole(ctx context.Context, filerAddress string, roleName string, roleDef *RoleDefinition) error {
 	if !m.initialized {
 		return fmt.Errorf("IAM manager not initialized")
 	}
@@ -174,7 +174,7 @@ func (m *IAMManager) CreateRole(ctx context.Context, roleName string, roleDef *R
 	}
 
 	// Store role definition
-	return m.roleStore.StoreRole(ctx, roleName, roleDef)
+	return m.roleStore.StoreRole(ctx, "", roleName, roleDef)
 }
 
 // AssumeRoleWithWebIdentity assumes a role using web identity (OIDC)
@@ -187,7 +187,7 @@ func (m *IAMManager) AssumeRoleWithWebIdentity(ctx context.Context, request *sts
 	roleName := extractRoleNameFromArn(request.RoleArn)
 
 	// Get role definition
-	roleDef, err := m.roleStore.GetRole(ctx, roleName)
+	roleDef, err := m.roleStore.GetRole(ctx, "", roleName)
 	if err != nil {
 		return nil, fmt.Errorf("role not found: %s", roleName)
 	}
@@ -211,7 +211,7 @@ func (m *IAMManager) AssumeRoleWithCredentials(ctx context.Context, request *sts
 	roleName := extractRoleNameFromArn(request.RoleArn)
 
 	// Get role definition
-	roleDef, err := m.roleStore.GetRole(ctx, roleName)
+	roleDef, err := m.roleStore.GetRole(ctx, "", roleName)
 	if err != nil {
 		return nil, fmt.Errorf("role not found: %s", roleName)
 	}
@@ -246,7 +246,7 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 	}
 
 	// Get role definition
-	roleDef, err := m.roleStore.GetRole(ctx, roleName)
+	roleDef, err := m.roleStore.GetRole(ctx, "", roleName)
 	if err != nil {
 		return false, fmt.Errorf("role not found: %s", roleName)
 	}
@@ -260,7 +260,7 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 	}
 
 	// Evaluate policies attached to the role
-	result, err := m.policyEngine.Evaluate(ctx, evalCtx, roleDef.AttachedPolicies)
+	result, err := m.policyEngine.Evaluate(ctx, "", evalCtx, roleDef.AttachedPolicies)
 	if err != nil {
 		return false, fmt.Errorf("policy evaluation failed: %w", err)
 	}
@@ -271,7 +271,7 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 // ValidateTrustPolicy validates if a principal can assume a role (for testing)
 func (m *IAMManager) ValidateTrustPolicy(ctx context.Context, roleArn, provider, userID string) bool {
 	roleName := extractRoleNameFromArn(roleArn)
-	roleDef, err := m.roleStore.GetRole(ctx, roleName)
+	roleDef, err := m.roleStore.GetRole(ctx, "", roleName)
 	if err != nil {
 		return false
 	}

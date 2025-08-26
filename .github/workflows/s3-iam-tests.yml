@@ -164,6 +164,14 @@ jobs:
               sudo apt-get install -y jq
               chmod +x setup_keycloak.sh
               ./setup_keycloak.sh
+
+              # Wait for the test realm to be fully available
+              echo "Waiting for seaweedfs-test realm to be available..."
+              timeout 120 bash -c 'until curl -fs http://localhost:8080/realms/seaweedfs-test/.well-known/openid-configuration > /dev/null; do echo "... waiting for realm"; sleep 3; done' || {
+                echo "❌ seaweedfs-test realm not available"
+                docker logs keycloak --tail=200 || true
+                exit 1
+              }
               
               # Start SeaweedFS services
               make clean setup start-services wait-for-services
@@ -299,6 +307,14 @@ jobs:
           
           # Give services extra time to fully initialize
           sleep 10
+
+          # Ensure the seaweedfs-test realm is available before running tests
+          echo "Waiting for seaweedfs-test realm to be available..."
+          timeout 120 bash -c 'until curl -fs http://localhost:8080/realms/seaweedfs-test/.well-known/openid-configuration > /dev/null; do echo "... waiting for realm"; sleep 3; done' || {
+            echo "❌ seaweedfs-test realm not available"
+            docker logs keycloak --tail=200 || true
+            exit 1
+          }
           
           # Verify services are accessible
           echo "=== Verifying Service Accessibility ==="

@@ -27,8 +27,8 @@ func NewMemoryPolicyStore() *MemoryPolicyStore {
 	}
 }
 
-// StorePolicy stores a policy document in memory
-func (s *MemoryPolicyStore) StorePolicy(ctx context.Context, name string, policy *PolicyDocument) error {
+// StorePolicy stores a policy document in memory (filerAddress ignored for memory store)
+func (s *MemoryPolicyStore) StorePolicy(ctx context.Context, filerAddress string, name string, policy *PolicyDocument) error {
 	if name == "" {
 		return fmt.Errorf("policy name cannot be empty")
 	}
@@ -45,8 +45,8 @@ func (s *MemoryPolicyStore) StorePolicy(ctx context.Context, name string, policy
 	return nil
 }
 
-// GetPolicy retrieves a policy document from memory
-func (s *MemoryPolicyStore) GetPolicy(ctx context.Context, name string) (*PolicyDocument, error) {
+// GetPolicy retrieves a policy document from memory (filerAddress ignored for memory store)
+func (s *MemoryPolicyStore) GetPolicy(ctx context.Context, filerAddress string, name string) (*PolicyDocument, error) {
 	if name == "" {
 		return nil, fmt.Errorf("policy name cannot be empty")
 	}
@@ -63,8 +63,8 @@ func (s *MemoryPolicyStore) GetPolicy(ctx context.Context, name string) (*Policy
 	return copyPolicyDocument(policy), nil
 }
 
-// DeletePolicy deletes a policy document from memory
-func (s *MemoryPolicyStore) DeletePolicy(ctx context.Context, name string) error {
+// DeletePolicy deletes a policy document from memory (filerAddress ignored for memory store)
+func (s *MemoryPolicyStore) DeletePolicy(ctx context.Context, filerAddress string, name string) error {
 	if name == "" {
 		return fmt.Errorf("policy name cannot be empty")
 	}
@@ -76,8 +76,8 @@ func (s *MemoryPolicyStore) DeletePolicy(ctx context.Context, name string) error
 	return nil
 }
 
-// ListPolicies lists all policy names in memory
-func (s *MemoryPolicyStore) ListPolicies(ctx context.Context) ([]string, error) {
+// ListPolicies lists all policy names in memory (filerAddress ignored for memory store)
+func (s *MemoryPolicyStore) ListPolicies(ctx context.Context, filerAddress string) ([]string, error) {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
@@ -148,9 +148,8 @@ func copyPolicyDocument(original *PolicyDocument) *PolicyDocument {
 
 // FilerPolicyStore implements PolicyStore using SeaweedFS filer
 type FilerPolicyStore struct {
-	filerGrpcAddress string
-	grpcDialOption   grpc.DialOption
-	basePath         string
+	grpcDialOption grpc.DialOption
+	basePath       string
 }
 
 // NewFilerPolicyStore creates a new filer-based policy store
@@ -159,29 +158,23 @@ func NewFilerPolicyStore(config map[string]interface{}) (*FilerPolicyStore, erro
 		basePath: "/etc/iam/policies", // Default path for policy storage - aligned with /etc/ convention
 	}
 
-	// Parse configuration
+	// Parse configuration - only basePath and other settings, NOT filerAddress
 	if config != nil {
-		if filerAddr, ok := config["filerAddress"].(string); ok {
-			store.filerGrpcAddress = filerAddr
-		}
-		if basePath, ok := config["basePath"].(string); ok {
+		if basePath, ok := config["basePath"].(string); ok && basePath != "" {
 			store.basePath = strings.TrimSuffix(basePath, "/")
 		}
 	}
 
-	// Validate configuration
-	if store.filerGrpcAddress == "" {
-		return nil, fmt.Errorf("filer address is required for FilerPolicyStore")
-	}
-
-	glog.V(2).Infof("Initialized FilerPolicyStore with filer %s, basePath %s",
-		store.filerGrpcAddress, store.basePath)
+	glog.V(2).Infof("Initialized FilerPolicyStore with basePath %s", store.basePath)
 
 	return store, nil
 }
 
 // StorePolicy stores a policy document in filer
-func (s *FilerPolicyStore) StorePolicy(ctx context.Context, name string, policy *PolicyDocument) error {
+func (s *FilerPolicyStore) StorePolicy(ctx context.Context, filerAddress string, name string, policy *PolicyDocument) error {
+	if filerAddress == "" {
+		return fmt.Errorf("filer address is required for FilerPolicyStore")
+	}
 	if name == "" {
 		return fmt.Errorf("policy name cannot be empty")
 	}
@@ -198,7 +191,7 @@ func (s *FilerPolicyStore) StorePolicy(ctx context.Context, name string, policy 
 	policyPath := s.getPolicyPath(name)
 
 	// Store in filer
-	return s.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	return s.withFilerClient(filerAddress, func(client filer_pb.SeaweedFilerClient) error {
 		request := &filer_pb.CreateEntryRequest{
 			Directory: s.basePath,
 			Entry: &filer_pb.Entry{
@@ -226,13 +219,16 @@ func (s *FilerPolicyStore) StorePolicy(ctx context.Context, name string, policy 
 }
 
 // GetPolicy retrieves a policy document from filer
-func (s *FilerPolicyStore) GetPolicy(ctx context.Context, name string) (*PolicyDocument, error) {
+func (s *FilerPolicyStore) GetPolicy(ctx context.Context, filerAddress string, name string) (*PolicyDocument, error) {
+	if filerAddress == "" {
+		return nil, fmt.Errorf("filer address is required for FilerPolicyStore")
+	}
 	if name == "" {
 		return nil, fmt.Errorf("policy name cannot be empty")
 	}
 
 	var policyData []byte
-	err := s.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err := s.withFilerClient(filerAddress, func(client filer_pb.SeaweedFilerClient) error {
 		request := &filer_pb.LookupDirectoryEntryRequest{
 			Directory: s.basePath,
 			Name:      s.getPolicyFileName(name),
@@ -266,12 +262,15 @@ func (s *FilerPolicyStore) GetPolicy(ctx context.Context, name string) (*PolicyD
 }
 
 // DeletePolicy deletes a policy document from filer
-func (s *FilerPolicyStore) DeletePolicy(ctx context.Context, name string) error {
+func (s *FilerPolicyStore) DeletePolicy(ctx context.Context, filerAddress string, name string) error {
+	if filerAddress == "" {
+		return fmt.Errorf("filer address is required for FilerPolicyStore")
+	}
 	if name == "" {
 		return fmt.Errorf("policy name cannot be empty")
 	}
 
-	return s.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	return s.withFilerClient(filerAddress, func(client filer_pb.SeaweedFilerClient) error {
 		request := &filer_pb.DeleteEntryRequest{
 			Directory:            s.basePath,
 			Name:                 s.getPolicyFileName(name),
@@ -304,10 +303,14 @@ func (s *FilerPolicyStore) DeletePolicy(ctx context.Context, name string) error 
 }
 
 // ListPolicies lists all policy names in filer
-func (s *FilerPolicyStore) ListPolicies(ctx context.Context) ([]string, error) {
+func (s *FilerPolicyStore) ListPolicies(ctx context.Context, filerAddress string) ([]string, error) {
+	if filerAddress == "" {
+		return nil, fmt.Errorf("filer address is required for FilerPolicyStore")
+	}
+
 	var policyNames []string
 
-	err := s.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err := s.withFilerClient(filerAddress, func(client filer_pb.SeaweedFilerClient) error {
 		// List all entries in the policy directory
 		request := &filer_pb.ListEntriesRequest{
 			Directory:          s.basePath,
@@ -353,20 +356,14 @@ func (s *FilerPolicyStore) ListPolicies(ctx context.Context) ([]string, error) {
 
 // Helper methods
 
-// SetFilerClient sets the filer client connection details
-func (s *FilerPolicyStore) SetFilerClient(filerAddress string, grpcDialOption grpc.DialOption) {
-	s.filerGrpcAddress = filerAddress
-	s.grpcDialOption = grpcDialOption
-}
-
 // withFilerClient executes a function with a filer client
-func (s *FilerPolicyStore) withFilerClient(fn func(client filer_pb.SeaweedFilerClient) error) error {
-	if s.filerGrpcAddress == "" {
-		return fmt.Errorf("filer address not configured")
+func (s *FilerPolicyStore) withFilerClient(filerAddress string, fn func(client filer_pb.SeaweedFilerClient) error) error {
+	if filerAddress == "" {
+		return fmt.Errorf("filer address is required for FilerPolicyStore")
 	}
 
 	// Use the pb.WithGrpcFilerClient helper similar to existing SeaweedFS code
-	return pb.WithGrpcFilerClient(false, 0, pb.ServerAddress(s.filerGrpcAddress), s.grpcDialOption, fn)
+	return pb.WithGrpcFilerClient(false, 0, pb.ServerAddress(filerAddress), s.grpcDialOption, fn)
 }
 
 // getPolicyPath returns the full path for a policy

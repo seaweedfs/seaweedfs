@@ -474,14 +474,14 @@ func loadIAMManagerFromConfig(configPath string) (*integration.IAMManager, error
 
 	// Load policies
 	for _, policyDef := range configRoot.Policies {
-		if err := iamManager.CreatePolicy(context.Background(), policyDef.Name, policyDef.Document); err != nil {
+		if err := iamManager.CreatePolicy(context.Background(), "", policyDef.Name, policyDef.Document); err != nil {
 			glog.Warningf("Failed to create policy %s: %v", policyDef.Name, err)
 		}
 	}
 
 	// Load roles
 	for _, roleDef := range configRoot.Roles {
-		if err := iamManager.CreateRole(context.Background(), roleDef.RoleName, roleDef); err != nil {
+		if err := iamManager.CreateRole(context.Background(), "", roleDef.RoleName, roleDef); err != nil {
 			glog.Warningf("Failed to create role %s: %v", roleDef.RoleName, err)
 		}
 	}
