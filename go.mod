@@ -190,9 +190,9 @@ require (
 	cloud.google.com/go/iam v1.5.2 // indirect
 	cloud.google.com/go/monitoring v1.24.2 // indirect
 	filippo.io/edwards25519 v1.1.0 // indirect
-	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.18.1
-	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.10.1
-	github.com/Azure/azure-sdk-for-go/sdk/internal v1.11.1 // indirect
+	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.18.2
+	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.11.0
+	github.com/Azure/azure-sdk-for-go/sdk/internal v1.11.2 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.6.1 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azfile v1.5.1 // indirect
 	github.com/Azure/go-ntlmssp v0.0.0-20221128193559-754e69321358 // indirect
