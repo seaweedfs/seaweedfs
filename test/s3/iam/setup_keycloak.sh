@@ -11,7 +11,8 @@ NC='\033[0m'
 
 KEYCLOAK_IMAGE="quay.io/keycloak/keycloak:26.0.7"
 CONTAINER_NAME="keycloak-iam-test"
-KEYCLOAK_PORT="8080"  # Default port
+KEYCLOAK_PORT="8080"  # Default external port
+KEYCLOAK_INTERNAL_PORT="8080"  # Internal container port (always 8080)
 KEYCLOAK_URL="http://localhost:${KEYCLOAK_PORT}"
 
 # Realm and test fixtures expected by tests
@@ -38,7 +39,6 @@ get_user_password() {
 USERS="admin-user read-user write-user write-only-user"
 
 echo -e "${BLUE}🔧 Setting up Keycloak realm and users for SeaweedFS S3 IAM testing...${NC}"
-echo "Keycloak URL: ${KEYCLOAK_URL}"
 
 ensure_container() {
   # Check for any existing Keycloak container and detect its port
@@ -110,11 +110,12 @@ wait_ready() {
 kcadm() {
   # Always authenticate before each command to ensure context
   # Try different admin passwords that might be used in different environments
-  local admin_passwords=("admin123" "admin" "password")
+  # GitHub Actions uses "admin", local testing might use "admin123"
+  local admin_passwords=("admin" "admin123" "password")
   local auth_success=false
   
   for pwd in "${admin_passwords[@]}"; do
-    if docker exec -i "${CONTAINER_NAME}" /opt/keycloak/bin/kcadm.sh config credentials --server "http://localhost:8080" --realm master --user admin --password "$pwd" >/dev/null 2>&1; then
+    if docker exec -i "${CONTAINER_NAME}" /opt/keycloak/bin/kcadm.sh config credentials --server "http://localhost:${KEYCLOAK_INTERNAL_PORT}" --realm master --user admin --password "$pwd" >/dev/null 2>&1; then
       auth_success=true
       break
     fi
@@ -130,7 +131,7 @@ kcadm() {
 
 admin_login() {
   # This is now handled by each kcadm() call  
-  echo "Logging into http://localhost:8080 as user admin of realm master"
+  echo "Logging into http://localhost:${KEYCLOAK_INTERNAL_PORT} as user admin of realm master"
 }
 
 ensure_realm() {
@@ -221,12 +222,11 @@ assign_role() {
 }
 
 configure_role_mapper() {
-  local client_id="$1"
-  echo -e "${YELLOW}🔧 Configuring role mapper for client '${client_id}'...${NC}"
+  echo -e "${YELLOW}🔧 Configuring role mapper for client '${CLIENT_ID}'...${NC}"
   
   # Get client's internal ID
   local internal_id
-  internal_id=$(kcadm get clients -r "${REALM_NAME}" -q clientId="${client_id}" | jq -r '.[0].id // empty')
+  internal_id=$(kcadm get clients -r "${REALM_NAME}" -q clientId="${CLIENT_ID}" | jq -r '.[0].id // empty')
   
   if [[ -z "${internal_id}" ]]; then
     echo -e "${RED}❌ Could not find client ${client_id} to configure role mapper${NC}"
@@ -267,10 +267,12 @@ main() {
   command -v jq >/dev/null || { echo -e "${RED}❌ jq is required${NC}"; exit 1; }
 
   ensure_container
+  echo "Keycloak URL: ${KEYCLOAK_URL}"
   wait_ready
   admin_login
   ensure_realm
   ensure_client
+  configure_role_mapper
   ensure_role "${ROLE_ADMIN}"
   ensure_role "${ROLE_READONLY}"
   ensure_role "${ROLE_WRITEONLY}"
@@ -287,6 +289,9 @@ main() {
   # Also create a dedicated write-only user for testing  
   ensure_user write-only-user "$(get_user_password write-only-user)"
   assign_role write-only-user "${ROLE_WRITEONLY}"
+  
+  # Copy the appropriate IAM configuration for this environment
+  setup_iam_config
 
   # Validate the setup by testing authentication and role inclusion
   echo -e "${YELLOW}🔍 Validating setup by testing admin-user authentication and role mapping...${NC}"
@@ -335,6 +340,34 @@ main() {
   rm -f /tmp/auth_test_response.json
   
   echo -e "${GREEN}✅ Keycloak test realm '${REALM_NAME}' configured${NC}"
+}
+
+setup_iam_config() {
+  echo -e "${BLUE}🔧 Setting up IAM configuration for detected environment${NC}"
+  
+  # Choose the appropriate config based on detected port
+  local config_source
+  if [[ "${KEYCLOAK_PORT}" == "8080" ]]; then
+    config_source="iam_config.github.json"
+    echo "   Using GitHub Actions configuration (port 8080)"
+  else
+    config_source="iam_config.local.json" 
+    echo "   Using local development configuration (port ${KEYCLOAK_PORT})"
+  fi
+  
+  # Verify source config exists
+  if [[ ! -f "$config_source" ]]; then
+    echo -e "${RED}❌ Config file $config_source not found${NC}"
+    exit 1
+  fi
+  
+  # Copy the appropriate config
+  cp "$config_source" "iam_config.json"
+  
+  local detected_issuer=$(cat iam_config.json | jq -r '.providers[] | select(.name=="keycloak") | .config.issuer')
+  echo -e "${GREEN}✅ IAM configuration set successfully${NC}"
+  echo "   - Using config: $config_source"
+  echo "   - Keycloak issuer: $detected_issuer"
 }
 
 main "$@"
