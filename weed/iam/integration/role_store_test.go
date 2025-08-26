@@ -65,13 +65,13 @@ func TestRoleStoreConfiguration(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, memoryStore)
 
-	// Test filer role store creation with invalid config
-	_, err = NewFilerRoleStore(map[string]interface{}{
-		// Missing filerAddress
+	// Test filer role store creation without filerAddress in config
+	filerStore2, err := NewFilerRoleStore(map[string]interface{}{
+		// filerAddress not required in config
 		"basePath": "/test/roles",
 	})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "filer address is required")
+	assert.NoError(t, err)
+	assert.NotNil(t, filerStore2)
 
 	// Test filer role store creation with valid config
 	filerStore, err := NewFilerRoleStore(map[string]interface{}{
@@ -88,11 +88,10 @@ func TestDistributedIAMManagerWithRoleStore(t *testing.T) {
 	// Create IAM manager with role store configuration
 	config := &IAMConfig{
 		STS: &sts.STSConfig{
-			TokenDuration:      3600,
-			MaxSessionLength:   43200,
-			Issuer:            "test-issuer",
-			SigningKey:        []byte("test-signing-key-32-characters-long"),
-
+			TokenDuration:    3600,
+			MaxSessionLength: 43200,
+			Issuer:           "test-issuer",
+			SigningKey:       []byte("test-signing-key-32-characters-long"),
 		},
 		Policy: &policy.PolicyEngineConfig{
 			DefaultEffect: "Deny",

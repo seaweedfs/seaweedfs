@@ -321,9 +321,9 @@ func TestFilerPolicyStoreConfiguration(t *testing.T) {
 			"basePath": "/seaweedfs/iam/policies",
 		}
 
-		_, err := NewFilerPolicyStore(config)
-		assert.Error(t, err, "Should require filer address")
-		assert.Contains(t, err.Error(), "filer address", "Error should mention filer address")
+		store, err := NewFilerPolicyStore(config)
+		assert.NoError(t, err, "Should create filer store without filerAddress in config")
+		assert.NotNil(t, store, "Store should be created successfully")
 	})
 }
 
