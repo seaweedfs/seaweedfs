@@ -43,7 +43,7 @@ func NewS3IAMIntegration(iamManager *integration.IAMManager, filerAddress string
 // AuthenticateJWT authenticates JWT tokens using our STS service
 func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Request) (*IAMIdentity, s3err.ErrorCode) {
 	glog.V(2).Infof("🔐 AuthenticateJWT: Starting JWT authentication for %s %s", r.Method, r.URL.Path)
-	
+
 	if !s3iam.enabled {
 		glog.V(2).Infof("🔐 AuthenticateJWT: IAM integration not enabled")
 		return nil, s3err.ErrNotImplemented
@@ -61,7 +61,7 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 		glog.V(2).Infof("🔐 AuthenticateJWT: Empty session token")
 		return nil, s3err.ErrAccessDenied
 	}
-	
+
 	glog.V(2).Infof("🔐 AuthenticateJWT: Processing JWT token (length: %d)", len(sessionToken))
 
 	// Basic token format validation - reject obviously invalid tokens
@@ -81,18 +81,18 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 	roleName, ok := tokenClaims["role"].(string)
 	if !ok || roleName == "" {
 		glog.V(2).Infof("🔐 AuthenticateJWT: No 'role' claim found, treating as OIDC token")
-		
+
 		// Not an STS session token, try to validate as OIDC token with timeout
 		// Create a context with a reasonable timeout to prevent hanging
 		glog.V(2).Infof("🔐 AuthenticateJWT: Starting OIDC token validation with 15s timeout...")
 		start := time.Now()
-		
+
 		ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
-		
+
 		identity, err := s3iam.validateOIDCToken(ctx, sessionToken)
 		elapsed := time.Since(start)
-		
+
 		if err != nil {
 			// Check if it's a timeout error and log accordingly
 			if ctx.Err() == context.DeadlineExceeded {
@@ -102,7 +102,7 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 			}
 			return nil, s3err.ErrAccessDenied
 		}
-		
+
 		glog.V(2).Infof("🔐 AuthenticateJWT: OIDC token validation SUCCEEDED after %v", elapsed)
 
 		// Extract role from OIDC identity
@@ -461,7 +461,7 @@ type OIDCIdentity struct {
 // validateOIDCToken validates an OIDC token using registered identity providers
 func (s3iam *S3IAMIntegration) validateOIDCToken(ctx context.Context, token string) (*OIDCIdentity, error) {
 	glog.V(2).Infof("🔍 validateOIDCToken: Starting OIDC token validation")
-	
+
 	if s3iam.iamManager == nil {
 		glog.V(2).Infof("🔍 validateOIDCToken: IAM manager not available")
 		return nil, fmt.Errorf("IAM manager not available")
@@ -477,20 +477,20 @@ func (s3iam *S3IAMIntegration) validateOIDCToken(ctx context.Context, token stri
 	// Try to validate token with each registered OIDC provider
 	providers := stsService.GetProviders()
 	glog.V(2).Infof("🔍 validateOIDCToken: Found %d providers to try", len(providers))
-	
+
 	for providerName, provider := range providers {
 		glog.V(2).Infof("🔍 validateOIDCToken: Trying provider '%s'...", providerName)
 		start := time.Now()
-		
+
 		// Try to authenticate with this provider
 		externalIdentity, err := provider.Authenticate(ctx, token)
 		elapsed := time.Since(start)
-		
+
 		if err != nil {
 			glog.V(2).Infof("🔍 validateOIDCToken: Provider '%s' FAILED after %v: %v", providerName, elapsed, err)
 			continue
 		}
-		
+
 		glog.V(2).Infof("🔍 validateOIDCToken: Provider '%s' SUCCEEDED after %v", providerName, elapsed)
 
 		// Extract role from external identity attributes
