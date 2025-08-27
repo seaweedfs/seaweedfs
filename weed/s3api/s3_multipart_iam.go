@@ -289,7 +289,9 @@ func determineMultipartS3Action(operation MultipartOperation) Action {
 	case MultipartOpListParts:
 		return s3_constants.ACTION_LIST_PARTS
 	default:
-		return s3_constants.ACTION_READ // Default fallback
+		// Fail closed for unmapped operations to prevent unintended access
+		glog.Errorf("unmapped multipart operation: %s", operation)
+		return "s3:InternalErrorUnknownMultipartAction" // Non-existent action ensures denial
 	}
 }
 

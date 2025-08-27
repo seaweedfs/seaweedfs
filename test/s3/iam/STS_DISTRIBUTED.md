@@ -289,11 +289,8 @@ User Request → Load Balancer → Any S3 Gateway Instance
                                       ↓
                               Extract JWT Session Token
                                       ↓
-                              Validate with TokenGenerator
-                              (Same signing key on all instances)
-                                      ↓
-                              Retrieve Session from Filer
-                              (Shared session store)
+                              Validate JWT Token
+                              (Self-contained - no external storage needed)
                                       ↓
                               Check Permissions
                               (Shared policy engine)

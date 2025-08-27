@@ -266,7 +266,7 @@ func TestMultipartS3ActionMapping(t *testing.T) {
 		{MultipartOpAbort, s3_constants.ACTION_ABORT_MULTIPART},
 		{MultipartOpList, s3_constants.ACTION_LIST_MULTIPART_UPLOADS},
 		{MultipartOpListParts, s3_constants.ACTION_LIST_PARTS},
-		{MultipartOperation("unknown"), s3_constants.ACTION_READ}, // Default fallback
+		{MultipartOperation("unknown"), "s3:InternalErrorUnknownMultipartAction"}, // Fail-closed for security
 	}
 
 	for _, tt := range tests {

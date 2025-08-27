@@ -227,8 +227,8 @@ time weed filer.cat /seaweedfs/iam/roles/TestRole.json
 - **Implement alerts** for IAM storage issues
 
 ### Capacity Planning
-- **Estimate IAM data size**: Roles + Policies + Sessions
-- **Plan for growth**: Active sessions scale with user count  
+- **Estimate IAM data size**: Roles + Policies (no sessions - stateless JWT)
+- **Plan for growth**: Role and policy count scales with user/application count  
 - **Monitor filer disk usage**: `/seaweedfs/iam/` path
 - **Set up log rotation**: For IAM audit logs
 
@@ -264,8 +264,7 @@ time weed filer.cat /seaweedfs/iam/roles/TestRole.json
                 │ │ /seaweedfs/   │ │
                 │ │ iam/          │ │
                 │ │ ├─roles/      │ │
-                │ │ ├─policies/   │ │
-                │ │ └─sessions/   │ │
+                │ │ └─policies/   │ │
                 │ └───────────────┘ │
                 └───────────────────┘
                         ✅
