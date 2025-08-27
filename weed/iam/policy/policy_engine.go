@@ -360,11 +360,11 @@ func (e *PolicyEngine) evaluateConditionBlock(conditionType string, block map[st
 	case "NotIpAddress":
 		return e.evaluateIPCondition(block, evalCtx, false)
 	case "StringEquals":
-		return e.evaluateStringCondition(block, evalCtx, true, false)
+		return e.EvaluateStringCondition(block, evalCtx, true, false)
 	case "StringNotEquals":
-		return e.evaluateStringCondition(block, evalCtx, false, false)
+		return e.EvaluateStringCondition(block, evalCtx, false, false)
 	case "StringLike":
-		return e.evaluateStringCondition(block, evalCtx, true, true)
+		return e.EvaluateStringCondition(block, evalCtx, true, true)
 	default:
 		// Unknown condition types default to false (more secure)
 		return false
@@ -418,8 +418,8 @@ func (e *PolicyEngine) evaluateIPCondition(block map[string]interface{}, evalCtx
 	return !shouldMatch
 }
 
-// evaluateStringCondition evaluates string-based conditions
-func (e *PolicyEngine) evaluateStringCondition(block map[string]interface{}, evalCtx *EvaluationContext, shouldMatch bool, useWildcard bool) bool {
+// EvaluateStringCondition evaluates string-based conditions
+func (e *PolicyEngine) EvaluateStringCondition(block map[string]interface{}, evalCtx *EvaluationContext, shouldMatch bool, useWildcard bool) bool {
 	// Iterate through all condition keys in the block
 	for conditionKey, conditionValue := range block {
 		// Get the context values for this condition key
@@ -582,38 +582,37 @@ func validateStatementWithType(statement *Statement, policyType string) error {
 	return nil
 }
 
+
 // matchResource checks if a resource pattern matches a requested resource
+// Uses filepath.Match for consistent wildcard behavior across the IAM system
 func matchResource(pattern, resource string) bool {
 	if pattern == resource {
 		return true
 	}
 
-	if pattern == "*" {
-		return true
+	// Use filepath.Match for standard wildcard support (*, ?, [])
+	matched, err := filepath.Match(pattern, resource)
+	if err != nil {
+		// Fallback to exact match if pattern is malformed
+		return pattern == resource
 	}
 
-	if strings.HasSuffix(pattern, "*") {
-		prefix := pattern[:len(pattern)-1]
-		return strings.HasPrefix(resource, prefix)
-	}
-
-	return false
+	return matched
 }
 
 // matchAction checks if an action pattern matches a requested action
+// Uses filepath.Match for consistent wildcard behavior across the IAM system
 func matchAction(pattern, action string) bool {
 	if pattern == action {
 		return true
 	}
 
-	if pattern == "*" {
-		return true
+	// Use filepath.Match for standard wildcard support (*, ?, [])
+	matched, err := filepath.Match(pattern, action)
+	if err != nil {
+		// Fallback to exact match if pattern is malformed
+		return pattern == action
 	}
 
-	if strings.HasSuffix(pattern, "*") {
-		prefix := pattern[:len(pattern)-1]
-		return strings.HasPrefix(action, prefix)
-	}
-
-	return false
+	return matched
 }

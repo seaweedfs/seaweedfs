@@ -325,20 +325,6 @@ func extractSourceIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
-// extractRoleNameFromPrincipal extracts role name from assumed role principal ARN
-func extractRoleNameFromPrincipal(principal string) string {
-	// Expected format: arn:seaweed:sts::assumed-role/RoleName/SessionName
-	prefix := "arn:seaweed:sts::assumed-role/"
-	if len(principal) > len(prefix) && principal[:len(prefix)] == prefix {
-		remainder := principal[len(prefix):]
-		// Split on first '/' to get role name
-		if slashIndex := strings.Index(remainder, "/"); slashIndex != -1 {
-			return remainder[:slashIndex]
-		}
-	}
-	return principal // Return original if parsing fails
-}
-
 // parseJWTToken parses a JWT token and returns its claims without verification
 // Note: This is for extracting claims only. Verification is done by the IAM system.
 func parseJWTToken(tokenString string) (jwt.MapClaims, error) {

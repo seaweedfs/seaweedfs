@@ -144,12 +144,12 @@ func TestCrossInstanceTokenUsage(t *testing.T) {
 		_, err = instanceB.ValidateSessionToken(ctx, sessionToken)
 		require.NoError(t, err, "Token should be valid on Instance B initially")
 
-		// Attempt to revoke session on Instance C (in stateless system, this only validates)
-		err = instanceC.RevokeSession(ctx, sessionToken)
+		// Validate session on Instance C to verify cross-instance token compatibility
+		_, err = instanceC.ValidateSessionToken(ctx, sessionToken)
 		require.NoError(t, err, "Instance C should be able to validate session token")
 
-		// In a stateless JWT system, tokens cannot be truly revoked without a shared blacklist
-		// The token should still be valid on all instances since it's self-contained
+		// In a stateless JWT system, tokens remain valid on all instances since they're self-contained
+		// No revocation is possible without breaking the stateless architecture
 		_, err = instanceA.ValidateSessionToken(ctx, sessionToken)
 		assert.NoError(t, err, "Token should still be valid on Instance A (stateless system)")
 

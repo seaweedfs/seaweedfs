@@ -5,12 +5,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/iam/providers"
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
+	"github.com/seaweedfs/seaweedfs/weed/iam/utils"
 )
 
 // IAMManager orchestrates all IAM components
@@ -240,7 +240,7 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 	}
 
 	// Extract role name from principal ARN
-	roleName := extractRoleNameFromPrincipal(request.Principal)
+	roleName := utils.ExtractRoleNameFromPrincipal(request.Principal)
 	if roleName == "" {
 		return false, fmt.Errorf("could not extract role from principal: %s", request.Principal)
 	}
@@ -381,37 +381,6 @@ func extractRoleNameFromArn(roleArn string) string {
 	return ""
 }
 
-// extractRoleNameFromPrincipal extracts role name from principal ARN
-func extractRoleNameFromPrincipal(principal string) string {
-	// Handle STS assumed role format: arn:seaweed:sts::assumed-role/RoleName/SessionName
-	stsPrefix := "arn:seaweed:sts::assumed-role/"
-	if len(principal) > len(stsPrefix) && principal[:len(stsPrefix)] == stsPrefix {
-		remainder := principal[len(stsPrefix):]
-		// Split on first '/' to get role name
-		if slashIndex := indexOf(remainder, "/"); slashIndex != -1 {
-			return remainder[:slashIndex]
-		}
-	}
-
-	// Handle IAM role format: arn:seaweed:iam::role/RoleName
-	iamPrefix := "arn:seaweed:iam::role/"
-	if len(principal) > len(iamPrefix) && principal[:len(iamPrefix)] == iamPrefix {
-		return principal[len(iamPrefix):]
-	}
-
-	return ""
-}
-
-// indexOf finds the index of the first occurrence of substring in string
-func indexOf(s, substr string) int {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return i
-		}
-	}
-	return -1
-}
-
 // ExpireSessionForTesting manually expires a session for testing purposes
 func (m *IAMManager) ExpireSessionForTesting(ctx context.Context, sessionToken string) error {
 	if !m.initialized {
@@ -525,15 +494,15 @@ func (m *IAMManager) evaluateTrustPolicyConditions(conditions map[string]map[str
 	for conditionType, conditionBlock := range conditions {
 		switch conditionType {
 		case "StringEquals":
-			if !m.evaluateStringConditionForTrust(conditionBlock, evalCtx, true, false) {
+			if !m.policyEngine.EvaluateStringCondition(conditionBlock, evalCtx, true, false) {
 				return false
 			}
 		case "StringNotEquals":
-			if !m.evaluateStringConditionForTrust(conditionBlock, evalCtx, false, false) {
+			if !m.policyEngine.EvaluateStringCondition(conditionBlock, evalCtx, false, false) {
 				return false
 			}
 		case "StringLike":
-			if !m.evaluateStringConditionForTrust(conditionBlock, evalCtx, true, true) {
+			if !m.policyEngine.EvaluateStringCondition(conditionBlock, evalCtx, true, true) {
 				return false
 			}
 		// Add other condition types as needed
@@ -545,71 +514,7 @@ func (m *IAMManager) evaluateTrustPolicyConditions(conditions map[string]map[str
 	return true
 }
 
-// evaluateStringConditionForTrust evaluates string conditions for trust policies
-func (m *IAMManager) evaluateStringConditionForTrust(block map[string]interface{}, evalCtx *policy.EvaluationContext, shouldMatch bool, useWildcard bool) bool {
-	for conditionKey, conditionValue := range block {
-		contextValues, exists := evalCtx.RequestContext[conditionKey]
-		if !exists {
-			if shouldMatch {
-				return false
-			}
-			continue
-		}
 
-		// Convert context value to string slice
-		var contextStrings []string
-		switch v := contextValues.(type) {
-		case string:
-			contextStrings = []string{v}
-		case []string:
-			contextStrings = v
-		default:
-			contextStrings = []string{fmt.Sprintf("%v", v)}
-		}
-
-		// Convert condition value to string slice
-		var expectedStrings []string
-		switch v := conditionValue.(type) {
-		case string:
-			expectedStrings = []string{v}
-		case []string:
-			expectedStrings = v
-		default:
-			expectedStrings = []string{fmt.Sprintf("%v", v)}
-		}
-
-		// Evaluate the condition
-		conditionMet := false
-		for _, expected := range expectedStrings {
-			for _, contextValue := range contextStrings {
-				if useWildcard {
-					matched, err := filepath.Match(expected, contextValue)
-					if err == nil && matched {
-						conditionMet = true
-						break
-					}
-				} else {
-					if expected == contextValue {
-						conditionMet = true
-						break
-					}
-				}
-			}
-			if conditionMet {
-				break
-			}
-		}
-
-		if shouldMatch && !conditionMet {
-			return false
-		}
-		if !shouldMatch && conditionMet {
-			return false
-		}
-	}
-
-	return true
-}
 
 // isOIDCToken checks if a token is an OIDC JWT token (vs STS session token)
 func isOIDCToken(token string) bool {

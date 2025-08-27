@@ -265,8 +265,9 @@ func TestSessionTokenValidation(t *testing.T) {
 	}
 }
 
-// TestSessionRevocation tests session token revocation
-func TestSessionRevocation(t *testing.T) {
+// TestSessionTokenPersistence tests that JWT tokens remain valid throughout their lifetime
+// Note: In the stateless JWT design, tokens cannot be revoked and remain valid until expiration
+func TestSessionTokenPersistence(t *testing.T) {
 	service := setupTestSTSService(t)
 	ctx := context.Background()
 
@@ -282,20 +283,18 @@ func TestSessionRevocation(t *testing.T) {
 
 	sessionToken := response.Credentials.SessionToken
 
-	// Verify token is valid before revocation
+	// Verify token is valid initially
 	session, err := service.ValidateSessionToken(ctx, sessionToken)
 	assert.NoError(t, err)
 	assert.NotNil(t, session)
+	assert.Equal(t, "test-session", session.SessionName)
 
-	// Attempt to revoke the session (in stateless JWT system, this only validates the token)
-	err = service.RevokeSession(ctx, sessionToken)
-	assert.NoError(t, err, "RevokeSession should succeed in stateless system")
-
-	// In a stateless JWT system, tokens cannot be truly revoked without a blacklist
-	// The token should still be valid since it's self-contained and hasn't expired
-	session, err = service.ValidateSessionToken(ctx, sessionToken)
-	assert.NoError(t, err, "Token should still be valid in stateless system")
-	assert.NotNil(t, session, "Session should be returned from JWT token")
+	// In a stateless JWT system, tokens remain valid throughout their lifetime
+	// Multiple validations should all succeed as long as the token hasn't expired
+	session2, err := service.ValidateSessionToken(ctx, sessionToken)
+	assert.NoError(t, err, "Token should remain valid in stateless system")
+	assert.NotNil(t, session2, "Session should be returned from JWT token")
+	assert.Equal(t, session.SessionId, session2.SessionId, "Session ID should be consistent")
 }
 
 // Helper functions

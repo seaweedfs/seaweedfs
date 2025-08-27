@@ -462,31 +462,18 @@ func (s *STSService) ValidateSessionToken(ctx context.Context, sessionToken stri
 	return claims.ToSessionInfo(), nil
 }
 
-// RevokeSession validates a session token (stateless operation)
-// Note: In a stateless JWT system, sessions cannot be revoked without a blacklist.
-// This method validates the token format but cannot actually revoke it.
-// For production use, consider implementing a token blacklist or use short-lived tokens.
-func (s *STSService) RevokeSession(ctx context.Context, sessionToken string) error {
-	if !s.initialized {
-		return fmt.Errorf("STS service not initialized")
-	}
-
-	if sessionToken == "" {
-		return fmt.Errorf("session token cannot be empty")
-	}
-
-	// Validate JWT token format
-	_, err := s.tokenGenerator.ValidateJWTWithClaims(sessionToken)
-	if err != nil {
-		return fmt.Errorf("invalid session token format: %w", err)
-	}
-
-	// In a stateless system, we cannot revoke JWT tokens without a blacklist
-	// The token will naturally expire based on its embedded expiration time
-	glog.V(1).Infof("Session revocation requested for stateless token - token will expire naturally at its embedded expiration time")
-
-	return nil
-}
+// NOTE: Session revocation is not supported in the stateless JWT design.
+//
+// In a stateless JWT system, tokens cannot be revoked without implementing a token blacklist,
+// which would break the stateless architecture. Tokens remain valid until their natural
+// expiration time.
+//
+// For applications requiring token revocation, consider:
+// 1. Using shorter token lifespans (e.g., 15-30 minutes)
+// 2. Implementing a distributed token blacklist (breaks stateless design)
+// 3. Including a "jti" (JWT ID) claim for tracking specific tokens
+//
+// Use ValidateSessionToken() to verify if a token is valid and not expired.
 
 // Helper methods for AssumeRoleWithWebIdentity
 

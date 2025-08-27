@@ -6,7 +6,7 @@
 all: test
 
 # Test configuration
-WEED_BINARY ?= /Users/chrislu/go/bin/weed
+WEED_BINARY ?= $(shell go env GOPATH)/bin/weed
 LOG_LEVEL ?= 2
 S3_PORT ?= 8333
 FILER_PORT ?= 8888

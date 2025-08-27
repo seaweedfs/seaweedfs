@@ -10,6 +10,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/iam/integration"
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
+	"github.com/seaweedfs/seaweedfs/weed/iam/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -212,7 +213,7 @@ func TestExtractRoleNameFromPrincipal(t *testing.T) {
 		{
 			name:      "missing session name",
 			principal: "arn:seaweed:sts::assumed-role/TestRole",
-			expected:  "arn:seaweed:sts::assumed-role/TestRole", // Returns original on failure
+			expected:  "TestRole", // Extracts role name even without session name
 		},
 		{
 			name:      "empty principal",
@@ -223,7 +224,7 @@ func TestExtractRoleNameFromPrincipal(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := extractRoleNameFromPrincipal(tt.principal)
+			result := utils.ExtractRoleNameFromPrincipal(tt.principal)
 			assert.Equal(t, tt.expected, result)
 		})
 	}

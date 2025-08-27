@@ -30,11 +30,11 @@ const (
 
 // Default Values
 const (
-	DefaultTokenDuration      = 3600          // 1 hour in seconds
-	DefaultMaxSessionLength   = 43200         // 12 hours in seconds
-	DefaultIssuer            = "seaweedfs-sts"
-	DefaultStoreType         = StoreTypeFiler // Default store type for persistence
-	MinSigningKeyLength      = 16             // Minimum signing key length in bytes
+	DefaultTokenDuration    = 3600  // 1 hour in seconds
+	DefaultMaxSessionLength = 43200 // 12 hours in seconds
+	DefaultIssuer           = "seaweedfs-sts"
+	DefaultStoreType        = StoreTypeFiler // Default store type for persistence
+	MinSigningKeyLength     = 16             // Minimum signing key length in bytes
 )
 
 // Configuration Field Names
@@ -52,30 +52,30 @@ const (
 
 // Error Messages
 const (
-	ErrConfigCannotBeNil           = "config cannot be nil"
-	ErrProviderCannotBeNil         = "provider cannot be nil"
-	ErrProviderNameEmpty           = "provider name cannot be empty"
-	ErrProviderTypeEmpty           = "provider type cannot be empty"
-	ErrTokenCannotBeEmpty          = "token cannot be empty"
-	ErrSessionTokenCannotBeEmpty   = "session token cannot be empty"
-	ErrSessionIDCannotBeEmpty      = "session ID cannot be empty"
-	ErrSTSServiceNotInitialized    = "STS service not initialized"
-	ErrProviderNotInitialized      = "provider not initialized"
-	ErrInvalidTokenDuration        = "token duration must be positive"
-	ErrInvalidMaxSessionLength     = "max session length must be positive"
-	ErrIssuerRequired              = "issuer is required"
-	ErrSigningKeyTooShort          = "signing key must be at least %d bytes"
-	ErrFilerAddressRequired        = "filer address is required"
-	ErrClientIDRequired            = "clientId is required for OIDC provider"
-	ErrUnsupportedStoreType        = "unsupported store type: %s"
-	ErrUnsupportedProviderType     = "unsupported provider type: %s"
-	ErrInvalidTokenFormat          = "invalid session token format: %w"
-	ErrSessionValidationFailed     = "session validation failed: %w"
-	ErrInvalidToken                = "invalid token: %w"
-	ErrTokenNotValid               = "token is not valid"
-	ErrInvalidTokenClaims          = "invalid token claims"
-	ErrInvalidIssuer               = "invalid issuer"
-	ErrMissingSessionID            = "missing session ID"
+	ErrConfigCannotBeNil         = "config cannot be nil"
+	ErrProviderCannotBeNil       = "provider cannot be nil"
+	ErrProviderNameEmpty         = "provider name cannot be empty"
+	ErrProviderTypeEmpty         = "provider type cannot be empty"
+	ErrTokenCannotBeEmpty        = "token cannot be empty"
+	ErrSessionTokenCannotBeEmpty = "session token cannot be empty"
+	ErrSessionIDCannotBeEmpty    = "session ID cannot be empty"
+	ErrSTSServiceNotInitialized  = "STS service not initialized"
+	ErrProviderNotInitialized    = "provider not initialized"
+	ErrInvalidTokenDuration      = "token duration must be positive"
+	ErrInvalidMaxSessionLength   = "max session length must be positive"
+	ErrIssuerRequired            = "issuer is required"
+	ErrSigningKeyTooShort        = "signing key must be at least %d bytes"
+	ErrFilerAddressRequired      = "filer address is required"
+	ErrClientIDRequired          = "clientId is required for OIDC provider"
+	ErrUnsupportedStoreType      = "unsupported store type: %s"
+	ErrUnsupportedProviderType   = "unsupported provider type: %s"
+	ErrInvalidTokenFormat        = "invalid session token format: %w"
+	ErrSessionValidationFailed   = "session validation failed: %w"
+	ErrInvalidToken              = "invalid token: %w"
+	ErrTokenNotValid             = "token is not valid"
+	ErrInvalidTokenClaims        = "invalid token claims"
+	ErrInvalidIssuer             = "invalid issuer"
+	ErrMissingSessionID          = "missing session ID"
 )
 
 // JWT Claims
@@ -97,11 +97,10 @@ const (
 
 // AWS STS Actions
 const (
-	ActionAssumeRole                    = "sts:AssumeRole"
-	ActionAssumeRoleWithWebIdentity     = "sts:AssumeRoleWithWebIdentity"
-	ActionAssumeRoleWithCredentials     = "sts:AssumeRoleWithCredentials"
-	ActionValidateSession               = "sts:ValidateSession"
-	ActionRevokeSession                 = "sts:RevokeSession"
+	ActionAssumeRole                = "sts:AssumeRole"
+	ActionAssumeRoleWithWebIdentity = "sts:AssumeRoleWithWebIdentity"
+	ActionAssumeRoleWithCredentials = "sts:AssumeRoleWithCredentials"
+	ActionValidateSession           = "sts:ValidateSession"
 )
 
 // Session File Prefixes
@@ -122,17 +121,17 @@ const (
 
 // Content Types
 const (
-	ContentTypeJSON            = "application/json"
-	ContentTypeFormURLEncoded  = "application/x-www-form-urlencoded"
+	ContentTypeJSON           = "application/json"
+	ContentTypeFormURLEncoded = "application/x-www-form-urlencoded"
 )
 
 // Default Test Values
 const (
 	TestSigningKey32Chars = "test-signing-key-32-characters-long"
-	TestIssuer           = "test-sts"
-	TestClientID         = "test-client"
-	TestSessionID        = "test-session-123"
-	TestValidToken       = "valid_test_token"
-	TestInvalidToken     = "invalid_token"
-	TestExpiredToken     = "expired_token"
+	TestIssuer            = "test-sts"
+	TestClientID          = "test-client"
+	TestSessionID         = "test-session-123"
+	TestValidToken        = "valid_test_token"
+	TestInvalidToken      = "invalid_token"
+	TestExpiredToken      = "expired_token"
 )
