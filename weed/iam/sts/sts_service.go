@@ -15,7 +15,7 @@ import (
 // in JWT tokens, eliminating the need for session storage and enabling true
 // distributed operation without shared state
 type STSService struct {
-	config           *STSConfig
+	Config           *STSConfig // Public for access by other components
 	initialized      bool
 	providers        map[string]providers.IdentityProvider
 	issuerToProvider map[string]providers.IdentityProvider // Efficient issuer-based provider lookup
@@ -199,7 +199,7 @@ func (s *STSService) Initialize(config *STSConfig) error {
 		return fmt.Errorf("invalid STS configuration: %w", err)
 	}
 
-	s.config = config
+	s.Config = config
 
 	// Initialize token generator for stateless JWT operations
 	s.tokenGenerator = NewTokenGenerator(config.SigningKey, config.Issuer)
@@ -366,7 +366,7 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *Ass
 	}
 
 	// Create rich JWT claims with all session information
-	sessionClaims := NewSTSSessionClaims(sessionId, s.config.Issuer, expiresAt).
+	sessionClaims := NewSTSSessionClaims(sessionId, s.Config.Issuer, expiresAt).
 		WithSessionName(request.RoleSessionName).
 		WithRoleInfo(request.RoleArn, assumedRoleUser.Arn, assumedRoleUser.Arn).
 		WithIdentityProvider(provider.Name(), externalIdentity.UserID, "").
@@ -445,7 +445,7 @@ func (s *STSService) AssumeRoleWithCredentials(ctx context.Context, request *Ass
 	}
 
 	// Create rich JWT claims with all session information
-	sessionClaims := NewSTSSessionClaims(sessionId, s.config.Issuer, expiresAt).
+	sessionClaims := NewSTSSessionClaims(sessionId, s.Config.Issuer, expiresAt).
 		WithSessionName(request.RoleSessionName).
 		WithRoleInfo(request.RoleArn, assumedRoleUser.Arn, assumedRoleUser.Arn).
 		WithIdentityProvider(provider.Name(), externalIdentity.UserID, "").
@@ -621,7 +621,7 @@ func (s *STSService) calculateSessionDuration(durationSeconds *int64) time.Durat
 	}
 
 	// Use default from config
-	return s.config.TokenDuration
+	return s.Config.TokenDuration
 }
 
 // extractSessionIdFromToken extracts session ID from JWT session token

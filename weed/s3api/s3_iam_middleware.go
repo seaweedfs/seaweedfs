@@ -532,31 +532,14 @@ func getProviderNames(providers map[string]providers.IdentityProvider) []string 
 }
 
 // isSTSIssuer determines if an issuer belongs to the STS service
-// This provides more robust token type detection than checking for role claims
+// Uses exact match against configured STS issuer for security and correctness
 func (s3iam *S3IAMIntegration) isSTSIssuer(issuer string) bool {
-	if s3iam.stsService == nil {
+	if s3iam.stsService == nil || s3iam.stsService.Config == nil {
 		return false
 	}
 
-	// Get the STS configuration to check the issuer
-	// For now, we'll use a simple heuristic - STS issuers typically contain "sts" or are internal
-	// In a full implementation, this could check against configured STS issuer values
-
-	// Check if issuer contains common STS patterns
-	stsPatterns := []string{
-		"sts",
-		"seaweedfs-sts",
-		"seaweed",
-		"localhost", // For development/testing
-	}
-
-	lowerIssuer := strings.ToLower(issuer)
-	for _, pattern := range stsPatterns {
-		if strings.Contains(lowerIssuer, pattern) {
-			return true
-		}
-	}
-
-	// If no pattern matches, assume it's an external OIDC issuer
-	return false
+	// Directly compare with the configured STS issuer for exact match
+	// This prevents false positives from external OIDC providers that might
+	// contain STS-related keywords in their issuer URLs
+	return issuer == s3iam.stsService.Config.Issuer
 }

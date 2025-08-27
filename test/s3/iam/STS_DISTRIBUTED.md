@@ -264,8 +264,7 @@ services:
    ↓
 6. STS generates temporary credentials
    - Creates temporary access key, secret key, session token
-   - Session token is signed JWT with session ID
-   - Stores session info in distributed session store
+   - Session token is signed JWT with all session information embedded (stateless)
    ↓
 7. User receives temporary credentials
    {

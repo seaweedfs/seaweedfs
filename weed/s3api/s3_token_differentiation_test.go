@@ -1,7 +1,9 @@
 package s3api
 
 import (
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/iam/integration"
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
@@ -9,10 +11,23 @@ import (
 )
 
 func TestS3IAMIntegration_isSTSIssuer(t *testing.T) {
-	// Create test STS service
+	// Create test STS service with configuration
 	stsService := sts.NewSTSService()
 
-	// Create S3IAM integration with STS service
+	// Set up STS configuration with a specific issuer
+	testIssuer := "https://seaweedfs-prod.company.com/sts"
+	stsConfig := &sts.STSConfig{
+		Issuer:           testIssuer,
+		SigningKey:       []byte("test-signing-key-32-characters-long"),
+		TokenDuration:    time.Hour,
+		MaxSessionLength: 12 * time.Hour, // Required field
+	}
+
+	// Initialize STS service with config (this sets the Config field)
+	err := stsService.Initialize(stsConfig)
+	assert.NoError(t, err)
+
+	// Create S3IAM integration with configured STS service
 	s3iam := &S3IAMIntegration{
 		iamManager:   &integration.IAMManager{}, // Mock
 		stsService:   stsService,
@@ -25,33 +40,33 @@ func TestS3IAMIntegration_isSTSIssuer(t *testing.T) {
 		issuer   string
 		expected bool
 	}{
-		// STS issuers (should return true)
+		// Only exact match should return true
 		{
-			name:     "explicit STS issuer",
-			issuer:   "seaweedfs-sts",
+			name:     "exact match with configured issuer",
+			issuer:   testIssuer,
 			expected: true,
 		},
+		// All other issuers should return false (exact matching)
 		{
-			name:     "STS in issuer name",
-			issuer:   "https://mycompany-sts.example.com",
-			expected: true,
+			name:     "similar but not exact issuer",
+			issuer:   "https://seaweedfs-prod.company.com/sts2",
+			expected: false,
 		},
 		{
-			name:     "seaweed in issuer name",
-			issuer:   "https://seaweed-prod.company.com",
-			expected: true,
+			name:     "substring of configured issuer",
+			issuer:   "seaweedfs-prod.company.com",
+			expected: false,
 		},
 		{
-			name:     "localhost for development",
-			issuer:   "http://localhost:9333/sts",
-			expected: true,
+			name:     "contains configured issuer as substring",
+			issuer:   "prefix-" + testIssuer + "-suffix",
+			expected: false,
 		},
 		{
-			name:     "case insensitive STS",
-			issuer:   "SEAWEEDFS-STS-PROD",
-			expected: true,
+			name:     "case sensitive - different case",
+			issuer:   strings.ToUpper(testIssuer),
+			expected: false,
 		},
-		// External OIDC issuers (should return false)
 		{
 			name:     "Google OIDC",
 			issuer:   "https://accounts.google.com",
@@ -73,8 +88,8 @@ func TestS3IAMIntegration_isSTSIssuer(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:     "Generic OIDC provider",
-			issuer:   "https://oidc.provider.com",
+			name:     "Empty string",
+			issuer:   "",
 			expected: false,
 		},
 	}
@@ -82,7 +97,7 @@ func TestS3IAMIntegration_isSTSIssuer(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := s3iam.isSTSIssuer(tt.issuer)
-			assert.Equal(t, tt.expected, result, "isSTSIssuer should correctly identify issuer type")
+			assert.Equal(t, tt.expected, result, "isSTSIssuer should use exact matching against configured issuer")
 		})
 	}
 }
