@@ -301,12 +301,12 @@ func (e *PolicyEngine) Evaluate(ctx context.Context, filerAddress string, evalCt
 // statementMatches checks if a statement matches the evaluation context
 func (e *PolicyEngine) statementMatches(statement *Statement, evalCtx *EvaluationContext) bool {
 	// Check action match
-	if !e.matchesActions(statement.Action, evalCtx.Action) {
+	if !e.matchesActions(statement.Action, evalCtx.Action, evalCtx) {
 		return false
 	}
 
 	// Check resource match
-	if !e.matchesResources(statement.Resource, evalCtx.Resource) {
+	if !e.matchesResources(statement.Resource, evalCtx.Resource, evalCtx) {
 		return false
 	}
 
@@ -319,9 +319,9 @@ func (e *PolicyEngine) statementMatches(statement *Statement, evalCtx *Evaluatio
 }
 
 // matchesActions checks if any action in the list matches the requested action
-func (e *PolicyEngine) matchesActions(actions []string, requestedAction string) bool {
+func (e *PolicyEngine) matchesActions(actions []string, requestedAction string, evalCtx *EvaluationContext) bool {
 	for _, action := range actions {
-		if matchAction(action, requestedAction) {
+		if awsIAMMatch(action, requestedAction, evalCtx) {
 			return true
 		}
 	}
@@ -329,9 +329,9 @@ func (e *PolicyEngine) matchesActions(actions []string, requestedAction string) 
 }
 
 // matchesResources checks if any resource in the list matches the requested resource
-func (e *PolicyEngine) matchesResources(resources []string, requestedResource string) bool {
+func (e *PolicyEngine) matchesResources(resources []string, requestedResource string, evalCtx *EvaluationContext) bool {
 	for _, resource := range resources {
-		if matchResource(resource, requestedResource) {
+		if awsIAMMatch(resource, requestedResource, evalCtx) {
 			return true
 		}
 	}
