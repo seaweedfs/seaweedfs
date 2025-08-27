@@ -97,7 +97,7 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 		ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
 
-		identity, err := s3iam.validateOIDCToken(ctx, sessionToken)
+		identity, err := s3iam.validateExternalOIDCToken(ctx, sessionToken)
 		elapsed := time.Since(start)
 
 		if err != nil {
@@ -729,77 +729,71 @@ type OIDCIdentity struct {
 	Provider string
 }
 
-// validateOIDCToken validates an OIDC token using registered identity providers
-func (s3iam *S3IAMIntegration) validateOIDCToken(ctx context.Context, token string) (*OIDCIdentity, error) {
-	glog.V(0).Infof("🔍 validateOIDCToken: Starting OIDC token validation")
+// validateExternalOIDCToken validates an external OIDC token using the STS service's secure issuer-based lookup
+// This method delegates to the STS service's validateWebIdentityToken for better security and efficiency
+func (s3iam *S3IAMIntegration) validateExternalOIDCToken(ctx context.Context, token string) (*OIDCIdentity, error) {
+	glog.V(0).Infof("🔍 validateExternalOIDCToken: Starting secure OIDC token validation via STS service")
 
 	if s3iam.iamManager == nil {
-		glog.V(0).Infof("🔍 validateOIDCToken: IAM manager not available")
+		glog.V(0).Infof("🔍 validateExternalOIDCToken: IAM manager not available")
 		return nil, fmt.Errorf("IAM manager not available")
 	}
 
-	// Get STS service to access identity providers
+	// Get STS service for secure token validation
 	stsService := s3iam.iamManager.GetSTSService()
 	if stsService == nil {
-		glog.V(0).Infof("🔍 validateOIDCToken: STS service not available")
+		glog.V(0).Infof("🔍 validateExternalOIDCToken: STS service not available")
 		return nil, fmt.Errorf("STS service not available")
 	}
 
-	// Try to validate token with each registered OIDC provider
-	providers := stsService.GetProviders()
-	glog.V(0).Infof("🔍 validateOIDCToken: Found %d providers to try", len(providers))
-
-	for providerName, provider := range providers {
-		glog.V(0).Infof("🔍 validateOIDCToken: Trying provider '%s'...", providerName)
-		start := time.Now()
-
-		// Try to authenticate with this provider
-		externalIdentity, err := provider.Authenticate(ctx, token)
-		elapsed := time.Since(start)
-
-		if err != nil {
-			glog.V(0).Infof("🔍 validateOIDCToken: Provider '%s' FAILED after %v: %v", providerName, elapsed, err)
-			continue
-		}
-
-		glog.V(0).Infof("🔍 validateOIDCToken: Provider '%s' SUCCEEDED after %v", providerName, elapsed)
-
-		// Extract role from external identity attributes
-		rolesAttr, exists := externalIdentity.Attributes["roles"]
-		if !exists || rolesAttr == "" {
-			glog.V(3).Infof("No roles found in external identity from provider %s", providerName)
-			continue
-		}
-
-		// Parse roles (stored as comma-separated string)
-		rolesStr := strings.TrimSpace(rolesAttr)
-		roles := strings.Split(rolesStr, ",")
-
-		// Clean up role names
-		var cleanRoles []string
-		for _, role := range roles {
-			cleanRole := strings.TrimSpace(role)
-			if cleanRole != "" {
-				cleanRoles = append(cleanRoles, cleanRole)
-			}
-		}
-
-		if len(cleanRoles) == 0 {
-			glog.V(3).Infof("Empty roles list from provider %s", providerName)
-			continue
-		}
-
-		// Determine the primary role using intelligent selection
-		roleArn := s3iam.selectPrimaryRole(cleanRoles, externalIdentity)
-
-		return &OIDCIdentity{
-			UserID:   externalIdentity.UserID,
-			RoleArn:  roleArn,
-			Provider: providerName,
-		}, nil
+	// Use the STS service's secure validateWebIdentityToken method
+	// This method uses issuer-based lookup to select the correct provider, which is more secure and efficient
+	externalIdentity, provider, err := stsService.ValidateWebIdentityToken(ctx, token)
+	if err != nil {
+		glog.V(0).Infof("🔍 validateExternalOIDCToken: STS validation failed: %v", err)
+		return nil, fmt.Errorf("token validation failed: %w", err)
 	}
 
-	return nil, fmt.Errorf("token not valid for any registered OIDC provider")
+	if externalIdentity == nil {
+		glog.V(0).Infof("🔍 validateExternalOIDCToken: STS validation succeeded but no identity returned")
+		return nil, fmt.Errorf("authentication succeeded but no identity returned")
+	}
+
+	glog.V(0).Infof("🔍 validateExternalOIDCToken: STS validation succeeded with provider type: %T", provider)
+
+	// Extract role from external identity attributes
+	rolesAttr, exists := externalIdentity.Attributes["roles"]
+	if !exists || rolesAttr == "" {
+		glog.V(3).Infof("No roles found in external identity")
+		return nil, fmt.Errorf("no roles found in external identity")
+	}
+
+	// Parse roles (stored as comma-separated string)
+	rolesStr := strings.TrimSpace(rolesAttr)
+	roles := strings.Split(rolesStr, ",")
+
+	// Clean up role names
+	var cleanRoles []string
+	for _, role := range roles {
+		cleanRole := strings.TrimSpace(role)
+		if cleanRole != "" {
+			cleanRoles = append(cleanRoles, cleanRole)
+		}
+	}
+
+	if len(cleanRoles) == 0 {
+		glog.V(3).Infof("Empty roles list after parsing")
+		return nil, fmt.Errorf("no valid roles found in token")
+	}
+
+	// Determine the primary role using intelligent selection
+	roleArn := s3iam.selectPrimaryRole(cleanRoles, externalIdentity)
+
+	return &OIDCIdentity{
+		UserID:   externalIdentity.UserID,
+		RoleArn:  roleArn,
+		Provider: fmt.Sprintf("%T", provider), // Use provider type as identifier
+	}, nil
 }
 
 // selectPrimaryRole simply picks the first role from the list

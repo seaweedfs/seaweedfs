@@ -581,6 +581,12 @@ func (s *STSService) validateWebIdentityToken(ctx context.Context, token string)
 	return identity, provider, nil
 }
 
+// ValidateWebIdentityToken is a public method that exposes secure token validation for external use
+// This method uses issuer-based lookup to select the correct provider, ensuring security and efficiency
+func (s *STSService) ValidateWebIdentityToken(ctx context.Context, token string) (*providers.ExternalIdentity, providers.IdentityProvider, error) {
+	return s.validateWebIdentityToken(ctx, token)
+}
+
 // validateWithAllProviders is a fallback for non-JWT tokens (e.g., LDAP credentials, test tokens)
 // This should only be used when the token is not a valid JWT
 func (s *STSService) validateWithAllProviders(ctx context.Context, token string) (*providers.ExternalIdentity, providers.IdentityProvider, error) {
