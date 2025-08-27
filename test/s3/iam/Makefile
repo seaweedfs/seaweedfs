@@ -87,7 +87,7 @@ start-services: ## Start SeaweedFS services for testing
 	@$(WEED_BINARY) -v=3 s3 -port=$(S3_PORT) \
 		-filer=localhost:$(FILER_PORT) \
 		-config=test_config.json \
-                -iam.config=$(CURDIR)/iam_config.json > weed-s3.log 2>&1 & \
+		-iam.config=$(CURDIR)/iam_config.json > weed-s3.log 2>&1 & \
 		echo $$! > $(S3_PID_FILE)
 	
 	@echo "✅ All services started"
