@@ -190,7 +190,7 @@ IAM data in memory is **not automatically migrated**. You'll need to:
 grep "advanced IAM" /path/to/s3-gateway.log
 
 # Verify filer connectivity
-weed filer.cat /seaweedfs/iam/roles/
+weed filer.ls /seaweedfs/iam/roles/
 ```
 
 ### Inconsistent Behavior
