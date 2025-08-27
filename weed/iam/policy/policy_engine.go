@@ -584,13 +584,19 @@ func validateStatementWithType(statement *Statement, policyType string) error {
 
 
 // matchResource checks if a resource pattern matches a requested resource
-// Uses filepath.Match for consistent wildcard behavior across the IAM system
+// Uses hybrid approach: simple suffix wildcards for compatibility, filepath.Match for complex patterns
 func matchResource(pattern, resource string) bool {
 	if pattern == resource {
 		return true
 	}
 
-	// Use filepath.Match for standard wildcard support (*, ?, [])
+	// Handle simple suffix wildcard (backward compatibility)
+	if strings.HasSuffix(pattern, "*") {
+		prefix := pattern[:len(pattern)-1]
+		return strings.HasPrefix(resource, prefix)
+	}
+
+	// For complex patterns, use filepath.Match for advanced wildcard support (*, ?, [])
 	matched, err := filepath.Match(pattern, resource)
 	if err != nil {
 		// Fallback to exact match if pattern is malformed
@@ -601,13 +607,19 @@ func matchResource(pattern, resource string) bool {
 }
 
 // matchAction checks if an action pattern matches a requested action
-// Uses filepath.Match for consistent wildcard behavior across the IAM system
+// Uses hybrid approach: simple suffix wildcards for compatibility, filepath.Match for complex patterns
 func matchAction(pattern, action string) bool {
 	if pattern == action {
 		return true
 	}
 
-	// Use filepath.Match for standard wildcard support (*, ?, [])
+	// Handle simple suffix wildcard (backward compatibility)
+	if strings.HasSuffix(pattern, "*") {
+		prefix := pattern[:len(pattern)-1]
+		return strings.HasPrefix(action, prefix)
+	}
+
+	// For complex patterns, use filepath.Match for advanced wildcard support (*, ?, [])
 	matched, err := filepath.Match(pattern, action)
 	if err != nil {
 		// Fallback to exact match if pattern is malformed
