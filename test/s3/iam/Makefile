@@ -87,7 +87,7 @@ start-services: ## Start SeaweedFS services for testing
 	@$(WEED_BINARY) -v=3 s3 -port=$(S3_PORT) \
 		-filer=localhost:$(FILER_PORT) \
 		-config=test_config.json \
-                -iam.config=$(shell pwd)/iam_config.json > weed-s3.log 2>&1 & \
+                -iam.config=$(CURDIR)/iam_config.json > weed-s3.log 2>&1 & \
 		echo $$! > $(S3_PID_FILE)
 	
 	@echo "✅ All services started"
@@ -234,9 +234,11 @@ docker-logs: ## Show logs from all services
 
 docker-test: docker-up ## Run tests with Docker Compose including Keycloak
 	@echo "🧪 Running Keycloak integration tests..."
+	@echo "⏳ Waiting for services to be ready..."
+	@timeout 120 bash -c 'until curl -s http://localhost:8080/health/ready > /dev/null 2>&1; do sleep 2; done' || (echo "❌ Keycloak failed to become ready" && exit 1)
+	@timeout 60 bash -c 'until curl -s http://localhost:8333 > /dev/null 2>&1; do sleep 2; done' || (echo "❌ S3 API failed to become ready" && exit 1)
 	@export KEYCLOAK_URL="http://localhost:8080" && \
 	 export S3_ENDPOINT="http://localhost:8333" && \
-	 sleep 10 && \
 	 go test -v -timeout $(TEST_TIMEOUT) -run "TestKeycloak" ./...
 	@echo "🐳 Stopping services after tests..."
 	@make docker-down
@@ -274,9 +276,11 @@ test-versioning-stress: ## Run S3 versioning stress tests
 
 test-keycloak-full: docker-up ## Run complete Keycloak integration tests
 	@echo "🔐 Running complete Keycloak integration tests..."
+	@echo "⏳ Waiting for services to be ready..."
+	@timeout 120 bash -c 'until curl -s http://localhost:8080/health/ready > /dev/null 2>&1; do sleep 2; done' || (echo "❌ Keycloak failed to become ready" && exit 1)
+	@timeout 60 bash -c 'until curl -s http://localhost:8333 > /dev/null 2>&1; do sleep 2; done' || (echo "❌ S3 API failed to become ready" && exit 1)
 	@export KEYCLOAK_URL="http://localhost:8080" && \
 	 export S3_ENDPOINT="http://localhost:8333" && \
-	 sleep 15 && \
 	 go test -v -timeout $(TEST_TIMEOUT) -run "TestKeycloak" ./...
 	@make docker-down
 

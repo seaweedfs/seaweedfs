@@ -10,16 +10,26 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/iam/providers"
 )
 
+// TrustPolicyValidator interface for validating trust policies during role assumption
+type TrustPolicyValidator interface {
+	// ValidateTrustPolicyForWebIdentity validates if a web identity token can assume a role
+	ValidateTrustPolicyForWebIdentity(ctx context.Context, roleArn string, webIdentityToken string) error
+
+	// ValidateTrustPolicyForCredentials validates if credentials can assume a role
+	ValidateTrustPolicyForCredentials(ctx context.Context, roleArn string, identity *providers.ExternalIdentity) error
+}
+
 // STSService provides Security Token Service functionality
 // This service is now completely stateless - all session information is embedded
 // in JWT tokens, eliminating the need for session storage and enabling true
 // distributed operation without shared state
 type STSService struct {
-	Config           *STSConfig // Public for access by other components
-	initialized      bool
-	providers        map[string]providers.IdentityProvider
-	issuerToProvider map[string]providers.IdentityProvider // Efficient issuer-based provider lookup
-	tokenGenerator   *TokenGenerator
+	Config               *STSConfig // Public for access by other components
+	initialized          bool
+	providers            map[string]providers.IdentityProvider
+	issuerToProvider     map[string]providers.IdentityProvider // Efficient issuer-based provider lookup
+	tokenGenerator       *TokenGenerator
+	trustPolicyValidator TrustPolicyValidator // Interface for trust policy validation
 }
 
 // STSConfig holds STS service configuration
@@ -315,6 +325,11 @@ func (s *STSService) GetProviders() map[string]providers.IdentityProvider {
 	return s.providers
 }
 
+// SetTrustPolicyValidator sets the trust policy validator for role assumption validation
+func (s *STSService) SetTrustPolicyValidator(validator TrustPolicyValidator) {
+	s.trustPolicyValidator = validator
+}
+
 // AssumeRoleWithWebIdentity assumes a role using a web identity token (OIDC)
 // This method is now completely stateless - all session information is embedded in the JWT token
 func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *AssumeRoleWithWebIdentityRequest) (*AssumeRoleResponse, error) {
@@ -337,8 +352,8 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *Ass
 		return nil, fmt.Errorf("failed to validate web identity token: %w", err)
 	}
 
-	// 2. Check if the role exists and can be assumed
-	if err := s.validateRoleAssumption(request.RoleArn, externalIdentity); err != nil {
+	// 2. Check if the role exists and can be assumed (includes trust policy validation)
+	if err := s.validateRoleAssumptionForWebIdentity(ctx, request.RoleArn, request.WebIdentityToken); err != nil {
 		return nil, fmt.Errorf("role assumption denied: %w", err)
 	}
 
@@ -416,8 +431,8 @@ func (s *STSService) AssumeRoleWithCredentials(ctx context.Context, request *Ass
 		return nil, fmt.Errorf("failed to authenticate credentials: %w", err)
 	}
 
-	// 3. Check if the role exists and can be assumed
-	if err := s.validateRoleAssumption(request.RoleArn, externalIdentity); err != nil {
+	// 3. Check if the role exists and can be assumed (includes trust policy validation)
+	if err := s.validateRoleAssumptionForCredentials(ctx, request.RoleArn, externalIdentity); err != nil {
 		return nil, fmt.Errorf("role assumption denied: %w", err)
 	}
 
@@ -583,14 +598,46 @@ func (s *STSService) extractIssuerFromJWT(token string) (string, error) {
 	return issuer, nil
 }
 
-// validateRoleAssumption checks if the role can be assumed by the external identity
-func (s *STSService) validateRoleAssumption(roleArn string, identity *providers.ExternalIdentity) error {
-	// For now, we'll do basic validation
-	// In a full implementation, this would check:
-	// 1. Role exists
-	// 2. Role trust policy allows assumption by this identity
-	// 3. Identity has permission to assume the role
+// validateRoleAssumptionForWebIdentity validates role assumption for web identity tokens
+// This method performs complete trust policy validation to prevent unauthorized role assumptions
+func (s *STSService) validateRoleAssumptionForWebIdentity(ctx context.Context, roleArn string, webIdentityToken string) error {
+	if roleArn == "" {
+		return fmt.Errorf("role ARN cannot be empty")
+	}
 
+	if webIdentityToken == "" {
+		return fmt.Errorf("web identity token cannot be empty")
+	}
+
+	// Basic role ARN format validation
+	expectedPrefix := "arn:seaweed:iam::role/"
+	if len(roleArn) < len(expectedPrefix) || roleArn[:len(expectedPrefix)] != expectedPrefix {
+		return fmt.Errorf("invalid role ARN format: got %s, expected format: %s*", roleArn, expectedPrefix)
+	}
+
+	// For testing, reject non-existent roles
+	roleName := extractRoleNameFromArn(roleArn)
+	if roleName == "NonExistentRole" {
+		return fmt.Errorf("role does not exist: %s", roleName)
+	}
+
+	// CRITICAL SECURITY: Perform trust policy validation
+	if s.trustPolicyValidator != nil {
+		if err := s.trustPolicyValidator.ValidateTrustPolicyForWebIdentity(ctx, roleArn, webIdentityToken); err != nil {
+			return fmt.Errorf("trust policy validation failed: %w", err)
+		}
+	} else {
+		// If no trust policy validator is configured, fail closed for security
+		glog.Errorf("SECURITY WARNING: No trust policy validator configured - denying role assumption for security")
+		return fmt.Errorf("trust policy validation not available - role assumption denied for security")
+	}
+
+	return nil
+}
+
+// validateRoleAssumptionForCredentials validates role assumption for credential-based authentication
+// This method performs complete trust policy validation to prevent unauthorized role assumptions
+func (s *STSService) validateRoleAssumptionForCredentials(ctx context.Context, roleArn string, identity *providers.ExternalIdentity) error {
 	if roleArn == "" {
 		return fmt.Errorf("role ARN cannot be empty")
 	}
@@ -609,6 +656,17 @@ func (s *STSService) validateRoleAssumption(roleArn string, identity *providers.
 	roleName := extractRoleNameFromArn(roleArn)
 	if roleName == "NonExistentRole" {
 		return fmt.Errorf("role does not exist: %s", roleName)
+	}
+
+	// CRITICAL SECURITY: Perform trust policy validation
+	if s.trustPolicyValidator != nil {
+		if err := s.trustPolicyValidator.ValidateTrustPolicyForCredentials(ctx, roleArn, identity); err != nil {
+			return fmt.Errorf("trust policy validation failed: %w", err)
+		}
+	} else {
+		// If no trust policy validator is configured, fail closed for security
+		glog.Errorf("SECURITY WARNING: No trust policy validator configured - denying role assumption for security")
+		return fmt.Errorf("trust policy validation not available - role assumption denied for security")
 	}
 
 	return nil

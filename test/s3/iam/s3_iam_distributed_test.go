@@ -218,13 +218,11 @@ func TestS3IAMDistributedTests(t *testing.T) {
 		// STRICT CONCURRENCY TESTING: Use appropriate thresholds for the operation count
 		// For totalOperations=6, error thresholds need to be adjusted to avoid unreachable conditions
 
-		// Serious errors (race conditions, deadlocks) should be zero or very rare
-		maxSeriousErrors := 1 // Allow 1 serious error max (16.7%) for small test size
+		// Serious errors (race conditions, deadlocks) should be zero for reliable testing
+		maxSeriousErrors := 0 // Allow 0 serious errors max - any serious error indicates system issues
 		if len(seriousErrors) > maxSeriousErrors {
-			t.Errorf("❌ Too many serious errors: %d (%.1f%%) - max allowed: %d. This indicates potential race conditions, deadlocks, or other concurrency bugs.",
-				len(seriousErrors), seriousErrorRate*100, maxSeriousErrors)
-		} else if len(seriousErrors) > 0 {
-			t.Logf("⚠️  %d serious error detected (%.1f%%) - within threshold but should be investigated", len(seriousErrors), seriousErrorRate*100)
+			t.Errorf("❌ %d serious error(s) detected, indicating potential concurrency bugs. First error: %v",
+				len(seriousErrors), seriousErrors[0])
 		}
 
 		// For total errors, allow more flexibility with small operation counts

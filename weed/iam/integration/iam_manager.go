@@ -95,6 +95,9 @@ func (m *IAMManager) Initialize(config *IAMConfig) error {
 		return fmt.Errorf("failed to initialize STS service: %w", err)
 	}
 
+	// CRITICAL SECURITY: Set trust policy validator to ensure proper role assumption validation
+	m.stsService.SetTrustPolicyValidator(m)
+
 	// Initialize policy engine
 	m.policyEngine = policy.NewPolicyEngine()
 	if err := m.policyEngine.Initialize(config.Policy); err != nil {
@@ -514,8 +517,6 @@ func (m *IAMManager) evaluateTrustPolicyConditions(conditions map[string]map[str
 	return true
 }
 
-
-
 // isOIDCToken checks if a token is an OIDC JWT token (vs STS session token)
 func isOIDCToken(token string) bool {
 	// JWT tokens have three parts separated by dots and start with base64-encoded JSON
@@ -526,4 +527,51 @@ func isOIDCToken(token string) bool {
 
 	// JWT tokens typically start with "eyJ" (base64 encoded JSON starting with "{")
 	return strings.HasPrefix(token, "eyJ")
+}
+
+// TrustPolicyValidator interface implementation
+// These methods allow the IAMManager to serve as the trust policy validator for the STS service
+
+// ValidateTrustPolicyForWebIdentity implements the TrustPolicyValidator interface
+func (m *IAMManager) ValidateTrustPolicyForWebIdentity(ctx context.Context, roleArn string, webIdentityToken string) error {
+	if !m.initialized {
+		return fmt.Errorf("IAM manager not initialized")
+	}
+
+	// Extract role name from ARN
+	roleName := extractRoleNameFromArn(roleArn)
+
+	// Get role definition
+	roleDef, err := m.roleStore.GetRole(ctx, "", roleName)
+	if err != nil {
+		return fmt.Errorf("role not found: %s", roleName)
+	}
+
+	// Use existing trust policy validation logic
+	return m.validateTrustPolicyForWebIdentity(ctx, roleDef, webIdentityToken)
+}
+
+// ValidateTrustPolicyForCredentials implements the TrustPolicyValidator interface
+func (m *IAMManager) ValidateTrustPolicyForCredentials(ctx context.Context, roleArn string, identity *providers.ExternalIdentity) error {
+	if !m.initialized {
+		return fmt.Errorf("IAM manager not initialized")
+	}
+
+	// Extract role name from ARN
+	roleName := extractRoleNameFromArn(roleArn)
+
+	// Get role definition
+	roleDef, err := m.roleStore.GetRole(ctx, "", roleName)
+	if err != nil {
+		return fmt.Errorf("role not found: %s", roleName)
+	}
+
+	// For credentials, we need to create a mock request to reuse existing validation
+	// This is a bit of a hack, but it allows us to reuse the existing logic
+	mockRequest := &sts.AssumeRoleWithCredentialsRequest{
+		ProviderName: identity.Provider, // Use the provider name from the identity
+	}
+
+	// Use existing trust policy validation logic
+	return m.validateTrustPolicyForCredentials(ctx, roleDef, mockRequest)
 }
