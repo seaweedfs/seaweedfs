@@ -641,8 +641,13 @@ func (s *STSService) validateRoleAssumptionForWebIdentity(ctx context.Context, r
 		return fmt.Errorf("invalid role ARN format: got %s, expected format: %s*", roleArn, expectedPrefix)
 	}
 
-	// For testing, reject non-existent roles
+	// Extract role name and validate ARN format
 	roleName := extractRoleNameFromArn(roleArn)
+	if roleName == "" {
+		return fmt.Errorf("invalid role ARN format: %s", roleArn)
+	}
+
+	// For testing, reject non-existent roles
 	if roleName == "NonExistentRole" {
 		return fmt.Errorf("role does not exist: %s", roleName)
 	}
@@ -678,8 +683,13 @@ func (s *STSService) validateRoleAssumptionForCredentials(ctx context.Context, r
 		return fmt.Errorf("invalid role ARN format: got %s, expected format: %s*", roleArn, expectedPrefix)
 	}
 
-	// For testing, reject non-existent roles
+	// Extract role name and validate ARN format
 	roleName := extractRoleNameFromArn(roleArn)
+	if roleName == "" {
+		return fmt.Errorf("invalid role ARN format: %s", roleArn)
+	}
+
+	// For testing, reject non-existent roles
 	if roleName == "NonExistentRole" {
 		return fmt.Errorf("role does not exist: %s", roleName)
 	}

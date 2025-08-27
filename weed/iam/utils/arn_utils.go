@@ -23,6 +23,7 @@ func ExtractRoleNameFromPrincipal(principal string) string {
 		return principal[len(iamPrefix):]
 	}
 
-	// For backwards compatibility, return original principal if no recognized format
-	return principal
+	// Return empty string to signal invalid ARN format
+	// This allows callers to handle the error explicitly instead of masking it
+	return ""
 }

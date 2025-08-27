@@ -198,6 +198,64 @@ func TestProviderFactory_ConvertToStringSlice(t *testing.T) {
 	})
 }
 
+func TestProviderFactory_ConfigConversionErrors(t *testing.T) {
+	factory := NewProviderFactory()
+
+	t.Run("invalid scopes type", func(t *testing.T) {
+		config := &ProviderConfig{
+			Name:    "invalid-scopes",
+			Type:    "oidc",
+			Enabled: true,
+			Config: map[string]interface{}{
+				"issuer":   "https://test-issuer.com",
+				"clientId": "test-client",
+				"scopes":   "invalid-not-array", // Should be array
+			},
+		}
+
+		provider, err := factory.CreateProvider(config)
+		assert.Error(t, err)
+		assert.Nil(t, provider)
+		assert.Contains(t, err.Error(), "failed to convert scopes")
+	})
+
+	t.Run("invalid claimsMapping type", func(t *testing.T) {
+		config := &ProviderConfig{
+			Name:    "invalid-claims",
+			Type:    "oidc",
+			Enabled: true,
+			Config: map[string]interface{}{
+				"issuer":        "https://test-issuer.com",
+				"clientId":      "test-client",
+				"claimsMapping": "invalid-not-map", // Should be map
+			},
+		}
+
+		provider, err := factory.CreateProvider(config)
+		assert.Error(t, err)
+		assert.Nil(t, provider)
+		assert.Contains(t, err.Error(), "failed to convert claimsMapping")
+	})
+
+	t.Run("invalid roleMapping type", func(t *testing.T) {
+		config := &ProviderConfig{
+			Name:    "invalid-roles",
+			Type:    "oidc",
+			Enabled: true,
+			Config: map[string]interface{}{
+				"issuer":      "https://test-issuer.com",
+				"clientId":    "test-client",
+				"roleMapping": "invalid-not-map", // Should be map
+			},
+		}
+
+		provider, err := factory.CreateProvider(config)
+		assert.Error(t, err)
+		assert.Nil(t, provider)
+		assert.Contains(t, err.Error(), "failed to convert roleMapping")
+	})
+}
+
 func TestProviderFactory_ConvertToStringMap(t *testing.T) {
 	factory := NewProviderFactory()
 

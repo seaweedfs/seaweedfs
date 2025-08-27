@@ -317,9 +317,19 @@ func (f *FilerRoleStore) DeleteRole(ctx context.Context, filerAddress string, ro
 		}
 
 		glog.V(3).Infof("Deleting role %s", roleName)
-		_, err := client.DeleteEntry(ctx, request)
+		resp, err := client.DeleteEntry(ctx, request)
 		if err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				return nil // Idempotent: deletion of non-existent role is successful
+			}
 			return fmt.Errorf("failed to delete role %s: %v", roleName, err)
+		}
+
+		if resp.Error != "" {
+			if strings.Contains(resp.Error, "not found") {
+				return nil // Idempotent: deletion of non-existent role is successful
+			}
+			return fmt.Errorf("failed to delete role %s: %s", roleName, resp.Error)
 		}
 
 		return nil

@@ -133,23 +133,29 @@ func (f *ProviderFactory) convertToOIDCConfig(configMap map[string]interface{}) 
 
 	// Convert scopes array
 	if scopesInterface, ok := configMap[ConfigFieldScopes]; ok {
-		if scopes, err := f.convertToStringSlice(scopesInterface); err == nil {
-			config.Scopes = scopes
+		scopes, err := f.convertToStringSlice(scopesInterface)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert scopes: %w", err)
 		}
+		config.Scopes = scopes
 	}
 
 	// Convert claims mapping
 	if claimsMapInterface, ok := configMap["claimsMapping"]; ok {
-		if claimsMap, err := f.convertToStringMap(claimsMapInterface); err == nil {
-			config.ClaimsMapping = claimsMap
+		claimsMap, err := f.convertToStringMap(claimsMapInterface)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert claimsMapping: %w", err)
 		}
+		config.ClaimsMapping = claimsMap
 	}
 
 	// Convert role mapping
 	if roleMappingInterface, ok := configMap["roleMapping"]; ok {
-		if roleMapping, err := f.convertToRoleMapping(roleMappingInterface); err == nil {
-			config.RoleMapping = roleMapping
+		roleMapping, err := f.convertToRoleMapping(roleMappingInterface)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert roleMapping: %w", err)
 		}
+		config.RoleMapping = roleMapping
 	}
 
 	glog.V(3).Infof("Converted OIDC config: issuer=%s, clientId=%s, jwksUri=%s",

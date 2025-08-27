@@ -132,7 +132,7 @@ func TestS3IAMDistributedTests(t *testing.T) {
 			var lastErr error
 			for attempt := 0; attempt <= maxRetries; attempt++ {
 				if attempt > 0 {
-					time.Sleep(retryDelay * time.Duration(attempt)) // Exponential backoff
+					time.Sleep(retryDelay * time.Duration(attempt)) // Linear backoff
 				}
 
 				lastErr = operation()

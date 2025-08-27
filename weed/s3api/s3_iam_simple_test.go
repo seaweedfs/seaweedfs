@@ -451,7 +451,7 @@ func TestExtractRoleNameFromPrincipal(t *testing.T) {
 		{
 			name:      "invalid format",
 			principal: "invalid-principal",
-			expected:  "invalid-principal", // Returns original on failure
+			expected:  "", // Returns empty string to signal invalid format
 		},
 		{
 			name:      "missing session name",

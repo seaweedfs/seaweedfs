@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -207,15 +208,20 @@ func GenerateSessionId() (string, error) {
 func GenerateAssumedRoleArn(roleArn, sessionName string) string {
 	// Convert role ARN to assumed role user ARN
 	// arn:seaweed:iam::role/RoleName -> arn:seaweed:sts::assumed-role/RoleName/SessionName
-	return fmt.Sprintf("arn:seaweed:sts::assumed-role/%s/%s", extractRoleNameFromArn(roleArn), sessionName)
+	roleName := extractRoleNameFromArn(roleArn)
+	if roleName == "" {
+		// This should not happen if validation is done properly upstream
+		return fmt.Sprintf("arn:seaweed:sts::assumed-role/INVALID-ARN/%s", sessionName)
+	}
+	return fmt.Sprintf("arn:seaweed:sts::assumed-role/%s/%s", roleName, sessionName)
 }
 
 // extractRoleNameFromArn extracts the role name from a role ARN
 func extractRoleNameFromArn(roleArn string) string {
 	// Simple extraction for arn:seaweed:iam::role/RoleName
 	prefix := "arn:seaweed:iam::role/"
-	if len(roleArn) > len(prefix) && roleArn[:len(prefix)] == prefix {
+	if strings.HasPrefix(roleArn, prefix) && len(roleArn) > len(prefix) {
 		return roleArn[len(prefix):]
 	}
-	return "UnknownRole"
+	return ""
 }

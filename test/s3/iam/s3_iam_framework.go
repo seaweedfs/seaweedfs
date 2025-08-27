@@ -390,9 +390,8 @@ func (f *S3IAMTestFramework) generateSTSSessionToken(username, roleName string, 
 		return "", err
 	}
 
-	// Note: In a real implementation, we would also create the session in the STS session store
-	// For now, we'll rely on the fact that if JWT validation passes, the session should be considered valid
-	// This is a limitation of our current testing approach
+	// The generated JWT is self-contained and includes all necessary session information.
+	// The stateless design of the STS service means no external session storage is required.
 
 	return tokenString, nil
 }
