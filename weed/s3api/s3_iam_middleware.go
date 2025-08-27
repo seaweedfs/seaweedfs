@@ -203,10 +203,13 @@ func (s3iam *S3IAMIntegration) AuthorizeAction(ctx context.Context, identity *IA
 	// Extract request context for policy conditions
 	requestContext := extractRequestContext(r)
 
+	// Determine the specific S3 action based on the HTTP request details
+	specificAction := determineGranularS3Action(r, action, bucket, objectKey)
+
 	// Create action request
 	actionRequest := &integration.ActionRequest{
 		Principal:      identity.Principal,
-		Action:         mapS3ActionToIAMAction(action),
+		Action:         specificAction,
 		Resource:       resourceArn,
 		SessionToken:   identity.SessionToken,
 		RequestContext: requestContext,
@@ -270,26 +273,200 @@ func buildS3ResourceArn(bucket string, objectKey string) string {
 	return "arn:seaweed:s3:::" + bucket + "/" + objectKey
 }
 
-// mapS3ActionToIAMAction maps S3 API actions to IAM policy actions
-func mapS3ActionToIAMAction(s3Action Action) string {
-	// Map S3 actions to standard IAM policy actions
-	actionMap := map[Action]string{
-		s3_constants.ACTION_READ:          "s3:GetObject",
-		s3_constants.ACTION_WRITE:         "s3:PutObject",
-		s3_constants.ACTION_LIST:          "s3:ListBucket",
-		s3_constants.ACTION_TAGGING:       "s3:GetObjectTagging",
-		s3_constants.ACTION_READ_ACP:      "s3:GetObjectAcl",
-		s3_constants.ACTION_WRITE_ACP:     "s3:PutObjectAcl",
-		s3_constants.ACTION_DELETE_BUCKET: "s3:DeleteBucket",
-		s3_constants.ACTION_ADMIN:         "s3:*",
+// determineGranularS3Action determines the specific S3 IAM action based on HTTP request details
+// This provides granular, operation-specific actions for accurate IAM policy enforcement
+func determineGranularS3Action(r *http.Request, fallbackAction Action, bucket string, objectKey string) string {
+	method := r.Method
+	query := r.URL.Query()
+
+	// Handle object-level operations
+	if objectKey != "" && objectKey != "/" {
+		switch method {
+		case "GET", "HEAD":
+			// Object read operations - check for specific query parameters
+			if _, hasAcl := query["acl"]; hasAcl {
+				return "s3:GetObjectAcl"
+			}
+			if _, hasTagging := query["tagging"]; hasTagging {
+				return "s3:GetObjectTagging"
+			}
+			if _, hasRetention := query["retention"]; hasRetention {
+				return "s3:GetObjectRetention"
+			}
+			if _, hasLegalHold := query["legal-hold"]; hasLegalHold {
+				return "s3:GetObjectLegalHold"
+			}
+			if _, hasVersions := query["versions"]; hasVersions {
+				return "s3:GetObjectVersion"
+			}
+			// Default object read
+			return "s3:GetObject"
+
+		case "PUT", "POST":
+			// Object write operations - check for specific query parameters
+			if _, hasAcl := query["acl"]; hasAcl {
+				return "s3:PutObjectAcl"
+			}
+			if _, hasTagging := query["tagging"]; hasTagging {
+				return "s3:PutObjectTagging"
+			}
+			if _, hasRetention := query["retention"]; hasRetention {
+				return "s3:PutObjectRetention"
+			}
+			if _, hasLegalHold := query["legal-hold"]; hasLegalHold {
+				return "s3:PutObjectLegalHold"
+			}
+			// Check for multipart upload operations
+			if _, hasUploads := query["uploads"]; hasUploads {
+				return "s3:CreateMultipartUpload"
+			}
+			if _, hasUploadId := query["uploadId"]; hasUploadId {
+				if _, hasPartNumber := query["partNumber"]; hasPartNumber {
+					return "s3:UploadPart"
+				}
+				return "s3:CompleteMultipartUpload" // Complete multipart upload
+			}
+			// Default object write
+			return "s3:PutObject"
+
+		case "DELETE":
+			// Object delete operations
+			if _, hasTagging := query["tagging"]; hasTagging {
+				return "s3:DeleteObjectTagging"
+			}
+			if _, hasUploadId := query["uploadId"]; hasUploadId {
+				return "s3:AbortMultipartUpload"
+			}
+			// Default object delete
+			return "s3:DeleteObject"
+		}
 	}
 
-	if iamAction, exists := actionMap[s3Action]; exists {
-		return iamAction
+	// Handle bucket-level operations
+	if bucket != "" {
+		switch method {
+		case "GET", "HEAD":
+			// Bucket read operations - check for specific query parameters
+			if _, hasAcl := query["acl"]; hasAcl {
+				return "s3:GetBucketAcl"
+			}
+			if _, hasPolicy := query["policy"]; hasPolicy {
+				return "s3:GetBucketPolicy"
+			}
+			if _, hasTagging := query["tagging"]; hasTagging {
+				return "s3:GetBucketTagging"
+			}
+			if _, hasCors := query["cors"]; hasCors {
+				return "s3:GetBucketCors"
+			}
+			if _, hasVersioning := query["versioning"]; hasVersioning {
+				return "s3:GetBucketVersioning"
+			}
+			if _, hasNotification := query["notification"]; hasNotification {
+				return "s3:GetBucketNotification"
+			}
+			if _, hasObjectLock := query["object-lock"]; hasObjectLock {
+				return "s3:GetBucketObjectLockConfiguration"
+			}
+			if _, hasUploads := query["uploads"]; hasUploads {
+				return "s3:ListMultipartUploads"
+			}
+			if _, hasVersions := query["versions"]; hasVersions {
+				return "s3:ListBucketVersions"
+			}
+			// Default bucket read/list
+			return "s3:ListBucket"
+
+		case "PUT":
+			// Bucket write operations - check for specific query parameters
+			if _, hasAcl := query["acl"]; hasAcl {
+				return "s3:PutBucketAcl"
+			}
+			if _, hasPolicy := query["policy"]; hasPolicy {
+				return "s3:PutBucketPolicy"
+			}
+			if _, hasTagging := query["tagging"]; hasTagging {
+				return "s3:PutBucketTagging"
+			}
+			if _, hasCors := query["cors"]; hasCors {
+				return "s3:PutBucketCors"
+			}
+			if _, hasVersioning := query["versioning"]; hasVersioning {
+				return "s3:PutBucketVersioning"
+			}
+			if _, hasNotification := query["notification"]; hasNotification {
+				return "s3:PutBucketNotification"
+			}
+			if _, hasObjectLock := query["object-lock"]; hasObjectLock {
+				return "s3:PutBucketObjectLockConfiguration"
+			}
+			// Default bucket creation
+			return "s3:CreateBucket"
+
+		case "DELETE":
+			// Bucket delete operations - check for specific query parameters
+			if _, hasPolicy := query["policy"]; hasPolicy {
+				return "s3:DeleteBucketPolicy"
+			}
+			if _, hasTagging := query["tagging"]; hasTagging {
+				return "s3:DeleteBucketTagging"
+			}
+			if _, hasCors := query["cors"]; hasCors {
+				return "s3:DeleteBucketCors"
+			}
+			// Default bucket delete
+			return "s3:DeleteBucket"
+		}
 	}
 
-	// Default to the string representation of the action
-	return string(s3Action)
+	// Fallback to legacy mapping for specific known actions
+	return mapLegacyActionToIAM(fallbackAction)
+}
+
+// mapLegacyActionToIAM provides fallback mapping for legacy actions
+// This ensures backward compatibility while the system transitions to granular actions
+func mapLegacyActionToIAM(legacyAction Action) string {
+	switch legacyAction {
+	case s3_constants.ACTION_READ:
+		return "s3:GetObject" // Fallback for unmapped read operations
+	case s3_constants.ACTION_WRITE:
+		return "s3:PutObject" // Fallback for unmapped write operations
+	case s3_constants.ACTION_LIST:
+		return "s3:ListBucket" // Fallback for unmapped list operations
+	case s3_constants.ACTION_TAGGING:
+		return "s3:GetObjectTagging" // Fallback for unmapped tagging operations
+	case s3_constants.ACTION_READ_ACP:
+		return "s3:GetObjectAcl" // Fallback for unmapped ACL read operations
+	case s3_constants.ACTION_WRITE_ACP:
+		return "s3:PutObjectAcl" // Fallback for unmapped ACL write operations
+	case s3_constants.ACTION_DELETE_BUCKET:
+		return "s3:DeleteBucket" // Fallback for unmapped bucket delete operations
+	case s3_constants.ACTION_ADMIN:
+		return "s3:*" // Fallback for unmapped admin operations
+
+	// Handle granular multipart actions (already correctly mapped)
+	case s3_constants.ACTION_CREATE_MULTIPART_UPLOAD:
+		return "s3:CreateMultipartUpload"
+	case s3_constants.ACTION_UPLOAD_PART:
+		return "s3:UploadPart"
+	case s3_constants.ACTION_COMPLETE_MULTIPART:
+		return "s3:CompleteMultipartUpload"
+	case s3_constants.ACTION_ABORT_MULTIPART:
+		return "s3:AbortMultipartUpload"
+	case s3_constants.ACTION_LIST_MULTIPART_UPLOADS:
+		return "s3:ListMultipartUploads"
+	case s3_constants.ACTION_LIST_PARTS:
+		return "s3:ListParts"
+
+	default:
+		// If it's already a properly formatted S3 action, return as-is
+		actionStr := string(legacyAction)
+		if strings.HasPrefix(actionStr, "s3:") {
+			return actionStr
+		}
+		// Fallback: convert to S3 action format
+		return "s3:" + actionStr
+	}
 }
 
 // extractRequestContext extracts request context for policy conditions

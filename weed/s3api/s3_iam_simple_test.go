@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 	"github.com/seaweedfs/seaweedfs/weed/iam/utils"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -116,33 +118,274 @@ func TestBuildS3ResourceArn(t *testing.T) {
 	}
 }
 
-// TestMapS3ActionToIAMAction tests S3 to IAM action mapping
-func TestMapS3ActionToIAMAction(t *testing.T) {
+// TestDetermineGranularS3Action tests granular S3 action determination from HTTP requests
+func TestDetermineGranularS3Action(t *testing.T) {
 	tests := []struct {
-		name     string
-		s3Action Action
-		expected string
+		name           string
+		method         string
+		bucket         string
+		objectKey      string
+		queryParams    map[string]string
+		fallbackAction Action
+		expected       string
+		description    string
 	}{
+		// Object-level operations
 		{
-			name:     "read action",
-			s3Action: "READ", // Assuming this is defined in s3_constants
-			expected: "READ", // Will fallback to string representation
+			name:           "get_object",
+			method:         "GET",
+			bucket:         "test-bucket",
+			objectKey:      "test-object.txt",
+			queryParams:    map[string]string{},
+			fallbackAction: s3_constants.ACTION_READ,
+			expected:       "s3:GetObject",
+			description:    "Basic object retrieval",
 		},
 		{
-			name:     "write action",
-			s3Action: "WRITE",
-			expected: "WRITE",
+			name:           "get_object_acl",
+			method:         "GET",
+			bucket:         "test-bucket",
+			objectKey:      "test-object.txt",
+			queryParams:    map[string]string{"acl": ""},
+			fallbackAction: s3_constants.ACTION_READ_ACP,
+			expected:       "s3:GetObjectAcl",
+			description:    "Object ACL retrieval",
 		},
 		{
-			name:     "list action",
-			s3Action: "LIST",
-			expected: "LIST",
+			name:           "get_object_tagging",
+			method:         "GET",
+			bucket:         "test-bucket",
+			objectKey:      "test-object.txt",
+			queryParams:    map[string]string{"tagging": ""},
+			fallbackAction: s3_constants.ACTION_TAGGING,
+			expected:       "s3:GetObjectTagging",
+			description:    "Object tagging retrieval",
+		},
+		{
+			name:           "put_object",
+			method:         "PUT",
+			bucket:         "test-bucket",
+			objectKey:      "test-object.txt",
+			queryParams:    map[string]string{},
+			fallbackAction: s3_constants.ACTION_WRITE,
+			expected:       "s3:PutObject",
+			description:    "Basic object upload",
+		},
+		{
+			name:           "put_object_acl",
+			method:         "PUT",
+			bucket:         "test-bucket",
+			objectKey:      "test-object.txt",
+			queryParams:    map[string]string{"acl": ""},
+			fallbackAction: s3_constants.ACTION_WRITE_ACP,
+			expected:       "s3:PutObjectAcl",
+			description:    "Object ACL modification",
+		},
+		{
+			name:           "delete_object",
+			method:         "DELETE",
+			bucket:         "test-bucket",
+			objectKey:      "test-object.txt",
+			queryParams:    map[string]string{},
+			fallbackAction: s3_constants.ACTION_WRITE, // DELETE object uses WRITE fallback
+			expected:       "s3:DeleteObject",
+			description:    "Object deletion - correctly mapped to DeleteObject (not PutObject)",
+		},
+		{
+			name:           "delete_object_tagging",
+			method:         "DELETE",
+			bucket:         "test-bucket",
+			objectKey:      "test-object.txt",
+			queryParams:    map[string]string{"tagging": ""},
+			fallbackAction: s3_constants.ACTION_TAGGING,
+			expected:       "s3:DeleteObjectTagging",
+			description:    "Object tag deletion",
+		},
+
+		// Multipart upload operations
+		{
+			name:           "create_multipart_upload",
+			method:         "POST",
+			bucket:         "test-bucket",
+			objectKey:      "large-file.txt",
+			queryParams:    map[string]string{"uploads": ""},
+			fallbackAction: s3_constants.ACTION_WRITE,
+			expected:       "s3:CreateMultipartUpload",
+			description:    "Multipart upload initiation",
+		},
+		{
+			name:           "upload_part",
+			method:         "PUT",
+			bucket:         "test-bucket",
+			objectKey:      "large-file.txt",
+			queryParams:    map[string]string{"uploadId": "12345", "partNumber": "1"},
+			fallbackAction: s3_constants.ACTION_WRITE,
+			expected:       "s3:UploadPart",
+			description:    "Multipart part upload",
+		},
+		{
+			name:           "complete_multipart_upload",
+			method:         "POST",
+			bucket:         "test-bucket",
+			objectKey:      "large-file.txt",
+			queryParams:    map[string]string{"uploadId": "12345"},
+			fallbackAction: s3_constants.ACTION_WRITE,
+			expected:       "s3:CompleteMultipartUpload",
+			description:    "Multipart upload completion",
+		},
+		{
+			name:           "abort_multipart_upload",
+			method:         "DELETE",
+			bucket:         "test-bucket",
+			objectKey:      "large-file.txt",
+			queryParams:    map[string]string{"uploadId": "12345"},
+			fallbackAction: s3_constants.ACTION_WRITE,
+			expected:       "s3:AbortMultipartUpload",
+			description:    "Multipart upload abort",
+		},
+
+		// Bucket-level operations
+		{
+			name:           "list_bucket",
+			method:         "GET",
+			bucket:         "test-bucket",
+			objectKey:      "",
+			queryParams:    map[string]string{},
+			fallbackAction: s3_constants.ACTION_LIST,
+			expected:       "s3:ListBucket",
+			description:    "Bucket listing",
+		},
+		{
+			name:           "get_bucket_acl",
+			method:         "GET",
+			bucket:         "test-bucket",
+			objectKey:      "",
+			queryParams:    map[string]string{"acl": ""},
+			fallbackAction: s3_constants.ACTION_READ_ACP,
+			expected:       "s3:GetBucketAcl",
+			description:    "Bucket ACL retrieval",
+		},
+		{
+			name:           "put_bucket_policy",
+			method:         "PUT",
+			bucket:         "test-bucket",
+			objectKey:      "",
+			queryParams:    map[string]string{"policy": ""},
+			fallbackAction: s3_constants.ACTION_WRITE,
+			expected:       "s3:PutBucketPolicy",
+			description:    "Bucket policy modification",
+		},
+		{
+			name:           "delete_bucket",
+			method:         "DELETE",
+			bucket:         "test-bucket",
+			objectKey:      "",
+			queryParams:    map[string]string{},
+			fallbackAction: s3_constants.ACTION_DELETE_BUCKET,
+			expected:       "s3:DeleteBucket",
+			description:    "Bucket deletion",
+		},
+		{
+			name:           "list_multipart_uploads",
+			method:         "GET",
+			bucket:         "test-bucket",
+			objectKey:      "",
+			queryParams:    map[string]string{"uploads": ""},
+			fallbackAction: s3_constants.ACTION_LIST,
+			expected:       "s3:ListMultipartUploads",
+			description:    "List multipart uploads in bucket",
+		},
+
+		// Fallback scenarios
+		{
+			name:           "legacy_read_fallback",
+			method:         "GET",
+			bucket:         "",
+			objectKey:      "",
+			queryParams:    map[string]string{},
+			fallbackAction: s3_constants.ACTION_READ,
+			expected:       "s3:GetObject",
+			description:    "Legacy read action fallback",
+		},
+		{
+			name:           "already_granular_action",
+			method:         "GET",
+			bucket:         "",
+			objectKey:      "",
+			queryParams:    map[string]string{},
+			fallbackAction: "s3:GetBucketLocation", // Already granular
+			expected:       "s3:GetBucketLocation",
+			description:    "Already granular action passed through",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := mapS3ActionToIAMAction(tt.s3Action)
+			// Create HTTP request with query parameters
+			req := &http.Request{
+				Method: tt.method,
+				URL:    &url.URL{Path: "/" + tt.bucket + "/" + tt.objectKey},
+			}
+
+			// Add query parameters
+			query := req.URL.Query()
+			for key, value := range tt.queryParams {
+				query.Set(key, value)
+			}
+			req.URL.RawQuery = query.Encode()
+
+			// Test the granular action determination
+			result := determineGranularS3Action(req, tt.fallbackAction, tt.bucket, tt.objectKey)
+
+			assert.Equal(t, tt.expected, result,
+				"Test %s failed: %s. Expected %s but got %s",
+				tt.name, tt.description, tt.expected, result)
+		})
+	}
+}
+
+// TestMapLegacyActionToIAM tests the legacy action fallback mapping
+func TestMapLegacyActionToIAM(t *testing.T) {
+	tests := []struct {
+		name         string
+		legacyAction Action
+		expected     string
+	}{
+		{
+			name:         "read_action_fallback",
+			legacyAction: s3_constants.ACTION_READ,
+			expected:     "s3:GetObject",
+		},
+		{
+			name:         "write_action_fallback",
+			legacyAction: s3_constants.ACTION_WRITE,
+			expected:     "s3:PutObject",
+		},
+		{
+			name:         "admin_action_fallback",
+			legacyAction: s3_constants.ACTION_ADMIN,
+			expected:     "s3:*",
+		},
+		{
+			name:         "granular_multipart_action",
+			legacyAction: s3_constants.ACTION_CREATE_MULTIPART_UPLOAD,
+			expected:     "s3:CreateMultipartUpload",
+		},
+		{
+			name:         "unknown_action_with_s3_prefix",
+			legacyAction: "s3:CustomAction",
+			expected:     "s3:CustomAction",
+		},
+		{
+			name:         "unknown_action_without_prefix",
+			legacyAction: "CustomAction",
+			expected:     "s3:CustomAction",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := mapLegacyActionToIAM(tt.legacyAction)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
