@@ -173,28 +173,57 @@ func TestS3IAMDistributedTests(t *testing.T) {
 		wg.Wait()
 		close(errors)
 
-		// Check for errors - allow some failures under concurrent load
+		// Analyze errors with categorization for better diagnostics
 		var errorList []error
+		var transientErrors []error
+		var seriousErrors []error
+		
 		for err := range errors {
 			errorList = append(errorList, err)
+			errorMsg := err.Error()
+			
+			// Categorize errors: transient vs serious
+			if strings.Contains(errorMsg, "timeout") || 
+			   strings.Contains(errorMsg, "connection reset") ||
+			   strings.Contains(errorMsg, "temporary failure") ||
+			   strings.Contains(errorMsg, "TooManyRequests") {
+				transientErrors = append(transientErrors, err)
+			} else {
+				seriousErrors = append(seriousErrors, err)
+			}
 		}
 
 		totalOperations := numGoroutines * numOperationsPerGoroutine
 		errorRate := float64(len(errorList)) / float64(totalOperations)
+		seriousErrorRate := float64(len(seriousErrors)) / float64(totalOperations)
+		transientErrorRate := float64(len(transientErrors)) / float64(totalOperations)
 
+		// Detailed error reporting
 		if len(errorList) > 0 {
-			t.Logf("Concurrent operations: %d/%d operations failed (%.1f%% error rate). First error: %v",
-				len(errorList), totalOperations, errorRate*100, errorList[0])
+			t.Logf("Concurrent operations summary:")
+			t.Logf("  Total operations: %d", totalOperations)
+			t.Logf("  Failed operations: %d (%.1f%% error rate)", len(errorList), errorRate*100)
+			t.Logf("  Serious errors: %d (%.1f%% rate)", len(seriousErrors), seriousErrorRate*100)
+			t.Logf("  Transient errors: %d (%.1f%% rate)", len(transientErrors), transientErrorRate*100)
+			
+			if len(seriousErrors) > 0 {
+				t.Logf("  First serious error: %v", seriousErrors[0])
+			}
+			if len(transientErrors) > 0 {
+				t.Logf("  First transient error: %v", transientErrors[0])
+			}
 		}
 
-		// Allow up to 50% error rate for concurrent stress testing
-		// This tests that the system handles concurrent load gracefully
-		if errorRate > 0.5 {
-			t.Errorf("Concurrent operations error rate too high: %.1f%% (>50%%). System may be unstable under load.", errorRate*100)
+		// STRICT CONCURRENCY TESTING: Use much lower error rate thresholds
+		// Serious errors (race conditions, deadlocks, etc.) should be near zero
+		if seriousErrorRate > 0.01 { // Max 1% serious error rate
+			t.Errorf("❌ Serious error rate too high: %.1f%% (>1%%). This indicates potential race conditions, deadlocks, or other concurrency bugs that must be fixed.", seriousErrorRate*100)
+		} else if errorRate > 0.05 { // Max 5% total error rate (including transient)
+			t.Errorf("❌ Total error rate too high: %.1f%% (>5%%). While some transient errors are acceptable, this rate suggests system instability under concurrent load.", errorRate*100)
 		} else if len(errorList) > 0 {
-			t.Logf("✅ Concurrent operations completed with acceptable error rate: %.1f%%", errorRate*100)
+			t.Logf("⚠️  Concurrent operations completed with acceptable error rate: %.1f%% (mostly transient errors)", errorRate*100)
 		} else {
-			t.Logf("✅ All concurrent operations completed successfully")
+			t.Logf("✅ All concurrent operations completed successfully - excellent concurrency handling!")
 		}
 	})
 }
