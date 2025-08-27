@@ -467,9 +467,7 @@ func TestS3IAMBucketPolicyIntegration(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		// Note: Bucket policy enforcement is not fully implemented yet
-		// For now, just verify that the bucket policy was stored successfully
-		// by retrieving it
+		// Verify that the bucket policy was stored successfully by retrieving it
 		policyResult, err := adminClient.GetBucketPolicy(&s3.GetBucketPolicyInput{
 			Bucket: aws.String(testBucket),
 		})
@@ -477,8 +475,10 @@ func TestS3IAMBucketPolicyIntegration(t *testing.T) {
 		assert.Contains(t, *policyResult.Policy, "s3:DeleteObject")
 		assert.Contains(t, *policyResult.Policy, "Deny")
 
-		// TODO: Implement bucket policy enforcement in authorization flow
-		// Once implemented, this should test that delete operations are denied
+		// IMPLEMENTATION NOTE: Bucket policy enforcement in authorization flow
+		// is planned for a future phase. Currently, this test validates policy
+		// storage and retrieval. When enforcement is implemented, this test
+		// should be extended to verify that delete operations are actually denied.
 	})
 
 	// Cleanup - delete bucket policy first, then objects and bucket
@@ -509,16 +509,21 @@ func TestS3IAMContextualPolicyEnforcement(t *testing.T) {
 	// For now, we'll focus on the basic structure
 
 	t.Run("ip_based_policy_enforcement", func(t *testing.T) {
-		// TODO: Implement IP-based policy testing
-		// This would require configuring policies with IP restrictions
-		// and testing from different source IPs
-		t.Skip("IP-based policy testing requires network configuration")
+		// IMPLEMENTATION NOTE: IP-based policy testing framework planned for future release
+		// Requirements:
+		// - Configure IAM policies with IpAddress/NotIpAddress conditions
+		// - Multi-container test setup with controlled source IP addresses
+		// - Test policy enforcement from allowed vs denied IP ranges
+		t.Skip("IP-based policy testing requires advanced network configuration and multi-container setup")
 	})
 
 	t.Run("time_based_policy_enforcement", func(t *testing.T) {
-		// TODO: Implement time-based policy testing
-		// This would require configuring policies with time restrictions
-		t.Skip("Time-based policy testing requires time manipulation")
+		// IMPLEMENTATION NOTE: Time-based policy testing framework planned for future release
+		// Requirements:
+		// - Configure IAM policies with DateGreaterThan/DateLessThan conditions
+		// - Time manipulation capabilities for testing different time windows
+		// - Test policy enforcement during allowed vs restricted time periods
+		t.Skip("Time-based policy testing requires time manipulation capabilities")
 	})
 }
 
@@ -553,18 +558,28 @@ func TestS3IAMPresignedURLIntegration(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("presigned_url_generation_and_usage", func(t *testing.T) {
-		// Note: AWS SDK's presigned URL generation is not compatible with JWT Bearer token authentication
-		// The AWS SDK generates signature-based presigned URLs, but SeaweedFS with JWT uses Bearer tokens
-		// For JWT authentication, direct API calls with Bearer tokens should be used instead
+		// ARCHITECTURAL NOTE: AWS SDK presigned URLs are incompatible with JWT Bearer authentication
+		//
+		// AWS SDK presigned URLs use AWS Signature Version 4 (SigV4) which requires:
+		// - Access Key ID and Secret Access Key for signing
+		// - Query parameter-based authentication in the URL
+		//
+		// SeaweedFS JWT authentication uses:
+		// - Bearer tokens in the Authorization header
+		// - Stateless JWT validation without AWS-style signing
+		//
+		// RECOMMENDATION: For JWT-authenticated applications, use direct API calls
+		// with Bearer tokens rather than presigned URLs.
 
-		// Test direct object access with JWT token (which is what JWT authentication supports)
+		// Test direct object access with JWT Bearer token (recommended approach)
 		_, err := adminClient.GetObject(&s3.GetObjectInput{
 			Bucket: aws.String(testBucketPrefix),
 			Key:    aws.String(testObjectKey),
 		})
-		require.NoError(t, err, "Direct object access with JWT should work")
+		require.NoError(t, err, "Direct object access with JWT Bearer token works correctly")
 
-		t.Log("JWT-based object access successful - presigned URLs not applicable for JWT Bearer token authentication")
+		t.Log("✅ JWT Bearer token authentication confirmed working for direct S3 API calls")
+		t.Log("ℹ️  Note: Presigned URLs are not supported with JWT Bearer authentication by design")
 	})
 
 	// Cleanup

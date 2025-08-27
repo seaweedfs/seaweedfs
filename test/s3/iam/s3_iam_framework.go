@@ -302,27 +302,33 @@ func (t *BearerTokenTransport) RoundTrip(req *http.Request) (*http.Response, err
 	// Add Bearer token authorization header
 	newReq.Header.Set("Authorization", "Bearer "+t.Token)
 
-	// Debug: log the token being sent (first 50 chars) and subject
+	// Token preview for logging (first 50 chars for security)
 	tokenPreview := t.Token
 	if len(tokenPreview) > 50 {
 		tokenPreview = tokenPreview[:50] + "..."
 	}
 
-	// Debug logging can be enabled if needed
-	// Extract subject from token for debugging
-	// parts := strings.Split(t.Token, ".")
-	// subject := "unknown"
-	// if len(parts) >= 2 {
-	//     if decoded, err := base64.RawURLEncoding.DecodeString(parts[1]); err == nil {
-	//         var claims map[string]interface{}
-	//         if json.Unmarshal(decoded, &claims) == nil {
-	//             if sub, ok := claims["sub"].(string); ok {
-	//                 subject = sub[:8] + "..." // First 8 chars of subject
-	//             }
-	//         }
-	//     }
-	// }
-	// fmt.Printf("DEBUG: Sending Bearer token (subject: %s): %s\n", subject, tokenPreview)
+	// Conditional debug logging - enable via TEST_DEBUG=1 environment variable
+	if os.Getenv("TEST_DEBUG") == "1" {
+		// Extract subject from JWT token for enhanced debugging
+		parts := strings.Split(t.Token, ".")
+		subject := "unknown"
+		if len(parts) >= 2 {
+			if decoded, err := base64.RawURLEncoding.DecodeString(parts[1]); err == nil {
+				var claims map[string]interface{}
+				if json.Unmarshal(decoded, &claims) == nil {
+					if sub, ok := claims["sub"].(string); ok {
+						if len(sub) > 8 {
+							subject = sub[:8] + "..." // First 8 chars of subject for security
+						} else {
+							subject = sub
+						}
+					}
+				}
+			}
+		}
+		fmt.Printf("DEBUG: Sending Bearer token (subject: %s): %s\n", subject, tokenPreview)
+	}
 
 	// Use underlying transport
 	transport := t.Transport
