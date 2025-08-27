@@ -656,7 +656,7 @@ func (f *S3IAMTestFramework) GenerateUniqueBucketName(prefix string) string {
 	testName = strings.ReplaceAll(testName, "_", "-")
 
 	// Add random suffix to handle parallel tests
-	randomSuffix := mathrand.IntN(10000)
+	randomSuffix := mathrand.Intn(10000)
 
 	return fmt.Sprintf("%s-%s-%d", prefix, testName, randomSuffix)
 }
