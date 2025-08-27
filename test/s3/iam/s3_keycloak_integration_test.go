@@ -129,7 +129,8 @@ func TestKeycloakTokenExpiration(t *testing.T) {
 	}
 
 	// Get a short-lived token (if Keycloak is configured for it)
-	tokenResp, err := framework.keycloakClient.AuthenticateUser("admin-user", "admin123")
+	// Use consistent password that matches Docker setup script logic: "adminuser123"
+	tokenResp, err := framework.keycloakClient.AuthenticateUser("admin-user", "adminuser123")
 	require.NoError(t, err)
 
 	// Verify token properties

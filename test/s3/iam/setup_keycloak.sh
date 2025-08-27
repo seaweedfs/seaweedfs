@@ -24,13 +24,13 @@ ROLE_READONLY="s3-read-only"
 ROLE_WRITEONLY="s3-write-only"
 ROLE_READWRITE="s3-read-write"
 
-# User credentials (compatible with older bash versions)
+# User credentials (matches Docker setup script logic: removes non-alphabetic chars + "123")
 get_user_password() {
   case "$1" in
-    "admin-user") echo "admin123" ;;
-    "read-user") echo "read123" ;;
-    "write-user") echo "readwrite123" ;;
-    "write-only-user") echo "writeonly123" ;;
+    "admin-user") echo "adminuser123" ;;        # "admin-user" -> "adminuser123"
+    "read-user") echo "readuser123" ;;          # "read-user" -> "readuser123"
+    "write-user") echo "writeuser123" ;;        # "write-user" -> "writeuser123"
+    "write-only-user") echo "writeonlyuser123" ;;  # "write-only-user" -> "writeonlyuser123"
     *) echo "" ;;
   esac
 }
@@ -342,7 +342,7 @@ main() {
     -d "client_id=${CLIENT_ID}" \
     -d "client_secret=${CLIENT_SECRET}" \
     -d "username=admin-user" \
-    -d "password=admin123" \
+    -d "password=adminuser123" \
     -d "scope=openid profile email" \
     -o /tmp/auth_test_response.json)
   

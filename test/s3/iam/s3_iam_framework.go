@@ -197,11 +197,13 @@ func (f *S3IAMTestFramework) getKeycloakToken(username string) (string, error) {
 
 // getTestUserPassword returns the password for test users
 func (f *S3IAMTestFramework) getTestUserPassword(username string) string {
+	// Password generation matches setup_keycloak_docker.sh logic:
+	// password="${username//[^a-zA-Z]/}123" (removes non-alphabetic chars + "123")
 	userPasswords := map[string]string{
-		"admin-user":      "admin123",
-		"read-user":       "read123",
-		"write-user":      "readwrite123",
-		"write-only-user": "writeonly123",
+		"admin-user":      "adminuser123",      // "admin-user" -> "adminuser" + "123"
+		"read-user":       "readuser123",       // "read-user" -> "readuser" + "123"
+		"write-user":      "writeuser123",      // "write-user" -> "writeuser" + "123"
+		"write-only-user": "writeonlyuser123", // "write-only-user" -> "writeonlyuser" + "123"
 	}
 
 	return userPasswords[username]
