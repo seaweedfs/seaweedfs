@@ -59,6 +59,12 @@ func TestCrossInstanceTokenUsage(t *testing.T) {
 	err = instanceC.Initialize(sharedConfig)
 	require.NoError(t, err, "Instance C should initialize")
 
+	// Set up mock trust policy validator for all instances (required for STS testing)
+	mockValidator := &MockTrustPolicyValidator{}
+	instanceA.SetTrustPolicyValidator(mockValidator)
+	instanceB.SetTrustPolicyValidator(mockValidator)
+	instanceC.SetTrustPolicyValidator(mockValidator)
+
 	// Test 1: Token generated on Instance A can be validated on Instance B & C
 	t.Run("cross_instance_token_validation", func(t *testing.T) {
 		// Generate session token on Instance A
@@ -367,6 +373,12 @@ func TestSTSRealWorldDistributedScenarios(t *testing.T) {
 
 		err = gateway3.Initialize(productionConfig)
 		require.NoError(t, err)
+
+		// Set up mock trust policy validator for all gateway instances
+		mockValidator := &MockTrustPolicyValidator{}
+		gateway1.SetTrustPolicyValidator(mockValidator)
+		gateway2.SetTrustPolicyValidator(mockValidator)
+		gateway3.SetTrustPolicyValidator(mockValidator)
 
 		// Step 1: User authenticates and hits Gateway 1 for AssumeRole
 		assumeRequest := &AssumeRoleWithWebIdentityRequest{

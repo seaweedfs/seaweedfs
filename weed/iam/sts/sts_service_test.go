@@ -312,6 +312,10 @@ func setupTestSTSService(t *testing.T) *STSService {
 	err := service.Initialize(config)
 	require.NoError(t, err)
 
+	// Set up mock trust policy validator (required for STS testing)
+	mockValidator := &MockTrustPolicyValidator{}
+	service.SetTrustPolicyValidator(mockValidator)
+
 	// Register test providers
 	mockOIDCProvider := &MockIdentityProvider{
 		name: "test-oidc",
