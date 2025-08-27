@@ -410,3 +410,14 @@ func (m *MockIdentityProvider) ValidateToken(ctx context.Context, token string) 
 	}
 	return nil, fmt.Errorf("invalid token")
 }
+
+// GetIssuer returns the issuer for this provider (for OIDC providers)
+func (m *MockIdentityProvider) GetIssuer() string {
+	// For OIDC mock provider, return the issuer from the first valid token
+	// This matches the issuer in the token claims
+	if m.name == "test-oidc" {
+		return "test-issuer"
+	}
+	// LDAP providers don't have issuers
+	return ""
+}

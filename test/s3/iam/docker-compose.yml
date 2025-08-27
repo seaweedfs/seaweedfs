@@ -132,7 +132,7 @@ services:
 
   # Keycloak Setup Service
   keycloak-setup:
-    image: alpine/curl:latest
+    image: alpine/curl:8.4.0
     container_name: keycloak-setup
     volumes:
       - ./setup_keycloak_docker.sh:/setup.sh:ro

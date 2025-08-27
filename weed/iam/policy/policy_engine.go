@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 // Effect represents the policy evaluation result
@@ -15,6 +16,12 @@ type Effect string
 const (
 	EffectAllow Effect = "Allow"
 	EffectDeny  Effect = "Deny"
+)
+
+// Package-level regex cache for performance optimization
+var (
+	regexCache   = make(map[string]*regexp.Regexp)
+	regexCacheMu sync.RWMutex
 )
 
 // PolicyEngine evaluates policies against requests
@@ -624,7 +631,7 @@ func awsIAMMatch(pattern, value string, evalCtx *EvaluationContext) bool {
 
 	// Step 4: Handle AWS-style wildcards (case-insensitive)
 	if strings.Contains(expandedPattern, "*") || strings.Contains(expandedPattern, "?") {
-		return awsWildcardMatch(expandedPattern, value)
+		return AwsWildcardMatch(expandedPattern, value)
 	}
 
 	return false
@@ -666,19 +673,37 @@ func getContextValue(evalCtx *EvaluationContext, key, defaultValue string) strin
 	return defaultValue
 }
 
-// awsWildcardMatch performs case-insensitive wildcard matching like AWS IAM
-func awsWildcardMatch(pattern, value string) bool {
-	// Convert pattern to regex with case-insensitive matching
-	// AWS uses * for any sequence and ? for any single character
+// AwsWildcardMatch performs case-insensitive wildcard matching like AWS IAM
+func AwsWildcardMatch(pattern, value string) bool {
+	// Create regex pattern key for caching
 	regexPattern := strings.ReplaceAll(pattern, "*", ".*")
 	regexPattern = strings.ReplaceAll(regexPattern, "?", ".")
 	regexPattern = "^" + regexPattern + "$"
+	regexKey := "(?i)" + regexPattern
 
-	// Compile with case-insensitive flag
-	regex, err := regexp.Compile("(?i)" + regexPattern)
-	if err != nil {
-		// Fallback to simple case-insensitive comparison if regex fails
-		return strings.EqualFold(pattern, value)
+	// Try to get compiled regex from cache
+	regexCacheMu.RLock()
+	regex, found := regexCache[regexKey]
+	regexCacheMu.RUnlock()
+
+	if !found {
+		// Compile and cache the regex
+		compiledRegex, err := regexp.Compile(regexKey)
+		if err != nil {
+			// Fallback to simple case-insensitive comparison if regex fails
+			return strings.EqualFold(pattern, value)
+		}
+
+		// Store in cache with write lock
+		regexCacheMu.Lock()
+		// Double-check in case another goroutine added it
+		if existingRegex, exists := regexCache[regexKey]; exists {
+			regex = existingRegex
+		} else {
+			regexCache[regexKey] = compiledRegex
+			regex = compiledRegex
+		}
+		regexCacheMu.Unlock()
 	}
 
 	return regex.MatchString(value)

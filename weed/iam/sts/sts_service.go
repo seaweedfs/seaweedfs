@@ -346,6 +346,11 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *Ass
 		return nil, fmt.Errorf("invalid request: %w", err)
 	}
 
+	// Check for unsupported session policy
+	if request.Policy != nil {
+		return nil, fmt.Errorf("session policies are not currently supported - Policy parameter must be omitted")
+	}
+
 	// 1. Validate the web identity token with appropriate provider
 	externalIdentity, provider, err := s.validateWebIdentityToken(ctx, request.WebIdentityToken)
 	if err != nil {
@@ -542,29 +547,44 @@ func (s *STSService) validateAssumeRoleWithWebIdentityRequest(request *AssumeRol
 	return nil
 }
 
-// validateWebIdentityToken validates the web identity token with available providers
+// validateWebIdentityToken validates the web identity token with strict issuer-to-provider mapping
+// SECURITY: JWT tokens with a specific issuer claim MUST only be validated by the provider for that issuer
 func (s *STSService) validateWebIdentityToken(ctx context.Context, token string) (*providers.ExternalIdentity, providers.IdentityProvider, error) {
-	// First, try efficient issuer-based lookup
+	// Try to extract issuer from JWT token for strict validation
 	issuer, err := s.extractIssuerFromJWT(token)
-	if err == nil {
-		// Look up provider by issuer for O(1) efficiency
-		if provider, exists := s.issuerToProvider[issuer]; exists {
-			identity, err := provider.Authenticate(ctx, token)
-			if err == nil && identity != nil {
-				return identity, provider, nil
-			}
-			// If authentication fails with the expected provider, don't continue
-			// This prevents tokens from being validated by wrong providers
-			return nil, nil, fmt.Errorf("token validation failed with issuer %s: %w", issuer, err)
-		}
-
-		glog.V(2).Infof("No provider registered for issuer %s, falling back to brute-force search", issuer)
-	} else {
-		glog.V(2).Infof("Could not extract issuer from token (%v), falling back to brute-force search", err)
+	if err != nil {
+		// Token is not a valid JWT or cannot be parsed
+		// This can happen with non-JWT providers (e.g., LDAP) or test tokens
+		// For backward compatibility with non-JWT tokens, fall back to trying all providers
+		glog.V(2).Infof("Token is not a valid JWT (%v), falling back to all providers", err)
+		return s.validateWithAllProviders(ctx, token)
 	}
 
-	// Fallback: try all providers (backward compatibility)
-	// This handles providers that don't have issuer mapping or malformed tokens
+	// Look up the specific provider for this issuer
+	provider, exists := s.issuerToProvider[issuer]
+	if !exists {
+		// SECURITY: If no provider is registered for this issuer, fail immediately
+		// This prevents JWT tokens from being validated by unintended providers
+		return nil, nil, fmt.Errorf("no identity provider registered for issuer: %s", issuer)
+	}
+
+	// Authenticate with the correct provider for this issuer
+	identity, err := provider.Authenticate(ctx, token)
+	if err != nil {
+		return nil, nil, fmt.Errorf("token validation failed with provider for issuer %s: %w", issuer, err)
+	}
+
+	if identity == nil {
+		return nil, nil, fmt.Errorf("authentication succeeded but no identity returned for issuer %s", issuer)
+	}
+
+	return identity, provider, nil
+}
+
+// validateWithAllProviders is a fallback for non-JWT tokens (e.g., LDAP credentials, test tokens)
+// This should only be used when the token is not a valid JWT
+func (s *STSService) validateWithAllProviders(ctx context.Context, token string) (*providers.ExternalIdentity, providers.IdentityProvider, error) {
+	// Try each provider until one succeeds
 	for _, provider := range s.providers {
 		identity, err := provider.Authenticate(ctx, token)
 		if err == nil && identity != nil {
@@ -572,7 +592,7 @@ func (s *STSService) validateWebIdentityToken(ctx context.Context, token string)
 		}
 	}
 
-	return nil, nil, fmt.Errorf("web identity token validation failed with all providers")
+	return nil, nil, fmt.Errorf("token validation failed with all providers")
 }
 
 // extractIssuerFromJWT extracts the issuer (iss) claim from a JWT token without verification

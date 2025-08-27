@@ -104,8 +104,8 @@ func TestS3IAMDistributedTests(t *testing.T) {
 
 	t.Run("distributed_concurrent_operations", func(t *testing.T) {
 		// Test concurrent operations across distributed instances
-		// CI-REALISTIC APPROACH: 8 total operations (4x2) - 33% more than original (6) with pragmatic CI tolerance
-		// Success rates vary from 62.5%-87.5% due to CI environment resource constraints, but system functions correctly
+		// STRINGENT APPROACH: 8 total operations (4x2) - 33% more than original (6) with rigorous error detection
+		// Target >87.5% success rate to catch concurrency regressions while allowing minimal CI infrastructure issues
 		const numGoroutines = 4             // Optimal concurrency for CI reliability
 		const numOperationsPerGoroutine = 2 // Minimal operations per goroutine
 
@@ -216,34 +216,33 @@ func TestS3IAMDistributedTests(t *testing.T) {
 			}
 		}
 
-		// CI-REALISTIC CONCURRENCY TESTING: Pragmatic thresholds based on observed CI environment variability
-		// For totalOperations=8, success rates vary 62.5%-87.5% due to CI infrastructure constraints
+		// STRINGENT CONCURRENCY TESTING: More rigorous thresholds to catch regressions while accounting for CI variability
+		// For totalOperations=8, target >87.5% success rate (≤12.5% error rate) to detect concurrency issues
 
-		// Serious errors (race conditions, deadlocks) should be minimal for reliable CI testing
-		// Allow up to 50% serious errors for CI environment variability (infrastructure limitations, volume allocation issues)
-		// This accounts for the reality that CI environments have resource constraints that can affect multiple operations
-		maxSeriousErrors := totalOperations / 2 // Realistic tolerance for CI infrastructure variability
+		// Serious errors (race conditions, deadlocks) should be very limited - allow only 1 for CI infrastructure issues
+		// Based on observed data: 1-3 errors due to volume allocation constraints, not actual concurrency bugs
+		maxSeriousErrors := 1 // Allow 1 serious error (12.5%) for CI infrastructure limitations only
 		if len(seriousErrors) > maxSeriousErrors {
 			t.Errorf("❌ %d serious error(s) detected (%.1f%%), exceeding threshold of %d. This indicates potential concurrency bugs. First error: %v",
 				len(seriousErrors), float64(len(seriousErrors))/float64(totalOperations)*100, maxSeriousErrors, seriousErrors[0])
 		}
 
-		// For total errors, use pragmatic thresholds based on observed CI environment variability
-		// CI environments can have resource constraints that affect multiple operations simultaneously
-		maxTotalErrorsStrict := 2  // Allow max 2 total errors (25% rate) - good performance in CI
-		maxTotalErrorsRelaxed := 4 // Allow max 4 total errors (50% rate) - acceptable for resource-constrained CI
+		// For total errors, use stringent thresholds to catch regressions while allowing minimal CI infrastructure issues
+		// Target >87.5% success rate to ensure system reliability and catch concurrency problems early
+		maxTotalErrorsStrict := 1  // Allow max 1 total error (12.5% rate) - excellent performance target
+		maxTotalErrorsRelaxed := 2 // Allow max 2 total errors (25% rate) - acceptable with infrastructure constraints
 
 		if len(errorList) > maxTotalErrorsRelaxed {
-			t.Errorf("❌ Too many total errors: %d (%.1f%%) - exceeds relaxed threshold of %d (%.1f%%). System is unstable under concurrent load.",
+			t.Errorf("❌ Too many total errors: %d (%.1f%%) - exceeds threshold of %d (%.1f%%). System may have concurrency issues.",
 				len(errorList), errorRate*100, maxTotalErrorsRelaxed, float64(maxTotalErrorsRelaxed)/float64(totalOperations)*100)
 		} else if len(errorList) > maxTotalErrorsStrict {
-			t.Logf("⚠️  Concurrent operations completed with %d errors (%.1f%%) - within relaxed CI limits. Normal CI environment variability.",
+			t.Logf("⚠️  Concurrent operations completed with %d errors (%.1f%%) - acceptable but monitor for patterns.",
 				len(errorList), errorRate*100)
 		} else if len(errorList) > 0 {
-			t.Logf("✅ Concurrent operations completed with %d errors (%.1f%%) - good performance for CI environment!",
+			t.Logf("✅ Concurrent operations completed with %d errors (%.1f%%) - excellent performance!",
 				len(errorList), errorRate*100)
 		} else {
-			t.Logf("🎉 All %d concurrent operations completed successfully - excellent CI performance!", totalOperations)
+			t.Logf("🎉 All %d concurrent operations completed successfully - perfect concurrency handling!", totalOperations)
 		}
 	})
 }

@@ -2,6 +2,8 @@ package oidc
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
@@ -490,6 +492,8 @@ func (p *OIDCProvider) parseJWK(key *JWK) (interface{}, error) {
 	switch key.Kty {
 	case "RSA":
 		return p.parseRSAKey(key)
+	case "EC":
+		return p.parseECKey(key)
 	default:
 		return nil, fmt.Errorf("unsupported key type: %s", key.Kty)
 	}
@@ -520,6 +524,53 @@ func (p *OIDCProvider) parseRSAKey(key *JWK) (*rsa.PublicKey, error) {
 		E: exponent,
 	}
 	pubKey.N = new(big.Int).SetBytes(nBytes)
+
+	return pubKey, nil
+}
+
+// parseECKey parses an Elliptic Curve key from JWK
+func (p *OIDCProvider) parseECKey(key *JWK) (*ecdsa.PublicKey, error) {
+	// Validate required fields
+	if key.X == "" || key.Y == "" || key.Crv == "" {
+		return nil, fmt.Errorf("incomplete EC key: missing x, y, or crv parameter")
+	}
+
+	// Get the curve
+	var curve elliptic.Curve
+	switch key.Crv {
+	case "P-256":
+		curve = elliptic.P256()
+	case "P-384":
+		curve = elliptic.P384()
+	case "P-521":
+		curve = elliptic.P521()
+	default:
+		return nil, fmt.Errorf("unsupported EC curve: %s", key.Crv)
+	}
+
+	// Decode x coordinate
+	xBytes, err := base64.RawURLEncoding.DecodeString(key.X)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode EC x coordinate: %v", err)
+	}
+
+	// Decode y coordinate
+	yBytes, err := base64.RawURLEncoding.DecodeString(key.Y)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode EC y coordinate: %v", err)
+	}
+
+	// Create EC public key
+	pubKey := &ecdsa.PublicKey{
+		Curve: curve,
+		X:     new(big.Int).SetBytes(xBytes),
+		Y:     new(big.Int).SetBytes(yBytes),
+	}
+
+	// Validate that the point is on the curve
+	if !curve.IsOnCurve(pubKey.X, pubKey.Y) {
+		return nil, fmt.Errorf("EC key coordinates are not on the specified curve")
+	}
 
 	return pubKey, nil
 }
