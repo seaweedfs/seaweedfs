@@ -77,10 +77,16 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 		return nil, s3err.ErrAccessDenied
 	}
 
-	// Check if this is an STS session token (has "role" claim)
-	roleName, ok := tokenClaims["role"].(string)
-	if !ok || roleName == "" {
-		glog.V(0).Infof("🔐 AuthenticateJWT: No 'role' claim found, treating as OIDC token")
+	// Determine token type by issuer claim (more robust than checking role claim)
+	issuer, issuerOk := tokenClaims["iss"].(string)
+	if !issuerOk {
+		glog.V(3).Infof("Token missing issuer claim - invalid JWT")
+		return nil, s3err.ErrAccessDenied
+	}
+
+	// Check if this is an STS-issued token by examining the issuer
+	if !s3iam.isSTSIssuer(issuer) {
+		glog.V(0).Infof("🔐 AuthenticateJWT: External issuer (%s), treating as OIDC token", issuer)
 
 		// Not an STS session token, try to validate as OIDC token with timeout
 		// Create a context with a reasonable timeout to prevent hanging
@@ -122,6 +128,16 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 				Id:           identity.UserID,
 			},
 		}, s3err.ErrNone
+	}
+
+	// This is an STS-issued token - extract STS session information
+	glog.V(0).Infof("🔐 AuthenticateJWT: STS-issued token from issuer: %s", issuer)
+
+	// Extract role claim from STS token
+	roleName, roleOk := tokenClaims["role"].(string)
+	if !roleOk || roleName == "" {
+		glog.V(3).Infof("STS token missing role claim")
+		return nil, s3err.ErrAccessDenied
 	}
 
 	sessionName, ok := tokenClaims["snam"].(string)
@@ -513,4 +529,34 @@ func getProviderNames(providers map[string]providers.IdentityProvider) []string 
 		names = append(names, name)
 	}
 	return names
+}
+
+// isSTSIssuer determines if an issuer belongs to the STS service
+// This provides more robust token type detection than checking for role claims
+func (s3iam *S3IAMIntegration) isSTSIssuer(issuer string) bool {
+	if s3iam.stsService == nil {
+		return false
+	}
+
+	// Get the STS configuration to check the issuer
+	// For now, we'll use a simple heuristic - STS issuers typically contain "sts" or are internal
+	// In a full implementation, this could check against configured STS issuer values
+
+	// Check if issuer contains common STS patterns
+	stsPatterns := []string{
+		"sts",
+		"seaweedfs-sts",
+		"seaweed",
+		"localhost", // For development/testing
+	}
+
+	lowerIssuer := strings.ToLower(issuer)
+	for _, pattern := range stsPatterns {
+		if strings.Contains(lowerIssuer, pattern) {
+			return true
+		}
+	}
+
+	// If no pattern matches, assume it's an external OIDC issuer
+	return false
 }

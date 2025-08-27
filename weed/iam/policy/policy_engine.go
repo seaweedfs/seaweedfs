@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -469,20 +470,21 @@ func (e *PolicyEngine) EvaluateStringCondition(block map[string]interface{}, eva
 			expectedStrings = []string{fmt.Sprintf("%v", v)}
 		}
 
-		// Evaluate the condition
+		// Evaluate the condition using AWS IAM-compliant matching
 		conditionMet := false
 		for _, expected := range expectedStrings {
 			for _, contextValue := range contextStrings {
 				if useWildcard {
-					// Use wildcard matching for StringLike conditions
-					matched, err := filepath.Match(expected, contextValue)
-					if err == nil && matched {
+					// Use AWS IAM-compliant wildcard matching for StringLike conditions
+					// This handles case-insensitivity and policy variables
+					if awsIAMMatch(expected, contextValue, evalCtx) {
 						conditionMet = true
 						break
 					}
 				} else {
-					// Exact string matching for StringEquals/StringNotEquals
-					if expected == contextValue {
+					// For StringEquals/StringNotEquals, also support policy variables but be case-sensitive
+					expandedExpected := expandPolicyVariables(expected, evalCtx)
+					if expandedExpected == contextValue {
 						conditionMet = true
 						break
 					}
@@ -582,7 +584,6 @@ func validateStatementWithType(statement *Statement, policyType string) error {
 	return nil
 }
 
-
 // matchResource checks if a resource pattern matches a requested resource
 // Uses hybrid approach: simple suffix wildcards for compatibility, filepath.Match for complex patterns
 func matchResource(pattern, resource string) bool {
@@ -604,6 +605,83 @@ func matchResource(pattern, resource string) bool {
 	}
 
 	return matched
+}
+
+// awsIAMMatch performs AWS IAM-compliant pattern matching with case-insensitivity and policy variable support
+func awsIAMMatch(pattern, value string, evalCtx *EvaluationContext) bool {
+	// Step 1: Substitute policy variables (e.g., ${aws:username}, ${saml:username})
+	expandedPattern := expandPolicyVariables(pattern, evalCtx)
+
+	// Step 2: Handle special patterns
+	if expandedPattern == "*" {
+		return true // Universal wildcard
+	}
+
+	// Step 3: Case-insensitive exact match
+	if strings.EqualFold(expandedPattern, value) {
+		return true
+	}
+
+	// Step 4: Handle AWS-style wildcards (case-insensitive)
+	if strings.Contains(expandedPattern, "*") || strings.Contains(expandedPattern, "?") {
+		return awsWildcardMatch(expandedPattern, value)
+	}
+
+	return false
+}
+
+// expandPolicyVariables substitutes AWS policy variables in the pattern
+func expandPolicyVariables(pattern string, evalCtx *EvaluationContext) string {
+	if evalCtx == nil || evalCtx.RequestContext == nil {
+		return pattern
+	}
+
+	expanded := pattern
+
+	// Common AWS policy variables that might be used in SeaweedFS
+	variableMap := map[string]string{
+		"${aws:username}":      getContextValue(evalCtx, "aws:username", ""),
+		"${saml:username}":     getContextValue(evalCtx, "saml:username", ""),
+		"${oidc:sub}":          getContextValue(evalCtx, "oidc:sub", ""),
+		"${aws:userid}":        getContextValue(evalCtx, "aws:userid", ""),
+		"${aws:principaltype}": getContextValue(evalCtx, "aws:principaltype", ""),
+	}
+
+	for variable, value := range variableMap {
+		if value != "" {
+			expanded = strings.ReplaceAll(expanded, variable, value)
+		}
+	}
+
+	return expanded
+}
+
+// getContextValue safely gets a value from the evaluation context
+func getContextValue(evalCtx *EvaluationContext, key, defaultValue string) string {
+	if value, exists := evalCtx.RequestContext[key]; exists {
+		if str, ok := value.(string); ok {
+			return str
+		}
+	}
+	return defaultValue
+}
+
+// awsWildcardMatch performs case-insensitive wildcard matching like AWS IAM
+func awsWildcardMatch(pattern, value string) bool {
+	// Convert pattern to regex with case-insensitive matching
+	// AWS uses * for any sequence and ? for any single character
+	regexPattern := strings.ReplaceAll(pattern, "*", ".*")
+	regexPattern = strings.ReplaceAll(regexPattern, "?", ".")
+	regexPattern = "^" + regexPattern + "$"
+
+	// Compile with case-insensitive flag
+	regex, err := regexp.Compile("(?i)" + regexPattern)
+	if err != nil {
+		// Fallback to simple case-insensitive comparison if regex fails
+		return strings.EqualFold(pattern, value)
+	}
+
+	return regex.MatchString(value)
 }
 
 // matchAction checks if an action pattern matches a requested action

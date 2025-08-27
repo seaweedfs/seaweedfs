@@ -130,9 +130,6 @@ When using filer storage, IAM data is stored at:
 
 ```
 /seaweedfs/iam/
-├── sessions/           # STS session tokens
-│   ├── session_abc123.json
-│   └── session_def456.json
 ├── policies/           # IAM policy documents  
 │   ├── policy_S3AdminPolicy.json
 │   └── policy_S3ReadOnlyPolicy.json

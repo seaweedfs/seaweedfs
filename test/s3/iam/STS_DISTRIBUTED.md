@@ -186,7 +186,8 @@ weed s3 -filer=prod-filer:8888 -port=833N -iam.config=/shared/sts_distributed.js
 1. **Identical Configuration Files**: All instances must use the exact same configuration file
 2. **Same Signing Keys**: All instances must have identical `signingKey` values
 3. **Same Issuer**: All instances must use the same `issuer` value
-4. **Shared Session Storage**: Use `"sessionStoreType": "filer"` for distributed sessions
+
+**Note**: STS now uses stateless JWT tokens, eliminating the need for shared session storage.
 
 ### High Availability Setup
 
@@ -336,11 +337,6 @@ User Request → Load Balancer → Any S3 Gateway Instance
     "maxSessionLength": 43200000000000,
     "issuer": "seaweedfs-prod-sts",
     "signingKey": "cHJvZC1zaWduaW5nLWtleS0zMi1jaGFyYWN0ZXJzLWxvbmctcmFuZG9t",
-    "sessionStoreType": "filer",
-    "sessionStoreConfig": {
-      "filerAddress": "prod-filer.company.com:8888",
-      "basePath": "/seaweedfs/iam/sessions"
-    },
     "providers": [
       {
         "name": "corporate-sso",

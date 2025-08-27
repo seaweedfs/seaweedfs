@@ -272,21 +272,22 @@ func (s3a *S3ApiServer) UploadPartWithIAM(w http.ResponseWriter, r *http.Request
 
 // Helper functions
 
-// determineMultipartS3Action maps multipart operations to S3 actions
+// determineMultipartS3Action maps multipart operations to granular S3 actions
+// This enables fine-grained IAM policies for multipart upload operations
 func determineMultipartS3Action(operation MultipartOperation) Action {
 	switch operation {
 	case MultipartOpInitiate:
-		return s3_constants.ACTION_WRITE // s3:CreateMultipartUpload maps to WRITE
+		return s3_constants.ACTION_CREATE_MULTIPART_UPLOAD
 	case MultipartOpUploadPart:
-		return s3_constants.ACTION_WRITE // s3:UploadPart maps to WRITE
+		return s3_constants.ACTION_UPLOAD_PART
 	case MultipartOpComplete:
-		return s3_constants.ACTION_WRITE // s3:CompleteMultipartUpload maps to WRITE
+		return s3_constants.ACTION_COMPLETE_MULTIPART
 	case MultipartOpAbort:
-		return s3_constants.ACTION_WRITE // s3:AbortMultipartUpload maps to WRITE
+		return s3_constants.ACTION_ABORT_MULTIPART
 	case MultipartOpList:
-		return s3_constants.ACTION_LIST // s3:ListMultipartUploads maps to LIST
+		return s3_constants.ACTION_LIST_MULTIPART_UPLOADS
 	case MultipartOpListParts:
-		return s3_constants.ACTION_LIST // s3:ListParts maps to LIST
+		return s3_constants.ACTION_LIST_PARTS
 	default:
 		return s3_constants.ACTION_READ // Default fallback
 	}

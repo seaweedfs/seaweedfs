@@ -260,12 +260,12 @@ func TestMultipartS3ActionMapping(t *testing.T) {
 		operation      MultipartOperation
 		expectedAction Action
 	}{
-		{MultipartOpInitiate, s3_constants.ACTION_WRITE},
-		{MultipartOpUploadPart, s3_constants.ACTION_WRITE},
-		{MultipartOpComplete, s3_constants.ACTION_WRITE},
-		{MultipartOpAbort, s3_constants.ACTION_WRITE},
-		{MultipartOpList, s3_constants.ACTION_LIST},
-		{MultipartOpListParts, s3_constants.ACTION_LIST},
+		{MultipartOpInitiate, s3_constants.ACTION_CREATE_MULTIPART_UPLOAD},
+		{MultipartOpUploadPart, s3_constants.ACTION_UPLOAD_PART},
+		{MultipartOpComplete, s3_constants.ACTION_COMPLETE_MULTIPART},
+		{MultipartOpAbort, s3_constants.ACTION_ABORT_MULTIPART},
+		{MultipartOpList, s3_constants.ACTION_LIST_MULTIPART_UPLOADS},
+		{MultipartOpListParts, s3_constants.ACTION_LIST_PARTS},
 		{MultipartOperation("unknown"), s3_constants.ACTION_READ}, // Default fallback
 	}
 
