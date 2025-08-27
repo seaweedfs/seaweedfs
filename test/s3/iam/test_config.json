@@ -104,13 +104,6 @@
         }
       }
     },
-    "sessionStore": {
-      "type": "filer",
-      "config": {
-        "filerAddress": "localhost:8888",
-        "basePath": "/seaweedfs/iam/sessions"
-      }
-    },
     "policyStore": {
       "type": "filer",
       "config": {

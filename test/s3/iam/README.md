@@ -4,11 +4,13 @@ This directory contains comprehensive integration tests for the SeaweedFS S3 API
 
 ## Overview
 
+**Important**: The STS service uses a **stateless JWT design** where all session information is embedded directly in the JWT token. No external session storage is required.
+
 The S3 IAM integration tests validate the complete end-to-end functionality of:
 
 - **JWT Authentication**: OIDC token-based authentication with S3 API
 - **Policy Enforcement**: Fine-grained access control for S3 operations
-- **Session Management**: STS session token validation and expiration
+- **Stateless Session Management**: JWT-based session token validation and expiration (no external storage)
 - **Role-Based Access Control (RBAC)**: IAM roles with different permission levels
 - **Bucket Policies**: Resource-based access control integration
 - **Multipart Upload IAM**: Policy enforcement for multipart operations
@@ -23,9 +25,8 @@ The S3 IAM integration tests validate the complete end-to-end functionality of:
 2. **IAM Manager** - Core IAM orchestration and policy evaluation
 3. **STS Service** - Security Token Service for temporary credentials
 4. **Policy Engine** - AWS IAM-compatible policy evaluation
-5. **Identity Providers** - OIDC and LDAP authentication providers
-6. **Session Store** - Persistent session storage using SeaweedFS filer
-7. **Policy Store** - Persistent policy storage using SeaweedFS filer
+5. **Identity Providers** - OIDC and LDAP authentication providers  
+6. **Policy Store** - Persistent policy storage using SeaweedFS filer
 
 ### Test Framework
 
@@ -162,7 +163,7 @@ The test configuration defines:
 - **Identity Providers**: OIDC and LDAP configurations
 - **IAM Roles**: Role definitions with trust policies
 - **IAM Policies**: Permission policies for different access levels
-- **Session/Policy Stores**: Persistent storage configurations
+- **Policy Stores**: Persistent storage configurations for IAM policies and roles
 
 ### Service Ports
 

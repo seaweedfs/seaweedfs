@@ -6,7 +6,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"sort"
 	"strings"
 	"time"
 
@@ -310,6 +309,9 @@ func determineGranularS3Action(r *http.Request, fallbackAction Action, bucket st
 			}
 			if _, hasVersions := query["versions"]; hasVersions {
 				return "s3:GetObjectVersion"
+			}
+			if _, hasUploadId := query["uploadId"]; hasUploadId {
+				return "s3:ListParts"
 			}
 			// Default object read
 			return "s3:GetObject"
@@ -800,87 +802,17 @@ func (s3iam *S3IAMIntegration) validateOIDCToken(ctx context.Context, token stri
 	return nil, fmt.Errorf("token not valid for any registered OIDC provider")
 }
 
-// selectPrimaryRole intelligently selects the primary role from multiple available roles
-// This provides deterministic role selection to prevent unpredictable access control behavior
+// selectPrimaryRole simply picks the first role from the list
+// The OIDC provider should return roles in priority order (most important first)
 func (s3iam *S3IAMIntegration) selectPrimaryRole(roles []string, externalIdentity *providers.ExternalIdentity) string {
-	if len(roles) == 1 {
-		return roles[0]
+	if len(roles) == 0 {
+		return ""
 	}
 
-	glog.V(2).Infof("🔍 selectPrimaryRole: Selecting from %d roles: %v", len(roles), roles)
-
-	// Strategy 1: Check for explicit primary_role claim
-	if primaryRole, exists := externalIdentity.Attributes["primary_role"]; exists && primaryRole != "" {
-		primaryRole = strings.TrimSpace(primaryRole)
-		// Verify the primary role is in the available roles list
-		for _, role := range roles {
-			if strings.EqualFold(role, primaryRole) {
-				glog.V(2).Infof("🔍 selectPrimaryRole: Using explicit primary_role: %s", role)
-				return role
-			}
-		}
-		glog.V(1).Infof("⚠️ selectPrimaryRole: primary_role '%s' not found in available roles, falling back", primaryRole)
-	}
-
-	// Strategy 2: Role hierarchy - select most privileged role
-	selectedRole := s3iam.selectByRoleHierarchy(roles)
-	if selectedRole != "" {
-		glog.V(2).Infof("🔍 selectPrimaryRole: Using hierarchical selection: %s", selectedRole)
-		return selectedRole
-	}
-
-	// Strategy 3: Deterministic fallback - alphabetical order (consistent behavior)
-	sort.Strings(roles)
-	glog.V(2).Infof("🔍 selectPrimaryRole: Using deterministic selection (first alphabetically): %s", roles[0])
-	return roles[0]
-}
-
-// selectByRoleHierarchy selects a role based on predefined privilege hierarchy
-// Returns the most privileged role available, or empty string if no hierarchy match
-func (s3iam *S3IAMIntegration) selectByRoleHierarchy(roles []string) string {
-	// Define role hierarchy from most privileged to least privileged
-	// This covers common enterprise role naming patterns
-	roleHierarchy := [][]string{
-		// Tier 1: Super Admin roles
-		{"SuperAdmin", "super-admin", "super_admin", "root", "owner"},
-
-		// Tier 2: Admin roles
-		{"Admin", "admin", "Administrator", "administrator", "system-admin", "system_admin"},
-
-		// Tier 3: Manager/Power User roles
-		{"Manager", "manager", "PowerUser", "power-user", "power_user", "lead", "supervisor"},
-
-		// Tier 4: Editor/Write roles
-		{"Editor", "editor", "Writer", "writer", "Contributor", "contributor", "write", "readwrite", "read-write"},
-
-		// Tier 5: Viewer/Read roles
-		{"Viewer", "viewer", "Reader", "reader", "read-only", "read_only", "readonly", "read", "guest"},
-	}
-
-	// Find the highest priority role available
-	for _, tier := range roleHierarchy {
-		for _, privilegedRole := range tier {
-			for _, availableRole := range roles {
-				// Check for exact match or contains match (case-insensitive)
-				if strings.EqualFold(availableRole, privilegedRole) ||
-					strings.Contains(strings.ToLower(availableRole), strings.ToLower(privilegedRole)) {
-					return availableRole
-				}
-			}
-		}
-	}
-
-	// No hierarchy match found
-	return ""
-}
-
-// getProviderNames returns a list of provider names for debugging
-func getProviderNames(providers map[string]providers.IdentityProvider) []string {
-	names := make([]string, 0, len(providers))
-	for name := range providers {
-		names = append(names, name)
-	}
-	return names
+	// Just pick the first one - keep it simple
+	selectedRole := roles[0]
+	glog.V(2).Infof("🔍 selectPrimaryRole: Selected first role: %s from %v", selectedRole, roles)
+	return selectedRole
 }
 
 // isSTSIssuer determines if an issuer belongs to the STS service
