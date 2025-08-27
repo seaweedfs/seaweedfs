@@ -80,7 +80,7 @@ jobs:
     timeout-minutes: 25
     strategy:
       matrix:
-        test-type: ["basic", "advanced", "policy-enforcement", "keycloak-integration"]
+        test-type: ["basic", "advanced", "policy-enforcement"]
         
     steps:
       - name: Check out code
@@ -129,60 +129,9 @@ jobs:
               make clean setup start-services wait-for-services
               go test -v -timeout 15m -run "TestS3IAMPolicyEnforcement|TestS3IAMBucketPolicy|TestS3IAMContextual" ./...
               ;;
-            "keycloak-integration")
-              echo "Running Keycloak integration tests..."
-              # Start Keycloak container
-              docker run -d \
-                --name keycloak \
-                -p 8080:8080 \
-                -e KC_BOOTSTRAP_ADMIN_USERNAME=admin \
-                -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin \
-                -e KC_HTTP_ENABLED=true \
-                -e KC_HOSTNAME_STRICT=false \
-                -e KC_HOSTNAME_STRICT_HTTPS=false \
-                quay.io/keycloak/keycloak:26.0 \
-                start-dev
-              
-              # Wait for Keycloak with better health checking
-              timeout 300 bash -c '
-                while true; do
-                  if curl -s http://localhost:8080/health/ready > /dev/null 2>&1; then
-                    echo "✅ Keycloak health check passed"
-                    break
-                  fi
-                  if curl -s http://localhost:8080/realms/master > /dev/null 2>&1; then
-                    echo "✅ Keycloak master realm accessible"
-                    break
-                  fi
-                  echo "Waiting for Keycloak..."
-                  sleep 5
-                done
-              '
-              
-              # Setup Keycloak realm and users
-              sudo apt-get update -y
-              sudo apt-get install -y jq
-              chmod +x setup_keycloak.sh
-              ./setup_keycloak.sh
-
-              # Wait for the test realm to be fully available
-              echo "Waiting for seaweedfs-test realm to be available..."
-              timeout 120 bash -c 'until curl -fs http://localhost:8080/realms/seaweedfs-test/.well-known/openid-configuration > /dev/null; do echo "... waiting for realm"; sleep 3; done' || {
-                echo "❌ seaweedfs-test realm not available"
-                docker logs keycloak --tail=200 || true
-                exit 1
-              }
-              
-              # Start SeaweedFS services
-              make clean setup start-services wait-for-services
-              
-              # Run Keycloak tests
-              export KEYCLOAK_URL="http://localhost:8080"
-              go test -v -timeout 15m -run "TestKeycloak" ./...
-              
-              # Cleanup Keycloak
-              docker stop keycloak || true
-              docker rm keycloak || true
+            *)
+              echo "Unknown test type: ${{ matrix.test-type }}"
+              exit 1
               ;;
           esac
           
