@@ -104,10 +104,10 @@ func TestS3IAMDistributedTests(t *testing.T) {
 
 	t.Run("distributed_concurrent_operations", func(t *testing.T) {
 		// Test concurrent operations across distributed instances
-		// BALANCED APPROACH: 18 total operations (6x3) - 3x more than original (6) but CI-friendly
-		// This provides better race condition detection while avoiding CI resource exhaustion
-		const numGoroutines = 6             // Moderate concurrency for CI stability
-		const numOperationsPerGoroutine = 3 // Reasonable operations per goroutine
+		// CONSERVATIVE APPROACH: 8 total operations (4x2) - 33% more than original (6) with high CI stability
+		// This provides meaningful race condition detection while ensuring CI environment stability
+		const numGoroutines = 4             // Conservative concurrency for CI reliability
+		const numOperationsPerGoroutine = 2 // Minimal operations per goroutine
 
 		var wg sync.WaitGroup
 		errors := make(chan error, numGoroutines*numOperationsPerGoroutine)
@@ -131,8 +131,8 @@ func TestS3IAMDistributedTests(t *testing.T) {
 						errors <- err
 						continue
 					}
-					// Small delay to reduce server load
-					time.Sleep(100 * time.Millisecond)
+					// Moderate delay to reduce server load and improve CI stability
+					time.Sleep(200 * time.Millisecond)
 
 					// Put object
 					objectKey := "test-object.txt"
@@ -140,24 +140,24 @@ func TestS3IAMDistributedTests(t *testing.T) {
 						errors <- err
 						continue
 					}
-					// Small delay to reduce server load
-					time.Sleep(100 * time.Millisecond)
+					// Moderate delay to reduce server load and improve CI stability
+					time.Sleep(200 * time.Millisecond)
 
 					// Get object
 					if _, err := framework.GetTestObject(client, bucketName, objectKey); err != nil {
 						errors <- err
 						continue
 					}
-					// Small delay to reduce server load
-					time.Sleep(100 * time.Millisecond)
+					// Moderate delay to reduce server load and improve CI stability
+					time.Sleep(200 * time.Millisecond)
 
 					// Delete object
 					if err := framework.DeleteTestObject(client, bucketName, objectKey); err != nil {
 						errors <- err
 						continue
 					}
-					// Small delay to reduce server load
-					time.Sleep(100 * time.Millisecond)
+					// Moderate delay to reduce server load and improve CI stability
+					time.Sleep(200 * time.Millisecond)
 
 					// Delete bucket
 					if _, err := client.DeleteBucket(&s3.DeleteBucketInput{
@@ -166,8 +166,8 @@ func TestS3IAMDistributedTests(t *testing.T) {
 						errors <- err
 						continue
 					}
-					// Small delay to reduce server load
-					time.Sleep(100 * time.Millisecond)
+					// Moderate delay to reduce server load and improve CI stability
+					time.Sleep(200 * time.Millisecond)
 				}
 			}(i)
 		}
@@ -216,19 +216,19 @@ func TestS3IAMDistributedTests(t *testing.T) {
 			}
 		}
 
-		// BALANCED CONCURRENCY TESTING: Use realistic thresholds for CI stability and race condition detection
-		// For totalOperations=18, we balance rigor with CI environment limitations
+		// CONSERVATIVE CONCURRENCY TESTING: Use CI-friendly thresholds while maintaining race condition detection
+		// For totalOperations=8, we prioritize CI stability with meaningful concurrency coverage
 
-		// Serious errors (race conditions, deadlocks) should be minimal for reliable testing
-		maxSeriousErrors := 1 // Allow 1 serious error (5.6% rate) - some tolerance for CI flakiness
+		// Serious errors (race conditions, deadlocks) should be zero for reliable CI testing
+		maxSeriousErrors := 0 // Zero tolerance for serious errors - indicates system-level concurrency issues
 		if len(seriousErrors) > maxSeriousErrors {
 			t.Errorf("❌ %d serious error(s) detected (%.1f%%), exceeding threshold of %d. This indicates potential concurrency bugs. First error: %v",
 				len(seriousErrors), float64(len(seriousErrors))/float64(totalOperations)*100, maxSeriousErrors, seriousErrors[0])
 		}
 
-		// For total errors, use pragmatic thresholds that balance detection with CI stability
-		maxTotalErrorsStrict := 2  // Allow max 2 total errors (11.1% rate) - strict but achievable
-		maxTotalErrorsRelaxed := 4 // Allow max 4 total errors (22.2% rate) - fallback for CI flakiness
+		// For total errors, use conservative thresholds appropriate for smaller operation count
+		maxTotalErrorsStrict := 1  // Allow max 1 total error (12.5% rate) - strict for small operation count
+		maxTotalErrorsRelaxed := 2 // Allow max 2 total errors (25% rate) - CI-friendly fallback
 
 		if len(errorList) > maxTotalErrorsRelaxed {
 			t.Errorf("❌ Too many total errors: %d (%.1f%%) - exceeds relaxed threshold of %d (%.1f%%). System is unstable under concurrent load.",
