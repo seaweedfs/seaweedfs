@@ -285,7 +285,7 @@ func determineGranularS3Action(r *http.Request, fallbackAction Action, bucket st
 	hasGranularIndicators := hasSpecificQueryParameters(query)
 
 	// Only check for method-action mismatch when there are NO granular indicators
-	// This handles test scenarios where method and action don't align but no specific query params exist
+	// This provides fallback behavior for cases where HTTP method doesn't align with intended action
 	if !hasGranularIndicators && isMethodActionMismatch(method, fallbackAction) {
 		return mapLegacyActionToIAM(fallbackAction)
 	}
@@ -482,28 +482,28 @@ func hasSpecificQueryParameters(query url.Values) bool {
 	return false
 }
 
-// isMethodActionMismatch detects when HTTP method doesn't align with intended action
-// This handles testing scenarios and edge cases where method and action don't naturally correspond
+// isMethodActionMismatch detects when HTTP method doesn't align with the intended S3 action
+// This provides a mechanism to use fallback action mapping when there's a semantic mismatch
 func isMethodActionMismatch(method string, fallbackAction Action) bool {
 	switch fallbackAction {
 	case s3_constants.ACTION_WRITE:
 		// WRITE actions should typically use PUT, POST, or DELETE methods
-		// If method is GET/HEAD, it's likely a test or edge case - use fallback
+		// GET/HEAD methods indicate read-oriented operations
 		return method == "GET" || method == "HEAD"
 
 	case s3_constants.ACTION_READ:
 		// READ actions should typically use GET or HEAD methods
-		// If method is PUT, POST, DELETE, it's likely a test or edge case - use fallback
+		// PUT, POST, DELETE methods indicate write-oriented operations
 		return method == "PUT" || method == "POST" || method == "DELETE"
 
 	case s3_constants.ACTION_LIST:
 		// LIST actions should typically use GET method
-		// If method is PUT, POST, DELETE, it's likely a test or edge case - use fallback
+		// PUT, POST, DELETE methods indicate write-oriented operations
 		return method == "PUT" || method == "POST" || method == "DELETE"
 
 	case s3_constants.ACTION_DELETE_BUCKET:
 		// DELETE_BUCKET should use DELETE method
-		// If method is GET, HEAD, PUT, POST, it's likely a test or edge case - use fallback
+		// Other methods indicate different operation types
 		return method != "DELETE"
 
 	default:

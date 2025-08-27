@@ -221,8 +221,11 @@ docker-up: ## Start all services with Docker Compose (including Keycloak)
 	@echo "🐳 Starting services with Docker Compose including Keycloak..."
 	@docker compose up -d
 	@echo "⏳ Waiting for services to be healthy..."
-	@sleep 30
-	@echo "✅ Services should be ready"
+	@timeout 120 bash -c 'until curl -s http://localhost:8080/health/ready > /dev/null 2>&1; do sleep 2; done' || (echo "❌ Keycloak failed to become ready" && exit 1)
+	@timeout 60 bash -c 'until curl -s http://localhost:8333 > /dev/null 2>&1; do sleep 2; done' || (echo "❌ S3 API failed to become ready" && exit 1)
+	@timeout 60 bash -c 'until curl -s http://localhost:8888 > /dev/null 2>&1; do sleep 2; done' || (echo "❌ Filer failed to become ready" && exit 1)
+	@timeout 60 bash -c 'until curl -s http://localhost:9333 > /dev/null 2>&1; do sleep 2; done' || (echo "❌ Master failed to become ready" && exit 1)
+	@echo "✅ All services are healthy and ready"
 
 docker-down: ## Stop all Docker Compose services
 	@echo "🐳 Stopping Docker Compose services..."

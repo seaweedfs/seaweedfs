@@ -4,7 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net/mail"
-	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -219,12 +220,28 @@ func (r *MappingRule) Matches(claims *TokenClaims) bool {
 }
 
 // matchValue checks if a value matches the rule value (with wildcard support)
+// Uses AWS IAM-compliant case-insensitive wildcard matching for consistency with policy engine
 func (r *MappingRule) matchValue(value string) bool {
-	matched, err := filepath.Match(r.Value, value)
-	if err != nil {
-		glog.V(3).Infof("Error matching '%s' against pattern '%s': %v", value, r.Value, err)
-		return false
-	}
-	glog.V(3).Infof("Pattern match result: '%s' matches '%s' = %t", value, r.Value, matched)
+	matched := awsWildcardMatch(r.Value, value)
+	glog.V(3).Infof("AWS IAM pattern match result: '%s' matches '%s' = %t", value, r.Value, matched)
 	return matched
+}
+
+// awsWildcardMatch performs case-insensitive wildcard matching like AWS IAM
+// This function ensures consistent matching behavior across the IAM system
+func awsWildcardMatch(pattern, value string) bool {
+	// Convert pattern to regex with case-insensitive matching
+	// AWS uses * for any sequence and ? for any single character
+	regexPattern := strings.ReplaceAll(pattern, "*", ".*")
+	regexPattern = strings.ReplaceAll(regexPattern, "?", ".")
+	regexPattern = "^" + regexPattern + "$"
+
+	// Compile with case-insensitive flag
+	regex, err := regexp.Compile("(?i)" + regexPattern)
+	if err != nil {
+		// Fallback to simple case-insensitive comparison if regex fails
+		return strings.EqualFold(pattern, value)
+	}
+
+	return regex.MatchString(value)
 }

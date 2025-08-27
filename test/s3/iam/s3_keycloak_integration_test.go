@@ -78,11 +78,8 @@ func TestKeycloakAuthentication(t *testing.T) {
 		parts := strings.Split(token, ".")
 		if len(parts) >= 2 {
 			payload := parts[1]
-			// Add padding if needed
-			for len(payload)%4 != 0 {
-				payload += "="
-			}
-			decoded, err := base64.StdEncoding.DecodeString(payload)
+			// JWTs use URL-safe base64 encoding without padding (RFC 4648 §5)
+			decoded, err := base64.RawURLEncoding.DecodeString(payload)
 			if err == nil {
 				var claims map[string]interface{}
 				if json.Unmarshal(decoded, &claims) == nil {
@@ -92,24 +89,24 @@ func TestKeycloakAuthentication(t *testing.T) {
 			}
 		}
 
-			// First test with direct HTTP request to verify OIDC authentication works
-	t.Logf("Testing with direct HTTP request...")
-	err = framework.TestKeycloakTokenDirectly(token)
-	require.NoError(t, err, "Direct HTTP test should succeed")
+		// First test with direct HTTP request to verify OIDC authentication works
+		t.Logf("Testing with direct HTTP request...")
+		err = framework.TestKeycloakTokenDirectly(token)
+		require.NoError(t, err, "Direct HTTP test should succeed")
 
-	// Create S3 client with Keycloak token
-	s3Client, err := framework.CreateS3ClientWithKeycloakToken(token)
-	require.NoError(t, err)
+		// Create S3 client with Keycloak token
+		s3Client, err := framework.CreateS3ClientWithKeycloakToken(token)
+		require.NoError(t, err)
 
-	// Test that read-only user can list buckets
-	t.Logf("Testing ListBuckets with AWS SDK...")
-	_, err = s3Client.ListBuckets(&s3.ListBucketsInput{})
-	assert.NoError(t, err, "Read-only user should be able to list buckets")
+		// Test that read-only user can list buckets
+		t.Logf("Testing ListBuckets with AWS SDK...")
+		_, err = s3Client.ListBuckets(&s3.ListBucketsInput{})
+		assert.NoError(t, err, "Read-only user should be able to list buckets")
 
-	// Test that read-only user cannot create buckets
-	t.Logf("Testing CreateBucket with AWS SDK...")
-	err = framework.CreateBucket(s3Client, testKeycloakBucket+"-readonly")
-	assert.Error(t, err, "Read-only user should not be able to create buckets")
+		// Test that read-only user cannot create buckets
+		t.Logf("Testing CreateBucket with AWS SDK...")
+		err = framework.CreateBucket(s3Client, testKeycloakBucket+"-readonly")
+		assert.Error(t, err, "Read-only user should not be able to create buckets")
 	})
 
 	t.Run("invalid_user_authentication", func(t *testing.T) {

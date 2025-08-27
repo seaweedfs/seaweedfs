@@ -234,13 +234,13 @@ func TestS3IAMDistributedTests(t *testing.T) {
 		maxTotalErrorsRelaxed := 4 // Allow max 4 total errors (50% rate) - acceptable for resource-constrained CI
 
 		if len(errorList) > maxTotalErrorsRelaxed {
-			t.Errorf("❌ Too many total errors: %d (%.1f%%) - exceeds relaxed threshold of %d (%.1f%%). System is unstable under concurrent load.", 
+			t.Errorf("❌ Too many total errors: %d (%.1f%%) - exceeds relaxed threshold of %d (%.1f%%). System is unstable under concurrent load.",
 				len(errorList), errorRate*100, maxTotalErrorsRelaxed, float64(maxTotalErrorsRelaxed)/float64(totalOperations)*100)
 		} else if len(errorList) > maxTotalErrorsStrict {
-			t.Logf("⚠️  Concurrent operations completed with %d errors (%.1f%%) - within relaxed CI limits. Normal CI environment variability.", 
+			t.Logf("⚠️  Concurrent operations completed with %d errors (%.1f%%) - within relaxed CI limits. Normal CI environment variability.",
 				len(errorList), errorRate*100)
 		} else if len(errorList) > 0 {
-			t.Logf("✅ Concurrent operations completed with %d errors (%.1f%%) - good performance for CI environment!", 
+			t.Logf("✅ Concurrent operations completed with %d errors (%.1f%%) - good performance for CI environment!",
 				len(errorList), errorRate*100)
 		} else {
 			t.Logf("🎉 All %d concurrent operations completed successfully - excellent CI performance!", totalOperations)

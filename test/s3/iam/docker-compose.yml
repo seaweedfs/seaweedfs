@@ -107,8 +107,6 @@ services:
       GLOG_v: "3"
     command: >
       sh -c "
-        echo 'Waiting for dependencies...' &&
-        sleep 10 &&
         echo 'Starting S3 API with IAM...' &&
         weed -v=3 s3 -ip=weed-s3 -port=8333 
           -filer=weed-filer:8888 
