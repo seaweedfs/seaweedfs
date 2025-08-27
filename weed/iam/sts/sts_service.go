@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/iam/providers"
 )
@@ -14,10 +15,11 @@ import (
 // in JWT tokens, eliminating the need for session storage and enabling true
 // distributed operation without shared state
 type STSService struct {
-	config         *STSConfig
-	initialized    bool
-	providers      map[string]providers.IdentityProvider
-	tokenGenerator *TokenGenerator
+	config           *STSConfig
+	initialized      bool
+	providers        map[string]providers.IdentityProvider
+	issuerToProvider map[string]providers.IdentityProvider // Efficient issuer-based provider lookup
+	tokenGenerator   *TokenGenerator
 }
 
 // STSConfig holds STS service configuration
@@ -182,7 +184,8 @@ type SessionInfo struct {
 // NewSTSService creates a new STS service
 func NewSTSService() *STSService {
 	return &STSService{
-		providers: make(map[string]providers.IdentityProvider),
+		providers:        make(map[string]providers.IdentityProvider),
+		issuerToProvider: make(map[string]providers.IdentityProvider),
 	}
 }
 
@@ -281,7 +284,30 @@ func (s *STSService) RegisterProvider(provider providers.IdentityProvider) error
 	}
 
 	s.providers[name] = provider
+
+	// Try to extract issuer information for efficient lookup
+	// This is a best-effort approach for different provider types
+	issuer := s.extractIssuerFromProvider(provider)
+	if issuer != "" {
+		s.issuerToProvider[issuer] = provider
+		glog.V(2).Infof("Registered provider %s with issuer %s for efficient lookup", name, issuer)
+	}
+
 	return nil
+}
+
+// extractIssuerFromProvider attempts to extract issuer information from different provider types
+func (s *STSService) extractIssuerFromProvider(provider providers.IdentityProvider) string {
+	// Handle different provider types
+	switch p := provider.(type) {
+	case interface{ GetIssuer() string }:
+		// For providers that implement GetIssuer() method
+		return p.GetIssuer()
+	default:
+		// For other provider types, we'll rely on JWT parsing during validation
+		// This is still more efficient than the current brute-force approach
+		return ""
+	}
 }
 
 // GetProviders returns all registered identity providers
@@ -503,16 +529,58 @@ func (s *STSService) validateAssumeRoleWithWebIdentityRequest(request *AssumeRol
 
 // validateWebIdentityToken validates the web identity token with available providers
 func (s *STSService) validateWebIdentityToken(ctx context.Context, token string) (*providers.ExternalIdentity, providers.IdentityProvider, error) {
-	// Try to validate with each registered provider
+	// First, try efficient issuer-based lookup
+	issuer, err := s.extractIssuerFromJWT(token)
+	if err == nil {
+		// Look up provider by issuer for O(1) efficiency
+		if provider, exists := s.issuerToProvider[issuer]; exists {
+			identity, err := provider.Authenticate(ctx, token)
+			if err == nil && identity != nil {
+				return identity, provider, nil
+			}
+			// If authentication fails with the expected provider, don't continue
+			// This prevents tokens from being validated by wrong providers
+			return nil, nil, fmt.Errorf("token validation failed with issuer %s: %w", issuer, err)
+		}
+
+		glog.V(2).Infof("No provider registered for issuer %s, falling back to brute-force search", issuer)
+	} else {
+		glog.V(2).Infof("Could not extract issuer from token (%v), falling back to brute-force search", err)
+	}
+
+	// Fallback: try all providers (backward compatibility)
+	// This handles providers that don't have issuer mapping or malformed tokens
 	for _, provider := range s.providers {
 		identity, err := provider.Authenticate(ctx, token)
 		if err == nil && identity != nil {
-			// Token validated successfully with this provider
 			return identity, provider, nil
 		}
 	}
 
 	return nil, nil, fmt.Errorf("web identity token validation failed with all providers")
+}
+
+// extractIssuerFromJWT extracts the issuer (iss) claim from a JWT token without verification
+func (s *STSService) extractIssuerFromJWT(token string) (string, error) {
+	// Parse token without verification to get claims
+	parsedToken, _, err := new(jwt.Parser).ParseUnverified(token, jwt.MapClaims{})
+	if err != nil {
+		return "", fmt.Errorf("failed to parse JWT token: %v", err)
+	}
+
+	// Extract claims
+	claims, ok := parsedToken.Claims.(jwt.MapClaims)
+	if !ok {
+		return "", fmt.Errorf("invalid token claims")
+	}
+
+	// Get issuer claim
+	issuer, ok := claims["iss"].(string)
+	if !ok || issuer == "" {
+		return "", fmt.Errorf("missing or invalid issuer claim")
+	}
+
+	return issuer, nil
 }
 
 // validateRoleAssumption checks if the role can be assumed by the external identity

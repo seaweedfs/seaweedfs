@@ -88,6 +88,14 @@ func (p *OIDCProvider) Name() string {
 	return p.name
 }
 
+// GetIssuer returns the configured issuer URL for efficient provider lookup
+func (p *OIDCProvider) GetIssuer() string {
+	if p.config == nil {
+		return ""
+	}
+	return p.config.Issuer
+}
+
 // Initialize initializes the OIDC provider with configuration
 func (p *OIDCProvider) Initialize(config interface{}) error {
 	if config == nil {
