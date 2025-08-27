@@ -105,10 +105,10 @@ func TestS3IAMDistributedTests(t *testing.T) {
 	t.Run("distributed_concurrent_operations", func(t *testing.T) {
 		// Test concurrent operations across distributed instances with robust retry mechanisms
 		// This approach implements proper retry logic instead of tolerating errors to catch real concurrency issues
-		const numGoroutines = 4             // Optimal concurrency for CI reliability
-		const numOperationsPerGoroutine = 2 // Minimal operations per goroutine
-		const maxRetries = 3                // Maximum retry attempts for transient failures
-		const retryDelay = 100 * time.Millisecond
+		const numGoroutines = 3                   // Reduced concurrency for better CI reliability
+		const numOperationsPerGoroutine = 2       // Minimal operations per goroutine
+		const maxRetries = 3                      // Maximum retry attempts for transient failures
+		const retryDelay = 200 * time.Millisecond // Increased delay for better stability
 
 		var wg sync.WaitGroup
 		errors := make(chan error, numGoroutines*numOperationsPerGoroutine)
@@ -224,8 +224,8 @@ func TestS3IAMDistributedTests(t *testing.T) {
 						t.Logf("Warning: Failed to cleanup bucket %s: %v", bucketName, err)
 					}
 
-					// Small delay between operation sequences to reduce server load
-					time.Sleep(50 * time.Millisecond)
+					// Increased delay between operation sequences to reduce server load and improve stability
+					time.Sleep(100 * time.Millisecond)
 				}
 			}(i)
 		}

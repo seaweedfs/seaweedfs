@@ -70,6 +70,7 @@ start-services: ## Start SeaweedFS services for testing
 	@$(WEED_BINARY) volume -port=$(VOLUME_PORT) \
 		-dataCenter=dc1 -rack=rack1 \
 		-dir=test-volume-data \
+		-max=100 \
 		-mserver=localhost:$(MASTER_PORT) > weed-volume.log 2>&1 & \
 		echo $$! > $(VOLUME_PID_FILE)
 	
@@ -103,6 +104,8 @@ wait-for-services: ## Wait for all services to be ready
 	@echo "Checking S3 API server..."
 	@timeout 30 bash -c 'until curl -s http://localhost:$(S3_PORT) > /dev/null 2>&1; do sleep 1; done' || (echo "❌ S3 API failed to start" && exit 1)
 	
+	@echo "Pre-allocating volumes for concurrent operations..."
+	@curl -s "http://localhost:$(MASTER_PORT)/vol/grow?collection=default&count=10&replication=000" > /dev/null || echo "⚠️  Volume pre-allocation failed, but continuing..."
 	@sleep 3
 	@echo "✅ All services are ready"
 
