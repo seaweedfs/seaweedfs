@@ -235,11 +235,11 @@ func TestFindGreaterOrEqual(t *testing.T) {
 	list = New(memStore)
 
 	for i := 0; i < maxN; i++ {
-		list.InsertByKey(Element(rand.Intn(maxNumber)), 0, Element(i))
+		list.InsertByKey(Element(rand.IntN(maxNumber)), 0, Element(i))
 	}
 
 	for i := 0; i < maxN; i++ {
-		key := Element(rand.Intn(maxNumber))
+		key := Element(rand.IntN(maxNumber))
 		if _, v, ok, _ := list.FindGreaterOrEqual(key); ok {
 			// if f is v should be bigger than the element before
 			if v.Prev != nil && bytes.Compare(key, v.Prev.Key) < 0 {

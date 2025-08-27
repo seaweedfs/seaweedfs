@@ -3,18 +3,19 @@ package shell
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/cluster"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
-	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
-	"github.com/seaweedfs/seaweedfs/weed/util"
-	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 	"io"
-	"math/rand"
+	"math/rand/v2"
 	"os"
 	"path"
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 
 	"github.com/peterh/liner"
 )
@@ -69,7 +70,7 @@ func RunShell(options ShellOptions) {
 		fmt.Printf("master: %s ", *options.Masters)
 		if len(filers) > 0 {
 			fmt.Printf("filers: %v", filers)
-			commandEnv.option.FilerAddress = filers[rand.Intn(len(filers))]
+			commandEnv.option.FilerAddress = filers[rand.IntN(len(filers))]
 		}
 		fmt.Println()
 	}

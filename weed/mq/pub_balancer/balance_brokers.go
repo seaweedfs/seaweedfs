@@ -1,9 +1,10 @@
 package pub_balancer
 
 import (
+	"math/rand/v2"
+
 	cmap "github.com/orcaman/concurrent-map/v2"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
-	"math/rand"
 )
 
 func BalanceTopicPartitionOnBrokers(brokers cmap.ConcurrentMap[string, *BrokerStats]) BalanceAction {
@@ -28,7 +29,7 @@ func BalanceTopicPartitionOnBrokers(brokers cmap.ConcurrentMap[string, *BrokerSt
 			maxPartitionCountPerBroker = brokerStats.Val.TopicPartitionCount
 			sourceBroker = brokerStats.Key
 			// select a random partition from the source broker
-			randomePartitionIndex := rand.Intn(int(brokerStats.Val.TopicPartitionCount))
+			randomePartitionIndex := rand.IntN(int(brokerStats.Val.TopicPartitionCount))
 			index := 0
 			for topicPartitionStats := range brokerStats.Val.TopicPartitionStats.IterBuffered() {
 				if index == randomePartitionIndex {

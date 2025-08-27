@@ -157,7 +157,7 @@ func doSomeWritesDeletes(i int, v *Volume, t *testing.T, infos []*needleInfo) {
 	}
 	// println("written file", i, "checksum", n.Checksum.Value(), "size", size)
 	if rand.Float64() < 0.03 {
-		toBeDeleted := rand.Intn(i) + 1
+		toBeDeleted := rand.IntN(i) + 1
 		oldNeedle := newEmptyNeedle(uint64(toBeDeleted))
 		v.deleteNeedle2(oldNeedle)
 		// println("deleted file", toBeDeleted)
@@ -175,7 +175,7 @@ type needleInfo struct {
 
 func newRandomNeedle(id uint64) *needle.Needle {
 	n := new(needle.Needle)
-	n.Data = make([]byte, rand.Intn(1024))
+	n.Data = make([]byte, rand.IntN(1024))
 	rand.Read(n.Data)
 
 	n.Checksum = needle.NewCRC(n.Data)

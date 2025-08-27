@@ -3,7 +3,7 @@ package mount
 import (
 	"context"
 	"errors"
-	"math/rand"
+	"math/rand/v2"
 	"os"
 	"path"
 	"path/filepath"
@@ -110,7 +110,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		fhLockTable:   util.NewLockTable[FileHandleId](),
 	}
 
-	wfs.option.filerIndex = int32(rand.Intn(len(option.FilerAddresses)))
+	wfs.option.filerIndex = int32(rand.IntN(len(option.FilerAddresses)))
 	wfs.option.setupUniqueCacheDirectory()
 	if option.CacheSizeMBForRead > 0 {
 		wfs.chunkCache = chunk_cache.NewTieredChunkCache(256, option.getUniqueCacheDirForRead(), option.CacheSizeMBForRead, 1024*1024)

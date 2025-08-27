@@ -91,7 +91,7 @@ func waitForS3Service(t *testing.T, client *s3.Client, timeout time.Duration) {
 func getNewBucketName() string {
 	timestamp := time.Now().UnixNano()
 	// Add random suffix to prevent collisions when tests run quickly
-	randomSuffix := mathrand.Intn(100000)
+	randomSuffix := mathrand.IntN(100000)
 	return fmt.Sprintf("%s%d-%d", defaultConfig.BucketPrefix, timestamp, randomSuffix)
 }
 

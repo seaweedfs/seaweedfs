@@ -33,7 +33,7 @@ func main() {
 		f, err := os.Create(fmt.Sprintf("%s/file%05d", *toDir, i))
 		check(err)
 
-		fileSize := *minSize + rand.Intn(*maxSize-*minSize)
+		fileSize := *minSize + rand.IntN(*maxSize-*minSize)
 		startTime := time.Now()
 
 		fmt.Printf("write %s %d bytes: ", f.Name(), fileSize)
