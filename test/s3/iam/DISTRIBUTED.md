@@ -7,19 +7,18 @@ This document explains how to configure SeaweedFS S3 Gateway for distributed env
 In distributed environments with multiple S3 gateway instances, the default in-memory storage for IAM components causes **serious consistency issues**:
 
 - **Roles**: Each instance maintains separate in-memory role definitions
-- **Sessions**: STS sessions created on one instance aren't visible on others  
 - **Policies**: Policy updates don't propagate across instances
-- **Authentication failures**: Users may get different responses from different instances
+- **Authentication inconsistency**: Users may get different responses from different instances
 
-## Solution: Filer-Based Distributed Storage
+## Solution: Stateless JWT + Filer-Based Storage
 
-SeaweedFS now supports **distributed IAM storage** using the filer as a centralized backend for:
+SeaweedFS now supports **distributed IAM** using:
 
-- ✅ **Role definitions** (FilerRoleStore)
-- ✅ **STS sessions** (FilerSessionStore)  
-- ✅ **IAM policies** (FilerPolicyStore)
+- ✅ **Stateless STS**: JWT tokens contain all session information (no session storage needed)
+- ✅ **Role definitions**: Filer-based distributed storage (FilerRoleStore)  
+- ✅ **IAM policies**: Filer-based distributed storage (FilerPolicyStore)
 
-All S3 gateway instances share the same IAM state through the filer.
+All S3 gateway instances share the same IAM state through the filer, and STS tokens are completely stateless.
 
 ## Configuration
 
@@ -46,12 +45,7 @@ All S3 gateway instances share the same IAM state through the filer.
     "tokenDuration": 3600000000000,
     "maxSessionLength": 43200000000000,
     "issuer": "seaweedfs-sts",
-    "signingKey": "base64-encoded-signing-key",
-    "sessionStoreType": "filer",
-    "sessionStoreConfig": {
-      "filerAddress": "localhost:8888",
-      "basePath": "/seaweedfs/iam/sessions"
-    }
+    "signingKey": "base64-encoded-signing-key"
   },
   "policy": {
     "defaultEffect": "Deny",
@@ -70,6 +64,12 @@ All S3 gateway instances share the same IAM state through the filer.
   }
 }
 ```
+
+**Key Configuration Changes for Distribution:**
+
+- **STS remains stateless**: No session store configuration needed as JWT tokens are self-contained
+- **Policy store uses filer**: `"storeType": "filer"` enables distributed policy storage
+- **Role store uses filer**: Ensures all instances share the same role definitions
 
 ## Storage Backends
 
@@ -169,7 +169,6 @@ When using filer storage, IAM data is stored at:
    ```json
    {
      "policy": { "storeType": "filer" },
-     "sts": { "sessionStoreType": "filer" },
      "roleStore": { "storeType": "filer" }
    }
    ```

@@ -387,13 +387,9 @@ func setupTestProviders(t *testing.T, manager *IAMManager) {
 	require.NoError(t, err)
 	oidcProvider.SetupDefaultTestData()
 
-	// Set up LDAP provider
+	// Set up LDAP mock provider (no config needed for mock)
 	ldapProvider := ldap.NewMockLDAPProvider("test-ldap")
-	ldapConfig := &ldap.LDAPConfig{
-		Server: "ldap://test-server:389",
-		BaseDN: "DC=test,DC=com",
-	}
-	err = ldapProvider.Initialize(ldapConfig)
+	err = ldapProvider.Initialize(nil) // Mock doesn't need real config
 	require.NoError(t, err)
 	ldapProvider.SetupDefaultTestData()
 

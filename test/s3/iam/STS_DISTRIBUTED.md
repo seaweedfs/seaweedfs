@@ -30,15 +30,12 @@ The STS service now supports **automatic provider loading** from configuration f
     "tokenDuration": 3600000000000,
     "maxSessionLength": 43200000000000, 
     "issuer": "seaweedfs-sts",
-    "signingKey": "base64-encoded-signing-key-32-chars-min",
-    "sessionStoreType": "filer",
-    "sessionStoreConfig": {
-      "filerAddress": "localhost:8888",
-      "basePath": "/seaweedfs/iam/sessions"
-    }
+    "signingKey": "base64-encoded-signing-key-32-chars-min"
   }
 }
 ```
+
+**Note**: The STS service uses a **stateless JWT design** where all session information is embedded directly in the JWT token. No external session storage is required.
 
 ### Configuration-Driven Providers
 
@@ -49,10 +46,6 @@ The STS service now supports **automatic provider loading** from configuration f
     "maxSessionLength": 43200000000000,
     "issuer": "seaweedfs-sts",
     "signingKey": "base64-encoded-signing-key",
-    "sessionStoreType": "filer",
-    "sessionStoreConfig": {
-      "filerAddress": "localhost:8888"
-    },
     "providers": [
       {
         "name": "keycloak-oidc",

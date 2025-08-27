@@ -179,21 +179,6 @@ type SessionInfo struct {
 	Credentials *Credentials `json:"credentials"`
 }
 
-// SessionStore defines the interface for storing session information
-type SessionStore interface {
-	// StoreSession stores session information (filerAddress ignored for memory stores)
-	StoreSession(ctx context.Context, filerAddress string, sessionId string, session *SessionInfo) error
-
-	// GetSession retrieves session information (filerAddress ignored for memory stores)
-	GetSession(ctx context.Context, filerAddress string, sessionId string) (*SessionInfo, error)
-
-	// RevokeSession revokes a session (filerAddress ignored for memory stores)
-	RevokeSession(ctx context.Context, filerAddress string, sessionId string) error
-
-	// CleanupExpiredSessions removes expired sessions (filerAddress ignored for memory stores)
-	CleanupExpiredSessions(ctx context.Context, filerAddress string) error
-}
-
 // NewSTSService creates a new STS service
 func NewSTSService() *STSService {
 	return &STSService{

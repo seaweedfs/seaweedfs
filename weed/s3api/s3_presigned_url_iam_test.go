@@ -456,11 +456,7 @@ func setupTestProvidersForPresigned(t *testing.T, manager *integration.IAMManage
 
 	// Set up LDAP provider
 	ldapProvider := ldap.NewMockLDAPProvider("test-ldap")
-	ldapConfig := &ldap.LDAPConfig{
-		Server: "ldap://test-server:389",
-		BaseDN: "DC=test,DC=com",
-	}
-	err = ldapProvider.Initialize(ldapConfig)
+	err = ldapProvider.Initialize(nil) // Mock doesn't need real config
 	require.NoError(t, err)
 	ldapProvider.SetupDefaultTestData()
 

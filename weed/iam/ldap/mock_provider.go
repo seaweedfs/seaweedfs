@@ -9,8 +9,10 @@ import (
 )
 
 // MockLDAPProvider is a mock implementation for testing
+// This is a standalone mock that doesn't depend on production LDAP code
 type MockLDAPProvider struct {
-	*LDAPProvider
+	name            string
+	initialized     bool
 	TestUsers       map[string]*providers.ExternalIdentity
 	TestCredentials map[string]string // username -> password
 }
@@ -18,10 +20,22 @@ type MockLDAPProvider struct {
 // NewMockLDAPProvider creates a mock LDAP provider for testing
 func NewMockLDAPProvider(name string) *MockLDAPProvider {
 	return &MockLDAPProvider{
-		LDAPProvider:    NewLDAPProvider(name),
+		name:            name,
+		initialized:     true, // Mock is always initialized
 		TestUsers:       make(map[string]*providers.ExternalIdentity),
 		TestCredentials: make(map[string]string),
 	}
+}
+
+// Name returns the provider name
+func (m *MockLDAPProvider) Name() string {
+	return m.name
+}
+
+// Initialize initializes the mock provider (no-op for testing)
+func (m *MockLDAPProvider) Initialize(config interface{}) error {
+	m.initialized = true
+	return nil
 }
 
 // AddTestUser adds a test user with credentials
