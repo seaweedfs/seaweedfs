@@ -15,7 +15,7 @@ In distributed environments with multiple S3 gateway instances, the default in-m
 SeaweedFS now supports **distributed IAM** using:
 
 - ✅ **Stateless STS**: JWT tokens contain all session information (no session storage needed)
-- ✅ **Role definitions**: Filer-based distributed storage (FilerRoleStore)  
+- ✅ **Role definitions**: Filer-based distributed storage (FilerRoleStore)
 - ✅ **IAM policies**: Filer-based distributed storage (FilerPolicyStore)
 
 All S3 gateway instances share the same IAM state through the filer, and STS tokens are completely stateless.
