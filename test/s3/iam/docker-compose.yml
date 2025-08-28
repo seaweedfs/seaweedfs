@@ -123,6 +123,8 @@ services:
         condition: service_healthy
       keycloak:
         condition: service_healthy
+      keycloak-setup:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8333"]
       interval: 10s
