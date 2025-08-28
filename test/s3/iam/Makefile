@@ -70,6 +70,7 @@ start-services: ## Start SeaweedFS services for testing
 	
 	@echo "Starting volume server..."
 	@$(WEED_BINARY) volume -port=$(VOLUME_PORT) \
+		-ip=localhost \
 		-dataCenter=dc1 -rack=rack1 \
 		-dir=test-volume-data \
 		-max=100 \
