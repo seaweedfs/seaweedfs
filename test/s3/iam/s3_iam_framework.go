@@ -310,28 +310,6 @@ func (t *BearerTokenTransport) RoundTrip(req *http.Request) (*http.Response, err
 		tokenPreview = tokenPreview[:50] + "..."
 	}
 
-	// Conditional debug logging - enable via TEST_DEBUG=1 environment variable
-	if os.Getenv("TEST_DEBUG") == "1" {
-		// Extract subject from JWT token for enhanced debugging
-		parts := strings.Split(t.Token, ".")
-		subject := "unknown"
-		if len(parts) >= 2 {
-			if decoded, err := base64.RawURLEncoding.DecodeString(parts[1]); err == nil {
-				var claims map[string]interface{}
-				if json.Unmarshal(decoded, &claims) == nil {
-					if sub, ok := claims["sub"].(string); ok {
-						if len(sub) > 8 {
-							subject = sub[:8] + "..." // First 8 chars of subject for security
-						} else {
-							subject = sub
-						}
-					}
-				}
-			}
-		}
-		fmt.Printf("DEBUG: Sending Bearer token (subject: %s): %s\n", subject, tokenPreview)
-	}
-
 	// Use underlying transport
 	transport := t.Transport
 	if transport == nil {
@@ -588,12 +566,11 @@ func (f *S3IAMTestFramework) TestKeycloakTokenDirectly(keycloakToken string) err
 	defer resp.Body.Close()
 
 	// Read response
-	body, err := io.ReadAll(resp.Body)
+	_, err = io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("failed to read response: %v", err)
 	}
 
-	fmt.Printf("Direct HTTP test - Status: %d, Body: %s\n", resp.StatusCode, string(body))
 	return nil
 }
 

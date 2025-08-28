@@ -43,27 +43,21 @@ func NewS3IAMIntegration(iamManager *integration.IAMManager, filerAddress string
 
 // AuthenticateJWT authenticates JWT tokens using our STS service
 func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Request) (*IAMIdentity, s3err.ErrorCode) {
-	glog.V(0).Infof("🔐 AuthenticateJWT: Starting JWT authentication for %s %s", r.Method, r.URL.Path)
 
 	if !s3iam.enabled {
-		glog.V(0).Infof("🔐 AuthenticateJWT: IAM integration not enabled")
 		return nil, s3err.ErrNotImplemented
 	}
 
 	// Extract bearer token from Authorization header
 	authHeader := r.Header.Get("Authorization")
 	if !strings.HasPrefix(authHeader, "Bearer ") {
-		glog.V(0).Infof("🔐 AuthenticateJWT: No Bearer token found")
 		return nil, s3err.ErrAccessDenied
 	}
 
 	sessionToken := strings.TrimPrefix(authHeader, "Bearer ")
 	if sessionToken == "" {
-		glog.V(0).Infof("🔐 AuthenticateJWT: Empty session token")
 		return nil, s3err.ErrAccessDenied
 	}
-
-	glog.V(0).Infof("🔐 AuthenticateJWT: Processing JWT token (length: %d)", len(sessionToken))
 
 	// Basic token format validation - reject obviously invalid tokens
 	if sessionToken == "invalid-token" || len(sessionToken) < 10 {
@@ -87,34 +81,20 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 
 	// Check if this is an STS-issued token by examining the issuer
 	if !s3iam.isSTSIssuer(issuer) {
-		glog.V(0).Infof("🔐 AuthenticateJWT: External issuer (%s), treating as OIDC token", issuer)
 
 		// Not an STS session token, try to validate as OIDC token with timeout
 		// Create a context with a reasonable timeout to prevent hanging
-		glog.V(0).Infof("🔐 AuthenticateJWT: Starting OIDC token validation with 15s timeout...")
-		start := time.Now()
-
 		ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
 
 		identity, err := s3iam.validateExternalOIDCToken(ctx, sessionToken)
-		elapsed := time.Since(start)
 
 		if err != nil {
-			// Check if it's a timeout error and log accordingly
-			if ctx.Err() == context.DeadlineExceeded {
-				glog.V(0).Infof("🔐 AuthenticateJWT: OIDC token validation TIMED OUT after %v: %v", elapsed, err)
-			} else {
-				glog.V(0).Infof("🔐 AuthenticateJWT: OIDC token validation FAILED after %v: %v", elapsed, err)
-			}
 			return nil, s3err.ErrAccessDenied
 		}
 
-		glog.V(0).Infof("🔐 AuthenticateJWT: OIDC token validation SUCCEEDED after %v", elapsed)
-
 		// Extract role from OIDC identity
 		if identity.RoleArn == "" {
-			glog.V(0).Info("No role found in OIDC token")
 			return nil, s3err.ErrAccessDenied
 		}
 
@@ -132,7 +112,6 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 	}
 
 	// This is an STS-issued token - extract STS session information
-	glog.V(0).Infof("🔐 AuthenticateJWT: STS-issued token from issuer: %s", issuer)
 
 	// Extract role claim from STS token
 	roleName, roleOk := tokenClaims["role"].(string)
@@ -732,17 +711,14 @@ type OIDCIdentity struct {
 // validateExternalOIDCToken validates an external OIDC token using the STS service's secure issuer-based lookup
 // This method delegates to the STS service's validateWebIdentityToken for better security and efficiency
 func (s3iam *S3IAMIntegration) validateExternalOIDCToken(ctx context.Context, token string) (*OIDCIdentity, error) {
-	glog.V(0).Infof("🔍 validateExternalOIDCToken: Starting secure OIDC token validation via STS service")
 
 	if s3iam.iamManager == nil {
-		glog.V(0).Infof("🔍 validateExternalOIDCToken: IAM manager not available")
 		return nil, fmt.Errorf("IAM manager not available")
 	}
 
 	// Get STS service for secure token validation
 	stsService := s3iam.iamManager.GetSTSService()
 	if stsService == nil {
-		glog.V(0).Infof("🔍 validateExternalOIDCToken: STS service not available")
 		return nil, fmt.Errorf("STS service not available")
 	}
 
@@ -750,16 +726,12 @@ func (s3iam *S3IAMIntegration) validateExternalOIDCToken(ctx context.Context, to
 	// This method uses issuer-based lookup to select the correct provider, which is more secure and efficient
 	externalIdentity, provider, err := stsService.ValidateWebIdentityToken(ctx, token)
 	if err != nil {
-		glog.V(0).Infof("🔍 validateExternalOIDCToken: STS validation failed: %v", err)
 		return nil, fmt.Errorf("token validation failed: %w", err)
 	}
 
 	if externalIdentity == nil {
-		glog.V(0).Infof("🔍 validateExternalOIDCToken: STS validation succeeded but no identity returned")
 		return nil, fmt.Errorf("authentication succeeded but no identity returned")
 	}
-
-	glog.V(0).Infof("🔍 validateExternalOIDCToken: STS validation succeeded with provider type: %T", provider)
 
 	// Extract role from external identity attributes
 	rolesAttr, exists := externalIdentity.Attributes["roles"]
@@ -805,7 +777,6 @@ func (s3iam *S3IAMIntegration) selectPrimaryRole(roles []string, externalIdentit
 
 	// Just pick the first one - keep it simple
 	selectedRole := roles[0]
-	glog.V(2).Infof("🔍 selectPrimaryRole: Selected first role: %s from %v", selectedRole, roles)
 	return selectedRole
 }
 
