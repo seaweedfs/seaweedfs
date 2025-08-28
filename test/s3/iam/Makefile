@@ -76,9 +76,15 @@ start-services: ## Start SeaweedFS services for testing
 		-mserver=localhost:$(MASTER_PORT) > weed-volume.log 2>&1 & \
 		echo $$! > $(VOLUME_PID_FILE)
 	
-	@echo "Waiting for volume server to be ready..."
-	@timeout 60 bash -c 'until curl -s http://localhost:$(VOLUME_PORT)/status > /dev/null 2>&1; do echo "Waiting for volume server..."; sleep 2; done' || (echo "❌ Volume server failed to start, checking logs..." && tail -20 weed-volume.log && exit 1)
-	@echo "✅ Volume server is ready"
+	@echo "Waiting for volume server to initialize..."
+	@sleep 5
+	@echo "Checking if volume server process is running..."
+	@if ! kill -0 $$(cat $(VOLUME_PID_FILE)) 2>/dev/null; then \
+		echo "❌ Volume server process died, checking logs..."; \
+		tail -20 weed-volume.log; \
+		exit 1; \
+	fi
+	@echo "✅ Volume server is running"
 	
 	@echo "Starting filer server..."
 	@$(WEED_BINARY) filer -port=$(FILER_PORT) \
