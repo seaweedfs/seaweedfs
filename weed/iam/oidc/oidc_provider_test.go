@@ -138,6 +138,29 @@ func TestOIDCProviderJWTValidation(t *testing.T) {
 		assert.Equal(t, "user@example.com", email)
 	})
 
+	t.Run("valid token with array audience", func(t *testing.T) {
+		// Create valid JWT token with audience as an array (per RFC 7519)
+		token := createTestJWT(t, privateKey, jwt.MapClaims{
+			"iss":   server.URL,
+			"aud":   []string{"test-client", "another-client"},
+			"sub":   "user456",
+			"exp":   time.Now().Add(time.Hour).Unix(),
+			"iat":   time.Now().Unix(),
+			"email": "user2@example.com",
+			"name":  "Test User 2",
+		})
+
+		claims, err := provider.ValidateToken(context.Background(), token)
+		require.NoError(t, err)
+		require.NotNil(t, claims)
+		assert.Equal(t, "user456", claims.Subject)
+		assert.Equal(t, server.URL, claims.Issuer)
+
+		email, exists := claims.GetClaimString("email")
+		assert.True(t, exists)
+		assert.Equal(t, "user2@example.com", email)
+	})
+
 	t.Run("expired token", func(t *testing.T) {
 		// Create expired JWT token
 		token := createTestJWT(t, privateKey, jwt.MapClaims{

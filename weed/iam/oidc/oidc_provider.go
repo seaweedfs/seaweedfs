@@ -332,17 +332,32 @@ func (p *OIDCProvider) ValidateToken(ctx context.Context, token string) (*provid
 	}
 
 	// Check audience claim (aud) or authorized party (azp) - Keycloak uses azp
-	var audience string
-	if aud, ok := claims["aud"].(string); ok {
-		audience = aud
-	} else if azp, ok := claims["azp"].(string); ok {
-		audience = azp
-	} else {
-		return nil, fmt.Errorf("invalid or missing audience claim")
+	// Per RFC 7519, aud can be either a string or an array of strings
+	var audienceMatched bool
+	if audClaim, ok := claims["aud"]; ok {
+		switch aud := audClaim.(type) {
+		case string:
+			if aud == p.config.ClientID {
+				audienceMatched = true
+			}
+		case []interface{}:
+			for _, a := range aud {
+				if str, ok := a.(string); ok && str == p.config.ClientID {
+					audienceMatched = true
+					break
+				}
+			}
+		}
 	}
 
-	if audience != p.config.ClientID {
-		return nil, fmt.Errorf("invalid audience claim: expected %s, got %s", p.config.ClientID, audience)
+	if !audienceMatched {
+		if azp, ok := claims["azp"].(string); ok && azp == p.config.ClientID {
+			audienceMatched = true
+		}
+	}
+
+	if !audienceMatched {
+		return nil, fmt.Errorf("invalid or missing audience claim for client ID %s", p.config.ClientID)
 	}
 
 	subject, ok := claims["sub"].(string)

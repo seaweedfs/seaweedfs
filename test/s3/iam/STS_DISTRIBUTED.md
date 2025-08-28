@@ -388,9 +388,9 @@ User Request → Load Balancer → Any S3 Gateway Instance
 
 ### 4. Capacity Planning
 
-- **Session Storage**: Monitor session store size and cleanup expired sessions
 - **Provider Performance**: Monitor OIDC provider response times and rate limits
 - **Token Validation**: Monitor JWT validation performance and caching
+- **Memory Usage**: Monitor JWT token validation caching and provider metadata
 
 ## Migration Guide
 
