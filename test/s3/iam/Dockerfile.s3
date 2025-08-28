@@ -14,7 +14,7 @@ COPY . .
 RUN cd weed && go build -o /usr/local/bin/weed
 
 # Final runtime image
-FROM alpine:3.18
+FROM alpine:latest
 
 # Install runtime dependencies
 RUN apk add --no-cache ca-certificates wget curl
