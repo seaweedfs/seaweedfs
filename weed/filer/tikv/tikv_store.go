@@ -162,34 +162,28 @@ func (store *TikvStore) DeleteFolderChildren(ctx context.Context, path util.Full
 	if err != nil {
 		return err
 	}
-	var (
-		startKey []byte = nil
-		endKey   []byte = nil
-	)
 	err = txn.RunInTxn(func(txn *txnkv.KVTxn) error {
 		iter, err := txn.Iter(directoryPrefix, nil)
 		if err != nil {
 			return err
 		}
 		defer iter.Close()
+		var keys [][]byte
 		for iter.Valid() {
 			key := iter.Key()
-			endKey = key
 			if !bytes.HasPrefix(key, directoryPrefix) {
 				break
 			}
-			if startKey == nil {
-				startKey = key
-			}
-
+			keys = append(keys, key)
 			err = iter.Next()
 			if err != nil {
 				return err
 			}
 		}
-		// Only one Key matched just delete it.
-		if startKey != nil && bytes.Equal(startKey, endKey) {
-			return txn.Delete(startKey)
+		for _, key := range keys {
+			if err := txn.Delete(key); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
@@ -197,13 +191,6 @@ func (store *TikvStore) DeleteFolderChildren(ctx context.Context, path util.Full
 		return fmt.Errorf("delete %s : %v", path, err)
 	}
 
-	if startKey != nil && endKey != nil && !bytes.Equal(startKey, endKey) {
-		// has startKey and endKey and they are not equals, so use delete range
-		_, err = store.client.DeleteRange(context.Background(), startKey, endKey, store.deleteRangeConcurrency)
-		if err != nil {
-			return fmt.Errorf("delete %s : %v", path, err)
-		}
-	}
 	return err
 }
 
