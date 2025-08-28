@@ -434,7 +434,9 @@ func setupTestIAMManagerForPresigned(t *testing.T) *integration.IAMManager {
 		},
 	}
 
-	err := manager.Initialize(config)
+	err := manager.Initialize(config, func() string {
+		return "localhost:8888" // Mock filer address for testing
+	})
 	require.NoError(t, err)
 
 	// Set up test identity providers

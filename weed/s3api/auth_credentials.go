@@ -60,6 +60,7 @@ type Identity struct {
 	Account     *Account
 	Credentials []*Credential
 	Actions     []Action
+	PrincipalArn string // ARN for IAM authorization (e.g., "arn:seaweed:iam::user/username")
 }
 
 // Account represents a system user, a system user can
@@ -302,9 +303,10 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 	for _, ident := range config.Identities {
 		glog.V(3).Infof("loading identity %s", ident.Name)
 		t := &Identity{
-			Name:        ident.Name,
-			Credentials: nil,
-			Actions:     nil,
+			Name:         ident.Name,
+			Credentials:  nil,
+			Actions:      nil,
+			PrincipalArn: generatePrincipalArn(ident.Name),
 		}
 		switch {
 		case ident.Name == AccountAnonymous.Id:
@@ -374,6 +376,19 @@ func (iam *IdentityAccessManagement) lookupAnonymous() (identity *Identity, foun
 		return iam.identityAnonymous, true
 	}
 	return nil, false
+}
+
+// generatePrincipalArn generates an ARN for a user identity
+func generatePrincipalArn(identityName string) string {
+	// Handle special cases
+	switch identityName {
+	case AccountAnonymous.Id:
+		return "arn:seaweed:iam::user/anonymous"
+	case AccountAdmin.Id:
+		return "arn:seaweed:iam::user/admin"
+	default:
+		return fmt.Sprintf("arn:seaweed:iam::user/%s", identityName)
+	}
 }
 
 func (iam *IdentityAccessManagement) GetAccountNameById(canonicalId string) string {
@@ -487,14 +502,14 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 	if action == s3_constants.ACTION_LIST && bucket == "" {
 		// ListBuckets operation - authorization handled per-bucket in the handler
 	} else {
-		// Use enhanced authorization if IAM integration is available
-		sessionToken := r.Header.Get("X-SeaweedFS-Session-Token")
-		if iam.iamIntegration != nil && sessionToken != "" {
+		// Use enhanced IAM authorization if available, otherwise fall back to legacy authorization
+		if iam.iamIntegration != nil {
+			// Always use IAM when available for unified authorization
 			if errCode := iam.authorizeWithIAM(r, identity, action, bucket, object); errCode != s3err.ErrNone {
 				return identity, errCode
 			}
 		} else {
-			// Fall back to existing authorization
+			// Fall back to existing authorization when IAM is not configured
 			if !identity.canDo(action, bucket, object) {
 				return identity, s3err.ErrAccessDenied
 			}
@@ -635,21 +650,30 @@ func (iam *IdentityAccessManagement) authenticateJWTWithIAM(r *http.Request) (*I
 func (iam *IdentityAccessManagement) authorizeWithIAM(r *http.Request, identity *Identity, action Action, bucket string, object string) s3err.ErrorCode {
 	ctx := r.Context()
 
-	// Get session info from request headers
+	// Get session info from request headers (for JWT-based authentication)
 	sessionToken := r.Header.Get("X-SeaweedFS-Session-Token")
 	principal := r.Header.Get("X-SeaweedFS-Principal")
 
-	if sessionToken == "" || principal == "" {
-		glog.V(3).Info("No session information for IAM authorization")
-		return s3err.ErrAccessDenied
-	}
-
 	// Create IAMIdentity for authorization
 	iamIdentity := &IAMIdentity{
-		Name:         identity.Name,
-		Principal:    principal,
-		SessionToken: sessionToken,
-		Account:      identity.Account,
+		Name:    identity.Name,
+		Account: identity.Account,
+	}
+
+	// Handle both session-based (JWT) and static-key-based (V4 signature) principals
+	if sessionToken != "" && principal != "" {
+		// JWT-based authentication - use session token and principal from headers
+		iamIdentity.Principal = principal
+		iamIdentity.SessionToken = sessionToken
+		glog.V(3).Infof("Using JWT-based IAM authorization for principal: %s", principal)
+	} else if identity.PrincipalArn != "" {
+		// V4 signature authentication - use principal ARN from identity
+		iamIdentity.Principal = identity.PrincipalArn
+		iamIdentity.SessionToken = "" // No session token for static credentials
+		glog.V(3).Infof("Using V4 signature IAM authorization for principal: %s", identity.PrincipalArn)
+	} else {
+		glog.V(3).Info("No valid principal information for IAM authorization")
+		return s3err.ErrAccessDenied
 	}
 
 	// Use IAM integration for authorization
