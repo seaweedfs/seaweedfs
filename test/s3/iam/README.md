@@ -25,7 +25,7 @@ The S3 IAM integration tests validate the complete end-to-end functionality of:
 2. **IAM Manager** - Core IAM orchestration and policy evaluation
 3. **STS Service** - Security Token Service for temporary credentials
 4. **Policy Engine** - AWS IAM-compatible policy evaluation
-5. **Identity Providers** - OIDC and LDAP authentication providers  
+5. **Identity Providers** - OIDC and LDAP authentication providers
 6. **Policy Store** - Persistent policy storage using SeaweedFS filer
 
 ### Test Framework
