@@ -26,7 +26,7 @@ The Docker Compose setup includes:
 - **🔐 Keycloak** - Identity provider with OIDC support
 - **🎯 SeaweedFS Master** - Metadata management
 - **💾 SeaweedFS Volume** - Data storage
-- **📁 SeaweedFS Filer** - File system interface  
+- **📁 SeaweedFS Filer** - File system interface
 - **📊 SeaweedFS S3** - S3-compatible API with IAM integration
 - **🔧 Keycloak Setup** - Automated realm and user configuration
 
