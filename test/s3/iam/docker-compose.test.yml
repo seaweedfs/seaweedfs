@@ -134,7 +134,7 @@ services:
       PHPLDAPADMIN_LDAP_HOSTS: "ldap-server"
       PHPLDAPADMIN_HTTPS: "false"
     ports:
-      - "8080:80"
+      - "8081:80"
     depends_on:
       - ldap-server
     networks:

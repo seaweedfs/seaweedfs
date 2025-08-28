@@ -152,7 +152,7 @@ docker-wait-healthy: ## Wait for all services to be healthy
 		while true; do \
 			all_healthy=true; \
 			for service in $$required_services; do \
-				if ! docker-compose -p $(PROJECT_NAME) -f $(COMPOSE_FILE) ps $$service | grep -q "healthy"; then \
+				if [ "$$(docker inspect -f '{{.State.Health.Status}}' $(PROJECT_NAME)-$${service}-1)" != "healthy" ]; then \
 					echo "Waiting for $$service to be healthy..."; \
 					all_healthy=false; \
 					break; \

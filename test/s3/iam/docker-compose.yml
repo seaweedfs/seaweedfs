@@ -51,7 +51,7 @@ services:
     container_name: weed-volume
     hostname: weed-volume
     ports:
-      - "8080:8080"
+      - "8081:8080"
       - "18080:18080"
     command: "volume -ip=weed-volume -port=8080 -dir=/data -mserver=weed-master:9333 -dataCenter=dc1 -rack=rack1"
     volumes:
