@@ -15,10 +15,11 @@ import (
 
 // IAMManager orchestrates all IAM components
 type IAMManager struct {
-	stsService   *sts.STSService
-	policyEngine *policy.PolicyEngine
-	roleStore    RoleStore
-	initialized  bool
+	stsService           *sts.STSService
+	policyEngine         *policy.PolicyEngine
+	roleStore            RoleStore
+	filerAddressProvider func() string // Function to get current filer address
+	initialized          bool
 }
 
 // IAMConfig holds configuration for all IAM components
@@ -84,10 +85,13 @@ func NewIAMManager() *IAMManager {
 }
 
 // Initialize initializes the IAM manager with all components
-func (m *IAMManager) Initialize(config *IAMConfig) error {
+func (m *IAMManager) Initialize(config *IAMConfig, filerAddressProvider func() string) error {
 	if config == nil {
 		return fmt.Errorf("config cannot be nil")
 	}
+
+	// Store the filer address provider function
+	m.filerAddressProvider = filerAddressProvider
 
 	// Initialize STS service
 	m.stsService = sts.NewSTSService()
@@ -113,6 +117,14 @@ func (m *IAMManager) Initialize(config *IAMConfig) error {
 
 	m.initialized = true
 	return nil
+}
+
+// getFilerAddress returns the current filer address using the provider function
+func (m *IAMManager) getFilerAddress() string {
+	if m.filerAddressProvider != nil {
+		return m.filerAddressProvider()
+	}
+	return "" // Fallback to empty string if no provider is set
 }
 
 // createRoleStore creates a role store based on configuration
@@ -190,7 +202,7 @@ func (m *IAMManager) AssumeRoleWithWebIdentity(ctx context.Context, request *sts
 	roleName := extractRoleNameFromArn(request.RoleArn)
 
 	// Get role definition
-	roleDef, err := m.roleStore.GetRole(ctx, "", roleName)
+	roleDef, err := m.roleStore.GetRole(ctx, m.getFilerAddress(), roleName)
 	if err != nil {
 		return nil, fmt.Errorf("role not found: %s", roleName)
 	}
@@ -214,7 +226,7 @@ func (m *IAMManager) AssumeRoleWithCredentials(ctx context.Context, request *sts
 	roleName := extractRoleNameFromArn(request.RoleArn)
 
 	// Get role definition
-	roleDef, err := m.roleStore.GetRole(ctx, "", roleName)
+	roleDef, err := m.roleStore.GetRole(ctx, m.getFilerAddress(), roleName)
 	if err != nil {
 		return nil, fmt.Errorf("role not found: %s", roleName)
 	}
@@ -249,7 +261,7 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 	}
 
 	// Get role definition
-	roleDef, err := m.roleStore.GetRole(ctx, "", roleName)
+	roleDef, err := m.roleStore.GetRole(ctx, m.getFilerAddress(), roleName)
 	if err != nil {
 		return false, fmt.Errorf("role not found: %s", roleName)
 	}
@@ -274,7 +286,7 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 // ValidateTrustPolicy validates if a principal can assume a role (for testing)
 func (m *IAMManager) ValidateTrustPolicy(ctx context.Context, roleArn, provider, userID string) bool {
 	roleName := extractRoleNameFromArn(roleArn)
-	roleDef, err := m.roleStore.GetRole(ctx, "", roleName)
+	roleDef, err := m.roleStore.GetRole(ctx, m.getFilerAddress(), roleName)
 	if err != nil {
 		return false
 	}
@@ -542,7 +554,7 @@ func (m *IAMManager) ValidateTrustPolicyForWebIdentity(ctx context.Context, role
 	roleName := extractRoleNameFromArn(roleArn)
 
 	// Get role definition
-	roleDef, err := m.roleStore.GetRole(ctx, "", roleName)
+	roleDef, err := m.roleStore.GetRole(ctx, m.getFilerAddress(), roleName)
 	if err != nil {
 		return fmt.Errorf("role not found: %s", roleName)
 	}
@@ -561,7 +573,7 @@ func (m *IAMManager) ValidateTrustPolicyForCredentials(ctx context.Context, role
 	roleName := extractRoleNameFromArn(roleArn)
 
 	// Get role definition
-	roleDef, err := m.roleStore.GetRole(ctx, "", roleName)
+	roleDef, err := m.roleStore.GetRole(ctx, m.getFilerAddress(), roleName)
 	if err != nil {
 		return fmt.Errorf("role not found: %s", roleName)
 	}

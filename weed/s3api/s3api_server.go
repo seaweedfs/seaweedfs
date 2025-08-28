@@ -102,7 +102,9 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	if option.IamConfig != "" {
 		glog.V(0).Infof("Loading advanced IAM configuration from: %s", option.IamConfig)
 
-		iamManager, err := loadIAMManagerFromConfig(option.IamConfig)
+		iamManager, err := loadIAMManagerFromConfig(option.IamConfig, func() string {
+			return string(option.Filer)
+		})
 		if err != nil {
 			glog.Errorf("Failed to load IAM configuration: %v", err)
 		} else {
@@ -412,7 +414,7 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 }
 
 // loadIAMManagerFromConfig loads the advanced IAM manager from configuration file
-func loadIAMManagerFromConfig(configPath string) (*integration.IAMManager, error) {
+func loadIAMManagerFromConfig(configPath string, filerAddressProvider func() string) (*integration.IAMManager, error) {
 	// Read configuration file
 	configData, err := os.ReadFile(configPath)
 	if err != nil {
@@ -446,7 +448,7 @@ func loadIAMManagerFromConfig(configPath string) (*integration.IAMManager, error
 
 	// Initialize IAM manager
 	iamManager := integration.NewIAMManager()
-	if err := iamManager.Initialize(iamConfig); err != nil {
+	if err := iamManager.Initialize(iamConfig, filerAddressProvider); err != nil {
 		return nil, fmt.Errorf("failed to initialize IAM manager: %w", err)
 	}
 

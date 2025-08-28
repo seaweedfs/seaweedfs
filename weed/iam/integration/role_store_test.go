@@ -103,7 +103,9 @@ func TestDistributedIAMManagerWithRoleStore(t *testing.T) {
 	}
 
 	iamManager := NewIAMManager()
-	err := iamManager.Initialize(config)
+	err := iamManager.Initialize(config, func() string {
+		return "localhost:8888" // Mock filer address for testing
+	})
 	require.NoError(t, err)
 
 	// Test creating a role

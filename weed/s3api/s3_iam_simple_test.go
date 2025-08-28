@@ -39,7 +39,9 @@ func TestS3IAMMiddleware(t *testing.T) {
 		},
 	}
 
-	err := iamManager.Initialize(config)
+	err := iamManager.Initialize(config, func() string {
+		return "localhost:8888" // Mock filer address for testing
+	})
 	require.NoError(t, err)
 
 	// Create S3 IAM integration

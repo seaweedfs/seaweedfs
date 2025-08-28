@@ -296,7 +296,9 @@ func setupCompleteS3IAMSystem(t *testing.T) (http.Handler, *integration.IAMManag
 		},
 	}
 
-	err := iamManager.Initialize(config)
+	err := iamManager.Initialize(config, func() string {
+		return "localhost:8888" // Mock filer address for testing
+	})
 	require.NoError(t, err)
 
 	// Set up test identity providers
