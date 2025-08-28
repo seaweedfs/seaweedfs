@@ -262,6 +262,19 @@ func (s *STSService) loadProvidersFromConfig(config *STSConfig) error {
 	// Replace current providers with new ones
 	s.providers = providersMap
 
+	// Also populate the issuerToProvider map for efficient and secure JWT validation
+	s.issuerToProvider = make(map[string]providers.IdentityProvider)
+	for name, provider := range s.providers {
+		issuer := s.extractIssuerFromProvider(provider)
+		if issuer != "" {
+			if _, exists := s.issuerToProvider[issuer]; exists {
+				glog.Warningf("Duplicate issuer %s found for provider %s. Overwriting.", issuer, name)
+			}
+			s.issuerToProvider[issuer] = provider
+			glog.V(2).Infof("Registered provider %s with issuer %s for efficient lookup", name, issuer)
+		}
+	}
+
 	glog.V(1).Infof("Successfully loaded %d identity providers: %v",
 		len(s.providers), s.getProviderNames())
 
