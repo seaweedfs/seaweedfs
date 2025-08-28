@@ -6,8 +6,10 @@ import (
 	"net"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Effect represents the policy evaluation result
@@ -363,16 +365,62 @@ func (e *PolicyEngine) matchesConditions(conditions map[string]map[string]interf
 // evaluateConditionBlock evaluates a single condition block
 func (e *PolicyEngine) evaluateConditionBlock(conditionType string, block map[string]interface{}, evalCtx *EvaluationContext) bool {
 	switch conditionType {
+	// IP Address conditions
 	case "IpAddress":
 		return e.evaluateIPCondition(block, evalCtx, true)
 	case "NotIpAddress":
 		return e.evaluateIPCondition(block, evalCtx, false)
+
+	// String conditions
 	case "StringEquals":
 		return e.EvaluateStringCondition(block, evalCtx, true, false)
 	case "StringNotEquals":
 		return e.EvaluateStringCondition(block, evalCtx, false, false)
 	case "StringLike":
 		return e.EvaluateStringCondition(block, evalCtx, true, true)
+	case "StringEqualsIgnoreCase":
+		return e.evaluateStringConditionIgnoreCase(block, evalCtx, true, false)
+	case "StringNotEqualsIgnoreCase":
+		return e.evaluateStringConditionIgnoreCase(block, evalCtx, false, false)
+	case "StringLikeIgnoreCase":
+		return e.evaluateStringConditionIgnoreCase(block, evalCtx, true, true)
+
+	// Numeric conditions
+	case "NumericEquals":
+		return e.evaluateNumericCondition(block, evalCtx, "==")
+	case "NumericNotEquals":
+		return e.evaluateNumericCondition(block, evalCtx, "!=")
+	case "NumericLessThan":
+		return e.evaluateNumericCondition(block, evalCtx, "<")
+	case "NumericLessThanEquals":
+		return e.evaluateNumericCondition(block, evalCtx, "<=")
+	case "NumericGreaterThan":
+		return e.evaluateNumericCondition(block, evalCtx, ">")
+	case "NumericGreaterThanEquals":
+		return e.evaluateNumericCondition(block, evalCtx, ">=")
+
+	// Date conditions
+	case "DateEquals":
+		return e.evaluateDateCondition(block, evalCtx, "==")
+	case "DateNotEquals":
+		return e.evaluateDateCondition(block, evalCtx, "!=")
+	case "DateLessThan":
+		return e.evaluateDateCondition(block, evalCtx, "<")
+	case "DateLessThanEquals":
+		return e.evaluateDateCondition(block, evalCtx, "<=")
+	case "DateGreaterThan":
+		return e.evaluateDateCondition(block, evalCtx, ">")
+	case "DateGreaterThanEquals":
+		return e.evaluateDateCondition(block, evalCtx, ">=")
+
+	// Boolean conditions
+	case "Bool":
+		return e.evaluateBoolCondition(block, evalCtx)
+
+	// Null conditions
+	case "Null":
+		return e.evaluateNullCondition(block, evalCtx)
+
 	default:
 		// Unknown condition types default to false (more secure)
 		return false
@@ -730,4 +778,310 @@ func matchAction(pattern, action string) bool {
 	}
 
 	return matched
+}
+
+// evaluateStringConditionIgnoreCase evaluates string conditions with case insensitivity
+func (e *PolicyEngine) evaluateStringConditionIgnoreCase(block map[string]interface{}, evalCtx *EvaluationContext, shouldMatch bool, useWildcard bool) bool {
+	for key, expectedValues := range block {
+		contextValue, exists := evalCtx.RequestContext[key]
+		if !exists {
+			if !shouldMatch {
+				continue // For NotEquals, missing key is OK
+			}
+			return false
+		}
+
+		contextStr, ok := contextValue.(string)
+		if !ok {
+			return false
+		}
+
+		contextStr = strings.ToLower(contextStr)
+		matched := false
+
+		// Handle different value types
+		switch v := expectedValues.(type) {
+		case string:
+			expectedStr := strings.ToLower(v)
+			if useWildcard {
+				matched, _ = filepath.Match(expectedStr, contextStr)
+			} else {
+				matched = expectedStr == contextStr
+			}
+		case []interface{}:
+			for _, val := range v {
+				if valStr, ok := val.(string); ok {
+					expectedStr := strings.ToLower(valStr)
+					if useWildcard {
+						if m, _ := filepath.Match(expectedStr, contextStr); m {
+							matched = true
+							break
+						}
+					} else {
+						if expectedStr == contextStr {
+							matched = true
+							break
+						}
+					}
+				}
+			}
+		}
+
+		if shouldMatch && !matched {
+			return false
+		}
+		if !shouldMatch && matched {
+			return false
+		}
+	}
+	return true
+}
+
+// evaluateNumericCondition evaluates numeric conditions
+func (e *PolicyEngine) evaluateNumericCondition(block map[string]interface{}, evalCtx *EvaluationContext, operator string) bool {
+	for key, expectedValues := range block {
+		contextValue, exists := evalCtx.RequestContext[key]
+		if !exists {
+			return false
+		}
+
+		contextNum, err := parseNumeric(contextValue)
+		if err != nil {
+			return false
+		}
+
+		matched := false
+
+		// Handle different value types
+		switch v := expectedValues.(type) {
+		case string:
+			expectedNum, err := parseNumeric(v)
+			if err != nil {
+				return false
+			}
+			matched = compareNumbers(contextNum, expectedNum, operator)
+		case []interface{}:
+			for _, val := range v {
+				expectedNum, err := parseNumeric(val)
+				if err != nil {
+					continue
+				}
+				if compareNumbers(contextNum, expectedNum, operator) {
+					matched = true
+					break
+				}
+			}
+		}
+
+		if !matched {
+			return false
+		}
+	}
+	return true
+}
+
+// evaluateDateCondition evaluates date conditions
+func (e *PolicyEngine) evaluateDateCondition(block map[string]interface{}, evalCtx *EvaluationContext, operator string) bool {
+	for key, expectedValues := range block {
+		contextValue, exists := evalCtx.RequestContext[key]
+		if !exists {
+			return false
+		}
+
+		contextTime, err := parseDateTime(contextValue)
+		if err != nil {
+			return false
+		}
+
+		matched := false
+
+		// Handle different value types
+		switch v := expectedValues.(type) {
+		case string:
+			expectedTime, err := parseDateTime(v)
+			if err != nil {
+				return false
+			}
+			matched = compareDates(contextTime, expectedTime, operator)
+		case []interface{}:
+			for _, val := range v {
+				expectedTime, err := parseDateTime(val)
+				if err != nil {
+					continue
+				}
+				if compareDates(contextTime, expectedTime, operator) {
+					matched = true
+					break
+				}
+			}
+		}
+
+		if !matched {
+			return false
+		}
+	}
+	return true
+}
+
+// evaluateBoolCondition evaluates boolean conditions
+func (e *PolicyEngine) evaluateBoolCondition(block map[string]interface{}, evalCtx *EvaluationContext) bool {
+	for key, expectedValues := range block {
+		contextValue, exists := evalCtx.RequestContext[key]
+		if !exists {
+			return false
+		}
+
+		contextBool, err := parseBool(contextValue)
+		if err != nil {
+			return false
+		}
+
+		matched := false
+
+		// Handle different value types
+		switch v := expectedValues.(type) {
+		case string:
+			expectedBool, err := parseBool(v)
+			if err != nil {
+				return false
+			}
+			matched = contextBool == expectedBool
+		case bool:
+			matched = contextBool == v
+		case []interface{}:
+			for _, val := range v {
+				expectedBool, err := parseBool(val)
+				if err != nil {
+					continue
+				}
+				if contextBool == expectedBool {
+					matched = true
+					break
+				}
+			}
+		}
+
+		if !matched {
+			return false
+		}
+	}
+	return true
+}
+
+// evaluateNullCondition evaluates null conditions
+func (e *PolicyEngine) evaluateNullCondition(block map[string]interface{}, evalCtx *EvaluationContext) bool {
+	for key, expectedValues := range block {
+		_, exists := evalCtx.RequestContext[key]
+
+		expectedNull := false
+		switch v := expectedValues.(type) {
+		case string:
+			expectedNull = v == "true"
+		case bool:
+			expectedNull = v
+		}
+
+		// If we expect null (true) and key exists, or expect non-null (false) and key doesn't exist
+		if expectedNull == exists {
+			return false
+		}
+	}
+	return true
+}
+
+// Helper functions for parsing and comparing values
+
+// parseNumeric parses a value as a float64
+func parseNumeric(value interface{}) (float64, error) {
+	switch v := value.(type) {
+	case float64:
+		return v, nil
+	case float32:
+		return float64(v), nil
+	case int:
+		return float64(v), nil
+	case int64:
+		return float64(v), nil
+	case string:
+		return strconv.ParseFloat(v, 64)
+	default:
+		return 0, fmt.Errorf("cannot parse %T as numeric", value)
+	}
+}
+
+// compareNumbers compares two numbers using the given operator
+func compareNumbers(a, b float64, operator string) bool {
+	switch operator {
+	case "==":
+		return a == b
+	case "!=":
+		return a != b
+	case "<":
+		return a < b
+	case "<=":
+		return a <= b
+	case ">":
+		return a > b
+	case ">=":
+		return a >= b
+	default:
+		return false
+	}
+}
+
+// parseDateTime parses a value as a time.Time
+func parseDateTime(value interface{}) (time.Time, error) {
+	switch v := value.(type) {
+	case string:
+		// Try common date formats
+		formats := []string{
+			time.RFC3339,
+			"2006-01-02T15:04:05Z",
+			"2006-01-02T15:04:05",
+			"2006-01-02 15:04:05",
+			"2006-01-02",
+		}
+		for _, format := range formats {
+			if t, err := time.Parse(format, v); err == nil {
+				return t, nil
+			}
+		}
+		return time.Time{}, fmt.Errorf("cannot parse date: %s", v)
+	case time.Time:
+		return v, nil
+	default:
+		return time.Time{}, fmt.Errorf("cannot parse %T as date", value)
+	}
+}
+
+// compareDates compares two dates using the given operator
+func compareDates(a, b time.Time, operator string) bool {
+	switch operator {
+	case "==":
+		return a.Equal(b)
+	case "!=":
+		return !a.Equal(b)
+	case "<":
+		return a.Before(b)
+	case "<=":
+		return a.Before(b) || a.Equal(b)
+	case ">":
+		return a.After(b)
+	case ">=":
+		return a.After(b) || a.Equal(b)
+	default:
+		return false
+	}
+}
+
+// parseBool parses a value as a boolean
+func parseBool(value interface{}) (bool, error) {
+	switch v := value.(type) {
+	case bool:
+		return v, nil
+	case string:
+		return strconv.ParseBool(v)
+	default:
+		return false, fmt.Errorf("cannot parse %T as boolean", value)
+	}
 }

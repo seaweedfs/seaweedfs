@@ -64,7 +64,8 @@ start-services: ## Start SeaweedFS services for testing
 		-mdir=test-volume-data/m9333 > weed-master.log 2>&1 & \
 		echo $$! > $(MASTER_PID_FILE)
 	
-	@sleep 2
+	@echo "Waiting for master server to be ready..."
+	@timeout 30 bash -c 'until curl -s http://localhost:$(MASTER_PORT)/cluster/status > /dev/null; do sleep 1; done' || (echo "❌ Master failed to start" && exit 1)
 	
 	@echo "Starting volume server..."
 	@$(WEED_BINARY) volume -port=$(VOLUME_PORT) \
@@ -74,7 +75,8 @@ start-services: ## Start SeaweedFS services for testing
 		-mserver=localhost:$(MASTER_PORT) > weed-volume.log 2>&1 & \
 		echo $$! > $(VOLUME_PID_FILE)
 	
-	@sleep 2
+	@echo "Waiting for volume server to be ready..."
+	@timeout 30 bash -c 'until curl -s http://localhost:$(VOLUME_PORT)/status > /dev/null; do sleep 1; done' || (echo "❌ Volume server failed to start" && exit 1)
 	
 	@echo "Starting filer server..."
 	@$(WEED_BINARY) filer -port=$(FILER_PORT) \
@@ -82,7 +84,8 @@ start-services: ## Start SeaweedFS services for testing
 		-master=localhost:$(MASTER_PORT) > weed-filer.log 2>&1 & \
 		echo $$! > $(FILER_PID_FILE)
 	
-	@sleep 2
+	@echo "Waiting for filer server to be ready..."
+	@timeout 30 bash -c 'until curl -s http://localhost:$(FILER_PORT)/status > /dev/null; do sleep 1; done' || (echo "❌ Filer failed to start" && exit 1)
 	
 	@echo "Starting S3 API server with IAM..."
 	@$(WEED_BINARY) -v=3 s3 -port=$(S3_PORT) \
@@ -91,7 +94,10 @@ start-services: ## Start SeaweedFS services for testing
 		-iam.config=$(CURDIR)/iam_config.json > weed-s3.log 2>&1 & \
 		echo $$! > $(S3_PID_FILE)
 	
-	@echo "✅ All services started"
+	@echo "Waiting for S3 API server to be ready..."
+	@timeout 30 bash -c 'until curl -s http://localhost:$(S3_PORT) > /dev/null 2>&1; do sleep 1; done' || (echo "❌ S3 API failed to start" && exit 1)
+	
+	@echo "✅ All services started and ready"
 
 wait-for-services: ## Wait for all services to be ready
 	@echo "⏳ Waiting for services to be ready..."

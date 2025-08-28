@@ -468,15 +468,21 @@ func (m *IAMManager) evaluateTrustPolicy(trustPolicy *policy.PolicyDocument, eva
 			principalMatches := false
 			if principal, ok := statement.Principal.(map[string]interface{}); ok {
 				// Check for Federated principal (OIDC/SAML)
-				if federated, ok := principal["Federated"].(string); ok {
-					// For web identity, check if the token issuer matches the federated provider
-					if tokenIssuer, exists := evalCtx.RequestContext["seaweed:FederatedProvider"]; exists {
-						if issuerStr, ok := tokenIssuer.(string); ok && issuerStr == federated {
-							principalMatches = true
-						}
+				if federatedValue, ok := principal["Federated"]; ok {
+					principalMatches = m.evaluatePrincipalValue(federatedValue, evalCtx, "seaweed:FederatedProvider")
+				}
+				// Check for AWS principal (IAM users/roles)
+				if !principalMatches {
+					if awsValue, ok := principal["AWS"]; ok {
+						principalMatches = m.evaluatePrincipalValue(awsValue, evalCtx, "seaweed:AWSPrincipal")
 					}
 				}
-				// Could add other principal types here (AWS, Service, etc.)
+				// Check for Service principal (AWS services)
+				if !principalMatches {
+					if serviceValue, ok := principal["Service"]; ok {
+						principalMatches = m.evaluatePrincipalValue(serviceValue, evalCtx, "seaweed:ServicePrincipal")
+					}
+				}
 			} else if principalStr, ok := statement.Principal.(string); ok {
 				// Handle string principal
 				if principalStr == "*" {
@@ -527,6 +533,47 @@ func (m *IAMManager) evaluateTrustPolicyConditions(conditions map[string]map[str
 		}
 	}
 	return true
+}
+
+// evaluatePrincipalValue evaluates a principal value (string or array) against the context
+func (m *IAMManager) evaluatePrincipalValue(principalValue interface{}, evalCtx *policy.EvaluationContext, contextKey string) bool {
+	// Get the value from evaluation context
+	contextValue, exists := evalCtx.RequestContext[contextKey]
+	if !exists {
+		return false
+	}
+
+	contextStr, ok := contextValue.(string)
+	if !ok {
+		return false
+	}
+
+	// Handle single string value
+	if principalStr, ok := principalValue.(string); ok {
+		return principalStr == contextStr || principalStr == "*"
+	}
+
+	// Handle array of strings
+	if principalArray, ok := principalValue.([]interface{}); ok {
+		for _, item := range principalArray {
+			if itemStr, ok := item.(string); ok {
+				if itemStr == contextStr || itemStr == "*" {
+					return true
+				}
+			}
+		}
+	}
+
+	// Handle array of strings (alternative JSON unmarshaling format)
+	if principalStrArray, ok := principalValue.([]string); ok {
+		for _, itemStr := range principalStrArray {
+			if itemStr == contextStr || itemStr == "*" {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // isOIDCToken checks if a token is an OIDC JWT token (vs STS session token)
