@@ -7,7 +7,7 @@ This document explains how to configure and deploy the STS (Security Token Servi
 Previously, identity providers had to be **manually registered** on each S3 gateway instance, leading to:
 
 - ❌ **Inconsistent authentication**: Different instances might have different providers
-- ❌ **Manual synchronization**: No guarantee all instances have same provider configs  
+- ❌ **Manual synchronization**: No guarantee all instances have same provider configs
 - ❌ **Authentication failures**: Users getting different responses from different instances
 - ❌ **Operational complexity**: Difficult to manage provider configurations at scale
 
