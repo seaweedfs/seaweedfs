@@ -1126,7 +1126,7 @@ func (s3a *S3ApiServer) copyMultipartSSECChunks(entry *filer_pb.Entry, copySourc
 
 	// For multipart SSE-C, always use decrypt/reencrypt path to ensure proper metadata handling
 	// The standard copyChunks() doesn't preserve SSE metadata, so we need per-chunk processing
-	glog.Infof("✅ Taking multipart SSE-C reencrypt path to preserve metadata: %s", dstPath)
+	glog.Infof("Taking multipart SSE-C reencrypt path to preserve metadata: %s", dstPath)
 
 	// Different keys or key changes: decrypt and re-encrypt each chunk individually
 	glog.V(2).Infof("Multipart SSE-C reencrypt copy (different keys): %s", dstPath)
@@ -1179,7 +1179,7 @@ func (s3a *S3ApiServer) copyMultipartSSEKMSChunks(entry *filer_pb.Entry, destKey
 
 	// For multipart SSE-KMS, always use decrypt/reencrypt path to ensure proper metadata handling
 	// The standard copyChunks() doesn't preserve SSE metadata, so we need per-chunk processing
-	glog.Infof("✅ Taking multipart SSE-KMS reencrypt path to preserve metadata: %s", dstPath)
+	glog.Infof("Taking multipart SSE-KMS reencrypt path to preserve metadata: %s", dstPath)
 
 	var dstChunks []*filer_pb.FileChunk
 
@@ -1217,9 +1217,9 @@ func (s3a *S3ApiServer) copyMultipartSSEKMSChunks(entry *filer_pb.Entry, destKey
 		}
 		if kmsMetadata, serErr := SerializeSSEKMSMetadata(sseKey); serErr == nil {
 			dstMetadata[s3_constants.SeaweedFSSSEKMSKey] = kmsMetadata
-			glog.Infof("✅ Created object-level KMS metadata for GET compatibility")
+			glog.Infof("Created object-level KMS metadata for GET compatibility")
 		} else {
-			glog.Errorf("❌ Failed to serialize SSE-KMS metadata: %v", serErr)
+			glog.Errorf("Failed to serialize SSE-KMS metadata: %v", serErr)
 		}
 	}
 
@@ -1529,7 +1529,7 @@ func (s3a *S3ApiServer) copyMultipartCrossEncryption(entry *filer_pb.Entry, r *h
 					StoreIVInMetadata(dstMetadata, iv)
 					dstMetadata[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] = []byte("AES256")
 					dstMetadata[s3_constants.AmzServerSideEncryptionCustomerKeyMD5] = []byte(destSSECKey.KeyMD5)
-					glog.Infof("✅ Created SSE-C object-level metadata from first chunk")
+					glog.Infof("Created SSE-C object-level metadata from first chunk")
 				}
 			}
 		}
@@ -1545,9 +1545,9 @@ func (s3a *S3ApiServer) copyMultipartCrossEncryption(entry *filer_pb.Entry, r *h
 		}
 		if kmsMetadata, serErr := SerializeSSEKMSMetadata(sseKey); serErr == nil {
 			dstMetadata[s3_constants.SeaweedFSSSEKMSKey] = kmsMetadata
-			glog.Infof("✅ Created SSE-KMS object-level metadata")
+			glog.Infof("Created SSE-KMS object-level metadata")
 		} else {
-			glog.Errorf("❌ Failed to serialize SSE-KMS metadata: %v", serErr)
+			glog.Errorf("Failed to serialize SSE-KMS metadata: %v", serErr)
 		}
 	}
 	// For unencrypted destination, no metadata needed (dstMetadata remains empty)
