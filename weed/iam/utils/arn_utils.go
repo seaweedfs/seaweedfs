@@ -27,3 +27,13 @@ func ExtractRoleNameFromPrincipal(principal string) string {
 	// This allows callers to handle the error explicitly instead of masking it
 	return ""
 }
+
+// ExtractRoleNameFromArn extracts role name from an IAM role ARN
+// Specifically handles: arn:seaweed:iam::role/RoleName
+func ExtractRoleNameFromArn(roleArn string) string {
+	prefix := "arn:seaweed:iam::role/"
+	if strings.HasPrefix(roleArn, prefix) && len(roleArn) > len(prefix) {
+		return roleArn[len(prefix):]
+	}
+	return ""
+}

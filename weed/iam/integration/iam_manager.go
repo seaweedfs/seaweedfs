@@ -234,7 +234,7 @@ func (m *IAMManager) AssumeRoleWithWebIdentity(ctx context.Context, request *sts
 	}
 
 	// Extract role name from ARN
-	roleName := extractRoleNameFromArn(request.RoleArn)
+	roleName := utils.ExtractRoleNameFromArn(request.RoleArn)
 
 	// Get role definition
 	roleDef, err := m.roleStore.GetRole(ctx, m.getFilerAddress(), roleName)
@@ -258,7 +258,7 @@ func (m *IAMManager) AssumeRoleWithCredentials(ctx context.Context, request *sts
 	}
 
 	// Extract role name from ARN
-	roleName := extractRoleNameFromArn(request.RoleArn)
+	roleName := utils.ExtractRoleNameFromArn(request.RoleArn)
 
 	// Get role definition
 	roleDef, err := m.roleStore.GetRole(ctx, m.getFilerAddress(), roleName)
@@ -320,7 +320,7 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 
 // ValidateTrustPolicy validates if a principal can assume a role (for testing)
 func (m *IAMManager) ValidateTrustPolicy(ctx context.Context, roleArn, provider, userID string) bool {
-	roleName := extractRoleNameFromArn(roleArn)
+	roleName := utils.ExtractRoleNameFromArn(roleArn)
 	roleDef, err := m.roleStore.GetRole(ctx, m.getFilerAddress(), roleName)
 	if err != nil {
 		return false
@@ -421,15 +421,6 @@ func (m *IAMManager) validateTrustPolicyForCredentials(ctx context.Context, role
 }
 
 // Helper functions
-
-// extractRoleNameFromArn extracts role name from role ARN
-func extractRoleNameFromArn(roleArn string) string {
-	prefix := "arn:seaweed:iam::role/"
-	if len(roleArn) > len(prefix) && roleArn[:len(prefix)] == prefix {
-		return roleArn[len(prefix):]
-	}
-	return ""
-}
 
 // ExpireSessionForTesting manually expires a session for testing purposes
 func (m *IAMManager) ExpireSessionForTesting(ctx context.Context, sessionToken string) error {
@@ -633,7 +624,7 @@ func (m *IAMManager) ValidateTrustPolicyForWebIdentity(ctx context.Context, role
 	}
 
 	// Extract role name from ARN
-	roleName := extractRoleNameFromArn(roleArn)
+	roleName := utils.ExtractRoleNameFromArn(roleArn)
 
 	// Get role definition
 	roleDef, err := m.roleStore.GetRole(ctx, m.getFilerAddress(), roleName)
@@ -652,7 +643,7 @@ func (m *IAMManager) ValidateTrustPolicyForCredentials(ctx context.Context, role
 	}
 
 	// Extract role name from ARN
-	roleName := extractRoleNameFromArn(roleArn)
+	roleName := utils.ExtractRoleNameFromArn(roleArn)
 
 	// Get role definition
 	roleDef, err := m.roleStore.GetRole(ctx, m.getFilerAddress(), roleName)

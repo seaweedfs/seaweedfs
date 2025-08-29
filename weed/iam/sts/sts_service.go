@@ -10,6 +10,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/iam/providers"
+	"github.com/seaweedfs/seaweedfs/weed/iam/utils"
 )
 
 // TrustPolicyValidator interface for validating trust policies during role assumption
@@ -701,7 +702,7 @@ func (s *STSService) validateRoleAssumptionForWebIdentity(ctx context.Context, r
 	}
 
 	// Extract role name and validate ARN format
-	roleName := extractRoleNameFromArn(roleArn)
+	roleName := utils.ExtractRoleNameFromArn(roleArn)
 	if roleName == "" {
 		return fmt.Errorf("invalid role ARN format: %s", roleArn)
 	}
@@ -743,7 +744,7 @@ func (s *STSService) validateRoleAssumptionForCredentials(ctx context.Context, r
 	}
 
 	// Extract role name and validate ARN format
-	roleName := extractRoleNameFromArn(roleArn)
+	roleName := utils.ExtractRoleNameFromArn(roleArn)
 	if roleName == "" {
 		return fmt.Errorf("invalid role ARN format: %s", roleArn)
 	}
