@@ -459,8 +459,8 @@ func setupTestIAMManagerForMultipart(t *testing.T) *integration.IAMManager {
 	// Initialize with test configuration
 	config := &integration.IAMConfig{
 		STS: &sts.STSConfig{
-			TokenDuration:    time.Hour,
-			MaxSessionLength: time.Hour * 12,
+			TokenDuration:    sts.FlexibleDuration{time.Hour},
+			MaxSessionLength: sts.FlexibleDuration{time.Hour * 12},
 			Issuer:           "test-sts",
 			SigningKey:       []byte("test-signing-key-32-characters-long"),
 		},

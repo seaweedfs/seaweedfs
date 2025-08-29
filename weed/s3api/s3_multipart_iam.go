@@ -79,8 +79,15 @@ func (iam *IdentityAccessManagement) ValidateMultipartOperationWithIAM(r *http.R
 		return s3err.ErrNone
 	}
 
+	// Retrieve the actual principal ARN from the request header
+	// This header is set during initial authentication and contains the correct assumed role ARN
+	principalArn := r.Header.Get("X-SeaweedFS-Principal")
+	if principalArn == "" {
+		glog.V(0).Info("IAM authorization for multipart operation failed: missing principal ARN in request header")
+		return s3err.ErrAccessDenied
+	}
+
 	// Create IAM identity for authorization
-	principalArn := fmt.Sprintf("arn:seaweed:sts::assumed-role/MultipartUser/%s", identity.Name)
 	iamIdentity := &IAMIdentity{
 		Name:         identity.Name,
 		Principal:    principalArn,
