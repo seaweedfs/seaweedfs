@@ -2,7 +2,9 @@ package sts
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -17,6 +19,50 @@ type TrustPolicyValidator interface {
 
 	// ValidateTrustPolicyForCredentials validates if credentials can assume a role
 	ValidateTrustPolicyForCredentials(ctx context.Context, roleArn string, identity *providers.ExternalIdentity) error
+}
+
+// FlexibleDuration wraps time.Duration to support both integer nanoseconds and duration strings in JSON
+type FlexibleDuration struct {
+	time.Duration
+}
+
+// UnmarshalJSON implements JSON unmarshaling for FlexibleDuration
+// Supports both: 3600000000000 (nanoseconds) and "1h" (duration string)
+func (fd *FlexibleDuration) UnmarshalJSON(data []byte) error {
+	// Try to unmarshal as a duration string first (e.g., "1h", "30m")
+	var durationStr string
+	if err := json.Unmarshal(data, &durationStr); err == nil {
+		duration, parseErr := time.ParseDuration(durationStr)
+		if parseErr != nil {
+			return fmt.Errorf("invalid duration string %q: %w", durationStr, parseErr)
+		}
+		fd.Duration = duration
+		return nil
+	}
+
+	// If that fails, try to unmarshal as an integer (nanoseconds for backward compatibility)
+	var nanoseconds int64
+	if err := json.Unmarshal(data, &nanoseconds); err == nil {
+		fd.Duration = time.Duration(nanoseconds)
+		return nil
+	}
+
+	// If both fail, try unmarshaling as a quoted number string (edge case)
+	var numberStr string
+	if err := json.Unmarshal(data, &numberStr); err == nil {
+		if nanoseconds, parseErr := strconv.ParseInt(numberStr, 10, 64); parseErr == nil {
+			fd.Duration = time.Duration(nanoseconds)
+			return nil
+		}
+	}
+
+	return fmt.Errorf("unable to parse duration from %s (expected duration string like \"1h\" or integer nanoseconds)", data)
+}
+
+// MarshalJSON implements JSON marshaling for FlexibleDuration
+// Always marshals as a human-readable duration string
+func (fd FlexibleDuration) MarshalJSON() ([]byte, error) {
+	return json.Marshal(fd.Duration.String())
 }
 
 // STSService provides Security Token Service functionality
@@ -35,10 +81,10 @@ type STSService struct {
 // STSConfig holds STS service configuration
 type STSConfig struct {
 	// TokenDuration is the default duration for issued tokens
-	TokenDuration time.Duration `json:"tokenDuration"`
+	TokenDuration FlexibleDuration `json:"tokenDuration"`
 
 	// MaxSessionLength is the maximum duration for any session
-	MaxSessionLength time.Duration `json:"maxSessionLength"`
+	MaxSessionLength FlexibleDuration `json:"maxSessionLength"`
 
 	// Issuer is the STS issuer identifier
 	Issuer string `json:"issuer"`
@@ -225,11 +271,11 @@ func (s *STSService) Initialize(config *STSConfig) error {
 
 // validateConfig validates the STS configuration
 func (s *STSService) validateConfig(config *STSConfig) error {
-	if config.TokenDuration <= 0 {
+	if config.TokenDuration.Duration <= 0 {
 		return fmt.Errorf(ErrInvalidTokenDuration)
 	}
 
-	if config.MaxSessionLength <= 0 {
+	if config.MaxSessionLength.Duration <= 0 {
 		return fmt.Errorf(ErrInvalidMaxSessionLength)
 	}
 
@@ -728,7 +774,7 @@ func (s *STSService) calculateSessionDuration(durationSeconds *int64) time.Durat
 	}
 
 	// Use default from config
-	return s.Config.TokenDuration
+	return s.Config.TokenDuration.Duration
 }
 
 // extractSessionIdFromToken extracts session ID from JWT session token
