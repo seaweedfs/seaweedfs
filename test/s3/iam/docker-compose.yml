@@ -51,9 +51,9 @@ services:
     container_name: weed-volume
     hostname: weed-volume
     ports:
-      - "8080:8080"
-      - "18080:18080"
-    command: "volume -ip=weed-volume -port=8080 -dir=/data -mserver=weed-master:9333 -dataCenter=dc1 -rack=rack1"
+      - "8083:8083"
+      - "18083:18083"
+    command: "volume -ip=weed-volume -port=8083 -dir=/data -mserver=weed-master:9333 -dataCenter=dc1 -rack=rack1"
     volumes:
       - volume-data:/data
     networks:
@@ -62,7 +62,7 @@ services:
       weed-master:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/status"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8083/status"]
       interval: 10s
       timeout: 5s
       retries: 3
