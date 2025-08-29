@@ -27,8 +27,8 @@ The STS service now supports **automatic provider loading** from configuration f
 ```json
 {
   "sts": {
-    "tokenDuration": 3600000000000,
-    "maxSessionLength": 43200000000000, 
+    "tokenDuration": "1h",
+    "maxSessionLength": "12h", 
     "issuer": "seaweedfs-sts",
     "signingKey": "base64-encoded-signing-key-32-chars-min"
   }
@@ -42,8 +42,8 @@ The STS service now supports **automatic provider loading** from configuration f
 ```json
 {
   "sts": {
-    "tokenDuration": 3600000000000,
-    "maxSessionLength": 43200000000000,
+    "tokenDuration": "1h",
+    "maxSessionLength": "12h",
     "issuer": "seaweedfs-sts",
     "signingKey": "base64-encoded-signing-key",
     "providers": [
@@ -305,8 +305,8 @@ User Request → Load Balancer → Any S3 Gateway Instance
 ```json
 {
   "sts": {
-    "tokenDuration": 3600000000000,
-    "maxSessionLength": 43200000000000,
+    "tokenDuration": "1h",
+    "maxSessionLength": "12h",
     "issuer": "seaweedfs-dev-sts",
     "signingKey": "ZGV2LXNpZ25pbmcta2V5LTMyLWNoYXJhY3RlcnMtbG9uZw==",
     "providers": [
@@ -329,8 +329,8 @@ User Request → Load Balancer → Any S3 Gateway Instance
 ```json
 {
   "sts": {
-    "tokenDuration": 3600000000000,
-    "maxSessionLength": 43200000000000,
+    "tokenDuration": "1h",
+    "maxSessionLength": "12h",
     "issuer": "seaweedfs-prod-sts",
     "signingKey": "cHJvZC1zaWduaW5nLWtleS0zMi1jaGFyYWN0ZXJzLWxvbmctcmFuZG9t",
     "providers": [

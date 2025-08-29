@@ -151,8 +151,8 @@ echo "🔧 Setting up IAM configuration for Docker environment..."
 cat > iam_config.json << 'EOF'
 {
   "sts": {
-    "tokenDuration": 3600000000000,
-    "maxSessionLength": 43200000000000,
+    "tokenDuration": "1h",
+    "maxSessionLength": "12h",
     "issuer": "seaweedfs-sts",
     "signingKey": "dGVzdC1zaWduaW5nLWtleS0zMi1jaGFyYWN0ZXJzLWxvbmc="
   },

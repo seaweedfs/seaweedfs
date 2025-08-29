@@ -26,8 +26,8 @@ All S3 gateway instances share the same IAM state through the filer, and STS tok
 ```json
 {
   "sts": {
-    "tokenDuration": 3600000000000,
-    "maxSessionLength": 43200000000000,
+    "tokenDuration": "1h",
+    "maxSessionLength": "12h",
     "issuer": "seaweedfs-sts",
     "signingKey": "base64-encoded-signing-key"
   },
@@ -42,8 +42,8 @@ All S3 gateway instances share the same IAM state through the filer, and STS tok
 ```json
 {
   "sts": {
-    "tokenDuration": 3600000000000,
-    "maxSessionLength": 43200000000000,
+    "tokenDuration": "1h",
+    "maxSessionLength": "12h",
     "issuer": "seaweedfs-sts",
     "signingKey": "base64-encoded-signing-key"
   },
