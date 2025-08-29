@@ -581,6 +581,9 @@ func createMultipartRequest(t *testing.T, method, path, sessionToken string) *ht
 	// Add session token if provided
 	if sessionToken != "" {
 		req.Header.Set("Authorization", "Bearer "+sessionToken)
+		// Set the principal ARN header that matches the assumed role from the test setup
+		// This corresponds to the role "arn:seaweed:iam::role/S3WriteRole" with session name "multipart-test-session"
+		req.Header.Set("X-SeaweedFS-Principal", "arn:seaweed:sts::assumed-role/S3WriteRole/multipart-test-session")
 	}
 
 	// Add common headers
