@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/karlseguin/ccache/v2"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -374,4 +375,247 @@ func (s *FilerPolicyStore) getPolicyPath(policyName string) string {
 // getPolicyFileName returns the filename for a policy
 func (s *FilerPolicyStore) getPolicyFileName(policyName string) string {
 	return "policy_" + policyName + ".json"
+}
+
+// CachedFilerPolicyStore implements PolicyStore with TTL caching on top of FilerPolicyStore
+type CachedFilerPolicyStore struct {
+	filerStore *FilerPolicyStore
+	cache      *ccache.Cache
+	listCache  *ccache.Cache
+	ttl        time.Duration
+	listTTL    time.Duration
+}
+
+// CachedFilerPolicyStoreConfig holds configuration for the cached policy store
+type CachedFilerPolicyStoreConfig struct {
+	BasePath     string `json:"basePath,omitempty"`
+	TTL          string `json:"ttl,omitempty"`          // e.g., "5m", "1h"
+	ListTTL      string `json:"listTtl,omitempty"`      // e.g., "1m", "30s"
+	MaxCacheSize int    `json:"maxCacheSize,omitempty"` // Maximum number of cached policies
+}
+
+// NewCachedFilerPolicyStore creates a new cached filer-based policy store
+func NewCachedFilerPolicyStore(config map[string]interface{}) (*CachedFilerPolicyStore, error) {
+	// Create underlying filer store
+	filerStore, err := NewFilerPolicyStore(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create filer policy store: %w", err)
+	}
+
+	// Parse cache configuration with defaults
+	cacheTTL := 5 * time.Minute // Default 5 minutes for policy cache
+	listTTL := 1 * time.Minute  // Default 1 minute for list cache
+	maxCacheSize := 500         // Default max 500 cached policies
+
+	if config != nil {
+		if ttlStr, ok := config["ttl"].(string); ok && ttlStr != "" {
+			if parsed, err := time.ParseDuration(ttlStr); err == nil {
+				cacheTTL = parsed
+			}
+		}
+		if listTTLStr, ok := config["listTtl"].(string); ok && listTTLStr != "" {
+			if parsed, err := time.ParseDuration(listTTLStr); err == nil {
+				listTTL = parsed
+			}
+		}
+		if maxSize, ok := config["maxCacheSize"].(int); ok && maxSize > 0 {
+			maxCacheSize = maxSize
+		}
+	}
+
+	store := &CachedFilerPolicyStore{
+		filerStore:   filerStore,
+		cache:        make(map[string]*cachedPolicyItem),
+		ttl:          cacheTTL,
+		listTTL:      listTTL,
+		maxCacheSize: maxCacheSize,
+	}
+
+	glog.V(2).Infof("Initialized CachedFilerPolicyStore with TTL %v, List TTL %v, Max Cache Size %d",
+		cacheTTL, listTTL, maxCacheSize)
+
+	return store, nil
+}
+
+// StorePolicy stores a policy document and invalidates the cache
+func (c *CachedFilerPolicyStore) StorePolicy(ctx context.Context, filerAddress string, name string, policy *PolicyDocument) error {
+	// Store in filer
+	err := c.filerStore.StorePolicy(ctx, filerAddress, name, policy)
+	if err != nil {
+		return err
+	}
+
+	// Invalidate cache entry and list cache
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	delete(c.cache, name)
+	c.listCache = nil // Invalidate list cache
+
+	glog.V(3).Infof("Stored and invalidated cache for policy %s", name)
+	return nil
+}
+
+// GetPolicy retrieves a policy document with caching
+func (c *CachedFilerPolicyStore) GetPolicy(ctx context.Context, filerAddress string, name string) (*PolicyDocument, error) {
+	// Try to get from cache first
+	item := c.cache.Get(name)
+	if item != nil {
+		// Cache hit - return cached policy (DO NOT extend TTL)
+		policy := item.Value().(*PolicyDocument)
+		glog.V(4).Infof("Cache hit for policy %s", name)
+		return copyPolicyDocument(policy), nil
+	}
+
+	// Cache miss - fetch from filer
+	glog.V(4).Infof("Cache miss for policy %s, fetching from filer", name)
+	policy, err := c.filerStore.GetPolicy(ctx, filerAddress, name)
+	if err != nil {
+		return nil, err
+	}
+
+	// Cache the result with TTL
+	c.cache.Set(name, copyPolicyDocument(policy), c.ttl)
+	glog.V(3).Infof("Cached policy %s with TTL %v", name, c.ttl)
+	return policy, nil
+}
+
+// DeletePolicy deletes a policy document and invalidates the cache
+func (c *CachedFilerPolicyStore) DeletePolicy(ctx context.Context, filerAddress string, name string) error {
+	// Delete from filer
+	err := c.filerStore.DeletePolicy(ctx, filerAddress, name)
+	if err != nil {
+		return err
+	}
+
+	// Invalidate cache entry and list cache
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	delete(c.cache, name)
+	c.listCache = nil // Invalidate list cache
+
+	glog.V(3).Infof("Deleted and invalidated cache for policy %s", name)
+	return nil
+}
+
+// ListPolicies lists all policy names with caching
+func (c *CachedFilerPolicyStore) ListPolicies(ctx context.Context, filerAddress string) ([]string, error) {
+	now := time.Now()
+
+	// Try to get from cache first
+	c.mutex.RLock()
+	if c.listCache != nil && now.Before(c.listCache.expiresAt) {
+		// Cache hit
+		policiesCopy := make([]string, len(c.listCache.policies))
+		copy(policiesCopy, c.listCache.policies)
+		c.mutex.RUnlock()
+		glog.V(4).Infof("Policy list cache hit, returning %d policies", len(policiesCopy))
+		return policiesCopy, nil
+	}
+	c.mutex.RUnlock()
+
+	// Cache miss - fetch from filer
+	glog.V(4).Infof("Policy list cache miss, fetching from filer")
+	policies, err := c.filerStore.ListPolicies(ctx, filerAddress)
+	if err != nil {
+		return nil, err
+	}
+
+	// Cache the result
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	policiesCopy := make([]string, len(policies))
+	copy(policiesCopy, policies)
+
+	c.listCache = &cachedPolicyList{
+		policies:  policiesCopy,
+		expiresAt: now.Add(c.listTTL),
+	}
+
+	glog.V(3).Infof("Cached policy list with %d entries, TTL %v", len(policies), c.listTTL)
+	return policies, nil
+}
+
+// ClearCache clears all cached entries (for testing or manual cache invalidation)
+func (c *CachedFilerPolicyStore) ClearCache() {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	c.cache = make(map[string]*cachedPolicyItem)
+	c.listCache = nil
+	glog.V(2).Infof("Cleared all policy cache entries")
+}
+
+// GetCacheStats returns cache statistics
+func (c *CachedFilerPolicyStore) GetCacheStats() map[string]interface{} {
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+
+	now := time.Now()
+	expiredCount := 0
+	for _, item := range c.cache {
+		if now.After(item.expiresAt) {
+			expiredCount++
+		}
+	}
+
+	return map[string]interface{}{
+		"totalEntries":     len(c.cache),
+		"expiredEntries":   expiredCount,
+		"activeEntries":    len(c.cache) - expiredCount,
+		"maxCacheSize":     c.maxCacheSize,
+		"ttl":              c.ttl.String(),
+		"listTTL":          c.listTTL.String(),
+		"hasListCache":     c.listCache != nil,
+		"listCacheExpired": c.listCache != nil && now.After(c.listCache.expiresAt),
+	}
+}
+
+// evictOldestEntries removes expired entries and oldest entries if cache is still full
+func (c *CachedFilerPolicyStore) evictOldestEntries() {
+	now := time.Now()
+
+	// First pass: remove expired entries
+	for policyName, item := range c.cache {
+		if now.After(item.expiresAt) {
+			delete(c.cache, policyName)
+		}
+	}
+
+	// Second pass: if still over limit, remove oldest entries
+	if len(c.cache) >= c.maxCacheSize {
+		// Find and remove 25% of oldest entries
+		type policyAge struct {
+			name      string
+			expiresAt time.Time
+		}
+
+		var ages []policyAge
+		for policyName, item := range c.cache {
+			ages = append(ages, policyAge{name: policyName, expiresAt: item.expiresAt})
+		}
+
+		// Sort by expiration time (oldest first)
+		for i := 0; i < len(ages)-1; i++ {
+			for j := i + 1; j < len(ages); j++ {
+				if ages[i].expiresAt.After(ages[j].expiresAt) {
+					ages[i], ages[j] = ages[j], ages[i]
+				}
+			}
+		}
+
+		// Remove oldest 25% or until we're under the limit
+		toRemove := len(ages) / 4
+		if toRemove < 1 {
+			toRemove = 1
+		}
+
+		for i := 0; i < toRemove && len(c.cache) >= c.maxCacheSize; i++ {
+			delete(c.cache, ages[i].name)
+		}
+
+		glog.V(3).Infof("Evicted %d oldest policy cache entries", toRemove)
+	}
 }

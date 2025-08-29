@@ -208,8 +208,17 @@ func (e *PolicyEngine) createPolicyStore(config *PolicyEngineConfig) (PolicyStor
 	switch config.StoreType {
 	case "memory":
 		return NewMemoryPolicyStore(), nil
-	case "filer":
-		return NewFilerPolicyStore(config.StoreConfig)
+	case "", "filer":
+		// Check if caching is explicitly disabled
+		if config.StoreConfig != nil {
+			if noCache, ok := config.StoreConfig["noCache"].(bool); ok && noCache {
+				return NewFilerPolicyStore(config.StoreConfig)
+			}
+		}
+		// Default to generic cached filer store for better performance
+		return NewGenericCachedPolicyStore(config.StoreConfig)
+	case "cached-filer", "generic-cached":
+		return NewGenericCachedPolicyStore(config.StoreConfig)
 	default:
 		return nil, fmt.Errorf("unsupported store type: %s", config.StoreType)
 	}

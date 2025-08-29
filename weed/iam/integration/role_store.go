@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/karlseguin/ccache/v2"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -351,4 +352,175 @@ func (f *FilerRoleStore) withFilerClient(filerAddress string, fn func(filer_pb.S
 		return fmt.Errorf("filer address is required for FilerRoleStore")
 	}
 	return pb.WithGrpcFilerClient(false, 0, pb.ServerAddress(filerAddress), f.grpcDialOption, fn)
+}
+
+// CachedFilerRoleStore implements RoleStore with TTL caching on top of FilerRoleStore
+type CachedFilerRoleStore struct {
+	filerStore *FilerRoleStore
+	cache      *ccache.Cache
+	listCache  *ccache.Cache
+	ttl        time.Duration
+	listTTL    time.Duration
+}
+
+// CachedFilerRoleStoreConfig holds configuration for the cached role store
+type CachedFilerRoleStoreConfig struct {
+	BasePath     string `json:"basePath,omitempty"`
+	TTL          string `json:"ttl,omitempty"`          // e.g., "5m", "1h"
+	ListTTL      string `json:"listTtl,omitempty"`      // e.g., "1m", "30s"
+	MaxCacheSize int    `json:"maxCacheSize,omitempty"` // Maximum number of cached roles
+}
+
+// NewCachedFilerRoleStore creates a new cached filer-based role store
+func NewCachedFilerRoleStore(config map[string]interface{}) (*CachedFilerRoleStore, error) {
+	// Create underlying filer store
+	filerStore, err := NewFilerRoleStore(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create filer role store: %w", err)
+	}
+
+	// Parse cache configuration with defaults
+	cacheTTL := 5 * time.Minute // Default 5 minutes for role cache
+	listTTL := 1 * time.Minute  // Default 1 minute for list cache
+	maxCacheSize := 1000        // Default max 1000 cached roles
+
+	if config != nil {
+		if ttlStr, ok := config["ttl"].(string); ok && ttlStr != "" {
+			if parsed, err := time.ParseDuration(ttlStr); err == nil {
+				cacheTTL = parsed
+			}
+		}
+		if listTTLStr, ok := config["listTtl"].(string); ok && listTTLStr != "" {
+			if parsed, err := time.ParseDuration(listTTLStr); err == nil {
+				listTTL = parsed
+			}
+		}
+		if maxSize, ok := config["maxCacheSize"].(int); ok && maxSize > 0 {
+			maxCacheSize = maxSize
+		}
+	}
+
+	// Create ccache instances with appropriate configurations
+	pruneCount := int64(maxCacheSize) >> 3
+	if pruneCount <= 0 {
+		pruneCount = 100
+	}
+
+	store := &CachedFilerRoleStore{
+		filerStore: filerStore,
+		cache:      ccache.New(ccache.Configure().MaxSize(int64(maxCacheSize)).ItemsToPrune(uint32(pruneCount))),
+		listCache:  ccache.New(ccache.Configure().MaxSize(100).ItemsToPrune(10)), // Smaller cache for lists
+		ttl:        cacheTTL,
+		listTTL:    listTTL,
+	}
+
+	glog.V(2).Infof("Initialized CachedFilerRoleStore with TTL %v, List TTL %v, Max Cache Size %d",
+		cacheTTL, listTTL, maxCacheSize)
+
+	return store, nil
+}
+
+// StoreRole stores a role definition and invalidates the cache
+func (c *CachedFilerRoleStore) StoreRole(ctx context.Context, filerAddress string, roleName string, role *RoleDefinition) error {
+	// Store in filer
+	err := c.filerStore.StoreRole(ctx, filerAddress, roleName, role)
+	if err != nil {
+		return err
+	}
+
+	// Invalidate cache entries
+	c.cache.Delete(roleName)
+	c.listCache.Clear() // Invalidate list cache
+
+	glog.V(3).Infof("Stored and invalidated cache for role %s", roleName)
+	return nil
+}
+
+// GetRole retrieves a role definition with caching
+func (c *CachedFilerRoleStore) GetRole(ctx context.Context, filerAddress string, roleName string) (*RoleDefinition, error) {
+	// Try to get from cache first
+	item := c.cache.Get(roleName)
+	if item != nil {
+		// Cache hit - return cached role (DO NOT extend TTL)
+		role := item.Value().(*RoleDefinition)
+		glog.V(4).Infof("Cache hit for role %s", roleName)
+		return copyRoleDefinition(role), nil
+	}
+
+	// Cache miss - fetch from filer
+	glog.V(4).Infof("Cache miss for role %s, fetching from filer", roleName)
+	role, err := c.filerStore.GetRole(ctx, filerAddress, roleName)
+	if err != nil {
+		return nil, err
+	}
+
+	// Cache the result with TTL
+	c.cache.Set(roleName, copyRoleDefinition(role), c.ttl)
+	glog.V(3).Infof("Cached role %s with TTL %v", roleName, c.ttl)
+	return role, nil
+}
+
+// ListRoles lists all role names with caching
+func (c *CachedFilerRoleStore) ListRoles(ctx context.Context, filerAddress string) ([]string, error) {
+	// Use a constant key for the role list cache
+	const listCacheKey = "role_list"
+
+	// Try to get from list cache first
+	item := c.listCache.Get(listCacheKey)
+	if item != nil {
+		// Cache hit - return cached list (DO NOT extend TTL)
+		roles := item.Value().([]string)
+		glog.V(4).Infof("List cache hit, returning %d roles", len(roles))
+		return append([]string(nil), roles...), nil // Return a copy
+	}
+
+	// Cache miss - fetch from filer
+	glog.V(4).Infof("List cache miss, fetching from filer")
+	roles, err := c.filerStore.ListRoles(ctx, filerAddress)
+	if err != nil {
+		return nil, err
+	}
+
+	// Cache the result with TTL (store a copy)
+	rolesCopy := append([]string(nil), roles...)
+	c.listCache.Set(listCacheKey, rolesCopy, c.listTTL)
+	glog.V(3).Infof("Cached role list with %d entries, TTL %v", len(roles), c.listTTL)
+	return roles, nil
+}
+
+// DeleteRole deletes a role definition and invalidates the cache
+func (c *CachedFilerRoleStore) DeleteRole(ctx context.Context, filerAddress string, roleName string) error {
+	// Delete from filer
+	err := c.filerStore.DeleteRole(ctx, filerAddress, roleName)
+	if err != nil {
+		return err
+	}
+
+	// Invalidate cache entries
+	c.cache.Delete(roleName)
+	c.listCache.Clear() // Invalidate list cache
+
+	glog.V(3).Infof("Deleted and invalidated cache for role %s", roleName)
+	return nil
+}
+
+// ClearCache clears all cached entries (for testing or manual cache invalidation)
+func (c *CachedFilerRoleStore) ClearCache() {
+	c.cache.Clear()
+	c.listCache.Clear()
+	glog.V(2).Infof("Cleared all role cache entries")
+}
+
+// GetCacheStats returns cache statistics
+func (c *CachedFilerRoleStore) GetCacheStats() map[string]interface{} {
+	return map[string]interface{}{
+		"roleCache": map[string]interface{}{
+			"size": c.cache.ItemCount(),
+			"ttl":  c.ttl.String(),
+		},
+		"listCache": map[string]interface{}{
+			"size": c.listCache.ItemCount(),
+			"ttl":  c.listTTL.String(),
+		},
+	}
 }
