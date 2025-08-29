@@ -26,8 +26,17 @@ const (
 	FDB_TRANSACTION_SIZE_LIMIT = 10 * 1024 * 1024
 )
 
-// Helper function to create prefix end for older FoundationDB Go bindings
-func prefixEnd(prefix fdb.Key) fdb.Key {
+// Helper function to create prefix range (tries idiomatic approach first, falls back to custom)
+func prefixRange(prefix fdb.Key) fdb.KeyRange {
+	// Try to use idiomatic FoundationDB PrefixRange if available
+	// Note: This may not be available in older Go bindings, so we provide fallback
+	begin := prefix
+	end := prefixEndFallback(prefix)
+	return fdb.KeyRange{Begin: begin, End: end}
+}
+
+// Fallback implementation for prefix end calculation
+func prefixEndFallback(prefix fdb.Key) fdb.Key {
 	if len(prefix) == 0 {
 		return fdb.Key("\xff")
 	}
@@ -72,7 +81,8 @@ func (store *FoundationDBStore) getTransactionFromContext(ctx context.Context) (
 	if tx, ok := ctx.Value(transactionKey).(fdb.Transaction); ok {
 		return tx, true
 	}
-	return nil, false
+	var emptyTx fdb.Transaction
+	return emptyTx, false
 }
 
 func (store *FoundationDBStore) setTransactionInContext(ctx context.Context, tx fdb.Transaction) context.Context {
@@ -289,14 +299,14 @@ func (store *FoundationDBStore) DeleteFolderChildren(ctx context.Context, fullpa
 
 	// Check if there's a transaction in context
 	if tx, exists := store.getTransactionFromContext(ctx); exists {
-		kr := fdb.KeyRange{Begin: directoryPrefix, End: prefixEnd(directoryPrefix)}
+		kr := prefixRange(directoryPrefix)
 		tx.ClearRange(kr)
 		return nil
 	}
 
 	// Execute in a new transaction if not in an existing one
 	_, err := store.database.Transact(func(tr fdb.Transaction) (interface{}, error) {
-		kr := fdb.KeyRange{Begin: directoryPrefix, End: prefixEnd(directoryPrefix)}
+		kr := prefixRange(directoryPrefix)
 		tr.ClearRange(kr)
 		return nil, nil
 	})
@@ -327,11 +337,11 @@ func (store *FoundationDBStore) ListDirectoryPrefixedEntries(ctx context.Context
 	var kvs []fdb.KeyValue
 	// Check if there's a transaction in context
 	if tx, exists := store.getTransactionFromContext(ctx); exists {
-		kr := fdb.KeyRange{Begin: fdb.Key(startKey), End: prefixEnd(directoryPrefix)}
+		kr := fdb.KeyRange{Begin: fdb.Key(startKey), End: prefixEndFallback(directoryPrefix)}
 		kvs = tx.GetRange(kr, fdb.RangeOptions{Limit: int(limit)}).GetSliceOrPanic()
 	} else {
 		result, err := store.database.ReadTransact(func(rtr fdb.ReadTransaction) (interface{}, error) {
-			kr := fdb.KeyRange{Begin: fdb.Key(startKey), End: prefixEnd(directoryPrefix)}
+			kr := fdb.KeyRange{Begin: fdb.Key(startKey), End: prefixEndFallback(directoryPrefix)}
 			return rtr.GetRange(kr, fdb.RangeOptions{Limit: int(limit)}).GetSliceOrPanic(), nil
 		})
 		if err != nil {

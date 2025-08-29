@@ -34,13 +34,8 @@ COPY . .
 
 # Using Go 1.24 to match project requirements
 
-# Download dependencies (including FoundationDB Go bindings)
-RUN go mod download && \
-    echo "🔧 Attempting to use compatible FoundationDB Go bindings..." && \
-    go get github.com/apple/foundationdb/bindings/go@7.1.61 || \
-    go get github.com/apple/foundationdb/bindings/go@v7.1.61 || \
-    go get github.com/apple/foundationdb/bindings/go@release-7.1 || \
-    echo "⚠️  Fallback to overriding API version at runtime..."
+# Download dependencies (using versions from go.mod for deterministic builds)
+RUN go mod download
 
 # Build SeaweedFS with FoundationDB support
 RUN echo "🔨 Building SeaweedFS with FoundationDB support..." && \
@@ -51,6 +46,7 @@ RUN echo "🔨 Building SeaweedFS with FoundationDB support..." && \
     echo "CGO_CFLAGS: $CGO_CFLAGS" && \
     echo "CGO_LDFLAGS: $CGO_LDFLAGS" && \
     go build -tags foundationdb -ldflags="-w -s" -o weed ./weed && \
+    chmod +x weed && \
     echo "✅ Build successful!" && \
     ./weed version
 

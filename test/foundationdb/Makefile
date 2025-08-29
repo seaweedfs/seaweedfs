@@ -69,10 +69,10 @@ test-arm64: setup-arm64 test-unit test-integration ## Run all tests with ARM64-n
 setup-emulated: ## Set up FoundationDB cluster with x86 emulation on ARM64
 	@echo "$(YELLOW)Setting up FoundationDB cluster with x86 emulation...$(NC)"
 	@echo "$(BLUE)Note: Using Docker platform emulation - may be slower$(NC)"
-	@export DOCKER_DEFAULT_PLATFORM=linux/amd64 && $(DOCKER_COMPOSE) up -d fdb1 fdb2 fdb3
+	@DOCKER_DEFAULT_PLATFORM=linux/amd64 $(DOCKER_COMPOSE) up -d fdb1 fdb2 fdb3
 	@echo "$(BLUE)Waiting for FoundationDB cluster to initialize...$(NC)"
 	@sleep 15
-	@export DOCKER_DEFAULT_PLATFORM=linux/amd64 && $(DOCKER_COMPOSE) up -d fdb-init
+	@DOCKER_DEFAULT_PLATFORM=linux/amd64 $(DOCKER_COMPOSE) up -d fdb-init
 	@sleep 10
 	@echo "$(BLUE)Starting SeaweedFS with FoundationDB filer...$(NC)"
 	@$(DOCKER_COMPOSE) up -d seaweedfs
