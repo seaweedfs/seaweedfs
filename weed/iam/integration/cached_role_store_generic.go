@@ -2,6 +2,7 @@ package integration
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -86,6 +87,51 @@ func NewGenericCachedRoleStore(config map[string]interface{}) (*GenericCachedRol
 	)
 
 	glog.V(2).Infof("Initialized GenericCachedRoleStore with TTL %v, List TTL %v, Max Cache Size %d",
+		cacheTTL, listTTL, maxCacheSize)
+
+	return &GenericCachedRoleStore{
+		CachedStore: cachedStore,
+		adapter:     adapter,
+	}, nil
+}
+
+// NewGenericCachedRoleStoreWithProvider creates a new cached role store with a provider function
+func NewGenericCachedRoleStoreWithProvider(config map[string]interface{}, filerAddressProvider func() string) (RoleStore, error) {
+	filerStore, err := NewFilerRoleStoreWithProvider(config, filerAddressProvider)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create filer role store with provider: %w", err)
+	}
+
+	// Parse cache configuration with defaults
+	cacheTTL := 5 * time.Minute
+	listTTL := 1 * time.Minute
+	var maxCacheSize int64 = 500
+
+	if config != nil {
+		if ttl, ok := config["cacheTTL"].(time.Duration); ok && ttl > 0 {
+			cacheTTL = ttl
+		}
+		if ttl, ok := config["listTTL"].(time.Duration); ok && ttl > 0 {
+			listTTL = ttl
+		}
+		if maxSize, ok := config["maxCacheSize"].(int); ok && maxSize > 0 {
+			maxCacheSize = int64(maxSize)
+		}
+	}
+
+	// Create adapter and generic cached store
+	adapter := NewRoleStoreAdapter(filerStore)
+	cachedStore := util.NewCachedStore(
+		adapter,
+		genericCopyRoleDefinition, // Copy function
+		util.CachedStoreConfig{
+			TTL:          cacheTTL,
+			ListTTL:      listTTL,
+			MaxCacheSize: maxCacheSize,
+		},
+	)
+
+	glog.V(2).Infof("Initialized GenericCachedRoleStoreWithProvider with TTL %v, List TTL %v, Max Cache Size %d",
 		cacheTTL, listTTL, maxCacheSize)
 
 	return &GenericCachedRoleStore{

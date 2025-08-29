@@ -159,6 +159,61 @@ func NewFilerRoleStore(config map[string]interface{}) (*FilerRoleStore, error) {
 	return store, nil
 }
 
+// FilerRoleStoreWithProvider is a wrapper around FilerRoleStore that uses a provider function for filer address
+type FilerRoleStoreWithProvider struct {
+	*FilerRoleStore
+	filerAddressProvider func() string
+}
+
+// NewFilerRoleStoreWithProvider creates a new filer-based role store with a filer address provider
+func NewFilerRoleStoreWithProvider(config map[string]interface{}, filerAddressProvider func() string) (*FilerRoleStoreWithProvider, error) {
+	baseStore, err := NewFilerRoleStore(config)
+	if err != nil {
+		return nil, err
+	}
+
+	return &FilerRoleStoreWithProvider{
+		FilerRoleStore:       baseStore,
+		filerAddressProvider: filerAddressProvider,
+	}, nil
+}
+
+// StoreRole stores a role using the provider function for filer address
+func (f *FilerRoleStoreWithProvider) StoreRole(ctx context.Context, filerAddress string, roleName string, role *RoleDefinition) error {
+	// Use provider function if filerAddress is not provided
+	if filerAddress == "" && f.filerAddressProvider != nil {
+		filerAddress = f.filerAddressProvider()
+	}
+	return f.FilerRoleStore.StoreRole(ctx, filerAddress, roleName, role)
+}
+
+// GetRole gets a role using the provider function for filer address
+func (f *FilerRoleStoreWithProvider) GetRole(ctx context.Context, filerAddress string, roleName string) (*RoleDefinition, error) {
+	// Use provider function if filerAddress is not provided
+	if filerAddress == "" && f.filerAddressProvider != nil {
+		filerAddress = f.filerAddressProvider()
+	}
+	return f.FilerRoleStore.GetRole(ctx, filerAddress, roleName)
+}
+
+// DeleteRole deletes a role using the provider function for filer address
+func (f *FilerRoleStoreWithProvider) DeleteRole(ctx context.Context, filerAddress string, roleName string) error {
+	// Use provider function if filerAddress is not provided
+	if filerAddress == "" && f.filerAddressProvider != nil {
+		filerAddress = f.filerAddressProvider()
+	}
+	return f.FilerRoleStore.DeleteRole(ctx, filerAddress, roleName)
+}
+
+// ListRoles lists roles using the provider function for filer address
+func (f *FilerRoleStoreWithProvider) ListRoles(ctx context.Context, filerAddress string) ([]string, error) {
+	// Use provider function if filerAddress is not provided
+	if filerAddress == "" && f.filerAddressProvider != nil {
+		filerAddress = f.filerAddressProvider()
+	}
+	return f.FilerRoleStore.ListRoles(ctx, filerAddress)
+}
+
 // StoreRole stores a role definition in filer
 func (f *FilerRoleStore) StoreRole(ctx context.Context, filerAddress string, roleName string, role *RoleDefinition) error {
 	if filerAddress == "" {

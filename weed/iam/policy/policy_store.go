@@ -170,6 +170,61 @@ func NewFilerPolicyStore(config map[string]interface{}) (*FilerPolicyStore, erro
 	return store, nil
 }
 
+// FilerPolicyStoreWithProvider is a wrapper around FilerPolicyStore that uses a provider function for filer address
+type FilerPolicyStoreWithProvider struct {
+	*FilerPolicyStore
+	filerAddressProvider func() string
+}
+
+// NewFilerPolicyStoreWithProvider creates a new filer-based policy store with a filer address provider
+func NewFilerPolicyStoreWithProvider(config map[string]interface{}, filerAddressProvider func() string) (*FilerPolicyStoreWithProvider, error) {
+	baseStore, err := NewFilerPolicyStore(config)
+	if err != nil {
+		return nil, err
+	}
+
+	return &FilerPolicyStoreWithProvider{
+		FilerPolicyStore:     baseStore,
+		filerAddressProvider: filerAddressProvider,
+	}, nil
+}
+
+// StorePolicy stores a policy using the provider function for filer address
+func (s *FilerPolicyStoreWithProvider) StorePolicy(ctx context.Context, filerAddress string, name string, policy *PolicyDocument) error {
+	// Use provider function if filerAddress is not provided
+	if filerAddress == "" && s.filerAddressProvider != nil {
+		filerAddress = s.filerAddressProvider()
+	}
+	return s.FilerPolicyStore.StorePolicy(ctx, filerAddress, name, policy)
+}
+
+// GetPolicy gets a policy using the provider function for filer address
+func (s *FilerPolicyStoreWithProvider) GetPolicy(ctx context.Context, filerAddress string, name string) (*PolicyDocument, error) {
+	// Use provider function if filerAddress is not provided
+	if filerAddress == "" && s.filerAddressProvider != nil {
+		filerAddress = s.filerAddressProvider()
+	}
+	return s.FilerPolicyStore.GetPolicy(ctx, filerAddress, name)
+}
+
+// DeletePolicy deletes a policy using the provider function for filer address
+func (s *FilerPolicyStoreWithProvider) DeletePolicy(ctx context.Context, filerAddress string, name string) error {
+	// Use provider function if filerAddress is not provided
+	if filerAddress == "" && s.filerAddressProvider != nil {
+		filerAddress = s.filerAddressProvider()
+	}
+	return s.FilerPolicyStore.DeletePolicy(ctx, filerAddress, name)
+}
+
+// ListPolicies lists policies using the provider function for filer address
+func (s *FilerPolicyStoreWithProvider) ListPolicies(ctx context.Context, filerAddress string) ([]string, error) {
+	// Use provider function if filerAddress is not provided
+	if filerAddress == "" && s.filerAddressProvider != nil {
+		filerAddress = s.filerAddressProvider()
+	}
+	return s.FilerPolicyStore.ListPolicies(ctx, filerAddress)
+}
+
 // StorePolicy stores a policy document in filer
 func (s *FilerPolicyStore) StorePolicy(ctx context.Context, filerAddress string, name string, policy *PolicyDocument) error {
 	if filerAddress == "" {

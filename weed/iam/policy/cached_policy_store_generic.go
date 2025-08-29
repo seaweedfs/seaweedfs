@@ -2,6 +2,7 @@ package policy
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -86,6 +87,51 @@ func NewGenericCachedPolicyStore(config map[string]interface{}) (*GenericCachedP
 	)
 
 	glog.V(2).Infof("Initialized GenericCachedPolicyStore with TTL %v, List TTL %v, Max Cache Size %d",
+		cacheTTL, listTTL, maxCacheSize)
+
+	return &GenericCachedPolicyStore{
+		CachedStore: cachedStore,
+		adapter:     adapter,
+	}, nil
+}
+
+// NewGenericCachedPolicyStoreWithProvider creates a new cached policy store with a provider function
+func NewGenericCachedPolicyStoreWithProvider(config map[string]interface{}, filerAddressProvider func() string) (PolicyStore, error) {
+	filerStore, err := NewFilerPolicyStoreWithProvider(config, filerAddressProvider)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create filer policy store with provider: %w", err)
+	}
+
+	// Parse cache configuration with defaults
+	cacheTTL := 5 * time.Minute
+	listTTL := 1 * time.Minute
+	var maxCacheSize int64 = 500
+
+	if config != nil {
+		if ttl, ok := config["cacheTTL"].(time.Duration); ok && ttl > 0 {
+			cacheTTL = ttl
+		}
+		if ttl, ok := config["listTTL"].(time.Duration); ok && ttl > 0 {
+			listTTL = ttl
+		}
+		if maxSize, ok := config["maxCacheSize"].(int); ok && maxSize > 0 {
+			maxCacheSize = int64(maxSize)
+		}
+	}
+
+	// Create adapter and generic cached store
+	adapter := NewPolicyStoreAdapter(filerStore)
+	cachedStore := util.NewCachedStore(
+		adapter,
+		genericCopyPolicyDocument, // Copy function
+		util.CachedStoreConfig{
+			TTL:          cacheTTL,
+			ListTTL:      listTTL,
+			MaxCacheSize: maxCacheSize,
+		},
+	)
+
+	glog.V(2).Infof("Initialized GenericCachedPolicyStoreWithProvider with TTL %v, List TTL %v, Max Cache Size %d",
 		cacheTTL, listTTL, maxCacheSize)
 
 	return &GenericCachedPolicyStore{

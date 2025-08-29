@@ -104,29 +104,12 @@ func (m *IAMManager) Initialize(config *IAMConfig, filerAddressProvider func() s
 
 	// Initialize policy engine
 	m.policyEngine = policy.NewPolicyEngine()
-	
-	// Inject filer address into policy store configuration if needed
-	if config.Policy != nil && config.Policy.StoreConfig != nil {
-		// Add filerAddress to store config for filer-based policy stores
-		if config.Policy.StoreType == "" || config.Policy.StoreType == "filer" || config.Policy.StoreType == "cached-filer" || config.Policy.StoreType == "generic-cached" {
-			config.Policy.StoreConfig["filerAddress"] = m.getFilerAddress()
-		}
-	}
-	
-	if err := m.policyEngine.Initialize(config.Policy); err != nil {
+	if err := m.policyEngine.InitializeWithProvider(config.Policy, m.filerAddressProvider); err != nil {
 		return fmt.Errorf("failed to initialize policy engine: %w", err)
 	}
 
 	// Initialize role store
-	// Inject filer address into role store configuration if needed
-	if config.Roles != nil && config.Roles.StoreConfig != nil {
-		// Add filerAddress to store config for filer-based role stores
-		if config.Roles.StoreType == "" || config.Roles.StoreType == "filer" || config.Roles.StoreType == "cached-filer" || config.Roles.StoreType == "generic-cached" {
-			config.Roles.StoreConfig["filerAddress"] = m.getFilerAddress()
-		}
-	}
-	
-	roleStore, err := m.createRoleStore(config.Roles)
+	roleStore, err := m.createRoleStoreWithProvider(config.Roles, m.filerAddressProvider)
 	if err != nil {
 		return fmt.Errorf("failed to initialize role store: %w", err)
 	}
@@ -163,6 +146,32 @@ func (m *IAMManager) createRoleStore(config *RoleStoreConfig) (RoleStore, error)
 		return NewGenericCachedRoleStore(config.StoreConfig)
 	case "cached-filer", "generic-cached":
 		return NewGenericCachedRoleStore(config.StoreConfig)
+	case "memory":
+		return NewMemoryRoleStore(), nil
+	default:
+		return nil, fmt.Errorf("unsupported role store type: %s", config.StoreType)
+	}
+}
+
+// createRoleStoreWithProvider creates a role store with a filer address provider function
+func (m *IAMManager) createRoleStoreWithProvider(config *RoleStoreConfig, filerAddressProvider func() string) (RoleStore, error) {
+	if config == nil {
+		// Default to generic cached filer role store when no config provided
+		return NewGenericCachedRoleStoreWithProvider(nil, filerAddressProvider)
+	}
+
+	switch config.StoreType {
+	case "", "filer":
+		// Check if caching is explicitly disabled
+		if config.StoreConfig != nil {
+			if noCache, ok := config.StoreConfig["noCache"].(bool); ok && noCache {
+				return NewFilerRoleStoreWithProvider(config.StoreConfig, filerAddressProvider)
+			}
+		}
+		// Default to generic cached filer store for better performance
+		return NewGenericCachedRoleStoreWithProvider(config.StoreConfig, filerAddressProvider)
+	case "cached-filer", "generic-cached":
+		return NewGenericCachedRoleStoreWithProvider(config.StoreConfig, filerAddressProvider)
 	case "memory":
 		return NewMemoryRoleStore(), nil
 	default:

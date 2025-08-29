@@ -190,6 +190,29 @@ func (e *PolicyEngine) Initialize(config *PolicyEngineConfig) error {
 	return nil
 }
 
+// InitializeWithProvider initializes the policy engine with configuration and a filer address provider
+func (e *PolicyEngine) InitializeWithProvider(config *PolicyEngineConfig, filerAddressProvider func() string) error {
+	if config == nil {
+		return fmt.Errorf("config cannot be nil")
+	}
+
+	if err := e.validateConfig(config); err != nil {
+		return fmt.Errorf("invalid configuration: %w", err)
+	}
+
+	e.config = config
+
+	// Initialize policy store with provider
+	store, err := e.createPolicyStoreWithProvider(config, filerAddressProvider)
+	if err != nil {
+		return fmt.Errorf("failed to create policy store: %w", err)
+	}
+	e.store = store
+
+	e.initialized = true
+	return nil
+}
+
 // validateConfig validates the policy engine configuration
 func (e *PolicyEngine) validateConfig(config *PolicyEngineConfig) error {
 	if config.DefaultEffect != "Allow" && config.DefaultEffect != "Deny" {
@@ -219,6 +242,27 @@ func (e *PolicyEngine) createPolicyStore(config *PolicyEngineConfig) (PolicyStor
 		return NewGenericCachedPolicyStore(config.StoreConfig)
 	case "cached-filer", "generic-cached":
 		return NewGenericCachedPolicyStore(config.StoreConfig)
+	default:
+		return nil, fmt.Errorf("unsupported store type: %s", config.StoreType)
+	}
+}
+
+// createPolicyStoreWithProvider creates a policy store with a filer address provider function
+func (e *PolicyEngine) createPolicyStoreWithProvider(config *PolicyEngineConfig, filerAddressProvider func() string) (PolicyStore, error) {
+	switch config.StoreType {
+	case "memory":
+		return NewMemoryPolicyStore(), nil
+	case "", "filer":
+		// Check if caching is explicitly disabled
+		if config.StoreConfig != nil {
+			if noCache, ok := config.StoreConfig["noCache"].(bool); ok && noCache {
+				return NewFilerPolicyStoreWithProvider(config.StoreConfig, filerAddressProvider)
+			}
+		}
+		// Default to generic cached filer store for better performance
+		return NewGenericCachedPolicyStoreWithProvider(config.StoreConfig, filerAddressProvider)
+	case "cached-filer", "generic-cached":
+		return NewGenericCachedPolicyStoreWithProvider(config.StoreConfig, filerAddressProvider)
 	default:
 		return nil, fmt.Errorf("unsupported store type: %s", config.StoreType)
 	}
