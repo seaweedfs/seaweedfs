@@ -304,6 +304,11 @@ func (t *BearerTokenTransport) RoundTrip(req *http.Request) (*http.Response, err
 	// Add Bearer token authorization header
 	newReq.Header.Set("Authorization", "Bearer "+t.Token)
 
+	// Extract and set the principal ARN from JWT token for security compliance
+	if principal := t.extractPrincipalFromJWT(t.Token); principal != "" {
+		newReq.Header.Set("X-SeaweedFS-Principal", principal)
+	}
+
 	// Token preview for logging (first 50 chars for security)
 	tokenPreview := t.Token
 	if len(tokenPreview) > 50 {
@@ -317,6 +322,34 @@ func (t *BearerTokenTransport) RoundTrip(req *http.Request) (*http.Response, err
 	}
 
 	return transport.RoundTrip(newReq)
+}
+
+// extractPrincipalFromJWT extracts the principal ARN from a JWT token without validating it
+// This is used to set the X-SeaweedFS-Principal header that's required after our security fix
+func (t *BearerTokenTransport) extractPrincipalFromJWT(tokenString string) string {
+	// Parse the JWT token without validation to extract the principal claim
+	token, _ := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		// We don't validate the signature here, just extract the claims
+		// This is safe because the actual validation happens server-side
+		return []byte("dummy-key"), nil
+	})
+	
+	// Even if parsing fails due to signature verification, we might still get claims
+	if claims, ok := token.Claims.(jwt.MapClaims); ok {
+		// Try multiple possible claim names for the principal ARN
+		if principal, exists := claims["principal"]; exists {
+			if principalStr, ok := principal.(string); ok {
+				return principalStr
+			}
+		}
+		if assumed, exists := claims["assumed"]; exists {
+			if assumedStr, ok := assumed.(string); ok {
+				return assumedStr
+			}
+		}
+	}
+	
+	return ""
 }
 
 // generateSTSSessionToken creates a session token using the actual STS service for proper validation
