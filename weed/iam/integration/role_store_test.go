@@ -3,6 +3,7 @@ package integration
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
@@ -88,8 +89,8 @@ func TestDistributedIAMManagerWithRoleStore(t *testing.T) {
 	// Create IAM manager with role store configuration
 	config := &IAMConfig{
 		STS: &sts.STSConfig{
-			TokenDuration:    3600,
-			MaxSessionLength: 43200,
+			TokenDuration:    sts.FlexibleDuration{time.Duration(3600) * time.Second},
+			MaxSessionLength: sts.FlexibleDuration{time.Duration(43200) * time.Second},
 			Issuer:           "test-issuer",
 			SigningKey:       []byte("test-signing-key-32-characters-long"),
 		},
