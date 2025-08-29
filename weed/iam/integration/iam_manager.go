@@ -104,11 +104,28 @@ func (m *IAMManager) Initialize(config *IAMConfig, filerAddressProvider func() s
 
 	// Initialize policy engine
 	m.policyEngine = policy.NewPolicyEngine()
+	
+	// Inject filer address into policy store configuration if needed
+	if config.Policy != nil && config.Policy.StoreConfig != nil {
+		// Add filerAddress to store config for filer-based policy stores
+		if config.Policy.StoreType == "" || config.Policy.StoreType == "filer" || config.Policy.StoreType == "cached-filer" || config.Policy.StoreType == "generic-cached" {
+			config.Policy.StoreConfig["filerAddress"] = m.getFilerAddress()
+		}
+	}
+	
 	if err := m.policyEngine.Initialize(config.Policy); err != nil {
 		return fmt.Errorf("failed to initialize policy engine: %w", err)
 	}
 
 	// Initialize role store
+	// Inject filer address into role store configuration if needed
+	if config.Roles != nil && config.Roles.StoreConfig != nil {
+		// Add filerAddress to store config for filer-based role stores
+		if config.Roles.StoreType == "" || config.Roles.StoreType == "filer" || config.Roles.StoreType == "cached-filer" || config.Roles.StoreType == "generic-cached" {
+			config.Roles.StoreConfig["filerAddress"] = m.getFilerAddress()
+		}
+	}
+	
 	roleStore, err := m.createRoleStore(config.Roles)
 	if err != nil {
 		return fmt.Errorf("failed to initialize role store: %w", err)
