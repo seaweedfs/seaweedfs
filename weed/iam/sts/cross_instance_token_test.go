@@ -17,8 +17,8 @@ func TestCrossInstanceTokenUsage(t *testing.T) {
 
 	// Common configuration that would be shared across all instances in production
 	sharedConfig := &STSConfig{
-		TokenDuration:    time.Hour,
-		MaxSessionLength: 12 * time.Hour,
+		TokenDuration:    FlexibleDuration{time.Hour},
+		MaxSessionLength: FlexibleDuration{12 * time.Hour},
 		Issuer:           "distributed-sts-cluster",     // SAME across all instances
 		SigningKey:       []byte(TestSigningKey32Chars), // SAME across all instances
 		Providers: []*ProviderConfig{
@@ -208,16 +208,16 @@ func TestSTSDistributedConfigurationRequirements(t *testing.T) {
 	t.Run("same_signing_key_required", func(t *testing.T) {
 		// Instance A with signing key 1
 		configA := &STSConfig{
-			TokenDuration:    time.Hour,
-			MaxSessionLength: 12 * time.Hour,
+			TokenDuration:    FlexibleDuration{time.Hour},
+			MaxSessionLength: FlexibleDuration{12 * time.Hour},
 			Issuer:           "test-sts",
 			SigningKey:       []byte("signing-key-1-32-characters-long"),
 		}
 
 		// Instance B with different signing key
 		configB := &STSConfig{
-			TokenDuration:    time.Hour,
-			MaxSessionLength: 12 * time.Hour,
+			TokenDuration:    FlexibleDuration{time.Hour},
+			MaxSessionLength: FlexibleDuration{12 * time.Hour},
 			Issuer:           "test-sts",
 			SigningKey:       []byte("signing-key-2-32-characters-long"), // DIFFERENT!
 		}
@@ -252,16 +252,16 @@ func TestSTSDistributedConfigurationRequirements(t *testing.T) {
 
 		// Instance A with issuer 1
 		configA := &STSConfig{
-			TokenDuration:    time.Hour,
-			MaxSessionLength: 12 * time.Hour,
+			TokenDuration:    FlexibleDuration{time.Hour},
+			MaxSessionLength: FlexibleDuration{12 * time.Hour},
 			Issuer:           "sts-cluster-1",
 			SigningKey:       sharedSigningKey,
 		}
 
 		// Instance B with different issuer
 		configB := &STSConfig{
-			TokenDuration:    time.Hour,
-			MaxSessionLength: 12 * time.Hour,
+			TokenDuration:    FlexibleDuration{time.Hour},
+			MaxSessionLength: FlexibleDuration{12 * time.Hour},
 			Issuer:           "sts-cluster-2", // DIFFERENT!
 			SigningKey:       sharedSigningKey,
 		}
@@ -290,8 +290,8 @@ func TestSTSDistributedConfigurationRequirements(t *testing.T) {
 	t.Run("identical_configuration_required", func(t *testing.T) {
 		// Identical configuration
 		identicalConfig := &STSConfig{
-			TokenDuration:    time.Hour,
-			MaxSessionLength: 12 * time.Hour,
+			TokenDuration:    FlexibleDuration{time.Hour},
+			MaxSessionLength: FlexibleDuration{12 * time.Hour},
 			Issuer:           "production-sts-cluster",
 			SigningKey:       []byte("production-signing-key-32-chars-l"),
 		}
@@ -331,8 +331,8 @@ func TestSTSRealWorldDistributedScenarios(t *testing.T) {
 		// 4. All instances should handle the session token correctly
 
 		productionConfig := &STSConfig{
-			TokenDuration:    2 * time.Hour,
-			MaxSessionLength: 24 * time.Hour,
+			TokenDuration:    FlexibleDuration{2 * time.Hour},
+			MaxSessionLength: FlexibleDuration{24 * time.Hour},
 			Issuer:           "seaweedfs-production-sts",
 			SigningKey:       []byte("prod-signing-key-32-characters-lon"),
 

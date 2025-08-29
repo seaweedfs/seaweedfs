@@ -16,8 +16,8 @@ func TestDistributedSTSService(t *testing.T) {
 
 	// Common configuration for all instances
 	commonConfig := &STSConfig{
-		TokenDuration:    time.Hour,
-		MaxSessionLength: 12 * time.Hour,
+		TokenDuration:    FlexibleDuration{time.Hour},
+		MaxSessionLength: FlexibleDuration{12 * time.Hour},
 		Issuer:           "distributed-sts-test",
 		SigningKey:       []byte("test-signing-key-32-characters-long"),
 
@@ -72,7 +72,7 @@ func TestDistributedSTSService(t *testing.T) {
 	t.Run("provider_consistency", func(t *testing.T) {
 		// All instances should have same number of providers
 		assert.Len(t, instance1.providers, 2, "Instance 1 should have 2 enabled providers")
-		assert.Len(t, instance2.providers, 2, "Instance 2 should have 2 enabled providers") 
+		assert.Len(t, instance2.providers, 2, "Instance 2 should have 2 enabled providers")
 		assert.Len(t, instance3.providers, 2, "Instance 3 should have 2 enabled providers")
 
 		// All instances should have same provider names
@@ -183,15 +183,15 @@ func TestSTSConfigurationValidation(t *testing.T) {
 	t.Run("consistent_signing_keys_required", func(t *testing.T) {
 		// Different signing keys should result in incompatible token validation
 		config1 := &STSConfig{
-			TokenDuration:    time.Hour,
-			MaxSessionLength: 12 * time.Hour,
+			TokenDuration:    FlexibleDuration{time.Hour},
+			MaxSessionLength: FlexibleDuration{12 * time.Hour},
 			Issuer:           "test-sts",
 			SigningKey:       []byte("signing-key-1-32-characters-long"),
 		}
 
 		config2 := &STSConfig{
-			TokenDuration:    time.Hour,
-			MaxSessionLength: 12 * time.Hour,
+			TokenDuration:    FlexibleDuration{time.Hour},
+			MaxSessionLength: FlexibleDuration{12 * time.Hour},
 			Issuer:           "test-sts",
 			SigningKey:       []byte("signing-key-2-32-characters-long"), // Different key!
 		}
@@ -225,15 +225,15 @@ func TestSTSConfigurationValidation(t *testing.T) {
 		commonSigningKey := []byte("shared-signing-key-32-characters-lo")
 
 		config1 := &STSConfig{
-			TokenDuration:    time.Hour,
-			MaxSessionLength: 12 * time.Hour,
+			TokenDuration:    FlexibleDuration{time.Hour},
+			MaxSessionLength: FlexibleDuration{12 * time.Hour},
 			Issuer:           "sts-instance-1",
 			SigningKey:       commonSigningKey,
 		}
 
 		config2 := &STSConfig{
-			TokenDuration:    time.Hour,
-			MaxSessionLength: 12 * time.Hour,
+			TokenDuration:    FlexibleDuration{time.Hour},
+			MaxSessionLength: FlexibleDuration{12 * time.Hour},
 			Issuer:           "sts-instance-2", // Different issuer!
 			SigningKey:       commonSigningKey,
 		}

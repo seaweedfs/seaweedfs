@@ -21,8 +21,8 @@ func TestSecurityIssuerToProviderMapping(t *testing.T) {
 	// Create STS service with two mock providers
 	service := NewSTSService()
 	config := &STSConfig{
-		TokenDuration:    time.Hour,
-		MaxSessionLength: time.Hour * 12,
+		TokenDuration:    FlexibleDuration{time.Hour},
+		MaxSessionLength: FlexibleDuration{time.Hour * 12},
 		Issuer:           "test-sts",
 		SigningKey:       []byte("test-signing-key-32-characters-long"),
 	}

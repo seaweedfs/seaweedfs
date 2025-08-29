@@ -2,6 +2,7 @@ package sts
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -292,8 +293,8 @@ func TestProviderFactory_GetSupportedProviderTypes(t *testing.T) {
 
 func TestSTSService_LoadProvidersFromConfig(t *testing.T) {
 	stsConfig := &STSConfig{
-		TokenDuration:    3600,
-		MaxSessionLength: 43200,
+		TokenDuration:    FlexibleDuration{3600 * time.Second},
+		MaxSessionLength: FlexibleDuration{43200 * time.Second},
 		Issuer:           "test-issuer",
 		SigningKey:       []byte("test-signing-key-32-characters-long"),
 		Providers: []*ProviderConfig{
@@ -321,8 +322,8 @@ func TestSTSService_LoadProvidersFromConfig(t *testing.T) {
 
 func TestSTSService_NoProvidersConfig(t *testing.T) {
 	stsConfig := &STSConfig{
-		TokenDuration:    3600,
-		MaxSessionLength: 43200,
+		TokenDuration:    FlexibleDuration{3600 * time.Second},
+		MaxSessionLength: FlexibleDuration{43200 * time.Second},
 		Issuer:           "test-issuer",
 		SigningKey:       []byte("test-signing-key-32-characters-long"),
 		// No providers configured

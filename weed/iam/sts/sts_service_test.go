@@ -22,8 +22,8 @@ func TestSTSServiceInitialization(t *testing.T) {
 		{
 			name: "valid config",
 			config: &STSConfig{
-				TokenDuration:    time.Hour,
-				MaxSessionLength: time.Hour * 12,
+				TokenDuration:    FlexibleDuration{time.Hour},
+				MaxSessionLength: FlexibleDuration{time.Hour * 12},
 				Issuer:           "seaweedfs-sts",
 				SigningKey:       []byte("test-signing-key"),
 			},
@@ -32,7 +32,7 @@ func TestSTSServiceInitialization(t *testing.T) {
 		{
 			name: "missing signing key",
 			config: &STSConfig{
-				TokenDuration: time.Hour,
+				TokenDuration: FlexibleDuration{time.Hour},
 				Issuer:        "seaweedfs-sts",
 			},
 			wantErr: true,
@@ -40,7 +40,7 @@ func TestSTSServiceInitialization(t *testing.T) {
 		{
 			name: "invalid token duration",
 			config: &STSConfig{
-				TokenDuration: -time.Hour,
+				TokenDuration: FlexibleDuration{-time.Hour},
 				Issuer:        "seaweedfs-sts",
 				SigningKey:    []byte("test-key"),
 			},
@@ -303,8 +303,8 @@ func setupTestSTSService(t *testing.T) *STSService {
 	service := NewSTSService()
 
 	config := &STSConfig{
-		TokenDuration:    time.Hour,
-		MaxSessionLength: time.Hour * 12,
+		TokenDuration:    FlexibleDuration{time.Hour},
+		MaxSessionLength: FlexibleDuration{time.Hour * 12},
 		Issuer:           "test-sts",
 		SigningKey:       []byte("test-signing-key-32-characters-long"),
 	}
