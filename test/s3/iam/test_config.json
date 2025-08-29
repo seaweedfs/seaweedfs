@@ -104,13 +104,7 @@
         }
       }
     },
-    "policyStore": {
-      "type": "filer",
-      "config": {
-        "filerAddress": "localhost:8888", 
-        "basePath": "/seaweedfs/iam/policies"
-      }
-    }
+    "policyStore": {}
   },
   "roles": {
     "S3AdminRole": {

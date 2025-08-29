@@ -202,8 +202,7 @@ cat > iam_config.json << 'EOF'
     }
   ],
   "policy": {
-    "defaultEffect": "Deny",
-    "storeType": "memory"
+    "defaultEffect": "Deny"
   },
   "roles": [
     {

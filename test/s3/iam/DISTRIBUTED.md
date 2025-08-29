@@ -32,8 +32,7 @@ All S3 gateway instances share the same IAM state through the filer, and STS tok
     "signingKey": "base64-encoded-signing-key"
   },
   "policy": {
-    "defaultEffect": "Deny",
-    "storeType": "memory"
+    "defaultEffect": "Deny"
   }
 }
 ```
@@ -48,19 +47,7 @@ All S3 gateway instances share the same IAM state through the filer, and STS tok
     "signingKey": "base64-encoded-signing-key"
   },
   "policy": {
-    "defaultEffect": "Deny",
-    "storeType": "filer",
-    "storeConfig": {
-      "filerAddress": "localhost:8888",
-      "basePath": "/seaweedfs/iam/policies"
-    }
-  },
-  "roleStore": {
-    "storeType": "filer",
-    "storeConfig": {
-      "filerAddress": "localhost:8888",
-      "basePath": "/seaweedfs/iam/roles"
-    }
+    "defaultEffect": "Deny"
   }
 }
 ```
@@ -68,22 +55,17 @@ All S3 gateway instances share the same IAM state through the filer, and STS tok
 **Key Configuration Changes for Distribution:**
 
 - **STS remains stateless**: No session store configuration needed as JWT tokens are self-contained
-- **Policy store uses filer**: `"storeType": "filer"` enables distributed policy storage
-- **Role store uses filer**: Ensures all instances share the same role definitions
+- **Automatic filer storage**: Policy and role storage automatically uses filer backend
+- **No manual configuration**: S3 server provides filer address internally
 
-## Storage Backends
+## Storage Backend
 
-### Memory Storage (Default)
-- **Performance**: Fastest access (sub-millisecond)
-- **Persistence**: Lost on restart
-- **Distribution**: ❌ Not shared across instances
-- **Use case**: Single instance or development
-
-### Filer Storage (Distributed)  
-- **Performance**: Network latency + filer performance
-- **Persistence**: ✅ Survives restarts
-- **Distribution**: ✅ Shared across all instances
-- **Use case**: Production multi-instance deployments
+### Filer Storage (Automatic)
+- **Performance**: Network latency + filer performance (typically 1-50ms)
+- **Persistence**: ✅ Survives restarts and failures
+- **Distribution**: ✅ Automatically shared across all instances
+- **Configuration**: S3 server provides filer address internally
+- **Use case**: All deployments (development and production)
 
 ## Deployment Examples
 
@@ -133,7 +115,7 @@ server {
 When using filer storage, IAM data is stored at:
 
 ```
-/seaweedfs/iam/
+/etc/iam/
 ├── policies/           # IAM policy documents  
 │   ├── policy_S3AdminPolicy.json
 │   └── policy_S3ReadOnlyPolicy.json
@@ -169,15 +151,14 @@ When using filer storage, IAM data is stored at:
 2. **Update configuration** to use filer storage:
    ```json
    {
-     "policy": { "storeType": "filer" },
-     "roleStore": { "storeType": "filer" }
+     "policy": { "defaultEffect": "Deny" }
    }
    ```
 3. **Start first instance** with new config
 4. **Verify IAM data** was migrated to filer
 5. **Start additional instances** with same config
 
-### From Memory to Filer Storage
+### Configuration Cleanup
 
 IAM data in memory is **not automatically migrated**. You'll need to:
 
@@ -194,7 +175,7 @@ IAM data in memory is **not automatically migrated**. You'll need to:
 grep "advanced IAM" /path/to/s3-gateway.log
 
 # Verify filer connectivity
-weed filer.ls /seaweedfs/iam/roles/
+weed filer.ls /etc/iam/roles/
 ```
 
 ### Inconsistent Behavior
@@ -204,7 +185,7 @@ curl http://gateway-1:8333/status
 curl http://gateway-2:8334/status
 
 # Verify IAM storage locations exist
-weed filer.ls /seaweedfs/iam/
+weed filer.ls /etc/iam/
 ```
 
 ### Performance Issues
@@ -213,14 +194,14 @@ weed filer.ls /seaweedfs/iam/
 curl http://filer:8888/stats
 
 # Check IAM storage path performance  
-time weed filer.cat /seaweedfs/iam/roles/TestRole.json
+time weed filer.cat /etc/iam/roles/TestRole.json
 ```
 
 ## Best Practices
 
 ### Security
 - **Secure filer access** - use TLS and authentication
-- **Limit IAM path access** - only S3 gateways should access `/seaweedfs/iam/`
+- **Limit IAM path access** - only S3 gateways should access `/etc/iam/`
 - **Regular backups** of IAM data in filer
 - **Monitor access** to IAM storage paths
 
@@ -233,7 +214,7 @@ time weed filer.cat /seaweedfs/iam/roles/TestRole.json
 ### Capacity Planning
 - **Estimate IAM data size**: Roles + Policies (no sessions - stateless JWT)
 - **Plan for growth**: Role and policy count scales with user/application count  
-- **Monitor filer disk usage**: `/seaweedfs/iam/` path
+- **Monitor filer disk usage**: `/etc/iam/` path
 - **Set up log rotation**: For IAM audit logs
 
 ## Architecture Comparison

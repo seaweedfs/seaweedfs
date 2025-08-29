@@ -59,8 +59,7 @@
     }
   ],
   "policy": {
-    "defaultEffect": "Deny",
-    "storeType": "memory"
+    "defaultEffect": "Deny"
   },
   "roles": [
     {
