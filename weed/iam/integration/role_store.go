@@ -137,14 +137,16 @@ func copyRoleDefinition(original *RoleDefinition) *RoleDefinition {
 
 // FilerRoleStore implements RoleStore using SeaweedFS filer
 type FilerRoleStore struct {
-	grpcDialOption grpc.DialOption
-	basePath       string
+	grpcDialOption       grpc.DialOption
+	basePath             string
+	filerAddressProvider func() string
 }
 
 // NewFilerRoleStore creates a new filer-based role store
-func NewFilerRoleStore(config map[string]interface{}) (*FilerRoleStore, error) {
+func NewFilerRoleStore(config map[string]interface{}, filerAddressProvider func() string) (*FilerRoleStore, error) {
 	store := &FilerRoleStore{
-		basePath: "/etc/iam/roles", // Default path for role storage - aligned with /etc/ convention
+		basePath:             "/etc/iam/roles", // Default path for role storage - aligned with /etc/ convention
+		filerAddressProvider: filerAddressProvider,
 	}
 
 	// Parse configuration - only basePath and other settings, NOT filerAddress
@@ -159,63 +161,12 @@ func NewFilerRoleStore(config map[string]interface{}) (*FilerRoleStore, error) {
 	return store, nil
 }
 
-// FilerRoleStoreWithProvider is a wrapper around FilerRoleStore that uses a provider function for filer address
-type FilerRoleStoreWithProvider struct {
-	*FilerRoleStore
-	filerAddressProvider func() string
-}
-
-// NewFilerRoleStoreWithProvider creates a new filer-based role store with a filer address provider
-func NewFilerRoleStoreWithProvider(config map[string]interface{}, filerAddressProvider func() string) (*FilerRoleStoreWithProvider, error) {
-	baseStore, err := NewFilerRoleStore(config)
-	if err != nil {
-		return nil, err
-	}
-
-	return &FilerRoleStoreWithProvider{
-		FilerRoleStore:       baseStore,
-		filerAddressProvider: filerAddressProvider,
-	}, nil
-}
-
-// StoreRole stores a role using the provider function for filer address
-func (f *FilerRoleStoreWithProvider) StoreRole(ctx context.Context, filerAddress string, roleName string, role *RoleDefinition) error {
-	// Use provider function if filerAddress is not provided
-	if filerAddress == "" && f.filerAddressProvider != nil {
-		filerAddress = f.filerAddressProvider()
-	}
-	return f.FilerRoleStore.StoreRole(ctx, filerAddress, roleName, role)
-}
-
-// GetRole gets a role using the provider function for filer address
-func (f *FilerRoleStoreWithProvider) GetRole(ctx context.Context, filerAddress string, roleName string) (*RoleDefinition, error) {
-	// Use provider function if filerAddress is not provided
-	if filerAddress == "" && f.filerAddressProvider != nil {
-		filerAddress = f.filerAddressProvider()
-	}
-	return f.FilerRoleStore.GetRole(ctx, filerAddress, roleName)
-}
-
-// DeleteRole deletes a role using the provider function for filer address
-func (f *FilerRoleStoreWithProvider) DeleteRole(ctx context.Context, filerAddress string, roleName string) error {
-	// Use provider function if filerAddress is not provided
-	if filerAddress == "" && f.filerAddressProvider != nil {
-		filerAddress = f.filerAddressProvider()
-	}
-	return f.FilerRoleStore.DeleteRole(ctx, filerAddress, roleName)
-}
-
-// ListRoles lists roles using the provider function for filer address
-func (f *FilerRoleStoreWithProvider) ListRoles(ctx context.Context, filerAddress string) ([]string, error) {
-	// Use provider function if filerAddress is not provided
-	if filerAddress == "" && f.filerAddressProvider != nil {
-		filerAddress = f.filerAddressProvider()
-	}
-	return f.FilerRoleStore.ListRoles(ctx, filerAddress)
-}
-
 // StoreRole stores a role definition in filer
 func (f *FilerRoleStore) StoreRole(ctx context.Context, filerAddress string, roleName string, role *RoleDefinition) error {
+	// Use provider function if filerAddress is not provided
+	if filerAddress == "" && f.filerAddressProvider != nil {
+		filerAddress = f.filerAddressProvider()
+	}
 	if filerAddress == "" {
 		return fmt.Errorf("filer address is required for FilerRoleStore")
 	}
@@ -264,6 +215,10 @@ func (f *FilerRoleStore) StoreRole(ctx context.Context, filerAddress string, rol
 
 // GetRole retrieves a role definition from filer
 func (f *FilerRoleStore) GetRole(ctx context.Context, filerAddress string, roleName string) (*RoleDefinition, error) {
+	// Use provider function if filerAddress is not provided
+	if filerAddress == "" && f.filerAddressProvider != nil {
+		filerAddress = f.filerAddressProvider()
+	}
 	if filerAddress == "" {
 		return nil, fmt.Errorf("filer address is required for FilerRoleStore")
 	}
@@ -307,6 +262,10 @@ func (f *FilerRoleStore) GetRole(ctx context.Context, filerAddress string, roleN
 
 // ListRoles lists all role names in filer
 func (f *FilerRoleStore) ListRoles(ctx context.Context, filerAddress string) ([]string, error) {
+	// Use provider function if filerAddress is not provided
+	if filerAddress == "" && f.filerAddressProvider != nil {
+		filerAddress = f.filerAddressProvider()
+	}
 	if filerAddress == "" {
 		return nil, fmt.Errorf("filer address is required for FilerRoleStore")
 	}
@@ -358,6 +317,10 @@ func (f *FilerRoleStore) ListRoles(ctx context.Context, filerAddress string) ([]
 
 // DeleteRole deletes a role definition from filer
 func (f *FilerRoleStore) DeleteRole(ctx context.Context, filerAddress string, roleName string) error {
+	// Use provider function if filerAddress is not provided
+	if filerAddress == "" && f.filerAddressProvider != nil {
+		filerAddress = f.filerAddressProvider()
+	}
 	if filerAddress == "" {
 		return fmt.Errorf("filer address is required for FilerRoleStore")
 	}
@@ -429,7 +392,7 @@ type CachedFilerRoleStoreConfig struct {
 // NewCachedFilerRoleStore creates a new cached filer-based role store
 func NewCachedFilerRoleStore(config map[string]interface{}) (*CachedFilerRoleStore, error) {
 	// Create underlying filer store
-	filerStore, err := NewFilerRoleStore(config)
+	filerStore, err := NewFilerRoleStore(config, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create filer role store: %w", err)
 	}

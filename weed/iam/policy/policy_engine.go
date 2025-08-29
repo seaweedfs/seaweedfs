@@ -235,13 +235,13 @@ func (e *PolicyEngine) createPolicyStore(config *PolicyEngineConfig) (PolicyStor
 		// Check if caching is explicitly disabled
 		if config.StoreConfig != nil {
 			if noCache, ok := config.StoreConfig["noCache"].(bool); ok && noCache {
-				return NewFilerPolicyStore(config.StoreConfig)
+				return NewFilerPolicyStore(config.StoreConfig, nil)
 			}
 		}
 		// Default to generic cached filer store for better performance
-		return NewGenericCachedPolicyStore(config.StoreConfig)
+		return NewGenericCachedPolicyStore(config.StoreConfig, nil)
 	case "cached-filer", "generic-cached":
-		return NewGenericCachedPolicyStore(config.StoreConfig)
+		return NewGenericCachedPolicyStore(config.StoreConfig, nil)
 	default:
 		return nil, fmt.Errorf("unsupported store type: %s", config.StoreType)
 	}
@@ -256,13 +256,13 @@ func (e *PolicyEngine) createPolicyStoreWithProvider(config *PolicyEngineConfig,
 		// Check if caching is explicitly disabled
 		if config.StoreConfig != nil {
 			if noCache, ok := config.StoreConfig["noCache"].(bool); ok && noCache {
-				return NewFilerPolicyStoreWithProvider(config.StoreConfig, filerAddressProvider)
+				return NewFilerPolicyStore(config.StoreConfig, filerAddressProvider)
 			}
 		}
 		// Default to generic cached filer store for better performance
-		return NewGenericCachedPolicyStoreWithProvider(config.StoreConfig, filerAddressProvider)
+		return NewGenericCachedPolicyStore(config.StoreConfig, filerAddressProvider)
 	case "cached-filer", "generic-cached":
-		return NewGenericCachedPolicyStoreWithProvider(config.StoreConfig, filerAddressProvider)
+		return NewGenericCachedPolicyStore(config.StoreConfig, filerAddressProvider)
 	default:
 		return nil, fmt.Errorf("unsupported store type: %s", config.StoreType)
 	}

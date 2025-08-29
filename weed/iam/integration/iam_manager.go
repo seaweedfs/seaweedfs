@@ -131,7 +131,7 @@ func (m *IAMManager) getFilerAddress() string {
 func (m *IAMManager) createRoleStore(config *RoleStoreConfig) (RoleStore, error) {
 	if config == nil {
 		// Default to generic cached filer role store when no config provided
-		return NewGenericCachedRoleStore(nil)
+		return NewGenericCachedRoleStore(nil, nil)
 	}
 
 	switch config.StoreType {
@@ -139,13 +139,13 @@ func (m *IAMManager) createRoleStore(config *RoleStoreConfig) (RoleStore, error)
 		// Check if caching is explicitly disabled
 		if config.StoreConfig != nil {
 			if noCache, ok := config.StoreConfig["noCache"].(bool); ok && noCache {
-				return NewFilerRoleStore(config.StoreConfig)
+				return NewFilerRoleStore(config.StoreConfig, nil)
 			}
 		}
 		// Default to generic cached filer store for better performance
-		return NewGenericCachedRoleStore(config.StoreConfig)
+		return NewGenericCachedRoleStore(config.StoreConfig, nil)
 	case "cached-filer", "generic-cached":
-		return NewGenericCachedRoleStore(config.StoreConfig)
+		return NewGenericCachedRoleStore(config.StoreConfig, nil)
 	case "memory":
 		return NewMemoryRoleStore(), nil
 	default:
@@ -157,7 +157,7 @@ func (m *IAMManager) createRoleStore(config *RoleStoreConfig) (RoleStore, error)
 func (m *IAMManager) createRoleStoreWithProvider(config *RoleStoreConfig, filerAddressProvider func() string) (RoleStore, error) {
 	if config == nil {
 		// Default to generic cached filer role store when no config provided
-		return NewGenericCachedRoleStoreWithProvider(nil, filerAddressProvider)
+		return NewGenericCachedRoleStore(nil, filerAddressProvider)
 	}
 
 	switch config.StoreType {
@@ -165,13 +165,13 @@ func (m *IAMManager) createRoleStoreWithProvider(config *RoleStoreConfig, filerA
 		// Check if caching is explicitly disabled
 		if config.StoreConfig != nil {
 			if noCache, ok := config.StoreConfig["noCache"].(bool); ok && noCache {
-				return NewFilerRoleStoreWithProvider(config.StoreConfig, filerAddressProvider)
+				return NewFilerRoleStore(config.StoreConfig, filerAddressProvider)
 			}
 		}
 		// Default to generic cached filer store for better performance
-		return NewGenericCachedRoleStoreWithProvider(config.StoreConfig, filerAddressProvider)
+		return NewGenericCachedRoleStore(config.StoreConfig, filerAddressProvider)
 	case "cached-filer", "generic-cached":
-		return NewGenericCachedRoleStoreWithProvider(config.StoreConfig, filerAddressProvider)
+		return NewGenericCachedRoleStore(config.StoreConfig, filerAddressProvider)
 	case "memory":
 		return NewMemoryRoleStore(), nil
 	default:

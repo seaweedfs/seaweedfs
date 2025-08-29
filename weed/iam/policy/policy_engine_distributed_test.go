@@ -300,7 +300,7 @@ func TestFilerPolicyStoreConfiguration(t *testing.T) {
 			"filerAddress": "localhost:8888",
 		}
 
-		store, err := NewFilerPolicyStore(config)
+		store, err := NewFilerPolicyStore(config, nil)
 		require.NoError(t, err, "Should create filer policy store with minimal config")
 		assert.NotNil(t, store)
 	})
@@ -311,7 +311,7 @@ func TestFilerPolicyStoreConfiguration(t *testing.T) {
 			"basePath":     "/custom/iam/policies",
 		}
 
-		store, err := NewFilerPolicyStore(config)
+		store, err := NewFilerPolicyStore(config, nil)
 		require.NoError(t, err, "Should create filer policy store with custom path")
 		assert.NotNil(t, store)
 	})
@@ -321,7 +321,7 @@ func TestFilerPolicyStoreConfiguration(t *testing.T) {
 			"basePath": "/seaweedfs/iam/policies",
 		}
 
-		store, err := NewFilerPolicyStore(config)
+		store, err := NewFilerPolicyStore(config, nil)
 		assert.NoError(t, err, "Should create filer store without filerAddress in config")
 		assert.NotNil(t, store, "Store should be created successfully")
 	})
