@@ -1,0 +1,70 @@
+# Simplified single-stage build for SeaweedFS with FoundationDB support
+# Force x86_64 platform to use AMD64 FoundationDB packages
+FROM --platform=linux/amd64 golang:1.24-bookworm
+
+# Install system dependencies and FoundationDB
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    wget \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install FoundationDB client libraries (x86_64 emulation)
+RUN echo "🏗️ Installing FoundationDB AMD64 package with x86_64 emulation..." \
+    && wget -q https://github.com/apple/foundationdb/releases/download/7.1.61/foundationdb-clients_7.1.61-1_amd64.deb \
+    && dpkg -i foundationdb-clients_7.1.61-1_amd64.deb \
+    && rm foundationdb-clients_7.1.61-1_amd64.deb \
+    && echo "🔍 Verifying FoundationDB installation..." \
+    && ls -la /usr/include/foundationdb/ \
+    && ls -la /usr/lib/*/libfdb_c* 2>/dev/null || echo "Library files:" \
+    && find /usr -name "libfdb_c*" -type f 2>/dev/null \
+    && ldconfig
+
+# Set up Go environment for CGO
+ENV CGO_ENABLED=1
+ENV GOOS=linux
+ENV CGO_CFLAGS="-I/usr/include/foundationdb -I/usr/local/include/foundationdb -DFDB_API_VERSION=630"
+ENV CGO_LDFLAGS="-L/usr/lib -lfdb_c"
+
+# Create work directory
+WORKDIR /build
+
+# Copy source code
+COPY . .
+
+# Using Go 1.24 to match project requirements
+
+# Download dependencies (including FoundationDB Go bindings)
+RUN go mod download && \
+    echo "🔧 Attempting to use compatible FoundationDB Go bindings..." && \
+    go get github.com/apple/foundationdb/bindings/go@7.1.61 || \
+    go get github.com/apple/foundationdb/bindings/go@v7.1.61 || \
+    go get github.com/apple/foundationdb/bindings/go@release-7.1 || \
+    echo "⚠️  Fallback to overriding API version at runtime..."
+
+# Build SeaweedFS with FoundationDB support
+RUN echo "🔨 Building SeaweedFS with FoundationDB support..." && \
+    echo "🔍 Debugging: Checking headers before build..." && \
+    find /usr -name "fdb_c.h" -type f 2>/dev/null || echo "No fdb_c.h found" && \
+    ls -la /usr/include/foundationdb/ 2>/dev/null || echo "No foundationdb include dir" && \
+    ls -la /usr/lib/libfdb_c* 2>/dev/null || echo "No libfdb_c libraries" && \
+    echo "CGO_CFLAGS: $CGO_CFLAGS" && \
+    echo "CGO_LDFLAGS: $CGO_LDFLAGS" && \
+    go build -tags foundationdb -ldflags="-w -s" -o weed ./weed && \
+    echo "✅ Build successful!" && \
+    ./weed version
+
+# Test compilation (don't run tests as they need cluster)
+RUN echo "🧪 Compiling tests..." && \
+    go test -tags foundationdb -c -o fdb_store_test ./weed/filer/foundationdb/ && \
+    echo "✅ Tests compiled successfully!"
+
+# Create runtime directories
+RUN mkdir -p /var/fdb/config /usr/local/bin
+
+# Copy binaries to final location
+RUN cp weed /usr/local/bin/weed && \
+    cp fdb_store_test /usr/local/bin/fdb_store_test
+
+# Default command
+CMD ["/usr/local/bin/weed", "version"]
