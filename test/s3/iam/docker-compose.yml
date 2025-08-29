@@ -27,7 +27,7 @@ services:
 
   # SeaweedFS Master
   weed-master:
-    image: chrislusf/seaweedfs:latest
+    image: ${SEAWEEDFS_IMAGE:-local/seaweedfs:latest}
     container_name: weed-master
     hostname: weed-master
     ports:
@@ -47,7 +47,7 @@ services:
 
   # SeaweedFS Volume Server
   weed-volume:
-    image: chrislusf/seaweedfs:latest
+    image: ${SEAWEEDFS_IMAGE:-local/seaweedfs:latest}
     container_name: weed-volume
     hostname: weed-volume
     ports:
@@ -70,7 +70,7 @@ services:
 
   # SeaweedFS Filer
   weed-filer:
-    image: chrislusf/seaweedfs:latest
+    image: ${SEAWEEDFS_IMAGE:-local/seaweedfs:latest}
     container_name: weed-filer
     hostname: weed-filer
     ports:
@@ -95,7 +95,7 @@ services:
 
   # SeaweedFS S3 API with IAM
   weed-s3:
-    image: ${SEAWEEDFS_IMAGE:-chrislusf/seaweedfs:latest}
+    image: ${SEAWEEDFS_IMAGE:-local/seaweedfs:latest}
     container_name: weed-s3
     hostname: weed-s3
     ports:

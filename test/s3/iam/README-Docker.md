@@ -4,17 +4,22 @@ This directory contains a complete Docker Compose setup for testing SeaweedFS S3
 
 ## 🚀 Quick Start
 
-1. **Start the environment:**
+1. **Build local SeaweedFS image:**
+   ```bash
+   make -f Makefile.docker docker-build
+   ```
+
+2. **Start the environment:**
    ```bash
    make -f Makefile.docker docker-up
    ```
 
-2. **Run the tests:**
+3. **Run the tests:**
    ```bash
    make -f Makefile.docker docker-test
    ```
 
-3. **Stop the environment:**
+4. **Stop the environment:**
    ```bash
    make -f Makefile.docker docker-down
    ```
@@ -80,12 +85,24 @@ make -f Makefile.docker docker-test-single TEST_NAME=TestKeycloakAuthentication
 
 ### Complete workflow (recommended)
 ```bash
+# Build, start, test, and clean up
+make -f Makefile.docker docker-build
 make -f Makefile.docker docker-dev
 ```
-This runs: down → up → test
+This runs: build → down → up → test
+
+### Using Published Images (Alternative)
+If you want to use published Docker Hub images instead of building locally:
+```bash
+export SEAWEEDFS_IMAGE=chrislusf/seaweedfs:latest
+make -f Makefile.docker docker-up
+```
 
 ### Manual steps
 ```bash
+# Build image (required first time, or after code changes)
+make -f Makefile.docker docker-build
+
 # Start services
 make -f Makefile.docker docker-up
 
@@ -125,18 +142,12 @@ make -f Makefile.docker docker-shell-s3
 make -f Makefile.docker docker-shell-keycloak
 ```
 
-### Debug environment
-```bash
-make -f Makefile.docker docker-debug
-```
-
 ## 📁 File Structure
 
 ```
 seaweedfs/test/s3/iam/
 ├── docker-compose.yml          # Main Docker Compose configuration
 ├── Makefile.docker             # Docker-specific Makefile
-├── Dockerfile.debug            # Debug SeaweedFS image
 ├── setup_keycloak_docker.sh    # Keycloak setup for containers
 ├── README-Docker.md            # This file
 ├── iam_config.json            # IAM configuration (auto-generated)
@@ -208,6 +219,7 @@ make -f Makefile.docker docker-clean
 
 ## 🎯 Key Features
 
+- **Local Code Testing**: Uses locally built SeaweedFS images to test current code
 - **Isolated Environment**: No conflicts with local services
 - **Consistent Networking**: Services communicate via Docker network
 - **Automated Setup**: Keycloak realm and users created automatically
@@ -220,10 +232,8 @@ make -f Makefile.docker docker-clean
 For automated testing:
 
 ```bash
-# Wait for all services to be healthy
-make -f Makefile.docker docker-wait-healthy
-
-# Run tests with proper cleanup
+# Build image, run tests with proper cleanup
+make -f Makefile.docker docker-build
 make -f Makefile.docker docker-up
 make -f Makefile.docker docker-wait-healthy  
 make -f Makefile.docker docker-test

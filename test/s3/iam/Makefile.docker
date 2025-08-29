@@ -19,16 +19,17 @@ help: ## Show this help message
 	@echo "  COMPOSE_FILE: $(COMPOSE_FILE)"
 	@echo "  PROJECT_NAME: $(PROJECT_NAME)"
 
-docker-build: ## Build custom SeaweedFS image if needed
-	@echo "🔨 Building custom SeaweedFS image with debug changes..."
-	@if [ -f ../../../weed-debug ]; then \
-		echo "Using debug binary for Docker image..."; \
-		cp ../../../weed-debug ./weed-debug; \
-		docker build -t seaweedfs-debug:latest -f Dockerfile.debug .; \
-		rm -f ./weed-debug; \
-	else \
-		echo "No debug binary found, using standard image"; \
-	fi
+docker-build: ## Build local SeaweedFS image for testing
+	@echo "🔨 Building local SeaweedFS image..."
+	@echo "Building weed binary..."
+	@cd ../../.. && cd weed && go build -o ../weed
+	@echo "Copying required files..."
+	@cd ../../.. && cp docker/filer.toml . && cp docker/entrypoint.sh .
+	@echo "Building Docker image..."
+	@cd ../../.. && docker build -f docker/Dockerfile.local -t local/seaweedfs:latest .
+	@echo "Cleaning up temporary files..."
+	@cd ../../.. && rm -f weed filer.toml entrypoint.sh
+	@echo "✅ Built local/seaweedfs:latest"
 
 docker-up: ## Start all services with Docker Compose
 	@echo "🚀 Starting SeaweedFS S3 IAM integration environment..."
