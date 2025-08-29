@@ -21,14 +21,16 @@ help: ## Show this help message
 
 docker-build: ## Build local SeaweedFS image for testing
 	@echo "🔨 Building local SeaweedFS image..."
+	@echo "Creating build directory..."
+	@cd ../../.. && mkdir -p .docker-build
 	@echo "Building weed binary..."
-	@cd ../../.. && cd weed && go build -o ../weed
-	@echo "Copying required files..."
-	@cd ../../.. && cp docker/filer.toml . && cp docker/entrypoint.sh .
+	@cd ../../.. && cd weed && go build -o ../.docker-build/weed
+	@echo "Copying required files to build directory..."
+	@cd ../../.. && cp docker/filer.toml .docker-build/ && cp docker/entrypoint.sh .docker-build/
 	@echo "Building Docker image..."
-	@cd ../../.. && docker build -f docker/Dockerfile.local -t local/seaweedfs:latest .
-	@echo "Cleaning up temporary files..."
-	@cd ../../.. && rm -f weed filer.toml entrypoint.sh
+	@cd ../../.. && docker build -f docker/Dockerfile.local -t local/seaweedfs:latest .docker-build/
+	@echo "Cleaning up build directory..."
+	@cd ../../.. && rm -rf .docker-build
 	@echo "✅ Built local/seaweedfs:latest"
 
 docker-up: ## Start all services with Docker Compose
@@ -67,12 +69,8 @@ docker-status: ## Check status of all services
 	@echo "🏥 Health Checks:"
 	@docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep $(PROJECT_NAME) || true
 
-docker-test: ## Run integration tests against Docker environment
+docker-test: docker-wait-healthy ## Run integration tests against Docker environment
 	@echo "🧪 Running SeaweedFS S3 IAM integration tests..."
-	@echo "⏳ Waiting for services to be ready..."
-	@timeout 120 bash -c 'until curl -s http://localhost:8333 > /dev/null 2>&1; do sleep 2; done'
-	@timeout 120 bash -c 'until curl -s http://localhost:8080/health/ready > /dev/null 2>&1; do sleep 2; done'
-	@echo "✅ Services are ready"
 	@echo ""
 	@KEYCLOAK_URL=http://localhost:8080 go test -v -timeout 10m ./...
 

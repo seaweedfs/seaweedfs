@@ -44,7 +44,7 @@ help: ## Show this help message
 	@echo "  docker-down              Stop all Docker Compose services"
 	@echo "  docker-logs              Show logs from all services"
 
-test: clean setup start-services wait-for-services run-tests stop-services ## Run complete IAM integration test suite
+test: clean setup start-services run-tests stop-services ## Run complete IAM integration test suite
 
 test-quick: run-tests ## Run tests assuming services are already running
 
@@ -251,9 +251,6 @@ docker-logs: ## Show logs from all services
 
 docker-test: docker-up ## Run tests with Docker Compose including Keycloak
 	@echo "🧪 Running Keycloak integration tests..."
-	@echo "⏳ Waiting for services to be ready..."
-	@timeout 120 bash -c 'until curl -s http://localhost:8080/health/ready > /dev/null 2>&1; do sleep 2; done' || (echo "❌ Keycloak failed to become ready" && exit 1)
-	@timeout 60 bash -c 'until curl -s http://localhost:8333 > /dev/null 2>&1; do sleep 2; done' || (echo "❌ S3 API failed to become ready" && exit 1)
 	@export KEYCLOAK_URL="http://localhost:8080" && \
 	 export S3_ENDPOINT="http://localhost:8333" && \
 	 go test -v -timeout $(TEST_TIMEOUT) -run "TestKeycloak" ./...
@@ -293,9 +290,6 @@ test-versioning-stress: ## Run S3 versioning stress tests
 
 test-keycloak-full: docker-up ## Run complete Keycloak integration tests
 	@echo "🔐 Running complete Keycloak integration tests..."
-	@echo "⏳ Waiting for services to be ready..."
-	@timeout 120 bash -c 'until curl -s http://localhost:8080/health/ready > /dev/null 2>&1; do sleep 2; done' || (echo "❌ Keycloak failed to become ready" && exit 1)
-	@timeout 60 bash -c 'until curl -s http://localhost:8333 > /dev/null 2>&1; do sleep 2; done' || (echo "❌ S3 API failed to become ready" && exit 1)
 	@export KEYCLOAK_URL="http://localhost:8080" && \
 	 export S3_ENDPOINT="http://localhost:8333" && \
 	 go test -v -timeout $(TEST_TIMEOUT) -run "TestKeycloak" ./...
