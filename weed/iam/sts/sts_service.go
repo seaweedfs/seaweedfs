@@ -694,11 +694,6 @@ func (s *STSService) validateRoleAssumptionForWebIdentity(ctx context.Context, r
 		return fmt.Errorf("invalid role ARN format: %s", roleArn)
 	}
 
-	// For testing, reject non-existent roles
-	if roleName == "NonExistentRole" {
-		return fmt.Errorf("role does not exist: %s", roleName)
-	}
-
 	// CRITICAL SECURITY: Perform trust policy validation
 	if s.trustPolicyValidator != nil {
 		if err := s.trustPolicyValidator.ValidateTrustPolicyForWebIdentity(ctx, roleArn, webIdentityToken); err != nil {
@@ -734,11 +729,6 @@ func (s *STSService) validateRoleAssumptionForCredentials(ctx context.Context, r
 	roleName := utils.ExtractRoleNameFromArn(roleArn)
 	if roleName == "" {
 		return fmt.Errorf("invalid role ARN format: %s", roleArn)
-	}
-
-	// For testing, reject non-existent roles
-	if roleName == "NonExistentRole" {
-		return fmt.Errorf("role does not exist: %s", roleName)
 	}
 
 	// CRITICAL SECURITY: Perform trust policy validation

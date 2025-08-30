@@ -29,10 +29,10 @@ func BalanceTopicPartitionOnBrokers(brokers cmap.ConcurrentMap[string, *BrokerSt
 			maxPartitionCountPerBroker = brokerStats.Val.TopicPartitionCount
 			sourceBroker = brokerStats.Key
 			// select a random partition from the source broker
-			randomePartitionIndex := rand.IntN(int(brokerStats.Val.TopicPartitionCount))
+			randomPartitionIndex := rand.IntN(int(brokerStats.Val.TopicPartitionCount))
 			index := 0
 			for topicPartitionStats := range brokerStats.Val.TopicPartitionStats.IterBuffered() {
-				if index == randomePartitionIndex {
+				if index == randomPartitionIndex {
 					candidatePartition = &topicPartitionStats.Val.TopicPartition
 					break
 				} else {
