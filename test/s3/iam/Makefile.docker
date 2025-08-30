@@ -1,0 +1,166 @@
+# Makefile for SeaweedFS S3 IAM Integration Tests with Docker Compose
+.PHONY: help docker-build docker-up docker-down docker-logs docker-test docker-clean docker-status docker-keycloak-setup
+
+# Default target
+.DEFAULT_GOAL := help
+
+# Docker Compose configuration
+COMPOSE_FILE := docker-compose.yml
+PROJECT_NAME := seaweedfs-iam-test
+
+help: ## Show this help message
+	@echo "SeaweedFS S3 IAM Integration Tests - Docker Compose"
+	@echo ""
+	@echo "Available commands:"
+	@echo ""
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@echo ""
+	@echo "Environment:"
+	@echo "  COMPOSE_FILE: $(COMPOSE_FILE)"
+	@echo "  PROJECT_NAME: $(PROJECT_NAME)"
+
+docker-build: ## Build local SeaweedFS image for testing
+	@echo "🔨 Building local SeaweedFS image..."
+	@echo "Creating build directory..."
+	@cd ../../.. && mkdir -p .docker-build
+	@echo "Building weed binary..."
+	@cd ../../.. && cd weed && go build -o ../.docker-build/weed
+	@echo "Copying required files to build directory..."
+	@cd ../../.. && cp docker/filer.toml .docker-build/ && cp docker/entrypoint.sh .docker-build/
+	@echo "Building Docker image..."
+	@cd ../../.. && docker build -f docker/Dockerfile.local -t local/seaweedfs:latest .docker-build/
+	@echo "Cleaning up build directory..."
+	@cd ../../.. && rm -rf .docker-build
+	@echo "✅ Built local/seaweedfs:latest"
+
+docker-up: ## Start all services with Docker Compose
+	@echo "🚀 Starting SeaweedFS S3 IAM integration environment..."
+	@docker-compose -p $(PROJECT_NAME) -f $(COMPOSE_FILE) up -d
+	@echo ""
+	@echo "✅ Environment started! Services will be available at:"
+	@echo "  🔐 Keycloak:     http://localhost:8080 (admin/admin)"
+	@echo "  🗄️  S3 API:       http://localhost:8333"
+	@echo "  📁 Filer:        http://localhost:8888"
+	@echo "  🎯 Master:       http://localhost:9333"
+	@echo ""
+	@echo "⏳ Waiting for all services to be healthy..."
+	@docker-compose -p $(PROJECT_NAME) -f $(COMPOSE_FILE) ps
+
+docker-down: ## Stop and remove all containers
+	@echo "🛑 Stopping SeaweedFS S3 IAM integration environment..."
+	@docker-compose -p $(PROJECT_NAME) -f $(COMPOSE_FILE) down -v
+	@echo "✅ Environment stopped and cleaned up"
+
+docker-restart: docker-down docker-up ## Restart the entire environment
+
+docker-logs: ## Show logs from all services
+	@docker-compose -p $(PROJECT_NAME) -f $(COMPOSE_FILE) logs -f
+
+docker-logs-s3: ## Show logs from S3 service only
+	@docker-compose -p $(PROJECT_NAME) -f $(COMPOSE_FILE) logs -f weed-s3
+
+docker-logs-keycloak: ## Show logs from Keycloak service only  
+	@docker-compose -p $(PROJECT_NAME) -f $(COMPOSE_FILE) logs -f keycloak
+
+docker-status: ## Check status of all services
+	@echo "📊 Service Status:"
+	@docker-compose -p $(PROJECT_NAME) -f $(COMPOSE_FILE) ps
+	@echo ""
+	@echo "🏥 Health Checks:"
+	@docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep $(PROJECT_NAME) || true
+
+docker-test: docker-wait-healthy ## Run integration tests against Docker environment
+	@echo "🧪 Running SeaweedFS S3 IAM integration tests..."
+	@echo ""
+	@KEYCLOAK_URL=http://localhost:8080 go test -v -timeout 10m ./...
+
+docker-test-single: ## Run a single test (use TEST_NAME=TestName)
+	@if [ -z "$(TEST_NAME)" ]; then \
+		echo "❌ Please specify TEST_NAME, e.g., make docker-test-single TEST_NAME=TestKeycloakAuthentication"; \
+		exit 1; \
+	fi
+	@echo "🧪 Running single test: $(TEST_NAME)"
+	@KEYCLOAK_URL=http://localhost:8080 go test -v -run "$(TEST_NAME)" -timeout 5m ./...
+
+docker-keycloak-setup: ## Manually run Keycloak setup (usually automatic)
+	@echo "🔧 Running Keycloak setup manually..."
+	@docker-compose -p $(PROJECT_NAME) -f $(COMPOSE_FILE) run --rm keycloak-setup
+
+docker-clean: ## Clean up everything (containers, volumes, images)
+	@echo "🧹 Cleaning up Docker environment..."
+	@docker-compose -p $(PROJECT_NAME) -f $(COMPOSE_FILE) down -v --remove-orphans
+	@docker system prune -f
+	@echo "✅ Cleanup complete"
+
+docker-shell-s3: ## Get shell access to S3 container
+	@docker-compose -p $(PROJECT_NAME) -f $(COMPOSE_FILE) exec weed-s3 sh
+
+docker-shell-keycloak: ## Get shell access to Keycloak container  
+	@docker-compose -p $(PROJECT_NAME) -f $(COMPOSE_FILE) exec keycloak bash
+
+docker-debug: ## Show debug information
+	@echo "🔍 Docker Environment Debug Information"
+	@echo ""
+	@echo "📋 Docker Compose Config:"
+	@docker-compose -p $(PROJECT_NAME) -f $(COMPOSE_FILE) config
+	@echo ""
+	@echo "📊 Container Status:"
+	@docker-compose -p $(PROJECT_NAME) -f $(COMPOSE_FILE) ps
+	@echo ""
+	@echo "🌐 Network Information:"
+	@docker network ls | grep $(PROJECT_NAME) || echo "No networks found"
+	@echo ""
+	@echo "💾 Volume Information:"  
+	@docker volume ls | grep $(PROJECT_NAME) || echo "No volumes found"
+
+# Quick test targets
+docker-test-auth: ## Quick test of authentication only
+	@KEYCLOAK_URL=http://localhost:8080 go test -v -run "TestKeycloakAuthentication" -timeout 2m ./...
+
+docker-test-roles: ## Quick test of role mapping only  
+	@KEYCLOAK_URL=http://localhost:8080 go test -v -run "TestKeycloakRoleMapping" -timeout 2m ./...
+
+docker-test-s3ops: ## Quick test of S3 operations only
+	@KEYCLOAK_URL=http://localhost:8080 go test -v -run "TestKeycloakS3Operations" -timeout 2m ./...
+
+# Development workflow
+docker-dev: docker-down docker-up docker-test ## Complete dev workflow: down -> up -> test
+
+# Show service URLs for easy access
+docker-urls: ## Display all service URLs
+	@echo "🌐 Service URLs:"
+	@echo ""  
+	@echo "  🔐 Keycloak Admin:   http://localhost:8080 (admin/admin)"
+	@echo "  🔐 Keycloak Realm:   http://localhost:8080/realms/seaweedfs-test"
+	@echo "  📁 S3 API:          http://localhost:8333"
+	@echo "  📂 Filer UI:        http://localhost:8888"  
+	@echo "  🎯 Master UI:       http://localhost:9333"
+	@echo "  💾 Volume Server:   http://localhost:8080"
+	@echo ""
+	@echo "  📖 Test Users:"
+	@echo "    • admin-user      (password: adminuser123)     - s3-admin role"
+	@echo "    • read-user       (password: readuser123)      - s3-read-only role"  
+	@echo "    • write-user      (password: writeuser123)     - s3-read-write role"
+	@echo "    • write-only-user (password: writeonlyuser123) - s3-write-only role"
+
+# Wait targets for CI/CD
+docker-wait-healthy: ## Wait for all services to be healthy
+	@echo "⏳ Waiting for all services to be healthy..."
+	@timeout 300 bash -c ' \
+		required_services="keycloak weed-master weed-volume weed-filer weed-s3"; \
+		while true; do \
+			all_healthy=true; \
+			for service in $$required_services; do \
+				if ! docker-compose -p $(PROJECT_NAME) -f $(COMPOSE_FILE) ps $$service | grep -q "healthy"; then \
+					echo "Waiting for $$service to be healthy..."; \
+					all_healthy=false; \
+					break; \
+				fi; \
+			done; \
+			if [ "$$all_healthy" = "true" ]; then \
+				break; \
+			fi; \
+			sleep 5; \
+		done \
+	'
+	@echo "✅ All required services are healthy"

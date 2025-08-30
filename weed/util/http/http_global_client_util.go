@@ -399,7 +399,8 @@ func readEncryptedUrl(ctx context.Context, fileUrl, jwt string, cipherKey []byte
 	if isFullChunk {
 		fn(decryptedData)
 	} else {
-		fn(decryptedData[int(offset) : int(offset)+size])
+		sliceEnd := int(offset) + size
+		fn(decryptedData[int(offset):sliceEnd])
 	}
 	return false, nil
 }

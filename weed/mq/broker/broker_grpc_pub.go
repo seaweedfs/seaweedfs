@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math/rand"
+	"math/rand/v2"
 	"net"
 	"sync/atomic"
 	"time"
@@ -71,7 +71,7 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 	var isClosed bool
 
 	// process each published messages
-	clientName := fmt.Sprintf("%v-%4d", findClientAddress(stream.Context()), rand.Intn(10000))
+	clientName := fmt.Sprintf("%v-%4d", findClientAddress(stream.Context()), rand.IntN(10000))
 	publisher := topic.NewLocalPublisher()
 	localTopicPartition.Publishers.AddPublisher(clientName, publisher)
 

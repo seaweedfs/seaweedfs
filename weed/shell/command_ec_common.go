@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"regexp"
 	"slices"
 	"sort"
 	"time"
@@ -1057,4 +1058,14 @@ func EcBalance(commandEnv *CommandEnv, collections []string, dc string, ecReplic
 	}
 
 	return nil
+}
+
+// compileCollectionPattern compiles a regex pattern for collection matching.
+// Empty patterns match empty collections only.
+func compileCollectionPattern(pattern string) (*regexp.Regexp, error) {
+	if pattern == "" {
+		// empty pattern matches empty collection
+		return regexp.Compile("^$")
+	}
+	return regexp.Compile(pattern)
 }

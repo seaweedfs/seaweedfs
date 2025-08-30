@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/md5"
+	"encoding/base64"
 	"fmt"
 	"hash"
 	"io"
@@ -14,9 +15,12 @@ import (
 
 	"slices"
 
+	"encoding/json"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -46,10 +50,10 @@ func (fs *FilerServer) uploadRequestToChunks(ctx context.Context, w http.Respons
 		chunkOffset = offsetInt
 	}
 
-	return fs.uploadReaderToChunks(ctx, reader, chunkOffset, chunkSize, fileName, contentType, isAppend, so)
+	return fs.uploadReaderToChunks(ctx, r, reader, chunkOffset, chunkSize, fileName, contentType, isAppend, so)
 }
 
-func (fs *FilerServer) uploadReaderToChunks(ctx context.Context, reader io.Reader, startOffset int64, chunkSize int32, fileName, contentType string, isAppend bool, so *operation.StorageOption) (fileChunks []*filer_pb.FileChunk, md5Hash hash.Hash, chunkOffset int64, uploadErr error, smallContent []byte) {
+func (fs *FilerServer) uploadReaderToChunks(ctx context.Context, r *http.Request, reader io.Reader, startOffset int64, chunkSize int32, fileName, contentType string, isAppend bool, so *operation.StorageOption) (fileChunks []*filer_pb.FileChunk, md5Hash hash.Hash, chunkOffset int64, uploadErr error, smallContent []byte) {
 
 	md5Hash = md5.New()
 	chunkOffset = startOffset
@@ -118,7 +122,7 @@ func (fs *FilerServer) uploadReaderToChunks(ctx context.Context, reader io.Reade
 				wg.Done()
 			}()
 
-			chunks, toChunkErr := fs.dataToChunk(ctx, fileName, contentType, buf.Bytes(), offset, so)
+			chunks, toChunkErr := fs.dataToChunkWithSSE(ctx, r, fileName, contentType, buf.Bytes(), offset, so)
 			if toChunkErr != nil {
 				uploadErrLock.Lock()
 				if uploadErr == nil {
@@ -193,6 +197,10 @@ func (fs *FilerServer) doUpload(ctx context.Context, urlLocation string, limited
 }
 
 func (fs *FilerServer) dataToChunk(ctx context.Context, fileName, contentType string, data []byte, chunkOffset int64, so *operation.StorageOption) ([]*filer_pb.FileChunk, error) {
+	return fs.dataToChunkWithSSE(ctx, nil, fileName, contentType, data, chunkOffset, so)
+}
+
+func (fs *FilerServer) dataToChunkWithSSE(ctx context.Context, r *http.Request, fileName, contentType string, data []byte, chunkOffset int64, so *operation.StorageOption) ([]*filer_pb.FileChunk, error) {
 	dataReader := util.NewBytesReader(data)
 
 	// retry to assign a different file id
@@ -235,5 +243,83 @@ func (fs *FilerServer) dataToChunk(ctx context.Context, fileName, contentType st
 	if uploadResult.Size == 0 {
 		return nil, nil
 	}
-	return []*filer_pb.FileChunk{uploadResult.ToPbFileChunk(fileId, chunkOffset, time.Now().UnixNano())}, nil
+
+	// Extract SSE metadata from request headers if available
+	var sseType filer_pb.SSEType = filer_pb.SSEType_NONE
+	var sseMetadata []byte
+
+	if r != nil {
+
+		// Check for SSE-KMS
+		sseKMSHeaderValue := r.Header.Get(s3_constants.SeaweedFSSSEKMSKeyHeader)
+		if sseKMSHeaderValue != "" {
+			sseType = filer_pb.SSEType_SSE_KMS
+			if kmsData, err := base64.StdEncoding.DecodeString(sseKMSHeaderValue); err == nil {
+				sseMetadata = kmsData
+				glog.V(4).InfofCtx(ctx, "Storing SSE-KMS metadata for chunk %s at offset %d", fileId, chunkOffset)
+			} else {
+				glog.V(1).InfofCtx(ctx, "Failed to decode SSE-KMS metadata for chunk %s: %v", fileId, err)
+			}
+		} else if r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerAlgorithm) != "" {
+			// SSE-C: Create per-chunk metadata for unified handling
+			sseType = filer_pb.SSEType_SSE_C
+
+			// Get SSE-C metadata from headers to create unified per-chunk metadata
+			sseIVHeader := r.Header.Get(s3_constants.SeaweedFSSSEIVHeader)
+			keyMD5Header := r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerKeyMD5)
+
+			if sseIVHeader != "" && keyMD5Header != "" {
+				// Decode IV from header
+				if ivData, err := base64.StdEncoding.DecodeString(sseIVHeader); err == nil {
+					// Create SSE-C metadata with chunk offset = chunkOffset for proper IV calculation
+					ssecMetadataStruct := struct {
+						Algorithm  string `json:"algorithm"`
+						IV         string `json:"iv"`
+						KeyMD5     string `json:"keyMD5"`
+						PartOffset int64  `json:"partOffset"`
+					}{
+						Algorithm:  "AES256",
+						IV:         base64.StdEncoding.EncodeToString(ivData),
+						KeyMD5:     keyMD5Header,
+						PartOffset: chunkOffset,
+					}
+					if ssecMetadata, serErr := json.Marshal(ssecMetadataStruct); serErr == nil {
+						sseMetadata = ssecMetadata
+					} else {
+						glog.V(1).InfofCtx(ctx, "Failed to serialize SSE-C metadata for chunk %s: %v", fileId, serErr)
+					}
+				} else {
+					glog.V(1).InfofCtx(ctx, "Failed to decode SSE-C IV for chunk %s: %v", fileId, err)
+				}
+			} else {
+				glog.V(4).InfofCtx(ctx, "SSE-C chunk %s missing IV or KeyMD5 header", fileId)
+			}
+		} else if r.Header.Get(s3_constants.SeaweedFSSSES3Key) != "" {
+			// SSE-S3: Server-side encryption with server-managed keys
+			// Set the correct SSE type for SSE-S3 chunks to maintain proper tracking
+			sseType = filer_pb.SSEType_SSE_S3
+
+			// Get SSE-S3 metadata from headers
+			sseS3Header := r.Header.Get(s3_constants.SeaweedFSSSES3Key)
+			if sseS3Header != "" {
+				if s3Data, err := base64.StdEncoding.DecodeString(sseS3Header); err == nil {
+					// For SSE-S3, store metadata at chunk level for consistency with SSE-KMS/SSE-C
+					glog.V(4).InfofCtx(ctx, "Storing SSE-S3 metadata for chunk %s at offset %d", fileId, chunkOffset)
+					sseMetadata = s3Data
+				} else {
+					glog.V(1).InfofCtx(ctx, "Failed to decode SSE-S3 metadata for chunk %s: %v", fileId, err)
+				}
+			}
+		}
+	}
+
+	// Create chunk with SSE metadata if available
+	var chunk *filer_pb.FileChunk
+	if sseType != filer_pb.SSEType_NONE {
+		chunk = uploadResult.ToPbFileChunkWithSSE(fileId, chunkOffset, time.Now().UnixNano(), sseType, sseMetadata)
+	} else {
+		chunk = uploadResult.ToPbFileChunk(fileId, chunkOffset, time.Now().UnixNano())
+	}
+
+	return []*filer_pb.FileChunk{chunk}, nil
 }

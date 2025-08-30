@@ -21,13 +21,21 @@ func (s3a *S3ApiServer) GetBucketTaggingHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Load bucket tags from metadata
-	tags, err := s3a.getBucketTags(bucket)
+	// Load bucket metadata and extract tags
+	metadata, err := s3a.GetBucketMetadata(bucket)
 	if err != nil {
-		glog.V(3).Infof("GetBucketTagging: no tags found for bucket %s: %v", bucket, err)
+		glog.V(3).Infof("GetBucketTagging: failed to get bucket metadata for %s: %v", bucket, err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	if len(metadata.Tags) == 0 {
+		glog.V(3).Infof("GetBucketTagging: no tags found for bucket %s", bucket)
 		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchTagSet)
 		return
 	}
+
+	tags := metadata.Tags
 
 	// Convert tags to XML response format
 	tagging := FromTags(tags)
@@ -70,8 +78,8 @@ func (s3a *S3ApiServer) PutBucketTaggingHandler(w http.ResponseWriter, r *http.R
 	}
 
 	// Store bucket tags in metadata
-	if err = s3a.setBucketTags(bucket, tags); err != nil {
-		glog.Errorf("PutBucketTagging setBucketTags %s: %v", r.URL, err)
+	if err = s3a.UpdateBucketTags(bucket, tags); err != nil {
+		glog.Errorf("PutBucketTagging UpdateBucketTags %s: %v", r.URL, err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
@@ -91,8 +99,8 @@ func (s3a *S3ApiServer) DeleteBucketTaggingHandler(w http.ResponseWriter, r *htt
 	}
 
 	// Remove bucket tags from metadata
-	if err := s3a.deleteBucketTags(bucket); err != nil {
-		glog.Errorf("DeleteBucketTagging deleteBucketTags %s: %v", r.URL, err)
+	if err := s3a.ClearBucketTags(bucket); err != nil {
+		glog.Errorf("DeleteBucketTagging ClearBucketTags %s: %v", r.URL, err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}

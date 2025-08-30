@@ -84,6 +84,8 @@ const (
 	ErrMalformedDate
 	ErrMalformedPresignedDate
 	ErrMalformedCredentialDate
+	ErrMalformedPolicy
+	ErrInvalidPolicyDocument
 	ErrMissingSignHeadersTag
 	ErrMissingSignTag
 	ErrUnsignedHeaders
@@ -102,6 +104,7 @@ const (
 	ErrAuthNotSetup
 	ErrNotImplemented
 	ErrPreconditionFailed
+	ErrNotModified
 
 	ErrExistingObjectIsDirectory
 	ErrExistingObjectIsFile
@@ -116,6 +119,22 @@ const (
 	ErrInvalidRetentionPeriod
 	ErrObjectLockConfigurationNotFoundError
 	ErrInvalidUnorderedWithDelimiter
+
+	// SSE-C related errors
+	ErrInvalidEncryptionAlgorithm
+	ErrInvalidEncryptionKey
+	ErrSSECustomerKeyMD5Mismatch
+	ErrSSECustomerKeyMissing
+	ErrSSECustomerKeyNotNeeded
+
+	// SSE-KMS related errors
+	ErrKMSKeyNotFound
+	ErrKMSAccessDenied
+	ErrKMSDisabled
+	ErrKMSInvalidCiphertext
+
+	// Bucket encryption errors
+	ErrNoSuchBucketEncryptionConfiguration
 )
 
 // Error message constants for checksum validation
@@ -273,6 +292,16 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrMalformedXML: {
 		Code:           "MalformedXML",
 		Description:    "The XML you provided was not well-formed or did not validate against our published schema.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrMalformedPolicy: {
+		Code:           "MalformedPolicy",
+		Description:    "Policy has invalid resource.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrInvalidPolicyDocument: {
+		Code:           "InvalidPolicyDocument",
+		Description:    "The content of the policy document is invalid.",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
 	ErrAuthHeaderEmpty: {
@@ -435,6 +464,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Description:    "At least one of the pre-conditions you specified did not hold",
 		HTTPStatusCode: http.StatusPreconditionFailed,
 	},
+	ErrNotModified: {
+		Code:           "NotModified",
+		Description:    "The object was not modified since the specified time",
+		HTTPStatusCode: http.StatusNotModified,
+	},
 	ErrExistingObjectIsDirectory: {
 		Code:           "ExistingObjectIsDirectory",
 		Description:    "Existing Object is a directory.",
@@ -470,6 +504,62 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Code:           "InvalidArgument",
 		Description:    "Unordered listing cannot be used with delimiter",
 		HTTPStatusCode: http.StatusBadRequest,
+	},
+
+	// SSE-C related error mappings
+	ErrInvalidEncryptionAlgorithm: {
+		Code:           "InvalidEncryptionAlgorithmError",
+		Description:    "The encryption algorithm specified is not valid.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrInvalidEncryptionKey: {
+		Code:           "InvalidArgument",
+		Description:    "Invalid encryption key. Encryption key must be 256-bit AES256.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrSSECustomerKeyMD5Mismatch: {
+		Code:           "InvalidArgument",
+		Description:    "The provided customer encryption key MD5 does not match the key.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrSSECustomerKeyMissing: {
+		Code:           "InvalidArgument",
+		Description:    "Requests specifying Server Side Encryption with Customer provided keys must provide the customer key.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrSSECustomerKeyNotNeeded: {
+		Code:           "InvalidArgument",
+		Description:    "The object was not encrypted with customer provided keys.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+
+	// SSE-KMS error responses
+	ErrKMSKeyNotFound: {
+		Code:           "KMSKeyNotFoundException",
+		Description:    "The specified KMS key does not exist.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrKMSAccessDenied: {
+		Code:           "KMSAccessDeniedException",
+		Description:    "Access denied to the specified KMS key.",
+		HTTPStatusCode: http.StatusForbidden,
+	},
+	ErrKMSDisabled: {
+		Code:           "KMSKeyDisabledException",
+		Description:    "The specified KMS key is disabled.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrKMSInvalidCiphertext: {
+		Code:           "InvalidCiphertext",
+		Description:    "The provided ciphertext is invalid or corrupted.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+
+	// Bucket encryption error responses
+	ErrNoSuchBucketEncryptionConfiguration: {
+		Code:           "ServerSideEncryptionConfigurationNotFoundError",
+		Description:    "The server side encryption configuration was not found.",
+		HTTPStatusCode: http.StatusNotFound,
 	},
 }
 

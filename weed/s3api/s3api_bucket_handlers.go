@@ -60,8 +60,22 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 	var listBuckets ListAllMyBucketsList
 	for _, entry := range entries {
 		if entry.IsDirectory {
-			if identity != nil && !identity.canDo(s3_constants.ACTION_LIST, entry.Name, "") {
-				continue
+			// Check permissions for each bucket
+			if identity != nil {
+				// For JWT-authenticated users, use IAM authorization
+				sessionToken := r.Header.Get("X-SeaweedFS-Session-Token")
+				if s3a.iam.iamIntegration != nil && sessionToken != "" {
+					// Use IAM authorization for JWT users
+					errCode := s3a.iam.authorizeWithIAM(r, identity, s3_constants.ACTION_LIST, entry.Name, "")
+					if errCode != s3err.ErrNone {
+						continue
+					}
+				} else {
+					// Use legacy authorization for non-JWT users
+					if !identity.canDo(s3_constants.ACTION_LIST, entry.Name, "") {
+						continue
+					}
+				}
 			}
 			listBuckets.Bucket = append(listBuckets.Bucket, ListAllMyBucketsEntry{
 				Name:         entry.Name,
@@ -225,6 +239,9 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Clean up bucket-related caches and locks after successful deletion
+	s3a.invalidateBucketConfigCache(bucket)
+
 	s3err.WriteEmptyResponse(w, r, http.StatusNoContent)
 }
 
@@ -324,15 +341,18 @@ func (s3a *S3ApiServer) AuthWithPublicRead(handler http.HandlerFunc, action Acti
 		authType := getRequestAuthType(r)
 		isAnonymous := authType == authTypeAnonymous
 
+		// For anonymous requests, check if bucket allows public read
 		if isAnonymous {
 			isPublic := s3a.isBucketPublicRead(bucket)
-
 			if isPublic {
 				handler(w, r)
 				return
 			}
 		}
-		s3a.iam.Auth(handler, action)(w, r) // Fallback to normal IAM auth
+
+		// For all authenticated requests and anonymous requests to non-public buckets,
+		// use normal IAM auth to enforce policies
+		s3a.iam.Auth(handler, action)(w, r)
 	}
 }
 
