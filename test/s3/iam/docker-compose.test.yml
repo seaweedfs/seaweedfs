@@ -85,7 +85,7 @@ services:
   integration-tests:
     build:
       context: ../../../
-      dockerfile: test/s3/iam/Dockerfile.test
+      dockerfile: test/s3/iam/Dockerfile.s3
     container_name: seaweedfs-s3-iam-tests
     environment:
       - WEED_BINARY=weed
