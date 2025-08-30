@@ -1,5 +1,5 @@
-// This file contains mock OIDC provider implementations for testing only.
-// These should NOT be used in production environments.
+//go:build test
+// +build test
 
 package oidc
 

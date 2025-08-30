@@ -12,7 +12,6 @@ const (
 	ProviderTypeOIDC = "oidc"
 	ProviderTypeLDAP = "ldap"
 	ProviderTypeSAML = "saml"
-	ProviderTypeMock = "mock"
 )
 
 // Policy Effects

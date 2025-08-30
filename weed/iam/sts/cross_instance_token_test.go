@@ -6,9 +6,42 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/seaweedfs/seaweedfs/weed/iam/oidc"
+	"github.com/seaweedfs/seaweedfs/weed/iam/providers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// Test-only constants for mock providers
+const (
+	ProviderTypeMock = "mock"
+)
+
+// createMockOIDCProvider creates a mock OIDC provider for testing
+// This is only available in test builds
+func createMockOIDCProvider(name string, config map[string]interface{}) (providers.IdentityProvider, error) {
+	// Convert config to OIDC format
+	factory := NewProviderFactory()
+	oidcConfig, err := factory.convertToOIDCConfig(config)
+	if err != nil {
+		return nil, err
+	}
+
+	// Set default values for mock provider if not provided
+	if oidcConfig.Issuer == "" {
+		oidcConfig.Issuer = "http://localhost:9999"
+	}
+
+	provider := oidc.NewMockOIDCProvider(name)
+	if err := provider.Initialize(oidcConfig); err != nil {
+		return nil, err
+	}
+
+	// Set up default test data for the mock provider
+	provider.SetupDefaultTestData()
+
+	return provider, nil
+}
 
 // createMockJWT creates a test JWT token with the specified issuer for mock provider testing
 func createMockJWT(t *testing.T, issuer, subject string) string {
@@ -48,15 +81,6 @@ func TestCrossInstanceTokenUsage(t *testing.T) {
 					ConfigFieldJWKSUri:  "https://sso.company.com/realms/production/protocol/openid-connect/certs",
 				},
 			},
-			{
-				Name:    "test-mock",
-				Type:    ProviderTypeMock,
-				Enabled: true,
-				Config: map[string]interface{}{
-					ConfigFieldIssuer:   "http://test-mock:9999",
-					ConfigFieldClientID: TestClientID,
-				},
-			},
 		},
 	}
 
@@ -80,6 +104,22 @@ func TestCrossInstanceTokenUsage(t *testing.T) {
 	instanceA.SetTrustPolicyValidator(mockValidator)
 	instanceB.SetTrustPolicyValidator(mockValidator)
 	instanceC.SetTrustPolicyValidator(mockValidator)
+
+	// Manually register mock provider for testing (not available in production)
+	mockProviderConfig := map[string]interface{}{
+		ConfigFieldIssuer:   "http://test-mock:9999",
+		ConfigFieldClientID: TestClientID,
+	}
+	mockProviderA, err := createMockOIDCProvider("test-mock", mockProviderConfig)
+	require.NoError(t, err)
+	mockProviderB, err := createMockOIDCProvider("test-mock", mockProviderConfig)
+	require.NoError(t, err)
+	mockProviderC, err := createMockOIDCProvider("test-mock", mockProviderConfig)
+	require.NoError(t, err)
+
+	instanceA.RegisterProvider(mockProviderA)
+	instanceB.RegisterProvider(mockProviderB)
+	instanceC.RegisterProvider(mockProviderC)
 
 	// Test 1: Token generated on Instance A can be validated on Instance B & C
 	t.Run("cross_instance_token_validation", func(t *testing.T) {
@@ -369,15 +409,6 @@ func TestSTSRealWorldDistributedScenarios(t *testing.T) {
 						"scopes":       []string{"openid", "profile", "email", "groups"},
 					},
 				},
-				{
-					Name:    "test-mock",
-					Type:    ProviderTypeMock,
-					Enabled: true,
-					Config: map[string]interface{}{
-						ConfigFieldIssuer:   "http://test-mock:9999",
-						ConfigFieldClientID: "test-client-id",
-					},
-				},
 			},
 		}
 
@@ -400,6 +431,22 @@ func TestSTSRealWorldDistributedScenarios(t *testing.T) {
 		gateway1.SetTrustPolicyValidator(mockValidator)
 		gateway2.SetTrustPolicyValidator(mockValidator)
 		gateway3.SetTrustPolicyValidator(mockValidator)
+
+		// Manually register mock provider for testing (not available in production)
+		mockProviderConfig := map[string]interface{}{
+			ConfigFieldIssuer:   "http://test-mock:9999",
+			ConfigFieldClientID: "test-client-id",
+		}
+		mockProvider1, err := createMockOIDCProvider("test-mock", mockProviderConfig)
+		require.NoError(t, err)
+		mockProvider2, err := createMockOIDCProvider("test-mock", mockProviderConfig)
+		require.NoError(t, err)
+		mockProvider3, err := createMockOIDCProvider("test-mock", mockProviderConfig)
+		require.NoError(t, err)
+
+		gateway1.RegisterProvider(mockProvider1)
+		gateway2.RegisterProvider(mockProvider2)
+		gateway3.RegisterProvider(mockProvider3)
 
 		// Step 1: User authenticates and hits Gateway 1 for AssumeRole
 		mockToken := createMockJWT(t, "http://test-mock:9999", "production-user")

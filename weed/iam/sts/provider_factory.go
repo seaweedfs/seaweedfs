@@ -44,8 +44,6 @@ func (f *ProviderFactory) CreateProvider(config *ProviderConfig) (providers.Iden
 		return f.createLDAPProvider(config)
 	case ProviderTypeSAML:
 		return f.createSAMLProvider(config)
-	case ProviderTypeMock:
-		return f.createMockProvider(config)
 	default:
 		return nil, fmt.Errorf(ErrUnsupportedProviderType, config.Type)
 	}
@@ -76,29 +74,6 @@ func (f *ProviderFactory) createLDAPProvider(config *ProviderConfig) (providers.
 func (f *ProviderFactory) createSAMLProvider(config *ProviderConfig) (providers.IdentityProvider, error) {
 	// TODO: Implement SAML provider when available
 	return nil, fmt.Errorf("SAML provider not implemented yet")
-}
-
-// createMockProvider creates a mock provider for testing
-func (f *ProviderFactory) createMockProvider(config *ProviderConfig) (providers.IdentityProvider, error) {
-	oidcConfig, err := f.convertToOIDCConfig(config.Config)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert mock config: %w", err)
-	}
-
-	// Set default values for mock provider if not provided
-	if oidcConfig.Issuer == "" {
-		oidcConfig.Issuer = "http://localhost:9999"
-	}
-
-	provider := oidc.NewMockOIDCProvider(config.Name)
-	if err := provider.Initialize(oidcConfig); err != nil {
-		return nil, fmt.Errorf("failed to initialize mock provider: %w", err)
-	}
-
-	// Set up default test data for the mock provider
-	provider.SetupDefaultTestData()
-
-	return provider, nil
 }
 
 // convertToOIDCConfig converts generic config map to OIDC config struct
@@ -314,8 +289,6 @@ func (f *ProviderFactory) ValidateProviderConfig(config *ProviderConfig) error {
 		return f.validateLDAPConfig(config.Config)
 	case "saml":
 		return f.validateSAMLConfig(config.Config)
-	case "mock":
-		return f.validateMockConfig(config.Config)
 	default:
 		return fmt.Errorf("unsupported provider type: %s", config.Type)
 	}
@@ -346,13 +319,7 @@ func (f *ProviderFactory) validateSAMLConfig(config map[string]interface{}) erro
 	return nil
 }
 
-// validateMockConfig validates mock provider configuration
-func (f *ProviderFactory) validateMockConfig(config map[string]interface{}) error {
-	// Mock provider is lenient for testing
-	return nil
-}
-
 // GetSupportedProviderTypes returns list of supported provider types
 func (f *ProviderFactory) GetSupportedProviderTypes() []string {
-	return []string{ProviderTypeOIDC, ProviderTypeMock}
+	return []string{ProviderTypeOIDC}
 }

@@ -30,24 +30,8 @@ func TestProviderFactory_CreateOIDCProvider(t *testing.T) {
 	assert.Equal(t, "test-oidc", provider.Name())
 }
 
-func TestProviderFactory_CreateMockProvider(t *testing.T) {
-	factory := NewProviderFactory()
-
-	config := &ProviderConfig{
-		Name:    "test-mock",
-		Type:    "mock",
-		Enabled: true,
-		Config: map[string]interface{}{
-			"issuer":   "http://localhost:9999",
-			"clientId": "mock-client", // Required for OIDC config
-		},
-	}
-
-	provider, err := factory.CreateProvider(config)
-	require.NoError(t, err)
-	assert.NotNil(t, provider)
-	assert.Equal(t, "test-mock", provider.Name())
-}
+// Note: Mock provider tests removed - mock providers are now test-only
+// and not available through the production ProviderFactory
 
 func TestProviderFactory_DisabledProvider(t *testing.T) {
 	factory := NewProviderFactory()
@@ -96,15 +80,7 @@ func TestProviderFactory_LoadMultipleProviders(t *testing.T) {
 				"clientId": "oidc-client",
 			},
 		},
-		{
-			Name:    "mock-provider",
-			Type:    "mock",
-			Enabled: true,
-			Config: map[string]interface{}{
-				"issuer":   "http://localhost:9999",
-				"clientId": "mock-client",
-			},
-		},
+
 		{
 			Name:    "disabled-provider",
 			Type:    "oidc",
@@ -118,10 +94,9 @@ func TestProviderFactory_LoadMultipleProviders(t *testing.T) {
 
 	providers, err := factory.LoadProvidersFromConfig(configs)
 	require.NoError(t, err)
-	assert.Len(t, providers, 2) // Only enabled providers should be loaded
+	assert.Len(t, providers, 1) // Only enabled providers should be loaded
 
 	assert.Contains(t, providers, "oidc-provider")
-	assert.Contains(t, providers, "mock-provider")
 	assert.NotContains(t, providers, "disabled-provider")
 }
 
@@ -287,8 +262,7 @@ func TestProviderFactory_GetSupportedProviderTypes(t *testing.T) {
 
 	supportedTypes := factory.GetSupportedProviderTypes()
 	assert.Contains(t, supportedTypes, "oidc")
-	assert.Contains(t, supportedTypes, "mock")
-	assert.Len(t, supportedTypes, 2) // Currently only OIDC and mock are supported
+	assert.Len(t, supportedTypes, 1) // Currently only OIDC is supported in production
 }
 
 func TestSTSService_LoadProvidersFromConfig(t *testing.T) {

@@ -32,15 +32,7 @@ func TestDistributedSTSService(t *testing.T) {
 					"jwksUri":  "http://keycloak:8080/realms/seaweedfs-test/protocol/openid-connect/certs",
 				},
 			},
-			{
-				Name:    "test-mock-provider",
-				Type:    "mock",
-				Enabled: true,
-				Config: map[string]interface{}{
-					"issuer":   "http://localhost:9999",
-					"clientId": "test-client",
-				},
-			},
+
 			{
 				Name:    "disabled-ldap",
 				Type:    "oidc", // Use OIDC as placeholder since LDAP isn't implemented
@@ -67,6 +59,22 @@ func TestDistributedSTSService(t *testing.T) {
 
 	err = instance3.Initialize(commonConfig)
 	require.NoError(t, err, "Instance 3 should initialize successfully")
+
+	// Manually register mock providers for testing (not available in production)
+	mockProviderConfig := map[string]interface{}{
+		"issuer":   "http://localhost:9999",
+		"clientId": "test-client",
+	}
+	mockProvider1, err := createMockOIDCProvider("test-mock-provider", mockProviderConfig)
+	require.NoError(t, err)
+	mockProvider2, err := createMockOIDCProvider("test-mock-provider", mockProviderConfig)
+	require.NoError(t, err)
+	mockProvider3, err := createMockOIDCProvider("test-mock-provider", mockProviderConfig)
+	require.NoError(t, err)
+
+	instance1.RegisterProvider(mockProvider1)
+	instance2.RegisterProvider(mockProvider2)
+	instance3.RegisterProvider(mockProvider3)
 
 	// Verify all instances have identical provider configurations
 	t.Run("provider_consistency", func(t *testing.T) {
@@ -287,15 +295,6 @@ func TestProviderFactoryDistributed(t *testing.T) {
 				"clientId": "seaweedfs-backup",
 			},
 		},
-		{
-			Name:    "dev-mock",
-			Type:    "mock",
-			Enabled: true,
-			Config: map[string]interface{}{
-				"issuer":   "http://dev-mock:9999",
-				"clientId": "mock-client",
-			},
-		},
 	}
 
 	// Create providers multiple times (simulating multiple instances)
@@ -308,9 +307,9 @@ func TestProviderFactoryDistributed(t *testing.T) {
 	require.NoError(t, err3, "Third load should succeed")
 
 	// All instances should have same provider counts
-	assert.Len(t, providers1, 2, "First instance should have 2 enabled providers")
-	assert.Len(t, providers2, 2, "Second instance should have 2 enabled providers")
-	assert.Len(t, providers3, 2, "Third instance should have 2 enabled providers")
+	assert.Len(t, providers1, 1, "First instance should have 1 enabled provider")
+	assert.Len(t, providers2, 1, "Second instance should have 1 enabled provider")
+	assert.Len(t, providers3, 1, "Third instance should have 1 enabled provider")
 
 	// All instances should have same provider names
 	names1 := make([]string, 0, len(providers1))
@@ -331,7 +330,7 @@ func TestProviderFactoryDistributed(t *testing.T) {
 	assert.ElementsMatch(t, names2, names3, "Instance 2 and 3 should have same provider names")
 
 	// Verify specific providers
-	expectedProviders := []string{"production-keycloak", "dev-mock"}
+	expectedProviders := []string{"production-keycloak"}
 	assert.ElementsMatch(t, names1, expectedProviders, "Should have expected enabled providers")
 
 	// Verify disabled providers are not included
