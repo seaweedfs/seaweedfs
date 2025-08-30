@@ -43,6 +43,13 @@ type MountOptions struct {
 	rdmaReadOnly      *bool
 	rdmaMaxConcurrent *int
 	rdmaTimeoutMs     *int
+	
+	// ML optimization options
+	mlOptimizationEnabled *bool
+	mlPrefetchWorkers     *int
+	mlConfidenceThreshold *float64
+	mlMaxPrefetchAhead    *int
+	mlBatchSize           *int
 }
 
 var (
@@ -90,6 +97,13 @@ func init() {
 	mountOptions.rdmaReadOnly = cmdMount.Flag.Bool("rdma.readOnly", false, "use RDMA for reads only (writes use HTTP)")
 	mountOptions.rdmaMaxConcurrent = cmdMount.Flag.Int("rdma.maxConcurrent", 64, "max concurrent RDMA operations")
 	mountOptions.rdmaTimeoutMs = cmdMount.Flag.Int("rdma.timeoutMs", 5000, "RDMA operation timeout in milliseconds")
+	
+	// ML optimization flags
+	mountOptions.mlOptimizationEnabled = cmdMount.Flag.Bool("ml.enabled", false, "enable ML-aware optimizations for machine learning workloads")
+	mountOptions.mlPrefetchWorkers = cmdMount.Flag.Int("ml.prefetchWorkers", 8, "number of prefetch worker threads for ML workloads")
+	mountOptions.mlConfidenceThreshold = cmdMount.Flag.Float64("ml.confidenceThreshold", 0.6, "minimum confidence threshold to trigger ML prefetch")
+	mountOptions.mlMaxPrefetchAhead = cmdMount.Flag.Int("ml.maxPrefetchAhead", 8, "maximum number of chunks to prefetch ahead")
+	mountOptions.mlBatchSize = cmdMount.Flag.Int("ml.batchSize", 3, "batch size for ML prefetch operations")
 
 	mountCpuProfile = cmdMount.Flag.String("cpuprofile", "", "cpu profile output file")
 	mountMemProfile = cmdMount.Flag.String("memprofile", "", "memory profile output file")
@@ -123,6 +137,18 @@ var cmdMount = &Command{
     -rdma.readOnly=false         Use RDMA for reads only (writes use HTTP)
     -rdma.maxConcurrent=64       Max concurrent RDMA operations
     -rdma.timeoutMs=5000         RDMA operation timeout in milliseconds
+
+  ML Optimization:
+  For machine learning workloads, enable intelligent prefetching and caching:
+    weed mount -filer=localhost:8888 -dir=/mnt/seaweedfs \
+      -ml.enabled=true
+
+  ML Options:
+    -ml.enabled=false            Enable ML-aware optimizations
+    -ml.prefetchWorkers=8        Number of concurrent prefetch workers
+    -ml.confidenceThreshold=0.6  Minimum confidence to trigger ML prefetch
+    -ml.maxPrefetchAhead=8       Maximum chunks to prefetch ahead
+    -ml.batchSize=3             Batch size for prefetch operations
 
   `,
 }

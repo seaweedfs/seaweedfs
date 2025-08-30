@@ -1,6 +1,8 @@
 package mount
 
 import (
+	"time"
+	
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mount/ml"
@@ -32,6 +34,42 @@ func NewMLIntegrationManager(chunkCache chunk_cache.ChunkCache, lookupFn wdclien
 	}
 
 	glog.V(1).Infof("ML integration manager initialized")
+	return manager
+}
+
+// NewMLIntegrationManagerWithConfig creates a new ML integration manager with custom configuration
+func NewMLIntegrationManagerWithConfig(
+	chunkCache chunk_cache.ChunkCache,
+	lookupFn wdclient.LookupFileIdFunctionType,
+	prefetchWorkers int,
+	confidenceThreshold float64,
+	maxPrefetchAhead int,
+	batchSize int,
+) *MLIntegrationManager {
+	config := &ml.MLConfig{
+		PrefetchWorkers:     prefetchWorkers,
+		PrefetchQueueSize:   prefetchWorkers * 4, // 4x workers for queue depth
+		PrefetchTimeout:     30 * time.Second,
+		EnableMLHeuristics:  true,
+		SequentialThreshold: 5,
+		ConfidenceThreshold: confidenceThreshold,
+		MaxPrefetchAhead:    maxPrefetchAhead,
+		PrefetchBatchSize:   batchSize,
+	}
+	
+	mlOpt := ml.NewMLOptimization(config, chunkCache, lookupFn)
+
+	// Create FUSE integration
+	fuseInt := ml.NewFUSEMLIntegration(mlOpt)
+
+	manager := &MLIntegrationManager{
+		mlOptimization:  mlOpt,
+		fuseIntegration: fuseInt,
+		enabled:         true,
+	}
+
+	glog.V(1).Infof("ML integration manager initialized with custom config: workers=%d, confidence=%.2f, prefetchAhead=%d, batchSize=%d",
+		prefetchWorkers, confidenceThreshold, maxPrefetchAhead, batchSize)
 	return manager
 }
 

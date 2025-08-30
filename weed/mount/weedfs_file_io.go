@@ -67,6 +67,14 @@ func (wfs *WFS) Open(cancel <-chan struct{}, in *fuse.OpenIn, out *fuse.OpenOut)
 	if status == fuse.OK {
 		out.Fh = uint64(fileHandle.fh)
 		out.OpenFlags = in.Flags
+		
+		// Apply ML optimizations if enabled
+		if wfs.mlIntegration != nil {
+			if path, _, entry, pathStatus := wfs.maybeReadEntry(in.NodeId); pathStatus == fuse.OK {
+				wfs.mlIntegration.OnFileOpen(in.NodeId, entry, string(path), in.Flags, out)
+			}
+		}
+		
 		if wfs.option.IsMacOs {
 			// remove the direct_io flag, as it is not well-supported on macOS
 			// https://code.google.com/archive/p/macfuse/wikis/OPTIONS.wiki recommended to avoid the direct_io flag
@@ -106,5 +114,10 @@ func (wfs *WFS) Open(cancel <-chan struct{}, in *fuse.OpenIn, out *fuse.OpenOut)
  * @param fi file information
  */
 func (wfs *WFS) Release(cancel <-chan struct{}, in *fuse.ReleaseIn) {
+	// Notify ML integration of file close
+	if wfs.mlIntegration != nil {
+		wfs.mlIntegration.OnFileClose(in.NodeId)
+	}
+	
 	wfs.ReleaseHandle(FileHandleId(in.Fh))
 }

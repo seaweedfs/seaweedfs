@@ -22,6 +22,12 @@ func (wfs *WFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse
 	_, _, entry, status := wfs.maybeReadEntry(inode)
 	if status == fuse.OK {
 		out.AttrValid = 1
+		
+		// Apply ML-specific attribute cache optimizations if enabled
+		if wfs.mlIntegration != nil {
+			wfs.mlIntegration.OptimizeAttributes(inode, out)
+		}
+		
 		wfs.setAttrByPbEntry(&out.Attr, inode, entry, true)
 		return status
 	} else {

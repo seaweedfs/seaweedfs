@@ -62,6 +62,11 @@ func (wfs *WFS) Read(cancel <-chan struct{}, in *fuse.ReadIn, buff []byte) (fuse
 		glog.Warningf("file handle read %s %d: %v", fh.FullPath(), totalRead, err)
 		return nil, fuse.EIO
 	}
+	
+	// Notify ML integration of file read for pattern detection
+	if wfs.mlIntegration != nil && totalRead > 0 {
+		wfs.mlIntegration.OnFileRead(in.NodeId, offset, int(totalRead))
+	}
 
 	if IsDebugFileReadWrite {
 		// print(".")

@@ -70,6 +70,13 @@ type Option struct {
 	RdmaReadOnly      bool
 	RdmaMaxConcurrent int
 	RdmaTimeoutMs     int
+	
+	// ML optimization options
+	MLOptimizationEnabled bool
+	MLPrefetchWorkers     int
+	MLConfidenceThreshold float64
+	MLMaxPrefetchAhead    int
+	MLBatchSize           int
 
 	uniqueCacheDirForRead  string
 	uniqueCacheDirForWrite string
@@ -96,6 +103,7 @@ type WFS struct {
 	IsOverQuota          bool
 	fhLockTable          *util.LockTable[FileHandleId]
 	rdmaClient           *RDMAMountClient
+	mlIntegration        *MLIntegrationManager
 	FilerConf            *filer.FilerConf
 }
 
@@ -151,6 +159,9 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		if wfs.rdmaClient != nil {
 			wfs.rdmaClient.Close()
 		}
+		if wfs.mlIntegration != nil {
+			wfs.mlIntegration.Shutdown()
+		}
 	})
 
 	// Initialize RDMA client if enabled
@@ -168,6 +179,20 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 			glog.Infof("RDMA acceleration enabled: sidecar=%s, maxConcurrent=%d, timeout=%dms",
 				option.RdmaSidecarAddr, option.RdmaMaxConcurrent, option.RdmaTimeoutMs)
 		}
+	}
+	
+	// Initialize ML optimization if enabled
+	if option.MLOptimizationEnabled {
+		wfs.mlIntegration = NewMLIntegrationManagerWithConfig(
+			wfs.chunkCache,
+			wfs.LookupFn(),
+			option.MLPrefetchWorkers,
+			option.MLConfidenceThreshold,
+			option.MLMaxPrefetchAhead,
+			option.MLBatchSize,
+		)
+		glog.Infof("ML optimization enabled: prefetchWorkers=%d, confidenceThreshold=%.2f, maxPrefetchAhead=%d",
+			option.MLPrefetchWorkers, option.MLConfidenceThreshold, option.MLMaxPrefetchAhead)
 	}
 
 	if wfs.option.ConcurrentWriters > 0 {
