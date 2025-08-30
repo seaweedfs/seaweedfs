@@ -89,12 +89,13 @@ func TestSecurityIssuerToProviderMapping(t *testing.T) {
 		assert.Contains(t, err.Error(), "no identity provider registered for issuer: https://unknown-issuer.com")
 	})
 
-	t.Run("non_jwt_tokens_still_work_with_fallback", func(t *testing.T) {
-		// Non-JWT tokens should still work via fallback mechanism
+	t.Run("non_jwt_tokens_are_rejected", func(t *testing.T) {
+		// Non-JWT tokens should be rejected - no fallback mechanism exists for security
 		identity, provider, err := service.validateWebIdentityToken(ctx, "token-for-provider-a")
-		assert.NoError(t, err)
-		assert.NotNil(t, identity)
-		assert.Equal(t, "provider-a", provider.Name())
+		assert.Error(t, err)
+		assert.Nil(t, identity)
+		assert.Nil(t, provider)
+		assert.Contains(t, err.Error(), "web identity token must be a valid JWT token")
 	})
 }
 

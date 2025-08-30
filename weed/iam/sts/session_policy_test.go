@@ -3,10 +3,27 @@ package sts
 import (
 	"context"
 	"testing"
+	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// createSessionPolicyTestJWT creates a test JWT token for session policy tests
+func createSessionPolicyTestJWT(t *testing.T, issuer, subject string) string {
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"iss": issuer,
+		"sub": subject,
+		"aud": "test-client",
+		"exp": time.Now().Add(time.Hour).Unix(),
+		"iat": time.Now().Unix(),
+	})
+
+	tokenString, err := token.SignedString([]byte("test-signing-key"))
+	require.NoError(t, err)
+	return tokenString
+}
 
 // TestAssumeRoleWithWebIdentity_SessionPolicy tests the handling of the Policy field
 // in AssumeRoleWithWebIdentityRequest to ensure users are properly informed that
@@ -27,9 +44,11 @@ func TestAssumeRoleWithWebIdentity_SessionPolicy(t *testing.T) {
 			}]
 		}`
 
+		testToken := createSessionPolicyTestJWT(t, "test-issuer", "test-user")
+
 		request := &AssumeRoleWithWebIdentityRequest{
 			RoleArn:          "arn:seaweed:iam::role/TestRole",
-			WebIdentityToken: "valid-oidc-token",
+			WebIdentityToken: testToken,
 			RoleSessionName:  "test-session",
 			DurationSeconds:  nil,            // Use default
 			Policy:           &sessionPolicy, // ← Session policy provided
@@ -47,10 +66,11 @@ func TestAssumeRoleWithWebIdentity_SessionPolicy(t *testing.T) {
 
 	t.Run("should_succeed_without_session_policy", func(t *testing.T) {
 		ctx := context.Background()
+		testToken := createSessionPolicyTestJWT(t, "test-issuer", "test-user")
 
 		request := &AssumeRoleWithWebIdentityRequest{
 			RoleArn:          "arn:seaweed:iam::role/TestRole",
-			WebIdentityToken: "valid-oidc-token",
+			WebIdentityToken: testToken,
 			RoleSessionName:  "test-session",
 			DurationSeconds:  nil, // Use default
 			Policy:           nil, // ← No session policy
@@ -70,10 +90,11 @@ func TestAssumeRoleWithWebIdentity_SessionPolicy(t *testing.T) {
 
 	t.Run("should_succeed_with_empty_policy_pointer", func(t *testing.T) {
 		ctx := context.Background()
+		testToken := createSessionPolicyTestJWT(t, "test-issuer", "test-user")
 
 		request := &AssumeRoleWithWebIdentityRequest{
 			RoleArn:          "arn:seaweed:iam::role/TestRole",
-			WebIdentityToken: "valid-oidc-token",
+			WebIdentityToken: testToken,
 			RoleSessionName:  "test-session",
 			Policy:           nil, // ← Explicitly nil
 		}
@@ -93,7 +114,7 @@ func TestAssumeRoleWithWebIdentity_SessionPolicy(t *testing.T) {
 
 		request := &AssumeRoleWithWebIdentityRequest{
 			RoleArn:          "arn:seaweed:iam::role/TestRole",
-			WebIdentityToken: "valid-oidc-token",
+			WebIdentityToken: createSessionPolicyTestJWT(t, "test-issuer", "test-user"),
 			RoleSessionName:  "test-session",
 			Policy:           &emptyPolicy, // ← Non-nil pointer to empty string
 		}
@@ -136,9 +157,11 @@ func TestAssumeRoleWithWebIdentity_SessionPolicy_ErrorMessage(t *testing.T) {
 		]
 	}`
 
+	testToken := createSessionPolicyTestJWT(t, "test-issuer", "test-user")
+
 	request := &AssumeRoleWithWebIdentityRequest{
 		RoleArn:          "arn:seaweed:iam::role/TestRole",
-		WebIdentityToken: "valid-oidc-token",
+		WebIdentityToken: testToken,
 		RoleSessionName:  "test-session-with-complex-policy",
 		Policy:           &complexPolicy,
 	}
@@ -174,7 +197,7 @@ func TestAssumeRoleWithWebIdentity_SessionPolicy_EdgeCases(t *testing.T) {
 
 		request := &AssumeRoleWithWebIdentityRequest{
 			RoleArn:          "arn:seaweed:iam::role/TestRole",
-			WebIdentityToken: "valid-oidc-token",
+			WebIdentityToken: createSessionPolicyTestJWT(t, "test-issuer", "test-user"),
 			RoleSessionName:  "test-session",
 			Policy:           &malformedPolicy,
 		}
@@ -193,7 +216,7 @@ func TestAssumeRoleWithWebIdentity_SessionPolicy_EdgeCases(t *testing.T) {
 
 		request := &AssumeRoleWithWebIdentityRequest{
 			RoleArn:          "arn:seaweed:iam::role/TestRole",
-			WebIdentityToken: "valid-oidc-token",
+			WebIdentityToken: createSessionPolicyTestJWT(t, "test-issuer", "test-user"),
 			RoleSessionName:  "test-session",
 			Policy:           &whitespacePolicy,
 		}

@@ -7,10 +7,26 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/seaweedfs/seaweedfs/weed/iam/providers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// createSTSTestJWT creates a test JWT token for STS service tests
+func createSTSTestJWT(t *testing.T, issuer, subject string) string {
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"iss": issuer,
+		"sub": subject,
+		"aud": "test-client",
+		"exp": time.Now().Add(time.Hour).Unix(),
+		"iat": time.Now().Unix(),
+	})
+
+	tokenString, err := token.SignedString([]byte("test-signing-key"))
+	require.NoError(t, err)
+	return tokenString
+}
 
 // TestSTSServiceInitialization tests STS service initialization
 func TestSTSServiceInitialization(t *testing.T) {
@@ -80,7 +96,7 @@ func TestAssumeRoleWithWebIdentity(t *testing.T) {
 		{
 			name:             "successful role assumption",
 			roleArn:          "arn:seaweed:iam::role/TestRole",
-			webIdentityToken: "valid-oidc-token",
+			webIdentityToken: createSTSTestJWT(t, "test-issuer", "test-user-id"),
 			sessionName:      "test-session",
 			durationSeconds:  nil, // Use default
 			wantErr:          false,
@@ -96,14 +112,14 @@ func TestAssumeRoleWithWebIdentity(t *testing.T) {
 		{
 			name:             "non-existent role",
 			roleArn:          "arn:seaweed:iam::role/NonExistentRole",
-			webIdentityToken: "valid-oidc-token",
+			webIdentityToken: createSTSTestJWT(t, "test-issuer", "test-user"),
 			sessionName:      "test-session",
 			wantErr:          true,
 		},
 		{
 			name:             "custom session duration",
 			roleArn:          "arn:seaweed:iam::role/TestRole",
-			webIdentityToken: "valid-oidc-token",
+			webIdentityToken: createSTSTestJWT(t, "test-issuer", "test-user"),
 			sessionName:      "test-session",
 			durationSeconds:  int64Ptr(7200), // 2 hours
 			wantErr:          false,
@@ -216,7 +232,7 @@ func TestSessionTokenValidation(t *testing.T) {
 	// First, create a session
 	request := &AssumeRoleWithWebIdentityRequest{
 		RoleArn:          "arn:seaweed:iam::role/TestRole",
-		WebIdentityToken: "valid-oidc-token",
+		WebIdentityToken: createSTSTestJWT(t, "test-issuer", "test-user"),
 		RoleSessionName:  "test-session",
 	}
 
@@ -274,7 +290,7 @@ func TestSessionTokenPersistence(t *testing.T) {
 	// Create a session first
 	request := &AssumeRoleWithWebIdentityRequest{
 		RoleArn:          "arn:seaweed:iam::role/TestRole",
-		WebIdentityToken: "valid-oidc-token",
+		WebIdentityToken: createSTSTestJWT(t, "test-issuer", "test-user"),
 		RoleSessionName:  "test-session",
 	}
 
@@ -320,7 +336,7 @@ func setupTestSTSService(t *testing.T) *STSService {
 	mockOIDCProvider := &MockIdentityProvider{
 		name: "test-oidc",
 		validTokens: map[string]*providers.TokenClaims{
-			"valid-oidc-token": {
+			createSTSTestJWT(t, "test-issuer", "test-user"): {
 				Subject: "test-user-id",
 				Issuer:  "test-issuer",
 				Claims: map[string]interface{}{
@@ -359,12 +375,37 @@ func (m *MockIdentityProvider) Name() string {
 	return m.name
 }
 
+func (m *MockIdentityProvider) GetIssuer() string {
+	return "test-issuer" // This matches the issuer in the token claims
+}
+
 func (m *MockIdentityProvider) Initialize(config interface{}) error {
 	return nil
 }
 
 func (m *MockIdentityProvider) Authenticate(ctx context.Context, token string) (*providers.ExternalIdentity, error) {
-	// Handle OIDC tokens
+	// First try to parse as JWT token
+	if len(token) > 20 && strings.Count(token, ".") >= 2 {
+		parsedToken, _, err := new(jwt.Parser).ParseUnverified(token, jwt.MapClaims{})
+		if err == nil {
+			if claims, ok := parsedToken.Claims.(jwt.MapClaims); ok {
+				issuer, _ := claims["iss"].(string)
+				subject, _ := claims["sub"].(string)
+
+				// Verify the issuer matches what we expect
+				if issuer == "test-issuer" && subject != "" {
+					return &providers.ExternalIdentity{
+						UserID:      subject,
+						Email:       subject + "@test-domain.com",
+						DisplayName: "Test User " + subject,
+						Provider:    m.name,
+					}, nil
+				}
+			}
+		}
+	}
+
+	// Handle legacy OIDC tokens (for backwards compatibility)
 	if claims, exists := m.validTokens[token]; exists {
 		email, _ := claims.GetClaimString("email")
 		name, _ := claims.GetClaimString("name")
@@ -393,7 +434,7 @@ func (m *MockIdentityProvider) Authenticate(ctx context.Context, token string) (
 		}
 	}
 
-	return nil, fmt.Errorf("invalid token")
+	return nil, fmt.Errorf("unknown test token: %s", token)
 }
 
 func (m *MockIdentityProvider) GetUserInfo(ctx context.Context, userID string) (*providers.ExternalIdentity, error) {
@@ -409,15 +450,4 @@ func (m *MockIdentityProvider) ValidateToken(ctx context.Context, token string) 
 		return claims, nil
 	}
 	return nil, fmt.Errorf("invalid token")
-}
-
-// GetIssuer returns the issuer for this provider (for OIDC providers)
-func (m *MockIdentityProvider) GetIssuer() string {
-	// For OIDC mock provider, return the issuer from the first valid token
-	// This matches the issuer in the token claims
-	if m.name == "test-oidc" {
-		return "test-issuer"
-	}
-	// LDAP providers don't have issuers
-	return ""
 }
