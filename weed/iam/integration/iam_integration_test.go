@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/seaweedfs/seaweedfs/weed/iam/ldap"
 	"github.com/seaweedfs/seaweedfs/weed/iam/oidc"
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
@@ -17,6 +18,10 @@ import (
 func TestFullOIDCWorkflow(t *testing.T) {
 	// Set up integrated IAM system
 	iamManager := setupIntegratedIAMSystem(t)
+
+	// Create JWT tokens for testing with the correct issuer
+	validJWTToken := createTestJWT(t, "https://test-issuer.com", "test-user-123", "test-signing-key")
+	invalidJWTToken := createTestJWT(t, "https://invalid-issuer.com", "test-user", "wrong-key")
 
 	tests := []struct {
 		name          string
@@ -31,7 +36,7 @@ func TestFullOIDCWorkflow(t *testing.T) {
 			name:          "successful role assumption with policy validation",
 			roleArn:       "arn:seaweed:iam::role/S3ReadOnlyRole",
 			sessionName:   "oidc-session",
-			webToken:      "valid-oidc-token",
+			webToken:      validJWTToken,
 			expectedAllow: true,
 			testAction:    "s3:GetObject",
 			testResource:  "arn:seaweed:s3:::test-bucket/file.txt",
@@ -40,14 +45,14 @@ func TestFullOIDCWorkflow(t *testing.T) {
 			name:          "role assumption denied by trust policy",
 			roleArn:       "arn:seaweed:iam::role/RestrictedRole",
 			sessionName:   "oidc-session",
-			webToken:      "valid-oidc-token",
+			webToken:      validJWTToken,
 			expectedAllow: false,
 		},
 		{
 			name:          "invalid token rejected",
 			roleArn:       "arn:seaweed:iam::role/S3ReadOnlyRole",
 			sessionName:   "oidc-session",
-			webToken:      "invalid-token",
+			webToken:      invalidJWTToken,
 			expectedAllow: false,
 		},
 	}
@@ -170,11 +175,14 @@ func TestFullLDAPWorkflow(t *testing.T) {
 func TestPolicyEnforcement(t *testing.T) {
 	iamManager := setupIntegratedIAMSystem(t)
 
+	// Create a valid JWT token for testing
+	validJWTToken := createTestJWT(t, "https://test-issuer.com", "test-user-123", "test-signing-key")
+
 	// Create a session for testing
 	ctx := context.Background()
 	assumeRequest := &sts.AssumeRoleWithWebIdentityRequest{
 		RoleArn:          "arn:seaweed:iam::role/S3ReadOnlyRole",
-		WebIdentityToken: "valid-oidc-token",
+		WebIdentityToken: validJWTToken,
 		RoleSessionName:  "policy-test-session",
 	}
 
@@ -248,10 +256,13 @@ func TestSessionExpiration(t *testing.T) {
 	iamManager := setupIntegratedIAMSystem(t)
 	ctx := context.Background()
 
+	// Create a valid JWT token for testing
+	validJWTToken := createTestJWT(t, "https://test-issuer.com", "test-user-123", "test-signing-key")
+
 	// Create a short-lived session
 	assumeRequest := &sts.AssumeRoleWithWebIdentityRequest{
 		RoleArn:          "arn:seaweed:iam::role/S3ReadOnlyRole",
-		WebIdentityToken: "valid-oidc-token",
+		WebIdentityToken: validJWTToken,
 		RoleSessionName:  "expiration-test",
 		DurationSeconds:  int64Ptr(900), // 15 minutes
 	}
@@ -342,6 +353,23 @@ func TestTrustPolicyValidation(t *testing.T) {
 }
 
 // Helper functions and test setup
+
+// createTestJWT creates a test JWT token with the specified issuer, subject and signing key
+func createTestJWT(t *testing.T, issuer, subject, signingKey string) string {
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"iss": issuer,
+		"sub": subject,
+		"aud": "test-client-id",
+		"exp": time.Now().Add(time.Hour).Unix(),
+		"iat": time.Now().Unix(),
+		// Add claims that trust policy validation expects
+		"idp": "test-oidc", // Identity provider claim for trust policy matching
+	})
+
+	tokenString, err := token.SignedString([]byte(signingKey))
+	require.NoError(t, err)
+	return tokenString
+}
 
 func setupIntegratedIAMSystem(t *testing.T) *IAMManager {
 	// Create IAM manager with all components
