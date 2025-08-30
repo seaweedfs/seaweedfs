@@ -2,7 +2,7 @@
 package user
 
 import (
-	"math/rand"
+	"math/rand/v2"
 	"path/filepath"
 )
 
@@ -22,7 +22,7 @@ func NewUser(username string) *User {
 	// Generate a random UID/GID between 1000 and 60000
 	// This range is typically safe for regular users in most systems
 	// 0-999 are often reserved for system users
-	randomId := 1000 + rand.Intn(59000)
+	randomId := 1000 + rand.IntN(59000)
 
 	return &User{
 		Username:    username,
