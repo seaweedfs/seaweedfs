@@ -609,15 +609,16 @@ func (s *STSService) validateAssumeRoleWithWebIdentityRequest(request *AssumeRol
 
 // validateWebIdentityToken validates the web identity token with strict issuer-to-provider mapping
 // SECURITY: JWT tokens with a specific issuer claim MUST only be validated by the provider for that issuer
+// SECURITY: This method only accepts JWT tokens. Non-JWT authentication must use AssumeRoleWithCredentials with explicit ProviderName.
 func (s *STSService) validateWebIdentityToken(ctx context.Context, token string) (*providers.ExternalIdentity, providers.IdentityProvider, error) {
 	// Try to extract issuer from JWT token for strict validation
 	issuer, err := s.extractIssuerFromJWT(token)
 	if err != nil {
 		// Token is not a valid JWT or cannot be parsed
-		// This can happen with non-JWT providers (e.g., LDAP) or test tokens
-		// For backward compatibility with non-JWT tokens, fall back to trying all providers
-		glog.V(2).Infof("Token is not a valid JWT (%v), falling back to all providers", err)
-		return s.validateWithAllProviders(ctx, token)
+		// SECURITY: Web identity tokens MUST be JWT tokens. Non-JWT authentication flows
+		// should use AssumeRoleWithCredentials with explicit ProviderName to prevent
+		// security vulnerabilities from non-deterministic provider selection.
+		return nil, nil, fmt.Errorf("web identity token must be a valid JWT token: %w", err)
 	}
 
 	// Look up the specific provider for this issuer
@@ -645,20 +646,6 @@ func (s *STSService) validateWebIdentityToken(ctx context.Context, token string)
 // This method uses issuer-based lookup to select the correct provider, ensuring security and efficiency
 func (s *STSService) ValidateWebIdentityToken(ctx context.Context, token string) (*providers.ExternalIdentity, providers.IdentityProvider, error) {
 	return s.validateWebIdentityToken(ctx, token)
-}
-
-// validateWithAllProviders is a fallback for non-JWT tokens (e.g., LDAP credentials, test tokens)
-// This should only be used when the token is not a valid JWT
-func (s *STSService) validateWithAllProviders(ctx context.Context, token string) (*providers.ExternalIdentity, providers.IdentityProvider, error) {
-	// Try each provider until one succeeds
-	for _, provider := range s.providers {
-		identity, err := provider.Authenticate(ctx, token)
-		if err == nil && identity != nil {
-			return identity, provider, nil
-		}
-	}
-
-	return nil, nil, fmt.Errorf("token validation failed with all providers")
 }
 
 // extractIssuerFromJWT extracts the issuer (iss) claim from a JWT token without verification

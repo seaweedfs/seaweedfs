@@ -777,8 +777,10 @@ func getContextValue(evalCtx *EvaluationContext, key, defaultValue string) strin
 // AwsWildcardMatch performs case-insensitive wildcard matching like AWS IAM
 func AwsWildcardMatch(pattern, value string) bool {
 	// Create regex pattern key for caching
-	regexPattern := strings.ReplaceAll(pattern, "*", ".*")
-	regexPattern = strings.ReplaceAll(regexPattern, "?", ".")
+	// First escape all regex metacharacters, then replace wildcards
+	regexPattern := regexp.QuoteMeta(pattern)
+	regexPattern = strings.ReplaceAll(regexPattern, "\\*", ".*")
+	regexPattern = strings.ReplaceAll(regexPattern, "\\?", ".")
 	regexPattern = "^" + regexPattern + "$"
 	regexKey := "(?i)" + regexPattern
 
