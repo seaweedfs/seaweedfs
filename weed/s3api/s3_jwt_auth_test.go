@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/seaweedfs/seaweedfs/weed/iam/integration"
 	"github.com/seaweedfs/seaweedfs/weed/iam/ldap"
 	"github.com/seaweedfs/seaweedfs/weed/iam/oidc"
@@ -17,6 +18,23 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// createTestJWTAuth creates a test JWT token with the specified issuer, subject and signing key
+func createTestJWTAuth(t *testing.T, issuer, subject, signingKey string) string {
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"iss": issuer,
+		"sub": subject,
+		"aud": "test-client-id",
+		"exp": time.Now().Add(time.Hour).Unix(),
+		"iat": time.Now().Unix(),
+		// Add claims that trust policy validation expects
+		"idp": "test-oidc", // Identity provider claim for trust policy matching
+	})
+
+	tokenString, err := token.SignedString([]byte(signingKey))
+	require.NoError(t, err)
+	return tokenString
+}
 
 // TestJWTAuthenticationFlow tests the JWT authentication flow without full S3 server
 func TestJWTAuthenticationFlow(t *testing.T) {
@@ -65,10 +83,13 @@ func TestJWTAuthenticationFlow(t *testing.T) {
 			// Set up role
 			tt.setupRole(ctx, iamManager)
 
+			// Create a valid JWT token for testing
+			validJWTToken := createTestJWTAuth(t, "https://test-issuer.com", "test-user-123", "test-signing-key")
+
 			// Assume role to get JWT
 			response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
 				RoleArn:          tt.roleArn,
-				WebIdentityToken: "valid-oidc-token",
+				WebIdentityToken: validJWTToken,
 				RoleSessionName:  "jwt-auth-test",
 			})
 			require.NoError(t, err)
@@ -195,10 +216,13 @@ func TestIPBasedPolicyEnforcement(t *testing.T) {
 	// Set up IP-restricted role
 	setupTestIPRestrictedRole(ctx, iamManager)
 
+	// Create a valid JWT token for testing
+	validJWTToken := createTestJWTAuth(t, "https://test-issuer.com", "test-user-123", "test-signing-key")
+
 	// Assume role
 	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
 		RoleArn:          "arn:seaweed:iam::role/S3IPRestrictedRole",
-		WebIdentityToken: "valid-oidc-token",
+		WebIdentityToken: validJWTToken,
 		RoleSessionName:  "ip-test-session",
 	})
 	require.NoError(t, err)

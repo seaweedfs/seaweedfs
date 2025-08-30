@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/seaweedfs/seaweedfs/weed/iam/integration"
 	"github.com/seaweedfs/seaweedfs/weed/iam/ldap"
 	"github.com/seaweedfs/seaweedfs/weed/iam/oidc"
@@ -17,6 +18,23 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// createTestJWTPresigned creates a test JWT token with the specified issuer, subject and signing key
+func createTestJWTPresigned(t *testing.T, issuer, subject, signingKey string) string {
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"iss": issuer,
+		"sub": subject,
+		"aud": "test-client-id",
+		"exp": time.Now().Add(time.Hour).Unix(),
+		"iat": time.Now().Unix(),
+		// Add claims that trust policy validation expects
+		"idp": "test-oidc", // Identity provider claim for trust policy matching
+	})
+
+	tokenString, err := token.SignedString([]byte(signingKey))
+	require.NoError(t, err)
+	return tokenString
+}
 
 // TestPresignedURLIAMValidation tests IAM validation for presigned URLs
 func TestPresignedURLIAMValidation(t *testing.T) {
@@ -34,10 +52,13 @@ func TestPresignedURLIAMValidation(t *testing.T) {
 	ctx := context.Background()
 	setupTestRolesForPresigned(ctx, iamManager)
 
+	// Create a valid JWT token for testing
+	validJWTToken := createTestJWTPresigned(t, "https://test-issuer.com", "test-user-123", "test-signing-key")
+
 	// Get session token
 	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
 		RoleArn:          "arn:seaweed:iam::role/S3ReadOnlyRole",
-		WebIdentityToken: "valid-oidc-token",
+		WebIdentityToken: validJWTToken,
 		RoleSessionName:  "presigned-test-session",
 	})
 	require.NoError(t, err)
@@ -110,10 +131,13 @@ func TestPresignedURLGeneration(t *testing.T) {
 	ctx := context.Background()
 	setupTestRolesForPresigned(ctx, iamManager)
 
+	// Create a valid JWT token for testing
+	validJWTToken := createTestJWTPresigned(t, "https://test-issuer.com", "test-user-123", "test-signing-key")
+
 	// Get session token
 	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
 		RoleArn:          "arn:seaweed:iam::role/S3AdminRole",
-		WebIdentityToken: "valid-oidc-token",
+		WebIdentityToken: validJWTToken,
 		RoleSessionName:  "presigned-gen-test-session",
 	})
 	require.NoError(t, err)

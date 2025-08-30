@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/iam/integration"
 	"github.com/seaweedfs/seaweedfs/weed/iam/ldap"
@@ -19,6 +20,23 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// createTestJWTEndToEnd creates a test JWT token with the specified issuer, subject and signing key
+func createTestJWTEndToEnd(t *testing.T, issuer, subject, signingKey string) string {
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"iss": issuer,
+		"sub": subject,
+		"aud": "test-client-id",
+		"exp": time.Now().Add(time.Hour).Unix(),
+		"iat": time.Now().Unix(),
+		// Add claims that trust policy validation expects
+		"idp": "test-oidc", // Identity provider claim for trust policy matching
+	})
+
+	tokenString, err := token.SignedString([]byte(signingKey))
+	require.NoError(t, err)
+	return tokenString
+}
 
 // TestS3EndToEndWithJWT tests complete S3 operations with JWT authentication
 func TestS3EndToEndWithJWT(t *testing.T) {
@@ -83,10 +101,13 @@ func TestS3EndToEndWithJWT(t *testing.T) {
 			// Set up role
 			tt.setupRole(ctx, iamManager)
 
+			// Create a valid JWT token for testing
+			validJWTToken := createTestJWTEndToEnd(t, "https://test-issuer.com", "test-user-123", "test-signing-key")
+
 			// Assume role to get JWT token
 			response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
 				RoleArn:          tt.roleArn,
-				WebIdentityToken: "valid-oidc-token",
+				WebIdentityToken: validJWTToken,
 				RoleSessionName:  tt.sessionName,
 			})
 			require.NoError(t, err, "Failed to assume role %s", tt.roleArn)
@@ -119,10 +140,13 @@ func TestS3MultipartUploadWithJWT(t *testing.T) {
 	// Set up write role
 	setupS3WriteRole(ctx, iamManager)
 
+	// Create a valid JWT token for testing
+	validJWTToken := createTestJWTEndToEnd(t, "https://test-issuer.com", "test-user-123", "test-signing-key")
+
 	// Assume role
 	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
 		RoleArn:          "arn:seaweed:iam::role/S3WriteRole",
-		WebIdentityToken: "valid-oidc-token",
+		WebIdentityToken: validJWTToken,
 		RoleSessionName:  "multipart-test-session",
 	})
 	require.NoError(t, err)
@@ -226,10 +250,13 @@ func TestS3PerformanceWithIAM(t *testing.T) {
 	// Set up performance role
 	setupS3ReadOnlyRole(ctx, iamManager)
 
+	// Create a valid JWT token for testing
+	validJWTToken := createTestJWTEndToEnd(t, "https://test-issuer.com", "test-user-123", "test-signing-key")
+
 	// Assume role
 	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
 		RoleArn:          "arn:seaweed:iam::role/S3ReadOnlyRole",
-		WebIdentityToken: "valid-oidc-token",
+		WebIdentityToken: validJWTToken,
 		RoleSessionName:  "performance-test-session",
 	})
 	require.NoError(t, err)

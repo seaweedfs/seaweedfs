@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/seaweedfs/seaweedfs/weed/iam/integration"
 	"github.com/seaweedfs/seaweedfs/weed/iam/ldap"
 	"github.com/seaweedfs/seaweedfs/weed/iam/oidc"
@@ -17,6 +18,23 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// createTestJWTMultipart creates a test JWT token with the specified issuer, subject and signing key
+func createTestJWTMultipart(t *testing.T, issuer, subject, signingKey string) string {
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"iss": issuer,
+		"sub": subject,
+		"aud": "test-client-id",
+		"exp": time.Now().Add(time.Hour).Unix(),
+		"iat": time.Now().Unix(),
+		// Add claims that trust policy validation expects
+		"idp": "test-oidc", // Identity provider claim for trust policy matching
+	})
+
+	tokenString, err := token.SignedString([]byte(signingKey))
+	require.NoError(t, err)
+	return tokenString
+}
 
 // TestMultipartIAMValidation tests IAM validation for multipart operations
 func TestMultipartIAMValidation(t *testing.T) {
@@ -35,10 +53,13 @@ func TestMultipartIAMValidation(t *testing.T) {
 	ctx := context.Background()
 	setupTestRolesForMultipart(ctx, iamManager)
 
+	// Create a valid JWT token for testing
+	validJWTToken := createTestJWTMultipart(t, "https://test-issuer.com", "test-user-123", "test-signing-key")
+
 	// Get session token
 	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
 		RoleArn:          "arn:seaweed:iam::role/S3WriteRole",
-		WebIdentityToken: "valid-oidc-token",
+		WebIdentityToken: validJWTToken,
 		RoleSessionName:  "multipart-test-session",
 	})
 	require.NoError(t, err)
