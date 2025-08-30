@@ -1,8 +1,6 @@
 package mount
 
 import (
-	"time"
-
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mount/ml"
@@ -13,9 +11,9 @@ import (
 
 // MLIntegrationManager manages ML optimization integration for the main WFS
 type MLIntegrationManager struct {
-	mlOptimization *ml.MLOptimization
+	mlOptimization  *ml.MLOptimization
 	fuseIntegration *ml.FUSEMLIntegration
-	enabled        bool
+	enabled         bool
 }
 
 // NewMLIntegrationManager creates a new ML integration manager
@@ -23,16 +21,16 @@ func NewMLIntegrationManager(chunkCache chunk_cache.ChunkCache, lookupFn wdclien
 	// Create ML optimization with default config
 	config := ml.DefaultMLConfig()
 	mlOpt := ml.NewMLOptimization(config, chunkCache, lookupFn)
-	
+
 	// Create FUSE integration
 	fuseInt := ml.NewFUSEMLIntegration(mlOpt)
-	
+
 	manager := &MLIntegrationManager{
 		mlOptimization:  mlOpt,
 		fuseIntegration: fuseInt,
 		enabled:         true,
 	}
-	
+
 	glog.V(1).Infof("ML integration manager initialized")
 	return manager
 }
@@ -40,15 +38,15 @@ func NewMLIntegrationManager(chunkCache chunk_cache.ChunkCache, lookupFn wdclien
 // EnableMLOptimization enables or disables ML optimization
 func (mgr *MLIntegrationManager) EnableMLOptimization(enabled bool) {
 	mgr.enabled = enabled
-	
+
 	if mgr.mlOptimization != nil {
 		mgr.mlOptimization.Enable(enabled)
 	}
-	
+
 	if mgr.fuseIntegration != nil {
 		mgr.fuseIntegration.EnableMLOptimizations(enabled)
 	}
-	
+
 	glog.V(1).Infof("ML optimization %s", map[bool]string{true: "enabled", false: "disabled"}[enabled])
 }
 
@@ -57,7 +55,7 @@ func (mgr *MLIntegrationManager) OnFileOpen(inode uint64, entry *filer_pb.Entry,
 	if !mgr.enabled || mgr.fuseIntegration == nil {
 		return
 	}
-	
+
 	mgr.fuseIntegration.OnFileOpen(inode, entry, fullPath, flags, out)
 }
 
@@ -66,7 +64,7 @@ func (mgr *MLIntegrationManager) OnFileClose(inode uint64) {
 	if !mgr.enabled || mgr.fuseIntegration == nil {
 		return
 	}
-	
+
 	mgr.fuseIntegration.OnFileClose(inode)
 }
 
@@ -75,7 +73,7 @@ func (mgr *MLIntegrationManager) OnFileRead(inode uint64, offset int64, size int
 	if !mgr.enabled || mgr.fuseIntegration == nil {
 		return
 	}
-	
+
 	mgr.fuseIntegration.OnFileRead(inode, offset, size)
 }
 
@@ -84,7 +82,7 @@ func (mgr *MLIntegrationManager) OnChunkAccess(inode uint64, chunkIndex uint32, 
 	if !mgr.enabled || mgr.fuseIntegration == nil {
 		return
 	}
-	
+
 	mgr.fuseIntegration.OnChunkAccess(inode, chunkIndex, fileId, cacheLevel, isHit)
 }
 
@@ -93,7 +91,7 @@ func (mgr *MLIntegrationManager) OptimizeAttributes(inode uint64, out *fuse.Attr
 	if !mgr.enabled || mgr.fuseIntegration == nil {
 		return
 	}
-	
+
 	mgr.fuseIntegration.OptimizeAttributes(inode, out)
 }
 
@@ -102,7 +100,7 @@ func (mgr *MLIntegrationManager) OptimizeEntryCache(inode uint64, entry *filer_p
 	if !mgr.enabled || mgr.fuseIntegration == nil {
 		return
 	}
-	
+
 	mgr.fuseIntegration.OptimizeEntryCache(inode, entry, out)
 }
 
@@ -111,7 +109,7 @@ func (mgr *MLIntegrationManager) ShouldEnableWriteback(inode uint64, entry *file
 	if !mgr.enabled || mgr.fuseIntegration == nil {
 		return false
 	}
-	
+
 	return mgr.fuseIntegration.ShouldEnableWriteback(inode, entry)
 }
 
@@ -120,7 +118,7 @@ func (mgr *MLIntegrationManager) GetComprehensiveMetrics() *ml.FUSEMLMetrics {
 	if !mgr.enabled || mgr.fuseIntegration == nil {
 		return &ml.FUSEMLMetrics{}
 	}
-	
+
 	metrics := mgr.fuseIntegration.GetOptimizationMetrics()
 	return &metrics
 }
@@ -133,10 +131,10 @@ func (mgr *MLIntegrationManager) IsEnabled() bool {
 // Shutdown gracefully shuts down the ML integration
 func (mgr *MLIntegrationManager) Shutdown() {
 	glog.V(1).Infof("Shutting down ML integration manager...")
-	
+
 	if mgr.fuseIntegration != nil {
 		mgr.fuseIntegration.Shutdown()
 	}
-	
+
 	glog.V(1).Infof("ML integration manager shutdown complete")
 }

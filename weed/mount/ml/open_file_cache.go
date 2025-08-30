@@ -10,48 +10,48 @@ import (
 
 // ChunkMetadata contains metadata about a cached chunk
 type ChunkMetadata struct {
-	FileId     string            // Chunk file ID
-	Offset     uint64            // Offset within the file
-	Size       uint64            // Size of the chunk
-	CacheLevel int               // 0=memory, 1=disk, 2=not cached
-	LastAccess time.Time         // Last access time
-	AccessCount int64             // Number of times accessed
-	IsHot      bool              // Whether this chunk is frequently accessed
-	Pattern    AccessPattern     // Access pattern for this chunk
+	FileId      string        // Chunk file ID
+	Offset      uint64        // Offset within the file
+	Size        uint64        // Size of the chunk
+	CacheLevel  int           // 0=memory, 1=disk, 2=not cached
+	LastAccess  time.Time     // Last access time
+	AccessCount int64         // Number of times accessed
+	IsHot       bool          // Whether this chunk is frequently accessed
+	Pattern     AccessPattern // Access pattern for this chunk
 }
 
 // OpenFileInfo contains comprehensive information about an open file
 type OpenFileInfo struct {
 	sync.RWMutex
-	
+
 	// Basic file information
-	Inode      uint64                      // File inode
-	Entry      *filer_pb.Entry            // File entry from filer
-	OpenCount  int                        // Number of open handles
-	OpenTime   time.Time                  // When file was first opened
-	LastAccess time.Time                  // Last access time
-	
+	Inode      uint64          // File inode
+	Entry      *filer_pb.Entry // File entry from filer
+	OpenCount  int             // Number of open handles
+	OpenTime   time.Time       // When file was first opened
+	LastAccess time.Time       // Last access time
+
 	// Chunk-level caching
-	ChunkCache    map[uint32]*ChunkMetadata // chunk index -> metadata
-	ChunkCount    uint32                    // Total number of chunks in file
-	ChunkSize     int64                     // Size of each chunk
-	
+	ChunkCache map[uint32]*ChunkMetadata // chunk index -> metadata
+	ChunkCount uint32                    // Total number of chunks in file
+	ChunkSize  int64                     // Size of each chunk
+
 	// Access pattern tracking
-	AccessInfo    *AccessInfo               // Access pattern information
-	ReadPattern   AccessPattern             // Overall file access pattern
-	PrefetchState PrefetchState             // Current prefetch state
-	
+	AccessInfo    *AccessInfo   // Access pattern information
+	ReadPattern   AccessPattern // Overall file access pattern
+	PrefetchState PrefetchState // Current prefetch state
+
 	// ML-specific optimizations
-	IsMLFile      bool                      // Whether this is likely an ML-related file
-	FileType      MLFileType                // Type of ML file (dataset, model, etc.)
-	BatchSize     int                       // Detected batch size for training data
-	EpochCount    int                       // Number of epochs detected
-	
+	IsMLFile   bool       // Whether this is likely an ML-related file
+	FileType   MLFileType // Type of ML file (dataset, model, etc.)
+	BatchSize  int        // Detected batch size for training data
+	EpochCount int        // Number of epochs detected
+
 	// Performance tracking
-	TotalBytesRead   int64                  // Total bytes read from this file
-	CacheHitCount    int64                  // Number of cache hits
-	CacheMissCount   int64                  // Number of cache misses
-	PrefetchHitCount int64                  // Number of prefetch hits
+	TotalBytesRead   int64 // Total bytes read from this file
+	CacheHitCount    int64 // Number of cache hits
+	CacheMissCount   int64 // Number of cache misses
+	PrefetchHitCount int64 // Number of prefetch hits
 }
 
 // PrefetchState represents the current prefetch state for a file
@@ -69,36 +69,36 @@ type MLFileType int
 
 const (
 	MLFileUnknown MLFileType = iota
-	MLFileDataset          // Training/validation dataset
-	MLFileModel            // Model checkpoint/weights
-	MLFileConfig           // Configuration files
-	MLFileTensor           // Individual tensor files
-	MLFileLog              // Training logs
+	MLFileDataset            // Training/validation dataset
+	MLFileModel              // Model checkpoint/weights
+	MLFileConfig             // Configuration files
+	MLFileTensor             // Individual tensor files
+	MLFileLog                // Training logs
 )
 
 // OpenFileCache manages open file information with ML-aware optimizations
 type OpenFileCache struct {
 	sync.RWMutex
-	
+
 	// Configuration
 	maxFiles        int           // Maximum number of files to track
 	ttl             time.Duration // TTL for inactive files
 	cleanupInterval time.Duration // Cleanup interval
-	
+
 	// File tracking
-	files           map[uint64]*OpenFileInfo  // inode -> file info
-	accessOrder     []uint64                  // LRU order for eviction
-	
+	files       map[uint64]*OpenFileInfo // inode -> file info
+	accessOrder []uint64                 // LRU order for eviction
+
 	// ML-specific configuration
 	enableMLOptimization bool
-	mlFileDetector      *MLFileDetector
-	
+	mlFileDetector       *MLFileDetector
+
 	// Metrics
-	totalFiles      int64
-	evictedFiles    int64
-	cacheHits       int64
-	cacheMisses     int64
-	
+	totalFiles   int64
+	evictedFiles int64
+	cacheHits    int64
+	cacheMisses  int64
+
 	// Background cleanup
 	shutdown chan struct{}
 	done     chan struct{}
@@ -110,11 +110,11 @@ type MLFileDetector struct {
 	datasetExtensions map[string]bool
 	modelExtensions   map[string]bool
 	configExtensions  map[string]bool
-	
+
 	// Path patterns
 	datasetPaths []string
 	modelPaths   []string
-	
+
 	// Size heuristics
 	modelMinSize    int64 // Minimum size for model files
 	datasetMaxItems int   // Maximum items in dataset directory
@@ -128,22 +128,22 @@ func NewOpenFileCache(maxFiles int, ttl time.Duration) *OpenFileCache {
 	if ttl <= 0 {
 		ttl = 30 * time.Minute // Default TTL
 	}
-	
+
 	ofc := &OpenFileCache{
-		maxFiles:        maxFiles,
-		ttl:             ttl,
-		cleanupInterval: 5 * time.Minute,
-		files:           make(map[uint64]*OpenFileInfo),
-		accessOrder:     make([]uint64, 0, maxFiles),
+		maxFiles:             maxFiles,
+		ttl:                  ttl,
+		cleanupInterval:      5 * time.Minute,
+		files:                make(map[uint64]*OpenFileInfo),
+		accessOrder:          make([]uint64, 0, maxFiles),
 		enableMLOptimization: true,
-		mlFileDetector:  newMLFileDetector(),
-		shutdown:        make(chan struct{}),
-		done:            make(chan struct{}),
+		mlFileDetector:       newMLFileDetector(),
+		shutdown:             make(chan struct{}),
+		done:                 make(chan struct{}),
 	}
-	
+
 	// Start background cleanup
 	go ofc.cleanupWorker()
-	
+
 	glog.V(1).Infof("OpenFileCache initialized: maxFiles=%d, ttl=%v", maxFiles, ttl)
 	return ofc
 }
@@ -185,7 +185,7 @@ func newMLFileDetector() *MLFileDetector {
 func (ofc *OpenFileCache) OpenFile(inode uint64, entry *filer_pb.Entry, fullPath string) *OpenFileInfo {
 	ofc.Lock()
 	defer ofc.Unlock()
-	
+
 	// Get or create file info
 	fileInfo := ofc.files[inode]
 	if fileInfo == nil {
@@ -198,35 +198,35 @@ func (ofc *OpenFileCache) OpenFile(inode uint64, entry *filer_pb.Entry, fullPath
 			ReadPattern:   RandomAccess,
 			PrefetchState: PrefetchIdle,
 		}
-		
+
 		// Detect ML file type
 		if ofc.enableMLOptimization {
 			fileInfo.IsMLFile, fileInfo.FileType = ofc.mlFileDetector.DetectMLFile(entry, fullPath)
 			if fileInfo.IsMLFile {
-				glog.V(3).Infof("ML file detected: inode=%d, type=%v, path=%s", 
+				glog.V(3).Infof("ML file detected: inode=%d, type=%v, path=%s",
 					inode, fileInfo.FileType, fullPath)
 			}
 		}
-		
+
 		ofc.files[inode] = fileInfo
 		ofc.totalFiles++
-		
+
 		// Update access order for LRU
 		ofc.updateAccessOrder(inode)
-		
+
 		// Evict if necessary
 		if len(ofc.files) > ofc.maxFiles {
 			ofc.evictLRU()
 		}
 	}
-	
+
 	fileInfo.OpenCount++
 	fileInfo.LastAccess = time.Now()
 	ofc.updateAccessOrder(inode)
-	
-	glog.V(4).Infof("File opened: inode=%d, openCount=%d, isML=%v", 
+
+	glog.V(4).Infof("File opened: inode=%d, openCount=%d, isML=%v",
 		inode, fileInfo.OpenCount, fileInfo.IsMLFile)
-	
+
 	return fileInfo
 }
 
@@ -234,15 +234,15 @@ func (ofc *OpenFileCache) OpenFile(inode uint64, entry *filer_pb.Entry, fullPath
 func (ofc *OpenFileCache) CloseFile(inode uint64) bool {
 	ofc.Lock()
 	defer ofc.Unlock()
-	
+
 	fileInfo := ofc.files[inode]
 	if fileInfo == nil {
 		return true // Already cleaned up
 	}
-	
+
 	fileInfo.OpenCount--
 	glog.V(4).Infof("File closed: inode=%d, openCount=%d", inode, fileInfo.OpenCount)
-	
+
 	// Return true if file can be evicted (no more open handles)
 	return fileInfo.OpenCount <= 0
 }
@@ -251,14 +251,14 @@ func (ofc *OpenFileCache) CloseFile(inode uint64) bool {
 func (ofc *OpenFileCache) GetFileInfo(inode uint64) *OpenFileInfo {
 	ofc.RLock()
 	defer ofc.RUnlock()
-	
+
 	fileInfo := ofc.files[inode]
 	if fileInfo != nil {
 		fileInfo.LastAccess = time.Now()
 		ofc.cacheHits++
 		return fileInfo
 	}
-	
+
 	ofc.cacheMisses++
 	return nil
 }
@@ -268,19 +268,19 @@ func (ofc *OpenFileCache) UpdateChunkCache(inode uint64, chunkIndex uint32, meta
 	ofc.RLock()
 	fileInfo := ofc.files[inode]
 	ofc.RUnlock()
-	
+
 	if fileInfo == nil {
 		return
 	}
-	
+
 	fileInfo.Lock()
 	defer fileInfo.Unlock()
-	
+
 	fileInfo.ChunkCache[chunkIndex] = metadata
 	metadata.LastAccess = time.Now()
 	metadata.AccessCount++
-	
-	glog.V(4).Infof("Updated chunk cache: inode=%d, chunk=%d, level=%d", 
+
+	glog.V(4).Infof("Updated chunk cache: inode=%d, chunk=%d, level=%d",
 		inode, chunkIndex, metadata.CacheLevel)
 }
 
@@ -289,20 +289,20 @@ func (ofc *OpenFileCache) GetChunkMetadata(inode uint64, chunkIndex uint32) (*Ch
 	ofc.RLock()
 	fileInfo := ofc.files[inode]
 	ofc.RUnlock()
-	
+
 	if fileInfo == nil {
 		return nil, false
 	}
-	
+
 	fileInfo.RLock()
 	defer fileInfo.RUnlock()
-	
+
 	metadata, exists := fileInfo.ChunkCache[chunkIndex]
 	if exists {
 		metadata.LastAccess = time.Now()
 		metadata.AccessCount++
 	}
-	
+
 	return metadata, exists
 }
 
@@ -315,7 +315,7 @@ func (ofc *OpenFileCache) updateAccessOrder(inode uint64) {
 			break
 		}
 	}
-	
+
 	// Add to front (most recently used)
 	ofc.accessOrder = append([]uint64{inode}, ofc.accessOrder...)
 }
@@ -325,24 +325,24 @@ func (ofc *OpenFileCache) evictLRU() {
 	if len(ofc.accessOrder) == 0 {
 		return
 	}
-	
+
 	// Find LRU file that can be evicted (not currently open)
 	for i := len(ofc.accessOrder) - 1; i >= 0; i-- {
 		inode := ofc.accessOrder[i]
 		fileInfo := ofc.files[inode]
-		
+
 		if fileInfo != nil && fileInfo.OpenCount <= 0 {
 			// Evict this file
 			delete(ofc.files, inode)
 			ofc.accessOrder = append(ofc.accessOrder[:i], ofc.accessOrder[i+1:]...)
 			ofc.evictedFiles++
-			
-			glog.V(3).Infof("Evicted file from cache: inode=%d, chunks=%d", 
+
+			glog.V(3).Infof("Evicted file from cache: inode=%d, chunks=%d",
 				inode, len(fileInfo.ChunkCache))
 			return
 		}
 	}
-	
+
 	// If no files can be evicted, just log a warning
 	glog.V(2).Infof("Warning: Could not evict any files from cache (all files are open)")
 }
@@ -351,7 +351,7 @@ func (ofc *OpenFileCache) evictLRU() {
 func (ofc *OpenFileCache) cleanupWorker() {
 	ticker := time.NewTicker(ofc.cleanupInterval)
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-ticker.C:
@@ -367,17 +367,17 @@ func (ofc *OpenFileCache) cleanupWorker() {
 func (ofc *OpenFileCache) cleanup() {
 	ofc.Lock()
 	defer ofc.Unlock()
-	
+
 	now := time.Now()
 	toRemove := make([]uint64, 0)
-	
+
 	for inode, fileInfo := range ofc.files {
 		// Only cleanup files that are not open and have expired
 		if fileInfo.OpenCount <= 0 && now.Sub(fileInfo.LastAccess) > ofc.ttl {
 			toRemove = append(toRemove, inode)
 		}
 	}
-	
+
 	// Remove expired files
 	for _, inode := range toRemove {
 		delete(ofc.files, inode)
@@ -389,7 +389,7 @@ func (ofc *OpenFileCache) cleanup() {
 			}
 		}
 	}
-	
+
 	if len(toRemove) > 0 {
 		glog.V(3).Infof("Cleaned up %d expired file cache entries", len(toRemove))
 	}
@@ -399,12 +399,12 @@ func (ofc *OpenFileCache) cleanup() {
 func (ofc *OpenFileCache) GetMetrics() OpenFileCacheMetrics {
 	ofc.RLock()
 	defer ofc.RUnlock()
-	
+
 	var totalChunks int64
 	var mlFiles int64
 	fileTypes := make(map[MLFileType]int)
 	patterns := make(map[AccessPattern]int)
-	
+
 	for _, fileInfo := range ofc.files {
 		totalChunks += int64(len(fileInfo.ChunkCache))
 		if fileInfo.IsMLFile {
@@ -413,43 +413,43 @@ func (ofc *OpenFileCache) GetMetrics() OpenFileCacheMetrics {
 		}
 		patterns[fileInfo.ReadPattern]++
 	}
-	
+
 	return OpenFileCacheMetrics{
-		TotalFiles:    int64(len(ofc.files)),
-		MLFiles:       mlFiles,
-		TotalChunks:   totalChunks,
-		CacheHits:     ofc.cacheHits,
-		CacheMisses:   ofc.cacheMisses,
-		EvictedFiles:  ofc.evictedFiles,
-		FileTypes:     fileTypes,
+		TotalFiles:     int64(len(ofc.files)),
+		MLFiles:        mlFiles,
+		TotalChunks:    totalChunks,
+		CacheHits:      ofc.cacheHits,
+		CacheMisses:    ofc.cacheMisses,
+		EvictedFiles:   ofc.evictedFiles,
+		FileTypes:      fileTypes,
 		AccessPatterns: patterns,
 	}
 }
 
 // OpenFileCacheMetrics holds metrics for the open file cache
 type OpenFileCacheMetrics struct {
-	TotalFiles     int64                    `json:"total_files"`
-	MLFiles        int64                    `json:"ml_files"`
-	TotalChunks    int64                    `json:"total_chunks"`
-	CacheHits      int64                    `json:"cache_hits"`
-	CacheMisses    int64                    `json:"cache_misses"`
-	EvictedFiles   int64                    `json:"evicted_files"`
-	FileTypes      map[MLFileType]int       `json:"file_types"`
-	AccessPatterns map[AccessPattern]int    `json:"access_patterns"`
+	TotalFiles     int64                 `json:"total_files"`
+	MLFiles        int64                 `json:"ml_files"`
+	TotalChunks    int64                 `json:"total_chunks"`
+	CacheHits      int64                 `json:"cache_hits"`
+	CacheMisses    int64                 `json:"cache_misses"`
+	EvictedFiles   int64                 `json:"evicted_files"`
+	FileTypes      map[MLFileType]int    `json:"file_types"`
+	AccessPatterns map[AccessPattern]int `json:"access_patterns"`
 }
 
 // Shutdown gracefully shuts down the open file cache
 func (ofc *OpenFileCache) Shutdown() {
 	glog.V(1).Infof("Shutting down OpenFileCache...")
-	
+
 	close(ofc.shutdown)
-	
+
 	// Wait for cleanup worker to finish
 	<-ofc.done
-	
+
 	// Print final metrics
 	metrics := ofc.GetMetrics()
-	glog.V(1).Infof("OpenFileCache final metrics: files=%d, chunks=%d, hits=%d, misses=%d", 
+	glog.V(1).Infof("OpenFileCache final metrics: files=%d, chunks=%d, hits=%d, misses=%d",
 		metrics.TotalFiles, metrics.TotalChunks, metrics.CacheHits, metrics.CacheMisses)
 }
 
@@ -460,10 +460,10 @@ func (detector *MLFileDetector) DetectMLFile(entry *filer_pb.Entry, fullPath str
 	if entry == nil {
 		return false, MLFileUnknown
 	}
-	
+
 	name := entry.Name
 	size := int64(entry.Attributes.FileSize)
-	
+
 	// Check file extension
 	if ext := getFileExtension(name); ext != "" {
 		if detector.datasetExtensions[ext] {
@@ -476,20 +476,20 @@ func (detector *MLFileDetector) DetectMLFile(entry *filer_pb.Entry, fullPath str
 			return true, MLFileConfig
 		}
 	}
-	
+
 	// Check path patterns
 	for _, path := range detector.datasetPaths {
 		if contains(fullPath, path) {
 			return true, MLFileDataset
 		}
 	}
-	
+
 	for _, path := range detector.modelPaths {
 		if contains(fullPath, path) {
 			return true, MLFileModel
 		}
 	}
-	
+
 	// Check size heuristics
 	if size > detector.modelMinSize {
 		// Large files in certain contexts might be models
@@ -497,17 +497,17 @@ func (detector *MLFileDetector) DetectMLFile(entry *filer_pb.Entry, fullPath str
 			return true, MLFileModel
 		}
 	}
-	
+
 	// Check for tensor files
 	if contains(name, "tensor") || contains(name, ".pt") || contains(name, ".npy") {
 		return true, MLFileTensor
 	}
-	
+
 	// Check for log files
 	if contains(name, "log") || contains(name, "tensorboard") || contains(fullPath, "logs") {
 		return true, MLFileLog
 	}
-	
+
 	return false, MLFileUnknown
 }
 
@@ -533,7 +533,7 @@ func findSubstring(str, substr string) bool {
 	if len(str) < len(substr) {
 		return false
 	}
-	
+
 	for i := 0; i <= len(str)-len(substr); i++ {
 		if str[i:i+len(substr)] == substr {
 			return true
