@@ -2,6 +2,7 @@ package policy
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -120,9 +121,19 @@ func genericCopyPolicyDocument(policy *PolicyDocument) *PolicyDocument {
 		return nil
 	}
 
-	// For now, return a shallow copy
-	// In production, you'd want to implement proper deep copying
-	// depending on the PolicyDocument structure
-	result := *policy
-	return &result
+	// Perform a deep copy to ensure cache isolation
+	// Using JSON marshaling is a safe way to achieve this
+	policyData, err := json.Marshal(policy)
+	if err != nil {
+		glog.Errorf("Failed to marshal policy document for deep copy: %v", err)
+		return nil
+	}
+
+	var copied PolicyDocument
+	if err := json.Unmarshal(policyData, &copied); err != nil {
+		glog.Errorf("Failed to unmarshal policy document for deep copy: %v", err)
+		return nil
+	}
+
+	return &copied
 }

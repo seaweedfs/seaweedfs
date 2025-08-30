@@ -2,9 +2,11 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/iam/util"
 )
 
@@ -123,8 +125,22 @@ func genericCopyRoleDefinition(role *RoleDefinition) *RoleDefinition {
 	result := &RoleDefinition{
 		RoleName:    role.RoleName,
 		RoleArn:     role.RoleArn,
-		TrustPolicy: role.TrustPolicy, // Note: shallow copy of pointer
 		Description: role.Description,
+	}
+
+	// Deep copy trust policy if it exists
+	if role.TrustPolicy != nil {
+		trustPolicyData, err := json.Marshal(role.TrustPolicy)
+		if err != nil {
+			glog.Errorf("Failed to marshal trust policy for deep copy: %v", err)
+			return nil
+		}
+		var trustPolicyCopy policy.PolicyDocument
+		if err := json.Unmarshal(trustPolicyData, &trustPolicyCopy); err != nil {
+			glog.Errorf("Failed to unmarshal trust policy for deep copy: %v", err)
+			return nil
+		}
+		result.TrustPolicy = &trustPolicyCopy
 	}
 
 	// Deep copy attached policies slice
