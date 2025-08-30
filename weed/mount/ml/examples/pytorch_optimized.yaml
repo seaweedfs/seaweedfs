@@ -1,0 +1,155 @@
+# PyTorch-Optimized Configuration
+# Specialized configuration for PyTorch deep learning workloads
+
+version: "1.0.0"
+name: "PyTorch Deep Learning Optimization"
+description: "Highly optimized configuration for PyTorch training and inference"
+author: "PyTorch Team"
+tags: ["pytorch", "deep_learning", "training", "inference"]
+
+settings:
+  default_strategy: "pytorch_aware"
+  max_concurrent_rules: 6
+  confidence_threshold: 0.7
+  adaptive_learning: true
+  metrics_collection: true
+
+rules:
+  - id: "pytorch_model_loading"
+    name: "PyTorch Model Loading Optimization"
+    description: "Optimized loading for PyTorch model files (.pth, .pt)"
+    priority: 100
+    conditions:
+      - type: "file_pattern"
+        property: "extension"
+        operator: "in"
+        value: [".pth", ".pt"]
+        weight: 1.0
+      - type: "workload_context"
+        property: "framework"
+        operator: "equals"
+        value: "pytorch"
+        weight: 0.9
+    actions:
+      - type: "pytorch_model_cache"
+        target: "file"
+        parameters:
+          lazy_loading: true
+          state_dict_optimization: true
+          device_placement: "auto"
+          memory_format: "channels_last"
+
+  - id: "pytorch_dataloader_optimization"
+    name: "PyTorch DataLoader Optimization"
+    description: "Optimize PyTorch DataLoader performance"
+    priority: 95
+    conditions:
+      - type: "workload_context"
+        property: "workload_type"
+        operator: "equals"
+        value: "training"
+        weight: 1.0
+      - type: "workload_context"
+        property: "framework"
+        operator: "equals"
+        value: "pytorch"
+        weight: 1.0
+    actions:
+      - type: "dataloader_optimization"
+        target: "dataset"
+        parameters:
+          num_workers: 8
+          pin_memory: true
+          persistent_workers: true
+          prefetch_factor: 4
+          multiprocessing_context: "spawn"
+
+  - id: "pytorch_checkpoint_handling"
+    name: "PyTorch Checkpoint Optimization"
+    description: "Efficient handling of PyTorch training checkpoints"
+    priority: 90
+    conditions:
+      - type: "file_pattern"
+        property: "name_pattern"
+        operator: "matches"
+        value: ".*checkpoint.*\\.(pth|pt)$"
+        weight: 1.0
+      - type: "workload_context"
+        property: "workload_type"
+        operator: "equals"
+        value: "training"
+        weight: 0.9
+    actions:
+      - type: "checkpoint_optimization"
+        target: "file"
+        parameters:
+          incremental_save: true
+          async_save: true
+          compression: "lz4"
+          metadata_tracking: true
+
+templates:
+  - id: "pytorch_training_optimized"
+    name: "PyTorch Training (Optimized)"
+    description: "Maximum performance for PyTorch training workloads"
+    category: "training"
+    rules:
+      - "pytorch_model_loading"
+      - "pytorch_dataloader_optimization"
+      - "pytorch_checkpoint_handling"
+    parameters:
+      torch_compile: true
+      mixed_precision: "fp16"
+      gradient_checkpointing: false
+      dataloader_config:
+        batch_size: "auto"
+        shuffle: true
+        drop_last: true
+      optimizer_config:
+        type: "AdamW"
+        fused: true
+        foreach: true
+
+  - id: "pytorch_inference_optimized"
+    name: "PyTorch Inference (Optimized)"
+    description: "Low-latency PyTorch inference"
+    category: "inference"
+    rules:
+      - "pytorch_model_loading"
+    parameters:
+      torch_compile: true
+      inference_mode: true
+      no_grad: true
+      jit_trace: false
+      precision: "fp16"
+
+frameworks:
+  pytorch:
+    enabled: true
+    version: "2.0+"
+    rules:
+      - "pytorch_model_loading"
+      - "pytorch_dataloader_optimization"
+      - "pytorch_checkpoint_handling"
+    parameters:
+      device_optimization: true
+      cuda_optimizations: true
+      memory_efficiency: true
+      compilation_cache: true
+
+metadata:
+  pytorch_version: "2.0+"
+  cuda_version: "11.8+"
+  recommended_hardware:
+    - "NVIDIA A100"
+    - "NVIDIA V100" 
+    - "NVIDIA RTX 4090"
+  optimized_for:
+    - "transformer_models"
+    - "computer_vision"
+    - "nlp_tasks"
+    - "multi_gpu_training"
+  benchmarks:
+    training_speedup: "15-30%"
+    inference_latency: "-20-40%"
+    memory_efficiency: "+10-25%"

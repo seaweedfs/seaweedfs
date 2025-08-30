@@ -1,0 +1,283 @@
+# Custom ML Optimization Configuration
+# This configuration demonstrates the flexible, recipe-based optimization system
+
+version: "1.0.0"
+name: "Custom ML Optimization Configuration"
+description: "Production-ready configuration for diverse ML workloads"
+author: "ML Infrastructure Team"
+tags: ["production", "custom", "ml", "multi-framework"]
+
+# Global optimization settings
+settings:
+  default_strategy: "adaptive"
+  max_concurrent_rules: 8
+  confidence_threshold: 0.65
+  adaptive_learning: true
+  metrics_collection: true
+  debug: false
+  memory_limit_mb: 1024
+  cpu_limit_percent: 15
+  experimental_features:
+    neural_optimization: false
+    predictive_caching: true
+    multi_tier_storage: true
+
+# Custom optimization rules
+rules:
+  - id: "large_model_chunked_loading"
+    name: "Large Model Chunked Loading"
+    description: "Optimize loading for models larger than 1GB using chunked approach"
+    priority: 100
+    conditions:
+      - type: "file_context"
+        property: "type"
+        operator: "equals"
+        value: "model"
+        weight: 1.0
+      - type: "file_context"
+        property: "size"
+        operator: "greater_than"
+        value: 1073741824  # 1GB
+        weight: 0.9
+    actions:
+      - type: "chunked_load"
+        target: "file"
+        parameters:
+          chunk_size: 134217728  # 128MB chunks
+          parallel_chunks: 4
+          memory_mapping: true
+          lazy_loading: true
+          compression: false
+
+  - id: "training_data_pipeline_optimization"
+    name: "Training Data Pipeline Optimization"
+    description: "Optimized data pipeline for training workloads"
+    priority: 95
+    conditions:
+      - type: "workload_context"
+        property: "workload_type"
+        operator: "equals"
+        value: "training"
+        weight: 1.0
+      - type: "access_pattern"
+        property: "pattern_type"
+        operator: "in"
+        value: ["sequential", "strided", "batch"]
+        weight: 0.8
+      - type: "file_context"
+        property: "type"
+        operator: "equals"
+        value: "dataset"
+        weight: 0.9
+    actions:
+      - type: "data_pipeline"
+        target: "dataset"
+        parameters:
+          prefetch_buffer: 16
+          parallel_reads: 8
+          shuffle_buffer: 10000
+          cache_dataset: true
+          compression_aware: true
+
+  - id: "inference_latency_optimization"
+    name: "Inference Latency Optimization"
+    description: "Low-latency optimizations for real-time inference"
+    priority: 90
+    conditions:
+      - type: "workload_context"
+        property: "workload_type"
+        operator: "equals"
+        value: "inference"
+        weight: 1.0
+      - type: "workload_context"
+        property: "batch_size"
+        operator: "less_equal"
+        value: 8
+        weight: 0.7
+    actions:
+      - type: "inference_optimization"
+        target: "model"
+        parameters:
+          preload_model: true
+          memory_pool: true
+          batch_optimization: false
+          warm_up_iterations: 5
+          precision: "fp16"
+
+  - id: "distributed_training_coordination"
+    name: "Distributed Training Coordination"
+    description: "Coordinate file access across distributed training nodes"
+    priority: 85
+    conditions:
+      - type: "system_context"
+        property: "gpu_count"
+        operator: "greater_than"
+        value: 4
+        weight: 0.8
+      - type: "workload_context"
+        property: "workload_type"
+        operator: "equals"
+        value: "training"
+        weight: 1.0
+    actions:
+      - type: "distributed_coordination"
+        target: "workload"
+        parameters:
+          node_awareness: true
+          data_locality: true
+          gradient_sync: true
+          communication_optimization: true
+
+  - id: "gpu_memory_aware_caching"
+    name: "GPU Memory Aware Caching"
+    description: "Cache optimization considering available GPU memory"
+    priority: 80
+    conditions:
+      - type: "system_context"
+        property: "gpu_count"
+        operator: "greater_than"
+        value: 0
+        weight: 0.9
+      - type: "system_context"
+        property: "available_memory"
+        operator: "greater_than"
+        value: 8589934592  # 8GB
+        weight: 0.6
+    actions:
+      - type: "gpu_aware_cache"
+        target: "file"
+        parameters:
+          gpu_memory_threshold: 0.7  # Use up to 70% of GPU memory
+          cpu_gpu_coordination: true
+          unified_memory: false
+          cache_priority: "gpu_first"
+
+# Optimization templates for different use cases
+templates:
+  - id: "research_experimentation"
+    name: "Research & Experimentation Template"
+    description: "Flexible template for ML research with adaptive optimizations"
+    category: "research"
+    rules:
+      - "large_model_chunked_loading"
+      - "training_data_pipeline_optimization"
+      - "gpu_memory_aware_caching"
+    parameters:
+      optimization_level: "adaptive"
+      experiment_tracking: true
+      resource_monitoring: true
+      flexible_caching: true
+
+  - id: "production_training"
+    name: "Production Training Template"
+    description: "High-performance template for production ML training"
+    category: "production_training"
+    rules:
+      - "training_data_pipeline_optimization"
+      - "distributed_training_coordination"
+      - "gpu_memory_aware_caching"
+      - "large_model_chunked_loading"
+    parameters:
+      optimization_level: "maximum"
+      fault_tolerance: true
+      checkpoint_optimization: true
+      monitoring: "comprehensive"
+
+  - id: "real_time_inference"
+    name: "Real-time Inference Template"
+    description: "Ultra-low latency template for real-time ML inference"
+    category: "inference"
+    rules:
+      - "inference_latency_optimization"
+      - "gpu_memory_aware_caching"
+    parameters:
+      optimization_level: "latency"
+      batch_processing: false
+      memory_pool: true
+      warm_up: true
+
+  - id: "batch_inference"
+    name: "Batch Inference Template"
+    description: "Throughput-optimized template for batch inference workloads"
+    category: "batch_inference"
+    rules:
+      - "large_model_chunked_loading"
+      - "gpu_memory_aware_caching"
+      - "training_data_pipeline_optimization"  # Reuse for batch data processing
+    parameters:
+      optimization_level: "throughput"
+      batch_processing: true
+      parallel_inference: true
+      queue_management: true
+
+# Framework-specific configurations
+frameworks:
+  pytorch:
+    enabled: true
+    version: "2.0+"
+    rules:
+      - "large_model_chunked_loading"
+      - "training_data_pipeline_optimization"
+      - "gpu_memory_aware_caching"
+    parameters:
+      dataloader_optimization: true
+      tensor_parallelism: true
+      gradient_compression: true
+      mixed_precision: true
+      compile_optimization: true
+
+  tensorflow:
+    enabled: true
+    version: "2.10+"
+    rules:
+      - "training_data_pipeline_optimization" 
+      - "distributed_training_coordination"
+      - "inference_latency_optimization"
+    parameters:
+      dataset_optimization: true
+      xla_compilation: true
+      mixed_precision: true
+      tensorrt_optimization: true
+      savedmodel_optimization: true
+
+  huggingface:
+    enabled: true
+    rules:
+      - "large_model_chunked_loading"
+      - "inference_latency_optimization"
+    parameters:
+      transformer_optimization: true
+      model_parallelism: true
+      attention_optimization: true
+      tokenizer_caching: true
+
+  jax:
+    enabled: true
+    rules:
+      - "distributed_training_coordination"
+      - "gpu_memory_aware_caching"
+    parameters:
+      jit_compilation: true
+      device_parallelism: true
+      gradient_transformation: true
+
+# Custom metadata for configuration management
+metadata:
+  config_version: "1.0.0"
+  created_by: "ML Infrastructure Team"
+  last_updated: "2024-01-15"
+  compatible_with: ["seaweedfs-ml-v1", "seaweedfs-ml-v2"]
+  environment: "production"
+  regions: ["us-west-2", "eu-west-1"]
+  gpu_types: ["V100", "A100", "H100"]
+  use_cases:
+    - "large_language_models"
+    - "computer_vision"
+    - "recommendation_systems" 
+    - "time_series_forecasting"
+    - "reinforcement_learning"
+  performance_targets:
+    training_throughput: "high"
+    inference_latency: "low"
+    resource_efficiency: "optimal"
+    scalability: "horizontal"
