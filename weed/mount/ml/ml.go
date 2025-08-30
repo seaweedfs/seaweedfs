@@ -10,10 +10,13 @@ import (
 
 // MLOptimization provides ML-aware optimizations for FUSE mounting
 type MLOptimization struct {
-	ReaderCache     *MLReaderCache
-	PrefetchManager *PrefetchManager
-	PatternDetector *AccessPatternDetector
-	enabled         bool
+	ReaderCache       *MLReaderCache
+	PrefetchManager   *PrefetchManager
+	PatternDetector   *AccessPatternDetector
+	DatasetDetector   *DatasetPatternDetector
+	TrainingOptimizer *TrainingOptimizer
+	BatchOptimizer    *BatchOptimizer
+	enabled           bool
 }
 
 // MLConfig holds configuration for ML optimizations
@@ -58,6 +61,15 @@ func NewMLOptimization(config *MLConfig, chunkCache chunk_cache.ChunkCache, look
 		config = DefaultMLConfig()
 	}
 	
+	// Create dataset pattern detector
+	datasetDetector := NewDatasetPatternDetector()
+	
+	// Create training optimizer
+	trainingOptimizer := NewTrainingOptimizer(datasetDetector)
+	
+	// Create batch optimizer
+	batchOptimizer := NewBatchOptimizer()
+	
 	// Create ML reader cache with embedded prefetch manager and pattern detector
 	mlReaderCache := NewMLReaderCache(10, chunkCache, lookupFn)
 	
@@ -65,10 +77,13 @@ func NewMLOptimization(config *MLConfig, chunkCache chunk_cache.ChunkCache, look
 	mlReaderCache.SetPrefetchConfiguration(config.MaxPrefetchAhead, config.PrefetchBatchSize)
 	
 	opt := &MLOptimization{
-		ReaderCache:     mlReaderCache,
-		PrefetchManager: mlReaderCache.prefetchManager,
-		PatternDetector: mlReaderCache.patternDetector,
-		enabled:         true,
+		ReaderCache:       mlReaderCache,
+		PrefetchManager:   mlReaderCache.prefetchManager,
+		PatternDetector:   mlReaderCache.patternDetector,
+		DatasetDetector:   datasetDetector,
+		TrainingOptimizer: trainingOptimizer,
+		BatchOptimizer:    batchOptimizer,
+		enabled:           true,
 	}
 	
 	glog.V(1).Infof("ML optimization enabled with config: workers=%d, queue=%d, confidence=%.2f", 
@@ -132,6 +147,15 @@ func (opt *MLOptimization) Shutdown() {
 	if opt.ReaderCache != nil {
 		opt.ReaderCache.Shutdown()
 	}
+	
+	if opt.DatasetDetector != nil {
+		opt.DatasetDetector.Cleanup()
+	}
+	
+	if opt.BatchOptimizer != nil {
+		opt.BatchOptimizer.Shutdown()
+	}
+	
 	glog.V(1).Infof("ML optimization shutdown complete")
 }
 

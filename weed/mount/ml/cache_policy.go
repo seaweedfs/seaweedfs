@@ -231,8 +231,8 @@ func (policy *MLCachePolicy) calculateMLScore(entry *CacheEntry) float64 {
 		score *= 1.5 // Strong boost for model access
 	case EpochAccess:
 		score *= 1.3 // Boost for epoch access
-	case BatchAccess:
-		score *= 1.1 // Small boost for batch access
+	case BatchGroupAccess:
+		score *= 1.1 // Small boost for batch group access
 	}
 
 	// Predicted reuse bonus

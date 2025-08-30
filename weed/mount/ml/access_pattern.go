@@ -14,7 +14,7 @@ const (
 	RandomAccess AccessPattern = iota
 	SequentialAccess
 	StridedAccess    // Common in image datasets - fixed stride between accesses
-	BatchAccess      // Multiple files accessed together
+	BatchGroupAccess // Multiple files accessed together
 	EpochAccess      // Dataset restart patterns (ML training)
 	ModelAccess      // Large model checkpoint loading
 )
@@ -27,8 +27,8 @@ func (ap AccessPattern) String() string {
 		return "Sequential"
 	case StridedAccess:
 		return "Strided"
-	case BatchAccess:
-		return "Batch"
+	case BatchGroupAccess:
+		return "BatchGroup"
 	case EpochAccess:
 		return "Epoch"
 	case ModelAccess:
@@ -384,21 +384,7 @@ func (apd *AccessPatternDetector) CleanupOldEntries(maxAge time.Duration) {
 	}
 }
 
-// Helper functions
-
-func minInt64(a, b int64) int64 {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func maxInt64(a, b int64) int64 {
-	if a > b {
-		return a
-	}
-	return b
-}
+// Helper functions moved to dataset_pattern.go to avoid redeclaration
 
 func minFloat(a, b float64) float64 {
 	if a < b {
