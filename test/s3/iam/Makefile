@@ -303,27 +303,4 @@ setup-all-tests: ## Setup environment for all tests (including Keycloak)
 	@echo "🚀 Setting up complete test environment..."
 	@./setup_all_tests.sh
 
-# Update help target
-help-advanced: ## Show advanced help with all test targets
-	@echo "SeaweedFS S3 IAM Integration Tests"
-	@echo ""
-	@echo "Usage:"
-	@echo "  make [target]"
-	@echo ""
-	@echo "Standard Targets:"
-	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-25s %s\n", $$1, $$2}' $(MAKEFILE_LIST) | head -20
-	@echo ""
-	@echo "New Test Targets (Previously Skipped):"
-	@echo "  test-distributed         Run distributed IAM tests"
-	@echo "  test-performance         Run performance tests"
-	@echo "  test-stress              Run stress tests"
-	@echo "  test-versioning-stress   Run S3 versioning stress tests"
-	@echo "  test-keycloak-full       Run complete Keycloak integration tests"
-	@echo "  test-all-previously-skipped  Run all previously skipped tests"
-	@echo "  setup-all-tests          Setup environment for all tests"
-	@echo ""
-	@echo "Docker Compose Targets:"
-	@echo "  docker-test              Run tests with Docker Compose including Keycloak"
-	@echo "  docker-up                Start all services with Docker Compose"
-	@echo "  docker-down              Stop all Docker Compose services"
-	@echo "  docker-logs              Show logs from all services"
+
