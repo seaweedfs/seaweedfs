@@ -13,6 +13,11 @@ type MockTrustPolicyValidator struct{}
 
 // ValidateTrustPolicyForWebIdentity allows valid JWT test tokens for STS testing
 func (m *MockTrustPolicyValidator) ValidateTrustPolicyForWebIdentity(ctx context.Context, roleArn string, webIdentityToken string) error {
+	// Reject non-existent roles for testing
+	if strings.Contains(roleArn, "NonExistentRole") {
+		return fmt.Errorf("trust policy validation failed: role does not exist")
+	}
+
 	// For STS unit tests, allow JWT tokens that look valid (contain dots for JWT structure)
 	// In real implementation, this would validate against actual trust policies
 	if len(webIdentityToken) > 20 && strings.Count(webIdentityToken, ".") >= 2 {
@@ -35,6 +40,11 @@ func (m *MockTrustPolicyValidator) ValidateTrustPolicyForWebIdentity(ctx context
 
 // ValidateTrustPolicyForCredentials allows valid test identities for STS testing
 func (m *MockTrustPolicyValidator) ValidateTrustPolicyForCredentials(ctx context.Context, roleArn string, identity *providers.ExternalIdentity) error {
+	// Reject non-existent roles for testing
+	if strings.Contains(roleArn, "NonExistentRole") {
+		return fmt.Errorf("trust policy validation failed: role does not exist")
+	}
+
 	// For STS unit tests, allow test identities
 	if identity != nil && identity.UserID != "" {
 		return nil
