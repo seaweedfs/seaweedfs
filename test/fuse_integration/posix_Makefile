@@ -333,12 +333,12 @@ generate-json-report:
 			fi; \
 			PASSED=$$(grep -c "PASS:" "$$logfile" 2>/dev/null || echo 0); \
 			FAILED=$$(grep -c "FAIL:" "$$logfile" 2>/dev/null || echo 0); \
-			TOTAL=$$(expr $$PASSED + $$FAILED); \
+			TOTAL=$$(expr "$$PASSED" + "$$FAILED" 2>/dev/null || echo 0); \
 			echo "    \"$$basename\": {" >> $(REPORT_DIR)/posix_compliance_report.json; \
 			echo "      \"total_tests\": $$TOTAL," >> $(REPORT_DIR)/posix_compliance_report.json; \
 			echo "      \"passed\": $$PASSED," >> $(REPORT_DIR)/posix_compliance_report.json; \
 			echo "      \"failed\": $$FAILED," >> $(REPORT_DIR)/posix_compliance_report.json; \
-			if [ $$TOTAL -gt 0 ]; then \
+			if [ "$$TOTAL" -gt 0 ] 2>/dev/null; then \
 				SUCCESS_RATE=$$(awk "BEGIN {printf \"%.2f\", ($$PASSED/$$TOTAL)*100}" 2>/dev/null || echo "0.00"); \
 			else \
 				SUCCESS_RATE="0.00"; \
@@ -353,12 +353,12 @@ generate-json-report:
 		if [ -f "$$logfile" ]; then \
 			PASSED=$$(grep -c "PASS:" "$$logfile" 2>/dev/null || echo 0); \
 			FAILED=$$(grep -c "FAIL:" "$$logfile" 2>/dev/null || echo 0); \
-			TOTAL_PASSED=$$(expr $$TOTAL_PASSED + $$PASSED); \
-			TOTAL_FAILED=$$(expr $$TOTAL_FAILED + $$FAILED); \
+			TOTAL_PASSED=$$(expr "$$TOTAL_PASSED" + "$$PASSED" 2>/dev/null || echo "$$TOTAL_PASSED"); \
+			TOTAL_FAILED=$$(expr "$$TOTAL_FAILED" + "$$FAILED" 2>/dev/null || echo "$$TOTAL_FAILED"); \
 		fi; \
 	done; \
-	GRAND_TOTAL=$$(expr $$TOTAL_PASSED + $$TOTAL_FAILED); \
-	if [ $$GRAND_TOTAL -gt 0 ]; then \
+	GRAND_TOTAL=$$(expr "$$TOTAL_PASSED" + "$$TOTAL_FAILED" 2>/dev/null || echo 0); \
+	if [ "$$GRAND_TOTAL" -gt 0 ] 2>/dev/null; then \
 		OVERALL_SUCCESS=$$(awk "BEGIN {printf \"%.2f\", ($$TOTAL_PASSED/$$GRAND_TOTAL)*100}" 2>/dev/null || echo "0.00"); \
 	else \
 		OVERALL_SUCCESS="0.00"; \
