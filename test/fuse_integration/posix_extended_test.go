@@ -40,7 +40,7 @@ func TestPOSIXExtended(t *testing.T) {
 	t.Run("ExtendedAttributes", suite.TestExtendedAttributes)
 	t.Run("FileLocking", suite.TestFileLocking)
 	t.Run("AdvancedIO", suite.TestAdvancedIO)
-	t.Run("SparseFIles", suite.TestSparseFiles)
+	t.Run("SparseFiles", suite.TestSparseFiles)
 	t.Run("LargeFiles", suite.TestLargeFiles)
 	t.Run("MMap", suite.TestMemoryMapping)
 	t.Run("DirectIO", suite.TestDirectIO)
