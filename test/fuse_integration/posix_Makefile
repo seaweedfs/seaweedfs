@@ -115,10 +115,10 @@ test-posix-basic: check-prereqs init-module setup-reports
 	@if [ -n "$(TEST_MOUNT_POINT)" ]; then \
 		echo "$(BLUE)Using external mount point: $(TEST_MOUNT_POINT)$(RESET)"; \
 		TEST_MOUNT_POINT="$(TEST_MOUNT_POINT)" TEST_SKIP_CLUSTER_SETUP="true" \
-		go test -v -timeout $(TEST_TIMEOUT) -run TestPOSIXCompliance $(POSIX_BASIC_TESTS) 2>&1 | \
+		go test -v -timeout $(TEST_TIMEOUT) -run TestPOSIXCompliance . 2>&1 | \
 		tee $(REPORT_DIR)/posix_basic_results.log; \
 	else \
-		go test -v -timeout $(TEST_TIMEOUT) -run TestPOSIXCompliance $(POSIX_BASIC_TESTS) 2>&1 | \
+		go test -v -timeout $(TEST_TIMEOUT) -run TestPOSIXCompliance . 2>&1 | \
 		tee $(REPORT_DIR)/posix_basic_results.log; \
 	fi
 
@@ -158,11 +158,11 @@ test-posix-critical: check-prereqs init-module setup-reports
 		TEST_MOUNT_POINT="$(TEST_MOUNT_POINT)" TEST_SKIP_CLUSTER_SETUP="true" \
 		go test -v -timeout 15m \
 		-run "TestPOSIXCompliance/(FileOperations|DirectoryOperations|PermissionTests|IOOperations)" \
-		$(POSIX_BASIC_TESTS) 2>&1 | tee $(REPORT_DIR)/posix_critical_results.log; \
+		. 2>&1 | tee $(REPORT_DIR)/posix_critical_results.log; \
 	else \
 		go test -v -timeout 15m \
 		-run "TestPOSIXCompliance/(FileOperations|DirectoryOperations|PermissionTests|IOOperations)" \
-		$(POSIX_BASIC_TESTS) 2>&1 | tee $(REPORT_DIR)/posix_critical_results.log; \
+		. 2>&1 | tee $(REPORT_DIR)/posix_critical_results.log; \
 	fi
 
 test-posix-stress: check-prereqs init-module setup-reports
@@ -175,13 +175,13 @@ test-posix-stress: check-prereqs init-module setup-reports
 benchmark-posix: check-prereqs init-module setup-reports
 	@echo "$(CYAN)📈 Running POSIX performance benchmarks...$(RESET)"
 	@go test -v -timeout $(TEST_TIMEOUT) -bench=. -benchmem \
-		$(POSIX_BASIC_TESTS) $(POSIX_EXTENDED_TESTS) 2>&1 | \
+		. 2>&1 | \
 		tee $(REPORT_DIR)/posix_benchmark_results.log
 
 profile-posix: check-prereqs init-module setup-reports
 	@echo "$(CYAN)[PROFILE] Running POSIX tests with profiling...$(RESET)"
 	@go test -v -timeout $(TEST_TIMEOUT) -cpuprofile $(REPORT_DIR)/posix.cpu.prof \
-		-memprofile $(REPORT_DIR)/posix.mem.prof -run TestPOSIXCompliance $(POSIX_BASIC_TESTS)
+		-memprofile $(REPORT_DIR)/posix.mem.prof -run TestPOSIXCompliance .
 	@echo "$(GREEN)[PROFILE] Profiles generated:$(RESET)"
 	@echo "  CPU: $(REPORT_DIR)/posix.cpu.prof"
 	@echo "  Memory: $(REPORT_DIR)/posix.mem.prof"
@@ -191,7 +191,7 @@ profile-posix: check-prereqs init-module setup-reports
 coverage-posix: check-prereqs init-module setup-reports
 	@echo "$(CYAN)[COVERAGE] Running POSIX tests with coverage analysis...$(RESET)"
 	@go test -v -timeout $(TEST_TIMEOUT) -coverprofile=$(REPORT_DIR)/$(COVERAGE_FILE) \
-		$(POSIX_BASIC_TESTS) $(POSIX_EXTENDED_TESTS) $(POSIX_EXTERNAL_TESTS)
+		.
 	@go tool cover -html=$(REPORT_DIR)/$(COVERAGE_FILE) -o $(REPORT_DIR)/posix_coverage.html
 	@echo "$(GREEN)[COVERAGE] Coverage report generated: $(REPORT_DIR)/posix_coverage.html$(RESET)"
 
