@@ -34,7 +34,7 @@ on:
         type: boolean
 
 env:
-  GO_VERSION: '1.21'
+  GO_VERSION: '1.24'
   TIMEOUT: '45m'
 
 jobs:
@@ -44,7 +44,6 @@ jobs:
     
     strategy:
       matrix:
-        go-version: ['1.21', '1.22']
         fuse-version: ['2.9', '3.0']
       fail-fast: false
     
@@ -54,10 +53,10 @@ jobs:
       with:
         fetch-depth: 1
     
-    - name: Set up Go ${{ matrix.go-version }}
+    - name: Set up Go ${{ env.GO_VERSION }}
       uses: actions/setup-go@v4
       with:
-        go-version: ${{ matrix.go-version }}
+        go-version: ${{ env.GO_VERSION }}
         cache: true
         cache-dependency-path: |
           go.sum
@@ -67,17 +66,21 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y \
-          fuse \
-          libfuse-dev \
           attr \
           acl \
           build-essential \
           git \
           python3-pip
         
-        # Install FUSE version specific packages if needed
-        if [ "${{ matrix.fuse-version }}" = "3.0" ]; then
+        # Install FUSE version specific packages
+        if [ "${{ matrix.fuse-version }}" = "2.9" ]; then
+          echo "Installing FUSE 2.9..."
+          sudo apt-get install -y fuse libfuse-dev
+        elif [ "${{ matrix.fuse-version }}" = "3.0" ]; then
+          echo "Installing FUSE 3.0..."
           sudo apt-get install -y fuse3 libfuse3-dev
+          # Also install fuse2 for compatibility if needed
+          sudo apt-get install -y fuse libfuse-dev
         fi
     
     - name: Set up user permissions for FUSE
@@ -414,7 +417,7 @@ jobs:
       uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: posix-test-results-ubuntu-go${{ matrix.go-version }}-fuse${{ matrix.fuse-version }}
+        name: posix-test-results-ubuntu-fuse${{ matrix.fuse-version }}
         path: |
           test/fuse_integration/reports/
           test/fuse_integration/*.log
@@ -424,7 +427,7 @@ jobs:
       uses: actions/upload-artifact@v4
       if: always() && (github.event.inputs.test_type == 'full' || github.event.inputs.test_type == 'extended')
       with:
-        name: posix-coverage-ubuntu-go${{ matrix.go-version }}
+        name: posix-coverage-ubuntu
         path: test/fuse_integration/reports/posix_coverage.html
         retention-days: 14
     
@@ -442,7 +445,7 @@ jobs:
             const report = fs.readFileSync(reportPath, 'utf8');
             const comment = `## POSIX Compliance Test Results
             
-            **Go Version:** ${{ matrix.go-version }}
+            **Go Version:** ${{ env.GO_VERSION }}
             **FUSE Version:** ${{ matrix.fuse-version }}
             **Test Type:** ${{ github.event.inputs.test_type || 'critical' }}
             
