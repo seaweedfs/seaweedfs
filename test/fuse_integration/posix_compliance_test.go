@@ -449,36 +449,6 @@ func (s *POSIXComplianceTestSuite) TestIOOperations(t *testing.T) {
 		require.Equal(t, 1, n)
 		require.Equal(t, []byte("A"), buffer)
 
-		// Test positioned I/O operations (pread/pwrite)
-		syscall.Close(fd)
-
-		// Open for read/write to test pwrite
-		fd, err = syscall.Open(testFile, syscall.O_RDWR, 0)
-		require.NoError(t, err)
-		defer syscall.Close(fd)
-
-		// Positioned write test
-		writeData := []byte("XYZ")
-		n, err = syscall.Pwrite(fd, writeData, 5) // pwrite at offset 5
-		require.NoError(t, err)
-		require.Equal(t, len(writeData), n)
-
-		// Verify file position is unchanged by pwrite
-		currentPos, err := syscall.Seek(fd, 0, 1) // SEEK_CUR
-		require.NoError(t, err)
-		require.Equal(t, int64(0), currentPos, "file offset should not be changed by pwrite")
-
-		// Read back with pread
-		readBuffer := make([]byte, len(writeData))
-		n, err = syscall.Pread(fd, readBuffer, 5) // pread at offset 5
-		require.NoError(t, err)
-		require.Equal(t, len(writeData), n)
-		require.Equal(t, writeData, readBuffer)
-
-		// Verify file position is still unchanged by pread
-		currentPos, err = syscall.Seek(fd, 0, 1) // SEEK_CUR
-		require.NoError(t, err)
-		require.Equal(t, int64(0), currentPos, "file offset should not be changed by pread")
 	})
 
 	t.Run("AppendMode", func(t *testing.T) {

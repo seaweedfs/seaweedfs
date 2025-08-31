@@ -58,12 +58,7 @@ check-prereqs: check-go check-fuse check-binary
 	@echo "$(GREEN)[OK] All prerequisites satisfied$(RESET)"
 
 # Setup and initialization
-init-module:
-	@if [ ! -f go.mod ]; then \
-		echo "$(BLUE)📦 Initializing Go module...$(RESET)"; \
-		go mod init seaweedfs-posix-tests; \
-		go mod tidy; \
-	fi
+
 
 setup-reports:
 	@mkdir -p $(REPORT_DIR)
@@ -91,7 +86,7 @@ setup-pjdfstest:
 
 setup-nfstest:
 	@echo "$(BLUE)[INSTALL] Installing nfstest...$(RESET)"
-	@pip3 install --user nfstest 2>/dev/null || \
+	@pip3 install --user nfstest || \
 	echo "$(YELLOW)[WARNING] nfstest installation failed. Install manually: pip3 install nfstest$(RESET)"
 
 setup-fio:
@@ -111,7 +106,7 @@ setup-fio:
 	fi
 
 # Core test execution
-test-posix-basic: check-prereqs init-module setup-reports
+test-posix-basic: check-prereqs setup-reports
 	@echo "$(CYAN)[TEST] Running basic POSIX compliance tests...$(RESET)"
 	@if [ -n "$(TEST_MOUNT_POINT)" ]; then \
 		echo "$(BLUE)Using external mount point: $(TEST_MOUNT_POINT)$(RESET)"; \
@@ -123,7 +118,7 @@ test-posix-basic: check-prereqs init-module setup-reports
 		tee $(REPORT_DIR)/posix_basic_results.log; \
 	fi
 
-test-posix-extended: check-prereqs init-module setup-reports
+test-posix-extended: check-prereqs setup-reports
 	@echo "$(CYAN)[TEST] Running extended POSIX compliance tests...$(RESET)"
 	@if [ -n "$(TEST_MOUNT_POINT)" ]; then \
 		echo "$(BLUE)Using external mount point: $(TEST_MOUNT_POINT)$(RESET)"; \
@@ -135,7 +130,7 @@ test-posix-extended: check-prereqs init-module setup-reports
 		tee $(REPORT_DIR)/posix_extended_results.log; \
 	fi
 
-test-posix-external: check-prereqs init-module setup-reports setup-external-tools
+test-posix-external: check-prereqs setup-reports setup-external-tools
 	@echo "$(CYAN)[TEST] Running external POSIX test suite integration...$(RESET)"
 	@if [ -n "$(TEST_MOUNT_POINT)" ]; then \
 		echo "$(BLUE)Using external mount point: $(TEST_MOUNT_POINT)$(RESET)"; \
@@ -152,7 +147,7 @@ test-posix-full: test-posix-basic test-posix-extended test-posix-external
 	@echo "$(GREEN)[OK] Full POSIX compliance test suite completed$(RESET)"
 	@$(MAKE) generate-report
 
-test-posix-critical: check-prereqs init-module setup-reports
+test-posix-critical: check-prereqs setup-reports
 	@echo "$(CYAN)[TEST] Running critical POSIX compliance tests...$(RESET)"
 	@if [ -n "$(TEST_MOUNT_POINT)" ]; then \
 		echo "$(BLUE)Using external mount point: $(TEST_MOUNT_POINT)$(RESET)"; \
@@ -166,20 +161,20 @@ test-posix-critical: check-prereqs init-module setup-reports
 		. 2>&1 | tee $(REPORT_DIR)/posix_critical_results.log; \
 	fi
 
-test-posix-stress: check-prereqs init-module setup-reports
+test-posix-stress: check-prereqs setup-reports
 	@echo "$(CYAN)[TEST] Running POSIX stress tests...$(RESET)"
 	@go test -v -timeout $(TEST_TIMEOUT) \
 		-run "TestExternalPOSIXSuites/CustomPOSIXTests" \
 		$(POSIX_EXTERNAL_TESTS) 2>&1 | tee $(REPORT_DIR)/posix_stress_results.log
 
 # Performance and benchmarks
-benchmark-posix: check-prereqs init-module setup-reports
+benchmark-posix: check-prereqs setup-reports
 	@echo "$(CYAN)📈 Running POSIX performance benchmarks...$(RESET)"
 	@go test -v -timeout $(TEST_TIMEOUT) -bench=. -benchmem \
 		. 2>&1 | \
 		tee $(REPORT_DIR)/posix_benchmark_results.log
 
-profile-posix: check-prereqs init-module setup-reports
+profile-posix: check-prereqs setup-reports
 	@echo "$(CYAN)[PROFILE] Running POSIX tests with profiling...$(RESET)"
 	@go test -v -timeout $(TEST_TIMEOUT) -cpuprofile $(REPORT_DIR)/posix.cpu.prof \
 		-memprofile $(REPORT_DIR)/posix.mem.prof -run TestPOSIXCompliance .
@@ -189,7 +184,7 @@ profile-posix: check-prereqs init-module setup-reports
 	@echo "$(BLUE)View with: go tool pprof $(REPORT_DIR)/posix.cpu.prof$(RESET)"
 
 # Coverage analysis
-coverage-posix: check-prereqs init-module setup-reports
+coverage-posix: check-prereqs setup-reports
 	@echo "$(CYAN)[COVERAGE] Running POSIX tests with coverage analysis...$(RESET)"
 	@go test -v -timeout $(TEST_TIMEOUT) -coverprofile=$(REPORT_DIR)/$(COVERAGE_FILE) \
 		.
@@ -339,7 +334,7 @@ lint:
 	fi
 
 # CI/CD integration
-ci-posix-tests: check-prereqs init-module setup-external-tools
+ci-posix-tests: check-prereqs setup-external-tools
 	@echo "$(CYAN)🚀 Running POSIX tests for CI/CD...$(RESET)"
 	@$(MAKE) test-posix-critical
 	@$(MAKE) generate-report
@@ -412,7 +407,7 @@ help:
 	@echo "  $(GREEN)make ci-posix-tests$(RESET)      - Run POSIX tests optimized for CI/CD"
 	@echo "  $(GREEN)make docker-test-posix$(RESET)   - Run tests in Docker container"
 
-.PHONY: help check-prereqs check-binary check-fuse check-go init-module setup-reports \
+.PHONY: help check-prereqs check-binary check-fuse check-go setup-reports \
         setup-external-tools setup-pjdfstest setup-nfstest setup-fio \
         test-posix-basic test-posix-extended test-posix-external test-posix-full \
         test-posix-critical test-posix-stress benchmark-posix profile-posix coverage-posix \
