@@ -206,8 +206,8 @@ test-pjdfstest: setup-external-tools
 test-nfstest-posix:
 	@echo "$(CYAN)[TEST] Running nfstest_posix...$(RESET)"
 	@if command -v nfstest_posix >/dev/null 2>&1; then \
-		mkdir -p /tmp/nfstest_mount; \
-		nfstest_posix --path /tmp/nfstest_mount --verbose 2>&1 | \
+		mkdir -p $(MOUNT_POINT); \
+		nfstest_posix --path $(MOUNT_POINT) --verbose 2>&1 | \
 		tee $(REPORT_DIR)/nfstest_results.log; \
 	else \
 					echo "$(YELLOW)[WARNING] nfstest_posix not available$(RESET)"; \
