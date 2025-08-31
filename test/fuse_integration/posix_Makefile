@@ -9,6 +9,12 @@ REPORT_DIR := reports
 EXTERNAL_TOOLS_DIR := external_tools
 MOUNT_POINT ?= /tmp/seaweedfs_mount
 
+# Go test command prefix for external mount points
+GO_TEST_PREFIX :=
+ifneq ($(TEST_MOUNT_POINT),)
+GO_TEST_PREFIX := TEST_MOUNT_POINT="$(TEST_MOUNT_POINT)" TEST_SKIP_CLUSTER_SETUP="true"
+endif
+
 # Test categories
 POSIX_BASIC_TESTS := posix_compliance_test.go
 POSIX_EXTENDED_TESTS := posix_extended_test.go  
@@ -108,39 +114,27 @@ setup-fio:
 # Core test execution
 test-posix-basic: check-prereqs setup-reports
 	@echo "$(CYAN)[TEST] Running basic POSIX compliance tests...$(RESET)"
-	@if [ -n "$(TEST_MOUNT_POINT)" ]; then \
-		echo "$(BLUE)Using external mount point: $(TEST_MOUNT_POINT)$(RESET)"; \
-		TEST_MOUNT_POINT="$(TEST_MOUNT_POINT)" TEST_SKIP_CLUSTER_SETUP="true" \
-		go test -v -timeout $(TEST_TIMEOUT) -run TestPOSIXCompliance . 2>&1 | \
-		tee $(REPORT_DIR)/posix_basic_results.log; \
-	else \
-		go test -v -timeout $(TEST_TIMEOUT) -run TestPOSIXCompliance . 2>&1 | \
-		tee $(REPORT_DIR)/posix_basic_results.log; \
-	fi
+ifneq ($(TEST_MOUNT_POINT),)
+	@echo "$(BLUE)Using external mount point: $(TEST_MOUNT_POINT)$(RESET)"
+endif
+	@$(GO_TEST_PREFIX) go test -v -timeout $(TEST_TIMEOUT) -run TestPOSIXCompliance . 2>&1 | \
+		tee $(REPORT_DIR)/posix_basic_results.log
 
 test-posix-extended: check-prereqs setup-reports
 	@echo "$(CYAN)[TEST] Running extended POSIX compliance tests...$(RESET)"
-	@if [ -n "$(TEST_MOUNT_POINT)" ]; then \
-		echo "$(BLUE)Using external mount point: $(TEST_MOUNT_POINT)$(RESET)"; \
-		TEST_MOUNT_POINT="$(TEST_MOUNT_POINT)" TEST_SKIP_CLUSTER_SETUP="true" \
-		go test -v -timeout $(TEST_TIMEOUT) -run TestPOSIXExtended $(POSIX_EXTENDED_TESTS) 2>&1 | \
-		tee $(REPORT_DIR)/posix_extended_results.log; \
-	else \
-		go test -v -timeout $(TEST_TIMEOUT) -run TestPOSIXExtended $(POSIX_EXTENDED_TESTS) 2>&1 | \
-		tee $(REPORT_DIR)/posix_extended_results.log; \
-	fi
+ifneq ($(TEST_MOUNT_POINT),)
+	@echo "$(BLUE)Using external mount point: $(TEST_MOUNT_POINT)$(RESET)"
+endif
+	@$(GO_TEST_PREFIX) go test -v -timeout $(TEST_TIMEOUT) -run TestPOSIXExtended $(POSIX_EXTENDED_TESTS) 2>&1 | \
+		tee $(REPORT_DIR)/posix_extended_results.log
 
 test-posix-external: check-prereqs setup-reports setup-external-tools
 	@echo "$(CYAN)[TEST] Running external POSIX test suite integration...$(RESET)"
-	@if [ -n "$(TEST_MOUNT_POINT)" ]; then \
-		echo "$(BLUE)Using external mount point: $(TEST_MOUNT_POINT)$(RESET)"; \
-		TEST_MOUNT_POINT="$(TEST_MOUNT_POINT)" TEST_SKIP_CLUSTER_SETUP="true" \
-		go test -v -timeout $(TEST_TIMEOUT) -run TestExternalPOSIXSuites $(POSIX_EXTERNAL_TESTS) 2>&1 | \
-		tee $(REPORT_DIR)/posix_external_results.log; \
-	else \
-		go test -v -timeout $(TEST_TIMEOUT) -run TestExternalPOSIXSuites $(POSIX_EXTERNAL_TESTS) 2>&1 | \
-		tee $(REPORT_DIR)/posix_external_results.log; \
-	fi
+ifneq ($(TEST_MOUNT_POINT),)
+	@echo "$(BLUE)Using external mount point: $(TEST_MOUNT_POINT)$(RESET)"
+endif
+	@$(GO_TEST_PREFIX) go test -v -timeout $(TEST_TIMEOUT) -run TestExternalPOSIXSuites $(POSIX_EXTERNAL_TESTS) 2>&1 | \
+		tee $(REPORT_DIR)/posix_external_results.log
 
 # Comprehensive test suites
 test-posix-full: test-posix-basic test-posix-extended test-posix-external
@@ -149,17 +143,12 @@ test-posix-full: test-posix-basic test-posix-extended test-posix-external
 
 test-posix-critical: check-prereqs setup-reports
 	@echo "$(CYAN)[TEST] Running critical POSIX compliance tests...$(RESET)"
-	@if [ -n "$(TEST_MOUNT_POINT)" ]; then \
-		echo "$(BLUE)Using external mount point: $(TEST_MOUNT_POINT)$(RESET)"; \
-		TEST_MOUNT_POINT="$(TEST_MOUNT_POINT)" TEST_SKIP_CLUSTER_SETUP="true" \
-		go test -v -timeout 15m \
+ifneq ($(TEST_MOUNT_POINT),)
+	@echo "$(BLUE)Using external mount point: $(TEST_MOUNT_POINT)$(RESET)"
+endif
+	@$(GO_TEST_PREFIX) go test -v -timeout 15m \
 		-run "TestPOSIXCompliance/(FileOperations|DirectoryOperations|PermissionTests|IOOperations)" \
-		. 2>&1 | tee $(REPORT_DIR)/posix_critical_results.log; \
-	else \
-		go test -v -timeout 15m \
-		-run "TestPOSIXCompliance/(FileOperations|DirectoryOperations|PermissionTests|IOOperations)" \
-		. 2>&1 | tee $(REPORT_DIR)/posix_critical_results.log; \
-	fi
+		. 2>&1 | tee $(REPORT_DIR)/posix_critical_results.log
 
 test-posix-stress: check-prereqs setup-reports
 	@echo "$(CYAN)[TEST] Running POSIX stress tests...$(RESET)"
@@ -339,11 +328,7 @@ ci-posix-tests: check-prereqs setup-external-tools
 	@$(MAKE) test-posix-critical
 	@$(MAKE) generate-report
 
-# Docker-based testing
-docker-test-posix:
-	@echo "$(BLUE)🐳 Running POSIX tests in Docker...$(RESET)"
-	@docker build -f Dockerfile.posix -t seaweedfs-posix-tests ../..
-	@docker run --rm --privileged -v $(PWD)/$(REPORT_DIR):/reports seaweedfs-posix-tests
+
 
 # Documentation and help
 list-tests:
@@ -405,7 +390,7 @@ help:
 	@echo ""
 	@echo "$(WHITE)CI/CD Integration:$(RESET)"
 	@echo "  $(GREEN)make ci-posix-tests$(RESET)      - Run POSIX tests optimized for CI/CD"
-	@echo "  $(GREEN)make docker-test-posix$(RESET)   - Run tests in Docker container"
+
 
 .PHONY: help check-prereqs check-binary check-fuse check-go setup-reports \
         setup-external-tools setup-pjdfstest setup-nfstest setup-fio \
@@ -414,4 +399,4 @@ help:
         test-pjdfstest test-nfstest-posix test-fio-posix create-fio-configs \
         generate-report generate-html-report generate-text-report generate-json-report \
         clean clean-external-tools clean-all validate fmt lint ci-posix-tests \
-        docker-test-posix list-tests test-info
+        list-tests test-info
