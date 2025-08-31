@@ -1,4 +1,4 @@
-package fuse_test
+package fuse
 
 import (
 	"os"
@@ -60,10 +60,6 @@ func (s *POSIXExtendedTestSuite) TestExtendedAttributes(t *testing.T) {
 		err := os.WriteFile(testFile, []byte("xattr test"), 0644)
 		require.NoError(t, err)
 
-		// Set extended attribute
-		attrName := "user.test_attr"
-		attrValue := []byte("test_value")
-
 		// Extended attributes test - platform dependent
 		t.Skip("Extended attributes testing requires platform-specific implementation")
 	})
@@ -75,13 +71,6 @@ func (s *POSIXExtendedTestSuite) TestExtendedAttributes(t *testing.T) {
 		err := os.WriteFile(testFile, []byte("list xattr test"), 0644)
 		require.NoError(t, err)
 
-		// Set multiple extended attributes
-		attrs := map[string][]byte{
-			"user.attr1": []byte("value1"),
-			"user.attr2": []byte("value2"),
-			"user.attr3": []byte("value3"),
-		}
-
 		// List extended attributes test - platform dependent
 		t.Skip("Extended attributes testing requires platform-specific implementation")
 	})
@@ -92,9 +81,6 @@ func (s *POSIXExtendedTestSuite) TestExtendedAttributes(t *testing.T) {
 		// Create test file
 		err := os.WriteFile(testFile, []byte("remove xattr test"), 0644)
 		require.NoError(t, err)
-
-		attrName := "user.removeme"
-		attrValue := []byte("to_be_removed")
 
 		// Remove extended attributes test - platform dependent
 		t.Skip("Extended attributes testing requires platform-specific implementation")
@@ -203,17 +189,6 @@ func (s *POSIXExtendedTestSuite) TestAdvancedIO(t *testing.T) {
 		fd, err := syscall.Open(testFile, syscall.O_CREAT|syscall.O_RDWR, 0644)
 		require.NoError(t, err)
 		defer syscall.Close(fd)
-
-		// Prepare multiple buffers for writev
-		buf1 := []byte("first")
-		buf2 := []byte("second")
-		buf3 := []byte("third")
-
-		iovecs := []syscall.Iovec{
-			{Base: &buf1[0], Len: uint64(len(buf1))},
-			{Base: &buf2[0], Len: uint64(len(buf2))},
-			{Base: &buf3[0], Len: uint64(len(buf3))},
-		}
 
 		// Vectored I/O test - requires platform-specific implementation
 		t.Skip("Vectored I/O testing requires platform-specific implementation")
@@ -382,35 +357,9 @@ func (s *POSIXExtendedTestSuite) TestMemoryMapping(t *testing.T) {
 
 // TestDirectIO tests direct I/O operations
 func (s *POSIXExtendedTestSuite) TestDirectIO(t *testing.T) {
-	mountPoint := s.framework.GetMountPoint()
-
 	t.Run("DirectIO", func(t *testing.T) {
-		testFile := filepath.Join(mountPoint, "direct_io_test.txt")
-
 		// Direct I/O is platform dependent and may not be supported
 		t.Skip("Direct I/O testing requires platform-specific implementation")
-
-		// For direct I/O, buffer must be aligned
-		const blockSize = 4096
-		alignedBuffer := make([]byte, blockSize)
-		for i := range alignedBuffer {
-			alignedBuffer[i] = byte(i % 256)
-		}
-
-		// Write with direct I/O
-		n, err := syscall.Write(fd, alignedBuffer)
-		require.NoError(t, err)
-		require.Equal(t, blockSize, n)
-
-		// Read back with direct I/O
-		_, err = syscall.Seek(fd, 0, 0)
-		require.NoError(t, err)
-
-		readBuffer := make([]byte, blockSize)
-		n, err = syscall.Read(fd, readBuffer)
-		require.NoError(t, err)
-		require.Equal(t, blockSize, n)
-		require.Equal(t, alignedBuffer, readBuffer)
 	})
 }
 

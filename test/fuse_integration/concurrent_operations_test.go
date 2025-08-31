@@ -1,4 +1,4 @@
-package fuse_test
+package fuse
 
 import (
 	"bytes"
@@ -393,6 +393,9 @@ func testHighFrequencySmallWrites(t *testing.T, framework *FuseTestFramework) {
 		require.NoError(t, err)
 	}
 	file.Close()
+
+	// Calculate expected total size
+	totalSize := int64(numWrites * writeSize)
 
 	// Verify file size
 	info, err := os.Stat(mountPath)
