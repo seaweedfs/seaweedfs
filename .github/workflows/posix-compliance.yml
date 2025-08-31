@@ -85,10 +85,23 @@ jobs:
     
     - name: Set up user permissions for FUSE
       run: |
+        # Create fuse group if it doesn't exist
+        sudo groupadd -f fuse
+        
+        # Add user to fuse group
         sudo usermod -a -G fuse $USER
+        
+        # Set permissions on FUSE device
         sudo chmod 666 /dev/fuse
+        
         # Ensure fuse module is loaded
         sudo modprobe fuse || true
+        
+        # Verify setup
+        echo "FUSE setup verification:"
+        ls -la /dev/fuse
+        groups $USER | grep fuse || echo "User not in fuse group yet (will be effective after login)"
+        lsmod | grep fuse || echo "FUSE module not loaded"
     
     - name: Install external test tools
       if: ${{ github.event.inputs.enable_external_tests == 'true' }}
