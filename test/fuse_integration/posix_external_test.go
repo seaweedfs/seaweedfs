@@ -479,9 +479,8 @@ func (s *ExternalPOSIXTestSuite) testEdgeCases(t *testing.T, mountPoint string) 
 		require.Error(t, err)
 		// Verify the error is specifically about the target being a directory
 		var pathErr *os.PathError
-		if require.ErrorAs(t, err, &pathErr) {
-			require.Equal(t, syscall.EISDIR, pathErr.Err)
-		}
+		require.ErrorAs(t, err, &pathErr)
+		require.Equal(t, syscall.EISDIR, pathErr.Err)
 	})
 
 	t.Run("VeryLongFileName", func(t *testing.T) {
