@@ -289,7 +289,7 @@ make -f posix_Makefile setup-pjdfstest
 make -f posix_Makefile test-pjdfstest
 ```
 
-#### nfstest
+#### nfstest_posix
 ```bash
 # Install and run nfstest_posix
 make -f posix_Makefile setup-nfstest

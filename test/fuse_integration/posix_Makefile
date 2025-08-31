@@ -193,17 +193,18 @@ endif
 	@echo "$(GREEN)[COVERAGE] Coverage report generated: $(REPORT_DIR)/posix_coverage.html$(RESET)"
 
 # External tool tests
-test-pjdfstest: setup-external-tools
+test-pjdfstest: setup-pjdfstest setup-reports
 	@echo "$(CYAN)[TEST] Running pjdfstest suite...$(RESET)"
 	@if [ -d "$(EXTERNAL_TOOLS_DIR)/pjdfstest" ]; then \
-		cd $(EXTERNAL_TOOLS_DIR)/pjdfstest && \
-		prove -r tests/ 2>&1 | tee ../../$(REPORT_DIR)/pjdfstest_results.log; \
+		mkdir -p $(MOUNT_POINT)/pjdfstest_workdir; \
+		cd $(MOUNT_POINT)/pjdfstest_workdir && \
+		prove -r $(CURDIR)/$(EXTERNAL_TOOLS_DIR)/pjdfstest/tests/ 2>&1 | tee $(CURDIR)/$(REPORT_DIR)/pjdfstest_results.log; \
 	else \
 		echo "$(RED)❌ pjdfstest not setup$(RESET)"; \
 		exit 1; \
 	fi
 
-test-nfstest-posix:
+test-nfstest-posix: setup-nfstest setup-reports
 	@echo "$(CYAN)[TEST] Running nfstest_posix...$(RESET)"
 	@if command -v nfstest_posix >/dev/null 2>&1; then \
 		mkdir -p $(MOUNT_POINT); \
