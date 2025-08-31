@@ -9,15 +9,23 @@ import (
 
 // MockChunkCache for testing
 type MockChunkCache struct{}
+
 func (m *MockChunkCache) HasChunk(fileId string, chunkOffset int64) bool { return false }
-func (m *MockChunkCache) IsInCache(fileId string, forRead bool) bool { return false }
-func (m *MockChunkCache) ReadChunk(fileId string, chunkOffset int64, buffer []byte) (int, error) { return 0, nil }
-func (m *MockChunkCache) ReadChunkAt(buffer []byte, fileId string, offset uint64) (int, error) { return 0, nil }
-func (m *MockChunkCache) WriteChunk(fileId string, chunkOffset int64, buffer []byte) error { return nil }
-func (m *MockChunkCache) DeleteFileChunks(fileId string) {}
-func (m *MockChunkCache) GetMetrics() interface{} { return struct{}{} } // Return empty struct
-func (m *MockChunkCache) GetMaxFilePartSizeInCache() uint64 { return 64 * 1024 * 1024 } // 64MB default
-func (m *MockChunkCache) Shutdown() {}
+func (m *MockChunkCache) IsInCache(fileId string, forRead bool) bool     { return false }
+func (m *MockChunkCache) ReadChunk(fileId string, chunkOffset int64, buffer []byte) (int, error) {
+	return 0, nil
+}
+func (m *MockChunkCache) ReadChunkAt(buffer []byte, fileId string, offset uint64) (int, error) {
+	return 0, nil
+}
+func (m *MockChunkCache) WriteChunk(fileId string, chunkOffset int64, buffer []byte) error {
+	return nil
+}
+func (m *MockChunkCache) SetChunk(fileId string, buffer []byte) {}
+func (m *MockChunkCache) DeleteFileChunks(fileId string)        {}
+func (m *MockChunkCache) GetMetrics() interface{}               { return struct{}{} }       // Return empty struct
+func (m *MockChunkCache) GetMaxFilePartSizeInCache() uint64     { return 64 * 1024 * 1024 } // 64MB default
+func (m *MockChunkCache) Shutdown()                             {}
 
 // MockLookupFileId for testing
 func MockLookupFileId(ctx context.Context, fileId string) (targetUrls []string, err error) {
@@ -79,9 +87,9 @@ func TestPhase4_GPUMemoryCoordinator_Basic(t *testing.T) {
 	if coordinator == nil {
 		t.Fatal("Should create GPU coordinator")
 	}
-	
+
 	t.Log("GPU coordinator created successfully (detailed GPU operations would require actual GPU hardware)")
-	
+
 	// Test that it doesn't crash on basic operations
 	t.Logf("GPU coordinator basic functionality verified")
 
@@ -117,9 +125,9 @@ func TestPhase4_ServingOptimizer_Basic(t *testing.T) {
 
 	// Test model registration (basic structure)
 	modelInfo := &ModelServingInfo{
-		ModelID:       "resnet50-v1",
-		ModelPath:     "/models/resnet50.pth",
-		Framework:     "pytorch",
+		ModelID:        "resnet50-v1",
+		ModelPath:      "/models/resnet50.pth",
+		Framework:      "pytorch",
 		ServingPattern: ServingPatternRealtimeInference,
 	}
 
@@ -158,19 +166,19 @@ func TestPhase4_TensorOptimizer_Basic(t *testing.T) {
 func TestPhase4_MLOptimization_AdvancedIntegration(t *testing.T) {
 	// Create ML configuration with all Phase 4 features enabled
 	config := &MLConfig{
-		PrefetchWorkers:           8,
-		PrefetchQueueSize:         100,
-		PrefetchTimeout:          30 * time.Second,
-		EnableMLHeuristics:       true,
-		SequentialThreshold:      3,
-		ConfidenceThreshold:     0.6,
-		MaxPrefetchAhead:        8,
-		PrefetchBatchSize:       3,
+		PrefetchWorkers:            8,
+		PrefetchQueueSize:          100,
+		PrefetchTimeout:            30 * time.Second,
+		EnableMLHeuristics:         true,
+		SequentialThreshold:        3,
+		ConfidenceThreshold:        0.6,
+		MaxPrefetchAhead:           8,
+		PrefetchBatchSize:          3,
 		EnableWorkloadCoordination: true,
-		EnableGPUCoordination:     true,
-		EnableDistributedTraining: true,
-		EnableModelServing:        true,
-		EnableTensorOptimization:  true,
+		EnableGPUCoordination:      true,
+		EnableDistributedTraining:  true,
+		EnableModelServing:         true,
+		EnableTensorOptimization:   true,
 	}
 
 	mockChunkCache := &MockChunkCache{}
@@ -203,9 +211,9 @@ func TestPhase4_MLOptimization_AdvancedIntegration(t *testing.T) {
 
 	// Register model for serving optimization
 	modelInfo := &ModelServingInfo{
-		ModelID:       "bert-large",
-		ModelPath:     "/models/bert-large.bin",
-		Framework:     "transformers",
+		ModelID:        "bert-large",
+		ModelPath:      "/models/bert-large.bin",
+		Framework:      "transformers",
 		ServingPattern: ServingPatternRealtimeInference,
 	}
 	mlOpt.ServingOptimizer.RegisterModel(modelInfo)
@@ -255,7 +263,7 @@ func TestPhase4_ConcurrentOperations(t *testing.T) {
 		}(i)
 	}
 
-	// Concurrent GPU coordination operations  
+	// Concurrent GPU coordination operations
 	for i := 0; i < numConcurrentOps; i++ {
 		go func(index int) {
 			defer wg.Done()
@@ -283,9 +291,9 @@ func TestPhase4_ConcurrentOperations(t *testing.T) {
 		go func(index int) {
 			defer wg.Done()
 			modelInfo := &ModelServingInfo{
-				ModelID:       "concurrent-model-" + string(rune('0'+index)),
-				ModelPath:     "/models/model-" + string(rune('0'+index)) + ".bin",
-				Framework:     "pytorch",
+				ModelID:        "concurrent-model-" + string(rune('0'+index)),
+				ModelPath:      "/models/model-" + string(rune('0'+index)) + ".bin",
+				Framework:      "pytorch",
 				ServingPattern: ServingPatternRealtimeInference,
 			}
 			mlOpt.ServingOptimizer.RegisterModel(modelInfo)
@@ -324,7 +332,7 @@ func TestPhase4_ConcurrentOperations(t *testing.T) {
 func TestPhase4_PerformanceImpact(t *testing.T) {
 	// Test with Phase 4 features disabled
 	configBasic := DefaultMLConfig()
-	
+
 	mockChunkCache := &MockChunkCache{}
 	startTime := time.Now()
 	mlOptBasic := NewMLOptimization(configBasic, mockChunkCache, MockLookupFileId)
@@ -346,7 +354,7 @@ func TestPhase4_PerformanceImpact(t *testing.T) {
 
 	// Performance impact should be reasonable (less than 10x slower)
 	performanceRatio := float64(advancedInitTime) / float64(basicInitTime)
-	t.Logf("Basic init time: %v, Advanced init time: %v, Ratio: %.2f", 
+	t.Logf("Basic init time: %v, Advanced init time: %v, Ratio: %.2f",
 		basicInitTime, advancedInitTime, performanceRatio)
 
 	if performanceRatio > 10.0 {
@@ -357,7 +365,7 @@ func TestPhase4_PerformanceImpact(t *testing.T) {
 	basicMemory := estimateMemoryUsage(mlOptBasic)
 	advancedMemory := estimateMemoryUsage(mlOptAdvanced)
 	memoryRatio := float64(advancedMemory) / float64(basicMemory)
-	
+
 	t.Logf("Basic memory: %d bytes, Advanced memory: %d bytes, Ratio: %.2f",
 		basicMemory, advancedMemory, memoryRatio)
 
@@ -371,7 +379,7 @@ func TestPhase4_PerformanceImpact(t *testing.T) {
 // Helper function to estimate memory usage (simplified)
 func estimateMemoryUsage(mlOpt *MLOptimization) int64 {
 	baseSize := int64(1024 * 1024) // 1MB base
-	
+
 	if mlOpt.WorkloadCoordinator != nil {
 		baseSize += 512 * 1024 // 512KB
 	}
@@ -387,7 +395,7 @@ func estimateMemoryUsage(mlOpt *MLOptimization) int64 {
 	if mlOpt.TensorOptimizer != nil {
 		baseSize += 256 * 1024 // 256KB
 	}
-	
+
 	return baseSize
 }
 
@@ -433,9 +441,9 @@ func TestPhase4_ShutdownSequence(t *testing.T) {
 	mlOpt := NewMLOptimization(config, mockChunkCache, MockLookupFileId)
 
 	// Verify all components are running
-	if mlOpt.WorkloadCoordinator == nil || mlOpt.GPUCoordinator == nil || 
-	   mlOpt.DistributedCoordinator == nil || mlOpt.ServingOptimizer == nil ||
-	   mlOpt.TensorOptimizer == nil {
+	if mlOpt.WorkloadCoordinator == nil || mlOpt.GPUCoordinator == nil ||
+		mlOpt.DistributedCoordinator == nil || mlOpt.ServingOptimizer == nil ||
+		mlOpt.TensorOptimizer == nil {
 		t.Fatal("Not all Phase 4 components initialized")
 	}
 
