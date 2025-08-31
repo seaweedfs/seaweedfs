@@ -163,7 +163,7 @@ jobs:
         start_and_wait "volume" "http://127.0.0.1:8080/status" "/tmp/seaweedfs/volume.pid" \
             "weed volume -mserver=127.0.0.1:9333 -ip=127.0.0.1 -port=8080 -dir=/tmp/seaweedfs/volume -max=100"
 
-        start_and_wait "filer" "http://127.0.0.1:8888/dir/status" "/tmp/seaweedfs/filer.pid" \
+        start_and_wait "filer" "http://127.0.0.1:8888/" "/tmp/seaweedfs/filer.pid" \
             "weed filer -master=127.0.0.1:9333 -ip=127.0.0.1 -port=8888"
 
         echo "SeaweedFS cluster status:"
@@ -247,7 +247,7 @@ jobs:
         echo "Verifying SeaweedFS cluster accessibility..."
         curl -sf http://127.0.0.1:9333/cluster/status
         curl -sf http://127.0.0.1:8080/status  
-        curl -sf http://127.0.0.1:8888/dir/status
+        curl -sf http://127.0.0.1:8888/
         
         # Verify mount point
         echo "Mount point: $SEAWEEDFS_MOUNT_POINT"
