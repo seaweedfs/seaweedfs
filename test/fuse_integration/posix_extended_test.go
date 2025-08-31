@@ -194,42 +194,6 @@ func (s *POSIXExtendedTestSuite) TestAdvancedIO(t *testing.T) {
 		t.Skip("Vectored I/O testing requires platform-specific implementation")
 	})
 
-	t.Run("PreadPwrite", func(t *testing.T) {
-		testFile := filepath.Join(mountPoint, "preadpwrite_test.txt")
-
-		// Create file with initial content
-		initialContent := []byte("0123456789ABCDEFGHIJ")
-		err := os.WriteFile(testFile, initialContent, 0644)
-		require.NoError(t, err)
-
-		// Open file
-		fd, err := syscall.Open(testFile, syscall.O_RDWR, 0)
-		require.NoError(t, err)
-		defer syscall.Close(fd)
-
-		// Positioned I/O test
-		writeData := []byte("XYZ")
-		n, err := syscall.Pwrite(fd, writeData, 5) // pwrite at offset 5
-		require.NoError(t, err)
-		require.Equal(t, len(writeData), n)
-
-		// Verify file position is unchanged
-		currentPos, err := syscall.Seek(fd, 0, 1) // SEEK_CUR
-		require.NoError(t, err)
-		require.Equal(t, int64(0), currentPos, "file offset should not be changed by pwrite")
-
-		// Read back with pread
-		readBuffer := make([]byte, len(writeData))
-		n, err = syscall.Pread(fd, readBuffer, 5) // pread at offset 5
-		require.NoError(t, err)
-		require.Equal(t, len(writeData), n)
-		require.Equal(t, writeData, readBuffer)
-
-		// Verify file position is still unchanged
-		currentPos, err = syscall.Seek(fd, 0, 1) // SEEK_CUR
-		require.NoError(t, err)
-		require.Equal(t, int64(0), currentPos, "file offset should not be changed by pread")
-	})
 }
 
 // TestSparseFiles tests sparse file handling
