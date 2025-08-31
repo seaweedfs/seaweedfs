@@ -112,88 +112,44 @@ jobs:
     
     - name: Set up SeaweedFS cluster
       run: |
-        # Create directories for SeaweedFS cluster
+        start_and_wait() {
+            local name=$1
+            local url=$2
+            local pidfile=$3
+            shift 3
+            local cmd="$@"
+
+            echo "Starting $name..."
+            $cmd > "/tmp/seaweedfs/$name.log" 2>&1 &
+            local pid=$!
+            echo $pid > "$pidfile"
+
+            echo "Waiting for $name to start..."
+            for i in {1..30}; do
+                if curl -sf "$url" > /dev/null 2>&1; then
+                    echo "$name is ready"
+                    return 0
+                fi
+                if [ $i -eq 30 ]; then
+                    echo "$name failed to start"
+                    cat "/tmp/seaweedfs/$name.log"
+                    exit 1
+                fi
+                sleep 2
+            done
+        }
+
         mkdir -p /tmp/seaweedfs/{master,volume,filer,mount}
-        
-        # Start SeaweedFS master server in background
-        echo "Starting SeaweedFS master..."
-        weed master \
-          -ip=127.0.0.1 \
-          -port=9333 \
-          -mdir=/tmp/seaweedfs/master \
-          -raftBootstrap=true \
-          > /tmp/seaweedfs/master.log 2>&1 &
-        MASTER_PID=$!
-        echo $MASTER_PID > /tmp/seaweedfs/master.pid
-        
-        # Wait for master to be ready
-        echo "Waiting for master to start..."
-        for i in {1..30}; do
-          if curl -sf http://127.0.0.1:9333/cluster/status > /dev/null 2>&1; then
-            echo "Master is ready"
-            break
-          fi
-          if [ $i -eq 30 ]; then
-            echo "Master failed to start"
-            cat /tmp/seaweedfs/master.log
-            exit 1
-          fi
-          sleep 2
-        done
-        
-        # Start volume server in background  
-        echo "Starting SeaweedFS volume server..."
-        weed volume \
-          -mserver=127.0.0.1:9333 \
-          -ip=127.0.0.1 \
-          -port=8080 \
-          -dir=/tmp/seaweedfs/volume \
-          -max=100 \
-          > /tmp/seaweedfs/volume.log 2>&1 &
-        VOLUME_PID=$!
-        echo $VOLUME_PID > /tmp/seaweedfs/volume.pid
-        
-        # Wait for volume server to be ready
-        echo "Waiting for volume server to start..."
-        for i in {1..30}; do
-          if curl -sf http://127.0.0.1:8080/status > /dev/null 2>&1; then
-            echo "Volume server is ready"
-            break
-          fi
-          if [ $i -eq 30 ]; then
-            echo "Volume server failed to start"
-            cat /tmp/seaweedfs/volume.log
-            exit 1
-          fi
-          sleep 2
-        done
-        
-        # Start filer server in background
-        echo "Starting SeaweedFS filer..."
-        weed filer \
-          -master=127.0.0.1:9333 \
-          -ip=127.0.0.1 \
-          -port=8888 \
-          > /tmp/seaweedfs/filer.log 2>&1 &
-        FILER_PID=$!
-        echo $FILER_PID > /tmp/seaweedfs/filer.pid
-        
-        # Wait for filer to be ready
-        echo "Waiting for filer to start..."
-        for i in {1..30}; do
-          if curl -sf http://127.0.0.1:8888/dir/status > /dev/null 2>&1; then
-            echo "Filer is ready"
-            break
-          fi
-          if [ $i -eq 30 ]; then
-            echo "Filer failed to start"
-            cat /tmp/seaweedfs/filer.log
-            exit 1
-          fi
-          sleep 2
-        done
-        
-        # Show cluster status
+
+        start_and_wait "master" "http://127.0.0.1:9333/cluster/status" "/tmp/seaweedfs/master.pid" \
+            "weed master -ip=127.0.0.1 -port=9333 -mdir=/tmp/seaweedfs/master -raftBootstrap=true"
+
+        start_and_wait "volume" "http://127.0.0.1:8080/status" "/tmp/seaweedfs/volume.pid" \
+            "weed volume -mserver=127.0.0.1:9333 -ip=127.0.0.1 -port=8080 -dir=/tmp/seaweedfs/volume -max=100"
+
+        start_and_wait "filer" "http://127.0.0.1:8888/dir/status" "/tmp/seaweedfs/filer.pid" \
+            "weed filer -master=127.0.0.1:9333 -ip=127.0.0.1 -port=8888"
+
         echo "SeaweedFS cluster status:"
         curl -s http://127.0.0.1:9333/cluster/status || true
     
@@ -339,67 +295,38 @@ jobs:
     - name: Cleanup SeaweedFS cluster and FUSE mount
       if: always()
       run: |
+        stop_process() {
+            local name=$1
+            local pidfile=$2
+            if [ -f "$pidfile" ]; then
+                local pid=$(cat "$pidfile")
+                if kill -0 $pid 2>/dev/null; then
+                    echo "Stopping $name process (PID: $pid)..."
+                    kill -TERM $pid || true
+                    sleep 2
+                    kill -KILL $pid 2>/dev/null || true
+                fi
+            fi
+        }
+
         echo "Cleaning up SeaweedFS cluster and FUSE mount..."
         
-        # Unmount FUSE filesystem
         MOUNT_POINT="/tmp/seaweedfs/mount"
         if mountpoint -q $MOUNT_POINT 2>/dev/null; then
           echo "Unmounting FUSE filesystem..."
           fusermount -u $MOUNT_POINT || umount $MOUNT_POINT || true
         fi
         
-        # Stop mount process
-        if [ -f /tmp/seaweedfs/mount.pid ]; then
-          MOUNT_PID=$(cat /tmp/seaweedfs/mount.pid)
-          if kill -0 $MOUNT_PID 2>/dev/null; then
-            echo "Stopping mount process (PID: $MOUNT_PID)..."
-            kill -TERM $MOUNT_PID || true
-            sleep 2
-            kill -KILL $MOUNT_PID 2>/dev/null || true
-          fi
-        fi
+        stop_process "mount" "/tmp/seaweedfs/mount.pid"
+        stop_process "filer" "/tmp/seaweedfs/filer.pid"
+        stop_process "volume" "/tmp/seaweedfs/volume.pid"
+        stop_process "master" "/tmp/seaweedfs/master.pid"
         
-        # Stop filer process
-        if [ -f /tmp/seaweedfs/filer.pid ]; then
-          FILER_PID=$(cat /tmp/seaweedfs/filer.pid)
-          if kill -0 $FILER_PID 2>/dev/null; then
-            echo "Stopping filer process (PID: $FILER_PID)..."
-            kill -TERM $FILER_PID || true
-            sleep 2
-            kill -KILL $FILER_PID 2>/dev/null || true
-          fi
-        fi
-        
-        # Stop volume process
-        if [ -f /tmp/seaweedfs/volume.pid ]; then
-          VOLUME_PID=$(cat /tmp/seaweedfs/volume.pid)
-          if kill -0 $VOLUME_PID 2>/dev/null; then
-            echo "Stopping volume process (PID: $VOLUME_PID)..."
-            kill -TERM $VOLUME_PID || true
-            sleep 2
-            kill -KILL $VOLUME_PID 2>/dev/null || true
-          fi
-        fi
-        
-        # Stop master process
-        if [ -f /tmp/seaweedfs/master.pid ]; then
-          MASTER_PID=$(cat /tmp/seaweedfs/master.pid)
-          if kill -0 $MASTER_PID 2>/dev/null; then
-            echo "Stopping master process (PID: $MASTER_PID)..."
-            kill -TERM $MASTER_PID || true
-            sleep 2
-            kill -KILL $MASTER_PID 2>/dev/null || true
-          fi
-        fi
-        
-        # Kill any remaining weed processes
         pkill -f "weed " || true
         
-        # Clean up any stale mounts
         fusermount -u $MOUNT_POINT 2>/dev/null || true
         umount $MOUNT_POINT 2>/dev/null || true
         
-        # Remove temporary directories
         rm -rf /tmp/seaweedfs || true
         
         echo "Cleanup completed"
@@ -603,14 +530,19 @@ jobs:
       with:
         go-version: ${{ env.GO_VERSION }}
     
-    - name: Install security tools
-      run: |
-        go install github.com/securecodewarrior/gosec/v2/cmd/gosec@latest
+    - name: Install gosec
+      run: go install github.com/securecodewarrior/gosec/v2/cmd/gosec@v2.18.2
     
     - name: Run security analysis on FUSE code
       run: |
         # Analyze mount and FUSE-related code for security issues
+        echo "Running gosec security analysis..."
         gosec -fmt json -out gosec-report.json -severity medium ./weed/mount/... ./weed/command/mount* ./weed/command/fuse* || true
+        
+        if [ ! -f gosec-report.json ]; then
+          echo "Warning: gosec report not found, creating placeholder"
+          echo '{"issues": [], "stats": {"files": 0, "lines": 0, "nosec": 0, "found": 0}, "error": "no report generated"}' > gosec-report.json
+        fi
     
     - name: Upload security analysis results
       uses: actions/upload-artifact@v4
