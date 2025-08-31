@@ -64,6 +64,10 @@ func (s *ExternalPOSIXTestSuite) TestPjdFsTest(t *testing.T) {
 	// Check if pjdfstest is available
 	_, err := exec.LookPath("pjdfstest")
 	if err != nil {
+		// For comprehensive POSIX compliance testing, external tools should be mandatory
+		if os.Getenv("POSIX_REQUIRE_EXTERNAL_TOOLS") == "true" {
+			t.Fatalf("pjdfstest is required for comprehensive POSIX compliance testing but not found. Install from: https://github.com/pjd/pjdfstest")
+		}
 		t.Skip("pjdfstest not found. Install from: https://github.com/pjd/pjdfstest")
 	}
 
@@ -119,6 +123,10 @@ func (s *ExternalPOSIXTestSuite) TestNFSTestPOSIX(t *testing.T) {
 	// Check if nfstest_posix is available
 	_, err := exec.LookPath("nfstest_posix")
 	if err != nil {
+		// For comprehensive POSIX compliance testing, external tools should be mandatory
+		if os.Getenv("POSIX_REQUIRE_EXTERNAL_TOOLS") == "true" {
+			t.Fatalf("nfstest_posix is required for comprehensive POSIX compliance testing but not found. Install via: pip install nfstest")
+		}
 		t.Skip("nfstest_posix not found. Install via: pip install nfstest")
 	}
 

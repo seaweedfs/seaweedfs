@@ -240,7 +240,11 @@ jobs:
         
         # Set up external tools if requested
         if [ "${{ github.event.inputs.enable_external_tests }}" = "true" ]; then
-          make -f posix_Makefile setup-external-tools || true
+          echo "Setting up external POSIX testing tools..."
+          make -f posix_Makefile setup-external-tools
+          # Make external tools mandatory when explicitly requested
+          export POSIX_REQUIRE_EXTERNAL_TOOLS="true"
+          echo "POSIX_REQUIRE_EXTERNAL_TOOLS=true" >> $GITHUB_ENV
         fi
         
         # Verify SeaweedFS cluster is accessible
@@ -277,6 +281,7 @@ jobs:
       id: posix-tests
       env:
         SEAWEEDFS_MOUNT_POINT: ${{ env.SEAWEEDFS_MOUNT_POINT }}
+        POSIX_REQUIRE_EXTERNAL_TOOLS: ${{ env.POSIX_REQUIRE_EXTERNAL_TOOLS }}
       run: |
         cd test/fuse_integration
         
