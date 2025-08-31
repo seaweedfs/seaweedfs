@@ -484,7 +484,7 @@ jobs:
         fi
     
     - name: Upload test results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always()
       with:
         name: posix-test-results-ubuntu-go${{ matrix.go-version }}-fuse${{ matrix.fuse-version }}
@@ -494,7 +494,7 @@ jobs:
         retention-days: 30
     
     - name: Upload test coverage
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always() && (github.event.inputs.test_type == 'full' || github.event.inputs.test_type == 'extended')
       with:
         name: posix-coverage-ubuntu-go${{ matrix.go-version }}
@@ -503,7 +503,7 @@ jobs:
     
     - name: Comment PR with results
       if: github.event_name == 'pull_request' && always()
-      uses: actions/github-script@v6
+      uses: actions/github-script@v7
       with:
         script: |
           const fs = require('fs');
@@ -581,7 +581,7 @@ jobs:
         make -f posix_Makefile test-posix-critical
     
     - name: Upload macOS test results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always()
       with:
         name: posix-test-results-macos
@@ -613,7 +613,7 @@ jobs:
         gosec -fmt json -out gosec-report.json -severity medium ./weed/mount/... ./weed/command/mount* ./weed/command/fuse* || true
     
     - name: Upload security analysis results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always()
       with:
         name: security-analysis-results
@@ -659,7 +659,7 @@ jobs:
         make -f posix_Makefile test-fio-posix
     
     - name: Store performance baseline
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: performance-baseline-results
         path: |
@@ -698,7 +698,7 @@ jobs:
     
     - name: Create compliance issue if tests fail
       if: failure()
-      uses: actions/github-script@v6
+      uses: actions/github-script@v7
       with:
         script: |
           const issue = await github.rest.issues.create({
