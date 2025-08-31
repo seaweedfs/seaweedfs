@@ -109,9 +109,151 @@ jobs:
         sudo cp ./weed /usr/local/bin/weed
         which weed
         weed version
-
-    - name: Run POSIX compliance tests
-      id: posix-tests
+    
+    - name: Set up SeaweedFS cluster
+      run: |
+        # Create directories for SeaweedFS cluster
+        mkdir -p /tmp/seaweedfs/{master,volume,filer,mount}
+        
+        # Start SeaweedFS master server in background
+        echo "Starting SeaweedFS master..."
+        weed master \
+          -ip=127.0.0.1 \
+          -port=9333 \
+          -mdir=/tmp/seaweedfs/master \
+          -raftBootstrap=true \
+          > /tmp/seaweedfs/master.log 2>&1 &
+        MASTER_PID=$!
+        echo $MASTER_PID > /tmp/seaweedfs/master.pid
+        
+        # Wait for master to be ready
+        echo "Waiting for master to start..."
+        for i in {1..30}; do
+          if curl -sf http://127.0.0.1:9333/cluster/status > /dev/null 2>&1; then
+            echo "Master is ready"
+            break
+          fi
+          if [ $i -eq 30 ]; then
+            echo "Master failed to start"
+            cat /tmp/seaweedfs/master.log
+            exit 1
+          fi
+          sleep 2
+        done
+        
+        # Start volume server in background  
+        echo "Starting SeaweedFS volume server..."
+        weed volume \
+          -mserver=127.0.0.1:9333 \
+          -ip=127.0.0.1 \
+          -port=8080 \
+          -dir=/tmp/seaweedfs/volume \
+          -max=100 \
+          > /tmp/seaweedfs/volume.log 2>&1 &
+        VOLUME_PID=$!
+        echo $VOLUME_PID > /tmp/seaweedfs/volume.pid
+        
+        # Wait for volume server to be ready
+        echo "Waiting for volume server to start..."
+        for i in {1..30}; do
+          if curl -sf http://127.0.0.1:8080/status > /dev/null 2>&1; then
+            echo "Volume server is ready"
+            break
+          fi
+          if [ $i -eq 30 ]; then
+            echo "Volume server failed to start"
+            cat /tmp/seaweedfs/volume.log
+            exit 1
+          fi
+          sleep 2
+        done
+        
+        # Start filer server in background
+        echo "Starting SeaweedFS filer..."
+        weed filer \
+          -master=127.0.0.1:9333 \
+          -ip=127.0.0.1 \
+          -port=8888 \
+          > /tmp/seaweedfs/filer.log 2>&1 &
+        FILER_PID=$!
+        echo $FILER_PID > /tmp/seaweedfs/filer.pid
+        
+        # Wait for filer to be ready
+        echo "Waiting for filer to start..."
+        for i in {1..30}; do
+          if curl -sf http://127.0.0.1:8888/dir/status > /dev/null 2>&1; then
+            echo "Filer is ready"
+            break
+          fi
+          if [ $i -eq 30 ]; then
+            echo "Filer failed to start"
+            cat /tmp/seaweedfs/filer.log
+            exit 1
+          fi
+          sleep 2
+        done
+        
+        # Show cluster status
+        echo "SeaweedFS cluster status:"
+        curl -s http://127.0.0.1:9333/cluster/status || true
+    
+    - name: Set up FUSE mount
+      run: |
+        # Create mount point
+        MOUNT_POINT="/tmp/seaweedfs/mount"
+        mkdir -p $MOUNT_POINT
+        
+        echo "Mounting SeaweedFS FUSE filesystem..."
+        # Mount SeaweedFS FUSE filesystem in background
+        weed mount \
+          -filer=127.0.0.1:8888 \
+          -dir=$MOUNT_POINT \
+          -filer.path=/ \
+          -dirAutoCreate=true \
+          -allowOthers=true \
+          -nonempty=true \
+          > /tmp/seaweedfs/mount.log 2>&1 &
+        MOUNT_PID=$!
+        echo $MOUNT_PID > /tmp/seaweedfs/mount.pid
+        
+        # Wait for mount to be ready
+        echo "Waiting for FUSE mount to be ready..."
+        for i in {1..30}; do
+          if mountpoint -q $MOUNT_POINT 2>/dev/null; then
+            echo "FUSE mount is ready"
+            break
+          fi
+          # Alternative check - try to list the directory
+          if ls -la $MOUNT_POINT > /dev/null 2>&1; then
+            echo "FUSE mount is ready (directory accessible)"
+            break
+          fi
+          if [ $i -eq 30 ]; then
+            echo "FUSE mount failed to be ready"
+            cat /tmp/seaweedfs/mount.log
+            echo "Mount status:"
+            mount | grep fuse || echo "No FUSE mounts found"
+            ps aux | grep weed || echo "No weed processes found"
+            exit 1
+          fi
+          sleep 2
+        done
+        
+        # Verify mount is working
+        echo "Testing FUSE mount functionality..."
+        echo "test" > $MOUNT_POINT/test_file.txt
+        if [ "$(cat $MOUNT_POINT/test_file.txt)" = "test" ]; then
+          echo "FUSE mount is working correctly"
+          rm $MOUNT_POINT/test_file.txt
+        else
+          echo "FUSE mount is not working properly"
+          exit 1
+        fi
+        
+        # Export mount point for tests
+        echo "SEAWEEDFS_MOUNT_POINT=$MOUNT_POINT" >> $GITHUB_ENV
+    
+    - name: Set up test environment
       run: |
         cd test/fuse_integration
         
@@ -129,6 +271,23 @@ jobs:
           make -f posix_Makefile setup-external-tools || true
         fi
         
+        # Verify SeaweedFS cluster is accessible
+        echo "Verifying SeaweedFS cluster accessibility..."
+        curl -sf http://127.0.0.1:9333/cluster/status
+        curl -sf http://127.0.0.1:8080/status  
+        curl -sf http://127.0.0.1:8888/dir/status
+        
+        # Verify mount point
+        echo "Mount point: $SEAWEEDFS_MOUNT_POINT"
+        ls -la $SEAWEEDFS_MOUNT_POINT
+    
+    - name: Run POSIX compliance tests
+      id: posix-tests
+      env:
+        SEAWEEDFS_MOUNT_POINT: ${{ env.SEAWEEDFS_MOUNT_POINT }}
+      run: |
+        cd test/fuse_integration
+        
         # Determine which tests to run
         TEST_TYPE="${{ github.event.inputs.test_type }}"
         if [ -z "$TEST_TYPE" ]; then
@@ -136,6 +295,11 @@ jobs:
         fi
         
         echo "Running POSIX tests: $TEST_TYPE"
+        echo "Using mount point: $SEAWEEDFS_MOUNT_POINT"
+        
+        # Set test configuration to use our mounted filesystem
+        export TEST_MOUNT_POINT="$SEAWEEDFS_MOUNT_POINT"
+        export TEST_SKIP_CLUSTER_SETUP="true"
         
         case "$TEST_TYPE" in
           "critical")
@@ -171,6 +335,153 @@ jobs:
       run: |
         cd test/fuse_integration
         make -f posix_Makefile generate-report
+    
+    - name: Cleanup SeaweedFS cluster and FUSE mount
+      if: always()
+      run: |
+        echo "Cleaning up SeaweedFS cluster and FUSE mount..."
+        
+        # Unmount FUSE filesystem
+        MOUNT_POINT="/tmp/seaweedfs/mount"
+        if mountpoint -q $MOUNT_POINT 2>/dev/null; then
+          echo "Unmounting FUSE filesystem..."
+          fusermount -u $MOUNT_POINT || umount $MOUNT_POINT || true
+        fi
+        
+        # Stop mount process
+        if [ -f /tmp/seaweedfs/mount.pid ]; then
+          MOUNT_PID=$(cat /tmp/seaweedfs/mount.pid)
+          if kill -0 $MOUNT_PID 2>/dev/null; then
+            echo "Stopping mount process (PID: $MOUNT_PID)..."
+            kill -TERM $MOUNT_PID || true
+            sleep 2
+            kill -KILL $MOUNT_PID 2>/dev/null || true
+          fi
+        fi
+        
+        # Stop filer process
+        if [ -f /tmp/seaweedfs/filer.pid ]; then
+          FILER_PID=$(cat /tmp/seaweedfs/filer.pid)
+          if kill -0 $FILER_PID 2>/dev/null; then
+            echo "Stopping filer process (PID: $FILER_PID)..."
+            kill -TERM $FILER_PID || true
+            sleep 2
+            kill -KILL $FILER_PID 2>/dev/null || true
+          fi
+        fi
+        
+        # Stop volume process
+        if [ -f /tmp/seaweedfs/volume.pid ]; then
+          VOLUME_PID=$(cat /tmp/seaweedfs/volume.pid)
+          if kill -0 $VOLUME_PID 2>/dev/null; then
+            echo "Stopping volume process (PID: $VOLUME_PID)..."
+            kill -TERM $VOLUME_PID || true
+            sleep 2
+            kill -KILL $VOLUME_PID 2>/dev/null || true
+          fi
+        fi
+        
+        # Stop master process
+        if [ -f /tmp/seaweedfs/master.pid ]; then
+          MASTER_PID=$(cat /tmp/seaweedfs/master.pid)
+          if kill -0 $MASTER_PID 2>/dev/null; then
+            echo "Stopping master process (PID: $MASTER_PID)..."
+            kill -TERM $MASTER_PID || true
+            sleep 2
+            kill -KILL $MASTER_PID 2>/dev/null || true
+          fi
+        fi
+        
+        # Kill any remaining weed processes
+        pkill -f "weed " || true
+        
+        # Clean up any stale mounts
+        fusermount -u $MOUNT_POINT 2>/dev/null || true
+        umount $MOUNT_POINT 2>/dev/null || true
+        
+        # Remove temporary directories
+        rm -rf /tmp/seaweedfs || true
+        
+        echo "Cleanup completed"
+    
+    - name: Collect system information for debugging
+      if: failure()
+      run: |
+        cd test/fuse_integration
+        mkdir -p reports/debug
+        
+        echo "System Information" > reports/debug/system_info.txt
+        uname -a >> reports/debug/system_info.txt
+        echo "" >> reports/debug/system_info.txt
+        
+        echo "Mount Information" >> reports/debug/system_info.txt
+        mount >> reports/debug/system_info.txt
+        echo "" >> reports/debug/system_info.txt
+        
+        echo "Disk Space" >> reports/debug/system_info.txt
+        df -h >> reports/debug/system_info.txt
+        echo "" >> reports/debug/system_info.txt
+        
+        echo "Memory Information" >> reports/debug/system_info.txt
+        free -h >> reports/debug/system_info.txt
+        echo "" >> reports/debug/system_info.txt
+        
+        echo "FUSE Information" >> reports/debug/system_info.txt
+        ls -la /dev/fuse >> reports/debug/system_info.txt
+        lsmod | grep fuse >> reports/debug/system_info.txt
+        echo "" >> reports/debug/system_info.txt
+        
+        echo "SeaweedFS Version" >> reports/debug/system_info.txt
+        weed version >> reports/debug/system_info.txt
+        echo "" >> reports/debug/system_info.txt
+        
+        echo "Go Version" >> reports/debug/system_info.txt
+        go version >> reports/debug/system_info.txt
+        echo "" >> reports/debug/system_info.txt
+        
+        echo "Running Processes" >> reports/debug/system_info.txt
+        ps aux | grep -E "(weed|fuse)" >> reports/debug/system_info.txt
+        echo "" >> reports/debug/system_info.txt
+        
+        # Collect SeaweedFS service logs
+        echo "=== SeaweedFS Service Logs ===" >> reports/debug/system_info.txt
+        if [ -f /tmp/seaweedfs/master.log ]; then
+          echo "Master Log:" >> reports/debug/system_info.txt
+          tail -50 /tmp/seaweedfs/master.log >> reports/debug/system_info.txt
+          echo "" >> reports/debug/system_info.txt
+        fi
+        
+        if [ -f /tmp/seaweedfs/volume.log ]; then
+          echo "Volume Log:" >> reports/debug/system_info.txt
+          tail -50 /tmp/seaweedfs/volume.log >> reports/debug/system_info.txt
+          echo "" >> reports/debug/system_info.txt
+        fi
+        
+        if [ -f /tmp/seaweedfs/filer.log ]; then
+          echo "Filer Log:" >> reports/debug/system_info.txt
+          tail -50 /tmp/seaweedfs/filer.log >> reports/debug/system_info.txt
+          echo "" >> reports/debug/system_info.txt
+        fi
+        
+        if [ -f /tmp/seaweedfs/mount.log ]; then
+          echo "Mount Log:" >> reports/debug/system_info.txt
+          tail -50 /tmp/seaweedfs/mount.log >> reports/debug/system_info.txt
+          echo "" >> reports/debug/system_info.txt
+        fi
+        
+        # Copy full logs as separate files
+        if [ -f /tmp/seaweedfs/master.log ]; then
+          cp /tmp/seaweedfs/master.log reports/debug/master.log
+        fi
+        if [ -f /tmp/seaweedfs/volume.log ]; then
+          cp /tmp/seaweedfs/volume.log reports/debug/volume.log  
+        fi
+        if [ -f /tmp/seaweedfs/filer.log ]; then
+          cp /tmp/seaweedfs/filer.log reports/debug/filer.log
+        fi
+        if [ -f /tmp/seaweedfs/mount.log ]; then
+          cp /tmp/seaweedfs/mount.log reports/debug/mount.log
+        fi
     
     - name: Upload test results
       uses: actions/upload-artifact@v4
@@ -211,9 +522,9 @@ jobs:
             <details>
             <summary>Test Summary</summary>
             
-            ```
+            \`\`\`
             ${report}
-            ```
+            \`\`\`
             </details>
             
             📊 Full results available in [test artifacts](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
@@ -292,19 +603,14 @@ jobs:
       with:
         go-version: ${{ env.GO_VERSION }}
     
-    - name: Install gosec
-      run: go install github.com/securecodewarrior/gosec/v2/cmd/gosec@v2.18.2
+    - name: Install security tools
+      run: |
+        go install github.com/securecodewarrior/gosec/v2/cmd/gosec@latest
     
     - name: Run security analysis on FUSE code
       run: |
         # Analyze mount and FUSE-related code for security issues
-        echo "Running gosec security analysis..."
         gosec -fmt json -out gosec-report.json -severity medium ./weed/mount/... ./weed/command/mount* ./weed/command/fuse* || true
-        
-        if [ ! -f gosec-report.json ]; then
-          echo "Warning: gosec report not found, creating placeholder"
-          echo '{"issues": [], "stats": {"files": 0, "lines": 0, "nosec": 0, "found": 0}, "error": "no report generated"}' > gosec-report.json
-        fi
     
     - name: Upload security analysis results
       uses: actions/upload-artifact@v4
