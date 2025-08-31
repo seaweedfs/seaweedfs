@@ -271,11 +271,35 @@ generate-html-report:
 	@echo "$(BLUE)[REPORT] Generating HTML report...$(RESET)"
 	@echo "<!DOCTYPE html>" > $(REPORT_DIR)/posix_compliance_report.html
 	@echo "<html><head><title>SeaweedFS POSIX Compliance Report</title>" >> $(REPORT_DIR)/posix_compliance_report.html
-	@echo "<style>body{font-family:Arial;margin:20px}.pass{color:green}.fail{color:red}</style>" >> $(REPORT_DIR)/posix_compliance_report.html
+	@echo "<style>body{font-family:Arial;margin:20px}.pass{color:green}.fail{color:red}.summary{background:#f5f5f5;padding:10px;margin:10px 0}.test-section{margin:20px 0;border-left:3px solid #ddd;padding-left:15px}</style>" >> $(REPORT_DIR)/posix_compliance_report.html
 	@echo "</head><body><h1>SeaweedFS POSIX Compliance Report</h1>" >> $(REPORT_DIR)/posix_compliance_report.html
 	@echo "<p>Generated on: $$(date)</p>" >> $(REPORT_DIR)/posix_compliance_report.html
-	@echo "<h2>Test Results</h2>" >> $(REPORT_DIR)/posix_compliance_report.html
-	@echo "<p>Detailed test results are available in the text and JSON reports.</p>" >> $(REPORT_DIR)/posix_compliance_report.html
+	@echo "<div class='summary'>" >> $(REPORT_DIR)/posix_compliance_report.html
+	@echo "<h2>Test Summary</h2>" >> $(REPORT_DIR)/posix_compliance_report.html
+	@if [ -f "$(REPORT_DIR)/posix_basic_results.log" ]; then \
+		TOTAL=$$(grep -c "RUN\|PASS\|FAIL" $(REPORT_DIR)/posix_basic_results.log 2>/dev/null || echo "0"); \
+		PASSED=$$(grep -c "PASS:" $(REPORT_DIR)/posix_basic_results.log 2>/dev/null || echo "0"); \
+		FAILED=$$(grep -c "FAIL:" $(REPORT_DIR)/posix_basic_results.log 2>/dev/null || echo "0"); \
+		echo "<p>Basic Tests: <span class='pass'>$$PASSED passed</span>, <span class='fail'>$$FAILED failed</span></p>" >> $(REPORT_DIR)/posix_compliance_report.html; \
+	fi
+	@if [ -f "$(REPORT_DIR)/posix_critical_results.log" ]; then \
+		TOTAL=$$(grep -c "RUN\|PASS\|FAIL" $(REPORT_DIR)/posix_critical_results.log 2>/dev/null || echo "0"); \
+		PASSED=$$(grep -c "PASS:" $(REPORT_DIR)/posix_critical_results.log 2>/dev/null || echo "0"); \
+		FAILED=$$(grep -c "FAIL:" $(REPORT_DIR)/posix_critical_results.log 2>/dev/null || echo "0"); \
+		echo "<p>Critical Tests: <span class='pass'>$$PASSED passed</span>, <span class='fail'>$$FAILED failed</span></p>" >> $(REPORT_DIR)/posix_compliance_report.html; \
+	fi
+	@echo "</div>" >> $(REPORT_DIR)/posix_compliance_report.html
+	@echo "<h2>Detailed Results</h2>" >> $(REPORT_DIR)/posix_compliance_report.html
+	@for logfile in $(REPORT_DIR)/*.log; do \
+		if [ -f "$$logfile" ]; then \
+			basename=$$(basename "$$logfile" .log); \
+			echo "<div class='test-section'>" >> $(REPORT_DIR)/posix_compliance_report.html; \
+			echo "<h3>$$basename</h3>" >> $(REPORT_DIR)/posix_compliance_report.html; \
+			echo "<pre>" >> $(REPORT_DIR)/posix_compliance_report.html; \
+			tail -50 "$$logfile" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' >> $(REPORT_DIR)/posix_compliance_report.html; \
+			echo "</pre></div>" >> $(REPORT_DIR)/posix_compliance_report.html; \
+		fi; \
+	done
 	@echo "</body></html>" >> $(REPORT_DIR)/posix_compliance_report.html
 	@echo "$(GREEN)[OK] HTML report generated: $(REPORT_DIR)/posix_compliance_report.html$(RESET)"
 
@@ -297,7 +321,54 @@ generate-json-report:
 	@echo "  \"timestamp\": \"$$(date -u +"%Y-%m-%dT%H:%M:%SZ")\"," >> $(REPORT_DIR)/posix_compliance_report.json
 	@echo "  \"seaweedfs_version\": \"$$($(WEED_BINARY) version 2>/dev/null | head -n1 || echo 'Unknown')\"," >> $(REPORT_DIR)/posix_compliance_report.json
 	@echo "  \"test_environment\": { \"os\": \"$$(uname -s)\", \"arch\": \"$$(uname -m)\" }," >> $(REPORT_DIR)/posix_compliance_report.json
-	@echo "  \"test_results\": \"See individual log files for detailed results\"" >> $(REPORT_DIR)/posix_compliance_report.json
+	@echo "  \"test_suites\": {" >> $(REPORT_DIR)/posix_compliance_report.json
+	@FIRST=true; \
+	for logfile in $(REPORT_DIR)/*.log; do \
+		if [ -f "$$logfile" ]; then \
+			basename=$$(basename "$$logfile" .log); \
+			if [ "$$FIRST" = "true" ]; then \
+				FIRST=false; \
+			else \
+				echo "    ," >> $(REPORT_DIR)/posix_compliance_report.json; \
+			fi; \
+			PASSED=$$(grep -c "PASS:" "$$logfile" 2>/dev/null || echo "0"); \
+			FAILED=$$(grep -c "FAIL:" "$$logfile" 2>/dev/null || echo "0"); \
+			TOTAL=$$((PASSED + FAILED)); \
+			echo "    \"$$basename\": {" >> $(REPORT_DIR)/posix_compliance_report.json; \
+			echo "      \"total_tests\": $$TOTAL," >> $(REPORT_DIR)/posix_compliance_report.json; \
+			echo "      \"passed\": $$PASSED," >> $(REPORT_DIR)/posix_compliance_report.json; \
+			echo "      \"failed\": $$FAILED," >> $(REPORT_DIR)/posix_compliance_report.json; \
+			if [ $$TOTAL -gt 0 ]; then \
+				SUCCESS_RATE=$$(awk "BEGIN {printf \"%.2f\", ($$PASSED/$$TOTAL)*100}"); \
+			else \
+				SUCCESS_RATE="0.00"; \
+			fi; \
+			echo "      \"success_rate\": \"$$SUCCESS_RATE%\"" >> $(REPORT_DIR)/posix_compliance_report.json; \
+			echo "    }" >> $(REPORT_DIR)/posix_compliance_report.json; \
+		fi; \
+	done
+	@echo "  }," >> $(REPORT_DIR)/posix_compliance_report.json
+	@TOTAL_PASSED=0; TOTAL_FAILED=0; \
+	for logfile in $(REPORT_DIR)/*.log; do \
+		if [ -f "$$logfile" ]; then \
+			PASSED=$$(grep -c "PASS:" "$$logfile" 2>/dev/null || echo "0"); \
+			FAILED=$$(grep -c "FAIL:" "$$logfile" 2>/dev/null || echo "0"); \
+			TOTAL_PASSED=$$((TOTAL_PASSED + PASSED)); \
+			TOTAL_FAILED=$$((TOTAL_FAILED + FAILED)); \
+		fi; \
+	done; \
+	GRAND_TOTAL=$$((TOTAL_PASSED + TOTAL_FAILED)); \
+	if [ $$GRAND_TOTAL -gt 0 ]; then \
+		OVERALL_SUCCESS=$$(awk "BEGIN {printf \"%.2f\", ($$TOTAL_PASSED/$$GRAND_TOTAL)*100}"); \
+	else \
+		OVERALL_SUCCESS="0.00"; \
+	fi; \
+	echo "  \"summary\": {" >> $(REPORT_DIR)/posix_compliance_report.json; \
+	echo "    \"total_tests\": $$GRAND_TOTAL," >> $(REPORT_DIR)/posix_compliance_report.json; \
+	echo "    \"total_passed\": $$TOTAL_PASSED," >> $(REPORT_DIR)/posix_compliance_report.json; \
+	echo "    \"total_failed\": $$TOTAL_FAILED," >> $(REPORT_DIR)/posix_compliance_report.json; \
+	echo "    \"overall_success_rate\": \"$$OVERALL_SUCCESS%\"" >> $(REPORT_DIR)/posix_compliance_report.json; \
+	echo "  }" >> $(REPORT_DIR)/posix_compliance_report.json
 	@echo "}" >> $(REPORT_DIR)/posix_compliance_report.json
 	@echo "$(GREEN)[OK] JSON report generated: $(REPORT_DIR)/posix_compliance_report.json$(RESET)"
 

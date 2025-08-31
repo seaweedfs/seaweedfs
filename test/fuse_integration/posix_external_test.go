@@ -191,7 +191,8 @@ set -e
 cd "$1"
 ln -s link1 link2
 ln -s link2 link1
-if [ -f link1 ]; then
+# Try to access the file, which should fail due to too many symbolic links
+if cat link1 2>/dev/null; then
     echo "FAIL: Symlink cycle not detected"
     exit 1
 fi
@@ -470,11 +471,13 @@ func (s *ExternalPOSIXTestSuite) testEdgeCases(t *testing.T, mountPoint string) 
 	require.NoError(t, err)
 	defer os.RemoveAll(testDir)
 
-	t.Run("EmptyFileName", func(t *testing.T) {
-		// Test creating files with empty names (should fail)
-		emptyFile := filepath.Join(testDir, "")
-		err := os.WriteFile(emptyFile, []byte("test"), 0644)
+	t.Run("WriteToDirectoryAsFile", func(t *testing.T) {
+		// Test writing to a directory as if it were a file (should fail)
+		// Note: filepath.Join(testDir, "") returns testDir itself
+		err := os.WriteFile(testDir, []byte("test"), 0644)
 		require.Error(t, err)
+		// Verify the error indicates we're trying to write to a directory
+		require.Contains(t, err.Error(), "directory", "Expected error to indicate target is a directory")
 	})
 
 	t.Run("VeryLongFileName", func(t *testing.T) {

@@ -633,7 +633,7 @@ func (s *POSIXComplianceTestSuite) TestConcurrentAccess(t *testing.T) {
 		}
 	})
 
-	t.Run("ConcurrentWrites", func(t *testing.T) {
+	t.Run("ConcurrentFileCreations", func(t *testing.T) {
 		testFile := filepath.Join(mountPoint, "concurrent_write.txt")
 
 		// Launch multiple concurrent writers
