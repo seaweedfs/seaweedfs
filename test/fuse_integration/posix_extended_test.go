@@ -1,3 +1,5 @@
+//go:build !windows
+
 package fuse
 
 import (
@@ -10,7 +12,11 @@ import (
 )
 
 // POSIXExtendedTestSuite provides additional POSIX compliance tests
-// covering extended attributes, file locking, and advanced features
+// covering extended attributes, file locking, and advanced features.
+//
+// NOTE: Many tests in this suite are currently skipped due to requiring
+// platform-specific implementations. See POSIX_IMPLEMENTATION_ROADMAP.md
+// for a comprehensive plan to implement these missing features.
 type POSIXExtendedTestSuite struct {
 	framework *FuseTestFramework
 	t         *testing.T
@@ -54,36 +60,99 @@ func (s *POSIXExtendedTestSuite) TestExtendedAttributes(t *testing.T) {
 	mountPoint := s.framework.GetMountPoint()
 
 	t.Run("SetAndGetXattr", func(t *testing.T) {
+		if !isXattrSupported() {
+			t.Skip("Extended attributes not supported on this platform")
+			return
+		}
+
 		testFile := filepath.Join(mountPoint, "xattr_test.txt")
 
 		// Create test file
 		err := os.WriteFile(testFile, []byte("xattr test"), 0644)
 		require.NoError(t, err)
 
-		// Extended attributes test - platform dependent
-		t.Skip("Extended attributes testing requires platform-specific implementation")
+		// Set extended attribute
+		attrName := "user.test_attr"
+		attrValue := []byte("test_value")
+		err = setXattr(testFile, attrName, attrValue, 0)
+		require.NoError(t, err)
+
+		// Verify attribute was set
+		readValue := make([]byte, 256)
+		size, err := getXattr(testFile, attrName, readValue)
+		require.NoError(t, err)
+		require.Equal(t, len(attrValue), size)
+		require.Equal(t, attrValue, readValue[:size])
 	})
 
 	t.Run("ListXattrs", func(t *testing.T) {
+		if !isXattrSupported() {
+			t.Skip("Extended attributes not supported on this platform")
+			return
+		}
+
 		testFile := filepath.Join(mountPoint, "xattr_list_test.txt")
 
 		// Create test file
 		err := os.WriteFile(testFile, []byte("list xattr test"), 0644)
 		require.NoError(t, err)
 
-		// List extended attributes test - platform dependent
-		t.Skip("Extended attributes testing requires platform-specific implementation")
+		// Set multiple extended attributes
+		attrs := map[string][]byte{
+			"user.attr1": []byte("value1"),
+			"user.attr2": []byte("value2"),
+			"user.attr3": []byte("value3"),
+		}
+
+		for name, value := range attrs {
+			err = setXattr(testFile, name, value, 0)
+			require.NoError(t, err)
+		}
+
+		// List all attributes
+		listBuf := make([]byte, 1024)
+		size, err := listXattr(testFile, listBuf)
+		require.NoError(t, err)
+		require.Greater(t, size, 0)
+
+		// Parse the null-separated list
+		attrList := string(listBuf[:size])
+		for name := range attrs {
+			require.Contains(t, attrList, name)
+		}
 	})
 
 	t.Run("RemoveXattr", func(t *testing.T) {
+		if !isXattrSupported() {
+			t.Skip("Extended attributes not supported on this platform")
+			return
+		}
+
 		testFile := filepath.Join(mountPoint, "xattr_remove_test.txt")
 
 		// Create test file
 		err := os.WriteFile(testFile, []byte("remove xattr test"), 0644)
 		require.NoError(t, err)
 
-		// Remove extended attributes test - platform dependent
-		t.Skip("Extended attributes testing requires platform-specific implementation")
+		// Set extended attribute
+		attrName := "user.remove_test"
+		attrValue := []byte("to_be_removed")
+		err = setXattr(testFile, attrName, attrValue, 0)
+		require.NoError(t, err)
+
+		// Verify attribute exists
+		readValue := make([]byte, 256)
+		size, err := getXattr(testFile, attrName, readValue)
+		require.NoError(t, err)
+		require.Equal(t, len(attrValue), size)
+
+		// Remove the attribute
+		err = removeXattr(testFile, attrName)
+		require.NoError(t, err)
+
+		// Verify attribute is gone
+		_, err = getXattr(testFile, attrName, readValue)
+		require.Error(t, err) // Should fail with ENODATA or similar
 	})
 }
 
@@ -183,6 +252,11 @@ func (s *POSIXExtendedTestSuite) TestAdvancedIO(t *testing.T) {
 	mountPoint := s.framework.GetMountPoint()
 
 	t.Run("ReadWriteV", func(t *testing.T) {
+		if !isVectoredIOSupported() {
+			t.Skip("Vectored I/O not supported on this platform")
+			return
+		}
+
 		testFile := filepath.Join(mountPoint, "readwritev_test.txt")
 
 		// Create file
@@ -190,8 +264,46 @@ func (s *POSIXExtendedTestSuite) TestAdvancedIO(t *testing.T) {
 		require.NoError(t, err)
 		defer syscall.Close(fd)
 
-		// Vectored I/O test - requires platform-specific implementation
-		t.Skip("Vectored I/O testing requires platform-specific implementation")
+		// Prepare test data in multiple buffers
+		writeBuffers := [][]byte{
+			[]byte("Hello "),
+			[]byte("vectored "),
+			[]byte("I/O "),
+			[]byte("world!"),
+		}
+
+		// Write using writev
+		writeIOVs := makeIOVecs(writeBuffers)
+		totalWritten, err := writevFile(fd, writeIOVs)
+		require.NoError(t, err)
+
+		expectedTotal := 0
+		for _, buf := range writeBuffers {
+			expectedTotal += len(buf)
+		}
+		require.Equal(t, expectedTotal, totalWritten)
+
+		// Seek back to beginning
+		_, err = syscall.Seek(fd, 0, 0)
+		require.NoError(t, err)
+
+		// Read using readv into multiple buffers
+		readBuffers := [][]byte{
+			make([]byte, 6), // "Hello "
+			make([]byte, 9), // "vectored "
+			make([]byte, 3), // "I/O "
+			make([]byte, 6), // "world!"
+		}
+
+		readIOVs := makeIOVecs(readBuffers)
+		totalRead, err := readvFile(fd, readIOVs)
+		require.NoError(t, err)
+		require.Equal(t, expectedTotal, totalRead)
+
+		// Verify data matches
+		for i, expected := range writeBuffers {
+			require.Equal(t, expected, readBuffers[i])
+		}
 	})
 
 }
@@ -281,6 +393,11 @@ func (s *POSIXExtendedTestSuite) TestMemoryMapping(t *testing.T) {
 	mountPoint := s.framework.GetMountPoint()
 
 	t.Run("MmapFile", func(t *testing.T) {
+		if !isMmapSupported() {
+			t.Skip("Memory mapping not supported on this platform")
+			return
+		}
+
 		testFile := filepath.Join(mountPoint, "mmap_test.txt")
 		testData := make([]byte, 4096)
 		for i := range testData {
@@ -291,38 +408,98 @@ func (s *POSIXExtendedTestSuite) TestMemoryMapping(t *testing.T) {
 		err := os.WriteFile(testFile, testData, 0644)
 		require.NoError(t, err)
 
-		// Open file
-		file, err := os.Open(testFile)
+		// Open file for reading
+		fd, err := syscall.Open(testFile, syscall.O_RDONLY, 0)
 		require.NoError(t, err)
-		defer file.Close()
+		defer syscall.Close(fd)
 
-		// Memory mapping test - requires platform-specific implementation
-		t.Skip("Memory mapping testing requires platform-specific implementation")
+		// Memory map the file
+		mappedData, err := mmapFile(fd, 0, len(testData), PROT_READ, MAP_SHARED)
+		require.NoError(t, err)
+		defer munmapFile(mappedData)
+
+		// Verify mapped content matches original
+		require.Equal(t, testData, mappedData)
 	})
 
 	t.Run("MmapWrite", func(t *testing.T) {
+		if !isMmapSupported() {
+			t.Skip("Memory mapping not supported on this platform")
+			return
+		}
+
 		testFile := filepath.Join(mountPoint, "mmap_write_test.txt")
 		size := 4096
 
 		// Create empty file of specific size
 		fd, err := syscall.Open(testFile, syscall.O_CREAT|syscall.O_RDWR, 0644)
 		require.NoError(t, err)
+		defer syscall.Close(fd)
 
 		err = syscall.Ftruncate(fd, int64(size))
 		require.NoError(t, err)
 
-		syscall.Close(fd)
+		// Memory map the file for writing
+		mappedData, err := mmapFile(fd, 0, size, PROT_READ|PROT_WRITE, MAP_SHARED)
+		require.NoError(t, err)
+		defer munmapFile(mappedData)
 
-		// Memory mapping write test - requires platform-specific implementation
-		t.Skip("Memory mapping testing requires platform-specific implementation")
+		// Write test pattern to mapped memory
+		testPattern := []byte("Hello, mmap world!")
+		copy(mappedData, testPattern)
+
+		// Sync changes to disk
+		err = msyncFile(mappedData, MS_SYNC)
+		require.NoError(t, err)
+
+		// Verify changes were written by reading file directly
+		readData, err := os.ReadFile(testFile)
+		require.NoError(t, err)
+		require.True(t, len(readData) >= len(testPattern))
+		require.Equal(t, testPattern, readData[:len(testPattern)])
 	})
 }
 
 // TestDirectIO tests direct I/O operations
 func (s *POSIXExtendedTestSuite) TestDirectIO(t *testing.T) {
+	mountPoint := s.framework.GetMountPoint()
+
 	t.Run("DirectIO", func(t *testing.T) {
-		// Direct I/O is platform dependent and may not be supported
-		t.Skip("Direct I/O testing requires platform-specific implementation")
+		if !isDirectIOSupported() {
+			t.Skip("Direct I/O not supported on this platform")
+			return
+		}
+
+		testFile := filepath.Join(mountPoint, "directio_test.txt")
+
+		// Open file with direct I/O
+		fd, err := openDirectIO(testFile, syscall.O_CREAT|syscall.O_RDWR, 0644)
+		require.NoError(t, err)
+		defer syscall.Close(fd)
+
+		// For direct I/O, data must be aligned to sector boundaries
+		// Use 4KB aligned buffer (common sector size)
+		blockSize := 4096
+		testData := make([]byte, blockSize)
+		for i := range testData {
+			testData[i] = byte(i % 256)
+		}
+
+		// Write data using direct I/O
+		n, err := syscall.Write(fd, testData)
+		require.NoError(t, err)
+		require.Equal(t, len(testData), n)
+
+		// Seek back to beginning
+		_, err = syscall.Seek(fd, 0, 0)
+		require.NoError(t, err)
+
+		// Read data using direct I/O
+		readData := make([]byte, blockSize)
+		n, err = syscall.Read(fd, readData)
+		require.NoError(t, err)
+		require.Equal(t, len(testData), n)
+		require.Equal(t, testData, readData)
 	})
 }
 
@@ -337,6 +514,11 @@ func (s *POSIXExtendedTestSuite) TestFallocate(t *testing.T) {
 	mountPoint := s.framework.GetMountPoint()
 
 	t.Run("FallocateSpace", func(t *testing.T) {
+		if !isFallocateSupported() {
+			t.Skip("fallocate not supported on this platform")
+			return
+		}
+
 		testFile := filepath.Join(mountPoint, "fallocate_test.txt")
 
 		// Open file
@@ -344,8 +526,22 @@ func (s *POSIXExtendedTestSuite) TestFallocate(t *testing.T) {
 		require.NoError(t, err)
 		defer syscall.Close(fd)
 
-		// File preallocation test - requires platform-specific implementation
-		t.Skip("fallocate testing requires platform-specific implementation")
+		// Preallocate 1MB of space
+		allocSize := int64(1024 * 1024)
+		err = fallocateFile(fd, 0, 0, allocSize)
+		require.NoError(t, err)
+
+		// Verify file size was extended
+		var stat syscall.Stat_t
+		err = syscall.Fstat(fd, &stat)
+		require.NoError(t, err)
+		require.GreaterOrEqual(t, stat.Size, allocSize)
+
+		// Write some data and verify it works
+		testData := []byte("fallocate test data")
+		n, err := syscall.Write(fd, testData)
+		require.NoError(t, err)
+		require.Equal(t, len(testData), n)
 	})
 }
 
@@ -376,8 +572,17 @@ func (s *POSIXExtendedTestSuite) TestSendfile(t *testing.T) {
 		require.NoError(t, err)
 		defer syscall.Close(dstFd)
 
-		// Sendfile test - requires platform-specific implementation
-		t.Skip("sendfile testing requires platform-specific implementation")
+		// Sendfile test
+		if !isSendfileSupported() {
+			t.Skip("sendfile not supported on this platform")
+			return
+		}
+
+		// Use sendfile to copy data
+		var offset int64 = 0
+		transferred, err := sendfileTransfer(dstFd, srcFd, &offset, len(testData))
+		require.NoError(t, err)
+		require.Equal(t, len(testData), transferred)
 
 		// Verify copy
 		copiedData, err := os.ReadFile(targetFile)

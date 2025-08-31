@@ -8,11 +8,13 @@ This comprehensive test suite provides full POSIX compliance testing for Seaweed
 
 ### ✅ **Comprehensive Test Coverage**
 - **Basic POSIX Operations**: File/directory create, read, write, delete, rename
-- **Advanced Features**: Extended attributes, file locking, memory mapping
-- **I/O Operations**: Synchronous/asynchronous I/O, direct I/O, vectored I/O
+- **Advanced Features**: Extended attributes, file locking, memory mapping *(see roadmap)*
+- **I/O Operations**: Synchronous/asynchronous I/O, direct I/O, vectored I/O *(see roadmap)*
 - **Error Handling**: Comprehensive error condition testing
 - **Concurrent Operations**: Multi-threaded stress testing
 - **External Integration**: pjdfstest, nfstest, FIO integration
+
+> **📋 Implementation Status**: Some advanced features are currently skipped pending platform-specific implementations. See [`POSIX_IMPLEMENTATION_ROADMAP.md`](./POSIX_IMPLEMENTATION_ROADMAP.md) for a detailed implementation plan and current status.
 
 ### 📊 **Performance Analysis**
 - **Benchmarking**: Built-in performance benchmarks
