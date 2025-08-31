@@ -18,9 +18,9 @@ on:
   workflow_dispatch:
     inputs:
       test_type:
-        description: 'Type of POSIX tests to run'
+        description: 'Type of POSIX tests to run (default: full for comprehensive testing)'
         required: true
-        default: 'critical'
+        default: 'full'
         type: choice
         options:
         - critical
@@ -288,11 +288,15 @@ jobs:
         # Determine which tests to run
         TEST_TYPE="${{ github.event.inputs.test_type }}"
         if [ -z "$TEST_TYPE" ]; then
-          TEST_TYPE="critical"
+          TEST_TYPE="full"
         fi
         
         echo "Running POSIX tests: $TEST_TYPE"
-        echo "Using mount point: $SEAWEEDFS_MOUNT_POINT"
+        if [ "$TEST_TYPE" = "full" ]; then
+          echo "🚀 Running COMPREHENSIVE POSIX test suite (including external test suites)"
+        else
+          echo "Using mount point: $SEAWEEDFS_MOUNT_POINT"
+        fi
         
         # Set test configuration to use our mounted filesystem
         export TEST_MOUNT_POINT="$SEAWEEDFS_MOUNT_POINT"
@@ -306,20 +310,27 @@ jobs:
         
         case "$TEST_TYPE" in
           "critical")
+            echo "Running critical POSIX tests (basic compliance only)..."
             make -f posix_Makefile test-posix-critical
             ;;
           "basic")
+            echo "Running basic POSIX tests (core file operations)..."
             make -f posix_Makefile test-posix-basic
             ;;
           "extended")
+            echo "Running extended POSIX tests (including advanced features)..."
             make -f posix_Makefile test-posix-extended
             ;;
           "full")
+            echo "🚀 Running COMPREHENSIVE POSIX test suite (all tests including external)..."
+            echo "   This includes: basic, extended, and external test suites"
+            echo "   External suites: pjdfstest, nfstest_posix, and custom stress tests"
             make -f posix_Makefile test-posix-full
             ;;
           *)
-            echo "Unknown test type: $TEST_TYPE"
-            exit 1
+            echo "Unknown test type: $TEST_TYPE, defaulting to full suite"
+            echo "🚀 Running full POSIX test suite (all tests including external)..."
+            make -f posix_Makefile test-posix-full
             ;;
         esac
     
@@ -491,7 +502,7 @@ jobs:
             
             **Go Version:** ${{ env.GO_VERSION }}
             **FUSE Version:** ${{ matrix.fuse-version }}
-            **Test Type:** ${{ github.event.inputs.test_type || 'critical' }}
+            **Test Type:** ${{ github.event.inputs.test_type || 'full' }}
             
             <details>
             <summary>Test Summary</summary>
