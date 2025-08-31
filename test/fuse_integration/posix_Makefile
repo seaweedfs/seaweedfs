@@ -263,9 +263,9 @@ create-fio-configs: setup-reports
 # Reporting and analysis
 generate-report: setup-reports
 	@echo "$(BLUE)[REPORT] Generating comprehensive POSIX compliance report...$(RESET)"
-	@$(MAKE) -f posix_Makefile generate-html-report
-	@$(MAKE) -f posix_Makefile generate-text-report
-	@$(MAKE) -f posix_Makefile generate-json-report
+	@$(MAKE) generate-html-report
+	@$(MAKE) generate-text-report
+	@$(MAKE) generate-json-report
 
 generate-html-report:
 	@echo "$(BLUE)[REPORT] Generating HTML report...$(RESET)"

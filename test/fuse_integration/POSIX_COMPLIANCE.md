@@ -415,7 +415,7 @@ jobs:
         make -f posix_Makefile ci-posix-tests
     
     - name: Upload Test Results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always()
       with:
         name: posix-test-results
