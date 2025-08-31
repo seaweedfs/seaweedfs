@@ -7,6 +7,7 @@ TEST_TIMEOUT := 45m
 COVERAGE_FILE := posix_coverage.out
 REPORT_DIR := reports
 EXTERNAL_TOOLS_DIR := external_tools
+MOUNT_POINT ?= /tmp/seaweedfs_mount
 
 # Test categories
 POSIX_BASIC_TESTS := posix_compliance_test.go
@@ -244,7 +245,7 @@ create-fio-configs: setup-reports
 	@echo "time_based" >> $(REPORT_DIR)/fio_random_rw.conf
 	@echo "" >> $(REPORT_DIR)/fio_random_rw.conf
 	@echo "[random_rw_test]" >> $(REPORT_DIR)/fio_random_rw.conf
-	@echo "directory=/tmp/seaweedfs_mount" >> $(REPORT_DIR)/fio_random_rw.conf
+	@echo "directory=$(MOUNT_POINT)" >> $(REPORT_DIR)/fio_random_rw.conf
 	@echo "[global]" > $(REPORT_DIR)/fio_sequential.conf
 	@echo "name=posix_sequential" >> $(REPORT_DIR)/fio_sequential.conf
 	@echo "ioengine=sync" >> $(REPORT_DIR)/fio_sequential.conf
@@ -257,11 +258,11 @@ create-fio-configs: setup-reports
 	@echo "" >> $(REPORT_DIR)/fio_sequential.conf
 	@echo "[seq_write]" >> $(REPORT_DIR)/fio_sequential.conf
 	@echo "rw=write" >> $(REPORT_DIR)/fio_sequential.conf
-	@echo "directory=/tmp/seaweedfs_mount" >> $(REPORT_DIR)/fio_sequential.conf
+	@echo "directory=$(MOUNT_POINT)" >> $(REPORT_DIR)/fio_sequential.conf
 	@echo "" >> $(REPORT_DIR)/fio_sequential.conf
 	@echo "[seq_read]" >> $(REPORT_DIR)/fio_sequential.conf
 	@echo "rw=read" >> $(REPORT_DIR)/fio_sequential.conf
-	@echo "directory=/tmp/seaweedfs_mount" >> $(REPORT_DIR)/fio_sequential.conf
+	@echo "directory=$(MOUNT_POINT)" >> $(REPORT_DIR)/fio_sequential.conf
 
 # Reporting and analysis
 generate-report: setup-reports

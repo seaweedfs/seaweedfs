@@ -1,7 +1,6 @@
 package fuse
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"os/exec"
@@ -171,9 +170,17 @@ set -e
 cd "$1"
 echo "test" > original
 ln original hardlink
-[ $(stat -c %h original) -eq 2 ]
+if [[ "$(uname)" == "Darwin" ]]; then
+  [ $(stat -f %l original) -eq 2 ]
+else
+  [ $(stat -c %h original) -eq 2 ]
+fi
 rm hardlink
-[ $(stat -c %h original) -eq 1 ]
+if [[ "$(uname)" == "Darwin" ]]; then
+  [ $(stat -f %l original) -eq 1 ]
+else
+  [ $(stat -c %h original) -eq 1 ]
+fi
 echo "PASS: Hard link counting works"
 `,
 		},
@@ -529,38 +536,4 @@ func (s *ExternalPOSIXTestSuite) testEdgeCases(t *testing.T, mountPoint string) 
 			}
 		}
 	})
-}
-
-// ReportPOSIXCompliance generates a comprehensive POSIX compliance report
-func (s *ExternalPOSIXTestSuite) ReportPOSIXCompliance(t *testing.T) {
-	reportPath := filepath.Join(s.workDir, "posix_compliance_report.txt")
-	file, err := os.Create(reportPath)
-	require.NoError(t, err)
-	defer file.Close()
-
-	writer := bufio.NewWriter(file)
-	defer writer.Flush()
-
-	fmt.Fprintf(writer, "SeaweedFS FUSE POSIX Compliance Report\n")
-	fmt.Fprintf(writer, "=====================================\n")
-	fmt.Fprintf(writer, "Generated: %s\n\n", time.Now().Format(time.RFC3339))
-
-	fmt.Fprintf(writer, "Mount Point: %s\n", s.framework.GetMountPoint())
-	fmt.Fprintf(writer, "Filer Address: %s\n\n", s.framework.GetFilerAddr())
-
-	// This would be populated by running the actual tests and collecting results
-	fmt.Fprintf(writer, "Test Results Summary:\n")
-	fmt.Fprintf(writer, "--------------------\n")
-	fmt.Fprintf(writer, "Basic File Operations: PASS\n")
-	fmt.Fprintf(writer, "Directory Operations: PASS\n")
-	fmt.Fprintf(writer, "Symlink Operations: PASS\n")
-	fmt.Fprintf(writer, "Permission Tests: PASS\n")
-	fmt.Fprintf(writer, "Timestamp Tests: PASS\n")
-	fmt.Fprintf(writer, "Extended Attributes: CONDITIONAL\n")
-	fmt.Fprintf(writer, "File Locking: PASS\n")
-	fmt.Fprintf(writer, "Advanced I/O: PARTIAL\n")
-	fmt.Fprintf(writer, "Memory Mapping: PASS\n")
-	fmt.Fprintf(writer, "External Test Suites: VARIABLE\n")
-
-	t.Logf("POSIX compliance report generated: %s", reportPath)
 }

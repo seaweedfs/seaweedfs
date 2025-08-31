@@ -207,29 +207,28 @@ func (s *POSIXExtendedTestSuite) TestAdvancedIO(t *testing.T) {
 		require.NoError(t, err)
 		defer syscall.Close(fd)
 
-		// Positioned I/O test - use standard library approach
-		_, err = syscall.Seek(fd, 5, 0) // Seek to position 5
-		require.NoError(t, err)
-
+		// Positioned I/O test
 		writeData := []byte("XYZ")
-		n, err := syscall.Write(fd, writeData)
+		n, err := syscall.Pwrite(fd, writeData, 5) // pwrite at offset 5
 		require.NoError(t, err)
 		require.Equal(t, len(writeData), n)
 
-		// Seek back and read
-		_, err = syscall.Seek(fd, 5, 0)
+		// Verify file position is unchanged
+		currentPos, err := syscall.Seek(fd, 0, 1) // SEEK_CUR
 		require.NoError(t, err)
+		require.Equal(t, int64(0), currentPos, "file offset should not be changed by pwrite")
 
+		// Read back with pread
 		readBuffer := make([]byte, len(writeData))
-		n, err = syscall.Read(fd, readBuffer)
+		n, err = syscall.Pread(fd, readBuffer, 5) // pread at offset 5
 		require.NoError(t, err)
 		require.Equal(t, len(writeData), n)
 		require.Equal(t, writeData, readBuffer)
 
-		// Verify file position wasn't changed by pread/pwrite
-		currentPos, err := syscall.Seek(fd, 0, 1) // SEEK_CUR
+		// Verify file position is still unchanged
+		currentPos, err = syscall.Seek(fd, 0, 1) // SEEK_CUR
 		require.NoError(t, err)
-		require.Equal(t, int64(0), currentPos) // Should still be at beginning
+		require.Equal(t, int64(0), currentPos, "file offset should not be changed by pread")
 	})
 }
 
