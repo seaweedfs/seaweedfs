@@ -106,6 +106,27 @@ func (f *FuseTestFramework) Setup(config *TestConfig) error {
 				f.t.Logf("Warning: failed to cleanup test file: %v", err)
 			}
 
+			// Verify this is actually a SeaweedFS mount by checking for SeaweedFS-specific behavior
+			// Create a test file and verify it appears in the filer
+			verifyFile := filepath.Join(f.mountPoint, ".seaweedfs_mount_verification")
+			if err := os.WriteFile(verifyFile, []byte("SeaweedFS mount verification"), 0644); err != nil {
+				return fmt.Errorf("mount point verification failed - cannot write: %v", err)
+			}
+
+			// Read it back to ensure it's working
+			if data, err := os.ReadFile(verifyFile); err != nil {
+				return fmt.Errorf("mount point verification failed - cannot read: %v", err)
+			} else if string(data) != "SeaweedFS mount verification" {
+				return fmt.Errorf("mount point verification failed - data mismatch")
+			}
+
+			// Clean up verification file
+			if err := os.Remove(verifyFile); err != nil {
+				f.t.Logf("Warning: failed to cleanup verification file: %v", err)
+			}
+
+			f.t.Logf("✅ SeaweedFS mount point verified and working: %s", f.mountPoint)
+
 			f.isSetup = true
 			return nil
 		}

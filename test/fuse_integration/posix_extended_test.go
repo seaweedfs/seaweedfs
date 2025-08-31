@@ -197,7 +197,7 @@ func (s *POSIXExtendedTestSuite) TestFileLocking(t *testing.T) {
 		}
 
 		err = syscall.FcntlFlock(file2.Fd(), syscall.F_SETLK, &flock2)
-		require.Equal(t, syscall.EAGAIN, err) // Lock should be blocked
+		require.Equal(t, syscall.EAGAIN, err) // Lock attempt should fail immediately as it's non-blocking
 
 		// Release lock
 		flock.Type = syscall.F_UNLCK

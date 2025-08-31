@@ -320,7 +320,7 @@ generate-json-report:
 	@echo "{" > $(REPORT_DIR)/posix_compliance_report.json
 	@echo "  \"report_type\": \"posix_compliance\"," >> $(REPORT_DIR)/posix_compliance_report.json
 	@echo "  \"timestamp\": \"$$(date -u +"%Y-%m-%dT%H:%M:%SZ")\"," >> $(REPORT_DIR)/posix_compliance_report.json
-	@echo "  \"seaweedfs_version\": \"$$($(WEED_BINARY) version 2>/dev/null | head -n1 || echo 'Unknown')\"," >> $(REPORT_DIR)/posix_compliance_report.json
+	@echo "  \"seaweedfs_version\": \"$$($(WEED_BINARY) version 2>/dev/null | head -n1 | sed 's/\\/\\\\/g; s/\"/\\\"/g' || echo 'Unknown')\"," >> $(REPORT_DIR)/posix_compliance_report.json
 	@echo "  \"test_environment\": { \"os\": \"$$(uname -s)\", \"arch\": \"$$(uname -m)\" }," >> $(REPORT_DIR)/posix_compliance_report.json
 	@echo "  \"test_suites\": {" >> $(REPORT_DIR)/posix_compliance_report.json
 	@FIRST=true; \

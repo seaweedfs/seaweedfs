@@ -34,6 +34,12 @@ type fstore struct {
 }
 
 func fallocateFile(fd int, mode int, offset int64, length int64) error {
+	// Check for unsupported modes on macOS
+	unsupportedModes := FALLOC_FL_PUNCH_HOLE | FALLOC_FL_NO_HIDE_STALE | FALLOC_FL_COLLAPSE_RANGE | FALLOC_FL_ZERO_RANGE | FALLOC_FL_INSERT_RANGE | FALLOC_FL_UNSHARE_RANGE
+	if mode&unsupportedModes != 0 {
+		return syscall.ENOTSUP // Operation not supported
+	}
+
 	// On macOS, we use fcntl with F_PREALLOCATE
 	store := fstore{
 		flags:   F_ALLOCATECONTIG,

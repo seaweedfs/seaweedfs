@@ -252,6 +252,26 @@ jobs:
         # Verify mount point
         echo "Mount point: $SEAWEEDFS_MOUNT_POINT"
         ls -la $SEAWEEDFS_MOUNT_POINT
+        
+        # Verify mount is actually working by testing file operations
+        echo "Verifying SeaweedFS mount functionality..."
+        TEST_FILE="$SEAWEEDFS_MOUNT_POINT/.mount_verification_test"
+        echo "SeaweedFS mount test" > "$TEST_FILE"
+        if [ "$(cat "$TEST_FILE")" = "SeaweedFS mount test" ]; then
+          echo "✅ Mount verification successful"
+          rm -f "$TEST_FILE"
+        else
+          echo "❌ Mount verification failed - mount may not be working properly"
+          exit 1
+        fi
+        
+        # Check if this is actually a FUSE mount
+        if mount | grep -q "$SEAWEEDFS_MOUNT_POINT"; then
+          echo "✅ FUSE mount detected:"
+          mount | grep "$SEAWEEDFS_MOUNT_POINT"
+        else
+          echo "⚠️  Warning: Mount point not found in mount table"
+        fi
     
     - name: Run POSIX compliance tests
       id: posix-tests
@@ -272,6 +292,12 @@ jobs:
         # Set test configuration to use our mounted filesystem
         export TEST_MOUNT_POINT="$SEAWEEDFS_MOUNT_POINT"
         export TEST_SKIP_CLUSTER_SETUP="true"
+        
+        # Debug: Show environment variables
+        echo "🔍 Test Environment:"
+        echo "  TEST_MOUNT_POINT=$TEST_MOUNT_POINT"
+        echo "  TEST_SKIP_CLUSTER_SETUP=$TEST_SKIP_CLUSTER_SETUP"
+        echo "  SEAWEEDFS_MOUNT_POINT=$SEAWEEDFS_MOUNT_POINT"
         
         case "$TEST_TYPE" in
           "critical")
