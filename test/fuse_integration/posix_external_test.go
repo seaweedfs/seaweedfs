@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -356,7 +357,9 @@ func (s *ExternalPOSIXTestSuite) stressTestRename(t *testing.T, mountPoint strin
 	for i := 0; i < numFiles; i++ {
 		fileName := filepath.Join(testDir, fmt.Sprintf("file_%d.txt", i))
 		err := os.WriteFile(fileName, []byte(fmt.Sprintf("content_%d", i)), 0644)
-		require.NoError(t, err)
+		if !assert.NoError(t, err, "Failed to create initial file %d", i) {
+			return // Skip test if setup fails
+		}
 	}
 
 	// Concurrent rename operations
@@ -376,16 +379,22 @@ func (s *ExternalPOSIXTestSuite) stressTestRename(t *testing.T, mountPoint strin
 		}(w)
 	}
 
-	// Wait for all workers
+	// Wait for all workers and collect errors
+	var errorCount int
 	for w := 0; w < numWorkers; w++ {
 		err := <-results
-		require.NoError(t, err)
+		if err != nil {
+			assert.NoError(t, err, "Worker %d failed", w)
+			errorCount++
+		}
 	}
 
-	// Verify all files were renamed
-	files, err := filepath.Glob(filepath.Join(testDir, "renamed_*.txt"))
-	require.NoError(t, err)
-	require.Equal(t, numFiles, len(files))
+	// Verify all files were renamed (if no errors occurred)
+	if errorCount == 0 {
+		files, err := filepath.Glob(filepath.Join(testDir, "renamed_*.txt"))
+		assert.NoError(t, err, "Failed to list renamed files")
+		assert.Equal(t, numFiles, len(files), "Not all files were renamed successfully")
+	}
 }
 
 // stressTestCreate tests file creation under stress

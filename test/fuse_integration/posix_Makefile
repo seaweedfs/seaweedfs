@@ -128,7 +128,7 @@ test-posix-basic: check-prereqs setup-reports
 ifneq ($(TEST_MOUNT_POINT),)
 	@echo "$(BLUE)Using external mount point: $(TEST_MOUNT_POINT)$(RESET)"
 endif
-	@$(GO_TEST_PREFIX) go test -v -timeout $(TEST_TIMEOUT) -run TestPOSIXCompliance . 2>&1 | \
+	@$(GO_TEST_PREFIX) go test -v -timeout $(TEST_TIMEOUT) -failfast=false -run TestPOSIXCompliance . 2>&1 | \
 		tee $(REPORT_DIR)/posix_basic_results.log
 
 test-posix-extended: check-prereqs setup-reports
@@ -136,7 +136,7 @@ test-posix-extended: check-prereqs setup-reports
 ifneq ($(TEST_MOUNT_POINT),)
 	@echo "$(BLUE)Using external mount point: $(TEST_MOUNT_POINT)$(RESET)"
 endif
-	@$(GO_TEST_PREFIX) go test -v -timeout $(TEST_TIMEOUT) -run TestPOSIXExtended . 2>&1 | \
+	@$(GO_TEST_PREFIX) go test -v -timeout $(TEST_TIMEOUT) -failfast=false -run TestPOSIXExtended . 2>&1 | \
 		tee $(REPORT_DIR)/posix_extended_results.log
 
 test-posix-external: check-prereqs setup-reports
@@ -146,7 +146,7 @@ ifneq ($(TEST_MOUNT_POINT),)
 endif
 	@if [ -d "$(EXTERNAL_TOOLS_DIR)/pjdfstest" ] || command -v nfstest_posix >/dev/null 2>&1; then \
 		echo "$(GREEN)[OK] External tools available - running external tests$(RESET)"; \
-		$(GO_TEST_PREFIX) go test -v -timeout $(TEST_TIMEOUT) -run TestExternalPOSIXSuites . 2>&1 | \
+		$(GO_TEST_PREFIX) go test -v -timeout $(TEST_TIMEOUT) -failfast=false -run TestExternalPOSIXSuites . 2>&1 | \
 			tee $(REPORT_DIR)/posix_external_results.log; \
 	else \
 		echo "$(YELLOW)[WARNING] External tools not available - skipping external tests$(RESET)"; \
@@ -163,7 +163,7 @@ test-posix-critical: check-prereqs setup-reports
 ifneq ($(TEST_MOUNT_POINT),)
 	@echo "$(BLUE)Using external mount point: $(TEST_MOUNT_POINT)$(RESET)"
 endif
-	@$(GO_TEST_PREFIX) go test -v -timeout 15m \
+	@$(GO_TEST_PREFIX) go test -v -timeout 15m -failfast=false \
 		-run "TestPOSIXCompliance/(FileOperations|DirectoryOperations|PermissionTests|IOOperations)" \
 		. 2>&1 | tee $(REPORT_DIR)/posix_critical_results.log
 
@@ -174,7 +174,7 @@ ifneq ($(TEST_MOUNT_POINT),)
 endif
 	@if [ -d "$(EXTERNAL_TOOLS_DIR)/pjdfstest" ] || command -v nfstest_posix >/dev/null 2>&1; then \
 		echo "$(GREEN)[OK] External tools available - running stress tests$(RESET)"; \
-		$(GO_TEST_PREFIX) go test -v -timeout $(TEST_TIMEOUT) \
+		$(GO_TEST_PREFIX) go test -v -timeout $(TEST_TIMEOUT) -failfast=false \
 			-run "TestExternalPOSIXSuites/CustomPOSIXTests" \
 			. 2>&1 | tee $(REPORT_DIR)/posix_stress_results.log; \
 	else \
