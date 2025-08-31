@@ -259,11 +259,12 @@ func (s *POSIXComplianceTestSuite) TestPermissions(t *testing.T) {
 		// SeaweedFS FUSE mount typically masks execute bits for security
 		actualMode := stat.Mode() & os.ModePerm
 		expectedMode := os.FileMode(0642)
+		expectedModeNoExec := os.FileMode(0640) // 642 without execute bits
 
 		// Accept either the exact permissions or permissions without execute bit
-		if actualMode != expectedMode && actualMode != (expectedMode&^0111) {
+		if actualMode != expectedMode && actualMode != expectedModeNoExec {
 			t.Errorf("Expected file permissions %o or %o, but got %o",
-				expectedMode, expectedMode&^0111, actualMode)
+				expectedMode, expectedModeNoExec, actualMode)
 		}
 	})
 
