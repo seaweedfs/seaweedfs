@@ -115,10 +115,11 @@ func (s *POSIXExtendedTestSuite) TestExtendedAttributes(t *testing.T) {
 		require.NoError(t, err)
 		require.Greater(t, size, 0)
 
-		// Parse the null-separated list
-		attrList := string(listBuf[:size])
-		for name := range attrs {
-			require.Contains(t, attrList, name)
+		// Parse the null-separated list and verify attributes
+		attrList := parseXattrList(listBuf[:size])
+		expectedAttrs := []string{"user.attr1", "user.attr2", "user.attr3"}
+		for _, expectedAttr := range expectedAttrs {
+			require.Contains(t, attrList, expectedAttr, "Expected attribute should be in the list")
 		}
 	})
 

@@ -257,16 +257,16 @@ func (s *POSIXComplianceTestSuite) TestPermissions(t *testing.T) {
 		stat, err := os.Stat(testFile)
 		require.NoError(t, err)
 
-		// Note: Some FUSE implementations may not preserve execute bits on regular files
-		// SeaweedFS FUSE mount typically masks execute bits for security
+		// Note: The final file permissions are affected by the system's umask.
+		// We check against the requested mode and the mode as affected by a common umask (e.g. 0022).
 		actualMode := stat.Mode() & os.ModePerm
 		expectedMode := os.FileMode(0642)
-		expectedModeNoExec := os.FileMode(0640) // 642 without execute bits
+		expectedModeWithUmask := os.FileMode(0640) // e.g., 0642 with umask 0002 or 0022
 
-		// Accept either the exact permissions or permissions without execute bit
-		if actualMode != expectedMode && actualMode != expectedModeNoExec {
+		// Accept either the exact permissions or permissions as modified by umask
+		if actualMode != expectedMode && actualMode != expectedModeWithUmask {
 			t.Errorf("Expected file permissions %o or %o, but got %o",
-				expectedMode, expectedModeNoExec, actualMode)
+				expectedMode, expectedModeWithUmask, actualMode)
 		}
 	})
 

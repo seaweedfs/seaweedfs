@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -476,8 +477,11 @@ func (s *ExternalPOSIXTestSuite) testEdgeCases(t *testing.T, mountPoint string) 
 		// Note: filepath.Join(testDir, "") returns testDir itself
 		err := os.WriteFile(testDir, []byte("test"), 0644)
 		require.Error(t, err)
-		// Verify the error indicates we're trying to write to a directory
-		require.Contains(t, err.Error(), "directory", "Expected error to indicate target is a directory")
+		// Verify the error is specifically about the target being a directory
+		var pathErr *os.PathError
+		if require.ErrorAs(t, err, &pathErr) {
+			require.Equal(t, syscall.EISDIR, pathErr.Err)
+		}
 	})
 
 	t.Run("VeryLongFileName", func(t *testing.T) {
