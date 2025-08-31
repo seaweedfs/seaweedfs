@@ -102,11 +102,11 @@ jobs:
     - name: Build SeaweedFS
       run: |
         make
-        # Verify binary exists and is executable
-        ./weed version
+        # Verify binary exists and is executable (it's installed to GOPATH/bin)
+        weed version
         
-        # Make weed binary available in PATH
-        sudo cp ./weed /usr/local/bin/weed
+        # Make weed binary available in PATH (it's already there from go install)
+        sudo cp $(which weed) /usr/local/bin/weed
         which weed
         weed version
     
@@ -490,7 +490,8 @@ jobs:
     - name: Build SeaweedFS
       run: |
         make
-        ./weed version
+        # Verify binary exists and is executable (it's installed to GOPATH/bin)
+        weed version
     
     - name: Run critical POSIX tests (macOS)
       continue-on-error: true  # macOS FUSE can be more restrictive
