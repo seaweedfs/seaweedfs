@@ -32,13 +32,13 @@ check-binary:
 		echo "   Please run 'make' in the root directory first"; \
 		exit 1; \
 	fi
-	@echo "$(GREEN)✅ SeaweedFS binary found at $(WEED_BINARY)$(RESET)"
+	@echo "$(GREEN)[OK] SeaweedFS binary found at $(WEED_BINARY)$(RESET)"
 
 check-fuse:
 	@if command -v fusermount >/dev/null 2>&1; then \
-		echo "$(GREEN)✅ FUSE is installed (Linux)$(RESET)"; \
+		echo "$(GREEN)[OK] FUSE is installed (Linux)$(RESET)"; \
 	elif command -v umount >/dev/null 2>&1 && [ "$$(uname)" = "Darwin" ]; then \
-		echo "$(GREEN)✅ FUSE is available (macOS)$(RESET)"; \
+		echo "$(GREEN)[OK] FUSE is available (macOS)$(RESET)"; \
 	else \
 		echo "$(RED)❌ FUSE not found. Please install:$(RESET)"; \
 		echo "   Ubuntu/Debian: sudo apt-get install fuse"; \
@@ -51,10 +51,10 @@ check-go:
 	@go version | grep -q "go1\.[2-9][0-9]" || \
 	go version | grep -q "go1\.2[1-9]" || \
 	(echo "$(RED)❌ Go $(GO_VERSION)+ required. Current: $$(go version)$(RESET)" && exit 1)
-	@echo "$(GREEN)✅ Go version check passed$(RESET)"
+	@echo "$(GREEN)[OK] Go version check passed$(RESET)"
 
 check-prereqs: check-go check-fuse check-binary
-	@echo "$(GREEN)✅ All prerequisites satisfied$(RESET)"
+	@echo "$(GREEN)[OK] All prerequisites satisfied$(RESET)"
 
 # Setup and initialization
 init-module:
@@ -77,7 +77,7 @@ setup-external-tools: setup-reports
 # External tools setup
 setup-pjdfstest:
 	@if [ ! -d "$(EXTERNAL_TOOLS_DIR)/pjdfstest" ]; then \
-		echo "$(BLUE)📥 Setting up pjdfstest...$(RESET)"; \
+		echo "$(BLUE)[SETUP] Setting up pjdfstest...$(RESET)"; \
 		cd $(EXTERNAL_TOOLS_DIR) && \
 		git clone https://github.com/pjd/pjdfstest.git && \
 		cd pjdfstest && \
@@ -85,17 +85,17 @@ setup-pjdfstest:
 		./configure && \
 		make; \
 	else \
-		echo "$(GREEN)✅ pjdfstest already setup$(RESET)"; \
+		echo "$(GREEN)[OK] pjdfstest already setup$(RESET)"; \
 	fi
 
 setup-nfstest:
-	@echo "$(BLUE)📥 Installing nfstest...$(RESET)"
+	@echo "$(BLUE)[INSTALL] Installing nfstest...$(RESET)"
 	@pip3 install --user nfstest 2>/dev/null || \
-	echo "$(YELLOW)⚠️  nfstest installation failed. Install manually: pip3 install nfstest$(RESET)"
+	echo "$(YELLOW)[WARNING] nfstest installation failed. Install manually: pip3 install nfstest$(RESET)"
 
 setup-fio:
 	@if ! command -v fio >/dev/null 2>&1; then \
-		echo "$(BLUE)📥 Installing FIO...$(RESET)"; \
+		echo "$(BLUE)[SETUP] Installing FIO...$(RESET)"; \
 		if command -v apt-get >/dev/null 2>&1; then \
 			sudo apt-get update && sudo apt-get install -y fio; \
 		elif command -v yum >/dev/null 2>&1; then \
@@ -103,15 +103,15 @@ setup-fio:
 		elif command -v brew >/dev/null 2>&1; then \
 			brew install fio; \
 		else \
-			echo "$(YELLOW)⚠️  Please install FIO manually$(RESET)"; \
+			echo "$(YELLOW)[WARNING] Please install FIO manually$(RESET)"; \
 		fi; \
 	else \
-		echo "$(GREEN)✅ FIO already installed$(RESET)"; \
+		echo "$(GREEN)[OK] FIO already installed$(RESET)"; \
 	fi
 
 # Core test execution
 test-posix-basic: check-prereqs init-module setup-reports
-	@echo "$(CYAN)🧪 Running basic POSIX compliance tests...$(RESET)"
+	@echo "$(CYAN)[TEST] Running basic POSIX compliance tests...$(RESET)"
 	@if [ -n "$(TEST_MOUNT_POINT)" ]; then \
 		echo "$(BLUE)Using external mount point: $(TEST_MOUNT_POINT)$(RESET)"; \
 		TEST_MOUNT_POINT="$(TEST_MOUNT_POINT)" TEST_SKIP_CLUSTER_SETUP="true" \
@@ -123,7 +123,7 @@ test-posix-basic: check-prereqs init-module setup-reports
 	fi
 
 test-posix-extended: check-prereqs init-module setup-reports
-	@echo "$(CYAN)🧪 Running extended POSIX compliance tests...$(RESET)"
+	@echo "$(CYAN)[TEST] Running extended POSIX compliance tests...$(RESET)"
 	@if [ -n "$(TEST_MOUNT_POINT)" ]; then \
 		echo "$(BLUE)Using external mount point: $(TEST_MOUNT_POINT)$(RESET)"; \
 		TEST_MOUNT_POINT="$(TEST_MOUNT_POINT)" TEST_SKIP_CLUSTER_SETUP="true" \
@@ -135,7 +135,7 @@ test-posix-extended: check-prereqs init-module setup-reports
 	fi
 
 test-posix-external: check-prereqs init-module setup-reports setup-external-tools
-	@echo "$(CYAN)🧪 Running external POSIX test suite integration...$(RESET)"
+	@echo "$(CYAN)[TEST] Running external POSIX test suite integration...$(RESET)"
 	@if [ -n "$(TEST_MOUNT_POINT)" ]; then \
 		echo "$(BLUE)Using external mount point: $(TEST_MOUNT_POINT)$(RESET)"; \
 		TEST_MOUNT_POINT="$(TEST_MOUNT_POINT)" TEST_SKIP_CLUSTER_SETUP="true" \
@@ -148,11 +148,11 @@ test-posix-external: check-prereqs init-module setup-reports setup-external-tool
 
 # Comprehensive test suites
 test-posix-full: test-posix-basic test-posix-extended test-posix-external
-	@echo "$(GREEN)✅ Full POSIX compliance test suite completed$(RESET)"
+	@echo "$(GREEN)[OK] Full POSIX compliance test suite completed$(RESET)"
 	@$(MAKE) generate-report
 
 test-posix-critical: check-prereqs init-module setup-reports
-	@echo "$(CYAN)🧪 Running critical POSIX compliance tests...$(RESET)"
+	@echo "$(CYAN)[TEST] Running critical POSIX compliance tests...$(RESET)"
 	@if [ -n "$(TEST_MOUNT_POINT)" ]; then \
 		echo "$(BLUE)Using external mount point: $(TEST_MOUNT_POINT)$(RESET)"; \
 		TEST_MOUNT_POINT="$(TEST_MOUNT_POINT)" TEST_SKIP_CLUSTER_SETUP="true" \
@@ -166,7 +166,7 @@ test-posix-critical: check-prereqs init-module setup-reports
 	fi
 
 test-posix-stress: check-prereqs init-module setup-reports
-	@echo "$(CYAN)🧪 Running POSIX stress tests...$(RESET)"
+	@echo "$(CYAN)[TEST] Running POSIX stress tests...$(RESET)"
 	@go test -v -timeout $(TEST_TIMEOUT) \
 		-run "TestExternalPOSIXSuites/CustomPOSIXTests" \
 		$(POSIX_EXTERNAL_TESTS) 2>&1 | tee $(REPORT_DIR)/posix_stress_results.log
@@ -179,25 +179,25 @@ benchmark-posix: check-prereqs init-module setup-reports
 		tee $(REPORT_DIR)/posix_benchmark_results.log
 
 profile-posix: check-prereqs init-module setup-reports
-	@echo "$(CYAN)📊 Running POSIX tests with profiling...$(RESET)"
+	@echo "$(CYAN)[PROFILE] Running POSIX tests with profiling...$(RESET)"
 	@go test -v -timeout $(TEST_TIMEOUT) -cpuprofile $(REPORT_DIR)/posix.cpu.prof \
 		-memprofile $(REPORT_DIR)/posix.mem.prof -run TestPOSIXCompliance $(POSIX_BASIC_TESTS)
-	@echo "$(GREEN)📊 Profiles generated:$(RESET)"
+	@echo "$(GREEN)[PROFILE] Profiles generated:$(RESET)"
 	@echo "  CPU: $(REPORT_DIR)/posix.cpu.prof"
 	@echo "  Memory: $(REPORT_DIR)/posix.mem.prof"
 	@echo "$(BLUE)View with: go tool pprof $(REPORT_DIR)/posix.cpu.prof$(RESET)"
 
 # Coverage analysis
 coverage-posix: check-prereqs init-module setup-reports
-	@echo "$(CYAN)📊 Running POSIX tests with coverage analysis...$(RESET)"
+	@echo "$(CYAN)[COVERAGE] Running POSIX tests with coverage analysis...$(RESET)"
 	@go test -v -timeout $(TEST_TIMEOUT) -coverprofile=$(REPORT_DIR)/$(COVERAGE_FILE) \
 		$(POSIX_BASIC_TESTS) $(POSIX_EXTENDED_TESTS) $(POSIX_EXTERNAL_TESTS)
 	@go tool cover -html=$(REPORT_DIR)/$(COVERAGE_FILE) -o $(REPORT_DIR)/posix_coverage.html
-	@echo "$(GREEN)📊 Coverage report generated: $(REPORT_DIR)/posix_coverage.html$(RESET)"
+	@echo "$(GREEN)[COVERAGE] Coverage report generated: $(REPORT_DIR)/posix_coverage.html$(RESET)"
 
 # External tool tests
 test-pjdfstest: setup-external-tools
-	@echo "$(CYAN)🧪 Running pjdfstest suite...$(RESET)"
+	@echo "$(CYAN)[TEST] Running pjdfstest suite...$(RESET)"
 	@if [ -d "$(EXTERNAL_TOOLS_DIR)/pjdfstest" ]; then \
 		cd $(EXTERNAL_TOOLS_DIR)/pjdfstest && \
 		prove -r tests/ 2>&1 | tee ../../$(REPORT_DIR)/pjdfstest_results.log; \
@@ -207,18 +207,18 @@ test-pjdfstest: setup-external-tools
 	fi
 
 test-nfstest-posix:
-	@echo "$(CYAN)🧪 Running nfstest_posix...$(RESET)"
+	@echo "$(CYAN)[TEST] Running nfstest_posix...$(RESET)"
 	@if command -v nfstest_posix >/dev/null 2>&1; then \
 		mkdir -p /tmp/nfstest_mount; \
 		nfstest_posix --path /tmp/nfstest_mount --verbose 2>&1 | \
 		tee $(REPORT_DIR)/nfstest_results.log; \
 	else \
-		echo "$(YELLOW)⚠️  nfstest_posix not available$(RESET)"; \
+					echo "$(YELLOW)[WARNING] nfstest_posix not available$(RESET)"; \
 	fi
 
 # FIO-based performance tests
 test-fio-posix: setup-reports
-	@echo "$(CYAN)🧪 Running FIO-based POSIX I/O tests...$(RESET)"
+	@echo "$(CYAN)[TEST] Running FIO-based POSIX I/O tests...$(RESET)"
 	@$(MAKE) create-fio-configs
 	@if command -v fio >/dev/null 2>&1; then \
 		for config in $(REPORT_DIR)/fio_*.conf; do \
@@ -226,190 +226,83 @@ test-fio-posix: setup-reports
 			fio $$config --output=$(REPORT_DIR)/$$(basename $$config .conf)_results.log; \
 		done; \
 	else \
-		echo "$(YELLOW)⚠️  FIO not available$(RESET)"; \
+					echo "$(YELLOW)[WARNING] FIO not available$(RESET)"; \
 	fi
 
 create-fio-configs: setup-reports
-	@echo "$(BLUE)📝 Creating FIO test configurations...$(RESET)"
-	@cat > $(REPORT_DIR)/fio_random_rw.conf << 'EOF'
-[global]
-name=posix_random_rw
-ioengine=sync
-iodepth=1
-rw=randrw
-bs=4k
-direct=0
-size=100m
-numjobs=4
-runtime=30
-time_based
-
-[random_rw_test]
-directory=/tmp/seaweedfs_mount
-EOF
-	@cat > $(REPORT_DIR)/fio_sequential.conf << 'EOF'
-[global]
-name=posix_sequential
-ioengine=sync
-iodepth=1
-bs=1m
-direct=0
-size=500m
-runtime=60
-time_based
-
-[seq_write]
-rw=write
-directory=/tmp/seaweedfs_mount
-
-[seq_read]
-rw=read
-directory=/tmp/seaweedfs_mount
-EOF
+	@echo "$(BLUE)[CONFIG] Creating FIO test configurations...$(RESET)"
+	@echo "[global]" > $(REPORT_DIR)/fio_random_rw.conf
+	@echo "name=posix_random_rw" >> $(REPORT_DIR)/fio_random_rw.conf
+	@echo "ioengine=sync" >> $(REPORT_DIR)/fio_random_rw.conf
+	@echo "iodepth=1" >> $(REPORT_DIR)/fio_random_rw.conf
+	@echo "rw=randrw" >> $(REPORT_DIR)/fio_random_rw.conf
+	@echo "bs=4k" >> $(REPORT_DIR)/fio_random_rw.conf
+	@echo "direct=0" >> $(REPORT_DIR)/fio_random_rw.conf
+	@echo "size=100m" >> $(REPORT_DIR)/fio_random_rw.conf
+	@echo "numjobs=4" >> $(REPORT_DIR)/fio_random_rw.conf
+	@echo "runtime=30" >> $(REPORT_DIR)/fio_random_rw.conf
+	@echo "time_based" >> $(REPORT_DIR)/fio_random_rw.conf
+	@echo "" >> $(REPORT_DIR)/fio_random_rw.conf
+	@echo "[random_rw_test]" >> $(REPORT_DIR)/fio_random_rw.conf
+	@echo "directory=/tmp/seaweedfs_mount" >> $(REPORT_DIR)/fio_random_rw.conf
+	@echo "[global]" > $(REPORT_DIR)/fio_sequential.conf
+	@echo "name=posix_sequential" >> $(REPORT_DIR)/fio_sequential.conf
+	@echo "ioengine=sync" >> $(REPORT_DIR)/fio_sequential.conf
+	@echo "iodepth=1" >> $(REPORT_DIR)/fio_sequential.conf
+	@echo "bs=1m" >> $(REPORT_DIR)/fio_sequential.conf
+	@echo "direct=0" >> $(REPORT_DIR)/fio_sequential.conf
+	@echo "size=500m" >> $(REPORT_DIR)/fio_sequential.conf
+	@echo "runtime=60" >> $(REPORT_DIR)/fio_sequential.conf
+	@echo "time_based" >> $(REPORT_DIR)/fio_sequential.conf
+	@echo "" >> $(REPORT_DIR)/fio_sequential.conf
+	@echo "[seq_write]" >> $(REPORT_DIR)/fio_sequential.conf
+	@echo "rw=write" >> $(REPORT_DIR)/fio_sequential.conf
+	@echo "directory=/tmp/seaweedfs_mount" >> $(REPORT_DIR)/fio_sequential.conf
+	@echo "" >> $(REPORT_DIR)/fio_sequential.conf
+	@echo "[seq_read]" >> $(REPORT_DIR)/fio_sequential.conf
+	@echo "rw=read" >> $(REPORT_DIR)/fio_sequential.conf
+	@echo "directory=/tmp/seaweedfs_mount" >> $(REPORT_DIR)/fio_sequential.conf
 
 # Reporting and analysis
 generate-report: setup-reports
-	@echo "$(BLUE)📋 Generating comprehensive POSIX compliance report...$(RESET)"
+	@echo "$(BLUE)[REPORT] Generating comprehensive POSIX compliance report...$(RESET)"
 	@$(MAKE) generate-html-report
 	@$(MAKE) generate-text-report
 	@$(MAKE) generate-json-report
 
 generate-html-report:
-	@echo "$(BLUE)📄 Generating HTML report...$(RESET)"
-	@cat > $(REPORT_DIR)/posix_compliance_report.html << 'EOF'
-<!DOCTYPE html>
-<html>
-<head>
-    <title>SeaweedFS POSIX Compliance Report</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        .header { background-color: #f4f4f4; padding: 10px; border-radius: 5px; }
-        .section { margin: 20px 0; padding: 10px; border-left: 4px solid #007cba; }
-        .pass { color: green; font-weight: bold; }
-        .fail { color: red; font-weight: bold; }
-        .warn { color: orange; font-weight: bold; }
-        .info { color: blue; }
-        pre { background-color: #f4f4f4; padding: 10px; border-radius: 3px; overflow-x: auto; }
-        table { border-collapse: collapse; width: 100%; }
-        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-        th { background-color: #f2f2f2; }
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h1>SeaweedFS POSIX Compliance Report</h1>
-        <p>Generated: $(shell date)</p>
-        <p>SeaweedFS Version: $(shell $(WEED_BINARY) version 2>/dev/null || echo "Unknown")</p>
-    </div>
-
-    <div class="section">
-        <h2>Executive Summary</h2>
-        <p>This report provides a comprehensive analysis of SeaweedFS FUSE mount POSIX compliance.</p>
-    </div>
-
-    <div class="section">
-        <h2>Test Categories</h2>
-        <table>
-            <tr><th>Category</th><th>Status</th><th>Details</th></tr>
-            <tr><td>Basic File Operations</td><td class="info">See detailed results</td><td>Create, read, write, delete operations</td></tr>
-            <tr><td>Directory Operations</td><td class="info">See detailed results</td><td>Directory lifecycle management</td></tr>
-            <tr><td>Extended Attributes</td><td class="info">See detailed results</td><td>xattr support and operations</td></tr>
-            <tr><td>File Locking</td><td class="info">See detailed results</td><td>Advisory and mandatory locking</td></tr>
-            <tr><td>Advanced I/O</td><td class="info">See detailed results</td><td>readv/writev, pread/pwrite, mmap</td></tr>
-            <tr><td>External Test Suites</td><td class="info">See detailed results</td><td>pjdfstest, nfstest integration</td></tr>
-        </table>
-    </div>
-
-    <div class="section">
-        <h2>Detailed Results</h2>
-        <p>See individual log files for detailed test results:</p>
-        <ul>
-            <li><a href="posix_basic_results.log">Basic POSIX Tests</a></li>
-            <li><a href="posix_extended_results.log">Extended POSIX Tests</a></li>
-            <li><a href="posix_external_results.log">External Test Suite Results</a></li>
-        </ul>
-    </div>
-</body>
-</html>
-EOF
-	@echo "$(GREEN)📄 HTML report generated: $(REPORT_DIR)/posix_compliance_report.html$(RESET)"
+	@echo "$(BLUE)[REPORT] Generating HTML report...$(RESET)"
+	@echo "<!DOCTYPE html>" > $(REPORT_DIR)/posix_compliance_report.html
+	@echo "<html><head><title>SeaweedFS POSIX Compliance Report</title>" >> $(REPORT_DIR)/posix_compliance_report.html
+	@echo "<style>body{font-family:Arial;margin:20px}.pass{color:green}.fail{color:red}</style>" >> $(REPORT_DIR)/posix_compliance_report.html
+	@echo "</head><body><h1>SeaweedFS POSIX Compliance Report</h1>" >> $(REPORT_DIR)/posix_compliance_report.html
+	@echo "<p>Generated on: $$(date)</p>" >> $(REPORT_DIR)/posix_compliance_report.html
+	@echo "<h2>Test Results</h2>" >> $(REPORT_DIR)/posix_compliance_report.html
+	@echo "<p>Detailed test results are available in the text and JSON reports.</p>" >> $(REPORT_DIR)/posix_compliance_report.html
+	@echo "</body></html>" >> $(REPORT_DIR)/posix_compliance_report.html
+	@echo "$(GREEN)[OK] HTML report generated: $(REPORT_DIR)/posix_compliance_report.html$(RESET)"
 
 generate-text-report:
-	@echo "$(BLUE)📄 Generating text report...$(RESET)"
-	@cat > $(REPORT_DIR)/posix_compliance_summary.txt << 'EOF'
-SeaweedFS POSIX Compliance Report
-=================================
-
-Generated: $(shell date)
-SeaweedFS Version: $(shell $(WEED_BINARY) version 2>/dev/null || echo "Unknown")
-
-Test Summary:
-------------
-Basic File Operations:     [See posix_basic_results.log]
-Directory Operations:      [See posix_basic_results.log]
-Symlink Operations:        [See posix_basic_results.log]
-Permission Tests:          [See posix_basic_results.log]
-Timestamp Tests:           [See posix_basic_results.log]
-Extended Attributes:       [See posix_extended_results.log]
-File Locking:              [See posix_extended_results.log]
-Advanced I/O:              [See posix_extended_results.log]
-Memory Mapping:            [See posix_extended_results.log]
-External Test Suites:      [See posix_external_results.log]
-
-Performance Benchmarks:
-----------------------
-[See posix_benchmark_results.log]
-
-Coverage Analysis:
------------------
-[See posix_coverage.html]
-
-Recommendations:
----------------
-1. Review any test failures in the detailed logs
-2. Consider implementing missing POSIX features if critical for your use case
-3. Monitor performance characteristics for your specific workload
-4. Re-run tests periodically to catch regressions
-
-For questions or issues, please refer to the SeaweedFS documentation
-or open an issue at https://github.com/seaweedfs/seaweedfs/issues
-EOF
-	@echo "$(GREEN)📄 Text report generated: $(REPORT_DIR)/posix_compliance_summary.txt$(RESET)"
+	@echo "$(BLUE)[REPORT] Generating text report...$(RESET)"
+	@echo "SeaweedFS POSIX Compliance Report" > $(REPORT_DIR)/posix_compliance_summary.txt
+	@echo "=================================" >> $(REPORT_DIR)/posix_compliance_summary.txt
+	@echo "" >> $(REPORT_DIR)/posix_compliance_summary.txt
+	@echo "Generated: $$(date)" >> $(REPORT_DIR)/posix_compliance_summary.txt
+	@echo "SeaweedFS Version: $$($(WEED_BINARY) version 2>/dev/null || echo 'Unknown')" >> $(REPORT_DIR)/posix_compliance_summary.txt
+	@echo "" >> $(REPORT_DIR)/posix_compliance_summary.txt
+	@echo "Test Summary: See individual log files for detailed results" >> $(REPORT_DIR)/posix_compliance_summary.txt
+	@echo "$(GREEN)[OK] Text report generated: $(REPORT_DIR)/posix_compliance_summary.txt$(RESET)"
 
 generate-json-report:
-	@echo "$(BLUE)📄 Generating JSON report...$(RESET)"
-	@cat > $(REPORT_DIR)/posix_compliance_report.json << 'EOF'
-{
-  "report_type": "posix_compliance",
-  "timestamp": "$(shell date -u +"%Y-%m-%dT%H:%M:%SZ")",
-  "seaweedfs_version": "$(shell $(WEED_BINARY) version 2>/dev/null | head -n1 || echo "Unknown")",
-  "test_environment": {
-    "os": "$(shell uname -s)",
-    "arch": "$(shell uname -m)",
-    "go_version": "$(shell go version)"
-  },
-  "test_categories": {
-    "basic_file_operations": {
-      "status": "executed",
-      "log_file": "posix_basic_results.log"
-    },
-    "extended_attributes": {
-      "status": "executed", 
-      "log_file": "posix_extended_results.log"
-    },
-    "external_test_suites": {
-      "status": "executed",
-      "log_file": "posix_external_results.log"
-    }
-  },
-  "summary": {
-    "total_categories": 3,
-    "executed_categories": 3,
-    "success_rate": "See individual logs for details"
-  }
-}
-EOF
-	@echo "$(GREEN)📄 JSON report generated: $(REPORT_DIR)/posix_compliance_report.json$(RESET)"
+	@echo "$(BLUE)[REPORT] Generating JSON report...$(RESET)"
+	@echo "{" > $(REPORT_DIR)/posix_compliance_report.json
+	@echo "  \"report_type\": \"posix_compliance\"," >> $(REPORT_DIR)/posix_compliance_report.json
+	@echo "  \"timestamp\": \"$$(date -u +"%Y-%m-%dT%H:%M:%SZ")\"," >> $(REPORT_DIR)/posix_compliance_report.json
+	@echo "  \"seaweedfs_version\": \"$$($(WEED_BINARY) version 2>/dev/null | head -n1 || echo 'Unknown')\"," >> $(REPORT_DIR)/posix_compliance_report.json
+	@echo "  \"test_environment\": { \"os\": \"$$(uname -s)\", \"arch\": \"$$(uname -m)\" }," >> $(REPORT_DIR)/posix_compliance_report.json
+	@echo "  \"test_results\": \"See individual log files for detailed results\"" >> $(REPORT_DIR)/posix_compliance_report.json
+	@echo "}" >> $(REPORT_DIR)/posix_compliance_report.json
+	@echo "$(GREEN)[OK] JSON report generated: $(REPORT_DIR)/posix_compliance_report.json$(RESET)"
 
 # Cleanup and maintenance
 clean:
@@ -417,7 +310,7 @@ clean:
 	@rm -rf $(REPORT_DIR)
 	@rm -rf /tmp/seaweedfs_*_test_*
 	@go clean -testcache
-	@echo "$(GREEN)✅ Cleanup complete$(RESET)"
+	@echo "$(GREEN)[OK] Cleanup complete$(RESET)"
 
 clean-external-tools:
 	@echo "$(YELLOW)🧹 Cleaning up external tools...$(RESET)"
@@ -427,9 +320,9 @@ clean-all: clean clean-external-tools
 
 # Development and debugging
 validate:
-	@echo "$(BLUE)✅ Validating test files...$(RESET)"
+	@echo "$(BLUE)[OK] Validating test files...$(RESET)"
 	@go build -o /dev/null ./...
-	@echo "$(GREEN)✅ All test files compile successfully$(RESET)"
+	@echo "$(GREEN)[OK] All test files compile successfully$(RESET)"
 
 fmt:
 	@echo "$(BLUE)🎨 Formatting Go code...$(RESET)"
@@ -440,7 +333,7 @@ lint:
 	@if command -v golangci-lint >/dev/null 2>&1; then \
 		golangci-lint run; \
 	else \
-		echo "$(YELLOW)⚠️  golangci-lint not found, running go vet instead$(RESET)"; \
+					echo "$(YELLOW)[WARNING] golangci-lint not found, running go vet instead$(RESET)"; \
 		go vet ./...; \
 	fi
 
@@ -462,7 +355,7 @@ list-tests:
 	@grep -r "^func Test" *.go 2>/dev/null | sed 's/.*func \(Test[^(]*\).*/  \1/' | sort || echo "No test files found"
 
 test-info:
-	@echo "$(BLUE)📊 POSIX Test Information:$(RESET)"
+	@echo "$(BLUE)[INFO] POSIX Test Information:$(RESET)"
 	@echo "Test files:"
 	@echo "  - $(POSIX_BASIC_TESTS): Core POSIX compliance tests"
 	@echo "  - $(POSIX_EXTENDED_TESTS): Extended POSIX feature tests"  
