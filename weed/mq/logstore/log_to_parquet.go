@@ -218,7 +218,11 @@ func writeLogFilesToParquet(filerClient filer_pb.FilerClient, partitionDir strin
 		os.Remove(tempFile.Name())
 	}()
 
-	writer := parquet.NewWriter(tempFile, parquetSchema, parquet.Compression(&zstd.Codec{Level: zstd.DefaultLevel}))
+	// Enable column statistics for fast aggregation queries
+	writer := parquet.NewWriter(tempFile, parquetSchema,
+		parquet.Compression(&zstd.Codec{Level: zstd.DefaultLevel}),
+		parquet.DataPageStatistics(true), // Enable column statistics
+	)
 	rowBuilder := parquet.NewRowBuilder(parquetSchema)
 
 	var startTsNs, stopTsNs int64
