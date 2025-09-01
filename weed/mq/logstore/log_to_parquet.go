@@ -3,6 +3,7 @@ package logstore
 import (
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -285,7 +286,14 @@ func writeLogFilesToParquet(filerClient filer_pb.FilerClient, partitionDir strin
 
 	// write to parquet file to partitionDir
 	parquetFileName := fmt.Sprintf("%s.parquet", time.Unix(0, startTsNs).UTC().Format("2006-01-02-15-04-05"))
-	if err := saveParquetFileToPartitionDir(filerClient, tempFile, partitionDir, parquetFileName, preference, startTsNs, stopTsNs); err != nil {
+
+	// Collect source log file names for deduplication metadata
+	var sourceLogFiles []string
+	for _, logFile := range logFileGroups {
+		sourceLogFiles = append(sourceLogFiles, logFile.Name)
+	}
+
+	if err := saveParquetFileToPartitionDir(filerClient, tempFile, partitionDir, parquetFileName, preference, startTsNs, stopTsNs, sourceLogFiles); err != nil {
 		return fmt.Errorf("save parquet file %s: %v", parquetFileName, err)
 	}
 
@@ -293,7 +301,7 @@ func writeLogFilesToParquet(filerClient filer_pb.FilerClient, partitionDir strin
 
 }
 
-func saveParquetFileToPartitionDir(filerClient filer_pb.FilerClient, sourceFile *os.File, partitionDir, parquetFileName string, preference *operation.StoragePreference, startTsNs, stopTsNs int64) error {
+func saveParquetFileToPartitionDir(filerClient filer_pb.FilerClient, sourceFile *os.File, partitionDir, parquetFileName string, preference *operation.StoragePreference, startTsNs, stopTsNs int64, sourceLogFiles []string) error {
 	uploader, err := operation.NewUploader()
 	if err != nil {
 		return fmt.Errorf("new uploader: %w", err)
@@ -325,6 +333,12 @@ func saveParquetFileToPartitionDir(filerClient filer_pb.FilerClient, sourceFile 
 	maxTsBytes := make([]byte, 8)
 	binary.BigEndian.PutUint64(maxTsBytes, uint64(stopTsNs))
 	entry.Extended["max"] = maxTsBytes
+
+	// Store source log files for deduplication (JSON-encoded list)
+	if len(sourceLogFiles) > 0 {
+		sourceLogFilesJson, _ := json.Marshal(sourceLogFiles)
+		entry.Extended["sources"] = sourceLogFilesJson
+	}
 
 	for i := int64(0); i < chunkCount; i++ {
 		fileId, uploadResult, err, _ := uploader.UploadWithRetry(
