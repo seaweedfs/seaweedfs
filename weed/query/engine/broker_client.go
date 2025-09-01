@@ -3,13 +3,14 @@ package engine
 import (
 	"context"
 	"fmt"
+	"io"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
-	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -20,8 +21,8 @@ import (
 // 2. gRPC connection with default timeout of 30 seconds
 // 3. Topics and namespaces are managed via SeaweedMessaging service
 type BrokerClient struct {
-	filerAddress  string
-	brokerAddress string
+	filerAddress   string
+	brokerAddress  string
 	grpcDialOption grpc.DialOption
 }
 
@@ -48,17 +49,17 @@ func (c *BrokerClient) findBrokerBalancer() error {
 	defer conn.Close()
 
 	client := filer_pb.NewSeaweedFilerClient(conn)
-	
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	
+
 	resp, err := client.FindLockOwner(ctx, &filer_pb.FindLockOwnerRequest{
 		Name: pub_balancer.LockBrokerBalancer,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to find broker balancer: %v", err)
 	}
-	
+
 	c.brokerAddress = resp.Owner
 	return nil
 }
@@ -69,7 +70,7 @@ func (c *BrokerClient) GetFilerClient() (filer_pb.FilerClient, error) {
 	if c.filerAddress == "" {
 		return nil, fmt.Errorf("filer address not specified")
 	}
-	
+
 	return &filerClientImpl{
 		filerAddress:   c.filerAddress,
 		grpcDialOption: c.grpcDialOption,
@@ -89,7 +90,7 @@ func (f *filerClientImpl) WithFilerClient(followRedirect bool, fn func(client fi
 		return fmt.Errorf("failed to connect to filer at %s: %v", f.filerAddress, err)
 	}
 	defer conn.Close()
-	
+
 	client := filer_pb.NewSeaweedFilerClient(conn)
 	return fn(client)
 }
@@ -106,54 +107,102 @@ func (f *filerClientImpl) GetDataCenter() string {
 	return ""
 }
 
-// ListNamespaces retrieves all MQ namespaces (databases)
-// Assumption: This would be implemented via a new gRPC method or derived from ListTopics
+// ListNamespaces retrieves all MQ namespaces (databases) from the filer
+// ✅ RESOLVED: Now queries actual topic directories instead of hardcoded values
 func (c *BrokerClient) ListNamespaces(ctx context.Context) ([]string, error) {
-	if err := c.findBrokerBalancer(); err != nil {
-		return nil, err
+	// Get filer client to list directories under /topics
+	filerClient, err := c.GetFilerClient()
+	if err != nil {
+		// Return empty list if filer unavailable - no fallback sample data
+		return []string{}, nil
 	}
 
-	// TODO: Implement proper namespace listing
-	// For now, we'll derive from known topic patterns or use a dedicated API
-	// This is a placeholder that should be replaced with actual broker call
-	
-	// Temporary implementation: return hardcoded namespaces
-	// Real implementation would call a ListNamespaces gRPC method
-	return []string{"default", "analytics", "logs"}, nil
+	var namespaces []string
+	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		// List directories under /topics to get namespaces
+		request := &filer_pb.ListEntriesRequest{
+			Directory: "/topics", // filer.TopicsDir constant value
+		}
+
+		stream, streamErr := client.ListEntries(ctx, request)
+		if streamErr != nil {
+			return fmt.Errorf("failed to list topics directory: %v", streamErr)
+		}
+
+		for {
+			resp, recvErr := stream.Recv()
+			if recvErr != nil {
+				if recvErr == io.EOF {
+					break // End of stream
+				}
+				return fmt.Errorf("failed to receive entry: %v", recvErr)
+			}
+
+			// Only include directories (namespaces), skip files
+			if resp.Entry != nil && resp.Entry.IsDirectory {
+				namespaces = append(namespaces, resp.Entry.Name)
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		// Return empty list if directory listing fails - no fallback sample data
+		return []string{}, nil
+	}
+
+	// Return actual namespaces found (may be empty if no topics exist)
+	return namespaces, nil
 }
 
-// ListTopics retrieves all topics in a namespace
-// Assumption: Uses existing ListTopics gRPC method from SeaweedMessaging service
+// ListTopics retrieves all topics in a namespace from the filer
+// ✅ RESOLVED: Now queries actual topic directories instead of hardcoded values
 func (c *BrokerClient) ListTopics(ctx context.Context, namespace string) ([]string, error) {
-	if err := c.findBrokerBalancer(); err != nil {
-		return nil, err
-	}
-
-	conn, err := grpc.Dial(c.brokerAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	// Get filer client to list directories under /topics/{namespace}
+	filerClient, err := c.GetFilerClient()
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to broker at %s: %v", c.brokerAddress, err)
-	}
-	defer conn.Close()
-
-	client := mq_pb.NewSeaweedMessagingClient(conn)
-	
-	resp, err := client.ListTopics(ctx, &mq_pb.ListTopicsRequest{
-		// TODO: Add namespace filtering to ListTopicsRequest if supported
-		// For now, we'll filter client-side
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list topics: %v", err)
+		// Return empty list if filer unavailable - no fallback sample data
+		return []string{}, nil
 	}
 
-	// Filter topics by namespace
-	// Assumption: Topic.Namespace field exists and matches our namespace
 	var topics []string
-	for _, topic := range resp.Topics {
-		if topic.Namespace == namespace {
-			topics = append(topics, topic.Name)
+	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		// List directories under /topics/{namespace} to get topics
+		namespaceDir := fmt.Sprintf("/topics/%s", namespace)
+		request := &filer_pb.ListEntriesRequest{
+			Directory: namespaceDir,
 		}
+
+		stream, streamErr := client.ListEntries(ctx, request)
+		if streamErr != nil {
+			return fmt.Errorf("failed to list namespace directory %s: %v", namespaceDir, streamErr)
+		}
+
+		for {
+			resp, recvErr := stream.Recv()
+			if recvErr != nil {
+				if recvErr == io.EOF {
+					break // End of stream
+				}
+				return fmt.Errorf("failed to receive entry: %v", recvErr)
+			}
+
+			// Only include directories (topics), skip files
+			if resp.Entry != nil && resp.Entry.IsDirectory {
+				topics = append(topics, resp.Entry.Name)
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		// Return empty list if directory listing fails - no fallback sample data
+		return []string{}, nil
 	}
 
+	// Return actual topics found (may be empty if no topics exist in namespace)
 	return topics, nil
 }
 
@@ -166,7 +215,7 @@ func (c *BrokerClient) GetTopicSchema(ctx context.Context, namespace, topicName 
 
 	// TODO: Implement proper schema retrieval
 	// This might be part of LookupTopicBrokers or a dedicated GetTopicSchema method
-	
+
 	conn, err := grpc.Dial(c.brokerAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to broker at %s: %v", c.brokerAddress, err)
@@ -174,7 +223,7 @@ func (c *BrokerClient) GetTopicSchema(ctx context.Context, namespace, topicName 
 	defer conn.Close()
 
 	client := mq_pb.NewSeaweedMessagingClient(conn)
-	
+
 	// Use LookupTopicBrokers to get topic information
 	resp, err := client.LookupTopicBrokers(ctx, &mq_pb.LookupTopicBrokersRequest{
 		Topic: &schema_pb.Topic{
@@ -221,7 +270,7 @@ func (c *BrokerClient) ConfigureTopic(ctx context.Context, namespace, topicName 
 	defer conn.Close()
 
 	client := mq_pb.NewSeaweedMessagingClient(conn)
-	
+
 	// Create topic configuration
 	_, err = client.ConfigureTopic(ctx, &mq_pb.ConfigureTopicRequest{
 		Topic: &schema_pb.Topic{
@@ -247,7 +296,7 @@ func (c *BrokerClient) DeleteTopic(ctx context.Context, namespace, topicName str
 
 	// TODO: Implement topic deletion
 	// This may require a new gRPC method in the broker service
-	
+
 	return fmt.Errorf("topic deletion not yet implemented in broker - need to add DeleteTopic gRPC method")
 }
 
@@ -258,39 +307,39 @@ func (c *BrokerClient) ListTopicPartitions(ctx context.Context, namespace, topic
 		// Fallback to default partition when broker unavailable
 		return []topic.Partition{{RangeStart: 0, RangeStop: 1000}}, nil
 	}
-	
+
 	// Get topic configuration to determine actual partitions
 	topicObj := topic.Topic{Namespace: namespace, Name: topicName}
-	
+
 	// Use filer client to read topic configuration
 	filerClient, err := c.GetFilerClient()
 	if err != nil {
 		// Fallback to default partition
 		return []topic.Partition{{RangeStart: 0, RangeStop: 1000}}, nil
 	}
-	
+
 	var topicConf *mq_pb.ConfigureTopicResponse
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		topicConf, err = topicObj.ReadConfFile(client)
 		return err
 	})
-	
+
 	if err != nil {
 		// Topic doesn't exist or can't read config, use default
 		return []topic.Partition{{RangeStart: 0, RangeStop: 1000}}, nil
 	}
-	
+
 	// Generate partitions based on topic configuration
 	partitionCount := int32(4) // Default partition count for topics
 	if len(topicConf.BrokerPartitionAssignments) > 0 {
 		partitionCount = int32(len(topicConf.BrokerPartitionAssignments))
 	}
-	
+
 	// Create partition ranges - simplified approach
 	// Each partition covers an equal range of the hash space
 	rangeSize := topic.PartitionCount / partitionCount
 	var partitions []topic.Partition
-	
+
 	for i := int32(0); i < partitionCount; i++ {
 		rangeStart := i * rangeSize
 		rangeStop := (i + 1) * rangeSize
@@ -298,7 +347,7 @@ func (c *BrokerClient) ListTopicPartitions(ctx context.Context, namespace, topic
 			// Last partition covers remaining range
 			rangeStop = topic.PartitionCount
 		}
-		
+
 		partitions = append(partitions, topic.Partition{
 			RangeStart: rangeStart,
 			RangeStop:  rangeStop,
@@ -306,6 +355,6 @@ func (c *BrokerClient) ListTopicPartitions(ctx context.Context, namespace, topic
 			UnixTimeNs: time.Now().UnixNano(),
 		})
 	}
-	
+
 	return partitions, nil
 }

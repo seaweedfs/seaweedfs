@@ -194,9 +194,15 @@ func (e *SQLEngine) executeSelectStatement(ctx context.Context, stmt *sqlparser.
 	}
 
 	// Build hybrid scan options
+	// ✅ RESOLVED TODO: Extract from WHERE clause time filters
+	startTimeNs, stopTimeNs := int64(0), int64(0)
+	if stmt.Where != nil {
+		startTimeNs, stopTimeNs = e.extractTimeFilters(stmt.Where.Expr)
+	}
+	
 	hybridScanOptions := HybridScanOptions{
-		StartTimeNs: 0, // TODO: Extract from WHERE clause time filters
-		StopTimeNs:  0, // TODO: Extract from WHERE clause time filters  
+		StartTimeNs: startTimeNs, // Extracted from WHERE clause time comparisons
+		StopTimeNs:  stopTimeNs,  // Extracted from WHERE clause time comparisons
 		Limit:       limit,
 		Predicate:   predicate,
 	}
@@ -365,6 +371,192 @@ func convertHybridResultsToSQL(results []HybridScanResult, columns []string) *Qu
 	return &QueryResult{
 		Columns: columns,
 		Rows:    rows,
+	}
+}
+
+// extractTimeFilters extracts time range filters from WHERE clause for optimization
+// This allows push-down of time-based queries to improve scan performance
+// Returns (startTimeNs, stopTimeNs) where 0 means unbounded
+func (e *SQLEngine) extractTimeFilters(expr sqlparser.Expr) (int64, int64) {
+	startTimeNs, stopTimeNs := int64(0), int64(0)
+	
+	// Recursively extract time filters from expression tree
+	e.extractTimeFiltersRecursive(expr, &startTimeNs, &stopTimeNs)
+	
+	return startTimeNs, stopTimeNs
+}
+
+// extractTimeFiltersRecursive recursively processes WHERE expressions to find time comparisons
+func (e *SQLEngine) extractTimeFiltersRecursive(expr sqlparser.Expr, startTimeNs, stopTimeNs *int64) {
+	switch exprType := expr.(type) {
+	case *sqlparser.ComparisonExpr:
+		e.extractTimeFromComparison(exprType, startTimeNs, stopTimeNs)
+	case *sqlparser.AndExpr:
+		// For AND expressions, combine time filters (intersection)
+		e.extractTimeFiltersRecursive(exprType.Left, startTimeNs, stopTimeNs)
+		e.extractTimeFiltersRecursive(exprType.Right, startTimeNs, stopTimeNs)
+	case *sqlparser.OrExpr:
+		// For OR expressions, we can't easily optimize time ranges
+		// Skip time filter extraction for OR clauses to avoid incorrect results
+		return
+	case *sqlparser.ParenExpr:
+		// Unwrap parentheses and continue
+		e.extractTimeFiltersRecursive(exprType.Expr, startTimeNs, stopTimeNs)
+	}
+}
+
+// extractTimeFromComparison extracts time bounds from comparison expressions
+// Handles comparisons against timestamp columns (_timestamp_ns, timestamp, created_at, etc.)
+func (e *SQLEngine) extractTimeFromComparison(comp *sqlparser.ComparisonExpr, startTimeNs, stopTimeNs *int64) {
+	// Check if this is a time-related column comparison
+	leftCol := e.getColumnName(comp.Left)
+	rightCol := e.getColumnName(comp.Right)
+	
+	var valueExpr sqlparser.Expr
+	var reversed bool
+	
+	// Determine which side is the time column
+	if e.isTimeColumn(leftCol) {
+		valueExpr = comp.Right
+		reversed = false
+	} else if e.isTimeColumn(rightCol) {
+		valueExpr = comp.Left
+		reversed = true
+	} else {
+		// Not a time comparison
+		return
+	}
+	
+	// Extract the time value
+	timeValue := e.extractTimeValue(valueExpr)
+	if timeValue == 0 {
+		// Couldn't parse time value
+		return
+	}
+	
+	// Apply the comparison operator to determine time bounds
+	operator := comp.Operator
+	if reversed {
+		// Reverse the operator if column and value are swapped
+		operator = e.reverseOperator(operator)
+	}
+	
+	switch operator {
+	case sqlparser.GreaterThanStr: // timestamp > value
+		if *startTimeNs == 0 || timeValue > *startTimeNs {
+			*startTimeNs = timeValue
+		}
+	case sqlparser.GreaterEqualStr: // timestamp >= value  
+		if *startTimeNs == 0 || timeValue >= *startTimeNs {
+			*startTimeNs = timeValue
+		}
+	case sqlparser.LessThanStr: // timestamp < value
+		if *stopTimeNs == 0 || timeValue < *stopTimeNs {
+			*stopTimeNs = timeValue
+		}
+	case sqlparser.LessEqualStr: // timestamp <= value
+		if *stopTimeNs == 0 || timeValue <= *stopTimeNs {
+			*stopTimeNs = timeValue
+		}
+	case sqlparser.EqualStr: // timestamp = value (point query)
+		// For exact matches, set both bounds to the same value
+		*startTimeNs = timeValue
+		*stopTimeNs = timeValue
+	}
+}
+
+// isTimeColumn checks if a column name refers to a timestamp field
+func (e *SQLEngine) isTimeColumn(columnName string) bool {
+	if columnName == "" {
+		return false
+	}
+	
+	// System timestamp columns
+	timeColumns := []string{
+		"_timestamp_ns",    // SeaweedFS MQ system timestamp (nanoseconds)
+		"timestamp_ns",     // Alternative naming
+		"timestamp",        // Common timestamp field
+		"created_at",       // Common creation time field
+		"updated_at",       // Common update time field
+		"event_time",       // Event timestamp
+		"log_time",         // Log timestamp
+		"ts",              // Short form
+	}
+	
+	for _, timeCol := range timeColumns {
+		if strings.EqualFold(columnName, timeCol) {
+			return true
+		}
+	}
+	
+	return false
+}
+
+// getColumnName extracts column name from expression (handles ColName types)
+func (e *SQLEngine) getColumnName(expr sqlparser.Expr) string {
+	switch exprType := expr.(type) {
+	case *sqlparser.ColName:
+		return exprType.Name.String()
+	}
+	return ""
+}
+
+// extractTimeValue parses time values from SQL expressions
+// Supports nanosecond timestamps, ISO dates, and relative times
+func (e *SQLEngine) extractTimeValue(expr sqlparser.Expr) int64 {
+	switch exprType := expr.(type) {
+	case *sqlparser.SQLVal:
+		if exprType.Type == sqlparser.IntVal {
+			// Parse as nanosecond timestamp
+			if val, err := strconv.ParseInt(string(exprType.Val), 10, 64); err == nil {
+				return val
+			}
+		} else if exprType.Type == sqlparser.StrVal {
+			// Parse as ISO date or other string formats
+			timeStr := string(exprType.Val)
+			
+			// Try parsing as RFC3339 (ISO 8601)
+			if t, err := time.Parse(time.RFC3339, timeStr); err == nil {
+				return t.UnixNano()
+			}
+			
+			// Try parsing as RFC3339 with nanoseconds
+			if t, err := time.Parse(time.RFC3339Nano, timeStr); err == nil {
+				return t.UnixNano()
+			}
+			
+			// Try parsing as date only (YYYY-MM-DD)
+			if t, err := time.Parse("2006-01-02", timeStr); err == nil {
+				return t.UnixNano()
+			}
+			
+			// Try parsing as datetime (YYYY-MM-DD HH:MM:SS)
+			if t, err := time.Parse("2006-01-02 15:04:05", timeStr); err == nil {
+				return t.UnixNano()
+			}
+		}
+	}
+	
+	return 0 // Couldn't parse
+}
+
+// reverseOperator reverses comparison operators when column and value are swapped
+func (e *SQLEngine) reverseOperator(op string) string {
+	switch op {
+	case sqlparser.GreaterThanStr:
+		return sqlparser.LessThanStr
+	case sqlparser.GreaterEqualStr:
+		return sqlparser.LessEqualStr
+	case sqlparser.LessThanStr:
+		return sqlparser.GreaterThanStr
+	case sqlparser.LessEqualStr:
+		return sqlparser.GreaterEqualStr
+	case sqlparser.EqualStr:
+		return sqlparser.EqualStr
+	case sqlparser.NotEqualStr:
+		return sqlparser.NotEqualStr
+	default:
+		return op
 	}
 }
 

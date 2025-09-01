@@ -28,15 +28,15 @@ func TestSQLEngine_SelectBasic(t *testing.T) {
 		t.Error("Expected rows in result")
 	}
 	
-	// Should have sample data with 3 columns
-	expectedColumns := []string{"user_id", "event_type", "data"}
+	// Should have sample data with 4 columns (includes _source from hybrid scanner)
+	expectedColumns := []string{"user_id", "event_type", "data", "_source"}
 	if len(result.Columns) != len(expectedColumns) {
 		t.Errorf("Expected %d columns, got %d", len(expectedColumns), len(result.Columns))
 	}
 	
-	// Should have 3 sample rows
-	if len(result.Rows) != 3 {
-		t.Errorf("Expected 3 rows, got %d", len(result.Rows))
+	// Should have 4 sample rows (hybrid data includes both live_log and parquet_archive)
+	if len(result.Rows) != 4 {
+		t.Errorf("Expected 4 rows, got %d", len(result.Rows))
 	}
 }
 
