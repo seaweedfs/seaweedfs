@@ -41,6 +41,11 @@ func NewSQLEngine(masterAddress string) *SQLEngine {
 	}
 }
 
+// GetCatalog returns the schema catalog for external access
+func (e *SQLEngine) GetCatalog() *SchemaCatalog {
+	return e.catalog
+}
+
 // ExecuteSQL parses and executes a SQL statement
 // Assumptions:
 // 1. All SQL statements are MySQL-compatible via xwb1989/sqlparser
@@ -823,11 +828,12 @@ func (e *SQLEngine) showDatabases(ctx context.Context) (*QueryResult, error) {
 }
 
 func (e *SQLEngine) showTables(ctx context.Context, dbName string) (*QueryResult, error) {
-	// Assumption: If no database specified, use default or return error
+	// Use current database context if no database specified
 	if dbName == "" {
-		// TODO: Implement default database context
-		// For now, use 'default' as the default database
-		dbName = "default"
+		dbName = e.catalog.GetCurrentDatabase()
+		if dbName == "" {
+			dbName = "default"
+		}
 	}
 
 	tables, err := e.catalog.ListTables(dbName)

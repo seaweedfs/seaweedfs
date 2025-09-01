@@ -92,6 +92,11 @@ func runSql(command *Command, args []string) bool {
 		interactive:     interactive,
 	}
 
+	// Set current database in SQL engine if specified via command line
+	if *sqlDatabase != "" {
+		ctx.engine.GetCatalog().SetCurrentDatabase(*sqlDatabase)
+	}
+
 	// Execute based on mode
 	switch {
 	case *sqlQuery != "":
@@ -215,12 +220,19 @@ func runInteractiveShell(ctx *SQLContext) bool {
 		}
 
 		// Handle database switching
-		if strings.HasPrefix(strings.ToUpper(line), "USE ") {
-			dbName := strings.TrimSpace(strings.TrimPrefix(strings.ToUpper(line), "USE "))
-			dbName = strings.TrimSuffix(dbName, ";")
-			ctx.currentDatabase = dbName
-			fmt.Printf("Database changed to: %s\n\n", dbName)
-			continue
+		upperLine := strings.ToUpper(line)
+		if strings.HasPrefix(upperLine, "USE ") {
+			// Extract database name preserving original case
+			parts := strings.SplitN(line, " ", 2)
+			if len(parts) >= 2 {
+				dbName := strings.TrimSpace(parts[1])
+				dbName = strings.TrimSuffix(dbName, ";")
+				ctx.currentDatabase = dbName
+				// Also update the SQL engine's catalog current database
+				ctx.engine.GetCatalog().SetCurrentDatabase(dbName)
+				fmt.Printf("Database changed to: %s\n\n", strings.ToUpper(dbName))
+				continue
+			}
 		}
 
 		// Handle output format switching
