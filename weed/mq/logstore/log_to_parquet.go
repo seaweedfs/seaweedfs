@@ -4,6 +4,11 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"io"
+	"os"
+	"strings"
+	"time"
+
 	"github.com/parquet-go/parquet-go"
 	"github.com/parquet-go/parquet-go/compress/zstd"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -16,10 +21,6 @@ import (
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 	"google.golang.org/protobuf/proto"
-	"io"
-	"os"
-	"strings"
-	"time"
 )
 
 const (
