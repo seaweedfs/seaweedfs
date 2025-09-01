@@ -55,53 +55,53 @@ func runSql(command *Command, args []string) bool {
 	// Interactive shell loop
 	scanner := bufio.NewScanner(os.Stdin)
 	var queryBuffer strings.Builder
-	
+
 	for {
 		// Show prompt
 		if queryBuffer.Len() == 0 {
 			fmt.Print("seaweedfs> ")
 		} else {
-			fmt.Print("    -> ")  // Continuation prompt
+			fmt.Print("    -> ") // Continuation prompt
 		}
-		
+
 		// Read line
 		if !scanner.Scan() {
 			break
 		}
-		
+
 		line := strings.TrimSpace(scanner.Text())
-		
+
 		// Handle special commands
 		if line == "exit;" || line == "quit;" || line == "\\q" {
 			fmt.Println("Goodbye!")
 			break
 		}
-		
+
 		if line == "help;" {
 			showHelp()
 			continue
 		}
-		
+
 		if line == "" {
 			continue
 		}
-		
+
 		// Accumulate multi-line queries
 		queryBuffer.WriteString(line)
 		queryBuffer.WriteString(" ")
-		
+
 		// Execute when query ends with semicolon
 		if strings.HasSuffix(line, ";") {
 			query := strings.TrimSpace(queryBuffer.String())
 			query = strings.TrimSuffix(query, ";") // Remove trailing semicolon
-			
+
 			executeQuery(sqlEngine, query)
-			
+
 			// Reset buffer for next query
 			queryBuffer.Reset()
 		}
 	}
-	
+
 	return true
 }
 
@@ -109,25 +109,25 @@ func runSql(command *Command, args []string) bool {
 // Assumption: All queries are executed synchronously for simplicity
 func executeQuery(engine *engine.SQLEngine, query string) {
 	startTime := time.Now()
-	
+
 	// Execute the query
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	
+
 	result, err := engine.ExecuteSQL(ctx, query)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
 	}
-	
+
 	if result.Error != nil {
 		fmt.Printf("Query Error: %v\n", result.Error)
 		return
 	}
-	
+
 	// Display results
 	displayQueryResult(result)
-	
+
 	// Show execution time
 	elapsed := time.Since(startTime)
 	fmt.Printf("\n(%d rows in set, %.2f sec)\n\n", len(result.Rows), elapsed.Seconds())
@@ -140,13 +140,13 @@ func displayQueryResult(result *engine.QueryResult) {
 		fmt.Println("Empty result set")
 		return
 	}
-	
+
 	// Calculate column widths for formatting
 	colWidths := make([]int, len(result.Columns))
 	for i, col := range result.Columns {
 		colWidths[i] = len(col)
 	}
-	
+
 	// Check data for wider columns
 	for _, row := range result.Rows {
 		for i, val := range row {
@@ -158,28 +158,28 @@ func displayQueryResult(result *engine.QueryResult) {
 			}
 		}
 	}
-	
+
 	// Print header separator
 	fmt.Print("+")
 	for _, width := range colWidths {
 		fmt.Print(strings.Repeat("-", width+2) + "+")
 	}
 	fmt.Println()
-	
+
 	// Print column headers
 	fmt.Print("|")
 	for i, col := range result.Columns {
 		fmt.Printf(" %-*s |", colWidths[i], col)
 	}
 	fmt.Println()
-	
+
 	// Print separator
 	fmt.Print("+")
 	for _, width := range colWidths {
 		fmt.Print(strings.Repeat("-", width+2) + "+")
 	}
 	fmt.Println()
-	
+
 	// Print data rows
 	for _, row := range result.Rows {
 		fmt.Print("|")
@@ -190,7 +190,7 @@ func displayQueryResult(result *engine.QueryResult) {
 		}
 		fmt.Println()
 	}
-	
+
 	// Print bottom separator
 	fmt.Print("+")
 	for _, width := range colWidths {
@@ -200,8 +200,7 @@ func displayQueryResult(result *engine.QueryResult) {
 }
 
 func showHelp() {
-	fmt.Println(`
-SeaweedFS SQL Interface Help:
+	fmt.Println(`SeaweedFS SQL Interface Help:
 
 Available Commands:
   SHOW DATABASES;              - List all MQ namespaces
@@ -224,6 +223,5 @@ Notes:
 - All queries must end with semicolon (;)
 - Multi-line queries are supported
 
-Current Status: Basic metadata operations implemented
-`)
+Current Status: Basic metadata operations implemented`)
 }

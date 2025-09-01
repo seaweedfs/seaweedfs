@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -621,6 +622,25 @@ func (e *SQLEngine) buildComparisonPredicate(expr *sqlparser.ComparisonExpr) (fu
 		default:
 			return nil, fmt.Errorf("unsupported SQL value type: %v", val.Type)
 		}
+	case sqlparser.ValTuple:
+		// Handle IN expressions with multiple values: column IN (value1, value2, value3)
+		var inValues []interface{}
+		for _, tupleVal := range val {
+			switch v := tupleVal.(type) {
+			case *sqlparser.SQLVal:
+				switch v.Type {
+				case sqlparser.IntVal:
+					intVal, err := strconv.ParseInt(string(v.Val), 10, 64)
+					if err != nil {
+						return nil, err
+					}
+					inValues = append(inValues, intVal)
+				case sqlparser.StrVal:
+					inValues = append(inValues, string(v.Val))
+				}
+			}
+		}
+		compareValue = inValues
 	default:
 		return nil, fmt.Errorf("unsupported comparison right side: %T", expr.Right)
 	}
@@ -650,7 +670,16 @@ func (e *SQLEngine) evaluateComparison(fieldValue *schema_pb.Value, operator str
 		return e.valueLessThan(fieldValue, compareValue)
 	case ">":
 		return e.valueGreaterThan(fieldValue, compareValue)
-	// TODO: Add support for <=, >=, !=, LIKE, IN, etc.
+	case "<=":
+		return e.valuesEqual(fieldValue, compareValue) || e.valueLessThan(fieldValue, compareValue)
+	case ">=":
+		return e.valuesEqual(fieldValue, compareValue) || e.valueGreaterThan(fieldValue, compareValue)
+	case "!=", "<>":
+		return !e.valuesEqual(fieldValue, compareValue)
+	case "LIKE", "like":
+		return e.valueLike(fieldValue, compareValue)
+	case "IN", "in":
+		return e.valueIn(fieldValue, compareValue)
 	default:
 		return false
 	}
@@ -700,6 +729,53 @@ func (e *SQLEngine) valueGreaterThan(fieldValue *schema_pb.Value, compareValue i
 			return v.Int64Value > intVal
 		}
 	}
+	return false
+}
+
+// valueLike implements SQL LIKE pattern matching with % and _ wildcards
+func (e *SQLEngine) valueLike(fieldValue *schema_pb.Value, compareValue interface{}) bool {
+	// Only support LIKE for string values
+	stringVal, ok := fieldValue.Kind.(*schema_pb.Value_StringValue)
+	if !ok {
+		return false
+	}
+	
+	pattern, ok := compareValue.(string)
+	if !ok {
+		return false
+	}
+	
+	// Convert SQL LIKE pattern to Go regex pattern
+	// % matches any sequence of characters (.*), _ matches single character (.)
+	regexPattern := strings.ReplaceAll(pattern, "%", ".*")
+	regexPattern = strings.ReplaceAll(regexPattern, "_", ".")
+	regexPattern = "^" + regexPattern + "$" // Anchor to match entire string
+	
+	// Compile and match regex
+	regex, err := regexp.Compile(regexPattern)
+	if err != nil {
+		return false // Invalid pattern
+	}
+	
+	return regex.MatchString(stringVal.StringValue)
+}
+
+// valueIn implements SQL IN operator for checking if value exists in a list
+func (e *SQLEngine) valueIn(fieldValue *schema_pb.Value, compareValue interface{}) bool {
+	// For now, handle simple case where compareValue is a slice of values
+	// In a full implementation, this would handle SQL IN expressions properly
+	values, ok := compareValue.([]interface{})
+	if !ok {
+		return false
+	}
+	
+	// Check if fieldValue matches any value in the list
+	for _, value := range values {
+		if e.valuesEqual(fieldValue, value) {
+			return true
+		}
+	}
+	
 	return false
 }
 
