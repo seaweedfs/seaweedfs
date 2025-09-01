@@ -1,11 +1,12 @@
 package topic
 
 import (
+	"time"
+
 	cmap "github.com/orcaman/concurrent-map/v2"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/shirou/gopsutil/v3/cpu"
-	"time"
 )
 
 // LocalTopicManager manages topics on local broker
