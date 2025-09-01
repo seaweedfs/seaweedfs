@@ -296,6 +296,19 @@ func (hms *HybridMessageScanner) convertLogEntryToRecordValue(logEntry *filer_pb
 	recordValue := &schema_pb.RecordValue{}
 	if err := proto.Unmarshal(logEntry.Data, recordValue); err == nil {
 		// This is an archived message from Parquet files
+		// ✅ FIX: Add system columns from LogEntry to RecordValue
+		if recordValue.Fields == nil {
+			recordValue.Fields = make(map[string]*schema_pb.Value)
+		}
+
+		// Add system columns from LogEntry
+		recordValue.Fields[SW_COLUMN_NAME_TS] = &schema_pb.Value{
+			Kind: &schema_pb.Value_Int64Value{Int64Value: logEntry.TsNs},
+		}
+		recordValue.Fields[SW_COLUMN_NAME_KEY] = &schema_pb.Value{
+			Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Key},
+		}
+
 		return recordValue, "parquet_archive", nil
 	}
 
