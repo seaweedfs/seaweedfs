@@ -15,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/seaweedfs/seaweedfs/weed/query/sqltypes"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 	"google.golang.org/protobuf/proto"
 )
@@ -141,52 +142,68 @@ func (hms *HybridMessageScanner) Scan(ctx context.Context, options HybridScanOpt
 	return results, nil
 }
 
-// discoverTopicPartitions discovers the actual partitions for this topic
-// Uses filerClient to read topic configuration and determine partition layout
+// discoverTopicPartitions discovers the actual partitions for this topic by scanning the filesystem
+// This finds real partition directories like v2025-09-01-07-16-34/0000-0630/
 func (hms *HybridMessageScanner) discoverTopicPartitions(ctx context.Context) ([]topic.Partition, error) {
 	if hms.filerClient == nil {
 		return nil, fmt.Errorf("filerClient not available for partition discovery")
 	}
 
-	// Read topic configuration from filer
-	var topicConf *mq_pb.ConfigureTopicResponse
+	var allPartitions []topic.Partition
 	var err error
-	err = hms.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		topicConf, err = hms.topic.ReadConfFile(client)
-		return err
+
+	// Scan the topic directory for actual partition versions (timestamped directories)
+	// List all version directories in the topic directory
+	err = filer_pb.ReadDirAllEntries(ctx, hms.filerClient, util.FullPath(hms.topic.Dir()), "", func(versionEntry *filer_pb.Entry, isLast bool) error {
+		if !versionEntry.IsDirectory {
+			return nil // Skip non-directories
+		}
+
+		// Parse version timestamp from directory name (e.g., "v2025-09-01-07-16-34")
+		versionTime, parseErr := topic.ParseTopicVersion(versionEntry.Name)
+		if parseErr != nil {
+			// Skip directories that don't match the version format
+			return nil
+		}
+
+		// Scan partition directories within this version
+		versionDir := fmt.Sprintf("%s/%s", hms.topic.Dir(), versionEntry.Name)
+		return filer_pb.ReadDirAllEntries(ctx, hms.filerClient, util.FullPath(versionDir), "", func(partitionEntry *filer_pb.Entry, isLast bool) error {
+			if !partitionEntry.IsDirectory {
+				return nil // Skip non-directories
+			}
+
+			// Parse partition boundary from directory name (e.g., "0000-0630")
+			rangeStart, rangeStop := topic.ParsePartitionBoundary(partitionEntry.Name)
+			if rangeStart == rangeStop {
+				return nil // Skip invalid partition names
+			}
+
+			// Create partition object
+			partition := topic.Partition{
+				RangeStart: rangeStart,
+				RangeStop:  rangeStop,
+				RingSize:   topic.PartitionCount,
+				UnixTimeNs: versionTime.UnixNano(),
+			}
+
+			allPartitions = append(allPartitions, partition)
+			return nil
+		})
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to read topic config for partition discovery: %v", err)
+		return nil, fmt.Errorf("failed to scan topic directory for partitions: %v", err)
 	}
 
-	// Generate partitions based on topic configuration
-	partitionCount := int32(4) // Default partition count
-	if len(topicConf.BrokerPartitionAssignments) > 0 {
-		partitionCount = int32(len(topicConf.BrokerPartitionAssignments))
+	// If no partitions found, use fallback
+	if len(allPartitions) == 0 {
+		fmt.Printf("No partitions found in filesystem for topic %s, using default partition\n", hms.topic.String())
+		return []topic.Partition{{RangeStart: 0, RangeStop: 1000}}, nil
 	}
 
-	// Create partition ranges following SeaweedFS MQ pattern
-	rangeSize := topic.PartitionCount / partitionCount
-	var partitions []topic.Partition
-
-	for i := int32(0); i < partitionCount; i++ {
-		rangeStart := i * rangeSize
-		rangeStop := (i + 1) * rangeSize
-		if i == partitionCount-1 {
-			// Last partition covers remaining range
-			rangeStop = topic.PartitionCount
-		}
-
-		partitions = append(partitions, topic.Partition{
-			RangeStart: rangeStart,
-			RangeStop:  rangeStop,
-			RingSize:   topic.PartitionCount,
-			UnixTimeNs: time.Now().UnixNano(),
-		})
-	}
-
-	return partitions, nil
+	fmt.Printf("Discovered %d partitions for topic %s\n", len(allPartitions), hms.topic.String())
+	return allPartitions, nil
 }
 
 // scanPartitionHybrid scans a specific partition using the hybrid approach

@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/seaweedfs/seaweedfs/weed/query/sqltypes"
+	"github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/xwb1989/sqlparser"
 )
 
@@ -36,6 +37,12 @@ type QueryResult struct {
 // NewSQLEngine creates a new SQL execution engine
 // Uses master address for service discovery and initialization
 func NewSQLEngine(masterAddress string) *SQLEngine {
+	// Initialize global HTTP client if not already done
+	// This is needed for reading partition data from the filer
+	if http.GetGlobalHttpClient() == nil {
+		http.InitGlobalHttpClient()
+	}
+
 	return &SQLEngine{
 		catalog: NewSchemaCatalog(masterAddress),
 	}
@@ -132,6 +139,14 @@ func (e *SQLEngine) executeSelectStatement(ctx context.Context, stmt *sqlparser.
 		database = e.catalog.GetCurrentDatabase()
 		if database == "" {
 			database = "default"
+		}
+	}
+
+	// Auto-discover and register topic if not already in catalog
+	if _, err := e.catalog.GetTableInfo(database, tableName); err != nil {
+		// Topic not in catalog, try to discover and register it
+		if regErr := e.discoverAndRegisterTopic(ctx, database, tableName); regErr != nil {
+			fmt.Printf("Warning: Failed to discover topic %s.%s: %v\n", database, tableName, regErr)
 		}
 	}
 
@@ -971,4 +986,30 @@ func (e *SQLEngine) dropTable(ctx context.Context, stmt *sqlparser.DDL) (*QueryR
 	}
 
 	return result, nil
+}
+
+// discoverAndRegisterTopic attempts to discover an existing topic and register it in the SQL catalog
+func (e *SQLEngine) discoverAndRegisterTopic(ctx context.Context, database, tableName string) error {
+	// First, check if topic exists by trying to get its schema from the broker/filer
+	recordType, err := e.catalog.brokerClient.GetTopicSchema(ctx, database, tableName)
+	if err != nil {
+		return fmt.Errorf("topic %s.%s not found or no schema available: %v", database, tableName, err)
+	}
+
+	// Create a schema object from the discovered record type
+	mqSchema := &schema.Schema{
+		Namespace:  database,
+		Name:       tableName,
+		RecordType: recordType,
+		RevisionId: 1, // Default to revision 1 for discovered topics
+	}
+
+	// Register the topic in the SQL catalog
+	err = e.catalog.RegisterTopic(database, tableName, mqSchema)
+	if err != nil {
+		return fmt.Errorf("failed to register discovered topic %s.%s: %v", database, tableName, err)
+	}
+
+	fmt.Printf("Auto-discovered and registered topic: %s.%s\n", database, tableName)
+	return nil
 }

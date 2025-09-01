@@ -162,8 +162,7 @@ func (f *filerClientImpl) WithFilerClient(followRedirect bool, fn func(client fi
 
 // AdjustedUrl implements the FilerClient interface (placeholder implementation)
 func (f *filerClientImpl) AdjustedUrl(location *filer_pb.Location) string {
-	// Simple implementation for MQ data access - may need adjustment for production
-	return fmt.Sprintf("http://%s", location.Url)
+	return location.Url
 }
 
 // GetDataCenter implements the FilerClient interface (placeholder implementation)
