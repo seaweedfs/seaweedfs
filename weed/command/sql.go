@@ -539,6 +539,11 @@ ADVANCED QUERYING:
   SELECT * FROM table WHERE id <= 100;        - Range filtering
   SELECT * FROM table WHERE name LIKE 'admin%'; - Pattern matching
   SELECT * FROM table WHERE status IN ('active', 'pending'); - Multi-value
+  SELECT COUNT(*), MAX(id), MIN(id) FROM ...;  - Aggregation functions
+
+QUERY ANALYSIS:
+  EXPLAIN SELECT ...;                          - Show hierarchical execution plan
+                                                 (data sources, optimizations, timing)
 
 DDL OPERATIONS:
   CREATE TABLE topic (field1 INT, field2 STRING); - Create topic
@@ -561,6 +566,7 @@ EXAMPLES:
   SELECT * FROM user_events WHERE user_id >= 10 AND status != 'deleted';
   SELECT username FROM users WHERE email LIKE '%@company.com';
   SELECT * FROM logs WHERE level IN ('error', 'warning') AND timestamp >= '2023-01-01';
+  EXPLAIN SELECT MAX(id) FROM events;  -- View execution plan
 
 Current Status: Full WHERE clause support + Real MQ integration`)
 }
