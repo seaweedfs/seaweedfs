@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/mq/schema"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/seaweedfs/seaweedfs/weed/query/sqltypes"
 	"github.com/xwb1989/sqlparser"
@@ -128,9 +129,18 @@ func (e *SQLEngine) executeSelectStatement(ctx context.Context, stmt *sqlparser.
 	}
 
 	// Create HybridMessageScanner for the topic (reads both live logs + Parquet files)
-	// TODO: Get real filerClient from broker connection
-	// For now, this will use sample data that simulates both live and archived messages
-	hybridScanner, err := NewHybridMessageScanner(nil, database, tableName)
+	// ✅ RESOLVED TODO: Get real filerClient from broker connection
+	var filerClient filer_pb.FilerClient
+	if e.catalog.brokerClient != nil {
+		var filerClientErr error
+		filerClient, filerClientErr = e.catalog.brokerClient.GetFilerClient()
+		if filerClientErr != nil {
+			// Log warning but continue with sample data fallback
+			fmt.Printf("Warning: Failed to get filer client: %v, using sample data\n", filerClientErr)
+		}
+	}
+	
+	hybridScanner, err := NewHybridMessageScanner(filerClient, database, tableName)
 	if err != nil {
 		// Fallback to sample data if topic doesn't exist or filer unavailable
 		return e.executeSelectWithSampleData(ctx, stmt, database, tableName)
