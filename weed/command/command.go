@@ -39,6 +39,7 @@ var Commands = []*Command{
 	cmdScaffold,
 	cmdServer,
 	cmdShell,
+	cmdSql,
 	cmdUpdate,
 	cmdUpload,
 	cmdVersion,
