@@ -76,12 +76,12 @@ type TxOrDB interface {
 	Close() error
 }
 
-type TxOrDbWrapper struct {
+type TxOrDBWrapper struct {
 	TxOrDBWithoutClose
 	CloseFunc func() error
 }
 
-func (t *TxOrDbWrapper) Close() error {
+func (t *TxOrDBWrapper) Close() error {
 	if t.CloseFunc == nil {
 		return nil
 	}
@@ -118,12 +118,14 @@ func (store *AbstractSqlStore) getTxOrDB(ctx context.Context, fullpath util.Full
 	bucket = DEFAULT_TABLE
 
 	if tx, ok := ctx.Value("tx").(*sql.Tx); ok {
-		txOrDB = &TxOrDbWrapper{tx, nil}
+		txOrDB = &TxOrDBWrapper{tx, nil}
 	} else {
-		txOrDB, err = store.DB.Conn(context.Background())
-		if err != nil {
+		conn, connErr := store.DB.Conn(context.Background())
+		if connErr != nil {
+			err = connErr
 			return
 		}
+		txOrDB = &TxOrDBWrapper{conn, conn.Close}
 	}
 
 	if !store.SupportBucketTable {
