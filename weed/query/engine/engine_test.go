@@ -6,7 +6,7 @@ import (
 )
 
 func TestSQLEngine_ShowDatabases(t *testing.T) {
-	engine := NewSQLEngine()
+	engine := NewSQLEngine("localhost:8888")
 	
 	result, err := engine.ExecuteSQL(context.Background(), "SHOW DATABASES")
 	if err != nil {
@@ -47,7 +47,7 @@ func TestSQLEngine_ShowDatabases(t *testing.T) {
 }
 
 func TestSQLEngine_ShowTables(t *testing.T) {
-	engine := NewSQLEngine()
+	engine := NewSQLEngine("localhost:8888")
 	
 	result, err := engine.ExecuteSQL(context.Background(), "SHOW TABLES")
 	if err != nil {
@@ -68,7 +68,7 @@ func TestSQLEngine_ShowTables(t *testing.T) {
 }
 
 func TestSQLEngine_ParseError(t *testing.T) {
-	engine := NewSQLEngine()
+	engine := NewSQLEngine("localhost:8888")
 	
 	result, err := engine.ExecuteSQL(context.Background(), "INVALID SQL")
 	if err == nil {
@@ -81,7 +81,7 @@ func TestSQLEngine_ParseError(t *testing.T) {
 }
 
 func TestSQLEngine_UnsupportedStatement(t *testing.T) {
-	engine := NewSQLEngine()
+	engine := NewSQLEngine("localhost:8888")
 	
 	// INSERT is not yet implemented
 	result, err := engine.ExecuteSQL(context.Background(), "INSERT INTO test VALUES (1)")

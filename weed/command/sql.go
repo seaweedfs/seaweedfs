@@ -50,7 +50,7 @@ func runSql(command *Command, args []string) bool {
 
 	// Initialize SQL engine
 	// Assumption: Engine will connect to MQ broker on demand
-	sqlEngine := engine.NewSQLEngine()
+	sqlEngine := engine.NewSQLEngine(*sqlServer)
 
 	// Interactive shell loop
 	scanner := bufio.NewScanner(os.Stdin)

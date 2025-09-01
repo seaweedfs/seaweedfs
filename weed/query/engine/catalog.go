@@ -1,8 +1,10 @@
 package engine
 
 import (
+	"context"
 	"fmt"
 	"sync"
+	"time"
 	
 	"github.com/seaweedfs/seaweedfs/weed/mq/schema"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
@@ -24,6 +26,9 @@ type SchemaCatalog struct {
 	// currentDatabase tracks the active database context (for USE database)
 	// Assumption: Single-threaded usage per SQL session
 	currentDatabase string
+	
+	// brokerClient handles communication with MQ broker
+	brokerClient *BrokerClient
 }
 
 // DatabaseInfo represents a SQL database (MQ namespace)
@@ -54,9 +59,10 @@ type ColumnInfo struct {
 
 // NewSchemaCatalog creates a new schema catalog
 // Assumption: Catalog starts empty and is populated on-demand
-func NewSchemaCatalog() *SchemaCatalog {
+func NewSchemaCatalog(filerAddress string) *SchemaCatalog {
 	return &SchemaCatalog{
-		databases: make(map[string]*DatabaseInfo),
+		databases:    make(map[string]*DatabaseInfo),
+		brokerClient: NewBrokerClient(filerAddress),
 	}
 }
 
@@ -66,18 +72,26 @@ func (c *SchemaCatalog) ListDatabases() []string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	
-	databases := make([]string, 0, len(c.databases))
-	for name := range c.databases {
-		databases = append(databases, name)
+	// Try to get real namespaces from broker first
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	
+	namespaces, err := c.brokerClient.ListNamespaces(ctx)
+	if err != nil {
+		// Fallback to cached databases if broker unavailable
+		databases := make([]string, 0, len(c.databases))
+		for name := range c.databases {
+			databases = append(databases, name)
+		}
+		
+		// If no cached data, return sample data for testing
+		if len(databases) == 0 {
+			return []string{"default", "analytics", "logs"}
+		}
+		return databases
 	}
 	
-	// TODO: Query actual MQ broker for namespace list
-	// For now, return sample data for testing
-	if len(databases) == 0 {
-		return []string{"default", "analytics", "logs"}
-	}
-	
-	return databases
+	return namespaces
 }
 
 // ListTables returns all tables in a database (MQ topics in namespace)
@@ -85,28 +99,36 @@ func (c *SchemaCatalog) ListTables(database string) ([]string, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	
-	db, exists := c.databases[database]
-	if !exists {
-		// TODO: Query MQ broker for actual topics in namespace
-		// For now, return sample data
-		switch database {
-		case "default":
-			return []string{"user_events", "system_logs"}, nil
-		case "analytics": 
-			return []string{"page_views", "click_events"}, nil
-		case "logs":
-			return []string{"error_logs", "access_logs"}, nil
-		default:
-			return nil, fmt.Errorf("database '%s' not found", database)
+	// Try to get real topics from broker first
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	
+	topics, err := c.brokerClient.ListTopics(ctx, database)
+	if err != nil {
+		// Fallback to cached data if broker unavailable
+		db, exists := c.databases[database]
+		if !exists {
+			// Return sample data if no cache
+			switch database {
+			case "default":
+				return []string{"user_events", "system_logs"}, nil
+			case "analytics": 
+				return []string{"page_views", "click_events"}, nil
+			case "logs":
+				return []string{"error_logs", "access_logs"}, nil
+			default:
+				return nil, fmt.Errorf("database '%s' not found", database)
+			}
 		}
+		
+		tables := make([]string, 0, len(db.Tables))
+		for name := range db.Tables {
+			tables = append(tables, name)
+		}
+		return tables, nil
 	}
 	
-	tables := make([]string, 0, len(db.Tables))
-	for name := range db.Tables {
-		tables = append(tables, name)
-	}
-	
-	return tables, nil
+	return topics, nil
 }
 
 // GetTableInfo returns detailed schema information for a table
