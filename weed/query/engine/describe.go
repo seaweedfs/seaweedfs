@@ -83,22 +83,31 @@ func (e *SQLEngine) executeShowStatementWithDescribe(ctx context.Context, stmt *
 // Add support for DESCRIBE as a separate statement type
 // This would be called from ExecuteSQL if we detect a DESCRIBE statement
 func (e *SQLEngine) handleDescribeCommand(ctx context.Context, sql string) (*QueryResult, error) {
-	// Simple parsing for "DESCRIBE table_name" format
-	// TODO: Use proper SQL parser for more robust parsing
+	// Simple parsing for "DESCRIBE [TABLE] table_name" format
+	// Handle both "DESCRIBE table_name" and "DESCRIBE TABLE table_name"
 	parts := strings.Fields(strings.TrimSpace(sql))
 	if len(parts) < 2 {
 		err := fmt.Errorf("DESCRIBE requires a table name")
 		return &QueryResult{Error: err}, err
 	}
 
-	tableName := parts[1]
+	var tableName string
+	// Check if "TABLE" keyword is used
+	if len(parts) >= 3 && strings.ToUpper(parts[1]) == "TABLE" {
+		// "DESCRIBE TABLE table_name" format
+		tableName = parts[2]
+	} else {
+		// "DESCRIBE table_name" format
+		tableName = parts[1]
+	}
+
 	database := ""
 
 	// Handle database.table format
 	if strings.Contains(tableName, ".") {
-		parts := strings.SplitN(tableName, ".", 2)
-		database = parts[0]
-		tableName = parts[1]
+		dbTableParts := strings.SplitN(tableName, ".", 2)
+		database = dbTableParts[0]
+		tableName = dbTableParts[1]
 	}
 
 	return e.executeDescribeStatement(ctx, tableName, database)
