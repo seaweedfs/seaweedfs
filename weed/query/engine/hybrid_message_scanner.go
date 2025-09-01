@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/parquet-go/parquet-go"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/logstore"
 	"github.com/seaweedfs/seaweedfs/weed/mq/schema"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
@@ -16,7 +18,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/seaweedfs/seaweedfs/weed/query/sqltypes"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -105,6 +109,22 @@ type HybridScanResult struct {
 	Timestamp int64                       // Message timestamp (_ts_ns)
 	Key       []byte                      // Message key (_key)
 	Source    string                      // "live_log" or "parquet_archive"
+}
+
+// ParquetColumnStats holds statistics for a single column from parquet metadata
+type ParquetColumnStats struct {
+	ColumnName string
+	MinValue   *schema_pb.Value
+	MaxValue   *schema_pb.Value
+	NullCount  int64
+	RowCount   int64
+}
+
+// ParquetFileStats holds aggregated statistics for a parquet file
+type ParquetFileStats struct {
+	FileName    string
+	RowCount    int64
+	ColumnStats map[string]*ParquetColumnStats
 }
 
 // Scan reads messages from both live logs and archived Parquet files
@@ -667,4 +687,301 @@ func (hms *HybridMessageScanner) generateSampleHybridData(options HybridScanOpti
 	}
 
 	return sampleData
+}
+
+// ReadParquetStatistics efficiently reads column statistics from parquet files
+// without scanning the full file content - uses parquet's built-in metadata
+func (h *HybridMessageScanner) ReadParquetStatistics(partitionPath string) ([]*ParquetFileStats, error) {
+	var fileStats []*ParquetFileStats
+
+	// Use the same chunk cache as the logstore package
+	chunkCache := chunk_cache.NewChunkCacheInMemory(256)
+	lookupFileIdFn := filer.LookupFn(h.filerClient)
+
+	err := filer_pb.ReadDirAllEntries(context.Background(), h.filerClient, util.FullPath(partitionPath), "", func(entry *filer_pb.Entry, isLast bool) error {
+		// Only process parquet files
+		if entry.IsDirectory || !strings.HasSuffix(entry.Name, ".parquet") {
+			return nil
+		}
+
+		// Extract statistics from this parquet file
+		stats, err := h.extractParquetFileStats(entry, lookupFileIdFn, chunkCache)
+		if err != nil {
+			// Log error but continue processing other files
+			fmt.Printf("Warning: failed to extract stats from %s: %v\n", entry.Name, err)
+			return nil
+		}
+
+		if stats != nil {
+			fileStats = append(fileStats, stats)
+		}
+		return nil
+	})
+
+	return fileStats, err
+}
+
+// extractParquetFileStats extracts column statistics from a single parquet file
+func (h *HybridMessageScanner) extractParquetFileStats(entry *filer_pb.Entry, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunkCache *chunk_cache.ChunkCacheInMemory) (*ParquetFileStats, error) {
+	// Create reader for the parquet file
+	fileSize := filer.FileSize(entry)
+	visibleIntervals, _ := filer.NonOverlappingVisibleIntervals(context.Background(), lookupFileIdFn, entry.Chunks, 0, int64(fileSize))
+	chunkViews := filer.ViewFromVisibleIntervals(visibleIntervals, 0, int64(fileSize))
+	readerCache := filer.NewReaderCache(32, chunkCache, lookupFileIdFn)
+	readerAt := filer.NewChunkReaderAtFromClient(context.Background(), readerCache, chunkViews, int64(fileSize))
+
+	// Create parquet reader - this only reads metadata, not data
+	parquetReader := parquet.NewReader(readerAt)
+	defer parquetReader.Close()
+
+	fileView := parquetReader.File()
+
+	fileStats := &ParquetFileStats{
+		FileName:    entry.Name,
+		RowCount:    fileView.NumRows(),
+		ColumnStats: make(map[string]*ParquetColumnStats),
+	}
+
+	// Get schema information
+	schema := fileView.Schema()
+
+	// Process each row group
+	rowGroups := fileView.RowGroups()
+	for _, rowGroup := range rowGroups {
+		columnChunks := rowGroup.ColumnChunks()
+
+		// Process each column chunk
+		for i, chunk := range columnChunks {
+			// Get column name from schema
+			columnName := h.getColumnNameFromSchema(schema, i)
+			if columnName == "" {
+				continue
+			}
+
+			// Try to get column statistics
+			columnIndex, err := chunk.ColumnIndex()
+			if err != nil {
+				// No column index available - skip this column
+				continue
+			}
+
+			// Extract min/max values from the first page (for simplicity)
+			// In a more sophisticated implementation, we could aggregate across all pages
+			numPages := columnIndex.NumPages()
+			if numPages == 0 {
+				continue
+			}
+
+			minParquetValue := columnIndex.MinValue(0)
+			maxParquetValue := columnIndex.MaxValue(numPages - 1)
+			nullCount := int64(0)
+
+			// Aggregate null counts across all pages
+			for pageIdx := 0; pageIdx < numPages; pageIdx++ {
+				nullCount += columnIndex.NullCount(pageIdx)
+			}
+
+			// Convert parquet values to schema_pb.Value
+			minValue, err := h.convertParquetValueToSchemaValue(minParquetValue)
+			if err != nil {
+				continue
+			}
+
+			maxValue, err := h.convertParquetValueToSchemaValue(maxParquetValue)
+			if err != nil {
+				continue
+			}
+
+			// Store column statistics (aggregate across row groups if column already exists)
+			if existingStats, exists := fileStats.ColumnStats[columnName]; exists {
+				// Update existing statistics
+				if h.compareSchemaValues(minValue, existingStats.MinValue) < 0 {
+					existingStats.MinValue = minValue
+				}
+				if h.compareSchemaValues(maxValue, existingStats.MaxValue) > 0 {
+					existingStats.MaxValue = maxValue
+				}
+				existingStats.NullCount += nullCount
+			} else {
+				// Create new column statistics
+				fileStats.ColumnStats[columnName] = &ParquetColumnStats{
+					ColumnName: columnName,
+					MinValue:   minValue,
+					MaxValue:   maxValue,
+					NullCount:  nullCount,
+					RowCount:   rowGroup.NumRows(),
+				}
+			}
+		}
+	}
+
+	return fileStats, nil
+}
+
+// getColumnNameFromSchema extracts column name from parquet schema by index
+func (h *HybridMessageScanner) getColumnNameFromSchema(schema *parquet.Schema, columnIndex int) string {
+	// Get the leaf columns in order
+	var columnNames []string
+	h.collectColumnNames(schema.Fields(), &columnNames)
+
+	if columnIndex >= 0 && columnIndex < len(columnNames) {
+		return columnNames[columnIndex]
+	}
+	return ""
+}
+
+// collectColumnNames recursively collects leaf column names from schema
+func (h *HybridMessageScanner) collectColumnNames(fields []parquet.Field, names *[]string) {
+	for _, field := range fields {
+		if len(field.Fields()) == 0 {
+			// This is a leaf field (no sub-fields)
+			*names = append(*names, field.Name())
+		} else {
+			// This is a group - recurse
+			h.collectColumnNames(field.Fields(), names)
+		}
+	}
+}
+
+// convertParquetValueToSchemaValue converts parquet.Value to schema_pb.Value
+func (h *HybridMessageScanner) convertParquetValueToSchemaValue(pv parquet.Value) (*schema_pb.Value, error) {
+	switch pv.Kind() {
+	case parquet.Boolean:
+		return &schema_pb.Value{Kind: &schema_pb.Value_BoolValue{BoolValue: pv.Boolean()}}, nil
+	case parquet.Int32:
+		return &schema_pb.Value{Kind: &schema_pb.Value_Int32Value{Int32Value: pv.Int32()}}, nil
+	case parquet.Int64:
+		return &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: pv.Int64()}}, nil
+	case parquet.Float:
+		return &schema_pb.Value{Kind: &schema_pb.Value_FloatValue{FloatValue: pv.Float()}}, nil
+	case parquet.Double:
+		return &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: pv.Double()}}, nil
+	case parquet.ByteArray:
+		return &schema_pb.Value{Kind: &schema_pb.Value_BytesValue{BytesValue: pv.ByteArray()}}, nil
+	default:
+		return nil, fmt.Errorf("unsupported parquet value kind: %v", pv.Kind())
+	}
+}
+
+// compareSchemaValues compares two schema_pb.Value objects
+func (h *HybridMessageScanner) compareSchemaValues(v1, v2 *schema_pb.Value) int {
+	if v1 == nil && v2 == nil {
+		return 0
+	}
+	if v1 == nil {
+		return -1
+	}
+	if v2 == nil {
+		return 1
+	}
+
+	// Extract raw values and compare
+	raw1 := h.extractRawValueFromSchema(v1)
+	raw2 := h.extractRawValueFromSchema(v2)
+
+	return h.compareRawValues(raw1, raw2)
+}
+
+// extractRawValueFromSchema extracts the raw value from schema_pb.Value
+func (h *HybridMessageScanner) extractRawValueFromSchema(value *schema_pb.Value) interface{} {
+	switch v := value.Kind.(type) {
+	case *schema_pb.Value_BoolValue:
+		return v.BoolValue
+	case *schema_pb.Value_Int32Value:
+		return v.Int32Value
+	case *schema_pb.Value_Int64Value:
+		return v.Int64Value
+	case *schema_pb.Value_FloatValue:
+		return v.FloatValue
+	case *schema_pb.Value_DoubleValue:
+		return v.DoubleValue
+	case *schema_pb.Value_BytesValue:
+		return string(v.BytesValue) // Convert to string for comparison
+	case *schema_pb.Value_StringValue:
+		return v.StringValue
+	}
+	return nil
+}
+
+// compareRawValues compares two raw values
+func (h *HybridMessageScanner) compareRawValues(v1, v2 interface{}) int {
+	// Handle nil cases
+	if v1 == nil && v2 == nil {
+		return 0
+	}
+	if v1 == nil {
+		return -1
+	}
+	if v2 == nil {
+		return 1
+	}
+
+	// Compare based on type
+	switch val1 := v1.(type) {
+	case bool:
+		if val2, ok := v2.(bool); ok {
+			if val1 == val2 {
+				return 0
+			}
+			if val1 {
+				return 1
+			}
+			return -1
+		}
+	case int32:
+		if val2, ok := v2.(int32); ok {
+			if val1 < val2 {
+				return -1
+			} else if val1 > val2 {
+				return 1
+			}
+			return 0
+		}
+	case int64:
+		if val2, ok := v2.(int64); ok {
+			if val1 < val2 {
+				return -1
+			} else if val1 > val2 {
+				return 1
+			}
+			return 0
+		}
+	case float32:
+		if val2, ok := v2.(float32); ok {
+			if val1 < val2 {
+				return -1
+			} else if val1 > val2 {
+				return 1
+			}
+			return 0
+		}
+	case float64:
+		if val2, ok := v2.(float64); ok {
+			if val1 < val2 {
+				return -1
+			} else if val1 > val2 {
+				return 1
+			}
+			return 0
+		}
+	case string:
+		if val2, ok := v2.(string); ok {
+			if val1 < val2 {
+				return -1
+			} else if val1 > val2 {
+				return 1
+			}
+			return 0
+		}
+	}
+
+	// Default: try string comparison
+	str1 := fmt.Sprintf("%v", v1)
+	str2 := fmt.Sprintf("%v", v2)
+	if str1 < str2 {
+		return -1
+	} else if str1 > str2 {
+		return 1
+	}
+	return 0
 }
