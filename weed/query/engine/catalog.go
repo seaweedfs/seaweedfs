@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 	"time"
-	
+
 	"github.com/seaweedfs/seaweedfs/weed/mq/schema"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 )
@@ -18,15 +18,15 @@ import (
 // 4. Schema evolution is tracked via RevisionId
 type SchemaCatalog struct {
 	mu sync.RWMutex
-	
+
 	// databases maps namespace names to database metadata
 	// Assumption: Namespace names are valid SQL database identifiers
 	databases map[string]*DatabaseInfo
-	
+
 	// currentDatabase tracks the active database context (for USE database)
 	// Assumption: Single-threaded usage per SQL session
 	currentDatabase string
-	
+
 	// brokerClient handles communication with MQ broker
 	brokerClient *BrokerClient
 }
@@ -43,26 +43,26 @@ type DatabaseInfo struct {
 // 2. Schema evolution maintains backward compatibility
 // 3. Primary key is implicitly the message timestamp/offset
 type TableInfo struct {
-	Name        string
-	Namespace   string  
-	Schema      *schema.Schema
-	Columns     []ColumnInfo
-	RevisionId  uint32
+	Name       string
+	Namespace  string
+	Schema     *schema.Schema
+	Columns    []ColumnInfo
+	RevisionId uint32
 }
 
 // ColumnInfo represents a SQL column (MQ schema field)
 type ColumnInfo struct {
 	Name     string
-	Type     string  // SQL type representation
-	Nullable bool    // Assumption: MQ fields are nullable by default
+	Type     string // SQL type representation
+	Nullable bool   // Assumption: MQ fields are nullable by default
 }
 
 // NewSchemaCatalog creates a new schema catalog
-// Assumption: Catalog starts empty and is populated on-demand
-func NewSchemaCatalog(filerAddress string) *SchemaCatalog {
+// Uses master address for service discovery of filers and brokers
+func NewSchemaCatalog(masterAddress string) *SchemaCatalog {
 	return &SchemaCatalog{
 		databases:    make(map[string]*DatabaseInfo),
-		brokerClient: NewBrokerClient(filerAddress),
+		brokerClient: NewBrokerClient(masterAddress),
 	}
 }
 
@@ -71,26 +71,25 @@ func NewSchemaCatalog(filerAddress string) *SchemaCatalog {
 func (c *SchemaCatalog) ListDatabases() []string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	
+
 	// Try to get real namespaces from broker first
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	
+
 	namespaces, err := c.brokerClient.ListNamespaces(ctx)
 	if err != nil {
+		// Silently handle broker connection errors
+
 		// Fallback to cached databases if broker unavailable
 		databases := make([]string, 0, len(c.databases))
 		for name := range c.databases {
 			databases = append(databases, name)
 		}
-		
-		// If no cached data, return sample data for testing
-		if len(databases) == 0 {
-			return []string{"default", "analytics", "logs"}
-		}
+
+		// Return empty list if no cached data (no more sample data)
 		return databases
 	}
-	
+
 	return namespaces
 }
 
@@ -98,36 +97,27 @@ func (c *SchemaCatalog) ListDatabases() []string {
 func (c *SchemaCatalog) ListTables(database string) ([]string, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	
+
 	// Try to get real topics from broker first
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	
+
 	topics, err := c.brokerClient.ListTopics(ctx, database)
 	if err != nil {
 		// Fallback to cached data if broker unavailable
 		db, exists := c.databases[database]
 		if !exists {
-			// Return sample data if no cache
-			switch database {
-			case "default":
-				return []string{"user_events", "system_logs"}, nil
-			case "analytics": 
-				return []string{"page_views", "click_events"}, nil
-			case "logs":
-				return []string{"error_logs", "access_logs"}, nil
-			default:
-				return nil, fmt.Errorf("database '%s' not found", database)
-			}
+			// Return empty list if database not found (no more sample data)
+			return []string{}, nil
 		}
-		
+
 		tables := make([]string, 0, len(db.Tables))
 		for name := range db.Tables {
 			tables = append(tables, name)
 		}
 		return tables, nil
 	}
-	
+
 	return topics, nil
 }
 
@@ -136,17 +126,17 @@ func (c *SchemaCatalog) ListTables(database string) ([]string, error) {
 func (c *SchemaCatalog) GetTableInfo(database, table string) (*TableInfo, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	
+
 	db, exists := c.databases[database]
 	if !exists {
 		return nil, fmt.Errorf("database '%s' not found", database)
 	}
-	
+
 	tableInfo, exists := db.Tables[table]
 	if !exists {
 		return nil, fmt.Errorf("table '%s' not found in database '%s'", table, database)
 	}
-	
+
 	return tableInfo, nil
 }
 
@@ -155,7 +145,7 @@ func (c *SchemaCatalog) GetTableInfo(database, table string) (*TableInfo, error)
 func (c *SchemaCatalog) RegisterTopic(namespace, topicName string, mqSchema *schema.Schema) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	
+
 	// Ensure database exists
 	db, exists := c.databases[namespace]
 	if !exists {
@@ -165,13 +155,13 @@ func (c *SchemaCatalog) RegisterTopic(namespace, topicName string, mqSchema *sch
 		}
 		c.databases[namespace] = db
 	}
-	
+
 	// Convert MQ schema to SQL table info
 	tableInfo, err := c.convertMQSchemaToTableInfo(namespace, topicName, mqSchema)
 	if err != nil {
 		return fmt.Errorf("failed to convert MQ schema: %v", err)
 	}
-	
+
 	db.Tables[topicName] = tableInfo
 	return nil
 }
@@ -183,20 +173,20 @@ func (c *SchemaCatalog) RegisterTopic(namespace, topicName string, mqSchema *sch
 // 3. All fields are nullable unless specifically marked otherwise
 func (c *SchemaCatalog) convertMQSchemaToTableInfo(namespace, topicName string, mqSchema *schema.Schema) (*TableInfo, error) {
 	columns := make([]ColumnInfo, len(mqSchema.RecordType.Fields))
-	
+
 	for i, field := range mqSchema.RecordType.Fields {
 		sqlType, err := c.convertMQFieldTypeToSQL(field.Type)
 		if err != nil {
 			return nil, fmt.Errorf("unsupported field type for '%s': %v", field.Name, err)
 		}
-		
+
 		columns[i] = ColumnInfo{
 			Name:     field.Name,
 			Type:     sqlType,
 			Nullable: true, // Assumption: MQ fields are nullable by default
 		}
 	}
-	
+
 	return &TableInfo{
 		Name:       topicName,
 		Namespace:  namespace,
@@ -245,7 +235,7 @@ func (c *SchemaCatalog) convertMQFieldTypeToSQL(fieldType *schema_pb.Type) (stri
 func (c *SchemaCatalog) SetCurrentDatabase(database string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	
+
 	// TODO: Validate database exists in MQ broker
 	c.currentDatabase = database
 	return nil

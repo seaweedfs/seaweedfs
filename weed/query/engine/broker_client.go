@@ -4,11 +4,15 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strconv"
+	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"google.golang.org/grpc"
@@ -17,32 +21,90 @@ import (
 
 // BrokerClient handles communication with SeaweedFS MQ broker
 // Assumptions:
-// 1. Broker discovery via filer lock mechanism (same as shell commands)
+// 1. Service discovery via master server (discovers filers and brokers)
 // 2. gRPC connection with default timeout of 30 seconds
 // 3. Topics and namespaces are managed via SeaweedMessaging service
 type BrokerClient struct {
+	masterAddress  string
 	filerAddress   string
 	brokerAddress  string
 	grpcDialOption grpc.DialOption
 }
 
 // NewBrokerClient creates a new MQ broker client
-// Assumption: Filer address is used to discover broker balancer
-func NewBrokerClient(filerAddress string) *BrokerClient {
+// Uses master HTTP address and converts it to gRPC address for service discovery
+func NewBrokerClient(masterHTTPAddress string) *BrokerClient {
+	// Convert HTTP address to gRPC address (typically HTTP port + 10000)
+	masterGRPCAddress := convertHTTPToGRPC(masterHTTPAddress)
+
 	return &BrokerClient{
-		filerAddress:   filerAddress,
+		masterAddress:  masterGRPCAddress,
 		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
 	}
 }
 
+// convertHTTPToGRPC converts HTTP address to gRPC address
+// Follows SeaweedFS convention: gRPC port = HTTP port + 10000
+func convertHTTPToGRPC(httpAddress string) string {
+	if strings.Contains(httpAddress, ":") {
+		parts := strings.Split(httpAddress, ":")
+		if len(parts) == 2 {
+			if port, err := strconv.Atoi(parts[1]); err == nil {
+				return fmt.Sprintf("%s:%d", parts[0], port+10000)
+			}
+		}
+	}
+	// Fallback: return original address if conversion fails
+	return httpAddress
+}
+
+// discoverFiler finds a filer from the master server
+func (c *BrokerClient) discoverFiler() error {
+	if c.filerAddress != "" {
+		return nil // already discovered
+	}
+
+	conn, err := grpc.Dial(c.masterAddress, c.grpcDialOption)
+	if err != nil {
+		return fmt.Errorf("failed to connect to master at %s: %v", c.masterAddress, err)
+	}
+	defer conn.Close()
+
+	client := master_pb.NewSeaweedClient(conn)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	resp, err := client.ListClusterNodes(ctx, &master_pb.ListClusterNodesRequest{
+		ClientType: cluster.FilerType,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list filers from master: %v", err)
+	}
+
+	if len(resp.ClusterNodes) == 0 {
+		return fmt.Errorf("no filers found in cluster")
+	}
+
+	// Use the first available filer and convert HTTP address to gRPC
+	filerHTTPAddress := resp.ClusterNodes[0].Address
+	c.filerAddress = convertHTTPToGRPC(filerHTTPAddress)
+
+	return nil
+}
+
 // findBrokerBalancer discovers the broker balancer using filer lock mechanism
-// Assumption: Uses same pattern as existing shell commands
+// First discovers filer from master, then uses filer to find broker balancer
 func (c *BrokerClient) findBrokerBalancer() error {
 	if c.brokerAddress != "" {
 		return nil // already found
 	}
 
-	conn, err := grpc.Dial(c.filerAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	// First discover filer from master
+	if err := c.discoverFiler(); err != nil {
+		return fmt.Errorf("failed to discover filer: %v", err)
+	}
+
+	conn, err := grpc.Dial(c.filerAddress, c.grpcDialOption)
 	if err != nil {
 		return fmt.Errorf("failed to connect to filer at %s: %v", c.filerAddress, err)
 	}
@@ -65,10 +127,11 @@ func (c *BrokerClient) findBrokerBalancer() error {
 }
 
 // GetFilerClient creates a filer client for accessing MQ data files
-// This resolves TODO: Get real filerClient from broker connection
+// Discovers filer from master if not already known
 func (c *BrokerClient) GetFilerClient() (filer_pb.FilerClient, error) {
-	if c.filerAddress == "" {
-		return nil, fmt.Errorf("filer address not specified")
+	// Ensure filer is discovered
+	if err := c.discoverFiler(); err != nil {
+		return nil, fmt.Errorf("failed to discover filer: %v", err)
 	}
 
 	return &filerClientImpl{
@@ -113,8 +176,7 @@ func (c *BrokerClient) ListNamespaces(ctx context.Context) ([]string, error) {
 	// Get filer client to list directories under /topics
 	filerClient, err := c.GetFilerClient()
 	if err != nil {
-		// Return empty list if filer unavailable - no fallback sample data
-		return []string{}, nil
+		return []string{}, fmt.Errorf("failed to get filer client: %v", err)
 	}
 
 	var namespaces []string
@@ -148,8 +210,7 @@ func (c *BrokerClient) ListNamespaces(ctx context.Context) ([]string, error) {
 	})
 
 	if err != nil {
-		// Return empty list if directory listing fails - no fallback sample data
-		return []string{}, nil
+		return []string{}, fmt.Errorf("failed to list namespaces from /topics: %v", err)
 	}
 
 	// Return actual namespaces found (may be empty if no topics exist)

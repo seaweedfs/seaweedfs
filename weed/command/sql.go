@@ -19,15 +19,15 @@ func init() {
 }
 
 var cmdSql = &Command{
-	UsageLine: "sql [-server=localhost:8888] [-interactive] [-file=query.sql] [-output=table|json|csv] [-database=dbname] [-query=\"SQL\"]",
+	UsageLine: "sql [-master=localhost:9333] [-interactive] [-file=query.sql] [-output=table|json|csv] [-database=dbname] [-query=\"SQL\"]",
 	Short:     "advanced SQL query interface for SeaweedFS MQ topics with multiple execution modes",
 	Long: `Enhanced SQL interface for SeaweedFS Message Queue topics with multiple execution modes.
 
 Execution Modes:
-- Interactive shell (default): weed sql --interactive
-- Single query: weed sql --query "SELECT * FROM user_events"  
-- Batch from file: weed sql --file queries.sql
-- Context switching: weed sql --database analytics --interactive
+- Interactive shell (default): weed sql -interactive
+- Single query: weed sql -query "SELECT * FROM user_events"  
+- Batch from file: weed sql -file queries.sql
+- Context switching: weed sql -database analytics -interactive
 
 Output Formats:
 - table: ASCII table format (default for interactive)
@@ -42,16 +42,16 @@ Features:
 - Database context switching
 
 Examples:
-  weed sql --interactive
-  weed sql --query "SHOW DATABASES" --output json
-  weed sql --file batch_queries.sql --output csv
-  weed sql --database analytics --query "SELECT COUNT(*) FROM metrics"
-  weed sql --server broker1:8888 --interactive
+  weed sql -interactive
+  weed sql -query "SHOW DATABASES" -output json
+  weed sql -file batch_queries.sql -output csv
+  weed sql -database analytics -query "SELECT COUNT(*) FROM metrics"
+  weed sql -master broker1:9333 -interactive
 `,
 }
 
 var (
-	sqlServer      = cmdSql.Flag.String("server", "localhost:8888", "SeaweedFS server address")
+	sqlMaster      = cmdSql.Flag.String("master", "localhost:9333", "SeaweedFS master server HTTP address")
 	sqlInteractive = cmdSql.Flag.Bool("interactive", false, "start interactive shell mode")
 	sqlFile        = cmdSql.Flag.String("file", "", "execute SQL queries from file")
 	sqlOutput      = cmdSql.Flag.String("output", "", "output format: table, json, csv (auto-detected if not specified)")
@@ -77,8 +77,8 @@ type SQLContext struct {
 }
 
 func runSql(command *Command, args []string) bool {
-	// Initialize SQL engine
-	sqlEngine := engine.NewSQLEngine(*sqlServer)
+	// Initialize SQL engine with master address for service discovery
+	sqlEngine := engine.NewSQLEngine(*sqlMaster)
 
 	// Determine execution mode and output format
 	interactive := *sqlInteractive || (*sqlQuery == "" && *sqlFile == "")
@@ -131,7 +131,7 @@ func executeSingleQuery(ctx *SQLContext, query string) bool {
 		return executeAndDisplay(ctx, query, false)
 	}
 
-	fmt.Printf("Executing query against %s...\n", *sqlServer)
+	fmt.Printf("Executing query against %s...\n", *sqlMaster)
 	return executeAndDisplay(ctx, query, true)
 }
 
@@ -144,7 +144,7 @@ func executeFileQueries(ctx *SQLContext, filename string) bool {
 	}
 
 	if ctx.outputFormat == OutputTable && ctx.interactive {
-		fmt.Printf("Executing queries from %s against %s...\n", filename, *sqlServer)
+		fmt.Printf("Executing queries from %s against %s...\n", filename, *sqlMaster)
 	}
 
 	// Split file content into individual queries (simple approach)
@@ -172,7 +172,7 @@ func executeFileQueries(ctx *SQLContext, filename string) bool {
 func runInteractiveShell(ctx *SQLContext) bool {
 	fmt.Println("🚀 SeaweedFS Enhanced SQL Interface")
 	fmt.Println("Type 'help;' for help, 'exit;' to quit")
-	fmt.Printf("Connected to: %s\n", *sqlServer)
+	fmt.Printf("Connected to master: %s\n", *sqlMaster)
 	if ctx.currentDatabase != "" {
 		fmt.Printf("Current database: %s\n", ctx.currentDatabase)
 	}

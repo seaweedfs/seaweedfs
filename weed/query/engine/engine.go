@@ -34,10 +34,10 @@ type QueryResult struct {
 }
 
 // NewSQLEngine creates a new SQL execution engine
-// Assumption: Schema catalog is initialized with current MQ state
-func NewSQLEngine(filerAddress string) *SQLEngine {
+// Uses master address for service discovery and initialization
+func NewSQLEngine(masterAddress string) *SQLEngine {
 	return &SQLEngine{
-		catalog: NewSchemaCatalog(filerAddress),
+		catalog: NewSchemaCatalog(masterAddress),
 	}
 }
 
