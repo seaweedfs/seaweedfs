@@ -51,12 +51,12 @@ Examples:
 }
 
 var (
-	sqlServer     = cmdSql.Flag.String("server", "localhost:8888", "SeaweedFS server address")
+	sqlServer      = cmdSql.Flag.String("server", "localhost:8888", "SeaweedFS server address")
 	sqlInteractive = cmdSql.Flag.Bool("interactive", false, "start interactive shell mode")
-	sqlFile       = cmdSql.Flag.String("file", "", "execute SQL queries from file")
-	sqlOutput     = cmdSql.Flag.String("output", "", "output format: table, json, csv (auto-detected if not specified)")
-	sqlDatabase   = cmdSql.Flag.String("database", "", "default database context")
-	sqlQuery      = cmdSql.Flag.String("query", "", "execute single SQL query")
+	sqlFile        = cmdSql.Flag.String("file", "", "execute SQL queries from file")
+	sqlOutput      = cmdSql.Flag.String("output", "", "output format: table, json, csv (auto-detected if not specified)")
+	sqlDatabase    = cmdSql.Flag.String("database", "", "default database context")
+	sqlQuery       = cmdSql.Flag.String("query", "", "execute single SQL query")
 )
 
 // OutputFormat represents different output formatting options
@@ -64,7 +64,7 @@ type OutputFormat string
 
 const (
 	OutputTable OutputFormat = "table"
-	OutputJSON  OutputFormat = "json" 
+	OutputJSON  OutputFormat = "json"
 	OutputCSV   OutputFormat = "csv"
 )
 
@@ -79,11 +79,11 @@ type SQLContext struct {
 func runSql(command *Command, args []string) bool {
 	// Initialize SQL engine
 	sqlEngine := engine.NewSQLEngine(*sqlServer)
-	
+
 	// Determine execution mode and output format
 	interactive := *sqlInteractive || (*sqlQuery == "" && *sqlFile == "")
 	outputFormat := determineOutputFormat(*sqlOutput, interactive)
-	
+
 	// Create SQL context
 	ctx := &SQLContext{
 		engine:          sqlEngine,
@@ -130,7 +130,7 @@ func executeSingleQuery(ctx *SQLContext, query string) bool {
 		// Suppress banner for non-interactive output
 		return executeAndDisplay(ctx, query, false)
 	}
-	
+
 	fmt.Printf("Executing query against %s...\n", *sqlServer)
 	return executeAndDisplay(ctx, query, true)
 }
@@ -149,7 +149,7 @@ func executeFileQueries(ctx *SQLContext, filename string) bool {
 
 	// Split file content into individual queries (simple approach)
 	queries := strings.Split(string(content), ";")
-	
+
 	for i, query := range queries {
 		query = strings.TrimSpace(query)
 		if query == "" {
