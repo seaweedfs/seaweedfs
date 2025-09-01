@@ -1,17 +1,20 @@
 package command
 
 import (
-	"bufio"
 	"context"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
+	"path"
 	"strings"
 	"time"
 
+	"github.com/peterh/liner"
 	"github.com/seaweedfs/seaweedfs/weed/query/engine"
+	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 )
 
 func init() {
@@ -173,57 +176,90 @@ func executeFileQueries(ctx *SQLContext, filename string) bool {
 	return true
 }
 
-// runInteractiveShell starts the enhanced interactive shell
+// runInteractiveShell starts the enhanced interactive shell with readline support
 func runInteractiveShell(ctx *SQLContext) bool {
-	fmt.Println("🚀 SeaweedFS Enhanced SQL Interface")
+	fmt.Println("SeaweedFS Enhanced SQL Interface")
 	fmt.Println("Type 'help;' for help, 'exit;' to quit")
 	fmt.Printf("Connected to master: %s\n", *sqlMaster)
 	if ctx.currentDatabase != "" {
 		fmt.Printf("Current database: %s\n", ctx.currentDatabase)
 	}
-	fmt.Println("✨ Advanced WHERE operators supported: <=, >=, !=, LIKE, IN")
+	fmt.Println("Advanced WHERE operators supported: <=, >=, !=, LIKE, IN")
+	fmt.Println("Use up/down arrows for command history")
 	fmt.Println()
 
-	// Interactive shell with command history (basic implementation)
-	scanner := bufio.NewScanner(os.Stdin)
+	// Initialize liner for readline functionality
+	line := liner.NewLiner()
+	defer line.Close()
+
+	// Handle Ctrl+C gracefully
+	line.SetCtrlCAborts(true)
+	grace.OnInterrupt(func() {
+		line.Close()
+	})
+
+	// Load command history
+	historyPath := path.Join(os.TempDir(), "weed-sql-history")
+	if f, err := os.Open(historyPath); err == nil {
+		line.ReadHistory(f)
+		f.Close()
+	}
+
+	// Save history on exit
+	defer func() {
+		if f, err := os.Create(historyPath); err == nil {
+			line.WriteHistory(f)
+			f.Close()
+		}
+	}()
+
 	var queryBuffer strings.Builder
-	queryHistory := make([]string, 0)
 
 	for {
 		// Show prompt with current database context
+		var prompt string
 		if queryBuffer.Len() == 0 {
 			if ctx.currentDatabase != "" {
-				fmt.Printf("seaweedfs:%s> ", ctx.currentDatabase)
+				prompt = fmt.Sprintf("seaweedfs:%s> ", ctx.currentDatabase)
 			} else {
-				fmt.Print("seaweedfs> ")
+				prompt = "seaweedfs> "
 			}
 		} else {
-			fmt.Print("    -> ") // Continuation prompt
+			prompt = "    -> " // Continuation prompt
 		}
 
-		// Read line
-		if !scanner.Scan() {
+		// Read line with readline support
+		input, err := line.Prompt(prompt)
+		if err != nil {
+			if err == liner.ErrPromptAborted {
+				fmt.Println("Query cancelled")
+				queryBuffer.Reset()
+				continue
+			}
+			if err != io.EOF {
+				fmt.Printf("Input error: %v\n", err)
+			}
 			break
 		}
 
-		line := strings.TrimSpace(scanner.Text())
+		lineStr := strings.TrimSpace(input)
 
 		// Handle special commands
-		if line == "exit;" || line == "quit;" || line == "\\q" {
-			fmt.Println("Goodbye! 👋")
+		if lineStr == "exit;" || lineStr == "quit;" || lineStr == "\\q" {
+			fmt.Println("Goodbye!")
 			break
 		}
 
-		if line == "help;" {
+		if lineStr == "help;" {
 			showEnhancedHelp()
 			continue
 		}
 
 		// Handle database switching
-		upperLine := strings.ToUpper(line)
+		upperLine := strings.ToUpper(lineStr)
 		if strings.HasPrefix(upperLine, "USE ") {
 			// Extract database name preserving original case
-			parts := strings.SplitN(line, " ", 2)
+			parts := strings.SplitN(lineStr, " ", 2)
 			if len(parts) >= 2 {
 				dbName := strings.TrimSpace(parts[1])
 				dbName = strings.TrimSuffix(dbName, ";")
@@ -236,8 +272,8 @@ func runInteractiveShell(ctx *SQLContext) bool {
 		}
 
 		// Handle output format switching
-		if strings.HasPrefix(strings.ToUpper(line), "\\FORMAT ") {
-			format := strings.TrimSpace(strings.TrimPrefix(strings.ToUpper(line), "\\FORMAT "))
+		if strings.HasPrefix(strings.ToUpper(lineStr), "\\FORMAT ") {
+			format := strings.TrimSpace(strings.TrimPrefix(strings.ToUpper(lineStr), "\\FORMAT "))
 			switch format {
 			case "TABLE":
 				ctx.outputFormat = OutputTable
@@ -254,23 +290,23 @@ func runInteractiveShell(ctx *SQLContext) bool {
 			continue
 		}
 
-		if line == "" {
+		if lineStr == "" {
 			continue
 		}
 
 		// Accumulate multi-line queries
-		queryBuffer.WriteString(line)
+		queryBuffer.WriteString(lineStr)
 		queryBuffer.WriteString(" ")
 
 		// Execute when query ends with semicolon
-		if strings.HasSuffix(line, ";") {
-			query := strings.TrimSpace(queryBuffer.String())
-			query = strings.TrimSuffix(query, ";") // Remove trailing semicolon
+		if strings.HasSuffix(lineStr, ";") {
+			fullQuery := strings.TrimSpace(queryBuffer.String())
+			query := strings.TrimSuffix(fullQuery, ";") // Remove trailing semicolon for execution
 
-			// Add to history
-			queryHistory = append(queryHistory, query)
+			// Add to history with semicolon (as user actually typed it)
+			line.AppendHistory(fullQuery)
 
-			// Execute query
+			// Execute query (without semicolon)
 			executeAndDisplay(ctx, query, true)
 
 			// Reset buffer for next query
@@ -457,42 +493,42 @@ func displayCSVResult(result *engine.QueryResult) {
 }
 
 func showEnhancedHelp() {
-	fmt.Println(`🚀 SeaweedFS Enhanced SQL Interface Help:
+	fmt.Println(`SeaweedFS Enhanced SQL Interface Help:
 
-📊 METADATA OPERATIONS:
+METADATA OPERATIONS:
   SHOW DATABASES;              - List all MQ namespaces
   SHOW TABLES;                 - List all topics in current namespace  
   SHOW TABLES FROM database;   - List topics in specific namespace
   DESCRIBE table_name;         - Show table schema
 
-🔍 ADVANCED QUERYING:
+ADVANCED QUERYING:
   SELECT * FROM table_name;                    - Query all data
   SELECT col1, col2 FROM table WHERE ...;     - Column projection
   SELECT * FROM table WHERE id <= 100;        - Range filtering
   SELECT * FROM table WHERE name LIKE 'admin%'; - Pattern matching
   SELECT * FROM table WHERE status IN ('active', 'pending'); - Multi-value
 
-📝 DDL OPERATIONS:
+DDL OPERATIONS:
   CREATE TABLE topic (field1 INT, field2 STRING); - Create topic
   DROP TABLE table_name;                           - Delete topic
 
-⚙️  SPECIAL COMMANDS:
+SPECIAL COMMANDS:
   USE database_name;           - Switch database context
   \format table|json|csv       - Change output format
   help;                        - Show this help
   exit; or quit; or \q        - Exit interface
 
-🎯 EXTENDED WHERE OPERATORS:
+EXTENDED WHERE OPERATORS:
   =, <, >, <=, >=             - Comparison operators
   !=, <>                      - Not equal operators  
   LIKE 'pattern%'             - Pattern matching (% = any chars, _ = single char)
   IN (value1, value2, ...)    - Multi-value matching
   AND, OR                     - Logical operators
 
-💡 EXAMPLES:
+EXAMPLES:
   SELECT * FROM user_events WHERE user_id >= 10 AND status != 'deleted';
   SELECT username FROM users WHERE email LIKE '%@company.com';
   SELECT * FROM logs WHERE level IN ('error', 'warning') AND timestamp >= '2023-01-01';
 
-🌟 Current Status: Full WHERE clause support + Real MQ integration`)
+Current Status: Full WHERE clause support + Real MQ integration`)
 }
