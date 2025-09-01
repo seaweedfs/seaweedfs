@@ -19,18 +19,40 @@ func (e *SQLEngine) executeDescribeStatement(ctx context.Context, tableName stri
 		}
 	}
 
+	// Auto-discover and register topic if not already in catalog (same logic as SELECT)
+	if _, err := e.catalog.GetTableInfo(database, tableName); err != nil {
+		// Topic not in catalog, try to discover and register it
+		if regErr := e.discoverAndRegisterTopic(ctx, database, tableName); regErr != nil {
+			fmt.Printf("Warning: Failed to discover topic %s.%s: %v\n", database, tableName, regErr)
+			return &QueryResult{Error: fmt.Errorf("topic %s.%s not found and auto-discovery failed: %v", database, tableName, regErr)}, regErr
+		}
+	}
+
 	// Get topic schema from broker
 	recordType, err := e.catalog.brokerClient.GetTopicSchema(ctx, database, tableName)
 	if err != nil {
 		return &QueryResult{Error: err}, err
 	}
 
-	// Format schema as DESCRIBE output
-	result := &QueryResult{
-		Columns: []string{"Field", "Type", "Null", "Key", "Default", "Extra"},
-		Rows:    make([][]sqltypes.Value, len(recordType.Fields)),
+	// System columns to include in DESCRIBE output
+	systemColumns := []struct {
+		Name  string
+		Type  string
+		Extra string
+	}{
+		{"_timestamp_ns", "BIGINT", "System column: Message timestamp in nanoseconds"},
+		{"_key", "VARBINARY", "System column: Message key"},
+		{"_source", "VARCHAR(255)", "System column: Data source (parquet/log)"},
 	}
 
+	// Format schema as DESCRIBE output (regular fields + system columns)
+	totalRows := len(recordType.Fields) + len(systemColumns)
+	result := &QueryResult{
+		Columns: []string{"Field", "Type", "Null", "Key", "Default", "Extra"},
+		Rows:    make([][]sqltypes.Value, totalRows),
+	}
+
+	// Add regular fields
 	for i, field := range recordType.Fields {
 		sqlType := e.convertMQTypeToSQL(field.Type)
 
@@ -41,6 +63,19 @@ func (e *SQLEngine) executeDescribeStatement(ctx context.Context, tableName stri
 			sqltypes.NewVarChar(""),         // Key (no keys for now)
 			sqltypes.NewVarChar("NULL"),     // Default
 			sqltypes.NewVarChar(""),         // Extra
+		}
+	}
+
+	// Add system columns
+	for i, sysCol := range systemColumns {
+		rowIndex := len(recordType.Fields) + i
+		result.Rows[rowIndex] = []sqltypes.Value{
+			sqltypes.NewVarChar(sysCol.Name),  // Field
+			sqltypes.NewVarChar(sysCol.Type),  // Type
+			sqltypes.NewVarChar("YES"),        // Null
+			sqltypes.NewVarChar(""),           // Key
+			sqltypes.NewVarChar("NULL"),       // Default
+			sqltypes.NewVarChar(sysCol.Extra), // Extra - description
 		}
 	}
 
@@ -80,14 +115,14 @@ func (e *SQLEngine) executeShowStatementWithDescribe(ctx context.Context, stmt *
 	}
 }
 
-// Add support for DESCRIBE as a separate statement type
-// This would be called from ExecuteSQL if we detect a DESCRIBE statement
+// Add support for DESCRIBE/DESC as a separate statement type
+// This would be called from ExecuteSQL if we detect a DESCRIBE/DESC statement
 func (e *SQLEngine) handleDescribeCommand(ctx context.Context, sql string) (*QueryResult, error) {
-	// Simple parsing for "DESCRIBE [TABLE] table_name" format
-	// Handle both "DESCRIBE table_name" and "DESCRIBE TABLE table_name"
+	// Simple parsing for "DESCRIBE/DESC [TABLE] table_name" format
+	// Handle both "DESCRIBE table_name", "DESC table_name", "DESCRIBE TABLE table_name", "DESC TABLE table_name"
 	parts := strings.Fields(strings.TrimSpace(sql))
 	if len(parts) < 2 {
-		err := fmt.Errorf("DESCRIBE requires a table name")
+		err := fmt.Errorf("DESCRIBE/DESC requires a table name")
 		return &QueryResult{Error: err}, err
 	}
 
@@ -101,13 +136,16 @@ func (e *SQLEngine) handleDescribeCommand(ctx context.Context, sql string) (*Que
 		tableName = parts[1]
 	}
 
+	// Remove backticks from table name if present (same as SQL parser does)
+	tableName = strings.Trim(tableName, "`")
+
 	database := ""
 
 	// Handle database.table format
 	if strings.Contains(tableName, ".") {
 		dbTableParts := strings.SplitN(tableName, ".", 2)
-		database = dbTableParts[0]
-		tableName = dbTableParts[1]
+		database = strings.Trim(dbTableParts[0], "`") // Also strip backticks from database name
+		tableName = strings.Trim(dbTableParts[1], "`")
 	}
 
 	return e.executeDescribeStatement(ctx, tableName, database)
