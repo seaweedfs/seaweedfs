@@ -397,9 +397,6 @@ func convertHybridResultsToSQL(results []HybridScanResult, columns []string) *Qu
 		for columnName := range columnSet {
 			columns = append(columns, columnName)
 		}
-
-		// Add metadata columns showing data source
-		columns = append(columns, "_source")
 	}
 
 	// Convert to SQL rows
@@ -407,12 +404,19 @@ func convertHybridResultsToSQL(results []HybridScanResult, columns []string) *Qu
 	for i, result := range results {
 		row := make([]sqltypes.Value, len(columns))
 		for j, columnName := range columns {
-			if columnName == "_source" {
+			switch columnName {
+			case "_source":
 				row[j] = sqltypes.NewVarChar(result.Source)
-			} else if value, exists := result.Values[columnName]; exists {
-				row[j] = convertSchemaValueToSQL(value)
-			} else {
-				row[j] = sqltypes.NULL
+			case "_timestamp_ns":
+				row[j] = sqltypes.NewInt64(result.Timestamp)
+			case "_key":
+				row[j] = sqltypes.NewVarBinary(string(result.Key))
+			default:
+				if value, exists := result.Values[columnName]; exists {
+					row[j] = convertSchemaValueToSQL(value)
+				} else {
+					row[j] = sqltypes.NULL
+				}
 			}
 		}
 		rows[i] = row

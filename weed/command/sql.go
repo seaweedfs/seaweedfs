@@ -244,36 +244,63 @@ func runInteractiveShell(ctx *SQLContext) bool {
 
 		lineStr := strings.TrimSpace(input)
 
-		// Handle special commands
-		if lineStr == "exit;" || lineStr == "quit;" || lineStr == "\\q" {
+		// Handle empty lines
+		if lineStr == "" {
+			continue
+		}
+
+		// Accumulate lines in query buffer
+		if queryBuffer.Len() > 0 {
+			queryBuffer.WriteString(" ")
+		}
+		queryBuffer.WriteString(lineStr)
+
+		// Check if we have a complete statement (ends with semicolon or special command)
+		fullQuery := strings.TrimSpace(queryBuffer.String())
+		isComplete := strings.HasSuffix(lineStr, ";") ||
+			isSpecialCommand(fullQuery)
+
+		if !isComplete {
+			continue // Continue reading more lines
+		}
+
+		// Add completed command to history
+		line.AppendHistory(fullQuery)
+
+		// Handle special commands (with or without semicolon)
+		cleanQuery := strings.TrimSuffix(fullQuery, ";")
+		cleanQuery = strings.TrimSpace(cleanQuery)
+
+		if cleanQuery == "exit" || cleanQuery == "quit" || cleanQuery == "\\q" {
 			fmt.Println("Goodbye!")
 			break
 		}
 
-		if lineStr == "help;" {
+		if cleanQuery == "help" {
 			showEnhancedHelp()
+			queryBuffer.Reset()
 			continue
 		}
 
 		// Handle database switching
-		upperLine := strings.ToUpper(lineStr)
-		if strings.HasPrefix(upperLine, "USE ") {
+		upperQuery := strings.ToUpper(cleanQuery)
+		if strings.HasPrefix(upperQuery, "USE ") {
 			// Extract database name preserving original case
-			parts := strings.SplitN(lineStr, " ", 2)
+			parts := strings.SplitN(cleanQuery, " ", 2)
 			if len(parts) >= 2 {
 				dbName := strings.TrimSpace(parts[1])
-				dbName = strings.TrimSuffix(dbName, ";")
 				ctx.currentDatabase = dbName
 				// Also update the SQL engine's catalog current database
 				ctx.engine.GetCatalog().SetCurrentDatabase(dbName)
-				fmt.Printf("Database changed to: %s\n\n", strings.ToUpper(dbName))
+				fmt.Printf("Database changed to: %s\n\n", dbName)
+				queryBuffer.Reset()
 				continue
 			}
 		}
 
 		// Handle output format switching
-		if strings.HasPrefix(strings.ToUpper(lineStr), "\\FORMAT ") {
-			format := strings.TrimSpace(strings.TrimPrefix(strings.ToUpper(lineStr), "\\FORMAT "))
+		if strings.HasPrefix(strings.ToUpper(cleanQuery), "\\FORMAT ") {
+			format := strings.TrimSpace(strings.TrimPrefix(strings.ToUpper(cleanQuery), "\\FORMAT "))
 			switch format {
 			case "TABLE":
 				ctx.outputFormat = OutputTable
@@ -287,34 +314,39 @@ func runInteractiveShell(ctx *SQLContext) bool {
 			default:
 				fmt.Printf("Invalid format: %s. Supported: table, json, csv\n", format)
 			}
-			continue
-		}
-
-		if lineStr == "" {
-			continue
-		}
-
-		// Accumulate multi-line queries
-		queryBuffer.WriteString(lineStr)
-		queryBuffer.WriteString(" ")
-
-		// Execute when query ends with semicolon
-		if strings.HasSuffix(lineStr, ";") {
-			fullQuery := strings.TrimSpace(queryBuffer.String())
-			query := strings.TrimSuffix(fullQuery, ";") // Remove trailing semicolon for execution
-
-			// Add to history with semicolon (as user actually typed it)
-			line.AppendHistory(fullQuery)
-
-			// Execute query (without semicolon)
-			executeAndDisplay(ctx, query, true)
-
-			// Reset buffer for next query
 			queryBuffer.Reset()
+			continue
 		}
+
+		// Execute SQL query (without semicolon)
+		executeAndDisplay(ctx, cleanQuery, true)
+
+		// Reset buffer for next query
+		queryBuffer.Reset()
 	}
 
 	return true
+}
+
+// isSpecialCommand checks if a command is a special command that doesn't require semicolon
+func isSpecialCommand(query string) bool {
+	cleanQuery := strings.TrimSuffix(strings.TrimSpace(query), ";")
+	cleanQuery = strings.ToLower(cleanQuery)
+
+	// Special commands that work with or without semicolon
+	specialCommands := []string{
+		"exit", "quit", "\\q", "help",
+	}
+
+	for _, cmd := range specialCommands {
+		if cleanQuery == cmd {
+			return true
+		}
+	}
+
+	// Commands that start with specific prefixes
+	return strings.HasPrefix(strings.ToUpper(cleanQuery), "USE ") ||
+		strings.HasPrefix(strings.ToUpper(cleanQuery), "\\FORMAT ")
 }
 
 // executeAndDisplay executes a query and displays the result in the specified format

@@ -580,9 +580,6 @@ func (hms *HybridMessageScanner) ConvertToSQLResult(results []HybridScanResult, 
 		for columnName := range columnSet {
 			columns = append(columns, columnName)
 		}
-
-		// Add metadata columns for debugging
-		columns = append(columns, "_source", "_timestamp_ns")
 	}
 
 	// Convert to SQL rows
@@ -595,6 +592,8 @@ func (hms *HybridMessageScanner) ConvertToSQLResult(results []HybridScanResult, 
 				row[j] = sqltypes.NewVarChar(result.Source)
 			case "_timestamp_ns":
 				row[j] = sqltypes.NewInt64(result.Timestamp)
+			case "_key":
+				row[j] = sqltypes.NewVarBinary(string(result.Key))
 			default:
 				if value, exists := result.Values[columnName]; exists {
 					row[j] = convertSchemaValueToSQL(value)
