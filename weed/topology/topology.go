@@ -32,8 +32,12 @@ type Topology struct {
 	NodeImpl
 
 	collectionMap  *util.ConcurrentReadMap
-	ecShardMap     map[needle.VolumeId]*EcShardLocations
+	ecShardMap     map[EcVolumeGenerationKey]*EcShardLocations
 	ecShardMapLock sync.RWMutex
+
+	// Track active generation for each EC volume
+	ecActiveGenerationMap     map[needle.VolumeId]uint32
+	ecActiveGenerationMapLock sync.RWMutex
 
 	pulse int64
 
@@ -69,7 +73,8 @@ func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, puls
 	t.children = make(map[NodeId]Node)
 	t.capacityReservations = newCapacityReservations()
 	t.collectionMap = util.NewConcurrentReadMap()
-	t.ecShardMap = make(map[needle.VolumeId]*EcShardLocations)
+	t.ecShardMap = make(map[EcVolumeGenerationKey]*EcShardLocations)
+	t.ecActiveGenerationMap = make(map[needle.VolumeId]uint32)
 	t.pulse = int64(pulse)
 	t.volumeSizeLimit = volumeSizeLimit
 	t.replicationAsMin = replicationAsMin
@@ -212,7 +217,12 @@ func (t *Topology) Lookup(collection string, vid needle.VolumeId) (dataNodes []*
 		}
 	}
 
-	if locations, found := t.LookupEcShards(vid); found {
+	// Use active generation for EC shard lookup, fallback to 0 for backward compatibility
+	activeGeneration := uint32(0)
+	if activeGen, found := t.GetEcActiveGeneration(vid); found {
+		activeGeneration = activeGen
+	}
+	if locations, found := t.LookupEcShards(vid, activeGeneration); found {
 		for _, loc := range locations.Locations {
 			dataNodes = append(dataNodes, loc...)
 		}

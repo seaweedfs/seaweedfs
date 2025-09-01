@@ -29,6 +29,8 @@ func (t *Topology) StartRefreshWritableVolumes(grpcDialOption grpc.DialOption, g
 				if !t.isDisableVacuum {
 					t.Vacuum(grpcDialOption, garbageThreshold, concurrentVacuumLimitPerVolumeServer, 0, "", preallocate, true)
 				}
+				// Update EC generation metrics periodically
+				t.UpdateEcGenerationMetrics()
 			} else {
 				stats.MasterReplicaPlacementMismatch.Reset()
 			}
