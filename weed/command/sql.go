@@ -3,7 +3,10 @@ package command
 import (
 	"bufio"
 	"context"
+	"encoding/csv"
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"strings"
 	"time"
@@ -16,50 +19,179 @@ func init() {
 }
 
 var cmdSql = &Command{
-	UsageLine: "sql [-server=localhost:8888]",
-	Short:     "start a SQL query interface for SeaweedFS MQ topics",
-	Long: `Start an interactive SQL shell to query SeaweedFS Message Queue topics as tables.
+	UsageLine: "sql [-server=localhost:8888] [-interactive] [-file=query.sql] [-output=table|json|csv] [-database=dbname] [-query=\"SQL\"]",
+	Short:     "advanced SQL query interface for SeaweedFS MQ topics with multiple execution modes",
+	Long: `Enhanced SQL interface for SeaweedFS Message Queue topics with multiple execution modes.
+
+Execution Modes:
+- Interactive shell (default): weed sql --interactive
+- Single query: weed sql --query "SELECT * FROM user_events"  
+- Batch from file: weed sql --file queries.sql
+- Context switching: weed sql --database analytics --interactive
+
+Output Formats:
+- table: ASCII table format (default for interactive)
+- json: JSON format (default for non-interactive) 
+- csv: Comma-separated values
 
 Features:
-- SHOW DATABASES: List all MQ namespaces  
-- SHOW TABLES: List topics in current namespace
-- DESCRIBE table: Show table schema
-- SELECT queries (coming soon)
-- CREATE/ALTER/DROP TABLE operations (coming soon)
-
-Assumptions:
-- MQ namespaces map to SQL databases
-- MQ topics map to SQL tables
-- Messages are stored in Parquet format for efficient querying
+- Full WHERE clause support (=, <, >, <=, >=, !=, LIKE, IN)
+- Advanced pattern matching with LIKE wildcards (%, _)
+- Multi-value filtering with IN operator
+- Real MQ namespace and topic discovery
+- Database context switching
 
 Examples:
-  weed sql
-  weed sql -server=broker1:8888
+  weed sql --interactive
+  weed sql --query "SHOW DATABASES" --output json
+  weed sql --file batch_queries.sql --output csv
+  weed sql --database analytics --query "SELECT COUNT(*) FROM metrics"
+  weed sql --server broker1:8888 --interactive
 `,
 }
 
 var (
-	sqlServer = cmdSql.Flag.String("server", "localhost:8888", "SeaweedFS server address")
+	sqlServer     = cmdSql.Flag.String("server", "localhost:8888", "SeaweedFS server address")
+	sqlInteractive = cmdSql.Flag.Bool("interactive", false, "start interactive shell mode")
+	sqlFile       = cmdSql.Flag.String("file", "", "execute SQL queries from file")
+	sqlOutput     = cmdSql.Flag.String("output", "", "output format: table, json, csv (auto-detected if not specified)")
+	sqlDatabase   = cmdSql.Flag.String("database", "", "default database context")
+	sqlQuery      = cmdSql.Flag.String("query", "", "execute single SQL query")
 )
 
+// OutputFormat represents different output formatting options
+type OutputFormat string
+
+const (
+	OutputTable OutputFormat = "table"
+	OutputJSON  OutputFormat = "json" 
+	OutputCSV   OutputFormat = "csv"
+)
+
+// SQLContext holds the execution context for SQL operations
+type SQLContext struct {
+	engine          *engine.SQLEngine
+	currentDatabase string
+	outputFormat    OutputFormat
+	interactive     bool
+}
+
 func runSql(command *Command, args []string) bool {
-	fmt.Println("SeaweedFS SQL Interface")
+	// Initialize SQL engine
+	sqlEngine := engine.NewSQLEngine(*sqlServer)
+	
+	// Determine execution mode and output format
+	interactive := *sqlInteractive || (*sqlQuery == "" && *sqlFile == "")
+	outputFormat := determineOutputFormat(*sqlOutput, interactive)
+	
+	// Create SQL context
+	ctx := &SQLContext{
+		engine:          sqlEngine,
+		currentDatabase: *sqlDatabase,
+		outputFormat:    outputFormat,
+		interactive:     interactive,
+	}
+
+	// Execute based on mode
+	switch {
+	case *sqlQuery != "":
+		// Single query mode
+		return executeSingleQuery(ctx, *sqlQuery)
+	case *sqlFile != "":
+		// Batch file mode
+		return executeFileQueries(ctx, *sqlFile)
+	default:
+		// Interactive mode
+		return runInteractiveShell(ctx)
+	}
+}
+
+// determineOutputFormat selects the appropriate output format
+func determineOutputFormat(specified string, interactive bool) OutputFormat {
+	switch strings.ToLower(specified) {
+	case "table":
+		return OutputTable
+	case "json":
+		return OutputJSON
+	case "csv":
+		return OutputCSV
+	default:
+		// Auto-detect based on mode
+		if interactive {
+			return OutputTable
+		}
+		return OutputJSON
+	}
+}
+
+// executeSingleQuery executes a single query and outputs the result
+func executeSingleQuery(ctx *SQLContext, query string) bool {
+	if ctx.outputFormat != OutputTable {
+		// Suppress banner for non-interactive output
+		return executeAndDisplay(ctx, query, false)
+	}
+	
+	fmt.Printf("Executing query against %s...\n", *sqlServer)
+	return executeAndDisplay(ctx, query, true)
+}
+
+// executeFileQueries processes SQL queries from a file
+func executeFileQueries(ctx *SQLContext, filename string) bool {
+	content, err := ioutil.ReadFile(filename)
+	if err != nil {
+		fmt.Printf("Error reading file %s: %v\n", filename, err)
+		return false
+	}
+
+	if ctx.outputFormat == OutputTable && ctx.interactive {
+		fmt.Printf("Executing queries from %s against %s...\n", filename, *sqlServer)
+	}
+
+	// Split file content into individual queries (simple approach)
+	queries := strings.Split(string(content), ";")
+	
+	for i, query := range queries {
+		query = strings.TrimSpace(query)
+		if query == "" {
+			continue
+		}
+
+		if ctx.outputFormat == OutputTable && len(queries) > 1 {
+			fmt.Printf("\n--- Query %d ---\n", i+1)
+		}
+
+		if !executeAndDisplay(ctx, query, ctx.outputFormat == OutputTable) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// runInteractiveShell starts the enhanced interactive shell
+func runInteractiveShell(ctx *SQLContext) bool {
+	fmt.Println("🚀 SeaweedFS Enhanced SQL Interface")
 	fmt.Println("Type 'help;' for help, 'exit;' to quit")
 	fmt.Printf("Connected to: %s\n", *sqlServer)
+	if ctx.currentDatabase != "" {
+		fmt.Printf("Current database: %s\n", ctx.currentDatabase)
+	}
+	fmt.Println("✨ Advanced WHERE operators supported: <=, >=, !=, LIKE, IN")
 	fmt.Println()
 
-	// Initialize SQL engine
-	// Assumption: Engine will connect to MQ broker on demand
-	sqlEngine := engine.NewSQLEngine(*sqlServer)
-
-	// Interactive shell loop
+	// Interactive shell with command history (basic implementation)
 	scanner := bufio.NewScanner(os.Stdin)
 	var queryBuffer strings.Builder
+	queryHistory := make([]string, 0)
 
 	for {
-		// Show prompt
+		// Show prompt with current database context
 		if queryBuffer.Len() == 0 {
-			fmt.Print("seaweedfs> ")
+			if ctx.currentDatabase != "" {
+				fmt.Printf("seaweedfs:%s> ", ctx.currentDatabase)
+			} else {
+				fmt.Print("seaweedfs> ")
+			}
 		} else {
 			fmt.Print("    -> ") // Continuation prompt
 		}
@@ -73,12 +205,40 @@ func runSql(command *Command, args []string) bool {
 
 		// Handle special commands
 		if line == "exit;" || line == "quit;" || line == "\\q" {
-			fmt.Println("Goodbye!")
+			fmt.Println("Goodbye! 👋")
 			break
 		}
 
 		if line == "help;" {
-			showHelp()
+			showEnhancedHelp()
+			continue
+		}
+
+		// Handle database switching
+		if strings.HasPrefix(strings.ToUpper(line), "USE ") {
+			dbName := strings.TrimSpace(strings.TrimPrefix(strings.ToUpper(line), "USE "))
+			dbName = strings.TrimSuffix(dbName, ";")
+			ctx.currentDatabase = dbName
+			fmt.Printf("Database changed to: %s\n\n", dbName)
+			continue
+		}
+
+		// Handle output format switching
+		if strings.HasPrefix(strings.ToUpper(line), "\\FORMAT ") {
+			format := strings.TrimSpace(strings.TrimPrefix(strings.ToUpper(line), "\\FORMAT "))
+			switch format {
+			case "TABLE":
+				ctx.outputFormat = OutputTable
+				fmt.Println("Output format set to: table")
+			case "JSON":
+				ctx.outputFormat = OutputJSON
+				fmt.Println("Output format set to: json")
+			case "CSV":
+				ctx.outputFormat = OutputCSV
+				fmt.Println("Output format set to: csv")
+			default:
+				fmt.Printf("Invalid format: %s. Supported: table, json, csv\n", format)
+			}
 			continue
 		}
 
@@ -95,7 +255,11 @@ func runSql(command *Command, args []string) bool {
 			query := strings.TrimSpace(queryBuffer.String())
 			query = strings.TrimSuffix(query, ";") // Remove trailing semicolon
 
-			executeQuery(sqlEngine, query)
+			// Add to history
+			queryHistory = append(queryHistory, query)
+
+			// Execute query
+			executeAndDisplay(ctx, query, true)
 
 			// Reset buffer for next query
 			queryBuffer.Reset()
@@ -105,37 +269,64 @@ func runSql(command *Command, args []string) bool {
 	return true
 }
 
-// executeQuery runs a SQL query and displays results
-// Assumption: All queries are executed synchronously for simplicity
-func executeQuery(engine *engine.SQLEngine, query string) {
+// executeAndDisplay executes a query and displays the result in the specified format
+func executeAndDisplay(ctx *SQLContext, query string, showTiming bool) bool {
 	startTime := time.Now()
 
 	// Execute the query
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	execCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	result, err := engine.ExecuteSQL(ctx, query)
+	result, err := ctx.engine.ExecuteSQL(execCtx, query)
 	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		return
+		if ctx.outputFormat == OutputJSON {
+			errorResult := map[string]interface{}{
+				"error": err.Error(),
+				"query": query,
+			}
+			jsonBytes, _ := json.MarshalIndent(errorResult, "", "  ")
+			fmt.Println(string(jsonBytes))
+		} else {
+			fmt.Printf("Error: %v\n", err)
+		}
+		return false
 	}
 
 	if result.Error != nil {
-		fmt.Printf("Query Error: %v\n", result.Error)
-		return
+		if ctx.outputFormat == OutputJSON {
+			errorResult := map[string]interface{}{
+				"error": result.Error.Error(),
+				"query": query,
+			}
+			jsonBytes, _ := json.MarshalIndent(errorResult, "", "  ")
+			fmt.Println(string(jsonBytes))
+		} else {
+			fmt.Printf("Query Error: %v\n", result.Error)
+		}
+		return false
 	}
 
-	// Display results
-	displayQueryResult(result)
+	// Display results in the specified format
+	switch ctx.outputFormat {
+	case OutputTable:
+		displayTableResult(result)
+	case OutputJSON:
+		displayJSONResult(result)
+	case OutputCSV:
+		displayCSVResult(result)
+	}
 
-	// Show execution time
-	elapsed := time.Since(startTime)
-	fmt.Printf("\n(%d rows in set, %.2f sec)\n\n", len(result.Rows), elapsed.Seconds())
+	// Show execution time for interactive/table mode
+	if showTiming && ctx.outputFormat == OutputTable {
+		elapsed := time.Since(startTime)
+		fmt.Printf("\n(%d rows in set, %.3f sec)\n\n", len(result.Rows), elapsed.Seconds())
+	}
+
+	return true
 }
 
-// displayQueryResult formats and displays query results in table format
-// Assumption: Results fit in terminal width (simple formatting for now)
-func displayQueryResult(result *engine.QueryResult) {
+// displayTableResult formats and displays query results in ASCII table format
+func displayTableResult(result *engine.QueryResult) {
 	if len(result.Columns) == 0 {
 		fmt.Println("Empty result set")
 		return
@@ -199,29 +390,97 @@ func displayQueryResult(result *engine.QueryResult) {
 	fmt.Println()
 }
 
-func showHelp() {
-	fmt.Println(`SeaweedFS SQL Interface Help:
+// displayJSONResult outputs query results in JSON format
+func displayJSONResult(result *engine.QueryResult) {
+	// Convert result to JSON-friendly format
+	jsonResult := map[string]interface{}{
+		"columns": result.Columns,
+		"rows":    make([]map[string]interface{}, len(result.Rows)),
+		"count":   len(result.Rows),
+	}
 
-Available Commands:
+	// Convert rows to JSON objects
+	for i, row := range result.Rows {
+		rowObj := make(map[string]interface{})
+		for j, val := range row {
+			if j < len(result.Columns) {
+				rowObj[result.Columns[j]] = val.ToString()
+			}
+		}
+		jsonResult["rows"].([]map[string]interface{})[i] = rowObj
+	}
+
+	// Marshal and print JSON
+	jsonBytes, err := json.MarshalIndent(jsonResult, "", "  ")
+	if err != nil {
+		fmt.Printf("Error formatting JSON: %v\n", err)
+		return
+	}
+
+	fmt.Println(string(jsonBytes))
+}
+
+// displayCSVResult outputs query results in CSV format
+func displayCSVResult(result *engine.QueryResult) {
+	writer := csv.NewWriter(os.Stdout)
+	defer writer.Flush()
+
+	// Write headers
+	if err := writer.Write(result.Columns); err != nil {
+		fmt.Printf("Error writing CSV headers: %v\n", err)
+		return
+	}
+
+	// Write data rows
+	for _, row := range result.Rows {
+		csvRow := make([]string, len(row))
+		for i, val := range row {
+			csvRow[i] = val.ToString()
+		}
+		if err := writer.Write(csvRow); err != nil {
+			fmt.Printf("Error writing CSV row: %v\n", err)
+			return
+		}
+	}
+}
+
+func showEnhancedHelp() {
+	fmt.Println(`🚀 SeaweedFS Enhanced SQL Interface Help:
+
+📊 METADATA OPERATIONS:
   SHOW DATABASES;              - List all MQ namespaces
   SHOW TABLES;                 - List all topics in current namespace  
   SHOW TABLES FROM database;   - List topics in specific namespace
-  DESCRIBE table_name;         - Show table schema (coming soon)
-  
-  SELECT * FROM table_name;    - Query table data (coming soon)
-  CREATE TABLE ...;            - Create new topic (coming soon)
-  ALTER TABLE ...;             - Modify topic schema (coming soon)
-  DROP TABLE table_name;       - Delete topic (coming soon)
+  DESCRIBE table_name;         - Show table schema
 
-Special Commands:
+🔍 ADVANCED QUERYING:
+  SELECT * FROM table_name;                    - Query all data
+  SELECT col1, col2 FROM table WHERE ...;     - Column projection
+  SELECT * FROM table WHERE id <= 100;        - Range filtering
+  SELECT * FROM table WHERE name LIKE 'admin%'; - Pattern matching
+  SELECT * FROM table WHERE status IN ('active', 'pending'); - Multi-value
+
+📝 DDL OPERATIONS:
+  CREATE TABLE topic (field1 INT, field2 STRING); - Create topic
+  DROP TABLE table_name;                           - Delete topic
+
+⚙️  SPECIAL COMMANDS:
+  USE database_name;           - Switch database context
+  \format table|json|csv       - Change output format
   help;                        - Show this help
-  exit; or quit; or \q        - Exit the SQL interface
+  exit; or quit; or \q        - Exit interface
 
-Notes:
-- MQ namespaces appear as SQL databases
-- MQ topics appear as SQL tables
-- All queries must end with semicolon (;)
-- Multi-line queries are supported
+🎯 EXTENDED WHERE OPERATORS:
+  =, <, >, <=, >=             - Comparison operators
+  !=, <>                      - Not equal operators  
+  LIKE 'pattern%'             - Pattern matching (% = any chars, _ = single char)
+  IN (value1, value2, ...)    - Multi-value matching
+  AND, OR                     - Logical operators
 
-Current Status: Basic metadata operations implemented`)
+💡 EXAMPLES:
+  SELECT * FROM user_events WHERE user_id >= 10 AND status != 'deleted';
+  SELECT username FROM users WHERE email LIKE '%@company.com';
+  SELECT * FROM logs WHERE level IN ('error', 'warning') AND timestamp >= '2023-01-01';
+
+🌟 Current Status: Full WHERE clause support + Real MQ integration`)
 }
