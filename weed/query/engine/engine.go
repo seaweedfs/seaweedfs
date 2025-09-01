@@ -152,7 +152,7 @@ func (e *SQLEngine) executeSelectStatement(ctx context.Context, stmt *sqlparser.
 	}
 
 	// Create HybridMessageScanner for the topic (reads both live logs + Parquet files)
-	// ✅ RESOLVED TODO: Get real filerClient from broker connection
+	// RESOLVED TODO: Get real filerClient from broker connection
 	var filerClient filer_pb.FilerClient
 	if e.catalog.brokerClient != nil {
 		var filerClientErr error
@@ -235,7 +235,7 @@ func (e *SQLEngine) executeSelectStatement(ctx context.Context, stmt *sqlparser.
 	}
 
 	// Build hybrid scan options
-	// ✅ RESOLVED TODO: Extract from WHERE clause time filters
+	// RESOLVED TODO: Extract from WHERE clause time filters
 	startTimeNs, stopTimeNs := int64(0), int64(0)
 	if stmt.Where != nil {
 		startTimeNs, stopTimeNs = e.extractTimeFilters(stmt.Where.Expr)
@@ -1097,18 +1097,18 @@ func (e *SQLEngine) executeAggregationQuery(ctx context.Context, hybridScanner *
 		startTimeNs, stopTimeNs = e.extractTimeFilters(stmt.Where.Expr)
 	}
 
-	// 🚀 FAST PATH: Try to use parquet statistics for optimization
+	// FAST PATH: Try to use parquet statistics for optimization
 	// This can be ~130x faster than scanning all data
 	if stmt.Where == nil { // Only optimize when no complex WHERE clause
 		fastResult, canOptimize := e.tryFastParquetAggregation(ctx, hybridScanner, aggregations)
 		if canOptimize {
-			fmt.Printf("✅ Using fast parquet statistics for aggregation (skipped full scan)\n")
+			fmt.Printf("Using fast parquet statistics for aggregation (skipped full scan)\n")
 			return fastResult, nil
 		}
 	}
 
 	// SLOW PATH: Fall back to full table scan
-	fmt.Printf("⚠️  Using full table scan for aggregation (parquet optimization not applicable)\n")
+	fmt.Printf("Using full table scan for aggregation (parquet optimization not applicable)\n")
 
 	// Build scan options for full table scan (aggregations need all data)
 	hybridScanOptions := HybridScanOptions{

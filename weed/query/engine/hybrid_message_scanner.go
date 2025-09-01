@@ -137,7 +137,7 @@ func (hms *HybridMessageScanner) Scan(ctx context.Context, options HybridScanOpt
 	var results []HybridScanResult
 
 	// Get all partitions for this topic
-	// ✅ RESOLVED TODO: Implement proper partition discovery via MQ broker
+	// RESOLVED TODO: Implement proper partition discovery via MQ broker
 	partitions, err := hms.discoverTopicPartitions(ctx)
 	if err != nil {
 		// Fallback to default partition if discovery fails
@@ -316,7 +316,7 @@ func (hms *HybridMessageScanner) convertLogEntryToRecordValue(logEntry *filer_pb
 	recordValue := &schema_pb.RecordValue{}
 	if err := proto.Unmarshal(logEntry.Data, recordValue); err == nil {
 		// This is an archived message from Parquet files
-		// ✅ FIX: Add system columns from LogEntry to RecordValue
+		// FIX: Add system columns from LogEntry to RecordValue
 		if recordValue.Fields == nil {
 			recordValue.Fields = make(map[string]*schema_pb.Value)
 		}
@@ -333,7 +333,7 @@ func (hms *HybridMessageScanner) convertLogEntryToRecordValue(logEntry *filer_pb
 	}
 
 	// If not a RecordValue, this is raw live message data
-	// ✅ RESOLVED TODO: Implement proper schema-aware parsing based on topic schema
+	// RESOLVED TODO: Implement proper schema-aware parsing based on topic schema
 	return hms.parseRawMessageWithSchema(logEntry)
 }
 
