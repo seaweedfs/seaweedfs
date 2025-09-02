@@ -1,12 +1,7 @@
 package engine
 
 import (
-	"regexp"
-	"strconv"
 	"strings"
-	"time"
-
-	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 )
 
 // isSystemColumn checks if a column is a system column (_timestamp_ns, _key, _source)
@@ -92,78 +87,6 @@ func (e *SQLEngine) getSystemColumnGlobalMax(columnName string, allFileStats map
 	case "_source", "source":
 		// Source is always "parquet_archive" for parquet files
 		return "parquet_archive"
-	}
-
-	return nil
-}
-
-// extractTimestampFromFilename extracts timestamp from parquet filename
-func (e *SQLEngine) extractTimestampFromFilename(filename string) int64 {
-	// Expected format: YYYY-MM-DD-HH-MM-SS.parquet or similar
-	// Try to parse timestamp from filename
-	re := regexp.MustCompile(`(\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2})`)
-	matches := re.FindStringSubmatch(filename)
-	if len(matches) > 1 {
-		timestampStr := matches[1]
-		// Convert to time and then to nanoseconds
-		t, err := time.Parse("2006-01-02-15-04-05", timestampStr)
-		if err == nil {
-			return t.UnixNano()
-		}
-	}
-
-	// Fallback: try to parse as unix timestamp if filename is numeric
-	if timestampStr := strings.TrimSuffix(filename, ".parquet"); timestampStr != filename {
-		if timestamp, err := strconv.ParseInt(timestampStr, 10, 64); err == nil {
-			// Assume it's already in nanoseconds
-			return timestamp
-		}
-	}
-
-	return 0
-}
-
-// findColumnValue performs case-insensitive lookup of column values
-// Now includes support for system columns stored in HybridScanResult
-func (e *SQLEngine) findColumnValue(result HybridScanResult, columnName string) *schema_pb.Value {
-	lowerName := strings.ToLower(columnName)
-
-	// Check system columns first
-	switch lowerName {
-	case "_timestamp_ns", "timestamp_ns":
-		return &schema_pb.Value{
-			Kind: &schema_pb.Value_Int64Value{Int64Value: result.Timestamp},
-		}
-	case "_key", "key":
-		return &schema_pb.Value{
-			Kind: &schema_pb.Value_BytesValue{BytesValue: result.Key},
-		}
-	case "_source", "source":
-		return &schema_pb.Value{
-			Kind: &schema_pb.Value_StringValue{StringValue: result.Source},
-		}
-	}
-
-	// Check regular columns in the record data
-	if result.RecordValue != nil {
-		recordValue, ok := result.RecordValue.Kind.(*schema_pb.Value_RecordValue)
-		if !ok {
-			return nil
-		}
-
-		if recordValue.RecordValue.Fields != nil {
-			// Try exact match first
-			if value, exists := recordValue.RecordValue.Fields[columnName]; exists {
-				return value
-			}
-
-			// Try case-insensitive match
-			for fieldName, value := range recordValue.RecordValue.Fields {
-				if strings.EqualFold(fieldName, columnName) {
-					return value
-				}
-			}
-		}
 	}
 
 	return nil

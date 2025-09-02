@@ -103,8 +103,9 @@ func (opt *FastPathOptimizer) CollectDataSources(ctx context.Context, hybridScan
 			}
 		}
 
-		// Count live log files
-		liveLogCount, _ := opt.engine.countLiveLogFiles(partitionPath, dataSources.ParquetFiles[partitionPath])
+		// Count live log files (excluding those converted to parquet)
+		parquetSources := opt.engine.extractParquetSourceFiles(dataSources.ParquetFiles[partitionPath])
+		liveLogCount, _ := opt.engine.countLiveLogRowsExcludingParquetSources(partitionPath, parquetSources)
 		dataSources.LiveLogRowCount += liveLogCount
 	}
 
