@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -1253,4 +1254,51 @@ func TestSQLEngine_LogBufferDeduplication_ServerRestartScenario(t *testing.T) {
 
 	// This demonstrates that buffer start indexes initialized with process start time
 	// prevent false positive duplicates across server restarts
+}
+
+func TestBrokerClient_ParquetBufferStartForBrokerQuery(t *testing.T) {
+	// Test scenario: getBufferStartFromEntry should handle both JSON and binary formats
+	// This tests the dual format support for buffer_start metadata
+	realBrokerClient := &BrokerClient{}
+
+	// Test binary format (Parquet files)
+	parquetEntry := &filer_pb.Entry{
+		Name:        "2025-01-07-14-30.parquet",
+		IsDirectory: false,
+		Extended: map[string][]byte{
+			"buffer_start": func() []byte {
+				// Binary format: 8-byte BigEndian
+				buf := make([]byte, 8)
+				binary.BigEndian.PutUint64(buf, uint64(2000001))
+				return buf
+			}(),
+		},
+	}
+
+	bufferStart := realBrokerClient.getBufferStartFromEntry(parquetEntry)
+	assert.NotNil(t, bufferStart)
+	assert.Equal(t, int64(2000001), bufferStart.StartIndex, "Should parse binary buffer_start from Parquet file")
+
+	// Test JSON format (log files)
+	logEntry := &filer_pb.Entry{
+		Name:        "2025-01-07-14-30-45",
+		IsDirectory: false,
+		Extended: map[string][]byte{
+			"buffer_start": []byte(`{"start_index": 1500001}`),
+		},
+	}
+
+	bufferStart = realBrokerClient.getBufferStartFromEntry(logEntry)
+	assert.NotNil(t, bufferStart)
+	assert.Equal(t, int64(1500001), bufferStart.StartIndex, "Should parse JSON buffer_start from log file")
+
+	// Test missing metadata
+	emptyEntry := &filer_pb.Entry{
+		Name:        "no-metadata",
+		IsDirectory: false,
+		Extended:    nil,
+	}
+
+	bufferStart = realBrokerClient.getBufferStartFromEntry(emptyEntry)
+	assert.Nil(t, bufferStart, "Should return nil for entry without buffer_start metadata")
 }

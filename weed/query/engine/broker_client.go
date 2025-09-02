@@ -518,7 +518,13 @@ func (c *BrokerClient) GetUnflushedMessages(ctx context.Context, namespace, topi
 }
 
 // getEarliestBufferStart finds the earliest buffer_start index from disk files in the partition
-// This checks both live log files and Parquet files for the most precise deduplication
+//
+// This method handles three scenarios for seamless broker querying:
+// 1. Live log files exist: Uses their buffer_start metadata (most recent boundaries)
+// 2. Only Parquet files exist: Uses Parquet buffer_start metadata (preserved from archived sources)
+// 3. Mixed files: Uses earliest buffer_start from all sources for comprehensive coverage
+//
+// This ensures continuous real-time querying capability even after log file compaction/archival
 func (c *BrokerClient) getEarliestBufferStart(ctx context.Context, partitionPath string) (int64, error) {
 	filerClient, err := c.GetFilerClient()
 	if err != nil {
@@ -526,11 +532,20 @@ func (c *BrokerClient) getEarliestBufferStart(ctx context.Context, partitionPath
 	}
 
 	var earliestBufferIndex int64 = -1 // -1 means no buffer_start found
+	var logFileCount, parquetFileCount int
+	var bufferStartSources []string // Track which files provide buffer_start
 
 	err = filer_pb.ReadDirAllEntries(ctx, filerClient, util.FullPath(partitionPath), "", func(entry *filer_pb.Entry, isLast bool) error {
 		// Skip directories
 		if entry.IsDirectory {
 			return nil
+		}
+
+		// Count file types for scenario detection
+		if strings.HasSuffix(entry.Name, ".parquet") {
+			parquetFileCount++
+		} else {
+			logFileCount++
 		}
 
 		// Extract buffer_start from file extended attributes (both log files and parquet files)
@@ -539,10 +554,24 @@ func (c *BrokerClient) getEarliestBufferStart(ctx context.Context, partitionPath
 			if earliestBufferIndex == -1 || bufferStart.StartIndex < earliestBufferIndex {
 				earliestBufferIndex = bufferStart.StartIndex
 			}
+			bufferStartSources = append(bufferStartSources, entry.Name)
 		}
 
 		return nil
 	})
+
+	// Debug: Show buffer_start determination logic in EXPLAIN mode
+	if isDebugMode(ctx) && len(bufferStartSources) > 0 {
+		if logFileCount == 0 && parquetFileCount > 0 {
+			fmt.Printf("Debug: Using Parquet buffer_start metadata (no log files) - sources: %v\n", bufferStartSources)
+		} else if logFileCount > 0 && parquetFileCount > 0 {
+			fmt.Printf("Debug: Using mixed sources for buffer_start - log files: %d, Parquet files: %d, sources: %v\n",
+				logFileCount, parquetFileCount, bufferStartSources)
+		} else {
+			fmt.Printf("Debug: Using log file buffer_start metadata - sources: %v\n", bufferStartSources)
+		}
+		fmt.Printf("Debug: Earliest buffer_start index: %d\n", earliestBufferIndex)
+	}
 
 	if err != nil {
 		return 0, fmt.Errorf("failed to scan partition directory: %v", err)
