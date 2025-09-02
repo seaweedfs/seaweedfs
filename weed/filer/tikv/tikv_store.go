@@ -159,6 +159,10 @@ func (store *TikvStore) DeleteFolderChildren(ctx context.Context, path util.Full
 		return err
 	}
 
+	defer func() {
+		_ = iterTxn.Rollback()
+	}()
+
 	iter, err := iterTxn.Iter(directoryPrefix, nil)
 	if err != nil {
 		return err
@@ -166,7 +170,6 @@ func (store *TikvStore) DeleteFolderChildren(ctx context.Context, path util.Full
 	defer iter.Close()
 
 	var keys [][]byte
-	batchCount := 0
 
 	for iter.Valid() {
 		key := iter.Key()
@@ -180,7 +183,6 @@ func (store *TikvStore) DeleteFolderChildren(ctx context.Context, path util.Full
 			if err := store.deleteBatch(ctx, keys); err != nil {
 				return fmt.Errorf("delete batch failed: %v", err)
 			}
-			batchCount++
 			keys = keys[:0]
 		}
 
@@ -193,19 +195,19 @@ func (store *TikvStore) DeleteFolderChildren(ctx context.Context, path util.Full
 		if err := store.deleteBatch(ctx, keys); err != nil {
 			return fmt.Errorf("delete batch failed: %v", err)
 		}
-		batchCount++
 	}
 
 	return nil
 }
 
 func (store *TikvStore) deleteBatch(ctx context.Context, keys [][]byte) error {
-	iterTxn, err := store.getTxn(ctx)
+	deleteTxn, err := store.getTxn(ctx)
+	defer deleteTxn.Close()
 	if err != nil {
 		return err
 	}
 
-	return iterTxn.RunInTxn(func(txn *txnkv.KVTxn) error {
+	return deleteTxn.RunInTxn(func(txn *txnkv.KVTxn) error {
 		for _, key := range keys {
 			if err := txn.Delete(key); err != nil {
 				return err
