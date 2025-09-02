@@ -174,7 +174,7 @@ func (store *TikvStore) DeleteFolderChildren(ctx context.Context, path util.Full
 			if !bytes.HasPrefix(key, directoryPrefix) {
 				break
 			}
-			keys = append(keys, key)
+keys = append(keys, append([]byte(nil), key...))
 			err = iter.Next()
 			if err != nil {
 				return err
