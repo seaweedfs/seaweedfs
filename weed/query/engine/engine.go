@@ -306,6 +306,14 @@ func (e *SQLEngine) buildHierarchicalPlan(plan *QueryExecutionPlan, err error) [
 			stats = append(stats, fmt.Sprintf("Rows Processed: %d", plan.TotalRowsProcessed))
 		}
 
+		// Broker buffer information
+		if plan.BrokerBufferQueried {
+			stats = append(stats, fmt.Sprintf("Broker Buffer Queried: Yes (%d messages)", plan.BrokerBufferMessages))
+			if plan.BufferStartIndex > 0 {
+				stats = append(stats, fmt.Sprintf("Buffer Start Index: %d (deduplication enabled)", plan.BufferStartIndex))
+			}
+		}
+
 		for i, stat := range stats {
 			if hasMoreAfterStats {
 				// More sections after Statistics, so use │   prefix
@@ -375,6 +383,8 @@ func (e *SQLEngine) formatDataSource(source string) string {
 		return "Parquet Files (full scan)"
 	case "live_logs":
 		return "Live Log Files"
+	case "broker_buffer":
+		return "Broker Buffer (real-time)"
 	default:
 		return source
 	}
@@ -441,8 +451,52 @@ func (e *SQLEngine) executeSelectStatementWithPlan(ctx context.Context, stmt *sq
 		}
 	}
 
-	// Execute the query
-	result, err := e.executeSelectStatement(ctx, stmt)
+	// Execute the query (handle aggregations specially for plan tracking)
+	var result *QueryResult
+	var err error
+
+	if hasAggregations {
+		// Extract table information for aggregation execution
+		var database, tableName string
+		if len(stmt.From) == 1 {
+			if table, ok := stmt.From[0].(*sqlparser.AliasedTableExpr); ok {
+				if tableExpr, ok := table.Expr.(sqlparser.TableName); ok {
+					tableName = tableExpr.Name.String()
+					if tableExpr.Qualifier.String() != "" {
+						database = tableExpr.Qualifier.String()
+					}
+				}
+			}
+		}
+
+		// Use current database if not specified
+		if database == "" {
+			database = e.catalog.currentDatabase
+			if database == "" {
+				database = "default"
+			}
+		}
+
+		// Create hybrid scanner for aggregation execution
+		var filerClient filer_pb.FilerClient
+		if e.catalog.brokerClient != nil {
+			filerClient, err = e.catalog.brokerClient.GetFilerClient()
+			if err != nil {
+				return &QueryResult{Error: err}, err
+			}
+		}
+
+		hybridScanner, err := NewHybridMessageScanner(filerClient, e.catalog.brokerClient, database, tableName)
+		if err != nil {
+			return &QueryResult{Error: err}, err
+		}
+
+		// Execute aggregation query with plan tracking
+		result, err = e.executeAggregationQueryWithPlan(ctx, hybridScanner, aggregations, stmt, plan)
+	} else {
+		// Regular SELECT query
+		result, err = e.executeSelectStatement(ctx, stmt)
+	}
 
 	if err == nil && result != nil {
 		// Extract table name for use in execution strategy determination

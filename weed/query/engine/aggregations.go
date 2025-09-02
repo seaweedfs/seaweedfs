@@ -331,6 +331,11 @@ func (comp *AggregationComputer) computeGlobalMax(spec AggregationSpec, dataSour
 
 // executeAggregationQuery handles SELECT queries with aggregation functions
 func (e *SQLEngine) executeAggregationQuery(ctx context.Context, hybridScanner *HybridMessageScanner, aggregations []AggregationSpec, stmt *sqlparser.Select) (*QueryResult, error) {
+	return e.executeAggregationQueryWithPlan(ctx, hybridScanner, aggregations, stmt, nil)
+}
+
+// executeAggregationQueryWithPlan handles SELECT queries with aggregation functions and populates execution plan
+func (e *SQLEngine) executeAggregationQueryWithPlan(ctx context.Context, hybridScanner *HybridMessageScanner, aggregations []AggregationSpec, stmt *sqlparser.Select, plan *QueryExecutionPlan) (*QueryResult, error) {
 	// Parse WHERE clause for filtering
 	var predicate func(*schema_pb.RecordValue) bool
 	var err error
@@ -373,9 +378,42 @@ func (e *SQLEngine) executeAggregationQuery(ctx context.Context, hybridScanner *
 	}
 
 	// Execute the hybrid scan to get all matching records
-	results, err := hybridScanner.Scan(ctx, hybridScanOptions)
-	if err != nil {
-		return &QueryResult{Error: err}, err
+	var results []HybridScanResult
+	if plan != nil {
+		// EXPLAIN mode - capture broker buffer stats
+		var stats *HybridScanStats
+		results, stats, err = hybridScanner.ScanWithStats(ctx, hybridScanOptions)
+		if err != nil {
+			return &QueryResult{Error: err}, err
+		}
+
+		// Populate plan with broker buffer information
+		if stats != nil {
+			plan.BrokerBufferQueried = stats.BrokerBufferQueried
+			plan.BrokerBufferMessages = stats.BrokerBufferMessages
+			plan.BufferStartIndex = stats.BufferStartIndex
+
+			// Add broker_buffer to data sources if buffer was queried
+			if stats.BrokerBufferQueried {
+				// Check if broker_buffer is already in data sources
+				hasBrokerBuffer := false
+				for _, source := range plan.DataSources {
+					if source == "broker_buffer" {
+						hasBrokerBuffer = true
+						break
+					}
+				}
+				if !hasBrokerBuffer {
+					plan.DataSources = append(plan.DataSources, "broker_buffer")
+				}
+			}
+		}
+	} else {
+		// Normal mode - just get results
+		results, err = hybridScanner.Scan(ctx, hybridScanOptions)
+		if err != nil {
+			return &QueryResult{Error: err}, err
+		}
 	}
 
 	// Compute aggregations

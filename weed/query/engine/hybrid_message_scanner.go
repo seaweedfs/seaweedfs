@@ -111,7 +111,15 @@ type HybridScanResult struct {
 	Values    map[string]*schema_pb.Value // Column name -> value
 	Timestamp int64                       // Message timestamp (_ts_ns)
 	Key       []byte                      // Message key (_key)
-	Source    string                      // "live_log" or "parquet_archive"
+	Source    string                      // "live_log" or "parquet_archive" or "in_memory_broker"
+}
+
+// HybridScanStats contains statistics about data sources scanned
+type HybridScanStats struct {
+	BrokerBufferQueried  bool
+	BrokerBufferMessages int
+	BufferStartIndex     int64
+	PartitionsScanned    int
 }
 
 // ParquetColumnStats holds statistics for a single column from parquet metadata
@@ -137,7 +145,14 @@ type ParquetFileStats struct {
 // 2. Applies filtering at the lowest level for efficiency
 // 3. Handles schema evolution transparently
 func (hms *HybridMessageScanner) Scan(ctx context.Context, options HybridScanOptions) ([]HybridScanResult, error) {
+	results, _, err := hms.ScanWithStats(ctx, options)
+	return results, err
+}
+
+// ScanWithStats reads messages and returns scan statistics for execution plans
+func (hms *HybridMessageScanner) ScanWithStats(ctx context.Context, options HybridScanOptions) ([]HybridScanResult, *HybridScanStats, error) {
 	var results []HybridScanResult
+	stats := &HybridScanStats{}
 
 	// Get all partitions for this topic
 	// RESOLVED TODO: Implement proper partition discovery via MQ broker
@@ -147,13 +162,26 @@ func (hms *HybridMessageScanner) Scan(ctx context.Context, options HybridScanOpt
 		partitions = []topic.Partition{{RangeStart: 0, RangeStop: 1000}}
 	}
 
+	stats.PartitionsScanned = len(partitions)
+
 	for _, partition := range partitions {
-		partitionResults, err := hms.scanPartitionHybrid(ctx, partition, options)
+		partitionResults, partitionStats, err := hms.scanPartitionHybridWithStats(ctx, partition, options)
 		if err != nil {
-			return nil, fmt.Errorf("failed to scan partition %v: %v", partition, err)
+			return nil, stats, fmt.Errorf("failed to scan partition %v: %v", partition, err)
 		}
 
 		results = append(results, partitionResults...)
+
+		// Aggregate broker buffer stats
+		if partitionStats != nil {
+			if partitionStats.BrokerBufferQueried {
+				stats.BrokerBufferQueried = true
+			}
+			stats.BrokerBufferMessages += partitionStats.BrokerBufferMessages
+			if partitionStats.BufferStartIndex > 0 && (stats.BufferStartIndex == 0 || partitionStats.BufferStartIndex < stats.BufferStartIndex) {
+				stats.BufferStartIndex = partitionStats.BufferStartIndex
+			}
+		}
 
 		// Apply global limit across all partitions
 		if options.Limit > 0 && len(results) >= options.Limit {
@@ -162,17 +190,27 @@ func (hms *HybridMessageScanner) Scan(ctx context.Context, options HybridScanOpt
 		}
 	}
 
-	return results, nil
+	return results, stats, nil
 }
 
 // scanUnflushedData queries brokers for unflushed in-memory data using buffer_start deduplication
 func (hms *HybridMessageScanner) scanUnflushedData(ctx context.Context, partition topic.Partition, options HybridScanOptions) ([]HybridScanResult, error) {
+	results, _, err := hms.scanUnflushedDataWithStats(ctx, partition, options)
+	return results, err
+}
+
+// scanUnflushedDataWithStats queries brokers for unflushed data and returns statistics
+func (hms *HybridMessageScanner) scanUnflushedDataWithStats(ctx context.Context, partition topic.Partition, options HybridScanOptions) ([]HybridScanResult, *HybridScanStats, error) {
 	var results []HybridScanResult
+	stats := &HybridScanStats{}
 
 	// Skip if no broker client available
 	if hms.brokerClient == nil {
-		return results, nil
+		return results, stats, nil
 	}
+
+	// Mark that we attempted to query broker buffer
+	stats.BrokerBufferQueried = true
 
 	// Step 1: Get unflushed data from broker using buffer_start-based method
 	// This method uses buffer_start metadata to avoid double-counting with exact precision
@@ -182,7 +220,20 @@ func (hms *HybridMessageScanner) scanUnflushedData(ctx context.Context, partitio
 		if isDebugMode(ctx) {
 			fmt.Printf("Debug: Failed to get unflushed messages: %v\n", err)
 		}
-		return results, nil
+		// Reset queried flag on error
+		stats.BrokerBufferQueried = false
+		return results, stats, nil
+	}
+
+	// Capture stats for EXPLAIN
+	stats.BrokerBufferMessages = len(unflushedEntries)
+
+	// Debug logging for EXPLAIN mode
+	if isDebugMode(ctx) {
+		fmt.Printf("Debug: Broker buffer queried - found %d unflushed messages\n", len(unflushedEntries))
+		if len(unflushedEntries) > 0 {
+			fmt.Printf("Debug: Using buffer_start deduplication for precise real-time data\n")
+		}
 	}
 
 	// Step 2: Process unflushed entries (already deduplicated by broker)
@@ -251,7 +302,7 @@ func (hms *HybridMessageScanner) scanUnflushedData(ctx context.Context, partitio
 		fmt.Printf("Debug: Retrieved %d unflushed messages from broker\n", len(results))
 	}
 
-	return results, nil
+	return results, stats, nil
 }
 
 // convertDataMessageToRecord converts mq_pb.DataMessage to schema_pb.RecordValue
@@ -344,15 +395,29 @@ func (hms *HybridMessageScanner) discoverTopicPartitions(ctx context.Context) ([
 // 1. Unflushed in-memory data from brokers (REAL-TIME)
 // 2. Live logs + Parquet files from disk (FLUSHED/ARCHIVED)
 func (hms *HybridMessageScanner) scanPartitionHybrid(ctx context.Context, partition topic.Partition, options HybridScanOptions) ([]HybridScanResult, error) {
+	results, _, err := hms.scanPartitionHybridWithStats(ctx, partition, options)
+	return results, err
+}
+
+// scanPartitionHybridWithStats scans a specific partition and returns statistics
+func (hms *HybridMessageScanner) scanPartitionHybridWithStats(ctx context.Context, partition topic.Partition, options HybridScanOptions) ([]HybridScanResult, *HybridScanStats, error) {
 	var results []HybridScanResult
+	stats := &HybridScanStats{}
 
 	// STEP 1: Scan unflushed in-memory data from brokers (REAL-TIME)
-	unflushedResults, err := hms.scanUnflushedData(ctx, partition, options)
+	unflushedResults, unflushedStats, err := hms.scanUnflushedDataWithStats(ctx, partition, options)
 	if err != nil {
 		// Don't fail the query if broker scanning fails - just log and continue with disk data
-		fmt.Printf("Warning: Failed to scan unflushed data from broker: %v\n", err)
+		if !isDebugMode(ctx) {
+			fmt.Printf("Warning: Failed to scan unflushed data from broker: %v\n", err)
+		}
 	} else {
 		results = append(results, unflushedResults...)
+		if unflushedStats != nil {
+			stats.BrokerBufferQueried = unflushedStats.BrokerBufferQueried
+			stats.BrokerBufferMessages = unflushedStats.BrokerBufferMessages
+			stats.BufferStartIndex = unflushedStats.BufferStartIndex
+		}
 	}
 
 	// STEP 2: Scan flushed data from disk (live logs + Parquet files)
@@ -436,7 +501,7 @@ func (hms *HybridMessageScanner) scanPartitionHybrid(ctx context.Context, partit
 		_, _, err = mergedReadFn(startPosition, stopTsNs, eachLogEntryFn)
 
 		if err != nil {
-			return nil, fmt.Errorf("flushed data scan failed: %v", err)
+			return nil, stats, fmt.Errorf("flushed data scan failed: %v", err)
 		}
 	}
 
@@ -458,7 +523,7 @@ func (hms *HybridMessageScanner) scanPartitionHybrid(ctx context.Context, partit
 		results = results[:options.Limit]
 	}
 
-	return results, nil
+	return results, stats, nil
 }
 
 // convertLogEntryToRecordValue converts a filer_pb.LogEntry to schema_pb.RecordValue

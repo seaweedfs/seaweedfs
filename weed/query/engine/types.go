@@ -8,7 +8,7 @@ import (
 type QueryExecutionPlan struct {
 	QueryType           string
 	ExecutionStrategy   string                 `json:"execution_strategy"` // fast_path, full_scan, hybrid
-	DataSources         []string               `json:"data_sources"`       // parquet_files, live_logs
+	DataSources         []string               `json:"data_sources"`       // parquet_files, live_logs, broker_buffer
 	PartitionsScanned   int                    `json:"partitions_scanned"`
 	ParquetFilesScanned int                    `json:"parquet_files_scanned"`
 	LiveLogFilesScanned int                    `json:"live_log_files_scanned"`
@@ -18,6 +18,11 @@ type QueryExecutionPlan struct {
 	Aggregations        []string               `json:"aggregations,omitempty"`
 	ExecutionTimeMs     float64                `json:"execution_time_ms"`
 	Details             map[string]interface{} `json:"details,omitempty"`
+
+	// Broker buffer information
+	BrokerBufferQueried  bool  `json:"broker_buffer_queried"`
+	BrokerBufferMessages int   `json:"broker_buffer_messages"`
+	BufferStartIndex     int64 `json:"buffer_start_index,omitempty"`
 }
 
 // QueryResult represents the result of a SQL query execution
