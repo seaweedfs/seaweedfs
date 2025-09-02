@@ -105,7 +105,7 @@ func (opt *FastPathOptimizer) CollectDataSources(ctx context.Context, hybridScan
 
 		// Count live log files (excluding those converted to parquet)
 		parquetSources := opt.engine.extractParquetSourceFiles(dataSources.ParquetFiles[partitionPath])
-		liveLogCount, _ := opt.engine.countLiveLogRowsExcludingParquetSources(partitionPath, parquetSources)
+		liveLogCount, _ := opt.engine.countLiveLogRowsExcludingParquetSources(ctx, partitionPath, parquetSources)
 		dataSources.LiveLogRowCount += liveLogCount
 	}
 
@@ -352,13 +352,17 @@ func (e *SQLEngine) executeAggregationQuery(ctx context.Context, hybridScanner *
 	if stmt.Where == nil { // Only optimize when no complex WHERE clause
 		fastResult, canOptimize := e.tryFastParquetAggregation(ctx, hybridScanner, aggregations)
 		if canOptimize {
-			fmt.Printf("Using fast hybrid statistics for aggregation (parquet stats + live log counts)\n")
+			if isDebugMode(ctx) {
+				fmt.Printf("Using fast hybrid statistics for aggregation (parquet stats + live log counts)\n")
+			}
 			return fastResult, nil
 		}
 	}
 
 	// SLOW PATH: Fall back to full table scan
-	fmt.Printf("Using full table scan for aggregation (parquet optimization not applicable)\n")
+	if isDebugMode(ctx) {
+		fmt.Printf("Using full table scan for aggregation (parquet optimization not applicable)\n")
+	}
 
 	// Build scan options for full table scan (aggregations need all data)
 	hybridScanOptions := HybridScanOptions{
@@ -426,8 +430,8 @@ func (e *SQLEngine) tryFastParquetAggregation(ctx context.Context, hybridScanner
 		partitions[i] = fmt.Sprintf("%s/%s", topicBasePath, relPartition)
 	}
 
-	// Debug: Show the hybrid optimization results
-	if dataSources.ParquetRowCount > 0 || dataSources.LiveLogRowCount > 0 {
+	// Debug: Show the hybrid optimization results (only in explain mode)
+	if isDebugMode(ctx) && (dataSources.ParquetRowCount > 0 || dataSources.LiveLogRowCount > 0) {
 		partitionsWithLiveLogs := 0
 		if dataSources.LiveLogRowCount > 0 {
 			partitionsWithLiveLogs = 1 // Simplified for now

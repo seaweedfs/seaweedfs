@@ -6,10 +6,12 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/xwb1989/sqlparser"
+	"google.golang.org/protobuf/proto"
 )
 
 // Mock implementations for testing
@@ -61,7 +63,7 @@ func (m *MockSQLEngine) extractParquetSourceFiles(fileStats []*ParquetFileStats)
 	return map[string]bool{"converted-log-1": true}
 }
 
-func (m *MockSQLEngine) countLiveLogRowsExcludingParquetSources(partition string, parquetSources map[string]bool) (int64, error) {
+func (m *MockSQLEngine) countLiveLogRowsExcludingParquetSources(ctx context.Context, partition string, parquetSources map[string]bool) (int64, error) {
 	if count, exists := m.mockLiveLogRowCounts[partition]; exists {
 		return count, nil
 	}
@@ -903,4 +905,234 @@ func BenchmarkAggregationComputer_ComputeFastPathAggregations(b *testing.B) {
 		}
 		_ = results
 	}
+}
+
+// Tests for convertLogEntryToRecordValue - Protocol Buffer parsing bug fix
+func TestSQLEngine_ConvertLogEntryToRecordValue_ValidProtobuf(t *testing.T) {
+	engine := NewTestSQLEngine()
+
+	// Create a valid RecordValue protobuf with user data
+	originalRecord := &schema_pb.RecordValue{
+		Fields: map[string]*schema_pb.Value{
+			"id":    {Kind: &schema_pb.Value_Int32Value{Int32Value: 42}},
+			"name":  {Kind: &schema_pb.Value_StringValue{StringValue: "test-user"}},
+			"score": {Kind: &schema_pb.Value_DoubleValue{DoubleValue: 95.5}},
+		},
+	}
+
+	// Serialize the protobuf (this is what MQ actually stores)
+	protobufData, err := proto.Marshal(originalRecord)
+	assert.NoError(t, err)
+
+	// Create a LogEntry with the serialized data
+	logEntry := &filer_pb.LogEntry{
+		TsNs:             1609459200000000000, // 2021-01-01 00:00:00 UTC
+		PartitionKeyHash: 123,
+		Data:             protobufData, // Protocol buffer data (not JSON!)
+		Key:              []byte("test-key-001"),
+	}
+
+	// Test the conversion
+	result, source, err := engine.convertLogEntryToRecordValue(logEntry)
+
+	// Verify no error
+	assert.NoError(t, err)
+	assert.Equal(t, "live_log", source)
+	assert.NotNil(t, result)
+	assert.NotNil(t, result.Fields)
+
+	// Verify system columns are added correctly
+	assert.Contains(t, result.Fields, SW_COLUMN_NAME_TS)
+	assert.Contains(t, result.Fields, SW_COLUMN_NAME_KEY)
+	assert.Equal(t, int64(1609459200000000000), result.Fields[SW_COLUMN_NAME_TS].GetInt64Value())
+	assert.Equal(t, []byte("test-key-001"), result.Fields[SW_COLUMN_NAME_KEY].GetBytesValue())
+
+	// Verify user data is preserved
+	assert.Contains(t, result.Fields, "id")
+	assert.Contains(t, result.Fields, "name")
+	assert.Contains(t, result.Fields, "score")
+	assert.Equal(t, int32(42), result.Fields["id"].GetInt32Value())
+	assert.Equal(t, "test-user", result.Fields["name"].GetStringValue())
+	assert.Equal(t, 95.5, result.Fields["score"].GetDoubleValue())
+}
+
+func TestSQLEngine_ConvertLogEntryToRecordValue_InvalidProtobuf(t *testing.T) {
+	engine := NewTestSQLEngine()
+
+	// Create LogEntry with invalid protobuf data (this would cause the original JSON parsing bug)
+	logEntry := &filer_pb.LogEntry{
+		TsNs:             1609459200000000000,
+		PartitionKeyHash: 123,
+		Data:             []byte{0x17, 0x00, 0xFF, 0xFE}, // Invalid protobuf data (starts with \x17 like in the original error)
+		Key:              []byte("test-key"),
+	}
+
+	// Test the conversion
+	result, source, err := engine.convertLogEntryToRecordValue(logEntry)
+
+	// Should return error for invalid protobuf
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to unmarshal log entry protobuf")
+	assert.Nil(t, result)
+	assert.Empty(t, source)
+}
+
+func TestSQLEngine_ConvertLogEntryToRecordValue_EmptyProtobuf(t *testing.T) {
+	engine := NewTestSQLEngine()
+
+	// Create a minimal valid RecordValue (empty fields)
+	emptyRecord := &schema_pb.RecordValue{
+		Fields: map[string]*schema_pb.Value{},
+	}
+	protobufData, err := proto.Marshal(emptyRecord)
+	assert.NoError(t, err)
+
+	logEntry := &filer_pb.LogEntry{
+		TsNs:             1609459200000000000,
+		PartitionKeyHash: 456,
+		Data:             protobufData,
+		Key:              []byte("empty-key"),
+	}
+
+	// Test the conversion
+	result, source, err := engine.convertLogEntryToRecordValue(logEntry)
+
+	// Should succeed and add system columns
+	assert.NoError(t, err)
+	assert.Equal(t, "live_log", source)
+	assert.NotNil(t, result)
+	assert.NotNil(t, result.Fields)
+
+	// Should have system columns
+	assert.Contains(t, result.Fields, SW_COLUMN_NAME_TS)
+	assert.Contains(t, result.Fields, SW_COLUMN_NAME_KEY)
+	assert.Equal(t, int64(1609459200000000000), result.Fields[SW_COLUMN_NAME_TS].GetInt64Value())
+	assert.Equal(t, []byte("empty-key"), result.Fields[SW_COLUMN_NAME_KEY].GetBytesValue())
+
+	// Should have no user fields
+	userFieldCount := 0
+	for fieldName := range result.Fields {
+		if fieldName != SW_COLUMN_NAME_TS && fieldName != SW_COLUMN_NAME_KEY {
+			userFieldCount++
+		}
+	}
+	assert.Equal(t, 0, userFieldCount)
+}
+
+func TestSQLEngine_ConvertLogEntryToRecordValue_NilFieldsMap(t *testing.T) {
+	engine := NewTestSQLEngine()
+
+	// Create RecordValue with nil Fields map (edge case)
+	recordWithNilFields := &schema_pb.RecordValue{
+		Fields: nil, // This should be handled gracefully
+	}
+	protobufData, err := proto.Marshal(recordWithNilFields)
+	assert.NoError(t, err)
+
+	logEntry := &filer_pb.LogEntry{
+		TsNs:             1609459200000000000,
+		PartitionKeyHash: 789,
+		Data:             protobufData,
+		Key:              []byte("nil-fields-key"),
+	}
+
+	// Test the conversion
+	result, source, err := engine.convertLogEntryToRecordValue(logEntry)
+
+	// Should succeed and create Fields map
+	assert.NoError(t, err)
+	assert.Equal(t, "live_log", source)
+	assert.NotNil(t, result)
+	assert.NotNil(t, result.Fields) // Should be created by the function
+
+	// Should have system columns
+	assert.Contains(t, result.Fields, SW_COLUMN_NAME_TS)
+	assert.Contains(t, result.Fields, SW_COLUMN_NAME_KEY)
+	assert.Equal(t, int64(1609459200000000000), result.Fields[SW_COLUMN_NAME_TS].GetInt64Value())
+	assert.Equal(t, []byte("nil-fields-key"), result.Fields[SW_COLUMN_NAME_KEY].GetBytesValue())
+}
+
+func TestSQLEngine_ConvertLogEntryToRecordValue_SystemColumnOverride(t *testing.T) {
+	engine := NewTestSQLEngine()
+
+	// Create RecordValue that already has system column names (should be overridden)
+	recordWithSystemCols := &schema_pb.RecordValue{
+		Fields: map[string]*schema_pb.Value{
+			"user_field":       {Kind: &schema_pb.Value_StringValue{StringValue: "user-data"}},
+			SW_COLUMN_NAME_TS:  {Kind: &schema_pb.Value_Int64Value{Int64Value: 999999999}},   // Should be overridden
+			SW_COLUMN_NAME_KEY: {Kind: &schema_pb.Value_StringValue{StringValue: "old-key"}}, // Should be overridden
+		},
+	}
+	protobufData, err := proto.Marshal(recordWithSystemCols)
+	assert.NoError(t, err)
+
+	logEntry := &filer_pb.LogEntry{
+		TsNs:             1609459200000000000,
+		PartitionKeyHash: 100,
+		Data:             protobufData,
+		Key:              []byte("actual-key"),
+	}
+
+	// Test the conversion
+	result, source, err := engine.convertLogEntryToRecordValue(logEntry)
+
+	// Should succeed
+	assert.NoError(t, err)
+	assert.Equal(t, "live_log", source)
+	assert.NotNil(t, result)
+
+	// System columns should use LogEntry values, not protobuf values
+	assert.Equal(t, int64(1609459200000000000), result.Fields[SW_COLUMN_NAME_TS].GetInt64Value())
+	assert.Equal(t, []byte("actual-key"), result.Fields[SW_COLUMN_NAME_KEY].GetBytesValue())
+
+	// User field should be preserved
+	assert.Contains(t, result.Fields, "user_field")
+	assert.Equal(t, "user-data", result.Fields["user_field"].GetStringValue())
+}
+
+func TestSQLEngine_ConvertLogEntryToRecordValue_ComplexDataTypes(t *testing.T) {
+	engine := NewTestSQLEngine()
+
+	// Test with various data types
+	complexRecord := &schema_pb.RecordValue{
+		Fields: map[string]*schema_pb.Value{
+			"int32_field":  {Kind: &schema_pb.Value_Int32Value{Int32Value: -42}},
+			"int64_field":  {Kind: &schema_pb.Value_Int64Value{Int64Value: 9223372036854775807}},
+			"float_field":  {Kind: &schema_pb.Value_FloatValue{FloatValue: 3.14159}},
+			"double_field": {Kind: &schema_pb.Value_DoubleValue{DoubleValue: 2.718281828}},
+			"bool_field":   {Kind: &schema_pb.Value_BoolValue{BoolValue: true}},
+			"string_field": {Kind: &schema_pb.Value_StringValue{StringValue: "test string with unicode 🎉"}},
+			"bytes_field":  {Kind: &schema_pb.Value_BytesValue{BytesValue: []byte{0x01, 0x02, 0x03}}},
+		},
+	}
+	protobufData, err := proto.Marshal(complexRecord)
+	assert.NoError(t, err)
+
+	logEntry := &filer_pb.LogEntry{
+		TsNs:             1609459200000000000,
+		PartitionKeyHash: 200,
+		Data:             protobufData,
+		Key:              []byte("complex-key"),
+	}
+
+	// Test the conversion
+	result, source, err := engine.convertLogEntryToRecordValue(logEntry)
+
+	// Should succeed
+	assert.NoError(t, err)
+	assert.Equal(t, "live_log", source)
+	assert.NotNil(t, result)
+
+	// Verify all data types are preserved
+	assert.Equal(t, int32(-42), result.Fields["int32_field"].GetInt32Value())
+	assert.Equal(t, int64(9223372036854775807), result.Fields["int64_field"].GetInt64Value())
+	assert.Equal(t, float32(3.14159), result.Fields["float_field"].GetFloatValue())
+	assert.Equal(t, 2.718281828, result.Fields["double_field"].GetDoubleValue())
+	assert.Equal(t, true, result.Fields["bool_field"].GetBoolValue())
+	assert.Equal(t, "test string with unicode 🎉", result.Fields["string_field"].GetStringValue())
+	assert.Equal(t, []byte{0x01, 0x02, 0x03}, result.Fields["bytes_field"].GetBytesValue())
+
+	// System columns should still be present
+	assert.Contains(t, result.Fields, SW_COLUMN_NAME_TS)
+	assert.Contains(t, result.Fields, SW_COLUMN_NAME_KEY)
 }

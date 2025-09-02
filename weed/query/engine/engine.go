@@ -21,6 +21,20 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// debugModeKey is used to store debug mode flag in context
+type debugModeKey struct{}
+
+// isDebugMode checks if we're in debug/explain mode
+func isDebugMode(ctx context.Context) bool {
+	debug, ok := ctx.Value(debugModeKey{}).(bool)
+	return ok && debug
+}
+
+// withDebugMode returns a context with debug mode enabled
+func withDebugMode(ctx context.Context) context.Context {
+	return context.WithValue(ctx, debugModeKey{}, true)
+}
+
 // SQLEngine provides SQL query execution capabilities for SeaweedFS
 // Assumptions:
 // 1. MQ namespaces map directly to SQL databases
@@ -111,6 +125,9 @@ func (e *SQLEngine) ExecuteSQL(ctx context.Context, sql string) (*QueryResult, e
 
 // executeExplain handles EXPLAIN statements by executing the query with plan tracking
 func (e *SQLEngine) executeExplain(ctx context.Context, actualSQL string, startTime time.Time) (*QueryResult, error) {
+	// Enable debug mode for EXPLAIN queries
+	ctx = withDebugMode(ctx)
+
 	// Parse the actual SQL statement
 	stmt, err := sqlparser.Parse(actualSQL)
 	if err != nil {
@@ -470,14 +487,14 @@ func (e *SQLEngine) executeSelectStatementWithPlan(ctx context.Context, stmt *sq
 
 					if canUseFastPath {
 						// Fast path: minimal scanning (only live logs that weren't converted)
-						if actualScanCount, countErr := e.getActualRowsScannedForFastPath("test", tableName); countErr == nil {
+						if actualScanCount, countErr := e.getActualRowsScannedForFastPath(ctx, "test", tableName); countErr == nil {
 							plan.TotalRowsProcessed = actualScanCount
 						} else {
 							plan.TotalRowsProcessed = 0 // Parquet stats only, no scanning
 						}
 					} else {
 						// Full scan: count all rows
-						if actualRowCount, countErr := e.getTopicTotalRowCount("test", tableName); countErr == nil {
+						if actualRowCount, countErr := e.getTopicTotalRowCount(ctx, "test", tableName); countErr == nil {
 							plan.TotalRowsProcessed = actualRowCount
 						} else {
 							plan.TotalRowsProcessed = int64(len(result.Rows))
@@ -486,7 +503,7 @@ func (e *SQLEngine) executeSelectStatementWithPlan(ctx context.Context, stmt *sq
 					}
 				} else {
 					// With WHERE clause: full scan required
-					if actualRowCount, countErr := e.getTopicTotalRowCount("test", tableName); countErr == nil {
+					if actualRowCount, countErr := e.getTopicTotalRowCount(ctx, "test", tableName); countErr == nil {
 						plan.TotalRowsProcessed = actualRowCount
 					} else {
 						plan.TotalRowsProcessed = int64(len(result.Rows))
@@ -1881,18 +1898,8 @@ func (e *SQLEngine) convertLogEntryToRecordValue(logEntry *filer_pb.LogEntry) (*
 		Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Key},
 	}
 
-	// Add user data fields
-	for fieldName, jsonValue := range jsonData {
-		if fieldName == SW_COLUMN_NAME_TS || fieldName == SW_COLUMN_NAME_KEY {
-			continue // Skip system fields in user data
-		}
-
-		// Convert JSON value to schema value (basic conversion)
-		schemaValue := e.convertJSONValueToSchemaValue(jsonValue)
-		if schemaValue != nil {
-			recordValue.Fields[fieldName] = schemaValue
-		}
-	}
+	// User data fields are already present in the protobuf-deserialized recordValue
+	// No additional processing needed since proto.Unmarshal already populated the Fields map
 
 	return recordValue, "live_log", nil
 }
@@ -1986,7 +1993,7 @@ func (e *SQLEngine) extractParquetSourceFiles(fileStats []*ParquetFileStats) map
 }
 
 // countLiveLogRowsExcludingParquetSources counts live log rows but excludes files that were converted to parquet
-func (e *SQLEngine) countLiveLogRowsExcludingParquetSources(partitionPath string, parquetSourceFiles map[string]bool) (int64, error) {
+func (e *SQLEngine) countLiveLogRowsExcludingParquetSources(ctx context.Context, partitionPath string, parquetSourceFiles map[string]bool) (int64, error) {
 	filerClient, err := e.catalog.brokerClient.GetFilerClient()
 	if err != nil {
 		return 0, err
@@ -2000,8 +2007,8 @@ func (e *SQLEngine) countLiveLogRowsExcludingParquetSources(partitionPath string
 		actualSourceFiles = parquetSourceFiles
 	}
 
-	// Debug: Show deduplication status
-	if len(actualSourceFiles) > 0 {
+	// Debug: Show deduplication status (only in explain mode)
+	if isDebugMode(ctx) && len(actualSourceFiles) > 0 {
 		fmt.Printf("Excluding %d converted log files from %s\n", len(actualSourceFiles), partitionPath)
 	}
 
@@ -2013,7 +2020,9 @@ func (e *SQLEngine) countLiveLogRowsExcludingParquetSources(partitionPath string
 
 		// Skip files that have been converted to parquet
 		if actualSourceFiles[entry.Name] {
-			fmt.Printf("Skipping %s (already converted to parquet)\n", entry.Name)
+			if isDebugMode(ctx) {
+				fmt.Printf("Skipping %s (already converted to parquet)\n", entry.Name)
+			}
 			return nil
 		}
 
@@ -2164,7 +2173,7 @@ func (e *SQLEngine) discoverTopicPartitions(namespace, topicName string) ([]stri
 }
 
 // getTopicTotalRowCount returns the total number of rows in a topic (combining parquet and live logs)
-func (e *SQLEngine) getTopicTotalRowCount(namespace, topicName string) (int64, error) {
+func (e *SQLEngine) getTopicTotalRowCount(ctx context.Context, namespace, topicName string) (int64, error) {
 	// Create a hybrid scanner to access parquet statistics
 	var filerClient filer_pb.FilerClient
 	if e.catalog.brokerClient != nil {
@@ -2211,7 +2220,7 @@ func (e *SQLEngine) getTopicTotalRowCount(namespace, topicName string) (int64, e
 			parquetSourceFiles = e.extractParquetSourceFiles(parquetStats)
 		}
 
-		liveLogCount, liveLogErr := e.countLiveLogRowsExcludingParquetSources(partition, parquetSourceFiles)
+		liveLogCount, liveLogErr := e.countLiveLogRowsExcludingParquetSources(ctx, partition, parquetSourceFiles)
 		if liveLogErr == nil {
 			totalRowCount += liveLogCount
 		}
@@ -2222,7 +2231,7 @@ func (e *SQLEngine) getTopicTotalRowCount(namespace, topicName string) (int64, e
 
 // getActualRowsScannedForFastPath returns only the rows that need to be scanned for fast path aggregations
 // (i.e., live log rows that haven't been converted to parquet - parquet uses metadata only)
-func (e *SQLEngine) getActualRowsScannedForFastPath(namespace, topicName string) (int64, error) {
+func (e *SQLEngine) getActualRowsScannedForFastPath(ctx context.Context, namespace, topicName string) (int64, error) {
 	// Create a hybrid scanner to access parquet statistics
 	var filerClient filer_pb.FilerClient
 	if e.catalog.brokerClient != nil {
@@ -2264,7 +2273,7 @@ func (e *SQLEngine) getActualRowsScannedForFastPath(namespace, topicName string)
 		}
 
 		// Count only live log rows that haven't been converted to parquet
-		liveLogCount, liveLogErr := e.countLiveLogRowsExcludingParquetSources(partition, parquetSourceFiles)
+		liveLogCount, liveLogErr := e.countLiveLogRowsExcludingParquetSources(ctx, partition, parquetSourceFiles)
 		if liveLogErr == nil {
 			totalScannedRows += liveLogCount
 		}
@@ -2327,6 +2336,6 @@ func (e *SQLEngine) discoverAndRegisterTopic(ctx context.Context, database, tabl
 		return fmt.Errorf("failed to register discovered topic %s.%s: %v", database, tableName, err)
 	}
 
-	fmt.Printf("Auto-discovered and registered topic: %s.%s\n", database, tableName)
+	// Note: This is a discovery operation, not query execution, so it's okay to always log
 	return nil
 }
