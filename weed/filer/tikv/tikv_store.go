@@ -159,9 +159,11 @@ func (store *TikvStore) DeleteFolderChildren(ctx context.Context, path util.Full
 		return err
 	}
 
-	defer func() {
-		_ = iterTxn.Rollback()
-	}()
+	if !iterTxn.inContext {
+		defer func() {
+			_ = iterTxn.Rollback()
+		}()
+	}
 
 	iter, err := iterTxn.Iter(directoryPrefix, nil)
 	if err != nil {
