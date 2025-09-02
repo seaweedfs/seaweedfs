@@ -16,10 +16,10 @@ import (
 )
 
 var (
-	postgresOptions PostgresOptions
+	dbOptions DBOptions
 )
 
-type PostgresOptions struct {
+type DBOptions struct {
 	host        *string
 	port        *int
 	masterAddr  *string
@@ -33,47 +33,47 @@ type PostgresOptions struct {
 }
 
 func init() {
-	cmdPostgres.Run = runPostgres // break init cycle
-	postgresOptions.host = cmdPostgres.Flag.String("host", "localhost", "PostgreSQL server host")
-	postgresOptions.port = cmdPostgres.Flag.Int("port", 5432, "PostgreSQL server port")
-	postgresOptions.masterAddr = cmdPostgres.Flag.String("master", "localhost:9333", "SeaweedFS master server address")
-	postgresOptions.authMethod = cmdPostgres.Flag.String("auth", "trust", "Authentication method: trust, password, md5")
-	postgresOptions.users = cmdPostgres.Flag.String("users", "", "User credentials for auth (format: user1:pass1,user2:pass2)")
-	postgresOptions.database = cmdPostgres.Flag.String("database", "default", "Default database name")
-	postgresOptions.maxConns = cmdPostgres.Flag.Int("max-connections", 100, "Maximum concurrent connections")
-	postgresOptions.idleTimeout = cmdPostgres.Flag.String("idle-timeout", "1h", "Connection idle timeout")
-	postgresOptions.tlsCert = cmdPostgres.Flag.String("tls-cert", "", "TLS certificate file path")
-	postgresOptions.tlsKey = cmdPostgres.Flag.String("tls-key", "", "TLS private key file path")
+	cmdDB.Run = runDB // break init cycle
+	dbOptions.host = cmdDB.Flag.String("host", "localhost", "Database server host")
+	dbOptions.port = cmdDB.Flag.Int("port", 5432, "Database server port")
+	dbOptions.masterAddr = cmdDB.Flag.String("master", "localhost:9333", "SeaweedFS master server address")
+	dbOptions.authMethod = cmdDB.Flag.String("auth", "trust", "Authentication method: trust, password, md5")
+	dbOptions.users = cmdDB.Flag.String("users", "", "User credentials for auth (format: user1:pass1,user2:pass2)")
+	dbOptions.database = cmdDB.Flag.String("database", "default", "Default database name")
+	dbOptions.maxConns = cmdDB.Flag.Int("max-connections", 100, "Maximum concurrent connections")
+	dbOptions.idleTimeout = cmdDB.Flag.String("idle-timeout", "1h", "Connection idle timeout")
+	dbOptions.tlsCert = cmdDB.Flag.String("tls-cert", "", "TLS certificate file path")
+	dbOptions.tlsKey = cmdDB.Flag.String("tls-key", "", "TLS private key file path")
 }
 
-var cmdPostgres = &Command{
-	UsageLine: "postgres -port=5432 -master=<master_server>",
-	Short:     "start a PostgreSQL-compatible server for SQL queries",
-	Long: `Start a PostgreSQL wire protocol compatible server that provides SQL query access to SeaweedFS.
+var cmdDB = &Command{
+	UsageLine: "db -port=5432 -master=<master_server>",
+	Short:     "start a PostgreSQL-compatible database server for SQL queries",
+	Long: `Start a PostgreSQL wire protocol compatible database server that provides SQL query access to SeaweedFS.
 
-This PostgreSQL server enables any PostgreSQL client, tool, or application to connect to SeaweedFS
+This database server enables any PostgreSQL client, tool, or application to connect to SeaweedFS
 and execute SQL queries against MQ topics. It implements the PostgreSQL wire protocol for maximum
 compatibility with the existing PostgreSQL ecosystem.
 
 Examples:
 
-	# Start PostgreSQL server on default port 5432
-	weed postgres
+	# Start database server on default port 5432
+	weed db
 	
 	# Start with password authentication
-	weed postgres -auth=password -users="admin:secret,readonly:view123"
+	weed db -auth=password -users="admin:secret,readonly:view123"
 	
 	# Start with MD5 authentication 
-	weed postgres -auth=md5 -users="user1:pass1,user2:pass2"
+	weed db -auth=md5 -users="user1:pass1,user2:pass2"
 	
 	# Start with custom port and master
-	weed postgres -port=5433 -master=master1:9333
+	weed db -port=5433 -master=master1:9333
 	
 	# Allow connections from any host
-	weed postgres -host=0.0.0.0 -port=5432
+	weed db -host=0.0.0.0 -port=5432
 	
 	# Start with TLS encryption
-	weed postgres -tls-cert=server.crt -tls-key=server.key
+	weed db -tls-cert=server.crt -tls-key=server.key
 
 Client Connection Examples:
 
@@ -112,6 +112,7 @@ Programming Language Examples:
 Supported SQL Operations:
 	- SELECT queries on MQ topics
 	- DESCRIBE/DESC table_name commands
+	- EXPLAIN query execution plans
 	- SHOW DATABASES/TABLES commands  
 	- Aggregation functions (COUNT, SUM, AVG, MIN, MAX)
 	- WHERE clauses with filtering
@@ -151,32 +152,32 @@ Performance Features:
 `,
 }
 
-func runPostgres(cmd *Command, args []string) bool {
+func runDB(cmd *Command, args []string) bool {
 
 	util.LoadConfiguration("security", false)
 
 	// Validate options
-	if *postgresOptions.masterAddr == "" {
+	if *dbOptions.masterAddr == "" {
 		fmt.Fprintf(os.Stderr, "Error: master address is required\n")
 		return false
 	}
 
 	// Parse authentication method
-	authMethod, err := parseAuthMethod(*postgresOptions.authMethod)
+	authMethod, err := parseAuthMethod(*dbOptions.authMethod)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return false
 	}
 
 	// Parse user credentials
-	users, err := parseUsers(*postgresOptions.users, authMethod)
+	users, err := parseUsers(*dbOptions.users, authMethod)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return false
 	}
 
 	// Parse idle timeout
-	idleTimeout, err := time.ParseDuration(*postgresOptions.idleTimeout)
+	idleTimeout, err := time.ParseDuration(*dbOptions.idleTimeout)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error parsing idle timeout: %v\n", err)
 		return false
@@ -184,8 +185,8 @@ func runPostgres(cmd *Command, args []string) bool {
 
 	// Setup TLS if requested
 	var tlsConfig *tls.Config
-	if *postgresOptions.tlsCert != "" && *postgresOptions.tlsKey != "" {
-		cert, err := tls.LoadX509KeyPair(*postgresOptions.tlsCert, *postgresOptions.tlsKey)
+	if *dbOptions.tlsCert != "" && *dbOptions.tlsKey != "" {
+		cert, err := tls.LoadX509KeyPair(*dbOptions.tlsCert, *dbOptions.tlsKey)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error loading TLS certificates: %v\n", err)
 			return false
@@ -197,32 +198,32 @@ func runPostgres(cmd *Command, args []string) bool {
 
 	// Create server configuration
 	config := &postgres.PostgreSQLServerConfig{
-		Host:        *postgresOptions.host,
-		Port:        *postgresOptions.port,
+		Host:        *dbOptions.host,
+		Port:        *dbOptions.port,
 		AuthMethod:  authMethod,
 		Users:       users,
-		Database:    *postgresOptions.database,
-		MaxConns:    *postgresOptions.maxConns,
+		Database:    *dbOptions.database,
+		MaxConns:    *dbOptions.maxConns,
 		IdleTimeout: idleTimeout,
 		TLSConfig:   tlsConfig,
 	}
 
-	// Create PostgreSQL server
-	postgresServer, err := postgres.NewPostgreSQLServer(config, *postgresOptions.masterAddr)
+	// Create database server
+	dbServer, err := postgres.NewPostgreSQLServer(config, *dbOptions.masterAddr)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating PostgreSQL server: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error creating database server: %v\n", err)
 		return false
 	}
 
 	// Print startup information
-	fmt.Printf("Starting SeaweedFS PostgreSQL Server...\n")
-	fmt.Printf("Host: %s\n", *postgresOptions.host)
-	fmt.Printf("Port: %d\n", *postgresOptions.port)
-	fmt.Printf("Master: %s\n", *postgresOptions.masterAddr)
-	fmt.Printf("Database: %s\n", *postgresOptions.database)
-	fmt.Printf("Auth Method: %s\n", *postgresOptions.authMethod)
-	fmt.Printf("Max Connections: %d\n", *postgresOptions.maxConns)
-	fmt.Printf("Idle Timeout: %s\n", *postgresOptions.idleTimeout)
+	fmt.Printf("Starting SeaweedFS Database Server...\n")
+	fmt.Printf("Host: %s\n", *dbOptions.host)
+	fmt.Printf("Port: %d\n", *dbOptions.port)
+	fmt.Printf("Master: %s\n", *dbOptions.masterAddr)
+	fmt.Printf("Database: %s\n", *dbOptions.database)
+	fmt.Printf("Auth Method: %s\n", *dbOptions.authMethod)
+	fmt.Printf("Max Connections: %d\n", *dbOptions.maxConns)
+	fmt.Printf("Idle Timeout: %s\n", *dbOptions.idleTimeout)
 	if tlsConfig != nil {
 		fmt.Printf("TLS: Enabled\n")
 	} else {
@@ -232,31 +233,32 @@ func runPostgres(cmd *Command, args []string) bool {
 		fmt.Printf("Users: %d configured\n", len(users))
 	}
 
-	fmt.Printf("\nPostgreSQL Connection Examples:\n")
-	fmt.Printf("  psql -h %s -p %d -U seaweedfs -d %s\n", *postgresOptions.host, *postgresOptions.port, *postgresOptions.database)
+	fmt.Printf("\nDatabase Connection Examples:\n")
+	fmt.Printf("  psql -h %s -p %d -U seaweedfs -d %s\n", *dbOptions.host, *dbOptions.port, *dbOptions.database)
 	if len(users) > 0 {
 		// Show first user as example
 		for username := range users {
-			fmt.Printf("  psql -h %s -p %d -U %s -d %s\n", *postgresOptions.host, *postgresOptions.port, username, *postgresOptions.database)
+			fmt.Printf("  psql -h %s -p %d -U %s -d %s\n", *dbOptions.host, *dbOptions.port, username, *dbOptions.database)
 			break
 		}
 	}
-	fmt.Printf("  postgresql://%s:%d/%s\n", *postgresOptions.host, *postgresOptions.port, *postgresOptions.database)
+	fmt.Printf("  postgresql://%s:%d/%s\n", *dbOptions.host, *dbOptions.port, *dbOptions.database)
 
 	fmt.Printf("\nSupported Operations:\n")
 	fmt.Printf("  - SELECT queries on MQ topics\n")
 	fmt.Printf("  - DESCRIBE/DESC table_name\n")
+	fmt.Printf("  - EXPLAIN query execution plans\n")
 	fmt.Printf("  - SHOW DATABASES/TABLES\n")
 	fmt.Printf("  - Aggregations: COUNT, SUM, AVG, MIN, MAX\n")
 	fmt.Printf("  - System columns: _timestamp_ns, _key, _source\n")
 	fmt.Printf("  - psql commands: \\d, \\dt, \\l, \\q\n")
 
-	fmt.Printf("\nReady for PostgreSQL connections!\n\n")
+	fmt.Printf("\nReady for database connections!\n\n")
 
 	// Start the server
-	err = postgresServer.Start()
+	err = dbServer.Start()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error starting PostgreSQL server: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error starting database server: %v\n", err)
 		return false
 	}
 
@@ -266,7 +268,7 @@ func runPostgres(cmd *Command, args []string) bool {
 
 	// Wait for shutdown signal
 	<-sigChan
-	fmt.Printf("\nReceived shutdown signal, stopping PostgreSQL server...\n")
+	fmt.Printf("\nReceived shutdown signal, stopping database server...\n")
 
 	// Create context with timeout for graceful shutdown
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -275,18 +277,18 @@ func runPostgres(cmd *Command, args []string) bool {
 	// Stop the server with timeout
 	done := make(chan error, 1)
 	go func() {
-		done <- postgresServer.Stop()
+		done <- dbServer.Stop()
 	}()
 
 	select {
 	case err := <-done:
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error stopping PostgreSQL server: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error stopping database server: %v\n", err)
 			return false
 		}
-		fmt.Printf("PostgreSQL server stopped successfully\n")
+		fmt.Printf("Database server stopped successfully\n")
 	case <-ctx.Done():
-		fmt.Fprintf(os.Stderr, "Timeout waiting for PostgreSQL server to stop\n")
+		fmt.Fprintf(os.Stderr, "Timeout waiting for database server to stop\n")
 		return false
 	}
 

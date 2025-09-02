@@ -231,7 +231,7 @@ psql -h localhost -p 5432 -U seaweedfs -d default
 - **DESIGN.md**: Complete architecture and design overview
 - **IMPLEMENTATION.md**: Detailed implementation guide
 - **postgres-examples/**: Client examples and test scripts
-- **Command Documentation**: `weed postgres -help`
+- **Command Documentation**: `weed db -help`
 
 ## Security Considerations
 

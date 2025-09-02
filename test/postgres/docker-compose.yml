@@ -44,7 +44,7 @@ services:
       retries: 5
       start_period: 60s
 
-  # PostgreSQL Wire Protocol Server (Custom Build)
+  # Database Server (PostgreSQL Wire Protocol Compatible)
   postgres-server:
     build:
       context: ../..  # Build from project root
@@ -56,7 +56,7 @@ services:
       seaweedfs:
         condition: service_healthy
     command: >
-      ./weed postgres
+      ./weed db
       -host=0.0.0.0
       -port=5432
       -master=seaweedfs:9333
