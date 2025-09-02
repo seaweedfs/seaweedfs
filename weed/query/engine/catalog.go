@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/mq/schema"
+	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 )
@@ -20,6 +21,9 @@ type BrokerClientInterface interface {
 	GetFilerClient() (filer_pb.FilerClient, error)
 	ConfigureTopic(ctx context.Context, namespace, topicName string, partitionCount int32, recordType *schema_pb.RecordType) error
 	DeleteTopic(ctx context.Context, namespace, topicName string) error
+	// GetUnflushedMessages returns only messages that haven't been flushed to disk yet
+	// This prevents double-counting when combining with disk-based data
+	GetUnflushedMessages(ctx context.Context, namespace, topicName string, partition topic.Partition, startTimeNs int64) ([]*filer_pb.LogEntry, error)
 }
 
 // SchemaCatalog manages the mapping between MQ topics and SQL tables

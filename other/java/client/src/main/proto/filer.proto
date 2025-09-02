@@ -162,7 +162,7 @@ message FileChunk {
     bool is_compressed = 10;
     bool is_chunk_manifest = 11; // content is a list of FileChunks
     SSEType sse_type = 12;           // Server-side encryption type
-    bytes sse_kms_metadata = 13;     // Serialized SSE-KMS metadata for this chunk
+    bytes sse_metadata = 13;         // Serialized SSE metadata for this chunk (SSE-C, SSE-KMS, or SSE-S3)
 }
 
 message FileChunkManifest {

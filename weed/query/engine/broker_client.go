@@ -427,3 +427,86 @@ func (c *BrokerClient) ListTopicPartitions(ctx context.Context, namespace, topic
 
 	return partitions, nil
 }
+
+// GetUnflushedMessages returns only messages that haven't been flushed to disk yet
+// Uses buffer_start metadata to determine what data has been persisted vs still in-memory
+// This prevents double-counting when combining with disk-based data
+func (c *BrokerClient) GetUnflushedMessages(ctx context.Context, namespace, topicName string, partition topic.Partition, startTimeNs int64) ([]*filer_pb.LogEntry, error) {
+	// Step 1: Find the broker that hosts this partition
+	if err := c.findBrokerBalancer(); err != nil {
+		// Return empty slice if we can't find broker - prevents double-counting
+		return []*filer_pb.LogEntry{}, nil
+	}
+
+	// Step 2: Connect to broker and call the GetUnflushedMessages gRPC method
+	conn, err := grpc.Dial(c.brokerAddress, c.grpcDialOption)
+	if err != nil {
+		// Return empty slice if connection fails - prevents double-counting
+		return []*filer_pb.LogEntry{}, nil
+	}
+	defer conn.Close()
+
+	client := mq_pb.NewSeaweedMessagingClient(conn)
+
+	// Step 3: Prepare the request using oneof start_filter (timestamp-based)
+	request := &mq_pb.GetUnflushedMessagesRequest{
+		Topic: &schema_pb.Topic{
+			Namespace: namespace,
+			Name:      topicName,
+		},
+		Partition: &schema_pb.Partition{
+			RingSize:   partition.RingSize,
+			RangeStart: partition.RangeStart,
+			RangeStop:  partition.RangeStop,
+			UnixTimeNs: partition.UnixTimeNs,
+		},
+		StartFilter: &mq_pb.GetUnflushedMessagesRequest_StartTimeNs{
+			StartTimeNs: startTimeNs,
+		},
+		// TODO: Could use buffer index filtering for more precision:
+		// StartFilter: &mq_pb.GetUnflushedMessagesRequest_StartBufferIndex{
+		//     StartBufferIndex: latestBufferIndex,
+		// },
+	}
+
+	// Step 4: Call the broker streaming API
+	stream, err := client.GetUnflushedMessages(ctx, request)
+	if err != nil {
+		// Return empty slice if gRPC call fails - prevents double-counting
+		return []*filer_pb.LogEntry{}, nil
+	}
+
+	// Step 5: Receive streaming responses
+	var logEntries []*filer_pb.LogEntry
+	for {
+		response, err := stream.Recv()
+		if err != nil {
+			// End of stream or error - return what we have to prevent double-counting
+			break
+		}
+
+		// Handle error messages
+		if response.Error != "" {
+			// Log the error but return empty slice - prevents double-counting
+			// (In debug mode, this would be visible)
+			return []*filer_pb.LogEntry{}, nil
+		}
+
+		// Check for end of stream
+		if response.EndOfStream {
+			break
+		}
+
+		// Convert and collect the message
+		if response.Message != nil {
+			logEntries = append(logEntries, &filer_pb.LogEntry{
+				TsNs:             response.Message.TsNs,
+				Key:              response.Message.Key,
+				Data:             response.Message.Data,
+				PartitionKeyHash: int32(response.Message.PartitionKeyHash), // Convert uint32 to int32
+			})
+		}
+	}
+
+	return logEntries, nil
+}

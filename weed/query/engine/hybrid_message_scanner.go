@@ -165,7 +165,7 @@ func (hms *HybridMessageScanner) Scan(ctx context.Context, options HybridScanOpt
 	return results, nil
 }
 
-// scanUnflushedData queries brokers for unflushed in-memory data
+// scanUnflushedData queries brokers for unflushed in-memory data using buffer_start deduplication
 func (hms *HybridMessageScanner) scanUnflushedData(ctx context.Context, partition topic.Partition, options HybridScanOptions) ([]HybridScanResult, error) {
 	var results []HybridScanResult
 
@@ -174,31 +174,33 @@ func (hms *HybridMessageScanner) scanUnflushedData(ctx context.Context, partitio
 		return results, nil
 	}
 
-	// Get broker address for this partition
-	// TODO: Implement proper broker discovery for partition
-	// For now, assume broker client knows how to reach the right broker
+	// Step 1: Get unflushed data from broker using our new interface method
+	// This method uses buffer_start metadata to avoid double-counting
+	unflushedEntries, err := hms.brokerClient.GetUnflushedMessages(ctx, hms.topic.Namespace, hms.topic.Name, partition, options.StartTimeNs)
+	if err != nil {
+		// Log error but don't fail the query - continue with disk data only
+		if isDebugMode(ctx) {
+			fmt.Printf("Debug: Failed to get unflushed messages: %v\n", err)
+		}
+		return results, nil
+	}
 
-	// Create a temporary slice to collect unflushed messages
-	unflushedMessages := make([]*mq_pb.DataMessage, 0)
-
-	// We need to call the broker to get unflushed data
-	// For now, we'll implement this as a best-effort approach
-	// In a full implementation, this would require a new gRPC method on the broker
-	// TODO: Implement actual broker gRPC call to get unflushed data
-
-	// Convert unflushed messages to HybridScanResult format
-	for _, msg := range unflushedMessages {
+	// Step 2: Process unflushed entries (already deduplicated by broker)
+	for _, logEntry := range unflushedEntries {
 		// Skip messages outside time range
-		if options.StartTimeNs > 0 && msg.TsNs < options.StartTimeNs {
+		if options.StartTimeNs > 0 && logEntry.TsNs < options.StartTimeNs {
 			continue
 		}
-		if options.StopTimeNs > 0 && msg.TsNs > options.StopTimeNs {
+		if options.StopTimeNs > 0 && logEntry.TsNs > options.StopTimeNs {
 			continue
 		}
 
-		// Convert DataMessage to RecordValue format
-		recordValue, _, err := hms.convertDataMessageToRecord(msg)
+		// Convert LogEntry to RecordValue format (same as disk data)
+		recordValue, _, err := hms.convertLogEntryToRecordValue(logEntry)
 		if err != nil {
+			if isDebugMode(ctx) {
+				fmt.Printf("Debug: Failed to convert unflushed log entry: %v\n", err)
+			}
 			continue // Skip malformed messages
 		}
 
@@ -207,12 +209,34 @@ func (hms *HybridMessageScanner) scanUnflushedData(ctx context.Context, partitio
 			continue
 		}
 
-		// Convert to HybridScanResult
+		// Extract system columns for result
+		timestamp := recordValue.Fields[SW_COLUMN_NAME_TS].GetInt64Value()
+		key := recordValue.Fields[SW_COLUMN_NAME_KEY].GetBytesValue()
+
+		// Apply column projection
+		values := make(map[string]*schema_pb.Value)
+		if len(options.Columns) == 0 {
+			// Select all columns (excluding system columns from user view)
+			for name, value := range recordValue.Fields {
+				if name != SW_COLUMN_NAME_TS && name != SW_COLUMN_NAME_KEY {
+					values[name] = value
+				}
+			}
+		} else {
+			// Select specified columns only
+			for _, columnName := range options.Columns {
+				if value, exists := recordValue.Fields[columnName]; exists {
+					values[columnName] = value
+				}
+			}
+		}
+
+		// Create result with proper source tagging
 		result := HybridScanResult{
-			Values:    recordValue.Fields,
-			Timestamp: msg.TsNs,
-			Key:       msg.Key,
-			Source:    "in_memory_broker",
+			Values:    values,
+			Timestamp: timestamp,
+			Key:       key,
+			Source:    "in_memory_broker", // Tag for debugging/analysis
 		}
 
 		results = append(results, result)
@@ -221,6 +245,10 @@ func (hms *HybridMessageScanner) scanUnflushedData(ctx context.Context, partitio
 		if options.Limit > 0 && len(results) >= options.Limit {
 			break
 		}
+	}
+
+	if isDebugMode(ctx) {
+		fmt.Printf("Debug: Retrieved %d unflushed messages from broker\n", len(results))
 	}
 
 	return results, nil

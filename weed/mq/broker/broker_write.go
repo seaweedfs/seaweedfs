@@ -13,11 +13,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-// LogBufferStart tracks the starting buffer index for a file
-type LogBufferStart struct {
-	StartIndex int64 `json:"start_index"` // Starting buffer index (count = len(chunks))
-}
-
 func (b *MessageQueueBroker) appendToFile(targetFile string, data []byte) error {
 	return b.appendToFileWithBufferIndex(targetFile, data, 0)
 }

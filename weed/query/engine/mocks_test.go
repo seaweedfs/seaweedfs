@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
@@ -220,4 +221,25 @@ func (m *MockBrokerClient) DeleteTopic(ctx context.Context, namespace, topicName
 	}
 
 	return nil
+}
+
+// GetUnflushedMessages returns mock unflushed data for testing
+// Always returns empty slice to simulate safe deduplication behavior
+func (m *MockBrokerClient) GetUnflushedMessages(ctx context.Context, namespace, topicName string, partition topic.Partition, startTimeNs int64) ([]*filer_pb.LogEntry, error) {
+	if m.shouldFail {
+		return nil, fmt.Errorf("mock broker failed to get unflushed messages: %s", m.failMessage)
+	}
+
+	// For testing, return empty slice to simulate:
+	// 1. No unflushed data available
+	// 2. Safe deduplication behavior (prevents double-counting)
+	// 3. Successful broker communication
+	//
+	// In a real implementation, this would:
+	// - Connect to actual broker
+	// - Access LocalPartition's LogBuffer
+	// - Use buffer_start metadata for deduplication
+	// - Return only truly unflushed messages
+
+	return []*filer_pb.LogEntry{}, nil
 }
