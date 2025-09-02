@@ -1,0 +1,379 @@
+package command
+
+import (
+	"context"
+	"crypto/tls"
+	"fmt"
+	"os"
+	"os/signal"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/server/postgres"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+)
+
+var (
+	postgresOptions PostgresOptions
+)
+
+type PostgresOptions struct {
+	host        *string
+	port        *int
+	masterAddr  *string
+	authMethod  *string
+	users       *string
+	database    *string
+	maxConns    *int
+	idleTimeout *string
+	tlsCert     *string
+	tlsKey      *string
+}
+
+func init() {
+	cmdPostgres.Run = runPostgres // break init cycle
+	postgresOptions.host = cmdPostgres.Flag.String("host", "localhost", "PostgreSQL server host")
+	postgresOptions.port = cmdPostgres.Flag.Int("port", 5432, "PostgreSQL server port")
+	postgresOptions.masterAddr = cmdPostgres.Flag.String("master", "localhost:9333", "SeaweedFS master server address")
+	postgresOptions.authMethod = cmdPostgres.Flag.String("auth", "trust", "Authentication method: trust, password, md5")
+	postgresOptions.users = cmdPostgres.Flag.String("users", "", "User credentials for auth (format: user1:pass1,user2:pass2)")
+	postgresOptions.database = cmdPostgres.Flag.String("database", "default", "Default database name")
+	postgresOptions.maxConns = cmdPostgres.Flag.Int("max-connections", 100, "Maximum concurrent connections")
+	postgresOptions.idleTimeout = cmdPostgres.Flag.String("idle-timeout", "1h", "Connection idle timeout")
+	postgresOptions.tlsCert = cmdPostgres.Flag.String("tls-cert", "", "TLS certificate file path")
+	postgresOptions.tlsKey = cmdPostgres.Flag.String("tls-key", "", "TLS private key file path")
+}
+
+var cmdPostgres = &Command{
+	UsageLine: "postgres -port=5432 -master=<master_server>",
+	Short:     "start a PostgreSQL-compatible server for SQL queries",
+	Long: `Start a PostgreSQL wire protocol compatible server that provides SQL query access to SeaweedFS.
+
+This PostgreSQL server enables any PostgreSQL client, tool, or application to connect to SeaweedFS
+and execute SQL queries against MQ topics. It implements the PostgreSQL wire protocol for maximum
+compatibility with the existing PostgreSQL ecosystem.
+
+Examples:
+
+	# Start PostgreSQL server on default port 5432
+	weed postgres
+	
+	# Start with password authentication
+	weed postgres -auth=password -users="admin:secret,readonly:view123"
+	
+	# Start with MD5 authentication 
+	weed postgres -auth=md5 -users="user1:pass1,user2:pass2"
+	
+	# Start with custom port and master
+	weed postgres -port=5433 -master=master1:9333
+	
+	# Allow connections from any host
+	weed postgres -host=0.0.0.0 -port=5432
+	
+	# Start with TLS encryption
+	weed postgres -tls-cert=server.crt -tls-key=server.key
+
+Client Connection Examples:
+
+	# psql command line client
+	psql "host=localhost port=5432 dbname=default user=seaweedfs"
+	psql -h localhost -p 5432 -U seaweedfs -d default
+	
+	# With password
+	PGPASSWORD=secret psql -h localhost -p 5432 -U admin -d default
+	
+	# Connection string
+	psql "postgresql://admin:secret@localhost:5432/default"
+
+Programming Language Examples:
+
+	# Python (psycopg2)
+	import psycopg2
+	conn = psycopg2.connect(
+		host="localhost", port=5432, 
+		user="seaweedfs", database="default"
+	)
+	
+	# Java JDBC
+	String url = "jdbc:postgresql://localhost:5432/default";
+	Connection conn = DriverManager.getConnection(url, "seaweedfs", "");
+	
+	# Go (lib/pq)
+	db, err := sql.Open("postgres", "host=localhost port=5432 user=seaweedfs dbname=default sslmode=disable")
+	
+	# Node.js (pg)
+	const client = new Client({
+		host: 'localhost', port: 5432,
+		user: 'seaweedfs', database: 'default'
+	});
+
+Supported SQL Operations:
+	- SELECT queries on MQ topics
+	- DESCRIBE/DESC table_name commands
+	- SHOW DATABASES/TABLES commands  
+	- Aggregation functions (COUNT, SUM, AVG, MIN, MAX)
+	- WHERE clauses with filtering
+	- System columns (_timestamp_ns, _key, _source)
+	- PostgreSQL system queries (version(), current_database(), etc.)
+	- psql meta-commands (\d, \dt, \l, etc.)
+
+Authentication Methods:
+	- trust: No authentication required (default)
+	- password: Clear text password authentication
+	- md5: MD5 password authentication (more secure)
+
+Compatible Tools:
+	- psql (PostgreSQL command line client)
+	- pgAdmin (PostgreSQL admin tool)
+	- DBeaver (universal database tool)
+	- DataGrip (JetBrains database IDE)
+	- Grafana (PostgreSQL data source)
+	- Superset (PostgreSQL connector)
+	- Tableau (PostgreSQL native connector)
+	- Any PostgreSQL JDBC/ODBC compatible tool
+
+Security Features:
+	- Multiple authentication methods
+	- TLS encryption support
+	- User access control
+	- Connection limits
+	- Read-only access (no data modification)
+
+Performance Features:
+	- Connection pooling
+	- Configurable connection limits
+	- Idle connection timeout
+	- Efficient wire protocol
+	- Query result streaming
+
+`,
+}
+
+func runPostgres(cmd *Command, args []string) bool {
+
+	util.LoadConfiguration("security", false)
+
+	// Validate options
+	if *postgresOptions.masterAddr == "" {
+		fmt.Fprintf(os.Stderr, "Error: master address is required\n")
+		return false
+	}
+
+	// Parse authentication method
+	authMethod, err := parseAuthMethod(*postgresOptions.authMethod)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return false
+	}
+
+	// Parse user credentials
+	users, err := parseUsers(*postgresOptions.users, authMethod)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return false
+	}
+
+	// Parse idle timeout
+	idleTimeout, err := time.ParseDuration(*postgresOptions.idleTimeout)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error parsing idle timeout: %v\n", err)
+		return false
+	}
+
+	// Setup TLS if requested
+	var tlsConfig *tls.Config
+	if *postgresOptions.tlsCert != "" && *postgresOptions.tlsKey != "" {
+		cert, err := tls.LoadX509KeyPair(*postgresOptions.tlsCert, *postgresOptions.tlsKey)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading TLS certificates: %v\n", err)
+			return false
+		}
+		tlsConfig = &tls.Config{
+			Certificates: []tls.Certificate{cert},
+		}
+	}
+
+	// Create server configuration
+	config := &postgres.PostgreSQLServerConfig{
+		Host:        *postgresOptions.host,
+		Port:        *postgresOptions.port,
+		AuthMethod:  authMethod,
+		Users:       users,
+		Database:    *postgresOptions.database,
+		MaxConns:    *postgresOptions.maxConns,
+		IdleTimeout: idleTimeout,
+		TLSConfig:   tlsConfig,
+	}
+
+	// Create PostgreSQL server
+	postgresServer, err := postgres.NewPostgreSQLServer(config, *postgresOptions.masterAddr)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating PostgreSQL server: %v\n", err)
+		return false
+	}
+
+	// Print startup information
+	fmt.Printf("Starting SeaweedFS PostgreSQL Server...\n")
+	fmt.Printf("Host: %s\n", *postgresOptions.host)
+	fmt.Printf("Port: %d\n", *postgresOptions.port)
+	fmt.Printf("Master: %s\n", *postgresOptions.masterAddr)
+	fmt.Printf("Database: %s\n", *postgresOptions.database)
+	fmt.Printf("Auth Method: %s\n", *postgresOptions.authMethod)
+	fmt.Printf("Max Connections: %d\n", *postgresOptions.maxConns)
+	fmt.Printf("Idle Timeout: %s\n", *postgresOptions.idleTimeout)
+	if tlsConfig != nil {
+		fmt.Printf("TLS: Enabled\n")
+	} else {
+		fmt.Printf("TLS: Disabled\n")
+	}
+	if len(users) > 0 {
+		fmt.Printf("Users: %d configured\n", len(users))
+	}
+
+	fmt.Printf("\nPostgreSQL Connection Examples:\n")
+	fmt.Printf("  psql -h %s -p %d -U seaweedfs -d %s\n", *postgresOptions.host, *postgresOptions.port, *postgresOptions.database)
+	if len(users) > 0 {
+		// Show first user as example
+		for username := range users {
+			fmt.Printf("  psql -h %s -p %d -U %s -d %s\n", *postgresOptions.host, *postgresOptions.port, username, *postgresOptions.database)
+			break
+		}
+	}
+	fmt.Printf("  postgresql://%s:%d/%s\n", *postgresOptions.host, *postgresOptions.port, *postgresOptions.database)
+
+	fmt.Printf("\nSupported Operations:\n")
+	fmt.Printf("  - SELECT queries on MQ topics\n")
+	fmt.Printf("  - DESCRIBE/DESC table_name\n")
+	fmt.Printf("  - SHOW DATABASES/TABLES\n")
+	fmt.Printf("  - Aggregations: COUNT, SUM, AVG, MIN, MAX\n")
+	fmt.Printf("  - System columns: _timestamp_ns, _key, _source\n")
+	fmt.Printf("  - psql commands: \\d, \\dt, \\l, \\q\n")
+
+	fmt.Printf("\nReady for PostgreSQL connections!\n\n")
+
+	// Start the server
+	err = postgresServer.Start()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error starting PostgreSQL server: %v\n", err)
+		return false
+	}
+
+	// Set up signal handling for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// Wait for shutdown signal
+	<-sigChan
+	fmt.Printf("\nReceived shutdown signal, stopping PostgreSQL server...\n")
+
+	// Create context with timeout for graceful shutdown
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Stop the server with timeout
+	done := make(chan error, 1)
+	go func() {
+		done <- postgresServer.Stop()
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error stopping PostgreSQL server: %v\n", err)
+			return false
+		}
+		fmt.Printf("PostgreSQL server stopped successfully\n")
+	case <-ctx.Done():
+		fmt.Fprintf(os.Stderr, "Timeout waiting for PostgreSQL server to stop\n")
+		return false
+	}
+
+	return true
+}
+
+// parseAuthMethod parses the authentication method string
+func parseAuthMethod(method string) (postgres.AuthMethod, error) {
+	switch strings.ToLower(method) {
+	case "trust":
+		return postgres.AuthTrust, nil
+	case "password":
+		return postgres.AuthPassword, nil
+	case "md5":
+		return postgres.AuthMD5, nil
+	default:
+		return postgres.AuthTrust, fmt.Errorf("unsupported auth method '%s'. Supported: trust, password, md5", method)
+	}
+}
+
+// parseUsers parses the user credentials string
+func parseUsers(usersStr string, authMethod postgres.AuthMethod) (map[string]string, error) {
+	users := make(map[string]string)
+
+	if usersStr == "" {
+		// No users specified
+		if authMethod != postgres.AuthTrust {
+			return nil, fmt.Errorf("users must be specified when auth method is not 'trust'")
+		}
+		return users, nil
+	}
+
+	// Parse user:password pairs
+	pairs := strings.Split(usersStr, ",")
+	for _, pair := range pairs {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+
+		parts := strings.SplitN(pair, ":", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid user format '%s'. Expected 'username:password'", pair)
+		}
+
+		username := strings.TrimSpace(parts[0])
+		password := strings.TrimSpace(parts[1])
+
+		if username == "" {
+			return nil, fmt.Errorf("empty username in user specification")
+		}
+
+		if authMethod != postgres.AuthTrust && password == "" {
+			return nil, fmt.Errorf("empty password for user '%s' with auth method", username)
+		}
+
+		users[username] = password
+	}
+
+	return users, nil
+}
+
+// validatePortNumber validates that the port number is reasonable
+func validatePortNumber(port int) error {
+	if port < 1 || port > 65535 {
+		return fmt.Errorf("port number must be between 1 and 65535, got %d", port)
+	}
+	if port < 1024 {
+		return fmt.Errorf("port number %d may require root privileges", port)
+	}
+	return nil
+}
+
+// parseConnectionLimit parses and validates the connection limit
+func parseConnectionLimit(limitStr string) (int, error) {
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil {
+		return 0, fmt.Errorf("invalid connection limit '%s': %v", limitStr, err)
+	}
+
+	if limit < 1 {
+		return 0, fmt.Errorf("connection limit must be at least 1, got %d", limit)
+	}
+
+	if limit > 10000 {
+		return 0, fmt.Errorf("connection limit too high (%d), maximum is 10000", limit)
+	}
+
+	return limit, nil
+}
