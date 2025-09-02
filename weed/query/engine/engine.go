@@ -684,7 +684,7 @@ func (e *SQLEngine) executeSelectStatement(ctx context.Context, stmt *sqlparser.
 		var filerClientErr error
 		filerClient, filerClientErr = e.catalog.brokerClient.GetFilerClient()
 		if filerClientErr != nil {
-			// Log warning but continue with sample data fallback
+			// Log warning but continue with sample data fallback (only when not in test mode)
 			fmt.Printf("Warning: Failed to get filer client: %v, using sample data\n", filerClientErr)
 		}
 	}
