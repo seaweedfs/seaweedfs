@@ -3,7 +3,6 @@ package engine
 import (
 	"context"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"io"
 	"strconv"
@@ -563,12 +562,12 @@ func (c *BrokerClient) getEarliestBufferStart(ctx context.Context, partitionPath
 	// Debug: Show buffer_start determination logic in EXPLAIN mode
 	if isDebugMode(ctx) && len(bufferStartSources) > 0 {
 		if logFileCount == 0 && parquetFileCount > 0 {
-			fmt.Printf("Debug: Using Parquet buffer_start metadata (no log files) - sources: %v\n", bufferStartSources)
+			fmt.Printf("Debug: Using Parquet buffer_start metadata (binary format, no log files) - sources: %v\n", bufferStartSources)
 		} else if logFileCount > 0 && parquetFileCount > 0 {
-			fmt.Printf("Debug: Using mixed sources for buffer_start - log files: %d, Parquet files: %d, sources: %v\n",
+			fmt.Printf("Debug: Using mixed sources for buffer_start (binary format) - log files: %d, Parquet files: %d, sources: %v\n",
 				logFileCount, parquetFileCount, bufferStartSources)
 		} else {
-			fmt.Printf("Debug: Using log file buffer_start metadata - sources: %v\n", bufferStartSources)
+			fmt.Printf("Debug: Using log file buffer_start metadata (binary format) - sources: %v\n", bufferStartSources)
 		}
 		fmt.Printf("Debug: Earliest buffer_start index: %d\n", earliestBufferIndex)
 	}
@@ -585,25 +584,19 @@ func (c *BrokerClient) getEarliestBufferStart(ctx context.Context, partitionPath
 }
 
 // getBufferStartFromEntry extracts LogBufferStart from file entry metadata
-// Handles both JSON format (log files) and binary format (Parquet files)
+// Only supports binary format (used by both log files and Parquet files)
 func (c *BrokerClient) getBufferStartFromEntry(entry *filer_pb.Entry) *LogBufferStart {
 	if entry.Extended == nil {
 		return nil
 	}
 
 	if startData, exists := entry.Extended["buffer_start"]; exists {
-		// Try binary format first (Parquet files)
+		// Only support binary format
 		if len(startData) == 8 {
 			startIndex := int64(binary.BigEndian.Uint64(startData))
 			if startIndex > 0 {
 				return &LogBufferStart{StartIndex: startIndex}
 			}
-		}
-
-		// Try JSON format (log files)
-		var bufferStart LogBufferStart
-		if err := json.Unmarshal(startData, &bufferStart); err == nil {
-			return &bufferStart
 		}
 	}
 

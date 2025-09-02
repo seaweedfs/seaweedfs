@@ -494,15 +494,13 @@ func getBufferStartFromLogFile(logFile *filer_pb.Entry) int64 {
 		return 0
 	}
 
-	// Parse buffer_start format (same as used in query engine)
-	if startJson, exists := logFile.Extended["buffer_start"]; exists {
-		// LogBufferStart struct (JSON format)
-		type LogBufferStart struct {
-			StartIndex int64 `json:"start_index"`
-		}
-		var bufferStart LogBufferStart
-		if err := json.Unmarshal(startJson, &bufferStart); err == nil {
-			return bufferStart.StartIndex
+	// Parse buffer_start binary format
+	if startData, exists := logFile.Extended["buffer_start"]; exists {
+		if len(startData) == 8 {
+			startIndex := int64(binary.BigEndian.Uint64(startData))
+			if startIndex > 0 {
+				return startIndex
+			}
 		}
 	}
 

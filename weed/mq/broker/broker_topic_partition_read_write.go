@@ -12,8 +12,9 @@ import (
 
 // LogBufferStart tracks the starting buffer index for a live log file
 // Buffer indexes are monotonically increasing, count = number of chunks
+// Now stored in binary format for efficiency
 type LogBufferStart struct {
-	StartIndex int64 `json:"start_index"` // Starting buffer index (count = len(chunks))
+	StartIndex int64 // Starting buffer index (count = len(chunks))
 }
 
 func (b *MessageQueueBroker) genLogFlushFunc(t topic.Topic, p topic.Partition) log_buffer.LogFlushFuncType {

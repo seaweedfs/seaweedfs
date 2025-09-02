@@ -3,7 +3,6 @@ package engine
 import (
 	"context"
 	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"testing"
 
@@ -1140,18 +1139,18 @@ func TestSQLEngine_ConvertLogEntryToRecordValue_ComplexDataTypes(t *testing.T) {
 }
 
 // Tests for log buffer deduplication functionality
-func TestSQLEngine_GetLogBufferStartFromFile_NewFormat(t *testing.T) {
+func TestSQLEngine_GetLogBufferStartFromFile_BinaryFormat(t *testing.T) {
 	engine := NewTestSQLEngine()
 
-	// Create sample buffer start (new ultra-efficient format)
-	bufferStart := LogBufferStart{StartIndex: 1609459100000000001}
-	startJson, _ := json.Marshal(bufferStart)
+	// Create sample buffer start (binary format)
+	bufferStartBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(bufferStartBytes, uint64(1609459100000000001))
 
 	// Create file entry with buffer start + some chunks
 	entry := &filer_pb.Entry{
 		Name: "test-log-file",
 		Extended: map[string][]byte{
-			"buffer_start": startJson,
+			"buffer_start": bufferStartBytes,
 		},
 		Chunks: []*filer_pb.FileChunk{
 			{FileId: "chunk1", Offset: 0, Size: 1000},
@@ -1166,7 +1165,7 @@ func TestSQLEngine_GetLogBufferStartFromFile_NewFormat(t *testing.T) {
 	assert.NotNil(t, result)
 	assert.Equal(t, int64(1609459100000000001), result.StartIndex)
 
-	// Test extraction works correctly with the new format
+	// Test extraction works correctly with the binary format
 }
 
 func TestSQLEngine_GetLogBufferStartFromFile_NoMetadata(t *testing.T) {
@@ -1187,18 +1186,18 @@ func TestSQLEngine_GetLogBufferStartFromFile_NoMetadata(t *testing.T) {
 func TestSQLEngine_GetLogBufferStartFromFile_InvalidData(t *testing.T) {
 	engine := NewTestSQLEngine()
 
-	// Create file entry with invalid buffer start
+	// Create file entry with invalid buffer start (wrong size)
 	entry := &filer_pb.Entry{
 		Name: "test-log-file",
 		Extended: map[string][]byte{
-			"buffer_start": []byte("invalid-json"),
+			"buffer_start": []byte("invalid-binary"),
 		},
 	}
 
 	// Test extraction
 	result, err := engine.getLogBufferStartFromFile(entry)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to parse buffer start")
+	assert.Contains(t, err.Error(), "invalid buffer_start format: expected 8 bytes")
 	assert.Nil(t, result)
 }
 
@@ -1256,14 +1255,14 @@ func TestSQLEngine_LogBufferDeduplication_ServerRestartScenario(t *testing.T) {
 	// prevent false positive duplicates across server restarts
 }
 
-func TestBrokerClient_ParquetBufferStartForBrokerQuery(t *testing.T) {
-	// Test scenario: getBufferStartFromEntry should handle both JSON and binary formats
-	// This tests the dual format support for buffer_start metadata
+func TestBrokerClient_BinaryBufferStartFormat(t *testing.T) {
+	// Test scenario: getBufferStartFromEntry should only support binary format
+	// This tests the standardized binary format for buffer_start metadata
 	realBrokerClient := &BrokerClient{}
 
-	// Test binary format (Parquet files)
-	parquetEntry := &filer_pb.Entry{
-		Name:        "2025-01-07-14-30.parquet",
+	// Test binary format (used by both log files and Parquet files)
+	binaryEntry := &filer_pb.Entry{
+		Name:        "2025-01-07-14-30-45",
 		IsDirectory: false,
 		Extended: map[string][]byte{
 			"buffer_start": func() []byte {
@@ -1275,22 +1274,26 @@ func TestBrokerClient_ParquetBufferStartForBrokerQuery(t *testing.T) {
 		},
 	}
 
-	bufferStart := realBrokerClient.getBufferStartFromEntry(parquetEntry)
+	bufferStart := realBrokerClient.getBufferStartFromEntry(binaryEntry)
 	assert.NotNil(t, bufferStart)
-	assert.Equal(t, int64(2000001), bufferStart.StartIndex, "Should parse binary buffer_start from Parquet file")
+	assert.Equal(t, int64(2000001), bufferStart.StartIndex, "Should parse binary buffer_start metadata")
 
-	// Test JSON format (log files)
-	logEntry := &filer_pb.Entry{
-		Name:        "2025-01-07-14-30-45",
+	// Test Parquet file (same binary format)
+	parquetEntry := &filer_pb.Entry{
+		Name:        "2025-01-07-14-30.parquet",
 		IsDirectory: false,
 		Extended: map[string][]byte{
-			"buffer_start": []byte(`{"start_index": 1500001}`),
+			"buffer_start": func() []byte {
+				buf := make([]byte, 8)
+				binary.BigEndian.PutUint64(buf, uint64(1500001))
+				return buf
+			}(),
 		},
 	}
 
-	bufferStart = realBrokerClient.getBufferStartFromEntry(logEntry)
+	bufferStart = realBrokerClient.getBufferStartFromEntry(parquetEntry)
 	assert.NotNil(t, bufferStart)
-	assert.Equal(t, int64(1500001), bufferStart.StartIndex, "Should parse JSON buffer_start from log file")
+	assert.Equal(t, int64(1500001), bufferStart.StartIndex, "Should parse binary buffer_start from Parquet file")
 
 	// Test missing metadata
 	emptyEntry := &filer_pb.Entry{
@@ -1301,4 +1304,16 @@ func TestBrokerClient_ParquetBufferStartForBrokerQuery(t *testing.T) {
 
 	bufferStart = realBrokerClient.getBufferStartFromEntry(emptyEntry)
 	assert.Nil(t, bufferStart, "Should return nil for entry without buffer_start metadata")
+
+	// Test invalid format (wrong size)
+	invalidEntry := &filer_pb.Entry{
+		Name:        "invalid-metadata",
+		IsDirectory: false,
+		Extended: map[string][]byte{
+			"buffer_start": []byte("invalid"),
+		},
+	}
+
+	bufferStart = realBrokerClient.getBufferStartFromEntry(invalidEntry)
+	assert.Nil(t, bufferStart, "Should return nil for invalid buffer_start metadata")
 }

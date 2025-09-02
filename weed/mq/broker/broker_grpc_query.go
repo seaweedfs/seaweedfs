@@ -2,7 +2,7 @@ package broker
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/binary"
 	"fmt"
 	"strings"
 
@@ -186,13 +186,16 @@ func (b *MessageQueueBroker) getLogBufferStartFromFile(entry *filer_pb.Entry) (*
 		return nil, nil
 	}
 
-	// Only support buffer_start format
-	if startJson, exists := entry.Extended["buffer_start"]; exists {
-		var bufferStart LogBufferStart
-		if err := json.Unmarshal(startJson, &bufferStart); err != nil {
-			return nil, fmt.Errorf("failed to parse buffer start: %v", err)
+	// Only support binary buffer_start format
+	if startData, exists := entry.Extended["buffer_start"]; exists {
+		if len(startData) == 8 {
+			startIndex := int64(binary.BigEndian.Uint64(startData))
+			if startIndex > 0 {
+				return &LogBufferStart{StartIndex: startIndex}, nil
+			}
+		} else {
+			return nil, fmt.Errorf("invalid buffer_start format: expected 8 bytes, got %d", len(startData))
 		}
-		return &bufferStart, nil
 	}
 
 	return nil, nil

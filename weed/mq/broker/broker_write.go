@@ -2,7 +2,7 @@ package broker
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/binary"
 	"fmt"
 	"os"
 	"time"
@@ -42,14 +42,12 @@ func (b *MessageQueueBroker) appendToFileWithBufferIndex(targetFile string, data
 			},
 		}
 
-		// Add buffer start index for deduplication tracking
+		// Add buffer start index for deduplication tracking (binary format)
 		if bufferIndex != 0 {
 			entry.Extended = make(map[string][]byte)
-			bufferStart := LogBufferStart{
-				StartIndex: bufferIndex,
-			}
-			startJson, _ := json.Marshal(bufferStart)
-			entry.Extended["buffer_start"] = startJson
+			bufferStartBytes := make([]byte, 8)
+			binary.BigEndian.PutUint64(bufferStartBytes, uint64(bufferIndex))
+			entry.Extended["buffer_start"] = bufferStartBytes
 		}
 	} else if err != nil {
 		return fmt.Errorf("find %s: %v", fullpath, err)
@@ -62,28 +60,27 @@ func (b *MessageQueueBroker) appendToFileWithBufferIndex(targetFile string, data
 				entry.Extended = make(map[string][]byte)
 			}
 
-			// Check for existing buffer start
+			// Check for existing buffer start (binary format)
 			if existingData, exists := entry.Extended["buffer_start"]; exists {
-				var bufferStart LogBufferStart
-				json.Unmarshal(existingData, &bufferStart)
+				if len(existingData) == 8 {
+					existingStartIndex := int64(binary.BigEndian.Uint64(existingData))
 
-				// Verify that the new buffer index is consecutive
-				// Expected index = start + number of existing chunks
-				expectedIndex := bufferStart.StartIndex + int64(len(entry.GetChunks()))
-				if bufferIndex != expectedIndex {
-					// This shouldn't happen in normal operation
-					// Log warning but continue (don't crash the system)
-					fmt.Printf("Warning: non-consecutive buffer index. Expected %d, got %d\n",
-						expectedIndex, bufferIndex)
+					// Verify that the new buffer index is consecutive
+					// Expected index = start + number of existing chunks
+					expectedIndex := existingStartIndex + int64(len(entry.GetChunks()))
+					if bufferIndex != expectedIndex {
+						// This shouldn't happen in normal operation
+						// Log warning but continue (don't crash the system)
+						fmt.Printf("Warning: non-consecutive buffer index. Expected %d, got %d\n",
+							expectedIndex, bufferIndex)
+					}
+					// Note: We don't update the start index - it stays the same
 				}
-				// Note: We don't update the start index - it stays the same
 			} else {
 				// No existing buffer start, create new one (shouldn't happen for existing files)
-				bufferStart := LogBufferStart{
-					StartIndex: bufferIndex,
-				}
-				startJson, _ := json.Marshal(bufferStart)
-				entry.Extended["buffer_start"] = startJson
+				bufferStartBytes := make([]byte, 8)
+				binary.BigEndian.PutUint64(bufferStartBytes, uint64(bufferIndex))
+				entry.Extended["buffer_start"] = bufferStartBytes
 			}
 		}
 	}
