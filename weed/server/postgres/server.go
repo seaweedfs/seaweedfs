@@ -101,7 +101,6 @@ type PostgreSQLServer struct {
 	sessionMux sync.RWMutex
 	shutdown   chan struct{}
 	wg         sync.WaitGroup
-	translator *PostgreSQLTranslator
 	nextConnID uint32
 }
 
@@ -169,21 +168,14 @@ func NewPostgreSQLServer(config *PostgreSQLServerConfig, masterAddr string) (*Po
 		config.IdleTimeout = time.Hour
 	}
 
-	// Create SQL engine
+	// Create SQL engine with real MQ connectivity
 	sqlEngine := engine.NewSQLEngine(masterAddr)
-
-	// Initialize translator
-	translator := &PostgreSQLTranslator{
-		systemQueries: make(map[string]string),
-	}
-	translator.initSystemQueries()
 
 	server := &PostgreSQLServer{
 		config:     config,
 		sqlEngine:  sqlEngine,
 		sessions:   make(map[uint32]*PostgreSQLSession),
 		shutdown:   make(chan struct{}),
-		translator: translator,
 		nextConnID: 1,
 	}
 

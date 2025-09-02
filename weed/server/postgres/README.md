@@ -8,8 +8,7 @@ This package implements PostgreSQL wire protocol support for SeaweedFS, enabling
 weed/server/postgres/
 ├── README.md           # This documentation
 ├── server.go          # Main PostgreSQL server implementation  
-├── protocol.go        # Wire protocol message handlers
-├── translator.go      # SQL translation layer
+├── protocol.go        # Wire protocol message handlers with MQ integration
 ├── DESIGN.md          # Architecture and design documentation
 └── IMPLEMENTATION.md  # Complete implementation guide
 ```
@@ -30,13 +29,26 @@ weed/server/postgres/
 - **Response Generation**: Row descriptions, data rows, command completion
 - **Data Type Mapping**: SeaweedFS to PostgreSQL type conversion
 - **Error Handling**: PostgreSQL-compliant error responses
+- **MQ Integration**: Direct integration with SeaweedFS SQL engine for real topic data
+- **System Query Support**: Essential PostgreSQL system queries (version, current_user, etc.)
+- **Database Context**: Session-based database switching with USE commands
 
-### `translator.go`
-- **SQL Translation**: PostgreSQL to SeaweedFS SQL conversion
-- **System Query Emulation**: version(), current_database(), current_user
-- **Meta-Command Support**: psql commands (\d, \dt, \l, \q)
-- **System Catalog Emulation**: pg_tables, pg_database, information_schema
-- **Transaction Commands**: BEGIN/COMMIT/ROLLBACK (no-op for read-only)
+## Key Features
+
+### Real MQ Topic Integration
+The PostgreSQL server now directly integrates with SeaweedFS Message Queue topics, providing:
+
+- **Live Topic Discovery**: Automatically discovers MQ namespaces and topics from the filer
+- **Real Schema Information**: Reads actual topic schemas from broker configuration
+- **Actual Data Access**: Queries real MQ data stored in Parquet and log files
+- **Dynamic Updates**: Reflects topic additions and schema changes automatically
+- **Consistent SQL Engine**: Uses the same SQL engine as `weed sql` command
+
+### Database Context Management
+- **Session Isolation**: Each PostgreSQL connection has its own database context
+- **USE Command Support**: Switch between namespaces using standard `USE database` syntax
+- **Auto-Discovery**: Topics are discovered and registered on first access
+- **Schema Caching**: Efficient caching of topic schemas and metadata
 
 ## Usage
 
