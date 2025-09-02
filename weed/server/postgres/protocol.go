@@ -9,10 +9,73 @@ import (
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/query/engine"
 	"github.com/seaweedfs/seaweedfs/weed/query/sqltypes"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"github.com/xwb1989/sqlparser"
 )
+
+// mapErrorToPostgreSQLCode maps SeaweedFS SQL engine errors to appropriate PostgreSQL error codes
+func mapErrorToPostgreSQLCode(err error) string {
+	if err == nil {
+		return "00000" // Success
+	}
+
+	errStr := err.Error()
+
+	// Map specific engine error types
+	switch e := err.(type) {
+	case engine.AggregationError:
+		// Aggregation errors are usually function-related issues
+		if strings.Contains(e.Error(), "unsupported") {
+			return "0A000" // Feature not supported
+		}
+		return "42703" // Undefined column (column-related aggregation issues)
+
+	case engine.DataSourceError:
+		// Data source errors could be table/topic not found
+		if strings.Contains(e.Error(), "not found") || strings.Contains(e.Error(), "topic") {
+			return "42P01" // Undefined table
+		}
+		return "08000" // Connection exception (data source access issues)
+
+	case engine.OptimizationError:
+		// Optimization failures are usually feature limitations
+		return "0A000" // Feature not supported
+	}
+
+	// Map based on error message patterns
+	errLower := strings.ToLower(errStr)
+
+	// Parsing and syntax errors
+	if strings.Contains(errLower, "parse error") || strings.Contains(errLower, "syntax") {
+		return "42601" // Syntax error
+	}
+
+	// Unsupported features
+	if strings.Contains(errLower, "unsupported") || strings.Contains(errLower, "not supported") {
+		return "0A000" // Feature not supported
+	}
+
+	// Table/topic not found
+	if strings.Contains(errLower, "not found") ||
+		strings.Contains(errLower, "topic") && strings.Contains(errLower, "available") {
+		return "42P01" // Undefined table
+	}
+
+	// Column-related errors
+	if strings.Contains(errLower, "column") || strings.Contains(errLower, "field") {
+		return "42703" // Undefined column
+	}
+
+	// Multi-table or complex query limitations
+	if strings.Contains(errLower, "single table") || strings.Contains(errLower, "join") {
+		return "0A000" // Feature not supported
+	}
+
+	// Default to generic syntax/access error
+	return "42000" // Syntax error or access rule violation
+}
 
 // handleMessage processes a single PostgreSQL protocol message
 func (s *PostgreSQLServer) handleMessage(session *PostgreSQLSession) error {
@@ -119,7 +182,8 @@ func (s *PostgreSQLServer) handleSimpleQuery(session *PostgreSQLSession, query s
 		result, err := s.sqlEngine.ExecuteSQL(ctx, cleanQuery)
 		if err != nil {
 			// Send error message but keep connection alive
-			sendErr := s.sendError(session, "42000", err.Error())
+			errorCode := mapErrorToPostgreSQLCode(err)
+			sendErr := s.sendError(session, errorCode, err.Error())
 			if sendErr != nil {
 				return sendErr
 			}
@@ -129,7 +193,8 @@ func (s *PostgreSQLServer) handleSimpleQuery(session *PostgreSQLSession, query s
 
 		if result.Error != nil {
 			// Send error message but keep connection alive
-			sendErr := s.sendError(session, "42000", result.Error.Error())
+			errorCode := mapErrorToPostgreSQLCode(result.Error)
+			sendErr := s.sendError(session, errorCode, result.Error.Error())
 			if sendErr != nil {
 				return sendErr
 			}

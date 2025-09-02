@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -367,22 +366,4 @@ func validatePortNumber(port int) error {
 		glog.Warningf("port number %d may require root privileges", port)
 	}
 	return nil
-}
-
-// parseConnectionLimit parses and validates the connection limit
-func parseConnectionLimit(limitStr string) (int, error) {
-	limit, err := strconv.Atoi(limitStr)
-	if err != nil {
-		return 0, fmt.Errorf("invalid connection limit '%s': %v", limitStr, err)
-	}
-
-	if limit < 1 {
-		return 0, fmt.Errorf("connection limit must be at least 1, got %d", limit)
-	}
-
-	if limit > 10000 {
-		return 0, fmt.Errorf("connection limit too high (%d), maximum is 10000", limit)
-	}
-
-	return limit, nil
 }

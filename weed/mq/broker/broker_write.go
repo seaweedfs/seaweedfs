@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -71,8 +72,8 @@ func (b *MessageQueueBroker) appendToFileWithBufferIndex(targetFile string, data
 					if bufferIndex != expectedIndex {
 						// This shouldn't happen in normal operation
 						// Log warning but continue (don't crash the system)
-						fmt.Printf("Warning: non-consecutive buffer index. Expected %d, got %d\n",
-							expectedIndex, bufferIndex)
+						glog.Warningf("non-consecutive buffer index for %s. Expected %d, got %d",
+							fullpath, expectedIndex, bufferIndex)
 					}
 					// Note: We don't update the start index - it stays the same
 				}

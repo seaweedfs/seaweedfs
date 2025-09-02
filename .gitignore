@@ -123,4 +123,3 @@ ADVANCED_IAM_DEVELOPMENT_PLAN.md
 /test/s3/iam/test-volume-data
 *.log
 weed-iam
-claude.md
