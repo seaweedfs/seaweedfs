@@ -1519,6 +1519,417 @@ type AggregationResult struct {
 	Max   interface{}
 }
 
+// AggregationStrategy represents the strategy for executing aggregations
+type AggregationStrategy struct {
+	CanUseFastPath   bool
+	Reason           string
+	UnsupportedSpecs []AggregationSpec
+}
+
+// TopicDataSources represents the data sources available for a topic
+type TopicDataSources struct {
+	ParquetFiles    map[string][]*ParquetFileStats // partitionPath -> parquet file stats
+	ParquetRowCount int64
+	LiveLogRowCount int64
+	PartitionsCount int
+}
+
+// FastPathOptimizer handles fast path aggregation optimization decisions
+type FastPathOptimizer struct {
+	engine *SQLEngine
+}
+
+// Error types for better error handling and testing
+type AggregationError struct {
+	Operation string
+	Column    string
+	Cause     error
+}
+
+func (e AggregationError) Error() string {
+	return fmt.Sprintf("aggregation error in %s(%s): %v", e.Operation, e.Column, e.Cause)
+}
+
+type DataSourceError struct {
+	Source string
+	Cause  error
+}
+
+func (e DataSourceError) Error() string {
+	return fmt.Sprintf("data source error in %s: %v", e.Source, e.Cause)
+}
+
+type OptimizationError struct {
+	Strategy string
+	Reason   string
+}
+
+func (e OptimizationError) Error() string {
+	return fmt.Sprintf("optimization failed for %s: %s", e.Strategy, e.Reason)
+}
+
+// NewFastPathOptimizer creates a new fast path optimizer
+func NewFastPathOptimizer(engine *SQLEngine) *FastPathOptimizer {
+	return &FastPathOptimizer{engine: engine}
+}
+
+// DetermineStrategy analyzes aggregations and determines if fast path can be used
+func (opt *FastPathOptimizer) DetermineStrategy(aggregations []AggregationSpec) AggregationStrategy {
+	strategy := AggregationStrategy{
+		CanUseFastPath:   true,
+		Reason:           "all_aggregations_supported",
+		UnsupportedSpecs: []AggregationSpec{},
+	}
+
+	for _, spec := range aggregations {
+		if !opt.engine.canUseParquetStatsForAggregation(spec) {
+			strategy.CanUseFastPath = false
+			strategy.Reason = "unsupported_aggregation_functions"
+			strategy.UnsupportedSpecs = append(strategy.UnsupportedSpecs, spec)
+		}
+	}
+
+	return strategy
+}
+
+// CollectDataSources gathers information about available data sources for a topic
+func (opt *FastPathOptimizer) CollectDataSources(ctx context.Context, hybridScanner *HybridMessageScanner) (*TopicDataSources, error) {
+	// Get all partitions for this topic
+	relativePartitions, err := opt.engine.discoverTopicPartitions(hybridScanner.topic.Namespace, hybridScanner.topic.Name)
+	if err != nil {
+		return nil, DataSourceError{
+			Source: fmt.Sprintf("partition_discovery:%s.%s", hybridScanner.topic.Namespace, hybridScanner.topic.Name),
+			Cause:  err,
+		}
+	}
+
+	// Convert relative partition paths to full paths
+	topicBasePath := fmt.Sprintf("/topics/%s/%s", hybridScanner.topic.Namespace, hybridScanner.topic.Name)
+	partitions := make([]string, len(relativePartitions))
+	for i, relPartition := range relativePartitions {
+		partitions[i] = fmt.Sprintf("%s/%s", topicBasePath, relPartition)
+	}
+
+	// Collect statistics from all partitions
+	dataSources := &TopicDataSources{
+		ParquetFiles:    make(map[string][]*ParquetFileStats),
+		ParquetRowCount: 0,
+		LiveLogRowCount: 0,
+		PartitionsCount: len(partitions),
+	}
+
+	for _, partition := range partitions {
+		partitionPath := partition
+
+		// Get parquet file statistics
+		fileStats, err := hybridScanner.ReadParquetStatistics(partitionPath)
+		if err != nil {
+			fileStats = []*ParquetFileStats{} // Empty stats, but continue
+		}
+
+		if len(fileStats) > 0 {
+			dataSources.ParquetFiles[partitionPath] = fileStats
+			for _, fileStat := range fileStats {
+				dataSources.ParquetRowCount += fileStat.RowCount
+			}
+		}
+
+		// Get parquet source files for deduplication
+		parquetSourceFiles := opt.engine.extractParquetSourceFiles(fileStats)
+
+		// Count live log rows (excluding parquet-converted files)
+		liveLogRowCount, err := opt.engine.countLiveLogRowsExcludingParquetSources(partitionPath, parquetSourceFiles)
+		if err != nil {
+			liveLogRowCount = 0 // No live logs is acceptable
+		}
+
+		dataSources.LiveLogRowCount += liveLogRowCount
+	}
+
+	return dataSources, nil
+}
+
+// AggregationComputer handles the computation of aggregations using fast path
+type AggregationComputer struct {
+	engine *SQLEngine
+}
+
+// NewAggregationComputer creates a new aggregation computer
+func NewAggregationComputer(engine *SQLEngine) *AggregationComputer {
+	return &AggregationComputer{engine: engine}
+}
+
+// ComputeFastPathAggregations computes aggregations using parquet statistics and live log data
+func (comp *AggregationComputer) ComputeFastPathAggregations(
+	ctx context.Context,
+	aggregations []AggregationSpec,
+	dataSources *TopicDataSources,
+	partitions []string,
+) ([]AggregationResult, error) {
+
+	aggResults := make([]AggregationResult, len(aggregations))
+
+	for i, spec := range aggregations {
+		switch spec.Function {
+		case "COUNT":
+			if spec.Column == "*" {
+				aggResults[i].Count = dataSources.ParquetRowCount + dataSources.LiveLogRowCount
+			} else {
+				// For specific columns, we might need to account for NULLs in the future
+				aggResults[i].Count = dataSources.ParquetRowCount + dataSources.LiveLogRowCount
+			}
+
+		case "MIN":
+			globalMin, err := comp.computeGlobalMin(spec, dataSources, partitions)
+			if err != nil {
+				return nil, AggregationError{
+					Operation: spec.Function,
+					Column:    spec.Column,
+					Cause:     err,
+				}
+			}
+			aggResults[i].Min = globalMin
+
+		case "MAX":
+			globalMax, err := comp.computeGlobalMax(spec, dataSources, partitions)
+			if err != nil {
+				return nil, AggregationError{
+					Operation: spec.Function,
+					Column:    spec.Column,
+					Cause:     err,
+				}
+			}
+			aggResults[i].Max = globalMax
+
+		default:
+			return nil, OptimizationError{
+				Strategy: "fast_path_aggregation",
+				Reason:   fmt.Sprintf("unsupported aggregation function: %s", spec.Function),
+			}
+		}
+	}
+
+	return aggResults, nil
+}
+
+// computeGlobalMin computes the global minimum value across all data sources
+func (comp *AggregationComputer) computeGlobalMin(spec AggregationSpec, dataSources *TopicDataSources, partitions []string) (interface{}, error) {
+	var globalMin interface{}
+	var globalMinValue *schema_pb.Value
+	hasParquetStats := false
+
+	// Step 1: Get minimum from parquet statistics
+	for _, fileStats := range dataSources.ParquetFiles {
+		for _, fileStat := range fileStats {
+			if colStats, exists := fileStat.ColumnStats[spec.Column]; exists {
+				if globalMinValue == nil || comp.engine.compareValues(colStats.MinValue, globalMinValue) < 0 {
+					globalMinValue = colStats.MinValue
+					globalMin = comp.engine.extractRawValue(colStats.MinValue)
+				}
+				hasParquetStats = true
+			}
+		}
+	}
+
+	// Step 2: Get minimum from live log data
+	for _, partition := range partitions {
+		partitionParquetSources := make(map[string]bool)
+		if partitionFileStats, exists := dataSources.ParquetFiles[partition]; exists {
+			partitionParquetSources = comp.engine.extractParquetSourceFiles(partitionFileStats)
+		}
+
+		liveLogMin, _, err := comp.engine.computeLiveLogMinMax(partition, spec.Column, partitionParquetSources)
+		if err != nil {
+			continue // Skip partitions with errors
+		}
+
+		if liveLogMin != nil {
+			if globalMin == nil {
+				globalMin = liveLogMin
+			} else {
+				liveLogSchemaValue := comp.engine.convertRawValueToSchemaValue(liveLogMin)
+				if comp.engine.compareValues(liveLogSchemaValue, globalMinValue) < 0 {
+					globalMin = liveLogMin
+					globalMinValue = liveLogSchemaValue
+				}
+			}
+		}
+	}
+
+	// Step 3: Handle system columns
+	if globalMin == nil && !hasParquetStats {
+		globalMin = comp.engine.getSystemColumnGlobalMin(spec.Column, dataSources.ParquetFiles)
+	}
+
+	return globalMin, nil
+}
+
+// computeGlobalMax computes the global maximum value across all data sources
+func (comp *AggregationComputer) computeGlobalMax(spec AggregationSpec, dataSources *TopicDataSources, partitions []string) (interface{}, error) {
+	var globalMax interface{}
+	var globalMaxValue *schema_pb.Value
+	hasParquetStats := false
+
+	// Step 1: Get maximum from parquet statistics
+	for _, fileStats := range dataSources.ParquetFiles {
+		for _, fileStat := range fileStats {
+			if colStats, exists := fileStat.ColumnStats[spec.Column]; exists {
+				if globalMaxValue == nil || comp.engine.compareValues(colStats.MaxValue, globalMaxValue) > 0 {
+					globalMaxValue = colStats.MaxValue
+					globalMax = comp.engine.extractRawValue(colStats.MaxValue)
+				}
+				hasParquetStats = true
+			}
+		}
+	}
+
+	// Step 2: Get maximum from live log data
+	for _, partition := range partitions {
+		partitionParquetSources := make(map[string]bool)
+		if partitionFileStats, exists := dataSources.ParquetFiles[partition]; exists {
+			partitionParquetSources = comp.engine.extractParquetSourceFiles(partitionFileStats)
+		}
+
+		_, liveLogMax, err := comp.engine.computeLiveLogMinMax(partition, spec.Column, partitionParquetSources)
+		if err != nil {
+			continue // Skip partitions with errors
+		}
+
+		if liveLogMax != nil {
+			if globalMax == nil {
+				globalMax = liveLogMax
+			} else {
+				liveLogSchemaValue := comp.engine.convertRawValueToSchemaValue(liveLogMax)
+				if comp.engine.compareValues(liveLogSchemaValue, globalMaxValue) > 0 {
+					globalMax = liveLogMax
+					globalMaxValue = liveLogSchemaValue
+				}
+			}
+		}
+	}
+
+	// Step 3: Handle system columns
+	if globalMax == nil && !hasParquetStats {
+		globalMax = comp.engine.getSystemColumnGlobalMax(spec.Column, dataSources.ParquetFiles)
+	}
+
+	return globalMax, nil
+}
+
+// ExecutionPlanBuilder handles building execution plans for queries
+type ExecutionPlanBuilder struct {
+	engine *SQLEngine
+}
+
+// NewExecutionPlanBuilder creates a new execution plan builder
+func NewExecutionPlanBuilder(engine *SQLEngine) *ExecutionPlanBuilder {
+	return &ExecutionPlanBuilder{engine: engine}
+}
+
+// BuildAggregationPlan builds an execution plan for aggregation queries
+func (builder *ExecutionPlanBuilder) BuildAggregationPlan(
+	stmt *sqlparser.Select,
+	aggregations []AggregationSpec,
+	strategy AggregationStrategy,
+	dataSources *TopicDataSources,
+) *QueryExecutionPlan {
+
+	plan := &QueryExecutionPlan{
+		QueryType:           "SELECT",
+		ExecutionStrategy:   builder.determineExecutionStrategy(stmt, strategy),
+		DataSources:         builder.buildDataSourcesList(strategy, dataSources),
+		PartitionsScanned:   dataSources.PartitionsCount,
+		ParquetFilesScanned: builder.countParquetFiles(dataSources),
+		LiveLogFilesScanned: 0, // TODO: Implement proper live log file counting
+		OptimizationsUsed:   builder.buildOptimizationsList(stmt, strategy),
+		Aggregations:        builder.buildAggregationsList(aggregations),
+		Details:             make(map[string]interface{}),
+	}
+
+	// Set row counts based on strategy
+	if strategy.CanUseFastPath {
+		plan.TotalRowsProcessed = dataSources.LiveLogRowCount // Only live logs are scanned, parquet uses metadata
+		plan.Details["scan_method"] = "Parquet Metadata Only"
+	} else {
+		plan.TotalRowsProcessed = dataSources.ParquetRowCount + dataSources.LiveLogRowCount
+		plan.Details["scan_method"] = "Full Data Scan"
+	}
+
+	return plan
+}
+
+// determineExecutionStrategy determines the execution strategy based on query characteristics
+func (builder *ExecutionPlanBuilder) determineExecutionStrategy(stmt *sqlparser.Select, strategy AggregationStrategy) string {
+	if stmt.Where != nil {
+		return "full_scan"
+	}
+
+	if strategy.CanUseFastPath {
+		return "hybrid_fast_path"
+	}
+
+	return "full_scan"
+}
+
+// buildDataSourcesList builds the list of data sources used
+func (builder *ExecutionPlanBuilder) buildDataSourcesList(strategy AggregationStrategy, dataSources *TopicDataSources) []string {
+	sources := []string{}
+
+	if strategy.CanUseFastPath {
+		sources = append(sources, "parquet_stats")
+		if dataSources.LiveLogRowCount > 0 {
+			sources = append(sources, "live_logs")
+		}
+	} else {
+		sources = append(sources, "live_logs", "parquet_files")
+	}
+
+	return sources
+}
+
+// countParquetFiles counts the total number of parquet files across all partitions
+func (builder *ExecutionPlanBuilder) countParquetFiles(dataSources *TopicDataSources) int {
+	count := 0
+	for _, fileStats := range dataSources.ParquetFiles {
+		count += len(fileStats)
+	}
+	return count
+}
+
+// buildOptimizationsList builds the list of optimizations used
+func (builder *ExecutionPlanBuilder) buildOptimizationsList(stmt *sqlparser.Select, strategy AggregationStrategy) []string {
+	optimizations := []string{}
+
+	if strategy.CanUseFastPath {
+		optimizations = append(optimizations, "parquet_statistics", "live_log_counting", "deduplication")
+	}
+
+	if stmt.Where != nil {
+		// Check if "predicate_pushdown" is already in the list
+		found := false
+		for _, opt := range optimizations {
+			if opt == "predicate_pushdown" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			optimizations = append(optimizations, "predicate_pushdown")
+		}
+	}
+
+	return optimizations
+}
+
+// buildAggregationsList builds the list of aggregations for display
+func (builder *ExecutionPlanBuilder) buildAggregationsList(aggregations []AggregationSpec) []string {
+	aggList := make([]string, len(aggregations))
+	for i, spec := range aggregations {
+		aggList[i] = fmt.Sprintf("%s(%s)", spec.Function, spec.Column)
+	}
+	return aggList
+}
+
 // parseAggregationFunction parses an aggregation function expression
 func (e *SQLEngine) parseAggregationFunction(funcExpr *sqlparser.FuncExpr, aliasExpr *sqlparser.AliasedExpr) (*AggregationSpec, error) {
 	funcName := strings.ToUpper(funcExpr.Name.String())
@@ -1859,209 +2270,51 @@ func (e *SQLEngine) compareValues(value1 *schema_pb.Value, value2 *schema_pb.Val
 // - Combine both for accurate results per partition
 // Returns (result, canOptimize) where canOptimize=true means the hybrid fast path was used
 func (e *SQLEngine) tryFastParquetAggregation(ctx context.Context, hybridScanner *HybridMessageScanner, aggregations []AggregationSpec) (*QueryResult, bool) {
-	// Check if all aggregations are optimizable with parquet statistics
-	for _, spec := range aggregations {
-		if !e.canUseParquetStatsForAggregation(spec) {
-			return nil, false
-		}
+	// Use the new modular components
+	optimizer := NewFastPathOptimizer(e)
+	computer := NewAggregationComputer(e)
+
+	// Step 1: Determine strategy
+	strategy := optimizer.DetermineStrategy(aggregations)
+	if !strategy.CanUseFastPath {
+		return nil, false
 	}
 
-	// Get all partitions for this topic
+	// Step 2: Collect data sources
+	dataSources, err := optimizer.CollectDataSources(ctx, hybridScanner)
+	if err != nil {
+		return nil, false
+	}
+
+	// Build partition list for aggregation computer
 	relativePartitions, err := e.discoverTopicPartitions(hybridScanner.topic.Namespace, hybridScanner.topic.Name)
 	if err != nil {
 		return nil, false
 	}
 
-	// Convert relative partition paths to full paths
 	topicBasePath := fmt.Sprintf("/topics/%s/%s", hybridScanner.topic.Namespace, hybridScanner.topic.Name)
 	partitions := make([]string, len(relativePartitions))
 	for i, relPartition := range relativePartitions {
 		partitions[i] = fmt.Sprintf("%s/%s", topicBasePath, relPartition)
 	}
 
-	// Collect statistics from all partitions (both parquet and live logs)
-	allFileStats := make(map[string][]*ParquetFileStats) // partitionPath -> parquet file stats
-	totalParquetRowCount := int64(0)
-	totalLiveLogRowCount := int64(0)
-	partitionsWithLiveLogs := 0
-
-	for _, partition := range partitions {
-		// partition is already a full path like "/topics/test/test-topic/v2025-09-01-22-54-02/0000-0630"
-		partitionPath := partition
-
-		// Get parquet file statistics (try this, but don't fail if missing)
-		fileStats, err := hybridScanner.ReadParquetStatistics(partitionPath)
-		if err != nil {
-			fileStats = []*ParquetFileStats{} // Empty stats, but continue
-		}
-
-		if len(fileStats) > 0 {
-			allFileStats[partitionPath] = fileStats
-			for _, fileStat := range fileStats {
-				totalParquetRowCount += fileStat.RowCount
-			}
-		}
-
-		// Get parquet source files for deduplication
-		parquetSourceFiles := e.extractParquetSourceFiles(fileStats)
-
-		// Check if there are live log files and count their rows (excluding parquet-converted files)
-		liveLogRowCount, err := e.countLiveLogRowsExcludingParquetSources(partitionPath, parquetSourceFiles)
-		if err != nil {
-			// Set to 0 for this partition and continue (no live logs is acceptable)
-			liveLogRowCount = 0
-		}
-		if liveLogRowCount > 0 {
-			totalLiveLogRowCount += liveLogRowCount
-			partitionsWithLiveLogs++
-		}
-	}
-
-	totalRowCount := totalParquetRowCount + totalLiveLogRowCount
-
 	// Debug: Show the hybrid optimization results
-	if totalParquetRowCount > 0 || totalLiveLogRowCount > 0 {
+	if dataSources.ParquetRowCount > 0 || dataSources.LiveLogRowCount > 0 {
+		partitionsWithLiveLogs := 0
+		if dataSources.LiveLogRowCount > 0 {
+			partitionsWithLiveLogs = 1 // Simplified for now
+		}
 		fmt.Printf("Hybrid fast aggregation with deduplication: %d parquet rows + %d deduplicated live log rows from %d partitions\n",
-			totalParquetRowCount, totalLiveLogRowCount, partitionsWithLiveLogs)
+			dataSources.ParquetRowCount, dataSources.LiveLogRowCount, partitionsWithLiveLogs)
 	}
 
-	// If no data found, can't optimize
-	if totalRowCount == 0 {
+	// Step 3: Compute aggregations using fast path
+	aggResults, err := computer.ComputeFastPathAggregations(ctx, aggregations, dataSources, partitions)
+	if err != nil {
 		return nil, false
 	}
 
-	// Compute aggregations using parquet statistics
-	aggResults := make([]AggregationResult, len(aggregations))
-
-	for i, spec := range aggregations {
-		switch spec.Function {
-		case "COUNT":
-			if spec.Column == "*" {
-				// COUNT(*) = sum of all file row counts
-				aggResults[i].Count = totalRowCount
-			} else {
-				// COUNT(column) - for now, assume all rows have non-null values
-				// TODO: Use null counts from parquet stats for more accuracy
-				aggResults[i].Count = totalRowCount
-			}
-
-		case "MIN":
-			// Hybrid approach: combine parquet statistics with live log scanning
-			var globalMin interface{}
-			var globalMinValue *schema_pb.Value
-			hasParquetStats := false
-
-			// Step 1: Get minimum from parquet statistics
-			for _, fileStats := range allFileStats {
-				for _, fileStat := range fileStats {
-					if colStats, exists := fileStat.ColumnStats[spec.Column]; exists {
-						if globalMinValue == nil || e.compareValues(colStats.MinValue, globalMinValue) < 0 {
-							globalMinValue = colStats.MinValue
-							globalMin = e.extractRawValue(colStats.MinValue)
-						}
-						hasParquetStats = true
-					}
-				}
-			}
-
-			// Step 2: Get minimum from live log data in each partition
-			for _, partition := range partitions {
-				// Get parquet source files for this partition (for deduplication)
-				partitionParquetSources := make(map[string]bool)
-				if partitionFileStats, exists := allFileStats[partition]; exists {
-					partitionParquetSources = e.extractParquetSourceFiles(partitionFileStats)
-				}
-
-				// Scan live log files for MIN value
-				liveLogMin, _, err := e.computeLiveLogMinMax(partition, spec.Column, partitionParquetSources)
-				if err != nil {
-					fmt.Printf("Warning: failed to compute live log min for partition %s: %v\n", partition, err)
-					continue
-				}
-
-				// Update global minimum if live log has a smaller value
-				if liveLogMin != nil {
-					if globalMin == nil {
-						globalMin = liveLogMin
-					} else {
-						// Compare live log min with current global min
-						liveLogSchemaValue := e.convertRawValueToSchemaValue(liveLogMin)
-						if e.compareValues(liveLogSchemaValue, globalMinValue) < 0 {
-							globalMin = liveLogMin
-							globalMinValue = liveLogSchemaValue
-						}
-					}
-				}
-			}
-
-			// Step 3: Handle system columns that aren't in parquet column stats
-			if globalMin == nil && !hasParquetStats {
-				globalMin = e.getSystemColumnGlobalMin(spec.Column, allFileStats)
-			}
-
-			aggResults[i].Min = globalMin
-
-		case "MAX":
-			// Hybrid approach: combine parquet statistics with live log scanning
-			var globalMax interface{}
-			var globalMaxValue *schema_pb.Value
-			hasParquetStats := false
-
-			// Step 1: Get maximum from parquet statistics
-			for _, fileStats := range allFileStats {
-				for _, fileStat := range fileStats {
-					if colStats, exists := fileStat.ColumnStats[spec.Column]; exists {
-						if globalMaxValue == nil || e.compareValues(colStats.MaxValue, globalMaxValue) > 0 {
-							globalMaxValue = colStats.MaxValue
-							globalMax = e.extractRawValue(colStats.MaxValue)
-						}
-						hasParquetStats = true
-					}
-				}
-			}
-
-			// Step 2: Get maximum from live log data in each partition
-			for _, partition := range partitions {
-				// Get parquet source files for this partition (for deduplication)
-				partitionParquetSources := make(map[string]bool)
-				if partitionFileStats, exists := allFileStats[partition]; exists {
-					partitionParquetSources = e.extractParquetSourceFiles(partitionFileStats)
-				}
-
-				// Scan live log files for MAX value
-				_, liveLogMax, err := e.computeLiveLogMinMax(partition, spec.Column, partitionParquetSources)
-				if err != nil {
-					fmt.Printf("Warning: failed to compute live log max for partition %s: %v\n", partition, err)
-					continue
-				}
-
-				// Update global maximum if live log has a larger value
-				if liveLogMax != nil {
-					if globalMax == nil {
-						globalMax = liveLogMax
-					} else {
-						// Compare live log max with current global max
-						liveLogSchemaValue := e.convertRawValueToSchemaValue(liveLogMax)
-						if e.compareValues(liveLogSchemaValue, globalMaxValue) > 0 {
-							globalMax = liveLogMax
-							globalMaxValue = liveLogSchemaValue
-						}
-					}
-				}
-			}
-
-			// Step 3: Handle system columns that aren't in parquet column stats
-			if globalMax == nil && !hasParquetStats {
-				globalMax = e.getSystemColumnGlobalMax(spec.Column, allFileStats)
-			}
-
-			aggResults[i].Max = globalMax
-
-		default:
-			// SUM, AVG not easily optimizable with current parquet stats
-			return nil, false
-		}
-	}
+	// Step 4: Build final query result
 
 	// Build result using fast parquet statistics
 	columns := make([]string, len(aggregations))

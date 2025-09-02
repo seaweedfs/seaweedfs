@@ -10,57 +10,57 @@ import (
 // TestTimeFilterExtraction tests the extraction of time filters from WHERE clauses
 func TestTimeFilterExtraction(t *testing.T) {
 	engine := NewSQLEngine("localhost:8888")
-	
+
 	// Test data: use fixed timestamps for consistent testing
-	
+
 	testCases := []struct {
-		name             string
-		whereClause      string
-		expectedStartNs  int64
-		expectedStopNs   int64
-		description      string
+		name            string
+		whereClause     string
+		expectedStartNs int64
+		expectedStopNs  int64
+		description     string
 	}{
 		{
-			name:             "Greater Than Filter",
-			whereClause:      "_timestamp_ns > 1672531200000000000", // Fixed timestamp
-			expectedStartNs:  1672531200000000000,
-			expectedStopNs:   0, // No upper bound
-			description:      "Should extract start time from > comparison",
+			name:            "Greater Than Filter",
+			whereClause:     "_timestamp_ns > 1672531200000000000", // Fixed timestamp
+			expectedStartNs: 1672531200000000000,
+			expectedStopNs:  0, // No upper bound
+			description:     "Should extract start time from > comparison",
 		},
 		{
-			name:             "Less Than Filter", 
-			whereClause:      "_timestamp_ns < 1672617600000000000", // Fixed timestamp  
-			expectedStartNs:  0, // No lower bound
-			expectedStopNs:   1672617600000000000,
-			description:      "Should extract stop time from < comparison",
+			name:            "Less Than Filter",
+			whereClause:     "_timestamp_ns < 1672617600000000000", // Fixed timestamp
+			expectedStartNs: 0,                                     // No lower bound
+			expectedStopNs:  1672617600000000000,
+			description:     "Should extract stop time from < comparison",
 		},
 		{
-			name:             "Range Filter (AND)",
-			whereClause:      "_timestamp_ns >= 1672531200000000000 AND _timestamp_ns <= 1672617600000000000",
-			expectedStartNs:  1672531200000000000,
-			expectedStopNs:   1672617600000000000,
-			description:      "Should extract both bounds from range query",
+			name:            "Range Filter (AND)",
+			whereClause:     "_timestamp_ns >= 1672531200000000000 AND _timestamp_ns <= 1672617600000000000",
+			expectedStartNs: 1672531200000000000,
+			expectedStopNs:  1672617600000000000,
+			description:     "Should extract both bounds from range query",
 		},
 		{
-			name:             "Equal Filter",
-			whereClause:      "_timestamp_ns = 1672531200000000000",
-			expectedStartNs:  1672531200000000000,
-			expectedStopNs:   1672531200000000000,
-			description:      "Should set both bounds for exact match",
+			name:            "Equal Filter",
+			whereClause:     "_timestamp_ns = 1672531200000000000",
+			expectedStartNs: 1672531200000000000,
+			expectedStopNs:  1672531200000000000,
+			description:     "Should set both bounds for exact match",
 		},
 		{
-			name:             "Non-Time Filter",
-			whereClause:      "user_id > 1000",
-			expectedStartNs:  0,
-			expectedStopNs:   0,
-			description:      "Should ignore non-time comparisons",
+			name:            "Non-Time Filter",
+			whereClause:     "user_id > 1000",
+			expectedStartNs: 0,
+			expectedStopNs:  0,
+			description:     "Should ignore non-time comparisons",
 		},
 		{
-			name:             "OR Filter (Skip)",
-			whereClause:      "_timestamp_ns > 1672531200000000000 OR user_id = 123",
-			expectedStartNs:  0,
-			expectedStopNs:   0,
-			description:      "Should skip time extraction for OR clauses (unsafe)",
+			name:            "OR Filter (Skip)",
+			whereClause:     "_timestamp_ns > 1672531200000000000 OR user_id = 123",
+			expectedStartNs: 0,
+			expectedStopNs:  0,
+			description:     "Should skip time extraction for OR clauses (unsafe)",
 		},
 	}
 
@@ -94,7 +94,7 @@ func TestTimeFilterExtraction(t *testing.T) {
 				t.Errorf("Stop time mismatch. Expected: %d, Got: %d", tc.expectedStopNs, stopNs)
 			}
 
-			t.Logf("✅ %s: StartNs=%d, StopNs=%d", tc.description, startNs, stopNs)
+			t.Logf("%s: StartNs=%d, StopNs=%d", tc.description, startNs, stopNs)
 		})
 	}
 }
@@ -114,7 +114,7 @@ func TestTimeColumnRecognition(t *testing.T) {
 	}
 
 	nonTimeColumns := []string{
-		"user_id", 
+		"user_id",
 		"name",
 		"data",
 		"count",
@@ -140,7 +140,7 @@ func TestTimeColumnRecognition(t *testing.T) {
 		t.Error("Time column matching should be case-insensitive")
 	}
 
-	t.Log("✅ Time column recognition working correctly")
+	t.Log("Time column recognition working correctly")
 }
 
 // TestTimeValueParsing tests parsing of different time value formats
@@ -206,13 +206,13 @@ func TestTimeValueParsing(t *testing.T) {
 				if timeNs == 0 {
 					t.Errorf("Expected successful parsing for %s, but got 0", tc.value)
 				} else {
-					t.Logf("✅ %s: Parsed to %d nanoseconds", tc.description, timeNs)
+					t.Logf("%s: Parsed to %d nanoseconds", tc.description, timeNs)
 				}
 			} else {
 				if timeNs != 0 {
 					t.Errorf("Expected parsing to fail for %s, but got %d", tc.value, timeNs)
 				} else {
-					t.Logf("✅ %s: Correctly failed to parse", tc.description)
+					t.Logf("%s: Correctly failed to parse", tc.description)
 				}
 			}
 		})
@@ -237,7 +237,7 @@ func TestTimeFilterIntegration(t *testing.T) {
 			if err != nil {
 				t.Errorf("Time filter integration failed for query '%s': %v", query, err)
 			} else {
-				t.Logf("✅ Time filter integration successful for query: %s (returned %d rows)", 
+				t.Logf("Time filter integration successful for query: %s (returned %d rows)",
 					query, len(result.Rows))
 			}
 		})

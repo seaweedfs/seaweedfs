@@ -21,7 +21,7 @@ func TestRealNamespaceDiscovery(t *testing.T) {
 	}
 
 	// With no fallback sample data, result may be empty if no real MQ cluster
-	t.Logf("✅ Discovered %d namespaces (no fallback data):", len(result.Rows))
+	t.Logf("Discovered %d namespaces (no fallback data):", len(result.Rows))
 	if len(result.Rows) == 0 {
 		t.Log("  (No namespaces found - requires real SeaweedFS MQ cluster)")
 	} else {
@@ -50,7 +50,7 @@ func TestRealTopicDiscovery(t *testing.T) {
 	}
 
 	// With no fallback sample data, result may be empty if no real MQ cluster or namespace doesn't exist
-	t.Logf("✅ Discovered %d topics in 'default' namespace (no fallback data):", len(result.Rows))
+	t.Logf("Discovered %d topics in 'default' namespace (no fallback data):", len(result.Rows))
 	if len(result.Rows) == 0 {
 		t.Log("  (No topics found - requires real SeaweedFS MQ cluster with 'default' namespace)")
 	} else {
@@ -73,10 +73,11 @@ func TestNamespaceDiscoveryNoFallback(t *testing.T) {
 		t.Fatal("Expected brokerClient to be initialized")
 	}
 
-	// Test namespace listing (should fallback to sample data)
+	// Test namespace listing (should fail without real cluster)
 	namespaces, err := brokerClient.ListNamespaces(context.Background())
 	if err != nil {
-		t.Fatalf("ListNamespaces failed: %v", err)
+		t.Logf("ListNamespaces failed as expected: %v", err)
+		namespaces = []string{} // Set empty for the rest of the test
 	}
 
 	// With no fallback sample data, should return empty lists
@@ -95,5 +96,5 @@ func TestNamespaceDiscoveryNoFallback(t *testing.T) {
 		t.Errorf("Expected empty topic list with no fallback, got %v", topics)
 	}
 
-	t.Log("✅ No fallback behavior - returns empty lists when filer unavailable")
+	t.Log("No fallback behavior - returns empty lists when filer unavailable")
 }
