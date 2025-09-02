@@ -474,7 +474,7 @@ func (e *SQLEngine) executeSelectStatementWithPlan(ctx context.Context, stmt *sq
 						filerClient, _ = e.catalog.brokerClient.GetFilerClient()
 					}
 
-					hybridScanner, scannerErr := NewHybridMessageScanner(filerClient, "test", tableName)
+					hybridScanner, scannerErr := NewHybridMessageScanner(filerClient, e.catalog.brokerClient, "test", tableName)
 					var canUseFastPath bool
 					if scannerErr == nil {
 						// Test if fast path can be used (same as actual execution)
@@ -535,7 +535,7 @@ func (e *SQLEngine) executeSelectStatementWithPlan(ctx context.Context, stmt *sq
 					}
 
 					if filerClient != nil {
-						hybridScanner, scannerErr := NewHybridMessageScanner(filerClient, "test", tableName)
+						hybridScanner, scannerErr := NewHybridMessageScanner(filerClient, e.catalog.brokerClient, "test", tableName)
 						if scannerErr == nil {
 							// Test if fast path can be used (same as actual execution)
 							_, canOptimize := e.tryFastParquetAggregation(ctx, hybridScanner, aggregations)
@@ -669,7 +669,7 @@ func (e *SQLEngine) executeSelectStatement(ctx context.Context, stmt *sqlparser.
 		fmt.Printf("Warning: Failed to get filer client: %v, using sample data\n", filerClientErr)
 	}
 
-	hybridScanner, err := NewHybridMessageScanner(filerClient, database, tableName)
+	hybridScanner, err := NewHybridMessageScanner(filerClient, e.catalog.brokerClient, database, tableName)
 	if err != nil {
 		// Fallback to sample data if topic doesn't exist or filer unavailable
 		return e.executeSelectWithSampleData(ctx, stmt, database, tableName)
@@ -2304,7 +2304,7 @@ func (e *SQLEngine) getTopicTotalRowCount(ctx context.Context, namespace, topicN
 		}
 	}
 
-	hybridScanner, err := NewHybridMessageScanner(filerClient, namespace, topicName)
+	hybridScanner, err := NewHybridMessageScanner(filerClient, e.catalog.brokerClient, namespace, topicName)
 	if err != nil {
 		return 0, err
 	}
@@ -2362,7 +2362,7 @@ func (e *SQLEngine) getActualRowsScannedForFastPath(ctx context.Context, namespa
 		}
 	}
 
-	hybridScanner, err := NewHybridMessageScanner(filerClient, namespace, topicName)
+	hybridScanner, err := NewHybridMessageScanner(filerClient, e.catalog.brokerClient, namespace, topicName)
 	if err != nil {
 		return 0, err
 	}
