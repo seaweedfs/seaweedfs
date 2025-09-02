@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/server/postgres"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -180,6 +181,12 @@ func runDB(cmd *Command, args []string) bool {
 	idleTimeout, err := time.ParseDuration(*dbOptions.idleTimeout)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error parsing idle timeout: %v\n", err)
+		return false
+	}
+
+	// Validate port number
+	if err := validatePortNumber(*dbOptions.port); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return false
 	}
 
@@ -357,7 +364,7 @@ func validatePortNumber(port int) error {
 		return fmt.Errorf("port number must be between 1 and 65535, got %d", port)
 	}
 	if port < 1024 {
-		return fmt.Errorf("port number %d may require root privileges", port)
+		glog.Warningf("port number %d may require root privileges", port)
 	}
 	return nil
 }

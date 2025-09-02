@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/query/sqltypes"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
+	"github.com/xwb1989/sqlparser"
 )
 
 // handleMessage processes a single PostgreSQL protocol message
@@ -85,69 +86,83 @@ func (s *PostgreSQLServer) handleSimpleQuery(session *PostgreSQLSession, query s
 		}
 	}
 
-	// Clean query by removing trailing semicolons and whitespace early
-	cleanQuery := strings.TrimSpace(query)
-	cleanQuery = strings.TrimSuffix(cleanQuery, ";")
-	cleanQuery = strings.TrimSpace(cleanQuery)
-
 	// Set database context in SQL engine if session database is different from current
 	if session.database != "" && session.database != s.sqlEngine.GetCatalog().GetCurrentDatabase() {
 		s.sqlEngine.GetCatalog().SetCurrentDatabase(session.database)
 	}
 
-	// Handle PostgreSQL-specific system queries directly
-	if systemResult := s.handleSystemQuery(session, cleanQuery); systemResult != nil {
-		return s.sendSystemQueryResult(session, systemResult, cleanQuery)
-	}
-
-	// Execute using SQL engine directly
-	ctx := context.Background()
-	result, err := s.sqlEngine.ExecuteSQL(ctx, cleanQuery)
+	// Split query string into individual statements to handle multi-statement queries
+	queries, err := sqlparser.SplitStatementToPieces(query)
 	if err != nil {
-		// Send error message but keep connection alive
-		sendErr := s.sendError(session, "42000", err.Error())
-		if sendErr != nil {
-			return sendErr
-		}
-		// Send ReadyForQuery to keep connection alive
-		return s.sendReadyForQuery(session)
+		// If split fails, fall back to single query processing
+		queries = []string{strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(query), ";"))}
 	}
 
-	if result.Error != nil {
-		// Send error message but keep connection alive
-		sendErr := s.sendError(session, "42000", result.Error.Error())
-		if sendErr != nil {
-			return sendErr
-		}
-		// Send ReadyForQuery to keep connection alive
-		return s.sendReadyForQuery(session)
-	}
-
-	// Send results
-	if len(result.Columns) > 0 {
-		// Send row description
-		err = s.sendRowDescription(session, result.Columns, result.Rows)
-		if err != nil {
-			return err
+	// Execute each statement sequentially
+	for _, singleQuery := range queries {
+		cleanQuery := strings.TrimSpace(singleQuery)
+		if cleanQuery == "" {
+			continue // Skip empty statements
 		}
 
-		// Send data rows
-		for _, row := range result.Rows {
-			err = s.sendDataRow(session, row)
+		// Handle PostgreSQL-specific system queries directly
+		if systemResult := s.handleSystemQuery(session, cleanQuery); systemResult != nil {
+			err := s.sendSystemQueryResult(session, systemResult, cleanQuery)
 			if err != nil {
 				return err
 			}
+			continue // Continue with next statement
+		}
+
+		// Execute using SQL engine directly
+		ctx := context.Background()
+		result, err := s.sqlEngine.ExecuteSQL(ctx, cleanQuery)
+		if err != nil {
+			// Send error message but keep connection alive
+			sendErr := s.sendError(session, "42000", err.Error())
+			if sendErr != nil {
+				return sendErr
+			}
+			// Send ReadyForQuery to keep connection alive
+			return s.sendReadyForQuery(session)
+		}
+
+		if result.Error != nil {
+			// Send error message but keep connection alive
+			sendErr := s.sendError(session, "42000", result.Error.Error())
+			if sendErr != nil {
+				return sendErr
+			}
+			// Send ReadyForQuery to keep connection alive
+			return s.sendReadyForQuery(session)
+		}
+
+		// Send results for this statement
+		if len(result.Columns) > 0 {
+			// Send row description
+			err = s.sendRowDescription(session, result.Columns, result.Rows)
+			if err != nil {
+				return err
+			}
+
+			// Send data rows
+			for _, row := range result.Rows {
+				err = s.sendDataRow(session, row)
+				if err != nil {
+					return err
+				}
+			}
+		}
+
+		// Send command complete for this statement
+		tag := s.getCommandTag(cleanQuery, len(result.Rows))
+		err = s.sendCommandComplete(session, tag)
+		if err != nil {
+			return err
 		}
 	}
 
-	// Send command complete
-	tag := s.getCommandTag(query, len(result.Rows))
-	err = s.sendCommandComplete(session, tag)
-	if err != nil {
-		return err
-	}
-
-	// Send ready for query
+	// Send ready for query after all statements are processed
 	return s.sendReadyForQuery(session)
 }
 

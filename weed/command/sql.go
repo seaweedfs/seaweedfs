@@ -15,6 +15,7 @@ import (
 	"github.com/peterh/liner"
 	"github.com/seaweedfs/seaweedfs/weed/query/engine"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
+	"github.com/xwb1989/sqlparser"
 )
 
 func init() {
@@ -155,8 +156,12 @@ func executeFileQueries(ctx *SQLContext, filename string) bool {
 		fmt.Printf("Executing queries from %s against %s...\n", filename, *sqlMaster)
 	}
 
-	// Split file content into individual queries (simple approach)
-	queries := strings.Split(string(content), ";")
+	// Split file content into individual queries (robust approach)
+	queries, err := sqlparser.SplitStatementToPieces(string(content))
+	if err != nil {
+		fmt.Printf("Error splitting SQL statements from file %s: %v\n", filename, err)
+		return false
+	}
 
 	for i, query := range queries {
 		query = strings.TrimSpace(query)
