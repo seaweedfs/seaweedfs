@@ -361,10 +361,7 @@ message CloseSubscribersResponse {
 message GetUnflushedMessagesRequest {
     schema_pb.Topic topic = 1;
     schema_pb.Partition partition = 2;
-    oneof start_filter {
-        int64 start_time_ns = 3;      // Filter by timestamp (messages after this time)
-        int64 start_buffer_index = 4; // Filter by buffer index (messages from buffers >= this index)
-    }
+    int64 start_buffer_index = 3; // Filter by buffer index (messages from buffers >= this index)
 }
 
 message GetUnflushedMessagesResponse {

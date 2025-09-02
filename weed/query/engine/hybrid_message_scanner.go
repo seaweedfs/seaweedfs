@@ -174,8 +174,8 @@ func (hms *HybridMessageScanner) scanUnflushedData(ctx context.Context, partitio
 		return results, nil
 	}
 
-	// Step 1: Get unflushed data from broker using our new interface method
-	// This method uses buffer_start metadata to avoid double-counting
+	// Step 1: Get unflushed data from broker using buffer_start-based method
+	// This method uses buffer_start metadata to avoid double-counting with exact precision
 	unflushedEntries, err := hms.brokerClient.GetUnflushedMessages(ctx, hms.topic.Namespace, hms.topic.Name, partition, options.StartTimeNs)
 	if err != nil {
 		// Log error but don't fail the query - continue with disk data only

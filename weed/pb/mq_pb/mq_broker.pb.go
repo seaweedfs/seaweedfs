@@ -2574,16 +2574,12 @@ func (*CloseSubscribersResponse) Descriptor() ([]byte, []int) {
 }
 
 type GetUnflushedMessagesRequest struct {
-	state     protoimpl.MessageState `protogen:"open.v1"`
-	Topic     *schema_pb.Topic       `protobuf:"bytes,1,opt,name=topic,proto3" json:"topic,omitempty"`
-	Partition *schema_pb.Partition   `protobuf:"bytes,2,opt,name=partition,proto3" json:"partition,omitempty"`
-	// Types that are valid to be assigned to StartFilter:
-	//
-	//	*GetUnflushedMessagesRequest_StartTimeNs
-	//	*GetUnflushedMessagesRequest_StartBufferIndex
-	StartFilter   isGetUnflushedMessagesRequest_StartFilter `protobuf_oneof:"start_filter"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Topic            *schema_pb.Topic       `protobuf:"bytes,1,opt,name=topic,proto3" json:"topic,omitempty"`
+	Partition        *schema_pb.Partition   `protobuf:"bytes,2,opt,name=partition,proto3" json:"partition,omitempty"`
+	StartBufferIndex int64                  `protobuf:"varint,3,opt,name=start_buffer_index,json=startBufferIndex,proto3" json:"start_buffer_index,omitempty"` // Filter by buffer index (messages from buffers >= this index)
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *GetUnflushedMessagesRequest) Reset() {
@@ -2630,46 +2626,12 @@ func (x *GetUnflushedMessagesRequest) GetPartition() *schema_pb.Partition {
 	return nil
 }
 
-func (x *GetUnflushedMessagesRequest) GetStartFilter() isGetUnflushedMessagesRequest_StartFilter {
-	if x != nil {
-		return x.StartFilter
-	}
-	return nil
-}
-
-func (x *GetUnflushedMessagesRequest) GetStartTimeNs() int64 {
-	if x != nil {
-		if x, ok := x.StartFilter.(*GetUnflushedMessagesRequest_StartTimeNs); ok {
-			return x.StartTimeNs
-		}
-	}
-	return 0
-}
-
 func (x *GetUnflushedMessagesRequest) GetStartBufferIndex() int64 {
 	if x != nil {
-		if x, ok := x.StartFilter.(*GetUnflushedMessagesRequest_StartBufferIndex); ok {
-			return x.StartBufferIndex
-		}
+		return x.StartBufferIndex
 	}
 	return 0
 }
-
-type isGetUnflushedMessagesRequest_StartFilter interface {
-	isGetUnflushedMessagesRequest_StartFilter()
-}
-
-type GetUnflushedMessagesRequest_StartTimeNs struct {
-	StartTimeNs int64 `protobuf:"varint,3,opt,name=start_time_ns,json=startTimeNs,proto3,oneof"` // Filter by timestamp (messages after this time)
-}
-
-type GetUnflushedMessagesRequest_StartBufferIndex struct {
-	StartBufferIndex int64 `protobuf:"varint,4,opt,name=start_buffer_index,json=startBufferIndex,proto3,oneof"` // Filter by buffer index (messages from buffers >= this index)
-}
-
-func (*GetUnflushedMessagesRequest_StartTimeNs) isGetUnflushedMessagesRequest_StartFilter() {}
-
-func (*GetUnflushedMessagesRequest_StartBufferIndex) isGetUnflushedMessagesRequest_StartFilter() {}
 
 type GetUnflushedMessagesResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -3895,13 +3857,11 @@ const file_mq_broker_proto_rawDesc = "" +
 	"\x05topic\x18\x01 \x01(\v2\x10.schema_pb.TopicR\x05topic\x12 \n" +
 	"\funix_time_ns\x18\x02 \x01(\x03R\n" +
 	"unixTimeNs\"\x1a\n" +
-	"\x18CloseSubscribersResponse\"\xdf\x01\n" +
+	"\x18CloseSubscribersResponse\"\xa7\x01\n" +
 	"\x1bGetUnflushedMessagesRequest\x12&\n" +
 	"\x05topic\x18\x01 \x01(\v2\x10.schema_pb.TopicR\x05topic\x122\n" +
-	"\tpartition\x18\x02 \x01(\v2\x14.schema_pb.PartitionR\tpartition\x12$\n" +
-	"\rstart_time_ns\x18\x03 \x01(\x03H\x00R\vstartTimeNs\x12.\n" +
-	"\x12start_buffer_index\x18\x04 \x01(\x03H\x00R\x10startBufferIndexB\x0e\n" +
-	"\fstart_filter\"\x8a\x01\n" +
+	"\tpartition\x18\x02 \x01(\v2\x14.schema_pb.PartitionR\tpartition\x12,\n" +
+	"\x12start_buffer_index\x18\x03 \x01(\x03R\x10startBufferIndex\"\x8a\x01\n" +
 	"\x1cGetUnflushedMessagesResponse\x120\n" +
 	"\amessage\x18\x01 \x01(\v2\x16.messaging_pb.LogEntryR\amessage\x12\x14\n" +
 	"\x05error\x18\x02 \x01(\tR\x05error\x12\"\n" +
@@ -4167,10 +4127,6 @@ func file_mq_broker_proto_init() {
 		(*SubscribeFollowMeRequest_Init)(nil),
 		(*SubscribeFollowMeRequest_Ack)(nil),
 		(*SubscribeFollowMeRequest_Close)(nil),
-	}
-	file_mq_broker_proto_msgTypes[42].OneofWrappers = []any{
-		(*GetUnflushedMessagesRequest_StartTimeNs)(nil),
-		(*GetUnflushedMessagesRequest_StartBufferIndex)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{

@@ -50,33 +50,13 @@ func (b *MessageQueueBroker) GetUnflushedMessages(req *mq_pb.GetUnflushedMessage
 		flushedBufferRanges = make([]BufferRange, 0)
 	}
 
-	// Determine filtering criteria based on oneof start_filter
+	// Use buffer_start index for precise deduplication
 	lastFlushTsNs := localPartition.LogBuffer.LastFlushTsNs
-	var startTimeNs int64
-	var startBufferIndex int64
-	var filterType string
+	startBufferIndex := req.StartBufferIndex
+	startTimeNs := lastFlushTsNs // Still respect last flush time for safety
 
-	// Handle oneof start_filter
-	switch filter := req.StartFilter.(type) {
-	case *mq_pb.GetUnflushedMessagesRequest_StartTimeNs:
-		startTimeNs = filter.StartTimeNs
-		filterType = "timestamp"
-		// Use the more restrictive of lastFlushTsNs vs requested startTimeNs
-		if lastFlushTsNs > startTimeNs {
-			startTimeNs = lastFlushTsNs
-		}
-	case *mq_pb.GetUnflushedMessagesRequest_StartBufferIndex:
-		startBufferIndex = filter.StartBufferIndex
-		startTimeNs = lastFlushTsNs // Still respect last flush time
-		filterType = "buffer_index"
-	default:
-		// No specific filter provided, use lastFlushTsNs as default
-		startTimeNs = lastFlushTsNs
-		filterType = "default"
-	}
-
-	glog.V(2).Infof("Streaming unflushed messages for %v %v, filter_type=%s, timestamp >= %d, buffer >= %d, excluding %d flushed buffer ranges",
-		t, partition, filterType, startTimeNs, startBufferIndex, len(flushedBufferRanges))
+	glog.V(2).Infof("Streaming unflushed messages for %v %v, buffer >= %d, timestamp >= %d (safety), excluding %d flushed buffer ranges",
+		t, partition, startBufferIndex, startTimeNs, len(flushedBufferRanges))
 
 	// Stream messages from LogBuffer with filtering
 	messageCount := 0
