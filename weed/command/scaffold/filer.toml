@@ -383,6 +383,9 @@ enabled = false
 pdaddrs = "localhost:2379"
 # Enable 1PC
 enable_1pc = false
+# batch delete count, default 10000 in code
+#batchdelete_count = 20000
+
 # Set the CA certificate path
 ca_path=""
 # Set the certificate path

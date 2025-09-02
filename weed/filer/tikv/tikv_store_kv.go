@@ -15,7 +15,7 @@ func (store *TikvStore) KvPut(ctx context.Context, key []byte, value []byte) err
 	if err != nil {
 		return err
 	}
-	return tw.RunInTxn(func(txn *txnkv.KVTxn) error {
+	return tw.RunInTxn(ctx, func(txn *txnkv.KVTxn) error {
 		return txn.Set(key, value)
 	})
 }
@@ -26,7 +26,7 @@ func (store *TikvStore) KvGet(ctx context.Context, key []byte) ([]byte, error) {
 		return nil, err
 	}
 	var data []byte = nil
-	err = tw.RunInTxn(func(txn *txnkv.KVTxn) error {
+	err = tw.RunInTxn(ctx, func(txn *txnkv.KVTxn) error {
 		val, err := txn.Get(context.TODO(), key)
 		if err == nil {
 			data = val
@@ -44,7 +44,7 @@ func (store *TikvStore) KvDelete(ctx context.Context, key []byte) error {
 	if err != nil {
 		return err
 	}
-	return tw.RunInTxn(func(txn *txnkv.KVTxn) error {
+	return tw.RunInTxn(ctx, func(txn *txnkv.KVTxn) error {
 		return txn.Delete(key)
 	})
 }
