@@ -202,7 +202,6 @@ func (store *TikvStore) DeleteFolderChildren(ctx context.Context, path util.Full
 
 func (store *TikvStore) deleteBatch(ctx context.Context, keys [][]byte) error {
 	deleteTxn, err := store.getTxn(ctx)
-	defer deleteTxn.Close()
 	if err != nil {
 		return err
 	}
