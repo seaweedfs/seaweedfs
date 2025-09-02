@@ -1733,42 +1733,66 @@ func (comp *AggregationComputer) computeGlobalMin(spec AggregationSpec, dataSour
 	// Step 1: Get minimum from parquet statistics
 	for _, fileStats := range dataSources.ParquetFiles {
 		for _, fileStat := range fileStats {
-			if colStats, exists := fileStat.ColumnStats[spec.Column]; exists {
+			// Try case-insensitive column lookup
+			var colStats *ParquetColumnStats
+			var found bool
+
+			// First try exact match
+			if stats, exists := fileStat.ColumnStats[spec.Column]; exists {
+				colStats = stats
+				found = true
+			} else {
+				// Try case-insensitive lookup
+				for colName, stats := range fileStat.ColumnStats {
+					if strings.EqualFold(colName, spec.Column) {
+						colStats = stats
+						found = true
+						break
+					}
+				}
+			}
+
+			if found && colStats != nil && colStats.MinValue != nil {
 				if globalMinValue == nil || comp.engine.compareValues(colStats.MinValue, globalMinValue) < 0 {
 					globalMinValue = colStats.MinValue
-					globalMin = comp.engine.extractRawValue(colStats.MinValue)
+					extractedValue := comp.engine.extractRawValue(colStats.MinValue)
+					if extractedValue != nil {
+						globalMin = extractedValue
+						hasParquetStats = true
+					}
 				}
-				hasParquetStats = true
 			}
 		}
 	}
 
-	// Step 2: Get minimum from live log data
-	for _, partition := range partitions {
-		partitionParquetSources := make(map[string]bool)
-		if partitionFileStats, exists := dataSources.ParquetFiles[partition]; exists {
-			partitionParquetSources = comp.engine.extractParquetSourceFiles(partitionFileStats)
-		}
+	// Step 2: Get minimum from live log data (only if no live logs or if we need to compare)
+	if dataSources.LiveLogRowCount > 0 {
+		for _, partition := range partitions {
+			partitionParquetSources := make(map[string]bool)
+			if partitionFileStats, exists := dataSources.ParquetFiles[partition]; exists {
+				partitionParquetSources = comp.engine.extractParquetSourceFiles(partitionFileStats)
+			}
 
-		liveLogMin, _, err := comp.engine.computeLiveLogMinMax(partition, spec.Column, partitionParquetSources)
-		if err != nil {
-			continue // Skip partitions with errors
-		}
+			liveLogMin, _, err := comp.engine.computeLiveLogMinMax(partition, spec.Column, partitionParquetSources)
+			if err != nil {
+				continue // Skip partitions with errors
+			}
 
-		if liveLogMin != nil {
-			if globalMin == nil {
-				globalMin = liveLogMin
-			} else {
-				liveLogSchemaValue := comp.engine.convertRawValueToSchemaValue(liveLogMin)
-				if comp.engine.compareValues(liveLogSchemaValue, globalMinValue) < 0 {
+			if liveLogMin != nil {
+				if globalMin == nil {
 					globalMin = liveLogMin
-					globalMinValue = liveLogSchemaValue
+				} else {
+					liveLogSchemaValue := comp.engine.convertRawValueToSchemaValue(liveLogMin)
+					if liveLogSchemaValue != nil && comp.engine.compareValues(liveLogSchemaValue, globalMinValue) < 0 {
+						globalMin = liveLogMin
+						globalMinValue = liveLogSchemaValue
+					}
 				}
 			}
 		}
 	}
 
-	// Step 3: Handle system columns
+	// Step 3: Handle system columns if no regular data found
 	if globalMin == nil && !hasParquetStats {
 		globalMin = comp.engine.getSystemColumnGlobalMin(spec.Column, dataSources.ParquetFiles)
 	}
@@ -1785,42 +1809,66 @@ func (comp *AggregationComputer) computeGlobalMax(spec AggregationSpec, dataSour
 	// Step 1: Get maximum from parquet statistics
 	for _, fileStats := range dataSources.ParquetFiles {
 		for _, fileStat := range fileStats {
-			if colStats, exists := fileStat.ColumnStats[spec.Column]; exists {
+			// Try case-insensitive column lookup
+			var colStats *ParquetColumnStats
+			var found bool
+
+			// First try exact match
+			if stats, exists := fileStat.ColumnStats[spec.Column]; exists {
+				colStats = stats
+				found = true
+			} else {
+				// Try case-insensitive lookup
+				for colName, stats := range fileStat.ColumnStats {
+					if strings.EqualFold(colName, spec.Column) {
+						colStats = stats
+						found = true
+						break
+					}
+				}
+			}
+
+			if found && colStats != nil && colStats.MaxValue != nil {
 				if globalMaxValue == nil || comp.engine.compareValues(colStats.MaxValue, globalMaxValue) > 0 {
 					globalMaxValue = colStats.MaxValue
-					globalMax = comp.engine.extractRawValue(colStats.MaxValue)
+					extractedValue := comp.engine.extractRawValue(colStats.MaxValue)
+					if extractedValue != nil {
+						globalMax = extractedValue
+						hasParquetStats = true
+					}
 				}
-				hasParquetStats = true
 			}
 		}
 	}
 
-	// Step 2: Get maximum from live log data
-	for _, partition := range partitions {
-		partitionParquetSources := make(map[string]bool)
-		if partitionFileStats, exists := dataSources.ParquetFiles[partition]; exists {
-			partitionParquetSources = comp.engine.extractParquetSourceFiles(partitionFileStats)
-		}
+	// Step 2: Get maximum from live log data (only if live logs exist)
+	if dataSources.LiveLogRowCount > 0 {
+		for _, partition := range partitions {
+			partitionParquetSources := make(map[string]bool)
+			if partitionFileStats, exists := dataSources.ParquetFiles[partition]; exists {
+				partitionParquetSources = comp.engine.extractParquetSourceFiles(partitionFileStats)
+			}
 
-		_, liveLogMax, err := comp.engine.computeLiveLogMinMax(partition, spec.Column, partitionParquetSources)
-		if err != nil {
-			continue // Skip partitions with errors
-		}
+			_, liveLogMax, err := comp.engine.computeLiveLogMinMax(partition, spec.Column, partitionParquetSources)
+			if err != nil {
+				continue // Skip partitions with errors
+			}
 
-		if liveLogMax != nil {
-			if globalMax == nil {
-				globalMax = liveLogMax
-			} else {
-				liveLogSchemaValue := comp.engine.convertRawValueToSchemaValue(liveLogMax)
-				if comp.engine.compareValues(liveLogSchemaValue, globalMaxValue) > 0 {
+			if liveLogMax != nil {
+				if globalMax == nil {
 					globalMax = liveLogMax
-					globalMaxValue = liveLogSchemaValue
+				} else {
+					liveLogSchemaValue := comp.engine.convertRawValueToSchemaValue(liveLogMax)
+					if liveLogSchemaValue != nil && comp.engine.compareValues(liveLogSchemaValue, globalMaxValue) > 0 {
+						globalMax = liveLogMax
+						globalMaxValue = liveLogSchemaValue
+					}
 				}
 			}
 		}
 	}
 
-	// Step 3: Handle system columns
+	// Step 3: Handle system columns if no regular data found
 	if globalMax == nil && !hasParquetStats {
 		globalMax = comp.engine.getSystemColumnGlobalMax(spec.Column, dataSources.ParquetFiles)
 	}
