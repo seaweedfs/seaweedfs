@@ -83,20 +83,6 @@ func NewSQLEngineWithCatalog(catalog *SchemaCatalog) *SQLEngine {
 	}
 }
 
-// NewTestSQLEngine creates a new SQL execution engine for testing
-// Does not attempt to connect to real SeaweedFS services
-func NewTestSQLEngine() *SQLEngine {
-	// Initialize global HTTP client if not already done
-	// This is needed for reading partition data from the filer
-	if util_http.GetGlobalHttpClient() == nil {
-		util_http.InitGlobalHttpClient()
-	}
-
-	return &SQLEngine{
-		catalog: NewTestSchemaCatalog(),
-	}
-}
-
 // GetCatalog returns the schema catalog for external access
 func (e *SQLEngine) GetCatalog() *SchemaCatalog {
 	return e.catalog
@@ -670,23 +656,18 @@ func (e *SQLEngine) executeSelectStatement(ctx context.Context, stmt *sqlparser.
 	if _, err := e.catalog.GetTableInfo(database, tableName); err != nil {
 		// Topic not in catalog, try to discover and register it
 		if regErr := e.discoverAndRegisterTopic(ctx, database, tableName); regErr != nil {
-			// Only show warning if we have a real broker client (not in test mode)
-			if e.catalog.brokerClient != nil {
-				fmt.Printf("Warning: Failed to discover topic %s.%s: %v\n", database, tableName, regErr)
-			}
+			fmt.Printf("Warning: Failed to discover topic %s.%s: %v\n", database, tableName, regErr)
 		}
 	}
 
 	// Create HybridMessageScanner for the topic (reads both live logs + Parquet files)
-	// RESOLVED TODO: Get real filerClient from broker connection
+	// Get filerClient from broker connection (works with both real and mock brokers)
 	var filerClient filer_pb.FilerClient
-	if e.catalog.brokerClient != nil {
-		var filerClientErr error
-		filerClient, filerClientErr = e.catalog.brokerClient.GetFilerClient()
-		if filerClientErr != nil {
-			// Log warning but continue with sample data fallback (only when not in test mode)
-			fmt.Printf("Warning: Failed to get filer client: %v, using sample data\n", filerClientErr)
-		}
+	var filerClientErr error
+	filerClient, filerClientErr = e.catalog.brokerClient.GetFilerClient()
+	if filerClientErr != nil {
+		// Log warning but continue with sample data fallback
+		fmt.Printf("Warning: Failed to get filer client: %v, using sample data\n", filerClientErr)
 	}
 
 	hybridScanner, err := NewHybridMessageScanner(filerClient, database, tableName)
@@ -3195,11 +3176,6 @@ func (e *SQLEngine) findColumnValue(result HybridScanResult, columnName string) 
 
 // discoverAndRegisterTopic attempts to discover an existing topic and register it in the SQL catalog
 func (e *SQLEngine) discoverAndRegisterTopic(ctx context.Context, database, tableName string) error {
-	// Skip discovery if no broker client (testing mode)
-	if e.catalog.brokerClient == nil {
-		return fmt.Errorf("topic %s.%s not found (no broker client available)", database, tableName)
-	}
-
 	// First, check if topic exists by trying to get its schema from the broker/filer
 	recordType, err := e.catalog.brokerClient.GetTopicSchema(ctx, database, tableName)
 	if err != nil {

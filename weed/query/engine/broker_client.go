@@ -22,6 +22,7 @@ import (
 )
 
 // BrokerClient handles communication with SeaweedFS MQ broker
+// Implements BrokerClientInterface for production use
 // Assumptions:
 // 1. Service discovery via master server (discovers filers and brokers)
 // 2. gRPC connection with default timeout of 30 seconds

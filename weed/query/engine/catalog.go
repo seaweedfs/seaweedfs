@@ -7,8 +7,20 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/mq/schema"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 )
+
+// BrokerClientInterface defines the interface for broker client operations
+// Both real BrokerClient and MockBrokerClient implement this interface
+type BrokerClientInterface interface {
+	ListNamespaces(ctx context.Context) ([]string, error)
+	ListTopics(ctx context.Context, namespace string) ([]string, error)
+	GetTopicSchema(ctx context.Context, namespace, topic string) (*schema_pb.RecordType, error)
+	GetFilerClient() (filer_pb.FilerClient, error)
+	ConfigureTopic(ctx context.Context, namespace, topicName string, partitionCount int32, recordType *schema_pb.RecordType) error
+	DeleteTopic(ctx context.Context, namespace, topicName string) error
+}
 
 // SchemaCatalog manages the mapping between MQ topics and SQL tables
 // Assumptions:
@@ -28,7 +40,7 @@ type SchemaCatalog struct {
 	currentDatabase string
 
 	// brokerClient handles communication with MQ broker
-	brokerClient *BrokerClient
+	brokerClient BrokerClientInterface // Use interface for dependency injection
 }
 
 // DatabaseInfo represents a SQL database (MQ namespace)
@@ -64,20 +76,6 @@ func NewSchemaCatalog(masterAddress string) *SchemaCatalog {
 		databases:    make(map[string]*DatabaseInfo),
 		brokerClient: NewBrokerClient(masterAddress),
 	}
-}
-
-// NewTestSchemaCatalog creates a schema catalog for testing with sample data
-// Does not attempt to connect to real services
-func NewTestSchemaCatalog() *SchemaCatalog {
-	catalog := &SchemaCatalog{
-		databases:       make(map[string]*DatabaseInfo),
-		currentDatabase: "default",
-		brokerClient:    nil, // No broker client to avoid connection attempts
-	}
-
-	// Pre-populate with sample data to avoid service discovery warnings
-	catalog.initSampleData()
-	return catalog
 }
 
 // ListDatabases returns all available databases (MQ namespaces)
