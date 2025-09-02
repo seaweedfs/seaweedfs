@@ -29,9 +29,8 @@ func init() {
 }
 
 type TikvStore struct {
-	client                 *txnkv.Client
-	deleteRangeConcurrency int
-	onePC                  bool
+	client *txnkv.Client
+	onePC  bool
 }
 
 // Basic APIs
@@ -46,12 +45,7 @@ func (store *TikvStore) Initialize(config util.Configuration, prefix string) err
 	verify_cn := strings.Split(config.GetString(prefix+"verify_cn"), ",")
 	pdAddrs := strings.Split(config.GetString(prefix+"pdaddrs"), ",")
 
-	drc := config.GetInt(prefix + "deleterange_concurrency")
-	if drc <= 0 {
-		drc = 1
-	}
 	store.onePC = config.GetBool(prefix + "enable_1pc")
-	store.deleteRangeConcurrency = drc
 	return store.initialize(ca, cert, key, verify_cn, pdAddrs)
 }
 
@@ -174,7 +168,7 @@ func (store *TikvStore) DeleteFolderChildren(ctx context.Context, path util.Full
 			if !bytes.HasPrefix(key, directoryPrefix) {
 				break
 			}
-keys = append(keys, append([]byte(nil), key...))
+			keys = append(keys, append([]byte(nil), key...))
 			err = iter.Next()
 			if err != nil {
 				return err
