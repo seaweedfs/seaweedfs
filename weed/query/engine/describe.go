@@ -136,8 +136,9 @@ func (e *SQLEngine) handleDescribeCommand(ctx context.Context, sql string) (*Que
 		tableName = parts[1]
 	}
 
-	// Remove backticks from table name if present (same as SQL parser does)
+	// Remove backticks and semicolons from table name
 	tableName = strings.Trim(tableName, "`")
+	tableName = strings.TrimSuffix(tableName, ";")
 
 	database := ""
 
@@ -145,7 +146,9 @@ func (e *SQLEngine) handleDescribeCommand(ctx context.Context, sql string) (*Que
 	if strings.Contains(tableName, ".") {
 		dbTableParts := strings.SplitN(tableName, ".", 2)
 		database = strings.Trim(dbTableParts[0], "`") // Also strip backticks from database name
+		database = strings.TrimSuffix(database, ";")
 		tableName = strings.Trim(dbTableParts[1], "`")
+		tableName = strings.TrimSuffix(tableName, ";")
 	}
 
 	return e.executeDescribeStatement(ctx, tableName, database)

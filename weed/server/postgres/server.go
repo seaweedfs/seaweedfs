@@ -19,6 +19,11 @@ import (
 
 // PostgreSQL protocol constants
 const (
+	// Protocol versions
+	PG_PROTOCOL_VERSION_3 = 196608   // PostgreSQL 3.0 protocol (0x00030000)
+	PG_SSL_REQUEST        = 80877103 // SSL request (0x04d2162f)
+	PG_GSSAPI_REQUEST     = 80877104 // GSSAPI request (0x04d21630)
+
 	// Message types from client
 	PG_MSG_STARTUP   = 0x00
 	PG_MSG_QUERY     = 'Q'
@@ -348,39 +353,68 @@ func (s *PostgreSQLServer) handleConnection(conn net.Conn) {
 
 // handleStartup processes the PostgreSQL startup sequence
 func (s *PostgreSQLServer) handleStartup(session *PostgreSQLSession) error {
-	// Read startup message
-	length := make([]byte, 4)
-	_, err := io.ReadFull(session.reader, length)
-	if err != nil {
-		return err
-	}
-
-	msgLength := binary.BigEndian.Uint32(length) - 4
-	msg := make([]byte, msgLength)
-	_, err = io.ReadFull(session.reader, msg)
-	if err != nil {
-		return err
-	}
-
-	// Parse startup message
-	protocolVersion := binary.BigEndian.Uint32(msg[0:4])
-	if protocolVersion != 196608 { // PostgreSQL protocol version 3.0
-		return fmt.Errorf("unsupported protocol version: %d", protocolVersion)
-	}
-
-	// Parse parameters
-	params := strings.Split(string(msg[4:]), "\x00")
-	for i := 0; i < len(params)-1; i += 2 {
-		if params[i] == "user" {
-			session.username = params[i+1]
-		} else if params[i] == "database" {
-			session.database = params[i+1]
+	for {
+		// Read startup message
+		length := make([]byte, 4)
+		_, err := io.ReadFull(session.reader, length)
+		if err != nil {
+			return err
 		}
-		session.parameters[params[i]] = params[i+1]
+
+		msgLength := binary.BigEndian.Uint32(length) - 4
+		msg := make([]byte, msgLength)
+		_, err = io.ReadFull(session.reader, msg)
+		if err != nil {
+			return err
+		}
+
+		// Parse protocol version
+		protocolVersion := binary.BigEndian.Uint32(msg[0:4])
+
+		switch protocolVersion {
+		case PG_SSL_REQUEST:
+			// Reject SSL request - send 'N' to indicate SSL not supported
+			_, err = session.conn.Write([]byte{'N'})
+			if err != nil {
+				return fmt.Errorf("failed to reject SSL request: %v", err)
+			}
+			// Continue loop to read the actual startup message
+			continue
+
+		case PG_GSSAPI_REQUEST:
+			// Reject GSSAPI request - send 'N' to indicate GSSAPI not supported
+			_, err = session.conn.Write([]byte{'N'})
+			if err != nil {
+				return fmt.Errorf("failed to reject GSSAPI request: %v", err)
+			}
+			// Continue loop to read the actual startup message
+			continue
+
+		case PG_PROTOCOL_VERSION_3:
+			// This is the actual startup message, break out of loop
+			break
+
+		default:
+			return fmt.Errorf("unsupported protocol version: %d", protocolVersion)
+		}
+
+		// Parse parameters
+		params := strings.Split(string(msg[4:]), "\x00")
+		for i := 0; i < len(params)-1; i += 2 {
+			if params[i] == "user" {
+				session.username = params[i+1]
+			} else if params[i] == "database" {
+				session.database = params[i+1]
+			}
+			session.parameters[params[i]] = params[i+1]
+		}
+
+		// Break out of the main loop - we have the startup message
+		break
 	}
 
 	// Handle authentication
-	err = s.handleAuthentication(session)
+	err := s.handleAuthentication(session)
 	if err != nil {
 		return err
 	}
@@ -439,7 +473,7 @@ func (s *PostgreSQLServer) handleAuthentication(session *PostgreSQLSession) erro
 
 // sendAuthenticationOk sends authentication OK message
 func (s *PostgreSQLServer) sendAuthenticationOk(session *PostgreSQLSession) error {
-	msg := make([]byte, 8)
+	msg := make([]byte, 9)
 	msg[0] = PG_RESP_AUTH_OK
 	binary.BigEndian.PutUint32(msg[1:5], 8)
 	binary.BigEndian.PutUint32(msg[5:9], AUTH_OK)
@@ -454,7 +488,7 @@ func (s *PostgreSQLServer) sendAuthenticationOk(session *PostgreSQLSession) erro
 // handlePasswordAuth handles clear password authentication
 func (s *PostgreSQLServer) handlePasswordAuth(session *PostgreSQLSession) error {
 	// Send password request
-	msg := make([]byte, 8)
+	msg := make([]byte, 9)
 	msg[0] = PG_RESP_AUTH_OK
 	binary.BigEndian.PutUint32(msg[1:5], 8)
 	binary.BigEndian.PutUint32(msg[5:9], AUTH_CLEAR)
@@ -511,7 +545,7 @@ func (s *PostgreSQLServer) handleMD5Auth(session *PostgreSQLSession) error {
 	}
 
 	// Send MD5 request
-	msg := make([]byte, 12)
+	msg := make([]byte, 13)
 	msg[0] = PG_RESP_AUTH_OK
 	binary.BigEndian.PutUint32(msg[1:5], 12)
 	binary.BigEndian.PutUint32(msg[5:9], AUTH_MD5)

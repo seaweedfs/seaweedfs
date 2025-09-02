@@ -105,7 +105,7 @@ func (e *SQLEngine) ExecuteSQL(ctx context.Context, sql string) (*QueryResult, e
 
 	// Handle DESCRIBE/DESC as a special case since it's not parsed as a standard statement
 	if strings.HasPrefix(sqlUpper, "DESCRIBE") || strings.HasPrefix(sqlUpper, "DESC") {
-		return e.handleDescribeCommand(ctx, sql)
+		return e.handleDescribeCommand(ctx, sqlTrimmed)
 	}
 
 	// Parse the SQL statement
