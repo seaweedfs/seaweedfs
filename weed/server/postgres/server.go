@@ -15,6 +15,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/query/engine"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 )
 
 // PostgreSQL protocol constants
@@ -420,7 +421,7 @@ func (s *PostgreSQLServer) handleStartup(session *PostgreSQLSession) error {
 	}
 
 	// Send parameter status messages
-	err = s.sendParameterStatus(session, "server_version", "14.0 (SeaweedFS)")
+	err = s.sendParameterStatus(session, "server_version", fmt.Sprintf("%s (SeaweedFS)", version.VERSION_NUMBER))
 	if err != nil {
 		return err
 	}

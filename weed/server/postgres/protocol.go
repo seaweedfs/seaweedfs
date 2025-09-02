@@ -10,6 +10,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/query/sqltypes"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 )
 
 // handleMessage processes a single PostgreSQL protocol message
@@ -168,7 +169,7 @@ func (s *PostgreSQLServer) handleSystemQuery(session *PostgreSQLSession, query s
 	case "select version()":
 		return &SystemQueryResult{
 			Columns: []string{"version"},
-			Rows:    [][]string{{"SeaweedFS 1.0 (PostgreSQL 14.0 compatible)"}},
+			Rows:    [][]string{{fmt.Sprintf("SeaweedFS %s (PostgreSQL 14.0 compatible)", version.VERSION_NUMBER)}},
 		}
 	case "select current_database()":
 		return &SystemQueryResult{
@@ -183,7 +184,7 @@ func (s *PostgreSQLServer) handleSystemQuery(session *PostgreSQLSession, query s
 	case "select current_setting('server_version')":
 		return &SystemQueryResult{
 			Columns: []string{"server_version"},
-			Rows:    [][]string{{"14.0"}},
+			Rows:    [][]string{{fmt.Sprintf("%s (SeaweedFS)", version.VERSION_NUMBER)}},
 		}
 	case "select current_setting('server_encoding')":
 		return &SystemQueryResult{
