@@ -8,7 +8,7 @@ import (
 )
 
 func TestSQLEngine_HybridSelectBasic(t *testing.T) {
-	engine := NewSQLEngine("localhost:8888")
+	engine := NewTestSQLEngine()
 
 	// Test SELECT with _source column to show both live and archived data
 	result, err := engine.ExecuteSQL(context.Background(), "SELECT *, _source FROM user_events")
@@ -77,7 +77,7 @@ func TestSQLEngine_HybridSelectBasic(t *testing.T) {
 }
 
 func TestSQLEngine_HybridSelectWithLimit(t *testing.T) {
-	engine := NewSQLEngine("localhost:8888")
+	engine := NewTestSQLEngine()
 
 	// Test SELECT with LIMIT on hybrid data
 	result, err := engine.ExecuteSQL(context.Background(), "SELECT * FROM user_events LIMIT 2")
@@ -96,7 +96,7 @@ func TestSQLEngine_HybridSelectWithLimit(t *testing.T) {
 }
 
 func TestSQLEngine_HybridSelectDifferentTables(t *testing.T) {
-	engine := NewSQLEngine("localhost:8888")
+	engine := NewTestSQLEngine()
 
 	// Test both user_events and system_logs tables
 	tables := []string{"user_events", "system_logs"}
@@ -139,7 +139,7 @@ func TestSQLEngine_HybridSelectDifferentTables(t *testing.T) {
 }
 
 func TestSQLEngine_HybridDataSource(t *testing.T) {
-	engine := NewSQLEngine("localhost:8888")
+	engine := NewTestSQLEngine()
 
 	// Test that we can distinguish between live and archived data
 	result, err := engine.ExecuteSQL(context.Background(), "SELECT user_id, event_type, _source FROM user_events")
@@ -203,7 +203,7 @@ func TestSQLEngine_HybridDataSource(t *testing.T) {
 }
 
 func TestSQLEngine_HybridSystemLogs(t *testing.T) {
-	engine := NewSQLEngine("localhost:8888")
+	engine := NewTestSQLEngine()
 
 	// Test system_logs with hybrid data
 	result, err := engine.ExecuteSQL(context.Background(), "SELECT level, message, service, _source FROM system_logs")
@@ -269,7 +269,7 @@ func TestSQLEngine_HybridSystemLogs(t *testing.T) {
 }
 
 func TestSQLEngine_HybridSelectWithTimeImplications(t *testing.T) {
-	engine := NewSQLEngine("localhost:8888")
+	engine := NewTestSQLEngine()
 
 	// Test that demonstrates the time-based nature of hybrid data
 	// Live data should be more recent than archived data

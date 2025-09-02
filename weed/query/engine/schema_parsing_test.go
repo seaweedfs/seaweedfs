@@ -132,7 +132,7 @@ func TestSchemaAwareParsing(t *testing.T) {
 
 // TestSchemaAwareParsingIntegration tests the full integration with SQL engine
 func TestSchemaAwareParsingIntegration(t *testing.T) {
-	engine := NewSQLEngine("localhost:8888")
+	engine := NewTestSQLEngine()
 
 	// Test that the enhanced schema-aware parsing doesn't break existing functionality
 	result, err := engine.ExecuteSQL(context.Background(), "SELECT *, _source FROM user_events LIMIT 2")

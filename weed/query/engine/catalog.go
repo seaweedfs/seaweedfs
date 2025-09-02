@@ -66,6 +66,20 @@ func NewSchemaCatalog(masterAddress string) *SchemaCatalog {
 	}
 }
 
+// NewTestSchemaCatalog creates a schema catalog for testing with sample data
+// Does not attempt to connect to real services
+func NewTestSchemaCatalog() *SchemaCatalog {
+	catalog := &SchemaCatalog{
+		databases:       make(map[string]*DatabaseInfo),
+		currentDatabase: "default",
+		brokerClient:    nil, // No broker client to avoid connection attempts
+	}
+
+	// Pre-populate with sample data to avoid service discovery warnings
+	catalog.initSampleData()
+	return catalog
+}
+
 // ListDatabases returns all available databases (MQ namespaces)
 // Assumption: This would be populated from MQ broker metadata
 func (c *SchemaCatalog) ListDatabases() []string {
@@ -246,4 +260,56 @@ func (c *SchemaCatalog) GetCurrentDatabase() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.currentDatabase
+}
+
+// initSampleData populates the catalog with sample schema data for testing
+func (c *SchemaCatalog) initSampleData() {
+	// Create sample databases and tables
+	c.databases["default"] = &DatabaseInfo{
+		Name: "default",
+		Tables: map[string]*TableInfo{
+			"user_events": {
+				Name: "user_events",
+				Columns: []ColumnInfo{
+					{Name: "user_id", Type: "VARCHAR(100)", Nullable: true},
+					{Name: "event_type", Type: "VARCHAR(50)", Nullable: true},
+					{Name: "data", Type: "TEXT", Nullable: true},
+					// System columns - hidden by default in SELECT *
+					{Name: "_timestamp_ns", Type: "BIGINT", Nullable: false},
+					{Name: "_key", Type: "VARCHAR(255)", Nullable: true},
+					{Name: "_source", Type: "VARCHAR(50)", Nullable: false},
+				},
+			},
+			"system_logs": {
+				Name: "system_logs",
+				Columns: []ColumnInfo{
+					{Name: "level", Type: "VARCHAR(10)", Nullable: true},
+					{Name: "message", Type: "TEXT", Nullable: true},
+					{Name: "service", Type: "VARCHAR(50)", Nullable: true},
+					// System columns
+					{Name: "_timestamp_ns", Type: "BIGINT", Nullable: false},
+					{Name: "_key", Type: "VARCHAR(255)", Nullable: true},
+					{Name: "_source", Type: "VARCHAR(50)", Nullable: false},
+				},
+			},
+		},
+	}
+
+	c.databases["test"] = &DatabaseInfo{
+		Name: "test",
+		Tables: map[string]*TableInfo{
+			"test-topic": {
+				Name: "test-topic",
+				Columns: []ColumnInfo{
+					{Name: "id", Type: "INT", Nullable: true},
+					{Name: "name", Type: "VARCHAR(100)", Nullable: true},
+					{Name: "value", Type: "DOUBLE", Nullable: true},
+					// System columns
+					{Name: "_timestamp_ns", Type: "BIGINT", Nullable: false},
+					{Name: "_key", Type: "VARCHAR(255)", Nullable: true},
+					{Name: "_source", Type: "VARCHAR(50)", Nullable: false},
+				},
+			},
+		},
+	}
 }

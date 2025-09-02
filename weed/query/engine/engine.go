@@ -69,6 +69,34 @@ func NewSQLEngine(masterAddress string) *SQLEngine {
 	}
 }
 
+// NewSQLEngineWithCatalog creates a new SQL execution engine with a custom catalog
+// Used for testing or when you want to provide a pre-configured catalog
+func NewSQLEngineWithCatalog(catalog *SchemaCatalog) *SQLEngine {
+	// Initialize global HTTP client if not already done
+	// This is needed for reading partition data from the filer
+	if util_http.GetGlobalHttpClient() == nil {
+		util_http.InitGlobalHttpClient()
+	}
+
+	return &SQLEngine{
+		catalog: catalog,
+	}
+}
+
+// NewTestSQLEngine creates a new SQL execution engine for testing
+// Does not attempt to connect to real SeaweedFS services
+func NewTestSQLEngine() *SQLEngine {
+	// Initialize global HTTP client if not already done
+	// This is needed for reading partition data from the filer
+	if util_http.GetGlobalHttpClient() == nil {
+		util_http.InitGlobalHttpClient()
+	}
+
+	return &SQLEngine{
+		catalog: NewTestSchemaCatalog(),
+	}
+}
+
 // GetCatalog returns the schema catalog for external access
 func (e *SQLEngine) GetCatalog() *SchemaCatalog {
 	return e.catalog
@@ -642,7 +670,10 @@ func (e *SQLEngine) executeSelectStatement(ctx context.Context, stmt *sqlparser.
 	if _, err := e.catalog.GetTableInfo(database, tableName); err != nil {
 		// Topic not in catalog, try to discover and register it
 		if regErr := e.discoverAndRegisterTopic(ctx, database, tableName); regErr != nil {
-			fmt.Printf("Warning: Failed to discover topic %s.%s: %v\n", database, tableName, regErr)
+			// Only show warning if we have a real broker client (not in test mode)
+			if e.catalog.brokerClient != nil {
+				fmt.Printf("Warning: Failed to discover topic %s.%s: %v\n", database, tableName, regErr)
+			}
 		}
 	}
 
@@ -3164,6 +3195,11 @@ func (e *SQLEngine) findColumnValue(result HybridScanResult, columnName string) 
 
 // discoverAndRegisterTopic attempts to discover an existing topic and register it in the SQL catalog
 func (e *SQLEngine) discoverAndRegisterTopic(ctx context.Context, database, tableName string) error {
+	// Skip discovery if no broker client (testing mode)
+	if e.catalog.brokerClient == nil {
+		return fmt.Errorf("topic %s.%s not found (no broker client available)", database, tableName)
+	}
+
 	// First, check if topic exists by trying to get its schema from the broker/filer
 	recordType, err := e.catalog.brokerClient.GetTopicSchema(ctx, database, tableName)
 	if err != nil {

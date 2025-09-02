@@ -9,7 +9,7 @@ import (
 
 // TestTimeFilterExtraction tests the extraction of time filters from WHERE clauses
 func TestTimeFilterExtraction(t *testing.T) {
-	engine := NewSQLEngine("localhost:8888")
+	engine := NewTestSQLEngine()
 
 	// Test data: use fixed timestamps for consistent testing
 
@@ -101,7 +101,7 @@ func TestTimeFilterExtraction(t *testing.T) {
 
 // TestTimeColumnRecognition tests the recognition of time-related columns
 func TestTimeColumnRecognition(t *testing.T) {
-	engine := NewSQLEngine("localhost:8888")
+	engine := NewTestSQLEngine()
 
 	timeColumns := []string{
 		"_timestamp_ns",
@@ -145,7 +145,7 @@ func TestTimeColumnRecognition(t *testing.T) {
 
 // TestTimeValueParsing tests parsing of different time value formats
 func TestTimeValueParsing(t *testing.T) {
-	engine := NewSQLEngine("localhost:8888")
+	engine := NewTestSQLEngine()
 
 	testCases := []struct {
 		name        string
@@ -221,7 +221,7 @@ func TestTimeValueParsing(t *testing.T) {
 
 // TestTimeFilterIntegration tests the full integration of time filters with SELECT queries
 func TestTimeFilterIntegration(t *testing.T) {
-	engine := NewSQLEngine("localhost:8888")
+	engine := NewTestSQLEngine()
 
 	// Test that time filters are properly extracted and used in SELECT queries
 	testQueries := []string{

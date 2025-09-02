@@ -8,7 +8,7 @@ import (
 )
 
 func TestSQLEngine_SelectBasic(t *testing.T) {
-	engine := NewSQLEngine("localhost:8888")
+	engine := NewTestSQLEngine()
 
 	// Test SELECT * FROM table
 	result, err := engine.ExecuteSQL(context.Background(), "SELECT * FROM user_events")
@@ -41,7 +41,7 @@ func TestSQLEngine_SelectBasic(t *testing.T) {
 }
 
 func TestSQLEngine_SelectWithLimit(t *testing.T) {
-	engine := NewSQLEngine("localhost:8888")
+	engine := NewTestSQLEngine()
 
 	// Test SELECT with LIMIT
 	result, err := engine.ExecuteSQL(context.Background(), "SELECT * FROM user_events LIMIT 2")
@@ -60,7 +60,7 @@ func TestSQLEngine_SelectWithLimit(t *testing.T) {
 }
 
 func TestSQLEngine_SelectSpecificColumns(t *testing.T) {
-	engine := NewSQLEngine("localhost:8888")
+	engine := NewTestSQLEngine()
 
 	// Test SELECT specific columns (this will fall back to sample data)
 	result, err := engine.ExecuteSQL(context.Background(), "SELECT user_id, event_type FROM user_events")
@@ -79,7 +79,7 @@ func TestSQLEngine_SelectSpecificColumns(t *testing.T) {
 }
 
 func TestSQLEngine_SelectFromNonExistentTable(t *testing.T) {
-	engine := NewSQLEngine("localhost:8888")
+	engine := NewTestSQLEngine()
 
 	// Test SELECT from non-existent table
 	result, _ := engine.ExecuteSQL(context.Background(), "SELECT * FROM nonexistent_table")
@@ -93,7 +93,7 @@ func TestSQLEngine_SelectFromNonExistentTable(t *testing.T) {
 }
 
 func TestSQLEngine_SelectDifferentTables(t *testing.T) {
-	engine := NewSQLEngine("localhost:8888")
+	engine := NewTestSQLEngine()
 
 	// Test different sample tables
 	tables := []string{"user_events", "system_logs"}
