@@ -103,11 +103,23 @@ func (s *PostgreSQLServer) handleSimpleQuery(session *PostgreSQLSession, query s
 	ctx := context.Background()
 	result, err := s.sqlEngine.ExecuteSQL(ctx, cleanQuery)
 	if err != nil {
-		return s.sendError(session, "42000", err.Error())
+		// Send error message but keep connection alive
+		sendErr := s.sendError(session, "42000", err.Error())
+		if sendErr != nil {
+			return sendErr
+		}
+		// Send ReadyForQuery to keep connection alive
+		return s.sendReadyForQuery(session)
 	}
 
 	if result.Error != nil {
-		return s.sendError(session, "42000", result.Error.Error())
+		// Send error message but keep connection alive
+		sendErr := s.sendError(session, "42000", result.Error.Error())
+		if sendErr != nil {
+			return sendErr
+		}
+		// Send ReadyForQuery to keep connection alive
+		return s.sendReadyForQuery(session)
 	}
 
 	// Send results

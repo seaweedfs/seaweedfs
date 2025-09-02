@@ -442,7 +442,10 @@ func (e *SQLEngine) executeSelectStatementWithPlan(ctx context.Context, stmt *sq
 			switch col := expr.Expr.(type) {
 			case *sqlparser.FuncExpr:
 				// This is an aggregation function
-				aggSpec, _ := e.parseAggregationFunction(col, expr)
+				aggSpec, err := e.parseAggregationFunction(col, expr)
+				if err != nil {
+					return &QueryResult{Error: err}, err
+				}
 				if aggSpec != nil {
 					aggregations = append(aggregations, *aggSpec)
 					hasAggregations = true
