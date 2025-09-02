@@ -1881,14 +1881,16 @@ func (e *SQLEngine) eachLogEntryInFile(filerClient filer_pb.FilerClient, filePat
 
 // convertLogEntryToRecordValue helper method (reuse existing logic)
 func (e *SQLEngine) convertLogEntryToRecordValue(logEntry *filer_pb.LogEntry) (*schema_pb.RecordValue, string, error) {
-	// Parse the log entry data as JSON
-	var jsonData map[string]interface{}
-	if err := json.Unmarshal(logEntry.Data, &jsonData); err != nil {
-		return nil, "", fmt.Errorf("failed to parse log entry JSON: %v", err)
+	// Parse the log entry data as Protocol Buffer (not JSON!)
+	recordValue := &schema_pb.RecordValue{}
+	if err := proto.Unmarshal(logEntry.Data, recordValue); err != nil {
+		return nil, "", fmt.Errorf("failed to unmarshal log entry protobuf: %v", err)
 	}
 
-	// Create record value with system and user fields
-	recordValue := &schema_pb.RecordValue{Fields: make(map[string]*schema_pb.Value)}
+	// Ensure Fields map exists
+	if recordValue.Fields == nil {
+		recordValue.Fields = make(map[string]*schema_pb.Value)
+	}
 
 	// Add system columns
 	recordValue.Fields[SW_COLUMN_NAME_TS] = &schema_pb.Value{
