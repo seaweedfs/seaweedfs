@@ -20,6 +20,8 @@ import (
 	"github.com/tikv/client-go/v2/txnkv"
 )
 
+const batchCommitSize = 10000
+
 var (
 	_ filer.FilerStore = ((*TikvStore)(nil))
 )
@@ -152,28 +154,58 @@ func (store *TikvStore) DeleteEntry(ctx context.Context, path util.FullPath) err
 func (store *TikvStore) DeleteFolderChildren(ctx context.Context, path util.FullPath) error {
 	directoryPrefix := genDirectoryKeyPrefix(path, "")
 
-	txn, err := store.getTxn(ctx)
+	iterTxn, err := store.getTxn(ctx)
 	if err != nil {
 		return err
 	}
-	err = txn.RunInTxn(func(txn *txnkv.KVTxn) error {
-		iter, err := txn.Iter(directoryPrefix, nil)
-		if err != nil {
+
+	iter, err := iterTxn.Iter(directoryPrefix, nil)
+	if err != nil {
+		return err
+	}
+	defer iter.Close()
+
+	var keys [][]byte
+	batchCount := 0
+
+	for iter.Valid() {
+		key := iter.Key()
+		if !bytes.HasPrefix(key, directoryPrefix) {
+			break
+		}
+
+		keys = append(keys, append([]byte(nil), key...))
+
+		if len(keys) >= batchCommitSize {
+			if err := store.deleteBatch(ctx, keys); err != nil {
+				return fmt.Errorf("delete batch failed: %v", err)
+			}
+			batchCount++
+			keys = keys[:0]
+		}
+
+		if err := iter.Next(); err != nil {
 			return err
 		}
-		defer iter.Close()
-		var keys [][]byte
-		for iter.Valid() {
-			key := iter.Key()
-			if !bytes.HasPrefix(key, directoryPrefix) {
-				break
-			}
-			keys = append(keys, append([]byte(nil), key...))
-			err = iter.Next()
-			if err != nil {
-				return err
-			}
+	}
+
+	if len(keys) > 0 {
+		if err := store.deleteBatch(ctx, keys); err != nil {
+			return fmt.Errorf("delete batch failed: %v", err)
 		}
+		batchCount++
+	}
+
+	return nil
+}
+
+func (store *TikvStore) deleteBatch(ctx context.Context, keys [][]byte) error {
+	iterTxn, err := store.getTxn(ctx)
+	if err != nil {
+		return err
+	}
+
+	return iterTxn.RunInTxn(func(txn *txnkv.KVTxn) error {
 		for _, key := range keys {
 			if err := txn.Delete(key); err != nil {
 				return err
@@ -181,11 +213,6 @@ func (store *TikvStore) DeleteFolderChildren(ctx context.Context, path util.Full
 		}
 		return nil
 	})
-	if err != nil {
-		return fmt.Errorf("delete %s : %v", path, err)
-	}
-
-	return err
 }
 
 func (store *TikvStore) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (string, error) {
