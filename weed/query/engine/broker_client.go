@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -517,7 +518,7 @@ func (c *BrokerClient) GetUnflushedMessages(ctx context.Context, namespace, topi
 }
 
 // getEarliestBufferStart finds the earliest buffer_start index from disk files in the partition
-// This is used for precise deduplication - any buffer index >= this value may still be in memory
+// This checks both live log files and Parquet files for the most precise deduplication
 func (c *BrokerClient) getEarliestBufferStart(ctx context.Context, partitionPath string) (int64, error) {
 	filerClient, err := c.GetFilerClient()
 	if err != nil {
@@ -527,12 +528,12 @@ func (c *BrokerClient) getEarliestBufferStart(ctx context.Context, partitionPath
 	var earliestBufferIndex int64 = -1 // -1 means no buffer_start found
 
 	err = filer_pb.ReadDirAllEntries(ctx, filerClient, util.FullPath(partitionPath), "", func(entry *filer_pb.Entry, isLast bool) error {
-		// Skip directories and parquet files
-		if entry.IsDirectory || strings.HasSuffix(entry.Name, ".parquet") {
+		// Skip directories
+		if entry.IsDirectory {
 			return nil
 		}
 
-		// Extract buffer_start from file extended attributes
+		// Extract buffer_start from file extended attributes (both log files and parquet files)
 		bufferStart := c.getBufferStartFromEntry(entry)
 		if bufferStart != nil && bufferStart.StartIndex > 0 {
 			if earliestBufferIndex == -1 || bufferStart.StartIndex < earliestBufferIndex {
@@ -555,15 +556,24 @@ func (c *BrokerClient) getEarliestBufferStart(ctx context.Context, partitionPath
 }
 
 // getBufferStartFromEntry extracts LogBufferStart from file entry metadata
+// Handles both JSON format (log files) and binary format (Parquet files)
 func (c *BrokerClient) getBufferStartFromEntry(entry *filer_pb.Entry) *LogBufferStart {
 	if entry.Extended == nil {
 		return nil
 	}
 
-	// Parse buffer_start format
-	if startJson, exists := entry.Extended["buffer_start"]; exists {
+	if startData, exists := entry.Extended["buffer_start"]; exists {
+		// Try binary format first (Parquet files)
+		if len(startData) == 8 {
+			startIndex := int64(binary.BigEndian.Uint64(startData))
+			if startIndex > 0 {
+				return &LogBufferStart{StartIndex: startIndex}
+			}
+		}
+
+		// Try JSON format (log files)
 		var bufferStart LogBufferStart
-		if err := json.Unmarshal(startJson, &bufferStart); err == nil {
+		if err := json.Unmarshal(startData, &bufferStart); err == nil {
 			return &bufferStart
 		}
 	}
