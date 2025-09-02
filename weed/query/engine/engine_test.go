@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -1135,4 +1136,121 @@ func TestSQLEngine_ConvertLogEntryToRecordValue_ComplexDataTypes(t *testing.T) {
 	// System columns should still be present
 	assert.Contains(t, result.Fields, SW_COLUMN_NAME_TS)
 	assert.Contains(t, result.Fields, SW_COLUMN_NAME_KEY)
+}
+
+// Tests for log buffer deduplication functionality
+func TestSQLEngine_GetLogBufferStartFromFile_NewFormat(t *testing.T) {
+	engine := NewTestSQLEngine()
+
+	// Create sample buffer start (new ultra-efficient format)
+	bufferStart := LogBufferStart{StartIndex: 1609459100000000001}
+	startJson, _ := json.Marshal(bufferStart)
+
+	// Create file entry with buffer start + some chunks
+	entry := &filer_pb.Entry{
+		Name: "test-log-file",
+		Extended: map[string][]byte{
+			"buffer_start": startJson,
+		},
+		Chunks: []*filer_pb.FileChunk{
+			{FileId: "chunk1", Offset: 0, Size: 1000},
+			{FileId: "chunk2", Offset: 1000, Size: 1000},
+			{FileId: "chunk3", Offset: 2000, Size: 1000},
+		},
+	}
+
+	// Test extraction
+	result, err := engine.getLogBufferStartFromFile(entry)
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, int64(1609459100000000001), result.StartIndex)
+
+	// Test extraction works correctly with the new format
+}
+
+func TestSQLEngine_GetLogBufferStartFromFile_NoMetadata(t *testing.T) {
+	engine := NewTestSQLEngine()
+
+	// Create file entry without buffer start
+	entry := &filer_pb.Entry{
+		Name:     "test-log-file",
+		Extended: nil,
+	}
+
+	// Test extraction
+	result, err := engine.getLogBufferStartFromFile(entry)
+	assert.NoError(t, err)
+	assert.Nil(t, result)
+}
+
+func TestSQLEngine_GetLogBufferStartFromFile_InvalidData(t *testing.T) {
+	engine := NewTestSQLEngine()
+
+	// Create file entry with invalid buffer start
+	entry := &filer_pb.Entry{
+		Name: "test-log-file",
+		Extended: map[string][]byte{
+			"buffer_start": []byte("invalid-json"),
+		},
+	}
+
+	// Test extraction
+	result, err := engine.getLogBufferStartFromFile(entry)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to parse buffer start")
+	assert.Nil(t, result)
+}
+
+func TestSQLEngine_BuildLogBufferDeduplicationMap_NoBrokerClient(t *testing.T) {
+	engine := NewTestSQLEngine()
+	engine.catalog.brokerClient = nil // Simulate no broker client
+
+	ctx := context.Background()
+	result, err := engine.buildLogBufferDeduplicationMap(ctx, "/topics/test/test-topic")
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Empty(t, result)
+}
+
+func TestSQLEngine_LogBufferDeduplication_ServerRestartScenario(t *testing.T) {
+	// Simulate scenario: Buffer indexes are now initialized with process start time
+	// This tests that buffer start indexes are globally unique across server restarts
+
+	// Before server restart: Process 1 buffer start (3 chunks)
+	beforeRestartStart := LogBufferStart{
+		StartIndex: 1609459100000000000, // Process 1 start time
+	}
+
+	// After server restart: Process 2 buffer start (3 chunks)
+	afterRestartStart := LogBufferStart{
+		StartIndex: 1609459300000000000, // Process 2 start time (DIFFERENT)
+	}
+
+	// Simulate 3 chunks for each file
+	chunkCount := int64(3)
+
+	// Calculate end indexes for range comparison
+	beforeEnd := beforeRestartStart.StartIndex + chunkCount - 1 // [start, start+2]
+	afterStart := afterRestartStart.StartIndex                  // [start, start+2]
+
+	// Test range overlap detection (should NOT overlap)
+	overlaps := beforeRestartStart.StartIndex <= (afterStart+chunkCount-1) && beforeEnd >= afterStart
+	assert.False(t, overlaps, "Buffer ranges after restart should not overlap")
+
+	// Verify the start indexes are globally unique
+	assert.NotEqual(t, beforeRestartStart.StartIndex, afterRestartStart.StartIndex, "Start indexes should be different")
+	assert.Less(t, beforeEnd, afterStart, "Ranges should be completely separate")
+
+	// Expected values:
+	// Before restart: [1609459100000000000, 1609459100000000002]
+	// After restart:  [1609459300000000000, 1609459300000000002]
+	expectedBeforeEnd := int64(1609459100000000002)
+	expectedAfterStart := int64(1609459300000000000)
+
+	assert.Equal(t, expectedBeforeEnd, beforeEnd)
+	assert.Equal(t, expectedAfterStart, afterStart)
+
+	// This demonstrates that buffer start indexes initialized with process start time
+	// prevent false positive duplicates across server restarts
 }

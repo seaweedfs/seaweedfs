@@ -2,16 +2,27 @@ package broker
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"os"
-	"time"
 )
 
+// LogBufferStart tracks the starting buffer index for a file
+type LogBufferStart struct {
+	StartIndex int64 `json:"start_index"` // Starting buffer index (count = len(chunks))
+}
+
 func (b *MessageQueueBroker) appendToFile(targetFile string, data []byte) error {
+	return b.appendToFileWithBufferIndex(targetFile, data, 0)
+}
+
+func (b *MessageQueueBroker) appendToFileWithBufferIndex(targetFile string, data []byte, bufferIndex int64) error {
 
 	fileId, uploadResult, err2 := b.assignAndUpload(targetFile, data)
 	if err2 != nil {
@@ -35,10 +46,51 @@ func (b *MessageQueueBroker) appendToFile(targetFile string, data []byte) error 
 				Gid:      uint32(os.Getgid()),
 			},
 		}
+
+		// Add buffer start index for deduplication tracking
+		if bufferIndex != 0 {
+			entry.Extended = make(map[string][]byte)
+			bufferStart := LogBufferStart{
+				StartIndex: bufferIndex,
+			}
+			startJson, _ := json.Marshal(bufferStart)
+			entry.Extended["buffer_start"] = startJson
+		}
 	} else if err != nil {
 		return fmt.Errorf("find %s: %v", fullpath, err)
 	} else {
 		offset = int64(filer.TotalSize(entry.GetChunks()))
+
+		// Verify buffer index continuity for existing files (append operations)
+		if bufferIndex != 0 {
+			if entry.Extended == nil {
+				entry.Extended = make(map[string][]byte)
+			}
+
+			// Check for existing buffer start
+			if existingData, exists := entry.Extended["buffer_start"]; exists {
+				var bufferStart LogBufferStart
+				json.Unmarshal(existingData, &bufferStart)
+
+				// Verify that the new buffer index is consecutive
+				// Expected index = start + number of existing chunks
+				expectedIndex := bufferStart.StartIndex + int64(len(entry.GetChunks()))
+				if bufferIndex != expectedIndex {
+					// This shouldn't happen in normal operation
+					// Log warning but continue (don't crash the system)
+					fmt.Printf("Warning: non-consecutive buffer index. Expected %d, got %d\n",
+						expectedIndex, bufferIndex)
+				}
+				// Note: We don't update the start index - it stays the same
+			} else {
+				// No existing buffer start, create new one (shouldn't happen for existing files)
+				bufferStart := LogBufferStart{
+					StartIndex: bufferIndex,
+				}
+				startJson, _ := json.Marshal(bufferStart)
+				entry.Extended["buffer_start"] = startJson
+			}
+		}
 	}
 
 	// append to existing chunks

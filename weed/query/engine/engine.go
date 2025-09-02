@@ -35,6 +35,12 @@ func withDebugMode(ctx context.Context) context.Context {
 	return context.WithValue(ctx, debugModeKey{}, true)
 }
 
+// LogBufferStart tracks the starting buffer index for a file
+// Buffer indexes are monotonically increasing, count = len(chunks)
+type LogBufferStart struct {
+	StartIndex int64 `json:"start_index"` // Starting buffer index (count = len(chunks))
+}
+
 // SQLEngine provides SQL query execution capabilities for SeaweedFS
 // Assumptions:
 // 1. MQ namespaces map directly to SQL databases
@@ -1994,7 +2000,7 @@ func (e *SQLEngine) extractParquetSourceFiles(fileStats []*ParquetFileStats) map
 	return sourceFiles
 }
 
-// countLiveLogRowsExcludingParquetSources counts live log rows but excludes files that were converted to parquet
+// countLiveLogRowsExcludingParquetSources counts live log rows but excludes files that were converted to parquet and duplicate log buffer data
 func (e *SQLEngine) countLiveLogRowsExcludingParquetSources(ctx context.Context, partitionPath string, parquetSourceFiles map[string]bool) (int64, error) {
 	filerClient, err := e.catalog.brokerClient.GetFilerClient()
 	if err != nil {
@@ -2009,9 +2015,23 @@ func (e *SQLEngine) countLiveLogRowsExcludingParquetSources(ctx context.Context,
 		actualSourceFiles = parquetSourceFiles
 	}
 
+	// Second, get duplicate files from log buffer metadata
+	logBufferDuplicates, err := e.buildLogBufferDeduplicationMap(ctx, partitionPath)
+	if err != nil {
+		if isDebugMode(ctx) {
+			fmt.Printf("Warning: failed to build log buffer deduplication map: %v\n", err)
+		}
+		logBufferDuplicates = make(map[string]bool)
+	}
+
 	// Debug: Show deduplication status (only in explain mode)
-	if isDebugMode(ctx) && len(actualSourceFiles) > 0 {
-		fmt.Printf("Excluding %d converted log files from %s\n", len(actualSourceFiles), partitionPath)
+	if isDebugMode(ctx) {
+		if len(actualSourceFiles) > 0 {
+			fmt.Printf("Excluding %d converted log files from %s\n", len(actualSourceFiles), partitionPath)
+		}
+		if len(logBufferDuplicates) > 0 {
+			fmt.Printf("Excluding %d duplicate log buffer files from %s\n", len(logBufferDuplicates), partitionPath)
+		}
 	}
 
 	totalRows := int64(0)
@@ -2024,6 +2044,14 @@ func (e *SQLEngine) countLiveLogRowsExcludingParquetSources(ctx context.Context,
 		if actualSourceFiles[entry.Name] {
 			if isDebugMode(ctx) {
 				fmt.Printf("Skipping %s (already converted to parquet)\n", entry.Name)
+			}
+			return nil
+		}
+
+		// Skip files that are duplicated due to log buffer metadata
+		if logBufferDuplicates[entry.Name] {
+			if isDebugMode(ctx) {
+				fmt.Printf("Skipping %s (duplicate log buffer data)\n", entry.Name)
 			}
 			return nil
 		}
@@ -2068,6 +2096,96 @@ func (e *SQLEngine) getParquetSourceFilesFromMetadata(partitionPath string) (map
 	})
 
 	return sourceFiles, err
+}
+
+// getLogBufferStartFromFile reads buffer start from file extended attributes
+func (e *SQLEngine) getLogBufferStartFromFile(entry *filer_pb.Entry) (*LogBufferStart, error) {
+	if entry.Extended == nil {
+		return nil, nil
+	}
+
+	// Only support buffer_start format
+	if startJson, exists := entry.Extended["buffer_start"]; exists {
+		var bufferStart LogBufferStart
+		if err := json.Unmarshal(startJson, &bufferStart); err != nil {
+			return nil, fmt.Errorf("failed to parse buffer start: %v", err)
+		}
+		return &bufferStart, nil
+	}
+
+	return nil, nil
+}
+
+// buildLogBufferDeduplicationMap creates a map to track duplicate files based on buffer ranges (ultra-efficient)
+func (e *SQLEngine) buildLogBufferDeduplicationMap(ctx context.Context, partitionPath string) (map[string]bool, error) {
+	if e.catalog.brokerClient == nil {
+		return make(map[string]bool), nil
+	}
+
+	filerClient, err := e.catalog.brokerClient.GetFilerClient()
+	if err != nil {
+		return make(map[string]bool), nil // Don't fail the query, just skip deduplication
+	}
+
+	// Track buffer ranges instead of individual indexes (much more efficient)
+	type BufferRange struct {
+		start, end int64
+	}
+
+	processedRanges := make([]BufferRange, 0)
+	duplicateFiles := make(map[string]bool)
+
+	err = filer_pb.ReadDirAllEntries(context.Background(), filerClient, util.FullPath(partitionPath), "", func(entry *filer_pb.Entry, isLast bool) error {
+		if entry.IsDirectory || strings.HasSuffix(entry.Name, ".parquet") {
+			return nil // Skip directories and parquet files
+		}
+
+		// Get buffer start for this file (most efficient)
+		bufferStart, err := e.getLogBufferStartFromFile(entry)
+		if err != nil || bufferStart == nil {
+			return nil // No buffer info, can't deduplicate
+		}
+
+		// Calculate range for this file: [start, start + chunkCount - 1]
+		chunkCount := int64(len(entry.GetChunks()))
+		if chunkCount == 0 {
+			return nil // Empty file, skip
+		}
+
+		fileRange := BufferRange{
+			start: bufferStart.StartIndex,
+			end:   bufferStart.StartIndex + chunkCount - 1,
+		}
+
+		// Check if this range overlaps with any processed range
+		isDuplicate := false
+		for _, processedRange := range processedRanges {
+			if fileRange.start <= processedRange.end && fileRange.end >= processedRange.start {
+				// Ranges overlap - this file contains duplicate buffer indexes
+				isDuplicate = true
+				if isDebugMode(ctx) {
+					fmt.Printf("Marking %s as duplicate (buffer range [%d-%d] overlaps with [%d-%d])\n",
+						entry.Name, fileRange.start, fileRange.end, processedRange.start, processedRange.end)
+				}
+				break
+			}
+		}
+
+		if isDuplicate {
+			duplicateFiles[entry.Name] = true
+		} else {
+			// Add this range to processed ranges
+			processedRanges = append(processedRanges, fileRange)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return make(map[string]bool), nil // Don't fail the query
+	}
+
+	return duplicateFiles, nil
 }
 
 // countRowsInLogFile counts rows in a single log file using SeaweedFS patterns
