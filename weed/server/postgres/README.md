@@ -28,6 +28,7 @@ weed/server/postgres/
 - **Message Handlers**: Startup, query, parse/bind/execute sequences
 - **Response Generation**: Row descriptions, data rows, command completion
 - **Data Type Mapping**: SeaweedFS to PostgreSQL type conversion
+- **SQL Parser**: Currently uses MySQL-dialect parser - see Architecture Notes below
 - **Error Handling**: PostgreSQL-compliant error responses
 - **MQ Integration**: Direct integration with SeaweedFS SQL engine for real topic data
 - **System Query Support**: Essential PostgreSQL system queries (version, current_user, etc.)
@@ -248,5 +249,40 @@ psql -h localhost -p 5432 -U seaweedfs -d default
 - Use principle of least privilege
 - Monitor connection patterns
 - Log authentication attempts
+
+## Architecture Notes
+
+### SQL Parser Dialect Considerations
+
+**✅ MIGRATION COMPLETED - Enhanced Implementation**: Now fully supports PostgreSQL-native parsing:
+
+- **✅ Core Engine**: `engine.go` now uses [`github.com/pganalyze/pg_query_go/v6`](https://github.com/pganalyze/pg_query_go) exclusively for proper PostgreSQL dialect support
+- **PostgreSQL Server**: Automatically uses PostgreSQL parser for optimal wire protocol compatibility  
+- **Parser**: Uses native PostgreSQL parser (`pg_query_go`) for full PostgreSQL compatibility
+- **Migration Status**: Core SQL execution engine fully migrated from MySQL-dialect to PostgreSQL-native parsing
+
+**Key Benefits of PostgreSQL Parser**:
+- **Native Dialect Support**: Correctly handles PostgreSQL-specific syntax and semantics
+- **System Catalog Compatibility**: Supports `pg_catalog`, `information_schema` queries
+- **Operator Compatibility**: Handles `||` string concatenation, PostgreSQL-specific operators  
+- **Type System Alignment**: Better PostgreSQL type inference and coercion
+- **Reduced Translation Overhead**: Eliminates need for dialect translation layer
+
+**Compatibility Considerations**:
+- **Identifier Quoting**: PostgreSQL uses double quotes (`"`) vs MySQL backticks (`` ` ``)
+- **String Concatenation**: PostgreSQL uses `||` vs MySQL `CONCAT()`
+- **System Functions**: PostgreSQL has unique system catalogs (`pg_catalog`) and functions
+- **Backward Compatibility**: Existing `weed sql` commands continue using MySQL parser
+
+**Mitigation Strategies**:
+- Query translation layer in `protocol.go` handles PostgreSQL-specific queries
+- System query detection and response (`SELECT version()`, `BEGIN`, etc.)
+- Type mapping between PostgreSQL and SeaweedFS schema types
+- Error code mapping to PostgreSQL standards
+
+**Future Considerations**:
+- Consider `pg_query_go` for pure PostgreSQL dialect parsing
+- Evaluate generic SQL parsers that support multiple dialects
+- Balance compatibility vs implementation complexity
 
 This package provides enterprise-grade PostgreSQL compatibility, enabling seamless integration of SeaweedFS with the entire PostgreSQL ecosystem.

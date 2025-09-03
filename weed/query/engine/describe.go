@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/query/sqltypes"
-	"github.com/xwb1989/sqlparser"
 )
 
 // executeDescribeStatement handles DESCRIBE table commands
@@ -83,7 +82,7 @@ func (e *SQLEngine) executeDescribeStatement(ctx context.Context, tableName stri
 }
 
 // Enhanced executeShowStatementWithDescribe handles SHOW statements including DESCRIBE
-func (e *SQLEngine) executeShowStatementWithDescribe(ctx context.Context, stmt *sqlparser.Show) (*QueryResult, error) {
+func (e *SQLEngine) executeShowStatementWithDescribe(ctx context.Context, stmt *ShowStatement) (*QueryResult, error) {
 	switch strings.ToUpper(stmt.Type) {
 	case "DATABASES":
 		return e.showDatabases(ctx)

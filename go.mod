@@ -92,7 +92,6 @@ require (
 	github.com/xdg-go/pbkdf2 v1.0.0 // indirect
 	github.com/xdg-go/scram v1.1.2 // indirect
 	github.com/xdg-go/stringprep v1.0.4 // indirect
-	github.com/xwb1989/sqlparser v0.0.0-20180606152119-120387863bf2
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
 	go.etcd.io/etcd/client/v3 v3.6.4
 	go.mongodb.org/mongo-driver v1.17.4
@@ -144,9 +143,11 @@ require (
 	github.com/hashicorp/raft v1.7.3
 	github.com/hashicorp/raft-boltdb/v2 v2.3.1
 	github.com/hashicorp/vault/api v1.20.0
+	github.com/lib/pq v1.10.9
 	github.com/minio/crc64nvme v1.1.1
 	github.com/orcaman/concurrent-map/v2 v2.0.1
 	github.com/parquet-go/parquet-go v0.25.1
+	github.com/pganalyze/pg_query_go/v6 v6.1.0
 	github.com/pkg/sftp v1.13.9
 	github.com/rabbitmq/amqp091-go v1.10.0
 	github.com/rclone/rclone v1.70.3

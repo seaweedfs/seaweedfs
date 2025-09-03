@@ -103,14 +103,15 @@ type PostgreSQLServerConfig struct {
 
 // PostgreSQL server
 type PostgreSQLServer struct {
-	config     *PostgreSQLServerConfig
-	listener   net.Listener
-	sqlEngine  *engine.SQLEngine
-	sessions   map[uint32]*PostgreSQLSession
-	sessionMux sync.RWMutex
-	shutdown   chan struct{}
-	wg         sync.WaitGroup
-	nextConnID uint32
+	config              *PostgreSQLServerConfig
+	listener            net.Listener
+	sqlEngine           *engine.SQLEngine
+	sqlEngineWithParser *engine.SQLEngineWithParser // Enhanced SQL engine with PostgreSQL parser
+	sessions            map[uint32]*PostgreSQLSession
+	sessionMux          sync.RWMutex
+	shutdown            chan struct{}
+	wg                  sync.WaitGroup
+	nextConnID          uint32
 }
 
 // PostgreSQL session
@@ -177,15 +178,18 @@ func NewPostgreSQLServer(config *PostgreSQLServerConfig, masterAddr string) (*Po
 		config.IdleTimeout = time.Hour
 	}
 
-	// Create SQL engine with real MQ connectivity
-	sqlEngine := engine.NewSQLEngine(masterAddr)
+	// Create SQL engine with PostgreSQL parser for proper dialect compatibility
+	// Use PostgreSQL parser since we're implementing PostgreSQL wire protocol
+	parserConfig := engine.PostgreSQLSQLParserConfig()
+	sqlEngineWithParser := engine.NewSQLEngineWithParser(masterAddr, parserConfig)
 
 	server := &PostgreSQLServer{
-		config:     config,
-		sqlEngine:  sqlEngine,
-		sessions:   make(map[uint32]*PostgreSQLSession),
-		shutdown:   make(chan struct{}),
-		nextConnID: 1,
+		config:              config,
+		sqlEngine:           sqlEngineWithParser.SQLEngine, // Maintain compatibility
+		sqlEngineWithParser: sqlEngineWithParser,           // PostgreSQL-compatible engine
+		sessions:            make(map[uint32]*PostgreSQLSession),
+		shutdown:            make(chan struct{}),
+		nextConnID:          1,
 	}
 
 	return server, nil

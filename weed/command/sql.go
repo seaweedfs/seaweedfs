@@ -15,8 +15,63 @@ import (
 	"github.com/peterh/liner"
 	"github.com/seaweedfs/seaweedfs/weed/query/engine"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
-	"github.com/xwb1989/sqlparser"
 )
+
+// splitSQLStatements splits a query string into individual SQL statements
+// This is a simple implementation that splits on semicolons outside of quoted strings
+func splitSQLStatements(query string) []string {
+	var statements []string
+	var current strings.Builder
+	inSingleQuote := false
+	inDoubleQuote := false
+
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return []string{}
+	}
+
+	for _, char := range query {
+		switch char {
+		case '\'':
+			if !inDoubleQuote {
+				inSingleQuote = !inSingleQuote
+			}
+			current.WriteRune(char)
+		case '"':
+			if !inSingleQuote {
+				inDoubleQuote = !inDoubleQuote
+			}
+			current.WriteRune(char)
+		case ';':
+			if !inSingleQuote && !inDoubleQuote {
+				stmt := strings.TrimSpace(current.String())
+				if stmt != "" {
+					statements = append(statements, stmt)
+				}
+				current.Reset()
+			} else {
+				current.WriteRune(char)
+			}
+		default:
+			current.WriteRune(char)
+		}
+	}
+
+	// Add any remaining statement
+	if current.Len() > 0 {
+		stmt := strings.TrimSpace(current.String())
+		if stmt != "" {
+			statements = append(statements, stmt)
+		}
+	}
+
+	// If no statements found, return the original query as a single statement
+	if len(statements) == 0 {
+		return []string{strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(query), ";"))}
+	}
+
+	return statements
+}
 
 func init() {
 	cmdSql.Run = runSql
@@ -157,11 +212,7 @@ func executeFileQueries(ctx *SQLContext, filename string) bool {
 	}
 
 	// Split file content into individual queries (robust approach)
-	queries, err := sqlparser.SplitStatementToPieces(string(content))
-	if err != nil {
-		fmt.Printf("Error splitting SQL statements from file %s: %v\n", filename, err)
-		return false
-	}
+	queries := splitSQLStatements(string(content))
 
 	for i, query := range queries {
 		query = strings.TrimSpace(query)

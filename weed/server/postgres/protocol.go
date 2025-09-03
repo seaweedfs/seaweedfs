@@ -13,8 +13,63 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/query/engine"
 	"github.com/seaweedfs/seaweedfs/weed/query/sqltypes"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
-	"github.com/xwb1989/sqlparser"
 )
+
+// splitSQLStatements splits a query string into individual SQL statements
+// This is a simple implementation that splits on semicolons outside of quoted strings
+func splitSQLStatements(query string) []string {
+	var statements []string
+	var current strings.Builder
+	inSingleQuote := false
+	inDoubleQuote := false
+
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return []string{}
+	}
+
+	for _, char := range query {
+		switch char {
+		case '\'':
+			if !inDoubleQuote {
+				inSingleQuote = !inSingleQuote
+			}
+			current.WriteRune(char)
+		case '"':
+			if !inSingleQuote {
+				inDoubleQuote = !inDoubleQuote
+			}
+			current.WriteRune(char)
+		case ';':
+			if !inSingleQuote && !inDoubleQuote {
+				stmt := strings.TrimSpace(current.String())
+				if stmt != "" {
+					statements = append(statements, stmt)
+				}
+				current.Reset()
+			} else {
+				current.WriteRune(char)
+			}
+		default:
+			current.WriteRune(char)
+		}
+	}
+
+	// Add any remaining statement
+	if current.Len() > 0 {
+		stmt := strings.TrimSpace(current.String())
+		if stmt != "" {
+			statements = append(statements, stmt)
+		}
+	}
+
+	// If no statements found, return the original query as a single statement
+	if len(statements) == 0 {
+		return []string{strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(query), ";"))}
+	}
+
+	return statements
+}
 
 // mapErrorToPostgreSQLCode maps SeaweedFS SQL engine errors to appropriate PostgreSQL error codes
 func mapErrorToPostgreSQLCode(err error) string {
@@ -153,11 +208,7 @@ func (s *PostgreSQLServer) handleSimpleQuery(session *PostgreSQLSession, query s
 	}
 
 	// Split query string into individual statements to handle multi-statement queries
-	queries, err := sqlparser.SplitStatementToPieces(query)
-	if err != nil {
-		// If split fails, fall back to single query processing
-		queries = []string{strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(query), ";"))}
-	}
+	queries := splitSQLStatements(query)
 
 	// Execute each statement sequentially
 	for _, singleQuery := range queries {
@@ -175,9 +226,17 @@ func (s *PostgreSQLServer) handleSimpleQuery(session *PostgreSQLSession, query s
 			continue // Continue with next statement
 		}
 
-		// Execute using SQL engine directly
+		// Execute using PostgreSQL-compatible SQL engine for proper dialect support
 		ctx := context.Background()
-		result, err := s.sqlEngine.ExecuteSQL(ctx, cleanQuery)
+		var result *engine.QueryResult
+		var err error
+
+		// Use PostgreSQL parser if available, fall back to standard engine
+		if s.sqlEngineWithParser != nil {
+			result, err = s.sqlEngineWithParser.ExecuteSQL(ctx, cleanQuery)
+		} else {
+			result, err = s.sqlEngine.ExecuteSQL(ctx, cleanQuery)
+		}
 		if err != nil {
 			// Send error message but keep connection alive
 			errorCode := mapErrorToPostgreSQLCode(err)

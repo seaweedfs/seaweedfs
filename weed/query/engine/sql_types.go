@@ -3,9 +3,8 @@ package engine
 import (
 	"fmt"
 	"strings"
-	
+
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
-	"github.com/xwb1989/sqlparser"
 )
 
 // convertSQLTypeToMQ converts SQL column types to MQ schema field types
@@ -13,40 +12,40 @@ import (
 // 1. Standard SQL types map to MQ scalar types
 // 2. Unsupported types result in errors
 // 3. Default sizes are used for variable-length types
-func (e *SQLEngine) convertSQLTypeToMQ(sqlType sqlparser.ColumnType) (*schema_pb.Type, error) {
+func (e *SQLEngine) convertSQLTypeToMQ(sqlType TypeRef) (*schema_pb.Type, error) {
 	typeName := strings.ToUpper(sqlType.Type)
-	
+
 	switch typeName {
 	case "BOOLEAN", "BOOL":
 		return &schema_pb.Type{Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_BOOL}}, nil
-		
+
 	case "TINYINT", "SMALLINT", "INT", "INTEGER", "MEDIUMINT":
 		return &schema_pb.Type{Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_INT32}}, nil
-		
+
 	case "BIGINT":
 		return &schema_pb.Type{Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_INT64}}, nil
-		
+
 	case "FLOAT", "REAL":
 		return &schema_pb.Type{Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_FLOAT}}, nil
-		
+
 	case "DOUBLE", "DOUBLE PRECISION":
 		return &schema_pb.Type{Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_DOUBLE}}, nil
-		
+
 	case "CHAR", "VARCHAR", "TEXT", "LONGTEXT", "MEDIUMTEXT", "TINYTEXT":
 		return &schema_pb.Type{Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_STRING}}, nil
-		
+
 	case "BINARY", "VARBINARY", "BLOB", "LONGBLOB", "MEDIUMBLOB", "TINYBLOB":
 		return &schema_pb.Type{Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_BYTES}}, nil
-		
+
 	case "JSON":
 		// JSON stored as string for now
 		// TODO: Implement proper JSON type support
 		return &schema_pb.Type{Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_STRING}}, nil
-		
+
 	case "TIMESTAMP", "DATETIME":
 		// Store as BIGINT (Unix timestamp in nanoseconds)
 		return &schema_pb.Type{Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_INT64}}, nil
-		
+
 	default:
 		return nil, fmt.Errorf("unsupported SQL type: %s", typeName)
 	}

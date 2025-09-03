@@ -8,7 +8,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/seaweedfs/seaweedfs/weed/query/sqltypes"
-	"github.com/xwb1989/sqlparser"
 )
 
 // AggregationSpec defines an aggregation function to be computed
@@ -343,12 +342,12 @@ func (comp *AggregationComputer) computeGlobalMax(spec AggregationSpec, dataSour
 }
 
 // executeAggregationQuery handles SELECT queries with aggregation functions
-func (e *SQLEngine) executeAggregationQuery(ctx context.Context, hybridScanner *HybridMessageScanner, aggregations []AggregationSpec, stmt *sqlparser.Select) (*QueryResult, error) {
+func (e *SQLEngine) executeAggregationQuery(ctx context.Context, hybridScanner *HybridMessageScanner, aggregations []AggregationSpec, stmt *SelectStatement) (*QueryResult, error) {
 	return e.executeAggregationQueryWithPlan(ctx, hybridScanner, aggregations, stmt, nil)
 }
 
 // executeAggregationQueryWithPlan handles SELECT queries with aggregation functions and populates execution plan
-func (e *SQLEngine) executeAggregationQueryWithPlan(ctx context.Context, hybridScanner *HybridMessageScanner, aggregations []AggregationSpec, stmt *sqlparser.Select, plan *QueryExecutionPlan) (*QueryResult, error) {
+func (e *SQLEngine) executeAggregationQueryWithPlan(ctx context.Context, hybridScanner *HybridMessageScanner, aggregations []AggregationSpec, stmt *SelectStatement, plan *QueryExecutionPlan) (*QueryResult, error) {
 	// Parse WHERE clause for filtering
 	var predicate func(*schema_pb.RecordValue) bool
 	var err error

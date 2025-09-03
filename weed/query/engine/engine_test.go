@@ -11,7 +11,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	"github.com/xwb1989/sqlparser"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -724,10 +723,10 @@ func TestExecutionPlanBuilder_BuildAggregationPlan(t *testing.T) {
 	engine := NewMockSQLEngine()
 	builder := NewExecutionPlanBuilder(engine.SQLEngine)
 
-	// Parse a simple SELECT statement
-	stmt, err := sqlparser.Parse("SELECT COUNT(*) FROM test_topic")
+	// Parse a simple SELECT statement using the native parser
+	stmt, err := ParseSQL("SELECT COUNT(*) FROM test_topic")
 	assert.NoError(t, err)
-	selectStmt := stmt.(*sqlparser.Select)
+	selectStmt := stmt.(*SelectStatement)
 
 	aggregations := []AggregationSpec{
 		{Function: "COUNT", Column: "*"},

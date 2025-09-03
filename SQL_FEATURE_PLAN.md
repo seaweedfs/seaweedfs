@@ -43,12 +43,18 @@ To provide a full-featured SQL interface for SeaweedFS, treating schema-tized MQ
 
 **1. Scaffolding & Dependencies**
 
-*   **SQL Parser:** Use **`github.com/xwb1989/sqlparser`** or **`github.com/blastrain/vitess-sqlparser`** (enhanced fork). Benefits:
-    *   Lightweight, focused SQL parser originally derived from Vitess
-    *   Full MySQL-compatible DDL/DML support (`CREATE`, `ALTER`, `DROP`, `SELECT`, etc.)
-    *   Integrates well with existing `weed/query/sqltypes` infrastructure
-    *   Proven in production use across many Go projects
-    *   Alternative: `blastrain/vitess-sqlparser` if advanced features like `OFFSET` or bulk operations are needed
+*   **SQL Parser:** **IMPORTANT ARCHITECTURAL DECISION**
+    *   **Current Implementation:** Native PostgreSQL parser (`pg_query_go`)
+    *   **PostgreSQL Compatibility Issue:** MySQL dialect parser used with PostgreSQL wire protocol creates dialect mismatch:
+        *   **Identifier Quoting:** PostgreSQL uses `"identifiers"` vs MySQL `` `identifiers` ``
+        *   **String Concatenation:** PostgreSQL uses `||` vs MySQL `CONCAT()`
+        *   **System Functions:** PostgreSQL has unique `pg_catalog` system functions
+    *   **Recommended Alternatives for Better PostgreSQL Compatibility:**
+        *   **`pg_query_go`** - Pure PostgreSQL dialect parser (best compatibility)
+        *   **Generic SQL parsers** supporting multiple dialects
+        *   **Custom translation layer** (current mitigation strategy)
+    *   **Current Mitigation:** Query translation in `protocol.go` handles PostgreSQL-specific queries
+    *   **Trade-off:** Implementation complexity vs dialect compatibility
 *   **Project Structure:** 
     *   Extend existing `weed/query/` package for SQL execution engine
     *   Create `weed/query/engine/` for query planning and execution
@@ -176,8 +182,8 @@ HAVING avg_response > 1000;
 SQL Query Flow:
 ┌─────────────┐    ┌──────────────┐    ┌─────────────────┐    ┌──────────────┐
 │   Client    │    │  SQL Parser  │    │  Query Planner  │    │   Execution  │
-│ (CLI/HTTP)  │──→ │ (xwb1989/    │──→ │   & Optimizer   │──→ │    Engine    │
-│             │    │  sqlparser)  │    │                 │    │              │
+│ (CLI/HTTP)  │──→ │ PostgreSQL   │──→ │   & Optimizer   │──→ │    Engine    │
+│             │    │ (pg_query)   │    │                 │    │              │
 └─────────────┘    └──────────────┘    └─────────────────┘    └──────────────┘
                                                │                       │
                                                ▼                       │
@@ -218,15 +224,32 @@ SQL Query Flow:
 *   Implement predicate pushdown to minimize data scanning
 *   Cache frequently accessed schema metadata
 
-**4. Transaction Semantics:**
+**4. SQL Parser Dialect Strategy:**
+*   **Challenge:** PostgreSQL wire protocol + MySQL-dialect parser = compatibility gap
+*   **Current Approach:** Translation layer in `protocol.go` for PostgreSQL-specific queries
+*   **Supported Translation:** System queries (`version()`, `BEGIN`, `COMMIT`), error codes, type mapping
+*   **Known Limitations:** 
+    *   Identifier quoting differences (`"` vs `` ` ``)
+    *   Function differences (`||` vs `CONCAT()`)
+    *   System catalog access (`pg_catalog.*`)
+*   **Future Migration Path:** Consider `pg_query_go` for full PostgreSQL dialect support
+*   **Trade-off Decision:** Rapid development with translation layer vs pure dialect compatibility
+
+**5. Transaction Semantics:**
 *   DDL operations (CREATE/ALTER/DROP) are atomic per topic
 *   SELECT queries provide read-consistent snapshots
 *   No cross-topic transactions initially (future enhancement)
 
+**6. Performance Considerations:**
+*   Prioritize read performance over write consistency
+*   Leverage MQ's natural partitioning for parallel queries
+*   Use Parquet metadata for query optimization
+*   Implement connection pooling and query caching
+
 ## Implementation Phases
 
 **Phase 1: Core SQL Infrastructure (Weeks 1-3)**
-1. Add `github.com/xwb1989/sqlparser` dependency
+1. Use native PostgreSQL parser (`pg_query_go`) for better PostgreSQL compatibility
 2. Create `weed/query/engine/` package with basic SQL execution framework
 3. Implement metadata catalog mapping MQ topics to SQL tables
 4. Basic `SHOW DATABASES`, `SHOW TABLES`, `DESCRIBE` commands
