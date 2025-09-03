@@ -295,10 +295,9 @@ func runInteractiveShell(ctx *SQLContext) bool {
 			ctx.currentDatabase = dbName
 			// Also update the SQL engine's catalog current database
 			ctx.engine.GetCatalog().SetCurrentDatabase(dbName)
-				fmt.Printf("Database changed to: %s\n\n", dbName)
-				queryBuffer.Reset()
-				continue
-			}
+			fmt.Printf("Database changed to: %s\n\n", dbName)
+			queryBuffer.Reset()
+			continue
 		}
 
 		// Handle output format switching

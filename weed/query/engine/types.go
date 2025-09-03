@@ -31,4 +31,7 @@ type QueryResult struct {
 	Rows          [][]sqltypes.Value  `json:"rows"`
 	Error         error               `json:"error,omitempty"`
 	ExecutionPlan *QueryExecutionPlan `json:"execution_plan,omitempty"`
+	// Schema information for type inference (optional)
+	Database string `json:"database,omitempty"`
+	Table    string `json:"table,omitempty"`
 }

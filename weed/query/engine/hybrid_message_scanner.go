@@ -780,8 +780,10 @@ func (hms *HybridMessageScanner) convertJSONValueToSchemaValue(jsonValue interfa
 func (hms *HybridMessageScanner) ConvertToSQLResult(results []HybridScanResult, columns []string) *QueryResult {
 	if len(results) == 0 {
 		return &QueryResult{
-			Columns: columns,
-			Rows:    [][]sqltypes.Value{},
+			Columns:  columns,
+			Rows:     [][]sqltypes.Value{},
+			Database: hms.topic.Namespace,
+			Table:    hms.topic.Name,
 		}
 	}
 
@@ -824,8 +826,10 @@ func (hms *HybridMessageScanner) ConvertToSQLResult(results []HybridScanResult, 
 	}
 
 	return &QueryResult{
-		Columns: columns,
-		Rows:    rows,
+		Columns:  columns,
+		Rows:     rows,
+		Database: hms.topic.Namespace,
+		Table:    hms.topic.Name,
 	}
 }
 

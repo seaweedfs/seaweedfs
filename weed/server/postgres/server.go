@@ -65,13 +65,16 @@ const (
 
 	// PostgreSQL data types
 	PG_TYPE_BOOL      = 16
+	PG_TYPE_BYTEA     = 17
 	PG_TYPE_INT8      = 20
 	PG_TYPE_INT4      = 23
 	PG_TYPE_TEXT      = 25
+	PG_TYPE_FLOAT4    = 700
 	PG_TYPE_FLOAT8    = 701
 	PG_TYPE_VARCHAR   = 1043
 	PG_TYPE_TIMESTAMP = 1114
 	PG_TYPE_JSON      = 114
+	PG_TYPE_JSONB     = 3802
 
 	// Default values
 	DEFAULT_POSTGRES_PORT = 5432
