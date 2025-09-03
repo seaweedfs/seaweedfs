@@ -187,6 +187,17 @@ func (s *PostgreSQLServer) handleMessage(session *PostgreSQLSession) error {
 func (s *PostgreSQLServer) handleSimpleQuery(session *PostgreSQLSession, query string) error {
 	glog.V(2).Infof("PostgreSQL Query (ID: %d): %s", session.processID, query)
 
+	// Add comprehensive error recovery to prevent crashes
+	defer func() {
+		if r := recover(); r != nil {
+			glog.Errorf("Panic in handleSimpleQuery (ID: %d): %v", session.processID, r)
+			// Try to send error message
+			s.sendError(session, "XX000", fmt.Sprintf("Internal error: %v", r))
+			// Try to send ReadyForQuery to keep connection alive
+			s.sendReadyForQuery(session)
+		}
+	}()
+
 	// Handle USE database commands for session context
 	parts := strings.Fields(strings.TrimSpace(query))
 	if len(parts) >= 2 && strings.ToUpper(parts[0]) == "USE" {
@@ -232,12 +243,23 @@ func (s *PostgreSQLServer) handleSimpleQuery(session *PostgreSQLSession, query s
 		var result *engine.QueryResult
 		var err error
 
-		// Use PostgreSQL parser if available, fall back to standard engine
-		if s.sqlEngineWithParser != nil {
-			result, err = s.sqlEngineWithParser.ExecuteSQL(ctx, cleanQuery)
-		} else {
-			result, err = s.sqlEngine.ExecuteSQL(ctx, cleanQuery)
-		}
+		// Execute SQL query with panic recovery to prevent crashes
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					glog.Errorf("Panic in SQL execution (ID: %d, Query: %s): %v", session.processID, cleanQuery, r)
+					err = fmt.Errorf("internal error during SQL execution: %v", r)
+				}
+			}()
+
+			// Use PostgreSQL parser if available, fall back to standard engine
+			if s.sqlEngineWithParser != nil {
+				result, err = s.sqlEngineWithParser.ExecuteSQL(ctx, cleanQuery)
+			} else {
+				result, err = s.sqlEngine.ExecuteSQL(ctx, cleanQuery)
+			}
+		}()
+
 		if err != nil {
 			// Send error message but keep connection alive
 			errorCode := mapErrorToPostgreSQLCode(err)
@@ -369,6 +391,15 @@ func (s *PostgreSQLServer) handleSystemQuery(session *PostgreSQLSession, query s
 
 // sendSystemQueryResult sends the result of a system query
 func (s *PostgreSQLServer) sendSystemQueryResult(session *PostgreSQLSession, result *SystemQueryResult, query string) error {
+	// Add panic recovery to prevent crashes in system query results
+	defer func() {
+		if r := recover(); r != nil {
+			glog.Errorf("Panic in sendSystemQueryResult (ID: %d, Query: %s): %v", session.processID, query, r)
+			// Try to send error and continue
+			s.sendError(session, "XX000", fmt.Sprintf("Internal error in system query: %v", r))
+		}
+	}()
+
 	// Create column descriptions for system query results
 	columns := make([]string, len(result.Columns))
 	for i, col := range result.Columns {
