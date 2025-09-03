@@ -99,10 +99,13 @@ Inject extra environment vars in the format key:value, if populated
 {{- $repositoryName := default .Values.image.repository .Values.global.repository | toString -}}
 {{- $name := .Values.global.imageName | toString -}}
 {{- $tag := default .Chart.AppVersion .Values.image.tag  | toString -}}
+{{- if $repositoryName -}}
+{{-   $name = printf "%s/%s" (trimSuffix "/" $repositoryName) (last (splitList "/" $name)) -}}
+{{- end -}}
 {{- if $registryName -}}
-{{- printf "%s/%s%s:%s" $registryName $repositoryName $name $tag -}}
+{{-   printf "%s/%s:%s" $registryName $name $tag -}}
 {{- else -}}
-{{- printf "%s%s:%s" $repositoryName $name $tag -}}
+{{-   printf "%s:%s" $name $tag -}}
 {{- end -}}
 {{- end -}}
 
