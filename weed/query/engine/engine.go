@@ -1383,65 +1383,98 @@ func (e *SQLEngine) evaluateComparison(fieldValue *schema_pb.Value, operator str
 	}
 }
 
-// Helper functions for value comparison (simplified implementation)
+// Helper functions for value comparison with proper type coercion
 func (e *SQLEngine) valuesEqual(fieldValue *schema_pb.Value, compareValue interface{}) bool {
-	switch v := fieldValue.Kind.(type) {
-	case *schema_pb.Value_Int32Value:
-		if intVal, ok := compareValue.(int64); ok {
-			if intVal > math.MaxInt32 || intVal < math.MinInt32 {
-				return false // Value out of range for int32, cannot be equal
-			}
-			return v.Int32Value == int32(intVal)
-		}
-	case *schema_pb.Value_Int64Value:
-		if intVal, ok := compareValue.(int64); ok {
-			return v.Int64Value == intVal
-		}
-	case *schema_pb.Value_StringValue:
+	// Handle string comparisons first
+	if strField, ok := fieldValue.Kind.(*schema_pb.Value_StringValue); ok {
 		if strVal, ok := compareValue.(string); ok {
-			return v.StringValue == strVal
+			return strField.StringValue == strVal
 		}
+		return false
 	}
+
+	// Handle boolean comparisons
+	if boolField, ok := fieldValue.Kind.(*schema_pb.Value_BoolValue); ok {
+		if boolVal, ok := compareValue.(bool); ok {
+			return boolField.BoolValue == boolVal
+		}
+		return false
+	}
+
+	// Handle numeric comparisons with type coercion
+	fieldNum := e.convertToNumber(fieldValue)
+	compareNum := e.convertCompareValueToNumber(compareValue)
+	
+	if fieldNum != nil && compareNum != nil {
+		return *fieldNum == *compareNum
+	}
+	
 	return false
 }
 
-func (e *SQLEngine) valueLessThan(fieldValue *schema_pb.Value, compareValue interface{}) bool {
-	switch v := fieldValue.Kind.(type) {
-	case *schema_pb.Value_Int32Value:
-		if intVal, ok := compareValue.(int64); ok {
-			if intVal > math.MaxInt32 {
-				return true // int32 value is always less than values > MaxInt32
-			}
-			if intVal < math.MinInt32 {
-				return false // int32 value is always greater than values < MinInt32
-			}
-			return v.Int32Value < int32(intVal)
-		}
-	case *schema_pb.Value_Int64Value:
-		if intVal, ok := compareValue.(int64); ok {
-			return v.Int64Value < intVal
+// convertCompareValueToNumber converts compare values from SQL queries to float64
+func (e *SQLEngine) convertCompareValueToNumber(compareValue interface{}) *float64 {
+	switch v := compareValue.(type) {
+	case int:
+		result := float64(v)
+		return &result
+	case int32:
+		result := float64(v)
+		return &result
+	case int64:
+		result := float64(v)
+		return &result
+	case float32:
+		result := float64(v)
+		return &result
+	case float64:
+		return &v
+	case string:
+		// Try to parse string as number for flexible comparisons
+		if parsed, err := strconv.ParseFloat(v, 64); err == nil {
+			return &parsed
 		}
 	}
+	return nil
+}
+
+func (e *SQLEngine) valueLessThan(fieldValue *schema_pb.Value, compareValue interface{}) bool {
+	// Handle string comparisons lexicographically
+	if strField, ok := fieldValue.Kind.(*schema_pb.Value_StringValue); ok {
+		if strVal, ok := compareValue.(string); ok {
+			return strField.StringValue < strVal
+		}
+		return false
+	}
+
+	// Handle numeric comparisons with type coercion
+	fieldNum := e.convertToNumber(fieldValue)
+	compareNum := e.convertCompareValueToNumber(compareValue)
+	
+	if fieldNum != nil && compareNum != nil {
+		return *fieldNum < *compareNum
+	}
+	
 	return false
 }
 
 func (e *SQLEngine) valueGreaterThan(fieldValue *schema_pb.Value, compareValue interface{}) bool {
-	switch v := fieldValue.Kind.(type) {
-	case *schema_pb.Value_Int32Value:
-		if intVal, ok := compareValue.(int64); ok {
-			if intVal > math.MaxInt32 {
-				return false // int32 value is never greater than values > MaxInt32
-			}
-			if intVal < math.MinInt32 {
-				return true // int32 value is always greater than values < MinInt32
-			}
-			return v.Int32Value > int32(intVal)
+	// Handle string comparisons lexicographically
+	if strField, ok := fieldValue.Kind.(*schema_pb.Value_StringValue); ok {
+		if strVal, ok := compareValue.(string); ok {
+			return strField.StringValue > strVal
 		}
-	case *schema_pb.Value_Int64Value:
-		if intVal, ok := compareValue.(int64); ok {
-			return v.Int64Value > intVal
-		}
+		return false
 	}
+
+	// Handle numeric comparisons with type coercion
+	fieldNum := e.convertToNumber(fieldValue)
+	compareNum := e.convertCompareValueToNumber(compareValue)
+	
+	if fieldNum != nil && compareNum != nil {
+		return *fieldNum > *compareNum
+	}
+	
 	return false
 }
 

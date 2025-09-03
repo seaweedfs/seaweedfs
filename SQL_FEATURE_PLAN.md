@@ -16,7 +16,7 @@ To provide a full-featured SQL interface for SeaweedFS, treating schema-tized MQ
 
 *   **Schema-tized Topic Management (Priority 1):**
     *   `SHOW DATABASES` - List all MQ namespaces
-    *   `SHOW TABLES` - List all topics in a namespace  
+    *   `SHOW TABLES` - List all topics in a namespace
     *   `CREATE TABLE topic_name (field1 INT, field2 STRING, ...)` - Create new MQ topic with schema
     *   `ALTER TABLE topic_name ADD COLUMN field3 BOOL` - Modify topic schema (with versioning)
     *   `DROP TABLE topic_name` - Delete MQ topic
@@ -202,7 +202,7 @@ SQL Query Flow:
 
 **1. SQL-to-MQ Mapping Strategy:**
 *   MQ Namespaces ↔ SQL Databases
-*   MQ Topics ↔ SQL Tables  
+*   MQ Topics ↔ SQL Tables
 *   Topic Partitions ↔ Table Shards (transparent to users)
 *   Schema Fields ↔ Table Columns
 
