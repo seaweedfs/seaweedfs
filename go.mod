@@ -147,7 +147,6 @@ require (
 	github.com/minio/crc64nvme v1.1.1
 	github.com/orcaman/concurrent-map/v2 v2.0.1
 	github.com/parquet-go/parquet-go v0.25.1
-	github.com/pganalyze/pg_query_go/v6 v6.1.0
 	github.com/pkg/sftp v1.13.9
 	github.com/rabbitmq/amqp091-go v1.10.0
 	github.com/rclone/rclone v1.70.3

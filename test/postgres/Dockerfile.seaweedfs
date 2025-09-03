@@ -1,7 +1,7 @@
 FROM golang:1.24-alpine AS builder
 
-# Install build dependencies including gcc for CGO (required by pg_query_go)
-RUN apk add --no-cache git make gcc musl-dev
+# Install git and other build dependencies
+RUN apk add --no-cache git make
 
 # Set working directory
 WORKDIR /app
@@ -13,8 +13,8 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the weed binary with CGO enabled (required for pg_query_go)
-RUN CGO_ENABLED=1 GOOS=linux go build -ldflags "-s -w" -o weed ./weed/
+# Build the weed binary without CGO
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags "-s -w" -o weed ./weed/
 
 # Final stage - minimal runtime image
 FROM alpine:latest

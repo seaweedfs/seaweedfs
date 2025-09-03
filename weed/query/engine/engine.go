@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	pg_query "github.com/pganalyze/pg_query_go/v6"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/schema"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -202,12 +201,12 @@ const (
 	NotEqualStr     = "!="
 )
 
-// ParseSQL uses PostgreSQL parser to parse SQL statements
+// ParseSQL uses a lightweight parser to parse SQL statements
 func ParseSQL(sql string) (Statement, error) {
 	sql = strings.TrimSpace(sql)
 	sqlUpper := strings.ToUpper(sql)
 
-	// Handle SHOW statements first (before PostgreSQL parser since pg doesn't support SHOW)
+	// Handle SHOW statements
 	if strings.HasPrefix(sqlUpper, "SHOW DATABASES") || strings.HasPrefix(sqlUpper, "SHOW SCHEMAS") {
 		return &ShowStatement{Type: "databases"}, nil
 	}
@@ -229,7 +228,7 @@ func ParseSQL(sql string) (Statement, error) {
 		return stmt, nil
 	}
 
-	// Handle DDL statements by parsing SQL text patterns (before PostgreSQL parser)
+	// Handle DDL statements
 	if strings.HasPrefix(sqlUpper, "CREATE TABLE") {
 		return parseCreateTableFromSQL(sql)
 	}
@@ -240,96 +239,223 @@ func ParseSQL(sql string) (Statement, error) {
 		return parseAlterTableFromSQL(sql)
 	}
 
-	// Parse with pg_query_go for SELECT and other standard PostgreSQL statements
-	result, err := pg_query.Parse(sql)
-	if err != nil {
-		return nil, fmt.Errorf("PostgreSQL parse error: %v", err)
-	}
-
-	if len(result.Stmts) == 0 {
-		return nil, fmt.Errorf("no statements parsed")
-	}
-
-	// Convert first statement
-	stmt := result.Stmts[0]
-
 	// Handle SELECT statements
-	if selectStmt := stmt.Stmt.GetSelectStmt(); selectStmt != nil {
-		return convertSelectStatement(selectStmt), nil
+	if strings.HasPrefix(sqlUpper, "SELECT") {
+		return parseSelectStatement(sql)
 	}
 
-	return nil, fmt.Errorf("unsupported statement type")
+	return nil, fmt.Errorf("unsupported statement type: %s", sqlUpper)
 }
 
-// Conversion helpers
-func convertSelectStatement(stmt *pg_query.SelectStmt) *SelectStatement {
+// parseSelectStatement parses SELECT statements using a lightweight parser
+func parseSelectStatement(sql string) (*SelectStatement, error) {
 	s := &SelectStatement{
 		SelectExprs: []SelectExpr{},
 		From:        []TableExpr{},
 	}
 
-	// Convert SELECT expressions
-	for _, target := range stmt.GetTargetList() {
-		if resTarget := target.GetResTarget(); resTarget != nil {
-			if resTarget.GetVal().GetColumnRef() != nil {
-				// This is likely SELECT *
+	sqlUpper := strings.ToUpper(sql)
+	
+	// Find SELECT clause
+	selectIdx := strings.Index(sqlUpper, "SELECT")
+	if selectIdx == -1 {
+		return nil, fmt.Errorf("SELECT keyword not found")
+	}
+	
+	// Find FROM clause
+	fromIdx := strings.Index(sqlUpper, "FROM")
+	var selectClause string
+	if fromIdx != -1 {
+		selectClause = sql[selectIdx+6 : fromIdx] // Skip "SELECT"
+	} else {
+		selectClause = sql[selectIdx+6:] // No FROM clause
+	}
+	
+	// Parse SELECT expressions
+	selectClause = strings.TrimSpace(selectClause)
+	if selectClause == "*" {
+		s.SelectExprs = append(s.SelectExprs, &StarExpr{})
+	} else {
+		// Split by commas and parse each expression
+		parts := strings.Split(selectClause, ",")
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			if part == "*" {
 				s.SelectExprs = append(s.SelectExprs, &StarExpr{})
 			} else {
+				// Handle column names and functions
 				expr := &AliasedExpr{}
-				if resTarget.GetName() != "" {
-					expr.As = aliasValue(resTarget.GetName())
+				if strings.Contains(strings.ToUpper(part), "(") && strings.Contains(part, ")") {
+					// Function expression
+					funcExpr := &FuncExpr{Name: stringValue(extractFunctionName(part))}
+					expr.Expr = funcExpr
 				} else {
-					expr.As = aliasValue("")
+					// Column name
+					colExpr := &ColName{Name: stringValue(part)}
+					expr.Expr = colExpr
 				}
 				s.SelectExprs = append(s.SelectExprs, expr)
 			}
 		}
 	}
 
-	// Convert FROM clause
-	for _, fromExpr := range stmt.GetFromClause() {
-		if rangeVar := fromExpr.GetRangeVar(); rangeVar != nil {
-			tableName := TableName{
-				Name:      stringValue(rangeVar.GetRelname()),
-				Qualifier: stringValue(rangeVar.GetSchemaname()),
+	// Parse FROM clause
+	if fromIdx != -1 {
+		remaining := sql[fromIdx+4:] // Skip "FROM"
+		
+		// Find WHERE clause
+		whereIdx := strings.Index(strings.ToUpper(remaining), "WHERE")
+		var fromClause string
+		if whereIdx != -1 {
+			fromClause = remaining[:whereIdx]
+		} else {
+			// Find LIMIT clause
+			limitIdx := strings.Index(strings.ToUpper(remaining), "LIMIT")
+			if limitIdx != -1 {
+				fromClause = remaining[:limitIdx]
+			} else {
+				fromClause = remaining
 			}
-			s.From = append(s.From, &AliasedTableExpr{Expr: tableName})
+		}
+		
+		fromClause = strings.TrimSpace(fromClause)
+		tableName := TableName{
+			Name:      stringValue(fromClause),
+			Qualifier: stringValue(""), // Initialize to empty string to avoid nil pointer
+		}
+		s.From = append(s.From, &AliasedTableExpr{Expr: tableName})
+
+		// Parse WHERE clause
+		if whereIdx != -1 {
+			whereClause := remaining[whereIdx+5:] // Skip "WHERE"
+			
+			// Find LIMIT clause
+			limitIdx := strings.Index(strings.ToUpper(whereClause), "LIMIT")
+			if limitIdx != -1 {
+				whereClause = whereClause[:limitIdx]
+			}
+			
+			whereClause = strings.TrimSpace(whereClause)
+			if whereClause != "" {
+				whereExpr, err := parseSimpleWhereExpression(whereClause)
+				if err != nil {
+					return nil, fmt.Errorf("failed to parse WHERE clause: %v", err)
+				}
+				s.Where = &WhereClause{Expr: whereExpr}
+			}
+		}
+		
+		// Parse LIMIT clause
+		limitIdx := strings.Index(strings.ToUpper(remaining), "LIMIT")
+		if limitIdx != -1 {
+			limitClause := remaining[limitIdx+5:] // Skip "LIMIT"
+			limitClause = strings.TrimSpace(limitClause)
+			
+			if _, err := strconv.Atoi(limitClause); err == nil {
+				s.Limit = &LimitClause{
+					Rowcount: &SQLVal{
+						Type: IntVal,
+						Val:  []byte(limitClause),
+					},
+				}
+			}
 		}
 	}
 
-	// Convert WHERE clause
-	if stmt.GetWhereClause() != nil {
-		s.Where = &WhereClause{
-			Expr: convertExpressionNode(stmt.GetWhereClause()),
-		}
-	}
-
-	// Convert LIMIT clause
-	if stmt.GetLimitCount() != nil {
-		s.Limit = &LimitClause{
-			Rowcount: convertExpressionNode(stmt.GetLimitCount()),
-		}
-	}
-
-	return s
+	return s, nil
 }
 
-// convertExpressionNode converts PostgreSQL parser expression nodes to our internal ExprNode types
-func convertExpressionNode(node *pg_query.Node) ExprNode {
-	if node == nil {
-		return nil
+// extractFunctionName extracts the function name from a function call expression
+func extractFunctionName(expr string) string {
+	parenIdx := strings.Index(expr, "(")
+	if parenIdx == -1 {
+		return expr
 	}
+	return strings.TrimSpace(expr[:parenIdx])
+}
 
-	// Handle A_Expr nodes (comparison operations: >, <, =, etc.)
-	if aExpr := node.GetAExpr(); aExpr != nil {
-		left := convertExpressionNode(aExpr.GetLexpr())
-		right := convertExpressionNode(aExpr.GetRexpr())
-
-		// Convert operator name
-		operator := ""
-		if len(aExpr.GetName()) > 0 {
-			opName := aExpr.GetName()[0].GetString_().GetSval()
-			switch opName {
+// parseSimpleWhereExpression parses a simple WHERE expression
+func parseSimpleWhereExpression(whereClause string) (ExprNode, error) {
+	whereClause = strings.TrimSpace(whereClause)
+	
+	// Handle AND/OR expressions first (higher precedence)
+	if strings.Contains(strings.ToUpper(whereClause), " AND ") {
+		// Use original case for parsing but ToUpper for detection
+		originalParts := strings.SplitN(whereClause, " AND ", 2)
+		if len(originalParts) != 2 {
+			originalParts = strings.SplitN(whereClause, " and ", 2)
+		}
+		if len(originalParts) == 2 {
+			left, err := parseSimpleWhereExpression(strings.TrimSpace(originalParts[0]))
+			if err != nil {
+				return nil, err
+			}
+			right, err := parseSimpleWhereExpression(strings.TrimSpace(originalParts[1]))
+			if err != nil {
+				return nil, err
+			}
+			return &AndExpr{Left: left, Right: right}, nil
+		}
+	}
+	
+	if strings.Contains(strings.ToUpper(whereClause), " OR ") {
+		// Use original case for parsing but ToUpper for detection
+		originalParts := strings.SplitN(whereClause, " OR ", 2)
+		if len(originalParts) != 2 {
+			originalParts = strings.SplitN(whereClause, " or ", 2)
+		}
+		if len(originalParts) == 2 {
+			left, err := parseSimpleWhereExpression(strings.TrimSpace(originalParts[0]))
+			if err != nil {
+				return nil, err
+			}
+			right, err := parseSimpleWhereExpression(strings.TrimSpace(originalParts[1]))
+			if err != nil {
+				return nil, err
+			}
+			return &OrExpr{Left: left, Right: right}, nil
+		}
+	}
+	
+	// Handle simple comparison operations
+	operators := []string{">=", "<=", "!=", "<>", "=", ">", "<"}
+	
+	for _, op := range operators {
+		if idx := strings.Index(whereClause, op); idx != -1 {
+			left := strings.TrimSpace(whereClause[:idx])
+			right := strings.TrimSpace(whereClause[idx+len(op):])
+			
+			// Parse left side (should be a column name)
+			leftExpr := &ColName{Name: stringValue(left)}
+			
+			// Parse right side (should be a value)
+			var rightExpr ExprNode
+			if strings.HasPrefix(right, "'") && strings.HasSuffix(right, "'") {
+				// String literal
+				rightExpr = &SQLVal{
+					Type: StrVal,
+					Val:  []byte(strings.Trim(right, "'")),
+				}
+			} else if _, err := strconv.ParseInt(right, 10, 64); err == nil {
+				// Integer literal
+				rightExpr = &SQLVal{
+					Type: IntVal,
+					Val:  []byte(right),
+				}
+			} else if _, err := strconv.ParseFloat(right, 64); err == nil {
+				// Float literal
+				rightExpr = &SQLVal{
+					Type: FloatVal,
+					Val:  []byte(right),
+				}
+			} else {
+				// Assume it's a column name
+				rightExpr = &ColName{Name: stringValue(right)}
+			}
+			
+			// Convert operator to internal representation
+			var operator string
+			switch op {
 			case ">":
 				operator = GreaterThanStr
 			case "<":
@@ -340,80 +466,21 @@ func convertExpressionNode(node *pg_query.Node) ExprNode {
 				operator = LessEqualStr
 			case "=":
 				operator = EqualStr
-			case "<>", "!=":
+			case "!=", "<>":
 				operator = NotEqualStr
 			default:
-				operator = opName
+				operator = op
 			}
-		}
-
-		return &ComparisonExpr{
-			Left:     left,
-			Right:    right,
-			Operator: operator,
+			
+			return &ComparisonExpr{
+				Left:     leftExpr,
+				Right:    rightExpr,
+				Operator: operator,
+			}, nil
 		}
 	}
-
-	// Handle BoolExpr nodes (AND, OR operations)
-	if boolExpr := node.GetBoolExpr(); boolExpr != nil {
-		args := boolExpr.GetArgs()
-		if len(args) >= 2 {
-			left := convertExpressionNode(args[0])
-			right := convertExpressionNode(args[1])
-
-			switch boolExpr.GetBoolop() {
-			case pg_query.BoolExprType_AND_EXPR:
-				return &AndExpr{
-					Left:  left,
-					Right: right,
-				}
-			case pg_query.BoolExprType_OR_EXPR:
-				return &OrExpr{
-					Left:  left,
-					Right: right,
-				}
-			}
-		}
-	}
-
-	// Handle constants
-	if aConst := node.GetAConst(); aConst != nil {
-		if aConst.GetIval() != nil {
-			return &SQLVal{
-				Type: IntVal,
-				Val:  []byte(fmt.Sprintf("%d", aConst.GetIval().GetIval())),
-			}
-		}
-		if aConst.GetSval() != nil {
-			return &SQLVal{
-				Type: StrVal,
-				Val:  []byte(aConst.GetSval().GetSval()),
-			}
-		}
-		if aConst.GetFval() != nil {
-			return &SQLVal{
-				Type: FloatVal,
-				Val:  []byte(aConst.GetFval().GetFval()),
-			}
-		}
-	}
-
-	// Handle column references
-	if columnRef := node.GetColumnRef(); columnRef != nil {
-		fields := columnRef.GetFields()
-		if len(fields) > 0 {
-			// Extract column name from the first field
-			if stringNode := fields[0].GetString_(); stringNode != nil {
-				return &ColName{
-					Name: stringValue(stringNode.GetSval()),
-				}
-			}
-		}
-	}
-
-	// Return nil for unsupported expression types instead of a placeholder
-	// This will help identify what still needs to be implemented
-	return nil
+	
+	return nil, fmt.Errorf("unsupported WHERE expression: %s", whereClause)
 }
 
 func parseCreateTableFromSQL(sql string) (*DDLStatement, error) {
