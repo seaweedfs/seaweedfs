@@ -1404,11 +1404,11 @@ func (e *SQLEngine) valuesEqual(fieldValue *schema_pb.Value, compareValue interf
 	// Handle numeric comparisons with type coercion
 	fieldNum := e.convertToNumber(fieldValue)
 	compareNum := e.convertCompareValueToNumber(compareValue)
-	
+
 	if fieldNum != nil && compareNum != nil {
 		return *fieldNum == *compareNum
 	}
-	
+
 	return false
 }
 
@@ -1450,11 +1450,11 @@ func (e *SQLEngine) valueLessThan(fieldValue *schema_pb.Value, compareValue inte
 	// Handle numeric comparisons with type coercion
 	fieldNum := e.convertToNumber(fieldValue)
 	compareNum := e.convertCompareValueToNumber(compareValue)
-	
+
 	if fieldNum != nil && compareNum != nil {
 		return *fieldNum < *compareNum
 	}
-	
+
 	return false
 }
 
@@ -1470,11 +1470,11 @@ func (e *SQLEngine) valueGreaterThan(fieldValue *schema_pb.Value, compareValue i
 	// Handle numeric comparisons with type coercion
 	fieldNum := e.convertToNumber(fieldValue)
 	compareNum := e.convertCompareValueToNumber(compareValue)
-	
+
 	if fieldNum != nil && compareNum != nil {
 		return *fieldNum > *compareNum
 	}
-	
+
 	return false
 }
 
