@@ -71,10 +71,10 @@ type TypeRef struct {
 func (d *DDLStatement) isStatement() {}
 
 type SelectStatement struct {
-	SelectExprs   []SelectExpr
-	From          []TableExpr
-	Where         *WhereClause
-	Limit         *LimitClause
+	SelectExprs     []SelectExpr
+	From            []TableExpr
+	Where           *WhereClause
+	Limit           *LimitClause
 	WindowFunctions []*WindowFunction
 }
 
@@ -98,7 +98,7 @@ type WindowFunction struct {
 	Function string     // ROW_NUMBER, RANK, LAG, LEAD
 	Args     []ExprNode // Function arguments
 	Over     *WindowSpec
-	Alias    string     // Column alias for the result
+	Alias    string // Column alias for the result
 }
 
 type OrderByClause struct {
