@@ -732,7 +732,15 @@ func (e *SQLEngine) executeSelectStatement(ctx context.Context, stmt *sqlparser.
 
 	hybridScanner, err := NewHybridMessageScanner(filerClient, e.catalog.brokerClient, database, tableName)
 	if err != nil {
-		// Return error for topic access issues instead of misleading sample data
+		// Check if this is a "has no schema" error (normal for quiet topics with no active brokers)
+		if strings.Contains(err.Error(), "has no schema") {
+			// For quiet topics, return empty result set instead of error
+			return &QueryResult{
+				Columns: []string{},
+				Rows:    [][]sqltypes.Value{},
+			}, nil
+		}
+		// Return error for other access issues (truly non-existent topics, etc.)
 		topicErr := fmt.Errorf("failed to access topic %s.%s: %v", database, tableName, err)
 		return &QueryResult{Error: topicErr}, topicErr
 	}
@@ -891,7 +899,15 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 
 	hybridScanner, err := NewHybridMessageScanner(filerClient, e.catalog.brokerClient, database, tableName)
 	if err != nil {
-		// Return error for topic access issues instead of misleading sample data
+		// Check if this is a "has no schema" error (normal for quiet topics with no active brokers)
+		if strings.Contains(err.Error(), "has no schema") {
+			// For quiet topics, return empty result set instead of error
+			return &QueryResult{
+				Columns: []string{},
+				Rows:    [][]sqltypes.Value{},
+			}, nil
+		}
+		// Return error for other access issues (truly non-existent topics, etc.)
 		topicErr := fmt.Errorf("failed to access topic %s.%s: %v", database, tableName, err)
 		return &QueryResult{Error: topicErr}, topicErr
 	}
