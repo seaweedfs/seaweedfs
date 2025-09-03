@@ -288,15 +288,13 @@ func runInteractiveShell(ctx *SQLContext) bool {
 		}
 
 		// Handle database switching
-		upperQuery := strings.ToUpper(cleanQuery)
-		if strings.HasPrefix(upperQuery, "USE ") {
+		parts := strings.Fields(cleanQuery)
+		if len(parts) >= 2 && strings.ToUpper(parts[0]) == "USE" {
 			// Extract database name preserving original case
-			parts := strings.SplitN(cleanQuery, " ", 2)
-			if len(parts) >= 2 {
-				dbName := strings.TrimSpace(parts[1])
-				ctx.currentDatabase = dbName
-				// Also update the SQL engine's catalog current database
-				ctx.engine.GetCatalog().SetCurrentDatabase(dbName)
+			dbName := strings.TrimSpace(parts[1])
+			ctx.currentDatabase = dbName
+			// Also update the SQL engine's catalog current database
+			ctx.engine.GetCatalog().SetCurrentDatabase(dbName)
 				fmt.Printf("Database changed to: %s\n\n", dbName)
 				queryBuffer.Reset()
 				continue
@@ -349,8 +347,12 @@ func isSpecialCommand(query string) bool {
 		}
 	}
 
-	// Commands that start with specific prefixes
-	return strings.HasPrefix(strings.ToUpper(cleanQuery), "USE ") ||
+	// Commands that are exactly specific commands (not just prefixes)
+	parts := strings.Fields(strings.ToUpper(cleanQuery))
+	if len(parts) == 0 {
+		return false
+	}
+	return (parts[0] == "USE" && len(parts) >= 2) ||
 		strings.HasPrefix(strings.ToUpper(cleanQuery), "\\FORMAT ")
 }
 

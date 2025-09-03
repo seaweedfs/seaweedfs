@@ -132,21 +132,18 @@ func (s *PostgreSQLServer) handleSimpleQuery(session *PostgreSQLSession, query s
 	glog.V(2).Infof("PostgreSQL Query (ID: %d): %s", session.processID, query)
 
 	// Handle USE database commands for session context
-	queryUpper := strings.ToUpper(strings.TrimSpace(query))
-	if strings.HasPrefix(queryUpper, "USE ") {
-		parts := strings.Fields(query)
-		if len(parts) >= 2 {
-			newDatabase := strings.TrimSpace(parts[1])
-			session.database = newDatabase
-			s.sqlEngine.GetCatalog().SetCurrentDatabase(newDatabase)
+	parts := strings.Fields(strings.TrimSpace(query))
+	if len(parts) >= 2 && strings.ToUpper(parts[0]) == "USE" {
+		newDatabase := strings.TrimSpace(parts[1])
+		session.database = newDatabase
+		s.sqlEngine.GetCatalog().SetCurrentDatabase(newDatabase)
 
-			// Send command complete for USE
-			err := s.sendCommandComplete(session, "USE")
-			if err != nil {
-				return err
-			}
-			return s.sendReadyForQuery(session)
+		// Send command complete for USE
+		err := s.sendCommandComplete(session, "USE")
+		if err != nil {
+			return err
 		}
+		return s.sendReadyForQuery(session)
 	}
 
 	// Set database context in SQL engine if session database is different from current
