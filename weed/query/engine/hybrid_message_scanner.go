@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"time"
@@ -59,7 +60,7 @@ func NewHybridMessageScanner(filerClient filer_pb.FilerClient, brokerClient Brok
 		return nil, fmt.Errorf("failed to get topic schema: %v", err)
 	}
 	if recordType == nil {
-		return nil, fmt.Errorf("topic %s.%s has no schema", namespace, topicName)
+		return nil, NoSchemaError{Namespace: namespace, Topic: topicName}
 	}
 
 	// Create a copy of the recordType to avoid modifying the original
@@ -119,6 +120,7 @@ type HybridScanStats struct {
 	BrokerBufferMessages int
 	BufferStartIndex     int64
 	PartitionsScanned    int
+	LiveLogFilesScanned  int // Number of live log files processed
 }
 
 // ParquetColumnStats holds statistics for a single column from parquet metadata
@@ -153,8 +155,7 @@ func (hms *HybridMessageScanner) ScanWithStats(ctx context.Context, options Hybr
 	var results []HybridScanResult
 	stats := &HybridScanStats{}
 
-	// Get all partitions for this topic
-	// RESOLVED TODO: Implement proper partition discovery via MQ broker
+	// Get all partitions for this topic via MQ broker discovery
 	partitions, err := hms.discoverTopicPartitions(ctx)
 	if err != nil {
 		// Fallback to default partition if discovery fails
@@ -423,6 +424,15 @@ func (hms *HybridMessageScanner) scanPartitionHybridWithStats(ctx context.Contex
 	// This uses SeaweedFS MQ's own merged reading logic
 	mergedReadFn := logstore.GenMergedReadFunc(hms.filerClient, hms.topic, partition)
 
+	// Count live log files for statistics
+	liveLogCount, err := hms.countLiveLogFiles(partition)
+	if err != nil {
+		// Don't fail the query, just log warning
+		fmt.Printf("Warning: Failed to count live log files: %v\n", err)
+		liveLogCount = 0
+	}
+	stats.LiveLogFilesScanned = liveLogCount
+
 	// Set up time range for scanning
 	startTime := time.Unix(0, options.StartTimeNs)
 	if options.StartTimeNs == 0 {
@@ -534,6 +544,54 @@ func (hms *HybridMessageScanner) scanPartitionHybridWithStats(ctx context.Contex
 	return results, stats, nil
 }
 
+// countLiveLogFiles counts the number of live log files in a partition for statistics
+func (hms *HybridMessageScanner) countLiveLogFiles(partition topic.Partition) (int, error) {
+	partitionDir := topic.PartitionDir(hms.topic, partition)
+
+	var fileCount int
+	err := hms.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		// List all files in partition directory
+		request := &filer_pb.ListEntriesRequest{
+			Directory:          partitionDir,
+			Prefix:             "",
+			StartFromFileName:  "",
+			InclusiveStartFrom: true,
+			Limit:              10000, // reasonable limit for counting
+		}
+
+		stream, err := client.ListEntries(context.Background(), request)
+		if err != nil {
+			return err
+		}
+
+		for {
+			resp, err := stream.Recv()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				return err
+			}
+
+			// Count files that are not .parquet files (live log files)
+			// Live log files typically have timestamps or are named like log files
+			fileName := resp.Entry.Name
+			if !strings.HasSuffix(fileName, ".parquet") &&
+				!strings.HasSuffix(fileName, ".offset") &&
+				len(resp.Entry.Chunks) > 0 { // Has actual content
+				fileCount++
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return 0, err
+	}
+	return fileCount, nil
+}
+
 // convertLogEntryToRecordValue converts a filer_pb.LogEntry to schema_pb.RecordValue
 // This handles both:
 // 1. Live log entries (raw message format)
@@ -559,8 +617,7 @@ func (hms *HybridMessageScanner) convertLogEntryToRecordValue(logEntry *filer_pb
 		return recordValue, "parquet_archive", nil
 	}
 
-	// If not a RecordValue, this is raw live message data
-	// RESOLVED TODO: Implement proper schema-aware parsing based on topic schema
+	// If not a RecordValue, this is raw live message data - parse with schema
 	return hms.parseRawMessageWithSchema(logEntry)
 }
 

@@ -14,9 +14,10 @@ import (
 // Uses mock clients instead of real service connections
 func NewTestSchemaCatalog() *SchemaCatalog {
 	catalog := &SchemaCatalog{
-		databases:       make(map[string]*DatabaseInfo),
-		currentDatabase: "default",
-		brokerClient:    NewMockBrokerClient(), // Use mock instead of nil
+		databases:             make(map[string]*DatabaseInfo),
+		currentDatabase:       "default",
+		brokerClient:          NewMockBrokerClient(), // Use mock instead of nil
+		defaultPartitionCount: 6,                     // Default partition count for tests
 	}
 
 	// Pre-populate with sample data to avoid service discovery requirements

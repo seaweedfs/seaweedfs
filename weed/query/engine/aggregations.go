@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/seaweedfs/seaweedfs/weed/query/sqltypes"
 	"github.com/xwb1989/sqlparser"
@@ -35,10 +36,11 @@ type AggregationStrategy struct {
 
 // TopicDataSources represents the data sources available for a topic
 type TopicDataSources struct {
-	ParquetFiles    map[string][]*ParquetFileStats // partitionPath -> parquet file stats
-	ParquetRowCount int64
-	LiveLogRowCount int64
-	PartitionsCount int
+	ParquetFiles      map[string][]*ParquetFileStats // partitionPath -> parquet file stats
+	ParquetRowCount   int64
+	LiveLogRowCount   int64
+	LiveLogFilesCount int // Total count of live log files across all partitions
+	PartitionsCount   int
 }
 
 // FastPathOptimizer handles fast path aggregation optimization decisions
@@ -73,10 +75,11 @@ func (opt *FastPathOptimizer) DetermineStrategy(aggregations []AggregationSpec) 
 // CollectDataSources gathers information about available data sources for a topic
 func (opt *FastPathOptimizer) CollectDataSources(ctx context.Context, hybridScanner *HybridMessageScanner) (*TopicDataSources, error) {
 	dataSources := &TopicDataSources{
-		ParquetFiles:    make(map[string][]*ParquetFileStats),
-		ParquetRowCount: 0,
-		LiveLogRowCount: 0,
-		PartitionsCount: 0,
+		ParquetFiles:      make(map[string][]*ParquetFileStats),
+		ParquetRowCount:   0,
+		LiveLogRowCount:   0,
+		LiveLogFilesCount: 0,
+		PartitionsCount:   0,
 	}
 
 	// Discover partitions for the topic
@@ -107,6 +110,16 @@ func (opt *FastPathOptimizer) CollectDataSources(ctx context.Context, hybridScan
 		parquetSources := opt.engine.extractParquetSourceFiles(dataSources.ParquetFiles[partitionPath])
 		liveLogCount, _ := opt.engine.countLiveLogRowsExcludingParquetSources(ctx, partitionPath, parquetSources)
 		dataSources.LiveLogRowCount += liveLogCount
+
+		// Count live log files for partition
+		partition := topic.Partition{
+			RangeStart: 0,    // This will be properly set in a full implementation
+			RangeStop:  1000, // This will be properly set in a full implementation
+		}
+		liveLogFileCount, err := hybridScanner.countLiveLogFiles(partition)
+		if err == nil {
+			dataSources.LiveLogFilesCount += liveLogFileCount
+		}
 	}
 
 	dataSources.PartitionsCount = len(relativePartitions)

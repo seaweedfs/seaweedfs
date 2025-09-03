@@ -371,8 +371,7 @@ func (c *BrokerClient) DeleteTopic(ctx context.Context, namespace, topicName str
 	return fmt.Errorf("topic deletion not yet implemented in broker - need to add DeleteTopic gRPC method")
 }
 
-// ListTopicPartitions discovers the actual partitions for a given topic
-// This resolves TODO: Implement proper partition discovery via MQ broker
+// ListTopicPartitions discovers the actual partitions for a given topic via MQ broker
 func (c *BrokerClient) ListTopicPartitions(ctx context.Context, namespace, topicName string) ([]topic.Partition, error) {
 	if err := c.findBrokerBalancer(); err != nil {
 		// Fallback to default partition when broker unavailable

@@ -45,6 +45,10 @@ type SchemaCatalog struct {
 
 	// brokerClient handles communication with MQ broker
 	brokerClient BrokerClientInterface // Use interface for dependency injection
+
+	// defaultPartitionCount is the default number of partitions for new topics
+	// Can be overridden in CREATE TABLE statements with PARTITION COUNT option
+	defaultPartitionCount int32
 }
 
 // DatabaseInfo represents a SQL database (MQ namespace)
@@ -77,8 +81,9 @@ type ColumnInfo struct {
 // Uses master address for service discovery of filers and brokers
 func NewSchemaCatalog(masterAddress string) *SchemaCatalog {
 	return &SchemaCatalog{
-		databases:    make(map[string]*DatabaseInfo),
-		brokerClient: NewBrokerClient(masterAddress),
+		databases:             make(map[string]*DatabaseInfo),
+		brokerClient:          NewBrokerClient(masterAddress),
+		defaultPartitionCount: 6, // Default partition count, can be made configurable via environment variable
 	}
 }
 
@@ -262,6 +267,20 @@ func (c *SchemaCatalog) GetCurrentDatabase() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.currentDatabase
+}
+
+// SetDefaultPartitionCount sets the default number of partitions for new topics
+func (c *SchemaCatalog) SetDefaultPartitionCount(count int32) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.defaultPartitionCount = count
+}
+
+// GetDefaultPartitionCount returns the default number of partitions for new topics
+func (c *SchemaCatalog) GetDefaultPartitionCount() int32 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.defaultPartitionCount
 }
 
 // initSampleData populates the catalog with sample schema data for testing

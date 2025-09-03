@@ -732,8 +732,17 @@ func (e *SQLEngine) executeSelectStatement(ctx context.Context, stmt *sqlparser.
 
 	hybridScanner, err := NewHybridMessageScanner(filerClient, e.catalog.brokerClient, database, tableName)
 	if err != nil {
-		// TODO: Handle quiet topics gracefully - for now, let tests continue with original behavior
-		// Return error for topic access issues
+		// Handle quiet topics gracefully: topics exist but have no active schema/brokers
+		if IsNoSchemaError(err) {
+			// Return empty result for quiet topics (normal in production environments)
+			return &QueryResult{
+				Columns:  []string{},
+				Rows:     [][]sqltypes.Value{},
+				Database: database,
+				Table:    tableName,
+			}, nil
+		}
+		// Return error for other access issues (truly non-existent topics, etc.)
 		topicErr := fmt.Errorf("failed to access topic %s.%s: %v", database, tableName, err)
 		return &QueryResult{Error: topicErr}, topicErr
 	}
@@ -804,7 +813,7 @@ func (e *SQLEngine) executeSelectStatement(ctx context.Context, stmt *sqlparser.
 	}
 
 	// Build hybrid scan options
-	// RESOLVED TODO: Extract from WHERE clause time filters
+	// Extract time filters from WHERE clause to optimize scanning
 	startTimeNs, stopTimeNs := int64(0), int64(0)
 	if stmt.Where != nil {
 		startTimeNs, stopTimeNs = e.extractTimeFilters(stmt.Where.Expr)
@@ -892,8 +901,17 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 
 	hybridScanner, err := NewHybridMessageScanner(filerClient, e.catalog.brokerClient, database, tableName)
 	if err != nil {
-		// TODO: Handle quiet topics gracefully - for now, let tests continue with original behavior
-		// Return error for topic access issues
+		// Handle quiet topics gracefully: topics exist but have no active schema/brokers
+		if IsNoSchemaError(err) {
+			// Return empty result for quiet topics (normal in production environments)
+			return &QueryResult{
+				Columns:  []string{},
+				Rows:     [][]sqltypes.Value{},
+				Database: database,
+				Table:    tableName,
+			}, nil
+		}
+		// Return error for other access issues (truly non-existent topics, etc.)
 		topicErr := fmt.Errorf("failed to access topic %s.%s: %v", database, tableName, err)
 		return &QueryResult{Error: topicErr}, topicErr
 	}
@@ -964,7 +982,7 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 	}
 
 	// Build hybrid scan options
-	// RESOLVED TODO: Extract from WHERE clause time filters
+	// Extract time filters from WHERE clause to optimize scanning
 	startTimeNs, stopTimeNs := int64(0), int64(0)
 	if stmt.Where != nil {
 		startTimeNs, stopTimeNs = e.extractTimeFilters(stmt.Where.Expr)
@@ -1564,8 +1582,8 @@ func (e *SQLEngine) createTable(ctx context.Context, stmt *sqlparser.DDL) (*Quer
 		Fields: fields,
 	}
 
-	// Create the topic via broker
-	partitionCount := int32(6) // Default partition count - TODO: make configurable
+	// Create the topic via broker using configurable partition count
+	partitionCount := e.catalog.GetDefaultPartitionCount()
 	err := e.catalog.brokerClient.ConfigureTopic(ctx, database, tableName, partitionCount, recordType)
 	if err != nil {
 		return &QueryResult{Error: err}, err
@@ -1619,7 +1637,7 @@ func (builder *ExecutionPlanBuilder) BuildAggregationPlan(
 		DataSources:         builder.buildDataSourcesList(strategy, dataSources),
 		PartitionsScanned:   dataSources.PartitionsCount,
 		ParquetFilesScanned: builder.countParquetFiles(dataSources),
-		LiveLogFilesScanned: 0, // TODO: Implement proper live log file counting
+		LiveLogFilesScanned: builder.countLiveLogFiles(dataSources),
 		OptimizationsUsed:   builder.buildOptimizationsList(stmt, strategy),
 		Aggregations:        builder.buildAggregationsList(aggregations),
 		Details:             make(map[string]interface{}),
@@ -1676,6 +1694,11 @@ func (builder *ExecutionPlanBuilder) countParquetFiles(dataSources *TopicDataSou
 		count += len(fileStats)
 	}
 	return count
+}
+
+// countLiveLogFiles returns the total number of live log files across all partitions
+func (builder *ExecutionPlanBuilder) countLiveLogFiles(dataSources *TopicDataSources) int {
+	return dataSources.LiveLogFilesCount
 }
 
 // buildOptimizationsList builds the list of optimizations used

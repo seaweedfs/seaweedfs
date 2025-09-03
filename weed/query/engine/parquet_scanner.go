@@ -18,8 +18,8 @@ import (
 
 // System columns added to all MQ records
 const (
-	SW_COLUMN_NAME_TS  = "_ts_ns"  // Timestamp in nanoseconds  
-	SW_COLUMN_NAME_KEY = "_key"    // Message key
+	SW_COLUMN_NAME_TS  = "_ts_ns" // Timestamp in nanoseconds
+	SW_COLUMN_NAME_KEY = "_key"   // Message key
 )
 
 // ParquetScanner scans MQ topic Parquet files for SELECT queries
@@ -63,7 +63,7 @@ func NewParquetScanner(filerClient filer_pb.FilerClient, namespace, topicName st
 	// Build complete schema with system columns
 	recordType := topicConf.GetRecordType()
 	if recordType == nil {
-		return nil, fmt.Errorf("topic %s.%s has no schema", namespace, topicName)
+		return nil, NoSchemaError{Namespace: namespace, Topic: topicName}
 	}
 
 	// Add system columns that MQ adds to all records

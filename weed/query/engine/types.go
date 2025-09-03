@@ -1,6 +1,9 @@
 package engine
 
 import (
+	"errors"
+	"fmt"
+
 	"github.com/seaweedfs/seaweedfs/weed/query/sqltypes"
 )
 
@@ -34,4 +37,21 @@ type QueryResult struct {
 	// Schema information for type inference (optional)
 	Database string `json:"database,omitempty"`
 	Table    string `json:"table,omitempty"`
+}
+
+// NoSchemaError indicates that a topic exists but has no schema defined
+// This is a normal condition for quiet topics that haven't received messages yet
+type NoSchemaError struct {
+	Namespace string
+	Topic     string
+}
+
+func (e NoSchemaError) Error() string {
+	return fmt.Sprintf("topic %s.%s has no schema", e.Namespace, e.Topic)
+}
+
+// IsNoSchemaError checks if an error is a NoSchemaError
+func IsNoSchemaError(err error) bool {
+	var noSchemaErr NoSchemaError
+	return errors.As(err, &noSchemaErr)
 }
