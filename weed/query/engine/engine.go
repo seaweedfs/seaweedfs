@@ -324,7 +324,7 @@ func convertExpressionNode(node *pg_query.Node) ExprNode {
 	if aExpr := node.GetAExpr(); aExpr != nil {
 		left := convertExpressionNode(aExpr.GetLexpr())
 		right := convertExpressionNode(aExpr.GetRexpr())
-		
+
 		// Convert operator name
 		operator := ""
 		if len(aExpr.GetName()) > 0 {
@@ -346,7 +346,7 @@ func convertExpressionNode(node *pg_query.Node) ExprNode {
 				operator = opName
 			}
 		}
-		
+
 		return &ComparisonExpr{
 			Left:     left,
 			Right:    right,
@@ -360,7 +360,7 @@ func convertExpressionNode(node *pg_query.Node) ExprNode {
 		if len(args) >= 2 {
 			left := convertExpressionNode(args[0])
 			right := convertExpressionNode(args[1])
-			
+
 			switch boolExpr.GetBoolop() {
 			case pg_query.BoolExprType_AND_EXPR:
 				return &AndExpr{
