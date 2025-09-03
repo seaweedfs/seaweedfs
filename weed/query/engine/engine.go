@@ -255,13 +255,13 @@ func parseSelectStatement(sql string) (*SelectStatement, error) {
 	}
 
 	sqlUpper := strings.ToUpper(sql)
-	
+
 	// Find SELECT clause
 	selectIdx := strings.Index(sqlUpper, "SELECT")
 	if selectIdx == -1 {
 		return nil, fmt.Errorf("SELECT keyword not found")
 	}
-	
+
 	// Find FROM clause
 	fromIdx := strings.Index(sqlUpper, "FROM")
 	var selectClause string
@@ -270,7 +270,7 @@ func parseSelectStatement(sql string) (*SelectStatement, error) {
 	} else {
 		selectClause = sql[selectIdx+6:] // No FROM clause
 	}
-	
+
 	// Parse SELECT expressions
 	selectClause = strings.TrimSpace(selectClause)
 	if selectClause == "*" {
@@ -302,7 +302,7 @@ func parseSelectStatement(sql string) (*SelectStatement, error) {
 	// Parse FROM clause
 	if fromIdx != -1 {
 		remaining := sql[fromIdx+4:] // Skip "FROM"
-		
+
 		// Find WHERE clause
 		whereIdx := strings.Index(strings.ToUpper(remaining), "WHERE")
 		var fromClause string
@@ -317,7 +317,7 @@ func parseSelectStatement(sql string) (*SelectStatement, error) {
 				fromClause = remaining
 			}
 		}
-		
+
 		fromClause = strings.TrimSpace(fromClause)
 		tableName := TableName{
 			Name:      stringValue(fromClause),
@@ -328,13 +328,13 @@ func parseSelectStatement(sql string) (*SelectStatement, error) {
 		// Parse WHERE clause
 		if whereIdx != -1 {
 			whereClause := remaining[whereIdx+5:] // Skip "WHERE"
-			
+
 			// Find LIMIT clause
 			limitIdx := strings.Index(strings.ToUpper(whereClause), "LIMIT")
 			if limitIdx != -1 {
 				whereClause = whereClause[:limitIdx]
 			}
-			
+
 			whereClause = strings.TrimSpace(whereClause)
 			if whereClause != "" {
 				whereExpr, err := parseSimpleWhereExpression(whereClause)
@@ -344,13 +344,13 @@ func parseSelectStatement(sql string) (*SelectStatement, error) {
 				s.Where = &WhereClause{Expr: whereExpr}
 			}
 		}
-		
+
 		// Parse LIMIT clause
 		limitIdx := strings.Index(strings.ToUpper(remaining), "LIMIT")
 		if limitIdx != -1 {
 			limitClause := remaining[limitIdx+5:] // Skip "LIMIT"
 			limitClause = strings.TrimSpace(limitClause)
-			
+
 			if _, err := strconv.Atoi(limitClause); err == nil {
 				s.Limit = &LimitClause{
 					Rowcount: &SQLVal{
@@ -377,7 +377,7 @@ func extractFunctionName(expr string) string {
 // parseSimpleWhereExpression parses a simple WHERE expression
 func parseSimpleWhereExpression(whereClause string) (ExprNode, error) {
 	whereClause = strings.TrimSpace(whereClause)
-	
+
 	// Handle AND/OR expressions first (higher precedence)
 	if strings.Contains(strings.ToUpper(whereClause), " AND ") {
 		// Use original case for parsing but ToUpper for detection
@@ -397,7 +397,7 @@ func parseSimpleWhereExpression(whereClause string) (ExprNode, error) {
 			return &AndExpr{Left: left, Right: right}, nil
 		}
 	}
-	
+
 	if strings.Contains(strings.ToUpper(whereClause), " OR ") {
 		// Use original case for parsing but ToUpper for detection
 		originalParts := strings.SplitN(whereClause, " OR ", 2)
@@ -416,18 +416,18 @@ func parseSimpleWhereExpression(whereClause string) (ExprNode, error) {
 			return &OrExpr{Left: left, Right: right}, nil
 		}
 	}
-	
+
 	// Handle simple comparison operations
 	operators := []string{">=", "<=", "!=", "<>", "=", ">", "<"}
-	
+
 	for _, op := range operators {
 		if idx := strings.Index(whereClause, op); idx != -1 {
 			left := strings.TrimSpace(whereClause[:idx])
 			right := strings.TrimSpace(whereClause[idx+len(op):])
-			
+
 			// Parse left side (should be a column name)
 			leftExpr := &ColName{Name: stringValue(left)}
-			
+
 			// Parse right side (should be a value)
 			var rightExpr ExprNode
 			if strings.HasPrefix(right, "'") && strings.HasSuffix(right, "'") {
@@ -452,7 +452,7 @@ func parseSimpleWhereExpression(whereClause string) (ExprNode, error) {
 				// Assume it's a column name
 				rightExpr = &ColName{Name: stringValue(right)}
 			}
-			
+
 			// Convert operator to internal representation
 			var operator string
 			switch op {
@@ -471,7 +471,7 @@ func parseSimpleWhereExpression(whereClause string) (ExprNode, error) {
 			default:
 				operator = op
 			}
-			
+
 			return &ComparisonExpr{
 				Left:     leftExpr,
 				Right:    rightExpr,
@@ -479,7 +479,7 @@ func parseSimpleWhereExpression(whereClause string) (ExprNode, error) {
 			}, nil
 		}
 	}
-	
+
 	return nil, fmt.Errorf("unsupported WHERE expression: %s", whereClause)
 }
 
