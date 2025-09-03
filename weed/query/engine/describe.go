@@ -9,7 +9,7 @@ import (
 )
 
 // executeDescribeStatement handles DESCRIBE table commands
-// Assumption: DESCRIBE shows table schema in MySQL-compatible format
+// Shows table schema in PostgreSQL-compatible format
 func (e *SQLEngine) executeDescribeStatement(ctx context.Context, tableName string, database string) (*QueryResult, error) {
 	if database == "" {
 		database = e.catalog.GetCurrentDatabase()

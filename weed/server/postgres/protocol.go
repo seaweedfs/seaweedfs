@@ -252,12 +252,8 @@ func (s *PostgreSQLServer) handleSimpleQuery(session *PostgreSQLSession, query s
 				}
 			}()
 
-			// Use PostgreSQL parser if available, fall back to standard engine
-			if s.sqlEngineWithParser != nil {
-				result, err = s.sqlEngineWithParser.ExecuteSQL(ctx, cleanQuery)
-			} else {
-				result, err = s.sqlEngine.ExecuteSQL(ctx, cleanQuery)
-			}
+			// The sqlEngineWithParser is always initialized, so use it directly
+			result, err = s.sqlEngineWithParser.ExecuteSQL(ctx, cleanQuery)
 		}()
 
 		if err != nil {

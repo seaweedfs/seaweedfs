@@ -238,7 +238,7 @@ func ParseSQL(sql string) (Statement, error) {
 			partsOriginal := strings.Fields(sql) // Use original casing
 			for i, part := range partsUpper {
 				if part == "FROM" && i+1 < len(partsOriginal) {
-					// Remove quotes if present (PostgreSQL uses double quotes, MySQL uses backticks)
+					// Remove quotes if present (PostgreSQL uses double quotes)
 					dbName := strings.Trim(partsOriginal[i+1], "\"'`")
 					stmt.Schema = dbName                    // Set the Schema field for the test
 					stmt.OnTable.Name = stringValue(dbName) // Keep for compatibility

@@ -218,7 +218,7 @@ func (c *SchemaCatalog) convertMQSchemaToTableInfo(namespace, topicName string, 
 }
 
 // convertMQFieldTypeToSQL maps MQ field types to SQL types
-// Assumption: Standard SQL type mappings with MySQL compatibility
+// Uses standard SQL type mappings with PostgreSQL compatibility
 func (c *SchemaCatalog) convertMQFieldTypeToSQL(fieldType *schema_pb.Type) (string, error) {
 	switch t := fieldType.Kind.(type) {
 	case *schema_pb.Type_ScalarType:

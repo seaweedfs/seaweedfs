@@ -7,85 +7,32 @@ import (
 	"time"
 )
 
-// SQLParserConfig controls which SQL parser to use
+// SQLParserConfig controls SQL parsing behavior (PostgreSQL syntax only)
 type SQLParserConfig struct {
-	UsePostgreSQLParser   bool // If true, use pg_query_go; if false, use mysql-dialect parser
-	EnableDialectWarnings bool // If true, log warnings about dialect mismatches
+	// Currently only PostgreSQL syntax is supported
+	// This struct is kept for future extensibility
 }
 
-// DefaultSQLParserConfig returns the default configuration (MySQL parser for now)
-func DefaultSQLParserConfig() *SQLParserConfig {
-	return &SQLParserConfig{
-		UsePostgreSQLParser:   false, // Keep MySQL parser as default for stability
-		EnableDialectWarnings: true,  // Enable warnings about dialect issues
-	}
-}
-
-// PostgreSQLSQLParserConfig returns configuration for PostgreSQL parser
+// PostgreSQLSQLParserConfig returns the default configuration (PostgreSQL only)
 func PostgreSQLSQLParserConfig() *SQLParserConfig {
-	return &SQLParserConfig{
-		UsePostgreSQLParser:   true,
-		EnableDialectWarnings: false, // No warnings needed when using correct parser
-	}
+	return &SQLParserConfig{}
 }
 
-// ParseSQL is a unified interface that can use either parser based on configuration
+// ParseSQL parses SQL using PostgreSQL syntax
 func (config *SQLParserConfig) ParseSQL(sql string) (Statement, error) {
-	if config.UsePostgreSQLParser {
-		return config.parseWithPostgreSQL(sql)
-	}
-	return config.parseWithMySQL(sql)
-}
-
-// parseWithMySQL uses the PostgreSQL parser (fallback for backward compatibility)
-func (config *SQLParserConfig) parseWithMySQL(sql string) (Statement, error) {
-	if config.EnableDialectWarnings {
-		config.checkForPostgreSQLDialectFeatures(sql)
-	}
-
-	// Since we've removed the MySQL parser, use the PostgreSQL parser instead
-	// This maintains backward compatibility while using the better parser
-	return config.parseWithPostgreSQL(sql)
-}
-
-// parseWithPostgreSQL uses the new PostgreSQL parser
-func (config *SQLParserConfig) parseWithPostgreSQL(sql string) (Statement, error) {
-	// Use the PostgreSQL parser from engine.go
 	return ParseSQL(sql)
 }
 
-// checkForPostgreSQLDialectFeatures logs warnings for PostgreSQL-specific syntax
-func (config *SQLParserConfig) checkForPostgreSQLDialectFeatures(sql string) {
-	sqlUpper := strings.ToUpper(sql)
-
-	// Check for PostgreSQL-specific features
-	if strings.Contains(sql, "\"") && !strings.Contains(sql, "'") {
-		fmt.Printf("WARNING: Detected double-quoted identifiers (\") - PostgreSQL uses these, MySQL uses backticks (`)\n")
-	}
-
-	if strings.Contains(sqlUpper, "||") && !strings.Contains(sqlUpper, "CONCAT") {
-		fmt.Printf("WARNING: Detected || string concatenation - PostgreSQL syntax, MySQL uses CONCAT()\n")
-	}
-
-	if strings.Contains(sqlUpper, "PG_") || strings.Contains(sqlUpper, "INFORMATION_SCHEMA") {
-		fmt.Printf("WARNING: Detected PostgreSQL system functions/catalogs - may not work with MySQL parser\n")
-	}
-
-	if strings.Contains(sqlUpper, "LIMIT") && strings.Contains(sqlUpper, "OFFSET") {
-		fmt.Printf("WARNING: LIMIT/OFFSET syntax may differ between PostgreSQL and MySQL\n")
-	}
-}
-
-// SQLEngineWithParser extends SQLEngine with configurable parser
+// SQLEngineWithParser extends SQLEngine with PostgreSQL parser
 type SQLEngineWithParser struct {
 	*SQLEngine
 	ParserConfig *SQLParserConfig
 }
 
-// NewSQLEngineWithParser creates a new SQLEngine with parser configuration
+// NewSQLEngineWithParser creates a new SQLEngine with PostgreSQL parser
 func NewSQLEngineWithParser(masterAddr string, config *SQLParserConfig) *SQLEngineWithParser {
 	if config == nil {
-		config = DefaultSQLParserConfig()
+		config = PostgreSQLSQLParserConfig()
 	}
 
 	return &SQLEngineWithParser{
@@ -94,7 +41,7 @@ func NewSQLEngineWithParser(masterAddr string, config *SQLParserConfig) *SQLEngi
 	}
 }
 
-// ExecuteSQL overrides the base ExecuteSQL to use the configured parser
+// ExecuteSQL overrides the base ExecuteSQL to use PostgreSQL parser
 func (e *SQLEngineWithParser) ExecuteSQL(ctx context.Context, sql string) (*QueryResult, error) {
 	// Clean up the SQL
 	sql = strings.TrimSpace(sql)
@@ -119,7 +66,7 @@ func (e *SQLEngineWithParser) ExecuteSQL(ctx context.Context, sql string) (*Quer
 		return e.handleDescribeCommand(ctx, sqlTrimmed)
 	}
 
-	// Parse the SQL statement using the configured parser
+	// Parse the SQL statement using PostgreSQL parser
 	stmt, err := e.ParserConfig.ParseSQL(sql)
 	if err != nil {
 		return &QueryResult{

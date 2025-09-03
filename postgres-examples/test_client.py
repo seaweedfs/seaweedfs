@@ -174,10 +174,10 @@ def test_data_queries(host, port, user, database, password=None):
         print(f"  📋 Testing with table: {table_name}")
         
         test_queries = [
-            (f"Count records in {table_name}", f"SELECT COUNT(*) FROM `{table_name}`"),
-            (f"Sample data from {table_name}", f"SELECT * FROM `{table_name}` LIMIT 3"),
-            (f"System columns from {table_name}", f"SELECT _timestamp_ns, _key, _source FROM `{table_name}` LIMIT 3"),
-            (f"Describe {table_name}", f"DESCRIBE `{table_name}`"),
+            (f"Count records in {table_name}", f"SELECT COUNT(*) FROM \"{table_name}\""),
+            (f"Sample data from {table_name}", f"SELECT * FROM \"{table_name}\" LIMIT 3"),
+            (f"System columns from {table_name}", f"SELECT _timestamp_ns, _key, _source FROM \"{table_name}\" LIMIT 3"),
+            (f"Describe {table_name}", f"DESCRIBE \"{table_name}\""),
         ]
         
         for name, query in test_queries:
