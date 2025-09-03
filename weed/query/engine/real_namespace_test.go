@@ -37,8 +37,8 @@ func TestRealNamespaceDiscovery(t *testing.T) {
 func TestRealTopicDiscovery(t *testing.T) {
 	engine := NewSQLEngine("localhost:8888")
 
-	// Test SHOW TABLES with real topic discovery (use backticks for reserved keyword)
-	result, err := engine.ExecuteSQL(context.Background(), "SHOW TABLES FROM `default`")
+	// Test SHOW TABLES with real topic discovery (use double quotes for PostgreSQL)
+	result, err := engine.ExecuteSQL(context.Background(), "SHOW TABLES FROM \"default\"")
 	if err != nil {
 		t.Fatalf("SHOW TABLES failed: %v", err)
 	}
