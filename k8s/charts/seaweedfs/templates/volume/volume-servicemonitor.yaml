@@ -21,9 +21,9 @@ metadata:
     {{- with $.Values.global.monitoring.additionalLabels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
-{{- if $volume.annotations }}
+{{- with $volume.annotations }}
   annotations:
-    {{- toYaml $volume.annotations | nindent 4 }}
+    {{- toYaml . | nindent 4 }}
 {{- end }}
 spec:
   endpoints:
