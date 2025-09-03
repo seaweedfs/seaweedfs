@@ -186,6 +186,7 @@ func (v ValTuple) isExprNode() {}
 const (
 	IntVal = iota
 	StrVal
+	FloatVal
 )
 
 // Operator constants
@@ -319,9 +320,64 @@ func convertExpressionNode(node *pg_query.Node) ExprNode {
 		return nil
 	}
 
-	// Handle different expression types
+	// Handle A_Expr nodes (comparison operations: >, <, =, etc.)
+	if aExpr := node.GetAExpr(); aExpr != nil {
+		left := convertExpressionNode(aExpr.GetLexpr())
+		right := convertExpressionNode(aExpr.GetRexpr())
+		
+		// Convert operator name
+		operator := ""
+		if len(aExpr.GetName()) > 0 {
+			opName := aExpr.GetName()[0].GetString_().GetSval()
+			switch opName {
+			case ">":
+				operator = GreaterThanStr
+			case "<":
+				operator = LessThanStr
+			case ">=":
+				operator = GreaterEqualStr
+			case "<=":
+				operator = LessEqualStr
+			case "=":
+				operator = EqualStr
+			case "<>", "!=":
+				operator = NotEqualStr
+			default:
+				operator = opName
+			}
+		}
+		
+		return &ComparisonExpr{
+			Left:     left,
+			Right:    right,
+			Operator: operator,
+		}
+	}
+
+	// Handle BoolExpr nodes (AND, OR operations)
+	if boolExpr := node.GetBoolExpr(); boolExpr != nil {
+		args := boolExpr.GetArgs()
+		if len(args) >= 2 {
+			left := convertExpressionNode(args[0])
+			right := convertExpressionNode(args[1])
+			
+			switch boolExpr.GetBoolop() {
+			case pg_query.BoolExprType_AND_EXPR:
+				return &AndExpr{
+					Left:  left,
+					Right: right,
+				}
+			case pg_query.BoolExprType_OR_EXPR:
+				return &OrExpr{
+					Left:  left,
+					Right: right,
+				}
+			}
+		}
+	}
+
+	// Handle constants
 	if aConst := node.GetAConst(); aConst != nil {
-		// Handle constants (numbers, strings)
 		if aConst.GetIval() != nil {
 			return &SQLVal{
 				Type: IntVal,
@@ -334,21 +390,30 @@ func convertExpressionNode(node *pg_query.Node) ExprNode {
 				Val:  []byte(aConst.GetSval().GetSval()),
 			}
 		}
-	}
-
-	if columnRef := node.GetColumnRef(); columnRef != nil {
-		// Handle column references
-		return &ColName{
-			Name: stringValue("column"), // Simplified - would need more complex parsing
+		if aConst.GetFval() != nil {
+			return &SQLVal{
+				Type: FloatVal,
+				Val:  []byte(aConst.GetFval().GetFval()),
+			}
 		}
 	}
 
-	// For now, return a simple placeholder for other expression types
-	// In a full implementation, we'd handle all PostgreSQL expression types
-	return &SQLVal{
-		Type: StrVal,
-		Val:  []byte(""),
+	// Handle column references
+	if columnRef := node.GetColumnRef(); columnRef != nil {
+		fields := columnRef.GetFields()
+		if len(fields) > 0 {
+			// Extract column name from the first field
+			if stringNode := fields[0].GetString_(); stringNode != nil {
+				return &ColName{
+					Name: stringValue(stringNode.GetSval()),
+				}
+			}
+		}
 	}
+
+	// Return nil for unsupported expression types instead of a placeholder
+	// This will help identify what still needs to be implemented
+	return nil
 }
 
 func parseCreateTableFromSQL(sql string) (*DDLStatement, error) {
@@ -1713,6 +1778,12 @@ func (e *SQLEngine) extractComparisonValue(expr ExprNode) (interface{}, error) {
 			return intVal, nil
 		case StrVal:
 			return string(val.Val), nil
+		case FloatVal:
+			floatVal, err := strconv.ParseFloat(string(val.Val), 64)
+			if err != nil {
+				return nil, err
+			}
+			return floatVal, nil
 		default:
 			return nil, fmt.Errorf("unsupported SQL value type: %v", val.Type)
 		}
@@ -1731,6 +1802,12 @@ func (e *SQLEngine) extractComparisonValue(expr ExprNode) (interface{}, error) {
 					inValues = append(inValues, intVal)
 				case StrVal:
 					inValues = append(inValues, string(v.Val))
+				case FloatVal:
+					floatVal, err := strconv.ParseFloat(string(v.Val), 64)
+					if err != nil {
+						return nil, err
+					}
+					inValues = append(inValues, floatVal)
 				}
 			}
 		}
