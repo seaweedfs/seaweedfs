@@ -411,16 +411,18 @@ func (e *SQLEngine) formatOptimization(opt string) string {
 	}
 }
 
-// executeDDLStatement handles CREATE, ALTER, DROP operations
-// Assumption: These operations modify the underlying MQ topic structure
+// executeDDLStatement handles CREATE operations only
+// Note: ALTER TABLE and DROP TABLE are not supported to protect topic data
 func (e *SQLEngine) executeDDLStatement(ctx context.Context, stmt *sqlparser.DDL) (*QueryResult, error) {
 	switch stmt.Action {
 	case sqlparser.CreateStr:
 		return e.createTable(ctx, stmt)
 	case sqlparser.AlterStr:
-		return e.alterTable(ctx, stmt)
+		err := fmt.Errorf("ALTER TABLE is not supported")
+		return &QueryResult{Error: err}, err
 	case sqlparser.DropStr:
-		return e.dropTable(ctx, stmt)
+		err := fmt.Errorf("DROP TABLE is not supported")
+		return &QueryResult{Error: err}, err
 	default:
 		err := fmt.Errorf("unsupported DDL action: %s", stmt.Action)
 		return &QueryResult{Error: err}, err
@@ -1393,50 +1395,6 @@ func (e *SQLEngine) createTable(ctx context.Context, stmt *sqlparser.DDL) (*Quer
 		Columns: []string{"Result"},
 		Rows: [][]sqltypes.Value{
 			{sqltypes.NewVarChar(fmt.Sprintf("Table '%s.%s' created successfully", database, tableName))},
-		},
-	}
-
-	return result, nil
-}
-
-func (e *SQLEngine) alterTable(ctx context.Context, stmt *sqlparser.DDL) (*QueryResult, error) {
-	// TODO: Implement table alteration
-	// This will modify the MQ topic schema with versioning
-	err := fmt.Errorf("ALTER TABLE not yet implemented")
-	return &QueryResult{Error: err}, err
-}
-
-func (e *SQLEngine) dropTable(ctx context.Context, stmt *sqlparser.DDL) (*QueryResult, error) {
-	// Parse DROP TABLE statement
-	// Assumption: Table name is in stmt.NewName for DROP operations
-	tableName := stmt.NewName.Name.String()
-	database := ""
-
-	// Check if database is specified in table name
-	if stmt.NewName.Qualifier.String() != "" {
-		database = stmt.NewName.Qualifier.String()
-	} else {
-		// Use current database context or default
-		database = e.catalog.GetCurrentDatabase()
-		if database == "" {
-			database = "default"
-		}
-	}
-
-	// Delete the topic via broker
-	err := e.catalog.brokerClient.DeleteTopic(ctx, database, tableName)
-	if err != nil {
-		return &QueryResult{Error: err}, err
-	}
-
-	// Remove from catalog cache
-	// TODO: Implement catalog cache removal
-
-	// Return success result
-	result := &QueryResult{
-		Columns: []string{"Result"},
-		Rows: [][]sqltypes.Value{
-			{sqltypes.NewVarChar(fmt.Sprintf("Table '%s.%s' dropped successfully", database, tableName))},
 		},
 	}
 

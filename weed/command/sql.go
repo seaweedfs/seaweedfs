@@ -552,7 +552,7 @@ QUERY ANALYSIS:
 
 DDL OPERATIONS:
   CREATE TABLE topic (field1 INT, field2 STRING); - Create topic
-  DROP TABLE table_name;                           - Delete topic
+  Note: ALTER TABLE and DROP TABLE are not supported
 
 SPECIAL COMMANDS:
   USE database_name;           - Switch database context
