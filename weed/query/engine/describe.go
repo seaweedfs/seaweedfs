@@ -89,22 +89,57 @@ func (e *SQLEngine) executeShowStatementWithDescribe(ctx context.Context, stmt *
 	case "TABLES":
 		// Parse FROM clause for database specification, or use current database context
 		database := ""
-		if stmt.OnTable.Name.String() != "" {
-			// SHOW TABLES FROM database_name
-			database = stmt.OnTable.Name.String()
+		// Check if there's a database specified in SHOW TABLES FROM database
+		if stmt.Schema != "" {
+			// Use schema field if set by parser
+			database = stmt.Schema
 		} else {
+			// Try to get from OnTable.Name safely with recovery
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						// If we panic, just use current database
+						database = e.catalog.GetCurrentDatabase()
+					}
+				}()
+				if stmt.OnTable.Name != nil {
+					if nameStr := stmt.OnTable.Name.String(); nameStr != "" {
+						database = nameStr
+					} else {
+						database = e.catalog.GetCurrentDatabase()
+					}
+				} else {
+					database = e.catalog.GetCurrentDatabase()
+				}
+			}()
+		}
+		if database == "" {
 			// Use current database context
 			database = e.catalog.GetCurrentDatabase()
 		}
 		return e.showTables(ctx, database)
 	case "COLUMNS":
 		// SHOW COLUMNS FROM table is equivalent to DESCRIBE
-		if stmt.OnTable.Name.String() != "" {
-			tableName := stmt.OnTable.Name.String()
-			database := ""
-			if stmt.OnTable.Qualifier.String() != "" {
-				database = stmt.OnTable.Qualifier.String()
+		var tableName, database string
+
+		// Safely extract table name and database
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					// If we panic, use empty values which will cause fallthrough
+					tableName = ""
+					database = ""
+				}
+			}()
+			if stmt.OnTable.Name != nil {
+				tableName = stmt.OnTable.Name.String()
+				if stmt.OnTable.Qualifier != nil {
+					database = stmt.OnTable.Qualifier.String()
+				}
 			}
+		}()
+
+		if tableName != "" {
 			return e.executeDescribeStatement(ctx, tableName, database)
 		}
 		fallthrough

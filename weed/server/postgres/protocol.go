@@ -199,6 +199,7 @@ func (s *PostgreSQLServer) handleSimpleQuery(session *PostgreSQLSession, query s
 		if err != nil {
 			return err
 		}
+		// Send ReadyForQuery and exit (don't continue processing)
 		return s.sendReadyForQuery(session)
 	}
 
