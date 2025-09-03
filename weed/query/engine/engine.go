@@ -71,10 +71,11 @@ type TypeRef struct {
 func (d *DDLStatement) isStatement() {}
 
 type SelectStatement struct {
-	SelectExprs []SelectExpr
-	From        []TableExpr
-	Where       *WhereClause
-	Limit       *LimitClause
+	SelectExprs   []SelectExpr
+	From          []TableExpr
+	Where         *WhereClause
+	Limit         *LimitClause
+	WindowFunctions []*WindowFunction
 }
 
 type WhereClause struct {
@@ -86,6 +87,24 @@ type LimitClause struct {
 }
 
 func (s *SelectStatement) isStatement() {}
+
+// Window function types for time-series analytics
+type WindowSpec struct {
+	PartitionBy []ExprNode
+	OrderBy     []*OrderByClause
+}
+
+type WindowFunction struct {
+	Function string     // ROW_NUMBER, RANK, LAG, LEAD
+	Args     []ExprNode // Function arguments
+	Over     *WindowSpec
+	Alias    string     // Column alias for the result
+}
+
+type OrderByClause struct {
+	Column string
+	Order  string // ASC or DESC
+}
 
 type SelectExpr interface {
 	isSelectExpr()
@@ -2004,13 +2023,13 @@ func (e *SQLEngine) decimalToString(decimalValue *schema_pb.DecimalValue) string
 	if decimalValue == nil || decimalValue.Value == nil {
 		return "0"
 	}
-	
+
 	// Convert bytes back to big.Int
 	intValue := new(big.Int).SetBytes(decimalValue.Value)
-	
+
 	// Convert to string with proper decimal placement
 	str := intValue.String()
-	
+
 	// Handle decimal placement based on scale
 	scale := int(decimalValue.Scale)
 	if scale > 0 && len(str) > scale {
@@ -2018,7 +2037,7 @@ func (e *SQLEngine) decimalToString(decimalValue *schema_pb.DecimalValue) string
 		decimalPos := len(str) - scale
 		return str[:decimalPos] + "." + str[decimalPos:]
 	}
-	
+
 	return str
 }
 
