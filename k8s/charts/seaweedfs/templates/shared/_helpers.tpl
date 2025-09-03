@@ -96,7 +96,7 @@ Inject extra environment vars in the format key:value, if populated
 {{/* Computes the container image name for all components (if they are not overridden) */}}
 {{- define "common.image" -}}
 {{- $registryName := default .Values.image.registry .Values.global.registry | toString -}}
-{{- $repositoryName := .Values.image.repository | toString -}}
+{{- $repositoryName := default .Values.image.repository .Values.global.repository | toString -}}
 {{- $name := .Values.global.imageName | toString -}}
 {{- $tag := default .Chart.AppVersion .Values.image.tag  | toString -}}
 {{- if $registryName -}}
