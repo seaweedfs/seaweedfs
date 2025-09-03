@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"math/big"
 	"regexp"
 	"strconv"
 	"strings"
@@ -1929,6 +1930,38 @@ func (e *SQLEngine) valuesEqual(fieldValue *schema_pb.Value, compareValue interf
 		return false
 	}
 
+	// Handle logical type comparisons
+	if timestampField, ok := fieldValue.Kind.(*schema_pb.Value_TimestampValue); ok {
+		if timestampVal, ok := compareValue.(int64); ok {
+			return timestampField.TimestampValue.TimestampMicros == timestampVal
+		}
+		return false
+	}
+
+	if dateField, ok := fieldValue.Kind.(*schema_pb.Value_DateValue); ok {
+		if dateVal, ok := compareValue.(int32); ok {
+			return dateField.DateValue.DaysSinceEpoch == dateVal
+		}
+		return false
+	}
+
+	// Handle DecimalValue comparison (convert to string for comparison)
+	if decimalField, ok := fieldValue.Kind.(*schema_pb.Value_DecimalValue); ok {
+		if decimalStr, ok := compareValue.(string); ok {
+			// Convert decimal bytes back to string for comparison
+			decimalValue := e.decimalToString(decimalField.DecimalValue)
+			return decimalValue == decimalStr
+		}
+		return false
+	}
+
+	if timeField, ok := fieldValue.Kind.(*schema_pb.Value_TimeValue); ok {
+		if timeVal, ok := compareValue.(int64); ok {
+			return timeField.TimeValue.TimeMicros == timeVal
+		}
+		return false
+	}
+
 	// Handle numeric comparisons with type coercion
 	fieldNum := e.convertToNumber(fieldValue)
 	compareNum := e.convertCompareValueToNumber(compareValue)
@@ -1966,11 +1999,56 @@ func (e *SQLEngine) convertCompareValueToNumber(compareValue interface{}) *float
 	return nil
 }
 
+// decimalToString converts a DecimalValue back to string representation
+func (e *SQLEngine) decimalToString(decimalValue *schema_pb.DecimalValue) string {
+	if decimalValue == nil || decimalValue.Value == nil {
+		return "0"
+	}
+	
+	// Convert bytes back to big.Int
+	intValue := new(big.Int).SetBytes(decimalValue.Value)
+	
+	// Convert to string with proper decimal placement
+	str := intValue.String()
+	
+	// Handle decimal placement based on scale
+	scale := int(decimalValue.Scale)
+	if scale > 0 && len(str) > scale {
+		// Insert decimal point
+		decimalPos := len(str) - scale
+		return str[:decimalPos] + "." + str[decimalPos:]
+	}
+	
+	return str
+}
+
 func (e *SQLEngine) valueLessThan(fieldValue *schema_pb.Value, compareValue interface{}) bool {
 	// Handle string comparisons lexicographically
 	if strField, ok := fieldValue.Kind.(*schema_pb.Value_StringValue); ok {
 		if strVal, ok := compareValue.(string); ok {
 			return strField.StringValue < strVal
+		}
+		return false
+	}
+
+	// Handle logical type comparisons
+	if timestampField, ok := fieldValue.Kind.(*schema_pb.Value_TimestampValue); ok {
+		if timestampVal, ok := compareValue.(int64); ok {
+			return timestampField.TimestampValue.TimestampMicros < timestampVal
+		}
+		return false
+	}
+
+	if dateField, ok := fieldValue.Kind.(*schema_pb.Value_DateValue); ok {
+		if dateVal, ok := compareValue.(int32); ok {
+			return dateField.DateValue.DaysSinceEpoch < dateVal
+		}
+		return false
+	}
+
+	if timeField, ok := fieldValue.Kind.(*schema_pb.Value_TimeValue); ok {
+		if timeVal, ok := compareValue.(int64); ok {
+			return timeField.TimeValue.TimeMicros < timeVal
 		}
 		return false
 	}
@@ -1991,6 +2069,28 @@ func (e *SQLEngine) valueGreaterThan(fieldValue *schema_pb.Value, compareValue i
 	if strField, ok := fieldValue.Kind.(*schema_pb.Value_StringValue); ok {
 		if strVal, ok := compareValue.(string); ok {
 			return strField.StringValue > strVal
+		}
+		return false
+	}
+
+	// Handle logical type comparisons
+	if timestampField, ok := fieldValue.Kind.(*schema_pb.Value_TimestampValue); ok {
+		if timestampVal, ok := compareValue.(int64); ok {
+			return timestampField.TimestampValue.TimestampMicros > timestampVal
+		}
+		return false
+	}
+
+	if dateField, ok := fieldValue.Kind.(*schema_pb.Value_DateValue); ok {
+		if dateVal, ok := compareValue.(int32); ok {
+			return dateField.DateValue.DaysSinceEpoch > dateVal
+		}
+		return false
+	}
+
+	if timeField, ok := fieldValue.Kind.(*schema_pb.Value_TimeValue); ok {
+		if timeVal, ok := compareValue.(int64); ok {
+			return timeField.TimeValue.TimeMicros > timeVal
 		}
 		return false
 	}

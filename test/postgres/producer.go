@@ -31,7 +31,7 @@ type UserEvent struct {
 	Status        string    `json:"status"`
 	Amount        float64   `json:"amount,omitempty"`
 	PreciseAmount string    `json:"precise_amount,omitempty"` // Will be converted to DECIMAL
-	BirthDate     time.Time `json:"birth_date"`              // Will be converted to DATE
+	BirthDate     time.Time `json:"birth_date"`               // Will be converted to DATE
 	Timestamp     time.Time `json:"timestamp"`
 	Metadata      string    `json:"metadata,omitempty"`
 }
@@ -199,16 +199,16 @@ func convertToDecimal(value string) ([]byte, int32, int32) {
 	if _, success := rat.SetString(value); !success {
 		return nil, 0, 0
 	}
-	
+
 	// Convert to a fixed scale (e.g., 4 decimal places)
 	scale := int32(4)
 	precision := int32(18) // Total digits
-	
+
 	// Scale the rational number to integer representation
 	multiplier := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(scale)), nil)
 	scaled := new(big.Int).Mul(rat.Num(), multiplier)
 	scaled.Div(scaled, rat.Denom())
-	
+
 	return scaled.Bytes(), precision, scale
 }
 
@@ -224,7 +224,7 @@ func convertToRecordValue(data interface{}) (*schema_pb.RecordValue, error) {
 		fields["action"] = &schema_pb.Value{Kind: &schema_pb.Value_StringValue{StringValue: v.Action}}
 		fields["status"] = &schema_pb.Value{Kind: &schema_pb.Value_StringValue{StringValue: v.Status}}
 		fields["amount"] = &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: v.Amount}}
-		
+
 		// Convert precise amount to DECIMAL logical type
 		if v.PreciseAmount != "" {
 			if decimal, precision, scale := convertToDecimal(v.PreciseAmount); decimal != nil {
@@ -235,15 +235,15 @@ func convertToRecordValue(data interface{}) (*schema_pb.RecordValue, error) {
 				}}}
 			}
 		}
-		
+
 		// Convert birth date to DATE logical type
 		fields["birth_date"] = &schema_pb.Value{Kind: &schema_pb.Value_DateValue{DateValue: &schema_pb.DateValue{
 			DaysSinceEpoch: int32(v.BirthDate.Unix() / 86400), // Convert to days since epoch
 		}}}
-		
+
 		fields["timestamp"] = &schema_pb.Value{Kind: &schema_pb.Value_TimestampValue{TimestampValue: &schema_pb.TimestampValue{
 			TimestampMicros: v.Timestamp.UnixMicro(),
-			IsUtc:          true,
+			IsUtc:           true,
 		}}}
 		fields["metadata"] = &schema_pb.Value{Kind: &schema_pb.Value_StringValue{StringValue: v.Metadata}}
 
@@ -255,7 +255,7 @@ func convertToRecordValue(data interface{}) (*schema_pb.RecordValue, error) {
 		fields["error_code"] = &schema_pb.Value{Kind: &schema_pb.Value_Int32Value{Int32Value: int32(v.ErrorCode)}}
 		fields["timestamp"] = &schema_pb.Value{Kind: &schema_pb.Value_TimestampValue{TimestampValue: &schema_pb.TimestampValue{
 			TimestampMicros: v.Timestamp.UnixMicro(),
-			IsUtc:          true,
+			IsUtc:           true,
 		}}}
 
 	case MetricEntry:
@@ -265,7 +265,7 @@ func convertToRecordValue(data interface{}) (*schema_pb.RecordValue, error) {
 		fields["tags"] = &schema_pb.Value{Kind: &schema_pb.Value_StringValue{StringValue: v.Tags}}
 		fields["timestamp"] = &schema_pb.Value{Kind: &schema_pb.Value_TimestampValue{TimestampValue: &schema_pb.TimestampValue{
 			TimestampMicros: v.Timestamp.UnixMicro(),
-			IsUtc:          true,
+			IsUtc:           true,
 		}}}
 
 	case ProductView:
@@ -277,7 +277,7 @@ func convertToRecordValue(data interface{}) (*schema_pb.RecordValue, error) {
 		fields["view_count"] = &schema_pb.Value{Kind: &schema_pb.Value_Int32Value{Int32Value: int32(v.ViewCount)}}
 		fields["timestamp"] = &schema_pb.Value{Kind: &schema_pb.Value_TimestampValue{TimestampValue: &schema_pb.TimestampValue{
 			TimestampMicros: v.Timestamp.UnixMicro(),
-			IsUtc:          true,
+			IsUtc:           true,
 		}}}
 
 	default:
@@ -441,7 +441,7 @@ func generateUserEvent() interface{} {
 	birthMonth := 1 + rand.Intn(12)
 	birthDay := 1 + rand.Intn(28) // Keep it simple, avoid month-specific day issues
 	birthDate := time.Date(birthYear, time.Month(birthMonth), birthDay, 0, 0, 0, 0, time.UTC)
-	
+
 	// Generate a precise amount as a string with 4 decimal places
 	preciseAmount := fmt.Sprintf("%.4f", rand.Float64()*10000)
 
