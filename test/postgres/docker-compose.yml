@@ -102,7 +102,7 @@ services:
       - POSTGRES_HOST=postgres-server
       - POSTGRES_PORT=5432
       - POSTGRES_USER=seaweedfs
-      - POSTGRES_DB=default
+      - POSTGRES_DB=logs
     networks:
       - seaweedfs-net
     profiles:

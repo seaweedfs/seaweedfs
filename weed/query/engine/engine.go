@@ -240,7 +240,8 @@ func ParseSQL(sql string) (Statement, error) {
 				if part == "FROM" && i+1 < len(partsOriginal) {
 					// Remove quotes if present (PostgreSQL uses double quotes, MySQL uses backticks)
 					dbName := strings.Trim(partsOriginal[i+1], "\"'`")
-					stmt.OnTable.Name = stringValue(dbName)
+					stmt.Schema = dbName                    // Set the Schema field for the test
+					stmt.OnTable.Name = stringValue(dbName) // Keep for compatibility
 					break
 				}
 			}
@@ -307,7 +308,15 @@ func parseSelectStatement(sql string) (*SelectStatement, error) {
 				expr := &AliasedExpr{}
 				if strings.Contains(strings.ToUpper(part), "(") && strings.Contains(part, ")") {
 					// Function expression
-					funcExpr := &FuncExpr{Name: stringValue(extractFunctionName(part))}
+					funcName := extractFunctionName(part)
+					funcArgs, err := extractFunctionArguments(part)
+					if err != nil {
+						return nil, fmt.Errorf("failed to parse function %s: %v", funcName, err)
+					}
+					funcExpr := &FuncExpr{
+						Name:  stringValue(funcName),
+						Exprs: funcArgs,
+					}
 					expr.Expr = funcExpr
 				} else {
 					// Column name
@@ -392,6 +401,48 @@ func extractFunctionName(expr string) string {
 		return expr
 	}
 	return strings.TrimSpace(expr[:parenIdx])
+}
+
+// extractFunctionArguments extracts the arguments from a function call expression
+func extractFunctionArguments(expr string) ([]SelectExpr, error) {
+	// Find the parentheses
+	startParen := strings.Index(expr, "(")
+	endParen := strings.LastIndex(expr, ")")
+
+	if startParen == -1 || endParen == -1 || endParen <= startParen {
+		return nil, fmt.Errorf("invalid function syntax")
+	}
+
+	// Extract arguments string
+	argsStr := strings.TrimSpace(expr[startParen+1 : endParen])
+
+	// Handle empty arguments
+	if argsStr == "" {
+		return []SelectExpr{}, nil
+	}
+
+	// Handle single * argument (for COUNT(*))
+	if argsStr == "*" {
+		return []SelectExpr{&StarExpr{}}, nil
+	}
+
+	// Parse multiple arguments separated by commas
+	args := []SelectExpr{}
+	argParts := strings.Split(argsStr, ",")
+
+	for _, argPart := range argParts {
+		argPart = strings.TrimSpace(argPart)
+		if argPart == "*" {
+			args = append(args, &StarExpr{})
+		} else {
+			// Regular column name
+			colExpr := &ColName{Name: stringValue(argPart)}
+			aliasedExpr := &AliasedExpr{Expr: colExpr}
+			args = append(args, aliasedExpr)
+		}
+	}
+
+	return args, nil
 }
 
 // parseSimpleWhereExpression parses a simple WHERE expression
@@ -2467,7 +2518,7 @@ func (e *SQLEngine) parseAggregationFunction(funcExpr *FuncExpr, aliasExpr *Alia
 	}
 
 	// Override with user-specified alias if provided
-	if !aliasExpr.As.IsEmpty() {
+	if aliasExpr != nil && aliasExpr.As != nil && !aliasExpr.As.IsEmpty() {
 		spec.Alias = aliasExpr.As.String()
 	}
 
