@@ -1,11 +1,11 @@
-package command
+package sqlutil
 
 import (
 	"reflect"
 	"testing"
 )
 
-func TestSplitSQLStatements(t *testing.T) {
+func TestSplitStatements(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    string
@@ -100,15 +100,15 @@ func TestSplitSQLStatements(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := splitSQLStatements(tt.input)
+			result := SplitStatements(tt.input)
 			if !reflect.DeepEqual(result, tt.expected) {
-				t.Errorf("splitSQLStatements() = %v, expected %v", result, tt.expected)
+				t.Errorf("SplitStatements() = %v, expected %v", result, tt.expected)
 			}
 		})
 	}
 }
 
-func TestSplitSQLStatements_EdgeCases(t *testing.T) {
+func TestSplitStatements_EdgeCases(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    string
@@ -138,9 +138,9 @@ func TestSplitSQLStatements_EdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := splitSQLStatements(tt.input)
+			result := SplitStatements(tt.input)
 			if !reflect.DeepEqual(result, tt.expected) {
-				t.Errorf("splitSQLStatements() = %v, expected %v", result, tt.expected)
+				t.Errorf("SplitStatements() = %v, expected %v", result, tt.expected)
 			}
 		})
 	}
