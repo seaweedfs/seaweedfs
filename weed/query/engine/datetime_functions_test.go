@@ -11,7 +11,10 @@ func TestDateTimeFunctions(t *testing.T) {
 	engine := NewTestSQLEngine()
 
 	t.Run("CURRENT_DATE function tests", func(t *testing.T) {
+		before := time.Now()
 		result, err := engine.CurrentDate()
+		after := time.Now()
+		
 		if err != nil {
 			t.Errorf("CurrentDate failed: %v", err)
 		}
@@ -27,10 +30,13 @@ func TestDateTimeFunctions(t *testing.T) {
 			return
 		}
 
-		// Check format (YYYY-MM-DD)
-		today := time.Now().Format("2006-01-02")
-		if stringVal.StringValue != today {
-			t.Errorf("Expected current date %s, got %s", today, stringVal.StringValue)
+		// Check format (YYYY-MM-DD) with tolerance for midnight boundary crossings
+		beforeDate := before.Format("2006-01-02")
+		afterDate := after.Format("2006-01-02")
+		
+		if stringVal.StringValue != beforeDate && stringVal.StringValue != afterDate {
+			t.Errorf("Expected current date %s or %s (due to potential midnight boundary), got %s", 
+				beforeDate, afterDate, stringVal.StringValue)
 		}
 	})
 
@@ -56,9 +62,15 @@ func TestDateTimeFunctions(t *testing.T) {
 
 		timestamp := time.UnixMicro(timestampVal.TimestampValue.TimestampMicros)
 
-		// Check that timestamp is within reasonable range
-		if timestamp.Before(before) || timestamp.After(after) {
-			t.Errorf("Timestamp %v should be between %v and %v", timestamp, before, after)
+		// Check that timestamp is within reasonable range with small tolerance buffer
+		// Allow for small timing variations, clock precision differences, and NTP adjustments
+		tolerance := 100 * time.Millisecond
+		beforeWithTolerance := before.Add(-tolerance)
+		afterWithTolerance := after.Add(tolerance)
+		
+		if timestamp.Before(beforeWithTolerance) || timestamp.After(afterWithTolerance) {
+			t.Errorf("Timestamp %v should be within tolerance of %v to %v (tolerance: %v)", 
+				timestamp, before, after, tolerance)
 		}
 	})
 
