@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
@@ -265,14 +266,14 @@ func (e *SQLEngine) Left(value *schema_pb.Value, length *schema_pb.Value) (*sche
 		}, nil
 	}
 
-	if int(lengthVal) >= len(str) {
+	if lengthVal > int64(len(str)) || lengthVal > int64(math.MaxInt) {
 		return &schema_pb.Value{
 			Kind: &schema_pb.Value_StringValue{StringValue: str},
 		}, nil
 	}
 
 	return &schema_pb.Value{
-		Kind: &schema_pb.Value_StringValue{StringValue: str[:lengthVal]},
+		Kind: &schema_pb.Value_StringValue{StringValue: str[:int(lengthVal)]},
 	}, nil
 }
 
@@ -298,7 +299,7 @@ func (e *SQLEngine) Right(value *schema_pb.Value, length *schema_pb.Value) (*sch
 		}, nil
 	}
 
-	if int(lengthVal) >= len(str) {
+	if lengthVal > int64(len(str)) || lengthVal > int64(math.MaxInt) {
 		return &schema_pb.Value{
 			Kind: &schema_pb.Value_StringValue{StringValue: str},
 		}, nil
