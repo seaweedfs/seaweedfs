@@ -1416,7 +1416,8 @@ func (e *SQLEngine) executeSelectStatement(ctx context.Context, stmt *SelectStat
 	}
 
 	// Parse LIMIT and OFFSET clauses
-	limit := 0
+	// Use -1 to distinguish "no LIMIT" from "LIMIT 0"
+	limit := -1
 	offset := 0
 	if stmt.Limit != nil && stmt.Limit.Rowcount != nil {
 		switch limitExpr := stmt.Limit.Rowcount.(type) {
@@ -1605,7 +1606,8 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 	}
 
 	// Parse LIMIT and OFFSET clauses
-	limit := 0
+	// Use -1 to distinguish "no LIMIT" from "LIMIT 0"
+	limit := -1
 	offset := 0
 	if stmt.Limit != nil && stmt.Limit.Rowcount != nil {
 		switch limitExpr := stmt.Limit.Rowcount.(type) {

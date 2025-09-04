@@ -233,24 +233,25 @@ func (hms *HybridMessageScanner) ScanWithStats(ctx context.Context, options Hybr
 	}
 
 	// Apply final OFFSET and LIMIT processing (done once at the end)
+	// Limit semantics: -1 = no limit, 0 = LIMIT 0 (empty), >0 = limit to N rows
 	if options.Offset > 0 || options.Limit >= 0 {
-		// Handle LIMIT 0 special case - return empty result immediately
+		// Handle LIMIT 0 special case first
 		if options.Limit == 0 {
-			results = []HybridScanResult{}
-		} else {
-			// Apply OFFSET first
-			if options.Offset > 0 {
-				if options.Offset >= len(results) {
-					results = []HybridScanResult{}
-				} else {
-					results = results[options.Offset:]
-				}
-			}
+			return []HybridScanResult{}, stats, nil
+		}
 
-			// Apply LIMIT after OFFSET
-			if options.Limit > 0 && len(results) > options.Limit {
-				results = results[:options.Limit]
+		// Apply OFFSET first
+		if options.Offset > 0 {
+			if options.Offset >= len(results) {
+				results = []HybridScanResult{}
+			} else {
+				results = results[options.Offset:]
 			}
+		}
+
+		// Apply LIMIT after OFFSET (only if limit > 0)
+		if options.Limit > 0 && len(results) > options.Limit {
+			results = results[:options.Limit]
 		}
 	}
 

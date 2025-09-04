@@ -350,7 +350,8 @@ func (e *SQLEngine) executeAggregationQuery(ctx context.Context, hybridScanner *
 // executeAggregationQueryWithPlan handles SELECT queries with aggregation functions and populates execution plan
 func (e *SQLEngine) executeAggregationQueryWithPlan(ctx context.Context, hybridScanner *HybridMessageScanner, aggregations []AggregationSpec, stmt *SelectStatement, plan *QueryExecutionPlan) (*QueryResult, error) {
 	// Parse LIMIT and OFFSET for aggregation results (do this first)
-	limit := 0
+	// Use -1 to distinguish "no LIMIT" from "LIMIT 0"
+	limit := -1
 	offset := 0
 	if stmt.Limit != nil && stmt.Limit.Rowcount != nil {
 		if limitExpr, ok := stmt.Limit.Rowcount.(*SQLVal); ok && limitExpr.Type == IntVal {
@@ -391,29 +392,31 @@ func (e *SQLEngine) executeAggregationQueryWithPlan(ctx context.Context, hybridS
 			if isDebugMode(ctx) {
 				fmt.Printf("Using fast hybrid statistics for aggregation (parquet stats + live log counts)\n")
 			}
-			
+
 			// Apply OFFSET and LIMIT to fast path results too
-			if offset > 0 || limit > 0 {
+			// Limit semantics: -1 = no limit, 0 = LIMIT 0 (empty), >0 = limit to N rows
+			if offset > 0 || limit >= 0 {
 				rows := fastResult.Rows
-				// Apply OFFSET first
-				if offset > 0 {
-					if offset >= len(rows) {
-						rows = [][]sqltypes.Value{}
-					} else {
-						rows = rows[offset:]
+				// Handle LIMIT 0 first
+				if limit == 0 {
+					rows = [][]sqltypes.Value{}
+				} else {
+					// Apply OFFSET first
+					if offset > 0 {
+						if offset >= len(rows) {
+							rows = [][]sqltypes.Value{}
+						} else {
+							rows = rows[offset:]
+						}
 					}
-				}
-				// Apply LIMIT after OFFSET
-				if limit >= 0 { // Handle LIMIT 0 case
-					if limit == 0 {
-						rows = [][]sqltypes.Value{}
-					} else if len(rows) > limit {
+					// Apply LIMIT after OFFSET (only if limit > 0)
+					if limit > 0 && len(rows) > limit {
 						rows = rows[:limit]
 					}
 				}
 				fastResult.Rows = rows
 			}
-			
+
 			return fastResult, nil
 		}
 	}
@@ -484,22 +487,24 @@ func (e *SQLEngine) executeAggregationQueryWithPlan(ctx context.Context, hybridS
 	}
 
 	// Apply OFFSET and LIMIT to aggregation results
+	// Limit semantics: -1 = no limit, 0 = LIMIT 0 (empty), >0 = limit to N rows
 	rows := [][]sqltypes.Value{row}
-	if offset > 0 || limit > 0 {
-		// Apply OFFSET first
-		if offset > 0 {
-			if offset >= len(rows) {
-				rows = [][]sqltypes.Value{}
-			} else {
-				rows = rows[offset:]
+	if offset > 0 || limit >= 0 {
+		// Handle LIMIT 0 first
+		if limit == 0 {
+			rows = [][]sqltypes.Value{}
+		} else {
+			// Apply OFFSET first
+			if offset > 0 {
+				if offset >= len(rows) {
+					rows = [][]sqltypes.Value{}
+				} else {
+					rows = rows[offset:]
+				}
 			}
-		}
 
-		// Apply LIMIT after OFFSET
-		if limit >= 0 { // Handle LIMIT 0 case
-			if limit == 0 {
-				rows = [][]sqltypes.Value{}
-			} else if len(rows) > limit {
+			// Apply LIMIT after OFFSET (only if limit > 0)
+			if limit > 0 && len(rows) > limit {
 				rows = rows[:limit]
 			}
 		}
