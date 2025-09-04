@@ -159,8 +159,7 @@ SHOW TABLES;
 
 -- Describe table structure
 DESCRIBE my_topic;
--- or
-DESC my_topic;
+-- or use the shorthand: DESC my_topic;
 
 -- Basic select
 SELECT * FROM my_topic;
