@@ -767,3 +767,175 @@ func TestExtractFunction(t *testing.T) {
 		})
 	}
 }
+
+func TestDateTruncFunction(t *testing.T) {
+	engine := NewTestSQLEngine()
+
+	// Create a test timestamp: 2023-06-15 14:30:45.123456
+	testTime := time.Date(2023, 6, 15, 14, 30, 45, 123456000, time.Local) // nanoseconds
+	testTimestamp := &schema_pb.Value{
+		Kind: &schema_pb.Value_TimestampValue{
+			TimestampValue: &schema_pb.TimestampValue{
+				TimestampMicros: testTime.UnixMicro(),
+			},
+		},
+	}
+
+	tests := []struct {
+		name       string
+		precision  string
+		value      *schema_pb.Value
+		expectErr  bool
+		expectedCheck func(result time.Time) bool // Custom check function
+	}{
+		{
+			name: "Truncate to second",
+			precision: "second",
+			value: testTimestamp,
+			expectErr: false,
+			expectedCheck: func(result time.Time) bool {
+				return result.Year() == 2023 && result.Month() == 6 && result.Day() == 15 &&
+					result.Hour() == 14 && result.Minute() == 30 && result.Second() == 45 &&
+					result.Nanosecond() == 0
+			},
+		},
+		{
+			name: "Truncate to minute",
+			precision: "minute",
+			value: testTimestamp,
+			expectErr: false,
+			expectedCheck: func(result time.Time) bool {
+				return result.Year() == 2023 && result.Month() == 6 && result.Day() == 15 &&
+					result.Hour() == 14 && result.Minute() == 30 && result.Second() == 0 &&
+					result.Nanosecond() == 0
+			},
+		},
+		{
+			name: "Truncate to hour",
+			precision: "hour",
+			value: testTimestamp,
+			expectErr: false,
+			expectedCheck: func(result time.Time) bool {
+				return result.Year() == 2023 && result.Month() == 6 && result.Day() == 15 &&
+					result.Hour() == 14 && result.Minute() == 0 && result.Second() == 0 &&
+					result.Nanosecond() == 0
+			},
+		},
+		{
+			name: "Truncate to day",
+			precision: "day",
+			value: testTimestamp,
+			expectErr: false,
+			expectedCheck: func(result time.Time) bool {
+				return result.Year() == 2023 && result.Month() == 6 && result.Day() == 15 &&
+					result.Hour() == 0 && result.Minute() == 0 && result.Second() == 0 &&
+					result.Nanosecond() == 0
+			},
+		},
+		{
+			name: "Truncate to month",
+			precision: "month",
+			value: testTimestamp,
+			expectErr: false,
+			expectedCheck: func(result time.Time) bool {
+				return result.Year() == 2023 && result.Month() == 6 && result.Day() == 1 &&
+					result.Hour() == 0 && result.Minute() == 0 && result.Second() == 0 &&
+					result.Nanosecond() == 0
+			},
+		},
+		{
+			name: "Truncate to quarter",
+			precision: "quarter",
+			value: testTimestamp,
+			expectErr: false,
+			expectedCheck: func(result time.Time) bool {
+				// June (month 6) should truncate to April (month 4) - start of Q2
+				return result.Year() == 2023 && result.Month() == 4 && result.Day() == 1 &&
+					result.Hour() == 0 && result.Minute() == 0 && result.Second() == 0 &&
+					result.Nanosecond() == 0
+			},
+		},
+		{
+			name: "Truncate to year",
+			precision: "year",
+			value: testTimestamp,
+			expectErr: false,
+			expectedCheck: func(result time.Time) bool {
+				return result.Year() == 2023 && result.Month() == 1 && result.Day() == 1 &&
+					result.Hour() == 0 && result.Minute() == 0 && result.Second() == 0 &&
+					result.Nanosecond() == 0
+			},
+		},
+		{
+			name: "Truncate with plural precision",
+			precision: "minutes", // Test plural form
+			value: testTimestamp,
+			expectErr: false,
+			expectedCheck: func(result time.Time) bool {
+				return result.Year() == 2023 && result.Month() == 6 && result.Day() == 15 &&
+					result.Hour() == 14 && result.Minute() == 30 && result.Second() == 0 &&
+					result.Nanosecond() == 0
+			},
+		},
+		{
+			name: "Truncate from string date",
+			precision: "day",
+			value: &schema_pb.Value{Kind: &schema_pb.Value_StringValue{StringValue: "2023-06-15 14:30:45"}},
+			expectErr: false,
+			expectedCheck: func(result time.Time) bool {
+				// The result should be the start of day 2023-06-15 in local timezone
+				expectedDay := time.Date(2023, 6, 15, 0, 0, 0, 0, result.Location())
+				return result.Equal(expectedDay)
+			},
+		},
+		{
+			name: "Truncate null value",
+			precision: "day",
+			value: nil,
+			expectErr: true,
+			expectedCheck: nil,
+		},
+		{
+			name: "Invalid precision",
+			precision: "invalid",
+			value: testTimestamp,
+			expectErr: true,
+			expectedCheck: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := engine.DateTrunc(tt.precision, tt.value)
+
+			if tt.expectErr {
+				if err == nil {
+					t.Errorf("Expected error but got none")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+				return
+			}
+
+			if result == nil {
+				t.Errorf("DateTrunc returned nil result")
+				return
+			}
+
+			timestampVal, ok := result.Kind.(*schema_pb.Value_TimestampValue)
+			if !ok {
+				t.Errorf("DateTrunc should return timestamp value, got %T", result.Kind)
+				return
+			}
+
+			resultTime := time.UnixMicro(timestampVal.TimestampValue.TimestampMicros)
+
+			if !tt.expectedCheck(resultTime) {
+				t.Errorf("DateTrunc result check failed for precision %s, got time: %v", tt.precision, resultTime)
+			}
+		})
+	}
+}

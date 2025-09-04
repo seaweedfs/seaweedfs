@@ -377,16 +377,23 @@ func (e *SQLEngine) valueToTime(value *schema_pb.Value) (time.Time, error) {
 		return time.UnixMicro(v.TimestampValue.TimestampMicros), nil
 	case *schema_pb.Value_StringValue:
 		// Try to parse various date/time string formats
-		dateFormats := []string{
-			"2006-01-02 15:04:05",
-			"2006-01-02T15:04:05Z",
-			"2006-01-02T15:04:05",
-			"2006-01-02",
-			"15:04:05",
+		dateFormats := []struct {
+			format   string
+			useLocal bool
+		}{
+			{"2006-01-02 15:04:05", true},  // Local time assumed for non-timezone formats
+			{"2006-01-02T15:04:05Z", false}, // UTC format
+			{"2006-01-02T15:04:05", true},   // Local time assumed
+			{"2006-01-02", true},            // Local time assumed for date only
+			{"15:04:05", true},              // Local time assumed for time only
 		}
 		
-		for _, format := range dateFormats {
-			if t, err := time.Parse(format, v.StringValue); err == nil {
+		for _, formatSpec := range dateFormats {
+			if t, err := time.Parse(formatSpec.format, v.StringValue); err == nil {
+				if formatSpec.useLocal {
+					// Convert to local timezone if no timezone was specified
+					return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), time.Local), nil
+				}
 				return t, nil
 			}
 		}
@@ -397,4 +404,76 @@ func (e *SQLEngine) valueToTime(value *schema_pb.Value) (time.Time, error) {
 	default:
 		return time.Time{}, fmt.Errorf("cannot convert value type to date/time")
 	}
+}
+
+// ===============================
+// DATE_TRUNC FUNCTION
+// ===============================
+
+// DateTrunc truncates a date/time to the specified precision
+func (e *SQLEngine) DateTrunc(precision string, value *schema_pb.Value) (*schema_pb.Value, error) {
+	if value == nil {
+		return nil, fmt.Errorf("DATE_TRUNC function requires non-null value")
+	}
+
+	// Convert value to time
+	t, err := e.valueToTime(value)
+	if err != nil {
+		return nil, fmt.Errorf("DATE_TRUNC function time conversion error: %v", err)
+	}
+
+	var truncated time.Time
+
+	switch strings.ToLower(precision) {
+	case "microsecond", "microseconds":
+		// No truncation needed for microsecond precision
+		truncated = t
+	case "millisecond", "milliseconds":
+		truncated = t.Truncate(time.Millisecond)
+	case "second", "seconds":
+		truncated = t.Truncate(time.Second)
+	case "minute", "minutes":
+		truncated = t.Truncate(time.Minute)
+	case "hour", "hours":
+		truncated = t.Truncate(time.Hour)
+	case "day", "days":
+		truncated = time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+	case "week", "weeks":
+		// Truncate to beginning of week (Monday)
+		days := int(t.Weekday())
+		if days == 0 { // Sunday = 0, adjust to make Monday = 0
+			days = 6
+		} else {
+			days = days - 1
+		}
+		truncated = time.Date(t.Year(), t.Month(), t.Day()-days, 0, 0, 0, 0, t.Location())
+	case "month", "months":
+		truncated = time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, t.Location())
+	case "quarter", "quarters":
+		month := t.Month()
+		quarterMonth := ((int(month)-1)/3)*3 + 1
+		truncated = time.Date(t.Year(), time.Month(quarterMonth), 1, 0, 0, 0, 0, t.Location())
+	case "year", "years":
+		truncated = time.Date(t.Year(), 1, 1, 0, 0, 0, 0, t.Location())
+	case "decade", "decades":
+		year := (t.Year()/10) * 10
+		truncated = time.Date(year, 1, 1, 0, 0, 0, 0, t.Location())
+	case "century", "centuries":
+		year := ((t.Year()-1)/100)*100 + 1
+		truncated = time.Date(year, 1, 1, 0, 0, 0, 0, t.Location())
+	case "millennium", "millennia":
+		year := ((t.Year()-1)/1000)*1000 + 1
+		truncated = time.Date(year, 1, 1, 0, 0, 0, 0, t.Location())
+	default:
+		return nil, fmt.Errorf("unsupported date truncation precision: %s", precision)
+	}
+
+	// Return as TimestampValue
+	return &schema_pb.Value{
+		Kind: &schema_pb.Value_TimestampValue{
+			TimestampValue: &schema_pb.TimestampValue{
+				TimestampMicros: truncated.UnixMicro(),
+			},
+		},
+	}, nil
 }
