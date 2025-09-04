@@ -14,7 +14,7 @@ To provide a full-featured SQL interface for SeaweedFS, treating schematized MQ 
 
 **2. Key Features**
 
-*   **Schema-tized Topic Management (Priority 1):**
+*   **Schematized Topic Management (Priority 1):**
     *   `SHOW DATABASES` - List all MQ namespaces
     *   `SHOW TABLES` - List all topics in a namespace
     *   `CREATE TABLE topic_name (field1 INT, field2 STRING, ...)` - Create new MQ topic with schema
