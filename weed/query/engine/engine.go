@@ -14,6 +14,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/schema"
+	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/seaweedfs/seaweedfs/weed/query/sqltypes"
@@ -265,7 +266,10 @@ func ParseSQL(sql string) (Statement, error) {
 		return parseSelectStatement(sql)
 	}
 
-	return nil, fmt.Errorf("unsupported statement type: %s", sqlUpper)
+	return nil, UnsupportedFeatureError{
+		Feature: fmt.Sprintf("statement type: %s", strings.Fields(sqlUpper)[0]),
+		Reason:  "statement parsing not implemented",
+	}
 }
 
 // parseSelectStatement parses SELECT statements using a lightweight parser
@@ -280,7 +284,10 @@ func parseSelectStatement(sql string) (*SelectStatement, error) {
 	// Find SELECT clause
 	selectIdx := strings.Index(sqlUpper, "SELECT")
 	if selectIdx == -1 {
-		return nil, fmt.Errorf("SELECT keyword not found")
+		return nil, ParseError{
+			Query:   sql,
+			Message: "SELECT keyword not found",
+		}
 	}
 
 	// Find FROM clause
@@ -3089,10 +3096,10 @@ func (e *SQLEngine) countRowsInLogFile(filerClient filer_pb.FilerClient, partiti
 	return rowCount, nil
 }
 
-// discoverTopicPartitions discovers all partitions for a given topic
+// discoverTopicPartitions discovers all partitions for a given topic using centralized logic
 func (e *SQLEngine) discoverTopicPartitions(namespace, topicName string) ([]string, error) {
-	// Use the same discovery logic as in hybrid_message_scanner.go
-	topicPath := fmt.Sprintf("/topics/%s/%s", namespace, topicName)
+	// Use centralized topic partition discovery
+	t := topic.NewTopic(namespace, topicName)
 
 	// Get FilerClient from BrokerClient
 	filerClient, err := e.catalog.brokerClient.GetFilerClient()
@@ -3100,35 +3107,7 @@ func (e *SQLEngine) discoverTopicPartitions(namespace, topicName string) ([]stri
 		return nil, err
 	}
 
-	var partitions []string
-	err = filer_pb.ReadDirAllEntries(context.Background(), filerClient, util.FullPath(topicPath), "", func(entry *filer_pb.Entry, isLast bool) error {
-		if !entry.IsDirectory {
-			return nil
-		}
-
-		// Check if this looks like a partition directory (format: vYYYY-MM-DD-HH-MM-SS)
-		if strings.HasPrefix(entry.Name, "v") && len(entry.Name) == 20 {
-			// This is a time-based partition directory
-			// Look for numeric subdirectories (partition IDs)
-			partitionBasePath := fmt.Sprintf("%s/%s", topicPath, entry.Name)
-			err := filer_pb.ReadDirAllEntries(context.Background(), filerClient, util.FullPath(partitionBasePath), "", func(subEntry *filer_pb.Entry, isLast bool) error {
-				if subEntry.IsDirectory {
-					// Check if this is a numeric partition directory (format: 0000-XXXX)
-					if len(subEntry.Name) >= 4 {
-						partitionPath := fmt.Sprintf("%s/%s", entry.Name, subEntry.Name)
-						partitions = append(partitions, partitionPath)
-					}
-				}
-				return nil
-			})
-			if err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-
-	return partitions, err
+	return t.DiscoverPartitions(context.Background(), filerClient)
 }
 
 // getTopicTotalRowCount returns the total number of rows in a topic (combining parquet and live logs)

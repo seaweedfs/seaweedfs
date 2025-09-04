@@ -150,12 +150,18 @@ func (c *SchemaCatalog) GetTableInfo(database, table string) (*TableInfo, error)
 
 	db, exists := c.databases[database]
 	if !exists {
-		return nil, fmt.Errorf("database '%s' not found", database)
+		return nil, TableNotFoundError{
+			Database: database,
+			Table:    "",
+		}
 	}
 
 	tableInfo, exists := db.Tables[table]
 	if !exists {
-		return nil, fmt.Errorf("table '%s' not found in database '%s'", table, database)
+		return nil, TableNotFoundError{
+			Database: database,
+			Table:    table,
+		}
 	}
 
 	return tableInfo, nil

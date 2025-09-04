@@ -70,8 +70,8 @@ func (c *commandMqTopicTruncate) Do(args []string, commandEnv *CommandEnv, write
 
 	fmt.Fprintf(writer, "Truncating topic %s.%s...\n", *namespace, *topicName)
 
-	// Discover and clear all partitions
-	partitions, err := c.discoverTopicPartitions(commandEnv, t)
+	// Discover and clear all partitions using centralized logic
+	partitions, err := t.DiscoverPartitions(context.Background(), commandEnv)
 	if err != nil {
 		return fmt.Errorf("failed to discover topic partitions: %v", err)
 	}
@@ -99,46 +99,6 @@ func (c *commandMqTopicTruncate) Do(args []string, commandEnv *CommandEnv, write
 		*namespace, *topicName, totalFilesDeleted, len(partitions))
 
 	return nil
-}
-
-// discoverTopicPartitions discovers all partition directories for a topic
-func (c *commandMqTopicTruncate) discoverTopicPartitions(commandEnv *CommandEnv, t topic.Topic) ([]string, error) {
-	var partitionPaths []string
-
-	// Scan the topic directory for version directories (e.g., v2025-09-01-07-16-34)
-	err := filer_pb.ReadDirAllEntries(context.Background(), commandEnv, util.FullPath(t.Dir()), "", func(versionEntry *filer_pb.Entry, isLast bool) error {
-		if !versionEntry.IsDirectory {
-			return nil // Skip non-directories
-		}
-
-		// Parse version timestamp from directory name (e.g., "v2025-09-01-07-16-34")
-		_, parseErr := topic.ParseTopicVersion(versionEntry.Name)
-		if parseErr != nil {
-			// Skip directories that don't match the version format
-			return nil
-		}
-
-		// Scan partition directories within this version (e.g., 0000-0630)
-		versionDir := fmt.Sprintf("%s/%s", t.Dir(), versionEntry.Name)
-		return filer_pb.ReadDirAllEntries(context.Background(), commandEnv, util.FullPath(versionDir), "", func(partitionEntry *filer_pb.Entry, isLast bool) error {
-			if !partitionEntry.IsDirectory {
-				return nil // Skip non-directories
-			}
-
-			// Parse partition boundary from directory name (e.g., "0000-0630")
-			rangeStart, rangeStop := topic.ParsePartitionBoundary(partitionEntry.Name)
-			if rangeStart == rangeStop {
-				return nil // Skip invalid partition names
-			}
-
-			// Add this partition path to the list
-			partitionPath := fmt.Sprintf("%s/%s", versionDir, partitionEntry.Name)
-			partitionPaths = append(partitionPaths, partitionPath)
-			return nil
-		})
-	})
-
-	return partitionPaths, err
 }
 
 // clearPartitionData deletes all data files (log files, parquet files) from a partition directory

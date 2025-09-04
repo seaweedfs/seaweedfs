@@ -77,31 +77,39 @@ func mapErrorToPostgreSQLCode(err error) string {
 		return "00000" // Success
 	}
 
-	errStr := err.Error()
+	// Use typed errors for robust error mapping
+	switch err.(type) {
+	case engine.ParseError:
+		return "42601" // Syntax error
 
-	// Map specific engine error types
-	switch e := err.(type) {
+	case engine.TableNotFoundError:
+		return "42P01" // Undefined table
+
+	case engine.ColumnNotFoundError:
+		return "42703" // Undefined column
+
+	case engine.UnsupportedFeatureError:
+		return "0A000" // Feature not supported
+
 	case engine.AggregationError:
 		// Aggregation errors are usually function-related issues
-		if strings.Contains(e.Error(), "unsupported") {
-			return "0A000" // Feature not supported
-		}
-		return "42703" // Undefined column (column-related aggregation issues)
+		return "42883" // Undefined function (aggregation function issues)
 
 	case engine.DataSourceError:
-		// Data source errors could be table/topic not found
-		if strings.Contains(e.Error(), "not found") || strings.Contains(e.Error(), "topic") {
-			return "42P01" // Undefined table
-		}
-		return "08000" // Connection exception (data source access issues)
+		// Data source errors are usually access or connection issues
+		return "08000" // Connection exception
 
 	case engine.OptimizationError:
 		// Optimization failures are usually feature limitations
 		return "0A000" // Feature not supported
+
+	case engine.NoSchemaError:
+		// Topic exists but no schema available
+		return "42P01" // Undefined table (treat as table not found)
 	}
 
-	// Map based on error message patterns
-	errLower := strings.ToLower(errStr)
+	// Fallback: analyze error message for backward compatibility with non-typed errors
+	errLower := strings.ToLower(err.Error())
 
 	// Parsing and syntax errors
 	if strings.Contains(errLower, "parse error") || strings.Contains(errLower, "syntax") {
@@ -115,7 +123,7 @@ func mapErrorToPostgreSQLCode(err error) string {
 
 	// Table/topic not found
 	if strings.Contains(errLower, "not found") ||
-		strings.Contains(errLower, "topic") && strings.Contains(errLower, "available") {
+		(strings.Contains(errLower, "topic") && strings.Contains(errLower, "available")) {
 		return "42P01" // Undefined table
 	}
 
