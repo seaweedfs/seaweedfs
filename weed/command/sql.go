@@ -47,12 +47,12 @@ func splitSQLStatements(query string) []string {
 			continue
 		}
 
-				// Handle multi-line comments (/* comment */)
+		// Handle multi-line comments (/* comment */)
 		if char == '/' && i+1 < len(runes) && runes[i+1] == '*' {
 			// Skip the /* opening
 			i++
 			i++
-			
+
 			// Skip to end of comment or end of input without including content
 			for i < len(runes) {
 				if runes[i] == '*' && i+1 < len(runes) && runes[i+1] == '/' {
