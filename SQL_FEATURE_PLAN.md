@@ -43,18 +43,19 @@ To provide a full-featured SQL interface for SeaweedFS, treating schema-tized MQ
 
 **1. Scaffolding & Dependencies**
 
-*   **SQL Parser:** **IMPORTANT ARCHITECTURAL DECISION**
-    *   **Current Implementation:** Native PostgreSQL parser (`pg_query_go`)
-    *   **PostgreSQL Compatibility Issue:** MySQL dialect parser used with PostgreSQL wire protocol creates dialect mismatch:
-        *   **Identifier Quoting:** PostgreSQL uses `"identifiers"` vs MySQL `` `identifiers` ``
-        *   **String Concatenation:** PostgreSQL uses `||` vs MySQL `CONCAT()`
-        *   **System Functions:** PostgreSQL has unique `pg_catalog` system functions
-    *   **Recommended Alternatives for Better PostgreSQL Compatibility:**
-        *   **`pg_query_go`** - Pure PostgreSQL dialect parser (best compatibility)
-        *   **Generic SQL parsers** supporting multiple dialects
-        *   **Custom translation layer** (current mitigation strategy)
-    *   **Current Mitigation:** Query translation in `protocol.go` handles PostgreSQL-specific queries
-    *   **Trade-off:** Implementation complexity vs dialect compatibility
+*   **SQL Parser:** **POSTGRESQL-ONLY IMPLEMENTATION**
+    *   **Current Implementation:** Custom lightweight PostgreSQL parser (pure Go, no CGO)
+    *   **Design Decision:** PostgreSQL-only dialect support for optimal wire protocol compatibility
+        *   **Identifier Quoting:** Uses PostgreSQL double quotes (`"identifiers"`)
+        *   **String Concatenation:** Supports PostgreSQL `||` operator
+        *   **System Functions:** Full support for PostgreSQL system catalogs and functions
+    *   **Architecture Benefits:**
+        *   **No CGO Dependencies:** Avoids build complexity and cross-platform issues
+        *   **Wire Protocol Alignment:** Perfect compatibility with PostgreSQL clients
+        *   **Lightweight:** Custom parser focused on SeaweedFS SQL feature subset
+        *   **Extensible:** Easy to add new PostgreSQL syntax support as needed
+    *   **Error Handling:** Typed errors map to standard PostgreSQL error codes
+    *   **Parser Location:** `weed/query/engine/engine.go` (ParseSQL function)
 *   **Project Structure:** 
     *   Extend existing `weed/query/` package for SQL execution engine
     *   Create `weed/query/engine/` for query planning and execution
@@ -69,10 +70,11 @@ To provide a full-featured SQL interface for SeaweedFS, treating schema-tized MQ
     *   Store schema metadata with version history
     *   Handle schema evolution and migration
 *   **Query Planner:**
-    *   Parse SQL AST using Vitess parser
+    *   Parse SQL statements using custom PostgreSQL parser
     *   Create optimized execution plans leveraging Parquet columnar format
     *   Push-down predicates to storage layer for efficient filtering
-    *   Optimize joins using partition pruning
+    *   Optimize aggregations using Parquet column statistics
+    *   Support time-based filtering with intelligent time range extraction
 *   **Query Executor:**
     *   Utilize existing `weed/mq/logstore/` for Parquet reading
     *   Implement streaming execution for large result sets
@@ -183,7 +185,7 @@ SQL Query Flow:
 ┌─────────────┐    ┌──────────────┐    ┌─────────────────┐    ┌──────────────┐
 │   Client    │    │  SQL Parser  │    │  Query Planner  │    │   Execution  │
 │ (CLI/HTTP)  │──→ │ PostgreSQL   │──→ │   & Optimizer   │──→ │    Engine    │
-│             │    │ (pg_query)   │    │                 │    │              │
+│             │    │ (Custom)     │    │                 │    │              │
 └─────────────┘    └──────────────┘    └─────────────────┘    └──────────────┘
                                                │                       │
                                                ▼                       │
@@ -224,16 +226,16 @@ SQL Query Flow:
 *   Implement predicate pushdown to minimize data scanning
 *   Cache frequently accessed schema metadata
 
-**4. SQL Parser Dialect Strategy:**
-*   **Challenge:** PostgreSQL wire protocol + MySQL-dialect parser = compatibility gap
-*   **Current Approach:** Translation layer in `protocol.go` for PostgreSQL-specific queries
-*   **Supported Translation:** System queries (`version()`, `BEGIN`, `COMMIT`), error codes, type mapping
-*   **Known Limitations:** 
-    *   Identifier quoting differences (`"` vs `` ` ``)
-    *   Function differences (`||` vs `CONCAT()`)
-    *   System catalog access (`pg_catalog.*`)
-*   **Future Migration Path:** Consider `pg_query_go` for full PostgreSQL dialect support
-*   **Trade-off Decision:** Rapid development with translation layer vs pure dialect compatibility
+**4. PostgreSQL Implementation Strategy:**
+*   **Architecture:** Custom PostgreSQL parser + PostgreSQL wire protocol = perfect compatibility
+*   **Benefits:** No dialect translation needed, direct PostgreSQL syntax support
+*   **Supported Features:** 
+    *   Native PostgreSQL identifier quoting (`"identifiers"`)
+    *   PostgreSQL string concatenation (`||` operator)
+    *   System queries (`version()`, `BEGIN`, `COMMIT`) with proper responses
+    *   PostgreSQL error codes mapped from typed errors
+*   **Error Handling:** Typed error system with proper PostgreSQL error code mapping
+*   **Parser Features:** Lightweight, focused on SeaweedFS SQL subset, easily extensible
 
 **5. Transaction Semantics:**
 *   DDL operations (CREATE/ALTER/DROP) are atomic per topic
@@ -248,11 +250,11 @@ SQL Query Flow:
 
 ## Implementation Phases
 
-**Phase 1: Core SQL Infrastructure (Weeks 1-3)**
-1. Use native PostgreSQL parser (`pg_query_go`) for better PostgreSQL compatibility
-2. Create `weed/query/engine/` package with basic SQL execution framework
-3. Implement metadata catalog mapping MQ topics to SQL tables
-4. Basic `SHOW DATABASES`, `SHOW TABLES`, `DESCRIBE` commands
+**Phase 1: Core SQL Infrastructure (Weeks 1-3)** ✅ COMPLETED
+1. Implemented custom PostgreSQL parser for optimal compatibility (no CGO dependencies)
+2. Created `weed/query/engine/` package with comprehensive SQL execution framework
+3. Implemented metadata catalog mapping MQ topics to SQL tables
+4. Added `SHOW DATABASES`, `SHOW TABLES`, `DESCRIBE` commands with full PostgreSQL compatibility
 
 **Phase 2: DDL Operations (Weeks 4-5)**
 1. `CREATE TABLE` → Create MQ topic with schema
