@@ -339,7 +339,7 @@ weed postgres -tls-cert=server.crt -tls-key=server.key
 ### Use MD5 Authentication
 ```bash
 # More secure than password auth
-weed postgres -auth=md5 -users="admin:secret123,readonly:view456"
+weed postgres -auth=md5 -users="admin:secret123;readonly:view456"
 ```
 
 ### Limit Connections
