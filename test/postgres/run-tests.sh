@@ -116,13 +116,11 @@ case "$1" in
     "all")
         echo -e "${YELLOW}Running complete test suite...${NC}"
         
-        # Start services
+        # Start services (wait_for_service ensures they're ready)
         $0 start
-        sleep 5
         
-        # Create data
+        # Create data (docker-compose up is synchronous)
         $0 produce
-        sleep 3
         
         # Run tests
         $0 test
