@@ -10,7 +10,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/server/postgres"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -363,7 +362,7 @@ func validatePortNumber(port int) error {
 		return fmt.Errorf("port number must be between 1 and 65535, got %d", port)
 	}
 	if port < 1024 {
-		glog.Warningf("port number %d may require root privileges", port)
+		fmt.Fprintf(os.Stderr, "Warning: port number %d may require root privileges\n", port)
 	}
 	return nil
 }

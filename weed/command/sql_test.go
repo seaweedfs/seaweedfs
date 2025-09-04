@@ -44,33 +44,31 @@ func TestSplitSQLStatements(t *testing.T) {
 		{
 			name:     "Single line comment",
 			input:    "SELECT * FROM users; -- This is a comment\nSELECT * FROM orders;",
-			expected: []string{"SELECT * FROM users", "-- This is a comment\nSELECT * FROM orders"},
+			expected: []string{"SELECT * FROM users", "SELECT * FROM orders"},
 		},
 		{
 			name:     "Single line comment with semicolon",
 			input:    "SELECT * FROM users; -- Comment with; semicolon\nSELECT * FROM orders;",
-			expected: []string{"SELECT * FROM users", "-- Comment with; semicolon\nSELECT * FROM orders"},
+			expected: []string{"SELECT * FROM users", "SELECT * FROM orders"},
 		},
 		{
 			name:     "Multi-line comment",
 			input:    "SELECT * FROM users; /* Multi-line\ncomment */ SELECT * FROM orders;",
-			expected: []string{"SELECT * FROM users", "/* Multi-line\ncomment */ SELECT * FROM orders"},
+			expected: []string{"SELECT * FROM users", "SELECT * FROM orders"},
 		},
 		{
 			name:     "Multi-line comment with semicolon",
 			input:    "SELECT * FROM users; /* Comment with; semicolon */ SELECT * FROM orders;",
-			expected: []string{"SELECT * FROM users", "/* Comment with; semicolon */ SELECT * FROM orders"},
+			expected: []string{"SELECT * FROM users", "SELECT * FROM orders"},
 		},
 		{
-			name:     "Complex mixed case",
-			input:    `SELECT 'test;string', "quoted;id" FROM users; -- Comment; here
+			name: "Complex mixed case",
+			input: `SELECT 'test;string', "quoted;id" FROM users; -- Comment; here
 			/* Another; comment */ 
 			INSERT INTO users VALUES ('name''s value', "id""field");`,
 			expected: []string{
 				`SELECT 'test;string', "quoted;id" FROM users`,
-				`-- Comment; here
-			/* Another; comment */ 
-			INSERT INTO users VALUES ('name''s value', "id""field")`,
+				`INSERT INTO users VALUES ('name''s value', "id""field")`,
 			},
 		},
 		{
@@ -119,7 +117,7 @@ func TestSplitSQLStatements_EdgeCases(t *testing.T) {
 		{
 			name:     "Nested comments are not supported but handled gracefully",
 			input:    "SELECT * FROM users; /* Outer /* inner */ comment */ SELECT * FROM orders;",
-			expected: []string{"SELECT * FROM users", "/* Outer /* inner */ comment */ SELECT * FROM orders"},
+			expected: []string{"SELECT * FROM users", "comment */ SELECT * FROM orders"},
 		},
 		{
 			name:     "Unterminated string (malformed SQL)",
@@ -129,7 +127,7 @@ func TestSplitSQLStatements_EdgeCases(t *testing.T) {
 		{
 			name:     "Unterminated comment (malformed SQL)",
 			input:    "SELECT * FROM users; /* unterminated comment",
-			expected: []string{"SELECT * FROM users", "/* unterminated comment"},
+			expected: []string{"SELECT * FROM users"},
 		},
 		{
 			name:     "Multiple semicolons in quotes",

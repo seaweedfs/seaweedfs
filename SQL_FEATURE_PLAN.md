@@ -303,7 +303,10 @@ SQL Query Flow:
 ## Success Metrics
 
 *   **Feature Completeness:** Support for all specified DDL/DML operations
-*   **Performance:** Query latency < 100ms for simple selects, < 1s for complex joins
+*   **Performance:** 
+    *   **Simple SELECT queries**: < 100ms latency for single-table queries with up to 3 WHERE predicates on ≤ 100K records
+    *   **Complex queries**: < 1s latency for queries involving aggregations (COUNT, SUM, MAX, MIN) on ≤ 1M records
+    *   **Time-range queries**: < 500ms for timestamp-based filtering on ≤ 500K records within 24-hour windows
 *   **Scalability:** Handle topics with millions of messages efficiently
 *   **Reliability:** 99.9% success rate for valid SQL operations
 *   **Usability:** Intuitive SQL interface matching standard database expectations
