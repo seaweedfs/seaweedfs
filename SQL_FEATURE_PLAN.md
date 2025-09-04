@@ -41,24 +41,6 @@ To provide a SQL querying interface for SeaweedFS, enabling analytics on existin
 
 **1. Scaffolding & Dependencies**
 
-*   **SQL Parser:** **POSTGRESQL-ONLY IMPLEMENTATION**
-    *   **Current Implementation:** Custom lightweight PostgreSQL parser (pure Go, no CGO)
-    *   **Design Decision:** PostgreSQL-only dialect support for optimal wire protocol compatibility
-        *   **Identifier Quoting:** Uses PostgreSQL double quotes (`"identifiers"`)
-        *   **String Concatenation:** Supports PostgreSQL `||` operator
-        *   **System Functions:** Full support for PostgreSQL system catalogs and functions
-    *   **Architecture Benefits:**
-        *   **No CGO Dependencies:** Avoids build complexity and cross-platform issues
-        *   **Wire Protocol Alignment:** Perfect compatibility with PostgreSQL clients
-        *   **Lightweight:** Custom parser focused on SeaweedFS SQL feature subset
-        *   **Extensible:** Easy to add new PostgreSQL syntax support as needed
-    *   **Error Handling:** Typed errors map to standard PostgreSQL error codes
-    *   **Parser Location:** `weed/query/engine/engine.go` (ParseSQL function)
-*   **Project Structure:** 
-    *   Extend existing `weed/query/` package for SQL execution engine
-    *   Create `weed/query/engine/` for query planning and execution
-    *   Create `weed/query/metadata/` for schema catalog management
-    *   Integration point in `weed/mq/` for topic-to-table mapping
 
 **2. SQL Engine Architecture**
 
@@ -213,16 +195,6 @@ SQL Query Flow:
 *   Implement predicate pushdown to minimize data scanning
 *   Cache frequently accessed schema metadata
 
-**4. PostgreSQL Implementation Strategy:**
-*   **Architecture:** Custom PostgreSQL parser + PostgreSQL wire protocol = perfect compatibility
-*   **Benefits:** No dialect translation needed, direct PostgreSQL syntax support
-*   **Supported Features:** 
-    *   Native PostgreSQL identifier quoting (`"identifiers"`)
-    *   PostgreSQL string concatenation (`||` operator)
-    *   System queries (`version()`, `BEGIN`, `COMMIT`) with proper responses
-    *   PostgreSQL error codes mapped from typed errors
-*   **Error Handling:** Typed error system with proper PostgreSQL error code mapping
-*   **Parser Features:** Lightweight, focused on SeaweedFS SQL subset, easily extensible
 
 **5. Query Semantics:**
 *   SELECT queries provide read-consistent snapshots of topic data
@@ -296,5 +268,3 @@ SQL Query Flow:
     *   **Complex queries**: < 1s latency for queries involving aggregations (COUNT, SUM, MAX, MIN) on ≤ 1M records
     *   **Time-range queries**: < 500ms for timestamp-based filtering on ≤ 500K records within 24-hour windows
 *   **Scalability:** Handle topics with millions of messages efficiently
-*   **Reliability:** 99.9% success rate for valid SQL queries
-*   **Usability:** Intuitive SQL querying interface matching standard database expectations
