@@ -257,3 +257,274 @@ func valuesEqual(v1, v2 *schema_pb.Value) bool {
 
 	return false
 }
+
+func TestMathematicalFunctions(t *testing.T) {
+	engine := NewTestSQLEngine()
+
+	t.Run("ROUND function tests", func(t *testing.T) {
+		tests := []struct {
+			name       string
+			value      *schema_pb.Value
+			precision  *schema_pb.Value
+			expected   *schema_pb.Value
+			expectErr  bool
+		}{
+			{
+				name: "Round float to integer",
+				value: &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 3.7}},
+				precision: nil,
+				expected: &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 4.0}},
+				expectErr: false,
+			},
+			{
+				name: "Round integer stays integer",
+				value: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
+				precision: nil,
+				expected: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
+				expectErr: false,
+			},
+			{
+				name: "Round with precision 2",
+				value: &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 3.14159}},
+				precision: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 2}},
+				expected: &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 3.14}},
+				expectErr: false,
+			},
+			{
+				name: "Round negative number",
+				value: &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: -3.7}},
+				precision: nil,
+				expected: &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: -4.0}},
+				expectErr: false,
+			},
+			{
+				name: "Round null value",
+				value: nil,
+				precision: nil,
+				expected: nil,
+				expectErr: true,
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				var result *schema_pb.Value
+				var err error
+
+				if tt.precision != nil {
+					result, err = engine.Round(tt.value, tt.precision)
+				} else {
+					result, err = engine.Round(tt.value)
+				}
+
+				if tt.expectErr {
+					if err == nil {
+						t.Errorf("Expected error but got none")
+					}
+					return
+				}
+
+				if err != nil {
+					t.Errorf("Unexpected error: %v", err)
+					return
+				}
+
+				if !valuesEqual(result, tt.expected) {
+					t.Errorf("Expected %v, got %v", tt.expected, result)
+				}
+			})
+		}
+	})
+
+	t.Run("CEIL function tests", func(t *testing.T) {
+		tests := []struct {
+			name       string
+			value      *schema_pb.Value
+			expected   *schema_pb.Value
+			expectErr  bool
+		}{
+			{
+				name: "Ceil positive decimal",
+				value: &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 3.2}},
+				expected: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 4}},
+				expectErr: false,
+			},
+			{
+				name: "Ceil negative decimal",
+				value: &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: -3.2}},
+				expected: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: -3}},
+				expectErr: false,
+			},
+			{
+				name: "Ceil integer",
+				value: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
+				expected: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
+				expectErr: false,
+			},
+			{
+				name: "Ceil null value",
+				value: nil,
+				expected: nil,
+				expectErr: true,
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				result, err := engine.Ceil(tt.value)
+
+				if tt.expectErr {
+					if err == nil {
+						t.Errorf("Expected error but got none")
+					}
+					return
+				}
+
+				if err != nil {
+					t.Errorf("Unexpected error: %v", err)
+					return
+				}
+
+				if !valuesEqual(result, tt.expected) {
+					t.Errorf("Expected %v, got %v", tt.expected, result)
+				}
+			})
+		}
+	})
+
+	t.Run("FLOOR function tests", func(t *testing.T) {
+		tests := []struct {
+			name       string
+			value      *schema_pb.Value
+			expected   *schema_pb.Value
+			expectErr  bool
+		}{
+			{
+				name: "Floor positive decimal",
+				value: &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 3.8}},
+				expected: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 3}},
+				expectErr: false,
+			},
+			{
+				name: "Floor negative decimal",
+				value: &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: -3.2}},
+				expected: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: -4}},
+				expectErr: false,
+			},
+			{
+				name: "Floor integer",
+				value: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
+				expected: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
+				expectErr: false,
+			},
+			{
+				name: "Floor null value",
+				value: nil,
+				expected: nil,
+				expectErr: true,
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				result, err := engine.Floor(tt.value)
+
+				if tt.expectErr {
+					if err == nil {
+						t.Errorf("Expected error but got none")
+					}
+					return
+				}
+
+				if err != nil {
+					t.Errorf("Unexpected error: %v", err)
+					return
+				}
+
+				if !valuesEqual(result, tt.expected) {
+					t.Errorf("Expected %v, got %v", tt.expected, result)
+				}
+			})
+		}
+	})
+
+	t.Run("ABS function tests", func(t *testing.T) {
+		tests := []struct {
+			name       string
+			value      *schema_pb.Value
+			expected   *schema_pb.Value
+			expectErr  bool
+		}{
+			{
+				name: "Abs positive integer",
+				value: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
+				expected: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
+				expectErr: false,
+			},
+			{
+				name: "Abs negative integer",
+				value: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: -5}},
+				expected: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
+				expectErr: false,
+			},
+			{
+				name: "Abs positive double",
+				value: &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 3.14}},
+				expected: &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 3.14}},
+				expectErr: false,
+			},
+			{
+				name: "Abs negative double",
+				value: &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: -3.14}},
+				expected: &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 3.14}},
+				expectErr: false,
+			},
+			{
+				name: "Abs positive float",
+				value: &schema_pb.Value{Kind: &schema_pb.Value_FloatValue{FloatValue: 2.5}},
+				expected: &schema_pb.Value{Kind: &schema_pb.Value_FloatValue{FloatValue: 2.5}},
+				expectErr: false,
+			},
+			{
+				name: "Abs negative float",
+				value: &schema_pb.Value{Kind: &schema_pb.Value_FloatValue{FloatValue: -2.5}},
+				expected: &schema_pb.Value{Kind: &schema_pb.Value_FloatValue{FloatValue: 2.5}},
+				expectErr: false,
+			},
+			{
+				name: "Abs zero",
+				value: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 0}},
+				expected: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 0}},
+				expectErr: false,
+			},
+			{
+				name: "Abs null value",
+				value: nil,
+				expected: nil,
+				expectErr: true,
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				result, err := engine.Abs(tt.value)
+
+				if tt.expectErr {
+					if err == nil {
+						t.Errorf("Expected error but got none")
+					}
+					return
+				}
+
+				if err != nil {
+					t.Errorf("Unexpected error: %v", err)
+					return
+				}
+
+				if !valuesEqual(result, tt.expected) {
+					t.Errorf("Expected %v, got %v", tt.expected, result)
+				}
+			})
+		}
+	})
+}
