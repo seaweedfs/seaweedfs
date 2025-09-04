@@ -85,6 +85,7 @@ type WhereClause struct {
 
 type LimitClause struct {
 	Rowcount ExprNode
+	Offset   ExprNode
 }
 
 func (s *SelectStatement) isStatement() {}
@@ -381,19 +382,46 @@ func parseSelectStatement(sql string) (*SelectStatement, error) {
 			}
 		}
 
-		// Parse LIMIT clause
+		// Parse LIMIT clause with optional OFFSET
 		limitIdx := strings.Index(strings.ToUpper(remaining), "LIMIT")
 		if limitIdx != -1 {
 			limitClause := remaining[limitIdx+5:] // Skip "LIMIT"
 			limitClause = strings.TrimSpace(limitClause)
 
-			if _, err := strconv.Atoi(limitClause); err == nil {
-				s.Limit = &LimitClause{
+			// Check for OFFSET keyword
+			limitClauseUpper := strings.ToUpper(limitClause)
+			offsetIdx := strings.Index(limitClauseUpper, "OFFSET")
+
+			var limitValue, offsetValue string
+			if offsetIdx != -1 {
+				// Parse LIMIT N OFFSET M syntax
+				limitValue = strings.TrimSpace(limitClause[:offsetIdx])
+				offsetValue = strings.TrimSpace(limitClause[offsetIdx+6:]) // Skip "OFFSET"
+			} else {
+				// Parse LIMIT N syntax only
+				limitValue = limitClause
+			}
+
+			// Create LIMIT clause
+			if _, err := strconv.Atoi(limitValue); err == nil {
+				limitClauseStruct := &LimitClause{
 					Rowcount: &SQLVal{
 						Type: IntVal,
-						Val:  []byte(limitClause),
+						Val:  []byte(limitValue),
 					},
 				}
+
+				// Add OFFSET if present
+				if offsetValue != "" {
+					if _, err := strconv.Atoi(offsetValue); err == nil {
+						limitClauseStruct.Offset = &SQLVal{
+							Type: IntVal,
+							Val:  []byte(offsetValue),
+						}
+					}
+				}
+
+				s.Limit = limitClauseStruct
 			}
 		}
 	}
@@ -1387,8 +1415,9 @@ func (e *SQLEngine) executeSelectStatement(ctx context.Context, stmt *SelectStat
 		}
 	}
 
-	// Parse LIMIT clause
+	// Parse LIMIT and OFFSET clauses
 	limit := 0
+	offset := 0
 	if stmt.Limit != nil && stmt.Limit.Rowcount != nil {
 		switch limitExpr := stmt.Limit.Rowcount.(type) {
 		case *SQLVal:
@@ -1406,6 +1435,24 @@ func (e *SQLEngine) executeSelectStatement(ctx context.Context, stmt *SelectStat
 		}
 	}
 
+	// Parse OFFSET clause if present
+	if stmt.Limit != nil && stmt.Limit.Offset != nil {
+		switch offsetExpr := stmt.Limit.Offset.(type) {
+		case *SQLVal:
+			if offsetExpr.Type == IntVal {
+				var parseErr error
+				offset64, parseErr := strconv.ParseInt(string(offsetExpr.Val), 10, 64)
+				if parseErr != nil {
+					return &QueryResult{Error: parseErr}, parseErr
+				}
+				if offset64 > math.MaxInt32 || offset64 < 0 {
+					return &QueryResult{Error: fmt.Errorf("OFFSET value %d is out of valid range", offset64)}, fmt.Errorf("OFFSET value %d is out of valid range", offset64)
+				}
+				offset = int(offset64)
+			}
+		}
+	}
+
 	// Build hybrid scan options
 	// Extract time filters from WHERE clause to optimize scanning
 	startTimeNs, stopTimeNs := int64(0), int64(0)
@@ -1417,6 +1464,7 @@ func (e *SQLEngine) executeSelectStatement(ctx context.Context, stmt *SelectStat
 		StartTimeNs: startTimeNs, // Extracted from WHERE clause time comparisons
 		StopTimeNs:  stopTimeNs,  // Extracted from WHERE clause time comparisons
 		Limit:       limit,
+		Offset:      offset,
 		Predicate:   predicate,
 	}
 
@@ -1556,8 +1604,9 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 		}
 	}
 
-	// Parse LIMIT clause
+	// Parse LIMIT and OFFSET clauses
 	limit := 0
+	offset := 0
 	if stmt.Limit != nil && stmt.Limit.Rowcount != nil {
 		switch limitExpr := stmt.Limit.Rowcount.(type) {
 		case *SQLVal:
@@ -1575,6 +1624,24 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 		}
 	}
 
+	// Parse OFFSET clause if present
+	if stmt.Limit != nil && stmt.Limit.Offset != nil {
+		switch offsetExpr := stmt.Limit.Offset.(type) {
+		case *SQLVal:
+			if offsetExpr.Type == IntVal {
+				var parseErr error
+				offset64, parseErr := strconv.ParseInt(string(offsetExpr.Val), 10, 64)
+				if parseErr != nil {
+					return &QueryResult{Error: parseErr}, parseErr
+				}
+				if offset64 > math.MaxInt32 || offset64 < 0 {
+					return &QueryResult{Error: fmt.Errorf("OFFSET value %d is out of valid range", offset64)}, fmt.Errorf("OFFSET value %d is out of valid range", offset64)
+				}
+				offset = int(offset64)
+			}
+		}
+	}
+
 	// Build hybrid scan options
 	// Extract time filters from WHERE clause to optimize scanning
 	startTimeNs, stopTimeNs := int64(0), int64(0)
@@ -1586,6 +1653,7 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 		StartTimeNs: startTimeNs, // Extracted from WHERE clause time comparisons
 		StopTimeNs:  stopTimeNs,  // Extracted from WHERE clause time comparisons
 		Limit:       limit,
+		Offset:      offset,
 		Predicate:   predicate,
 	}
 

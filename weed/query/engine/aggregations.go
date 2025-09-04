@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
@@ -348,6 +349,24 @@ func (e *SQLEngine) executeAggregationQuery(ctx context.Context, hybridScanner *
 
 // executeAggregationQueryWithPlan handles SELECT queries with aggregation functions and populates execution plan
 func (e *SQLEngine) executeAggregationQueryWithPlan(ctx context.Context, hybridScanner *HybridMessageScanner, aggregations []AggregationSpec, stmt *SelectStatement, plan *QueryExecutionPlan) (*QueryResult, error) {
+	// Parse LIMIT and OFFSET for aggregation results (do this first)
+	limit := 0
+	offset := 0
+	if stmt.Limit != nil && stmt.Limit.Rowcount != nil {
+		if limitExpr, ok := stmt.Limit.Rowcount.(*SQLVal); ok && limitExpr.Type == IntVal {
+			if limit64, err := strconv.ParseInt(string(limitExpr.Val), 10, 64); err == nil {
+				limit = int(limit64)
+			}
+		}
+	}
+	if stmt.Limit != nil && stmt.Limit.Offset != nil {
+		if offsetExpr, ok := stmt.Limit.Offset.(*SQLVal); ok && offsetExpr.Type == IntVal {
+			if offset64, err := strconv.ParseInt(string(offsetExpr.Val), 10, 64); err == nil {
+				offset = int(offset64)
+			}
+		}
+	}
+
 	// Parse WHERE clause for filtering
 	var predicate func(*schema_pb.RecordValue) bool
 	var err error
@@ -372,6 +391,29 @@ func (e *SQLEngine) executeAggregationQueryWithPlan(ctx context.Context, hybridS
 			if isDebugMode(ctx) {
 				fmt.Printf("Using fast hybrid statistics for aggregation (parquet stats + live log counts)\n")
 			}
+			
+			// Apply OFFSET and LIMIT to fast path results too
+			if offset > 0 || limit > 0 {
+				rows := fastResult.Rows
+				// Apply OFFSET first
+				if offset > 0 {
+					if offset >= len(rows) {
+						rows = [][]sqltypes.Value{}
+					} else {
+						rows = rows[offset:]
+					}
+				}
+				// Apply LIMIT after OFFSET
+				if limit >= 0 { // Handle LIMIT 0 case
+					if limit == 0 {
+						rows = [][]sqltypes.Value{}
+					} else if len(rows) > limit {
+						rows = rows[:limit]
+					}
+				}
+				fastResult.Rows = rows
+			}
+			
 			return fastResult, nil
 		}
 	}
@@ -381,11 +423,12 @@ func (e *SQLEngine) executeAggregationQueryWithPlan(ctx context.Context, hybridS
 		fmt.Printf("Using full table scan for aggregation (parquet optimization not applicable)\n")
 	}
 
-	// Build scan options for full table scan (aggregations need all data)
+	// Build scan options for full table scan (aggregations need all data during scanning)
 	hybridScanOptions := HybridScanOptions{
 		StartTimeNs: startTimeNs,
 		StopTimeNs:  stopTimeNs,
-		Limit:       0, // No limit for aggregations - need all data
+		Limit:       0, // No limit during scanning - need all data for aggregation
+		Offset:      0, // No offset during scanning - OFFSET applies to final results
 		Predicate:   predicate,
 	}
 
@@ -440,9 +483,31 @@ func (e *SQLEngine) executeAggregationQueryWithPlan(ctx context.Context, hybridS
 		row[i] = e.formatAggregationResult(spec, aggResults[i])
 	}
 
+	// Apply OFFSET and LIMIT to aggregation results
+	rows := [][]sqltypes.Value{row}
+	if offset > 0 || limit > 0 {
+		// Apply OFFSET first
+		if offset > 0 {
+			if offset >= len(rows) {
+				rows = [][]sqltypes.Value{}
+			} else {
+				rows = rows[offset:]
+			}
+		}
+
+		// Apply LIMIT after OFFSET
+		if limit >= 0 { // Handle LIMIT 0 case
+			if limit == 0 {
+				rows = [][]sqltypes.Value{}
+			} else if len(rows) > limit {
+				rows = rows[:limit]
+			}
+		}
+	}
+
 	return &QueryResult{
 		Columns: columns,
-		Rows:    [][]sqltypes.Value{row},
+		Rows:    rows,
 	}, nil
 }
 

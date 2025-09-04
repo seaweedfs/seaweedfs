@@ -345,6 +345,11 @@ func TestParseSQL_LIMIT_Clauses(t *testing.T) {
 					t.Error("Expected LIMIT rowcount, got nil")
 				}
 
+				// Verify no OFFSET is set
+				if selectStmt.Limit.Offset != nil {
+					t.Error("Expected OFFSET to be nil for LIMIT-only query")
+				}
+
 				sqlVal, ok := selectStmt.Limit.Rowcount.(*SQLVal)
 				if !ok {
 					t.Errorf("Expected *SQLVal, got %T", selectStmt.Limit.Rowcount)
@@ -356,6 +361,99 @@ func TestParseSQL_LIMIT_Clauses(t *testing.T) {
 
 				if string(sqlVal.Val) != "10" {
 					t.Errorf("Expected limit value '10', got '%s'", string(sqlVal.Val))
+				}
+			},
+		},
+		{
+			name:    "LIMIT with OFFSET",
+			sql:     "SELECT * FROM users LIMIT 10 OFFSET 5",
+			wantErr: false,
+			validate: func(t *testing.T, stmt Statement) {
+				selectStmt := stmt.(*SelectStatement)
+				if selectStmt.Limit == nil {
+					t.Fatal("Expected LIMIT clause, got nil")
+				}
+
+				// Verify LIMIT value
+				if selectStmt.Limit.Rowcount == nil {
+					t.Error("Expected LIMIT rowcount, got nil")
+				}
+
+				limitVal, ok := selectStmt.Limit.Rowcount.(*SQLVal)
+				if !ok {
+					t.Errorf("Expected *SQLVal for LIMIT, got %T", selectStmt.Limit.Rowcount)
+				}
+
+				if limitVal.Type != IntVal {
+					t.Errorf("Expected IntVal type for LIMIT, got %d", limitVal.Type)
+				}
+
+				if string(limitVal.Val) != "10" {
+					t.Errorf("Expected limit value '10', got '%s'", string(limitVal.Val))
+				}
+
+				// Verify OFFSET value
+				if selectStmt.Limit.Offset == nil {
+					t.Fatal("Expected OFFSET clause, got nil")
+				}
+
+				offsetVal, ok := selectStmt.Limit.Offset.(*SQLVal)
+				if !ok {
+					t.Errorf("Expected *SQLVal for OFFSET, got %T", selectStmt.Limit.Offset)
+				}
+
+				if offsetVal.Type != IntVal {
+					t.Errorf("Expected IntVal type for OFFSET, got %d", offsetVal.Type)
+				}
+
+				if string(offsetVal.Val) != "5" {
+					t.Errorf("Expected offset value '5', got '%s'", string(offsetVal.Val))
+				}
+			},
+		},
+		{
+			name:    "LIMIT with OFFSET zero",
+			sql:     "SELECT * FROM users LIMIT 5 OFFSET 0",
+			wantErr: false,
+			validate: func(t *testing.T, stmt Statement) {
+				selectStmt := stmt.(*SelectStatement)
+				if selectStmt.Limit == nil {
+					t.Fatal("Expected LIMIT clause, got nil")
+				}
+
+				// Verify OFFSET is 0
+				if selectStmt.Limit.Offset == nil {
+					t.Fatal("Expected OFFSET clause, got nil")
+				}
+
+				offsetVal, ok := selectStmt.Limit.Offset.(*SQLVal)
+				if !ok {
+					t.Errorf("Expected *SQLVal for OFFSET, got %T", selectStmt.Limit.Offset)
+				}
+
+				if string(offsetVal.Val) != "0" {
+					t.Errorf("Expected offset value '0', got '%s'", string(offsetVal.Val))
+				}
+			},
+		},
+		{
+			name:    "LIMIT with large OFFSET",
+			sql:     "SELECT * FROM users LIMIT 100 OFFSET 1000",
+			wantErr: false,
+			validate: func(t *testing.T, stmt Statement) {
+				selectStmt := stmt.(*SelectStatement)
+				if selectStmt.Limit == nil {
+					t.Fatal("Expected LIMIT clause, got nil")
+				}
+
+				// Verify large OFFSET value
+				offsetVal, ok := selectStmt.Limit.Offset.(*SQLVal)
+				if !ok {
+					t.Errorf("Expected *SQLVal for OFFSET, got %T", selectStmt.Limit.Offset)
+				}
+
+				if string(offsetVal.Val) != "1000" {
+					t.Errorf("Expected offset value '1000', got '%s'", string(offsetVal.Val))
 				}
 			},
 		},

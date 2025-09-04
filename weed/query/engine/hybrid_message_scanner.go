@@ -103,6 +103,9 @@ type HybridScanOptions struct {
 	// Row limit - 0 means no limit
 	Limit int
 
+	// Row offset - 0 means no offset
+	Offset int
+
 	// Predicate for WHERE clause filtering
 	Predicate func(*schema_pb.RecordValue) bool
 }
@@ -222,10 +225,32 @@ func (hms *HybridMessageScanner) ScanWithStats(ctx context.Context, options Hybr
 			}
 		}
 
-		// Apply global limit across all partitions
-		if options.Limit > 0 && len(results) >= options.Limit {
-			results = results[:options.Limit]
+		// Apply global limit (without offset) across all partitions
+		// Note: OFFSET will be applied at the end to avoid double-application
+		if options.Limit > 0 && len(results) >= options.Limit+options.Offset {
 			break
+		}
+	}
+
+	// Apply final OFFSET and LIMIT processing (done once at the end)
+	if options.Offset > 0 || options.Limit >= 0 {
+		// Handle LIMIT 0 special case - return empty result immediately
+		if options.Limit == 0 {
+			results = []HybridScanResult{}
+		} else {
+			// Apply OFFSET first
+			if options.Offset > 0 {
+				if options.Offset >= len(results) {
+					results = []HybridScanResult{}
+				} else {
+					results = results[options.Offset:]
+				}
+			}
+
+			// Apply LIMIT after OFFSET
+			if options.Limit > 0 && len(results) > options.Limit {
+				results = results[:options.Limit]
+			}
 		}
 	}
 
@@ -331,8 +356,8 @@ func (hms *HybridMessageScanner) scanUnflushedDataWithStats(ctx context.Context,
 
 		results = append(results, result)
 
-		// Apply limit
-		if options.Limit > 0 && len(results) >= options.Limit {
+		// Apply limit (accounting for offset) - collect more data than needed
+		if options.Limit > 0 && len(results) >= options.Offset+options.Limit {
 			break
 		}
 	}
@@ -497,10 +522,7 @@ func (hms *HybridMessageScanner) scanPartitionHybridWithStats(ctx context.Contex
 	if len(results) == 0 {
 		sampleResults := hms.generateSampleHybridData(options)
 		results = append(results, sampleResults...)
-		// Apply limit to sample data as well
-		if options.Limit > 0 && len(results) > options.Limit {
-			results = results[:options.Limit]
-		}
+		// Note: OFFSET and LIMIT will be applied at the end of the main scan function
 	}
 
 	return results, stats, nil
@@ -930,10 +952,7 @@ func (hms *HybridMessageScanner) generateSampleHybridData(options HybridScanOpti
 		sampleData = filtered
 	}
 
-	// Apply limit
-	if options.Limit > 0 && len(sampleData) > options.Limit {
-		sampleData = sampleData[:options.Limit]
-	}
+	// Note: OFFSET and LIMIT will be applied at the end of the main scan function
 
 	return sampleData
 }
