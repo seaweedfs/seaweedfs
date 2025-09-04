@@ -64,7 +64,7 @@ func NewLogBuffer(name string, flushInterval time.Duration, flushFn LogFlushFunc
 		notifyFn:       notifyFn,
 		flushChan:      make(chan *dataToFlush, 256),
 		isStopping:     new(atomic.Bool),
-		batchIndex:     time.Now().UnixNano(), // Initialize with process start time for uniqueness
+		batchIndex:     time.Now().UnixNano(), // Initialize with creation time for uniqueness across restarts
 	}
 	go lb.loopFlush()
 	go lb.loopInterval()
