@@ -9,10 +9,10 @@ This directory contains examples demonstrating how to connect to SeaweedFS using
 weed postgres -port=5432 -master=localhost:9333
 
 # Start with password authentication
-weed postgres -port=5432 -auth=password -users="admin:secret,readonly:view123"
+weed postgres -port=5432 -auth=password -users="admin:secret;readonly:view123"
 
 # Start with MD5 authentication (more secure)
-weed postgres -port=5432 -auth=md5 -users="user1:pass1,user2:pass2"
+weed postgres -port=5432 -auth=md5 -users="user1:pass1;user2:pass2"
 
 # Start with TLS encryption
 weed postgres -port=5432 -tls-cert=server.crt -tls-key=server.key

@@ -297,14 +297,14 @@ jdbc:postgresql://localhost:5432/default?user=seaweedfs&password=secret
 ```bash
 # Start PostgreSQL protocol server
 weed db -port=5432 -auth=trust
-weed db -port=5432 -auth=password -users="admin:secret,readonly:pass"
+weed db -port=5432 -auth=password -users="admin:secret;readonly:pass"
 weed db -port=5432 -tls-cert=server.crt -tls-key=server.key
 
 # Configuration options
 -host=localhost              # Listen host
 -port=5432                   # PostgreSQL standard port
 -auth=trust|password|md5     # Authentication method
--users=user:pass,user2:pass2 # User credentials (password/md5 auth)
+-users=user:pass;user2:pass2 # User credentials (password/md5 auth) - use semicolons to separate users
 -database=default            # Default database name
 -max-connections=100         # Maximum concurrent connections
 -idle-timeout=1h             # Connection idle timeout

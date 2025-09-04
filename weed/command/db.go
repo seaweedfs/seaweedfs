@@ -37,7 +37,7 @@ func init() {
 	dbOptions.port = cmdDB.Flag.Int("port", 5432, "Database server port")
 	dbOptions.masterAddr = cmdDB.Flag.String("master", "localhost:9333", "SeaweedFS master server address")
 	dbOptions.authMethod = cmdDB.Flag.String("auth", "trust", "Authentication method: trust, password, md5")
-	dbOptions.users = cmdDB.Flag.String("users", "", "User credentials for auth (format: user1:pass1,user2:pass2)")
+	dbOptions.users = cmdDB.Flag.String("users", "", "User credentials for auth (format: user1:pass1;user2:pass2)")
 	dbOptions.database = cmdDB.Flag.String("database", "default", "Default database name")
 	dbOptions.maxConns = cmdDB.Flag.Int("max-connections", 100, "Maximum concurrent connections")
 	dbOptions.idleTimeout = cmdDB.Flag.String("idle-timeout", "1h", "Connection idle timeout")
@@ -60,10 +60,10 @@ Examples:
 	weed db
 	
 	# Start with password authentication
-	weed db -auth=password -users="admin:secret,readonly:view123"
+	weed db -auth=password -users="admin:secret;readonly:view123"
 	
 	# Start with MD5 authentication 
-	weed db -auth=md5 -users="user1:pass1,user2:pass2"
+	weed db -auth=md5 -users="user1:pass1;user2:pass2"
 	
 	# Start with custom port and master
 	weed db -port=5433 -master=master1:9333
@@ -315,6 +315,8 @@ func parseAuthMethod(method string) (postgres.AuthMethod, error) {
 }
 
 // parseUsers parses the user credentials string
+// Format: username:password;username2:password2
+// Semicolons are used as separators to avoid conflicts with commas that may appear in passwords
 func parseUsers(usersStr string, authMethod postgres.AuthMethod) (map[string]string, error) {
 	users := make(map[string]string)
 
@@ -326,8 +328,24 @@ func parseUsers(usersStr string, authMethod postgres.AuthMethod) (map[string]str
 		return users, nil
 	}
 
-	// Parse user:password pairs
-	pairs := strings.Split(usersStr, ",")
+	// Parse user:password pairs separated by semicolons (safer than commas for passwords)
+	// Also support legacy comma format for backward compatibility
+	var pairs []string
+	if strings.Contains(usersStr, ";") {
+		pairs = strings.Split(usersStr, ";")
+	} else {
+		// Legacy comma format - warn about potential issues
+		pairs = strings.Split(usersStr, ",")
+		if len(pairs) > 1 {
+			// Only warn if there are actually multiple pairs
+			for _, pair := range pairs {
+				if strings.Count(pair, ":") > 1 {
+					return nil, fmt.Errorf("detected multiple colons in user specification '%s'. This may indicate a password containing commas. Please use semicolons (;) to separate user:password pairs instead of commas", pair)
+				}
+			}
+		}
+	}
+
 	for _, pair := range pairs {
 		pair = strings.TrimSpace(pair)
 		if pair == "" {

@@ -286,8 +286,17 @@ func runInteractiveShell(ctx *SQLContext) bool {
 		// Handle database switching
 		parts := strings.Fields(cleanQuery)
 		if len(parts) >= 2 && strings.ToUpper(parts[0]) == "USE" {
-			// Extract database name preserving original case
-			dbName := strings.TrimSpace(parts[1])
+			// Re-join the parts after "USE" to handle names with spaces, then trim.
+			dbName := strings.TrimSpace(strings.TrimPrefix(cleanQuery, parts[0]))
+
+			// Unquote if necessary (handle quoted identifiers like "my-database")
+			if len(dbName) > 1 && dbName[0] == '"' && dbName[len(dbName)-1] == '"' {
+				dbName = dbName[1 : len(dbName)-1]
+			} else if len(dbName) > 1 && dbName[0] == '`' && dbName[len(dbName)-1] == '`' {
+				// Also handle backtick quotes for MySQL compatibility
+				dbName = dbName[1 : len(dbName)-1]
+			}
+
 			ctx.currentDatabase = dbName
 			// Also update the SQL engine's catalog current database
 			ctx.engine.GetCatalog().SetCurrentDatabase(dbName)
