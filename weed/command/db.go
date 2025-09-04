@@ -316,7 +316,7 @@ func parseAuthMethod(method string) (postgres.AuthMethod, error) {
 
 // parseUsers parses the user credentials string
 // Format: username:password;username2:password2
-// Semicolons are used as separators to avoid conflicts with commas that may appear in passwords
+// Semicolons are used as separators to support passwords with special characters including commas
 func parseUsers(usersStr string, authMethod postgres.AuthMethod) (map[string]string, error) {
 	users := make(map[string]string)
 
@@ -328,23 +328,8 @@ func parseUsers(usersStr string, authMethod postgres.AuthMethod) (map[string]str
 		return users, nil
 	}
 
-	// Parse user:password pairs separated by semicolons (safer than commas for passwords)
-	// Also support legacy comma format for backward compatibility
-	var pairs []string
-	if strings.Contains(usersStr, ";") {
-		pairs = strings.Split(usersStr, ";")
-	} else {
-		// Legacy comma format - warn about potential issues
-		pairs = strings.Split(usersStr, ",")
-		if len(pairs) > 1 {
-			// Only warn if there are actually multiple pairs
-			for _, pair := range pairs {
-				if strings.Count(pair, ":") > 1 {
-					return nil, fmt.Errorf("detected multiple colons in user specification '%s'. This may indicate a password containing commas. Please use semicolons (;) to separate user:password pairs instead of commas", pair)
-				}
-			}
-		}
-	}
+	// Parse user:password pairs separated by semicolons
+	pairs := strings.Split(usersStr, ";")
 
 	for _, pair := range pairs {
 		pair = strings.TrimSpace(pair)

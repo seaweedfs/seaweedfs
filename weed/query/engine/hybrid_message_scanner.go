@@ -516,14 +516,8 @@ func (hms *HybridMessageScanner) scanPartitionHybridWithStats(ctx context.Contex
 	// STEP 3: Sort results chronologically (unflushed + flushed data)
 	// This ensures proper time ordering across all data sources
 	if len(results) > 1 {
-		// Simple sort by timestamp - in a full implementation, consider more efficient merging
-		for i := 0; i < len(results)-1; i++ {
-			for j := i + 1; j < len(results); j++ {
-				if results[i].Timestamp > results[j].Timestamp {
-					results[i], results[j] = results[j], results[i]
-				}
-			}
-		}
+		// Use efficient merge sort for better performance with large datasets
+		hms.mergeSort(results, 0, len(results)-1)
 	}
 
 	// Apply final limit after merging and sorting
@@ -1271,4 +1265,57 @@ func (h *HybridMessageScanner) compareRawValues(v1, v2 interface{}) int {
 		return 1
 	}
 	return 0
+}
+
+// mergeSort efficiently sorts HybridScanResult slice by timestamp using merge sort algorithm
+func (hms *HybridMessageScanner) mergeSort(results []HybridScanResult, left, right int) {
+	if left < right {
+		mid := left + (right-left)/2
+
+		// Recursively sort both halves
+		hms.mergeSort(results, left, mid)
+		hms.mergeSort(results, mid+1, right)
+
+		// Merge the sorted halves
+		hms.merge(results, left, mid, right)
+	}
+}
+
+// merge combines two sorted subarrays into a single sorted array
+func (hms *HybridMessageScanner) merge(results []HybridScanResult, left, mid, right int) {
+	// Create temporary arrays for the two subarrays
+	leftArray := make([]HybridScanResult, mid-left+1)
+	rightArray := make([]HybridScanResult, right-mid)
+
+	// Copy data to temporary arrays
+	copy(leftArray, results[left:mid+1])
+	copy(rightArray, results[mid+1:right+1])
+
+	// Merge the temporary arrays back into results[left..right]
+	i, j, k := 0, 0, left
+
+	for i < len(leftArray) && j < len(rightArray) {
+		if leftArray[i].Timestamp <= rightArray[j].Timestamp {
+			results[k] = leftArray[i]
+			i++
+		} else {
+			results[k] = rightArray[j]
+			j++
+		}
+		k++
+	}
+
+	// Copy remaining elements of leftArray, if any
+	for i < len(leftArray) {
+		results[k] = leftArray[i]
+		i++
+		k++
+	}
+
+	// Copy remaining elements of rightArray, if any
+	for j < len(rightArray) {
+		results[k] = rightArray[j]
+		j++
+		k++
+	}
 }

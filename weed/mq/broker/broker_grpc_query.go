@@ -134,48 +134,70 @@ func (b *MessageQueueBroker) buildBufferStartDeduplicationMap(partitionDir strin
 	var flushedRanges []BufferRange
 
 	// List all files in the partition directory using filer client accessor
+	// Use pagination to handle directories with more than 1000 files
 	err := b.fca.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return filer_pb.SeaweedList(context.Background(), client, partitionDir, "", func(entry *filer_pb.Entry, isLast bool) error {
-			if entry.IsDirectory {
-				return nil
-			}
+		var lastFileName string
+		var hasMore = true
 
-			// Skip Parquet files - they don't represent buffer ranges
-			if strings.HasSuffix(entry.Name, ".parquet") {
-				return nil
-			}
+		for hasMore {
+			var currentBatchProcessed int
+			err := filer_pb.SeaweedList(context.Background(), client, partitionDir, "", func(entry *filer_pb.Entry, isLast bool) error {
+				currentBatchProcessed++
+				hasMore = !isLast // If this is the last entry of a full batch, there might be more
+				lastFileName = entry.Name
 
-			// Skip offset files
-			if strings.HasSuffix(entry.Name, ".offset") {
-				return nil
-			}
-
-			// Get buffer start for this file
-			bufferStart, err := b.getLogBufferStartFromFile(entry)
-			if err != nil {
-				glog.V(2).Infof("Failed to get buffer start from file %s: %v", entry.Name, err)
-				return nil // Continue with other files
-			}
-
-			if bufferStart == nil {
-				// File has no buffer metadata - skip deduplication for this file
-				glog.V(2).Infof("File %s has no buffer_start metadata", entry.Name)
-				return nil
-			}
-
-			// Calculate the buffer range covered by this file
-			chunkCount := int64(len(entry.GetChunks()))
-			if chunkCount > 0 {
-				fileRange := BufferRange{
-					start: bufferStart.StartIndex,
-					end:   bufferStart.StartIndex + chunkCount - 1,
+				if entry.IsDirectory {
+					return nil
 				}
-				flushedRanges = append(flushedRanges, fileRange)
-				glog.V(3).Infof("File %s covers buffer range [%d-%d]", entry.Name, fileRange.start, fileRange.end)
+
+				// Skip Parquet files - they don't represent buffer ranges
+				if strings.HasSuffix(entry.Name, ".parquet") {
+					return nil
+				}
+
+				// Skip offset files
+				if strings.HasSuffix(entry.Name, ".offset") {
+					return nil
+				}
+
+				// Get buffer start for this file
+				bufferStart, err := b.getLogBufferStartFromFile(entry)
+				if err != nil {
+					glog.V(2).Infof("Failed to get buffer start from file %s: %v", entry.Name, err)
+					return nil // Continue with other files
+				}
+
+				if bufferStart == nil {
+					// File has no buffer metadata - skip deduplication for this file
+					glog.V(2).Infof("File %s has no buffer_start metadata", entry.Name)
+					return nil
+				}
+
+				// Calculate the buffer range covered by this file
+				chunkCount := int64(len(entry.GetChunks()))
+				if chunkCount > 0 {
+					fileRange := BufferRange{
+						start: bufferStart.StartIndex,
+						end:   bufferStart.StartIndex + chunkCount - 1,
+					}
+					flushedRanges = append(flushedRanges, fileRange)
+					glog.V(3).Infof("File %s covers buffer range [%d-%d]", entry.Name, fileRange.start, fileRange.end)
+				}
+
+				return nil
+			}, lastFileName, false, 1000) // Start from last processed file name for next batch
+
+			if err != nil {
+				return err
 			}
 
-			return nil
-		}, "", true, 1000)
+			// If we processed fewer than 1000 entries, we've reached the end
+			if currentBatchProcessed < 1000 {
+				hasMore = false
+			}
+		}
+
+		return nil
 	})
 
 	if err != nil {
