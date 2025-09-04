@@ -1,12 +1,12 @@
 # SQL Query Engine Feature, Dev, and Test Plan
 
-This document outlines the plan for adding comprehensive SQL support to SeaweedFS, focusing on schema-tized Message Queue (MQ) topics with full DDL and DML capabilities, plus S3 objects querying.
+This document outlines the plan for adding comprehensive SQL support to SeaweedFS, focusing on schematized Message Queue (MQ) topics with full DDL and DML capabilities, plus S3 objects querying.
 
 ## Feature Plan
 
 **1. Goal**
 
-To provide a full-featured SQL interface for SeaweedFS, treating schema-tized MQ topics as database tables with complete DDL/DML support. This enables:
+To provide a full-featured SQL interface for SeaweedFS, treating schematized MQ topics as database tables with complete DDL/DML support. This enables:
 - Database-like operations on MQ topics (CREATE TABLE, ALTER TABLE, DROP TABLE)
 - Advanced querying with SELECT, WHERE, JOIN, aggregations
 - Schema management and metadata operations (SHOW DATABASES, SHOW TABLES)
