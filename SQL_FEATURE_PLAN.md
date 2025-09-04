@@ -1,26 +1,24 @@
 # SQL Query Engine Feature, Dev, and Test Plan
 
-This document outlines the plan for adding comprehensive SQL support to SeaweedFS, focusing on schematized Message Queue (MQ) topics with full DDL and DML capabilities, plus S3 objects querying.
+This document outlines the plan for adding SQL querying support to SeaweedFS, focusing on reading and analyzing data from Message Queue (MQ) topics and S3 objects.
 
 ## Feature Plan
 
 **1. Goal**
 
-To provide a full-featured SQL interface for SeaweedFS, treating schematized MQ topics as database tables with complete DDL/DML support. This enables:
-- Database-like operations on MQ topics (CREATE TABLE, ALTER TABLE, DROP TABLE)
-- Advanced querying with SELECT, WHERE, JOIN, aggregations
-- Schema management and metadata operations (SHOW DATABASES, SHOW TABLES)
+To provide a SQL querying interface for SeaweedFS, enabling analytics on existing MQ topics and S3 objects. This enables:
+- Advanced querying with SELECT, WHERE, JOIN, aggregations on MQ topics
+- Schema discovery and metadata operations (SHOW DATABASES, SHOW TABLES, DESCRIBE)
 - In-place analytics on Parquet-stored messages without data movement
+- Direct querying of S3 objects in various formats
 
 **2. Key Features**
 
-*   **Schematized Topic Management (Priority 1):**
+*   **Schema Discovery and Metadata (Priority 1):**
     *   `SHOW DATABASES` - List all MQ namespaces
-    *   `SHOW TABLES` - List all topics in a namespace
-    *   `CREATE TABLE topic_name (field1 INT, field2 STRING, ...)` - Create new MQ topic with schema
-    *   `ALTER TABLE topic_name ADD COLUMN field3 BOOL` - Modify topic schema (with versioning)
-    *   `DROP TABLE topic_name` - Delete MQ topic
+    *   `SHOW TABLES` - List all topics in a namespace  
     *   `DESCRIBE table_name` - Show topic schema details
+    *   Automatic schema detection from existing Parquet data
 *   **Advanced Query Engine (Priority 1):**
     *   Full `SELECT` support with `WHERE`, `ORDER BY`, `LIMIT`, `OFFSET`
     *   Aggregation functions: `COUNT()`, `SUM()`, `AVG()`, `MIN()`, `MAX()`, `GROUP BY`
@@ -67,8 +65,8 @@ To provide a full-featured SQL interface for SeaweedFS, treating schematized MQ 
 *   **Schema Catalog:**
     *   Leverage existing `weed/mq/schema/` infrastructure
     *   Map MQ namespaces to "databases" and topics to "tables"
-    *   Store schema metadata with version history
-    *   Handle schema evolution and migration
+    *   Discover schema metadata from existing Parquet files
+    *   Handle schema evolution in read operations
 *   **Query Planner:**
     *   Parse SQL statements using custom PostgreSQL parser
     *   Create optimized execution plans leveraging Parquet columnar format
@@ -90,8 +88,8 @@ To provide a full-featured SQL interface for SeaweedFS, treating schematized MQ 
     *   Handle partition-based parallelism for scalable queries
 *   **Schema Registry Integration:**
     *   Extend `weed/mq/schema/schema.go` for SQL metadata operations
-    *   Implement DDL operations that modify underlying MQ topic schemas
-    *   Version control for schema changes with migration support
+    *   Read existing topic schemas for query planning
+    *   Handle schema evolution during query execution
 *   **S3 Connector (Secondary):**
     *   Reading data from S3 objects with CSV, JSON, and Parquet parsers
     *   Efficient streaming for large files with columnar optimizations
@@ -113,7 +111,7 @@ To provide a full-featured SQL interface for SeaweedFS, treating schematized MQ 
 
 ## Example Usage Scenarios
 
-**Scenario 1: Topic Management**
+**Scenario 1: Schema Discovery and Metadata**
 ```sql
 -- List all namespaces (databases)
 SHOW DATABASES;
@@ -122,18 +120,7 @@ SHOW DATABASES;
 USE my_namespace;
 SHOW TABLES;
 
--- Create a new topic with schema
-CREATE TABLE user_events (
-    user_id INT,
-    event_type STRING,
-    timestamp BIGINT,
-    metadata STRING
-);
-
--- Modify topic schema
-ALTER TABLE user_events ADD COLUMN session_id STRING;
-
--- View topic structure
+-- View topic structure and discovered schema
 DESCRIBE user_events;
 ```
 
@@ -215,10 +202,10 @@ SQL Query Flow:
 *   Schema Fields ↔ Table Columns
 
 **2. Schema Evolution Handling:**
-*   Maintain schema version history in topic metadata
+*   Read schema version history from existing topic metadata
 *   Support backward-compatible queries across schema versions
-*   Automatic type coercion where possible
-*   Clear error messages for incompatible changes
+*   Automatic type coercion where possible during reads
+*   Clear error messages for incompatible data
 
 **3. Query Optimization:**
 *   Leverage Parquet columnar format for projection pushdown
@@ -237,10 +224,10 @@ SQL Query Flow:
 *   **Error Handling:** Typed error system with proper PostgreSQL error code mapping
 *   **Parser Features:** Lightweight, focused on SeaweedFS SQL subset, easily extensible
 
-**5. Transaction Semantics:**
-*   DDL operations (CREATE/ALTER/DROP) are atomic per topic
-*   SELECT queries provide read-consistent snapshots
-*   No cross-topic transactions initially (future enhancement)
+**5. Query Semantics:**
+*   SELECT queries provide read-consistent snapshots of topic data
+*   Queries operate on immutable Parquet files for consistency
+*   No transactional guarantees across multiple topics
 
 **6. Performance Considerations:**
 *   Prioritize read performance over write consistency
@@ -256,41 +243,42 @@ SQL Query Flow:
 3. Implemented metadata catalog mapping MQ topics to SQL tables
 4. Added `SHOW DATABASES`, `SHOW TABLES`, `DESCRIBE` commands with full PostgreSQL compatibility
 
-**Phase 2: DDL Operations (Weeks 4-5)**
-1. `CREATE TABLE` → Create MQ topic with schema
-2. `ALTER TABLE` → Modify topic schema with versioning
-3. `DROP TABLE` → Delete MQ topic
-4. Schema validation and migration handling
-
-**Phase 3: Query Engine (Weeks 6-8)**
+**Phase 2: Query Engine (Weeks 4-6)**
 1. `SELECT` with `WHERE`, `ORDER BY`, `LIMIT`, `OFFSET`
 2. Aggregation functions and `GROUP BY`
 3. Basic joins between topics
 4. Predicate pushdown to Parquet layer
+5. Schema discovery from existing Parquet files
 
-**Phase 4: API & CLI Integration (Weeks 9-10)**
+**Phase 3: API & CLI Integration (Weeks 7-8)**
 1. HTTP `/sql` endpoint implementation
 2. `weed sql` CLI command with interactive mode
 3. Result streaming and pagination
 4. Error handling and query optimization
 
+**Phase 4: Advanced Features (Weeks 9-10)**
+1. Window functions and advanced analytics
+2. S3 object querying capabilities
+3. Performance optimizations
+4. Connection pooling and query caching
+
 ## Test Plan
 
 **1. Unit Tests**
 
-*   **SQL Parser Tests:** Validate parsing of all supported DDL/DML statements
-*   **Schema Mapping Tests:** Test topic-to-table conversion and metadata operations
+*   **SQL Parser Tests:** Validate parsing of all supported SELECT statements and metadata operations
+*   **Schema Mapping Tests:** Test topic-to-table conversion and schema discovery
 *   **Query Planning Tests:** Verify optimization and predicate pushdown logic
 *   **Execution Engine Tests:** Test query execution with various data patterns
-*   **Edge Cases:** Malformed queries, schema evolution, concurrent operations
+*   **Edge Cases:** Malformed queries, schema evolution in existing data, concurrent reads
 
 **2. Integration Tests**
 
-*   **End-to-End Workflow:** Complete SQL operations against live SeaweedFS cluster
-*   **Schema Evolution:** Test backward compatibility during schema changes
+*   **End-to-End Workflow:** Complete SQL querying operations against live SeaweedFS cluster
+*   **Schema Discovery:** Test automatic schema detection from existing Parquet data
 *   **Multi-Topic Joins:** Validate cross-topic query performance and correctness
 *   **Large Dataset Tests:** Performance validation with GB-scale Parquet data
-*   **Concurrent Access:** Multiple SQL sessions operating simultaneously
+*   **Concurrent Access:** Multiple SQL query sessions operating simultaneously
 
 **3. Performance & Security Testing**
 
@@ -302,11 +290,11 @@ SQL Query Flow:
 
 ## Success Metrics
 
-*   **Feature Completeness:** Support for all specified DDL/DML operations
+*   **Feature Completeness:** Support for all specified SELECT operations and metadata commands
 *   **Performance:** 
     *   **Simple SELECT queries**: < 100ms latency for single-table queries with up to 3 WHERE predicates on ≤ 100K records
     *   **Complex queries**: < 1s latency for queries involving aggregations (COUNT, SUM, MAX, MIN) on ≤ 1M records
     *   **Time-range queries**: < 500ms for timestamp-based filtering on ≤ 500K records within 24-hour windows
 *   **Scalability:** Handle topics with millions of messages efficiently
-*   **Reliability:** 99.9% success rate for valid SQL operations
-*   **Usability:** Intuitive SQL interface matching standard database expectations
+*   **Reliability:** 99.9% success rate for valid SQL queries
+*   **Usability:** Intuitive SQL querying interface matching standard database expectations
