@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -356,6 +357,9 @@ func (e *SQLEngine) executeAggregationQueryWithPlan(ctx context.Context, hybridS
 	if stmt.Limit != nil && stmt.Limit.Rowcount != nil {
 		if limitExpr, ok := stmt.Limit.Rowcount.(*SQLVal); ok && limitExpr.Type == IntVal {
 			if limit64, err := strconv.ParseInt(string(limitExpr.Val), 10, 64); err == nil {
+				if limit64 > int64(math.MaxInt) || limit64 < 0 {
+					return nil, fmt.Errorf("LIMIT value %d is out of range", limit64)
+				}
 				limit = int(limit64)
 			}
 		}
@@ -363,6 +367,9 @@ func (e *SQLEngine) executeAggregationQueryWithPlan(ctx context.Context, hybridS
 	if stmt.Limit != nil && stmt.Limit.Offset != nil {
 		if offsetExpr, ok := stmt.Limit.Offset.(*SQLVal); ok && offsetExpr.Type == IntVal {
 			if offset64, err := strconv.ParseInt(string(offsetExpr.Val), 10, 64); err == nil {
+				if offset64 > int64(math.MaxInt) || offset64 < 0 {
+					return nil, fmt.Errorf("OFFSET value %d is out of range", offset64)
+				}
 				offset = int(offset64)
 			}
 		}
