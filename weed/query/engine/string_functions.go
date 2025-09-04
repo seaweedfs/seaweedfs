@@ -147,8 +147,8 @@ func (e *SQLEngine) Substring(value *schema_pb.Value, start *schema_pb.Value, le
 		if lengthVal <= 0 {
 			result = ""
 		} else {
-			if lengthVal > int64(math.MaxInt) {
-				// If length is too large, take substring from startIdx to end
+			if lengthVal > int64(math.MaxInt) || lengthVal < int64(math.MinInt) {
+				// If length is out-of-bounds for int, take substring from startIdx to end
 				result = str[startIdx:]
 			} else {
 				endIdx := startIdx + int(lengthVal)
@@ -277,7 +277,7 @@ func (e *SQLEngine) Left(value *schema_pb.Value, length *schema_pb.Value) (*sche
 		}, nil
 	}
 
-	if lengthVal > int64(math.MaxInt) {
+	if lengthVal > int64(math.MaxInt) || lengthVal < int64(math.MinInt) {
 		return &schema_pb.Value{
 			Kind: &schema_pb.Value_StringValue{StringValue: str},
 		}, nil
@@ -316,7 +316,7 @@ func (e *SQLEngine) Right(value *schema_pb.Value, length *schema_pb.Value) (*sch
 		}, nil
 	}
 
-	if lengthVal > int64(math.MaxInt) {
+	if lengthVal > int64(math.MaxInt) || lengthVal < int64(math.MinInt) {
 		return &schema_pb.Value{
 			Kind: &schema_pb.Value_StringValue{StringValue: str},
 		}, nil
