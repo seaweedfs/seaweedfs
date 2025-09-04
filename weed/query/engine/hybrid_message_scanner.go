@@ -520,11 +520,12 @@ func (hms *HybridMessageScanner) scanPartitionHybridWithStats(ctx context.Contex
 	}
 
 	// STEP 4: Fallback to sample data if no results found
-	if len(results) == 0 {
-		sampleResults := hms.generateSampleHybridData(options)
-		results = append(results, sampleResults...)
-		// Note: OFFSET and LIMIT will be applied at the end of the main scan function
-	}
+	// STEP 4: Fallback to sample data if no results found
+	// if len(results) == 0 {
+	// 	sampleResults := hms.generateSampleHybridData(options)
+	// 	results = append(results, sampleResults...)
+	// 	// Note: OFFSET and LIMIT will be applied at the end of the main scan function
+	// }
 
 	return results, stats, nil
 }
