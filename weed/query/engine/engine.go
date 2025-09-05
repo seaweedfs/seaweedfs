@@ -284,6 +284,8 @@ func ParseSQL(sql string) (Statement, error) {
 
 // parseSelectStatement parses SELECT statements using a lightweight parser
 func parseSelectStatement(sql string) (*SelectStatement, error) {
+	// Create a temporary engine for parsing expressions with literal support
+	tempEngine := &SQLEngine{}
 	s := &SelectStatement{
 		SelectExprs: []SelectExpr{},
 		From:        []TableExpr{},
@@ -335,8 +337,8 @@ func parseSelectStatement(sql string) (*SelectStatement, error) {
 						Exprs: funcArgs,
 					}
 					expr.Expr = funcExpr
-				} else if arithmeticExpr := parseArithmeticExpression(part); arithmeticExpr != nil {
-					// Arithmetic expression (id+user_id, col1-col2, etc.)
+				} else if arithmeticExpr := tempEngine.parseArithmeticExpressionWithLiterals(part); arithmeticExpr != nil {
+					// Arithmetic expression (id+user_id, col1-col2, etc.) with literal support
 					expr.Expr = arithmeticExpr
 				} else if strings.HasPrefix(part, "'") && strings.HasSuffix(part, "'") {
 					// String literal

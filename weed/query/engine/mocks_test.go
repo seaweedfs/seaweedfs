@@ -239,9 +239,9 @@ func (e *TestSQLEngine) generateTestQueryResult(tableName string, stmt *SelectSt
 					columnName := colName.Name.String()
 					columns = append(columns, columnName)
 				} else if arithmeticExpr, ok := aliasedExpr.Expr.(*ArithmeticExpr); ok {
-					// Handle arithmetic expressions like id+user_id
-					// For mock testing, create a simple alias name
-					alias := fmt.Sprintf("%s%s%s", e.getColumnName(arithmeticExpr.Left), arithmeticExpr.Operator, e.getColumnName(arithmeticExpr.Right))
+					// Handle arithmetic expressions like id+user_id and concatenations
+					// For complex expressions, preserve the original text instead of generating simplified aliases
+					alias := e.getArithmeticExpressionAlias(arithmeticExpr)
 					columns = append(columns, alias)
 				} else if funcExpr, ok := aliasedExpr.Expr.(*FuncExpr); ok {
 					// Handle string functions like UPPER(status), LENGTH(action)
@@ -297,6 +297,14 @@ func (e *TestSQLEngine) generateTestQueryResult(tableName string, stmt *SelectSt
 				row = append(row, sqltypes.NewVarChar(string(result.Key)))
 			} else if columnName == SW_COLUMN_NAME_SOURCE {
 				row = append(row, sqltypes.NewVarChar(result.Source))
+			} else if strings.Contains(columnName, "||") {
+				// Handle string concatenation expressions using production engine logic
+				// Try to use production engine evaluation for complex expressions
+				if value := e.evaluateComplexExpressionMock(columnName, result); value != nil {
+					row = append(row, *value)
+				} else {
+					row = append(row, e.evaluateStringConcatenationMock(columnName, result))
+				}
 			} else if strings.Contains(columnName, "+") || strings.Contains(columnName, "-") || strings.Contains(columnName, "*") || strings.Contains(columnName, "/") || strings.Contains(columnName, "%") {
 				// Handle arithmetic expression results - for mock testing, calculate based on operator
 				idValue := int64(0)
@@ -783,4 +791,55 @@ func (m *MockBrokerClient) GetUnflushedMessages(ctx context.Context, namespace, 
 	}
 
 	return logEntries, nil
+}
+
+// evaluateStringConcatenationMock evaluates string concatenation expressions for mock testing
+func (e *TestSQLEngine) evaluateStringConcatenationMock(columnName string, result HybridScanResult) sqltypes.Value {
+	// Split the expression by || to get individual parts
+	parts := strings.Split(columnName, "||")
+	var concatenated strings.Builder
+
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+
+		// Check if it's a string literal (enclosed in single quotes)
+		if strings.HasPrefix(part, "'") && strings.HasSuffix(part, "'") {
+			// Extract the literal value
+			literal := strings.Trim(part, "'")
+			concatenated.WriteString(literal)
+		} else {
+			// It's a column name - get the value from result
+			if value, exists := result.Values[part]; exists {
+				// Convert to string and append
+				if strValue := value.GetStringValue(); strValue != "" {
+					concatenated.WriteString(strValue)
+				} else if intValue := value.GetInt64Value(); intValue != 0 {
+					concatenated.WriteString(fmt.Sprintf("%d", intValue))
+				} else if int32Value := value.GetInt32Value(); int32Value != 0 {
+					concatenated.WriteString(fmt.Sprintf("%d", int32Value))
+				} else if floatValue := value.GetDoubleValue(); floatValue != 0 {
+					concatenated.WriteString(fmt.Sprintf("%g", floatValue))
+				} else if floatValue := value.GetFloatValue(); floatValue != 0 {
+					concatenated.WriteString(fmt.Sprintf("%g", floatValue))
+				}
+			}
+			// If column doesn't exist or has no value, we append nothing (which is correct SQL behavior)
+		}
+	}
+
+	return sqltypes.NewVarChar(concatenated.String())
+}
+
+// evaluateComplexExpressionMock attempts to use production engine logic for complex expressions
+func (e *TestSQLEngine) evaluateComplexExpressionMock(columnName string, result HybridScanResult) *sqltypes.Value {
+	// Parse the column name back into an expression and try to evaluate it using production logic
+	tempEngine := &SQLEngine{}
+	if expr := tempEngine.parseArithmeticExpressionWithLiterals(columnName); expr != nil {
+		// Try to evaluate using production logic
+		if value, err := tempEngine.evaluateArithmeticExpression(expr, result); err == nil && value != nil {
+			sqlValue := convertSchemaValueToSQLValue(value)
+			return &sqlValue
+		}
+	}
+	return nil
 }
