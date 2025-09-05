@@ -151,6 +151,7 @@ func (e *SQLEngine) Substring(value *schema_pb.Value, start *schema_pb.Value, le
 				// If length is out-of-bounds for int, take substring from startIdx to end
 				result = str[startIdx:]
 			} else {
+				// Safe conversion after bounds check
 				endIdx := startIdx + int(lengthVal)
 				if endIdx > len(str) {
 					endIdx = len(str)
@@ -283,6 +284,7 @@ func (e *SQLEngine) Left(value *schema_pb.Value, length *schema_pb.Value) (*sche
 		}, nil
 	}
 
+	// Safe conversion after bounds check
 	return &schema_pb.Value{
 		Kind: &schema_pb.Value_StringValue{StringValue: str[:int(lengthVal)]},
 	}, nil
@@ -322,6 +324,7 @@ func (e *SQLEngine) Right(value *schema_pb.Value, length *schema_pb.Value) (*sch
 		}, nil
 	}
 
+	// Safe conversion after bounds check
 	startPos := len(str) - int(lengthVal)
 	return &schema_pb.Value{
 		Kind: &schema_pb.Value_StringValue{StringValue: str[startPos:]},

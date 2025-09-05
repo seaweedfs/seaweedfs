@@ -360,6 +360,7 @@ func (e *SQLEngine) executeAggregationQueryWithPlan(ctx context.Context, hybridS
 				if limit64 > int64(math.MaxInt) || limit64 < 0 {
 					return nil, fmt.Errorf("LIMIT value %d is out of range", limit64)
 				}
+				// Safe conversion after bounds check
 				limit = int(limit64)
 			}
 		}
@@ -370,6 +371,7 @@ func (e *SQLEngine) executeAggregationQueryWithPlan(ctx context.Context, hybridS
 				if offset64 > int64(math.MaxInt) || offset64 < 0 {
 					return nil, fmt.Errorf("OFFSET value %d is out of range", offset64)
 				}
+				// Safe conversion after bounds check
 				offset = int(offset64)
 			}
 		}
