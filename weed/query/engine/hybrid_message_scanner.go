@@ -202,8 +202,7 @@ func (hms *HybridMessageScanner) ScanWithStats(ctx context.Context, options Hybr
 	// Get all partitions for this topic via MQ broker discovery
 	partitions, err := hms.discoverTopicPartitions(ctx)
 	if err != nil {
-		// Fallback to default partition if discovery fails
-		partitions = []topic.Partition{{RangeStart: 0, RangeStop: 1000}}
+		return nil, stats, fmt.Errorf("failed to discover partitions for topic %s: %v", hms.topic.String(), err)
 	}
 
 	stats.PartitionsScanned = len(partitions)

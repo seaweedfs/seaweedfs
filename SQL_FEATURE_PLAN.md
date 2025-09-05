@@ -41,6 +41,13 @@ To provide a SQL querying interface for SeaweedFS, enabling analytics on existin
 
 **1. Scaffolding & Dependencies**
 
+*   **PostgreSQL Driver:** `github.com/lib/pq v1.10.9` - Provides PostgreSQL wire protocol compatibility for client connections
+*   **PostgreSQL Connection Pool:** `github.com/jackc/pgx/v5 v5.7.5` - High-performance PostgreSQL driver with connection pooling and prepared statements
+*   **Parquet Processing:** `github.com/parquet-go/parquet-go v0.25.1` - Native Go Parquet reader/writer for columnar data processing
+*   **SQL Parser:** Custom PostgreSQL-compatible parser built without CGO dependencies for optimal performance
+*   **Query Engine Infrastructure:** New `weed/query/engine/` package providing comprehensive SQL execution framework
+*   **Schema Catalog:** Integration with existing `weed/mq/schema/` infrastructure for metadata management
+
 
 **2. SQL Engine Architecture**
 

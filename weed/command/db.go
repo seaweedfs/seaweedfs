@@ -37,7 +37,7 @@ func init() {
 	dbOptions.port = cmdDB.Flag.Int("port", 5432, "Database server port")
 	dbOptions.masterAddr = cmdDB.Flag.String("master", "localhost:9333", "SeaweedFS master server address")
 	dbOptions.authMethod = cmdDB.Flag.String("auth", "trust", "Authentication method: trust, password, md5")
-	dbOptions.users = cmdDB.Flag.String("users", "", "User credentials for auth (format: user1:pass1;user2:pass2)")
+	dbOptions.users = cmdDB.Flag.String("users", "", "User credentials for auth (format: user1:pass1;user2:pass2). Note: passwords cannot contain semicolons")
 	dbOptions.database = cmdDB.Flag.String("database", "default", "Default database name")
 	dbOptions.maxConns = cmdDB.Flag.Int("max-connections", 100, "Maximum concurrent connections")
 	dbOptions.idleTimeout = cmdDB.Flag.String("idle-timeout", "1h", "Connection idle timeout")
