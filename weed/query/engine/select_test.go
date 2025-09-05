@@ -28,8 +28,8 @@ func TestSQLEngine_SelectBasic(t *testing.T) {
 		t.Error("Expected rows in result")
 	}
 
-	// Should have sample data with 3 columns (SELECT * excludes system columns)
-	expectedColumns := []string{"user_id", "event_type", "data"}
+	// Should have sample data with 4 columns (SELECT * excludes system columns)
+	expectedColumns := []string{"id", "user_id", "event_type", "data"}
 	if len(result.Columns) != len(expectedColumns) {
 		t.Errorf("Expected %d columns, got %d", len(expectedColumns), len(result.Columns))
 	}
@@ -107,9 +107,9 @@ func TestSQLEngine_SelectWithOffset(t *testing.T) {
 	}
 
 	// Should have fewer rows than total since we skip 1 row
-	// Sample data has 4 rows, so OFFSET 1 should give us 3 rows
-	if len(result.Rows) != 3 {
-		t.Errorf("Expected 3 rows with OFFSET 1 (4 total - 1 offset), got %d", len(result.Rows))
+	// Sample data has 10 rows, so OFFSET 1 should give us 9 rows
+	if len(result.Rows) != 9 {
+		t.Errorf("Expected 9 rows with OFFSET 1 (10 total - 1 offset), got %d", len(result.Rows))
 	}
 }
 

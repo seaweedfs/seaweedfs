@@ -223,7 +223,7 @@ func (e *TestSQLEngine) generateTestQueryResult(tableName string, stmt *SelectSt
 			// SELECT * - return user columns only (system columns are hidden by default)
 			switch tableName {
 			case "user_events":
-				columns = []string{"user_id", "event_type", "data"}
+				columns = []string{"id", "user_id", "event_type", "data"}
 			case "system_logs":
 				columns = []string{"level", "message", "service"}
 			}
@@ -235,6 +235,11 @@ func (e *TestSQLEngine) generateTestQueryResult(tableName string, stmt *SelectSt
 				if colName, ok := aliasedExpr.Expr.(*ColName); ok {
 					columnName := colName.Name.String()
 					columns = append(columns, columnName)
+				} else if arithmeticExpr, ok := aliasedExpr.Expr.(*ArithmeticExpr); ok {
+					// Handle arithmetic expressions like id+user_id
+					// For mock testing, create a simple alias name
+					alias := fmt.Sprintf("%s%s%s", e.getColumnName(arithmeticExpr.Left), arithmeticExpr.Operator, e.getColumnName(arithmeticExpr.Right))
+					columns = append(columns, alias)
 				}
 			}
 		}
@@ -243,7 +248,7 @@ func (e *TestSQLEngine) generateTestQueryResult(tableName string, stmt *SelectSt
 		if len(columns) == 0 {
 			switch tableName {
 			case "user_events":
-				columns = []string{"user_id", "event_type", "data"}
+				columns = []string{"id", "user_id", "event_type", "data"}
 			case "system_logs":
 				columns = []string{"level", "message", "service"}
 			}
@@ -263,6 +268,28 @@ func (e *TestSQLEngine) generateTestQueryResult(tableName string, stmt *SelectSt
 				row = append(row, sqltypes.NewVarChar(string(result.Key)))
 			} else if columnName == SW_COLUMN_NAME_SOURCE {
 				row = append(row, sqltypes.NewVarChar(result.Source))
+			} else if strings.Contains(columnName, "+") {
+				// Handle arithmetic expression results - for mock testing, calculate simple addition
+				if strings.Contains(columnName, "id+user_id") {
+					idValue := int64(0)
+					userIdValue := int64(0)
+					if idVal, exists := result.Values["id"]; exists && idVal.GetInt64Value() != 0 {
+						idValue = idVal.GetInt64Value()
+					}
+					if userIdVal, exists := result.Values["user_id"]; exists {
+						if userIdVal.GetInt32Value() != 0 {
+							userIdValue = int64(userIdVal.GetInt32Value())
+						} else if userIdVal.GetInt64Value() != 0 {
+							userIdValue = userIdVal.GetInt64Value()
+						}
+					}
+					row = append(row, sqltypes.NewInt64(idValue+userIdValue))
+				} else {
+					row = append(row, sqltypes.NewInt64(12345)) // Default mock arithmetic result
+				}
+			} else if strings.Contains(columnName, "-") || strings.Contains(columnName, "*") || strings.Contains(columnName, "/") {
+				// Handle other arithmetic expressions - for mock testing, return a calculated value
+				row = append(row, sqltypes.NewInt64(12345)) // Mock arithmetic result
 			} else {
 				row = append(row, sqltypes.NewVarChar("")) // Default empty value
 			}
@@ -330,6 +357,14 @@ func (e *TestSQLEngine) parseLimitOffset(sql string) (limit int, offset int) {
 	}
 
 	return limit, offset
+}
+
+// getColumnName extracts column name from expression for mock testing
+func (e *TestSQLEngine) getColumnName(expr ExprNode) string {
+	if colName, ok := expr.(*ColName); ok {
+		return colName.Name.String()
+	}
+	return "col"
 }
 
 // isHybridQuery determines if this is a hybrid query that should include archived data

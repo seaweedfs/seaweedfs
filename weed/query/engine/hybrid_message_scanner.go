@@ -227,9 +227,18 @@ func (hms *HybridMessageScanner) ScanWithStats(ctx context.Context, options Hybr
 		}
 
 		// Apply global limit (without offset) across all partitions
+		// When OFFSET is used, collect more data to ensure we have enough after skipping
 		// Note: OFFSET will be applied at the end to avoid double-application
-		if options.Limit > 0 && len(results) >= options.Limit+options.Offset {
-			break
+		if options.Limit > 0 {
+			// Collect more data when offset is involved to ensure sufficient results
+			minRequired := options.Limit + options.Offset
+			if options.Offset > 0 {
+				// When offset is used, collect extra buffer to handle edge cases
+				minRequired = minRequired * 2
+			}
+			if len(results) >= minRequired {
+				break
+			}
 		}
 	}
 
@@ -359,8 +368,16 @@ func (hms *HybridMessageScanner) scanUnflushedDataWithStats(ctx context.Context,
 		results = append(results, result)
 
 		// Apply limit (accounting for offset) - collect more data than needed
-		if options.Limit > 0 && len(results) >= options.Offset+options.Limit {
-			break
+		if options.Limit > 0 {
+			// Ensure we collect enough data for proper OFFSET and LIMIT application
+			minRequired := options.Limit + options.Offset
+			if options.Offset > 0 {
+				// When offset is used, collect extra buffer to handle edge cases
+				minRequired = minRequired * 2
+			}
+			if len(results) >= minRequired {
+				break
+			}
 		}
 	}
 
@@ -1459,12 +1476,29 @@ func (s *StreamingFlushedDataSource) startStreaming() {
 				Source:    source,
 			}
 
-			// Send result to channel
+			// Check if already closed before trying to send
+			if atomic.LoadInt32(&s.closed) != 0 {
+				return true, nil // Stop processing if closed
+			}
+
+			// Send result to channel with proper handling of closed channels
 			select {
 			case s.resultChan <- result:
 				return false, nil
 			case <-s.doneChan:
 				return true, nil // Stop processing if closed
+			default:
+				// Check again if closed (in case it was closed between the atomic check and select)
+				if atomic.LoadInt32(&s.closed) != 0 {
+					return true, nil
+				}
+				// If not closed, try sending again with blocking select
+				select {
+				case s.resultChan <- result:
+					return false, nil
+				case <-s.doneChan:
+					return true, nil
+				}
 			}
 		}
 
@@ -1473,9 +1507,14 @@ func (s *StreamingFlushedDataSource) startStreaming() {
 		_, _, err := s.mergedReadFn(startPosition, stopTsNs, eachLogEntryFn)
 
 		if err != nil {
-			select {
-			case s.errorChan <- fmt.Errorf("flushed data scan failed: %v", err):
-			case <-s.doneChan:
+			// Only try to send error if not already closed
+			if atomic.LoadInt32(&s.closed) == 0 {
+				select {
+				case s.errorChan <- fmt.Errorf("flushed data scan failed: %v", err):
+				case <-s.doneChan:
+				default:
+					// Channel might be full or closed, ignore
+				}
 			}
 		}
 
