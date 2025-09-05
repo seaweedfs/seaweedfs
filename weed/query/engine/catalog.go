@@ -49,12 +49,17 @@ type SchemaCatalog struct {
 	// defaultPartitionCount is the default number of partitions for new topics
 	// Can be overridden in CREATE TABLE statements with PARTITION COUNT option
 	defaultPartitionCount int32
+
+	// cacheTTL is the time-to-live for cached database and table information
+	// After this duration, cached data is considered stale and will be refreshed
+	cacheTTL time.Duration
 }
 
 // DatabaseInfo represents a SQL database (MQ namespace)
 type DatabaseInfo struct {
-	Name   string
-	Tables map[string]*TableInfo
+	Name     string
+	Tables   map[string]*TableInfo
+	CachedAt time.Time // Timestamp when this database info was cached
 }
 
 // TableInfo represents a SQL table (MQ topic) with schema information
@@ -68,6 +73,7 @@ type TableInfo struct {
 	Schema     *schema.Schema
 	Columns    []ColumnInfo
 	RevisionId uint32
+	CachedAt   time.Time // Timestamp when this table info was cached
 }
 
 // ColumnInfo represents a SQL column (MQ schema field)
@@ -83,13 +89,19 @@ func NewSchemaCatalog(masterAddress string) *SchemaCatalog {
 	return &SchemaCatalog{
 		databases:             make(map[string]*DatabaseInfo),
 		brokerClient:          NewBrokerClient(masterAddress),
-		defaultPartitionCount: 6, // Default partition count, can be made configurable via environment variable
+		defaultPartitionCount: 6,               // Default partition count, can be made configurable via environment variable
+		cacheTTL:              5 * time.Minute, // Default cache TTL of 5 minutes, can be made configurable
 	}
 }
 
 // ListDatabases returns all available databases (MQ namespaces)
 // Assumption: This would be populated from MQ broker metadata
 func (c *SchemaCatalog) ListDatabases() []string {
+	// Clean up expired cache entries first
+	c.mu.Lock()
+	c.cleanExpiredDatabases()
+	c.mu.Unlock()
+
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -116,6 +128,11 @@ func (c *SchemaCatalog) ListDatabases() []string {
 
 // ListTables returns all tables in a database (MQ topics in namespace)
 func (c *SchemaCatalog) ListTables(database string) ([]string, error) {
+	// Clean up expired cache entries first
+	c.mu.Lock()
+	c.cleanExpiredDatabases()
+	c.mu.Unlock()
+
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -145,11 +162,15 @@ func (c *SchemaCatalog) ListTables(database string) ([]string, error) {
 // GetTableInfo returns detailed schema information for a table
 // Assumption: Table exists and schema is accessible
 func (c *SchemaCatalog) GetTableInfo(database, table string) (*TableInfo, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	// Clean up expired cache entries first
+	c.mu.Lock()
+	c.cleanExpiredDatabases()
+	c.mu.Unlock()
 
+	c.mu.RLock()
 	db, exists := c.databases[database]
 	if !exists {
+		c.mu.RUnlock()
 		return nil, TableNotFoundError{
 			Database: database,
 			Table:    "",
@@ -157,13 +178,66 @@ func (c *SchemaCatalog) GetTableInfo(database, table string) (*TableInfo, error)
 	}
 
 	tableInfo, exists := db.Tables[table]
-	if !exists {
-		return nil, TableNotFoundError{
-			Database: database,
-			Table:    table,
+	if !exists || c.isTableCacheExpired(tableInfo) {
+		c.mu.RUnlock()
+
+		// Try to refresh table info from broker if not found or expired
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		recordType, err := c.brokerClient.GetTopicSchema(ctx, database, table)
+		if err != nil {
+			// If broker unavailable and we have expired cached data, return it
+			if exists {
+				return tableInfo, nil
+			}
+			// Otherwise return not found error
+			return nil, TableNotFoundError{
+				Database: database,
+				Table:    table,
+			}
 		}
+
+		// Convert the broker response to schema and register it
+		mqSchema := &schema.Schema{
+			RecordType: recordType,
+			RevisionId: 1, // Default revision for schema fetched from broker
+		}
+
+		// Register the refreshed schema
+		err = c.RegisterTopic(database, table, mqSchema)
+		if err != nil {
+			// If registration fails but we have cached data, return it
+			if exists {
+				return tableInfo, nil
+			}
+			return nil, fmt.Errorf("failed to register topic schema: %v", err)
+		}
+
+		// Get the newly registered table info
+		c.mu.RLock()
+		defer c.mu.RUnlock()
+
+		db, exists := c.databases[database]
+		if !exists {
+			return nil, TableNotFoundError{
+				Database: database,
+				Table:    table,
+			}
+		}
+
+		tableInfo, exists := db.Tables[table]
+		if !exists {
+			return nil, TableNotFoundError{
+				Database: database,
+				Table:    table,
+			}
+		}
+
+		return tableInfo, nil
 	}
 
+	c.mu.RUnlock()
 	return tableInfo, nil
 }
 
@@ -173,12 +247,15 @@ func (c *SchemaCatalog) RegisterTopic(namespace, topicName string, mqSchema *sch
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	now := time.Now()
+
 	// Ensure database exists
 	db, exists := c.databases[namespace]
 	if !exists {
 		db = &DatabaseInfo{
-			Name:   namespace,
-			Tables: make(map[string]*TableInfo),
+			Name:     namespace,
+			Tables:   make(map[string]*TableInfo),
+			CachedAt: now,
 		}
 		c.databases[namespace] = db
 	}
@@ -188,6 +265,9 @@ func (c *SchemaCatalog) RegisterTopic(namespace, topicName string, mqSchema *sch
 	if err != nil {
 		return fmt.Errorf("failed to convert MQ schema: %v", err)
 	}
+
+	// Set the cached timestamp for the table
+	tableInfo.CachedAt = now
 
 	db.Tables[topicName] = tableInfo
 	return nil
@@ -287,4 +367,53 @@ func (c *SchemaCatalog) GetDefaultPartitionCount() int32 {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.defaultPartitionCount
+}
+
+// SetCacheTTL sets the time-to-live for cached database and table information
+func (c *SchemaCatalog) SetCacheTTL(ttl time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.cacheTTL = ttl
+}
+
+// GetCacheTTL returns the current cache TTL setting
+func (c *SchemaCatalog) GetCacheTTL() time.Duration {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.cacheTTL
+}
+
+// isDatabaseCacheExpired checks if a database's cached information has expired
+func (c *SchemaCatalog) isDatabaseCacheExpired(db *DatabaseInfo) bool {
+	return time.Since(db.CachedAt) > c.cacheTTL
+}
+
+// isTableCacheExpired checks if a table's cached information has expired
+func (c *SchemaCatalog) isTableCacheExpired(table *TableInfo) bool {
+	return time.Since(table.CachedAt) > c.cacheTTL
+}
+
+// cleanExpiredDatabases removes expired database entries from cache
+// Note: This method assumes the caller already holds the write lock
+func (c *SchemaCatalog) cleanExpiredDatabases() {
+	for name, db := range c.databases {
+		if c.isDatabaseCacheExpired(db) {
+			delete(c.databases, name)
+		} else {
+			// Clean expired tables within non-expired databases
+			for tableName, table := range db.Tables {
+				if c.isTableCacheExpired(table) {
+					delete(db.Tables, tableName)
+				}
+			}
+		}
+	}
+}
+
+// CleanExpiredCache removes all expired entries from the cache
+// This method can be called externally to perform periodic cache cleanup
+func (c *SchemaCatalog) CleanExpiredCache() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.cleanExpiredDatabases()
 }
