@@ -1,0 +1,76 @@
+# Multi-stage Dockerfile to build FoundationDB for ARM64
+FROM --platform=linux/arm64 ubuntu:22.04 as builder
+
+# Install dependencies for building FoundationDB
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    git \
+    python3 \
+    python3-pip \
+    wget \
+    curl \
+    ninja-build \
+    libboost-dev \
+    libboost-system-dev \
+    libboost-filesystem-dev \
+    libssl-dev \
+    openjdk-8-jdk \
+    mono-complete \
+    && rm -rf /var/lib/apt/lists/*
+
+# Clone FoundationDB source
+WORKDIR /tmp
+RUN git clone https://github.com/apple/foundationdb.git
+WORKDIR /tmp/foundationdb
+
+# Checkout a stable release version
+RUN git checkout release-7.1
+
+# Build FoundationDB (disable bindings that cause issues)
+RUN mkdir build
+WORKDIR /tmp/foundationdb/build
+RUN cmake -G Ninja -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_JAVA_BINDING=OFF \
+    -DBUILD_CSHARP_BINDING=OFF \
+    -DBUILD_PYTHON_BINDING=OFF \
+    -DBUILD_RUBY_BINDING=OFF \
+    ..
+RUN ninja -j$(nproc) fdbserver fdbcli
+
+# Runtime stage
+FROM --platform=linux/arm64 ubuntu:22.04
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    python3 \
+    libssl3 \
+    libboost-system1.74.0 \
+    libboost-filesystem1.74.0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy built binaries from builder stage
+COPY --from=builder /tmp/foundationdb/build/bin/fdbserver /usr/bin/
+COPY --from=builder /tmp/foundationdb/build/bin/fdbcli /usr/bin/
+COPY --from=builder /tmp/foundationdb/build/lib/libfdb_c.so /usr/lib/
+
+# Create FDB directories
+RUN mkdir -p /var/fdb/{logs,data,config} && \
+    mkdir -p /usr/lib/foundationdb && \
+    mkdir -p /var/fdb/scripts
+
+# Create basic startup script
+COPY --from=builder /tmp/foundationdb/packaging/docker/scripts/* /var/fdb/scripts/
+RUN chmod +x /var/fdb/scripts/*
+
+# Set environment variables
+ENV FDB_NETWORKING_MODE=host
+ENV FDB_COORDINATOR_PORT=4500
+ENV FDB_PORT=4501
+ENV PUBLIC_IP=127.0.0.1
+
+# Expose ports
+EXPOSE 4500 4501
+
+# Default command
+CMD ["/var/fdb/scripts/fdb.bash"]

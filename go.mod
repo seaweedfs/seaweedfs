@@ -126,6 +126,7 @@ require (
 	github.com/Jille/raft-grpc-transport v1.6.1
 	github.com/ThreeDotsLabs/watermill v1.5.0
 	github.com/a-h/templ v0.3.924
+	github.com/apple/foundationdb/bindings/go v0.0.0-20250828195015-ba4c89167099
 	github.com/arangodb/go-driver v1.6.6
 	github.com/armon/go-metrics v0.4.1
 	github.com/aws/aws-sdk-go-v2 v1.38.1
@@ -424,3 +425,5 @@ require (
 )
 
 // replace github.com/seaweedfs/raft => /Users/chrislu/go/src/github.com/seaweedfs/raft
+
+replace github.com/apple/foundationdb/bindings/go v0.0.0-20250828195015-ba4c89167099 => github.com/apple/foundationdb/bindings/go v0.0.0-20240515141816-262c6fe778ad
