@@ -1,35 +1,30 @@
 # SQL Query Engine Feature, Dev, and Test Plan
 
-This document outlines the plan for adding SQL querying support to SeaweedFS, focusing on reading and analyzing data from Message Queue (MQ) topics and S3 objects.
+This document outlines the plan for adding SQL querying support to SeaweedFS, focusing on reading and analyzing data from Message Queue (MQ) topics.
 
 ## Feature Plan
 
 **1. Goal**
 
-To provide a SQL querying interface for SeaweedFS, enabling analytics on existing MQ topics and S3 objects. This enables:
+To provide a SQL querying interface for SeaweedFS, enabling analytics on existing MQ topics. This enables:
 - Advanced querying with SELECT, WHERE, JOIN, aggregations on MQ topics
 - Schema discovery and metadata operations (SHOW DATABASES, SHOW TABLES, DESCRIBE)
 - In-place analytics on Parquet-stored messages without data movement
-- Direct querying of S3 objects in various formats
 
 **2. Key Features**
 
-*   **Schema Discovery and Metadata (Priority 1):**
+*   **Schema Discovery and Metadata:**
     *   `SHOW DATABASES` - List all MQ namespaces
     *   `SHOW TABLES` - List all topics in a namespace  
     *   `DESCRIBE table_name` - Show topic schema details
     *   Automatic schema detection from existing Parquet data
-*   **Advanced Query Engine (Priority 1):**
+*   **Advanced Query Engine:**
     *   Full `SELECT` support with `WHERE`, `ORDER BY`, `LIMIT`, `OFFSET`
     *   Aggregation functions: `COUNT()`, `SUM()`, `AVG()`, `MIN()`, `MAX()`, `GROUP BY`
     *   Join operations between topics (leveraging Parquet columnar format)
     *   Window functions and advanced analytics
     *   Temporal queries with timestamp-based filtering
-*   **S3 Select (Priority 2):**
-    *   Support for querying objects in standard data formats (CSV, JSON, Parquet)
-    *   Queries executed directly on storage nodes to minimize data transfer
 *   **User Interfaces:**
-    *   New API endpoint `/sql` for HTTP-based SQL execution
     *   New CLI command `weed sql` with interactive shell mode
     *   Optional: Web UI for query execution and result visualization
 *   **Output Formats:**
@@ -39,34 +34,7 @@ To provide a SQL querying interface for SeaweedFS, enabling analytics on existin
 
 ## Development Plan
 
-**1. Scaffolding & Dependencies**
 
-*   **PostgreSQL Driver:** `github.com/lib/pq v1.10.9` - Provides PostgreSQL wire protocol compatibility for client connections
-*   **PostgreSQL Connection Pool:** `github.com/jackc/pgx/v5 v5.7.5` - High-performance PostgreSQL driver with connection pooling and prepared statements
-*   **Parquet Processing:** `github.com/parquet-go/parquet-go v0.25.1` - Native Go Parquet reader/writer for columnar data processing
-*   **SQL Parser:** Custom PostgreSQL-compatible parser built without CGO dependencies for optimal performance
-*   **Query Engine Infrastructure:** New `weed/query/engine/` package providing comprehensive SQL execution framework
-*   **Schema Catalog:** Integration with existing `weed/mq/schema/` infrastructure for metadata management
-
-
-**2. SQL Engine Architecture**
-
-*   **Schema Catalog:**
-    *   Leverage existing `weed/mq/schema/` infrastructure
-    *   Map MQ namespaces to "databases" and topics to "tables"
-    *   Discover schema metadata from existing Parquet files
-    *   Handle schema evolution in read operations
-*   **Query Planner:**
-    *   Parse SQL statements using custom PostgreSQL parser
-    *   Create optimized execution plans leveraging Parquet columnar format
-    *   Push-down predicates to storage layer for efficient filtering
-    *   Optimize aggregations using Parquet column statistics
-    *   Support time-based filtering with intelligent time range extraction
-*   **Query Executor:**
-    *   Utilize existing `weed/mq/logstore/` for Parquet reading
-    *   Implement streaming execution for large result sets
-    *   Support parallel processing across topic partitions
-    *   Handle schema evolution during query execution
 
 **3. Data Source Integration**
 
@@ -79,17 +47,9 @@ To provide a SQL querying interface for SeaweedFS, enabling analytics on existin
     *   Extend `weed/mq/schema/schema.go` for SQL metadata operations
     *   Read existing topic schemas for query planning
     *   Handle schema evolution during query execution
-*   **S3 Connector (Secondary):**
-    *   Reading data from S3 objects with CSV, JSON, and Parquet parsers
-    *   Efficient streaming for large files with columnar optimizations
 
 **4. API & CLI Integration**
 
-*   **HTTP API Endpoint:**
-    *   Add `/sql` endpoint to Filer server following existing patterns in `weed/server/filer_server.go`
-    *   Support both POST (for queries) and GET (for metadata operations)
-    *   Include query result pagination and streaming
-    *   Authentication and authorization integration
 *   **CLI Command:**
     *   New `weed sql` command with interactive shell mode (similar to `weed shell`)
     *   Support for script execution and result formatting
@@ -161,7 +121,7 @@ SQL Query Flow:
                                   1. Parse SQL        2. Plan & Optimize      3. Execute Query
 ┌─────────────┐    ┌──────────────┐    ┌─────────────────┐    ┌──────────────┐
 │   Client    │    │  SQL Parser  │    │  Query Planner  │    │   Execution  │
-│ (CLI/HTTP)  │──→ │ PostgreSQL   │──→ │   & Optimizer   │──→ │    Engine    │
+│    (CLI)    │──→ │ PostgreSQL   │──→ │   & Optimizer   │──→ │    Engine    │
 │             │    │ (Custom)     │    │                 │    │              │
 └─────────────┘    └──────────────┘    └─────────────────┘    └──────────────┘
                                                │                       │
@@ -173,107 +133,20 @@ SQL Query Flow:
                     │  • Topic → Table mapping                                  │
                     │  • Schema version management                              │
                     └─────────────────────────────────────────────────────────────┘
-                                                                        │
+                                                                        ▲
                                                                         │ Metadata
-                                                                        ▼
+                                                                        │
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                          MQ Storage Layer                                      │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐         │
-│  │   Topic A   │  │   Topic B   │  │   Topic C   │  │     ...     │         │
-│  │ (Parquet)   │  │ (Parquet)   │  │ (Parquet)   │  │ (Parquet)   │         │
-│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘         │
-└─────────────────────────────────────────────────────────────────────────────┘
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐    ▲    │
+│  │   Topic A   │  │   Topic B   │  │   Topic C   │  │     ...     │    │    │
+│  │ (Parquet)   │  │ (Parquet)   │  │ (Parquet)   │  │ (Parquet)   │    │    │
+│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘    │    │
+└──────────────────────────────────────────────────────────────────────────│──┘
+                                                                          │
+                                                                     Data Access
 ```
 
-## Key Design Decisions
-
-**1. SQL-to-MQ Mapping Strategy:**
-*   MQ Namespaces ↔ SQL Databases
-*   MQ Topics ↔ SQL Tables
-*   Topic Partitions ↔ Table Shards (transparent to users)
-*   Schema Fields ↔ Table Columns
-
-**2. Schema Evolution Handling:**
-*   Read schema version history from existing topic metadata
-*   Support backward-compatible queries across schema versions
-*   Automatic type coercion where possible during reads
-*   Clear error messages for incompatible data
-
-**3. Query Optimization:**
-*   Leverage Parquet columnar format for projection pushdown
-*   Use topic partitioning for parallel query execution
-*   Implement predicate pushdown to minimize data scanning
-*   Cache frequently accessed schema metadata
-
-**4. Data Consistency and Concurrency:**
-*   Read-only operations ensure no impact on MQ write performance
-*   Queries operate on immutable Parquet segments for consistency
-*   Handle concurrent reads without blocking MQ operations
-*   Manage schema evolution during active query execution
-
-**5. Query Semantics:**
-*   SELECT queries provide read-consistent snapshots of topic data
-*   Queries operate on immutable Parquet files for consistency
-*   No transactional guarantees across multiple topics
-
-**6. Performance Considerations:**
-*   Prioritize read performance over write consistency
-*   Leverage MQ's natural partitioning for parallel queries
-*   Use Parquet metadata for query optimization
-*   Implement connection pooling and query caching
-
-## Implementation Phases
-
-**Phase 1: Core SQL Infrastructure (Weeks 1-3)** ✅ COMPLETED
-1. Implemented custom PostgreSQL parser for optimal compatibility (no CGO dependencies)
-2. Created `weed/query/engine/` package with comprehensive SQL execution framework
-3. Implemented metadata catalog mapping MQ topics to SQL tables
-4. Added `SHOW DATABASES`, `SHOW TABLES`, `DESCRIBE` commands with full PostgreSQL compatibility
-
-**Phase 2: Query Engine (Weeks 4-6)**
-1. `SELECT` with `WHERE`, `ORDER BY`, `LIMIT`, `OFFSET`
-2. Aggregation functions and `GROUP BY`
-3. Basic joins between topics
-4. Predicate pushdown to Parquet layer
-5. Schema discovery from existing Parquet files
-
-**Phase 3: API & CLI Integration (Weeks 7-8)**
-1. HTTP `/sql` endpoint implementation
-2. `weed sql` CLI command with interactive mode
-3. Result streaming and pagination
-4. Error handling and query optimization
-
-**Phase 4: Advanced Features (Weeks 9-10)**
-1. Window functions and advanced analytics
-2. S3 object querying capabilities
-3. Performance optimizations
-4. Connection pooling and query caching
-
-## Test Plan
-
-**1. Unit Tests**
-
-*   **SQL Parser Tests:** Validate parsing of all supported SELECT statements and metadata operations
-*   **Schema Mapping Tests:** Test topic-to-table conversion and schema discovery
-*   **Query Planning Tests:** Verify optimization and predicate pushdown logic
-*   **Execution Engine Tests:** Test query execution with various data patterns
-*   **Edge Cases:** Malformed queries, schema evolution in existing data, concurrent reads
-
-**2. Integration Tests**
-
-*   **End-to-End Workflow:** Complete SQL querying operations against live SeaweedFS cluster
-*   **Schema Discovery:** Test automatic schema detection from existing Parquet data
-*   **Multi-Topic Joins:** Validate cross-topic query performance and correctness
-*   **Large Dataset Tests:** Performance validation with GB-scale Parquet data
-*   **Concurrent Access:** Multiple SQL query sessions operating simultaneously
-
-**3. Performance & Security Testing**
-
-*   **Query Performance:** Benchmark latency for various query patterns
-*   **Memory Usage:** Monitor resource consumption during large result sets
-*   **Scalability Tests:** Performance across multiple partitions and topics
-*   **SQL Injection Prevention:** Security validation of parser and execution engine
-*   **Fuzz Testing:** Automated testing with malformed SQL inputs
 
 ## Success Metrics
 
