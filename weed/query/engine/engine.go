@@ -518,8 +518,8 @@ func parseArithmeticExpression(expr string) *ArithmeticExpr {
 
 // parseArithmeticExpressionWithLiterals parses arithmetic expressions with support for literal values
 func (e *SQLEngine) parseArithmeticExpressionWithLiterals(expr string) *ArithmeticExpr {
-	// Remove spaces for easier parsing
-	expr = strings.ReplaceAll(expr, " ", "")
+	// Remove spaces for easier parsing, but preserve spaces inside string literals
+	expr = e.removeSpacesPreservingLiterals(expr)
 
 	// Check for arithmetic and string operators (order matters for precedence)
 	// String concatenation (||) has lower precedence than arithmetic operators
@@ -572,6 +572,31 @@ func (e *SQLEngine) parseArithmeticExpressionWithLiterals(expr string) *Arithmet
 	}
 
 	return nil
+}
+
+// removeSpacesPreservingLiterals removes spaces outside of string literals for easier parsing
+func (e *SQLEngine) removeSpacesPreservingLiterals(expr string) string {
+	var result strings.Builder
+	inStringLiteral := false
+
+	for _, char := range expr {
+		if char == '\'' {
+			// Toggle string literal mode when we encounter a single quote
+			inStringLiteral = !inStringLiteral
+			result.WriteRune(char)
+		} else if inStringLiteral {
+			// Inside string literal - preserve all characters including spaces
+			result.WriteRune(char)
+		} else if char == ' ' {
+			// Outside string literal - skip spaces
+			continue
+		} else {
+			// Outside string literal - keep non-space characters
+			result.WriteRune(char)
+		}
+	}
+
+	return result.String()
 }
 
 // parseExpressionNode parses an expression string into the appropriate ExprNode type
