@@ -942,9 +942,9 @@ func TestSQLEngine_ConvertLogEntryToRecordValue_ValidProtobuf(t *testing.T) {
 	assert.NotNil(t, result.Fields)
 
 	// Verify system columns are added correctly
-	assert.Contains(t, result.Fields, SW_COLUMN_NAME_TS)
+	assert.Contains(t, result.Fields, SW_COLUMN_NAME_TIMESTAMP)
 	assert.Contains(t, result.Fields, SW_COLUMN_NAME_KEY)
-	assert.Equal(t, int64(1609459200000000000), result.Fields[SW_COLUMN_NAME_TS].GetInt64Value())
+	assert.Equal(t, int64(1609459200000000000), result.Fields[SW_COLUMN_NAME_TIMESTAMP].GetInt64Value())
 	assert.Equal(t, []byte("test-key-001"), result.Fields[SW_COLUMN_NAME_KEY].GetBytesValue())
 
 	// Verify user data is preserved
@@ -1004,15 +1004,15 @@ func TestSQLEngine_ConvertLogEntryToRecordValue_EmptyProtobuf(t *testing.T) {
 	assert.NotNil(t, result.Fields)
 
 	// Should have system columns
-	assert.Contains(t, result.Fields, SW_COLUMN_NAME_TS)
+	assert.Contains(t, result.Fields, SW_COLUMN_NAME_TIMESTAMP)
 	assert.Contains(t, result.Fields, SW_COLUMN_NAME_KEY)
-	assert.Equal(t, int64(1609459200000000000), result.Fields[SW_COLUMN_NAME_TS].GetInt64Value())
+	assert.Equal(t, int64(1609459200000000000), result.Fields[SW_COLUMN_NAME_TIMESTAMP].GetInt64Value())
 	assert.Equal(t, []byte("empty-key"), result.Fields[SW_COLUMN_NAME_KEY].GetBytesValue())
 
 	// Should have no user fields
 	userFieldCount := 0
 	for fieldName := range result.Fields {
-		if fieldName != SW_COLUMN_NAME_TS && fieldName != SW_COLUMN_NAME_KEY {
+		if fieldName != SW_COLUMN_NAME_TIMESTAMP && fieldName != SW_COLUMN_NAME_KEY {
 			userFieldCount++
 		}
 	}
@@ -1046,9 +1046,9 @@ func TestSQLEngine_ConvertLogEntryToRecordValue_NilFieldsMap(t *testing.T) {
 	assert.NotNil(t, result.Fields) // Should be created by the function
 
 	// Should have system columns
-	assert.Contains(t, result.Fields, SW_COLUMN_NAME_TS)
+	assert.Contains(t, result.Fields, SW_COLUMN_NAME_TIMESTAMP)
 	assert.Contains(t, result.Fields, SW_COLUMN_NAME_KEY)
-	assert.Equal(t, int64(1609459200000000000), result.Fields[SW_COLUMN_NAME_TS].GetInt64Value())
+	assert.Equal(t, int64(1609459200000000000), result.Fields[SW_COLUMN_NAME_TIMESTAMP].GetInt64Value())
 	assert.Equal(t, []byte("nil-fields-key"), result.Fields[SW_COLUMN_NAME_KEY].GetBytesValue())
 }
 
@@ -1058,9 +1058,9 @@ func TestSQLEngine_ConvertLogEntryToRecordValue_SystemColumnOverride(t *testing.
 	// Create RecordValue that already has system column names (should be overridden)
 	recordWithSystemCols := &schema_pb.RecordValue{
 		Fields: map[string]*schema_pb.Value{
-			"user_field":       {Kind: &schema_pb.Value_StringValue{StringValue: "user-data"}},
-			SW_COLUMN_NAME_TS:  {Kind: &schema_pb.Value_Int64Value{Int64Value: 999999999}},   // Should be overridden
-			SW_COLUMN_NAME_KEY: {Kind: &schema_pb.Value_StringValue{StringValue: "old-key"}}, // Should be overridden
+			"user_field":             {Kind: &schema_pb.Value_StringValue{StringValue: "user-data"}},
+			SW_COLUMN_NAME_TIMESTAMP: {Kind: &schema_pb.Value_Int64Value{Int64Value: 999999999}},   // Should be overridden
+			SW_COLUMN_NAME_KEY:       {Kind: &schema_pb.Value_StringValue{StringValue: "old-key"}}, // Should be overridden
 		},
 	}
 	protobufData, err := proto.Marshal(recordWithSystemCols)
@@ -1082,7 +1082,7 @@ func TestSQLEngine_ConvertLogEntryToRecordValue_SystemColumnOverride(t *testing.
 	assert.NotNil(t, result)
 
 	// System columns should use LogEntry values, not protobuf values
-	assert.Equal(t, int64(1609459200000000000), result.Fields[SW_COLUMN_NAME_TS].GetInt64Value())
+	assert.Equal(t, int64(1609459200000000000), result.Fields[SW_COLUMN_NAME_TIMESTAMP].GetInt64Value())
 	assert.Equal(t, []byte("actual-key"), result.Fields[SW_COLUMN_NAME_KEY].GetBytesValue())
 
 	// User field should be preserved
@@ -1133,7 +1133,7 @@ func TestSQLEngine_ConvertLogEntryToRecordValue_ComplexDataTypes(t *testing.T) {
 	assert.Equal(t, []byte{0x01, 0x02, 0x03}, result.Fields["bytes_field"].GetBytesValue())
 
 	// System columns should still be present
-	assert.Contains(t, result.Fields, SW_COLUMN_NAME_TS)
+	assert.Contains(t, result.Fields, SW_COLUMN_NAME_TIMESTAMP)
 	assert.Contains(t, result.Fields, SW_COLUMN_NAME_KEY)
 }
 

@@ -16,17 +16,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
 )
 
-// System columns added to all MQ records
-const (
-	SW_COLUMN_NAME_TS  = "_ts_ns" // Timestamp in nanoseconds
-	SW_COLUMN_NAME_KEY = "_key"   // Message key
-)
-
 // ParquetScanner scans MQ topic Parquet files for SELECT queries
 // Assumptions:
 // 1. All MQ messages are stored in Parquet format in topic partitions
 // 2. Each partition directory contains dated Parquet files
-// 3. System columns (_ts_ns, _key) are added to user schema
+// 3. System columns (_timestamp_ns, _key) are added to user schema
 // 4. Predicate pushdown is used for efficient scanning
 type ParquetScanner struct {
 	filerClient   filer_pb.FilerClient
@@ -68,7 +62,7 @@ func NewParquetScanner(filerClient filer_pb.FilerClient, namespace, topicName st
 
 	// Add system columns that MQ adds to all records
 	recordType = schema.NewRecordTypeBuilder(recordType).
-		WithField(SW_COLUMN_NAME_TS, schema.TypeInt64).
+		WithField(SW_COLUMN_NAME_TIMESTAMP, schema.TypeInt64).
 		WithField(SW_COLUMN_NAME_KEY, schema.TypeBytes).
 		RecordTypeEnd()
 
@@ -196,7 +190,7 @@ func (ps *ParquetScanner) scanParquetFile(ctx context.Context, entry *filer_pb.E
 			}
 
 			// Extract system columns
-			timestamp := recordValue.Fields[SW_COLUMN_NAME_TS].GetInt64Value()
+			timestamp := recordValue.Fields[SW_COLUMN_NAME_TIMESTAMP].GetInt64Value()
 			key := recordValue.Fields[SW_COLUMN_NAME_KEY].GetBytesValue()
 
 			// Apply time filtering
@@ -217,7 +211,7 @@ func (ps *ParquetScanner) scanParquetFile(ctx context.Context, entry *filer_pb.E
 			if len(options.Columns) == 0 {
 				// Select all columns (excluding system columns from user view)
 				for name, value := range recordValue.Fields {
-					if name != SW_COLUMN_NAME_TS && name != SW_COLUMN_NAME_KEY {
+					if name != SW_COLUMN_NAME_TIMESTAMP && name != SW_COLUMN_NAME_KEY {
 						values[name] = value
 					}
 				}
@@ -293,7 +287,7 @@ func (ps *ParquetScanner) generateSampleData(options ScanOptions) []ScanResult {
 			for k, v := range result.Values {
 				recordValue.Fields[k] = v
 			}
-			recordValue.Fields[SW_COLUMN_NAME_TS] = &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: result.Timestamp}}
+			recordValue.Fields[SW_COLUMN_NAME_TIMESTAMP] = &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: result.Timestamp}}
 			recordValue.Fields[SW_COLUMN_NAME_KEY] = &schema_pb.Value{Kind: &schema_pb.Value_BytesValue{BytesValue: result.Key}}
 
 			if options.Predicate(recordValue) {

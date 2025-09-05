@@ -4,12 +4,19 @@ import (
 	"strings"
 )
 
+// System column constants used throughout the SQL engine
+const (
+	SW_COLUMN_NAME_TIMESTAMP = "_timestamp_ns" // Message timestamp in nanoseconds
+	SW_COLUMN_NAME_KEY       = "_key"          // Message key
+	SW_COLUMN_NAME_SOURCE    = "_source"       // Data source (live_log, parquet_archive, etc.)
+)
+
 // isSystemColumn checks if a column is a system column (_timestamp_ns, _key, _source)
 func (e *SQLEngine) isSystemColumn(columnName string) bool {
 	lowerName := strings.ToLower(columnName)
-	return lowerName == "_timestamp_ns" || lowerName == "timestamp_ns" ||
-		lowerName == "_key" || lowerName == "key" ||
-		lowerName == "_source" || lowerName == "source"
+	return lowerName == SW_COLUMN_NAME_TIMESTAMP ||
+		lowerName == SW_COLUMN_NAME_KEY ||
+		lowerName == SW_COLUMN_NAME_SOURCE
 }
 
 // isRegularColumn checks if a column might be a regular data column (placeholder)
@@ -23,7 +30,7 @@ func (e *SQLEngine) getSystemColumnGlobalMin(columnName string, allFileStats map
 	lowerName := strings.ToLower(columnName)
 
 	switch lowerName {
-	case "_timestamp_ns", "timestamp_ns":
+	case SW_COLUMN_NAME_TIMESTAMP:
 		// For timestamps, find the earliest timestamp across all files
 		// This should match what's in the Extended["min"] metadata
 		var minTimestamp *int64
@@ -42,12 +49,12 @@ func (e *SQLEngine) getSystemColumnGlobalMin(columnName string, allFileStats map
 			return *minTimestamp
 		}
 
-	case "_key", "key":
+	case SW_COLUMN_NAME_KEY:
 		// For keys, we'd need to read the actual parquet column stats
 		// Fall back to scanning if not available in our current stats
 		return nil
 
-	case "_source", "source":
+	case SW_COLUMN_NAME_SOURCE:
 		// Source is always "parquet_archive" for parquet files
 		return "parquet_archive"
 	}
@@ -60,7 +67,7 @@ func (e *SQLEngine) getSystemColumnGlobalMax(columnName string, allFileStats map
 	lowerName := strings.ToLower(columnName)
 
 	switch lowerName {
-	case "_timestamp_ns", "timestamp_ns":
+	case SW_COLUMN_NAME_TIMESTAMP:
 		// For timestamps, find the latest timestamp across all files
 		// This should match what's in the Extended["max"] metadata
 		var maxTimestamp *int64
@@ -79,12 +86,12 @@ func (e *SQLEngine) getSystemColumnGlobalMax(columnName string, allFileStats map
 			return *maxTimestamp
 		}
 
-	case "_key", "key":
+	case SW_COLUMN_NAME_KEY:
 		// For keys, we'd need to read the actual parquet column stats
 		// Fall back to scanning if not available in our current stats
 		return nil
 
-	case "_source", "source":
+	case SW_COLUMN_NAME_SOURCE:
 		// Source is always "parquet_archive" for parquet files
 		return "parquet_archive"
 	}

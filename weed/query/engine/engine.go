@@ -1554,8 +1554,14 @@ func (e *SQLEngine) executeSelectStatement(ctx context.Context, stmt *SelectStat
 
 	// Convert to SQL result format
 	if selectAll {
-		columns = nil // Let converter determine all columns
-		return hybridScanner.ConvertToSQLResult(results, columns), nil
+		if len(columns) > 0 {
+			// SELECT *, specific_columns - include both auto-discovered and explicit columns
+			return hybridScanner.ConvertToSQLResultWithMixedColumns(results, columns), nil
+		} else {
+			// SELECT * only - let converter determine all columns (excludes system columns)
+			columns = nil
+			return hybridScanner.ConvertToSQLResult(results, columns), nil
+		}
 	}
 
 	// Handle custom column expressions (including arithmetic)
@@ -1782,8 +1788,14 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 
 	// Convert to SQL result format
 	if selectAll {
-		columns = nil // Let converter determine all columns
-		return hybridScanner.ConvertToSQLResult(results, columns), nil
+		if len(columns) > 0 {
+			// SELECT *, specific_columns - include both auto-discovered and explicit columns
+			return hybridScanner.ConvertToSQLResultWithMixedColumns(results, columns), nil
+		} else {
+			// SELECT * only - let converter determine all columns (excludes system columns)
+			columns = nil
+			return hybridScanner.ConvertToSQLResult(results, columns), nil
+		}
 	}
 
 	// Handle custom column expressions (including arithmetic)
@@ -1881,31 +1893,73 @@ func (e *SQLEngine) extractTimeFromComparison(comp *ComparisonExpr, startTimeNs,
 	}
 }
 
-// isTimeColumn checks if a column name refers to a timestamp field
+// isTimeColumn checks if a column refers to a timestamp field based on actual type information
+// This function uses schema metadata, not naming conventions
 func (e *SQLEngine) isTimeColumn(columnName string) bool {
 	if columnName == "" {
 		return false
 	}
 
-	// System timestamp columns
-	timeColumns := []string{
-		"_timestamp_ns", // SeaweedFS MQ system timestamp (nanoseconds)
-		"timestamp_ns",  // Alternative naming
-		"timestamp",     // Common timestamp field
-		"created_at",    // Common creation time field
-		"updated_at",    // Common update time field
-		"event_time",    // Event timestamp
-		"log_time",      // Log timestamp
-		"ts",            // Short form
+	// System timestamp columns are always time columns
+	if columnName == SW_COLUMN_NAME_TIMESTAMP {
+		return true
 	}
 
-	for _, timeCol := range timeColumns {
-		if strings.EqualFold(columnName, timeCol) {
-			return true
+	// For user-defined columns, check actual schema type information
+	if e.catalog != nil {
+		currentDB := e.catalog.GetCurrentDatabase()
+		if currentDB == "" {
+			currentDB = "default"
+		}
+
+		// Get current table context from query execution
+		// Note: This is a limitation - we need table context here
+		// In a full implementation, this would be passed from the query context
+		tableInfo, err := e.getCurrentTableInfo(currentDB)
+		if err == nil && tableInfo != nil {
+			for _, col := range tableInfo.Columns {
+				if strings.EqualFold(col.Name, columnName) {
+					// Use actual SQL type to determine if this is a timestamp
+					return e.isSQLTypeTimestamp(col.Type)
+				}
+			}
 		}
 	}
 
+	// Only return true if we have explicit type information
+	// No guessing based on column names
 	return false
+}
+
+// isSQLTypeTimestamp checks if a SQL type string represents a timestamp type
+func (e *SQLEngine) isSQLTypeTimestamp(sqlType string) bool {
+	upperType := strings.ToUpper(strings.TrimSpace(sqlType))
+
+	// Handle type with precision/length specifications
+	if idx := strings.Index(upperType, "("); idx != -1 {
+		upperType = upperType[:idx]
+	}
+
+	switch upperType {
+	case "TIMESTAMP", "DATETIME":
+		return true
+	case "BIGINT":
+		// BIGINT could be a timestamp if it follows the pattern for timestamp storage
+		// This is a heuristic - in a better system, we'd have semantic type information
+		return false // Conservative approach - require explicit TIMESTAMP type
+	default:
+		return false
+	}
+}
+
+// getCurrentTableInfo attempts to get table info for the current query context
+// This is a simplified implementation - ideally table context would be passed explicitly
+func (e *SQLEngine) getCurrentTableInfo(database string) (*TableInfo, error) {
+	// This is a limitation of the current architecture
+	// In practice, we'd need the table context from the current query
+	// For now, return nil to fallback to naming conventions
+	// TODO: Enhance architecture to pass table context through query execution
+	return nil, fmt.Errorf("table context not available in current architecture")
 }
 
 // getColumnName extracts column name from expression (handles ColName types)
@@ -2757,11 +2811,11 @@ func (e *SQLEngine) computeFileMinMax(filerClient filer_pb.FilerClient, filePath
 		if e.isSystemColumn(columnName) {
 			// Handle system columns
 			switch strings.ToLower(columnName) {
-			case "_timestamp_ns", "timestamp_ns":
+			case SW_COLUMN_NAME_TIMESTAMP:
 				columnValue = &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: logEntry.TsNs}}
-			case "_key", "key":
+			case SW_COLUMN_NAME_KEY:
 				columnValue = &schema_pb.Value{Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Key}}
-			case "_source", "source":
+			case SW_COLUMN_NAME_SOURCE:
 				columnValue = &schema_pb.Value{Kind: &schema_pb.Value_StringValue{StringValue: "live_log"}}
 			}
 		} else {
@@ -2894,7 +2948,7 @@ func (e *SQLEngine) convertLogEntryToRecordValue(logEntry *filer_pb.LogEntry) (*
 	}
 
 	// Add system columns
-	recordValue.Fields[SW_COLUMN_NAME_TS] = &schema_pb.Value{
+	recordValue.Fields[SW_COLUMN_NAME_TIMESTAMP] = &schema_pb.Value{
 		Kind: &schema_pb.Value_Int64Value{Int64Value: logEntry.TsNs},
 	}
 	recordValue.Fields[SW_COLUMN_NAME_KEY] = &schema_pb.Value{
@@ -3378,11 +3432,11 @@ func (e *SQLEngine) findColumnValue(result HybridScanResult, columnName string) 
 	// Check system columns first (stored separately in HybridScanResult)
 	lowerColumnName := strings.ToLower(columnName)
 	switch lowerColumnName {
-	case "_timestamp_ns", "timestamp_ns":
+	case SW_COLUMN_NAME_TIMESTAMP:
 		return &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: result.Timestamp}}
-	case "_key", "key":
+	case SW_COLUMN_NAME_KEY:
 		return &schema_pb.Value{Kind: &schema_pb.Value_BytesValue{BytesValue: result.Key}}
-	case "_source", "source":
+	case SW_COLUMN_NAME_SOURCE:
 		return &schema_pb.Value{Kind: &schema_pb.Value_StringValue{StringValue: result.Source}}
 	}
 

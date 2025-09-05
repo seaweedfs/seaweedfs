@@ -74,7 +74,7 @@ func NewHybridMessageScanner(filerClient filer_pb.FilerClient, brokerClient Brok
 
 	// Add system columns that MQ adds to all records
 	recordType = schema.NewRecordTypeBuilder(recordTypeCopy).
-		WithField(SW_COLUMN_NAME_TS, schema.TypeInt64).
+		WithField(SW_COLUMN_NAME_TIMESTAMP, schema.TypeInt64).
 		WithField(SW_COLUMN_NAME_KEY, schema.TypeBytes).
 		RecordTypeEnd()
 
@@ -328,7 +328,7 @@ func (hms *HybridMessageScanner) scanUnflushedDataWithStats(ctx context.Context,
 		}
 
 		// Extract system columns for result
-		timestamp := recordValue.Fields[SW_COLUMN_NAME_TS].GetInt64Value()
+		timestamp := recordValue.Fields[SW_COLUMN_NAME_TIMESTAMP].GetInt64Value()
 		key := recordValue.Fields[SW_COLUMN_NAME_KEY].GetBytesValue()
 
 		// Apply column projection
@@ -336,7 +336,7 @@ func (hms *HybridMessageScanner) scanUnflushedDataWithStats(ctx context.Context,
 		if len(options.Columns) == 0 {
 			// Select all columns (excluding system columns from user view)
 			for name, value := range recordValue.Fields {
-				if name != SW_COLUMN_NAME_TS && name != SW_COLUMN_NAME_KEY {
+				if name != SW_COLUMN_NAME_TIMESTAMP && name != SW_COLUMN_NAME_KEY {
 					values[name] = value
 				}
 			}
@@ -354,7 +354,7 @@ func (hms *HybridMessageScanner) scanUnflushedDataWithStats(ctx context.Context,
 			Values:    values,
 			Timestamp: timestamp,
 			Key:       key,
-			Source:    "in_memory_broker", // Tag for debugging/analysis
+			Source:    "live_log", // Data from broker's unflushed messages
 		}
 
 		results = append(results, result)
@@ -386,7 +386,7 @@ func (hms *HybridMessageScanner) convertDataMessageToRecord(msg *mq_pb.DataMessa
 	}
 
 	// Add timestamp
-	recordValue.Fields[SW_COLUMN_NAME_TS] = &schema_pb.Value{
+	recordValue.Fields[SW_COLUMN_NAME_TIMESTAMP] = &schema_pb.Value{
 		Kind: &schema_pb.Value_Int64Value{Int64Value: msg.TsNs},
 	}
 
@@ -521,14 +521,6 @@ func (hms *HybridMessageScanner) scanPartitionHybridWithStats(ctx context.Contex
 		results = mergedResults
 	}
 
-	// STEP 4: Fallback to sample data if no results found
-	// STEP 4: Fallback to sample data if no results found
-	// if len(results) == 0 {
-	// 	sampleResults := hms.generateSampleHybridData(options)
-	// 	results = append(results, sampleResults...)
-	// 	// Note: OFFSET and LIMIT will be applied at the end of the main scan function
-	// }
-
 	return results, stats, nil
 }
 
@@ -595,7 +587,7 @@ func (hms *HybridMessageScanner) convertLogEntryToRecordValue(logEntry *filer_pb
 		}
 
 		// Add system columns from LogEntry
-		recordValue.Fields[SW_COLUMN_NAME_TS] = &schema_pb.Value{
+		recordValue.Fields[SW_COLUMN_NAME_TIMESTAMP] = &schema_pb.Value{
 			Kind: &schema_pb.Value_Int64Value{Int64Value: logEntry.TsNs},
 		}
 		recordValue.Fields[SW_COLUMN_NAME_KEY] = &schema_pb.Value{
@@ -617,7 +609,7 @@ func (hms *HybridMessageScanner) parseRawMessageWithSchema(logEntry *filer_pb.Lo
 	}
 
 	// Add system columns (always present)
-	recordValue.Fields[SW_COLUMN_NAME_TS] = &schema_pb.Value{
+	recordValue.Fields[SW_COLUMN_NAME_TIMESTAMP] = &schema_pb.Value{
 		Kind: &schema_pb.Value_Int64Value{Int64Value: logEntry.TsNs},
 	}
 	recordValue.Fields[SW_COLUMN_NAME_KEY] = &schema_pb.Value{
@@ -862,11 +854,11 @@ func (hms *HybridMessageScanner) ConvertToSQLResult(results []HybridScanResult, 
 		row := make([]sqltypes.Value, len(columns))
 		for j, columnName := range columns {
 			switch columnName {
-			case "_source":
+			case SW_COLUMN_NAME_SOURCE:
 				row[j] = sqltypes.NewVarChar(result.Source)
-			case "_timestamp_ns":
+			case SW_COLUMN_NAME_TIMESTAMP:
 				row[j] = sqltypes.NewInt64(result.Timestamp)
-			case "_key":
+			case SW_COLUMN_NAME_KEY:
 				row[j] = sqltypes.NewVarBinary(string(result.Key))
 			default:
 				if value, exists := result.Values[columnName]; exists {
@@ -887,78 +879,89 @@ func (hms *HybridMessageScanner) ConvertToSQLResult(results []HybridScanResult, 
 	}
 }
 
-// generateSampleHybridData creates sample data that simulates both live and archived messages
-func (hms *HybridMessageScanner) generateSampleHybridData(options HybridScanOptions) []HybridScanResult {
-	now := time.Now().UnixNano()
+// ConvertToSQLResultWithMixedColumns handles SELECT *, specific_columns queries
+// Combines auto-discovered columns (from *) with explicitly requested columns
+func (hms *HybridMessageScanner) ConvertToSQLResultWithMixedColumns(results []HybridScanResult, explicitColumns []string) *QueryResult {
+	if len(results) == 0 {
+		// For empty results, combine auto-discovered columns with explicit ones
+		columnSet := make(map[string]bool)
 
-	sampleData := []HybridScanResult{
-		// Simulated live log data (recent)
-		{
-			Values: map[string]*schema_pb.Value{
-				"user_id":    {Kind: &schema_pb.Value_Int32Value{Int32Value: 1003}},
-				"event_type": {Kind: &schema_pb.Value_StringValue{StringValue: "live_login"}},
-				"data":       {Kind: &schema_pb.Value_StringValue{StringValue: `{"ip": "10.0.0.1", "live": true}`}},
-			},
-			Timestamp: now - 300000000000, // 5 minutes ago
-			Key:       []byte("live-user-1003"),
-			Source:    "live_log",
-		},
-		{
-			Values: map[string]*schema_pb.Value{
-				"user_id":    {Kind: &schema_pb.Value_Int32Value{Int32Value: 1004}},
-				"event_type": {Kind: &schema_pb.Value_StringValue{StringValue: "live_action"}},
-				"data":       {Kind: &schema_pb.Value_StringValue{StringValue: `{"action": "click", "live": true}`}},
-			},
-			Timestamp: now - 120000000000, // 2 minutes ago
-			Key:       []byte("live-user-1004"),
-			Source:    "live_log",
-		},
+		// Add explicit columns first
+		for _, col := range explicitColumns {
+			columnSet[col] = true
+		}
 
-		// Simulated archived Parquet data (older)
-		{
-			Values: map[string]*schema_pb.Value{
-				"user_id":    {Kind: &schema_pb.Value_Int32Value{Int32Value: 1001}},
-				"event_type": {Kind: &schema_pb.Value_StringValue{StringValue: "archived_login"}},
-				"data":       {Kind: &schema_pb.Value_StringValue{StringValue: `{"ip": "192.168.1.1", "archived": true}`}},
-			},
-			Timestamp: now - 3600000000000, // 1 hour ago
-			Key:       []byte("archived-user-1001"),
-			Source:    "parquet_archive",
-		},
-		{
-			Values: map[string]*schema_pb.Value{
-				"user_id":    {Kind: &schema_pb.Value_Int32Value{Int32Value: 1002}},
-				"event_type": {Kind: &schema_pb.Value_StringValue{StringValue: "archived_logout"}},
-				"data":       {Kind: &schema_pb.Value_StringValue{StringValue: `{"duration": 1800, "archived": true}`}},
-			},
-			Timestamp: now - 1800000000000, // 30 minutes ago
-			Key:       []byte("archived-user-1002"),
-			Source:    "parquet_archive",
-		},
+		// Build final column list
+		columns := make([]string, 0, len(columnSet))
+		for col := range columnSet {
+			columns = append(columns, col)
+		}
+
+		return &QueryResult{
+			Columns:  columns,
+			Rows:     [][]sqltypes.Value{},
+			Database: hms.topic.Namespace,
+			Table:    hms.topic.Name,
+		}
 	}
 
-	// Apply predicate filtering if specified
-	if options.Predicate != nil {
-		var filtered []HybridScanResult
-		for _, result := range sampleData {
-			// Convert to RecordValue for predicate testing
-			recordValue := &schema_pb.RecordValue{Fields: make(map[string]*schema_pb.Value)}
-			for k, v := range result.Values {
-				recordValue.Fields[k] = v
-			}
-			recordValue.Fields[SW_COLUMN_NAME_TS] = &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: result.Timestamp}}
-			recordValue.Fields[SW_COLUMN_NAME_KEY] = &schema_pb.Value{Kind: &schema_pb.Value_BytesValue{BytesValue: result.Key}}
+	// Auto-discover columns from data (like SELECT *)
+	autoColumns := make(map[string]bool)
+	for _, result := range results {
+		for columnName := range result.Values {
+			autoColumns[columnName] = true
+		}
+	}
 
-			if options.Predicate(recordValue) {
-				filtered = append(filtered, result)
+	// Combine auto-discovered and explicit columns
+	columnSet := make(map[string]bool)
+
+	// Add auto-discovered columns first (regular data columns)
+	for col := range autoColumns {
+		columnSet[col] = true
+	}
+
+	// Add explicit columns (may include system columns like _source)
+	for _, col := range explicitColumns {
+		columnSet[col] = true
+	}
+
+	// Build final column list
+	columns := make([]string, 0, len(columnSet))
+	for col := range columnSet {
+		columns = append(columns, col)
+	}
+
+	// Convert to SQL rows
+	rows := make([][]sqltypes.Value, len(results))
+	for i, result := range results {
+		row := make([]sqltypes.Value, len(columns))
+		for j, columnName := range columns {
+			switch columnName {
+			case SW_COLUMN_NAME_TIMESTAMP:
+				row[j] = sqltypes.NewInt64(result.Timestamp)
+			case SW_COLUMN_NAME_KEY:
+				row[j] = sqltypes.NewVarBinary(string(result.Key))
+			case SW_COLUMN_NAME_SOURCE:
+				row[j] = sqltypes.NewVarChar(result.Source)
+			default:
+				// Regular data column
+				if value, exists := result.Values[columnName]; exists {
+					row[j] = convertSchemaValueToSQL(value)
+				} else {
+					row[j] = sqltypes.NULL
+				}
 			}
 		}
-		sampleData = filtered
+		rows[i] = row
 	}
 
-	// Note: OFFSET and LIMIT will be applied at the end of the main scan function
-
-	return sampleData
+	return &QueryResult{
+		Columns:  columns,
+		Rows:     rows,
+		Database: hms.topic.Namespace,
+		Table:    hms.topic.Name,
+	}
 }
 
 // ReadParquetStatistics efficiently reads column statistics from parquet files
@@ -1428,7 +1431,7 @@ func (s *StreamingFlushedDataSource) startStreaming() {
 			}
 
 			// Extract system columns
-			timestamp := recordValue.Fields[SW_COLUMN_NAME_TS].GetInt64Value()
+			timestamp := recordValue.Fields[SW_COLUMN_NAME_TIMESTAMP].GetInt64Value()
 			key := recordValue.Fields[SW_COLUMN_NAME_KEY].GetBytesValue()
 
 			// Apply column projection
@@ -1436,7 +1439,7 @@ func (s *StreamingFlushedDataSource) startStreaming() {
 			if len(s.options.Columns) == 0 {
 				// Select all columns (excluding system columns from user view)
 				for name, value := range recordValue.Fields {
-					if name != SW_COLUMN_NAME_TS && name != SW_COLUMN_NAME_KEY {
+					if name != SW_COLUMN_NAME_TIMESTAMP && name != SW_COLUMN_NAME_KEY {
 						values[name] = value
 					}
 				}

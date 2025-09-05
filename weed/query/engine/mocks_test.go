@@ -8,6 +8,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
+	"google.golang.org/protobuf/proto"
 )
 
 // NewTestSchemaCatalog creates a schema catalog for testing with sample data
@@ -21,8 +22,61 @@ func NewTestSchemaCatalog() *SchemaCatalog {
 	}
 
 	// Pre-populate with sample data to avoid service discovery requirements
-	catalog.initSampleData()
+	initTestSampleData(catalog)
 	return catalog
+}
+
+// initTestSampleData populates the catalog with sample schema data for testing
+// This function is only available in test builds and not in production
+func initTestSampleData(c *SchemaCatalog) {
+	// Create sample databases and tables
+	c.databases["default"] = &DatabaseInfo{
+		Name: "default",
+		Tables: map[string]*TableInfo{
+			"user_events": {
+				Name: "user_events",
+				Columns: []ColumnInfo{
+					{Name: "user_id", Type: "VARCHAR(100)", Nullable: true},
+					{Name: "event_type", Type: "VARCHAR(50)", Nullable: true},
+					{Name: "data", Type: "TEXT", Nullable: true},
+					// System columns - hidden by default in SELECT *
+					{Name: SW_COLUMN_NAME_TIMESTAMP, Type: "BIGINT", Nullable: false},
+					{Name: SW_COLUMN_NAME_KEY, Type: "VARCHAR(255)", Nullable: true},
+					{Name: SW_COLUMN_NAME_SOURCE, Type: "VARCHAR(50)", Nullable: false},
+				},
+			},
+			"system_logs": {
+				Name: "system_logs",
+				Columns: []ColumnInfo{
+					{Name: "level", Type: "VARCHAR(10)", Nullable: true},
+					{Name: "message", Type: "TEXT", Nullable: true},
+					{Name: "service", Type: "VARCHAR(50)", Nullable: true},
+					// System columns
+					{Name: SW_COLUMN_NAME_TIMESTAMP, Type: "BIGINT", Nullable: false},
+					{Name: SW_COLUMN_NAME_KEY, Type: "VARCHAR(255)", Nullable: true},
+					{Name: SW_COLUMN_NAME_SOURCE, Type: "VARCHAR(50)", Nullable: false},
+				},
+			},
+		},
+	}
+
+	c.databases["test"] = &DatabaseInfo{
+		Name: "test",
+		Tables: map[string]*TableInfo{
+			"test-topic": {
+				Name: "test-topic",
+				Columns: []ColumnInfo{
+					{Name: "id", Type: "INT", Nullable: true},
+					{Name: "name", Type: "VARCHAR(100)", Nullable: true},
+					{Name: "value", Type: "DOUBLE", Nullable: true},
+					// System columns
+					{Name: SW_COLUMN_NAME_TIMESTAMP, Type: "BIGINT", Nullable: false},
+					{Name: SW_COLUMN_NAME_KEY, Type: "VARCHAR(255)", Nullable: true},
+					{Name: SW_COLUMN_NAME_SOURCE, Type: "VARCHAR(50)", Nullable: false},
+				},
+			},
+		},
+	}
 }
 
 // NewTestSQLEngine creates a new SQL execution engine for testing
@@ -225,22 +279,44 @@ func (m *MockBrokerClient) DeleteTopic(ctx context.Context, namespace, topicName
 }
 
 // GetUnflushedMessages returns mock unflushed data for testing
-// Always returns empty slice to simulate safe deduplication behavior
+// Returns sample data as LogEntries to provide test data for SQL engine
 func (m *MockBrokerClient) GetUnflushedMessages(ctx context.Context, namespace, topicName string, partition topic.Partition, startTimeNs int64) ([]*filer_pb.LogEntry, error) {
 	if m.shouldFail {
 		return nil, fmt.Errorf("mock broker failed to get unflushed messages: %s", m.failMessage)
 	}
 
-	// For testing, return empty slice to simulate:
-	// 1. No unflushed data available
-	// 2. Safe deduplication behavior (prevents double-counting)
-	// 3. Successful broker communication
-	//
-	// In a real implementation, this would:
-	// - Connect to actual broker
-	// - Access LocalPartition's LogBuffer
-	// - Use buffer_start metadata for deduplication
-	// - Return only truly unflushed messages
+	// Generate sample data as LogEntries for testing
+	// This provides data that looks like it came from the broker's memory buffer
+	allSampleData := generateSampleHybridData(topicName, HybridScanOptions{})
 
-	return []*filer_pb.LogEntry{}, nil
+	var logEntries []*filer_pb.LogEntry
+	for _, result := range allSampleData {
+		// Only return live_log entries as unflushed messages
+		// This matches real system behavior where unflushed messages come from broker memory
+		// parquet_archive data would come from parquet files, not unflushed messages
+		if result.Source != "live_log" {
+			continue
+		}
+
+		// Convert sample data to protobuf LogEntry format
+		recordValue := &schema_pb.RecordValue{Fields: make(map[string]*schema_pb.Value)}
+		for k, v := range result.Values {
+			recordValue.Fields[k] = v
+		}
+
+		// Serialize the RecordValue
+		data, err := proto.Marshal(recordValue)
+		if err != nil {
+			continue // Skip invalid entries
+		}
+
+		logEntry := &filer_pb.LogEntry{
+			TsNs: result.Timestamp,
+			Key:  result.Key,
+			Data: data,
+		}
+		logEntries = append(logEntries, logEntry)
+	}
+
+	return logEntries, nil
 }
