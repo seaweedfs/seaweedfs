@@ -1,6 +1,6 @@
 module github.com/seaweedfs/seaweedfs
 
-go 1.24
+go 1.24.0
 
 toolchain go1.24.1
 
@@ -74,7 +74,7 @@ require (
 	github.com/rcrowley/go-metrics v0.0.0-20201227073835-cf1acfcdf475 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/seaweedfs/goexif v1.0.3
-	github.com/seaweedfs/raft v1.1.3
+	github.com/seaweedfs/raft v1.1.4
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/spf13/afero v1.12.0 // indirect
 	github.com/spf13/cast v1.7.1 // indirect
@@ -409,7 +409,7 @@ require (
 	golang.org/x/term v0.34.0 // indirect
 	golang.org/x/time v0.12.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20250818200422-3122310a409c // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20250818200422-3122310a409c // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20250826171959-ef028d996bc1 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/validator.v2 v2.0.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
