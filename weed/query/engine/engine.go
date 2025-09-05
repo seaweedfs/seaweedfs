@@ -4004,21 +4004,6 @@ func (e *SQLEngine) getSQLValAlias(sqlVal *SQLVal) string {
 func (e *SQLEngine) evaluateStringFunction(funcExpr *FuncExpr, result HybridScanResult) (*schema_pb.Value, error) {
 	funcName := strings.ToUpper(funcExpr.Name.String())
 
-	// Handle zero-argument functions (datetime constants)
-	if len(funcExpr.Exprs) == 0 {
-		switch funcName {
-		case "CURRENT_DATE":
-			return e.CurrentDate()
-		case "CURRENT_TIME":
-			return e.CurrentTime()
-		case "CURRENT_TIMESTAMP":
-			return e.CurrentTimestamp()
-		case "NOW":
-			return e.Now()
-		default:
-			return nil, fmt.Errorf("unsupported zero-argument function: %s", funcName)
-		}
-	}
 
 	// Most string functions require exactly 1 argument
 	if len(funcExpr.Exprs) != 1 {

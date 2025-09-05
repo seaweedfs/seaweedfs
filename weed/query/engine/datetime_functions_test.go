@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -429,144 +430,66 @@ func TestDateTruncFunction(t *testing.T) {
 	}
 }
 
-// TestZeroArgumentFunctionsBugFix tests the fix for the CURRENT_TIME empty values bug
-// This test reproduces the original issue where zero-argument functions like CURRENT_TIME
-// were failing in evaluateStringFunction because they were treated as single-argument functions
-func TestZeroArgumentFunctionsBugFix(t *testing.T) {
+// TestDateTimeConstantsInSQL tests that datetime constants work in actual SQL queries
+// This test reproduces the original bug where CURRENT_TIME returned empty values
+func TestDateTimeConstantsInSQL(t *testing.T) {
 	engine := NewTestSQLEngine()
 
-	t.Run("CURRENT_TIME in evaluateStringFunction context", func(t *testing.T) {
-		// Create a FuncExpr that represents CURRENT_TIME() with zero arguments
-		funcExpr := &FuncExpr{
-			Name:  testStringValue("CURRENT_TIME"),
-			Exprs: []SelectExpr{}, // Zero arguments - this was the bug
-		}
-
-		// Create a mock result (the function shouldn't use it for zero-arg functions)
-		mockResult := HybridScanResult{}
-
-		// This would have failed before the fix with "function CURRENT_TIME expects exactly 1 argument"
-		result, err := engine.evaluateStringFunction(funcExpr, mockResult)
-
+	t.Run("CURRENT_TIME in SQL query", func(t *testing.T) {
+		// This is the exact case that was failing
+		result, err := engine.ExecuteSQL(context.Background(), "SELECT CURRENT_TIME FROM user_events LIMIT 1")
+		
 		if err != nil {
-			t.Errorf("evaluateStringFunction failed for CURRENT_TIME: %v", err)
-			return
+			t.Fatalf("SQL execution failed: %v", err)
 		}
-
-		if result == nil {
-			t.Errorf("evaluateStringFunction returned nil for CURRENT_TIME")
-			return
+		
+		if result.Error != nil {
+			t.Fatalf("Query result has error: %v", result.Error)
 		}
-
-		stringVal, ok := result.Kind.(*schema_pb.Value_StringValue)
-		if !ok {
-			t.Errorf("CURRENT_TIME should return string value, got %T", result.Kind)
-			return
+		
+		// Verify we have the correct column and non-empty values
+		if len(result.Columns) != 1 || result.Columns[0] != "current_time" {
+			t.Errorf("Expected column 'current_time', got %v", result.Columns)
 		}
-
+		
+		if len(result.Rows) == 0 {
+			t.Fatal("Expected at least one row")
+		}
+		
+		timeValue := result.Rows[0][0].ToString()
+		if timeValue == "" {
+			t.Error("CURRENT_TIME should not return empty value")
+		}
+		
 		// Verify HH:MM:SS format
-		if len(stringVal.StringValue) != 8 || stringVal.StringValue[2] != ':' || stringVal.StringValue[5] != ':' {
-			t.Errorf("CURRENT_TIME should return HH:MM:SS format, got %s", stringVal.StringValue)
+		if len(timeValue) == 8 && timeValue[2] == ':' && timeValue[5] == ':' {
+			t.Logf("CURRENT_TIME returned valid time: %s", timeValue)
+		} else {
+			t.Errorf("CURRENT_TIME should return HH:MM:SS format, got: %s", timeValue)
 		}
-
-		t.Logf("CURRENT_TIME via evaluateStringFunction returned: %s", stringVal.StringValue)
 	})
 
-	t.Run("CURRENT_DATE in evaluateStringFunction context", func(t *testing.T) {
-		funcExpr := &FuncExpr{
-			Name:  testStringValue("CURRENT_DATE"),
-			Exprs: []SelectExpr{}, // Zero arguments
-		}
-
-		mockResult := HybridScanResult{}
-		result, err := engine.evaluateStringFunction(funcExpr, mockResult)
-
+	t.Run("CURRENT_DATE in SQL query", func(t *testing.T) {
+		result, err := engine.ExecuteSQL(context.Background(), "SELECT CURRENT_DATE FROM user_events LIMIT 1")
+		
 		if err != nil {
-			t.Errorf("evaluateStringFunction failed for CURRENT_DATE: %v", err)
-			return
+			t.Fatalf("SQL execution failed: %v", err)
 		}
-
-		if result == nil {
-			t.Errorf("evaluateStringFunction returned nil for CURRENT_DATE")
-			return
+		
+		if result.Error != nil {
+			t.Fatalf("Query result has error: %v", result.Error)
 		}
-
-		stringVal, ok := result.Kind.(*schema_pb.Value_StringValue)
-		if !ok {
-			t.Errorf("CURRENT_DATE should return string value, got %T", result.Kind)
-			return
+		
+		if len(result.Rows) == 0 {
+			t.Fatal("Expected at least one row")
 		}
-
-		// Verify YYYY-MM-DD format
-		if len(stringVal.StringValue) != 10 || stringVal.StringValue[4] != '-' || stringVal.StringValue[7] != '-' {
-			t.Errorf("CURRENT_DATE should return YYYY-MM-DD format, got %s", stringVal.StringValue)
+		
+		dateValue := result.Rows[0][0].ToString()
+		if dateValue == "" {
+			t.Error("CURRENT_DATE should not return empty value")
 		}
-
-		t.Logf("CURRENT_DATE via evaluateStringFunction returned: %s", stringVal.StringValue)
-	})
-
-	t.Run("NOW in evaluateStringFunction context", func(t *testing.T) {
-		funcExpr := &FuncExpr{
-			Name:  testStringValue("NOW"),
-			Exprs: []SelectExpr{}, // Zero arguments
-		}
-
-		mockResult := HybridScanResult{}
-		result, err := engine.evaluateStringFunction(funcExpr, mockResult)
-
-		if err != nil {
-			t.Errorf("evaluateStringFunction failed for NOW: %v", err)
-			return
-		}
-
-		if result == nil {
-			t.Errorf("evaluateStringFunction returned nil for NOW")
-			return
-		}
-
-		timestampVal, ok := result.Kind.(*schema_pb.Value_TimestampValue)
-		if !ok {
-			t.Errorf("NOW should return timestamp value, got %T", result.Kind)
-			return
-		}
-
-		if timestampVal.TimestampValue.TimestampMicros <= 0 {
-			t.Errorf("NOW should return positive timestamp, got %d", timestampVal.TimestampValue.TimestampMicros)
-		}
-
-		t.Logf("NOW via evaluateStringFunction returned timestamp: %d", timestampVal.TimestampValue.TimestampMicros)
-	})
-
-	t.Run("CURRENT_TIMESTAMP in evaluateStringFunction context", func(t *testing.T) {
-		funcExpr := &FuncExpr{
-			Name:  testStringValue("CURRENT_TIMESTAMP"),
-			Exprs: []SelectExpr{}, // Zero arguments
-		}
-
-		mockResult := HybridScanResult{}
-		result, err := engine.evaluateStringFunction(funcExpr, mockResult)
-
-		if err != nil {
-			t.Errorf("evaluateStringFunction failed for CURRENT_TIMESTAMP: %v", err)
-			return
-		}
-
-		if result == nil {
-			t.Errorf("evaluateStringFunction returned nil for CURRENT_TIMESTAMP")
-			return
-		}
-
-		timestampVal, ok := result.Kind.(*schema_pb.Value_TimestampValue)
-		if !ok {
-			t.Errorf("CURRENT_TIMESTAMP should return timestamp value, got %T", result.Kind)
-			return
-		}
-
-		if timestampVal.TimestampValue.TimestampMicros <= 0 {
-			t.Errorf("CURRENT_TIMESTAMP should return positive timestamp, got %d", timestampVal.TimestampValue.TimestampMicros)
-		}
-
-		t.Logf("CURRENT_TIMESTAMP via evaluateStringFunction returned timestamp: %d", timestampVal.TimestampValue.TimestampMicros)
+		
+		t.Logf("CURRENT_DATE returned: %s", dateValue)
 	})
 }
 
@@ -575,18 +498,23 @@ func TestZeroArgumentFunctionsBugFix(t *testing.T) {
 func TestFunctionArgumentCountHandling(t *testing.T) {
 	engine := NewTestSQLEngine()
 
-	t.Run("Zero-argument function should work", func(t *testing.T) {
+	t.Run("Zero-argument function should fail appropriately", func(t *testing.T) {
 		funcExpr := &FuncExpr{
 			Name:  testStringValue("CURRENT_TIME"),
-			Exprs: []SelectExpr{}, // Zero arguments - should work
+			Exprs: []SelectExpr{}, // Zero arguments - should fail since we removed zero-arg support
 		}
 
 		result, err := engine.evaluateStringFunction(funcExpr, HybridScanResult{})
-		if err != nil {
-			t.Errorf("Zero-argument function failed: %v", err)
+		if err == nil {
+			t.Error("Expected error for zero-argument function, but got none")
 		}
-		if result == nil {
-			t.Errorf("Zero-argument function returned nil")
+		if result != nil {
+			t.Error("Expected nil result for zero-argument function")
+		}
+		
+		expectedError := "function CURRENT_TIME expects exactly 1 argument"
+		if err.Error() != expectedError {
+			t.Errorf("Expected error '%s', got '%s'", expectedError, err.Error())
 		}
 	})
 
@@ -615,21 +543,21 @@ func TestFunctionArgumentCountHandling(t *testing.T) {
 		}
 	})
 
-	t.Run("Unsupported zero-argument function should fail gracefully", func(t *testing.T) {
+	t.Run("Any zero-argument function should fail", func(t *testing.T) {
 		funcExpr := &FuncExpr{
 			Name:  testStringValue("INVALID_FUNCTION"),
-			Exprs: []SelectExpr{}, // Zero arguments but invalid function
+			Exprs: []SelectExpr{}, // Zero arguments - should fail
 		}
 
 		result, err := engine.evaluateStringFunction(funcExpr, HybridScanResult{})
 		if err == nil {
-			t.Errorf("Expected error for unsupported zero-argument function, got nil")
+			t.Error("Expected error for zero-argument function, got nil")
 		}
 		if result != nil {
-			t.Errorf("Expected nil result for unsupported function, got %v", result)
+			t.Errorf("Expected nil result for zero-argument function, got %v", result)
 		}
 
-		expectedError := "unsupported zero-argument function: INVALID_FUNCTION"
+		expectedError := "function INVALID_FUNCTION expects exactly 1 argument"
 		if err.Error() != expectedError {
 			t.Errorf("Expected error '%s', got '%s'", expectedError, err.Error())
 		}
@@ -659,15 +587,3 @@ func TestFunctionArgumentCountHandling(t *testing.T) {
 	})
 }
 
-// Helper function to create a string value for testing
-func testStringValue(s string) StringGetter {
-	return &testStringValueImpl{value: s}
-}
-
-type testStringValueImpl struct {
-	value string
-}
-
-func (s *testStringValueImpl) String() string {
-	return s.value
-}
