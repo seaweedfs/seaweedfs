@@ -1535,6 +1535,8 @@ func (e *SQLEngine) executeSelectStatement(ctx context.Context, stmt *SelectStat
 	var aggregations []AggregationSpec
 	selectAll := false
 	hasAggregations := false
+	// Track required base columns for arithmetic expressions
+	baseColumnsSet := make(map[string]bool)
 
 	for _, selectExpr := range stmt.SelectExprs {
 		switch expr := selectExpr.(type) {
@@ -1543,10 +1545,14 @@ func (e *SQLEngine) executeSelectStatement(ctx context.Context, stmt *SelectStat
 		case *AliasedExpr:
 			switch col := expr.Expr.(type) {
 			case *ColName:
-				columns = append(columns, col.Name.String())
+				colName := col.Name.String()
+				columns = append(columns, colName)
+				baseColumnsSet[colName] = true
 			case *ArithmeticExpr:
 				// Handle arithmetic expressions like id+user_id and string concatenation like name||suffix
 				columns = append(columns, e.getArithmeticExpressionAlias(col))
+				// Extract base columns needed for this arithmetic expression
+				e.extractBaseColumns(col, baseColumnsSet)
 			case *FuncExpr:
 				// Handle aggregation functions
 				aggSpec, err := e.parseAggregationFunction(col, expr)
@@ -1634,7 +1640,18 @@ func (e *SQLEngine) executeSelectStatement(ctx context.Context, stmt *SelectStat
 	}
 
 	if !selectAll {
-		hybridScanOptions.Columns = columns
+		// Convert baseColumnsSet to slice for hybrid scan options
+		baseColumns := make([]string, 0, len(baseColumnsSet))
+		for columnName := range baseColumnsSet {
+			baseColumns = append(baseColumns, columnName)
+		}
+		// Use base columns (not expression aliases) for data retrieval
+		if len(baseColumns) > 0 {
+			hybridScanOptions.Columns = baseColumns
+		} else {
+			// If no base columns found (shouldn't happen), use original columns
+			hybridScanOptions.Columns = columns
+		}
 	}
 
 	// Execute the hybrid scan (live logs + Parquet files)
@@ -1736,6 +1753,8 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 	var aggregations []AggregationSpec
 	selectAll := false
 	hasAggregations := false
+	// Track required base columns for arithmetic expressions
+	baseColumnsSet := make(map[string]bool)
 
 	for _, selectExpr := range stmt.SelectExprs {
 		switch expr := selectExpr.(type) {
@@ -1744,10 +1763,14 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 		case *AliasedExpr:
 			switch col := expr.Expr.(type) {
 			case *ColName:
-				columns = append(columns, col.Name.String())
+				colName := col.Name.String()
+				columns = append(columns, colName)
+				baseColumnsSet[colName] = true
 			case *ArithmeticExpr:
 				// Handle arithmetic expressions like id+user_id and string concatenation like name||suffix
 				columns = append(columns, e.getArithmeticExpressionAlias(col))
+				// Extract base columns needed for this arithmetic expression
+				e.extractBaseColumns(col, baseColumnsSet)
 			case *FuncExpr:
 				// Handle aggregation functions
 				aggSpec, err := e.parseAggregationFunction(col, expr)
@@ -1835,7 +1858,18 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 	}
 
 	if !selectAll {
-		hybridScanOptions.Columns = columns
+		// Convert baseColumnsSet to slice for hybrid scan options
+		baseColumns := make([]string, 0, len(baseColumnsSet))
+		for columnName := range baseColumnsSet {
+			baseColumns = append(baseColumns, columnName)
+		}
+		// Use base columns (not expression aliases) for data retrieval
+		if len(baseColumns) > 0 {
+			hybridScanOptions.Columns = baseColumns
+		} else {
+			// If no base columns found (shouldn't happen), use original columns
+			hybridScanOptions.Columns = columns
+		}
 	}
 
 	// Execute the hybrid scan with stats capture for EXPLAIN
@@ -3758,5 +3792,31 @@ func (e *SQLEngine) ConvertToSQLResultWithExpressions(hms *HybridMessageScanner,
 		Rows:     rows,
 		Database: hms.topic.Namespace,
 		Table:    hms.topic.Name,
+	}
+}
+
+// extractBaseColumns recursively extracts base column names from arithmetic expressions
+func (e *SQLEngine) extractBaseColumns(expr *ArithmeticExpr, baseColumnsSet map[string]bool) {
+	// Extract columns from left operand
+	e.extractBaseColumnsFromExpression(expr.Left, baseColumnsSet)
+	// Extract columns from right operand
+	e.extractBaseColumnsFromExpression(expr.Right, baseColumnsSet)
+}
+
+// extractBaseColumnsFromExpression extracts base column names from any expression node
+func (e *SQLEngine) extractBaseColumnsFromExpression(expr ExprNode, baseColumnsSet map[string]bool) {
+	switch exprType := expr.(type) {
+	case *ColName:
+		columnName := exprType.Name.String()
+		// Check if it's a literal number disguised as a column name
+		if _, err := strconv.ParseInt(columnName, 10, 64); err != nil {
+			if _, err := strconv.ParseFloat(columnName, 64); err != nil {
+				// Not a numeric literal, treat as actual column name
+				baseColumnsSet[columnName] = true
+			}
+		}
+	case *ArithmeticExpr:
+		// Recursively handle nested arithmetic expressions
+		e.extractBaseColumns(exprType, baseColumnsSet)
 	}
 }
