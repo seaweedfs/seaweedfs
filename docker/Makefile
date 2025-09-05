@@ -20,9 +20,10 @@ build: binary
 	docker build --no-cache -t chrislusf/seaweedfs:local -f Dockerfile.local .
 
 build_e2e: binary_race
-	DOCKER_BUILDKIT=1 docker build \
+	docker buildx build \
 		--cache-from=type=local,src=/tmp/.buildx-cache \
 		--cache-to=type=local,dest=/tmp/.buildx-cache-new,mode=max \
+		--load \
 		-t chrislusf/seaweedfs:e2e \
 		-f Dockerfile.e2e .
 	# Move cache to avoid growing cache size
