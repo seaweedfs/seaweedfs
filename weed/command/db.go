@@ -39,7 +39,7 @@ func init() {
 	dbOptions.authMethod = cmdDB.Flag.String("auth", "trust", "Authentication method: trust, password, md5")
 	dbOptions.users = cmdDB.Flag.String("users", "", "User credentials for auth (format: user1:pass1;user2:pass2). Note: passwords cannot contain semicolons")
 	dbOptions.database = cmdDB.Flag.String("database", "default", "Default database name")
-	dbOptions.maxConns = cmdDB.Flag.Int("max-connections", 100, "Maximum concurrent connections")
+	dbOptions.maxConns = cmdDB.Flag.Int("max-connections", 100, "Maximum concurrent connections per server")
 	dbOptions.idleTimeout = cmdDB.Flag.String("idle-timeout", "1h", "Connection idle timeout")
 	dbOptions.tlsCert = cmdDB.Flag.String("tls-cert", "", "TLS certificate file path")
 	dbOptions.tlsKey = cmdDB.Flag.String("tls-key", "", "TLS private key file path")
