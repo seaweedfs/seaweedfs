@@ -116,36 +116,26 @@ Supported SQL Operations:
 	- Aggregation functions (COUNT, SUM, AVG, MIN, MAX)
 	- WHERE clauses with filtering
 	- System columns (_timestamp_ns, _key, _source)
-	- PostgreSQL system queries (version(), current_database(), etc.)
-	- psql meta-commands (\d, \dt, \l, etc.)
+	- Basic PostgreSQL system queries (version(), current_database(), current_user)
 
 Authentication Methods:
 	- trust: No authentication required (default)
 	- password: Clear text password authentication
-	- md5: MD5 password authentication (more secure)
+	- md5: MD5 password authentication
 
 Compatible Tools:
 	- psql (PostgreSQL command line client)
-	- pgAdmin (PostgreSQL admin tool)
-	- DBeaver (universal database tool)
-	- DataGrip (JetBrains database IDE)
-	- Grafana (PostgreSQL data source)
-	- Superset (PostgreSQL connector)
-	- Tableau (PostgreSQL native connector)
 	- Any PostgreSQL JDBC/ODBC compatible tool
 
 Security Features:
 	- Multiple authentication methods
 	- TLS encryption support
-	- User access control
-	- Connection limits
 	- Read-only access (no data modification)
 
 Performance Features:
-	- Connection pooling
-	- Configurable connection limits
-	- Idle connection timeout
-	- Efficient wire protocol
+	- Fast path aggregation optimization (COUNT, MIN, MAX without WHERE clauses)
+	- Hybrid data scanning (parquet files + live logs)
+	- PostgreSQL wire protocol
 	- Query result streaming
 
 `,
@@ -256,7 +246,7 @@ func runDB(cmd *Command, args []string) bool {
 	fmt.Printf("  - SHOW DATABASES/TABLES\n")
 	fmt.Printf("  - Aggregations: COUNT, SUM, AVG, MIN, MAX\n")
 	fmt.Printf("  - System columns: _timestamp_ns, _key, _source\n")
-	fmt.Printf("  - psql commands: \\d, \\dt, \\l, \\q\n")
+	fmt.Printf("  - Basic PostgreSQL system queries\n")
 
 	fmt.Printf("\nReady for database connections!\n\n")
 
