@@ -25,6 +25,10 @@ func generateSampleHybridData(topicName string, options HybridScanOptions) []Hyb
 					"user_id":    {Kind: &schema_pb.Value_Int32Value{Int32Value: 9465}},
 					"event_type": {Kind: &schema_pb.Value_StringValue{StringValue: "live_login"}},
 					"data":       {Kind: &schema_pb.Value_StringValue{StringValue: `{"ip": "10.0.0.1", "live": true}`}},
+					"status":     {Kind: &schema_pb.Value_StringValue{StringValue: "active"}},
+					"action":     {Kind: &schema_pb.Value_StringValue{StringValue: "login"}},
+					"user_type":  {Kind: &schema_pb.Value_StringValue{StringValue: "premium"}},
+					"amount":     {Kind: &schema_pb.Value_DoubleValue{DoubleValue: 43.619326294957126}},
 				},
 				Timestamp: now - 300000000000, // 5 minutes ago
 				Key:       []byte("live-user-9465"),
@@ -36,6 +40,10 @@ func generateSampleHybridData(topicName string, options HybridScanOptions) []Hyb
 					"user_id":    {Kind: &schema_pb.Value_Int32Value{Int32Value: 2336}},
 					"event_type": {Kind: &schema_pb.Value_StringValue{StringValue: "live_action"}},
 					"data":       {Kind: &schema_pb.Value_StringValue{StringValue: `{"action": "click", "live": true}`}},
+					"status":     {Kind: &schema_pb.Value_StringValue{StringValue: "pending"}},
+					"action":     {Kind: &schema_pb.Value_StringValue{StringValue: "click"}},
+					"user_type":  {Kind: &schema_pb.Value_StringValue{StringValue: "standard"}},
+					"amount":     {Kind: &schema_pb.Value_DoubleValue{DoubleValue: 550.0278410655299}},
 				},
 				Timestamp: now - 120000000000, // 2 minutes ago
 				Key:       []byte("live-user-2336"),

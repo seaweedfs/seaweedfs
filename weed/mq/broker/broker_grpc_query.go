@@ -176,7 +176,7 @@ func (b *MessageQueueBroker) buildBufferStartDeduplicationMap(partitionDir strin
 
 		for hasMore {
 			var currentBatchProcessed int
-			err := filer_pb.SeaweedList(stream.Context(), client, partitionDir, "", func(entry *filer_pb.Entry, isLast bool) error {
+			err := filer_pb.SeaweedList(context.Background(), client, partitionDir, "", func(entry *filer_pb.Entry, isLast bool) error {
 				currentBatchProcessed++
 				hasMore = !isLast // If this is the last entry of a full batch, there might be more
 				lastFileName = entry.Name

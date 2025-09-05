@@ -228,7 +228,10 @@ func (e *TestSQLEngine) generateTestQueryResult(tableName string, stmt *SelectSt
 				columns = []string{"level", "message", "service"}
 			}
 		}
-	} else {
+	}
+
+	// Process specific expressions if not SELECT *
+	if len(columns) == 0 {
 		// Specific columns requested - for testing, include system columns if requested
 		for _, expr := range stmt.SelectExprs {
 			if aliasedExpr, ok := expr.(*AliasedExpr); ok {
@@ -240,12 +243,38 @@ func (e *TestSQLEngine) generateTestQueryResult(tableName string, stmt *SelectSt
 					// For mock testing, create a simple alias name
 					alias := fmt.Sprintf("%s%s%s", e.getColumnName(arithmeticExpr.Left), arithmeticExpr.Operator, e.getColumnName(arithmeticExpr.Right))
 					columns = append(columns, alias)
+				} else if funcExpr, ok := aliasedExpr.Expr.(*FuncExpr); ok {
+					// Handle string functions like UPPER(status), LENGTH(action)
+					funcName := funcExpr.Name.String()
+					if len(funcExpr.Exprs) > 0 {
+						if argExpr, ok := funcExpr.Exprs[0].(*AliasedExpr); ok {
+							if argCol, ok := argExpr.Expr.(*ColName); ok {
+								alias := fmt.Sprintf("%s(%s)", funcName, argCol.Name.String())
+								columns = append(columns, alias)
+							}
+						}
+					} else {
+						alias := fmt.Sprintf("%s(...)", funcName)
+						columns = append(columns, alias)
+					}
+				} else if sqlVal, ok := aliasedExpr.Expr.(*SQLVal); ok {
+					// Handle string literals like 'good', 123
+					switch sqlVal.Type {
+					case StrVal:
+						alias := fmt.Sprintf("'%s'", string(sqlVal.Val))
+						columns = append(columns, alias)
+					case IntVal, FloatVal:
+						alias := string(sqlVal.Val)
+						columns = append(columns, alias)
+					default:
+						columns = append(columns, "literal")
+					}
 				}
 			}
 		}
 
-		// If no columns were parsed (fallback), use default columns
-		if len(columns) == 0 {
+		// Only use fallback columns if this is a malformed query with no expressions
+		if len(columns) == 0 && len(stmt.SelectExprs) == 0 {
 			switch tableName {
 			case "user_events":
 				columns = []string{"id", "user_id", "event_type", "data"}
@@ -304,6 +333,54 @@ func (e *TestSQLEngine) generateTestQueryResult(tableName string, stmt *SelectSt
 				} else {
 					// Default calculation for other arithmetic expressions
 					row = append(row, sqltypes.NewInt64(idValue*2)) // Simple default
+				}
+			} else if strings.HasPrefix(columnName, "'") && strings.HasSuffix(columnName, "'") {
+				// Handle string literals like 'good', 'test'
+				literal := strings.Trim(columnName, "'")
+				row = append(row, sqltypes.NewVarChar(literal))
+			} else if strings.Contains(columnName, "(") && strings.Contains(columnName, ")") {
+				// Handle string functions like UPPER(status), LENGTH(action)
+				if strings.Contains(strings.ToUpper(columnName), "UPPER(") {
+					// Extract the column being uppercased and get its value
+					if strings.Contains(columnName, "status") {
+						if statusVal, exists := result.Values["status"]; exists {
+							statusStr := statusVal.GetStringValue()
+							row = append(row, sqltypes.NewVarChar(strings.ToUpper(statusStr)))
+						} else {
+							row = append(row, sqltypes.NewVarChar("ACTIVE")) // Mock value
+						}
+					} else if strings.Contains(columnName, "action") {
+						if actionVal, exists := result.Values["action"]; exists {
+							actionStr := actionVal.GetStringValue()
+							row = append(row, sqltypes.NewVarChar(strings.ToUpper(actionStr)))
+						} else {
+							row = append(row, sqltypes.NewVarChar("LOGIN")) // Mock value
+						}
+					} else {
+						row = append(row, sqltypes.NewVarChar("MOCK_UPPER"))
+					}
+				} else if strings.Contains(strings.ToUpper(columnName), "LENGTH(") {
+					// Extract the column whose length is being calculated
+					if strings.Contains(columnName, "status") {
+						if statusVal, exists := result.Values["status"]; exists {
+							statusStr := statusVal.GetStringValue()
+							row = append(row, sqltypes.NewInt64(int64(len(statusStr))))
+						} else {
+							row = append(row, sqltypes.NewInt64(6)) // Length of "ACTIVE"
+						}
+					} else if strings.Contains(columnName, "action") {
+						if actionVal, exists := result.Values["action"]; exists {
+							actionStr := actionVal.GetStringValue()
+							row = append(row, sqltypes.NewInt64(int64(len(actionStr))))
+						} else {
+							row = append(row, sqltypes.NewInt64(5)) // Length of "LOGIN"
+						}
+					} else {
+						row = append(row, sqltypes.NewInt64(10)) // Mock length
+					}
+				} else {
+					// Other functions - return mock result
+					row = append(row, sqltypes.NewVarChar("MOCK_FUNC"))
 				}
 			} else {
 				row = append(row, sqltypes.NewVarChar("")) // Default empty value

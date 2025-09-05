@@ -338,6 +338,12 @@ func parseSelectStatement(sql string) (*SelectStatement, error) {
 				} else if arithmeticExpr := parseArithmeticExpression(part); arithmeticExpr != nil {
 					// Arithmetic expression (id+user_id, col1-col2, etc.)
 					expr.Expr = arithmeticExpr
+				} else if strings.HasPrefix(part, "'") && strings.HasSuffix(part, "'") {
+					// String literal
+					expr.Expr = &SQLVal{
+						Type: StrVal,
+						Val:  []byte(strings.Trim(part, "'")),
+					}
 				} else {
 					// Column name
 					colExpr := &ColName{Name: stringValue(part)}
@@ -1553,14 +1559,28 @@ func (e *SQLEngine) executeSelectStatement(ctx context.Context, stmt *SelectStat
 				columns = append(columns, e.getArithmeticExpressionAlias(col))
 				// Extract base columns needed for this arithmetic expression
 				e.extractBaseColumns(col, baseColumnsSet)
+			case *SQLVal:
+				// Handle string/numeric literals like 'good', 123, etc.
+				columns = append(columns, e.getSQLValAlias(col))
 			case *FuncExpr:
-				// Handle aggregation functions
-				aggSpec, err := e.parseAggregationFunction(col, expr)
-				if err != nil {
-					return &QueryResult{Error: err}, err
+				// Distinguish between aggregation functions and string functions
+				funcName := strings.ToUpper(col.Name.String())
+				if e.isAggregationFunction(funcName) {
+					// Handle aggregation functions
+					aggSpec, err := e.parseAggregationFunction(col, expr)
+					if err != nil {
+						return &QueryResult{Error: err}, err
+					}
+					aggregations = append(aggregations, *aggSpec)
+					hasAggregations = true
+				} else if e.isStringFunction(funcName) {
+					// Handle string functions like UPPER, LENGTH, etc.
+					columns = append(columns, e.getStringFunctionAlias(col))
+					// Extract base columns needed for this string function
+					e.extractBaseColumnsFromFunction(col, baseColumnsSet)
+				} else {
+					return &QueryResult{Error: fmt.Errorf("unsupported function: %s", funcName)}, fmt.Errorf("unsupported function: %s", funcName)
 				}
-				aggregations = append(aggregations, *aggSpec)
-				hasAggregations = true
 			default:
 				err := fmt.Errorf("unsupported SELECT expression: %T", col)
 				return &QueryResult{Error: err}, err
@@ -1771,14 +1791,28 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 				columns = append(columns, e.getArithmeticExpressionAlias(col))
 				// Extract base columns needed for this arithmetic expression
 				e.extractBaseColumns(col, baseColumnsSet)
+			case *SQLVal:
+				// Handle string/numeric literals like 'good', 123, etc.
+				columns = append(columns, e.getSQLValAlias(col))
 			case *FuncExpr:
-				// Handle aggregation functions
-				aggSpec, err := e.parseAggregationFunction(col, expr)
-				if err != nil {
-					return &QueryResult{Error: err}, err
+				// Distinguish between aggregation functions and string functions
+				funcName := strings.ToUpper(col.Name.String())
+				if e.isAggregationFunction(funcName) {
+					// Handle aggregation functions
+					aggSpec, err := e.parseAggregationFunction(col, expr)
+					if err != nil {
+						return &QueryResult{Error: err}, err
+					}
+					aggregations = append(aggregations, *aggSpec)
+					hasAggregations = true
+				} else if e.isStringFunction(funcName) {
+					// Handle string functions like UPPER, LENGTH, etc.
+					columns = append(columns, e.getStringFunctionAlias(col))
+					// Extract base columns needed for this string function
+					e.extractBaseColumnsFromFunction(col, baseColumnsSet)
+				} else {
+					return &QueryResult{Error: fmt.Errorf("unsupported function: %s", funcName)}, fmt.Errorf("unsupported function: %s", funcName)
 				}
-				aggregations = append(aggregations, *aggSpec)
-				hasAggregations = true
 			default:
 				err := fmt.Errorf("unsupported SELECT expression: %T", col)
 				return &QueryResult{Error: err}, err
@@ -3724,6 +3758,10 @@ func (e *SQLEngine) ConvertToSQLResultWithExpressions(hms *HybridMessageScanner,
 					columns = append(columns, col.Name.String())
 				case *ArithmeticExpr:
 					columns = append(columns, e.getArithmeticExpressionAlias(col))
+				case *FuncExpr:
+					columns = append(columns, e.getStringFunctionAlias(col))
+				case *SQLVal:
+					columns = append(columns, e.getSQLValAlias(col))
 				default:
 					columns = append(columns, "expr")
 				}
@@ -3748,6 +3786,10 @@ func (e *SQLEngine) ConvertToSQLResultWithExpressions(hms *HybridMessageScanner,
 				columns = append(columns, col.Name.String())
 			case *ArithmeticExpr:
 				columns = append(columns, e.getArithmeticExpressionAlias(col))
+			case *FuncExpr:
+				columns = append(columns, e.getStringFunctionAlias(col))
+			case *SQLVal:
+				columns = append(columns, e.getSQLValAlias(col))
 			default:
 				columns = append(columns, "expr")
 			}
@@ -3777,6 +3819,17 @@ func (e *SQLEngine) ConvertToSQLResultWithExpressions(hms *HybridMessageScanner,
 					} else {
 						row[j] = sqltypes.NULL
 					}
+				case *FuncExpr:
+					// Handle string function
+					if value, err := e.evaluateStringFunction(col, result); err == nil && value != nil {
+						row[j] = convertSchemaValueToSQL(value)
+					} else {
+						row[j] = sqltypes.NULL
+					}
+				case *SQLVal:
+					// Handle literal value
+					value := e.convertSQLValToSchemaValue(col)
+					row[j] = convertSchemaValueToSQL(value)
 				default:
 					row[j] = sqltypes.NULL
 				}
@@ -3818,5 +3871,105 @@ func (e *SQLEngine) extractBaseColumnsFromExpression(expr ExprNode, baseColumnsS
 	case *ArithmeticExpr:
 		// Recursively handle nested arithmetic expressions
 		e.extractBaseColumns(exprType, baseColumnsSet)
+	}
+}
+
+// isAggregationFunction checks if a function name is an aggregation function
+func (e *SQLEngine) isAggregationFunction(funcName string) bool {
+	switch funcName {
+	case "COUNT", "SUM", "AVG", "MIN", "MAX":
+		return true
+	default:
+		return false
+	}
+}
+
+// isStringFunction checks if a function name is a string function
+func (e *SQLEngine) isStringFunction(funcName string) bool {
+	switch funcName {
+	case "UPPER", "LOWER", "LENGTH", "TRIM", "LTRIM", "RTRIM", "SUBSTRING", "LEFT", "RIGHT", "CONCAT":
+		return true
+	default:
+		return false
+	}
+}
+
+// getStringFunctionAlias generates an alias for string functions
+func (e *SQLEngine) getStringFunctionAlias(funcExpr *FuncExpr) string {
+	funcName := funcExpr.Name.String()
+	if len(funcExpr.Exprs) == 1 {
+		if aliasedExpr, ok := funcExpr.Exprs[0].(*AliasedExpr); ok {
+			if colName, ok := aliasedExpr.Expr.(*ColName); ok {
+				return fmt.Sprintf("%s(%s)", funcName, colName.Name.String())
+			}
+		}
+	}
+	return fmt.Sprintf("%s(...)", funcName)
+}
+
+// extractBaseColumnsFromFunction extracts base columns needed by a string function
+func (e *SQLEngine) extractBaseColumnsFromFunction(funcExpr *FuncExpr, baseColumnsSet map[string]bool) {
+	for _, expr := range funcExpr.Exprs {
+		if aliasedExpr, ok := expr.(*AliasedExpr); ok {
+			e.extractBaseColumnsFromExpression(aliasedExpr.Expr, baseColumnsSet)
+		}
+	}
+}
+
+// getSQLValAlias generates an alias for SQL literal values
+func (e *SQLEngine) getSQLValAlias(sqlVal *SQLVal) string {
+	switch sqlVal.Type {
+	case StrVal:
+		return fmt.Sprintf("'%s'", string(sqlVal.Val))
+	case IntVal:
+		return string(sqlVal.Val)
+	case FloatVal:
+		return string(sqlVal.Val)
+	default:
+		return "literal"
+	}
+}
+
+// evaluateStringFunction evaluates a string function for a given record
+func (e *SQLEngine) evaluateStringFunction(funcExpr *FuncExpr, result HybridScanResult) (*schema_pb.Value, error) {
+	funcName := strings.ToUpper(funcExpr.Name.String())
+
+	// Most string functions require exactly 1 argument
+	if len(funcExpr.Exprs) != 1 {
+		return nil, fmt.Errorf("function %s expects exactly 1 argument", funcName)
+	}
+
+	// Get the argument value
+	var argValue *schema_pb.Value
+	if aliasedExpr, ok := funcExpr.Exprs[0].(*AliasedExpr); ok {
+		var err error
+		argValue, err = e.evaluateExpressionValue(aliasedExpr.Expr, result)
+		if err != nil {
+			return nil, fmt.Errorf("error evaluating function argument: %v", err)
+		}
+	} else {
+		return nil, fmt.Errorf("unsupported function argument type")
+	}
+
+	if argValue == nil {
+		return nil, nil // NULL input produces NULL output
+	}
+
+	// Call the appropriate string function
+	switch funcName {
+	case "UPPER":
+		return e.Upper(argValue)
+	case "LOWER":
+		return e.Lower(argValue)
+	case "LENGTH":
+		return e.Length(argValue)
+	case "TRIM":
+		return e.Trim(argValue)
+	case "LTRIM":
+		return e.LTrim(argValue)
+	case "RTRIM":
+		return e.RTrim(argValue)
+	default:
+		return nil, fmt.Errorf("unsupported string function: %s", funcName)
 	}
 }
