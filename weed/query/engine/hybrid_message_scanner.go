@@ -446,9 +446,10 @@ func (hms *HybridMessageScanner) discoverTopicPartitions(ctx context.Context) ([
 		return nil, fmt.Errorf("failed to scan topic directory for partitions: %v", err)
 	}
 
-	// If no partitions found, return error instead of masking the issue
+	// If no partitions found, return empty slice (valid for newly created or empty topics)
 	if len(allPartitions) == 0 {
-		return nil, fmt.Errorf("no partitions found for topic %s", hms.topic.String())
+		fmt.Printf("No partitions found for topic %s - returning empty result set\n", hms.topic.String())
+		return []topic.Partition{}, nil
 	}
 
 	fmt.Printf("Discovered %d partitions for topic %s\n", len(allPartitions), hms.topic.String())
