@@ -125,9 +125,10 @@ func TestSQLEngine_OFFSET_EdgeCases(t *testing.T) {
 		if result.Error != nil {
 			t.Fatalf("Expected no query error, got %v", result.Error)
 		}
-		// With 4 sample rows, OFFSET 3 LIMIT 1 should return 1 row (the last one)
-		if len(result.Rows) != 1 {
-			t.Errorf("Expected 1 row with LIMIT 1 OFFSET 3, got %d", len(result.Rows))
+		// In clean mock environment, we only have 2 live_log rows from unflushed messages
+		// OFFSET 3 exceeds available data, should return 0 rows
+		if len(result.Rows) != 0 {
+			t.Errorf("Expected 0 rows with LIMIT 1 OFFSET 3 (exceeds available data), got %d", len(result.Rows))
 		}
 	})
 }

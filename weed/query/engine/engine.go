@@ -1834,7 +1834,7 @@ func (e *SQLEngine) extractTimeFiltersRecursive(expr ExprNode, startTimeNs, stop
 }
 
 // extractTimeFromComparison extracts time bounds from comparison expressions
-// Handles comparisons against timestamp columns (_timestamp_ns, timestamp, created_at, etc.)
+// Handles comparisons against timestamp columns (system columns and schema-defined timestamp types)
 func (e *SQLEngine) extractTimeFromComparison(comp *ComparisonExpr, startTimeNs, stopTimeNs *int64) {
 	// Check if this is a time-related column comparison
 	leftCol := e.getColumnName(comp.Left)
@@ -1843,11 +1843,11 @@ func (e *SQLEngine) extractTimeFromComparison(comp *ComparisonExpr, startTimeNs,
 	var valueExpr ExprNode
 	var reversed bool
 
-	// Determine which side is the time column
-	if e.isTimeColumn(leftCol) {
+	// Determine which side is the time column (using schema types)
+	if e.isTimestampColumn(leftCol) {
 		valueExpr = comp.Right
 		reversed = false
-	} else if e.isTimeColumn(rightCol) {
+	} else if e.isTimestampColumn(rightCol) {
 		valueExpr = comp.Left
 		reversed = true
 	} else {
@@ -1893,9 +1893,8 @@ func (e *SQLEngine) extractTimeFromComparison(comp *ComparisonExpr, startTimeNs,
 	}
 }
 
-// isTimeColumn checks if a column refers to a timestamp field based on actual type information
-// This function uses schema metadata, not naming conventions
-func (e *SQLEngine) isTimeColumn(columnName string) bool {
+// isTimestampColumn checks if a column is a timestamp using schema type information
+func (e *SQLEngine) isTimestampColumn(columnName string) bool {
 	if columnName == "" {
 		return false
 	}
