@@ -158,20 +158,23 @@ HAVING avg_response > 1000;
 
 ```
 SQL Query Flow:
+                                  1. Parse SQL        2. Plan & Optimize      3. Execute Query
 ┌─────────────┐    ┌──────────────┐    ┌─────────────────┐    ┌──────────────┐
 │   Client    │    │  SQL Parser  │    │  Query Planner  │    │   Execution  │
 │ (CLI/HTTP)  │──→ │ PostgreSQL   │──→ │   & Optimizer   │──→ │    Engine    │
 │             │    │ (Custom)     │    │                 │    │              │
 └─────────────┘    └──────────────┘    └─────────────────┘    └──────────────┘
                                                │                       │
-                                               ▼                       │
-                    ┌─────────────────────────────────────────────────┐│
-                    │            Schema Catalog                        ││
-                    │  • Namespace → Database mapping                ││
-                    │  • Topic → Table mapping                       ││
-                    │  • Schema version management                   ││
-                    └─────────────────────────────────────────────────┘│
+                                               │ Schema Lookup         │ Data Access
+                                               ▼                       ▼
+                    ┌─────────────────────────────────────────────────────────────┐
+                    │                    Schema Catalog                            │
+                    │  • Namespace → Database mapping                            │
+                    │  • Topic → Table mapping                                  │
+                    │  • Schema version management                              │
+                    └─────────────────────────────────────────────────────────────┘
                                                                         │
+                                                                        │ Metadata
                                                                         ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                          MQ Storage Layer                                      │
