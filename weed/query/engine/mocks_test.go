@@ -239,8 +239,8 @@ func (e *TestSQLEngine) generateTestQueryResult(tableName string, stmt *SelectSt
 					columnName := colName.Name.String()
 					upperColumnName := strings.ToUpper(columnName)
 					// Handle datetime constants
-					if upperColumnName == "CURRENT_DATE" || upperColumnName == "CURRENT_TIME" ||
-						upperColumnName == "CURRENT_TIMESTAMP" || upperColumnName == "NOW" {
+					if upperColumnName == FuncCURRENT_DATE || upperColumnName == FuncCURRENT_TIME ||
+						upperColumnName == FuncCURRENT_TIMESTAMP || upperColumnName == FuncNOW {
 						columns = append(columns, strings.ToLower(columnName))
 					} else {
 						columns = append(columns, columnName)
@@ -299,18 +299,18 @@ func (e *TestSQLEngine) generateTestQueryResult(tableName string, stmt *SelectSt
 			upperColumnName := strings.ToUpper(columnName)
 
 			// Handle datetime constants first
-			if upperColumnName == "CURRENT_DATE" || upperColumnName == "CURRENT_TIME" ||
-				upperColumnName == "CURRENT_TIMESTAMP" || upperColumnName == "NOW" {
+			if upperColumnName == FuncCURRENT_DATE || upperColumnName == FuncCURRENT_TIME ||
+				upperColumnName == FuncCURRENT_TIMESTAMP || upperColumnName == FuncNOW {
 				var value *schema_pb.Value
 				var err error
 				switch upperColumnName {
-				case "CURRENT_DATE":
+				case FuncCURRENT_DATE:
 					value, err = e.CurrentDate()
-				case "CURRENT_TIME":
+				case FuncCURRENT_TIME:
 					value, err = e.CurrentTime()
-				case "CURRENT_TIMESTAMP":
+				case FuncCURRENT_TIMESTAMP:
 					value, err = e.CurrentTimestamp()
-				case "NOW":
+				case FuncNOW:
 					value, err = e.Now()
 				}
 

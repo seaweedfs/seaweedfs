@@ -123,9 +123,9 @@ func TestFastPathOptimizer_DetermineStrategy(t *testing.T) {
 		{
 			name: "Supported aggregations",
 			aggregations: []AggregationSpec{
-				{Function: "COUNT", Column: "*"},
-				{Function: "MAX", Column: "id"},
-				{Function: "MIN", Column: "value"},
+				{Function: FuncCOUNT, Column: "*"},
+				{Function: FuncMAX, Column: "id"},
+				{Function: FuncMIN, Column: "value"},
 			},
 			expected: AggregationStrategy{
 				CanUseFastPath:   true,
@@ -136,8 +136,8 @@ func TestFastPathOptimizer_DetermineStrategy(t *testing.T) {
 		{
 			name: "Unsupported aggregation",
 			aggregations: []AggregationSpec{
-				{Function: "COUNT", Column: "*"},
-				{Function: "AVG", Column: "value"}, // Not supported
+				{Function: FuncCOUNT, Column: "*"},
+				{Function: FuncAVG, Column: "value"}, // Not supported
 			},
 			expected: AggregationStrategy{
 				CanUseFastPath: false,
@@ -199,7 +199,7 @@ func TestAggregationComputer_ComputeFastPathAggregations(t *testing.T) {
 		{
 			name: "COUNT aggregation",
 			aggregations: []AggregationSpec{
-				{Function: "COUNT", Column: "*"},
+				{Function: FuncCOUNT, Column: "*"},
 			},
 			validate: func(t *testing.T, results []AggregationResult) {
 				assert.Len(t, results, 1)
@@ -209,7 +209,7 @@ func TestAggregationComputer_ComputeFastPathAggregations(t *testing.T) {
 		{
 			name: "MAX aggregation",
 			aggregations: []AggregationSpec{
-				{Function: "MAX", Column: "id"},
+				{Function: FuncMAX, Column: "id"},
 			},
 			validate: func(t *testing.T, results []AggregationResult) {
 				assert.Len(t, results, 1)
@@ -220,7 +220,7 @@ func TestAggregationComputer_ComputeFastPathAggregations(t *testing.T) {
 		{
 			name: "MIN aggregation",
 			aggregations: []AggregationSpec{
-				{Function: "MIN", Column: "id"},
+				{Function: FuncMIN, Column: "id"},
 			},
 			validate: func(t *testing.T, results []AggregationResult) {
 				assert.Len(t, results, 1)
@@ -270,8 +270,8 @@ func TestAggregationComputer_MinMaxEdgeCases(t *testing.T) {
 				PartitionsCount: 1,
 			},
 			aggregations: []AggregationSpec{
-				{Function: "MIN", Column: "id"}, // lowercase column name
-				{Function: "MAX", Column: "id"},
+				{Function: FuncMIN, Column: "id"}, // lowercase column name
+				{Function: FuncMAX, Column: "id"},
 			},
 			validate: func(t *testing.T, results []AggregationResult, err error) {
 				assert.NoError(t, err)
@@ -304,8 +304,8 @@ func TestAggregationComputer_MinMaxEdgeCases(t *testing.T) {
 				PartitionsCount: 1,
 			},
 			aggregations: []AggregationSpec{
-				{Function: "MIN", Column: "id"},
-				{Function: "MAX", Column: "id"},
+				{Function: FuncMIN, Column: "id"},
+				{Function: FuncMAX, Column: "id"},
 			},
 			validate: func(t *testing.T, results []AggregationResult, err error) {
 				assert.NoError(t, err)
@@ -332,8 +332,8 @@ func TestAggregationComputer_MinMaxEdgeCases(t *testing.T) {
 				PartitionsCount: 1,
 			},
 			aggregations: []AggregationSpec{
-				{Function: "MIN", Column: "name"},
-				{Function: "MAX", Column: "name"},
+				{Function: FuncMIN, Column: "name"},
+				{Function: FuncMAX, Column: "name"},
 			},
 			validate: func(t *testing.T, results []AggregationResult, err error) {
 				assert.NoError(t, err)
@@ -360,8 +360,8 @@ func TestAggregationComputer_MinMaxEdgeCases(t *testing.T) {
 				PartitionsCount: 1,
 			},
 			aggregations: []AggregationSpec{
-				{Function: "MIN", Column: "price"},
-				{Function: "MAX", Column: "price"},
+				{Function: FuncMIN, Column: "price"},
+				{Function: FuncMAX, Column: "price"},
 			},
 			validate: func(t *testing.T, results []AggregationResult, err error) {
 				assert.NoError(t, err)
@@ -389,8 +389,8 @@ func TestAggregationComputer_MinMaxEdgeCases(t *testing.T) {
 				PartitionsCount: 1,
 			},
 			aggregations: []AggregationSpec{
-				{Function: "MIN", Column: "nonexistent_column"},
-				{Function: "MAX", Column: "nonexistent_column"},
+				{Function: FuncMIN, Column: "nonexistent_column"},
+				{Function: FuncMAX, Column: "nonexistent_column"},
 			},
 			validate: func(t *testing.T, results []AggregationResult, err error) {
 				assert.NoError(t, err)
@@ -423,8 +423,8 @@ func TestAggregationComputer_MinMaxEdgeCases(t *testing.T) {
 				PartitionsCount: 1,
 			},
 			aggregations: []AggregationSpec{
-				{Function: "MIN", Column: "score"},
-				{Function: "MAX", Column: "score"},
+				{Function: FuncMIN, Column: "score"},
+				{Function: FuncMAX, Column: "score"},
 			},
 			validate: func(t *testing.T, results []AggregationResult, err error) {
 				assert.NoError(t, err)
@@ -484,12 +484,12 @@ func TestAggregationComputer_MinMaxEmptyValuesBugFix(t *testing.T) {
 	}{
 		{
 			name:       "MIN should return 0 not empty",
-			aggregSpec: AggregationSpec{Function: "MIN", Column: "id"},
+			aggregSpec: AggregationSpec{Function: FuncMIN, Column: "id"},
 			expected:   int32(0), // Should extract the actual minimum value
 		},
 		{
 			name:       "MAX should return 99 not empty",
-			aggregSpec: AggregationSpec{Function: "MAX", Column: "id"},
+			aggregSpec: AggregationSpec{Function: FuncMAX, Column: "id"},
 			expected:   int32(99), // Should extract the actual maximum value
 		},
 	}
@@ -503,10 +503,10 @@ func TestAggregationComputer_MinMaxEmptyValuesBugFix(t *testing.T) {
 			assert.Len(t, results, 1)
 
 			// Verify the result is not nil/empty
-			if tt.aggregSpec.Function == "MIN" {
+			if tt.aggregSpec.Function == FuncMIN {
 				assert.NotNil(t, results[0].Min, "MIN result should not be nil")
 				assert.Equal(t, tt.expected, results[0].Min)
-			} else if tt.aggregSpec.Function == "MAX" {
+			} else if tt.aggregSpec.Function == FuncMAX {
 				assert.NotNil(t, results[0].Max, "MAX result should not be nil")
 				assert.Equal(t, tt.expected, results[0].Max)
 			}
@@ -526,37 +526,37 @@ func TestSQLEngine_FormatAggregationResult_MinMax(t *testing.T) {
 	}{
 		{
 			name:     "MIN with zero value should not be empty",
-			spec:     AggregationSpec{Function: "MIN", Column: "id"},
+			spec:     AggregationSpec{Function: FuncMIN, Column: "id"},
 			result:   AggregationResult{Min: int32(0)},
 			expected: "0",
 		},
 		{
 			name:     "MAX with large value",
-			spec:     AggregationSpec{Function: "MAX", Column: "id"},
+			spec:     AggregationSpec{Function: FuncMAX, Column: "id"},
 			result:   AggregationResult{Max: int32(99)},
 			expected: "99",
 		},
 		{
 			name:     "MIN with negative value",
-			spec:     AggregationSpec{Function: "MIN", Column: "score"},
+			spec:     AggregationSpec{Function: FuncMIN, Column: "score"},
 			result:   AggregationResult{Min: int64(-50)},
 			expected: "-50",
 		},
 		{
 			name:     "MAX with float value",
-			spec:     AggregationSpec{Function: "MAX", Column: "price"},
+			spec:     AggregationSpec{Function: FuncMAX, Column: "price"},
 			result:   AggregationResult{Max: float64(299.99)},
 			expected: "299.99",
 		},
 		{
 			name:     "MIN with string value",
-			spec:     AggregationSpec{Function: "MIN", Column: "name"},
+			spec:     AggregationSpec{Function: FuncMIN, Column: "name"},
 			result:   AggregationResult{Min: "Alice"},
 			expected: "Alice",
 		},
 		{
 			name:     "MIN with nil should return NULL",
-			spec:     AggregationSpec{Function: "MIN", Column: "missing"},
+			spec:     AggregationSpec{Function: FuncMIN, Column: "missing"},
 			result:   AggregationResult{Min: nil},
 			expected: "", // NULL values display as empty
 		},
@@ -587,28 +587,28 @@ func TestSQLEngine_MinMaxBugFixIntegration(t *testing.T) {
 	}{
 		{
 			name:          "MIN with zero should not be empty (the original bug)",
-			aggregSpec:    AggregationSpec{Function: "MIN", Column: "id", Alias: "MIN(id)"},
+			aggregSpec:    AggregationSpec{Function: FuncMIN, Column: "id", Alias: "MIN(id)"},
 			aggResult:     AggregationResult{Min: int32(0)}, // This was returning empty before fix
 			expectedEmpty: false,
 			expectedValue: "0",
 		},
 		{
 			name:          "MAX with valid value should not be empty",
-			aggregSpec:    AggregationSpec{Function: "MAX", Column: "id", Alias: "MAX(id)"},
+			aggregSpec:    AggregationSpec{Function: FuncMAX, Column: "id", Alias: "MAX(id)"},
 			aggResult:     AggregationResult{Max: int32(99)},
 			expectedEmpty: false,
 			expectedValue: "99",
 		},
 		{
 			name:          "MIN with negative value should work",
-			aggregSpec:    AggregationSpec{Function: "MIN", Column: "score", Alias: "MIN(score)"},
+			aggregSpec:    AggregationSpec{Function: FuncMIN, Column: "score", Alias: "MIN(score)"},
 			aggResult:     AggregationResult{Min: int64(-10)},
 			expectedEmpty: false,
 			expectedValue: "-10",
 		},
 		{
 			name:          "MIN with nil should be empty (expected behavior)",
-			aggregSpec:    AggregationSpec{Function: "MIN", Column: "missing", Alias: "MIN(missing)"},
+			aggregSpec:    AggregationSpec{Function: FuncMIN, Column: "missing", Alias: "MIN(missing)"},
 			aggResult:     AggregationResult{Min: nil},
 			expectedEmpty: true,
 			expectedValue: "",
@@ -672,7 +672,7 @@ func TestSQLEngine_FastParquetAggregationBugFix(t *testing.T) {
 		{
 			name: "Single MIN aggregation should return value not nil",
 			aggregations: []AggregationSpec{
-				{Function: "MIN", Column: "id", Alias: "MIN(id)"},
+				{Function: FuncMIN, Column: "id", Alias: "MIN(id)"},
 			},
 			validateResults: func(t *testing.T, results []AggregationResult) {
 				assert.Len(t, results, 1)
@@ -683,7 +683,7 @@ func TestSQLEngine_FastParquetAggregationBugFix(t *testing.T) {
 		{
 			name: "Single MAX aggregation should return value not nil",
 			aggregations: []AggregationSpec{
-				{Function: "MAX", Column: "id", Alias: "MAX(id)"},
+				{Function: FuncMAX, Column: "id", Alias: "MAX(id)"},
 			},
 			validateResults: func(t *testing.T, results []AggregationResult) {
 				assert.Len(t, results, 1)
@@ -694,8 +694,8 @@ func TestSQLEngine_FastParquetAggregationBugFix(t *testing.T) {
 		{
 			name: "Combined MIN/MAX should both return values",
 			aggregations: []AggregationSpec{
-				{Function: "MIN", Column: "id", Alias: "MIN(id)"},
-				{Function: "MAX", Column: "id", Alias: "MAX(id)"},
+				{Function: FuncMIN, Column: "id", Alias: "MIN(id)"},
+				{Function: FuncMAX, Column: "id", Alias: "MAX(id)"},
 			},
 			validateResults: func(t *testing.T, results []AggregationResult) {
 				assert.Len(t, results, 2)
@@ -729,7 +729,7 @@ func TestExecutionPlanBuilder_BuildAggregationPlan(t *testing.T) {
 	selectStmt := stmt.(*SelectStatement)
 
 	aggregations := []AggregationSpec{
-		{Function: "COUNT", Column: "*"},
+		{Function: FuncCOUNT, Column: "*"},
 	}
 
 	strategy := AggregationStrategy{
@@ -804,8 +804,8 @@ func TestIntegration_FastPathOptimization(t *testing.T) {
 
 	// Mock data setup
 	aggregations := []AggregationSpec{
-		{Function: "COUNT", Column: "*"},
-		{Function: "MAX", Column: "id"},
+		{Function: FuncCOUNT, Column: "*"},
+		{Function: FuncMAX, Column: "id"},
 	}
 
 	// Step 1: Determine strategy
@@ -860,8 +860,8 @@ func BenchmarkFastPathOptimizer_DetermineStrategy(b *testing.B) {
 	optimizer := NewFastPathOptimizer(engine.SQLEngine)
 
 	aggregations := []AggregationSpec{
-		{Function: "COUNT", Column: "*"},
-		{Function: "MAX", Column: "id"},
+		{Function: FuncCOUNT, Column: "*"},
+		{Function: FuncMAX, Column: "id"},
 		{Function: "MIN", Column: "value"},
 	}
 
@@ -890,8 +890,8 @@ func BenchmarkAggregationComputer_ComputeFastPathAggregations(b *testing.B) {
 	}
 
 	aggregations := []AggregationSpec{
-		{Function: "COUNT", Column: "*"},
-		{Function: "MAX", Column: "id"},
+		{Function: FuncCOUNT, Column: "*"},
+		{Function: FuncMAX, Column: "id"},
 	}
 
 	partitions := []string{"partition-1"}

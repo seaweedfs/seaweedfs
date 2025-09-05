@@ -500,7 +500,7 @@ func TestFunctionArgumentCountHandling(t *testing.T) {
 
 	t.Run("Zero-argument function should fail appropriately", func(t *testing.T) {
 		funcExpr := &FuncExpr{
-			Name:  testStringValue("CURRENT_TIME"),
+			Name:  testStringValue(FuncCURRENT_TIME),
 			Exprs: []SelectExpr{}, // Zero arguments - should fail since we removed zero-arg support
 		}
 
@@ -520,7 +520,7 @@ func TestFunctionArgumentCountHandling(t *testing.T) {
 
 	t.Run("Single-argument function should still work", func(t *testing.T) {
 		funcExpr := &FuncExpr{
-			Name: testStringValue("UPPER"),
+			Name: testStringValue(FuncUPPER),
 			Exprs: []SelectExpr{
 				&AliasedExpr{
 					Expr: &SQLVal{
@@ -565,7 +565,7 @@ func TestFunctionArgumentCountHandling(t *testing.T) {
 
 	t.Run("Wrong argument count for single-arg function should fail", func(t *testing.T) {
 		funcExpr := &FuncExpr{
-			Name: testStringValue("UPPER"),
+			Name: testStringValue(FuncUPPER),
 			Exprs: []SelectExpr{
 				&AliasedExpr{Expr: &SQLVal{Type: StrVal, Val: []byte("test1")}},
 				&AliasedExpr{Expr: &SQLVal{Type: StrVal, Val: []byte("test2")}},

@@ -23,6 +23,36 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// SQL Function Name Constants
+const (
+	// Aggregation Functions
+	FuncCOUNT = "COUNT"
+	FuncSUM   = "SUM"
+	FuncAVG   = "AVG"
+	FuncMIN   = "MIN"
+	FuncMAX   = "MAX"
+
+	// String Functions
+	FuncUPPER     = "UPPER"
+	FuncLOWER     = "LOWER"
+	FuncLENGTH    = "LENGTH"
+	FuncTRIM      = "TRIM"
+	FuncLTRIM     = "LTRIM"
+	FuncRTRIM     = "RTRIM"
+	FuncSUBSTRING = "SUBSTRING"
+	FuncLEFT      = "LEFT"
+	FuncRIGHT     = "RIGHT"
+	FuncCONCAT    = "CONCAT"
+
+	// DateTime Functions
+	FuncCURRENT_DATE      = "CURRENT_DATE"
+	FuncCURRENT_TIME      = "CURRENT_TIME"
+	FuncCURRENT_TIMESTAMP = "CURRENT_TIMESTAMP"
+	FuncNOW               = "NOW"
+	FuncEXTRACT           = "EXTRACT"
+	FuncDATE_TRUNC        = "DATE_TRUNC"
+)
+
 // PostgreSQL parser compatibility types
 type Statement interface {
 	isStatement()
@@ -2890,7 +2920,7 @@ func (e *SQLEngine) parseAggregationFunction(funcExpr *FuncExpr, aliasExpr *Alia
 
 	// Parse function arguments
 	switch funcName {
-	case "COUNT":
+	case FuncCOUNT:
 		if len(funcExpr.Exprs) != 1 {
 			return nil, fmt.Errorf("COUNT function expects exactly 1 argument")
 		}
@@ -2910,7 +2940,7 @@ func (e *SQLEngine) parseAggregationFunction(funcExpr *FuncExpr, aliasExpr *Alia
 			return nil, fmt.Errorf("unsupported COUNT argument: %T", arg)
 		}
 
-	case "SUM", "AVG", "MIN", "MAX":
+	case FuncSUM, FuncAVG, FuncMIN, FuncMAX:
 		if len(funcExpr.Exprs) != 1 {
 			return nil, fmt.Errorf("%s function expects exactly 1 argument", funcName)
 		}
@@ -3803,8 +3833,8 @@ func (e *SQLEngine) ConvertToSQLResultWithExpressions(hms *HybridMessageScanner,
 					columnName := col.Name.String()
 					upperColumnName := strings.ToUpper(columnName)
 					// Use lowercase for datetime constants in column headers
-					if upperColumnName == "CURRENT_DATE" || upperColumnName == "CURRENT_TIME" ||
-						upperColumnName == "CURRENT_TIMESTAMP" || upperColumnName == "NOW" {
+					if upperColumnName == FuncCURRENT_DATE || upperColumnName == FuncCURRENT_TIME ||
+						upperColumnName == FuncCURRENT_TIMESTAMP || upperColumnName == FuncNOW {
 						columns = append(columns, strings.ToLower(columnName))
 					} else {
 						columns = append(columns, columnName)
@@ -3839,8 +3869,8 @@ func (e *SQLEngine) ConvertToSQLResultWithExpressions(hms *HybridMessageScanner,
 				columnName := col.Name.String()
 				upperColumnName := strings.ToUpper(columnName)
 				// Use lowercase for datetime constants in column headers
-				if upperColumnName == "CURRENT_DATE" || upperColumnName == "CURRENT_TIME" ||
-					upperColumnName == "CURRENT_TIMESTAMP" || upperColumnName == "NOW" {
+				if upperColumnName == FuncCURRENT_DATE || upperColumnName == FuncCURRENT_TIME ||
+					upperColumnName == FuncCURRENT_TIMESTAMP || upperColumnName == FuncNOW {
 					columns = append(columns, strings.ToLower(columnName))
 				} else {
 					columns = append(columns, columnName)
@@ -3877,13 +3907,13 @@ func (e *SQLEngine) ConvertToSQLResultWithExpressions(hms *HybridMessageScanner,
 						var value *schema_pb.Value
 						var err error
 						switch upperColumnName {
-						case "CURRENT_DATE":
+						case FuncCURRENT_DATE:
 							value, err = e.CurrentDate()
-						case "CURRENT_TIME":
+						case FuncCURRENT_TIME:
 							value, err = e.CurrentTime()
-						case "CURRENT_TIMESTAMP":
+						case FuncCURRENT_TIMESTAMP:
 							value, err = e.CurrentTimestamp()
-						case "NOW":
+						case FuncNOW:
 							value, err = e.Now()
 						}
 
@@ -3965,7 +3995,7 @@ func (e *SQLEngine) extractBaseColumnsFromExpression(expr ExprNode, baseColumnsS
 // isAggregationFunction checks if a function name is an aggregation function
 func (e *SQLEngine) isAggregationFunction(funcName string) bool {
 	switch funcName {
-	case "COUNT", "SUM", "AVG", "MIN", "MAX":
+	case FuncCOUNT, FuncSUM, FuncAVG, FuncMIN, FuncMAX:
 		return true
 	default:
 		return false
@@ -3975,7 +4005,7 @@ func (e *SQLEngine) isAggregationFunction(funcName string) bool {
 // isStringFunction checks if a function name is a string function
 func (e *SQLEngine) isStringFunction(funcName string) bool {
 	switch funcName {
-	case "UPPER", "LOWER", "LENGTH", "TRIM", "LTRIM", "RTRIM", "SUBSTRING", "LEFT", "RIGHT", "CONCAT":
+	case FuncUPPER, FuncLOWER, FuncLENGTH, FuncTRIM, FuncLTRIM, FuncRTRIM, FuncSUBSTRING, FuncLEFT, FuncRIGHT, FuncCONCAT:
 		return true
 	default:
 		return false
@@ -4045,17 +4075,17 @@ func (e *SQLEngine) evaluateStringFunction(funcExpr *FuncExpr, result HybridScan
 
 	// Call the appropriate string function
 	switch funcName {
-	case "UPPER":
+	case FuncUPPER:
 		return e.Upper(argValue)
-	case "LOWER":
+	case FuncLOWER:
 		return e.Lower(argValue)
-	case "LENGTH":
+	case FuncLENGTH:
 		return e.Length(argValue)
-	case "TRIM":
+	case FuncTRIM:
 		return e.Trim(argValue)
-	case "LTRIM":
+	case FuncLTRIM:
 		return e.LTrim(argValue)
-	case "RTRIM":
+	case FuncRTRIM:
 		return e.RTrim(argValue)
 	default:
 		return nil, fmt.Errorf("unsupported string function: %s", funcName)

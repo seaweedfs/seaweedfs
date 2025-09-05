@@ -150,7 +150,7 @@ func (comp *AggregationComputer) ComputeFastPathAggregations(
 
 	for i, spec := range aggregations {
 		switch spec.Function {
-		case "COUNT":
+		case FuncCOUNT:
 			if spec.Column == "*" {
 				aggResults[i].Count = dataSources.ParquetRowCount + dataSources.LiveLogRowCount
 			} else {
@@ -158,7 +158,7 @@ func (comp *AggregationComputer) ComputeFastPathAggregations(
 				aggResults[i].Count = dataSources.ParquetRowCount + dataSources.LiveLogRowCount
 			}
 
-		case "MIN":
+		case FuncMIN:
 			globalMin, err := comp.computeGlobalMin(spec, dataSources, partitions)
 			if err != nil {
 				return nil, AggregationError{
@@ -169,7 +169,7 @@ func (comp *AggregationComputer) ComputeFastPathAggregations(
 			}
 			aggResults[i].Min = globalMin
 
-		case "MAX":
+		case FuncMAX:
 			globalMax, err := comp.computeGlobalMax(spec, dataSources, partitions)
 			if err != nil {
 				return nil, AggregationError{
@@ -598,7 +598,7 @@ func (e *SQLEngine) computeAggregations(results []HybridScanResult, aggregations
 
 	for i, spec := range aggregations {
 		switch spec.Function {
-		case "COUNT":
+		case FuncCOUNT:
 			if spec.Column == "*" {
 				aggResults[i].Count = int64(len(results))
 			} else {
@@ -611,7 +611,7 @@ func (e *SQLEngine) computeAggregations(results []HybridScanResult, aggregations
 				aggResults[i].Count = count
 			}
 
-		case "SUM":
+		case FuncSUM:
 			sum := float64(0)
 			for _, result := range results {
 				if value := e.findColumnValue(result, spec.Column); value != nil {
@@ -622,7 +622,7 @@ func (e *SQLEngine) computeAggregations(results []HybridScanResult, aggregations
 			}
 			aggResults[i].Sum = sum
 
-		case "AVG":
+		case FuncAVG:
 			sum := float64(0)
 			count := int64(0)
 			for _, result := range results {
@@ -638,7 +638,7 @@ func (e *SQLEngine) computeAggregations(results []HybridScanResult, aggregations
 				aggResults[i].Count = count
 			}
 
-		case "MIN":
+		case FuncMIN:
 			var min interface{}
 			var minValue *schema_pb.Value
 			for _, result := range results {
@@ -651,7 +651,7 @@ func (e *SQLEngine) computeAggregations(results []HybridScanResult, aggregations
 			}
 			aggResults[i].Min = min
 
-		case "MAX":
+		case FuncMAX:
 			var max interface{}
 			var maxValue *schema_pb.Value
 			for _, result := range results {
@@ -672,11 +672,11 @@ func (e *SQLEngine) computeAggregations(results []HybridScanResult, aggregations
 // canUseParquetStatsForAggregation determines if an aggregation can be optimized with parquet stats
 func (e *SQLEngine) canUseParquetStatsForAggregation(spec AggregationSpec) bool {
 	switch spec.Function {
-	case "COUNT":
+	case FuncCOUNT:
 		return spec.Column == "*" || e.isSystemColumn(spec.Column) || e.isRegularColumn(spec.Column)
-	case "MIN", "MAX":
+	case FuncMIN, FuncMAX:
 		return e.isSystemColumn(spec.Column) || e.isRegularColumn(spec.Column)
-	case "SUM", "AVG":
+	case FuncSUM, FuncAVG:
 		// These require scanning actual values, not just min/max
 		return false
 	default:
