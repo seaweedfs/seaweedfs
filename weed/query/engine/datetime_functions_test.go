@@ -438,29 +438,29 @@ func TestDateTimeConstantsInSQL(t *testing.T) {
 	t.Run("CURRENT_TIME in SQL query", func(t *testing.T) {
 		// This is the exact case that was failing
 		result, err := engine.ExecuteSQL(context.Background(), "SELECT CURRENT_TIME FROM user_events LIMIT 1")
-		
+
 		if err != nil {
 			t.Fatalf("SQL execution failed: %v", err)
 		}
-		
+
 		if result.Error != nil {
 			t.Fatalf("Query result has error: %v", result.Error)
 		}
-		
+
 		// Verify we have the correct column and non-empty values
 		if len(result.Columns) != 1 || result.Columns[0] != "current_time" {
 			t.Errorf("Expected column 'current_time', got %v", result.Columns)
 		}
-		
+
 		if len(result.Rows) == 0 {
 			t.Fatal("Expected at least one row")
 		}
-		
+
 		timeValue := result.Rows[0][0].ToString()
 		if timeValue == "" {
 			t.Error("CURRENT_TIME should not return empty value")
 		}
-		
+
 		// Verify HH:MM:SS format
 		if len(timeValue) == 8 && timeValue[2] == ':' && timeValue[5] == ':' {
 			t.Logf("CURRENT_TIME returned valid time: %s", timeValue)
@@ -471,24 +471,24 @@ func TestDateTimeConstantsInSQL(t *testing.T) {
 
 	t.Run("CURRENT_DATE in SQL query", func(t *testing.T) {
 		result, err := engine.ExecuteSQL(context.Background(), "SELECT CURRENT_DATE FROM user_events LIMIT 1")
-		
+
 		if err != nil {
 			t.Fatalf("SQL execution failed: %v", err)
 		}
-		
+
 		if result.Error != nil {
 			t.Fatalf("Query result has error: %v", result.Error)
 		}
-		
+
 		if len(result.Rows) == 0 {
 			t.Fatal("Expected at least one row")
 		}
-		
+
 		dateValue := result.Rows[0][0].ToString()
 		if dateValue == "" {
 			t.Error("CURRENT_DATE should not return empty value")
 		}
-		
+
 		t.Logf("CURRENT_DATE returned: %s", dateValue)
 	})
 }
@@ -511,7 +511,7 @@ func TestFunctionArgumentCountHandling(t *testing.T) {
 		if result != nil {
 			t.Error("Expected nil result for zero-argument function")
 		}
-		
+
 		expectedError := "function CURRENT_TIME expects exactly 1 argument"
 		if err.Error() != expectedError {
 			t.Errorf("Expected error '%s', got '%s'", expectedError, err.Error())
@@ -587,3 +587,15 @@ func TestFunctionArgumentCountHandling(t *testing.T) {
 	})
 }
 
+// Helper function to create a string value for testing
+func testStringValue(s string) StringGetter {
+	return &testStringValueImpl{value: s}
+}
+
+type testStringValueImpl struct {
+	value string
+}
+
+func (s *testStringValueImpl) String() string {
+	return s.value
+}

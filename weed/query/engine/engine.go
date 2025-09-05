@@ -376,9 +376,27 @@ func parseSelectStatement(sql string) (*SelectStatement, error) {
 		}
 
 		fromClause = strings.TrimSpace(fromClause)
+
+		// Parse qualified table names (e.g., "database.table")
+		var name, qualifier string
+		if strings.Contains(fromClause, ".") {
+			parts := strings.Split(fromClause, ".")
+			if len(parts) == 2 {
+				qualifier = strings.TrimSpace(parts[0])
+				name = strings.TrimSpace(parts[1])
+			} else {
+				// Handle cases with more than one dot or malformed names
+				name = fromClause
+				qualifier = ""
+			}
+		} else {
+			name = fromClause
+			qualifier = ""
+		}
+
 		tableName := TableName{
-			Name:      stringValue(fromClause),
-			Qualifier: stringValue(""), // Initialize to empty string to avoid nil pointer
+			Name:      stringValue(name),
+			Qualifier: stringValue(qualifier),
 		}
 		s.From = append(s.From, &AliasedTableExpr{Expr: tableName})
 
@@ -4003,7 +4021,6 @@ func (e *SQLEngine) getSQLValAlias(sqlVal *SQLVal) string {
 // evaluateStringFunction evaluates a string function for a given record
 func (e *SQLEngine) evaluateStringFunction(funcExpr *FuncExpr, result HybridScanResult) (*schema_pb.Value, error) {
 	funcName := strings.ToUpper(funcExpr.Name.String())
-
 
 	// Most string functions require exactly 1 argument
 	if len(funcExpr.Exprs) != 1 {
