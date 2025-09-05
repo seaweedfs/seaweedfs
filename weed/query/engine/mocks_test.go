@@ -237,7 +237,14 @@ func (e *TestSQLEngine) generateTestQueryResult(tableName string, stmt *SelectSt
 			if aliasedExpr, ok := expr.(*AliasedExpr); ok {
 				if colName, ok := aliasedExpr.Expr.(*ColName); ok {
 					columnName := colName.Name.String()
-					columns = append(columns, columnName)
+					upperColumnName := strings.ToUpper(columnName)
+					// Handle datetime constants
+					if upperColumnName == "CURRENT_DATE" || upperColumnName == "CURRENT_TIME" ||
+						upperColumnName == "CURRENT_TIMESTAMP" || upperColumnName == "NOW" {
+						columns = append(columns, strings.ToLower(columnName))
+					} else {
+						columns = append(columns, columnName)
+					}
 				} else if arithmeticExpr, ok := aliasedExpr.Expr.(*ArithmeticExpr); ok {
 					// Handle arithmetic expressions like id+user_id and concatenations
 					// For complex expressions, preserve the original text instead of generating simplified aliases
@@ -289,7 +296,30 @@ func (e *TestSQLEngine) generateTestQueryResult(tableName string, stmt *SelectSt
 	for _, result := range sampleData {
 		var row []sqltypes.Value
 		for _, columnName := range columns {
-			if value, exists := result.Values[columnName]; exists {
+			upperColumnName := strings.ToUpper(columnName)
+
+			// Handle datetime constants first
+			if upperColumnName == "CURRENT_DATE" || upperColumnName == "CURRENT_TIME" ||
+				upperColumnName == "CURRENT_TIMESTAMP" || upperColumnName == "NOW" {
+				var value *schema_pb.Value
+				var err error
+				switch upperColumnName {
+				case "CURRENT_DATE":
+					value, err = e.CurrentDate()
+				case "CURRENT_TIME":
+					value, err = e.CurrentTime()
+				case "CURRENT_TIMESTAMP":
+					value, err = e.CurrentTimestamp()
+				case "NOW":
+					value, err = e.Now()
+				}
+
+				if err == nil && value != nil {
+					row = append(row, convertSchemaValueToSQLValue(value))
+				} else {
+					row = append(row, sqltypes.NULL)
+				}
+			} else if value, exists := result.Values[columnName]; exists {
 				row = append(row, convertSchemaValueToSQLValue(value))
 			} else if columnName == SW_COLUMN_NAME_TIMESTAMP {
 				row = append(row, sqltypes.NewInt64(result.Timestamp))
@@ -427,6 +457,11 @@ func convertSchemaValueToSQLValue(value *schema_pb.Value) sqltypes.Value {
 		return sqltypes.NewVarChar("false")
 	case *schema_pb.Value_BytesValue:
 		return sqltypes.NewVarChar(string(v.BytesValue))
+	case *schema_pb.Value_TimestampValue:
+		// Convert timestamp to string representation
+		timestampMicros := v.TimestampValue.TimestampMicros
+		seconds := timestampMicros / 1000000
+		return sqltypes.NewInt64(seconds)
 	default:
 		return sqltypes.NewVarChar("")
 	}

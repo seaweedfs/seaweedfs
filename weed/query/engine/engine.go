@@ -3782,7 +3782,15 @@ func (e *SQLEngine) ConvertToSQLResultWithExpressions(hms *HybridMessageScanner,
 			case *AliasedExpr:
 				switch col := expr.Expr.(type) {
 				case *ColName:
-					columns = append(columns, col.Name.String())
+					columnName := col.Name.String()
+					upperColumnName := strings.ToUpper(columnName)
+					// Use lowercase for datetime constants in column headers
+					if upperColumnName == "CURRENT_DATE" || upperColumnName == "CURRENT_TIME" ||
+						upperColumnName == "CURRENT_TIMESTAMP" || upperColumnName == "NOW" {
+						columns = append(columns, strings.ToLower(columnName))
+					} else {
+						columns = append(columns, columnName)
+					}
 				case *ArithmeticExpr:
 					columns = append(columns, e.getArithmeticExpressionAlias(col))
 				case *FuncExpr:
@@ -3810,7 +3818,15 @@ func (e *SQLEngine) ConvertToSQLResultWithExpressions(hms *HybridMessageScanner,
 		case *AliasedExpr:
 			switch col := expr.Expr.(type) {
 			case *ColName:
-				columns = append(columns, col.Name.String())
+				columnName := col.Name.String()
+				upperColumnName := strings.ToUpper(columnName)
+				// Use lowercase for datetime constants in column headers
+				if upperColumnName == "CURRENT_DATE" || upperColumnName == "CURRENT_TIME" ||
+					upperColumnName == "CURRENT_TIMESTAMP" || upperColumnName == "NOW" {
+					columns = append(columns, strings.ToLower(columnName))
+				} else {
+					columns = append(columns, columnName)
+				}
 			case *ArithmeticExpr:
 				columns = append(columns, e.getArithmeticExpressionAlias(col))
 			case *FuncExpr:
@@ -3832,12 +3848,39 @@ func (e *SQLEngine) ConvertToSQLResultWithExpressions(hms *HybridMessageScanner,
 			case *AliasedExpr:
 				switch col := expr.Expr.(type) {
 				case *ColName:
-					// Handle regular column
+					// Handle regular column or datetime constants
 					columnName := col.Name.String()
-					if value := e.findColumnValue(result, columnName); value != nil {
-						row[j] = convertSchemaValueToSQL(value)
+					upperColumnName := strings.ToUpper(columnName)
+
+					// Check if this is a datetime constant (function without parentheses)
+					if upperColumnName == "CURRENT_DATE" || upperColumnName == "CURRENT_TIME" ||
+						upperColumnName == "CURRENT_TIMESTAMP" || upperColumnName == "NOW" {
+						// Handle as datetime function
+						var value *schema_pb.Value
+						var err error
+						switch upperColumnName {
+						case "CURRENT_DATE":
+							value, err = e.CurrentDate()
+						case "CURRENT_TIME":
+							value, err = e.CurrentTime()
+						case "CURRENT_TIMESTAMP":
+							value, err = e.CurrentTimestamp()
+						case "NOW":
+							value, err = e.Now()
+						}
+
+						if err == nil && value != nil {
+							row[j] = convertSchemaValueToSQL(value)
+						} else {
+							row[j] = sqltypes.NULL
+						}
 					} else {
-						row[j] = sqltypes.NULL
+						// Handle as regular column
+						if value := e.findColumnValue(result, columnName); value != nil {
+							row[j] = convertSchemaValueToSQL(value)
+						} else {
+							row[j] = sqltypes.NULL
+						}
 					}
 				case *ArithmeticExpr:
 					// Handle arithmetic expression
@@ -3960,6 +4003,22 @@ func (e *SQLEngine) getSQLValAlias(sqlVal *SQLVal) string {
 // evaluateStringFunction evaluates a string function for a given record
 func (e *SQLEngine) evaluateStringFunction(funcExpr *FuncExpr, result HybridScanResult) (*schema_pb.Value, error) {
 	funcName := strings.ToUpper(funcExpr.Name.String())
+
+	// Handle zero-argument functions (datetime constants)
+	if len(funcExpr.Exprs) == 0 {
+		switch funcName {
+		case "CURRENT_DATE":
+			return e.CurrentDate()
+		case "CURRENT_TIME":
+			return e.CurrentTime()
+		case "CURRENT_TIMESTAMP":
+			return e.CurrentTimestamp()
+		case "NOW":
+			return e.Now()
+		default:
+			return nil, fmt.Errorf("unsupported zero-argument function: %s", funcName)
+		}
+	}
 
 	// Most string functions require exactly 1 argument
 	if len(funcExpr.Exprs) != 1 {
