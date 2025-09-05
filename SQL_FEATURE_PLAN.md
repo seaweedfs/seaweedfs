@@ -195,6 +195,11 @@ SQL Query Flow:
 *   Implement predicate pushdown to minimize data scanning
 *   Cache frequently accessed schema metadata
 
+**4. Data Consistency and Concurrency:**
+*   Read-only operations ensure no impact on MQ write performance
+*   Queries operate on immutable Parquet segments for consistency
+*   Handle concurrent reads without blocking MQ operations
+*   Manage schema evolution during active query execution
 
 **5. Query Semantics:**
 *   SELECT queries provide read-consistent snapshots of topic data
