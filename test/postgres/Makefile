@@ -55,8 +55,9 @@ dev-rebuild: ## Rebuild and restart services
 start-seaweedfs: ## Start only SeaweedFS
 	@docker-compose up -d seaweedfs
 
-start-postgres: ## Start only PostgreSQL server
-	@docker-compose up -d postgres-server
+restart-postgres: ## Start only PostgreSQL server
+	@docker-compose down -d postgres-server
+	@docker-compose up -d --build seaweedfs postgres-server
 
 # Testing targets
 test-basic: ## Run basic connectivity test
