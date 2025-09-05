@@ -149,7 +149,7 @@ ORDER BY hour;
 -- Real-time monitoring
 SELECT event_type, AVG(response_time) as avg_response
 FROM api_logs
-WHERE timestamp >= UNIX_TIMESTAMP() - 3600
+WHERE timestamp >= EXTRACT(EPOCH FROM NOW()) - 3600
 GROUP BY event_type
 HAVING avg_response > 1000;
 ```
