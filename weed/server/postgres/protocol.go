@@ -154,9 +154,19 @@ func (s *PostgreSQLServer) handleSimpleQuery(session *PostgreSQLSession, query s
 	// Handle USE database commands for session context
 	parts := strings.Fields(strings.TrimSpace(query))
 	if len(parts) >= 2 && strings.ToUpper(parts[0]) == "USE" {
-		newDatabase := strings.TrimSpace(parts[1])
-		session.database = newDatabase
-		s.sqlEngine.GetCatalog().SetCurrentDatabase(newDatabase)
+		// Re-join the parts after "USE" to handle names with spaces, then trim.
+		dbName := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(query), parts[0]))
+
+		// Unquote if necessary (handle quoted identifiers like "my-database")
+		if len(dbName) > 1 && dbName[0] == '"' && dbName[len(dbName)-1] == '"' {
+			dbName = dbName[1 : len(dbName)-1]
+		} else if len(dbName) > 1 && dbName[0] == '`' && dbName[len(dbName)-1] == '`' {
+			// Also handle backtick quotes for MySQL/other client compatibility
+			dbName = dbName[1 : len(dbName)-1]
+		}
+
+		session.database = dbName
+		s.sqlEngine.GetCatalog().SetCurrentDatabase(dbName)
 
 		// Send command complete for USE
 		err := s.sendCommandComplete(session, "USE")
