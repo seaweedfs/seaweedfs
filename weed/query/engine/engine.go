@@ -508,6 +508,97 @@ func parseArithmeticExpression(expr string) *ArithmeticExpr {
 	return nil
 }
 
+// parseArithmeticExpressionWithLiterals parses arithmetic expressions with support for literal values
+func (e *SQLEngine) parseArithmeticExpressionWithLiterals(expr string) *ArithmeticExpr {
+	// Remove spaces for easier parsing
+	expr = strings.ReplaceAll(expr, " ", "")
+
+	// Check for arithmetic and string operators (order matters for precedence)
+	// String concatenation (||) has lower precedence than arithmetic operators
+	operators := []string{"||", "+", "-", "*", "/", "%"}
+
+	for _, op := range operators {
+		// Find the operator position (skip operators inside parentheses)
+		opPos := -1
+		parenLevel := 0
+		for i, char := range expr {
+			if char == '(' {
+				parenLevel++
+			} else if char == ')' {
+				parenLevel--
+			} else if parenLevel == 0 && strings.HasPrefix(expr[i:], op) {
+				opPos = i
+				break
+			}
+		}
+
+		if opPos > 0 && opPos < len(expr)-len(op) {
+			leftExpr := strings.TrimSpace(expr[:opPos])
+			rightExpr := strings.TrimSpace(expr[opPos+len(op):])
+
+			if leftExpr != "" && rightExpr != "" {
+				// Create left and right expressions (recursively handle complex expressions)
+				var left, right ExprNode
+
+				// Parse left side
+				if leftArithmetic := e.parseArithmeticExpressionWithLiterals(leftExpr); leftArithmetic != nil {
+					left = leftArithmetic
+				} else {
+					left = e.parseExpressionNode(leftExpr)
+				}
+
+				// Parse right side
+				if rightArithmetic := e.parseArithmeticExpressionWithLiterals(rightExpr); rightArithmetic != nil {
+					right = rightArithmetic
+				} else {
+					right = e.parseExpressionNode(rightExpr)
+				}
+
+				return &ArithmeticExpr{
+					Left:     left,
+					Right:    right,
+					Operator: op,
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// parseExpressionNode parses an expression string into the appropriate ExprNode type
+// It distinguishes between column names and literal values
+func (e *SQLEngine) parseExpressionNode(expr string) ExprNode {
+	expr = strings.TrimSpace(expr)
+
+	// Check if it's a numeric literal
+	if _, err := strconv.ParseInt(expr, 10, 64); err == nil {
+		return &SQLVal{
+			Type: IntVal,
+			Val:  []byte(expr),
+		}
+	}
+
+	// Check if it's a float literal
+	if _, err := strconv.ParseFloat(expr, 64); err == nil {
+		return &SQLVal{
+			Type: FloatVal,
+			Val:  []byte(expr),
+		}
+	}
+
+	// Check if it's a string literal (quoted)
+	if strings.HasPrefix(expr, "'") && strings.HasSuffix(expr, "'") {
+		return &SQLVal{
+			Type: StrVal,
+			Val:  []byte(strings.Trim(expr, "'")),
+		}
+	}
+
+	// Otherwise, treat it as a column name
+	return &ColName{Name: stringValue(expr)}
+}
+
 // extractFunctionArguments extracts the arguments from a function call expression
 func extractFunctionArguments(expr string) ([]SelectExpr, error) {
 	// Find the parentheses
@@ -3544,6 +3635,16 @@ func (e *SQLEngine) evaluateExpressionValue(expr ExprNode, result HybridScanResu
 	switch exprType := expr.(type) {
 	case *ColName:
 		columnName := exprType.Name.String()
+
+		// Check if this is actually a numeric literal disguised as a column name
+		if val, err := strconv.ParseInt(columnName, 10, 64); err == nil {
+			return &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: val}}, nil
+		}
+		if val, err := strconv.ParseFloat(columnName, 64); err == nil {
+			return &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: val}}, nil
+		}
+
+		// Otherwise, treat as a regular column lookup
 		value := e.findColumnValue(result, columnName)
 		if value == nil {
 			return nil, nil
@@ -3551,9 +3652,30 @@ func (e *SQLEngine) evaluateExpressionValue(expr ExprNode, result HybridScanResu
 		return value, nil
 	case *ArithmeticExpr:
 		return e.evaluateArithmeticExpression(exprType, result)
+	case *SQLVal:
+		// Handle literal values
+		return e.convertSQLValToSchemaValue(exprType), nil
 	default:
 		return nil, fmt.Errorf("unsupported expression type: %T", expr)
 	}
+}
+
+// convertSQLValToSchemaValue converts SQLVal literal to schema_pb.Value
+func (e *SQLEngine) convertSQLValToSchemaValue(sqlVal *SQLVal) *schema_pb.Value {
+	switch sqlVal.Type {
+	case IntVal:
+		if val, err := strconv.ParseInt(string(sqlVal.Val), 10, 64); err == nil {
+			return &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: val}}
+		}
+	case FloatVal:
+		if val, err := strconv.ParseFloat(string(sqlVal.Val), 64); err == nil {
+			return &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: val}}
+		}
+	case StrVal:
+		return &schema_pb.Value{Kind: &schema_pb.Value_StringValue{StringValue: string(sqlVal.Val)}}
+	}
+	// Default to string if parsing fails
+	return &schema_pb.Value{Kind: &schema_pb.Value_StringValue{StringValue: string(sqlVal.Val)}}
 }
 
 // ConvertToSQLResultWithExpressions converts HybridScanResults to SQL query results with expression evaluation

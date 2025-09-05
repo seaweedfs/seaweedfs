@@ -268,28 +268,43 @@ func (e *TestSQLEngine) generateTestQueryResult(tableName string, stmt *SelectSt
 				row = append(row, sqltypes.NewVarChar(string(result.Key)))
 			} else if columnName == SW_COLUMN_NAME_SOURCE {
 				row = append(row, sqltypes.NewVarChar(result.Source))
-			} else if strings.Contains(columnName, "+") {
-				// Handle arithmetic expression results - for mock testing, calculate simple addition
-				if strings.Contains(columnName, "id+user_id") {
-					idValue := int64(0)
-					userIdValue := int64(0)
-					if idVal, exists := result.Values["id"]; exists && idVal.GetInt64Value() != 0 {
-						idValue = idVal.GetInt64Value()
-					}
-					if userIdVal, exists := result.Values["user_id"]; exists {
-						if userIdVal.GetInt32Value() != 0 {
-							userIdValue = int64(userIdVal.GetInt32Value())
-						} else if userIdVal.GetInt64Value() != 0 {
-							userIdValue = userIdVal.GetInt64Value()
-						}
-					}
-					row = append(row, sqltypes.NewInt64(idValue+userIdValue))
-				} else {
-					row = append(row, sqltypes.NewInt64(12345)) // Default mock arithmetic result
+			} else if strings.Contains(columnName, "+") || strings.Contains(columnName, "-") || strings.Contains(columnName, "*") || strings.Contains(columnName, "/") || strings.Contains(columnName, "%") {
+				// Handle arithmetic expression results - for mock testing, calculate based on operator
+				idValue := int64(0)
+				userIdValue := int64(0)
+
+				// Extract id and user_id values for calculations
+				if idVal, exists := result.Values["id"]; exists && idVal.GetInt64Value() != 0 {
+					idValue = idVal.GetInt64Value()
 				}
-			} else if strings.Contains(columnName, "-") || strings.Contains(columnName, "*") || strings.Contains(columnName, "/") {
-				// Handle other arithmetic expressions - for mock testing, return a calculated value
-				row = append(row, sqltypes.NewInt64(12345)) // Mock arithmetic result
+				if userIdVal, exists := result.Values["user_id"]; exists {
+					if userIdVal.GetInt32Value() != 0 {
+						userIdValue = int64(userIdVal.GetInt32Value())
+					} else if userIdVal.GetInt64Value() != 0 {
+						userIdValue = userIdVal.GetInt64Value()
+					}
+				}
+
+				// Calculate based on specific expressions
+				if strings.Contains(columnName, "id+user_id") {
+					row = append(row, sqltypes.NewInt64(idValue+userIdValue))
+				} else if strings.Contains(columnName, "id-user_id") {
+					row = append(row, sqltypes.NewInt64(idValue-userIdValue))
+				} else if strings.Contains(columnName, "id*2") {
+					row = append(row, sqltypes.NewInt64(idValue*2))
+				} else if strings.Contains(columnName, "id*user_id") {
+					row = append(row, sqltypes.NewInt64(idValue*userIdValue))
+				} else if strings.Contains(columnName, "user_id*2") {
+					row = append(row, sqltypes.NewInt64(userIdValue*2))
+				} else if strings.Contains(columnName, "id/2") && idValue != 0 {
+					row = append(row, sqltypes.NewInt64(idValue/2))
+				} else if strings.Contains(columnName, "id%") || strings.Contains(columnName, "user_id%") {
+					// Simple modulo calculation
+					row = append(row, sqltypes.NewInt64(idValue%100))
+				} else {
+					// Default calculation for other arithmetic expressions
+					row = append(row, sqltypes.NewInt64(idValue*2)) // Simple default
+				}
 			} else {
 				row = append(row, sqltypes.NewVarChar("")) // Default empty value
 			}

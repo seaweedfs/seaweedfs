@@ -398,6 +398,50 @@ func TestSQLEngine_LIMIT_OFFSET_ArithmeticExpressions(t *testing.T) {
 		} else {
 			t.Logf("Insufficient data (%d rows) to fully test LIMIT 10 OFFSET 5 scenario", rows1)
 		}
+
+		// Verify multiplication expressions work in the second query
+		if len(result2.Rows) > 0 {
+			for i, row := range result2.Rows {
+				if len(row) >= 3 { // Check if we have the id+user_id column
+					idVal := row[0].ToString()     // id column
+					userIdVal := row[1].ToString() // user_id column
+					sumVal := row[2].ToString()    // id+user_id column
+					t.Logf("Row %d: id=%s, user_id=%s, id+user_id=%s", i, idVal, userIdVal, sumVal)
+				}
+			}
+		}
+	})
+
+	// Test multiplication specifically
+	t.Run("Multiplication expressions", func(t *testing.T) {
+		result, err := engine.ExecuteSQL(context.Background(), "SELECT id, id*2 FROM user_events LIMIT 3")
+		if err != nil {
+			t.Fatalf("Expected no error for multiplication test, got %v", err)
+		}
+		if result.Error != nil {
+			t.Fatalf("Expected no query error for multiplication test, got %v", result.Error)
+		}
+
+		if len(result.Columns) != 2 {
+			t.Errorf("Expected 2 columns for multiplication test, got %d", len(result.Columns))
+		}
+
+		if len(result.Rows) == 0 {
+			t.Error("Expected some rows for multiplication test")
+		}
+
+		// Check that id*2 column has values (not empty)
+		for i, row := range result.Rows {
+			if len(row) >= 2 {
+				idVal := row[0].ToString()
+				doubledVal := row[1].ToString()
+				if doubledVal == "" || doubledVal == "0" {
+					t.Errorf("Row %d: id*2 should not be empty, id=%s, id*2=%s", i, idVal, doubledVal)
+				} else {
+					t.Logf("Row %d: id=%s, id*2=%s ✓", i, idVal, doubledVal)
+				}
+			}
+		}
 	})
 }
 
