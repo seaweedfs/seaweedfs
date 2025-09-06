@@ -120,11 +120,16 @@ func (p *CockroachSQLParser) convertExpr(expr tree.Expr) (ExprNode, error) {
 
 		// Convert function arguments
 		for _, arg := range e.Exprs {
-			convertedArg, err := p.convertExpr(arg)
-			if err != nil {
-				return nil, fmt.Errorf("failed to convert function argument: %v", err)
+			// Special case: Handle star expressions in function calls like COUNT(*)
+			if _, isStar := arg.(tree.UnqualifiedStar); isStar {
+				seaweedFunc.Exprs = append(seaweedFunc.Exprs, &StarExpr{})
+			} else {
+				convertedArg, err := p.convertExpr(arg)
+				if err != nil {
+					return nil, fmt.Errorf("failed to convert function argument: %v", err)
+				}
+				seaweedFunc.Exprs = append(seaweedFunc.Exprs, &AliasedExpr{Expr: convertedArg})
 			}
-			seaweedFunc.Exprs = append(seaweedFunc.Exprs, &AliasedExpr{Expr: convertedArg})
 		}
 
 		return seaweedFunc, nil
