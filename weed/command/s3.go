@@ -250,7 +250,7 @@ func (s3opt *S3Options) startS3Server() bool {
 	} else {
 		glog.V(0).Infof("Starting S3 API Server with standard IAM")
 	}
-	
+
 	s3ApiServer, s3ApiServer_err = s3api.NewS3ApiServer(router, &s3api.S3ApiServerOption{
 		Filer:                     filerAddress,
 		Port:                      *s3opt.port,

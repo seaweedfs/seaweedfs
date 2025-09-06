@@ -1,0 +1,40 @@
+FROM golang:1.24-alpine AS builder
+
+# Install git and other build dependencies
+RUN apk add --no-cache git make
+
+# Set working directory
+WORKDIR /app
+
+# Copy go mod files first for better caching
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build the weed binary without CGO
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags "-s -w" -o weed ./weed/
+
+# Final stage - minimal runtime image
+FROM alpine:latest
+
+# Install ca-certificates for HTTPS calls and netcat for health checks
+RUN apk --no-cache add ca-certificates netcat-openbsd curl
+
+WORKDIR /root/
+
+# Copy the weed binary from builder stage
+COPY --from=builder /app/weed .
+
+# Make it executable
+RUN chmod +x ./weed
+
+# Expose ports
+EXPOSE 9333 8888 8333 8085 9533 5432
+
+# Create data directory
+RUN mkdir -p /data
+
+# Default command (can be overridden)
+CMD ["./weed", "server", "-dir=/data"]

@@ -2,13 +2,14 @@ package broker
 
 import (
 	"context"
+	"sync"
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer_client"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/sub_coordinator"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
-	"sync"
-	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"

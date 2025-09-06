@@ -1,0 +1,37 @@
+FROM golang:1.24-alpine AS builder
+
+# Set working directory
+WORKDIR /app
+
+# Copy go mod files first for better caching
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build the client
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o client ./test/postgres/client.go
+
+# Final stage
+FROM alpine:latest
+
+# Install ca-certificates and netcat for health checks
+RUN apk --no-cache add ca-certificates netcat-openbsd
+
+WORKDIR /root/
+
+# Copy the binary from builder stage
+COPY --from=builder /app/client .
+
+# Make it executable
+RUN chmod +x ./client
+
+# Set environment variables with defaults
+ENV POSTGRES_HOST=localhost
+ENV POSTGRES_PORT=5432
+ENV POSTGRES_USER=seaweedfs
+ENV POSTGRES_DB=default
+
+# Run the client
+CMD ["./client"]

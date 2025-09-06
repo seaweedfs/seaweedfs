@@ -24,6 +24,7 @@ type dataToFlush struct {
 }
 
 type EachLogEntryFuncType func(logEntry *filer_pb.LogEntry) (isDone bool, err error)
+type EachLogEntryWithBatchIndexFuncType func(logEntry *filer_pb.LogEntry, batchIndex int64) (isDone bool, err error)
 type LogFlushFuncType func(logBuffer *LogBuffer, startTime, stopTime time.Time, buf []byte)
 type LogReadFromDiskFuncType func(startPosition MessagePosition, stopTsNs int64, eachLogEntryFn EachLogEntryFuncType) (lastReadPosition MessagePosition, isDone bool, err error)
 
@@ -63,6 +64,7 @@ func NewLogBuffer(name string, flushInterval time.Duration, flushFn LogFlushFunc
 		notifyFn:       notifyFn,
 		flushChan:      make(chan *dataToFlush, 256),
 		isStopping:     new(atomic.Bool),
+		batchIndex:     time.Now().UnixNano(), // Initialize with creation time for uniqueness across restarts
 	}
 	go lb.loopFlush()
 	go lb.loopInterval()
@@ -341,6 +343,20 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 }
 func (logBuffer *LogBuffer) ReleaseMemory(b *bytes.Buffer) {
 	bufferPool.Put(b)
+}
+
+// GetName returns the log buffer name for metadata tracking
+func (logBuffer *LogBuffer) GetName() string {
+	logBuffer.RLock()
+	defer logBuffer.RUnlock()
+	return logBuffer.name
+}
+
+// GetBatchIndex returns the current batch index for metadata tracking
+func (logBuffer *LogBuffer) GetBatchIndex() int64 {
+	logBuffer.RLock()
+	defer logBuffer.RUnlock()
+	return logBuffer.batchIndex
 }
 
 var bufferPool = sync.Pool{

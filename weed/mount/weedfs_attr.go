@@ -9,6 +9,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func (wfs *WFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse.AttrOut) (code fuse.Status) {
@@ -27,7 +28,10 @@ func (wfs *WFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse
 	} else {
 		if fh, found := wfs.fhMap.FindFileHandle(inode); found {
 			out.AttrValid = 1
+			// Use shared lock to prevent race with Write operations
+			fhActiveLock := wfs.fhLockTable.AcquireLock("GetAttr", fh.fh, util.SharedLock)
 			wfs.setAttrByPbEntry(&out.Attr, inode, fh.entry.GetEntry(), true)
+			wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
 			out.Nlink = 0
 			return fuse.OK
 		}

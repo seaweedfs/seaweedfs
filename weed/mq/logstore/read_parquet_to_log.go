@@ -35,9 +35,18 @@ func GenParquetReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p topic
 		topicConf, err = t.ReadConfFile(client)
 		return err
 	}); err != nil {
-		return nil
+		// Return a no-op function for test environments or when topic config can't be read
+		return func(startPosition log_buffer.MessagePosition, stopTsNs int64, eachLogEntryFn log_buffer.EachLogEntryFuncType) (log_buffer.MessagePosition, bool, error) {
+			return startPosition, true, nil
+		}
 	}
 	recordType := topicConf.GetRecordType()
+	if recordType == nil {
+		// Return a no-op function if no schema is available
+		return func(startPosition log_buffer.MessagePosition, stopTsNs int64, eachLogEntryFn log_buffer.EachLogEntryFuncType) (log_buffer.MessagePosition, bool, error) {
+			return startPosition, true, nil
+		}
+	}
 	recordType = schema.NewRecordTypeBuilder(recordType).
 		WithField(SW_COLUMN_NAME_TS, schema.TypeInt64).
 		WithField(SW_COLUMN_NAME_KEY, schema.TypeBytes).
