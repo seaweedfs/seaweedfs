@@ -68,6 +68,17 @@ func (p *CockroachSQLParser) convertSelectStatement(crdbSelect *tree.Select) (*S
 		},
 	}
 
+	// Convert WHERE clause if present
+	if selectClause.Where != nil {
+		whereExpr, err := p.convertExpr(selectClause.Where.Expr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert WHERE clause: %v", err)
+		}
+		seaweedSelect.Where = &WhereClause{
+			Expr: whereExpr,
+		}
+	}
+
 	return seaweedSelect, nil
 }
 
@@ -139,6 +150,28 @@ func (p *CockroachSQLParser) convertExpr(expr tree.Expr) (ExprNode, error) {
 		seaweedArith.Right = right
 
 		return seaweedArith, nil
+
+	case *tree.ComparisonExpr:
+		// Comparison operations (=, >, <, >=, <=, !=, etc.) used in WHERE clauses
+		seaweedComp := &ComparisonExpr{
+			Operator: e.Operator.String(),
+		}
+
+		// Convert left operand
+		left, err := p.convertExpr(e.Left)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert comparison left operand: %v", err)
+		}
+		seaweedComp.Left = left
+
+		// Convert right operand
+		right, err := p.convertExpr(e.Right)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert comparison right operand: %v", err)
+		}
+		seaweedComp.Right = right
+
+		return seaweedComp, nil
 
 	case *tree.StrVal:
 		// String literal

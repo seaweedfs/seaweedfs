@@ -204,6 +204,33 @@ func (e *TestSQLEngine) generateTestQueryResult(tableName string, stmt *SelectSt
 		sampleData = allSampleData
 	}
 
+	// Apply WHERE clause filtering if present
+	if stmt.Where != nil {
+		predicate, err := e.SQLEngine.buildPredicate(stmt.Where.Expr)
+		if err != nil {
+			return &QueryResult{Error: fmt.Errorf("failed to build WHERE predicate: %v", err)}, err
+		}
+
+		var filteredData []HybridScanResult
+		for _, result := range sampleData {
+			// Convert HybridScanResult to RecordValue format for predicate testing
+			recordValue := &schema_pb.RecordValue{
+				Fields: make(map[string]*schema_pb.Value),
+			}
+
+			// Copy all values from result to recordValue
+			for name, value := range result.Values {
+				recordValue.Fields[name] = value
+			}
+
+			// Apply predicate
+			if predicate(recordValue) {
+				filteredData = append(filteredData, result)
+			}
+		}
+		sampleData = filteredData
+	}
+
 	// Parse LIMIT and OFFSET from SQL string (test-only implementation)
 	limit, offset := e.parseLimitOffset(sql)
 
