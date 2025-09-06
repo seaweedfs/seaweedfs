@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
@@ -11,33 +12,33 @@ func TestStringFunctions(t *testing.T) {
 
 	t.Run("LENGTH function tests", func(t *testing.T) {
 		tests := []struct {
-			name     string
-			value    *schema_pb.Value
-			expected int64
+			name      string
+			value     *schema_pb.Value
+			expected  int64
 			expectErr bool
 		}{
 			{
-				name: "Length of string",
-				value: &schema_pb.Value{Kind: &schema_pb.Value_StringValue{StringValue: "Hello World"}},
-				expected: 11,
+				name:      "Length of string",
+				value:     &schema_pb.Value{Kind: &schema_pb.Value_StringValue{StringValue: "Hello World"}},
+				expected:  11,
 				expectErr: false,
 			},
 			{
-				name: "Length of empty string",
-				value: &schema_pb.Value{Kind: &schema_pb.Value_StringValue{StringValue: ""}},
-				expected: 0,
+				name:      "Length of empty string",
+				value:     &schema_pb.Value{Kind: &schema_pb.Value_StringValue{StringValue: ""}},
+				expected:  0,
 				expectErr: false,
 			},
 			{
-				name: "Length of number",
-				value: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 12345}},
-				expected: 5,
+				name:      "Length of number",
+				value:     &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 12345}},
+				expected:  5,
 				expectErr: false,
 			},
 			{
-				name: "Length of null value",
-				value: nil,
-				expected: 0,
+				name:      "Length of null value",
+				value:     nil,
+				expected:  0,
 				expectErr: true,
 			},
 		}
@@ -131,7 +132,7 @@ func TestStringFunctions(t *testing.T) {
 		testStr := &schema_pb.Value{Kind: &schema_pb.Value_StringValue{StringValue: "Hello World"}}
 
 		// Test substring with start and length
-		result, err := engine.Substring(testStr, 
+		result, err := engine.Substring(testStr,
 			&schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 7}},
 			&schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}})
 		if err != nil {
@@ -143,7 +144,7 @@ func TestStringFunctions(t *testing.T) {
 		}
 
 		// Test substring with just start position
-		result, err = engine.Substring(testStr, 
+		result, err = engine.Substring(testStr,
 			&schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 7}})
 		if err != nil {
 			t.Errorf("SUBSTRING failed: %v", err)
@@ -268,4 +269,125 @@ func TestStringFunctions(t *testing.T) {
 			t.Errorf("Expected '👍🙂', got '%s'", stringVal.StringValue)
 		}
 	})
+}
+
+// TestStringFunctionsSQL tests string functions through SQL execution
+func TestStringFunctionsSQL(t *testing.T) {
+	engine := NewTestSQLEngine()
+
+	testCases := []struct {
+		name        string
+		sql         string
+		expectError bool
+		expectedVal string
+	}{
+		{
+			name:        "UPPER function",
+			sql:         "SELECT UPPER('hello world') AS upper_value FROM user_events LIMIT 1",
+			expectError: false,
+			expectedVal: "HELLO WORLD",
+		},
+		{
+			name:        "LOWER function",
+			sql:         "SELECT LOWER('HELLO WORLD') AS lower_value FROM user_events LIMIT 1",
+			expectError: false,
+			expectedVal: "hello world",
+		},
+		{
+			name:        "LENGTH function",
+			sql:         "SELECT LENGTH('hello') AS length_value FROM user_events LIMIT 1",
+			expectError: false,
+			expectedVal: "5",
+		},
+		{
+			name:        "TRIM function",
+			sql:         "SELECT TRIM('  hello world  ') AS trimmed_value FROM user_events LIMIT 1",
+			expectError: false,
+			expectedVal: "hello world",
+		},
+		{
+			name:        "LTRIM function",
+			sql:         "SELECT LTRIM('  hello world  ') AS ltrimmed_value FROM user_events LIMIT 1",
+			expectError: false,
+			expectedVal: "hello world  ",
+		},
+		{
+			name:        "RTRIM function",
+			sql:         "SELECT RTRIM('  hello world  ') AS rtrimmed_value FROM user_events LIMIT 1",
+			expectError: false,
+			expectedVal: "  hello world",
+		},
+		{
+			name:        "Multiple string functions",
+			sql:         "SELECT UPPER('hello') AS up, LOWER('WORLD') AS low, LENGTH('test') AS len FROM user_events LIMIT 1",
+			expectError: false,
+			expectedVal: "", // We'll check this separately
+		},
+		{
+			name:        "String function with wrong argument count",
+			sql:         "SELECT UPPER('hello', 'extra') FROM user_events LIMIT 1",
+			expectError: true,
+			expectedVal: "",
+		},
+		{
+			name:        "String function with no arguments",
+			sql:         "SELECT UPPER() FROM user_events LIMIT 1",
+			expectError: true,
+			expectedVal: "",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := engine.ExecuteSQL(context.Background(), tc.sql)
+
+			if tc.expectError {
+				if err == nil && result.Error == nil {
+					t.Errorf("Expected error but got none")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+				return
+			}
+
+			if result.Error != nil {
+				t.Errorf("Query result has error: %v", result.Error)
+				return
+			}
+
+			if len(result.Rows) == 0 {
+				t.Fatal("Expected at least one row")
+			}
+
+			if tc.name == "Multiple string functions" {
+				// Special case for multiple functions test
+				if len(result.Rows[0]) != 3 {
+					t.Fatalf("Expected 3 columns, got %d", len(result.Rows[0]))
+				}
+
+				// Check UPPER('hello') -> 'HELLO'
+				if result.Rows[0][0].ToString() != "HELLO" {
+					t.Errorf("Expected 'HELLO', got '%s'", result.Rows[0][0].ToString())
+				}
+
+				// Check LOWER('WORLD') -> 'world'
+				if result.Rows[0][1].ToString() != "world" {
+					t.Errorf("Expected 'world', got '%s'", result.Rows[0][1].ToString())
+				}
+
+				// Check LENGTH('test') -> '4'
+				if result.Rows[0][2].ToString() != "4" {
+					t.Errorf("Expected '4', got '%s'", result.Rows[0][2].ToString())
+				}
+			} else {
+				actualVal := result.Rows[0][0].ToString()
+				if actualVal != tc.expectedVal {
+					t.Errorf("Expected '%s', got '%s'", tc.expectedVal, actualVal)
+				}
+			}
+		})
+	}
 }

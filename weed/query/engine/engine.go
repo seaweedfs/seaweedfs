@@ -51,6 +51,15 @@ const (
 	FuncNOW               = "NOW"
 	FuncEXTRACT           = "EXTRACT"
 	FuncDATE_TRUNC        = "DATE_TRUNC"
+
+	// Simple date part extraction functions
+	FuncYEAR    = "YEAR"
+	FuncMONTH   = "MONTH"
+	FuncDAY     = "DAY"
+	FuncHOUR    = "HOUR"
+	FuncMINUTE  = "MINUTE"
+	FuncSECOND  = "SECOND"
+	FuncQUARTER = "QUARTER"
 )
 
 // PostgreSQL parser compatibility types
@@ -3778,6 +3787,30 @@ func (e *SQLEngine) evaluateExpressionValue(expr ExprNode, result HybridScanResu
 	switch exprType := expr.(type) {
 	case *ColName:
 		columnName := exprType.Name.String()
+		upperColumnName := strings.ToUpper(columnName)
+
+		// Check if this is actually a string literal that was parsed as ColName
+		if (strings.HasPrefix(columnName, "'") && strings.HasSuffix(columnName, "'")) ||
+			(strings.HasPrefix(columnName, "\"") && strings.HasSuffix(columnName, "\"")) {
+			// This is a string literal that was incorrectly parsed as a column name
+			literal := strings.Trim(strings.Trim(columnName, "'"), "\"")
+			return &schema_pb.Value{Kind: &schema_pb.Value_StringValue{StringValue: literal}}, nil
+		}
+
+		// Check if this is a datetime constant
+		if upperColumnName == FuncCURRENT_DATE || upperColumnName == FuncCURRENT_TIME ||
+			upperColumnName == FuncCURRENT_TIMESTAMP || upperColumnName == FuncNOW {
+			switch upperColumnName {
+			case FuncCURRENT_DATE:
+				return e.CurrentDate()
+			case FuncCURRENT_TIME:
+				return e.CurrentTime()
+			case FuncCURRENT_TIMESTAMP:
+				return e.CurrentTimestamp()
+			case FuncNOW:
+				return e.Now()
+			}
+		}
 
 		// Check if this is actually a numeric literal disguised as a column name
 		if val, err := strconv.ParseInt(columnName, 10, 64); err == nil {
@@ -3798,6 +3831,20 @@ func (e *SQLEngine) evaluateExpressionValue(expr ExprNode, result HybridScanResu
 	case *SQLVal:
 		// Handle literal values
 		return e.convertSQLValToSchemaValue(exprType), nil
+	case *FuncExpr:
+		// Handle nested function calls
+		funcName := strings.ToUpper(exprType.Name.String())
+		
+		// Route to appropriate function evaluator based on function type
+		if funcName == FuncEXTRACT || funcName == FuncDATE_TRUNC || 
+		   funcName == FuncYEAR || funcName == FuncMONTH || funcName == FuncDAY ||
+		   funcName == FuncHOUR || funcName == FuncMINUTE || funcName == FuncSECOND || funcName == FuncQUARTER {
+			// Use datetime function evaluator
+			return e.evaluateDateTimeFunction(exprType, result)
+		} else {
+			// Use string function evaluator
+			return e.evaluateStringFunction(exprType, result)
+		}
 	default:
 		return nil, fmt.Errorf("unsupported expression type: %T", expr)
 	}
@@ -3938,8 +3985,22 @@ func (e *SQLEngine) ConvertToSQLResultWithExpressions(hms *HybridMessageScanner,
 						row[j] = sqltypes.NULL
 					}
 				case *FuncExpr:
-					// Handle string function
-					if value, err := e.evaluateStringFunction(col, result); err == nil && value != nil {
+					// Handle function - route to appropriate evaluator
+					funcName := strings.ToUpper(col.Name.String())
+					var value *schema_pb.Value
+					var err error
+
+					// Check if it's a datetime function
+					if funcName == FuncEXTRACT || funcName == FuncDATE_TRUNC ||
+						funcName == FuncYEAR || funcName == FuncMONTH || funcName == FuncDAY ||
+						funcName == FuncHOUR || funcName == FuncMINUTE || funcName == FuncSECOND || funcName == FuncQUARTER {
+						value, err = e.evaluateDateTimeFunction(col, result)
+					} else {
+						// Default to string function evaluator
+						value, err = e.evaluateStringFunction(col, result)
+					}
+
+					if err == nil && value != nil {
 						row[j] = convertSchemaValueToSQL(value)
 					} else {
 						row[j] = sqltypes.NULL
@@ -4089,5 +4150,157 @@ func (e *SQLEngine) evaluateStringFunction(funcExpr *FuncExpr, result HybridScan
 		return e.RTrim(argValue)
 	default:
 		return nil, fmt.Errorf("unsupported string function: %s", funcName)
+	}
+}
+
+// evaluateDateTimeFunction evaluates a datetime function for a given record
+func (e *SQLEngine) evaluateDateTimeFunction(funcExpr *FuncExpr, result HybridScanResult) (*schema_pb.Value, error) {
+	funcName := strings.ToUpper(funcExpr.Name.String())
+
+	switch funcName {
+	case FuncEXTRACT:
+		// EXTRACT requires exactly 2 arguments: date part and value
+		if len(funcExpr.Exprs) != 2 {
+			return nil, fmt.Errorf("EXTRACT function expects exactly 2 arguments (date_part, value), got %d", len(funcExpr.Exprs))
+		}
+
+		// Get the first argument (date part)
+		var datePartValue *schema_pb.Value
+		if aliasedExpr, ok := funcExpr.Exprs[0].(*AliasedExpr); ok {
+			var err error
+			datePartValue, err = e.evaluateExpressionValue(aliasedExpr.Expr, result)
+			if err != nil {
+				return nil, fmt.Errorf("error evaluating EXTRACT date part argument: %v", err)
+			}
+		} else {
+			return nil, fmt.Errorf("unsupported EXTRACT date part argument type")
+		}
+
+		if datePartValue == nil {
+			return nil, fmt.Errorf("EXTRACT date part cannot be NULL")
+		}
+
+		// Convert date part to string
+		var datePart string
+		if stringVal, ok := datePartValue.Kind.(*schema_pb.Value_StringValue); ok {
+			datePart = strings.ToUpper(stringVal.StringValue)
+		} else {
+			return nil, fmt.Errorf("EXTRACT date part must be a string")
+		}
+
+		// Get the second argument (value to extract from)
+		var extractValue *schema_pb.Value
+		if aliasedExpr, ok := funcExpr.Exprs[1].(*AliasedExpr); ok {
+			var err error
+			extractValue, err = e.evaluateExpressionValue(aliasedExpr.Expr, result)
+			if err != nil {
+				return nil, fmt.Errorf("error evaluating EXTRACT value argument: %v", err)
+			}
+		} else {
+			return nil, fmt.Errorf("unsupported EXTRACT value argument type")
+		}
+
+		if extractValue == nil {
+			return nil, nil // NULL input produces NULL output
+		}
+
+		// Call the Extract function
+		return e.Extract(DatePart(datePart), extractValue)
+
+	case FuncDATE_TRUNC:
+		// DATE_TRUNC requires exactly 2 arguments: precision and value
+		if len(funcExpr.Exprs) != 2 {
+			return nil, fmt.Errorf("DATE_TRUNC function expects exactly 2 arguments (precision, value), got %d", len(funcExpr.Exprs))
+		}
+
+		// Get the first argument (precision)
+		var precisionValue *schema_pb.Value
+		if aliasedExpr, ok := funcExpr.Exprs[0].(*AliasedExpr); ok {
+			var err error
+			precisionValue, err = e.evaluateExpressionValue(aliasedExpr.Expr, result)
+			if err != nil {
+				return nil, fmt.Errorf("error evaluating DATE_TRUNC precision argument: %v", err)
+			}
+		} else {
+			return nil, fmt.Errorf("unsupported DATE_TRUNC precision argument type")
+		}
+
+		if precisionValue == nil {
+			return nil, fmt.Errorf("DATE_TRUNC precision cannot be NULL")
+		}
+
+		// Convert precision to string
+		var precision string
+		if stringVal, ok := precisionValue.Kind.(*schema_pb.Value_StringValue); ok {
+			precision = stringVal.StringValue
+		} else {
+			return nil, fmt.Errorf("DATE_TRUNC precision must be a string")
+		}
+
+		// Get the second argument (value to truncate)
+		var truncateValue *schema_pb.Value
+		if aliasedExpr, ok := funcExpr.Exprs[1].(*AliasedExpr); ok {
+			var err error
+			truncateValue, err = e.evaluateExpressionValue(aliasedExpr.Expr, result)
+			if err != nil {
+				return nil, fmt.Errorf("error evaluating DATE_TRUNC value argument: %v", err)
+			}
+		} else {
+			return nil, fmt.Errorf("unsupported DATE_TRUNC value argument type")
+		}
+
+		if truncateValue == nil {
+			return nil, nil // NULL input produces NULL output
+		}
+
+		// Call the DateTrunc function
+		return e.DateTrunc(precision, truncateValue)
+
+	case FuncYEAR, FuncMONTH, FuncDAY, FuncHOUR, FuncMINUTE, FuncSECOND, FuncQUARTER:
+		// Simple date part extraction functions - require exactly 1 argument
+		if len(funcExpr.Exprs) != 1 {
+			return nil, fmt.Errorf("%s function expects exactly 1 argument (datetime_value), got %d", funcName, len(funcExpr.Exprs))
+		}
+
+		// Get the argument (datetime value to extract from)
+		var datetimeValue *schema_pb.Value
+		if aliasedExpr, ok := funcExpr.Exprs[0].(*AliasedExpr); ok {
+			var err error
+			datetimeValue, err = e.evaluateExpressionValue(aliasedExpr.Expr, result)
+			if err != nil {
+				return nil, fmt.Errorf("error evaluating %s datetime argument: %v", funcName, err)
+			}
+		} else {
+			return nil, fmt.Errorf("unsupported %s datetime argument type", funcName)
+		}
+
+		if datetimeValue == nil {
+			return nil, nil // NULL input produces NULL output
+		}
+
+		// Map function name to DatePart and call Extract
+		var datePart DatePart
+		switch funcName {
+		case FuncYEAR:
+			datePart = PartYear
+		case FuncMONTH:
+			datePart = PartMonth
+		case FuncDAY:
+			datePart = PartDay
+		case FuncHOUR:
+			datePart = PartHour
+		case FuncMINUTE:
+			datePart = PartMinute
+		case FuncSECOND:
+			datePart = PartSecond
+		case FuncQUARTER:
+			datePart = PartQuarter
+		}
+
+		// Call the Extract function with the appropriate date part
+		return e.Extract(datePart, datetimeValue)
+
+	default:
+		return nil, fmt.Errorf("unsupported datetime function: %s", funcName)
 	}
 }

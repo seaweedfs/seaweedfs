@@ -2,6 +2,8 @@ package engine
 
 import (
 	"context"
+	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -598,4 +600,292 @@ type testStringValueImpl struct {
 
 func (s *testStringValueImpl) String() string {
 	return s.value
+}
+
+// TestExtractFunctionSQL tests the EXTRACT function through SQL execution
+func TestExtractFunctionSQL(t *testing.T) {
+	engine := NewTestSQLEngine()
+
+	testCases := []struct {
+		name        string
+		sql         string
+		expectError bool
+		checkValue  func(t *testing.T, result *QueryResult)
+	}{
+		{
+			name:        "Extract YEAR from current_date",
+			sql:         "SELECT EXTRACT(YEAR FROM current_date) AS year_value FROM user_events LIMIT 1",
+			expectError: false,
+			checkValue: func(t *testing.T, result *QueryResult) {
+				if len(result.Rows) == 0 {
+					t.Fatal("Expected at least one row")
+				}
+				yearStr := result.Rows[0][0].ToString()
+				currentYear := time.Now().Year()
+				if yearStr != fmt.Sprintf("%d", currentYear) {
+					t.Errorf("Expected current year %d, got %s", currentYear, yearStr)
+				}
+			},
+		},
+		{
+			name:        "Extract MONTH from current_date",
+			sql:         "SELECT EXTRACT('MONTH', current_date) AS month_value FROM user_events LIMIT 1",
+			expectError: false,
+			checkValue: func(t *testing.T, result *QueryResult) {
+				if len(result.Rows) == 0 {
+					t.Fatal("Expected at least one row")
+				}
+				monthStr := result.Rows[0][0].ToString()
+				currentMonth := time.Now().Month()
+				if monthStr != fmt.Sprintf("%d", int(currentMonth)) {
+					t.Errorf("Expected current month %d, got %s", int(currentMonth), monthStr)
+				}
+			},
+		},
+		{
+			name:        "Extract DAY from current_date",
+			sql:         "SELECT EXTRACT('DAY', current_date) AS day_value FROM user_events LIMIT 1",
+			expectError: false,
+			checkValue: func(t *testing.T, result *QueryResult) {
+				if len(result.Rows) == 0 {
+					t.Fatal("Expected at least one row")
+				}
+				dayStr := result.Rows[0][0].ToString()
+				currentDay := time.Now().Day()
+				if dayStr != fmt.Sprintf("%d", currentDay) {
+					t.Errorf("Expected current day %d, got %s", currentDay, dayStr)
+				}
+			},
+		},
+		{
+			name:        "Extract HOUR from current_timestamp",
+			sql:         "SELECT EXTRACT('HOUR', current_timestamp) AS hour_value FROM user_events LIMIT 1",
+			expectError: false,
+			checkValue: func(t *testing.T, result *QueryResult) {
+				if len(result.Rows) == 0 {
+					t.Fatal("Expected at least one row")
+				}
+				hourStr := result.Rows[0][0].ToString()
+				// Just check it's a valid hour (0-23)
+				hour, err := strconv.Atoi(hourStr)
+				if err != nil {
+					t.Errorf("Expected valid hour integer, got %s", hourStr)
+				}
+				if hour < 0 || hour > 23 {
+					t.Errorf("Expected hour 0-23, got %d", hour)
+				}
+			},
+		},
+		{
+			name:        "Extract MINUTE from current_timestamp",
+			sql:         "SELECT EXTRACT('MINUTE', current_timestamp) AS minute_value FROM user_events LIMIT 1",
+			expectError: false,
+			checkValue: func(t *testing.T, result *QueryResult) {
+				if len(result.Rows) == 0 {
+					t.Fatal("Expected at least one row")
+				}
+				minuteStr := result.Rows[0][0].ToString()
+				// Just check it's a valid minute (0-59)
+				minute, err := strconv.Atoi(minuteStr)
+				if err != nil {
+					t.Errorf("Expected valid minute integer, got %s", minuteStr)
+				}
+				if minute < 0 || minute > 59 {
+					t.Errorf("Expected minute 0-59, got %d", minute)
+				}
+			},
+		},
+		{
+			name:        "Extract QUARTER from current_date",
+			sql:         "SELECT EXTRACT('QUARTER', current_date) AS quarter_value FROM user_events LIMIT 1",
+			expectError: false,
+			checkValue: func(t *testing.T, result *QueryResult) {
+				if len(result.Rows) == 0 {
+					t.Fatal("Expected at least one row")
+				}
+				quarterStr := result.Rows[0][0].ToString()
+				quarter, err := strconv.Atoi(quarterStr)
+				if err != nil {
+					t.Errorf("Expected valid quarter integer, got %s", quarterStr)
+				}
+				if quarter < 1 || quarter > 4 {
+					t.Errorf("Expected quarter 1-4, got %d", quarter)
+				}
+			},
+		},
+		{
+			name:        "Multiple EXTRACT functions",
+			sql:         "SELECT EXTRACT('YEAR', current_date) AS year_val, EXTRACT('MONTH', current_date) AS month_val, EXTRACT('DAY', current_date) AS day_val FROM user_events LIMIT 1",
+			expectError: false,
+			checkValue: func(t *testing.T, result *QueryResult) {
+				if len(result.Rows) == 0 {
+					t.Fatal("Expected at least one row")
+				}
+				if len(result.Rows[0]) != 3 {
+					t.Fatalf("Expected 3 columns, got %d", len(result.Rows[0]))
+				}
+
+				// Check year
+				yearStr := result.Rows[0][0].ToString()
+				currentYear := time.Now().Year()
+				if yearStr != fmt.Sprintf("%d", currentYear) {
+					t.Errorf("Expected current year %d, got %s", currentYear, yearStr)
+				}
+
+				// Check month
+				monthStr := result.Rows[0][1].ToString()
+				currentMonth := time.Now().Month()
+				if monthStr != fmt.Sprintf("%d", int(currentMonth)) {
+					t.Errorf("Expected current month %d, got %s", int(currentMonth), monthStr)
+				}
+
+				// Check day
+				dayStr := result.Rows[0][2].ToString()
+				currentDay := time.Now().Day()
+				if dayStr != fmt.Sprintf("%d", currentDay) {
+					t.Errorf("Expected current day %d, got %s", currentDay, dayStr)
+				}
+			},
+		},
+		{
+			name:        "EXTRACT with invalid date part",
+			sql:         "SELECT EXTRACT('INVALID_PART', current_date) FROM user_events LIMIT 1",
+			expectError: true,
+			checkValue:  nil,
+		},
+		{
+			name:        "EXTRACT with wrong number of arguments",
+			sql:         "SELECT EXTRACT('YEAR') FROM user_events LIMIT 1",
+			expectError: true,
+			checkValue:  nil,
+		},
+		{
+			name:        "EXTRACT with too many arguments",
+			sql:         "SELECT EXTRACT('YEAR', current_date, 'extra') FROM user_events LIMIT 1",
+			expectError: true,
+			checkValue:  nil,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := engine.ExecuteSQL(context.Background(), tc.sql)
+
+			if tc.expectError {
+				if err == nil && result.Error == nil {
+					t.Errorf("Expected error but got none")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+				return
+			}
+
+			if result.Error != nil {
+				t.Errorf("Query result has error: %v", result.Error)
+				return
+			}
+
+			if tc.checkValue != nil {
+				tc.checkValue(t, result)
+			}
+		})
+	}
+}
+
+// TestDateTruncFunctionSQL tests the DATE_TRUNC function through SQL execution
+func TestDateTruncFunctionSQL(t *testing.T) {
+	engine := NewTestSQLEngine()
+
+	testCases := []struct {
+		name        string
+		sql         string
+		expectError bool
+		checkValue  func(t *testing.T, result *QueryResult)
+	}{
+		{
+			name:        "DATE_TRUNC to day",
+			sql:         "SELECT DATE_TRUNC('day', current_timestamp) AS truncated_day FROM user_events LIMIT 1",
+			expectError: false,
+			checkValue: func(t *testing.T, result *QueryResult) {
+				if len(result.Rows) == 0 {
+					t.Fatal("Expected at least one row")
+				}
+				// The result should be a timestamp value, just check it's not empty
+				timestampStr := result.Rows[0][0].ToString()
+				if timestampStr == "" {
+					t.Error("Expected non-empty timestamp result")
+				}
+			},
+		},
+		{
+			name:        "DATE_TRUNC to hour",
+			sql:         "SELECT DATE_TRUNC('hour', current_timestamp) AS truncated_hour FROM user_events LIMIT 1",
+			expectError: false,
+			checkValue: func(t *testing.T, result *QueryResult) {
+				if len(result.Rows) == 0 {
+					t.Fatal("Expected at least one row")
+				}
+				timestampStr := result.Rows[0][0].ToString()
+				if timestampStr == "" {
+					t.Error("Expected non-empty timestamp result")
+				}
+			},
+		},
+		{
+			name:        "DATE_TRUNC to month",
+			sql:         "SELECT DATE_TRUNC('month', current_timestamp) AS truncated_month FROM user_events LIMIT 1",
+			expectError: false,
+			checkValue: func(t *testing.T, result *QueryResult) {
+				if len(result.Rows) == 0 {
+					t.Fatal("Expected at least one row")
+				}
+				timestampStr := result.Rows[0][0].ToString()
+				if timestampStr == "" {
+					t.Error("Expected non-empty timestamp result")
+				}
+			},
+		},
+		{
+			name:        "DATE_TRUNC with invalid precision",
+			sql:         "SELECT DATE_TRUNC('invalid', current_timestamp) FROM user_events LIMIT 1",
+			expectError: true,
+			checkValue:  nil,
+		},
+		{
+			name:        "DATE_TRUNC with wrong number of arguments",
+			sql:         "SELECT DATE_TRUNC('day') FROM user_events LIMIT 1",
+			expectError: true,
+			checkValue:  nil,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := engine.ExecuteSQL(context.Background(), tc.sql)
+
+			if tc.expectError {
+				if err == nil && result.Error == nil {
+					t.Errorf("Expected error but got none")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+				return
+			}
+
+			if result.Error != nil {
+				t.Errorf("Query result has error: %v", result.Error)
+				return
+			}
+
+			if tc.checkValue != nil {
+				tc.checkValue(t, result)
+			}
+		})
+	}
 }

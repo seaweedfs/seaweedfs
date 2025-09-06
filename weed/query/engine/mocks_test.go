@@ -86,6 +86,7 @@ func initTestSampleData(c *SchemaCatalog) {
 // TestSQLEngine wraps SQLEngine with test-specific behavior
 type TestSQLEngine struct {
 	*SQLEngine
+	funcExpressions map[string]*FuncExpr // Map from column key to function expression
 }
 
 // NewTestSQLEngine creates a new SQL execution engine for testing
@@ -101,11 +102,17 @@ func NewTestSQLEngine() *TestSQLEngine {
 		catalog: NewTestSchemaCatalog(),
 	}
 
-	return &TestSQLEngine{SQLEngine: engine}
+	return &TestSQLEngine{
+		SQLEngine:       engine,
+		funcExpressions: make(map[string]*FuncExpr),
+	}
 }
 
 // ExecuteSQL overrides the real implementation to use sample data for testing
 func (e *TestSQLEngine) ExecuteSQL(ctx context.Context, sql string) (*QueryResult, error) {
+	// Clear function expressions from previous executions
+	e.funcExpressions = make(map[string]*FuncExpr)
+
 	// Parse the SQL statement
 	stmt, err := ParseSQL(sql)
 	if err != nil {
@@ -251,19 +258,11 @@ func (e *TestSQLEngine) generateTestQueryResult(tableName string, stmt *SelectSt
 					alias := e.getArithmeticExpressionAlias(arithmeticExpr)
 					columns = append(columns, alias)
 				} else if funcExpr, ok := aliasedExpr.Expr.(*FuncExpr); ok {
-					// Handle string functions like UPPER(status), LENGTH(action)
-					funcName := funcExpr.Name.String()
-					if len(funcExpr.Exprs) > 0 {
-						if argExpr, ok := funcExpr.Exprs[0].(*AliasedExpr); ok {
-							if argCol, ok := argExpr.Expr.(*ColName); ok {
-								alias := fmt.Sprintf("%s(%s)", funcName, argCol.Name.String())
-								columns = append(columns, alias)
-							}
-						}
-					} else {
-						alias := fmt.Sprintf("%s(...)", funcName)
-						columns = append(columns, alias)
-					}
+					// Store the function expression for evaluation later
+					// Use a special prefix to distinguish function expressions
+					funcExprKey := fmt.Sprintf("__FUNCEXPR__%p", funcExpr)
+					e.funcExpressions[funcExprKey] = funcExpr
+					columns = append(columns, funcExprKey)
 				} else if sqlVal, ok := aliasedExpr.Expr.(*SQLVal); ok {
 					// Handle string literals like 'good', 123
 					switch sqlVal.Type {
@@ -376,50 +375,22 @@ func (e *TestSQLEngine) generateTestQueryResult(tableName string, stmt *SelectSt
 				// Handle string literals like 'good', 'test'
 				literal := strings.Trim(columnName, "'")
 				row = append(row, sqltypes.NewVarChar(literal))
-			} else if strings.Contains(columnName, "(") && strings.Contains(columnName, ")") {
-				// Handle string functions like UPPER(status), LENGTH(action)
-				if strings.Contains(strings.ToUpper(columnName), "UPPER(") {
-					// Extract the column being uppercased and get its value
-					if strings.Contains(columnName, "status") {
-						if statusVal, exists := result.Values["status"]; exists {
-							statusStr := statusVal.GetStringValue()
-							row = append(row, sqltypes.NewVarChar(strings.ToUpper(statusStr)))
-						} else {
-							row = append(row, sqltypes.NewVarChar("ACTIVE")) // Mock value
-						}
-					} else if strings.Contains(columnName, "action") {
-						if actionVal, exists := result.Values["action"]; exists {
-							actionStr := actionVal.GetStringValue()
-							row = append(row, sqltypes.NewVarChar(strings.ToUpper(actionStr)))
-						} else {
-							row = append(row, sqltypes.NewVarChar("LOGIN")) // Mock value
-						}
+			} else if strings.HasPrefix(columnName, "__FUNCEXPR__") {
+				// Handle function expressions by evaluating them with the actual engine
+				if funcExpr, exists := e.funcExpressions[columnName]; exists {
+					// Evaluate the function expression using the actual engine logic
+					if value, err := e.evaluateFunctionExpression(funcExpr, result); err == nil && value != nil {
+						row = append(row, convertSchemaValueToSQLValue(value))
 					} else {
-						row = append(row, sqltypes.NewVarChar("MOCK_UPPER"))
-					}
-				} else if strings.Contains(strings.ToUpper(columnName), "LENGTH(") {
-					// Extract the column whose length is being calculated
-					if strings.Contains(columnName, "status") {
-						if statusVal, exists := result.Values["status"]; exists {
-							statusStr := statusVal.GetStringValue()
-							row = append(row, sqltypes.NewInt64(int64(len(statusStr))))
-						} else {
-							row = append(row, sqltypes.NewInt64(6)) // Length of "ACTIVE"
-						}
-					} else if strings.Contains(columnName, "action") {
-						if actionVal, exists := result.Values["action"]; exists {
-							actionStr := actionVal.GetStringValue()
-							row = append(row, sqltypes.NewInt64(int64(len(actionStr))))
-						} else {
-							row = append(row, sqltypes.NewInt64(5)) // Length of "LOGIN"
-						}
-					} else {
-						row = append(row, sqltypes.NewInt64(10)) // Mock length
+						row = append(row, sqltypes.NULL)
 					}
 				} else {
-					// Other functions - return mock result
-					row = append(row, sqltypes.NewVarChar("MOCK_FUNC"))
+					row = append(row, sqltypes.NULL)
 				}
+			} else if strings.Contains(columnName, "(") && strings.Contains(columnName, ")") {
+				// Legacy function handling - should be replaced by function expression evaluation above
+				// Other functions - return mock result
+				row = append(row, sqltypes.NewVarChar("MOCK_FUNC"))
 			} else {
 				row = append(row, sqltypes.NewVarChar("")) // Default empty value
 			}
@@ -877,4 +848,20 @@ func (e *TestSQLEngine) evaluateComplexExpressionMock(columnName string, result 
 		}
 	}
 	return nil
+}
+
+// evaluateFunctionExpression evaluates a function expression using the actual engine logic
+func (e *TestSQLEngine) evaluateFunctionExpression(funcExpr *FuncExpr, result HybridScanResult) (*schema_pb.Value, error) {
+	funcName := strings.ToUpper(funcExpr.Name.String())
+
+	// Route to appropriate function evaluator based on function type
+	if funcName == FuncEXTRACT || funcName == FuncDATE_TRUNC ||
+		funcName == FuncYEAR || funcName == FuncMONTH || funcName == FuncDAY ||
+		funcName == FuncHOUR || funcName == FuncMINUTE || funcName == FuncSECOND || funcName == FuncQUARTER {
+		// Use datetime function evaluator
+		return e.evaluateDateTimeFunction(funcExpr, result)
+	} else {
+		// Use string function evaluator
+		return e.evaluateStringFunction(funcExpr, result)
+	}
 }
