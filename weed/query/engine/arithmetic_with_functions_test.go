@@ -72,7 +72,7 @@ func TestArithmeticWithFunctions(t *testing.T) {
 			if actual != tc.expected {
 				t.Errorf("%s: Expected '%s', got '%s'", tc.desc, tc.expected, actual)
 			} else {
-				t.Logf("✅ %s: %s → %s", tc.desc, tc.sql, actual)
+				t.Logf("PASS %s: %s → %s", tc.desc, tc.sql, actual)
 			}
 		})
 	}

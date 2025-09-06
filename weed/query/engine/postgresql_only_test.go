@@ -86,25 +86,25 @@ func TestPostgreSQLOnlySupport(t *testing.T) {
 					}
 				}
 
-				t.Logf("✅ CORRECTLY REJECTED: %s", tc.desc)
+				t.Logf("CORRECTLY REJECTED: %s", tc.desc)
 				passCount++
 			} else {
 				// We expect this query to succeed
 				if err != nil {
-					t.Errorf("❌ Unexpected error for %s: %v", tc.desc, err)
+					t.Errorf("Unexpected error for %s: %v", tc.desc, err)
 					return
 				}
 
 				if result.Error != nil {
-					t.Errorf("❌ Unexpected result error for %s: %v", tc.desc, result.Error)
+					t.Errorf("Unexpected result error for %s: %v", tc.desc, result.Error)
 					return
 				}
 
-				t.Logf("✅ CORRECTLY ACCEPTED: %s", tc.desc)
+				t.Logf("CORRECTLY ACCEPTED: %s", tc.desc)
 				passCount++
 			}
 		})
 	}
 
-	t.Logf("🎯 PostgreSQL-only compliance: %d/%d tests passed", passCount, len(testCases))
+	t.Logf("PostgreSQL-only compliance: %d/%d tests passed", passCount, len(testCases))
 }

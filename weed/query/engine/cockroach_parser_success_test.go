@@ -84,13 +84,13 @@ func TestCockroachDBParserSuccess(t *testing.T) {
 			actual := result.Rows[0][0].ToString()
 
 			if actual == tc.expected {
-				t.Logf("✅ SUCCESS: %s → %s", tc.desc, actual)
+				t.Logf("SUCCESS: %s → %s", tc.desc, actual)
 				successCount++
 			} else {
-				t.Errorf("❌ %s - Expected '%s', got '%s'", tc.desc, tc.expected, actual)
+				t.Errorf("FAIL %s - Expected '%s', got '%s'", tc.desc, tc.expected, actual)
 			}
 		})
 	}
 
-	t.Logf("🎉 CockroachDB Parser Integration: %d/%d tests passed!", successCount, len(testCases))
+	t.Logf("CockroachDB Parser Integration: %d/%d tests passed!", successCount, len(testCases))
 }
