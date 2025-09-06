@@ -37,6 +37,7 @@ const (
 	FuncLOWER     = "LOWER"
 	FuncLENGTH    = "LENGTH"
 	FuncTRIM      = "TRIM"
+	FuncBTRIM     = "BTRIM"  // CockroachDB's internal name for TRIM
 	FuncLTRIM     = "LTRIM"
 	FuncRTRIM     = "RTRIM"
 	FuncSUBSTRING = "SUBSTRING"
@@ -2403,7 +2404,21 @@ func (e *SQLEngine) buildComparisonPredicate(expr *ComparisonExpr) (func(*schema
 		compareValue = val
 
 	} else {
-		return nil, fmt.Errorf("no column name found in comparison expression, left: %T, right: %T", expr.Left, expr.Right)
+		// Handle literal-only comparisons like 1 = 0, 'a' = 'b', etc.
+		leftVal, leftErr := e.extractComparisonValue(expr.Left)
+		rightVal, rightErr := e.extractComparisonValue(expr.Right)
+
+		if leftErr != nil || rightErr != nil {
+			return nil, fmt.Errorf("no column name found in comparison expression, left: %T, right: %T", expr.Left, expr.Right)
+		}
+
+		// Evaluate the literal comparison once
+		result := e.compareLiteralValues(leftVal, rightVal, expr.Operator)
+
+		// Return a constant predicate
+		return func(record *schema_pb.RecordValue) bool {
+			return result
+		}, nil
 	}
 
 	// Create predicate based on operator
@@ -2782,6 +2797,85 @@ func (e *SQLEngine) showTables(ctx context.Context, dbName string) (*QueryResult
 	}
 
 	return result, nil
+}
+
+// compareLiteralValues compares two literal values with the given operator
+func (e *SQLEngine) compareLiteralValues(left, right interface{}, operator string) bool {
+	switch operator {
+	case "=", "==":
+		return e.literalValuesEqual(left, right)
+	case "!=", "<>":
+		return !e.literalValuesEqual(left, right)
+	case "<":
+		return e.compareLiteralNumber(left, right) < 0
+	case "<=":
+		return e.compareLiteralNumber(left, right) <= 0
+	case ">":
+		return e.compareLiteralNumber(left, right) > 0
+	case ">=":
+		return e.compareLiteralNumber(left, right) >= 0
+	default:
+		// For unsupported operators, default to false
+		return false
+	}
+}
+
+// literalValuesEqual checks if two literal values are equal
+func (e *SQLEngine) literalValuesEqual(left, right interface{}) bool {
+	// Convert both to strings for comparison
+	leftStr := fmt.Sprintf("%v", left)
+	rightStr := fmt.Sprintf("%v", right)
+	return leftStr == rightStr
+}
+
+// compareLiteralNumber compares two values as numbers
+func (e *SQLEngine) compareLiteralNumber(left, right interface{}) int {
+	leftNum, leftOk := e.convertToFloat64(left)
+	rightNum, rightOk := e.convertToFloat64(right)
+
+	if !leftOk || !rightOk {
+		// Fall back to string comparison if not numeric
+		leftStr := fmt.Sprintf("%v", left)
+		rightStr := fmt.Sprintf("%v", right)
+		if leftStr < rightStr {
+			return -1
+		} else if leftStr > rightStr {
+			return 1
+		} else {
+			return 0
+		}
+	}
+
+	if leftNum < rightNum {
+		return -1
+	} else if leftNum > rightNum {
+		return 1
+	} else {
+		return 0
+	}
+}
+
+// convertToFloat64 attempts to convert a value to float64
+func (e *SQLEngine) convertToFloat64(value interface{}) (float64, bool) {
+	switch v := value.(type) {
+	case int64:
+		return float64(v), true
+	case int32:
+		return float64(v), true
+	case int:
+		return float64(v), true
+	case float64:
+		return v, true
+	case float32:
+		return float64(v), true
+	case string:
+		if num, err := strconv.ParseFloat(v, 64); err == nil {
+			return num, true
+		}
+		return 0, false
+	default:
+		return 0, false
+	}
 }
 
 func (e *SQLEngine) createTable(ctx context.Context, stmt *DDLStatement) (*QueryResult, error) {
@@ -3799,6 +3893,8 @@ func (e *SQLEngine) getExpressionAlias(expr ExprNode) string {
 		return exprType.Name.String()
 	case *ArithmeticExpr:
 		return e.getArithmeticExpressionAlias(exprType)
+	case *SQLVal:
+		return e.getSQLValAlias(exprType)
 	default:
 		return "expr"
 	}
@@ -4147,7 +4243,7 @@ func (e *SQLEngine) isAggregationFunction(funcName string) bool {
 // isStringFunction checks if a function name is a string function
 func (e *SQLEngine) isStringFunction(funcName string) bool {
 	switch funcName {
-	case FuncUPPER, FuncLOWER, FuncLENGTH, FuncTRIM, FuncLTRIM, FuncRTRIM, FuncSUBSTRING, FuncLEFT, FuncRIGHT, FuncCONCAT:
+	case FuncUPPER, FuncLOWER, FuncLENGTH, FuncTRIM, FuncBTRIM, FuncLTRIM, FuncRTRIM, FuncSUBSTRING, FuncLEFT, FuncRIGHT, FuncCONCAT:
 		return true
 	default:
 		return false
@@ -4223,7 +4319,7 @@ func (e *SQLEngine) evaluateStringFunction(funcExpr *FuncExpr, result HybridScan
 		return e.Lower(argValue)
 	case FuncLENGTH:
 		return e.Length(argValue)
-	case FuncTRIM:
+	case FuncTRIM, FuncBTRIM: // CockroachDB converts TRIM to BTRIM
 		return e.Trim(argValue)
 	case FuncLTRIM:
 		return e.LTrim(argValue)
@@ -4395,7 +4491,7 @@ func (e *SQLEngine) evaluateColumnNameAsFunction(columnName string, result Hybri
 		return e.Lower(argValue)
 	case FuncLENGTH:
 		return e.Length(argValue)
-	case FuncTRIM:
+	case FuncTRIM, FuncBTRIM: // CockroachDB converts TRIM to BTRIM
 		return e.Trim(argValue)
 	case FuncLTRIM:
 		return e.LTrim(argValue)

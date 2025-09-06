@@ -321,11 +321,11 @@ func (e *TestSQLEngine) generateTestQueryResult(tableName string, stmt *SelectSt
 						// Map the alias back to the function expression key for evaluation
 						e.funcExpressions[aliasName] = funcExpr
 					} else {
-						// Use function name as column name instead of funcExprKey
-						functionName := strings.ToLower(funcExpr.Name.String())
-						columns = append(columns, functionName)
-						// Map the function name to the expression for evaluation
-						e.funcExpressions[functionName] = funcExpr
+						// Use proper function alias like UPPER(status) instead of just function name
+						functionAlias := e.getStringFunctionAlias(funcExpr)
+						columns = append(columns, functionAlias)
+						// Map the function alias to the expression for evaluation
+						e.funcExpressions[functionAlias] = funcExpr
 					}
 				} else if sqlVal, ok := aliasedExpr.Expr.(*SQLVal); ok {
 					// Handle string literals like 'good', 123
@@ -508,6 +508,12 @@ func (e *TestSQLEngine) generateTestQueryResult(tableName string, stmt *SelectSt
 				if value, err := e.evaluateFunctionExpression(funcExpr, result); err == nil && value != nil {
 					row = append(row, convertSchemaValueToSQLValue(value))
 				} else {
+					// Check if this is a validation error (wrong argument count, etc.)
+					if err != nil && (strings.Contains(err.Error(), "expects exactly") || strings.Contains(err.Error(), "argument")) {
+						// For validation errors, return the error to the caller instead of using fallback
+						return &QueryResult{Error: err}, err
+					}
+
 					// Fallback for common datetime functions that might fail in evaluation
 					functionName := strings.ToUpper(funcExpr.Name.String())
 					switch functionName {
