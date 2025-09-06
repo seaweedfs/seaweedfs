@@ -3797,6 +3797,13 @@ func (e *SQLEngine) evaluateExpressionValue(expr ExprNode, result HybridScanResu
 			return &schema_pb.Value{Kind: &schema_pb.Value_StringValue{StringValue: literal}}, nil
 		}
 
+		// Check if this is actually a function call that was parsed as ColName
+		if strings.Contains(columnName, "(") && strings.Contains(columnName, ")") {
+			// This is a function call that was parsed incorrectly as a column name
+			// We need to manually evaluate it as a function
+			return e.evaluateColumnNameAsFunction(columnName, result)
+		}
+
 		// Check if this is a datetime constant
 		if upperColumnName == FuncCURRENT_DATE || upperColumnName == FuncCURRENT_TIME ||
 			upperColumnName == FuncCURRENT_TIMESTAMP || upperColumnName == FuncNOW {
@@ -3834,11 +3841,11 @@ func (e *SQLEngine) evaluateExpressionValue(expr ExprNode, result HybridScanResu
 	case *FuncExpr:
 		// Handle nested function calls
 		funcName := strings.ToUpper(exprType.Name.String())
-		
+
 		// Route to appropriate function evaluator based on function type
-		if funcName == FuncEXTRACT || funcName == FuncDATE_TRUNC || 
-		   funcName == FuncYEAR || funcName == FuncMONTH || funcName == FuncDAY ||
-		   funcName == FuncHOUR || funcName == FuncMINUTE || funcName == FuncSECOND || funcName == FuncQUARTER {
+		if funcName == FuncEXTRACT || funcName == FuncDATE_TRUNC ||
+			funcName == FuncYEAR || funcName == FuncMONTH || funcName == FuncDAY ||
+			funcName == FuncHOUR || funcName == FuncMINUTE || funcName == FuncSECOND || funcName == FuncQUARTER {
 			// Use datetime function evaluator
 			return e.evaluateDateTimeFunction(exprType, result)
 		} else {
@@ -4302,5 +4309,81 @@ func (e *SQLEngine) evaluateDateTimeFunction(funcExpr *FuncExpr, result HybridSc
 
 	default:
 		return nil, fmt.Errorf("unsupported datetime function: %s", funcName)
+	}
+}
+
+// evaluateColumnNameAsFunction handles function calls that were incorrectly parsed as column names
+func (e *SQLEngine) evaluateColumnNameAsFunction(columnName string, result HybridScanResult) (*schema_pb.Value, error) {
+	// Simple parser for basic function calls like TRIM('hello world')
+	// Extract function name and argument
+	parenPos := strings.Index(columnName, "(")
+	if parenPos == -1 {
+		return nil, fmt.Errorf("invalid function format: %s", columnName)
+	}
+
+	funcName := strings.ToUpper(strings.TrimSpace(columnName[:parenPos]))
+	argsString := columnName[parenPos+1:]
+
+	// Find the closing parenthesis (handling nested quotes)
+	closeParen := strings.LastIndex(argsString, ")")
+	if closeParen == -1 {
+		return nil, fmt.Errorf("missing closing parenthesis in function: %s", columnName)
+	}
+
+	argString := strings.TrimSpace(argsString[:closeParen])
+
+	// Parse the argument - for now handle simple cases
+	var argValue *schema_pb.Value
+	var err error
+
+	if strings.HasPrefix(argString, "'") && strings.HasSuffix(argString, "'") {
+		// String literal argument
+		literal := strings.Trim(argString, "'")
+		argValue = &schema_pb.Value{Kind: &schema_pb.Value_StringValue{StringValue: literal}}
+	} else if strings.Contains(argString, "(") && strings.Contains(argString, ")") {
+		// Nested function call - recursively evaluate it
+		argValue, err = e.evaluateColumnNameAsFunction(argString, result)
+		if err != nil {
+			return nil, fmt.Errorf("error evaluating nested function argument: %v", err)
+		}
+	} else {
+		// Column name or other expression
+		return nil, fmt.Errorf("unsupported argument type in function: %s", argString)
+	}
+
+	if argValue == nil {
+		return nil, nil
+	}
+
+	// Call the appropriate function
+	switch funcName {
+	case FuncUPPER:
+		return e.Upper(argValue)
+	case FuncLOWER:
+		return e.Lower(argValue)
+	case FuncLENGTH:
+		return e.Length(argValue)
+	case FuncTRIM:
+		return e.Trim(argValue)
+	case FuncLTRIM:
+		return e.LTrim(argValue)
+	case FuncRTRIM:
+		return e.RTrim(argValue)
+	case FuncYEAR:
+		return e.Extract(PartYear, argValue)
+	case FuncMONTH:
+		return e.Extract(PartMonth, argValue)
+	case FuncDAY:
+		return e.Extract(PartDay, argValue)
+	case FuncHOUR:
+		return e.Extract(PartHour, argValue)
+	case FuncMINUTE:
+		return e.Extract(PartMinute, argValue)
+	case FuncSECOND:
+		return e.Extract(PartSecond, argValue)
+	case FuncQUARTER:
+		return e.Extract(PartQuarter, argValue)
+	default:
+		return nil, fmt.Errorf("unsupported function in column name: %s", funcName)
 	}
 }

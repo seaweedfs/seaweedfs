@@ -262,7 +262,16 @@ func (e *TestSQLEngine) generateTestQueryResult(tableName string, stmt *SelectSt
 					// Use a special prefix to distinguish function expressions
 					funcExprKey := fmt.Sprintf("__FUNCEXPR__%p", funcExpr)
 					e.funcExpressions[funcExprKey] = funcExpr
-					columns = append(columns, funcExprKey)
+
+					// Check if there's an alias, use that as column name, otherwise use funcExprKey
+					if aliasedExpr.As != nil && aliasedExpr.As.String() != "" {
+						aliasName := aliasedExpr.As.String()
+						columns = append(columns, aliasName)
+						// Map the alias back to the function expression key for evaluation
+						e.funcExpressions[aliasName] = funcExpr
+					} else {
+						columns = append(columns, funcExprKey)
+					}
 				} else if sqlVal, ok := aliasedExpr.Expr.(*SQLVal); ok {
 					// Handle string literals like 'good', 123
 					switch sqlVal.Type {
@@ -384,6 +393,13 @@ func (e *TestSQLEngine) generateTestQueryResult(tableName string, stmt *SelectSt
 					} else {
 						row = append(row, sqltypes.NULL)
 					}
+				} else {
+					row = append(row, sqltypes.NULL)
+				}
+			} else if funcExpr, exists := e.funcExpressions[columnName]; exists {
+				// Handle function expressions identified by their alias
+				if value, err := e.evaluateFunctionExpression(funcExpr, result); err == nil && value != nil {
+					row = append(row, convertSchemaValueToSQLValue(value))
 				} else {
 					row = append(row, sqltypes.NULL)
 				}
