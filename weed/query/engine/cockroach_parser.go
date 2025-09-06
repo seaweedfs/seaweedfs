@@ -139,7 +139,7 @@ func (p *CockroachSQLParser) convertExpr(expr tree.Expr) (ExprNode, error) {
 	case *tree.FuncExpr:
 		// Function call
 		seaweedFunc := &FuncExpr{
-			Name:  stringValue(e.Func.String()),
+			Name:  stringValue(strings.ToUpper(e.Func.String())), // Convert to uppercase for consistency
 			Exprs: make([]SelectExpr, 0, len(e.Exprs)),
 		}
 
@@ -229,6 +229,36 @@ func (p *CockroachSQLParser) convertExpr(expr tree.Expr) (ExprNode, error) {
 		// Column name
 		return &ColName{
 			Name: stringValue(e.String()),
+		}, nil
+
+	case *tree.AndExpr:
+		// AND expression
+		left, err := p.convertExpr(e.Left)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert AND left operand: %v", err)
+		}
+		right, err := p.convertExpr(e.Right)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert AND right operand: %v", err)
+		}
+		return &AndExpr{
+			Left:  left,
+			Right: right,
+		}, nil
+
+	case *tree.OrExpr:
+		// OR expression
+		left, err := p.convertExpr(e.Left)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert OR left operand: %v", err)
+		}
+		right, err := p.convertExpr(e.Right)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert OR right operand: %v", err)
+		}
+		return &OrExpr{
+			Left:  left,
+			Right: right,
 		}, nil
 
 	default:
