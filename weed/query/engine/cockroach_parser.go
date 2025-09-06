@@ -73,6 +73,11 @@ func (p *CockroachSQLParser) convertSelectStatement(crdbSelect *tree.Select) (*S
 
 // convertSelectExpr converts CockroachDB SelectExpr to SeaweedFS format
 func (p *CockroachSQLParser) convertSelectExpr(expr tree.SelectExpr) (SelectExpr, error) {
+	// Handle star expressions (SELECT *)
+	if _, isStar := expr.Expr.(tree.UnqualifiedStar); isStar {
+		return &StarExpr{}, nil
+	}
+
 	// CockroachDB's SelectExpr is a struct, not an interface, so handle it directly
 	seaweedExpr := &AliasedExpr{}
 

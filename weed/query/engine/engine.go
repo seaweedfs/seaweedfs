@@ -1616,7 +1616,7 @@ func (e *SQLEngine) executeSelectStatement(ctx context.Context, stmt *SelectStat
 		switch tableExpr := table.Expr.(type) {
 		case TableName:
 			tableName = tableExpr.Name.String()
-			if tableExpr.Qualifier.String() != "" {
+			if tableExpr.Qualifier != nil && tableExpr.Qualifier.String() != "" {
 				database = tableExpr.Qualifier.String()
 			}
 		default:
@@ -1855,7 +1855,7 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 		switch tableExpr := table.Expr.(type) {
 		case TableName:
 			tableName = tableExpr.Name.String()
-			if tableExpr.Qualifier.String() != "" {
+			if tableExpr.Qualifier != nil && tableExpr.Qualifier.String() != "" {
 				database = tableExpr.Qualifier.String()
 			}
 		default:
