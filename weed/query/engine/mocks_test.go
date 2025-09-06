@@ -907,9 +907,7 @@ func (e *TestSQLEngine) evaluateFunctionExpression(funcExpr *FuncExpr, result Hy
 	funcName := strings.ToUpper(funcExpr.Name.String())
 
 	// Route to appropriate function evaluator based on function type
-	if funcName == FuncEXTRACT || funcName == FuncDATE_TRUNC ||
-		funcName == FuncYEAR || funcName == FuncMONTH || funcName == FuncDAY ||
-		funcName == FuncHOUR || funcName == FuncMINUTE || funcName == FuncSECOND || funcName == FuncQUARTER {
+	if funcName == FuncEXTRACT || funcName == FuncDATE_TRUNC {
 		// Use datetime function evaluator
 		return e.evaluateDateTimeFunction(funcExpr, result)
 	} else {

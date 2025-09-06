@@ -153,8 +153,8 @@ func (e *SQLEngine) handleDescribeCommand(ctx context.Context, sql string) (*Que
 		tableName = parts[1]
 	}
 
-	// Remove backticks and semicolons from table name
-	tableName = strings.Trim(tableName, "`")
+	// Remove double quotes and semicolons from table name (PostgreSQL standard)
+	tableName = strings.Trim(tableName, "\"")
 	tableName = strings.TrimSuffix(tableName, ";")
 
 	database := ""
@@ -162,9 +162,9 @@ func (e *SQLEngine) handleDescribeCommand(ctx context.Context, sql string) (*Que
 	// Handle database.table format
 	if strings.Contains(tableName, ".") {
 		dbTableParts := strings.SplitN(tableName, ".", 2)
-		database = strings.Trim(dbTableParts[0], "`") // Also strip backticks from database name
+		database = strings.Trim(dbTableParts[0], "\"") // Strip double quotes from database name (PostgreSQL standard)
 		database = strings.TrimSuffix(database, ";")
-		tableName = strings.Trim(dbTableParts[1], "`")
+		tableName = strings.Trim(dbTableParts[1], "\"")
 		tableName = strings.TrimSuffix(tableName, ";")
 	}
 

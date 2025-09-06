@@ -8,7 +8,7 @@ import (
 	"github.com/cockroachdb/cockroachdb-parser/pkg/sql/sem/tree"
 )
 
-// CockroachSQLParser wraps CockroachDB's SQL parser for use in SeaweedFS
+// CockroachSQLParser wraps CockroachDB's PostgreSQL-compatible SQL parser for use in SeaweedFS
 type CockroachSQLParser struct{}
 
 // NewCockroachSQLParser creates a new instance of the CockroachDB SQL parser wrapper

@@ -52,17 +52,10 @@ const (
 	FuncEXTRACT           = "EXTRACT"
 	FuncDATE_TRUNC        = "DATE_TRUNC"
 
-	// Simple date part extraction functions
-	FuncYEAR    = "YEAR"
-	FuncMONTH   = "MONTH"
-	FuncDAY     = "DAY"
-	FuncHOUR    = "HOUR"
-	FuncMINUTE  = "MINUTE"
-	FuncSECOND  = "SECOND"
-	FuncQUARTER = "QUARTER"
+	// PostgreSQL uses EXTRACT(part FROM date) instead of convenience functions like YEAR(), MONTH(), etc.
 )
 
-// PostgreSQL parser compatibility types
+// PostgreSQL-compatible SQL AST types
 type Statement interface {
 	isStatement()
 }
@@ -271,7 +264,7 @@ const (
 	NotEqualStr     = "!="
 )
 
-// ParseSQL uses a lightweight parser to parse SQL statements
+// ParseSQL parses PostgreSQL-compatible SQL statements using CockroachDB parser for SELECT queries
 func ParseSQL(sql string) (Statement, error) {
 	sql = strings.TrimSpace(sql)
 	sqlUpper := strings.ToUpper(sql)
@@ -288,8 +281,8 @@ func ParseSQL(sql string) (Statement, error) {
 			partsOriginal := strings.Fields(sql) // Use original casing
 			for i, part := range partsUpper {
 				if part == "FROM" && i+1 < len(partsOriginal) {
-					// Remove quotes if present (PostgreSQL uses double quotes)
-					dbName := strings.Trim(partsOriginal[i+1], "\"'`")
+					// Remove double quotes if present (PostgreSQL standard for identifiers)
+					dbName := strings.Trim(partsOriginal[i+1], "\"")
 					stmt.Schema = dbName                    // Set the Schema field for the test
 					stmt.OnTable.Name = stringValue(dbName) // Keep for compatibility
 					break
@@ -3909,9 +3902,7 @@ func (e *SQLEngine) evaluateExpressionValue(expr ExprNode, result HybridScanResu
 		funcName := strings.ToUpper(exprType.Name.String())
 
 		// Route to appropriate function evaluator based on function type
-		if funcName == FuncEXTRACT || funcName == FuncDATE_TRUNC ||
-			funcName == FuncYEAR || funcName == FuncMONTH || funcName == FuncDAY ||
-			funcName == FuncHOUR || funcName == FuncMINUTE || funcName == FuncSECOND || funcName == FuncQUARTER {
+		if funcName == FuncEXTRACT || funcName == FuncDATE_TRUNC {
 			// Use datetime function evaluator
 			return e.evaluateDateTimeFunction(exprType, result)
 		} else {
@@ -4079,9 +4070,7 @@ func (e *SQLEngine) ConvertToSQLResultWithExpressions(hms *HybridMessageScanner,
 					var err error
 
 					// Check if it's a datetime function
-					if funcName == FuncEXTRACT || funcName == FuncDATE_TRUNC ||
-						funcName == FuncYEAR || funcName == FuncMONTH || funcName == FuncDAY ||
-						funcName == FuncHOUR || funcName == FuncMINUTE || funcName == FuncSECOND || funcName == FuncQUARTER {
+					if funcName == FuncEXTRACT || funcName == FuncDATE_TRUNC {
 						value, err = e.evaluateDateTimeFunction(col, result)
 					} else {
 						// Default to string function evaluator
@@ -4344,49 +4333,7 @@ func (e *SQLEngine) evaluateDateTimeFunction(funcExpr *FuncExpr, result HybridSc
 		// Call the DateTrunc function
 		return e.DateTrunc(precision, truncateValue)
 
-	case FuncYEAR, FuncMONTH, FuncDAY, FuncHOUR, FuncMINUTE, FuncSECOND, FuncQUARTER:
-		// Simple date part extraction functions - require exactly 1 argument
-		if len(funcExpr.Exprs) != 1 {
-			return nil, fmt.Errorf("%s function expects exactly 1 argument (datetime_value), got %d", funcName, len(funcExpr.Exprs))
-		}
-
-		// Get the argument (datetime value to extract from)
-		var datetimeValue *schema_pb.Value
-		if aliasedExpr, ok := funcExpr.Exprs[0].(*AliasedExpr); ok {
-			var err error
-			datetimeValue, err = e.evaluateExpressionValue(aliasedExpr.Expr, result)
-			if err != nil {
-				return nil, fmt.Errorf("error evaluating %s datetime argument: %v", funcName, err)
-			}
-		} else {
-			return nil, fmt.Errorf("unsupported %s datetime argument type", funcName)
-		}
-
-		if datetimeValue == nil {
-			return nil, nil // NULL input produces NULL output
-		}
-
-		// Map function name to DatePart and call Extract
-		var datePart DatePart
-		switch funcName {
-		case FuncYEAR:
-			datePart = PartYear
-		case FuncMONTH:
-			datePart = PartMonth
-		case FuncDAY:
-			datePart = PartDay
-		case FuncHOUR:
-			datePart = PartHour
-		case FuncMINUTE:
-			datePart = PartMinute
-		case FuncSECOND:
-			datePart = PartSecond
-		case FuncQUARTER:
-			datePart = PartQuarter
-		}
-
-		// Call the Extract function with the appropriate date part
-		return e.Extract(datePart, datetimeValue)
+	// PostgreSQL uses EXTRACT(part FROM date) instead of convenience functions like YEAR(date)
 
 	default:
 		return nil, fmt.Errorf("unsupported datetime function: %s", funcName)
@@ -4450,20 +4397,7 @@ func (e *SQLEngine) evaluateColumnNameAsFunction(columnName string, result Hybri
 		return e.LTrim(argValue)
 	case FuncRTRIM:
 		return e.RTrim(argValue)
-	case FuncYEAR:
-		return e.Extract(PartYear, argValue)
-	case FuncMONTH:
-		return e.Extract(PartMonth, argValue)
-	case FuncDAY:
-		return e.Extract(PartDay, argValue)
-	case FuncHOUR:
-		return e.Extract(PartHour, argValue)
-	case FuncMINUTE:
-		return e.Extract(PartMinute, argValue)
-	case FuncSECOND:
-		return e.Extract(PartSecond, argValue)
-	case FuncQUARTER:
-		return e.Extract(PartQuarter, argValue)
+	// PostgreSQL-only: Use EXTRACT(YEAR FROM date) instead of YEAR(date)
 	default:
 		return nil, fmt.Errorf("unsupported function in column name: %s", funcName)
 	}
