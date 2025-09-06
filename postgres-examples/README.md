@@ -168,7 +168,7 @@ SELECT * FROM my_topic;
 SELECT id, message FROM my_topic WHERE id > 1000;
 
 -- With LIMIT
-SELECT * FROM my_topic ORDER BY _timestamp_ns DESC LIMIT 100;
+SELECT * FROM my_topic LIMIT 100;
 ```
 
 ### Aggregations

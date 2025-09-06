@@ -7,7 +7,7 @@ This document outlines the plan for adding SQL querying support to SeaweedFS, fo
 **1. Goal**
 
 To provide a SQL querying interface for SeaweedFS, enabling analytics on existing MQ topics. This enables:
-- Advanced querying with SELECT, WHERE, JOIN, aggregations on MQ topics
+- Basic querying with SELECT, WHERE, aggregations on MQ topics
 - Schema discovery and metadata operations (SHOW DATABASES, SHOW TABLES, DESCRIBE)
 - In-place analytics on Parquet-stored messages without data movement
 
@@ -18,11 +18,9 @@ To provide a SQL querying interface for SeaweedFS, enabling analytics on existin
     *   `SHOW TABLES` - List all topics in a namespace  
     *   `DESCRIBE table_name` - Show topic schema details
     *   Automatic schema detection from existing Parquet data
-*   **Advanced Query Engine:**
-    *   Full `SELECT` support with `WHERE`, `ORDER BY`, `LIMIT`, `OFFSET`
-    *   Aggregation functions: `COUNT()`, `SUM()`, `AVG()`, `MIN()`, `MAX()`, `GROUP BY`
-    *   Join operations between topics (leveraging Parquet columnar format)
-    *   Window functions and advanced analytics
+*   **Basic Query Engine:**
+    *   `SELECT` support with `WHERE`, `LIMIT`, `OFFSET`
+    *   Aggregation functions: `COUNT()`, `SUM()`, `AVG()`, `MIN()`, `MAX()`
     *   Temporal queries with timestamp-based filtering
 *   **User Interfaces:**
     *   New CLI command `weed sql` with interactive shell mode
@@ -79,40 +77,29 @@ DESCRIBE user_events;
 SELECT user_id, event_type, timestamp 
 FROM user_events 
 WHERE timestamp > 1640995200000 
-ORDER BY timestamp DESC 
 LIMIT 100;
 
--- Aggregation queries
-SELECT event_type, COUNT(*) as event_count
+-- Aggregation queries  
+SELECT COUNT(*) as event_count
 FROM user_events 
-WHERE timestamp >= 1640995200000
-GROUP BY event_type;
+WHERE timestamp >= 1640995200000;
 
--- Cross-topic joins
-SELECT u.user_id, u.event_type, p.product_name
-FROM user_events u
-JOIN product_catalog p ON u.product_id = p.id
-WHERE u.event_type = 'purchase';
+-- More aggregation examples
+SELECT MAX(timestamp), MIN(timestamp) 
+FROM user_events;
 ```
 
 **Scenario 3: Analytics & Monitoring**
 ```sql
--- Time-series analysis
-SELECT 
-    DATE_TRUNC('hour', FROM_UNIXTIME(timestamp/1000)) as hour,
-    COUNT(*) as events_per_hour
+-- Basic analytics
+SELECT COUNT(*) as total_events
 FROM user_events 
-WHERE timestamp >= 1640995200000
-GROUP BY hour
-ORDER BY hour;
+WHERE timestamp >= 1640995200000;
 
--- Real-time monitoring
-SELECT event_type, AVG(response_time) as avg_response
+-- Simple monitoring
+SELECT AVG(response_time) as avg_response
 FROM api_logs
-WHERE timestamp >= EXTRACT(EPOCH FROM NOW()) - 3600
-GROUP BY event_type
-HAVING avg_response > 1000;
-```
+WHERE timestamp >= 1640995200000;
 
 ## Architecture Overview
 

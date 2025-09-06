@@ -49,7 +49,7 @@ postgres=> SHOW DATABASES;
 postgres=> USE analytics;
 postgres=> SHOW TABLES;
 postgres=> SELECT COUNT(*) FROM user_events;
-postgres=> SELECT user_type, COUNT(*) FROM user_events GROUP BY user_type;
+postgres=> SELECT COUNT(*) FROM user_events;
 postgres=> \q
 ```
 
@@ -160,7 +160,7 @@ The producer creates realistic test data across multiple namespaces:
 
 ### 5. Aggregation Queries
 - `COUNT(*)`, `SUM()`, `AVG()`, `MIN()`, `MAX()`
-- `GROUP BY` operations
+- Aggregation operations
 - Statistical analysis
 
 ### 6. Database Context Switching
@@ -174,7 +174,7 @@ The producer creates realistic test data across multiple namespaces:
 
 ### 8. Complex Queries
 - `WHERE` clauses with comparisons
-- `ORDER BY` and `LIMIT`
+- `LIMIT`
 - Multi-condition filtering
 
 ## Expected Results
@@ -224,32 +224,26 @@ SELECT * FROM user_events LIMIT 5;
 
 -- Aggregations
 SELECT 
-    user_type,
     COUNT(*) as events,
     AVG(amount) as avg_amount
 FROM user_events 
-WHERE amount IS NOT NULL
-GROUP BY user_type
-ORDER BY events DESC;
+WHERE amount IS NOT NULL;
 
 -- Time-based analysis
 SELECT 
-    action,
     COUNT(*) as count
 FROM user_events 
-WHERE status = 'active'
-GROUP BY action
-ORDER BY count DESC;
+WHERE status = 'active';
 ```
 
 ### Cross-Namespace Analysis
 ```sql
 -- Switch between namespaces
 USE ecommerce;
-SELECT category, COUNT(*) FROM product_views GROUP BY category;
+SELECT COUNT(*) FROM product_views;
 
 USE logs;  
-SELECT level, COUNT(*) FROM application_logs GROUP BY level;
+SELECT COUNT(*) FROM application_logs;
 ```
 
 ## Troubleshooting

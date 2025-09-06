@@ -139,9 +139,8 @@ The test client validates:
 
 ### 4. Advanced SQL Features
 - ✅ Aggregation functions (COUNT, SUM, AVG, MIN, MAX)
-- ✅ GROUP BY operations with real data
 - ✅ WHERE clauses with comparisons
-- ✅ ORDER BY and LIMIT functionality
+- ✅ LIMIT functionality
 
 ### 5. Database Context Management
 - ✅ USE database commands
@@ -239,33 +238,23 @@ SELECT * FROM user_events WHERE user_type = 'premium' LIMIT 5;
 ```sql
 -- User behavior analysis
 SELECT 
-    user_type,
     COUNT(*) as events,
     AVG(amount) as avg_amount
 FROM user_events 
-WHERE amount IS NOT NULL
-GROUP BY user_type
-ORDER BY events DESC;
+WHERE amount IS NOT NULL;
 
 -- System health monitoring
 USE logs;
 SELECT 
-    level,
-    COUNT(*) as count,
-    COUNT(*) * 100.0 / SUM(COUNT(*)) OVER () as percentage
-FROM application_logs 
-GROUP BY level
-ORDER BY count DESC;
+    COUNT(*) as count
+FROM application_logs;
 
 -- Cross-namespace analysis
 USE ecommerce;
 SELECT 
-    category,
     COUNT(*) as views,
     AVG(price) as avg_price
-FROM product_views 
-GROUP BY category
-ORDER BY views DESC;
+FROM product_views;
 ```
 
 ## 🎯 Production Validation
