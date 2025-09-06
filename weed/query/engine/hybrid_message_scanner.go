@@ -230,11 +230,11 @@ func (hms *HybridMessageScanner) ScanWithStats(ctx context.Context, options Hybr
 		// When OFFSET is used, collect more data to ensure we have enough after skipping
 		// Note: OFFSET will be applied at the end to avoid double-application
 		if options.Limit > 0 {
-			// Collect more data when offset is involved to ensure sufficient results
+			// Collect exact amount needed: LIMIT + OFFSET (no excessive doubling)
 			minRequired := options.Limit + options.Offset
-			if options.Offset > 0 {
-				// When offset is used, collect extra buffer to handle edge cases
-				minRequired = minRequired * 2
+			// Small buffer only when needed to handle edge cases in distributed scanning
+			if options.Offset > 0 && minRequired < 10 {
+				minRequired = minRequired + 1 // Add 1 extra row buffer, not doubling
 			}
 			if len(results) >= minRequired {
 				break
@@ -367,13 +367,13 @@ func (hms *HybridMessageScanner) scanUnflushedDataWithStats(ctx context.Context,
 
 		results = append(results, result)
 
-		// Apply limit (accounting for offset) - collect more data than needed
+		// Apply limit (accounting for offset) - collect exact amount needed
 		if options.Limit > 0 {
-			// Ensure we collect enough data for proper OFFSET and LIMIT application
+			// Collect exact amount needed: LIMIT + OFFSET (no excessive doubling)
 			minRequired := options.Limit + options.Offset
-			if options.Offset > 0 {
-				// When offset is used, collect extra buffer to handle edge cases
-				minRequired = minRequired * 2
+			// Small buffer only when needed to handle edge cases in message streaming
+			if options.Offset > 0 && minRequired < 10 {
+				minRequired = minRequired + 1 // Add 1 extra row buffer, not doubling
 			}
 			if len(results) >= minRequired {
 				break
@@ -531,7 +531,14 @@ func (hms *HybridMessageScanner) scanPartitionHybridWithStats(ctx context.Contex
 	// STEP 3: Use streaming merge for memory-efficient chronological ordering
 	var results []HybridScanResult
 	if len(dataSources) > 0 {
-		mergedResults, err := hms.streamingMerge(dataSources, options.Limit)
+		// Calculate how many rows we need to collect during scanning (before OFFSET/LIMIT)
+		// For LIMIT N OFFSET M, we need to collect at least N+M rows
+		scanLimit := options.Limit
+		if options.Limit > 0 && options.Offset > 0 {
+			scanLimit = options.Limit + options.Offset
+		}
+
+		mergedResults, err := hms.streamingMerge(dataSources, scanLimit)
 		if err != nil {
 			return nil, stats, fmt.Errorf("streaming merge failed: %v", err)
 		}

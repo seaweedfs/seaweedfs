@@ -574,34 +574,92 @@ func (e *TestSQLEngine) isHybridQuery(stmt *SelectStatement, sql string) bool {
 	return false
 }
 
-// isAggregationQuery determines if this is an aggregation query like COUNT(*)
+// isAggregationQuery determines if this is an aggregation query (COUNT, MAX, MIN, SUM, AVG)
 func (e *TestSQLEngine) isAggregationQuery(stmt *SelectStatement, sql string) bool {
 	upperSQL := strings.ToUpper(sql)
-	return strings.Contains(upperSQL, "COUNT(")
-}
-
-// handleAggregationQuery handles COUNT and other aggregation queries
-func (e *TestSQLEngine) handleAggregationQuery(tableName string, stmt *SelectStatement, sql string) (*QueryResult, error) {
-	// Get sample data to count
-	allSampleData := generateSampleHybridData(tableName, HybridScanOptions{})
-
-	// For regular COUNT queries, only count live_log data (mock environment behavior)
-	var dataToCount []HybridScanResult
-	includeArchived := e.isHybridQuery(stmt, sql)
-	if includeArchived {
-		dataToCount = allSampleData
-	} else {
-		for _, result := range allSampleData {
-			if result.Source == "live_log" {
-				dataToCount = append(dataToCount, result)
-			}
+	// Check for all aggregation functions
+	aggregationFunctions := []string{"COUNT(", "MAX(", "MIN(", "SUM(", "AVG("}
+	for _, funcName := range aggregationFunctions {
+		if strings.Contains(upperSQL, funcName) {
+			return true
 		}
 	}
+	return false
+}
 
-	// Create aggregation result
-	count := len(dataToCount)
+// handleAggregationQuery handles COUNT, MAX, MIN, SUM, AVG and other aggregation queries
+func (e *TestSQLEngine) handleAggregationQuery(tableName string, stmt *SelectStatement, sql string) (*QueryResult, error) {
+	// Get sample data for aggregation
+	allSampleData := generateSampleHybridData(tableName, HybridScanOptions{})
+
+	// Determine aggregation type from SQL
+	upperSQL := strings.ToUpper(sql)
+	var result sqltypes.Value
+	var columnName string
+
+	if strings.Contains(upperSQL, "COUNT(") {
+		// COUNT aggregation - return count of all rows
+		result = sqltypes.NewInt64(int64(len(allSampleData)))
+		columnName = "COUNT(*)"
+	} else if strings.Contains(upperSQL, "MAX(") {
+		// MAX aggregation - find maximum value
+		columnName = "MAX(id)" // Default assumption
+		maxVal := int64(0)
+		for _, row := range allSampleData {
+			if idVal := row.Values["id"]; idVal != nil {
+				if intVal := idVal.GetInt64Value(); intVal > maxVal {
+					maxVal = intVal
+				}
+			}
+		}
+		result = sqltypes.NewInt64(maxVal)
+	} else if strings.Contains(upperSQL, "MIN(") {
+		// MIN aggregation - find minimum value
+		columnName = "MIN(id)"     // Default assumption
+		minVal := int64(999999999) // Start with large number
+		for _, row := range allSampleData {
+			if idVal := row.Values["id"]; idVal != nil {
+				if intVal := idVal.GetInt64Value(); intVal < minVal {
+					minVal = intVal
+				}
+			}
+		}
+		result = sqltypes.NewInt64(minVal)
+	} else if strings.Contains(upperSQL, "SUM(") {
+		// SUM aggregation - sum all values
+		columnName = "SUM(id)" // Default assumption
+		sumVal := int64(0)
+		for _, row := range allSampleData {
+			if idVal := row.Values["id"]; idVal != nil {
+				sumVal += idVal.GetInt64Value()
+			}
+		}
+		result = sqltypes.NewInt64(sumVal)
+	} else if strings.Contains(upperSQL, "AVG(") {
+		// AVG aggregation - average of all values
+		columnName = "AVG(id)" // Default assumption
+		sumVal := int64(0)
+		count := 0
+		for _, row := range allSampleData {
+			if idVal := row.Values["id"]; idVal != nil {
+				sumVal += idVal.GetInt64Value()
+				count++
+			}
+		}
+		if count > 0 {
+			result = sqltypes.NewFloat64(float64(sumVal) / float64(count))
+		} else {
+			result = sqltypes.NewInt64(0)
+		}
+	} else {
+		// Fallback - treat as COUNT
+		result = sqltypes.NewInt64(int64(len(allSampleData)))
+		columnName = "COUNT(*)"
+	}
+
+	// Create aggregation result (single row with single column)
 	aggregationRows := [][]sqltypes.Value{
-		{sqltypes.NewInt64(int64(count))},
+		{result},
 	}
 
 	// Parse LIMIT and OFFSET
@@ -626,7 +684,7 @@ func (e *TestSQLEngine) handleAggregationQuery(tableName string, stmt *SelectSta
 	}
 
 	return &QueryResult{
-		Columns: []string{"COUNT(*)"},
+		Columns: []string{columnName},
 		Rows:    aggregationRows,
 	}, nil
 }

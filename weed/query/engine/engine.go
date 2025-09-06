@@ -1677,6 +1677,7 @@ func (e *SQLEngine) executeSelectStatement(ctx context.Context, stmt *SelectStat
 	var aggregations []AggregationSpec
 	selectAll := false
 	hasAggregations := false
+	_ = hasAggregations // Used later in aggregation routing
 	// Track required base columns for arithmetic expressions
 	baseColumnsSet := make(map[string]bool)
 
@@ -1916,6 +1917,7 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 	var aggregations []AggregationSpec
 	selectAll := false
 	hasAggregations := false
+	_ = hasAggregations // Used later in aggregation routing
 	// Track required base columns for arithmetic expressions
 	baseColumnsSet := make(map[string]bool)
 
@@ -4132,7 +4134,9 @@ func (e *SQLEngine) extractBaseColumnsFromExpression(expr ExprNode, baseColumnsS
 
 // isAggregationFunction checks if a function name is an aggregation function
 func (e *SQLEngine) isAggregationFunction(funcName string) bool {
-	switch funcName {
+	// Convert to uppercase for case-insensitive comparison
+	upperFuncName := strings.ToUpper(funcName)
+	switch upperFuncName {
 	case FuncCOUNT, FuncSUM, FuncAVG, FuncMIN, FuncMAX:
 		return true
 	default:

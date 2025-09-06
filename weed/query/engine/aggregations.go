@@ -393,56 +393,56 @@ func (e *SQLEngine) executeAggregationQueryWithPlan(ctx context.Context, hybridS
 		startTimeNs, stopTimeNs = e.extractTimeFilters(stmt.Where.Expr)
 	}
 
-	// FAST PATH: Try to use parquet statistics for optimization
-	// This can be ~130x faster than scanning all data
-	if stmt.Where == nil { // Only optimize when no complex WHERE clause
-		fastResult, canOptimize := e.tryFastParquetAggregation(ctx, hybridScanner, aggregations)
-		if canOptimize {
-			if isDebugMode(ctx) {
-				fmt.Printf("Using fast hybrid statistics for aggregation (parquet stats + live log counts)\n")
-			}
-
-			// Apply OFFSET and LIMIT to fast path results too
-			// Limit semantics: -1 = no limit, 0 = LIMIT 0 (empty), >0 = limit to N rows
-			if offset > 0 || limit >= 0 {
-				rows := fastResult.Rows
-				// Handle LIMIT 0 first
-				if limit == 0 {
-					rows = [][]sqltypes.Value{}
-				} else {
-					// Apply OFFSET first
-					if offset > 0 {
-						if offset >= len(rows) {
-							rows = [][]sqltypes.Value{}
-						} else {
-							rows = rows[offset:]
-						}
-					}
-					// Apply LIMIT after OFFSET (only if limit > 0)
-					if limit > 0 && len(rows) > limit {
-						rows = rows[:limit]
-					}
-				}
-				fastResult.Rows = rows
-			}
-
-			return fastResult, nil
-		}
-	}
+	// FAST PATH DISABLED: The fast path has bugs where parquet statistics and live log counting
+	// return incorrect results (0 or partial counts) while regular scanning works correctly.
+	// Until the fast path data discovery is fixed to match regular scan behavior, we force
+	// all aggregation queries to use the reliable scanning path.
+	//
+	// TODO: Fix fast path data collection to match hybridScanner.Scan() behavior
+	//
+	// Original fast path code (disabled):
+	// if stmt.Where == nil {
+	//     fastResult, canOptimize := e.tryFastParquetAggregation(ctx, hybridScanner, aggregations)
+	//     if canOptimize {
+	//         return fastResult, nil
+	//     }
+	// }
 
 	// SLOW PATH: Fall back to full table scan
 	if isDebugMode(ctx) {
 		fmt.Printf("Using full table scan for aggregation (parquet optimization not applicable)\n")
 	}
 
+	// Extract columns needed for aggregations
+	columnsNeeded := make(map[string]bool)
+	for _, spec := range aggregations {
+		if spec.Column != "*" {
+			columnsNeeded[spec.Column] = true
+		}
+	}
+
+	// Convert to slice
+	var scanColumns []string
+	if len(columnsNeeded) > 0 {
+		scanColumns = make([]string, 0, len(columnsNeeded))
+		for col := range columnsNeeded {
+			scanColumns = append(scanColumns, col)
+		}
+	}
+	// If no specific columns needed (COUNT(*) only), don't specify columns (scan all)
+
 	// Build scan options for full table scan (aggregations need all data during scanning)
 	hybridScanOptions := HybridScanOptions{
 		StartTimeNs: startTimeNs,
 		StopTimeNs:  stopTimeNs,
-		Limit:       0, // No limit during scanning - need all data for aggregation
-		Offset:      0, // No offset during scanning - OFFSET applies to final results
+		Limit:       -1, // Use -1 to mean "no limit" - need all data for aggregation
+		Offset:      0,  // No offset during scanning - OFFSET applies to final results
 		Predicate:   predicate,
+		Columns:     scanColumns, // Include columns needed for aggregation functions
 	}
+
+	// DEBUG: Log scan options for aggregation
+	debugHybridScanOptions(ctx, hybridScanOptions, "AGGREGATION")
 
 	// Execute the hybrid scan to get all matching records
 	var results []HybridScanResult
@@ -481,6 +481,11 @@ func (e *SQLEngine) executeAggregationQueryWithPlan(ctx context.Context, hybridS
 		if err != nil {
 			return &QueryResult{Error: err}, err
 		}
+	}
+
+	// DEBUG: Log scan results
+	if isDebugMode(ctx) {
+		fmt.Printf("AGGREGATION SCAN RESULTS: %d rows returned\n", len(results))
 	}
 
 	// Compute aggregations
@@ -681,5 +686,19 @@ func (e *SQLEngine) canUseParquetStatsForAggregation(spec AggregationSpec) bool 
 		return false
 	default:
 		return false
+	}
+}
+
+// debugHybridScanOptions logs the exact scan options being used
+func debugHybridScanOptions(ctx context.Context, options HybridScanOptions, queryType string) {
+	if isDebugMode(ctx) {
+		fmt.Printf("\n=== HYBRID SCAN OPTIONS DEBUG (%s) ===\n", queryType)
+		fmt.Printf("StartTimeNs: %d\n", options.StartTimeNs)
+		fmt.Printf("StopTimeNs: %d\n", options.StopTimeNs)
+		fmt.Printf("Limit: %d\n", options.Limit)
+		fmt.Printf("Offset: %d\n", options.Offset)
+		fmt.Printf("Predicate: %v\n", options.Predicate != nil)
+		fmt.Printf("Columns: %v\n", options.Columns)
+		fmt.Printf("==========================================\n")
 	}
 }
