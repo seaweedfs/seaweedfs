@@ -79,6 +79,31 @@ func (p *CockroachSQLParser) convertSelectStatement(crdbSelect *tree.Select) (*S
 		}
 	}
 
+	// Convert LIMIT and OFFSET clauses if present
+	if crdbSelect.Limit != nil {
+		limitClause := &LimitClause{}
+
+		// Convert LIMIT (Count)
+		if crdbSelect.Limit.Count != nil {
+			countExpr, err := p.convertExpr(crdbSelect.Limit.Count)
+			if err != nil {
+				return nil, fmt.Errorf("failed to convert LIMIT clause: %v", err)
+			}
+			limitClause.Rowcount = countExpr
+		}
+
+		// Convert OFFSET
+		if crdbSelect.Limit.Offset != nil {
+			offsetExpr, err := p.convertExpr(crdbSelect.Limit.Offset)
+			if err != nil {
+				return nil, fmt.Errorf("failed to convert OFFSET clause: %v", err)
+			}
+			limitClause.Offset = offsetExpr
+		}
+
+		seaweedSelect.Limit = limitClause
+	}
+
 	return seaweedSelect, nil
 }
 
