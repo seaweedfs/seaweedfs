@@ -60,12 +60,15 @@ func (p *CockroachSQLParser) convertSelectStatement(crdbSelect *tree.Select) (*S
 		seaweedSelect.SelectExprs = append(seaweedSelect.SelectExprs, seaweedExpr)
 	}
 
-	// TODO: Convert FROM clause - temporarily disabled for compilation
-	// Will fix this after understanding CockroachDB's tree.From structure
-	seaweedSelect.From = []TableExpr{
-		&AliasedTableExpr{
-			Expr: TableName{Name: stringValue("user_events")}, // Hardcoded for now
-		},
+	// Convert FROM clause
+	if len(selectClause.From.Tables) > 0 {
+		for _, fromExpr := range selectClause.From.Tables {
+			seaweedTableExpr, err := p.convertFromExpr(fromExpr)
+			if err != nil {
+				return nil, fmt.Errorf("failed to convert FROM clause: %v", err)
+			}
+			seaweedSelect.From = append(seaweedSelect.From, seaweedTableExpr)
+		}
 	}
 
 	// Convert WHERE clause if present
@@ -275,6 +278,8 @@ func (p *CockroachSQLParser) convertFromExpr(expr tree.TableExpr) (TableExpr, er
 			Name: stringValue(e.Table()),
 		}
 
+		// Extract database qualifier if present
+
 		if e.Schema() != "" {
 			tableName.Qualifier = stringValue(e.Schema())
 		}
@@ -282,6 +287,25 @@ func (p *CockroachSQLParser) convertFromExpr(expr tree.TableExpr) (TableExpr, er
 		return &AliasedTableExpr{
 			Expr: tableName,
 		}, nil
+
+	case *tree.AliasedTableExpr:
+		// Handle aliased table expressions (which is what CockroachDB uses for qualified names)
+		if tableName, ok := e.Expr.(*tree.TableName); ok {
+			seaweedTableName := TableName{
+				Name: stringValue(tableName.Table()),
+			}
+
+			// Extract database qualifier if present
+			if tableName.Schema() != "" {
+				seaweedTableName.Qualifier = stringValue(tableName.Schema())
+			}
+
+			return &AliasedTableExpr{
+				Expr: seaweedTableName,
+			}, nil
+		}
+
+		return nil, fmt.Errorf("unsupported expression in AliasedTableExpr: %T", e.Expr)
 
 	default:
 		return nil, fmt.Errorf("unsupported table expression type: %T", e)
