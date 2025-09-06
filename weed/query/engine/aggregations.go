@@ -112,14 +112,22 @@ func (opt *FastPathOptimizer) CollectDataSources(ctx context.Context, hybridScan
 		liveLogCount, _ := opt.engine.countLiveLogRowsExcludingParquetSources(ctx, partitionPath, parquetSources)
 		dataSources.LiveLogRowCount += liveLogCount
 
-		// Count live log files for partition
-		partition := topic.Partition{
-			RangeStart: 0,    // This will be properly set in a full implementation
-			RangeStop:  1000, // This will be properly set in a full implementation
-		}
-		liveLogFileCount, err := hybridScanner.countLiveLogFiles(partition)
-		if err == nil {
-			dataSources.LiveLogFilesCount += liveLogFileCount
+		// Count live log files for partition with proper range values
+		// Parse the relative partition to get actual range values
+		partitionParts := strings.Split(relPartition, "-")
+		if len(partitionParts) == 2 {
+			rangeStart, err1 := strconv.Atoi(partitionParts[0])
+			rangeStop, err2 := strconv.Atoi(partitionParts[1])
+			if err1 == nil && err2 == nil {
+				partition := topic.Partition{
+					RangeStart: int32(rangeStart),
+					RangeStop:  int32(rangeStop),
+				}
+				liveLogFileCount, err := hybridScanner.countLiveLogFiles(partition)
+				if err == nil {
+					dataSources.LiveLogFilesCount += liveLogFileCount
+				}
+			}
 		}
 	}
 
@@ -393,14 +401,12 @@ func (e *SQLEngine) executeAggregationQueryWithPlan(ctx context.Context, hybridS
 		startTimeNs, stopTimeNs = e.extractTimeFilters(stmt.Where.Expr)
 	}
 
-	// FAST PATH DISABLED: The fast path has bugs where parquet statistics and live log counting
-	// return incorrect results (0 or partial counts) while regular scanning works correctly.
-	// Until the fast path data discovery is fixed to match regular scan behavior, we force
-	// all aggregation queries to use the reliable scanning path.
+	// FAST PATH TEMPORARILY DISABLED: Still investigating data counting issues
+	// The fast path returns 0 for COUNT(*) even after fixes, indicating deeper issues
+	// with data source discovery or partition parsing logic.
 	//
-	// TODO: Fix fast path data collection to match hybridScanner.Scan() behavior
+	// TODO: Debug why fast path data collection returns 0 rows when slow path returns 1803
 	//
-	// Original fast path code (disabled):
 	// if stmt.Where == nil {
 	//     fastResult, canOptimize := e.tryFastParquetAggregation(ctx, hybridScanner, aggregations)
 	//     if canOptimize {
@@ -578,6 +584,29 @@ func (e *SQLEngine) tryFastParquetAggregation(ctx context.Context, hybridScanner
 	aggResults, err := computer.ComputeFastPathAggregations(ctx, aggregations, dataSources, partitions)
 	if err != nil {
 		return nil, false
+	}
+
+	// Step 3.5: Validate fast path results (safety check)
+	// For simple COUNT(*) queries, ensure we got a reasonable result
+	if len(aggregations) == 1 && aggregations[0].Function == FuncCOUNT && aggregations[0].Column == "*" {
+		totalRows := dataSources.ParquetRowCount + dataSources.LiveLogRowCount
+		if totalRows == 0 && aggResults[0].Count > 0 {
+			// Fast path found data but data sources show 0 - this suggests a bug
+			if isDebugMode(ctx) {
+				fmt.Printf("Fast path validation failed: COUNT result %d but data sources show 0 rows\n", aggResults[0].Count)
+			}
+			return nil, false
+		}
+		if totalRows > 0 && aggResults[0].Count == 0 {
+			// Data sources show data but COUNT is 0 - this also suggests a bug
+			if isDebugMode(ctx) {
+				fmt.Printf("Fast path validation failed: Data sources show %d rows but COUNT result is 0\n", totalRows)
+			}
+			return nil, false
+		}
+		if isDebugMode(ctx) {
+			fmt.Printf("Fast path validation passed: COUNT=%d, DataSources=%d\n", aggResults[0].Count, totalRows)
+		}
 	}
 
 	// Step 4: Build final query result
