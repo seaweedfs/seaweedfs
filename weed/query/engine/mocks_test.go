@@ -514,8 +514,11 @@ func (e *TestSQLEngine) generateTestQueryResult(tableName string, stmt *SelectSt
 				if value, err := e.evaluateFunctionExpression(funcExpr, result); err == nil && value != nil {
 					row = append(row, convertSchemaValueToSQLValue(value))
 				} else {
-					// Check if this is a validation error (wrong argument count, etc.)
-					if err != nil && (strings.Contains(err.Error(), "expects exactly") || strings.Contains(err.Error(), "argument")) {
+					// Check if this is a validation error (wrong argument count, unsupported parts/precision, etc.)
+					if err != nil && (strings.Contains(err.Error(), "expects exactly") ||
+						strings.Contains(err.Error(), "argument") ||
+						strings.Contains(err.Error(), "unsupported date part") ||
+						strings.Contains(err.Error(), "unsupported date truncation precision")) {
 						// For validation errors, return the error to the caller instead of using fallback
 						return &QueryResult{Error: err}, err
 					}

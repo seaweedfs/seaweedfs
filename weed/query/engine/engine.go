@@ -4293,7 +4293,20 @@ func (e *SQLEngine) getDateTimeFunctionAlias(funcExpr *FuncExpr) string {
 		return strings.ToLower(funcName)
 	}
 
-	// Handle multi-argument functions like EXTRACT, DATE_TRUNC
+	// Handle EXTRACT function specially to create unique aliases
+	if strings.ToUpper(funcName) == "EXTRACT" && len(funcExpr.Exprs) == 2 {
+		// Try to extract the date part to make the alias unique
+		if aliasedExpr, ok := funcExpr.Exprs[0].(*AliasedExpr); ok {
+			if sqlVal, ok := aliasedExpr.Expr.(*SQLVal); ok && sqlVal.Type == StrVal {
+				datePart := strings.ToLower(string(sqlVal.Val))
+				return fmt.Sprintf("extract_%s", datePart)
+			}
+		}
+		// Fallback to generic if we can't extract the date part
+		return fmt.Sprintf("%s(...)", funcName)
+	}
+
+	// Handle other multi-argument functions like DATE_TRUNC
 	if len(funcExpr.Exprs) == 2 {
 		return fmt.Sprintf("%s(...)", funcName)
 	}

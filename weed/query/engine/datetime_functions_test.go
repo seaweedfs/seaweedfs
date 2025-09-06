@@ -715,7 +715,7 @@ func TestExtractFunctionSQL(t *testing.T) {
 		},
 		{
 			name:        "Multiple EXTRACT functions",
-			sql:         "SELECT EXTRACT('YEAR', current_date) AS year_val, EXTRACT('MONTH', current_date) AS month_val, EXTRACT('DAY', current_date) AS day_val FROM user_events LIMIT 1",
+			sql:         "SELECT EXTRACT(YEAR FROM current_date) AS year_val, EXTRACT(MONTH FROM current_date) AS month_val, EXTRACT(DAY FROM current_date) AS day_val FROM user_events LIMIT 1",
 			expectError: false,
 			checkValue: func(t *testing.T, result *QueryResult) {
 				if len(result.Rows) == 0 {
