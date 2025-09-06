@@ -37,7 +37,7 @@ const (
 	FuncLOWER     = "LOWER"
 	FuncLENGTH    = "LENGTH"
 	FuncTRIM      = "TRIM"
-	FuncBTRIM     = "BTRIM"  // CockroachDB's internal name for TRIM
+	FuncBTRIM     = "BTRIM" // CockroachDB's internal name for TRIM
 	FuncLTRIM     = "LTRIM"
 	FuncRTRIM     = "RTRIM"
 	FuncSUBSTRING = "SUBSTRING"
