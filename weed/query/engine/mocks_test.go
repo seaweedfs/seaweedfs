@@ -321,8 +321,14 @@ func (e *TestSQLEngine) generateTestQueryResult(tableName string, stmt *SelectSt
 						// Map the alias back to the function expression key for evaluation
 						e.funcExpressions[aliasName] = funcExpr
 					} else {
-						// Use proper function alias like UPPER(status) instead of just function name
-						functionAlias := e.getStringFunctionAlias(funcExpr)
+						// Use proper function alias based on function type
+						funcName := strings.ToUpper(funcExpr.Name.String())
+						var functionAlias string
+						if e.isDateTimeFunction(funcName) {
+							functionAlias = e.getDateTimeFunctionAlias(funcExpr)
+						} else {
+							functionAlias = e.getStringFunctionAlias(funcExpr)
+						}
 						columns = append(columns, functionAlias)
 						// Map the function alias to the expression for evaluation
 						e.funcExpressions[functionAlias] = funcExpr
@@ -1096,7 +1102,7 @@ func (e *TestSQLEngine) evaluateFunctionExpression(funcExpr *FuncExpr, result Hy
 	funcName := strings.ToUpper(funcExpr.Name.String())
 
 	// Route to appropriate function evaluator based on function type
-	if funcName == FuncEXTRACT || funcName == FuncDATE_TRUNC {
+	if e.isDateTimeFunction(funcName) {
 		// Use datetime function evaluator
 		return e.evaluateDateTimeFunction(funcExpr, result)
 	} else {

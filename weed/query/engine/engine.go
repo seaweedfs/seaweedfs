@@ -1723,6 +1723,11 @@ func (e *SQLEngine) executeSelectStatement(ctx context.Context, stmt *SelectStat
 					columns = append(columns, e.getStringFunctionAlias(col))
 					// Extract base columns needed for this string function
 					e.extractBaseColumnsFromFunction(col, baseColumnsSet)
+				} else if e.isDateTimeFunction(funcName) {
+					// Handle datetime functions like CURRENT_DATE, NOW, EXTRACT, DATE_TRUNC
+					columns = append(columns, e.getDateTimeFunctionAlias(col))
+					// Extract base columns needed for this datetime function
+					e.extractBaseColumnsFromFunction(col, baseColumnsSet)
 				} else {
 					return &QueryResult{Error: fmt.Errorf("unsupported function: %s", funcName)}, fmt.Errorf("unsupported function: %s", funcName)
 				}
@@ -1955,6 +1960,11 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 					// Handle string functions like UPPER, LENGTH, etc.
 					columns = append(columns, e.getStringFunctionAlias(col))
 					// Extract base columns needed for this string function
+					e.extractBaseColumnsFromFunction(col, baseColumnsSet)
+				} else if e.isDateTimeFunction(funcName) {
+					// Handle datetime functions like CURRENT_DATE, NOW, EXTRACT, DATE_TRUNC
+					columns = append(columns, e.getDateTimeFunctionAlias(col))
+					// Extract base columns needed for this datetime function
 					e.extractBaseColumnsFromFunction(col, baseColumnsSet)
 				} else {
 					return &QueryResult{Error: fmt.Errorf("unsupported function: %s", funcName)}, fmt.Errorf("unsupported function: %s", funcName)
@@ -4000,7 +4010,7 @@ func (e *SQLEngine) evaluateExpressionValue(expr ExprNode, result HybridScanResu
 		funcName := strings.ToUpper(exprType.Name.String())
 
 		// Route to appropriate function evaluator based on function type
-		if funcName == FuncEXTRACT || funcName == FuncDATE_TRUNC {
+		if e.isDateTimeFunction(funcName) {
 			// Use datetime function evaluator
 			return e.evaluateDateTimeFunction(exprType, result)
 		} else {
@@ -4168,7 +4178,7 @@ func (e *SQLEngine) ConvertToSQLResultWithExpressions(hms *HybridMessageScanner,
 					var err error
 
 					// Check if it's a datetime function
-					if funcName == FuncEXTRACT || funcName == FuncDATE_TRUNC {
+					if e.isDateTimeFunction(funcName) {
 						value, err = e.evaluateDateTimeFunction(col, result)
 					} else {
 						// Default to string function evaluator
@@ -4250,6 +4260,16 @@ func (e *SQLEngine) isStringFunction(funcName string) bool {
 	}
 }
 
+// isDateTimeFunction checks if a function name is a datetime function
+func (e *SQLEngine) isDateTimeFunction(funcName string) bool {
+	switch funcName {
+	case FuncCURRENT_DATE, FuncCURRENT_TIME, FuncCURRENT_TIMESTAMP, FuncNOW, FuncEXTRACT, FuncDATE_TRUNC:
+		return true
+	default:
+		return false
+	}
+}
+
 // getStringFunctionAlias generates an alias for string functions
 func (e *SQLEngine) getStringFunctionAlias(funcExpr *FuncExpr) string {
 	funcName := funcExpr.Name.String()
@@ -4260,6 +4280,24 @@ func (e *SQLEngine) getStringFunctionAlias(funcExpr *FuncExpr) string {
 			}
 		}
 	}
+	return fmt.Sprintf("%s(...)", funcName)
+}
+
+// getDateTimeFunctionAlias generates an alias for datetime functions
+func (e *SQLEngine) getDateTimeFunctionAlias(funcExpr *FuncExpr) string {
+	funcName := funcExpr.Name.String()
+
+	// Handle zero-argument functions like CURRENT_DATE, NOW
+	if len(funcExpr.Exprs) == 0 {
+		// Use lowercase for datetime constants in column headers
+		return strings.ToLower(funcName)
+	}
+
+	// Handle multi-argument functions like EXTRACT, DATE_TRUNC
+	if len(funcExpr.Exprs) == 2 {
+		return fmt.Sprintf("%s(...)", funcName)
+	}
+
 	return fmt.Sprintf("%s(...)", funcName)
 }
 
@@ -4432,6 +4470,34 @@ func (e *SQLEngine) evaluateDateTimeFunction(funcExpr *FuncExpr, result HybridSc
 
 		// Call the DateTrunc function
 		return e.DateTrunc(precision, truncateValue)
+
+	case FuncCURRENT_DATE:
+		// CURRENT_DATE is a zero-argument function
+		if len(funcExpr.Exprs) != 0 {
+			return nil, fmt.Errorf("CURRENT_DATE function expects no arguments, got %d", len(funcExpr.Exprs))
+		}
+		return e.CurrentDate()
+
+	case FuncCURRENT_TIME:
+		// CURRENT_TIME is a zero-argument function
+		if len(funcExpr.Exprs) != 0 {
+			return nil, fmt.Errorf("CURRENT_TIME function expects no arguments, got %d", len(funcExpr.Exprs))
+		}
+		return e.CurrentTime()
+
+	case FuncCURRENT_TIMESTAMP:
+		// CURRENT_TIMESTAMP is a zero-argument function
+		if len(funcExpr.Exprs) != 0 {
+			return nil, fmt.Errorf("CURRENT_TIMESTAMP function expects no arguments, got %d", len(funcExpr.Exprs))
+		}
+		return e.CurrentTimestamp()
+
+	case FuncNOW:
+		// NOW is a zero-argument function (but often used with () syntax)
+		if len(funcExpr.Exprs) != 0 {
+			return nil, fmt.Errorf("NOW function expects no arguments, got %d", len(funcExpr.Exprs))
+		}
+		return e.Now()
 
 	// PostgreSQL uses EXTRACT(part FROM date) instead of convenience functions like YEAR(date)
 
