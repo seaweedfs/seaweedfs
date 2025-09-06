@@ -276,7 +276,7 @@ func ParseSQL(sql string) (Statement, error) {
 	sql = strings.TrimSpace(sql)
 	sqlUpper := strings.ToUpper(sql)
 
-	// Handle SHOW statements
+	// Handle SHOW statements (keep custom parsing for these simple cases)
 	if strings.HasPrefix(sqlUpper, "SHOW DATABASES") || strings.HasPrefix(sqlUpper, "SHOW SCHEMAS") {
 		return &ShowStatement{Type: "databases"}, nil
 	}
@@ -299,7 +299,7 @@ func ParseSQL(sql string) (Statement, error) {
 		return stmt, nil
 	}
 
-	// Handle DDL statements
+	// Handle DDL statements (keep custom parsing for now)
 	if strings.HasPrefix(sqlUpper, "CREATE TABLE") {
 		return parseCreateTableFromSQL(sql)
 	}
@@ -310,9 +310,10 @@ func ParseSQL(sql string) (Statement, error) {
 		return parseAlterTableFromSQL(sql)
 	}
 
-	// Handle SELECT statements
+	// Use CockroachDB parser for complex SELECT statements
 	if strings.HasPrefix(sqlUpper, "SELECT") {
-		return parseSelectStatement(sql)
+		parser := NewCockroachSQLParser()
+		return parser.ParseSQL(sql)
 	}
 
 	return nil, UnsupportedFeatureError{
@@ -364,10 +365,25 @@ func parseSelectStatement(sql string) (*SelectStatement, error) {
 			} else {
 				// Handle column names, functions, and arithmetic expressions
 				expr := &AliasedExpr{}
-				if strings.Contains(strings.ToUpper(part), "(") && strings.Contains(part, ")") {
-					// Function expression
-					funcName := extractFunctionName(part)
-					funcArgs, err := extractFunctionArguments(part)
+
+				// Extract alias (AS alias_name) before parsing the expression
+				exprPart := part
+				if asPos := strings.LastIndex(strings.ToUpper(part), " AS "); asPos != -1 {
+					exprPart = strings.TrimSpace(part[:asPos])
+					// aliasName := strings.TrimSpace(part[asPos+4:]) // Skip " AS "
+					// TODO: Set alias properly - for now focus on fixing the parsing
+					expr.As = nil
+				}
+
+				// IMPORTANT: Check for arithmetic expressions FIRST (before functions)
+				// This fixes the bug where "LENGTH('hello') + 10" was parsed as just "LENGTH('hello')"
+				if arithmeticExpr := tempEngine.parseArithmeticExpressionWithLiterals(exprPart); arithmeticExpr != nil {
+					// Arithmetic expression (id+user_id, col1-col2, LENGTH('hello')+10, etc.) with literal support
+					expr.Expr = arithmeticExpr
+				} else if strings.Contains(strings.ToUpper(exprPart), "(") && strings.Contains(exprPart, ")") {
+					// Function expression (only if NOT an arithmetic expression)
+					funcName := extractFunctionName(exprPart)
+					funcArgs, err := extractFunctionArguments(exprPart)
 					if err != nil {
 						return nil, fmt.Errorf("failed to parse function %s: %v", funcName, err)
 					}
@@ -376,18 +392,15 @@ func parseSelectStatement(sql string) (*SelectStatement, error) {
 						Exprs: funcArgs,
 					}
 					expr.Expr = funcExpr
-				} else if arithmeticExpr := tempEngine.parseArithmeticExpressionWithLiterals(part); arithmeticExpr != nil {
-					// Arithmetic expression (id+user_id, col1-col2, etc.) with literal support
-					expr.Expr = arithmeticExpr
-				} else if strings.HasPrefix(part, "'") && strings.HasSuffix(part, "'") {
+				} else if strings.HasPrefix(exprPart, "'") && strings.HasSuffix(exprPart, "'") {
 					// String literal
 					expr.Expr = &SQLVal{
 						Type: StrVal,
-						Val:  []byte(strings.Trim(part, "'")),
+						Val:  []byte(strings.Trim(exprPart, "'")),
 					}
 				} else {
 					// Column name
-					colExpr := &ColName{Name: stringValue(part)}
+					colExpr := &ColName{Name: stringValue(exprPart)}
 					expr.Expr = colExpr
 				}
 				s.SelectExprs = append(s.SelectExprs, expr)
@@ -657,9 +670,23 @@ func (e *SQLEngine) removeSpacesPreservingLiterals(expr string) string {
 }
 
 // parseExpressionNode parses an expression string into the appropriate ExprNode type
-// It distinguishes between column names and literal values
+// It distinguishes between column names, literals, and function calls
 func (e *SQLEngine) parseExpressionNode(expr string) ExprNode {
 	expr = strings.TrimSpace(expr)
+
+	// Check if it's a function call (contains parentheses)
+	if strings.Contains(expr, "(") && strings.Contains(expr, ")") {
+		// Parse as function call
+		funcName := extractFunctionName(expr)
+		funcArgs, err := extractFunctionArguments(expr)
+		if err == nil {
+			return &FuncExpr{
+				Name:  stringValue(funcName),
+				Exprs: funcArgs,
+			}
+		}
+		// If function parsing fails, fall through to treat as column name
+	}
 
 	// Check if it's a numeric literal
 	if _, err := strconv.ParseInt(expr, 10, 64); err == nil {
@@ -716,14 +743,46 @@ func extractFunctionArguments(expr string) ([]SelectExpr, error) {
 	args := []SelectExpr{}
 	argParts := strings.Split(argsStr, ",")
 
+	// Use a temporary engine for parsing arguments with the same sophisticated logic as SELECT parsing
+	tempEngine := &SQLEngine{}
+
 	for _, argPart := range argParts {
 		argPart = strings.TrimSpace(argPart)
 		if argPart == "*" {
 			args = append(args, &StarExpr{})
 		} else {
-			// Regular column name
-			colExpr := &ColName{Name: stringValue(argPart)}
-			aliasedExpr := &AliasedExpr{Expr: colExpr}
+			// Parse arguments using the same logic as SELECT expressions
+			// This handles arithmetic expressions, nested functions, literals, etc.
+			aliasedExpr := &AliasedExpr{}
+
+			// Check for arithmetic expressions FIRST (like string concatenation)
+			if arithmeticExpr := tempEngine.parseArithmeticExpressionWithLiterals(argPart); arithmeticExpr != nil {
+				aliasedExpr.Expr = arithmeticExpr
+			} else if strings.Contains(strings.ToUpper(argPart), "(") && strings.Contains(argPart, ")") {
+				// Nested function expression
+				funcName := extractFunctionName(argPart)
+				funcArgs, err := extractFunctionArguments(argPart)
+				if err != nil {
+					// If nested function parsing fails, fall back to treating as column name
+					aliasedExpr.Expr = &ColName{Name: stringValue(argPart)}
+				} else {
+					funcExpr := &FuncExpr{
+						Name:  stringValue(funcName),
+						Exprs: funcArgs,
+					}
+					aliasedExpr.Expr = funcExpr
+				}
+			} else if strings.HasPrefix(argPart, "'") && strings.HasSuffix(argPart, "'") {
+				// String literal
+				aliasedExpr.Expr = &SQLVal{
+					Type: StrVal,
+					Val:  []byte(strings.Trim(argPart, "'")),
+				}
+			} else {
+				// Regular column name (fallback)
+				aliasedExpr.Expr = &ColName{Name: stringValue(argPart)}
+			}
+
 			args = append(args, aliasedExpr)
 		}
 	}
@@ -1636,8 +1695,15 @@ func (e *SQLEngine) executeSelectStatement(ctx context.Context, stmt *SelectStat
 			switch col := expr.Expr.(type) {
 			case *ColName:
 				colName := col.Name.String()
-				columns = append(columns, colName)
-				baseColumnsSet[colName] = true
+
+				// Check if this "column" is actually an arithmetic expression with functions
+				if arithmeticExpr := e.parseColumnLevelCalculation(colName); arithmeticExpr != nil {
+					columns = append(columns, e.getArithmeticExpressionAlias(arithmeticExpr))
+					e.extractBaseColumns(arithmeticExpr, baseColumnsSet)
+				} else {
+					columns = append(columns, colName)
+					baseColumnsSet[colName] = true
+				}
 			case *ArithmeticExpr:
 				// Handle arithmetic expressions like id+user_id and string concatenation like name||suffix
 				columns = append(columns, e.getArithmeticExpressionAlias(col))
@@ -3839,7 +3905,7 @@ func (e *SQLEngine) evaluateExpressionValue(expr ExprNode, result HybridScanResu
 		// Handle literal values
 		return e.convertSQLValToSchemaValue(exprType), nil
 	case *FuncExpr:
-		// Handle nested function calls
+		// Handle function calls that are part of arithmetic expressions
 		funcName := strings.ToUpper(exprType.Name.String())
 
 		// Route to appropriate function evaluator based on function type
@@ -3886,9 +3952,13 @@ func (e *SQLEngine) ConvertToSQLResultWithExpressions(hms *HybridMessageScanner,
 				case *ColName:
 					columnName := col.Name.String()
 					upperColumnName := strings.ToUpper(columnName)
-					// Use lowercase for datetime constants in column headers
-					if upperColumnName == FuncCURRENT_DATE || upperColumnName == FuncCURRENT_TIME ||
+
+					// Check if this is an arithmetic expression embedded in a ColName
+					if arithmeticExpr := e.parseColumnLevelCalculation(columnName); arithmeticExpr != nil {
+						columns = append(columns, e.getArithmeticExpressionAlias(arithmeticExpr))
+					} else if upperColumnName == FuncCURRENT_DATE || upperColumnName == FuncCURRENT_TIME ||
 						upperColumnName == FuncCURRENT_TIMESTAMP || upperColumnName == FuncNOW {
+						// Use lowercase for datetime constants in column headers
 						columns = append(columns, strings.ToLower(columnName))
 					} else {
 						columns = append(columns, columnName)
@@ -3922,9 +3992,13 @@ func (e *SQLEngine) ConvertToSQLResultWithExpressions(hms *HybridMessageScanner,
 			case *ColName:
 				columnName := col.Name.String()
 				upperColumnName := strings.ToUpper(columnName)
-				// Use lowercase for datetime constants in column headers
-				if upperColumnName == FuncCURRENT_DATE || upperColumnName == FuncCURRENT_TIME ||
+
+				// Check if this is an arithmetic expression embedded in a ColName
+				if arithmeticExpr := e.parseColumnLevelCalculation(columnName); arithmeticExpr != nil {
+					columns = append(columns, e.getArithmeticExpressionAlias(arithmeticExpr))
+				} else if upperColumnName == FuncCURRENT_DATE || upperColumnName == FuncCURRENT_TIME ||
 					upperColumnName == FuncCURRENT_TIMESTAMP || upperColumnName == FuncNOW {
+					// Use lowercase for datetime constants in column headers
 					columns = append(columns, strings.ToLower(columnName))
 				} else {
 					columns = append(columns, columnName)
@@ -3950,12 +4024,19 @@ func (e *SQLEngine) ConvertToSQLResultWithExpressions(hms *HybridMessageScanner,
 			case *AliasedExpr:
 				switch col := expr.Expr.(type) {
 				case *ColName:
-					// Handle regular column or datetime constants
+					// Handle regular column, datetime constants, or arithmetic expressions
 					columnName := col.Name.String()
 					upperColumnName := strings.ToUpper(columnName)
 
-					// Check if this is a datetime constant (function without parentheses)
-					if upperColumnName == "CURRENT_DATE" || upperColumnName == "CURRENT_TIME" ||
+					// Check if this is an arithmetic expression embedded in a ColName
+					if arithmeticExpr := e.parseColumnLevelCalculation(columnName); arithmeticExpr != nil {
+						// Handle as arithmetic expression
+						if value, err := e.evaluateArithmeticExpression(arithmeticExpr, result); err == nil && value != nil {
+							row[j] = convertSchemaValueToSQL(value)
+						} else {
+							row[j] = sqltypes.NULL
+						}
+					} else if upperColumnName == "CURRENT_DATE" || upperColumnName == "CURRENT_TIME" ||
 						upperColumnName == "CURRENT_TIMESTAMP" || upperColumnName == "NOW" {
 						// Handle as datetime function
 						var value *schema_pb.Value
@@ -4386,4 +4467,141 @@ func (e *SQLEngine) evaluateColumnNameAsFunction(columnName string, result Hybri
 	default:
 		return nil, fmt.Errorf("unsupported function in column name: %s", funcName)
 	}
+}
+
+// parseColumnLevelCalculation detects and parses arithmetic expressions that contain function calls
+// This handles cases where the SQL parser incorrectly treats "LENGTH('hello') + 10" as a single ColName
+func (e *SQLEngine) parseColumnLevelCalculation(expression string) *ArithmeticExpr {
+	// First check if this looks like an arithmetic expression
+	if !e.containsArithmeticOperator(expression) {
+		return nil
+	}
+
+	// Build AST for the arithmetic expression
+	return e.buildArithmeticAST(expression)
+}
+
+// containsArithmeticOperator checks if the expression contains arithmetic operators outside of function calls
+func (e *SQLEngine) containsArithmeticOperator(expr string) bool {
+	operators := []string{"+", "-", "*", "/", "%", "||"}
+
+	parenLevel := 0
+	quoteLevel := false
+
+	for i, char := range expr {
+		switch char {
+		case '(':
+			if !quoteLevel {
+				parenLevel++
+			}
+		case ')':
+			if !quoteLevel {
+				parenLevel--
+			}
+		case '\'':
+			quoteLevel = !quoteLevel
+		default:
+			// Only check for operators outside of parentheses and quotes
+			if parenLevel == 0 && !quoteLevel {
+				for _, op := range operators {
+					if strings.HasPrefix(expr[i:], op) {
+						return true
+					}
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+// buildArithmeticAST builds an Abstract Syntax Tree for arithmetic expressions containing function calls
+func (e *SQLEngine) buildArithmeticAST(expr string) *ArithmeticExpr {
+	// Remove leading/trailing spaces
+	expr = strings.TrimSpace(expr)
+
+	// Find the main operator (outside of parentheses)
+	operators := []string{"||", "+", "-", "*", "/", "%"} // Order matters for precedence
+
+	for _, op := range operators {
+		opPos := e.findMainOperator(expr, op)
+		if opPos != -1 {
+			leftExpr := strings.TrimSpace(expr[:opPos])
+			rightExpr := strings.TrimSpace(expr[opPos+len(op):])
+
+			if leftExpr != "" && rightExpr != "" {
+				return &ArithmeticExpr{
+					Left:     e.parseASTExpressionNode(leftExpr),
+					Right:    e.parseASTExpressionNode(rightExpr),
+					Operator: op,
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// findMainOperator finds the position of an operator that's not inside parentheses or quotes
+func (e *SQLEngine) findMainOperator(expr string, operator string) int {
+	parenLevel := 0
+	quoteLevel := false
+
+	for i := 0; i <= len(expr)-len(operator); i++ {
+		char := expr[i]
+
+		switch char {
+		case '(':
+			if !quoteLevel {
+				parenLevel++
+			}
+		case ')':
+			if !quoteLevel {
+				parenLevel--
+			}
+		case '\'':
+			quoteLevel = !quoteLevel
+		default:
+			// Check for operator only at top level (not inside parentheses or quotes)
+			if parenLevel == 0 && !quoteLevel && strings.HasPrefix(expr[i:], operator) {
+				return i
+			}
+		}
+	}
+
+	return -1
+}
+
+// parseASTExpressionNode parses an expression into the appropriate ExprNode type
+func (e *SQLEngine) parseASTExpressionNode(expr string) ExprNode {
+	expr = strings.TrimSpace(expr)
+
+	// Check if it's a function call (contains parentheses)
+	if strings.Contains(expr, "(") && strings.Contains(expr, ")") {
+		// This should be parsed as a function expression, but since our SQL parser
+		// has limitations, we'll create a special ColName that represents the function
+		return &ColName{Name: stringValue(expr)}
+	}
+
+	// Check if it's a numeric literal
+	if _, err := strconv.ParseInt(expr, 10, 64); err == nil {
+		return &SQLVal{Type: IntVal, Val: []byte(expr)}
+	}
+
+	if _, err := strconv.ParseFloat(expr, 64); err == nil {
+		return &SQLVal{Type: FloatVal, Val: []byte(expr)}
+	}
+
+	// Check if it's a string literal
+	if strings.HasPrefix(expr, "'") && strings.HasSuffix(expr, "'") {
+		return &SQLVal{Type: StrVal, Val: []byte(strings.Trim(expr, "'"))}
+	}
+
+	// Check for nested arithmetic expressions
+	if nestedArithmetic := e.buildArithmeticAST(expr); nestedArithmetic != nil {
+		return nestedArithmetic
+	}
+
+	// Default to column name
+	return &ColName{Name: stringValue(expr)}
 }

@@ -86,7 +86,8 @@ func initTestSampleData(c *SchemaCatalog) {
 // TestSQLEngine wraps SQLEngine with test-specific behavior
 type TestSQLEngine struct {
 	*SQLEngine
-	funcExpressions map[string]*FuncExpr // Map from column key to function expression
+	funcExpressions       map[string]*FuncExpr       // Map from column key to function expression
+	arithmeticExpressions map[string]*ArithmeticExpr // Map from column key to arithmetic expression
 }
 
 // NewTestSQLEngine creates a new SQL execution engine for testing
@@ -103,15 +104,17 @@ func NewTestSQLEngine() *TestSQLEngine {
 	}
 
 	return &TestSQLEngine{
-		SQLEngine:       engine,
-		funcExpressions: make(map[string]*FuncExpr),
+		SQLEngine:             engine,
+		funcExpressions:       make(map[string]*FuncExpr),
+		arithmeticExpressions: make(map[string]*ArithmeticExpr),
 	}
 }
 
 // ExecuteSQL overrides the real implementation to use sample data for testing
 func (e *TestSQLEngine) ExecuteSQL(ctx context.Context, sql string) (*QueryResult, error) {
-	// Clear function expressions from previous executions
+	// Clear expressions from previous executions
 	e.funcExpressions = make(map[string]*FuncExpr)
+	e.arithmeticExpressions = make(map[string]*ArithmeticExpr)
 
 	// Parse the SQL statement
 	stmt, err := ParseSQL(sql)
@@ -245,18 +248,36 @@ func (e *TestSQLEngine) generateTestQueryResult(tableName string, stmt *SelectSt
 				if colName, ok := aliasedExpr.Expr.(*ColName); ok {
 					columnName := colName.Name.String()
 					upperColumnName := strings.ToUpper(columnName)
-					// Handle datetime constants
-					if upperColumnName == FuncCURRENT_DATE || upperColumnName == FuncCURRENT_TIME ||
+
+					// Check if this is an arithmetic expression embedded in a ColName
+					if arithmeticExpr := e.parseColumnLevelCalculation(columnName); arithmeticExpr != nil {
+						columns = append(columns, e.getArithmeticExpressionAlias(arithmeticExpr))
+					} else if upperColumnName == FuncCURRENT_DATE || upperColumnName == FuncCURRENT_TIME ||
 						upperColumnName == FuncCURRENT_TIMESTAMP || upperColumnName == FuncNOW {
+						// Handle datetime constants
 						columns = append(columns, strings.ToLower(columnName))
 					} else {
 						columns = append(columns, columnName)
 					}
 				} else if arithmeticExpr, ok := aliasedExpr.Expr.(*ArithmeticExpr); ok {
 					// Handle arithmetic expressions like id+user_id and concatenations
-					// For complex expressions, preserve the original text instead of generating simplified aliases
-					alias := e.getArithmeticExpressionAlias(arithmeticExpr)
-					columns = append(columns, alias)
+					// Store the arithmetic expression for evaluation later
+					arithmeticExprKey := fmt.Sprintf("__ARITHEXPR__%p", arithmeticExpr)
+					e.arithmeticExpressions[arithmeticExprKey] = arithmeticExpr
+
+					// Check if there's an alias, use that as column name, otherwise use arithmeticExprKey
+					if aliasedExpr.As != nil && aliasedExpr.As.String() != "" {
+						aliasName := aliasedExpr.As.String()
+						columns = append(columns, aliasName)
+						// Map the alias back to the arithmetic expression key for evaluation
+						e.arithmeticExpressions[aliasName] = arithmeticExpr
+					} else {
+						// Use a more descriptive alias than the memory address
+						alias := e.getArithmeticExpressionAlias(arithmeticExpr)
+						columns = append(columns, alias)
+						// Map the descriptive alias to the arithmetic expression
+						e.arithmeticExpressions[alias] = arithmeticExpr
+					}
 				} else if funcExpr, ok := aliasedExpr.Expr.(*FuncExpr); ok {
 					// Store the function expression for evaluation later
 					// Use a special prefix to distinguish function expressions
@@ -306,9 +327,24 @@ func (e *TestSQLEngine) generateTestQueryResult(tableName string, stmt *SelectSt
 		for _, columnName := range columns {
 			upperColumnName := strings.ToUpper(columnName)
 
-			// Handle datetime constants first
-			if upperColumnName == FuncCURRENT_DATE || upperColumnName == FuncCURRENT_TIME ||
+			// IMPORTANT: Check stored arithmetic expressions FIRST (before legacy parsing)
+			if arithmeticExpr, exists := e.arithmeticExpressions[columnName]; exists {
+				// Handle arithmetic expressions by evaluating them with the actual engine
+				if value, err := e.evaluateArithmeticExpression(arithmeticExpr, result); err == nil && value != nil {
+					row = append(row, convertSchemaValueToSQLValue(value))
+				} else {
+					row = append(row, sqltypes.NULL)
+				}
+			} else if arithmeticExpr := e.parseColumnLevelCalculation(columnName); arithmeticExpr != nil {
+				// Evaluate the arithmetic expression (legacy fallback)
+				if value, err := e.evaluateArithmeticExpression(arithmeticExpr, result); err == nil && value != nil {
+					row = append(row, convertSchemaValueToSQLValue(value))
+				} else {
+					row = append(row, sqltypes.NULL)
+				}
+			} else if upperColumnName == FuncCURRENT_DATE || upperColumnName == FuncCURRENT_TIME ||
 				upperColumnName == FuncCURRENT_TIMESTAMP || upperColumnName == FuncNOW {
+				// Handle datetime constants
 				var value *schema_pb.Value
 				var err error
 				switch upperColumnName {
