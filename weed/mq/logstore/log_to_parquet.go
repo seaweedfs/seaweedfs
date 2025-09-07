@@ -233,14 +233,15 @@ func writeLogFilesToParquet(filerClient filer_pb.FilerClient, partitionDir strin
 		var rows []parquet.Row
 		if err := iterateLogEntries(filerClient, logFile, func(entry *filer_pb.LogEntry) error {
 
+			// Skip control entries without actual data (same logic as read operations)
+			if isControlEntry(entry) {
+				return nil
+			}
+
 			if startTsNs == 0 {
 				startTsNs = entry.TsNs
 			}
 			stopTsNs = entry.TsNs
-
-			if len(entry.Key) == 0 {
-				return nil
-			}
 
 			// write to parquet file
 			rowBuilder.Reset()
