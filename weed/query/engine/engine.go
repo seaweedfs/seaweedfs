@@ -1348,7 +1348,7 @@ func (e *SQLEngine) executeSelectStatement(ctx context.Context, stmt *SelectStat
 	// Parse WHERE clause for predicate pushdown
 	var predicate func(*schema_pb.RecordValue) bool
 	if stmt.Where != nil {
-		predicate, err = e.buildPredicate(stmt.Where.Expr)
+		predicate, err = e.buildPredicateWithContext(stmt.Where.Expr, stmt.SelectExprs)
 		if err != nil {
 			return &QueryResult{Error: err}, err
 		}
@@ -1586,7 +1586,7 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 	// Parse WHERE clause for predicate pushdown
 	var predicate func(*schema_pb.RecordValue) bool
 	if stmt.Where != nil {
-		predicate, err = e.buildPredicate(stmt.Where.Expr)
+		predicate, err = e.buildPredicateWithContext(stmt.Where.Expr, stmt.SelectExprs)
 		if err != nil {
 			return &QueryResult{Error: err}, err
 		}
@@ -1892,6 +1892,29 @@ func (e *SQLEngine) getColumnName(expr ExprNode) string {
 	return ""
 }
 
+// resolveColumnAlias tries to resolve a column name that might be an alias
+func (e *SQLEngine) resolveColumnAlias(columnName string, selectExprs []SelectExpr) string {
+	if selectExprs == nil {
+		return columnName
+	}
+
+	// Check if this column name is actually an alias in the SELECT list
+	for _, selectExpr := range selectExprs {
+		if aliasedExpr, ok := selectExpr.(*AliasedExpr); ok && aliasedExpr != nil {
+			// Check if the alias matches our column name
+			if aliasedExpr.As != nil && !aliasedExpr.As.IsEmpty() && aliasedExpr.As.String() == columnName {
+				// If the aliased expression is a column, return the actual column name
+				if colExpr, ok := aliasedExpr.Expr.(*ColName); ok && colExpr != nil {
+					return colExpr.Name.String()
+				}
+			}
+		}
+	}
+
+	// If no alias found, return the original column name
+	return columnName
+}
+
 // extractTimeValue parses time values from SQL expressions
 // Supports nanosecond timestamps, ISO dates, and relative times
 func (e *SQLEngine) extractTimeValue(expr ExprNode) int64 {
@@ -1955,15 +1978,20 @@ func (e *SQLEngine) reverseOperator(op string) string {
 // buildPredicate creates a predicate function from a WHERE clause expression
 // This is a simplified implementation - a full implementation would be much more complex
 func (e *SQLEngine) buildPredicate(expr ExprNode) (func(*schema_pb.RecordValue) bool, error) {
+	return e.buildPredicateWithContext(expr, nil)
+}
+
+// buildPredicateWithContext creates a predicate function with SELECT context for alias resolution
+func (e *SQLEngine) buildPredicateWithContext(expr ExprNode, selectExprs []SelectExpr) (func(*schema_pb.RecordValue) bool, error) {
 	switch exprType := expr.(type) {
 	case *ComparisonExpr:
-		return e.buildComparisonPredicate(exprType)
+		return e.buildComparisonPredicateWithContext(exprType, selectExprs)
 	case *AndExpr:
-		leftPred, err := e.buildPredicate(exprType.Left)
+		leftPred, err := e.buildPredicateWithContext(exprType.Left, selectExprs)
 		if err != nil {
 			return nil, err
 		}
-		rightPred, err := e.buildPredicate(exprType.Right)
+		rightPred, err := e.buildPredicateWithContext(exprType.Right, selectExprs)
 		if err != nil {
 			return nil, err
 		}
@@ -1971,11 +1999,11 @@ func (e *SQLEngine) buildPredicate(expr ExprNode) (func(*schema_pb.RecordValue) 
 			return leftPred(record) && rightPred(record)
 		}, nil
 	case *OrExpr:
-		leftPred, err := e.buildPredicate(exprType.Left)
+		leftPred, err := e.buildPredicateWithContext(exprType.Left, selectExprs)
 		if err != nil {
 			return nil, err
 		}
-		rightPred, err := e.buildPredicate(exprType.Right)
+		rightPred, err := e.buildPredicateWithContext(exprType.Right, selectExprs)
 		if err != nil {
 			return nil, err
 		}
@@ -1987,16 +2015,101 @@ func (e *SQLEngine) buildPredicate(expr ExprNode) (func(*schema_pb.RecordValue) 
 	}
 }
 
+// buildPredicateWithAliases creates a predicate function with alias resolution support
+func (e *SQLEngine) buildPredicateWithAliases(expr ExprNode, aliases map[string]ExprNode) (func(*schema_pb.RecordValue) bool, error) {
+	switch exprType := expr.(type) {
+	case *ComparisonExpr:
+		return e.buildComparisonPredicateWithAliases(exprType, aliases)
+	case *AndExpr:
+		leftPred, err := e.buildPredicateWithAliases(exprType.Left, aliases)
+		if err != nil {
+			return nil, err
+		}
+		rightPred, err := e.buildPredicateWithAliases(exprType.Right, aliases)
+		if err != nil {
+			return nil, err
+		}
+		return func(record *schema_pb.RecordValue) bool {
+			return leftPred(record) && rightPred(record)
+		}, nil
+	case *OrExpr:
+		leftPred, err := e.buildPredicateWithAliases(exprType.Left, aliases)
+		if err != nil {
+			return nil, err
+		}
+		rightPred, err := e.buildPredicateWithAliases(exprType.Right, aliases)
+		if err != nil {
+			return nil, err
+		}
+		return func(record *schema_pb.RecordValue) bool {
+			return leftPred(record) || rightPred(record)
+		}, nil
+	default:
+		return nil, fmt.Errorf("unsupported WHERE expression: %T", expr)
+	}
+}
+
+// buildComparisonPredicateWithAliases creates a predicate for comparison operations with alias support
+func (e *SQLEngine) buildComparisonPredicateWithAliases(expr *ComparisonExpr, aliases map[string]ExprNode) (func(*schema_pb.RecordValue) bool, error) {
+	var columnName string
+	var compareValue interface{}
+	var operator string
+
+	// Extract the comparison details, resolving aliases if needed
+	leftCol := e.getColumnNameWithAliases(expr.Left, aliases)
+	rightCol := e.getColumnNameWithAliases(expr.Right, aliases)
+	operator = e.normalizeOperator(expr.Operator)
+
+	if leftCol != "" && rightCol == "" {
+		// Left side is column, right side is value
+		columnName = leftCol
+		val, err := e.extractValueFromExpr(expr.Right)
+		if err != nil {
+			return nil, err
+		}
+		compareValue = val
+	} else if rightCol != "" && leftCol == "" {
+		// Right side is column, left side is value
+		columnName = rightCol
+		val, err := e.extractValueFromExpr(expr.Left)
+		if err != nil {
+			return nil, err
+		}
+		compareValue = val
+		// Reverse the operator when column is on the right
+		operator = e.reverseOperator(operator)
+	} else if leftCol != "" && rightCol != "" {
+		return nil, fmt.Errorf("column-to-column comparisons not yet supported")
+	} else {
+		return nil, fmt.Errorf("at least one side of comparison must be a column")
+	}
+
+	return func(record *schema_pb.RecordValue) bool {
+		fieldValue, exists := record.Fields[columnName]
+		if !exists {
+			return false
+		}
+		return e.evaluateComparison(fieldValue, operator, compareValue)
+	}, nil
+}
+
 // buildComparisonPredicate creates a predicate for comparison operations (=, <, >, etc.)
 // Handles column names on both left and right sides of the comparison
 func (e *SQLEngine) buildComparisonPredicate(expr *ComparisonExpr) (func(*schema_pb.RecordValue) bool, error) {
+	return e.buildComparisonPredicateWithContext(expr, nil)
+}
+
+// buildComparisonPredicateWithContext creates a predicate for comparison operations with alias support
+func (e *SQLEngine) buildComparisonPredicateWithContext(expr *ComparisonExpr, selectExprs []SelectExpr) (func(*schema_pb.RecordValue) bool, error) {
 	var columnName string
 	var compareValue interface{}
 	var operator string
 
 	// Check if column is on the left side (normal case: column > value)
 	if colName, ok := expr.Left.(*ColName); ok {
-		columnName = colName.Name.String()
+		rawColumnName := colName.Name.String()
+		// Resolve potential alias to actual column name
+		columnName = e.resolveColumnAlias(rawColumnName, selectExprs)
 		operator = expr.Operator
 
 		// Extract comparison value from right side
@@ -2008,7 +2121,9 @@ func (e *SQLEngine) buildComparisonPredicate(expr *ComparisonExpr) (func(*schema
 
 	} else if colName, ok := expr.Right.(*ColName); ok {
 		// Column is on the right side (reversed case: value < column)
-		columnName = colName.Name.String()
+		rawColumnName := colName.Name.String()
+		// Resolve potential alias to actual column name
+		columnName = e.resolveColumnAlias(rawColumnName, selectExprs)
 
 		// Reverse the operator when column is on right side
 		operator = e.reverseOperator(expr.Operator)
@@ -2038,15 +2153,67 @@ func (e *SQLEngine) buildComparisonPredicate(expr *ComparisonExpr) (func(*schema
 		}, nil
 	}
 
-	// Create predicate based on operator
+	// Return the predicate function
 	return func(record *schema_pb.RecordValue) bool {
 		fieldValue, exists := record.Fields[columnName]
 		if !exists {
-			return false
+			return false // Column doesn't exist in record
 		}
 
+		// Use the comparison evaluation function
 		return e.evaluateComparison(fieldValue, operator, compareValue)
 	}, nil
+}
+
+// getColumnNameWithAliases extracts column name from expression, resolving aliases if needed
+func (e *SQLEngine) getColumnNameWithAliases(expr ExprNode, aliases map[string]ExprNode) string {
+	switch exprType := expr.(type) {
+	case *ColName:
+		colName := exprType.Name.String()
+		// Check if this is an alias that should be resolved
+		if aliases != nil {
+			if actualExpr, exists := aliases[colName]; exists {
+				// Recursively resolve the aliased expression
+				return e.getColumnNameWithAliases(actualExpr, nil) // Don't recurse aliases
+			}
+		}
+		return colName
+	}
+	return ""
+}
+
+// extractValueFromExpr extracts a value from an expression node (for alias support)
+func (e *SQLEngine) extractValueFromExpr(expr ExprNode) (interface{}, error) {
+	return e.extractComparisonValue(expr)
+}
+
+// normalizeOperator normalizes comparison operators
+func (e *SQLEngine) normalizeOperator(op string) string {
+	return op // For now, just return as-is
+}
+
+// extractSelectAliases builds a map of aliases to their underlying expressions
+func (e *SQLEngine) extractSelectAliases(selectExprs []SelectExpr) map[string]ExprNode {
+	aliases := make(map[string]ExprNode)
+
+	if selectExprs == nil {
+		return aliases
+	}
+
+	for _, selectExpr := range selectExprs {
+		if selectExpr == nil {
+			continue
+		}
+		if aliasedExpr, ok := selectExpr.(*AliasedExpr); ok && aliasedExpr != nil {
+			// Additional safety checks
+			if aliasedExpr.As != nil && !aliasedExpr.As.IsEmpty() && aliasedExpr.Expr != nil {
+				// Map the alias name to the underlying expression
+				aliases[aliasedExpr.As.String()] = aliasedExpr.Expr
+			}
+		}
+	}
+
+	return aliases
 }
 
 // extractComparisonValue extracts the comparison value from a SQL expression
