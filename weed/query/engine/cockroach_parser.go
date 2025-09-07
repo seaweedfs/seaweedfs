@@ -127,10 +127,9 @@ func (p *CockroachSQLParser) convertSelectExpr(expr tree.SelectExpr) (SelectExpr
 	}
 	seaweedExpr.Expr = convertedExpr
 
-	// Convert alias if present (temporarily set to nil to avoid interface issues)
+	// Convert alias if present
 	if expr.As != "" {
-		// TODO: Fix alias handling - for now set to nil to get compilation working
-		seaweedExpr.As = nil
+		seaweedExpr.As = aliasValue(expr.As)
 	}
 
 	return seaweedExpr, nil
