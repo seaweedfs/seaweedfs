@@ -3584,16 +3584,10 @@ func (e *SQLEngine) getTopicTotalRowCount(ctx context.Context, namespace, topicN
 	}
 
 	// Get all partitions for this topic
-	relativePartitions, err := e.discoverTopicPartitions(namespace, topicName)
+	// Note: discoverTopicPartitions always returns absolute paths
+	partitions, err := e.discoverTopicPartitions(namespace, topicName)
 	if err != nil {
 		return 0, err
-	}
-
-	// Convert relative partition paths to full paths
-	topicBasePath := fmt.Sprintf("/topics/%s/%s", namespace, topicName)
-	partitions := make([]string, len(relativePartitions))
-	for i, relPartition := range relativePartitions {
-		partitions[i] = fmt.Sprintf("%s/%s", topicBasePath, relPartition)
 	}
 
 	totalRowCount := int64(0)
@@ -3642,16 +3636,10 @@ func (e *SQLEngine) getActualRowsScannedForFastPath(ctx context.Context, namespa
 	}
 
 	// Get all partitions for this topic
-	relativePartitions, err := e.discoverTopicPartitions(namespace, topicName)
+	// Note: discoverTopicPartitions always returns absolute paths
+	partitions, err := e.discoverTopicPartitions(namespace, topicName)
 	if err != nil {
 		return 0, err
-	}
-
-	// Convert relative partition paths to full paths
-	topicBasePath := fmt.Sprintf("/topics/%s/%s", namespace, topicName)
-	partitions := make([]string, len(relativePartitions))
-	for i, relPartition := range relativePartitions {
-		partitions[i] = fmt.Sprintf("%s/%s", topicBasePath, relPartition)
 	}
 
 	totalScannedRows := int64(0)

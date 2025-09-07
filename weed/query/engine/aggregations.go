@@ -83,38 +83,76 @@ func (opt *FastPathOptimizer) CollectDataSources(ctx context.Context, hybridScan
 		PartitionsCount:   0,
 	}
 
+	// DEBUG: Log start of data source collection
+	if isDebugMode(ctx) {
+		fmt.Printf("=== FAST PATH DATA SOURCE COLLECTION DEBUG ===\n")
+		fmt.Printf("Topic: %s/%s\n", hybridScanner.topic.Namespace, hybridScanner.topic.Name)
+	}
+
 	// Discover partitions for the topic
-	relativePartitions, err := opt.engine.discoverTopicPartitions(hybridScanner.topic.Namespace, hybridScanner.topic.Name)
+	partitionPaths, err := opt.engine.discoverTopicPartitions(hybridScanner.topic.Namespace, hybridScanner.topic.Name)
 	if err != nil {
+		if isDebugMode(ctx) {
+			fmt.Printf("ERROR: Partition discovery failed: %v\n", err)
+		}
 		return dataSources, DataSourceError{
 			Source: "partition_discovery",
 			Cause:  err,
 		}
 	}
 
-	topicBasePath := fmt.Sprintf("/topics/%s/%s", hybridScanner.topic.Namespace, hybridScanner.topic.Name)
+	// DEBUG: Log discovered partitions
+	if isDebugMode(ctx) {
+		fmt.Printf("Discovered %d partitions: %v\n", len(partitionPaths), partitionPaths)
+	}
 
 	// Collect stats from each partition
-	for _, relPartition := range relativePartitions {
-		partitionPath := fmt.Sprintf("%s/%s", topicBasePath, relPartition)
+	// Note: discoverTopicPartitions always returns absolute paths starting with "/topics/"
+	for _, partitionPath := range partitionPaths {
+		if isDebugMode(ctx) {
+			fmt.Printf("\nProcessing partition: %s\n", partitionPath)
+		}
 
 		// Read parquet file statistics
 		parquetStats, err := hybridScanner.ReadParquetStatistics(partitionPath)
-		if err == nil && len(parquetStats) > 0 {
+		if err != nil {
+			if isDebugMode(ctx) {
+				fmt.Printf("  ERROR: Failed to read parquet statistics: %v\n", err)
+			}
+		} else if len(parquetStats) == 0 {
+			if isDebugMode(ctx) {
+				fmt.Printf("  No parquet files found in partition\n")
+			}
+		} else {
 			dataSources.ParquetFiles[partitionPath] = parquetStats
+			partitionParquetRows := int64(0)
 			for _, stat := range parquetStats {
+				partitionParquetRows += stat.RowCount
 				dataSources.ParquetRowCount += stat.RowCount
+			}
+			if isDebugMode(ctx) {
+				fmt.Printf("  Found %d parquet files with %d total rows\n", len(parquetStats), partitionParquetRows)
 			}
 		}
 
 		// Count live log files (excluding those converted to parquet)
 		parquetSources := opt.engine.extractParquetSourceFiles(dataSources.ParquetFiles[partitionPath])
-		liveLogCount, _ := opt.engine.countLiveLogRowsExcludingParquetSources(ctx, partitionPath, parquetSources)
-		dataSources.LiveLogRowCount += liveLogCount
+		liveLogCount, liveLogErr := opt.engine.countLiveLogRowsExcludingParquetSources(ctx, partitionPath, parquetSources)
+		if liveLogErr != nil {
+			if isDebugMode(ctx) {
+				fmt.Printf("  ERROR: Failed to count live log rows: %v\n", liveLogErr)
+			}
+		} else {
+			dataSources.LiveLogRowCount += liveLogCount
+			if isDebugMode(ctx) {
+				fmt.Printf("  Found %d live log rows (excluding %d parquet sources)\n", liveLogCount, len(parquetSources))
+			}
+		}
 
 		// Count live log files for partition with proper range values
-		// Parse the relative partition to get actual range values
-		partitionParts := strings.Split(relPartition, "-")
+		// Extract partition name from absolute path (e.g., "0000-2520" from "/topics/.../v2025.../0000-2520")
+		partitionName := partitionPath[strings.LastIndex(partitionPath, "/")+1:]
+		partitionParts := strings.Split(partitionName, "-")
 		if len(partitionParts) == 2 {
 			rangeStart, err1 := strconv.Atoi(partitionParts[0])
 			rangeStop, err2 := strconv.Atoi(partitionParts[1])
@@ -131,7 +169,21 @@ func (opt *FastPathOptimizer) CollectDataSources(ctx context.Context, hybridScan
 		}
 	}
 
-	dataSources.PartitionsCount = len(relativePartitions)
+	dataSources.PartitionsCount = len(partitionPaths)
+
+	// DEBUG: Log final summary
+	if isDebugMode(ctx) {
+		fmt.Printf("\n=== FAST PATH DATA COLLECTION SUMMARY ===\n")
+		fmt.Printf("Partitions discovered: %d\n", dataSources.PartitionsCount)
+		fmt.Printf("Parquet files found: %d partitions with data\n", len(dataSources.ParquetFiles))
+		fmt.Printf("Total parquet rows: %d\n", dataSources.ParquetRowCount)
+		fmt.Printf("Total live log rows: %d\n", dataSources.LiveLogRowCount)
+		fmt.Printf("Total live log files: %d\n", dataSources.LiveLogFilesCount)
+		fmt.Printf("TOTAL ROWS: %d (parquet) + %d (live) = %d\n",
+			dataSources.ParquetRowCount, dataSources.LiveLogRowCount,
+			dataSources.ParquetRowCount+dataSources.LiveLogRowCount)
+		fmt.Printf("============================================\n")
+	}
 
 	return dataSources, nil
 }
@@ -401,18 +453,29 @@ func (e *SQLEngine) executeAggregationQueryWithPlan(ctx context.Context, hybridS
 		startTimeNs, stopTimeNs = e.extractTimeFilters(stmt.Where.Expr)
 	}
 
-	// FAST PATH TEMPORARILY DISABLED: Still investigating data counting issues
-	// The fast path returns 0 for COUNT(*) even after fixes, indicating deeper issues
-	// with data source discovery or partition parsing logic.
-	//
-	// TODO: Debug why fast path data collection returns 0 rows when slow path returns 1803
-	//
-	// if stmt.Where == nil {
-	//     fastResult, canOptimize := e.tryFastParquetAggregation(ctx, hybridScanner, aggregations)
-	//     if canOptimize {
-	//         return fastResult, nil
-	//     }
-	// }
+	// FAST PATH RE-ENABLED WITH DEBUG LOGGING:
+	// Added comprehensive debug logging to identify data counting issues
+	// This will help us understand why fast path was returning 0 when slow path returns 1803
+	if stmt.Where == nil {
+		if isDebugMode(ctx) {
+			fmt.Printf("\n=== ATTEMPTING FAST PATH OPTIMIZATION ===\n")
+		}
+		fastResult, canOptimize := e.tryFastParquetAggregationWithPlan(ctx, hybridScanner, aggregations, plan)
+		if canOptimize {
+			if isDebugMode(ctx) {
+				fmt.Printf("Fast path optimization succeeded!\n")
+			}
+			return fastResult, nil
+		} else {
+			if isDebugMode(ctx) {
+				fmt.Printf("Fast path optimization failed, falling back to slow path\n")
+			}
+		}
+	} else {
+		if isDebugMode(ctx) {
+			fmt.Printf("Fast path not applicable due to WHERE clause\n")
+		}
+	}
 
 	// SLOW PATH: Fall back to full table scan
 	if isDebugMode(ctx) {
@@ -542,6 +605,11 @@ func (e *SQLEngine) executeAggregationQueryWithPlan(ctx context.Context, hybridS
 // - Combine both for accurate results per partition
 // Returns (result, canOptimize) where canOptimize=true means the hybrid fast path was used
 func (e *SQLEngine) tryFastParquetAggregation(ctx context.Context, hybridScanner *HybridMessageScanner, aggregations []AggregationSpec) (*QueryResult, bool) {
+	return e.tryFastParquetAggregationWithPlan(ctx, hybridScanner, aggregations, nil)
+}
+
+// tryFastParquetAggregationWithPlan is the same as tryFastParquetAggregation but also populates execution plan if provided
+func (e *SQLEngine) tryFastParquetAggregationWithPlan(ctx context.Context, hybridScanner *HybridMessageScanner, aggregations []AggregationSpec, plan *QueryExecutionPlan) (*QueryResult, bool) {
 	// Use the new modular components
 	optimizer := NewFastPathOptimizer(e)
 	computer := NewAggregationComputer(e)
@@ -559,15 +627,10 @@ func (e *SQLEngine) tryFastParquetAggregation(ctx context.Context, hybridScanner
 	}
 
 	// Build partition list for aggregation computer
-	relativePartitions, err := e.discoverTopicPartitions(hybridScanner.topic.Namespace, hybridScanner.topic.Name)
+	// Note: discoverTopicPartitions always returns absolute paths
+	partitions, err := e.discoverTopicPartitions(hybridScanner.topic.Namespace, hybridScanner.topic.Name)
 	if err != nil {
 		return nil, false
-	}
-
-	topicBasePath := fmt.Sprintf("/topics/%s/%s", hybridScanner.topic.Namespace, hybridScanner.topic.Name)
-	partitions := make([]string, len(relativePartitions))
-	for i, relPartition := range relativePartitions {
-		partitions[i] = fmt.Sprintf("%s/%s", topicBasePath, relPartition)
 	}
 
 	// Debug: Show the hybrid optimization results (only in explain mode)
@@ -590,26 +653,71 @@ func (e *SQLEngine) tryFastParquetAggregation(ctx context.Context, hybridScanner
 	// For simple COUNT(*) queries, ensure we got a reasonable result
 	if len(aggregations) == 1 && aggregations[0].Function == FuncCOUNT && aggregations[0].Column == "*" {
 		totalRows := dataSources.ParquetRowCount + dataSources.LiveLogRowCount
-		if totalRows == 0 && aggResults[0].Count > 0 {
+		countResult := aggResults[0].Count
+
+		if isDebugMode(ctx) {
+			fmt.Printf("\n=== FAST PATH VALIDATION ===\n")
+			fmt.Printf("COUNT(*) result: %d\n", countResult)
+			fmt.Printf("Data source totals: %d (parquet: %d, live: %d)\n",
+				totalRows, dataSources.ParquetRowCount, dataSources.LiveLogRowCount)
+		}
+
+		if totalRows == 0 && countResult > 0 {
 			// Fast path found data but data sources show 0 - this suggests a bug
 			if isDebugMode(ctx) {
-				fmt.Printf("Fast path validation failed: COUNT result %d but data sources show 0 rows\n", aggResults[0].Count)
+				fmt.Printf("VALIDATION FAILED: COUNT result %d but data sources show 0 rows\n", countResult)
+				fmt.Printf("This indicates a bug in the fast path computation logic\n")
 			}
 			return nil, false
 		}
-		if totalRows > 0 && aggResults[0].Count == 0 {
+		if totalRows > 0 && countResult == 0 {
 			// Data sources show data but COUNT is 0 - this also suggests a bug
 			if isDebugMode(ctx) {
-				fmt.Printf("Fast path validation failed: Data sources show %d rows but COUNT result is 0\n", totalRows)
+				fmt.Printf("VALIDATION FAILED: Data sources show %d rows but COUNT result is 0\n", totalRows)
+				fmt.Printf("This indicates a bug in the data source discovery logic\n")
+			}
+			return nil, false
+		}
+		if countResult != totalRows {
+			// Counts don't match - this suggests inconsistent logic
+			if isDebugMode(ctx) {
+				fmt.Printf("VALIDATION FAILED: COUNT result %d != data source total %d\n", countResult, totalRows)
+				fmt.Printf("This indicates inconsistent logic between counting and data source collection\n")
 			}
 			return nil, false
 		}
 		if isDebugMode(ctx) {
-			fmt.Printf("Fast path validation passed: COUNT=%d, DataSources=%d\n", aggResults[0].Count, totalRows)
+			fmt.Printf("VALIDATION PASSED: COUNT=%d matches DataSources=%d\n", countResult, totalRows)
 		}
 	}
 
-	// Step 4: Build final query result
+	// Step 4: Populate execution plan if provided (for EXPLAIN queries)
+	if plan != nil {
+		strategy := optimizer.DetermineStrategy(aggregations)
+		builder := &ExecutionPlanBuilder{}
+
+		// Create a minimal SELECT statement for the plan builder (avoid nil pointer)
+		stmt := &SelectStatement{}
+
+		// Build aggregation plan with fast path strategy
+		aggPlan := builder.BuildAggregationPlan(stmt, aggregations, strategy, dataSources)
+
+		// Copy relevant fields to the main plan
+		plan.ExecutionStrategy = aggPlan.ExecutionStrategy
+		plan.DataSources = aggPlan.DataSources
+		plan.OptimizationsUsed = aggPlan.OptimizationsUsed
+		plan.PartitionsScanned = aggPlan.PartitionsScanned
+		plan.ParquetFilesScanned = aggPlan.ParquetFilesScanned
+		plan.LiveLogFilesScanned = aggPlan.LiveLogFilesScanned
+		plan.TotalRowsProcessed = aggPlan.TotalRowsProcessed
+		plan.Aggregations = aggPlan.Aggregations
+
+		if isDebugMode(ctx) {
+			fmt.Printf("Populated execution plan with fast path strategy\n")
+		}
+	}
+
+	// Step 5: Build final query result
 	columns := make([]string, len(aggregations))
 	row := make([]sqltypes.Value, len(aggregations))
 
