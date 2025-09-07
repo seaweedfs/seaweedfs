@@ -313,6 +313,11 @@ func (hms *HybridMessageScanner) scanUnflushedDataWithStats(ctx context.Context,
 
 	// Step 2: Process unflushed entries (already deduplicated by broker)
 	for _, logEntry := range unflushedEntries {
+		// Skip control entries without actual data
+		if hms.isControlEntry(logEntry) {
+			continue // Skip this entry
+		}
+
 		// Skip messages outside time range
 		if options.StartTimeNs > 0 && logEntry.TsNs < options.StartTimeNs {
 			continue
@@ -594,6 +599,34 @@ func (hms *HybridMessageScanner) countLiveLogFiles(partition topic.Partition) (i
 		return 0, err
 	}
 	return fileCount, nil
+}
+
+// isControlEntry checks if a log entry is a control entry without actual data
+// Based on MQ system analysis, control entries are:
+// 1. DataMessages with populated Ctrl field (publisher close signals)
+// 2. Entries with empty keys (as filtered by subscriber)
+// 3. Entries with no data
+func (hms *HybridMessageScanner) isControlEntry(logEntry *filer_pb.LogEntry) bool {
+	// Skip entries with no data
+	if len(logEntry.Data) == 0 {
+		return true
+	}
+
+	// Skip entries with empty keys (same logic as subscriber)
+	if len(logEntry.Key) == 0 {
+		return true
+	}
+
+	// Check if this is a DataMessage with control field populated
+	dataMessage := &mq_pb.DataMessage{}
+	if err := proto.Unmarshal(logEntry.Data, dataMessage); err == nil {
+		// If it has a control field, it's a control message
+		if dataMessage.Ctrl != nil {
+			return true
+		}
+	}
+
+	return false
 }
 
 // convertLogEntryToRecordValue converts a filer_pb.LogEntry to schema_pb.RecordValue
@@ -1443,6 +1476,11 @@ func (s *StreamingFlushedDataSource) startStreaming() {
 
 		// Message processing function
 		eachLogEntryFn := func(logEntry *filer_pb.LogEntry) (isDone bool, err error) {
+			// Skip control entries without actual data
+			if s.hms.isControlEntry(logEntry) {
+				return false, nil // Skip this entry
+			}
+
 			// Convert log entry to schema_pb.RecordValue for consistent processing
 			recordValue, source, convertErr := s.hms.convertLogEntryToRecordValue(logEntry)
 			if convertErr != nil {
