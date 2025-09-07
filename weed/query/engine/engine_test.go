@@ -1316,3 +1316,77 @@ func TestBrokerClient_BinaryBufferStartFormat(t *testing.T) {
 	bufferStart = realBrokerClient.getBufferStartFromEntry(invalidEntry)
 	assert.Nil(t, bufferStart, "Should return nil for invalid buffer_start metadata")
 }
+
+// TestGetSQLValAlias tests the getSQLValAlias function, particularly for SQL injection prevention
+func TestGetSQLValAlias(t *testing.T) {
+	engine := &SQLEngine{}
+
+	tests := []struct {
+		name     string
+		sqlVal   *SQLVal
+		expected string
+		desc     string
+	}{
+		{
+			name: "simple string",
+			sqlVal: &SQLVal{
+				Type: StrVal,
+				Val:  []byte("hello"),
+			},
+			expected: "'hello'",
+			desc:     "Simple string should be wrapped in single quotes",
+		},
+		{
+			name: "string with single quote",
+			sqlVal: &SQLVal{
+				Type: StrVal,
+				Val:  []byte("don't"),
+			},
+			expected: "'don''t'",
+			desc:     "String with single quote should have the quote escaped by doubling it",
+		},
+		{
+			name: "string with multiple single quotes",
+			sqlVal: &SQLVal{
+				Type: StrVal,
+				Val:  []byte("'malicious'; DROP TABLE users; --"),
+			},
+			expected: "'''malicious''; DROP TABLE users; --'",
+			desc:     "String with SQL injection attempt should have all single quotes properly escaped",
+		},
+		{
+			name: "empty string",
+			sqlVal: &SQLVal{
+				Type: StrVal,
+				Val:  []byte(""),
+			},
+			expected: "''",
+			desc:     "Empty string should result in empty quoted string",
+		},
+		{
+			name: "integer value",
+			sqlVal: &SQLVal{
+				Type: IntVal,
+				Val:  []byte("123"),
+			},
+			expected: "123",
+			desc:     "Integer value should not be quoted",
+		},
+		{
+			name: "float value",
+			sqlVal: &SQLVal{
+				Type: FloatVal,
+				Val:  []byte("123.45"),
+			},
+			expected: "123.45",
+			desc:     "Float value should not be quoted",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := engine.getSQLValAlias(tt.sqlVal)
+			assert.Equal(t, tt.expected, result, tt.desc)
+		})
+	}
+}

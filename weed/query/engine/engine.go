@@ -4327,7 +4327,9 @@ func (e *SQLEngine) extractBaseColumnsFromFunction(funcExpr *FuncExpr, baseColum
 func (e *SQLEngine) getSQLValAlias(sqlVal *SQLVal) string {
 	switch sqlVal.Type {
 	case StrVal:
-		return fmt.Sprintf("'%s'", string(sqlVal.Val))
+		// Escape single quotes by replacing ' with '' (SQL standard escaping)
+		escapedVal := strings.ReplaceAll(string(sqlVal.Val), "'", "''")
+		return fmt.Sprintf("'%s'", escapedVal)
 	case IntVal:
 		return string(sqlVal.Val)
 	case FloatVal:
