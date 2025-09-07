@@ -1470,9 +1470,14 @@ func (s *StreamingFlushedDataSource) startStreaming() {
 		}
 
 		stopTsNs := s.options.StopTimeNs
-		if stopTsNs == 0 {
+		// For SQL queries, stopTsNs = 0 means "no stop time restriction"
+		// This is different from message queue consumers which want to stop at "now"
+		// We detect SQL context by checking if we have a predicate function
+		if stopTsNs == 0 && s.options.Predicate == nil {
+			// Only set to current time for non-SQL queries (message queue consumers)
 			stopTsNs = time.Now().UnixNano()
 		}
+		// If stopTsNs is still 0, it means this is a SQL query that wants unrestricted scanning
 
 		// Message processing function
 		eachLogEntryFn := func(logEntry *filer_pb.LogEntry) (isDone bool, err error) {

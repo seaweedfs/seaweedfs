@@ -1725,6 +1725,12 @@ func (e *SQLEngine) extractTimeFilters(expr ExprNode) (int64, int64) {
 	// Recursively extract time filters from expression tree
 	e.extractTimeFiltersRecursive(expr, &startTimeNs, &stopTimeNs)
 
+	// Special case: if startTimeNs == stopTimeNs, treat it like an equality query
+	// to avoid premature scan termination. The predicate will handle exact matching.
+	if startTimeNs != 0 && startTimeNs == stopTimeNs {
+		stopTimeNs = 0
+	}
+
 	return startTimeNs, stopTimeNs
 }
 
@@ -1801,9 +1807,11 @@ func (e *SQLEngine) extractTimeFromComparison(comp *ComparisonExpr, startTimeNs,
 			*stopTimeNs = timeValue
 		}
 	case EqualStr: // timestamp = value (point query)
-		// For exact matches, set both bounds to the same value
-		*startTimeNs = timeValue
-		*stopTimeNs = timeValue
+		// For exact matches, we set startTimeNs slightly before the target
+		// This works around a scan boundary bug where >= X starts after X instead of at X
+		// The predicate function will handle exact matching
+		*startTimeNs = timeValue - 1
+		// Do NOT set stopTimeNs - let the predicate handle exact matching
 	}
 }
 
@@ -2173,7 +2181,9 @@ func (e *SQLEngine) valuesEqual(fieldValue *schema_pb.Value, compareValue interf
 	// Handle direct int64 comparisons for timestamp precision (before float64 conversion)
 	if int64Field, ok := fieldValue.Kind.(*schema_pb.Value_Int64Value); ok {
 		if int64Val, ok := compareValue.(int64); ok {
-			return int64Field.Int64Value == int64Val
+			result := int64Field.Int64Value == int64Val
+			// Removed debug logging
+			return result
 		}
 		if intVal, ok := compareValue.(int); ok {
 			return int64Field.Int64Value == int64(intVal)
