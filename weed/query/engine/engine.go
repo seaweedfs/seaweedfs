@@ -70,6 +70,12 @@ type ShowStatement struct {
 
 func (s *ShowStatement) isStatement() {}
 
+type UseStatement struct {
+	Database string // database name to switch to
+}
+
+func (u *UseStatement) isStatement() {}
+
 type DDLStatement struct {
 	Action    string // "create", "alter", "drop"
 	NewName   NameRef
@@ -265,10 +271,105 @@ const (
 	NotEqualStr     = "!="
 )
 
+// parseIdentifier properly parses a potentially quoted identifier (database/table name)
+func parseIdentifier(identifier string) string {
+	identifier = strings.TrimSpace(identifier)
+	identifier = strings.TrimSuffix(identifier, ";") // Remove trailing semicolon
+
+	// Handle double quotes (PostgreSQL standard)
+	if len(identifier) >= 2 && identifier[0] == '"' && identifier[len(identifier)-1] == '"' {
+		return identifier[1 : len(identifier)-1]
+	}
+
+	// Handle backticks (MySQL compatibility)
+	if len(identifier) >= 2 && identifier[0] == '`' && identifier[len(identifier)-1] == '`' {
+		return identifier[1 : len(identifier)-1]
+	}
+
+	return identifier
+}
+
 // ParseSQL parses PostgreSQL-compatible SQL statements using CockroachDB parser for SELECT queries
 func ParseSQL(sql string) (Statement, error) {
 	sql = strings.TrimSpace(sql)
 	sqlUpper := strings.ToUpper(sql)
+
+	// Handle USE statement
+	if strings.HasPrefix(sqlUpper, "USE ") {
+		parts := strings.Fields(sql)
+		if len(parts) < 2 {
+			return nil, fmt.Errorf("USE statement requires a database name")
+		}
+		// Parse the database name properly, handling quoted identifiers
+		dbName := parseIdentifier(strings.Join(parts[1:], " "))
+		return &UseStatement{Database: dbName}, nil
+	}
+
+	// Handle DESCRIBE/DESC statements as aliases for SHOW COLUMNS FROM
+	if strings.HasPrefix(sqlUpper, "DESCRIBE ") || strings.HasPrefix(sqlUpper, "DESC ") {
+		parts := strings.Fields(sql)
+		if len(parts) < 2 {
+			return nil, fmt.Errorf("DESCRIBE/DESC statement requires a table name")
+		}
+
+		var tableName string
+		var database string
+
+		// Get the raw table name (before parsing identifiers)
+		var rawTableName string
+		if len(parts) >= 3 && strings.ToUpper(parts[1]) == "TABLE" {
+			rawTableName = parts[2]
+		} else {
+			rawTableName = parts[1]
+		}
+
+		// Parse database.table format first, then apply parseIdentifier to each part
+		if strings.Contains(rawTableName, ".") {
+			// Handle quoted database.table like "db"."table"
+			if strings.HasPrefix(rawTableName, "\"") || strings.HasPrefix(rawTableName, "`") {
+				// Find the closing quote and the dot
+				var quoteChar byte = '"'
+				if rawTableName[0] == '`' {
+					quoteChar = '`'
+				}
+
+				// Find the matching closing quote
+				closingIndex := -1
+				for i := 1; i < len(rawTableName); i++ {
+					if rawTableName[i] == quoteChar {
+						closingIndex = i
+						break
+					}
+				}
+
+				if closingIndex != -1 && closingIndex+1 < len(rawTableName) && rawTableName[closingIndex+1] == '.' {
+					// Valid quoted database name
+					database = parseIdentifier(rawTableName[:closingIndex+1])
+					tableName = parseIdentifier(rawTableName[closingIndex+2:])
+				} else {
+					// Fall back to simple split then parse
+					dbTableParts := strings.SplitN(rawTableName, ".", 2)
+					database = parseIdentifier(dbTableParts[0])
+					tableName = parseIdentifier(dbTableParts[1])
+				}
+			} else {
+				// Simple case: no quotes, just split then parse
+				dbTableParts := strings.SplitN(rawTableName, ".", 2)
+				database = parseIdentifier(dbTableParts[0])
+				tableName = parseIdentifier(dbTableParts[1])
+			}
+		} else {
+			// No database.table format, just parse the table name
+			tableName = parseIdentifier(rawTableName)
+		}
+
+		stmt := &ShowStatement{Type: "columns"}
+		stmt.OnTable.Name = stringValue(tableName)
+		if database != "" {
+			stmt.OnTable.Qualifier = stringValue(database)
+		}
+		return stmt, nil
+	}
 
 	// Handle SHOW statements (keep custom parsing for these simple cases)
 	if strings.HasPrefix(sqlUpper, "SHOW DATABASES") || strings.HasPrefix(sqlUpper, "SHOW SCHEMAS") {
@@ -282,13 +383,72 @@ func ParseSQL(sql string) (Statement, error) {
 			partsOriginal := strings.Fields(sql) // Use original casing
 			for i, part := range partsUpper {
 				if part == "FROM" && i+1 < len(partsOriginal) {
-					// Remove double quotes if present (PostgreSQL standard for identifiers)
-					dbName := strings.Trim(partsOriginal[i+1], "\"")
+					// Parse the database name properly
+					dbName := parseIdentifier(partsOriginal[i+1])
 					stmt.Schema = dbName                    // Set the Schema field for the test
 					stmt.OnTable.Name = stringValue(dbName) // Keep for compatibility
 					break
 				}
 			}
+		}
+		return stmt, nil
+	}
+	if strings.HasPrefix(sqlUpper, "SHOW COLUMNS FROM") {
+		// Parse "SHOW COLUMNS FROM table" or "SHOW COLUMNS FROM database.table"
+		parts := strings.Fields(sql)
+		if len(parts) < 4 {
+			return nil, fmt.Errorf("SHOW COLUMNS FROM statement requires a table name")
+		}
+
+		// Get the raw table name (before parsing identifiers)
+		rawTableName := parts[3]
+		var tableName string
+		var database string
+
+		// Parse database.table format first, then apply parseIdentifier to each part
+		if strings.Contains(rawTableName, ".") {
+			// Handle quoted database.table like "db"."table"
+			if strings.HasPrefix(rawTableName, "\"") || strings.HasPrefix(rawTableName, "`") {
+				// Find the closing quote and the dot
+				var quoteChar byte = '"'
+				if rawTableName[0] == '`' {
+					quoteChar = '`'
+				}
+
+				// Find the matching closing quote
+				closingIndex := -1
+				for i := 1; i < len(rawTableName); i++ {
+					if rawTableName[i] == quoteChar {
+						closingIndex = i
+						break
+					}
+				}
+
+				if closingIndex != -1 && closingIndex+1 < len(rawTableName) && rawTableName[closingIndex+1] == '.' {
+					// Valid quoted database name
+					database = parseIdentifier(rawTableName[:closingIndex+1])
+					tableName = parseIdentifier(rawTableName[closingIndex+2:])
+				} else {
+					// Fall back to simple split then parse
+					dbTableParts := strings.SplitN(rawTableName, ".", 2)
+					database = parseIdentifier(dbTableParts[0])
+					tableName = parseIdentifier(dbTableParts[1])
+				}
+			} else {
+				// Simple case: no quotes, just split then parse
+				dbTableParts := strings.SplitN(rawTableName, ".", 2)
+				database = parseIdentifier(dbTableParts[0])
+				tableName = parseIdentifier(dbTableParts[1])
+			}
+		} else {
+			// No database.table format, just parse the table name
+			tableName = parseIdentifier(rawTableName)
+		}
+
+		stmt := &ShowStatement{Type: "columns"}
+		stmt.OnTable.Name = stringValue(tableName)
+		if database != "" {
+			stmt.OnTable.Qualifier = stringValue(database)
 		}
 		return stmt, nil
 	}
@@ -449,11 +609,6 @@ func (e *SQLEngine) ExecuteSQL(ctx context.Context, sql string) (*QueryResult, e
 		return e.executeExplain(ctx, actualSQL, startTime)
 	}
 
-	// Handle DESCRIBE/DESC as a special case since it's not parsed as a standard statement
-	if strings.HasPrefix(sqlUpper, "DESCRIBE") || strings.HasPrefix(sqlUpper, "DESC") {
-		return e.handleDescribeCommand(ctx, sqlTrimmed)
-	}
-
 	// Parse the SQL statement using PostgreSQL parser
 	stmt, err := ParseSQL(sql)
 	if err != nil {
@@ -466,6 +621,8 @@ func (e *SQLEngine) ExecuteSQL(ctx context.Context, sql string) (*QueryResult, e
 	switch stmt := stmt.(type) {
 	case *ShowStatement:
 		return e.executeShowStatementWithDescribe(ctx, stmt)
+	case *UseStatement:
+		return e.executeUseStatement(ctx, stmt)
 	case *DDLStatement:
 		return e.executeDDLStatement(ctx, stmt)
 	case *SelectStatement:
@@ -755,6 +912,28 @@ func (e *SQLEngine) formatOptimization(opt string) string {
 	default:
 		return opt
 	}
+}
+
+// executeUseStatement handles USE database statements to switch current database context
+func (e *SQLEngine) executeUseStatement(ctx context.Context, stmt *UseStatement) (*QueryResult, error) {
+	// Validate database name
+	if stmt.Database == "" {
+		err := fmt.Errorf("database name cannot be empty")
+		return &QueryResult{Error: err}, err
+	}
+
+	// Set the current database in the catalog
+	e.catalog.SetCurrentDatabase(stmt.Database)
+
+	// Return success message
+	result := &QueryResult{
+		Columns: []string{"message"},
+		Rows: [][]sqltypes.Value{
+			{sqltypes.MakeString([]byte(fmt.Sprintf("Database changed to: %s", stmt.Database)))},
+		},
+		Error: nil,
+	}
+	return result, nil
 }
 
 // executeDDLStatement handles CREATE operations only

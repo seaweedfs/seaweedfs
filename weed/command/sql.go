@@ -283,24 +283,25 @@ func runInteractiveShell(ctx *SQLContext) bool {
 			continue
 		}
 
-		// Handle database switching
-		parts := strings.Fields(cleanQuery)
-		if len(parts) >= 2 && strings.ToUpper(parts[0]) == "USE" {
-			// Re-join the parts after "USE" to handle names with spaces, then trim.
-			dbName := strings.TrimSpace(strings.TrimPrefix(cleanQuery, parts[0]))
-
-			// Unquote if necessary (handle quoted identifiers like "my-database")
-			if len(dbName) > 1 && dbName[0] == '"' && dbName[len(dbName)-1] == '"' {
-				dbName = dbName[1 : len(dbName)-1]
-			} else if len(dbName) > 1 && dbName[0] == '`' && dbName[len(dbName)-1] == '`' {
-				// Also handle backtick quotes for MySQL compatibility
-				dbName = dbName[1 : len(dbName)-1]
+		// Handle database switching - use proper SQL parser instead of manual parsing
+		if strings.HasPrefix(strings.ToUpper(cleanQuery), "USE ") {
+			// Execute USE statement through the SQL engine for proper parsing
+			result, err := ctx.engine.ExecuteSQL(context.Background(), cleanQuery)
+			if err != nil {
+				fmt.Printf("Error: %v\n\n", err)
+			} else if result.Error != nil {
+				fmt.Printf("Error: %v\n\n", result.Error)
+			} else {
+				// Extract the database name from the result message for CLI context
+				if len(result.Rows) > 0 && len(result.Rows[0]) > 0 {
+					message := result.Rows[0][0].ToString()
+					// Extract database name from "Database changed to: dbname"
+					if strings.HasPrefix(message, "Database changed to: ") {
+						ctx.currentDatabase = strings.TrimPrefix(message, "Database changed to: ")
+					}
+					fmt.Printf("%s\n\n", message)
+				}
 			}
-
-			ctx.currentDatabase = dbName
-			// Also update the SQL engine's catalog current database
-			ctx.engine.GetCatalog().SetCurrentDatabase(dbName)
-			fmt.Printf("Database changed to: %s\n\n", dbName)
 			queryBuffer.Reset()
 			continue
 		}
