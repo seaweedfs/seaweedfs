@@ -8,8 +8,10 @@ import (
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/seaweedfs/seaweedfs/weed/query/sqltypes"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // AggregationSpec defines an aggregation function to be computed
@@ -83,10 +85,8 @@ func (opt *FastPathOptimizer) CollectDataSources(ctx context.Context, hybridScan
 		PartitionsCount:   0,
 	}
 
-	// DEBUG: Log start of data source collection
 	if isDebugMode(ctx) {
-		fmt.Printf("=== FAST PATH DATA SOURCE COLLECTION DEBUG ===\n")
-		fmt.Printf("Topic: %s/%s\n", hybridScanner.topic.Namespace, hybridScanner.topic.Name)
+		fmt.Printf("Collecting data sources for: %s/%s\n", hybridScanner.topic.Namespace, hybridScanner.topic.Name)
 	}
 
 	// Discover partitions for the topic
@@ -171,18 +171,9 @@ func (opt *FastPathOptimizer) CollectDataSources(ctx context.Context, hybridScan
 
 	dataSources.PartitionsCount = len(partitionPaths)
 
-	// DEBUG: Log final summary
 	if isDebugMode(ctx) {
-		fmt.Printf("\n=== FAST PATH DATA COLLECTION SUMMARY ===\n")
-		fmt.Printf("Partitions discovered: %d\n", dataSources.PartitionsCount)
-		fmt.Printf("Parquet files found: %d partitions with data\n", len(dataSources.ParquetFiles))
-		fmt.Printf("Total parquet rows: %d\n", dataSources.ParquetRowCount)
-		fmt.Printf("Total live log rows: %d\n", dataSources.LiveLogRowCount)
-		fmt.Printf("Total live log files: %d\n", dataSources.LiveLogFilesCount)
-		fmt.Printf("TOTAL ROWS: %d (parquet) + %d (live) = %d\n",
-			dataSources.ParquetRowCount, dataSources.LiveLogRowCount,
-			dataSources.ParquetRowCount+dataSources.LiveLogRowCount)
-		fmt.Printf("============================================\n")
+		fmt.Printf("Data sources collected: %d partitions, %d parquet rows, %d live log rows\n",
+			dataSources.PartitionsCount, dataSources.ParquetRowCount, dataSources.LiveLogRowCount)
 	}
 
 	return dataSources, nil
@@ -458,7 +449,7 @@ func (e *SQLEngine) executeAggregationQueryWithPlan(ctx context.Context, hybridS
 	// This will help us understand why fast path was returning 0 when slow path returns 1803
 	if stmt.Where == nil {
 		if isDebugMode(ctx) {
-			fmt.Printf("\n=== ATTEMPTING FAST PATH OPTIMIZATION ===\n")
+			fmt.Printf("\nFast path optimization attempt...\n")
 		}
 		fastResult, canOptimize := e.tryFastParquetAggregationWithPlan(ctx, hybridScanner, aggregations, plan)
 		if canOptimize {
@@ -656,38 +647,32 @@ func (e *SQLEngine) tryFastParquetAggregationWithPlan(ctx context.Context, hybri
 		countResult := aggResults[0].Count
 
 		if isDebugMode(ctx) {
-			fmt.Printf("\n=== FAST PATH VALIDATION ===\n")
-			fmt.Printf("COUNT(*) result: %d\n", countResult)
-			fmt.Printf("Data source totals: %d (parquet: %d, live: %d)\n",
-				totalRows, dataSources.ParquetRowCount, dataSources.LiveLogRowCount)
+			fmt.Printf("Validating fast path: COUNT=%d, Sources=%d\n", countResult, totalRows)
 		}
 
 		if totalRows == 0 && countResult > 0 {
 			// Fast path found data but data sources show 0 - this suggests a bug
 			if isDebugMode(ctx) {
-				fmt.Printf("VALIDATION FAILED: COUNT result %d but data sources show 0 rows\n", countResult)
-				fmt.Printf("This indicates a bug in the fast path computation logic\n")
+				fmt.Printf("Fast path validation failed: COUNT=%d but sources=0\n", countResult)
 			}
 			return nil, false
 		}
 		if totalRows > 0 && countResult == 0 {
 			// Data sources show data but COUNT is 0 - this also suggests a bug
 			if isDebugMode(ctx) {
-				fmt.Printf("VALIDATION FAILED: Data sources show %d rows but COUNT result is 0\n", totalRows)
-				fmt.Printf("This indicates a bug in the data source discovery logic\n")
+				fmt.Printf("Fast path validation failed: sources=%d but COUNT=0\n", totalRows)
 			}
 			return nil, false
 		}
 		if countResult != totalRows {
 			// Counts don't match - this suggests inconsistent logic
 			if isDebugMode(ctx) {
-				fmt.Printf("VALIDATION FAILED: COUNT result %d != data source total %d\n", countResult, totalRows)
-				fmt.Printf("This indicates inconsistent logic between counting and data source collection\n")
+				fmt.Printf("Fast path validation failed: COUNT=%d != sources=%d\n", countResult, totalRows)
 			}
 			return nil, false
 		}
 		if isDebugMode(ctx) {
-			fmt.Printf("VALIDATION PASSED: COUNT=%d matches DataSources=%d\n", countResult, totalRows)
+			fmt.Printf("Fast path validation passed: COUNT=%d\n", countResult)
 		}
 	}
 
@@ -711,6 +696,55 @@ func (e *SQLEngine) tryFastParquetAggregationWithPlan(ctx context.Context, hybri
 		plan.LiveLogFilesScanned = aggPlan.LiveLogFilesScanned
 		plan.TotalRowsProcessed = aggPlan.TotalRowsProcessed
 		plan.Aggregations = aggPlan.Aggregations
+
+		// Merge details while preserving existing ones
+		if plan.Details == nil {
+			plan.Details = make(map[string]interface{})
+		}
+		for key, value := range aggPlan.Details {
+			plan.Details[key] = value
+		}
+
+		// Add file path information from the data collection
+		plan.Details["partition_paths"] = partitions
+
+		// Collect actual file information for each partition
+		var parquetFiles []string
+		var liveLogFiles []string
+
+		for _, partitionPath := range partitions {
+			// Get parquet files for this partition
+			if parquetStats, err := hybridScanner.ReadParquetStatistics(partitionPath); err == nil {
+				for _, stats := range parquetStats {
+					parquetFiles = append(parquetFiles, fmt.Sprintf("%s/%s", partitionPath, stats.FileName))
+				}
+			}
+
+			// Get live log files for this partition
+			if liveFiles, err := collectLiveLogFileNames(hybridScanner.filerClient, partitionPath); err == nil {
+				for _, fileName := range liveFiles {
+					liveLogFiles = append(liveLogFiles, fmt.Sprintf("%s/%s", partitionPath, fileName))
+				}
+			}
+		}
+
+		if len(parquetFiles) > 0 {
+			plan.Details["parquet_files"] = parquetFiles
+		}
+		if len(liveLogFiles) > 0 {
+			plan.Details["live_log_files"] = liveLogFiles
+		}
+
+		// Update the dataSources.LiveLogFilesCount to match the actual files found
+		dataSources.LiveLogFilesCount = len(liveLogFiles)
+
+		// Also update the plan's LiveLogFilesScanned to match
+		plan.LiveLogFilesScanned = len(liveLogFiles)
+
+		// Ensure PartitionsScanned is set so Statistics section appears
+		if plan.PartitionsScanned == 0 && len(partitions) > 0 {
+			plan.PartitionsScanned = len(partitions)
+		}
 
 		if isDebugMode(ctx) {
 			fmt.Printf("Populated execution plan with fast path strategy\n")
@@ -838,4 +872,25 @@ func debugHybridScanOptions(ctx context.Context, options HybridScanOptions, quer
 		fmt.Printf("Columns: %v\n", options.Columns)
 		fmt.Printf("==========================================\n")
 	}
+}
+
+// collectLiveLogFileNames collects the names of live log files in a partition
+func collectLiveLogFileNames(filerClient filer_pb.FilerClient, partitionPath string) ([]string, error) {
+	var fileNames []string
+
+	err := filer_pb.ReadDirAllEntries(context.Background(), filerClient, util.FullPath(partitionPath), "", func(entry *filer_pb.Entry, isLast bool) error {
+		// Skip directories and parquet files
+		if entry.IsDirectory || strings.HasSuffix(entry.Name, ".parquet") || strings.HasSuffix(entry.Name, ".offset") {
+			return nil
+		}
+
+		// Only include files with actual content
+		if len(entry.Chunks) > 0 {
+			fileNames = append(fileNames, entry.Name)
+		}
+
+		return nil
+	})
+
+	return fileNames, err
 }

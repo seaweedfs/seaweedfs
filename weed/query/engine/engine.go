@@ -774,13 +774,19 @@ func (e *SQLEngine) buildHierarchicalPlan(plan *QueryExecutionPlan, err error) [
 		}
 	}
 
+	// Check for data sources tree availability
+	partitionPaths, hasPartitions := plan.Details["partition_paths"].([]string)
+	parquetFiles, _ := plan.Details["parquet_files"].([]string)
+	liveLogFiles, _ := plan.Details["live_log_files"].([]string)
+
 	// Statistics section
 	statisticsPresent := plan.PartitionsScanned > 0 || plan.ParquetFilesScanned > 0 ||
 		plan.LiveLogFilesScanned > 0 || plan.TotalRowsProcessed > 0
 
 	if statisticsPresent {
-		// Performance is always present, so Statistics is never the last section
-		hasMoreAfterStats := true
+		// Check if there are sections after Statistics (Data Sources Tree, Details, Performance)
+		hasDataSourcesTree := hasPartitions && len(partitionPaths) > 0
+		hasMoreAfterStats := hasDataSourcesTree || len(plan.Details) > 0 || err != nil || true // Performance is always present
 		if hasMoreAfterStats {
 			lines = append(lines, "├── Statistics")
 		} else {
@@ -837,11 +843,101 @@ func (e *SQLEngine) buildHierarchicalPlan(plan *QueryExecutionPlan, err error) [
 		}
 	}
 
+	// Data Sources Tree section (if file paths are available)
+	if hasPartitions && len(partitionPaths) > 0 {
+		// Check if there are more sections after this
+		hasMore := len(plan.Details) > 0 || err != nil
+		if hasMore {
+			lines = append(lines, "├── Data Sources Tree")
+		} else {
+			lines = append(lines, "├── Data Sources Tree") // Performance always comes after
+		}
+
+		// Build a tree structure for each partition
+		for i, partition := range partitionPaths {
+			isLastPartition := i == len(partitionPaths)-1
+
+			// Show partition directory
+			partitionPrefix := "├── "
+			if isLastPartition {
+				partitionPrefix = "└── "
+			}
+			lines = append(lines, fmt.Sprintf("│   %s%s/", partitionPrefix, partition))
+
+			// Show parquet files in this partition
+			partitionParquetFiles := make([]string, 0)
+			for _, file := range parquetFiles {
+				if strings.HasPrefix(file, partition+"/") {
+					fileName := file[len(partition)+1:]
+					partitionParquetFiles = append(partitionParquetFiles, fileName)
+				}
+			}
+
+			// Show live log files in this partition
+			partitionLiveLogFiles := make([]string, 0)
+			for _, file := range liveLogFiles {
+				if strings.HasPrefix(file, partition+"/") {
+					fileName := file[len(partition)+1:]
+					partitionLiveLogFiles = append(partitionLiveLogFiles, fileName)
+				}
+			}
+
+			// Display files with proper tree formatting
+			totalFiles := len(partitionParquetFiles) + len(partitionLiveLogFiles)
+			fileIndex := 0
+
+			// Display parquet files
+			for _, fileName := range partitionParquetFiles {
+				fileIndex++
+				isLastFile := fileIndex == totalFiles && isLastPartition
+
+				var filePrefix string
+				if isLastPartition {
+					if isLastFile {
+						filePrefix = "    └── "
+					} else {
+						filePrefix = "    ├── "
+					}
+				} else {
+					if isLastFile {
+						filePrefix = "│   └── "
+					} else {
+						filePrefix = "│   ├── "
+					}
+				}
+				lines = append(lines, fmt.Sprintf("│   %s%s (parquet)", filePrefix, fileName))
+			}
+
+			// Display live log files
+			for _, fileName := range partitionLiveLogFiles {
+				fileIndex++
+				isLastFile := fileIndex == totalFiles && isLastPartition
+
+				var filePrefix string
+				if isLastPartition {
+					if isLastFile {
+						filePrefix = "    └── "
+					} else {
+						filePrefix = "    ├── "
+					}
+				} else {
+					if isLastFile {
+						filePrefix = "│   └── "
+					} else {
+						filePrefix = "│   ├── "
+					}
+				}
+				lines = append(lines, fmt.Sprintf("│   %s%s (live log)", filePrefix, fileName))
+			}
+		}
+	}
+
 	// Details section
 	// Filter out details that are shown elsewhere
 	filteredDetails := make([]string, 0)
 	for key, value := range plan.Details {
-		if key != "results_returned" { // Skip as it's shown in Statistics section
+		// Skip keys that are already formatted and displayed in the Statistics section
+		if key != "results_returned" && key != "partition_paths" && key != "parquet_files" && key != "live_log_files" {
 			filteredDetails = append(filteredDetails, fmt.Sprintf("%s: %v", key, value))
 		}
 	}
@@ -1109,51 +1205,55 @@ func (e *SQLEngine) executeSelectStatementWithPlan(ctx context.Context, stmt *Se
 
 		// Determine execution strategy based on query type (reuse fast path detection from above)
 		if hasAggregations {
-			// For aggregations, determine if fast path conditions are met
-			if stmt.Where == nil {
-				// Reuse the same logic used above for row counting
-				var canUseFastPath bool
-				if tableName != "" {
-					var filerClient filer_pb.FilerClient
-					if e.catalog.brokerClient != nil {
-						filerClient, _ = e.catalog.brokerClient.GetFilerClient()
-					}
-
-					if filerClient != nil {
-						hybridScanner, scannerErr := NewHybridMessageScanner(filerClient, e.catalog.brokerClient, "test", tableName)
-						if scannerErr == nil {
-							// Test if fast path can be used (same as actual execution)
-							_, canOptimize := e.tryFastParquetAggregation(ctx, hybridScanner, aggregations)
-							canUseFastPath = canOptimize
-						} else {
-							canUseFastPath = false
+			// Skip execution strategy determination if plan was already populated by aggregation execution
+			// This prevents overwriting the correctly built plan from BuildAggregationPlan
+			if plan.ExecutionStrategy == "" {
+				// For aggregations, determine if fast path conditions are met
+				if stmt.Where == nil {
+					// Reuse the same logic used above for row counting
+					var canUseFastPath bool
+					if tableName != "" {
+						var filerClient filer_pb.FilerClient
+						if e.catalog.brokerClient != nil {
+							filerClient, _ = e.catalog.brokerClient.GetFilerClient()
 						}
-					} else {
-						// Fallback check
-						canUseFastPath = true
-						for _, spec := range aggregations {
-							if !e.canUseParquetStatsForAggregation(spec) {
+
+						if filerClient != nil {
+							hybridScanner, scannerErr := NewHybridMessageScanner(filerClient, e.catalog.brokerClient, "test", tableName)
+							if scannerErr == nil {
+								// Test if fast path can be used (same as actual execution)
+								_, canOptimize := e.tryFastParquetAggregation(ctx, hybridScanner, aggregations)
+								canUseFastPath = canOptimize
+							} else {
 								canUseFastPath = false
-								break
+							}
+						} else {
+							// Fallback check
+							canUseFastPath = true
+							for _, spec := range aggregations {
+								if !e.canUseParquetStatsForAggregation(spec) {
+									canUseFastPath = false
+									break
+								}
 							}
 						}
+					} else {
+						canUseFastPath = false
 					}
-				} else {
-					canUseFastPath = false
-				}
 
-				if canUseFastPath {
-					plan.ExecutionStrategy = "hybrid_fast_path"
-					plan.OptimizationsUsed = append(plan.OptimizationsUsed, "parquet_statistics", "live_log_counting", "deduplication")
-					plan.DataSources = []string{"parquet_stats", "live_logs"}
+					if canUseFastPath {
+						plan.ExecutionStrategy = "hybrid_fast_path"
+						plan.OptimizationsUsed = append(plan.OptimizationsUsed, "parquet_statistics", "live_log_counting", "deduplication")
+						plan.DataSources = []string{"parquet_stats", "live_logs"}
+					} else {
+						plan.ExecutionStrategy = "full_scan"
+						plan.DataSources = []string{"live_logs", "parquet_files"}
+					}
 				} else {
 					plan.ExecutionStrategy = "full_scan"
 					plan.DataSources = []string{"live_logs", "parquet_files"}
+					plan.OptimizationsUsed = append(plan.OptimizationsUsed, "predicate_pushdown")
 				}
-			} else {
-				plan.ExecutionStrategy = "full_scan"
-				plan.DataSources = []string{"live_logs", "parquet_files"}
-				plan.OptimizationsUsed = append(plan.OptimizationsUsed, "predicate_pushdown")
 			}
 		} else {
 			// For regular SELECT queries
