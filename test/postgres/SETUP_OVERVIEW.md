@@ -225,7 +225,7 @@ SELECT current_user, current_database();
 
 -- Discover structure
 SHOW DATABASES;
-USE analytics;
+\c analytics;
 SHOW TABLES;
 DESCRIBE user_events;
 

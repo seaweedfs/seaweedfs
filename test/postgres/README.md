@@ -46,7 +46,7 @@ This will automatically:
 
 # Inside psql session:
 postgres=> SHOW DATABASES;
-postgres=> USE analytics;
+postgres=> \c analytics;
 postgres=> SHOW TABLES;
 postgres=> SELECT COUNT(*) FROM user_events;
 postgres=> SELECT COUNT(*) FROM user_events;
@@ -211,7 +211,7 @@ SELECT current_user, current_database();
 
 -- Discover data structure  
 SHOW DATABASES;
-USE analytics;
+\c analytics;
 SHOW TABLES;
 DESCRIBE user_events;
 ```
