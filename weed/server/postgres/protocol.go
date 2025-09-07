@@ -215,8 +215,8 @@ func (s *PostgreSQLServer) handleSimpleQuery(session *PostgreSQLSession, query s
 				}
 			}()
 
-			// The sqlEngineWithParser is always initialized, so use it directly
-			result, err = s.sqlEngineWithParser.ExecuteSQL(ctx, cleanQuery)
+			// Use the main sqlEngine (now uses CockroachDB parser for PostgreSQL compatibility)
+			result, err = s.sqlEngine.ExecuteSQL(ctx, cleanQuery)
 		}()
 
 		if err != nil {
