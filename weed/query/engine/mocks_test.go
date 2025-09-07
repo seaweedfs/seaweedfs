@@ -1088,13 +1088,23 @@ func (e *TestSQLEngine) evaluateStringConcatenationMock(columnName string, resul
 
 // evaluateComplexExpressionMock attempts to use production engine logic for complex expressions
 func (e *TestSQLEngine) evaluateComplexExpressionMock(columnName string, result HybridScanResult) *sqltypes.Value {
-	// Parse the column name back into an expression and try to evaluate it using production logic
-	tempEngine := &SQLEngine{}
-	if expr := tempEngine.parseArithmeticExpressionWithLiterals(columnName); expr != nil {
-		// Try to evaluate using production logic
-		if value, err := tempEngine.evaluateArithmeticExpression(expr, result); err == nil && value != nil {
-			sqlValue := convertSchemaValueToSQLValue(value)
-			return &sqlValue
+	// Parse the column name back into an expression using CockroachDB parser
+	cockroachParser := NewCockroachSQLParser()
+	dummySelect := fmt.Sprintf("SELECT %s", columnName)
+
+	stmt, err := cockroachParser.ParseSQL(dummySelect)
+	if err == nil {
+		if selectStmt, ok := stmt.(*SelectStatement); ok && len(selectStmt.SelectExprs) > 0 {
+			if aliasedExpr, ok := selectStmt.SelectExprs[0].(*AliasedExpr); ok {
+				if arithmeticExpr, ok := aliasedExpr.Expr.(*ArithmeticExpr); ok {
+					// Try to evaluate using production logic
+					tempEngine := &SQLEngine{}
+					if value, err := tempEngine.evaluateArithmeticExpression(arithmeticExpr, result); err == nil && value != nil {
+						sqlValue := convertSchemaValueToSQLValue(value)
+						return &sqlValue
+					}
+				}
+			}
 		}
 	}
 	return nil

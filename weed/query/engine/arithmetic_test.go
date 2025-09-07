@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
@@ -64,7 +65,21 @@ func TestArithmeticExpressionParsing(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := parseArithmeticExpression(tt.expression)
+			// Use CockroachDB parser to parse the expression
+			cockroachParser := NewCockroachSQLParser()
+			dummySelect := fmt.Sprintf("SELECT %s", tt.expression)
+			stmt, err := cockroachParser.ParseSQL(dummySelect)
+
+			var result *ArithmeticExpr
+			if err == nil {
+				if selectStmt, ok := stmt.(*SelectStatement); ok && len(selectStmt.SelectExprs) > 0 {
+					if aliasedExpr, ok := selectStmt.SelectExprs[0].(*AliasedExpr); ok {
+						if arithmeticExpr, ok := aliasedExpr.Expr.(*ArithmeticExpr); ok {
+							result = arithmeticExpr
+						}
+					}
+				}
+			}
 
 			if tt.expectNil {
 				if result != nil {
@@ -154,8 +169,23 @@ func TestArithmeticExpressionEvaluation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Parse the arithmetic expression
-			arithmeticExpr := parseArithmeticExpression(tt.expression)
+			// Parse the arithmetic expression using CockroachDB parser
+			cockroachParser := NewCockroachSQLParser()
+			dummySelect := fmt.Sprintf("SELECT %s", tt.expression)
+			stmt, err := cockroachParser.ParseSQL(dummySelect)
+			if err != nil {
+				t.Fatalf("Failed to parse expression %s: %v", tt.expression, err)
+			}
+
+			var arithmeticExpr *ArithmeticExpr
+			if selectStmt, ok := stmt.(*SelectStatement); ok && len(selectStmt.SelectExprs) > 0 {
+				if aliasedExpr, ok := selectStmt.SelectExprs[0].(*AliasedExpr); ok {
+					if arithExpr, ok := aliasedExpr.Expr.(*ArithmeticExpr); ok {
+						arithmeticExpr = arithExpr
+					}
+				}
+			}
+
 			if arithmeticExpr == nil {
 				t.Fatalf("Failed to parse arithmetic expression: %s", tt.expression)
 			}

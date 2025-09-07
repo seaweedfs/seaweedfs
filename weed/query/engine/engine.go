@@ -305,204 +305,7 @@ func ParseSQL(sql string) (Statement, error) {
 	}
 }
 
-// extractFunctionName extracts the function name from a function call expression
-func extractFunctionName(expr string) string {
-	parenIdx := strings.Index(expr, "(")
-	if parenIdx == -1 {
-		return expr
-	}
-	return strings.TrimSpace(expr[:parenIdx])
-}
-
-// parseArithmeticExpression parses arithmetic expressions like id+user_id, col1*col2, etc.
-func parseArithmeticExpression(expr string) *ArithmeticExpr {
-	// Remove spaces for easier parsing
-	expr = strings.ReplaceAll(expr, " ", "")
-
-	// Check for arithmetic and string operators (order matters for precedence)
-	// String concatenation (||) has lower precedence than arithmetic operators
-	operators := []string{"||", "+", "-", "*", "/", "%"}
-
-	for _, op := range operators {
-		// Find the operator position (skip operators inside parentheses)
-		opPos := -1
-		parenLevel := 0
-		for i, char := range expr {
-			if char == '(' {
-				parenLevel++
-			} else if char == ')' {
-				parenLevel--
-			} else if parenLevel == 0 && strings.HasPrefix(expr[i:], op) {
-				opPos = i
-				break
-			}
-		}
-
-		if opPos > 0 && opPos < len(expr)-len(op) {
-			leftExpr := strings.TrimSpace(expr[:opPos])
-			rightExpr := strings.TrimSpace(expr[opPos+len(op):])
-
-			if leftExpr != "" && rightExpr != "" {
-				// Create left and right expressions (recursively handle complex expressions)
-				var left, right ExprNode
-
-				// Parse left side
-				if leftArithmetic := parseArithmeticExpression(leftExpr); leftArithmetic != nil {
-					left = leftArithmetic
-				} else {
-					left = &ColName{Name: stringValue(leftExpr)}
-				}
-
-				// Parse right side
-				if rightArithmetic := parseArithmeticExpression(rightExpr); rightArithmetic != nil {
-					right = rightArithmetic
-				} else {
-					right = &ColName{Name: stringValue(rightExpr)}
-				}
-
-				return &ArithmeticExpr{
-					Left:     left,
-					Right:    right,
-					Operator: op,
-				}
-			}
-		}
-	}
-
-	return nil
-}
-
-// parseArithmeticExpressionWithLiterals parses arithmetic expressions with support for literal values
-func (e *SQLEngine) parseArithmeticExpressionWithLiterals(expr string) *ArithmeticExpr {
-	// Remove spaces for easier parsing, but preserve spaces inside string literals
-	expr = e.removeSpacesPreservingLiterals(expr)
-
-	// Check for arithmetic and string operators (order matters for precedence)
-	// String concatenation (||) has lower precedence than arithmetic operators
-	operators := []string{"||", "+", "-", "*", "/", "%"}
-
-	for _, op := range operators {
-		// Find the operator position (skip operators inside parentheses)
-		opPos := -1
-		parenLevel := 0
-		for i, char := range expr {
-			if char == '(' {
-				parenLevel++
-			} else if char == ')' {
-				parenLevel--
-			} else if parenLevel == 0 && strings.HasPrefix(expr[i:], op) {
-				opPos = i
-				break
-			}
-		}
-
-		if opPos > 0 && opPos < len(expr)-len(op) {
-			leftExpr := strings.TrimSpace(expr[:opPos])
-			rightExpr := strings.TrimSpace(expr[opPos+len(op):])
-
-			if leftExpr != "" && rightExpr != "" {
-				// Create left and right expressions (recursively handle complex expressions)
-				var left, right ExprNode
-
-				// Parse left side
-				if leftArithmetic := e.parseArithmeticExpressionWithLiterals(leftExpr); leftArithmetic != nil {
-					left = leftArithmetic
-				} else {
-					left = e.parseExpressionNode(leftExpr)
-				}
-
-				// Parse right side
-				if rightArithmetic := e.parseArithmeticExpressionWithLiterals(rightExpr); rightArithmetic != nil {
-					right = rightArithmetic
-				} else {
-					right = e.parseExpressionNode(rightExpr)
-				}
-
-				return &ArithmeticExpr{
-					Left:     left,
-					Right:    right,
-					Operator: op,
-				}
-			}
-		}
-	}
-
-	return nil
-}
-
-// removeSpacesPreservingLiterals removes spaces outside of string literals for easier parsing
-func (e *SQLEngine) removeSpacesPreservingLiterals(expr string) string {
-	var result strings.Builder
-	inStringLiteral := false
-
-	for _, char := range expr {
-		if char == '\'' {
-			// Toggle string literal mode when we encounter a single quote
-			inStringLiteral = !inStringLiteral
-			result.WriteRune(char)
-		} else if inStringLiteral {
-			// Inside string literal - preserve all characters including spaces
-			result.WriteRune(char)
-		} else if char == ' ' {
-			// Outside string literal - skip spaces
-			continue
-		} else {
-			// Outside string literal - keep non-space characters
-			result.WriteRune(char)
-		}
-	}
-
-	return result.String()
-}
-
-// parseExpressionNode parses an expression string into the appropriate ExprNode type
-// It distinguishes between column names, literals, and function calls
-func (e *SQLEngine) parseExpressionNode(expr string) ExprNode {
-	expr = strings.TrimSpace(expr)
-
-	// Check if it's a function call (contains parentheses)
-	if strings.Contains(expr, "(") && strings.Contains(expr, ")") {
-		// Parse as function call
-		funcName := extractFunctionName(expr)
-		funcArgs, err := extractFunctionArguments(expr)
-		if err == nil {
-			return &FuncExpr{
-				Name:  stringValue(funcName),
-				Exprs: funcArgs,
-			}
-		}
-		// If function parsing fails, fall through to treat as column name
-	}
-
-	// Check if it's a numeric literal
-	if _, err := strconv.ParseInt(expr, 10, 64); err == nil {
-		return &SQLVal{
-			Type: IntVal,
-			Val:  []byte(expr),
-		}
-	}
-
-	// Check if it's a float literal
-	if _, err := strconv.ParseFloat(expr, 64); err == nil {
-		return &SQLVal{
-			Type: FloatVal,
-			Val:  []byte(expr),
-		}
-	}
-
-	// Check if it's a string literal (quoted)
-	if strings.HasPrefix(expr, "'") && strings.HasSuffix(expr, "'") {
-		return &SQLVal{
-			Type: StrVal,
-			Val:  []byte(strings.Trim(expr, "'")),
-		}
-	}
-
-	// Otherwise, treat it as a column name
-	return &ColName{Name: stringValue(expr)}
-}
-
-// extractFunctionArguments extracts the arguments from a function call expression
+// extractFunctionArguments extracts the arguments from a function call expression using CockroachDB parser
 func extractFunctionArguments(expr string) ([]SelectExpr, error) {
 	// Find the parentheses
 	startParen := strings.Index(expr, "(")
@@ -529,160 +332,40 @@ func extractFunctionArguments(expr string) ([]SelectExpr, error) {
 	args := []SelectExpr{}
 	argParts := strings.Split(argsStr, ",")
 
-	// Use a temporary engine for parsing arguments with the same sophisticated logic as SELECT parsing
-	tempEngine := &SQLEngine{}
+	// Use CockroachDB parser to parse each argument as a SELECT expression
+	cockroachParser := NewCockroachSQLParser()
 
 	for _, argPart := range argParts {
 		argPart = strings.TrimSpace(argPart)
 		if argPart == "*" {
 			args = append(args, &StarExpr{})
 		} else {
-			// Parse arguments using the same logic as SELECT expressions
-			// This handles arithmetic expressions, nested functions, literals, etc.
-			aliasedExpr := &AliasedExpr{}
+			// Create a dummy SELECT statement to parse the argument expression
+			dummySelect := fmt.Sprintf("SELECT %s", argPart)
 
-			// Check for arithmetic expressions FIRST (like string concatenation)
-			if arithmeticExpr := tempEngine.parseArithmeticExpressionWithLiterals(argPart); arithmeticExpr != nil {
-				aliasedExpr.Expr = arithmeticExpr
-			} else if strings.Contains(strings.ToUpper(argPart), "(") && strings.Contains(argPart, ")") {
-				// Nested function expression
-				funcName := extractFunctionName(argPart)
-				funcArgs, err := extractFunctionArguments(argPart)
-				if err != nil {
-					// If nested function parsing fails, fall back to treating as column name
-					aliasedExpr.Expr = &ColName{Name: stringValue(argPart)}
-				} else {
-					funcExpr := &FuncExpr{
-						Name:  stringValue(funcName),
-						Exprs: funcArgs,
-					}
-					aliasedExpr.Expr = funcExpr
-				}
-			} else if strings.HasPrefix(argPart, "'") && strings.HasSuffix(argPart, "'") {
-				// String literal
-				aliasedExpr.Expr = &SQLVal{
-					Type: StrVal,
-					Val:  []byte(strings.Trim(argPart, "'")),
-				}
-			} else {
-				// Regular column name (fallback)
-				aliasedExpr.Expr = &ColName{Name: stringValue(argPart)}
+			// Parse using CockroachDB parser
+			stmt, err := cockroachParser.ParseSQL(dummySelect)
+			if err != nil {
+				// If CockroachDB parser fails, fall back to simple column name
+				args = append(args, &AliasedExpr{
+					Expr: &ColName{Name: stringValue(argPart)},
+				})
+				continue
 			}
 
-			args = append(args, aliasedExpr)
+			// Extract the expression from the parsed SELECT statement
+			if selectStmt, ok := stmt.(*SelectStatement); ok && len(selectStmt.SelectExprs) > 0 {
+				args = append(args, selectStmt.SelectExprs[0])
+			} else {
+				// Fallback to column name if parsing fails
+				args = append(args, &AliasedExpr{
+					Expr: &ColName{Name: stringValue(argPart)},
+				})
+			}
 		}
 	}
 
 	return args, nil
-}
-
-// parseSimpleWhereExpression parses a simple WHERE expression
-func parseSimpleWhereExpression(whereClause string) (ExprNode, error) {
-	whereClause = strings.TrimSpace(whereClause)
-
-	// Handle AND/OR expressions first (higher precedence)
-	if strings.Contains(strings.ToUpper(whereClause), " AND ") {
-		// Use original case for parsing but ToUpper for detection
-		originalParts := strings.SplitN(whereClause, " AND ", 2)
-		if len(originalParts) != 2 {
-			originalParts = strings.SplitN(whereClause, " and ", 2)
-		}
-		if len(originalParts) == 2 {
-			left, err := parseSimpleWhereExpression(strings.TrimSpace(originalParts[0]))
-			if err != nil {
-				return nil, err
-			}
-			right, err := parseSimpleWhereExpression(strings.TrimSpace(originalParts[1]))
-			if err != nil {
-				return nil, err
-			}
-			return &AndExpr{Left: left, Right: right}, nil
-		}
-	}
-
-	if strings.Contains(strings.ToUpper(whereClause), " OR ") {
-		// Use original case for parsing but ToUpper for detection
-		originalParts := strings.SplitN(whereClause, " OR ", 2)
-		if len(originalParts) != 2 {
-			originalParts = strings.SplitN(whereClause, " or ", 2)
-		}
-		if len(originalParts) == 2 {
-			left, err := parseSimpleWhereExpression(strings.TrimSpace(originalParts[0]))
-			if err != nil {
-				return nil, err
-			}
-			right, err := parseSimpleWhereExpression(strings.TrimSpace(originalParts[1]))
-			if err != nil {
-				return nil, err
-			}
-			return &OrExpr{Left: left, Right: right}, nil
-		}
-	}
-
-	// Handle simple comparison operations
-	operators := []string{">=", "<=", "!=", "<>", "=", ">", "<"}
-
-	for _, op := range operators {
-		if idx := strings.Index(whereClause, op); idx != -1 {
-			left := strings.TrimSpace(whereClause[:idx])
-			right := strings.TrimSpace(whereClause[idx+len(op):])
-
-			// Parse left side (should be a column name)
-			leftExpr := &ColName{Name: stringValue(left)}
-
-			// Parse right side (should be a value)
-			var rightExpr ExprNode
-			if strings.HasPrefix(right, "'") && strings.HasSuffix(right, "'") {
-				// String literal
-				rightExpr = &SQLVal{
-					Type: StrVal,
-					Val:  []byte(strings.Trim(right, "'")),
-				}
-			} else if _, err := strconv.ParseInt(right, 10, 64); err == nil {
-				// Integer literal
-				rightExpr = &SQLVal{
-					Type: IntVal,
-					Val:  []byte(right),
-				}
-			} else if _, err := strconv.ParseFloat(right, 64); err == nil {
-				// Float literal
-				rightExpr = &SQLVal{
-					Type: FloatVal,
-					Val:  []byte(right),
-				}
-			} else {
-				// Assume it's a column name
-				rightExpr = &ColName{Name: stringValue(right)}
-			}
-
-			// Convert operator to internal representation
-			var operator string
-			switch op {
-			case ">":
-				operator = GreaterThanStr
-			case "<":
-				operator = LessThanStr
-			case ">=":
-				operator = GreaterEqualStr
-			case "<=":
-				operator = LessEqualStr
-			case "=":
-				operator = EqualStr
-			case "!=", "<>":
-				operator = NotEqualStr
-			default:
-				operator = op
-			}
-
-			return &ComparisonExpr{
-				Left:     leftExpr,
-				Right:    rightExpr,
-				Operator: operator,
-			}, nil
-		}
-	}
-
-	return nil, fmt.Errorf("unsupported WHERE expression: %s", whereClause)
 }
 
 // debugModeKey is used to store debug mode flag in context
