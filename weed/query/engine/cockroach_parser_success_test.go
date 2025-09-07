@@ -58,6 +58,12 @@ func TestCockroachDBParserSuccess(t *testing.T) {
 			expected: "5",
 			desc:     "Nested function calls",
 		},
+		{
+			name:     "Column_Alias",
+			sql:      "SELECT LENGTH('test') AS test_length FROM user_events LIMIT 1",
+			expected: "4",
+			desc:     "Column alias functionality (AS keyword)",
+		},
 	}
 
 	successCount := 0
