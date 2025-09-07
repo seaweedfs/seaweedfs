@@ -276,18 +276,24 @@ func (e *TestSQLEngine) generateTestQueryResult(tableName string, stmt *SelectSt
 		for _, expr := range stmt.SelectExprs {
 			if aliasedExpr, ok := expr.(*AliasedExpr); ok {
 				if colName, ok := aliasedExpr.Expr.(*ColName); ok {
-					columnName := colName.Name.String()
-					upperColumnName := strings.ToUpper(columnName)
-
-					// Check if this is an arithmetic expression embedded in a ColName
-					if arithmeticExpr := e.parseColumnLevelCalculation(columnName); arithmeticExpr != nil {
-						columns = append(columns, e.getArithmeticExpressionAlias(arithmeticExpr))
-					} else if upperColumnName == FuncCURRENT_DATE || upperColumnName == FuncCURRENT_TIME ||
-						upperColumnName == FuncCURRENT_TIMESTAMP || upperColumnName == FuncNOW {
-						// Handle datetime constants
-						columns = append(columns, strings.ToLower(columnName))
+					// Check if there's an alias, use that as column name
+					if aliasedExpr.As != nil && !aliasedExpr.As.IsEmpty() {
+						columns = append(columns, aliasedExpr.As.String())
 					} else {
-						columns = append(columns, columnName)
+						// Fall back to expression-based column naming
+						columnName := colName.Name.String()
+						upperColumnName := strings.ToUpper(columnName)
+
+						// Check if this is an arithmetic expression embedded in a ColName
+						if arithmeticExpr := e.parseColumnLevelCalculation(columnName); arithmeticExpr != nil {
+							columns = append(columns, e.getArithmeticExpressionAlias(arithmeticExpr))
+						} else if upperColumnName == FuncCURRENT_DATE || upperColumnName == FuncCURRENT_TIME ||
+							upperColumnName == FuncCURRENT_TIMESTAMP || upperColumnName == FuncNOW {
+							// Handle datetime constants
+							columns = append(columns, strings.ToLower(columnName))
+						} else {
+							columns = append(columns, columnName)
+						}
 					}
 				} else if arithmeticExpr, ok := aliasedExpr.Expr.(*ArithmeticExpr); ok {
 					// Handle arithmetic expressions like id+user_id and concatenations

@@ -2170,7 +2170,30 @@ func (e *SQLEngine) valuesEqual(fieldValue *schema_pb.Value, compareValue interf
 		return false
 	}
 
-	// Handle numeric comparisons with type coercion
+	// Handle direct int64 comparisons for timestamp precision (before float64 conversion)
+	if int64Field, ok := fieldValue.Kind.(*schema_pb.Value_Int64Value); ok {
+		if int64Val, ok := compareValue.(int64); ok {
+			return int64Field.Int64Value == int64Val
+		}
+		if intVal, ok := compareValue.(int); ok {
+			return int64Field.Int64Value == int64(intVal)
+		}
+	}
+
+	// Handle direct int32 comparisons
+	if int32Field, ok := fieldValue.Kind.(*schema_pb.Value_Int32Value); ok {
+		if int32Val, ok := compareValue.(int32); ok {
+			return int32Field.Int32Value == int32Val
+		}
+		if intVal, ok := compareValue.(int); ok {
+			return int32Field.Int32Value == int32(intVal)
+		}
+		if int64Val, ok := compareValue.(int64); ok && int64Val >= math.MinInt32 && int64Val <= math.MaxInt32 {
+			return int32Field.Int32Value == int32(int64Val)
+		}
+	}
+
+	// Handle numeric comparisons with type coercion (fallback for other numeric types)
 	fieldNum := e.convertToNumber(fieldValue)
 	compareNum := e.convertCompareValueToNumber(compareValue)
 
@@ -2261,7 +2284,30 @@ func (e *SQLEngine) valueLessThan(fieldValue *schema_pb.Value, compareValue inte
 		return false
 	}
 
-	// Handle numeric comparisons with type coercion
+	// Handle direct int64 comparisons for timestamp precision (before float64 conversion)
+	if int64Field, ok := fieldValue.Kind.(*schema_pb.Value_Int64Value); ok {
+		if int64Val, ok := compareValue.(int64); ok {
+			return int64Field.Int64Value < int64Val
+		}
+		if intVal, ok := compareValue.(int); ok {
+			return int64Field.Int64Value < int64(intVal)
+		}
+	}
+
+	// Handle direct int32 comparisons
+	if int32Field, ok := fieldValue.Kind.(*schema_pb.Value_Int32Value); ok {
+		if int32Val, ok := compareValue.(int32); ok {
+			return int32Field.Int32Value < int32Val
+		}
+		if intVal, ok := compareValue.(int); ok {
+			return int32Field.Int32Value < int32(intVal)
+		}
+		if int64Val, ok := compareValue.(int64); ok && int64Val >= math.MinInt32 && int64Val <= math.MaxInt32 {
+			return int32Field.Int32Value < int32(int64Val)
+		}
+	}
+
+	// Handle numeric comparisons with type coercion (fallback for other numeric types)
 	fieldNum := e.convertToNumber(fieldValue)
 	compareNum := e.convertCompareValueToNumber(compareValue)
 
@@ -2303,7 +2349,30 @@ func (e *SQLEngine) valueGreaterThan(fieldValue *schema_pb.Value, compareValue i
 		return false
 	}
 
-	// Handle numeric comparisons with type coercion
+	// Handle direct int64 comparisons for timestamp precision (before float64 conversion)
+	if int64Field, ok := fieldValue.Kind.(*schema_pb.Value_Int64Value); ok {
+		if int64Val, ok := compareValue.(int64); ok {
+			return int64Field.Int64Value > int64Val
+		}
+		if intVal, ok := compareValue.(int); ok {
+			return int64Field.Int64Value > int64(intVal)
+		}
+	}
+
+	// Handle direct int32 comparisons
+	if int32Field, ok := fieldValue.Kind.(*schema_pb.Value_Int32Value); ok {
+		if int32Val, ok := compareValue.(int32); ok {
+			return int32Field.Int32Value > int32Val
+		}
+		if intVal, ok := compareValue.(int); ok {
+			return int32Field.Int32Value > int32(intVal)
+		}
+		if int64Val, ok := compareValue.(int64); ok && int64Val >= math.MinInt32 && int64Val <= math.MaxInt32 {
+			return int32Field.Int32Value > int32(int64Val)
+		}
+	}
+
+	// Handle numeric comparisons with type coercion (fallback for other numeric types)
 	fieldNum := e.convertToNumber(fieldValue)
 	compareNum := e.convertCompareValueToNumber(compareValue)
 
@@ -3646,6 +3715,57 @@ func (e *SQLEngine) ConvertToSQLResultWithExpressions(hms *HybridMessageScanner,
 		for _, selectExpr := range selectExprs {
 			switch expr := selectExpr.(type) {
 			case *AliasedExpr:
+				// Check if alias is available and use it
+				if expr.As != nil && !expr.As.IsEmpty() {
+					columns = append(columns, expr.As.String())
+				} else {
+					// Fall back to expression-based column naming
+					switch col := expr.Expr.(type) {
+					case *ColName:
+						columnName := col.Name.String()
+						upperColumnName := strings.ToUpper(columnName)
+
+						// Check if this is an arithmetic expression embedded in a ColName
+						if arithmeticExpr := e.parseColumnLevelCalculation(columnName); arithmeticExpr != nil {
+							columns = append(columns, e.getArithmeticExpressionAlias(arithmeticExpr))
+						} else if upperColumnName == FuncCURRENT_DATE || upperColumnName == FuncCURRENT_TIME ||
+							upperColumnName == FuncCURRENT_TIMESTAMP || upperColumnName == FuncNOW {
+							// Use lowercase for datetime constants in column headers
+							columns = append(columns, strings.ToLower(columnName))
+						} else {
+							columns = append(columns, columnName)
+						}
+					case *ArithmeticExpr:
+						columns = append(columns, e.getArithmeticExpressionAlias(col))
+					case *FuncExpr:
+						columns = append(columns, e.getStringFunctionAlias(col))
+					case *SQLVal:
+						columns = append(columns, e.getSQLValAlias(col))
+					default:
+						columns = append(columns, "expr")
+					}
+				}
+			}
+		}
+
+		return &QueryResult{
+			Columns:  columns,
+			Rows:     [][]sqltypes.Value{},
+			Database: hms.topic.Namespace,
+			Table:    hms.topic.Name,
+		}
+	}
+
+	// Build columns from SELECT expressions
+	columns := make([]string, 0, len(selectExprs))
+	for _, selectExpr := range selectExprs {
+		switch expr := selectExpr.(type) {
+		case *AliasedExpr:
+			// Check if alias is available and use it
+			if expr.As != nil && !expr.As.IsEmpty() {
+				columns = append(columns, expr.As.String())
+			} else {
+				// Fall back to expression-based column naming
 				switch col := expr.Expr.(type) {
 				case *ColName:
 					columnName := col.Name.String()
@@ -3670,45 +3790,6 @@ func (e *SQLEngine) ConvertToSQLResultWithExpressions(hms *HybridMessageScanner,
 				default:
 					columns = append(columns, "expr")
 				}
-			}
-		}
-
-		return &QueryResult{
-			Columns:  columns,
-			Rows:     [][]sqltypes.Value{},
-			Database: hms.topic.Namespace,
-			Table:    hms.topic.Name,
-		}
-	}
-
-	// Build columns from SELECT expressions
-	columns := make([]string, 0, len(selectExprs))
-	for _, selectExpr := range selectExprs {
-		switch expr := selectExpr.(type) {
-		case *AliasedExpr:
-			switch col := expr.Expr.(type) {
-			case *ColName:
-				columnName := col.Name.String()
-				upperColumnName := strings.ToUpper(columnName)
-
-				// Check if this is an arithmetic expression embedded in a ColName
-				if arithmeticExpr := e.parseColumnLevelCalculation(columnName); arithmeticExpr != nil {
-					columns = append(columns, e.getArithmeticExpressionAlias(arithmeticExpr))
-				} else if upperColumnName == FuncCURRENT_DATE || upperColumnName == FuncCURRENT_TIME ||
-					upperColumnName == FuncCURRENT_TIMESTAMP || upperColumnName == FuncNOW {
-					// Use lowercase for datetime constants in column headers
-					columns = append(columns, strings.ToLower(columnName))
-				} else {
-					columns = append(columns, columnName)
-				}
-			case *ArithmeticExpr:
-				columns = append(columns, e.getArithmeticExpressionAlias(col))
-			case *FuncExpr:
-				columns = append(columns, e.getStringFunctionAlias(col))
-			case *SQLVal:
-				columns = append(columns, e.getSQLValAlias(col))
-			default:
-				columns = append(columns, "expr")
 			}
 		}
 	}
