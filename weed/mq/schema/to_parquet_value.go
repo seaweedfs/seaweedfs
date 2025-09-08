@@ -106,11 +106,11 @@ func toParquetValue(value *schema_pb.Value) (parquet.Value, error) {
 		if decimalValue == nil || decimalValue.Value == nil || len(decimalValue.Value) == 0 {
 			return parquet.NullValue(), nil
 		}
-		
+
 		// Store DECIMAL according to Parquet specification based on precision
 		// Spec: unscaledValue * 10^(-scale) where unscaledValue is stored as signed integer
 		precision := decimalValue.Precision
-		
+
 		// Handle signed two's complement conversion for proper Parquet DECIMAL
 		var unscaledValue *big.Int
 		if len(decimalValue.Value) > 0 && decimalValue.Value[0]&0x80 != 0 {
@@ -125,7 +125,7 @@ func toParquetValue(value *schema_pb.Value) (parquet.Value, error) {
 			// Positive number - SetBytes works correctly
 			unscaledValue = new(big.Int).SetBytes(decimalValue.Value)
 		}
-		
+
 		if precision <= 9 {
 			// Store as INT32 for precision ≤ 9
 			if unscaledValue.IsInt64() {
@@ -136,15 +136,15 @@ func toParquetValue(value *schema_pb.Value) (parquet.Value, error) {
 			}
 			// Fallback to 0 if out of range
 			return parquet.Int32Value(0), nil
-			
+
 		} else if precision <= 18 {
-			// Store as INT64 for 9 < precision ≤ 18  
+			// Store as INT64 for 9 < precision ≤ 18
 			if unscaledValue.IsInt64() {
 				return parquet.Int64Value(unscaledValue.Int64()), nil
 			}
 			// Fallback to 0 if out of range
 			return parquet.Int64Value(0), nil
-			
+
 		} else {
 			// Store as BINARY for precision > 18 (unlimited precision)
 			// Ensure proper two's complement big-endian format
