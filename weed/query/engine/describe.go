@@ -39,7 +39,7 @@ func (e *SQLEngine) executeDescribeStatement(ctx context.Context, tableName stri
 		Type  string
 		Extra string
 	}{
-		{"_timestamp_ns", "BIGINT", "System column: Message timestamp in nanoseconds"},
+		{"_ts", "TIMESTAMP", "System column: Message timestamp"},
 		{"_key", "VARBINARY", "System column: Message key"},
 		{"_source", "VARCHAR(255)", "System column: Data source (parquet/log)"},
 	}

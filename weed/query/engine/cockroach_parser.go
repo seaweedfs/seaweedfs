@@ -290,6 +290,35 @@ func (p *CockroachSQLParser) convertExpr(expr tree.Expr) (ExprNode, error) {
 		// For non-interval casts, just convert the inner expression
 		return p.convertExpr(e.Expr)
 
+	case *tree.RangeCond:
+		// Handle BETWEEN expressions: column BETWEEN value1 AND value2
+		seaweedBetween := &BetweenExpr{
+			Not: e.Not, // Handle NOT BETWEEN
+		}
+
+		// Convert the left operand (the expression being tested)
+		left, err := p.convertExpr(e.Left)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert BETWEEN left operand: %v", err)
+		}
+		seaweedBetween.Left = left
+
+		// Convert the FROM operand (lower bound)
+		from, err := p.convertExpr(e.From)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert BETWEEN from operand: %v", err)
+		}
+		seaweedBetween.From = from
+
+		// Convert the TO operand (upper bound)
+		to, err := p.convertExpr(e.To)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert BETWEEN to operand: %v", err)
+		}
+		seaweedBetween.To = to
+
+		return seaweedBetween, nil
+
 	default:
 		return nil, fmt.Errorf("unsupported expression type: %T", e)
 	}

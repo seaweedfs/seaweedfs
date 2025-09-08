@@ -41,11 +41,12 @@ type HybridMessageScanner struct {
 	topic         topic.Topic
 	recordSchema  *schema_pb.RecordType
 	parquetLevels *schema.ParquetLevels
+	engine        *SQLEngine // Reference for system column formatting
 }
 
 // NewHybridMessageScanner creates a scanner that reads from all data sources
 // This provides complete real-time message coverage including unflushed data
-func NewHybridMessageScanner(filerClient filer_pb.FilerClient, brokerClient BrokerClientInterface, namespace, topicName string) (*HybridMessageScanner, error) {
+func NewHybridMessageScanner(filerClient filer_pb.FilerClient, brokerClient BrokerClientInterface, namespace, topicName string, engine *SQLEngine) (*HybridMessageScanner, error) {
 	// Check if filerClient is available
 	if filerClient == nil {
 		return nil, fmt.Errorf("filerClient is required but not available")
@@ -90,6 +91,7 @@ func NewHybridMessageScanner(filerClient filer_pb.FilerClient, brokerClient Brok
 		topic:         t,
 		recordSchema:  recordType,
 		parquetLevels: parquetLevels,
+		engine:        engine,
 	}, nil
 }
 
@@ -917,8 +919,9 @@ func (hms *HybridMessageScanner) ConvertToSQLResult(results []HybridScanResult, 
 			switch columnName {
 			case SW_COLUMN_NAME_SOURCE:
 				row[j] = sqltypes.NewVarChar(result.Source)
-			case SW_COLUMN_NAME_TIMESTAMP:
-				row[j] = sqltypes.NewInt64(result.Timestamp)
+			case SW_COLUMN_NAME_TIMESTAMP, SW_DISPLAY_NAME_TIMESTAMP:
+				// Format timestamp as proper timestamp type instead of raw nanoseconds
+				row[j] = hms.engine.formatTimestampColumn(result.Timestamp)
 			case SW_COLUMN_NAME_KEY:
 				row[j] = sqltypes.NewVarBinary(string(result.Key))
 			default:

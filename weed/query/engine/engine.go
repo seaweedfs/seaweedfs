@@ -258,6 +258,15 @@ type IntervalExpr struct {
 
 func (i *IntervalExpr) isExprNode() {}
 
+type BetweenExpr struct {
+	Left ExprNode // The expression to test
+	From ExprNode // Lower bound (inclusive)
+	To   ExprNode // Upper bound (inclusive)
+	Not  bool     // true for NOT BETWEEN
+}
+
+func (b *BetweenExpr) isExprNode() {}
+
 // SQLVal types
 const (
 	IntVal = iota
@@ -1125,7 +1134,7 @@ func (e *SQLEngine) executeSelectStatementWithPlan(ctx context.Context, stmt *Se
 			}
 		}
 
-		hybridScanner, err := NewHybridMessageScanner(filerClient, e.catalog.brokerClient, database, tableName)
+		hybridScanner, err := NewHybridMessageScanner(filerClient, e.catalog.brokerClient, database, tableName, e)
 		if err != nil {
 			return &QueryResult{Error: err}, err
 		}
@@ -1167,7 +1176,7 @@ func (e *SQLEngine) executeSelectStatementWithPlan(ctx context.Context, stmt *Se
 						filerClient, _ = e.catalog.brokerClient.GetFilerClient()
 					}
 
-					hybridScanner, scannerErr := NewHybridMessageScanner(filerClient, e.catalog.brokerClient, "test", tableName)
+					hybridScanner, scannerErr := NewHybridMessageScanner(filerClient, e.catalog.brokerClient, "test", tableName, e)
 					var canUseFastPath bool
 					if scannerErr == nil {
 						// Test if fast path can be used (same as actual execution)
@@ -1231,7 +1240,7 @@ func (e *SQLEngine) executeSelectStatementWithPlan(ctx context.Context, stmt *Se
 						}
 
 						if filerClient != nil {
-							hybridScanner, scannerErr := NewHybridMessageScanner(filerClient, e.catalog.brokerClient, "test", tableName)
+							hybridScanner, scannerErr := NewHybridMessageScanner(filerClient, e.catalog.brokerClient, "test", tableName, e)
 							if scannerErr == nil {
 								// Test if fast path can be used (same as actual execution)
 								_, canOptimize := e.tryFastParquetAggregation(ctx, hybridScanner, aggregations)
@@ -1367,7 +1376,7 @@ func (e *SQLEngine) executeSelectStatement(ctx context.Context, stmt *SelectStat
 		return &QueryResult{Error: filerClientErr}, filerClientErr
 	}
 
-	hybridScanner, err := NewHybridMessageScanner(filerClient, e.catalog.brokerClient, database, tableName)
+	hybridScanner, err := NewHybridMessageScanner(filerClient, e.catalog.brokerClient, database, tableName, e)
 	if err != nil {
 		// Handle quiet topics gracefully: topics exist but have no active schema/brokers
 		if IsNoSchemaError(err) {
@@ -1612,7 +1621,7 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 		return &QueryResult{Error: filerClientErr}, filerClientErr
 	}
 
-	hybridScanner, err := NewHybridMessageScanner(filerClient, e.catalog.brokerClient, database, tableName)
+	hybridScanner, err := NewHybridMessageScanner(filerClient, e.catalog.brokerClient, database, tableName, e)
 	if err != nil {
 		// Handle quiet topics gracefully: topics exist but have no active schema/brokers
 		if IsNoSchemaError(err) {
@@ -2098,6 +2107,8 @@ func (e *SQLEngine) buildPredicateWithContext(expr ExprNode, selectExprs []Selec
 	switch exprType := expr.(type) {
 	case *ComparisonExpr:
 		return e.buildComparisonPredicateWithContext(exprType, selectExprs)
+	case *BetweenExpr:
+		return e.buildBetweenPredicateWithContext(exprType, selectExprs)
 	case *AndExpr:
 		leftPred, err := e.buildPredicateWithContext(exprType.Left, selectExprs)
 		if err != nil {
@@ -2132,6 +2143,8 @@ func (e *SQLEngine) buildPredicateWithAliases(expr ExprNode, aliases map[string]
 	switch exprType := expr.(type) {
 	case *ComparisonExpr:
 		return e.buildComparisonPredicateWithAliases(exprType, aliases)
+	case *BetweenExpr:
+		return e.buildBetweenPredicateWithAliases(exprType, aliases)
 	case *AndExpr:
 		leftPred, err := e.buildPredicateWithAliases(exprType.Left, aliases)
 		if err != nil {
@@ -2174,7 +2187,7 @@ func (e *SQLEngine) buildComparisonPredicateWithAliases(expr *ComparisonExpr, al
 
 	if leftCol != "" && rightCol == "" {
 		// Left side is column, right side is value
-		columnName = leftCol
+		columnName = e.getSystemColumnInternalName(leftCol)
 		val, err := e.extractValueFromExpr(expr.Right)
 		if err != nil {
 			return nil, err
@@ -2182,7 +2195,7 @@ func (e *SQLEngine) buildComparisonPredicateWithAliases(expr *ComparisonExpr, al
 		compareValue = val
 	} else if rightCol != "" && leftCol == "" {
 		// Right side is column, left side is value
-		columnName = rightCol
+		columnName = e.getSystemColumnInternalName(rightCol)
 		val, err := e.extractValueFromExpr(expr.Left)
 		if err != nil {
 			return nil, err
@@ -2222,6 +2235,8 @@ func (e *SQLEngine) buildComparisonPredicateWithContext(expr *ComparisonExpr, se
 		rawColumnName := colName.Name.String()
 		// Resolve potential alias to actual column name
 		columnName = e.resolveColumnAlias(rawColumnName, selectExprs)
+		// Map display names to internal names for system columns
+		columnName = e.getSystemColumnInternalName(columnName)
 		operator = expr.Operator
 
 		// Extract comparison value from right side
@@ -2236,6 +2251,8 @@ func (e *SQLEngine) buildComparisonPredicateWithContext(expr *ComparisonExpr, se
 		rawColumnName := colName.Name.String()
 		// Resolve potential alias to actual column name
 		columnName = e.resolveColumnAlias(rawColumnName, selectExprs)
+		// Map display names to internal names for system columns
+		columnName = e.getSystemColumnInternalName(columnName)
 
 		// Reverse the operator when column is on right side
 		operator = e.reverseOperator(expr.Operator)
@@ -2274,6 +2291,106 @@ func (e *SQLEngine) buildComparisonPredicateWithContext(expr *ComparisonExpr, se
 
 		// Use the comparison evaluation function
 		return e.evaluateComparison(fieldValue, operator, compareValue)
+	}, nil
+}
+
+// buildBetweenPredicateWithContext creates a predicate for BETWEEN operations
+func (e *SQLEngine) buildBetweenPredicateWithContext(expr *BetweenExpr, selectExprs []SelectExpr) (func(*schema_pb.RecordValue) bool, error) {
+	var columnName string
+	var fromValue, toValue interface{}
+
+	// Check if left side is a column name
+	if colName, ok := expr.Left.(*ColName); ok {
+		rawColumnName := colName.Name.String()
+		// Resolve potential alias to actual column name
+		columnName = e.resolveColumnAlias(rawColumnName, selectExprs)
+		// Map display names to internal names for system columns
+		columnName = e.getSystemColumnInternalName(columnName)
+
+		// Extract FROM value
+		fromVal, err := e.extractComparisonValue(expr.From)
+		if err != nil {
+			return nil, fmt.Errorf("failed to extract BETWEEN from value: %v", err)
+		}
+		fromValue = fromVal
+
+		// Extract TO value
+		toVal, err := e.extractComparisonValue(expr.To)
+		if err != nil {
+			return nil, fmt.Errorf("failed to extract BETWEEN to value: %v", err)
+		}
+		toValue = toVal
+	} else {
+		return nil, fmt.Errorf("BETWEEN left operand must be a column name, got: %T", expr.Left)
+	}
+
+	// Return the predicate function
+	return func(record *schema_pb.RecordValue) bool {
+		fieldValue, exists := record.Fields[columnName]
+		if !exists {
+			return false
+		}
+
+		// Evaluate: fieldValue >= fromValue AND fieldValue <= toValue
+		greaterThanOrEqualFrom := e.evaluateComparison(fieldValue, ">=", fromValue)
+		lessThanOrEqualTo := e.evaluateComparison(fieldValue, "<=", toValue)
+
+		result := greaterThanOrEqualFrom && lessThanOrEqualTo
+
+		// Handle NOT BETWEEN
+		if expr.Not {
+			result = !result
+		}
+
+		return result
+	}, nil
+}
+
+// buildBetweenPredicateWithAliases creates a predicate for BETWEEN operations with alias support
+func (e *SQLEngine) buildBetweenPredicateWithAliases(expr *BetweenExpr, aliases map[string]ExprNode) (func(*schema_pb.RecordValue) bool, error) {
+	var columnName string
+	var fromValue, toValue interface{}
+
+	// Extract column name from left side with alias resolution
+	leftCol := e.getColumnNameWithAliases(expr.Left, aliases)
+	if leftCol == "" {
+		return nil, fmt.Errorf("BETWEEN left operand must be a column name, got: %T", expr.Left)
+	}
+	columnName = e.getSystemColumnInternalName(leftCol)
+
+	// Extract FROM value
+	fromVal, err := e.extractValueFromExpr(expr.From)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract BETWEEN from value: %v", err)
+	}
+	fromValue = fromVal
+
+	// Extract TO value
+	toVal, err := e.extractValueFromExpr(expr.To)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract BETWEEN to value: %v", err)
+	}
+	toValue = toVal
+
+	// Return the predicate function
+	return func(record *schema_pb.RecordValue) bool {
+		fieldValue, exists := record.Fields[columnName]
+		if !exists {
+			return false
+		}
+
+		// Evaluate: fieldValue >= fromValue AND fieldValue <= toValue
+		greaterThanOrEqualFrom := e.evaluateComparison(fieldValue, ">=", fromValue)
+		lessThanOrEqualTo := e.evaluateComparison(fieldValue, "<=", toValue)
+
+		result := greaterThanOrEqualFrom && lessThanOrEqualTo
+
+		// Handle NOT BETWEEN
+		if expr.Not {
+			result = !result
+		}
+
+		return result
 	}, nil
 }
 
@@ -2350,6 +2467,19 @@ func (e *SQLEngine) extractComparisonValue(expr ExprNode) (interface{}, error) {
 		default:
 			return nil, fmt.Errorf("unsupported SQL value type: %v", val.Type)
 		}
+	case *ArithmeticExpr:
+		// Handle arithmetic expressions like CURRENT_TIMESTAMP - INTERVAL '1 hour'
+		return e.evaluateArithmeticExpressionForComparison(val)
+	case *FuncExpr:
+		// Handle function calls like NOW(), CURRENT_TIMESTAMP
+		return e.evaluateFunctionExpressionForComparison(val)
+	case *IntervalExpr:
+		// Handle standalone INTERVAL expressions
+		nanos, err := e.evaluateInterval(val.Value)
+		if err != nil {
+			return nil, err
+		}
+		return nanos, nil
 	case ValTuple:
 		// Handle IN expressions with multiple values: column IN (value1, value2, value3)
 		var inValues []interface{}
@@ -2377,6 +2507,90 @@ func (e *SQLEngine) extractComparisonValue(expr ExprNode) (interface{}, error) {
 		return inValues, nil
 	default:
 		return nil, fmt.Errorf("unsupported comparison value type: %T", expr)
+	}
+}
+
+// evaluateArithmeticExpressionForComparison evaluates an arithmetic expression for WHERE clause comparisons
+func (e *SQLEngine) evaluateArithmeticExpressionForComparison(expr *ArithmeticExpr) (interface{}, error) {
+	// Check if this is timestamp arithmetic with intervals
+	if e.isTimestampArithmetic(expr.Left, expr.Right) && (expr.Operator == "+" || expr.Operator == "-") {
+		// Evaluate timestamp arithmetic and return the result as nanoseconds
+		result, err := e.evaluateTimestampArithmetic(expr.Left, expr.Right, expr.Operator)
+		if err != nil {
+			return nil, err
+		}
+
+		// Extract the timestamp value as nanoseconds for comparison
+		if result.Kind != nil {
+			switch resultKind := result.Kind.(type) {
+			case *schema_pb.Value_Int64Value:
+				return resultKind.Int64Value, nil
+			case *schema_pb.Value_StringValue:
+				// If it's a formatted timestamp string, parse it back to nanoseconds
+				if timestamp, err := time.Parse("2006-01-02T15:04:05.000000000Z", resultKind.StringValue); err == nil {
+					return timestamp.UnixNano(), nil
+				}
+				return nil, fmt.Errorf("could not parse timestamp string: %s", resultKind.StringValue)
+			}
+		}
+		return nil, fmt.Errorf("invalid timestamp arithmetic result")
+	}
+
+	// For other arithmetic operations, we'd need to evaluate them differently
+	// For now, return an error for unsupported arithmetic
+	return nil, fmt.Errorf("unsupported arithmetic expression in WHERE clause: %s", expr.Operator)
+}
+
+// evaluateFunctionExpressionForComparison evaluates a function expression for WHERE clause comparisons
+func (e *SQLEngine) evaluateFunctionExpressionForComparison(expr *FuncExpr) (interface{}, error) {
+	funcName := strings.ToUpper(expr.Name.String())
+
+	switch funcName {
+	case "NOW", "CURRENT_TIMESTAMP":
+		result, err := e.Now()
+		if err != nil {
+			return nil, err
+		}
+		// Return as nanoseconds for comparison
+		if result.Kind != nil {
+			if resultKind, ok := result.Kind.(*schema_pb.Value_TimestampValue); ok {
+				// Convert microseconds to nanoseconds
+				return resultKind.TimestampValue.TimestampMicros * 1000, nil
+			}
+		}
+		return nil, fmt.Errorf("invalid NOW() result: expected TimestampValue, got %T", result.Kind)
+
+	case "CURRENT_DATE":
+		result, err := e.CurrentDate()
+		if err != nil {
+			return nil, err
+		}
+		// Convert date to nanoseconds (start of day)
+		if result.Kind != nil {
+			if resultKind, ok := result.Kind.(*schema_pb.Value_StringValue); ok {
+				if date, err := time.Parse("2006-01-02", resultKind.StringValue); err == nil {
+					return date.UnixNano(), nil
+				}
+			}
+		}
+		return nil, fmt.Errorf("invalid CURRENT_DATE result")
+
+	case "CURRENT_TIME":
+		result, err := e.CurrentTime()
+		if err != nil {
+			return nil, err
+		}
+		// For time comparison, we might need special handling
+		// For now, just return the string value
+		if result.Kind != nil {
+			if resultKind, ok := result.Kind.(*schema_pb.Value_StringValue); ok {
+				return resultKind.StringValue, nil
+			}
+		}
+		return nil, fmt.Errorf("invalid CURRENT_TIME result")
+
+	default:
+		return nil, fmt.Errorf("unsupported function in WHERE clause: %s", funcName)
 	}
 }
 
@@ -3708,7 +3922,7 @@ func (e *SQLEngine) getTopicTotalRowCount(ctx context.Context, namespace, topicN
 		}
 	}
 
-	hybridScanner, err := NewHybridMessageScanner(filerClient, e.catalog.brokerClient, namespace, topicName)
+	hybridScanner, err := NewHybridMessageScanner(filerClient, e.catalog.brokerClient, namespace, topicName, e)
 	if err != nil {
 		return 0, err
 	}
@@ -3760,7 +3974,7 @@ func (e *SQLEngine) getActualRowsScannedForFastPath(ctx context.Context, namespa
 		}
 	}
 
-	hybridScanner, err := NewHybridMessageScanner(filerClient, e.catalog.brokerClient, namespace, topicName)
+	hybridScanner, err := NewHybridMessageScanner(filerClient, e.catalog.brokerClient, namespace, topicName, e)
 	if err != nil {
 		return 0, err
 	}
@@ -3802,8 +4016,11 @@ func (e *SQLEngine) findColumnValue(result HybridScanResult, columnName string) 
 	// Check system columns first (stored separately in HybridScanResult)
 	lowerColumnName := strings.ToLower(columnName)
 	switch lowerColumnName {
-	case SW_COLUMN_NAME_TIMESTAMP:
-		return &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: result.Timestamp}}
+	case SW_COLUMN_NAME_TIMESTAMP, SW_DISPLAY_NAME_TIMESTAMP:
+		// For timestamp column, format as proper timestamp instead of raw nanoseconds
+		timestamp := time.Unix(result.Timestamp/1e9, result.Timestamp%1e9)
+		timestampStr := timestamp.UTC().Format("2006-01-02T15:04:05.000000000Z")
+		return &schema_pb.Value{Kind: &schema_pb.Value_StringValue{StringValue: timestampStr}}
 	case SW_COLUMN_NAME_KEY:
 		return &schema_pb.Value{Kind: &schema_pb.Value_BytesValue{BytesValue: result.Key}}
 	case SW_COLUMN_NAME_SOURCE:
@@ -4068,7 +4285,9 @@ func (e *SQLEngine) ConvertToSQLResultWithExpressions(hms *HybridMessageScanner,
 							// Use lowercase for datetime constants in column headers
 							columns = append(columns, strings.ToLower(columnName))
 						} else {
-							columns = append(columns, columnName)
+							// Use display name for system columns
+							displayName := e.getSystemColumnDisplayName(columnName)
+							columns = append(columns, displayName)
 						}
 					case *ArithmeticExpr:
 						columns = append(columns, e.getArithmeticExpressionAlias(col))
@@ -4600,15 +4819,20 @@ func (e *SQLEngine) evaluateTimestampArithmetic(left, right ExprNode, operator s
 		switch leftKind := leftValue.Kind.(type) {
 		case *schema_pb.Value_Int64Value:
 			leftTimestamp = leftKind.Int64Value
+		case *schema_pb.Value_TimestampValue:
+			// Convert microseconds to nanoseconds
+			leftTimestamp = leftKind.TimestampValue.TimestampMicros * 1000
 		case *schema_pb.Value_StringValue:
 			// Parse timestamp string
 			if ts, err := time.Parse(time.RFC3339, leftKind.StringValue); err == nil {
+				leftTimestamp = ts.UnixNano()
+			} else if ts, err := time.Parse("2006-01-02 15:04:05", leftKind.StringValue); err == nil {
 				leftTimestamp = ts.UnixNano()
 			} else {
 				return nil, fmt.Errorf("invalid timestamp format: %s", leftKind.StringValue)
 			}
 		default:
-			return nil, fmt.Errorf("left operand must be a timestamp")
+			return nil, fmt.Errorf("left operand must be a timestamp, got: %T", leftKind)
 		}
 	} else {
 		return nil, fmt.Errorf("left operand value is nil")
