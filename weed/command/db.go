@@ -3,7 +3,9 @@ package command
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"os/signal"
 	"strings"
@@ -37,7 +39,7 @@ func init() {
 	dbOptions.port = cmdDB.Flag.Int("port", 5432, "Database server port")
 	dbOptions.masterAddr = cmdDB.Flag.String("master", "localhost:9333", "SeaweedFS master server address")
 	dbOptions.authMethod = cmdDB.Flag.String("auth", "trust", "Authentication method: trust, password, md5")
-	dbOptions.users = cmdDB.Flag.String("users", "", "User credentials for auth (format: user1:pass1;user2:pass2). Note: passwords cannot contain semicolons")
+	dbOptions.users = cmdDB.Flag.String("users", "", "User credentials for auth (JSON format '{\"user1\":\"pass1\",\"user2\":\"pass2\"}' or file '@/path/to/users.json')")
 	dbOptions.database = cmdDB.Flag.String("database", "default", "Default database name")
 	dbOptions.maxConns = cmdDB.Flag.Int("max-connections", 100, "Maximum concurrent connections per server")
 	dbOptions.idleTimeout = cmdDB.Flag.String("idle-timeout", "1h", "Connection idle timeout")
@@ -59,11 +61,14 @@ Examples:
 	# Start database server on default port 5432
 	weed db
 	
-	# Start with password authentication
-	weed db -auth=password -users="admin:secret;readonly:view123"
+	# Start with MD5 authentication using JSON format (recommended)
+	weed db -auth=md5 -users='{"admin":"secret","readonly":"view123"}'
 	
-	# Start with MD5 authentication 
-	weed db -auth=md5 -users="user1:pass1;user2:pass2"
+	# Start with complex passwords using JSON format
+	weed db -auth=md5 -users='{"admin":"pass;with;semicolons","user":"password:with:colons"}'
+	
+	# Start with credentials from JSON file (most secure)
+	weed db -auth=md5 -users="@/etc/seaweedfs/users.json"
 	
 	# Start with custom port and master
 	weed db -port=5433 -master=master1:9333
@@ -122,6 +127,13 @@ Authentication Methods:
 	- trust: No authentication required (default)
 	- password: Clear text password authentication
 	- md5: MD5 password authentication
+
+User Credential Formats:
+	- JSON format: '{"user1":"pass1","user2":"pass2"}' (supports any special characters)
+	- File format: "@/path/to/users.json" (JSON file)
+	
+	Note: JSON format supports passwords with semicolons, colons, and any other special characters.
+	      File format is recommended for production to keep credentials secure.
 
 Compatible Tools:
 	- psql (PostgreSQL command line client)
@@ -304,9 +316,10 @@ func parseAuthMethod(method string) (postgres.AuthMethod, error) {
 	}
 }
 
-// parseUsers parses the user credentials string
-// Format: username:password;username2:password2
-// Semicolons are used as separators to support passwords with special characters including commas
+// parseUsers parses the user credentials string with support for secure formats only
+// Supported formats:
+// 1. JSON format: {"username":"password","username2":"password2"}
+// 2. File format: /path/to/users.json or @/path/to/users.json
 func parseUsers(usersStr string, authMethod postgres.AuthMethod) (map[string]string, error) {
 	users := make(map[string]string)
 
@@ -318,35 +331,62 @@ func parseUsers(usersStr string, authMethod postgres.AuthMethod) (map[string]str
 		return users, nil
 	}
 
-	// Parse user:password pairs separated by semicolons
-	pairs := strings.Split(usersStr, ";")
+	// Trim whitespace
+	usersStr = strings.TrimSpace(usersStr)
 
-	for _, pair := range pairs {
-		pair = strings.TrimSpace(pair)
-		if pair == "" {
-			continue
-		}
+	// Determine format and parse accordingly
+	if strings.HasPrefix(usersStr, "{") && strings.HasSuffix(usersStr, "}") {
+		// JSON format
+		return parseUsersJSON(usersStr, authMethod)
+	} else if strings.HasPrefix(usersStr, "@") || strings.Contains(usersStr, "/") {
+		// File format
+		return parseUsersFile(usersStr, authMethod)
+	} else {
+		// Invalid format
+		return nil, fmt.Errorf("invalid user credentials format. Use JSON format '{\"user\":\"pass\"}' or file format '@/path/to/users.json'. Legacy semicolon-separated format is no longer supported")
+	}
+}
 
-		parts := strings.SplitN(pair, ":", 2)
-		if len(parts) != 2 {
-			return nil, fmt.Errorf("invalid user format '%s'. Expected 'username:password'", pair)
-		}
+// parseUsersJSON parses user credentials from JSON format
+func parseUsersJSON(jsonStr string, authMethod postgres.AuthMethod) (map[string]string, error) {
+	var users map[string]string
+	if err := json.Unmarshal([]byte(jsonStr), &users); err != nil {
+		return nil, fmt.Errorf("invalid JSON format for users: %v", err)
+	}
 
-		username := strings.TrimSpace(parts[0])
-		password := strings.TrimSpace(parts[1])
-
+	// Validate users
+	for username, password := range users {
 		if username == "" {
-			return nil, fmt.Errorf("empty username in user specification")
+			return nil, fmt.Errorf("empty username in JSON user specification")
 		}
-
 		if authMethod != postgres.AuthTrust && password == "" {
 			return nil, fmt.Errorf("empty password for user '%s' with auth method", username)
 		}
-
-		users[username] = password
 	}
 
 	return users, nil
+}
+
+// parseUsersFile parses user credentials from a JSON file
+func parseUsersFile(filePath string, authMethod postgres.AuthMethod) (map[string]string, error) {
+	// Remove @ prefix if present
+	filePath = strings.TrimPrefix(filePath, "@")
+
+	// Read file content
+	content, err := ioutil.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read users file '%s': %v", filePath, err)
+	}
+
+	contentStr := strings.TrimSpace(string(content))
+
+	// File must contain JSON format
+	if !strings.HasPrefix(contentStr, "{") || !strings.HasSuffix(contentStr, "}") {
+		return nil, fmt.Errorf("users file '%s' must contain JSON format: {\"user\":\"pass\"}. Legacy formats are no longer supported", filePath)
+	}
+
+	// Parse as JSON
+	return parseUsersJSON(contentStr, authMethod)
 }
 
 // validatePortNumber validates that the port number is reasonable
