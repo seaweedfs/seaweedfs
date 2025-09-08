@@ -810,7 +810,12 @@ func (e *SQLEngine) buildHierarchicalPlan(plan *QueryExecutionPlan, err error) [
 
 			// Add fast path explanation when no rows were scanned
 			if plan.TotalRowsProcessed == 0 {
-				stats = append(stats, "Scan Method: Parquet Metadata Only")
+				// Use the actual scan method from Details instead of hardcoding
+				if scanMethod, exists := plan.Details["scan_method"].(string); exists {
+					stats = append(stats, fmt.Sprintf("Scan Method: %s", scanMethod))
+				} else {
+					stats = append(stats, "Scan Method: Metadata Only")
+				}
 			}
 		} else if plan.TotalRowsProcessed > 0 {
 			stats = append(stats, fmt.Sprintf("Rows Processed: %d", plan.TotalRowsProcessed))
@@ -2932,7 +2937,7 @@ func (builder *ExecutionPlanBuilder) BuildAggregationPlan(
 		PartitionsScanned:   dataSources.PartitionsCount,
 		ParquetFilesScanned: builder.countParquetFiles(dataSources),
 		LiveLogFilesScanned: builder.countLiveLogFiles(dataSources),
-		OptimizationsUsed:   builder.buildOptimizationsList(stmt, strategy),
+		OptimizationsUsed:   builder.buildOptimizationsList(stmt, strategy, dataSources),
 		Aggregations:        builder.buildAggregationsList(aggregations),
 		Details:             make(map[string]interface{}),
 	}
@@ -2940,7 +2945,14 @@ func (builder *ExecutionPlanBuilder) BuildAggregationPlan(
 	// Set row counts based on strategy
 	if strategy.CanUseFastPath {
 		plan.TotalRowsProcessed = dataSources.LiveLogRowCount // Only live logs are scanned, parquet uses metadata
-		plan.Details["scan_method"] = "Parquet Metadata Only"
+		// Set scan method based on what data sources actually exist
+		if dataSources.ParquetRowCount > 0 && dataSources.LiveLogRowCount > 0 {
+			plan.Details["scan_method"] = "Parquet Metadata + Live Log Counting"
+		} else if dataSources.ParquetRowCount > 0 {
+			plan.Details["scan_method"] = "Parquet Metadata Only"
+		} else {
+			plan.Details["scan_method"] = "Live Log Counting Only"
+		}
 	} else {
 		plan.TotalRowsProcessed = dataSources.ParquetRowCount + dataSources.LiveLogRowCount
 		plan.Details["scan_method"] = "Full Data Scan"
@@ -2967,7 +2979,10 @@ func (builder *ExecutionPlanBuilder) buildDataSourcesList(strategy AggregationSt
 	sources := []string{}
 
 	if strategy.CanUseFastPath {
-		sources = append(sources, "parquet_stats")
+		// Only show parquet stats if there are actual parquet files
+		if dataSources.ParquetRowCount > 0 {
+			sources = append(sources, "parquet_stats")
+		}
 		if dataSources.LiveLogRowCount > 0 {
 			sources = append(sources, "live_logs")
 		}
@@ -2996,11 +3011,19 @@ func (builder *ExecutionPlanBuilder) countLiveLogFiles(dataSources *TopicDataSou
 }
 
 // buildOptimizationsList builds the list of optimizations used
-func (builder *ExecutionPlanBuilder) buildOptimizationsList(stmt *SelectStatement, strategy AggregationStrategy) []string {
+func (builder *ExecutionPlanBuilder) buildOptimizationsList(stmt *SelectStatement, strategy AggregationStrategy, dataSources *TopicDataSources) []string {
 	optimizations := []string{}
 
 	if strategy.CanUseFastPath {
-		optimizations = append(optimizations, "parquet_statistics", "live_log_counting", "deduplication")
+		// Only include parquet statistics if there are actual parquet files
+		if dataSources.ParquetRowCount > 0 {
+			optimizations = append(optimizations, "parquet_statistics")
+		}
+		if dataSources.LiveLogRowCount > 0 {
+			optimizations = append(optimizations, "live_log_counting")
+		}
+		// Always include deduplication when using fast path
+		optimizations = append(optimizations, "deduplication")
 	}
 
 	if stmt.Where != nil {
