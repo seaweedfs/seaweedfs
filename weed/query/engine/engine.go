@@ -251,6 +251,13 @@ type ValTuple []ExprNode
 
 func (v ValTuple) isExprNode() {}
 
+type IntervalExpr struct {
+	Value string // The interval value (e.g., "1 hour", "30 minutes")
+	Unit  string // The unit (parsed from value)
+}
+
+func (i *IntervalExpr) isExprNode() {}
+
 // SQLVal types
 const (
 	IntVal = iota
@@ -3868,6 +3875,11 @@ func (e *SQLEngine) getExpressionAlias(expr ExprNode) string {
 
 // evaluateArithmeticExpression evaluates an arithmetic expression for a given record
 func (e *SQLEngine) evaluateArithmeticExpression(expr *ArithmeticExpr, result HybridScanResult) (*schema_pb.Value, error) {
+	// Check for timestamp arithmetic with intervals first
+	if e.isTimestampArithmetic(expr.Left, expr.Right) && (expr.Operator == "+" || expr.Operator == "-") {
+		return e.evaluateTimestampArithmetic(expr.Left, expr.Right, expr.Operator)
+	}
+
 	// Get left operand value
 	leftValue, err := e.evaluateExpressionValue(expr.Left, result)
 	if err != nil {
@@ -3903,6 +3915,32 @@ func (e *SQLEngine) evaluateArithmeticExpression(expr *ArithmeticExpr, result Hy
 	}
 
 	return e.EvaluateArithmeticExpression(leftValue, rightValue, op)
+}
+
+// isTimestampArithmetic checks if an arithmetic operation involves timestamps and intervals
+func (e *SQLEngine) isTimestampArithmetic(left, right ExprNode) bool {
+	// Check if left is a timestamp function (NOW, CURRENT_TIMESTAMP, etc.)
+	leftIsTimestamp := e.isTimestampFunction(left)
+
+	// Check if right is an interval
+	rightIsInterval := e.isIntervalExpression(right)
+
+	return leftIsTimestamp && rightIsInterval
+}
+
+// isTimestampFunction checks if an expression is a timestamp function
+func (e *SQLEngine) isTimestampFunction(expr ExprNode) bool {
+	if funcExpr, ok := expr.(*FuncExpr); ok {
+		funcName := strings.ToUpper(funcExpr.Name.String())
+		return funcName == "NOW" || funcName == "CURRENT_TIMESTAMP" || funcName == "CURRENT_DATE" || funcName == "CURRENT_TIME"
+	}
+	return false
+}
+
+// isIntervalExpression checks if an expression is an interval
+func (e *SQLEngine) isIntervalExpression(expr ExprNode) bool {
+	_, ok := expr.(*IntervalExpr)
+	return ok
 }
 
 // evaluateExpressionValue evaluates any expression to get its value from a record
@@ -3973,6 +4011,15 @@ func (e *SQLEngine) evaluateExpressionValue(expr ExprNode, result HybridScanResu
 			// Use string function evaluator
 			return e.evaluateStringFunction(exprType, result)
 		}
+	case *IntervalExpr:
+		// Handle interval expressions - evaluate as duration in nanoseconds
+		nanos, err := e.evaluateInterval(exprType.Value)
+		if err != nil {
+			return nil, err
+		}
+		return &schema_pb.Value{
+			Kind: &schema_pb.Value_Int64Value{Int64Value: nanos},
+		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported expression type: %T", expr)
 	}
@@ -4487,6 +4534,114 @@ func (e *SQLEngine) evaluateDateTimeFunction(funcExpr *FuncExpr, result HybridSc
 	default:
 		return nil, fmt.Errorf("unsupported datetime function: %s", funcName)
 	}
+}
+
+// evaluateInterval parses an interval string and returns duration in nanoseconds
+func (e *SQLEngine) evaluateInterval(intervalValue string) (int64, error) {
+	// Parse interval strings like "1 hour", "30 minutes", "2 days"
+	parts := strings.Fields(strings.TrimSpace(intervalValue))
+	if len(parts) != 2 {
+		return 0, fmt.Errorf("invalid interval format: %s (expected 'number unit')", intervalValue)
+	}
+
+	// Parse the numeric value
+	value, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid interval value: %s", parts[0])
+	}
+
+	// Parse the unit and convert to nanoseconds
+	unit := strings.ToLower(parts[1])
+	var multiplier int64
+
+	switch unit {
+	case "nanosecond", "nanoseconds", "ns":
+		multiplier = 1
+	case "microsecond", "microseconds", "us":
+		multiplier = 1000
+	case "millisecond", "milliseconds", "ms":
+		multiplier = 1000000
+	case "second", "seconds", "s":
+		multiplier = 1000000000
+	case "minute", "minutes", "m":
+		multiplier = 60 * 1000000000
+	case "hour", "hours", "h":
+		multiplier = 60 * 60 * 1000000000
+	case "day", "days", "d":
+		multiplier = 24 * 60 * 60 * 1000000000
+	case "week", "weeks", "w":
+		multiplier = 7 * 24 * 60 * 60 * 1000000000
+	default:
+		return 0, fmt.Errorf("unsupported interval unit: %s", unit)
+	}
+
+	return value * multiplier, nil
+}
+
+// evaluateTimestampArithmetic performs arithmetic operations with timestamps and intervals
+func (e *SQLEngine) evaluateTimestampArithmetic(left, right ExprNode, operator string) (*schema_pb.Value, error) {
+	// Handle timestamp arithmetic: NOW() - INTERVAL '1 hour'
+	// For timestamp arithmetic, we don't need the result context, so we pass an empty one
+	emptyResult := HybridScanResult{}
+
+	leftValue, err := e.evaluateExpressionValue(left, emptyResult)
+	if err != nil {
+		return nil, fmt.Errorf("failed to evaluate left operand: %v", err)
+	}
+
+	rightValue, err := e.evaluateExpressionValue(right, emptyResult)
+	if err != nil {
+		return nil, fmt.Errorf("failed to evaluate right operand: %v", err)
+	}
+
+	// Convert left operand (should be timestamp)
+	var leftTimestamp int64
+	if leftValue.Kind != nil {
+		switch leftKind := leftValue.Kind.(type) {
+		case *schema_pb.Value_Int64Value:
+			leftTimestamp = leftKind.Int64Value
+		case *schema_pb.Value_StringValue:
+			// Parse timestamp string
+			if ts, err := time.Parse(time.RFC3339, leftKind.StringValue); err == nil {
+				leftTimestamp = ts.UnixNano()
+			} else {
+				return nil, fmt.Errorf("invalid timestamp format: %s", leftKind.StringValue)
+			}
+		default:
+			return nil, fmt.Errorf("left operand must be a timestamp")
+		}
+	} else {
+		return nil, fmt.Errorf("left operand value is nil")
+	}
+
+	// Convert right operand (should be interval in nanoseconds)
+	var intervalNanos int64
+	if rightValue.Kind != nil {
+		switch rightKind := rightValue.Kind.(type) {
+		case *schema_pb.Value_Int64Value:
+			intervalNanos = rightKind.Int64Value
+		default:
+			return nil, fmt.Errorf("right operand must be an interval duration")
+		}
+	} else {
+		return nil, fmt.Errorf("right operand value is nil")
+	}
+
+	// Perform arithmetic
+	var resultTimestamp int64
+	switch operator {
+	case "+":
+		resultTimestamp = leftTimestamp + intervalNanos
+	case "-":
+		resultTimestamp = leftTimestamp - intervalNanos
+	default:
+		return nil, fmt.Errorf("unsupported timestamp arithmetic operator: %s", operator)
+	}
+
+	// Return as timestamp
+	return &schema_pb.Value{
+		Kind: &schema_pb.Value_Int64Value{Int64Value: resultTimestamp},
+	}, nil
 }
 
 // evaluateColumnNameAsFunction handles function calls that were incorrectly parsed as column names

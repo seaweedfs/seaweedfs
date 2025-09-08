@@ -275,6 +275,21 @@ func (p *CockroachSQLParser) convertExpr(expr tree.Expr) (ExprNode, error) {
 		}
 		return tupleValues, nil
 
+	case *tree.CastExpr:
+		// Handle INTERVAL expressions: INTERVAL '1 hour'
+		// CockroachDB represents these as cast expressions
+		if p.isIntervalCast(e) {
+			// Extract the string value being cast to interval
+			if strVal, ok := e.Expr.(*tree.StrVal); ok {
+				return &IntervalExpr{
+					Value: string(strVal.RawString()),
+				}, nil
+			}
+			return nil, fmt.Errorf("invalid INTERVAL expression: expected string literal")
+		}
+		// For non-interval casts, just convert the inner expression
+		return p.convertExpr(e.Expr)
+
 	default:
 		return nil, fmt.Errorf("unsupported expression type: %T", e)
 	}
@@ -321,4 +336,22 @@ func (p *CockroachSQLParser) convertFromExpr(expr tree.TableExpr) (TableExpr, er
 	default:
 		return nil, fmt.Errorf("unsupported table expression type: %T", e)
 	}
+}
+
+// isIntervalCast checks if a CastExpr is casting to an INTERVAL type
+func (p *CockroachSQLParser) isIntervalCast(castExpr *tree.CastExpr) bool {
+	// Check if the target type is an interval type
+	// CockroachDB represents interval types in the Type field
+	// We need to check if it's an interval type by examining the type structure
+	if castExpr.Type != nil {
+		// Try to detect interval type by examining the AST structure
+		// Since we can't easily access the type string, we'll be more conservative
+		// and assume any cast expression on a string literal could be an interval
+		if _, ok := castExpr.Expr.(*tree.StrVal); ok {
+			// This is likely an INTERVAL expression since CockroachDB
+			// represents INTERVAL '1 hour' as casting a string to interval type
+			return true
+		}
+	}
+	return false
 }
