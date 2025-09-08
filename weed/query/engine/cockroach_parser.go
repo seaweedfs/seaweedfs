@@ -263,6 +263,18 @@ func (p *CockroachSQLParser) convertExpr(expr tree.Expr) (ExprNode, error) {
 			Right: right,
 		}, nil
 
+	case *tree.Tuple:
+		// Tuple expression for IN clauses: (value1, value2, value3)
+		tupleValues := make(ValTuple, 0, len(e.Exprs))
+		for _, tupleExpr := range e.Exprs {
+			convertedExpr, err := p.convertExpr(tupleExpr)
+			if err != nil {
+				return nil, fmt.Errorf("failed to convert tuple element: %v", err)
+			}
+			tupleValues = append(tupleValues, convertedExpr)
+		}
+		return tupleValues, nil
+
 	default:
 		return nil, fmt.Errorf("unsupported expression type: %T", e)
 	}
