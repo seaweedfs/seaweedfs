@@ -155,9 +155,6 @@ func (e *TestSQLEngine) executeTestSelectStatement(ctx context.Context, stmt *Se
 		return &QueryResult{Error: err}, err
 	}
 
-	// Debug: log the extracted table name
-	// fmt.Printf("DEBUG: Extracted table name: '%s'\n", tableName)
-
 	// Check if this is a known test table
 	switch tableName {
 	case "user_events", "system_logs":

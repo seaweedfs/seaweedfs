@@ -2829,9 +2829,7 @@ func (e *SQLEngine) valuesEqual(fieldValue *schema_pb.Value, compareValue interf
 	// Handle direct int64 comparisons for timestamp precision (before float64 conversion)
 	if int64Field, ok := fieldValue.Kind.(*schema_pb.Value_Int64Value); ok {
 		if int64Val, ok := compareValue.(int64); ok {
-			result := int64Field.Int64Value == int64Val
-			// Removed debug logging
-			return result
+			return int64Field.Int64Value == int64Val
 		}
 		if intVal, ok := compareValue.(int); ok {
 			return int64Field.Int64Value == int64(intVal)

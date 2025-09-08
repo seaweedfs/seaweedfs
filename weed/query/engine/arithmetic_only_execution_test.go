@@ -106,8 +106,6 @@ func TestSQLEngine_ArithmeticOnlyQueryBugReproduction(t *testing.T) {
 		t.Errorf("Expected %d columns, got %d", len(expectedColumns), len(result.Columns))
 	}
 
-	// Uncomment for debugging: t.Logf("DEBUG: Actual column names: %v", result.Columns)
-
 	// 3. Must have calculated values, not empty/null
 	for i, row := range result.Rows {
 		for j, val := range row {
