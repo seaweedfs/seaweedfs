@@ -584,10 +584,17 @@ func (e *SQLEngine) executeAggregationQueryWithPlan(ctx context.Context, hybridS
 		}
 	}
 
-	return &QueryResult{
+	result := &QueryResult{
 		Columns: columns,
 		Rows:    rows,
-	}, nil
+	}
+
+	// Build execution tree for aggregation queries if plan is provided
+	if plan != nil {
+		plan.RootNode = e.buildExecutionTree(plan, stmt)
+	}
+
+	return result, nil
 }
 
 // tryFastParquetAggregation attempts to compute aggregations using hybrid approach:
@@ -721,7 +728,7 @@ func (e *SQLEngine) tryFastParquetAggregationWithPlan(ctx context.Context, hybri
 			}
 
 			// Get live log files for this partition
-			if liveFiles, err := collectLiveLogFileNames(hybridScanner.filerClient, partitionPath); err == nil {
+			if liveFiles, err := e.collectLiveLogFileNames(hybridScanner.filerClient, partitionPath); err == nil {
 				for _, fileName := range liveFiles {
 					liveLogFiles = append(liveLogFiles, fmt.Sprintf("%s/%s", partitionPath, fileName))
 				}

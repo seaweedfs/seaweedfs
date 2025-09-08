@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"math/big"
 	"regexp"
@@ -712,8 +713,15 @@ func (e *SQLEngine) formatExecutionPlan(plan *QueryExecutionPlan, originalResult
 	columns := []string{"Query Execution Plan"}
 	rows := [][]sqltypes.Value{}
 
-	// Build hierarchical plan display
-	planLines := e.buildHierarchicalPlan(plan, originalErr)
+	var planLines []string
+
+	// Use new tree structure if available, otherwise fallback to legacy format
+	if plan.RootNode != nil {
+		planLines = e.buildTreePlan(plan, originalErr)
+	} else {
+		// Build legacy hierarchical plan display
+		planLines = e.buildHierarchicalPlan(plan, originalErr)
+	}
 
 	for _, line := range planLines {
 		rows = append(rows, []sqltypes.Value{
@@ -735,6 +743,142 @@ func (e *SQLEngine) formatExecutionPlan(plan *QueryExecutionPlan, originalResult
 		Rows:          rows,
 		ExecutionPlan: plan,
 	}, nil
+}
+
+// buildTreePlan creates the new tree-based execution plan display
+func (e *SQLEngine) buildTreePlan(plan *QueryExecutionPlan, err error) []string {
+	var lines []string
+
+	// Root header
+	lines = append(lines, fmt.Sprintf("%s Query (%s)", plan.QueryType, plan.ExecutionStrategy))
+
+	// Build the execution tree
+	if plan.RootNode != nil {
+		treeLines := e.formatExecutionNode(plan.RootNode, "├── ", "│   ", true)
+		lines = append(lines, treeLines...)
+	}
+
+	// Add performance information
+	lines = append(lines, "└── Performance")
+	lines = append(lines, fmt.Sprintf("    └── Execution Time: %.3fms", plan.ExecutionTimeMs))
+
+	// Add error information if present
+	if err != nil {
+		lines = append(lines, "")
+		lines = append(lines, fmt.Sprintf("Error: %v", err))
+	}
+
+	return lines
+}
+
+// formatExecutionNode recursively formats execution tree nodes
+func (e *SQLEngine) formatExecutionNode(node ExecutionNode, prefix, childPrefix string, isRoot bool) []string {
+	var lines []string
+
+	description := node.GetDescription()
+
+	// Format the current node
+	if isRoot {
+		lines = append(lines, fmt.Sprintf("%s%s", prefix, description))
+	} else {
+		lines = append(lines, fmt.Sprintf("%s%s", prefix, description))
+	}
+
+	// Add node-specific details
+	switch n := node.(type) {
+	case *FileSourceNode:
+		lines = e.formatFileSourceDetails(lines, n, childPrefix, isRoot)
+	case *ScanOperationNode:
+		lines = e.formatScanOperationDetails(lines, n, childPrefix, isRoot)
+	case *MergeOperationNode:
+		lines = e.formatMergeOperationDetails(lines, n, childPrefix, isRoot)
+	}
+
+	// Format children
+	children := node.GetChildren()
+	if len(children) > 0 {
+		for i, child := range children {
+			isLastChild := i == len(children)-1
+
+			var nextPrefix, nextChildPrefix string
+			if isLastChild {
+				nextPrefix = childPrefix + "└── "
+				nextChildPrefix = childPrefix + "    "
+			} else {
+				nextPrefix = childPrefix + "├── "
+				nextChildPrefix = childPrefix + "│   "
+			}
+
+			childLines := e.formatExecutionNode(child, nextPrefix, nextChildPrefix, false)
+			lines = append(lines, childLines...)
+		}
+	}
+
+	return lines
+}
+
+// formatFileSourceDetails adds details for file source nodes
+func (e *SQLEngine) formatFileSourceDetails(lines []string, node *FileSourceNode, childPrefix string, isRoot bool) []string {
+	prefix := childPrefix
+	if isRoot {
+		prefix = "│   "
+	}
+
+	// Add predicates
+	if len(node.Predicates) > 0 {
+		lines = append(lines, fmt.Sprintf("%s├── Predicates: %s", prefix, strings.Join(node.Predicates, ", ")))
+	}
+
+	// Add operations
+	if len(node.Operations) > 0 {
+		lines = append(lines, fmt.Sprintf("%s└── Operations: %s", prefix, strings.Join(node.Operations, ", ")))
+	} else if len(node.Predicates) == 0 {
+		lines = append(lines, fmt.Sprintf("%s└── Operation: full_scan", prefix))
+	}
+
+	return lines
+}
+
+// formatScanOperationDetails adds details for scan operation nodes
+func (e *SQLEngine) formatScanOperationDetails(lines []string, node *ScanOperationNode, childPrefix string, isRoot bool) []string {
+	prefix := childPrefix
+	if isRoot {
+		prefix = "│   "
+	}
+
+	hasChildren := len(node.Children) > 0
+
+	// Add predicates if present
+	if len(node.Predicates) > 0 {
+		if hasChildren {
+			lines = append(lines, fmt.Sprintf("%s├── Predicates: %s", prefix, strings.Join(node.Predicates, ", ")))
+		} else {
+			lines = append(lines, fmt.Sprintf("%s└── Predicates: %s", prefix, strings.Join(node.Predicates, ", ")))
+		}
+	}
+
+	return lines
+}
+
+// formatMergeOperationDetails adds details for merge operation nodes
+func (e *SQLEngine) formatMergeOperationDetails(lines []string, node *MergeOperationNode, childPrefix string, isRoot bool) []string {
+	prefix := childPrefix
+	if isRoot {
+		prefix = "│   "
+	}
+
+	hasChildren := len(node.Children) > 0
+
+	// Add merge strategy info
+	if strategy, exists := node.Details["merge_strategy"]; exists {
+		if hasChildren {
+			lines = append(lines, fmt.Sprintf("%s├── Strategy: %v", prefix, strategy))
+		} else {
+			lines = append(lines, fmt.Sprintf("%s└── Strategy: %v", prefix, strategy))
+		}
+	}
+
+	return lines
 }
 
 // buildHierarchicalPlan creates a tree-like structure for the execution plan
@@ -1021,6 +1165,301 @@ func (e *SQLEngine) formatDataSource(source string) string {
 	default:
 		return source
 	}
+}
+
+// buildExecutionTree creates a tree representation of the query execution plan
+func (e *SQLEngine) buildExecutionTree(plan *QueryExecutionPlan, stmt *SelectStatement) ExecutionNode {
+	// Extract WHERE clause predicates for pushdown analysis
+	var predicates []string
+	if stmt.Where != nil {
+		predicates = e.extractPredicateStrings(stmt.Where.Expr)
+	}
+
+	// Check if we have detailed file information
+	partitionPaths, hasPartitions := plan.Details["partition_paths"].([]string)
+	parquetFiles, hasParquetFiles := plan.Details["parquet_files"].([]string)
+	liveLogFiles, hasLiveLogFiles := plan.Details["live_log_files"].([]string)
+
+	if !hasPartitions || len(partitionPaths) == 0 {
+		// Fallback: create simple structure without file details
+		return &ScanOperationNode{
+			ScanType:    "hybrid_scan",
+			Description: fmt.Sprintf("Hybrid Scan (%s)", plan.ExecutionStrategy),
+			Predicates:  predicates,
+			Details: map[string]interface{}{
+				"note": "File details not available",
+			},
+		}
+	}
+
+	// Build file source nodes
+	var parquetNodes []ExecutionNode
+	var liveLogNodes []ExecutionNode
+	var brokerBufferNodes []ExecutionNode
+
+	// Create parquet file nodes
+	if hasParquetFiles {
+		for _, filePath := range parquetFiles {
+			operations := e.determineParquetOperations(plan, filePath)
+			parquetNodes = append(parquetNodes, &FileSourceNode{
+				FilePath:         filePath,
+				SourceType:       "parquet",
+				Predicates:       predicates,
+				Operations:       operations,
+				OptimizationHint: e.determineOptimizationHint(plan, "parquet"),
+				Details: map[string]interface{}{
+					"format": "parquet",
+				},
+			})
+		}
+	}
+
+	// Create live log file nodes
+	if hasLiveLogFiles {
+		for _, filePath := range liveLogFiles {
+			operations := e.determineLiveLogOperations(plan, filePath)
+			liveLogNodes = append(liveLogNodes, &FileSourceNode{
+				FilePath:         filePath,
+				SourceType:       "live_log",
+				Predicates:       predicates,
+				Operations:       operations,
+				OptimizationHint: e.determineOptimizationHint(plan, "live_log"),
+				Details: map[string]interface{}{
+					"format": "log_entry",
+				},
+			})
+		}
+	}
+
+	// Create broker buffer node if queried
+	if plan.BrokerBufferQueried {
+		brokerBufferNodes = append(brokerBufferNodes, &FileSourceNode{
+			FilePath:         "broker_memory_buffer",
+			SourceType:       "broker_buffer",
+			Predicates:       predicates,
+			Operations:       []string{"memory_scan"},
+			OptimizationHint: "real_time",
+			Details: map[string]interface{}{
+				"messages":         plan.BrokerBufferMessages,
+				"buffer_start_idx": plan.BufferStartIndex,
+			},
+		})
+	}
+
+	// Build the tree structure based on data sources
+	var scanNodes []ExecutionNode
+
+	// Add parquet scan node if there are parquet files
+	if len(parquetNodes) > 0 {
+		scanNodes = append(scanNodes, &ScanOperationNode{
+			ScanType:    "parquet_scan",
+			Description: fmt.Sprintf("Parquet File Scan (%d files)", len(parquetNodes)),
+			Predicates:  predicates,
+			Children:    parquetNodes,
+			Details: map[string]interface{}{
+				"files_count": len(parquetNodes),
+				"pushdown":    "column_projection, predicate_filtering",
+			},
+		})
+	}
+
+	// Add live log scan node if there are live log files
+	if len(liveLogNodes) > 0 {
+		scanNodes = append(scanNodes, &ScanOperationNode{
+			ScanType:    "live_log_scan",
+			Description: fmt.Sprintf("Live Log Scan (%d files)", len(liveLogNodes)),
+			Predicates:  predicates,
+			Children:    liveLogNodes,
+			Details: map[string]interface{}{
+				"files_count": len(liveLogNodes),
+				"pushdown":    "predicate_filtering",
+			},
+		})
+	}
+
+	// Add broker buffer scan node if present
+	if len(brokerBufferNodes) > 0 {
+		scanNodes = append(scanNodes, &ScanOperationNode{
+			ScanType:    "broker_buffer_scan",
+			Description: "Real-time Buffer Scan",
+			Predicates:  predicates,
+			Children:    brokerBufferNodes,
+			Details: map[string]interface{}{
+				"real_time": true,
+			},
+		})
+	}
+
+	// If only one scan type, return it directly
+	if len(scanNodes) == 1 {
+		return scanNodes[0]
+	}
+
+	// Multiple scan types - need merge operation
+	return &MergeOperationNode{
+		OperationType: "chronological_merge",
+		Description:   "Chronological Merge (time-ordered)",
+		Children:      scanNodes,
+		Details: map[string]interface{}{
+			"merge_strategy": "timestamp_based",
+			"sources_count":  len(scanNodes),
+		},
+	}
+}
+
+// extractPredicateStrings extracts predicate descriptions from WHERE clause
+func (e *SQLEngine) extractPredicateStrings(expr ExprNode) []string {
+	var predicates []string
+	e.extractPredicateStringsRecursive(expr, &predicates)
+	return predicates
+}
+
+func (e *SQLEngine) extractPredicateStringsRecursive(expr ExprNode, predicates *[]string) {
+	switch exprType := expr.(type) {
+	case *ComparisonExpr:
+		*predicates = append(*predicates, fmt.Sprintf("%s %s %s",
+			e.exprToString(exprType.Left), exprType.Operator, e.exprToString(exprType.Right)))
+	case *IsNullExpr:
+		*predicates = append(*predicates, fmt.Sprintf("%s IS NULL", e.exprToString(exprType.Expr)))
+	case *IsNotNullExpr:
+		*predicates = append(*predicates, fmt.Sprintf("%s IS NOT NULL", e.exprToString(exprType.Expr)))
+	case *AndExpr:
+		e.extractPredicateStringsRecursive(exprType.Left, predicates)
+		e.extractPredicateStringsRecursive(exprType.Right, predicates)
+	case *OrExpr:
+		e.extractPredicateStringsRecursive(exprType.Left, predicates)
+		e.extractPredicateStringsRecursive(exprType.Right, predicates)
+	case *ParenExpr:
+		e.extractPredicateStringsRecursive(exprType.Expr, predicates)
+	}
+}
+
+func (e *SQLEngine) exprToString(expr ExprNode) string {
+	switch exprType := expr.(type) {
+	case *ColName:
+		return exprType.Name.String()
+	default:
+		// For now, return a simplified representation
+		return fmt.Sprintf("%T", expr)
+	}
+}
+
+// determineParquetOperations determines what operations will be performed on parquet files
+func (e *SQLEngine) determineParquetOperations(plan *QueryExecutionPlan, filePath string) []string {
+	var operations []string
+
+	// Check for column projection
+	if contains(plan.OptimizationsUsed, "column_projection") {
+		operations = append(operations, "column_projection")
+	}
+
+	// Check for predicate pushdown
+	if contains(plan.OptimizationsUsed, "predicate_pushdown") {
+		operations = append(operations, "predicate_pushdown")
+	}
+
+	// Check for statistics usage
+	if contains(plan.OptimizationsUsed, "parquet_statistics") || plan.ExecutionStrategy == "hybrid_fast_path" {
+		operations = append(operations, "statistics_skip")
+	} else {
+		operations = append(operations, "row_group_scan")
+	}
+
+	if len(operations) == 0 {
+		operations = append(operations, "full_scan")
+	}
+
+	return operations
+}
+
+// determineLiveLogOperations determines what operations will be performed on live log files
+func (e *SQLEngine) determineLiveLogOperations(plan *QueryExecutionPlan, filePath string) []string {
+	var operations []string
+
+	// Live logs typically require sequential scan
+	operations = append(operations, "sequential_scan")
+
+	// Check for predicate filtering
+	if contains(plan.OptimizationsUsed, "predicate_pushdown") {
+		operations = append(operations, "predicate_filtering")
+	}
+
+	return operations
+}
+
+// determineOptimizationHint determines the optimization hint for a data source
+func (e *SQLEngine) determineOptimizationHint(plan *QueryExecutionPlan, sourceType string) string {
+	switch plan.ExecutionStrategy {
+	case "hybrid_fast_path":
+		if sourceType == "parquet" {
+			return "statistics_only"
+		}
+		return "minimal_scan"
+	case "full_scan":
+		return "full_scan"
+	case "column_projection":
+		return "column_filter"
+	default:
+		return ""
+	}
+}
+
+// Helper function to check if slice contains string
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
+}
+
+// collectLiveLogFileNames collects live log file names from a partition directory
+func (e *SQLEngine) collectLiveLogFileNames(filerClient filer_pb.FilerClient, partitionPath string) ([]string, error) {
+	var liveLogFiles []string
+
+	err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		// List all files in partition directory
+		request := &filer_pb.ListEntriesRequest{
+			Directory:          partitionPath,
+			Prefix:             "",
+			StartFromFileName:  "",
+			InclusiveStartFrom: false,
+			Limit:              10000, // reasonable limit
+		}
+
+		stream, err := client.ListEntries(context.Background(), request)
+		if err != nil {
+			return err
+		}
+
+		for {
+			resp, err := stream.Recv()
+			if err != nil {
+				if err == io.EOF {
+					break
+				}
+				return err
+			}
+
+			entry := resp.Entry
+			if entry != nil && !entry.IsDirectory {
+				// Check if this is a log file (not a parquet file)
+				fileName := entry.Name
+				if !strings.HasSuffix(fileName, ".parquet") && !strings.HasSuffix(fileName, ".metadata") {
+					liveLogFiles = append(liveLogFiles, fileName)
+				}
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return liveLogFiles, nil
 }
 
 // formatOptimization provides user-friendly names for optimizations
@@ -1325,6 +1764,11 @@ func (e *SQLEngine) executeSelectStatementWithPlan(ctx context.Context, stmt *Se
 				}
 			}
 		}
+	}
+
+	// Build execution tree after all plan details are populated
+	if err == nil && result != nil && plan != nil {
+		plan.RootNode = e.buildExecutionTree(plan, stmt)
 	}
 
 	return result, err
@@ -1825,6 +2269,44 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 				}
 			}
 		}
+
+		// Populate execution plan details with source file information for Data Sources Tree
+		if partitions, discoverErr := e.discoverTopicPartitions(database, tableName); discoverErr == nil {
+			// Add partition paths to execution plan details
+			plan.Details["partition_paths"] = partitions
+
+			// Collect actual file information for each partition
+			var parquetFiles []string
+			var liveLogFiles []string
+
+			for _, partitionPath := range partitions {
+				// Get parquet files for this partition
+				if parquetStats, err := hybridScanner.ReadParquetStatistics(partitionPath); err == nil {
+					for _, stats := range parquetStats {
+						parquetFiles = append(parquetFiles, fmt.Sprintf("%s/%s", partitionPath, stats.FileName))
+					}
+				}
+
+				// Get live log files for this partition
+				if liveFiles, err := e.collectLiveLogFileNames(hybridScanner.filerClient, partitionPath); err == nil {
+					for _, fileName := range liveFiles {
+						liveLogFiles = append(liveLogFiles, fmt.Sprintf("%s/%s", partitionPath, fileName))
+					}
+				}
+			}
+
+			if len(parquetFiles) > 0 {
+				plan.Details["parquet_files"] = parquetFiles
+			}
+			if len(liveLogFiles) > 0 {
+				plan.Details["live_log_files"] = liveLogFiles
+			}
+
+			// Update scan statistics for execution plan display
+			plan.PartitionsScanned = len(partitions)
+			plan.ParquetFilesScanned = len(parquetFiles)
+			plan.LiveLogFilesScanned = len(liveLogFiles)
+		}
 	} else {
 		// Normal mode - just get results
 		results, err = hybridScanner.Scan(ctx, hybridScanOptions)
@@ -2143,46 +2625,6 @@ func (e *SQLEngine) buildPredicateWithContext(expr ExprNode, selectExprs []Selec
 			return nil, err
 		}
 		rightPred, err := e.buildPredicateWithContext(exprType.Right, selectExprs)
-		if err != nil {
-			return nil, err
-		}
-		return func(record *schema_pb.RecordValue) bool {
-			return leftPred(record) || rightPred(record)
-		}, nil
-	default:
-		return nil, fmt.Errorf("unsupported WHERE expression: %T", expr)
-	}
-}
-
-// buildPredicateWithAliases creates a predicate function with alias resolution support
-func (e *SQLEngine) buildPredicateWithAliases(expr ExprNode, aliases map[string]ExprNode) (func(*schema_pb.RecordValue) bool, error) {
-	switch exprType := expr.(type) {
-	case *ComparisonExpr:
-		return e.buildComparisonPredicateWithAliases(exprType, aliases)
-	case *BetweenExpr:
-		return e.buildBetweenPredicateWithAliases(exprType, aliases)
-	case *IsNullExpr:
-		return e.buildIsNullPredicateWithAliases(exprType, aliases)
-	case *IsNotNullExpr:
-		return e.buildIsNotNullPredicateWithAliases(exprType, aliases)
-	case *AndExpr:
-		leftPred, err := e.buildPredicateWithAliases(exprType.Left, aliases)
-		if err != nil {
-			return nil, err
-		}
-		rightPred, err := e.buildPredicateWithAliases(exprType.Right, aliases)
-		if err != nil {
-			return nil, err
-		}
-		return func(record *schema_pb.RecordValue) bool {
-			return leftPred(record) && rightPred(record)
-		}, nil
-	case *OrExpr:
-		leftPred, err := e.buildPredicateWithAliases(exprType.Left, aliases)
-		if err != nil {
-			return nil, err
-		}
-		rightPred, err := e.buildPredicateWithAliases(exprType.Right, aliases)
 		if err != nil {
 			return nil, err
 		}
@@ -2574,30 +3016,6 @@ func (e *SQLEngine) extractValueFromExpr(expr ExprNode) (interface{}, error) {
 // normalizeOperator normalizes comparison operators
 func (e *SQLEngine) normalizeOperator(op string) string {
 	return op // For now, just return as-is
-}
-
-// extractSelectAliases builds a map of aliases to their underlying expressions
-func (e *SQLEngine) extractSelectAliases(selectExprs []SelectExpr) map[string]ExprNode {
-	aliases := make(map[string]ExprNode)
-
-	if selectExprs == nil {
-		return aliases
-	}
-
-	for _, selectExpr := range selectExprs {
-		if selectExpr == nil {
-			continue
-		}
-		if aliasedExpr, ok := selectExpr.(*AliasedExpr); ok && aliasedExpr != nil {
-			// Additional safety checks
-			if aliasedExpr.As != nil && !aliasedExpr.As.IsEmpty() && aliasedExpr.Expr != nil {
-				// Map the alias name to the underlying expression
-				aliases[aliasedExpr.As.String()] = aliasedExpr.Expr
-			}
-		}
-	}
-
-	return aliases
 }
 
 // extractComparisonValue extracts the comparison value from a SQL expression
@@ -3723,31 +4141,6 @@ func (e *SQLEngine) extractTimestampFromFilename(filename string) int64 {
 	}
 
 	return t.UnixNano()
-}
-
-// hasLiveLogFiles checks if there are any live log files (non-parquet files) in a partition
-func (e *SQLEngine) hasLiveLogFiles(partitionPath string) (bool, error) {
-	// Get FilerClient from BrokerClient
-	filerClient, err := e.catalog.brokerClient.GetFilerClient()
-	if err != nil {
-		return false, err
-	}
-
-	hasLiveLogs := false
-
-	// Read all files in the partition directory
-	err = filer_pb.ReadDirAllEntries(context.Background(), filerClient, util.FullPath(partitionPath), "", func(entry *filer_pb.Entry, isLast bool) error {
-		// Skip directories and parquet files
-		if entry.IsDirectory || strings.HasSuffix(entry.Name, ".parquet") {
-			return nil
-		}
-
-		// Found a non-parquet file (live log)
-		hasLiveLogs = true
-		return nil // Can continue or return early, doesn't matter for existence check
-	})
-
-	return hasLiveLogs, err
 }
 
 // countLiveLogRows counts the total number of rows in live log files (non-parquet files) in a partition
