@@ -3,6 +3,7 @@
 global:
   createClusterRole: true
   registry: ""
+  # if repository is set, it overrides the namespace part of imageName
   repository: ""
   imageName: chrislusf/seaweedfs
   imagePullPolicy: IfNotPresent

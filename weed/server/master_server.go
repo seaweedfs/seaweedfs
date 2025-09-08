@@ -57,6 +57,7 @@ type MasterOption struct {
 	IsFollower              bool
 	TelemetryUrl            string
 	TelemetryEnabled        bool
+	VolumeGrowthDisabled      bool
 }
 
 type MasterServer struct {
@@ -105,6 +106,9 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 	v.SetDefault("master.volume_growth.copy_3", topology.VolumeGrowStrategy.Copy3Count)
 	v.SetDefault("master.volume_growth.copy_other", topology.VolumeGrowStrategy.CopyOtherCount)
 	v.SetDefault("master.volume_growth.threshold", topology.VolumeGrowStrategy.Threshold)
+	v.SetDefault("master.volume_growth.disable", false)
+	option.VolumeGrowthDisabled = v.GetBool("master.volume_growth.disable")
+
 	topology.VolumeGrowStrategy.Copy1Count = v.GetUint32("master.volume_growth.copy_1")
 	topology.VolumeGrowStrategy.Copy2Count = v.GetUint32("master.volume_growth.copy_2")
 	topology.VolumeGrowStrategy.Copy3Count = v.GetUint32("master.volume_growth.copy_3")

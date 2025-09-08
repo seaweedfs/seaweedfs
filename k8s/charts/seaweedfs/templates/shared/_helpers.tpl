@@ -96,13 +96,16 @@ Inject extra environment vars in the format key:value, if populated
 {{/* Computes the container image name for all components (if they are not overridden) */}}
 {{- define "common.image" -}}
 {{- $registryName := default .Values.image.registry .Values.global.registry | toString -}}
-{{- $repositoryName := .Values.image.repository | toString -}}
+{{- $repositoryName := default .Values.image.repository .Values.global.repository | toString -}}
 {{- $name := .Values.global.imageName | toString -}}
 {{- $tag := default .Chart.AppVersion .Values.image.tag  | toString -}}
+{{- if $repositoryName -}}
+{{-   $name = printf "%s/%s" (trimSuffix "/" $repositoryName) (base $name) -}}
+{{- end -}}
 {{- if $registryName -}}
-{{- printf "%s/%s%s:%s" $registryName $repositoryName $name $tag -}}
+{{-   printf "%s/%s:%s" $registryName $name $tag -}}
 {{- else -}}
-{{- printf "%s%s:%s" $repositoryName $name $tag -}}
+{{-   printf "%s:%s" $name $tag -}}
 {{- end -}}
 {{- end -}}
 

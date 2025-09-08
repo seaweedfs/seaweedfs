@@ -250,7 +250,19 @@ func collectStatForOneVolume(vid needle.VolumeId, v *Volume) (s *VolumeInfo) {
 		DiskId:           v.diskId,
 	}
 	s.RemoteStorageName, s.RemoteStorageKey = v.RemoteStorageNameKey()
-	s.Size, _, _ = v.FileStat()
+
+	v.dataFileAccessLock.RLock()
+	defer v.dataFileAccessLock.RUnlock()
+
+	if v.nm == nil {
+		return
+	}
+
+	s.FileCount = v.nm.FileCount()
+	s.DeleteCount = v.nm.DeletedCount()
+	s.DeletedByteCount = v.nm.DeletedSize()
+	s.Size = v.nm.ContentSize()
+
 	return
 }
 
