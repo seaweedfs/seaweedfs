@@ -2192,7 +2192,7 @@ func (e *SQLEngine) buildComparisonPredicateWithAliases(expr *ComparisonExpr, al
 		if err != nil {
 			return nil, err
 		}
-		compareValue = val
+		compareValue = e.convertValueForTimestampColumn(columnName, val, expr.Right)
 	} else if rightCol != "" && leftCol == "" {
 		// Right side is column, left side is value
 		columnName = e.getSystemColumnInternalName(rightCol)
@@ -2200,7 +2200,7 @@ func (e *SQLEngine) buildComparisonPredicateWithAliases(expr *ComparisonExpr, al
 		if err != nil {
 			return nil, err
 		}
-		compareValue = val
+		compareValue = e.convertValueForTimestampColumn(columnName, val, expr.Left)
 		// Reverse the operator when column is on the right
 		operator = e.reverseOperator(operator)
 	} else if leftCol != "" && rightCol != "" {
@@ -2244,7 +2244,7 @@ func (e *SQLEngine) buildComparisonPredicateWithContext(expr *ComparisonExpr, se
 		if err != nil {
 			return nil, fmt.Errorf("failed to extract right-side value: %v", err)
 		}
-		compareValue = val
+		compareValue = e.convertValueForTimestampColumn(columnName, val, expr.Right)
 
 	} else if colName, ok := expr.Right.(*ColName); ok {
 		// Column is on the right side (reversed case: value < column)
@@ -2262,7 +2262,7 @@ func (e *SQLEngine) buildComparisonPredicateWithContext(expr *ComparisonExpr, se
 		if err != nil {
 			return nil, fmt.Errorf("failed to extract left-side value: %v", err)
 		}
-		compareValue = val
+		compareValue = e.convertValueForTimestampColumn(columnName, val, expr.Left)
 
 	} else {
 		// Handle literal-only comparisons like 1 = 0, 'a' = 'b', etc.
@@ -2312,14 +2312,14 @@ func (e *SQLEngine) buildBetweenPredicateWithContext(expr *BetweenExpr, selectEx
 		if err != nil {
 			return nil, fmt.Errorf("failed to extract BETWEEN from value: %v", err)
 		}
-		fromValue = fromVal
+		fromValue = e.convertValueForTimestampColumn(columnName, fromVal, expr.From)
 
 		// Extract TO value
 		toVal, err := e.extractComparisonValue(expr.To)
 		if err != nil {
 			return nil, fmt.Errorf("failed to extract BETWEEN to value: %v", err)
 		}
-		toValue = toVal
+		toValue = e.convertValueForTimestampColumn(columnName, toVal, expr.To)
 	} else {
 		return nil, fmt.Errorf("BETWEEN left operand must be a column name, got: %T", expr.Left)
 	}
@@ -2363,14 +2363,14 @@ func (e *SQLEngine) buildBetweenPredicateWithAliases(expr *BetweenExpr, aliases 
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract BETWEEN from value: %v", err)
 	}
-	fromValue = fromVal
+	fromValue = e.convertValueForTimestampColumn(columnName, fromVal, expr.From)
 
 	// Extract TO value
 	toVal, err := e.extractValueFromExpr(expr.To)
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract BETWEEN to value: %v", err)
 	}
-	toValue = toVal
+	toValue = e.convertValueForTimestampColumn(columnName, toVal, expr.To)
 
 	// Return the predicate function
 	return func(record *schema_pb.RecordValue) bool {
@@ -4795,6 +4795,19 @@ func (e *SQLEngine) evaluateInterval(intervalValue string) (int64, error) {
 	}
 
 	return value * multiplier, nil
+}
+
+// convertValueForTimestampColumn converts string timestamp values to nanoseconds for system timestamp columns
+func (e *SQLEngine) convertValueForTimestampColumn(columnName string, value interface{}, expr ExprNode) interface{} {
+	// Special handling for timestamp system columns
+	if columnName == SW_COLUMN_NAME_TIMESTAMP {
+		if _, ok := value.(string); ok {
+			if timeNanos := e.extractTimeValue(expr); timeNanos != 0 {
+				return timeNanos
+			}
+		}
+	}
+	return value
 }
 
 // evaluateTimestampArithmetic performs arithmetic operations with timestamps and intervals
