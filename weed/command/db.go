@@ -338,13 +338,17 @@ func parseUsers(usersStr string, authMethod postgres.AuthMethod) (map[string]str
 	if strings.HasPrefix(usersStr, "{") && strings.HasSuffix(usersStr, "}") {
 		// JSON format
 		return parseUsersJSON(usersStr, authMethod)
-	} else if strings.HasPrefix(usersStr, "@") || strings.Contains(usersStr, "/") {
-		// File format
-		return parseUsersFile(usersStr, authMethod)
-	} else {
-		// Invalid format
-		return nil, fmt.Errorf("invalid user credentials format. Use JSON format '{\"user\":\"pass\"}' or file format '@/path/to/users.json'. Legacy semicolon-separated format is no longer supported")
 	}
+
+	// Check if it's a file path (with or without @ prefix) before declaring invalid format
+	filePath := strings.TrimPrefix(usersStr, "@")
+	if _, err := os.Stat(filePath); err == nil {
+		// File format
+		return parseUsersFile(usersStr, authMethod) // Pass original string to preserve @ handling
+	}
+
+	// Invalid format
+	return nil, fmt.Errorf("invalid user credentials format. Use JSON format '{\"user\":\"pass\"}' or file format '@/path/to/users.json' or 'path/to/users.json'. Legacy semicolon-separated format is no longer supported")
 }
 
 // parseUsersJSON parses user credentials from JSON format

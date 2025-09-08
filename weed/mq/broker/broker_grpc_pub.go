@@ -149,8 +149,10 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 				if err := validateRecordValueNoDecimal(record); err != nil {
 					return fmt.Errorf("decimal validation failed for topic %v partition %v: %v", initMessage.Topic, initMessage.Partition, err)
 				}
+			} else {
+				// If unmarshaling fails, we skip validation but log a warning
+				glog.V(1).Infof("Could not unmarshal RecordValue for validation on topic %v partition %v: %v", initMessage.Topic, initMessage.Partition, err)
 			}
-			// If unmarshaling fails, we skip validation (might be different format)
 		}
 
 		// The control message should still be sent to the follower
