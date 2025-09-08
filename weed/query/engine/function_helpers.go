@@ -105,18 +105,18 @@ func (e *SQLEngine) valueToTime(value *schema_pb.Value) (time.Time, error) {
 			format   string
 			useLocal bool
 		}{
-			{"2006-01-02 15:04:05", true},  // Local time assumed for non-timezone formats
+			{"2006-01-02 15:04:05", true},   // Local time assumed for non-timezone formats
 			{"2006-01-02T15:04:05Z", false}, // UTC format
 			{"2006-01-02T15:04:05", true},   // Local time assumed
 			{"2006-01-02", true},            // Local time assumed for date only
 			{"15:04:05", true},              // Local time assumed for time only
 		}
-		
+
 		for _, formatSpec := range dateFormats {
 			if t, err := time.Parse(formatSpec.format, v.StringValue); err == nil {
 				if formatSpec.useLocal {
-					// Convert to local timezone if no timezone was specified
-					return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), time.Local), nil
+					// Convert to UTC for consistency if no timezone was specified
+					return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), time.UTC), nil
 				}
 				return t, nil
 			}
