@@ -498,9 +498,13 @@ func (hms *HybridMessageScanner) scanPartitionHybridWithStats(ctx context.Contex
 	// STEP 1: Scan unflushed in-memory data from brokers (REAL-TIME)
 	unflushedResults, unflushedStats, err := hms.scanUnflushedDataWithStats(ctx, partition, options)
 	if err != nil {
-		// Don't fail the query if broker scanning fails - just log and continue with disk data
-		if !isDebugMode(ctx) {
-			fmt.Printf("Warning: Failed to scan unflushed data from broker: %v\n", err)
+		// Don't fail the query if broker scanning fails, but provide clear warning to user
+		// This ensures users are aware that results may not include the most recent data
+		if isDebugMode(ctx) {
+			fmt.Printf("Debug: Failed to scan unflushed data from broker: %v\n", err)
+		} else {
+			fmt.Printf("Warning: Unable to access real-time data from message broker: %v\n", err)
+			fmt.Printf("Note: Query results may not include the most recent unflushed messages\n")
 		}
 	} else if unflushedStats != nil {
 		stats.BrokerBufferQueried = unflushedStats.BrokerBufferQueried
