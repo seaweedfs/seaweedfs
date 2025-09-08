@@ -267,6 +267,18 @@ type BetweenExpr struct {
 
 func (b *BetweenExpr) isExprNode() {}
 
+type IsNullExpr struct {
+	Expr ExprNode // The expression to test for null
+}
+
+func (i *IsNullExpr) isExprNode() {}
+
+type IsNotNullExpr struct {
+	Expr ExprNode // The expression to test for not null
+}
+
+func (i *IsNotNullExpr) isExprNode() {}
+
 // SQLVal types
 const (
 	IntVal = iota
@@ -2109,6 +2121,10 @@ func (e *SQLEngine) buildPredicateWithContext(expr ExprNode, selectExprs []Selec
 		return e.buildComparisonPredicateWithContext(exprType, selectExprs)
 	case *BetweenExpr:
 		return e.buildBetweenPredicateWithContext(exprType, selectExprs)
+	case *IsNullExpr:
+		return e.buildIsNullPredicateWithContext(exprType, selectExprs)
+	case *IsNotNullExpr:
+		return e.buildIsNotNullPredicateWithContext(exprType, selectExprs)
 	case *AndExpr:
 		leftPred, err := e.buildPredicateWithContext(exprType.Left, selectExprs)
 		if err != nil {
@@ -2145,6 +2161,10 @@ func (e *SQLEngine) buildPredicateWithAliases(expr ExprNode, aliases map[string]
 		return e.buildComparisonPredicateWithAliases(exprType, aliases)
 	case *BetweenExpr:
 		return e.buildBetweenPredicateWithAliases(exprType, aliases)
+	case *IsNullExpr:
+		return e.buildIsNullPredicateWithAliases(exprType, aliases)
+	case *IsNotNullExpr:
+		return e.buildIsNotNullPredicateWithAliases(exprType, aliases)
 	case *AndExpr:
 		leftPred, err := e.buildPredicateWithAliases(exprType.Left, aliases)
 		if err != nil {
@@ -2392,6 +2412,141 @@ func (e *SQLEngine) buildBetweenPredicateWithAliases(expr *BetweenExpr, aliases 
 
 		return result
 	}, nil
+}
+
+// buildIsNullPredicateWithContext creates a predicate for IS NULL operations
+func (e *SQLEngine) buildIsNullPredicateWithContext(expr *IsNullExpr, selectExprs []SelectExpr) (func(*schema_pb.RecordValue) bool, error) {
+	// Check if the expression is a column name
+	if colName, ok := expr.Expr.(*ColName); ok {
+		rawColumnName := colName.Name.String()
+		// Resolve potential alias to actual column name
+		columnName := e.resolveColumnAlias(rawColumnName, selectExprs)
+		// Map display names to internal names for system columns
+		columnName = e.getSystemColumnInternalName(columnName)
+
+		// Return the predicate function
+		return func(record *schema_pb.RecordValue) bool {
+			// Check if field exists and if it's null or missing
+			fieldValue, exists := record.Fields[columnName]
+			if !exists {
+				return true // Field doesn't exist = NULL
+			}
+
+			// Check if the field value itself is null/empty
+			return e.isValueNull(fieldValue)
+		}, nil
+	} else {
+		return nil, fmt.Errorf("IS NULL left operand must be a column name, got: %T", expr.Expr)
+	}
+}
+
+// buildIsNotNullPredicateWithContext creates a predicate for IS NOT NULL operations
+func (e *SQLEngine) buildIsNotNullPredicateWithContext(expr *IsNotNullExpr, selectExprs []SelectExpr) (func(*schema_pb.RecordValue) bool, error) {
+	// Check if the expression is a column name
+	if colName, ok := expr.Expr.(*ColName); ok {
+		rawColumnName := colName.Name.String()
+		// Resolve potential alias to actual column name
+		columnName := e.resolveColumnAlias(rawColumnName, selectExprs)
+		// Map display names to internal names for system columns
+		columnName = e.getSystemColumnInternalName(columnName)
+
+		// Return the predicate function
+		return func(record *schema_pb.RecordValue) bool {
+			// Check if field exists and if it's not null
+			fieldValue, exists := record.Fields[columnName]
+			if !exists {
+				return false // Field doesn't exist = NULL, so NOT NULL is false
+			}
+
+			// Check if the field value itself is not null/empty
+			return !e.isValueNull(fieldValue)
+		}, nil
+	} else {
+		return nil, fmt.Errorf("IS NOT NULL left operand must be a column name, got: %T", expr.Expr)
+	}
+}
+
+// buildIsNullPredicateWithAliases creates a predicate for IS NULL operations with alias support
+func (e *SQLEngine) buildIsNullPredicateWithAliases(expr *IsNullExpr, aliases map[string]ExprNode) (func(*schema_pb.RecordValue) bool, error) {
+	// Extract column name from expression with alias resolution
+	columnName := e.getColumnNameWithAliases(expr.Expr, aliases)
+	if columnName == "" {
+		return nil, fmt.Errorf("IS NULL operand must be a column name, got: %T", expr.Expr)
+	}
+	columnName = e.getSystemColumnInternalName(columnName)
+
+	// Return the predicate function
+	return func(record *schema_pb.RecordValue) bool {
+		// Check if field exists and if it's null or missing
+		fieldValue, exists := record.Fields[columnName]
+		if !exists {
+			return true // Field doesn't exist = NULL
+		}
+
+		// Check if the field value itself is null/empty
+		return e.isValueNull(fieldValue)
+	}, nil
+}
+
+// buildIsNotNullPredicateWithAliases creates a predicate for IS NOT NULL operations with alias support
+func (e *SQLEngine) buildIsNotNullPredicateWithAliases(expr *IsNotNullExpr, aliases map[string]ExprNode) (func(*schema_pb.RecordValue) bool, error) {
+	// Extract column name from expression with alias resolution
+	columnName := e.getColumnNameWithAliases(expr.Expr, aliases)
+	if columnName == "" {
+		return nil, fmt.Errorf("IS NOT NULL operand must be a column name, got: %T", expr.Expr)
+	}
+	columnName = e.getSystemColumnInternalName(columnName)
+
+	// Return the predicate function
+	return func(record *schema_pb.RecordValue) bool {
+		// Check if field exists and if it's not null
+		fieldValue, exists := record.Fields[columnName]
+		if !exists {
+			return false // Field doesn't exist = NULL, so NOT NULL is false
+		}
+
+		// Check if the field value itself is not null/empty
+		return !e.isValueNull(fieldValue)
+	}, nil
+}
+
+// isValueNull checks if a schema_pb.Value is null or represents a null value
+func (e *SQLEngine) isValueNull(value *schema_pb.Value) bool {
+	if value == nil {
+		return true
+	}
+
+	// Check the Kind field to see if it represents a null value
+	if value.Kind == nil {
+		return true
+	}
+
+	// For different value types, check if they represent null/empty values
+	switch kind := value.Kind.(type) {
+	case *schema_pb.Value_StringValue:
+		// Empty string could be considered null depending on semantics
+		// For now, treat empty string as not null (SQL standard behavior)
+		return false
+	case *schema_pb.Value_BoolValue:
+		return false // Boolean values are never null
+	case *schema_pb.Value_Int32Value, *schema_pb.Value_Int64Value:
+		return false // Integer values are never null
+	case *schema_pb.Value_FloatValue, *schema_pb.Value_DoubleValue:
+		return false // Numeric values are never null
+	case *schema_pb.Value_BytesValue:
+		// Bytes could be null if empty, but for now treat as not null
+		return false
+	case *schema_pb.Value_TimestampValue:
+		// Check if timestamp is zero/uninitialized
+		return kind.TimestampValue == nil
+	case *schema_pb.Value_DateValue:
+		return kind.DateValue == nil
+	case *schema_pb.Value_TimeValue:
+		return kind.TimeValue == nil
+	default:
+		// Unknown type, consider it null to be safe
+		return true
+	}
 }
 
 // getColumnNameWithAliases extracts column name from expression, resolving aliases if needed

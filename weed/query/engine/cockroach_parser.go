@@ -319,6 +319,28 @@ func (p *CockroachSQLParser) convertExpr(expr tree.Expr) (ExprNode, error) {
 
 		return seaweedBetween, nil
 
+	case *tree.IsNullExpr:
+		// Handle IS NULL expressions: column IS NULL
+		expr, err := p.convertExpr(e.Expr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert IS NULL expression: %v", err)
+		}
+
+		return &IsNullExpr{
+			Expr: expr,
+		}, nil
+
+	case *tree.IsNotNullExpr:
+		// Handle IS NOT NULL expressions: column IS NOT NULL
+		expr, err := p.convertExpr(e.Expr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert IS NOT NULL expression: %v", err)
+		}
+
+		return &IsNotNullExpr{
+			Expr: expr,
+		}, nil
+
 	default:
 		return nil, fmt.Errorf("unsupported expression type: %T", e)
 	}
