@@ -65,18 +65,10 @@ func doDeleteEntry(client filer_pb.SeaweedFilerClient, parentDirectoryPath strin
 
 	glog.V(1).Infof("delete entry %v/%v: %v", parentDirectoryPath, entryName, request)
 	if resp, err := client.DeleteEntry(context.Background(), request); err != nil {
-		// Treat NotFound as success for idempotency
-		if strings.Contains(err.Error(), filer_pb.ErrNotFound.Error()) {
-			return nil
-		}
 		glog.V(0).Infof("delete entry %v: %v", request, err)
 		return fmt.Errorf("delete entry %s/%s: %v", parentDirectoryPath, entryName, err)
 	} else {
 		if resp.Error != "" {
-			// Treat NotFound as success for idempotency
-			if strings.Contains(resp.Error, filer_pb.ErrNotFound.Error()) {
-				return nil
-			}
 			return fmt.Errorf("delete entry %s/%s: %v", parentDirectoryPath, entryName, resp.Error)
 		}
 	}
