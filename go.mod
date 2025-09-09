@@ -205,14 +205,14 @@ require (
 	github.com/stretchr/objx v0.5.2 // indirect
 	github.com/twpayne/go-geom v1.4.1 // indirect
 	github.com/twpayne/go-kml v1.5.2 // indirect
+	github.com/zeebo/xxh3 v1.0.2 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.37.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.37.0 // indirect
 	go.opentelemetry.io/otel/exporters/zipkin v1.36.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.7.0 // indirect
+	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	golang.org/x/mod v0.27.0 // indirect
 	gonum.org/v1/gonum v0.16.0 // indirect
-	github.com/zeebo/xxh3 v1.0.2 // indirect
-	go.yaml.in/yaml/v2 v2.4.2 // indirect
 )
 
 require (
