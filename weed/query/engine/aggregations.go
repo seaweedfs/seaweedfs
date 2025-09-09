@@ -718,6 +718,7 @@ func (e *SQLEngine) tryFastParquetAggregationWithPlan(ctx context.Context, hybri
 		// Collect actual file information for each partition
 		var parquetFiles []string
 		var liveLogFiles []string
+		parquetSources := make(map[string]bool)
 
 		for _, partitionPath := range partitions {
 			// Get parquet files for this partition
@@ -727,9 +728,20 @@ func (e *SQLEngine) tryFastParquetAggregationWithPlan(ctx context.Context, hybri
 				}
 			}
 
+			// Merge accurate parquet sources from metadata (preferred over filename fallback)
+			if sources, err := e.getParquetSourceFilesFromMetadata(partitionPath); err == nil {
+				for src := range sources {
+					parquetSources[src] = true
+				}
+			}
+
 			// Get live log files for this partition
 			if liveFiles, err := e.collectLiveLogFileNames(hybridScanner.filerClient, partitionPath); err == nil {
 				for _, fileName := range liveFiles {
+					// Exclude live log files that have been converted to parquet (deduplicated)
+					if parquetSources[fileName] {
+						continue
+					}
 					liveLogFiles = append(liveLogFiles, fmt.Sprintf("%s/%s", partitionPath, fileName))
 				}
 			}

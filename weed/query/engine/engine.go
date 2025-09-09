@@ -17,6 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/schema"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/seaweedfs/seaweedfs/weed/query/sqltypes"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -2293,6 +2294,7 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 			// Collect actual file information for each partition
 			var parquetFiles []string
 			var liveLogFiles []string
+			parquetSources := make(map[string]bool)
 
 			for _, partitionPath := range partitions {
 				// Get parquet files for this partition
@@ -2302,9 +2304,20 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 					}
 				}
 
+				// Merge accurate parquet sources from metadata
+				if sources, err := e.getParquetSourceFilesFromMetadata(partitionPath); err == nil {
+					for src := range sources {
+						parquetSources[src] = true
+					}
+				}
+
 				// Get live log files for this partition
 				if liveFiles, err := e.collectLiveLogFileNames(hybridScanner.filerClient, partitionPath); err == nil {
 					for _, fileName := range liveFiles {
+						// Exclude live log files that have been converted to parquet (deduplicated)
+						if parquetSources[fileName] {
+							continue
+						}
 						liveLogFiles = append(liveLogFiles, fmt.Sprintf("%s/%s", partitionPath, fileName))
 					}
 				}
@@ -4417,6 +4430,12 @@ func (e *SQLEngine) countRowsInLogFile(filerClient filer_pb.FilerClient, partiti
 				continue // Skip corrupted entries
 			}
 
+			// Skip control messages (publisher control, empty key, or no data)
+			if isControlLogEntry(logEntry) {
+				pos += 4 + int(size)
+				continue
+			}
+
 			rowCount++
 			pos += 4 + int(size)
 		}
@@ -4455,6 +4474,33 @@ func (e *SQLEngine) countRowsInLogFile(filerClient filer_pb.FilerClient, partiti
 	}
 
 	return rowCount, nil
+}
+
+// isControlLogEntry checks if a log entry is a control entry without actual user data
+// Control entries include:
+// - DataMessages with populated Ctrl field (publisher control signals)
+// - Entries with empty keys (filtered by subscriber)
+// - Entries with no data
+func isControlLogEntry(logEntry *filer_pb.LogEntry) bool {
+	// No data: control or placeholder
+	if len(logEntry.Data) == 0 {
+		return true
+	}
+
+	// Empty keys are treated as control entries (consistent with subscriber filtering)
+	if len(logEntry.Key) == 0 {
+		return true
+	}
+
+	// Check if the payload is a DataMessage carrying a control signal
+	dataMessage := &mq_pb.DataMessage{}
+	if err := proto.Unmarshal(logEntry.Data, dataMessage); err == nil {
+		if dataMessage.Ctrl != nil {
+			return true
+		}
+	}
+
+	return false
 }
 
 // discoverTopicPartitions discovers all partitions for a given topic using centralized logic
