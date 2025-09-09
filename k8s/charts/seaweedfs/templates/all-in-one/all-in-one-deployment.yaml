@@ -80,7 +80,7 @@ spec:
           imagePullPolicy: {{ default "IfNotPresent" .Values.global.imagePullPolicy }}
           env:
             {{- /* Determine default cluster alias and the corresponding env var keys to avoid conflicts */}}
-            {{- $envMerged := merge (.Values.allInOne.extraEnvironmentVars | default dict) (.Values.global.extraEnvironmentVars | default dict) }}
+            {{- $envMerged := merge (.Values.global.extraEnvironmentVars | default dict) (.Values.allInOne.extraEnvironmentVars | default dict) }}
             {{- $clusterDefault := default "sw" (index $envMerged "WEED_CLUSTER_DEFAULT") }}
             {{- $clusterUpper := upper $clusterDefault }}
             {{- $clusterMasterKey := printf "WEED_CLUSTER_%s_MASTER" $clusterUpper }}
@@ -101,7 +101,7 @@ spec:
               value: "{{ template "seaweedfs.name" . }}"
             {{- if .Values.allInOne.extraEnvironmentVars }}
             {{- range $key, $value := .Values.allInOne.extraEnvironmentVars }}
-            {{- if and (ne $key $clusterMasterKey) (ne $key $clusterFilerKey) }}
+            {{- if and (not (regexMatch "^WEED_CLUSTER_.*_MASTER$" $key)) (not (regexMatch "^WEED_CLUSTER_.*_FILER$" $key)) }}
             - name: {{ $key }}
               {{- if kindIs "string" $value }}
               value: {{ $value | quote }}
@@ -114,7 +114,7 @@ spec:
             {{- end }}
             {{- if .Values.global.extraEnvironmentVars }}
             {{- range $key, $value := .Values.global.extraEnvironmentVars }}
-            {{- if and (ne $key $clusterMasterKey) (ne $key $clusterFilerKey) }}
+            {{- if and (not (regexMatch "^WEED_CLUSTER_.*_MASTER$" $key)) (not (regexMatch "^WEED_CLUSTER_.*_FILER$" $key)) }}
             - name: {{ $key }}
               {{- if kindIs "string" $value }}
               value: {{ $value | quote }}
