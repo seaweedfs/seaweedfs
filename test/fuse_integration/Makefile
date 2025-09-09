@@ -2,7 +2,7 @@
 
 # Configuration
 WEED_BINARY := weed
-GO_VERSION := 1.21
+GO_VERSION := 1.24
 TEST_TIMEOUT := 30m
 COVERAGE_FILE := coverage.out
 

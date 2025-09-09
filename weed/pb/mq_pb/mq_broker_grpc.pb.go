@@ -36,6 +36,7 @@ const (
 	SeaweedMessaging_SubscribeMessage_FullMethodName           = "/messaging_pb.SeaweedMessaging/SubscribeMessage"
 	SeaweedMessaging_PublishFollowMe_FullMethodName            = "/messaging_pb.SeaweedMessaging/PublishFollowMe"
 	SeaweedMessaging_SubscribeFollowMe_FullMethodName          = "/messaging_pb.SeaweedMessaging/SubscribeFollowMe"
+	SeaweedMessaging_GetUnflushedMessages_FullMethodName       = "/messaging_pb.SeaweedMessaging/GetUnflushedMessages"
 )
 
 // SeaweedMessagingClient is the client API for SeaweedMessaging service.
@@ -66,6 +67,8 @@ type SeaweedMessagingClient interface {
 	// The lead broker asks a follower broker to follow itself
 	PublishFollowMe(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[PublishFollowMeRequest, PublishFollowMeResponse], error)
 	SubscribeFollowMe(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[SubscribeFollowMeRequest, SubscribeFollowMeResponse], error)
+	// SQL query support - get unflushed messages from broker's in-memory buffer (streaming)
+	GetUnflushedMessages(ctx context.Context, in *GetUnflushedMessagesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GetUnflushedMessagesResponse], error)
 }
 
 type seaweedMessagingClient struct {
@@ -264,6 +267,25 @@ func (c *seaweedMessagingClient) SubscribeFollowMe(ctx context.Context, opts ...
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type SeaweedMessaging_SubscribeFollowMeClient = grpc.ClientStreamingClient[SubscribeFollowMeRequest, SubscribeFollowMeResponse]
 
+func (c *seaweedMessagingClient) GetUnflushedMessages(ctx context.Context, in *GetUnflushedMessagesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GetUnflushedMessagesResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &SeaweedMessaging_ServiceDesc.Streams[6], SeaweedMessaging_GetUnflushedMessages_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[GetUnflushedMessagesRequest, GetUnflushedMessagesResponse]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type SeaweedMessaging_GetUnflushedMessagesClient = grpc.ServerStreamingClient[GetUnflushedMessagesResponse]
+
 // SeaweedMessagingServer is the server API for SeaweedMessaging service.
 // All implementations must embed UnimplementedSeaweedMessagingServer
 // for forward compatibility.
@@ -292,6 +314,8 @@ type SeaweedMessagingServer interface {
 	// The lead broker asks a follower broker to follow itself
 	PublishFollowMe(grpc.BidiStreamingServer[PublishFollowMeRequest, PublishFollowMeResponse]) error
 	SubscribeFollowMe(grpc.ClientStreamingServer[SubscribeFollowMeRequest, SubscribeFollowMeResponse]) error
+	// SQL query support - get unflushed messages from broker's in-memory buffer (streaming)
+	GetUnflushedMessages(*GetUnflushedMessagesRequest, grpc.ServerStreamingServer[GetUnflushedMessagesResponse]) error
 	mustEmbedUnimplementedSeaweedMessagingServer()
 }
 
@@ -352,6 +376,9 @@ func (UnimplementedSeaweedMessagingServer) PublishFollowMe(grpc.BidiStreamingSer
 }
 func (UnimplementedSeaweedMessagingServer) SubscribeFollowMe(grpc.ClientStreamingServer[SubscribeFollowMeRequest, SubscribeFollowMeResponse]) error {
 	return status.Errorf(codes.Unimplemented, "method SubscribeFollowMe not implemented")
+}
+func (UnimplementedSeaweedMessagingServer) GetUnflushedMessages(*GetUnflushedMessagesRequest, grpc.ServerStreamingServer[GetUnflushedMessagesResponse]) error {
+	return status.Errorf(codes.Unimplemented, "method GetUnflushedMessages not implemented")
 }
 func (UnimplementedSeaweedMessagingServer) mustEmbedUnimplementedSeaweedMessagingServer() {}
 func (UnimplementedSeaweedMessagingServer) testEmbeddedByValue()                          {}
@@ -614,6 +641,17 @@ func _SeaweedMessaging_SubscribeFollowMe_Handler(srv interface{}, stream grpc.Se
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type SeaweedMessaging_SubscribeFollowMeServer = grpc.ClientStreamingServer[SubscribeFollowMeRequest, SubscribeFollowMeResponse]
 
+func _SeaweedMessaging_GetUnflushedMessages_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(GetUnflushedMessagesRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(SeaweedMessagingServer).GetUnflushedMessages(m, &grpc.GenericServerStream[GetUnflushedMessagesRequest, GetUnflushedMessagesResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type SeaweedMessaging_GetUnflushedMessagesServer = grpc.ServerStreamingServer[GetUnflushedMessagesResponse]
+
 // SeaweedMessaging_ServiceDesc is the grpc.ServiceDesc for SeaweedMessaging service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -701,6 +739,11 @@ var SeaweedMessaging_ServiceDesc = grpc.ServiceDesc{
 			StreamName:    "SubscribeFollowMe",
 			Handler:       _SeaweedMessaging_SubscribeFollowMe_Handler,
 			ClientStreams: true,
+		},
+		{
+			StreamName:    "GetUnflushedMessages",
+			Handler:       _SeaweedMessaging_GetUnflushedMessages_Handler,
+			ServerStreams: true,
 		},
 	},
 	Metadata: "mq_broker.proto",

@@ -3,6 +3,10 @@ package logstore
 import (
 	"context"
 	"fmt"
+	"math"
+	"strings"
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
@@ -11,9 +15,6 @@ import (
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 	"google.golang.org/protobuf/proto"
-	"math"
-	"strings"
-	"time"
 )
 
 func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p topic.Partition) log_buffer.LogReadFromDiskFuncType {
@@ -90,7 +91,6 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 			for _, urlString := range urlStrings {
 				// TODO optimization opportunity: reuse the buffer
 				var data []byte
-				// fmt.Printf("reading %s/%s %s\n", partitionDir, entry.Name, urlString)
 				if data, _, err = util_http.Get(urlString); err == nil {
 					processed = true
 					if processedTsNs, err = eachChunkFn(data, eachLogEntryFn, starTsNs, stopTsNs); err != nil {

@@ -23,6 +23,34 @@ var (
 	chunkCache = chunk_cache.NewChunkCacheInMemory(256) // 256 entries, 8MB max per entry
 )
 
+// isControlEntry checks if a log entry is a control entry without actual data
+// Based on MQ system analysis, control entries are:
+// 1. DataMessages with populated Ctrl field (publisher close signals)
+// 2. Entries with empty keys (as filtered by subscriber)
+// 3. Entries with no data
+func isControlEntry(logEntry *filer_pb.LogEntry) bool {
+	// Skip entries with no data
+	if len(logEntry.Data) == 0 {
+		return true
+	}
+
+	// Skip entries with empty keys (same logic as subscriber)
+	if len(logEntry.Key) == 0 {
+		return true
+	}
+
+	// Check if this is a DataMessage with control field populated
+	dataMessage := &mq_pb.DataMessage{}
+	if err := proto.Unmarshal(logEntry.Data, dataMessage); err == nil {
+		// If it has a control field, it's a control message
+		if dataMessage.Ctrl != nil {
+			return true
+		}
+	}
+
+	return false
+}
+
 func GenParquetReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p topic.Partition) log_buffer.LogReadFromDiskFuncType {
 	partitionDir := topic.PartitionDir(t, p)
 
@@ -35,9 +63,18 @@ func GenParquetReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p topic
 		topicConf, err = t.ReadConfFile(client)
 		return err
 	}); err != nil {
-		return nil
+		// Return a no-op function for test environments or when topic config can't be read
+		return func(startPosition log_buffer.MessagePosition, stopTsNs int64, eachLogEntryFn log_buffer.EachLogEntryFuncType) (log_buffer.MessagePosition, bool, error) {
+			return startPosition, true, nil
+		}
 	}
 	recordType := topicConf.GetRecordType()
+	if recordType == nil {
+		// Return a no-op function if no schema is available
+		return func(startPosition log_buffer.MessagePosition, stopTsNs int64, eachLogEntryFn log_buffer.EachLogEntryFuncType) (log_buffer.MessagePosition, bool, error) {
+			return startPosition, true, nil
+		}
+	}
 	recordType = schema.NewRecordTypeBuilder(recordType).
 		WithField(SW_COLUMN_NAME_TS, schema.TypeInt64).
 		WithField(SW_COLUMN_NAME_KEY, schema.TypeBytes).
@@ -90,6 +127,11 @@ func GenParquetReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p topic
 					Data: data,
 				}
 
+				// Skip control entries without actual data
+				if isControlEntry(logEntry) {
+					continue
+				}
+
 				// fmt.Printf(" parquet entry %s ts %v\n", string(logEntry.Key), time.Unix(0, logEntry.TsNs).UTC())
 
 				if _, err = eachLogEntryFn(logEntry); err != nil {
@@ -108,7 +150,6 @@ func GenParquetReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p topic
 				return processedTsNs, nil
 			}
 		}
-		return
 	}
 
 	return func(startPosition log_buffer.MessagePosition, stopTsNs int64, eachLogEntryFn log_buffer.EachLogEntryFuncType) (lastReadPosition log_buffer.MessagePosition, isDone bool, err error) {

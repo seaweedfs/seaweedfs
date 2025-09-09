@@ -2,7 +2,18 @@ FROM ubuntu:22.04
 
 LABEL author="Chris Lu"
 
-RUN apt-get update && apt-get install -y curl fio fuse
+# Use faster mirrors and optimize package installation
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    --no-install-recommends \
+    --no-install-suggests \
+    curl \
+    fio \
+    fuse \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -rf /tmp/* \
+    && rm -rf /var/tmp/*
 RUN mkdir -p /etc/seaweedfs /data/filerldb2
 
 COPY ./weed /usr/bin/
