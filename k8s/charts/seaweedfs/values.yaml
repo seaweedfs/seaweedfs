@@ -202,8 +202,7 @@ master:
   # nodeSelector labels for master pod assignment, formatted as a muli-line string.
   # ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#nodeselector
   # Example:
-  nodeSelector: |
-    kubernetes.io/arch: amd64
+  nodeSelector: ""
   # nodeSelector: |
   #   sw-backend: "true"
 
@@ -479,8 +478,7 @@ volume:
   # nodeSelector labels for server pod assignment, formatted as a muli-line string.
   # ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#nodeselector
   # Example:
-  nodeSelector: |
-   kubernetes.io/arch: amd64
+  nodeSelector: ""
   # nodeSelector: |
   #   sw-volume: "true"
 
@@ -736,8 +734,7 @@ filer:
   # nodeSelector labels for server pod assignment, formatted as a muli-line string.
   # ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#nodeselector
   # Example:
-  nodeSelector: |
-    kubernetes.io/arch: amd64
+  nodeSelector: ""
   # nodeSelector: |
   #   sw-backend: "true"
 
@@ -933,8 +930,7 @@ s3:
   # nodeSelector labels for server pod assignment, formatted as a muli-line string.
   # ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#nodeselector
   # Example:
-  nodeSelector: |
-    kubernetes.io/arch: amd64
+  nodeSelector: ""
   # nodeSelector: |
   #   sw-backend: "true"
 
@@ -1052,8 +1048,7 @@ sftp:
   annotations: {}
   resources: {}
   tolerations: ""
-  nodeSelector: |
-    kubernetes.io/arch: amd64
+  nodeSelector: ""
   priorityClassName: ""
   serviceAccountName: ""
   podSecurityContext: {}
@@ -1180,8 +1175,7 @@ allInOne:
 
   # nodeSelector labels for master pod assignment, formatted as a muli-line string.
   # ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#nodeselector
-  nodeSelector: |
-    kubernetes.io/arch: amd64
+  nodeSelector: ""
 
   # Used to assign priority to master pods
   # ref: https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
