@@ -67,10 +67,11 @@ func toParquetFieldTypeScalar(scalarType schema_pb.ScalarType) (parquet.Node, er
 		// Stored as INT32 (days since Unix epoch)
 		return parquet.Leaf(parquet.Int32Type), nil
 	case schema_pb.ScalarType_DECIMAL:
-		// Use proper DECIMAL logical type with correct physical storage
+		// Use maximum precision/scale to accommodate any decimal value
 		// Per Parquet spec: precision ≤9→INT32, ≤18→INT64, >18→FixedLenByteArray
-		// Using INT64 for good balance of precision and compatibility
-		return parquet.Decimal(2, 18, parquet.Int64Type), nil
+		// Using precision=38 (max for most systems), scale=18 for flexibility
+		// Individual values can have smaller precision/scale, but schema supports maximum
+		return parquet.Decimal(18, 38, parquet.FixedLenByteArrayType(16)), nil
 	case schema_pb.ScalarType_TIME:
 		// Stored as INT64 (microseconds since midnight)
 		return parquet.Leaf(parquet.Int64Type), nil

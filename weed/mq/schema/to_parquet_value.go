@@ -118,20 +118,20 @@ func toParquetValue(value *schema_pb.Value) (parquet.Value, error) {
 			return parquet.NullValue(), fmt.Errorf("decimal value too large: %d bytes (max 64)", len(decimalValue.Value))
 		}
 
-		// Convert decimal bytes to INT64 to match schema (DECIMAL with INT64 physical type)
-		// This ensures compatibility with our schema definition
-		if len(decimalValue.Value) <= 8 {
-			// Can fit in INT64 - convert bytes to integer
-			var intValue int64
-			for _, b := range decimalValue.Value {
-				intValue = intValue<<8 | int64(b)
-			}
-			return parquet.Int64Value(intValue), nil
+		// Convert to FixedLenByteArray to match schema (DECIMAL with FixedLenByteArray physical type)
+		// This accommodates any precision up to 38 digits (16 bytes = 128 bits)
+
+		// Pad or truncate to exactly 16 bytes for FixedLenByteArray
+		fixedBytes := make([]byte, 16)
+		if len(decimalValue.Value) <= 16 {
+			// Right-align the value (big-endian)
+			copy(fixedBytes[16-len(decimalValue.Value):], decimalValue.Value)
+		} else {
+			// Truncate if too large, taking the least significant bytes
+			copy(fixedBytes, decimalValue.Value[len(decimalValue.Value)-16:])
 		}
 
-		// For very large values that don't fit in INT64, fallback to 0
-		// In practice, the schema precision=18 scale=2 should handle most decimal values
-		return parquet.Int64Value(0), nil
+		return parquet.FixedLenByteArrayValue(fixedBytes), nil
 	case *schema_pb.Value_TimeValue:
 		timeValue := value.GetTimeValue()
 		if timeValue == nil {

@@ -251,7 +251,7 @@ func TestToParquetValue_DecimalValue(t *testing.T) {
 					},
 				},
 			},
-			expected: parquet.Int64Value(12345), // Actual byte-to-int64 conversion
+			expected: createFixedLenByteArray(encodeBigIntToBytes(big.NewInt(12345))), // FixedLenByteArray conversion
 		},
 		{
 			name: "Small Decimal (precision <= 9) - negative",
@@ -264,7 +264,7 @@ func TestToParquetValue_DecimalValue(t *testing.T) {
 					},
 				},
 			},
-			expected: parquet.Int64Value(53191), // Actual byte-to-int64 conversion
+			expected: createFixedLenByteArray(encodeBigIntToBytes(big.NewInt(-12345))), // FixedLenByteArray conversion
 		},
 		{
 			name: "Medium Decimal (9 < precision <= 18)",
@@ -277,7 +277,7 @@ func TestToParquetValue_DecimalValue(t *testing.T) {
 					},
 				},
 			},
-			expected: parquet.Int64Value(123456789012345), // Direct int64 value
+			expected: createFixedLenByteArray(encodeBigIntToBytes(big.NewInt(123456789012345))), // FixedLenByteArray conversion
 		},
 		{
 			name: "Large Decimal (precision > 18)",
@@ -290,7 +290,7 @@ func TestToParquetValue_DecimalValue(t *testing.T) {
 					},
 				},
 			},
-			expected: parquet.Int64Value(0x0123456789ABCDEF), // 8-byte conversion
+			expected: createFixedLenByteArray([]byte{0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF}), // FixedLenByteArray conversion
 		},
 		{
 			name: "Decimal with zero precision",
@@ -303,7 +303,7 @@ func TestToParquetValue_DecimalValue(t *testing.T) {
 					},
 				},
 			},
-			expected: parquet.Int64Value(0), // Zero as int64
+			expected: createFixedLenByteArray(encodeBigIntToBytes(big.NewInt(0))), // Zero as FixedLenByteArray
 		},
 		{
 			name: "Decimal nil pointer",
@@ -351,7 +351,7 @@ func TestToParquetValue_DecimalValue(t *testing.T) {
 					},
 				},
 			},
-			expected: parquet.Int64Value(999999999999), // Within int64 range
+			expected: createFixedLenByteArray(encodeBigIntToBytes(big.NewInt(999999999999))), // FixedLenByteArray
 		},
 		{
 			name: "Decimal out of int64 range (stored as binary)",
@@ -369,7 +369,11 @@ func TestToParquetValue_DecimalValue(t *testing.T) {
 					},
 				},
 			},
-			expected: parquet.Int64Value(0), // Too large, fallback to 0
+			expected: createFixedLenByteArray(func() []byte {
+				bigNum := new(big.Int)
+				bigNum.SetString("99999999999999999999999999999", 10)
+				return encodeBigIntToBytes(bigNum)
+			}()), // Large number as FixedLenByteArray (truncated to 16 bytes)
 		},
 		{
 			name: "Decimal extremely large value (should be rejected)",
@@ -547,6 +551,19 @@ func encodeBigIntToBytes(n *big.Int) []byte {
 	return bytes
 }
 
+// Helper function to create a FixedLenByteArray(16) matching our conversion logic
+func createFixedLenByteArray(inputBytes []byte) parquet.Value {
+	fixedBytes := make([]byte, 16)
+	if len(inputBytes) <= 16 {
+		// Right-align the value (big-endian) - same as our conversion logic
+		copy(fixedBytes[16-len(inputBytes):], inputBytes)
+	} else {
+		// Truncate if too large, taking the least significant bytes
+		copy(fixedBytes, inputBytes[len(inputBytes)-16:])
+	}
+	return parquet.FixedLenByteArrayValue(fixedBytes)
+}
+
 // Helper function to compare parquet values
 func parquetValuesEqual(a, b parquet.Value) bool {
 	// Handle both being null
@@ -576,6 +593,18 @@ func parquetValuesEqual(a, b parquet.Value) bool {
 		return a.Double() == b.Double()
 	case parquet.ByteArray:
 		aBytes := a.ByteArray()
+		bBytes := b.ByteArray()
+		if len(aBytes) != len(bBytes) {
+			return false
+		}
+		for i, v := range aBytes {
+			if v != bBytes[i] {
+				return false
+			}
+		}
+		return true
+	case parquet.FixedLenByteArray:
+		aBytes := a.ByteArray() // FixedLenByteArray also uses ByteArray() method
 		bBytes := b.ByteArray()
 		if len(aBytes) != len(bBytes) {
 			return false

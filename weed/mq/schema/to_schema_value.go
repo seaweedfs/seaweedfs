@@ -1,6 +1,7 @@
 package schema
 
 import (
+	"bytes"
 	"fmt"
 
 	"github.com/parquet-go/parquet-go"
@@ -102,14 +103,19 @@ func toScalarValue(scalarType schema_pb.ScalarType, levels *ParquetLevels, value
 			},
 		}, valueIndex + 1, nil
 	case schema_pb.ScalarType_DECIMAL:
-		// Stored as BINARY, convert back to DecimalValue
-		byteArray := value.ByteArray()
+		// Stored as FixedLenByteArray, convert back to DecimalValue
+		fixedBytes := value.ByteArray() // FixedLenByteArray also uses ByteArray() method
+		// Remove leading zeros to get the minimal representation
+		trimmedBytes := bytes.TrimLeft(fixedBytes, "\x00")
+		if len(trimmedBytes) == 0 {
+			trimmedBytes = []byte{0} // Ensure we have at least one byte for zero
+		}
 		return &schema_pb.Value{
 			Kind: &schema_pb.Value_DecimalValue{
 				DecimalValue: &schema_pb.DecimalValue{
-					Value:     byteArray,
-					Precision: 18, // Default precision for compatibility
-					Scale:     2,  // Default scale for compatibility
+					Value:     trimmedBytes,
+					Precision: 38, // Maximum precision supported by schema
+					Scale:     18, // Maximum scale supported by schema
 				},
 			},
 		}, valueIndex + 1, nil
