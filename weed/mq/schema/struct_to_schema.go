@@ -55,9 +55,8 @@ func reflectTypeToSchemaType(t reflect.Type) *schema_pb.Type {
 				return nil
 			}
 			recordType.Fields = append(recordType.Fields, &schema_pb.Field{
-				Name:       fieldName,
-				FieldIndex: int32(i),
-				Type:       schemaField,
+				Name: fieldName,
+				Type: schemaField,
 			})
 		}
 		return &schema_pb.Type{
