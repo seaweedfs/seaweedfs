@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/signal"
 	"strings"
@@ -377,7 +376,7 @@ func parseUsersFile(filePath string, authMethod postgres.AuthMethod) (map[string
 	filePath = strings.TrimPrefix(filePath, "@")
 
 	// Read file content
-	content, err := ioutil.ReadFile(filePath)
+	content, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read users file '%s': %v", filePath, err)
 	}
