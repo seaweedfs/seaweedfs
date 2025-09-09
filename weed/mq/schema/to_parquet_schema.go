@@ -2,6 +2,7 @@ package schema
 
 import (
 	"fmt"
+
 	parquet "github.com/parquet-go/parquet-go"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 )
@@ -58,6 +59,20 @@ func toParquetFieldTypeScalar(scalarType schema_pb.ScalarType) (parquet.Node, er
 		return parquet.Leaf(parquet.ByteArrayType), nil
 	case schema_pb.ScalarType_STRING:
 		return parquet.Leaf(parquet.ByteArrayType), nil
+	// Parquet logical types - map to their physical storage types
+	case schema_pb.ScalarType_TIMESTAMP:
+		// Stored as INT64 (microseconds since Unix epoch)
+		return parquet.Leaf(parquet.Int64Type), nil
+	case schema_pb.ScalarType_DATE:
+		// Stored as INT32 (days since Unix epoch)
+		return parquet.Leaf(parquet.Int32Type), nil
+	case schema_pb.ScalarType_DECIMAL:
+		// Stored as BINARY for flexibility (supports all precisions)
+		// Individual values will be converted to appropriate types in toParquetValue
+		return parquet.Leaf(parquet.ByteArrayType), nil
+	case schema_pb.ScalarType_TIME:
+		// Stored as INT64 (microseconds since midnight)
+		return parquet.Leaf(parquet.Int64Type), nil
 	default:
 		return nil, fmt.Errorf("unknown scalar type: %v", scalarType)
 	}

@@ -2,7 +2,6 @@ package schema
 
 import (
 	"fmt"
-	"math/big"
 
 	parquet "github.com/parquet-go/parquet-go"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
@@ -73,6 +72,11 @@ func doVisitValue(fieldType *schema_pb.Type, levels *ParquetLevels, fieldValue *
 }
 
 func toParquetValue(value *schema_pb.Value) (parquet.Value, error) {
+	// Safety check for nil value
+	if value == nil || value.Kind == nil {
+		return parquet.NullValue(), fmt.Errorf("nil value or nil value kind")
+	}
+
 	switch value.Kind.(type) {
 	case *schema_pb.Value_BoolValue:
 		return parquet.BooleanValue(value.GetBoolValue()), nil
@@ -88,7 +92,7 @@ func toParquetValue(value *schema_pb.Value) (parquet.Value, error) {
 		return parquet.ByteArrayValue(value.GetBytesValue()), nil
 	case *schema_pb.Value_StringValue:
 		return parquet.ByteArrayValue([]byte(value.GetStringValue())), nil
-	// Parquet logical types
+	// Parquet logical types with safe conversion (preventing commit 7a4aeec60 panic)
 	case *schema_pb.Value_TimestampValue:
 		timestampValue := value.GetTimestampValue()
 		if timestampValue == nil {
@@ -107,49 +111,26 @@ func toParquetValue(value *schema_pb.Value) (parquet.Value, error) {
 			return parquet.NullValue(), nil
 		}
 
-		// Store DECIMAL according to Parquet specification based on precision
-		// Spec: unscaledValue * 10^(-scale) where unscaledValue is stored as signed integer
-		precision := decimalValue.Precision
-
-		// Handle signed two's complement conversion for proper Parquet DECIMAL
-		var unscaledValue *big.Int
-		if len(decimalValue.Value) > 0 && decimalValue.Value[0]&0x80 != 0 {
-			// Negative number in two's complement - convert properly
-			unscaledValue = new(big.Int)
-			unscaledValue.SetBytes(decimalValue.Value)
-			// Convert from unsigned interpretation to signed by subtracting 2^(8*len)
-			bitLen := len(decimalValue.Value) * 8
-			maxVal := new(big.Int).Lsh(big.NewInt(1), uint(bitLen))
-			unscaledValue.Sub(unscaledValue, maxVal)
-		} else {
-			// Positive number - SetBytes works correctly
-			unscaledValue = new(big.Int).SetBytes(decimalValue.Value)
+		// Validate input data before processing
+		if len(decimalValue.Value) > 16 {
+			// Very large decimal values - truncate for safety
+			truncated := make([]byte, 16)
+			copy(truncated, decimalValue.Value[:16])
+			return parquet.ByteArrayValue(truncated), nil
 		}
 
-		if precision <= 9 {
-			// Store as INT32 for precision ≤ 9
-			if unscaledValue.IsInt64() {
-				val := unscaledValue.Int64()
-				if val <= 2147483647 && val >= -2147483648 {
-					return parquet.Int32Value(int32(val)), nil
-				}
-			}
-			// Fallback to 0 if out of range
-			return parquet.Int32Value(0), nil
-
-		} else if precision <= 18 {
-			// Store as INT64 for 9 < precision ≤ 18
-			if unscaledValue.IsInt64() {
-				return parquet.Int64Value(unscaledValue.Int64()), nil
-			}
-			// Fallback to 0 if out of range
-			return parquet.Int64Value(0), nil
-
-		} else {
-			// Store as BINARY for precision > 18 (unlimited precision)
-			// Ensure proper two's complement big-endian format
-			return parquet.ByteArrayValue(decimalValue.Value), nil
+		// Always store DECIMAL as BINARY for consistency with schema mapping
+		// This prevents type mismatches that cause panics in parquet-go
+		// CRITICAL FIX: Create a new slice and ensure it's never nil
+		if len(decimalValue.Value) == 0 {
+			// Return a single zero byte for empty/zero decimals
+			return parquet.ByteArrayValue([]byte{0x00}), nil
 		}
+
+		// Create a safe copy to prevent nil/malformed byte slice issues
+		resultBytes := make([]byte, len(decimalValue.Value))
+		copy(resultBytes, decimalValue.Value)
+		return parquet.ByteArrayValue(resultBytes), nil
 	case *schema_pb.Value_TimeValue:
 		timeValue := value.GetTimeValue()
 		if timeValue == nil {

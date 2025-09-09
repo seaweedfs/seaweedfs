@@ -2,6 +2,7 @@ package schema
 
 import (
 	"fmt"
+
 	"github.com/parquet-go/parquet-go"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 )
@@ -80,6 +81,47 @@ func toScalarValue(scalarType schema_pb.ScalarType, levels *ParquetLevels, value
 		return &schema_pb.Value{Kind: &schema_pb.Value_BytesValue{BytesValue: value.ByteArray()}}, valueIndex + 1, nil
 	case schema_pb.ScalarType_STRING:
 		return &schema_pb.Value{Kind: &schema_pb.Value_StringValue{StringValue: string(value.ByteArray())}}, valueIndex + 1, nil
+	// Parquet logical types - convert from their physical storage back to logical values
+	case schema_pb.ScalarType_TIMESTAMP:
+		// Stored as INT64, convert back to TimestampValue
+		return &schema_pb.Value{
+			Kind: &schema_pb.Value_TimestampValue{
+				TimestampValue: &schema_pb.TimestampValue{
+					TimestampMicros: value.Int64(),
+					IsUtc:           true, // Default to UTC for compatibility
+				},
+			},
+		}, valueIndex + 1, nil
+	case schema_pb.ScalarType_DATE:
+		// Stored as INT32, convert back to DateValue
+		return &schema_pb.Value{
+			Kind: &schema_pb.Value_DateValue{
+				DateValue: &schema_pb.DateValue{
+					DaysSinceEpoch: value.Int32(),
+				},
+			},
+		}, valueIndex + 1, nil
+	case schema_pb.ScalarType_DECIMAL:
+		// Stored as BINARY, convert back to DecimalValue
+		byteArray := value.ByteArray()
+		return &schema_pb.Value{
+			Kind: &schema_pb.Value_DecimalValue{
+				DecimalValue: &schema_pb.DecimalValue{
+					Value:     byteArray,
+					Precision: 18, // Default precision for compatibility
+					Scale:     2,  // Default scale for compatibility
+				},
+			},
+		}, valueIndex + 1, nil
+	case schema_pb.ScalarType_TIME:
+		// Stored as INT64, convert back to TimeValue
+		return &schema_pb.Value{
+			Kind: &schema_pb.Value_TimeValue{
+				TimeValue: &schema_pb.TimeValue{
+					TimeMicros: value.Int64(),
+				},
+			},
+		}, valueIndex + 1, nil
 	}
 	return nil, valueIndex, fmt.Errorf("unsupported scalar type: %v", scalarType)
 }
