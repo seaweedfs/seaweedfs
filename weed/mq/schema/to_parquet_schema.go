@@ -19,20 +19,8 @@ func ToParquetSchema(topicName string, recordType *schema_pb.RecordType) (*parqu
 }
 
 func toParquetFieldType(fieldType *schema_pb.Type) (dataType parquet.Node, err error) {
-	switch fieldType.Kind.(type) {
-	case *schema_pb.Type_ScalarType:
-		dataType, err = toParquetFieldTypeScalar(fieldType.GetScalarType())
-		dataType = parquet.Optional(dataType)
-	case *schema_pb.Type_RecordType:
-		dataType, err = toParquetFieldTypeRecord(fieldType.GetRecordType())
-		dataType = parquet.Optional(dataType)
-	case *schema_pb.Type_ListType:
-		dataType, err = toParquetFieldTypeList(fieldType.GetListType())
-	default:
-		return nil, fmt.Errorf("unknown field type: %T", fieldType.Kind)
-	}
-
-	return dataType, err
+	// This is the old function - now defaults to Optional for backward compatibility
+	return toParquetFieldTypeWithRequirement(fieldType, false)
 }
 
 func toParquetFieldTypeList(listType *schema_pb.ListType) (parquet.Node, error) {
@@ -82,11 +70,48 @@ func toParquetFieldTypeScalar(scalarType schema_pb.ScalarType) (parquet.Node, er
 func toParquetFieldTypeRecord(recordType *schema_pb.RecordType) (parquet.Node, error) {
 	recordNode := parquet.Group{}
 	for _, field := range recordType.Fields {
-		parquetFieldType, err := toParquetFieldType(field.Type)
+		parquetFieldType, err := toParquetFieldTypeWithRequirement(field.Type, field.IsRequired)
 		if err != nil {
 			return nil, err
 		}
 		recordNode[field.Name] = parquetFieldType
 	}
 	return recordNode, nil
+}
+
+// toParquetFieldTypeWithRequirement creates parquet field type respecting required/optional constraints
+func toParquetFieldTypeWithRequirement(fieldType *schema_pb.Type, isRequired bool) (dataType parquet.Node, err error) {
+	switch fieldType.Kind.(type) {
+	case *schema_pb.Type_ScalarType:
+		dataType, err = toParquetFieldTypeScalar(fieldType.GetScalarType())
+		if err != nil {
+			return nil, err
+		}
+		if isRequired {
+			// Required fields are NOT wrapped in Optional
+			return dataType, nil
+		} else {
+			// Optional fields are wrapped in Optional
+			return parquet.Optional(dataType), nil
+		}
+	case *schema_pb.Type_RecordType:
+		dataType, err = toParquetFieldTypeRecord(fieldType.GetRecordType())
+		if err != nil {
+			return nil, err
+		}
+		if isRequired {
+			return dataType, nil
+		} else {
+			return parquet.Optional(dataType), nil
+		}
+	case *schema_pb.Type_ListType:
+		dataType, err = toParquetFieldTypeList(fieldType.GetListType())
+		if err != nil {
+			return nil, err
+		}
+		// Lists are typically optional by nature
+		return dataType, nil
+	default:
+		return nil, fmt.Errorf("unknown field type: %T", fieldType.Kind)
+	}
 }

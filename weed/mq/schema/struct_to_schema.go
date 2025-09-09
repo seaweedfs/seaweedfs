@@ -1,8 +1,9 @@
 package schema
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"reflect"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 )
 
 func StructToSchema(instance any) *schema_pb.RecordType {
@@ -54,8 +55,9 @@ func reflectTypeToSchemaType(t reflect.Type) *schema_pb.Type {
 				return nil
 			}
 			recordType.Fields = append(recordType.Fields, &schema_pb.Field{
-				Name: fieldName,
-				Type: schemaField,
+				Name:       fieldName,
+				FieldIndex: int32(i),
+				Type:       schemaField,
 			})
 		}
 		return &schema_pb.Type{

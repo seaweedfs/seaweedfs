@@ -494,7 +494,7 @@ func TestToParquetValue_EdgeCases(t *testing.T) {
 			value: &schema_pb.Value{
 				Kind: &schema_pb.Value_BytesValue{BytesValue: nil},
 			},
-			expected: parquet.ByteArrayValue(nil), // Should handle nil gracefully
+			expected: parquet.ByteArrayValue([]byte{}), // Should convert nil to empty slice
 		},
 	}
 

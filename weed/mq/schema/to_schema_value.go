@@ -79,9 +79,19 @@ func toScalarValue(scalarType schema_pb.ScalarType, levels *ParquetLevels, value
 	case schema_pb.ScalarType_DOUBLE:
 		return &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: value.Double()}}, valueIndex + 1, nil
 	case schema_pb.ScalarType_BYTES:
-		return &schema_pb.Value{Kind: &schema_pb.Value_BytesValue{BytesValue: value.ByteArray()}}, valueIndex + 1, nil
+		// Handle nil byte arrays from parquet to prevent growslice panic
+		byteData := value.ByteArray()
+		if byteData == nil {
+			byteData = []byte{} // Use empty slice instead of nil
+		}
+		return &schema_pb.Value{Kind: &schema_pb.Value_BytesValue{BytesValue: byteData}}, valueIndex + 1, nil
 	case schema_pb.ScalarType_STRING:
-		return &schema_pb.Value{Kind: &schema_pb.Value_StringValue{StringValue: string(value.ByteArray())}}, valueIndex + 1, nil
+		// Handle nil byte arrays from parquet to prevent string conversion issues
+		byteData := value.ByteArray()
+		if byteData == nil {
+			byteData = []byte{} // Use empty slice instead of nil
+		}
+		return &schema_pb.Value{Kind: &schema_pb.Value_StringValue{StringValue: string(byteData)}}, valueIndex + 1, nil
 	// Parquet logical types - convert from their physical storage back to logical values
 	case schema_pb.ScalarType_TIMESTAMP:
 		// Stored as INT64, convert back to TimestampValue
@@ -105,6 +115,9 @@ func toScalarValue(scalarType schema_pb.ScalarType, levels *ParquetLevels, value
 	case schema_pb.ScalarType_DECIMAL:
 		// Stored as FixedLenByteArray, convert back to DecimalValue
 		fixedBytes := value.ByteArray() // FixedLenByteArray also uses ByteArray() method
+		if fixedBytes == nil {
+			fixedBytes = []byte{} // Use empty slice instead of nil
+		}
 		// Remove leading zeros to get the minimal representation
 		trimmedBytes := bytes.TrimLeft(fixedBytes, "\x00")
 		if len(trimmedBytes) == 0 {
