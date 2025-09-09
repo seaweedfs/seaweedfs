@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path"
 	"strings"
@@ -146,7 +145,7 @@ func executeSingleQuery(ctx *SQLContext, query string) bool {
 
 // executeFileQueries processes SQL queries from a file
 func executeFileQueries(ctx *SQLContext, filename string) bool {
-	content, err := ioutil.ReadFile(filename)
+	content, err := os.ReadFile(filename)
 	if err != nil {
 		fmt.Printf("Error reading file %s: %v\n", filename, err)
 		return false
