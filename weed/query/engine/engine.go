@@ -1577,7 +1577,7 @@ func (e *SQLEngine) executeSelectStatementWithPlan(ctx context.Context, stmt *Se
 			if table, ok := stmt.From[0].(*AliasedTableExpr); ok {
 				if tableExpr, ok := table.Expr.(TableName); ok {
 					tableName = tableExpr.Name.String()
-					if tableExpr.Qualifier.String() != "" {
+					if tableExpr.Qualifier != nil && tableExpr.Qualifier.String() != "" {
 						database = tableExpr.Qualifier.String()
 					}
 				}
