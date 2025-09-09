@@ -276,7 +276,17 @@ func writeLogFilesToParquet(filerClient filer_pb.FilerClient, partitionDir strin
 				return fmt.Errorf("add record value: %w", err)
 			}
 
-			rows = append(rows, rowBuilder.Row())
+			// Build row and normalize any nil ByteArray values to empty slices
+			row := rowBuilder.Row()
+			for i, value := range row {
+				if value.Kind() == parquet.ByteArray {
+					if value.ByteArray() == nil {
+						row[i] = parquet.ByteArrayValue([]byte{})
+					}
+				}
+			}
+
+			rows = append(rows, row)
 
 			return nil
 
@@ -284,30 +294,7 @@ func writeLogFilesToParquet(filerClient filer_pb.FilerClient, partitionDir strin
 			return fmt.Errorf("iterate log entry %v/%v: %w", partitionDir, logFile.Name, err)
 		}
 
-		// AGGRESSIVE final safety: deep-clean all rows and force buffer flush
-		cleanRows := make([]parquet.Row, len(rows))
-		nilFixCount := 0
-		for rowIdx, row := range rows {
-			cleanRow := make(parquet.Row, len(row))
-			for colIdx, value := range row {
-				if value.Kind() == parquet.ByteArray {
-					byteData := value.ByteArray()
-					if byteData == nil {
-						nilFixCount++
-						cleanRow[colIdx] = parquet.ByteArrayValue([]byte{})
-					} else {
-						cleanRow[colIdx] = value
-					}
-				} else {
-					cleanRow[colIdx] = value
-				}
-			}
-			cleanRows[rowIdx] = cleanRow
-		}
-		_ = nilFixCount // kept for potential future metrics; avoid unused var
-
-		// Write the completely clean rows
-		rows = cleanRows
+		// Nil ByteArray handling is done during row creation
 
 		// Write all rows in a single call
 		if _, err := writer.WriteRows(rows); err != nil {
