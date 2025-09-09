@@ -135,34 +135,6 @@ func compactTopicPartitionDir(filerClient filer_pb.FilerClient, topicName, parti
 	return nil
 }
 
-// writeRowsInBatches writes rows in small batches to work around parquet-go v0.25.1 growslice bug
-func writeRowsInBatches(writer *parquet.Writer, rows []parquet.Row) error {
-	const MAX_BATCH_SIZE = 50 // Small batch size to work around parquet-go bug
-
-	if len(rows) <= MAX_BATCH_SIZE {
-		// Small dataset, write directly
-		if _, err := writer.WriteRows(rows); err != nil {
-			return fmt.Errorf("write small batch: %w", err)
-		}
-		return nil
-	}
-
-	// Write in small batches
-	for i := 0; i < len(rows); i += MAX_BATCH_SIZE {
-		end := i + MAX_BATCH_SIZE
-		if end > len(rows) {
-			end = len(rows)
-		}
-
-		batch := rows[i:end]
-		if _, err := writer.WriteRows(batch); err != nil {
-			return fmt.Errorf("write batch %d-%d: %w", i+1, end, err)
-		}
-	}
-
-	return nil
-}
-
 func groupFilesBySize(logFiles []*filer_pb.Entry, maxGroupSize int64) (logFileGroups [][]*filer_pb.Entry) {
 	var logFileGroup []*filer_pb.Entry
 	var groupSize int64
@@ -337,9 +309,9 @@ func writeLogFilesToParquet(filerClient filer_pb.FilerClient, partitionDir strin
 		// Write the completely clean rows
 		rows = cleanRows
 
-		// Use smaller batch sizes
-		if err := writeRowsInBatches(writer, rows); err != nil {
-			return fmt.Errorf("write rows in batches: %w", err)
+		// Write all rows in a single call
+		if _, err := writer.WriteRows(rows); err != nil {
+			return fmt.Errorf("write rows: %w", err)
 		}
 	}
 
