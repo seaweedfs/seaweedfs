@@ -605,10 +605,87 @@ func (e *SQLEngine) executeAggregationQueryWithPlan(ctx context.Context, hybridS
 
 	// Build execution tree for aggregation queries if plan is provided
 	if plan != nil {
+		// Populate detailed plan information for full scan (similar to fast path)
+		e.populateFullScanPlanDetails(ctx, plan, hybridScanner, stmt)
 		plan.RootNode = e.buildExecutionTree(plan, stmt)
 	}
 
 	return result, nil
+}
+
+// populateFullScanPlanDetails populates detailed plan information for full scan queries
+// This provides consistency with fast path execution plan details
+func (e *SQLEngine) populateFullScanPlanDetails(ctx context.Context, plan *QueryExecutionPlan, hybridScanner *HybridMessageScanner, stmt *SelectStatement) {
+	// Initialize plan details if not already done
+	if plan.Details == nil {
+		plan.Details = make(map[string]interface{})
+	}
+
+	// Extract table information
+	var database, tableName string
+	if len(stmt.From) == 1 {
+		if table, ok := stmt.From[0].(*AliasedTableExpr); ok {
+			if tableExpr, ok := table.Expr.(TableName); ok {
+				tableName = tableExpr.Name.String()
+				if tableExpr.Qualifier != nil && tableExpr.Qualifier.String() != "" {
+					database = tableExpr.Qualifier.String()
+				}
+			}
+		}
+	}
+
+	// Use current database if not specified
+	if database == "" {
+		database = e.catalog.currentDatabase
+		if database == "" {
+			database = "default"
+		}
+	}
+
+	// Discover partitions and populate file details
+	if partitions, discoverErr := e.discoverTopicPartitions(database, tableName); discoverErr == nil {
+		// Add partition paths to execution plan details
+		plan.Details["partition_paths"] = partitions
+
+		// Collect actual file information for each partition
+		var parquetFiles []string
+		var liveLogFiles []string
+		parquetSources := make(map[string]bool)
+
+		for _, partitionPath := range partitions {
+			// Get parquet files for this partition
+			if parquetStats, err := hybridScanner.ReadParquetStatistics(partitionPath); err == nil {
+				for _, stats := range parquetStats {
+					parquetFiles = append(parquetFiles, fmt.Sprintf("%s/%s", partitionPath, stats.FileName))
+				}
+			}
+
+			// Merge accurate parquet sources from metadata
+			if sources, err := e.getParquetSourceFilesFromMetadata(partitionPath); err == nil {
+				for src := range sources {
+					parquetSources[src] = true
+				}
+			}
+
+			// Get live log files for this partition
+			if liveFiles, err := e.collectLiveLogFileNames(hybridScanner.filerClient, partitionPath); err == nil {
+				for _, fileName := range liveFiles {
+					// Exclude live log files that have been converted to parquet (deduplicated)
+					if parquetSources[fileName] {
+						continue
+					}
+					liveLogFiles = append(liveLogFiles, fmt.Sprintf("%s/%s", partitionPath, fileName))
+				}
+			}
+		}
+
+		if len(parquetFiles) > 0 {
+			plan.Details["parquet_files"] = parquetFiles
+		}
+		if len(liveLogFiles) > 0 {
+			plan.Details["live_log_files"] = liveLogFiles
+		}
+	}
 }
 
 // tryFastParquetAggregation attempts to compute aggregations using hybrid approach:
