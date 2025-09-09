@@ -108,6 +108,27 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Idempotency: if bucket already exists and is owned by the requester, return success.
+	identityId := r.Header.Get(s3_constants.AmzIdentityId)
+	if existingEntry, err := s3a.getEntry(s3a.option.BucketsPath, bucket); err == nil && existingEntry != nil && existingEntry.IsDirectory {
+		if owner, ok := existingEntry.Extended[s3_constants.AmzIdentityId]; ok {
+			if string(owner) == identityId || identityId == "" {
+				w.Header().Set("Location", "/"+bucket)
+				writeSuccessResponseEmpty(w, r)
+				return
+			}
+		} else {
+			// No owner recorded; treat as success for idempotency
+			w.Header().Set("Location", "/"+bucket)
+			writeSuccessResponseEmpty(w, r)
+			return
+		}
+	} else if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		// Unexpected error fetching existing entry
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
 	// avoid duplicated buckets
 	errCode := s3err.ErrNone
 	if err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
@@ -191,6 +212,16 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("DeleteBucketHandler %s", bucket)
+
+	// Idempotency: if the bucket doesn't exist, return NoContent (success)
+	if entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket); err != nil || entry == nil {
+		if errors.Is(err, filer_pb.ErrNotFound) || entry == nil {
+			s3err.WriteEmptyResponse(w, r, http.StatusNoContent)
+			return
+		}
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
 
 	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, err)
