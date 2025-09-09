@@ -142,13 +142,10 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 			continue
 		}
 
-		// Fail fast: validate no decimal logical types in the message data
+		// Basic validation: ensure message can be unmarshaled as RecordValue
 		if dataMessage.Value != nil {
 			record := &schema_pb.RecordValue{}
 			if err := proto.Unmarshal(dataMessage.Value, record); err == nil {
-				if err := validateRecordValueNoDecimal(record); err != nil {
-					return fmt.Errorf("decimal validation failed for topic %v partition %v: %v", initMessage.Topic, initMessage.Partition, err)
-				}
 			} else {
 				// If unmarshaling fails, we skip validation but log a warning
 				glog.V(1).Infof("Could not unmarshal RecordValue for validation on topic %v partition %v: %v", initMessage.Topic, initMessage.Partition, err)
@@ -187,47 +184,3 @@ func findClientAddress(ctx context.Context) string {
 	return pr.Addr.String()
 }
 
-// validateRecordValueNoDecimal recursively validates that record values contain no DECIMAL logical types
-func validateRecordValueNoDecimal(record *schema_pb.RecordValue) error {
-	if record == nil || record.Fields == nil {
-		return nil
-	}
-
-	for fieldName, value := range record.Fields {
-		if err := validateValueNoDecimal(fieldName, value); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func validateValueNoDecimal(fieldName string, value *schema_pb.Value) error {
-	if value == nil {
-		return nil
-	}
-
-	switch value.Kind.(type) {
-	case *schema_pb.Value_DecimalValue:
-		return fmt.Errorf("field '%s' contains DECIMAL logical type which is not supported due to parquet-go library limitations (use DOUBLE or STRING instead)", fieldName)
-	case *schema_pb.Value_ListValue:
-		listValue := value.GetListValue()
-		if listValue != nil {
-			for i, listItem := range listValue.Values {
-				if err := validateValueNoDecimal(fmt.Sprintf("%s[%d]", fieldName, i), listItem); err != nil {
-					return err
-				}
-			}
-		}
-	case *schema_pb.Value_RecordValue:
-		recordValue := value.GetRecordValue()
-		if recordValue != nil {
-			for nestedFieldName, nestedValue := range recordValue.Fields {
-				nestedPath := fmt.Sprintf("%s.%s", fieldName, nestedFieldName)
-				if err := validateValueNoDecimal(nestedPath, nestedValue); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	return nil
-}
