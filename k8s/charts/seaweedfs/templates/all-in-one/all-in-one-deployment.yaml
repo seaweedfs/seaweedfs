@@ -79,6 +79,11 @@ spec:
           image: {{ template "master.image" . }}
           imagePullPolicy: {{ default "IfNotPresent" .Values.global.imagePullPolicy }}
           env:
+            {{- /* Determine default cluster alias and the corresponding env var keys to avoid conflicts */}}
+            {{- $clusterDefault := default "sw" (index .Values.global.extraEnvironmentVars "WEED_CLUSTER_DEFAULT") }}
+            {{- $clusterUpper := upper $clusterDefault }}
+            {{- $clusterMasterKey := printf "WEED_CLUSTER_%s_MASTER" $clusterUpper }}
+            {{- $clusterFilerKey := printf "WEED_CLUSTER_%s_FILER" $clusterUpper }}
             - name: POD_IP
               valueFrom:
                 fieldRef:
@@ -95,6 +100,7 @@ spec:
               value: "{{ template "seaweedfs.name" . }}"
             {{- if .Values.allInOne.extraEnvironmentVars }}
             {{- range $key, $value := .Values.allInOne.extraEnvironmentVars }}
+            {{- if and (ne $key $clusterMasterKey) (ne $key $clusterFilerKey) }}
             - name: {{ $key }}
               {{- if kindIs "string" $value }}
               value: {{ $value | quote }}
@@ -102,10 +108,12 @@ spec:
               valueFrom:
                 {{ toYaml $value | nindent 16 }}
               {{- end }}
+            {{- end }}
             {{- end }}
             {{- end }}
             {{- if .Values.global.extraEnvironmentVars }}
             {{- range $key, $value := .Values.global.extraEnvironmentVars }}
+            {{- if and (ne $key $clusterMasterKey) (ne $key $clusterFilerKey) }}
             - name: {{ $key }}
               {{- if kindIs "string" $value }}
               value: {{ $value | quote }}
@@ -115,6 +123,12 @@ spec:
               {{- end }}
             {{- end }}
             {{- end }}
+            {{- end }}
+            # Inject computed cluster endpoints for the default cluster
+            - name: {{ $clusterMasterKey }}
+              value: {{ include "seaweedfs.cluster.masterAddress" . | quote }}
+            - name: {{ $clusterFilerKey }}
+              value: {{ include "seaweedfs.cluster.filerAddress" . | quote }}
           command:
             - "/bin/sh"
             - "-ec"

@@ -222,3 +222,27 @@ or generate a new random password if it doesn't exist.
   {{- randAlphaNum $length -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Compute the master service address to be used in cluster env vars.
+If allInOne is enabled, point to the all-in-one service; otherwise, point to the master service.
+*/}}
+{{- define "seaweedfs.cluster.masterAddress" -}}
+{{- if .Values.allInOne.enabled -}}
+{{- printf "%s-all-in-one.%s:%d" (include "seaweedfs.name" .) .Release.Namespace (int .Values.master.port) -}}
+{{- else -}}
+{{- printf "%s-master.%s:%d" (include "seaweedfs.name" .) .Release.Namespace (int .Values.master.port) -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Compute the filer service address to be used in cluster env vars.
+If allInOne is enabled, point to the all-in-one service; otherwise, point to the filer-client service.
+*/}}
+{{- define "seaweedfs.cluster.filerAddress" -}}
+{{- if .Values.allInOne.enabled -}}
+{{- printf "%s-all-in-one.%s:%d" (include "seaweedfs.name" .) .Release.Namespace (int .Values.filer.port) -}}
+{{- else -}}
+{{- printf "%s-filer-client.%s:%d" (include "seaweedfs.name" .) .Release.Namespace (int .Values.filer.port) -}}
+{{- end -}}
+{{- end -}}
