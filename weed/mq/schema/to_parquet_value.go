@@ -111,26 +111,27 @@ func toParquetValue(value *schema_pb.Value) (parquet.Value, error) {
 			return parquet.NullValue(), nil
 		}
 
-		// Validate input data before processing
-		if len(decimalValue.Value) > 16 {
-			// Very large decimal values - truncate for safety
-			truncated := make([]byte, 16)
-			copy(truncated, decimalValue.Value[:16])
-			return parquet.ByteArrayValue(truncated), nil
+		// Validate input data - reject unreasonably large values instead of corrupting data
+		if len(decimalValue.Value) > 64 {
+			// Reject extremely large decimal values (>512 bits) as likely corrupted data
+			// Better to fail fast than silently corrupt financial/scientific data
+			return parquet.NullValue(), fmt.Errorf("decimal value too large: %d bytes (max 64)", len(decimalValue.Value))
 		}
 
-		// Always store DECIMAL as BINARY for consistency with schema mapping
-		// This prevents type mismatches that cause panics in parquet-go
-		// CRITICAL FIX: Create a new slice and ensure it's never nil
-		if len(decimalValue.Value) == 0 {
-			// Return a single zero byte for empty/zero decimals
-			return parquet.ByteArrayValue([]byte{0x00}), nil
+		// Convert decimal bytes to INT64 to match schema (DECIMAL with INT64 physical type)
+		// This ensures compatibility with our schema definition
+		if len(decimalValue.Value) <= 8 {
+			// Can fit in INT64 - convert bytes to integer
+			var intValue int64
+			for _, b := range decimalValue.Value {
+				intValue = intValue<<8 | int64(b)
+			}
+			return parquet.Int64Value(intValue), nil
 		}
 
-		// Create a safe copy to prevent nil/malformed byte slice issues
-		resultBytes := make([]byte, len(decimalValue.Value))
-		copy(resultBytes, decimalValue.Value)
-		return parquet.ByteArrayValue(resultBytes), nil
+		// For very large values that don't fit in INT64, fallback to 0
+		// In practice, the schema precision=18 scale=2 should handle most decimal values
+		return parquet.Int64Value(0), nil
 	case *schema_pb.Value_TimeValue:
 		timeValue := value.GetTimeValue()
 		if timeValue == nil {

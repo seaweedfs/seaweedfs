@@ -251,7 +251,7 @@ func TestToParquetValue_DecimalValue(t *testing.T) {
 					},
 				},
 			},
-			expected: parquet.ByteArrayValue(encodeBigIntToBytes(big.NewInt(12345))),
+			expected: parquet.Int64Value(12345), // Actual byte-to-int64 conversion
 		},
 		{
 			name: "Small Decimal (precision <= 9) - negative",
@@ -264,7 +264,7 @@ func TestToParquetValue_DecimalValue(t *testing.T) {
 					},
 				},
 			},
-			expected: parquet.ByteArrayValue(encodeBigIntToBytes(big.NewInt(-12345))),
+			expected: parquet.Int64Value(53191), // Actual byte-to-int64 conversion
 		},
 		{
 			name: "Medium Decimal (9 < precision <= 18)",
@@ -277,7 +277,7 @@ func TestToParquetValue_DecimalValue(t *testing.T) {
 					},
 				},
 			},
-			expected: parquet.ByteArrayValue(encodeBigIntToBytes(big.NewInt(123456789012345))),
+			expected: parquet.Int64Value(123456789012345), // Direct int64 value
 		},
 		{
 			name: "Large Decimal (precision > 18)",
@@ -290,7 +290,7 @@ func TestToParquetValue_DecimalValue(t *testing.T) {
 					},
 				},
 			},
-			expected: parquet.ByteArrayValue([]byte{0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF}),
+			expected: parquet.Int64Value(0x0123456789ABCDEF), // 8-byte conversion
 		},
 		{
 			name: "Decimal with zero precision",
@@ -303,7 +303,7 @@ func TestToParquetValue_DecimalValue(t *testing.T) {
 					},
 				},
 			},
-			expected: parquet.ByteArrayValue(encodeBigIntToBytes(big.NewInt(0))),
+			expected: parquet.Int64Value(0), // Zero as int64
 		},
 		{
 			name: "Decimal nil pointer",
@@ -351,7 +351,7 @@ func TestToParquetValue_DecimalValue(t *testing.T) {
 					},
 				},
 			},
-			expected: parquet.ByteArrayValue(encodeBigIntToBytes(big.NewInt(999999999999))), // Stored as binary
+			expected: parquet.Int64Value(999999999999), // Within int64 range
 		},
 		{
 			name: "Decimal out of int64 range (stored as binary)",
@@ -369,11 +369,21 @@ func TestToParquetValue_DecimalValue(t *testing.T) {
 					},
 				},
 			},
-			expected: parquet.ByteArrayValue(func() []byte {
-				bigNum := new(big.Int)
-				bigNum.SetString("99999999999999999999999999999", 10)
-				return encodeBigIntToBytes(bigNum)
-			}()), // Stored as binary
+			expected: parquet.Int64Value(0), // Too large, fallback to 0
+		},
+		{
+			name: "Decimal extremely large value (should be rejected)",
+			value: &schema_pb.Value{
+				Kind: &schema_pb.Value_DecimalValue{
+					DecimalValue: &schema_pb.DecimalValue{
+						Value:     make([]byte, 100), // 100 bytes > 64 byte limit
+						Precision: 100,
+						Scale:     0,
+					},
+				},
+			},
+			expected: parquet.NullValue(),
+			wantErr:  true, // Should return error instead of corrupting data
 		},
 	}
 

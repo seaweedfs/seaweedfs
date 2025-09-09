@@ -67,9 +67,10 @@ func toParquetFieldTypeScalar(scalarType schema_pb.ScalarType) (parquet.Node, er
 		// Stored as INT32 (days since Unix epoch)
 		return parquet.Leaf(parquet.Int32Type), nil
 	case schema_pb.ScalarType_DECIMAL:
-		// Stored as BINARY for flexibility (supports all precisions)
-		// Individual values will be converted to appropriate types in toParquetValue
-		return parquet.Leaf(parquet.ByteArrayType), nil
+		// Use proper DECIMAL logical type with correct physical storage
+		// Per Parquet spec: precision ≤9→INT32, ≤18→INT64, >18→FixedLenByteArray
+		// Using INT64 for good balance of precision and compatibility
+		return parquet.Decimal(2, 18, parquet.Int64Type), nil
 	case schema_pb.ScalarType_TIME:
 		// Stored as INT64 (microseconds since midnight)
 		return parquet.Leaf(parquet.Int64Type), nil
