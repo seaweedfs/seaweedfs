@@ -39,11 +39,12 @@ type AggregationStrategy struct {
 
 // TopicDataSources represents the data sources available for a topic
 type TopicDataSources struct {
-	ParquetFiles      map[string][]*ParquetFileStats // partitionPath -> parquet file stats
-	ParquetRowCount   int64
-	LiveLogRowCount   int64
-	LiveLogFilesCount int // Total count of live log files across all partitions
-	PartitionsCount   int
+	ParquetFiles         map[string][]*ParquetFileStats // partitionPath -> parquet file stats
+	ParquetRowCount      int64
+	LiveLogRowCount      int64
+	LiveLogFilesCount    int // Total count of live log files across all partitions
+	PartitionsCount      int
+	BrokerUnflushedCount int64
 }
 
 // FastPathOptimizer handles fast path aggregation optimization decisions
@@ -165,6 +166,19 @@ func (opt *FastPathOptimizer) CollectDataSources(ctx context.Context, hybridScan
 				if err == nil {
 					dataSources.LiveLogFilesCount += liveLogFileCount
 				}
+
+				// Count broker unflushed messages for this partition
+				if hybridScanner.brokerClient != nil {
+					entries, err := hybridScanner.brokerClient.GetUnflushedMessages(ctx, hybridScanner.topic.Namespace, hybridScanner.topic.Name, partition, 0)
+					if err == nil {
+						dataSources.BrokerUnflushedCount += int64(len(entries))
+						if isDebugMode(ctx) {
+							fmt.Printf("  Found %d unflushed broker messages\n", len(entries))
+						}
+					} else if isDebugMode(ctx) {
+						fmt.Printf("  ERROR: Failed to get unflushed broker messages: %v\n", err)
+					}
+				}
 			}
 		}
 	}
@@ -172,8 +186,8 @@ func (opt *FastPathOptimizer) CollectDataSources(ctx context.Context, hybridScan
 	dataSources.PartitionsCount = len(partitionPaths)
 
 	if isDebugMode(ctx) {
-		fmt.Printf("Data sources collected: %d partitions, %d parquet rows, %d live log rows\n",
-			dataSources.PartitionsCount, dataSources.ParquetRowCount, dataSources.LiveLogRowCount)
+		fmt.Printf("Data sources collected: %d partitions, %d parquet rows, %d live log rows, %d broker buffer rows\n",
+			dataSources.PartitionsCount, dataSources.ParquetRowCount, dataSources.LiveLogRowCount, dataSources.BrokerUnflushedCount)
 	}
 
 	return dataSources, nil
@@ -203,10 +217,10 @@ func (comp *AggregationComputer) ComputeFastPathAggregations(
 		switch spec.Function {
 		case FuncCOUNT:
 			if spec.Column == "*" {
-				aggResults[i].Count = dataSources.ParquetRowCount + dataSources.LiveLogRowCount
+				aggResults[i].Count = dataSources.ParquetRowCount + dataSources.LiveLogRowCount + dataSources.BrokerUnflushedCount
 			} else {
 				// For specific columns, we might need to account for NULLs in the future
-				aggResults[i].Count = dataSources.ParquetRowCount + dataSources.LiveLogRowCount
+				aggResults[i].Count = dataSources.ParquetRowCount + dataSources.LiveLogRowCount + dataSources.BrokerUnflushedCount
 			}
 
 		case FuncMIN:
@@ -632,13 +646,13 @@ func (e *SQLEngine) tryFastParquetAggregationWithPlan(ctx context.Context, hybri
 	}
 
 	// Debug: Show the hybrid optimization results (only in explain mode)
-	if isDebugMode(ctx) && (dataSources.ParquetRowCount > 0 || dataSources.LiveLogRowCount > 0) {
+	if isDebugMode(ctx) && (dataSources.ParquetRowCount > 0 || dataSources.LiveLogRowCount > 0 || dataSources.BrokerUnflushedCount > 0) {
 		partitionsWithLiveLogs := 0
-		if dataSources.LiveLogRowCount > 0 {
+		if dataSources.LiveLogRowCount > 0 || dataSources.BrokerUnflushedCount > 0 {
 			partitionsWithLiveLogs = 1 // Simplified for now
 		}
-		fmt.Printf("Hybrid fast aggregation with deduplication: %d parquet rows + %d deduplicated live log rows from %d partitions\n",
-			dataSources.ParquetRowCount, dataSources.LiveLogRowCount, partitionsWithLiveLogs)
+		fmt.Printf("Hybrid fast aggregation with deduplication: %d parquet rows + %d deduplicated live log rows + %d broker buffer rows from %d partitions\n",
+			dataSources.ParquetRowCount, dataSources.LiveLogRowCount, dataSources.BrokerUnflushedCount, partitionsWithLiveLogs)
 	}
 
 	// Step 3: Compute aggregations using fast path
@@ -650,7 +664,7 @@ func (e *SQLEngine) tryFastParquetAggregationWithPlan(ctx context.Context, hybri
 	// Step 3.5: Validate fast path results (safety check)
 	// For simple COUNT(*) queries, ensure we got a reasonable result
 	if len(aggregations) == 1 && aggregations[0].Function == FuncCOUNT && aggregations[0].Column == "*" {
-		totalRows := dataSources.ParquetRowCount + dataSources.LiveLogRowCount
+		totalRows := dataSources.ParquetRowCount + dataSources.LiveLogRowCount + dataSources.BrokerUnflushedCount
 		countResult := aggResults[0].Count
 
 		if isDebugMode(ctx) {
@@ -703,6 +717,12 @@ func (e *SQLEngine) tryFastParquetAggregationWithPlan(ctx context.Context, hybri
 		plan.LiveLogFilesScanned = aggPlan.LiveLogFilesScanned
 		plan.TotalRowsProcessed = aggPlan.TotalRowsProcessed
 		plan.Aggregations = aggPlan.Aggregations
+
+		// Indicate broker buffer participation for EXPLAIN tree rendering
+		if dataSources.BrokerUnflushedCount > 0 {
+			plan.BrokerBufferQueried = true
+			plan.BrokerBufferMessages = int(dataSources.BrokerUnflushedCount)
+		}
 
 		// Merge details while preserving existing ones
 		if plan.Details == nil {

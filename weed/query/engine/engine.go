@@ -3764,14 +3764,18 @@ func (builder *ExecutionPlanBuilder) BuildAggregationPlan(
 
 	// Set row counts based on strategy
 	if strategy.CanUseFastPath {
-		plan.TotalRowsProcessed = dataSources.LiveLogRowCount // Only live logs are scanned, parquet uses metadata
+		// Only live logs and broker buffer rows are actually scanned; parquet uses metadata
+		plan.TotalRowsProcessed = dataSources.LiveLogRowCount
+		if dataSources.BrokerUnflushedCount > 0 {
+			plan.TotalRowsProcessed += dataSources.BrokerUnflushedCount
+		}
 		// Set scan method based on what data sources actually exist
-		if dataSources.ParquetRowCount > 0 && dataSources.LiveLogRowCount > 0 {
-			plan.Details["scan_method"] = "Parquet Metadata + Live Log Counting"
+		if dataSources.ParquetRowCount > 0 && (dataSources.LiveLogRowCount > 0 || dataSources.BrokerUnflushedCount > 0) {
+			plan.Details["scan_method"] = "Parquet Metadata + Live Log/Broker Counting"
 		} else if dataSources.ParquetRowCount > 0 {
 			plan.Details["scan_method"] = "Parquet Metadata Only"
 		} else {
-			plan.Details["scan_method"] = "Live Log Counting Only"
+			plan.Details["scan_method"] = "Live Log/Broker Counting Only"
 		}
 	} else {
 		plan.TotalRowsProcessed = dataSources.ParquetRowCount + dataSources.LiveLogRowCount
@@ -3805,6 +3809,9 @@ func (builder *ExecutionPlanBuilder) buildDataSourcesList(strategy AggregationSt
 		}
 		if dataSources.LiveLogRowCount > 0 {
 			sources = append(sources, "live_logs")
+		}
+		if dataSources.BrokerUnflushedCount > 0 {
+			sources = append(sources, "broker_buffer")
 		}
 	} else {
 		sources = append(sources, "live_logs", "parquet_files")
