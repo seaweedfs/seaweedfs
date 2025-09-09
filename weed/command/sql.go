@@ -514,6 +514,18 @@ func displayJSONResult(result *engine.QueryResult) {
 
 // displayCSVResult outputs query results in CSV format
 func displayCSVResult(result *engine.QueryResult) {
+	// Handle execution plan results specially to avoid CSV quoting issues
+	if len(result.Columns) == 1 && result.Columns[0] == "Query Execution Plan" {
+		// For execution plans, output directly without CSV encoding to avoid quotes
+		for _, row := range result.Rows {
+			if len(row) > 0 {
+				fmt.Println(row[0].ToString())
+			}
+		}
+		return
+	}
+
+	// Standard CSV output for regular query results
 	writer := csv.NewWriter(os.Stdout)
 	defer writer.Flush()
 

@@ -754,13 +754,10 @@ func (e *SQLEngine) buildTreePlan(plan *QueryExecutionPlan, err error) []string 
 
 	// Build the execution tree
 	if plan.RootNode != nil {
-		treeLines := e.formatExecutionNode(plan.RootNode, "├── ", "│   ", true)
+		// Root execution node is always the last (and only) child of SELECT Query
+		treeLines := e.formatExecutionNode(plan.RootNode, "└── ", "    ", true)
 		lines = append(lines, treeLines...)
 	}
-
-	// Add performance information
-	lines = append(lines, "└── Performance")
-	lines = append(lines, fmt.Sprintf("    └── Execution Time: %.3fms", plan.ExecutionTimeMs))
 
 	// Add error information if present
 	if err != nil {
@@ -826,12 +823,12 @@ func (e *SQLEngine) formatFileSourceDetails(lines []string, node *FileSourceNode
 
 	// Add predicates
 	if len(node.Predicates) > 0 {
-		lines = append(lines, fmt.Sprintf("%s├── Predicates: %s", prefix, strings.Join(node.Predicates, ", ")))
+		lines = append(lines, fmt.Sprintf("%s├── Predicates: %s", prefix, strings.Join(node.Predicates, " AND ")))
 	}
 
 	// Add operations
 	if len(node.Operations) > 0 {
-		lines = append(lines, fmt.Sprintf("%s└── Operations: %s", prefix, strings.Join(node.Operations, ", ")))
+		lines = append(lines, fmt.Sprintf("%s└── Operations: %s", prefix, strings.Join(node.Operations, " + ")))
 	} else if len(node.Predicates) == 0 {
 		lines = append(lines, fmt.Sprintf("%s└── Operation: full_scan", prefix))
 	}
@@ -851,9 +848,9 @@ func (e *SQLEngine) formatScanOperationDetails(lines []string, node *ScanOperati
 	// Add predicates if present
 	if len(node.Predicates) > 0 {
 		if hasChildren {
-			lines = append(lines, fmt.Sprintf("%s├── Predicates: %s", prefix, strings.Join(node.Predicates, ", ")))
+			lines = append(lines, fmt.Sprintf("%s├── Predicates: %s", prefix, strings.Join(node.Predicates, " AND ")))
 		} else {
-			lines = append(lines, fmt.Sprintf("%s└── Predicates: %s", prefix, strings.Join(node.Predicates, ", ")))
+			lines = append(lines, fmt.Sprintf("%s└── Predicates: %s", prefix, strings.Join(node.Predicates, " AND ")))
 		}
 	}
 
@@ -862,20 +859,12 @@ func (e *SQLEngine) formatScanOperationDetails(lines []string, node *ScanOperati
 
 // formatMergeOperationDetails adds details for merge operation nodes
 func (e *SQLEngine) formatMergeOperationDetails(lines []string, node *MergeOperationNode, childPrefix string, isRoot bool) []string {
-	prefix := childPrefix
-	if isRoot {
-		prefix = "│   "
-	}
-
 	hasChildren := len(node.Children) > 0
 
-	// Add merge strategy info
-	if strategy, exists := node.Details["merge_strategy"]; exists {
-		if hasChildren {
-			lines = append(lines, fmt.Sprintf("%s├── Strategy: %v", prefix, strategy))
-		} else {
-			lines = append(lines, fmt.Sprintf("%s└── Strategy: %v", prefix, strategy))
-		}
+	// Add merge strategy info only if we have children, with proper indentation
+	if strategy, exists := node.Details["merge_strategy"]; exists && hasChildren {
+		// Strategy should be indented as a detail of this node, before its children
+		lines = append(lines, fmt.Sprintf("%s├── Strategy: %v", childPrefix, strategy))
 	}
 
 	return lines
@@ -1249,7 +1238,7 @@ func (e *SQLEngine) buildExecutionTree(plan *QueryExecutionPlan, stmt *SelectSta
 	// Build the tree structure based on data sources
 	var scanNodes []ExecutionNode
 
-	// Add parquet scan node if there are parquet files
+	// Add parquet scan node ONLY if there are actual parquet files
 	if len(parquetNodes) > 0 {
 		scanNodes = append(scanNodes, &ScanOperationNode{
 			ScanType:    "parquet_scan",
@@ -1258,12 +1247,12 @@ func (e *SQLEngine) buildExecutionTree(plan *QueryExecutionPlan, stmt *SelectSta
 			Children:    parquetNodes,
 			Details: map[string]interface{}{
 				"files_count": len(parquetNodes),
-				"pushdown":    "column_projection, predicate_filtering",
+				"pushdown":    "column_projection + predicate_filtering",
 			},
 		})
 	}
 
-	// Add live log scan node if there are live log files
+	// Add live log scan node ONLY if there are actual live log files
 	if len(liveLogNodes) > 0 {
 		scanNodes = append(scanNodes, &ScanOperationNode{
 			ScanType:    "live_log_scan",
@@ -1277,7 +1266,7 @@ func (e *SQLEngine) buildExecutionTree(plan *QueryExecutionPlan, stmt *SelectSta
 		})
 	}
 
-	// Add broker buffer scan node if present
+	// Add broker buffer scan node ONLY if buffer was actually queried
 	if len(brokerBufferNodes) > 0 {
 		scanNodes = append(scanNodes, &ScanOperationNode{
 			ScanType:    "broker_buffer_scan",
@@ -1288,6 +1277,32 @@ func (e *SQLEngine) buildExecutionTree(plan *QueryExecutionPlan, stmt *SelectSta
 				"real_time": true,
 			},
 		})
+	}
+
+	// Debug: Check what we actually have
+	totalFileNodes := len(parquetNodes) + len(liveLogNodes) + len(brokerBufferNodes)
+	if totalFileNodes == 0 {
+		// No actual files found, return simple fallback
+		return &ScanOperationNode{
+			ScanType:    "hybrid_scan",
+			Description: fmt.Sprintf("Hybrid Scan (%s)", plan.ExecutionStrategy),
+			Predicates:  predicates,
+			Details: map[string]interface{}{
+				"note": "No source files discovered",
+			},
+		}
+	}
+
+	// If no scan nodes, return a fallback structure
+	if len(scanNodes) == 0 {
+		return &ScanOperationNode{
+			ScanType:    "hybrid_scan",
+			Description: fmt.Sprintf("Hybrid Scan (%s)", plan.ExecutionStrategy),
+			Predicates:  predicates,
+			Details: map[string]interface{}{
+				"note": "No file details available",
+			},
+		}
 	}
 
 	// If only one scan type, return it directly
