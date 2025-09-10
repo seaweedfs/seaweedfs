@@ -1221,8 +1221,8 @@ func (e *SQLEngine) buildExecutionTree(plan *QueryExecutionPlan, stmt *SelectSta
 		}
 	}
 
-	// Create broker buffer node if queried
-	if plan.BrokerBufferQueried {
+	// Create broker buffer node only if queried AND has unflushed messages
+	if plan.BrokerBufferQueried && plan.BrokerBufferMessages > 0 {
 		brokerBufferNodes = append(brokerBufferNodes, &FileSourceNode{
 			FilePath:         "broker_memory_buffer",
 			SourceType:       "broker_buffer",
