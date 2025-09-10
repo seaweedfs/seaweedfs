@@ -2632,23 +2632,21 @@ func (e *SQLEngine) canSkipParquetFile(ctx context.Context, fileStats *ParquetFi
 func (e *SQLEngine) canSkipFileByComparison(ctx context.Context, fileStats *ParquetFileStats, expr *ComparisonExpr) bool {
 	// Extract column name and comparison value
 	var columnName string
-	var compareValue interface{}
+	var compareSchemaValue *schema_pb.Value
 	var operator string = expr.Operator
 
 	// Determine which side is the column and which is the value
 	if colRef, ok := expr.Left.(*ColName); ok {
 		columnName = colRef.Name.String()
 		if sqlVal, ok := expr.Right.(*SQLVal); ok {
-			compareSchemaValue := e.convertSQLValToSchemaValue(sqlVal)
-			compareValue = e.extractRawValue(compareSchemaValue)
+			compareSchemaValue = e.convertSQLValToSchemaValue(sqlVal)
 		} else {
 			return false // Can't optimize complex expressions
 		}
 	} else if colRef, ok := expr.Right.(*ColName); ok {
 		columnName = colRef.Name.String()
 		if sqlVal, ok := expr.Left.(*SQLVal); ok {
-			compareSchemaValue := e.convertSQLValToSchemaValue(sqlVal)
-			compareValue = e.extractRawValue(compareSchemaValue)
+			compareSchemaValue = e.convertSQLValToSchemaValue(sqlVal)
 			// Flip operator for reversed comparison
 			operator = e.flipOperator(operator)
 		} else {
@@ -2656,6 +2654,11 @@ func (e *SQLEngine) canSkipFileByComparison(ctx context.Context, fileStats *Parq
 		}
 	} else {
 		return false // No column reference found
+	}
+
+	// Validate comparison value
+	if compareSchemaValue == nil {
+		return false
 	}
 
 	// Get column statistics
@@ -2673,12 +2676,6 @@ func (e *SQLEngine) canSkipFileByComparison(ctx context.Context, fileStats *Parq
 
 	if !exists || colStats == nil || colStats.MinValue == nil || colStats.MaxValue == nil {
 		return false // No statistics available
-	}
-
-	// Convert comparison value to schema value for comparison
-	compareSchemaValue := e.convertRawValueToSchemaValue(compareValue)
-	if compareSchemaValue == nil {
-		return false
 	}
 
 	// Apply pruning logic based on operator
