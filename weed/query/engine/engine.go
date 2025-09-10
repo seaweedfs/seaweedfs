@@ -495,69 +495,6 @@ func ParseSQL(sql string) (Statement, error) {
 	}
 }
 
-// extractFunctionArguments extracts the arguments from a function call expression using CockroachDB parser
-func extractFunctionArguments(expr string) ([]SelectExpr, error) {
-	// Find the parentheses
-	startParen := strings.Index(expr, "(")
-	endParen := strings.LastIndex(expr, ")")
-
-	if startParen == -1 || endParen == -1 || endParen <= startParen {
-		return nil, fmt.Errorf("invalid function syntax")
-	}
-
-	// Extract arguments string
-	argsStr := strings.TrimSpace(expr[startParen+1 : endParen])
-
-	// Handle empty arguments
-	if argsStr == "" {
-		return []SelectExpr{}, nil
-	}
-
-	// Handle single * argument (for COUNT(*))
-	if argsStr == "*" {
-		return []SelectExpr{&StarExpr{}}, nil
-	}
-
-	// Parse multiple arguments separated by commas
-	args := []SelectExpr{}
-	argParts := strings.Split(argsStr, ",")
-
-	// Use CockroachDB parser to parse each argument as a SELECT expression
-	cockroachParser := NewCockroachSQLParser()
-
-	for _, argPart := range argParts {
-		argPart = strings.TrimSpace(argPart)
-		if argPart == "*" {
-			args = append(args, &StarExpr{})
-		} else {
-			// Create a dummy SELECT statement to parse the argument expression
-			dummySelect := fmt.Sprintf("SELECT %s", argPart)
-
-			// Parse using CockroachDB parser
-			stmt, err := cockroachParser.ParseSQL(dummySelect)
-			if err != nil {
-				// If CockroachDB parser fails, fall back to simple column name
-				args = append(args, &AliasedExpr{
-					Expr: &ColName{Name: stringValue(argPart)},
-				})
-				continue
-			}
-
-			// Extract the expression from the parsed SELECT statement
-			if selectStmt, ok := stmt.(*SelectStatement); ok && len(selectStmt.SelectExprs) > 0 {
-				args = append(args, selectStmt.SelectExprs[0])
-			} else {
-				// Fallback to column name if parsing fails
-				args = append(args, &AliasedExpr{
-					Expr: &ColName{Name: stringValue(argPart)},
-				})
-			}
-		}
-	}
-
-	return args, nil
-}
-
 // debugModeKey is used to store debug mode flag in context
 type debugModeKey struct{}
 
@@ -2972,12 +2909,6 @@ func (e *SQLEngine) buildPredicateWithContext(expr ExprNode, selectExprs []Selec
 	}
 }
 
-// buildComparisonPredicate creates a predicate for comparison operations (=, <, >, etc.)
-// Handles column names on both left and right sides of the comparison
-func (e *SQLEngine) buildComparisonPredicate(expr *ComparisonExpr) (func(*schema_pb.RecordValue) bool, error) {
-	return e.buildComparisonPredicateWithContext(expr, nil)
-}
-
 // buildComparisonPredicateWithContext creates a predicate for comparison operations with alias support
 func (e *SQLEngine) buildComparisonPredicateWithContext(expr *ComparisonExpr, selectExprs []SelectExpr) (func(*schema_pb.RecordValue) bool, error) {
 	var columnName string
@@ -4321,31 +4252,6 @@ func (e *SQLEngine) extractTimestampFromFilename(filename string) int64 {
 	}
 
 	return t.UnixNano()
-}
-
-// countLiveLogRows counts the total number of rows in live log files (non-parquet files) in a partition
-func (e *SQLEngine) countLiveLogRows(partitionPath string) (int64, error) {
-	filerClient, err := e.catalog.brokerClient.GetFilerClient()
-	if err != nil {
-		return 0, err
-	}
-
-	totalRows := int64(0)
-	err = filer_pb.ReadDirAllEntries(context.Background(), filerClient, util.FullPath(partitionPath), "", func(entry *filer_pb.Entry, isLast bool) error {
-		if entry.IsDirectory || strings.HasSuffix(entry.Name, ".parquet") {
-			return nil // Skip directories and parquet files
-		}
-
-		// Count rows in live log file
-		rowCount, err := e.countRowsInLogFile(filerClient, partitionPath, entry)
-		if err != nil {
-			fmt.Printf("Warning: failed to count rows in %s/%s: %v\n", partitionPath, entry.Name, err)
-			return nil // Continue with other files
-		}
-		totalRows += rowCount
-		return nil
-	})
-	return totalRows, err
 }
 
 // extractParquetSourceFiles extracts source log file names from parquet file metadata for deduplication

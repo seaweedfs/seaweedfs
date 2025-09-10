@@ -8,10 +8,8 @@ import (
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
-	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/seaweedfs/seaweedfs/weed/query/sqltypes"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // AggregationSpec defines an aggregation function to be computed
@@ -927,25 +925,4 @@ func debugHybridScanOptions(ctx context.Context, options HybridScanOptions, quer
 		fmt.Printf("Columns: %v\n", options.Columns)
 		fmt.Printf("==========================================\n")
 	}
-}
-
-// collectLiveLogFileNames collects the names of live log files in a partition
-func collectLiveLogFileNames(filerClient filer_pb.FilerClient, partitionPath string) ([]string, error) {
-	var fileNames []string
-
-	err := filer_pb.ReadDirAllEntries(context.Background(), filerClient, util.FullPath(partitionPath), "", func(entry *filer_pb.Entry, isLast bool) error {
-		// Skip directories and parquet files
-		if entry.IsDirectory || strings.HasSuffix(entry.Name, ".parquet") || strings.HasSuffix(entry.Name, ".offset") {
-			return nil
-		}
-
-		// Only include files with actual content
-		if len(entry.Chunks) > 0 {
-			fileNames = append(fileNames, entry.Name)
-		}
-
-		return nil
-	})
-
-	return fileNames, err
 }
