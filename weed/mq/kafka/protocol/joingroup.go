@@ -118,7 +118,7 @@ func (h *Handler) handleJoinGroup(correlationID uint32, requestBody []byte) ([]b
 	member := &consumer.GroupMember{
 		ID:               memberID,
 		ClientID:         request.GroupInstanceID,
-		ClientHost:       "unknown", // TODO: extract from connection
+		ClientHost:       "unknown", // TODO: extract from connection - needed for consumer group metadata
 		SessionTimeout:   request.SessionTimeout,
 		RebalanceTimeout: request.RebalanceTimeout,
 		Subscription:     h.extractSubscriptionFromProtocols(request.GroupProtocols),
@@ -223,17 +223,22 @@ func (h *Handler) parseJoinGroupRequest(data []byte) (*JoinGroupRequest, error) 
 		offset += memberIDLength
 	}
 	
-	// For simplicity, we'll assume basic protocol parsing
-	// In a full implementation, we'd parse the protocol type and protocols array
+	// TODO: CRITICAL - JoinGroup request parsing is incomplete
+	// Missing parsing of:
+	// - Group instance ID (for static membership)
+	// - Protocol type validation
+	// - Group protocols array (client's supported assignment strategies)  
+	// - Protocol metadata (consumer subscriptions, user data)
+	// Without this, assignment strategies and subscriptions won't work with real clients
 	
 	return &JoinGroupRequest{
 		GroupID:          groupID,
 		SessionTimeout:   sessionTimeout,
 		RebalanceTimeout: rebalanceTimeout,
 		MemberID:         memberID,
-		ProtocolType:     "consumer",
+		ProtocolType:     "consumer", // TODO: Parse from request
 		GroupProtocols: []GroupProtocol{
-			{Name: "range", Metadata: []byte{}},
+			{Name: "range", Metadata: []byte{}}, // TODO: Parse actual protocols from request
 		},
 	}, nil
 }
@@ -328,8 +333,13 @@ func (h *Handler) buildJoinGroupErrorResponse(correlationID uint32, errorCode in
 }
 
 func (h *Handler) extractSubscriptionFromProtocols(protocols []GroupProtocol) []string {
-	// For simplicity, return a default subscription
-	// In a real implementation, we'd parse the protocol metadata to extract subscribed topics
+	// TODO: CRITICAL - Consumer subscription extraction is hardcoded to "test-topic"
+	// This breaks real Kafka consumers which send their actual subscriptions
+	// Consumer protocol metadata format (for "consumer" protocol type):
+	// - Version (2 bytes)  
+	// - Topics array (4 bytes count + topic names)
+	// - User data (4 bytes length + data)
+	// Without fixing this, consumers will be assigned wrong topics
 	return []string{"test-topic"}
 }
 

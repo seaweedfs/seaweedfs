@@ -169,7 +169,13 @@ func (h *Handler) handleProduce(correlationID uint32, requestBody []byte) ([]byt
 }
 
 // parseRecordSet parses a Kafka record set and returns the number of records and total size
-// This is a simplified parser for Phase 1 - just counts valid records
+// TODO: CRITICAL - This is a simplified parser that needs complete rewrite for protocol compatibility
+// Missing:
+// - Proper record batch format parsing (v0, v1, v2)
+// - Compression support (gzip, snappy, lz4, zstd) 
+// - CRC32 validation
+// - Transaction markers and control records
+// - Individual record extraction (key, value, headers, timestamps)
 func (h *Handler) parseRecordSet(recordSetData []byte) (recordCount int32, totalSize int32, err error) {
 	if len(recordSetData) < 12 { // minimum record set size
 		return 0, 0, fmt.Errorf("record set too small")
@@ -218,6 +224,12 @@ func (h *Handler) produceToSeaweedMQ(topic string, partition int32, recordSetDat
 }
 
 // extractFirstRecord extracts the first record from a Kafka record set (simplified)
+// TODO: CRITICAL - This function returns placeholder data instead of parsing real records
+// For real client compatibility, need to:
+// - Parse record batch header properly 
+// - Extract actual key/value from first record in batch
+// - Handle compressed record batches
+// - Support all record formats (v0, v1, v2)
 func (h *Handler) extractFirstRecord(recordSetData []byte) ([]byte, []byte) {
 	// For Phase 2, create a simple placeholder record
 	// This represents what would be extracted from the actual Kafka record batch

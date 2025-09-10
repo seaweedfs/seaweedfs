@@ -193,7 +193,14 @@ func (h *Handler) handleFetch(correlationID uint32, requestBody []byte) ([]byte,
 }
 
 // constructRecordBatch creates a simplified Kafka record batch for testing
-// In a real implementation, this would read actual message data from storage
+// TODO: CRITICAL - This function creates fake record batches with dummy data
+// For real client compatibility need to:
+// - Read actual message data from SeaweedMQ/storage 
+// - Construct proper record batch headers with correct CRC
+// - Use proper varint encoding (not single-byte shortcuts)
+// - Support different record batch versions
+// - Handle compressed batches if messages were stored compressed
+// Currently returns fake "message-N" data that no real client expects
 func (h *Handler) constructRecordBatch(ledger interface{}, fetchOffset, highWaterMark int64) []byte {
 	// For Phase 1, create a simple record batch with dummy messages
 	// This simulates what would come from real message storage

@@ -292,8 +292,14 @@ func (h *Handler) parseOffsetCommitRequest(data []byte) (*OffsetCommitRequest, e
 	memberID := string(data[offset : offset+memberIDLength])
 	offset += memberIDLength
 	
-	// For simplicity, we'll create a basic request structure
-	// In a full implementation, we'd parse the full topics array
+	// TODO: CRITICAL - This parsing is completely broken for real clients
+	// Currently hardcoded to return "test-topic" with partition 0
+	// Real OffsetCommit requests contain:
+	// - RetentionTime (8 bytes, -1 for broker default)
+	// - Topics array with actual topic names  
+	// - Partitions array with actual partition IDs and offsets
+	// - Optional group instance ID for static membership
+	// Without fixing this, no real Kafka client can commit offsets properly
 	
 	return &OffsetCommitRequest{
 		GroupID:       groupID,
@@ -302,9 +308,9 @@ func (h *Handler) parseOffsetCommitRequest(data []byte) (*OffsetCommitRequest, e
 		RetentionTime: -1, // Use broker default
 		Topics: []OffsetCommitTopic{
 			{
-				Name: "test-topic", // Simplified
+				Name: "test-topic", // TODO: Parse actual topic from request
 				Partitions: []OffsetCommitPartition{
-					{Index: 0, Offset: 0, LeaderEpoch: -1, Metadata: ""},
+					{Index: 0, Offset: 0, LeaderEpoch: -1, Metadata: ""}, // TODO: Parse actual partition data
 				},
 			},
 		},
@@ -327,15 +333,20 @@ func (h *Handler) parseOffsetFetchRequest(data []byte) (*OffsetFetchRequest, err
 	groupID := string(data[offset : offset+groupIDLength])
 	offset += groupIDLength
 	
-	// For simplicity, we'll create a basic request structure
-	// In a full implementation, we'd parse the full topics array
+	// TODO: CRITICAL - OffsetFetch parsing is also hardcoded 
+	// Real clients send topics array with specific partitions to fetch
+	// Need to parse:
+	// - Topics array (4 bytes count + topics)
+	// - For each topic: name + partitions array
+	// - RequireStable flag for transactional consistency
+	// Currently will fail with any real Kafka client doing offset fetches
 	
 	return &OffsetFetchRequest{
 		GroupID: groupID,
 		Topics: []OffsetFetchTopic{
 			{
-				Name:       "test-topic", // Simplified
-				Partitions: []int32{0},   // Fetch partition 0
+				Name:       "test-topic", // TODO: Parse actual topics from request
+				Partitions: []int32{0},   // TODO: Parse actual partitions or empty for "all"
 			},
 		},
 		RequireStable: false,

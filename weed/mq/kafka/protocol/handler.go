@@ -142,6 +142,9 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 
 		size := binary.BigEndian.Uint32(sizeBytes[:])
 		if size == 0 || size > 1024*1024 { // 1MB limit
+			// TODO: Consider making message size limit configurable
+			// 1MB might be too restrictive for some use cases
+			// Kafka default max.message.bytes is often higher
 			return fmt.Errorf("invalid message size: %d", size)
 		}
 
@@ -159,6 +162,11 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 		apiKey := binary.BigEndian.Uint16(messageBuf[0:2])
 		apiVersion := binary.BigEndian.Uint16(messageBuf[2:4])
 		correlationID := binary.BigEndian.Uint32(messageBuf[4:8])
+		
+		// TODO: IMPORTANT - API version validation is missing
+		// Different API versions have different request/response formats
+		// Need to validate apiVersion against supported versions for each API
+		// Currently ignoring apiVersion completely which may cause parsing errors
 
 		// Handle the request based on API key
 		var response []byte
