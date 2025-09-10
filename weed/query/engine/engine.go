@@ -2303,37 +2303,18 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 			var liveLogFiles []string
 			parquetSources := make(map[string]bool)
 
+			var parquetReadErrors []string
 			for _, partitionPath := range partitions {
 				// Get parquet files for this partition
 				if parquetStats, err := hybridScanner.ReadParquetStatistics(partitionPath); err == nil {
-					for _, stats := range parquetStats {
-						// Prune by column statistics if we have time filters
-						if startTimeNs != 0 || stopTimeNs != 0 {
-							if isDebugMode(ctx) {
-								fmt.Printf("Debug: Checking parquet file %s for pruning\n", stats.FileName)
-							}
-							if minNs, maxNs, ok := hybridScanner.getTimestampRangeFromStats(stats); ok {
-								qStart := startTimeNs
-								qStop := stopTimeNs
-								if qStop == 0 { // unbounded
-									qStop = math.MaxInt64
-								}
-								if isDebugMode(ctx) {
-									fmt.Printf("Debug: Prune check parquet %s min=%d max=%d qStart=%d qStop=%d\n", stats.FileName, minNs, maxNs, qStart, qStop)
-								}
-								// Skip file if no overlap
-								if qStop < minNs || (qStart != 0 && qStart > maxNs) {
-									if isDebugMode(ctx) {
-										fmt.Printf("Debug: Skipping parquet file %s due to no time overlap\n", stats.FileName)
-									}
-									continue
-								}
-							} else if isDebugMode(ctx) {
-								fmt.Printf("Debug: No stats range available for parquet %s, cannot prune\n", stats.FileName)
-							}
-						}
+					// Prune files by time range with debug logging
+					filteredStats := pruneParquetFilesByTimeWithDebug(ctx, parquetStats, hybridScanner, startTimeNs, stopTimeNs)
+					for _, stats := range filteredStats {
 						parquetFiles = append(parquetFiles, fmt.Sprintf("%s/%s", partitionPath, stats.FileName))
 					}
+				} else {
+					// Collect parquet statistics reading errors
+					parquetReadErrors = append(parquetReadErrors, fmt.Sprintf("%s: %s", partitionPath, err.Error()))
 				}
 
 				// Merge accurate parquet sources from metadata
@@ -2361,11 +2342,20 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 			if len(liveLogFiles) > 0 {
 				plan.Details["live_log_files"] = liveLogFiles
 			}
+			if len(parquetReadErrors) > 0 {
+				plan.Details["error_parquet_statistics"] = parquetReadErrors
+			}
 
 			// Update scan statistics for execution plan display
 			plan.PartitionsScanned = len(partitions)
 			plan.ParquetFilesScanned = len(parquetFiles)
 			plan.LiveLogFilesScanned = len(liveLogFiles)
+		} else {
+			// Handle partition discovery error
+			if plan.Details == nil {
+				plan.Details = make(map[string]interface{})
+			}
+			plan.Details["error_partition_discovery"] = discoverErr.Error()
 		}
 	} else {
 		// Normal mode - just get results
@@ -2563,6 +2553,41 @@ func pruneParquetFilesByTime(parquetStats []*ParquetFileStats, hybridScanner *Hy
 			if qStop < minNs || (qStart != 0 && qStart > maxNs) {
 				continue
 			}
+		}
+		pruned = append(pruned, fs)
+	}
+	return pruned
+}
+
+// pruneParquetFilesByTimeWithDebug filters parquet files based on timestamp ranges with debug logging
+func pruneParquetFilesByTimeWithDebug(ctx context.Context, parquetStats []*ParquetFileStats, hybridScanner *HybridMessageScanner, startTimeNs, stopTimeNs int64) []*ParquetFileStats {
+	if startTimeNs == 0 && stopTimeNs == 0 {
+		return parquetStats
+	}
+
+	var pruned []*ParquetFileStats
+	qStart := startTimeNs
+	qStop := stopTimeNs
+	if qStop == 0 {
+		qStop = math.MaxInt64
+	}
+
+	for _, fs := range parquetStats {
+		if isDebugMode(ctx) {
+			fmt.Printf("Debug: Checking parquet file %s for pruning\n", fs.FileName)
+		}
+		if minNs, maxNs, ok := hybridScanner.getTimestampRangeFromStats(fs); ok {
+			if isDebugMode(ctx) {
+				fmt.Printf("Debug: Prune check parquet %s min=%d max=%d qStart=%d qStop=%d\n", fs.FileName, minNs, maxNs, qStart, qStop)
+			}
+			if qStop < minNs || (qStart != 0 && qStart > maxNs) {
+				if isDebugMode(ctx) {
+					fmt.Printf("Debug: Skipping parquet file %s due to no time overlap\n", fs.FileName)
+				}
+				continue
+			}
+		} else if isDebugMode(ctx) {
+			fmt.Printf("Debug: No stats range available for parquet %s, cannot prune\n", fs.FileName)
 		}
 		pruned = append(pruned, fs)
 	}
