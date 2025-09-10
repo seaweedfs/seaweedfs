@@ -209,8 +209,8 @@ func (h *Handler) handleApiVersions(correlationID uint32) ([]byte, error) {
 	response = append(response, 0, 7) // max version 7
 
 	// API Key 1 (Fetch): api_key(2) + min_version(2) + max_version(2)
-	response = append(response, 0, 1) // API key 1
-	response = append(response, 0, 0) // min version 0
+	response = append(response, 0, 1)  // API key 1
+	response = append(response, 0, 0)  // min version 0
 	response = append(response, 0, 11) // max version 11
 
 	// Throttle time (4 bytes, 0 = no throttling)
