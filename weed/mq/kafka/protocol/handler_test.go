@@ -408,8 +408,8 @@ func TestHandler_handleListOffsets(t *testing.T) {
 	
 	timestamp := int64(binary.BigEndian.Uint64(response[offset : offset+8]))
 	offset += 8
-	if timestamp != 0 {
-		t.Errorf("partition 0 timestamp: got %d, want 0", timestamp)
+	if timestamp <= 0 {
+		t.Errorf("partition 0 timestamp: got %d, want > 0", timestamp)
 	}
 	
 	offsetValue := int64(binary.BigEndian.Uint64(response[offset : offset+8]))

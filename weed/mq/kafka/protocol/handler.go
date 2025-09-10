@@ -8,6 +8,8 @@ import (
 	"net"
 	"sync"
 	"time"
+	
+	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
 )
 
 // TopicInfo holds basic information about a topic
@@ -17,16 +19,64 @@ type TopicInfo struct {
 	CreatedAt  int64
 }
 
+// TopicPartitionKey uniquely identifies a topic partition
+type TopicPartitionKey struct {
+	Topic     string
+	Partition int32
+}
+
 // Handler processes Kafka protocol requests from clients
 type Handler struct {
 	topicsMu sync.RWMutex
 	topics   map[string]*TopicInfo // topic name -> topic info
+	
+	ledgersMu sync.RWMutex
+	ledgers   map[TopicPartitionKey]*offset.Ledger // topic-partition -> offset ledger
 }
 
 func NewHandler() *Handler {
 	return &Handler{
-		topics: make(map[string]*TopicInfo),
+		topics:  make(map[string]*TopicInfo),
+		ledgers: make(map[TopicPartitionKey]*offset.Ledger),
 	}
+}
+
+// GetOrCreateLedger returns the offset ledger for a topic-partition, creating it if needed
+func (h *Handler) GetOrCreateLedger(topic string, partition int32) *offset.Ledger {
+	key := TopicPartitionKey{Topic: topic, Partition: partition}
+	
+	// First try to get existing ledger with read lock
+	h.ledgersMu.RLock()
+	ledger, exists := h.ledgers[key]
+	h.ledgersMu.RUnlock()
+	
+	if exists {
+		return ledger
+	}
+	
+	// Create new ledger with write lock
+	h.ledgersMu.Lock()
+	defer h.ledgersMu.Unlock()
+	
+	// Double-check after acquiring write lock
+	if ledger, exists := h.ledgers[key]; exists {
+		return ledger
+	}
+	
+	// Create and store new ledger
+	ledger = offset.NewLedger()
+	h.ledgers[key] = ledger
+	return ledger
+}
+
+// GetLedger returns the offset ledger for a topic-partition, or nil if not found
+func (h *Handler) GetLedger(topic string, partition int32) *offset.Ledger {
+	key := TopicPartitionKey{Topic: topic, Partition: partition}
+	
+	h.ledgersMu.RLock()
+	defer h.ledgersMu.RUnlock()
+	
+	return h.ledgers[key]
 }
 
 // HandleConn processes a single client connection
@@ -278,20 +328,43 @@ func (h *Handler) handleListOffsets(correlationID uint32, requestBody []byte) ([
 			// Error code (0 = no error)
 			response = append(response, 0, 0)
 
-			// For stub: return the original timestamp for timestamp queries, or current time for earliest/latest
+			// Get the ledger for this topic-partition
+			ledger := h.GetOrCreateLedger(string(topicName), int32(partitionID))
+			
 			var responseTimestamp int64
 			var responseOffset int64
-
+			
 			switch timestamp {
 			case -2: // earliest offset
-				responseTimestamp = 0
-				responseOffset = 0
-			case -1: // latest offset
-				responseTimestamp = 1000000000 // some timestamp
-				responseOffset = 0             // stub: no messages yet
-			default: // specific timestamp
+				responseOffset = ledger.GetEarliestOffset()
+				if responseOffset == ledger.GetHighWaterMark() {
+					// No messages yet, return current time
+					responseTimestamp = time.Now().UnixNano()
+				} else {
+					// Get timestamp of earliest message
+					if ts, _, err := ledger.GetRecord(responseOffset); err == nil {
+						responseTimestamp = ts
+					} else {
+						responseTimestamp = time.Now().UnixNano()
+					}
+				}
+			case -1: // latest offset  
+				responseOffset = ledger.GetLatestOffset()
+				if responseOffset == 0 && ledger.GetHighWaterMark() == 0 {
+					// No messages yet
+					responseTimestamp = time.Now().UnixNano()
+					responseOffset = 0
+				} else {
+					// Get timestamp of latest message
+					if ts, _, err := ledger.GetRecord(responseOffset); err == nil {
+						responseTimestamp = ts
+					} else {
+						responseTimestamp = time.Now().UnixNano()
+					}
+				}
+			default: // specific timestamp - find offset by timestamp
+				responseOffset = ledger.FindOffsetByTimestamp(timestamp)
 				responseTimestamp = timestamp
-				responseOffset = 0 // stub: no messages at any timestamp
 			}
 
 			timestampBytes := make([]byte, 8)
@@ -417,6 +490,11 @@ func (h *Handler) handleCreateTopics(correlationID uint32, requestBody []byte) (
 				Partitions: int32(numPartitions),
 				CreatedAt:  time.Now().UnixNano(),
 			}
+			
+			// Initialize ledgers for all partitions
+			for partitionID := int32(0); partitionID < int32(numPartitions); partitionID++ {
+				h.GetOrCreateLedger(topicName, partitionID)
+			}
 		}
 
 		// Error code
@@ -500,12 +578,21 @@ func (h *Handler) handleDeleteTopics(correlationID uint32, requestBody []byte) (
 		var errorCode uint16 = 0
 		var errorMessage string = ""
 
-		if _, exists := h.topics[topicName]; !exists {
+		topicInfo, exists := h.topics[topicName]
+		if !exists {
 			errorCode = 3 // UNKNOWN_TOPIC_OR_PARTITION
 			errorMessage = "Unknown topic"
 		} else {
 			// Delete the topic
 			delete(h.topics, topicName)
+			
+			// Clean up associated ledgers
+			h.ledgersMu.Lock()
+			for partitionID := int32(0); partitionID < topicInfo.Partitions; partitionID++ {
+				key := TopicPartitionKey{Topic: topicName, Partition: partitionID}
+				delete(h.ledgers, key)
+			}
+			h.ledgersMu.Unlock()
 		}
 
 		// Error code
