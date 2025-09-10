@@ -110,19 +110,29 @@ func (h *Handler) handleProduce(correlationID uint32, requestBody []byte) ([]byt
 			if !topicExists {
 				errorCode = 3 // UNKNOWN_TOPIC_OR_PARTITION
 			} else {
-				// Process the record set (simplified - just count records and assign offsets)
+				// Process the record set
 				recordCount, totalSize, parseErr := h.parseRecordSet(recordSetData)
 				if parseErr != nil {
 					errorCode = 42 // INVALID_RECORD
 				} else if recordCount > 0 {
-					// Get ledger and assign offsets
-					ledger := h.GetOrCreateLedger(topicName, int32(partitionID))
-					baseOffset = ledger.AssignOffsets(int64(recordCount))
-					
-					// Append each record to the ledger
-					avgSize := totalSize / recordCount
-					for k := int64(0); k < int64(recordCount); k++ {
-						ledger.AppendRecord(baseOffset+k, currentTime+k*1000, avgSize) // spread timestamps slightly
+					if h.useSeaweedMQ {
+						// Use SeaweedMQ integration for production
+						offset, err := h.produceToSeaweedMQ(topicName, int32(partitionID), recordSetData)
+						if err != nil {
+							errorCode = 1 // UNKNOWN_SERVER_ERROR
+						} else {
+							baseOffset = offset
+						}
+					} else {
+						// Use legacy in-memory mode for tests
+						ledger := h.GetOrCreateLedger(topicName, int32(partitionID))
+						baseOffset = ledger.AssignOffsets(int64(recordCount))
+						
+						// Append each record to the ledger
+						avgSize := totalSize / recordCount
+						for k := int64(0); k < int64(recordCount); k++ {
+							ledger.AppendRecord(baseOffset+k, currentTime+k*1000, avgSize)
+						}
 					}
 				}
 			}
@@ -193,4 +203,32 @@ func (h *Handler) parseRecordSet(recordSetData []byte) (recordCount int32, total
 	}
 	
 	return recordCount, int32(len(recordSetData)), nil
+}
+
+// produceToSeaweedMQ publishes a single record to SeaweedMQ (simplified for Phase 2)
+func (h *Handler) produceToSeaweedMQ(topic string, partition int32, recordSetData []byte) (int64, error) {
+	// For Phase 2, we'll extract a simple key-value from the record set
+	// In a full implementation, this would parse the entire batch properly
+	
+	// Extract first record from record set (simplified)
+	key, value := h.extractFirstRecord(recordSetData)
+	
+	// Publish to SeaweedMQ
+	return h.seaweedMQHandler.ProduceRecord(topic, partition, key, value)
+}
+
+// extractFirstRecord extracts the first record from a Kafka record set (simplified)
+func (h *Handler) extractFirstRecord(recordSetData []byte) ([]byte, []byte) {
+	// For Phase 2, create a simple placeholder record
+	// This represents what would be extracted from the actual Kafka record batch
+	
+	key := []byte("kafka-key")
+	value := fmt.Sprintf("kafka-message-data-%d", time.Now().UnixNano())
+	
+	// In a real implementation, this would:
+	// 1. Parse the record batch header
+	// 2. Extract individual records with proper key/value/timestamp
+	// 3. Handle compression, transaction markers, etc.
+	
+	return key, []byte(value)
 }

@@ -8,7 +8,8 @@ import (
 	"net"
 	"sync"
 	"time"
-
+	
+	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/integration"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
 )
 
@@ -27,18 +28,48 @@ type TopicPartitionKey struct {
 
 // Handler processes Kafka protocol requests from clients
 type Handler struct {
+	// Legacy in-memory mode (for backward compatibility and tests)
 	topicsMu sync.RWMutex
 	topics   map[string]*TopicInfo // topic name -> topic info
-
+	
 	ledgersMu sync.RWMutex
 	ledgers   map[TopicPartitionKey]*offset.Ledger // topic-partition -> offset ledger
+	
+	// SeaweedMQ integration (optional, for production use)
+	seaweedMQHandler *integration.SeaweedMQHandler
+	useSeaweedMQ     bool
 }
 
+// NewHandler creates a new handler in legacy in-memory mode
 func NewHandler() *Handler {
 	return &Handler{
-		topics:  make(map[string]*TopicInfo),
-		ledgers: make(map[TopicPartitionKey]*offset.Ledger),
+		topics:       make(map[string]*TopicInfo),
+		ledgers:      make(map[TopicPartitionKey]*offset.Ledger),
+		useSeaweedMQ: false,
 	}
+}
+
+// NewSeaweedMQHandler creates a new handler with SeaweedMQ integration
+func NewSeaweedMQHandler(agentAddress string) (*Handler, error) {
+	smqHandler, err := integration.NewSeaweedMQHandler(agentAddress)
+	if err != nil {
+		return nil, err
+	}
+	
+	return &Handler{
+		topics:           make(map[string]*TopicInfo), // Keep for compatibility
+		ledgers:          make(map[TopicPartitionKey]*offset.Ledger), // Keep for compatibility
+		seaweedMQHandler: smqHandler,
+		useSeaweedMQ:     true,
+	}, nil
+}
+
+// Close shuts down the handler and all connections
+func (h *Handler) Close() error {
+	if h.useSeaweedMQ && h.seaweedMQHandler != nil {
+		return h.seaweedMQHandler.Close()
+	}
+	return nil
 }
 
 // GetOrCreateLedger returns the offset ledger for a topic-partition, creating it if needed
@@ -488,26 +519,47 @@ func (h *Handler) handleCreateTopics(correlationID uint32, requestBody []byte) (
 		var errorCode uint16 = 0
 		var errorMessage string = ""
 
-		if _, exists := h.topics[topicName]; exists {
-			errorCode = 36 // TOPIC_ALREADY_EXISTS
-			errorMessage = "Topic already exists"
-		} else if numPartitions <= 0 {
-			errorCode = 37 // INVALID_PARTITIONS
-			errorMessage = "Invalid number of partitions"
-		} else if replicationFactor <= 0 {
-			errorCode = 38 // INVALID_REPLICATION_FACTOR
-			errorMessage = "Invalid replication factor"
-		} else {
-			// Create the topic
-			h.topics[topicName] = &TopicInfo{
-				Name:       topicName,
-				Partitions: int32(numPartitions),
-				CreatedAt:  time.Now().UnixNano(),
+		if h.useSeaweedMQ {
+			// Use SeaweedMQ integration
+			if h.seaweedMQHandler.TopicExists(topicName) {
+				errorCode = 36 // TOPIC_ALREADY_EXISTS
+				errorMessage = "Topic already exists"
+			} else if numPartitions <= 0 {
+				errorCode = 37 // INVALID_PARTITIONS
+				errorMessage = "Invalid number of partitions"
+			} else if replicationFactor <= 0 {
+				errorCode = 38 // INVALID_REPLICATION_FACTOR
+				errorMessage = "Invalid replication factor"
+			} else {
+				// Create the topic in SeaweedMQ
+				if err := h.seaweedMQHandler.CreateTopic(topicName, int32(numPartitions)); err != nil {
+					errorCode = 1 // UNKNOWN_SERVER_ERROR
+					errorMessage = err.Error()
+				}
 			}
+		} else {
+			// Use legacy in-memory mode
+			if _, exists := h.topics[topicName]; exists {
+				errorCode = 36 // TOPIC_ALREADY_EXISTS
+				errorMessage = "Topic already exists"
+			} else if numPartitions <= 0 {
+				errorCode = 37 // INVALID_PARTITIONS
+				errorMessage = "Invalid number of partitions"
+			} else if replicationFactor <= 0 {
+				errorCode = 38 // INVALID_REPLICATION_FACTOR
+				errorMessage = "Invalid replication factor"
+			} else {
+				// Create the topic
+				h.topics[topicName] = &TopicInfo{
+					Name:       topicName,
+					Partitions: int32(numPartitions),
+					CreatedAt:  time.Now().UnixNano(),
+				}
 
-			// Initialize ledgers for all partitions
-			for partitionID := int32(0); partitionID < int32(numPartitions); partitionID++ {
-				h.GetOrCreateLedger(topicName, partitionID)
+				// Initialize ledgers for all partitions
+				for partitionID := int32(0); partitionID < int32(numPartitions); partitionID++ {
+					h.GetOrCreateLedger(topicName, partitionID)
+				}
 			}
 		}
 
@@ -592,21 +644,36 @@ func (h *Handler) handleDeleteTopics(correlationID uint32, requestBody []byte) (
 		var errorCode uint16 = 0
 		var errorMessage string = ""
 
-		topicInfo, exists := h.topics[topicName]
-		if !exists {
-			errorCode = 3 // UNKNOWN_TOPIC_OR_PARTITION
-			errorMessage = "Unknown topic"
-		} else {
-			// Delete the topic
-			delete(h.topics, topicName)
-
-			// Clean up associated ledgers
-			h.ledgersMu.Lock()
-			for partitionID := int32(0); partitionID < topicInfo.Partitions; partitionID++ {
-				key := TopicPartitionKey{Topic: topicName, Partition: partitionID}
-				delete(h.ledgers, key)
+		if h.useSeaweedMQ {
+			// Use SeaweedMQ integration
+			if !h.seaweedMQHandler.TopicExists(topicName) {
+				errorCode = 3 // UNKNOWN_TOPIC_OR_PARTITION
+				errorMessage = "Unknown topic"
+			} else {
+				// Delete the topic from SeaweedMQ
+				if err := h.seaweedMQHandler.DeleteTopic(topicName); err != nil {
+					errorCode = 1 // UNKNOWN_SERVER_ERROR
+					errorMessage = err.Error()
+				}
 			}
-			h.ledgersMu.Unlock()
+		} else {
+			// Use legacy in-memory mode
+			topicInfo, exists := h.topics[topicName]
+			if !exists {
+				errorCode = 3 // UNKNOWN_TOPIC_OR_PARTITION
+				errorMessage = "Unknown topic"
+			} else {
+				// Delete the topic
+				delete(h.topics, topicName)
+
+				// Clean up associated ledgers
+				h.ledgersMu.Lock()
+				for partitionID := int32(0); partitionID < topicInfo.Partitions; partitionID++ {
+					key := TopicPartitionKey{Topic: topicName, Partition: partitionID}
+					delete(h.ledgers, key)
+				}
+				h.ledgersMu.Unlock()
+			}
 		}
 
 		// Error code
