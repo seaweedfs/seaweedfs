@@ -57,14 +57,14 @@ func (h *Handler) handleFindCoordinator(correlationID uint32, requestBody []byte
 	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
 	response = append(response, correlationIDBytes...)
 	
-	// Throttle time (4 bytes, 0 = no throttling)
-	response = append(response, 0, 0, 0, 0)
+	// FindCoordinator v0 Response Format (no throttle_time or error_message):
+	// - error_code (INT16)
+	// - node_id (INT32) 
+	// - host (STRING)
+	// - port (INT32)
 	
 	// Error code (2 bytes, 0 = no error)
 	response = append(response, 0, 0)
-	
-	// Error message (nullable string) - null (-1 length)
-	response = append(response, 0xFF, 0xFF)
 	
 	// Coordinator node_id (4 bytes) - use broker 0 (this gateway)
 	response = append(response, 0, 0, 0, 0)
