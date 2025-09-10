@@ -2727,7 +2727,8 @@ func (e *SQLEngine) flipOperator(op string) string {
 }
 
 // populatePlanFileDetails populates execution plan with detailed file information for partitions
-func (e *SQLEngine) populatePlanFileDetails(ctx context.Context, plan *QueryExecutionPlan, hybridScanner *HybridMessageScanner, partitions []string) {
+// Includes column statistics pruning optimization when WHERE clause is provided
+func (e *SQLEngine) populatePlanFileDetails(ctx context.Context, plan *QueryExecutionPlan, hybridScanner *HybridMessageScanner, partitions []string, stmt *SelectStatement) {
 	debugEnabled := ctx != nil && isDebugMode(ctx)
 	// Collect actual file information for each partition
 	var parquetFiles []string
@@ -2744,6 +2745,24 @@ func (e *SQLEngine) populatePlanFileDetails(ctx context.Context, plan *QueryExec
 		if parquetStats, err := hybridScanner.ReadParquetStatistics(partitionPath); err == nil {
 			// Prune files by time range
 			filteredStats := pruneParquetFilesByTime(ctx, parquetStats, hybridScanner, startTimeNs, stopTimeNs)
+
+			// Further prune by column statistics from WHERE clause
+			if stmt != nil && stmt.Where != nil {
+				beforeColumnPrune := len(filteredStats)
+				filteredStats = e.pruneParquetFilesByColumnStats(ctx, filteredStats, stmt.Where.Expr)
+				columnPrunedCount := beforeColumnPrune - len(filteredStats)
+
+				if columnPrunedCount > 0 {
+					if debugEnabled {
+						fmt.Printf("Debug: Column statistics pruning skipped %d parquet files in %s\n", columnPrunedCount, partitionPath)
+					}
+					// Track column statistics optimization
+					if !contains(plan.OptimizationsUsed, "column_statistics_pruning") {
+						plan.OptimizationsUsed = append(plan.OptimizationsUsed, "column_statistics_pruning")
+					}
+				}
+			}
+
 			for _, stats := range filteredStats {
 				parquetFiles = append(parquetFiles, fmt.Sprintf("%s/%s", partitionPath, stats.FileName))
 			}

@@ -478,7 +478,7 @@ func (e *SQLEngine) executeAggregationQueryWithPlan(ctx context.Context, hybridS
 				fmt.Printf("\nFast path optimization attempt (time-only WHERE clause)...\n")
 			}
 		}
-		fastResult, canOptimize := e.tryFastParquetAggregationWithPlan(ctx, hybridScanner, aggregations, plan, startTimeNs, stopTimeNs)
+		fastResult, canOptimize := e.tryFastParquetAggregationWithPlan(ctx, hybridScanner, aggregations, plan, startTimeNs, stopTimeNs, stmt)
 		if canOptimize {
 			if isDebugMode(ctx) {
 				fmt.Printf("Fast path optimization succeeded!\n")
@@ -658,7 +658,7 @@ func (e *SQLEngine) populateFullScanPlanDetails(ctx context.Context, plan *Query
 		plan.Details["partition_paths"] = partitions
 
 		// Populate detailed file information using shared helper
-		e.populatePlanFileDetails(ctx, plan, hybridScanner, partitions)
+		e.populatePlanFileDetails(ctx, plan, hybridScanner, partitions, stmt)
 	} else {
 		// Record discovery error to plan for better diagnostics
 		plan.Details["error_partition_discovery"] = discoverErr.Error()
@@ -671,12 +671,13 @@ func (e *SQLEngine) populateFullScanPlanDetails(ctx context.Context, plan *Query
 // - Combine both for accurate results per partition
 // Returns (result, canOptimize) where canOptimize=true means the hybrid fast path was used
 func (e *SQLEngine) tryFastParquetAggregation(ctx context.Context, hybridScanner *HybridMessageScanner, aggregations []AggregationSpec) (*QueryResult, bool) {
-	return e.tryFastParquetAggregationWithPlan(ctx, hybridScanner, aggregations, nil, 0, 0)
+	return e.tryFastParquetAggregationWithPlan(ctx, hybridScanner, aggregations, nil, 0, 0, nil)
 }
 
 // tryFastParquetAggregationWithPlan is the same as tryFastParquetAggregation but also populates execution plan if provided
 // startTimeNs, stopTimeNs: optional time range filters for parquet file optimization (0 means no filtering)
-func (e *SQLEngine) tryFastParquetAggregationWithPlan(ctx context.Context, hybridScanner *HybridMessageScanner, aggregations []AggregationSpec, plan *QueryExecutionPlan, startTimeNs, stopTimeNs int64) (*QueryResult, bool) {
+// stmt: SELECT statement for column statistics pruning optimization (can be nil)
+func (e *SQLEngine) tryFastParquetAggregationWithPlan(ctx context.Context, hybridScanner *HybridMessageScanner, aggregations []AggregationSpec, plan *QueryExecutionPlan, startTimeNs, stopTimeNs int64, stmt *SelectStatement) (*QueryResult, bool) {
 	// Use the new modular components
 	optimizer := NewFastPathOptimizer(e)
 	computer := NewAggregationComputer(e)
@@ -790,7 +791,7 @@ func (e *SQLEngine) tryFastParquetAggregationWithPlan(ctx context.Context, hybri
 		// Populate detailed file information using shared helper, including time filters for pruning
 		plan.Details[PlanDetailStartTimeNs] = startTimeNs
 		plan.Details[PlanDetailStopTimeNs] = stopTimeNs
-		e.populatePlanFileDetails(ctx, plan, hybridScanner, partitions)
+		e.populatePlanFileDetails(ctx, plan, hybridScanner, partitions, stmt)
 
 		// Update counts to match discovered live log files
 		if liveLogFiles, ok := plan.Details["live_log_files"].([]string); ok {
