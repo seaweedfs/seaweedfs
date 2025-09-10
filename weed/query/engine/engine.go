@@ -2294,6 +2294,10 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 			plan.Details[PlanDetailStartTimeNs] = startTimeNs
 			plan.Details[PlanDetailStopTimeNs] = stopTimeNs
 
+			if isDebugMode(ctx) {
+				fmt.Printf("Debug: Time filters extracted - startTimeNs=%d stopTimeNs=%d\n", startTimeNs, stopTimeNs)
+			}
+
 			// Collect actual file information for each partition
 			var parquetFiles []string
 			var liveLogFiles []string
@@ -2305,16 +2309,27 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 					for _, stats := range parquetStats {
 						// Prune by column statistics if we have time filters
 						if startTimeNs != 0 || stopTimeNs != 0 {
+							if isDebugMode(ctx) {
+								fmt.Printf("Debug: Checking parquet file %s for pruning\n", stats.FileName)
+							}
 							if minNs, maxNs, ok := hybridScanner.getTimestampRangeFromStats(stats); ok {
 								qStart := startTimeNs
 								qStop := stopTimeNs
 								if qStop == 0 { // unbounded
 									qStop = math.MaxInt64
 								}
+								if isDebugMode(ctx) {
+									fmt.Printf("Debug: Prune check parquet %s min=%d max=%d qStart=%d qStop=%d\n", stats.FileName, minNs, maxNs, qStart, qStop)
+								}
 								// Skip file if no overlap
 								if qStop < minNs || (qStart != 0 && qStart > maxNs) {
+									if isDebugMode(ctx) {
+										fmt.Printf("Debug: Skipping parquet file %s due to no time overlap\n", stats.FileName)
+									}
 									continue
 								}
+							} else if isDebugMode(ctx) {
+								fmt.Printf("Debug: No stats range available for parquet %s, cannot prune\n", stats.FileName)
 							}
 						}
 						parquetFiles = append(parquetFiles, fmt.Sprintf("%s/%s", partitionPath, stats.FileName))
@@ -2482,7 +2497,7 @@ func (e *SQLEngine) isTimestampColumn(columnName string) bool {
 	}
 
 	// System timestamp columns are always time columns
-	if columnName == SW_COLUMN_NAME_TIMESTAMP {
+	if columnName == SW_COLUMN_NAME_TIMESTAMP || columnName == SW_DISPLAY_NAME_TIMESTAMP {
 		return true
 	}
 
