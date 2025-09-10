@@ -26,23 +26,23 @@ func TestHandler_ApiVersions(t *testing.T) {
 	// Request format: api_key(2) + api_version(2) + correlation_id(4) + client_id_size(2) + client_id + body
 	correlationID := uint32(12345)
 	clientID := "test-client"
-	
+
 	message := make([]byte, 0, 64)
-	message = append(message, 0, 18)     // API key 18 (ApiVersions)
-	message = append(message, 0, 0)      // API version 0
-	
+	message = append(message, 0, 18) // API key 18 (ApiVersions)
+	message = append(message, 0, 0)  // API version 0
+
 	// Correlation ID
 	correlationIDBytes := make([]byte, 4)
 	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
 	message = append(message, correlationIDBytes...)
-	
+
 	// Client ID length and string
 	clientIDLen := uint16(len(clientID))
 	message = append(message, byte(clientIDLen>>8), byte(clientIDLen))
 	message = append(message, []byte(clientID)...)
-	
+
 	// Empty request body for ApiVersions
-	
+
 	// Write message size and data
 	messageSize := uint32(len(message))
 	sizeBuf := make([]byte, 4)
@@ -77,34 +77,34 @@ func TestHandler_ApiVersions(t *testing.T) {
 	if len(respBuf) < 14 { // minimum response size
 		t.Fatalf("response too short: %d bytes", len(respBuf))
 	}
-	
+
 	// Check correlation ID
 	respCorrelationID := binary.BigEndian.Uint32(respBuf[0:4])
 	if respCorrelationID != correlationID {
 		t.Errorf("correlation ID mismatch: got %d, want %d", respCorrelationID, correlationID)
 	}
-	
+
 	// Check error code
 	errorCode := binary.BigEndian.Uint16(respBuf[4:6])
 	if errorCode != 0 {
 		t.Errorf("expected no error, got error code: %d", errorCode)
 	}
-	
+
 	// Check number of API keys
 	numAPIKeys := binary.BigEndian.Uint32(respBuf[6:10])
 	if numAPIKeys != 1 {
 		t.Errorf("expected 1 API key, got: %d", numAPIKeys)
 	}
-	
+
 	// Check API key details: api_key(2) + min_version(2) + max_version(2)
 	if len(respBuf) < 16 {
 		t.Fatalf("response too short for API key data")
 	}
-	
+
 	apiKey := binary.BigEndian.Uint16(respBuf[10:12])
 	minVersion := binary.BigEndian.Uint16(respBuf[12:14])
 	maxVersion := binary.BigEndian.Uint16(respBuf[14:16])
-	
+
 	if apiKey != 18 {
 		t.Errorf("expected API key 18, got: %d", apiKey)
 	}
@@ -132,28 +132,28 @@ func TestHandler_ApiVersions(t *testing.T) {
 func TestHandler_handleApiVersions(t *testing.T) {
 	h := NewHandler()
 	correlationID := uint32(999)
-	
+
 	response, err := h.handleApiVersions(correlationID)
 	if err != nil {
 		t.Fatalf("handleApiVersions: %v", err)
 	}
-	
+
 	if len(response) < 20 { // minimum expected size
 		t.Fatalf("response too short: %d bytes", len(response))
 	}
-	
+
 	// Check correlation ID
 	respCorrelationID := binary.BigEndian.Uint32(response[0:4])
 	if respCorrelationID != correlationID {
 		t.Errorf("correlation ID: got %d, want %d", respCorrelationID, correlationID)
 	}
-	
+
 	// Check error code
 	errorCode := binary.BigEndian.Uint16(response[4:6])
 	if errorCode != 0 {
 		t.Errorf("error code: got %d, want 0", errorCode)
 	}
-	
+
 	// Check API key
 	apiKey := binary.BigEndian.Uint16(response[10:12])
 	if apiKey != 18 {

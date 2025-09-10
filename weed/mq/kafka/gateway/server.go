@@ -1,12 +1,12 @@
 package gateway
 
 import (
-    "context"
-    "net"
-    "sync"
+	"context"
+	"net"
+	"sync"
 
-    "github.com/seaweedfs/seaweedfs/weed/glog"
-    "github.com/seaweedfs/seaweedfs/weed/mq/kafka/protocol"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/protocol"
 )
 
 type Options struct {
@@ -14,12 +14,12 @@ type Options struct {
 }
 
 type Server struct {
-    opts    Options
-    ln      net.Listener
-    wg      sync.WaitGroup
-    ctx     context.Context
-    cancel  context.CancelFunc
-    handler *protocol.Handler
+	opts    Options
+	ln      net.Listener
+	wg      sync.WaitGroup
+	ctx     context.Context
+	cancel  context.CancelFunc
+	handler *protocol.Handler
 }
 
 func NewServer(opts Options) *Server {
@@ -51,13 +51,13 @@ func (s *Server) Start() error {
 					return
 				}
 			}
-            s.wg.Add(1)
-            go func(c net.Conn) {
-                defer s.wg.Done()
-                if err := s.handler.HandleConn(c); err != nil {
-                    glog.V(1).Infof("handle conn %v: %v", c.RemoteAddr(), err)
-                }
-            }(conn)
+			s.wg.Add(1)
+			go func(c net.Conn) {
+				defer s.wg.Done()
+				if err := s.handler.HandleConn(c); err != nil {
+					glog.V(1).Infof("handle conn %v: %v", c.RemoteAddr(), err)
+				}
+			}(conn)
 		}
 	}()
 	return nil
