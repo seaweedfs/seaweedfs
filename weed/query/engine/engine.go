@@ -2510,13 +2510,13 @@ func pruneParquetFilesByTime(ctx context.Context, parquetStats []*ParquetFileSta
 	}
 
 	debugEnabled := ctx != nil && isDebugMode(ctx)
-	var pruned []*ParquetFileStats
 	qStart := startTimeNs
 	qStop := stopTimeNs
 	if qStop == 0 {
 		qStop = math.MaxInt64
 	}
 
+	n := 0
 	for _, fs := range parquetStats {
 		if debugEnabled {
 			fmt.Printf("Debug: Checking parquet file %s for pruning\n", fs.FileName)
@@ -2534,9 +2534,10 @@ func pruneParquetFilesByTime(ctx context.Context, parquetStats []*ParquetFileSta
 		} else if debugEnabled {
 			fmt.Printf("Debug: No stats range available for parquet %s, cannot prune\n", fs.FileName)
 		}
-		pruned = append(pruned, fs)
+		parquetStats[n] = fs
+		n++
 	}
-	return pruned
+	return parquetStats[:n]
 }
 
 // pruneParquetFilesByColumnStats filters parquet files based on column statistics and WHERE predicates
@@ -2545,17 +2546,19 @@ func (e *SQLEngine) pruneParquetFilesByColumnStats(ctx context.Context, parquetS
 		return parquetStats
 	}
 
-	var pruned []*ParquetFileStats
+	debugEnabled := ctx != nil && isDebugMode(ctx)
+	n := 0
 	for _, fs := range parquetStats {
 		if e.canSkipParquetFile(ctx, fs, whereExpr) {
-			if ctx != nil && isDebugMode(ctx) {
+			if debugEnabled {
 				fmt.Printf("Debug: Skipping parquet file %s due to column statistics pruning\n", fs.FileName)
 			}
 			continue
 		}
-		pruned = append(pruned, fs)
+		parquetStats[n] = fs
+		n++
 	}
-	return pruned
+	return parquetStats[:n]
 }
 
 // canSkipParquetFile determines if a parquet file can be skipped based on column statistics
