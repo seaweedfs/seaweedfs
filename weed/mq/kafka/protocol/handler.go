@@ -134,6 +134,8 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 			response, err = h.handleDeleteTopics(correlationID, messageBuf[8:]) // skip header
 		case 0: // Produce
 			response, err = h.handleProduce(correlationID, messageBuf[8:]) // skip header
+		case 1: // Fetch
+			response, err = h.handleFetch(correlationID, messageBuf[8:]) // skip header
 		default:
 			err = fmt.Errorf("unsupported API key: %d (version %d)", apiKey, apiVersion)
 		}
@@ -174,7 +176,7 @@ func (h *Handler) handleApiVersions(correlationID uint32) ([]byte, error) {
 	response = append(response, 0, 0)
 
 	// Number of API keys (compact array format in newer versions, but using basic format for simplicity)
-	response = append(response, 0, 0, 0, 6) // 6 API keys
+	response = append(response, 0, 0, 0, 7) // 7 API keys
 
 	// API Key 18 (ApiVersions): api_key(2) + min_version(2) + max_version(2)
 	response = append(response, 0, 18) // API key 18
@@ -205,6 +207,11 @@ func (h *Handler) handleApiVersions(correlationID uint32) ([]byte, error) {
 	response = append(response, 0, 0) // API key 0
 	response = append(response, 0, 0) // min version 0
 	response = append(response, 0, 7) // max version 7
+
+	// API Key 1 (Fetch): api_key(2) + min_version(2) + max_version(2)
+	response = append(response, 0, 1) // API key 1
+	response = append(response, 0, 0) // min version 0
+	response = append(response, 0, 11) // max version 11
 
 	// Throttle time (4 bytes, 0 = no throttling)
 	response = append(response, 0, 0, 0, 0)

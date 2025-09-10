@@ -92,12 +92,12 @@ func TestHandler_ApiVersions(t *testing.T) {
 
 	// Check number of API keys
 	numAPIKeys := binary.BigEndian.Uint32(respBuf[6:10])
-	if numAPIKeys != 6 {
-		t.Errorf("expected 6 API keys, got: %d", numAPIKeys)
+	if numAPIKeys != 7 {
+		t.Errorf("expected 7 API keys, got: %d", numAPIKeys)
 	}
 	
 	// Check API key details: api_key(2) + min_version(2) + max_version(2)
-	if len(respBuf) < 46 { // need space for 6 API keys
+	if len(respBuf) < 52 { // need space for 7 API keys
 		t.Fatalf("response too short for API key data")
 	}
 	
@@ -190,6 +190,21 @@ func TestHandler_ApiVersions(t *testing.T) {
 	if maxVersion6 != 7 {
 		t.Errorf("expected max version 7, got: %d", maxVersion6)
 	}
+	
+	// Seventh API key (Fetch)
+	apiKey7 := binary.BigEndian.Uint16(respBuf[46:48])
+	minVersion7 := binary.BigEndian.Uint16(respBuf[48:50])
+	maxVersion7 := binary.BigEndian.Uint16(respBuf[50:52])
+	
+	if apiKey7 != 1 {
+		t.Errorf("expected API key 1, got: %d", apiKey7)
+	}
+	if minVersion7 != 0 {
+		t.Errorf("expected min version 0, got: %d", minVersion7)
+	}
+	if maxVersion7 != 11 {
+		t.Errorf("expected max version 11, got: %d", maxVersion7)
+	}
 
 	// Close client to end handler
 	client.Close()
@@ -214,7 +229,7 @@ func TestHandler_handleApiVersions(t *testing.T) {
 		t.Fatalf("handleApiVersions: %v", err)
 	}
 	
-	if len(response) < 48 { // minimum expected size (now has 6 API keys)
+	if len(response) < 54 { // minimum expected size (now has 7 API keys)
 		t.Fatalf("response too short: %d bytes", len(response))
 	}
 	
@@ -232,8 +247,8 @@ func TestHandler_handleApiVersions(t *testing.T) {
 	
 	// Check number of API keys
 	numAPIKeys := binary.BigEndian.Uint32(response[6:10])
-	if numAPIKeys != 6 {
-		t.Errorf("expected 6 API keys, got: %d", numAPIKeys)
+	if numAPIKeys != 7 {
+		t.Errorf("expected 7 API keys, got: %d", numAPIKeys)
 	}
 	
 	// Check first API key (ApiVersions)
@@ -270,6 +285,12 @@ func TestHandler_handleApiVersions(t *testing.T) {
 	apiKey6 := binary.BigEndian.Uint16(response[40:42])
 	if apiKey6 != 0 {
 		t.Errorf("sixth API key: got %d, want 0", apiKey6)
+	}
+	
+	// Check seventh API key (Fetch)
+	apiKey7 := binary.BigEndian.Uint16(response[46:48])
+	if apiKey7 != 1 {
+		t.Errorf("seventh API key: got %d, want 1", apiKey7)
 	}
 }
 
