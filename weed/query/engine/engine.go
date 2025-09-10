@@ -2333,6 +2333,8 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 						}
 						liveLogFiles = append(liveLogFiles, fmt.Sprintf("%s/%s", partitionPath, fileName))
 					}
+				} else if isDebugMode(ctx) {
+					fmt.Printf("Debug: Failed to list live log files in %s: %v\n", partitionPath, err)
 				}
 			}
 
@@ -2588,6 +2590,8 @@ func (e *SQLEngine) populatePlanFileDetails(ctx context.Context, plan *QueryExec
 			for _, stats := range filteredStats {
 				parquetFiles = append(parquetFiles, fmt.Sprintf("%s/%s", partitionPath, stats.FileName))
 			}
+		} else if isDebugMode(ctx) {
+			fmt.Printf("Debug: Failed to read parquet statistics in %s: %v\n", partitionPath, err)
 		}
 
 		// Merge accurate parquet sources from metadata
@@ -2606,6 +2610,8 @@ func (e *SQLEngine) populatePlanFileDetails(ctx context.Context, plan *QueryExec
 				}
 				liveLogFiles = append(liveLogFiles, fmt.Sprintf("%s/%s", partitionPath, fileName))
 			}
+		} else if isDebugMode(ctx) {
+			fmt.Printf("Debug: Failed to list live log files in %s: %v\n", partitionPath, err)
 		}
 	}
 

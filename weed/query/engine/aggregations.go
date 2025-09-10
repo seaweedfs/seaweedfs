@@ -793,13 +793,9 @@ func (e *SQLEngine) tryFastParquetAggregationWithPlan(ctx context.Context, hybri
 		// Populate detailed file information using shared helper
 		e.populatePlanFileDetails(ctx, plan, hybridScanner, partitions)
 
-		// Update the dataSources.LiveLogFilesCount to match the actual files found
+		// Update counts to match discovered live log files
 		if liveLogFiles, ok := plan.Details["live_log_files"].([]string); ok {
 			dataSources.LiveLogFilesCount = len(liveLogFiles)
-		}
-
-		// Also update the plan's LiveLogFilesScanned to match
-		if liveLogFiles, ok := plan.Details["live_log_files"].([]string); ok {
 			plan.LiveLogFilesScanned = len(liveLogFiles)
 		}
 
