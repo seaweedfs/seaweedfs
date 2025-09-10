@@ -6,7 +6,20 @@ import (
 	"time"
 )
 
-func (h *Handler) handleProduce(correlationID uint32, requestBody []byte) ([]byte, error) {
+func (h *Handler) handleProduce(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
+	// Version-specific handling
+	switch apiVersion {
+	case 0, 1:
+		return h.handleProduceV0V1(correlationID, apiVersion, requestBody)
+	default:
+		return nil, fmt.Errorf("produce version %d not implemented yet", apiVersion)
+	}
+}
+
+func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
+	// DEBUG: Show version being handled
+	fmt.Printf("DEBUG: Handling Produce v%d request\n", apiVersion)
+	
 	// DEBUG: Hex dump first 50 bytes to understand actual request format
 	dumpLen := len(requestBody)
 	if dumpLen > 50 {
@@ -14,7 +27,7 @@ func (h *Handler) handleProduce(correlationID uint32, requestBody []byte) ([]byt
 	}
 	fmt.Printf("DEBUG: Produce request hex dump (first %d bytes): %x\n", dumpLen, requestBody[:dumpLen])
 
-	// Parse minimal Produce request
+	// Parse Produce v0/v1 request
 	// Request format: client_id + acks(2) + timeout(4) + topics_array
 
 	if len(requestBody) < 8 { // client_id_size(2) + acks(2) + timeout(4)
@@ -24,11 +37,11 @@ func (h *Handler) handleProduce(correlationID uint32, requestBody []byte) ([]byt
 	// Skip client_id
 	clientIDSize := binary.BigEndian.Uint16(requestBody[0:2])
 	fmt.Printf("DEBUG: Client ID size: %d\n", clientIDSize)
-	
+
 	if len(requestBody) < 2+int(clientIDSize) {
 		return nil, fmt.Errorf("Produce request client_id too short")
 	}
-	
+
 	clientID := string(requestBody[2 : 2+int(clientIDSize)])
 	offset := 2 + int(clientIDSize)
 	fmt.Printf("DEBUG: Client ID: '%s', offset after client_id: %d\n", clientID, offset)
@@ -41,7 +54,7 @@ func (h *Handler) handleProduce(correlationID uint32, requestBody []byte) ([]byt
 	acks := int16(binary.BigEndian.Uint16(requestBody[offset : offset+2]))
 	offset += 2
 	fmt.Printf("DEBUG: Acks: %d, offset after acks: %d\n", acks, offset)
-	
+
 	timeout := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 	offset += 4
 	fmt.Printf("DEBUG: Timeout: %d, offset after timeout: %d\n", timeout, offset)
@@ -83,13 +96,13 @@ func (h *Handler) handleProduce(correlationID uint32, requestBody []byte) ([]byt
 		// Parse partitions count
 		partitionsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 		offset += 4
-		
+
 		fmt.Printf("DEBUG: Produce request for topic '%s' (%d partitions)\n", topicName, partitionsCount)
 
 		// Check if topic exists, auto-create if it doesn't (simulates auto.create.topics.enable=true)
 		h.topicsMu.Lock()
 		_, topicExists := h.topics[topicName]
-		
+
 		// Debug: show all existing topics
 		existingTopics := make([]string, 0, len(h.topics))
 		for tName := range h.topics {
@@ -105,7 +118,7 @@ func (h *Handler) handleProduce(correlationID uint32, requestBody []byte) ([]byt
 			}
 			// Initialize ledger for partition 0
 			h.GetOrCreateLedger(topicName, 0)
-			topicExists = true  // CRITICAL FIX: Update the flag after creating the topic
+			topicExists = true // CRITICAL FIX: Update the flag after creating the topic
 			fmt.Printf("DEBUG: Topic '%s' auto-created successfully, topicExists = %v\n", topicName, topicExists)
 		}
 		h.topicsMu.Unlock()
@@ -212,7 +225,7 @@ func (h *Handler) handleProduce(correlationID uint32, requestBody []byte) ([]byt
 // TODO: CRITICAL - This is a simplified parser that needs complete rewrite for protocol compatibility
 // Missing:
 // - Proper record batch format parsing (v0, v1, v2)
-// - Compression support (gzip, snappy, lz4, zstd) 
+// - Compression support (gzip, snappy, lz4, zstd)
 // - CRC32 validation
 // - Transaction markers and control records
 // - Individual record extraction (key, value, headers, timestamps)
@@ -266,7 +279,7 @@ func (h *Handler) produceToSeaweedMQ(topic string, partition int32, recordSetDat
 // extractFirstRecord extracts the first record from a Kafka record set (simplified)
 // TODO: CRITICAL - This function returns placeholder data instead of parsing real records
 // For real client compatibility, need to:
-// - Parse record batch header properly 
+// - Parse record batch header properly
 // - Extract actual key/value from first record in batch
 // - Handle compressed record batches
 // - Support all record formats (v0, v1, v2)
