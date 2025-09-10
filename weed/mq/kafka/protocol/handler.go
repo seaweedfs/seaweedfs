@@ -163,6 +163,10 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 		apiVersion := binary.BigEndian.Uint16(messageBuf[2:4])
 		correlationID := binary.BigEndian.Uint32(messageBuf[4:8])
 		
+		// DEBUG: Log all incoming requests for debugging client compatibility
+		fmt.Printf("DEBUG: Received request - API Key: %d, Version: %d, Correlation: %d, Size: %d\n", 
+			apiKey, apiVersion, correlationID, size)
+		
 		// TODO: IMPORTANT - API version validation is missing
 		// Different API versions have different request/response formats
 		// Need to validate apiVersion against supported versions for each API
@@ -206,6 +210,9 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 		if err != nil {
 			return fmt.Errorf("handle request: %w", err)
 		}
+
+		// DEBUG: Log response details
+		fmt.Printf("DEBUG: Sending response for API %d - Size: %d bytes\n", apiKey, len(response))
 
 		// Write response size and data
 		responseSizeBytes := make([]byte, 4)
@@ -488,6 +495,11 @@ func (h *Handler) handleListOffsets(correlationID uint32, requestBody []byte) ([
 }
 
 func (h *Handler) handleCreateTopics(correlationID uint32, requestBody []byte) ([]byte, error) {
+	// TODO: CRITICAL - This function only supports CreateTopics v0 format
+	// kafka-go uses v2 which has a different request structure!
+	// The wrong topics count (1274981) shows we're parsing from wrong offset
+	// Need to implement proper v2 request parsing or negotiate API version
+	
 	// Parse minimal CreateTopics request
 	// Request format: client_id + timeout(4) + topics_array
 
@@ -498,16 +510,28 @@ func (h *Handler) handleCreateTopics(correlationID uint32, requestBody []byte) (
 	// Skip client_id
 	clientIDSize := binary.BigEndian.Uint16(requestBody[0:2])
 	offset := 2 + int(clientIDSize)
+	
+	fmt.Printf("DEBUG: Client ID size: %d, client ID: %s\n", clientIDSize, string(requestBody[2:2+clientIDSize]))
 
-	if len(requestBody) < offset+8 { // timeout(4) + topics_count(4)
-		return nil, fmt.Errorf("CreateTopics request missing data")
+	// CreateTopics v2 has different format than v0
+	// v2 format: client_id + topics_array + timeout(4) + validate_only(1)
+	// (no separate timeout field before topics like in v0)
+	
+	if len(requestBody) < offset+4 { 
+		return nil, fmt.Errorf("CreateTopics request missing topics array")
 	}
 
-	// Skip timeout
-	offset += 4
-
+	// Read topics count directly (no timeout field before it in v2)
 	topicsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 	offset += 4
+
+	// DEBUG: Hex dump first 50 bytes to understand v2 format
+	dumpLen := len(requestBody)
+	if dumpLen > 50 {
+		dumpLen = 50
+	}
+	fmt.Printf("DEBUG: CreateTopics v2 request hex dump (first %d bytes): %x\n", dumpLen, requestBody[:dumpLen])
+	fmt.Printf("DEBUG: CreateTopics v2 - Topics count: %d, remaining bytes: %d\n", topicsCount, len(requestBody)-offset)
 
 	response := make([]byte, 0, 256)
 
