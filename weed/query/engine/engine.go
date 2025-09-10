@@ -2367,6 +2367,23 @@ func (e *SQLEngine) extractTimeFilters(expr ExprNode) (int64, int64) {
 	return startTimeNs, stopTimeNs
 }
 
+// extractTimeFiltersWithValidation extracts time filters and validates that WHERE clause contains only time-based predicates
+// Returns (startTimeNs, stopTimeNs, onlyTimePredicates) where onlyTimePredicates indicates if fast path is safe
+func (e *SQLEngine) extractTimeFiltersWithValidation(expr ExprNode) (int64, int64, bool) {
+	startTimeNs, stopTimeNs := int64(0), int64(0)
+	onlyTimePredicates := true
+
+	// Recursively extract time filters and validate predicates
+	e.extractTimeFiltersWithValidationRecursive(expr, &startTimeNs, &stopTimeNs, &onlyTimePredicates)
+
+	// Special case: if startTimeNs == stopTimeNs, treat it like an equality query
+	if startTimeNs != 0 && startTimeNs == stopTimeNs {
+		stopTimeNs = 0
+	}
+
+	return startTimeNs, stopTimeNs, onlyTimePredicates
+}
+
 // extractTimeFiltersRecursive recursively processes WHERE expressions to find time comparisons
 func (e *SQLEngine) extractTimeFiltersRecursive(expr ExprNode, startTimeNs, stopTimeNs *int64) {
 	switch exprType := expr.(type) {
@@ -2383,6 +2400,39 @@ func (e *SQLEngine) extractTimeFiltersRecursive(expr ExprNode, startTimeNs, stop
 	case *ParenExpr:
 		// Unwrap parentheses and continue
 		e.extractTimeFiltersRecursive(exprType.Expr, startTimeNs, stopTimeNs)
+	}
+}
+
+// extractTimeFiltersWithValidationRecursive recursively processes WHERE expressions to find time comparisons and validate predicates
+func (e *SQLEngine) extractTimeFiltersWithValidationRecursive(expr ExprNode, startTimeNs, stopTimeNs *int64, onlyTimePredicates *bool) {
+	switch exprType := expr.(type) {
+	case *ComparisonExpr:
+		// Check if this is a time-based comparison
+		leftCol := e.getColumnName(exprType.Left)
+		rightCol := e.getColumnName(exprType.Right)
+
+		isTimeComparison := e.isTimestampColumn(leftCol) || e.isTimestampColumn(rightCol)
+		if isTimeComparison {
+			// Extract time filter from this comparison
+			e.extractTimeFromComparison(exprType, startTimeNs, stopTimeNs)
+		} else {
+			// Non-time predicate found - fast path is not safe
+			*onlyTimePredicates = false
+		}
+	case *AndExpr:
+		// For AND expressions, both sides must be time-only for fast path to be safe
+		e.extractTimeFiltersWithValidationRecursive(exprType.Left, startTimeNs, stopTimeNs, onlyTimePredicates)
+		e.extractTimeFiltersWithValidationRecursive(exprType.Right, startTimeNs, stopTimeNs, onlyTimePredicates)
+	case *OrExpr:
+		// OR expressions are complex and not supported in fast path
+		*onlyTimePredicates = false
+		return
+	case *ParenExpr:
+		// Unwrap parentheses and continue
+		e.extractTimeFiltersWithValidationRecursive(exprType.Expr, startTimeNs, stopTimeNs, onlyTimePredicates)
+	default:
+		// Unknown expression type - not safe for fast path
+		*onlyTimePredicates = false
 	}
 }
 

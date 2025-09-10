@@ -458,22 +458,24 @@ func (e *SQLEngine) executeAggregationQueryWithPlan(ctx context.Context, hybridS
 		}
 	}
 
-	// Extract time filters for optimization
+	// Extract time filters and validate that WHERE clause contains only time-based predicates
 	startTimeNs, stopTimeNs := int64(0), int64(0)
+	onlyTimePredicates := true
 	if stmt.Where != nil {
-		startTimeNs, stopTimeNs = e.extractTimeFilters(stmt.Where.Expr)
+		startTimeNs, stopTimeNs, onlyTimePredicates = e.extractTimeFiltersWithValidation(stmt.Where.Expr)
 	}
 
 	// FAST PATH WITH TIME-BASED OPTIMIZATION:
-	// Allow fast path for queries without WHERE clause or with time-only WHERE clauses
-	canAttemptFastPath := stmt.Where == nil || (startTimeNs > 0 || stopTimeNs > 0)
+	// Allow fast path only for queries without WHERE clause or with time-only WHERE clauses
+	// This prevents incorrect results when non-time predicates are present
+	canAttemptFastPath := stmt.Where == nil || onlyTimePredicates
 
 	if canAttemptFastPath {
 		if isDebugMode(ctx) {
 			if stmt.Where == nil {
 				fmt.Printf("\nFast path optimization attempt (no WHERE clause)...\n")
 			} else {
-				fmt.Printf("\nFast path optimization attempt (time-based WHERE clause)...\n")
+				fmt.Printf("\nFast path optimization attempt (time-only WHERE clause)...\n")
 			}
 		}
 		fastResult, canOptimize := e.tryFastParquetAggregationWithPlan(ctx, hybridScanner, aggregations, plan, startTimeNs, stopTimeNs)
