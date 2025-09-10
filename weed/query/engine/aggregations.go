@@ -785,7 +785,9 @@ func (e *SQLEngine) tryFastParquetAggregationWithPlan(ctx context.Context, hybri
 		// Add file path information from the data collection
 		plan.Details["partition_paths"] = partitions
 
-		// Populate detailed file information using shared helper
+		// Populate detailed file information using shared helper, including time filters for pruning
+		plan.Details[PlanDetailStartTimeNs] = startTimeNs
+		plan.Details[PlanDetailStopTimeNs] = stopTimeNs
 		e.populatePlanFileDetails(ctx, plan, hybridScanner, partitions)
 
 		// Update counts to match discovered live log files
