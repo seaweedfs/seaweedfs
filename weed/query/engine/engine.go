@@ -2337,7 +2337,7 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 						parquetFiles = append(parquetFiles, fmt.Sprintf("%s/%s", partitionPath, stats.FileName))
 					}
 				} else {
-					parquetReadErrors = append(parquetReadErrors, fmt.Sprintf("%s: %s", partitionPath, err.Error()))
+					parquetReadErrors = append(parquetReadErrors, fmt.Sprintf("%s: %v", partitionPath, err))
 					if isDebugMode(ctx) {
 						fmt.Printf("Debug: Failed to read parquet statistics in %s: %v\n", partitionPath, err)
 					}
@@ -2572,6 +2572,7 @@ func pruneParquetFilesByTime(ctx context.Context, parquetStats []*ParquetFileSta
 		return parquetStats
 	}
 
+	debugEnabled := ctx != nil && isDebugMode(ctx)
 	var pruned []*ParquetFileStats
 	qStart := startTimeNs
 	qStop := stopTimeNs
@@ -2580,20 +2581,20 @@ func pruneParquetFilesByTime(ctx context.Context, parquetStats []*ParquetFileSta
 	}
 
 	for _, fs := range parquetStats {
-		if ctx != nil && isDebugMode(ctx) {
+		if debugEnabled {
 			fmt.Printf("Debug: Checking parquet file %s for pruning\n", fs.FileName)
 		}
 		if minNs, maxNs, ok := hybridScanner.getTimestampRangeFromStats(fs); ok {
-			if ctx != nil && isDebugMode(ctx) {
+			if debugEnabled {
 				fmt.Printf("Debug: Prune check parquet %s min=%d max=%d qStart=%d qStop=%d\n", fs.FileName, minNs, maxNs, qStart, qStop)
 			}
 			if qStop < minNs || (qStart != 0 && qStart > maxNs) {
-				if ctx != nil && isDebugMode(ctx) {
+				if debugEnabled {
 					fmt.Printf("Debug: Skipping parquet file %s due to no time overlap\n", fs.FileName)
 				}
 				continue
 			}
-		} else if ctx != nil && isDebugMode(ctx) {
+		} else if debugEnabled {
 			fmt.Printf("Debug: No stats range available for parquet %s, cannot prune\n", fs.FileName)
 		}
 		pruned = append(pruned, fs)
@@ -2737,6 +2738,7 @@ func (e *SQLEngine) flipOperator(op string) string {
 
 // populatePlanFileDetails populates execution plan with detailed file information for partitions
 func (e *SQLEngine) populatePlanFileDetails(ctx context.Context, plan *QueryExecutionPlan, hybridScanner *HybridMessageScanner, partitions []string) {
+	debugEnabled := ctx != nil && isDebugMode(ctx)
 	// Collect actual file information for each partition
 	var parquetFiles []string
 	var liveLogFiles []string
@@ -2757,7 +2759,7 @@ func (e *SQLEngine) populatePlanFileDetails(ctx context.Context, plan *QueryExec
 			}
 		} else {
 			parquetReadErrors = append(parquetReadErrors, fmt.Sprintf("%s: %v", partitionPath, err))
-			if isDebugMode(ctx) {
+			if debugEnabled {
 				fmt.Printf("Debug: Failed to read parquet statistics in %s: %v\n", partitionPath, err)
 			}
 		}
@@ -2780,7 +2782,7 @@ func (e *SQLEngine) populatePlanFileDetails(ctx context.Context, plan *QueryExec
 			}
 		} else {
 			liveLogListErrors = append(liveLogListErrors, fmt.Sprintf("%s: %v", partitionPath, err))
-			if isDebugMode(ctx) {
+			if debugEnabled {
 				fmt.Printf("Debug: Failed to list live log files in %s: %v\n", partitionPath, err)
 			}
 		}
@@ -2970,50 +2972,6 @@ func (e *SQLEngine) buildPredicateWithContext(expr ExprNode, selectExprs []Selec
 	}
 }
 
-// buildComparisonPredicateWithAliases creates a predicate for comparison operations with alias support
-func (e *SQLEngine) buildComparisonPredicateWithAliases(expr *ComparisonExpr, aliases map[string]ExprNode) (func(*schema_pb.RecordValue) bool, error) {
-	var columnName string
-	var compareValue interface{}
-	var operator string
-
-	// Extract the comparison details, resolving aliases if needed
-	leftCol := e.getColumnNameWithAliases(expr.Left, aliases)
-	rightCol := e.getColumnNameWithAliases(expr.Right, aliases)
-	operator = e.normalizeOperator(expr.Operator)
-
-	if leftCol != "" && rightCol == "" {
-		// Left side is column, right side is value
-		columnName = e.getSystemColumnInternalName(leftCol)
-		val, err := e.extractValueFromExpr(expr.Right)
-		if err != nil {
-			return nil, err
-		}
-		compareValue = e.convertValueForTimestampColumn(columnName, val, expr.Right)
-	} else if rightCol != "" && leftCol == "" {
-		// Right side is column, left side is value
-		columnName = e.getSystemColumnInternalName(rightCol)
-		val, err := e.extractValueFromExpr(expr.Left)
-		if err != nil {
-			return nil, err
-		}
-		compareValue = e.convertValueForTimestampColumn(columnName, val, expr.Left)
-		// Reverse the operator when column is on the right
-		operator = e.reverseOperator(operator)
-	} else if leftCol != "" && rightCol != "" {
-		return nil, fmt.Errorf("column-to-column comparisons not yet supported")
-	} else {
-		return nil, fmt.Errorf("at least one side of comparison must be a column")
-	}
-
-	return func(record *schema_pb.RecordValue) bool {
-		fieldValue, exists := record.Fields[columnName]
-		if !exists {
-			return false
-		}
-		return e.evaluateComparison(fieldValue, operator, compareValue)
-	}, nil
-}
-
 // buildComparisonPredicate creates a predicate for comparison operations (=, <, >, etc.)
 // Handles column names on both left and right sides of the comparison
 func (e *SQLEngine) buildComparisonPredicate(expr *ComparisonExpr) (func(*schema_pb.RecordValue) bool, error) {
@@ -3142,54 +3100,6 @@ func (e *SQLEngine) buildBetweenPredicateWithContext(expr *BetweenExpr, selectEx
 	}, nil
 }
 
-// buildBetweenPredicateWithAliases creates a predicate for BETWEEN operations with alias support
-func (e *SQLEngine) buildBetweenPredicateWithAliases(expr *BetweenExpr, aliases map[string]ExprNode) (func(*schema_pb.RecordValue) bool, error) {
-	var columnName string
-	var fromValue, toValue interface{}
-
-	// Extract column name from left side with alias resolution
-	leftCol := e.getColumnNameWithAliases(expr.Left, aliases)
-	if leftCol == "" {
-		return nil, fmt.Errorf("BETWEEN left operand must be a column name, got: %T", expr.Left)
-	}
-	columnName = e.getSystemColumnInternalName(leftCol)
-
-	// Extract FROM value
-	fromVal, err := e.extractValueFromExpr(expr.From)
-	if err != nil {
-		return nil, fmt.Errorf("failed to extract BETWEEN from value: %v", err)
-	}
-	fromValue = e.convertValueForTimestampColumn(columnName, fromVal, expr.From)
-
-	// Extract TO value
-	toVal, err := e.extractValueFromExpr(expr.To)
-	if err != nil {
-		return nil, fmt.Errorf("failed to extract BETWEEN to value: %v", err)
-	}
-	toValue = e.convertValueForTimestampColumn(columnName, toVal, expr.To)
-
-	// Return the predicate function
-	return func(record *schema_pb.RecordValue) bool {
-		fieldValue, exists := record.Fields[columnName]
-		if !exists {
-			return false
-		}
-
-		// Evaluate: fieldValue >= fromValue AND fieldValue <= toValue
-		greaterThanOrEqualFrom := e.evaluateComparison(fieldValue, ">=", fromValue)
-		lessThanOrEqualTo := e.evaluateComparison(fieldValue, "<=", toValue)
-
-		result := greaterThanOrEqualFrom && lessThanOrEqualTo
-
-		// Handle NOT BETWEEN
-		if expr.Not {
-			result = !result
-		}
-
-		return result
-	}, nil
-}
-
 // buildIsNullPredicateWithContext creates a predicate for IS NULL operations
 func (e *SQLEngine) buildIsNullPredicateWithContext(expr *IsNullExpr, selectExprs []SelectExpr) (func(*schema_pb.RecordValue) bool, error) {
 	// Check if the expression is a column name
@@ -3242,50 +3152,6 @@ func (e *SQLEngine) buildIsNotNullPredicateWithContext(expr *IsNotNullExpr, sele
 	}
 }
 
-// buildIsNullPredicateWithAliases creates a predicate for IS NULL operations with alias support
-func (e *SQLEngine) buildIsNullPredicateWithAliases(expr *IsNullExpr, aliases map[string]ExprNode) (func(*schema_pb.RecordValue) bool, error) {
-	// Extract column name from expression with alias resolution
-	columnName := e.getColumnNameWithAliases(expr.Expr, aliases)
-	if columnName == "" {
-		return nil, fmt.Errorf("IS NULL operand must be a column name, got: %T", expr.Expr)
-	}
-	columnName = e.getSystemColumnInternalName(columnName)
-
-	// Return the predicate function
-	return func(record *schema_pb.RecordValue) bool {
-		// Check if field exists and if it's null or missing
-		fieldValue, exists := record.Fields[columnName]
-		if !exists {
-			return true // Field doesn't exist = NULL
-		}
-
-		// Check if the field value itself is null/empty
-		return e.isValueNull(fieldValue)
-	}, nil
-}
-
-// buildIsNotNullPredicateWithAliases creates a predicate for IS NOT NULL operations with alias support
-func (e *SQLEngine) buildIsNotNullPredicateWithAliases(expr *IsNotNullExpr, aliases map[string]ExprNode) (func(*schema_pb.RecordValue) bool, error) {
-	// Extract column name from expression with alias resolution
-	columnName := e.getColumnNameWithAliases(expr.Expr, aliases)
-	if columnName == "" {
-		return nil, fmt.Errorf("IS NOT NULL operand must be a column name, got: %T", expr.Expr)
-	}
-	columnName = e.getSystemColumnInternalName(columnName)
-
-	// Return the predicate function
-	return func(record *schema_pb.RecordValue) bool {
-		// Check if field exists and if it's not null
-		fieldValue, exists := record.Fields[columnName]
-		if !exists {
-			return false // Field doesn't exist = NULL, so NOT NULL is false
-		}
-
-		// Check if the field value itself is not null/empty
-		return !e.isValueNull(fieldValue)
-	}, nil
-}
-
 // isValueNull checks if a schema_pb.Value is null or represents a null value
 func (e *SQLEngine) isValueNull(value *schema_pb.Value) bool {
 	if value == nil {
@@ -3323,33 +3189,6 @@ func (e *SQLEngine) isValueNull(value *schema_pb.Value) bool {
 		// Unknown type, consider it null to be safe
 		return true
 	}
-}
-
-// getColumnNameWithAliases extracts column name from expression, resolving aliases if needed
-func (e *SQLEngine) getColumnNameWithAliases(expr ExprNode, aliases map[string]ExprNode) string {
-	switch exprType := expr.(type) {
-	case *ColName:
-		colName := exprType.Name.String()
-		// Check if this is an alias that should be resolved
-		if aliases != nil {
-			if actualExpr, exists := aliases[colName]; exists {
-				// Recursively resolve the aliased expression
-				return e.getColumnNameWithAliases(actualExpr, nil) // Don't recurse aliases
-			}
-		}
-		return colName
-	}
-	return ""
-}
-
-// extractValueFromExpr extracts a value from an expression node (for alias support)
-func (e *SQLEngine) extractValueFromExpr(expr ExprNode) (interface{}, error) {
-	return e.extractComparisonValue(expr)
-}
-
-// normalizeOperator normalizes comparison operators
-func (e *SQLEngine) normalizeOperator(op string) string {
-	return op // For now, just return as-is
 }
 
 // extractComparisonValue extracts the comparison value from a SQL expression
@@ -4532,6 +4371,7 @@ func (e *SQLEngine) extractParquetSourceFiles(fileStats []*ParquetFileStats) map
 
 // countLiveLogRowsExcludingParquetSources counts live log rows but excludes files that were converted to parquet and duplicate log buffer data
 func (e *SQLEngine) countLiveLogRowsExcludingParquetSources(ctx context.Context, partitionPath string, parquetSourceFiles map[string]bool) (int64, error) {
+	debugEnabled := ctx != nil && isDebugMode(ctx)
 	filerClient, err := e.catalog.brokerClient.GetFilerClient()
 	if err != nil {
 		return 0, err
@@ -4548,14 +4388,14 @@ func (e *SQLEngine) countLiveLogRowsExcludingParquetSources(ctx context.Context,
 	// Second, get duplicate files from log buffer metadata
 	logBufferDuplicates, err := e.buildLogBufferDeduplicationMap(ctx, partitionPath)
 	if err != nil {
-		if isDebugMode(ctx) {
+		if debugEnabled {
 			fmt.Printf("Warning: failed to build log buffer deduplication map: %v\n", err)
 		}
 		logBufferDuplicates = make(map[string]bool)
 	}
 
 	// Debug: Show deduplication status (only in explain mode)
-	if isDebugMode(ctx) {
+	if debugEnabled {
 		if len(actualSourceFiles) > 0 {
 			fmt.Printf("Excluding %d converted log files from %s\n", len(actualSourceFiles), partitionPath)
 		}
@@ -4572,7 +4412,7 @@ func (e *SQLEngine) countLiveLogRowsExcludingParquetSources(ctx context.Context,
 
 		// Skip files that have been converted to parquet
 		if actualSourceFiles[entry.Name] {
-			if isDebugMode(ctx) {
+			if debugEnabled {
 				fmt.Printf("Skipping %s (already converted to parquet)\n", entry.Name)
 			}
 			return nil
@@ -4580,7 +4420,7 @@ func (e *SQLEngine) countLiveLogRowsExcludingParquetSources(ctx context.Context,
 
 		// Skip files that are duplicated due to log buffer metadata
 		if logBufferDuplicates[entry.Name] {
-			if isDebugMode(ctx) {
+			if debugEnabled {
 				fmt.Printf("Skipping %s (duplicate log buffer data)\n", entry.Name)
 			}
 			return nil
@@ -4651,6 +4491,7 @@ func (e *SQLEngine) getLogBufferStartFromFile(entry *filer_pb.Entry) (*LogBuffer
 
 // buildLogBufferDeduplicationMap creates a map to track duplicate files based on buffer ranges (ultra-efficient)
 func (e *SQLEngine) buildLogBufferDeduplicationMap(ctx context.Context, partitionPath string) (map[string]bool, error) {
+	debugEnabled := ctx != nil && isDebugMode(ctx)
 	if e.catalog.brokerClient == nil {
 		return make(map[string]bool), nil
 	}
@@ -4696,7 +4537,7 @@ func (e *SQLEngine) buildLogBufferDeduplicationMap(ctx context.Context, partitio
 			if fileRange.start <= processedRange.end && fileRange.end >= processedRange.start {
 				// Ranges overlap - this file contains duplicate buffer indexes
 				isDuplicate = true
-				if isDebugMode(ctx) {
+				if debugEnabled {
 					fmt.Printf("Marking %s as duplicate (buffer range [%d-%d] overlaps with [%d-%d])\n",
 						entry.Name, fileRange.start, fileRange.end, processedRange.start, processedRange.end)
 				}
