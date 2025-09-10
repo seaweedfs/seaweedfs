@@ -8,7 +8,7 @@ import (
 	"net"
 	"sync"
 	"time"
-	
+
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/consumer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/integration"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
@@ -32,14 +32,14 @@ type Handler struct {
 	// Legacy in-memory mode (for backward compatibility and tests)
 	topicsMu sync.RWMutex
 	topics   map[string]*TopicInfo // topic name -> topic info
-	
+
 	ledgersMu sync.RWMutex
 	ledgers   map[TopicPartitionKey]*offset.Ledger // topic-partition -> offset ledger
-	
+
 	// SeaweedMQ integration (optional, for production use)
 	seaweedMQHandler *integration.SeaweedMQHandler
 	useSeaweedMQ     bool
-	
+
 	// Consumer group coordination
 	groupCoordinator *consumer.GroupCoordinator
 }
@@ -76,7 +76,7 @@ func (h *Handler) Close() error {
 	if h.groupCoordinator != nil {
 		h.groupCoordinator.Close()
 	}
-	
+
 	// Close SeaweedMQ handler if present
 	if h.useSeaweedMQ && h.seaweedMQHandler != nil {
 		return h.seaweedMQHandler.Close()
