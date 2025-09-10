@@ -58,10 +58,12 @@ func TestKafkaProduceConsumeE2E(t *testing.T) {
 	
 	// Produce messages
 	for i, msg := range testMessages {
-		err := writer.WriteMessages(context.Background(), kafka.Message{
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		err := writer.WriteMessages(ctx, kafka.Message{
 			Key:   []byte(fmt.Sprintf("key-%d", i)),
 			Value: []byte(msg),
 		})
+		cancel()
 		if err != nil {
 			t.Fatalf("Failed to produce message %d: %v", i, err)
 		}

@@ -234,7 +234,11 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 		case 9: // OffsetFetch
 			response, err = h.handleOffsetFetch(correlationID, messageBuf[8:]) // skip header
 		case 10: // FindCoordinator
+			fmt.Printf("DEBUG: *** FINDCOORDINATOR REQUEST RECEIVED *** Correlation: %d\n", correlationID)
 			response, err = h.handleFindCoordinator(correlationID, messageBuf[8:]) // skip header
+			if err != nil {
+				fmt.Printf("DEBUG: FindCoordinator error: %v\n", err)
+			}
 		case 12: // Heartbeat
 			response, err = h.handleHeartbeat(correlationID, messageBuf[8:]) // skip header
 		case 13: // LeaveGroup
