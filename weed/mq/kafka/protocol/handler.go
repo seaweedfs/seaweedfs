@@ -63,6 +63,8 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 			response, err = h.handleApiVersions(correlationID)
 		case 3: // Metadata
 			response, err = h.handleMetadata(correlationID, messageBuf[8:]) // skip header
+		case 2: // ListOffsets
+			response, err = h.handleListOffsets(correlationID, messageBuf[8:]) // skip header
 		default:
 			err = fmt.Errorf("unsupported API key: %d (version %d)", apiKey, apiVersion)
 		}
@@ -103,7 +105,7 @@ func (h *Handler) handleApiVersions(correlationID uint32) ([]byte, error) {
 	response = append(response, 0, 0)
 	
 	// Number of API keys (compact array format in newer versions, but using basic format for simplicity)
-	response = append(response, 0, 0, 0, 2) // 2 API keys
+	response = append(response, 0, 0, 0, 3) // 3 API keys
 	
 	// API Key 18 (ApiVersions): api_key(2) + min_version(2) + max_version(2)
 	response = append(response, 0, 18) // API key 18
@@ -114,6 +116,11 @@ func (h *Handler) handleApiVersions(correlationID uint32) ([]byte, error) {
 	response = append(response, 0, 3)  // API key 3
 	response = append(response, 0, 0)  // min version 0  
 	response = append(response, 0, 7)  // max version 7
+	
+	// API Key 2 (ListOffsets): api_key(2) + min_version(2) + max_version(2)
+	response = append(response, 0, 2)  // API key 2
+	response = append(response, 0, 0)  // min version 0
+	response = append(response, 0, 5)  // max version 5
 	
 	// Throttle time (4 bytes, 0 = no throttling)
 	response = append(response, 0, 0, 0, 0)
@@ -161,6 +168,114 @@ func (h *Handler) handleMetadata(correlationID uint32, requestBody []byte) ([]by
 	
 	// Topics array length (4 bytes) - 0 topics for now
 	response = append(response, 0, 0, 0, 0)
+	
+	return response, nil
+}
+
+func (h *Handler) handleListOffsets(correlationID uint32, requestBody []byte) ([]byte, error) {
+	// Parse minimal request to understand what's being asked
+	// For this stub, we'll just return stub responses for any requested topic/partition
+	// Request format after client_id: topics_array
+	
+	if len(requestBody) < 6 { // at minimum need client_id_size(2) + topics_count(4)
+		return nil, fmt.Errorf("ListOffsets request too short")
+	}
+	
+	// Skip client_id: client_id_size(2) + client_id_data
+	clientIDSize := binary.BigEndian.Uint16(requestBody[0:2])
+	offset := 2 + int(clientIDSize)
+	
+	if len(requestBody) < offset+4 {
+		return nil, fmt.Errorf("ListOffsets request missing topics count")
+	}
+	
+	topicsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
+	offset += 4
+	
+	response := make([]byte, 0, 256)
+	
+	// Correlation ID
+	correlationIDBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
+	response = append(response, correlationIDBytes...)
+	
+	// Throttle time (4 bytes, 0 = no throttling)
+	response = append(response, 0, 0, 0, 0)
+	
+	// Topics count (same as request)
+	topicsCountBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(topicsCountBytes, topicsCount)
+	response = append(response, topicsCountBytes...)
+	
+	// Process each requested topic
+	for i := uint32(0); i < topicsCount && offset < len(requestBody); i++ {
+		if len(requestBody) < offset+2 {
+			break
+		}
+		
+		// Parse topic name
+		topicNameSize := binary.BigEndian.Uint16(requestBody[offset : offset+2])
+		offset += 2
+		
+		if len(requestBody) < offset+int(topicNameSize)+4 {
+			break
+		}
+		
+		topicName := requestBody[offset : offset+int(topicNameSize)]
+		offset += int(topicNameSize)
+		
+		// Parse partitions count for this topic
+		partitionsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
+		offset += 4
+		
+		// Response: topic_name_size(2) + topic_name + partitions_array
+		response = append(response, byte(topicNameSize>>8), byte(topicNameSize))
+		response = append(response, topicName...)
+		
+		partitionsCountBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(partitionsCountBytes, partitionsCount)
+		response = append(response, partitionsCountBytes...)
+		
+		// Process each partition
+		for j := uint32(0); j < partitionsCount && offset+12 <= len(requestBody); j++ {
+			// Parse partition request: partition_id(4) + timestamp(8)
+			partitionID := binary.BigEndian.Uint32(requestBody[offset : offset+4])
+			timestamp := int64(binary.BigEndian.Uint64(requestBody[offset+4 : offset+12]))
+			offset += 12
+			
+			// Response: partition_id(4) + error_code(2) + timestamp(8) + offset(8)
+			partitionIDBytes := make([]byte, 4)
+			binary.BigEndian.PutUint32(partitionIDBytes, partitionID)
+			response = append(response, partitionIDBytes...)
+			
+			// Error code (0 = no error)
+			response = append(response, 0, 0)
+			
+			// For stub: return the original timestamp for timestamp queries, or current time for earliest/latest
+			var responseTimestamp int64
+			var responseOffset int64
+			
+			switch timestamp {
+			case -2: // earliest offset
+				responseTimestamp = 0
+				responseOffset = 0
+			case -1: // latest offset  
+				responseTimestamp = 1000000000 // some timestamp
+				responseOffset = 0             // stub: no messages yet
+			default: // specific timestamp
+				responseTimestamp = timestamp
+				responseOffset = 0 // stub: no messages at any timestamp
+			}
+			
+			timestampBytes := make([]byte, 8)
+			binary.BigEndian.PutUint64(timestampBytes, uint64(responseTimestamp))
+			response = append(response, timestampBytes...)
+			
+			offsetBytes := make([]byte, 8)
+			binary.BigEndian.PutUint64(offsetBytes, uint64(responseOffset))
+			response = append(response, offsetBytes...)
+		}
+	}
 	
 	return response, nil
 }
