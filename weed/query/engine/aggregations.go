@@ -78,6 +78,12 @@ func (opt *FastPathOptimizer) DetermineStrategy(aggregations []AggregationSpec) 
 
 // CollectDataSources gathers information about available data sources for a topic
 func (opt *FastPathOptimizer) CollectDataSources(ctx context.Context, hybridScanner *HybridMessageScanner) (*TopicDataSources, error) {
+	return opt.CollectDataSourcesWithTimeFilter(ctx, hybridScanner, 0, 0)
+}
+
+// CollectDataSourcesWithTimeFilter gathers information about available data sources for a topic
+// with optional time filtering to skip irrelevant parquet files
+func (opt *FastPathOptimizer) CollectDataSourcesWithTimeFilter(ctx context.Context, hybridScanner *HybridMessageScanner, startTimeNs, stopTimeNs int64) (*TopicDataSources, error) {
 	dataSources := &TopicDataSources{
 		ParquetFiles:      make(map[string][]*ParquetFileStats),
 		ParquetRowCount:   0,
@@ -125,14 +131,34 @@ func (opt *FastPathOptimizer) CollectDataSources(ctx context.Context, hybridScan
 				fmt.Printf("  No parquet files found in partition\n")
 			}
 		} else {
-			dataSources.ParquetFiles[partitionPath] = parquetStats
+			// Optionally prune by time range using parquet column statistics
+			filtered := parquetStats
+			if startTimeNs != 0 || stopTimeNs != 0 {
+				var pruned []*ParquetFileStats
+				qStart := startTimeNs
+				qStop := stopTimeNs
+				if qStop == 0 {
+					qStop = math.MaxInt64
+				}
+				for _, fs := range parquetStats {
+					if minNs, maxNs, ok := hybridScanner.getTimestampRangeFromStats(fs); ok {
+						if qStop < minNs || (qStart != 0 && qStart > maxNs) {
+							continue
+						}
+					}
+					pruned = append(pruned, fs)
+				}
+				filtered = pruned
+			}
+
+			dataSources.ParquetFiles[partitionPath] = filtered
 			partitionParquetRows := int64(0)
-			for _, stat := range parquetStats {
+			for _, stat := range filtered {
 				partitionParquetRows += stat.RowCount
 				dataSources.ParquetRowCount += stat.RowCount
 			}
 			if isDebugMode(ctx) {
-				fmt.Printf("  Found %d parquet files with %d total rows\n", len(parquetStats), partitionParquetRows)
+				fmt.Printf("  Found %d parquet files with %d total rows\n", len(filtered), partitionParquetRows)
 			}
 		}
 
@@ -458,14 +484,19 @@ func (e *SQLEngine) executeAggregationQueryWithPlan(ctx context.Context, hybridS
 		startTimeNs, stopTimeNs = e.extractTimeFilters(stmt.Where.Expr)
 	}
 
-	// FAST PATH RE-ENABLED WITH DEBUG LOGGING:
-	// Added comprehensive debug logging to identify data counting issues
-	// This will help us understand why fast path was returning 0 when slow path returns 1803
-	if stmt.Where == nil {
+	// FAST PATH WITH TIME-BASED OPTIMIZATION:
+	// Allow fast path for queries without WHERE clause or with time-only WHERE clauses
+	canAttemptFastPath := stmt.Where == nil || (startTimeNs > 0 || stopTimeNs > 0)
+
+	if canAttemptFastPath {
 		if isDebugMode(ctx) {
-			fmt.Printf("\nFast path optimization attempt...\n")
+			if stmt.Where == nil {
+				fmt.Printf("\nFast path optimization attempt (no WHERE clause)...\n")
+			} else {
+				fmt.Printf("\nFast path optimization attempt (time-based WHERE clause)...\n")
+			}
 		}
-		fastResult, canOptimize := e.tryFastParquetAggregationWithPlan(ctx, hybridScanner, aggregations, plan)
+		fastResult, canOptimize := e.tryFastParquetAggregationWithPlan(ctx, hybridScanner, aggregations, plan, startTimeNs, stopTimeNs)
 		if canOptimize {
 			if isDebugMode(ctx) {
 				fmt.Printf("Fast path optimization succeeded!\n")
@@ -478,7 +509,7 @@ func (e *SQLEngine) executeAggregationQueryWithPlan(ctx context.Context, hybridS
 		}
 	} else {
 		if isDebugMode(ctx) {
-			fmt.Printf("Fast path not applicable due to WHERE clause\n")
+			fmt.Printf("Fast path not applicable due to complex WHERE clause\n")
 		}
 	}
 
@@ -656,6 +687,30 @@ func (e *SQLEngine) populateFullScanPlanDetails(ctx context.Context, plan *Query
 			// Get parquet files for this partition
 			if parquetStats, err := hybridScanner.ReadParquetStatistics(partitionPath); err == nil {
 				for _, stats := range parquetStats {
+					// Prune by time filters if available in plan details
+					if startNsVal, ok := plan.Details[PlanDetailStartTimeNs]; ok {
+						if startNs, ok2 := startNsVal.(int64); ok2 {
+							var stopNs int64
+							if stopNsVal, ok3 := plan.Details[PlanDetailStopTimeNs]; ok3 {
+								if s, ok4 := stopNsVal.(int64); ok4 {
+									stopNs = s
+								}
+							}
+							if startNs != 0 || stopNs != 0 {
+								if minNs, maxNs, ok5 := hybridScanner.getTimestampRangeFromStats(stats); ok5 {
+									qStart := startNs
+									qStop := stopNs
+									if qStop == 0 {
+										qStop = math.MaxInt64
+									}
+									// Skip file if no overlap
+									if qStop < minNs || (qStart != 0 && qStart > maxNs) {
+										continue
+									}
+								}
+							}
+						}
+					}
 					parquetFiles = append(parquetFiles, fmt.Sprintf("%s/%s", partitionPath, stats.FileName))
 				}
 			}
@@ -694,11 +749,12 @@ func (e *SQLEngine) populateFullScanPlanDetails(ctx context.Context, plan *Query
 // - Combine both for accurate results per partition
 // Returns (result, canOptimize) where canOptimize=true means the hybrid fast path was used
 func (e *SQLEngine) tryFastParquetAggregation(ctx context.Context, hybridScanner *HybridMessageScanner, aggregations []AggregationSpec) (*QueryResult, bool) {
-	return e.tryFastParquetAggregationWithPlan(ctx, hybridScanner, aggregations, nil)
+	return e.tryFastParquetAggregationWithPlan(ctx, hybridScanner, aggregations, nil, 0, 0)
 }
 
 // tryFastParquetAggregationWithPlan is the same as tryFastParquetAggregation but also populates execution plan if provided
-func (e *SQLEngine) tryFastParquetAggregationWithPlan(ctx context.Context, hybridScanner *HybridMessageScanner, aggregations []AggregationSpec, plan *QueryExecutionPlan) (*QueryResult, bool) {
+// startTimeNs, stopTimeNs: optional time range filters for parquet file optimization (0 means no filtering)
+func (e *SQLEngine) tryFastParquetAggregationWithPlan(ctx context.Context, hybridScanner *HybridMessageScanner, aggregations []AggregationSpec, plan *QueryExecutionPlan, startTimeNs, stopTimeNs int64) (*QueryResult, bool) {
 	// Use the new modular components
 	optimizer := NewFastPathOptimizer(e)
 	computer := NewAggregationComputer(e)
@@ -709,8 +765,8 @@ func (e *SQLEngine) tryFastParquetAggregationWithPlan(ctx context.Context, hybri
 		return nil, false
 	}
 
-	// Step 2: Collect data sources
-	dataSources, err := optimizer.CollectDataSources(ctx, hybridScanner)
+	// Step 2: Collect data sources with time filtering for parquet file optimization
+	dataSources, err := optimizer.CollectDataSourcesWithTimeFilter(ctx, hybridScanner, startTimeNs, stopTimeNs)
 	if err != nil {
 		return nil, false
 	}
@@ -821,6 +877,29 @@ func (e *SQLEngine) tryFastParquetAggregationWithPlan(ctx context.Context, hybri
 			// Get parquet files for this partition
 			if parquetStats, err := hybridScanner.ReadParquetStatistics(partitionPath); err == nil {
 				for _, stats := range parquetStats {
+					// Prune by time filters if available in plan details
+					if startNsVal, ok := plan.Details[PlanDetailStartTimeNs]; ok {
+						if startNs, ok2 := startNsVal.(int64); ok2 {
+							var stopNs int64
+							if stopNsVal, ok3 := plan.Details[PlanDetailStopTimeNs]; ok3 {
+								if s, ok4 := stopNsVal.(int64); ok4 {
+									stopNs = s
+								}
+							}
+							if startNs != 0 || stopNs != 0 {
+								if minNs, maxNs, ok5 := hybridScanner.getTimestampRangeFromStats(stats); ok5 {
+									qStart := startNs
+									qStop := stopNs
+									if qStop == 0 {
+										qStop = math.MaxInt64
+									}
+									if qStop < minNs || (qStart != 0 && qStart > maxNs) {
+										continue
+									}
+								}
+							}
+						}
+					}
 					parquetFiles = append(parquetFiles, fmt.Sprintf("%s/%s", partitionPath, stats.FileName))
 				}
 			}

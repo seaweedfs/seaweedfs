@@ -87,6 +87,12 @@ type QueryExecutionPlan struct {
 	BufferStartIndex     int64 `json:"buffer_start_index,omitempty"`
 }
 
+// Plan detail keys
+const (
+	PlanDetailStartTimeNs = "StartTimeNs"
+	PlanDetailStopTimeNs  = "StopTimeNs"
+)
+
 // QueryResult represents the result of a SQL query execution
 type QueryResult struct {
 	Columns       []string            `json:"columns"`

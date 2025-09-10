@@ -2290,6 +2290,9 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 		if partitions, discoverErr := e.discoverTopicPartitions(database, tableName); discoverErr == nil {
 			// Add partition paths to execution plan details
 			plan.Details["partition_paths"] = partitions
+			// Persist time filter details for downstream pruning/diagnostics
+			plan.Details[PlanDetailStartTimeNs] = startTimeNs
+			plan.Details[PlanDetailStopTimeNs] = stopTimeNs
 
 			// Collect actual file information for each partition
 			var parquetFiles []string
@@ -2300,6 +2303,20 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 				// Get parquet files for this partition
 				if parquetStats, err := hybridScanner.ReadParquetStatistics(partitionPath); err == nil {
 					for _, stats := range parquetStats {
+						// Prune by column statistics if we have time filters
+						if startTimeNs != 0 || stopTimeNs != 0 {
+							if minNs, maxNs, ok := hybridScanner.getTimestampRangeFromStats(stats); ok {
+								qStart := startTimeNs
+								qStop := stopTimeNs
+								if qStop == 0 { // unbounded
+									qStop = math.MaxInt64
+								}
+								// Skip file if no overlap
+								if qStop < minNs || (qStart != 0 && qStart > maxNs) {
+									continue
+								}
+							}
+						}
 						parquetFiles = append(parquetFiles, fmt.Sprintf("%s/%s", partitionPath, stats.FileName))
 					}
 				}

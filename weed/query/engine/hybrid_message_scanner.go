@@ -147,6 +147,42 @@ type ParquetFileStats struct {
 	ColumnStats map[string]*ParquetColumnStats
 }
 
+// getTimestampRangeFromStats returns (minTsNs, maxTsNs, ok) by inspecting common timestamp columns
+func (h *HybridMessageScanner) getTimestampRangeFromStats(fileStats *ParquetFileStats) (int64, int64, bool) {
+	if fileStats == nil || len(fileStats.ColumnStats) == 0 {
+		return 0, 0, false
+	}
+	// Always use the system timestamp column written by MQ parquet writer
+	var tsStats *ParquetColumnStats
+	if s, ok := fileStats.ColumnStats[logstore.SW_COLUMN_NAME_TS]; ok {
+		tsStats = s
+	}
+	if tsStats == nil || tsStats.MinValue == nil || tsStats.MaxValue == nil {
+		return 0, 0, false
+	}
+	minNs, okMin := h.schemaValueToNs(tsStats.MinValue)
+	maxNs, okMax := h.schemaValueToNs(tsStats.MaxValue)
+	if !okMin || !okMax {
+		return 0, 0, false
+	}
+	return minNs, maxNs, true
+}
+
+// schemaValueToNs converts a schema_pb.Value that represents a timestamp to ns
+func (h *HybridMessageScanner) schemaValueToNs(v *schema_pb.Value) (int64, bool) {
+	if v == nil {
+		return 0, false
+	}
+	switch k := v.Kind.(type) {
+	case *schema_pb.Value_Int64Value:
+		return k.Int64Value, true
+	case *schema_pb.Value_Int32Value:
+		return int64(k.Int32Value), true
+	default:
+		return 0, false
+	}
+}
+
 // StreamingDataSource provides a streaming interface for reading scan results
 type StreamingDataSource interface {
 	Next() (*HybridScanResult, error) // Returns next result or nil when done
