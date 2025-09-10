@@ -66,4 +66,12 @@ func (s *Server) Close() error {
     return nil
 }
 
+// Addr returns the bound address of the server listener, or empty if not started.
+func (s *Server) Addr() string {
+    if s.ln == nil {
+        return ""
+    }
+    return s.ln.Addr().String()
+}
+
 
