@@ -226,7 +226,13 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 		case 1: // Fetch
 			response, err = h.handleFetch(correlationID, messageBuf[8:]) // skip header
 		case 11: // JoinGroup
-			response, err = h.handleJoinGroup(correlationID, messageBuf[8:]) // skip header
+			fmt.Printf("DEBUG: *** JOINGROUP REQUEST RECEIVED *** Correlation: %d, Version: %d\n", correlationID, apiVersion)
+			response, err = h.handleJoinGroup(correlationID, apiVersion, messageBuf[8:]) // skip header
+			if err != nil {
+				fmt.Printf("DEBUG: JoinGroup error: %v\n", err)
+			} else {
+				fmt.Printf("DEBUG: JoinGroup response hex dump (%d bytes): %x\n", len(response), response)
+			}
 		case 14: // SyncGroup
 			response, err = h.handleSyncGroup(correlationID, messageBuf[8:]) // skip header
 		case 8: // OffsetCommit

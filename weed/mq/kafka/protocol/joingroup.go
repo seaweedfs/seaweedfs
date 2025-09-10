@@ -57,12 +57,23 @@ const (
 	ErrorCodeFencedInstanceID       int16 = 82
 )
 
-func (h *Handler) handleJoinGroup(correlationID uint32, requestBody []byte) ([]byte, error) {
+func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
+	// DEBUG: Hex dump the request to understand format
+	dumpLen := len(requestBody)
+	if dumpLen > 100 {
+		dumpLen = 100
+	}
+	fmt.Printf("DEBUG: JoinGroup request hex dump (first %d bytes): %x\n", dumpLen, requestBody[:dumpLen])
+	
 	// Parse JoinGroup request
 	request, err := h.parseJoinGroupRequest(requestBody)
 	if err != nil {
+		fmt.Printf("DEBUG: JoinGroup parseJoinGroupRequest error: %v\n", err)
 		return h.buildJoinGroupErrorResponse(correlationID, ErrorCodeInvalidGroupID), nil
 	}
+	
+	fmt.Printf("DEBUG: JoinGroup parsed request - GroupID: '%s', MemberID: '%s', SessionTimeout: %d\n", 
+		request.GroupID, request.MemberID, request.SessionTimeout)
 	
 	// Validate request
 	if request.GroupID == "" {
@@ -185,7 +196,15 @@ func (h *Handler) parseJoinGroupRequest(data []byte) (*JoinGroupRequest, error) 
 	
 	offset := 0
 	
+	// Skip client_id (part of request header, not JoinGroup payload)
+	clientIDLength := int(binary.BigEndian.Uint16(data[offset:]))
+	offset += 2 + clientIDLength
+	fmt.Printf("DEBUG: JoinGroup skipped client_id (%d bytes), offset now: %d\n", clientIDLength, offset)
+	
 	// GroupID (string)
+	if offset+2 > len(data) {
+		return nil, fmt.Errorf("missing group ID length")
+	}
 	groupIDLength := int(binary.BigEndian.Uint16(data[offset:]))
 	offset += 2
 	if offset+groupIDLength > len(data) {
@@ -193,6 +212,7 @@ func (h *Handler) parseJoinGroupRequest(data []byte) (*JoinGroupRequest, error) 
 	}
 	groupID := string(data[offset : offset+groupIDLength])
 	offset += groupIDLength
+	fmt.Printf("DEBUG: JoinGroup parsed GroupID: '%s', offset now: %d\n", groupID, offset)
 	
 	// Session timeout (4 bytes)
 	if offset+4 > len(data) {
