@@ -19,15 +19,15 @@ type AgentClient struct {
 	agentAddress string
 	conn         *grpc.ClientConn
 	client       mq_agent_pb.SeaweedMessagingAgentClient
-	
+
 	// Publisher sessions: topic-partition -> session info
 	publishersLock sync.RWMutex
 	publishers     map[string]*PublisherSession
-	
+
 	// Subscriber sessions for offset tracking
 	subscribersLock sync.RWMutex
 	subscribers     map[string]*SubscriberSession
-	
+
 	ctx    context.Context
 	cancel context.CancelFunc
 }
@@ -44,17 +44,17 @@ type PublisherSession struct {
 
 // SubscriberSession tracks a subscription for offset management
 type SubscriberSession struct {
-	Topic       string
-	Partition   int32
-	Stream      mq_agent_pb.SeaweedMessagingAgent_SubscribeRecordClient
+	Topic        string
+	Partition    int32
+	Stream       mq_agent_pb.SeaweedMessagingAgent_SubscribeRecordClient
 	OffsetLedger *offset.Ledger // Still use for Kafka offset translation
 }
 
 // NewAgentClient creates a new SeaweedMQ Agent client
 func NewAgentClient(agentAddress string) (*AgentClient, error) {
 	ctx, cancel := context.WithCancel(context.Background())
-	
-	conn, err := grpc.DialContext(ctx, agentAddress, 
+
+	conn, err := grpc.DialContext(ctx, agentAddress,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		// Don't block - fail fast for invalid addresses
 	)
@@ -62,9 +62,9 @@ func NewAgentClient(agentAddress string) (*AgentClient, error) {
 		cancel()
 		return nil, fmt.Errorf("failed to connect to agent %s: %v", agentAddress, err)
 	}
-	
+
 	client := mq_agent_pb.NewSeaweedMessagingAgentClient(conn)
-	
+
 	return &AgentClient{
 		agentAddress: agentAddress,
 		conn:         conn,
@@ -79,7 +79,7 @@ func NewAgentClient(agentAddress string) (*AgentClient, error) {
 // Close shuts down the agent client and all sessions
 func (ac *AgentClient) Close() error {
 	ac.cancel()
-	
+
 	// Close all publisher sessions
 	ac.publishersLock.Lock()
 	for key, session := range ac.publishers {
@@ -87,7 +87,7 @@ func (ac *AgentClient) Close() error {
 		delete(ac.publishers, key)
 	}
 	ac.publishersLock.Unlock()
-	
+
 	// Close all subscriber sessions
 	ac.subscribersLock.Lock()
 	for key, session := range ac.subscribers {
@@ -97,14 +97,14 @@ func (ac *AgentClient) Close() error {
 		delete(ac.subscribers, key)
 	}
 	ac.subscribersLock.Unlock()
-	
+
 	return ac.conn.Close()
 }
 
 // GetOrCreatePublisher gets or creates a publisher session for a topic-partition
 func (ac *AgentClient) GetOrCreatePublisher(topic string, partition int32) (*PublisherSession, error) {
 	key := fmt.Sprintf("%s-%d", topic, partition)
-	
+
 	// Try to get existing publisher
 	ac.publishersLock.RLock()
 	if session, exists := ac.publishers[key]; exists {
@@ -112,22 +112,22 @@ func (ac *AgentClient) GetOrCreatePublisher(topic string, partition int32) (*Pub
 		return session, nil
 	}
 	ac.publishersLock.RUnlock()
-	
+
 	// Create new publisher session
 	ac.publishersLock.Lock()
 	defer ac.publishersLock.Unlock()
-	
+
 	// Double-check after acquiring write lock
 	if session, exists := ac.publishers[key]; exists {
 		return session, nil
 	}
-	
+
 	// Create the session
 	session, err := ac.createPublishSession(topic, partition)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	ac.publishers[key] = session
 	return session, nil
 }
@@ -166,7 +166,7 @@ func (ac *AgentClient) createPublishSession(topic string, partition int32) (*Pub
 			},
 		},
 	}
-	
+
 	// Start publish session
 	startReq := &mq_agent_pb.StartPublishSessionRequest{
 		Topic: &schema_pb.Topic{
@@ -177,22 +177,22 @@ func (ac *AgentClient) createPublishSession(topic string, partition int32) (*Pub
 		RecordType:     recordType,
 		PublisherName:  "kafka-gateway",
 	}
-	
+
 	startResp, err := ac.client.StartPublishSession(ac.ctx, startReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to start publish session: %v", err)
 	}
-	
+
 	if startResp.Error != "" {
 		return nil, fmt.Errorf("publish session error: %s", startResp.Error)
 	}
-	
+
 	// Create streaming connection
 	stream, err := ac.client.PublishRecord(ac.ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create publish stream: %v", err)
 	}
-	
+
 	session := &PublisherSession{
 		SessionID:  startResp.SessionId,
 		Topic:      topic,
@@ -200,7 +200,7 @@ func (ac *AgentClient) createPublishSession(topic string, partition int32) (*Pub
 		Stream:     stream,
 		RecordType: recordType,
 	}
-	
+
 	return session, nil
 }
 
@@ -210,7 +210,7 @@ func (ac *AgentClient) PublishRecord(topic string, partition int32, key []byte, 
 	if err != nil {
 		return 0, err
 	}
-	
+
 	// Convert to SeaweedMQ record format
 	record := &schema_pb.RecordValue{
 		Fields: map[string]*schema_pb.Value{
@@ -230,28 +230,28 @@ func (ac *AgentClient) PublishRecord(topic string, partition int32, key []byte, 
 			},
 		},
 	}
-	
+
 	// Send publish request
 	req := &mq_agent_pb.PublishRecordRequest{
 		SessionId: session.SessionID,
 		Key:       key,
 		Value:     record,
 	}
-	
+
 	if err := session.Stream.Send(req); err != nil {
 		return 0, fmt.Errorf("failed to send record: %v", err)
 	}
-	
+
 	// Read acknowledgment (this is a streaming API, so we should read the response)
 	resp, err := session.Stream.Recv()
 	if err != nil {
 		return 0, fmt.Errorf("failed to receive ack: %v", err)
 	}
-	
+
 	if resp.Error != "" {
 		return 0, fmt.Errorf("publish error: %s", resp.Error)
 	}
-	
+
 	session.LastSequence = resp.AckSequence
 	return resp.AckSequence, nil
 }
@@ -259,27 +259,27 @@ func (ac *AgentClient) PublishRecord(topic string, partition int32, key []byte, 
 // GetOrCreateSubscriber gets or creates a subscriber for offset tracking
 func (ac *AgentClient) GetOrCreateSubscriber(topic string, partition int32, startOffset int64) (*SubscriberSession, error) {
 	key := fmt.Sprintf("%s-%d", topic, partition)
-	
+
 	ac.subscribersLock.RLock()
 	if session, exists := ac.subscribers[key]; exists {
 		ac.subscribersLock.RUnlock()
 		return session, nil
 	}
 	ac.subscribersLock.RUnlock()
-	
+
 	// Create new subscriber session
 	ac.subscribersLock.Lock()
 	defer ac.subscribersLock.Unlock()
-	
+
 	if session, exists := ac.subscribers[key]; exists {
 		return session, nil
 	}
-	
+
 	session, err := ac.createSubscribeSession(topic, partition, startOffset)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	ac.subscribers[key] = session
 	return session, nil
 }
@@ -290,7 +290,7 @@ func (ac *AgentClient) createSubscribeSession(topic string, partition int32, sta
 	if err != nil {
 		return nil, fmt.Errorf("failed to create subscribe stream: %v", err)
 	}
-	
+
 	// Send initial subscribe request
 	initReq := &mq_agent_pb.SubscribeRecordRequest{
 		Init: &mq_agent_pb.SubscribeRecordRequest_InitSubscribeRecordRequest{
@@ -310,38 +310,38 @@ func (ac *AgentClient) createSubscribeSession(topic string, partition int32, sta
 					StartTsNs: startOffset, // Use offset as timestamp for now
 				},
 			},
-			OffsetType:               schema_pb.OffsetType_EXACT_TS_NS,
-			MaxSubscribedPartitions:  1,
-			SlidingWindowSize:        10,
+			OffsetType:              schema_pb.OffsetType_EXACT_TS_NS,
+			MaxSubscribedPartitions: 1,
+			SlidingWindowSize:       10,
 		},
 	}
-	
+
 	if err := stream.Send(initReq); err != nil {
 		return nil, fmt.Errorf("failed to send subscribe init: %v", err)
 	}
-	
+
 	session := &SubscriberSession{
-		Topic:       topic,
-		Partition:   partition,
-		Stream:      stream,
+		Topic:        topic,
+		Partition:    partition,
+		Stream:       stream,
 		OffsetLedger: offset.NewLedger(), // Keep Kafka offset tracking
 	}
-	
+
 	return session, nil
 }
 
 // ClosePublisher closes a specific publisher session
 func (ac *AgentClient) ClosePublisher(topic string, partition int32) error {
 	key := fmt.Sprintf("%s-%d", topic, partition)
-	
+
 	ac.publishersLock.Lock()
 	defer ac.publishersLock.Unlock()
-	
+
 	session, exists := ac.publishers[key]
 	if !exists {
 		return nil // Already closed or never existed
 	}
-	
+
 	err := ac.closePublishSessionLocked(session.SessionID)
 	delete(ac.publishers, key)
 	return err
@@ -352,7 +352,7 @@ func (ac *AgentClient) closePublishSessionLocked(sessionID int64) error {
 	closeReq := &mq_agent_pb.ClosePublishSessionRequest{
 		SessionId: sessionID,
 	}
-	
+
 	_, err := ac.client.ClosePublishSession(ac.ctx, closeReq)
 	return err
 }
@@ -362,7 +362,7 @@ func (ac *AgentClient) HealthCheck() error {
 	// Create a timeout context for health check
 	ctx, cancel := context.WithTimeout(ac.ctx, 2*time.Second)
 	defer cancel()
-	
+
 	// Try to start and immediately close a dummy session
 	req := &mq_agent_pb.StartPublishSessionRequest{
 		Topic: &schema_pb.Topic{
@@ -383,21 +383,21 @@ func (ac *AgentClient) HealthCheck() error {
 		},
 		PublisherName: "health-check",
 	}
-	
+
 	resp, err := ac.client.StartPublishSession(ctx, req)
 	if err != nil {
 		return fmt.Errorf("health check failed: %v", err)
 	}
-	
+
 	if resp.Error != "" {
 		return fmt.Errorf("health check error: %s", resp.Error)
 	}
-	
+
 	// Close the health check session
 	closeReq := &mq_agent_pb.ClosePublishSessionRequest{
 		SessionId: resp.SessionId,
 	}
 	_, _ = ac.client.ClosePublishSession(ctx, closeReq)
-	
+
 	return nil
 }

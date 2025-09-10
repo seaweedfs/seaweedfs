@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 	
+	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/consumer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/integration"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
 )
@@ -38,14 +39,18 @@ type Handler struct {
 	// SeaweedMQ integration (optional, for production use)
 	seaweedMQHandler *integration.SeaweedMQHandler
 	useSeaweedMQ     bool
+	
+	// Consumer group coordination
+	groupCoordinator *consumer.GroupCoordinator
 }
 
 // NewHandler creates a new handler in legacy in-memory mode
 func NewHandler() *Handler {
 	return &Handler{
-		topics:       make(map[string]*TopicInfo),
-		ledgers:      make(map[TopicPartitionKey]*offset.Ledger),
-		useSeaweedMQ: false,
+		topics:           make(map[string]*TopicInfo),
+		ledgers:          make(map[TopicPartitionKey]*offset.Ledger),
+		useSeaweedMQ:     false,
+		groupCoordinator: consumer.NewGroupCoordinator(),
 	}
 }
 
@@ -55,17 +60,24 @@ func NewSeaweedMQHandler(agentAddress string) (*Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return &Handler{
-		topics:           make(map[string]*TopicInfo), // Keep for compatibility
+		topics:           make(map[string]*TopicInfo),                // Keep for compatibility
 		ledgers:          make(map[TopicPartitionKey]*offset.Ledger), // Keep for compatibility
 		seaweedMQHandler: smqHandler,
 		useSeaweedMQ:     true,
+		groupCoordinator: consumer.NewGroupCoordinator(),
 	}, nil
 }
 
 // Close shuts down the handler and all connections
 func (h *Handler) Close() error {
+	// Close group coordinator
+	if h.groupCoordinator != nil {
+		h.groupCoordinator.Close()
+	}
+	
+	// Close SeaweedMQ handler if present
 	if h.useSeaweedMQ && h.seaweedMQHandler != nil {
 		return h.seaweedMQHandler.Close()
 	}
@@ -167,6 +179,10 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 			response, err = h.handleProduce(correlationID, messageBuf[8:]) // skip header
 		case 1: // Fetch
 			response, err = h.handleFetch(correlationID, messageBuf[8:]) // skip header
+		case 11: // JoinGroup
+			response, err = h.handleJoinGroup(correlationID, messageBuf[8:]) // skip header
+		case 14: // SyncGroup
+			response, err = h.handleSyncGroup(correlationID, messageBuf[8:]) // skip header
 		default:
 			err = fmt.Errorf("unsupported API key: %d (version %d)", apiKey, apiVersion)
 		}
@@ -207,7 +223,7 @@ func (h *Handler) handleApiVersions(correlationID uint32) ([]byte, error) {
 	response = append(response, 0, 0)
 
 	// Number of API keys (compact array format in newer versions, but using basic format for simplicity)
-	response = append(response, 0, 0, 0, 7) // 7 API keys
+	response = append(response, 0, 0, 0, 9) // 9 API keys
 
 	// API Key 18 (ApiVersions): api_key(2) + min_version(2) + max_version(2)
 	response = append(response, 0, 18) // API key 18
@@ -243,6 +259,16 @@ func (h *Handler) handleApiVersions(correlationID uint32) ([]byte, error) {
 	response = append(response, 0, 1)  // API key 1
 	response = append(response, 0, 0)  // min version 0
 	response = append(response, 0, 11) // max version 11
+
+	// API Key 11 (JoinGroup): api_key(2) + min_version(2) + max_version(2)
+	response = append(response, 0, 11) // API key 11
+	response = append(response, 0, 0)  // min version 0
+	response = append(response, 0, 7)  // max version 7
+
+	// API Key 14 (SyncGroup): api_key(2) + min_version(2) + max_version(2)
+	response = append(response, 0, 14) // API key 14
+	response = append(response, 0, 0)  // min version 0
+	response = append(response, 0, 5)  // max version 5
 
 	// Throttle time (4 bytes, 0 = no throttling)
 	response = append(response, 0, 0, 0, 0)

@@ -10,9 +10,9 @@ import (
 )
 
 type Options struct {
-	Listen            string
-	AgentAddress      string // Optional: SeaweedMQ Agent address for production mode
-	UseSeaweedMQ      bool   // Use SeaweedMQ backend instead of in-memory stub
+	Listen       string
+	AgentAddress string // Optional: SeaweedMQ Agent address for production mode
+	UseSeaweedMQ bool   // Use SeaweedMQ backend instead of in-memory stub
 }
 
 type Server struct {
@@ -26,7 +26,7 @@ type Server struct {
 
 func NewServer(opts Options) *Server {
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	var handler *protocol.Handler
 	if opts.UseSeaweedMQ && opts.AgentAddress != "" {
 		// Try to create SeaweedMQ handler
@@ -43,7 +43,7 @@ func NewServer(opts Options) *Server {
 		handler = protocol.NewHandler()
 		glog.V(1).Infof("Created Kafka gateway with in-memory backend")
 	}
-	
+
 	return &Server{
 		opts:    opts,
 		ctx:     ctx,
@@ -94,14 +94,14 @@ func (s *Server) Close() error {
 		_ = s.ln.Close()
 	}
 	s.wg.Wait()
-	
+
 	// Close the handler (important for SeaweedMQ mode)
 	if s.handler != nil {
 		if err := s.handler.Close(); err != nil {
 			glog.Warningf("Error closing handler: %v", err)
 		}
 	}
-	
+
 	return nil
 }
 

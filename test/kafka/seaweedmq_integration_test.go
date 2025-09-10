@@ -110,7 +110,7 @@ func testSeaweedMQTopicLifecycle(t *testing.T, addr string) {
 	// Test CreateTopics request
 	topicName := "seaweedmq-test-topic"
 	createReq := buildCreateTopicsRequestCustom(topicName)
-	
+
 	_, err = conn.Write(createReq)
 	if err != nil {
 		t.Fatalf("Failed to send CreateTopics: %v", err)
@@ -143,7 +143,7 @@ func testSeaweedMQTopicLifecycle(t *testing.T, addr string) {
 func testSeaweedMQProduceConsume(t *testing.T, addr string) {
 	// This would be a more comprehensive test in a full implementation
 	// For now, just test that Produce requests are handled
-	
+
 	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
@@ -174,65 +174,65 @@ func testSeaweedMQProduceConsume(t *testing.T, addr string) {
 
 	// TODO: Send a Produce request and verify it works with SeaweedMQ
 	// This would require building a proper Kafka Produce request
-	
+
 	t.Logf("SeaweedMQ produce/consume test placeholder completed")
 }
 
 // buildCreateTopicsRequestCustom creates a CreateTopics request for a specific topic
 func buildCreateTopicsRequestCustom(topicName string) []byte {
 	clientID := "seaweedmq-test-client"
-	
+
 	// Approximate message size
 	messageSize := 2 + 2 + 4 + 2 + len(clientID) + 4 + 4 + 2 + len(topicName) + 4 + 2 + 4 + 4
-	
+
 	request := make([]byte, 0, messageSize+4)
-	
+
 	// Message size placeholder
 	sizePos := len(request)
 	request = append(request, 0, 0, 0, 0)
-	
+
 	// API key (CreateTopics = 19)
 	request = append(request, 0, 19)
-	
+
 	// API version
 	request = append(request, 0, 4)
-	
+
 	// Correlation ID
 	request = append(request, 0, 0, 0x30, 0x42) // 12354
-	
+
 	// Client ID
 	request = append(request, 0, byte(len(clientID)))
 	request = append(request, []byte(clientID)...)
-	
+
 	// Timeout (5000ms)
 	request = append(request, 0, 0, 0x13, 0x88)
-	
+
 	// Topics count (1)
 	request = append(request, 0, 0, 0, 1)
-	
+
 	// Topic name
 	request = append(request, 0, byte(len(topicName)))
 	request = append(request, []byte(topicName)...)
-	
+
 	// Num partitions (1)
 	request = append(request, 0, 0, 0, 1)
-	
+
 	// Replication factor (1)
 	request = append(request, 0, 1)
-	
+
 	// Configs count (0)
 	request = append(request, 0, 0, 0, 0)
-	
+
 	// Topic timeout (5000ms)
 	request = append(request, 0, 0, 0x13, 0x88)
-	
+
 	// Fix message size
 	actualSize := len(request) - 4
 	request[sizePos] = byte(actualSize >> 24)
 	request[sizePos+1] = byte(actualSize >> 16)
 	request[sizePos+2] = byte(actualSize >> 8)
 	request[sizePos+3] = byte(actualSize)
-	
+
 	return request
 }
 
@@ -285,8 +285,8 @@ func TestSeaweedMQGateway_ModeSelection(t *testing.T) {
 // TestSeaweedMQGateway_ConfigValidation tests configuration validation
 func TestSeaweedMQGateway_ConfigValidation(t *testing.T) {
 	testCases := []struct {
-		name     string
-		options  gateway.Options
+		name       string
+		options    gateway.Options
 		shouldWork bool
 	}{
 		{
@@ -321,11 +321,11 @@ func TestSeaweedMQGateway_ConfigValidation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			server := gateway.NewServer(tc.options)
 			err := server.Start()
-			
+
 			if tc.shouldWork && err != nil {
 				t.Errorf("Expected config to work, got error: %v", err)
 			}
-			
+
 			if err == nil {
 				server.Close()
 				t.Logf("Config test passed for %s", tc.name)
