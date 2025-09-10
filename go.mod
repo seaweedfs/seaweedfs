@@ -154,6 +154,7 @@ require (
 	github.com/rdleal/intervalst v1.5.0
 	github.com/redis/go-redis/v9 v9.12.1
 	github.com/schollz/progressbar/v3 v3.18.0
+	github.com/segmentio/kafka-go v0.4.49
 	github.com/shirou/gopsutil/v3 v3.24.5
 	github.com/tarantool/go-tarantool/v2 v2.4.0
 	github.com/tikv/client-go/v2 v2.0.7
