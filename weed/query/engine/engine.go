@@ -2737,11 +2737,6 @@ func (e *SQLEngine) flipOperator(op string) string {
 
 // populatePlanFileDetails populates execution plan with detailed file information for partitions
 func (e *SQLEngine) populatePlanFileDetails(ctx context.Context, plan *QueryExecutionPlan, hybridScanner *HybridMessageScanner, partitions []string) {
-	e.populatePlanFileDetailsWithWhere(ctx, plan, hybridScanner, partitions, nil)
-}
-
-// populatePlanFileDetailsWithWhere populates execution plan with detailed file information for partitions, with optional WHERE clause for column pruning
-func (e *SQLEngine) populatePlanFileDetailsWithWhere(ctx context.Context, plan *QueryExecutionPlan, hybridScanner *HybridMessageScanner, partitions []string, whereExpr ExprNode) {
 	// Collect actual file information for each partition
 	var parquetFiles []string
 	var liveLogFiles []string
@@ -2757,10 +2752,6 @@ func (e *SQLEngine) populatePlanFileDetailsWithWhere(ctx context.Context, plan *
 		if parquetStats, err := hybridScanner.ReadParquetStatistics(partitionPath); err == nil {
 			// Prune files by time range
 			filteredStats := pruneParquetFilesByTime(ctx, parquetStats, hybridScanner, startTimeNs, stopTimeNs)
-			// Further prune by column statistics from WHERE clause
-			if whereExpr != nil {
-				filteredStats = e.pruneParquetFilesByColumnStats(ctx, filteredStats, whereExpr)
-			}
 			for _, stats := range filteredStats {
 				parquetFiles = append(parquetFiles, fmt.Sprintf("%s/%s", partitionPath, stats.FileName))
 			}

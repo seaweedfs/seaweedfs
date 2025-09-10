@@ -780,9 +780,6 @@ func (e *SQLEngine) tryFastParquetAggregationWithPlan(ctx context.Context, hybri
 		}
 
 		// Merge details while preserving existing ones
-		if plan.Details == nil {
-			plan.Details = make(map[string]interface{})
-		}
 		for key, value := range aggPlan.Details {
 			plan.Details[key] = value
 		}
