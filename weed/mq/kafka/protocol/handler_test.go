@@ -92,8 +92,8 @@ func TestHandler_ApiVersions(t *testing.T) {
 
 	// Check number of API keys
 	numAPIKeys := binary.BigEndian.Uint32(respBuf[6:10])
-	if numAPIKeys != 9 {
-		t.Errorf("expected 9 API keys, got: %d", numAPIKeys)
+	if numAPIKeys != 11 {
+		t.Errorf("expected 11 API keys, got: %d", numAPIKeys)
 	}
 	
 	// Check API key details: api_key(2) + min_version(2) + max_version(2)
@@ -229,7 +229,7 @@ func TestHandler_handleApiVersions(t *testing.T) {
 		t.Fatalf("handleApiVersions: %v", err)
 	}
 	
-	if len(response) < 66 { // minimum expected size (now has 9 API keys)
+	if len(response) < 78 { // minimum expected size (now has 11 API keys)
 		t.Fatalf("response too short: %d bytes", len(response))
 	}
 	
@@ -247,8 +247,8 @@ func TestHandler_handleApiVersions(t *testing.T) {
 	
 	// Check number of API keys
 	numAPIKeys := binary.BigEndian.Uint32(response[6:10])
-	if numAPIKeys != 9 {
-		t.Errorf("expected 9 API keys, got: %d", numAPIKeys)
+	if numAPIKeys != 11 {
+		t.Errorf("expected 11 API keys, got: %d", numAPIKeys)
 	}
 	
 	// Check first API key (ApiVersions)

@@ -183,6 +183,10 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 			response, err = h.handleJoinGroup(correlationID, messageBuf[8:]) // skip header
 		case 14: // SyncGroup
 			response, err = h.handleSyncGroup(correlationID, messageBuf[8:]) // skip header
+		case 8: // OffsetCommit
+			response, err = h.handleOffsetCommit(correlationID, messageBuf[8:]) // skip header
+		case 9: // OffsetFetch
+			response, err = h.handleOffsetFetch(correlationID, messageBuf[8:]) // skip header
 		default:
 			err = fmt.Errorf("unsupported API key: %d (version %d)", apiKey, apiVersion)
 		}
@@ -223,7 +227,7 @@ func (h *Handler) handleApiVersions(correlationID uint32) ([]byte, error) {
 	response = append(response, 0, 0)
 
 	// Number of API keys (compact array format in newer versions, but using basic format for simplicity)
-	response = append(response, 0, 0, 0, 9) // 9 API keys
+	response = append(response, 0, 0, 0, 11) // 11 API keys
 
 	// API Key 18 (ApiVersions): api_key(2) + min_version(2) + max_version(2)
 	response = append(response, 0, 18) // API key 18
@@ -269,6 +273,16 @@ func (h *Handler) handleApiVersions(correlationID uint32) ([]byte, error) {
 	response = append(response, 0, 14) // API key 14
 	response = append(response, 0, 0)  // min version 0
 	response = append(response, 0, 5)  // max version 5
+
+	// API Key 8 (OffsetCommit): api_key(2) + min_version(2) + max_version(2)
+	response = append(response, 0, 8) // API key 8
+	response = append(response, 0, 0) // min version 0
+	response = append(response, 0, 8) // max version 8
+
+	// API Key 9 (OffsetFetch): api_key(2) + min_version(2) + max_version(2)
+	response = append(response, 0, 9) // API key 9
+	response = append(response, 0, 0) // min version 0
+	response = append(response, 0, 8) // max version 8
 
 	// Throttle time (4 bytes, 0 = no throttling)
 	response = append(response, 0, 0, 0, 0)
