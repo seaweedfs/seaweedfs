@@ -131,26 +131,8 @@ func (opt *FastPathOptimizer) CollectDataSourcesWithTimeFilter(ctx context.Conte
 				fmt.Printf("  No parquet files found in partition\n")
 			}
 		} else {
-			// Optionally prune by time range using parquet column statistics
-			filtered := parquetStats
-			if startTimeNs != 0 || stopTimeNs != 0 {
-				var pruned []*ParquetFileStats
-				qStart := startTimeNs
-				qStop := stopTimeNs
-				if qStop == 0 {
-					qStop = math.MaxInt64
-				}
-				for _, fs := range parquetStats {
-					if minNs, maxNs, ok := hybridScanner.getTimestampRangeFromStats(fs); ok {
-						if qStop < minNs || (qStart != 0 && qStart > maxNs) {
-							continue
-						}
-					}
-					pruned = append(pruned, fs)
-				}
-				filtered = pruned
-			}
-
+			// Prune by time range using parquet column statistics
+			filtered := pruneParquetFilesByTime(parquetStats, hybridScanner, startTimeNs, stopTimeNs)
 			dataSources.ParquetFiles[partitionPath] = filtered
 			partitionParquetRows := int64(0)
 			for _, stat := range filtered {
@@ -683,34 +665,15 @@ func (e *SQLEngine) populateFullScanPlanDetails(ctx context.Context, plan *Query
 		var liveLogFiles []string
 		parquetSources := make(map[string]bool)
 
+		// Extract time filters from plan details
+		startTimeNs, stopTimeNs := getTimeFiltersFromPlan(plan)
+
 		for _, partitionPath := range partitions {
 			// Get parquet files for this partition
 			if parquetStats, err := hybridScanner.ReadParquetStatistics(partitionPath); err == nil {
-				for _, stats := range parquetStats {
-					// Prune by time filters if available in plan details
-					if startNsVal, ok := plan.Details[PlanDetailStartTimeNs]; ok {
-						if startNs, ok2 := startNsVal.(int64); ok2 {
-							var stopNs int64
-							if stopNsVal, ok3 := plan.Details[PlanDetailStopTimeNs]; ok3 {
-								if s, ok4 := stopNsVal.(int64); ok4 {
-									stopNs = s
-								}
-							}
-							if startNs != 0 || stopNs != 0 {
-								if minNs, maxNs, ok5 := hybridScanner.getTimestampRangeFromStats(stats); ok5 {
-									qStart := startNs
-									qStop := stopNs
-									if qStop == 0 {
-										qStop = math.MaxInt64
-									}
-									// Skip file if no overlap
-									if qStop < minNs || (qStart != 0 && qStart > maxNs) {
-										continue
-									}
-								}
-							}
-						}
-					}
+				// Prune files by time range
+				filteredStats := pruneParquetFilesByTime(parquetStats, hybridScanner, startTimeNs, stopTimeNs)
+				for _, stats := range filteredStats {
 					parquetFiles = append(parquetFiles, fmt.Sprintf("%s/%s", partitionPath, stats.FileName))
 				}
 			}
@@ -873,33 +836,15 @@ func (e *SQLEngine) tryFastParquetAggregationWithPlan(ctx context.Context, hybri
 		var liveLogFiles []string
 		parquetSources := make(map[string]bool)
 
+		// Extract time filters from plan details
+		planStartTimeNs, planStopTimeNs := getTimeFiltersFromPlan(plan)
+
 		for _, partitionPath := range partitions {
 			// Get parquet files for this partition
 			if parquetStats, err := hybridScanner.ReadParquetStatistics(partitionPath); err == nil {
-				for _, stats := range parquetStats {
-					// Prune by time filters if available in plan details
-					if startNsVal, ok := plan.Details[PlanDetailStartTimeNs]; ok {
-						if startNs, ok2 := startNsVal.(int64); ok2 {
-							var stopNs int64
-							if stopNsVal, ok3 := plan.Details[PlanDetailStopTimeNs]; ok3 {
-								if s, ok4 := stopNsVal.(int64); ok4 {
-									stopNs = s
-								}
-							}
-							if startNs != 0 || stopNs != 0 {
-								if minNs, maxNs, ok5 := hybridScanner.getTimestampRangeFromStats(stats); ok5 {
-									qStart := startNs
-									qStop := stopNs
-									if qStop == 0 {
-										qStop = math.MaxInt64
-									}
-									if qStop < minNs || (qStart != 0 && qStart > maxNs) {
-										continue
-									}
-								}
-							}
-						}
-					}
+				// Prune files by time range
+				filteredStats := pruneParquetFilesByTime(parquetStats, hybridScanner, planStartTimeNs, planStopTimeNs)
+				for _, stats := range filteredStats {
 					parquetFiles = append(parquetFiles, fmt.Sprintf("%s/%s", partitionPath, stats.FileName))
 				}
 			}

@@ -2527,6 +2527,48 @@ func (e *SQLEngine) isTimestampColumn(columnName string) bool {
 	return false
 }
 
+// getTimeFiltersFromPlan extracts time filter values from execution plan details
+func getTimeFiltersFromPlan(plan *QueryExecutionPlan) (startTimeNs, stopTimeNs int64) {
+	if plan == nil || plan.Details == nil {
+		return 0, 0
+	}
+	if startNsVal, ok := plan.Details[PlanDetailStartTimeNs]; ok {
+		if startNs, ok2 := startNsVal.(int64); ok2 {
+			startTimeNs = startNs
+		}
+	}
+	if stopNsVal, ok := plan.Details[PlanDetailStopTimeNs]; ok {
+		if stopNs, ok2 := stopNsVal.(int64); ok2 {
+			stopTimeNs = stopNs
+		}
+	}
+	return
+}
+
+// pruneParquetFilesByTime filters parquet files based on timestamp ranges
+func pruneParquetFilesByTime(parquetStats []*ParquetFileStats, hybridScanner *HybridMessageScanner, startTimeNs, stopTimeNs int64) []*ParquetFileStats {
+	if startTimeNs == 0 && stopTimeNs == 0 {
+		return parquetStats
+	}
+
+	var pruned []*ParquetFileStats
+	qStart := startTimeNs
+	qStop := stopTimeNs
+	if qStop == 0 {
+		qStop = math.MaxInt64
+	}
+
+	for _, fs := range parquetStats {
+		if minNs, maxNs, ok := hybridScanner.getTimestampRangeFromStats(fs); ok {
+			if qStop < minNs || (qStart != 0 && qStart > maxNs) {
+				continue
+			}
+		}
+		pruned = append(pruned, fs)
+	}
+	return pruned
+}
+
 // isSQLTypeTimestamp checks if a SQL type string represents a timestamp type
 func (e *SQLEngine) isSQLTypeTimestamp(sqlType string) bool {
 	upperType := strings.ToUpper(strings.TrimSpace(sqlType))
