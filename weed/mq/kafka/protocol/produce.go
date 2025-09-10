@@ -65,10 +65,21 @@ func (h *Handler) handleProduce(correlationID uint32, requestBody []byte) ([]byt
 		partitionsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 		offset += 4
 
-		// Check if topic exists
-		h.topicsMu.RLock()
+		// Check if topic exists, auto-create if it doesn't (simulates auto.create.topics.enable=true)
+		h.topicsMu.Lock()
 		_, topicExists := h.topics[topicName]
-		h.topicsMu.RUnlock()
+		if !topicExists {
+			fmt.Printf("DEBUG: Auto-creating topic during Produce: %s\n", topicName)
+			h.topics[topicName] = &TopicInfo{
+				Name:       topicName,
+				Partitions: 1, // Default to 1 partition
+				CreatedAt:  time.Now().UnixNano(),
+			}
+			// Initialize ledger for partition 0
+			h.GetOrCreateLedger(topicName, 0)
+			topicExists = true
+		}
+		h.topicsMu.Unlock()
 
 		// Response: topic_name_size(2) + topic_name + partitions_array
 		response = append(response, byte(topicNameSize>>8), byte(topicNameSize))

@@ -112,3 +112,8 @@ func (s *Server) Addr() string {
 	}
 	return s.ln.Addr().String()
 }
+
+// GetHandler returns the protocol handler (for testing)
+func (s *Server) GetHandler() *protocol.Handler {
+	return s.handler
+}

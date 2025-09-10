@@ -67,17 +67,17 @@ func TestGateway_ApiVersionsRequest(t *testing.T) {
 	clientID := "debug-client"
 
 	request := make([]byte, 0, 64)
-	
+
 	// Build message body first (without size)
 	msgBody := make([]byte, 0, 32)
-	msgBody = append(msgBody, 0, 18)  // API key 18 (ApiVersions)
-	msgBody = append(msgBody, 0, 0)   // API version 0
-	
+	msgBody = append(msgBody, 0, 18) // API key 18 (ApiVersions)
+	msgBody = append(msgBody, 0, 0)  // API version 0
+
 	// Correlation ID
 	correlationBytes := make([]byte, 4)
 	binary.BigEndian.PutUint32(correlationBytes, correlationID)
 	msgBody = append(msgBody, correlationBytes...)
-	
+
 	// Client ID string
 	clientIDBytes := []byte(clientID)
 	msgBody = append(msgBody, byte(len(clientIDBytes)>>8), byte(len(clientIDBytes)))
@@ -170,37 +170,37 @@ func TestGateway_CreateTopicsRequest(t *testing.T) {
 
 	// Build message body
 	msgBody := make([]byte, 0, 128)
-	msgBody = append(msgBody, 0, 19)  // API key 19 (CreateTopics)
-	msgBody = append(msgBody, 0, 0)   // API version 0
-	
+	msgBody = append(msgBody, 0, 19) // API key 19 (CreateTopics)
+	msgBody = append(msgBody, 0, 0)  // API version 0
+
 	// Correlation ID
 	correlationBytes := make([]byte, 4)
 	binary.BigEndian.PutUint32(correlationBytes, correlationID)
 	msgBody = append(msgBody, correlationBytes...)
-	
+
 	// Client ID string
 	clientIDBytes := []byte(clientID)
 	msgBody = append(msgBody, byte(len(clientIDBytes)>>8), byte(len(clientIDBytes)))
 	msgBody = append(msgBody, clientIDBytes...)
-	
+
 	// Topics array - count (4 bytes)
 	msgBody = append(msgBody, 0, 0, 0, 1) // 1 topic
-	
+
 	// Topic name
 	topicNameBytes := []byte(topicName)
 	msgBody = append(msgBody, byte(len(topicNameBytes)>>8), byte(len(topicNameBytes)))
 	msgBody = append(msgBody, topicNameBytes...)
-	
+
 	// Num partitions (4 bytes)
 	msgBody = append(msgBody, 0, 0, 0, 1) // 1 partition
-	
-	// Replication factor (2 bytes) 
+
+	// Replication factor (2 bytes)
 	msgBody = append(msgBody, 0, 1) // replication factor 1
-	
+
 	// Configs count (4 bytes)
 	msgBody = append(msgBody, 0, 0, 0, 0) // 0 configs
-	
-	// Timeout (4 bytes) 
+
+	// Timeout (4 bytes)
 	msgBody = append(msgBody, 0, 0, 0x75, 0x30) // 30 seconds
 
 	// Message size + message body

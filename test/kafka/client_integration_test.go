@@ -8,15 +8,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/segmentio/kafka-go"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/gateway"
+	"github.com/segmentio/kafka-go"
 )
 
 // TestKafkaGoClient_BasicProduceConsume tests our gateway with real kafka-go client
 func TestKafkaGoClient_BasicProduceConsume(t *testing.T) {
 	// Start the gateway server
 	srv := gateway.NewServer(gateway.Options{
-		Listen:       ":0", // Use random port
+		Listen:       ":0",  // Use random port
 		UseSeaweedMQ: false, // Use in-memory mode for testing
 	})
 
@@ -188,7 +188,7 @@ func TestKafkaGoClient_OffsetManagement(t *testing.T) {
 		t.Errorf("Expected 2 remaining messages, got %d", len(remainingMessages))
 	}
 
-	t.Logf("Offset management test passed: consumed %d + %d messages", 
+	t.Logf("Offset management test passed: consumed %d + %d messages",
 		len(partialMessages), len(remainingMessages))
 }
 
@@ -200,7 +200,7 @@ func createTopicWithKafkaGo(brokerAddr, topicName string) error {
 		Timeout:   5 * time.Second,
 		DualStack: true,
 	}
-	
+
 	conn, err := dialer.Dial("tcp", brokerAddr)
 	if err != nil {
 		return fmt.Errorf("dial broker: %w", err)
@@ -214,8 +214,8 @@ func createTopicWithKafkaGo(brokerAddr, topicName string) error {
 
 	topicConfigs := []kafka.TopicConfig{
 		{
-			Topic:         topicName,
-			NumPartitions: 1,
+			Topic:             topicName,
+			NumPartitions:     1,
 			ReplicationFactor: 1,
 		},
 	}
@@ -236,7 +236,7 @@ func produceMessages(brokerAddr, topicName string, messages []kafka.Message) err
 		Topic:    topicName,
 		Balancer: &kafka.LeastBytes{},
 		// Enable detailed logging for debugging protocol issues
-		Logger:      kafka.LoggerFunc(func(msg string, args ...interface{}) {
+		Logger: kafka.LoggerFunc(func(msg string, args ...interface{}) {
 			if strings.Contains(msg, "error") || strings.Contains(msg, "failed") {
 				fmt.Printf("PRODUCER ERROR: "+msg+"\n", args...)
 			}
