@@ -92,12 +92,12 @@ func TestHandler_ApiVersions(t *testing.T) {
 
 	// Check number of API keys
 	numAPIKeys := binary.BigEndian.Uint32(respBuf[6:10])
-	if numAPIKeys != 3 {
-		t.Errorf("expected 3 API keys, got: %d", numAPIKeys)
+	if numAPIKeys != 5 {
+		t.Errorf("expected 5 API keys, got: %d", numAPIKeys)
 	}
 	
 	// Check API key details: api_key(2) + min_version(2) + max_version(2)
-	if len(respBuf) < 28 { // need space for 3 API keys
+	if len(respBuf) < 40 { // need space for 5 API keys
 		t.Fatalf("response too short for API key data")
 	}
 	
@@ -145,6 +145,36 @@ func TestHandler_ApiVersions(t *testing.T) {
 	if maxVersion3 != 5 {
 		t.Errorf("expected max version 5, got: %d", maxVersion3)
 	}
+	
+	// Fourth API key (CreateTopics)
+	apiKey4 := binary.BigEndian.Uint16(respBuf[28:30])
+	minVersion4 := binary.BigEndian.Uint16(respBuf[30:32])
+	maxVersion4 := binary.BigEndian.Uint16(respBuf[32:34])
+	
+	if apiKey4 != 19 {
+		t.Errorf("expected API key 19, got: %d", apiKey4)
+	}
+	if minVersion4 != 0 {
+		t.Errorf("expected min version 0, got: %d", minVersion4)
+	}
+	if maxVersion4 != 4 {
+		t.Errorf("expected max version 4, got: %d", maxVersion4)
+	}
+	
+	// Fifth API key (DeleteTopics)
+	apiKey5 := binary.BigEndian.Uint16(respBuf[34:36])
+	minVersion5 := binary.BigEndian.Uint16(respBuf[36:38])
+	maxVersion5 := binary.BigEndian.Uint16(respBuf[38:40])
+	
+	if apiKey5 != 20 {
+		t.Errorf("expected API key 20, got: %d", apiKey5)
+	}
+	if minVersion5 != 0 {
+		t.Errorf("expected min version 0, got: %d", minVersion5)
+	}
+	if maxVersion5 != 4 {
+		t.Errorf("expected max version 4, got: %d", maxVersion5)
+	}
 
 	// Close client to end handler
 	client.Close()
@@ -169,7 +199,7 @@ func TestHandler_handleApiVersions(t *testing.T) {
 		t.Fatalf("handleApiVersions: %v", err)
 	}
 	
-	if len(response) < 30 { // minimum expected size (now has 3 API keys)
+	if len(response) < 42 { // minimum expected size (now has 5 API keys)
 		t.Fatalf("response too short: %d bytes", len(response))
 	}
 	
@@ -187,8 +217,8 @@ func TestHandler_handleApiVersions(t *testing.T) {
 	
 	// Check number of API keys
 	numAPIKeys := binary.BigEndian.Uint32(response[6:10])
-	if numAPIKeys != 3 {
-		t.Errorf("expected 3 API keys, got: %d", numAPIKeys)
+	if numAPIKeys != 5 {
+		t.Errorf("expected 5 API keys, got: %d", numAPIKeys)
 	}
 	
 	// Check first API key (ApiVersions)
@@ -207,6 +237,18 @@ func TestHandler_handleApiVersions(t *testing.T) {
 	apiKey3 := binary.BigEndian.Uint16(response[22:24])
 	if apiKey3 != 2 {
 		t.Errorf("third API key: got %d, want 2", apiKey3)
+	}
+	
+	// Check fourth API key (CreateTopics)
+	apiKey4 := binary.BigEndian.Uint16(response[28:30])
+	if apiKey4 != 19 {
+		t.Errorf("fourth API key: got %d, want 19", apiKey4)
+	}
+	
+	// Check fifth API key (DeleteTopics)
+	apiKey5 := binary.BigEndian.Uint16(response[34:36])
+	if apiKey5 != 20 {
+		t.Errorf("fifth API key: got %d, want 20", apiKey5)
 	}
 }
 
