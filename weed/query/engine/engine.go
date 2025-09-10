@@ -1489,6 +1489,8 @@ func (e *SQLEngine) formatOptimization(opt string) string {
 		return "Duplicate Data Avoidance"
 	case "predicate_pushdown":
 		return "WHERE Clause Pushdown"
+	case "column_statistics_pruning":
+		return "Column Statistics File Pruning"
 	case "column_projection":
 		return "Column Selection"
 	case "limit_pushdown":
@@ -2314,6 +2316,23 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 				if parquetStats, err := hybridScanner.ReadParquetStatistics(partitionPath); err == nil {
 					// Prune files by time range with debug logging
 					filteredStats := pruneParquetFilesByTime(ctx, parquetStats, hybridScanner, startTimeNs, stopTimeNs)
+
+					// Further prune by column statistics from WHERE clause
+					if stmt.Where != nil {
+						beforeColumnPrune := len(filteredStats)
+						filteredStats = e.pruneParquetFilesByColumnStats(ctx, filteredStats, stmt.Where.Expr)
+						columnPrunedCount := beforeColumnPrune - len(filteredStats)
+
+						if columnPrunedCount > 0 {
+							if isDebugMode(ctx) {
+								fmt.Printf("Debug: Column statistics pruning skipped %d parquet files in %s\n", columnPrunedCount, partitionPath)
+							}
+							// Track column statistics optimization
+							if !contains(plan.OptimizationsUsed, "column_statistics_pruning") {
+								plan.OptimizationsUsed = append(plan.OptimizationsUsed, "column_statistics_pruning")
+							}
+						}
+					}
 					for _, stats := range filteredStats {
 						parquetFiles = append(parquetFiles, fmt.Sprintf("%s/%s", partitionPath, stats.FileName))
 					}
@@ -2582,8 +2601,147 @@ func pruneParquetFilesByTime(ctx context.Context, parquetStats []*ParquetFileSta
 	return pruned
 }
 
+// pruneParquetFilesByColumnStats filters parquet files based on column statistics and WHERE predicates
+func (e *SQLEngine) pruneParquetFilesByColumnStats(ctx context.Context, parquetStats []*ParquetFileStats, whereExpr ExprNode) []*ParquetFileStats {
+	if whereExpr == nil {
+		return parquetStats
+	}
+
+	var pruned []*ParquetFileStats
+	for _, fs := range parquetStats {
+		if e.canSkipParquetFile(ctx, fs, whereExpr) {
+			if ctx != nil && isDebugMode(ctx) {
+				fmt.Printf("Debug: Skipping parquet file %s due to column statistics pruning\n", fs.FileName)
+			}
+			continue
+		}
+		pruned = append(pruned, fs)
+	}
+	return pruned
+}
+
+// canSkipParquetFile determines if a parquet file can be skipped based on column statistics
+func (e *SQLEngine) canSkipParquetFile(ctx context.Context, fileStats *ParquetFileStats, whereExpr ExprNode) bool {
+	switch expr := whereExpr.(type) {
+	case *ComparisonExpr:
+		return e.canSkipFileByComparison(ctx, fileStats, expr)
+	case *AndExpr:
+		// For AND: skip if ANY condition allows skipping (more aggressive pruning)
+		return e.canSkipParquetFile(ctx, fileStats, expr.Left) || e.canSkipParquetFile(ctx, fileStats, expr.Right)
+	case *OrExpr:
+		// For OR: skip only if ALL conditions allow skipping (conservative)
+		return e.canSkipParquetFile(ctx, fileStats, expr.Left) && e.canSkipParquetFile(ctx, fileStats, expr.Right)
+	default:
+		// Unknown expression type - don't skip
+		return false
+	}
+}
+
+// canSkipFileByComparison checks if a file can be skipped based on a comparison predicate
+func (e *SQLEngine) canSkipFileByComparison(ctx context.Context, fileStats *ParquetFileStats, expr *ComparisonExpr) bool {
+	// Extract column name and comparison value
+	var columnName string
+	var compareValue interface{}
+	var operator string = expr.Operator
+
+	// Determine which side is the column and which is the value
+	if colRef, ok := expr.Left.(*ColName); ok {
+		columnName = colRef.Name.String()
+		if sqlVal, ok := expr.Right.(*SQLVal); ok {
+			compareSchemaValue := e.convertSQLValToSchemaValue(sqlVal)
+			compareValue = e.extractRawValue(compareSchemaValue)
+		} else {
+			return false // Can't optimize complex expressions
+		}
+	} else if colRef, ok := expr.Right.(*ColName); ok {
+		columnName = colRef.Name.String()
+		if sqlVal, ok := expr.Left.(*SQLVal); ok {
+			compareSchemaValue := e.convertSQLValToSchemaValue(sqlVal)
+			compareValue = e.extractRawValue(compareSchemaValue)
+			// Flip operator for reversed comparison
+			operator = e.flipOperator(operator)
+		} else {
+			return false
+		}
+	} else {
+		return false // No column reference found
+	}
+
+	// Get column statistics
+	colStats, exists := fileStats.ColumnStats[columnName]
+	if !exists || colStats == nil {
+		// Try case-insensitive lookup
+		for colName, stats := range fileStats.ColumnStats {
+			if strings.EqualFold(colName, columnName) {
+				colStats = stats
+				exists = true
+				break
+			}
+		}
+	}
+
+	if !exists || colStats == nil || colStats.MinValue == nil || colStats.MaxValue == nil {
+		return false // No statistics available
+	}
+
+	// Convert comparison value to schema value for comparison
+	compareSchemaValue := e.convertRawValueToSchemaValue(compareValue)
+	if compareSchemaValue == nil {
+		return false
+	}
+
+	// Apply pruning logic based on operator
+	switch operator {
+	case ">":
+		// Skip if max(column) <= compareValue
+		return e.compareValues(colStats.MaxValue, compareSchemaValue) <= 0
+	case ">=":
+		// Skip if max(column) < compareValue
+		return e.compareValues(colStats.MaxValue, compareSchemaValue) < 0
+	case "<":
+		// Skip if min(column) >= compareValue
+		return e.compareValues(colStats.MinValue, compareSchemaValue) >= 0
+	case "<=":
+		// Skip if min(column) > compareValue
+		return e.compareValues(colStats.MinValue, compareSchemaValue) > 0
+	case "=":
+		// Skip if compareValue is outside [min, max] range
+		return e.compareValues(compareSchemaValue, colStats.MinValue) < 0 ||
+			e.compareValues(compareSchemaValue, colStats.MaxValue) > 0
+	case "!=", "<>":
+		// Skip if min == max == compareValue (all values are the same and equal to compareValue)
+		return e.compareValues(colStats.MinValue, colStats.MaxValue) == 0 &&
+			e.compareValues(colStats.MinValue, compareSchemaValue) == 0
+	default:
+		return false // Unknown operator
+	}
+}
+
+// flipOperator flips comparison operators when operands are swapped
+func (e *SQLEngine) flipOperator(op string) string {
+	switch op {
+	case ">":
+		return "<"
+	case ">=":
+		return "<="
+	case "<":
+		return ">"
+	case "<=":
+		return ">="
+	case "=", "!=", "<>":
+		return op // These are symmetric
+	default:
+		return op
+	}
+}
+
 // populatePlanFileDetails populates execution plan with detailed file information for partitions
 func (e *SQLEngine) populatePlanFileDetails(ctx context.Context, plan *QueryExecutionPlan, hybridScanner *HybridMessageScanner, partitions []string) {
+	e.populatePlanFileDetailsWithWhere(ctx, plan, hybridScanner, partitions, nil)
+}
+
+// populatePlanFileDetailsWithWhere populates execution plan with detailed file information for partitions, with optional WHERE clause for column pruning
+func (e *SQLEngine) populatePlanFileDetailsWithWhere(ctx context.Context, plan *QueryExecutionPlan, hybridScanner *HybridMessageScanner, partitions []string, whereExpr ExprNode) {
 	// Collect actual file information for each partition
 	var parquetFiles []string
 	var liveLogFiles []string
@@ -2599,6 +2757,10 @@ func (e *SQLEngine) populatePlanFileDetails(ctx context.Context, plan *QueryExec
 		if parquetStats, err := hybridScanner.ReadParquetStatistics(partitionPath); err == nil {
 			// Prune files by time range
 			filteredStats := pruneParquetFilesByTime(ctx, parquetStats, hybridScanner, startTimeNs, stopTimeNs)
+			// Further prune by column statistics from WHERE clause
+			if whereExpr != nil {
+				filteredStats = e.pruneParquetFilesByColumnStats(ctx, filteredStats, whereExpr)
+			}
 			for _, stats := range filteredStats {
 				parquetFiles = append(parquetFiles, fmt.Sprintf("%s/%s", partitionPath, stats.FileName))
 			}
