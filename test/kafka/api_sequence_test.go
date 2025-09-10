@@ -48,7 +48,7 @@ func TestKafkaGateway_APISequence(t *testing.T) {
 	defer writer.Close()
 
 	// Try to write a single message and log the full API sequence
-	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second) // Longer timeout to see all connection attempts
 	defer cancel()
 
 	fmt.Printf("\n=== STARTING kafka-go WRITE ATTEMPT ===\n")

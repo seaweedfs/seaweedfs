@@ -141,7 +141,7 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 		fmt.Printf("DEBUG: [%s] Connection closing\n", connectionID)
 		conn.Close()
 	}()
-	
+
 	fmt.Printf("DEBUG: [%s] New connection established\n", connectionID)
 
 	r := bufio.NewReader(conn)
@@ -399,25 +399,37 @@ func (h *Handler) handleMetadata(correlationID uint32, requestBody []byte) ([]by
 
 	// Parse topics from request (for metadata discovery)
 	requestedTopics := h.parseMetadataTopics(requestBody)
-	// fmt.Printf("DEBUG: Metadata request for topics: %v (empty=all topics)\n", requestedTopics)
+	fmt.Printf("DEBUG: 🔍 METADATA REQUEST - Requested topics: %v (empty=all topics)\n", requestedTopics)
 
 	// Build topics array response - return existing topics only
 	h.topicsMu.RLock()
+	
+	// Debug: Show all available topics
+	availableTopics := make([]string, 0, len(h.topics))
+	for topicName := range h.topics {
+		availableTopics = append(availableTopics, topicName)
+	}
+	fmt.Printf("DEBUG: 📋 AVAILABLE TOPICS: %v\n", availableTopics)
+	
 	var topicsToReturn []string
 	if len(requestedTopics) == 0 {
 		// If no specific topics requested, return all existing topics
 		for topicName := range h.topics {
 			topicsToReturn = append(topicsToReturn, topicName)
 		}
-		// fmt.Printf("DEBUG: Returning all existing topics: %v\n", topicsToReturn)
+		fmt.Printf("DEBUG: 📤 RETURNING all existing topics: %v\n", topicsToReturn)
 	} else {
 		// Return only requested topics that exist
+		fmt.Printf("DEBUG: 🔍 CHECKING requested topics: %v\n", requestedTopics)
 		for _, topicName := range requestedTopics {
 			if _, exists := h.topics[topicName]; exists {
 				topicsToReturn = append(topicsToReturn, topicName)
+				fmt.Printf("DEBUG: ✅ Found requested topic: '%s'\n", topicName)
+			} else {
+				fmt.Printf("DEBUG: ❌ Topic NOT FOUND: '%s'\n", topicName)
 			}
 		}
-		fmt.Printf("DEBUG: Returning requested existing topics: %v\n", topicsToReturn)
+		fmt.Printf("DEBUG: 📤 RETURNING requested existing topics: %v\n", topicsToReturn)
 	}
 	h.topicsMu.RUnlock()
 
@@ -448,11 +460,20 @@ func (h *Handler) handleMetadata(correlationID uint32, requestBody []byte) ([]by
 		// fmt.Printf("DEBUG: Added partitions count: 1\n")
 
 		// Partition 0: error_code(2) + partition_id(4) + leader_id(4) + replicas + isr
-		response = append(response, 0, 0)                   // no error
-		response = append(response, 0, 0, 0, 0)             // partition_id = 0
-		response = append(response, 0, 0, 0, 0)             // leader_id = 0 (this broker)
-		response = append(response, 0, 0, 0, 1, 0, 0, 0, 0) // replicas = [0]
-		response = append(response, 0, 0, 0, 1, 0, 0, 0, 0) // isr = [0]
+		response = append(response, 0, 0)       // no error
+		response = append(response, 0, 0, 0, 0) // partition_id = 0
+		response = append(response, 0, 0, 0, 0) // leader_id = 0 (this broker)
+		
+		// Replicas array: length(4) + broker_ids
+		response = append(response, 0, 0, 0, 1) // replicas count = 1
+		response = append(response, 0, 0, 0, 0) // replica broker_id = 0
+		
+		// ISR (In-Sync Replicas) array: length(4) + broker_ids
+		response = append(response, 0, 0, 0, 1) // isr count = 1  
+		response = append(response, 0, 0, 0, 0) // isr broker_id = 0
+		
+		// Debug: Show detailed partition info
+		fmt.Printf("DEBUG: Partition 0 - leader_id=0, replicas=[0], isr=[0]\n")
 
 		// TEMP: Removed v7+ topic authorized operations for v1 compatibility
 	}
