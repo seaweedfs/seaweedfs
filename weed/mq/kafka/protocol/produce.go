@@ -19,7 +19,7 @@ func (h *Handler) handleProduce(correlationID uint32, apiVersion uint16, request
 func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
 	// DEBUG: Show version being handled
 	fmt.Printf("DEBUG: Handling Produce v%d request\n", apiVersion)
-	
+
 	// DEBUG: Hex dump first 50 bytes to understand actual request format
 	dumpLen := len(requestBody)
 	if dumpLen > 50 {
