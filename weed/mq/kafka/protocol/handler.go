@@ -42,6 +42,10 @@ type Handler struct {
 
 	// Consumer group coordination
 	groupCoordinator *consumer.GroupCoordinator
+	
+	// Dynamic broker address for Metadata responses
+	brokerHost string
+	brokerPort int
 }
 
 // NewHandler creates a new handler in legacy in-memory mode
@@ -51,6 +55,8 @@ func NewHandler() *Handler {
 		ledgers:          make(map[TopicPartitionKey]*offset.Ledger),
 		useSeaweedMQ:     false,
 		groupCoordinator: consumer.NewGroupCoordinator(),
+		brokerHost:       "localhost", // default fallback
+		brokerPort:       9092,        // default fallback
 	}
 }
 
@@ -120,6 +126,12 @@ func (h *Handler) GetLedger(topic string, partition int32) *offset.Ledger {
 	defer h.ledgersMu.RUnlock()
 
 	return h.ledgers[key]
+}
+
+// SetBrokerAddress updates the broker address used in Metadata responses  
+func (h *Handler) SetBrokerAddress(host string, port int) {
+	h.brokerHost = host
+	h.brokerPort = port
 }
 
 // HandleConn processes a single client connection
@@ -358,16 +370,19 @@ func (h *Handler) handleMetadata(correlationID uint32, requestBody []byte) ([]by
 	// Broker 0: node_id(4) + host + port(4) + rack
 	response = append(response, 0, 0, 0, 0) // node_id = 0
 
-	// Use "localhost" for simplicity - kafka-go should be able to connect back
-	// The port issue is more likely the problem than the host
-	host := "localhost"
-
+	// Use dynamic broker address set by the server
+	host := h.brokerHost
+	port := h.brokerPort
+	
+	fmt.Printf("DEBUG: Advertising broker at %s:%d\n", host, port)
+	
 	response = append(response, 0, byte(len(host)))
 	response = append(response, []byte(host)...)
 
-	// Port (4 bytes) - Use standard Kafka port for now
-	// TODO: Should get actual port from server configuration
-	response = append(response, 0, 0, 0x23, 0x84) // 9092 in big-endian
+	// Port (4 bytes) - Use actual gateway port
+	portBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(portBytes, uint32(port))
+	response = append(response, portBytes...)
 
 	// Rack - nullable string, using null (-1 length)
 	response = append(response, 0xFF, 0xFF) // null rack
@@ -423,7 +438,7 @@ func (h *Handler) handleMetadata(correlationID uint32, requestBody []byte) ([]by
 		binary.BigEndian.PutUint16(topicNameLen, uint16(len(topicNameBytes)))
 		response = append(response, topicNameLen...)
 		response = append(response, topicNameBytes...)
-		
+
 		// TEMP: Removed v7+ fields for v1 compatibility
 		// Topic UUID and is_internal_topic removed
 
@@ -437,7 +452,7 @@ func (h *Handler) handleMetadata(correlationID uint32, requestBody []byte) ([]by
 		response = append(response, 0, 0, 0, 0)             // leader_id = 0 (this broker)
 		response = append(response, 0, 0, 0, 1, 0, 0, 0, 0) // replicas = [0]
 		response = append(response, 0, 0, 0, 1, 0, 0, 0, 0) // isr = [0]
-		
+
 		// TEMP: Removed v7+ topic authorized operations for v1 compatibility
 	}
 
