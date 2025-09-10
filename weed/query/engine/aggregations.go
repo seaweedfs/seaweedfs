@@ -659,50 +659,9 @@ func (e *SQLEngine) populateFullScanPlanDetails(ctx context.Context, plan *Query
 	if partitions, discoverErr := e.discoverTopicPartitions(database, tableName); discoverErr == nil {
 		// Add partition paths to execution plan details
 		plan.Details["partition_paths"] = partitions
-
-		// Collect actual file information for each partition
-		var parquetFiles []string
-		var liveLogFiles []string
-		parquetSources := make(map[string]bool)
-
-		// Extract time filters from plan details
-		startTimeNs, stopTimeNs := getTimeFiltersFromPlan(plan)
-
-		for _, partitionPath := range partitions {
-			// Get parquet files for this partition
-			if parquetStats, err := hybridScanner.ReadParquetStatistics(partitionPath); err == nil {
-				// Prune files by time range
-				filteredStats := pruneParquetFilesByTime(parquetStats, hybridScanner, startTimeNs, stopTimeNs)
-				for _, stats := range filteredStats {
-					parquetFiles = append(parquetFiles, fmt.Sprintf("%s/%s", partitionPath, stats.FileName))
-				}
-			}
-
-			// Merge accurate parquet sources from metadata
-			if sources, err := e.getParquetSourceFilesFromMetadata(partitionPath); err == nil {
-				for src := range sources {
-					parquetSources[src] = true
-				}
-			}
-
-			// Get live log files for this partition
-			if liveFiles, err := e.collectLiveLogFileNames(hybridScanner.filerClient, partitionPath); err == nil {
-				for _, fileName := range liveFiles {
-					// Exclude live log files that have been converted to parquet (deduplicated)
-					if parquetSources[fileName] {
-						continue
-					}
-					liveLogFiles = append(liveLogFiles, fmt.Sprintf("%s/%s", partitionPath, fileName))
-				}
-			}
-		}
-
-		if len(parquetFiles) > 0 {
-			plan.Details["parquet_files"] = parquetFiles
-		}
-		if len(liveLogFiles) > 0 {
-			plan.Details["live_log_files"] = liveLogFiles
-		}
+		
+		// Populate detailed file information using shared helper
+		e.populatePlanFileDetails(plan, hybridScanner, partitions)
 	}
 }
 
@@ -831,55 +790,18 @@ func (e *SQLEngine) tryFastParquetAggregationWithPlan(ctx context.Context, hybri
 		// Add file path information from the data collection
 		plan.Details["partition_paths"] = partitions
 
-		// Collect actual file information for each partition
-		var parquetFiles []string
-		var liveLogFiles []string
-		parquetSources := make(map[string]bool)
-
-		// Extract time filters from plan details
-		planStartTimeNs, planStopTimeNs := getTimeFiltersFromPlan(plan)
-
-		for _, partitionPath := range partitions {
-			// Get parquet files for this partition
-			if parquetStats, err := hybridScanner.ReadParquetStatistics(partitionPath); err == nil {
-				// Prune files by time range
-				filteredStats := pruneParquetFilesByTime(parquetStats, hybridScanner, planStartTimeNs, planStopTimeNs)
-				for _, stats := range filteredStats {
-					parquetFiles = append(parquetFiles, fmt.Sprintf("%s/%s", partitionPath, stats.FileName))
-				}
-			}
-
-			// Merge accurate parquet sources from metadata (preferred over filename fallback)
-			if sources, err := e.getParquetSourceFilesFromMetadata(partitionPath); err == nil {
-				for src := range sources {
-					parquetSources[src] = true
-				}
-			}
-
-			// Get live log files for this partition
-			if liveFiles, err := e.collectLiveLogFileNames(hybridScanner.filerClient, partitionPath); err == nil {
-				for _, fileName := range liveFiles {
-					// Exclude live log files that have been converted to parquet (deduplicated)
-					if parquetSources[fileName] {
-						continue
-					}
-					liveLogFiles = append(liveLogFiles, fmt.Sprintf("%s/%s", partitionPath, fileName))
-				}
-			}
-		}
-
-		if len(parquetFiles) > 0 {
-			plan.Details["parquet_files"] = parquetFiles
-		}
-		if len(liveLogFiles) > 0 {
-			plan.Details["live_log_files"] = liveLogFiles
-		}
+		// Populate detailed file information using shared helper
+		e.populatePlanFileDetails(plan, hybridScanner, partitions)
 
 		// Update the dataSources.LiveLogFilesCount to match the actual files found
-		dataSources.LiveLogFilesCount = len(liveLogFiles)
+		if liveLogFiles, ok := plan.Details["live_log_files"].([]string); ok {
+			dataSources.LiveLogFilesCount = len(liveLogFiles)
+		}
 
 		// Also update the plan's LiveLogFilesScanned to match
-		plan.LiveLogFilesScanned = len(liveLogFiles)
+		if liveLogFiles, ok := plan.Details["live_log_files"].([]string); ok {
+			plan.LiveLogFilesScanned = len(liveLogFiles)
+		}
 
 		// Ensure PartitionsScanned is set so Statistics section appears
 		if plan.PartitionsScanned == 0 && len(partitions) > 0 {

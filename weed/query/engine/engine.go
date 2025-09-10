@@ -2594,6 +2594,54 @@ func pruneParquetFilesByTimeWithDebug(ctx context.Context, parquetStats []*Parqu
 	return pruned
 }
 
+// populatePlanFileDetails populates execution plan with detailed file information for partitions
+func (e *SQLEngine) populatePlanFileDetails(plan *QueryExecutionPlan, hybridScanner *HybridMessageScanner, partitions []string) {
+	// Collect actual file information for each partition
+	var parquetFiles []string
+	var liveLogFiles []string
+	parquetSources := make(map[string]bool)
+
+	// Extract time filters from plan details
+	startTimeNs, stopTimeNs := getTimeFiltersFromPlan(plan)
+
+	for _, partitionPath := range partitions {
+		// Get parquet files for this partition
+		if parquetStats, err := hybridScanner.ReadParquetStatistics(partitionPath); err == nil {
+			// Prune files by time range
+			filteredStats := pruneParquetFilesByTime(parquetStats, hybridScanner, startTimeNs, stopTimeNs)
+			for _, stats := range filteredStats {
+				parquetFiles = append(parquetFiles, fmt.Sprintf("%s/%s", partitionPath, stats.FileName))
+			}
+		}
+
+		// Merge accurate parquet sources from metadata
+		if sources, err := e.getParquetSourceFilesFromMetadata(partitionPath); err == nil {
+			for src := range sources {
+				parquetSources[src] = true
+			}
+		}
+
+		// Get live log files for this partition
+		if liveFiles, err := e.collectLiveLogFileNames(hybridScanner.filerClient, partitionPath); err == nil {
+			for _, fileName := range liveFiles {
+				// Exclude live log files that have been converted to parquet (deduplicated)
+				if parquetSources[fileName] {
+					continue
+				}
+				liveLogFiles = append(liveLogFiles, fmt.Sprintf("%s/%s", partitionPath, fileName))
+			}
+		}
+	}
+
+	// Add file lists to plan details
+	if len(parquetFiles) > 0 {
+		plan.Details["parquet_files"] = parquetFiles
+	}
+	if len(liveLogFiles) > 0 {
+		plan.Details["live_log_files"] = liveLogFiles
+	}
+}
+
 // isSQLTypeTimestamp checks if a SQL type string represents a timestamp type
 func (e *SQLEngine) isSQLTypeTimestamp(sqlType string) bool {
 	upperType := strings.ToUpper(strings.TrimSpace(sqlType))
