@@ -2308,7 +2308,7 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 				// Get parquet files for this partition
 				if parquetStats, err := hybridScanner.ReadParquetStatistics(partitionPath); err == nil {
 					// Prune files by time range with debug logging
-					filteredStats := pruneParquetFilesByTimeWithDebug(ctx, parquetStats, hybridScanner, startTimeNs, stopTimeNs)
+					filteredStats := pruneParquetFilesByTime(ctx, parquetStats, hybridScanner, startTimeNs, stopTimeNs)
 					for _, stats := range filteredStats {
 						parquetFiles = append(parquetFiles, fmt.Sprintf("%s/%s", partitionPath, stats.FileName))
 					}
@@ -2535,8 +2535,8 @@ func getTimeFiltersFromPlan(plan *QueryExecutionPlan) (startTimeNs, stopTimeNs i
 	return
 }
 
-// pruneParquetFilesByTime filters parquet files based on timestamp ranges
-func pruneParquetFilesByTime(parquetStats []*ParquetFileStats, hybridScanner *HybridMessageScanner, startTimeNs, stopTimeNs int64) []*ParquetFileStats {
+// pruneParquetFilesByTime filters parquet files based on timestamp ranges, with optional debug logging
+func pruneParquetFilesByTime(ctx context.Context, parquetStats []*ParquetFileStats, hybridScanner *HybridMessageScanner, startTimeNs, stopTimeNs int64) []*ParquetFileStats {
 	if startTimeNs == 0 && stopTimeNs == 0 {
 		return parquetStats
 	}
@@ -2549,44 +2549,20 @@ func pruneParquetFilesByTime(parquetStats []*ParquetFileStats, hybridScanner *Hy
 	}
 
 	for _, fs := range parquetStats {
-		if minNs, maxNs, ok := hybridScanner.getTimestampRangeFromStats(fs); ok {
-			if qStop < minNs || (qStart != 0 && qStart > maxNs) {
-				continue
-			}
-		}
-		pruned = append(pruned, fs)
-	}
-	return pruned
-}
-
-// pruneParquetFilesByTimeWithDebug filters parquet files based on timestamp ranges with debug logging
-func pruneParquetFilesByTimeWithDebug(ctx context.Context, parquetStats []*ParquetFileStats, hybridScanner *HybridMessageScanner, startTimeNs, stopTimeNs int64) []*ParquetFileStats {
-	if startTimeNs == 0 && stopTimeNs == 0 {
-		return parquetStats
-	}
-
-	var pruned []*ParquetFileStats
-	qStart := startTimeNs
-	qStop := stopTimeNs
-	if qStop == 0 {
-		qStop = math.MaxInt64
-	}
-
-	for _, fs := range parquetStats {
-		if isDebugMode(ctx) {
+		if ctx != nil && isDebugMode(ctx) {
 			fmt.Printf("Debug: Checking parquet file %s for pruning\n", fs.FileName)
 		}
 		if minNs, maxNs, ok := hybridScanner.getTimestampRangeFromStats(fs); ok {
-			if isDebugMode(ctx) {
+			if ctx != nil && isDebugMode(ctx) {
 				fmt.Printf("Debug: Prune check parquet %s min=%d max=%d qStart=%d qStop=%d\n", fs.FileName, minNs, maxNs, qStart, qStop)
 			}
 			if qStop < minNs || (qStart != 0 && qStart > maxNs) {
-				if isDebugMode(ctx) {
+				if ctx != nil && isDebugMode(ctx) {
 					fmt.Printf("Debug: Skipping parquet file %s due to no time overlap\n", fs.FileName)
 				}
 				continue
 			}
-		} else if isDebugMode(ctx) {
+		} else if ctx != nil && isDebugMode(ctx) {
 			fmt.Printf("Debug: No stats range available for parquet %s, cannot prune\n", fs.FileName)
 		}
 		pruned = append(pruned, fs)
@@ -2595,7 +2571,7 @@ func pruneParquetFilesByTimeWithDebug(ctx context.Context, parquetStats []*Parqu
 }
 
 // populatePlanFileDetails populates execution plan with detailed file information for partitions
-func (e *SQLEngine) populatePlanFileDetails(plan *QueryExecutionPlan, hybridScanner *HybridMessageScanner, partitions []string) {
+func (e *SQLEngine) populatePlanFileDetails(ctx context.Context, plan *QueryExecutionPlan, hybridScanner *HybridMessageScanner, partitions []string) {
 	// Collect actual file information for each partition
 	var parquetFiles []string
 	var liveLogFiles []string
@@ -2608,7 +2584,7 @@ func (e *SQLEngine) populatePlanFileDetails(plan *QueryExecutionPlan, hybridScan
 		// Get parquet files for this partition
 		if parquetStats, err := hybridScanner.ReadParquetStatistics(partitionPath); err == nil {
 			// Prune files by time range
-			filteredStats := pruneParquetFilesByTime(parquetStats, hybridScanner, startTimeNs, stopTimeNs)
+			filteredStats := pruneParquetFilesByTime(ctx, parquetStats, hybridScanner, startTimeNs, stopTimeNs)
 			for _, stats := range filteredStats {
 				parquetFiles = append(parquetFiles, fmt.Sprintf("%s/%s", partitionPath, stats.FileName))
 			}

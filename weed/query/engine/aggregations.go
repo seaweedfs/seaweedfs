@@ -132,7 +132,7 @@ func (opt *FastPathOptimizer) CollectDataSourcesWithTimeFilter(ctx context.Conte
 			}
 		} else {
 			// Prune by time range using parquet column statistics
-			filtered := pruneParquetFilesByTime(parquetStats, hybridScanner, startTimeNs, stopTimeNs)
+			filtered := pruneParquetFilesByTime(ctx, parquetStats, hybridScanner, startTimeNs, stopTimeNs)
 			dataSources.ParquetFiles[partitionPath] = filtered
 			partitionParquetRows := int64(0)
 			for _, stat := range filtered {
@@ -659,9 +659,9 @@ func (e *SQLEngine) populateFullScanPlanDetails(ctx context.Context, plan *Query
 	if partitions, discoverErr := e.discoverTopicPartitions(database, tableName); discoverErr == nil {
 		// Add partition paths to execution plan details
 		plan.Details["partition_paths"] = partitions
-		
+
 		// Populate detailed file information using shared helper
-		e.populatePlanFileDetails(plan, hybridScanner, partitions)
+		e.populatePlanFileDetails(ctx, plan, hybridScanner, partitions)
 	}
 }
 
@@ -791,7 +791,7 @@ func (e *SQLEngine) tryFastParquetAggregationWithPlan(ctx context.Context, hybri
 		plan.Details["partition_paths"] = partitions
 
 		// Populate detailed file information using shared helper
-		e.populatePlanFileDetails(plan, hybridScanner, partitions)
+		e.populatePlanFileDetails(ctx, plan, hybridScanner, partitions)
 
 		// Update the dataSources.LiveLogFilesCount to match the actual files found
 		if liveLogFiles, ok := plan.Details["live_log_files"].([]string); ok {
