@@ -233,6 +233,8 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 			response, err = h.handleOffsetCommit(correlationID, messageBuf[8:]) // skip header
 		case 9: // OffsetFetch
 			response, err = h.handleOffsetFetch(correlationID, messageBuf[8:]) // skip header
+		case 10: // FindCoordinator
+			response, err = h.handleFindCoordinator(correlationID, messageBuf[8:]) // skip header
 		case 12: // Heartbeat
 			response, err = h.handleHeartbeat(correlationID, messageBuf[8:]) // skip header
 		case 13: // LeaveGroup
@@ -286,7 +288,7 @@ func (h *Handler) handleApiVersions(correlationID uint32) ([]byte, error) {
 	response = append(response, 0, 0)
 
 	// Number of API keys (compact array format in newer versions, but using basic format for simplicity)
-	response = append(response, 0, 0, 0, 13) // 13 API keys
+	response = append(response, 0, 0, 0, 14) // 14 API keys
 
 	// API Key 18 (ApiVersions): api_key(2) + min_version(2) + max_version(2)
 	response = append(response, 0, 18) // API key 18
@@ -345,6 +347,11 @@ func (h *Handler) handleApiVersions(correlationID uint32) ([]byte, error) {
 	response = append(response, 0, 9) // API key 9
 	response = append(response, 0, 0) // min version 0
 	response = append(response, 0, 8) // max version 8
+
+	// API Key 10 (FindCoordinator): api_key(2) + min_version(2) + max_version(2)
+	response = append(response, 0, 10) // API key 10
+	response = append(response, 0, 0)  // min version 0
+	response = append(response, 0, 4)  // max version 4
 
 	// API Key 12 (Heartbeat): api_key(2) + min_version(2) + max_version(2)
 	response = append(response, 0, 12) // API key 12
@@ -487,7 +494,7 @@ func (h *Handler) HandleMetadataV1(correlationID uint32, requestBody []byte) ([]
 	// Rack (NULLABLE_STRING) - null (-1 length, 2 bytes)
 	response = append(response, 0xFF, 0xFF)
 
-	// Cluster ID (NULLABLE_STRING) - null (-1 length, 2 bytes)  
+	// Cluster ID (NULLABLE_STRING) - null (-1 length, 2 bytes)
 	response = append(response, 0xFF, 0xFF)
 
 	// Controller ID (4 bytes) - -1 (no controller)
@@ -1026,6 +1033,7 @@ func (h *Handler) validateAPIVersion(apiKey, apiVersion uint16) error {
 		2:  {0, 5}, // ListOffsets: v0-v5
 		19: {0, 4}, // CreateTopics: v0-v4
 		20: {0, 4}, // DeleteTopics: v0-v4
+		10: {0, 4}, // FindCoordinator: v0-v4
 		11: {0, 7}, // JoinGroup: v0-v7
 		14: {0, 5}, // SyncGroup: v0-v5
 		8:  {0, 8}, // OffsetCommit: v0-v8
@@ -1094,6 +1102,8 @@ func getAPIName(apiKey uint16) string {
 		return "OffsetCommit"
 	case 9:
 		return "OffsetFetch"
+	case 10:
+		return "FindCoordinator"
 	case 11:
 		return "JoinGroup"
 	case 12:
