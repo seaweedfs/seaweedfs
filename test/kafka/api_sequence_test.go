@@ -31,17 +31,18 @@ func TestKafkaGateway_APISequence(t *testing.T) {
 	handler := srv.GetHandler()
 	handler.AddTopicForTesting(topicName, 1)
 
-	// Create a writer and try to write a single message
+	// Create a writer and try to write a single message  
 	writer := &kafka.Writer{
 		Addr:         kafka.TCP(brokerAddr),
 		Topic:        topicName,
 		WriteTimeout: 15 * time.Second,
 		ReadTimeout:  15 * time.Second,
+		// Enable ALL kafka-go logging to see internal validation issues
 		Logger: kafka.LoggerFunc(func(msg string, args ...interface{}) {
-			fmt.Printf("KAFKA-GO WRITER LOG: "+msg+"\n", args...)
+			fmt.Printf("KAFKA-GO LOG: "+msg+"\n", args...)
 		}),
 		ErrorLogger: kafka.LoggerFunc(func(msg string, args ...interface{}) {
-			fmt.Printf("KAFKA-GO WRITER ERROR: "+msg+"\n", args...)
+			fmt.Printf("KAFKA-GO ERROR: "+msg+"\n", args...)
 		}),
 	}
 	defer writer.Close()

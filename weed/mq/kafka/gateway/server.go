@@ -132,19 +132,21 @@ func (s *Server) GetListenerAddr() (string, int) {
 	}
 	
 	addr := s.ln.Addr().String()
-	// Parse [::]:port or host:port format
+	// Parse [::]:port or host:port format - use exact match for kafka-go compatibility
 	if strings.HasPrefix(addr, "[::]:") {
 		port := strings.TrimPrefix(addr, "[::]:") 
 		if p, err := strconv.Atoi(port); err == nil {
-			return "localhost", p
+			// Revert to 127.0.0.1 for broader compatibility  
+			return "127.0.0.1", p
 		}
 	}
 	
 	// Handle host:port format
 	if host, port, err := net.SplitHostPort(addr); err == nil {
 		if p, err := strconv.Atoi(port); err == nil {
+			// Use 127.0.0.1 instead of localhost for better kafka-go compatibility
 			if host == "::" || host == "" {
-				host = "localhost"
+				host = "127.0.0.1"
 			}
 			return host, p
 		}

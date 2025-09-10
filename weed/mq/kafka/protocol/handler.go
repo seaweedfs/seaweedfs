@@ -42,7 +42,7 @@ type Handler struct {
 
 	// Consumer group coordination
 	groupCoordinator *consumer.GroupCoordinator
-	
+
 	// Dynamic broker address for Metadata responses
 	brokerHost string
 	brokerPort int
@@ -128,7 +128,7 @@ func (h *Handler) GetLedger(topic string, partition int32) *offset.Ledger {
 	return h.ledgers[key]
 }
 
-// SetBrokerAddress updates the broker address used in Metadata responses  
+// SetBrokerAddress updates the broker address used in Metadata responses
 func (h *Handler) SetBrokerAddress(host string, port int) {
 	h.brokerHost = host
 	h.brokerPort = port
@@ -136,12 +136,13 @@ func (h *Handler) SetBrokerAddress(host string, port int) {
 
 // HandleConn processes a single client connection
 func (h *Handler) HandleConn(conn net.Conn) error {
+	connectionID := fmt.Sprintf("%s->%s", conn.RemoteAddr(), conn.LocalAddr())
 	defer func() {
-		fmt.Printf("DEBUG: Closing connection from %s\n", conn.RemoteAddr())
+		fmt.Printf("DEBUG: [%s] Connection closing\n", connectionID)
 		conn.Close()
 	}()
-
-	fmt.Printf("DEBUG: New connection from %s\n", conn.RemoteAddr())
+	
+	fmt.Printf("DEBUG: [%s] New connection established\n", connectionID)
 
 	r := bufio.NewReader(conn)
 	w := bufio.NewWriter(conn)
@@ -373,9 +374,9 @@ func (h *Handler) handleMetadata(correlationID uint32, requestBody []byte) ([]by
 	// Use dynamic broker address set by the server
 	host := h.brokerHost
 	port := h.brokerPort
-	
+
 	fmt.Printf("DEBUG: Advertising broker at %s:%d\n", host, port)
-	
+
 	response = append(response, 0, byte(len(host)))
 	response = append(response, []byte(host)...)
 
