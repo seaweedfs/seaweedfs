@@ -629,10 +629,7 @@ func (e *SQLEngine) executeAggregationQueryWithPlan(ctx context.Context, hybridS
 // populateFullScanPlanDetails populates detailed plan information for full scan queries
 // This provides consistency with fast path execution plan details
 func (e *SQLEngine) populateFullScanPlanDetails(ctx context.Context, plan *QueryExecutionPlan, hybridScanner *HybridMessageScanner, stmt *SelectStatement) {
-	// Initialize plan details if not already done
-	if plan.Details == nil {
-		plan.Details = make(map[string]interface{})
-	}
+	// plan.Details is initialized at the start of the SELECT execution
 
 	// Extract table information
 	var database, tableName string
@@ -662,6 +659,9 @@ func (e *SQLEngine) populateFullScanPlanDetails(ctx context.Context, plan *Query
 
 		// Populate detailed file information using shared helper
 		e.populatePlanFileDetails(ctx, plan, hybridScanner, partitions)
+	} else {
+		// Record discovery error to plan for better diagnostics
+		plan.Details["error_partition_discovery"] = discoverErr.Error()
 	}
 }
 

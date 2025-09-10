@@ -1540,6 +1540,10 @@ func (e *SQLEngine) executeDDLStatement(ctx context.Context, stmt *DDLStatement)
 
 // executeSelectStatementWithPlan handles SELECT queries with execution plan tracking
 func (e *SQLEngine) executeSelectStatementWithPlan(ctx context.Context, stmt *SelectStatement, plan *QueryExecutionPlan) (*QueryResult, error) {
+	// Initialize plan details once
+	if plan != nil && plan.Details == nil {
+		plan.Details = make(map[string]interface{})
+	}
 	// Parse aggregations to populate plan
 	var aggregations []AggregationSpec
 	hasAggregations := false
@@ -2304,6 +2308,7 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 			parquetSources := make(map[string]bool)
 
 			var parquetReadErrors []string
+			var liveLogListErrors []string
 			for _, partitionPath := range partitions {
 				// Get parquet files for this partition
 				if parquetStats, err := hybridScanner.ReadParquetStatistics(partitionPath); err == nil {
@@ -2313,8 +2318,10 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 						parquetFiles = append(parquetFiles, fmt.Sprintf("%s/%s", partitionPath, stats.FileName))
 					}
 				} else {
-					// Collect parquet statistics reading errors
 					parquetReadErrors = append(parquetReadErrors, fmt.Sprintf("%s: %s", partitionPath, err.Error()))
+					if isDebugMode(ctx) {
+						fmt.Printf("Debug: Failed to read parquet statistics in %s: %v\n", partitionPath, err)
+					}
 				}
 
 				// Merge accurate parquet sources from metadata
@@ -2333,8 +2340,11 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 						}
 						liveLogFiles = append(liveLogFiles, fmt.Sprintf("%s/%s", partitionPath, fileName))
 					}
-				} else if isDebugMode(ctx) {
-					fmt.Printf("Debug: Failed to list live log files in %s: %v\n", partitionPath, err)
+				} else {
+					liveLogListErrors = append(liveLogListErrors, fmt.Sprintf("%s: %v", partitionPath, err))
+					if isDebugMode(ctx) {
+						fmt.Printf("Debug: Failed to list live log files in %s: %v\n", partitionPath, err)
+					}
 				}
 			}
 
@@ -2347,6 +2357,9 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 			if len(parquetReadErrors) > 0 {
 				plan.Details["error_parquet_statistics"] = parquetReadErrors
 			}
+			if len(liveLogListErrors) > 0 {
+				plan.Details["error_live_log_listing"] = liveLogListErrors
+			}
 
 			// Update scan statistics for execution plan display
 			plan.PartitionsScanned = len(partitions)
@@ -2354,9 +2367,6 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 			plan.LiveLogFilesScanned = len(liveLogFiles)
 		} else {
 			// Handle partition discovery error
-			if plan.Details == nil {
-				plan.Details = make(map[string]interface{})
-			}
 			plan.Details["error_partition_discovery"] = discoverErr.Error()
 		}
 	} else {
@@ -2578,6 +2588,8 @@ func (e *SQLEngine) populatePlanFileDetails(ctx context.Context, plan *QueryExec
 	var parquetFiles []string
 	var liveLogFiles []string
 	parquetSources := make(map[string]bool)
+	var parquetReadErrors []string
+	var liveLogListErrors []string
 
 	// Extract time filters from plan details
 	startTimeNs, stopTimeNs := getTimeFiltersFromPlan(plan)
@@ -2590,8 +2602,11 @@ func (e *SQLEngine) populatePlanFileDetails(ctx context.Context, plan *QueryExec
 			for _, stats := range filteredStats {
 				parquetFiles = append(parquetFiles, fmt.Sprintf("%s/%s", partitionPath, stats.FileName))
 			}
-		} else if isDebugMode(ctx) {
-			fmt.Printf("Debug: Failed to read parquet statistics in %s: %v\n", partitionPath, err)
+		} else {
+			parquetReadErrors = append(parquetReadErrors, fmt.Sprintf("%s: %v", partitionPath, err))
+			if isDebugMode(ctx) {
+				fmt.Printf("Debug: Failed to read parquet statistics in %s: %v\n", partitionPath, err)
+			}
 		}
 
 		// Merge accurate parquet sources from metadata
@@ -2610,8 +2625,11 @@ func (e *SQLEngine) populatePlanFileDetails(ctx context.Context, plan *QueryExec
 				}
 				liveLogFiles = append(liveLogFiles, fmt.Sprintf("%s/%s", partitionPath, fileName))
 			}
-		} else if isDebugMode(ctx) {
-			fmt.Printf("Debug: Failed to list live log files in %s: %v\n", partitionPath, err)
+		} else {
+			liveLogListErrors = append(liveLogListErrors, fmt.Sprintf("%s: %v", partitionPath, err))
+			if isDebugMode(ctx) {
+				fmt.Printf("Debug: Failed to list live log files in %s: %v\n", partitionPath, err)
+			}
 		}
 	}
 
@@ -2621,6 +2639,12 @@ func (e *SQLEngine) populatePlanFileDetails(ctx context.Context, plan *QueryExec
 	}
 	if len(liveLogFiles) > 0 {
 		plan.Details["live_log_files"] = liveLogFiles
+	}
+	if len(parquetReadErrors) > 0 {
+		plan.Details["error_parquet_statistics"] = parquetReadErrors
+	}
+	if len(liveLogListErrors) > 0 {
+		plan.Details["error_live_log_listing"] = liveLogListErrors
 	}
 }
 
