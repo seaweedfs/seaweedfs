@@ -7,6 +7,13 @@ import (
 )
 
 func (h *Handler) handleProduce(correlationID uint32, requestBody []byte) ([]byte, error) {
+	// DEBUG: Hex dump first 50 bytes to understand actual request format
+	dumpLen := len(requestBody)
+	if dumpLen > 50 {
+		dumpLen = 50
+	}
+	fmt.Printf("DEBUG: Produce request hex dump (first %d bytes): %x\n", dumpLen, requestBody[:dumpLen])
+
 	// Parse minimal Produce request
 	// Request format: client_id + acks(2) + timeout(4) + topics_array
 
@@ -16,7 +23,15 @@ func (h *Handler) handleProduce(correlationID uint32, requestBody []byte) ([]byt
 
 	// Skip client_id
 	clientIDSize := binary.BigEndian.Uint16(requestBody[0:2])
+	fmt.Printf("DEBUG: Client ID size: %d\n", clientIDSize)
+	
+	if len(requestBody) < 2+int(clientIDSize) {
+		return nil, fmt.Errorf("Produce request client_id too short")
+	}
+	
+	clientID := string(requestBody[2 : 2+int(clientIDSize)])
 	offset := 2 + int(clientIDSize)
+	fmt.Printf("DEBUG: Client ID: '%s', offset after client_id: %d\n", clientID, offset)
 
 	if len(requestBody) < offset+10 { // acks(2) + timeout(4) + topics_count(4)
 		return nil, fmt.Errorf("Produce request missing data")
@@ -25,12 +40,16 @@ func (h *Handler) handleProduce(correlationID uint32, requestBody []byte) ([]byt
 	// Parse acks and timeout
 	acks := int16(binary.BigEndian.Uint16(requestBody[offset : offset+2]))
 	offset += 2
+	fmt.Printf("DEBUG: Acks: %d, offset after acks: %d\n", acks, offset)
+	
 	timeout := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 	offset += 4
+	fmt.Printf("DEBUG: Timeout: %d, offset after timeout: %d\n", timeout, offset)
 	_ = timeout // unused for now
 
 	topicsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 	offset += 4
+	fmt.Printf("DEBUG: Topics count: %d, offset after topics_count: %d\n", topicsCount, offset)
 
 	response := make([]byte, 0, 1024)
 
@@ -185,11 +204,7 @@ func (h *Handler) handleProduce(correlationID uint32, requestBody []byte) ([]byt
 	// Add throttle time at the end (4 bytes)
 	response = append(response, 0, 0, 0, 0)
 
-	// If acks=0, return empty response (fire and forget)
-	if acks == 0 {
-		return []byte{}, nil
-	}
-
+	// Even for acks=0, kafka-go expects a minimal response structure
 	return response, nil
 }
 

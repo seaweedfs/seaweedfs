@@ -202,7 +202,8 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 		case 18: // ApiVersions
 			response, err = h.handleApiVersions(correlationID)
 		case 3: // Metadata
-			response, err = h.handleMetadata(correlationID, messageBuf[8:]) // skip header
+			// For now, serve Metadata v0 to avoid version mismatches
+			response, err = h.handleMetadataV0(correlationID, messageBuf[8:])
 		case 2: // ListOffsets
 			response, err = h.handleListOffsets(correlationID, messageBuf[8:]) // skip header
 		case 19: // CreateTopics
@@ -283,10 +284,10 @@ func (h *Handler) handleApiVersions(correlationID uint32) ([]byte, error) {
 	response = append(response, 0, 3)  // max version 3
 
 	// API Key 3 (Metadata): api_key(2) + min_version(2) + max_version(2)
-	// TEMP: Limit to v1 to test if issue is v7-specific
+	// Strictly advertise v0 to ensure response matches client expectation
 	response = append(response, 0, 3) // API key 3
 	response = append(response, 0, 0) // min version 0
-	response = append(response, 0, 1) // max version 1 (instead of 7)
+	response = append(response, 0, 0) // max version 0
 
 	// API Key 2 (ListOffsets): api_key(2) + min_version(2) + max_version(2)
 	response = append(response, 0, 2) // API key 2
@@ -304,9 +305,10 @@ func (h *Handler) handleApiVersions(correlationID uint32) ([]byte, error) {
 	response = append(response, 0, 4)  // max version 4
 
 	// API Key 0 (Produce): api_key(2) + min_version(2) + max_version(2)
+	// Advertise v1 to get simpler request format from kafka-go
 	response = append(response, 0, 0) // API key 0
 	response = append(response, 0, 0) // min version 0
-	response = append(response, 0, 7) // max version 7
+	response = append(response, 0, 1) // max version 1 (simplified parsing)
 
 	// API Key 1 (Fetch): api_key(2) + min_version(2) + max_version(2)
 	response = append(response, 0, 1)  // API key 1
@@ -346,6 +348,99 @@ func (h *Handler) handleApiVersions(correlationID uint32) ([]byte, error) {
 	// Throttle time (4 bytes, 0 = no throttling)
 	response = append(response, 0, 0, 0, 0)
 
+	return response, nil
+}
+
+// handleMetadataV0 implements the Metadata API response in version 0 format.
+// v0 response layout:
+// correlation_id(4) + brokers(ARRAY) + topics(ARRAY)
+// broker: node_id(4) + host(STRING) + port(4)
+// topic: error_code(2) + name(STRING) + partitions(ARRAY)
+// partition: error_code(2) + partition_id(4) + leader(4) + replicas(ARRAY<int32>) + isr(ARRAY<int32>)
+func (h *Handler) handleMetadataV0(correlationID uint32, requestBody []byte) ([]byte, error) {
+	response := make([]byte, 0, 256)
+
+	// Correlation ID
+	correlationIDBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
+	response = append(response, correlationIDBytes...)
+
+	// Brokers array length (4 bytes) - 1 broker (this gateway)
+	response = append(response, 0, 0, 0, 1)
+
+	// Broker 0: node_id(4) + host(STRING) + port(4)
+	response = append(response, 0, 0, 0, 0) // node_id = 0
+
+	// Use dynamic broker address set by the server
+	host := h.brokerHost
+	port := h.brokerPort
+	fmt.Printf("DEBUG: Advertising broker (v0) at %s:%d\n", host, port)
+
+	// Host (STRING: 2 bytes length + bytes)
+	hostLen := uint16(len(host))
+	response = append(response, byte(hostLen>>8), byte(hostLen))
+	response = append(response, []byte(host)...)
+
+	// Port (4 bytes)
+	portBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(portBytes, uint32(port))
+	response = append(response, portBytes...)
+
+	// Parse requested topics (empty means all)
+	requestedTopics := h.parseMetadataTopics(requestBody)
+	fmt.Printf("DEBUG: 🔍 METADATA v0 REQUEST - Requested: %v (empty=all)\n", requestedTopics)
+
+	// Determine topics to return
+	h.topicsMu.RLock()
+	var topicsToReturn []string
+	if len(requestedTopics) == 0 {
+		topicsToReturn = make([]string, 0, len(h.topics))
+		for name := range h.topics {
+			topicsToReturn = append(topicsToReturn, name)
+		}
+	} else {
+		for _, name := range requestedTopics {
+			if _, exists := h.topics[name]; exists {
+				topicsToReturn = append(topicsToReturn, name)
+			}
+		}
+	}
+	h.topicsMu.RUnlock()
+
+	// Topics array length (4 bytes)
+	topicsCountBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(topicsCountBytes, uint32(len(topicsToReturn)))
+	response = append(response, topicsCountBytes...)
+
+	// Topic entries
+	for _, topicName := range topicsToReturn {
+		// error_code(2) = 0
+		response = append(response, 0, 0)
+
+		// name (STRING)
+		nameBytes := []byte(topicName)
+		nameLen := uint16(len(nameBytes))
+		response = append(response, byte(nameLen>>8), byte(nameLen))
+		response = append(response, nameBytes...)
+
+		// partitions array length (4 bytes) - 1 partition
+		response = append(response, 0, 0, 0, 1)
+
+		// partition: error_code(2) + partition_id(4) + leader(4)
+		response = append(response, 0, 0)       // error_code
+		response = append(response, 0, 0, 0, 0) // partition_id = 0
+		response = append(response, 0, 0, 0, 0) // leader = 0 (this broker)
+
+		// replicas: array length(4) + one broker id (0)
+		response = append(response, 0, 0, 0, 1)
+		response = append(response, 0, 0, 0, 0)
+
+		// isr: array length(4) + one broker id (0)
+		response = append(response, 0, 0, 0, 1)
+		response = append(response, 0, 0, 0, 0)
+	}
+
+	fmt.Printf("DEBUG: Metadata v0 response for %d topics: %v\n", len(topicsToReturn), topicsToReturn)
 	return response, nil
 }
 
@@ -403,14 +498,14 @@ func (h *Handler) handleMetadata(correlationID uint32, requestBody []byte) ([]by
 
 	// Build topics array response - return existing topics only
 	h.topicsMu.RLock()
-	
+
 	// Debug: Show all available topics
 	availableTopics := make([]string, 0, len(h.topics))
 	for topicName := range h.topics {
 		availableTopics = append(availableTopics, topicName)
 	}
 	fmt.Printf("DEBUG: 📋 AVAILABLE TOPICS: %v\n", availableTopics)
-	
+
 	var topicsToReturn []string
 	if len(requestedTopics) == 0 {
 		// If no specific topics requested, return all existing topics
@@ -463,15 +558,15 @@ func (h *Handler) handleMetadata(correlationID uint32, requestBody []byte) ([]by
 		response = append(response, 0, 0)       // no error
 		response = append(response, 0, 0, 0, 0) // partition_id = 0
 		response = append(response, 0, 0, 0, 0) // leader_id = 0 (this broker)
-		
+
 		// Replicas array: length(4) + broker_ids
 		response = append(response, 0, 0, 0, 1) // replicas count = 1
 		response = append(response, 0, 0, 0, 0) // replica broker_id = 0
-		
+
 		// ISR (In-Sync Replicas) array: length(4) + broker_ids
-		response = append(response, 0, 0, 0, 1) // isr count = 1  
+		response = append(response, 0, 0, 0, 1) // isr count = 1
 		response = append(response, 0, 0, 0, 0) // isr broker_id = 0
-		
+
 		// Debug: Show detailed partition info
 		fmt.Printf("DEBUG: Partition 0 - leader_id=0, replicas=[0], isr=[0]\n")
 
