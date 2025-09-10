@@ -64,10 +64,19 @@ func (h *Handler) handleProduce(correlationID uint32, requestBody []byte) ([]byt
 		// Parse partitions count
 		partitionsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 		offset += 4
+		
+		fmt.Printf("DEBUG: Produce request for topic '%s' (%d partitions)\n", topicName, partitionsCount)
 
 		// Check if topic exists, auto-create if it doesn't (simulates auto.create.topics.enable=true)
 		h.topicsMu.Lock()
 		_, topicExists := h.topics[topicName]
+		
+		// Debug: show all existing topics
+		existingTopics := make([]string, 0, len(h.topics))
+		for tName := range h.topics {
+			existingTopics = append(existingTopics, tName)
+		}
+		fmt.Printf("DEBUG: Topic exists check: '%s' -> %v (existing topics: %v)\n", topicName, topicExists, existingTopics)
 		if !topicExists {
 			fmt.Printf("DEBUG: Auto-creating topic during Produce: %s\n", topicName)
 			h.topics[topicName] = &TopicInfo{
@@ -77,7 +86,8 @@ func (h *Handler) handleProduce(correlationID uint32, requestBody []byte) ([]byt
 			}
 			// Initialize ledger for partition 0
 			h.GetOrCreateLedger(topicName, 0)
-			topicExists = true
+			topicExists = true  // CRITICAL FIX: Update the flag after creating the topic
+			fmt.Printf("DEBUG: Topic '%s' auto-created successfully, topicExists = %v\n", topicName, topicExists)
 		}
 		h.topicsMu.Unlock()
 
@@ -118,9 +128,13 @@ func (h *Handler) handleProduce(correlationID uint32, requestBody []byte) ([]byt
 			var baseOffset int64 = 0
 			currentTime := time.Now().UnixNano()
 
+			fmt.Printf("DEBUG: Processing partition %d for topic '%s' (topicExists=%v)\n", partitionID, topicName, topicExists)
+
 			if !topicExists {
+				fmt.Printf("DEBUG: ERROR - Topic '%s' not found, returning UNKNOWN_TOPIC_OR_PARTITION\n", topicName)
 				errorCode = 3 // UNKNOWN_TOPIC_OR_PARTITION
 			} else {
+				fmt.Printf("DEBUG: SUCCESS - Topic '%s' found, processing record set (size=%d)\n", topicName, recordSetSize)
 				// Process the record set
 				recordCount, totalSize, parseErr := h.parseRecordSet(recordSetData)
 				if parseErr != nil {

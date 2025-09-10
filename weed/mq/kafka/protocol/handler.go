@@ -124,7 +124,12 @@ func (h *Handler) GetLedger(topic string, partition int32) *offset.Ledger {
 
 // HandleConn processes a single client connection
 func (h *Handler) HandleConn(conn net.Conn) error {
-	defer conn.Close()
+	defer func() {
+		fmt.Printf("DEBUG: Closing connection from %s\n", conn.RemoteAddr())
+		conn.Close()
+	}()
+
+	fmt.Printf("DEBUG: New connection from %s\n", conn.RemoteAddr())
 
 	r := bufio.NewReader(conn)
 	w := bufio.NewWriter(conn)
@@ -135,8 +140,10 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 		var sizeBytes [4]byte
 		if _, err := io.ReadFull(r, sizeBytes[:]); err != nil {
 			if err == io.EOF {
+				fmt.Printf("DEBUG: Client closed connection (clean EOF)\n")
 				return nil // clean disconnect
 			}
+			fmt.Printf("DEBUG: Error reading message size: %v\n", err)
 			return fmt.Errorf("read size: %w", err)
 		}
 
@@ -163,9 +170,11 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 		apiVersion := binary.BigEndian.Uint16(messageBuf[2:4])
 		correlationID := binary.BigEndian.Uint32(messageBuf[4:8])
 
-		// DEBUG: Log all incoming requests for debugging client compatibility
-		fmt.Printf("DEBUG: Received request - API Key: %d, Version: %d, Correlation: %d, Size: %d\n",
-			apiKey, apiVersion, correlationID, size)
+		// DEBUG: Log all incoming requests (minimal for performance)
+		apiName := getAPIName(apiKey)
+		requestStart := time.Now()
+		fmt.Printf("DEBUG: API %d (%s) v%d - Correlation: %d, Size: %d\n",
+			apiKey, apiName, apiVersion, correlationID, size)
 
 		// TODO: IMPORTANT - API version validation is missing
 		// Different API versions have different request/response formats
@@ -188,6 +197,7 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 		case 20: // DeleteTopics
 			response, err = h.handleDeleteTopics(correlationID, messageBuf[8:]) // skip header
 		case 0: // Produce
+			fmt.Printf("DEBUG: *** PRODUCE REQUEST RECEIVED *** Correlation: %d\n", correlationID)
 			response, err = h.handleProduce(correlationID, messageBuf[8:]) // skip header
 		case 1: // Fetch
 			response, err = h.handleFetch(correlationID, messageBuf[8:]) // skip header
@@ -204,6 +214,7 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 		case 13: // LeaveGroup
 			response, err = h.handleLeaveGroup(correlationID, messageBuf[8:]) // skip header
 		default:
+			fmt.Printf("DEBUG: *** UNSUPPORTED API KEY *** %d (%s) v%d - Correlation: %d\n", apiKey, apiName, apiVersion, correlationID)
 			err = fmt.Errorf("unsupported API key: %d (version %d)", apiKey, apiVersion)
 		}
 
@@ -211,8 +222,10 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 			return fmt.Errorf("handle request: %w", err)
 		}
 
-		// DEBUG: Log response details
-		fmt.Printf("DEBUG: Sending response for API %d - Size: %d bytes\n", apiKey, len(response))
+		// DEBUG: Log response details (minimal for performance)
+		processingDuration := time.Since(requestStart)
+		fmt.Printf("DEBUG: API %d (%s) response: %d bytes, %v\n",
+			apiKey, apiName, len(response), processingDuration)
 
 		// Write response size and data
 		responseSizeBytes := make([]byte, 4)
@@ -228,6 +241,9 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 		if err := w.Flush(); err != nil {
 			return fmt.Errorf("flush response: %w", err)
 		}
+
+		// Minimal flush logging
+		// fmt.Printf("DEBUG: API %d flushed\n", apiKey)
 	}
 }
 
@@ -341,12 +357,15 @@ func (h *Handler) handleMetadata(correlationID uint32, requestBody []byte) ([]by
 	// Broker 0: node_id(4) + host + port(4) + rack
 	response = append(response, 0, 0, 0, 0) // node_id = 0
 
-	// Host string: length(2) + "localhost"
+	// Use "localhost" for simplicity - kafka-go should be able to connect back
+	// The port issue is more likely the problem than the host
 	host := "localhost"
+	
 	response = append(response, 0, byte(len(host)))
 	response = append(response, []byte(host)...)
 
-	// Port (4 bytes) - 9092 (standard Kafka port)
+	// Port (4 bytes) - Use standard Kafka port for now
+	// TODO: Should get actual port from server configuration
 	response = append(response, 0, 0, 0x23, 0x84) // 9092 in big-endian
 
 	// Rack - nullable string, using null (-1 length)
@@ -358,10 +377,14 @@ func (h *Handler) handleMetadata(correlationID uint32, requestBody []byte) ([]by
 	// Controller ID (4 bytes) - -1 (no controller)
 	response = append(response, 0xFF, 0xFF, 0xFF, 0xFF)
 
+	// Cluster authorized operations (4 bytes) - For Metadata v7+
+	// -1 = not supported/null
+	response = append(response, 0xFF, 0xFF, 0xFF, 0xFF)
+
 	// Parse topics from request (for metadata discovery)
 	requestedTopics := h.parseMetadataTopics(requestBody)
-	fmt.Printf("DEBUG: Metadata request for topics: %v (empty=all topics)\n", requestedTopics)
-	
+	// fmt.Printf("DEBUG: Metadata request for topics: %v (empty=all topics)\n", requestedTopics)
+
 	// Build topics array response - return existing topics only
 	h.topicsMu.RLock()
 	var topicsToReturn []string
@@ -370,7 +393,7 @@ func (h *Handler) handleMetadata(correlationID uint32, requestBody []byte) ([]by
 		for topicName := range h.topics {
 			topicsToReturn = append(topicsToReturn, topicName)
 		}
-		fmt.Printf("DEBUG: Returning all existing topics: %v\n", topicsToReturn)
+		// fmt.Printf("DEBUG: Returning all existing topics: %v\n", topicsToReturn)
 	} else {
 		// Return only requested topics that exist
 		for _, topicName := range requestedTopics {
@@ -381,96 +404,97 @@ func (h *Handler) handleMetadata(correlationID uint32, requestBody []byte) ([]by
 		fmt.Printf("DEBUG: Returning requested existing topics: %v\n", topicsToReturn)
 	}
 	h.topicsMu.RUnlock()
-	
+
 	// Topics array length (4 bytes)
 	topicsCountBytes := make([]byte, 4)
 	binary.BigEndian.PutUint32(topicsCountBytes, uint32(len(topicsToReturn)))
 	response = append(response, topicsCountBytes...)
-	
+
 	// Build each topic response
 	for _, topicName := range topicsToReturn {
+		// fmt.Printf("DEBUG: Building topic response for: '%s' (length: %d)\n", topicName, len(topicName))
+
 		// Topic error code (2 bytes) - 0 = no error
 		response = append(response, 0, 0)
-		
+
 		// Topic name
 		topicNameBytes := []byte(topicName)
 		topicNameLen := make([]byte, 2)
 		binary.BigEndian.PutUint16(topicNameLen, uint16(len(topicNameBytes)))
 		response = append(response, topicNameLen...)
 		response = append(response, topicNameBytes...)
-		
+
+		// Topic UUID (16 bytes) - For Metadata v7+, using null UUID (all zeros)
+		response = append(response, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+
+		// Is internal topic (1 byte) - false
+		response = append(response, 0)
+
 		// Partitions array length (4 bytes) - 1 partition
 		response = append(response, 0, 0, 0, 1)
-		
+		// fmt.Printf("DEBUG: Added partitions count: 1\n")
+
 		// Partition 0: error_code(2) + partition_id(4) + leader_id(4) + replicas + isr
 		response = append(response, 0, 0)                   // no error
 		response = append(response, 0, 0, 0, 0)             // partition_id = 0
 		response = append(response, 0, 0, 0, 0)             // leader_id = 0 (this broker)
 		response = append(response, 0, 0, 0, 1, 0, 0, 0, 0) // replicas = [0]
 		response = append(response, 0, 0, 0, 1, 0, 0, 0, 0) // isr = [0]
+
+		// Topic authorized operations (4 bytes) - For Metadata v7+
+		// -1 = not supported/null
+		response = append(response, 0xFF, 0xFF, 0xFF, 0xFF)
 	}
-	
+
 	fmt.Printf("DEBUG: Metadata response for %d topics: %v\n", len(topicsToReturn), topicsToReturn)
+	fmt.Printf("DEBUG: Metadata response full hex dump (%d bytes): %x\n", len(response), response)
 	return response, nil
 }
 
 func (h *Handler) parseMetadataTopics(requestBody []byte) []string {
 	// Parse Metadata request to extract requested topics
 	// Format: client_id + topics_array
-	
-	fmt.Printf("DEBUG: parseMetadataTopics - request body length: %d\n", len(requestBody))
-	if len(requestBody) > 0 {
-		dumpLen := len(requestBody)
-		if dumpLen > 30 {
-			dumpLen = 30
-		}
-		fmt.Printf("DEBUG: parseMetadataTopics - hex dump (first %d bytes): %x\n", dumpLen, requestBody[:dumpLen])
-	}
-	
+
+	// Temporarily disable debug logging to test performance
 	if len(requestBody) < 6 { // at minimum: client_id_size(2) + topics_count(4)
-		fmt.Printf("DEBUG: parseMetadataTopics - request too short (%d bytes), returning empty\n", len(requestBody))
 		return []string{} // Return empty - means "all topics"
 	}
-	
+
 	// Skip client_id
 	clientIDSize := binary.BigEndian.Uint16(requestBody[0:2])
 	offset := 2 + int(clientIDSize)
-	fmt.Printf("DEBUG: parseMetadataTopics - client ID size: %d, offset after client: %d\n", clientIDSize, offset)
-	
+
 	if len(requestBody) < offset+4 {
-		fmt.Printf("DEBUG: parseMetadataTopics - not enough bytes for topics count, returning empty\n")
 		return []string{}
 	}
-	
+
 	// Parse topics count
 	topicsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 	offset += 4
-	fmt.Printf("DEBUG: parseMetadataTopics - topics count: %d, offset after count: %d\n", topicsCount, offset)
-	
-	if topicsCount == 0 {
-		fmt.Printf("DEBUG: parseMetadataTopics - topics count is 0, returning empty (means 'all topics')\n")
+
+	if topicsCount == 0 || topicsCount > 1000000 { // sanity check
 		return []string{} // Return empty - means "all topics"
 	}
-	
+
 	// Parse each requested topic name
 	topics := make([]string, 0, topicsCount)
 	for i := uint32(0); i < topicsCount && offset < len(requestBody); i++ {
 		if len(requestBody) < offset+2 {
 			break
 		}
-		
+
 		topicNameSize := binary.BigEndian.Uint16(requestBody[offset : offset+2])
 		offset += 2
-		
+
 		if len(requestBody) < offset+int(topicNameSize) {
 			break
 		}
-		
+
 		topicName := string(requestBody[offset : offset+int(topicNameSize)])
 		topics = append(topics, topicName)
 		offset += int(topicNameSize)
 	}
-	
+
 	return topics
 }
 
@@ -889,23 +913,57 @@ func (h *Handler) handleDeleteTopics(correlationID uint32, requestBody []byte) (
 	return response, nil
 }
 
+// getAPIName returns a human-readable name for Kafka API keys (for debugging)
+func getAPIName(apiKey uint16) string {
+	switch apiKey {
+	case 0:
+		return "Produce"
+	case 1:
+		return "Fetch"
+	case 2:
+		return "ListOffsets"
+	case 3:
+		return "Metadata"
+	case 8:
+		return "OffsetCommit"
+	case 9:
+		return "OffsetFetch"
+	case 11:
+		return "JoinGroup"
+	case 12:
+		return "Heartbeat"
+	case 13:
+		return "LeaveGroup"
+	case 14:
+		return "SyncGroup"
+	case 18:
+		return "ApiVersions"
+	case 19:
+		return "CreateTopics"
+	case 20:
+		return "DeleteTopics"
+	default:
+		return "Unknown"
+	}
+}
+
 // AddTopicForTesting adds a topic directly to the handler (for testing only)
 func (h *Handler) AddTopicForTesting(topicName string, partitions int32) {
 	h.topicsMu.Lock()
 	defer h.topicsMu.Unlock()
-	
+
 	if _, exists := h.topics[topicName]; !exists {
 		h.topics[topicName] = &TopicInfo{
 			Name:       topicName,
 			Partitions: partitions,
 			CreatedAt:  time.Now().UnixNano(),
 		}
-		
+
 		// Initialize ledgers for all partitions
 		for partitionID := int32(0); partitionID < partitions; partitionID++ {
 			h.GetOrCreateLedger(topicName, partitionID)
 		}
-		
+
 		fmt.Printf("DEBUG: Added topic for testing: %s with %d partitions\n", topicName, partitions)
 	}
 }

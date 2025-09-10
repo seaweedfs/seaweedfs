@@ -90,16 +90,16 @@ func createTopicDirectly(srv interface{}, topicName string) error {
 	if !ok {
 		return fmt.Errorf("invalid server type")
 	}
-	
+
 	// Get the handler and directly add the topic
 	handler := gatewayServer.GetHandler()
 	if handler == nil {
 		return fmt.Errorf("handler is nil")
 	}
-	
+
 	// Add the topic with 1 partition
 	handler.AddTopicForTesting(topicName, 1)
-	
+
 	fmt.Printf("DEBUG: Topic %s created directly in handler registry\n", topicName)
 	return nil
 }
@@ -111,9 +111,9 @@ func produceMessagesDirect(brokerAddr, topicName string, messages []kafka.Messag
 		Topic:    topicName,
 		Balancer: &kafka.LeastBytes{},
 
-		// Reduce timeouts for faster debugging
-		WriteTimeout: 10 * time.Second,
-		ReadTimeout:  10 * time.Second,
+		// Increase timeouts to see if kafka-go eventually makes other requests
+		WriteTimeout: 20 * time.Second,
+		ReadTimeout:  20 * time.Second,
 
 		// Enable detailed logging
 		Logger: kafka.LoggerFunc(func(msg string, args ...interface{}) {
