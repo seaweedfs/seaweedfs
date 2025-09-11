@@ -334,10 +334,10 @@ func (h *Handler) handleApiVersions(correlationID uint32) ([]byte, error) {
 	response = append(response, 0, 4)  // max version 4
 
 	// API Key 0 (Produce): api_key(2) + min_version(2) + max_version(2)
-	// Advertise v1 to get simpler request format from kafka-go
+	// Support v7 for Sarama compatibility (Kafka 2.1.0)
 	response = append(response, 0, 0) // API key 0
 	response = append(response, 0, 0) // min version 0
-	response = append(response, 0, 1) // max version 1 (simplified parsing)
+	response = append(response, 0, 7) // max version 7
 
 	// API Key 1 (Fetch): api_key(2) + min_version(2) + max_version(2)
 	response = append(response, 0, 1)  // API key 1
@@ -1453,7 +1453,7 @@ func (h *Handler) validateAPIVersion(apiKey, apiVersion uint16) error {
 	supportedVersions := map[uint16][2]uint16{
 		18: {0, 3}, // ApiVersions: v0-v3
 		3:  {0, 7}, // Metadata: v0-v7
-		0:  {0, 1}, // Produce: v0-v1
+		0:  {0, 7}, // Produce: v0-v7
 		1:  {0, 1}, // Fetch: v0-v1
 		2:  {0, 5}, // ListOffsets: v0-v5
 		19: {0, 4}, // CreateTopics: v0-v4

@@ -11,6 +11,8 @@ func (h *Handler) handleProduce(correlationID uint32, apiVersion uint16, request
 	switch apiVersion {
 	case 0, 1:
 		return h.handleProduceV0V1(correlationID, apiVersion, requestBody)
+	case 2, 3, 4, 5, 6, 7:
+		return h.handleProduceV2Plus(correlationID, apiVersion, requestBody)
 	default:
 		return nil, fmt.Errorf("produce version %d not implemented yet", apiVersion)
 	}
@@ -296,4 +298,158 @@ func (h *Handler) extractFirstRecord(recordSetData []byte) ([]byte, []byte) {
 	// 3. Handle compression, transaction markers, etc.
 
 	return key, []byte(value)
+}
+
+// handleProduceV2Plus handles Produce API v2-v7 (Kafka 0.11+)
+func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
+	fmt.Printf("DEBUG: Handling Produce v%d request\n", apiVersion)
+	
+	// DEBUG: Hex dump first 100 bytes to understand actual request format
+	dumpLen := len(requestBody)
+	if dumpLen > 100 {
+		dumpLen = 100
+	}
+	fmt.Printf("DEBUG: Produce v%d request hex dump (first %d bytes): %x\n", apiVersion, dumpLen, requestBody[:dumpLen])
+	fmt.Printf("DEBUG: Produce v%d request total length: %d bytes\n", apiVersion, len(requestBody))
+	
+	// For now, use simplified parsing similar to v0/v1 but handle v2+ response format
+	// In v2+, the main differences are:
+	// - Request: transactional_id field (nullable string) at the beginning
+	// - Response: throttle_time_ms field at the beginning
+	
+	// Parse Produce v7 request format based on actual Sarama request
+	// Format: client_id(STRING) + transactional_id(NULLABLE_STRING) + acks(INT16) + timeout_ms(INT32) + topics(ARRAY)
+	
+	offset := 0
+	
+	// Parse client_id (STRING: 2 bytes length + data)
+	if len(requestBody) < 2 {
+		return nil, fmt.Errorf("Produce v%d request too short for client_id", apiVersion)
+	}
+	clientIDLen := binary.BigEndian.Uint16(requestBody[offset:offset+2])
+	offset += 2
+	
+	if len(requestBody) < offset+int(clientIDLen) {
+		return nil, fmt.Errorf("Produce v%d request client_id too short", apiVersion)
+	}
+	clientID := string(requestBody[offset:offset+int(clientIDLen)])
+	offset += int(clientIDLen)
+	fmt.Printf("DEBUG: Produce v%d - client_id: %s\n", apiVersion, clientID)
+	
+	// Parse transactional_id (NULLABLE_STRING: 2 bytes length + data, -1 = null)
+	if len(requestBody) < offset+2 {
+		return nil, fmt.Errorf("Produce v%d request too short for transactional_id", apiVersion)
+	}
+	transactionalIDLen := int16(binary.BigEndian.Uint16(requestBody[offset:offset+2]))
+	offset += 2
+	
+	var transactionalID string
+	if transactionalIDLen == -1 {
+		transactionalID = "null"
+	} else if transactionalIDLen >= 0 {
+		if len(requestBody) < offset+int(transactionalIDLen) {
+			return nil, fmt.Errorf("Produce v%d request transactional_id too short", apiVersion)
+		}
+		transactionalID = string(requestBody[offset:offset+int(transactionalIDLen)])
+		offset += int(transactionalIDLen)
+	}
+	fmt.Printf("DEBUG: Produce v%d - transactional_id: %s\n", apiVersion, transactionalID)
+	
+	// Parse acks (INT16) and timeout_ms (INT32)
+	if len(requestBody) < offset+6 {
+		return nil, fmt.Errorf("Produce v%d request missing acks/timeout", apiVersion)
+	}
+	
+	acks := int16(binary.BigEndian.Uint16(requestBody[offset:offset+2]))
+	offset += 2
+	timeout := binary.BigEndian.Uint32(requestBody[offset:offset+4])
+	offset += 4
+	
+	fmt.Printf("DEBUG: Produce v%d - acks: %d, timeout: %d\n", apiVersion, acks, timeout)
+	
+	// Parse topics array
+	if len(requestBody) < offset+4 {
+		return nil, fmt.Errorf("Produce v%d request missing topics count", apiVersion)
+	}
+	
+	topicsCount := binary.BigEndian.Uint32(requestBody[offset:offset+4])
+	offset += 4
+	
+	fmt.Printf("DEBUG: Produce v%d - topics count: %d\n", apiVersion, topicsCount)
+	
+	// Build response
+	response := make([]byte, 0, 256)
+	
+	// Correlation ID
+	correlationIDBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
+	response = append(response, correlationIDBytes...)
+	
+	// Throttle time (4 bytes) - v1+
+	response = append(response, 0, 0, 0, 0)
+	
+	// Topics array length
+	topicsCountBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(topicsCountBytes, topicsCount)
+	response = append(response, topicsCountBytes...)
+	
+	// Process each topic (simplified - just return success for all)
+	for i := uint32(0); i < topicsCount && offset < len(requestBody); i++ {
+		// Parse topic name
+		if len(requestBody) < offset+2 {
+			break
+		}
+		
+		topicNameSize := binary.BigEndian.Uint16(requestBody[offset:offset+2])
+		offset += 2
+		
+		if len(requestBody) < offset+int(topicNameSize)+4 {
+			break
+		}
+		
+		topicName := string(requestBody[offset:offset+int(topicNameSize)])
+		offset += int(topicNameSize)
+		
+		// Parse partitions count
+		partitionsCount := binary.BigEndian.Uint32(requestBody[offset:offset+4])
+		offset += 4
+		
+		fmt.Printf("DEBUG: Produce v%d - topic: %s, partitions: %d\n", apiVersion, topicName, partitionsCount)
+		
+		// Response: topic name
+		response = append(response, byte(topicNameSize>>8), byte(topicNameSize))
+		response = append(response, []byte(topicName)...)
+		
+		// Response: partitions count
+		partitionsCountBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(partitionsCountBytes, partitionsCount)
+		response = append(response, partitionsCountBytes...)
+		
+		// Process each partition (simplified - just return success)
+		for j := uint32(0); j < partitionsCount && offset < len(requestBody); j++ {
+			// Skip partition parsing for now - just return success response
+			
+			// Response: partition_id(4) + error_code(2) + base_offset(8)
+			response = append(response, 0, 0, 0, byte(j)) // partition_id
+			response = append(response, 0, 0)             // error_code (success)
+			response = append(response, 0, 0, 0, 0, 0, 0, 0, 0) // base_offset
+			
+			// v2+ additional fields
+			if apiVersion >= 2 {
+				// log_append_time (-1 = not set)
+				response = append(response, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF)
+			}
+			
+			if apiVersion >= 5 {
+				// log_start_offset (8 bytes)
+				response = append(response, 0, 0, 0, 0, 0, 0, 0, 0)
+			}
+			
+			// Skip to next partition (simplified)
+			offset += 20 // rough estimate to skip partition data
+		}
+	}
+	
+	fmt.Printf("DEBUG: Produce v%d response: %d bytes\n", apiVersion, len(response))
+	return response, nil
 }

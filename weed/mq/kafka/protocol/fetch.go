@@ -152,9 +152,21 @@ func (h *Handler) handleFetch(correlationID uint32, requestBody []byte) ([]byte,
 				} else {
 					highWaterMark = ledger.GetHighWaterMark()
 					
-					// For Phase 1, construct simple record batches for any messages in range
+					// Try to fetch actual records using SeaweedMQ integration if available
 					if fetchOffset < highWaterMark {
-						records = h.constructRecordBatch(ledger, fetchOffset, highWaterMark)
+						if h.useSeaweedMQ && h.seaweedMQHandler != nil {
+							// Use SeaweedMQ integration for real message fetching
+							fetchedRecords, err := h.seaweedMQHandler.FetchRecords(topicName, int32(partitionID), fetchOffset, int32(partitionMaxBytes))
+							if err != nil {
+								fmt.Printf("DEBUG: FetchRecords error: %v\n", err)
+								errorCode = 1 // OFFSET_OUT_OF_RANGE
+							} else {
+								records = fetchedRecords
+							}
+						} else {
+							// Fallback to in-memory stub records
+							records = h.constructRecordBatch(ledger, fetchOffset, highWaterMark)
+						}
 					}
 				}
 			}
