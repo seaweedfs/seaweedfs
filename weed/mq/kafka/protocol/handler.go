@@ -1038,7 +1038,7 @@ func (h *Handler) parseMetadataTopics(requestBody []byte) []string {
 
 func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
 	fmt.Printf("DEBUG: ListOffsets v%d request hex dump (first 100 bytes): %x\n", apiVersion, requestBody[:min(100, len(requestBody))])
-	
+
 	// Parse minimal request to understand what's being asked
 	// For this stub, we'll just return stub responses for any requested topic/partition
 	// Request format after client_id: topics_array
@@ -1470,20 +1470,20 @@ func (h *Handler) handleDeleteTopics(correlationID uint32, requestBody []byte) (
 // validateAPIVersion checks if we support the requested API version
 func (h *Handler) validateAPIVersion(apiKey, apiVersion uint16) error {
 	supportedVersions := map[uint16][2]uint16{
-		18: {0, 3}, // ApiVersions: v0-v3
-		3:  {0, 7}, // Metadata: v0-v7
-		0:  {0, 7}, // Produce: v0-v7
+		18: {0, 3},  // ApiVersions: v0-v3
+		3:  {0, 7},  // Metadata: v0-v7
+		0:  {0, 7},  // Produce: v0-v7
 		1:  {0, 11}, // Fetch: v0-v11
-		2:  {0, 5}, // ListOffsets: v0-v5
-		19: {0, 4}, // CreateTopics: v0-v4
-		20: {0, 4}, // DeleteTopics: v0-v4
-		10: {0, 4}, // FindCoordinator: v0-v4
-		11: {0, 7}, // JoinGroup: v0-v7
-		14: {0, 5}, // SyncGroup: v0-v5
-		8:  {0, 8}, // OffsetCommit: v0-v8
-		9:  {0, 8}, // OffsetFetch: v0-v8
-		12: {0, 4}, // Heartbeat: v0-v4
-		13: {0, 4}, // LeaveGroup: v0-v4
+		2:  {0, 5},  // ListOffsets: v0-v5
+		19: {0, 4},  // CreateTopics: v0-v4
+		20: {0, 4},  // DeleteTopics: v0-v4
+		10: {0, 4},  // FindCoordinator: v0-v4
+		11: {0, 7},  // JoinGroup: v0-v7
+		14: {0, 5},  // SyncGroup: v0-v5
+		8:  {0, 8},  // OffsetCommit: v0-v8
+		9:  {0, 8},  // OffsetFetch: v0-v8
+		12: {0, 4},  // Heartbeat: v0-v4
+		13: {0, 4},  // LeaveGroup: v0-v4
 	}
 
 	if versionRange, exists := supportedVersions[apiKey]; exists {
