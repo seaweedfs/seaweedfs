@@ -52,15 +52,21 @@ func ParseConfluentEnvelope(data []byte) (*ConfluentEnvelope, bool) {
 	schemaID := binary.BigEndian.Uint32(data[1:5])
 	
 	envelope := &ConfluentEnvelope{
-		Format:   FormatAvro, // Default assumption; will be refined later
+		Format:   FormatAvro, // Default assumption; will be refined by schema registry lookup
 		SchemaID: schemaID,
 		Indexes:  nil,
 		Payload:  data[5:], // Default: payload starts after schema ID
 	}
 
-	// For Protobuf, there may be additional indexes after the schema ID
-	// This is a more complex parsing that we'll implement when we add Protobuf support
-	// For now, assume Avro format
+	// Try to detect Protobuf format by looking for message indexes
+	// Protobuf messages in Confluent format may have varint-encoded indexes
+	// after the schema ID to identify nested message types
+	if protobufEnvelope, isProtobuf := ParseConfluentProtobufEnvelope(data); isProtobuf {
+		// If it looks like Protobuf (has valid indexes), use that parsing
+		if len(protobufEnvelope.Indexes) > 0 {
+			return protobufEnvelope, true
+		}
+	}
 	
 	return envelope, true
 }
