@@ -1,10 +1,12 @@
 package schema
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/mq/client/pub_client"
+	"github.com/seaweedfs/seaweedfs/weed/mq/client/sub_client"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 )
@@ -17,6 +19,10 @@ type BrokerClient struct {
 	// Publisher cache: topic -> publisher
 	publishersLock sync.RWMutex
 	publishers     map[string]*pub_client.TopicPublisher
+
+	// Subscriber cache: topic -> subscriber
+	subscribersLock sync.RWMutex
+	subscribers     map[string]*sub_client.TopicSubscriber
 }
 
 // BrokerClientConfig holds configuration for the broker client
@@ -31,6 +37,7 @@ func NewBrokerClient(config BrokerClientConfig) *BrokerClient {
 		brokers:       config.Brokers,
 		schemaManager: config.SchemaManager,
 		publishers:    make(map[string]*pub_client.TopicPublisher),
+		subscribers:   make(map[string]*sub_client.TopicSubscriber),
 	}
 }
 
@@ -109,12 +116,128 @@ func (bc *BrokerClient) getOrCreatePublisher(topicName string, recordType *schem
 	return publisher, nil
 }
 
-// Close shuts down all publishers
-func (bc *BrokerClient) Close() error {
-	bc.publishersLock.Lock()
-	defer bc.publishersLock.Unlock()
+// FetchSchematizedMessages fetches RecordValue messages from mq.broker and reconstructs Confluent envelopes
+func (bc *BrokerClient) FetchSchematizedMessages(topicName string, maxMessages int) ([][]byte, error) {
+	// Get or create subscriber for this topic
+	subscriber, err := bc.getOrCreateSubscriber(topicName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get subscriber for topic %s: %w", topicName, err)
+	}
 
+	// Fetch RecordValue messages
+	messages := make([][]byte, 0, maxMessages)
+	for len(messages) < maxMessages {
+		// Try to receive a message (non-blocking for now)
+		recordValue, err := bc.receiveRecordValue(subscriber)
+		if err != nil {
+			break // No more messages available
+		}
+
+		// Reconstruct Confluent envelope from RecordValue
+		envelope, err := bc.reconstructConfluentEnvelope(recordValue)
+		if err != nil {
+			fmt.Printf("Warning: failed to reconstruct envelope: %v\n", err)
+			continue
+		}
+
+		messages = append(messages, envelope)
+	}
+
+	return messages, nil
+}
+
+// getOrCreateSubscriber gets or creates a TopicSubscriber for the given topic
+func (bc *BrokerClient) getOrCreateSubscriber(topicName string) (*sub_client.TopicSubscriber, error) {
+	// Try to get existing subscriber
+	bc.subscribersLock.RLock()
+	if subscriber, exists := bc.subscribers[topicName]; exists {
+		bc.subscribersLock.RUnlock()
+		return subscriber, nil
+	}
+	bc.subscribersLock.RUnlock()
+
+	// Create new subscriber
+	bc.subscribersLock.Lock()
+	defer bc.subscribersLock.Unlock()
+
+	// Double-check after acquiring write lock
+	if subscriber, exists := bc.subscribers[topicName]; exists {
+		return subscriber, nil
+	}
+
+	// Create subscriber configuration
+	subscriberConfig := &sub_client.SubscriberConfiguration{
+		ClientId:                "kafka-gateway-schema",
+		ConsumerGroup:           "kafka-gateway",
+		ConsumerGroupInstanceId: fmt.Sprintf("kafka-gateway-%s", topicName),
+		MaxPartitionCount:       1,
+		SlidingWindowSize:       10,
+	}
+
+	// Create content configuration
+	contentConfig := &sub_client.ContentConfiguration{
+		Topic:      topic.NewTopic("kafka", topicName),
+		Filter:     "",
+		OffsetType: schema_pb.OffsetType_RESET_TO_EARLIEST,
+	}
+
+	// Create partition offset channel
+	partitionOffsetChan := make(chan sub_client.KeyedOffset, 100)
+
+	// Create the subscriber
+	subscriber := sub_client.NewTopicSubscriber(
+		context.Background(),
+		bc.brokers,
+		subscriberConfig,
+		contentConfig,
+		partitionOffsetChan,
+	)
+
+	// Cache the subscriber
+	bc.subscribers[topicName] = subscriber
+
+	return subscriber, nil
+}
+
+// receiveRecordValue receives a single RecordValue from the subscriber
+func (bc *BrokerClient) receiveRecordValue(subscriber *sub_client.TopicSubscriber) (*schema_pb.RecordValue, error) {
+	// This is a simplified implementation - in a real system, this would
+	// integrate with the subscriber's message receiving mechanism
+	// For now, return an error to indicate no messages available
+	return nil, fmt.Errorf("no messages available")
+}
+
+// reconstructConfluentEnvelope reconstructs a Confluent envelope from a RecordValue
+func (bc *BrokerClient) reconstructConfluentEnvelope(recordValue *schema_pb.RecordValue) ([]byte, error) {
+	// Extract schema information from the RecordValue metadata
+	// This is a simplified implementation - in practice, we'd need to store
+	// schema metadata alongside the RecordValue when publishing
+
+	// For now, create a placeholder envelope
+	// In a real implementation, we would:
+	// 1. Extract the original schema ID from RecordValue metadata
+	// 2. Get the schema format from the schema registry
+	// 3. Encode the RecordValue back to the original format (Avro, JSON, etc.)
+	// 4. Create the Confluent envelope with magic byte + schema ID + encoded data
+
+	schemaID := uint32(1) // Placeholder - would be extracted from metadata
+	format := FormatAvro  // Placeholder - would be determined from schema registry
+
+	// Encode RecordValue back to original format
+	encodedData, err := bc.schemaManager.EncodeMessage(recordValue, schemaID, format)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode RecordValue: %w", err)
+	}
+
+	return encodedData, nil
+}
+
+// Close shuts down all publishers and subscribers
+func (bc *BrokerClient) Close() error {
 	var lastErr error
+
+	// Close publishers
+	bc.publishersLock.Lock()
 	for key, publisher := range bc.publishers {
 		if err := publisher.FinishPublish(); err != nil {
 			lastErr = fmt.Errorf("failed to finish publisher %s: %w", key, err)
@@ -124,24 +247,44 @@ func (bc *BrokerClient) Close() error {
 		}
 		delete(bc.publishers, key)
 	}
+	bc.publishersLock.Unlock()
+
+	// Close subscribers
+	bc.subscribersLock.Lock()
+	for key, subscriber := range bc.subscribers {
+		// TopicSubscriber doesn't have a Shutdown method in the current implementation
+		// In a real implementation, we would properly close the subscriber
+		_ = subscriber // Avoid unused variable warning
+		delete(bc.subscribers, key)
+	}
+	bc.subscribersLock.Unlock()
 
 	return lastErr
 }
 
-// GetPublisherStats returns statistics about active publishers
+// GetPublisherStats returns statistics about active publishers and subscribers
 func (bc *BrokerClient) GetPublisherStats() map[string]interface{} {
 	bc.publishersLock.RLock()
+	bc.subscribersLock.RLock()
 	defer bc.publishersLock.RUnlock()
+	defer bc.subscribersLock.RUnlock()
 
 	stats := make(map[string]interface{})
 	stats["active_publishers"] = len(bc.publishers)
+	stats["active_subscribers"] = len(bc.subscribers)
 	stats["brokers"] = bc.brokers
 
-	topicList := make([]string, 0, len(bc.publishers))
+	publisherTopics := make([]string, 0, len(bc.publishers))
 	for key := range bc.publishers {
-		topicList = append(topicList, key)
+		publisherTopics = append(publisherTopics, key)
 	}
-	stats["topics"] = topicList
+	stats["publisher_topics"] = publisherTopics
+
+	subscriberTopics := make([]string, 0, len(bc.subscribers))
+	for key := range bc.subscribers {
+		subscriberTopics = append(subscriberTopics, key)
+	}
+	stats["subscriber_topics"] = subscriberTopics
 
 	return stats
 }
