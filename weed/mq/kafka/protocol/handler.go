@@ -210,13 +210,15 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 		var response []byte
 		var err error
 
+		fmt.Printf("DEBUG: About to handle API key %d\n", apiKey)
 		switch apiKey {
 		case 18: // ApiVersions
 			response, err = h.handleApiVersions(correlationID)
 		case 3: // Metadata
 			response, err = h.handleMetadata(correlationID, apiVersion, messageBuf[8:])
 		case 2: // ListOffsets
-			response, err = h.handleListOffsets(correlationID, messageBuf[8:]) // skip header
+			fmt.Printf("DEBUG: *** LISTOFFSETS REQUEST RECEIVED *** Correlation: %d, Version: %d\n", correlationID, apiVersion)
+			response, err = h.handleListOffsets(correlationID, apiVersion, messageBuf[8:]) // skip header
 		case 19: // CreateTopics
 			response, err = h.handleCreateTopics(correlationID, messageBuf[8:]) // skip header
 		case 20: // DeleteTopics
@@ -225,7 +227,8 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 			fmt.Printf("DEBUG: *** PRODUCE REQUEST RECEIVED *** Correlation: %d\n", correlationID)
 			response, err = h.handleProduce(correlationID, apiVersion, messageBuf[8:])
 		case 1: // Fetch
-			response, err = h.handleFetch(correlationID, messageBuf[8:]) // skip header
+			fmt.Printf("DEBUG: *** FETCH HANDLER CALLED *** Correlation: %d, Version: %d\n", correlationID, apiVersion)
+			response, err = h.handleFetch(correlationID, apiVersion, messageBuf[8:]) // skip header
 		case 11: // JoinGroup
 			fmt.Printf("DEBUG: *** JOINGROUP REQUEST RECEIVED *** Correlation: %d, Version: %d\n", correlationID, apiVersion)
 			response, err = h.handleJoinGroup(correlationID, apiVersion, messageBuf[8:]) // skip header
@@ -1033,7 +1036,9 @@ func (h *Handler) parseMetadataTopics(requestBody []byte) []string {
 	return topics
 }
 
-func (h *Handler) handleListOffsets(correlationID uint32, requestBody []byte) ([]byte, error) {
+func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
+	fmt.Printf("DEBUG: ListOffsets v%d request hex dump (first 100 bytes): %x\n", apiVersion, requestBody[:min(100, len(requestBody))])
+	
 	// Parse minimal request to understand what's being asked
 	// For this stub, we'll just return stub responses for any requested topic/partition
 	// Request format after client_id: topics_array
@@ -1045,6 +1050,17 @@ func (h *Handler) handleListOffsets(correlationID uint32, requestBody []byte) ([
 	// Skip client_id: client_id_size(2) + client_id_data
 	clientIDSize := binary.BigEndian.Uint16(requestBody[0:2])
 	offset := 2 + int(clientIDSize)
+
+	// ListOffsets v2+ has additional fields: replica_id(4) + isolation_level(1)
+	if apiVersion >= 2 {
+		if len(requestBody) < offset+5 {
+			return nil, fmt.Errorf("ListOffsets v%d request missing replica_id/isolation_level", apiVersion)
+		}
+		replicaID := int32(binary.BigEndian.Uint32(requestBody[offset : offset+4]))
+		isolationLevel := requestBody[offset+4]
+		offset += 5
+		fmt.Printf("DEBUG: ListOffsets v%d - replica_id: %d, isolation_level: %d\n", apiVersion, replicaID, isolationLevel)
+	}
 
 	if len(requestBody) < offset+4 {
 		return nil, fmt.Errorf("ListOffsets request missing topics count")
@@ -1060,8 +1076,10 @@ func (h *Handler) handleListOffsets(correlationID uint32, requestBody []byte) ([
 	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
 	response = append(response, correlationIDBytes...)
 
-	// Throttle time (4 bytes, 0 = no throttling)
-	response = append(response, 0, 0, 0, 0)
+	// Throttle time (4 bytes, 0 = no throttling) - v1+ only
+	if apiVersion >= 1 {
+		response = append(response, 0, 0, 0, 0)
+	}
 
 	// Topics count (same as request)
 	topicsCountBytes := make([]byte, 4)
@@ -1161,6 +1179,7 @@ func (h *Handler) handleListOffsets(correlationID uint32, requestBody []byte) ([
 		}
 	}
 
+	fmt.Printf("DEBUG: ListOffsets v%d response: %d bytes\n", apiVersion, len(response))
 	return response, nil
 }
 
@@ -1454,7 +1473,7 @@ func (h *Handler) validateAPIVersion(apiKey, apiVersion uint16) error {
 		18: {0, 3}, // ApiVersions: v0-v3
 		3:  {0, 7}, // Metadata: v0-v7
 		0:  {0, 7}, // Produce: v0-v7
-		1:  {0, 1}, // Fetch: v0-v1
+		1:  {0, 11}, // Fetch: v0-v11
 		2:  {0, 5}, // ListOffsets: v0-v5
 		19: {0, 4}, // CreateTopics: v0-v4
 		20: {0, 4}, // DeleteTopics: v0-v4

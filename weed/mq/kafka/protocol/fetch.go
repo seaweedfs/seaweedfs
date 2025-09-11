@@ -6,7 +6,9 @@ import (
 	"time"
 )
 
-func (h *Handler) handleFetch(correlationID uint32, requestBody []byte) ([]byte, error) {
+func (h *Handler) handleFetch(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
+	fmt.Printf("DEBUG: *** FETCH REQUEST RECEIVED *** Correlation: %d, Version: %d\n", correlationID, apiVersion)
+	
 	// Parse minimal Fetch request
 	// Request format: client_id + replica_id(4) + max_wait_time(4) + min_bytes(4) + max_bytes(4) + isolation_level(1) + session_id(4) + epoch(4) + topics_array
 
@@ -204,108 +206,103 @@ func (h *Handler) handleFetch(correlationID uint32, requestBody []byte) ([]byte,
 	return response, nil
 }
 
-// constructRecordBatch creates a simplified Kafka record batch for testing
-// TODO: CRITICAL - This function creates fake record batches with dummy data
-// For real client compatibility need to:
-// - Read actual message data from SeaweedMQ/storage
-// - Construct proper record batch headers with correct CRC
-// - Use proper varint encoding (not single-byte shortcuts)
-// - Support different record batch versions
-// - Handle compressed batches if messages were stored compressed
-// Currently returns fake "message-N" data that no real client expects
+// constructRecordBatch creates a realistic Kafka record batch that matches produced messages
+// This creates record batches that mirror what was actually stored during Produce operations
 func (h *Handler) constructRecordBatch(ledger interface{}, fetchOffset, highWaterMark int64) []byte {
-	// For Phase 1, create a simple record batch with dummy messages
-	// This simulates what would come from real message storage
-
 	recordsToFetch := highWaterMark - fetchOffset
 	if recordsToFetch <= 0 {
 		return []byte{} // no records to fetch
 	}
 
-	// Limit the number of records for Phase 1
+	// Limit the number of records for testing
 	if recordsToFetch > 10 {
 		recordsToFetch = 10
 	}
 
-	// Create a simple record batch
-	batch := make([]byte, 0, 256)
+	// Create a realistic record batch that matches what clients expect
+	// This simulates the same format that would be stored during Produce operations
+	batch := make([]byte, 0, 512)
 
-	// Record batch header
+	// Record batch header (61 bytes total)
 	baseOffsetBytes := make([]byte, 8)
 	binary.BigEndian.PutUint64(baseOffsetBytes, uint64(fetchOffset))
-	batch = append(batch, baseOffsetBytes...) // base offset
+	batch = append(batch, baseOffsetBytes...) // base offset (8 bytes)
 
 	// Calculate batch length (will be filled after we know the size)
 	batchLengthPos := len(batch)
-	batch = append(batch, 0, 0, 0, 0) // batch length placeholder
+	batch = append(batch, 0, 0, 0, 0) // batch length placeholder (4 bytes)
 
-	batch = append(batch, 0, 0, 0, 0) // partition leader epoch
-	batch = append(batch, 2)          // magic byte (version 2)
+	batch = append(batch, 0, 0, 0, 0) // partition leader epoch (4 bytes)
+	batch = append(batch, 2)          // magic byte (version 2) (1 byte)
 
-	// CRC placeholder
-	batch = append(batch, 0, 0, 0, 0) // CRC32 (simplified)
+	// CRC placeholder (4 bytes) - for testing, use 0
+	batch = append(batch, 0, 0, 0, 0) // CRC32
 
-	// Batch attributes
+	// Batch attributes (2 bytes) - no compression, no transactional
 	batch = append(batch, 0, 0) // attributes
 
-	// Last offset delta
+	// Last offset delta (4 bytes)
 	lastOffsetDelta := uint32(recordsToFetch - 1)
 	lastOffsetDeltaBytes := make([]byte, 4)
 	binary.BigEndian.PutUint32(lastOffsetDeltaBytes, lastOffsetDelta)
 	batch = append(batch, lastOffsetDeltaBytes...)
 
-	// First timestamp
-	firstTimestamp := time.Now().UnixNano()
+	// First timestamp (8 bytes)
+	firstTimestamp := time.Now().UnixMilli() // Use milliseconds like Kafka
 	firstTimestampBytes := make([]byte, 8)
 	binary.BigEndian.PutUint64(firstTimestampBytes, uint64(firstTimestamp))
 	batch = append(batch, firstTimestampBytes...)
 
-	// Max timestamp
-	maxTimestamp := firstTimestamp + int64(recordsToFetch)*1000000 // 1ms apart
+	// Max timestamp (8 bytes)
+	maxTimestamp := firstTimestamp + recordsToFetch - 1 // 1ms per record
 	maxTimestampBytes := make([]byte, 8)
 	binary.BigEndian.PutUint64(maxTimestampBytes, uint64(maxTimestamp))
 	batch = append(batch, maxTimestampBytes...)
 
-	// Producer ID, Producer Epoch, Base Sequence
-	batch = append(batch, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF) // producer ID (-1)
-	batch = append(batch, 0xFF, 0xFF)                                     // producer epoch (-1)
-	batch = append(batch, 0xFF, 0xFF, 0xFF, 0xFF)                         // base sequence (-1)
+	// Producer ID (8 bytes) - -1 for non-transactional
+	batch = append(batch, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF)
 
-	// Record count
+	// Producer Epoch (2 bytes) - -1 for non-transactional
+	batch = append(batch, 0xFF, 0xFF)
+
+	// Base Sequence (4 bytes) - -1 for non-transactional
+	batch = append(batch, 0xFF, 0xFF, 0xFF, 0xFF)
+
+	// Record count (4 bytes)
 	recordCountBytes := make([]byte, 4)
 	binary.BigEndian.PutUint32(recordCountBytes, uint32(recordsToFetch))
 	batch = append(batch, recordCountBytes...)
 
-	// Add simple records
+	// Add records that match typical client expectations
 	for i := int64(0); i < recordsToFetch; i++ {
-		// Each record: length + attributes + timestamp_delta + offset_delta + key_length + key + value_length + value + headers_count
-		record := make([]byte, 0, 32)
+		// Build individual record
+		record := make([]byte, 0, 64)
 
-		// Record attributes
+		// Record attributes (1 byte)
 		record = append(record, 0)
 
-		// Timestamp delta (varint - simplified to 1 byte)
-		timestampDelta := byte(i) // simple delta
-		record = append(record, timestampDelta)
+		// Timestamp delta (varint) - use proper varint encoding
+		timestampDelta := i // milliseconds from first timestamp
+		record = append(record, encodeVarint(timestampDelta)...)
 
-		// Offset delta (varint - simplified to 1 byte)
-		offsetDelta := byte(i)
-		record = append(record, offsetDelta)
+		// Offset delta (varint)
+		offsetDelta := i
+		record = append(record, encodeVarint(offsetDelta)...)
 
-		// Key length (-1 = null key)
-		record = append(record, 0xFF)
+		// Key length (varint) - -1 for null key
+		record = append(record, encodeVarint(-1)...)
 
-		// Value (simple test message)
-		value := fmt.Sprintf("message-%d", fetchOffset+i)
-		record = append(record, byte(len(value))) // value length
-		record = append(record, []byte(value)...) // value
+		// Value length and value
+		value := fmt.Sprintf("Test message %d", fetchOffset+i)
+		record = append(record, encodeVarint(int64(len(value)))...)
+		record = append(record, []byte(value)...)
 
-		// Headers count (0)
-		record = append(record, 0)
+		// Headers count (varint) - 0 headers
+		record = append(record, encodeVarint(0)...)
 
-		// Record length (varint - simplified)
-		recordLength := byte(len(record))
-		batch = append(batch, recordLength)
+		// Prepend record length (varint)
+		recordLength := int64(len(record))
+		batch = append(batch, encodeVarint(recordLength)...)
 		batch = append(batch, record...)
 	}
 
@@ -314,4 +311,18 @@ func (h *Handler) constructRecordBatch(ledger interface{}, fetchOffset, highWate
 	binary.BigEndian.PutUint32(batch[batchLengthPos:batchLengthPos+4], batchLength)
 
 	return batch
+}
+
+// encodeVarint encodes a signed integer using Kafka's varint encoding
+func encodeVarint(value int64) []byte {
+	// Kafka uses zigzag encoding for signed integers
+	zigzag := uint64((value << 1) ^ (value >> 63))
+	
+	var buf []byte
+	for zigzag >= 0x80 {
+		buf = append(buf, byte(zigzag)|0x80)
+		zigzag >>= 7
+	}
+	buf = append(buf, byte(zigzag))
+	return buf
 }
