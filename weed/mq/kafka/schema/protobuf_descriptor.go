@@ -2,9 +2,12 @@ package schema
 
 import (
 	"fmt"
+	"sync"
 
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protodesc"
 	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/reflect/protoregistry"
 	"google.golang.org/protobuf/types/descriptorpb"
 )
 
@@ -19,6 +22,7 @@ type ProtobufSchema struct {
 
 // ProtobufDescriptorParser handles parsing of Confluent Schema Registry Protobuf descriptors
 type ProtobufDescriptorParser struct {
+	mu sync.RWMutex
 	// Cache for parsed descriptors to avoid re-parsing
 	descriptorCache map[string]*ProtobufSchema
 }
@@ -35,13 +39,16 @@ func NewProtobufDescriptorParser() *ProtobufDescriptorParser {
 func (p *ProtobufDescriptorParser) ParseBinaryDescriptor(binaryData []byte, messageName string) (*ProtobufSchema, error) {
 	// Check cache first
 	cacheKey := fmt.Sprintf("%x:%s", binaryData[:min(32, len(binaryData))], messageName)
+	p.mu.RLock()
 	if cached, exists := p.descriptorCache[cacheKey]; exists {
+		p.mu.RUnlock()
 		// If we have a cached schema but no message descriptor, return the same error
 		if cached.MessageDescriptor == nil {
-			return nil, fmt.Errorf("failed to find message descriptor for %s: message descriptor resolution not fully implemented in Phase E1 - found message %s in package %s", messageName, messageName, cached.PackageName)
+			return cached, fmt.Errorf("failed to find message descriptor for %s: message descriptor resolution not fully implemented in Phase E1 - found message %s in package %s", messageName, messageName, cached.PackageName)
 		}
 		return cached, nil
 	}
+	p.mu.RUnlock()
 
 	// Parse the FileDescriptorSet from binary data
 	var fileDescriptorSet descriptorpb.FileDescriptorSet
@@ -52,6 +59,14 @@ func (p *ProtobufDescriptorParser) ParseBinaryDescriptor(binaryData []byte, mess
 	// Validate the descriptor set
 	if err := p.validateDescriptorSet(&fileDescriptorSet); err != nil {
 		return nil, fmt.Errorf("invalid descriptor set: %w", err)
+	}
+
+	// If no message name provided, try to find the first available message
+	if messageName == "" {
+		messageName = p.findFirstMessageName(&fileDescriptorSet)
+		if messageName == "" {
+			return nil, fmt.Errorf("no messages found in FileDescriptorSet")
+		}
 	}
 
 	// Find the target message descriptor
@@ -66,8 +81,10 @@ func (p *ProtobufDescriptorParser) ParseBinaryDescriptor(binaryData []byte, mess
 			PackageName:       packageName,
 			Dependencies:      p.extractDependencies(&fileDescriptorSet),
 		}
+		p.mu.Lock()
 		p.descriptorCache[cacheKey] = schema
-		return nil, fmt.Errorf("failed to find message descriptor for %s: %w", messageName, err)
+		p.mu.Unlock()
+		return schema, fmt.Errorf("failed to find message descriptor for %s: %w", messageName, err)
 	}
 
 	// Extract dependencies
@@ -83,7 +100,9 @@ func (p *ProtobufDescriptorParser) ParseBinaryDescriptor(binaryData []byte, mess
 	}
 
 	// Cache the result
+	p.mu.Lock()
 	p.descriptorCache[cacheKey] = schema
+	p.mu.Unlock()
 
 	return schema, nil
 }
@@ -106,6 +125,16 @@ func (p *ProtobufDescriptorParser) validateDescriptorSet(fds *descriptorpb.FileD
 	return nil
 }
 
+// findFirstMessageName finds the first message name in the FileDescriptorSet
+func (p *ProtobufDescriptorParser) findFirstMessageName(fds *descriptorpb.FileDescriptorSet) string {
+	for _, file := range fds.File {
+		if len(file.MessageType) > 0 {
+			return file.MessageType[0].GetName()
+		}
+	}
+	return ""
+}
+
 // findMessageDescriptor locates a specific message descriptor within the FileDescriptorSet
 func (p *ProtobufDescriptorParser) findMessageDescriptor(fds *descriptorpb.FileDescriptorSet, messageName string) (protoreflect.MessageDescriptor, string, error) {
 	// This is a simplified implementation for Phase E1
@@ -124,19 +153,91 @@ func (p *ProtobufDescriptorParser) findMessageDescriptor(fds *descriptorpb.FileD
 		// Search for the message in this file
 		for _, messageType := range file.MessageType {
 			if messageType.Name != nil && *messageType.Name == messageName {
-				// For Phase E1, we'll create a placeholder descriptor
-				// In Phase E2, this will be replaced with proper descriptor resolution
-				return nil, packageName, fmt.Errorf("message descriptor resolution not fully implemented in Phase E1 - found message %s in package %s", messageName, packageName)
+				// Try to build a proper descriptor from the FileDescriptorProto
+				fileDesc, err := p.buildFileDescriptor(file)
+				if err != nil {
+					return nil, packageName, fmt.Errorf("failed to build file descriptor: %w", err)
+				}
+
+				// Find the message descriptor in the built file
+				msgDesc := p.findMessageInFileDescriptor(fileDesc, messageName)
+				if msgDesc != nil {
+					return msgDesc, packageName, nil
+				}
+
+				return nil, packageName, fmt.Errorf("message descriptor built but not found: %s", messageName)
 			}
 
 			// Search nested messages (simplified)
 			if nestedDesc := p.searchNestedMessages(messageType, messageName); nestedDesc != nil {
-				return nil, packageName, fmt.Errorf("nested message descriptor resolution not fully implemented in Phase E1 - found nested message %s", messageName)
+				// Try to build descriptor for nested message
+				fileDesc, err := p.buildFileDescriptor(file)
+				if err != nil {
+					return nil, packageName, fmt.Errorf("failed to build file descriptor for nested message: %w", err)
+				}
+
+				msgDesc := p.findMessageInFileDescriptor(fileDesc, messageName)
+				if msgDesc != nil {
+					return msgDesc, packageName, nil
+				}
+
+				return nil, packageName, fmt.Errorf("nested message descriptor built but not found: %s", messageName)
 			}
 		}
 	}
 
 	return nil, "", fmt.Errorf("message %s not found in descriptor set", messageName)
+}
+
+// buildFileDescriptor builds a protoreflect.FileDescriptor from a FileDescriptorProto
+func (p *ProtobufDescriptorParser) buildFileDescriptor(fileProto *descriptorpb.FileDescriptorProto) (protoreflect.FileDescriptor, error) {
+	// Create a local registry to avoid conflicts
+	localFiles := &protoregistry.Files{}
+
+	// Build the file descriptor using protodesc
+	fileDesc, err := protodesc.NewFile(fileProto, localFiles)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create file descriptor: %w", err)
+	}
+
+	return fileDesc, nil
+}
+
+// findMessageInFileDescriptor searches for a message descriptor within a file descriptor
+func (p *ProtobufDescriptorParser) findMessageInFileDescriptor(fileDesc protoreflect.FileDescriptor, messageName string) protoreflect.MessageDescriptor {
+	// Search top-level messages
+	messages := fileDesc.Messages()
+	for i := 0; i < messages.Len(); i++ {
+		msgDesc := messages.Get(i)
+		if string(msgDesc.Name()) == messageName {
+			return msgDesc
+		}
+
+		// Search nested messages
+		if nestedDesc := p.findNestedMessageDescriptor(msgDesc, messageName); nestedDesc != nil {
+			return nestedDesc
+		}
+	}
+
+	return nil
+}
+
+// findNestedMessageDescriptor recursively searches for nested messages
+func (p *ProtobufDescriptorParser) findNestedMessageDescriptor(msgDesc protoreflect.MessageDescriptor, messageName string) protoreflect.MessageDescriptor {
+	nestedMessages := msgDesc.Messages()
+	for i := 0; i < nestedMessages.Len(); i++ {
+		nestedDesc := nestedMessages.Get(i)
+		if string(nestedDesc.Name()) == messageName {
+			return nestedDesc
+		}
+
+		// Recursively search deeper nested messages
+		if deeperNested := p.findNestedMessageDescriptor(nestedDesc, messageName); deeperNested != nil {
+			return deeperNested
+		}
+	}
+
+	return nil
 }
 
 // searchNestedMessages recursively searches for nested message types
@@ -226,11 +327,15 @@ func (s *ProtobufSchema) ValidateMessage(messageData []byte) error {
 
 // ClearCache clears the descriptor cache
 func (p *ProtobufDescriptorParser) ClearCache() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.descriptorCache = make(map[string]*ProtobufSchema)
 }
 
 // GetCacheStats returns statistics about the descriptor cache
 func (p *ProtobufDescriptorParser) GetCacheStats() map[string]interface{} {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 	return map[string]interface{}{
 		"cached_descriptors": len(p.descriptorCache),
 	}

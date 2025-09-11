@@ -37,7 +37,7 @@ func NewLedger() *Ledger {
 func (l *Ledger) AssignOffsets(count int64) int64 {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	
+
 	baseOffset := l.nextOffset
 	l.nextOffset += count
 	return baseOffset
@@ -48,25 +48,25 @@ func (l *Ledger) AssignOffsets(count int64) int64 {
 func (l *Ledger) AppendRecord(kafkaOffset, timestamp int64, size int32) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	
+
 	// Validate offset is in expected range
 	if kafkaOffset < 0 || kafkaOffset >= l.nextOffset {
 		return fmt.Errorf("invalid offset %d, expected 0 <= offset < %d", kafkaOffset, l.nextOffset)
 	}
-	
+
 	// Check for duplicate offset (shouldn't happen in normal operation)
 	if len(l.entries) > 0 && l.entries[len(l.entries)-1].KafkaOffset >= kafkaOffset {
 		return fmt.Errorf("offset %d already exists or is out of order", kafkaOffset)
 	}
-	
+
 	entry := OffsetEntry{
 		KafkaOffset: kafkaOffset,
 		Timestamp:   timestamp,
 		Size:        size,
 	}
-	
+
 	l.entries = append(l.entries, entry)
-	
+
 	// Update earliest/latest timestamps
 	if l.earliestTime == 0 || timestamp < l.earliestTime {
 		l.earliestTime = timestamp
@@ -74,7 +74,7 @@ func (l *Ledger) AppendRecord(kafkaOffset, timestamp int64, size int32) error {
 	if timestamp > l.latestTime {
 		l.latestTime = timestamp
 	}
-	
+
 	return nil
 }
 
@@ -82,16 +82,16 @@ func (l *Ledger) AppendRecord(kafkaOffset, timestamp int64, size int32) error {
 func (l *Ledger) GetRecord(kafkaOffset int64) (timestamp int64, size int32, err error) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	
+
 	// Binary search for the offset
 	idx := sort.Search(len(l.entries), func(i int) bool {
 		return l.entries[i].KafkaOffset >= kafkaOffset
 	})
-	
+
 	if idx >= len(l.entries) || l.entries[idx].KafkaOffset != kafkaOffset {
 		return 0, 0, fmt.Errorf("offset %d not found", kafkaOffset)
 	}
-	
+
 	entry := l.entries[idx]
 	return entry.Timestamp, entry.Size, nil
 }
@@ -100,7 +100,7 @@ func (l *Ledger) GetRecord(kafkaOffset int64) (timestamp int64, size int32, err 
 func (l *Ledger) GetEarliestOffset() int64 {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	
+
 	if len(l.entries) == 0 {
 		return 0 // no messages yet, earliest is 0
 	}
@@ -111,7 +111,7 @@ func (l *Ledger) GetEarliestOffset() int64 {
 func (l *Ledger) GetLatestOffset() int64 {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	
+
 	if len(l.entries) == 0 {
 		return 0 // no messages yet, latest is 0
 	}
@@ -131,21 +131,21 @@ func (l *Ledger) GetHighWaterMark() int64 {
 func (l *Ledger) FindOffsetByTimestamp(targetTimestamp int64) int64 {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	
+
 	if len(l.entries) == 0 {
 		return 0
 	}
-	
+
 	// Binary search for first entry with timestamp >= targetTimestamp
 	idx := sort.Search(len(l.entries), func(i int) bool {
 		return l.entries[i].Timestamp >= targetTimestamp
 	})
-	
+
 	if idx >= len(l.entries) {
 		// Target timestamp is after all entries, return high water mark
 		return l.nextOffset
 	}
-	
+
 	return l.entries[idx].KafkaOffset
 }
 
@@ -153,7 +153,7 @@ func (l *Ledger) FindOffsetByTimestamp(targetTimestamp int64) int64 {
 func (l *Ledger) GetStats() (entryCount int, earliestTime, latestTime, nextOffset int64) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	
+
 	return len(l.entries), l.earliestTime, l.latestTime, l.nextOffset
 }
 
@@ -161,11 +161,22 @@ func (l *Ledger) GetStats() (entryCount int, earliestTime, latestTime, nextOffse
 func (l *Ledger) GetTimestampRange() (earliest, latest int64) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	
+
 	if len(l.entries) == 0 {
 		now := time.Now().UnixNano()
 		return now, now // stub values when no data
 	}
-	
+
 	return l.earliestTime, l.latestTime
+}
+
+// GetEntries returns a copy of all offset entries in the ledger
+func (l *Ledger) GetEntries() []OffsetEntry {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+
+	// Return a copy to prevent external modification
+	entries := make([]OffsetEntry, len(l.entries))
+	copy(entries, l.entries)
+	return entries
 }

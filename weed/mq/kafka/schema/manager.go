@@ -21,6 +21,9 @@ type Manager struct {
 	jsonSchemaDecoders map[uint32]*JSONSchemaDecoder // schema ID -> decoder
 	decoderMu          sync.RWMutex
 
+	// Schema evolution checker
+	evolutionChecker *SchemaEvolutionChecker
+
 	// Configuration
 	config ManagerConfig
 }
@@ -78,6 +81,7 @@ func NewManager(config ManagerConfig) (*Manager, error) {
 		avroDecoders:       make(map[uint32]*AvroDecoder),
 		protobufDecoders:   make(map[uint32]*ProtobufDecoder),
 		jsonSchemaDecoders: make(map[uint32]*JSONSchemaDecoder),
+		evolutionChecker:   NewSchemaEvolutionChecker(),
 		config:             config,
 	}, nil
 }
@@ -227,7 +231,7 @@ func (m *Manager) decodeJSONSchemaMessage(envelope *ConfluentEnvelope, cachedSch
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get JSON Schema decoder: %w", err)
 	}
-	
+
 	// Decode to RecordValue
 	recordValue, err := decoder.DecodeToRecordValue(envelope.Payload)
 	if err != nil {
@@ -237,7 +241,7 @@ func (m *Manager) decodeJSONSchemaMessage(envelope *ConfluentEnvelope, cachedSch
 		// In permissive mode, try to decode as much as possible
 		return nil, nil, fmt.Errorf("permissive decoding failed: %w", err)
 	}
-	
+
 	// Get RecordType from schema
 	recordType, err := decoder.InferRecordType()
 	if err != nil {
@@ -248,7 +252,7 @@ func (m *Manager) decodeJSONSchemaMessage(envelope *ConfluentEnvelope, cachedSch
 			return nil, nil, fmt.Errorf("failed to infer record type: %w", err)
 		}
 	}
-	
+
 	return recordValue, recordType, nil
 }
 
@@ -300,7 +304,7 @@ func (m *Manager) getProtobufDecoder(schemaID uint32, schemaStr string) (*Protob
 	m.decoderMu.Lock()
 	m.protobufDecoders[schemaID] = decoder
 	m.decoderMu.Unlock()
-	
+
 	return decoder, nil
 }
 
@@ -313,18 +317,18 @@ func (m *Manager) getJSONSchemaDecoder(schemaID uint32, schemaStr string) (*JSON
 		return decoder, nil
 	}
 	m.decoderMu.RUnlock()
-	
+
 	// Create new decoder
 	decoder, err := NewJSONSchemaDecoder(schemaStr)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Cache the decoder
 	m.decoderMu.Lock()
 	m.jsonSchemaDecoders[schemaID] = decoder
 	m.decoderMu.Unlock()
-	
+
 	return decoder, nil
 }
 
@@ -387,7 +391,7 @@ func (m *Manager) ClearCache() {
 	m.protobufDecoders = make(map[uint32]*ProtobufDecoder)
 	m.jsonSchemaDecoders = make(map[uint32]*JSONSchemaDecoder)
 	m.decoderMu.Unlock()
-	
+
 	m.registryClient.ClearCache()
 }
 
@@ -475,7 +479,7 @@ func (m *Manager) encodeProtobufMessage(recordValue *schema_pb.RecordValue, sche
 
 	// Create Confluent envelope (with indexes if needed)
 	envelope := CreateConfluentEnvelope(FormatProtobuf, schemaID, nil, binary)
-	
+
 	return envelope, nil
 }
 
@@ -486,22 +490,22 @@ func (m *Manager) encodeJSONSchemaMessage(recordValue *schema_pb.RecordValue, sc
 	if err != nil {
 		return nil, fmt.Errorf("failed to get schema for encoding: %w", err)
 	}
-	
+
 	// Get decoder (which contains the schema validator)
 	decoder, err := m.getJSONSchemaDecoder(schemaID, cachedSchema.Schema)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get decoder for encoding: %w", err)
 	}
-	
+
 	// Encode using JSON Schema decoder
 	jsonData, err := decoder.EncodeFromRecordValue(recordValue)
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode to JSON: %w", err)
 	}
-	
+
 	// Create Confluent envelope
 	envelope := CreateConfluentEnvelope(FormatJSONSchema, schemaID, nil, jsonData)
-	
+
 	return envelope, nil
 }
 
@@ -631,4 +635,67 @@ func schemaValueToGoValue(value *schema_pb.Value) interface{} {
 		// Default to string representation
 		return fmt.Sprintf("%v", value)
 	}
+}
+
+// CheckSchemaCompatibility checks if two schemas are compatible
+func (m *Manager) CheckSchemaCompatibility(
+	oldSchemaStr, newSchemaStr string,
+	format Format,
+	level CompatibilityLevel,
+) (*CompatibilityResult, error) {
+	return m.evolutionChecker.CheckCompatibility(oldSchemaStr, newSchemaStr, format, level)
+}
+
+// CanEvolveSchema checks if a schema can be evolved for a given subject
+func (m *Manager) CanEvolveSchema(
+	subject string,
+	currentSchemaStr, newSchemaStr string,
+	format Format,
+) (*CompatibilityResult, error) {
+	return m.evolutionChecker.CanEvolve(subject, currentSchemaStr, newSchemaStr, format)
+}
+
+// SuggestSchemaEvolution provides suggestions for schema evolution
+func (m *Manager) SuggestSchemaEvolution(
+	oldSchemaStr, newSchemaStr string,
+	format Format,
+	level CompatibilityLevel,
+) ([]string, error) {
+	return m.evolutionChecker.SuggestEvolution(oldSchemaStr, newSchemaStr, format, level)
+}
+
+// ValidateSchemaEvolution validates a schema evolution before applying it
+func (m *Manager) ValidateSchemaEvolution(
+	subject string,
+	newSchemaStr string,
+	format Format,
+) error {
+	// Get the current schema for the subject
+	currentSchema, err := m.registryClient.GetLatestSchema(subject)
+	if err != nil {
+		// If no current schema exists, any schema is valid
+		return nil
+	}
+
+	// Check compatibility
+	result, err := m.CanEvolveSchema(subject, currentSchema.Schema, newSchemaStr, format)
+	if err != nil {
+		return fmt.Errorf("failed to check schema compatibility: %w", err)
+	}
+
+	if !result.Compatible {
+		return fmt.Errorf("schema evolution is not compatible: %v", result.Issues)
+	}
+
+	return nil
+}
+
+// GetCompatibilityLevel gets the compatibility level for a subject
+func (m *Manager) GetCompatibilityLevel(subject string) CompatibilityLevel {
+	return m.evolutionChecker.GetCompatibilityLevel(subject)
+}
+
+// SetCompatibilityLevel sets the compatibility level for a subject
+func (m *Manager) SetCompatibilityLevel(subject string, level CompatibilityLevel) error {
+	return m.evolutionChecker.SetCompatibilityLevel(subject, level)
 }

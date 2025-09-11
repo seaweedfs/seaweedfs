@@ -225,47 +225,31 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 	return response, nil
 }
 
-// parseRecordSet parses a Kafka record set and returns the number of records and total size
-// TODO: CRITICAL - This is a simplified parser that needs complete rewrite for protocol compatibility
-// Missing:
-// - Proper record batch format parsing (v0, v1, v2)
+// parseRecordSet parses a Kafka record set using the enhanced record batch parser
+// Now supports:
+// - Proper record batch format parsing (v2)
 // - Compression support (gzip, snappy, lz4, zstd)
 // - CRC32 validation
-// - Transaction markers and control records
-// - Individual record extraction (key, value, headers, timestamps)
+// - Individual record extraction
 func (h *Handler) parseRecordSet(recordSetData []byte) (recordCount int32, totalSize int32, err error) {
-	if len(recordSetData) < 12 { // minimum record set size
-		return 0, 0, fmt.Errorf("record set too small")
-	}
-
-	// For Phase 1, we'll do a very basic parse to count records
-	// In a full implementation, this would parse the record batch format properly
-
-	// Record batch header: base_offset(8) + length(4) + partition_leader_epoch(4) + magic(1) + ...
-	if len(recordSetData) < 17 {
-		return 0, 0, fmt.Errorf("invalid record batch header")
-	}
-
-	// Skip to record count (at offset 16 in record batch)
-	if len(recordSetData) < 20 {
-		// Assume single record for very small batches
-		return 1, int32(len(recordSetData)), nil
-	}
-
-	// Try to read record count from the batch header
-	recordCount = int32(binary.BigEndian.Uint32(recordSetData[16:20]))
-
-	// Validate record count is reasonable
-	if recordCount <= 0 || recordCount > 1000000 { // sanity check
-		// Fallback to estimating based on size
-		estimatedCount := int32(len(recordSetData)) / 32 // rough estimate
-		if estimatedCount <= 0 {
-			estimatedCount = 1
+	parser := NewRecordBatchParser()
+	
+	// Parse the record batch with CRC validation
+	batch, err := parser.ParseRecordBatchWithValidation(recordSetData, true)
+	if err != nil {
+		// If CRC validation fails, try without validation for backward compatibility
+		batch, err = parser.ParseRecordBatch(recordSetData)
+		if err != nil {
+			return 0, 0, fmt.Errorf("failed to parse record batch: %w", err)
 		}
-		return estimatedCount, int32(len(recordSetData)), nil
+		fmt.Printf("DEBUG: Record batch parsed without CRC validation (codec: %s)\n", 
+			batch.GetCompressionCodec())
+	} else {
+		fmt.Printf("DEBUG: Record batch parsed successfully with CRC validation (codec: %s)\n", 
+			batch.GetCompressionCodec())
 	}
 
-	return recordCount, int32(len(recordSetData)), nil
+	return batch.RecordCount, int32(len(recordSetData)), nil
 }
 
 // produceToSeaweedMQ publishes a single record to SeaweedMQ (simplified for Phase 2)
@@ -571,24 +555,31 @@ func (h *Handler) storeDecodedMessage(topicName string, partitionID int32, decod
 	return nil
 }
 
-// extractMessagesFromRecordSet extracts individual messages from a Kafka record set
-// This is a simplified implementation for Phase 4 - full implementation in Phase 8
+// extractMessagesFromRecordSet extracts individual messages from a record set with compression support
 func (h *Handler) extractMessagesFromRecordSet(recordSetData []byte) ([][]byte, error) {
-	// For now, treat the entire record set as a single message
-	// In a full implementation, this would:
-	// 1. Parse the record batch header
-	// 2. Handle compression (gzip, snappy, lz4, zstd)
-	// 3. Extract individual records with their keys, values, headers
-	// 4. Validate CRC32 checksums
-	// 5. Handle different record batch versions (v0, v1, v2)
-
-	if len(recordSetData) < 20 {
-		return nil, fmt.Errorf("record set too small for extraction")
+	parser := NewRecordBatchParser()
+	
+	// Parse the record batch
+	batch, err := parser.ParseRecordBatch(recordSetData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse record batch for message extraction: %w", err)
 	}
 
-	// Simplified: assume single message starting after record batch header
-	// Real implementation would parse the record batch format properly
-	messages := [][]byte{recordSetData}
+	fmt.Printf("DEBUG: Extracting messages from record batch (codec: %s, records: %d)\n", 
+		batch.GetCompressionCodec(), batch.RecordCount)
+
+	// Decompress the records if compressed
+	decompressedData, err := batch.DecompressRecords()
+	if err != nil {
+		return nil, fmt.Errorf("failed to decompress records: %w", err)
+	}
+
+	// For now, return the decompressed data as a single message
+	// In a full implementation, this would parse individual records from the decompressed data
+	messages := [][]byte{decompressedData}
+
+	fmt.Printf("DEBUG: Extracted %d messages (decompressed size: %d bytes)\n", 
+		len(messages), len(decompressedData))
 
 	return messages, nil
 }

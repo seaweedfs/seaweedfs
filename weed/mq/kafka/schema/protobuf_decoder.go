@@ -18,12 +18,23 @@ type ProtobufDecoder struct {
 
 // NewProtobufDecoder creates a new Protobuf decoder from a schema descriptor
 func NewProtobufDecoder(schemaBytes []byte) (*ProtobufDecoder, error) {
-	// For Phase 5, we'll implement a simplified version
-	// In a full implementation, this would properly parse FileDescriptorSet
-	// and handle complex schema dependencies
+	// Parse the binary descriptor using the descriptor parser
+	parser := NewProtobufDescriptorParser()
 
-	// For now, return an error indicating this needs proper implementation
-	return nil, fmt.Errorf("Protobuf decoder from binary descriptors not fully implemented in Phase 5 - use NewProtobufDecoderFromDescriptor for testing")
+	// For now, we need to extract the message name from the schema bytes
+	// In a real implementation, this would be provided by the Schema Registry
+	// For this phase, we'll try to find the first message in the descriptor
+	schema, err := parser.ParseBinaryDescriptor(schemaBytes, "")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse binary descriptor: %w", err)
+	}
+
+	// Create the decoder using the parsed descriptor
+	if schema.MessageDescriptor == nil {
+		return nil, fmt.Errorf("no message descriptor found in schema")
+	}
+
+	return NewProtobufDecoderFromDescriptor(schema.MessageDescriptor), nil
 }
 
 // NewProtobufDecoderFromDescriptor creates a Protobuf decoder from a message descriptor

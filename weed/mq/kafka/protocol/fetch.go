@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/compression"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/schema"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 )
@@ -295,8 +296,20 @@ func (h *Handler) createSchematizedRecordBatch(messages [][]byte, baseOffset int
 	return h.createRecordBatchWithPayload(baseOffset, int32(len(messages)), batchPayload)
 }
 
-// createEmptyRecordBatch creates an empty Kafka record batch
+// createEmptyRecordBatch creates an empty Kafka record batch using the new parser
 func (h *Handler) createEmptyRecordBatch(baseOffset int64) []byte {
+	// Use the new record batch creation function with no compression
+	emptyRecords := []byte{}
+	batch, err := CreateRecordBatch(baseOffset, emptyRecords, compression.None)
+	if err != nil {
+		// Fallback to manual creation if there's an error
+		return h.createEmptyRecordBatchManual(baseOffset)
+	}
+	return batch
+}
+
+// createEmptyRecordBatchManual creates an empty Kafka record batch manually (fallback)
+func (h *Handler) createEmptyRecordBatchManual(baseOffset int64) []byte {
 	// Create a minimal empty record batch
 	batch := make([]byte, 0, 61) // Standard record batch header size
 

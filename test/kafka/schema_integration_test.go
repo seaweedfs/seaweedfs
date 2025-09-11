@@ -2,13 +2,11 @@ package kafka
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
-	"github.com/IBM/sarama"
 	"github.com/linkedin/goavro/v2"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/protocol"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/schema"
@@ -185,14 +183,14 @@ func createMultiFormatSchemaRegistry(t *testing.T) *httptest.Server {
 func startKafkaGatewayWithSchema(t *testing.T, registryURL string) *TestServer {
 	// Create handler with schema support
 	handler := protocol.NewHandler()
-	
+
 	// Enable schema management
 	schemaConfig := schema.ManagerConfig{
-		RegistryURL:      registryURL,
-		ValidationMode:   schema.ValidationPermissive,
-		EnableMirroring:  false,
+		RegistryURL:     registryURL,
+		ValidationMode:  schema.ValidationPermissive,
+		EnableMirroring: false,
 	}
-	
+
 	if err := handler.EnableSchemaManagement(schemaConfig); err != nil {
 		t.Fatalf("Failed to enable schema management: %v", err)
 	}
@@ -277,7 +275,7 @@ func testSchemaEvolution(t *testing.T, gatewayURL, registryURL string) {
 		RegistryURL:    registryURL,
 		ValidationMode: schema.ValidationPermissive,
 	}
-	
+
 	manager, err := schema.NewManager(config)
 	if err != nil {
 		t.Fatalf("Failed to create schema manager: %v", err)
@@ -370,7 +368,7 @@ func testSchemaErrorHandling(t *testing.T, gatewayURL string) {
 	for _, tc := range errorCases {
 		t.Run(tc.name, func(t *testing.T) {
 			envelope, ok := schema.ParseConfluentEnvelope(tc.message)
-			
+
 			switch tc.name {
 			case "NonSchematizedMessage", "InvalidMagicByte", "TooShortMessage":
 				if ok {
@@ -383,7 +381,7 @@ func testSchemaErrorHandling(t *testing.T, gatewayURL string) {
 					t.Errorf("Expected parsing to succeed for %s, but it failed", tc.desc)
 				}
 			}
-			
+
 			_ = envelope // Use the variable to avoid unused warning
 		})
 	}
@@ -406,7 +404,7 @@ func testFormatSpecificWorkflow(t *testing.T, gatewayURL, topic string, schemaID
 				{"name": "message", "type": "string"}
 			]
 		}`
-		
+
 		codec, _ := goavro.NewCodec(avroSchema)
 		testData = map[string]interface{}{
 			"id":      int32(123),
@@ -475,7 +473,7 @@ func TestKafkaGateway_SchemaPerformance(t *testing.T) {
 		RegistryURL:    schemaRegistry.URL,
 		ValidationMode: schema.ValidationPermissive,
 	}
-	
+
 	manager, err := schema.NewManager(config)
 	if err != nil {
 		t.Fatalf("Failed to create schema manager: %v", err)
@@ -490,7 +488,7 @@ func TestKafkaGateway_SchemaPerformance(t *testing.T) {
 			{"name": "name", "type": "string"}
 		]
 	}`
-	
+
 	codec, _ := goavro.NewCodec(avroSchema)
 	testData := map[string]interface{}{
 		"id":   int32(1),
@@ -505,20 +503,20 @@ func TestKafkaGateway_SchemaPerformance(t *testing.T) {
 	// Performance test
 	start := time.Now()
 	iterations := 1000
-	
+
 	for i := 0; i < iterations; i++ {
 		_, err := manager.DecodeMessage(testMsg)
 		if err != nil {
 			t.Fatalf("Decode failed at iteration %d: %v", i, err)
 		}
 	}
-	
+
 	duration := time.Since(start)
 	avgTime := duration / time.Duration(iterations)
-	
-	t.Logf("Performance test: %d iterations in %v (avg: %v per decode)", 
+
+	t.Logf("Performance test: %d iterations in %v (avg: %v per decode)",
 		iterations, duration, avgTime)
-	
+
 	// Verify reasonable performance (adjust threshold as needed)
 	if avgTime > time.Millisecond {
 		t.Logf("Warning: Average decode time %v may be too slow", avgTime)
