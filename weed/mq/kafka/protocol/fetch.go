@@ -4,6 +4,9 @@ import (
 	"encoding/binary"
 	"fmt"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/schema"
+	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 )
 
 func (h *Handler) handleFetch(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
@@ -209,4 +212,232 @@ func encodeVarint(value int64) []byte {
 	}
 	buf = append(buf, byte(zigzag))
 	return buf
+}
+
+// reconstructSchematizedMessage reconstructs a schematized message from SMQ RecordValue
+func (h *Handler) reconstructSchematizedMessage(recordValue *schema_pb.RecordValue, metadata map[string]string) ([]byte, error) {
+	// Only reconstruct if schema management is enabled
+	if !h.IsSchemaEnabled() {
+		return nil, fmt.Errorf("schema management not enabled")
+	}
+
+	// Extract schema information from metadata
+	schemaIDStr, exists := metadata["schema_id"]
+	if !exists {
+		return nil, fmt.Errorf("no schema ID in metadata")
+	}
+
+	var schemaID uint32
+	if _, err := fmt.Sscanf(schemaIDStr, "%d", &schemaID); err != nil {
+		return nil, fmt.Errorf("invalid schema ID: %w", err)
+	}
+
+	formatStr, exists := metadata["schema_format"]
+	if !exists {
+		return nil, fmt.Errorf("no schema format in metadata")
+	}
+
+	var format schema.Format
+	switch formatStr {
+	case "AVRO":
+		format = schema.FormatAvro
+	case "PROTOBUF":
+		format = schema.FormatProtobuf
+	case "JSON_SCHEMA":
+		format = schema.FormatJSONSchema
+	default:
+		return nil, fmt.Errorf("unsupported schema format: %s", formatStr)
+	}
+
+	// Use schema manager to encode back to original format
+	return h.schemaManager.EncodeMessage(recordValue, schemaID, format)
+}
+
+// fetchSchematizedRecords fetches and reconstructs schematized records from SeaweedMQ
+func (h *Handler) fetchSchematizedRecords(topicName string, partitionID int32, offset int64, maxBytes int32) ([][]byte, error) {
+	// This is a placeholder for Phase 7
+	// In Phase 8, this will integrate with SeaweedMQ to:
+	// 1. Fetch stored RecordValues and metadata from SeaweedMQ
+	// 2. Reconstruct original Kafka message format using schema information
+	// 3. Handle schema evolution and compatibility
+	// 4. Return properly formatted Kafka record batches
+
+	fmt.Printf("DEBUG: Would fetch schematized records - topic: %s, partition: %d, offset: %d, maxBytes: %d\n",
+		topicName, partitionID, offset, maxBytes)
+
+	// For Phase 7, return empty records
+	// In Phase 8, this will return actual reconstructed messages
+	return [][]byte{}, nil
+}
+
+// createSchematizedRecordBatch creates a Kafka record batch from reconstructed schematized messages
+func (h *Handler) createSchematizedRecordBatch(messages [][]byte, baseOffset int64) []byte {
+	if len(messages) == 0 {
+		// Return empty record batch
+		return h.createEmptyRecordBatch(baseOffset)
+	}
+
+	// For Phase 7, create a simple record batch
+	// In Phase 8, this will properly format multiple messages into a record batch
+	// with correct headers, compression, and CRC validation
+
+	// Combine all messages into a single batch payload
+	var batchPayload []byte
+	for _, msg := range messages {
+		// Add message length prefix (for record batch format)
+		msgLen := len(msg)
+		lengthBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(lengthBytes, uint32(msgLen))
+		batchPayload = append(batchPayload, lengthBytes...)
+		batchPayload = append(batchPayload, msg...)
+	}
+
+	return h.createRecordBatchWithPayload(baseOffset, int32(len(messages)), batchPayload)
+}
+
+// createEmptyRecordBatch creates an empty Kafka record batch
+func (h *Handler) createEmptyRecordBatch(baseOffset int64) []byte {
+	// Create a minimal empty record batch
+	batch := make([]byte, 0, 61) // Standard record batch header size
+
+	// Base offset (8 bytes)
+	baseOffsetBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(baseOffsetBytes, uint64(baseOffset))
+	batch = append(batch, baseOffsetBytes...)
+
+	// Batch length (4 bytes) - will be filled at the end
+	lengthPlaceholder := len(batch)
+	batch = append(batch, 0, 0, 0, 0)
+
+	// Partition leader epoch (4 bytes) - 0 for simplicity
+	batch = append(batch, 0, 0, 0, 0)
+
+	// Magic byte (1 byte) - version 2
+	batch = append(batch, 2)
+
+	// CRC32 (4 bytes) - placeholder, should be calculated
+	batch = append(batch, 0, 0, 0, 0)
+
+	// Attributes (2 bytes) - no compression, no transactional
+	batch = append(batch, 0, 0)
+
+	// Last offset delta (4 bytes) - 0 for empty batch
+	batch = append(batch, 0xFF, 0xFF, 0xFF, 0xFF)
+
+	// First timestamp (8 bytes) - current time
+	timestamp := time.Now().UnixMilli()
+	timestampBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(timestampBytes, uint64(timestamp))
+	batch = append(batch, timestampBytes...)
+
+	// Max timestamp (8 bytes) - same as first for empty batch
+	batch = append(batch, timestampBytes...)
+
+	// Producer ID (8 bytes) - -1 for non-transactional
+	batch = append(batch, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF)
+
+	// Producer Epoch (2 bytes) - -1 for non-transactional
+	batch = append(batch, 0xFF, 0xFF)
+
+	// Base Sequence (4 bytes) - -1 for non-transactional
+	batch = append(batch, 0xFF, 0xFF, 0xFF, 0xFF)
+
+	// Record count (4 bytes) - 0 for empty batch
+	batch = append(batch, 0, 0, 0, 0)
+
+	// Fill in the batch length
+	batchLength := len(batch) - 12 // Exclude base offset and length field itself
+	binary.BigEndian.PutUint32(batch[lengthPlaceholder:lengthPlaceholder+4], uint32(batchLength))
+
+	return batch
+}
+
+// createRecordBatchWithPayload creates a record batch with the given payload
+func (h *Handler) createRecordBatchWithPayload(baseOffset int64, recordCount int32, payload []byte) []byte {
+	// For Phase 7, create a simplified record batch
+	// In Phase 8, this will implement proper Kafka record batch format v2
+	
+	batch := h.createEmptyRecordBatch(baseOffset)
+	
+	// Update record count
+	recordCountOffset := len(batch) - 4
+	binary.BigEndian.PutUint32(batch[recordCountOffset:recordCountOffset+4], uint32(recordCount))
+	
+	// Append payload (simplified - real implementation would format individual records)
+	batch = append(batch, payload...)
+	
+	// Update batch length
+	batchLength := len(batch) - 12
+	binary.BigEndian.PutUint32(batch[8:12], uint32(batchLength))
+	
+	return batch
+}
+
+// handleSchematizedFetch handles fetch requests for topics with schematized messages
+func (h *Handler) handleSchematizedFetch(topicName string, partitionID int32, offset int64, maxBytes int32) ([]byte, error) {
+	// Check if this topic uses schema management
+	if !h.IsSchemaEnabled() {
+		// Fall back to regular fetch handling
+		return nil, fmt.Errorf("schema management not enabled")
+	}
+
+	// Fetch schematized records from SeaweedMQ
+	messages, err := h.fetchSchematizedRecords(topicName, partitionID, offset, maxBytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch schematized records: %w", err)
+	}
+
+	// Create record batch from reconstructed messages
+	recordBatch := h.createSchematizedRecordBatch(messages, offset)
+
+	fmt.Printf("DEBUG: Created schematized record batch: %d bytes for %d messages\n", 
+		len(recordBatch), len(messages))
+
+	return recordBatch, nil
+}
+
+// isSchematizedTopic checks if a topic uses schema management
+func (h *Handler) isSchematizedTopic(topicName string) bool {
+	// For Phase 7, we'll implement a simple check
+	// In Phase 8, this will check SeaweedMQ metadata or configuration
+	// to determine if a topic has schematized messages
+
+	// For now, assume topics ending with "-value" or "-key" are schematized
+	// This is a common Confluent Schema Registry convention
+	if len(topicName) > 6 {
+		suffix := topicName[len(topicName)-6:]
+		if suffix == "-value" {
+			return true
+		}
+	}
+	if len(topicName) > 4 {
+		suffix := topicName[len(topicName)-4:]
+		if suffix == "-key" {
+			return true
+		}
+	}
+
+	return false
+}
+
+// getSchemaMetadataForTopic retrieves schema metadata for a topic
+func (h *Handler) getSchemaMetadataForTopic(topicName string) (map[string]string, error) {
+	// This is a placeholder for Phase 7
+	// In Phase 8, this will retrieve actual schema metadata from SeaweedMQ
+	// including schema ID, format, subject, version, etc.
+
+	if !h.IsSchemaEnabled() {
+		return nil, fmt.Errorf("schema management not enabled")
+	}
+
+	// For Phase 7, return mock metadata
+	metadata := map[string]string{
+		"schema_id":      "1",
+		"schema_format":  "AVRO",
+		"schema_subject": topicName,
+		"schema_version": "1",
+	}
+
+	fmt.Printf("DEBUG: Retrieved schema metadata for topic %s: %v\n", topicName, metadata)
+	return metadata, nil
 }

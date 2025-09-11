@@ -58,15 +58,9 @@ func ParseConfluentEnvelope(data []byte) (*ConfluentEnvelope, bool) {
 		Payload:  data[5:], // Default: payload starts after schema ID
 	}
 
-	// Try to detect Protobuf format by looking for message indexes
-	// Protobuf messages in Confluent format may have varint-encoded indexes
-	// after the schema ID to identify nested message types
-	if protobufEnvelope, isProtobuf := ParseConfluentProtobufEnvelope(data); isProtobuf {
-		// If it looks like Protobuf (has valid indexes), use that parsing
-		if len(protobufEnvelope.Indexes) > 0 {
-			return protobufEnvelope, true
-		}
-	}
+	// Note: Format detection should be done by the schema registry lookup
+	// For now, we'll default to Avro and let the manager determine the actual format
+	// based on the schema registry information
 	
 	return envelope, true
 }
