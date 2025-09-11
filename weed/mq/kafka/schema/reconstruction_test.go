@@ -37,7 +37,7 @@ func TestSchemaReconstruction_Avro(t *testing.T) {
 		RegistryURL:    server.URL,
 		ValidationMode: ValidationPermissive,
 	}
-	
+
 	manager, err := NewManager(config)
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
@@ -52,7 +52,7 @@ func TestSchemaReconstruction_Avro(t *testing.T) {
 			{"name": "name", "type": "string"}
 		]
 	}`
-	
+
 	codec, err := goavro.NewCodec(avroSchema)
 	if err != nil {
 		t.Fatalf("Failed to create Avro codec: %v", err)
@@ -72,7 +72,7 @@ func TestSchemaReconstruction_Avro(t *testing.T) {
 
 	// Create original Confluent message
 	originalMsg := CreateConfluentEnvelope(FormatAvro, 1, nil, avroBinary)
-	
+
 	// Debug: Check the created message
 	t.Logf("Original Avro binary length: %d", len(avroBinary))
 	t.Logf("Original Confluent message length: %d", len(originalMsg))
@@ -82,7 +82,7 @@ func TestSchemaReconstruction_Avro(t *testing.T) {
 	if !ok {
 		t.Fatal("Failed to parse Confluent envelope")
 	}
-	t.Logf("Parsed envelope - SchemaID: %d, Format: %v, Payload length: %d", 
+	t.Logf("Parsed envelope - SchemaID: %d, Format: %v, Payload length: %d",
 		envelope.SchemaID, envelope.Format, len(envelope.Payload))
 
 	// Step 1: Decode the original message (simulate Produce path)
@@ -128,7 +128,7 @@ func TestSchemaReconstruction_Avro(t *testing.T) {
 
 func TestSchemaReconstruction_MultipleFormats(t *testing.T) {
 	// Test that the reconstruction framework can handle multiple schema formats
-	
+
 	testCases := []struct {
 		name   string
 		format Format
@@ -151,7 +151,7 @@ func TestSchemaReconstruction_MultipleFormats(t *testing.T) {
 			config := ManagerConfig{
 				RegistryURL: "http://localhost:8081", // Not used for this test
 			}
-			
+
 			manager, err := NewManager(config)
 			if err != nil {
 				t.Skip("Skipping test - no registry available")
@@ -159,7 +159,7 @@ func TestSchemaReconstruction_MultipleFormats(t *testing.T) {
 
 			// Test encoding (will fail for Protobuf/JSON Schema in Phase 7, which is expected)
 			_, err = manager.EncodeMessage(recordValue, 1, tc.format)
-			
+
 			switch tc.format {
 			case FormatAvro:
 				// Avro should work (but will fail due to no registry)
@@ -191,7 +191,7 @@ func TestSchemaReconstruction_MultipleFormats(t *testing.T) {
 
 func TestConfluentEnvelope_RoundTrip(t *testing.T) {
 	// Test that Confluent envelope creation and parsing work correctly
-	
+
 	testCases := []struct {
 		name     string
 		format   Format
@@ -263,7 +263,7 @@ func TestConfluentEnvelope_RoundTrip(t *testing.T) {
 
 func TestSchemaMetadata_Preservation(t *testing.T) {
 	// Test that schema metadata is properly preserved through the reconstruction process
-	
+
 	envelope := &ConfluentEnvelope{
 		Format:   FormatAvro,
 		SchemaID: 42,
@@ -276,9 +276,9 @@ func TestSchemaMetadata_Preservation(t *testing.T) {
 
 	// Verify metadata contents
 	expectedMetadata := map[string]string{
-		"schema_format":     "AVRO",
-		"schema_id":         "42",
-		"protobuf_indexes":  "1,2,3",
+		"schema_format":    "AVRO",
+		"schema_id":        "42",
+		"protobuf_indexes": "1,2,3",
 	}
 
 	for key, expectedValue := range expectedMetadata {
@@ -299,7 +299,7 @@ func TestSchemaMetadata_Preservation(t *testing.T) {
 	}
 
 	if reconstructedFormat != envelope.Format {
-		t.Errorf("Failed to reconstruct format from metadata: expected %v, got %v", 
+		t.Errorf("Failed to reconstruct format from metadata: expected %v, got %v",
 			envelope.Format, reconstructedFormat)
 	}
 
@@ -318,7 +318,7 @@ func BenchmarkSchemaReconstruction_Avro(b *testing.B) {
 	config := ManagerConfig{
 		RegistryURL: "http://localhost:8081",
 	}
-	
+
 	manager, err := NewManager(config)
 	if err != nil {
 		b.Skip("Skipping benchmark - no registry available")
@@ -333,7 +333,7 @@ func BenchmarkSchemaReconstruction_Avro(b *testing.B) {
 
 func BenchmarkConfluentEnvelope_Creation(b *testing.B) {
 	payload := []byte("test-payload-for-benchmarking")
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = CreateConfluentEnvelope(FormatAvro, 1, nil, payload)
@@ -342,7 +342,7 @@ func BenchmarkConfluentEnvelope_Creation(b *testing.B) {
 
 func BenchmarkConfluentEnvelope_Parsing(b *testing.B) {
 	envelope := CreateConfluentEnvelope(FormatAvro, 1, nil, []byte("test-payload"))
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = ParseConfluentEnvelope(envelope)

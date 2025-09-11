@@ -1607,10 +1607,10 @@ func (h *Handler) EnableSchemaManagement(config schema.ManagerConfig) error {
 	if err != nil {
 		return fmt.Errorf("failed to create schema manager: %w", err)
 	}
-	
+
 	h.schemaManager = manager
 	h.useSchema = true
-	
+
 	fmt.Printf("Schema management enabled with registry: %s\n", config.RegistryURL)
 	return nil
 }

@@ -14,12 +14,12 @@ import (
 // Manager coordinates schema operations for the Kafka Gateway
 type Manager struct {
 	registryClient *RegistryClient
-	
+
 	// Decoder cache
-	avroDecoders    map[uint32]*AvroDecoder    // schema ID -> decoder
+	avroDecoders     map[uint32]*AvroDecoder     // schema ID -> decoder
 	protobufDecoders map[uint32]*ProtobufDecoder // schema ID -> decoder
-	decoderMu       sync.RWMutex
-	
+	decoderMu        sync.RWMutex
+
 	// Configuration
 	config ManagerConfig
 }
@@ -47,17 +47,17 @@ const (
 type DecodedMessage struct {
 	// Original envelope information
 	Envelope *ConfluentEnvelope
-	
+
 	// Schema information
 	SchemaID     uint32
 	SchemaFormat Format
 	Subject      string
 	Version      int
-	
+
 	// Decoded data
 	RecordValue *schema_pb.RecordValue
 	RecordType  *schema_pb.RecordType
-	
+
 	// Metadata for storage
 	Metadata map[string]string
 }
@@ -69,9 +69,9 @@ func NewManager(config ManagerConfig) (*Manager, error) {
 		Username: config.RegistryUsername,
 		Password: config.RegistryPassword,
 	}
-	
+
 	registryClient := NewRegistryClient(registryConfig)
-	
+
 	return &Manager{
 		registryClient:   registryClient,
 		avroDecoders:     make(map[uint32]*AvroDecoder),
@@ -86,12 +86,12 @@ func NewManagerWithHealthCheck(config ManagerConfig) (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Test connectivity
 	if err := manager.registryClient.HealthCheck(); err != nil {
 		return nil, fmt.Errorf("schema registry health check failed: %w", err)
 	}
-	
+
 	return manager, nil
 }
 
@@ -102,22 +102,22 @@ func (m *Manager) DecodeMessage(messageBytes []byte) (*DecodedMessage, error) {
 	if !isSchematized {
 		return nil, fmt.Errorf("message is not schematized")
 	}
-	
+
 	// Step 2: Validate envelope
 	if err := envelope.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid envelope: %w", err)
 	}
-	
+
 	// Step 3: Get schema from registry
 	cachedSchema, err := m.registryClient.GetSchemaByID(envelope.SchemaID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get schema %d: %w", envelope.SchemaID, err)
 	}
-	
+
 	// Step 4: Decode based on format
 	var recordValue *schema_pb.RecordValue
 	var recordType *schema_pb.RecordType
-	
+
 	switch cachedSchema.Format {
 	case FormatAvro:
 		recordValue, recordType, err = m.decodeAvroMessage(envelope, cachedSchema)
@@ -134,7 +134,7 @@ func (m *Manager) DecodeMessage(messageBytes []byte) (*DecodedMessage, error) {
 	default:
 		return nil, fmt.Errorf("unsupported schema format: %v", cachedSchema.Format)
 	}
-	
+
 	// Step 5: Create decoded message
 	decodedMsg := &DecodedMessage{
 		Envelope:     envelope,
@@ -146,7 +146,7 @@ func (m *Manager) DecodeMessage(messageBytes []byte) (*DecodedMessage, error) {
 		RecordType:   recordType,
 		Metadata:     m.createMetadata(envelope, cachedSchema),
 	}
-	
+
 	return decodedMsg, nil
 }
 
@@ -157,7 +157,7 @@ func (m *Manager) decodeAvroMessage(envelope *ConfluentEnvelope, cachedSchema *C
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get Avro decoder: %w", err)
 	}
-	
+
 	// Decode to RecordValue
 	recordValue, err := decoder.DecodeToRecordValue(envelope.Payload)
 	if err != nil {
@@ -168,7 +168,7 @@ func (m *Manager) decodeAvroMessage(envelope *ConfluentEnvelope, cachedSchema *C
 		// For now, return the error - we could implement partial decoding later
 		return nil, nil, fmt.Errorf("permissive decoding failed: %w", err)
 	}
-	
+
 	// Infer or get RecordType
 	recordType, err := decoder.InferRecordType()
 	if err != nil {
@@ -179,7 +179,7 @@ func (m *Manager) decodeAvroMessage(envelope *ConfluentEnvelope, cachedSchema *C
 			return nil, nil, fmt.Errorf("failed to infer record type: %w", err)
 		}
 	}
-	
+
 	return recordValue, recordType, nil
 }
 
@@ -190,7 +190,7 @@ func (m *Manager) decodeProtobufMessage(envelope *ConfluentEnvelope, cachedSchem
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get Protobuf decoder: %w", err)
 	}
-	
+
 	// Decode to RecordValue
 	recordValue, err := decoder.DecodeToRecordValue(envelope.Payload)
 	if err != nil {
@@ -200,7 +200,7 @@ func (m *Manager) decodeProtobufMessage(envelope *ConfluentEnvelope, cachedSchem
 		// In permissive mode, try to decode as much as possible
 		return nil, nil, fmt.Errorf("permissive decoding failed: %w", err)
 	}
-	
+
 	// Get RecordType from descriptor
 	recordType, err := decoder.InferRecordType()
 	if err != nil {
@@ -211,7 +211,7 @@ func (m *Manager) decodeProtobufMessage(envelope *ConfluentEnvelope, cachedSchem
 			return nil, nil, fmt.Errorf("failed to infer record type: %w", err)
 		}
 	}
-	
+
 	return recordValue, recordType, nil
 }
 
@@ -224,18 +224,18 @@ func (m *Manager) getAvroDecoder(schemaID uint32, schemaStr string) (*AvroDecode
 		return decoder, nil
 	}
 	m.decoderMu.RUnlock()
-	
+
 	// Create new decoder
 	decoder, err := NewAvroDecoder(schemaStr)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Cache the decoder
 	m.decoderMu.Lock()
 	m.avroDecoders[schemaID] = decoder
 	m.decoderMu.Unlock()
-	
+
 	return decoder, nil
 }
 
@@ -248,38 +248,38 @@ func (m *Manager) getProtobufDecoder(schemaID uint32, schemaStr string) (*Protob
 		return decoder, nil
 	}
 	m.decoderMu.RUnlock()
-	
+
 	// For Protobuf, the schema is typically a binary FileDescriptorSet
 	// In Confluent Schema Registry, Protobuf schemas are stored as binary descriptors
 	schemaBytes := []byte(schemaStr) // Assume schemaStr contains binary data
-	
+
 	// Create new decoder
 	decoder, err := NewProtobufDecoder(schemaBytes)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Cache the decoder
 	m.decoderMu.Lock()
 	m.protobufDecoders[schemaID] = decoder
 	m.decoderMu.Unlock()
-	
+
 	return decoder, nil
 }
 
 // createMetadata creates metadata for storage in SeaweedMQ
 func (m *Manager) createMetadata(envelope *ConfluentEnvelope, cachedSchema *CachedSchema) map[string]string {
 	metadata := envelope.Metadata()
-	
+
 	// Add schema registry information
 	metadata["schema_subject"] = cachedSchema.Subject
 	metadata["schema_version"] = fmt.Sprintf("%d", cachedSchema.Version)
 	metadata["registry_url"] = m.registryClient.baseURL
-	
+
 	// Add decoding information
 	metadata["decoded_at"] = fmt.Sprintf("%d", cachedSchema.CachedAt.Unix())
 	metadata["validation_mode"] = fmt.Sprintf("%d", m.config.ValidationMode)
-	
+
 	return metadata
 }
 
@@ -294,13 +294,13 @@ func (m *Manager) GetSchemaInfo(messageBytes []byte) (uint32, Format, error) {
 	if !ok {
 		return 0, FormatUnknown, fmt.Errorf("not a schematized message")
 	}
-	
+
 	// Get basic schema info from cache or registry
 	cachedSchema, err := m.registryClient.GetSchemaByID(envelope.SchemaID)
 	if err != nil {
 		return 0, FormatUnknown, fmt.Errorf("failed to get schema info: %w", err)
 	}
-	
+
 	return envelope.SchemaID, cachedSchema.Format, nil
 }
 
@@ -325,7 +325,7 @@ func (m *Manager) ClearCache() {
 	m.avroDecoders = make(map[uint32]*AvroDecoder)
 	m.protobufDecoders = make(map[uint32]*ProtobufDecoder)
 	m.decoderMu.Unlock()
-	
+
 	m.registryClient.ClearCache()
 }
 
@@ -334,7 +334,7 @@ func (m *Manager) GetCacheStats() (decoders, schemas, subjects int) {
 	m.decoderMu.RLock()
 	decoders = len(m.avroDecoders) + len(m.protobufDecoders)
 	m.decoderMu.RUnlock()
-	
+
 	schemas, subjects = m.registryClient.GetCacheStats()
 	return
 }
@@ -360,25 +360,25 @@ func (m *Manager) encodeAvroMessage(recordValue *schema_pb.RecordValue, schemaID
 	if err != nil {
 		return nil, fmt.Errorf("failed to get schema for encoding: %w", err)
 	}
-	
+
 	// Get decoder (which contains the codec)
 	decoder, err := m.getAvroDecoder(schemaID, cachedSchema.Schema)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get decoder for encoding: %w", err)
 	}
-	
+
 	// Convert RecordValue back to Go map
 	goMap := recordValueToMap(recordValue)
-	
+
 	// Encode using Avro codec
 	binary, err := decoder.codec.BinaryFromNative(nil, goMap)
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode to Avro binary: %w", err)
 	}
-	
+
 	// Create Confluent envelope
 	envelope := CreateConfluentEnvelope(FormatAvro, schemaID, nil, binary)
-	
+
 	return envelope, nil
 }
 
@@ -389,31 +389,31 @@ func (m *Manager) encodeProtobufMessage(recordValue *schema_pb.RecordValue, sche
 	if err != nil {
 		return nil, fmt.Errorf("failed to get schema for encoding: %w", err)
 	}
-	
+
 	// Get decoder (which contains the descriptor)
 	decoder, err := m.getProtobufDecoder(schemaID, cachedSchema.Schema)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get decoder for encoding: %w", err)
 	}
-	
+
 	// Convert RecordValue back to Go map
 	goMap := recordValueToMap(recordValue)
-	
+
 	// Create a new message instance and populate it
 	msg := decoder.msgType.New()
 	if err := m.populateProtobufMessage(msg, goMap, decoder.descriptor); err != nil {
 		return nil, fmt.Errorf("failed to populate Protobuf message: %w", err)
 	}
-	
+
 	// Encode using Protobuf
 	binary, err := proto.Marshal(msg.Interface())
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode to Protobuf binary: %w", err)
 	}
-	
+
 	// Create Confluent envelope (with indexes if needed)
 	envelope := CreateConfluentEnvelope(FormatProtobuf, schemaID, nil, binary)
-	
+
 	return envelope, nil
 }
 
@@ -426,16 +426,16 @@ func (m *Manager) populateProtobufMessage(msg protoreflect.Message, data map[str
 			// Skip unknown fields in permissive mode
 			continue
 		}
-		
+
 		// Convert and set the value
 		protoValue, err := m.goValueToProtoValue(value, fieldDesc)
 		if err != nil {
 			return fmt.Errorf("failed to convert field %s: %w", key, err)
 		}
-		
+
 		msg.Set(fieldDesc, protoValue)
 	}
-	
+
 	return nil
 }
 
@@ -444,7 +444,7 @@ func (m *Manager) goValueToProtoValue(value interface{}, fieldDesc protoreflect.
 	if value == nil {
 		return protoreflect.Value{}, nil
 	}
-	
+
 	switch fieldDesc.Kind() {
 	case protoreflect.BoolKind:
 		if b, ok := value.(bool); ok {
@@ -496,18 +496,18 @@ func (m *Manager) goValueToProtoValue(value interface{}, fieldDesc protoreflect.
 			return protoreflect.ValueOfMessage(nestedMsg), nil
 		}
 	}
-	
+
 	return protoreflect.Value{}, fmt.Errorf("unsupported value type %T for field kind %v", value, fieldDesc.Kind())
 }
 
 // recordValueToMap converts a RecordValue back to a Go map for encoding
 func recordValueToMap(recordValue *schema_pb.RecordValue) map[string]interface{} {
 	result := make(map[string]interface{})
-	
+
 	for key, value := range recordValue.Fields {
 		result[key] = schemaValueToGoValue(value)
 	}
-	
+
 	return result
 }
 

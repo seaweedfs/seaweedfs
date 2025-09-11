@@ -514,7 +514,7 @@ func (h *Handler) processSchematizedMessage(topicName string, partitionID int32,
 		return fmt.Errorf("schema decoding failed: %w", err)
 	}
 
-	fmt.Printf("DEBUG: Successfully decoded message with schema ID %d, format %s, subject %s\n", 
+	fmt.Printf("DEBUG: Successfully decoded message with schema ID %d, format %s, subject %s\n",
 		decodedMsg.SchemaID, decodedMsg.SchemaFormat, decodedMsg.Subject)
 
 	// If SeaweedMQ integration is enabled, store the decoded message
@@ -524,7 +524,7 @@ func (h *Handler) processSchematizedMessage(topicName string, partitionID int32,
 
 	// For in-memory mode, we could store metadata about the schema
 	// For now, just log the successful decoding
-	fmt.Printf("DEBUG: Schema decoding successful - would store RecordValue with %d fields\n", 
+	fmt.Printf("DEBUG: Schema decoding successful - would store RecordValue with %d fields\n",
 		len(decodedMsg.RecordValue.Fields))
 
 	return nil
@@ -565,7 +565,7 @@ func (h *Handler) extractMessagesFromRecordSet(recordSetData []byte) ([][]byte, 
 	// Simplified: assume single message starting after record batch header
 	// Real implementation would parse the record batch format properly
 	messages := [][]byte{recordSetData}
-	
+
 	return messages, nil
 }
 
@@ -581,7 +581,7 @@ func (h *Handler) validateSchemaCompatibility(topicName string, messageBytes []b
 		return nil // Not schematized, no validation needed
 	}
 
-	fmt.Printf("DEBUG: Validating schema compatibility - ID: %d, Format: %s, Topic: %s\n", 
+	fmt.Printf("DEBUG: Validating schema compatibility - ID: %d, Format: %s, Topic: %s\n",
 		schemaID, format, topicName)
 
 	// TODO: Implement topic-specific schema validation

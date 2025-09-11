@@ -37,7 +37,7 @@ func TestManager_DecodeMessage(t *testing.T) {
 		RegistryURL:    server.URL,
 		ValidationMode: ValidationPermissive,
 	}
-	
+
 	manager, err := NewManager(config)
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
@@ -52,7 +52,7 @@ func TestManager_DecodeMessage(t *testing.T) {
 			{"name": "name", "type": "string"}
 		]
 	}`
-	
+
 	codec, err := goavro.NewCodec(avroSchema)
 	if err != nil {
 		t.Fatalf("Failed to create Avro codec: %v", err)
@@ -112,7 +112,7 @@ func TestManager_IsSchematized(t *testing.T) {
 	config := ManagerConfig{
 		RegistryURL: "http://localhost:8081", // Not used for this test
 	}
-	
+
 	manager, err := NewManager(config)
 	if err != nil {
 		// Skip test if we can't connect to registry
@@ -177,7 +177,7 @@ func TestManager_GetSchemaInfo(t *testing.T) {
 	config := ManagerConfig{
 		RegistryURL: server.URL,
 	}
-	
+
 	manager, err := NewManager(config)
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
@@ -204,7 +204,7 @@ func TestManager_CacheManagement(t *testing.T) {
 	config := ManagerConfig{
 		RegistryURL: "http://localhost:8081", // Not used for this test
 	}
-	
+
 	manager, err := NewManager(config)
 	if err != nil {
 		t.Skip("Skipping test - no registry available")
@@ -213,7 +213,7 @@ func TestManager_CacheManagement(t *testing.T) {
 	// Check initial cache stats
 	decoders, schemas, subjects := manager.GetCacheStats()
 	if decoders != 0 || schemas != 0 || subjects != 0 {
-		t.Errorf("Expected empty cache initially, got decoders=%d, schemas=%d, subjects=%d", 
+		t.Errorf("Expected empty cache initially, got decoders=%d, schemas=%d, subjects=%d",
 			decoders, schemas, subjects)
 	}
 
@@ -223,7 +223,7 @@ func TestManager_CacheManagement(t *testing.T) {
 	// Verify still empty
 	decoders, schemas, subjects = manager.GetCacheStats()
 	if decoders != 0 || schemas != 0 || subjects != 0 {
-		t.Errorf("Expected empty cache after clear, got decoders=%d, schemas=%d, subjects=%d", 
+		t.Errorf("Expected empty cache after clear, got decoders=%d, schemas=%d, subjects=%d",
 			decoders, schemas, subjects)
 	}
 }
@@ -254,7 +254,7 @@ func TestManager_EncodeMessage(t *testing.T) {
 	config := ManagerConfig{
 		RegistryURL: server.URL,
 	}
-	
+
 	manager, err := NewManager(config)
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
@@ -308,7 +308,7 @@ func BenchmarkManager_DecodeMessage(b *testing.B) {
 	// Setup (similar to TestManager_DecodeMessage but simplified)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		response := map[string]interface{}{
-			"schema": `{"type":"record","name":"User","fields":[{"name":"id","type":"int"}]}`,
+			"schema":  `{"type":"record","name":"User","fields":[{"name":"id","type":"int"}]}`,
 			"subject": "user-value",
 			"version": 1,
 		}

@@ -32,8 +32,8 @@ func (f Format) String() string {
 type ConfluentEnvelope struct {
 	Format   Format
 	SchemaID uint32
-	Indexes  []int    // For Protobuf nested message resolution
-	Payload  []byte   // The actual encoded data
+	Indexes  []int  // For Protobuf nested message resolution
+	Payload  []byte // The actual encoded data
 }
 
 // ParseConfluentEnvelope parses a Confluent Schema Registry framed message
@@ -50,7 +50,7 @@ func ParseConfluentEnvelope(data []byte) (*ConfluentEnvelope, bool) {
 
 	// Extract schema ID (big-endian uint32)
 	schemaID := binary.BigEndian.Uint32(data[1:5])
-	
+
 	envelope := &ConfluentEnvelope{
 		Format:   FormatAvro, // Default assumption; will be refined by schema registry lookup
 		SchemaID: schemaID,
@@ -61,7 +61,7 @@ func ParseConfluentEnvelope(data []byte) (*ConfluentEnvelope, bool) {
 	// Note: Format detection should be done by the schema registry lookup
 	// For now, we'll default to Avro and let the manager determine the actual format
 	// based on the schema registry information
-	
+
 	return envelope, true
 }
 
@@ -86,16 +86,16 @@ func CreateConfluentEnvelope(format Format, schemaID uint32, indexes []int, payl
 	result := make([]byte, 5, 5+len(payload)+len(indexes)*4)
 	result[0] = 0x00 // Magic byte
 	binary.BigEndian.PutUint32(result[1:5], schemaID)
-	
+
 	// For Protobuf, add indexes as varints (simplified for Phase 1)
 	if format == FormatProtobuf && len(indexes) > 0 {
 		// TODO: Implement proper varint encoding for Protobuf indexes in Phase 5
 		// For now, we'll just append the payload
 	}
-	
+
 	// Append the actual payload
 	result = append(result, payload...)
-	
+
 	return result
 }
 
@@ -104,11 +104,11 @@ func (e *ConfluentEnvelope) Validate() error {
 	if e.SchemaID == 0 {
 		return fmt.Errorf("invalid schema ID: 0")
 	}
-	
+
 	if len(e.Payload) == 0 {
 		return fmt.Errorf("empty payload")
 	}
-	
+
 	// Format-specific validation
 	switch e.Format {
 	case FormatAvro:
@@ -121,7 +121,7 @@ func (e *ConfluentEnvelope) Validate() error {
 	default:
 		return fmt.Errorf("unsupported format: %v", e.Format)
 	}
-	
+
 	return nil
 }
 
@@ -131,7 +131,7 @@ func (e *ConfluentEnvelope) Metadata() map[string]string {
 		"schema_format": e.Format.String(),
 		"schema_id":     fmt.Sprintf("%d", e.SchemaID),
 	}
-	
+
 	if len(e.Indexes) > 0 {
 		// Store indexes for Protobuf reconstruction
 		indexStr := ""
@@ -143,6 +143,6 @@ func (e *ConfluentEnvelope) Metadata() map[string]string {
 		}
 		metadata["protobuf_indexes"] = indexStr
 	}
-	
+
 	return metadata
 }

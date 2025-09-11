@@ -356,20 +356,20 @@ func (h *Handler) createEmptyRecordBatch(baseOffset int64) []byte {
 func (h *Handler) createRecordBatchWithPayload(baseOffset int64, recordCount int32, payload []byte) []byte {
 	// For Phase 7, create a simplified record batch
 	// In Phase 8, this will implement proper Kafka record batch format v2
-	
+
 	batch := h.createEmptyRecordBatch(baseOffset)
-	
+
 	// Update record count
 	recordCountOffset := len(batch) - 4
 	binary.BigEndian.PutUint32(batch[recordCountOffset:recordCountOffset+4], uint32(recordCount))
-	
+
 	// Append payload (simplified - real implementation would format individual records)
 	batch = append(batch, payload...)
-	
+
 	// Update batch length
 	batchLength := len(batch) - 12
 	binary.BigEndian.PutUint32(batch[8:12], uint32(batchLength))
-	
+
 	return batch
 }
 
@@ -390,7 +390,7 @@ func (h *Handler) handleSchematizedFetch(topicName string, partitionID int32, of
 	// Create record batch from reconstructed messages
 	recordBatch := h.createSchematizedRecordBatch(messages, offset)
 
-	fmt.Printf("DEBUG: Created schematized record batch: %d bytes for %d messages\n", 
+	fmt.Printf("DEBUG: Created schematized record batch: %d bytes for %d messages\n",
 		len(recordBatch), len(messages))
 
 	return recordBatch, nil

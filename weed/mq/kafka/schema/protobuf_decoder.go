@@ -21,7 +21,7 @@ func NewProtobufDecoder(schemaBytes []byte) (*ProtobufDecoder, error) {
 	// For Phase 5, we'll implement a simplified version
 	// In a full implementation, this would properly parse FileDescriptorSet
 	// and handle complex schema dependencies
-	
+
 	// For now, return an error indicating this needs proper implementation
 	return nil, fmt.Errorf("Protobuf decoder from binary descriptors not fully implemented in Phase 5 - use NewProtobufDecoderFromDescriptor for testing")
 }
@@ -30,7 +30,7 @@ func NewProtobufDecoder(schemaBytes []byte) (*ProtobufDecoder, error) {
 // This is used for testing and when we have pre-built descriptors
 func NewProtobufDecoderFromDescriptor(msgDesc protoreflect.MessageDescriptor) *ProtobufDecoder {
 	msgType := dynamicpb.NewMessageType(msgDesc)
-	
+
 	return &ProtobufDecoder{
 		descriptor: msgDesc,
 		msgType:    msgType,
@@ -43,7 +43,7 @@ func NewProtobufDecoderFromString(schemaStr string) (*ProtobufDecoder, error) {
 	// For Phase 5, we'll implement a basic string-to-descriptor parser
 	// In a full implementation, this would use protoc to compile .proto files
 	// or parse the Confluent Schema Registry's Protobuf descriptor format
-	
+
 	return nil, fmt.Errorf("string-based Protobuf schemas not yet implemented - use binary descriptors")
 }
 
@@ -79,13 +79,13 @@ func (pd *ProtobufDecoder) InferRecordType() (*schema_pb.RecordType, error) {
 // messageToMap converts a Protobuf message to a Go map
 func (pd *ProtobufDecoder) messageToMap(msg protoreflect.Message) map[string]interface{} {
 	result := make(map[string]interface{})
-	
+
 	msg.Range(func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
 		fieldName := string(fd.Name())
 		result[fieldName] = pd.valueToInterface(fd, v)
 		return true
 	})
-	
+
 	return result
 }
 
@@ -152,10 +152,10 @@ func (pd *ProtobufDecoder) scalarValueToInterface(fd protoreflect.FieldDescripto
 // descriptorToRecordType converts a Protobuf descriptor to SeaweedMQ RecordType
 func (pd *ProtobufDecoder) descriptorToRecordType(desc protoreflect.MessageDescriptor) *schema_pb.RecordType {
 	fields := make([]*schema_pb.Field, 0, desc.Fields().Len())
-	
+
 	for i := 0; i < desc.Fields().Len(); i++ {
 		fd := desc.Fields().Get(i)
-		
+
 		field := &schema_pb.Field{
 			Name:       string(fd.Name()),
 			FieldIndex: int32(fd.Number() - 1), // Protobuf field numbers start at 1
@@ -163,10 +163,10 @@ func (pd *ProtobufDecoder) descriptorToRecordType(desc protoreflect.MessageDescr
 			IsRequired: fd.Cardinality() == protoreflect.Required,
 			IsRepeated: fd.IsList(),
 		}
-		
+
 		fields = append(fields, field)
 	}
-	
+
 	return &schema_pb.RecordType{
 		Fields: fields,
 	}
@@ -190,7 +190,7 @@ func (pd *ProtobufDecoder) fieldDescriptorToType(fd protoreflect.FieldDescriptor
 		// Handle map fields - for simplicity, treat as record with key/value fields
 		keyType := pd.scalarKindToType(fd.MapKey().Kind(), nil)
 		valueType := pd.scalarKindToType(fd.MapValue().Kind(), fd.MapValue().Message())
-		
+
 		mapRecordType := &schema_pb.RecordType{
 			Fields: []*schema_pb.Field{
 				{
@@ -200,14 +200,14 @@ func (pd *ProtobufDecoder) fieldDescriptorToType(fd protoreflect.FieldDescriptor
 					IsRequired: true,
 				},
 				{
-					Name:       "value", 
+					Name:       "value",
 					FieldIndex: 1,
 					Type:       valueType,
 					IsRequired: false,
 				},
 			},
 		}
-		
+
 		return &schema_pb.Type{
 			Kind: &schema_pb.Type_RecordType{
 				RecordType: mapRecordType,
@@ -336,10 +336,10 @@ func ParseConfluentProtobufEnvelope(data []byte) (*ConfluentEnvelope, bool) {
 			// No more varints, rest is message data
 			break
 		}
-		
+
 		envelope.Indexes = append(envelope.Indexes, int(index))
 		offset += bytesRead
-		
+
 		// Limit to reasonable number of indexes to avoid infinite loop
 		if len(envelope.Indexes) > 10 {
 			break
@@ -354,22 +354,22 @@ func ParseConfluentProtobufEnvelope(data []byte) (*ConfluentEnvelope, bool) {
 func readVarint(data []byte) (uint64, int) {
 	var result uint64
 	var shift uint
-	
+
 	for i, b := range data {
 		if i >= 10 { // Prevent overflow (max varint is 10 bytes)
 			return 0, 0
 		}
-		
+
 		result |= uint64(b&0x7F) << shift
-		
+
 		if b&0x80 == 0 {
 			// Last byte (MSB is 0)
 			return result, i + 1
 		}
-		
+
 		shift += 7
 	}
-	
+
 	// Incomplete varint
 	return 0, 0
 }
@@ -379,18 +379,18 @@ func encodeVarint(value uint64) []byte {
 	if value == 0 {
 		return []byte{0}
 	}
-	
+
 	var result []byte
 	for value > 0 {
 		b := byte(value & 0x7F)
 		value >>= 7
-		
+
 		if value > 0 {
 			b |= 0x80 // Set continuation bit
 		}
-		
+
 		result = append(result, b)
 	}
-	
+
 	return result
 }
