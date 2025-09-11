@@ -315,7 +315,7 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 	// For now, use simplified parsing similar to v0/v1 but handle v2+ response format
 	// In v2+, the main differences are:
 	// - Request: transactional_id field (nullable string) at the beginning
-	// - Response: throttle_time_ms field at the beginning
+	// - Response: throttle_time_ms field at the end (v1+)
 
 	// Parse Produce v7 request format based on actual Sarama request
 	// Format: client_id(STRING) + transactional_id(NULLABLE_STRING) + acks(INT16) + timeout_ms(INT32) + topics(ARRAY)
@@ -380,20 +380,20 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 	// Build response
 	response := make([]byte, 0, 256)
 
-	// Correlation ID
+	// Correlation ID (always first)
 	correlationIDBytes := make([]byte, 4)
 	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
 	response = append(response, correlationIDBytes...)
 
-	// Throttle time (4 bytes) - v1+
-	response = append(response, 0, 0, 0, 0)
+	// NOTE: For v1+, Sarama expects throttle_time_ms at the END of the response body.
+	// We will append topics array first, and add throttle_time_ms just before returning.
 
 	// Topics array length
 	topicsCountBytes := make([]byte, 4)
 	binary.BigEndian.PutUint32(topicsCountBytes, topicsCount)
 	response = append(response, topicsCountBytes...)
 
-	// Process each topic (simplified - just return success for all)
+	// Process each topic with correct parsing and response format
 	for i := uint32(0); i < topicsCount && offset < len(requestBody); i++ {
 		// Parse topic name
 		if len(requestBody) < offset+2 {
@@ -416,63 +416,72 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 
 		fmt.Printf("DEBUG: Produce v%d - topic: %s, partitions: %d\n", apiVersion, topicName, partitionsCount)
 
-		// Response: topic name
+		// Response: topic name (STRING: 2 bytes length + data)
 		response = append(response, byte(topicNameSize>>8), byte(topicNameSize))
 		response = append(response, []byte(topicName)...)
 
-		// Response: partitions count
+		// Response: partitions count (4 bytes)
 		partitionsCountBytes := make([]byte, 4)
 		binary.BigEndian.PutUint32(partitionsCountBytes, partitionsCount)
 		response = append(response, partitionsCountBytes...)
 
-		// Process each partition with correct parsing and response format
+		// Process each partition with correct parsing
 		for j := uint32(0); j < partitionsCount && offset < len(requestBody); j++ {
 			// Parse partition request: partition_id(4) + record_set_size(4) + record_set_data
 			if len(requestBody) < offset+8 {
 				break
 			}
-			
-			partitionID := binary.BigEndian.Uint32(requestBody[offset:offset+4])
+
+			partitionID := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 			offset += 4
-			recordSetSize := binary.BigEndian.Uint32(requestBody[offset:offset+4])
+			recordSetSize := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 			offset += 4
-			
+
 			// Skip the record set data for now (we'll implement proper parsing later)
 			if len(requestBody) < offset+int(recordSetSize) {
 				break
 			}
 			offset += int(recordSetSize)
-			
+
 			fmt.Printf("DEBUG: Produce v%d - partition: %d, record_set_size: %d\n", apiVersion, partitionID, recordSetSize)
-			
-			// Build correct Produce v7 response for this partition
-			// Format: partition_id(4) + error_code(2) + base_offset(8) + log_append_time(8) + log_start_offset(8)
-			
+
+			// Build correct Produce v2+ response for this partition
+			// Format: partition_id(4) + error_code(2) + base_offset(8) + [log_append_time(8) if v>=2] + [log_start_offset(8) if v>=5]
+
 			// partition_id (4 bytes)
 			partitionIDBytes := make([]byte, 4)
 			binary.BigEndian.PutUint32(partitionIDBytes, partitionID)
 			response = append(response, partitionIDBytes...)
-			
+
 			// error_code (2 bytes) - 0 = success
 			response = append(response, 0, 0)
-			
-			// base_offset (8 bytes) - offset of first message
+
+			// base_offset (8 bytes) - offset of first message (stubbed)
 			currentTime := time.Now().UnixNano()
 			baseOffset := currentTime / 1000000 // Use timestamp as offset for now
 			baseOffsetBytes := make([]byte, 8)
 			binary.BigEndian.PutUint64(baseOffsetBytes, uint64(baseOffset))
 			response = append(response, baseOffsetBytes...)
-			
+
 			// log_append_time (8 bytes) - v2+ field (actual timestamp, not -1)
-			logAppendTimeBytes := make([]byte, 8)
-			binary.BigEndian.PutUint64(logAppendTimeBytes, uint64(currentTime))
-			response = append(response, logAppendTimeBytes...)
-			
+			if apiVersion >= 2 {
+				logAppendTimeBytes := make([]byte, 8)
+				binary.BigEndian.PutUint64(logAppendTimeBytes, uint64(currentTime))
+				response = append(response, logAppendTimeBytes...)
+			}
+
 			// log_start_offset (8 bytes) - v5+ field
-			logStartOffsetBytes := make([]byte, 8)
-			binary.BigEndian.PutUint64(logStartOffsetBytes, uint64(baseOffset))
-			response = append(response, logStartOffsetBytes...)
+			if apiVersion >= 5 {
+				logStartOffsetBytes := make([]byte, 8)
+				binary.BigEndian.PutUint64(logStartOffsetBytes, uint64(baseOffset))
+				response = append(response, logStartOffsetBytes...)
+			}
 		}
+	}
+
+	// Append throttle_time_ms at the END for v1+
+	if apiVersion >= 1 {
+		response = append(response, 0, 0, 0, 0)
 	}
 
 	fmt.Printf("DEBUG: Produce v%d response: %d bytes\n", apiVersion, len(response))
