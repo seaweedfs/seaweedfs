@@ -174,20 +174,16 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 				if parseErr != nil {
 					errorCode = 42 // INVALID_RECORD
 				} else if recordCount > 0 {
-					if h.useSeaweedMQ && h.seaweedMQHandler != nil {
+					if h.useSeaweedMQ {
 						// Use SeaweedMQ integration for production
-						fmt.Printf("DEBUG: Using SeaweedMQ backend for topic '%s' partition %d\n", topicName, partitionID)
 						offset, err := h.produceToSeaweedMQ(topicName, int32(partitionID), recordSetData)
 						if err != nil {
-							fmt.Printf("DEBUG: SeaweedMQ produce error: %v\n", err)
 							errorCode = 1 // UNKNOWN_SERVER_ERROR
 						} else {
-							fmt.Printf("DEBUG: SeaweedMQ produce success, offset: %d\n", offset)
 							baseOffset = offset
 						}
 					} else {
 						// Use legacy in-memory mode for tests
-						fmt.Printf("DEBUG: Using in-memory backend for topic '%s' partition %d\n", topicName, partitionID)
 						ledger := h.GetOrCreateLedger(topicName, int32(partitionID))
 						baseOffset = ledger.AssignOffsets(int64(recordCount))
 
@@ -270,26 +266,16 @@ func (h *Handler) parseRecordSet(recordSetData []byte) (recordCount int32, total
 	return recordCount, int32(len(recordSetData)), nil
 }
 
-// produceToSeaweedMQ publishes records to SeaweedMQ via enhanced agent client
+// produceToSeaweedMQ publishes a single record to SeaweedMQ (simplified for Phase 2)
 func (h *Handler) produceToSeaweedMQ(topic string, partition int32, recordSetData []byte) (int64, error) {
-	if h.seaweedMQHandler == nil {
-		return 0, fmt.Errorf("SeaweedMQ handler not available")
-	}
+	// For Phase 2, we'll extract a simple key-value from the record set
+	// In a full implementation, this would parse the entire batch properly
 
-	fmt.Printf("DEBUG: Producing to SeaweedMQ - topic: %s, partition: %d, data size: %d\n", topic, partition, len(recordSetData))
-
-	// For Phase 1, extract a simple key-value from the record set
-	// This will be enhanced in Phase 2 with proper record batch parsing
+	// Extract first record from record set (simplified)
 	key, value := h.extractFirstRecord(recordSetData)
 
-	// Publish to SeaweedMQ using enhanced schema
-	offset, err := h.seaweedMQHandler.ProduceRecord(topic, partition, key, value)
-	if err != nil {
-		return 0, fmt.Errorf("failed to produce to SeaweedMQ: %v", err)
-	}
-
-	fmt.Printf("DEBUG: Successfully produced to SeaweedMQ, offset: %d\n", offset)
-	return offset, nil
+	// Publish to SeaweedMQ
+	return h.seaweedMQHandler.ProduceRecord(topic, partition, key, value)
 }
 
 // extractFirstRecord extracts the first record from a Kafka record set (simplified)
