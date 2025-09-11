@@ -530,20 +530,44 @@ func (h *Handler) processSchematizedMessage(topicName string, partitionID int32,
 	return nil
 }
 
-// storeDecodedMessage stores a decoded message using SeaweedMQ integration
+// storeDecodedMessage stores a decoded message using mq.broker integration
 func (h *Handler) storeDecodedMessage(topicName string, partitionID int32, decodedMsg *schema.DecodedMessage) error {
-	// TODO: Integrate with SeaweedMQ to store the RecordValue and RecordType
-	// This would involve:
-	// 1. Converting RecordValue to the format expected by SeaweedMQ
-	// 2. Storing schema metadata alongside the message
-	// 3. Maintaining schema evolution history
-	// 4. Handling schema compatibility checks
+	// Use broker client if available
+	if h.IsBrokerIntegrationEnabled() {
+		// Extract key from the original envelope (simplified for now)
+		key := []byte(fmt.Sprintf("kafka-key-%d", time.Now().UnixNano()))
+		
+		// Publish the decoded RecordValue to mq.broker
+		err := h.brokerClient.PublishSchematizedMessage(topicName, key, decodedMsg.Envelope.OriginalBytes)
+		if err != nil {
+			return fmt.Errorf("failed to publish to mq.broker: %w", err)
+		}
 
-	fmt.Printf("DEBUG: Would store decoded message to SeaweedMQ - topic: %s, partition: %d, schema: %d\n",
-		topicName, partitionID, decodedMsg.SchemaID)
+		fmt.Printf("DEBUG: Successfully published decoded message to mq.broker - topic: %s, partition: %d, schema: %d\n",
+			topicName, partitionID, decodedMsg.SchemaID)
+		return nil
+	}
 
-	// For Phase 4, we'll simulate successful storage
-	// In Phase 8, we'll implement the full SeaweedMQ integration
+	// Fallback to SeaweedMQ integration if available
+	if h.useSeaweedMQ && h.seaweedMQHandler != nil {
+		// Extract key and value from the original envelope (simplified)
+		key := []byte(fmt.Sprintf("kafka-key-%d", time.Now().UnixNano()))
+		value := decodedMsg.Envelope.Payload
+
+		_, err := h.seaweedMQHandler.ProduceRecord(topicName, partitionID, key, value)
+		if err != nil {
+			return fmt.Errorf("failed to produce to SeaweedMQ: %w", err)
+		}
+
+		fmt.Printf("DEBUG: Successfully stored message to SeaweedMQ - topic: %s, partition: %d, schema: %d\n",
+			topicName, partitionID, decodedMsg.SchemaID)
+		return nil
+	}
+
+	// For in-memory mode, just log the successful decoding
+	fmt.Printf("DEBUG: Schema decoding successful (in-memory mode) - topic: %s, partition: %d, schema: %d, fields: %d\n",
+		topicName, partitionID, decodedMsg.SchemaID, len(decodedMsg.RecordValue.Fields))
+
 	return nil
 }
 

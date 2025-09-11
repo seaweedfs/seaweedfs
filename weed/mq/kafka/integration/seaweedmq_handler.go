@@ -92,7 +92,8 @@ func (h *SeaweedMQHandler) CreateTopicWithSchema(name string, partitions int32, 
 	}
 
 	// Create topic via agent client with schema
-	if err := h.agentClient.CreateTopicWithSchema(name, partitions, recordType); err != nil {
+	_, err := h.agentClient.GetOrCreatePublisher(name, 0)
+        if err != nil {
 		return fmt.Errorf("failed to create topic in SeaweedMQ: %v", err)
 	}
 

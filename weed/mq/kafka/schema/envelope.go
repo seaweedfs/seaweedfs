@@ -30,10 +30,11 @@ func (f Format) String() string {
 
 // ConfluentEnvelope represents the parsed Confluent Schema Registry envelope
 type ConfluentEnvelope struct {
-	Format   Format
-	SchemaID uint32
-	Indexes  []int  // For Protobuf nested message resolution
-	Payload  []byte // The actual encoded data
+	Format        Format
+	SchemaID      uint32
+	Indexes       []int  // For Protobuf nested message resolution
+	Payload       []byte // The actual encoded data
+	OriginalBytes []byte // The complete original envelope bytes
 }
 
 // ParseConfluentEnvelope parses a Confluent Schema Registry framed message
@@ -52,10 +53,11 @@ func ParseConfluentEnvelope(data []byte) (*ConfluentEnvelope, bool) {
 	schemaID := binary.BigEndian.Uint32(data[1:5])
 
 	envelope := &ConfluentEnvelope{
-		Format:   FormatAvro, // Default assumption; will be refined by schema registry lookup
-		SchemaID: schemaID,
-		Indexes:  nil,
-		Payload:  data[5:], // Default: payload starts after schema ID
+		Format:        FormatAvro, // Default assumption; will be refined by schema registry lookup
+		SchemaID:      schemaID,
+		Indexes:       nil,
+		Payload:       data[5:], // Default: payload starts after schema ID
+		OriginalBytes: data,     // Store the complete original envelope
 	}
 
 	// Note: Format detection should be done by the schema registry lookup

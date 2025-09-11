@@ -48,6 +48,7 @@ type Handler struct {
 	// Schema management (optional, for schematized topics)
 	schemaManager *schema.Manager
 	useSchema     bool
+	brokerClient  *schema.BrokerClient
 
 	// Dynamic broker address for Metadata responses
 	brokerHost string
@@ -87,6 +88,13 @@ func (h *Handler) Close() error {
 	// Close group coordinator
 	if h.groupCoordinator != nil {
 		h.groupCoordinator.Close()
+	}
+
+	// Close broker client if present
+	if h.brokerClient != nil {
+		if err := h.brokerClient.Close(); err != nil {
+			fmt.Printf("Warning: failed to close broker client: %v\n", err)
+		}
 	}
 
 	// Close SeaweedMQ handler if present
@@ -1615,8 +1623,29 @@ func (h *Handler) EnableSchemaManagement(config schema.ManagerConfig) error {
 	return nil
 }
 
-// DisableSchemaManagement disables schema management
+// EnableBrokerIntegration enables mq.broker integration for schematized messages
+func (h *Handler) EnableBrokerIntegration(brokers []string) error {
+	if !h.IsSchemaEnabled() {
+		return fmt.Errorf("schema management must be enabled before broker integration")
+	}
+
+	brokerClient := schema.NewBrokerClient(schema.BrokerClientConfig{
+		Brokers:       brokers,
+		SchemaManager: h.schemaManager,
+	})
+
+	h.brokerClient = brokerClient
+	fmt.Printf("Broker integration enabled with brokers: %v\n", brokers)
+	return nil
+}
+
+// DisableSchemaManagement disables schema management and broker integration
 func (h *Handler) DisableSchemaManagement() {
+	if h.brokerClient != nil {
+		h.brokerClient.Close()
+		h.brokerClient = nil
+		fmt.Println("Broker integration disabled")
+	}
 	h.schemaManager = nil
 	h.useSchema = false
 	fmt.Println("Schema management disabled")
@@ -1625,4 +1654,9 @@ func (h *Handler) DisableSchemaManagement() {
 // IsSchemaEnabled returns whether schema management is enabled
 func (h *Handler) IsSchemaEnabled() bool {
 	return h.useSchema && h.schemaManager != nil
+}
+
+// IsBrokerIntegrationEnabled returns true if broker integration is enabled
+func (h *Handler) IsBrokerIntegrationEnabled() bool {
+	return h.IsSchemaEnabled() && h.brokerClient != nil
 }
