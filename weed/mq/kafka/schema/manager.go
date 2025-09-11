@@ -16,9 +16,10 @@ type Manager struct {
 	registryClient *RegistryClient
 
 	// Decoder cache
-	avroDecoders     map[uint32]*AvroDecoder     // schema ID -> decoder
-	protobufDecoders map[uint32]*ProtobufDecoder // schema ID -> decoder
-	decoderMu        sync.RWMutex
+	avroDecoders       map[uint32]*AvroDecoder       // schema ID -> decoder
+	protobufDecoders   map[uint32]*ProtobufDecoder   // schema ID -> decoder
+	jsonSchemaDecoders map[uint32]*JSONSchemaDecoder // schema ID -> decoder
+	decoderMu          sync.RWMutex
 
 	// Configuration
 	config ManagerConfig
@@ -73,10 +74,11 @@ func NewManager(config ManagerConfig) (*Manager, error) {
 	registryClient := NewRegistryClient(registryConfig)
 
 	return &Manager{
-		registryClient:   registryClient,
-		avroDecoders:     make(map[uint32]*AvroDecoder),
-		protobufDecoders: make(map[uint32]*ProtobufDecoder),
-		config:           config,
+		registryClient:     registryClient,
+		avroDecoders:       make(map[uint32]*AvroDecoder),
+		protobufDecoders:   make(map[uint32]*ProtobufDecoder),
+		jsonSchemaDecoders: make(map[uint32]*JSONSchemaDecoder),
+		config:             config,
 	}, nil
 }
 
@@ -130,7 +132,10 @@ func (m *Manager) DecodeMessage(messageBytes []byte) (*DecodedMessage, error) {
 			return nil, fmt.Errorf("failed to decode Protobuf message: %w", err)
 		}
 	case FormatJSONSchema:
-		return nil, fmt.Errorf("JSON Schema decoding not yet implemented (Phase 6)")
+		recordValue, recordType, err = m.decodeJSONSchemaMessage(envelope, cachedSchema)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode JSON Schema message: %w", err)
+		}
 	default:
 		return nil, fmt.Errorf("unsupported schema format: %v", cachedSchema.Format)
 	}
@@ -215,6 +220,38 @@ func (m *Manager) decodeProtobufMessage(envelope *ConfluentEnvelope, cachedSchem
 	return recordValue, recordType, nil
 }
 
+// decodeJSONSchemaMessage decodes a JSON Schema message using cached or new decoder
+func (m *Manager) decodeJSONSchemaMessage(envelope *ConfluentEnvelope, cachedSchema *CachedSchema) (*schema_pb.RecordValue, *schema_pb.RecordType, error) {
+	// Get or create JSON Schema decoder
+	decoder, err := m.getJSONSchemaDecoder(envelope.SchemaID, cachedSchema.Schema)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get JSON Schema decoder: %w", err)
+	}
+	
+	// Decode to RecordValue
+	recordValue, err := decoder.DecodeToRecordValue(envelope.Payload)
+	if err != nil {
+		if m.config.ValidationMode == ValidationStrict {
+			return nil, nil, fmt.Errorf("strict validation failed: %w", err)
+		}
+		// In permissive mode, try to decode as much as possible
+		return nil, nil, fmt.Errorf("permissive decoding failed: %w", err)
+	}
+	
+	// Get RecordType from schema
+	recordType, err := decoder.InferRecordType()
+	if err != nil {
+		// Fall back to inferring from the decoded map
+		if decodedMap, decodeErr := decoder.Decode(envelope.Payload); decodeErr == nil {
+			recordType = InferRecordTypeFromMap(decodedMap)
+		} else {
+			return nil, nil, fmt.Errorf("failed to infer record type: %w", err)
+		}
+	}
+	
+	return recordValue, recordType, nil
+}
+
 // getAvroDecoder gets or creates an Avro decoder for the given schema
 func (m *Manager) getAvroDecoder(schemaID uint32, schemaStr string) (*AvroDecoder, error) {
 	// Check cache first
@@ -263,7 +300,31 @@ func (m *Manager) getProtobufDecoder(schemaID uint32, schemaStr string) (*Protob
 	m.decoderMu.Lock()
 	m.protobufDecoders[schemaID] = decoder
 	m.decoderMu.Unlock()
+	
+	return decoder, nil
+}
 
+// getJSONSchemaDecoder gets or creates a JSON Schema decoder for the given schema
+func (m *Manager) getJSONSchemaDecoder(schemaID uint32, schemaStr string) (*JSONSchemaDecoder, error) {
+	// Check cache first
+	m.decoderMu.RLock()
+	if decoder, exists := m.jsonSchemaDecoders[schemaID]; exists {
+		m.decoderMu.RUnlock()
+		return decoder, nil
+	}
+	m.decoderMu.RUnlock()
+	
+	// Create new decoder
+	decoder, err := NewJSONSchemaDecoder(schemaStr)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Cache the decoder
+	m.decoderMu.Lock()
+	m.jsonSchemaDecoders[schemaID] = decoder
+	m.decoderMu.Unlock()
+	
 	return decoder, nil
 }
 
@@ -324,15 +385,16 @@ func (m *Manager) ClearCache() {
 	m.decoderMu.Lock()
 	m.avroDecoders = make(map[uint32]*AvroDecoder)
 	m.protobufDecoders = make(map[uint32]*ProtobufDecoder)
+	m.jsonSchemaDecoders = make(map[uint32]*JSONSchemaDecoder)
 	m.decoderMu.Unlock()
-
+	
 	m.registryClient.ClearCache()
 }
 
 // GetCacheStats returns cache statistics
 func (m *Manager) GetCacheStats() (decoders, schemas, subjects int) {
 	m.decoderMu.RLock()
-	decoders = len(m.avroDecoders) + len(m.protobufDecoders)
+	decoders = len(m.avroDecoders) + len(m.protobufDecoders) + len(m.jsonSchemaDecoders)
 	m.decoderMu.RUnlock()
 
 	schemas, subjects = m.registryClient.GetCacheStats()
@@ -347,7 +409,7 @@ func (m *Manager) EncodeMessage(recordValue *schema_pb.RecordValue, schemaID uin
 	case FormatProtobuf:
 		return m.encodeProtobufMessage(recordValue, schemaID)
 	case FormatJSONSchema:
-		return nil, fmt.Errorf("JSON Schema encoding not yet implemented (Phase 7)")
+		return m.encodeJSONSchemaMessage(recordValue, schemaID)
 	default:
 		return nil, fmt.Errorf("unsupported format for encoding: %v", format)
 	}
@@ -413,7 +475,33 @@ func (m *Manager) encodeProtobufMessage(recordValue *schema_pb.RecordValue, sche
 
 	// Create Confluent envelope (with indexes if needed)
 	envelope := CreateConfluentEnvelope(FormatProtobuf, schemaID, nil, binary)
+	
+	return envelope, nil
+}
 
+// encodeJSONSchemaMessage encodes a RecordValue back to JSON Schema format
+func (m *Manager) encodeJSONSchemaMessage(recordValue *schema_pb.RecordValue, schemaID uint32) ([]byte, error) {
+	// Get schema from registry
+	cachedSchema, err := m.registryClient.GetSchemaByID(schemaID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get schema for encoding: %w", err)
+	}
+	
+	// Get decoder (which contains the schema validator)
+	decoder, err := m.getJSONSchemaDecoder(schemaID, cachedSchema.Schema)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get decoder for encoding: %w", err)
+	}
+	
+	// Encode using JSON Schema decoder
+	jsonData, err := decoder.EncodeFromRecordValue(recordValue)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode to JSON: %w", err)
+	}
+	
+	// Create Confluent envelope
+	envelope := CreateConfluentEnvelope(FormatJSONSchema, schemaID, nil, jsonData)
+	
 	return envelope, nil
 }
 
