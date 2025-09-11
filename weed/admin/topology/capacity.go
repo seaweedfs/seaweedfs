@@ -227,13 +227,9 @@ func (at *ActiveTopology) isDiskAvailableForPlanning(disk *activeDisk, taskType 
 		return false
 	}
 
-	// Check for conflicting task types in active tasks only
-	for _, task := range disk.assignedTasks {
-		if at.areTaskTypesConflicting(task.TaskType, taskType) {
-			return false
-		}
-	}
-
+	// For planning purposes, we only check capacity constraints
+	// Volume-specific conflicts will be checked when the actual task is scheduled
+	// with knowledge of the specific volume ID
 	return true
 }
 
@@ -297,4 +293,53 @@ func (at *ActiveTopology) getEffectiveAvailableCapacityUnsafe(disk *activeDisk) 
 		VolumeSlots: int32(availableVolumeSlots),
 		ShardSlots:  -netImpact.ShardSlots, // Available shard capacity (negative impact becomes positive availability)
 	}
+}
+
+// GetDisksWithEffectiveCapacityForVolume returns disks with effective capacity for a specific volume
+// Uses volume-aware conflict checking to prevent race conditions on the same volume
+func (at *ActiveTopology) GetDisksWithEffectiveCapacityForVolume(taskType TaskType, volumeID uint32, excludeNodeID string, minCapacity int64) []*DiskInfo {
+	at.mutex.RLock()
+	defer at.mutex.RUnlock()
+
+	var available []*DiskInfo
+
+	for _, disk := range at.disks {
+		if disk.NodeID == excludeNodeID {
+			continue // Skip excluded node
+		}
+
+		if at.isDiskAvailableForVolume(disk, taskType, volumeID) {
+			effectiveCapacity := at.getEffectiveAvailableCapacityUnsafe(disk)
+
+			// Only include disks that meet minimum capacity requirement
+			if int64(effectiveCapacity.VolumeSlots) >= minCapacity {
+				// Create a new DiskInfo with current capacity information
+				diskCopy := DiskInfo{
+					NodeID:     disk.DiskInfo.NodeID,
+					DiskID:     disk.DiskInfo.DiskID,
+					DiskType:   disk.DiskInfo.DiskType,
+					DataCenter: disk.DiskInfo.DataCenter,
+					Rack:       disk.DiskInfo.Rack,
+					LoadCount:  len(disk.pendingTasks) + len(disk.assignedTasks), // Count all tasks
+				}
+
+				// Create a new protobuf DiskInfo to avoid modifying the original
+				diskInfoCopy := &master_pb.DiskInfo{
+					DiskId:            disk.DiskInfo.DiskInfo.DiskId,
+					MaxVolumeCount:    disk.DiskInfo.DiskInfo.MaxVolumeCount,
+					VolumeCount:       disk.DiskInfo.DiskInfo.MaxVolumeCount - int64(effectiveCapacity.VolumeSlots),
+					VolumeInfos:       disk.DiskInfo.DiskInfo.VolumeInfos,
+					EcShardInfos:      disk.DiskInfo.DiskInfo.EcShardInfos,
+					RemoteVolumeCount: disk.DiskInfo.DiskInfo.RemoteVolumeCount,
+					ActiveVolumeCount: disk.DiskInfo.DiskInfo.ActiveVolumeCount,
+					FreeVolumeCount:   disk.DiskInfo.DiskInfo.FreeVolumeCount,
+				}
+				diskCopy.DiskInfo = diskInfoCopy
+
+				available = append(available, &diskCopy)
+			}
+		}
+	}
+
+	return available
 }

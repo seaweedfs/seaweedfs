@@ -281,9 +281,9 @@ func TaskConfigField(field *config.Field, config interface{}) templ.Component {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var14 string
-			templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%.0f", components.ConvertInt32SecondsToDisplayValue(getTaskConfigInt32Field(config, field.JSONName))))
+			templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%.0f", components.ConvertInt32SecondsToDisplayValue(getTaskConfigInt32FieldWithDefault(config, field))))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_config_schema.templ`, Line: 210, Col: 142}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/task_config_schema.templ`, Line: 210, Col: 144}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var14))
 			if templ_7745c5c3_Err != nil {
@@ -339,7 +339,7 @@ func TaskConfigField(field *config.Field, config interface{}) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			if components.GetInt32DisplayUnit(getTaskConfigInt32Field(config, field.JSONName)) == "minutes" {
+			if components.GetInt32DisplayUnit(getTaskConfigInt32FieldWithDefault(config, field)) == "minutes" {
 				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 28, " selected")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
@@ -349,7 +349,7 @@ func TaskConfigField(field *config.Field, config interface{}) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			if components.GetInt32DisplayUnit(getTaskConfigInt32Field(config, field.JSONName)) == "hours" {
+			if components.GetInt32DisplayUnit(getTaskConfigInt32FieldWithDefault(config, field)) == "hours" {
 				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 30, " selected")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
@@ -359,7 +359,7 @@ func TaskConfigField(field *config.Field, config interface{}) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			if components.GetInt32DisplayUnit(getTaskConfigInt32Field(config, field.JSONName)) == "days" {
+			if components.GetInt32DisplayUnit(getTaskConfigInt32FieldWithDefault(config, field)) == "days" {
 				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 32, " selected")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
@@ -849,6 +849,26 @@ func getTaskConfigInt32Field(config interface{}, fieldName string) int32 {
 	}
 }
 
+func getTaskConfigInt32FieldWithDefault(config interface{}, field *config.Field) int32 {
+	value := getTaskConfigInt32Field(config, field.JSONName)
+
+	// If no value is stored (value is 0), use the schema default
+	if value == 0 && field.DefaultValue != nil {
+		switch defaultVal := field.DefaultValue.(type) {
+		case int:
+			return int32(defaultVal)
+		case int32:
+			return defaultVal
+		case int64:
+			return int32(defaultVal)
+		case float64:
+			return int32(defaultVal)
+		}
+	}
+
+	return value
+}
+
 func getTaskConfigFloatField(config interface{}, fieldName string) float64 {
 	if value := getTaskFieldValue(config, fieldName); value != nil {
 		switch v := value.(type) {
@@ -890,7 +910,7 @@ func getTaskConfigStringField(config interface{}, fieldName string) string {
 }
 
 func getTaskNumberStep(field *config.Field) string {
-	if field.Type == config.FieldTypeFloat {
+	if field.Type == "float" {
 		return "0.01"
 	}
 	return "1"

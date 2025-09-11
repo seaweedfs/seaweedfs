@@ -146,3 +146,62 @@ func (r *TaskRegistry) GetAll() map[types.TaskType]types.TaskFactory {
 	}
 	return result
 }
+
+// InitializeDynamicTaskTypes sets up the dynamic task type functions
+// This should be called after all tasks have been registered
+func InitializeDynamicTaskTypes() {
+	// Set up the function variables in the types package
+	types.GetAvailableTaskTypes = func() []types.TaskType {
+		typesRegistry := GetGlobalTypesRegistry()
+		var taskTypes []types.TaskType
+		for taskType := range typesRegistry.GetAllDetectors() {
+			taskTypes = append(taskTypes, taskType)
+		}
+		return taskTypes
+	}
+
+	types.IsTaskTypeAvailable = func(taskType types.TaskType) bool {
+		typesRegistry := GetGlobalTypesRegistry()
+		detectors := typesRegistry.GetAllDetectors()
+		_, exists := detectors[taskType]
+		return exists
+	}
+
+	types.GetTaskType = func(name string) (types.TaskType, bool) {
+		taskType := types.TaskType(name)
+		if types.IsTaskTypeAvailable(taskType) {
+			return taskType, true
+		}
+		return "", false
+	}
+
+	glog.V(1).Infof("Initialized dynamic task type functions")
+}
+
+// GetAllRegisteredTaskTypes returns all currently registered task types
+func GetAllRegisteredTaskTypes() []types.TaskType {
+	if types.GetAvailableTaskTypes != nil {
+		return types.GetAvailableTaskTypes()
+	}
+
+	// Fallback: get directly from registry
+	typesRegistry := GetGlobalTypesRegistry()
+	var taskTypes []types.TaskType
+	for taskType := range typesRegistry.GetAllDetectors() {
+		taskTypes = append(taskTypes, taskType)
+	}
+	return taskTypes
+}
+
+// IsTaskTypeRegistered checks if a task type is currently registered
+func IsTaskTypeRegistered(taskType types.TaskType) bool {
+	if types.IsTaskTypeAvailable != nil {
+		return types.IsTaskTypeAvailable(taskType)
+	}
+
+	// Fallback: check directly in registry
+	typesRegistry := GetGlobalTypesRegistry()
+	detectors := typesRegistry.GetAllDetectors()
+	_, exists := detectors[taskType]
+	return exists
+}

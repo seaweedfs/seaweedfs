@@ -16,7 +16,7 @@ func Replay(filerStore FilerStore, resp *filer_pb.SubscribeMetadataResponse) err
 	if message.OldEntry != nil {
 		oldPath = util.NewFullPath(resp.Directory, message.OldEntry.Name)
 		glog.V(4).Infof("deleting %v", oldPath)
-		if err := filerStore.DeleteEntry(context.Background(), oldPath); err != nil {
+		if err := filerStore.DeleteEntry(context.Background(), oldPath); err != nil && err != filer_pb.ErrNotFound {
 			return err
 		}
 	}

@@ -30,8 +30,12 @@ func DefaultMaintenanceConfigProto() *worker_pb.MaintenanceConfig {
 		MaxRetries:             3,
 		CleanupIntervalSeconds: 24 * 60 * 60,     // 24 hours
 		TaskRetentionSeconds:   7 * 24 * 60 * 60, // 7 days
-		// Policy field will be populated dynamically from separate task configuration files
-		Policy: nil,
+		Policy: &worker_pb.MaintenancePolicy{
+			GlobalMaxConcurrent:          4,
+			DefaultRepeatIntervalSeconds: 24 * 60 * 60, // 24 hours
+			DefaultCheckIntervalSeconds:  60 * 60,      // 1 hour
+			TaskPolicies:                 make(map[string]*worker_pb.TaskPolicy),
+		},
 	}
 }
 
@@ -40,87 +44,7 @@ func (mcm *MaintenanceConfigManager) GetConfig() *worker_pb.MaintenanceConfig {
 	return mcm.config
 }
 
-// Type-safe configuration accessors
-
-// GetVacuumConfig returns vacuum-specific configuration for a task type
-func (mcm *MaintenanceConfigManager) GetVacuumConfig(taskType string) *worker_pb.VacuumTaskConfig {
-	if policy := mcm.getTaskPolicy(taskType); policy != nil {
-		if vacuumConfig := policy.GetVacuumConfig(); vacuumConfig != nil {
-			return vacuumConfig
-		}
-	}
-	// Return defaults if not configured
-	return &worker_pb.VacuumTaskConfig{
-		GarbageThreshold:   0.3,
-		MinVolumeAgeHours:  24,
-		MinIntervalSeconds: 7 * 24 * 60 * 60, // 7 days
-	}
-}
-
-// GetErasureCodingConfig returns EC-specific configuration for a task type
-func (mcm *MaintenanceConfigManager) GetErasureCodingConfig(taskType string) *worker_pb.ErasureCodingTaskConfig {
-	if policy := mcm.getTaskPolicy(taskType); policy != nil {
-		if ecConfig := policy.GetErasureCodingConfig(); ecConfig != nil {
-			return ecConfig
-		}
-	}
-	// Return defaults if not configured
-	return &worker_pb.ErasureCodingTaskConfig{
-		FullnessRatio:    0.95,
-		QuietForSeconds:  3600,
-		MinVolumeSizeMb:  100,
-		CollectionFilter: "",
-	}
-}
-
-// GetBalanceConfig returns balance-specific configuration for a task type
-func (mcm *MaintenanceConfigManager) GetBalanceConfig(taskType string) *worker_pb.BalanceTaskConfig {
-	if policy := mcm.getTaskPolicy(taskType); policy != nil {
-		if balanceConfig := policy.GetBalanceConfig(); balanceConfig != nil {
-			return balanceConfig
-		}
-	}
-	// Return defaults if not configured
-	return &worker_pb.BalanceTaskConfig{
-		ImbalanceThreshold: 0.2,
-		MinServerCount:     2,
-	}
-}
-
-// GetReplicationConfig returns replication-specific configuration for a task type
-func (mcm *MaintenanceConfigManager) GetReplicationConfig(taskType string) *worker_pb.ReplicationTaskConfig {
-	if policy := mcm.getTaskPolicy(taskType); policy != nil {
-		if replicationConfig := policy.GetReplicationConfig(); replicationConfig != nil {
-			return replicationConfig
-		}
-	}
-	// Return defaults if not configured
-	return &worker_pb.ReplicationTaskConfig{
-		TargetReplicaCount: 2,
-	}
-}
-
-// Typed convenience methods for getting task configurations
-
-// GetVacuumTaskConfigForType returns vacuum configuration for a specific task type
-func (mcm *MaintenanceConfigManager) GetVacuumTaskConfigForType(taskType string) *worker_pb.VacuumTaskConfig {
-	return GetVacuumTaskConfig(mcm.config.Policy, MaintenanceTaskType(taskType))
-}
-
-// GetErasureCodingTaskConfigForType returns erasure coding configuration for a specific task type
-func (mcm *MaintenanceConfigManager) GetErasureCodingTaskConfigForType(taskType string) *worker_pb.ErasureCodingTaskConfig {
-	return GetErasureCodingTaskConfig(mcm.config.Policy, MaintenanceTaskType(taskType))
-}
-
-// GetBalanceTaskConfigForType returns balance configuration for a specific task type
-func (mcm *MaintenanceConfigManager) GetBalanceTaskConfigForType(taskType string) *worker_pb.BalanceTaskConfig {
-	return GetBalanceTaskConfig(mcm.config.Policy, MaintenanceTaskType(taskType))
-}
-
-// GetReplicationTaskConfigForType returns replication configuration for a specific task type
-func (mcm *MaintenanceConfigManager) GetReplicationTaskConfigForType(taskType string) *worker_pb.ReplicationTaskConfig {
-	return GetReplicationTaskConfig(mcm.config.Policy, MaintenanceTaskType(taskType))
-}
+// Generic configuration accessors - tasks manage their own specific configs
 
 // Helper methods
 

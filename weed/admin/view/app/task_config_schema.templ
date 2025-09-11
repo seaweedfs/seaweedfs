@@ -6,9 +6,9 @@ import (
     "fmt"
     "reflect"
     "strings"
+    "github.com/seaweedfs/seaweedfs/weed/admin/config"
     "github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
     "github.com/seaweedfs/seaweedfs/weed/worker/tasks"
-    "github.com/seaweedfs/seaweedfs/weed/admin/config"
     "github.com/seaweedfs/seaweedfs/weed/admin/view/components"
     "github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 )
@@ -207,7 +207,7 @@ templ TaskConfigField(field *config.Field, config interface{}) {
                     class="form-control" 
                     id={ field.JSONName + "_value" } 
                     name={ field.JSONName + "_value" } 
-                    value={ fmt.Sprintf("%.0f", components.ConvertInt32SecondsToDisplayValue(getTaskConfigInt32Field(config, field.JSONName))) }
+                    value={ fmt.Sprintf("%.0f", components.ConvertInt32SecondsToDisplayValue(getTaskConfigInt32FieldWithDefault(config, field))) }
                     step="1"
                     min="1"
                     if field.Required {
@@ -223,30 +223,30 @@ templ TaskConfigField(field *config.Field, config interface{}) {
                         required
                     }
                 >
-                    <option 
-                        value="minutes"
-                        if components.GetInt32DisplayUnit(getTaskConfigInt32Field(config, field.JSONName)) == "minutes" {
-                            selected
-                        }
-                    >
-                        Minutes
-                    </option>
-                    <option 
-                        value="hours"
-                        if components.GetInt32DisplayUnit(getTaskConfigInt32Field(config, field.JSONName)) == "hours" {
-                            selected
-                        }
-                    >
-                        Hours
-                    </option>
-                    <option 
-                        value="days"
-                        if components.GetInt32DisplayUnit(getTaskConfigInt32Field(config, field.JSONName)) == "days" {
-                            selected
-                        }
-                    >
-                        Days
-                    </option>
+                                            <option 
+                            value="minutes"
+                            if components.GetInt32DisplayUnit(getTaskConfigInt32FieldWithDefault(config, field)) == "minutes" {
+                                selected
+                            }
+                        >
+                            Minutes
+                        </option>
+                        <option 
+                            value="hours"
+                            if components.GetInt32DisplayUnit(getTaskConfigInt32FieldWithDefault(config, field)) == "hours" {
+                                selected
+                            }
+                        >
+                            Hours
+                        </option>
+                        <option 
+                            value="days"
+                            if components.GetInt32DisplayUnit(getTaskConfigInt32FieldWithDefault(config, field)) == "days" {
+                                selected
+                            }
+                        >
+                            Days
+                        </option>
                 </select>
             </div>
             if field.Description != "" {
@@ -388,6 +388,26 @@ func getTaskConfigInt32Field(config interface{}, fieldName string) int32 {
     }
 }
 
+func getTaskConfigInt32FieldWithDefault(config interface{}, field *config.Field) int32 {
+    value := getTaskConfigInt32Field(config, field.JSONName)
+    
+    // If no value is stored (value is 0), use the schema default
+    if value == 0 && field.DefaultValue != nil {
+        switch defaultVal := field.DefaultValue.(type) {
+        case int:
+            return int32(defaultVal)
+        case int32:
+            return defaultVal
+        case int64:
+            return int32(defaultVal)
+        case float64:
+            return int32(defaultVal)
+        }
+    }
+    
+    return value
+}
+
 func getTaskConfigFloatField(config interface{}, fieldName string) float64 {
     if value := getTaskFieldValue(config, fieldName); value != nil {
         switch v := value.(type) {
@@ -429,7 +449,7 @@ func getTaskConfigStringField(config interface{}, fieldName string) string {
 }
 
 func getTaskNumberStep(field *config.Field) string {
-    if field.Type == config.FieldTypeFloat {
+    if field.Type == "float" {
         return "0.01"
     }
     return "1"

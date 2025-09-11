@@ -33,7 +33,7 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
 
     <!-- EC Volume Summary -->
     <div class="row mb-4">
-        <div class="col-md-6">
+        <div class="col-md-4">
             <div class="card">
                 <div class="card-header">
                     <h5 class="card-title mb-0">
@@ -101,6 +101,38 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                             </td>
                         </tr>
                         <tr>
+                            <td><strong>Active Generation:</strong></td>
+                            <td>
+                                if data.ActiveGeneration > 0 {
+                                    <span class="badge bg-success">{fmt.Sprintf("G%d", data.ActiveGeneration)}</span>
+                                } else {
+                                    <span class="badge bg-primary">G0</span>
+                                }
+                                if len(data.Generations) > 1 {
+                                    <span class="ms-1 badge bg-warning">
+                                        <i class="fas fa-layer-group me-1"></i>Multi-Gen
+                                    </span>
+                                }
+                            </td>
+                        </tr>
+                        if len(data.Generations) > 1 {
+                            <tr>
+                                <td><strong>All Generations:</strong></td>
+                                <td>
+                                    for i, gen := range data.Generations {
+                                        if i > 0 { 
+                                            <span class="me-1"></span>
+                                        }
+                                        if gen == data.ActiveGeneration {
+                                            <span class="badge bg-success">G{fmt.Sprintf("%d", gen)} (Active)</span>
+                                        } else {
+                                            <span class="badge bg-secondary">G{fmt.Sprintf("%d", gen)}</span>
+                                        }
+                                    }
+                                </td>
+                            </tr>
+                        }
+                        <tr>
                             <td><strong>Last Updated:</strong></td>
                             <td>
                                 <span class="text-muted">{data.LastUpdated.Format("2006-01-02 15:04:05")}</span>
@@ -111,7 +143,134 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
             </div>
         </div>
         
-        <div class="col-md-6">
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">
+                        <i class="fas fa-database me-2"></i>Volume Health
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <!-- Storage Metrics -->
+                    if data.TotalSize > 0 || data.DeletedByteCount > 0 || data.DeleteCount > 0 {
+                        <div class="row mb-3">
+                            if data.TotalSize > 0 {
+                                <div class="col-6">
+                                    <div class="text-center">
+                                        <div class="h4 mb-0 font-weight-bold text-success">
+                                            {bytesToHumanReadableUint64(func() uint64 {
+                                                if data.DeletedByteCount > data.TotalSize {
+                                                    return 0
+                                                }
+                                                return data.TotalSize - data.DeletedByteCount
+                                            }())}
+                                        </div>
+                                        <small class="text-muted">Active Bytes</small>
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="text-center">
+                                        <div class="h4 mb-0 font-weight-bold text-danger">
+                                            {bytesToHumanReadableUint64(data.DeletedByteCount)}
+                                        </div>
+                                        <small class="text-muted">Deleted Bytes</small>
+                                    </div>
+                                </div>
+                            } else {
+                                <!-- EC-only volume - show deletion info differently -->
+                                <div class="col-12">
+                                    <div class="text-center">
+                                        <div class="h4 mb-0 font-weight-bold text-warning">
+                                            {fmt.Sprintf("%d", data.DeleteCount)}
+                                        </div>
+                                        <small class="text-muted">Deleted Needles (EC-only volume)</small>
+                                        if data.DeleteCount > 0 {
+                                            <div class="mt-1">
+                                                <small class="text-info">
+                                                    <i class="fas fa-info-circle me-1"></i>
+                                                    Deletion info from .ecj files
+                                                </small>
+                                            </div>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                        </div>
+
+                        <!-- File Metrics - only show for regular volumes -->
+                        if data.TotalSize > 0 {
+                            <div class="row mb-3">
+                                <div class="col-6">
+                                    <div class="text-center">
+                                        <div class="h5 mb-0 text-primary">
+                                            {fmt.Sprintf("%d", func() uint64 {
+                                                if data.DeleteCount > data.FileCount {
+                                                    return 0
+                                                }
+                                                return data.FileCount - data.DeleteCount
+                                            }())}
+                                        </div>
+                                        <small class="text-muted">Active Files</small>
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="text-center">
+                                        <div class="h5 mb-0 text-warning">
+                                            {fmt.Sprintf("%d", data.DeleteCount)}
+                                        </div>
+                                        <small class="text-muted">Deleted Files</small>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Garbage Ratio for EC Vacuum -->
+                            <div class="row mb-3">
+                                <div class="col-12">
+                                    <div class="text-center">
+                                        <div class="h4 mb-0 font-weight-bold" style={"color: " + getGarbageRatioColor(data.GarbageRatio)}>
+                                            {fmt.Sprintf("%.1f%%", data.GarbageRatio * 100)}
+                                        </div>
+                                        <small class="text-muted">Garbage Ratio</small>
+                                        if data.GarbageRatio >= 0.3 {
+                                            <div class="mt-1">
+                                                <span class="badge bg-warning">
+                                                    <i class="fas fa-broom me-1"></i>EC Vacuum Candidate
+                                                </span>
+                                            </div>
+                                        }
+                                    </div>
+                                </div>
+                            </div>
+                        } else if data.DeleteCount > 0 {
+                            <!-- For EC-only volumes, show a note about EC vacuum eligibility -->
+                            <div class="row mb-3">
+                                <div class="col-12">
+                                    <div class="text-center">
+                                        <div class="mt-2">
+                                            <span class="badge bg-info">
+                                                <i class="fas fa-broom me-1"></i>EC Vacuum Eligible
+                                            </span>
+                                            <div class="mt-1">
+                                                <small class="text-muted">Volume has {fmt.Sprintf("%d", data.DeleteCount)} deleted needles</small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                    } else {
+                        <div class="text-center text-muted py-3">
+                            <i class="fas fa-info-circle mb-2"></i>
+                            <div>Volume health metrics not available</div>
+                            <small>This may be normal for newly created EC volumes</small>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+        
+        <!-- Third column for Shard Distribution -->
+        <div class="col-md-4">
             <div class="card">
                 <div class="card-header">
                     <h5 class="card-title mb-0">
@@ -140,21 +299,52 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                         </div>
                     </div>
                     
-                    <!-- Shard Distribution Visualization -->
+                    <!-- Generation-aware Shard Distribution -->
                     <div class="mt-3">
-                        <h6>Present Shards:</h6>
-                        <div class="d-flex flex-wrap gap-1">
-                            for _, shard := range data.Shards {
-                                <span class="badge bg-success me-1 mb-1">{fmt.Sprintf("%02d", shard.ShardID)}</span>
+                        if len(data.Generations) > 1 {
+                            <!-- Multiple generations - show by generation -->
+                            for _, gen := range data.Generations {
+                                <div class="mb-2">
+                                    <h6 class="mb-1">
+                                        if gen == data.ActiveGeneration {
+                                            <span class="badge bg-success me-1">G{fmt.Sprintf("%d", gen)} (Active)</span>
+                                        } else {
+                                            <span class="badge bg-secondary me-1">G{fmt.Sprintf("%d", gen)}</span>
+                                        }
+                                        {fmt.Sprintf("%d/14 shards", len(data.GenerationShards[gen]))}
+                                        if data.GenerationComplete[gen] {
+                                            <i class="fas fa-check-circle text-success ms-1"></i>
+                                        } else {
+                                            <i class="fas fa-exclamation-triangle text-warning ms-1"></i>
+                                        }
+                                    </h6>
+                                    <div class="d-flex flex-wrap gap-1">
+                                        for _, shardID := range data.GenerationShards[gen] {
+                                            if gen == data.ActiveGeneration {
+                                                <span class="badge bg-success me-1 mb-1">{fmt.Sprintf("%02d", shardID)}</span>
+                                            } else {
+                                                <span class="badge bg-secondary me-1 mb-1">{fmt.Sprintf("%02d", shardID)}</span>
+                                            }
+                                        }
+                                    </div>
+                                </div>
                             }
-                        </div>
-                        if len(data.MissingShards) > 0 {
-                            <h6 class="mt-2">Missing Shards:</h6>
+                        } else {
+                            <!-- Single generation - show all shards -->
+                            <h6>Present Shards:</h6>
                             <div class="d-flex flex-wrap gap-1">
-                                for _, shardID := range data.MissingShards {
-                                    <span class="badge bg-secondary me-1 mb-1">{fmt.Sprintf("%02d", shardID)}</span>
+                                for _, shard := range data.Shards {
+                                    <span class="badge bg-success me-1 mb-1">{fmt.Sprintf("%02d", shard.ShardID)}</span>
                                 }
                             </div>
+                            if len(data.MissingShards) > 0 {
+                                <h6 class="mt-2">Missing Shards:</h6>
+                                <div class="d-flex flex-wrap gap-1">
+                                    for _, shardID := range data.MissingShards {
+                                        <span class="badge bg-secondary me-1 mb-1">{fmt.Sprintf("%02d", shardID)}</span>
+                                    }
+                                </div>
+                            }
                         }
                     </div>
                 </div>
@@ -231,6 +421,7 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                                         }
                                     </a>
                                 </th>
+                                <th class="text-dark">Generation</th>
                                 <th class="text-dark">Disk Type</th>
                                 <th class="text-dark">Shard Size</th>
                                 <th class="text-dark">Actions</th>
@@ -252,6 +443,14 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                                         </td>
                                         <td>
                                             <span class="badge bg-secondary text-white">{shard.Rack}</span>
+                                        </td>
+                                        <td>
+                                            if shard.Generation == data.ActiveGeneration {
+                                                <span class="badge bg-success">G{fmt.Sprintf("%d", shard.Generation)}</span>
+                                                <i class="fas fa-star text-warning ms-1" title="Active Generation"></i>
+                                            } else {
+                                                <span class="badge bg-secondary">G{fmt.Sprintf("%d", shard.Generation)}</span>
+                                            }
                                         </td>
                                         <td>
                                             <span class="text-dark">{shard.DiskType}</span>
@@ -310,4 +509,16 @@ func bytesToHumanReadableUint64(bytes uint64) string {
         exp++
     }
     return fmt.Sprintf("%.1f%cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+// Helper function to get color for garbage ratio display
+func getGarbageRatioColor(ratio float64) string {
+    if ratio >= 0.5 {
+        return "#dc3545" // Red for high garbage ratio
+    } else if ratio >= 0.3 {
+        return "#fd7e14" // Orange for medium garbage ratio
+    } else if ratio >= 0.1 {
+        return "#ffc107" // Yellow for low garbage ratio
+    }
+    return "#28a745" // Green for very low garbage ratio
 } 
