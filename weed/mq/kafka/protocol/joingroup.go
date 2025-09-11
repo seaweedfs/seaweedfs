@@ -277,6 +277,12 @@ func (h *Handler) buildJoinGroupResponse(response JoinGroupResponse) []byte {
 	binary.BigEndian.PutUint32(correlationIDBytes, response.CorrelationID)
 	result = append(result, correlationIDBytes...)
 	
+	// JoinGroup v2 Response Format: throttle_time_ms + error_code + generation_id + ...
+	// Throttle time (4 bytes) - CRITICAL: This was missing!
+	throttleTimeBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(throttleTimeBytes, 0) // No throttling
+	result = append(result, throttleTimeBytes...)
+	
 	// Error code (2 bytes)
 	errorCodeBytes := make([]byte, 2)
 	binary.BigEndian.PutUint16(errorCodeBytes, uint16(response.ErrorCode))
@@ -331,9 +337,6 @@ func (h *Handler) buildJoinGroupResponse(response JoinGroupResponse) []byte {
 		result = append(result, metadataLength...)
 		result = append(result, member.Metadata...)
 	}
-	
-	// Throttle time (4 bytes, 0 = no throttling)
-	result = append(result, 0, 0, 0, 0)
 	
 	return result
 }
@@ -404,12 +407,23 @@ const (
 	ErrorCodeInconsistentGroupProtocol int16 = 23
 )
 
-func (h *Handler) handleSyncGroup(correlationID uint32, requestBody []byte) ([]byte, error) {
+func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
+	// DEBUG: Hex dump the request to understand format
+	dumpLen := len(requestBody)
+	if dumpLen > 100 {
+		dumpLen = 100
+	}
+	fmt.Printf("DEBUG: SyncGroup request hex dump (first %d bytes): %x\n", dumpLen, requestBody[:dumpLen])
+	
 	// Parse SyncGroup request
 	request, err := h.parseSyncGroupRequest(requestBody)
 	if err != nil {
+		fmt.Printf("DEBUG: SyncGroup parseSyncGroupRequest error: %v\n", err)
 		return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeInvalidGroupID), nil
 	}
+	
+	fmt.Printf("DEBUG: SyncGroup parsed request - GroupID: '%s', MemberID: '%s', GenerationID: %d\n", 
+		request.GroupID, request.MemberID, request.GenerationID)
 	
 	// Validate request
 	if request.GroupID == "" || request.MemberID == "" {
