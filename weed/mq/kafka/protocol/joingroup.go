@@ -36,6 +36,7 @@ type JoinGroupResponse struct {
 	GroupProtocol string
 	GroupLeader   string
 	MemberID      string
+	Version       uint16
 	Members       []JoinGroupMember // Only populated for group leader
 }
 
@@ -184,7 +185,7 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 			fmt.Printf("DEBUG: JoinGroup generating subscription metadata for topics: %v\n", availableTopics)
 
 			metadata := make([]byte, 0, 64)
-			// Version (2 bytes) - use version 0
+			// Version (2 bytes) - use version 0 to exclude OwnedPartitions
 			metadata = append(metadata, 0, 0)
 			// Topics count (4 bytes)
 			topicsCount := make([]byte, 4)
@@ -197,6 +198,10 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 				metadata = append(metadata, topicLen...)
 				metadata = append(metadata, []byte(topic)...)
 			}
+			// UserData (nullable bytes) - encode empty (length 0)
+			userDataLen := make([]byte, 4)
+			binary.BigEndian.PutUint32(userDataLen, 0)
+			metadata = append(metadata, userDataLen...)
 			member.Metadata = metadata
 			fmt.Printf("DEBUG: JoinGroup generated metadata (%d bytes): %x\n", len(metadata), metadata)
 		} else {
@@ -236,6 +241,7 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 		GroupProtocol: groupProtocol,
 		GroupLeader:   group.Leader,
 		MemberID:      memberID,
+		Version:       apiVersion,
 	}
 
 	fmt.Printf("DEBUG: JoinGroup response - Generation: %d, Protocol: '%s', Leader: '%s', Member: '%s'\n",
@@ -336,9 +342,26 @@ func (h *Handler) parseJoinGroupRequest(data []byte) (*JoinGroupRequest, error) 
 
 func (h *Handler) buildJoinGroupResponse(response JoinGroupResponse) []byte {
 	// Estimate response size
-	estimatedSize := 32 + len(response.GroupProtocol) + len(response.GroupLeader) + len(response.MemberID)
+	estimatedSize := 0
+	// CorrelationID(4) + (optional throttle 4) + error_code(2) + generation_id(4)
+	if response.Version >= 2 {
+		estimatedSize = 4 + 4 + 2 + 4
+	} else {
+		estimatedSize = 4 + 2 + 4
+	}
+	estimatedSize += 2 + len(response.GroupProtocol) // protocol string
+	estimatedSize += 2 + len(response.GroupLeader)   // leader string
+	estimatedSize += 2 + len(response.MemberID)      // member id string
+	estimatedSize += 4                               // members array count
 	for _, member := range response.Members {
-		estimatedSize += len(member.MemberID) + len(member.GroupInstanceID) + len(member.Metadata) + 8
+		// MemberID string
+		estimatedSize += 2 + len(member.MemberID)
+		if response.Version >= 5 {
+			// GroupInstanceID string
+			estimatedSize += 2 + len(member.GroupInstanceID)
+		}
+		// Metadata bytes (4 + len)
+		estimatedSize += 4 + len(member.Metadata)
 	}
 
 	result := make([]byte, 0, estimatedSize)
@@ -348,11 +371,12 @@ func (h *Handler) buildJoinGroupResponse(response JoinGroupResponse) []byte {
 	binary.BigEndian.PutUint32(correlationIDBytes, response.CorrelationID)
 	result = append(result, correlationIDBytes...)
 
-	// JoinGroup v2 Response Format: throttle_time_ms + error_code + generation_id + ...
-	// Throttle time (4 bytes) - CRITICAL: This was missing!
-	throttleTimeBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(throttleTimeBytes, 0) // No throttling
-	result = append(result, throttleTimeBytes...)
+	// JoinGroup v2 adds throttle_time_ms
+	if response.Version >= 2 {
+		throttleTimeBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(throttleTimeBytes, 0) // No throttling
+		result = append(result, throttleTimeBytes...)
+	}
 
 	// Error code (2 bytes)
 	errorCodeBytes := make([]byte, 2)
@@ -394,12 +418,14 @@ func (h *Handler) buildJoinGroupResponse(response JoinGroupResponse) []byte {
 		result = append(result, memberLength...)
 		result = append(result, []byte(member.MemberID)...)
 
-		// Group instance ID (string) - can be empty
-		instanceIDLength := make([]byte, 2)
-		binary.BigEndian.PutUint16(instanceIDLength, uint16(len(member.GroupInstanceID)))
-		result = append(result, instanceIDLength...)
-		if len(member.GroupInstanceID) > 0 {
-			result = append(result, []byte(member.GroupInstanceID)...)
+		if response.Version >= 5 {
+			// Group instance ID (string) - can be empty
+			instanceIDLength := make([]byte, 2)
+			binary.BigEndian.PutUint16(instanceIDLength, uint16(len(member.GroupInstanceID)))
+			result = append(result, instanceIDLength...)
+			if len(member.GroupInstanceID) > 0 {
+				result = append(result, []byte(member.GroupInstanceID)...)
+			}
 		}
 
 		// Metadata (bytes)
@@ -420,6 +446,7 @@ func (h *Handler) buildJoinGroupErrorResponse(correlationID uint32, errorCode in
 		GroupProtocol: "",
 		GroupLeader:   "",
 		MemberID:      "",
+		Version:       2,
 		Members:       []JoinGroupMember{},
 	}
 

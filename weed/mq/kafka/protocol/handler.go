@@ -317,7 +317,7 @@ func (h *Handler) handleApiVersions(correlationID uint32) ([]byte, error) {
 	// TODO: Fix Metadata v1 format - kafka-go rejects our v1 response with "Unknown Topic Or Partition"
 	response = append(response, 0, 3) // API key 3
 	response = append(response, 0, 0) // min version 0
-	response = append(response, 0, 0) // max version 0 (v1 has format issue)
+	response = append(response, 0, 1) // max version 1
 
 	// API Key 2 (ListOffsets): api_key(2) + min_version(2) + max_version(2)
 	response = append(response, 0, 2) // API key 2
@@ -490,7 +490,7 @@ func (h *Handler) HandleMetadataV1(correlationID uint32, requestBody []byte) ([]
 	// Brokers array length (4 bytes) - 1 broker (this gateway)
 	response = append(response, 0, 0, 0, 1)
 
-	// Broker 0: node_id(4) + host(STRING) + port(4) + rack(NULLABLE_STRING)
+	// Broker 0: node_id(4) + host(STRING) + port(4) + rack(STRING)
 	response = append(response, 0, 0, 0, 0) // node_id = 0
 
 	// Use dynamic broker address set by the server
@@ -508,14 +508,11 @@ func (h *Handler) HandleMetadataV1(correlationID uint32, requestBody []byte) ([]
 	binary.BigEndian.PutUint32(portBytes, uint32(port))
 	response = append(response, portBytes...)
 
-	// Rack (NULLABLE_STRING) - null (-1 length, 2 bytes)
-	response = append(response, 0xFF, 0xFF)
+	// Rack (STRING, NOT nullable in v1) - use empty string
+	response = append(response, 0x00, 0x00)
 
-	// Cluster ID (NULLABLE_STRING) - null (-1 length, 2 bytes)
-	response = append(response, 0xFF, 0xFF)
-
-	// Controller ID (4 bytes) - -1 (no controller)
-	response = append(response, 0xFF, 0xFF, 0xFF, 0xFF)
+	// Controller ID (4 bytes) - use broker 0 as controller
+	response = append(response, 0x00, 0x00, 0x00, 0x00)
 
 	// Parse requested topics (empty means all)
 	requestedTopics := h.parseMetadataTopics(requestBody)
@@ -543,7 +540,7 @@ func (h *Handler) HandleMetadataV1(correlationID uint32, requestBody []byte) ([]
 	binary.BigEndian.PutUint32(topicsCountBytes, uint32(len(topicsToReturn)))
 	response = append(response, topicsCountBytes...)
 
-	// Topic entries (same format as v0)
+	// Topic entries (v1)
 	for _, topicName := range topicsToReturn {
 		// error_code(2) = 0
 		response = append(response, 0, 0)
@@ -579,49 +576,57 @@ func (h *Handler) HandleMetadataV1(correlationID uint32, requestBody []byte) ([]
 }
 
 func (h *Handler) parseMetadataTopics(requestBody []byte) []string {
-	// Parse Metadata request to extract requested topics
-	// Format: client_id + topics_array
-
-	// Temporarily disable debug logging to test performance
-	if len(requestBody) < 6 { // at minimum: client_id_size(2) + topics_count(4)
-		return []string{} // Return empty - means "all topics"
-	}
-
-	// Skip client_id
-	clientIDSize := binary.BigEndian.Uint16(requestBody[0:2])
-	offset := 2 + int(clientIDSize)
-
-	if len(requestBody) < offset+4 {
+	// Support both v0/v1 parsing: v1 payload starts directly with topics array length (int32),
+	// while older assumptions may have included a client_id string first.
+	if len(requestBody) < 4 {
 		return []string{}
 	}
 
-	// Parse topics count
+	// Try path A: interpret first 4 bytes as topics_count
+	offset := 0
 	topicsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
+	if topicsCount == 0xFFFFFFFF { // -1 means all topics
+		return []string{}
+	}
+	if topicsCount <= 1000000 { // sane bound
+		offset += 4
+		topics := make([]string, 0, topicsCount)
+		for i := uint32(0); i < topicsCount && offset+2 <= len(requestBody); i++ {
+			nameLen := int(binary.BigEndian.Uint16(requestBody[offset : offset+2]))
+			offset += 2
+			if offset+nameLen > len(requestBody) {
+				break
+			}
+			topics = append(topics, string(requestBody[offset:offset+nameLen]))
+			offset += nameLen
+		}
+		return topics
+	}
+
+	// Path B: assume leading client_id string then topics_count
+	if len(requestBody) < 6 {
+		return []string{}
+	}
+	clientIDLen := int(binary.BigEndian.Uint16(requestBody[0:2]))
+	offset = 2 + clientIDLen
+	if len(requestBody) < offset+4 {
+		return []string{}
+	}
+	topicsCount = binary.BigEndian.Uint32(requestBody[offset : offset+4])
 	offset += 4
-
-	if topicsCount == 0 || topicsCount > 1000000 { // sanity check
-		return []string{} // Return empty - means "all topics"
+	if topicsCount == 0xFFFFFFFF {
+		return []string{}
 	}
-
-	// Parse each requested topic name
 	topics := make([]string, 0, topicsCount)
-	for i := uint32(0); i < topicsCount && offset < len(requestBody); i++ {
-		if len(requestBody) < offset+2 {
-			break
-		}
-
-		topicNameSize := binary.BigEndian.Uint16(requestBody[offset : offset+2])
+	for i := uint32(0); i < topicsCount && offset+2 <= len(requestBody); i++ {
+		nameLen := int(binary.BigEndian.Uint16(requestBody[offset : offset+2]))
 		offset += 2
-
-		if len(requestBody) < offset+int(topicNameSize) {
+		if offset+nameLen > len(requestBody) {
 			break
 		}
-
-		topicName := string(requestBody[offset : offset+int(topicNameSize)])
-		topics = append(topics, topicName)
-		offset += int(topicNameSize)
+		topics = append(topics, string(requestBody[offset:offset+nameLen]))
+		offset += nameLen
 	}
-
 	return topics
 }
 
@@ -1044,7 +1049,7 @@ func (h *Handler) handleDeleteTopics(correlationID uint32, requestBody []byte) (
 func (h *Handler) validateAPIVersion(apiKey, apiVersion uint16) error {
 	supportedVersions := map[uint16][2]uint16{
 		18: {0, 3}, // ApiVersions: v0-v3
-		3:  {0, 0}, // Metadata: v0 only (v1 has format issue)
+		3:  {0, 1}, // Metadata: v0-v1
 		0:  {0, 1}, // Produce: v0-v1
 		1:  {0, 1}, // Fetch: v0-v1
 		2:  {0, 5}, // ListOffsets: v0-v5
