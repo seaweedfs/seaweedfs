@@ -111,7 +111,7 @@ func TestBrokerClient_FetchIntegration(t *testing.T) {
 		stats := brokerClient.GetPublisherStats()
 		assert.Contains(t, stats, "active_subscribers")
 		assert.Contains(t, stats, "subscriber_topics")
-		
+
 		// Check that subscriber was created (may be > 0 if creation succeeded)
 		subscriberCount := stats["active_subscribers"].(int)
 		t.Logf("Active subscribers: %d", subscriberCount)

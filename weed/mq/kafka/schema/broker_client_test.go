@@ -105,7 +105,7 @@ func TestBrokerClient_SchematizedMessage(t *testing.T) {
 		recordType, err := brokerClient.CreateRecordType(uint32(schemaID), FormatAvro)
 		require.NoError(t, err)
 		assert.NotNil(t, recordType)
-		
+
 		// Note: RecordType inference has known limitations in current implementation
 		if len(recordType.Fields) != 3 {
 			t.Logf("Known issue: RecordType has %d fields instead of expected 3", len(recordType.Fields))

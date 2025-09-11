@@ -34,7 +34,7 @@ func TestBasicSchemaDecodeEncode(t *testing.T) {
 				{"name": "message", "type": "string"}
 			]
 		}`
-		
+
 		// Register schema
 		registerBasicSchema(t, registry, schemaID, schemaJSON)
 
@@ -67,7 +67,7 @@ func TestBasicSchemaDecodeEncode(t *testing.T) {
 		// Test encode back
 		reconstructed, err := manager.EncodeMessage(decoded.RecordValue, decoded.SchemaID, decoded.SchemaFormat)
 		require.NoError(t, err)
-		
+
 		// Verify envelope structure
 		assert.Equal(t, envelope[:5], reconstructed[:5]) // Magic byte + schema ID
 		assert.True(t, len(reconstructed) > 5)
@@ -82,7 +82,7 @@ func TestBasicSchemaDecodeEncode(t *testing.T) {
 			},
 			"required": ["name"]
 		}`
-		
+
 		// Register schema
 		registerBasicSchema(t, registry, schemaID, schemaJSON)
 
@@ -101,7 +101,7 @@ func TestBasicSchemaDecodeEncode(t *testing.T) {
 		// For now, this will be detected as Avro due to format detection logic
 		// We'll test that it at least doesn't crash and provides a meaningful error
 		decoded, err := manager.DecodeMessage(envelope)
-		
+
 		// The current implementation may detect this as Avro and fail
 		// That's expected behavior for now - we're testing the error handling
 		if err != nil {
@@ -123,7 +123,7 @@ func TestBasicSchemaDecodeEncode(t *testing.T) {
 				{"name": "value", "type": "string"}
 			]
 		}`
-		
+
 		registerBasicSchema(t, registry, schemaID, schemaJSON)
 
 		// Create test data
@@ -145,7 +145,7 @@ func TestBasicSchemaDecodeEncode(t *testing.T) {
 		// Verify results are consistent
 		assert.Equal(t, decoded1.SchemaID, decoded2.SchemaID)
 		assert.Equal(t, decoded1.SchemaFormat, decoded2.SchemaFormat)
-		
+
 		// Verify field values match
 		field1 := decoded1.RecordValue.Fields["value"]
 		field2 := decoded2.RecordValue.Fields["value"]
@@ -178,7 +178,7 @@ func TestSchemaValidation(t *testing.T) {
 				{"name": "timestamp", "type": "long"}
 			]
 		}`
-		
+
 		registerBasicSchema(t, registry, schemaID, schemaJSON)
 
 		// Create valid test data
@@ -197,7 +197,7 @@ func TestSchemaValidation(t *testing.T) {
 		decoded, err := manager.DecodeMessage(envelope)
 		require.NoError(t, err)
 		assert.Equal(t, uint32(schemaID), decoded.SchemaID)
-		
+
 		// Verify fields
 		idField := decoded.RecordValue.Fields["id"]
 		timestampField := decoded.RecordValue.Fields["timestamp"]
@@ -208,7 +208,7 @@ func TestSchemaValidation(t *testing.T) {
 	t.Run("Non-Schematized Message", func(t *testing.T) {
 		// Raw message without Confluent envelope
 		rawMessage := []byte("This is not a schematized message")
-		
+
 		_, err := manager.DecodeMessage(rawMessage)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "not schematized")
@@ -227,7 +227,7 @@ func TestSchemaValidation(t *testing.T) {
 
 func createBasicMockRegistry(t *testing.T) *httptest.Server {
 	schemas := make(map[int32]string)
-	
+
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/subjects":

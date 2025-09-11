@@ -536,7 +536,7 @@ func (h *Handler) storeDecodedMessage(topicName string, partitionID int32, decod
 	if h.IsBrokerIntegrationEnabled() {
 		// Extract key from the original envelope (simplified for now)
 		key := []byte(fmt.Sprintf("kafka-key-%d", time.Now().UnixNano()))
-		
+
 		// Publish the decoded RecordValue to mq.broker
 		err := h.brokerClient.PublishSchematizedMessage(topicName, key, decodedMsg.Envelope.OriginalBytes)
 		if err != nil {
