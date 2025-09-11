@@ -314,10 +314,10 @@ func (h *Handler) handleApiVersions(correlationID uint32) ([]byte, error) {
 	response = append(response, 0, 3)  // max version 3
 
 	// API Key 3 (Metadata): api_key(2) + min_version(2) + max_version(2)
-	// TEMPORARY: Force v0 only until kafka-go compatibility issue is resolved
+	// Advertise Metadata v1 as required by kafka-go ReadPartitions
 	response = append(response, 0, 3) // API key 3
 	response = append(response, 0, 0) // min version 0
-	response = append(response, 0, 1) // max version 1 (force v0 for kafka-go compatibility)
+	response = append(response, 0, 1) // max version 1
 
 	// API Key 2 (ListOffsets): api_key(2) + min_version(2) + max_version(2)
 	response = append(response, 0, 2) // API key 2
@@ -498,7 +498,7 @@ func (h *Handler) HandleMetadataV1(correlationID uint32, requestBody []byte) ([]
 	//     IsInternal bool                    `kafka:"min=v1,max=v8"`
 	//     Partitions []metadataPartitionV1   `kafka:"min=v0,max=v8"`
 	// }
-	
+
 	// Parse requested topics (empty means all)
 	requestedTopics := h.parseMetadataTopics(requestBody)
 	fmt.Printf("DEBUG: 🔍 METADATA v1 REQUEST - Requested: %v (empty=all)\n", requestedTopics)
@@ -521,59 +521,59 @@ func (h *Handler) HandleMetadataV1(correlationID uint32, requestBody []byte) ([]
 	h.topicsMu.RUnlock()
 
 	var buf bytes.Buffer
-	
+
 	// Correlation ID (4 bytes)
 	binary.Write(&buf, binary.BigEndian, correlationID)
 
 	// Brokers array (4 bytes length + brokers)
 	binary.Write(&buf, binary.BigEndian, int32(1)) // 1 broker
-	
+
 	// Broker 0
 	binary.Write(&buf, binary.BigEndian, int32(1)) // NodeID
-	
+
 	// Host (STRING: 2 bytes length + data)
 	host := h.brokerHost
 	binary.Write(&buf, binary.BigEndian, int16(len(host)))
 	buf.WriteString(host)
-	
+
 	// Port (4 bytes)
 	binary.Write(&buf, binary.BigEndian, int32(h.brokerPort))
-	
+
 	// Rack (STRING: 2 bytes length + data) - v1 addition, non-nullable
 	binary.Write(&buf, binary.BigEndian, int16(0)) // Empty string
-	
+
 	// ControllerID (4 bytes) - v1 addition (comes after ALL brokers)
 	binary.Write(&buf, binary.BigEndian, int32(1))
 
 	// Topics array (4 bytes length + topics)
 	binary.Write(&buf, binary.BigEndian, int32(len(topicsToReturn)))
-	
+
 	for _, topicName := range topicsToReturn {
 		// ErrorCode (2 bytes)
 		binary.Write(&buf, binary.BigEndian, int16(0))
-		
+
 		// Name (STRING: 2 bytes length + data)
 		binary.Write(&buf, binary.BigEndian, int16(len(topicName)))
 		buf.WriteString(topicName)
-		
+
 		// IsInternal (1 byte) - v1 addition
 		buf.WriteByte(0) // false
-		
+
 		// Partitions array (4 bytes length + partitions)
 		binary.Write(&buf, binary.BigEndian, int32(1)) // 1 partition
-		
+
 		// Partition 0
-		binary.Write(&buf, binary.BigEndian, int16(0))  // ErrorCode
-		binary.Write(&buf, binary.BigEndian, int32(0))  // PartitionIndex
-		binary.Write(&buf, binary.BigEndian, int32(1))  // LeaderID
-		
+		binary.Write(&buf, binary.BigEndian, int16(0)) // ErrorCode
+		binary.Write(&buf, binary.BigEndian, int32(0)) // PartitionIndex
+		binary.Write(&buf, binary.BigEndian, int32(1)) // LeaderID
+
 		// ReplicaNodes array (4 bytes length + nodes)
-		binary.Write(&buf, binary.BigEndian, int32(1))  // 1 replica
-		binary.Write(&buf, binary.BigEndian, int32(1))  // NodeID 1
-		
+		binary.Write(&buf, binary.BigEndian, int32(1)) // 1 replica
+		binary.Write(&buf, binary.BigEndian, int32(1)) // NodeID 1
+
 		// IsrNodes array (4 bytes length + nodes)
-		binary.Write(&buf, binary.BigEndian, int32(1))  // 1 ISR node
-		binary.Write(&buf, binary.BigEndian, int32(1))  // NodeID 1
+		binary.Write(&buf, binary.BigEndian, int32(1)) // 1 ISR node
+		binary.Write(&buf, binary.BigEndian, int32(1)) // NodeID 1
 	}
 
 	response := buf.Bytes()
