@@ -4,6 +4,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/schema"
 )
 
 func (h *Handler) handleProduce(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
@@ -486,4 +488,108 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 
 	fmt.Printf("DEBUG: Produce v%d response: %d bytes\n", apiVersion, len(response))
 	return response, nil
+}
+
+// processSchematizedMessage processes a message that may contain schema information
+func (h *Handler) processSchematizedMessage(topicName string, partitionID int32, messageBytes []byte) error {
+	// Only process if schema management is enabled
+	if !h.IsSchemaEnabled() {
+		return nil // Skip schema processing
+	}
+
+	// Check if message is schematized
+	if !h.schemaManager.IsSchematized(messageBytes) {
+		fmt.Printf("DEBUG: Message is not schematized, skipping schema processing\n")
+		return nil // Not schematized, continue with normal processing
+	}
+
+	fmt.Printf("DEBUG: Processing schematized message for topic %s, partition %d\n", topicName, partitionID)
+
+	// Decode the message
+	decodedMsg, err := h.schemaManager.DecodeMessage(messageBytes)
+	if err != nil {
+		fmt.Printf("ERROR: Failed to decode schematized message: %v\n", err)
+		// In permissive mode, we could continue with raw bytes
+		// In strict mode, we should reject the message
+		return fmt.Errorf("schema decoding failed: %w", err)
+	}
+
+	fmt.Printf("DEBUG: Successfully decoded message with schema ID %d, format %s, subject %s\n", 
+		decodedMsg.SchemaID, decodedMsg.SchemaFormat, decodedMsg.Subject)
+
+	// If SeaweedMQ integration is enabled, store the decoded message
+	if h.useSeaweedMQ && h.seaweedMQHandler != nil {
+		return h.storeDecodedMessage(topicName, partitionID, decodedMsg)
+	}
+
+	// For in-memory mode, we could store metadata about the schema
+	// For now, just log the successful decoding
+	fmt.Printf("DEBUG: Schema decoding successful - would store RecordValue with %d fields\n", 
+		len(decodedMsg.RecordValue.Fields))
+
+	return nil
+}
+
+// storeDecodedMessage stores a decoded message using SeaweedMQ integration
+func (h *Handler) storeDecodedMessage(topicName string, partitionID int32, decodedMsg *schema.DecodedMessage) error {
+	// TODO: Integrate with SeaweedMQ to store the RecordValue and RecordType
+	// This would involve:
+	// 1. Converting RecordValue to the format expected by SeaweedMQ
+	// 2. Storing schema metadata alongside the message
+	// 3. Maintaining schema evolution history
+	// 4. Handling schema compatibility checks
+
+	fmt.Printf("DEBUG: Would store decoded message to SeaweedMQ - topic: %s, partition: %d, schema: %d\n",
+		topicName, partitionID, decodedMsg.SchemaID)
+
+	// For Phase 4, we'll simulate successful storage
+	// In Phase 8, we'll implement the full SeaweedMQ integration
+	return nil
+}
+
+// extractMessagesFromRecordSet extracts individual messages from a Kafka record set
+// This is a simplified implementation for Phase 4 - full implementation in Phase 8
+func (h *Handler) extractMessagesFromRecordSet(recordSetData []byte) ([][]byte, error) {
+	// For now, treat the entire record set as a single message
+	// In a full implementation, this would:
+	// 1. Parse the record batch header
+	// 2. Handle compression (gzip, snappy, lz4, zstd)
+	// 3. Extract individual records with their keys, values, headers
+	// 4. Validate CRC32 checksums
+	// 5. Handle different record batch versions (v0, v1, v2)
+
+	if len(recordSetData) < 20 {
+		return nil, fmt.Errorf("record set too small for extraction")
+	}
+
+	// Simplified: assume single message starting after record batch header
+	// Real implementation would parse the record batch format properly
+	messages := [][]byte{recordSetData}
+	
+	return messages, nil
+}
+
+// validateSchemaCompatibility checks if a message is compatible with existing schema
+func (h *Handler) validateSchemaCompatibility(topicName string, messageBytes []byte) error {
+	if !h.IsSchemaEnabled() {
+		return nil // No validation if schema management is disabled
+	}
+
+	// Extract schema information
+	schemaID, format, err := h.schemaManager.GetSchemaInfo(messageBytes)
+	if err != nil {
+		return nil // Not schematized, no validation needed
+	}
+
+	fmt.Printf("DEBUG: Validating schema compatibility - ID: %d, Format: %s, Topic: %s\n", 
+		schemaID, format, topicName)
+
+	// TODO: Implement topic-specific schema validation
+	// This would involve:
+	// 1. Checking if the topic has a registered schema
+	// 2. Validating schema evolution rules
+	// 3. Ensuring backward/forward compatibility
+	// 4. Handling schema versioning policies
+
+	return nil
 }

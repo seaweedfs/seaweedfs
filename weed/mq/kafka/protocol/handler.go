@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/consumer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/integration"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
+	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/schema"
 )
 
 // TopicInfo holds basic information about a topic
@@ -43,6 +44,10 @@ type Handler struct {
 
 	// Consumer group coordination
 	groupCoordinator *consumer.GroupCoordinator
+
+	// Schema management (optional, for schematized topics)
+	schemaManager *schema.Manager
+	useSchema     bool
 
 	// Dynamic broker address for Metadata responses
 	brokerHost string
@@ -1594,4 +1599,30 @@ func (h *Handler) AddTopicForTesting(topicName string, partitions int32) {
 
 		fmt.Printf("DEBUG: Added topic for testing: %s with %d partitions\n", topicName, partitions)
 	}
+}
+
+// EnableSchemaManagement enables schema management with the given configuration
+func (h *Handler) EnableSchemaManagement(config schema.ManagerConfig) error {
+	manager, err := schema.NewManagerWithHealthCheck(config)
+	if err != nil {
+		return fmt.Errorf("failed to create schema manager: %w", err)
+	}
+	
+	h.schemaManager = manager
+	h.useSchema = true
+	
+	fmt.Printf("Schema management enabled with registry: %s\n", config.RegistryURL)
+	return nil
+}
+
+// DisableSchemaManagement disables schema management
+func (h *Handler) DisableSchemaManagement() {
+	h.schemaManager = nil
+	h.useSchema = false
+	fmt.Println("Schema management disabled")
+}
+
+// IsSchemaEnabled returns whether schema management is enabled
+func (h *Handler) IsSchemaEnabled() bool {
+	return h.useSchema && h.schemaManager != nil
 }
