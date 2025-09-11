@@ -31,6 +31,7 @@ type KafkaTopicInfo struct {
 
 	// SeaweedMQ integration
 	SeaweedTopic *schema_pb.Topic
+	Schema       *schema_pb.RecordType // Kafka message schema
 }
 
 // TopicPartitionKey uniquely identifies a topic partition
@@ -66,6 +67,11 @@ func (h *SeaweedMQHandler) Close() error {
 
 // CreateTopic creates a new topic in both Kafka registry and SeaweedMQ
 func (h *SeaweedMQHandler) CreateTopic(name string, partitions int32) error {
+	return h.CreateTopicWithSchema(name, partitions, nil)
+}
+
+// CreateTopicWithSchema creates a topic with a specific schema in SeaweedMQ
+func (h *SeaweedMQHandler) CreateTopicWithSchema(name string, partitions int32, recordType *schema_pb.RecordType) error {
 	h.topicsMu.Lock()
 	defer h.topicsMu.Unlock()
 
@@ -74,10 +80,20 @@ func (h *SeaweedMQHandler) CreateTopic(name string, partitions int32) error {
 		return fmt.Errorf("topic %s already exists", name)
 	}
 
+	// Use default Kafka schema if none provided
+	if recordType == nil {
+		recordType = h.getDefaultKafkaSchema()
+	}
+
 	// Create SeaweedMQ topic reference
 	seaweedTopic := &schema_pb.Topic{
 		Namespace: "kafka",
 		Name:      name,
+	}
+
+	// Create topic via agent client with schema
+	if err := h.agentClient.CreateTopicWithSchema(name, partitions, recordType); err != nil {
+		return fmt.Errorf("failed to create topic in SeaweedMQ: %v", err)
 	}
 
 	// Create Kafka topic info
@@ -86,6 +102,7 @@ func (h *SeaweedMQHandler) CreateTopic(name string, partitions int32) error {
 		Partitions:   partitions,
 		CreatedAt:    time.Now().UnixNano(),
 		SeaweedTopic: seaweedTopic,
+		Schema:       recordType, // Store the schema
 	}
 
 	// Store in registry
@@ -354,4 +371,66 @@ func (h *SeaweedMQHandler) constructSingleRecord(index, offset int64) []byte {
 	record = append(record, 0)
 
 	return record
+}
+
+// getDefaultKafkaSchema returns the default schema for Kafka messages in SeaweedMQ
+func (h *SeaweedMQHandler) getDefaultKafkaSchema() *schema_pb.RecordType {
+	return &schema_pb.RecordType{
+		Fields: []*schema_pb.Field{
+			{
+				Name:       "kafka_key",
+				FieldIndex: 0,
+				Type: &schema_pb.Type{
+					Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_BYTES},
+				},
+				IsRequired: false,
+				IsRepeated: false,
+			},
+			{
+				Name:       "kafka_value",
+				FieldIndex: 1,
+				Type: &schema_pb.Type{
+					Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_BYTES},
+				},
+				IsRequired: true,
+				IsRepeated: false,
+			},
+			{
+				Name:       "kafka_timestamp",
+				FieldIndex: 2,
+				Type: &schema_pb.Type{
+					Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_TIMESTAMP},
+				},
+				IsRequired: false,
+				IsRepeated: false,
+			},
+			{
+				Name:       "kafka_headers",
+				FieldIndex: 3,
+				Type: &schema_pb.Type{
+					Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_BYTES},
+				},
+				IsRequired: false,
+				IsRepeated: false,
+			},
+			{
+				Name:       "kafka_offset",
+				FieldIndex: 4,
+				Type: &schema_pb.Type{
+					Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_INT64},
+				},
+				IsRequired: false,
+				IsRepeated: false,
+			},
+			{
+				Name:       "kafka_partition",
+				FieldIndex: 5,
+				Type: &schema_pb.Type{
+					Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_INT32},
+				},
+				IsRequired: false,
+				IsRepeated: false,
+			},
+		},
+	}
 }

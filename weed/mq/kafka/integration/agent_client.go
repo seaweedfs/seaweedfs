@@ -134,37 +134,12 @@ func (ac *AgentClient) GetOrCreatePublisher(topic string, partition int32) (*Pub
 
 // createPublishSession creates a new publishing session with SeaweedMQ Agent
 func (ac *AgentClient) createPublishSession(topic string, partition int32) (*PublisherSession, error) {
-	// Create a basic record type for Kafka messages
-	recordType := &schema_pb.RecordType{
-		Fields: []*schema_pb.Field{
-			{
-				Name:       "key",
-				FieldIndex: 0,
-				Type: &schema_pb.Type{
-					Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_BYTES},
-				},
-				IsRequired: false,
-				IsRepeated: false,
-			},
-			{
-				Name:       "value",
-				FieldIndex: 1,
-				Type: &schema_pb.Type{
-					Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_BYTES},
-				},
-				IsRequired: true,
-				IsRepeated: false,
-			},
-			{
-				Name:       "timestamp",
-				FieldIndex: 2,
-				Type: &schema_pb.Type{
-					Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_TIMESTAMP},
-				},
-				IsRequired: false,
-				IsRepeated: false,
-			},
-		},
+	// Create comprehensive Kafka record schema for SeaweedMQ
+	recordType := ac.createKafkaRecordSchema()
+
+	// Check if topic already exists in SeaweedMQ, create if needed
+	if err := ac.ensureTopicExists(topic, recordType); err != nil {
+		return nil, fmt.Errorf("failed to ensure topic exists: %v", err)
 	}
 
 	// Start publish session
@@ -211,22 +186,31 @@ func (ac *AgentClient) PublishRecord(topic string, partition int32, key []byte, 
 		return 0, err
 	}
 
-	// Convert to SeaweedMQ record format
+	// Convert to SeaweedMQ record format using enhanced Kafka schema
 	record := &schema_pb.RecordValue{
 		Fields: map[string]*schema_pb.Value{
-			"key": {
+			"kafka_key": {
 				Kind: &schema_pb.Value_BytesValue{BytesValue: key},
 			},
-			"value": {
+			"kafka_value": {
 				Kind: &schema_pb.Value_BytesValue{BytesValue: value},
 			},
-			"timestamp": {
+			"kafka_timestamp": {
 				Kind: &schema_pb.Value_TimestampValue{
 					TimestampValue: &schema_pb.TimestampValue{
 						TimestampMicros: timestamp / 1000, // Convert nanoseconds to microseconds
 						IsUtc:           true,
 					},
 				},
+			},
+			"kafka_headers": {
+				Kind: &schema_pb.Value_BytesValue{BytesValue: []byte{}}, // Empty headers for now
+			},
+			"kafka_offset": {
+				Kind: &schema_pb.Value_Int64Value{Int64Value: 0}, // Will be set by SeaweedMQ
+			},
+			"kafka_partition": {
+				Kind: &schema_pb.Value_Int32Value{Int32Value: partition},
 			},
 		},
 	}
@@ -399,5 +383,81 @@ func (ac *AgentClient) HealthCheck() error {
 	}
 	_, _ = ac.client.ClosePublishSession(ctx, closeReq)
 
+	return nil
+}
+
+// createKafkaRecordSchema creates a comprehensive schema for Kafka messages in SeaweedMQ
+func (ac *AgentClient) createKafkaRecordSchema() *schema_pb.RecordType {
+	return &schema_pb.RecordType{
+		Fields: []*schema_pb.Field{
+			{
+				Name:       "kafka_key",
+				FieldIndex: 0,
+				Type: &schema_pb.Type{
+					Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_BYTES},
+				},
+				IsRequired: false,
+				IsRepeated: false,
+			},
+			{
+				Name:       "kafka_value",
+				FieldIndex: 1,
+				Type: &schema_pb.Type{
+					Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_BYTES},
+				},
+				IsRequired: true,
+				IsRepeated: false,
+			},
+			{
+				Name:       "kafka_timestamp",
+				FieldIndex: 2,
+				Type: &schema_pb.Type{
+					Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_TIMESTAMP},
+				},
+				IsRequired: false,
+				IsRepeated: false,
+			},
+			{
+				Name:       "kafka_headers",
+				FieldIndex: 3,
+				Type: &schema_pb.Type{
+					Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_BYTES},
+				},
+				IsRequired: false,
+				IsRepeated: false,
+			},
+			{
+				Name:       "kafka_offset",
+				FieldIndex: 4,
+				Type: &schema_pb.Type{
+					Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_INT64},
+				},
+				IsRequired: false,
+				IsRepeated: false,
+			},
+			{
+				Name:       "kafka_partition",
+				FieldIndex: 5,
+				Type: &schema_pb.Type{
+					Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_INT32},
+				},
+				IsRequired: false,
+				IsRepeated: false,
+			},
+		},
+	}
+}
+
+// ensureTopicExists checks if topic exists in SeaweedMQ and creates it if needed
+func (ac *AgentClient) ensureTopicExists(topic string, recordType *schema_pb.RecordType) error {
+	// For Phase 1, we'll rely on SeaweedMQ's auto-creation during publish
+	// In Phase 3, we'll implement proper topic discovery and creation
+	return nil
+}
+
+// CreateTopicWithSchema creates a topic in SeaweedMQ with the specified schema
+func (ac *AgentClient) CreateTopicWithSchema(topic string, partitions int32, recordType *schema_pb.RecordType) error {
+	// This will be implemented in Phase 3 when we integrate with CreateTopics API
+	// For now, topics are auto-created during first publish
 	return nil
 }

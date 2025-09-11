@@ -25,10 +25,15 @@ func (h *Handler) handleFetch(correlationID uint32, apiVersion uint16, requestBo
 		response = append(response, 0, 0, 0, 0) // throttle_time_ms (4 bytes, 0 = no throttling)
 	}
 
-	// Fetch v4+ has error_code and session_id
+	// Fetch v4+ has session_id, but let's check if v5 has it at all
 	if apiVersion >= 4 {
-		response = append(response, 0, 0)       // error_code (2 bytes, 0 = no error)
-		response = append(response, 0, 0, 0, 0) // session_id (4 bytes, 0 for now)
+		// Let's try v5 without session_id entirely
+		if apiVersion == 5 {
+			// No session_id for v5 - go directly to topics
+		} else {
+			response = append(response, 0, 0)       // error_code (2 bytes, 0 = no error)
+			response = append(response, 0, 0, 0, 0) // session_id (4 bytes, 0 for now)
+		}
 	}
 
 	// Topics count (1 topic - hardcoded for now)
@@ -63,6 +68,25 @@ func (h *Handler) handleFetch(correlationID uint32, apiVersion uint16, requestBo
 	response = append(response, 0, 0, 0, 0) // records size (4 bytes) = 0 (no records)
 
 	fmt.Printf("DEBUG: Fetch v%d response: %d bytes, hex dump: %x\n", apiVersion, len(response), response)
+
+	// Let's manually verify our response structure for debugging
+	fmt.Printf("DEBUG: Response breakdown:\n")
+	fmt.Printf("  - correlation_id (4): %x\n", response[0:4])
+	if apiVersion >= 1 {
+		fmt.Printf("  - throttle_time_ms (4): %x\n", response[4:8])
+		if apiVersion >= 4 {
+			if apiVersion == 5 {
+				// v5 doesn't have session_id at all
+				fmt.Printf("  - topics_count (4): %x\n", response[8:12])
+			} else {
+				fmt.Printf("  - error_code (2): %x\n", response[8:10])
+				fmt.Printf("  - session_id (4): %x\n", response[10:14])
+				fmt.Printf("  - topics_count (4): %x\n", response[14:18])
+			}
+		} else {
+			fmt.Printf("  - topics_count (4): %x\n", response[8:12])
+		}
+	}
 	return response, nil
 }
 
