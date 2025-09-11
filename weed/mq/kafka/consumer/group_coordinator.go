@@ -190,10 +190,10 @@ func (gc *GroupCoordinator) ListGroups() []string {
 
 // GenerateMemberID creates a deterministic member ID based on client info
 func (gc *GroupCoordinator) GenerateMemberID(clientID, clientHost string) string {
-	// Use hash of client info to create deterministic member ID
-	// This ensures the same client gets the same member ID across calls
+	// EXPERIMENT: Use simpler member ID format like real Kafka brokers
+	// Real Kafka uses format like: "consumer-1-uuid" or "consumer-groupId-uuid"
 	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(clientID+"-"+clientHost)))
-	return fmt.Sprintf("%s-%s-%s", clientID, clientHost, hash[:8])
+	return fmt.Sprintf("consumer-%s", hash[:16]) // Shorter, simpler format
 }
 
 // ValidateSessionTimeout checks if session timeout is within acceptable range

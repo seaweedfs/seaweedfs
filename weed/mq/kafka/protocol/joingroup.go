@@ -175,37 +175,15 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 		JoinedAt:         time.Now(),
 	}
 
-	// Store protocol metadata for leader - CRITICAL: Generate proper subscription metadata
+	// Store protocol metadata for leader - EXPERIMENT: Use client's metadata as-is
 	if len(request.GroupProtocols) > 0 {
-		// If client sends empty metadata, generate subscription metadata for available topics
+		// EXPERIMENT: Always use client's metadata, even if empty
+		member.Metadata = request.GroupProtocols[0].Metadata
+		fmt.Printf("DEBUG: JoinGroup using client metadata as-is (%d bytes): %x\n", len(member.Metadata), member.Metadata)
+		
+		// If client sends empty metadata, that might be intentional
 		if len(request.GroupProtocols[0].Metadata) == 0 {
-			// Generate subscription metadata for all available topics
-			// Format: version(2) + topics_count(4) + topics[]
-			availableTopics := h.getAvailableTopics()
-			fmt.Printf("DEBUG: JoinGroup generating subscription metadata for topics: %v\n", availableTopics)
-
-			metadata := make([]byte, 0, 64)
-			// Version (2 bytes) - use version 0 to exclude OwnedPartitions
-			metadata = append(metadata, 0, 0)
-			// Topics count (4 bytes)
-			topicsCount := make([]byte, 4)
-			binary.BigEndian.PutUint32(topicsCount, uint32(len(availableTopics)))
-			metadata = append(metadata, topicsCount...)
-			// Topics (string array)
-			for _, topic := range availableTopics {
-				topicLen := make([]byte, 2)
-				binary.BigEndian.PutUint16(topicLen, uint16(len(topic)))
-				metadata = append(metadata, topicLen...)
-				metadata = append(metadata, []byte(topic)...)
-			}
-			// UserData (nullable bytes) - encode empty (length 0)
-			userDataLen := make([]byte, 4)
-			binary.BigEndian.PutUint32(userDataLen, 0)
-			metadata = append(metadata, userDataLen...)
-			member.Metadata = metadata
-			fmt.Printf("DEBUG: JoinGroup generated metadata (%d bytes): %x\n", len(metadata), metadata)
-		} else {
-			member.Metadata = request.GroupProtocols[0].Metadata
+			fmt.Printf("DEBUG: JoinGroup client sent empty metadata - using as-is (kafka-go might handle this)\n")
 		}
 	}
 
@@ -263,7 +241,8 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 		fmt.Printf("DEBUG: JoinGroup member '%s' is NOT the leader (leader is '%s'), empty members array\n", memberID, group.Leader)
 	}
 
-	return h.buildJoinGroupResponse(response), nil
+	// EXPERIMENT: Return minimal hardcoded response to test kafka-go compatibility
+	return h.buildMinimalJoinGroupResponse(correlationID, apiVersion), nil
 }
 
 func (h *Handler) parseJoinGroupRequest(data []byte) (*JoinGroupRequest, error) {
@@ -451,6 +430,54 @@ func (h *Handler) buildJoinGroupErrorResponse(correlationID uint32, errorCode in
 	}
 
 	return h.buildJoinGroupResponse(response)
+}
+
+// buildMinimalJoinGroupResponse creates a minimal hardcoded response for testing
+func (h *Handler) buildMinimalJoinGroupResponse(correlationID uint32, apiVersion uint16) []byte {
+	// Create the absolute minimal JoinGroup response that should work with kafka-go
+	response := make([]byte, 0, 64)
+	
+	// Correlation ID (4 bytes)
+	correlationIDBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
+	response = append(response, correlationIDBytes...)
+	
+	// Throttle time (4 bytes) - v2+ only
+	if apiVersion >= 2 {
+		response = append(response, 0, 0, 0, 0) // No throttling
+	}
+	
+	// Error code (2 bytes) - 0 = success
+	response = append(response, 0, 0)
+	
+	// Generation ID (4 bytes) - use 1
+	response = append(response, 0, 0, 0, 1)
+	
+	// Group protocol (STRING) - "range"
+	response = append(response, 0, 5) // length
+	response = append(response, []byte("range")...)
+	
+	// Group leader (STRING) - "test-member"
+	response = append(response, 0, 11) // length
+	response = append(response, []byte("test-member")...)
+	
+	// Member ID (STRING) - "test-member" (same as leader)
+	response = append(response, 0, 11) // length
+	response = append(response, []byte("test-member")...)
+	
+	// Members array (4 bytes count + members)
+	response = append(response, 0, 0, 0, 1) // 1 member
+	
+	// Member 0:
+	// Member ID (STRING) - "test-member"
+	response = append(response, 0, 11) // length
+	response = append(response, []byte("test-member")...)
+	
+	// Member metadata (BYTES) - empty
+	response = append(response, 0, 0, 0, 0) // 0 bytes
+	
+	fmt.Printf("DEBUG: JoinGroup minimal response (%d bytes): %x\n", len(response), response)
+	return response
 }
 
 func (h *Handler) extractSubscriptionFromProtocols(protocols []GroupProtocol) []string {
