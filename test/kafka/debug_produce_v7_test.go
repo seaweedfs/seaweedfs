@@ -59,7 +59,7 @@ func TestDebugProduceV7Format(t *testing.T) {
 
 	t.Logf("Sending message to topic: %s", topicName)
 	partition, offset, err := producer.SendMessage(msg)
-	
+
 	if err != nil {
 		t.Logf("❌ Produce failed (expected): %v", err)
 		t.Logf("This allows us to see the debug output of the malformed request parsing")
