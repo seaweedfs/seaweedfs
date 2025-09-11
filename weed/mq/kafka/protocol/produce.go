@@ -425,28 +425,53 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 		binary.BigEndian.PutUint32(partitionsCountBytes, partitionsCount)
 		response = append(response, partitionsCountBytes...)
 
-		// Process each partition (simplified - just return success)
+		// Process each partition with correct parsing and response format
 		for j := uint32(0); j < partitionsCount && offset < len(requestBody); j++ {
-			// Skip partition parsing for now - just return success response
-
-			// Response: partition_id(4) + error_code(2) + base_offset(8)
-			response = append(response, 0, 0, 0, byte(j))       // partition_id
-			response = append(response, 0, 0)                   // error_code (success)
-			response = append(response, 0, 0, 0, 0, 0, 0, 0, 0) // base_offset
-
-			// v2+ additional fields
-			if apiVersion >= 2 {
-				// log_append_time (-1 = not set)
-				response = append(response, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF)
+			// Parse partition request: partition_id(4) + record_set_size(4) + record_set_data
+			if len(requestBody) < offset+8 {
+				break
 			}
-
-			if apiVersion >= 5 {
-				// log_start_offset (8 bytes)
-				response = append(response, 0, 0, 0, 0, 0, 0, 0, 0)
+			
+			partitionID := binary.BigEndian.Uint32(requestBody[offset:offset+4])
+			offset += 4
+			recordSetSize := binary.BigEndian.Uint32(requestBody[offset:offset+4])
+			offset += 4
+			
+			// Skip the record set data for now (we'll implement proper parsing later)
+			if len(requestBody) < offset+int(recordSetSize) {
+				break
 			}
-
-			// Skip to next partition (simplified)
-			offset += 20 // rough estimate to skip partition data
+			offset += int(recordSetSize)
+			
+			fmt.Printf("DEBUG: Produce v%d - partition: %d, record_set_size: %d\n", apiVersion, partitionID, recordSetSize)
+			
+			// Build correct Produce v7 response for this partition
+			// Format: partition_id(4) + error_code(2) + base_offset(8) + log_append_time(8) + log_start_offset(8)
+			
+			// partition_id (4 bytes)
+			partitionIDBytes := make([]byte, 4)
+			binary.BigEndian.PutUint32(partitionIDBytes, partitionID)
+			response = append(response, partitionIDBytes...)
+			
+			// error_code (2 bytes) - 0 = success
+			response = append(response, 0, 0)
+			
+			// base_offset (8 bytes) - offset of first message
+			currentTime := time.Now().UnixNano()
+			baseOffset := currentTime / 1000000 // Use timestamp as offset for now
+			baseOffsetBytes := make([]byte, 8)
+			binary.BigEndian.PutUint64(baseOffsetBytes, uint64(baseOffset))
+			response = append(response, baseOffsetBytes...)
+			
+			// log_append_time (8 bytes) - v2+ field (actual timestamp, not -1)
+			logAppendTimeBytes := make([]byte, 8)
+			binary.BigEndian.PutUint64(logAppendTimeBytes, uint64(currentTime))
+			response = append(response, logAppendTimeBytes...)
+			
+			// log_start_offset (8 bytes) - v5+ field
+			logStartOffsetBytes := make([]byte, 8)
+			binary.BigEndian.PutUint64(logStartOffsetBytes, uint64(baseOffset))
+			response = append(response, logStartOffsetBytes...)
 		}
 	}
 
