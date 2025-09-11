@@ -313,8 +313,6 @@ func (h *Handler) handleApiVersions(correlationID uint32) ([]byte, error) {
 	response = append(response, 0, 3)  // max version 3
 
 	// API Key 3 (Metadata): api_key(2) + min_version(2) + max_version(2)
-	// Keep v0 only until v1 format issue is resolved
-	// TODO: Fix Metadata v1 format - kafka-go rejects our v1 response with "Unknown Topic Or Partition"
 	response = append(response, 0, 3) // API key 3
 	response = append(response, 0, 0) // min version 0
 	response = append(response, 0, 1) // max version 1
@@ -480,6 +478,9 @@ func (h *Handler) HandleMetadataV0(correlationID uint32, requestBody []byte) ([]
 }
 
 func (h *Handler) HandleMetadataV1(correlationID uint32, requestBody []byte) ([]byte, error) {
+	// TEMPORARY: Use v0 format as base and add only the essential v1 differences
+	// This is to debug the kafka-go parsing issue
+	
 	response := make([]byte, 0, 256)
 
 	// Correlation ID
@@ -490,7 +491,7 @@ func (h *Handler) HandleMetadataV1(correlationID uint32, requestBody []byte) ([]
 	// Brokers array length (4 bytes) - 1 broker (this gateway)
 	response = append(response, 0, 0, 0, 1)
 
-	// Broker 0: node_id(4) + host(STRING) + port(4) + rack(STRING)
+	// Broker 0: node_id(4) + host(STRING) + port(4) + rack(STRING) [v1 adds rack]
 	response = append(response, 0, 0, 0, 0) // node_id = 0
 
 	// Use dynamic broker address set by the server
@@ -508,11 +509,8 @@ func (h *Handler) HandleMetadataV1(correlationID uint32, requestBody []byte) ([]
 	binary.BigEndian.PutUint32(portBytes, uint32(port))
 	response = append(response, portBytes...)
 
-	// Rack (STRING, NOT nullable in v1) - use empty string
+	// Rack (STRING) - v1 addition: empty string (NOT nullable)
 	response = append(response, 0x00, 0x00)
-
-	// Controller ID (4 bytes) - use broker 0 as controller
-	response = append(response, 0x00, 0x00, 0x00, 0x00)
 
 	// Parse requested topics (empty means all)
 	requestedTopics := h.parseMetadataTopics(requestBody)
@@ -540,7 +538,7 @@ func (h *Handler) HandleMetadataV1(correlationID uint32, requestBody []byte) ([]
 	binary.BigEndian.PutUint32(topicsCountBytes, uint32(len(topicsToReturn)))
 	response = append(response, topicsCountBytes...)
 
-	// Topic entries (v1)
+	// Topic entries - using v0 format first, then add v1 differences
 	for _, topicName := range topicsToReturn {
 		// error_code(2) = 0
 		response = append(response, 0, 0)
@@ -551,7 +549,7 @@ func (h *Handler) HandleMetadataV1(correlationID uint32, requestBody []byte) ([]
 		response = append(response, byte(nameLen>>8), byte(nameLen))
 		response = append(response, nameBytes...)
 
-		// is_internal(1) = false (v1 addition)
+		// is_internal(1) = false - v1 addition: this is the key difference!
 		response = append(response, 0)
 
 		// partitions array length (4 bytes) - 1 partition
@@ -572,6 +570,13 @@ func (h *Handler) HandleMetadataV1(correlationID uint32, requestBody []byte) ([]
 	}
 
 	fmt.Printf("DEBUG: Metadata v1 response for %d topics: %v\n", len(topicsToReturn), topicsToReturn)
+	fmt.Printf("DEBUG: Metadata v1 response hex dump (%d bytes): %x\n", len(response), response)
+	
+	// CRITICAL DEBUG: Let's also compare with v0 format
+	v0Response, _ := h.HandleMetadataV0(correlationID, requestBody)
+	fmt.Printf("DEBUG: Metadata v0 response hex dump (%d bytes): %x\n", len(v0Response), v0Response)
+	fmt.Printf("DEBUG: v1 vs v0 length difference: %d bytes\n", len(response) - len(v0Response))
+	
 	return response, nil
 }
 
