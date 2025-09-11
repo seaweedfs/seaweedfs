@@ -235,6 +235,7 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 			}
 		case 14: // SyncGroup
 			fmt.Printf("DEBUG: *** SYNCGROUP REQUEST RECEIVED *** Correlation: %d, Version: %d\n", correlationID, apiVersion)
+			fmt.Printf("DEBUG: *** THIS IS CRITICAL - SYNCGROUP WAS CALLED! ***\n")
 			response, err = h.handleSyncGroup(correlationID, apiVersion, messageBuf[8:]) // skip header
 			if err != nil {
 				fmt.Printf("DEBUG: SyncGroup error: %v\n", err)
