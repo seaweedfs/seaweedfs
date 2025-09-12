@@ -80,7 +80,7 @@ func (h *Handler) handleFetch(correlationID uint32, apiVersion uint16, requestBo
 				response = append(response, highWaterMarkBytes...)
 				// Log start offset (8 bytes) - 0 for simplicity
 				response = append(response, 0, 0, 0, 0, 0, 0, 0, 0)
-				
+
 				// Aborted transactions count (4 bytes) = 0
 				response = append(response, 0, 0, 0, 0)
 			}
@@ -682,7 +682,7 @@ func encodeVarint(value int64) []byte {
 // getMultipleRecordBatches retrieves and combines multiple record batches starting from the given offset
 func (h *Handler) getMultipleRecordBatches(topicName string, partitionID int32, startOffset, highWaterMark int64) []byte {
 	var combinedBatch []byte
-	
+
 	// Try to get all available record batches from startOffset to highWaterMark-1
 	for offset := startOffset; offset < highWaterMark; offset++ {
 		if batch, exists := h.GetRecordBatch(topicName, partitionID, offset); exists {
@@ -697,7 +697,7 @@ func (h *Handler) getMultipleRecordBatches(topicName string, partitionID int32, 
 			}
 		}
 	}
-	
+
 	return combinedBatch
 }
 
