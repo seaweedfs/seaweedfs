@@ -67,7 +67,7 @@ func (h *Handler) handleFetch(correlationID uint32, apiVersion uint16, requestBo
 			// Get ledger for this topic-partition to determine high water mark
 			ledger := h.GetOrCreateLedger(topic.Name, partition.PartitionID)
 			highWaterMark := ledger.GetHighWaterMark()
-			
+
 			fmt.Printf("DEBUG: Fetch - topic: %s, partition: %d, fetchOffset: %d, highWaterMark: %d\n",
 				topic.Name, partition.PartitionID, partition.FetchOffset, highWaterMark)
 
