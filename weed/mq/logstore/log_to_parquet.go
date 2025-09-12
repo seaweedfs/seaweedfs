@@ -25,8 +25,9 @@ import (
 )
 
 const (
-	SW_COLUMN_NAME_TS  = "_ts_ns"
-	SW_COLUMN_NAME_KEY = "_key"
+	SW_COLUMN_NAME_TS    = "_ts_ns"
+	SW_COLUMN_NAME_KEY   = "_key"
+	SW_COLUMN_NAME_INDEX = "_index"
 )
 
 func CompactTopicPartitions(filerClient filer_pb.FilerClient, t topic.Topic, timeAgo time.Duration, recordType *schema_pb.RecordType, preference *operation.StoragePreference) error {
@@ -269,6 +270,12 @@ func writeLogFilesToParquet(filerClient filer_pb.FilerClient, partitionDir strin
 			record.Fields[SW_COLUMN_NAME_KEY] = &schema_pb.Value{
 				Kind: &schema_pb.Value_BytesValue{
 					BytesValue: keyBytes,
+				},
+			}
+
+			record.Fields[SW_COLUMN_NAME_INDEX] = &schema_pb.Value{
+				Kind: &schema_pb.Value_Int64Value{
+					Int64Value: entry.Offset,
 				},
 			}
 

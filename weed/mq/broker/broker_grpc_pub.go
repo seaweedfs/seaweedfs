@@ -155,12 +155,23 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 		// The control message should still be sent to the follower
 		// to avoid timing issue when ack messages.
 
-		// send to the local partition
-		if err = localTopicPartition.Publish(dataMessage); err != nil {
+		// TODO: Integrate offset assignment into publish flow
+		// ASSUMPTION: For now using existing Publish method, offset assignment will be added in Phase 4 completion
+		// send to the local partition with offset assignment
+		t, p := topic.FromPbTopic(initMessage.Topic), topic.FromPbPartition(initMessage.Partition)
+		
+		// Create offset assignment function for this partition
+		assignOffsetFn := func() (int64, error) {
+			return b.offsetManager.AssignOffset(t, p)
+		}
+		
+		// Use offset-aware publishing
+		if err = localTopicPartition.PublishWithOffset(dataMessage, assignOffsetFn); err != nil {
 			return fmt.Errorf("topic %v partition %v publish error: %w", initMessage.Topic, initMessage.Partition, err)
 		}
 
 		// Update published offset and last seen time for this publisher
+		// TODO: Update this to use the actual assigned offset instead of timestamp
 		publisher.UpdatePublishedOffset(dataMessage.TsNs)
 	}
 
