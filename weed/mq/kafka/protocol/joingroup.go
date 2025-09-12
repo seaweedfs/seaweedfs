@@ -269,11 +269,7 @@ func (h *Handler) parseJoinGroupRequest(data []byte) (*JoinGroupRequest, error) 
 
 	offset := 0
 
-	// Skip client_id (part of JoinGroup v5 payload)
-	clientIDLength := int(binary.BigEndian.Uint16(data[offset:]))
-	offset += 2 + clientIDLength
-	fmt.Printf("DEBUG: JoinGroup v5 skipped client_id (%d bytes: '%s'), offset now: %d\n",
-		clientIDLength, string(data[2:2+clientIDLength]), offset)
+	// JoinGroup v5 body starts with GroupID according to Kafka spec
 
 	// GroupID (string)
 	if offset+2 > len(data) {
@@ -772,11 +768,7 @@ func (h *Handler) parseSyncGroupRequest(data []byte) (*SyncGroupRequest, error) 
 
 	offset := 0
 
-	// Skip client_id (part of SyncGroup v3 payload)
-	clientIDLength := int(binary.BigEndian.Uint16(data[offset:]))
-	offset += 2 + clientIDLength
-	fmt.Printf("DEBUG: SyncGroup v3 skipped client_id (%d bytes: '%s'), offset now: %d\n",
-		clientIDLength, string(data[2:2+clientIDLength]), offset)
+	// SyncGroup v3 body starts with GroupID according to Kafka spec
 
 	// GroupID (string)
 	groupIDLength := int(binary.BigEndian.Uint16(data[offset:]))

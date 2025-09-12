@@ -10,8 +10,7 @@ func (h *Handler) handleFindCoordinator(correlationID uint32, requestBody []byte
 }
 
 func (h *Handler) handleFindCoordinatorV2(correlationID uint32, requestBody []byte) ([]byte, error) {
-	// Parse FindCoordinator request
-	// Request format: client_id + coordinator_key + coordinator_type(1)
+	// Parse FindCoordinator request (v0-2 non-flex): Key (STRING), v1+ adds KeyType (INT8)
 
 	// DEBUG: Hex dump the request to understand format
 	dumpLen := len(requestBody)
@@ -20,17 +19,14 @@ func (h *Handler) handleFindCoordinatorV2(correlationID uint32, requestBody []by
 	}
 	fmt.Printf("DEBUG: FindCoordinator request hex dump (first %d bytes): %x\n", dumpLen, requestBody[:dumpLen])
 
-	if len(requestBody) < 2 { // client_id_size(2)
+	if len(requestBody) < 2 { // need at least Key length
 		return nil, fmt.Errorf("FindCoordinator request too short")
 	}
 
-	// Skip client_id
-	clientIDSize := binary.BigEndian.Uint16(requestBody[0:2])
-	fmt.Printf("DEBUG: FindCoordinator client_id_size: %d\n", clientIDSize)
-	offset := 2 + int(clientIDSize)
+	offset := 0
 
-	if len(requestBody) < offset+3 { // coordinator_key_size(2) + coordinator_type(1)
-		return nil, fmt.Errorf("FindCoordinator request missing data (need %d bytes, have %d)", offset+3, len(requestBody))
+	if len(requestBody) < offset+2 { // coordinator_key_size(2)
+		return nil, fmt.Errorf("FindCoordinator request missing data (need %d bytes, have %d)", offset+2, len(requestBody))
 	}
 
 	// Parse coordinator key (group ID for consumer groups)
@@ -45,13 +41,11 @@ func (h *Handler) handleFindCoordinatorV2(correlationID uint32, requestBody []by
 	coordinatorKey := string(requestBody[offset : offset+int(coordinatorKeySize)])
 	offset += int(coordinatorKeySize)
 
-	// Coordinator type is optional in some versions, default to 0 (group coordinator)
+	// Coordinator type present in v1+ (INT8). If absent, default 0.
 	var coordinatorType byte = 0
 	if offset < len(requestBody) {
 		coordinatorType = requestBody[offset]
 	}
-	_ = coordinatorType // 0 = group coordinator, 1 = transaction coordinator
-
 	fmt.Printf("DEBUG: FindCoordinator request for key '%s' (type: %d)\n", coordinatorKey, coordinatorType)
 
 	response := make([]byte, 0, 64)

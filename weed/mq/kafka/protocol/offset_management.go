@@ -411,12 +411,6 @@ func (h *Handler) parseOffsetFetchRequest(data []byte) (*OffsetFetchRequest, err
 	}
 	fmt.Printf("DEBUG: OffsetFetch request hex dump (first %d bytes): %x\n", dumpLen, data[:dumpLen])
 
-	// Skip client_id (part of OffsetFetch payload)
-	clientIDLength := int(binary.BigEndian.Uint16(data[offset:]))
-	offset += 2 + clientIDLength
-	fmt.Printf("DEBUG: OffsetFetch skipped client_id (%d bytes: '%s'), offset now: %d\n",
-		clientIDLength, string(data[2:2+clientIDLength]), offset)
-
 	// GroupID (string)
 	fmt.Printf("DEBUG: OffsetFetch GroupID length bytes at offset %d: %x\n", offset, data[offset:offset+2])
 	groupIDLength := int(binary.BigEndian.Uint16(data[offset:]))
@@ -433,26 +427,25 @@ func (h *Handler) parseOffsetFetchRequest(data []byte) (*OffsetFetchRequest, err
 	offset -= 1
 	fmt.Printf("DEBUG: OffsetFetch corrected offset by -1, now: %d\n", offset)
 
-	// Parse Topics array - OffsetFetch uses 1-byte count, not 4-byte
-	if len(data) < offset+1 {
+	// Parse Topics array - classic encoding (INT32 count) for v0-v5
+	if len(data) < offset+4 {
 		return nil, fmt.Errorf("OffsetFetch request missing topics array")
 	}
-	fmt.Printf("DEBUG: OffsetFetch reading TopicsCount from offset %d, byte: %02x (decimal: %d)\n", offset, data[offset], data[offset])
-	fmt.Printf("DEBUG: OffsetFetch next few bytes: %x\n", data[offset:offset+5])
-	topicsCount := uint32(data[offset])
-	offset += 1
+	fmt.Printf("DEBUG: OffsetFetch reading TopicsCount from offset %d, bytes: %x\n", offset, data[offset:offset+4])
+	topicsCount := binary.BigEndian.Uint32(data[offset : offset+4])
+	offset += 4
 
 	fmt.Printf("DEBUG: OffsetFetch - GroupID: %s, TopicsCount: %d\n", groupID, topicsCount)
 
 	topics := make([]OffsetFetchTopic, 0, topicsCount)
 
 	for i := uint32(0); i < topicsCount && offset < len(data); i++ {
-		// Parse topic name - OffsetFetch uses 1-byte length
-		if len(data) < offset+1 {
+		// Parse topic name (STRING: INT16 length + bytes)
+		if len(data) < offset+2 {
 			break
 		}
-		topicNameLength := uint8(data[offset])
-		offset += 1
+		topicNameLength := binary.BigEndian.Uint16(data[offset : offset+2])
+		offset += 2
 
 		if len(data) < offset+int(topicNameLength) {
 			break
@@ -460,12 +453,12 @@ func (h *Handler) parseOffsetFetchRequest(data []byte) (*OffsetFetchRequest, err
 		topicName := string(data[offset : offset+int(topicNameLength)])
 		offset += int(topicNameLength)
 
-		// Parse partitions array - OffsetFetch uses 1-byte count
-		if len(data) < offset+1 {
+		// Parse partitions array (ARRAY: INT32 count)
+		if len(data) < offset+4 {
 			break
 		}
-		partitionsCount := uint32(data[offset])
-		offset += 1
+		partitionsCount := binary.BigEndian.Uint32(data[offset : offset+4])
+		offset += 4
 
 		partitions := make([]int32, 0, partitionsCount)
 
