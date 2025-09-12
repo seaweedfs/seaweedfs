@@ -20,15 +20,44 @@ type BrokerOffsetManager struct {
 
 // NewBrokerOffsetManager creates a new broker offset manager
 func NewBrokerOffsetManager() *BrokerOffsetManager {
-	// TODO: Replace with SQL-based storage in Phase 5
-	// ASSUMPTION: For now using in-memory storage, will be replaced with persistent storage
-	storage := offset.NewInMemoryOffsetStorage()
+	return NewBrokerOffsetManagerWithStorage(nil)
+}
+
+// NewBrokerOffsetManagerWithStorage creates a new broker offset manager with custom storage
+func NewBrokerOffsetManagerWithStorage(storage offset.OffsetStorage) *BrokerOffsetManager {
+	// TODO: Add configuration for database path and type
+	// ASSUMPTION: Using in-memory storage as fallback, SQL storage preferred when available
+	if storage == nil {
+		storage = offset.NewInMemoryOffsetStorage()
+	}
 	
 	return &BrokerOffsetManager{
 		offsetIntegration: offset.NewSMQOffsetIntegration(storage),
 		partitionManagers: make(map[string]*offset.PartitionOffsetManager),
 		storage:          storage,
 	}
+}
+
+// NewBrokerOffsetManagerWithSQL creates a new broker offset manager with SQL storage
+func NewBrokerOffsetManagerWithSQL(dbPath string) (*BrokerOffsetManager, error) {
+	// Create or open SQL database
+	db, err := offset.CreateDatabase(dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create database: %w", err)
+	}
+	
+	// Create SQL storage
+	sqlStorage, err := offset.NewSQLOffsetStorage(db)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to create SQL storage: %w", err)
+	}
+	
+	return &BrokerOffsetManager{
+		offsetIntegration: offset.NewSMQOffsetIntegration(sqlStorage),
+		partitionManagers: make(map[string]*offset.PartitionOffsetManager),
+		storage:          sqlStorage,
+	}, nil
 }
 
 // AssignOffset assigns the next offset for a partition

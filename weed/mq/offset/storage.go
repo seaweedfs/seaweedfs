@@ -100,31 +100,4 @@ func (s *InMemoryOffsetStorage) Clear() {
 	s.records = make(map[string]map[int64]bool)
 }
 
-// SQLOffsetStorage provides a SQL-based implementation of OffsetStorage
-type SQLOffsetStorage struct {
-	// TODO: Implement SQL-based storage with _index column
-	// This will be implemented in a later phase
-}
-
-// NewSQLOffsetStorage creates a new SQL-based storage
-func NewSQLOffsetStorage() *SQLOffsetStorage {
-	return &SQLOffsetStorage{}
-}
-
-// SaveCheckpoint saves the checkpoint for a partition
-func (s *SQLOffsetStorage) SaveCheckpoint(partition *schema_pb.Partition, offset int64) error {
-	// TODO: Implement SQL checkpoint storage
-	return fmt.Errorf("SQL storage not implemented yet")
-}
-
-// LoadCheckpoint loads the checkpoint for a partition
-func (s *SQLOffsetStorage) LoadCheckpoint(partition *schema_pb.Partition) (int64, error) {
-	// TODO: Implement SQL checkpoint loading
-	return -1, fmt.Errorf("SQL storage not implemented yet")
-}
-
-// GetHighestOffset finds the highest offset in storage for a partition
-func (s *SQLOffsetStorage) GetHighestOffset(partition *schema_pb.Partition) (int64, error) {
-	// TODO: Implement SQL query to find highest _index value
-	return -1, fmt.Errorf("SQL storage not implemented yet")
-}
+// Note: SQLOffsetStorage is now implemented in sql_storage.go
