@@ -81,6 +81,7 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 	response = append(response, topicsCountBytes...)
 
 	// Process each topic
+	fmt.Printf("DEBUG: Produce v%d - topics count: %d\n", apiVersion, topicsCount)
 	for i := uint32(0); i < topicsCount && offset < len(requestBody); i++ {
 		if len(requestBody) < offset+2 {
 			break
@@ -165,6 +166,7 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 			currentTime := time.Now().UnixNano()
 
 			fmt.Printf("DEBUG: Processing partition %d for topic '%s' (topicExists=%v)\n", partitionID, topicName, topicExists)
+			fmt.Printf("DEBUG: Record set size: %d bytes\n", recordSetSize)
 
 			if !topicExists {
 				fmt.Printf("DEBUG: ERROR - Topic '%s' not found, returning UNKNOWN_TOPIC_OR_PARTITION\n", topicName)
@@ -173,6 +175,7 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 				fmt.Printf("DEBUG: SUCCESS - Topic '%s' found, processing record set (size=%d)\n", topicName, recordSetSize)
 				// Process the record set
 				recordCount, totalSize, parseErr := h.parseRecordSet(recordSetData)
+				fmt.Printf("DEBUG: parseRecordSet result - recordCount: %d, totalSize: %d, parseErr: %v\n", recordCount, totalSize, parseErr)
 				if parseErr != nil {
 					errorCode = 42 // INVALID_RECORD
 				} else if recordCount > 0 {
@@ -187,13 +190,19 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 					} else {
 						// Use legacy in-memory mode for tests
 						ledger := h.GetOrCreateLedger(topicName, int32(partitionID))
+						fmt.Printf("DEBUG: Before AssignOffsets - HWM: %d, recordCount: %d\n", ledger.GetHighWaterMark(), recordCount)
 						baseOffset = ledger.AssignOffsets(int64(recordCount))
+						fmt.Printf("DEBUG: After AssignOffsets - HWM: %d, baseOffset: %d\n", ledger.GetHighWaterMark(), baseOffset)
 
 						// Append each record to the ledger
 						avgSize := totalSize / recordCount
 						for k := int64(0); k < int64(recordCount); k++ {
-							ledger.AppendRecord(baseOffset+k, currentTime+k*1000, avgSize)
+							err := ledger.AppendRecord(baseOffset+k, currentTime+k*1000, avgSize)
+							if err != nil {
+								fmt.Printf("DEBUG: AppendRecord error: %v\n", err)
+							}
 						}
+						fmt.Printf("DEBUG: After AppendRecord - HWM: %d, entries: %d\n", ledger.GetHighWaterMark(), len(ledger.GetEntries()))
 					}
 				}
 			}
@@ -423,13 +432,75 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 			recordSetSize := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 			offset += 4
 
-			// Skip the record set data for now (we'll implement proper parsing later)
+			// Extract record set data for processing
 			if len(requestBody) < offset+int(recordSetSize) {
 				break
 			}
+			recordSetData := requestBody[offset : offset+int(recordSetSize)]
 			offset += int(recordSetSize)
 
 			fmt.Printf("DEBUG: Produce v%d - partition: %d, record_set_size: %d\n", apiVersion, partitionID, recordSetSize)
+
+			// Process the record set and store in ledger
+			var errorCode uint16 = 0
+			var baseOffset int64 = 0
+			currentTime := time.Now().UnixNano()
+
+			// Check if topic exists, auto-create if it doesn't
+			h.topicsMu.Lock()
+			_, topicExists := h.topics[topicName]
+			if !topicExists {
+				fmt.Printf("DEBUG: Auto-creating topic during Produce v%d: %s\n", apiVersion, topicName)
+				h.topics[topicName] = &TopicInfo{
+					Name:       topicName,
+					Partitions: 1, // Default to 1 partition
+					CreatedAt:  time.Now().UnixNano(),
+				}
+				// Initialize ledger for partition 0
+				h.GetOrCreateLedger(topicName, 0)
+				topicExists = true
+			}
+			h.topicsMu.Unlock()
+
+			if !topicExists {
+				errorCode = 3 // UNKNOWN_TOPIC_OR_PARTITION
+			} else {
+				// Process the record set
+				recordCount, totalSize, parseErr := h.parseRecordSet(recordSetData)
+				fmt.Printf("DEBUG: Produce v%d parseRecordSet result - recordCount: %d, totalSize: %d, parseErr: %v\n", apiVersion, recordCount, totalSize, parseErr)
+				if parseErr != nil {
+					errorCode = 42 // INVALID_RECORD
+				} else if recordCount > 0 {
+					if h.useSeaweedMQ {
+						// Use SeaweedMQ integration for production
+						offset, err := h.produceToSeaweedMQ(topicName, int32(partitionID), recordSetData)
+						if err != nil {
+							errorCode = 1 // UNKNOWN_SERVER_ERROR
+						} else {
+							baseOffset = offset
+						}
+					} else {
+						// Use legacy in-memory mode for tests
+						ledger := h.GetOrCreateLedger(topicName, int32(partitionID))
+						fmt.Printf("DEBUG: Produce v%d Before AssignOffsets - HWM: %d, recordCount: %d\n", apiVersion, ledger.GetHighWaterMark(), recordCount)
+						baseOffset = ledger.AssignOffsets(int64(recordCount))
+						fmt.Printf("DEBUG: Produce v%d After AssignOffsets - HWM: %d, baseOffset: %d\n", apiVersion, ledger.GetHighWaterMark(), baseOffset)
+
+						// Store the actual record batch data for Fetch operations
+						h.StoreRecordBatch(topicName, int32(partitionID), baseOffset, recordSetData)
+
+						// Append each record to the ledger
+						avgSize := totalSize / recordCount
+						for k := int64(0); k < int64(recordCount); k++ {
+							err := ledger.AppendRecord(baseOffset+k, currentTime+k*1000, avgSize)
+							if err != nil {
+								fmt.Printf("DEBUG: Produce v%d AppendRecord error: %v\n", apiVersion, err)
+							}
+						}
+						fmt.Printf("DEBUG: Produce v%d After AppendRecord - HWM: %d, entries: %d\n", apiVersion, ledger.GetHighWaterMark(), len(ledger.GetEntries()))
+					}
+				}
+			}
 
 			// Build correct Produce v2+ response for this partition
 			// Format: partition_id(4) + error_code(2) + base_offset(8) + [log_append_time(8) if v>=2] + [log_start_offset(8) if v>=5]
@@ -439,12 +510,10 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 			binary.BigEndian.PutUint32(partitionIDBytes, partitionID)
 			response = append(response, partitionIDBytes...)
 
-			// error_code (2 bytes) - 0 = success
-			response = append(response, 0, 0)
+			// error_code (2 bytes)
+			response = append(response, byte(errorCode>>8), byte(errorCode))
 
-			// base_offset (8 bytes) - offset of first message (stubbed)
-			currentTime := time.Now().UnixNano()
-			baseOffset := currentTime / 1000000 // Use timestamp as offset for now
+			// base_offset (8 bytes) - offset of first message
 			baseOffsetBytes := make([]byte, 8)
 			binary.BigEndian.PutUint64(baseOffsetBytes, uint64(baseOffset))
 			response = append(response, baseOffsetBytes...)

@@ -38,6 +38,10 @@ type Handler struct {
 	ledgersMu sync.RWMutex
 	ledgers   map[TopicPartitionKey]*offset.Ledger // topic-partition -> offset ledger
 
+	// Record batch storage for in-memory mode (for testing)
+	recordBatchMu sync.RWMutex
+	recordBatches map[string][]byte // "topic:partition:offset" -> record batch data
+
 	// SeaweedMQ integration (optional, for production use)
 	seaweedMQHandler *integration.SeaweedMQHandler
 	useSeaweedMQ     bool
@@ -60,6 +64,7 @@ func NewHandler() *Handler {
 	return &Handler{
 		topics:           make(map[string]*TopicInfo),
 		ledgers:          make(map[TopicPartitionKey]*offset.Ledger),
+		recordBatches:    make(map[string][]byte),
 		useSeaweedMQ:     false,
 		groupCoordinator: consumer.NewGroupCoordinator(),
 		brokerHost:       "localhost", // default fallback
@@ -140,6 +145,23 @@ func (h *Handler) GetLedger(topic string, partition int32) *offset.Ledger {
 	defer h.ledgersMu.RUnlock()
 
 	return h.ledgers[key]
+}
+
+// StoreRecordBatch stores a record batch for later retrieval during Fetch operations
+func (h *Handler) StoreRecordBatch(topicName string, partition int32, baseOffset int64, recordBatch []byte) {
+	key := fmt.Sprintf("%s:%d:%d", topicName, partition, baseOffset)
+	h.recordBatchMu.Lock()
+	defer h.recordBatchMu.Unlock()
+	h.recordBatches[key] = recordBatch
+}
+
+// GetRecordBatch retrieves a stored record batch
+func (h *Handler) GetRecordBatch(topicName string, partition int32, offset int64) ([]byte, bool) {
+	key := fmt.Sprintf("%s:%d:%d", topicName, partition, offset)
+	h.recordBatchMu.RLock()
+	defer h.recordBatchMu.RUnlock()
+	batch, exists := h.recordBatches[key]
+	return batch, exists
 }
 
 // SetBrokerAddress updates the broker address used in Metadata responses
@@ -234,6 +256,11 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 		case 1: // Fetch
 			fmt.Printf("DEBUG: *** FETCH HANDLER CALLED *** Correlation: %d, Version: %d\n", correlationID, apiVersion)
 			response, err = h.handleFetch(correlationID, apiVersion, messageBuf[8:]) // skip header
+			if err != nil {
+				fmt.Printf("DEBUG: Fetch error: %v\n", err)
+			} else {
+				fmt.Printf("DEBUG: Fetch response hex dump (%d bytes): %x\n", len(response), response)
+			}
 		case 11: // JoinGroup
 			fmt.Printf("DEBUG: *** JOINGROUP REQUEST RECEIVED *** Correlation: %d, Version: %d\n", correlationID, apiVersion)
 			response, err = h.handleJoinGroup(correlationID, apiVersion, messageBuf[8:]) // skip header

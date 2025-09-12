@@ -182,7 +182,7 @@ func TestSaramaProduceConsume(t *testing.T) {
 	// Test messages
 	testMessages := []string{
 		"Sarama Producer Message 1",
-		"Sarama Producer Message 2", 
+		"Sarama Producer Message 2",
 		"Sarama Producer Message 3",
 	}
 

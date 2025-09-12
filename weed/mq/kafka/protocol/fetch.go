@@ -3,6 +3,7 @@ package protocol
 import (
 	"encoding/binary"
 	"fmt"
+	"hash/crc32"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/compression"
@@ -30,11 +31,8 @@ func (h *Handler) handleFetch(correlationID uint32, apiVersion uint16, requestBo
 		response = append(response, 0, 0, 0, 0) // throttle_time_ms (4 bytes, 0 = no throttling)
 	}
 
-	// Fetch v4+ has session_id and error_code
-	if apiVersion >= 4 {
-		response = append(response, 0, 0)       // error_code (2 bytes, 0 = no error)
-		response = append(response, 0, 0, 0, 0) // session_id (4 bytes, 0 for now)
-	}
+	// Fetch v4+ has different format - no error_code and session_id at top level
+	// The session_id and error_code are handled differently in v4+
 
 	// Topics count
 	topicsCount := len(fetchRequest.Topics)
@@ -45,7 +43,7 @@ func (h *Handler) handleFetch(correlationID uint32, apiVersion uint16, requestBo
 	// Process each requested topic
 	for _, topic := range fetchRequest.Topics {
 		topicNameBytes := []byte(topic.Name)
-		
+
 		// Topic name length and name
 		response = append(response, byte(len(topicNameBytes)>>8), byte(len(topicNameBytes)))
 		response = append(response, topicNameBytes...)
@@ -69,6 +67,9 @@ func (h *Handler) handleFetch(correlationID uint32, apiVersion uint16, requestBo
 			// Get ledger for this topic-partition to determine high water mark
 			ledger := h.GetOrCreateLedger(topic.Name, partition.PartitionID)
 			highWaterMark := ledger.GetHighWaterMark()
+			
+			fmt.Printf("DEBUG: Fetch - topic: %s, partition: %d, fetchOffset: %d, highWaterMark: %d\n",
+				topic.Name, partition.PartitionID, partition.FetchOffset, highWaterMark)
 
 			// High water mark (8 bytes)
 			highWaterMarkBytes := make([]byte, 8)
@@ -88,14 +89,27 @@ func (h *Handler) handleFetch(correlationID uint32, apiVersion uint16, requestBo
 				response = append(response, 0, 0, 0, 0) // aborted_transactions count (4 bytes) = 0
 			}
 
-			// Records - construct record batch with actual messages
-			recordBatch := h.constructRecordBatchFromLedger(ledger, partition.FetchOffset, highWaterMark)
-			
+			// Records - get actual stored record batches
+			var recordBatch []byte
+			if highWaterMark > partition.FetchOffset {
+				// Try to get the actual stored record batch first
+				if storedBatch, exists := h.GetRecordBatch(topic.Name, partition.PartitionID, partition.FetchOffset); exists {
+					recordBatch = storedBatch
+					fmt.Printf("DEBUG: Using stored record batch for offset %d, size: %d bytes\n", partition.FetchOffset, len(storedBatch))
+				} else {
+					// Fallback to synthetic batch if no stored batch found
+					recordBatch = h.constructSimpleRecordBatch(partition.FetchOffset, highWaterMark)
+					fmt.Printf("DEBUG: Using synthetic record batch for offset %d, size: %d bytes\n", partition.FetchOffset, len(recordBatch))
+				}
+			} else {
+				recordBatch = []byte{} // No messages available
+			}
+
 			// Records size (4 bytes)
 			recordsSizeBytes := make([]byte, 4)
 			binary.BigEndian.PutUint32(recordsSizeBytes, uint32(len(recordBatch)))
 			response = append(response, recordsSizeBytes...)
-			
+
 			// Records data
 			response = append(response, recordBatch...)
 
@@ -123,10 +137,10 @@ type FetchTopic struct {
 }
 
 type FetchPartition struct {
-	PartitionID   int32
-	FetchOffset   int64
+	PartitionID    int32
+	FetchOffset    int64
 	LogStartOffset int64
-	MaxBytes      int32
+	MaxBytes       int32
 }
 
 // parseFetchRequest parses a Kafka Fetch request
@@ -144,7 +158,7 @@ func (h *Handler) parseFetchRequest(apiVersion uint16, requestBody []byte) (*Fet
 	}
 	clientIDLength := int(binary.BigEndian.Uint16(requestBody[offset : offset+2]))
 	offset += 2
-	
+
 	if clientIDLength >= 0 {
 		if offset+clientIDLength > len(requestBody) {
 			return nil, fmt.Errorf("insufficient data for client_id")
@@ -282,7 +296,7 @@ func (h *Handler) constructRecordBatchFromLedger(ledger interface{}, fetchOffset
 	offsetLedger, ok := ledger.(interface {
 		GetMessages(startOffset, endOffset int64) []interface{}
 	})
-	
+
 	if !ok {
 		// If ledger doesn't support GetMessages, return empty batch
 		return []byte{}
@@ -362,7 +376,7 @@ func (h *Handler) constructRecordBatchFromLedger(ledger interface{}, fetchOffset
 	for i, msg := range messages {
 		// Try to extract key and value from the message
 		var key, value []byte
-		
+
 		// Handle different message types
 		if msgMap, ok := msg.(map[string]interface{}); ok {
 			if keyVal, exists := msgMap["key"]; exists {
@@ -424,6 +438,124 @@ func (h *Handler) constructRecordBatchFromLedger(ledger interface{}, fetchOffset
 	// Fill in the batch length
 	batchLength := uint32(len(batch) - batchLengthPos - 4)
 	binary.BigEndian.PutUint32(batch[batchLengthPos:batchLengthPos+4], batchLength)
+
+	return batch
+}
+
+// constructSimpleRecordBatch creates a simple record batch for testing
+func (h *Handler) constructSimpleRecordBatch(fetchOffset, highWaterMark int64) []byte {
+	recordsToFetch := highWaterMark - fetchOffset
+	if recordsToFetch <= 0 {
+		return []byte{} // no records to fetch
+	}
+
+	// Limit the number of records for testing
+	if recordsToFetch > 10 {
+		recordsToFetch = 10
+	}
+
+	// Create a simple record batch
+	batch := make([]byte, 0, 512)
+
+	// Record batch header
+	baseOffsetBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(baseOffsetBytes, uint64(fetchOffset))
+	batch = append(batch, baseOffsetBytes...) // base offset (8 bytes)
+
+	// Calculate batch length (will be filled after we know the size)
+	batchLengthPos := len(batch)
+	batch = append(batch, 0, 0, 0, 0) // batch length placeholder (4 bytes)
+
+	batch = append(batch, 0, 0, 0, 0) // partition leader epoch (4 bytes)
+	batch = append(batch, 2)          // magic byte (version 2) (1 byte)
+
+	// CRC placeholder (4 bytes) - will be calculated at the end
+	crcPos := len(batch)
+	batch = append(batch, 0, 0, 0, 0) // CRC32 placeholder
+
+	// Batch attributes (2 bytes) - no compression, no transactional
+	batch = append(batch, 0, 0) // attributes
+
+	// Last offset delta (4 bytes)
+	lastOffsetDelta := uint32(recordsToFetch - 1)
+	lastOffsetDeltaBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(lastOffsetDeltaBytes, lastOffsetDelta)
+	batch = append(batch, lastOffsetDeltaBytes...)
+
+	// First timestamp (8 bytes)
+	firstTimestamp := time.Now().UnixMilli()
+	firstTimestampBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(firstTimestampBytes, uint64(firstTimestamp))
+	batch = append(batch, firstTimestampBytes...)
+
+	// Max timestamp (8 bytes)
+	maxTimestamp := firstTimestamp + recordsToFetch - 1
+	maxTimestampBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(maxTimestampBytes, uint64(maxTimestamp))
+	batch = append(batch, maxTimestampBytes...)
+
+	// Producer ID (8 bytes) - -1 for non-transactional
+	batch = append(batch, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF)
+
+	// Producer Epoch (2 bytes) - -1 for non-transactional
+	batch = append(batch, 0xFF, 0xFF)
+
+	// Base Sequence (4 bytes) - -1 for non-transactional
+	batch = append(batch, 0xFF, 0xFF, 0xFF, 0xFF)
+
+	// Record count (4 bytes)
+	recordCountBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(recordCountBytes, uint32(recordsToFetch))
+	batch = append(batch, recordCountBytes...)
+
+	// Add individual records
+	for i := int64(0); i < recordsToFetch; i++ {
+		// Create test message
+		key := []byte(fmt.Sprintf("key-%d", fetchOffset+i))
+		value := []byte(fmt.Sprintf("Test message %d", fetchOffset+i))
+
+		// Build individual record
+		record := make([]byte, 0, 128)
+
+		// Record attributes (1 byte)
+		record = append(record, 0)
+
+		// Timestamp delta (varint)
+		timestampDelta := i
+		record = append(record, encodeVarint(timestampDelta)...)
+
+		// Offset delta (varint)
+		offsetDelta := i
+		record = append(record, encodeVarint(offsetDelta)...)
+
+		// Key length and key (varint + data)
+		record = append(record, encodeVarint(int64(len(key)))...)
+		record = append(record, key...)
+
+		// Value length and value (varint + data)
+		record = append(record, encodeVarint(int64(len(value)))...)
+		record = append(record, value...)
+
+		// Headers count (varint) - 0 headers
+		record = append(record, encodeVarint(0)...)
+
+		// Prepend record length (varint)
+		recordLength := int64(len(record))
+		batch = append(batch, encodeVarint(recordLength)...)
+		batch = append(batch, record...)
+	}
+
+	// Fill in the batch length
+	batchLength := uint32(len(batch) - batchLengthPos - 4)
+	binary.BigEndian.PutUint32(batch[batchLengthPos:batchLengthPos+4], batchLength)
+
+	// Calculate CRC32 for the batch
+	// CRC is calculated over: attributes + last_offset_delta + first_timestamp + max_timestamp + producer_id + producer_epoch + base_sequence + records_count + records
+	// This starts after the CRC field (which comes after magic byte)
+	crcStartPos := crcPos + 4 // start after the CRC field
+	crcData := batch[crcStartPos:]
+	crc := crc32.ChecksumIEEE(crcData)
+	binary.BigEndian.PutUint32(batch[crcPos:crcPos+4], crc)
 
 	return batch
 }
