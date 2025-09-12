@@ -329,10 +329,11 @@ func (h *Handler) handleApiVersions(correlationID uint32) ([]byte, error) {
 	response = append(response, 0, 3)  // max version 3
 
 	// API Key 3 (Metadata): api_key(2) + min_version(2) + max_version(2)
-	// kafka-go negotiates v1,v6 - try v6 since our v6 works with Sarama
+	// TEMPORARY FIX: Limit to v4 since v6 has format issues with kafka-go
+	// Sarama works with v4, kafka-go should also work with v4
 	response = append(response, 0, 3) // API key 3
 	response = append(response, 0, 0) // min version 0
-	response = append(response, 0, 6) // max version 6
+	response = append(response, 0, 4) // max version 4 (was 6)
 
 	// API Key 2 (ListOffsets): api_key(2) + min_version(2) + max_version(2)
 	response = append(response, 0, 2) // API key 2
@@ -1198,11 +1199,11 @@ func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, req
 
 func (h *Handler) handleCreateTopics(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
 	fmt.Printf("DEBUG: *** CREATETOPICS REQUEST RECEIVED *** Correlation: %d, Version: %d\n", correlationID, apiVersion)
-	
+
 	if len(requestBody) < 2 {
 		return nil, fmt.Errorf("CreateTopics request too short")
 	}
-	
+
 	// Parse based on API version
 	switch apiVersion {
 	case 0, 1:
@@ -1217,25 +1218,25 @@ func (h *Handler) handleCreateTopics(correlationID uint32, apiVersion uint16, re
 func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
 	// CreateTopics v2+ format:
 	// topics_array + timeout_ms(4) + validate_only(1) + [tagged_fields]
-	
+
 	offset := 0
-	
+
 	// Parse topics array (compact array format in v2+)
 	if len(requestBody) < offset+1 {
 		return nil, fmt.Errorf("CreateTopics v2+ request missing topics array")
 	}
-	
+
 	// Read topics count (compact array: length + 1)
 	topicsCountRaw := requestBody[offset]
 	offset += 1
-	
+
 	var topicsCount uint32
 	if topicsCountRaw == 0 {
 		topicsCount = 0
 	} else {
 		topicsCount = uint32(topicsCountRaw) - 1
 	}
-	
+
 	fmt.Printf("DEBUG: CreateTopics v%d - Topics count: %d, remaining bytes: %d\n", apiVersion, topicsCount, len(requestBody)-offset)
 
 	// DEBUG: Hex dump to understand request format
@@ -1272,10 +1273,10 @@ func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint
 		if len(requestBody) < offset+1 {
 			break
 		}
-		
+
 		topicNameLengthRaw := requestBody[offset]
 		offset += 1
-		
+
 		var topicNameLength int
 		if topicNameLengthRaw == 0 {
 			topicNameLength = 0
@@ -1297,7 +1298,7 @@ func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint
 		numPartitions := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 		offset += 4
 
-		// Parse replication_factor (2 bytes)  
+		// Parse replication_factor (2 bytes)
 		if len(requestBody) < offset+2 {
 			break
 		}
@@ -1308,14 +1309,14 @@ func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint
 		if len(requestBody) >= offset+1 {
 			configsCountRaw := requestBody[offset]
 			offset += 1
-			
+
 			var configsCount uint32
 			if configsCountRaw == 0 {
 				configsCount = 0
 			} else {
 				configsCount = uint32(configsCountRaw) - 1
 			}
-			
+
 			// Skip configs for now (simplified)
 			for j := uint32(0); j < configsCount && offset < len(requestBody); j++ {
 				// Skip config name (compact string)
@@ -1418,24 +1419,24 @@ func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint
 			response = append(response, byte(len(errorMessage)+1)) // Compact string format
 			response = append(response, []byte(errorMessage)...)
 		}
-		
+
 		// Tagged fields (empty)
 		response = append(response, 0)
 	}
-	
+
 	// Parse timeout_ms and validate_only at the end (after all topics)
 	if len(requestBody) >= offset+4 {
 		timeoutMs := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 		offset += 4
 		fmt.Printf("DEBUG: CreateTopics timeout_ms: %d\n", timeoutMs)
 	}
-	
+
 	if len(requestBody) >= offset+1 {
 		validateOnly := requestBody[offset] != 0
 		offset += 1
 		fmt.Printf("DEBUG: CreateTopics validate_only: %v\n", validateOnly)
 	}
-	
+
 	// Tagged fields at the end
 	response = append(response, 0)
 
@@ -1447,18 +1448,18 @@ func (h *Handler) handleCreateTopicsV0V1(correlationID uint32, requestBody []byt
 	// TODO: Implement v0/v1 parsing if needed
 	// For now, return unsupported version error
 	response := make([]byte, 0, 32)
-	
+
 	// Correlation ID
 	correlationIDBytes := make([]byte, 4)
 	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
 	response = append(response, correlationIDBytes...)
-	
+
 	// Throttle time
 	response = append(response, 0, 0, 0, 0)
-	
+
 	// Empty topics array
 	response = append(response, 0, 0, 0, 0)
-	
+
 	return response, nil
 }
 
@@ -1755,4 +1756,3 @@ func (h *Handler) IsSchemaEnabled() bool {
 func (h *Handler) IsBrokerIntegrationEnabled() bool {
 	return h.IsSchemaEnabled() && h.brokerClient != nil
 }
-
