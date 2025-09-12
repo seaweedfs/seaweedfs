@@ -420,7 +420,7 @@ func (h *Handler) HandleMetadataV0(correlationID uint32, requestBody []byte) ([]
 	response = append(response, 0, 0, 0, 1)
 
 	// Broker 0: node_id(4) + host(STRING) + port(4)
-	response = append(response, 0, 0, 0, 0) // node_id = 0
+	response = append(response, 0, 0, 0, 1) // node_id = 1 (consistent with partitions)
 
 	// Use dynamic broker address set by the server
 	host := h.brokerHost
@@ -531,10 +531,8 @@ func (h *Handler) HandleMetadataV1(correlationID uint32, requestBody []byte) ([]
 	// Build response using same approach as v0 but with v1 additions
 	response := make([]byte, 0, 256)
 
-	// Correlation ID (4 bytes)
-	correlationIDBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
-	response = append(response, correlationIDBytes...)
+	// NOTE: Correlation ID is handled by transport layer in kafka-go
+	// Do NOT include it in the response struct
 
 	// Brokers array length (4 bytes) - 1 broker (this gateway)
 	response = append(response, 0, 0, 0, 1)
