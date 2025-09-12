@@ -273,7 +273,7 @@ func writeLogFilesToParquet(filerClient filer_pb.FilerClient, partitionDir strin
 				},
 			}
 
-			// TODO: Add offset field to parquet records for native offset support
+			// Add offset field to parquet records for native offset support
 			// ASSUMPTION: LogEntry.Offset field is populated by broker during message publishing
 			record.Fields[SW_COLUMN_NAME_OFFSET] = &schema_pb.Value{
 				Kind: &schema_pb.Value_Int64Value{
