@@ -156,7 +156,6 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 		conn.Close()
 	}()
 
-	fmt.Printf("DEBUG: [%s] New connection established\n", connectionID)
 
 	r := bufio.NewReader(conn)
 	w := bufio.NewWriter(conn)
@@ -197,11 +196,7 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 		apiVersion := binary.BigEndian.Uint16(messageBuf[2:4])
 		correlationID := binary.BigEndian.Uint32(messageBuf[4:8])
 
-		// DEBUG: Log all incoming requests (minimal for performance)
 		apiName := getAPIName(apiKey)
-		requestStart := time.Now()
-		fmt.Printf("DEBUG: API %d (%s) v%d - Correlation: %d, Size: %d\n",
-			apiKey, apiName, apiVersion, correlationID, size)
 
 		// Validate API version against what we support
 		if err := h.validateAPIVersion(apiKey, apiVersion); err != nil {
@@ -223,7 +218,6 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 		var response []byte
 		var err error
 
-		fmt.Printf("DEBUG: About to handle API key %d\n", apiKey)
 		switch apiKey {
 		case 18: // ApiVersions
 			response, err = h.handleApiVersions(correlationID)
@@ -280,10 +274,6 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 			return fmt.Errorf("handle request: %w", err)
 		}
 
-		// DEBUG: Log response details (minimal for performance)
-		processingDuration := time.Since(requestStart)
-		fmt.Printf("DEBUG: API %d (%s) response: %d bytes, %v\n",
-			apiKey, apiName, len(response), processingDuration)
 
 		// Write response size and data
 		responseSizeBytes := make([]byte, 4)
@@ -781,8 +771,6 @@ func (h *Handler) HandleMetadataV3V4(correlationID uint32, requestBody []byte) (
 	}
 
 	response := buf.Bytes()
-	fmt.Printf("DEBUG: Advertising broker (v3/v4) at %s:%d\n", h.brokerHost, h.brokerPort)
-	fmt.Printf("DEBUG: Metadata v3/v4 response for %d topics: %v\n", len(topicsToReturn), topicsToReturn)
 
 	return response, nil
 }
@@ -1696,7 +1684,6 @@ func (h *Handler) AddTopicForTesting(topicName string, partitions int32) {
 			h.GetOrCreateLedger(topicName, partitionID)
 		}
 
-		fmt.Printf("DEBUG: Added topic for testing: %s with %d partitions\n", topicName, partitions)
 	}
 }
 
