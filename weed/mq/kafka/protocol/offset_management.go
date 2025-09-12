@@ -292,28 +292,108 @@ func (h *Handler) parseOffsetCommitRequest(data []byte) (*OffsetCommitRequest, e
 	memberID := string(data[offset : offset+memberIDLength])
 	offset += memberIDLength
 	
-	// TODO: CRITICAL - This parsing is completely broken for real clients
-	// Currently hardcoded to return "test-topic" with partition 0
-	// Real OffsetCommit requests contain:
-	// - RetentionTime (8 bytes, -1 for broker default)
-	// - Topics array with actual topic names  
-	// - Partitions array with actual partition IDs and offsets
-	// - Optional group instance ID for static membership
-	// Without fixing this, no real Kafka client can commit offsets properly
+	// Parse RetentionTime (8 bytes, -1 for broker default)
+	if len(data) < offset+8 {
+		return nil, fmt.Errorf("OffsetCommit request missing retention time")
+	}
+	retentionTime := int64(binary.BigEndian.Uint64(data[offset : offset+8]))
+	offset += 8
+	
+	// Parse Topics array
+	if len(data) < offset+4 {
+		return nil, fmt.Errorf("OffsetCommit request missing topics array")
+	}
+	topicsCount := binary.BigEndian.Uint32(data[offset : offset+4])
+	offset += 4
+	
+	fmt.Printf("DEBUG: OffsetCommit - GroupID: %s, GenerationID: %d, MemberID: %s, RetentionTime: %d, TopicsCount: %d\n", 
+		groupID, generationID, memberID, retentionTime, topicsCount)
+	
+	topics := make([]OffsetCommitTopic, 0, topicsCount)
+	
+	for i := uint32(0); i < topicsCount && offset < len(data); i++ {
+		// Parse topic name
+		if len(data) < offset+2 {
+			break
+		}
+		topicNameLength := binary.BigEndian.Uint16(data[offset : offset+2])
+		offset += 2
+		
+		if len(data) < offset+int(topicNameLength) {
+			break
+		}
+		topicName := string(data[offset : offset+int(topicNameLength)])
+		offset += int(topicNameLength)
+		
+		// Parse partitions array
+		if len(data) < offset+4 {
+			break
+		}
+		partitionsCount := binary.BigEndian.Uint32(data[offset : offset+4])
+		offset += 4
+		
+		partitions := make([]OffsetCommitPartition, 0, partitionsCount)
+		
+		for j := uint32(0); j < partitionsCount && offset < len(data); j++ {
+			// Parse partition index (4 bytes)
+			if len(data) < offset+4 {
+				break
+			}
+			partitionIndex := int32(binary.BigEndian.Uint32(data[offset : offset+4]))
+			offset += 4
+			
+			// Parse committed offset (8 bytes)
+			if len(data) < offset+8 {
+				break
+			}
+			committedOffset := int64(binary.BigEndian.Uint64(data[offset : offset+8]))
+			offset += 8
+			
+			// Parse leader epoch (4 bytes)
+			if len(data) < offset+4 {
+				break
+			}
+			leaderEpoch := int32(binary.BigEndian.Uint32(data[offset : offset+4]))
+			offset += 4
+			
+			// Parse metadata (nullable string)
+			if len(data) < offset+2 {
+				break
+			}
+			metadataLength := int16(binary.BigEndian.Uint16(data[offset : offset+2]))
+			offset += 2
+			
+			var metadata string
+			if metadataLength == -1 {
+				metadata = "" // null string
+			} else if metadataLength >= 0 && len(data) >= offset+int(metadataLength) {
+				metadata = string(data[offset : offset+int(metadataLength)])
+				offset += int(metadataLength)
+			}
+			
+			partitions = append(partitions, OffsetCommitPartition{
+				Index:       partitionIndex,
+				Offset:      committedOffset,
+				LeaderEpoch: leaderEpoch,
+				Metadata:    metadata,
+			})
+			
+			fmt.Printf("DEBUG: OffsetCommit - Topic: %s, Partition: %d, Offset: %d, LeaderEpoch: %d, Metadata: %s\n",
+				topicName, partitionIndex, committedOffset, leaderEpoch, metadata)
+		}
+		
+		topics = append(topics, OffsetCommitTopic{
+			Name:       topicName,
+			Partitions: partitions,
+		})
+	}
 	
 	return &OffsetCommitRequest{
 		GroupID:       groupID,
 		GenerationID:  generationID,
 		MemberID:      memberID,
-		RetentionTime: -1, // Use broker default
-		Topics: []OffsetCommitTopic{
-			{
-				Name: "test-topic", // TODO: Parse actual topic from request
-				Partitions: []OffsetCommitPartition{
-					{Index: 0, Offset: 0, LeaderEpoch: -1, Metadata: ""}, // TODO: Parse actual partition data
-				},
-			},
-		},
+		RetentionTime: retentionTime,
+		Topics:        topics,
 	}, nil
 }
 
@@ -333,23 +413,76 @@ func (h *Handler) parseOffsetFetchRequest(data []byte) (*OffsetFetchRequest, err
 	groupID := string(data[offset : offset+groupIDLength])
 	offset += groupIDLength
 	
-	// TODO: CRITICAL - OffsetFetch parsing is also hardcoded 
-	// Real clients send topics array with specific partitions to fetch
-	// Need to parse:
-	// - Topics array (4 bytes count + topics)
-	// - For each topic: name + partitions array
-	// - RequireStable flag for transactional consistency
-	// Currently will fail with any real Kafka client doing offset fetches
+	// Parse Topics array
+	if len(data) < offset+4 {
+		return nil, fmt.Errorf("OffsetFetch request missing topics array")
+	}
+	topicsCount := binary.BigEndian.Uint32(data[offset : offset+4])
+	offset += 4
+	
+	fmt.Printf("DEBUG: OffsetFetch - GroupID: %s, TopicsCount: %d\n", groupID, topicsCount)
+	
+	topics := make([]OffsetFetchTopic, 0, topicsCount)
+	
+	for i := uint32(0); i < topicsCount && offset < len(data); i++ {
+		// Parse topic name
+		if len(data) < offset+2 {
+			break
+		}
+		topicNameLength := binary.BigEndian.Uint16(data[offset : offset+2])
+		offset += 2
+		
+		if len(data) < offset+int(topicNameLength) {
+			break
+		}
+		topicName := string(data[offset : offset+int(topicNameLength)])
+		offset += int(topicNameLength)
+		
+		// Parse partitions array
+		if len(data) < offset+4 {
+			break
+		}
+		partitionsCount := binary.BigEndian.Uint32(data[offset : offset+4])
+		offset += 4
+		
+		partitions := make([]int32, 0, partitionsCount)
+		
+		// If partitionsCount is 0, it means "fetch all partitions"
+		if partitionsCount == 0 {
+			fmt.Printf("DEBUG: OffsetFetch - Topic: %s, Partitions: ALL\n", topicName)
+			partitions = nil // nil means all partitions
+		} else {
+			for j := uint32(0); j < partitionsCount && offset < len(data); j++ {
+				// Parse partition index (4 bytes)
+				if len(data) < offset+4 {
+					break
+				}
+				partitionIndex := int32(binary.BigEndian.Uint32(data[offset : offset+4]))
+				offset += 4
+				
+				partitions = append(partitions, partitionIndex)
+				fmt.Printf("DEBUG: OffsetFetch - Topic: %s, Partition: %d\n", topicName, partitionIndex)
+			}
+		}
+		
+		topics = append(topics, OffsetFetchTopic{
+			Name:       topicName,
+			Partitions: partitions,
+		})
+	}
+	
+	// Parse RequireStable flag (1 byte) - for transactional consistency
+	var requireStable bool
+	if len(data) >= offset+1 {
+		requireStable = data[offset] != 0
+		offset += 1
+		fmt.Printf("DEBUG: OffsetFetch - RequireStable: %v\n", requireStable)
+	}
 	
 	return &OffsetFetchRequest{
-		GroupID: groupID,
-		Topics: []OffsetFetchTopic{
-			{
-				Name:       "test-topic", // TODO: Parse actual topics from request
-				Partitions: []int32{0},   // TODO: Parse actual partitions or empty for "all"
-			},
-		},
-		RequireStable: false,
+		GroupID:       groupID,
+		Topics:        topics,
+		RequireStable: requireStable,
 	}, nil
 }
 
