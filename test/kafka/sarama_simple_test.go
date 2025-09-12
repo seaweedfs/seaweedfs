@@ -145,3 +145,113 @@ func TestSaramaMinimalConfig(t *testing.T) {
 		t.Logf("✅ Minimal produce succeeded: partition=%d, offset=%d", partition, offset)
 	}
 }
+
+func TestSaramaProduceConsume(t *testing.T) {
+	// Start gateway
+	gatewayServer := gateway.NewServer(gateway.Options{
+		Listen: "127.0.0.1:0",
+	})
+
+	go func() {
+		if err := gatewayServer.Start(); err != nil {
+			t.Errorf("Failed to start gateway: %v", err)
+		}
+	}()
+	defer gatewayServer.Close()
+
+	// Wait for server to start
+	time.Sleep(100 * time.Millisecond)
+
+	host, port := gatewayServer.GetListenerAddr()
+	brokerAddr := fmt.Sprintf("%s:%d", host, port)
+	t.Logf("Gateway running on %s", brokerAddr)
+
+	// Add test topic
+	gatewayHandler := gatewayServer.GetHandler()
+	topicName := "sarama-produce-consume"
+	gatewayHandler.AddTopicForTesting(topicName, 1)
+	t.Logf("Added topic: %s", topicName)
+
+	// Configure Sarama for Kafka 0.11 baseline
+	config := sarama.NewConfig()
+	config.Version = sarama.V0_11_0_0
+	config.Producer.Return.Successes = true
+	config.Producer.RequiredAcks = sarama.WaitForAll
+	config.Consumer.Return.Errors = true
+
+	// Test messages
+	testMessages := []string{
+		"Sarama Producer Message 1",
+		"Sarama Producer Message 2", 
+		"Sarama Producer Message 3",
+	}
+
+	t.Logf("=== Testing Sarama Producer ===")
+
+	// Create producer
+	producer, err := sarama.NewSyncProducer([]string{brokerAddr}, config)
+	if err != nil {
+		t.Fatalf("Failed to create producer: %v", err)
+	}
+	defer producer.Close()
+
+	// Produce messages
+	for i, msgText := range testMessages {
+		msg := &sarama.ProducerMessage{
+			Topic: topicName,
+			Key:   sarama.StringEncoder(fmt.Sprintf("key-%d", i)),
+			Value: sarama.StringEncoder(msgText),
+		}
+
+		partition, offset, err := producer.SendMessage(msg)
+		if err != nil {
+			t.Fatalf("Failed to produce message %d: %v", i, err)
+		}
+		t.Logf("✅ Produced message %d: partition=%d, offset=%d", i, partition, offset)
+	}
+
+	t.Logf("=== Testing Sarama Consumer ===")
+
+	// Create consumer
+	consumer, err := sarama.NewConsumer([]string{brokerAddr}, config)
+	if err != nil {
+		t.Fatalf("Failed to create consumer: %v", err)
+	}
+	defer consumer.Close()
+
+	// Get partition consumer
+	partitionConsumer, err := consumer.ConsumePartition(topicName, 0, sarama.OffsetOldest)
+	if err != nil {
+		t.Fatalf("Failed to create partition consumer: %v", err)
+	}
+	defer partitionConsumer.Close()
+
+	// Consume messages
+	consumedCount := 0
+	timeout := time.After(10 * time.Second)
+
+	for consumedCount < len(testMessages) {
+		select {
+		case msg := <-partitionConsumer.Messages():
+			t.Logf("✅ Consumed message %d: key=%s, value=%s, offset=%d",
+				consumedCount, string(msg.Key), string(msg.Value), msg.Offset)
+
+			// Verify message content matches what we produced
+			expectedValue := testMessages[consumedCount]
+			if string(msg.Value) != expectedValue {
+				t.Errorf("Message %d mismatch: got %s, want %s",
+					consumedCount, string(msg.Value), expectedValue)
+			}
+
+			consumedCount++
+
+		case err := <-partitionConsumer.Errors():
+			t.Fatalf("Consumer error: %v", err)
+
+		case <-timeout:
+			t.Fatalf("Timeout waiting for messages. Consumed %d/%d", consumedCount, len(testMessages))
+		}
+	}
+
+	t.Logf("🎉 SUCCESS: Sarama produce-consume test completed with %d messages", len(testMessages))
+}

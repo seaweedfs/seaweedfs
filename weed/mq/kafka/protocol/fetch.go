@@ -11,13 +11,14 @@ import (
 )
 
 func (h *Handler) handleFetch(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
-	fmt.Printf("DEBUG: *** FETCH REQUEST RECEIVED *** Correlation: %d, Version: %d\n", correlationID, apiVersion)
-	fmt.Printf("DEBUG: Fetch v%d request hex dump (first 83 bytes): %x\n", apiVersion, requestBody[:min(83, len(requestBody))])
+	// Parse the Fetch request to get the requested topics and partitions
+	fetchRequest, err := h.parseFetchRequest(apiVersion, requestBody)
+	if err != nil {
+		return nil, fmt.Errorf("parse fetch request: %w", err)
+	}
 
-	// For now, create a minimal working Fetch response that returns empty records
-	// This will allow Sarama to parse the response successfully, even if no messages are returned
-
-	response := make([]byte, 0, 256)
+	// Build the response
+	response := make([]byte, 0, 1024)
 
 	// Correlation ID (4 bytes)
 	correlationIDBytes := make([]byte, 4)
@@ -29,69 +30,402 @@ func (h *Handler) handleFetch(correlationID uint32, apiVersion uint16, requestBo
 		response = append(response, 0, 0, 0, 0) // throttle_time_ms (4 bytes, 0 = no throttling)
 	}
 
-	// Fetch v4+ has session_id, but let's check if v5 has it at all
+	// Fetch v4+ has session_id and error_code
 	if apiVersion >= 4 {
-		// Let's try v5 without session_id entirely
-		if apiVersion == 5 {
-			// No session_id for v5 - go directly to topics
-		} else {
-			response = append(response, 0, 0)       // error_code (2 bytes, 0 = no error)
-			response = append(response, 0, 0, 0, 0) // session_id (4 bytes, 0 for now)
-		}
+		response = append(response, 0, 0)       // error_code (2 bytes, 0 = no error)
+		response = append(response, 0, 0, 0, 0) // session_id (4 bytes, 0 for now)
 	}
 
-	// Topics count (1 topic - hardcoded for now)
-	response = append(response, 0, 0, 0, 1) // 1 topic
+	// Topics count
+	topicsCount := len(fetchRequest.Topics)
+	topicsCountBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(topicsCountBytes, uint32(topicsCount))
+	response = append(response, topicsCountBytes...)
 
-	// Topic: "sarama-e2e-topic"
-	topicName := "sarama-e2e-topic"
-	topicNameBytes := []byte(topicName)
-	response = append(response, byte(len(topicNameBytes)>>8), byte(len(topicNameBytes))) // topic name length
-	response = append(response, topicNameBytes...)                                       // topic name
+	// Process each requested topic
+	for _, topic := range fetchRequest.Topics {
+		topicNameBytes := []byte(topic.Name)
+		
+		// Topic name length and name
+		response = append(response, byte(len(topicNameBytes)>>8), byte(len(topicNameBytes)))
+		response = append(response, topicNameBytes...)
 
-	// Partitions count (1 partition)
-	response = append(response, 0, 0, 0, 1) // 1 partition
+		// Partitions count for this topic
+		partitionsCount := len(topic.Partitions)
+		partitionsCountBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(partitionsCountBytes, uint32(partitionsCount))
+		response = append(response, partitionsCountBytes...)
 
-	// Partition 0 response
-	response = append(response, 0, 0, 0, 0)             // partition_id (4 bytes) = 0
-	response = append(response, 0, 0)                   // error_code (2 bytes) = 0 (no error)
-	response = append(response, 0, 0, 0, 0, 0, 0, 0, 3) // high_water_mark (8 bytes) = 3 (we produced 3 messages)
+		// Process each requested partition
+		for _, partition := range topic.Partitions {
+			// Partition ID
+			partitionIDBytes := make([]byte, 4)
+			binary.BigEndian.PutUint32(partitionIDBytes, uint32(partition.PartitionID))
+			response = append(response, partitionIDBytes...)
 
-	// Fetch v4+ has last_stable_offset and log_start_offset
-	if apiVersion >= 4 {
-		response = append(response, 0, 0, 0, 0, 0, 0, 0, 3) // last_stable_offset (8 bytes) = 3
-		response = append(response, 0, 0, 0, 0, 0, 0, 0, 0) // log_start_offset (8 bytes) = 0
-	}
+			// Error code (2 bytes) - 0 = no error
+			response = append(response, 0, 0)
 
-	// Fetch v4+ has aborted_transactions
-	if apiVersion >= 4 {
-		response = append(response, 0, 0, 0, 0) // aborted_transactions count (4 bytes) = 0
-	}
+			// Get ledger for this topic-partition to determine high water mark
+			ledger := h.GetOrCreateLedger(topic.Name, partition.PartitionID)
+			highWaterMark := ledger.GetHighWaterMark()
 
-	// Records size and data (empty for now - no records returned)
-	response = append(response, 0, 0, 0, 0) // records size (4 bytes) = 0 (no records)
+			// High water mark (8 bytes)
+			highWaterMarkBytes := make([]byte, 8)
+			binary.BigEndian.PutUint64(highWaterMarkBytes, uint64(highWaterMark))
+			response = append(response, highWaterMarkBytes...)
 
-	fmt.Printf("DEBUG: Fetch v%d response: %d bytes, hex dump: %x\n", apiVersion, len(response), response)
-
-	// Let's manually verify our response structure for debugging
-	fmt.Printf("DEBUG: Response breakdown:\n")
-	fmt.Printf("  - correlation_id (4): %x\n", response[0:4])
-	if apiVersion >= 1 {
-		fmt.Printf("  - throttle_time_ms (4): %x\n", response[4:8])
-		if apiVersion >= 4 {
-			if apiVersion == 5 {
-				// v5 doesn't have session_id at all
-				fmt.Printf("  - topics_count (4): %x\n", response[8:12])
-			} else {
-				fmt.Printf("  - error_code (2): %x\n", response[8:10])
-				fmt.Printf("  - session_id (4): %x\n", response[10:14])
-				fmt.Printf("  - topics_count (4): %x\n", response[14:18])
+			// Fetch v4+ has last_stable_offset and log_start_offset
+			if apiVersion >= 4 {
+				// Last stable offset (8 bytes) - same as high water mark for non-transactional
+				response = append(response, highWaterMarkBytes...)
+				// Log start offset (8 bytes) - 0 for simplicity
+				response = append(response, 0, 0, 0, 0, 0, 0, 0, 0)
 			}
-		} else {
-			fmt.Printf("  - topics_count (4): %x\n", response[8:12])
+
+			// Fetch v4+ has aborted_transactions
+			if apiVersion >= 4 {
+				response = append(response, 0, 0, 0, 0) // aborted_transactions count (4 bytes) = 0
+			}
+
+			// Records - construct record batch with actual messages
+			recordBatch := h.constructRecordBatchFromLedger(ledger, partition.FetchOffset, highWaterMark)
+			
+			// Records size (4 bytes)
+			recordsSizeBytes := make([]byte, 4)
+			binary.BigEndian.PutUint32(recordsSizeBytes, uint32(len(recordBatch)))
+			response = append(response, recordsSizeBytes...)
+			
+			// Records data
+			response = append(response, recordBatch...)
+
+			fmt.Printf("DEBUG: Would fetch schematized records - topic: %s, partition: %d, offset: %d, maxBytes: %d\n",
+				topic.Name, partition.PartitionID, partition.FetchOffset, partition.MaxBytes)
 		}
 	}
+
 	return response, nil
+}
+
+// FetchRequest represents a parsed Kafka Fetch request
+type FetchRequest struct {
+	ReplicaID      int32
+	MaxWaitTime    int32
+	MinBytes       int32
+	MaxBytes       int32
+	IsolationLevel int8
+	Topics         []FetchTopic
+}
+
+type FetchTopic struct {
+	Name       string
+	Partitions []FetchPartition
+}
+
+type FetchPartition struct {
+	PartitionID   int32
+	FetchOffset   int64
+	LogStartOffset int64
+	MaxBytes      int32
+}
+
+// parseFetchRequest parses a Kafka Fetch request
+func (h *Handler) parseFetchRequest(apiVersion uint16, requestBody []byte) (*FetchRequest, error) {
+	if len(requestBody) < 16 {
+		return nil, fmt.Errorf("fetch request too short: %d bytes", len(requestBody))
+	}
+
+	offset := 0
+	request := &FetchRequest{}
+
+	// Skip client_id (string) - read length first
+	if offset+2 > len(requestBody) {
+		return nil, fmt.Errorf("insufficient data for client_id length")
+	}
+	clientIDLength := int(binary.BigEndian.Uint16(requestBody[offset : offset+2]))
+	offset += 2
+	
+	if clientIDLength >= 0 {
+		if offset+clientIDLength > len(requestBody) {
+			return nil, fmt.Errorf("insufficient data for client_id")
+		}
+		offset += clientIDLength
+	}
+
+	// Replica ID (4 bytes)
+	if offset+4 > len(requestBody) {
+		return nil, fmt.Errorf("insufficient data for replica_id")
+	}
+	request.ReplicaID = int32(binary.BigEndian.Uint32(requestBody[offset : offset+4]))
+	offset += 4
+
+	// Max wait time (4 bytes)
+	if offset+4 > len(requestBody) {
+		return nil, fmt.Errorf("insufficient data for max_wait_time")
+	}
+	request.MaxWaitTime = int32(binary.BigEndian.Uint32(requestBody[offset : offset+4]))
+	offset += 4
+
+	// Min bytes (4 bytes)
+	if offset+4 > len(requestBody) {
+		return nil, fmt.Errorf("insufficient data for min_bytes")
+	}
+	request.MinBytes = int32(binary.BigEndian.Uint32(requestBody[offset : offset+4]))
+	offset += 4
+
+	// Max bytes (4 bytes) - only in v3+
+	if apiVersion >= 3 {
+		if offset+4 > len(requestBody) {
+			return nil, fmt.Errorf("insufficient data for max_bytes")
+		}
+		request.MaxBytes = int32(binary.BigEndian.Uint32(requestBody[offset : offset+4]))
+		offset += 4
+	}
+
+	// Isolation level (1 byte) - only in v4+
+	if apiVersion >= 4 {
+		if offset+1 > len(requestBody) {
+			return nil, fmt.Errorf("insufficient data for isolation_level")
+		}
+		request.IsolationLevel = int8(requestBody[offset])
+		offset += 1
+	}
+
+	// Session ID (4 bytes) and Session Epoch (4 bytes) - only in v7+
+	if apiVersion >= 7 {
+		if offset+8 > len(requestBody) {
+			return nil, fmt.Errorf("insufficient data for session_id and epoch")
+		}
+		offset += 8 // Skip session_id and session_epoch
+	}
+
+	// Topics count (4 bytes)
+	if offset+4 > len(requestBody) {
+		return nil, fmt.Errorf("insufficient data for topics count")
+	}
+	topicsCount := int(binary.BigEndian.Uint32(requestBody[offset : offset+4]))
+	offset += 4
+
+	// Parse topics
+	request.Topics = make([]FetchTopic, topicsCount)
+	for i := 0; i < topicsCount; i++ {
+		// Topic name length (2 bytes)
+		if offset+2 > len(requestBody) {
+			return nil, fmt.Errorf("insufficient data for topic name length")
+		}
+		topicNameLength := int(binary.BigEndian.Uint16(requestBody[offset : offset+2]))
+		offset += 2
+
+		// Topic name
+		if offset+topicNameLength > len(requestBody) {
+			return nil, fmt.Errorf("insufficient data for topic name")
+		}
+		request.Topics[i].Name = string(requestBody[offset : offset+topicNameLength])
+		offset += topicNameLength
+
+		// Partitions count (4 bytes)
+		if offset+4 > len(requestBody) {
+			return nil, fmt.Errorf("insufficient data for partitions count")
+		}
+		partitionsCount := int(binary.BigEndian.Uint32(requestBody[offset : offset+4]))
+		offset += 4
+
+		// Parse partitions
+		request.Topics[i].Partitions = make([]FetchPartition, partitionsCount)
+		for j := 0; j < partitionsCount; j++ {
+			// Partition ID (4 bytes)
+			if offset+4 > len(requestBody) {
+				return nil, fmt.Errorf("insufficient data for partition ID")
+			}
+			request.Topics[i].Partitions[j].PartitionID = int32(binary.BigEndian.Uint32(requestBody[offset : offset+4]))
+			offset += 4
+
+			// Current leader epoch (4 bytes) - only in v9+
+			if apiVersion >= 9 {
+				if offset+4 > len(requestBody) {
+					return nil, fmt.Errorf("insufficient data for current leader epoch")
+				}
+				offset += 4 // Skip current leader epoch
+			}
+
+			// Fetch offset (8 bytes)
+			if offset+8 > len(requestBody) {
+				return nil, fmt.Errorf("insufficient data for fetch offset")
+			}
+			request.Topics[i].Partitions[j].FetchOffset = int64(binary.BigEndian.Uint64(requestBody[offset : offset+8]))
+			offset += 8
+
+			// Log start offset (8 bytes) - only in v5+
+			if apiVersion >= 5 {
+				if offset+8 > len(requestBody) {
+					return nil, fmt.Errorf("insufficient data for log start offset")
+				}
+				request.Topics[i].Partitions[j].LogStartOffset = int64(binary.BigEndian.Uint64(requestBody[offset : offset+8]))
+				offset += 8
+			}
+
+			// Partition max bytes (4 bytes)
+			if offset+4 > len(requestBody) {
+				return nil, fmt.Errorf("insufficient data for partition max bytes")
+			}
+			request.Topics[i].Partitions[j].MaxBytes = int32(binary.BigEndian.Uint32(requestBody[offset : offset+4]))
+			offset += 4
+		}
+	}
+
+	return request, nil
+}
+
+// constructRecordBatchFromLedger creates a record batch from messages stored in the ledger
+func (h *Handler) constructRecordBatchFromLedger(ledger interface{}, fetchOffset, highWaterMark int64) []byte {
+	// Get the actual ledger interface
+	offsetLedger, ok := ledger.(interface {
+		GetMessages(startOffset, endOffset int64) []interface{}
+	})
+	
+	if !ok {
+		// If ledger doesn't support GetMessages, return empty batch
+		return []byte{}
+	}
+
+	// Calculate how many records to fetch
+	recordsToFetch := highWaterMark - fetchOffset
+	if recordsToFetch <= 0 {
+		return []byte{} // no records to fetch
+	}
+
+	// Limit the number of records for performance
+	if recordsToFetch > 100 {
+		recordsToFetch = 100
+	}
+
+	// Get messages from ledger
+	messages := offsetLedger.GetMessages(fetchOffset, fetchOffset+recordsToFetch)
+	if len(messages) == 0 {
+		return []byte{} // no messages available
+	}
+
+	// Create a realistic record batch
+	batch := make([]byte, 0, 1024)
+
+	// Record batch header
+	baseOffsetBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(baseOffsetBytes, uint64(fetchOffset))
+	batch = append(batch, baseOffsetBytes...) // base offset (8 bytes)
+
+	// Calculate batch length (will be filled after we know the size)
+	batchLengthPos := len(batch)
+	batch = append(batch, 0, 0, 0, 0) // batch length placeholder (4 bytes)
+
+	batch = append(batch, 0, 0, 0, 0) // partition leader epoch (4 bytes)
+	batch = append(batch, 2)          // magic byte (version 2) (1 byte)
+
+	// CRC placeholder (4 bytes) - for testing, use 0
+	batch = append(batch, 0, 0, 0, 0) // CRC32
+
+	// Batch attributes (2 bytes) - no compression, no transactional
+	batch = append(batch, 0, 0) // attributes
+
+	// Last offset delta (4 bytes)
+	lastOffsetDelta := uint32(len(messages) - 1)
+	lastOffsetDeltaBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(lastOffsetDeltaBytes, lastOffsetDelta)
+	batch = append(batch, lastOffsetDeltaBytes...)
+
+	// First timestamp (8 bytes)
+	firstTimestamp := time.Now().UnixMilli()
+	firstTimestampBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(firstTimestampBytes, uint64(firstTimestamp))
+	batch = append(batch, firstTimestampBytes...)
+
+	// Max timestamp (8 bytes)
+	maxTimestamp := firstTimestamp + int64(len(messages)) - 1
+	maxTimestampBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(maxTimestampBytes, uint64(maxTimestamp))
+	batch = append(batch, maxTimestampBytes...)
+
+	// Producer ID (8 bytes) - -1 for non-transactional
+	batch = append(batch, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF)
+
+	// Producer Epoch (2 bytes) - -1 for non-transactional
+	batch = append(batch, 0xFF, 0xFF)
+
+	// Base Sequence (4 bytes) - -1 for non-transactional
+	batch = append(batch, 0xFF, 0xFF, 0xFF, 0xFF)
+
+	// Record count (4 bytes)
+	recordCountBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(recordCountBytes, uint32(len(messages)))
+	batch = append(batch, recordCountBytes...)
+
+	// Add individual records
+	for i, msg := range messages {
+		// Try to extract key and value from the message
+		var key, value []byte
+		
+		// Handle different message types
+		if msgMap, ok := msg.(map[string]interface{}); ok {
+			if keyVal, exists := msgMap["key"]; exists {
+				if keyBytes, ok := keyVal.([]byte); ok {
+					key = keyBytes
+				} else if keyStr, ok := keyVal.(string); ok {
+					key = []byte(keyStr)
+				}
+			}
+			if valueVal, exists := msgMap["value"]; exists {
+				if valueBytes, ok := valueVal.([]byte); ok {
+					value = valueBytes
+				} else if valueStr, ok := valueVal.(string); ok {
+					value = []byte(valueStr)
+				}
+			}
+		}
+
+		// If we couldn't extract key/value, create default ones
+		if value == nil {
+			value = []byte(fmt.Sprintf("Message %d", fetchOffset+int64(i)))
+		}
+
+		// Build individual record
+		record := make([]byte, 0, 128)
+
+		// Record attributes (1 byte)
+		record = append(record, 0)
+
+		// Timestamp delta (varint)
+		timestampDelta := int64(i)
+		record = append(record, encodeVarint(timestampDelta)...)
+
+		// Offset delta (varint)
+		offsetDelta := int64(i)
+		record = append(record, encodeVarint(offsetDelta)...)
+
+		// Key length and key (varint + data)
+		if key == nil {
+			record = append(record, encodeVarint(-1)...) // null key
+		} else {
+			record = append(record, encodeVarint(int64(len(key)))...)
+			record = append(record, key...)
+		}
+
+		// Value length and value (varint + data)
+		record = append(record, encodeVarint(int64(len(value)))...)
+		record = append(record, value...)
+
+		// Headers count (varint) - 0 headers
+		record = append(record, encodeVarint(0)...)
+
+		// Prepend record length (varint)
+		recordLength := int64(len(record))
+		batch = append(batch, encodeVarint(recordLength)...)
+		batch = append(batch, record...)
+	}
+
+	// Fill in the batch length
+	batchLength := uint32(len(batch) - batchLengthPos - 4)
+	binary.BigEndian.PutUint32(batch[batchLengthPos:batchLengthPos+4], batchLength)
+
+	return batch
 }
 
 // constructRecordBatch creates a realistic Kafka record batch that matches produced messages
