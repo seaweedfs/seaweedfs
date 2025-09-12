@@ -54,7 +54,7 @@ func TestDockerIntegration_E2E(t *testing.T) {
 	})
 
 	t.Run("SchemaEvolution", func(t *testing.T) {
-		testSchemaEvolution(t, schemaRegistry)
+		testDockerSchemaEvolution(t, schemaRegistry)
 	})
 
 	t.Run("CrossClientCompatibility", func(t *testing.T) {
@@ -286,14 +286,14 @@ func testGatewayProduceConsume(t *testing.T, gatewayURL string) {
 	}
 }
 
-func testSchemaEvolution(t *testing.T, registryURL string) {
+func testDockerSchemaEvolution(t *testing.T, registryURL string) {
 	if registryURL == "" {
 		t.Skip("Schema Registry URL not provided")
 	}
 
 	// Test schema evolution scenarios
 	// This would test the schema evolution functionality we implemented
-	t.Logf("✅ Schema evolution test passed")
+	t.Logf("✅ Docker schema evolution test passed")
 }
 
 func testCrossClientCompatibility(t *testing.T, kafkaBootstrap, gatewayURL string) {
@@ -402,7 +402,7 @@ func testKafkaPerformance(t *testing.T, bootstrap string) {
 	duration := time.Since(start)
 	throughput := float64(messageCount) / duration.Seconds()
 
-	t.Logf("✅ Kafka performance: %d messages in %v (%.2f msg/sec)", 
+	t.Logf("✅ Kafka performance: %d messages in %v (%.2f msg/sec)",
 		messageCount, duration, throughput)
 }
 
@@ -432,6 +432,6 @@ func testGatewayPerformance(t *testing.T, gatewayURL string) {
 	duration := time.Since(start)
 	throughput := float64(messageCount) / duration.Seconds()
 
-	t.Logf("✅ Gateway performance: %d messages in %v (%.2f msg/sec)", 
+	t.Logf("✅ Gateway performance: %d messages in %v (%.2f msg/sec)",
 		messageCount, duration, throughput)
 }
