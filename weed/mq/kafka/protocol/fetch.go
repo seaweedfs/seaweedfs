@@ -72,8 +72,8 @@ func (h *Handler) handleFetch(correlationID uint32, apiVersion uint16, requestBo
 			ledger := h.GetOrCreateLedger(topic.Name, partition.PartitionID)
 			highWaterMark := ledger.GetHighWaterMark()
 
-			fmt.Printf("DEBUG: Fetch - topic: %s, partition: %d, fetchOffset: %d, highWaterMark: %d\n",
-				topic.Name, partition.PartitionID, partition.FetchOffset, highWaterMark)
+			fmt.Printf("DEBUG: Fetch v%d - topic: %s, partition: %d, fetchOffset: %d, highWaterMark: %d, maxBytes: %d\n",
+				apiVersion, topic.Name, partition.PartitionID, partition.FetchOffset, highWaterMark, partition.MaxBytes)
 
 			// High water mark (8 bytes)
 			highWaterMarkBytes := make([]byte, 8)
@@ -97,7 +97,12 @@ func (h *Handler) handleFetch(correlationID uint32, apiVersion uint16, requestBo
 				// Try to get the actual stored record batch first
 				if storedBatch, exists := h.GetRecordBatch(topic.Name, partition.PartitionID, partition.FetchOffset); exists {
 					recordBatch = storedBatch
-					fmt.Printf("DEBUG: Using stored record batch for offset %d, size: %d bytes\n", partition.FetchOffset, len(storedBatch))
+					hexLen := 20
+					if len(storedBatch) < hexLen {
+						hexLen = len(storedBatch)
+					}
+					fmt.Printf("DEBUG: Using stored record batch for offset %d, size: %d bytes, first %d bytes: %x\n", 
+						partition.FetchOffset, len(storedBatch), hexLen, storedBatch[:hexLen])
 				} else {
 					fmt.Printf("DEBUG: No stored record batch found for offset %d, using synthetic batch\n", partition.FetchOffset)
 					// Fallback to synthetic batch if no stored batch found
@@ -122,6 +127,7 @@ func (h *Handler) handleFetch(correlationID uint32, apiVersion uint16, requestBo
 		}
 	}
 
+	fmt.Printf("DEBUG: Fetch v%d response constructed, size: %d bytes\n", apiVersion, len(response))
 	return response, nil
 }
 

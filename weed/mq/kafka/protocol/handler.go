@@ -193,6 +193,16 @@ func (h *Handler) GetRecordBatch(topicName string, partition int32, offset int64
 
 		if recordCount > 0 && offset >= baseOffset && offset < baseOffset+int64(recordCount) {
 			fmt.Printf("DEBUG: Found matching batch for offset %d in batch with baseOffset %d\n", offset, baseOffset)
+			
+			// If requesting the base offset, return the entire batch
+			if offset == baseOffset {
+				return batch, true
+			}
+			
+			// For non-base offsets, we need to create a sub-batch starting from the requested offset
+			// This is a complex operation, so for now return the entire batch
+			// TODO: Implement proper sub-batch extraction
+			fmt.Printf("DEBUG: WARNING: Returning entire batch for offset %d (baseOffset=%d) - may cause client issues\n", offset, baseOffset)
 			return batch, true
 		}
 	}
@@ -269,7 +279,6 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 		apiKey := binary.BigEndian.Uint16(messageBuf[0:2])
 		apiVersion := binary.BigEndian.Uint16(messageBuf[2:4])
 		correlationID := binary.BigEndian.Uint32(messageBuf[4:8])
-
 
 		apiName := getAPIName(apiKey)
 
