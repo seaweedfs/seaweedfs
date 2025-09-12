@@ -429,7 +429,7 @@ func (h *Handler) handleApiVersions(correlationID uint32) ([]byte, error) {
 	// Sarama works with v4, kafka-go should also work with v4
 	response = append(response, 0, 3) // API key 3
 	response = append(response, 0, 0) // min version 0
-	response = append(response, 0, 4) // max version 4 (was 6)
+	response = append(response, 0, 7) // max version 7
 
 	// API Key 2 (ListOffsets): api_key(2) + min_version(2) + max_version(2)
 	response = append(response, 0, 2) // API key 2
@@ -1152,7 +1152,7 @@ func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, req
 		return nil, fmt.Errorf("ListOffsets request too short")
 	}
 
-	// Skip client_id: client_id_size(2) + client_id_data
+	// Skip client_id: client_id_size(2) + topics_count(4)
 	clientIDSize := binary.BigEndian.Uint16(requestBody[0:2])
 	offset := 2 + int(clientIDSize)
 
