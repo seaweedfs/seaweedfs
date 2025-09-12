@@ -270,7 +270,6 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 		apiVersion := binary.BigEndian.Uint16(messageBuf[2:4])
 		correlationID := binary.BigEndian.Uint32(messageBuf[4:8])
 
-		fmt.Printf("DEBUG: API Request - Key: %d, Version: %d, Correlation: %d\n", apiKey, apiVersion, correlationID)
 
 		apiName := getAPIName(apiKey)
 
@@ -852,7 +851,6 @@ func (h *Handler) HandleMetadataV3V4(correlationID uint32, requestBody []byte) (
 	}
 
 	response := buf.Bytes()
-	fmt.Printf("DEBUG: Metadata v4 response size: %d bytes, hex: %x\n", len(response), response)
 
 	return response, nil
 }
@@ -1266,7 +1264,6 @@ func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, req
 		}
 	}
 
-	fmt.Printf("DEBUG: ListOffsets v%d response: %d bytes, hex: %x\n", apiVersion, len(response), response)
 	return response, nil
 }
 

@@ -122,7 +122,6 @@ func (h *Handler) handleFetch(correlationID uint32, apiVersion uint16, requestBo
 		}
 	}
 
-	fmt.Printf("DEBUG: Fetch v%d response hex dump (%d bytes): %x\n", apiVersion, len(response), response)
 	return response, nil
 }
 
