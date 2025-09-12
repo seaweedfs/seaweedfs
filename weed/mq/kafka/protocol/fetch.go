@@ -32,6 +32,12 @@ func (h *Handler) handleFetch(correlationID uint32, apiVersion uint16, requestBo
 		response = append(response, 0, 0, 0, 0) // throttle_time_ms (4 bytes, 0 = no throttling)
 	}
 
+	// Fetch v7+ has error_code and session_id
+	if apiVersion >= 7 {
+		response = append(response, 0, 0)       // error_code (2 bytes, 0 = no error)
+		response = append(response, 0, 0, 0, 0) // session_id (4 bytes, 0 = no session)
+	}
+
 	// Topics count
 	topicsCount := len(fetchRequest.Topics)
 	topicsCountBytes := make([]byte, 4)
