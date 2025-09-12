@@ -237,7 +237,6 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 		case 20: // DeleteTopics
 			response, err = h.handleDeleteTopics(correlationID, messageBuf[8:]) // skip header
 		case 0: // Produce
-			fmt.Printf("DEBUG: *** PRODUCE REQUEST RECEIVED *** Correlation: %d\n", correlationID)
 			response, err = h.handleProduce(correlationID, apiVersion, messageBuf[8:])
 		case 1: // Fetch
 			fmt.Printf("DEBUG: *** FETCH HANDLER CALLED *** Correlation: %d, Version: %d\n", correlationID, apiVersion)
@@ -700,7 +699,6 @@ func (h *Handler) HandleMetadataV3V4(correlationID uint32, requestBody []byte) (
 
 	// Parse requested topics (empty means all)
 	requestedTopics := h.parseMetadataTopics(requestBody)
-	fmt.Printf("DEBUG: 🔍 METADATA v3/v4 REQUEST - Requested: %v (empty=all)\n", requestedTopics)
 
 	// Determine topics to return
 	h.topicsMu.RLock()

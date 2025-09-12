@@ -21,7 +21,7 @@ func TestDockerSetup_Files(t *testing.T) {
 		// Read and validate basic structure
 		content, err := os.ReadFile(composePath)
 		require.NoError(t, err)
-		
+
 		composeContent := string(content)
 		assert.Contains(t, composeContent, "version:", "Should have version specified")
 		assert.Contains(t, composeContent, "services:", "Should have services section")
@@ -45,7 +45,7 @@ func TestDockerSetup_Files(t *testing.T) {
 			// Validate basic Dockerfile structure
 			content, err := os.ReadFile(dockerfilePath)
 			require.NoError(t, err)
-			
+
 			dockerContent := string(content)
 			assert.Contains(t, dockerContent, "FROM", "Should have FROM instruction")
 		}
@@ -69,7 +69,7 @@ func TestDockerSetup_Files(t *testing.T) {
 			// Validate basic shell script structure
 			content, err := os.ReadFile(scriptPath)
 			require.NoError(t, err)
-			
+
 			scriptContent := string(content)
 			assert.Contains(t, scriptContent, "#!/", "Should have shebang")
 		}
@@ -83,7 +83,7 @@ func TestDockerSetup_Files(t *testing.T) {
 		// Validate basic Makefile structure
 		content, err := os.ReadFile(makefilePath)
 		require.NoError(t, err)
-		
+
 		makefileContent := string(content)
 		assert.Contains(t, makefileContent, "help:", "Should have help target")
 		assert.Contains(t, makefileContent, "setup:", "Should have setup target")
@@ -99,7 +99,7 @@ func TestDockerSetup_Files(t *testing.T) {
 		// Validate basic README structure
 		content, err := os.ReadFile(readmePath)
 		require.NoError(t, err)
-		
+
 		readmeContent := string(content)
 		assert.Contains(t, readmeContent, "# Kafka Integration Testing", "Should have main title")
 		assert.Contains(t, readmeContent, "## Quick Start", "Should have quick start section")
@@ -114,7 +114,7 @@ func TestDockerSetup_Files(t *testing.T) {
 		// Validate basic Go file structure
 		content, err := os.ReadFile(setupPath)
 		require.NoError(t, err)
-		
+
 		setupContent := string(content)
 		assert.Contains(t, setupContent, "package main", "Should be main package")
 		assert.Contains(t, setupContent, "func main()", "Should have main function")
@@ -127,11 +127,11 @@ func TestDockerSetup_Configuration(t *testing.T) {
 	t.Run("PortConfiguration", func(t *testing.T) {
 		// This test verifies that the ports used in docker-compose.yml are reasonable
 		// and don't conflict with common development ports
-		
+
 		expectedPorts := map[string]string{
-			"zookeeper":      "2181",
-			"kafka":          "9092",
-			"schema-registry": "8081",
+			"zookeeper":        "2181",
+			"kafka":            "9092",
+			"schema-registry":  "8081",
 			"seaweedfs-master": "9333",
 			"seaweedfs-volume": "8080",
 			"seaweedfs-filer":  "8888",
@@ -141,11 +141,11 @@ func TestDockerSetup_Configuration(t *testing.T) {
 		composePath := "docker-compose.yml"
 		content, err := os.ReadFile(composePath)
 		require.NoError(t, err)
-		
+
 		composeContent := string(content)
-		
+
 		for service, port := range expectedPorts {
-			assert.Contains(t, composeContent, port+":", 
+			assert.Contains(t, composeContent, port+":",
 				"Service %s should expose port %s", service, port)
 		}
 	})
@@ -155,17 +155,17 @@ func TestDockerSetup_Configuration(t *testing.T) {
 		composePath := "docker-compose.yml"
 		content, err := os.ReadFile(composePath)
 		require.NoError(t, err)
-		
+
 		composeContent := string(content)
-		
+
 		// Should have health checks for critical services
 		assert.Contains(t, composeContent, "healthcheck:", "Should have health checks")
-		
+
 		// Verify specific health check patterns
 		healthCheckServices := []string{"kafka", "schema-registry", "seaweedfs-master"}
 		for _, service := range healthCheckServices {
 			// Look for health check in the service section (basic validation)
-			assert.Contains(t, composeContent, service+":", 
+			assert.Contains(t, composeContent, service+":",
 				"Service %s should be defined", service)
 		}
 	})
@@ -174,9 +174,9 @@ func TestDockerSetup_Configuration(t *testing.T) {
 		composePath := "docker-compose.yml"
 		content, err := os.ReadFile(composePath)
 		require.NoError(t, err)
-		
+
 		composeContent := string(content)
-		
+
 		// Should have network configuration
 		assert.Contains(t, composeContent, "networks:", "Should have networks section")
 		assert.Contains(t, composeContent, "kafka-test-net", "Should have test network")
@@ -193,7 +193,7 @@ func TestDockerSetup_Integration(t *testing.T) {
 		// Validate test structure
 		content, err := os.ReadFile(testPath)
 		require.NoError(t, err)
-		
+
 		testContent := string(content)
 		assert.Contains(t, testContent, "TestDockerIntegration_E2E", "Should have E2E test")
 		assert.Contains(t, testContent, "KAFKA_BOOTSTRAP_SERVERS", "Should check environment variables")
@@ -205,17 +205,17 @@ func TestDockerSetup_Integration(t *testing.T) {
 		testPath := "docker_integration_test.go"
 		content, err := os.ReadFile(testPath)
 		require.NoError(t, err)
-		
+
 		testContent := string(content)
-		
+
 		envVars := []string{
 			"KAFKA_BOOTSTRAP_SERVERS",
-			"KAFKA_GATEWAY_URL", 
+			"KAFKA_GATEWAY_URL",
 			"SCHEMA_REGISTRY_URL",
 		}
-		
+
 		for _, envVar := range envVars {
-			assert.Contains(t, testContent, envVar, 
+			assert.Contains(t, testContent, envVar,
 				"Should reference environment variable %s", envVar)
 		}
 	})
@@ -227,9 +227,9 @@ func TestDockerSetup_Makefile(t *testing.T) {
 		makefilePath := "Makefile"
 		content, err := os.ReadFile(makefilePath)
 		require.NoError(t, err)
-		
+
 		makefileContent := string(content)
-		
+
 		essentialTargets := []string{
 			"help:",
 			"setup:",
@@ -241,9 +241,9 @@ func TestDockerSetup_Makefile(t *testing.T) {
 			"logs:",
 			"status:",
 		}
-		
+
 		for _, target := range essentialTargets {
-			assert.Contains(t, makefileContent, target, 
+			assert.Contains(t, makefileContent, target,
 				"Should have target %s", target)
 		}
 	})
@@ -252,9 +252,9 @@ func TestDockerSetup_Makefile(t *testing.T) {
 		makefilePath := "Makefile"
 		content, err := os.ReadFile(makefilePath)
 		require.NoError(t, err)
-		
+
 		makefileContent := string(content)
-		
+
 		devTargets := []string{
 			"dev-kafka:",
 			"dev-seaweedfs:",
@@ -262,9 +262,9 @@ func TestDockerSetup_Makefile(t *testing.T) {
 			"shell-kafka:",
 			"topics:",
 		}
-		
+
 		for _, target := range devTargets {
-			assert.Contains(t, makefileContent, target, 
+			assert.Contains(t, makefileContent, target,
 				"Should have development target %s", target)
 		}
 	})

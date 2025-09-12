@@ -233,7 +233,7 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 // - Individual record extraction
 func (h *Handler) parseRecordSet(recordSetData []byte) (recordCount int32, totalSize int32, err error) {
 	parser := NewRecordBatchParser()
-	
+
 	// Parse the record batch with CRC validation
 	batch, err := parser.ParseRecordBatchWithValidation(recordSetData, true)
 	if err != nil {
@@ -242,10 +242,10 @@ func (h *Handler) parseRecordSet(recordSetData []byte) (recordCount int32, total
 		if err != nil {
 			return 0, 0, fmt.Errorf("failed to parse record batch: %w", err)
 		}
-		fmt.Printf("DEBUG: Record batch parsed without CRC validation (codec: %s)\n", 
+		fmt.Printf("DEBUG: Record batch parsed without CRC validation (codec: %s)\n",
 			batch.GetCompressionCodec())
 	} else {
-		fmt.Printf("DEBUG: Record batch parsed successfully with CRC validation (codec: %s)\n", 
+		fmt.Printf("DEBUG: Record batch parsed successfully with CRC validation (codec: %s)\n",
 			batch.GetCompressionCodec())
 	}
 
@@ -558,14 +558,14 @@ func (h *Handler) storeDecodedMessage(topicName string, partitionID int32, decod
 // extractMessagesFromRecordSet extracts individual messages from a record set with compression support
 func (h *Handler) extractMessagesFromRecordSet(recordSetData []byte) ([][]byte, error) {
 	parser := NewRecordBatchParser()
-	
+
 	// Parse the record batch
 	batch, err := parser.ParseRecordBatch(recordSetData)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse record batch for message extraction: %w", err)
 	}
 
-	fmt.Printf("DEBUG: Extracting messages from record batch (codec: %s, records: %d)\n", 
+	fmt.Printf("DEBUG: Extracting messages from record batch (codec: %s, records: %d)\n",
 		batch.GetCompressionCodec(), batch.RecordCount)
 
 	// Decompress the records if compressed
@@ -578,7 +578,7 @@ func (h *Handler) extractMessagesFromRecordSet(recordSetData []byte) ([][]byte, 
 	// In a full implementation, this would parse individual records from the decompressed data
 	messages := [][]byte{decompressedData}
 
-	fmt.Printf("DEBUG: Extracted %d messages (decompressed size: %d bytes)\n", 
+	fmt.Printf("DEBUG: Extracted %d messages (decompressed size: %d bytes)\n",
 		len(messages), len(decompressedData))
 
 	return messages, nil
