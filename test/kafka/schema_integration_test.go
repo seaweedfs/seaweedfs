@@ -479,20 +479,22 @@ func TestKafkaGateway_SchemaPerformance(t *testing.T) {
 		t.Fatalf("Failed to create schema manager: %v", err)
 	}
 
-	// Create test message
+	// Create test message using the same schema as registered (with email field)
 	avroSchema := `{
 		"type": "record",
 		"name": "User",
 		"fields": [
 			{"name": "id", "type": "int"},
-			{"name": "name", "type": "string"}
+			{"name": "name", "type": "string"},
+			{"name": "email", "type": ["null", "string"], "default": null}
 		]
 	}`
 
 	codec, _ := goavro.NewCodec(avroSchema)
 	testData := map[string]interface{}{
-		"id":   int32(1),
-		"name": "Performance Test",
+		"id":    int32(1),
+		"name":  "Performance Test",
+		"email": map[string]interface{}{"string": "perf@example.com"},
 	}
 	avroBinary, _ := codec.BinaryFromNative(nil, testData)
 	testMsg := schema.CreateConfluentEnvelope(schema.FormatAvro, 1, nil, avroBinary)

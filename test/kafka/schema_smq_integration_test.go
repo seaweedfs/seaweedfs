@@ -37,12 +37,13 @@ func createTestKafkaHandler(t *testing.T) *protocol.Handler {
 	// Create handler with schema management enabled
 	handler := protocol.NewHandler()
 
-	// Enable schema management with mock registry
+	// Try to enable schema management, but don't fail if registry is not available
 	err := handler.EnableSchemaManagement(schema.ManagerConfig{
 		RegistryURL: "http://localhost:8081", // Mock registry
 	})
 	if err != nil {
 		t.Logf("Schema management not enabled (expected in test): %v", err)
+		// Continue without schema management for basic offset testing
 	}
 
 	return handler
@@ -100,6 +101,16 @@ func testAvroMessageWorkflow(t *testing.T, handler *protocol.Handler) {
 	t.Logf("Assigned Kafka offset: %d", baseOffset)
 
 	// Step 6: Process the schematized message (simulate what happens in Produce handler)
+	// Always store the record in the ledger for offset tracking
+	timestamp := time.Now().UnixNano()
+	err = ledger.AppendRecord(baseOffset, timestamp, int32(len(confluentMsg)))
+	if err != nil {
+		t.Fatalf("Failed to append record to ledger: %v", err)
+	}
+
+	t.Logf("Stored message in SMQ simulation - Offset: %d, Timestamp: %d, Size: %d",
+		baseOffset, timestamp, len(confluentMsg))
+
 	if handler.IsSchemaEnabled() {
 		// Parse Confluent envelope
 		envelope, ok := schema.ParseConfluentEnvelope(confluentMsg)
@@ -111,15 +122,7 @@ func testAvroMessageWorkflow(t *testing.T, handler *protocol.Handler) {
 			envelope.SchemaID, envelope.Format, len(envelope.Payload))
 
 		// This is where the message would be decoded and sent to SMQ
-		// For now, we'll simulate the SMQ storage
-		timestamp := time.Now().UnixNano()
-		err = ledger.AppendRecord(baseOffset, timestamp, int32(len(confluentMsg)))
-		if err != nil {
-			t.Fatalf("Failed to append record to ledger: %v", err)
-		}
-
-		t.Logf("Stored message in SMQ simulation - Offset: %d, Timestamp: %d, Size: %d",
-			baseOffset, timestamp, len(confluentMsg))
+		// Schema processing happens after storage
 	}
 
 	// Step 7: Verify offset management

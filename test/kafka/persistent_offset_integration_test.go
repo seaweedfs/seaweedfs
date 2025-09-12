@@ -233,6 +233,7 @@ func testSMQSubscriberIntegration(t *testing.T, brokers []string) {
 	// Subscribe from offset 0
 	subscription, err := subscriber.Subscribe(kafkaTopic, kafkaPartition, 0, consumerGroup)
 	require.NoError(t, err)
+	_ = subscription // Use the subscription variable
 
 	// Wait for subscription to be active
 	time.Sleep(2 * time.Second)
