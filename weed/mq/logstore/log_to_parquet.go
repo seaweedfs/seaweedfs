@@ -25,9 +25,9 @@ import (
 )
 
 const (
-	SW_COLUMN_NAME_TS    = "_ts_ns"
-	SW_COLUMN_NAME_KEY   = "_key"
-	SW_COLUMN_NAME_INDEX = "_index"
+	SW_COLUMN_NAME_TS     = "_ts_ns"
+	SW_COLUMN_NAME_KEY    = "_key"
+	SW_COLUMN_NAME_OFFSET = "_offset"
 )
 
 func CompactTopicPartitions(filerClient filer_pb.FilerClient, t topic.Topic, timeAgo time.Duration, recordType *schema_pb.RecordType, preference *operation.StoragePreference) error {
@@ -273,7 +273,9 @@ func writeLogFilesToParquet(filerClient filer_pb.FilerClient, partitionDir strin
 				},
 			}
 
-			record.Fields[SW_COLUMN_NAME_INDEX] = &schema_pb.Value{
+			// TODO: Add offset field to parquet records for native offset support
+			// ASSUMPTION: LogEntry.Offset field is populated by broker during message publishing
+			record.Fields[SW_COLUMN_NAME_OFFSET] = &schema_pb.Value{
 				Kind: &schema_pb.Value_Int64Value{
 					Int64Value: entry.Offset,
 				},
