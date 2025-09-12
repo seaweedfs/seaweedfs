@@ -316,23 +316,92 @@ func (h *Handler) parseJoinGroupRequest(data []byte) (*JoinGroupRequest, error) 
 		offset += memberIDLength
 	}
 
-	// TODO: CRITICAL - JoinGroup request parsing is incomplete
-	// Missing parsing of:
-	// - Group instance ID (for static membership)
-	// - Protocol type validation
-	// - Group protocols array (client's supported assignment strategies)
-	// - Protocol metadata (consumer subscriptions, user data)
-	// Without this, assignment strategies and subscriptions won't work with real clients
+	// Parse Protocol Type
+	if len(data) < offset+2 {
+		return nil, fmt.Errorf("JoinGroup request missing protocol type")
+	}
+	protocolTypeLength := binary.BigEndian.Uint16(data[offset : offset+2])
+	offset += 2
+	
+	if len(data) < offset+int(protocolTypeLength) {
+		return nil, fmt.Errorf("JoinGroup request protocol type too short")
+	}
+	protocolType := string(data[offset : offset+int(protocolTypeLength)])
+	offset += int(protocolTypeLength)
+	
+	// Parse Group Protocols array
+	if len(data) < offset+4 {
+		return nil, fmt.Errorf("JoinGroup request missing group protocols")
+	}
+	protocolsCount := binary.BigEndian.Uint32(data[offset : offset+4])
+	offset += 4
+	
+	fmt.Printf("DEBUG: JoinGroup - GroupID: %s, SessionTimeout: %d, RebalanceTimeout: %d, MemberID: %s, ProtocolType: %s, ProtocolsCount: %d\n",
+		groupID, sessionTimeout, rebalanceTimeout, memberID, protocolType, protocolsCount)
+	
+	protocols := make([]GroupProtocol, 0, protocolsCount)
+	
+	for i := uint32(0); i < protocolsCount && offset < len(data); i++ {
+		// Parse protocol name
+		if len(data) < offset+2 {
+			break
+		}
+		protocolNameLength := binary.BigEndian.Uint16(data[offset : offset+2])
+		offset += 2
+		
+		if len(data) < offset+int(protocolNameLength) {
+			break
+		}
+		protocolName := string(data[offset : offset+int(protocolNameLength)])
+		offset += int(protocolNameLength)
+		
+		// Parse protocol metadata
+		if len(data) < offset+4 {
+			break
+		}
+		metadataLength := binary.BigEndian.Uint32(data[offset : offset+4])
+		offset += 4
+		
+		var metadata []byte
+		if metadataLength > 0 && len(data) >= offset+int(metadataLength) {
+			metadata = make([]byte, metadataLength)
+			copy(metadata, data[offset:offset+int(metadataLength)])
+			offset += int(metadataLength)
+		}
+		
+		protocols = append(protocols, GroupProtocol{
+			Name:     protocolName,
+			Metadata: metadata,
+		})
+		
+		fmt.Printf("DEBUG: JoinGroup - Protocol: %s, MetadataLength: %d\n", protocolName, metadataLength)
+	}
+	
+	// Parse Group Instance ID (nullable string) - for static membership (Kafka 2.3+)
+	var groupInstanceID string
+	if len(data) >= offset+2 {
+		instanceIDLength := int16(binary.BigEndian.Uint16(data[offset : offset+2]))
+		offset += 2
+		
+		if instanceIDLength == -1 {
+			groupInstanceID = "" // null string
+		} else if instanceIDLength >= 0 && len(data) >= offset+int(instanceIDLength) {
+			groupInstanceID = string(data[offset : offset+int(instanceIDLength)])
+			offset += int(instanceIDLength)
+		}
+		
+		if groupInstanceID != "" {
+			fmt.Printf("DEBUG: JoinGroup - GroupInstanceID: %s\n", groupInstanceID)
+		}
+	}
 
 	return &JoinGroupRequest{
 		GroupID:          groupID,
 		SessionTimeout:   sessionTimeout,
 		RebalanceTimeout: rebalanceTimeout,
 		MemberID:         memberID,
-		ProtocolType:     "consumer", // TODO: Parse from request
-		GroupProtocols: []GroupProtocol{
-			{Name: "range", Metadata: []byte{}}, // TODO: Parse actual protocols from request
-		},
+		ProtocolType:     protocolType,
+		GroupProtocols:   protocols,
 	}, nil
 }
 
@@ -498,14 +567,68 @@ func (h *Handler) buildMinimalJoinGroupResponse(correlationID uint32, apiVersion
 }
 
 func (h *Handler) extractSubscriptionFromProtocols(protocols []GroupProtocol) []string {
-	// TODO: CRITICAL - Consumer subscription extraction is hardcoded to "test-topic"
-	// This breaks real Kafka consumers which send their actual subscriptions
+	// Parse consumer protocol metadata to extract actual subscribed topics
 	// Consumer protocol metadata format (for "consumer" protocol type):
 	// - Version (2 bytes)
 	// - Topics array (4 bytes count + topic names)
 	// - User data (4 bytes length + data)
-	// Without fixing this, consumers will be assigned wrong topics
+	
+	for _, protocol := range protocols {
+		if protocol.Name == "range" || protocol.Name == "roundrobin" || protocol.Name == "sticky" {
+			topics := h.parseConsumerProtocolMetadata(protocol.Metadata)
+			if len(topics) > 0 {
+				fmt.Printf("DEBUG: Extracted subscription topics: %v from protocol: %s\n", topics, protocol.Name)
+				return topics
+			}
+		}
+	}
+	
+	// Fallback to default if parsing fails
+	fmt.Printf("DEBUG: Failed to extract subscription, using fallback topic\n")
 	return []string{"test-topic"}
+}
+
+func (h *Handler) parseConsumerProtocolMetadata(metadata []byte) []string {
+	if len(metadata) < 6 { // version(2) + topics_count(4)
+		return nil
+	}
+	
+	offset := 0
+	
+	// Parse version (2 bytes)
+	version := binary.BigEndian.Uint16(metadata[offset : offset+2])
+	offset += 2
+	
+	// Parse topics array
+	if len(metadata) < offset+4 {
+		return nil
+	}
+	topicsCount := binary.BigEndian.Uint32(metadata[offset : offset+4])
+	offset += 4
+	
+	fmt.Printf("DEBUG: Consumer protocol metadata - Version: %d, TopicsCount: %d\n", version, topicsCount)
+	
+	topics := make([]string, 0, topicsCount)
+	
+	for i := uint32(0); i < topicsCount && offset < len(metadata); i++ {
+		// Parse topic name
+		if len(metadata) < offset+2 {
+			break
+		}
+		topicNameLength := binary.BigEndian.Uint16(metadata[offset : offset+2])
+		offset += 2
+		
+		if len(metadata) < offset+int(topicNameLength) {
+			break
+		}
+		topicName := string(metadata[offset : offset+int(topicNameLength)])
+		offset += int(topicNameLength)
+		
+		topics = append(topics, topicName)
+		fmt.Printf("DEBUG: Consumer subscribed to topic: %s\n", topicName)
+	}
+	
+	return topics
 }
 
 func (h *Handler) updateGroupSubscription(group *consumer.ConsumerGroup) {
