@@ -156,7 +156,6 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 		conn.Close()
 	}()
 
-
 	r := bufio.NewReader(conn)
 	w := bufio.NewWriter(conn)
 	defer w.Flush()
@@ -273,7 +272,6 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 		if err != nil {
 			return fmt.Errorf("handle request: %w", err)
 		}
-
 
 		// Write response size and data
 		responseSizeBytes := make([]byte, 4)
