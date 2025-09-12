@@ -1138,7 +1138,7 @@ func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, req
 		replicaID := int32(binary.BigEndian.Uint32(requestBody[offset : offset+4]))
 		offset += 4
 		fmt.Printf("DEBUG: ListOffsets v%d - replica_id: %d\n", apiVersion, replicaID)
-		
+
 		if apiVersion >= 2 {
 			if len(requestBody) < offset+1 {
 				return nil, fmt.Errorf("ListOffsets v%d request missing isolation_level", apiVersion)
