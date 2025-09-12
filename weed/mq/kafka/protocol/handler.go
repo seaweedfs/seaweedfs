@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -155,13 +157,64 @@ func (h *Handler) StoreRecordBatch(topicName string, partition int32, baseOffset
 	h.recordBatches[key] = recordBatch
 }
 
-// GetRecordBatch retrieves a stored record batch
+// GetRecordBatch retrieves a stored record batch that contains the requested offset
 func (h *Handler) GetRecordBatch(topicName string, partition int32, offset int64) ([]byte, bool) {
-	key := fmt.Sprintf("%s:%d:%d", topicName, partition, offset)
 	h.recordBatchMu.RLock()
 	defer h.recordBatchMu.RUnlock()
-	batch, exists := h.recordBatches[key]
-	return batch, exists
+	
+	fmt.Printf("DEBUG: GetRecordBatch - looking for topic=%s, partition=%d, offset=%d\n", topicName, partition, offset)
+	fmt.Printf("DEBUG: Available record batches: %d\n", len(h.recordBatches))
+	
+	// Look for a record batch that contains this offset
+	// Record batches are stored by their base offset, but may contain multiple records
+	topicPartitionPrefix := fmt.Sprintf("%s:%d:", topicName, partition)
+	
+	for key, batch := range h.recordBatches {
+		fmt.Printf("DEBUG: Checking key: %s\n", key)
+		if !strings.HasPrefix(key, topicPartitionPrefix) {
+			continue
+		}
+		
+		// Extract the base offset from the key
+		parts := strings.Split(key, ":")
+		if len(parts) != 3 {
+			continue
+		}
+		
+		baseOffset, err := strconv.ParseInt(parts[2], 10, 64)
+		if err != nil {
+			continue
+		}
+		
+		// Check if this batch could contain the requested offset
+		// We need to parse the batch to determine how many records it contains
+		recordCount := h.getRecordCountFromBatch(batch)
+		fmt.Printf("DEBUG: Batch key=%s, baseOffset=%d, recordCount=%d, requested offset=%d\n", key, baseOffset, recordCount, offset)
+		
+		if recordCount > 0 && offset >= baseOffset && offset < baseOffset+int64(recordCount) {
+			fmt.Printf("DEBUG: Found matching batch for offset %d in batch with baseOffset %d\n", offset, baseOffset)
+			return batch, true
+		}
+	}
+	
+	fmt.Printf("DEBUG: No matching batch found for offset %d\n", offset)
+	return nil, false
+}
+
+// getRecordCountFromBatch extracts the record count from a Kafka record batch
+func (h *Handler) getRecordCountFromBatch(batch []byte) int32 {
+	// Kafka record batch format:
+	// base_offset (8) + batch_length (4) + partition_leader_epoch (4) + magic (1) + crc (4) + 
+	// attributes (2) + last_offset_delta (4) + first_timestamp (8) + max_timestamp (8) +
+	// producer_id (8) + producer_epoch (2) + base_sequence (4) + records_count (4) + records...
+	
+	// The record count is at offset 57 (8+4+4+1+4+2+4+8+8+8+2+4 = 57)
+	if len(batch) < 61 { // 57 + 4 bytes for record count
+		return 0
+	}
+	
+	recordCount := binary.BigEndian.Uint32(batch[57:61])
+	return int32(recordCount)
 }
 
 // SetBrokerAddress updates the broker address used in Metadata responses
@@ -216,6 +269,8 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 		apiKey := binary.BigEndian.Uint16(messageBuf[0:2])
 		apiVersion := binary.BigEndian.Uint16(messageBuf[2:4])
 		correlationID := binary.BigEndian.Uint32(messageBuf[4:8])
+		
+		fmt.Printf("DEBUG: API Request - Key: %d, Version: %d, Correlation: %d\n", apiKey, apiVersion, correlationID)
 
 		apiName := getAPIName(apiKey)
 
@@ -1098,8 +1153,8 @@ func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, req
 	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
 	response = append(response, correlationIDBytes...)
 
-	// Throttle time (4 bytes, 0 = no throttling) - v1+ only
-	if apiVersion >= 1 {
+	// Throttle time (4 bytes, 0 = no throttling) - v2+ only
+	if apiVersion >= 2 {
 		response = append(response, 0, 0, 0, 0)
 	}
 

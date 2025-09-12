@@ -12,6 +12,7 @@ import (
 )
 
 func (h *Handler) handleFetch(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
+	fmt.Printf("DEBUG: *** FETCH HANDLER CALLED *** Correlation: %d, Version: %d\n", correlationID, apiVersion)
 	// Parse the Fetch request to get the requested topics and partitions
 	fetchRequest, err := h.parseFetchRequest(apiVersion, requestBody)
 	if err != nil {
@@ -30,9 +31,6 @@ func (h *Handler) handleFetch(correlationID uint32, apiVersion uint16, requestBo
 	if apiVersion >= 1 {
 		response = append(response, 0, 0, 0, 0) // throttle_time_ms (4 bytes, 0 = no throttling)
 	}
-
-	// Fetch v4+ has different format - no error_code and session_id at top level
-	// The session_id and error_code are handled differently in v4+
 
 	// Topics count
 	topicsCount := len(fetchRequest.Topics)
@@ -82,11 +80,9 @@ func (h *Handler) handleFetch(correlationID uint32, apiVersion uint16, requestBo
 				response = append(response, highWaterMarkBytes...)
 				// Log start offset (8 bytes) - 0 for simplicity
 				response = append(response, 0, 0, 0, 0, 0, 0, 0, 0)
-			}
-
-			// Fetch v4+ has aborted_transactions
-			if apiVersion >= 4 {
-				response = append(response, 0, 0, 0, 0) // aborted_transactions count (4 bytes) = 0
+				
+				// Aborted transactions count (4 bytes) = 0
+				response = append(response, 0, 0, 0, 0)
 			}
 
 			// Records - get actual stored record batches
@@ -97,11 +93,13 @@ func (h *Handler) handleFetch(correlationID uint32, apiVersion uint16, requestBo
 					recordBatch = storedBatch
 					fmt.Printf("DEBUG: Using stored record batch for offset %d, size: %d bytes\n", partition.FetchOffset, len(storedBatch))
 				} else {
+					fmt.Printf("DEBUG: No stored record batch found for offset %d, using synthetic batch\n", partition.FetchOffset)
 					// Fallback to synthetic batch if no stored batch found
 					recordBatch = h.constructSimpleRecordBatch(partition.FetchOffset, highWaterMark)
 					fmt.Printf("DEBUG: Using synthetic record batch for offset %d, size: %d bytes\n", partition.FetchOffset, len(recordBatch))
 				}
 			} else {
+				fmt.Printf("DEBUG: No messages available - fetchOffset %d >= highWaterMark %d\n", partition.FetchOffset, highWaterMark)
 				recordBatch = []byte{} // No messages available
 			}
 
@@ -679,6 +677,28 @@ func encodeVarint(value int64) []byte {
 	}
 	buf = append(buf, byte(zigzag))
 	return buf
+}
+
+// getMultipleRecordBatches retrieves and combines multiple record batches starting from the given offset
+func (h *Handler) getMultipleRecordBatches(topicName string, partitionID int32, startOffset, highWaterMark int64) []byte {
+	var combinedBatch []byte
+	
+	// Try to get all available record batches from startOffset to highWaterMark-1
+	for offset := startOffset; offset < highWaterMark; offset++ {
+		if batch, exists := h.GetRecordBatch(topicName, partitionID, offset); exists {
+			// For the first batch, include the full record batch
+			if len(combinedBatch) == 0 {
+				combinedBatch = append(combinedBatch, batch...)
+			} else {
+				// For subsequent batches, we need to append them properly
+				// For now, just return the first batch to avoid format issues
+				// TODO: Implement proper record batch concatenation
+				break
+			}
+		}
+	}
+	
+	return combinedBatch
 }
 
 // reconstructSchematizedMessage reconstructs a schematized message from SMQ RecordValue

@@ -14,6 +14,8 @@ require (
 
 replace github.com/seaweedfs/seaweedfs => ../../
 
+replace github.com/segmentio/kafka-go => /Users/chrislu/dev/kafka-go
+
 require (
 	cloud.google.com/go/auth v0.16.5 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
