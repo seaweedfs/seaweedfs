@@ -390,6 +390,7 @@ message LogEntry {
     int32 partition_key_hash = 2;
     bytes data = 3;
     bytes key = 4;
+    int64 offset = 5;  // Sequential offset within partition
 }
 
 message KeepConnectedRequest {

@@ -119,16 +119,17 @@ func (m *MigrationManager) GetCurrentVersion() (int, error) {
 		return 0, fmt.Errorf("failed to create migrations table: %w", err)
 	}
 	
-	var version int
+	var version sql.NullInt64
 	err = m.db.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version)
-	if err == sql.ErrNoRows {
-		return 0, nil // No migrations applied yet
-	}
 	if err != nil {
 		return 0, fmt.Errorf("failed to get current version: %w", err)
 	}
 	
-	return version, nil
+	if !version.Valid {
+		return 0, nil // No migrations applied yet
+	}
+	
+	return int(version.Int64), nil
 }
 
 // ApplyMigrations applies all pending migrations
