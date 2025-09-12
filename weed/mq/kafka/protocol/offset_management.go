@@ -404,6 +404,12 @@ func (h *Handler) parseOffsetFetchRequest(data []byte) (*OffsetFetchRequest, err
 
 	offset := 0
 
+	// Skip client_id (part of OffsetFetch payload)
+	clientIDLength := int(binary.BigEndian.Uint16(data[offset:]))
+	offset += 2 + clientIDLength
+	fmt.Printf("DEBUG: OffsetFetch skipped client_id (%d bytes: '%s'), offset now: %d\n", 
+		clientIDLength, string(data[2:2+clientIDLength]), offset)
+
 	// GroupID (string)
 	groupIDLength := int(binary.BigEndian.Uint16(data[offset:]))
 	offset += 2

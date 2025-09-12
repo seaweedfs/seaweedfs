@@ -272,7 +272,7 @@ func (h *Handler) parseJoinGroupRequest(data []byte) (*JoinGroupRequest, error) 
 	// Skip client_id (part of JoinGroup v5 payload)
 	clientIDLength := int(binary.BigEndian.Uint16(data[offset:]))
 	offset += 2 + clientIDLength
-	fmt.Printf("DEBUG: JoinGroup v5 skipped client_id (%d bytes: '%s'), offset now: %d\n", 
+	fmt.Printf("DEBUG: JoinGroup v5 skipped client_id (%d bytes: '%s'), offset now: %d\n",
 		clientIDLength, string(data[2:2+clientIDLength]), offset)
 
 	// GroupID (string)
@@ -324,7 +324,7 @@ func (h *Handler) parseJoinGroupRequest(data []byte) (*JoinGroupRequest, error) 
 	}
 	instanceIDLength := int16(binary.BigEndian.Uint16(data[offset:]))
 	offset += 2
-	
+
 	if instanceIDLength == -1 {
 		groupInstanceID = "" // null string
 	} else if instanceIDLength >= 0 {
@@ -334,8 +334,8 @@ func (h *Handler) parseJoinGroupRequest(data []byte) (*JoinGroupRequest, error) 
 		groupInstanceID = string(data[offset : offset+int(instanceIDLength)])
 		offset += int(instanceIDLength)
 	}
-	
-	fmt.Printf("DEBUG: JoinGroup v5 - MemberID: '%s', GroupInstanceID: '%s' (len=%d), offset now: %d\n", 
+
+	fmt.Printf("DEBUG: JoinGroup v5 - MemberID: '%s', GroupInstanceID: '%s' (len=%d), offset now: %d\n",
 		memberID, groupInstanceID, instanceIDLength, offset)
 
 	// Parse Protocol Type
@@ -398,7 +398,6 @@ func (h *Handler) parseJoinGroupRequest(data []byte) (*JoinGroupRequest, error) 
 
 		fmt.Printf("DEBUG: JoinGroup - Protocol: %s, MetadataLength: %d\n", protocolName, metadataLength)
 	}
-
 
 	return &JoinGroupRequest{
 		GroupID:          groupID,
@@ -773,6 +772,12 @@ func (h *Handler) parseSyncGroupRequest(data []byte) (*SyncGroupRequest, error) 
 
 	offset := 0
 
+	// Skip client_id (part of SyncGroup v3 payload)
+	clientIDLength := int(binary.BigEndian.Uint16(data[offset:]))
+	offset += 2 + clientIDLength
+	fmt.Printf("DEBUG: SyncGroup v3 skipped client_id (%d bytes: '%s'), offset now: %d\n", 
+		clientIDLength, string(data[2:2+clientIDLength]), offset)
+
 	// GroupID (string)
 	groupIDLength := int(binary.BigEndian.Uint16(data[offset:]))
 	offset += 2
@@ -822,6 +827,10 @@ func (h *Handler) buildSyncGroupResponse(response SyncGroupResponse) []byte {
 	binary.BigEndian.PutUint32(correlationIDBytes, response.CorrelationID)
 	result = append(result, correlationIDBytes...)
 
+	// SyncGroup v1+ has throttle_time_ms at the beginning
+	// Throttle time (4 bytes, 0 = no throttling)
+	result = append(result, 0, 0, 0, 0)
+
 	// Error code (2 bytes)
 	errorCodeBytes := make([]byte, 2)
 	binary.BigEndian.PutUint16(errorCodeBytes, uint16(response.ErrorCode))
@@ -832,9 +841,6 @@ func (h *Handler) buildSyncGroupResponse(response SyncGroupResponse) []byte {
 	binary.BigEndian.PutUint32(assignmentLength, uint32(len(response.Assignment)))
 	result = append(result, assignmentLength...)
 	result = append(result, response.Assignment...)
-
-	// Throttle time (4 bytes, 0 = no throttling)
-	result = append(result, 0, 0, 0, 0)
 
 	return result
 }
