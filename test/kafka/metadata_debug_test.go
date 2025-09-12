@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/segmentio/kafka-go"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/gateway"
+	"github.com/segmentio/kafka-go"
 )
 
 func TestMetadataV6Debug(t *testing.T) {
@@ -41,7 +41,7 @@ func TestMetadataV6Debug(t *testing.T) {
 
 	t.Logf("Successfully read %d partitions for topic %s", len(partitions), topic)
 	for _, p := range partitions {
-		t.Logf("Partition %d: Leader=%d, Replicas=%v, ISR=%v", 
+		t.Logf("Partition %d: Leader=%d, Replicas=%v, ISR=%v",
 			p.ID, p.Leader.ID, p.Replicas, p.Isr)
 	}
 }
