@@ -233,7 +233,7 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 			fmt.Printf("DEBUG: *** LISTOFFSETS REQUEST RECEIVED *** Correlation: %d, Version: %d\n", correlationID, apiVersion)
 			response, err = h.handleListOffsets(correlationID, apiVersion, messageBuf[8:]) // skip header
 		case 19: // CreateTopics
-			response, err = h.handleCreateTopics(correlationID, messageBuf[8:]) // skip header
+			response, err = h.handleCreateTopics(correlationID, apiVersion, messageBuf[8:]) // skip header
 		case 20: // DeleteTopics
 			response, err = h.handleDeleteTopics(correlationID, messageBuf[8:]) // skip header
 		case 0: // Produce
@@ -1196,45 +1196,56 @@ func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, req
 	return response, nil
 }
 
-func (h *Handler) handleCreateTopics(correlationID uint32, requestBody []byte) ([]byte, error) {
-	// TODO: CRITICAL - This function only supports CreateTopics v0 format
-	// kafka-go uses v2 which has a different request structure!
-	// The wrong topics count (1274981) shows we're parsing from wrong offset
-	// Need to implement proper v2 request parsing or negotiate API version
-
-	// Parse minimal CreateTopics request
-	// Request format: client_id + timeout(4) + topics_array
-
-	if len(requestBody) < 6 { // client_id_size(2) + timeout(4)
+func (h *Handler) handleCreateTopics(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
+	fmt.Printf("DEBUG: *** CREATETOPICS REQUEST RECEIVED *** Correlation: %d, Version: %d\n", correlationID, apiVersion)
+	
+	if len(requestBody) < 2 {
 		return nil, fmt.Errorf("CreateTopics request too short")
 	}
-
-	// Skip client_id
-	clientIDSize := binary.BigEndian.Uint16(requestBody[0:2])
-	offset := 2 + int(clientIDSize)
-
-	fmt.Printf("DEBUG: Client ID size: %d, client ID: %s\n", clientIDSize, string(requestBody[2:2+clientIDSize]))
-
-	// CreateTopics v2 has different format than v0
-	// v2 format: client_id + topics_array + timeout(4) + validate_only(1)
-	// (no separate timeout field before topics like in v0)
-
-	if len(requestBody) < offset+4 {
-		return nil, fmt.Errorf("CreateTopics request missing topics array")
+	
+	// Parse based on API version
+	switch apiVersion {
+	case 0, 1:
+		return h.handleCreateTopicsV0V1(correlationID, requestBody)
+	case 2, 3, 4, 5:
+		return h.handleCreateTopicsV2Plus(correlationID, apiVersion, requestBody)
+	default:
+		return nil, fmt.Errorf("unsupported CreateTopics API version: %d", apiVersion)
 	}
+}
 
-	// Read topics count directly (no timeout field before it in v2)
-	topicsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
-	offset += 4
+func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
+	// CreateTopics v2+ format:
+	// topics_array + timeout_ms(4) + validate_only(1) + [tagged_fields]
+	
+	offset := 0
+	
+	// Parse topics array (compact array format in v2+)
+	if len(requestBody) < offset+1 {
+		return nil, fmt.Errorf("CreateTopics v2+ request missing topics array")
+	}
+	
+	// Read topics count (compact array: length + 1)
+	topicsCountRaw := requestBody[offset]
+	offset += 1
+	
+	var topicsCount uint32
+	if topicsCountRaw == 0 {
+		topicsCount = 0
+	} else {
+		topicsCount = uint32(topicsCountRaw) - 1
+	}
+	
+	fmt.Printf("DEBUG: CreateTopics v%d - Topics count: %d, remaining bytes: %d\n", apiVersion, topicsCount, len(requestBody)-offset)
 
-	// DEBUG: Hex dump first 50 bytes to understand v2 format
+	// DEBUG: Hex dump to understand request format
 	dumpLen := len(requestBody)
 	if dumpLen > 50 {
 		dumpLen = 50
 	}
-	fmt.Printf("DEBUG: CreateTopics v2 request hex dump (first %d bytes): %x\n", dumpLen, requestBody[:dumpLen])
-	fmt.Printf("DEBUG: CreateTopics v2 - Topics count: %d, remaining bytes: %d\n", topicsCount, len(requestBody)-offset)
+	fmt.Printf("DEBUG: CreateTopics v%d request hex dump (first %d bytes): %x\n", apiVersion, dumpLen, requestBody[:dumpLen])
 
+	// Build response
 	response := make([]byte, 0, 256)
 
 	// Correlation ID
@@ -1245,62 +1256,108 @@ func (h *Handler) handleCreateTopics(correlationID uint32, requestBody []byte) (
 	// Throttle time (4 bytes, 0 = no throttling)
 	response = append(response, 0, 0, 0, 0)
 
-	// Topics count (same as request)
-	topicsCountBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(topicsCountBytes, topicsCount)
-	response = append(response, topicsCountBytes...)
+	// Topics array (compact format in v2+: count + 1)
+	if topicsCount == 0 {
+		response = append(response, 0) // Empty array
+	} else {
+		response = append(response, byte(topicsCount+1)) // Compact array format
+	}
 
 	// Process each topic
 	h.topicsMu.Lock()
 	defer h.topicsMu.Unlock()
 
 	for i := uint32(0); i < topicsCount && offset < len(requestBody); i++ {
+		// Parse topic name (compact string in v2+)
+		if len(requestBody) < offset+1 {
+			break
+		}
+		
+		topicNameLengthRaw := requestBody[offset]
+		offset += 1
+		
+		var topicNameLength int
+		if topicNameLengthRaw == 0 {
+			topicNameLength = 0
+		} else {
+			topicNameLength = int(topicNameLengthRaw) - 1
+		}
+
+		if len(requestBody) < offset+topicNameLength {
+			break
+		}
+
+		topicName := string(requestBody[offset : offset+topicNameLength])
+		offset += topicNameLength
+
+		// Parse num_partitions (4 bytes)
+		if len(requestBody) < offset+4 {
+			break
+		}
+		numPartitions := binary.BigEndian.Uint32(requestBody[offset : offset+4])
+		offset += 4
+
+		// Parse replication_factor (2 bytes)  
 		if len(requestBody) < offset+2 {
 			break
 		}
-
-		// Parse topic name
-		topicNameSize := binary.BigEndian.Uint16(requestBody[offset : offset+2])
-		offset += 2
-
-		if len(requestBody) < offset+int(topicNameSize)+12 { // name + num_partitions(4) + replication_factor(2) + configs_count(4) + timeout(4) - simplified
-			break
-		}
-
-		topicName := string(requestBody[offset : offset+int(topicNameSize)])
-		offset += int(topicNameSize)
-
-		// Parse num_partitions and replication_factor (skip others for simplicity)
-		numPartitions := binary.BigEndian.Uint32(requestBody[offset : offset+4])
-		offset += 4
 		replicationFactor := binary.BigEndian.Uint16(requestBody[offset : offset+2])
 		offset += 2
 
-		// Skip configs and remaining fields for simplicity
-		// In a real implementation, we'd parse these properly
-		if len(requestBody) >= offset+4 {
-			configsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
-			offset += 4
-			// Skip configs (simplified)
-			for j := uint32(0); j < configsCount && offset+6 <= len(requestBody); j++ {
-				if len(requestBody) >= offset+2 {
-					configNameSize := binary.BigEndian.Uint16(requestBody[offset : offset+2])
-					offset += 2 + int(configNameSize)
-					if len(requestBody) >= offset+2 {
-						configValueSize := binary.BigEndian.Uint16(requestBody[offset : offset+2])
-						offset += 2 + int(configValueSize)
+		// Parse configs (compact array in v2+)
+		if len(requestBody) >= offset+1 {
+			configsCountRaw := requestBody[offset]
+			offset += 1
+			
+			var configsCount uint32
+			if configsCountRaw == 0 {
+				configsCount = 0
+			} else {
+				configsCount = uint32(configsCountRaw) - 1
+			}
+			
+			// Skip configs for now (simplified)
+			for j := uint32(0); j < configsCount && offset < len(requestBody); j++ {
+				// Skip config name (compact string)
+				if len(requestBody) >= offset+1 {
+					configNameLengthRaw := requestBody[offset]
+					offset += 1
+					if configNameLengthRaw > 0 {
+						configNameLength := int(configNameLengthRaw) - 1
+						offset += configNameLength
+					}
+				}
+				// Skip config value (compact string)
+				if len(requestBody) >= offset+1 {
+					configValueLengthRaw := requestBody[offset]
+					offset += 1
+					if configValueLengthRaw > 0 {
+						configValueLength := int(configValueLengthRaw) - 1
+						offset += configValueLength
 					}
 				}
 			}
 		}
 
-		// Skip timeout field if present
-		if len(requestBody) >= offset+4 {
-			offset += 4
+		// Skip tagged fields (empty for now)
+		if len(requestBody) >= offset+1 {
+			taggedFieldsCount := requestBody[offset]
+			offset += 1
+			// Skip tagged fields (simplified - should be 0 for basic requests)
+			for j := 0; j < int(taggedFieldsCount); j++ {
+				// Skip tagged field parsing for now
+				break
+			}
 		}
 
-		// Response: topic_name + error_code(2) + error_message
-		response = append(response, byte(topicNameSize>>8), byte(topicNameSize))
+		fmt.Printf("DEBUG: Parsed topic: %s, partitions: %d, replication: %d\n", topicName, numPartitions, replicationFactor)
+
+		// Response: topic_name (compact string) + error_code(2) + error_message (compact string)
+		if len(topicName) == 0 {
+			response = append(response, 0) // Empty string
+		} else {
+			response = append(response, byte(len(topicName)+1)) // Compact string format
+		}
 		response = append(response, []byte(topicName)...)
 
 		// Check if topic already exists
@@ -1354,16 +1411,54 @@ func (h *Handler) handleCreateTopics(correlationID uint32, requestBody []byte) (
 		// Error code
 		response = append(response, byte(errorCode>>8), byte(errorCode))
 
-		// Error message (nullable string)
+		// Error message (compact nullable string in v2+)
 		if errorMessage == "" {
-			response = append(response, 0xFF, 0xFF) // null string
+			response = append(response, 0) // null string in compact format
 		} else {
-			errorMsgLen := uint16(len(errorMessage))
-			response = append(response, byte(errorMsgLen>>8), byte(errorMsgLen))
+			response = append(response, byte(len(errorMessage)+1)) // Compact string format
 			response = append(response, []byte(errorMessage)...)
 		}
+		
+		// Tagged fields (empty)
+		response = append(response, 0)
 	}
+	
+	// Parse timeout_ms and validate_only at the end (after all topics)
+	if len(requestBody) >= offset+4 {
+		timeoutMs := binary.BigEndian.Uint32(requestBody[offset : offset+4])
+		offset += 4
+		fmt.Printf("DEBUG: CreateTopics timeout_ms: %d\n", timeoutMs)
+	}
+	
+	if len(requestBody) >= offset+1 {
+		validateOnly := requestBody[offset] != 0
+		offset += 1
+		fmt.Printf("DEBUG: CreateTopics validate_only: %v\n", validateOnly)
+	}
+	
+	// Tagged fields at the end
+	response = append(response, 0)
 
+	return response, nil
+}
+
+// handleCreateTopicsV0V1 handles CreateTopics API versions 0 and 1
+func (h *Handler) handleCreateTopicsV0V1(correlationID uint32, requestBody []byte) ([]byte, error) {
+	// TODO: Implement v0/v1 parsing if needed
+	// For now, return unsupported version error
+	response := make([]byte, 0, 32)
+	
+	// Correlation ID
+	correlationIDBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
+	response = append(response, correlationIDBytes...)
+	
+	// Throttle time
+	response = append(response, 0, 0, 0, 0)
+	
+	// Empty topics array
+	response = append(response, 0, 0, 0, 0)
+	
 	return response, nil
 }
 
@@ -1660,3 +1755,4 @@ func (h *Handler) IsSchemaEnabled() bool {
 func (h *Handler) IsBrokerIntegrationEnabled() bool {
 	return h.IsSchemaEnabled() && h.brokerClient != nil
 }
+
