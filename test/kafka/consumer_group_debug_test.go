@@ -29,7 +29,7 @@ func TestConsumerGroup_Debug(t *testing.T) {
 	// Test configuration
 	topicName := "debug-test"
 	groupID := "debug-group"
-	
+
 	// Add topic for testing
 	gatewayServer.GetHandler().AddTopicForTesting(topicName, 1)
 
@@ -70,7 +70,7 @@ func TestConsumerGroup_Debug(t *testing.T) {
 
 	// Start one consumer
 	t.Logf("=== Starting 1 consumer in group '%s' ===", groupID)
-	
+
 	consumerGroup, err := sarama.NewConsumerGroup([]string{brokerAddr}, groupID, config)
 	if err != nil {
 		t.Fatalf("Failed to create consumer group: %v", err)
@@ -95,16 +95,16 @@ func TestConsumerGroup_Debug(t *testing.T) {
 	select {
 	case <-handler.ready:
 		t.Logf("✅ Consumer is ready!")
-		
+
 		// Try to consume the message
 		select {
 		case msg := <-handler.messages:
-			t.Logf("✅ Consumed message: key=%s, value=%s, offset=%d", 
+			t.Logf("✅ Consumed message: key=%s, value=%s, offset=%d",
 				string(msg.Key), string(msg.Value), msg.Offset)
 		case <-time.After(5 * time.Second):
 			t.Logf("⚠️ No message received within timeout")
 		}
-		
+
 	case <-time.After(8 * time.Second):
 		t.Logf("❌ Timeout waiting for consumer to be ready")
 	}
@@ -120,7 +120,7 @@ type DebugHandler struct {
 }
 
 func (h *DebugHandler) Setup(session sarama.ConsumerGroupSession) error {
-	h.t.Logf("🔧 Consumer group session setup - Generation: %d, Claims: %v", 
+	h.t.Logf("🔧 Consumer group session setup - Generation: %d, Claims: %v",
 		session.GenerationID(), session.Claims())
 	close(h.ready)
 	return nil
@@ -132,9 +132,9 @@ func (h *DebugHandler) Cleanup(session sarama.ConsumerGroupSession) error {
 }
 
 func (h *DebugHandler) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
-	h.t.Logf("🍽️ Starting to consume partition %d from offset %d", 
+	h.t.Logf("🍽️ Starting to consume partition %d from offset %d",
 		claim.Partition(), claim.InitialOffset())
-	
+
 	for {
 		select {
 		case message := <-claim.Messages():
@@ -142,7 +142,7 @@ func (h *DebugHandler) ConsumeClaim(session sarama.ConsumerGroupSession, claim s
 				h.t.Logf("📭 Received nil message, ending consumption")
 				return nil
 			}
-			h.t.Logf("📨 Received message: key=%s, value=%s, offset=%d", 
+			h.t.Logf("📨 Received message: key=%s, value=%s, offset=%d",
 				string(message.Key), string(message.Value), message.Offset)
 			h.messages <- message
 			session.MarkMessage(message, "")

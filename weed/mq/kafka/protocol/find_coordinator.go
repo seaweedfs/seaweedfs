@@ -6,6 +6,10 @@ import (
 )
 
 func (h *Handler) handleFindCoordinator(correlationID uint32, requestBody []byte) ([]byte, error) {
+	return h.handleFindCoordinatorV2(correlationID, requestBody)
+}
+
+func (h *Handler) handleFindCoordinatorV2(correlationID uint32, requestBody []byte) ([]byte, error) {
 	// Parse FindCoordinator request
 	// Request format: client_id + coordinator_key + coordinator_type(1)
 
@@ -57,17 +61,25 @@ func (h *Handler) handleFindCoordinator(correlationID uint32, requestBody []byte
 	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
 	response = append(response, correlationIDBytes...)
 
-	// FindCoordinator v0 Response Format (no throttle_time or error_message):
+	// FindCoordinator v2 Response Format:
+	// - throttle_time_ms (INT32)
 	// - error_code (INT16)
+	// - error_message (STRING) - nullable
 	// - node_id (INT32)
 	// - host (STRING)
 	// - port (INT32)
 
+	// Throttle time (4 bytes, 0 = no throttling)
+	response = append(response, 0, 0, 0, 0)
+
 	// Error code (2 bytes, 0 = no error)
 	response = append(response, 0, 0)
 
-	// Coordinator node_id (4 bytes) - use broker 0 (this gateway)
-	response = append(response, 0, 0, 0, 0)
+	// Error message (nullable string) - null for success
+	response = append(response, 0xff, 0xff) // -1 length indicates null
+
+	// Coordinator node_id (4 bytes) - use broker 1 (this gateway)
+	response = append(response, 0, 0, 0, 1)
 
 	// Coordinator host (string)
 	host := h.brokerHost

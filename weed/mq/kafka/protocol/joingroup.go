@@ -269,10 +269,11 @@ func (h *Handler) parseJoinGroupRequest(data []byte) (*JoinGroupRequest, error) 
 
 	offset := 0
 
-	// Skip client_id (part of request header, not JoinGroup payload)
+	// Skip client_id (part of JoinGroup v5 payload)
 	clientIDLength := int(binary.BigEndian.Uint16(data[offset:]))
 	offset += 2 + clientIDLength
-	fmt.Printf("DEBUG: JoinGroup skipped client_id (%d bytes), offset now: %d\n", clientIDLength, offset)
+	fmt.Printf("DEBUG: JoinGroup v5 skipped client_id (%d bytes: '%s'), offset now: %d\n", 
+		clientIDLength, string(data[2:2+clientIDLength]), offset)
 
 	// GroupID (string)
 	if offset+2 > len(data) {
@@ -315,6 +316,27 @@ func (h *Handler) parseJoinGroupRequest(data []byte) (*JoinGroupRequest, error) 
 		memberID = string(data[offset : offset+memberIDLength])
 		offset += memberIDLength
 	}
+
+	// Parse Group Instance ID (nullable string) - for JoinGroup v5+
+	var groupInstanceID string
+	if offset+2 > len(data) {
+		return nil, fmt.Errorf("missing group instance ID length")
+	}
+	instanceIDLength := int16(binary.BigEndian.Uint16(data[offset:]))
+	offset += 2
+	
+	if instanceIDLength == -1 {
+		groupInstanceID = "" // null string
+	} else if instanceIDLength >= 0 {
+		if offset+int(instanceIDLength) > len(data) {
+			return nil, fmt.Errorf("invalid group instance ID length")
+		}
+		groupInstanceID = string(data[offset : offset+int(instanceIDLength)])
+		offset += int(instanceIDLength)
+	}
+	
+	fmt.Printf("DEBUG: JoinGroup v5 - MemberID: '%s', GroupInstanceID: '%s' (len=%d), offset now: %d\n", 
+		memberID, groupInstanceID, instanceIDLength, offset)
 
 	// Parse Protocol Type
 	if len(data) < offset+2 {
@@ -377,29 +399,13 @@ func (h *Handler) parseJoinGroupRequest(data []byte) (*JoinGroupRequest, error) 
 		fmt.Printf("DEBUG: JoinGroup - Protocol: %s, MetadataLength: %d\n", protocolName, metadataLength)
 	}
 
-	// Parse Group Instance ID (nullable string) - for static membership (Kafka 2.3+)
-	var groupInstanceID string
-	if len(data) >= offset+2 {
-		instanceIDLength := int16(binary.BigEndian.Uint16(data[offset : offset+2]))
-		offset += 2
-
-		if instanceIDLength == -1 {
-			groupInstanceID = "" // null string
-		} else if instanceIDLength >= 0 && len(data) >= offset+int(instanceIDLength) {
-			groupInstanceID = string(data[offset : offset+int(instanceIDLength)])
-			offset += int(instanceIDLength)
-		}
-
-		if groupInstanceID != "" {
-			fmt.Printf("DEBUG: JoinGroup - GroupInstanceID: %s\n", groupInstanceID)
-		}
-	}
 
 	return &JoinGroupRequest{
 		GroupID:          groupID,
 		SessionTimeout:   sessionTimeout,
 		RebalanceTimeout: rebalanceTimeout,
 		MemberID:         memberID,
+		GroupInstanceID:  groupInstanceID,
 		ProtocolType:     protocolType,
 		GroupProtocols:   protocols,
 	}, nil

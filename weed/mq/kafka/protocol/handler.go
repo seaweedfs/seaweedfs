@@ -364,7 +364,7 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 		case 9: // OffsetFetch
 			response, err = h.handleOffsetFetch(correlationID, messageBuf[8:]) // skip header
 		case 10: // FindCoordinator
-			fmt.Printf("DEBUG: *** FINDCOORDINATOR REQUEST RECEIVED *** Correlation: %d\n", correlationID)
+			fmt.Printf("DEBUG: *** FINDCOORDINATOR REQUEST RECEIVED *** Correlation: %d, Version: %d\n", correlationID, apiVersion)
 			response, err = h.handleFindCoordinator(correlationID, messageBuf[8:]) // skip header
 			if err != nil {
 				fmt.Printf("DEBUG: FindCoordinator error: %v\n", err)
