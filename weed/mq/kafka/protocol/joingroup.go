@@ -775,7 +775,7 @@ func (h *Handler) parseSyncGroupRequest(data []byte) (*SyncGroupRequest, error) 
 	// Skip client_id (part of SyncGroup v3 payload)
 	clientIDLength := int(binary.BigEndian.Uint16(data[offset:]))
 	offset += 2 + clientIDLength
-	fmt.Printf("DEBUG: SyncGroup v3 skipped client_id (%d bytes: '%s'), offset now: %d\n", 
+	fmt.Printf("DEBUG: SyncGroup v3 skipped client_id (%d bytes: '%s'), offset now: %d\n",
 		clientIDLength, string(data[2:2+clientIDLength]), offset)
 
 	// GroupID (string)
