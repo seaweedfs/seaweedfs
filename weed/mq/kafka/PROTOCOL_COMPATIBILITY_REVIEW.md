@@ -5,7 +5,7 @@ This document identifies areas in the current Kafka implementation that need att
 
 ## Critical Protocol Issues
 
-### 🚨 HIGH PRIORITY - Protocol Breaking Issues
+### HIGH PRIORITY - Protocol Breaking Issues
 
 #### 1. **Record Batch Parsing (Produce API)**
 **File**: `protocol/produce.go`
@@ -63,7 +63,7 @@ This document identifies areas in the current Kafka implementation that need att
 // - Handle different record batch versions correctly
 ```
 
-### ⚠️ MEDIUM PRIORITY - Compatibility Issues
+### MEDIUM PRIORITY - Compatibility Issues
 
 #### 4. **API Version Support**
 **File**: `protocol/handler.go`
@@ -116,7 +116,7 @@ This document identifies areas in the current Kafka implementation that need att
 // - Security/authorization errors
 ```
 
-### 🔧 LOW PRIORITY - Implementation Completeness
+### LOW PRIORITY - Implementation Completeness
 
 #### 7. **Connection Management**
 **File**: `protocol/handler.go`
