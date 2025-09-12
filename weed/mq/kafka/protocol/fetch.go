@@ -101,7 +101,7 @@ func (h *Handler) handleFetch(correlationID uint32, apiVersion uint16, requestBo
 					if len(storedBatch) < hexLen {
 						hexLen = len(storedBatch)
 					}
-					fmt.Printf("DEBUG: Using stored record batch for offset %d, size: %d bytes, first %d bytes: %x\n", 
+					fmt.Printf("DEBUG: Using stored record batch for offset %d, size: %d bytes, first %d bytes: %x\n",
 						partition.FetchOffset, len(storedBatch), hexLen, storedBatch[:hexLen])
 				} else {
 					fmt.Printf("DEBUG: No stored record batch found for offset %d, using synthetic batch\n", partition.FetchOffset)
