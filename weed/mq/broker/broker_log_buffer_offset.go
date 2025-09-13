@@ -1,13 +1,14 @@
 package broker
 
 import (
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 	"google.golang.org/protobuf/proto"
-	"time"
 )
 
 // OffsetAssignmentFunc is a function type for assigning offsets to messages
@@ -27,7 +28,7 @@ func (b *MessageQueueBroker) AddToBufferWithOffset(
 	if err != nil {
 		return err
 	}
-	
+
 	// PERFORMANCE OPTIMIZATION: Pre-process expensive operations OUTSIDE the lock
 	var ts time.Time
 	processingTsNs := message.TsNs
@@ -69,16 +70,10 @@ func (b *MessageQueueBroker) addLogEntryToBuffer(
 	// TODO: This is a simplified version of LogBuffer.AddDataToBuffer
 	// ASSUMPTION: We're bypassing some of the LogBuffer's internal logic
 	// This should be properly integrated when LogBuffer is modified
-	
-	// For now, we'll use the existing AddToBuffer method and ignore the offset
-	// The offset will be preserved in the parquet files through our parquet integration
-	message := &mq_pb.DataMessage{
-		Key:   logEntry.Key,
-		Value: logEntry.Data,
-		TsNs:  logEntry.TsNs,
-	}
-	
-	logBuffer.AddToBuffer(message)
+
+	// Use the new AddLogEntryToBuffer method to preserve offset information
+	// This ensures the offset is maintained throughout the entire data flow
+	logBuffer.AddLogEntryToBuffer(logEntry)
 	return nil
 }
 
@@ -88,7 +83,7 @@ func (b *MessageQueueBroker) GetPartitionOffsetInfo(t topic.Topic, p topic.Parti
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Convert to broker-specific format if needed
 	return &PartitionOffsetInfo{
 		Topic:               t,
@@ -123,7 +118,7 @@ func (b *MessageQueueBroker) CreateOffsetSubscription(
 	// TODO: Convert string offsetType to schema_pb.OffsetType
 	// ASSUMPTION: For now using RESET_TO_EARLIEST as default
 	// This should be properly mapped based on the offsetType parameter
-	
+
 	_, err := b.offsetManager.CreateSubscription(
 		subscriptionID,
 		t,
@@ -131,14 +126,14 @@ func (b *MessageQueueBroker) CreateOffsetSubscription(
 		0, // schema_pb.OffsetType_RESET_TO_EARLIEST
 		startOffset,
 	)
-	
+
 	return err
 }
 
 // GetOffsetMetrics returns offset metrics for monitoring
 func (b *MessageQueueBroker) GetOffsetMetrics() map[string]interface{} {
 	metrics := b.offsetManager.GetOffsetMetrics()
-	
+
 	return map[string]interface{}{
 		"partition_count":      metrics.PartitionCount,
 		"total_offsets":        metrics.TotalOffsets,

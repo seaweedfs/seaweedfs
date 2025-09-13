@@ -75,6 +75,60 @@ func (logBuffer *LogBuffer) AddToBuffer(message *mq_pb.DataMessage) {
 	logBuffer.AddDataToBuffer(message.Key, message.Value, message.TsNs)
 }
 
+// AddLogEntryToBuffer directly adds a LogEntry to the buffer, preserving offset information
+func (logBuffer *LogBuffer) AddLogEntryToBuffer(logEntry *filer_pb.LogEntry) {
+	logEntryData, _ := proto.Marshal(logEntry)
+
+	var toFlush *dataToFlush
+	logBuffer.Lock()
+	defer func() {
+		logBuffer.Unlock()
+		if toFlush != nil {
+			logBuffer.flushChan <- toFlush
+		}
+		if logBuffer.notifyFn != nil {
+			logBuffer.notifyFn()
+		}
+	}()
+
+	processingTsNs := logEntry.TsNs
+	ts := time.Unix(0, processingTsNs)
+
+	// Handle timestamp collision inside lock (rare case)
+	if logBuffer.LastTsNs.Load() >= processingTsNs {
+		processingTsNs = logBuffer.LastTsNs.Add(1)
+		ts = time.Unix(0, processingTsNs)
+		// Re-marshal with corrected timestamp
+		logEntry.TsNs = processingTsNs
+		logEntryData, _ = proto.Marshal(logEntry)
+	} else {
+		logBuffer.LastTsNs.Store(processingTsNs)
+	}
+
+	size := len(logEntryData)
+
+	if logBuffer.pos == 0 {
+		logBuffer.startTime = ts
+	}
+
+	if logBuffer.startTime.Add(logBuffer.flushInterval).Before(ts) || len(logBuffer.buf)-logBuffer.pos < size+4 {
+		toFlush = logBuffer.copyToFlush()
+		logBuffer.startTime = ts
+		if len(logBuffer.buf) < size+4 {
+			logBuffer.buf = make([]byte, 2*size+4)
+		}
+	}
+	logBuffer.stopTime = ts
+
+	logBuffer.idx = append(logBuffer.idx, logBuffer.pos)
+	util.Uint32toBytes(logBuffer.sizeBuf, uint32(size))
+	copy(logBuffer.buf[logBuffer.pos:logBuffer.pos+4], logBuffer.sizeBuf)
+	copy(logBuffer.buf[logBuffer.pos+4:logBuffer.pos+4+size], logEntryData)
+	logBuffer.pos += size + 4
+
+	logBuffer.batchIndex++
+}
+
 func (logBuffer *LogBuffer) AddDataToBuffer(partitionKey, data []byte, processingTsNs int64) {
 
 	// PERFORMANCE OPTIMIZATION: Pre-process expensive operations OUTSIDE the lock
