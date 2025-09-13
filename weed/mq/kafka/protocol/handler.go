@@ -72,7 +72,8 @@ func NewHandler() *Handler {
 		brokerHost:       "localhost",
 		brokerPort:       9092,
 		seaweedMQHandler: &basicSeaweedMQHandler{
-			topics: make(map[string]bool),
+			topics:  make(map[string]bool),
+			ledgers: make(map[string]*offset.Ledger),
 		},
 	}
 }
@@ -93,7 +94,9 @@ func NewTestHandler() *Handler {
 
 // basicSeaweedMQHandler is a minimal in-memory implementation for basic Kafka functionality
 type basicSeaweedMQHandler struct {
-	topics map[string]bool
+	topics  map[string]bool
+	ledgers map[string]*offset.Ledger
+	mu      sync.RWMutex
 }
 
 // testSeaweedMQHandler is a minimal mock implementation for testing
@@ -127,15 +130,51 @@ func (b *basicSeaweedMQHandler) DeleteTopic(topic string) error {
 }
 
 func (b *basicSeaweedMQHandler) GetOrCreateLedger(topic string, partition int32) *offset.Ledger {
-	return offset.NewLedger()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	key := fmt.Sprintf("%s-%d", topic, partition)
+	if ledger, exists := b.ledgers[key]; exists {
+		return ledger
+	}
+
+	// Create new ledger
+	ledger := offset.NewLedger()
+	b.ledgers[key] = ledger
+
+	// Also create the topic if it doesn't exist
+	b.topics[topic] = true
+
+	return ledger
 }
 
 func (b *basicSeaweedMQHandler) GetLedger(topic string, partition int32) *offset.Ledger {
-	return offset.NewLedger()
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	key := fmt.Sprintf("%s-%d", topic, partition)
+	if ledger, exists := b.ledgers[key]; exists {
+		return ledger
+	}
+
+	// Return nil if ledger doesn't exist (topic doesn't exist)
+	return nil
 }
 
 func (b *basicSeaweedMQHandler) ProduceRecord(topicName string, partitionID int32, key, value []byte) (int64, error) {
-	return 1, nil // Return offset 1 to simulate successful produce
+	// Store the record in the ledger
+	ledger := b.GetOrCreateLedger(topicName, partitionID)
+
+	// Assign an offset and append the record
+	offset := ledger.AssignOffsets(1)
+	timestamp := time.Now().UnixNano()
+	size := int32(len(value))
+
+	if err := ledger.AppendRecord(offset, timestamp, size); err != nil {
+		return 0, fmt.Errorf("failed to append record: %w", err)
+	}
+
+	return offset, nil
 }
 
 func (b *basicSeaweedMQHandler) Close() error {

@@ -166,26 +166,15 @@ type FetchPartition struct {
 
 // parseFetchRequest parses a Kafka Fetch request
 func (h *Handler) parseFetchRequest(apiVersion uint16, requestBody []byte) (*FetchRequest, error) {
-	if len(requestBody) < 16 {
+	if len(requestBody) < 12 {
 		return nil, fmt.Errorf("fetch request too short: %d bytes", len(requestBody))
 	}
 
 	offset := 0
 	request := &FetchRequest{}
 
-	// Skip client_id (string) - read length first
-	if offset+2 > len(requestBody) {
-		return nil, fmt.Errorf("insufficient data for client_id length")
-	}
-	clientIDLength := int(binary.BigEndian.Uint16(requestBody[offset : offset+2]))
-	offset += 2
-
-	if clientIDLength >= 0 {
-		if offset+clientIDLength > len(requestBody) {
-			return nil, fmt.Errorf("insufficient data for client_id")
-		}
-		offset += clientIDLength
-	}
+	// NOTE: client_id is already handled by HandleConn and stripped from requestBody
+	// Request body starts directly with fetch-specific fields
 
 	// Replica ID (4 bytes)
 	if offset+4 > len(requestBody) {
