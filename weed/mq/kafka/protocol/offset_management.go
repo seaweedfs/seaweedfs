@@ -148,9 +148,9 @@ func (h *Handler) handleOffsetCommit(correlationID uint32, requestBody []byte) (
 		for _, partition := range topic.Partitions {
 			// Create consumer offset key for SMQ storage
 			key := offset.ConsumerOffsetKey{
-				Topic:               topic.Name,
-				Partition:           partition.Index,
-				ConsumerGroup:       request.GroupID,
+				Topic:                 topic.Name,
+				Partition:             partition.Index,
+				ConsumerGroup:         request.GroupID,
 				ConsumerGroupInstance: request.GroupInstanceID,
 			}
 
@@ -229,9 +229,9 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, requestBody []byte) ([
 		for _, partition := range partitionsToFetch {
 			// Create consumer offset key for SMQ storage
 			key := offset.ConsumerOffsetKey{
-				Topic:               topic.Name,
-				Partition:           partition,
-				ConsumerGroup:       request.GroupID,
+				Topic:                 topic.Name,
+				Partition:             partition,
+				ConsumerGroup:         request.GroupID,
 				ConsumerGroupInstance: request.GroupInstanceID,
 			}
 

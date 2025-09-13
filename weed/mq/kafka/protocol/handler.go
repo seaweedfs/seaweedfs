@@ -48,7 +48,7 @@ type Handler struct {
 	seaweedMQHandler *integration.SeaweedMQHandler
 	useSeaweedMQ     bool
 
-	// SMQ offset storage for consumer group offsets  
+	// SMQ offset storage for consumer group offsets
 	smqOffsetStorage *offset.SMQOffsetStorage
 
 	// Consumer group coordination
@@ -103,7 +103,7 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string) (*Handler, err
 	// Create SMQ offset storage using the first master as filer address
 	masterAddresses := strings.Split(masters, ",")
 	filerAddress := masterAddresses[0] // Use first master as filer
-	
+
 	smqOffsetStorage, err := offset.NewSMQOffsetStorage(filerAddress)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create SMQ offset storage: %w", err)
@@ -1894,33 +1894,32 @@ func (h *Handler) IsBrokerIntegrationEnabled() bool {
 	return h.IsSchemaEnabled() && h.brokerClient != nil
 }
 
-
 // commitOffsetToSMQ commits offset using SMQ storage
 func (h *Handler) commitOffsetToSMQ(key offset.ConsumerOffsetKey, offsetValue int64, metadata string) error {
 	if h.smqOffsetStorage == nil {
 		return fmt.Errorf("SMQ offset storage not initialized")
 	}
-	
+
 	// Save to SMQ storage - use current timestamp and size 0 as placeholders
 	// since SMQ storage primarily tracks the committed offset
 	return h.smqOffsetStorage.SaveConsumerOffset(key, offsetValue, time.Now().UnixNano(), 0)
 }
 
-// fetchOffsetFromSMQ fetches offset using SMQ storage  
+// fetchOffsetFromSMQ fetches offset using SMQ storage
 func (h *Handler) fetchOffsetFromSMQ(key offset.ConsumerOffsetKey) (int64, string, error) {
 	if h.smqOffsetStorage == nil {
 		return -1, "", fmt.Errorf("SMQ offset storage not initialized")
 	}
-	
+
 	entries, err := h.smqOffsetStorage.LoadConsumerOffsets(key)
 	if err != nil {
 		return -1, "", err
 	}
-	
+
 	if len(entries) == 0 {
 		return -1, "", nil // No committed offset
 	}
-	
+
 	// Return the committed offset (metadata is not stored in SMQ format)
 	return entries[0].KafkaOffset, "", nil
 }
