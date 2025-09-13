@@ -393,9 +393,6 @@ jobs:
           echo "All SeaweedFS components are ready!"
           cd ../s3-tests
           sed -i "s/assert prefixes == \['foo%2B1\/', 'foo\/', 'quux%20ab\/'\]/assert prefixes == \['foo\/', 'foo%2B1\/', 'quux%20ab\/'\]/" s3tests_boto3/functional/test_s3.py
-          # Fix bucket creation conflicts in versioning tests by replacing _create_objects calls
-          sed -i 's/bucket_name = _create_objects(bucket_name=bucket_name,keys=key_names)/# Use the existing bucket for object creation\n        client = get_client()\n        for key in key_names:\n            client.put_object(Bucket=bucket_name, Body=key, Key=key)/' s3tests_boto3/functional/test_s3.py
-          sed -i 's/bucket = _create_objects(bucket_name=bucket_name, keys=key_names)/# Use the existing bucket for object creation\n        client = get_client()\n        for key in key_names:\n            client.put_object(Bucket=bucket_name, Body=key, Key=key)/' s3tests_boto3/functional/test_s3.py
           # Create and update s3tests.conf to use port 8001
           cp ../docker/compose/s3tests.conf ../docker/compose/s3tests-versioning.conf
           sed -i 's/port = 8000/port = 8001/g' ../docker/compose/s3tests-versioning.conf
