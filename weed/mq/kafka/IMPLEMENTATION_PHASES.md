@@ -64,18 +64,21 @@
 
 **Verification**: ClientHost shows real IPs; enhanced protocol metadata parsing with 17 tests
 
-## Phase 5: Multi-Batch Fetch Support (PRIORITY MEDIUM)
+## Phase 5: Multi-Batch Fetch Support (COMPLETED ✅)
 **Goal**: Support multiple record batch concatenation in Fetch responses
 
 ### Tasks:
-- [ ] Implement proper record batch concatenation
-- [ ] Handle batch size limits and chunking
-- [ ] Add support for compressed record batches
-- [ ] Performance optimization for large batch responses
+- [x] Implement proper record batch concatenation
+- [x] Handle batch size limits and chunking
+- [x] Add support for compressed record batches
+- [x] Performance optimization for large batch responses
 
-**Files to modify**:
-- `weed/mq/kafka/protocol/fetch.go`
-- Add test file: `weed/mq/kafka/protocol/fetch_multi_batch_test.go`
+**Files modified**:
+- `weed/mq/kafka/protocol/fetch.go` (integrated multi-batch fetcher)
+- Added file: `weed/mq/kafka/protocol/fetch_multibatch.go`
+- Added test file: `weed/mq/kafka/protocol/fetch_multibatch_test.go`
+
+**Verification**: MaxBytes compliance, multi-batch concatenation, 17 comprehensive tests, E2E compatibility
 
 ## Phase 6: Flexible Versions Support (PRIORITY LOW)
 **Goal**: Basic support for flexible versions and tagged fields
@@ -105,7 +108,7 @@
 - All protocol handler files
 - Add test file: `weed/mq/kafka/protocol/error_handling_test.go`
 
-## Current Status: Phase 1-4 completed, ready for Phase 5
+## Current Status: Phase 1-5 completed, ready for Phase 6
 
 ### Implementation Notes:
 - Each phase should include comprehensive tests
