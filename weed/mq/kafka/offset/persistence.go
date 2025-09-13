@@ -8,6 +8,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/mq/client/pub_client"
 	"github.com/seaweedfs/seaweedfs/weed/mq/client/sub_client"
+	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
@@ -207,9 +208,9 @@ func (s *SeaweedMQStorage) LoadOffsetMappings(topicPartition string) ([]OffsetEn
 		PartitionOffsets: []*schema_pb.PartitionOffset{
 			{
 				Partition: &schema_pb.Partition{
-					RingSize:   1024,
+					RingSize:   pub_balancer.MaxPartitionCount,
 					RangeStart: 0,
-					RangeStop:  1023,
+					RangeStop:  pub_balancer.MaxPartitionCount - 1,
 				},
 				StartTsNs: 0, // Read from beginning
 			},
