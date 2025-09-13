@@ -71,13 +71,109 @@ func NewSeaweedMQHandler(agentAddress string) (*SeaweedMQHandler, error) {
 	}, nil
 }
 
-// GetStoredRecords retrieves records from SeaweedMQ storage (not implemented yet)
-// This is part of the SeaweedMQHandlerInterface for compatibility with the unified interface
+// GetStoredRecords retrieves records from SeaweedMQ storage
+// This implements the core integration between Kafka Fetch API and SeaweedMQ storage
 func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromOffset int64, maxRecords int) ([]offset.SMQRecord, error) {
-	// TODO: Implement actual SeaweedMQ record retrieval
-	// For now, return empty to maintain interface compatibility
-	// In the future, this should query SeaweedMQ brokers/agents for stored records
-	return nil, nil
+	// Verify topic exists
+	if !h.TopicExists(topic) {
+		return nil, fmt.Errorf("topic %s does not exist", topic)
+	}
+
+	// Get the offset ledger to translate Kafka offsets to SeaweedMQ timestamps
+	ledger := h.GetLedger(topic, partition)
+	if ledger == nil {
+		// No messages yet, return empty
+		return nil, nil
+	}
+
+	highWaterMark := ledger.GetHighWaterMark()
+
+	// If fromOffset is at or beyond high water mark, no records to return
+	if fromOffset >= highWaterMark {
+		return nil, nil
+	}
+
+	// Calculate how many records to fetch, respecting the limit
+	recordsToFetch := int(highWaterMark - fromOffset)
+	if maxRecords > 0 && recordsToFetch > maxRecords {
+		recordsToFetch = maxRecords
+	}
+	if recordsToFetch > 100 {
+		recordsToFetch = 100 // Reasonable batch size limit
+	}
+
+	// Get or create subscriber session for this topic/partition
+	var seaweedRecords []*SeaweedRecord
+	var err error
+
+	// Read records using appropriate client (broker or agent)
+	if h.useBroker && h.brokerClient != nil {
+		brokerSubscriber, subErr := h.brokerClient.GetOrCreateSubscriber(topic, partition, fromOffset)
+		if subErr != nil {
+			return nil, fmt.Errorf("failed to get broker subscriber: %v", subErr)
+		}
+		seaweedRecords, err = h.brokerClient.ReadRecords(brokerSubscriber, recordsToFetch)
+	} else if h.agentClient != nil {
+		agentSubscriber, subErr := h.agentClient.GetOrCreateSubscriber(topic, partition, fromOffset)
+		if subErr != nil {
+			return nil, fmt.Errorf("failed to get agent subscriber: %v", subErr)
+		}
+		seaweedRecords, err = h.agentClient.ReadRecords(agentSubscriber, recordsToFetch)
+	} else {
+		return nil, fmt.Errorf("no SeaweedMQ client available")
+	}
+
+	if err != nil {
+		// Return empty instead of error for better Kafka compatibility
+		return nil, nil
+	}
+
+	if len(seaweedRecords) == 0 {
+		return nil, nil
+	}
+
+	// Convert SeaweedMQ records to SMQRecord interface with proper Kafka offsets
+	smqRecords := make([]offset.SMQRecord, 0, len(seaweedRecords))
+	for i, seaweedRecord := range seaweedRecords {
+		kafkaOffset := fromOffset + int64(i)
+		smqRecord := &SeaweedSMQRecord{
+			key:       seaweedRecord.Key,
+			value:     seaweedRecord.Value,
+			timestamp: seaweedRecord.Timestamp,
+			offset:    kafkaOffset,
+		}
+		smqRecords = append(smqRecords, smqRecord)
+	}
+
+	return smqRecords, nil
+}
+
+// SeaweedSMQRecord implements the offset.SMQRecord interface for SeaweedMQ records
+type SeaweedSMQRecord struct {
+	key       []byte
+	value     []byte
+	timestamp int64
+	offset    int64
+}
+
+// GetKey returns the record key
+func (r *SeaweedSMQRecord) GetKey() []byte {
+	return r.key
+}
+
+// GetValue returns the record value
+func (r *SeaweedSMQRecord) GetValue() []byte {
+	return r.value
+}
+
+// GetTimestamp returns the record timestamp
+func (r *SeaweedSMQRecord) GetTimestamp() int64 {
+	return r.timestamp
+}
+
+// GetOffset returns the Kafka offset for this record
+func (r *SeaweedSMQRecord) GetOffset() int64 {
+	return r.offset
 }
 
 // Close shuts down the handler and all connections

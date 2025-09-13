@@ -12,8 +12,7 @@ import (
 func TestSaramaSimpleProducer(t *testing.T) {
 	// Start gateway with test mode
 	gatewayServer := gateway.NewTestServer(gateway.Options{
-		Listen:  "127.0.0.1:0",
-		
+		Listen: "127.0.0.1:0",
 	})
 
 	go func() {
@@ -88,8 +87,7 @@ func TestSaramaSimpleProducer(t *testing.T) {
 func TestSaramaMinimalConfig(t *testing.T) {
 	// Start gateway with test mode
 	gatewayServer := gateway.NewTestServer(gateway.Options{
-		Listen:  "127.0.0.1:0",
-		
+		Listen: "127.0.0.1:0",
 	})
 
 	go func() {
@@ -151,8 +149,7 @@ func TestSaramaMinimalConfig(t *testing.T) {
 func TestSaramaProduceConsume(t *testing.T) {
 	// Start gateway with test mode
 	gatewayServer := gateway.NewTestServer(gateway.Options{
-		Listen:  "127.0.0.1:0",
-		
+		Listen: "127.0.0.1:0",
 	})
 
 	go func() {
