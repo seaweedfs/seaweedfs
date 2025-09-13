@@ -1,6 +1,7 @@
 package kafka
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -163,8 +164,9 @@ func TestSaramaConsumerGroup(t *testing.T) {
 
 	// Start consuming (this will test FindCoordinator, JoinGroup, SyncGroup workflow)
 	go func() {
+		ctx := context.Background()
 		for {
-			err := consumerGroup.Consume(nil, []string{topicName}, consumerHandler)
+			err := consumerGroup.Consume(ctx, []string{topicName}, consumerHandler)
 			if err != nil {
 				t.Logf("Consumer group error: %v", err)
 				return
