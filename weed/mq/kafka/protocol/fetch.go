@@ -344,8 +344,9 @@ func (h *Handler) constructRecordBatchFromLedger(ledger interface{}, fetchOffset
 	batch = append(batch, 0, 0, 0, 0) // partition leader epoch (4 bytes)
 	batch = append(batch, 2)          // magic byte (version 2) (1 byte)
 
-	// CRC placeholder (4 bytes) - for testing, use 0
-	batch = append(batch, 0, 0, 0, 0) // CRC32
+	// CRC placeholder (4 bytes) - will be calculated at the end
+	crcPos := len(batch)
+	batch = append(batch, 0, 0, 0, 0) // CRC32 placeholder
 
 	// Batch attributes (2 bytes) - no compression, no transactional
 	batch = append(batch, 0, 0) // attributes
@@ -448,6 +449,14 @@ func (h *Handler) constructRecordBatchFromLedger(ledger interface{}, fetchOffset
 	// Fill in the batch length
 	batchLength := uint32(len(batch) - batchLengthPos - 4)
 	binary.BigEndian.PutUint32(batch[batchLengthPos:batchLengthPos+4], batchLength)
+
+	// Calculate CRC32 for the batch
+	// CRC is calculated over: attributes + last_offset_delta + first_timestamp + max_timestamp + producer_id + producer_epoch + base_sequence + records_count + records
+	// This starts after the CRC field (which comes after magic byte)
+	crcStartPos := crcPos + 4 // start after the CRC field
+	crcData := batch[crcStartPos:]
+	crc := crc32.ChecksumIEEE(crcData)
+	binary.BigEndian.PutUint32(batch[crcPos:crcPos+4], crc)
 
 	return batch
 }
