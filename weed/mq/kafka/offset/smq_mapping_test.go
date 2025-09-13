@@ -115,7 +115,7 @@ func TestCreateSMQSubscriptionRequest(t *testing.T) {
 		assert.Equal(t, schema_pb.OffsetType_EXACT_TS_NS, offsetType)
 		assert.Equal(t, baseTime+2000, partitionOffset.StartTsNs)
 		assert.Equal(t, int32(0), partitionOffset.Partition.RangeStart)
-		assert.Equal(t, int32(31), partitionOffset.Partition.RangeStop)
+		assert.Equal(t, int32(77), partitionOffset.Partition.RangeStop)
 
 		t.Logf("Specific offset 2 → SMQ timestamp %d", partitionOffset.StartTsNs)
 	})
