@@ -72,8 +72,9 @@ func NewHandler() *Handler {
 		brokerHost:       "localhost",
 		brokerPort:       9092,
 		seaweedMQHandler: &basicSeaweedMQHandler{
-			topics:  make(map[string]bool),
-			ledgers: make(map[string]*offset.Ledger),
+			topics:   make(map[string]bool),
+			ledgers:  make(map[string]*offset.Ledger),
+			messages: make(map[string]map[int32]map[int64]*MessageRecord),
 		},
 	}
 }
@@ -92,11 +93,20 @@ func NewTestHandler() *Handler {
 	}
 }
 
+// MessageRecord represents a stored message
+type MessageRecord struct {
+	Key       []byte
+	Value     []byte
+	Timestamp int64
+}
+
 // basicSeaweedMQHandler is a minimal in-memory implementation for basic Kafka functionality
 type basicSeaweedMQHandler struct {
 	topics  map[string]bool
 	ledgers map[string]*offset.Ledger
-	mu      sync.RWMutex
+	// messages stores actual message content indexed by topic-partition-offset
+	messages map[string]map[int32]map[int64]*MessageRecord // topic -> partition -> offset -> message
+	mu       sync.RWMutex
 }
 
 // testSeaweedMQHandler is a minimal mock implementation for testing
@@ -162,8 +172,12 @@ func (b *basicSeaweedMQHandler) GetLedger(topic string, partition int32) *offset
 }
 
 func (b *basicSeaweedMQHandler) ProduceRecord(topicName string, partitionID int32, key, value []byte) (int64, error) {
-	// Store the record in the ledger
+	// Get or create the ledger first (this will acquire and release the lock)
 	ledger := b.GetOrCreateLedger(topicName, partitionID)
+
+	// Now acquire the lock for the rest of the operation
+	b.mu.Lock()
+	defer b.mu.Unlock()
 
 	// Assign an offset and append the record
 	offset := ledger.AssignOffsets(1)
@@ -174,7 +188,52 @@ func (b *basicSeaweedMQHandler) ProduceRecord(topicName string, partitionID int3
 		return 0, fmt.Errorf("failed to append record: %w", err)
 	}
 
+	// Store the actual message content
+	if b.messages[topicName] == nil {
+		b.messages[topicName] = make(map[int32]map[int64]*MessageRecord)
+	}
+	if b.messages[topicName][partitionID] == nil {
+		b.messages[topicName][partitionID] = make(map[int64]*MessageRecord)
+	}
+
+	// Make copies of key and value to avoid referencing the original slices
+	keyCopy := make([]byte, len(key))
+	copy(keyCopy, key)
+	valueCopy := make([]byte, len(value))
+	copy(valueCopy, value)
+
+	b.messages[topicName][partitionID][offset] = &MessageRecord{
+		Key:       keyCopy,
+		Value:     valueCopy,
+		Timestamp: timestamp,
+	}
+
 	return offset, nil
+}
+
+// GetStoredMessages retrieves stored messages for a topic-partition from a given offset
+func (b *basicSeaweedMQHandler) GetStoredMessages(topicName string, partitionID int32, fromOffset int64, maxMessages int) []*MessageRecord {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	if b.messages[topicName] == nil || b.messages[topicName][partitionID] == nil {
+		return nil
+	}
+
+	partitionMessages := b.messages[topicName][partitionID]
+	var result []*MessageRecord
+
+	// Collect messages starting from fromOffset
+	for offset := fromOffset; offset < fromOffset+int64(maxMessages); offset++ {
+		if msg, exists := partitionMessages[offset]; exists {
+			result = append(result, msg)
+		} else {
+			// No more consecutive messages
+			break
+		}
+	}
+
+	return result
 }
 
 func (b *basicSeaweedMQHandler) Close() error {

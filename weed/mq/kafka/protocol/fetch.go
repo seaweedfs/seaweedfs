@@ -105,13 +105,30 @@ func (h *Handler) handleFetch(correlationID uint32, apiVersion uint16, requestBo
 			// Records - get actual stored record batches
 			var recordBatch []byte
 			if ledger != nil && highWaterMark > partition.FetchOffset {
-				fmt.Printf("DEBUG: GetRecordBatch delegated to SeaweedMQ handler - topic:%s, partition:%d, offset:%d\n", 
+				fmt.Printf("DEBUG: GetRecordBatch delegated to SeaweedMQ handler - topic:%s, partition:%d, offset:%d\n",
 					topic.Name, partition.PartitionID, partition.FetchOffset)
-				
-				// Use synthetic record batch since we don't have stored batches yet
-				fmt.Printf("DEBUG: No stored record batch found for offset %d, using synthetic batch\n", partition.FetchOffset)
-				recordBatch = h.constructSimpleRecordBatch(partition.FetchOffset, highWaterMark)
-				fmt.Printf("DEBUG: Using synthetic record batch for offset %d, size: %d bytes\n", partition.FetchOffset, len(recordBatch))
+
+				// Try to get stored messages first
+				if basicHandler, ok := h.seaweedMQHandler.(*basicSeaweedMQHandler); ok {
+					maxMessages := int(highWaterMark - partition.FetchOffset)
+					if maxMessages > 10 {
+						maxMessages = 10
+					}
+					storedMessages := basicHandler.GetStoredMessages(topic.Name, partition.PartitionID, partition.FetchOffset, maxMessages)
+					if len(storedMessages) > 0 {
+						fmt.Printf("DEBUG: Found %d stored messages for offset %d, constructing real record batch\n", len(storedMessages), partition.FetchOffset)
+						recordBatch = h.constructRecordBatchFromMessages(partition.FetchOffset, storedMessages)
+						fmt.Printf("DEBUG: Using real stored message batch for offset %d, size: %d bytes\n", partition.FetchOffset, len(recordBatch))
+					} else {
+						fmt.Printf("DEBUG: No stored messages found for offset %d, using synthetic batch\n", partition.FetchOffset)
+						recordBatch = h.constructSimpleRecordBatch(partition.FetchOffset, highWaterMark)
+						fmt.Printf("DEBUG: Using synthetic record batch for offset %d, size: %d bytes\n", partition.FetchOffset, len(recordBatch))
+					}
+				} else {
+					fmt.Printf("DEBUG: Not using basicSeaweedMQHandler, using synthetic batch\n")
+					recordBatch = h.constructSimpleRecordBatch(partition.FetchOffset, highWaterMark)
+					fmt.Printf("DEBUG: Using synthetic record batch for offset %d, size: %d bytes\n", partition.FetchOffset, len(recordBatch))
+				}
 			} else {
 				fmt.Printf("DEBUG: No messages available - fetchOffset %d >= highWaterMark %d\n", partition.FetchOffset, highWaterMark)
 				recordBatch = []byte{} // No messages available
@@ -563,6 +580,126 @@ func (h *Handler) constructSimpleRecordBatch(fetchOffset, highWaterMark int64) [
 	// Calculate CRC32 for the batch
 	// CRC is calculated over: attributes + last_offset_delta + first_timestamp + max_timestamp + producer_id + producer_epoch + base_sequence + records_count + records
 	// This starts after the CRC field (which comes after magic byte)
+	crcStartPos := crcPos + 4 // start after the CRC field
+	crcData := batch[crcStartPos:]
+	crc := crc32.Checksum(crcData, crc32.MakeTable(crc32.Castagnoli))
+	binary.BigEndian.PutUint32(batch[crcPos:crcPos+4], crc)
+
+	return batch
+}
+
+// constructRecordBatchFromMessages creates a Kafka record batch from actual stored messages
+func (h *Handler) constructRecordBatchFromMessages(fetchOffset int64, messages []*MessageRecord) []byte {
+	if len(messages) == 0 {
+		return []byte{}
+	}
+
+	// Create record batch using the real stored messages
+	batch := make([]byte, 0, 512)
+
+	// Record batch header
+	baseOffsetBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(baseOffsetBytes, uint64(fetchOffset))
+	batch = append(batch, baseOffsetBytes...) // base offset (8 bytes)
+
+	// Calculate batch length (will be filled after we know the size)
+	batchLengthPos := len(batch)
+	batch = append(batch, 0, 0, 0, 0) // batch length placeholder (4 bytes)
+
+	// Partition leader epoch (4 bytes) - use -1 for no epoch
+	batch = append(batch, 0xFF, 0xFF, 0xFF, 0xFF)
+
+	// Magic byte (1 byte) - v2 format
+	batch = append(batch, 2)
+
+	// CRC placeholder (4 bytes) - will be calculated later
+	crcPos := len(batch)
+	batch = append(batch, 0, 0, 0, 0)
+
+	// Attributes (2 bytes) - no compression, etc.
+	batch = append(batch, 0, 0)
+
+	// Last offset delta (4 bytes)
+	lastOffsetDelta := int32(len(messages) - 1)
+	lastOffsetDeltaBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(lastOffsetDeltaBytes, uint32(lastOffsetDelta))
+	batch = append(batch, lastOffsetDeltaBytes...)
+
+	// Base timestamp (8 bytes) - use first message timestamp
+	baseTimestamp := messages[0].Timestamp
+	baseTimestampBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(baseTimestampBytes, uint64(baseTimestamp))
+	batch = append(batch, baseTimestampBytes...)
+
+	// Max timestamp (8 bytes) - use last message timestamp or same as base
+	maxTimestamp := baseTimestamp
+	if len(messages) > 1 {
+		maxTimestamp = messages[len(messages)-1].Timestamp
+	}
+	maxTimestampBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(maxTimestampBytes, uint64(maxTimestamp))
+	batch = append(batch, maxTimestampBytes...)
+
+	// Producer ID (8 bytes) - use -1 for no producer ID
+	batch = append(batch, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF)
+
+	// Producer epoch (2 bytes) - use -1 for no producer epoch
+	batch = append(batch, 0xFF, 0xFF)
+
+	// Base sequence (4 bytes) - use -1 for no base sequence
+	batch = append(batch, 0xFF, 0xFF, 0xFF, 0xFF)
+
+	// Records count (4 bytes)
+	recordCountBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(recordCountBytes, uint32(len(messages)))
+	batch = append(batch, recordCountBytes...)
+
+	// Add individual records from stored messages
+	for i, msg := range messages {
+		// Build individual record
+		record := make([]byte, 0, 128)
+
+		// Record attributes (1 byte)
+		record = append(record, 0)
+
+		// Timestamp delta (varint) - calculate from base timestamp
+		timestampDelta := msg.Timestamp - baseTimestamp
+		record = append(record, encodeVarint(timestampDelta)...)
+
+		// Offset delta (varint)
+		offsetDelta := int64(i)
+		record = append(record, encodeVarint(offsetDelta)...)
+
+		// Key length and key (varint + data)
+		if msg.Key == nil {
+			record = append(record, encodeVarint(-1)...) // null key
+		} else {
+			record = append(record, encodeVarint(int64(len(msg.Key)))...)
+			record = append(record, msg.Key...)
+		}
+
+		// Value length and value (varint + data)
+		if msg.Value == nil {
+			record = append(record, encodeVarint(-1)...) // null value
+		} else {
+			record = append(record, encodeVarint(int64(len(msg.Value)))...)
+			record = append(record, msg.Value...)
+		}
+
+		// Headers count (varint) - 0 headers
+		record = append(record, encodeVarint(0)...)
+
+		// Prepend record length (varint)
+		recordLength := int64(len(record))
+		batch = append(batch, encodeVarint(recordLength)...)
+		batch = append(batch, record...)
+	}
+
+	// Fill in the batch length
+	batchLength := uint32(len(batch) - batchLengthPos - 4)
+	binary.BigEndian.PutUint32(batch[batchLengthPos:batchLengthPos+4], batchLength)
+
+	// Calculate CRC32 for the batch
 	crcStartPos := crcPos + 4 // start after the CRC field
 	crcData := batch[crcStartPos:]
 	crc := crc32.Checksum(crcData, crc32.MakeTable(crc32.Castagnoli))
