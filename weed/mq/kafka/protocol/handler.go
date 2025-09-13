@@ -63,6 +63,9 @@ type Handler struct {
 	// Dynamic broker address for Metadata responses
 	brokerHost string
 	brokerPort int
+
+	// Connection context for tracking client information
+	connContext *ConnectionContext
 }
 
 // NewHandler creates a basic Kafka handler with in-memory storage
@@ -200,8 +203,17 @@ func (h *Handler) SetBrokerAddress(host string, port int) {
 // HandleConn processes a single client connection
 func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 	connectionID := fmt.Sprintf("%s->%s", conn.RemoteAddr(), conn.LocalAddr())
+
+	// Set connection context for this connection
+	h.connContext = &ConnectionContext{
+		RemoteAddr:   conn.RemoteAddr(),
+		LocalAddr:    conn.LocalAddr(),
+		ConnectionID: connectionID,
+	}
+
 	defer func() {
 		fmt.Printf("DEBUG: [%s] Connection closing\n", connectionID)
+		h.connContext = nil // Clear connection context
 		conn.Close()
 	}()
 

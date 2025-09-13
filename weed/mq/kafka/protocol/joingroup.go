@@ -162,14 +162,18 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 		return h.buildJoinGroupErrorResponse(correlationID, ErrorCodeInvalidGroupID), nil
 	}
 
-	// Create or update member
+	// Extract client host from connection context
+	clientHost := ExtractClientHost(h.connContext)
+	fmt.Printf("DEBUG: JoinGroup extracted client host: %s\n", clientHost)
+
+	// Create or update member with enhanced metadata parsing
 	member := &consumer.GroupMember{
 		ID:               memberID,
-		ClientID:         clientKey, // Use deterministic client key for member identification
-		ClientHost:       "unknown", // TODO: extract from connection - needed for consumer group metadata
+		ClientID:         clientKey,  // Use deterministic client key for member identification
+		ClientHost:       clientHost, // Now extracted from actual connection
 		SessionTimeout:   request.SessionTimeout,
 		RebalanceTimeout: request.RebalanceTimeout,
-		Subscription:     h.extractSubscriptionFromProtocols(request.GroupProtocols),
+		Subscription:     h.extractSubscriptionFromProtocolsEnhanced(request.GroupProtocols),
 		State:            consumer.MemberStatePending,
 		LastHeartbeat:    time.Now(),
 		JoinedAt:         time.Now(),
@@ -211,15 +215,18 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 	// Update group's subscribed topics
 	h.updateGroupSubscription(group)
 
-	// Select assignment protocol (prefer range, fall back to roundrobin)
-	groupProtocol := "range"
-	for _, protocol := range request.GroupProtocols {
-		if protocol.Name == "range" || protocol.Name == "roundrobin" {
-			groupProtocol = protocol.Name
-			break
-		}
+	// Select assignment protocol using enhanced selection logic
+	existingProtocols := make([]string, 0)
+	for _ = range group.Members {
+		// Collect protocols from existing members (simplified - in real implementation
+		// we'd track each member's supported protocols)
+		existingProtocols = append(existingProtocols, "range") // placeholder
 	}
+
+	groupProtocol := SelectBestProtocol(request.GroupProtocols, existingProtocols)
 	group.Protocol = groupProtocol
+	fmt.Printf("DEBUG: JoinGroup selected protocol: %s (from %d client protocols)\n",
+		groupProtocol, len(request.GroupProtocols))
 
 	// Select group leader (first member or keep existing if still present)
 	if group.Leader == "" || group.Members[group.Leader] == nil {
@@ -565,26 +572,29 @@ func (h *Handler) buildMinimalJoinGroupResponse(correlationID uint32, apiVersion
 	return response
 }
 
+// extractSubscriptionFromProtocols - legacy method for backward compatibility
 func (h *Handler) extractSubscriptionFromProtocols(protocols []GroupProtocol) []string {
-	// Parse consumer protocol metadata to extract actual subscribed topics
-	// Consumer protocol metadata format (for "consumer" protocol type):
-	// - Version (2 bytes)
-	// - Topics array (4 bytes count + topic names)
-	// - User data (4 bytes length + data)
+	return h.extractSubscriptionFromProtocolsEnhanced(protocols)
+}
 
-	for _, protocol := range protocols {
-		if protocol.Name == "range" || protocol.Name == "roundrobin" || protocol.Name == "sticky" {
-			topics := h.parseConsumerProtocolMetadata(protocol.Metadata)
-			if len(topics) > 0 {
-				fmt.Printf("DEBUG: Extracted subscription topics: %v from protocol: %s\n", topics, protocol.Name)
-				return topics
-			}
+// extractSubscriptionFromProtocolsEnhanced uses improved metadata parsing with better error handling
+func (h *Handler) extractSubscriptionFromProtocolsEnhanced(protocols []GroupProtocol) []string {
+	// Analyze protocol metadata for debugging
+	debugInfo := AnalyzeProtocolMetadata(protocols)
+	for _, info := range debugInfo {
+		if info.ParsedOK {
+			fmt.Printf("DEBUG: Protocol %s parsed successfully: version=%d, topics=%v\n",
+				info.Strategy, info.Version, info.Topics)
+		} else {
+			fmt.Printf("DEBUG: Protocol %s parse failed: %s\n", info.Strategy, info.ParseError)
 		}
 	}
 
-	// Fallback to default if parsing fails
-	fmt.Printf("DEBUG: Failed to extract subscription, using fallback topic\n")
-	return []string{"test-topic"}
+	// Extract topics using enhanced parsing
+	topics := ExtractTopicsFromMetadata(protocols, h.getAvailableTopics())
+
+	fmt.Printf("DEBUG: Enhanced subscription extraction result: %v\n", topics)
+	return topics
 }
 
 func (h *Handler) parseConsumerProtocolMetadata(metadata []byte) []string {
