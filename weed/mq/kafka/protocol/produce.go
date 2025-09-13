@@ -330,60 +330,36 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 	// - Request: transactional_id field (nullable string) at the beginning
 	// - Response: throttle_time_ms field at the end (v1+)
 
-	// Parse Produce v7 request format based on actual Sarama request
-	// Format: client_id(STRING) + transactional_id(NULLABLE_STRING) + acks(INT16) + timeout_ms(INT32) + topics(ARRAY)
+	// Parse Produce v7 request format (client_id is already handled by HandleConn)
+	// Format: transactional_id(NULLABLE_STRING) + acks(INT16) + timeout_ms(INT32) + topics(ARRAY)
 
 	offset := 0
 
-	// Parse client_id (STRING: 2 bytes length + data)
+	// Parse transactional_id (NULLABLE_STRING: 2 bytes length + data, -1 = null)
 	if len(requestBody) < 2 {
-		return nil, fmt.Errorf("Produce v%d request too short for client_id", apiVersion)
+		return nil, fmt.Errorf("Produce v%d request too short for transactional_id", apiVersion)
 	}
-	clientIDLen := binary.BigEndian.Uint16(requestBody[offset : offset+2])
+
+	var transactionalID string = "null"
+	txIDLen := int16(binary.BigEndian.Uint16(requestBody[offset : offset+2]))
 	offset += 2
 
-	if len(requestBody) < offset+int(clientIDLen) {
-		return nil, fmt.Errorf("Produce v%d request client_id too short", apiVersion)
-	}
-	clientID := string(requestBody[offset : offset+int(clientIDLen)])
-	offset += int(clientIDLen)
-	fmt.Printf("DEBUG: Produce v%d - client_id: %s\n", apiVersion, clientID)
-
-	// Parse transactional_id (NULLABLE_STRING: 2 bytes length + data, -1 = null)
-	var transactionalID string = "null"
-	baseTxOffset := offset
-	if len(requestBody) >= offset+2 {
-		possibleLen := int16(binary.BigEndian.Uint16(requestBody[offset : offset+2]))
-		consumedTx := false
-		if possibleLen == -1 {
-			// consume just the length
-			offset += 2
-			consumedTx = true
-		} else if possibleLen >= 0 && len(requestBody) >= offset+2+int(possibleLen)+6 {
-			// There is enough room for a string and acks/timeout after it
-			offset += 2
-			if int(possibleLen) > 0 {
-				if len(requestBody) < offset+int(possibleLen) {
-					return nil, fmt.Errorf("Produce v%d request transactional_id too short", apiVersion)
-				}
-				transactionalID = string(requestBody[offset : offset+int(possibleLen)])
-				offset += int(possibleLen)
-			}
-			consumedTx = true
+	if txIDLen == -1 {
+		// null transactional_id
+		transactionalID = "null"
+		fmt.Printf("DEBUG: Produce v%d - transactional_id: null\n", apiVersion)
+	} else if txIDLen >= 0 {
+		if len(requestBody) < offset+int(txIDLen) {
+			return nil, fmt.Errorf("Produce v%d request transactional_id too short", apiVersion)
 		}
-		// Tentatively consumed transactional_id; we'll validate later and may revert
-		_ = consumedTx
+		transactionalID = string(requestBody[offset : offset+int(txIDLen)])
+		offset += int(txIDLen)
+		fmt.Printf("DEBUG: Produce v%d - transactional_id: %s\n", apiVersion, transactionalID)
 	}
-	fmt.Printf("DEBUG: Produce v%d - transactional_id: %s\n", apiVersion, transactionalID)
 
 	// Parse acks (INT16) and timeout_ms (INT32)
 	if len(requestBody) < offset+6 {
-		// If transactional_id was mis-parsed, revert and try without it
-		offset = baseTxOffset
-		transactionalID = "null"
-		if len(requestBody) < offset+6 {
-			return nil, fmt.Errorf("Produce v%d request missing acks/timeout", apiVersion)
-		}
+		return nil, fmt.Errorf("Produce v%d request missing acks/timeout", apiVersion)
 	}
 
 	acks := int16(binary.BigEndian.Uint16(requestBody[offset : offset+2]))
@@ -393,37 +369,20 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 
 	fmt.Printf("DEBUG: Produce v%d - acks: %d, timeout: %d\n", apiVersion, acks, timeout)
 
-	// Parse topics array
-	if len(requestBody) < offset+4 {
-		// Fallback: treat transactional_id as absent if this seems invalid
-		offset = baseTxOffset
-		transactionalID = "null"
-		if len(requestBody) < offset+6 {
-			return nil, fmt.Errorf("Produce v%d request missing acks/timeout", apiVersion)
-		}
-		acks = int16(binary.BigEndian.Uint16(requestBody[offset : offset+2]))
-		offset += 2
-		timeout = binary.BigEndian.Uint32(requestBody[offset : offset+4])
-		offset += 4
+	// If acks=0, fire-and-forget - return empty response immediately
+	if acks == 0 {
+		fmt.Printf("DEBUG: Produce v%d - acks=0, returning empty response (fire-and-forget)\n", apiVersion)
+		return []byte{}, nil
 	}
+
+	fmt.Printf("DEBUG: Produce v%d - acks=%d, will process and return response\n", apiVersion, acks)
 
 	topicsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 	offset += 4
 
-	// If topicsCount is implausible, revert transactional_id consumption and re-parse once
+	// If topicsCount is implausible, there might be a parsing issue
 	if topicsCount > 1000 {
-		// revert
-		offset = baseTxOffset
-		transactionalID = "null"
-		acks = int16(binary.BigEndian.Uint16(requestBody[offset : offset+2]))
-		offset += 2
-		timeout = binary.BigEndian.Uint32(requestBody[offset : offset+4])
-		offset += 4
-		if len(requestBody) < offset+4 {
-			return nil, fmt.Errorf("Produce v%d request missing topics count", apiVersion)
-		}
-		topicsCount = binary.BigEndian.Uint32(requestBody[offset : offset+4])
-		offset += 4
+		return nil, fmt.Errorf("Produce v%d request has implausible topics count: %d", apiVersion, topicsCount)
 	}
 
 	fmt.Printf("DEBUG: Produce v%d - topics count: %d\n", apiVersion, topicsCount)
@@ -573,17 +532,15 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 		}
 	}
 
-	// If acks=0, fire-and-forget - return empty response per Kafka spec
-	if acks == 0 {
-		return []byte{}, nil
-	}
-
 	// Append throttle_time_ms at the END for v1+
 	if apiVersion >= 1 {
 		response = append(response, 0, 0, 0, 0)
 	}
 
-	fmt.Printf("DEBUG: Produce v%d response: %d bytes\n", apiVersion, len(response))
+	fmt.Printf("DEBUG: Produce v%d response: %d bytes (acks=%d)\n", apiVersion, len(response), acks)
+	if len(response) < 20 {
+		fmt.Printf("DEBUG: Produce v%d response hex: %x\n", apiVersion, response)
+	}
 	return response, nil
 }
 

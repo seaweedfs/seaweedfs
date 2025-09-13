@@ -13,21 +13,21 @@ type PartitionOffsetManager struct {
 	mu         sync.RWMutex
 	partition  *schema_pb.Partition
 	nextOffset int64
-	
+
 	// Checkpointing for recovery
 	lastCheckpoint     int64
 	checkpointInterval int64
-	storage           OffsetStorage
+	storage            OffsetStorage
 }
 
 // OffsetStorage interface for persisting offset state
 type OffsetStorage interface {
 	// SaveCheckpoint persists the current offset state for recovery
 	SaveCheckpoint(partition *schema_pb.Partition, offset int64) error
-	
+
 	// LoadCheckpoint retrieves the last saved offset state
 	LoadCheckpoint(partition *schema_pb.Partition) (int64, error)
-	
+
 	// GetHighestOffset scans storage to find the highest assigned offset
 	GetHighestOffset(partition *schema_pb.Partition) (int64, error)
 }
@@ -36,48 +36,64 @@ type OffsetStorage interface {
 func NewPartitionOffsetManager(partition *schema_pb.Partition, storage OffsetStorage) (*PartitionOffsetManager, error) {
 	manager := &PartitionOffsetManager{
 		partition:          partition,
-		checkpointInterval: 100, // Checkpoint every 100 offsets
-		storage:           storage,
+		checkpointInterval: 1, // Checkpoint every offset for immediate persistence
+		storage:            storage,
 	}
-	
+
 	// Recover offset state
 	if err := manager.recover(); err != nil {
 		return nil, fmt.Errorf("failed to recover offset state: %w", err)
 	}
-	
+
 	return manager, nil
 }
 
 // AssignOffset assigns the next sequential offset
 func (m *PartitionOffsetManager) AssignOffset() int64 {
+	var shouldCheckpoint bool
+	var checkpointOffset int64
+
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	
 	offset := m.nextOffset
 	m.nextOffset++
-	
-	// Checkpoint periodically
+
+	// Check if we should checkpoint (but don't do it inside the lock)
 	if offset-m.lastCheckpoint >= m.checkpointInterval {
-		go m.checkpoint(offset)
+		shouldCheckpoint = true
+		checkpointOffset = offset
 	}
-	
+	m.mu.Unlock()
+
+	// Checkpoint outside the lock to avoid deadlock
+	if shouldCheckpoint {
+		m.checkpoint(checkpointOffset)
+	}
+
 	return offset
 }
 
 // AssignOffsets assigns a batch of sequential offsets
 func (m *PartitionOffsetManager) AssignOffsets(count int64) (baseOffset int64, lastOffset int64) {
+	var shouldCheckpoint bool
+	var checkpointOffset int64
+
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	
 	baseOffset = m.nextOffset
 	lastOffset = m.nextOffset + count - 1
 	m.nextOffset += count
-	
-	// Checkpoint if needed
+
+	// Check if we should checkpoint (but don't do it inside the lock)
 	if lastOffset-m.lastCheckpoint >= m.checkpointInterval {
-		go m.checkpoint(lastOffset)
+		shouldCheckpoint = true
+		checkpointOffset = lastOffset
 	}
-	
+	m.mu.Unlock()
+
+	// Checkpoint outside the lock to avoid deadlock
+	if shouldCheckpoint {
+		m.checkpoint(checkpointOffset)
+	}
+
 	return baseOffset, lastOffset
 }
 
@@ -97,17 +113,17 @@ func (m *PartitionOffsetManager) GetHighWaterMark() int64 {
 func (m *PartitionOffsetManager) recover() error {
 	var checkpointOffset int64 = -1
 	var highestOffset int64 = -1
-	
+
 	// Try to load checkpoint
 	if offset, err := m.storage.LoadCheckpoint(m.partition); err == nil && offset >= 0 {
 		checkpointOffset = offset
 	}
-	
+
 	// Try to scan storage for highest offset
 	if offset, err := m.storage.GetHighestOffset(m.partition); err == nil && offset >= 0 {
 		highestOffset = offset
 	}
-	
+
 	// Use the higher of checkpoint or storage scan
 	if checkpointOffset >= 0 && highestOffset >= 0 {
 		if highestOffset > checkpointOffset {
@@ -128,7 +144,7 @@ func (m *PartitionOffsetManager) recover() error {
 		m.nextOffset = 0
 		m.lastCheckpoint = -1
 	}
-	
+
 	return nil
 }
 
@@ -139,7 +155,7 @@ func (m *PartitionOffsetManager) checkpoint(offset int64) {
 		fmt.Printf("Failed to checkpoint offset %d: %v\n", offset, err)
 		return
 	}
-	
+
 	m.mu.Lock()
 	m.lastCheckpoint = offset
 	m.mu.Unlock()
@@ -163,29 +179,29 @@ func NewPartitionOffsetRegistry(storage OffsetStorage) *PartitionOffsetRegistry 
 // GetManager returns the offset manager for a partition, creating it if needed
 func (r *PartitionOffsetRegistry) GetManager(partition *schema_pb.Partition) (*PartitionOffsetManager, error) {
 	key := partitionKey(partition)
-	
+
 	r.mu.RLock()
 	manager, exists := r.managers[key]
 	r.mu.RUnlock()
-	
+
 	if exists {
 		return manager, nil
 	}
-	
+
 	// Create new manager
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	
+
 	// Double-check after acquiring write lock
 	if manager, exists := r.managers[key]; exists {
 		return manager, nil
 	}
-	
+
 	manager, err := NewPartitionOffsetManager(partition, r.storage)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	r.managers[key] = manager
 	return manager, nil
 }
@@ -196,7 +212,7 @@ func (r *PartitionOffsetRegistry) AssignOffset(partition *schema_pb.Partition) (
 	if err != nil {
 		return 0, err
 	}
-	
+
 	return manager.AssignOffset(), nil
 }
 
@@ -206,7 +222,7 @@ func (r *PartitionOffsetRegistry) AssignOffsets(partition *schema_pb.Partition, 
 	if err != nil {
 		return 0, 0, err
 	}
-	
+
 	baseOffset, lastOffset = manager.AssignOffsets(count)
 	return baseOffset, lastOffset, nil
 }
@@ -217,13 +233,13 @@ func (r *PartitionOffsetRegistry) GetHighWaterMark(partition *schema_pb.Partitio
 	if err != nil {
 		return 0, err
 	}
-	
+
 	return manager.GetHighWaterMark(), nil
 }
 
 // partitionKey generates a unique key for a partition
 func partitionKey(partition *schema_pb.Partition) string {
-	return fmt.Sprintf("ring:%d:range:%d-%d:time:%d", 
+	return fmt.Sprintf("ring:%d:range:%d-%d:time:%d",
 		partition.RingSize, partition.RangeStart, partition.RangeStop, partition.UnixTimeNs)
 }
 
@@ -268,7 +284,7 @@ func (a *OffsetAssigner) AssignSingleOffset(partition *schema_pb.Partition) *Ass
 	if err != nil {
 		return &AssignmentResult{Error: err}
 	}
-	
+
 	return &AssignmentResult{
 		Assignment: &OffsetAssignment{
 			Offset:    offset,
@@ -284,7 +300,7 @@ func (a *OffsetAssigner) AssignBatchOffsets(partition *schema_pb.Partition, coun
 	if err != nil {
 		return &AssignmentResult{Error: err}
 	}
-	
+
 	return &AssignmentResult{
 		Batch: &BatchOffsetAssignment{
 			BaseOffset: baseOffset,
