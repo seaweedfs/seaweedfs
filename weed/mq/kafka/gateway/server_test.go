@@ -12,7 +12,7 @@ func TestServerStartAndClose(t *testing.T) {
 	t.Skip("This test requires SeaweedMQ Agent integration - run manually with agent available")
 
 	srv := NewServer(Options{
-		Listen: ":0",
+		Listen:  ":0",
 		Masters: "localhost:9333", // Use masters instead of AgentAddress
 	})
 	if err := srv.Start(); err != nil {
@@ -42,7 +42,7 @@ func TestGetListenerAddr(t *testing.T) {
 
 	// Test with localhost binding - should return the actual address
 	srv := NewServer(Options{
-		Listen:       "127.0.0.1:0",
+		Listen:  "127.0.0.1:0",
 		Masters: "localhost:9333", // Would need real agent for this test
 	})
 	if err := srv.Start(); err != nil {
@@ -60,7 +60,7 @@ func TestGetListenerAddr(t *testing.T) {
 
 	// Test IPv6 all interfaces binding - should resolve to non-loopback IP
 	srv6 := NewServer(Options{
-		Listen:       "[::]:0",
+		Listen:  "[::]:0",
 		Masters: "localhost:9333", // Would need real agent for this test
 	})
 	if err := srv6.Start(); err != nil {

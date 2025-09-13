@@ -228,7 +228,7 @@ func TestBrokerClient_SubscriberConfiguration(t *testing.T) {
 		// With mock brokers, behavior may vary - just verify no panic
 		t.Logf("Subscriber creation results: err1=%v, err2=%v", err1, err2)
 		// Don't assert errors as mock behavior may vary
-		
+
 		// Verify broker client is still functional after failed subscriber creation
 		if brokerClient != nil {
 			t.Log("Broker client remains functional after subscriber creation attempts")
