@@ -1,12 +1,19 @@
 package integration
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 )
 
@@ -539,4 +546,90 @@ func (h *SeaweedMQHandler) convertSingleSeaweedRecord(seaweedRecord *SeaweedReco
 	record = append(record, 0)
 
 	return record
+}
+
+// NewSeaweedMQBrokerHandler creates a new handler with SeaweedMQ broker integration
+func NewSeaweedMQBrokerHandler(masters string, filerGroup string) (*SeaweedMQHandler, error) {
+	// Parse master addresses
+	masterAddresses := strings.Split(masters, ",")
+	if len(masterAddresses) == 0 {
+		return nil, fmt.Errorf("no master addresses provided")
+	}
+
+	// Discover brokers from masters
+	brokerAddresses, err := discoverBrokers(masterAddresses, filerGroup)
+	if err != nil {
+		return nil, fmt.Errorf("failed to discover brokers: %v", err)
+	}
+
+	if len(brokerAddresses) == 0 {
+		return nil, fmt.Errorf("no brokers discovered from masters")
+	}
+
+	// For now, use the first broker (can be enhanced later for load balancing)
+	brokerAddress := brokerAddresses[0]
+
+	// Create broker client (reuse AgentClient structure but connect to broker)
+	brokerClient, err := NewBrokerClient(brokerAddress)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create broker client: %v", err)
+	}
+
+	// Test the connection
+	if err := brokerClient.HealthCheck(); err != nil {
+		brokerClient.Close()
+		return nil, fmt.Errorf("broker health check failed: %v", err)
+	}
+
+	return &SeaweedMQHandler{
+		agentClient: brokerClient,
+		topics:      make(map[string]*KafkaTopicInfo),
+		ledgers:     make(map[TopicPartitionKey]*offset.Ledger),
+	}, nil
+}
+
+// discoverBrokers queries masters for available brokers
+func discoverBrokers(masterAddresses []string, filerGroup string) ([]string, error) {
+	var brokers []string
+
+	// Try each master until we get a response
+	for _, masterAddr := range masterAddresses {
+		conn, err := grpc.Dial(masterAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err != nil {
+			continue // Try next master
+		}
+		defer conn.Close()
+
+		client := master_pb.NewSeaweedClient(conn)
+
+		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
+			ClientType: cluster.BrokerType,
+			FilerGroup: filerGroup,
+			Limit:      100,
+		})
+		if err != nil {
+			continue // Try next master
+		}
+
+		// Extract broker addresses from response
+		for _, node := range resp.ClusterNodes {
+			if node.Address != "" {
+				brokers = append(brokers, node.Address)
+			}
+		}
+
+		if len(brokers) > 0 {
+			break // Found brokers, no need to try other masters
+		}
+	}
+
+	return brokers, nil
+}
+
+// NewBrokerClient creates a client that connects to a SeaweedMQ broker
+// This reuses the AgentClient structure but connects to a broker instead
+func NewBrokerClient(brokerAddress string) (*AgentClient, error) {
+	// For now, reuse the AgentClient implementation
+	// In the future, this could be enhanced to use broker-specific protocols
+	return NewAgentClient(brokerAddress)
 }

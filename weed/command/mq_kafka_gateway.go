@@ -10,40 +10,44 @@ var (
 )
 
 type mqKafkaGatewayOpts struct {
-	listen       *string
-	agentAddress *string
+	listen     *string
+	masters    *string
+	filerGroup *string
 }
 
 func init() {
 	cmdMqKafkaGateway.Run = runMqKafkaGateway
 	mqKafkaGatewayOptions.listen = cmdMqKafkaGateway.Flag.String("listen", ":9092", "Kafka gateway listen address")
-	mqKafkaGatewayOptions.agentAddress = cmdMqKafkaGateway.Flag.String("agent", "localhost:17777", "SeaweedMQ Agent address (required)")
+	mqKafkaGatewayOptions.masters = cmdMqKafkaGateway.Flag.String("masters", "localhost:9333", "SeaweedFS master servers")
+	mqKafkaGatewayOptions.filerGroup = cmdMqKafkaGateway.Flag.String("filerGroup", "", "filer group name")
 }
 
 var cmdMqKafkaGateway = &Command{
-	UsageLine: "mq.kafka.gateway [-listen=:9092] [-agent=localhost:17777]",
+	UsageLine: "mq.kafka.gateway [-listen=:9092] [-masters=localhost:9333] [-filerGroup=]",
 	Short:     "start a Kafka wire-protocol gateway for SeaweedMQ",
 	Long: `Start a Kafka wire-protocol gateway translating Kafka client requests to SeaweedMQ.
 
-Requires a running SeaweedMQ Agent. Use -agent=<address> to specify the agent location.
+Connects to SeaweedFS master servers to discover available brokers. Use -masters=<addresses> 
+to specify comma-separated master locations.
 
 This is experimental and currently supports a minimal subset for development.
 `,
 }
 
 func runMqKafkaGateway(cmd *Command, args []string) bool {
-	// Validate options - agent address is now required
-	if *mqKafkaGatewayOptions.agentAddress == "" {
-		glog.Fatalf("SeaweedMQ Agent address is required (-agent)")
+	// Validate options - masters address is now required
+	if *mqKafkaGatewayOptions.masters == "" {
+		glog.Fatalf("SeaweedFS masters address is required (-masters)")
 		return false
 	}
 
 	srv := gateway.NewServer(gateway.Options{
-		Listen:       *mqKafkaGatewayOptions.listen,
-		AgentAddress: *mqKafkaGatewayOptions.agentAddress,
+		Listen:     *mqKafkaGatewayOptions.listen,
+		Masters:    *mqKafkaGatewayOptions.masters,
+		FilerGroup: *mqKafkaGatewayOptions.filerGroup,
 	})
 
-	glog.V(0).Infof("Starting MQ Kafka Gateway on %s with SeaweedMQ backend (%s)", *mqKafkaGatewayOptions.listen, *mqKafkaGatewayOptions.agentAddress)
+	glog.V(0).Infof("Starting MQ Kafka Gateway on %s with SeaweedMQ brokers from masters (%s)", *mqKafkaGatewayOptions.listen, *mqKafkaGatewayOptions.masters)
 	if err := srv.Start(); err != nil {
 		glog.Fatalf("mq kafka gateway start: %v", err)
 		return false

@@ -90,6 +90,22 @@ func NewSeaweedMQHandler(agentAddress string) (*Handler, error) {
 	}, nil
 }
 
+// NewSeaweedMQBrokerHandler creates a new handler with SeaweedMQ broker integration
+func NewSeaweedMQBrokerHandler(masters string, filerGroup string) (*Handler, error) {
+	smqHandler, err := integration.NewSeaweedMQBrokerHandler(masters, filerGroup)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Handler{
+		topics:           make(map[string]*TopicInfo),                // Keep for compatibility
+		ledgers:          make(map[TopicPartitionKey]*offset.Ledger), // Keep for compatibility
+		seaweedMQHandler: smqHandler,
+		useSeaweedMQ:     true,
+		groupCoordinator: consumer.NewGroupCoordinator(),
+	}, nil
+}
+
 // Close shuts down the handler and all connections
 func (h *Handler) Close() error {
 	// Close group coordinator
