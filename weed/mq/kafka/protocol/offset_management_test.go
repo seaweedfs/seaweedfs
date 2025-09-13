@@ -156,7 +156,7 @@ func TestHandler_handleOffsetFetch(t *testing.T) {
 	requestBody := createOffsetFetchRequestBody("test-group")
 
 	correlationID := uint32(126)
-	response, err := h.handleOffsetFetch(correlationID, requestBody)
+	response, err := h.handleOffsetFetch(correlationID, 2, requestBody)
 
 	if err != nil {
 		t.Fatalf("handleOffsetFetch failed: %v", err)
@@ -188,7 +188,7 @@ func TestHandler_handleOffsetFetch_NoCommittedOffset(t *testing.T) {
 	requestBody := createOffsetFetchRequestBody("test-group")
 
 	correlationID := uint32(127)
-	response, err := h.handleOffsetFetch(correlationID, requestBody)
+	response, err := h.handleOffsetFetch(correlationID, 2, requestBody)
 
 	if err != nil {
 		t.Fatalf("handleOffsetFetch failed: %v", err)
@@ -369,7 +369,7 @@ func TestHandler_OffsetCommitFetch_EndToEnd(t *testing.T) {
 
 	// Test offset fetch
 	fetchRequestBody := createOffsetFetchRequestBody("test-group")
-	fetchResponse, err := server.handleOffsetFetch(457, fetchRequestBody)
+	fetchResponse, err := server.handleOffsetFetch(457, 2, fetchRequestBody)
 	if err != nil {
 		t.Fatalf("offset fetch failed: %v", err)
 	}

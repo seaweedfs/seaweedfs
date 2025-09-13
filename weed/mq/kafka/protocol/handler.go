@@ -527,7 +527,13 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		case 8: // OffsetCommit
 			response, err = h.handleOffsetCommit(correlationID, requestBody)
 		case 9: // OffsetFetch
-			response, err = h.handleOffsetFetch(correlationID, requestBody)
+			fmt.Printf("DEBUG: *** OFFSETFETCH REQUEST RECEIVED *** Correlation: %d, Version: %d\n", correlationID, apiVersion)
+			response, err = h.handleOffsetFetch(correlationID, apiVersion, requestBody)
+			if err != nil {
+				fmt.Printf("DEBUG: OffsetFetch error: %v\n", err)
+			} else {
+				fmt.Printf("DEBUG: OffsetFetch response hex dump (%d bytes): %x\n", len(response), response)
+			}
 		case 10: // FindCoordinator
 			fmt.Printf("DEBUG: *** FINDCOORDINATOR REQUEST RECEIVED *** Correlation: %d, Version: %d\n", correlationID, apiVersion)
 			response, err = h.handleFindCoordinator(correlationID, requestBody)

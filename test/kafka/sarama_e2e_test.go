@@ -146,6 +146,9 @@ func TestSaramaConsumerGroup(t *testing.T) {
 	config.Consumer.Group.Rebalance.Strategy = sarama.BalanceStrategyRoundRobin
 	config.Consumer.Offsets.Initial = sarama.OffsetOldest
 	config.Consumer.Return.Errors = true
+	// Producer configuration for SyncProducer
+	config.Producer.Return.Successes = true
+	config.Producer.Return.Errors = true
 
 	t.Logf("=== Testing Sarama Consumer Group ===")
 

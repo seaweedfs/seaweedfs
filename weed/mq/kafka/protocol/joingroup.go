@@ -897,13 +897,8 @@ func (h *Handler) getTopicPartitions(group *consumer.ConsumerGroup) map[string][
 }
 
 func (h *Handler) serializeMemberAssignment(assignments []consumer.PartitionAssignment) []byte {
-	// Build a simple serialized format for partition assignments
-	// Format: version(2) + num_topics(4) + topics...
-	// For each topic: topic_name_len(2) + topic_name + num_partitions(4) + partitions...
-
-	if len(assignments) == 0 {
-		return []byte{0, 1, 0, 0, 0, 0} // Version 1, 0 topics
-	}
+	// Build ConsumerGroupMemberAssignment format exactly as Sarama expects:
+	// Version(2) + Topics array + UserData bytes
 
 	// Group assignments by topic
 	topicAssignments := make(map[string][]int32)
@@ -916,22 +911,20 @@ func (h *Handler) serializeMemberAssignment(assignments []consumer.PartitionAssi
 	// Version (2 bytes) - use version 1
 	result = append(result, 0, 1)
 
-	// Number of topics (4 bytes)
+	// Number of topics (4 bytes) - array length
 	numTopicsBytes := make([]byte, 4)
 	binary.BigEndian.PutUint32(numTopicsBytes, uint32(len(topicAssignments)))
 	result = append(result, numTopicsBytes...)
 
-	// Topics
+	// Topics - each topic follows Kafka string + int32 array format
 	for topic, partitions := range topicAssignments {
-		// Topic name length (2 bytes)
+		// Topic name as Kafka string: length(2) + content
 		topicLenBytes := make([]byte, 2)
 		binary.BigEndian.PutUint16(topicLenBytes, uint16(len(topic)))
 		result = append(result, topicLenBytes...)
-
-		// Topic name
 		result = append(result, []byte(topic)...)
 
-		// Number of partitions (4 bytes)
+		// Partitions as int32 array: length(4) + elements
 		numPartitionsBytes := make([]byte, 4)
 		binary.BigEndian.PutUint32(numPartitionsBytes, uint32(len(partitions)))
 		result = append(result, numPartitionsBytes...)
@@ -944,9 +937,11 @@ func (h *Handler) serializeMemberAssignment(assignments []consumer.PartitionAssi
 		}
 	}
 
-	// User data length (4 bytes) - no user data
+	// UserData as Kafka bytes: length(4) + data (empty in our case)
+	// For empty user data, just put length = 0
 	result = append(result, 0, 0, 0, 0)
 
+	fmt.Printf("DEBUG: Generated assignment bytes (%d): %x\n", len(result), result)
 	return result
 }
 

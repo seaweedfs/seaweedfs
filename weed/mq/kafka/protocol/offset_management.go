@@ -180,7 +180,7 @@ func (h *Handler) handleOffsetCommit(correlationID uint32, requestBody []byte) (
 	return h.buildOffsetCommitResponse(response), nil
 }
 
-func (h *Handler) handleOffsetFetch(correlationID uint32, requestBody []byte) ([]byte, error) {
+func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
 	// Parse OffsetFetch request
 	request, err := h.parseOffsetFetchRequest(requestBody)
 	if err != nil {
@@ -266,7 +266,7 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, requestBody []byte) ([
 		response.Topics = append(response.Topics, topicResponse)
 	}
 
-	return h.buildOffsetFetchResponse(response), nil
+	return h.buildOffsetFetchResponse(response, apiVersion), nil
 }
 
 func (h *Handler) parseOffsetCommitRequest(data []byte) (*OffsetCommitRequest, error) {
@@ -579,7 +579,7 @@ func (h *Handler) buildOffsetCommitResponse(response OffsetCommitResponse) []byt
 	return result
 }
 
-func (h *Handler) buildOffsetFetchResponse(response OffsetFetchResponse) []byte {
+func (h *Handler) buildOffsetFetchResponse(response OffsetFetchResponse, apiVersion uint16) []byte {
 	estimatedSize := 32
 	for _, topic := range response.Topics {
 		estimatedSize += len(topic.Name) + 16 + len(topic.Partitions)*32
@@ -627,10 +627,12 @@ func (h *Handler) buildOffsetFetchResponse(response OffsetFetchResponse) []byte 
 			binary.BigEndian.PutUint64(offsetBytes, uint64(partition.Offset))
 			result = append(result, offsetBytes...)
 
-			// Leader epoch (4 bytes)
-			epochBytes := make([]byte, 4)
-			binary.BigEndian.PutUint32(epochBytes, uint32(partition.LeaderEpoch))
-			result = append(result, epochBytes...)
+			// Leader epoch (4 bytes) - only included in version 5+
+			if apiVersion >= 5 {
+				epochBytes := make([]byte, 4)
+				binary.BigEndian.PutUint32(epochBytes, uint32(partition.LeaderEpoch))
+				result = append(result, epochBytes...)
+			}
 
 			// Metadata length (2 bytes)
 			metadataLength := make([]byte, 2)
@@ -652,8 +654,10 @@ func (h *Handler) buildOffsetFetchResponse(response OffsetFetchResponse) []byte 
 	binary.BigEndian.PutUint16(groupErrorBytes, uint16(response.ErrorCode))
 	result = append(result, groupErrorBytes...)
 
-	// Throttle time (4 bytes, 0 = no throttling)
-	result = append(result, 0, 0, 0, 0)
+	// Throttle time (4 bytes) - only included in version 3+
+	if apiVersion >= 3 {
+		result = append(result, 0, 0, 0, 0)
+	}
 
 	return result
 }
@@ -681,5 +685,5 @@ func (h *Handler) buildOffsetFetchErrorResponse(correlationID uint32, errorCode 
 		ErrorCode:     errorCode,
 	}
 
-	return h.buildOffsetFetchResponse(response)
+	return h.buildOffsetFetchResponse(response, 0)
 }
