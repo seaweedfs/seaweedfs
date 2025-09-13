@@ -28,7 +28,7 @@ type SMQSubscriber struct {
 
 	// Offset mapping
 	offsetMapper  *offset.KafkaToSMQMapper
-	offsetStorage *offset.SeaweedMQStorage
+	offsetStorage *offset.SMQIntegratedStorage
 }
 
 // SubscriptionWrapper wraps a SMQ subscription with Kafka-specific metadata
@@ -66,7 +66,7 @@ type KafkaMessage struct {
 // NewSMQSubscriber creates a new SMQ subscriber for Kafka messages
 func NewSMQSubscriber(brokers []string) (*SMQSubscriber, error) {
 	// Create offset storage
-	offsetStorage, err := offset.NewSeaweedMQStorage(brokers)
+	offsetStorage, err := offset.NewSMQIntegratedStorage(brokers)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create offset storage: %w", err)
 	}

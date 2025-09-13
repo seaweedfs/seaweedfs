@@ -18,7 +18,7 @@ type PersistentKafkaHandler struct {
 	subscriber *SMQSubscriber
 
 	// Offset storage
-	offsetStorage *offset.SeaweedMQStorage
+	offsetStorage *offset.SMQIntegratedStorage
 
 	// Topic registry
 	topicsMu sync.RWMutex
@@ -53,7 +53,7 @@ func NewPersistentKafkaHandler(brokers []string) (*PersistentKafkaHandler, error
 	}
 
 	// Create offset storage
-	offsetStorage, err := offset.NewSeaweedMQStorage(brokers)
+	offsetStorage, err := offset.NewSMQIntegratedStorage(brokers)
 	if err != nil {
 		publisher.Close()
 		subscriber.Close()

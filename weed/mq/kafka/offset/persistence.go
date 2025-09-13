@@ -2,19 +2,19 @@ package offset
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
+	"strings"
+	"sync"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/mq/client/pub_client"
-	"github.com/seaweedfs/seaweedfs/weed/mq/client/sub_client"
-	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
-	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
-	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
-	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/filer_client"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/protobuf/proto"
 )
 
 // PersistentLedger extends Ledger with persistence capabilities
@@ -24,21 +24,42 @@ type PersistentLedger struct {
 	storage        LedgerStorage
 }
 
-// LedgerStorage interface for persisting offset mappings
+// ConsumerOffsetKey represents the full key for consumer offset storage
+type ConsumerOffsetKey struct {
+	Topic                 string
+	Partition             int32
+	ConsumerGroup         string
+	ConsumerGroupInstance string // Optional - can be empty
+}
+
+// String returns the string representation for use as map key
+func (k ConsumerOffsetKey) String() string {
+	if k.ConsumerGroupInstance != "" {
+		return fmt.Sprintf("%s:%d:%s:%s", k.Topic, k.Partition, k.ConsumerGroup, k.ConsumerGroupInstance)
+	}
+	return fmt.Sprintf("%s:%d:%s", k.Topic, k.Partition, k.ConsumerGroup)
+}
+
+// LedgerStorage interface for persisting consumer group offset mappings
 type LedgerStorage interface {
-	// SaveOffsetMapping persists a Kafka offset -> SMQ timestamp mapping
+	// SaveConsumerOffset persists a consumer's committed Kafka offset -> SMQ timestamp mapping
+	SaveConsumerOffset(key ConsumerOffsetKey, kafkaOffset, smqTimestamp int64, size int32) error
+
+	// LoadConsumerOffsets restores all offset mappings for a consumer group's topic-partition
+	LoadConsumerOffsets(key ConsumerOffsetKey) ([]OffsetEntry, error)
+
+	// GetConsumerHighWaterMark returns the highest committed Kafka offset for a consumer
+	GetConsumerHighWaterMark(key ConsumerOffsetKey) (int64, error)
+
+	// Legacy methods for backward compatibility (deprecated)
 	SaveOffsetMapping(topicPartition string, kafkaOffset, smqTimestamp int64, size int32) error
-
-	// LoadOffsetMappings restores all offset mappings for a topic-partition
 	LoadOffsetMappings(topicPartition string) ([]OffsetEntry, error)
-
-	// GetHighWaterMark returns the highest Kafka offset for a topic-partition
 	GetHighWaterMark(topicPartition string) (int64, error)
 }
 
 // NewPersistentLedger creates a ledger that persists to storage
 func NewPersistentLedger(topicPartition string, storage LedgerStorage) (*PersistentLedger, error) {
-	// Try to restore from storage
+	// Try to restore from storage (legacy method for backward compatibility)
 	entries, err := storage.LoadOffsetMappings(topicPartition)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load offset mappings: %w", err)
@@ -75,7 +96,7 @@ func NewPersistentLedger(topicPartition string, storage LedgerStorage) (*Persist
 
 // AppendRecord persists the offset mapping in addition to in-memory storage
 func (pl *PersistentLedger) AppendRecord(kafkaOffset, timestamp int64, size int32) error {
-	// First persist to storage
+	// First persist to storage (legacy method for backward compatibility)
 	if err := pl.storage.SaveOffsetMapping(pl.topicPartition, kafkaOffset, timestamp, size); err != nil {
 		return fmt.Errorf("failed to persist offset mapping: %w", err)
 	}
@@ -89,247 +110,443 @@ func (pl *PersistentLedger) GetEntries() []OffsetEntry {
 	return pl.Ledger.GetEntries()
 }
 
-// SeaweedMQStorage implements LedgerStorage using SeaweedMQ as the backend
-type SeaweedMQStorage struct {
-	brokers        []string
-	grpcDialOption grpc.DialOption
-	ctx            context.Context
-	publisher      *pub_client.TopicPublisher
-	offsetTopic    topic.Topic
+// SMQIntegratedStorage implements LedgerStorage using SMQ's in-memory replication pattern
+// This approach avoids the scalability issue by using checkpoints instead of reading full history
+type SMQIntegratedStorage struct {
+	filerAddress        string
+	filerClientAccessor *filer_client.FilerClientAccessor
+
+	// In-memory replicated state (SMQ pattern)
+	ledgers sync.Map // map[ConsumerOffsetKey.String()]*ReplicatedOffsetLedger
+
+	// Configuration
+	checkpointInterval time.Duration
+	maxMemoryMappings  int
+	ctx                context.Context
+	cancel             context.CancelFunc
 }
 
-// NewSeaweedMQStorage creates a new SeaweedMQ-backed storage
-func NewSeaweedMQStorage(brokers []string) (*SeaweedMQStorage, error) {
-	storage := &SeaweedMQStorage{
-		brokers:        brokers,
-		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
-		ctx:            context.Background(),
-		offsetTopic:    topic.NewTopic("kafka-system", "offset-mappings"),
+// ReplicatedOffsetLedger represents in-memory consumer offset state with checkpoint persistence
+type ReplicatedOffsetLedger struct {
+	consumerKey ConsumerOffsetKey
+
+	// In-memory mappings (recent entries only)
+	mappings      sync.Map // map[int64]*OffsetEntry
+	currentOffset int64
+	maxOffset     int64
+
+	// Checkpoint state
+	lastCheckpoint     int64
+	lastCheckpointTime time.Time
+	lastPersistTime    time.Time
+
+	// State management
+	mu               sync.RWMutex
+	needsPersistence bool
+}
+
+// NewSMQIntegratedStorage creates SMQ-integrated offset storage
+// This uses SMQ's proven in-memory replication + checkpoint persistence pattern
+func NewSMQIntegratedStorage(brokers []string) (*SMQIntegratedStorage, error) {
+	if len(brokers) == 0 {
+		return nil, fmt.Errorf("no brokers provided")
 	}
 
-	// Create record type for offset mappings
-	recordType := &schema_pb.RecordType{
-		Fields: []*schema_pb.Field{
-			{
-				Name:       "topic_partition",
-				FieldIndex: 0,
-				Type: &schema_pb.Type{
-					Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_STRING},
-				},
-				IsRequired: true,
-			},
-			{
-				Name:       "kafka_offset",
-				FieldIndex: 1,
-				Type: &schema_pb.Type{
-					Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_INT64},
-				},
-				IsRequired: true,
-			},
-			{
-				Name:       "smq_timestamp",
-				FieldIndex: 2,
-				Type: &schema_pb.Type{
-					Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_INT64},
-				},
-				IsRequired: true,
-			},
-			{
-				Name:       "message_size",
-				FieldIndex: 3,
-				Type: &schema_pb.Type{
-					Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_INT32},
-				},
-				IsRequired: true,
-			},
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Use first broker as filer address (brokers typically run co-located with filer)
+	// In SMQ architecture, brokers connect to local filer instances
+	filerAddress := brokers[0]
+
+	// Create filer client accessor (like SMQ does)
+	filerClientAccessor := &filer_client.FilerClientAccessor{
+		GetFiler: func() pb.ServerAddress {
+			return pb.ServerAddress(filerAddress)
+		},
+		GetGrpcDialOption: func() grpc.DialOption {
+			return grpc.WithInsecure()
 		},
 	}
 
-	// Create publisher for offset mappings
-	publisher, err := pub_client.NewTopicPublisher(&pub_client.PublisherConfiguration{
-		Topic:          storage.offsetTopic,
-		PartitionCount: 16, // Multiple partitions for offset storage
-		Brokers:        brokers,
-		PublisherName:  "kafka-offset-storage",
-		RecordType:     recordType,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create offset publisher: %w", err)
+	storage := &SMQIntegratedStorage{
+		filerAddress:        filerAddress,
+		filerClientAccessor: filerClientAccessor,
+		checkpointInterval:  30 * time.Second, // SMQ-style periodic checkpoints
+		maxMemoryMappings:   10000,            // Keep recent mappings in memory
+		ctx:                 ctx,
+		cancel:              cancel,
 	}
 
-	storage.publisher = publisher
+	// Start background checkpoint persistence (SMQ pattern)
+	go storage.backgroundCheckpointPersistence()
+
 	return storage, nil
 }
 
-// SaveOffsetMapping stores the offset mapping in SeaweedMQ
-func (s *SeaweedMQStorage) SaveOffsetMapping(topicPartition string, kafkaOffset, smqTimestamp int64, size int32) error {
-	// Create record for the offset mapping
-	record := &schema_pb.RecordValue{
-		Fields: map[string]*schema_pb.Value{
-			"topic_partition": {
-				Kind: &schema_pb.Value_StringValue{StringValue: topicPartition},
-			},
-			"kafka_offset": {
-				Kind: &schema_pb.Value_Int64Value{Int64Value: kafkaOffset},
-			},
-			"smq_timestamp": {
-				Kind: &schema_pb.Value_Int64Value{Int64Value: smqTimestamp},
-			},
-			"message_size": {
-				Kind: &schema_pb.Value_Int32Value{Int32Value: size},
-			},
-		},
+// SaveConsumerOffset stores consumer offset mapping in memory (SMQ pattern) and triggers checkpoint if needed
+func (s *SMQIntegratedStorage) SaveConsumerOffset(key ConsumerOffsetKey, kafkaOffset, smqTimestamp int64, size int32) error {
+	// Get or create replicated ledger for this consumer
+	ledger := s.getOrCreateLedger(key)
+
+	// Update in-memory state (like SMQ subscriber offsets)
+	entry := &OffsetEntry{
+		KafkaOffset: kafkaOffset,
+		Timestamp:   smqTimestamp,
+		Size:        size,
 	}
 
-	// Use topic-partition as key for consistent partitioning
-	key := []byte(topicPartition)
+	ledger.mu.Lock()
+	ledger.mappings.Store(kafkaOffset, entry)
+	ledger.currentOffset = kafkaOffset
+	if kafkaOffset > ledger.maxOffset {
+		ledger.maxOffset = kafkaOffset
+	}
+	ledger.needsPersistence = true
+	ledger.mu.Unlock()
 
-	// Publish the offset mapping
-	if err := s.publisher.PublishRecord(key, record); err != nil {
-		return fmt.Errorf("failed to publish offset mapping: %w", err)
+	// Trigger checkpoint if threshold reached (SMQ pattern)
+	if s.shouldCheckpoint(ledger) {
+		return s.persistCheckpoint(ledger)
 	}
 
 	return nil
 }
 
-// LoadOffsetMappings retrieves all offset mappings from SeaweedMQ
-func (s *SeaweedMQStorage) LoadOffsetMappings(topicPartition string) ([]OffsetEntry, error) {
-	// Create subscriber to read offset mappings
-	subscriberConfig := &sub_client.SubscriberConfiguration{
-		ConsumerGroup:           "kafka-offset-loader",
-		ConsumerGroupInstanceId: fmt.Sprintf("offset-loader-%s", topicPartition),
-		GrpcDialOption:          s.grpcDialOption,
-		MaxPartitionCount:       16,
-		SlidingWindowSize:       100,
+// LoadConsumerOffsets loads checkpoint + in-memory state (SMQ pattern) - O(1) instead of O(n)!
+func (s *SMQIntegratedStorage) LoadConsumerOffsets(key ConsumerOffsetKey) ([]OffsetEntry, error) {
+	ledger := s.getOrCreateLedger(key)
+
+	// Load from checkpoint if not already loaded (SMQ pattern)
+	if err := s.loadCheckpointIfNeeded(ledger); err != nil {
+		return nil, fmt.Errorf("failed to load checkpoint: %w", err)
 	}
 
-	contentConfig := &sub_client.ContentConfiguration{
-		Topic: s.offsetTopic,
-		PartitionOffsets: []*schema_pb.PartitionOffset{
-			{
-				Partition: &schema_pb.Partition{
-					RingSize:   pub_balancer.MaxPartitionCount,
-					RangeStart: 0,
-					RangeStop:  pub_balancer.MaxPartitionCount - 1,
-				},
-				StartTsNs: 0, // Read from beginning
-			},
-		},
-		OffsetType: schema_pb.OffsetType_RESET_TO_EARLIEST,
-		Filter:     fmt.Sprintf("topic_partition == '%s'", topicPartition), // Filter by topic-partition
+	// Return current in-memory state (fast!)
+	return s.getCurrentMappings(ledger), nil
+}
+
+// GetConsumerHighWaterMark returns consumer's next offset from in-memory state (fast!)
+func (s *SMQIntegratedStorage) GetConsumerHighWaterMark(key ConsumerOffsetKey) (int64, error) {
+	ledger := s.getOrCreateLedger(key)
+
+	// Load checkpoint if needed
+	if err := s.loadCheckpointIfNeeded(ledger); err != nil {
+		return 0, fmt.Errorf("failed to load checkpoint: %w", err)
 	}
 
-	subscriber := sub_client.NewTopicSubscriber(
-		s.ctx,
-		s.brokers,
-		subscriberConfig,
-		contentConfig,
-		make(chan sub_client.KeyedOffset, 100),
-	)
+	ledger.mu.RLock()
+	maxOffset := ledger.maxOffset
+	ledger.mu.RUnlock()
 
-	var entries []OffsetEntry
-	entriesChan := make(chan OffsetEntry, 1000)
-	done := make(chan bool, 1)
+	if maxOffset < 0 {
+		return 0, nil
+	}
+	return maxOffset + 1, nil
+}
 
-	// Set up message handler
-	subscriber.SetOnDataMessageFn(func(m *mq_pb.SubscribeMessageResponse_Data) {
-		record := &schema_pb.RecordValue{}
-		if err := proto.Unmarshal(m.Data.Value, record); err != nil {
-			return
+// Close persists all pending checkpoints and shuts down (SMQ pattern)
+func (s *SMQIntegratedStorage) Close() error {
+	s.cancel()
+
+	// Persist all ledgers before shutdown (like SMQ on disconnect)
+	s.ledgers.Range(func(key, value interface{}) bool {
+		ledger := value.(*ReplicatedOffsetLedger)
+		if ledger.needsPersistence {
+			s.persistCheckpoint(ledger)
 		}
-
-		// Extract fields
-		topicPartField := record.Fields["topic_partition"]
-		kafkaOffsetField := record.Fields["kafka_offset"]
-		smqTimestampField := record.Fields["smq_timestamp"]
-		messageSizeField := record.Fields["message_size"]
-
-		if topicPartField == nil || kafkaOffsetField == nil ||
-			smqTimestampField == nil || messageSizeField == nil {
-			return
-		}
-
-		// Only process records for our topic-partition
-		if topicPartField.GetStringValue() != topicPartition {
-			return
-		}
-
-		entry := OffsetEntry{
-			KafkaOffset: kafkaOffsetField.GetInt64Value(),
-			Timestamp:   smqTimestampField.GetInt64Value(),
-			Size:        messageSizeField.GetInt32Value(),
-		}
-
-		entriesChan <- entry
+		return true
 	})
 
-	// Subscribe in background
-	go func() {
-		defer close(done)
-		if err := subscriber.Subscribe(); err != nil {
-			fmt.Printf("Subscribe error: %v\n", err)
-		}
-	}()
+	return nil
+}
 
-	// Collect entries for a reasonable time
-	timeout := time.After(3 * time.Second)
-	collecting := true
+// SMQ-style helper methods for in-memory replication + checkpoint persistence
 
-	for collecting {
-		select {
-		case entry := <-entriesChan:
-			entries = append(entries, entry)
-		case <-timeout:
-			collecting = false
-		case <-done:
-			// Drain remaining entries
-			for {
-				select {
-				case entry := <-entriesChan:
-					entries = append(entries, entry)
-				default:
-					collecting = false
-					goto done_collecting
-				}
-			}
-		}
+// getOrCreateLedger gets or creates in-memory consumer ledger (SMQ pattern)
+func (s *SMQIntegratedStorage) getOrCreateLedger(key ConsumerOffsetKey) *ReplicatedOffsetLedger {
+	keyStr := key.String()
+	if existing, ok := s.ledgers.Load(keyStr); ok {
+		return existing.(*ReplicatedOffsetLedger)
 	}
-done_collecting:
 
-	// Sort entries by Kafka offset
+	// Create new consumer ledger
+	ledger := &ReplicatedOffsetLedger{
+		consumerKey:      key,
+		currentOffset:    -1,
+		maxOffset:        -1,
+		lastCheckpoint:   -1,
+		needsPersistence: false,
+	}
+
+	// Try to store, return existing if already created by another goroutine
+	if actual, loaded := s.ledgers.LoadOrStore(keyStr, ledger); loaded {
+		return actual.(*ReplicatedOffsetLedger)
+	}
+
+	return ledger
+}
+
+// loadCheckpointIfNeeded loads checkpoint from filer if not already loaded (SMQ pattern)
+func (s *SMQIntegratedStorage) loadCheckpointIfNeeded(ledger *ReplicatedOffsetLedger) error {
+	ledger.mu.Lock()
+	defer ledger.mu.Unlock()
+
+	// Already loaded?
+	if ledger.lastCheckpoint >= 0 {
+		return nil
+	}
+
+	// Load checkpoint from filer
+	checkpointDir := s.getCheckpointDir()
+	checkpointFile := ledger.consumerKey.String() + ".json"
+
+	err := s.filerClientAccessor.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		data, err := filer.ReadInsideFiler(client, checkpointDir, checkpointFile)
+		if err != nil {
+			return err // Will be handled below
+		}
+
+		var checkpoint CheckpointData
+		if err := json.Unmarshal(data, &checkpoint); err != nil {
+			return fmt.Errorf("failed to unmarshal checkpoint: %w", err)
+		}
+
+		// Restore state from checkpoint
+		ledger.lastCheckpoint = checkpoint.MaxOffset
+		ledger.maxOffset = checkpoint.MaxOffset
+		ledger.currentOffset = checkpoint.MaxOffset
+		ledger.lastCheckpointTime = time.Unix(0, checkpoint.TimestampNs)
+
+		// Load recent mappings (last N entries for fast access)
+		for _, entry := range checkpoint.RecentMappings {
+			ledger.mappings.Store(entry.KafkaOffset, &entry)
+		}
+
+		return nil
+	})
+
+	if err != nil && err != filer_pb.ErrNotFound {
+		return fmt.Errorf("failed to load checkpoint: %w", err)
+	}
+
+	// Mark as loaded even if no checkpoint found
+	if ledger.lastCheckpoint < 0 {
+		ledger.lastCheckpoint = 0
+	}
+
+	return nil
+}
+
+// getCurrentMappings returns current in-memory mappings (SMQ pattern)
+func (s *SMQIntegratedStorage) getCurrentMappings(ledger *ReplicatedOffsetLedger) []OffsetEntry {
+	var entries []OffsetEntry
+
+	ledger.mappings.Range(func(key, value interface{}) bool {
+		entry := value.(*OffsetEntry)
+		entries = append(entries, *entry)
+		return true
+	})
+
+	// Sort by Kafka offset
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].KafkaOffset < entries[j].KafkaOffset
 	})
 
-	return entries, nil
+	return entries
 }
 
-// GetHighWaterMark returns the next available offset
-func (s *SeaweedMQStorage) GetHighWaterMark(topicPartition string) (int64, error) {
-	entries, err := s.LoadOffsetMappings(topicPartition)
+// shouldCheckpoint determines if checkpoint persistence is needed (SMQ pattern)
+func (s *SMQIntegratedStorage) shouldCheckpoint(ledger *ReplicatedOffsetLedger) bool {
+	ledger.mu.RLock()
+	defer ledger.mu.RUnlock()
+
+	// Persist if:
+	// 1. Enough time has passed
+	// 2. Too many in-memory entries
+	// 3. Significant offset advancement
+
+	timeSinceLastCheckpoint := time.Since(ledger.lastCheckpointTime)
+
+	mappingCount := 0
+	ledger.mappings.Range(func(key, value interface{}) bool {
+		mappingCount++
+		return mappingCount < s.maxMemoryMappings // Stop counting if too many
+	})
+
+	offsetDelta := ledger.currentOffset - ledger.lastCheckpoint
+
+	return timeSinceLastCheckpoint > s.checkpointInterval ||
+		mappingCount >= s.maxMemoryMappings ||
+		offsetDelta >= 1000 // Significant advancement
+}
+
+// persistCheckpoint saves checkpoint to filer (SMQ pattern)
+func (s *SMQIntegratedStorage) persistCheckpoint(ledger *ReplicatedOffsetLedger) error {
+	ledger.mu.Lock()
+	defer ledger.mu.Unlock()
+
+	// Collect recent mappings for checkpoint
+	var recentMappings []OffsetEntry
+	ledger.mappings.Range(func(key, value interface{}) bool {
+		entry := value.(*OffsetEntry)
+		recentMappings = append(recentMappings, *entry)
+		return len(recentMappings) < 1000 // Keep last 1000 entries in checkpoint
+	})
+
+	// Sort by offset (keep most recent)
+	sort.Slice(recentMappings, func(i, j int) bool {
+		return recentMappings[i].KafkaOffset > recentMappings[j].KafkaOffset
+	})
+	if len(recentMappings) > 1000 {
+		recentMappings = recentMappings[:1000]
+	}
+
+	// Create checkpoint
+	checkpoint := CheckpointData{
+		ConsumerKey:    ledger.consumerKey,
+		MaxOffset:      ledger.maxOffset,
+		TimestampNs:    time.Now().UnixNano(),
+		RecentMappings: recentMappings,
+		TopicPartition: fmt.Sprintf("%s:%d", ledger.consumerKey.Topic, ledger.consumerKey.Partition), // Legacy compatibility
+	}
+
+	// Marshal checkpoint
+	data, err := json.Marshal(checkpoint)
 	if err != nil {
-		return 0, err
+		return fmt.Errorf("failed to marshal checkpoint: %w", err)
 	}
 
-	if len(entries) == 0 {
-		return 0, nil
+	// Write to filer
+	checkpointDir := s.getCheckpointDir()
+	checkpointFile := ledger.consumerKey.String() + ".json"
+	err = s.filerClientAccessor.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return filer.SaveInsideFiler(client, checkpointDir, checkpointFile, data)
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to save checkpoint: %w", err)
 	}
 
-	// Find highest offset
-	var maxOffset int64 = -1
-	for _, entry := range entries {
-		if entry.KafkaOffset > maxOffset {
-			maxOffset = entry.KafkaOffset
+	// Update checkpoint state
+	ledger.lastCheckpoint = ledger.maxOffset
+	ledger.lastCheckpointTime = time.Now()
+	ledger.lastPersistTime = time.Now()
+	ledger.needsPersistence = false
+
+	return nil
+}
+
+// backgroundCheckpointPersistence runs periodic checkpoint saves (SMQ pattern)
+func (s *SMQIntegratedStorage) backgroundCheckpointPersistence() {
+	ticker := time.NewTicker(s.checkpointInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-ticker.C:
+			// Persist all ledgers that need it
+			s.ledgers.Range(func(key, value interface{}) bool {
+				ledger := value.(*ReplicatedOffsetLedger)
+				if ledger.needsPersistence && s.shouldCheckpoint(ledger) {
+					if err := s.persistCheckpoint(ledger); err != nil {
+						// Log error but continue
+						fmt.Printf("Failed to persist checkpoint for %s: %v\n", ledger.consumerKey.String(), err)
+					}
+				}
+				return true
+			})
 		}
 	}
-
-	return maxOffset + 1, nil
 }
 
-// Close shuts down the storage
-func (s *SeaweedMQStorage) Close() error {
-	if s.publisher != nil {
-		return s.publisher.Shutdown()
+// getCheckpointDir returns filer directory for checkpoints
+func (s *SMQIntegratedStorage) getCheckpointDir() string {
+	return "/kafka-offsets/checkpoints"
+}
+
+// CheckpointData represents persisted consumer checkpoint state
+type CheckpointData struct {
+	ConsumerKey    ConsumerOffsetKey `json:"consumer_key"`
+	MaxOffset      int64             `json:"max_offset"`
+	TimestampNs    int64             `json:"timestamp_ns"`
+	RecentMappings []OffsetEntry     `json:"recent_mappings"`
+
+	// Legacy field for backward compatibility
+	TopicPartition string `json:"topic_partition,omitempty"`
+}
+
+// Legacy methods for backward compatibility (will be deprecated)
+
+// SaveOffsetMapping - legacy method that maps to topic-partition only (no consumer group info)
+func (s *SMQIntegratedStorage) SaveOffsetMapping(topicPartition string, kafkaOffset, smqTimestamp int64, size int32) error {
+	// Parse topic:partition format
+	parts := strings.Split(topicPartition, ":")
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid topic-partition format: %s", topicPartition)
 	}
-	return nil
+
+	partition, err := strconv.ParseInt(parts[1], 10, 32)
+	if err != nil {
+		return fmt.Errorf("invalid partition number in %s: %w", topicPartition, err)
+	}
+
+	// Use legacy consumer key (no consumer group)
+	legacyKey := ConsumerOffsetKey{
+		Topic:                 parts[0],
+		Partition:             int32(partition),
+		ConsumerGroup:         "_legacy_",
+		ConsumerGroupInstance: "",
+	}
+
+	return s.SaveConsumerOffset(legacyKey, kafkaOffset, smqTimestamp, size)
+}
+
+// LoadOffsetMappings - legacy method that loads from topic-partition only
+func (s *SMQIntegratedStorage) LoadOffsetMappings(topicPartition string) ([]OffsetEntry, error) {
+	// Parse topic:partition format
+	parts := strings.Split(topicPartition, ":")
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("invalid topic-partition format: %s", topicPartition)
+	}
+
+	partition, err := strconv.ParseInt(parts[1], 10, 32)
+	if err != nil {
+		return nil, fmt.Errorf("invalid partition number in %s: %w", topicPartition, err)
+	}
+
+	// Use legacy consumer key (no consumer group)
+	legacyKey := ConsumerOffsetKey{
+		Topic:                 parts[0],
+		Partition:             int32(partition),
+		ConsumerGroup:         "_legacy_",
+		ConsumerGroupInstance: "",
+	}
+
+	return s.LoadConsumerOffsets(legacyKey)
+}
+
+// GetHighWaterMark - legacy method that gets high water mark for topic-partition only
+func (s *SMQIntegratedStorage) GetHighWaterMark(topicPartition string) (int64, error) {
+	// Parse topic:partition format
+	parts := strings.Split(topicPartition, ":")
+	if len(parts) != 2 {
+		return 0, fmt.Errorf("invalid topic-partition format: %s", topicPartition)
+	}
+
+	partition, err := strconv.ParseInt(parts[1], 10, 32)
+	if err != nil {
+		return 0, fmt.Errorf("invalid partition number in %s: %w", topicPartition, err)
+	}
+
+	// Use legacy consumer key (no consumer group)
+	legacyKey := ConsumerOffsetKey{
+		Topic:                 parts[0],
+		Partition:             int32(partition),
+		ConsumerGroup:         "_legacy_",
+		ConsumerGroupInstance: "",
+	}
+
+	return s.GetConsumerHighWaterMark(legacyKey)
 }
