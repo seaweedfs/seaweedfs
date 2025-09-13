@@ -189,5 +189,6 @@ func (pl *PersistentLedger) GetLatestOffset() int64 {
 
 // GetStats returns statistics about the ledger
 func (pl *PersistentLedger) GetStats() (count int, earliestTime, latestTime int64) {
-	return pl.Ledger.GetStats()
+	count, _, earliestTime, latestTime = pl.Ledger.GetStats()
+	return count, earliestTime, latestTime
 }
