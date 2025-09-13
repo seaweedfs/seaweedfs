@@ -28,7 +28,7 @@ type SMQSubscriber struct {
 
 	// Offset mapping
 	offsetMapper  *offset.KafkaToSMQMapper
-	offsetStorage *offset.SMQIntegratedStorage
+	offsetStorage *offset.SMQOffsetStorage
 }
 
 // SubscriptionWrapper wraps a SMQ subscription with Kafka-specific metadata
@@ -66,7 +66,9 @@ type KafkaMessage struct {
 // NewSMQSubscriber creates a new SMQ subscriber for Kafka messages
 func NewSMQSubscriber(brokers []string) (*SMQSubscriber, error) {
 	// Create offset storage
-	offsetStorage, err := offset.NewSMQIntegratedStorage(brokers)
+	// Use first broker as filer address for offset storage
+	filerAddress := brokers[0]
+	offsetStorage, err := offset.NewSMQOffsetStorage(filerAddress)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create offset storage: %w", err)
 	}

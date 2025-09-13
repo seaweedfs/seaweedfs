@@ -25,7 +25,7 @@ type SMQPublisher struct {
 	publishers     map[string]*TopicPublisherWrapper
 
 	// Offset persistence
-	offsetStorage *offset.SMQIntegratedStorage
+	offsetStorage *offset.SMQOffsetStorage
 
 	// Ledgers for offset tracking
 	ledgersLock sync.RWMutex
@@ -44,7 +44,9 @@ type TopicPublisherWrapper struct {
 // NewSMQPublisher creates a new SMQ publisher for Kafka messages
 func NewSMQPublisher(brokers []string) (*SMQPublisher, error) {
 	// Create offset storage
-	offsetStorage, err := offset.NewSMQIntegratedStorage(brokers)
+	// Use first broker as filer address for offset storage
+	filerAddress := brokers[0]
+	offsetStorage, err := offset.NewSMQOffsetStorage(filerAddress)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create offset storage: %w", err)
 	}
