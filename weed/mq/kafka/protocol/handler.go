@@ -1473,20 +1473,148 @@ func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint
 
 // handleCreateTopicsV0V1 handles CreateTopics API versions 0 and 1
 func (h *Handler) handleCreateTopicsV0V1(correlationID uint32, requestBody []byte) ([]byte, error) {
-	// TODO: Implement v0/v1 parsing if needed
-	// For now, return unsupported version error
-	response := make([]byte, 0, 32)
+	fmt.Printf("DEBUG: CreateTopics v0/v1 - parsing request of %d bytes\n", len(requestBody))
+
+	if len(requestBody) < 4 {
+		return nil, fmt.Errorf("CreateTopics v0/v1 request too short")
+	}
+
+	offset := 0
+
+	// Parse topics array (regular array format: count + topics)
+	topicsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
+	offset += 4
+
+	fmt.Printf("DEBUG: CreateTopics v0/v1 - Topics count: %d\n", topicsCount)
+
+	// Build response
+	response := make([]byte, 0, 256)
 
 	// Correlation ID
 	correlationIDBytes := make([]byte, 4)
 	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
 	response = append(response, correlationIDBytes...)
 
-	// Throttle time
-	response = append(response, 0, 0, 0, 0)
+	// Topics array count (4 bytes in v0/v1)
+	topicsCountBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(topicsCountBytes, topicsCount)
+	response = append(response, topicsCountBytes...)
 
-	// Empty topics array
-	response = append(response, 0, 0, 0, 0)
+	// Process each topic
+	for i := uint32(0); i < topicsCount && offset < len(requestBody); i++ {
+		// Parse topic name (regular string: length + bytes)
+		if len(requestBody) < offset+2 {
+			break
+		}
+		topicNameLength := binary.BigEndian.Uint16(requestBody[offset : offset+2])
+		offset += 2
+
+		if len(requestBody) < offset+int(topicNameLength) {
+			break
+		}
+		topicName := string(requestBody[offset : offset+int(topicNameLength)])
+		offset += int(topicNameLength)
+
+		// Parse num_partitions (4 bytes)
+		if len(requestBody) < offset+4 {
+			break
+		}
+		numPartitions := binary.BigEndian.Uint32(requestBody[offset : offset+4])
+		offset += 4
+
+		// Parse replication_factor (2 bytes)
+		if len(requestBody) < offset+2 {
+			break
+		}
+		replicationFactor := binary.BigEndian.Uint16(requestBody[offset : offset+2])
+		offset += 2
+
+		// Parse assignments array (4 bytes count, then assignments)
+		if len(requestBody) < offset+4 {
+			break
+		}
+		assignmentsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
+		offset += 4
+
+		// Skip assignments for now (simplified)
+		for j := uint32(0); j < assignmentsCount && offset < len(requestBody); j++ {
+			// Skip partition_id (4 bytes)
+			if len(requestBody) >= offset+4 {
+				offset += 4
+			}
+			// Skip replicas array (4 bytes count + replica_ids)
+			if len(requestBody) >= offset+4 {
+				replicasCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
+				offset += 4
+				offset += int(replicasCount) * 4 // Skip replica IDs
+			}
+		}
+
+		// Parse configs array (4 bytes count, then configs)
+		if len(requestBody) >= offset+4 {
+			configsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
+			offset += 4
+
+			// Skip configs (simplified)
+			for j := uint32(0); j < configsCount && offset < len(requestBody); j++ {
+				// Skip config name (string: 2 bytes length + bytes)
+				if len(requestBody) >= offset+2 {
+					configNameLength := binary.BigEndian.Uint16(requestBody[offset : offset+2])
+					offset += 2 + int(configNameLength)
+				}
+				// Skip config value (string: 2 bytes length + bytes)
+				if len(requestBody) >= offset+2 {
+					configValueLength := binary.BigEndian.Uint16(requestBody[offset : offset+2])
+					offset += 2 + int(configValueLength)
+				}
+			}
+		}
+
+		fmt.Printf("DEBUG: CreateTopics v0/v1 - Parsed topic: %s, partitions: %d, replication: %d\n", 
+			topicName, numPartitions, replicationFactor)
+
+		// Build response for this topic
+		// Topic name (string: length + bytes)
+		topicNameLengthBytes := make([]byte, 2)
+		binary.BigEndian.PutUint16(topicNameLengthBytes, uint16(len(topicName)))
+		response = append(response, topicNameLengthBytes...)
+		response = append(response, []byte(topicName)...)
+
+		// Determine error code and message
+		var errorCode uint16 = 0
+
+		// Use SeaweedMQ integration
+		if h.seaweedMQHandler.TopicExists(topicName) {
+			errorCode = 36 // TOPIC_ALREADY_EXISTS
+		} else if numPartitions <= 0 {
+			errorCode = 37 // INVALID_PARTITIONS
+		} else if replicationFactor <= 0 {
+			errorCode = 38 // INVALID_REPLICATION_FACTOR
+		} else {
+			// Create the topic in SeaweedMQ
+			if err := h.seaweedMQHandler.CreateTopic(topicName, int32(numPartitions)); err != nil {
+				errorCode = 1 // UNKNOWN_SERVER_ERROR
+			}
+		}
+
+		// Error code (2 bytes)
+		errorCodeBytes := make([]byte, 2)
+		binary.BigEndian.PutUint16(errorCodeBytes, errorCode)
+		response = append(response, errorCodeBytes...)
+	}
+
+	// Parse timeout_ms (4 bytes) - at the end of request
+	if len(requestBody) >= offset+4 {
+		timeoutMs := binary.BigEndian.Uint32(requestBody[offset : offset+4])
+		fmt.Printf("DEBUG: CreateTopics v0/v1 - timeout_ms: %d\n", timeoutMs)
+		offset += 4
+	}
+
+	// Parse validate_only (1 byte) - only in v1
+	if len(requestBody) >= offset+1 {
+		validateOnly := requestBody[offset] != 0
+		fmt.Printf("DEBUG: CreateTopics v0/v1 - validate_only: %v\n", validateOnly)
+	}
 
 	return response, nil
 }
