@@ -9,7 +9,7 @@ import (
 
 func TestHandler_ApiVersions(t *testing.T) {
 	// Create handler
-	h := NewHandler()
+	h := NewTestHandler()
 
 	// Create in-memory connection
 	server, client := net.Pipe()
@@ -221,7 +221,7 @@ func TestHandler_ApiVersions(t *testing.T) {
 }
 
 func TestHandler_handleApiVersions(t *testing.T) {
-	h := NewHandler()
+	h := NewTestHandler()
 	correlationID := uint32(999)
 
 	response, err := h.handleApiVersions(correlationID)
@@ -271,7 +271,7 @@ func TestHandler_handleApiVersions(t *testing.T) {
 }
 
 func TestHandler_handleMetadata(t *testing.T) {
-	h := NewHandler()
+	h := NewTestHandler()
 	correlationID := uint32(456)
 
 	// Empty request body for minimal test
@@ -300,7 +300,7 @@ func TestHandler_handleMetadata(t *testing.T) {
 }
 
 func TestHandler_handleListOffsets(t *testing.T) {
-	h := NewHandler()
+	h := NewTestHandler()
 	correlationID := uint32(123)
 
 	// Build a simple ListOffsets v0 request body (header stripped): topics
@@ -351,7 +351,7 @@ func TestHandler_handleListOffsets(t *testing.T) {
 
 func TestHandler_ListOffsets_EndToEnd(t *testing.T) {
 	// Create handler
-	h := NewHandler()
+	h := NewTestHandler()
 
 	// Create in-memory connection
 	server, client := net.Pipe()
@@ -461,7 +461,7 @@ func TestHandler_ListOffsets_EndToEnd(t *testing.T) {
 
 func TestHandler_Metadata_EndToEnd(t *testing.T) {
 	// Create handler
-	h := NewHandler()
+	h := NewTestHandler()
 
 	// Create in-memory connection
 	server, client := net.Pipe()

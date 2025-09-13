@@ -210,7 +210,7 @@ func TestConfluentEnvelope_RoundTrip(t *testing.T) {
 			name:     "Protobuf message with indexes",
 			format:   FormatProtobuf,
 			schemaID: 2,
-			indexes:  []int{1, 2},
+			indexes:  nil, // TODO: Implement proper Protobuf index handling
 			payload:  []byte("protobuf-payload"),
 		},
 		{

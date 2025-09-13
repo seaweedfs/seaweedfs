@@ -10,7 +10,7 @@ import (
 )
 
 func TestHandler_handleOffsetCommit(t *testing.T) {
-	h := NewHandler()
+	h := NewTestHandler()
 	defer h.Close()
 
 	// Create a consumer group with a stable member
@@ -63,7 +63,7 @@ func TestHandler_handleOffsetCommit(t *testing.T) {
 }
 
 func TestHandler_handleOffsetCommit_InvalidGroup(t *testing.T) {
-	h := NewHandler()
+	h := NewTestHandler()
 	defer h.Close()
 
 	// Request for non-existent group
@@ -89,7 +89,7 @@ func TestHandler_handleOffsetCommit_InvalidGroup(t *testing.T) {
 }
 
 func TestHandler_handleOffsetCommit_WrongGeneration(t *testing.T) {
-	h := NewHandler()
+	h := NewTestHandler()
 	defer h.Close()
 
 	// Create a consumer group with generation 2
@@ -131,7 +131,7 @@ func TestHandler_handleOffsetCommit_WrongGeneration(t *testing.T) {
 }
 
 func TestHandler_handleOffsetFetch(t *testing.T) {
-	h := NewHandler()
+	h := NewTestHandler()
 	defer h.Close()
 
 	// Create a consumer group with committed offsets
@@ -174,7 +174,7 @@ func TestHandler_handleOffsetFetch(t *testing.T) {
 }
 
 func TestHandler_handleOffsetFetch_NoCommittedOffset(t *testing.T) {
-	h := NewHandler()
+	h := NewTestHandler()
 	defer h.Close()
 
 	// Create a consumer group without committed offsets
@@ -206,7 +206,7 @@ func TestHandler_handleOffsetFetch_NoCommittedOffset(t *testing.T) {
 }
 
 func TestHandler_commitOffset(t *testing.T) {
-	h := NewHandler()
+	h := NewTestHandler()
 	defer h.Close()
 
 	group := &consumer.ConsumerGroup{
@@ -260,7 +260,7 @@ func TestHandler_commitOffset(t *testing.T) {
 }
 
 func TestHandler_fetchOffset(t *testing.T) {
-	h := NewHandler()
+	h := NewTestHandler()
 	defer h.Close()
 
 	// Test fetching from empty group
@@ -394,7 +394,7 @@ func TestHandler_OffsetCommitFetch_EndToEnd(t *testing.T) {
 }
 
 func TestHandler_parseOffsetCommitRequest(t *testing.T) {
-	h := NewHandler()
+	h := NewTestHandler()
 	defer h.Close()
 
 	requestBody := createOffsetCommitRequestBody("test-group", 1, "member1")
@@ -418,7 +418,7 @@ func TestHandler_parseOffsetCommitRequest(t *testing.T) {
 }
 
 func TestHandler_parseOffsetFetchRequest(t *testing.T) {
-	h := NewHandler()
+	h := NewTestHandler()
 	defer h.Close()
 
 	requestBody := createOffsetFetchRequestBody("test-group")
@@ -442,7 +442,7 @@ func TestHandler_parseOffsetFetchRequest(t *testing.T) {
 }
 
 func TestHandler_buildOffsetCommitResponse(t *testing.T) {
-	h := NewHandler()
+	h := NewTestHandler()
 	defer h.Close()
 
 	response := OffsetCommitResponse{
@@ -472,7 +472,7 @@ func TestHandler_buildOffsetCommitResponse(t *testing.T) {
 }
 
 func TestHandler_buildOffsetFetchResponse(t *testing.T) {
-	h := NewHandler()
+	h := NewTestHandler()
 	defer h.Close()
 
 	response := OffsetFetchResponse{

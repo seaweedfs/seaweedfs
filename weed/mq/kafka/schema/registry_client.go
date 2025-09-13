@@ -312,7 +312,9 @@ func (rc *RegistryClient) detectSchemaFormat(schema string) Format {
 						}
 					}
 					// Common JSON Schema types (that are not Avro types)
-					jsonSchemaTypes := []string{"object", "string", "number", "integer", "boolean", "null"}
+					// Note: "string" is ambiguous - it could be Avro primitive or JSON Schema
+					// We need to check other indicators first
+					jsonSchemaTypes := []string{"object", "number", "integer", "boolean", "null"}
 					for _, jsonSchemaType := range jsonSchemaTypes {
 						if typeStr == jsonSchemaType {
 							return FormatJSONSchema

@@ -48,12 +48,13 @@ func TestBrokerClient_FetchIntegration(t *testing.T) {
 		// Register schema
 		registerFetchTestSchema(t, registry, schemaID, schemaJSON)
 
-		// Test FetchSchematizedMessages (will return empty for now since no real broker)
+		// Test FetchSchematizedMessages (will fail to connect to mock broker)
 		messages, err := brokerClient.FetchSchematizedMessages("fetch-test-topic", 5)
-		require.NoError(t, err)
-		assert.Equal(t, 0, len(messages)) // No messages available from mock
+		assert.Error(t, err) // Expect error with mock broker that doesn't exist
+		assert.Contains(t, err.Error(), "failed to get subscriber")
+		assert.Nil(t, messages)
 
-		t.Logf("Fetch integration test completed - no messages available from mock broker")
+		t.Logf("Fetch integration test completed - connection failed as expected with mock broker: %v", err)
 	})
 
 	t.Run("Envelope Reconstruction", func(t *testing.T) {

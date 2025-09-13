@@ -9,11 +9,11 @@ import (
 // TestVersionMatrix_JoinGroup tests JoinGroup request parsing across versions
 func TestVersionMatrix_JoinGroup(t *testing.T) {
 	tests := []struct {
-		name       string
-		version    int16
-		buildBody  func() []byte
-		expectErr  bool
-		expectReq  *JoinGroupRequest
+		name      string
+		version   int16
+		buildBody func() []byte
+		expectErr bool
+		expectReq *JoinGroupRequest
 	}{
 		{
 			name:    "JoinGroup v0",
@@ -41,11 +41,11 @@ func TestVersionMatrix_JoinGroup(t *testing.T) {
 			},
 			expectErr: false,
 			expectReq: &JoinGroupRequest{
-				GroupID:         "test-group",
-				SessionTimeout:  30000,
-				MemberID:        "",
-				ProtocolType:    "consumer",
-				GroupProtocols:  []GroupProtocol{{Name: "range", Metadata: []byte{}}},
+				GroupID:        "test-group",
+				SessionTimeout: 30000,
+				MemberID:       "",
+				ProtocolType:   "consumer",
+				GroupProtocols: []GroupProtocol{{Name: "range", Metadata: []byte{}}},
 			},
 		},
 		{
@@ -78,22 +78,22 @@ func TestVersionMatrix_JoinGroup(t *testing.T) {
 			},
 			expectErr: false,
 			expectReq: &JoinGroupRequest{
-				GroupID:           "test-group",
-				SessionTimeout:    30000,
-				RebalanceTimeout:  300000,
-				MemberID:          "",
-				GroupInstanceID:   "",
-				ProtocolType:      "consumer",
-				GroupProtocols:    []GroupProtocol{{Name: "range", Metadata: []byte{}}},
+				GroupID:          "test-group",
+				SessionTimeout:   30000,
+				RebalanceTimeout: 300000,
+				MemberID:         "",
+				GroupInstanceID:  "",
+				ProtocolType:     "consumer",
+				GroupProtocols:   []GroupProtocol{{Name: "range", Metadata: []byte{}}},
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := NewHandler()
+			h := NewTestHandler()
 			body := tt.buildBody()
-			
+
 			req, err := h.parseJoinGroupRequest(body, uint16(tt.version))
 			if tt.expectErr && err == nil {
 				t.Errorf("expected error but got none")
@@ -128,11 +128,11 @@ func TestVersionMatrix_JoinGroup(t *testing.T) {
 // TestVersionMatrix_SyncGroup tests SyncGroup request parsing across versions
 func TestVersionMatrix_SyncGroup(t *testing.T) {
 	tests := []struct {
-		name       string
-		version    int16
-		buildBody  func() []byte
-		expectErr  bool
-		expectReq  *SyncGroupRequest
+		name      string
+		version   int16
+		buildBody func() []byte
+		expectErr bool
+		expectReq *SyncGroupRequest
 	}{
 		{
 			name:    "SyncGroup v0",
@@ -153,9 +153,9 @@ func TestVersionMatrix_SyncGroup(t *testing.T) {
 			},
 			expectErr: false,
 			expectReq: &SyncGroupRequest{
-				GroupID:      "test-group",
-				GenerationID: 1,
-				MemberID:     "member",
+				GroupID:          "test-group",
+				GenerationID:     1,
+				MemberID:         "member",
 				GroupAssignments: []GroupAssignment{},
 			},
 		},
@@ -180,10 +180,10 @@ func TestVersionMatrix_SyncGroup(t *testing.T) {
 			},
 			expectErr: false,
 			expectReq: &SyncGroupRequest{
-				GroupID:         "test-group",
-				GenerationID:    1,
-				MemberID:        "member",
-				GroupInstanceID: "",
+				GroupID:          "test-group",
+				GenerationID:     1,
+				MemberID:         "member",
+				GroupInstanceID:  "",
 				GroupAssignments: []GroupAssignment{},
 			},
 		},
@@ -191,9 +191,9 @@ func TestVersionMatrix_SyncGroup(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := NewHandler()
+			h := NewTestHandler()
 			body := tt.buildBody()
-			
+
 			req, err := h.parseSyncGroupRequest(body, uint16(tt.version))
 			if tt.expectErr && err == nil {
 				t.Errorf("expected error but got none")
@@ -222,11 +222,11 @@ func TestVersionMatrix_SyncGroup(t *testing.T) {
 // TestVersionMatrix_OffsetFetch tests OffsetFetch request parsing across versions
 func TestVersionMatrix_OffsetFetch(t *testing.T) {
 	tests := []struct {
-		name       string
-		version    int16
-		buildBody  func() []byte
-		expectErr  bool
-		expectReq  *OffsetFetchRequest
+		name      string
+		version   int16
+		buildBody func() []byte
+		expectErr bool
+		expectReq *OffsetFetchRequest
 	}{
 		{
 			name:    "OffsetFetch v1",
@@ -252,7 +252,7 @@ func TestVersionMatrix_OffsetFetch(t *testing.T) {
 				GroupID: "test-group",
 				Topics: []OffsetFetchTopic{
 					{
-						Name:  "test-topic",
+						Name:       "test-topic",
 						Partitions: []int32{0},
 					},
 				},
@@ -282,7 +282,7 @@ func TestVersionMatrix_OffsetFetch(t *testing.T) {
 				GroupID: "test-group",
 				Topics: []OffsetFetchTopic{
 					{
-						Name:  "test-topic",
+						Name:       "test-topic",
 						Partitions: []int32{0},
 					},
 				},
@@ -310,9 +310,9 @@ func TestVersionMatrix_OffsetFetch(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := NewHandler()
+			h := NewTestHandler()
 			body := tt.buildBody()
-			
+
 			req, err := h.parseOffsetFetchRequest(body)
 			if tt.expectErr && err == nil {
 				t.Errorf("expected error but got none")
@@ -329,8 +329,8 @@ func TestVersionMatrix_OffsetFetch(t *testing.T) {
 				}
 				for i, topic := range req.Topics {
 					if i < len(tt.expectReq.Topics) {
-					if topic.Name != tt.expectReq.Topics[i].Name {
-						t.Errorf("Topic[%d] name: got %q, want %q", i, topic.Name, tt.expectReq.Topics[i].Name)
+						if topic.Name != tt.expectReq.Topics[i].Name {
+							t.Errorf("Topic[%d] name: got %q, want %q", i, topic.Name, tt.expectReq.Topics[i].Name)
 						}
 					}
 				}
@@ -400,23 +400,23 @@ func TestVersionMatrix_FindCoordinator(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			body := tt.buildBody()
-			
+
 			// Parse the request manually to test the format
 			offset := 0
-			
+
 			// coordinator_key
 			if offset+2 > len(body) {
 				t.Fatalf("body too short for coordinator_key length")
 			}
-			keyLen := int(binary.BigEndian.Uint16(body[offset:offset+2]))
+			keyLen := int(binary.BigEndian.Uint16(body[offset : offset+2]))
 			offset += 2
-			
+
 			if offset+keyLen > len(body) {
 				t.Fatalf("body too short for coordinator_key")
 			}
-			key := string(body[offset:offset+keyLen])
+			key := string(body[offset : offset+keyLen])
 			offset += keyLen
-			
+
 			// coordinator_type (v1+)
 			var coordType int8 = 0 // default GROUP
 			if tt.version >= 1 {
@@ -426,7 +426,7 @@ func TestVersionMatrix_FindCoordinator(t *testing.T) {
 				coordType = int8(body[offset])
 				offset++
 			}
-			
+
 			if key != tt.expectKey {
 				t.Errorf("coordinator_key: got %q, want %q", key, tt.expectKey)
 			}
@@ -440,10 +440,10 @@ func TestVersionMatrix_FindCoordinator(t *testing.T) {
 // TestVersionMatrix_ListOffsets tests ListOffsets request parsing across versions
 func TestVersionMatrix_ListOffsets(t *testing.T) {
 	tests := []struct {
-		name         string
-		version      int16
-		buildBody    func() []byte
-		expectErr    bool
+		name          string
+		version       int16
+		buildBody     func() []byte
+		expectErr     bool
 		expectReplica int32
 		expectTopics  int
 	}{
@@ -525,20 +525,20 @@ func TestVersionMatrix_ListOffsets(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			body := tt.buildBody()
-			
+
 			// Parse the request manually to test the format
 			offset := 0
-			
+
 			// replica_id (v1+)
 			var replicaID int32 = -1
 			if tt.version >= 1 {
 				if offset+4 > len(body) {
 					t.Fatalf("body too short for replica_id")
 				}
-				replicaID = int32(binary.BigEndian.Uint32(body[offset:offset+4]))
+				replicaID = int32(binary.BigEndian.Uint32(body[offset : offset+4]))
 				offset += 4
 			}
-			
+
 			// isolation_level (v2+)
 			if tt.version >= 2 {
 				if offset+1 > len(body) {
@@ -547,14 +547,14 @@ func TestVersionMatrix_ListOffsets(t *testing.T) {
 				// isolationLevel := int8(body[offset])
 				offset += 1
 			}
-			
+
 			// topics array count
 			if offset+4 > len(body) {
 				t.Fatalf("body too short for topics count")
 			}
-			topicsCount := int(binary.BigEndian.Uint32(body[offset:offset+4]))
+			topicsCount := int(binary.BigEndian.Uint32(body[offset : offset+4]))
 			offset += 4
-			
+
 			if replicaID != tt.expectReplica {
 				t.Errorf("replica_id: got %d, want %d", replicaID, tt.expectReplica)
 			}

@@ -51,12 +51,12 @@ func TestNewAvroDecoder(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			decoder, err := NewAvroDecoder(tt.schema)
-			
+
 			if (err != nil) != tt.expectErr {
 				t.Errorf("NewAvroDecoder() error = %v, expectErr %v", err, tt.expectErr)
 				return
 			}
-			
+
 			if !tt.expectErr && decoder == nil {
 				t.Error("Expected non-nil decoder for valid schema")
 			}
@@ -106,11 +106,11 @@ func TestAvroDecoder_Decode(t *testing.T) {
 	if result["id"] != int32(123) {
 		t.Errorf("Expected id=123, got %v", result["id"])
 	}
-	
+
 	if result["name"] != "John Doe" {
 		t.Errorf("Expected name='John Doe', got %v", result["name"])
 	}
-	
+
 	// For union types, Avro returns a map with the type name as key
 	if emailMap, ok := result["email"].(map[string]interface{}); ok {
 		if emailMap["string"] != "john@example.com" {
@@ -163,7 +163,7 @@ func TestAvroDecoder_DecodeToRecordValue(t *testing.T) {
 	if idValue == nil {
 		t.Fatal("Expected id field")
 	}
-	
+
 	if idValue.GetInt32Value() != 456 {
 		t.Errorf("Expected id=456, got %v", idValue.GetInt32Value())
 	}
@@ -172,7 +172,7 @@ func TestAvroDecoder_DecodeToRecordValue(t *testing.T) {
 	if nameValue == nil {
 		t.Fatal("Expected name field")
 	}
-	
+
 	if nameValue.GetStringValue() != "Jane Smith" {
 		t.Errorf("Expected name='Jane Smith', got %v", nameValue.GetStringValue())
 	}
@@ -241,7 +241,7 @@ func TestMapToRecordValue(t *testing.T) {
 	if nestedValue == nil {
 		t.Fatal("Expected nested record")
 	}
-	
+
 	if nestedValue.Fields["inner"].GetStringValue() != "value" {
 		t.Error("Expected nested inner='value'")
 	}
@@ -385,14 +385,14 @@ func TestInferTypeFromValue(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := inferTypeFromValue(tt.input)
-			
+
 			// Handle special cases
 			if tt.input == nil || reflect.TypeOf(tt.input).Kind() == reflect.Slice ||
-			   reflect.TypeOf(tt.input).Kind() == reflect.Map {
+				reflect.TypeOf(tt.input).Kind() == reflect.Map {
 				// Skip scalar type check for complex types
 				return
 			}
-			
+
 			if result.GetScalarType() != tt.expected {
 				t.Errorf("inferTypeFromValue() = %v, want %v", result.GetScalarType(), tt.expected)
 			}
@@ -494,7 +494,7 @@ func TestAvroDecoder_Integration(t *testing.T) {
 	if metadataRecord == nil {
 		t.Fatal("Expected metadata record")
 	}
-	
+
 	if metadataRecord.Fields["source"].GetStringValue() != "web" {
 		t.Error("Expected metadata source to be preserved")
 	}
@@ -513,12 +513,12 @@ func BenchmarkAvroDecoder_Decode(b *testing.B) {
 
 	decoder, _ := NewAvroDecoder(schema)
 	codec, _ := goavro.NewCodec(schema)
-	
+
 	testRecord := map[string]interface{}{
 		"id":   int32(123),
 		"name": "John Doe",
 	}
-	
+
 	binary, _ := codec.BinaryFromNative(nil, testRecord)
 
 	b.ResetTimer()

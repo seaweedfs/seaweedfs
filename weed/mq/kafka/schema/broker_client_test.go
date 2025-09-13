@@ -229,7 +229,7 @@ func TestBrokerClient_Integration(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, FormatAvro, avroDecoded.SchemaFormat)
 
-		// Test JSON Schema (will be detected as Avro due to current implementation)
+		// Test JSON Schema (now correctly detected as JSON Schema format)
 		jsonSchemaID := int32(11)
 		jsonSchema := `{
 			"type": "object",
@@ -242,10 +242,11 @@ func TestBrokerClient_Integration(t *testing.T) {
 		require.NoError(t, err)
 		jsonEnvelope := createBrokerTestEnvelope(jsonSchemaID, jsonBytes)
 
-		// This will fail due to format detection, which is expected
-		_, err = brokerClient.ValidateMessage(jsonEnvelope)
-		assert.Error(t, err)
-		t.Logf("Expected JSON Schema error (detected as Avro): %v", err)
+		// This should now work correctly with improved format detection
+		jsonDecoded, err := brokerClient.ValidateMessage(jsonEnvelope)
+		require.NoError(t, err)
+		assert.Equal(t, FormatJSONSchema, jsonDecoded.SchemaFormat)
+		t.Logf("Successfully validated JSON Schema message with schema ID %d", jsonSchemaID)
 	})
 
 	t.Run("Cache Behavior", func(t *testing.T) {

@@ -70,8 +70,12 @@ func (h *Handler) handleFetch(correlationID uint32, apiVersion uint16, requestBo
 			response = append(response, 0, 0)
 
 			// Get ledger for this topic-partition to determine high water mark
-			ledger := h.GetOrCreateLedger(topic.Name, partition.PartitionID)
-			highWaterMark := ledger.GetHighWaterMark()
+			// Use GetLedger (not GetOrCreateLedger) to avoid creating topics that don't exist
+			ledger := h.GetLedger(topic.Name, partition.PartitionID)
+			var highWaterMark int64 = 0
+			if ledger != nil {
+				highWaterMark = ledger.GetHighWaterMark()
+			}
 
 			fmt.Printf("DEBUG: Fetch v%d - topic: %s, partition: %d, fetchOffset: %d, highWaterMark: %d, maxBytes: %d\n",
 				apiVersion, topic.Name, partition.PartitionID, partition.FetchOffset, highWaterMark, partition.MaxBytes)
@@ -92,15 +96,15 @@ func (h *Handler) handleFetch(correlationID uint32, apiVersion uint16, requestBo
 				response = append(response, 0, 0, 0, 0)
 			}
 
-			// If topic does not exist, patch error to UNKNOWN_TOPIC_OR_PARTITION
-			if !h.seaweedMQHandler.TopicExists(topic.Name) {
+			// If topic/ledger does not exist, patch error to UNKNOWN_TOPIC_OR_PARTITION
+			if ledger == nil || !h.seaweedMQHandler.TopicExists(topic.Name) {
 				response[errorPos] = 0
 				response[errorPos+1] = 3 // UNKNOWN_TOPIC_OR_PARTITION
 			}
 
 			// Records - get actual stored record batches
 			var recordBatch []byte
-			if highWaterMark > partition.FetchOffset {
+			if ledger != nil && highWaterMark > partition.FetchOffset {
 				// Try to get the actual stored record batch first
 				if storedBatch, exists := h.GetRecordBatch(topic.Name, partition.PartitionID, partition.FetchOffset); exists {
 					recordBatch = storedBatch

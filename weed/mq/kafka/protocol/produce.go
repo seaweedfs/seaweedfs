@@ -345,13 +345,13 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 
 	fmt.Printf("DEBUG: Produce v%d - acks: %d, timeout: %d\n", apiVersion, acks, timeout)
 
-	// If acks=0, fire-and-forget - return empty response immediately
-	if acks == 0 {
-		fmt.Printf("DEBUG: Produce v%d - acks=0, returning empty response (fire-and-forget)\n", apiVersion)
-		return []byte{}, nil
+	// Remember if this is fire-and-forget mode
+	isFireAndForget := acks == 0
+	if isFireAndForget {
+		fmt.Printf("DEBUG: Produce v%d - acks=0, will process but return empty response (fire-and-forget)\n", apiVersion)
+	} else {
+		fmt.Printf("DEBUG: Produce v%d - acks=%d, will process and return response\n", apiVersion, acks)
 	}
-
-	fmt.Printf("DEBUG: Produce v%d - acks=%d, will process and return response\n", apiVersion, acks)
 
 	topicsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 	offset += 4
@@ -486,6 +486,12 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 				response = append(response, logStartOffsetBytes...)
 			}
 		}
+	}
+
+	// For fire-and-forget mode, return empty response after processing
+	if isFireAndForget {
+		fmt.Printf("DEBUG: Produce v%d - acks=0, returning empty response after processing\n", apiVersion)
+		return []byte{}, nil
 	}
 
 	// Append throttle_time_ms at the END for v1+

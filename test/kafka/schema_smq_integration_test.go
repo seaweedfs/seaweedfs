@@ -35,7 +35,7 @@ func TestSchematizedMessageToSMQ(t *testing.T) {
 
 func createTestKafkaHandler(t *testing.T) *protocol.Handler {
 	// Create handler with schema management enabled
-	handler := protocol.NewHandler()
+	handler := protocol.NewTestHandler()
 
 	// Try to enable schema management, but don't fail if registry is not available
 	err := handler.EnableSchemaManagement(schema.ManagerConfig{

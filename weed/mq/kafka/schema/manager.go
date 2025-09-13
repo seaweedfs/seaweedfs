@@ -433,8 +433,8 @@ func (m *Manager) encodeAvroMessage(recordValue *schema_pb.RecordValue, schemaID
 		return nil, fmt.Errorf("failed to get decoder for encoding: %w", err)
 	}
 
-	// Convert RecordValue back to Go map
-	goMap := recordValueToMap(recordValue)
+	// Convert RecordValue back to Go map with Avro union format preservation
+	goMap := recordValueToMapWithAvroContext(recordValue, true)
 
 	// Encode using Avro codec
 	binary, err := decoder.codec.BinaryFromNative(nil, goMap)
@@ -594,10 +594,16 @@ func (m *Manager) goValueToProtoValue(value interface{}, fieldDesc protoreflect.
 
 // recordValueToMap converts a RecordValue back to a Go map for encoding
 func recordValueToMap(recordValue *schema_pb.RecordValue) map[string]interface{} {
+	return recordValueToMapWithAvroContext(recordValue, false)
+}
+
+// recordValueToMapWithAvroContext converts a RecordValue back to a Go map for encoding
+// with optional Avro union format preservation
+func recordValueToMapWithAvroContext(recordValue *schema_pb.RecordValue, preserveAvroUnions bool) map[string]interface{} {
 	result := make(map[string]interface{})
 
 	for key, value := range recordValue.Fields {
-		result[key] = schemaValueToGoValue(value)
+		result[key] = schemaValueToGoValueWithAvroContext(value, preserveAvroUnions)
 	}
 
 	return result
@@ -605,6 +611,12 @@ func recordValueToMap(recordValue *schema_pb.RecordValue) map[string]interface{}
 
 // schemaValueToGoValue converts a schema Value back to a Go value
 func schemaValueToGoValue(value *schema_pb.Value) interface{} {
+	return schemaValueToGoValueWithAvroContext(value, false)
+}
+
+// schemaValueToGoValueWithAvroContext converts a schema Value back to a Go value
+// with optional Avro union format preservation
+func schemaValueToGoValueWithAvroContext(value *schema_pb.Value, preserveAvroUnions bool) interface{} {
 	switch v := value.Kind.(type) {
 	case *schema_pb.Value_BoolValue:
 		return v.BoolValue
@@ -623,11 +635,11 @@ func schemaValueToGoValue(value *schema_pb.Value) interface{} {
 	case *schema_pb.Value_ListValue:
 		result := make([]interface{}, len(v.ListValue.Values))
 		for i, item := range v.ListValue.Values {
-			result[i] = schemaValueToGoValue(item)
+			result[i] = schemaValueToGoValueWithAvroContext(item, preserveAvroUnions)
 		}
 		return result
 	case *schema_pb.Value_RecordValue:
-		return recordValueToMap(v.RecordValue)
+		return recordValueToMapWithAvroContext(v.RecordValue, preserveAvroUnions)
 	case *schema_pb.Value_TimestampValue:
 		// Convert back to time if needed, or return as int64
 		return v.TimestampValue.TimestampMicros

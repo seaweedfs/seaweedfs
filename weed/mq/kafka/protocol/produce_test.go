@@ -6,7 +6,7 @@ import (
 )
 
 func TestHandler_handleProduce(t *testing.T) {
-	h := NewHandler()
+	h := NewTestHandler()
 	correlationID := uint32(333)
 
 	// First create a topic
@@ -16,9 +16,12 @@ func TestHandler_handleProduce(t *testing.T) {
 	// CreatedAt:  time.Now().UnixNano(),
 	// }
 
+	// Create the topic by getting a ledger
+	topicName := "test-topic"
+	h.GetOrCreateLedger(topicName, 0)
+
 	// Build a simple Produce request with minimal record
 	clientID := "test-producer"
-	topicName := "test-topic"
 
 	requestBody := make([]byte, 0, 256)
 
@@ -131,7 +134,7 @@ func TestHandler_handleProduce(t *testing.T) {
 }
 
 func TestHandler_handleProduce_UnknownTopic(t *testing.T) {
-	h := NewHandler()
+	h := NewTestHandler()
 	correlationID := uint32(444)
 
 	// Build Produce request for non-existent topic
@@ -183,7 +186,7 @@ func TestHandler_handleProduce_UnknownTopic(t *testing.T) {
 }
 
 func TestHandler_handleProduce_FireAndForget(t *testing.T) {
-	h := NewHandler()
+	h := NewTestHandler()
 	correlationID := uint32(555)
 
 	// Create a topic
@@ -193,9 +196,12 @@ func TestHandler_handleProduce_FireAndForget(t *testing.T) {
 	// CreatedAt:  time.Now().UnixNano(),
 	// }
 
+	// Create the topic by getting a ledger
+	topicName := "test-topic"
+	h.GetOrCreateLedger(topicName, 0)
+
 	// Build Produce request with acks=0 (fire and forget)
 	clientID := "test-producer"
-	topicName := "test-topic"
 
 	requestBody := make([]byte, 0, 128)
 
@@ -250,7 +256,7 @@ func TestHandler_handleProduce_FireAndForget(t *testing.T) {
 }
 
 func TestHandler_parseRecordSet(t *testing.T) {
-	h := NewHandler()
+	h := NewTestHandler()
 
 	// Test with valid record set
 	recordSet := make([]byte, 32)

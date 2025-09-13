@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/consumer"
@@ -83,7 +84,8 @@ func NewTestHandler() *Handler {
 		brokerHost:       "localhost",
 		brokerPort:       9092,
 		seaweedMQHandler: &testSeaweedMQHandler{
-			topics: make(map[string]bool),
+			topics:  make(map[string]bool),
+			ledgers: make(map[string]*offset.Ledger),
 		},
 	}
 }
@@ -95,7 +97,9 @@ type basicSeaweedMQHandler struct {
 
 // testSeaweedMQHandler is a minimal mock implementation for testing
 type testSeaweedMQHandler struct {
-	topics map[string]bool
+	topics  map[string]bool
+	ledgers map[string]*offset.Ledger
+	mu      sync.RWMutex
 }
 
 // basicSeaweedMQHandler implementation
@@ -161,19 +165,49 @@ func (t *testSeaweedMQHandler) DeleteTopic(topic string) error {
 }
 
 func (t *testSeaweedMQHandler) GetOrCreateLedger(topic string, partition int32) *offset.Ledger {
-	// Create a mock ledger for testing
-	return offset.NewLedger()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	// Mark topic as existing when creating ledger
+	t.topics[topic] = true
+
+	key := fmt.Sprintf("%s-%d", topic, partition)
+	if ledger, exists := t.ledgers[key]; exists {
+		return ledger
+	}
+
+	ledger := offset.NewLedger()
+	t.ledgers[key] = ledger
+	return ledger
 }
 
 func (t *testSeaweedMQHandler) GetLedger(topic string, partition int32) *offset.Ledger {
-	// Create a mock ledger for testing
-	return offset.NewLedger()
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	key := fmt.Sprintf("%s-%d", topic, partition)
+	if ledger, exists := t.ledgers[key]; exists {
+		return ledger
+	}
+
+	// Return nil if ledger doesn't exist (topic doesn't exist)
+	return nil
 }
 
 func (t *testSeaweedMQHandler) ProduceRecord(topicName string, partitionID int32, key, value []byte) (int64, error) {
-	// For testing, return incrementing offset to simulate real behavior
-	// In a real test, this would store the record and return the assigned offset
-	return 1, nil // Return offset 1 to simulate successful produce
+	// For testing, actually store the record in the ledger
+	ledger := t.GetOrCreateLedger(topicName, partitionID)
+
+	// Assign an offset and append the record
+	offset := ledger.AssignOffsets(1)
+	timestamp := time.Now().UnixNano()
+	size := int32(len(value))
+
+	if err := ledger.AppendRecord(offset, timestamp, size); err != nil {
+		return 0, fmt.Errorf("failed to append record: %w", err)
+	}
+
+	return offset, nil
 }
 
 func (t *testSeaweedMQHandler) Close() error {

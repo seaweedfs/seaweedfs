@@ -136,10 +136,12 @@ func goValueToSchemaValue(value interface{}) *schema_pb.Value {
 			},
 		}
 	case map[string]interface{}:
-		// Check if this is an Avro union type (single key-value pair)
+		// Check if this is an Avro union type (single key-value pair with type name as key)
+		// Union types have keys that are typically Avro type names like "int", "string", etc.
+		// Regular nested records would have meaningful field names like "inner", "name", etc.
 		if len(v) == 1 {
 			for unionType, unionValue := range v {
-				// Handle common union type patterns
+				// Handle common Avro union type patterns (only if key looks like a type name)
 				switch unionType {
 				case "int":
 					if intVal, ok := unionValue.(int32); ok {
@@ -178,12 +180,11 @@ func goValueToSchemaValue(value interface{}) *schema_pb.Value {
 						}
 					}
 				}
-				// If it's not a recognized union type, recurse on the value
-				return goValueToSchemaValue(unionValue)
+				// If it's not a recognized union type, fall through to treat as nested record
 			}
 		}
 
-		// Handle nested records (not union types)
+		// Handle nested records (both single-field and multi-field maps)
 		fields := make(map[string]*schema_pb.Value)
 		for key, val := range v {
 			fields[key] = goValueToSchemaValue(val)

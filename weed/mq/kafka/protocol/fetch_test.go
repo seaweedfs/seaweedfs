@@ -7,7 +7,7 @@ import (
 )
 
 func TestHandler_handleFetch(t *testing.T) {
-	h := NewHandler()
+	h := NewTestHandler()
 	correlationID := uint32(666)
 
 	// Create a topic and add some records
@@ -162,10 +162,10 @@ func TestHandler_handleFetch(t *testing.T) {
 }
 
 func TestHandler_handleFetch_UnknownTopic(t *testing.T) {
-	h := NewHandler()
+	h := NewTestHandler()
 	correlationID := uint32(777)
 
-	// Build Fetch request for non-existent topic
+	// Build Fetch request for non-existent topic (don't create it)
 	clientID := "test-consumer"
 	topicName := "non-existent-topic"
 
@@ -215,7 +215,7 @@ func TestHandler_handleFetch_UnknownTopic(t *testing.T) {
 }
 
 func TestHandler_handleFetch_EmptyPartition(t *testing.T) {
-	h := NewHandler()
+	h := NewTestHandler()
 	correlationID := uint32(888)
 
 	// Create a topic but don't add any records
@@ -290,7 +290,7 @@ func TestHandler_handleFetch_EmptyPartition(t *testing.T) {
 }
 
 func TestHandler_constructRecordBatch(t *testing.T) {
-	h := NewHandler()
+	h := NewTestHandler()
 
 	// Test with simple parameters
 	records := h.constructRecordBatch(nil, 0, 3)
