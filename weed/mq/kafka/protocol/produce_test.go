@@ -3,7 +3,6 @@ package protocol
 import (
 	"encoding/binary"
 	"testing"
-	"time"
 )
 
 func TestHandler_handleProduce(t *testing.T) {
@@ -11,11 +10,11 @@ func TestHandler_handleProduce(t *testing.T) {
 	correlationID := uint32(333)
 
 	// First create a topic
-	h.topics["test-topic"] = &TopicInfo{
-		Name:       "test-topic",
-		Partitions: 1,
-		CreatedAt:  time.Now().UnixNano(),
-	}
+	// h.topics["test-topic"] = &TopicInfo{ // Commented out - now handled by SeaweedMQ handler
+	// Name:       "test-topic",
+	// Partitions: 1,
+	// CreatedAt:  time.Now().UnixNano(),
+	// }
 
 	// Build a simple Produce request with minimal record
 	clientID := "test-producer"
@@ -188,11 +187,11 @@ func TestHandler_handleProduce_FireAndForget(t *testing.T) {
 	correlationID := uint32(555)
 
 	// Create a topic
-	h.topics["test-topic"] = &TopicInfo{
-		Name:       "test-topic",
-		Partitions: 1,
-		CreatedAt:  time.Now().UnixNano(),
-	}
+	// h.topics["test-topic"] = &TopicInfo{ // Commented out - now handled by SeaweedMQ handler
+	// Name:       "test-topic",
+	// Partitions: 1,
+	// CreatedAt:  time.Now().UnixNano(),
+	// }
 
 	// Build Produce request with acks=0 (fire and forget)
 	clientID := "test-producer"

@@ -105,28 +105,22 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 		fmt.Printf("DEBUG: Produce request for topic '%s' (%d partitions)\n", topicName, partitionsCount)
 
 		// Check if topic exists, auto-create if it doesn't (simulates auto.create.topics.enable=true)
-		h.topicsMu.Lock()
-		_, topicExists := h.topics[topicName]
+		topicExists := h.seaweedMQHandler.TopicExists(topicName)
 
 		// Debug: show all existing topics
-		existingTopics := make([]string, 0, len(h.topics))
-		for tName := range h.topics {
-			existingTopics = append(existingTopics, tName)
-		}
+		existingTopics := h.seaweedMQHandler.ListTopics()
 		fmt.Printf("DEBUG: Topic exists check: '%s' -> %v (existing topics: %v)\n", topicName, topicExists, existingTopics)
 		if !topicExists {
 			fmt.Printf("DEBUG: Auto-creating topic during Produce: %s\n", topicName)
-			h.topics[topicName] = &TopicInfo{
-				Name:       topicName,
-				Partitions: 1, // Default to 1 partition
-				CreatedAt:  time.Now().UnixNano(),
+			if err := h.seaweedMQHandler.CreateTopic(topicName, 1); err != nil {
+				fmt.Printf("DEBUG: Failed to auto-create topic '%s': %v\n", topicName, err)
+			} else {
+				// Initialize ledger for partition 0
+				h.GetOrCreateLedger(topicName, 0)
+				topicExists = true // CRITICAL FIX: Update the flag after creating the topic
+				fmt.Printf("DEBUG: Topic '%s' auto-created successfully, topicExists = %v\n", topicName, topicExists)
 			}
-			// Initialize ledger for partition 0
-			h.GetOrCreateLedger(topicName, 0)
-			topicExists = true // CRITICAL FIX: Update the flag after creating the topic
-			fmt.Printf("DEBUG: Topic '%s' auto-created successfully, topicExists = %v\n", topicName, topicExists)
 		}
-		h.topicsMu.Unlock()
 
 		// Response: topic_name_size(2) + topic_name + partitions_array
 		response = append(response, byte(topicNameSize>>8), byte(topicNameSize))
@@ -441,9 +435,7 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 			currentTime := time.Now().UnixNano()
 
 			// Check if topic exists; for v2+ do NOT auto-create
-			h.topicsMu.RLock()
-			_, topicExists := h.topics[topicName]
-			h.topicsMu.RUnlock()
+			topicExists := h.seaweedMQHandler.TopicExists(topicName)
 
 			if !topicExists {
 				errorCode = 3 // UNKNOWN_TOPIC_OR_PARTITION

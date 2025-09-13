@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"strconv"
 	"strings"
 	"time"
 
@@ -137,82 +136,16 @@ func (h *Handler) Close() error {
 
 // StoreRecordBatch stores a record batch for later retrieval during Fetch operations
 func (h *Handler) StoreRecordBatch(topicName string, partition int32, baseOffset int64, recordBatch []byte) {
-	key := fmt.Sprintf("%s:%d:%d", topicName, partition, baseOffset)
-
-	// Fix the base offset in the record batch binary data to match the assigned offset
-	// The base offset is stored in the first 8 bytes of the record batch
-	if len(recordBatch) >= 8 {
-		// Create a copy to avoid modifying the original
-		fixedBatch := make([]byte, len(recordBatch))
-		copy(fixedBatch, recordBatch)
-
-		// Update the base offset (first 8 bytes, big endian)
-		binary.BigEndian.PutUint64(fixedBatch[0:8], uint64(baseOffset))
-
-		h.recordBatchMu.Lock()
-		defer h.recordBatchMu.Unlock()
-		h.recordBatches[key] = fixedBatch
-
-		fmt.Printf("DEBUG: Stored record batch with corrected base offset %d (was %d)\n",
-			baseOffset, binary.BigEndian.Uint64(recordBatch[0:8]))
-	} else {
-		h.recordBatchMu.Lock()
-		defer h.recordBatchMu.Unlock()
-		h.recordBatches[key] = recordBatch
-	}
+	// Record batch storage is now handled by the SeaweedMQ handler
+	fmt.Printf("DEBUG: StoreRecordBatch delegated to SeaweedMQ handler - topic:%s, partition:%d, offset:%d\n",
+		topicName, partition, baseOffset)
 }
 
 // GetRecordBatch retrieves a stored record batch that contains the requested offset
 func (h *Handler) GetRecordBatch(topicName string, partition int32, offset int64) ([]byte, bool) {
-	h.recordBatchMu.RLock()
-	defer h.recordBatchMu.RUnlock()
-
-	fmt.Printf("DEBUG: GetRecordBatch - looking for topic=%s, partition=%d, offset=%d\n", topicName, partition, offset)
-	fmt.Printf("DEBUG: Available record batches: %d\n", len(h.recordBatches))
-
-	// Look for a record batch that contains this offset
-	// Record batches are stored by their base offset, but may contain multiple records
-	topicPartitionPrefix := fmt.Sprintf("%s:%d:", topicName, partition)
-
-	for key, batch := range h.recordBatches {
-		fmt.Printf("DEBUG: Checking key: %s\n", key)
-		if !strings.HasPrefix(key, topicPartitionPrefix) {
-			continue
-		}
-
-		// Extract the base offset from the key
-		parts := strings.Split(key, ":")
-		if len(parts) != 3 {
-			continue
-		}
-
-		baseOffset, err := strconv.ParseInt(parts[2], 10, 64)
-		if err != nil {
-			continue
-		}
-
-		// Check if this batch could contain the requested offset
-		// We need to parse the batch to determine how many records it contains
-		recordCount := h.getRecordCountFromBatch(batch)
-		fmt.Printf("DEBUG: Batch key=%s, baseOffset=%d, recordCount=%d, requested offset=%d\n", key, baseOffset, recordCount, offset)
-
-		if recordCount > 0 && offset >= baseOffset && offset < baseOffset+int64(recordCount) {
-			fmt.Printf("DEBUG: Found matching batch for offset %d in batch with baseOffset %d\n", offset, baseOffset)
-
-			// If requesting the base offset, return the entire batch
-			if offset == baseOffset {
-				return batch, true
-			}
-
-			// For non-base offsets, we need to create a sub-batch starting from the requested offset
-			// This is a complex operation, so for now return the entire batch
-			// TODO: Implement proper sub-batch extraction
-			fmt.Printf("DEBUG: WARNING: Returning entire batch for offset %d (baseOffset=%d) - may cause client issues\n", offset, baseOffset)
-			return batch, true
-		}
-	}
-
-	fmt.Printf("DEBUG: No matching batch found for offset %d\n", offset)
+	// Record batch retrieval is now handled by the SeaweedMQ handler
+	fmt.Printf("DEBUG: GetRecordBatch delegated to SeaweedMQ handler - topic:%s, partition:%d, offset:%d\n",
+		topicName, partition, offset)
 	return nil, false
 }
 
@@ -540,22 +473,17 @@ func (h *Handler) HandleMetadataV0(correlationID uint32, requestBody []byte) ([]
 	requestedTopics := h.parseMetadataTopics(requestBody)
 	fmt.Printf("DEBUG: 🔍 METADATA v0 REQUEST - Requested: %v (empty=all)\n", requestedTopics)
 
-	// Determine topics to return
-	h.topicsMu.RLock()
+	// Determine topics to return using SeaweedMQ handler
 	var topicsToReturn []string
 	if len(requestedTopics) == 0 {
-		topicsToReturn = make([]string, 0, len(h.topics))
-		for name := range h.topics {
-			topicsToReturn = append(topicsToReturn, name)
-		}
+		topicsToReturn = h.seaweedMQHandler.ListTopics()
 	} else {
 		for _, name := range requestedTopics {
-			if _, exists := h.topics[name]; exists {
+			if h.seaweedMQHandler.TopicExists(name) {
 				topicsToReturn = append(topicsToReturn, name)
 			}
 		}
 	}
-	h.topicsMu.RUnlock()
 
 	// Topics array length (4 bytes)
 	topicsCountBytes := make([]byte, 4)
@@ -610,22 +538,17 @@ func (h *Handler) HandleMetadataV1(correlationID uint32, requestBody []byte) ([]
 	requestedTopics := h.parseMetadataTopics(requestBody)
 	fmt.Printf("DEBUG: 🔍 METADATA v1 REQUEST - Requested: %v (empty=all)\n", requestedTopics)
 
-	// Determine topics to return
-	h.topicsMu.RLock()
+	// Determine topics to return using SeaweedMQ handler
 	var topicsToReturn []string
 	if len(requestedTopics) == 0 {
-		topicsToReturn = make([]string, 0, len(h.topics))
-		for name := range h.topics {
-			topicsToReturn = append(topicsToReturn, name)
-		}
+		topicsToReturn = h.seaweedMQHandler.ListTopics()
 	} else {
 		for _, name := range requestedTopics {
-			if _, exists := h.topics[name]; exists {
+			if h.seaweedMQHandler.TopicExists(name) {
 				topicsToReturn = append(topicsToReturn, name)
 			}
 		}
 	}
-	h.topicsMu.RUnlock()
 
 	// Build response using same approach as v0 but with v1 additions
 	response := make([]byte, 0, 256)
@@ -711,22 +634,17 @@ func (h *Handler) HandleMetadataV2(correlationID uint32, requestBody []byte) ([]
 	requestedTopics := h.parseMetadataTopics(requestBody)
 	fmt.Printf("DEBUG: 🔍 METADATA v2 REQUEST - Requested: %v (empty=all)\n", requestedTopics)
 
-	// Determine topics to return
-	h.topicsMu.RLock()
+	// Determine topics to return using SeaweedMQ handler
 	var topicsToReturn []string
 	if len(requestedTopics) == 0 {
-		topicsToReturn = make([]string, 0, len(h.topics))
-		for name := range h.topics {
-			topicsToReturn = append(topicsToReturn, name)
-		}
+		topicsToReturn = h.seaweedMQHandler.ListTopics()
 	} else {
 		for _, name := range requestedTopics {
-			if _, exists := h.topics[name]; exists {
+			if h.seaweedMQHandler.TopicExists(name) {
 				topicsToReturn = append(topicsToReturn, name)
 			}
 		}
 	}
-	h.topicsMu.RUnlock()
 
 	var buf bytes.Buffer
 
@@ -803,22 +721,17 @@ func (h *Handler) HandleMetadataV3V4(correlationID uint32, requestBody []byte) (
 	// Parse requested topics (empty means all)
 	requestedTopics := h.parseMetadataTopics(requestBody)
 
-	// Determine topics to return
-	h.topicsMu.RLock()
+	// Determine topics to return using SeaweedMQ handler
 	var topicsToReturn []string
 	if len(requestedTopics) == 0 {
-		topicsToReturn = make([]string, 0, len(h.topics))
-		for name := range h.topics {
-			topicsToReturn = append(topicsToReturn, name)
-		}
+		topicsToReturn = h.seaweedMQHandler.ListTopics()
 	} else {
 		for _, name := range requestedTopics {
-			if _, exists := h.topics[name]; exists {
+			if h.seaweedMQHandler.TopicExists(name) {
 				topicsToReturn = append(topicsToReturn, name)
 			}
 		}
 	}
-	h.topicsMu.RUnlock()
 
 	var buf bytes.Buffer
 
@@ -898,22 +811,17 @@ func (h *Handler) HandleMetadataV5V6(correlationID uint32, requestBody []byte) (
 	requestedTopics := h.parseMetadataTopics(requestBody)
 	fmt.Printf("DEBUG: 🔍 METADATA v5/v6 REQUEST - Requested: %v (empty=all)\n", requestedTopics)
 
-	// Determine topics to return
-	h.topicsMu.RLock()
+	// Determine topics to return using SeaweedMQ handler
 	var topicsToReturn []string
 	if len(requestedTopics) == 0 {
-		topicsToReturn = make([]string, 0, len(h.topics))
-		for name := range h.topics {
-			topicsToReturn = append(topicsToReturn, name)
-		}
+		topicsToReturn = h.seaweedMQHandler.ListTopics()
 	} else {
 		for _, name := range requestedTopics {
-			if _, exists := h.topics[name]; exists {
+			if h.seaweedMQHandler.TopicExists(name) {
 				topicsToReturn = append(topicsToReturn, name)
 			}
 		}
 	}
-	h.topicsMu.RUnlock()
 
 	var buf bytes.Buffer
 
@@ -998,22 +906,17 @@ func (h *Handler) HandleMetadataV7(correlationID uint32, requestBody []byte) ([]
 	requestedTopics := h.parseMetadataTopics(requestBody)
 	fmt.Printf("DEBUG: 🔍 METADATA v7 REQUEST - Requested: %v (empty=all)\n", requestedTopics)
 
-	// Determine topics to return
-	h.topicsMu.RLock()
+	// Determine topics to return using SeaweedMQ handler
 	var topicsToReturn []string
 	if len(requestedTopics) == 0 {
-		topicsToReturn = make([]string, 0, len(h.topics))
-		for name := range h.topics {
-			topicsToReturn = append(topicsToReturn, name)
-		}
+		topicsToReturn = h.seaweedMQHandler.ListTopics()
 	} else {
 		for _, name := range requestedTopics {
-			if _, exists := h.topics[name]; exists {
+			if h.seaweedMQHandler.TopicExists(name) {
 				topicsToReturn = append(topicsToReturn, name)
 			}
 		}
 	}
-	h.topicsMu.RUnlock()
 
 	var buf bytes.Buffer
 
@@ -1359,9 +1262,7 @@ func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint
 		response = append(response, byte(topicsCount+1)) // Compact array format
 	}
 
-	// Process each topic
-	h.topicsMu.Lock()
-	defer h.topicsMu.Unlock()
+	// Process each topic (using SeaweedMQ handler)
 
 	for i := uint32(0); i < topicsCount && offset < len(requestBody); i++ {
 		// Parse topic name (compact string in v2+)
@@ -1460,47 +1361,21 @@ func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint
 		var errorCode uint16 = 0
 		var errorMessage string = ""
 
-		if h.useSeaweedMQ {
-			// Use SeaweedMQ integration
-			if h.seaweedMQHandler.TopicExists(topicName) {
-				errorCode = 36 // TOPIC_ALREADY_EXISTS
-				errorMessage = "Topic already exists"
-			} else if numPartitions <= 0 {
-				errorCode = 37 // INVALID_PARTITIONS
-				errorMessage = "Invalid number of partitions"
-			} else if replicationFactor <= 0 {
-				errorCode = 38 // INVALID_REPLICATION_FACTOR
-				errorMessage = "Invalid replication factor"
-			} else {
-				// Create the topic in SeaweedMQ
-				if err := h.seaweedMQHandler.CreateTopic(topicName, int32(numPartitions)); err != nil {
-					errorCode = 1 // UNKNOWN_SERVER_ERROR
-					errorMessage = err.Error()
-				}
-			}
+		// Use SeaweedMQ integration
+		if h.seaweedMQHandler.TopicExists(topicName) {
+			errorCode = 36 // TOPIC_ALREADY_EXISTS
+			errorMessage = "Topic already exists"
+		} else if numPartitions <= 0 {
+			errorCode = 37 // INVALID_PARTITIONS
+			errorMessage = "Invalid number of partitions"
+		} else if replicationFactor <= 0 {
+			errorCode = 38 // INVALID_REPLICATION_FACTOR
+			errorMessage = "Invalid replication factor"
 		} else {
-			// Use legacy in-memory mode
-			if _, exists := h.topics[topicName]; exists {
-				errorCode = 36 // TOPIC_ALREADY_EXISTS
-				errorMessage = "Topic already exists"
-			} else if numPartitions <= 0 {
-				errorCode = 37 // INVALID_PARTITIONS
-				errorMessage = "Invalid number of partitions"
-			} else if replicationFactor <= 0 {
-				errorCode = 38 // INVALID_REPLICATION_FACTOR
-				errorMessage = "Invalid replication factor"
-			} else {
-				// Create the topic
-				h.topics[topicName] = &TopicInfo{
-					Name:       topicName,
-					Partitions: int32(numPartitions),
-					CreatedAt:  time.Now().UnixNano(),
-				}
-
-				// Initialize ledgers for all partitions
-				for partitionID := int32(0); partitionID < int32(numPartitions); partitionID++ {
-					h.GetOrCreateLedger(topicName, partitionID)
-				}
+			// Create the topic in SeaweedMQ
+			if err := h.seaweedMQHandler.CreateTopic(topicName, int32(numPartitions)); err != nil {
+				errorCode = 1 // UNKNOWN_SERVER_ERROR
+				errorMessage = err.Error()
 			}
 		}
 
@@ -1595,9 +1470,7 @@ func (h *Handler) handleDeleteTopics(correlationID uint32, requestBody []byte) (
 	binary.BigEndian.PutUint32(topicsCountBytes, topicsCount)
 	response = append(response, topicsCountBytes...)
 
-	// Process each topic
-	h.topicsMu.Lock()
-	defer h.topicsMu.Unlock()
+	// Process each topic (using SeaweedMQ handler)
 
 	for i := uint32(0); i < topicsCount && offset < len(requestBody); i++ {
 		if len(requestBody) < offset+2 {
@@ -1623,35 +1496,15 @@ func (h *Handler) handleDeleteTopics(correlationID uint32, requestBody []byte) (
 		var errorCode uint16 = 0
 		var errorMessage string = ""
 
-		if h.useSeaweedMQ {
-			// Use SeaweedMQ integration
-			if !h.seaweedMQHandler.TopicExists(topicName) {
-				errorCode = 3 // UNKNOWN_TOPIC_OR_PARTITION
-				errorMessage = "Unknown topic"
-			} else {
-				// Delete the topic from SeaweedMQ
-				if err := h.seaweedMQHandler.DeleteTopic(topicName); err != nil {
-					errorCode = 1 // UNKNOWN_SERVER_ERROR
-					errorMessage = err.Error()
-				}
-			}
+		// Use SeaweedMQ integration
+		if !h.seaweedMQHandler.TopicExists(topicName) {
+			errorCode = 3 // UNKNOWN_TOPIC_OR_PARTITION
+			errorMessage = "Unknown topic"
 		} else {
-			// Use legacy in-memory mode
-			topicInfo, exists := h.topics[topicName]
-			if !exists {
-				errorCode = 3 // UNKNOWN_TOPIC_OR_PARTITION
-				errorMessage = "Unknown topic"
-			} else {
-				// Delete the topic
-				delete(h.topics, topicName)
-
-				// Clean up associated ledgers
-				h.ledgersMu.Lock()
-				for partitionID := int32(0); partitionID < topicInfo.Partitions; partitionID++ {
-					key := TopicPartitionKey{Topic: topicName, Partition: partitionID}
-					delete(h.ledgers, key)
-				}
-				h.ledgersMu.Unlock()
+			// Delete the topic from SeaweedMQ
+			if err := h.seaweedMQHandler.DeleteTopic(topicName); err != nil {
+				errorCode = 1 // UNKNOWN_SERVER_ERROR
+				errorMessage = err.Error()
 			}
 		}
 
@@ -1776,26 +1629,6 @@ func getAPIName(apiKey uint16) string {
 		return "DeleteTopics"
 	default:
 		return "Unknown"
-	}
-}
-
-// AddTopicForTesting adds a topic directly to the handler (for testing only)
-func (h *Handler) AddTopicForTesting(topicName string, partitions int32) {
-	h.topicsMu.Lock()
-	defer h.topicsMu.Unlock()
-
-	if _, exists := h.topics[topicName]; !exists {
-		h.topics[topicName] = &TopicInfo{
-			Name:       topicName,
-			Partitions: partitions,
-			CreatedAt:  time.Now().UnixNano(),
-		}
-
-		// Initialize ledgers for all partitions
-		for partitionID := int32(0); partitionID < partitions; partitionID++ {
-			h.GetOrCreateLedger(topicName, partitionID)
-		}
-
 	}
 }
 

@@ -11,9 +11,9 @@ func TestOffsetCommitHandlerIntegration(t *testing.T) {
 
 	// Test ConsumerOffsetKey creation
 	key := offset.ConsumerOffsetKey{
-		Topic:               "test-topic",
-		Partition:           0,
-		ConsumerGroup:       "test-group", 
+		Topic:                 "test-topic",
+		Partition:             0,
+		ConsumerGroup:         "test-group",
 		ConsumerGroupInstance: "test-instance",
 	}
 
@@ -37,7 +37,6 @@ func TestOffsetCommitHandlerIntegration(t *testing.T) {
 func TestOffsetCommitToSMQ_WithoutStorage(t *testing.T) {
 	// Test error handling when SMQ storage is not initialized
 	handler := &Handler{
-		useSeaweedMQ:     true,
 		smqOffsetStorage: nil, // Not initialized
 	}
 
@@ -61,7 +60,6 @@ func TestOffsetCommitToSMQ_WithoutStorage(t *testing.T) {
 func TestFetchOffsetFromSMQ_WithoutStorage(t *testing.T) {
 	// Test error handling when SMQ storage is not initialized
 	handler := &Handler{
-		useSeaweedMQ:     true,
 		smqOffsetStorage: nil, // Not initialized
 	}
 
@@ -87,7 +85,7 @@ func TestFetchOffsetFromSMQ_WithoutStorage(t *testing.T) {
 
 func TestOffsetHandlers_StructureValidation(t *testing.T) {
 	// Validate that offset commit/fetch request/response structures are properly formed
-	
+
 	// Test OffsetCommitRequest structure
 	request := OffsetCommitRequest{
 		GroupID:         "test-group",
@@ -135,9 +133,9 @@ func TestOffsetHandlers_StructureValidation(t *testing.T) {
 		t.Errorf("Expected offset 100, got %d", partition.Offset)
 	}
 
-	// Test OffsetFetchRequest structure  
+	// Test OffsetFetchRequest structure
 	fetchRequest := OffsetFetchRequest{
-		GroupID:       "test-group",
+		GroupID:         "test-group",
 		GroupInstanceID: "test-instance",
 		Topics: []OffsetFetchTopic{
 			{

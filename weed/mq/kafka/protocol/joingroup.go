@@ -881,17 +881,11 @@ func (h *Handler) getTopicPartitions(group *consumer.ConsumerGroup) map[string][
 
 	// Get partition info for all subscribed topics
 	for topic := range group.SubscribedTopics {
-		// Check if topic exists in our topic registry
-		h.topicsMu.RLock()
-		topicInfo, exists := h.topics[topic]
-		h.topicsMu.RUnlock()
-
-		if exists {
-			// Create partition list for this topic
-			partitions := make([]int32, topicInfo.Partitions)
-			for i := int32(0); i < topicInfo.Partitions; i++ {
-				partitions[i] = i
-			}
+		// Check if topic exists using SeaweedMQ handler
+		if h.seaweedMQHandler.TopicExists(topic) {
+			// For now, assume 1 partition per topic (can be extended later)
+			// In a real implementation, this would query SeaweedMQ for actual partition count
+			partitions := []int32{0}
 			topicPartitions[topic] = partitions
 		} else {
 			// Default to single partition if topic not found
@@ -958,12 +952,5 @@ func (h *Handler) serializeMemberAssignment(assignments []consumer.PartitionAssi
 
 // getAvailableTopics returns list of available topics for subscription metadata
 func (h *Handler) getAvailableTopics() []string {
-	h.topicsMu.RLock()
-	defer h.topicsMu.RUnlock()
-
-	topics := make([]string, 0, len(h.topics))
-	for topicName := range h.topics {
-		topics = append(topics, topicName)
-	}
-	return topics
+	return h.seaweedMQHandler.ListTopics()
 }

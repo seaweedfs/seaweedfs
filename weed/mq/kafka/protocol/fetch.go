@@ -93,10 +93,7 @@ func (h *Handler) handleFetch(correlationID uint32, apiVersion uint16, requestBo
 			}
 
 			// If topic does not exist, patch error to UNKNOWN_TOPIC_OR_PARTITION
-			h.topicsMu.RLock()
-			_, topicExists := h.topics[topic.Name]
-			h.topicsMu.RUnlock()
-			if !topicExists {
+			if !h.seaweedMQHandler.TopicExists(topic.Name) {
 				response[errorPos] = 0
 				response[errorPos+1] = 3 // UNKNOWN_TOPIC_OR_PARTITION
 			}

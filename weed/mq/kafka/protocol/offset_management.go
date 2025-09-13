@@ -156,7 +156,7 @@ func (h *Handler) handleOffsetCommit(correlationID uint32, requestBody []byte) (
 
 			// Commit offset using SMQ storage if available
 			var errorCode int16 = ErrorCodeNone
-			if h.useSeaweedMQ && h.smqOffsetStorage != nil {
+			if h.seaweedMQHandler != nil && h.smqOffsetStorage != nil {
 				if err := h.commitOffsetToSMQ(key, partition.Offset, partition.Metadata); err != nil {
 					errorCode = ErrorCodeOffsetMetadataTooLarge
 				}
@@ -240,7 +240,7 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, requestBody []byte) ([
 			var errorCode int16 = ErrorCodeNone
 
 			// Fetch offset using SMQ storage if available
-			if h.useSeaweedMQ && h.smqOffsetStorage != nil {
+			if h.seaweedMQHandler != nil && h.smqOffsetStorage != nil {
 				if offset, meta, err := h.fetchOffsetFromSMQ(key); err == nil {
 					fetchedOffset = offset
 					metadata = meta
