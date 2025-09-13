@@ -16,19 +16,20 @@
 
 **Verification**: E2E tests show "Found X SMQ records" - real data retrieval working
 
-## Phase 2: CreateTopics Protocol Compliance (PRIORITY HIGH)
+## Phase 2: CreateTopics Protocol Compliance (COMPLETED ✅)
 **Goal**: Fix CreateTopics API parsing and partition handling
 
 ### Tasks:
-- [ ] Implement `handleCreateTopicsV0V1` request parsing
-- [ ] Add support for partition count and basic topic configurations
-- [ ] Wire CreateTopics to actual SeaweedMQ topic creation
-- [ ] Add CreateTopics integration tests
+- [x] Implement `handleCreateTopicsV0V1` request parsing
+- [x] Add support for partition count and basic topic configurations
+- [x] Wire CreateTopics to actual SeaweedMQ topic creation
+- [x] Add CreateTopics integration tests
 
-**Files to modify**:
+**Files modified**:
 - `weed/mq/kafka/protocol/handler.go`
-- `weed/mq/kafka/protocol/create_topics.go` (new file)
-- Add test file: `weed/mq/kafka/protocol/create_topics_test.go`
+- Added test file: `weed/mq/kafka/protocol/create_topics_test.go`
+
+**Verification**: All v0-v5 CreateTopics tests pass; proper partition handling
 
 ## Phase 3: ApiVersions Matrix Accuracy (PRIORITY MEDIUM)
 **Goal**: Ensure advertised API versions match actual implementation
@@ -99,7 +100,7 @@
 - All protocol handler files
 - Add test file: `weed/mq/kafka/protocol/error_handling_test.go`
 
-## Current Status: Ready to start Phase 1
+## Current Status: Phase 1 & 2 completed, ready for Phase 3
 
 ### Implementation Notes:
 - Each phase should include comprehensive tests
