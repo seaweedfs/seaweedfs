@@ -103,22 +103,37 @@ func (h *Handler) handleFetch(correlationID uint32, apiVersion uint16, requestBo
 				response[errorPos+1] = 3 // UNKNOWN_TOPIC_OR_PARTITION
 			}
 
-			// Records - get actual stored record batches
+			// Records - get actual stored record batches using multi-batch fetcher
 			var recordBatch []byte
 			if ledger != nil && highWaterMark > partition.FetchOffset {
-				fmt.Printf("DEBUG: GetRecordBatch delegated to SeaweedMQ handler - topic:%s, partition:%d, offset:%d\n",
-					topic.Name, partition.PartitionID, partition.FetchOffset)
+				fmt.Printf("DEBUG: Multi-batch fetch - topic:%s, partition:%d, offset:%d, maxBytes:%d\n",
+					topic.Name, partition.PartitionID, partition.FetchOffset, partition.MaxBytes)
 
-				// Try to get records via GetStoredRecords interface
-				smqRecords, err := h.seaweedMQHandler.GetStoredRecords(topic.Name, partition.PartitionID, partition.FetchOffset, 10)
-				if err == nil && len(smqRecords) > 0 {
-					fmt.Printf("DEBUG: Found %d SMQ records for offset %d, constructing record batch\n", len(smqRecords), partition.FetchOffset)
-					recordBatch = h.constructRecordBatchFromSMQ(partition.FetchOffset, smqRecords)
-					fmt.Printf("DEBUG: Using SMQ record batch for offset %d, size: %d bytes\n", partition.FetchOffset, len(recordBatch))
+				// Use multi-batch fetcher for better MaxBytes compliance
+				multiFetcher := NewMultiBatchFetcher(h)
+				result, err := multiFetcher.FetchMultipleBatches(
+					topic.Name, 
+					partition.PartitionID, 
+					partition.FetchOffset, 
+					highWaterMark, 
+					partition.MaxBytes,
+				)
+
+				if err == nil && result.TotalSize > 0 {
+					fmt.Printf("DEBUG: Multi-batch result - %d batches, %d bytes, next offset %d\n", 
+						result.BatchCount, result.TotalSize, result.NextOffset)
+					recordBatch = result.RecordBatches
 				} else {
-					fmt.Printf("DEBUG: No SMQ records available, using synthetic batch\n")
-					recordBatch = h.constructSimpleRecordBatch(partition.FetchOffset, highWaterMark)
-					fmt.Printf("DEBUG: Using synthetic record batch for offset %d, size: %d bytes\n", partition.FetchOffset, len(recordBatch))
+					fmt.Printf("DEBUG: Multi-batch failed or empty, falling back to single batch\n")
+					// Fallback to original single batch logic
+					smqRecords, err := h.seaweedMQHandler.GetStoredRecords(topic.Name, partition.PartitionID, partition.FetchOffset, 10)
+					if err == nil && len(smqRecords) > 0 {
+						recordBatch = h.constructRecordBatchFromSMQ(partition.FetchOffset, smqRecords)
+						fmt.Printf("DEBUG: Fallback single batch size: %d bytes\n", len(recordBatch))
+					} else {
+						recordBatch = h.constructSimpleRecordBatch(partition.FetchOffset, highWaterMark)
+						fmt.Printf("DEBUG: Fallback synthetic batch size: %d bytes\n", len(recordBatch))
+					}
 				}
 			} else {
 				fmt.Printf("DEBUG: No messages available - fetchOffset %d >= highWaterMark %d\n", partition.FetchOffset, highWaterMark)
