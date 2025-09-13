@@ -11,6 +11,42 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/protocol"
 )
 
+// resolveAdvertisedAddress resolves the appropriate address to advertise to Kafka clients
+// when the server binds to all interfaces (:: or 0.0.0.0)
+func resolveAdvertisedAddress() string {
+	// Try to find a non-loopback interface
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		glog.V(1).Infof("Failed to get network interfaces, using localhost: %v", err)
+		return "127.0.0.1"
+	}
+
+	for _, iface := range interfaces {
+		// Skip loopback and inactive interfaces
+		if iface.Flags&net.FlagLoopback != 0 || iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+
+		for _, addr := range addrs {
+			if ipNet, ok := addr.(*net.IPNet); ok && !ipNet.IP.IsLoopback() {
+				// Prefer IPv4 addresses for better Kafka client compatibility
+				if ipv4 := ipNet.IP.To4(); ipv4 != nil {
+					return ipv4.String()
+				}
+			}
+		}
+	}
+
+	// Fallback to localhost if no suitable interface found
+	glog.V(1).Infof("No non-loopback interface found, using localhost")
+	return "127.0.0.1"
+}
+
 type Options struct {
 	Listen       string
 	AgentAddress string // Optional: SeaweedMQ Agent address for production mode
@@ -136,17 +172,17 @@ func (s *Server) GetListenerAddr() (string, int) {
 	if strings.HasPrefix(addr, "[::]:") {
 		port := strings.TrimPrefix(addr, "[::]:") 
 		if p, err := strconv.Atoi(port); err == nil {
-			// Revert to 127.0.0.1 for broader compatibility  
-			return "127.0.0.1", p
+			// Resolve appropriate address when bound to IPv6 all interfaces
+			return resolveAdvertisedAddress(), p
 		}
 	}
 	
 	// Handle host:port format
 	if host, port, err := net.SplitHostPort(addr); err == nil {
 		if p, err := strconv.Atoi(port); err == nil {
-			// Use 127.0.0.1 instead of localhost for better kafka-go compatibility
-			if host == "::" || host == "" {
-				host = "127.0.0.1"
+			// Resolve appropriate address when bound to all interfaces
+			if host == "::" || host == "" || host == "0.0.0.0" {
+				host = resolveAdvertisedAddress()
 			}
 			return host, p
 		}
