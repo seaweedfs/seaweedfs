@@ -45,9 +45,9 @@ func TestKafkaToSMQMapping(t *testing.T) {
 
 		// Verify the mapping
 		assert.Equal(t, baseTime+2000, partitionOffset.StartTsNs)
-		assert.Equal(t, int32(1024), partitionOffset.Partition.RingSize)
+		assert.Equal(t, int32(2520), partitionOffset.Partition.RingSize)
 		assert.Equal(t, int32(0), partitionOffset.Partition.RangeStart)
-		assert.Equal(t, int32(31), partitionOffset.Partition.RangeStop)
+		assert.Equal(t, int32(77), partitionOffset.Partition.RangeStop)
 
 		t.Logf("Kafka offset %d → SMQ timestamp %d", kafkaOffset, partitionOffset.StartTsNs)
 	})
@@ -71,10 +71,10 @@ func TestKafkaToSMQMapping(t *testing.T) {
 			expectedStart  int32
 			expectedStop   int32
 		}{
-			{0, 0, 31},
-			{1, 32, 63},
-			{2, 64, 95},
-			{15, 480, 511},
+			{0, 0, 77},       // 0 * 78 = 0, (0+1)*78-1 = 77
+			{1, 78, 155},     // 1 * 78 = 78, (1+1)*78-1 = 155
+			{2, 156, 233},    // 2 * 78 = 156, (2+1)*78-1 = 233
+			{15, 1170, 1247}, // 15 * 78 = 1170, (15+1)*78-1 = 1247
 		}
 
 		for _, tc := range testCases {
@@ -207,8 +207,8 @@ func TestGetMappingInfo(t *testing.T) {
 	assert.Equal(t, int64(0), info.KafkaOffset)
 	assert.Equal(t, baseTime, info.SMQTimestamp)
 	assert.Equal(t, int32(2), info.KafkaPartition)
-	assert.Equal(t, int32(64), info.SMQRangeStart) // 2 * 32
-	assert.Equal(t, int32(95), info.SMQRangeStop)  // (2+1) * 32 - 1
+	assert.Equal(t, int32(156), info.SMQRangeStart) // 2 * 78
+	assert.Equal(t, int32(233), info.SMQRangeStop)  // (2+1) * 78 - 1
 	assert.Equal(t, int32(150), info.MessageSize)
 
 	t.Logf("Mapping info: Kafka %d:%d → SMQ %d [%d-%d] (%d bytes)",
@@ -265,9 +265,9 @@ func TestCreatePartitionOffsetForTimeRange(t *testing.T) {
 	partitionOffset := mapper.CreatePartitionOffsetForTimeRange(kafkaPartition, startTime)
 
 	assert.Equal(t, startTime, partitionOffset.StartTsNs)
-	assert.Equal(t, int32(1024), partitionOffset.Partition.RingSize)
-	assert.Equal(t, int32(160), partitionOffset.Partition.RangeStart) // 5 * 32
-	assert.Equal(t, int32(191), partitionOffset.Partition.RangeStop)  // (5+1) * 32 - 1
+	assert.Equal(t, int32(2520), partitionOffset.Partition.RingSize)
+	assert.Equal(t, int32(390), partitionOffset.Partition.RangeStart) // 5 * 78
+	assert.Equal(t, int32(467), partitionOffset.Partition.RangeStop)  // (5+1) * 78 - 1
 
 	t.Logf("Kafka partition %d time range → SMQ PartitionOffset [%d-%d] @ %d",
 		kafkaPartition, partitionOffset.Partition.RangeStart,

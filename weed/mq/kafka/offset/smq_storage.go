@@ -5,6 +5,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/filer_client"
+	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -36,23 +37,23 @@ func NewSMQOffsetStorage(filerAddress string) (*SMQOffsetStorage, error) {
 
 // SaveConsumerOffset saves the committed offset for a consumer group
 // Uses the same file format and location as SMQ brokers:
-// Path: <topic-dir>/<partition-dir>/<consumerGroup>.offset  
+// Path: <topic-dir>/<partition-dir>/<consumerGroup>.offset
 // Content: 8-byte big-endian offset
 func (s *SMQOffsetStorage) SaveConsumerOffset(key ConsumerOffsetKey, kafkaOffset, smqTimestamp int64, size int32) error {
 	t := topic.Topic{
 		Namespace: "kafka", // Use kafka namespace for Kafka topics
 		Name:      key.Topic,
 	}
-	
+
 	p := topic.Partition{
-		RingSize:   MaxPartitionCount,
+		RingSize:   pub_balancer.MaxPartitionCount,
 		RangeStart: int32(key.Partition),
 		RangeStop:  int32(key.Partition),
 	}
 
 	partitionDir := topic.PartitionDir(t, p)
 	offsetFileName := fmt.Sprintf("%s.offset", key.ConsumerGroup)
-	
+
 	// Use SMQ's 8-byte offset format
 	offsetBytes := make([]byte, 8)
 	util.Uint64toBytes(offsetBytes, uint64(kafkaOffset))
@@ -69,7 +70,7 @@ func (s *SMQOffsetStorage) LoadConsumerOffsets(key ConsumerOffsetKey) ([]OffsetE
 	if err != nil {
 		return []OffsetEntry{}, nil // No committed offset found
 	}
-	
+
 	if offset < 0 {
 		return []OffsetEntry{}, nil // No valid offset
 	}
@@ -79,7 +80,7 @@ func (s *SMQOffsetStorage) LoadConsumerOffsets(key ConsumerOffsetKey) ([]OffsetE
 		{
 			KafkaOffset: offset,
 			Timestamp:   0, // SMQ doesn't store timestamp mapping
-			Size:        0, // SMQ doesn't store size mapping  
+			Size:        0, // SMQ doesn't store size mapping
 		},
 	}, nil
 }
@@ -90,23 +91,23 @@ func (s *SMQOffsetStorage) GetConsumerHighWaterMark(key ConsumerOffsetKey) (int6
 	if err != nil {
 		return 0, nil // Start from beginning if no committed offset
 	}
-	
+
 	if offset < 0 {
 		return 0, nil // Start from beginning
 	}
-	
+
 	return offset + 1, nil // Next offset after committed
 }
 
 // getCommittedOffset reads the committed offset from SMQ's filer location
 func (s *SMQOffsetStorage) getCommittedOffset(key ConsumerOffsetKey) (int64, error) {
 	t := topic.Topic{
-		Namespace: "kafka", 
+		Namespace: "kafka",
 		Name:      key.Topic,
 	}
-	
+
 	p := topic.Partition{
-		RingSize:   MaxPartitionCount,
+		RingSize:   pub_balancer.MaxPartitionCount,
 		RangeStart: int32(key.Partition),
 		RangeStop:  int32(key.Partition),
 	}
@@ -126,11 +127,11 @@ func (s *SMQOffsetStorage) getCommittedOffset(key ConsumerOffsetKey) (int64, err
 		offset = int64(util.BytesToUint64(data))
 		return nil
 	})
-	
+
 	if err != nil {
 		return -1, err
 	}
-	
+
 	return offset, nil
 }
 
@@ -164,9 +165,6 @@ func (s *SMQOffsetStorage) GetHighWaterMark(topicPartition string) (int64, error
 func (s *SMQOffsetStorage) Close() error {
 	return nil
 }
-
-// MaxPartitionCount defines the partition ring size used by SMQ
-const MaxPartitionCount = 1024
 
 // parseTopicPartitionKey parses legacy "topic:partition" format into ConsumerOffsetKey
 func parseTopicPartitionKey(topicPartition string) (ConsumerOffsetKey, error) {
