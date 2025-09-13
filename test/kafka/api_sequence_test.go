@@ -14,8 +14,7 @@ import (
 func TestKafkaGateway_APISequence(t *testing.T) {
 	// Start the gateway server
 	srv := gateway.NewServer(gateway.Options{
-		Listen:       ":0",
-		UseSeaweedMQ: false,
+		Listen: ":0",
 	})
 
 	if err := srv.Start(); err != nil {
@@ -31,7 +30,7 @@ func TestKafkaGateway_APISequence(t *testing.T) {
 	handler := srv.GetHandler()
 	handler.AddTopicForTesting(topicName, 1)
 
-	// Create a writer and try to write a single message  
+	// Create a writer and try to write a single message
 	writer := &kafka.Writer{
 		Addr:         kafka.TCP(brokerAddr),
 		Topic:        topicName,

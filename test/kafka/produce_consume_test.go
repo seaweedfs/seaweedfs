@@ -15,8 +15,7 @@ import (
 func TestKafkaGoClient_DirectProduceConsume(t *testing.T) {
 	// Start the gateway server
 	srv := gateway.NewServer(gateway.Options{
-		Listen:       ":0",
-		UseSeaweedMQ: false,
+		Listen: ":0",
 	})
 
 	if err := srv.Start(); err != nil {

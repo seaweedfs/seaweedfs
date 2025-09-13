@@ -39,15 +39,13 @@ func TestPersistentOffsetIntegration(t *testing.T) {
 
 func testOffsetPersistenceAndRecovery(t *testing.T, brokers []string) {
 	// Create offset storage
-	storage, err := offset.NewSeaweedMQStorage(brokers)
-	require.NoError(t, err)
+	storage := offset.NewSeaweedMQStorage()
 	defer storage.Close()
 
 	topicPartition := "test-persistence-topic-0"
 
 	// Create first ledger and add some entries
-	ledger1, err := offset.NewPersistentLedger(topicPartition, storage)
-	require.NoError(t, err)
+	ledger1 := offset.NewPersistentLedger(topicPartition, storage)
 
 	// Add test entries
 	testEntries := []struct {
@@ -77,8 +75,7 @@ func testOffsetPersistenceAndRecovery(t *testing.T, brokers []string) {
 	time.Sleep(2 * time.Second)
 
 	// Create second ledger (simulating restart)
-	ledger2, err := offset.NewPersistentLedger(topicPartition, storage)
-	require.NoError(t, err)
+	ledger2 := offset.NewPersistentLedger(topicPartition, storage)
 
 	// Verify recovered state
 	assert.Equal(t, ledger1.GetHighWaterMark(), ledger2.GetHighWaterMark())

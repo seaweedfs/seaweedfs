@@ -16,8 +16,7 @@ import (
 func TestComprehensiveE2E(t *testing.T) {
 	// Start gateway
 	gatewayServer := gateway.NewServer(gateway.Options{
-		Listen:       "127.0.0.1:0",
-		UseSeaweedMQ: false, // Use in-memory mode for testing
+		Listen: "127.0.0.1:0",
 	})
 
 	go func() {
@@ -359,8 +358,7 @@ func testSaramaToKafkaGo(t *testing.T, addr, topic string) {
 func TestOffsetManagement(t *testing.T) {
 	// Start gateway
 	gatewayServer := gateway.NewServer(gateway.Options{
-		Listen:       "127.0.0.1:0",
-		UseSeaweedMQ: false,
+		Listen: "127.0.0.1:0",
 	})
 
 	go func() {

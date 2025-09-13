@@ -13,8 +13,7 @@ import (
 func TestGateway_BasicConnection(t *testing.T) {
 	// Start the gateway server
 	srv := gateway.NewServer(gateway.Options{
-		Listen:       ":0",
-		UseSeaweedMQ: false,
+		Listen: ":0",
 	})
 
 	if err := srv.Start(); err != nil {
@@ -39,8 +38,7 @@ func TestGateway_BasicConnection(t *testing.T) {
 func TestGateway_ApiVersionsRequest(t *testing.T) {
 	// Start the gateway server
 	srv := gateway.NewServer(gateway.Options{
-		Listen:       ":0",
-		UseSeaweedMQ: false,
+		Listen: ":0",
 	})
 
 	if err := srv.Start(); err != nil {
@@ -141,8 +139,7 @@ func TestGateway_ApiVersionsRequest(t *testing.T) {
 func TestGateway_CreateTopicsRequest(t *testing.T) {
 	// Start the gateway server
 	srv := gateway.NewServer(gateway.Options{
-		Listen:       ":0",
-		UseSeaweedMQ: false,
+		Listen: ":0",
 	})
 
 	if err := srv.Start(); err != nil {

@@ -14,14 +14,9 @@ func TestSeaweedMQIntegration_E2E(t *testing.T) {
 	// Skip by default - requires real SeaweedMQ setup
 	t.Skip("Integration test requires real SeaweedMQ setup - run manually")
 
-	// Test configuration
-	agentAddress := "localhost:17777" // Default SeaweedMQ Agent address
-
 	// Start the gateway with SeaweedMQ backend
 	gatewayServer := gateway.NewServer(gateway.Options{
-		Listen:       ":0", // random port
-		AgentAddress: agentAddress,
-		UseSeaweedMQ: true,
+		Listen: ":0", // random port
 	})
 
 	err := gatewayServer.Start()
@@ -241,8 +236,7 @@ func TestSeaweedMQGateway_ModeSelection(t *testing.T) {
 	// Test in-memory mode (should always work)
 	t.Run("InMemoryMode", func(t *testing.T) {
 		server := gateway.NewServer(gateway.Options{
-			Listen:       ":0",
-			UseSeaweedMQ: false,
+			Listen: ":0",
 		})
 
 		err := server.Start()
@@ -262,9 +256,7 @@ func TestSeaweedMQGateway_ModeSelection(t *testing.T) {
 	// Test SeaweedMQ mode with invalid agent (should fall back)
 	t.Run("SeaweedMQModeFallback", func(t *testing.T) {
 		server := gateway.NewServer(gateway.Options{
-			Listen:       ":0",
-			AgentAddress: "invalid:99999", // Invalid address
-			UseSeaweedMQ: true,
+			Listen: ":0",
 		})
 
 		err := server.Start()
@@ -292,26 +284,21 @@ func TestSeaweedMQGateway_ConfigValidation(t *testing.T) {
 		{
 			name: "ValidInMemory",
 			options: gateway.Options{
-				Listen:       ":0",
-				UseSeaweedMQ: false,
+				Listen: ":0",
 			},
 			shouldWork: true,
 		},
 		{
 			name: "ValidSeaweedMQWithAgent",
 			options: gateway.Options{
-				Listen:       ":0",
-				AgentAddress: "localhost:17777",
-				UseSeaweedMQ: true,
+				Listen: ":0",
 			},
 			shouldWork: true, // May fail if no agent, but config is valid
 		},
 		{
 			name: "SeaweedMQWithoutAgent",
 			options: gateway.Options{
-				Listen:       ":0",
-				UseSeaweedMQ: true,
-				// AgentAddress is empty
+				Listen: ":0",
 			},
 			shouldWork: true, // Should fall back to in-memory
 		},

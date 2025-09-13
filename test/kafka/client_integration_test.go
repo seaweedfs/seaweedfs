@@ -16,8 +16,7 @@ import (
 func TestKafkaGoClient_BasicProduceConsume(t *testing.T) {
 	// Start the gateway server
 	srv := gateway.NewServer(gateway.Options{
-		Listen:       ":0",  // Use random port
-		UseSeaweedMQ: false, // Use in-memory mode for testing
+		Listen: ":0", // Use random port
 	})
 
 	if err := srv.Start(); err != nil {
@@ -83,8 +82,7 @@ func TestKafkaGoClient_BasicProduceConsume(t *testing.T) {
 func TestKafkaGoClient_ConsumerGroups(t *testing.T) {
 	// Start the gateway server
 	srv := gateway.NewServer(gateway.Options{
-		Listen:       ":0",
-		UseSeaweedMQ: false,
+		Listen: ":0",
 	})
 
 	if err := srv.Start(); err != nil {
@@ -137,8 +135,7 @@ func TestKafkaGoClient_MultiplePartitions(t *testing.T) {
 func TestKafkaGoClient_OffsetManagement(t *testing.T) {
 	// Start the gateway server
 	srv := gateway.NewServer(gateway.Options{
-		Listen:       ":0",
-		UseSeaweedMQ: false,
+		Listen: ":0",
 	})
 
 	if err := srv.Start(); err != nil {
