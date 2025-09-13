@@ -264,8 +264,8 @@ func (h *Handler) parseFetchRequest(apiVersion uint16, requestBody []byte) (*Fet
 			request.Topics[i].Partitions[j].PartitionID = int32(binary.BigEndian.Uint32(requestBody[offset : offset+4]))
 			offset += 4
 
-			// Current leader epoch (4 bytes) - only in v5+
-			if apiVersion >= 5 {
+			// Current leader epoch (4 bytes) - only in v9+
+			if apiVersion >= 9 {
 				if offset+4 > len(requestBody) {
 					return nil, fmt.Errorf("insufficient data for current leader epoch")
 				}

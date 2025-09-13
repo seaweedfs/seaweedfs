@@ -61,8 +61,8 @@ func TestHandler_handleFetch(t *testing.T) {
 	requestBody = append(requestBody, 0, 0, 0, 1)
 
 	// Partition 0
-	requestBody = append(requestBody, 0, 0, 0, 0)                            // partition ID
-	requestBody = append(requestBody, 0, 0, 0, 0)                            // current leader epoch
+	requestBody = append(requestBody, 0, 0, 0, 0) // partition ID
+	// NOTE: current leader epoch only in v9+, not v7
 	requestBody = append(requestBody, 0, 0, 0, 0, 0, 0, 0, byte(baseOffset)) // fetch offset
 	requestBody = append(requestBody, 0, 0, 0, 0, 0, 0, 0, 0)                // log start offset
 	requestBody = append(requestBody, 0, 0, 0x10, 0)                         // partition max bytes (1MB)
@@ -248,8 +248,8 @@ func TestHandler_handleFetch_EmptyPartition(t *testing.T) {
 	requestBody = append(requestBody, 0, 0, 0, 1)
 
 	// Partition 0 - fetch from offset 0
-	requestBody = append(requestBody, 0, 0, 0, 0)             // partition ID
-	requestBody = append(requestBody, 0, 0, 0, 0)             // current leader epoch
+	requestBody = append(requestBody, 0, 0, 0, 0) // partition ID
+	// NOTE: current leader epoch only in v9+, not v7
 	requestBody = append(requestBody, 0, 0, 0, 0, 0, 0, 0, 0) // fetch offset
 	requestBody = append(requestBody, 0, 0, 0, 0, 0, 0, 0, 0) // log start offset
 	requestBody = append(requestBody, 0, 0, 0x10, 0)          // partition max bytes

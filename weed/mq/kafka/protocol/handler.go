@@ -734,15 +734,15 @@ func (h *Handler) HandleMetadataV0(correlationID uint32, requestBody []byte) ([]
 		// partition: error_code(2) + partition_id(4) + leader(4)
 		response = append(response, 0, 0)       // error_code
 		response = append(response, 0, 0, 0, 0) // partition_id = 0
-		response = append(response, 0, 0, 0, 0) // leader = 0 (this broker)
+		response = append(response, 0, 0, 0, 1) // leader = 1 (this broker)
 
-		// replicas: array length(4) + one broker id (0)
+		// replicas: array length(4) + one broker id (1)
 		response = append(response, 0, 0, 0, 1)
-		response = append(response, 0, 0, 0, 0)
+		response = append(response, 0, 0, 0, 1)
 
-		// isr: array length(4) + one broker id (0)
+		// isr: array length(4) + one broker id (1)
 		response = append(response, 0, 0, 0, 1)
-		response = append(response, 0, 0, 0, 0)
+		response = append(response, 0, 0, 0, 1)
 	}
 
 	fmt.Printf("DEBUG: Metadata v0 response for %d topics: %v\n", len(topicsToReturn), topicsToReturn)
