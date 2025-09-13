@@ -24,13 +24,10 @@ func TestHandler_handleFetch(t *testing.T) {
 	ledger.AppendRecord(baseOffset+2, currentTime+2000, 150)
 
 	// Build a Fetch request
-	clientID := "test-consumer"
-
 	requestBody := make([]byte, 0, 256)
 
-	// Client ID
-	requestBody = append(requestBody, 0, byte(len(clientID)))
-	requestBody = append(requestBody, []byte(clientID)...)
+	// NOTE: client_id is handled by HandleConn and stripped before reaching handler
+	// Start directly with Fetch-specific fields
 
 	// Replica ID (-1 for consumer)
 	requestBody = append(requestBody, 0xFF, 0xFF, 0xFF, 0xFF)
@@ -166,14 +163,12 @@ func TestHandler_handleFetch_UnknownTopic(t *testing.T) {
 	correlationID := uint32(777)
 
 	// Build Fetch request for non-existent topic (don't create it)
-	clientID := "test-consumer"
 	topicName := "non-existent-topic"
 
 	requestBody := make([]byte, 0, 128)
 
-	// Client ID
-	requestBody = append(requestBody, 0, byte(len(clientID)))
-	requestBody = append(requestBody, []byte(clientID)...)
+	// NOTE: client_id is handled by HandleConn and stripped before reaching handler
+	// Start directly with Fetch-specific fields
 
 	// Standard Fetch parameters
 	requestBody = append(requestBody, 0xFF, 0xFF, 0xFF, 0xFF) // replica ID
@@ -228,13 +223,10 @@ func TestHandler_handleFetch_EmptyPartition(t *testing.T) {
 	_ = ledger // ledger exists but is empty
 
 	// Build Fetch request
-	clientID := "test-consumer"
-
 	requestBody := make([]byte, 0, 128)
 
-	// Client ID
-	requestBody = append(requestBody, 0, byte(len(clientID)))
-	requestBody = append(requestBody, []byte(clientID)...)
+	// NOTE: client_id is handled by HandleConn and stripped before reaching handler
+	// Start directly with Fetch-specific fields
 
 	// Standard parameters
 	requestBody = append(requestBody, 0xFF, 0xFF, 0xFF, 0xFF) // replica ID
