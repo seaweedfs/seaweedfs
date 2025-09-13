@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -144,4 +145,176 @@ func TestAgentClient_ConcurrentPublish(t *testing.T) {
 
 	t.Logf("Concurrent publish test: %d/%d successful, last sequence: %d",
 		successCount, numRecords, lastSequence)
+}
+
+// TestAgentClient_SubscriberSession tests subscriber session creation and management
+func TestAgentClient_SubscriberSession(t *testing.T) {
+	t.Skip("Integration test requires real SeaweedMQ Agent - run manually with agent available")
+
+	client, err := NewAgentClient("localhost:17777")
+	if err != nil {
+		t.Fatalf("Failed to create agent client: %v", err)
+	}
+	defer client.Close()
+
+	topic := "subscriber-test-topic"
+	partition := int32(0)
+	startOffset := int64(0)
+
+	// Create subscriber session
+	session, err := client.GetOrCreateSubscriber(topic, partition, startOffset)
+	if err != nil {
+		t.Fatalf("Failed to create subscriber: %v", err)
+	}
+
+	if session.Topic != topic {
+		t.Errorf("Topic mismatch: got %s, want %s", session.Topic, topic)
+	}
+
+	if session.Partition != partition {
+		t.Errorf("Partition mismatch: got %d, want %d", session.Partition, partition)
+	}
+
+	if session.Stream == nil {
+		t.Errorf("Stream should not be nil")
+	}
+
+	if session.OffsetLedger == nil {
+		t.Errorf("OffsetLedger should not be nil")
+	}
+
+	// Test getting existing session
+	session2, err := client.GetOrCreateSubscriber(topic, partition, startOffset)
+	if err != nil {
+		t.Fatalf("Failed to get existing subscriber: %v", err)
+	}
+
+	// Should return the same session
+	if session != session2 {
+		t.Errorf("Should return the same subscriber session")
+	}
+
+	t.Logf("Subscriber session test completed successfully")
+}
+
+// TestAgentClient_ReadRecords tests reading records from subscriber stream
+func TestAgentClient_ReadRecords(t *testing.T) {
+	t.Skip("Integration test requires real SeaweedMQ Agent - run manually with agent available")
+
+	client, err := NewAgentClient("localhost:17777")
+	if err != nil {
+		t.Fatalf("Failed to create agent client: %v", err)
+	}
+	defer client.Close()
+
+	topic := "read-records-test-topic"
+	partition := int32(0)
+
+	// First, publish some records to have data to read
+	testData := []struct {
+		key   []byte
+		value []byte
+	}{
+		{[]byte("read-key-1"), []byte("read-value-1")},
+		{[]byte("read-key-2"), []byte("read-value-2")},
+		{[]byte("read-key-3"), []byte("read-value-3")},
+	}
+
+	// Publish records
+	for i, data := range testData {
+		timestamp := time.Now().UnixNano()
+		sequence, err := client.PublishRecord(topic, partition, data.key, data.value, timestamp)
+		if err != nil {
+			t.Fatalf("Failed to publish record %d: %v", i, err)
+		}
+		t.Logf("Published record %d with sequence %d", i, sequence)
+	}
+
+	// Wait for records to be available
+	time.Sleep(200 * time.Millisecond)
+
+	// Create subscriber session
+	subscriber, err := client.GetOrCreateSubscriber(topic, partition, 0)
+	if err != nil {
+		t.Fatalf("Failed to create subscriber: %v", err)
+	}
+
+	// Try to read records
+	maxRecords := len(testData)
+	records, err := client.ReadRecords(subscriber, maxRecords)
+	if err != nil {
+		t.Fatalf("Failed to read records: %v", err)
+	}
+
+	t.Logf("Read %d records from SeaweedMQ", len(records))
+
+	// Validate records
+	for i, record := range records {
+		if record == nil {
+			t.Errorf("Record %d should not be nil", i)
+			continue
+		}
+
+		if len(record.Value) == 0 {
+			t.Errorf("Record %d should have non-empty value", i)
+		}
+
+		if record.Timestamp == 0 {
+			t.Errorf("Record %d should have non-zero timestamp", i)
+		}
+
+		t.Logf("Record %d: key=%s, value=%s, timestamp=%d, sequence=%d",
+			i, string(record.Key), string(record.Value), record.Timestamp, record.Sequence)
+	}
+
+	// Test reading with smaller maxRecords
+	smallBatch, err := client.ReadRecords(subscriber, 1)
+	if err != nil {
+		t.Errorf("Failed to read small batch: %v", err)
+	}
+	t.Logf("Small batch read returned %d records", len(smallBatch))
+
+	// Test reading when no records available (should not block indefinitely)
+	emptyBatch, err := client.ReadRecords(subscriber, 10)
+	if err != nil {
+		t.Logf("Expected: reading when no records available returned error: %v", err)
+	} else {
+		t.Logf("Reading when no records available returned %d records", len(emptyBatch))
+	}
+
+	t.Logf("ReadRecords test completed successfully")
+}
+
+// TestAgentClient_ReadRecords_ErrorHandling tests error cases for reading records
+func TestAgentClient_ReadRecords_ErrorHandling(t *testing.T) {
+	// This is a unit test that can run without SeaweedMQ agent
+	ctx := context.TODO()
+	client := &AgentClient{
+		subscribers: make(map[string]*SubscriberSession),
+		ctx:         ctx,
+	}
+
+	// Test reading from nil session - this will fail safely
+	records, err := client.ReadRecords(nil, 10)
+	if err == nil {
+		t.Errorf("Reading from nil session should fail")
+	}
+	if records != nil {
+		t.Errorf("Records should be nil when session is nil")
+	}
+
+	// Test reading with maxRecords=0 - should return empty records quickly
+	session := &SubscriberSession{
+		Topic:     "test-topic",
+		Partition: 0,
+		Stream:    nil, // This will cause an error when trying to read
+	}
+
+	records, err = client.ReadRecords(session, 0)
+	if len(records) != 0 {
+		t.Errorf("Should return empty records for maxRecords=0, got %d", len(records))
+	}
+	// Error is expected due to nil stream, but it should return empty records before attempting to read
+
+	t.Logf("ReadRecords error handling test completed")
 }

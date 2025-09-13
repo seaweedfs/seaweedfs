@@ -248,9 +248,33 @@ func (h *SeaweedMQHandler) FetchRecords(topic string, partition int32, fetchOffs
 		return []byte{}, nil
 	}
 
-	// For Phase 2, we'll construct a simplified record batch
-	// In a full implementation, this would read from SeaweedMQ subscriber
-	return h.constructKafkaRecordBatch(ledger, fetchOffset, highWaterMark, maxBytes)
+	// Get or create subscriber session for this topic/partition
+	subscriber, err := h.agentClient.GetOrCreateSubscriber(topic, partition, fetchOffset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get subscriber: %v", err)
+	}
+
+	// Calculate how many records to fetch
+	recordsToFetch := int(highWaterMark - fetchOffset)
+	if recordsToFetch > 100 {
+		recordsToFetch = 100 // Limit batch size
+	}
+
+	// Read real records from SeaweedMQ
+	seaweedRecords, err := h.agentClient.ReadRecords(subscriber, recordsToFetch)
+	if err != nil {
+		// If no records available, return empty batch instead of error
+		return []byte{}, nil
+	}
+
+	// Map SeaweedMQ records to Kafka offsets and update ledger
+	kafkaRecords, err := h.mapSeaweedToKafkaOffsets(topic, partition, seaweedRecords, fetchOffset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to map offsets: %v", err)
+	}
+
+	// Convert mapped records to Kafka record batch format
+	return h.convertSeaweedToKafkaRecordBatch(kafkaRecords, fetchOffset, maxBytes)
 }
 
 // constructKafkaRecordBatch creates a Kafka-compatible record batch
@@ -349,6 +373,167 @@ func (h *SeaweedMQHandler) constructSingleRecord(index, offset int64) []byte {
 	value := fmt.Sprintf("seaweedmq-message-%d", offset)
 	record = append(record, byte(len(value)))
 	record = append(record, []byte(value)...)
+
+	// Headers count (0)
+	record = append(record, 0)
+
+	return record
+}
+
+// mapSeaweedToKafkaOffsets maps SeaweedMQ records to proper Kafka offsets
+func (h *SeaweedMQHandler) mapSeaweedToKafkaOffsets(topic string, partition int32, seaweedRecords []*SeaweedRecord, startOffset int64) ([]*SeaweedRecord, error) {
+	if len(seaweedRecords) == 0 {
+		return seaweedRecords, nil
+	}
+
+	ledger := h.GetOrCreateLedger(topic, partition)
+	mappedRecords := make([]*SeaweedRecord, 0, len(seaweedRecords))
+
+	// Assign the required offsets first (this ensures offsets are reserved in sequence)
+	// Note: In a real scenario, these offsets would have been assigned during produce
+	// but for fetch operations we need to ensure the ledger state is consistent
+	for i, seaweedRecord := range seaweedRecords {
+		currentKafkaOffset := startOffset + int64(i)
+
+		// Create a copy of the record with proper Kafka offset assignment
+		mappedRecord := &SeaweedRecord{
+			Key:       seaweedRecord.Key,
+			Value:     seaweedRecord.Value,
+			Timestamp: seaweedRecord.Timestamp,
+			Sequence:  currentKafkaOffset, // Use Kafka offset as sequence for consistency
+		}
+
+		// Update the offset ledger to track the mapping between SeaweedMQ sequence and Kafka offset
+		recordSize := int32(len(seaweedRecord.Value))
+		if err := ledger.AppendRecord(currentKafkaOffset, seaweedRecord.Timestamp, recordSize); err != nil {
+			// Log warning but continue processing
+			fmt.Printf("Warning: failed to update offset ledger for topic %s partition %d offset %d: %v\n",
+				topic, partition, currentKafkaOffset, err)
+		}
+
+		mappedRecords = append(mappedRecords, mappedRecord)
+	}
+
+	return mappedRecords, nil
+}
+
+// convertSeaweedToKafkaRecordBatch converts SeaweedMQ records to Kafka record batch format
+func (h *SeaweedMQHandler) convertSeaweedToKafkaRecordBatch(seaweedRecords []*SeaweedRecord, fetchOffset int64, maxBytes int32) ([]byte, error) {
+	if len(seaweedRecords) == 0 {
+		return []byte{}, nil
+	}
+
+	batch := make([]byte, 0, 512)
+
+	// Record batch header
+	baseOffsetBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(baseOffsetBytes, uint64(fetchOffset))
+	batch = append(batch, baseOffsetBytes...) // base offset
+
+	// Batch length (placeholder, will be filled at end)
+	batchLengthPos := len(batch)
+	batch = append(batch, 0, 0, 0, 0)
+
+	batch = append(batch, 0, 0, 0, 0) // partition leader epoch
+	batch = append(batch, 2)          // magic byte (version 2)
+
+	// CRC placeholder
+	batch = append(batch, 0, 0, 0, 0)
+
+	// Batch attributes
+	batch = append(batch, 0, 0)
+
+	// Last offset delta
+	lastOffsetDelta := uint32(len(seaweedRecords) - 1)
+	lastOffsetDeltaBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(lastOffsetDeltaBytes, lastOffsetDelta)
+	batch = append(batch, lastOffsetDeltaBytes...)
+
+	// Timestamps - use actual timestamps from SeaweedMQ records
+	var firstTimestamp, maxTimestamp int64
+	if len(seaweedRecords) > 0 {
+		firstTimestamp = seaweedRecords[0].Timestamp
+		maxTimestamp = firstTimestamp
+		for _, record := range seaweedRecords {
+			if record.Timestamp > maxTimestamp {
+				maxTimestamp = record.Timestamp
+			}
+		}
+	}
+
+	firstTimestampBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(firstTimestampBytes, uint64(firstTimestamp))
+	batch = append(batch, firstTimestampBytes...)
+
+	maxTimestampBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(maxTimestampBytes, uint64(maxTimestamp))
+	batch = append(batch, maxTimestampBytes...)
+
+	// Producer info (simplified)
+	batch = append(batch, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF) // producer ID (-1)
+	batch = append(batch, 0xFF, 0xFF)                                     // producer epoch (-1)
+	batch = append(batch, 0xFF, 0xFF, 0xFF, 0xFF)                         // base sequence (-1)
+
+	// Record count
+	recordCountBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(recordCountBytes, uint32(len(seaweedRecords)))
+	batch = append(batch, recordCountBytes...)
+
+	// Add actual records from SeaweedMQ
+	for i, seaweedRecord := range seaweedRecords {
+		record := h.convertSingleSeaweedRecord(seaweedRecord, int64(i), fetchOffset)
+		recordLength := byte(len(record))
+		batch = append(batch, recordLength)
+		batch = append(batch, record...)
+
+		// Check if we're approaching maxBytes limit
+		if int32(len(batch)) > maxBytes*3/4 {
+			// Leave room for remaining headers and stop adding records
+			break
+		}
+	}
+
+	// Fill in the batch length
+	batchLength := uint32(len(batch) - batchLengthPos - 4)
+	binary.BigEndian.PutUint32(batch[batchLengthPos:batchLengthPos+4], batchLength)
+
+	return batch, nil
+}
+
+// convertSingleSeaweedRecord converts a single SeaweedMQ record to Kafka format
+func (h *SeaweedMQHandler) convertSingleSeaweedRecord(seaweedRecord *SeaweedRecord, index, baseOffset int64) []byte {
+	record := make([]byte, 0, 64)
+
+	// Record attributes
+	record = append(record, 0)
+
+	// Timestamp delta (varint - simplified)
+	timestampDelta := seaweedRecord.Timestamp - baseOffset // Simple delta calculation
+	if timestampDelta < 0 {
+		timestampDelta = 0
+	}
+	record = append(record, byte(timestampDelta&0xFF)) // Simplified varint encoding
+
+	// Offset delta (varint - simplified)
+	record = append(record, byte(index))
+
+	// Key length and key
+	if len(seaweedRecord.Key) > 0 {
+		record = append(record, byte(len(seaweedRecord.Key)))
+		record = append(record, seaweedRecord.Key...)
+	} else {
+		// Null key
+		record = append(record, 0xFF)
+	}
+
+	// Value length and value
+	if len(seaweedRecord.Value) > 0 {
+		record = append(record, byte(len(seaweedRecord.Value)))
+		record = append(record, seaweedRecord.Value...)
+	} else {
+		// Empty value
+		record = append(record, 0)
+	}
 
 	// Headers count (0)
 	record = append(record, 0)

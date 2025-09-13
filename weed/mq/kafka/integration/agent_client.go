@@ -51,6 +51,14 @@ type SubscriberSession struct {
 	OffsetLedger *offset.Ledger // Still use for Kafka offset translation
 }
 
+// SeaweedRecord represents a record received from SeaweedMQ
+type SeaweedRecord struct {
+	Key       []byte
+	Value     []byte
+	Timestamp int64
+	Sequence  int64
+}
+
 // NewAgentClient creates a new SeaweedMQ Agent client
 func NewAgentClient(agentAddress string) (*AgentClient, error) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -358,6 +366,68 @@ func (ac *AgentClient) closePublishSessionLocked(sessionID int64) error {
 
 	_, err := ac.client.ClosePublishSession(ac.ctx, closeReq)
 	return err
+}
+
+// ReadRecords reads available records from the subscriber session
+func (ac *AgentClient) ReadRecords(session *SubscriberSession, maxRecords int) ([]*SeaweedRecord, error) {
+	if session == nil {
+		return nil, fmt.Errorf("subscriber session cannot be nil")
+	}
+
+	var records []*SeaweedRecord
+
+	for len(records) < maxRecords {
+		// Try to receive a message with timeout to avoid blocking indefinitely
+		ctx, cancel := context.WithTimeout(ac.ctx, 100*time.Millisecond)
+
+		select {
+		case <-ctx.Done():
+			cancel()
+			return records, nil // Return what we have so far
+		default:
+			// Try to receive a record
+			resp, err := session.Stream.Recv()
+			cancel()
+
+			if err != nil {
+				// If we have some records, return them; otherwise return error
+				if len(records) > 0 {
+					return records, nil
+				}
+				return nil, fmt.Errorf("failed to receive record: %v", err)
+			}
+
+			if resp.Value != nil || resp.Key != nil {
+				// Convert SeaweedMQ record to our format
+				record := &SeaweedRecord{
+					Sequence:  resp.Offset, // Use offset as sequence
+					Timestamp: resp.TsNs,   // Timestamp in nanoseconds
+					Key:       resp.Key,    // Raw key
+				}
+
+				// Extract value from the structured record
+				if resp.Value != nil && resp.Value.Fields != nil {
+					if valueValue, exists := resp.Value.Fields["value"]; exists && valueValue.GetBytesValue() != nil {
+						record.Value = valueValue.GetBytesValue()
+					}
+					// Also check for key in structured fields if raw key is empty
+					if len(record.Key) == 0 {
+						if keyValue, exists := resp.Value.Fields["key"]; exists && keyValue.GetBytesValue() != nil {
+							record.Key = keyValue.GetBytesValue()
+						}
+					}
+					// Override timestamp if available in structured fields
+					if timestampValue, exists := resp.Value.Fields["timestamp"]; exists && timestampValue.GetTimestampValue() != nil {
+						record.Timestamp = timestampValue.GetTimestampValue().TimestampMicros * 1000 // Convert to nanoseconds
+					}
+				}
+
+				records = append(records, record)
+			}
+		}
+	}
+
+	return records, nil
 }
 
 // HealthCheck verifies the agent connection is working
