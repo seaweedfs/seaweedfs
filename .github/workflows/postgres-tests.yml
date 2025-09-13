@@ -44,7 +44,7 @@ jobs:
 
     - name: Start PostgreSQL Gateway Services
       run: |
-        make start-seaweedfs
+        make dev-start
         sleep 10
 
     - name: Run Basic Connectivity Test
