@@ -133,10 +133,7 @@ func (h *PersistentKafkaHandler) GetOrCreateLedger(topic string, partition int32
 	}
 
 	// Create persistent ledger
-	ledger, err := offset.NewPersistentLedger(key, h.offsetStorage)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create persistent ledger: %w", err)
-	}
+	ledger := offset.NewPersistentLedger(key, h.offsetStorage)
 
 	h.ledgers[key] = ledger
 	return ledger, nil
@@ -270,7 +267,8 @@ func (h *PersistentKafkaHandler) GetStats() map[string]interface{} {
 	h.ledgersMu.RLock()
 	ledgerStats := make(map[string]interface{})
 	for key, ledger := range h.ledgers {
-		entryCount, earliestTime, latestTime, nextOffset := ledger.GetStats()
+		entryCount, earliestTime, latestTime := ledger.GetStats()
+		nextOffset := ledger.GetHighWaterMark()
 		ledgerStats[key] = map[string]interface{}{
 			"entry_count":     entryCount,
 			"earliest_time":   earliestTime,

@@ -102,10 +102,7 @@ func (s *SMQSubscriber) Subscribe(
 
 	// Create persistent ledger for offset mapping
 	ledgerKey := fmt.Sprintf("%s-%d", kafkaTopic, kafkaPartition)
-	ledger, err := offset.NewPersistentLedger(ledgerKey, s.offsetStorage)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create ledger: %w", err)
-	}
+	ledger := offset.NewPersistentLedger(ledgerKey, s.offsetStorage)
 
 	// Create offset mapper
 	offsetMapper := offset.NewKafkaToSMQMapper(ledger.Ledger)

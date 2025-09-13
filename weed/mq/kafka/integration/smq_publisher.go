@@ -169,10 +169,7 @@ func (p *SMQPublisher) getOrCreateLedger(kafkaTopic string, partition int32) (*o
 	}
 
 	// Create persistent ledger
-	ledger, err := offset.NewPersistentLedger(key, p.offsetStorage)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create persistent ledger: %w", err)
-	}
+	ledger := offset.NewPersistentLedger(key, p.offsetStorage)
 
 	p.ledgers[key] = ledger
 	return ledger, nil
