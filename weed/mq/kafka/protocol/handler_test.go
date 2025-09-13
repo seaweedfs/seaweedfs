@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"context"
 	"encoding/binary"
 	"net"
 	"testing"
@@ -19,7 +20,7 @@ func TestHandler_ApiVersions(t *testing.T) {
 	// Handle connection in background
 	done := make(chan error, 1)
 	go func() {
-		done <- h.HandleConn(server)
+		done <- h.HandleConn(context.Background(), server)
 	}()
 
 	// Create ApiVersions request manually
@@ -361,7 +362,7 @@ func TestHandler_ListOffsets_EndToEnd(t *testing.T) {
 	// Handle connection in background
 	done := make(chan error, 1)
 	go func() {
-		done <- h.HandleConn(server)
+		done <- h.HandleConn(context.Background(), server)
 	}()
 
 	// Create ListOffsets request
@@ -471,7 +472,7 @@ func TestHandler_Metadata_EndToEnd(t *testing.T) {
 	// Handle connection in background
 	done := make(chan error, 1)
 	go func() {
-		done <- h.HandleConn(server)
+		done <- h.HandleConn(context.Background(), server)
 	}()
 
 	// Create Metadata request
