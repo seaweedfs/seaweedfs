@@ -125,19 +125,11 @@ func (h *Handler) handleOffsetCommit(correlationID uint32, requestBody []byte) (
 	// Update group's last activity
 	group.LastActivity = time.Now()
 
-	// Validate member exists and is in stable state
-	member, exists := group.Members[request.MemberID]
-	if !exists {
-		return h.buildOffsetCommitErrorResponse(correlationID, ErrorCodeUnknownMemberID), nil
-	}
-
-	if member.State != consumer.MemberStateStable {
-		return h.buildOffsetCommitErrorResponse(correlationID, ErrorCodeRebalanceInProgress), nil
-	}
-
-	// Validate generation
+	// Validate generation must match for commit to be accepted
+	// Use code 22 (IllegalGeneration) consistent with SyncGroup
+	const illegalGen int16 = 22
 	if request.GenerationID != group.Generation {
-		return h.buildOffsetCommitErrorResponse(correlationID, ErrorCodeIllegalGeneration), nil
+		return h.buildOffsetCommitErrorResponse(correlationID, illegalGen), nil
 	}
 
 	// Process offset commits
@@ -153,25 +145,10 @@ func (h *Handler) handleOffsetCommit(correlationID uint32, requestBody []byte) (
 		}
 
 		for _, partition := range topic.Partitions {
-			// Validate partition assignment - consumer should only commit offsets for assigned partitions
-			assigned := false
-			for _, assignment := range member.Assignment {
-				if assignment.Topic == topic.Name && assignment.Partition == partition.Index {
-					assigned = true
-					break
-				}
-			}
-
+			// Commit without strict assignment checks
 			var errorCode int16 = ErrorCodeNone
-			if !assigned && group.State == consumer.GroupStateStable {
-				// Allow commits during rebalancing, but restrict during stable state
-				errorCode = ErrorCodeIllegalGeneration
-			} else {
-				// Commit the offset
-				err := h.commitOffset(group, topic.Name, partition.Index, partition.Offset, partition.Metadata)
-				if err != nil {
-					errorCode = ErrorCodeOffsetMetadataTooLarge // Generic error
-				}
+			if err := h.commitOffset(group, topic.Name, partition.Index, partition.Offset, partition.Metadata); err != nil {
+				errorCode = ErrorCodeOffsetMetadataTooLarge
 			}
 
 			partitionResponse := OffsetCommitPartitionResponse{
@@ -292,22 +269,19 @@ func (h *Handler) parseOffsetCommitRequest(data []byte) (*OffsetCommitRequest, e
 	memberID := string(data[offset : offset+memberIDLength])
 	offset += memberIDLength
 
-	// Parse RetentionTime (8 bytes, -1 for broker default)
-	if len(data) < offset+8 {
-		return nil, fmt.Errorf("OffsetCommit request missing retention time")
+	// RetentionTime (optional 8 bytes)
+	var retentionTime int64 = -1
+	if len(data) >= offset+8 {
+		retentionTime = int64(binary.BigEndian.Uint64(data[offset : offset+8]))
+		offset += 8
 	}
-	retentionTime := int64(binary.BigEndian.Uint64(data[offset : offset+8]))
-	offset += 8
 
-	// Parse Topics array
-	if len(data) < offset+4 {
-		return nil, fmt.Errorf("OffsetCommit request missing topics array")
+	// Topics array (optional)
+	var topicsCount uint32
+	if len(data) >= offset+4 {
+		topicsCount = binary.BigEndian.Uint32(data[offset : offset+4])
+		offset += 4
 	}
-	topicsCount := binary.BigEndian.Uint32(data[offset : offset+4])
-	offset += 4
-
-	fmt.Printf("DEBUG: OffsetCommit - GroupID: %s, GenerationID: %d, MemberID: %s, RetentionTime: %d, TopicsCount: %d\n",
-		groupID, generationID, memberID, retentionTime, topicsCount)
 
 	topics := make([]OffsetCommitTopic, 0, topicsCount)
 
@@ -365,7 +339,7 @@ func (h *Handler) parseOffsetCommitRequest(data []byte) (*OffsetCommitRequest, e
 
 			var metadata string
 			if metadataLength == -1 {
-				metadata = "" // null string
+				metadata = ""
 			} else if metadataLength >= 0 && len(data) >= offset+int(metadataLength) {
 				metadata = string(data[offset : offset+int(metadataLength)])
 				offset += int(metadataLength)
@@ -377,9 +351,6 @@ func (h *Handler) parseOffsetCommitRequest(data []byte) (*OffsetCommitRequest, e
 				LeaderEpoch: leaderEpoch,
 				Metadata:    metadata,
 			})
-
-			fmt.Printf("DEBUG: OffsetCommit - Topic: %s, Partition: %d, Offset: %d, LeaderEpoch: %d, Metadata: %s\n",
-				topicName, partitionIndex, committedOffset, leaderEpoch, metadata)
 		}
 
 		topics = append(topics, OffsetCommitTopic{
@@ -404,15 +375,7 @@ func (h *Handler) parseOffsetFetchRequest(data []byte) (*OffsetFetchRequest, err
 
 	offset := 0
 
-	// DEBUG: Hex dump the entire request
-	dumpLen := len(data)
-	if dumpLen > 100 {
-		dumpLen = 100
-	}
-	fmt.Printf("DEBUG: OffsetFetch request hex dump (first %d bytes): %x\n", dumpLen, data[:dumpLen])
-
 	// GroupID (string)
-	fmt.Printf("DEBUG: OffsetFetch GroupID length bytes at offset %d: %x\n", offset, data[offset:offset+2])
 	groupIDLength := int(binary.BigEndian.Uint16(data[offset:]))
 	offset += 2
 	if offset+groupIDLength > len(data) {
@@ -420,22 +383,13 @@ func (h *Handler) parseOffsetFetchRequest(data []byte) (*OffsetFetchRequest, err
 	}
 	groupID := string(data[offset : offset+groupIDLength])
 	offset += groupIDLength
-	fmt.Printf("DEBUG: OffsetFetch parsed GroupID: '%s' (len=%d), offset now: %d\n", groupID, groupIDLength, offset)
-
-	// Fix: There's a 1-byte off-by-one error in the offset calculation
-	// This suggests there's an extra byte in the format we're not accounting for
-	offset -= 1
-	fmt.Printf("DEBUG: OffsetFetch corrected offset by -1, now: %d\n", offset)
 
 	// Parse Topics array - classic encoding (INT32 count) for v0-v5
 	if len(data) < offset+4 {
 		return nil, fmt.Errorf("OffsetFetch request missing topics array")
 	}
-	fmt.Printf("DEBUG: OffsetFetch reading TopicsCount from offset %d, bytes: %x\n", offset, data[offset:offset+4])
 	topicsCount := binary.BigEndian.Uint32(data[offset : offset+4])
 	offset += 4
-
-	fmt.Printf("DEBUG: OffsetFetch - GroupID: %s, TopicsCount: %d\n", groupID, topicsCount)
 
 	topics := make([]OffsetFetchTopic, 0, topicsCount)
 
@@ -464,7 +418,6 @@ func (h *Handler) parseOffsetFetchRequest(data []byte) (*OffsetFetchRequest, err
 
 		// If partitionsCount is 0, it means "fetch all partitions"
 		if partitionsCount == 0 {
-			fmt.Printf("DEBUG: OffsetFetch - Topic: %s, Partitions: ALL\n", topicName)
 			partitions = nil // nil means all partitions
 		} else {
 			for j := uint32(0); j < partitionsCount && offset < len(data); j++ {
@@ -476,7 +429,6 @@ func (h *Handler) parseOffsetFetchRequest(data []byte) (*OffsetFetchRequest, err
 				offset += 4
 
 				partitions = append(partitions, partitionIndex)
-				fmt.Printf("DEBUG: OffsetFetch - Topic: %s, Partition: %d\n", topicName, partitionIndex)
 			}
 		}
 
@@ -491,7 +443,6 @@ func (h *Handler) parseOffsetFetchRequest(data []byte) (*OffsetFetchRequest, err
 	if len(data) >= offset+1 {
 		requireStable = data[offset] != 0
 		offset += 1
-		fmt.Printf("DEBUG: OffsetFetch - RequireStable: %v\n", requireStable)
 	}
 
 	return &OffsetFetchRequest{

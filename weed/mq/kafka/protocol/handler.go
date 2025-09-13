@@ -317,6 +317,25 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 			continue
 		}
 
+		// Strip client_id (nullable STRING) from header to get pure request body
+		bodyOffset := 8
+		if len(messageBuf) < bodyOffset+2 {
+			return fmt.Errorf("invalid header: missing client_id length")
+		}
+		clientIDLen := int16(binary.BigEndian.Uint16(messageBuf[bodyOffset : bodyOffset+2]))
+		bodyOffset += 2
+		if clientIDLen >= 0 {
+			if len(messageBuf) < bodyOffset+int(clientIDLen) {
+				return fmt.Errorf("invalid header: client_id truncated")
+			}
+			// clientID := string(messageBuf[bodyOffset : bodyOffset+int(clientIDLen)])
+			bodyOffset += int(clientIDLen)
+		} else {
+			// client_id is null; nothing to skip
+		}
+		// TODO: Flexible versions have tagged fields in header; ignored for now
+		requestBody := messageBuf[bodyOffset:]
+
 		// Handle the request based on API key and version
 		var response []byte
 		var err error
@@ -325,19 +344,19 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 		case 18: // ApiVersions
 			response, err = h.handleApiVersions(correlationID)
 		case 3: // Metadata
-			response, err = h.handleMetadata(correlationID, apiVersion, messageBuf[8:])
+			response, err = h.handleMetadata(correlationID, apiVersion, requestBody)
 		case 2: // ListOffsets
 			fmt.Printf("DEBUG: *** LISTOFFSETS REQUEST RECEIVED *** Correlation: %d, Version: %d\n", correlationID, apiVersion)
-			response, err = h.handleListOffsets(correlationID, apiVersion, messageBuf[8:]) // skip header
+			response, err = h.handleListOffsets(correlationID, apiVersion, requestBody)
 		case 19: // CreateTopics
-			response, err = h.handleCreateTopics(correlationID, apiVersion, messageBuf[8:]) // skip header
+			response, err = h.handleCreateTopics(correlationID, apiVersion, requestBody)
 		case 20: // DeleteTopics
-			response, err = h.handleDeleteTopics(correlationID, messageBuf[8:]) // skip header
+			response, err = h.handleDeleteTopics(correlationID, requestBody)
 		case 0: // Produce
-			response, err = h.handleProduce(correlationID, apiVersion, messageBuf[8:])
+			response, err = h.handleProduce(correlationID, apiVersion, requestBody)
 		case 1: // Fetch
 			fmt.Printf("DEBUG: *** FETCH HANDLER CALLED *** Correlation: %d, Version: %d\n", correlationID, apiVersion)
-			response, err = h.handleFetch(correlationID, apiVersion, messageBuf[8:]) // skip header
+			response, err = h.handleFetch(correlationID, apiVersion, requestBody)
 			if err != nil {
 				fmt.Printf("DEBUG: Fetch error: %v\n", err)
 			} else {
@@ -345,7 +364,7 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 			}
 		case 11: // JoinGroup
 			fmt.Printf("DEBUG: *** JOINGROUP REQUEST RECEIVED *** Correlation: %d, Version: %d\n", correlationID, apiVersion)
-			response, err = h.handleJoinGroup(correlationID, apiVersion, messageBuf[8:]) // skip header
+			response, err = h.handleJoinGroup(correlationID, apiVersion, requestBody)
 			if err != nil {
 				fmt.Printf("DEBUG: JoinGroup error: %v\n", err)
 			} else {
@@ -353,26 +372,26 @@ func (h *Handler) HandleConn(conn net.Conn) error {
 			}
 		case 14: // SyncGroup
 			fmt.Printf("DEBUG: *** 🎉 SYNCGROUP API CALLED! Version: %d, Correlation: %d ***\n", apiVersion, correlationID)
-			response, err = h.handleSyncGroup(correlationID, apiVersion, messageBuf[8:]) // skip header
+			response, err = h.handleSyncGroup(correlationID, apiVersion, requestBody)
 			if err != nil {
 				fmt.Printf("DEBUG: SyncGroup error: %v\n", err)
 			} else {
 				fmt.Printf("DEBUG: SyncGroup response hex dump (%d bytes): %x\n", len(response), response)
 			}
 		case 8: // OffsetCommit
-			response, err = h.handleOffsetCommit(correlationID, messageBuf[8:]) // skip header
+			response, err = h.handleOffsetCommit(correlationID, requestBody)
 		case 9: // OffsetFetch
-			response, err = h.handleOffsetFetch(correlationID, messageBuf[8:]) // skip header
+			response, err = h.handleOffsetFetch(correlationID, requestBody)
 		case 10: // FindCoordinator
 			fmt.Printf("DEBUG: *** FINDCOORDINATOR REQUEST RECEIVED *** Correlation: %d, Version: %d\n", correlationID, apiVersion)
-			response, err = h.handleFindCoordinator(correlationID, messageBuf[8:]) // skip header
+			response, err = h.handleFindCoordinator(correlationID, requestBody)
 			if err != nil {
 				fmt.Printf("DEBUG: FindCoordinator error: %v\n", err)
 			}
 		case 12: // Heartbeat
-			response, err = h.handleHeartbeat(correlationID, messageBuf[8:]) // skip header
+			response, err = h.handleHeartbeat(correlationID, requestBody)
 		case 13: // LeaveGroup
-			response, err = h.handleLeaveGroup(correlationID, messageBuf[8:]) // skip header
+			response, err = h.handleLeaveGroup(correlationID, requestBody)
 		default:
 			fmt.Printf("DEBUG: *** UNSUPPORTED API KEY *** %d (%s) v%d - Correlation: %d\n", apiKey, apiName, apiVersion, correlationID)
 			err = fmt.Errorf("unsupported API key: %d (version %d)", apiKey, apiVersion)
@@ -1144,19 +1163,10 @@ func (h *Handler) parseMetadataTopics(requestBody []byte) []string {
 func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
 	fmt.Printf("DEBUG: ListOffsets v%d request hex dump (first 100 bytes): %x\n", apiVersion, requestBody[:min(100, len(requestBody))])
 
-	// Parse minimal request to understand what's being asked
-	// For this stub, we'll just return stub responses for any requested topic/partition
-	// Request format after client_id: topics_array
+	// Parse minimal request to understand what's being asked (header already stripped)
+	offset := 0
 
-	if len(requestBody) < 6 { // at minimum need client_id_size(2) + topics_count(4)
-		return nil, fmt.Errorf("ListOffsets request too short")
-	}
-
-	// Skip client_id: client_id_size(2) + topics_count(4)
-	clientIDSize := binary.BigEndian.Uint16(requestBody[0:2])
-	offset := 2 + int(clientIDSize)
-
-	// ListOffsets v1+ has replica_id(4), v2+ adds isolation_level(1)
+	// v1+ has replica_id(4)
 	if apiVersion >= 1 {
 		if len(requestBody) < offset+4 {
 			return nil, fmt.Errorf("ListOffsets v%d request missing replica_id", apiVersion)
@@ -1164,15 +1174,16 @@ func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, req
 		replicaID := int32(binary.BigEndian.Uint32(requestBody[offset : offset+4]))
 		offset += 4
 		fmt.Printf("DEBUG: ListOffsets v%d - replica_id: %d\n", apiVersion, replicaID)
+	}
 
-		if apiVersion >= 2 {
-			if len(requestBody) < offset+1 {
-				return nil, fmt.Errorf("ListOffsets v%d request missing isolation_level", apiVersion)
-			}
-			isolationLevel := requestBody[offset]
-			offset += 1
-			fmt.Printf("DEBUG: ListOffsets v%d - isolation_level: %d\n", apiVersion, isolationLevel)
+	// v2+ adds isolation_level(1)
+	if apiVersion >= 2 {
+		if len(requestBody) < offset+1 {
+			return nil, fmt.Errorf("ListOffsets v%d request missing isolation_level", apiVersion)
 		}
+		isolationLevel := requestBody[offset]
+		offset += 1
+		fmt.Printf("DEBUG: ListOffsets v%d - isolation_level: %d\n", apiVersion, isolationLevel)
 	}
 
 	if len(requestBody) < offset+4 {

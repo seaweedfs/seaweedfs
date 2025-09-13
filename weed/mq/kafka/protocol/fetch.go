@@ -65,7 +65,8 @@ func (h *Handler) handleFetch(correlationID uint32, apiVersion uint16, requestBo
 			binary.BigEndian.PutUint32(partitionIDBytes, uint32(partition.PartitionID))
 			response = append(response, partitionIDBytes...)
 
-			// Error code (2 bytes) - 0 = no error
+			// Error code (2 bytes) - default 0 = no error (may patch below)
+			errorPos := len(response)
 			response = append(response, 0, 0)
 
 			// Get ledger for this topic-partition to determine high water mark
@@ -89,6 +90,15 @@ func (h *Handler) handleFetch(correlationID uint32, apiVersion uint16, requestBo
 
 				// Aborted transactions count (4 bytes) = 0
 				response = append(response, 0, 0, 0, 0)
+			}
+
+			// If topic does not exist, patch error to UNKNOWN_TOPIC_OR_PARTITION
+			h.topicsMu.RLock()
+			_, topicExists := h.topics[topic.Name]
+			h.topicsMu.RUnlock()
+			if !topicExists {
+				response[errorPos] = 0
+				response[errorPos+1] = 3 // UNKNOWN_TOPIC_OR_PARTITION
 			}
 
 			// Records - get actual stored record batches

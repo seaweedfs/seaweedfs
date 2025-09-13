@@ -172,7 +172,7 @@ func TestProduceHandler_MessageExtraction(t *testing.T) {
 	defer handler.Close()
 
 	t.Run("Extract Messages From Record Set", func(t *testing.T) {
-		// Create a mock record set
+		// Create a mock record set (arbitrary data)
 		recordSet := []byte("mock-record-set-data-with-sufficient-length-for-testing")
 
 		messages, err := handler.extractMessagesFromRecordSet(recordSet)

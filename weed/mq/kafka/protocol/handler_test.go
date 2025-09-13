@@ -247,8 +247,8 @@ func TestHandler_handleApiVersions(t *testing.T) {
 
 	// Check number of API keys
 	numAPIKeys := binary.BigEndian.Uint32(response[6:10])
-	if numAPIKeys != 13 {
-		t.Errorf("expected 13 API keys, got: %d", numAPIKeys)
+	if numAPIKeys != 14 {
+		t.Errorf("expected 14 API keys, got: %d", numAPIKeys)
 	}
 
 	// Check first API key (ApiVersions)
@@ -303,16 +303,11 @@ func TestHandler_handleListOffsets(t *testing.T) {
 	h := NewHandler()
 	correlationID := uint32(123)
 
-	// Build a simple ListOffsets request: client_id + topics
-	// client_id_size(2) + client_id + topics_count(4) + topic + partitions
-	clientID := "test"
+	// Build a simple ListOffsets v0 request body (header stripped): topics
+	// topics_count(4) + topic + partitions
 	topic := "test-topic"
 
 	requestBody := make([]byte, 0, 64)
-
-	// Client ID
-	requestBody = append(requestBody, 0, byte(len(clientID)))
-	requestBody = append(requestBody, []byte(clientID)...)
 
 	// Topics count (1)
 	requestBody = append(requestBody, 0, 0, 0, 1)
@@ -337,7 +332,7 @@ func TestHandler_handleListOffsets(t *testing.T) {
 		t.Fatalf("handleListOffsets: %v", err)
 	}
 
-	if len(response) < 50 { // minimum expected size
+	if len(response) < 20 { // minimum expected size
 		t.Fatalf("response too short: %d bytes", len(response))
 	}
 
@@ -347,10 +342,10 @@ func TestHandler_handleListOffsets(t *testing.T) {
 		t.Errorf("correlation ID: got %d, want %d", respCorrelationID, correlationID)
 	}
 
-	// Check throttle time
-	throttleTime := binary.BigEndian.Uint32(response[4:8])
-	if throttleTime != 0 {
-		t.Errorf("throttle time: got %d, want 0", throttleTime)
+	// For v0, throttle time is not present; topics count is next
+	topicsCount := binary.BigEndian.Uint32(response[4:8])
+	if topicsCount != 1 {
+		t.Errorf("topics count: got %d, want 1", topicsCount)
 	}
 }
 
@@ -433,7 +428,7 @@ func TestHandler_ListOffsets_EndToEnd(t *testing.T) {
 		t.Fatalf("read response: %v", err)
 	}
 
-	// Parse response: correlation_id(4) + throttle_time(4) + topics
+	// Parse response: correlation_id(4) + topics
 	if len(respBuf) < 20 { // minimum response size
 		t.Fatalf("response too short: %d bytes", len(respBuf))
 	}
@@ -444,14 +439,11 @@ func TestHandler_ListOffsets_EndToEnd(t *testing.T) {
 		t.Errorf("correlation ID mismatch: got %d, want %d", respCorrelationID, correlationID)
 	}
 
-	// Check topics count
-	topicsCount := binary.BigEndian.Uint32(respBuf[8:12])
+	// Check topics count for v0 (no throttle time in v0)
+	topicsCount := binary.BigEndian.Uint32(respBuf[4:8])
 	if topicsCount != 1 {
 		t.Errorf("expected 1 topic, got: %d", topicsCount)
 	}
-
-	// Check topic name (skip verification of full response for brevity)
-	// The important thing is we got a structurally valid response
 
 	// Close client to end handler
 	client.Close()
@@ -533,8 +525,8 @@ func TestHandler_Metadata_EndToEnd(t *testing.T) {
 		t.Fatalf("read response: %v", err)
 	}
 
-	// Parse response: correlation_id(4) + throttle_time(4) + brokers + cluster_id + controller_id + topics
-	if len(respBuf) < 40 { // minimum response size
+	// Parse response: correlation_id(4) + brokers + topics (v0 has no throttle time)
+	if len(respBuf) < 31 { // minimum response size for v0
 		t.Fatalf("response too short: %d bytes", len(respBuf))
 	}
 
@@ -544,8 +536,8 @@ func TestHandler_Metadata_EndToEnd(t *testing.T) {
 		t.Errorf("correlation ID mismatch: got %d, want %d", respCorrelationID, correlationID)
 	}
 
-	// Check brokers count
-	brokersCount := binary.BigEndian.Uint32(respBuf[8:12])
+	// Check brokers count (immediately after correlation ID in v0)
+	brokersCount := binary.BigEndian.Uint32(respBuf[4:8])
 	if brokersCount != 1 {
 		t.Errorf("expected 1 broker, got: %d", brokersCount)
 	}
