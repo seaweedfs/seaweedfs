@@ -1688,20 +1688,20 @@ func (h *Handler) handleDeleteTopics(correlationID uint32, requestBody []byte) (
 // validateAPIVersion checks if we support the requested API version
 func (h *Handler) validateAPIVersion(apiKey, apiVersion uint16) error {
 	supportedVersions := map[uint16][2]uint16{
-		18: {0, 3},  // ApiVersions: v0-v3
-		3:  {0, 7},  // Metadata: v0-v7
-		0:  {0, 7},  // Produce: v0-v7
-		1:  {0, 7},  // Fetch: v0-v7
-		2:  {0, 2},  // ListOffsets: v0-v2
-		19: {0, 4},  // CreateTopics: v0-v4
-		20: {0, 4},  // DeleteTopics: v0-v4
-		10: {0, 2},  // FindCoordinator: v0-v2
-		11: {0, 7},  // JoinGroup: v0-v7
-		14: {0, 5},  // SyncGroup: v0-v5
-		8:  {0, 2},  // OffsetCommit: v0-v2
-		9:  {0, 2},  // OffsetFetch: v0-v2
-		12: {0, 4},  // Heartbeat: v0-v4
-		13: {0, 4},  // LeaveGroup: v0-v4
+		18: {0, 3}, // ApiVersions: v0-v3
+		3:  {0, 7}, // Metadata: v0-v7
+		0:  {0, 7}, // Produce: v0-v7
+		1:  {0, 7}, // Fetch: v0-v7
+		2:  {0, 2}, // ListOffsets: v0-v2
+		19: {0, 4}, // CreateTopics: v0-v4
+		20: {0, 4}, // DeleteTopics: v0-v4
+		10: {0, 2}, // FindCoordinator: v0-v2
+		11: {0, 7}, // JoinGroup: v0-v7
+		14: {0, 5}, // SyncGroup: v0-v5
+		8:  {0, 2}, // OffsetCommit: v0-v2
+		9:  {0, 2}, // OffsetFetch: v0-v2
+		12: {0, 4}, // Heartbeat: v0-v4
+		13: {0, 4}, // LeaveGroup: v0-v4
 	}
 
 	if versionRange, exists := supportedVersions[apiKey]; exists {

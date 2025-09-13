@@ -142,8 +142,8 @@ func TestHandler_ApiVersions(t *testing.T) {
 	if minVersion3 != 0 {
 		t.Errorf("expected min version 0, got: %d", minVersion3)
 	}
-	if maxVersion3 != 5 {
-		t.Errorf("expected max version 5, got: %d", maxVersion3)
+	if maxVersion3 != 2 {
+		t.Errorf("expected max version 2, got: %d", maxVersion3)
 	}
 
 	// Fourth API key (CreateTopics)
@@ -202,8 +202,8 @@ func TestHandler_ApiVersions(t *testing.T) {
 	if minVersion7 != 0 {
 		t.Errorf("expected min version 0, got: %d", minVersion7)
 	}
-	if maxVersion7 != 11 {
-		t.Errorf("expected max version 11, got: %d", maxVersion7)
+	if maxVersion7 != 7 {
+		t.Errorf("expected max version 7, got: %d", maxVersion7)
 	}
 
 	// Close client to end handler
