@@ -49,8 +49,7 @@ func resolveAdvertisedAddress() string {
 
 type Options struct {
 	Listen       string
-	AgentAddress string // Optional: SeaweedMQ Agent address for production mode
-	UseSeaweedMQ bool   // Use SeaweedMQ backend instead of in-memory stub
+	AgentAddress string // SeaweedMQ Agent address (required)
 }
 
 type Server struct {
@@ -65,22 +64,12 @@ type Server struct {
 func NewServer(opts Options) *Server {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	var handler *protocol.Handler
-	if opts.UseSeaweedMQ && opts.AgentAddress != "" {
-		// Try to create SeaweedMQ handler
-		smqHandler, err := protocol.NewSeaweedMQHandler(opts.AgentAddress)
-		if err != nil {
-			glog.Warningf("Failed to create SeaweedMQ handler, falling back to in-memory mode: %v", err)
-			handler = protocol.NewHandler()
-		} else {
-			handler = smqHandler
-			glog.V(1).Infof("Created Kafka gateway with SeaweedMQ backend at %s", opts.AgentAddress)
-		}
-	} else {
-		// Use in-memory mode
-		handler = protocol.NewHandler()
-		glog.V(1).Infof("Created Kafka gateway with in-memory backend")
+	// Always use SeaweedMQ handler
+	handler, err := protocol.NewSeaweedMQHandler(opts.AgentAddress)
+	if err != nil {
+		glog.Fatalf("Failed to create SeaweedMQ handler: %v", err)
 	}
+	glog.V(1).Infof("Created Kafka gateway with SeaweedMQ backend at %s", opts.AgentAddress)
 
 	return &Server{
 		opts:    opts,
