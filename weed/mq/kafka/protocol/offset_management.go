@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/consumer"
+	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
 )
 
 // OffsetCommit API (key 8) - Commit consumer group offsets
@@ -145,10 +146,25 @@ func (h *Handler) handleOffsetCommit(correlationID uint32, requestBody []byte) (
 		}
 
 		for _, partition := range topic.Partitions {
-			// Commit without strict assignment checks
+			// Create consumer offset key for SMQ storage
+			key := offset.ConsumerOffsetKey{
+				Topic:               topic.Name,
+				Partition:           partition.Index,
+				ConsumerGroup:       request.GroupID,
+				ConsumerGroupInstance: request.GroupInstanceID,
+			}
+
+			// Commit offset using SMQ storage if available
 			var errorCode int16 = ErrorCodeNone
-			if err := h.commitOffset(group, topic.Name, partition.Index, partition.Offset, partition.Metadata); err != nil {
-				errorCode = ErrorCodeOffsetMetadataTooLarge
+			if h.useSeaweedMQ && h.smqOffsetStorage != nil {
+				if err := h.commitOffsetToSMQ(key, partition.Offset, partition.Metadata); err != nil {
+					errorCode = ErrorCodeOffsetMetadataTooLarge
+				}
+			} else {
+				// Fall back to in-memory storage
+				if err := h.commitOffset(group, topic.Name, partition.Index, partition.Offset, partition.Metadata); err != nil {
+					errorCode = ErrorCodeOffsetMetadataTooLarge
+				}
 			}
 
 			partitionResponse := OffsetCommitPartitionResponse{
@@ -211,16 +227,35 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, requestBody []byte) ([
 
 		// Fetch offsets for requested partitions
 		for _, partition := range partitionsToFetch {
-			offset, metadata, err := h.fetchOffset(group, topic.Name, partition)
+			// Create consumer offset key for SMQ storage
+			key := offset.ConsumerOffsetKey{
+				Topic:               topic.Name,
+				Partition:           partition,
+				ConsumerGroup:       request.GroupID,
+				ConsumerGroupInstance: request.GroupInstanceID,
+			}
 
+			var fetchedOffset int64 = -1
+			var metadata string = ""
 			var errorCode int16 = ErrorCodeNone
-			if err != nil {
-				errorCode = ErrorCodeOffsetLoadInProgress // Generic error
+
+			// Fetch offset using SMQ storage if available
+			if h.useSeaweedMQ && h.smqOffsetStorage != nil {
+				if offset, meta, err := h.fetchOffsetFromSMQ(key); err == nil {
+					fetchedOffset = offset
+					metadata = meta
+				}
+			} else {
+				// Fall back to in-memory storage
+				if offset, meta, err := h.fetchOffset(group, topic.Name, partition); err == nil {
+					fetchedOffset = offset
+					metadata = meta
+				}
 			}
 
 			partitionResponse := OffsetFetchPartitionResponse{
 				Index:       partition,
-				Offset:      offset,
+				Offset:      fetchedOffset,
 				LeaderEpoch: -1, // Not implemented
 				Metadata:    metadata,
 				ErrorCode:   errorCode,
