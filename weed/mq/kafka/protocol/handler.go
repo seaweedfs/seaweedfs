@@ -300,24 +300,49 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			continue
 		}
 
-		// Strip client_id (nullable STRING) from header to get pure request body
-		bodyOffset := 8
-		if len(messageBuf) < bodyOffset+2 {
-			return fmt.Errorf("invalid header: missing client_id length")
-		}
-		clientIDLen := int16(binary.BigEndian.Uint16(messageBuf[bodyOffset : bodyOffset+2]))
-		bodyOffset += 2
-		if clientIDLen >= 0 {
-			if len(messageBuf) < bodyOffset+int(clientIDLen) {
-				return fmt.Errorf("invalid header: client_id truncated")
+		// Parse header using flexible version utilities for validation and client ID extraction
+		header, requestBody, parseErr := ParseRequestHeader(messageBuf)
+		if parseErr != nil {
+			// Fall back to basic header parsing if flexible version parsing fails
+			fmt.Printf("DEBUG: Flexible header parsing failed, using basic parsing: %v\n", parseErr)
+			
+			// Basic header parsing fallback (original logic)
+			bodyOffset := 8
+			if len(messageBuf) < bodyOffset+2 {
+				return fmt.Errorf("invalid header: missing client_id length")
 			}
-			// clientID := string(messageBuf[bodyOffset : bodyOffset+int(clientIDLen)])
-			bodyOffset += int(clientIDLen)
+			clientIDLen := int16(binary.BigEndian.Uint16(messageBuf[bodyOffset : bodyOffset+2]))
+			bodyOffset += 2
+			if clientIDLen >= 0 {
+				if len(messageBuf) < bodyOffset+int(clientIDLen) {
+					return fmt.Errorf("invalid header: client_id truncated")
+				}
+				bodyOffset += int(clientIDLen)
+			}
+			requestBody = messageBuf[bodyOffset:]
 		} else {
-			// client_id is null; nothing to skip
+			// Validate parsed header matches what we already extracted
+			if header.APIKey != apiKey || header.APIVersion != apiVersion || header.CorrelationID != correlationID {
+				fmt.Printf("DEBUG: Header parsing mismatch - using basic parsing as fallback\n")
+				// Fall back to basic parsing rather than failing
+				bodyOffset := 8
+				if len(messageBuf) < bodyOffset+2 {
+					return fmt.Errorf("invalid header: missing client_id length")
+				}
+				clientIDLen := int16(binary.BigEndian.Uint16(messageBuf[bodyOffset : bodyOffset+2]))
+				bodyOffset += 2
+				if clientIDLen >= 0 {
+					if len(messageBuf) < bodyOffset+int(clientIDLen) {
+						return fmt.Errorf("invalid header: client_id truncated")
+					}
+					bodyOffset += int(clientIDLen)
+				}
+				requestBody = messageBuf[bodyOffset:]
+			} else if header.ClientID != nil {
+				// Log client ID if available and parsing was successful
+				fmt.Printf("DEBUG: Client ID: %s\n", *header.ClientID)
+			}
 		}
-		// TODO: Flexible versions have tagged fields in header; ignored for now
-		requestBody := messageBuf[bodyOffset:]
 
 		// Handle the request based on API key and version
 		var response []byte
@@ -325,7 +350,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 
 		switch apiKey {
 		case 18: // ApiVersions
-			response, err = h.handleApiVersions(correlationID)
+			response, err = h.handleApiVersions(correlationID, apiVersion)
 		case 3: // Metadata
 			response, err = h.handleMetadata(correlationID, apiVersion, requestBody)
 		case 2: // ListOffsets
@@ -410,11 +435,11 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 	}
 }
 
-func (h *Handler) handleApiVersions(correlationID uint32) ([]byte, error) {
-	// Build ApiVersions response manually
-	// Response format (v0): correlation_id(4) + error_code(2) + num_api_keys(4) + api_keys
-
-	response := make([]byte, 0, 64)
+func (h *Handler) handleApiVersions(correlationID uint32, apiVersion uint16) ([]byte, error) {
+	// Build ApiVersions response supporting flexible versions (v3+)
+	isFlexible := IsFlexibleVersion(18, apiVersion)
+	
+	response := make([]byte, 0, 128)
 
 	// Correlation ID
 	correlationIDBytes := make([]byte, 4)
@@ -424,8 +449,15 @@ func (h *Handler) handleApiVersions(correlationID uint32) ([]byte, error) {
 	// Error code (0 = no error)
 	response = append(response, 0, 0)
 
-	// Number of API keys (compact array format in newer versions, but using basic format for simplicity)
-	response = append(response, 0, 0, 0, 14) // 14 API keys
+	// Number of API keys - use compact or regular array format based on version
+	apiKeysCount := uint32(14)
+	if isFlexible {
+		// Compact array format for flexible versions
+		response = append(response, CompactArrayLength(apiKeysCount)...)
+	} else {
+		// Regular array format for older versions
+		response = append(response, 0, 0, 0, 14) // 14 API keys
+	}
 
 	// API Key 18 (ApiVersions): api_key(2) + min_version(2) + max_version(2)
 	response = append(response, 0, 18) // API key 18
@@ -500,7 +532,13 @@ func (h *Handler) handleApiVersions(correlationID uint32) ([]byte, error) {
 	response = append(response, 0, 0)  // min version 0
 	response = append(response, 0, 4)  // max version 4
 
-	fmt.Printf("DEBUG: ApiVersions v0 response: %d bytes\n", len(response))
+	// Add tagged fields for flexible versions
+	if isFlexible {
+		// Empty tagged fields for now
+		response = append(response, 0)
+	}
+	
+	fmt.Printf("DEBUG: ApiVersions v%d response: %d bytes\n", apiVersion, len(response))
 	return response, nil
 }
 

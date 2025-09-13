@@ -10,7 +10,7 @@ func TestApiVersions_AdvertisedVersionsMatch(t *testing.T) {
 	handler := NewTestHandler()
 	defer handler.Close()
 
-	response, err := handler.handleApiVersions(12345)
+	response, err := handler.handleApiVersions(12345, 0)
 	if err != nil {
 		t.Fatalf("handleApiVersions failed: %v", err)
 	}
@@ -253,7 +253,7 @@ func TestApiVersions_ResponseFormat(t *testing.T) {
 	handler := NewTestHandler()
 	defer handler.Close()
 
-	response, err := handler.handleApiVersions(99999)
+	response, err := handler.handleApiVersions(99999, 0)
 	if err != nil {
 		t.Fatalf("handleApiVersions failed: %v", err)
 	}
