@@ -9,7 +9,6 @@ import (
 	"net"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/consumer"
@@ -31,22 +30,10 @@ type TopicPartitionKey struct {
 	Partition int32
 }
 
-// Handler processes Kafka protocol requests from clients
+// Handler processes Kafka protocol requests from clients using SeaweedMQ
 type Handler struct {
-	// Legacy in-memory mode (for backward compatibility and tests)
-	topicsMu sync.RWMutex
-	topics   map[string]*TopicInfo // topic name -> topic info
-
-	ledgersMu sync.RWMutex
-	ledgers   map[TopicPartitionKey]*offset.Ledger // topic-partition -> offset ledger
-
-	// Record batch storage for in-memory mode (for testing)
-	recordBatchMu sync.RWMutex
-	recordBatches map[string][]byte // "topic:partition:offset" -> record batch data
-
-	// SeaweedMQ integration (optional, for production use)
+	// SeaweedMQ integration
 	seaweedMQHandler *integration.SeaweedMQHandler
-	useSeaweedMQ     bool
 
 	// SMQ offset storage for consumer group offsets
 	smqOffsetStorage *offset.SMQOffsetStorage
@@ -64,17 +51,9 @@ type Handler struct {
 	brokerPort int
 }
 
-// NewHandler creates a new handler in legacy in-memory mode
+// NewHandler is deprecated - use NewSeaweedMQBrokerHandler with proper SeaweedMQ infrastructure
 func NewHandler() *Handler {
-	return &Handler{
-		topics:           make(map[string]*TopicInfo),
-		ledgers:          make(map[TopicPartitionKey]*offset.Ledger),
-		recordBatches:    make(map[string][]byte),
-		useSeaweedMQ:     false,
-		groupCoordinator: consumer.NewGroupCoordinator(),
-		brokerHost:       "localhost", // default fallback
-		brokerPort:       9092,        // default fallback
-	}
+	panic("NewHandler() deprecated - SeaweedMQ infrastructure must be configured using NewSeaweedMQBrokerHandler()")
 }
 
 // NewSeaweedMQHandler creates a new handler with SeaweedMQ integration
@@ -85,16 +64,16 @@ func NewSeaweedMQHandler(agentAddress string) (*Handler, error) {
 	}
 
 	return &Handler{
-		topics:           make(map[string]*TopicInfo),                // Keep for compatibility
-		ledgers:          make(map[TopicPartitionKey]*offset.Ledger), // Keep for compatibility
 		seaweedMQHandler: smqHandler,
-		useSeaweedMQ:     true,
 		groupCoordinator: consumer.NewGroupCoordinator(),
+		brokerHost:       "localhost",
+		brokerPort:       9092,
 	}, nil
 }
 
 // NewSeaweedMQBrokerHandler creates a new handler with SeaweedMQ broker integration
 func NewSeaweedMQBrokerHandler(masters string, filerGroup string) (*Handler, error) {
+	// Set up SeaweedMQ integration
 	smqHandler, err := integration.NewSeaweedMQBrokerHandler(masters, filerGroup)
 	if err != nil {
 		return nil, err
@@ -110,13 +89,29 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string) (*Handler, err
 	}
 
 	return &Handler{
-		topics:           make(map[string]*TopicInfo),                // Keep for compatibility
-		ledgers:          make(map[TopicPartitionKey]*offset.Ledger), // Keep for compatibility
 		seaweedMQHandler: smqHandler,
 		smqOffsetStorage: smqOffsetStorage,
-		useSeaweedMQ:     true,
 		groupCoordinator: consumer.NewGroupCoordinator(),
+		brokerHost:       "localhost", // default fallback
+		brokerPort:       9092,        // default fallback
 	}, nil
+}
+
+// Delegate methods to SeaweedMQ handler
+
+// AddTopicForTesting creates a topic for testing purposes
+func (h *Handler) AddTopicForTesting(topicName string, partitions int32) {
+	h.seaweedMQHandler.CreateTopic(topicName, partitions)
+}
+
+// GetOrCreateLedger delegates to SeaweedMQ handler
+func (h *Handler) GetOrCreateLedger(topic string, partition int32) *offset.Ledger {
+	return h.seaweedMQHandler.GetOrCreateLedger(topic, partition)
+}
+
+// GetLedger delegates to SeaweedMQ handler
+func (h *Handler) GetLedger(topic string, partition int32) *offset.Ledger {
+	return h.seaweedMQHandler.GetLedger(topic, partition)
 }
 
 // Close shuts down the handler and all connections
@@ -134,48 +129,10 @@ func (h *Handler) Close() error {
 	}
 
 	// Close SeaweedMQ handler if present
-	if h.useSeaweedMQ && h.seaweedMQHandler != nil {
+	if h.seaweedMQHandler != nil {
 		return h.seaweedMQHandler.Close()
 	}
 	return nil
-}
-
-// GetOrCreateLedger returns the offset ledger for a topic-partition, creating it if needed
-func (h *Handler) GetOrCreateLedger(topic string, partition int32) *offset.Ledger {
-	key := TopicPartitionKey{Topic: topic, Partition: partition}
-
-	// First try to get existing ledger with read lock
-	h.ledgersMu.RLock()
-	ledger, exists := h.ledgers[key]
-	h.ledgersMu.RUnlock()
-
-	if exists {
-		return ledger
-	}
-
-	// Create new ledger with write lock
-	h.ledgersMu.Lock()
-	defer h.ledgersMu.Unlock()
-
-	// Double-check after acquiring write lock
-	if ledger, exists := h.ledgers[key]; exists {
-		return ledger
-	}
-
-	// Create and store new ledger
-	ledger = offset.NewLedger()
-	h.ledgers[key] = ledger
-	return ledger
-}
-
-// GetLedger returns the offset ledger for a topic-partition, or nil if not found
-func (h *Handler) GetLedger(topic string, partition int32) *offset.Ledger {
-	key := TopicPartitionKey{Topic: topic, Partition: partition}
-
-	h.ledgersMu.RLock()
-	defer h.ledgersMu.RUnlock()
-
-	return h.ledgers[key]
 }
 
 // StoreRecordBatch stores a record batch for later retrieval during Fetch operations

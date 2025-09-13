@@ -179,30 +179,12 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 				if parseErr != nil {
 					errorCode = 42 // INVALID_RECORD
 				} else if recordCount > 0 {
-					if h.useSeaweedMQ {
-						// Use SeaweedMQ integration for production
-						offset, err := h.produceToSeaweedMQ(topicName, int32(partitionID), recordSetData)
-						if err != nil {
-							errorCode = 1 // UNKNOWN_SERVER_ERROR
-						} else {
-							baseOffset = offset
-						}
+					// Use SeaweedMQ integration
+					offset, err := h.produceToSeaweedMQ(topicName, int32(partitionID), recordSetData)
+					if err != nil {
+						errorCode = 1 // UNKNOWN_SERVER_ERROR
 					} else {
-						// Use legacy in-memory mode for tests
-						ledger := h.GetOrCreateLedger(topicName, int32(partitionID))
-						fmt.Printf("DEBUG: Before AssignOffsets - HWM: %d, recordCount: %d\n", ledger.GetHighWaterMark(), recordCount)
-						baseOffset = ledger.AssignOffsets(int64(recordCount))
-						fmt.Printf("DEBUG: After AssignOffsets - HWM: %d, baseOffset: %d\n", ledger.GetHighWaterMark(), baseOffset)
-
-						// Append each record to the ledger
-						avgSize := totalSize / recordCount
-						for k := int64(0); k < int64(recordCount); k++ {
-							err := ledger.AppendRecord(baseOffset+k, currentTime+k*1000, avgSize)
-							if err != nil {
-								fmt.Printf("DEBUG: AppendRecord error: %v\n", err)
-							}
-						}
-						fmt.Printf("DEBUG: After AppendRecord - HWM: %d, entries: %d\n", ledger.GetHighWaterMark(), len(ledger.GetEntries()))
+						baseOffset = offset
 					}
 				}
 			}
@@ -472,30 +454,12 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 				if parseErr != nil {
 					errorCode = 42 // INVALID_RECORD
 				} else if recordCount > 0 {
-					if h.useSeaweedMQ {
-						// Use SeaweedMQ integration for production
-						offsetVal, err := h.produceToSeaweedMQ(topicName, int32(partitionID), recordSetData)
-						if err != nil {
-							errorCode = 1 // UNKNOWN_SERVER_ERROR
-						} else {
-							baseOffset = offsetVal
-						}
+					// Use SeaweedMQ integration
+					offsetVal, err := h.produceToSeaweedMQ(topicName, int32(partitionID), recordSetData)
+					if err != nil {
+						errorCode = 1 // UNKNOWN_SERVER_ERROR
 					} else {
-						// Use legacy in-memory mode for tests
-						ledger := h.GetOrCreateLedger(topicName, int32(partitionID))
-						fmt.Printf("DEBUG: Produce v%d Before AssignOffsets - HWM: %d, recordCount: %d\n", apiVersion, ledger.GetHighWaterMark(), recordCount)
-						baseOffset = ledger.AssignOffsets(int64(recordCount))
-						fmt.Printf("DEBUG: Produce v%d After AssignOffsets - HWM: %d, baseOffset: %d\n", apiVersion, ledger.GetHighWaterMark(), baseOffset)
-
-						// Store the actual record batch data for Fetch operations
-						h.StoreRecordBatch(topicName, int32(partitionID), baseOffset, recordSetData)
-
-						// Append each record to the ledger
-						avgSize := totalSize / recordCount
-						for k := int64(0); k < int64(recordCount); k++ {
-							_ = ledger.AppendRecord(baseOffset+k, currentTime+k*1000, avgSize)
-						}
-						fmt.Printf("DEBUG: Produce v%d After AppendRecord - HWM: %d, entries: %d\n", apiVersion, ledger.GetHighWaterMark(), len(ledger.GetEntries()))
+						baseOffset = offsetVal
 					}
 				}
 			}
@@ -571,17 +535,8 @@ func (h *Handler) processSchematizedMessage(topicName string, partitionID int32,
 	fmt.Printf("DEBUG: Successfully decoded message with schema ID %d, format %s, subject %s\n",
 		decodedMsg.SchemaID, decodedMsg.SchemaFormat, decodedMsg.Subject)
 
-	// If SeaweedMQ integration is enabled, store the decoded message
-	if h.useSeaweedMQ && h.seaweedMQHandler != nil {
-		return h.storeDecodedMessage(topicName, partitionID, decodedMsg)
-	}
-
-	// For in-memory mode, we could store metadata about the schema
-	// For now, just log the successful decoding
-	fmt.Printf("DEBUG: Schema decoding successful - would store RecordValue with %d fields\n",
-		len(decodedMsg.RecordValue.Fields))
-
-	return nil
+	// Store the decoded message using SeaweedMQ
+	return h.storeDecodedMessage(topicName, partitionID, decodedMsg)
 }
 
 // storeDecodedMessage stores a decoded message using mq.broker integration
@@ -602,8 +557,8 @@ func (h *Handler) storeDecodedMessage(topicName string, partitionID int32, decod
 		return nil
 	}
 
-	// Fallback to SeaweedMQ integration if available
-	if h.useSeaweedMQ && h.seaweedMQHandler != nil {
+	// Use SeaweedMQ integration
+	if h.seaweedMQHandler != nil {
 		// Extract key and value from the original envelope (simplified)
 		key := []byte(fmt.Sprintf("kafka-key-%d", time.Now().UnixNano()))
 		value := decodedMsg.Envelope.Payload
@@ -618,11 +573,7 @@ func (h *Handler) storeDecodedMessage(topicName string, partitionID int32, decod
 		return nil
 	}
 
-	// For in-memory mode, just log the successful decoding
-	fmt.Printf("DEBUG: Schema decoding successful (in-memory mode) - topic: %s, partition: %d, schema: %d, fields: %d\n",
-		topicName, partitionID, decodedMsg.SchemaID, len(decodedMsg.RecordValue.Fields))
-
-	return nil
+	return fmt.Errorf("no SeaweedMQ handler available")
 }
 
 // extractMessagesFromRecordSet extracts individual messages from a record set with compression support

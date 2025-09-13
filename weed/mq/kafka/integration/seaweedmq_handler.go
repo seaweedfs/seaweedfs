@@ -585,6 +585,10 @@ func (h *SeaweedMQHandler) convertSingleSeaweedRecord(seaweedRecord *SeaweedReco
 
 // NewSeaweedMQBrokerHandler creates a new handler with SeaweedMQ broker integration
 func NewSeaweedMQBrokerHandler(masters string, filerGroup string) (*SeaweedMQHandler, error) {
+	if masters == "" {
+		return nil, fmt.Errorf("masters required - SeaweedMQ infrastructure must be configured")
+	}
+
 	// Parse master addresses
 	masterAddresses := strings.Split(masters, ",")
 	if len(masterAddresses) == 0 {
