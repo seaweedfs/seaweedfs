@@ -435,7 +435,7 @@ func (h *Handler) handleApiVersions(correlationID uint32) ([]byte, error) {
 	// API Key 19 (CreateTopics): api_key(2) + min_version(2) + max_version(2)
 	response = append(response, 0, 19) // API key 19
 	response = append(response, 0, 0)  // min version 0
-	response = append(response, 0, 4)  // max version 4
+	response = append(response, 0, 5)  // max version 5
 
 	// API Key 20 (DeleteTopics): api_key(2) + min_version(2) + max_version(2)
 	response = append(response, 0, 20) // API key 20
@@ -468,10 +468,10 @@ func (h *Handler) handleApiVersions(correlationID uint32) ([]byte, error) {
 	response = append(response, 0, 0) // min version 0
 	response = append(response, 0, 2) // max version 2
 
-	// API Key 9 (OffsetFetch): limit to v2 (implemented and tested)
+	// API Key 9 (OffsetFetch): supports up to v5 (with leader epoch and throttle time)
 	response = append(response, 0, 9) // API key 9
 	response = append(response, 0, 0) // min version 0
-	response = append(response, 0, 2) // max version 2
+	response = append(response, 0, 5) // max version 5
 
 	// API Key 10 (FindCoordinator): limit to v2 (implemented)
 	response = append(response, 0, 10) // API key 10
@@ -1570,7 +1570,7 @@ func (h *Handler) handleCreateTopicsV0V1(correlationID uint32, requestBody []byt
 			}
 		}
 
-		fmt.Printf("DEBUG: CreateTopics v0/v1 - Parsed topic: %s, partitions: %d, replication: %d\n", 
+		fmt.Printf("DEBUG: CreateTopics v0/v1 - Parsed topic: %s, partitions: %d, replication: %d\n",
 			topicName, numPartitions, replicationFactor)
 
 		// Build response for this topic
@@ -1718,13 +1718,13 @@ func (h *Handler) validateAPIVersion(apiKey, apiVersion uint16) error {
 		0:  {0, 7}, // Produce: v0-v7
 		1:  {0, 7}, // Fetch: v0-v7
 		2:  {0, 2}, // ListOffsets: v0-v2
-		19: {0, 4}, // CreateTopics: v0-v4
+		19: {0, 5}, // CreateTopics: v0-v5 (updated to match implementation)
 		20: {0, 4}, // DeleteTopics: v0-v4
 		10: {0, 2}, // FindCoordinator: v0-v2
 		11: {0, 7}, // JoinGroup: v0-v7
 		14: {0, 5}, // SyncGroup: v0-v5
 		8:  {0, 2}, // OffsetCommit: v0-v2
-		9:  {0, 2}, // OffsetFetch: v0-v2
+		9:  {0, 5}, // OffsetFetch: v0-v5 (updated to match implementation)
 		12: {0, 4}, // Heartbeat: v0-v4
 		13: {0, 4}, // LeaveGroup: v0-v4
 	}
