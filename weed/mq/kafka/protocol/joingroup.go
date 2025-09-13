@@ -67,7 +67,7 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 	fmt.Printf("DEBUG: JoinGroup request hex dump (first %d bytes): %x\n", dumpLen, requestBody[:dumpLen])
 
 	// Parse JoinGroup request
-	request, err := h.parseJoinGroupRequest(requestBody)
+	request, err := h.parseJoinGroupRequest(requestBody, apiVersion)
 	if err != nil {
 		fmt.Printf("DEBUG: JoinGroup parseJoinGroupRequest error: %v\n", err)
 		return h.buildJoinGroupErrorResponse(correlationID, ErrorCodeInvalidGroupID), nil
@@ -262,7 +262,7 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 	return h.buildJoinGroupResponse(response), nil
 }
 
-func (h *Handler) parseJoinGroupRequest(data []byte) (*JoinGroupRequest, error) {
+func (h *Handler) parseJoinGroupRequest(data []byte, apiVersion uint16) (*JoinGroupRequest, error) {
 	if len(data) < 8 {
 		return nil, fmt.Errorf("request too short")
 	}
@@ -282,7 +282,6 @@ func (h *Handler) parseJoinGroupRequest(data []byte) (*JoinGroupRequest, error) 
 	}
 	groupID := string(data[offset : offset+groupIDLength])
 	offset += groupIDLength
-	fmt.Printf("DEBUG: JoinGroup parsed GroupID: '%s', offset now: %d\n", groupID, offset)
 
 	// Session timeout (4 bytes)
 	if offset+4 > len(data) {
@@ -291,9 +290,9 @@ func (h *Handler) parseJoinGroupRequest(data []byte) (*JoinGroupRequest, error) 
 	sessionTimeout := int32(binary.BigEndian.Uint32(data[offset:]))
 	offset += 4
 
-	// Rebalance timeout (4 bytes) - for newer versions
-	rebalanceTimeout := sessionTimeout // Default to session timeout
-	if offset+4 <= len(data) {
+	// Rebalance timeout (4 bytes) - for v1+ versions
+	rebalanceTimeout := sessionTimeout // Default to session timeout for v0
+	if apiVersion >= 1 && offset+4 <= len(data) {
 		rebalanceTimeout = int32(binary.BigEndian.Uint32(data[offset:]))
 		offset += 4
 	}
@@ -315,24 +314,23 @@ func (h *Handler) parseJoinGroupRequest(data []byte) (*JoinGroupRequest, error) 
 
 	// Parse Group Instance ID (nullable string) - for JoinGroup v5+
 	var groupInstanceID string
-	if offset+2 > len(data) {
-		return nil, fmt.Errorf("missing group instance ID length")
-	}
-	instanceIDLength := int16(binary.BigEndian.Uint16(data[offset:]))
-	offset += 2
-
-	if instanceIDLength == -1 {
-		groupInstanceID = "" // null string
-	} else if instanceIDLength >= 0 {
-		if offset+int(instanceIDLength) > len(data) {
-			return nil, fmt.Errorf("invalid group instance ID length")
+	if apiVersion >= 5 {
+		if offset+2 > len(data) {
+			return nil, fmt.Errorf("missing group instance ID length")
 		}
-		groupInstanceID = string(data[offset : offset+int(instanceIDLength)])
-		offset += int(instanceIDLength)
-	}
+		instanceIDLength := int16(binary.BigEndian.Uint16(data[offset:]))
+		offset += 2
 
-	fmt.Printf("DEBUG: JoinGroup v5 - MemberID: '%s', GroupInstanceID: '%s' (len=%d), offset now: %d\n",
-		memberID, groupInstanceID, instanceIDLength, offset)
+		if instanceIDLength == -1 {
+			groupInstanceID = "" // null string
+		} else if instanceIDLength >= 0 {
+			if offset+int(instanceIDLength) > len(data) {
+				return nil, fmt.Errorf("invalid group instance ID length")
+			}
+			groupInstanceID = string(data[offset : offset+int(instanceIDLength)])
+			offset += int(instanceIDLength)
+		}
+	}
 
 	// Parse Protocol Type
 	if len(data) < offset+2 {
@@ -682,7 +680,7 @@ func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, reque
 	fmt.Printf("DEBUG: SyncGroup request hex dump (first %d bytes): %x\n", dumpLen, requestBody[:dumpLen])
 
 	// Parse SyncGroup request
-	request, err := h.parseSyncGroupRequest(requestBody)
+	request, err := h.parseSyncGroupRequest(requestBody, apiVersion)
 	if err != nil {
 		fmt.Printf("DEBUG: SyncGroup parseSyncGroupRequest error: %v\n", err)
 		return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeInvalidGroupID), nil
@@ -761,7 +759,7 @@ func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, reque
 	return h.buildSyncGroupResponse(response), nil
 }
 
-func (h *Handler) parseSyncGroupRequest(data []byte) (*SyncGroupRequest, error) {
+func (h *Handler) parseSyncGroupRequest(data []byte, apiVersion uint16) (*SyncGroupRequest, error) {
 	if len(data) < 8 {
 		return nil, fmt.Errorf("request too short")
 	}
@@ -798,6 +796,26 @@ func (h *Handler) parseSyncGroupRequest(data []byte) (*SyncGroupRequest, error) 
 	memberID := string(data[offset : offset+memberIDLength])
 	offset += memberIDLength
 
+	// GroupInstanceID (nullable string) - for SyncGroup v3+
+	var groupInstanceID string
+	if apiVersion >= 3 {
+		if offset+2 > len(data) {
+			return nil, fmt.Errorf("missing group instance ID length")
+		}
+		instanceIDLength := int16(binary.BigEndian.Uint16(data[offset:]))
+		offset += 2
+
+		if instanceIDLength == -1 {
+			groupInstanceID = "" // null string
+		} else if instanceIDLength >= 0 {
+			if offset+int(instanceIDLength) > len(data) {
+				return nil, fmt.Errorf("invalid group instance ID length")
+			}
+			groupInstanceID = string(data[offset : offset+int(instanceIDLength)])
+			offset += int(instanceIDLength)
+		}
+	}
+
 	// For simplicity, we'll parse basic fields
 	// In a full implementation, we'd parse the full group assignments array
 
@@ -805,7 +823,7 @@ func (h *Handler) parseSyncGroupRequest(data []byte) (*SyncGroupRequest, error) 
 		GroupID:          groupID,
 		GenerationID:     generationID,
 		MemberID:         memberID,
-		GroupInstanceID:  "",
+		GroupInstanceID:  groupInstanceID,
 		GroupAssignments: []GroupAssignment{},
 	}, nil
 }
