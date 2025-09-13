@@ -93,14 +93,7 @@ type OffsetFetchPartitionResponse struct {
 	ErrorCode   int16  // Partition-level error
 }
 
-// Error codes specific to offset management
-const (
-	ErrorCodeInvalidCommitOffsetSize  int16 = 28
-	ErrorCodeOffsetMetadataTooLarge   int16 = 12
-	ErrorCodeOffsetLoadInProgress     int16 = 14
-	ErrorCodeNotCoordinatorForGroup   int16 = 16
-	ErrorCodeGroupAuthorizationFailed int16 = 30
-)
+// Error codes specific to offset management are imported from errors.go
 
 func (h *Handler) handleOffsetCommit(correlationID uint32, requestBody []byte) ([]byte, error) {
 	// Parse OffsetCommit request

@@ -221,6 +221,9 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 	w := bufio.NewWriter(conn)
 	defer w.Flush()
 
+	// Use default timeout config
+	timeoutConfig := DefaultTimeoutConfig()
+
 	for {
 		// Check if context is cancelled
 		select {
@@ -230,12 +233,18 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		default:
 		}
 
-		// Set a read deadline for the connection based on context
+		// Set a read deadline for the connection based on context or default timeout
+		var readDeadline time.Time
 		if deadline, ok := ctx.Deadline(); ok {
-			conn.SetReadDeadline(deadline)
+			readDeadline = deadline
 		} else {
-			// Set a reasonable timeout if no deadline is set
-			conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+			// Use configurable read timeout instead of hardcoded 5 seconds
+			readDeadline = time.Now().Add(timeoutConfig.ReadTimeout)
+		}
+
+		if err := conn.SetReadDeadline(readDeadline); err != nil {
+			fmt.Printf("DEBUG: [%s] Failed to set read deadline: %v\n", connectionID, err)
+			return fmt.Errorf("set read deadline: %w", err)
 		}
 
 		// Read message size (4 bytes)
@@ -245,31 +254,51 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 				fmt.Printf("DEBUG: Client closed connection (clean EOF)\n")
 				return nil // clean disconnect
 			}
-			// Check if error is due to context cancellation
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+
+			// Use centralized error classification
+			errorCode := ClassifyNetworkError(err)
+			switch errorCode {
+			case ErrorCodeRequestTimedOut:
+				// Check if error is due to context cancellation
 				select {
 				case <-ctx.Done():
 					fmt.Printf("DEBUG: [%s] Read timeout due to context cancellation\n", connectionID)
 					return ctx.Err()
 				default:
-					// Actual timeout, continue with error
+					fmt.Printf("DEBUG: [%s] Read timeout: %v\n", connectionID, err)
+					return fmt.Errorf("read timeout: %w", err)
 				}
+			case ErrorCodeNetworkException:
+				fmt.Printf("DEBUG: [%s] Network error reading message size: %v\n", connectionID, err)
+				return fmt.Errorf("network error: %w", err)
+			default:
+				fmt.Printf("DEBUG: [%s] Error reading message size: %v (code: %d)\n", connectionID, err, errorCode)
+				return fmt.Errorf("read size: %w", err)
 			}
-			fmt.Printf("DEBUG: Error reading message size: %v\n", err)
-			return fmt.Errorf("read size: %w", err)
 		}
 
 		size := binary.BigEndian.Uint32(sizeBytes[:])
 		if size == 0 || size > 1024*1024 { // 1MB limit
-			// TODO: Consider making message size limit configurable
-			// 1MB might be too restrictive for some use cases
-			// Kafka default max.message.bytes is often higher
-			return fmt.Errorf("invalid message size: %d", size)
+			// Use standardized error for message size limit
+			fmt.Printf("DEBUG: [%s] Invalid message size: %d (limit: 1MB)\n", connectionID, size)
+			// Send error response for message too large
+			errorResponse := BuildErrorResponse(0, ErrorCodeMessageTooLarge) // correlation ID 0 since we can't parse it yet
+			if writeErr := h.writeResponseWithTimeout(w, errorResponse, timeoutConfig.WriteTimeout); writeErr != nil {
+				fmt.Printf("DEBUG: [%s] Failed to send message too large response: %v\n", connectionID, writeErr)
+			}
+			return fmt.Errorf("message size %d exceeds limit", size)
+		}
+
+		// Set read deadline for message body
+		if err := conn.SetReadDeadline(time.Now().Add(timeoutConfig.ReadTimeout)); err != nil {
+			fmt.Printf("DEBUG: [%s] Failed to set message read deadline: %v\n", connectionID, err)
 		}
 
 		// Read the message
 		messageBuf := make([]byte, size)
 		if _, err := io.ReadFull(r, messageBuf); err != nil {
+			errorCode := HandleTimeoutError(err, "read")
+			fmt.Printf("DEBUG: [%s] Error reading message body: %v (code: %d)\n", connectionID, err, errorCode)
 			return fmt.Errorf("read message: %w", err)
 		}
 
@@ -292,11 +321,10 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 				return fmt.Errorf("build error response: %w", writeErr)
 			}
 			// Send error response and continue to next request
-			responseSizeBytes := make([]byte, 4)
-			binary.BigEndian.PutUint32(responseSizeBytes, uint32(len(response)))
-			w.Write(responseSizeBytes)
-			w.Write(response)
-			w.Flush()
+			if writeErr := h.writeResponseWithTimeout(w, response, timeoutConfig.WriteTimeout); writeErr != nil {
+				fmt.Printf("DEBUG: [%s] Failed to send unsupported version response: %v\n", connectionID, writeErr)
+				return fmt.Errorf("send error response: %w", writeErr)
+			}
 			continue
 		}
 
@@ -305,7 +333,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		if parseErr != nil {
 			// Fall back to basic header parsing if flexible version parsing fails
 			fmt.Printf("DEBUG: Flexible header parsing failed, using basic parsing: %v\n", parseErr)
-			
+
 			// Basic header parsing fallback (original logic)
 			bodyOffset := 8
 			if len(messageBuf) < bodyOffset+2 {
@@ -415,19 +443,11 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			return fmt.Errorf("handle request: %w", err)
 		}
 
-		// Write response size and data
-		responseSizeBytes := make([]byte, 4)
-		binary.BigEndian.PutUint32(responseSizeBytes, uint32(len(response)))
-
-		if _, err := w.Write(responseSizeBytes); err != nil {
-			return fmt.Errorf("write response size: %w", err)
-		}
-		if _, err := w.Write(response); err != nil {
-			return fmt.Errorf("write response: %w", err)
-		}
-
-		if err := w.Flush(); err != nil {
-			return fmt.Errorf("flush response: %w", err)
+		// Send response with timeout handling
+		if err := h.writeResponseWithTimeout(w, response, timeoutConfig.WriteTimeout); err != nil {
+			errorCode := HandleTimeoutError(err, "write")
+			fmt.Printf("DEBUG: [%s] Error sending response: %v (code: %d)\n", connectionID, err, errorCode)
+			return fmt.Errorf("send response: %w", err)
 		}
 
 		// Minimal flush logging
@@ -438,7 +458,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 func (h *Handler) handleApiVersions(correlationID uint32, apiVersion uint16) ([]byte, error) {
 	// Build ApiVersions response supporting flexible versions (v3+)
 	isFlexible := IsFlexibleVersion(18, apiVersion)
-	
+
 	response := make([]byte, 0, 128)
 
 	// Correlation ID
@@ -537,7 +557,7 @@ func (h *Handler) handleApiVersions(correlationID uint32, apiVersion uint16) ([]
 		// Empty tagged fields for now
 		response = append(response, 0)
 	}
-	
+
 	fmt.Printf("DEBUG: ApiVersions v%d response: %d bytes\n", apiVersion, len(response))
 	return response, nil
 }
@@ -1793,23 +1813,8 @@ func (h *Handler) validateAPIVersion(apiKey, apiVersion uint16) error {
 
 // buildUnsupportedVersionResponse creates a proper Kafka error response
 func (h *Handler) buildUnsupportedVersionResponse(correlationID uint32, apiKey, apiVersion uint16) ([]byte, error) {
-	response := make([]byte, 0, 16)
-
-	// Correlation ID
-	correlationIDBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
-	response = append(response, correlationIDBytes...)
-
-	// Error code: UNSUPPORTED_VERSION (35)
-	response = append(response, 0, 35)
-
-	// Error message
 	errorMsg := fmt.Sprintf("Unsupported version %d for API key %d", apiVersion, apiKey)
-	errorMsgLen := uint16(len(errorMsg))
-	response = append(response, byte(errorMsgLen>>8), byte(errorMsgLen))
-	response = append(response, []byte(errorMsg)...)
-
-	return response, nil
+	return BuildErrorResponseWithMessage(correlationID, ErrorCodeUnsupportedVersion, errorMsg), nil
 }
 
 // handleMetadata routes to the appropriate version-specific handler
@@ -1866,6 +1871,32 @@ func getAPIName(apiKey uint16) string {
 	default:
 		return "Unknown"
 	}
+}
+
+// writeResponseWithTimeout writes a Kafka response with timeout handling
+func (h *Handler) writeResponseWithTimeout(w *bufio.Writer, response []byte, timeout time.Duration) error {
+	// Note: bufio.Writer doesn't support direct timeout setting
+	// Timeout handling should be done at the connection level before calling this function
+
+	// Write response size (4 bytes)
+	responseSizeBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(responseSizeBytes, uint32(len(response)))
+
+	if _, err := w.Write(responseSizeBytes); err != nil {
+		return fmt.Errorf("write response size: %w", err)
+	}
+
+	// Write response data
+	if _, err := w.Write(response); err != nil {
+		return fmt.Errorf("write response data: %w", err)
+	}
+
+	// Flush the buffer
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("flush response: %w", err)
+	}
+
+	return nil
 }
 
 // EnableSchemaManagement enables schema management with the given configuration

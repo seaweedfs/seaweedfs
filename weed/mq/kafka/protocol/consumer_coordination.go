@@ -57,11 +57,7 @@ type LeaveGroupMemberResponse struct {
 	ErrorCode       int16
 }
 
-// Error codes specific to consumer coordination
-const (
-	ErrorCodeUnstableOffsetCommit int16 = 95 // Consumer group is rebalancing
-	ErrorCodeGroupMaxSizeReached  int16 = 84 // Group has reached maximum size
-)
+// Error codes specific to consumer coordination are imported from errors.go
 
 func (h *Handler) handleHeartbeat(correlationID uint32, requestBody []byte) ([]byte, error) {
 	// Parse Heartbeat request

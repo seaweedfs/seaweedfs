@@ -235,7 +235,7 @@ func BenchmarkValidateAPIVersion(b *testing.B) {
 		version uint16
 	}{
 		{9, 3},  // OffsetFetch v3
-		{9, 5},  // OffsetFetch v5  
+		{9, 5},  // OffsetFetch v5
 		{19, 5}, // CreateTopics v5
 		{3, 7},  // Metadata v7
 		{18, 3}, // ApiVersions v3

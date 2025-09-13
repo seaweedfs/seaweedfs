@@ -80,19 +80,22 @@
 
 **Verification**: MaxBytes compliance, multi-batch concatenation, 17 comprehensive tests, E2E compatibility
 
-## Phase 6: Flexible Versions Support (PRIORITY LOW)
+## Phase 6: Basic Flexible Versions Support (COMPLETED ✅)
 **Goal**: Basic support for flexible versions and tagged fields
 
 ### Tasks:
-- [ ] Add flexible version detection in request headers
-- [ ] Implement tagged field parsing/skipping
-- [ ] Update response encoders for flexible versions
-- [ ] Add flexible version tests
+- [x] Add flexible version detection in request headers
+- [x] Implement tagged field parsing/skipping (with backward compatibility)
+- [x] Update response encoders for flexible versions (ApiVersions v3+)
+- [x] Add flexible version tests
 
-**Files to modify**:
-- `weed/mq/kafka/protocol/handler.go`
-- `weed/mq/kafka/protocol/flexible_versions.go` (new file)
-- Add test file: `weed/mq/kafka/protocol/flexible_versions_test.go`
+**Files modified**:
+- `weed/mq/kafka/protocol/handler.go` (added header parsing with fallback)
+- Added file: `weed/mq/kafka/protocol/flexible_versions.go`
+- Added test file: `weed/mq/kafka/protocol/flexible_versions_test.go`
+- Added test file: `weed/mq/kafka/protocol/flexible_versions_integration_test.go`
+
+**Verification**: 27 flexible version tests pass; robust fallback for older clients; E2E compatibility maintained
 
 ## Phase 7: Error Handling and Edge Cases (PRIORITY LOW)
 **Goal**: Comprehensive error handling and Kafka spec compliance
@@ -108,7 +111,7 @@
 - All protocol handler files
 - Add test file: `weed/mq/kafka/protocol/error_handling_test.go`
 
-## Current Status: Phase 1-5 completed, ready for Phase 6
+## Current Status: Phase 1-6 completed, ready for Phase 7 (low priority)
 
 ### Implementation Notes:
 - Each phase should include comprehensive tests

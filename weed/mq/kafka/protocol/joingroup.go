@@ -47,16 +47,7 @@ type JoinGroupMember struct {
 	Metadata        []byte
 }
 
-// Error codes for JoinGroup
-const (
-	ErrorCodeNone                  int16 = 0
-	ErrorCodeInvalidGroupID        int16 = 24
-	ErrorCodeUnknownMemberID       int16 = 25
-	ErrorCodeInvalidSessionTimeout int16 = 26
-	ErrorCodeRebalanceInProgress   int16 = 27
-	ErrorCodeMemberIDRequired      int16 = 79
-	ErrorCodeFencedInstanceID      int16 = 82
-)
+// Error codes for JoinGroup are imported from errors.go
 
 func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
 	// DEBUG: Hex dump the request to understand format
@@ -676,10 +667,7 @@ type SyncGroupResponse struct {
 }
 
 // Additional error codes for SyncGroup
-const (
-	ErrorCodeIllegalGeneration         int16 = 22
-	ErrorCodeInconsistentGroupProtocol int16 = 23
-)
+// Error codes for SyncGroup are imported from errors.go
 
 func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
 	// DEBUG: Hex dump the request to understand format
