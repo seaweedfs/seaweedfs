@@ -136,7 +136,54 @@ func goValueToSchemaValue(value interface{}) *schema_pb.Value {
 			},
 		}
 	case map[string]interface{}:
-		// Handle nested records
+		// Check if this is an Avro union type (single key-value pair)
+		if len(v) == 1 {
+			for unionType, unionValue := range v {
+				// Handle common union type patterns
+				switch unionType {
+				case "int":
+					if intVal, ok := unionValue.(int32); ok {
+						return &schema_pb.Value{
+							Kind: &schema_pb.Value_Int64Value{Int64Value: int64(intVal)},
+						}
+					}
+				case "long":
+					if longVal, ok := unionValue.(int64); ok {
+						return &schema_pb.Value{
+							Kind: &schema_pb.Value_Int64Value{Int64Value: longVal},
+						}
+					}
+				case "float":
+					if floatVal, ok := unionValue.(float32); ok {
+						return &schema_pb.Value{
+							Kind: &schema_pb.Value_FloatValue{FloatValue: floatVal},
+						}
+					}
+				case "double":
+					if doubleVal, ok := unionValue.(float64); ok {
+						return &schema_pb.Value{
+							Kind: &schema_pb.Value_DoubleValue{DoubleValue: doubleVal},
+						}
+					}
+				case "string":
+					if strVal, ok := unionValue.(string); ok {
+						return &schema_pb.Value{
+							Kind: &schema_pb.Value_StringValue{StringValue: strVal},
+						}
+					}
+				case "boolean":
+					if boolVal, ok := unionValue.(bool); ok {
+						return &schema_pb.Value{
+							Kind: &schema_pb.Value_BoolValue{BoolValue: boolVal},
+						}
+					}
+				}
+				// If it's not a recognized union type, recurse on the value
+				return goValueToSchemaValue(unionValue)
+			}
+		}
+
+		// Handle nested records (not union types)
 		fields := make(map[string]*schema_pb.Value)
 		for key, val := range v {
 			fields[key] = goValueToSchemaValue(val)
@@ -169,7 +216,7 @@ func avroSchemaToRecordType(schemaStr string) (*schema_pb.RecordType, error) {
 	// For now, we'll create a simplified RecordType
 	// In a full implementation, we would parse the Avro schema JSON
 	// and extract field definitions to create proper SeaweedMQ field types
-	
+
 	// This is a placeholder implementation that creates a flexible schema
 	// allowing any field types (which will be determined at runtime)
 	fields := []*schema_pb.Field{
@@ -205,7 +252,7 @@ func InferRecordTypeFromMap(m map[string]interface{}) *schema_pb.RecordType {
 
 	for key, value := range m {
 		fieldType := inferTypeFromValue(value)
-		
+
 		field := &schema_pb.Field{
 			Name:       key,
 			FieldIndex: fieldIndex,
@@ -213,12 +260,12 @@ func InferRecordTypeFromMap(m map[string]interface{}) *schema_pb.RecordType {
 			IsRequired: value != nil, // Non-nil values are considered required
 			IsRepeated: false,
 		}
-		
+
 		// Check if it's an array
 		if reflect.TypeOf(value).Kind() == reflect.Slice {
 			field.IsRepeated = true
 		}
-		
+
 		fields = append(fields, field)
 		fieldIndex++
 	}
@@ -301,7 +348,7 @@ func inferTypeFromValue(value interface{}) *schema_pb.Type {
 				},
 			}
 		}
-		
+
 		return &schema_pb.Type{
 			Kind: &schema_pb.Type_ListType{
 				ListType: &schema_pb.ListType{

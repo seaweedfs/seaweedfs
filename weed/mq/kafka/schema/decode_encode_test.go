@@ -327,7 +327,11 @@ func TestSchemaDecodeEncode_ErrorHandling(t *testing.T) {
 		envelope := createConfluentEnvelope(schemaID, []byte("invalid avro data"))
 		_, err := manager.DecodeMessage(envelope)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to decode")
+		if err != nil {
+			assert.Contains(t, err.Error(), "failed to decode")
+		} else {
+			t.Error("Expected error but got nil - this indicates a bug in error handling")
+		}
 	})
 
 	t.Run("Invalid JSON Data", func(t *testing.T) {

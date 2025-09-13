@@ -14,12 +14,12 @@ import (
 type RegistryClient struct {
 	baseURL    string
 	httpClient *http.Client
-	
+
 	// Caching
-	schemaCache   map[uint32]*CachedSchema // schema ID -> schema
-	subjectCache  map[string]*CachedSubject // subject -> latest version info
-	cacheMu       sync.RWMutex
-	cacheTTL      time.Duration
+	schemaCache  map[uint32]*CachedSchema  // schema ID -> schema
+	subjectCache map[string]*CachedSubject // subject -> latest version info
+	cacheMu      sync.RWMutex
+	cacheTTL     time.Duration
 }
 
 // CachedSchema represents a cached schema with metadata
@@ -34,21 +34,21 @@ type CachedSchema struct {
 
 // CachedSubject represents cached subject information
 type CachedSubject struct {
-	Subject     string    `json:"subject"`
-	LatestID    uint32    `json:"id"`
-	Version     int       `json:"version"`
-	Schema      string    `json:"schema"`
-	CachedAt    time.Time `json:"-"`
+	Subject  string    `json:"subject"`
+	LatestID uint32    `json:"id"`
+	Version  int       `json:"version"`
+	Schema   string    `json:"schema"`
+	CachedAt time.Time `json:"-"`
 }
 
 // RegistryConfig holds configuration for the Schema Registry client
 type RegistryConfig struct {
-	URL         string
-	Username    string // Optional basic auth
-	Password    string // Optional basic auth
-	Timeout     time.Duration
-	CacheTTL    time.Duration
-	MaxRetries  int
+	URL        string
+	Username   string // Optional basic auth
+	Password   string // Optional basic auth
+	Timeout    time.Duration
+	CacheTTL   time.Duration
+	MaxRetries int
 }
 
 // NewRegistryClient creates a new Schema Registry client
@@ -183,11 +183,11 @@ func (rc *RegistryClient) GetLatestSchema(subject string) (*CachedSubject, error
 // RegisterSchema registers a new schema for a subject
 func (rc *RegistryClient) RegisterSchema(subject, schema string) (uint32, error) {
 	url := fmt.Sprintf("%s/subjects/%s/versions", rc.baseURL, subject)
-	
+
 	reqBody := map[string]string{
 		"schema": schema,
 	}
-	
+
 	jsonData, err := json.Marshal(reqBody)
 	if err != nil {
 		return 0, fmt.Errorf("failed to marshal schema request: %w", err)
@@ -224,11 +224,11 @@ func (rc *RegistryClient) RegisterSchema(subject, schema string) (uint32, error)
 // CheckCompatibility checks if a schema is compatible with the subject
 func (rc *RegistryClient) CheckCompatibility(subject, schema string) (bool, error) {
 	url := fmt.Sprintf("%s/compatibility/subjects/%s/versions/latest", rc.baseURL, subject)
-	
+
 	reqBody := map[string]string{
 		"schema": schema,
 	}
-	
+
 	jsonData, err := json.Marshal(reqBody)
 	if err != nil {
 		return false, fmt.Errorf("failed to marshal compatibility request: %w", err)
@@ -282,7 +282,7 @@ func (rc *RegistryClient) ListSubjects() ([]string, error) {
 func (rc *RegistryClient) ClearCache() {
 	rc.cacheMu.Lock()
 	defer rc.cacheMu.Unlock()
-	
+
 	rc.schemaCache = make(map[uint32]*CachedSchema)
 	rc.subjectCache = make(map[string]*CachedSubject)
 }
@@ -291,7 +291,7 @@ func (rc *RegistryClient) ClearCache() {
 func (rc *RegistryClient) GetCacheStats() (schemaCount, subjectCount int) {
 	rc.cacheMu.RLock()
 	defer rc.cacheMu.RUnlock()
-	
+
 	return len(rc.schemaCache), len(rc.subjectCache)
 }
 
@@ -311,14 +311,25 @@ func (rc *RegistryClient) detectSchemaFormat(schema string) Format {
 							return FormatAvro
 						}
 					}
+					// Common JSON Schema types (that are not Avro types)
+					jsonSchemaTypes := []string{"object", "string", "number", "integer", "boolean", "null"}
+					for _, jsonSchemaType := range jsonSchemaTypes {
+						if typeStr == jsonSchemaType {
+							return FormatJSONSchema
+						}
+					}
 				}
 			}
 			// Check for JSON Schema indicators
 			if _, exists := schemaMap["$schema"]; exists {
 				return FormatJSONSchema
 			}
+			// Check for JSON Schema properties field
+			if _, exists := schemaMap["properties"]; exists {
+				return FormatJSONSchema
+			}
 		}
-		// Default JSON-based schema to Avro
+		// Default JSON-based schema to Avro only if it doesn't look like JSON Schema
 		return FormatAvro
 	}
 

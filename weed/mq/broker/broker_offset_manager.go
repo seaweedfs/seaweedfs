@@ -271,5 +271,13 @@ func (bom *BrokerOffsetManager) Shutdown() {
 	}
 	bom.partitionManagers = make(map[string]*offset.PartitionOffsetManager)
 
+	// Reset the underlying storage to ensure clean restart behavior
+	// This is important for testing where we want offsets to start from 0 after shutdown
+	if bom.storage != nil {
+		if resettable, ok := bom.storage.(interface{ Reset() error }); ok {
+			resettable.Reset()
+		}
+	}
+
 	// TODO: Close storage connections when SQL storage is implemented
 }

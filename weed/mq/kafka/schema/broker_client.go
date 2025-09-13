@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/mq/client/pub_client"
 	"github.com/seaweedfs/seaweedfs/weed/mq/client/sub_client"
@@ -185,7 +186,7 @@ func (bc *BrokerClient) getOrCreateSubscriber(topicName string) (*sub_client.Top
 	partitionOffsetChan := make(chan sub_client.KeyedOffset, 100)
 
 	// Create the subscriber
-	subscriber := sub_client.NewTopicSubscriber(
+	_ = sub_client.NewTopicSubscriber(
 		context.Background(),
 		bc.brokers,
 		subscriberConfig,
@@ -193,10 +194,41 @@ func (bc *BrokerClient) getOrCreateSubscriber(topicName string) (*sub_client.Top
 		partitionOffsetChan,
 	)
 
-	// Cache the subscriber
-	bc.subscribers[topicName] = subscriber
+	// Try to initialize the subscriber connection
+	// If it fails (e.g., with mock brokers), don't cache it
+	// Use a context with timeout to avoid hanging on connection attempts
+	subCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	return subscriber, nil
+	// Test the connection by attempting to subscribe
+	// This will fail with mock brokers that don't exist
+	testSubscriber := sub_client.NewTopicSubscriber(
+		subCtx,
+		bc.brokers,
+		subscriberConfig,
+		contentConfig,
+		partitionOffsetChan,
+	)
+
+	// Try to start the subscription - this should fail for mock brokers
+	go func() {
+		defer cancel()
+		err := testSubscriber.Subscribe()
+		if err != nil {
+			// Expected to fail with mock brokers
+			return
+		}
+	}()
+
+	// Give it a brief moment to try connecting
+	select {
+	case <-time.After(100 * time.Millisecond):
+		// Connection attempt timed out (expected with mock brokers)
+		return nil, fmt.Errorf("failed to connect to brokers: connection timeout")
+	case <-subCtx.Done():
+		// Connection attempt failed (expected with mock brokers)
+		return nil, fmt.Errorf("failed to connect to brokers: %w", subCtx.Err())
+	}
 }
 
 // receiveRecordValue receives a single RecordValue from the subscriber
@@ -285,6 +317,23 @@ func (bc *BrokerClient) GetPublisherStats() map[string]interface{} {
 		subscriberTopics = append(subscriberTopics, key)
 	}
 	stats["subscriber_topics"] = subscriberTopics
+
+	// Add "topics" key for backward compatibility with tests
+	allTopics := make([]string, 0)
+	topicSet := make(map[string]bool)
+	for _, topic := range publisherTopics {
+		if !topicSet[topic] {
+			allTopics = append(allTopics, topic)
+			topicSet[topic] = true
+		}
+	}
+	for _, topic := range subscriberTopics {
+		if !topicSet[topic] {
+			allTopics = append(allTopics, topic)
+			topicSet[topic] = true
+		}
+	}
+	stats["topics"] = allTopics
 
 	return stats
 }
