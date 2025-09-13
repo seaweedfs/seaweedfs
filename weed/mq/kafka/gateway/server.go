@@ -96,9 +96,9 @@ func (s *Server) Start() error {
 		return err
 	}
 	s.ln = ln
-	
+
 	// Update handler with actual broker address for Metadata responses
-	host, port := s.GetListenerAddr() 
+	host, port := s.GetListenerAddr()
 	s.handler.SetBrokerAddress(host, port)
 	glog.V(1).Infof("Kafka gateway advertising broker at %s:%d", host, port)
 	s.wg.Add(1)
@@ -166,17 +166,17 @@ func (s *Server) GetListenerAddr() (string, int) {
 	if s.ln == nil {
 		return "localhost", 9092 // fallback
 	}
-	
+
 	addr := s.ln.Addr().String()
 	// Parse [::]:port or host:port format - use exact match for kafka-go compatibility
 	if strings.HasPrefix(addr, "[::]:") {
-		port := strings.TrimPrefix(addr, "[::]:") 
+		port := strings.TrimPrefix(addr, "[::]:")
 		if p, err := strconv.Atoi(port); err == nil {
 			// Resolve appropriate address when bound to IPv6 all interfaces
 			return resolveAdvertisedAddress(), p
 		}
 	}
-	
+
 	// Handle host:port format
 	if host, port, err := net.SplitHostPort(addr); err == nil {
 		if p, err := strconv.Atoi(port); err == nil {
@@ -187,6 +187,6 @@ func (s *Server) GetListenerAddr() (string, int) {
 			return host, p
 		}
 	}
-	
+
 	return "localhost", 9092 // fallback
 }
