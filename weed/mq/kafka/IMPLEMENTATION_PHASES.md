@@ -31,19 +31,21 @@
 
 **Verification**: All v0-v5 CreateTopics tests pass; proper partition handling
 
-## Phase 3: ApiVersions Matrix Accuracy (PRIORITY MEDIUM)
+## Phase 3: ApiVersions Matrix Accuracy (COMPLETED ✅)
 **Goal**: Ensure advertised API versions match actual implementation
 
 ### Tasks:
-- [ ] Audit current `handleApiVersions` response against implemented features
-- [ ] Lower max versions for APIs with incomplete implementations
-- [ ] Add version validation in request handlers
-- [ ] Document supported vs unsupported features per API version
+- [x] Audit current `handleApiVersions` response against implemented features
+- [x] Correct max versions for APIs with higher implementations than advertised
+- [x] Update version validation in request handlers to match advertisements
+- [x] Document supported vs unsupported features per API version
 
-**Files to modify**:
-- `weed/mq/kafka/protocol/handler.go` (`handleApiVersions`)
-- Add file: `weed/mq/kafka/API_VERSION_MATRIX.md`
-- Add test file: `weed/mq/kafka/protocol/api_versions_test.go`
+**Files modified**:
+- `weed/mq/kafka/protocol/handler.go` (`handleApiVersions` & `validateAPIVersion`)
+- Added file: `weed/mq/kafka/API_VERSION_MATRIX.md`
+- Added test file: `weed/mq/kafka/protocol/api_versions_test.go`
+
+**Verification**: Critical fixes for OffsetFetch v0-v5 and CreateTopics v0-v5 accuracy
 
 ## Phase 4: Consumer Group Protocol Metadata (PRIORITY MEDIUM)
 **Goal**: Proper JoinGroup protocol metadata parsing
@@ -100,7 +102,7 @@
 - All protocol handler files
 - Add test file: `weed/mq/kafka/protocol/error_handling_test.go`
 
-## Current Status: Phase 1 & 2 completed, ready for Phase 3
+## Current Status: Phase 1, 2 & 3 completed, ready for Phase 4
 
 ### Implementation Notes:
 - Each phase should include comprehensive tests
