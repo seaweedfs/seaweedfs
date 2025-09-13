@@ -48,6 +48,9 @@ type MessageQueueBroker struct {
 	localTopicManager *topic.LocalTopicManager
 	PubBalancer       *pub_balancer.PubBalancer
 	lockAsBalancer    *cluster.LiveLock
+	// TODO: Add native offset management to broker
+	// ASSUMPTION: BrokerOffsetManager handles all partition offset assignment
+	offsetManager     *BrokerOffsetManager
 	SubCoordinator    *sub_coordinator.SubCoordinator
 	accessLock        sync.Mutex
 	fca               *filer_client.FilerClientAccessor
@@ -66,6 +69,7 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 		localTopicManager: topic.NewLocalTopicManager(),
 		PubBalancer:       pubBalancer,
 		SubCoordinator:    subCoordinator,
+		offsetManager:     NewBrokerOffsetManager(),
 	}
 	fca := &filer_client.FilerClientAccessor{
 		GetFiler:          mqBroker.GetFiler,

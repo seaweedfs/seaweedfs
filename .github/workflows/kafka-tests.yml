@@ -1,0 +1,102 @@
+name: "Kafka Gateway Tests"
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+concurrency:
+  group: ${{ github.head_ref }}/kafka-tests
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  kafka-unit-tests:
+    name: Kafka Unit Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+    - name: Set up Go 1.x
+      uses: actions/setup-go@v5
+      with:
+        go-version: ^1.21
+      id: go
+
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Get dependencies
+      run: |
+        cd test/kafka
+        go mod download
+
+    - name: Run Kafka Gateway Unit Tests
+      run: |
+        cd test/kafka
+        go test -v -timeout 30s ./...
+
+  kafka-client-compatibility:
+    name: Kafka Client Compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - name: Set up Go 1.x
+      uses: actions/setup-go@v5
+      with:
+        go-version: ^1.21
+      id: go
+
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Get dependencies
+      run: |
+        cd test/kafka
+        go mod download
+
+    - name: Test kafka-go Client Compatibility
+      run: |
+        cd test/kafka
+        go test -v -run TestKafkaGo_ProduceOnly -timeout 10s
+
+    - name: Test Sarama Client Compatibility
+      run: |
+        cd test/kafka
+        go test -v -run TestSarama -timeout 10s
+
+  kafka-protocol-tests:
+    name: Kafka Protocol Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+    - name: Set up Go 1.x
+      uses: actions/setup-go@v5
+      with:
+        go-version: ^1.21
+      id: go
+
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Get dependencies
+      run: |
+        cd test/kafka
+        go mod download
+
+    - name: Test Metadata API Versions
+      run: |
+        cd test/kafka
+        go test -v -run TestMetadata -timeout 10s
+
+    - name: Test Produce API Versions
+      run: |
+        cd test/kafka
+        go test -v -run TestProduce -timeout 10s
+
+    - name: Test ApiVersions Compatibility
+      run: |
+        cd test/kafka
+        go test -v -run TestApiVersions -timeout 10s

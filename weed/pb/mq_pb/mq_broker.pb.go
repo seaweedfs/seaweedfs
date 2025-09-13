@@ -2699,6 +2699,7 @@ type LogEntry struct {
 	Key              []byte                 `protobuf:"bytes,2,opt,name=key,proto3" json:"key,omitempty"`
 	Data             []byte                 `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
 	PartitionKeyHash uint32                 `protobuf:"varint,4,opt,name=partition_key_hash,json=partitionKeyHash,proto3" json:"partition_key_hash,omitempty"`
+	Offset           int64                  `protobuf:"varint,5,opt,name=offset,proto3" json:"offset,omitempty"` // Sequential offset within partition
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -2757,6 +2758,13 @@ func (x *LogEntry) GetData() []byte {
 func (x *LogEntry) GetPartitionKeyHash() uint32 {
 	if x != nil {
 		return x.PartitionKeyHash
+	}
+	return 0
+}
+
+func (x *LogEntry) GetOffset() int64 {
+	if x != nil {
+		return x.Offset
 	}
 	return 0
 }
@@ -3865,12 +3873,13 @@ const file_mq_broker_proto_rawDesc = "" +
 	"\x1cGetUnflushedMessagesResponse\x120\n" +
 	"\amessage\x18\x01 \x01(\v2\x16.messaging_pb.LogEntryR\amessage\x12\x14\n" +
 	"\x05error\x18\x02 \x01(\tR\x05error\x12\"\n" +
-	"\rend_of_stream\x18\x03 \x01(\bR\vendOfStream\"s\n" +
+	"\rend_of_stream\x18\x03 \x01(\bR\vendOfStream\"\x8b\x01\n" +
 	"\bLogEntry\x12\x13\n" +
 	"\x05ts_ns\x18\x01 \x01(\x03R\x04tsNs\x12\x10\n" +
 	"\x03key\x18\x02 \x01(\fR\x03key\x12\x12\n" +
 	"\x04data\x18\x03 \x01(\fR\x04data\x12,\n" +
-	"\x12partition_key_hash\x18\x04 \x01(\rR\x10partitionKeyHash2\x8a\x0f\n" +
+	"\x12partition_key_hash\x18\x04 \x01(\rR\x10partitionKeyHash\x12\x16\n" +
+	"\x06offset\x18\x05 \x01(\x03R\x06offset2\x8a\x0f\n" +
 	"\x10SeaweedMessaging\x12c\n" +
 	"\x10FindBrokerLeader\x12%.messaging_pb.FindBrokerLeaderRequest\x1a&.messaging_pb.FindBrokerLeaderResponse\"\x00\x12y\n" +
 	"\x16PublisherToPubBalancer\x12+.messaging_pb.PublisherToPubBalancerRequest\x1a,.messaging_pb.PublisherToPubBalancerResponse\"\x00(\x010\x01\x12Z\n" +

@@ -322,6 +322,72 @@ func TestSignatureV4WithForwardedPrefix(t *testing.T) {
 	}
 }
 
+// Test X-Forwarded-Prefix with trailing slash preservation (GitHub issue #7223)
+// This tests the specific bug where S3 SDK signs paths with trailing slashes
+// but path.Clean() would remove them, causing signature verification to fail
+func TestSignatureV4WithForwardedPrefixTrailingSlash(t *testing.T) {
+	tests := []struct {
+		name            string
+		forwardedPrefix string
+		urlPath         string
+		expectedPath    string
+	}{
+		{
+			name:            "bucket listObjects with trailing slash",
+			forwardedPrefix: "/oss-sf-nnct",
+			urlPath:         "/s3user-bucket1/",
+			expectedPath:    "/oss-sf-nnct/s3user-bucket1/",
+		},
+		{
+			name:            "prefix path with trailing slash",
+			forwardedPrefix: "/s3",
+			urlPath:         "/my-bucket/folder/",
+			expectedPath:    "/s3/my-bucket/folder/",
+		},
+		{
+			name:            "root bucket with trailing slash",
+			forwardedPrefix: "/api/s3",
+			urlPath:         "/test-bucket/",
+			expectedPath:    "/api/s3/test-bucket/",
+		},
+		{
+			name:            "nested folder with trailing slash",
+			forwardedPrefix: "/storage",
+			urlPath:         "/bucket/path/to/folder/",
+			expectedPath:    "/storage/bucket/path/to/folder/",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			iam := newTestIAM()
+
+			// Create a request with the URL path that has a trailing slash
+			r, err := newTestRequest("GET", "https://example.com"+tt.urlPath, 0, nil)
+			if err != nil {
+				t.Fatalf("Failed to create test request: %v", err)
+			}
+
+			// Manually set the URL path with trailing slash to ensure it's preserved
+			r.URL.Path = tt.urlPath
+
+			r.Header.Set("X-Forwarded-Prefix", tt.forwardedPrefix)
+			r.Header.Set("Host", "example.com")
+			r.Header.Set("X-Forwarded-Host", "example.com")
+
+			// Sign the request with the full path including the trailing slash
+			// This simulates what S3 SDK does for listObjects operations
+			signV4WithPath(r, "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", tt.expectedPath)
+
+			// Test signature verification - this should succeed even with trailing slashes
+			_, errCode := iam.doesSignatureMatch(getContentSha256Cksum(r), r)
+			if errCode != s3err.ErrNone {
+				t.Errorf("Expected successful signature validation with trailing slash in path %q, got error: %v (code: %d)", tt.urlPath, errCode, int(errCode))
+			}
+		})
+	}
+}
+
 // Test X-Forwarded-Port support for reverse proxy scenarios
 func TestSignatureV4WithForwardedPort(t *testing.T) {
 	tests := []struct {
@@ -510,6 +576,73 @@ func TestPresignedSignatureV4WithForwardedPrefix(t *testing.T) {
 			_, errCode := iam.doesPresignedSignatureMatch(getContentSha256Cksum(r), r)
 			if errCode != s3err.ErrNone {
 				t.Errorf("Expected successful presigned signature validation with X-Forwarded-Prefix %q, got error: %v (code: %d)", tt.forwardedPrefix, errCode, int(errCode))
+			}
+		})
+	}
+}
+
+// Test X-Forwarded-Prefix with trailing slash preservation for presigned URLs (GitHub issue #7223)
+func TestPresignedSignatureV4WithForwardedPrefixTrailingSlash(t *testing.T) {
+	tests := []struct {
+		name            string
+		forwardedPrefix string
+		originalPath    string
+		strippedPath    string
+	}{
+		{
+			name:            "bucket listObjects with trailing slash",
+			forwardedPrefix: "/oss-sf-nnct",
+			originalPath:    "/oss-sf-nnct/s3user-bucket1/",
+			strippedPath:    "/s3user-bucket1/",
+		},
+		{
+			name:            "prefix path with trailing slash",
+			forwardedPrefix: "/s3",
+			originalPath:    "/s3/my-bucket/folder/",
+			strippedPath:    "/my-bucket/folder/",
+		},
+		{
+			name:            "api path with trailing slash",
+			forwardedPrefix: "/api/s3",
+			originalPath:    "/api/s3/test-bucket/",
+			strippedPath:    "/test-bucket/",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			iam := newTestIAM()
+
+			// Create a presigned request that simulates reverse proxy scenario with trailing slashes:
+			// 1. Client generates presigned URL with prefixed path including trailing slash
+			// 2. Proxy strips prefix and forwards to SeaweedFS with X-Forwarded-Prefix header
+
+			// Start with the original request URL (what client sees) with trailing slash
+			r, err := newTestRequest("GET", "https://example.com"+tt.originalPath, 0, nil)
+			if err != nil {
+				t.Fatalf("Failed to create test request: %v", err)
+			}
+
+			// Generate presigned URL with the original prefixed path including trailing slash
+			err = preSignV4WithPath(iam, r, "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", 3600, tt.originalPath)
+			if err != nil {
+				t.Errorf("Failed to presign request: %v", err)
+				return
+			}
+
+			// Now simulate what the reverse proxy does:
+			// 1. Strip the prefix from the URL path but preserve the trailing slash
+			r.URL.Path = tt.strippedPath
+
+			// 2. Add the forwarded headers
+			r.Header.Set("X-Forwarded-Prefix", tt.forwardedPrefix)
+			r.Header.Set("Host", "example.com")
+			r.Header.Set("X-Forwarded-Host", "example.com")
+
+			// Test presigned signature verification - this should succeed with trailing slashes
+			_, errCode := iam.doesPresignedSignatureMatch(getContentSha256Cksum(r), r)
+			if errCode != s3err.ErrNone {
+				t.Errorf("Expected successful presigned signature validation with trailing slash in path %q, got error: %v (code: %d)", tt.strippedPath, errCode, int(errCode))
 			}
 		})
 	}
