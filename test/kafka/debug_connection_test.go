@@ -12,7 +12,7 @@ import (
 // TestGateway_BasicConnection tests if the gateway can handle basic TCP connections
 func TestGateway_BasicConnection(t *testing.T) {
 	// Start the gateway server
-	srv := gateway.NewServer(gateway.Options{
+	srv := gateway.NewTestServer(gateway.Options{
 		Listen: ":0",
 	})
 
@@ -37,7 +37,7 @@ func TestGateway_BasicConnection(t *testing.T) {
 // TestGateway_ApiVersionsRequest tests if we can send an ApiVersions request
 func TestGateway_ApiVersionsRequest(t *testing.T) {
 	// Start the gateway server
-	srv := gateway.NewServer(gateway.Options{
+	srv := gateway.NewTestServer(gateway.Options{
 		Listen: ":0",
 	})
 
@@ -138,7 +138,7 @@ func TestGateway_ApiVersionsRequest(t *testing.T) {
 // TestGateway_CreateTopicsRequest tests if we can send a CreateTopics request
 func TestGateway_CreateTopicsRequest(t *testing.T) {
 	// Start the gateway server
-	srv := gateway.NewServer(gateway.Options{
+	srv := gateway.NewTestServer(gateway.Options{
 		Listen: ":0",
 	})
 

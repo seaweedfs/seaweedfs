@@ -13,7 +13,7 @@ import (
 // TestConnectionDebug debugs the exact connection behavior between kafka-go and our gateway
 func TestConnectionDebug(t *testing.T) {
 	// Start gateway server
-	gatewayServer := gateway.NewServer(gateway.Options{
+	gatewayServer := gateway.NewTestServer(gateway.Options{
 		Listen: ":0", // random port
 	})
 

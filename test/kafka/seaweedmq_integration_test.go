@@ -15,7 +15,7 @@ func TestSeaweedMQIntegration_E2E(t *testing.T) {
 	t.Skip("Integration test requires real SeaweedMQ setup - run manually")
 
 	// Start the gateway with SeaweedMQ backend
-	gatewayServer := gateway.NewServer(gateway.Options{
+	gatewayServer := gateway.NewTestServer(gateway.Options{
 		Listen: ":0", // random port
 	})
 
@@ -235,7 +235,7 @@ func buildCreateTopicsRequestCustom(topicName string) []byte {
 func TestSeaweedMQGateway_ModeSelection(t *testing.T) {
 	// Test in-memory mode (should always work)
 	t.Run("InMemoryMode", func(t *testing.T) {
-		server := gateway.NewServer(gateway.Options{
+		server := gateway.NewTestServer(gateway.Options{
 			Listen: ":0",
 		})
 
@@ -255,7 +255,7 @@ func TestSeaweedMQGateway_ModeSelection(t *testing.T) {
 
 	// Test SeaweedMQ mode with invalid agent (should fall back)
 	t.Run("SeaweedMQModeFallback", func(t *testing.T) {
-		server := gateway.NewServer(gateway.Options{
+		server := gateway.NewTestServer(gateway.Options{
 			Listen: ":0",
 		})
 
@@ -306,7 +306,7 @@ func TestSeaweedMQGateway_ConfigValidation(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			server := gateway.NewServer(tc.options)
+			server := gateway.NewTestServer(tc.options)
 			err := server.Start()
 
 			if tc.shouldWork && err != nil {

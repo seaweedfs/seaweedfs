@@ -12,7 +12,7 @@ import (
 // TestRawProduceRequest tests our Produce API directly without kafka-go
 func TestRawProduceRequest(t *testing.T) {
 	// Start the gateway server
-	srv := gateway.NewServer(gateway.Options{
+	srv := gateway.NewTestServer(gateway.Options{
 		Listen: ":0",
 	})
 

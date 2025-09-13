@@ -11,8 +11,10 @@ import (
 )
 
 func TestKafkaGo_ProduceOnly(t *testing.T) {
-	// Start gateway
-	gatewayServer := gateway.NewServer(gateway.Options{Listen: "127.0.0.1:0"})
+	// Start gateway with test server
+	gatewayServer := gateway.NewTestServer(gateway.Options{
+		Listen: "127.0.0.1:0",
+	})
 	go func() {
 		if err := gatewayServer.Start(); err != nil {
 			t.Errorf("Failed to start gateway: %v", err)
@@ -47,7 +49,7 @@ func TestKafkaGo_ProduceOnly(t *testing.T) {
 
 func TestKafkaGo_ProduceConsume(t *testing.T) {
 	// Start gateway
-	gatewayServer := gateway.NewServer(gateway.Options{Listen: "127.0.0.1:0"})
+	gatewayServer := gateway.NewTestServer(gateway.Options{Listen: "127.0.0.1:0"})
 	go func() {
 		if err := gatewayServer.Start(); err != nil {
 			t.Errorf("Failed to start gateway: %v", err)
@@ -112,7 +114,7 @@ func TestKafkaGo_ProduceConsume(t *testing.T) {
 			t.Fatalf("kafka-go consume failed at message %d: %v", i, err)
 		}
 		consumedMessages = append(consumedMessages, msg)
-		t.Logf("✅ Consumed message %d: key=%s, value=%s, offset=%d", 
+		t.Logf("✅ Consumed message %d: key=%s, value=%s, offset=%d",
 			i, string(msg.Key), string(msg.Value), msg.Offset)
 	}
 
@@ -124,11 +126,11 @@ func TestKafkaGo_ProduceConsume(t *testing.T) {
 	for i, consumed := range consumedMessages {
 		expected := testMessages[i]
 		if string(consumed.Key) != string(expected.Key) {
-			t.Errorf("Message %d key mismatch: got %s, want %s", 
+			t.Errorf("Message %d key mismatch: got %s, want %s",
 				i, string(consumed.Key), string(expected.Key))
 		}
 		if string(consumed.Value) != string(expected.Value) {
-			t.Errorf("Message %d value mismatch: got %s, want %s", 
+			t.Errorf("Message %d value mismatch: got %s, want %s",
 				i, string(consumed.Value), string(expected.Value))
 		}
 	}
@@ -138,7 +140,7 @@ func TestKafkaGo_ProduceConsume(t *testing.T) {
 
 func TestKafkaGo_ConsumerGroup(t *testing.T) {
 	// Start gateway
-	gatewayServer := gateway.NewServer(gateway.Options{Listen: "127.0.0.1:0"})
+	gatewayServer := gateway.NewTestServer(gateway.Options{Listen: "127.0.0.1:0"})
 	go func() {
 		if err := gatewayServer.Start(); err != nil {
 			t.Errorf("Failed to start gateway: %v", err)
@@ -205,7 +207,7 @@ func TestKafkaGo_ConsumerGroup(t *testing.T) {
 			t.Fatalf("kafka-go consumer group failed at message %d: %v", i, err)
 		}
 		consumedMessages = append(consumedMessages, msg)
-		t.Logf("✅ Consumer group consumed message %d: key=%s, value=%s, offset=%d", 
+		t.Logf("✅ Consumer group consumed message %d: key=%s, value=%s, offset=%d",
 			i, string(msg.Key), string(msg.Value), msg.Offset)
 	}
 
@@ -217,11 +219,11 @@ func TestKafkaGo_ConsumerGroup(t *testing.T) {
 	for i, consumed := range consumedMessages {
 		expected := testMessages[i]
 		if string(consumed.Key) != string(expected.Key) {
-			t.Errorf("Message %d key mismatch: got %s, want %s", 
+			t.Errorf("Message %d key mismatch: got %s, want %s",
 				i, string(consumed.Key), string(expected.Key))
 		}
 		if string(consumed.Value) != string(expected.Value) {
-			t.Errorf("Message %d value mismatch: got %s, want %s", 
+			t.Errorf("Message %d value mismatch: got %s, want %s",
 				i, string(consumed.Value), string(expected.Value))
 		}
 	}

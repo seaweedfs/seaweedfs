@@ -15,7 +15,7 @@ import (
 // TestMetadataV1Isolation creates a minimal test to isolate the Metadata v1 parsing issue
 func TestMetadataV1Isolation(t *testing.T) {
 	// Start gateway
-	gatewayServer := gateway.NewServer(gateway.Options{
+	gatewayServer := gateway.NewTestServer(gateway.Options{
 		Listen: "127.0.0.1:0",
 	})
 

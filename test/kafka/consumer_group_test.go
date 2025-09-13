@@ -13,7 +13,7 @@ import (
 
 func TestConsumerGroup_BasicFunctionality(t *testing.T) {
 	// Start Kafka gateway
-	gatewayServer := gateway.NewServer(gateway.Options{Listen: ":0"})
+	gatewayServer := gateway.NewTestServer(gateway.Options{Listen: ":0"})
 
 	go func() {
 		if err := gatewayServer.Start(); err != nil {
@@ -203,7 +203,7 @@ func (h *ConsumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSession,
 
 func TestConsumerGroup_OffsetCommitAndFetch(t *testing.T) {
 	// Start Kafka gateway
-	gatewayServer := gateway.NewServer(gateway.Options{Listen: ":0"})
+	gatewayServer := gateway.NewTestServer(gateway.Options{Listen: ":0"})
 
 	go func() {
 		if err := gatewayServer.Start(); err != nil {
@@ -402,7 +402,7 @@ func (h *OffsetTestHandler) ConsumeClaim(session sarama.ConsumerGroupSession, cl
 
 func TestConsumerGroup_Rebalancing(t *testing.T) {
 	// Start Kafka gateway
-	gatewayServer := gateway.NewServer(gateway.Options{Listen: ":0"})
+	gatewayServer := gateway.NewTestServer(gateway.Options{Listen: ":0"})
 
 	go func() {
 		if err := gatewayServer.Start(); err != nil {

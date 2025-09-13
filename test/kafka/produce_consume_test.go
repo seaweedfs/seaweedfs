@@ -14,7 +14,7 @@ import (
 // TestKafkaGoClient_DirectProduceConsume bypasses CreateTopics and tests produce/consume directly
 func TestKafkaGoClient_DirectProduceConsume(t *testing.T) {
 	// Start the gateway server
-	srv := gateway.NewServer(gateway.Options{
+	srv := gateway.NewTestServer(gateway.Options{
 		Listen: ":0",
 	})
 

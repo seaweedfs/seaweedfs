@@ -11,7 +11,7 @@ import (
 
 func TestMetadataV6Debug(t *testing.T) {
 	// Start gateway
-	gatewayServer := gateway.NewServer(gateway.Options{Listen: "127.0.0.1:0"})
+	gatewayServer := gateway.NewTestServer(gateway.Options{Listen: "127.0.0.1:0"})
 	go func() {
 		if err := gatewayServer.Start(); err != nil {
 			t.Errorf("Failed to start gateway: %v", err)

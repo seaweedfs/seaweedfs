@@ -7,6 +7,15 @@ import (
 	"time"
 )
 
+// SMQRecord represents a record from SeaweedMQ storage
+// This interface is defined here to avoid circular imports between protocol and integration packages
+type SMQRecord interface {
+	GetKey() []byte
+	GetValue() []byte
+	GetTimestamp() int64
+	GetOffset() int64
+}
+
 // OffsetEntry represents a single offset mapping
 type OffsetEntry struct {
 	KafkaOffset int64 // Kafka offset (sequential integer)
@@ -126,6 +135,17 @@ func (l *Ledger) GetHighWaterMark() int64 {
 	return l.nextOffset
 }
 
+// GetEntries returns all offset entries in the ledger
+func (l *Ledger) GetEntries() []OffsetEntry {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+
+	// Return a copy to prevent external modification
+	result := make([]OffsetEntry, len(l.entries))
+	copy(result, l.entries)
+	return result
+}
+
 // FindOffsetByTimestamp returns the first offset with a timestamp >= target
 // Used for timestamp-based offset lookup
 func (l *Ledger) FindOffsetByTimestamp(targetTimestamp int64) int64 {
@@ -168,15 +188,4 @@ func (l *Ledger) GetTimestampRange() (earliest, latest int64) {
 	}
 
 	return l.earliestTime, l.latestTime
-}
-
-// GetEntries returns a copy of all offset entries in the ledger
-func (l *Ledger) GetEntries() []OffsetEntry {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-
-	// Return a copy to prevent external modification
-	entries := make([]OffsetEntry, len(l.entries))
-	copy(entries, l.entries)
-	return entries
 }

@@ -14,7 +14,7 @@ import (
 // TestConnectionCloseDebug captures the exact moment kafka-go closes the connection
 func TestConnectionCloseDebug(t *testing.T) {
 	// Start gateway server
-	gatewayServer := gateway.NewServer(gateway.Options{
+	gatewayServer := gateway.NewTestServer(gateway.Options{
 		Listen: ":0", // random port
 	})
 

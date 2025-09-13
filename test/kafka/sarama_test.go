@@ -12,9 +12,10 @@ import (
 
 // TestSaramaCompatibility tests our Kafka gateway with IBM Sarama client
 func TestSaramaCompatibility(t *testing.T) {
-	// Start gateway
-	gatewayServer := gateway.NewServer(gateway.Options{
-		Listen: "127.0.0.1:0",
+	// Start gateway with test mode
+	gatewayServer := gateway.NewTestServer(gateway.Options{
+		Listen:  "127.0.0.1:0",
+		
 	})
 
 	go gatewayServer.Start()
@@ -263,9 +264,10 @@ func (h *SaramaConsumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSe
 
 // TestSaramaMetadataOnly tests just the metadata functionality that's failing with kafka-go
 func TestSaramaMetadataOnly(t *testing.T) {
-	// Start gateway
-	gatewayServer := gateway.NewServer(gateway.Options{
-		Listen: "127.0.0.1:0",
+	// Start gateway with test mode
+	gatewayServer := gateway.NewTestServer(gateway.Options{
+		Listen:  "127.0.0.1:0",
+		
 	})
 
 	go gatewayServer.Start()

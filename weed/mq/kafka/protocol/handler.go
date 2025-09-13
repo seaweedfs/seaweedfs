@@ -9,7 +9,6 @@ import (
 	"io"
 	"net"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/consumer"
@@ -40,6 +39,8 @@ type SeaweedMQHandlerInterface interface {
 	GetOrCreateLedger(topic string, partition int32) *offset.Ledger
 	GetLedger(topic string, partition int32) *offset.Ledger
 	ProduceRecord(topicName string, partitionID int32, key, value []byte) (int64, error)
+	// GetStoredRecords retrieves records from SMQ storage (optional - for advanced implementations)
+	GetStoredRecords(topic string, partition int32, fromOffset int64, maxRecords int) ([]offset.SMQRecord, error)
 	Close() error
 }
 
@@ -65,260 +66,17 @@ type Handler struct {
 }
 
 // NewHandler creates a basic Kafka handler with in-memory storage
+// WARNING: This is for testing ONLY - never use in production!
 // For production use with persistent storage, use NewSeaweedMQBrokerHandler instead
 func NewHandler() *Handler {
-	return &Handler{
-		groupCoordinator: consumer.NewGroupCoordinator(),
-		brokerHost:       "localhost",
-		brokerPort:       9092,
-		seaweedMQHandler: &basicSeaweedMQHandler{
-			topics:   make(map[string]bool),
-			ledgers:  make(map[string]*offset.Ledger),
-			messages: make(map[string]map[int32]map[int64]*MessageRecord),
-		},
-	}
+	// Production safety check - prevent accidental production use
+	// Comment out for testing: os.Getenv can be used for runtime checks
+	panic("NewHandler() with in-memory storage should NEVER be used in production! Use NewSeaweedMQBrokerHandler() with SeaweedMQ masters for production, or NewTestHandler() for tests.")
 }
 
-// NewTestHandler creates a handler for testing purposes without requiring SeaweedMQ masters
-// This should ONLY be used in tests
-func NewTestHandler() *Handler {
-	return &Handler{
-		groupCoordinator: consumer.NewGroupCoordinator(),
-		brokerHost:       "localhost",
-		brokerPort:       9092,
-		seaweedMQHandler: &testSeaweedMQHandler{
-			topics:  make(map[string]bool),
-			ledgers: make(map[string]*offset.Ledger),
-		},
-	}
-}
+// NewTestHandler and NewSimpleTestHandler moved to handler_test.go (test-only file)
 
-// MessageRecord represents a stored message
-type MessageRecord struct {
-	Key       []byte
-	Value     []byte
-	Timestamp int64
-}
-
-// basicSeaweedMQHandler is a minimal in-memory implementation for basic Kafka functionality
-type basicSeaweedMQHandler struct {
-	topics  map[string]bool
-	ledgers map[string]*offset.Ledger
-	// messages stores actual message content indexed by topic-partition-offset
-	messages map[string]map[int32]map[int64]*MessageRecord // topic -> partition -> offset -> message
-	mu       sync.RWMutex
-}
-
-// testSeaweedMQHandler is a minimal mock implementation for testing
-type testSeaweedMQHandler struct {
-	topics  map[string]bool
-	ledgers map[string]*offset.Ledger
-	mu      sync.RWMutex
-}
-
-// basicSeaweedMQHandler implementation
-func (b *basicSeaweedMQHandler) TopicExists(topic string) bool {
-	return b.topics[topic]
-}
-
-func (b *basicSeaweedMQHandler) ListTopics() []string {
-	topics := make([]string, 0, len(b.topics))
-	for topic := range b.topics {
-		topics = append(topics, topic)
-	}
-	return topics
-}
-
-func (b *basicSeaweedMQHandler) CreateTopic(topic string, partitions int32) error {
-	b.topics[topic] = true
-	return nil
-}
-
-func (b *basicSeaweedMQHandler) DeleteTopic(topic string) error {
-	delete(b.topics, topic)
-	return nil
-}
-
-func (b *basicSeaweedMQHandler) GetOrCreateLedger(topic string, partition int32) *offset.Ledger {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	key := fmt.Sprintf("%s-%d", topic, partition)
-	if ledger, exists := b.ledgers[key]; exists {
-		return ledger
-	}
-
-	// Create new ledger
-	ledger := offset.NewLedger()
-	b.ledgers[key] = ledger
-
-	// Also create the topic if it doesn't exist
-	b.topics[topic] = true
-
-	return ledger
-}
-
-func (b *basicSeaweedMQHandler) GetLedger(topic string, partition int32) *offset.Ledger {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-
-	key := fmt.Sprintf("%s-%d", topic, partition)
-	if ledger, exists := b.ledgers[key]; exists {
-		return ledger
-	}
-
-	// Return nil if ledger doesn't exist (topic doesn't exist)
-	return nil
-}
-
-func (b *basicSeaweedMQHandler) ProduceRecord(topicName string, partitionID int32, key, value []byte) (int64, error) {
-	// Get or create the ledger first (this will acquire and release the lock)
-	ledger := b.GetOrCreateLedger(topicName, partitionID)
-
-	// Now acquire the lock for the rest of the operation
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	// Assign an offset and append the record
-	offset := ledger.AssignOffsets(1)
-	timestamp := time.Now().UnixNano()
-	size := int32(len(value))
-
-	if err := ledger.AppendRecord(offset, timestamp, size); err != nil {
-		return 0, fmt.Errorf("failed to append record: %w", err)
-	}
-
-	// Store the actual message content
-	if b.messages[topicName] == nil {
-		b.messages[topicName] = make(map[int32]map[int64]*MessageRecord)
-	}
-	if b.messages[topicName][partitionID] == nil {
-		b.messages[topicName][partitionID] = make(map[int64]*MessageRecord)
-	}
-
-	// Make copies of key and value to avoid referencing the original slices
-	keyCopy := make([]byte, len(key))
-	copy(keyCopy, key)
-	valueCopy := make([]byte, len(value))
-	copy(valueCopy, value)
-
-	b.messages[topicName][partitionID][offset] = &MessageRecord{
-		Key:       keyCopy,
-		Value:     valueCopy,
-		Timestamp: timestamp,
-	}
-
-	return offset, nil
-}
-
-// GetStoredMessages retrieves stored messages for a topic-partition from a given offset
-func (b *basicSeaweedMQHandler) GetStoredMessages(topicName string, partitionID int32, fromOffset int64, maxMessages int) []*MessageRecord {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-
-	if b.messages[topicName] == nil || b.messages[topicName][partitionID] == nil {
-		return nil
-	}
-
-	partitionMessages := b.messages[topicName][partitionID]
-	var result []*MessageRecord
-
-	// Collect messages starting from fromOffset
-	for offset := fromOffset; offset < fromOffset+int64(maxMessages); offset++ {
-		if msg, exists := partitionMessages[offset]; exists {
-			result = append(result, msg)
-		} else {
-			// No more consecutive messages
-			break
-		}
-	}
-
-	return result
-}
-
-func (b *basicSeaweedMQHandler) Close() error {
-	return nil
-}
-
-// testSeaweedMQHandler implementation (for tests)
-func (t *testSeaweedMQHandler) TopicExists(topic string) bool {
-	return t.topics[topic]
-}
-
-func (t *testSeaweedMQHandler) ListTopics() []string {
-	var topics []string
-	for topic := range t.topics {
-		topics = append(topics, topic)
-	}
-	return topics
-}
-
-func (t *testSeaweedMQHandler) CreateTopic(topic string, partitions int32) error {
-	t.topics[topic] = true
-	return nil
-}
-
-func (t *testSeaweedMQHandler) DeleteTopic(topic string) error {
-	delete(t.topics, topic)
-	return nil
-}
-
-func (t *testSeaweedMQHandler) GetOrCreateLedger(topic string, partition int32) *offset.Ledger {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	// Mark topic as existing when creating ledger
-	t.topics[topic] = true
-
-	key := fmt.Sprintf("%s-%d", topic, partition)
-	if ledger, exists := t.ledgers[key]; exists {
-		return ledger
-	}
-
-	ledger := offset.NewLedger()
-	t.ledgers[key] = ledger
-	return ledger
-}
-
-func (t *testSeaweedMQHandler) GetLedger(topic string, partition int32) *offset.Ledger {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-
-	key := fmt.Sprintf("%s-%d", topic, partition)
-	if ledger, exists := t.ledgers[key]; exists {
-		return ledger
-	}
-
-	// Return nil if ledger doesn't exist (topic doesn't exist)
-	return nil
-}
-
-func (t *testSeaweedMQHandler) ProduceRecord(topicName string, partitionID int32, key, value []byte) (int64, error) {
-	// For testing, actually store the record in the ledger
-	ledger := t.GetOrCreateLedger(topicName, partitionID)
-
-	// Assign an offset and append the record
-	offset := ledger.AssignOffsets(1)
-	timestamp := time.Now().UnixNano()
-	size := int32(len(value))
-
-	if err := ledger.AppendRecord(offset, timestamp, size); err != nil {
-		return 0, fmt.Errorf("failed to append record: %w", err)
-	}
-
-	return offset, nil
-}
-
-func (t *testSeaweedMQHandler) Close() error {
-	return nil
-}
-
-// AddTopicForTesting creates a topic for testing purposes (restored for test compatibility)
-func (h *Handler) AddTopicForTesting(topicName string, partitions int32) {
-	if h.seaweedMQHandler != nil {
-		h.seaweedMQHandler.CreateTopic(topicName, partitions)
-	}
-}
+// All test-related types and implementations moved to handler_test.go (test-only file)
 
 // NewSeaweedMQHandler creates a new handler with SeaweedMQ integration
 func NewSeaweedMQHandler(agentAddress string) (*Handler, error) {
@@ -359,6 +117,14 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string) (*Handler, err
 		brokerHost:       "localhost", // default fallback
 		brokerPort:       9092,        // default fallback
 	}, nil
+}
+
+// AddTopicForTesting creates a topic for testing purposes
+// This delegates to the underlying SeaweedMQ handler
+func (h *Handler) AddTopicForTesting(topicName string, partitions int32) {
+	if h.seaweedMQHandler != nil {
+		h.seaweedMQHandler.CreateTopic(topicName, partitions)
+	}
 }
 
 // Delegate methods to SeaweedMQ handler

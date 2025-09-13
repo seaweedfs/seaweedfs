@@ -68,20 +68,17 @@ func NewServer(opts Options) *Server {
 	var handler *protocol.Handler
 	var err error
 
-	// Try to create SeaweedMQ handler, fallback to basic handler if masters not available
-	if opts.Masters != "" {
-		handler, err = protocol.NewSeaweedMQBrokerHandler(opts.Masters, opts.FilerGroup)
-		if err != nil {
-			glog.Warningf("Failed to create SeaweedMQ handler with masters %s: %v", opts.Masters, err)
-			glog.V(1).Info("Falling back to basic Kafka handler without SeaweedMQ integration")
-			handler = protocol.NewHandler()
-		} else {
-			glog.V(1).Infof("Created Kafka gateway with SeaweedMQ brokers via masters %s", opts.Masters)
-		}
-	} else {
-		glog.V(1).Info("No masters provided, creating basic Kafka handler")
-		handler = protocol.NewHandler()
+	// Create SeaweedMQ handler - masters are required for production
+	if opts.Masters == "" {
+		glog.Fatalf("SeaweedMQ masters are required for Kafka gateway - provide masters addresses")
 	}
+
+	handler, err = protocol.NewSeaweedMQBrokerHandler(opts.Masters, opts.FilerGroup)
+	if err != nil {
+		glog.Fatalf("Failed to create SeaweedMQ handler with masters %s: %v", opts.Masters, err)
+	}
+
+	glog.V(1).Infof("Created Kafka gateway with SeaweedMQ brokers via masters %s", opts.Masters)
 
 	return &Server{
 		opts:    opts,

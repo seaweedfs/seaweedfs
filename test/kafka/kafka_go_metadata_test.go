@@ -12,7 +12,7 @@ import (
 // TestKafkaGoMetadataV1Compatibility tests if our Metadata v1 response is compatible with kafka-go
 func TestKafkaGoMetadataV1Compatibility(t *testing.T) {
 	// Start gateway server
-	gatewayServer := gateway.NewServer(gateway.Options{
+	gatewayServer := gateway.NewTestServer(gateway.Options{
 		Listen: ":0", // random port
 	})
 

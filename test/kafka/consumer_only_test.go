@@ -13,7 +13,7 @@ import (
 // TestConsumerOnly tests only the consumer workflow to debug SyncGroup issue
 func TestConsumerOnly(t *testing.T) {
 	// Start gateway server
-	gatewayServer := gateway.NewServer(gateway.Options{
+	gatewayServer := gateway.NewTestServer(gateway.Options{
 		Listen: ":0", // random port
 	})
 

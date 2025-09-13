@@ -71,6 +71,15 @@ func NewSeaweedMQHandler(agentAddress string) (*SeaweedMQHandler, error) {
 	}, nil
 }
 
+// GetStoredRecords retrieves records from SeaweedMQ storage (not implemented yet)
+// This is part of the SeaweedMQHandlerInterface for compatibility with the unified interface
+func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromOffset int64, maxRecords int) ([]offset.SMQRecord, error) {
+	// TODO: Implement actual SeaweedMQ record retrieval
+	// For now, return empty to maintain interface compatibility
+	// In the future, this should query SeaweedMQ brokers/agents for stored records
+	return nil, nil
+}
+
 // Close shuts down the handler and all connections
 func (h *SeaweedMQHandler) Close() error {
 	if h.useBroker && h.brokerClient != nil {

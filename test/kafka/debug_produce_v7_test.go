@@ -11,7 +11,7 @@ import (
 
 func TestDebugProduceV7Format(t *testing.T) {
 	// Start gateway
-	gatewayServer := gateway.NewServer(gateway.Options{
+	gatewayServer := gateway.NewTestServer(gateway.Options{
 		Listen: "127.0.0.1:0",
 	})
 

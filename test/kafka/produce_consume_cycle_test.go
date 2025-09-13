@@ -12,7 +12,7 @@ import (
 
 func TestKafkaProduceConsumeE2E(t *testing.T) {
 	// Start gateway server
-	gatewayServer := gateway.NewServer(gateway.Options{
+	gatewayServer := gateway.NewTestServer(gateway.Options{
 		Listen: ":0", // random port
 	})
 	

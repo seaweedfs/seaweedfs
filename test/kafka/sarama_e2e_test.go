@@ -11,10 +11,13 @@ import (
 )
 
 func TestSaramaE2EProduceConsume(t *testing.T) {
-	// Start gateway
-	gatewayServer := gateway.NewServer(gateway.Options{
+	// Start gateway with test server (creates in-memory test handler)
+	gatewayServer := gateway.NewTestServer(gateway.Options{
 		Listen: "127.0.0.1:0",
 	})
+
+	// Note: NewTestServer creates an in-memory handler for testing only
+	// Production deployments use NewServer() and require real SeaweedMQ masters
 
 	go func() {
 		if err := gatewayServer.Start(); err != nil {
@@ -115,8 +118,8 @@ func TestSaramaE2EProduceConsume(t *testing.T) {
 }
 
 func TestSaramaConsumerGroup(t *testing.T) {
-	// Start gateway
-	gatewayServer := gateway.NewServer(gateway.Options{
+	// Start gateway with test server
+	gatewayServer := gateway.NewTestServer(gateway.Options{
 		Listen: "127.0.0.1:0",
 	})
 

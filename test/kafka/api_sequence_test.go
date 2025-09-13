@@ -13,7 +13,7 @@ import (
 // TestKafkaGateway_APISequence logs all API requests that kafka-go makes
 func TestKafkaGateway_APISequence(t *testing.T) {
 	// Start the gateway server
-	srv := gateway.NewServer(gateway.Options{
+	srv := gateway.NewTestServer(gateway.Options{
 		Listen: ":0",
 	})
 

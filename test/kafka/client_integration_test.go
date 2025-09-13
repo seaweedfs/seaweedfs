@@ -15,7 +15,7 @@ import (
 // TestKafkaGoClient_BasicProduceConsume tests our gateway with real kafka-go client
 func TestKafkaGoClient_BasicProduceConsume(t *testing.T) {
 	// Start the gateway server
-	srv := gateway.NewServer(gateway.Options{
+	srv := gateway.NewTestServer(gateway.Options{
 		Listen: ":0", // Use random port
 	})
 
@@ -81,7 +81,7 @@ func TestKafkaGoClient_BasicProduceConsume(t *testing.T) {
 // TestKafkaGoClient_ConsumerGroups tests consumer group functionality
 func TestKafkaGoClient_ConsumerGroups(t *testing.T) {
 	// Start the gateway server
-	srv := gateway.NewServer(gateway.Options{
+	srv := gateway.NewTestServer(gateway.Options{
 		Listen: ":0",
 	})
 
@@ -134,7 +134,7 @@ func TestKafkaGoClient_MultiplePartitions(t *testing.T) {
 // TestKafkaGoClient_OffsetManagement tests offset commit/fetch operations
 func TestKafkaGoClient_OffsetManagement(t *testing.T) {
 	// Start the gateway server
-	srv := gateway.NewServer(gateway.Options{
+	srv := gateway.NewTestServer(gateway.Options{
 		Listen: ":0",
 	})
 

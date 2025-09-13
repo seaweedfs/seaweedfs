@@ -15,7 +15,7 @@ import (
 // TestComprehensiveE2E tests both kafka-go and Sarama clients in a comprehensive scenario
 func TestComprehensiveE2E(t *testing.T) {
 	// Start gateway
-	gatewayServer := gateway.NewServer(gateway.Options{
+	gatewayServer := gateway.NewTestServer(gateway.Options{
 		Listen: "127.0.0.1:0",
 	})
 
@@ -357,7 +357,7 @@ func testSaramaToKafkaGo(t *testing.T, addr, topic string) {
 // TestOffsetManagement tests offset commit and fetch operations
 func TestOffsetManagement(t *testing.T) {
 	// Start gateway
-	gatewayServer := gateway.NewServer(gateway.Options{
+	gatewayServer := gateway.NewTestServer(gateway.Options{
 		Listen: "127.0.0.1:0",
 	})
 

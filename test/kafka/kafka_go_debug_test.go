@@ -14,7 +14,7 @@ import (
 // TestKafkaGoDeepDebug attempts to get more detailed error information from kafka-go
 func TestKafkaGoDeepDebug(t *testing.T) {
 	// Start gateway
-	gatewayServer := gateway.NewServer(gateway.Options{
+	gatewayServer := gateway.NewTestServer(gateway.Options{
 		Listen: "127.0.0.1:0",
 	})
 

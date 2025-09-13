@@ -9,7 +9,7 @@ import (
 )
 
 func TestGateway_StartAcceptsConnections(t *testing.T) {
-	srv := gateway.NewServer(gateway.Options{Listen: ":0"})
+	srv := gateway.NewTestServer(gateway.Options{Listen: ":0"})
 	if err := srv.Start(); err != nil {
 		t.Fatalf("start gateway: %v", err)
 	}
@@ -28,7 +28,7 @@ func TestGateway_StartAcceptsConnections(t *testing.T) {
 }
 
 func TestGateway_RefusesAfterClose(t *testing.T) {
-	srv := gateway.NewServer(gateway.Options{Listen: ":0"})
+	srv := gateway.NewTestServer(gateway.Options{Listen: ":0"})
 	if err := srv.Start(); err != nil {
 		t.Fatalf("start gateway: %v", err)
 	}

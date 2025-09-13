@@ -13,7 +13,7 @@ import (
 // TestJoinGroupDebug captures the exact JoinGroup request/response to debug format issues
 func TestJoinGroupDebug(t *testing.T) {
 	// Start gateway server
-	gatewayServer := gateway.NewServer(gateway.Options{
+	gatewayServer := gateway.NewTestServer(gateway.Options{
 		Listen: ":0", // random port
 	})
 

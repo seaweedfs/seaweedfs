@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/compression"
+	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/schema"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 )
@@ -108,24 +109,14 @@ func (h *Handler) handleFetch(correlationID uint32, apiVersion uint16, requestBo
 				fmt.Printf("DEBUG: GetRecordBatch delegated to SeaweedMQ handler - topic:%s, partition:%d, offset:%d\n",
 					topic.Name, partition.PartitionID, partition.FetchOffset)
 
-				// Try to get stored messages first
-				if basicHandler, ok := h.seaweedMQHandler.(*basicSeaweedMQHandler); ok {
-					maxMessages := int(highWaterMark - partition.FetchOffset)
-					if maxMessages > 10 {
-						maxMessages = 10
-					}
-					storedMessages := basicHandler.GetStoredMessages(topic.Name, partition.PartitionID, partition.FetchOffset, maxMessages)
-					if len(storedMessages) > 0 {
-						fmt.Printf("DEBUG: Found %d stored messages for offset %d, constructing real record batch\n", len(storedMessages), partition.FetchOffset)
-						recordBatch = h.constructRecordBatchFromMessages(partition.FetchOffset, storedMessages)
-						fmt.Printf("DEBUG: Using real stored message batch for offset %d, size: %d bytes\n", partition.FetchOffset, len(recordBatch))
-					} else {
-						fmt.Printf("DEBUG: No stored messages found for offset %d, using synthetic batch\n", partition.FetchOffset)
-						recordBatch = h.constructSimpleRecordBatch(partition.FetchOffset, highWaterMark)
-						fmt.Printf("DEBUG: Using synthetic record batch for offset %d, size: %d bytes\n", partition.FetchOffset, len(recordBatch))
-					}
+				// Try to get records via GetStoredRecords interface
+				smqRecords, err := h.seaweedMQHandler.GetStoredRecords(topic.Name, partition.PartitionID, partition.FetchOffset, 10)
+				if err == nil && len(smqRecords) > 0 {
+					fmt.Printf("DEBUG: Found %d SMQ records for offset %d, constructing record batch\n", len(smqRecords), partition.FetchOffset)
+					recordBatch = h.constructRecordBatchFromSMQ(partition.FetchOffset, smqRecords)
+					fmt.Printf("DEBUG: Using SMQ record batch for offset %d, size: %d bytes\n", partition.FetchOffset, len(recordBatch))
 				} else {
-					fmt.Printf("DEBUG: Not using basicSeaweedMQHandler, using synthetic batch\n")
+					fmt.Printf("DEBUG: No SMQ records available, using synthetic batch\n")
 					recordBatch = h.constructSimpleRecordBatch(partition.FetchOffset, highWaterMark)
 					fmt.Printf("DEBUG: Using synthetic record batch for offset %d, size: %d bytes\n", partition.FetchOffset, len(recordBatch))
 				}
@@ -588,13 +579,13 @@ func (h *Handler) constructSimpleRecordBatch(fetchOffset, highWaterMark int64) [
 	return batch
 }
 
-// constructRecordBatchFromMessages creates a Kafka record batch from actual stored messages
-func (h *Handler) constructRecordBatchFromMessages(fetchOffset int64, messages []*MessageRecord) []byte {
-	if len(messages) == 0 {
+// constructRecordBatchFromSMQ creates a Kafka record batch from SeaweedMQ records
+func (h *Handler) constructRecordBatchFromSMQ(fetchOffset int64, smqRecords []offset.SMQRecord) []byte {
+	if len(smqRecords) == 0 {
 		return []byte{}
 	}
 
-	// Create record batch using the real stored messages
+	// Create record batch using the SMQ records
 	batch := make([]byte, 0, 512)
 
 	// Record batch header
@@ -620,21 +611,21 @@ func (h *Handler) constructRecordBatchFromMessages(fetchOffset int64, messages [
 	batch = append(batch, 0, 0)
 
 	// Last offset delta (4 bytes)
-	lastOffsetDelta := int32(len(messages) - 1)
+	lastOffsetDelta := int32(len(smqRecords) - 1)
 	lastOffsetDeltaBytes := make([]byte, 4)
 	binary.BigEndian.PutUint32(lastOffsetDeltaBytes, uint32(lastOffsetDelta))
 	batch = append(batch, lastOffsetDeltaBytes...)
 
-	// Base timestamp (8 bytes) - use first message timestamp
-	baseTimestamp := messages[0].Timestamp
+	// Base timestamp (8 bytes) - use first record timestamp
+	baseTimestamp := smqRecords[0].GetTimestamp()
 	baseTimestampBytes := make([]byte, 8)
 	binary.BigEndian.PutUint64(baseTimestampBytes, uint64(baseTimestamp))
 	batch = append(batch, baseTimestampBytes...)
 
-	// Max timestamp (8 bytes) - use last message timestamp or same as base
+	// Max timestamp (8 bytes) - use last record timestamp or same as base
 	maxTimestamp := baseTimestamp
-	if len(messages) > 1 {
-		maxTimestamp = messages[len(messages)-1].Timestamp
+	if len(smqRecords) > 1 {
+		maxTimestamp = smqRecords[len(smqRecords)-1].GetTimestamp()
 	}
 	maxTimestampBytes := make([]byte, 8)
 	binary.BigEndian.PutUint64(maxTimestampBytes, uint64(maxTimestamp))
@@ -651,48 +642,50 @@ func (h *Handler) constructRecordBatchFromMessages(fetchOffset int64, messages [
 
 	// Records count (4 bytes)
 	recordCountBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(recordCountBytes, uint32(len(messages)))
+	binary.BigEndian.PutUint32(recordCountBytes, uint32(len(smqRecords)))
 	batch = append(batch, recordCountBytes...)
 
-	// Add individual records from stored messages
-	for i, msg := range messages {
+	// Add individual records from SMQ records
+	for i, smqRecord := range smqRecords {
 		// Build individual record
-		record := make([]byte, 0, 128)
+		recordBytes := make([]byte, 0, 128)
 
 		// Record attributes (1 byte)
-		record = append(record, 0)
+		recordBytes = append(recordBytes, 0)
 
 		// Timestamp delta (varint) - calculate from base timestamp
-		timestampDelta := msg.Timestamp - baseTimestamp
-		record = append(record, encodeVarint(timestampDelta)...)
+		timestampDelta := smqRecord.GetTimestamp() - baseTimestamp
+		recordBytes = append(recordBytes, encodeVarint(timestampDelta)...)
 
 		// Offset delta (varint)
 		offsetDelta := int64(i)
-		record = append(record, encodeVarint(offsetDelta)...)
+		recordBytes = append(recordBytes, encodeVarint(offsetDelta)...)
 
 		// Key length and key (varint + data)
-		if msg.Key == nil {
-			record = append(record, encodeVarint(-1)...) // null key
+		key := smqRecord.GetKey()
+		if key == nil {
+			recordBytes = append(recordBytes, encodeVarint(-1)...) // null key
 		} else {
-			record = append(record, encodeVarint(int64(len(msg.Key)))...)
-			record = append(record, msg.Key...)
+			recordBytes = append(recordBytes, encodeVarint(int64(len(key)))...)
+			recordBytes = append(recordBytes, key...)
 		}
 
 		// Value length and value (varint + data)
-		if msg.Value == nil {
-			record = append(record, encodeVarint(-1)...) // null value
+		value := smqRecord.GetValue()
+		if value == nil {
+			recordBytes = append(recordBytes, encodeVarint(-1)...) // null value
 		} else {
-			record = append(record, encodeVarint(int64(len(msg.Value)))...)
-			record = append(record, msg.Value...)
+			recordBytes = append(recordBytes, encodeVarint(int64(len(value)))...)
+			recordBytes = append(recordBytes, value...)
 		}
 
 		// Headers count (varint) - 0 headers
-		record = append(record, encodeVarint(0)...)
+		recordBytes = append(recordBytes, encodeVarint(0)...)
 
 		// Prepend record length (varint)
-		recordLength := int64(len(record))
+		recordLength := int64(len(recordBytes))
 		batch = append(batch, encodeVarint(recordLength)...)
-		batch = append(batch, record...)
+		batch = append(batch, recordBytes...)
 	}
 
 	// Fill in the batch length

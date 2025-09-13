@@ -13,7 +13,7 @@ import (
 // TestKafkaGoReader tests if kafka-go Reader has different validation than Writer
 func TestKafkaGoReader(t *testing.T) {
 	// Start the gateway server
-	srv := gateway.NewServer(gateway.Options{
+	srv := gateway.NewTestServer(gateway.Options{
 		Listen: ":0",
 	})
 

@@ -332,10 +332,10 @@ func TestHandler_fetchOffset(t *testing.T) {
 
 func TestHandler_OffsetCommitFetch_EndToEnd(t *testing.T) {
 	// Create two handlers connected via pipe to simulate client-server
-	server := NewHandler()
+	server := NewTestHandler()
 	defer server.Close()
 
-	client := NewHandler()
+	client := NewTestHandler()
 	defer client.Close()
 
 	serverConn, clientConn := net.Pipe()
@@ -494,7 +494,7 @@ func TestHandler_buildOffsetFetchResponse(t *testing.T) {
 		ErrorCode: ErrorCodeNone,
 	}
 
-	responseBytes := h.buildOffsetFetchResponse(response)
+	responseBytes := h.buildOffsetFetchResponse(response, 5) // Use API version 5 (includes leader epoch)
 
 	if len(responseBytes) < 20 {
 		t.Fatalf("response too short: %d bytes", len(responseBytes))

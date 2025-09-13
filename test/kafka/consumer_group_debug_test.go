@@ -12,7 +12,7 @@ import (
 
 func TestConsumerGroup_Debug(t *testing.T) {
 	// Start Kafka gateway
-	gatewayServer := gateway.NewServer(gateway.Options{Listen: ":0"})
+	gatewayServer := gateway.NewTestServer(gateway.Options{Listen: ":0"})
 
 	go func() {
 		if err := gatewayServer.Start(); err != nil {

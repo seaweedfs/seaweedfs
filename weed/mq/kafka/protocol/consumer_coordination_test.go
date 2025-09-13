@@ -446,10 +446,10 @@ func TestHandler_buildLeaveGroupResponse(t *testing.T) {
 
 func TestHandler_HeartbeatLeaveGroup_EndToEnd(t *testing.T) {
 	// Create two handlers connected via pipe to simulate client-server
-	server := NewHandler()
+	server := NewTestHandler()
 	defer server.Close()
 
-	client := NewHandler()
+	client := NewTestHandler()
 	defer client.Close()
 
 	serverConn, clientConn := net.Pipe()

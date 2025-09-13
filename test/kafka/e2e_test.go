@@ -12,7 +12,7 @@ import (
 // TestKafkaGateway_E2E tests the complete Kafka workflow using the gateway
 func TestKafkaGateway_E2E(t *testing.T) {
 	// Start the gateway server
-	gatewayServer := gateway.NewServer(gateway.Options{
+	gatewayServer := gateway.NewTestServer(gateway.Options{
 		Listen: ":0", // use random port
 	})
 	
@@ -331,7 +331,7 @@ func TestKafkaGateway_ProduceConsume(t *testing.T) {
 // TestKafkaGateway_MultipleClients tests concurrent client connections
 func TestKafkaGateway_MultipleClients(t *testing.T) {
 	// Start the gateway server
-	gatewayServer := gateway.NewServer(gateway.Options{
+	gatewayServer := gateway.NewTestServer(gateway.Options{
 		Listen: ":0", // use random port
 	})
 	
@@ -393,7 +393,7 @@ func TestKafkaGateway_StressTest(t *testing.T) {
 	}
 	
 	// Start the gateway server
-	gatewayServer := gateway.NewServer(gateway.Options{
+	gatewayServer := gateway.NewTestServer(gateway.Options{
 		Listen: ":0",
 	})
 	
