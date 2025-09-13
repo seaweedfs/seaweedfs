@@ -20,6 +20,34 @@ func (h *Handler) handleFetch(correlationID uint32, apiVersion uint16, requestBo
 		return nil, fmt.Errorf("parse fetch request: %w", err)
 	}
 
+	// Basic long-polling to avoid client busy-looping when there's no data.
+	var throttleTimeMs int32 = 0
+	hasDataAvailable := func() bool {
+		for _, topic := range fetchRequest.Topics {
+			for _, p := range topic.Partitions {
+				ledger := h.GetLedger(topic.Name, p.PartitionID)
+				if ledger == nil {
+					continue
+				}
+				if ledger.GetHighWaterMark() > p.FetchOffset {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	if fetchRequest.MinBytes > 0 && fetchRequest.MaxWaitTime > 0 && !hasDataAvailable() {
+		start := time.Now()
+		deadline := start.Add(time.Duration(fetchRequest.MaxWaitTime) * time.Millisecond)
+		for time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+			if hasDataAvailable() {
+				break
+			}
+		}
+		throttleTimeMs = int32(time.Since(start) / time.Millisecond)
+	}
+
 	// Build the response
 	response := make([]byte, 0, 1024)
 
@@ -30,7 +58,9 @@ func (h *Handler) handleFetch(correlationID uint32, apiVersion uint16, requestBo
 
 	// Fetch v1+ has throttle_time_ms at the beginning
 	if apiVersion >= 1 {
-		response = append(response, 0, 0, 0, 0) // throttle_time_ms (4 bytes, 0 = no throttling)
+		throttleBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(throttleBytes, uint32(throttleTimeMs))
+		response = append(response, throttleBytes...)
 	}
 
 	// Fetch v7+ has error_code and session_id
