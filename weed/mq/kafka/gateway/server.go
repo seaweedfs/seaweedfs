@@ -49,9 +49,8 @@ func resolveAdvertisedAddress() string {
 
 type Options struct {
 	Listen     string
-	Masters    string // SeaweedFS master servers (required for production mode)
+	Masters    string // SeaweedFS master servers (required for production mode, empty for testing)
 	FilerGroup string // filer group name (optional)
-	TestMode   bool   // Use in-memory handler for testing (optional)
 }
 
 type Server struct {
@@ -69,12 +68,12 @@ func NewServer(opts Options) *Server {
 	var handler *protocol.Handler
 	var err error
 
-	if opts.TestMode || opts.Masters == "" {
-		// Use in-memory handler for testing or when no masters are configured
+	if opts.Masters == "" {
+		// Use in-memory handler when no masters are configured (typical for tests)
 		handler = protocol.NewHandler()
-		glog.V(1).Infof("Created Kafka gateway with in-memory handler for testing")
+		glog.V(1).Infof("Created Kafka gateway with in-memory handler")
 	} else {
-		// Create broker-based SeaweedMQ handler for production
+		// Create broker-based SeaweedMQ handler when masters are provided
 		handler, err = protocol.NewSeaweedMQBrokerHandler(opts.Masters, opts.FilerGroup)
 		if err != nil {
 			glog.Fatalf("Failed to create SeaweedMQ broker handler: %v", err)
