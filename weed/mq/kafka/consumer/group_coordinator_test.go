@@ -1,6 +1,7 @@
 package consumer
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -196,24 +197,34 @@ func TestGroupCoordinator_GenerateMemberID(t *testing.T) {
 	gc := NewGroupCoordinator()
 	defer gc.Close()
 	
-	// Generate member IDs with small delay to ensure different timestamps
+	// Test that same client/host combination generates consistent member ID
 	id1 := gc.GenerateMemberID("client1", "host1")
-	time.Sleep(1 * time.Nanosecond) // Ensure different timestamp
 	id2 := gc.GenerateMemberID("client1", "host1")
-	time.Sleep(1 * time.Nanosecond) // Ensure different timestamp
+	
+	// Same client/host should generate same ID (deterministic)
+	if id1 != id2 {
+		t.Errorf("Expected same member ID for same client/host: %s vs %s", id1, id2)
+	}
+	
+	// Different clients should generate different IDs
 	id3 := gc.GenerateMemberID("client2", "host1")
+	id4 := gc.GenerateMemberID("client1", "host2")
 	
-	// IDs should be unique
-	if id1 == id2 {
-		t.Errorf("Expected different member IDs for same client: %s vs %s", id1, id2)
+	if id1 == id3 {
+		t.Errorf("Expected different member IDs for different clients: %s vs %s", id1, id3)
 	}
 	
-	if id1 == id3 || id2 == id3 {
-		t.Errorf("Expected different member IDs for different clients: %s, %s, %s", id1, id2, id3)
+	if id1 == id4 {
+		t.Errorf("Expected different member IDs for different hosts: %s vs %s", id1, id4)
 	}
 	
-	// IDs should contain client and host info
-	if len(id1) < 10 { // Should be longer than just timestamp
-		t.Errorf("Expected member ID to contain client and host info, got: %s", id1)
+	// IDs should be properly formatted
+	if len(id1) < 10 { // Should be longer than just "consumer-"
+		t.Errorf("Expected member ID to be properly formatted, got: %s", id1)
+	}
+	
+	// Should start with "consumer-" prefix
+	if !strings.HasPrefix(id1, "consumer-") {
+		t.Errorf("Expected member ID to start with 'consumer-', got: %s", id1)
 	}
 }
