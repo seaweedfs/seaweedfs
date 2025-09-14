@@ -18,6 +18,17 @@ jobs:
     name: Kafka Unit Tests
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        container-id: [unit-tests-1]
+    container:
+      image: golang:1.21-alpine
+      options: --cpus 1.0 --memory 1g --hostname kafka-unit-${{ matrix.container-id }}
+    env:
+      GOMAXPROCS: 1
+      CGO_ENABLED: 0
+      CONTAINER_ID: ${{ matrix.container-id }}
     steps:
     - name: Set up Go 1.x
       uses: actions/setup-go@v5
@@ -28,6 +39,11 @@ jobs:
     - name: Check out code
       uses: actions/checkout@v4
 
+    - name: Setup Container Environment
+      run: |
+        apk add --no-cache git
+        ulimit -n 1024
+        
     - name: Get dependencies
       run: |
         cd test/kafka
@@ -36,12 +52,22 @@ jobs:
     - name: Run Kafka Gateway Unit Tests (Excluding Integration Tests)
       run: |
         cd test/kafka
-        go test -v -timeout 10s -run "^Test(?!KafkaGateway_APISequence|KafkaGoClient_BasicProduceConsume|Sarama)" ./...
+        # Set process limits for container isolation
+        ulimit -n 512
+        ulimit -u 100
+        go test -v -timeout 10s -run "^Test" -skip "KafkaGateway_APISequence|KafkaGoClient_BasicProduceConsume|Sarama" ./...
 
   kafka-integration-tests:
     name: Kafka Integration Tests (Critical)
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    container:
+      image: golang:1.21-alpine
+      options: --cpus 2.0 --memory 2g --ulimit nofile=1024:1024
+    env:
+      GOMAXPROCS: 2
+      CGO_ENABLED: 0
+      KAFKA_TEST_ISOLATION: "true"
     steps:
     - name: Set up Go 1.x
       uses: actions/setup-go@v5
@@ -52,6 +78,11 @@ jobs:
     - name: Check out code
       uses: actions/checkout@v4
 
+    - name: Setup Integration Container Environment
+      run: |
+        apk add --no-cache git procps
+        ulimit -n 2048
+        
     - name: Get dependencies
       run: |
         cd test/kafka
@@ -60,9 +91,12 @@ jobs:
     - name: Test API Sequence Integration
       run: |
         cd test/kafka
+        # Higher limits for integration tests
+        ulimit -n 1024
+        ulimit -u 200
         go test -v -run "^TestKafkaGateway_APISequence$" -timeout 10s
       env:
-        GOMAXPROCS: 1
+        GOMAXPROCS: 2
 
     - name: Cleanup Between Tests
       run: |
@@ -81,6 +115,13 @@ jobs:
     name: Kafka Client Compatibility (Isolated)
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    container:
+      image: golang:1.21-alpine
+      options: --cpus 1.0 --memory 1.5g --shm-size 256m
+    env:
+      GOMAXPROCS: 1
+      CGO_ENABLED: 0
+      KAFKA_CLIENT_ISOLATION: "true"
     steps:
     - name: Set up Go 1.x
       uses: actions/setup-go@v5
@@ -120,6 +161,13 @@ jobs:
     name: Kafka Protocol Tests (Isolated)
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    container:
+      image: golang:1.21-alpine
+      options: --cpus 1.0 --memory 1g --tmpfs /tmp
+    env:
+      GOMAXPROCS: 1
+      CGO_ENABLED: 0
+      KAFKA_PROTOCOL_ISOLATION: "true"
     steps:
     - name: Set up Go 1.x
       uses: actions/setup-go@v5
