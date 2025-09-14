@@ -220,7 +220,7 @@ func IsFlexibleVersion(apiKey, apiVersion uint16) bool {
 	case 13: // LeaveGroup
 		return apiVersion >= 4
 	case 19: // CreateTopics
-		return apiVersion >= 2
+		return apiVersion >= 5
 	case 20: // DeleteTopics
 		return apiVersion >= 4
 	default:
