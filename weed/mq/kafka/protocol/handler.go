@@ -233,6 +233,9 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		default:
 		}
 
+		// Set a very short read deadline to prevent hanging in CI
+		shortDeadline := time.Now().Add(1 * time.Second)
+
 		// Set a read deadline for the connection based on context or default timeout
 		var readDeadline time.Time
 		if deadline, ok := ctx.Deadline(); ok {
@@ -240,6 +243,14 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		} else {
 			// Use configurable read timeout instead of hardcoded 5 seconds
 			readDeadline = time.Now().Add(timeoutConfig.ReadTimeout)
+		}
+
+		// Always use the shorter of the two deadlines
+		if shortDeadline.Before(readDeadline) {
+			readDeadline = shortDeadline
+			fmt.Printf("DEBUG: [%s] Using short deadline (1s) to prevent hanging\n", connectionID)
+		} else {
+			fmt.Printf("DEBUG: [%s] Using context/config deadline\n", connectionID)
 		}
 
 		if err := conn.SetReadDeadline(readDeadline); err != nil {
@@ -255,11 +266,6 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			time.Sleep(100 * time.Millisecond)
 			return ctx.Err()
 		default:
-		}
-
-		// Set a much shorter read deadline to prevent hanging in CI
-		if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
-			fmt.Printf("DEBUG: [%s] Failed to set short read deadline: %v\n", connectionID, err)
 		}
 
 		// Read message size (4 bytes)
