@@ -216,14 +216,7 @@ func (iam *IdentityAccessManagement) doesSignatureMatch(hashedPayload string, r 
 	if forwardedPrefix := r.Header.Get("X-Forwarded-Prefix"); forwardedPrefix != "" {
 		// Try signature verification with the forwarded prefix first.
 		// This handles cases where reverse proxies strip URL prefixes and add the X-Forwarded-Prefix header.
-		// Preserve trailing slash if present in the original URL path to match S3 SDK signature
-		fullPath := forwardedPrefix + req.URL.Path
-		hasTrailingSlash := strings.HasSuffix(req.URL.Path, "/") && req.URL.Path != "/"
-		cleanedPath := path.Clean(fullPath)
-		if hasTrailingSlash && !strings.HasSuffix(cleanedPath, "/") {
-			cleanedPath += "/"
-		}
-		errCode = iam.verifySignatureWithPath(extractedSignedHeaders, hashedPayload, queryStr, cleanedPath, req.Method, foundCred.SecretKey, t, signV4Values)
+		errCode = iam.verifySignatureWithPath(extractedSignedHeaders, hashedPayload, queryStr, path.Clean(forwardedPrefix+req.URL.Path), req.Method, foundCred.SecretKey, t, signV4Values)
 		if errCode == s3err.ErrNone {
 			return identity, errCode
 		}
@@ -376,14 +369,7 @@ func (iam *IdentityAccessManagement) doesPresignedSignatureMatch(hashedPayload s
 	if forwardedPrefix := r.Header.Get("X-Forwarded-Prefix"); forwardedPrefix != "" {
 		// Try signature verification with the forwarded prefix first.
 		// This handles cases where reverse proxies strip URL prefixes and add the X-Forwarded-Prefix header.
-		// Preserve trailing slash if present in the original URL path to match S3 SDK signature
-		fullPath := forwardedPrefix + r.URL.Path
-		hasTrailingSlash := strings.HasSuffix(r.URL.Path, "/") && r.URL.Path != "/"
-		cleanedPath := path.Clean(fullPath)
-		if hasTrailingSlash && !strings.HasSuffix(cleanedPath, "/") {
-			cleanedPath += "/"
-		}
-		errCode = iam.verifyPresignedSignatureWithPath(extractedSignedHeaders, hashedPayload, queryStr, cleanedPath, r.Method, foundCred.SecretKey, t, credHeader, signature)
+		errCode = iam.verifyPresignedSignatureWithPath(extractedSignedHeaders, hashedPayload, queryStr, path.Clean(forwardedPrefix+r.URL.Path), r.Method, foundCred.SecretKey, t, credHeader, signature)
 		if errCode == s3err.ErrNone {
 			return identity, errCode
 		}
