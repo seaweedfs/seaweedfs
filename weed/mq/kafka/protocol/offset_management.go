@@ -588,6 +588,11 @@ func (h *Handler) buildOffsetFetchResponse(response OffsetFetchResponse, apiVers
 	binary.BigEndian.PutUint32(correlationIDBytes, response.CorrelationID)
 	result = append(result, correlationIDBytes...)
 
+	// Throttle time (4 bytes) - for version 3+ this appears immediately after correlation ID
+	if apiVersion >= 3 {
+		result = append(result, 0, 0, 0, 0) // throttle_time_ms = 0
+	}
+
 	// Topics array length (4 bytes)
 	topicsLengthBytes := make([]byte, 4)
 	binary.BigEndian.PutUint32(topicsLengthBytes, uint32(len(response.Topics)))
