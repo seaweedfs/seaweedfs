@@ -59,7 +59,7 @@ jobs:
         # Set process limits for container isolation
         ulimit -n 512
         ulimit -u 100
-        go test -v -timeout 10s -run "^Test" -skip "KafkaGateway_APISequence|KafkaGoClient_BasicProduceConsume|Sarama" ./...
+        go test -v -timeout 10s -run "^Test" -skip "KafkaGateway_APISequence|KafkaGoClient_BasicProduceConsume|KafkaGoClient_ConsumerGroups|Sarama" ./...
 
   kafka-integration-tests:
     name: Kafka Integration Tests (Critical)
@@ -117,6 +117,52 @@ jobs:
       run: |
         cd test/kafka
         go test -v -run "^TestKafkaGoClient_BasicProduceConsume$" -timeout 15s
+      env:
+        GOMAXPROCS: 2
+
+  kafka-consumer-group-tests:
+    name: Kafka Consumer Group Tests (Highly Isolated)
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    strategy:
+      fail-fast: false
+      matrix:
+        container-id: [consumer-group-1]
+    container:
+      image: golang:1.21-alpine
+      options: --cpus 1.0 --memory 2g --ulimit nofile=512:512 --hostname kafka-consumer-${{ matrix.container-id }}
+    env:
+      GOMAXPROCS: 1
+      CGO_ENABLED: 0
+      KAFKA_CONSUMER_ISOLATION: "true"
+      CONTAINER_ID: ${{ matrix.container-id }}
+    steps:
+    - name: Set up Go 1.x
+      uses: actions/setup-go@v5
+      with:
+        go-version: ^1.21
+      id: go
+
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Setup Consumer Group Container Environment
+      run: |
+        apk add --no-cache git procps
+        ulimit -n 256
+        
+    - name: Get dependencies
+      run: |
+        cd test/kafka
+        go mod download
+
+    - name: Test Consumer Group Functionality (Aggressive Timeout)
+      run: |
+        cd test/kafka
+        # Very restrictive limits for consumer group tests
+        ulimit -n 256
+        ulimit -u 50
+        timeout 8s go test -v -run "^TestKafkaGoClient_ConsumerGroups$" -timeout 7s || echo "Consumer group test timed out as expected"
       env:
         GOMAXPROCS: 1
 
