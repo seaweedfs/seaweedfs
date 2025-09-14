@@ -307,13 +307,18 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 
 		// Start a timeout goroutine that will force completion after 1 second
 		go func() {
-			time.Sleep(1 * time.Second)
 			select {
-			case done <- true:
-				fmt.Printf("DEBUG: [%s] Force timeout after 1 second, closing connection\n", connectionID)
-				finalErr = fmt.Errorf("force timeout")
-			default:
-				// Already completed
+			case <-time.After(1 * time.Second):
+				select {
+				case done <- true:
+					fmt.Printf("DEBUG: [%s] Force timeout after 1 second, closing connection\n", connectionID)
+					finalErr = fmt.Errorf("force timeout")
+				default:
+					// Already completed
+				}
+			case <-done:
+				// Operation completed, exit timeout goroutine
+				return
 			}
 		}()
 
