@@ -8,21 +8,19 @@ This document identifies areas in the current Kafka implementation that need att
 ### HIGH PRIORITY - Protocol Breaking Issues
 
 #### 1. **Record Batch Parsing (Produce API)**
-**File**: `protocol/produce.go`
-**Issues**:
-- `parseRecordSet()` uses simplified parsing logic that doesn't handle the full Kafka record batch format
-- Hardcoded assumptions about record batch structure
-- Missing compression support (gzip, snappy, lz4, zstd)
-- CRC validation is completely missing
-
+**Files**: `protocol/record_batch_parser.go`, `protocol/produce.go`
+**Status**:
+- Compression implemented (gzip, snappy, lz4, zstd)
+- CRC validation available in `ParseRecordBatchWithValidation`
+**Remaining**:
+- Parse individual records (varints, headers, control records, timestamps)
+- Integrate real record extraction into Produce path (replace simplified fallbacks)
 **TODOs**:
 ```go
-// TODO: Implement full Kafka record batch parsing
-// - Support all record batch versions (v0, v1, v2)
-// - Handle compression codecs (gzip, snappy, lz4, zstd)
-// - Validate CRC32 checksums
-// - Parse individual record headers, keys, values, timestamps
-// - Handle transaction markers and control records
+// TODO: Implement full record parsing for v2 batches
+// - Varint decode for per-record fields and headers
+// - Control records and transaction markers
+// - Accurate timestamp handling
 ```
 
 #### 2. **Request Parsing Assumptions**
@@ -49,27 +47,25 @@ This document identifies areas in the current Kafka implementation that need att
 
 #### 3. **Fetch Record Construction**
 **File**: `protocol/fetch.go`
-**Issues**:
-- `constructRecordBatch()` creates fake record batches with dummy data
-- Varint encoding is simplified to single bytes (incorrect)
-- Missing proper record headers, timestamps, and metadata
-
+**Status**:
+- Basic batching works; needs proper record encoding
+**Remaining**:
+- Build real record batches from stored records with proper varints and headers
+- Honor timestamps and per-record metadata
 **TODOs**:
 ```go
-// TODO: Replace dummy record batch construction with real data
-// - Read actual message data from SeaweedMQ/storage
-// - Implement proper varint encoding/decoding
-// - Support record headers and custom timestamps
-// - Handle different record batch versions correctly
+// TODO: Implement real batch construction for Fetch
+// - Proper varint encode for lengths and deltas
+// - Include headers and correct timestamps
+// - Support v2 record batch layout end-to-end
 ```
 
 ### MEDIUM PRIORITY - Compatibility Issues
 
 #### 4. **API Version Support**
 **File**: `protocol/handler.go`
-**Issues**:
-- ApiVersions response advertises max versions but implementations may not support all features
-- No version-specific handling in most APIs
+**Status**: Advertised ranges updated to match implemented (e.g., CreateTopics v5, OffsetFetch v5)
+**Remaining**: Maintain alignment as handlers evolve; add stricter per-version validation paths
 
 **TODOs**:
 ```go
@@ -140,7 +136,7 @@ This document identifies areas in the current Kafka implementation that need att
 **Files**: `protocol/produce.go`, `protocol/fetch.go`
 **Issues**:
 - Simplified timestamp handling
-- Offset assignment may not match Kafka behavior exactly
+**Note**: Offset assignment is handled by SMQ native offsets; ensure Kafka-visible semantics map correctly
 
 **TODOs**:
 ```go
@@ -234,12 +230,10 @@ This document identifies areas in the current Kafka implementation that need att
 ## Immediate Action Items
 
 ### Phase 4 Priority List:
-1. **Fix Record Batch Parsing** - Critical for real client compatibility
-2. **Implement Proper Request Parsing** - Remove hardcoded assumptions
-3. **Add Compression Support** - Essential for performance
-4. **Real SeaweedMQ Integration** - Move beyond placeholder data
-5. **Consumer Protocol Metadata** - Fix subscription handling
-6. **API Version Handling** - Support multiple protocol versions
+1. Full record parsing for Produce (v2) and real Fetch batch construction
+2. Proper request parsing (arrays) in OffsetCommit/OffsetFetch and group APIs
+3. Consumer protocol metadata parsing (Join/Sync)
+4. Maintain API version alignment and validation
 
 ### Compatibility Validation:
 1. **Test with kafka-go library** - Most popular Go Kafka client

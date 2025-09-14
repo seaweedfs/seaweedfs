@@ -24,11 +24,10 @@
 - Message routing: `hash(key) -> kafka partition -> ring slot -> SMQ partition covering that slot`.
 - SMQ’s internal segment split/merge remains transparent; ordering is preserved per Kafka partition.
 
-### Offset Model
-- Kafka requires strictly increasing integer offsets per partition; SMQ uses timestamps.
-- Maintain a per-partition offset ledger mapping `kOffset -> tsNs (+ size)`, with a sparse index for seeks.
-- Earliest/latest offsets and timestamp-based lookup are served from the ledger and its index.
-- Consumer group commits store Kafka offsets (not timestamps). On Fetch, offsets are translated to timestamps.
+### Offset Model (updated)
+- Use SMQ native per-partition sequential offsets. Kafka offsets map 1:1 to SMQ offsets.
+- Earliest/latest and timestamp-based lookups come from SMQ APIs; minimize translation.
+- Consumer group commits store SMQ offsets directly.
 
 ### Consumer Groups and Assignment
 - Gateway implements Kafka group coordinator: Join/Sync/Heartbeat/Leave.
@@ -37,8 +36,8 @@
 
 ### Protocol Coverage (initial)
 - ApiVersions, Metadata, CreateTopics/DeleteTopics.
-- Produce (v2+) uncompressed to start; Fetch (v2+) with wait/maxBytes semantics.
-- ListOffsets (earliest/latest; timestamp in phase 2).
+- Produce (v2+) with record-batch v2 parsing, compression, and CRC validation; Fetch (v2+) with wait/maxBytes semantics.
+- ListOffsets (earliest/latest; timestamp in a later phase).
 - FindCoordinator/JoinGroup/SyncGroup/Heartbeat/LeaveGroup.
 - OffsetCommit/OffsetFetch.
 
@@ -52,12 +51,12 @@
 
 ### Compatibility Limits (initial)
 - No idempotent producers, transactions, or compaction policies.
-- Compression support added in phase 2 (GZIP/Snappy/LZ4/ZSTD).
+- Compression codecs (GZIP/Snappy/LZ4/ZSTD) are available via the record-batch parser.
 
 ### Milestones
-- **M1**: Gateway skeleton; ApiVersions/Metadata/Create/Delete; single-partition Produce/Fetch (no compression); plaintext; initial offset ledger.
+- **M1**: Gateway skeleton; ApiVersions/Metadata/Create/Delete; single-partition Produce/Fetch; plaintext; SMQ native offsets.
 - **M2**: Multi-partition mapping, ListOffsets (earliest/latest), OffsetCommit/Fetch, group coordinator (Range), TLS.
-- **M3**: Compression codecs, timestamp ListOffsets, Sticky assignor, SASL/PLAIN, metrics.
+- **M3**: Record-batch compression codecs + CRC; timestamp ListOffsets; Sticky assignor; SASL/PLAIN; metrics.
 - **M4**: SCRAM, admin HTTP, ledger compaction tooling, performance tuning.
 - **M5** (optional): Idempotent producers groundwork, EOS design exploration.
 
@@ -68,8 +67,8 @@
 ### Scope
 - Kafka Gateway process scaffolding and configuration.
 - Protocol: ApiVersions, Metadata, CreateTopics, DeleteTopics.
-- Produce (single topic-partition path) and Fetch for uncompressed records.
-- Basic filer-backed topic registry and offset ledger (append-only + sparse index stub).
+- Produce (single topic-partition path) and Fetch using v2 record-batch parser with compression and CRC.
+- Basic filer-backed topic registry; offsets via SMQ native offsets (no separate ledger files).
 - Plaintext only; no consumer groups yet (direct Fetch by offset).
 
 ### Deliverables
@@ -95,9 +94,9 @@
   - ApiVersions: advertise minimal supported versions.
   - Metadata: topics/partitions and leader endpoints (this gateway instance).
   - CreateTopics/DeleteTopics: validate, persist topic metadata in filer, create SMQ topic.
-  - ListOffsets: earliest/latest only using the ledger bounds.
-  - Produce: parse record batches (uncompressed); per record compute Kafka offset; publish to SMQ; return baseOffset.
-  - Fetch: translate Kafka offset -> tsNs via ledger; read from SMQ starting at tsNs; return records honoring `maxBytes`/`maxWait`.
+  - ListOffsets: earliest/latest using SMQ bounds.
+  - Produce: parse v2 record batches (compressed/uncompressed), extract records, publish to SMQ; return baseOffset.
+  - Fetch: read from SMQ starting at requested offset; construct proper v2 record batches honoring `maxBytes`/`maxWait`.
 
 3) Topic Registry and Mapping
 - Define `meta.json` schema:
@@ -105,39 +104,30 @@
 - Map Kafka partition id to SMQ ring range: divide ring (4096) into `partitions` contiguous ranges.
 - Enforce fixed partition count post-create.
 
-4) Offset Ledger (M1 minimal)
-- Append-only `ledger.log` entries: `varint(kOffsetDelta), varint(tsNsDelta), varint(size)` per record; batched fsync policy.
-- Maintain in-memory `lastKafkaOffset` and `lastTsNs` per partition; write periodic checkpoints every N records.
-- `ledger.index` sparse index format (stub in M1): record periodic `(kOffset, filePos)`.
-- APIs:
-  - `AssignOffsets(batchCount) -> baseOffset` (reserve range atomically per partition).
-  - `AppendOffsets(kOffset, tsNs, size)` batched.
-  - `Translate(kOffset) -> tsNs` (linear forward from nearest checkpoint/index in M1).
-  - `Earliest()`, `Latest()` from on-disk checkpoints + tail state.
+4) Offset Handling (M1)
+- Use SMQ native offsets; remove separate ledger and translation in the gateway.
+- Earliest/Latest come from SMQ; timestamp lookups added in later phase.
 
 5) Produce Path
 - For each topic-partition in request:
   - Validate topic existence and partition id.
-  - Reserve offsets for all records in the batch.
-  - For each record: compute SMQ key/value/headers; timestamp = client-provided or broker time.
-  - Publish to SMQ via broker gRPC (batch if available). On success, append `(kOffset, tsNs, size)` to ledger.
-  - Return `baseOffset` per partition.
+  - Parse record-batch v2; extract records (varints/headers), handle compression and CRC.
+  - Publish to SMQ via broker (batch if available); SMQ assigns offsets; return `baseOffset` per partition.
 
 6) Fetch Path (no groups)
 - For each topic-partition in request:
-  - If offset is `-1` (latest) or `-2` (earliest), use ledger bounds.
-  - Translate offset to `tsNs` via ledger; start a bounded scan from SMQ at `tsNs`.
-  - Page results into Kafka record sets up to `maxBytes` or `minBytes`/`maxWait` semantics.
-  - Close scan when request satisfied; no long-lived group sessions in M1.
+  - If offset is `-1` (latest) or `-2` (earliest), use SMQ bounds.
+  - Read from SMQ starting at the requested offset; construct proper v2 record batches.
+  - Page results up to `maxBytes` or `minBytes`/`maxWait` semantics.
 
 7) Metadata and SMQ Integration
 - Create/delete topic maps to SMQ topic lifecycle using existing MQ APIs.
 - No auto-scaling of partitions in M1 (Kafka partition count fixed).
 
 8) Testing
-- Unit tests for ledger encode/decode, earliest/latest, translate.
+- Unit tests for record-batch parser (compression, CRC), earliest/latest via SMQ.
 - E2E:
-  - sarama producer -> gateway -> SMQ; then fetch and validate ordering/offsets.
+  - sarama producer -> gateway -> SMQ; fetch and validate ordering/offsets.
   - kafka-go fetch from earliest/latest.
   - Metadata and create/delete topic via Kafka Admin client (happy path).
 
@@ -151,6 +141,6 @@
 ### Open Questions / Follow-ups
 - Exact `ApiVersions` and version ranges to advertise for maximal client compatibility.
 - Whether to expose namespace as Kafka cluster or encode in topic names (`ns.topic`).
-- Offset ledger compaction cadence and background tasks (defer to M3/M4).
+- Offset state compaction not applicable in gateway; defer SMQ-side retention considerations to later phases.
 
 

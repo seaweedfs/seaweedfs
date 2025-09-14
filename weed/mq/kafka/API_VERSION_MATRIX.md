@@ -14,36 +14,26 @@ This document audits the advertised API versions in `handleApiVersions()` agains
 | 0 | Produce | v0-v7 | v0-v7 | ✅ Match | None |
 | 1 | Fetch | v0-v7 | v0-v7 | ✅ Match | None |
 | 2 | ListOffsets | v0-v2 | v0-v2 | ✅ Match | None |
-| 19 | CreateTopics | v0-v4 | v0-v5 | ❌ Mismatch | Update advertised to v0-v5 |
+| 19 | CreateTopics | v0-v5 | v0-v5 | ✅ Match | None |
 | 20 | DeleteTopics | v0-v4 | v0-v4 | ✅ Match | None |
 | 11 | JoinGroup | v0-v7 | v0-v7 | ✅ Match | None |
 | 14 | SyncGroup | v0-v5 | v0-v5 | ✅ Match | None |
 | 8 | OffsetCommit | v0-v2 | v0-v2 | ✅ Match | None |
-| 9 | OffsetFetch | v0-v2 | v0-v5+ | ❌ MAJOR Mismatch | Update advertised to v0-v5 |
+| 9 | OffsetFetch | v0-v5 | v0-v5 | ✅ Match | None |
 | 10 | FindCoordinator | v0-v2 | v0-v2 | ✅ Match | None |
 | 12 | Heartbeat | v0-v4 | v0-v4 | ✅ Match | None |
 | 13 | LeaveGroup | v0-v4 | v0-v4 | ✅ Match | None |
 
 ## Detailed Analysis
 
-### 1. OffsetFetch API (Key 9) - CRITICAL MISMATCH
-- **Advertised**: v0-v2 (max version 2)
-- **Actually Implemented**: Up to v5+
-  - **Evidence**: `buildOffsetFetchResponse()` includes `if apiVersion >= 5` for leader epoch
-  - **Evidence**: `if apiVersion >= 3` for throttle time
-- **Impact**: Clients may not use advanced features available in v3-v5
-- **Action**: Update advertised max version from 2 to 5
+### 1. OffsetFetch API (Key 9)
+- Advertised and implemented aligned at v0–v5.
 
-### 2. CreateTopics API (Key 19) - MINOR MISMATCH  
-- **Advertised**: v0-v4 (max version 4)
-- **Actually Implemented**: v0-v5
-  - **Evidence**: `handleCreateTopics()` routes v5 requests to `handleCreateTopicsV2Plus()`
-  - **Evidence**: Tests validate v0-v5 versions
-- **Impact**: v5 clients may not connect expecting v5 support
-- **Action**: Update advertised max version from 4 to 5
+### 2. CreateTopics API (Key 19)
+- Advertised and implemented aligned at v0–v5.
 
-### 3. Validation vs Advertisement Inconsistency
-The `validateAPIVersion()` function matches the advertised versions, which means it will incorrectly reject valid v3-v5 OffsetFetch requests that the handler can actually process.
+### Validation vs Advertisement Consistency
+`validateAPIVersion()` and `handleApiVersions()` are consistent with the supported ranges.
 
 ## Implementation Details
 
@@ -58,18 +48,15 @@ The `validateAPIVersion()` function matches the advertised versions, which means
 
 ## Recommendations
 
-1. **Immediate Fix**: Update `handleApiVersions()` to advertise correct max versions
-2. **Consistency Check**: Update `validateAPIVersion()` to match the corrected advertised versions  
-3. **Testing**: Verify that higher version clients can successfully connect and use advanced features
-4. **Documentation**: Update any client guidance to reflect the correct supported versions
+1. Re-verify after protocol changes to keep the matrix accurate
+2. Extend coverage as implementations grow; keep tests for version guards
 
-## Test Verification Needed
+## Test Verification
 
-After fixes:
-1. Test OffsetFetch v3, v4, v5 with real Kafka clients
-2. Test CreateTopics v5 with real Kafka clients  
-3. Verify throttle_time_ms and leader_epoch are correctly populated
-4. Ensure version validation doesn't reject valid higher version requests
+1. Exercise OffsetFetch v3–v5 with kafka-go and Sarama
+2. Exercise CreateTopics v5; verify fields and tagged fields
+3. Verify throttle_time_ms and leader_epoch population
+4. Ensure version validation permits supported versions only
 
 ## Conservative Alternative
 
