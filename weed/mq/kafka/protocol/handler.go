@@ -247,13 +247,27 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			return fmt.Errorf("set read deadline: %w", err)
 		}
 
+		// Check context before reading
+		select {
+		case <-ctx.Done():
+			fmt.Printf("DEBUG: [%s] Context cancelled before reading message header\n", connectionID)
+			return ctx.Err()
+		default:
+		}
+
 		// Read message size (4 bytes)
 		fmt.Printf("DEBUG: [%s] About to read message size header\n", connectionID)
 		var sizeBytes [4]byte
 		if _, err := io.ReadFull(r, sizeBytes[:]); err != nil {
 			if err == io.EOF {
-				fmt.Printf("DEBUG: Client closed connection (clean EOF)\n")
+				fmt.Printf("DEBUG: [%s] Client closed connection (clean EOF)\n", connectionID)
 				return nil // clean disconnect
+			}
+
+			// Check if it's a timeout error
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				fmt.Printf("DEBUG: [%s] Read timeout due to context cancellation\n", connectionID)
+				return ctx.Err()
 			}
 
 			// Use centralized error classification
