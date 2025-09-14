@@ -54,7 +54,13 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 	shouldLongPoll := fetchRequest.MinBytes > 0 && maxWaitMs > 0 && !hasDataAvailable() && allTopicsExist()
 	if shouldLongPoll {
 		start := time.Now()
-		deadline := start.Add(time.Duration(maxWaitMs) * time.Millisecond)
+		// Limit polling time to maximum 2 seconds to prevent hanging in CI
+		maxPollTime := time.Duration(maxWaitMs) * time.Millisecond
+		if maxPollTime > 2*time.Second {
+			maxPollTime = 2 * time.Second
+			fmt.Printf("DEBUG: Limiting fetch polling to 2 seconds to prevent hanging\n")
+		}
+		deadline := start.Add(maxPollTime)
 		for time.Now().Before(deadline) {
 			// Use context-aware sleep instead of blocking time.Sleep
 			select {

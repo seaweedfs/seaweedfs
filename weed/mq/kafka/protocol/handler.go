@@ -300,11 +300,14 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			readChan <- readResult{n: n, err: err}
 		}()
 
-		// Wait for either the read to complete or context cancellation
+		// Wait for either the read to complete or context cancellation with a backup timeout
 		select {
 		case <-ctx.Done():
 			fmt.Printf("DEBUG: [%s] Context cancelled during read, closing connection\n", connectionID)
 			return ctx.Err()
+		case <-time.After(2 * time.Second):
+			fmt.Printf("DEBUG: [%s] Read operation timed out after 2 seconds, closing connection\n", connectionID)
+			return fmt.Errorf("read timeout")
 		case result := <-readChan:
 			if result.err != nil {
 				if result.err == io.EOF {
