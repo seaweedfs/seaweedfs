@@ -17,7 +17,7 @@ jobs:
   kafka-unit-tests:
     name: Kafka Unit Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
     - name: Set up Go 1.x
       uses: actions/setup-go@v5
@@ -33,15 +33,54 @@ jobs:
         cd test/kafka
         go mod download
 
-    - name: Run Kafka Gateway Unit Tests
+    - name: Run Kafka Gateway Unit Tests (Excluding Integration Tests)
       run: |
         cd test/kafka
-        go test -v -timeout 30s ./...
+        go test -v -timeout 10s -run "^Test(?!KafkaGateway_APISequence|KafkaGoClient_BasicProduceConsume|Sarama)" ./...
+
+  kafka-integration-tests:
+    name: Kafka Integration Tests (Critical)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+    - name: Set up Go 1.x
+      uses: actions/setup-go@v5
+      with:
+        go-version: ^1.21
+      id: go
+
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Get dependencies
+      run: |
+        cd test/kafka
+        go mod download
+
+    - name: Test API Sequence Integration
+      run: |
+        cd test/kafka
+        go test -v -run "^TestKafkaGateway_APISequence$" -timeout 10s
+      env:
+        GOMAXPROCS: 1
+
+    - name: Cleanup Between Tests
+      run: |
+        pkill -f "kafka" || true
+        pkill -f "seaweed" || true
+        sleep 2
+
+    - name: Test kafka-go Client Integration
+      run: |
+        cd test/kafka
+        go test -v -run "^TestKafkaGoClient_BasicProduceConsume$" -timeout 15s
+      env:
+        GOMAXPROCS: 1
 
   kafka-client-compatibility:
-    name: Kafka Client Compatibility
+    name: Kafka Client Compatibility (Isolated)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
     - name: Set up Go 1.x
       uses: actions/setup-go@v5
@@ -60,17 +99,27 @@ jobs:
     - name: Test kafka-go Client Compatibility
       run: |
         cd test/kafka
-        go test -v -run TestKafkaGo_ProduceOnly -timeout 10s
+        go test -v -run "^TestKafkaGo_ProduceOnly$" -timeout 10s
+      env:
+        GOMAXPROCS: 1
 
-    - name: Test Sarama Client Compatibility
+    - name: Cleanup Between Tests
+      run: |
+        pkill -f "kafka" || true
+        pkill -f "seaweed" || true
+        sleep 2
+
+    - name: Test Sarama Client Compatibility (Isolated)
       run: |
         cd test/kafka
-        go test -v -run TestSarama -timeout 10s
+        go test -v -run "^TestSarama" -timeout 10s
+      env:
+        GOMAXPROCS: 1
 
   kafka-protocol-tests:
-    name: Kafka Protocol Tests
+    name: Kafka Protocol Tests (Isolated)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
     - name: Set up Go 1.x
       uses: actions/setup-go@v5
@@ -89,14 +138,32 @@ jobs:
     - name: Test Metadata API Versions
       run: |
         cd test/kafka
-        go test -v -run TestMetadata -timeout 10s
+        go test -v -run "^TestMetadata" -timeout 10s
+      env:
+        GOMAXPROCS: 1
+
+    - name: Cleanup Between Tests
+      run: |
+        pkill -f "kafka" || true
+        pkill -f "seaweed" || true
+        sleep 1
 
     - name: Test Produce API Versions
       run: |
         cd test/kafka
-        go test -v -run TestProduce -timeout 10s
+        go test -v -run "^TestProduce" -timeout 10s
+      env:
+        GOMAXPROCS: 1
+
+    - name: Cleanup Between Tests
+      run: |
+        pkill -f "kafka" || true
+        pkill -f "seaweed" || true
+        sleep 1
 
     - name: Test ApiVersions Compatibility
       run: |
         cd test/kafka
-        go test -v -run TestApiVersions -timeout 10s
+        go test -v -run "^TestApiVersions" -timeout 10s
+      env:
+        GOMAXPROCS: 1
