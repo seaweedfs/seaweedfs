@@ -227,7 +227,7 @@ jobs:
         container-id: [protocol-1]
     container:
       image: golang:1.24-alpine
-      options: --cpus 1.0 --memory 1g --tmpfs /tmp --hostname kafka-protocol-${{ matrix.container-id }}
+      options: --cpus 1.0 --memory 1g --tmpfs /tmp:exec --hostname kafka-protocol-${{ matrix.container-id }}
     env:
       GOMAXPROCS: 1
       CGO_ENABLED: 0
@@ -243,6 +243,16 @@ jobs:
     - name: Check out code
       uses: actions/checkout@v4
 
+    - name: Setup Protocol Container Environment
+      run: |
+        apk add --no-cache git procps
+        # Ensure proper permissions for test execution
+        chmod -R 755 /tmp || true
+        export TMPDIR=/tmp
+        export GOCACHE=/tmp/go-cache
+        mkdir -p $GOCACHE
+        chmod 755 $GOCACHE
+
     - name: Get dependencies
       run: |
         cd test/kafka
@@ -251,9 +261,13 @@ jobs:
     - name: Test Metadata API Versions
       run: |
         cd test/kafka
+        export TMPDIR=/tmp
+        export GOCACHE=/tmp/go-cache
         go test -v -run "^TestMetadata" -timeout 10s
       env:
         GOMAXPROCS: 1
+        TMPDIR: /tmp
+        GOCACHE: /tmp/go-cache
 
     - name: Cleanup Between Tests
       run: |
@@ -264,9 +278,13 @@ jobs:
     - name: Test Produce API Versions
       run: |
         cd test/kafka
+        export TMPDIR=/tmp
+        export GOCACHE=/tmp/go-cache
         go test -v -run "^TestProduce" -timeout 10s
       env:
         GOMAXPROCS: 1
+        TMPDIR: /tmp
+        GOCACHE: /tmp/go-cache
 
     - name: Cleanup Between Tests
       run: |
@@ -277,6 +295,10 @@ jobs:
     - name: Test ApiVersions Compatibility
       run: |
         cd test/kafka
+        export TMPDIR=/tmp
+        export GOCACHE=/tmp/go-cache
         go test -v -run "^TestApiVersions" -timeout 10s
       env:
         GOMAXPROCS: 1
+        TMPDIR: /tmp
+        GOCACHE: /tmp/go-cache
