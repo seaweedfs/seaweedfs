@@ -443,7 +443,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			response, err = h.handleProduce(correlationID, apiVersion, requestBody)
 		case 1: // Fetch
 			fmt.Printf("DEBUG: *** FETCH HANDLER CALLED *** Correlation: %d, Version: %d\n", correlationID, apiVersion)
-			response, err = h.handleFetch(correlationID, apiVersion, requestBody)
+			response, err = h.handleFetch(ctx, correlationID, apiVersion, requestBody)
 			if err != nil {
 				fmt.Printf("DEBUG: Fetch error: %v\n", err)
 			} else {
