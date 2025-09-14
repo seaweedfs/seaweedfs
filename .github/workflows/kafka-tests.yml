@@ -10,6 +10,10 @@ concurrency:
   group: ${{ github.head_ref }}/kafka-tests
   cancel-in-progress: true
 
+# Force different runners for better isolation
+env:
+  FORCE_RUNNER_SEPARATION: true
+
 permissions:
   contents: read
 
@@ -171,13 +175,18 @@ jobs:
     name: Kafka Protocol Tests (Isolated)
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        container-id: [protocol-1]
     container:
       image: golang:1.21-alpine
-      options: --cpus 1.0 --memory 1g --tmpfs /tmp
+      options: --cpus 1.0 --memory 1g --tmpfs /tmp --hostname kafka-protocol-${{ matrix.container-id }}
     env:
       GOMAXPROCS: 1
       CGO_ENABLED: 0
       KAFKA_PROTOCOL_ISOLATION: "true"
+      CONTAINER_ID: ${{ matrix.container-id }}
     steps:
     - name: Set up Go 1.x
       uses: actions/setup-go@v5
