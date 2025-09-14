@@ -61,13 +61,18 @@ jobs:
     name: Kafka Integration Tests (Critical)
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        container-id: [integration-1]
     container:
       image: golang:1.21-alpine
-      options: --cpus 2.0 --memory 2g --ulimit nofile=1024:1024
+      options: --cpus 2.0 --memory 2g --ulimit nofile=1024:1024 --hostname kafka-integration-${{ matrix.container-id }}
     env:
       GOMAXPROCS: 2
       CGO_ENABLED: 0
       KAFKA_TEST_ISOLATION: "true"
+      CONTAINER_ID: ${{ matrix.container-id }}
     steps:
     - name: Set up Go 1.x
       uses: actions/setup-go@v5
@@ -115,13 +120,18 @@ jobs:
     name: Kafka Client Compatibility (Isolated)
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        container-id: [client-compat-1]
     container:
       image: golang:1.21-alpine
-      options: --cpus 1.0 --memory 1.5g --shm-size 256m
+      options: --cpus 1.0 --memory 1.5g --shm-size 256m --hostname kafka-client-${{ matrix.container-id }}
     env:
       GOMAXPROCS: 1
       CGO_ENABLED: 0
       KAFKA_CLIENT_ISOLATION: "true"
+      CONTAINER_ID: ${{ matrix.container-id }}
     steps:
     - name: Set up Go 1.x
       uses: actions/setup-go@v5
