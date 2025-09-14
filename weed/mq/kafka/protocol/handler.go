@@ -305,6 +305,14 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		var finalResult readResult
 		var finalErr error
 
+		// Ensure the done channel is always signaled to clean up timeout goroutine
+		defer func() {
+			select {
+			case done <- true:
+			default:
+			}
+		}()
+
 		// Start a timeout goroutine that will force completion after 1 second
 		go func() {
 			select {
