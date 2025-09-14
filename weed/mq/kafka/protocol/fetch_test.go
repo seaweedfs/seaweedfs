@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"context"
 	"encoding/binary"
 	"testing"
 	"time"
@@ -67,7 +68,7 @@ func TestHandler_handleFetch(t *testing.T) {
 	requestBody = append(requestBody, 0, 0, 0, 0, 0, 0, 0, 0)                // log start offset
 	requestBody = append(requestBody, 0, 0, 0x10, 0)                         // partition max bytes (1MB)
 
-	response, err := h.handleFetch(correlationID, 7, requestBody)
+	response, err := h.handleFetch(context.Background(), correlationID, 7, requestBody)
 	if err != nil {
 		t.Fatalf("handleFetch: %v", err)
 	}
@@ -196,7 +197,7 @@ func TestHandler_handleFetch_UnknownTopic(t *testing.T) {
 	requestBody = append(requestBody, 0, 0, 0, 0, 0, 0, 0, 0) // log start offset
 	requestBody = append(requestBody, 0, 0, 0x10, 0)          // partition max bytes
 
-	response, err := h.handleFetch(correlationID, 7, requestBody)
+	response, err := h.handleFetch(context.Background(), correlationID, 7, requestBody)
 	if err != nil {
 		t.Fatalf("handleFetch: %v", err)
 	}
@@ -254,7 +255,7 @@ func TestHandler_handleFetch_EmptyPartition(t *testing.T) {
 	requestBody = append(requestBody, 0, 0, 0, 0, 0, 0, 0, 0) // log start offset
 	requestBody = append(requestBody, 0, 0, 0x10, 0)          // partition max bytes
 
-	response, err := h.handleFetch(correlationID, 7, requestBody)
+	response, err := h.handleFetch(context.Background(), correlationID, 7, requestBody)
 	if err != nil {
 		t.Fatalf("handleFetch: %v", err)
 	}

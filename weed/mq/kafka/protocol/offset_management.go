@@ -647,11 +647,6 @@ func (h *Handler) buildOffsetFetchResponse(response OffsetFetchResponse, apiVers
 	binary.BigEndian.PutUint16(groupErrorBytes, uint16(response.ErrorCode))
 	result = append(result, groupErrorBytes...)
 
-	// Throttle time (4 bytes) - only included in version 3+
-	if apiVersion >= 3 {
-		result = append(result, 0, 0, 0, 0)
-	}
-
 	return result
 }
 

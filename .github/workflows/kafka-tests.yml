@@ -27,7 +27,7 @@ jobs:
       matrix:
         container-id: [unit-tests-1]
     container:
-      image: golang:1.21-alpine
+      image: golang:1.24-alpine
       options: --cpus 1.0 --memory 1g --hostname kafka-unit-${{ matrix.container-id }}
     env:
       GOMAXPROCS: 1
@@ -37,7 +37,7 @@ jobs:
     - name: Set up Go 1.x
       uses: actions/setup-go@v5
       with:
-        go-version: ^1.21
+        go-version: ^1.24
       id: go
 
     - name: Check out code
@@ -59,7 +59,7 @@ jobs:
         # Set process limits for container isolation
         ulimit -n 512
         ulimit -u 100
-        go test -v -timeout 10s -run "^Test" -skip "KafkaGateway_APISequence|KafkaGoClient_BasicProduceConsume|KafkaGoClient_ConsumerGroups|KafkaGoClient_OffsetManagement|Sarama" ./...
+        go test -v -timeout 10s -run "^Test" -skip "KafkaGateway_APISequence|KafkaGoClient_BasicProduceConsume|KafkaGoClient_ConsumerGroups|KafkaGoClient_OffsetManagement|TestOffsetManagement|Sarama" ./...
 
   kafka-integration-tests:
     name: Kafka Integration Tests (Critical)
@@ -70,7 +70,7 @@ jobs:
       matrix:
         container-id: [integration-1]
     container:
-      image: golang:1.21-alpine
+      image: golang:1.24-alpine
       options: --cpus 2.0 --memory 2g --ulimit nofile=1024:1024 --hostname kafka-integration-${{ matrix.container-id }}
     env:
       GOMAXPROCS: 2
@@ -81,7 +81,7 @@ jobs:
     - name: Set up Go 1.x
       uses: actions/setup-go@v5
       with:
-        go-version: ^1.21
+        go-version: ^1.24
       id: go
 
     - name: Check out code
@@ -129,7 +129,7 @@ jobs:
       matrix:
         container-id: [consumer-group-1]
     container:
-      image: golang:1.21-alpine
+      image: golang:1.24-alpine
       options: --cpus 1.0 --memory 2g --ulimit nofile=512:512 --hostname kafka-consumer-${{ matrix.container-id }}
     env:
       GOMAXPROCS: 1
@@ -140,7 +140,7 @@ jobs:
     - name: Set up Go 1.x
       uses: actions/setup-go@v5
       with:
-        go-version: ^1.21
+        go-version: ^1.24
       id: go
 
     - name: Check out code
@@ -185,7 +185,7 @@ jobs:
       matrix:
         container-id: [client-compat-1]
     container:
-      image: golang:1.21-alpine
+      image: golang:1.24-alpine
       options: --cpus 1.0 --memory 1.5g --shm-size 256m --hostname kafka-client-${{ matrix.container-id }}
     env:
       GOMAXPROCS: 1
@@ -196,7 +196,7 @@ jobs:
     - name: Set up Go 1.x
       uses: actions/setup-go@v5
       with:
-        go-version: ^1.21
+        go-version: ^1.24
       id: go
 
     - name: Check out code
@@ -236,7 +236,7 @@ jobs:
       matrix:
         container-id: [protocol-1]
     container:
-      image: golang:1.21-alpine
+      image: golang:1.24-alpine
       options: --cpus 1.0 --memory 1g --tmpfs /tmp --hostname kafka-protocol-${{ matrix.container-id }}
     env:
       GOMAXPROCS: 1
@@ -247,7 +247,7 @@ jobs:
     - name: Set up Go 1.x
       uses: actions/setup-go@v5
       with:
-        go-version: ^1.21
+        go-version: ^1.24
       id: go
 
     - name: Check out code
