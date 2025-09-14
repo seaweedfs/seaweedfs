@@ -291,6 +291,11 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		readChan := make(chan readResult, 1)
 
 		go func() {
+			// Set a very short deadline for this specific read to prevent hanging
+			if err := conn.SetReadDeadline(time.Now().Add(1 * time.Second)); err != nil {
+				readChan <- readResult{n: 0, err: err}
+				return
+			}
 			n, err := io.ReadFull(r, sizeBytes[:])
 			readChan <- readResult{n: n, err: err}
 		}()
