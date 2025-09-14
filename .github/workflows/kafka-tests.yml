@@ -46,7 +46,7 @@ jobs:
     - name: Setup Container Environment
       run: |
         apk add --no-cache git
-        ulimit -n 1024
+        ulimit -n 1024 || echo "Warning: Could not set file descriptor limit"
         
     - name: Get dependencies
       run: |
@@ -57,8 +57,8 @@ jobs:
       run: |
         cd test/kafka
         # Set process limits for container isolation
-        ulimit -n 512
-        ulimit -u 100
+        ulimit -n 512 || echo "Warning: Could not set file descriptor limit"
+        ulimit -u 100 || echo "Warning: Could not set process limit"
         go test -v -timeout 10s -run "^TestGateway_|^TestConsumerGroup_Debug$" ./...
 
   kafka-integration-tests:
@@ -90,7 +90,7 @@ jobs:
     - name: Setup Integration Container Environment
       run: |
         apk add --no-cache git procps
-        ulimit -n 2048
+        ulimit -n 2048 || echo "Warning: Could not set file descriptor limit"
         
     - name: Get dependencies
       run: |
@@ -101,8 +101,8 @@ jobs:
       run: |
         cd test/kafka
         # Higher limits for integration tests
-        ulimit -n 1024
-        ulimit -u 200
+        ulimit -n 1024 || echo "Warning: Could not set file descriptor limit"
+        ulimit -u 200 || echo "Warning: Could not set process limit"
         go test -v -run "^TestKafkaGateway_APISequence$" -timeout 10s
       env:
         GOMAXPROCS: 2
@@ -149,7 +149,7 @@ jobs:
     - name: Setup Consumer Group Container Environment
       run: |
         apk add --no-cache git procps
-        ulimit -n 256
+        ulimit -n 256 || echo "Warning: Could not set file descriptor limit"
         
     - name: Get dependencies
       run: |
@@ -160,8 +160,8 @@ jobs:
       run: |
         cd test/kafka
         # Test the working consumer group debug test
-        ulimit -n 512
-        ulimit -u 100
+        ulimit -n 512 || echo "Warning: Could not set file descriptor limit"
+        ulimit -u 100 || echo "Warning: Could not set process limit"
         go test -v -run "^TestConsumerGroup_Debug$" -timeout 10s ./...
       env:
         GOMAXPROCS: 1
