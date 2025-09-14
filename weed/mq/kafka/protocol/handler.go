@@ -1334,8 +1334,11 @@ func (h *Handler) handleCreateTopics(correlationID uint32, apiVersion uint16, re
 	switch apiVersion {
 	case 0, 1:
 		return h.handleCreateTopicsV0V1(correlationID, requestBody)
-	case 2, 3, 4, 5:
-		// Flexible versions (v2+)
+	case 2, 3, 4:
+		// Use non-flexible parser for v2-4 (kafka-go sends regular format)
+		return h.handleCreateTopicsV2To4(correlationID, requestBody)
+	case 5:
+		// v5+ uses flexible format
 		return h.handleCreateTopicsV2Plus(correlationID, apiVersion, requestBody)
 	default:
 		return nil, fmt.Errorf("unsupported CreateTopics API version: %d", apiVersion)
