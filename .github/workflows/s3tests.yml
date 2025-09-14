@@ -404,7 +404,7 @@ jobs:
           sed -i 's/localhost:8000/localhost:8001/g' ../docker/compose/s3tests-versioning.conf
           sed -i 's/127\.0\.0\.1:8000/127.0.0.1:8001/g' ../docker/compose/s3tests-versioning.conf
           # Ensure per-run unique bucket prefix to avoid collisions
-          sed -i "s/^bucket prefix = .*/bucket prefix = seaweedci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-{random}-/" ../docker/compose/s3tests-versioning.conf
+          sed -i "s/^bucket prefix = .*/bucket prefix = seaweedci-{random}-/" ../docker/compose/s3tests-versioning.conf
           export S3TEST_CONF=../docker/compose/s3tests-versioning.conf
           
           # Debug: Show the config file contents
