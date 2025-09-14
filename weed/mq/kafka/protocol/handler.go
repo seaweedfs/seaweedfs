@@ -324,6 +324,10 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 				default:
 					// Already completed
 				}
+			case <-ctx.Done():
+				// Context cancelled, exit timeout goroutine
+				fmt.Printf("DEBUG: [%s] Force timeout goroutine cancelled due to context\n", connectionID)
+				return
 			case <-done:
 				// Operation completed, exit timeout goroutine
 				return

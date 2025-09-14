@@ -146,9 +146,9 @@ func (s *Server) Close() error {
 	select {
 	case <-done:
 		// Normal shutdown
-	case <-time.After(2 * time.Second):
+	case <-time.After(1 * time.Second):
 		// Timeout - force shutdown
-		glog.Warningf("Server shutdown timed out after 2 seconds, forcing close")
+		glog.Warningf("Server shutdown timed out after 1 second, forcing close")
 	}
 
 	// Close the handler (important for SeaweedMQ mode)
