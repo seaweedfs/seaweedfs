@@ -403,6 +403,8 @@ jobs:
           sed -i 's/:8000/:8001/g' ../docker/compose/s3tests-versioning.conf
           sed -i 's/localhost:8000/localhost:8001/g' ../docker/compose/s3tests-versioning.conf
           sed -i 's/127\.0\.0\.1:8000/127.0.0.1:8001/g' ../docker/compose/s3tests-versioning.conf
+          # Ensure per-run unique bucket prefix to avoid collisions
+          sed -i "s/^bucket prefix = .*/bucket prefix = seaweedci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-{random}-/" ../docker/compose/s3tests-versioning.conf
           export S3TEST_CONF=../docker/compose/s3tests-versioning.conf
           
           # Debug: Show the config file contents
@@ -424,12 +426,8 @@ jobs:
             echo "S3 connection test failed, retrying... ($i/10)"
             sleep 2
           done
-          # tox -- s3tests_boto3/functional/test_s3.py -k "object_lock or (versioning and not test_versioning_obj_suspend_versions and not test_bucket_list_return_data_versioning and not test_versioning_concurrent_multi_object_delete)" --tb=short
-          # Run all versioning and object lock tests including specific list object versions tests
-          tox -- \
-          s3tests_boto3/functional/test_s3.py::test_bucket_list_return_data_versioning \
-          s3tests_boto3/functional/test_s3.py::test_versioning_obj_list_marker \
-          s3tests_boto3/functional/test_s3.py -k "object_lock or versioning" --tb=short
+          # Run versioning and object lock tests once (avoid duplicates)
+          tox -- s3tests_boto3/functional/test_s3.py -k "object_lock or versioning" --tb=short
           kill -9 $pid || true
           # Clean up data directory
           rm -rf "$WEED_DATA_DIR" || true
