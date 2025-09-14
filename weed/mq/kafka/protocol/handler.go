@@ -248,6 +248,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		}
 
 		// Read message size (4 bytes)
+		fmt.Printf("DEBUG: [%s] About to read message size header\n", connectionID)
 		var sizeBytes [4]byte
 		if _, err := io.ReadFull(r, sizeBytes[:]); err != nil {
 			if err == io.EOF {
@@ -278,6 +279,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		}
 
 		size := binary.BigEndian.Uint32(sizeBytes[:])
+		fmt.Printf("DEBUG: [%s] Read message size header: %d bytes\n", connectionID, size)
 		if size == 0 || size > 1024*1024 { // 1MB limit
 			// Use standardized error for message size limit
 			fmt.Printf("DEBUG: [%s] Invalid message size: %d (limit: 1MB)\n", connectionID, size)
