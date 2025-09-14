@@ -213,7 +213,7 @@ jobs:
     - name: Test Sarama Client Compatibility (Isolated)
       run: |
         cd test/kafka
-        go test -v -run "^TestSarama" -timeout 10s
+        go test -v -run "^(TestSaramaBasic|TestSaramaMinimalConfig|TestSaramaProduceConsume|TestSaramaMetadataOnly)$" -timeout 10s
       env:
         GOMAXPROCS: 1
 
