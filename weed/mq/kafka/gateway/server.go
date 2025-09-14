@@ -151,7 +151,9 @@ func (s *Server) Addr() string {
 	if s.ln == nil {
 		return ""
 	}
-	return s.ln.Addr().String()
+	// Normalize to an address reachable by clients
+	host, port := s.GetListenerAddr()
+	return net.JoinHostPort(host, strconv.Itoa(port))
 }
 
 // GetHandler returns the protocol handler (for testing)
