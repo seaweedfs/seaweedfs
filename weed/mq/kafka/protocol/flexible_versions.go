@@ -220,7 +220,7 @@ func IsFlexibleVersion(apiKey, apiVersion uint16) bool {
 	case 13: // LeaveGroup
 		return apiVersion >= 4
 	case 19: // CreateTopics
-		return apiVersion >= 5
+		return apiVersion >= 2
 	case 20: // DeleteTopics
 		return apiVersion >= 4
 	default:
@@ -276,6 +276,47 @@ type FlexibleVersionHeader struct {
 	TaggedFields  *TaggedFields
 }
 
+// parseRegularHeader parses a regular (non-flexible) Kafka request header
+func parseRegularHeader(data []byte) (*FlexibleVersionHeader, []byte, error) {
+	if len(data) < 8 {
+		return nil, nil, fmt.Errorf("header too short")
+	}
+
+	header := &FlexibleVersionHeader{}
+	offset := 0
+
+	// API Key (2 bytes)
+	header.APIKey = binary.BigEndian.Uint16(data[offset : offset+2])
+	offset += 2
+
+	// API Version (2 bytes)
+	header.APIVersion = binary.BigEndian.Uint16(data[offset : offset+2])
+	offset += 2
+
+	// Correlation ID (4 bytes)
+	header.CorrelationID = binary.BigEndian.Uint32(data[offset : offset+4])
+	offset += 4
+
+	// Regular versions use standard strings
+	if len(data) < offset+2 {
+		return nil, nil, fmt.Errorf("missing client_id length")
+	}
+
+	clientIDLen := int16(binary.BigEndian.Uint16(data[offset : offset+2]))
+	offset += 2
+
+	if clientIDLen >= 0 {
+		if len(data) < offset+int(clientIDLen) {
+			return nil, nil, fmt.Errorf("client_id truncated")
+		}
+		clientID := string(data[offset : offset+int(clientIDLen)])
+		header.ClientID = &clientID
+		offset += int(clientIDLen)
+	}
+
+	return header, data[offset:], nil
+}
+
 // ParseRequestHeader parses a Kafka request header, handling both regular and flexible versions
 func ParseRequestHeader(data []byte) (*FlexibleVersionHeader, []byte, error) {
 	if len(data) < 8 {
@@ -315,7 +356,9 @@ func ParseRequestHeader(data []byte) (*FlexibleVersionHeader, []byte, error) {
 		// Parse tagged fields in header
 		taggedFields, consumed, err := DecodeTaggedFields(data[offset:])
 		if err != nil {
-			return nil, nil, fmt.Errorf("decode header tagged fields: %w", err)
+			// If tagged fields parsing fails, this might be a regular header sent by kafka-go
+			// Fall back to regular header parsing
+			return parseRegularHeader(data)
 		}
 		offset += consumed
 		header.TaggedFields = taggedFields

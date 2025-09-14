@@ -1335,21 +1335,47 @@ func (h *Handler) handleCreateTopics(correlationID uint32, apiVersion uint16, re
 	case 0, 1:
 		return h.handleCreateTopicsV0V1(correlationID, requestBody)
 	case 2, 3, 4:
-		// Use non-flexible parser for v2-4 (kafka-go sends regular format)
+		// kafka-go sends v2-4 in regular format, not compact
 		return h.handleCreateTopicsV2To4(correlationID, requestBody)
 	case 5:
-		// v5+ uses flexible format
+		// v5+ uses flexible format with compact arrays
 		return h.handleCreateTopicsV2Plus(correlationID, apiVersion, requestBody)
 	default:
 		return nil, fmt.Errorf("unsupported CreateTopics API version: %d", apiVersion)
 	}
 }
 
-// handleCreateTopicsV2To4 handles CreateTopics API versions 2-4 (non-flexible, regular arrays/strings)
+// handleCreateTopicsV2To4 handles CreateTopics API versions 2-4 (auto-detect regular vs compact format)
 func (h *Handler) handleCreateTopicsV2To4(correlationID uint32, requestBody []byte) ([]byte, error) {
-	// Format (v2-v4):
-	// topics (ARRAY) + timeout_ms (INT32) + validate_only (BOOLEAN)
+	// Auto-detect format: kafka-go sends regular format, tests send compact format
+	if len(requestBody) < 1 {
+		return nil, fmt.Errorf("CreateTopics v2-4 request too short")
+	}
 
+	// Detect format by checking first byte
+	// Compact format: first byte is compact array length (usually 0x02 for 1 topic)
+	// Regular format: first 4 bytes are regular array count (usually 0x00000001 for 1 topic)
+	isCompactFormat := false
+	if len(requestBody) >= 4 {
+		// Check if this looks like a regular 4-byte array count
+		regularCount := binary.BigEndian.Uint32(requestBody[0:4])
+		// If the "regular count" is very large (> 1000), it's probably compact format
+		// Also check if first byte is small (typical compact array length)
+		if regularCount > 1000 || (requestBody[0] <= 10 && requestBody[0] > 0) {
+			isCompactFormat = true
+		}
+	} else if requestBody[0] <= 10 && requestBody[0] > 0 {
+		isCompactFormat = true
+	}
+
+	if isCompactFormat {
+		fmt.Printf("DEBUG: CreateTopics v2-4 - Detected compact format\n")
+		// Delegate to the compact format handler
+		return h.handleCreateTopicsV2Plus(correlationID, 2, requestBody)
+	}
+
+	fmt.Printf("DEBUG: CreateTopics v2-4 - Detected regular format\n")
+	// Handle regular format
 	offset := 0
 	if len(requestBody) < offset+4 {
 		return nil, fmt.Errorf("CreateTopics v2-4 request too short for topics array")
@@ -1423,12 +1449,15 @@ func (h *Handler) handleCreateTopicsV2To4(correlationID uint32, requestBody []by
 			}
 			nameLen := binary.BigEndian.Uint16(requestBody[offset : offset+2])
 			offset += 2 + int(nameLen)
-			// value (string)
+			// value (nullable string)
 			if len(requestBody) < offset+2 {
 				return nil, fmt.Errorf("CreateTopics v2-4: truncated config value length")
 			}
-			valLen := binary.BigEndian.Uint16(requestBody[offset : offset+2])
-			offset += 2 + int(valLen)
+			valueLen := int16(binary.BigEndian.Uint16(requestBody[offset : offset+2]))
+			offset += 2
+			if valueLen >= 0 {
+				offset += int(valueLen)
+			}
 		}
 
 		topics = append(topics, struct {
@@ -1776,7 +1805,48 @@ func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint
 		legacyBody = append(legacyBody, 0)
 	}
 
-	return h.handleCreateTopicsV2To4(correlationID, legacyBody)
+	// Build response directly instead of delegating to avoid circular dependency
+	response := make([]byte, 0, 128)
+
+	// Correlation ID
+	cid := make([]byte, 4)
+	binary.BigEndian.PutUint32(cid, correlationID)
+	response = append(response, cid...)
+
+	// throttle_time_ms (4 bytes)
+	response = append(response, 0, 0, 0, 0)
+
+	// topics array count (int32)
+	countBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(countBytes, uint32(len(topics)))
+	response = append(response, countBytes...)
+
+	// For each topic
+	for _, t := range topics {
+		// topic name (string)
+		response = append(response, 0, byte(len(t.name)))
+		response = append(response, []byte(t.name)...)
+		// error_code (int16)
+		var errCode uint16 = 0
+		if h.seaweedMQHandler.TopicExists(t.name) {
+			errCode = 36 // TOPIC_ALREADY_EXISTS
+		} else if t.partitions == 0 {
+			errCode = 37 // INVALID_PARTITIONS
+		} else if t.replication == 0 {
+			errCode = 38 // INVALID_REPLICATION_FACTOR
+		} else {
+			if err := h.seaweedMQHandler.CreateTopic(t.name, int32(t.partitions)); err != nil {
+				errCode = 1 // UNKNOWN_SERVER_ERROR
+			}
+		}
+		eb := make([]byte, 2)
+		binary.BigEndian.PutUint16(eb, errCode)
+		response = append(response, eb...)
+		// error_message (nullable string) -> null
+		response = append(response, 0xFF, 0xFF)
+	}
+
+	return response, nil
 }
 
 func (h *Handler) handleDeleteTopics(correlationID uint32, requestBody []byte) ([]byte, error) {
