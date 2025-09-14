@@ -3,6 +3,7 @@ package kafka
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -114,15 +115,18 @@ func TestConsumerGroup_Debug(t *testing.T) {
 
 // DebugHandler implements sarama.ConsumerGroupHandler for debugging
 type DebugHandler struct {
-	messages chan *sarama.ConsumerMessage
-	ready    chan bool
-	t        *testing.T
+	messages  chan *sarama.ConsumerMessage
+	ready     chan bool
+	readyOnce sync.Once
+	t         *testing.T
 }
 
 func (h *DebugHandler) Setup(session sarama.ConsumerGroupSession) error {
 	h.t.Logf("🔧 Consumer group session setup - Generation: %d, Claims: %v",
 		session.GenerationID(), session.Claims())
-	close(h.ready)
+	h.readyOnce.Do(func() {
+		close(h.ready)
+	})
 	return nil
 }
 
