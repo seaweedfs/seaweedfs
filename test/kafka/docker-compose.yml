@@ -90,7 +90,7 @@ services:
     volumes:
       - seaweedfs-master-data:/data
     healthcheck:
-      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:9333/cluster/status || curl -sf http://localhost:9333/cluster/status"]
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://seaweedfs-master:9333/cluster/status || curl -sf http://seaweedfs-master:9333/cluster/status"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -119,7 +119,7 @@ services:
     volumes:
       - seaweedfs-volume-data:/data
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/status"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://seaweedfs-volume:8080/status"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -148,7 +148,7 @@ services:
     volumes:
       - seaweedfs-filer-data:/data
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8888/"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://seaweedfs-filer:8888/"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -164,7 +164,7 @@ services:
       - "17777:17777"  # MQ Broker port
     command:
       - mq.broker
-      - -filer=seaweedfs-filer:8888
+      - -master=seaweedfs-master:9333
       - -ip=seaweedfs-mq-broker
       - -port=17777
     depends_on:
