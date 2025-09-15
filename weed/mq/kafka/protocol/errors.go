@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"net"
@@ -331,6 +332,20 @@ func DefaultTimeoutConfig() TimeoutConfig {
 func HandleTimeoutError(err error, operation string) int16 {
 	if err == nil {
 		return ErrorCodeNone
+	}
+
+	// Handle context timeout errors
+	if err == context.DeadlineExceeded {
+		switch operation {
+		case "read":
+			return ErrorCodeReadTimeout
+		case "write":
+			return ErrorCodeWriteTimeout
+		case "connect":
+			return ErrorCodeConnectionTimeout
+		default:
+			return ErrorCodeRequestTimedOut
+		}
 	}
 
 	if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
