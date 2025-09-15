@@ -2,6 +2,7 @@ package testutil
 
 import (
 	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -16,19 +17,38 @@ type GatewayTestServer struct {
 
 // GatewayOptions contains configuration for test gateway
 type GatewayOptions struct {
-	Listen string
+	Listen        string
+	Masters       string
+	UseProduction bool
 	// Add more options as needed
 }
 
 // NewGatewayTestServer creates a new test gateway server with common setup
 func NewGatewayTestServer(t *testing.T, opts GatewayOptions) *GatewayTestServer {
 	if opts.Listen == "" {
-		opts.Listen = ":0" // Use random port by default
+		opts.Listen = "127.0.0.1:0" // Use random port by default
 	}
 
-	srv := gateway.NewTestServer(gateway.Options{
-		Listen: opts.Listen,
-	})
+	// Allow switching to production gateway if requested (requires masters)
+	var srv *gateway.Server
+	if opts.UseProduction {
+		if opts.Masters == "" {
+			// Fallback to env variable for convenience in CI
+			if v := os.Getenv("SEAWEEDFS_MASTERS"); v != "" {
+				opts.Masters = v
+			} else {
+				opts.Masters = "localhost:9333"
+			}
+		}
+		srv = gateway.NewServer(gateway.Options{
+			Listen:  opts.Listen,
+			Masters: opts.Masters,
+		})
+	} else {
+		srv = gateway.NewTestServer(gateway.Options{
+			Listen: opts.Listen,
+		})
+	}
 
 	return &GatewayTestServer{
 		Server: srv,

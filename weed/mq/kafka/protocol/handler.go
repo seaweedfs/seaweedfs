@@ -300,53 +300,14 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			readChan <- readResult{n: n, err: err}
 		}()
 
-		// Wait for either the read to complete or context cancellation with aggressive timeout
-		done := make(chan bool, 1)
+		// Wait for either the read to complete or context cancellation
 		var finalResult readResult
-		var finalErr error
-
-		// Ensure the done channel is always signaled to clean up timeout goroutine
-		defer func() {
-			select {
-			case done <- true:
-			default:
-			}
-		}()
-
-		// Start a timeout goroutine that will force completion after 1 second
-		go func() {
-			select {
-			case <-time.After(1 * time.Second):
-				select {
-				case done <- true:
-					fmt.Printf("DEBUG: [%s] Force timeout after 1 second, closing connection\n", connectionID)
-					finalErr = fmt.Errorf("force timeout")
-				default:
-					// Already completed
-				}
-			case <-ctx.Done():
-				// Context cancelled, exit timeout goroutine
-				fmt.Printf("DEBUG: [%s] Force timeout goroutine cancelled due to context\n", connectionID)
-				return
-			case <-done:
-				// Operation completed, exit timeout goroutine
-				return
-			}
-		}()
-
-		// Main waiting logic
 		select {
 		case <-ctx.Done():
 			fmt.Printf("DEBUG: [%s] Context cancelled during read, closing connection\n", connectionID)
-			done <- true
 			return ctx.Err()
 		case result := <-readChan:
-			done <- true
 			finalResult = result
-		case <-done:
-			if finalErr != nil {
-				return finalErr
-			}
 		}
 
 		// Process the result if we got one
@@ -590,76 +551,124 @@ func (h *Handler) handleApiVersions(correlationID uint32, apiVersion uint16) ([]
 	response = append(response, 0, 18) // API key 18
 	response = append(response, 0, 0)  // min version 0
 	response = append(response, 0, 3)  // max version 3
+	if isFlexible {
+		// per-element tagged fields (empty)
+		response = append(response, 0)
+	}
 
 	// API Key 3 (Metadata): api_key(2) + min_version(2) + max_version(2)
 	response = append(response, 0, 3) // API key 3
 	response = append(response, 0, 0) // min version 0
 	response = append(response, 0, 7) // max version 7
+	if isFlexible {
+		response = append(response, 0)
+	}
 
 	// API Key 2 (ListOffsets): limit to v2 (implemented and tested)
 	response = append(response, 0, 2) // API key 2
 	response = append(response, 0, 0) // min version 0
 	response = append(response, 0, 2) // max version 2
+	if isFlexible {
+		response = append(response, 0)
+	}
 
 	// API Key 19 (CreateTopics): api_key(2) + min_version(2) + max_version(2)
 	response = append(response, 0, 19) // API key 19
 	response = append(response, 0, 0)  // min version 0
 	response = append(response, 0, 5)  // max version 5
+	if isFlexible {
+		response = append(response, 0)
+	}
 
 	// API Key 20 (DeleteTopics): api_key(2) + min_version(2) + max_version(2)
 	response = append(response, 0, 20) // API key 20
 	response = append(response, 0, 0)  // min version 0
 	response = append(response, 0, 4)  // max version 4
+	if isFlexible {
+		response = append(response, 0)
+	}
 
 	// API Key 0 (Produce): api_key(2) + min_version(2) + max_version(2)
 	// Support v7 for Sarama compatibility (Kafka 2.1.0)
 	response = append(response, 0, 0) // API key 0
 	response = append(response, 0, 0) // min version 0
 	response = append(response, 0, 7) // max version 7
+	if isFlexible {
+		response = append(response, 0)
+	}
 
 	// API Key 1 (Fetch): limit to v7 (current handler semantics)
 	response = append(response, 0, 1) // API key 1
 	response = append(response, 0, 0) // min version 0
 	response = append(response, 0, 7) // max version 7
+	if isFlexible {
+		response = append(response, 0)
+	}
 
 	// API Key 11 (JoinGroup): api_key(2) + min_version(2) + max_version(2)
 	response = append(response, 0, 11) // API key 11
 	response = append(response, 0, 0)  // min version 0
 	response = append(response, 0, 7)  // max version 7
+	if isFlexible {
+		response = append(response, 0)
+	}
 
 	// API Key 14 (SyncGroup): api_key(2) + min_version(2) + max_version(2)
 	response = append(response, 0, 14) // API key 14
 	response = append(response, 0, 0)  // min version 0
 	response = append(response, 0, 5)  // max version 5
+	if isFlexible {
+		response = append(response, 0)
+	}
 
 	// API Key 8 (OffsetCommit): limit to v2 for current implementation
 	response = append(response, 0, 8) // API key 8
 	response = append(response, 0, 0) // min version 0
 	response = append(response, 0, 2) // max version 2
+	if isFlexible {
+		response = append(response, 0)
+	}
 
 	// API Key 9 (OffsetFetch): supports up to v5 (with leader epoch and throttle time)
 	response = append(response, 0, 9) // API key 9
 	response = append(response, 0, 0) // min version 0
 	response = append(response, 0, 5) // max version 5
+	if isFlexible {
+		response = append(response, 0)
+	}
 
 	// API Key 10 (FindCoordinator): limit to v2 (implemented)
 	response = append(response, 0, 10) // API key 10
 	response = append(response, 0, 0)  // min version 0
 	response = append(response, 0, 2)  // max version 2
+	if isFlexible {
+		response = append(response, 0)
+	}
 
 	// API Key 12 (Heartbeat): api_key(2) + min_version(2) + max_version(2)
 	response = append(response, 0, 12) // API key 12
 	response = append(response, 0, 0)  // min version 0
 	response = append(response, 0, 4)  // max version 4
+	if isFlexible {
+		response = append(response, 0)
+	}
 
 	// API Key 13 (LeaveGroup): api_key(2) + min_version(2) + max_version(2)
 	response = append(response, 0, 13) // API key 13
 	response = append(response, 0, 0)  // min version 0
 	response = append(response, 0, 4)  // max version 4
+	if isFlexible {
+		response = append(response, 0)
+	}
+
+	// ApiVersions v1+ include throttle_time_ms
+	if apiVersion >= 1 {
+		response = append(response, 0, 0, 0, 0) // throttle_time_ms = 0
+	}
 
 	// Add tagged fields for flexible versions
 	if isFlexible {
-		// Empty tagged fields for now
+		// Empty tagged fields for now (response-level)
 		response = append(response, 0)
 	}
 
@@ -1206,8 +1215,7 @@ func (h *Handler) HandleMetadataV7(correlationID uint32, requestBody []byte) ([]
 		binary.Write(&buf, binary.BigEndian, int32(1)) // LeaderID
 
 		// LeaderEpoch (4 bytes) - v7+ addition
-		// NOTE: kafka-go client doesn't expect leader_epoch in v7, commenting out for compatibility
-		// binary.Write(&buf, binary.BigEndian, int32(0)) // Leader epoch 0
+		binary.Write(&buf, binary.BigEndian, int32(0)) // Leader epoch 0
 
 		// ReplicaNodes array (4 bytes length + nodes)
 		binary.Write(&buf, binary.BigEndian, int32(1)) // 1 replica
@@ -1218,8 +1226,7 @@ func (h *Handler) HandleMetadataV7(correlationID uint32, requestBody []byte) ([]
 		binary.Write(&buf, binary.BigEndian, int32(1)) // NodeID 1
 
 		// OfflineReplicas array (4 bytes length + nodes) - v5+ addition
-		// NOTE: kafka-go client might not expect offline_replicas in v7, testing without it
-		// binary.Write(&buf, binary.BigEndian, int32(0)) // No offline replicas
+		binary.Write(&buf, binary.BigEndian, int32(0)) // No offline replicas
 	}
 
 	response := buf.Bytes()

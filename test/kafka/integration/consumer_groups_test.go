@@ -3,6 +3,7 @@ package integration
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -13,7 +14,13 @@ import (
 
 // TestConsumerGroups tests consumer group functionality
 func TestConsumerGroups(t *testing.T) {
-	gateway := testutil.NewGatewayTestServer(t, testutil.GatewayOptions{})
+	// If SEAWEEDFS_MASTERS is set, use production gateway with SMQ-backed offsets.
+	// Otherwise skip here; this test should be run alongside the suite that brings SeaweedFS up.
+	masters := os.Getenv("SEAWEEDFS_MASTERS")
+	if masters == "" {
+		t.Skip("Skipping ConsumerGroups integration without SEAWEEDFS_MASTERS; run in suite that starts SeaweedFS MQ")
+	}
+	gateway := testutil.NewGatewayTestServer(t, testutil.GatewayOptions{UseProduction: true, Masters: masters})
 	defer gateway.CleanupAndClose()
 
 	addr := gateway.StartAndWait()
@@ -174,14 +181,17 @@ func testConsumerGroupOffsetCommitAndFetch(t *testing.T, addr string) {
 	cancel1()
 	time.Sleep(500 * time.Millisecond) // Wait for cleanup
 
-	// Second consumer: should start from offset 3 (after committed offset)
+	// Stop the first consumer after N messages
+	// Allow a brief moment for commit/heartbeat to flush
+	time.Sleep(1 * time.Second)
+
+	// Start a second consumer in the same group to verify resumption from committed offset
 	handler2 := &OffsetTestHandler{
 		messages:  make(chan *sarama.ConsumerMessage, len(messages)),
 		ready:     make(chan bool),
-		stopAfter: 2, // Should get remaining 2 messages
+		stopAfter: 2,
 		t:         t,
 	}
-
 	consumerGroup2, err := sarama.NewConsumerGroup([]string{addr}, groupID, client.GetConfig())
 	testutil.AssertNoError(t, err, "Failed to create second consumer group")
 	defer consumerGroup2.Close()
@@ -213,7 +223,9 @@ func testConsumerGroupOffsetCommitAndFetch(t *testing.T, addr string) {
 	// Verify second consumer started from correct offset
 	if len(secondConsumerMessages) > 0 {
 		firstMessageOffset := secondConsumerMessages[0].Offset
-		testutil.AssertGreaterThan(t, 2, int(firstMessageOffset), "Second consumer should start from offset >= 3")
+		if firstMessageOffset < 3 {
+			t.Fatalf("Second consumer should start from offset >= 3: got %d", firstMessageOffset)
+		}
 	}
 }
 
@@ -297,6 +309,8 @@ func (h *OffsetTestHandler) ConsumeClaim(session sarama.ConsumerGroupSession, cl
 			// Stop after consuming the specified number of messages
 			if h.consumed >= h.stopAfter {
 				h.t.Logf("Stopping consumer after %d messages", h.consumed)
+				// Ensure commits are flushed before exiting the claim
+				session.Commit()
 				return nil
 			}
 		case <-session.Context().Done():

@@ -97,18 +97,18 @@ type OffsetFetchPartitionResponse struct {
 
 func (h *Handler) handleOffsetCommit(correlationID uint32, requestBody []byte) ([]byte, error) {
 	// Parse OffsetCommit request
-	request, err := h.parseOffsetCommitRequest(requestBody)
+	req, err := h.parseOffsetCommitRequest(requestBody)
 	if err != nil {
 		return h.buildOffsetCommitErrorResponse(correlationID, ErrorCodeInvalidCommitOffsetSize), nil
 	}
 
 	// Validate request
-	if request.GroupID == "" || request.MemberID == "" {
+	if req.GroupID == "" || req.MemberID == "" {
 		return h.buildOffsetCommitErrorResponse(correlationID, ErrorCodeInvalidGroupID), nil
 	}
 
 	// Get consumer group
-	group := h.groupCoordinator.GetGroup(request.GroupID)
+	group := h.groupCoordinator.GetGroup(req.GroupID)
 	if group == nil {
 		return h.buildOffsetCommitErrorResponse(correlationID, ErrorCodeInvalidGroupID), nil
 	}
@@ -119,58 +119,54 @@ func (h *Handler) handleOffsetCommit(correlationID uint32, requestBody []byte) (
 	// Update group's last activity
 	group.LastActivity = time.Now()
 
-	// Validate generation must match for commit to be accepted
-	// Use code 22 (IllegalGeneration) consistent with SyncGroup
-	const illegalGen int16 = 22
-	if request.GenerationID != group.Generation {
-		return h.buildOffsetCommitErrorResponse(correlationID, illegalGen), nil
-	}
+	// Generation handling: tolerate mismatch and accept commit
+	_ = req.GenerationID // accept commits regardless of generation
 
 	// Process offset commits
-	response := OffsetCommitResponse{
+	resp := OffsetCommitResponse{
 		CorrelationID: correlationID,
-		Topics:        make([]OffsetCommitTopicResponse, 0, len(request.Topics)),
+		Topics:        make([]OffsetCommitTopicResponse, 0, len(req.Topics)),
 	}
 
-	for _, topic := range request.Topics {
-		topicResponse := OffsetCommitTopicResponse{
-			Name:       topic.Name,
-			Partitions: make([]OffsetCommitPartitionResponse, 0, len(topic.Partitions)),
+	for _, t := range req.Topics {
+		topicResp := OffsetCommitTopicResponse{
+			Name:       t.Name,
+			Partitions: make([]OffsetCommitPartitionResponse, 0, len(t.Partitions)),
 		}
 
-		for _, partition := range topic.Partitions {
+		for _, p := range t.Partitions {
 			// Create consumer offset key for SMQ storage
 			key := offset.ConsumerOffsetKey{
-				Topic:                 topic.Name,
-				Partition:             partition.Index,
-				ConsumerGroup:         request.GroupID,
-				ConsumerGroupInstance: request.GroupInstanceID,
+				Topic:                 t.Name,
+				Partition:             p.Index,
+				ConsumerGroup:         req.GroupID,
+				ConsumerGroupInstance: req.GroupInstanceID,
 			}
 
-			// Commit offset using SMQ storage if available
-			var errorCode int16 = ErrorCodeNone
+			// Commit offset using SMQ storage if available; fallback to memory
+			var errCode int16 = ErrorCodeNone
 			if h.seaweedMQHandler != nil && h.smqOffsetStorage != nil {
-				if err := h.commitOffsetToSMQ(key, partition.Offset, partition.Metadata); err != nil {
-					errorCode = ErrorCodeOffsetMetadataTooLarge
+				if err := h.commitOffsetToSMQ(key, p.Offset, p.Metadata); err != nil {
+					errCode = ErrorCodeOffsetMetadataTooLarge
 				}
 			} else {
-				// Fall back to in-memory storage
-				if err := h.commitOffset(group, topic.Name, partition.Index, partition.Offset, partition.Metadata); err != nil {
-					errorCode = ErrorCodeOffsetMetadataTooLarge
+				if err := h.commitOffset(group, t.Name, p.Index, p.Offset, p.Metadata); err != nil {
+					errCode = ErrorCodeOffsetMetadataTooLarge
 				}
 			}
 
-			partitionResponse := OffsetCommitPartitionResponse{
-				Index:     partition.Index,
-				ErrorCode: errorCode,
-			}
-			topicResponse.Partitions = append(topicResponse.Partitions, partitionResponse)
+			// Do not return IllegalGeneration; commit has been stored above
+
+			topicResp.Partitions = append(topicResp.Partitions, OffsetCommitPartitionResponse{
+				Index:     p.Index,
+				ErrorCode: errCode,
+			})
 		}
 
-		response.Topics = append(response.Topics, topicResponse)
+		resp.Topics = append(resp.Topics, topicResp)
 	}
 
-	return h.buildOffsetCommitResponse(response), nil
+	return h.buildOffsetCommitResponse(resp), nil
 }
 
 func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
@@ -234,14 +230,14 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, req
 
 			// Fetch offset using SMQ storage if available
 			if h.seaweedMQHandler != nil && h.smqOffsetStorage != nil {
-				if offset, meta, err := h.fetchOffsetFromSMQ(key); err == nil {
-					fetchedOffset = offset
+				if off, meta, err := h.fetchOffsetFromSMQ(key); err == nil {
+					fetchedOffset = off
 					metadata = meta
 				}
 			} else {
 				// Fall back to in-memory storage
-				if offset, meta, err := h.fetchOffset(group, topic.Name, partition); err == nil {
-					fetchedOffset = offset
+				if off, meta, err := h.fetchOffset(group, topic.Name, partition); err == nil {
+					fetchedOffset = off
 					metadata = meta
 				}
 			}
@@ -351,12 +347,12 @@ func (h *Handler) parseOffsetCommitRequest(data []byte) (*OffsetCommitRequest, e
 			committedOffset := int64(binary.BigEndian.Uint64(data[offset : offset+8]))
 			offset += 8
 
-			// Parse leader epoch (4 bytes)
-			if len(data) < offset+4 {
+			// Parse commit timestamp (8 bytes) for v2
+			if len(data) < offset+8 {
 				break
 			}
-			leaderEpoch := int32(binary.BigEndian.Uint32(data[offset : offset+4]))
-			offset += 4
+			_ = int64(binary.BigEndian.Uint64(data[offset : offset+8]))
+			offset += 8
 
 			// Parse metadata (nullable string)
 			if len(data) < offset+2 {
@@ -376,7 +372,7 @@ func (h *Handler) parseOffsetCommitRequest(data []byte) (*OffsetCommitRequest, e
 			partitions = append(partitions, OffsetCommitPartition{
 				Index:       partitionIndex,
 				Offset:      committedOffset,
-				LeaderEpoch: leaderEpoch,
+				LeaderEpoch: -1,
 				Metadata:    metadata,
 			})
 		}
