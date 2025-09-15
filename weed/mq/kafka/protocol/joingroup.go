@@ -243,12 +243,9 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 
 	// If this member is the leader, include all member info
 	if memberID == group.Leader {
-		fmt.Printf("DEBUG: JoinGroup member '%s' is the leader, including %d members in response\n", memberID, len(group.Members))
 		// TESTING: Try empty members array to see if that fixes the size issue
 		response.Members = make([]JoinGroupMember, 0)
-		fmt.Printf("DEBUG: JoinGroup TESTING: sending empty members array instead of %d members\n", len(group.Members))
 	} else {
-		fmt.Printf("DEBUG: JoinGroup member '%s' is NOT the leader (leader is '%s'), empty members array\n", memberID, group.Leader)
 	}
 
 	return h.buildJoinGroupResponse(response), nil
