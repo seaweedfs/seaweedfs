@@ -37,8 +37,6 @@ jobs:
         run: |
           git clone https://github.com/ceph/s3-tests.git
           cd s3-tests
-          # Pin to commit before recent versioning test changes that may not be compatible
-          git checkout cb8c4b3ef8c2140f522f2cb57309de959ee3cf5b  # Before PR #687 and #690 changes
           pip install -r requirements.txt
           pip install tox
           pip install -e .
@@ -332,8 +330,6 @@ jobs:
         run: |
           git clone https://github.com/ceph/s3-tests.git
           cd s3-tests
-          # Pin to commit before recent versioning test changes that may not be compatible
-          git checkout cb8c4b3ef8c2140f522f2cb57309de959ee3cf5b  # Before PR #687 and #690 changes
           pip install -r requirements.txt
           pip install tox
           pip install -e .
@@ -408,7 +404,8 @@ jobs:
           sed -i 's/localhost:8000/localhost:8001/g' ../docker/compose/s3tests-versioning.conf
           sed -i 's/127\.0\.0\.1:8000/127.0.0.1:8001/g' ../docker/compose/s3tests-versioning.conf
           # Ensure per-run unique bucket prefix to avoid collisions
-          sed -i "s/^bucket prefix = .*/bucket prefix = seaweedci-{random}-/" ../docker/compose/s3tests-versioning.conf
+          UNIQUE_PREFIX="sw$(date +%s)$(shuf -i 1000-9999 -n 1)"
+          sed -i "s/^bucket prefix = .*/bucket prefix = ${UNIQUE_PREFIX}-{random}-/" ../docker/compose/s3tests-versioning.conf
           export S3TEST_CONF=../docker/compose/s3tests-versioning.conf
           
           # Debug: Show the config file contents
@@ -430,6 +427,42 @@ jobs:
             echo "S3 connection test failed, retrying... ($i/10)"
             sleep 2
           done
+          
+          # Force cleanup any existing buckets to avoid conflicts
+          echo "Cleaning up any existing buckets..."
+          python3 -c "
+          import boto3
+          from botocore.exceptions import ClientError
+          try:
+              s3 = boto3.client('s3', 
+                  endpoint_url='http://localhost:8001',
+                  aws_access_key_id='0555b35654ad1656d804',
+                  aws_secret_access_key='h7GhxuBLTrlhVUyxSPUKUV8r/2EI4ngqJxD7iBdBYLhwluN30JaT3Q==')
+              buckets = s3.list_buckets()['Buckets']
+              for bucket in buckets:
+                  bucket_name = bucket['Name']
+                  print(f'Deleting bucket: {bucket_name}')
+                  try:
+                      # Delete all objects first
+                      objects = s3.list_objects_v2(Bucket=bucket_name)
+                      if 'Contents' in objects:
+                          for obj in objects['Contents']:
+                              s3.delete_object(Bucket=bucket_name, Key=obj['Key'])
+                      # Delete all versions if versioning enabled
+                      versions = s3.list_object_versions(Bucket=bucket_name)
+                      if 'Versions' in versions:
+                          for version in versions['Versions']:
+                              s3.delete_object(Bucket=bucket_name, Key=version['Key'], VersionId=version['VersionId'])
+                      if 'DeleteMarkers' in versions:
+                          for marker in versions['DeleteMarkers']:
+                              s3.delete_object(Bucket=bucket_name, Key=marker['Key'], VersionId=marker['VersionId'])
+                      # Delete bucket
+                      s3.delete_bucket(Bucket=bucket_name)
+                  except ClientError as e:
+                      print(f'Error deleting bucket {bucket_name}: {e}')
+          except Exception as e:
+              print(f'Cleanup failed: {e}')
+          " || echo "Cleanup completed with some errors (expected)"
           # Run versioning and object lock tests once (avoid duplicates)
           tox -- s3tests_boto3/functional/test_s3.py -k "object_lock or versioning" --tb=short
           kill -9 $pid || true
@@ -459,8 +492,6 @@ jobs:
         run: |
           git clone https://github.com/ceph/s3-tests.git
           cd s3-tests
-          # Pin to commit before recent versioning test changes that may not be compatible
-          git checkout cb8c4b3ef8c2140f522f2cb57309de959ee3cf5b  # Before PR #687 and #690 changes
           pip install -r requirements.txt
           pip install tox
           pip install -e .
@@ -684,8 +715,6 @@ jobs:
         run: |
           git clone https://github.com/ceph/s3-tests.git
           cd s3-tests
-          # Pin to commit before recent versioning test changes that may not be compatible
-          git checkout cb8c4b3ef8c2140f522f2cb57309de959ee3cf5b  # Before PR #687 and #690 changes
           pip install -r requirements.txt
           pip install tox
           pip install -e .
