@@ -65,6 +65,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("PutObjectHandler %s %s", bucket, object)
+	glog.V(0).Infof("CI-DEBUG: PutObjectHandler: starting PUT for %s/%s (raw object path: '%s')", bucket, object, object)
 
 	_, err := validateContentMd5(r.Header)
 	if err != nil {
@@ -133,6 +134,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 		versioningEnabled := (versioningState == s3_constants.VersioningEnabled)
 		versioningConfigured := (versioningState != "")
+		glog.V(0).Infof("CI-DEBUG: PutObjectHandler: versioning state for %s/%s is '%s' (enabled: %v, configured: %v)", bucket, object, versioningState, versioningEnabled, versioningConfigured)
 
 		// Validate object lock headers before processing
 		if err := s3a.validateObjectLockHeaders(r, versioningEnabled); err != nil {
@@ -154,6 +156,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 		if versioningState == s3_constants.VersioningEnabled {
 			// Handle enabled versioning - create new versions with real version IDs
+			glog.V(0).Infof("CI-DEBUG: PutObjectHandler: versioning ENABLED for %s/%s - calling putVersionedObject", bucket, object)
 			versionId, etag, errCode := s3a.putVersionedObject(r, bucket, object, dataReader, objectContentType)
 			if errCode != s3err.ErrNone {
 				s3err.WriteErrorResponse(w, r, errCode)
