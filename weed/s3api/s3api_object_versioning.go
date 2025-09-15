@@ -740,6 +740,7 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 func (s3a *S3ApiServer) ListObjectVersionsHandler(w http.ResponseWriter, r *http.Request) {
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("ListObjectVersionsHandler %s", bucket)
+	glog.V(0).Infof("CI-DEBUG: ListObjectVersionsHandler: request for bucket %s", bucket)
 
 	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, err)
@@ -766,6 +767,10 @@ func (s3a *S3ApiServer) ListObjectVersionsHandler(w http.ResponseWriter, r *http
 		}
 	}
 
+	// Debug logging for CI to trace request parameters
+	glog.V(0).Infof("CI-DEBUG: ListObjectVersionsHandler: params - prefix='%s', maxKeys=%d, keyMarker='%s', versionIdMarker='%s'", 
+		originalPrefix, maxKeys, keyMarker, versionIdMarker)
+
 	// List versions
 	result, err := s3a.listObjectVersions(bucket, prefix, keyMarker, versionIdMarker, delimiter, maxKeys)
 	if err != nil {
@@ -776,6 +781,23 @@ func (s3a *S3ApiServer) ListObjectVersionsHandler(w http.ResponseWriter, r *http
 
 	// Set the original prefix in the response (not the normalized internal prefix)
 	result.Prefix = originalPrefix
+
+	// Debug logging for CI to trace ListObjectVersions response
+	glog.V(0).Infof("CI-DEBUG: ListObjectVersions response for bucket %s: %d versions, %d delete markers, truncated=%v", 
+		bucket, len(result.Versions), len(result.DeleteMarkers), result.IsTruncated)
+	
+	if len(result.Versions) > 0 {
+		glog.V(0).Infof("CI-DEBUG: ListObjectVersions first few versions:")
+		for i, v := range result.Versions {
+			if i >= 3 { // Only show first 3 to avoid log spam
+				glog.V(0).Infof("CI-DEBUG: ... and %d more versions", len(result.Versions)-3)
+				break
+			}
+			glog.V(0).Infof("CI-DEBUG:   Version %d: Key=%s, VersionId=%s, Size=%d", i+1, v.Key, v.VersionId, v.Size)
+		}
+	} else {
+		glog.V(0).Infof("CI-DEBUG: ListObjectVersions NO VERSIONS found for bucket %s", bucket)
+	}
 
 	writeSuccessResponseXML(w, r, result)
 }
