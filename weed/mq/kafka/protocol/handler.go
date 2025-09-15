@@ -248,12 +248,6 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			fmt.Printf("DEBUG: [%s] Using config timeout: %v\n", connectionID, timeoutDuration)
 		}
 
-		// If context is about to be cancelled or timeout is very long, use a shorter deadline to prevent hanging
-		if timeoutDuration > 5*time.Second {
-			readDeadline = time.Now().Add(5 * time.Second)
-			fmt.Printf("DEBUG: [%s] Limiting timeout to 5s to prevent hanging\n", connectionID)
-		}
-
 		if err := conn.SetReadDeadline(readDeadline); err != nil {
 			fmt.Printf("DEBUG: [%s] Failed to set read deadline: %v\n", connectionID, err)
 			return fmt.Errorf("set read deadline: %w", err)
@@ -279,60 +273,21 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			}
 		}
 
-		// Read message size (4 bytes) with context cancellation
+		// Read message size (4 bytes)
 		fmt.Printf("DEBUG: [%s] About to read message size header\n", connectionID)
 		var sizeBytes [4]byte
-
-		// Use a channel to make the read operation cancellable
-		type readResult struct {
-			n   int
-			err error
-		}
-		readChan := make(chan readResult, 1)
-
-		go func() {
-			// Set a very short deadline for this specific read to prevent hanging
-			if err := conn.SetReadDeadline(time.Now().Add(1 * time.Second)); err != nil {
-				readChan <- readResult{n: 0, err: err}
-				return
-			}
-			n, err := io.ReadFull(r, sizeBytes[:])
-			readChan <- readResult{n: n, err: err}
-		}()
-
-		// Wait for either the read to complete or context cancellation
-		var finalResult readResult
-		select {
-		case <-ctx.Done():
-			fmt.Printf("DEBUG: [%s] Context cancelled during read, closing connection\n", connectionID)
-			return ctx.Err()
-		case result := <-readChan:
-			finalResult = result
-		}
-
-		// Process the result if we got one
-		if finalResult.err != nil {
-			if finalResult.err == io.EOF {
+		if _, err := io.ReadFull(r, sizeBytes[:]); err != nil {
+			if err == io.EOF {
 				fmt.Printf("DEBUG: [%s] Client closed connection (clean EOF)\n", connectionID)
-				return nil // clean disconnect
+				return nil
 			}
-
-			// Check if it's a timeout error
-			if netErr, ok := finalResult.err.(net.Error); ok && netErr.Timeout() {
-				fmt.Printf("DEBUG: [%s] Read timeout (likely due to context cancellation or client disconnect)\n", connectionID)
-				// Check if context was cancelled
-				select {
-				case <-ctx.Done():
-					fmt.Printf("DEBUG: [%s] Context was cancelled, returning context error\n", connectionID)
-					return ctx.Err()
-				default:
-					fmt.Printf("DEBUG: [%s] Timeout without context cancellation, treating as client disconnect\n", connectionID)
-					return nil // treat as clean disconnect
-				}
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				// Idle timeout while waiting for next request; keep connection open
+				fmt.Printf("DEBUG: [%s] Read timeout waiting for request, continuing\n", connectionID)
+				continue
 			}
-
-			fmt.Printf("DEBUG: [%s] Read error: %v\n", connectionID, finalResult.err)
-			return fmt.Errorf("read message size: %w", finalResult.err)
+			fmt.Printf("DEBUG: [%s] Read error: %v\n", connectionID, err)
+			return fmt.Errorf("read message size: %w", err)
 		}
 
 		// Successfully read the message size

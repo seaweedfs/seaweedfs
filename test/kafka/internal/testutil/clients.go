@@ -130,11 +130,12 @@ func (k *KafkaGoClient) ConsumeWithGroup(topicName, groupID string, expectedCoun
 	k.t.Helper()
 
 	reader := kafka.NewReader(kafka.ReaderConfig{
-		Brokers:  []string{k.brokerAddr},
-		Topic:    topicName,
-		GroupID:  groupID,
-		MinBytes: 1,
-		MaxBytes: 10e6,
+		Brokers:        []string{k.brokerAddr},
+		Topic:          topicName,
+		GroupID:        groupID,
+		MinBytes:       1,
+		MaxBytes:       10e6,
+		CommitInterval: 500 * time.Millisecond,
 	})
 	defer reader.Close()
 
@@ -143,11 +144,26 @@ func (k *KafkaGoClient) ConsumeWithGroup(topicName, groupID string, expectedCoun
 
 	var messages []kafka.Message
 	for i := 0; i < expectedCount; i++ {
-		msg, err := reader.ReadMessage(ctx)
+		// Fetch then explicitly commit to better control commit timing
+		msg, err := reader.FetchMessage(ctx)
 		if err != nil {
 			return messages, fmt.Errorf("read message %d: %w", i, err)
 		}
 		messages = append(messages, msg)
+
+		// Commit with simple retry to handle transient connection churn
+		var commitErr error
+		for attempt := 0; attempt < 3; attempt++ {
+			commitErr = reader.CommitMessages(ctx, msg)
+			if commitErr == nil {
+				break
+			}
+			// brief backoff
+			time.Sleep(time.Duration(50*(1<<attempt)) * time.Millisecond)
+		}
+		if commitErr != nil {
+			return messages, fmt.Errorf("committing message %d: %w", i, commitErr)
+		}
 	}
 
 	k.t.Logf("Consumed %d messages from topic %s with group %s", len(messages), topicName, groupID)
