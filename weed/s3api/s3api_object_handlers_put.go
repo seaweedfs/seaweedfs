@@ -566,6 +566,17 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 	versionObjectPath := object + ".versions/" + versionFileName
 	versionUploadUrl := s3a.toFilerUrl(bucket, versionObjectPath)
 
+	// Ensure the .versions directory exists before uploading
+	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	versionsDir := object + ".versions"
+	err := s3a.mkdir(bucketDir, versionsDir, func(entry *filer_pb.Entry) {
+		entry.Attributes.Mime = s3_constants.FolderMimeType
+	})
+	if err != nil {
+		glog.Errorf("putVersionedObject: failed to create .versions directory: %v", err)
+		return "", "", s3err.ErrInternalError
+	}
+
 	hash := md5.New()
 	var body = io.TeeReader(dataReader, hash)
 	if objectContentType == "" {
@@ -636,25 +647,11 @@ func (s3a *S3ApiServer) updateLatestVersionInDirectory(bucket, object, versionId
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
 	versionsObjectPath := object + ".versions"
 
-	// Get the current .versions directory entry, create if it doesn't exist
+	// Get the current .versions directory entry
 	versionsEntry, err := s3a.getEntry(bucketDir, versionsObjectPath)
 	if err != nil {
-		glog.V(2).Infof("updateLatestVersionInDirectory: .versions directory doesn't exist for %s/%s, creating it", bucket, object)
-		// Create the .versions directory if it doesn't exist
-		err = s3a.mkdir(bucketDir, versionsObjectPath, func(entry *filer_pb.Entry) {
-			entry.Attributes.Mime = s3_constants.FolderMimeType
-			if entry.Extended == nil {
-				entry.Extended = make(map[string][]byte)
-			}
-			entry.Extended[s3_constants.ExtLatestVersionIdKey] = []byte(versionId)
-			entry.Extended[s3_constants.ExtLatestVersionFileNameKey] = []byte(versionFileName)
-		})
-		if err != nil {
-			glog.Errorf("updateLatestVersionInDirectory: failed to create .versions directory: %v", err)
-			return fmt.Errorf("failed to create .versions directory: %w", err)
-		}
-		glog.V(2).Infof("updateLatestVersionInDirectory: created .versions directory for %s/%s with version %s", bucket, object, versionId)
-		return nil
+		glog.Errorf("updateLatestVersionInDirectory: failed to get .versions directory for %s/%s: %v", bucket, object, err)
+		return fmt.Errorf("failed to get .versions directory: %w", err)
 	}
 
 	// Add or update the latest version metadata
