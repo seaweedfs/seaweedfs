@@ -620,12 +620,15 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 	}
 
 	// Update the .versions directory metadata to indicate this is the latest version
+	glog.V(0).Infof("CI-DEBUG: putVersionedObject: about to update latest version metadata for %s/%s version %s", bucket, object, versionId)
 	err = s3a.updateLatestVersionInDirectory(bucket, object, versionId, versionFileName)
 	if err != nil {
 		glog.Errorf("putVersionedObject: failed to update latest version in directory: %v", err)
+		glog.V(0).Infof("CI-DEBUG: putVersionedObject: FAILED to update latest version metadata for %s/%s version %s: %v", bucket, object, versionId, err)
 		return "", "", s3err.ErrInternalError
 	}
 
+	glog.V(0).Infof("CI-DEBUG: putVersionedObject: successfully updated latest version metadata for %s/%s version %s", bucket, object, versionId)
 	glog.V(2).Infof("putVersionedObject: successfully created version %s for %s/%s", versionId, bucket, object)
 	return versionId, etag, s3err.ErrNone
 }
@@ -635,12 +638,17 @@ func (s3a *S3ApiServer) updateLatestVersionInDirectory(bucket, object, versionId
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
 	versionsObjectPath := object + ".versions"
 
+	glog.V(0).Infof("CI-DEBUG: updateLatestVersionInDirectory: starting update for %s/%s version %s file %s", bucket, object, versionId, versionFileName)
+
 	// Get the current .versions directory entry
 	versionsEntry, err := s3a.getEntry(bucketDir, versionsObjectPath)
 	if err != nil {
 		glog.Errorf("updateLatestVersionInDirectory: failed to get .versions directory for %s/%s: %v", bucket, object, err)
+		glog.V(0).Infof("CI-DEBUG: updateLatestVersionInDirectory: FAILED to get .versions entry for %s/%s: %v", bucket, object, err)
 		return fmt.Errorf("failed to get .versions directory: %w", err)
 	}
+
+	glog.V(0).Infof("CI-DEBUG: updateLatestVersionInDirectory: got .versions entry for %s/%s, updating metadata", bucket, object)
 
 	// Add or update the latest version metadata
 	if versionsEntry.Extended == nil {
@@ -657,9 +665,11 @@ func (s3a *S3ApiServer) updateLatestVersionInDirectory(bucket, object, versionId
 	})
 	if err != nil {
 		glog.Errorf("updateLatestVersionInDirectory: failed to update .versions directory metadata: %v", err)
+		glog.V(0).Infof("CI-DEBUG: updateLatestVersionInDirectory: FAILED to save .versions metadata for %s/%s: %v", bucket, object, err)
 		return fmt.Errorf("failed to update .versions directory metadata: %w", err)
 	}
 
+	glog.V(0).Infof("CI-DEBUG: updateLatestVersionInDirectory: successfully saved .versions metadata for %s/%s version %s", bucket, object, versionId)
 	return nil
 }
 
