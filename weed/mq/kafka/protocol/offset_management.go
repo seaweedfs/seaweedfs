@@ -647,10 +647,12 @@ func (h *Handler) buildOffsetFetchResponse(response OffsetFetchResponse, apiVers
 		}
 	}
 
-	// Group-level error code (2 bytes)
-	groupErrorBytes := make([]byte, 2)
-	binary.BigEndian.PutUint16(groupErrorBytes, uint16(response.ErrorCode))
-	result = append(result, groupErrorBytes...)
+	// Group-level error code (2 bytes) - only included in version 2+
+	if apiVersion >= 2 {
+		groupErrorBytes := make([]byte, 2)
+		binary.BigEndian.PutUint16(groupErrorBytes, uint16(response.ErrorCode))
+		result = append(result, groupErrorBytes...)
+	}
 
 	return result
 }

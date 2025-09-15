@@ -675,7 +675,7 @@ func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, reque
 	request, err := h.parseSyncGroupRequest(requestBody, apiVersion)
 	if err != nil {
 		fmt.Printf("DEBUG: SyncGroup parseSyncGroupRequest error: %v\n", err)
-		return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeInvalidGroupID), nil
+		return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeInvalidGroupID, apiVersion), nil
 	}
 
 	fmt.Printf("DEBUG: SyncGroup parsed request - GroupID: '%s', MemberID: '%s', GenerationID: %d\n",
@@ -683,13 +683,13 @@ func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, reque
 
 	// Validate request
 	if request.GroupID == "" || request.MemberID == "" {
-		return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeInvalidGroupID), nil
+		return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeInvalidGroupID, apiVersion), nil
 	}
 
 	// Get consumer group
 	group := h.groupCoordinator.GetGroup(request.GroupID)
 	if group == nil {
-		return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeInvalidGroupID), nil
+		return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeInvalidGroupID, apiVersion), nil
 	}
 
 	group.Mu.Lock()
@@ -701,12 +701,12 @@ func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, reque
 	// Validate member exists
 	member, exists := group.Members[request.MemberID]
 	if !exists {
-		return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeUnknownMemberID), nil
+		return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeUnknownMemberID, apiVersion), nil
 	}
 
 	// Validate generation
 	if request.GenerationID != group.Generation {
-		return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeIllegalGeneration), nil
+		return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeIllegalGeneration, apiVersion), nil
 	}
 
 	// Check if this is the group leader with assignments
@@ -714,7 +714,7 @@ func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, reque
 		// Leader is providing assignments - process and store them
 		err = h.processGroupAssignments(group, request.GroupAssignments)
 		if err != nil {
-			return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeInconsistentGroupProtocol), nil
+			return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeInconsistentGroupProtocol, apiVersion), nil
 		}
 
 		// Move group to stable state
@@ -748,7 +748,7 @@ func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, reque
 		Assignment:    assignment,
 	}
 
-	return h.buildSyncGroupResponse(response), nil
+	return h.buildSyncGroupResponse(response, apiVersion), nil
 }
 
 func (h *Handler) parseSyncGroupRequest(data []byte, apiVersion uint16) (*SyncGroupRequest, error) {
@@ -820,7 +820,7 @@ func (h *Handler) parseSyncGroupRequest(data []byte, apiVersion uint16) (*SyncGr
 	}, nil
 }
 
-func (h *Handler) buildSyncGroupResponse(response SyncGroupResponse) []byte {
+func (h *Handler) buildSyncGroupResponse(response SyncGroupResponse, apiVersion uint16) []byte {
 	estimatedSize := 16 + len(response.Assignment)
 	result := make([]byte, 0, estimatedSize)
 
@@ -830,8 +830,11 @@ func (h *Handler) buildSyncGroupResponse(response SyncGroupResponse) []byte {
 	result = append(result, correlationIDBytes...)
 
 	// SyncGroup v1+ has throttle_time_ms at the beginning
-	// Throttle time (4 bytes, 0 = no throttling)
-	result = append(result, 0, 0, 0, 0)
+	// SyncGroup v0 does NOT include throttle_time_ms
+	if apiVersion >= 1 {
+		// Throttle time (4 bytes, 0 = no throttling)
+		result = append(result, 0, 0, 0, 0)
+	}
 
 	// Error code (2 bytes)
 	errorCodeBytes := make([]byte, 2)
@@ -847,14 +850,14 @@ func (h *Handler) buildSyncGroupResponse(response SyncGroupResponse) []byte {
 	return result
 }
 
-func (h *Handler) buildSyncGroupErrorResponse(correlationID uint32, errorCode int16) []byte {
+func (h *Handler) buildSyncGroupErrorResponse(correlationID uint32, errorCode int16, apiVersion uint16) []byte {
 	response := SyncGroupResponse{
 		CorrelationID: correlationID,
 		ErrorCode:     errorCode,
 		Assignment:    []byte{},
 	}
 
-	return h.buildSyncGroupResponse(response)
+	return h.buildSyncGroupResponse(response, apiVersion)
 }
 
 func (h *Handler) processGroupAssignments(group *consumer.ConsumerGroup, assignments []GroupAssignment) error {
