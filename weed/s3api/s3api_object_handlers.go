@@ -441,15 +441,12 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 		} else {
 			// Request for latest version
 			glog.V(2).Infof("HeadObject: requesting latest version for %s%s", bucket, object)
-			glog.V(0).Infof("CI-DEBUG: HeadObject: requesting latest version for %s/%s", bucket, object)
 			entry, err = s3a.getLatestObjectVersion(bucket, object)
 			if err != nil {
 				glog.Errorf("Failed to get latest version: %v", err)
-				glog.V(0).Infof("CI-DEBUG: HeadObject: FAILED to get latest version for %s/%s: %v", bucket, object, err)
 				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 				return
 			}
-			glog.V(0).Infof("CI-DEBUG: HeadObject: successfully got latest version for %s/%s", bucket, object)
 			if entry.Extended != nil {
 				if versionIdBytes, exists := entry.Extended[s3_constants.ExtVersionIdKey]; exists {
 					targetVersionId = string(versionIdBytes)

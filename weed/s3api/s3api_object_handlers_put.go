@@ -65,7 +65,6 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("PutObjectHandler %s %s", bucket, object)
-	glog.V(0).Infof("CI-DEBUG: PutObjectHandler: starting PUT for %s/%s (raw object path: '%s')", bucket, object, object)
 
 	_, err := validateContentMd5(r.Header)
 	if err != nil {
@@ -134,7 +133,6 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 		versioningEnabled := (versioningState == s3_constants.VersioningEnabled)
 		versioningConfigured := (versioningState != "")
-		glog.V(0).Infof("CI-DEBUG: PutObjectHandler: versioning state for %s/%s is '%s' (enabled: %v, configured: %v)", bucket, object, versioningState, versioningEnabled, versioningConfigured)
 
 		// Validate object lock headers before processing
 		if err := s3a.validateObjectLockHeaders(r, versioningEnabled); err != nil {
@@ -156,7 +154,6 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 		if versioningState == s3_constants.VersioningEnabled {
 			// Handle enabled versioning - create new versions with real version IDs
-			glog.V(0).Infof("CI-DEBUG: PutObjectHandler: versioning ENABLED for %s/%s - calling putVersionedObject", bucket, object)
 			versionId, etag, errCode := s3a.putVersionedObject(r, bucket, object, dataReader, objectContentType)
 			if errCode != s3err.ErrNone {
 				s3err.WriteErrorResponse(w, r, errCode)
@@ -626,15 +623,11 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 	}
 
 	// Update the .versions directory metadata to indicate this is the latest version
-	glog.V(0).Infof("CI-DEBUG: putVersionedObject: about to update latest version metadata for %s/%s version %s (normalized: %s)", bucket, object, versionId, normalizedObject)
 	err = s3a.updateLatestVersionInDirectory(bucket, normalizedObject, versionId, versionFileName)
 	if err != nil {
 		glog.Errorf("putVersionedObject: failed to update latest version in directory: %v", err)
-		glog.V(0).Infof("CI-DEBUG: putVersionedObject: FAILED to update latest version metadata for %s/%s version %s: %v", bucket, object, versionId, err)
 		return "", "", s3err.ErrInternalError
 	}
-
-	glog.V(0).Infof("CI-DEBUG: putVersionedObject: successfully updated latest version metadata for %s/%s version %s (normalized: %s)", bucket, object, versionId, normalizedObject)
 	glog.V(2).Infof("putVersionedObject: successfully created version %s for %s/%s (normalized: %s)", versionId, bucket, object, normalizedObject)
 	return versionId, etag, s3err.ErrNone
 }
@@ -643,8 +636,6 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 func (s3a *S3ApiServer) updateLatestVersionInDirectory(bucket, object, versionId, versionFileName string) error {
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
 	versionsObjectPath := object + ".versions"
-
-	glog.V(0).Infof("CI-DEBUG: updateLatestVersionInDirectory: starting update for %s/%s version %s file %s", bucket, object, versionId, versionFileName)
 
 	// Get the current .versions directory entry with retry logic for filer consistency
 	var versionsEntry *filer_pb.Entry
@@ -656,23 +647,17 @@ func (s3a *S3ApiServer) updateLatestVersionInDirectory(bucket, object, versionId
 			break
 		}
 
-		glog.V(0).Infof("CI-DEBUG: updateLatestVersionInDirectory: attempt %d/%d failed to get .versions entry for %s/%s: %v", attempt, maxRetries, bucket, object, err)
-
 		if attempt < maxRetries {
 			// Exponential backoff with higher base: 100ms, 200ms, 400ms, 800ms, 1600ms, 3200ms, 6400ms
 			delay := time.Millisecond * time.Duration(100*(1<<(attempt-1)))
-			glog.V(0).Infof("CI-DEBUG: updateLatestVersionInDirectory: sleeping %v before retry %d", delay, attempt+1)
 			time.Sleep(delay)
 		}
 	}
 
 	if err != nil {
 		glog.Errorf("updateLatestVersionInDirectory: failed to get .versions directory for %s/%s after %d attempts: %v", bucket, object, maxRetries, err)
-		glog.V(0).Infof("CI-DEBUG: updateLatestVersionInDirectory: FAILED to get .versions entry for %s/%s after %d attempts (total delay ~%dms): %v", bucket, object, maxRetries, (100*(1<<maxRetries-1) - 100), err)
 		return fmt.Errorf("failed to get .versions directory after %d attempts: %w", maxRetries, err)
 	}
-
-	glog.V(0).Infof("CI-DEBUG: updateLatestVersionInDirectory: got .versions entry for %s/%s, updating metadata", bucket, object)
 
 	// Add or update the latest version metadata
 	if versionsEntry.Extended == nil {
@@ -689,11 +674,9 @@ func (s3a *S3ApiServer) updateLatestVersionInDirectory(bucket, object, versionId
 	})
 	if err != nil {
 		glog.Errorf("updateLatestVersionInDirectory: failed to update .versions directory metadata: %v", err)
-		glog.V(0).Infof("CI-DEBUG: updateLatestVersionInDirectory: FAILED to save .versions metadata for %s/%s: %v", bucket, object, err)
 		return fmt.Errorf("failed to update .versions directory metadata: %w", err)
 	}
 
-	glog.V(0).Infof("CI-DEBUG: updateLatestVersionInDirectory: successfully saved .versions metadata for %s/%s version %s", bucket, object, versionId)
 	return nil
 }
 
