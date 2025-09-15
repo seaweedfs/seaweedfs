@@ -119,8 +119,8 @@ func (h *Handler) handleOffsetCommit(correlationID uint32, requestBody []byte) (
 	// Update group's last activity
 	group.LastActivity = time.Now()
 
-	// Generation handling: tolerate mismatch and accept commit
-	_ = req.GenerationID // accept commits regardless of generation
+	// Require matching generation to store commits; return IllegalGeneration otherwise
+	generationMatches := (req.GenerationID == group.Generation)
 
 	// Process offset commits
 	resp := OffsetCommitResponse{
@@ -145,17 +145,20 @@ func (h *Handler) handleOffsetCommit(correlationID uint32, requestBody []byte) (
 
 			// Commit offset using SMQ storage if available; fallback to memory
 			var errCode int16 = ErrorCodeNone
-			if h.seaweedMQHandler != nil && h.smqOffsetStorage != nil {
-				if err := h.commitOffsetToSMQ(key, p.Offset, p.Metadata); err != nil {
-					errCode = ErrorCodeOffsetMetadataTooLarge
+			if generationMatches {
+				if h.seaweedMQHandler != nil && h.smqOffsetStorage != nil {
+					if err := h.commitOffsetToSMQ(key, p.Offset, p.Metadata); err != nil {
+						errCode = ErrorCodeOffsetMetadataTooLarge
+					}
+				} else {
+					if err := h.commitOffset(group, t.Name, p.Index, p.Offset, p.Metadata); err != nil {
+						errCode = ErrorCodeOffsetMetadataTooLarge
+					}
 				}
 			} else {
-				if err := h.commitOffset(group, t.Name, p.Index, p.Offset, p.Metadata); err != nil {
-					errCode = ErrorCodeOffsetMetadataTooLarge
-				}
+				// Do not store commit if generation mismatch
+				errCode = 22 // IllegalGeneration
 			}
-
-			// Do not return IllegalGeneration; commit has been stored above
 
 			topicResp.Partitions = append(topicResp.Partitions, OffsetCommitPartitionResponse{
 				Index:     p.Index,
@@ -347,26 +350,46 @@ func (h *Handler) parseOffsetCommitRequest(data []byte) (*OffsetCommitRequest, e
 			committedOffset := int64(binary.BigEndian.Uint64(data[offset : offset+8]))
 			offset += 8
 
-			// Parse commit timestamp (8 bytes) for v2
-			if len(data) < offset+8 {
-				break
-			}
-			_ = int64(binary.BigEndian.Uint64(data[offset : offset+8]))
-			offset += 8
-
-			// Parse metadata (nullable string)
-			if len(data) < offset+2 {
-				break
-			}
-			metadataLength := int16(binary.BigEndian.Uint16(data[offset : offset+2]))
-			offset += 2
-
+			// After offset, tolerate either 8-byte commit timestamp (v2) or 4-byte leader_epoch (older tests)
+			preMetaOffset := offset
 			var metadata string
-			if metadataLength == -1 {
-				metadata = ""
-			} else if metadataLength >= 0 && len(data) >= offset+int(metadataLength) {
-				metadata = string(data[offset : offset+int(metadataLength)])
-				offset += int(metadataLength)
+			usedTimestampPath := false
+			if len(data) >= offset+8 {
+				// Try timestamp path
+				_ = int64(binary.BigEndian.Uint64(data[offset : offset+8]))
+				offset += 8
+				if len(data) >= offset+2 {
+					metadataLength := int16(binary.BigEndian.Uint16(data[offset : offset+2]))
+					offset += 2
+					if metadataLength == -1 {
+						metadata = ""
+						usedTimestampPath = true
+					} else if metadataLength >= 0 && len(data) >= offset+int(metadataLength) {
+						metadata = string(data[offset : offset+int(metadataLength)])
+						offset += int(metadataLength)
+						usedTimestampPath = true
+					}
+				}
+			}
+			if !usedTimestampPath {
+				// Fallback to leader_epoch (4 bytes) then metadata
+				offset = preMetaOffset
+				if len(data) < offset+4 {
+					break
+				}
+				_ = int32(binary.BigEndian.Uint32(data[offset : offset+4])) // leader_epoch ignored
+				offset += 4
+				if len(data) < offset+2 {
+					break
+				}
+				metadataLength := int16(binary.BigEndian.Uint16(data[offset : offset+2]))
+				offset += 2
+				if metadataLength == -1 {
+					metadata = ""
+				} else if metadataLength >= 0 && len(data) >= offset+int(metadataLength) {
+					metadata = string(data[offset : offset+int(metadataLength)])
+					offset += int(metadataLength)
+				}
 			}
 
 			partitions = append(partitions, OffsetCommitPartition{
