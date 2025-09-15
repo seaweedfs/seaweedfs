@@ -49,21 +49,22 @@ type MasterOptions struct {
 	volumePreallocate          *bool
 	maxParallelVacuumPerServer *int
 	// pulseSeconds       *int
-	defaultReplication *string
-	garbageThreshold   *float64
-	whiteList          *string
-	disableHttp        *bool
-	metricsAddress     *string
-	metricsIntervalSec *int
-	raftResumeState    *bool
-	metricsHttpPort    *int
-	metricsHttpIp      *string
-	heartbeatInterval  *time.Duration
-	electionTimeout    *time.Duration
-	raftHashicorp      *bool
-	raftBootstrap      *bool
-	telemetryUrl       *string
-	telemetryEnabled   *bool
+	defaultReplication     *string
+	garbageThreshold       *float64
+	whiteList              *string
+	disableHttp            *bool
+	metricsAddress         *string
+	metricsIntervalSec     *int
+	raftResumeState        *bool
+	metricsHttpPort        *int
+	metricsHttpIp          *string
+	heartbeatInterval      *time.Duration
+	electionTimeout        *time.Duration
+	raftHashicorp          *bool
+	raftBootstrap          *bool
+	telemetryUrl           *string
+	telemetryEnabled       *bool
+	intervalToCollectStats *time.Duration
 }
 
 func init() {
@@ -93,6 +94,7 @@ func init() {
 	m.raftBootstrap = cmdMaster.Flag.Bool("raftBootstrap", false, "Whether to bootstrap the Raft cluster")
 	m.telemetryUrl = cmdMaster.Flag.String("telemetry.url", "https://telemetry.seaweedfs.com/api/collect", "telemetry server URL to send usage statistics")
 	m.telemetryEnabled = cmdMaster.Flag.Bool("telemetry", false, "enable telemetry reporting")
+	m.intervalToCollectStats = cmdMaster.Flag.Duration("intervalToCollectStats", time.Second*120, "interval to collect s3 stats")
 }
 
 var cmdMaster = &Command{
@@ -244,6 +246,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	}
 
 	go ms.MasterClient.KeepConnectedToMaster(context.Background())
+	go weed_server.CollectCollectionsStats(context.Background(), ms, *masterOption.intervalToCollectStats)
 
 	// start http server
 	var (

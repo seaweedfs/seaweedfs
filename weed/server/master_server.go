@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/telemetry"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
@@ -57,7 +58,7 @@ type MasterOption struct {
 	IsFollower              bool
 	TelemetryUrl            string
 	TelemetryEnabled        bool
-	VolumeGrowthDisabled      bool
+	VolumeGrowthDisabled    bool
 }
 
 type MasterServer struct {
@@ -433,4 +434,51 @@ func (ms *MasterServer) Reload() {
 	ms.guard.UpdateWhiteList(append(ms.option.WhiteList,
 		util.StringSplit(v.GetString("guard.white_list"), ",")...),
 	)
+}
+
+func CollectCollectionsStats(ctx context.Context, ms *MasterServer, intervalToCollect time.Duration) {
+	ticker := time.NewTicker(intervalToCollect)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			volumeList, err := ms.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+			if err != nil {
+				glog.Errorf("collect volume list: %v", err)
+			}
+
+			collectionInfos := make(map[string]*shell.CollectionInfo)
+			for _, dc := range volumeList.TopologyInfo.DataCenterInfos {
+				for _, r := range dc.RackInfos {
+					for _, dn := range r.DataNodeInfos {
+						for _, diskInfo := range dn.DiskInfos {
+							for _, vif := range diskInfo.VolumeInfos {
+								c := vif.Collection
+								cif, found := collectionInfos[c]
+								if !found {
+									cif = &shell.CollectionInfo{}
+									collectionInfos[c] = cif
+								}
+								replicaPlacement, _ := super_block.NewReplicaPlacementFromByte(byte(vif.ReplicaPlacement))
+								copyCount := float64(replicaPlacement.GetCopyCount())
+								cif.Size += float64(vif.Size) / copyCount
+								cif.DeleteCount += float64(vif.DeleteCount) / copyCount
+								cif.FileCount += float64(vif.FileCount) / copyCount
+								cif.DeletedByteCount += float64(vif.DeletedByteCount) / copyCount
+								cif.VolumeCount++
+							}
+						}
+					}
+				}
+			}
+
+			for k, v := range collectionInfos {
+				stats.S3BucketFileCount.WithLabelValues(k).Set(v.FileCount - v.DeleteCount)
+				stats.S3BucketSize.WithLabelValues(k).Set(v.Size - v.DeletedByteCount)
+			}
+		}
+	}
 }

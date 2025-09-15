@@ -382,6 +382,22 @@ var (
 			Name:      "uploaded_objects",
 			Help:      "Number of objects uploaded in each bucket.",
 		}, []string{"bucket"})
+
+	S3BucketFileCount = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "s3",
+			Name:      "bucket_file_count",
+			Help:      "Number files in bucket",
+		}, []string{"bucket"})
+
+	S3BucketSize = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "s3",
+			Name:      "bucket_size",
+			Help:      "Bucket size in bytes",
+		}, []string{"bucket"})
 )
 
 func init() {
@@ -433,6 +449,8 @@ func init() {
 	Gather.MustRegister(S3BucketTrafficSentBytesCounter)
 	Gather.MustRegister(S3DeletedObjectsCounter)
 	Gather.MustRegister(S3UploadedObjectsCounter)
+	Gather.MustRegister(S3BucketFileCount)
+	Gather.MustRegister(S3BucketSize)
 
 	go bucketMetricTTLControl()
 }
