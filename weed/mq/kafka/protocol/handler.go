@@ -592,10 +592,9 @@ func (h *Handler) handleApiVersions(correlationID uint32, apiVersion uint16) ([]
 	response = append(response, 0, 3)  // max version 3
 
 	// API Key 3 (Metadata): api_key(2) + min_version(2) + max_version(2)
-	// TESTING: Limit to v6 to avoid v7 compatibility issues with kafka-go
 	response = append(response, 0, 3) // API key 3
 	response = append(response, 0, 0) // min version 0
-	response = append(response, 0, 6) // max version 6 (was 7)
+	response = append(response, 0, 7) // max version 7
 
 	// API Key 2 (ListOffsets): limit to v2 (implemented and tested)
 	response = append(response, 0, 2) // API key 2
