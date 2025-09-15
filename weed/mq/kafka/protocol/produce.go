@@ -22,14 +22,6 @@ func (h *Handler) handleProduce(correlationID uint32, apiVersion uint16, request
 
 func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
 	// DEBUG: Show version being handled
-	fmt.Printf("DEBUG: Handling Produce v%d request\n", apiVersion)
-
-	// DEBUG: Hex dump first 50 bytes to understand actual request format
-	dumpLen := len(requestBody)
-	if dumpLen > 50 {
-		dumpLen = 50
-	}
-	fmt.Printf("DEBUG: Produce request hex dump (first %d bytes): %x\n", dumpLen, requestBody[:dumpLen])
 
 	// Parse Produce v0/v1 request
 	// Request format: client_id + acks(2) + timeout(4) + topics_array
@@ -40,7 +32,6 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 
 	// Skip client_id
 	clientIDSize := binary.BigEndian.Uint16(requestBody[0:2])
-	fmt.Printf("DEBUG: Client ID size: %d\n", clientIDSize)
 
 	if len(requestBody) < 2+int(clientIDSize) {
 		return nil, fmt.Errorf("Produce request client_id too short")
@@ -48,7 +39,6 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 
 	clientID := string(requestBody[2 : 2+int(clientIDSize)])
 	offset := 2 + int(clientIDSize)
-	fmt.Printf("DEBUG: Client ID: '%s', offset after client_id: %d\n", clientID, offset)
 
 	if len(requestBody) < offset+10 { // acks(2) + timeout(4) + topics_count(4)
 		return nil, fmt.Errorf("Produce request missing data")
@@ -57,16 +47,13 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 	// Parse acks and timeout
 	acks := int16(binary.BigEndian.Uint16(requestBody[offset : offset+2]))
 	offset += 2
-	fmt.Printf("DEBUG: Acks: %d, offset after acks: %d\n", acks, offset)
 
 	timeout := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 	offset += 4
-	fmt.Printf("DEBUG: Timeout: %d, offset after timeout: %d\n", timeout, offset)
 	_ = timeout // unused for now
 
 	topicsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 	offset += 4
-	fmt.Printf("DEBUG: Topics count: %d, offset after topics_count: %d\n", topicsCount, offset)
 
 	response := make([]byte, 0, 1024)
 
@@ -81,7 +68,6 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 	response = append(response, topicsCountBytes...)
 
 	// Process each topic
-	fmt.Printf("DEBUG: Produce v%d - topics count: %d\n", apiVersion, topicsCount)
 	for i := uint32(0); i < topicsCount && offset < len(requestBody); i++ {
 		if len(requestBody) < offset+2 {
 			break
@@ -102,23 +88,18 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 		partitionsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 		offset += 4
 
-		fmt.Printf("DEBUG: Produce request (%d partitions)\n", partitionsCount)
 
 		// Check if topic exists, auto-create if it doesn't (simulates auto.create.topics.enable=true)
 		topicExists := h.seaweedMQHandler.TopicExists(topicName)
 
 		// Debug: show all existing topics
 		existingTopics := h.seaweedMQHandler.ListTopics()
-		fmt.Printf("DEBUG: Topic exists check -> %v (existing topics count: %d)\n", topicExists, len(existingTopics))
 		if !topicExists {
-			fmt.Printf("DEBUG: Auto-creating topic during Produce\n")
 			if err := h.seaweedMQHandler.CreateTopic(topicName, 1); err != nil {
-				fmt.Printf("DEBUG: Failed to auto-create topic: %v\n", err)
 			} else {
 				// Initialize ledger for partition 0
 				h.GetOrCreateLedger(topicName, 0)
 				topicExists = true // CRITICAL FIX: Update the flag after creating the topic
-				fmt.Printf("DEBUG: Topic auto-created successfully, topicExists = %v\n", topicExists)
 			}
 		}
 
@@ -159,17 +140,12 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 			var baseOffset int64 = 0
 			currentTime := time.Now().UnixNano()
 
-			fmt.Printf("DEBUG: Processing partition %d (topicExists=%v)\n", partitionID, topicExists)
-			fmt.Printf("DEBUG: Record set size: %d bytes\n", recordSetSize)
 
 			if !topicExists {
-				fmt.Printf("DEBUG: ERROR - Topic not found, returning UNKNOWN_TOPIC_OR_PARTITION\n")
 				errorCode = 3 // UNKNOWN_TOPIC_OR_PARTITION
 			} else {
-				fmt.Printf("DEBUG: SUCCESS - Topic found, processing record set (size=%d)\n", recordSetSize)
 				// Process the record set
 				recordCount, totalSize, parseErr := h.parseRecordSet(recordSetData)
-				fmt.Printf("DEBUG: parseRecordSet result - recordCount: %d, totalSize: %d, parseErr: %v\n", recordCount, totalSize, parseErr)
 				if parseErr != nil {
 					errorCode = 42 // INVALID_RECORD
 				} else if recordCount > 0 {
@@ -245,10 +221,8 @@ func (h *Handler) parseRecordSet(recordSetData []byte) (recordCount int32, total
 		if err != nil {
 			return 0, 0, fmt.Errorf("failed to parse record batch: %w", err)
 		}
-		fmt.Printf("DEBUG: Record batch parsed without CRC validation (codec: %s)\n",
 			batch.GetCompressionCodec())
 	} else {
-		fmt.Printf("DEBUG: Record batch parsed successfully with CRC validation (codec: %s)\n",
 			batch.GetCompressionCodec())
 	}
 
@@ -397,10 +371,8 @@ func (h *Handler) extractAllRecords(recordSetData []byte) []struct{ Key, Value [
 
 // extractFirstRecord extracts the first record from a Kafka record batch
 func (h *Handler) extractFirstRecord(recordSetData []byte) ([]byte, []byte) {
-	fmt.Printf("DEBUG: extractFirstRecord - parsing %d bytes\n", len(recordSetData))
 
 	if len(recordSetData) < 61 {
-		fmt.Printf("DEBUG: Record batch too short (%d bytes), returning placeholder\n", len(recordSetData))
 		// Fallback to placeholder
 		key := []byte("kafka-key")
 		value := fmt.Sprintf("kafka-message-data-%d", time.Now().UnixNano())
@@ -418,16 +390,13 @@ func (h *Handler) extractFirstRecord(recordSetData []byte) ([]byte, []byte) {
 	batchLength := int32(binary.BigEndian.Uint32(recordSetData[offset:]))
 	offset += 4 // batch_length
 
-	fmt.Printf("DEBUG: Record batch length: %d\n", batchLength)
 
 	offset += 4 // skip partition_leader_epoch
 	magic := recordSetData[offset]
 	offset += 1 // magic byte
 
-	fmt.Printf("DEBUG: Magic byte: %d\n", magic)
 
 	if magic != 2 {
-		fmt.Printf("DEBUG: Unsupported magic byte %d, returning placeholder\n", magic)
 		// Fallback for older formats
 		key := []byte("kafka-key")
 		value := fmt.Sprintf("kafka-message-data-%d", time.Now().UnixNano())
@@ -446,10 +415,8 @@ func (h *Handler) extractFirstRecord(recordSetData []byte) ([]byte, []byte) {
 	recordsCount := int32(binary.BigEndian.Uint32(recordSetData[offset:]))
 	offset += 4 // records_count
 
-	fmt.Printf("DEBUG: Records count: %d\n", recordsCount)
 
 	if recordsCount == 0 {
-		fmt.Printf("DEBUG: No records in batch, returning placeholder\n")
 		key := []byte("kafka-key")
 		value := fmt.Sprintf("kafka-message-data-%d", time.Now().UnixNano())
 		return key, []byte(value)
@@ -457,7 +424,6 @@ func (h *Handler) extractFirstRecord(recordSetData []byte) ([]byte, []byte) {
 
 	// Parse first record
 	if offset >= len(recordSetData) {
-		fmt.Printf("DEBUG: Record data truncated at offset %d, returning placeholder\n", offset)
 		key := []byte("kafka-key")
 		value := fmt.Sprintf("kafka-message-data-%d", time.Now().UnixNano())
 		return key, []byte(value)
@@ -466,17 +432,14 @@ func (h *Handler) extractFirstRecord(recordSetData []byte) ([]byte, []byte) {
 	// Read record length (varint)
 	recordLength, varintLen := decodeVarint(recordSetData[offset:])
 	if varintLen == 0 {
-		fmt.Printf("DEBUG: Failed to decode record length varint, returning placeholder\n")
 		key := []byte("kafka-key")
 		value := fmt.Sprintf("kafka-message-data-%d", time.Now().UnixNano())
 		return key, []byte(value)
 	}
 	offset += varintLen
 
-	fmt.Printf("DEBUG: First record length: %d\n", recordLength)
 
 	if offset+int(recordLength) > len(recordSetData) {
-		fmt.Printf("DEBUG: Record data extends beyond batch, returning placeholder\n")
 		key := []byte("kafka-key")
 		value := fmt.Sprintf("kafka-message-data-%d", time.Now().UnixNano())
 		return key, []byte(value)
@@ -491,7 +454,6 @@ func (h *Handler) extractFirstRecord(recordSetData []byte) ([]byte, []byte) {
 	// Skip timestamp_delta (varint)
 	_, varintLen = decodeVarint(recordData[recordOffset:])
 	if varintLen == 0 {
-		fmt.Printf("DEBUG: Failed to decode timestamp delta, returning placeholder\n")
 		key := []byte("kafka-key")
 		value := fmt.Sprintf("kafka-message-data-%d", time.Now().UnixNano())
 		return key, []byte(value)
@@ -501,7 +463,6 @@ func (h *Handler) extractFirstRecord(recordSetData []byte) ([]byte, []byte) {
 	// Skip offset_delta (varint)
 	_, varintLen = decodeVarint(recordData[recordOffset:])
 	if varintLen == 0 {
-		fmt.Printf("DEBUG: Failed to decode offset delta, returning placeholder\n")
 		key := []byte("kafka-key")
 		value := fmt.Sprintf("kafka-message-data-%d", time.Now().UnixNano())
 		return key, []byte(value)
@@ -511,7 +472,6 @@ func (h *Handler) extractFirstRecord(recordSetData []byte) ([]byte, []byte) {
 	// Read key length and key
 	keyLength, varintLen := decodeVarint(recordData[recordOffset:])
 	if varintLen == 0 {
-		fmt.Printf("DEBUG: Failed to decode key length, returning placeholder\n")
 		key := []byte("kafka-key")
 		value := fmt.Sprintf("kafka-message-data-%d", time.Now().UnixNano())
 		return key, []byte(value)
@@ -521,26 +481,21 @@ func (h *Handler) extractFirstRecord(recordSetData []byte) ([]byte, []byte) {
 	var key []byte
 	if keyLength == -1 {
 		key = nil // null key
-		fmt.Printf("DEBUG: Record has null key\n")
 	} else if keyLength == 0 {
 		key = []byte{} // empty key
-		fmt.Printf("DEBUG: Record has empty key\n")
 	} else {
 		if recordOffset+int(keyLength) > len(recordData) {
-			fmt.Printf("DEBUG: Key extends beyond record, returning placeholder\n")
 			key = []byte("kafka-key")
 			value := fmt.Sprintf("kafka-message-data-%d", time.Now().UnixNano())
 			return key, []byte(value)
 		}
 		key = recordData[recordOffset : recordOffset+int(keyLength)]
 		recordOffset += int(keyLength)
-		fmt.Printf("DEBUG: Extracted key: %s\n", string(key))
 	}
 
 	// Read value length and value
 	valueLength, varintLen := decodeVarint(recordData[recordOffset:])
 	if varintLen == 0 {
-		fmt.Printf("DEBUG: Failed to decode value length, returning placeholder\n")
 		if key == nil {
 			key = []byte("kafka-key")
 		}
@@ -552,13 +507,10 @@ func (h *Handler) extractFirstRecord(recordSetData []byte) ([]byte, []byte) {
 	var value []byte
 	if valueLength == -1 {
 		value = nil // null value
-		fmt.Printf("DEBUG: Record has null value\n")
 	} else if valueLength == 0 {
 		value = []byte{} // empty value
-		fmt.Printf("DEBUG: Record has empty value\n")
 	} else {
 		if recordOffset+int(valueLength) > len(recordData) {
-			fmt.Printf("DEBUG: Value extends beyond record, returning placeholder\n")
 			if key == nil {
 				key = []byte("kafka-key")
 			}
@@ -566,7 +518,6 @@ func (h *Handler) extractFirstRecord(recordSetData []byte) ([]byte, []byte) {
 			return key, []byte(value)
 		}
 		value = recordData[recordOffset : recordOffset+int(valueLength)]
-		fmt.Printf("DEBUG: Extracted value: %s\n", string(value))
 	}
 
 	if key == nil {
@@ -576,7 +527,6 @@ func (h *Handler) extractFirstRecord(recordSetData []byte) ([]byte, []byte) {
 		value = []byte{} // convert null value to empty for consistency
 	}
 
-	fmt.Printf("DEBUG: Successfully extracted record - key: %s, value: %s\n", string(key), string(value))
 	return key, value
 }
 
@@ -613,15 +563,12 @@ func decodeVarint(data []byte) (int64, int) {
 
 // handleProduceV2Plus handles Produce API v2-v7 (Kafka 0.11+)
 func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
-	fmt.Printf("DEBUG: Handling Produce v%d request\n", apiVersion)
 
 	// DEBUG: Hex dump first 100 bytes to understand actual request format
 	dumpLen := len(requestBody)
 	if dumpLen > 100 {
 		dumpLen = 100
 	}
-	fmt.Printf("DEBUG: Produce v%d request hex dump (first %d bytes): %x\n", apiVersion, dumpLen, requestBody[:dumpLen])
-	fmt.Printf("DEBUG: Produce v%d request total length: %d bytes\n", apiVersion, len(requestBody))
 
 	// For now, use simplified parsing similar to v0/v1 but handle v2+ response format
 	// In v2+, the main differences are:
@@ -645,14 +592,12 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 	if txIDLen == -1 {
 		// null transactional_id
 		transactionalID = "null"
-		fmt.Printf("DEBUG: Produce v%d - transactional_id: null\n", apiVersion)
 	} else if txIDLen >= 0 {
 		if len(requestBody) < offset+int(txIDLen) {
 			return nil, fmt.Errorf("Produce v%d request transactional_id too short", apiVersion)
 		}
 		transactionalID = string(requestBody[offset : offset+int(txIDLen)])
 		offset += int(txIDLen)
-		fmt.Printf("DEBUG: Produce v%d - transactional_id: %s\n", apiVersion, transactionalID)
 	}
 
 	// Parse acks (INT16) and timeout_ms (INT32)
@@ -665,14 +610,11 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 	timeout := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 	offset += 4
 
-	fmt.Printf("DEBUG: Produce v%d - acks: %d, timeout: %d\n", apiVersion, acks, timeout)
 
 	// Remember if this is fire-and-forget mode
 	isFireAndForget := acks == 0
 	if isFireAndForget {
-		fmt.Printf("DEBUG: Produce v%d - acks=0, will process but return empty response (fire-and-forget)\n", apiVersion)
 	} else {
-		fmt.Printf("DEBUG: Produce v%d - acks=%d, will process and return response\n", apiVersion, acks)
 	}
 
 	topicsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
@@ -683,7 +625,6 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 		return nil, fmt.Errorf("Produce v%d request has implausible topics count: %d", apiVersion, topicsCount)
 	}
 
-	fmt.Printf("DEBUG: Produce v%d - topics count: %d\n", apiVersion, topicsCount)
 
 	// Build response
 	response := make([]byte, 0, 256)
@@ -722,7 +663,6 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 		partitionsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 		offset += 4
 
-		fmt.Printf("DEBUG: Produce v%d - topic: %s, partitions: %d\n", apiVersion, topicName, partitionsCount)
 
 		// Response: topic name (STRING: 2 bytes length + data)
 		response = append(response, byte(topicNameSize>>8), byte(topicNameSize))
@@ -749,7 +689,6 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 			recordSetData := requestBody[offset : offset+int(recordSetSize)]
 			offset += int(recordSetSize)
 
-			fmt.Printf("DEBUG: Produce v%d - partition: %d, record_set_size: %d\n", apiVersion, partitionID, recordSetSize)
 
 			// Process the record set and store in ledger
 			var errorCode uint16 = 0
@@ -764,7 +703,6 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 			} else {
 				// Process the record set (lenient parsing)
 				recordCount, totalSize, parseErr := h.parseRecordSet(recordSetData)
-				fmt.Printf("DEBUG: Produce v%d parseRecordSet result - recordCount: %d, totalSize: %d, parseErr: %v\n", apiVersion, recordCount, totalSize, parseErr)
 				if parseErr != nil {
 					errorCode = 42 // INVALID_RECORD
 				} else if recordCount > 0 {
@@ -827,7 +765,6 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 
 	// For fire-and-forget mode, return empty response after processing
 	if isFireAndForget {
-		fmt.Printf("DEBUG: Produce v%d - acks=0, returning empty response after processing\n", apiVersion)
 		return []byte{}, nil
 	}
 
@@ -836,9 +773,7 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 		response = append(response, 0, 0, 0, 0)
 	}
 
-	fmt.Printf("DEBUG: Produce v%d response: %d bytes (acks=%d)\n", apiVersion, len(response), acks)
 	if len(response) < 20 {
-		fmt.Printf("DEBUG: Produce v%d response hex: %x\n", apiVersion, response)
 	}
 	return response, nil
 }
@@ -852,11 +787,9 @@ func (h *Handler) processSchematizedMessage(topicName string, partitionID int32,
 
 	// Check if message is schematized
 	if !h.schemaManager.IsSchematized(messageBytes) {
-		fmt.Printf("DEBUG: Message is not schematized, skipping schema processing\n")
 		return nil // Not schematized, continue with normal processing
 	}
 
-	fmt.Printf("DEBUG: Processing schematized message for topic %s, partition %d\n", topicName, partitionID)
 
 	// Decode the message
 	decodedMsg, err := h.schemaManager.DecodeMessage(messageBytes)
@@ -867,7 +800,6 @@ func (h *Handler) processSchematizedMessage(topicName string, partitionID int32,
 		return fmt.Errorf("schema decoding failed: %w", err)
 	}
 
-	fmt.Printf("DEBUG: Successfully decoded message with schema ID %d, format %s, subject %s\n",
 		decodedMsg.SchemaID, decodedMsg.SchemaFormat, decodedMsg.Subject)
 
 	// Store the decoded message using SeaweedMQ
@@ -887,7 +819,6 @@ func (h *Handler) storeDecodedMessage(topicName string, partitionID int32, decod
 			return fmt.Errorf("failed to publish to mq.broker: %w", err)
 		}
 
-		fmt.Printf("DEBUG: Successfully published decoded message to mq.broker - topic: %s, partition: %d, schema: %d\n",
 			topicName, partitionID, decodedMsg.SchemaID)
 		return nil
 	}
@@ -903,7 +834,6 @@ func (h *Handler) storeDecodedMessage(topicName string, partitionID int32, decod
 			return fmt.Errorf("failed to produce to SeaweedMQ: %w", err)
 		}
 
-		fmt.Printf("DEBUG: Successfully stored message to SeaweedMQ - topic: %s, partition: %d, schema: %d\n",
 			topicName, partitionID, decodedMsg.SchemaID)
 		return nil
 	}
@@ -934,7 +864,6 @@ func (h *Handler) validateSchemaCompatibility(topicName string, messageBytes []b
 		return nil // Not schematized, no validation needed
 	}
 
-	fmt.Printf("DEBUG: Validating schema compatibility - ID: %d, Format: %s, Topic: %s\n",
 		schemaID, format, topicName)
 
 	// TODO: Implement topic-specific schema validation

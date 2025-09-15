@@ -18,7 +18,7 @@ func (h *Handler) handleFindCoordinator(correlationID uint32, apiVersion uint16,
 
 func (h *Handler) handleFindCoordinatorV0(correlationID uint32, requestBody []byte) ([]byte, error) {
 	// Parse FindCoordinator v0 request: Key (STRING) only
-	
+
 	// DEBUG: Hex dump the request to understand format
 	dumpLen := len(requestBody)
 	if dumpLen > 50 {
