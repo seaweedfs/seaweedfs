@@ -791,23 +791,23 @@ func (s3a *S3ApiServer) getLatestObjectVersion(bucket, object string) (*filer_pb
 		if err == nil {
 			break
 		}
-		
+
 		glog.V(0).Infof("CI-DEBUG: getLatestObjectVersion: attempt %d/%d failed to get .versions directory for %s/%s: %v", attempt, maxRetries, bucket, object, err)
-		
+
 		if attempt < maxRetries {
 			// Exponential backoff with higher base: 100ms, 200ms, 400ms, 800ms, 1600ms, 3200ms, 6400ms
-			delay := time.Millisecond * time.Duration(100 * (1 << (attempt - 1)))
+			delay := time.Millisecond * time.Duration(100*(1<<(attempt-1)))
 			glog.V(0).Infof("CI-DEBUG: getLatestObjectVersion: sleeping %v before retry %d", delay, attempt+1)
 			time.Sleep(delay)
 		}
 	}
-	
+
 	if err != nil {
 		// .versions directory doesn't exist - this can happen for objects that existed
 		// before versioning was enabled on the bucket. Fall back to checking for a
 		// regular (non-versioned) object file.
 		glog.V(1).Infof("getLatestObjectVersion: no .versions directory for %s%s after %d attempts (error: %v), checking for pre-versioning object", bucket, object, maxRetries, err)
-		glog.V(0).Infof("CI-DEBUG: getLatestObjectVersion: no .versions directory for %s/%s after %d attempts (total delay ~%dms, error: %v), falling back to pre-versioning", bucket, object, maxRetries, (100*(1<<maxRetries-1)-100), err)
+		glog.V(0).Infof("CI-DEBUG: getLatestObjectVersion: no .versions directory for %s/%s after %d attempts (total delay ~%dms, error: %v), falling back to pre-versioning", bucket, object, maxRetries, (100*(1<<maxRetries-1) - 100), err)
 
 		regularEntry, regularErr := s3a.getEntry(bucketDir, object)
 		if regularErr != nil {
@@ -822,12 +822,12 @@ func (s3a *S3ApiServer) getLatestObjectVersion(bucket, object string) (*filer_pb
 	// Check if directory has latest version metadata - retry if missing due to race condition
 	if versionsEntry.Extended == nil {
 		glog.V(0).Infof("CI-DEBUG: getLatestObjectVersion: .versions directory exists but NO Extended metadata for %s/%s - retrying to handle race condition", bucket, object)
-		
+
 		// Retry a few times to handle the race condition where directory exists but metadata is not yet written
 		metadataRetries := 3
 		for metaAttempt := 1; metaAttempt <= metadataRetries; metaAttempt++ {
 			glog.V(0).Infof("CI-DEBUG: getLatestObjectVersion: metadata retry %d/%d for %s/%s", metaAttempt, metadataRetries, bucket, object)
-			
+
 			// Small delay and re-read the directory
 			time.Sleep(time.Millisecond * 100)
 			versionsEntry, err = s3a.getEntry(bucketDir, versionsObjectPath)
@@ -835,13 +835,13 @@ func (s3a *S3ApiServer) getLatestObjectVersion(bucket, object string) (*filer_pb
 				glog.V(0).Infof("CI-DEBUG: getLatestObjectVersion: metadata retry %d failed to re-read .versions for %s/%s: %v", metaAttempt, bucket, object, err)
 				break
 			}
-			
+
 			if versionsEntry.Extended != nil {
 				glog.V(0).Infof("CI-DEBUG: getLatestObjectVersion: metadata retry %d SUCCESS - found Extended metadata for %s/%s", metaAttempt, bucket, object)
 				break
 			}
 		}
-		
+
 		// If still no metadata after retries, fall back to pre-versioning object
 		if versionsEntry.Extended == nil {
 			glog.V(2).Infof("getLatestObjectVersion: no Extended metadata in .versions directory for %s%s after retries, checking for pre-versioning object", bucket, object)
