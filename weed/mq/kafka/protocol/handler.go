@@ -475,6 +475,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		var response []byte
 		var err error
 
+		fmt.Printf("DEBUG: *** API REQUEST *** Key: %d (%s), Version: %d, Correlation: %d\n", apiKey, getAPIName(apiKey), apiVersion, correlationID)
 		switch apiKey {
 		case 18: // ApiVersions
 			response, err = h.handleApiVersions(correlationID, apiVersion)
@@ -500,6 +501,9 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		case 11: // JoinGroup
 			fmt.Printf("DEBUG: *** JOINGROUP REQUEST RECEIVED *** Correlation: %d, Version: %d\n", correlationID, apiVersion)
 			response, err = h.handleJoinGroup(correlationID, apiVersion, requestBody)
+			if err == nil {
+				fmt.Printf("DEBUG: JoinGroup response size: %d bytes\n", len(response))
+			}
 			if err != nil {
 				fmt.Printf("DEBUG: JoinGroup error: %v\n", err)
 			} else {
@@ -526,6 +530,9 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		case 10: // FindCoordinator
 			fmt.Printf("DEBUG: *** FINDCOORDINATOR REQUEST RECEIVED *** Correlation: %d, Version: %d\n", correlationID, apiVersion)
 			response, err = h.handleFindCoordinator(correlationID, requestBody)
+			if err == nil {
+				fmt.Printf("DEBUG: FindCoordinator response size: %d bytes\n", len(response))
+			}
 			if err != nil {
 				fmt.Printf("DEBUG: FindCoordinator error: %v\n", err)
 			}
@@ -543,6 +550,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		}
 
 		// Send response with timeout handling
+		fmt.Printf("DEBUG: [%s] Sending %s response: %d bytes\n", connectionID, getAPIName(apiKey), len(response))
 		if err := h.writeResponseWithTimeout(w, response, timeoutConfig.WriteTimeout); err != nil {
 			errorCode := HandleTimeoutError(err, "write")
 			fmt.Printf("DEBUG: [%s] Error sending response: %v (code: %d)\n", connectionID, err, errorCode)
