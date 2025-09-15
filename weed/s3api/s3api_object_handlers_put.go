@@ -545,19 +545,22 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 	// Generate version ID
 	versionId = generateVersionId()
 
-	glog.V(2).Infof("putVersionedObject: creating version %s for %s/%s", versionId, bucket, object)
+	// Normalize object path to ensure consistency with toFilerUrl behavior
+	normalizedObject := removeDuplicateSlashes(object)
+
+	glog.V(2).Infof("putVersionedObject: creating version %s for %s/%s (normalized: %s)", versionId, bucket, object, normalizedObject)
 
 	// Create the version file name
 	versionFileName := s3a.getVersionFileName(versionId)
 
 	// Upload directly to the versions directory
 	// We need to construct the object path relative to the bucket
-	versionObjectPath := object + ".versions/" + versionFileName
+	versionObjectPath := normalizedObject + ".versions/" + versionFileName
 	versionUploadUrl := s3a.toFilerUrl(bucket, versionObjectPath)
 
 	// Ensure the .versions directory exists before uploading
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
-	versionsDir := object + ".versions"
+	versionsDir := normalizedObject + ".versions"
 	err := s3a.mkdir(bucketDir, versionsDir, func(entry *filer_pb.Entry) {
 		entry.Attributes.Mime = s3_constants.FolderMimeType
 	})
@@ -620,16 +623,16 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 	}
 
 	// Update the .versions directory metadata to indicate this is the latest version
-	glog.V(0).Infof("CI-DEBUG: putVersionedObject: about to update latest version metadata for %s/%s version %s", bucket, object, versionId)
-	err = s3a.updateLatestVersionInDirectory(bucket, object, versionId, versionFileName)
+	glog.V(0).Infof("CI-DEBUG: putVersionedObject: about to update latest version metadata for %s/%s version %s (normalized: %s)", bucket, object, versionId, normalizedObject)
+	err = s3a.updateLatestVersionInDirectory(bucket, normalizedObject, versionId, versionFileName)
 	if err != nil {
 		glog.Errorf("putVersionedObject: failed to update latest version in directory: %v", err)
 		glog.V(0).Infof("CI-DEBUG: putVersionedObject: FAILED to update latest version metadata for %s/%s version %s: %v", bucket, object, versionId, err)
 		return "", "", s3err.ErrInternalError
 	}
 
-	glog.V(0).Infof("CI-DEBUG: putVersionedObject: successfully updated latest version metadata for %s/%s version %s", bucket, object, versionId)
-	glog.V(2).Infof("putVersionedObject: successfully created version %s for %s/%s", versionId, bucket, object)
+	glog.V(0).Infof("CI-DEBUG: putVersionedObject: successfully updated latest version metadata for %s/%s version %s (normalized: %s)", bucket, object, versionId, normalizedObject)
+	glog.V(2).Infof("putVersionedObject: successfully created version %s for %s/%s (normalized: %s)", versionId, bucket, object, normalizedObject)
 	return versionId, etag, s3err.ErrNone
 }
 

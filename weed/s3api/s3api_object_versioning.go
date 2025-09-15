@@ -546,23 +546,26 @@ func (s3a *S3ApiServer) calculateETagFromChunks(chunks []*filer_pb.FileChunk) st
 
 // getSpecificObjectVersion retrieves a specific version of an object
 func (s3a *S3ApiServer) getSpecificObjectVersion(bucket, object, versionId string) (*filer_pb.Entry, error) {
+	// Normalize object path to ensure consistency with toFilerUrl behavior
+	normalizedObject := removeDuplicateSlashes(object)
+	
 	if versionId == "" {
 		// Get current version
-		return s3a.getEntry(path.Join(s3a.option.BucketsPath, bucket), strings.TrimPrefix(object, "/"))
+		return s3a.getEntry(path.Join(s3a.option.BucketsPath, bucket), strings.TrimPrefix(normalizedObject, "/"))
 	}
 
 	if versionId == "null" {
 		// "null" version ID refers to pre-versioning objects stored as regular files
 		bucketDir := s3a.option.BucketsPath + "/" + bucket
-		entry, err := s3a.getEntry(bucketDir, object)
+		entry, err := s3a.getEntry(bucketDir, normalizedObject)
 		if err != nil {
-			return nil, fmt.Errorf("null version object %s not found: %v", object, err)
+			return nil, fmt.Errorf("null version object %s not found: %v", normalizedObject, err)
 		}
 		return entry, nil
 	}
 
 	// Get specific version from .versions directory
-	versionsDir := s3a.getVersionedObjectDir(bucket, object)
+	versionsDir := s3a.getVersionedObjectDir(bucket, normalizedObject)
 	versionFile := s3a.getVersionFileName(versionId)
 
 	entry, err := s3a.getEntry(versionsDir, versionFile)
@@ -575,6 +578,9 @@ func (s3a *S3ApiServer) getSpecificObjectVersion(bucket, object, versionId strin
 
 // deleteSpecificObjectVersion deletes a specific version of an object
 func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId string) error {
+	// Normalize object path to ensure consistency with toFilerUrl behavior
+	normalizedObject := removeDuplicateSlashes(object)
+	
 	if versionId == "" {
 		return fmt.Errorf("version ID is required for version-specific deletion")
 	}
@@ -582,7 +588,7 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId st
 	if versionId == "null" {
 		// Delete "null" version (pre-versioning object stored as regular file)
 		bucketDir := s3a.option.BucketsPath + "/" + bucket
-		cleanObject := strings.TrimPrefix(object, "/")
+		cleanObject := strings.TrimPrefix(normalizedObject, "/")
 
 		// Check if the object exists
 		_, err := s3a.getEntry(bucketDir, cleanObject)
@@ -605,11 +611,11 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId st
 		return nil
 	}
 
-	versionsDir := s3a.getVersionedObjectDir(bucket, object)
+	versionsDir := s3a.getVersionedObjectDir(bucket, normalizedObject)
 	versionFile := s3a.getVersionFileName(versionId)
 
 	// Check if this is the latest version before attempting deletion (for potential metadata update)
-	versionsEntry, dirErr := s3a.getEntry(path.Join(s3a.option.BucketsPath, bucket), object+".versions")
+	versionsEntry, dirErr := s3a.getEntry(path.Join(s3a.option.BucketsPath, bucket), normalizedObject+".versions")
 	isLatestVersion := false
 	if dirErr == nil && versionsEntry.Extended != nil {
 		if latestVersionIdBytes, hasLatest := versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey]; hasLatest {
@@ -776,11 +782,14 @@ func (s3a *S3ApiServer) ListObjectVersionsHandler(w http.ResponseWriter, r *http
 
 // getLatestObjectVersion finds the latest version of an object by reading .versions directory metadata
 func (s3a *S3ApiServer) getLatestObjectVersion(bucket, object string) (*filer_pb.Entry, error) {
+	// Normalize object path to ensure consistency with toFilerUrl behavior
+	normalizedObject := removeDuplicateSlashes(object)
+	
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
-	versionsObjectPath := object + ".versions"
+	versionsObjectPath := normalizedObject + ".versions"
 
-	glog.V(1).Infof("getLatestObjectVersion: looking for latest version of %s/%s", bucket, object)
-	glog.V(0).Infof("CI-DEBUG: getLatestObjectVersion: starting lookup for %s/%s", bucket, object)
+	glog.V(1).Infof("getLatestObjectVersion: looking for latest version of %s/%s (normalized: %s)", bucket, object, normalizedObject)
+	glog.V(0).Infof("CI-DEBUG: getLatestObjectVersion: starting lookup for %s/%s (normalized: %s)", bucket, object, normalizedObject)
 
 	// Get the .versions directory entry to read latest version metadata with retry logic for filer consistency
 	var versionsEntry *filer_pb.Entry
@@ -806,16 +815,16 @@ func (s3a *S3ApiServer) getLatestObjectVersion(bucket, object string) (*filer_pb
 		// .versions directory doesn't exist - this can happen for objects that existed
 		// before versioning was enabled on the bucket. Fall back to checking for a
 		// regular (non-versioned) object file.
-		glog.V(1).Infof("getLatestObjectVersion: no .versions directory for %s%s after %d attempts (error: %v), checking for pre-versioning object", bucket, object, maxRetries, err)
-		glog.V(0).Infof("CI-DEBUG: getLatestObjectVersion: no .versions directory for %s/%s after %d attempts (total delay ~%dms, error: %v), falling back to pre-versioning", bucket, object, maxRetries, (100*(1<<maxRetries-1) - 100), err)
+		glog.V(1).Infof("getLatestObjectVersion: no .versions directory for %s%s after %d attempts (error: %v), checking for pre-versioning object", bucket, normalizedObject, maxRetries, err)
+		glog.V(0).Infof("CI-DEBUG: getLatestObjectVersion: no .versions directory for %s/%s after %d attempts (total delay ~%dms, error: %v), falling back to pre-versioning", bucket, normalizedObject, maxRetries, (100*(1<<maxRetries-1) - 100), err)
 
-		regularEntry, regularErr := s3a.getEntry(bucketDir, object)
+		regularEntry, regularErr := s3a.getEntry(bucketDir, normalizedObject)
 		if regularErr != nil {
-			glog.V(1).Infof("getLatestObjectVersion: no pre-versioning object found for %s%s (error: %v)", bucket, object, regularErr)
-			return nil, fmt.Errorf("failed to get %s%s .versions directory and no regular object found: %w", bucket, object, err)
+			glog.V(1).Infof("getLatestObjectVersion: no pre-versioning object found for %s%s (error: %v)", bucket, normalizedObject, regularErr)
+			return nil, fmt.Errorf("failed to get %s%s .versions directory and no regular object found: %w", bucket, normalizedObject, err)
 		}
 
-		glog.V(1).Infof("getLatestObjectVersion: found pre-versioning object for %s/%s", bucket, object)
+		glog.V(1).Infof("getLatestObjectVersion: found pre-versioning object for %s/%s", bucket, normalizedObject)
 		return regularEntry, nil
 	}
 
@@ -847,9 +856,9 @@ func (s3a *S3ApiServer) getLatestObjectVersion(bucket, object string) (*filer_pb
 			glog.V(2).Infof("getLatestObjectVersion: no Extended metadata in .versions directory for %s%s after retries, checking for pre-versioning object", bucket, object)
 			glog.V(0).Infof("CI-DEBUG: getLatestObjectVersion: NO Extended metadata for %s/%s after %d retries - falling back to pre-versioning", bucket, object, metadataRetries)
 
-			regularEntry, regularErr := s3a.getEntry(bucketDir, object)
+			regularEntry, regularErr := s3a.getEntry(bucketDir, normalizedObject)
 			if regularErr != nil {
-				return nil, fmt.Errorf("no version metadata in .versions directory and no regular object found for %s%s", bucket, object)
+				return nil, fmt.Errorf("no version metadata in .versions directory and no regular object found for %s%s", bucket, normalizedObject)
 			}
 
 			glog.V(2).Infof("getLatestObjectVersion: found pre-versioning object for %s%s (no Extended metadata case)", bucket, object)
@@ -868,9 +877,9 @@ func (s3a *S3ApiServer) getLatestObjectVersion(bucket, object string) (*filer_pb
 		glog.V(2).Infof("getLatestObjectVersion: no version metadata in .versions directory for %s/%s, checking for pre-versioning object", bucket, object)
 		glog.V(0).Infof("CI-DEBUG: getLatestObjectVersion: MISSING version metadata keys for %s/%s - possible race condition", bucket, object)
 
-		regularEntry, regularErr := s3a.getEntry(bucketDir, object)
+		regularEntry, regularErr := s3a.getEntry(bucketDir, normalizedObject)
 		if regularErr != nil {
-			return nil, fmt.Errorf("no version metadata in .versions directory and no regular object found for %s%s", bucket, object)
+			return nil, fmt.Errorf("no version metadata in .versions directory and no regular object found for %s%s", bucket, normalizedObject)
 		}
 
 		glog.V(2).Infof("getLatestObjectVersion: found pre-versioning object for %s%s after version deletion", bucket, object)
