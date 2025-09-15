@@ -187,7 +187,7 @@ func TestHandler_handleLeaveGroup(t *testing.T) {
 	requestBody := createLeaveGroupRequestBody("test-group", "member2")
 
 	correlationID := uint32(127)
-	response, err := h.handleLeaveGroup(correlationID, requestBody)
+	response, err := h.handleLeaveGroup(correlationID, 0, requestBody)
 
 	if err != nil {
 		t.Fatalf("handleLeaveGroup failed: %v", err)
@@ -260,7 +260,7 @@ func TestHandler_handleLeaveGroup_LastMember(t *testing.T) {
 	requestBody := createLeaveGroupRequestBody("test-group", "member1")
 
 	correlationID := uint32(128)
-	response, err := h.handleLeaveGroup(correlationID, requestBody)
+	response, err := h.handleLeaveGroup(correlationID, 0, requestBody)
 
 	if err != nil {
 		t.Fatalf("handleLeaveGroup failed: %v", err)
@@ -315,7 +315,7 @@ func TestHandler_handleLeaveGroup_LeaderLeaves(t *testing.T) {
 	requestBody := createLeaveGroupRequestBody("test-group", "leader-member")
 
 	correlationID := uint32(129)
-	_, err := h.handleLeaveGroup(correlationID, requestBody)
+	_, err := h.handleLeaveGroup(correlationID, 0, requestBody)
 
 	if err != nil {
 		t.Fatalf("handleLeaveGroup failed: %v", err)
@@ -425,7 +425,7 @@ func TestHandler_buildLeaveGroupResponse(t *testing.T) {
 		},
 	}
 
-	responseBytes := h.buildLeaveGroupResponse(response)
+	responseBytes := h.buildLeaveGroupResponse(response, 0)
 
 	if len(responseBytes) < 16 {
 		t.Fatalf("response too short: %d bytes", len(responseBytes))
@@ -490,7 +490,7 @@ func TestHandler_HeartbeatLeaveGroup_EndToEnd(t *testing.T) {
 
 	// Test leave group
 	leaveGroupRequestBody := createLeaveGroupRequestBody("test-group", "member1")
-	leaveGroupResponse, err := server.handleLeaveGroup(457, leaveGroupRequestBody)
+	leaveGroupResponse, err := server.handleLeaveGroup(457, 0, leaveGroupRequestBody)
 	if err != nil {
 		t.Fatalf("leave group failed: %v", err)
 	}

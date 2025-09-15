@@ -37,7 +37,7 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 		return nil, fmt.Errorf("Produce request client_id too short")
 	}
 
-	clientID := string(requestBody[2 : 2+int(clientIDSize)])
+	_ = string(requestBody[2 : 2+int(clientIDSize)]) // clientID
 	offset := 2 + int(clientIDSize)
 
 	if len(requestBody) < offset+10 { // acks(2) + timeout(4) + topics_count(4)
@@ -45,7 +45,7 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 	}
 
 	// Parse acks and timeout
-	acks := int16(binary.BigEndian.Uint16(requestBody[offset : offset+2]))
+	_ = int16(binary.BigEndian.Uint16(requestBody[offset : offset+2])) // acks
 	offset += 2
 
 	timeout := binary.BigEndian.Uint32(requestBody[offset : offset+4])
@@ -221,9 +221,6 @@ func (h *Handler) parseRecordSet(recordSetData []byte) (recordCount int32, total
 		if err != nil {
 			return 0, 0, fmt.Errorf("failed to parse record batch: %w", err)
 		}
-			batch.GetCompressionCodec())
-	} else {
-			batch.GetCompressionCodec())
 	}
 
 	return batch.RecordCount, int32(len(recordSetData)), nil
@@ -800,8 +797,6 @@ func (h *Handler) processSchematizedMessage(topicName string, partitionID int32,
 		return fmt.Errorf("schema decoding failed: %w", err)
 	}
 
-		decodedMsg.SchemaID, decodedMsg.SchemaFormat, decodedMsg.Subject)
-
 	// Store the decoded message using SeaweedMQ
 	return h.storeDecodedMessage(topicName, partitionID, decodedMsg)
 }
@@ -819,7 +814,6 @@ func (h *Handler) storeDecodedMessage(topicName string, partitionID int32, decod
 			return fmt.Errorf("failed to publish to mq.broker: %w", err)
 		}
 
-			topicName, partitionID, decodedMsg.SchemaID)
 		return nil
 	}
 
@@ -834,7 +828,6 @@ func (h *Handler) storeDecodedMessage(topicName string, partitionID int32, decod
 			return fmt.Errorf("failed to produce to SeaweedMQ: %w", err)
 		}
 
-			topicName, partitionID, decodedMsg.SchemaID)
 		return nil
 	}
 
@@ -859,12 +852,10 @@ func (h *Handler) validateSchemaCompatibility(topicName string, messageBytes []b
 	}
 
 	// Extract schema information
-	schemaID, format, err := h.schemaManager.GetSchemaInfo(messageBytes)
+	_, _, err := h.schemaManager.GetSchemaInfo(messageBytes)
 	if err != nil {
 		return nil // Not schematized, no validation needed
 	}
-
-		schemaID, format, topicName)
 
 	// TODO: Implement topic-specific schema validation
 	// This would involve:
