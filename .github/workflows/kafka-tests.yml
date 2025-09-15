@@ -53,13 +53,13 @@ jobs:
         cd test/kafka
         go mod download
 
-    - name: Run Kafka Gateway Unit Tests (Excluding Integration Tests)
+    - name: Run Kafka Gateway Unit Tests
       run: |
         cd test/kafka
         # Set process limits for container isolation
         ulimit -n 512 || echo "Warning: Could not set file descriptor limit"
         ulimit -u 100 || echo "Warning: Could not set process limit"
-        go test -v -timeout 10s -run "^TestGateway_|^TestConsumerGroup_Debug$" ./...
+        go test -v -timeout 10s ./unit/...
 
   kafka-integration-tests:
     name: Kafka Integration Tests (Critical)
@@ -97,26 +97,59 @@ jobs:
         cd test/kafka
         go mod download
 
-    - name: Test API Sequence Integration
+    - name: Run Integration Tests
       run: |
         cd test/kafka
         # Higher limits for integration tests
         ulimit -n 1024 || echo "Warning: Could not set file descriptor limit"
         ulimit -u 200 || echo "Warning: Could not set process limit"
-        go test -v -run "^TestKafkaGateway_APISequence$" -timeout 10s
+        go test -v -timeout 15s ./integration/...
       env:
         GOMAXPROCS: 2
 
-    - name: Cleanup Between Tests
-      run: |
-        pkill -f "kafka" || true
-        pkill -f "seaweed" || true
-        sleep 2
+  kafka-e2e-tests:
+    name: Kafka End-to-End Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        container-id: [e2e-1]
+    container:
+      image: golang:1.24-alpine
+      options: --cpus 2.0 --memory 2g --hostname kafka-e2e-${{ matrix.container-id }}
+    env:
+      GOMAXPROCS: 2
+      CGO_ENABLED: 0
+      KAFKA_E2E_ISOLATION: "true"
+      CONTAINER_ID: ${{ matrix.container-id }}
+    steps:
+    - name: Set up Go 1.x
+      uses: actions/setup-go@v5
+      with:
+        go-version: ^1.24
+      id: go
 
-    - name: Test kafka-go Client Integration
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Setup E2E Container Environment
+      run: |
+        apk add --no-cache git procps
+        ulimit -n 2048 || echo "Warning: Could not set file descriptor limit"
+        
+    - name: Get dependencies
       run: |
         cd test/kafka
-        go test -v -run "^TestKafkaGoClient_BasicProduceConsume$" -timeout 15s
+        go mod download
+
+    - name: Run End-to-End Tests
+      run: |
+        cd test/kafka
+        # Higher limits for E2E tests
+        ulimit -n 1024 || echo "Warning: Could not set file descriptor limit"
+        ulimit -u 200 || echo "Warning: Could not set process limit"
+        go test -v -timeout 30s ./e2e/...
       env:
         GOMAXPROCS: 2
 
@@ -157,13 +190,13 @@ jobs:
         # Use go mod download with timeout to prevent hanging
         timeout 90s go mod download || echo "Warning: Dependency download timed out, continuing with cached modules"
 
-    - name: Test Working Consumer Group Debug (Should Pass)
+    - name: Run Consumer Group Tests
       run: |
         cd test/kafka
-        # Test the working consumer group debug test with explicit timeout
+        # Test consumer group functionality with explicit timeout
         ulimit -n 512 || echo "Warning: Could not set file descriptor limit"
         ulimit -u 100 || echo "Warning: Could not set process limit"
-        timeout 30s go test -v -run "^TestConsumerGroup_Debug$" -timeout 10s ./... || echo "Test execution timed out or failed"
+        timeout 30s go test -v -run "^TestConsumerGroups" -timeout 10s ./integration/... || echo "Test execution timed out or failed"
       env:
         GOMAXPROCS: 1
 
@@ -198,23 +231,10 @@ jobs:
         cd test/kafka
         go mod download
 
-    - name: Test kafka-go Client Compatibility
+    - name: Run Client Compatibility Tests
       run: |
         cd test/kafka
-        go test -v -run "^TestKafkaGo_ProduceOnly$" -timeout 10s
-      env:
-        GOMAXPROCS: 1
-
-    - name: Cleanup Between Tests
-      run: |
-        pkill -f "kafka" || true
-        pkill -f "seaweed" || true
-        sleep 2
-
-    - name: Test Sarama Client Compatibility (Isolated)
-      run: |
-        cd test/kafka
-        go test -v -run "^(TestSaramaBasic|TestSaramaMinimalConfig|TestSaramaProduceConsume|TestSaramaMetadataOnly)$" -timeout 10s
+        go test -v -run "^TestClientCompatibility" -timeout 10s ./integration/...
       env:
         GOMAXPROCS: 1
 
@@ -259,46 +279,14 @@ jobs:
         cd test/kafka
         go mod download
 
-    - name: Test Metadata API Versions
+    - name: Run Protocol Tests
       run: |
         cd test/kafka
         export TMPDIR=/tmp
         export GOCACHE=/tmp/go-cache
-        go test -v -run "^TestMetadata" -timeout 10s
-      env:
-        GOMAXPROCS: 1
-        TMPDIR: /tmp
-        GOCACHE: /tmp/go-cache
-
-    - name: Cleanup Between Tests
-      run: |
-        pkill -f "kafka" || true
-        pkill -f "seaweed" || true
-        sleep 1
-
-    - name: Test Produce API Versions
-      run: |
-        cd test/kafka
-        export TMPDIR=/tmp
-        export GOCACHE=/tmp/go-cache
-        go test -v -run "^TestProduce" -timeout 10s
-      env:
-        GOMAXPROCS: 1
-        TMPDIR: /tmp
-        GOCACHE: /tmp/go-cache
-
-    - name: Cleanup Between Tests
-      run: |
-        pkill -f "kafka" || true
-        pkill -f "seaweed" || true
-        sleep 1
-
-    - name: Test ApiVersions Compatibility
-      run: |
-        cd test/kafka
-        export TMPDIR=/tmp
-        export GOCACHE=/tmp/go-cache
-        go test -v -run "^TestApiVersions" -timeout 10s
+        # Run protocol tests from the weed/mq/kafka directory since they test the protocol implementation
+        cd ../../weed/mq/kafka
+        go test -v -run "^Test.*" -timeout 10s ./...
       env:
         GOMAXPROCS: 1
         TMPDIR: /tmp

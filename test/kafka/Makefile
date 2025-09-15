@@ -1,4 +1,5 @@
-# Kafka Integration Testing Makefile
+# Kafka Integration Testing Makefile - Refactored
+# This replaces the existing Makefile with better organization
 
 # Configuration
 DOCKER_COMPOSE ?= docker-compose
@@ -14,14 +15,15 @@ YELLOW := \033[33m
 RED := \033[31m
 NC := \033[0m # No Color
 
-.PHONY: help setup test test-unit test-integration test-e2e clean logs status
+.PHONY: help setup test clean logs status
 
 help: ## Show this help message
-	@echo "$(BLUE)SeaweedFS Kafka Integration Testing$(NC)"
+	@echo "$(BLUE)SeaweedFS Kafka Integration Testing - Refactored$(NC)"
 	@echo ""
 	@echo "Available targets:"
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  $(GREEN)%-20s$(NC) %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
+# Environment Setup
 setup: ## Set up test environment (Kafka + Schema Registry + SeaweedFS)
 	@echo "$(YELLOW)Setting up Kafka integration test environment...$(NC)"
 	@$(DOCKER_COMPOSE) up -d zookeeper kafka schema-registry
@@ -43,58 +45,81 @@ setup-schemas: setup ## Set up test environment and register schemas
 	@$(DOCKER_COMPOSE) --profile setup run --rm test-setup
 	@echo "$(GREEN)✅ Schemas registered!$(NC)"
 
-test: setup-schemas test-unit test-integration ## Run all tests
+# Test Categories
+test: test-unit test-integration test-e2e ## Run all tests
 
-test-unit: ## Run unit tests for Kafka components
-	@echo "$(YELLOW)Running Kafka component unit tests...$(NC)"
-	@cd ../../ && go test -v -timeout=$(TEST_TIMEOUT) ./weed/mq/kafka/...
+test-unit: ## Run unit tests
+	@echo "$(YELLOW)Running unit tests...$(NC)"
+	@cd ../../ && go test -v -timeout=$(TEST_TIMEOUT) ./test/kafka/unit/...
 
-test-integration: ## Run integration tests with real Kafka and Schema Registry
-	@echo "$(YELLOW)Running Kafka integration tests...$(NC)"
+test-integration: ## Run integration tests
+	@echo "$(YELLOW)Running integration tests...$(NC)"
+	@cd ../../ && go test -v -timeout=$(TEST_TIMEOUT) ./test/kafka/integration/...
+
+test-e2e: setup-schemas ## Run end-to-end tests
+	@echo "$(YELLOW)Running end-to-end tests...$(NC)"
 	@cd ../../ && KAFKA_BOOTSTRAP_SERVERS=$(KAFKA_BOOTSTRAP_SERVERS) \
 		KAFKA_GATEWAY_URL=$(KAFKA_GATEWAY_URL) \
 		SCHEMA_REGISTRY_URL=$(SCHEMA_REGISTRY_URL) \
-		go test -v -timeout=$(TEST_TIMEOUT) ./test/kafka/ -run Integration
+		go test -v -timeout=$(TEST_TIMEOUT) ./test/kafka/e2e/...
 
-test-schema: ## Run schema registry integration tests
+test-docker: setup-schemas ## Run Docker integration tests
+	@echo "$(YELLOW)Running Docker integration tests...$(NC)"
+	@cd ../../ && KAFKA_BOOTSTRAP_SERVERS=$(KAFKA_BOOTSTRAP_SERVERS) \
+		KAFKA_GATEWAY_URL=$(KAFKA_GATEWAY_URL) \
+		SCHEMA_REGISTRY_URL=$(SCHEMA_REGISTRY_URL) \
+		go test -v -timeout=$(TEST_TIMEOUT) ./test/kafka/integration/ -run Docker
+
+# Schema-specific tests
+test-schema: setup-schemas ## Run schema registry integration tests
 	@echo "$(YELLOW)Running schema registry integration tests...$(NC)"
 	@cd ../../ && SCHEMA_REGISTRY_URL=$(SCHEMA_REGISTRY_URL) \
-		go test -v -timeout=$(TEST_TIMEOUT) ./test/kafka/ -run Schema
+		go test -v -timeout=$(TEST_TIMEOUT) ./test/kafka/integration/ -run Schema
 
-test-e2e: setup-schemas ## Run end-to-end tests with complete setup
-	@echo "$(YELLOW)Running end-to-end Kafka tests...$(NC)"
-	@$(DOCKER_COMPOSE) --profile producer run --rm kafka-producer
-	@sleep 5
-	@cd ../../ && KAFKA_BOOTSTRAP_SERVERS=$(KAFKA_BOOTSTRAP_SERVERS) \
-		KAFKA_GATEWAY_URL=$(KAFKA_GATEWAY_URL) \
-		SCHEMA_REGISTRY_URL=$(SCHEMA_REGISTRY_URL) \
-		go test -v -timeout=$(TEST_TIMEOUT) ./test/kafka/ -run E2E
-
-test-performance: setup-schemas ## Run performance benchmarks
-	@echo "$(YELLOW)Running Kafka performance benchmarks...$(NC)"
-	@cd ../../ && KAFKA_BOOTSTRAP_SERVERS=$(KAFKA_BOOTSTRAP_SERVERS) \
-		KAFKA_GATEWAY_URL=$(KAFKA_GATEWAY_URL) \
-		SCHEMA_REGISTRY_URL=$(SCHEMA_REGISTRY_URL) \
-		go test -v -timeout=$(TEST_TIMEOUT) -bench=. ./test/kafka/
-
+# Client-specific tests
 test-sarama: setup-schemas ## Run Sarama client tests
 	@echo "$(YELLOW)Running Sarama client tests...$(NC)"
 	@cd ../../ && KAFKA_BOOTSTRAP_SERVERS=$(KAFKA_BOOTSTRAP_SERVERS) \
 		KAFKA_GATEWAY_URL=$(KAFKA_GATEWAY_URL) \
-		go test -v -timeout=$(TEST_TIMEOUT) ./test/kafka/ -run Sarama
+		go test -v -timeout=$(TEST_TIMEOUT) ./test/kafka/integration/ -run Sarama
 
 test-kafka-go: setup-schemas ## Run kafka-go client tests
 	@echo "$(YELLOW)Running kafka-go client tests...$(NC)"
 	@cd ../../ && KAFKA_BOOTSTRAP_SERVERS=$(KAFKA_BOOTSTRAP_SERVERS) \
 		KAFKA_GATEWAY_URL=$(KAFKA_GATEWAY_URL) \
-		go test -v -timeout=$(TEST_TIMEOUT) ./test/kafka/ -run KafkaGo
+		go test -v -timeout=$(TEST_TIMEOUT) ./test/kafka/integration/ -run KafkaGo
 
+# Performance tests
+test-performance: setup-schemas ## Run performance benchmarks
+	@echo "$(YELLOW)Running Kafka performance benchmarks...$(NC)"
+	@cd ../../ && KAFKA_BOOTSTRAP_SERVERS=$(KAFKA_BOOTSTRAP_SERVERS) \
+		KAFKA_GATEWAY_URL=$(KAFKA_GATEWAY_URL) \
+		SCHEMA_REGISTRY_URL=$(SCHEMA_REGISTRY_URL) \
+		go test -v -timeout=$(TEST_TIMEOUT) -bench=. ./test/kafka/...
+
+# Development targets
+dev-kafka: ## Start only Kafka ecosystem for development
+	@$(DOCKER_COMPOSE) up -d zookeeper kafka schema-registry
+	@sleep 20
+	@$(DOCKER_COMPOSE) --profile setup run --rm test-setup
+
+dev-seaweedfs: ## Start only SeaweedFS for development
+	@$(DOCKER_COMPOSE) up -d seaweedfs-master seaweedfs-volume seaweedfs-filer seaweedfs-mq-broker seaweedfs-mq-agent
+
+dev-gateway: dev-seaweedfs ## Start Kafka Gateway for development
+	@$(DOCKER_COMPOSE) up -d kafka-gateway
+
+dev-test: dev-kafka ## Quick test with just Kafka ecosystem
+	@cd ../../ && SCHEMA_REGISTRY_URL=$(SCHEMA_REGISTRY_URL) go test -v -timeout=30s ./test/kafka/unit/...
+
+# Cleanup
 clean: ## Clean up test environment
 	@echo "$(YELLOW)Cleaning up test environment...$(NC)"
 	@$(DOCKER_COMPOSE) down -v --remove-orphans
 	@docker system prune -f
 	@echo "$(GREEN)✅ Environment cleaned up!$(NC)"
 
+# Monitoring and debugging
 logs: ## Show logs from all services
 	@$(DOCKER_COMPOSE) logs --tail=50 -f
 
@@ -137,21 +162,6 @@ debug: ## Debug test environment
 	@echo ""
 	@echo "Schema Registry subjects:"
 	@curl -s $(SCHEMA_REGISTRY_URL)/subjects 2>/dev/null || echo "Schema Registry not accessible"
-
-# Development targets
-dev-kafka: ## Start only Kafka ecosystem for development
-	@$(DOCKER_COMPOSE) up -d zookeeper kafka schema-registry
-	@sleep 20
-	@$(DOCKER_COMPOSE) --profile setup run --rm test-setup
-
-dev-seaweedfs: ## Start only SeaweedFS for development
-	@$(DOCKER_COMPOSE) up -d seaweedfs-master seaweedfs-volume seaweedfs-filer seaweedfs-mq-broker seaweedfs-mq-agent
-
-dev-gateway: dev-seaweedfs ## Start Kafka Gateway for development
-	@$(DOCKER_COMPOSE) up -d kafka-gateway
-
-dev-test: dev-kafka ## Quick test with just Kafka ecosystem
-	@cd ../../ && SCHEMA_REGISTRY_URL=$(SCHEMA_REGISTRY_URL) go test -v -timeout=30s -run TestSchema ./test/kafka/
 
 # Utility targets
 install-deps: ## Install required dependencies

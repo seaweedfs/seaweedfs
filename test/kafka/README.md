@@ -1,355 +1,298 @@
-# Kafka Integration Testing with Docker Compose
+# Kafka Integration Testing - Refactored Structure
 
-This directory contains comprehensive integration tests for SeaweedFS Kafka Gateway using Docker Compose to set up all required dependencies.
+This document describes the refactored Kafka integration testing structure for SeaweedFS.
 
-## Overview
+## 🎯 **Refactoring Goals**
 
-The Docker Compose setup provides:
-- **Apache Kafka** with Zookeeper
-- **Confluent Schema Registry** for schema management
-- **SeaweedFS** complete stack (Master, Volume, Filer, MQ Broker, MQ Agent)
-- **Kafka Gateway** that bridges Kafka protocol to SeaweedFS MQ
-- **Test utilities** for schema registration and data setup
+- **Better Organization**: Clear separation of unit, integration, and e2e tests
+- **Reduced Duplication**: Common utilities and helpers extracted
+- **Improved Maintainability**: Consistent patterns and naming conventions
+- **Enhanced Readability**: Well-documented and structured code
+- **Easier Development**: Simplified test creation and debugging
 
-## Quick Start
-
-### Prerequisites
-
-- Docker and Docker Compose
-- Go 1.21+
-- Make (optional, for convenience)
-
-### Basic Usage
-
-1. **Start the environment:**
-   ```bash
-   make setup-schemas
-   ```
-   This starts all services and registers test schemas.
-
-2. **Run integration tests:**
-   ```bash
-   make test-integration
-   ```
-
-3. **Run end-to-end tests:**
-   ```bash
-   make test-e2e
-   ```
-
-4. **Clean up:**
-   ```bash
-   make clean
-   ```
-
-## Architecture
+## 📁 **New Directory Structure**
 
 ```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   Kafka Client  │───▶│  Kafka Gateway   │───▶│   SeaweedFS MQ  │
-│   (Sarama/      │    │  (Port 9093)     │    │   (Broker/Agent)│
-│    kafka-go)    │    │                  │    │                 │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-                              │
-                              ▼
-                       ┌──────────────────┐
-                       │ Schema Registry  │
-                       │  (Port 8081)     │
-                       └──────────────────┘
-                              │
-                              ▼
-                       ┌──────────────────┐
-                       │  Native Kafka    │
-                       │  (Port 9092)     │
-                       └──────────────────┘
+test/kafka/
+├── internal/testutil/          # Common test utilities (NEW)
+│   ├── gateway.go             # Gateway server utilities
+│   ├── clients.go             # Kafka client wrappers
+│   ├── messages.go            # Message generation and validation
+│   ├── docker.go              # Docker environment helpers
+│   └── assertions.go          # Custom test assertions
+├── unit/                      # Unit tests (NEW)
+│   └── gateway_test.go        # Gateway unit tests
+├── integration/               # Integration tests (NEW)
+│   ├── client_compatibility_test.go  # Client compatibility tests
+│   ├── consumer_groups_test.go       # Consumer group tests
+│   └── docker_test.go               # Docker integration tests
+├── e2e/                       # End-to-end tests (NEW)
+│   ├── comprehensive_test.go         # Comprehensive E2E scenarios
+│   └── offset_management_test.go     # Offset management E2E tests
+├── cmd/setup/                 # Test setup utilities (EXISTING)
+├── scripts/                   # Helper scripts (EXISTING)
+├── docker-compose.yml         # Docker setup (EXISTING)
+├── Makefile.new              # Refactored Makefile (NEW)
+└── README_REFACTORED.md      # This documentation (NEW)
 ```
 
-## Services
+## 🛠 **Common Test Utilities**
 
-### Core Services
+### **Gateway Utilities** (`internal/testutil/gateway.go`)
 
-| Service | Port | Description |
-|---------|------|-------------|
-| Zookeeper | 2181 | Kafka coordination |
-| Kafka | 9092 | Native Kafka broker |
-| Schema Registry | 8081 | Confluent Schema Registry |
-| SeaweedFS Master | 9333 | SeaweedFS master server |
-| SeaweedFS Volume | 8080 | SeaweedFS volume server |
-| SeaweedFS Filer | 8888 | SeaweedFS filer server |
-| SeaweedFS MQ Broker | 17777 | SeaweedFS message queue broker |
-| SeaweedFS MQ Agent | 16777 | SeaweedFS message queue agent |
-| Kafka Gateway | 9093 | Kafka protocol gateway to SeaweedFS |
+```go
+// Create and manage test gateway servers
+gateway := testutil.NewGatewayTestServer(t, testutil.GatewayOptions{})
+defer gateway.CleanupAndClose()
 
-### Test Services
+addr := gateway.StartAndWait()
+gateway.AddTestTopic("my-topic")
+```
 
-| Service | Description |
-|---------|-------------|
-| test-setup | Registers schemas and sets up test data |
-| kafka-producer | Creates topics and produces test messages |
-| kafka-consumer | Consumes messages for verification |
+### **Client Utilities** (`internal/testutil/clients.go`)
 
-## Available Tests
+```go
+// Kafka-go client wrapper
+kafkaGoClient := testutil.NewKafkaGoClient(t, addr)
+err := kafkaGoClient.ProduceMessages(topic, messages)
+consumed, err := kafkaGoClient.ConsumeMessages(topic, count)
 
-### Unit Tests
+// Sarama client wrapper
+saramaClient := testutil.NewSaramaClient(t, addr)
+err := saramaClient.CreateTopic(topic, partitions, replicationFactor)
+err := saramaClient.ProduceMessages(topic, stringMessages)
+```
+
+### **Message Utilities** (`internal/testutil/messages.go`)
+
+```go
+// Generate test messages
+msgGen := testutil.NewMessageGenerator()
+kafkaGoMessages := msgGen.GenerateKafkaGoMessages(5)
+stringMessages := msgGen.GenerateStringMessages(5)
+
+// Generate unique names
+topic := testutil.GenerateUniqueTopicName("test-topic")
+groupID := testutil.GenerateUniqueGroupID("test-group")
+
+// Validate message content
+err := testutil.ValidateKafkaGoMessageContent(expected, actual)
+err := testutil.ValidateMessageContent(expectedStrings, actualStrings)
+```
+
+### **Docker Utilities** (`internal/testutil/docker.go`)
+
+```go
+// Handle Docker environment
+env := testutil.NewDockerEnvironment(t)
+env.SkipIfNotAvailable(t)
+env.RequireKafka(t)
+env.RequireGateway(t)
+```
+
+### **Custom Assertions** (`internal/testutil/assertions.go`)
+
+```go
+// Enhanced assertions with better error messages
+testutil.AssertNoError(t, err, "Failed to create topic")
+testutil.AssertEqual(t, expected, actual, "Message count mismatch")
+testutil.AssertEventually(t, assertion, timeout, interval, "Condition not met")
+```
+
+## 📋 **Test Categories**
+
+### **Unit Tests** (`unit/`)
+- Test individual components in isolation
+- No external dependencies (Docker, real Kafka)
+- Fast execution
+- Focus on gateway functionality, protocol handling
+
+### **Integration Tests** (`integration/`)
+- Test component interactions
+- May use Docker environment
+- Test client compatibility, consumer groups
+- Focus on SeaweedFS Kafka Gateway integration
+
+### **End-to-End Tests** (`e2e/`)
+- Test complete workflows
+- Full environment setup required
+- Test real-world scenarios
+- Focus on user-facing functionality
+
+## 🚀 **Usage Examples**
+
+### **Running Tests**
+
 ```bash
+# Run all tests
+make test
+
+# Run specific categories
 make test-unit
-```
-Tests individual Kafka components without external dependencies.
-
-### Integration Tests
-```bash
 make test-integration
-```
-Tests with real Kafka, Schema Registry, and SeaweedFS services.
-
-### Schema Tests
-```bash
-make test-schema
-```
-Tests schema registry integration and schema evolution.
-
-### End-to-End Tests
-```bash
 make test-e2e
-```
-Complete workflow tests with all services running.
 
-### Performance Tests
-```bash
-make test-performance
-```
-Benchmarks and performance measurements.
+# Run Docker-based tests
+make test-docker
 
-### Client-Specific Tests
-```bash
-make test-sarama      # IBM Sarama client tests
-make test-kafka-go    # Segmentio kafka-go client tests
+# Run client-specific tests
+make test-sarama
+make test-kafka-go
 ```
 
-## Development Workflow
-
-### Start Individual Components
+### **Development Workflow**
 
 ```bash
-# Start only Kafka ecosystem
-make dev-kafka
+# Start development environment
+make dev-kafka        # Just Kafka ecosystem
+make dev-seaweedfs     # Just SeaweedFS
+make dev-gateway       # Full gateway setup
 
-# Start only SeaweedFS
-make dev-seaweedfs
+# Quick development test
+make dev-test
 
-# Start Kafka Gateway
-make dev-gateway
-```
-
-### Debugging
-
-```bash
-# Show all service logs
-make logs
-
-# Show specific service logs
-make logs-kafka
-make logs-schema-registry
-make logs-seaweedfs
-make logs-gateway
-
-# Check service status
+# Monitor services
 make status
-
-# Debug environment
-make debug
+make logs-gateway
 ```
 
-### Interactive Testing
+### **Writing New Tests**
 
-```bash
-# List Kafka topics
-make topics
+#### **Unit Test Example**
 
-# Create a topic
-make create-topic TOPIC=my-test-topic
+```go
+package unit
 
-# Produce messages interactively
-make produce TOPIC=my-test-topic
+import (
+    "testing"
+    "github.com/seaweedfs/seaweedfs/test/kafka/internal/testutil"
+)
 
-# Consume messages
-make consume TOPIC=my-test-topic
-
-# Open shell in containers
-make shell-kafka
-make shell-gateway
-```
-
-## Test Configuration
-
-### Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | Kafka broker addresses |
-| `KAFKA_GATEWAY_URL` | `localhost:9093` | Kafka Gateway address |
-| `SCHEMA_REGISTRY_URL` | `http://localhost:8081` | Schema Registry URL |
-| `TEST_TIMEOUT` | `10m` | Test timeout duration |
-
-### Running Tests with Custom Configuration
-
-```bash
-KAFKA_BOOTSTRAP_SERVERS=localhost:9092 \
-KAFKA_GATEWAY_URL=localhost:9093 \
-SCHEMA_REGISTRY_URL=http://localhost:8081 \
-go test -v ./test/kafka/ -run Integration
-```
-
-## Test Schemas
-
-The setup automatically registers these test schemas:
-
-### User Schema
-```json
-{
-  "type": "record",
-  "name": "User",
-  "fields": [
-    {"name": "id", "type": "int"},
-    {"name": "name", "type": "string"},
-    {"name": "email", "type": ["null", "string"], "default": null}
-  ]
+func TestMyFeature(t *testing.T) {
+    gateway := testutil.NewGatewayTestServer(t, testutil.GatewayOptions{})
+    defer gateway.CleanupAndClose()
+    
+    addr := gateway.StartAndWait()
+    
+    // Test implementation
+    client := testutil.NewKafkaGoClient(t, addr)
+    // ... test logic
 }
 ```
 
-### User Event Schema
-```json
-{
-  "type": "record",
-  "name": "UserEvent",
-  "fields": [
-    {"name": "userId", "type": "int"},
-    {"name": "eventType", "type": "string"},
-    {"name": "timestamp", "type": "long"},
-    {"name": "data", "type": ["null", "string"], "default": null}
-  ]
+#### **Integration Test Example**
+
+```go
+package integration
+
+func TestClientCompatibility(t *testing.T) {
+    gateway := testutil.NewGatewayTestServer(t, testutil.GatewayOptions{})
+    defer gateway.CleanupAndClose()
+    
+    addr := gateway.StartAndWait()
+    topic := testutil.GenerateUniqueTopicName("compatibility-test")
+    gateway.AddTestTopic(topic)
+    
+    // Test cross-client compatibility
+    kafkaGoClient := testutil.NewKafkaGoClient(t, addr)
+    saramaClient := testutil.NewSaramaClient(t, addr)
+    // ... test logic
 }
 ```
 
-### Log Entry Schema
-```json
-{
-  "type": "record",
-  "name": "LogEntry",
-  "fields": [
-    {"name": "level", "type": "string"},
-    {"name": "message", "type": "string"},
-    {"name": "timestamp", "type": "long"},
-    {"name": "service", "type": "string"},
-    {"name": "metadata", "type": {"type": "map", "values": "string"}}
-  ]
+#### **E2E Test Example**
+
+```go
+package e2e
+
+func TestCompleteWorkflow(t *testing.T) {
+    env := testutil.NewDockerEnvironment(t)
+    env.SkipIfNotAvailable(t)
+    
+    // Test complete end-to-end workflow
+    // ... test logic
 }
 ```
 
-## Troubleshooting
+## 🔄 **Migration Guide**
 
-### Common Issues
+### **From Old Structure to New Structure**
 
-1. **Services not starting:**
-   ```bash
-   make status
-   make debug
-   ```
+1. **Extract Common Code**: Move repeated gateway setup, client creation, and message generation to `testutil` packages
 
-2. **Port conflicts:**
-   - Check if ports 2181, 8081, 9092, 9093, etc. are available
-   - Modify `docker-compose.yml` to use different ports if needed
+2. **Categorize Tests**: Move tests to appropriate directories:
+   - `*_debug_test.go` → Remove or convert to proper tests
+   - Basic functionality → `unit/`
+   - Client interactions → `integration/`
+   - Complete workflows → `e2e/`
 
-3. **Schema Registry connection issues:**
-   ```bash
-   curl http://localhost:8081/subjects
-   make logs-schema-registry
-   ```
+3. **Update Imports**: Change imports to use new `testutil` packages
 
-4. **Kafka Gateway not responding:**
-   ```bash
-   nc -z localhost 9093
-   make logs-gateway
-   ```
+4. **Standardize Naming**: Use consistent naming patterns:
+   - `TestFeatureName` for test functions
+   - `testFeatureSpecificCase` for helper functions
+   - Descriptive test names that explain what is being tested
 
-5. **Test timeouts:**
-   - Increase `TEST_TIMEOUT` environment variable
-   - Check service health with `make status`
+5. **Use New Utilities**: Replace custom setup code with `testutil` functions
 
-### Performance Tuning
+### **Example Migration**
 
-For better performance in testing:
-
-1. **Increase Docker resources:**
-   - Memory: 4GB+
-   - CPU: 2+ cores
-
-2. **Adjust Kafka settings:**
-   - Modify `docker-compose.yml` Kafka environment variables
-   - Tune partition counts and replication factors
-
-3. **SeaweedFS optimization:**
-   - Adjust volume size limits
-   - Configure appropriate replication settings
-
-## CI/CD Integration
-
-### GitHub Actions Example
-
-```yaml
-name: Kafka Integration Tests
-
-on: [push, pull_request]
-
-jobs:
-  kafka-integration:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-go@v3
-        with:
-          go-version: '1.21'
-      - name: Run Kafka Integration Tests
-        run: |
-          cd test/kafka
-          make ci-test
+**Before (old structure):**
+```go
+func TestSaramaBasic(t *testing.T) {
+    // 50 lines of gateway setup, client creation, message generation
+    srv := gateway.NewTestServer(gateway.Options{Listen: ":0"})
+    // ... lots of boilerplate
+}
 ```
 
-### Local CI Testing
-
-```bash
-# Run full CI test suite
-make ci-test
-
-# Run end-to-end CI tests
-make ci-e2e
+**After (new structure):**
+```go
+func TestSaramaBasicFunctionality(t *testing.T) {
+    gateway := testutil.NewGatewayTestServer(t, testutil.GatewayOptions{})
+    defer gateway.CleanupAndClose()
+    
+    addr := gateway.StartAndWait()
+    client := testutil.NewSaramaClient(t, addr)
+    // ... focus on actual test logic
+}
 ```
 
-## Contributing
+## 📊 **Benefits of Refactoring**
+
+### **Before Refactoring**
+- ❌ 40+ test files in single directory
+- ❌ Massive code duplication
+- ❌ Inconsistent naming and patterns
+- ❌ Debug tests mixed with real tests
+- ❌ Hard to find and run specific test types
+- ❌ Difficult to maintain and extend
+
+### **After Refactoring**
+- ✅ Clear organization by test type
+- ✅ Reusable test utilities
+- ✅ Consistent patterns and naming
+- ✅ Separated debug/development tests
+- ✅ Easy to run specific test categories
+- ✅ Maintainable and extensible structure
+
+## 🎯 **Next Steps**
+
+1. **Complete Migration**: Move remaining tests to new structure
+2. **Remove Debug Tests**: Clean up or properly organize debug tests
+3. **Add More Utilities**: Extend `testutil` with more common patterns
+4. **Improve Documentation**: Add more examples and best practices
+5. **Performance Tests**: Add dedicated performance test category
+6. **Schema Tests**: Add comprehensive schema testing utilities
+
+## 🤝 **Contributing**
 
 When adding new tests:
 
-1. **Follow naming conventions:**
-   - Integration tests: `TestDockerIntegration_*`
-   - Unit tests: `Test*_Unit`
-   - Performance tests: `TestDockerIntegration_Performance`
+1. **Choose the Right Category**: Unit, Integration, or E2E
+2. **Use Common Utilities**: Leverage `testutil` packages
+3. **Follow Naming Conventions**: Descriptive and consistent names
+4. **Add Documentation**: Update this README for new patterns
+5. **Clean Up**: Remove any debug or temporary code
 
-2. **Use environment variables:**
-   - Check for required environment variables
-   - Skip tests gracefully if dependencies unavailable
-
-3. **Clean up resources:**
-   - Use unique topic names with timestamps
-   - Clean up test data after tests
-
-4. **Add documentation:**
-   - Update this README for new test categories
-   - Document any new environment variables or configuration
-
-## References
-
-- [Apache Kafka Documentation](https://kafka.apache.org/documentation/)
-- [Confluent Schema Registry](https://docs.confluent.io/platform/current/schema-registry/index.html)
-- [SeaweedFS Documentation](https://github.com/seaweedfs/seaweedfs/wiki)
-- [IBM Sarama Kafka Client](https://github.com/IBM/sarama)
-- [Segmentio kafka-go Client](https://github.com/segmentio/kafka-go)
+This refactored structure provides a solid foundation for maintainable, scalable Kafka integration testing.
