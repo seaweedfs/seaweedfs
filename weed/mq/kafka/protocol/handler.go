@@ -529,7 +529,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			}
 		case 10: // FindCoordinator
 			fmt.Printf("DEBUG: *** FINDCOORDINATOR REQUEST RECEIVED *** Correlation: %d, Version: %d\n", correlationID, apiVersion)
-			response, err = h.handleFindCoordinator(correlationID, requestBody)
+			response, err = h.handleFindCoordinator(correlationID, apiVersion, requestBody)
 			if err == nil {
 				fmt.Printf("DEBUG: FindCoordinator response size: %d bytes\n", len(response))
 			}

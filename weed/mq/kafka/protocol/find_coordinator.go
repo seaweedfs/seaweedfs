@@ -5,8 +5,15 @@ import (
 	"fmt"
 )
 
-func (h *Handler) handleFindCoordinator(correlationID uint32, requestBody []byte) ([]byte, error) {
-	return h.handleFindCoordinatorV0(correlationID, requestBody)
+func (h *Handler) handleFindCoordinator(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
+	switch apiVersion {
+	case 0:
+		return h.handleFindCoordinatorV0(correlationID, requestBody)
+	case 1, 2:
+		return h.handleFindCoordinatorV2(correlationID, requestBody)
+	default:
+		return nil, fmt.Errorf("FindCoordinator version %d not supported", apiVersion)
+	}
 }
 
 func (h *Handler) handleFindCoordinatorV0(correlationID uint32, requestBody []byte) ([]byte, error) {
