@@ -640,12 +640,28 @@ func (s3a *S3ApiServer) updateLatestVersionInDirectory(bucket, object, versionId
 
 	glog.V(0).Infof("CI-DEBUG: updateLatestVersionInDirectory: starting update for %s/%s version %s file %s", bucket, object, versionId, versionFileName)
 
-	// Get the current .versions directory entry
-	versionsEntry, err := s3a.getEntry(bucketDir, versionsObjectPath)
+	// Get the current .versions directory entry with retry logic for filer consistency
+	var versionsEntry *filer_pb.Entry
+	var err error
+	maxRetries := 3
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		versionsEntry, err = s3a.getEntry(bucketDir, versionsObjectPath)
+		if err == nil {
+			break
+		}
+		
+		glog.V(0).Infof("CI-DEBUG: updateLatestVersionInDirectory: attempt %d/%d failed to get .versions entry for %s/%s: %v", attempt, maxRetries, bucket, object, err)
+		
+		if attempt < maxRetries {
+			// Brief wait before retry to allow filer consistency
+			time.Sleep(time.Millisecond * 50)
+		}
+	}
+	
 	if err != nil {
-		glog.Errorf("updateLatestVersionInDirectory: failed to get .versions directory for %s/%s: %v", bucket, object, err)
-		glog.V(0).Infof("CI-DEBUG: updateLatestVersionInDirectory: FAILED to get .versions entry for %s/%s: %v", bucket, object, err)
-		return fmt.Errorf("failed to get .versions directory: %w", err)
+		glog.Errorf("updateLatestVersionInDirectory: failed to get .versions directory for %s/%s after %d attempts: %v", bucket, object, maxRetries, err)
+		glog.V(0).Infof("CI-DEBUG: updateLatestVersionInDirectory: FAILED to get .versions entry for %s/%s after %d attempts: %v", bucket, object, maxRetries, err)
+		return fmt.Errorf("failed to get .versions directory after %d attempts: %w", maxRetries, err)
 	}
 
 	glog.V(0).Infof("CI-DEBUG: updateLatestVersionInDirectory: got .versions entry for %s/%s, updating metadata", bucket, object)

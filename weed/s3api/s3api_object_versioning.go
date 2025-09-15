@@ -782,14 +782,30 @@ func (s3a *S3ApiServer) getLatestObjectVersion(bucket, object string) (*filer_pb
 	glog.V(1).Infof("getLatestObjectVersion: looking for latest version of %s/%s", bucket, object)
 	glog.V(0).Infof("CI-DEBUG: getLatestObjectVersion: starting lookup for %s/%s", bucket, object)
 
-	// Get the .versions directory entry to read latest version metadata
-	versionsEntry, err := s3a.getEntry(bucketDir, versionsObjectPath)
+	// Get the .versions directory entry to read latest version metadata with retry logic for filer consistency
+	var versionsEntry *filer_pb.Entry
+	var err error
+	maxRetries := 3
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		versionsEntry, err = s3a.getEntry(bucketDir, versionsObjectPath)
+		if err == nil {
+			break
+		}
+		
+		glog.V(0).Infof("CI-DEBUG: getLatestObjectVersion: attempt %d/%d failed to get .versions directory for %s/%s: %v", attempt, maxRetries, bucket, object, err)
+		
+		if attempt < maxRetries {
+			// Brief wait before retry to allow filer consistency
+			time.Sleep(time.Millisecond * 50)
+		}
+	}
+	
 	if err != nil {
 		// .versions directory doesn't exist - this can happen for objects that existed
 		// before versioning was enabled on the bucket. Fall back to checking for a
 		// regular (non-versioned) object file.
-		glog.V(1).Infof("getLatestObjectVersion: no .versions directory for %s%s (error: %v), checking for pre-versioning object", bucket, object, err)
-		glog.V(0).Infof("CI-DEBUG: getLatestObjectVersion: no .versions directory for %s/%s (error: %v), falling back to pre-versioning", bucket, object, err)
+		glog.V(1).Infof("getLatestObjectVersion: no .versions directory for %s%s after %d attempts (error: %v), checking for pre-versioning object", bucket, object, maxRetries, err)
+		glog.V(0).Infof("CI-DEBUG: getLatestObjectVersion: no .versions directory for %s/%s after %d attempts (error: %v), falling back to pre-versioning", bucket, object, maxRetries, err)
 
 		regularEntry, regularErr := s3a.getEntry(bucketDir, object)
 		if regularErr != nil {
