@@ -539,7 +539,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		case 12: // Heartbeat
 			response, err = h.handleHeartbeat(correlationID, requestBody)
 		case 13: // LeaveGroup
-			response, err = h.handleLeaveGroup(correlationID, requestBody)
+			response, err = h.handleLeaveGroup(correlationID, apiVersion, requestBody)
 		default:
 			fmt.Printf("DEBUG: *** UNSUPPORTED API KEY *** %d (%s) v%d - Correlation: %d\n", apiKey, apiName, apiVersion, correlationID)
 			err = fmt.Errorf("unsupported API key: %d (version %d)", apiKey, apiVersion)

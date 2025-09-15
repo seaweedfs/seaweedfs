@@ -122,22 +122,22 @@ func (h *Handler) handleHeartbeat(correlationID uint32, requestBody []byte) ([]b
 	return h.buildHeartbeatResponse(response), nil
 }
 
-func (h *Handler) handleLeaveGroup(correlationID uint32, requestBody []byte) ([]byte, error) {
+func (h *Handler) handleLeaveGroup(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
 	// Parse LeaveGroup request
 	request, err := h.parseLeaveGroupRequest(requestBody)
 	if err != nil {
-		return h.buildLeaveGroupErrorResponse(correlationID, ErrorCodeInvalidGroupID), nil
+		return h.buildLeaveGroupErrorResponse(correlationID, ErrorCodeInvalidGroupID, apiVersion), nil
 	}
 
 	// Validate request
 	if request.GroupID == "" || request.MemberID == "" {
-		return h.buildLeaveGroupErrorResponse(correlationID, ErrorCodeInvalidGroupID), nil
+		return h.buildLeaveGroupErrorResponse(correlationID, ErrorCodeInvalidGroupID, apiVersion), nil
 	}
 
 	// Get consumer group
 	group := h.groupCoordinator.GetGroup(request.GroupID)
 	if group == nil {
-		return h.buildLeaveGroupErrorResponse(correlationID, ErrorCodeInvalidGroupID), nil
+		return h.buildLeaveGroupErrorResponse(correlationID, ErrorCodeInvalidGroupID, apiVersion), nil
 	}
 
 	group.Mu.Lock()
@@ -149,7 +149,7 @@ func (h *Handler) handleLeaveGroup(correlationID uint32, requestBody []byte) ([]
 	// Validate member exists
 	_, exists := group.Members[request.MemberID]
 	if !exists {
-		return h.buildLeaveGroupErrorResponse(correlationID, ErrorCodeUnknownMemberID), nil
+		return h.buildLeaveGroupErrorResponse(correlationID, ErrorCodeUnknownMemberID, apiVersion), nil
 	}
 
 	// Remove the member from the group
@@ -197,7 +197,7 @@ func (h *Handler) handleLeaveGroup(correlationID uint32, requestBody []byte) ([]
 		},
 	}
 
-	return h.buildLeaveGroupResponse(response), nil
+	return h.buildLeaveGroupResponse(response, apiVersion), nil
 }
 
 func (h *Handler) parseHeartbeatRequest(data []byte) (*HeartbeatRequest, error) {
@@ -298,7 +298,33 @@ func (h *Handler) buildHeartbeatResponse(response HeartbeatResponse) []byte {
 	return result
 }
 
-func (h *Handler) buildLeaveGroupResponse(response LeaveGroupResponse) []byte {
+func (h *Handler) buildLeaveGroupResponse(response LeaveGroupResponse, apiVersion uint16) []byte {
+	// LeaveGroup v0 only includes correlation_id and error_code (no throttle_time_ms, no members)
+	if apiVersion == 0 {
+		return h.buildLeaveGroupV0Response(response)
+	}
+	
+	// For v1+ use the full response format
+	return h.buildLeaveGroupFullResponse(response)
+}
+
+func (h *Handler) buildLeaveGroupV0Response(response LeaveGroupResponse) []byte {
+	result := make([]byte, 0, 6)
+
+	// Correlation ID (4 bytes)
+	correlationIDBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(correlationIDBytes, response.CorrelationID)
+	result = append(result, correlationIDBytes...)
+
+	// Error code (2 bytes) - that's it for v0!
+	errorCodeBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(errorCodeBytes, uint16(response.ErrorCode))
+	result = append(result, errorCodeBytes...)
+
+	return result
+}
+
+func (h *Handler) buildLeaveGroupFullResponse(response LeaveGroupResponse) []byte {
 	estimatedSize := 16
 	for _, member := range response.Members {
 		estimatedSize += len(member.MemberID) + len(member.GroupInstanceID) + 8
@@ -362,14 +388,14 @@ func (h *Handler) buildHeartbeatErrorResponse(correlationID uint32, errorCode in
 	return h.buildHeartbeatResponse(response)
 }
 
-func (h *Handler) buildLeaveGroupErrorResponse(correlationID uint32, errorCode int16) []byte {
+func (h *Handler) buildLeaveGroupErrorResponse(correlationID uint32, errorCode int16, apiVersion uint16) []byte {
 	response := LeaveGroupResponse{
 		CorrelationID: correlationID,
 		ErrorCode:     errorCode,
 		Members:       []LeaveGroupMemberResponse{},
 	}
 
-	return h.buildLeaveGroupResponse(response)
+	return h.buildLeaveGroupResponse(response, apiVersion)
 }
 
 func (h *Handler) updateGroupSubscriptionFromMembers(group *consumer.ConsumerGroup) {
