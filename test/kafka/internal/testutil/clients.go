@@ -37,6 +37,7 @@ func NewSaramaClient(t *testing.T, brokerAddr string) *SaramaClient {
 	config.Version = sarama.V2_8_0_0
 	config.Producer.Return.Successes = true
 	config.Consumer.Return.Errors = true
+	config.Consumer.Offsets.Initial = sarama.OffsetOldest // Start from earliest when no committed offset
 
 	return &SaramaClient{
 		brokerAddr: brokerAddr,
