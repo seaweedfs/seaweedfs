@@ -469,6 +469,65 @@ jobs:
           except Exception as e:
               print(f'Cleanup failed: {e}')
           " || echo "Cleanup completed with some errors (expected)"
+          
+          # Add debug logging to s3-tests code for CI debugging
+          echo "Adding debug logging to s3-tests..."
+          
+          # Add debug to test_bucket_list_return_data_versioning
+          sed -i '/def test_bucket_list_return_data_versioning():/a\
+    print("CI-S3TEST-DEBUG: Starting test_bucket_list_return_data_versioning")' s3tests_boto3/functional/test_s3.py
+          
+          sed -i '/key_names = \['\''bar'\'', '\''baz'\'', '\''foo'\''\]/a\
+    print(f"CI-S3TEST-DEBUG: Creating objects with keys: {key_names} in bucket {bucket_name}")' s3tests_boto3/functional/test_s3.py
+          
+          sed -i '/for key_name in key_names:/a\
+        print(f"CI-S3TEST-DEBUG: Attempting head_object for key: {key_name}")' s3tests_boto3/functional/test_s3.py
+          
+          sed -i '/obj_response = client.head_object(Bucket=bucket_name, Key=key_name)/a\
+        print(f"CI-S3TEST-DEBUG: head_object SUCCESS for {key_name}: ETag={obj_response.get(\"ETag\")}, VersionId={obj_response.get(\"VersionId\")}")' s3tests_boto3/functional/test_s3.py
+          
+          sed -i '/response  = client.list_object_versions(Bucket=bucket_name)/a\
+    print(f"CI-S3TEST-DEBUG: list_object_versions response keys: {list(response.keys())}")\
+    if "Versions" in response:\
+        print(f"CI-S3TEST-DEBUG: Found {len(response[\"Versions\"])} versions")\
+        for i, v in enumerate(response["Versions"][:3]):\
+            print(f"CI-S3TEST-DEBUG:   Version {i+1}: Key={v[\"Key\"]}, VersionId={v[\"VersionId\"]}")\
+    else:\
+        print("CI-S3TEST-DEBUG: NO Versions key in response!")' s3tests_boto3/functional/test_s3.py
+          
+          # Add debug to test_versioning_concurrent_multi_object_delete  
+          sed -i '/def test_versioning_concurrent_multi_object_delete():/a\
+    print("CI-S3TEST-DEBUG: Starting test_versioning_concurrent_multi_object_delete")' s3tests_boto3/functional/test_s3.py
+          
+          sed -i '/key_names = \["key_{:d}".format(x) for x in range(num_objects)\]/a\
+    print(f"CI-S3TEST-DEBUG: Will create {num_objects} objects with {num_versions_per_object} versions each = {total_num_objects_in_the_bucket} total versions")\
+    print(f"CI-S3TEST-DEBUG: Object keys: {key_names}")' s3tests_boto3/functional/test_s3.py
+          
+          sed -i '/for _ in range(num_versions_per_object):/a\
+        print(f"CI-S3TEST-DEBUG: Creating version {_+1} of {num_versions_per_object} for all objects")' s3tests_boto3/functional/test_s3.py
+          
+          sed -i '/versions = client.list_object_versions(Bucket=bucket_name)\['\''Versions'\''\]/i\
+    list_response = client.list_object_versions(Bucket=bucket_name)\
+    print(f"CI-S3TEST-DEBUG: list_object_versions response keys: {list(list_response.keys())}")\
+    if "Versions" in list_response:\
+        print(f"CI-S3TEST-DEBUG: Found {len(list_response[\"Versions\"])} versions, expected {total_num_objects_in_the_bucket}")\
+    else:\
+        print("CI-S3TEST-DEBUG: NO Versions key in list_object_versions response!")\
+    versions = list_response['\''Versions'\'']' s3tests_boto3/functional/test_s3.py
+          
+          # Add debug to _create_objects function
+          sed -i '/for key in keys:/a\
+        print(f"CI-S3TEST-DEBUG: Creating object with key=\\"{key}\\" body=\\"{key}\\" in bucket {bucket_name}")' s3tests_boto3/functional/test_s3.py
+          
+          sed -i '/obj = bucket.put_object(Body=key, Key=key)/a\
+        print(f"CI-S3TEST-DEBUG: put_object SUCCESS for key=\\"{key}\\"")\
+        if hasattr(obj, "version_id"):\
+            print(f"CI-S3TEST-DEBUG: Created version_id: {obj.version_id}")\
+        else:\
+            print("CI-S3TEST-DEBUG: No version_id attribute on put_object response")' s3tests_boto3/functional/test_s3.py
+          
+          echo "Debug logging added to s3-tests"
+          
           # Run versioning and object lock tests once (avoid duplicates)
           tox -- s3tests_boto3/functional/test_s3.py -k "object_lock or versioning" --tb=short
           kill -9 $pid || true
