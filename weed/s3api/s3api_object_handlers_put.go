@@ -592,7 +592,6 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 	}
 
 	// Get the uploaded entry to add versioning metadata
-	bucketDir := s3a.option.BucketsPath + "/" + bucket
 	versionEntry, err := s3a.getEntry(bucketDir, versionObjectPath)
 	if err != nil {
 		glog.Errorf("putVersionedObject: failed to get version entry: %v", err)
