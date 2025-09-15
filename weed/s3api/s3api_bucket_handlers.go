@@ -926,11 +926,13 @@ func (s3a *S3ApiServer) PutBucketVersioningHandler(w http.ResponseWriter, r *htt
 	}
 
 	// Update bucket versioning configuration using new bucket config system
+	glog.V(0).Infof("PutBucketVersioningHandler: setting versioning status to '%s' for bucket %s", status, bucket)
 	if errCode := s3a.setBucketVersioningStatus(bucket, status); errCode != s3err.ErrNone {
 		glog.Errorf("PutBucketVersioningHandler save config: %d", errCode)
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
+	glog.V(0).Infof("PutBucketVersioningHandler: successfully set versioning status to '%s' for bucket %s", status, bucket)
 
 	writeSuccessResponseEmpty(w, r)
 }

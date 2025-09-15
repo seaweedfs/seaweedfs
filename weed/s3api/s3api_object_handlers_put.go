@@ -140,7 +140,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		versioningEnabled := (versioningState == s3_constants.VersioningEnabled)
 		versioningConfigured := (versioningState != "")
 
-		glog.V(1).Infof("PutObjectHandler: bucket %s, object %s, versioningState=%s", bucket, object, versioningState)
+		glog.V(0).Infof("PutObjectHandler: bucket %s, object %s, versioningState='%s', versioningEnabled=%v, versioningConfigured=%v", bucket, object, versioningState, versioningEnabled, versioningConfigured)
 
 		// Validate object lock headers before processing
 		if err := s3a.validateObjectLockHeaders(r, versioningEnabled); err != nil {
@@ -162,7 +162,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 		if versioningState == s3_constants.VersioningEnabled {
 			// Handle enabled versioning - create new versions with real version IDs
-			glog.V(1).Infof("PutObjectHandler: using versioned PUT for %s/%s", bucket, object)
+			glog.V(0).Infof("PutObjectHandler: USING VERSIONED PUT for %s/%s", bucket, object)
 			versionId, etag, errCode := s3a.putVersionedObject(r, bucket, object, dataReader, objectContentType)
 			if errCode != s3err.ErrNone {
 				s3err.WriteErrorResponse(w, r, errCode)
@@ -178,7 +178,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			setEtag(w, etag)
 		} else if versioningState == s3_constants.VersioningSuspended {
 			// Handle suspended versioning - overwrite with "null" version ID but preserve existing versions
-			glog.V(1).Infof("PutObjectHandler: using suspended versioning PUT for %s/%s", bucket, object)
+			glog.V(0).Infof("PutObjectHandler: USING SUSPENDED VERSIONING PUT for %s/%s", bucket, object)
 			etag, errCode := s3a.putSuspendedVersioningObject(r, bucket, object, dataReader, objectContentType)
 			if errCode != s3err.ErrNone {
 				s3err.WriteErrorResponse(w, r, errCode)
@@ -192,7 +192,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			setEtag(w, etag)
 		} else {
 			// Handle regular PUT (never configured versioning)
-			glog.V(1).Infof("PutObjectHandler: using regular PUT for %s/%s", bucket, object)
+			glog.V(0).Infof("PutObjectHandler: USING REGULAR PUT for %s/%s (versioning never configured)", bucket, object)
 			uploadUrl := s3a.toFilerUrl(bucket, object)
 			if objectContentType == "" {
 				dataReader = mimeDetect(r, dataReader)
