@@ -1207,7 +1207,7 @@ func (h *Handler) HandleMetadataV7(correlationID uint32, requestBody []byte) ([]
 		binary.Write(&buf, binary.BigEndian, int32(0)) // PartitionIndex
 		binary.Write(&buf, binary.BigEndian, int32(1)) // LeaderID
 
-		// LeaderEpoch (4 bytes) - v7+ addition 
+		// LeaderEpoch (4 bytes) - v7+ addition
 		// NOTE: kafka-go client doesn't expect leader_epoch in v7, commenting out for compatibility
 		// binary.Write(&buf, binary.BigEndian, int32(0)) // Leader epoch 0
 
@@ -1220,7 +1220,8 @@ func (h *Handler) HandleMetadataV7(correlationID uint32, requestBody []byte) ([]
 		binary.Write(&buf, binary.BigEndian, int32(1)) // NodeID 1
 
 		// OfflineReplicas array (4 bytes length + nodes) - v5+ addition
-		binary.Write(&buf, binary.BigEndian, int32(0)) // No offline replicas
+		// NOTE: kafka-go client might not expect offline_replicas in v7, testing without it
+		// binary.Write(&buf, binary.BigEndian, int32(0)) // No offline replicas
 	}
 
 	response := buf.Bytes()
