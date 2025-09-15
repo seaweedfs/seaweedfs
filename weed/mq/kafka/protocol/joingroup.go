@@ -244,15 +244,9 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 	// If this member is the leader, include all member info
 	if memberID == group.Leader {
 		fmt.Printf("DEBUG: JoinGroup member '%s' is the leader, including %d members in response\n", memberID, len(group.Members))
-		response.Members = make([]JoinGroupMember, 0, len(group.Members))
-		for _, m := range group.Members {
-			response.Members = append(response.Members, JoinGroupMember{
-				MemberID:        m.ID,
-				GroupInstanceID: "", // Empty for kafka-go compatibility - static membership not used
-				Metadata:        m.Metadata,
-			})
-			fmt.Printf("DEBUG: JoinGroup adding member to response - ID: '%s', Metadata: %d bytes\n", m.ID, len(m.Metadata))
-		}
+		// TESTING: Try empty members array to see if that fixes the size issue
+		response.Members = make([]JoinGroupMember, 0)
+		fmt.Printf("DEBUG: JoinGroup TESTING: sending empty members array instead of %d members\n", len(group.Members))
 	} else {
 		fmt.Printf("DEBUG: JoinGroup member '%s' is NOT the leader (leader is '%s'), empty members array\n", memberID, group.Leader)
 	}
