@@ -93,7 +93,7 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 		topicExists := h.seaweedMQHandler.TopicExists(topicName)
 
 		// Debug: show all existing topics
-		existingTopics := h.seaweedMQHandler.ListTopics()
+		_ = h.seaweedMQHandler.ListTopics() // existingTopics
 		if !topicExists {
 			if err := h.seaweedMQHandler.CreateTopic(topicName, 1); err != nil {
 			} else {
@@ -145,7 +145,7 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 				errorCode = 3 // UNKNOWN_TOPIC_OR_PARTITION
 			} else {
 				// Process the record set
-				recordCount, totalSize, parseErr := h.parseRecordSet(recordSetData)
+				recordCount, _, parseErr := h.parseRecordSet(recordSetData) // totalSize unused
 				if parseErr != nil {
 					errorCode = 42 // INVALID_RECORD
 				} else if recordCount > 0 {
@@ -384,7 +384,7 @@ func (h *Handler) extractFirstRecord(recordSetData []byte) ([]byte, []byte) {
 	// + base_sequence(4) + records_count(4) = 61 bytes header
 
 	offset += 8 // skip base_offset
-	batchLength := int32(binary.BigEndian.Uint32(recordSetData[offset:]))
+	_ = int32(binary.BigEndian.Uint32(recordSetData[offset:])) // batchLength unused
 	offset += 4 // batch_length
 
 
@@ -582,18 +582,16 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 		return nil, fmt.Errorf("Produce v%d request too short for transactional_id", apiVersion)
 	}
 
-	var transactionalID string = "null"
 	txIDLen := int16(binary.BigEndian.Uint16(requestBody[offset : offset+2]))
 	offset += 2
 
 	if txIDLen == -1 {
-		// null transactional_id
-		transactionalID = "null"
+		// null transactional_id - skip
 	} else if txIDLen >= 0 {
 		if len(requestBody) < offset+int(txIDLen) {
 			return nil, fmt.Errorf("Produce v%d request transactional_id too short", apiVersion)
 		}
-		transactionalID = string(requestBody[offset : offset+int(txIDLen)])
+		// Skip transactional_id data
 		offset += int(txIDLen)
 	}
 
@@ -604,7 +602,7 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 
 	acks := int16(binary.BigEndian.Uint16(requestBody[offset : offset+2]))
 	offset += 2
-	timeout := binary.BigEndian.Uint32(requestBody[offset : offset+4])
+	_ = binary.BigEndian.Uint32(requestBody[offset : offset+4]) // timeout unused
 	offset += 4
 
 
@@ -699,7 +697,7 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 				errorCode = 3 // UNKNOWN_TOPIC_OR_PARTITION
 			} else {
 				// Process the record set (lenient parsing)
-				recordCount, totalSize, parseErr := h.parseRecordSet(recordSetData)
+				recordCount, _, parseErr := h.parseRecordSet(recordSetData) // totalSize unused
 				if parseErr != nil {
 					errorCode = 42 // INVALID_RECORD
 				} else if recordCount > 0 {
