@@ -38,7 +38,7 @@ jobs:
           git clone https://github.com/ceph/s3-tests.git
           cd s3-tests
           # Pin to commit before recent versioning test changes that may not be compatible
-          git checkout 95c232b  # Before PR #687 and #690 changes
+          git checkout 6fd748b0e3a0088e0bf32c849865039355326327  # Before PR #687 and #690 changes
           pip install -r requirements.txt
           pip install tox
           pip install -e .
@@ -333,7 +333,7 @@ jobs:
           git clone https://github.com/ceph/s3-tests.git
           cd s3-tests
           # Pin to commit before recent versioning test changes that may not be compatible
-          git checkout 95c232b  # Before PR #687 and #690 changes
+          git checkout 6fd748b0e3a0088e0bf32c849865039355326327  # Before PR #687 and #690 changes
           pip install -r requirements.txt
           pip install tox
           pip install -e .
@@ -460,7 +460,7 @@ jobs:
           git clone https://github.com/ceph/s3-tests.git
           cd s3-tests
           # Pin to commit before recent versioning test changes that may not be compatible
-          git checkout 95c232b  # Before PR #687 and #690 changes
+          git checkout 6fd748b0e3a0088e0bf32c849865039355326327  # Before PR #687 and #690 changes
           pip install -r requirements.txt
           pip install tox
           pip install -e .
@@ -685,7 +685,7 @@ jobs:
           git clone https://github.com/ceph/s3-tests.git
           cd s3-tests
           # Pin to commit before recent versioning test changes that may not be compatible
-          git checkout 95c232b  # Before PR #687 and #690 changes
+          git checkout 6fd748b0e3a0088e0bf32c849865039355326327  # Before PR #687 and #690 changes
           pip install -r requirements.txt
           pip install tox
           pip install -e .
