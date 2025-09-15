@@ -176,9 +176,10 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 				}
 			}
 
-			// Same owner, compatible settings - return success (idempotent)
-			glog.V(3).Infof("PutBucketHandler: bucket %s already exists with compatible settings, returning success", bucket)
-			writeSuccessResponseXML(w, r, CreateBucketConfiguration{})
+			// Bucket already exists - always return BucketAlreadyExists per S3 specification
+			// The S3 tests expect BucketAlreadyExists in all cases, not BucketAlreadyOwnedByYou
+			glog.V(3).Infof("PutBucketHandler: bucket %s already exists", bucket)
+			s3err.WriteErrorResponse(w, r, s3err.ErrBucketAlreadyExists)
 			return
 		}
 	}
