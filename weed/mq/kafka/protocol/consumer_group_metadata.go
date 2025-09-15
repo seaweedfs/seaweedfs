@@ -114,6 +114,12 @@ func ParseConsumerProtocolMetadata(metadata []byte, strategyName string) (*Consu
 		userDataLength := binary.BigEndian.Uint32(metadata[offset : offset+4])
 		offset += 4
 
+		// Handle -1 (0xFFFFFFFF) as null/empty user data (Kafka protocol convention)
+		if userDataLength == 0xFFFFFFFF {
+			result.UserData = []byte{}
+			return result, nil
+		}
+
 		// Validate user data length
 		if userDataLength > 100000 { // 100KB limit
 			return nil, fmt.Errorf("unreasonable user data length: %d", userDataLength)
