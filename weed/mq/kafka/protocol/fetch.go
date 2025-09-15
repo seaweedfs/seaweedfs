@@ -156,8 +156,8 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 				}
 			}
 
-			fmt.Printf("DEBUG: Fetch v%d - topic: %s, partition: %d, fetchOffset: %d (effective: %d), highWaterMark: %d, maxBytes: %d\n",
-				apiVersion, topic.Name, partition.PartitionID, partition.FetchOffset, effectiveFetchOffset, highWaterMark, partition.MaxBytes)
+			fmt.Printf("DEBUG: Fetch v%d - partition: %d, fetchOffset: %d (effective: %d), highWaterMark: %d, maxBytes: %d\n",
+				apiVersion, partition.PartitionID, partition.FetchOffset, effectiveFetchOffset, highWaterMark, partition.MaxBytes)
 
 			// High water mark (8 bytes)
 			highWaterMarkBytes := make([]byte, 8)
@@ -184,8 +184,8 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 			// Records - get actual stored record batches using multi-batch fetcher
 			var recordBatch []byte
 			if ledger != nil && highWaterMark > effectiveFetchOffset {
-				fmt.Printf("DEBUG: Multi-batch fetch - topic:%s, partition:%d, offset:%d, maxBytes:%d\n",
-					topic.Name, partition.PartitionID, effectiveFetchOffset, partition.MaxBytes)
+				fmt.Printf("DEBUG: Multi-batch fetch - partition:%d, offset:%d, maxBytes:%d\n",
+					partition.PartitionID, effectiveFetchOffset, partition.MaxBytes)
 
 				// Use multi-batch fetcher for better MaxBytes compliance
 				multiFetcher := NewMultiBatchFetcher(h)
@@ -226,8 +226,8 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 			// Records data
 			response = append(response, recordBatch...)
 
-			fmt.Printf("DEBUG: Would fetch schematized records - topic: %s, partition: %d, offset: %d, maxBytes: %d\n",
-				topic.Name, partition.PartitionID, partition.FetchOffset, partition.MaxBytes)
+			fmt.Printf("DEBUG: Would fetch schematized records - partition: %d, offset: %d, maxBytes: %d\n",
+				partition.PartitionID, partition.FetchOffset, partition.MaxBytes)
 		}
 	}
 
@@ -985,8 +985,8 @@ func (h *Handler) fetchSchematizedRecords(topicName string, partitionID int32, o
 	// 3. Handle schema evolution and compatibility
 	// 4. Return properly formatted Kafka record batches
 
-	fmt.Printf("DEBUG: Would fetch schematized records - topic: %s, partition: %d, offset: %d, maxBytes: %d\n",
-		topicName, partitionID, offset, maxBytes)
+	fmt.Printf("DEBUG: Would fetch schematized records - partition: %d, offset: %d, maxBytes: %d\n",
+		partitionID, offset, maxBytes)
 
 	// For Phase 7, return empty records
 	// In Phase 8, this will return actual reconstructed messages
@@ -1173,6 +1173,6 @@ func (h *Handler) getSchemaMetadataForTopic(topicName string) (map[string]string
 		"schema_version": "1",
 	}
 
-	fmt.Printf("DEBUG: Retrieved schema metadata for topic %s: %v\n", topicName, metadata)
+	fmt.Printf("DEBUG: Retrieved schema metadata: %v\n", metadata)
 	return metadata, nil
 }

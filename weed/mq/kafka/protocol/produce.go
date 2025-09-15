@@ -102,23 +102,23 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 		partitionsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 		offset += 4
 
-		fmt.Printf("DEBUG: Produce request for topic '%s' (%d partitions)\n", topicName, partitionsCount)
+		fmt.Printf("DEBUG: Produce request (%d partitions)\n", partitionsCount)
 
 		// Check if topic exists, auto-create if it doesn't (simulates auto.create.topics.enable=true)
 		topicExists := h.seaweedMQHandler.TopicExists(topicName)
 
 		// Debug: show all existing topics
 		existingTopics := h.seaweedMQHandler.ListTopics()
-		fmt.Printf("DEBUG: Topic exists check: '%s' -> %v (existing topics: %v)\n", topicName, topicExists, existingTopics)
+		fmt.Printf("DEBUG: Topic exists check -> %v (existing topics count: %d)\n", topicExists, len(existingTopics))
 		if !topicExists {
-			fmt.Printf("DEBUG: Auto-creating topic during Produce: %s\n", topicName)
+			fmt.Printf("DEBUG: Auto-creating topic during Produce\n")
 			if err := h.seaweedMQHandler.CreateTopic(topicName, 1); err != nil {
-				fmt.Printf("DEBUG: Failed to auto-create topic '%s': %v\n", topicName, err)
+				fmt.Printf("DEBUG: Failed to auto-create topic: %v\n", err)
 			} else {
 				// Initialize ledger for partition 0
 				h.GetOrCreateLedger(topicName, 0)
 				topicExists = true // CRITICAL FIX: Update the flag after creating the topic
-				fmt.Printf("DEBUG: Topic '%s' auto-created successfully, topicExists = %v\n", topicName, topicExists)
+				fmt.Printf("DEBUG: Topic auto-created successfully, topicExists = %v\n", topicExists)
 			}
 		}
 
@@ -159,14 +159,14 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 			var baseOffset int64 = 0
 			currentTime := time.Now().UnixNano()
 
-			fmt.Printf("DEBUG: Processing partition %d for topic '%s' (topicExists=%v)\n", partitionID, topicName, topicExists)
+			fmt.Printf("DEBUG: Processing partition %d (topicExists=%v)\n", partitionID, topicExists)
 			fmt.Printf("DEBUG: Record set size: %d bytes\n", recordSetSize)
 
 			if !topicExists {
-				fmt.Printf("DEBUG: ERROR - Topic '%s' not found, returning UNKNOWN_TOPIC_OR_PARTITION\n", topicName)
+				fmt.Printf("DEBUG: ERROR - Topic not found, returning UNKNOWN_TOPIC_OR_PARTITION\n")
 				errorCode = 3 // UNKNOWN_TOPIC_OR_PARTITION
 			} else {
-				fmt.Printf("DEBUG: SUCCESS - Topic '%s' found, processing record set (size=%d)\n", topicName, recordSetSize)
+				fmt.Printf("DEBUG: SUCCESS - Topic found, processing record set (size=%d)\n", recordSetSize)
 				// Process the record set
 				recordCount, totalSize, parseErr := h.parseRecordSet(recordSetData)
 				fmt.Printf("DEBUG: parseRecordSet result - recordCount: %d, totalSize: %d, parseErr: %v\n", recordCount, totalSize, parseErr)

@@ -44,8 +44,8 @@ func (f *MultiBatchFetcher) FetchMultipleBatches(topicName string, partitionID i
 		maxBytes = minResponseSize
 	}
 
-	fmt.Printf("DEBUG: MultiBatch - topic:%s, partition:%d, startOffset:%d, highWaterMark:%d, maxBytes:%d\n",
-		topicName, partitionID, startOffset, highWaterMark, maxBytes)
+	fmt.Printf("DEBUG: MultiBatch - partition:%d, startOffset:%d, highWaterMark:%d, maxBytes:%d\n",
+		partitionID, startOffset, highWaterMark, maxBytes)
 
 	var combinedBatches []byte
 	currentOffset := startOffset

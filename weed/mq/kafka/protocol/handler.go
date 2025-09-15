@@ -166,15 +166,15 @@ func (h *Handler) Close() error {
 // StoreRecordBatch stores a record batch for later retrieval during Fetch operations
 func (h *Handler) StoreRecordBatch(topicName string, partition int32, baseOffset int64, recordBatch []byte) {
 	// Record batch storage is now handled by the SeaweedMQ handler
-	fmt.Printf("DEBUG: StoreRecordBatch delegated to SeaweedMQ handler - topic:%s, partition:%d, offset:%d\n",
-		topicName, partition, baseOffset)
+	fmt.Printf("DEBUG: StoreRecordBatch delegated to SeaweedMQ handler - partition:%d, offset:%d\n",
+		partition, baseOffset)
 }
 
 // GetRecordBatch retrieves a stored record batch that contains the requested offset
 func (h *Handler) GetRecordBatch(topicName string, partition int32, offset int64) ([]byte, bool) {
 	// Record batch retrieval is now handled by the SeaweedMQ handler
-	fmt.Printf("DEBUG: GetRecordBatch delegated to SeaweedMQ handler - topic:%s, partition:%d, offset:%d\n",
-		topicName, partition, offset)
+	fmt.Printf("DEBUG: GetRecordBatch delegated to SeaweedMQ handler - partition:%d, offset:%d\n",
+		partition, offset)
 	return nil, false
 }
 

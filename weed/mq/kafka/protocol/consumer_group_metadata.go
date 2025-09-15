@@ -182,13 +182,12 @@ func ExtractTopicsFromMetadata(protocols []GroupProtocol, fallbackTopics []strin
 		if ValidateAssignmentStrategy(protocol.Name) {
 			parsed, err := ParseConsumerProtocolMetadata(protocol.Metadata, protocol.Name)
 			if err != nil {
-				fmt.Printf("DEBUG: Failed to parse protocol metadata for %s: %v\n", protocol.Name, err)
+				fmt.Printf("DEBUG: Failed to parse protocol metadata: %v\n", err)
 				continue
 			}
 
 			if len(parsed.Topics) > 0 {
-				fmt.Printf("DEBUG: Extracted %d topics from %s protocol: %v\n",
-					len(parsed.Topics), protocol.Name, parsed.Topics)
+				fmt.Printf("DEBUG: Extracted %d topics from protocol\n", len(parsed.Topics))
 				return parsed.Topics
 			}
 		}
@@ -196,7 +195,7 @@ func ExtractTopicsFromMetadata(protocols []GroupProtocol, fallbackTopics []strin
 
 	// Fallback to provided topics or default
 	if len(fallbackTopics) > 0 {
-		fmt.Printf("DEBUG: Using fallback topics: %v\n", fallbackTopics)
+		fmt.Printf("DEBUG: Using fallback topics (%d topics)\n", len(fallbackTopics))
 		return fallbackTopics
 	}
 
