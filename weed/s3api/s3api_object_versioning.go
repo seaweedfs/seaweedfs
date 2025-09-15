@@ -768,7 +768,7 @@ func (s3a *S3ApiServer) ListObjectVersionsHandler(w http.ResponseWriter, r *http
 	}
 
 	// Debug logging for CI to trace request parameters
-	glog.V(0).Infof("CI-DEBUG: ListObjectVersionsHandler: params - prefix='%s', maxKeys=%d, keyMarker='%s', versionIdMarker='%s'", 
+	glog.V(0).Infof("CI-DEBUG: ListObjectVersionsHandler: params - prefix='%s', maxKeys=%d, keyMarker='%s', versionIdMarker='%s'",
 		originalPrefix, maxKeys, keyMarker, versionIdMarker)
 
 	// List versions
@@ -783,9 +783,9 @@ func (s3a *S3ApiServer) ListObjectVersionsHandler(w http.ResponseWriter, r *http
 	result.Prefix = originalPrefix
 
 	// Debug logging for CI to trace ListObjectVersions response
-	glog.V(0).Infof("CI-DEBUG: ListObjectVersions response for bucket %s: %d versions, %d delete markers, truncated=%v", 
+	glog.V(0).Infof("CI-DEBUG: ListObjectVersions response for bucket %s: %d versions, %d delete markers, truncated=%v",
 		bucket, len(result.Versions), len(result.DeleteMarkers), result.IsTruncated)
-	
+
 	if len(result.Versions) > 0 {
 		glog.V(0).Infof("CI-DEBUG: ListObjectVersions first few versions:")
 		for i, v := range result.Versions {
