@@ -151,6 +151,8 @@ func (s3a *S3ApiServer) createDeleteMarker(bucket, object string) (string, error
 func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdMarker, delimiter string, maxKeys int) (*S3ListObjectVersionsResult, error) {
 	var allVersions []interface{} // Can contain VersionEntry or DeleteMarkerEntry
 
+	glog.V(1).Infof("listObjectVersions: listing versions for bucket %s, prefix '%s'", bucket, prefix)
+
 	// Track objects that have been processed to avoid duplicates
 	processedObjects := make(map[string]bool)
 
@@ -161,8 +163,11 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 	bucketPath := path.Join(s3a.option.BucketsPath, bucket)
 	err := s3a.findVersionsRecursively(bucketPath, "", &allVersions, processedObjects, seenVersionIds, bucket, prefix)
 	if err != nil {
+		glog.Errorf("listObjectVersions: findVersionsRecursively failed: %v", err)
 		return nil, err
 	}
+
+	glog.V(1).Infof("listObjectVersions: found %d total versions", len(allVersions))
 
 	// Sort by key, then by LastModified (newest first), then by VersionId for deterministic ordering
 	sort.Slice(allVersions, func(i, j int) bool {
@@ -218,6 +223,8 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 		IsTruncated: len(allVersions) > maxKeys,
 	}
 
+	glog.V(1).Infof("listObjectVersions: building response with %d versions (truncated: %v)", len(allVersions), result.IsTruncated)
+
 	// Limit results
 	if len(allVersions) > maxKeys {
 		allVersions = allVersions[:maxKeys]
@@ -239,14 +246,18 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 	result.DeleteMarkers = make([]DeleteMarkerEntry, 0)
 
 	// Add versions to result
-	for _, version := range allVersions {
+	for i, version := range allVersions {
 		switch v := version.(type) {
 		case *VersionEntry:
+			glog.V(2).Infof("listObjectVersions: adding version %d: key=%s, versionId=%s", i, v.Key, v.VersionId)
 			result.Versions = append(result.Versions, *v)
 		case *DeleteMarkerEntry:
+			glog.V(2).Infof("listObjectVersions: adding delete marker %d: key=%s, versionId=%s", i, v.Key, v.VersionId)
 			result.DeleteMarkers = append(result.DeleteMarkers, *v)
 		}
 	}
+
+	glog.V(1).Infof("listObjectVersions: final result - %d versions, %d delete markers", len(result.Versions), len(result.DeleteMarkers))
 
 	return result, nil
 }
@@ -768,20 +779,23 @@ func (s3a *S3ApiServer) getLatestObjectVersion(bucket, object string) (*filer_pb
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
 	versionsObjectPath := object + ".versions"
 
+	glog.V(1).Infof("getLatestObjectVersion: looking for latest version of %s/%s", bucket, object)
+
 	// Get the .versions directory entry to read latest version metadata
 	versionsEntry, err := s3a.getEntry(bucketDir, versionsObjectPath)
 	if err != nil {
 		// .versions directory doesn't exist - this can happen for objects that existed
 		// before versioning was enabled on the bucket. Fall back to checking for a
 		// regular (non-versioned) object file.
-		glog.V(2).Infof("getLatestObjectVersion: no .versions directory for %s%s, checking for pre-versioning object", bucket, object)
+		glog.V(1).Infof("getLatestObjectVersion: no .versions directory for %s%s (error: %v), checking for pre-versioning object", bucket, object, err)
 
 		regularEntry, regularErr := s3a.getEntry(bucketDir, object)
 		if regularErr != nil {
+			glog.V(1).Infof("getLatestObjectVersion: no pre-versioning object found for %s%s (error: %v)", bucket, object, regularErr)
 			return nil, fmt.Errorf("failed to get %s%s .versions directory and no regular object found: %w", bucket, object, err)
 		}
 
-		glog.V(2).Infof("getLatestObjectVersion: found pre-versioning object for %s/%s", bucket, object)
+		glog.V(1).Infof("getLatestObjectVersion: found pre-versioning object for %s/%s", bucket, object)
 		return regularEntry, nil
 	}
 
