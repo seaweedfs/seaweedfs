@@ -41,6 +41,12 @@ jobs:
           pip install tox
           pip install -e .
 
+      - name: Fix S3 tests bucket creation conflicts
+        run: |
+          python3 test/s3/fix_s3_tests_bucket_conflicts.py
+        env:
+          S3_TESTS_PATH: s3-tests
+
       - name: Run Basic S3 tests
         timeout-minutes: 15
         env:
