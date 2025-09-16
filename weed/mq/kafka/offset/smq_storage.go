@@ -2,6 +2,8 @@ package offset
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/filer_client"
@@ -168,5 +170,30 @@ func (s *SMQOffsetStorage) Close() error {
 
 // parseTopicPartitionKey parses legacy "topic:partition" format into ConsumerOffsetKey
 func parseTopicPartitionKey(topicPartition string) (ConsumerOffsetKey, error) {
-	return ConsumerOffsetKey{}, fmt.Errorf("legacy format parsing not implemented yet")
+	parts := strings.Split(topicPartition, ":")
+	if len(parts) != 2 {
+		return ConsumerOffsetKey{}, fmt.Errorf("invalid legacy format: expected 'topic:partition', got '%s'", topicPartition)
+	}
+	
+	topic := parts[0]
+	if topic == "" {
+		return ConsumerOffsetKey{}, fmt.Errorf("empty topic in legacy format: '%s'", topicPartition)
+	}
+	
+	partitionStr := parts[1]
+	partition, err := strconv.ParseInt(partitionStr, 10, 32)
+	if err != nil {
+		return ConsumerOffsetKey{}, fmt.Errorf("invalid partition number in legacy format '%s': %w", topicPartition, err)
+	}
+	
+	if partition < 0 {
+		return ConsumerOffsetKey{}, fmt.Errorf("negative partition number in legacy format: %d", partition)
+	}
+	
+	// Return a ConsumerOffsetKey with empty group ID since legacy format doesn't include it
+	return ConsumerOffsetKey{
+		ConsumerGroup: "", // Legacy format doesn't specify group
+		Topic:         topic,
+		Partition:     int32(partition),
+	}, nil
 }

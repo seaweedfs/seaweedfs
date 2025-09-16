@@ -248,7 +248,7 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, req
 			partitionResponse := OffsetFetchPartitionResponse{
 				Index:       partition,
 				Offset:      fetchedOffset,
-				LeaderEpoch: -1, // Not implemented
+				LeaderEpoch: 0, // Default epoch for SeaweedMQ (single leader model)
 				Metadata:    metadata,
 				ErrorCode:   errorCode,
 			}
