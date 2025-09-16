@@ -1176,46 +1176,168 @@ func (h *Handler) handleSchematizedFetch(topicName string, partitionID int32, of
 
 // isSchematizedTopic checks if a topic uses schema management
 func (h *Handler) isSchematizedTopic(topicName string) bool {
-	// For Phase 7, we'll implement a simple check
-	// In Phase 8, this will check SeaweedMQ metadata or configuration
-	// to determine if a topic has schematized messages
-
-	// For now, assume topics ending with "-value" or "-key" are schematized
-	// This is a common Confluent Schema Registry convention
-	if len(topicName) > 6 {
-		suffix := topicName[len(topicName)-6:]
-		if suffix == "-value" {
-			return true
-		}
+	if !h.IsSchemaEnabled() {
+		return false
 	}
-	if len(topicName) > 4 {
-		suffix := topicName[len(topicName)-4:]
-		if suffix == "-key" {
-			return true
-		}
+
+	// Check multiple indicators for schematized topics:
+	
+	// 1. Confluent Schema Registry naming conventions
+	if h.matchesSchemaRegistryConvention(topicName) {
+		return true
+	}
+	
+	// 2. Check if topic has schema metadata in SeaweedMQ
+	if h.hasSchemaMetadata(topicName) {
+		return true
+	}
+	
+	// 3. Check for schema configuration in topic metadata
+	if h.hasSchemaConfiguration(topicName) {
+		return true
+	}
+	
+	// 4. Check if topic has been used with schematized messages before
+	if h.hasSchematizedMessageHistory(topicName) {
+		return true
 	}
 
 	return false
 }
 
+// matchesSchemaRegistryConvention checks Confluent Schema Registry naming patterns
+func (h *Handler) matchesSchemaRegistryConvention(topicName string) bool {
+	// Common Schema Registry subject patterns:
+	// - topicName-value (for message values)
+	// - topicName-key (for message keys)
+	// - topicName (direct topic name as subject)
+	
+	if len(topicName) > 6 && topicName[len(topicName)-6:] == "-value" {
+		return true
+	}
+	if len(topicName) > 4 && topicName[len(topicName)-4:] == "-key" {
+		return true
+	}
+	
+	// Check if the topic name itself is registered as a schema subject
+	if h.schemaManager != nil {
+		// Try to get latest schema for this subject
+		_, err := h.schemaManager.registryClient.GetLatestSchema(topicName)
+		if err == nil {
+			return true
+		}
+		
+		// Also check with -value suffix
+		_, err = h.schemaManager.registryClient.GetLatestSchema(topicName + "-value")
+		if err == nil {
+			return true
+		}
+	}
+	
+	return false
+}
+
+// hasSchemaMetadata checks if topic has schema metadata in SeaweedMQ
+func (h *Handler) hasSchemaMetadata(topicName string) bool {
+	// This would integrate with SeaweedMQ's topic metadata system
+	// For now, return false as this requires SeaweedMQ integration
+	// TODO: Implement SeaweedMQ topic metadata lookup
+	return false
+}
+
+// hasSchemaConfiguration checks topic-level schema configuration
+func (h *Handler) hasSchemaConfiguration(topicName string) bool {
+	// This would check for topic-level configuration that enables schemas
+	// Could be stored in SeaweedMQ topic configuration or external config
+	// TODO: Implement configuration-based schema detection
+	return false
+}
+
+// hasSchematizedMessageHistory checks if topic has been used with schemas before
+func (h *Handler) hasSchematizedMessageHistory(topicName string) bool {
+	// This could maintain a cache of topics that have had schematized messages
+	// For now, return false as this requires persistent state
+	// TODO: Implement schema usage history tracking
+	return false
+}
+
 // getSchemaMetadataForTopic retrieves schema metadata for a topic
 func (h *Handler) getSchemaMetadataForTopic(topicName string) (map[string]string, error) {
-	// This is a placeholder for Phase 7
-	// In Phase 8, this will retrieve actual schema metadata from SeaweedMQ
-	// including schema ID, format, subject, version, etc.
-
 	if !h.IsSchemaEnabled() {
 		return nil, fmt.Errorf("schema management not enabled")
 	}
 
-	// For Phase 7, return mock metadata
-	metadata := map[string]string{
-		"schema_id":      "1",
-		"schema_format":  "AVRO",
-		"schema_subject": topicName,
-		"schema_version": "1",
+	// Try multiple approaches to get schema metadata
+	
+	// 1. Try to get schema from registry using topic name as subject
+	metadata, err := h.getSchemaMetadataFromRegistry(topicName)
+	if err == nil {
+		return metadata, nil
+	}
+	
+	// 2. Try with -value suffix (common pattern)
+	metadata, err = h.getSchemaMetadataFromRegistry(topicName + "-value")
+	if err == nil {
+		return metadata, nil
+	}
+	
+	// 3. Try with -key suffix
+	metadata, err = h.getSchemaMetadataFromRegistry(topicName + "-key")
+	if err == nil {
+		return metadata, nil
+	}
+	
+	// 4. Check SeaweedMQ topic metadata (TODO: implement)
+	metadata, err = h.getSchemaMetadataFromSeaweedMQ(topicName)
+	if err == nil {
+		return metadata, nil
+	}
+	
+	// 5. Check topic configuration (TODO: implement)
+	metadata, err = h.getSchemaMetadataFromConfig(topicName)
+	if err == nil {
+		return metadata, nil
 	}
 
-	fmt.Printf("DEBUG: Retrieved schema metadata: %v\n", metadata)
+	return nil, fmt.Errorf("no schema metadata found for topic %s", topicName)
+}
+
+// getSchemaMetadataFromRegistry retrieves schema metadata from Schema Registry
+func (h *Handler) getSchemaMetadataFromRegistry(subject string) (map[string]string, error) {
+	if h.schemaManager == nil {
+		return nil, fmt.Errorf("schema manager not available")
+	}
+	
+	// Get latest schema for the subject
+	schema, err := h.schemaManager.registryClient.GetLatestSchema(subject)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get schema for subject %s: %w", subject, err)
+	}
+	
+	// Build metadata map
+	metadata := map[string]string{
+		"schema_id":      fmt.Sprintf("%d", schema.ID),
+		"schema_format":  string(schema.Format),
+		"schema_subject": subject,
+		"schema_version": fmt.Sprintf("%d", schema.Version),
+		"schema_content": schema.Schema,
+	}
+	
 	return metadata, nil
+}
+
+// getSchemaMetadataFromSeaweedMQ retrieves schema metadata from SeaweedMQ topic metadata
+func (h *Handler) getSchemaMetadataFromSeaweedMQ(topicName string) (map[string]string, error) {
+	// TODO: Implement SeaweedMQ topic metadata integration
+	// This would query SeaweedMQ's topic metadata system to get schema information
+	// that might be stored as topic-level configuration
+	return nil, fmt.Errorf("SeaweedMQ schema metadata lookup not implemented")
+}
+
+// getSchemaMetadataFromConfig retrieves schema metadata from configuration
+func (h *Handler) getSchemaMetadataFromConfig(topicName string) (map[string]string, error) {
+	// TODO: Implement configuration-based schema metadata lookup
+	// This could read from a configuration file, database, or other source
+	// that maps topics to their schema information
+	return nil, fmt.Errorf("configuration-based schema metadata lookup not implemented")
 }
