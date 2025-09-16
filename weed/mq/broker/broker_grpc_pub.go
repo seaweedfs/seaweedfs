@@ -170,9 +170,7 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 		// The control message should still be sent to the follower
 		// to avoid timing issue when ack messages.
 
-		// TODO: Integrate offset assignment into publish flow
-		// ASSUMPTION: For now using existing Publish method, offset assignment will be added in Phase 4 completion
-		// send to the local partition with offset assignment
+		// Send to the local partition with offset assignment
 		t, p := topic.FromPbTopic(initMessage.Topic), topic.FromPbPartition(initMessage.Partition)
 
 		// Create offset assignment function for this partition
