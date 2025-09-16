@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka"
-	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 )
 
@@ -142,12 +141,13 @@ func (m *KafkaToSMQMapper) GetMappingInfo(kafkaOffset int64, kafkaPartition int3
 		return nil, err
 	}
 
+	start, stop := kafka.MapKafkaPartitionToSMQRange(kafkaPartition)
 	return &OffsetMappingInfo{
 		KafkaOffset:    kafkaOffset,
 		SMQTimestamp:   timestamp,
 		KafkaPartition: kafkaPartition,
-		SMQRangeStart:  kafkaPartition * int32(pub_balancer.MaxPartitionCount/32),
-		SMQRangeStop:   (kafkaPartition+1)*int32(pub_balancer.MaxPartitionCount/32) - 1,
+		SMQRangeStart:  start,
+		SMQRangeStop:   stop,
 		MessageSize:    size,
 	}, nil
 }
@@ -202,13 +202,7 @@ func (m *KafkaToSMQMapper) CreatePartitionOffsetForTimeRange(
 	startTime int64,
 ) *schema_pb.PartitionOffset {
 
-	rangeSize := int32(pub_balancer.MaxPartitionCount / 32) // Calculate dynamic range size
-	smqPartition := &schema_pb.Partition{
-		RingSize:   pub_balancer.MaxPartitionCount,
-		RangeStart: kafkaPartition * rangeSize,
-		RangeStop:  (kafkaPartition+1)*rangeSize - 1,
-		UnixTimeNs: time.Now().UnixNano(),
-	}
+	smqPartition := kafka.CreateSMQPartition(kafkaPartition, time.Now().UnixNano())
 
 	return &schema_pb.PartitionOffset{
 		Partition: smqPartition,

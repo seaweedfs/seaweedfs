@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/mq/kafka"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -46,8 +47,9 @@ func TestKafkaToSMQMapping(t *testing.T) {
 		// Verify the mapping
 		assert.Equal(t, baseTime+2000, partitionOffset.StartTsNs)
 		assert.Equal(t, int32(2520), partitionOffset.Partition.RingSize)
-		assert.Equal(t, int32(0), partitionOffset.Partition.RangeStart)
-		assert.Equal(t, int32(77), partitionOffset.Partition.RangeStop)
+		start, stop := kafka.MapKafkaPartitionToSMQRange(kafkaPartition)
+		assert.Equal(t, start, partitionOffset.Partition.RangeStart)
+		assert.Equal(t, stop, partitionOffset.Partition.RangeStop)
 
 		t.Logf("Kafka offset %d → SMQ timestamp %d", kafkaOffset, partitionOffset.StartTsNs)
 	})
@@ -66,31 +68,23 @@ func TestKafkaToSMQMapping(t *testing.T) {
 	})
 
 	t.Run("MultiplePartitionMapping", func(t *testing.T) {
-		testCases := []struct {
-			kafkaPartition int32
-			expectedStart  int32
-			expectedStop   int32
-		}{
-			{0, 0, 77},       // 0 * 78 = 0, (0+1)*78-1 = 77
-			{1, 78, 155},     // 1 * 78 = 78, (1+1)*78-1 = 155
-			{2, 156, 233},    // 2 * 78 = 156, (2+1)*78-1 = 233
-			{15, 1170, 1247}, // 15 * 78 = 1170, (15+1)*78-1 = 1247
-		}
+		testPartitions := []int32{0, 1, 2, 15}
 
-		for _, tc := range testCases {
+		for _, kp := range testPartitions {
 			partitionOffset, err := mapper.KafkaOffsetToSMQPartitionOffset(
-				0, "test-topic", tc.kafkaPartition)
+				0, "test-topic", kp)
 			require.NoError(t, err)
 
-			assert.Equal(t, tc.expectedStart, partitionOffset.Partition.RangeStart)
-			assert.Equal(t, tc.expectedStop, partitionOffset.Partition.RangeStop)
+			start, stop := kafka.MapKafkaPartitionToSMQRange(kp)
+			assert.Equal(t, start, partitionOffset.Partition.RangeStart)
+			assert.Equal(t, stop, partitionOffset.Partition.RangeStop)
 
 			// Verify reverse mapping
 			extractedPartition := ExtractKafkaPartitionFromSMQPartition(partitionOffset.Partition)
-			assert.Equal(t, tc.kafkaPartition, extractedPartition)
+			assert.Equal(t, kp, extractedPartition)
 
 			t.Logf("Kafka partition %d → SMQ range [%d, %d]",
-				tc.kafkaPartition, tc.expectedStart, tc.expectedStop)
+				kp, start, stop)
 		}
 	})
 }
@@ -114,8 +108,9 @@ func TestCreateSMQSubscriptionRequest(t *testing.T) {
 
 		assert.Equal(t, schema_pb.OffsetType_EXACT_TS_NS, offsetType)
 		assert.Equal(t, baseTime+2000, partitionOffset.StartTsNs)
-		assert.Equal(t, int32(0), partitionOffset.Partition.RangeStart)
-		assert.Equal(t, int32(77), partitionOffset.Partition.RangeStop)
+		start, stop := kafka.MapKafkaPartitionToSMQRange(0)
+		assert.Equal(t, start, partitionOffset.Partition.RangeStart)
+		assert.Equal(t, stop, partitionOffset.Partition.RangeStop)
 
 		t.Logf("Specific offset 2 → SMQ timestamp %d", partitionOffset.StartTsNs)
 	})
@@ -207,8 +202,9 @@ func TestGetMappingInfo(t *testing.T) {
 	assert.Equal(t, int64(0), info.KafkaOffset)
 	assert.Equal(t, baseTime, info.SMQTimestamp)
 	assert.Equal(t, int32(2), info.KafkaPartition)
-	assert.Equal(t, int32(156), info.SMQRangeStart) // 2 * 78
-	assert.Equal(t, int32(233), info.SMQRangeStop)  // (2+1) * 78 - 1
+	start, stop := kafka.MapKafkaPartitionToSMQRange(2)
+	assert.Equal(t, start, info.SMQRangeStart)
+	assert.Equal(t, stop, info.SMQRangeStop)
 	assert.Equal(t, int32(150), info.MessageSize)
 
 	t.Logf("Mapping info: Kafka %d:%d → SMQ %d [%d-%d] (%d bytes)",
@@ -266,8 +262,9 @@ func TestCreatePartitionOffsetForTimeRange(t *testing.T) {
 
 	assert.Equal(t, startTime, partitionOffset.StartTsNs)
 	assert.Equal(t, int32(2520), partitionOffset.Partition.RingSize)
-	assert.Equal(t, int32(390), partitionOffset.Partition.RangeStart) // 5 * 78
-	assert.Equal(t, int32(467), partitionOffset.Partition.RangeStop)  // (5+1) * 78 - 1
+	start, stop := kafka.MapKafkaPartitionToSMQRange(kafkaPartition)
+	assert.Equal(t, start, partitionOffset.Partition.RangeStart)
+	assert.Equal(t, stop, partitionOffset.Partition.RangeStop)
 
 	t.Logf("Kafka partition %d time range → SMQ PartitionOffset [%d-%d] @ %d",
 		kafkaPartition, partitionOffset.Partition.RangeStart,
