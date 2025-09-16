@@ -917,24 +917,67 @@ func encodeVarint(value int64) []byte {
 
 // getMultipleRecordBatches retrieves and combines multiple record batches starting from the given offset
 func (h *Handler) getMultipleRecordBatches(topicName string, partitionID int32, startOffset, highWaterMark int64) []byte {
-	var combinedBatch []byte
+	var combinedBatches []byte
+	var batchCount int
+	const maxBatchSize = 1024 * 1024 // 1MB limit for combined batches
+
+	Debug("Multi-batch concatenation: startOffset=%d, highWaterMark=%d", startOffset, highWaterMark)
 
 	// Try to get all available record batches from startOffset to highWaterMark-1
-	for offset := startOffset; offset < highWaterMark; offset++ {
+	for offset := startOffset; offset < highWaterMark && len(combinedBatches) < maxBatchSize; offset++ {
 		if batch, exists := h.GetRecordBatch(topicName, partitionID, offset); exists {
-			// For the first batch, include the full record batch
-			if len(combinedBatch) == 0 {
-				combinedBatch = append(combinedBatch, batch...)
-			} else {
-				// For subsequent batches, we need to append them properly
-				// For now, just return the first batch to avoid format issues
-				// TODO: Implement proper record batch concatenation
+			// Validate batch format before concatenation
+			if !h.isValidRecordBatch(batch) {
+				Debug("Skipping invalid record batch at offset %d", offset)
+				continue
+			}
+
+			// Check if adding this batch would exceed size limit
+			if len(combinedBatches)+len(batch) > maxBatchSize {
+				Debug("Batch size limit reached, stopping concatenation at offset %d", offset)
 				break
 			}
+
+			// Concatenate the batch directly - Kafka protocol allows multiple record batches
+			// to be concatenated in the records field of a fetch response
+			combinedBatches = append(combinedBatches, batch...)
+			batchCount++
+			
+			Debug("Concatenated batch %d: offset=%d, size=%d bytes, total=%d bytes", 
+				batchCount, offset, len(batch), len(combinedBatches))
+		} else {
+			Debug("No batch found at offset %d, stopping concatenation", offset)
+			break
 		}
 	}
 
-	return combinedBatch
+	Debug("Multi-batch concatenation complete: %d batches, %d total bytes", batchCount, len(combinedBatches))
+	return combinedBatches
+}
+
+// isValidRecordBatch performs basic validation on a record batch
+func (h *Handler) isValidRecordBatch(batch []byte) bool {
+	// Minimum record batch size: base_offset(8) + batch_length(4) + partition_leader_epoch(4) + magic(1) = 17 bytes
+	if len(batch) < 17 {
+		return false
+	}
+	
+	// Check magic byte (should be 2 for record batch format v2)
+	magic := batch[16] // magic byte is at offset 16
+	if magic != 2 {
+		Debug("Invalid magic byte in record batch: %d (expected 2)", magic)
+		return false
+	}
+	
+	// Check batch length field consistency
+	batchLength := binary.BigEndian.Uint32(batch[8:12])
+	expectedTotalSize := int(batchLength) + 12 // batch_length doesn't include base_offset(8) + batch_length(4)
+	if len(batch) != expectedTotalSize {
+		Debug("Record batch size mismatch: got %d bytes, expected %d", len(batch), expectedTotalSize)
+		return false
+	}
+	
+	return true
 }
 
 // reconstructSchematizedMessage reconstructs a schematized message from SMQ RecordValue

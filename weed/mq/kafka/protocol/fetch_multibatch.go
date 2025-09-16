@@ -1,6 +1,8 @@
 package protocol
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
@@ -501,11 +503,24 @@ func (f *MultiBatchFetcher) compressData(data []byte, codec compression.Compress
 	case compression.None:
 		return data, nil
 	case compression.Gzip:
-		// Basic GZIP compression - in a full implementation this would use gzip package
-		// For now, simulate compression by returning original data
-		// TODO: Implement actual GZIP compression
-		fmt.Printf("DEBUG: GZIP compression requested but not fully implemented\n")
-		return data, nil
+		// Implement actual GZIP compression
+		var buf bytes.Buffer
+		gzipWriter := gzip.NewWriter(&buf)
+		
+		if _, err := gzipWriter.Write(data); err != nil {
+			gzipWriter.Close()
+			return nil, fmt.Errorf("gzip compression write failed: %w", err)
+		}
+		
+		if err := gzipWriter.Close(); err != nil {
+			return nil, fmt.Errorf("gzip compression close failed: %w", err)
+		}
+		
+		compressed := buf.Bytes()
+		Debug("GZIP compression: %d bytes -> %d bytes (%.1f%% reduction)", 
+			len(data), len(compressed), 100.0*(1.0-float64(len(compressed))/float64(len(data))))
+		
+		return compressed, nil
 	default:
 		return nil, fmt.Errorf("unsupported compression codec: %d", codec)
 	}
