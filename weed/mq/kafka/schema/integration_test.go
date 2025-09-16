@@ -147,6 +147,12 @@ func TestFullIntegration_AvroWorkflow(t *testing.T) {
 			"name":  "Charlie Brown",
 			"email": map[string]interface{}{"string": "charlie@example.com"},
 			"age":   map[string]interface{}{"int": int32(42)}, // Avro union
+			"preferences": map[string]interface{}{
+				"Preferences": map[string]interface{}{ // Avro union with record type
+					"notifications": true,
+					"theme":         "dark",
+				},
+			},
 		}
 
 		// Encode -> Decode -> Encode -> Decode
@@ -161,7 +167,15 @@ func TestFullIntegration_AvroWorkflow(t *testing.T) {
 		decodedMsg, _ := manager.DecodeMessage(confluentMsg)
 
 		// Step 3: RecordValue -> Confluent
-		reconstructedMsg, _ := manager.EncodeMessage(decodedMsg.RecordValue, 1, FormatAvro)
+		reconstructedMsg, encodeErr := manager.EncodeMessage(decodedMsg.RecordValue, 1, FormatAvro)
+		if encodeErr != nil {
+			t.Fatalf("Failed to encode message: %v", encodeErr)
+		}
+
+		// Verify the reconstructed message is valid
+		if len(reconstructedMsg) == 0 {
+			t.Fatal("Reconstructed message is empty")
+		}
 
 		// Step 4: Confluent -> Verify
 		finalDecodedMsg, err := manager.DecodeMessage(reconstructedMsg)
