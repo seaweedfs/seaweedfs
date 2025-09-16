@@ -469,6 +469,9 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		case 16: // ListGroups
 			Debug("ListGroups request received, correlation: %d, version: %d", correlationID, apiVersion)
 			response, err = h.handleListGroups(correlationID, apiVersion, requestBody)
+		case 32: // DescribeConfigs
+			Debug("DescribeConfigs request received, correlation: %d, version: %d", correlationID, apiVersion)
+			response, err = h.handleDescribeConfigs(correlationID, apiVersion, requestBody)
 		default:
 			Warning("Unsupported API key: %d (%s) v%d - Correlation: %d", apiKey, apiName, apiVersion, correlationID)
 			err = fmt.Errorf("unsupported API key: %d (version %d)", apiKey, apiVersion)
@@ -2077,6 +2080,7 @@ func (h *Handler) validateAPIVersion(apiKey, apiVersion uint16) error {
 		13: {0, 4}, // LeaveGroup: v0-v4
 		15: {0, 5}, // DescribeGroups: v0-v5
 		16: {0, 4}, // ListGroups: v0-v4
+		32: {0, 4}, // DescribeConfigs: v0-v4
 	}
 
 	if versionRange, exists := supportedVersions[apiKey]; exists {
@@ -2152,9 +2156,74 @@ func getAPIName(apiKey uint16) string {
 		return "CreateTopics"
 	case 20:
 		return "DeleteTopics"
+	case 32:
+		return "DescribeConfigs"
 	default:
 		return "Unknown"
 	}
+}
+
+// handleDescribeConfigs handles DescribeConfigs API requests (API key 32)
+func (h *Handler) handleDescribeConfigs(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
+	Debug("DescribeConfigs v%d - parsing request body (%d bytes)", apiVersion, len(requestBody))
+	
+	// Parse request - read resources array length
+	if len(requestBody) < 4 {
+		return nil, fmt.Errorf("request too short")
+	}
+	
+	resourcesLength := int32(binary.BigEndian.Uint32(requestBody[0:4]))
+	Debug("DescribeConfigs - resources count: %d", resourcesLength)
+	
+	// Skip parsing individual resources for now - just create empty response
+	// In a full implementation, we would parse each resource and return actual configs
+	
+	// Build response
+	response := make([]byte, 0, 1024)
+	
+	// Correlation ID
+	correlationIDBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
+	response = append(response, correlationIDBytes...)
+	
+	// Throttle time (0ms)
+	throttleBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(throttleBytes, 0)
+	response = append(response, throttleBytes...)
+	
+	// Resources array length (same as request)
+	resourcesBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(resourcesBytes, uint32(resourcesLength))
+	response = append(response, resourcesBytes...)
+	
+	// For each resource, return empty config
+	for i := int32(0); i < resourcesLength; i++ {
+		// Error code (0 = no error)
+		errorCodeBytes := make([]byte, 2)
+		binary.BigEndian.PutUint16(errorCodeBytes, 0)
+		response = append(response, errorCodeBytes...)
+		
+		// Error message (null string = -1 length)
+		errorMsgBytes := make([]byte, 2)
+		binary.BigEndian.PutUint16(errorMsgBytes, 0xFFFF) // -1 as uint16
+		response = append(response, errorMsgBytes...)
+		
+		// Resource type (2 for topic)
+		response = append(response, 2)
+		
+		// Resource name (empty string = 0 length)
+		nameBytes := make([]byte, 2)
+		binary.BigEndian.PutUint16(nameBytes, 0)
+		response = append(response, nameBytes...)
+		
+		// Config entries array length (0 = no configs)
+		configBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(configBytes, 0)
+		response = append(response, configBytes...)
+	}
+	
+	Debug("DescribeConfigs v%d response constructed, size: %d bytes", apiVersion, len(response))
+	return response, nil
 }
 
 // writeResponseWithTimeout writes a Kafka response with timeout handling
