@@ -232,7 +232,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		// Check if context is cancelled
 		select {
 		case <-ctx.Done():
-			fmt.Printf("DEBUG: [%s] Context cancelled, closing connection\n", connectionID)
+			Debug("[%s] Context cancelled, closing connection", connectionID)
 			return ctx.Err()
 		default:
 		}
@@ -244,23 +244,23 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		if deadline, ok := ctx.Deadline(); ok {
 			readDeadline = deadline
 			timeoutDuration = time.Until(deadline)
-			fmt.Printf("DEBUG: [%s] Using context deadline: %v\n", connectionID, timeoutDuration)
+			Debug("[%s] Using context deadline: %v", connectionID, timeoutDuration)
 		} else {
 			// Use configurable read timeout instead of hardcoded 5 seconds
 			timeoutDuration = timeoutConfig.ReadTimeout
 			readDeadline = time.Now().Add(timeoutDuration)
-			fmt.Printf("DEBUG: [%s] Using config timeout: %v\n", connectionID, timeoutDuration)
+			Debug("[%s] Using config timeout: %v", connectionID, timeoutDuration)
 		}
 
 		if err := conn.SetReadDeadline(readDeadline); err != nil {
-			fmt.Printf("DEBUG: [%s] Failed to set read deadline: %v\n", connectionID, err)
+			Debug("[%s] Failed to set read deadline: %v", connectionID, err)
 			return fmt.Errorf("set read deadline: %w", err)
 		}
 
 		// Check context before reading
 		select {
 		case <-ctx.Done():
-			fmt.Printf("DEBUG: [%s] Context cancelled before reading message header\n", connectionID)
+			Debug("[%s] Context cancelled before reading message header", connectionID)
 			// Give a small delay to ensure proper cleanup
 			time.Sleep(100 * time.Millisecond)
 			return ctx.Err()
@@ -271,53 +271,53 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 				if timeUntilDeadline < 2*time.Second && timeUntilDeadline > 0 {
 					shortDeadline := time.Now().Add(500 * time.Millisecond)
 					if err := conn.SetReadDeadline(shortDeadline); err == nil {
-						fmt.Printf("DEBUG: [%s] Context deadline approaching, using 500ms timeout\n", connectionID)
+						Debug("[%s] Context deadline approaching, using 500ms timeout", connectionID)
 					}
 				}
 			}
 		}
 
 		// Read message size (4 bytes)
-		fmt.Printf("DEBUG: [%s] About to read message size header\n", connectionID)
+		Debug("[%s] About to read message size header", connectionID)
 		var sizeBytes [4]byte
 		if _, err := io.ReadFull(r, sizeBytes[:]); err != nil {
 			if err == io.EOF {
-				fmt.Printf("DEBUG: [%s] Client closed connection (clean EOF)\n", connectionID)
+				Debug("[%s] Client closed connection (clean EOF)", connectionID)
 				return nil
 			}
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 				// Idle timeout while waiting for next request; keep connection open
-				fmt.Printf("DEBUG: [%s] Read timeout waiting for request, continuing\n", connectionID)
+				Debug("[%s] Read timeout waiting for request, continuing", connectionID)
 				continue
 			}
-			fmt.Printf("DEBUG: [%s] Read error: %v\n", connectionID, err)
+			Debug("[%s] Read error: %v", connectionID, err)
 			return fmt.Errorf("read message size: %w", err)
 		}
 
 		// Successfully read the message size
 		size := binary.BigEndian.Uint32(sizeBytes[:])
-		fmt.Printf("DEBUG: [%s] Read message size header: %d bytes\n", connectionID, size)
+		Debug("[%s] Read message size header: %d bytes", connectionID, size)
 		if size == 0 || size > 1024*1024 { // 1MB limit
 			// Use standardized error for message size limit
-			fmt.Printf("DEBUG: [%s] Invalid message size: %d (limit: 1MB)\n", connectionID, size)
+			Debug("[%s] Invalid message size: %d (limit: 1MB)", connectionID, size)
 			// Send error response for message too large
 			errorResponse := BuildErrorResponse(0, ErrorCodeMessageTooLarge) // correlation ID 0 since we can't parse it yet
 			if writeErr := h.writeResponseWithTimeout(w, errorResponse, timeoutConfig.WriteTimeout); writeErr != nil {
-				fmt.Printf("DEBUG: [%s] Failed to send message too large response: %v\n", connectionID, writeErr)
+				Debug("[%s] Failed to send message too large response: %v", connectionID, writeErr)
 			}
 			return fmt.Errorf("message size %d exceeds limit", size)
 		}
 
 		// Set read deadline for message body
 		if err := conn.SetReadDeadline(time.Now().Add(timeoutConfig.ReadTimeout)); err != nil {
-			fmt.Printf("DEBUG: [%s] Failed to set message read deadline: %v\n", connectionID, err)
+			Debug("[%s] Failed to set message read deadline: %v", connectionID, err)
 		}
 
 		// Read the message
 		messageBuf := make([]byte, size)
 		if _, err := io.ReadFull(r, messageBuf); err != nil {
 			errorCode := HandleTimeoutError(err, "read")
-			fmt.Printf("DEBUG: [%s] Error reading message body: %v (code: %d)\n", connectionID, err, errorCode)
+			Debug("[%s] Error reading message body: %v (code: %d)", connectionID, err, errorCode)
 			return fmt.Errorf("read message: %w", err)
 		}
 
@@ -341,7 +341,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			}
 			// Send error response and continue to next request
 			if writeErr := h.writeResponseWithTimeout(w, response, timeoutConfig.WriteTimeout); writeErr != nil {
-				fmt.Printf("DEBUG: [%s] Failed to send unsupported version response: %v\n", connectionID, writeErr)
+				Debug("[%s] Failed to send unsupported version response: %v", connectionID, writeErr)
 				return fmt.Errorf("send error response: %w", writeErr)
 			}
 			continue
@@ -351,7 +351,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		header, requestBody, parseErr := ParseRequestHeader(messageBuf)
 		if parseErr != nil {
 			// Fall back to basic header parsing if flexible version parsing fails
-			fmt.Printf("DEBUG: Flexible header parsing failed, using basic parsing: %v\n", parseErr)
+			Debug("Flexible header parsing failed, using basic parsing: %v", parseErr)
 
 			// Basic header parsing fallback (original logic)
 			bodyOffset := 8
@@ -370,7 +370,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		} else {
 			// Validate parsed header matches what we already extracted
 			if header.APIKey != apiKey || header.APIVersion != apiVersion || header.CorrelationID != correlationID {
-				fmt.Printf("DEBUG: Header parsing mismatch - using basic parsing as fallback\n")
+				Debug("Header parsing mismatch - using basic parsing as fallback")
 				// Fall back to basic parsing rather than failing
 				bodyOffset := 8
 				if len(messageBuf) < bodyOffset+2 {
@@ -387,7 +387,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 				requestBody = messageBuf[bodyOffset:]
 			} else if header.ClientID != nil {
 				// Log client ID if available and parsing was successful
-				fmt.Printf("DEBUG: Client ID: %s\n", *header.ClientID)
+				Debug("Client ID: %s", *header.ClientID)
 			}
 		}
 
@@ -405,7 +405,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		case 3: // Metadata
 			response, err = h.handleMetadata(correlationID, apiVersion, requestBody)
 		case 2: // ListOffsets
-			fmt.Printf("DEBUG: *** LISTOFFSETS REQUEST RECEIVED *** Correlation: %d, Version: %d\n", correlationID, apiVersion)
+			Debug("*** LISTOFFSETS REQUEST RECEIVED *** Correlation: %d, Version: %d", correlationID, apiVersion)
 			response, err = h.handleListOffsets(correlationID, apiVersion, requestBody)
 		case 19: // CreateTopics
 			response, err = h.handleCreateTopics(correlationID, apiVersion, requestBody)
@@ -463,7 +463,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		RecordRequestMetrics(apiKey, requestLatency)
 
 		// Minimal flush logging
-		// fmt.Printf("DEBUG: API %d flushed\n", apiKey)
+		// Debug("API %d flushed", apiKey)
 	}
 }
 
@@ -659,7 +659,7 @@ func (h *Handler) HandleMetadataV0(correlationID uint32, requestBody []byte) ([]
 	// Use dynamic broker address set by the server
 	host := h.brokerHost
 	port := h.brokerPort
-	fmt.Printf("DEBUG: Advertising broker (v0) at %s:%d\n", host, port)
+	Debug("Advertising broker (v0) at %s:%d", host, port)
 
 	// Host (STRING: 2 bytes length + bytes)
 	hostLen := uint16(len(host))
@@ -673,7 +673,7 @@ func (h *Handler) HandleMetadataV0(correlationID uint32, requestBody []byte) ([]
 
 	// Parse requested topics (empty means all)
 	requestedTopics := h.parseMetadataTopics(requestBody)
-	fmt.Printf("DEBUG: 🔍 METADATA v0 REQUEST - Requested: %v (empty=all)\n", requestedTopics)
+	Debug("🔍 METADATA v0 REQUEST - Requested: %v (empty=all)", requestedTopics)
 
 	// Determine topics to return using SeaweedMQ handler
 	var topicsToReturn []string
@@ -720,15 +720,15 @@ func (h *Handler) HandleMetadataV0(correlationID uint32, requestBody []byte) ([]
 		response = append(response, 0, 0, 0, 1)
 	}
 
-	fmt.Printf("DEBUG: Metadata v0 response for %d topics: %v\n", len(topicsToReturn), topicsToReturn)
-	fmt.Printf("DEBUG: *** METADATA v0 RESPONSE DETAILS ***\n")
-	fmt.Printf("DEBUG: Response size: %d bytes\n", len(response))
-	fmt.Printf("DEBUG: Broker: %s:%d\n", h.brokerHost, h.brokerPort)
-	fmt.Printf("DEBUG: Topics: %v\n", topicsToReturn)
+	Debug("Metadata v0 response for %d topics: %v", len(topicsToReturn), topicsToReturn)
+	Debug("*** METADATA v0 RESPONSE DETAILS ***")
+	Debug("Response size: %d bytes", len(response))
+	Debug("Broker: %s:%d", h.brokerHost, h.brokerPort)
+	Debug("Topics: %v", topicsToReturn)
 	for i, topic := range topicsToReturn {
-		fmt.Printf("DEBUG: Topic[%d]: %s (1 partition)\n", i, topic)
+		Debug("Topic[%d]: %s (1 partition)", i, topic)
 	}
-	fmt.Printf("DEBUG: *** END METADATA v0 RESPONSE ***\n")
+	Debug("*** END METADATA v0 RESPONSE ***")
 	return response, nil
 }
 
@@ -738,7 +738,7 @@ func (h *Handler) HandleMetadataV1(correlationID uint32, requestBody []byte) ([]
 
 	// Parse requested topics (empty means all)
 	requestedTopics := h.parseMetadataTopics(requestBody)
-	fmt.Printf("DEBUG: 🔍 METADATA v1 REQUEST - Requested: %v (empty=all)\n", requestedTopics)
+	Debug("🔍 METADATA v1 REQUEST - Requested: %v (empty=all)", requestedTopics)
 
 	// Determine topics to return using SeaweedMQ handler
 	var topicsToReturn []string
@@ -769,7 +769,7 @@ func (h *Handler) HandleMetadataV1(correlationID uint32, requestBody []byte) ([]
 	// Use dynamic broker address set by the server
 	host := h.brokerHost
 	port := h.brokerPort
-	fmt.Printf("DEBUG: Advertising broker (v1) at %s:%d\n", host, port)
+	Debug("Advertising broker (v1) at %s:%d", host, port)
 
 	// Host (STRING: 2 bytes length + bytes)
 	hostLen := uint16(len(host))
@@ -822,8 +822,8 @@ func (h *Handler) HandleMetadataV1(correlationID uint32, requestBody []byte) ([]
 		response = append(response, 0, 0, 0, 1)
 	}
 
-	fmt.Printf("DEBUG: Metadata v1 response for %d topics: %v\n", len(topicsToReturn), topicsToReturn)
-	fmt.Printf("DEBUG: Metadata v1 response size: %d bytes\n", len(response))
+	Debug("Metadata v1 response for %d topics: %v", len(topicsToReturn), topicsToReturn)
+	Debug("Metadata v1 response size: %d bytes", len(response))
 	return response, nil
 }
 
@@ -834,7 +834,7 @@ func (h *Handler) HandleMetadataV2(correlationID uint32, requestBody []byte) ([]
 
 	// Parse requested topics (empty means all)
 	requestedTopics := h.parseMetadataTopics(requestBody)
-	fmt.Printf("DEBUG: 🔍 METADATA v2 REQUEST - Requested: %v (empty=all)\n", requestedTopics)
+	Debug("🔍 METADATA v2 REQUEST - Requested: %v (empty=all)", requestedTopics)
 
 	// Determine topics to return using SeaweedMQ handler
 	var topicsToReturn []string
@@ -909,8 +909,8 @@ func (h *Handler) HandleMetadataV2(correlationID uint32, requestBody []byte) ([]
 	}
 
 	response := buf.Bytes()
-	fmt.Printf("DEBUG: Advertising broker (v2) at %s:%d\n", h.brokerHost, h.brokerPort)
-	fmt.Printf("DEBUG: Metadata v2 response for %d topics: %v\n", len(topicsToReturn), topicsToReturn)
+	Debug("Advertising broker (v2) at %s:%d", h.brokerHost, h.brokerPort)
+	Debug("Metadata v2 response for %d topics: %v", len(topicsToReturn), topicsToReturn)
 
 	return response, nil
 }
@@ -1011,7 +1011,7 @@ func (h *Handler) HandleMetadataV5V6(correlationID uint32, requestBody []byte) (
 
 	// Parse requested topics (empty means all)
 	requestedTopics := h.parseMetadataTopics(requestBody)
-	fmt.Printf("DEBUG: 🔍 METADATA v5/v6 REQUEST - Requested: %v (empty=all)\n", requestedTopics)
+	Debug("🔍 METADATA v5/v6 REQUEST - Requested: %v (empty=all)", requestedTopics)
 
 	// Determine topics to return using SeaweedMQ handler
 	var topicsToReturn []string
@@ -1092,8 +1092,8 @@ func (h *Handler) HandleMetadataV5V6(correlationID uint32, requestBody []byte) (
 	}
 
 	response := buf.Bytes()
-	fmt.Printf("DEBUG: Advertising broker (v5/v6) at %s:%d\n", h.brokerHost, h.brokerPort)
-	fmt.Printf("DEBUG: Metadata v5/v6 response for %d topics: %v\n", len(topicsToReturn), topicsToReturn)
+	Debug("Advertising broker (v5/v6) at %s:%d", h.brokerHost, h.brokerPort)
+	Debug("Metadata v5/v6 response for %d topics: %v", len(topicsToReturn), topicsToReturn)
 
 	return response, nil
 }
@@ -1106,7 +1106,7 @@ func (h *Handler) HandleMetadataV7(correlationID uint32, requestBody []byte) ([]
 
 	// Parse requested topics (empty means all)
 	requestedTopics := h.parseMetadataTopics(requestBody)
-	fmt.Printf("DEBUG: 🔍 METADATA v7 REQUEST - Requested: %v (empty=all)\n", requestedTopics)
+	Debug("🔍 METADATA v7 REQUEST - Requested: %v (empty=all)", requestedTopics)
 
 	// Determine topics to return using SeaweedMQ handler
 	var topicsToReturn []string
@@ -1190,8 +1190,8 @@ func (h *Handler) HandleMetadataV7(correlationID uint32, requestBody []byte) ([]
 	}
 
 	response := buf.Bytes()
-	fmt.Printf("DEBUG: Advertising broker (v7) at %s:%d\n", h.brokerHost, h.brokerPort)
-	fmt.Printf("DEBUG: Metadata v7 response for %d topics: %v\n", len(topicsToReturn), topicsToReturn)
+	Debug("Advertising broker (v7) at %s:%d", h.brokerHost, h.brokerPort)
+	Debug("Metadata v7 response for %d topics: %v", len(topicsToReturn), topicsToReturn)
 
 	return response, nil
 }
@@ -1252,7 +1252,7 @@ func (h *Handler) parseMetadataTopics(requestBody []byte) []string {
 }
 
 func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
-	fmt.Printf("DEBUG: ListOffsets v%d request hex dump (first 100 bytes): %x\n", apiVersion, requestBody[:min(100, len(requestBody))])
+	Debug("ListOffsets v%d request hex dump (first 100 bytes): %x", apiVersion, requestBody[:min(100, len(requestBody))])
 
 	// Parse minimal request to understand what's being asked (header already stripped)
 	offset := 0
@@ -1264,7 +1264,7 @@ func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, req
 		}
 		replicaID := int32(binary.BigEndian.Uint32(requestBody[offset : offset+4]))
 		offset += 4
-		fmt.Printf("DEBUG: ListOffsets v%d - replica_id: %d\n", apiVersion, replicaID)
+		Debug("ListOffsets v%d - replica_id: %d", apiVersion, replicaID)
 	}
 
 	// v2+ adds isolation_level(1)
@@ -1274,7 +1274,7 @@ func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, req
 		}
 		isolationLevel := requestBody[offset]
 		offset += 1
-		fmt.Printf("DEBUG: ListOffsets v%d - isolation_level: %d\n", apiVersion, isolationLevel)
+		Debug("ListOffsets v%d - isolation_level: %d", apiVersion, isolationLevel)
 	}
 
 	if len(requestBody) < offset+4 {
@@ -1398,8 +1398,8 @@ func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, req
 }
 
 func (h *Handler) handleCreateTopics(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
-	fmt.Printf("DEBUG: *** CREATETOPICS REQUEST RECEIVED *** Correlation: %d, Version: %d\n", correlationID, apiVersion)
-	fmt.Printf("DEBUG: CreateTopics - Request body size: %d bytes\n", len(requestBody))
+	Debug("*** CREATETOPICS REQUEST RECEIVED *** Correlation: %d, Version: %d", correlationID, apiVersion)
+	Debug("CreateTopics - Request body size: %d bytes", len(requestBody))
 
 	if len(requestBody) < 2 {
 		return nil, fmt.Errorf("CreateTopics request too short")
@@ -1408,21 +1408,21 @@ func (h *Handler) handleCreateTopics(correlationID uint32, apiVersion uint16, re
 	// Parse based on API version
 	switch apiVersion {
 	case 0, 1:
-		fmt.Printf("DEBUG: CreateTopics - Routing to v0/v1 handler\n")
+		Debug("CreateTopics - Routing to v0/v1 handler")
 		response, err := h.handleCreateTopicsV0V1(correlationID, requestBody)
-		fmt.Printf("DEBUG: CreateTopics - v0/v1 handler returned, response size: %d bytes, err: %v\n", len(response), err)
+		Debug("CreateTopics - v0/v1 handler returned, response size: %d bytes, err: %v", len(response), err)
 		return response, err
 	case 2, 3, 4:
 		// kafka-go sends v2-4 in regular format, not compact
-		fmt.Printf("DEBUG: CreateTopics - Routing to v2-4 handler\n")
+		Debug("CreateTopics - Routing to v2-4 handler")
 		response, err := h.handleCreateTopicsV2To4(correlationID, requestBody)
-		fmt.Printf("DEBUG: CreateTopics - v2-4 handler returned, response size: %d bytes, err: %v\n", len(response), err)
+		Debug("CreateTopics - v2-4 handler returned, response size: %d bytes, err: %v", len(response), err)
 		return response, err
 	case 5:
 		// v5+ uses flexible format with compact arrays
-		fmt.Printf("DEBUG: CreateTopics - Routing to v5+ handler\n")
+		Debug("CreateTopics - Routing to v5+ handler")
 		response, err := h.handleCreateTopicsV2Plus(correlationID, apiVersion, requestBody)
-		fmt.Printf("DEBUG: CreateTopics - v5+ handler returned, response size: %d bytes, err: %v\n", len(response), err)
+		Debug("CreateTopics - v5+ handler returned, response size: %d bytes, err: %v", len(response), err)
 		return response, err
 	default:
 		return nil, fmt.Errorf("unsupported CreateTopics API version: %d", apiVersion)
@@ -1453,14 +1453,14 @@ func (h *Handler) handleCreateTopicsV2To4(correlationID uint32, requestBody []by
 	}
 
 	if isCompactFormat {
-		fmt.Printf("DEBUG: CreateTopics v2-4 - Detected compact format\n")
+		Debug("CreateTopics v2-4 - Detected compact format")
 		// Delegate to the compact format handler
 		response, err := h.handleCreateTopicsV2Plus(correlationID, 2, requestBody)
-		fmt.Printf("DEBUG: CreateTopics v2-4 - Compact format handler returned, response size: %d bytes, err: %v\n", len(response), err)
+		Debug("CreateTopics v2-4 - Compact format handler returned, response size: %d bytes, err: %v", len(response), err)
 		return response, err
 	}
 
-	fmt.Printf("DEBUG: CreateTopics v2-4 - Detected regular format\n")
+	Debug("CreateTopics v2-4 - Detected regular format")
 	// Handle regular format
 	offset := 0
 	if len(requestBody) < offset+4 {
@@ -1469,7 +1469,7 @@ func (h *Handler) handleCreateTopicsV2To4(correlationID uint32, requestBody []by
 
 	topicsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 	offset += 4
-	fmt.Printf("DEBUG: CreateTopics v2-4 - Topics count: %d, remaining bytes: %d\n", topicsCount, len(requestBody)-offset)
+	Debug("CreateTopics v2-4 - Topics count: %d, remaining bytes: %d", topicsCount, len(requestBody)-offset)
 
 	// Parse topics
 	topics := make([]struct {
@@ -1603,12 +1603,12 @@ func (h *Handler) handleCreateTopicsV2To4(correlationID uint32, requestBody []by
 		response = append(response, 0xFF, 0xFF)
 	}
 
-	fmt.Printf("DEBUG: CreateTopics v2-4 - Regular format handler completed, response size: %d bytes\n", len(response))
+	Debug("CreateTopics v2-4 - Regular format handler completed, response size: %d bytes", len(response))
 	return response, nil
 }
 
 func (h *Handler) handleCreateTopicsV0V1(correlationID uint32, requestBody []byte) ([]byte, error) {
-	fmt.Printf("DEBUG: CreateTopics v0/v1 - parsing request of %d bytes\n", len(requestBody))
+	Debug("CreateTopics v0/v1 - parsing request of %d bytes", len(requestBody))
 
 	if len(requestBody) < 4 {
 		return nil, fmt.Errorf("CreateTopics v0/v1 request too short")
@@ -1620,7 +1620,7 @@ func (h *Handler) handleCreateTopicsV0V1(correlationID uint32, requestBody []byt
 	topicsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 	offset += 4
 
-	fmt.Printf("DEBUG: CreateTopics v0/v1 - Topics count: %d\n", topicsCount)
+	Debug("CreateTopics v0/v1 - Topics count: %d", topicsCount)
 
 	// Build response
 	response := make([]byte, 0, 256)
@@ -1705,7 +1705,7 @@ func (h *Handler) handleCreateTopicsV0V1(correlationID uint32, requestBody []byt
 			}
 		}
 
-		fmt.Printf("DEBUG: CreateTopics v0/v1 - Parsed topic: %s, partitions: %d, replication: %d\n",
+		Debug("CreateTopics v0/v1 - Parsed topic: %s, partitions: %d, replication: %d",
 			topicName, numPartitions, replicationFactor)
 
 		// Build response for this topic
@@ -1741,14 +1741,14 @@ func (h *Handler) handleCreateTopicsV0V1(correlationID uint32, requestBody []byt
 	// Parse timeout_ms (4 bytes) - at the end of request
 	if len(requestBody) >= offset+4 {
 		timeoutMs := binary.BigEndian.Uint32(requestBody[offset : offset+4])
-		fmt.Printf("DEBUG: CreateTopics v0/v1 - timeout_ms: %d\n", timeoutMs)
+		Debug("CreateTopics v0/v1 - timeout_ms: %d", timeoutMs)
 		offset += 4
 	}
 
 	// Parse validate_only (1 byte) - only in v1
 	if len(requestBody) >= offset+1 {
 		validateOnly := requestBody[offset] != 0
-		fmt.Printf("DEBUG: CreateTopics v0/v1 - validate_only: %v\n", validateOnly)
+		Debug("CreateTopics v0/v1 - validate_only: %v", validateOnly)
 	}
 
 	return response, nil
@@ -1758,7 +1758,7 @@ func (h *Handler) handleCreateTopicsV0V1(correlationID uint32, requestBody []byt
 // For simplicity and consistency with existing response builder, this parses the flexible request,
 // converts it into the non-flexible v2-v4 body format, and reuses handleCreateTopicsV2To4 to build the response.
 func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
-	fmt.Printf("DEBUG: CreateTopics V2+ (flexible) - parsing request of %d bytes (version %d)\n", len(requestBody), apiVersion)
+	Debug("CreateTopics V2+ (flexible) - parsing request of %d bytes (version %d)", len(requestBody), apiVersion)
 
 	offset := 0
 

@@ -58,14 +58,14 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 		maxPollTime := time.Duration(maxWaitMs) * time.Millisecond
 		if maxPollTime > 2*time.Second {
 			maxPollTime = 2 * time.Second
-			fmt.Printf("DEBUG: Limiting fetch polling to 2 seconds to prevent hanging\n")
+			Debug("Limiting fetch polling to 2 seconds to prevent hanging")
 		}
 		deadline := start.Add(maxPollTime)
 		for time.Now().Before(deadline) {
 			// Use context-aware sleep instead of blocking time.Sleep
 			select {
 			case <-ctx.Done():
-				fmt.Printf("DEBUG: Fetch polling cancelled due to context cancellation\n")
+				Debug("Fetch polling cancelled due to context cancellation")
 				throttleTimeMs = int32(time.Since(start) / time.Millisecond)
 				break
 			case <-time.After(10 * time.Millisecond):
@@ -156,7 +156,7 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 				}
 			}
 
-			fmt.Printf("DEBUG: Fetch v%d - partition: %d, fetchOffset: %d (effective: %d), highWaterMark: %d, maxBytes: %d\n",
+			Debug("Fetch v%d - partition: %d, fetchOffset: %d (effective: %d), highWaterMark: %d, maxBytes: %d",
 				apiVersion, partition.PartitionID, partition.FetchOffset, effectiveFetchOffset, highWaterMark, partition.MaxBytes)
 
 			// High water mark (8 bytes)
@@ -184,7 +184,7 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 			// Records - get actual stored record batches using multi-batch fetcher
 			var recordBatch []byte
 			if ledger != nil && highWaterMark > effectiveFetchOffset {
-				fmt.Printf("DEBUG: Multi-batch fetch - partition:%d, offset:%d, maxBytes:%d\n",
+				Debug("Multi-batch fetch - partition:%d, offset:%d, maxBytes:%d",
 					partition.PartitionID, effectiveFetchOffset, partition.MaxBytes)
 
 				// Use multi-batch fetcher for better MaxBytes compliance
@@ -198,23 +198,23 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 				)
 
 				if err == nil && result.TotalSize > 0 {
-					fmt.Printf("DEBUG: Multi-batch result - %d batches, %d bytes, next offset %d\n",
+					Debug("Multi-batch result - %d batches, %d bytes, next offset %d",
 						result.BatchCount, result.TotalSize, result.NextOffset)
 					recordBatch = result.RecordBatches
 				} else {
-					fmt.Printf("DEBUG: Multi-batch failed or empty, falling back to single batch\n")
+					Debug("Multi-batch failed or empty, falling back to single batch")
 					// Fallback to original single batch logic
 					smqRecords, err := h.seaweedMQHandler.GetStoredRecords(topic.Name, partition.PartitionID, effectiveFetchOffset, 10)
 					if err == nil && len(smqRecords) > 0 {
 						recordBatch = h.constructRecordBatchFromSMQ(effectiveFetchOffset, smqRecords)
-						fmt.Printf("DEBUG: Fallback single batch size: %d bytes\n", len(recordBatch))
+						Debug("Fallback single batch size: %d bytes", len(recordBatch))
 					} else {
 						recordBatch = h.constructSimpleRecordBatch(effectiveFetchOffset, highWaterMark)
-						fmt.Printf("DEBUG: Fallback synthetic batch size: %d bytes\n", len(recordBatch))
+						Debug("Fallback synthetic batch size: %d bytes", len(recordBatch))
 					}
 				}
 			} else {
-				fmt.Printf("DEBUG: No messages available - effective fetchOffset %d >= highWaterMark %d\n", effectiveFetchOffset, highWaterMark)
+				Debug("No messages available - effective fetchOffset %d >= highWaterMark %d", effectiveFetchOffset, highWaterMark)
 				recordBatch = []byte{} // No messages available
 			}
 
@@ -246,7 +246,7 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 		}
 	}
 
-	fmt.Printf("DEBUG: Fetch v%d response constructed, size: %d bytes\n", apiVersion, len(response))
+	Debug("Fetch v%d response constructed, size: %d bytes", apiVersion, len(response))
 	return response, nil
 }
 
@@ -1449,7 +1449,7 @@ func (h *Handler) handleSchematizedFetch(topicName string, partitionID int32, of
 	// Create record batch from reconstructed messages
 	recordBatch := h.createSchematizedRecordBatch(messages, offset)
 
-	fmt.Printf("DEBUG: Created schematized record batch: %d bytes for %d messages\n",
+	Debug("Created schematized record batch: %d bytes for %d messages",
 		len(recordBatch), len(messages))
 
 	return recordBatch, nil
