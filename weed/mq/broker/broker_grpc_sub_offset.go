@@ -43,7 +43,7 @@ func (b *MessageQueueBroker) SubscribeWithOffset(
 		RingSize:   initMessage.PartitionOffset.Partition.RingSize,
 		RangeStart: initMessage.PartitionOffset.Partition.RangeStart,
 		RangeStop:  initMessage.PartitionOffset.Partition.RangeStop,
-		UnixTimeNs: time.Now().UnixNano(),
+		UnixTimeNs: initMessage.PartitionOffset.Partition.UnixTimeNs,
 	}
 
 	// Create offset-based subscription
@@ -174,9 +174,28 @@ func (b *MessageQueueBroker) GetSubscriptionInfo(subscriptionID string) (map[str
 
 // ListActiveSubscriptions returns information about all active subscriptions
 func (b *MessageQueueBroker) ListActiveSubscriptions() ([]map[string]interface{}, error) {
-	// TODO: Implement subscription listing
-	// ASSUMPTION: This would require extending the offset manager to track all subscriptions
-	return []map[string]interface{}{}, nil
+	subscriptions, err := b.offsetManager.ListActiveSubscriptions()
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]map[string]interface{}, len(subscriptions))
+	for i, subscription := range subscriptions {
+		lag, _ := subscription.GetLag()
+		atEnd, _ := subscription.IsAtEnd()
+
+		result[i] = map[string]interface{}{
+			"subscription_id": subscription.ID,
+			"start_offset":    subscription.StartOffset,
+			"current_offset":  subscription.CurrentOffset,
+			"offset_type":     subscription.OffsetType.String(),
+			"is_active":       subscription.IsActive,
+			"lag":             lag,
+			"at_end":          atEnd,
+		}
+	}
+
+	return result, nil
 }
 
 // SeekSubscription seeks an existing subscription to a specific offset

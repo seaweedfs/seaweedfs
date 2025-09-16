@@ -64,69 +64,34 @@ func NewBrokerOffsetManagerWithSQL(dbPath string) (*BrokerOffsetManager, error) 
 func (bom *BrokerOffsetManager) AssignOffset(t topic.Topic, p topic.Partition) (int64, error) {
 	partition := topicPartitionToSchemaPartition(t, p)
 
-	bom.mu.RLock()
-	manager, exists := bom.partitionManagers[partitionKey(partition)]
-	bom.mu.RUnlock()
-
-	if !exists {
-		bom.mu.Lock()
-		// Double-check after acquiring write lock
-		if manager, exists = bom.partitionManagers[partitionKey(partition)]; !exists {
-			var err error
-			manager, err = offset.NewPartitionOffsetManager(partition, bom.storage)
-			if err != nil {
-				bom.mu.Unlock()
-				return 0, fmt.Errorf("failed to create partition offset manager: %w", err)
-			}
-			bom.partitionManagers[partitionKey(partition)] = manager
-		}
-		bom.mu.Unlock()
+	// Use the integration layer's offset assigner to ensure consistency with subscriptions
+	result := bom.offsetIntegration.AssignSingleOffset(partition)
+	if result.Error != nil {
+		return 0, result.Error
 	}
 
-	return manager.AssignOffset(), nil
+	return result.Assignment.Offset, nil
 }
 
 // AssignBatchOffsets assigns a batch of offsets for a partition
 func (bom *BrokerOffsetManager) AssignBatchOffsets(t topic.Topic, p topic.Partition, count int64) (baseOffset, lastOffset int64, err error) {
 	partition := topicPartitionToSchemaPartition(t, p)
 
-	bom.mu.RLock()
-	manager, exists := bom.partitionManagers[partitionKey(partition)]
-	bom.mu.RUnlock()
-
-	if !exists {
-		bom.mu.Lock()
-		// Double-check after acquiring write lock
-		if manager, exists = bom.partitionManagers[partitionKey(partition)]; !exists {
-			manager, err = offset.NewPartitionOffsetManager(partition, bom.storage)
-			if err != nil {
-				bom.mu.Unlock()
-				return 0, 0, fmt.Errorf("failed to create partition offset manager: %w", err)
-			}
-			bom.partitionManagers[partitionKey(partition)] = manager
-		}
-		bom.mu.Unlock()
+	// Use the integration layer's offset assigner to ensure consistency with subscriptions
+	result := bom.offsetIntegration.AssignBatchOffsets(partition, count)
+	if result.Error != nil {
+		return 0, 0, result.Error
 	}
 
-	baseOffset, lastOffset = manager.AssignOffsets(count)
-	return baseOffset, lastOffset, nil
+	return result.Batch.BaseOffset, result.Batch.LastOffset, nil
 }
 
 // GetHighWaterMark returns the high water mark for a partition
 func (bom *BrokerOffsetManager) GetHighWaterMark(t topic.Topic, p topic.Partition) (int64, error) {
 	partition := topicPartitionToSchemaPartition(t, p)
 
-	// Use the same partition manager that AssignBatchOffsets updates
-	bom.mu.RLock()
-	manager, exists := bom.partitionManagers[partitionKey(partition)]
-	bom.mu.RUnlock()
-
-	if !exists {
-		// If no manager exists, return 0 (no offsets assigned yet)
-		return 0, nil
-	}
-
-	return manager.GetHighWaterMark(), nil
+	// Use the integration layer's offset assigner to ensure consistency with subscriptions
+	return bom.offsetIntegration.GetHighWaterMark(partition)
 }
 
 // CreateSubscription creates an offset-based subscription
@@ -143,9 +108,7 @@ func (bom *BrokerOffsetManager) CreateSubscription(
 
 // GetSubscription retrieves an existing subscription
 func (bom *BrokerOffsetManager) GetSubscription(subscriptionID string) (*offset.OffsetSubscription, error) {
-	// TODO: Access offsetSubscriber through public method
-	// ASSUMPTION: This should be exposed through the integration layer
-	return nil, fmt.Errorf("GetSubscription not implemented - needs public accessor")
+	return bom.offsetIntegration.GetSubscription(subscriptionID)
 }
 
 // CloseSubscription closes a subscription
@@ -153,42 +116,17 @@ func (bom *BrokerOffsetManager) CloseSubscription(subscriptionID string) error {
 	return bom.offsetIntegration.CloseSubscription(subscriptionID)
 }
 
+// ListActiveSubscriptions returns all active subscriptions
+func (bom *BrokerOffsetManager) ListActiveSubscriptions() ([]*offset.OffsetSubscription, error) {
+	return bom.offsetIntegration.ListActiveSubscriptions()
+}
+
 // GetPartitionOffsetInfo returns comprehensive offset information for a partition
 func (bom *BrokerOffsetManager) GetPartitionOffsetInfo(t topic.Topic, p topic.Partition) (*offset.PartitionOffsetInfo, error) {
 	partition := topicPartitionToSchemaPartition(t, p)
 
-	// Use the same partition manager that AssignBatchOffsets updates
-	bom.mu.RLock()
-	manager, exists := bom.partitionManagers[partitionKey(partition)]
-	bom.mu.RUnlock()
-
-	if !exists {
-		// If no manager exists, return info for empty partition
-		return &offset.PartitionOffsetInfo{
-			Partition:           partition,
-			EarliestOffset:      0,
-			LatestOffset:        -1, // -1 indicates no records yet
-			HighWaterMark:       0,
-			RecordCount:         0,
-			ActiveSubscriptions: 0,
-		}, nil
-	}
-
-	// Get info from the manager
-	highWaterMark := manager.GetHighWaterMark()
-	var latestOffset int64 = -1
-	if highWaterMark > 0 {
-		latestOffset = highWaterMark - 1 // Latest assigned offset
-	}
-
-	return &offset.PartitionOffsetInfo{
-		Partition:           partition,
-		EarliestOffset:      0, // For simplicity, assume earliest is always 0
-		LatestOffset:        latestOffset,
-		HighWaterMark:       highWaterMark,
-		RecordCount:         highWaterMark,
-		ActiveSubscriptions: 0, // TODO: Track subscription count if needed
-	}, nil
+	// Use the integration layer to ensure consistency with subscriptions
+	return bom.offsetIntegration.GetPartitionOffsetInfo(partition)
 }
 
 // topicPartitionToSchemaPartition converts topic.Topic and topic.Partition to schema_pb.Partition
@@ -240,23 +178,8 @@ func (bom *BrokerOffsetManager) AssignOffsetsWithResult(t topic.Topic, p topic.P
 
 // GetOffsetMetrics returns metrics about offset usage across all partitions
 func (bom *BrokerOffsetManager) GetOffsetMetrics() *offset.OffsetMetrics {
-	bom.mu.RLock()
-	defer bom.mu.RUnlock()
-
-	// Count active partitions and calculate total offsets
-	partitionCount := int64(len(bom.partitionManagers))
-	var totalOffsets int64 = 0
-
-	for _, manager := range bom.partitionManagers {
-		totalOffsets += manager.GetHighWaterMark()
-	}
-
-	return &offset.OffsetMetrics{
-		PartitionCount:      partitionCount,
-		TotalOffsets:        totalOffsets,
-		ActiveSubscriptions: 0, // TODO: Track subscription count if needed
-		AverageLatency:      0.0,
-	}
+	// Use the integration layer to ensure consistency with subscriptions
+	return bom.offsetIntegration.GetOffsetMetrics()
 }
 
 // Shutdown gracefully shuts down the offset manager
@@ -264,11 +187,7 @@ func (bom *BrokerOffsetManager) Shutdown() {
 	bom.mu.Lock()
 	defer bom.mu.Unlock()
 
-	// Close all partition managers
-	for key := range bom.partitionManagers {
-		// Partition managers don't have explicit shutdown, but we clear the map
-		delete(bom.partitionManagers, key)
-	}
+	// Clear the partition managers map (now unused but kept for compatibility)
 	bom.partitionManagers = make(map[string]*offset.PartitionOffsetManager)
 
 	// Reset the underlying storage to ensure clean restart behavior
@@ -279,5 +198,6 @@ func (bom *BrokerOffsetManager) Shutdown() {
 		}
 	}
 
-	// TODO: Close storage connections when SQL storage is implemented
+	// Reset the integration layer to ensure clean restart behavior
+	bom.offsetIntegration.Reset()
 }

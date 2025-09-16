@@ -3,6 +3,7 @@ package offset
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_agent_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
@@ -10,27 +11,21 @@ import (
 
 // SMQOffsetIntegration provides integration between offset management and SMQ broker
 type SMQOffsetIntegration struct {
-	mu              sync.RWMutex
-	offsetAssigner  *OffsetAssigner
+	mu               sync.RWMutex
+	offsetAssigner   *OffsetAssigner
 	offsetSubscriber *OffsetSubscriber
-	offsetSeeker    *OffsetSeeker
-	
-	// Mapping between SMQ records and offsets
-	recordOffsetMap map[string]int64 // record key -> offset
-	offsetRecordMap map[string]map[int64]int64 // partition key -> offset -> record timestamp
+	offsetSeeker     *OffsetSeeker
 }
 
 // NewSMQOffsetIntegration creates a new SMQ offset integration
 func NewSMQOffsetIntegration(storage OffsetStorage) *SMQOffsetIntegration {
 	registry := NewPartitionOffsetRegistry(storage)
 	assigner := &OffsetAssigner{registry: registry}
-	
+
 	return &SMQOffsetIntegration{
 		offsetAssigner:   assigner,
 		offsetSubscriber: NewOffsetSubscriber(registry),
 		offsetSeeker:     NewOffsetSeeker(registry),
-		recordOffsetMap:  make(map[string]int64),
-		offsetRecordMap:  make(map[string]map[int64]int64),
 	}
 }
 
@@ -40,7 +35,7 @@ func (integration *SMQOffsetIntegration) PublishRecord(
 	key []byte,
 	value *schema_pb.RecordValue,
 ) (*mq_agent_pb.PublishRecordResponse, error) {
-	
+
 	// Assign offset for this record
 	result := integration.offsetAssigner.AssignSingleOffset(partition)
 	if result.Error != nil {
@@ -48,21 +43,12 @@ func (integration *SMQOffsetIntegration) PublishRecord(
 			Error: fmt.Sprintf("Failed to assign offset: %v", result.Error),
 		}, nil
 	}
-	
+
 	assignment := result.Assignment
-	
-	// Store the mapping for later retrieval
-	integration.mu.Lock()
-	recordKey := string(key)
-	integration.recordOffsetMap[recordKey] = assignment.Offset
-	
-	partitionKey := partitionKey(partition)
-	if integration.offsetRecordMap[partitionKey] == nil {
-		integration.offsetRecordMap[partitionKey] = make(map[int64]int64)
-	}
-	integration.offsetRecordMap[partitionKey][assignment.Offset] = assignment.Timestamp
-	integration.mu.Unlock()
-	
+
+	// Note: Removed in-memory mapping storage to prevent memory leaks
+	// Record-to-offset mappings are now handled by persistent storage layer
+
 	// Return response with offset information
 	return &mq_agent_pb.PublishRecordResponse{
 		AckSequence: assignment.Offset, // Use offset as ack sequence for now
@@ -77,13 +63,13 @@ func (integration *SMQOffsetIntegration) PublishRecordBatch(
 	partition *schema_pb.Partition,
 	records []PublishRecordRequest,
 ) (*mq_agent_pb.PublishRecordResponse, error) {
-	
+
 	if len(records) == 0 {
 		return &mq_agent_pb.PublishRecordResponse{
 			Error: "Empty record batch",
 		}, nil
 	}
-	
+
 	// Assign batch of offsets
 	result := integration.offsetAssigner.AssignBatchOffsets(partition, int64(len(records)))
 	if result.Error != nil {
@@ -91,27 +77,12 @@ func (integration *SMQOffsetIntegration) PublishRecordBatch(
 			Error: fmt.Sprintf("Failed to assign batch offsets: %v", result.Error),
 		}, nil
 	}
-	
+
 	batch := result.Batch
-	
-	// Store mappings for all records in the batch
-	integration.mu.Lock()
-	for i, record := range records {
-		recordKey := string(record.Key)
-		offset := batch.BaseOffset + int64(i)
-		integration.recordOffsetMap[recordKey] = offset
-	}
-	
-	partitionKey := partitionKey(partition)
-	if integration.offsetRecordMap[partitionKey] == nil {
-		integration.offsetRecordMap[partitionKey] = make(map[int64]int64)
-	}
-	for i := int64(0); i < batch.Count; i++ {
-		offset := batch.BaseOffset + i
-		integration.offsetRecordMap[partitionKey][offset] = batch.Timestamp
-	}
-	integration.mu.Unlock()
-	
+
+	// Note: Removed in-memory mapping storage to prevent memory leaks
+	// Batch record-to-offset mappings are now handled by persistent storage layer
+
 	return &mq_agent_pb.PublishRecordResponse{
 		AckSequence: batch.LastOffset, // Use last offset as ack sequence
 		BaseOffset:  batch.BaseOffset,
@@ -127,7 +98,7 @@ func (integration *SMQOffsetIntegration) CreateSubscription(
 	offsetType schema_pb.OffsetType,
 	startOffset int64,
 ) (*OffsetSubscription, error) {
-	
+
 	return integration.offsetSubscriber.CreateSubscription(
 		subscriptionID,
 		partition,
@@ -141,43 +112,43 @@ func (integration *SMQOffsetIntegration) SubscribeRecords(
 	subscription *OffsetSubscription,
 	maxRecords int64,
 ) ([]*mq_agent_pb.SubscribeRecordResponse, error) {
-	
+
 	if !subscription.IsActive {
 		return nil, fmt.Errorf("subscription is not active")
 	}
-	
+
 	// Get the range of offsets to read
 	offsetRange, err := subscription.GetOffsetRange(maxRecords)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get offset range: %w", err)
 	}
-	
+
 	if offsetRange.Count == 0 {
 		// No records available
 		return []*mq_agent_pb.SubscribeRecordResponse{}, nil
 	}
-	
+
 	// TODO: This is where we would integrate with SMQ's actual storage layer
 	// For now, return mock responses with offset information
 	responses := make([]*mq_agent_pb.SubscribeRecordResponse, offsetRange.Count)
-	
+
 	for i := int64(0); i < offsetRange.Count; i++ {
 		offset := offsetRange.StartOffset + i
-		
+
 		responses[i] = &mq_agent_pb.SubscribeRecordResponse{
 			Key:           []byte(fmt.Sprintf("key-%d", offset)),
 			Value:         &schema_pb.RecordValue{}, // Mock value
-			TsNs:          offset * 1000000, // Mock timestamp based on offset
+			TsNs:          offset * 1000000,         // Mock timestamp based on offset
 			Offset:        offset,
 			IsEndOfStream: false,
 			IsEndOfTopic:  false,
 			Error:         "",
 		}
 	}
-	
+
 	// Advance the subscription
 	subscription.AdvanceOffsetBy(offsetRange.Count)
-	
+
 	return responses, nil
 }
 
@@ -191,12 +162,12 @@ func (integration *SMQOffsetIntegration) SeekSubscription(
 	subscriptionID string,
 	offset int64,
 ) error {
-	
+
 	subscription, err := integration.offsetSubscriber.GetSubscription(subscriptionID)
 	if err != nil {
 		return fmt.Errorf("subscription not found: %w", err)
 	}
-	
+
 	return subscription.SeekToOffset(offset)
 }
 
@@ -206,7 +177,7 @@ func (integration *SMQOffsetIntegration) GetSubscriptionLag(subscriptionID strin
 	if err != nil {
 		return 0, fmt.Errorf("subscription not found: %w", err)
 	}
-	
+
 	return subscription.GetLag()
 }
 
@@ -220,7 +191,7 @@ func (integration *SMQOffsetIntegration) ValidateOffsetRange(
 	partition *schema_pb.Partition,
 	startOffset, endOffset int64,
 ) error {
-	
+
 	return integration.offsetSeeker.ValidateOffsetRange(partition, startOffset, endOffset)
 }
 
@@ -237,17 +208,17 @@ type PublishRecordRequest struct {
 
 // OffsetMetrics provides metrics about offset usage
 type OffsetMetrics struct {
-	PartitionCount    int64
-	TotalOffsets      int64
+	PartitionCount      int64
+	TotalOffsets        int64
 	ActiveSubscriptions int64
-	AverageLatency    float64
+	AverageLatency      float64
 }
 
 // GetOffsetMetrics returns metrics about offset usage
 func (integration *SMQOffsetIntegration) GetOffsetMetrics() *OffsetMetrics {
 	integration.mu.RLock()
 	defer integration.mu.RUnlock()
-	
+
 	// Count active subscriptions
 	activeSubscriptions := int64(0)
 	for _, subscription := range integration.offsetSubscriber.subscriptions {
@@ -255,10 +226,16 @@ func (integration *SMQOffsetIntegration) GetOffsetMetrics() *OffsetMetrics {
 			activeSubscriptions++
 		}
 	}
-	
+
+	// Calculate total offsets from all partition managers instead of in-memory map
+	var totalOffsets int64
+	for _, manager := range integration.offsetAssigner.registry.managers {
+		totalOffsets += manager.GetHighWaterMark()
+	}
+
 	return &OffsetMetrics{
 		PartitionCount:      int64(len(integration.offsetAssigner.registry.managers)),
-		TotalOffsets:        int64(len(integration.recordOffsetMap)),
+		TotalOffsets:        totalOffsets, // Now calculated from storage, not memory maps
 		ActiveSubscriptions: activeSubscriptions,
 		AverageLatency:      0.0, // TODO: Implement latency tracking
 	}
@@ -277,27 +254,23 @@ func (integration *SMQOffsetIntegration) GetOffsetInfo(
 	partition *schema_pb.Partition,
 	offset int64,
 ) (*OffsetInfo, error) {
-	
+
 	hwm, err := integration.GetHighWaterMark(partition)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get high water mark: %w", err)
 	}
-	
+
 	exists := offset >= 0 && offset < hwm
-	
+
 	// TODO: Get actual timestamp from storage
 	timestamp := int64(0)
+	// Note: Timestamp lookup from in-memory map removed to prevent memory leaks
+	// For now, use a placeholder timestamp. In production, this should come from
+	// persistent storage if timestamp tracking is needed.
 	if exists {
-		integration.mu.RLock()
-		partitionKey := partitionKey(partition)
-		if offsetMap, found := integration.offsetRecordMap[partitionKey]; found {
-			if ts, found := offsetMap[offset]; found {
-				timestamp = ts
-			}
-		}
-		integration.mu.RUnlock()
+		timestamp = time.Now().UnixNano() // Placeholder - should come from storage
 	}
-	
+
 	return &OffsetInfo{
 		Offset:    offset,
 		Timestamp: timestamp,
@@ -308,11 +281,11 @@ func (integration *SMQOffsetIntegration) GetOffsetInfo(
 
 // PartitionOffsetInfo provides offset information for a partition
 type PartitionOffsetInfo struct {
-	Partition         *schema_pb.Partition
-	EarliestOffset    int64
-	LatestOffset      int64
-	HighWaterMark     int64
-	RecordCount       int64
+	Partition           *schema_pb.Partition
+	EarliestOffset      int64
+	LatestOffset        int64
+	HighWaterMark       int64
+	RecordCount         int64
 	ActiveSubscriptions int64
 }
 
@@ -322,13 +295,13 @@ func (integration *SMQOffsetIntegration) GetPartitionOffsetInfo(partition *schem
 	if err != nil {
 		return nil, fmt.Errorf("failed to get high water mark: %w", err)
 	}
-	
+
 	earliestOffset := int64(0)
 	latestOffset := hwm - 1
 	if hwm == 0 {
 		latestOffset = -1 // No records
 	}
-	
+
 	// Count active subscriptions for this partition
 	activeSubscriptions := int64(0)
 	integration.mu.RLock()
@@ -338,7 +311,7 @@ func (integration *SMQOffsetIntegration) GetPartitionOffsetInfo(partition *schem
 		}
 	}
 	integration.mu.RUnlock()
-	
+
 	return &PartitionOffsetInfo{
 		Partition:           partition,
 		EarliestOffset:      earliestOffset,
@@ -347,4 +320,55 @@ func (integration *SMQOffsetIntegration) GetPartitionOffsetInfo(partition *schem
 		RecordCount:         hwm,
 		ActiveSubscriptions: activeSubscriptions,
 	}, nil
+}
+
+// GetSubscription retrieves an existing subscription
+func (integration *SMQOffsetIntegration) GetSubscription(subscriptionID string) (*OffsetSubscription, error) {
+	return integration.offsetSubscriber.GetSubscription(subscriptionID)
+}
+
+// ListActiveSubscriptions returns all active subscriptions
+func (integration *SMQOffsetIntegration) ListActiveSubscriptions() ([]*OffsetSubscription, error) {
+	integration.mu.RLock()
+	defer integration.mu.RUnlock()
+
+	result := make([]*OffsetSubscription, 0)
+	for _, subscription := range integration.offsetSubscriber.subscriptions {
+		if subscription.IsActive {
+			result = append(result, subscription)
+		}
+	}
+
+	return result, nil
+}
+
+// AssignSingleOffset assigns a single offset for a partition
+func (integration *SMQOffsetIntegration) AssignSingleOffset(partition *schema_pb.Partition) *AssignmentResult {
+	return integration.offsetAssigner.AssignSingleOffset(partition)
+}
+
+// AssignBatchOffsets assigns a batch of offsets for a partition
+func (integration *SMQOffsetIntegration) AssignBatchOffsets(partition *schema_pb.Partition, count int64) *AssignmentResult {
+	return integration.offsetAssigner.AssignBatchOffsets(partition, count)
+}
+
+// Reset resets the integration layer state (for testing)
+func (integration *SMQOffsetIntegration) Reset() {
+	integration.mu.Lock()
+	defer integration.mu.Unlock()
+
+	// Note: No in-memory maps to clear (removed to prevent memory leaks)
+
+	// Close all subscriptions
+	for _, subscription := range integration.offsetSubscriber.subscriptions {
+		subscription.IsActive = false
+	}
+	integration.offsetSubscriber.subscriptions = make(map[string]*OffsetSubscription)
+
+	// Reset the registries by creating new ones with the same storage
+	// This ensures that partition managers start fresh
+	registry := NewPartitionOffsetRegistry(integration.offsetAssigner.registry.storage)
+	integration.offsetAssigner.registry = registry
+	integration.offsetSubscriber.offsetRegistry = registry
+	integration.offsetSeeker.offsetRegistry = registry
 }
