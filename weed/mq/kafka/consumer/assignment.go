@@ -378,6 +378,8 @@ func GetAssignmentStrategy(name string) AssignmentStrategy {
 		return &RoundRobinAssignmentStrategy{}
 	case "cooperative-sticky":
 		return &CooperativeStickyAssignmentStrategy{}
+	case "incremental-cooperative":
+		return NewIncrementalCooperativeAssignmentStrategy()
 	default:
 		// Default to range strategy
 		return &RangeAssignmentStrategy{}

@@ -313,7 +313,7 @@ func (h *Handler) buildLeaveGroupResponse(response LeaveGroupResponse, apiVersio
 	if apiVersion == 0 {
 		return h.buildLeaveGroupV0Response(response)
 	}
-	
+
 	// For v1+ use the full response format
 	return h.buildLeaveGroupFullResponse(response)
 }
