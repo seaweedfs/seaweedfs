@@ -409,9 +409,8 @@ jobs:
           sed -i 's/:8000/:8001/g' ../docker/compose/s3tests-versioning.conf
           sed -i 's/localhost:8000/localhost:8001/g' ../docker/compose/s3tests-versioning.conf
           sed -i 's/127\.0\.0\.1:8000/127.0.0.1:8001/g' ../docker/compose/s3tests-versioning.conf
-          # Ensure per-run unique bucket prefix to avoid collisions
-          UNIQUE_PREFIX="sw$(date +%s)$(shuf -i 1000-9999 -n 1)"
-          sed -i "s/^bucket prefix = .*/bucket prefix = ${UNIQUE_PREFIX}-{random}-/" ../docker/compose/s3tests-versioning.conf
+          # Use the configured bucket prefix from config and do not override with unique prefixes
+          # This avoids mismatch in tests that rely on a fixed provided name
           export S3TEST_CONF=../docker/compose/s3tests-versioning.conf
           
           # Debug: Show the config file contents

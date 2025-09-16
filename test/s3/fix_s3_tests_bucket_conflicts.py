@@ -64,25 +64,39 @@ def patch_s3_tests_init_file(file_path):
                         use_ssl=config.default_is_secure,
                         verify=config.default_ssl_verify)
     
-    # Retry bucket creation if name conflicts occur
-    max_retries = 10
-    for attempt in range(max_retries):
-        if name is None or attempt > 0:
-            name = get_new_bucket_name()
-        
+    # If a name is provided, do not change it; reuse that exact bucket name.
+    if name is not None:
         bucket = s3.Bucket(name)
         try:
-            bucket_location = bucket.create()
+            bucket.create()
+        except ClientError as e:
+            error_code = e.response['Error']['Code']
+            if error_code in ['BucketAlreadyOwnedByYou']:
+                # Bucket already exists and is owned by us; reuse it
+                return bucket
+            if error_code in ['BucketAlreadyExists']:
+                # Name conflict in global namespace; fall back to a fresh unique name
+                name = None
+            else:
+                raise
+        else:
+            return bucket
+
+    # Retry bucket creation with generated names only when name is not provided
+    max_retries = 10
+    for attempt in range(max_retries):
+        gen_name = get_new_bucket_name()
+        bucket = s3.Bucket(gen_name)
+        try:
+            bucket.create()
             return bucket
         except ClientError as e:
             error_code = e.response['Error']['Code']
             if error_code in ['BucketAlreadyExists', 'BucketAlreadyOwnedByYou']:
-                # Bucket name conflict, try again with a new name
                 if attempt == max_retries - 1:
                     raise Exception(f"Failed to create unique bucket after {max_retries} attempts")
                 continue
             else:
-                # Other error, re-raise
                 raise'''
 
     # Patch get_new_bucket function
