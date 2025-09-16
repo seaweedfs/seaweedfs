@@ -2133,19 +2133,16 @@ func getAPIName(apiKey uint16) string {
 func (h *Handler) handleDescribeConfigs(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
 	Debug("DescribeConfigs v%d - parsing request body (%d bytes)", apiVersion, len(requestBody))
 
-	// Parse request - read resources array length
-	if len(requestBody) < 4 {
-		return nil, fmt.Errorf("request too short")
+	// Parse request to extract resources
+	resources, err := h.parseDescribeConfigsRequest(requestBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse DescribeConfigs request: %w", err)
 	}
 
-	resourcesLength := int32(binary.BigEndian.Uint32(requestBody[0:4]))
-	Debug("DescribeConfigs - resources count: %d", resourcesLength)
-
-	// Skip parsing individual resources for now - just create empty response
-	// In a full implementation, we would parse each resource and return actual configs
+	Debug("DescribeConfigs - parsed %d resources", len(resources))
 
 	// Build response
-	response := make([]byte, 0, 1024)
+	response := make([]byte, 0, 2048)
 
 	// Correlation ID
 	correlationIDBytes := make([]byte, 4)
@@ -2157,35 +2154,15 @@ func (h *Handler) handleDescribeConfigs(correlationID uint32, apiVersion uint16,
 	binary.BigEndian.PutUint32(throttleBytes, 0)
 	response = append(response, throttleBytes...)
 
-	// Resources array length (same as request)
+	// Resources array length
 	resourcesBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(resourcesBytes, uint32(resourcesLength))
+	binary.BigEndian.PutUint32(resourcesBytes, uint32(len(resources)))
 	response = append(response, resourcesBytes...)
 
-	// For each resource, return empty config
-	for i := int32(0); i < resourcesLength; i++ {
-		// Error code (0 = no error)
-		errorCodeBytes := make([]byte, 2)
-		binary.BigEndian.PutUint16(errorCodeBytes, 0)
-		response = append(response, errorCodeBytes...)
-
-		// Error message (null string = -1 length)
-		errorMsgBytes := make([]byte, 2)
-		binary.BigEndian.PutUint16(errorMsgBytes, 0xFFFF) // -1 as uint16
-		response = append(response, errorMsgBytes...)
-
-		// Resource type (2 for topic)
-		response = append(response, 2)
-
-		// Resource name (empty string = 0 length)
-		nameBytes := make([]byte, 2)
-		binary.BigEndian.PutUint16(nameBytes, 0)
-		response = append(response, nameBytes...)
-
-		// Config entries array length (0 = no configs)
-		configBytes := make([]byte, 4)
-		binary.BigEndian.PutUint32(configBytes, 0)
-		response = append(response, configBytes...)
+	// For each resource, return appropriate configs
+	for _, resource := range resources {
+		resourceResponse := h.buildDescribeConfigsResourceResponse(resource)
+		response = append(response, resourceResponse...)
 	}
 
 	Debug("DescribeConfigs v%d response constructed, size: %d bytes", apiVersion, len(response))
@@ -2298,4 +2275,320 @@ func (h *Handler) fetchOffsetFromSMQ(key offset.ConsumerOffsetKey) (int64, strin
 
 	// Return the committed offset (metadata is not stored in SMQ format)
 	return entries[0].KafkaOffset, "", nil
+}
+
+// DescribeConfigsResource represents a resource in a DescribeConfigs request
+type DescribeConfigsResource struct {
+	ResourceType int8   // 2 = Topic, 4 = Broker
+	ResourceName string
+	ConfigNames  []string // Empty means return all configs
+}
+
+// parseDescribeConfigsRequest parses a DescribeConfigs request body
+func (h *Handler) parseDescribeConfigsRequest(requestBody []byte) ([]DescribeConfigsResource, error) {
+	if len(requestBody) < 4 {
+		return nil, fmt.Errorf("request too short")
+	}
+
+	offset := 0
+	resourcesLength := int32(binary.BigEndian.Uint32(requestBody[offset : offset+4]))
+	offset += 4
+
+	// Validate resources length to prevent panic
+	if resourcesLength < 0 || resourcesLength > 100 { // Reasonable limit
+		return nil, fmt.Errorf("invalid resources length: %d", resourcesLength)
+	}
+
+	resources := make([]DescribeConfigsResource, 0, resourcesLength)
+
+	for i := int32(0); i < resourcesLength; i++ {
+		if offset+1 > len(requestBody) {
+			return nil, fmt.Errorf("insufficient data for resource type")
+		}
+
+		// Resource type (1 byte)
+		resourceType := int8(requestBody[offset])
+		offset++
+
+		// Resource name (string)
+		if offset+2 > len(requestBody) {
+			return nil, fmt.Errorf("insufficient data for resource name length")
+		}
+		nameLength := int(binary.BigEndian.Uint16(requestBody[offset : offset+2]))
+		offset += 2
+
+		// Validate name length to prevent panic
+		if nameLength < 0 || nameLength > 1000 { // Reasonable limit
+			return nil, fmt.Errorf("invalid resource name length: %d", nameLength)
+		}
+
+		if offset+nameLength > len(requestBody) {
+			return nil, fmt.Errorf("insufficient data for resource name")
+		}
+		resourceName := string(requestBody[offset : offset+nameLength])
+		offset += nameLength
+
+		// Config names array (optional filter)
+		if offset+4 > len(requestBody) {
+			return nil, fmt.Errorf("insufficient data for config names length")
+		}
+		configNamesLength := int32(binary.BigEndian.Uint32(requestBody[offset : offset+4]))
+		offset += 4
+
+		// Validate config names length to prevent panic
+		if configNamesLength < 0 || configNamesLength > 1000 { // Reasonable limit
+			return nil, fmt.Errorf("invalid config names length: %d", configNamesLength)
+		}
+
+		configNames := make([]string, 0, configNamesLength)
+		for j := int32(0); j < configNamesLength; j++ {
+			if offset+2 > len(requestBody) {
+				return nil, fmt.Errorf("insufficient data for config name length")
+			}
+			configNameLength := int(binary.BigEndian.Uint16(requestBody[offset : offset+2]))
+			offset += 2
+
+			// Validate config name length to prevent panic
+			if configNameLength < 0 || configNameLength > 500 { // Reasonable limit
+				return nil, fmt.Errorf("invalid config name length: %d", configNameLength)
+			}
+
+			if offset+configNameLength > len(requestBody) {
+				return nil, fmt.Errorf("insufficient data for config name")
+			}
+			configName := string(requestBody[offset : offset+configNameLength])
+			offset += configNameLength
+
+			configNames = append(configNames, configName)
+		}
+
+		resources = append(resources, DescribeConfigsResource{
+			ResourceType: resourceType,
+			ResourceName: resourceName,
+			ConfigNames:  configNames,
+		})
+	}
+
+	return resources, nil
+}
+
+// buildDescribeConfigsResourceResponse builds the response for a single resource
+func (h *Handler) buildDescribeConfigsResourceResponse(resource DescribeConfigsResource) []byte {
+	response := make([]byte, 0, 512)
+
+	// Error code (0 = no error)
+	errorCodeBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(errorCodeBytes, 0)
+	response = append(response, errorCodeBytes...)
+
+	// Error message (null string = -1 length)
+	errorMsgBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(errorMsgBytes, 0xFFFF) // -1 as uint16
+	response = append(response, errorMsgBytes...)
+
+	// Resource type
+	response = append(response, byte(resource.ResourceType))
+
+	// Resource name
+	nameBytes := make([]byte, 2+len(resource.ResourceName))
+	binary.BigEndian.PutUint16(nameBytes[0:2], uint16(len(resource.ResourceName)))
+	copy(nameBytes[2:], []byte(resource.ResourceName))
+	response = append(response, nameBytes...)
+
+	// Get configs for this resource
+	configs := h.getConfigsForResource(resource)
+
+	// Config entries array length
+	configCountBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(configCountBytes, uint32(len(configs)))
+	response = append(response, configCountBytes...)
+
+	// Add each config entry
+	for _, config := range configs {
+		configBytes := h.buildConfigEntry(config)
+		response = append(response, configBytes...)
+	}
+
+	return response
+}
+
+// ConfigEntry represents a single configuration entry
+type ConfigEntry struct {
+	Name      string
+	Value     string
+	ReadOnly  bool
+	IsDefault bool
+	Sensitive bool
+}
+
+// getConfigsForResource returns appropriate configs for a resource
+func (h *Handler) getConfigsForResource(resource DescribeConfigsResource) []ConfigEntry {
+	switch resource.ResourceType {
+	case 2: // Topic
+		return h.getTopicConfigs(resource.ResourceName, resource.ConfigNames)
+	case 4: // Broker
+		return h.getBrokerConfigs(resource.ConfigNames)
+	default:
+		return []ConfigEntry{}
+	}
+}
+
+// getTopicConfigs returns topic-level configurations
+func (h *Handler) getTopicConfigs(topicName string, requestedConfigs []string) []ConfigEntry {
+	// Default topic configs that admin clients commonly request
+	allConfigs := map[string]ConfigEntry{
+		"cleanup.policy": {
+			Name:      "cleanup.policy",
+			Value:     "delete",
+			ReadOnly:  false,
+			IsDefault: true,
+			Sensitive: false,
+		},
+		"retention.ms": {
+			Name:      "retention.ms",
+			Value:     "604800000", // 7 days in milliseconds
+			ReadOnly:  false,
+			IsDefault: true,
+			Sensitive: false,
+		},
+		"retention.bytes": {
+			Name:      "retention.bytes",
+			Value:     "-1", // Unlimited
+			ReadOnly:  false,
+			IsDefault: true,
+			Sensitive: false,
+		},
+		"segment.ms": {
+			Name:      "segment.ms",
+			Value:     "86400000", // 1 day in milliseconds
+			ReadOnly:  false,
+			IsDefault: true,
+			Sensitive: false,
+		},
+		"max.message.bytes": {
+			Name:      "max.message.bytes",
+			Value:     "1048588", // ~1MB
+			ReadOnly:  false,
+			IsDefault: true,
+			Sensitive: false,
+		},
+		"min.insync.replicas": {
+			Name:      "min.insync.replicas",
+			Value:     "1",
+			ReadOnly:  false,
+			IsDefault: true,
+			Sensitive: false,
+		},
+	}
+
+	// If specific configs requested, filter to those
+	if len(requestedConfigs) > 0 {
+		filteredConfigs := make([]ConfigEntry, 0, len(requestedConfigs))
+		for _, configName := range requestedConfigs {
+			if config, exists := allConfigs[configName]; exists {
+				filteredConfigs = append(filteredConfigs, config)
+			}
+		}
+		return filteredConfigs
+	}
+
+	// Return all configs
+	configs := make([]ConfigEntry, 0, len(allConfigs))
+	for _, config := range allConfigs {
+		configs = append(configs, config)
+	}
+	return configs
+}
+
+// getBrokerConfigs returns broker-level configurations
+func (h *Handler) getBrokerConfigs(requestedConfigs []string) []ConfigEntry {
+	// Default broker configs that admin clients commonly request
+	allConfigs := map[string]ConfigEntry{
+		"log.retention.hours": {
+			Name:      "log.retention.hours",
+			Value:     "168", // 7 days
+			ReadOnly:  false,
+			IsDefault: true,
+			Sensitive: false,
+		},
+		"log.segment.bytes": {
+			Name:      "log.segment.bytes",
+			Value:     "1073741824", // 1GB
+			ReadOnly:  false,
+			IsDefault: true,
+			Sensitive: false,
+		},
+		"num.network.threads": {
+			Name:      "num.network.threads",
+			Value:     "3",
+			ReadOnly:  true,
+			IsDefault: true,
+			Sensitive: false,
+		},
+		"num.io.threads": {
+			Name:      "num.io.threads",
+			Value:     "8",
+			ReadOnly:  true,
+			IsDefault: true,
+			Sensitive: false,
+		},
+	}
+
+	// If specific configs requested, filter to those
+	if len(requestedConfigs) > 0 {
+		filteredConfigs := make([]ConfigEntry, 0, len(requestedConfigs))
+		for _, configName := range requestedConfigs {
+			if config, exists := allConfigs[configName]; exists {
+				filteredConfigs = append(filteredConfigs, config)
+			}
+		}
+		return filteredConfigs
+	}
+
+	// Return all configs
+	configs := make([]ConfigEntry, 0, len(allConfigs))
+	for _, config := range allConfigs {
+		configs = append(configs, config)
+	}
+	return configs
+}
+
+// buildConfigEntry builds the wire format for a single config entry
+func (h *Handler) buildConfigEntry(config ConfigEntry) []byte {
+	entry := make([]byte, 0, 256)
+
+	// Config name
+	nameBytes := make([]byte, 2+len(config.Name))
+	binary.BigEndian.PutUint16(nameBytes[0:2], uint16(len(config.Name)))
+	copy(nameBytes[2:], []byte(config.Name))
+	entry = append(entry, nameBytes...)
+
+	// Config value
+	valueBytes := make([]byte, 2+len(config.Value))
+	binary.BigEndian.PutUint16(valueBytes[0:2], uint16(len(config.Value)))
+	copy(valueBytes[2:], []byte(config.Value))
+	entry = append(entry, valueBytes...)
+
+	// Read only flag
+	if config.ReadOnly {
+		entry = append(entry, 1)
+	} else {
+		entry = append(entry, 0)
+	}
+
+	// Is default flag
+	if config.IsDefault {
+		entry = append(entry, 1)
+	} else {
+		entry = append(entry, 0)
+	}
+
+	// Sensitive flag
+	if config.Sensitive {
+		entry = append(entry, 1)
+	} else {
+		entry = append(entry, 0)
+	}
+
+	return entry
 }
