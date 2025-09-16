@@ -204,47 +204,17 @@ func (b *MessageQueueBroker) convertOffsetToMessagePosition(subscription *offset
 	case schema_pb.OffsetType_EXACT_OFFSET, schema_pb.OffsetType_EXACT_TS_NS:
 		// For exact offsets, we need to convert the Kafka offset to a SeaweedMQ timestamp
 		// TODO: This should use proper offset ledger lookup: ledger.GetRecord(currentOffset)
-		// For now, implement a better fallback than the previous time-based approximation
+		// For now, implement proper offset-based timestamp approximation
 
-		if currentOffset == 0 {
-			// Starting from beginning - use earliest possible timestamp
-			return log_buffer.NewMessagePosition(1, -3), nil
-		}
+		// Use current time as base and subtract offset-based duration
+		// Higher offsets get older timestamps (further back in time)
+		baseTime := time.Now()
 
-		// For non-zero offsets, attempt to get partition info for better timestamp estimation
-		if subscription.Partition != nil {
-			// Convert partition to topic.Topic and topic.Partition for the offset manager
-			t := topic.Topic{
-				Namespace: "default", // Use default namespace for now
-				Name:      "unknown", // We don't have topic name from subscription context
-			}
-			p := topic.Partition{
-				RingSize:   subscription.Partition.RingSize,
-				RangeStart: subscription.Partition.RangeStart,
-				RangeStop:  subscription.Partition.RangeStop,
-				UnixTimeNs: subscription.Partition.UnixTimeNs,
-			}
+		// Approximate each offset as 1 millisecond back in time
+		// This ensures proper progression: higher offset = older timestamp
+		timestampNs := baseTime.Add(-time.Duration(currentOffset) * time.Millisecond).UnixNano()
 
-			// Try to get the partition's info from the offset manager
-			if info, err := b.offsetManager.GetPartitionOffsetInfo(t, p); err == nil && info != nil {
-				// Use the partition's earliest timestamp as a base, which is more accurate
-				// than arbitrary time approximation
-				baseTimestamp := time.Now().UnixNano() - 24*time.Hour.Nanoseconds() // 24 hours ago as fallback
-
-				// If the partition has actual data, adjust based on high water mark ratio
-				if info.HighWaterMark > 0 && currentOffset < info.HighWaterMark {
-					// Rough approximation: assume messages are distributed over recent time
-					timeRangeDuration := time.Hour.Nanoseconds() // assume 1 hour range
-					ratio := float64(currentOffset) / float64(info.HighWaterMark)
-					offsetTimestamp := baseTimestamp + int64(float64(timeRangeDuration)*ratio)
-					return log_buffer.NewMessagePosition(offsetTimestamp, -2), nil
-				}
-			}
-		}
-
-		// Fallback: use a timestamp from 1 hour ago (more conservative than previous approach)
-		fallbackTimestamp := time.Now().Add(-1 * time.Hour).UnixNano()
-		return log_buffer.NewMessagePosition(fallbackTimestamp, -2), nil
+		return log_buffer.NewMessagePosition(timestampNs, -2), nil
 
 	default:
 		// Default to starting from current time for unknown offset types
