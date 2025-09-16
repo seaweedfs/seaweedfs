@@ -119,6 +119,12 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 		binary.BigEndian.PutUint32(partitionsCountBytes, uint32(partitionsCount))
 		response = append(response, partitionsCountBytes...)
 
+		// Check if this topic uses schema management (topic-level check)
+		isSchematizedTopic := h.IsSchemaEnabled() && h.isSchematizedTopic(topic.Name)
+		if isSchematizedTopic {
+			Debug("Topic %s is schematized, will fetch schematized records for all partitions", topic.Name)
+		}
+
 		// Process each requested partition
 		for _, partition := range topic.Partitions {
 			// Partition ID
@@ -218,8 +224,8 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 				recordBatch = []byte{} // No messages available
 			}
 
-			// Try to fetch schematized records if schema management is enabled
-			if h.IsSchemaEnabled() && h.isSchematizedTopic(topic.Name) {
+			// Try to fetch schematized records if this topic uses schema management
+			if isSchematizedTopic {
 				schematizedMessages, err := h.fetchSchematizedRecords(topic.Name, partition.PartitionID, effectiveFetchOffset, partition.MaxBytes)
 				if err != nil {
 					Debug("Failed to fetch schematized records for topic %s partition %d: %v", topic.Name, partition.PartitionID, err)
