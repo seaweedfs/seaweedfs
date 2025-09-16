@@ -8,14 +8,16 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/offset"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
+	"google.golang.org/grpc"
 )
 
 // BrokerOffsetManager manages offset assignment for all partitions in a broker
 type BrokerOffsetManager struct {
-	mu                sync.RWMutex
-	offsetIntegration *offset.SMQOffsetIntegration
-	partitionManagers map[string]*offset.PartitionOffsetManager
-	storage           offset.OffsetStorage
+	mu                   sync.RWMutex
+	offsetIntegration    *offset.SMQOffsetIntegration
+	partitionManagers    map[string]*offset.PartitionOffsetManager
+	storage              offset.OffsetStorage
+	consumerGroupStorage offset.ConsumerGroupOffsetStorage
 }
 
 // NewBrokerOffsetManager creates a new broker offset manager
@@ -32,13 +34,31 @@ func NewBrokerOffsetManagerWithStorage(storage offset.OffsetStorage) *BrokerOffs
 	}
 
 	return &BrokerOffsetManager{
-		offsetIntegration: offset.NewSMQOffsetIntegration(storage),
-		partitionManagers: make(map[string]*offset.PartitionOffsetManager),
-		storage:           storage,
+		offsetIntegration:    offset.NewSMQOffsetIntegration(storage),
+		partitionManagers:    make(map[string]*offset.PartitionOffsetManager),
+		storage:              storage,
+		consumerGroupStorage: nil, // Will be set separately if needed
+	}
+}
+
+// NewBrokerOffsetManagerWithFiler creates a new broker offset manager with filer storage
+func NewBrokerOffsetManagerWithFiler(filerAddress string, namespace string, topicName string, grpcDialOption grpc.DialOption) *BrokerOffsetManager {
+	// Create filer storage for partition offsets
+	filerStorage := offset.NewFilerOffsetStorage(filerAddress, namespace, topicName, grpcDialOption)
+
+	// Create filer storage for consumer group offsets
+	consumerGroupStorage := offset.NewFilerConsumerGroupOffsetStorage(filerAddress, grpcDialOption)
+
+	return &BrokerOffsetManager{
+		offsetIntegration:    offset.NewSMQOffsetIntegration(filerStorage),
+		partitionManagers:    make(map[string]*offset.PartitionOffsetManager),
+		storage:              filerStorage,
+		consumerGroupStorage: consumerGroupStorage,
 	}
 }
 
 // NewBrokerOffsetManagerWithSQL creates a new broker offset manager with SQL storage
+// DEPRECATED: Use NewBrokerOffsetManagerWithFiler instead
 func NewBrokerOffsetManagerWithSQL(dbPath string) (*BrokerOffsetManager, error) {
 	// Create or open SQL database
 	db, err := offset.CreateDatabase(dbPath)
@@ -200,4 +220,38 @@ func (bom *BrokerOffsetManager) Shutdown() {
 
 	// Reset the integration layer to ensure clean restart behavior
 	bom.offsetIntegration.Reset()
+}
+
+// Consumer Group Offset Management
+
+// SaveConsumerGroupOffset saves the committed offset for a consumer group
+func (bom *BrokerOffsetManager) SaveConsumerGroupOffset(t topic.Topic, p topic.Partition, consumerGroup string, offset int64) error {
+	if bom.consumerGroupStorage == nil {
+		return fmt.Errorf("consumer group storage not configured")
+	}
+	return bom.consumerGroupStorage.SaveConsumerGroupOffset(t, p, consumerGroup, offset)
+}
+
+// LoadConsumerGroupOffset loads the committed offset for a consumer group
+func (bom *BrokerOffsetManager) LoadConsumerGroupOffset(t topic.Topic, p topic.Partition, consumerGroup string) (int64, error) {
+	if bom.consumerGroupStorage == nil {
+		return -1, fmt.Errorf("consumer group storage not configured")
+	}
+	return bom.consumerGroupStorage.LoadConsumerGroupOffset(t, p, consumerGroup)
+}
+
+// ListConsumerGroups returns all consumer groups for a topic partition
+func (bom *BrokerOffsetManager) ListConsumerGroups(t topic.Topic, p topic.Partition) ([]string, error) {
+	if bom.consumerGroupStorage == nil {
+		return nil, fmt.Errorf("consumer group storage not configured")
+	}
+	return bom.consumerGroupStorage.ListConsumerGroups(t, p)
+}
+
+// DeleteConsumerGroupOffset removes the offset file for a consumer group
+func (bom *BrokerOffsetManager) DeleteConsumerGroupOffset(t topic.Topic, p topic.Partition, consumerGroup string) error {
+	if bom.consumerGroupStorage == nil {
+		return fmt.Errorf("consumer group storage not configured")
+	}
+	return bom.consumerGroupStorage.DeleteConsumerGroupOffset(t, p, consumerGroup)
 }
