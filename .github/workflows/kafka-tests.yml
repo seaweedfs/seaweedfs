@@ -156,7 +156,7 @@ jobs:
   kafka-consumer-group-tests:
     name: Kafka Consumer Group Tests (Highly Isolated)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -170,20 +170,31 @@ jobs:
       KAFKA_CONSUMER_ISOLATION: "true"
       CONTAINER_ID: ${{ matrix.container-id }}
     steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+
     - name: Set up Go 1.x
       uses: actions/setup-go@v5
       with:
         go-version: ^1.24
+        cache: true
+        cache-dependency-path: |
+          **/go.sum
       id: go
-
-    - name: Check out code
-      uses: actions/checkout@v4
 
     - name: Setup Consumer Group Container Environment
       run: |
         apk add --no-cache git procps curl
         ulimit -n 256 || echo "Warning: Could not set file descriptor limit"
         
+    - name: Warm Go module cache
+      run: |
+        # Warm cache for root module
+        go mod download || true
+        # Warm cache for kafka test module
+        cd test/kafka
+        go mod download || true
+
     - name: Get dependencies
       run: |
         cd test/kafka
