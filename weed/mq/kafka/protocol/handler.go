@@ -332,7 +332,6 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 
 		apiName := getAPIName(apiKey)
 		
-
 		// Validate API version against what we support
 		if err := h.validateAPIVersion(apiKey, apiVersion); err != nil {
 			// Return proper Kafka error response for unsupported version
@@ -2140,8 +2139,8 @@ func (h *Handler) handleDescribeConfigs(correlationID uint32, apiVersion uint16,
 			Error("DescribeConfigs parsing error: %v", err)
 			return nil, fmt.Errorf("failed to parse DescribeConfigs request: %w", err)
 		}
-
-	Debug("DescribeConfigs - parsed %d resources", len(resources))
+		
+		Debug("DescribeConfigs parsed %d resources", len(resources))
 
 	// Build response
 	response := make([]byte, 0, 2048)
@@ -2338,8 +2337,14 @@ func (h *Handler) parseDescribeConfigsRequest(requestBody []byte) ([]DescribeCon
 		offset += 4
 
 		// Validate config names length to prevent panic
-		if configNamesLength < 0 || configNamesLength > 1000 { // Reasonable limit
+		// Note: -1 means null/empty array in Kafka protocol
+		if configNamesLength < -1 || configNamesLength > 1000 { // Reasonable limit
 			return nil, fmt.Errorf("invalid config names length: %d", configNamesLength)
+		}
+		
+		// Handle null array case
+		if configNamesLength == -1 {
+			configNamesLength = 0
 		}
 
 		configNames := make([]string, 0, configNamesLength)
