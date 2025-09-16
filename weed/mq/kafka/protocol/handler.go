@@ -414,51 +414,17 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		case 0: // Produce
 			response, err = h.handleProduce(correlationID, apiVersion, requestBody)
 		case 1: // Fetch
-			fmt.Printf("DEBUG: *** FETCH HANDLER CALLED *** Correlation: %d, Version: %d\n", correlationID, apiVersion)
 			response, err = h.handleFetch(ctx, correlationID, apiVersion, requestBody)
-			if err != nil {
-				fmt.Printf("DEBUG: Fetch error: %v\n", err)
-			} else {
-				fmt.Printf("DEBUG: Fetch response hex dump (%d bytes): %x\n", len(response), response)
-			}
 		case 11: // JoinGroup
-			fmt.Printf("DEBUG: *** JOINGROUP REQUEST RECEIVED *** Correlation: %d, Version: %d\n", correlationID, apiVersion)
 			response, err = h.handleJoinGroup(correlationID, apiVersion, requestBody)
-			if err == nil {
-				fmt.Printf("DEBUG: JoinGroup response size: %d bytes\n", len(response))
-			}
-			if err != nil {
-				fmt.Printf("DEBUG: JoinGroup error: %v\n", err)
-			} else {
-				fmt.Printf("DEBUG: JoinGroup response hex dump (%d bytes): %x\n", len(response), response)
-			}
 		case 14: // SyncGroup
-			fmt.Printf("DEBUG: *** 🎉 SYNCGROUP API CALLED! Version: %d, Correlation: %d ***\n", apiVersion, correlationID)
 			response, err = h.handleSyncGroup(correlationID, apiVersion, requestBody)
-			if err != nil {
-				fmt.Printf("DEBUG: SyncGroup error: %v\n", err)
-			} else {
-				fmt.Printf("DEBUG: SyncGroup response hex dump (%d bytes): %x\n", len(response), response)
-			}
 		case 8: // OffsetCommit
 			response, err = h.handleOffsetCommit(correlationID, requestBody)
 		case 9: // OffsetFetch
-			fmt.Printf("DEBUG: *** OFFSETFETCH REQUEST RECEIVED *** Correlation: %d, Version: %d\n", correlationID, apiVersion)
 			response, err = h.handleOffsetFetch(correlationID, apiVersion, requestBody)
-			if err != nil {
-				fmt.Printf("DEBUG: OffsetFetch error: %v\n", err)
-			} else {
-				fmt.Printf("DEBUG: OffsetFetch response hex dump (%d bytes): %x\n", len(response), response)
-			}
 		case 10: // FindCoordinator
-			fmt.Printf("DEBUG: *** FINDCOORDINATOR REQUEST RECEIVED *** Correlation: %d, Version: %d\n", correlationID, apiVersion)
 			response, err = h.handleFindCoordinator(correlationID, apiVersion, requestBody)
-			if err == nil {
-				fmt.Printf("DEBUG: FindCoordinator response size: %d bytes\n", len(response))
-			}
-			if err != nil {
-				fmt.Printf("DEBUG: FindCoordinator error: %v\n", err)
-			}
 		case 12: // Heartbeat
 			response, err = h.handleHeartbeat(correlationID, requestBody)
 		case 13: // LeaveGroup

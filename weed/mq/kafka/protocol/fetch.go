@@ -15,7 +15,6 @@ import (
 )
 
 func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
-	fmt.Printf("DEBUG: *** FETCH HANDLER CALLED *** Correlation: %d, Version: %d\n", correlationID, apiVersion)
 	// Parse the Fetch request to get the requested topics and partitions
 	fetchRequest, err := h.parseFetchRequest(apiVersion, requestBody)
 	if err != nil {
