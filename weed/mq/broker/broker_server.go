@@ -50,10 +50,11 @@ type MessageQueueBroker struct {
 	lockAsBalancer    *cluster.LiveLock
 	// TODO: Add native offset management to broker
 	// ASSUMPTION: BrokerOffsetManager handles all partition offset assignment
-	offsetManager  *BrokerOffsetManager
-	SubCoordinator *sub_coordinator.SubCoordinator
-	accessLock     sync.Mutex
-	fca            *filer_client.FilerClientAccessor
+	offsetManager   *BrokerOffsetManager
+	SubCoordinator  *sub_coordinator.SubCoordinator
+	gatewayRegistry *KafkaGatewayRegistry // Registry for Kafka gateway instances
+	accessLock      sync.Mutex
+	fca             *filer_client.FilerClientAccessor
 }
 
 func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.DialOption) (mqBroker *MessageQueueBroker, err error) {
@@ -69,6 +70,7 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 		localTopicManager: topic.NewLocalTopicManager(),
 		PubBalancer:       pubBalancer,
 		SubCoordinator:    subCoordinator,
+		gatewayRegistry:   NewKafkaGatewayRegistry(),
 		// offsetManager will be set after filer is available
 	}
 	fca := &filer_client.FilerClientAccessor{

@@ -34,28 +34,6 @@ func NewBrokerOffsetManagerWithFiler(filerAddress string, namespace string, topi
 	}
 }
 
-// NewBrokerOffsetManagerWithSQL creates a new broker offset manager with SQL storage
-// DEPRECATED: Use NewBrokerOffsetManagerWithFiler instead
-func NewBrokerOffsetManagerWithSQL(dbPath string) (*BrokerOffsetManager, error) {
-	// Create or open SQL database
-	db, err := offset.CreateDatabase(dbPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create database: %w", err)
-	}
-
-	// Create SQL storage
-	sqlStorage, err := offset.NewSQLOffsetStorage(db)
-	if err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to create SQL storage: %w", err)
-	}
-
-	return &BrokerOffsetManager{
-		offsetIntegration: offset.NewSMQOffsetIntegration(sqlStorage),
-		storage:           sqlStorage,
-	}, nil
-}
-
 // AssignOffset assigns the next offset for a partition
 func (bom *BrokerOffsetManager) AssignOffset(t topic.Topic, p topic.Partition) (int64, error) {
 	partition := topicPartitionToSchemaPartition(t, p)

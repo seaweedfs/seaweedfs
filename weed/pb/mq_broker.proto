@@ -62,6 +62,10 @@ service SeaweedMessaging {
     // SQL query support - get unflushed messages from broker's in-memory buffer (streaming)
     rpc GetUnflushedMessages (GetUnflushedMessagesRequest) returns (stream GetUnflushedMessagesResponse) {
     }
+
+    // Kafka Gateway Registration (heartbeat-only approach)
+    rpc KafkaGatewayHeartbeat (KafkaGatewayHeartbeatRequest) returns (KafkaGatewayHeartbeatResponse) {
+    }
 }
 
 //////////////////////////////////////////////////
@@ -375,4 +379,34 @@ message LogEntry {
     bytes key = 2;
     bytes data = 3;
     uint32 partition_key_hash = 4;
+}
+
+//////////////////////////////////////////////////
+// Kafka Gateway Registration (Heartbeat-Only)
+//////////////////////////////////////////////////
+
+message KafkaGatewayHeartbeatRequest {
+    string gateway_id = 1;
+    string gateway_address = 2;      // host:port where gateway listens (for auto-registration)
+    int64 heartbeat_time = 3;
+    map<string, string> metadata = 4; // Gateway metadata (version, region, etc.)
+    map<string, string> status = 5;   // Current status (load, connections, etc.)
+}
+
+message KafkaGatewayHeartbeatResponse {
+    bool success = 1;
+    string error_message = 2;
+    bool should_unregister = 3;           // Broker can request gateway to unregister
+    int32 heartbeat_interval_seconds = 4; // Broker can adjust heartbeat interval
+}
+
+// Internal gateway info (used by registry, not exposed via RPC)
+message KafkaGatewayInfo {
+    string gateway_id = 1;
+    string gateway_address = 2;
+    int64 registration_time = 3;
+    int64 last_heartbeat_time = 4;
+    bool is_active = 5;
+    map<string, string> metadata = 6;
+    map<string, string> status = 7;
 }

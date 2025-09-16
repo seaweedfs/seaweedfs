@@ -31,14 +31,14 @@ func TestFindCoordinatorForGroup(t *testing.T) {
 			groupID:     "test-group-3",
 			brokerHost:  "",
 			brokerPort:  9092,
-			expectError: false, // Should still work, returns empty host
+			expectError: false, // Should work, returns fallback localhost
 		},
 		{
 			name:        "zero broker port",
 			groupID:     "test-group-4",
 			brokerHost:  "localhost",
 			brokerPort:  0,
-			expectError: false, // Should still work, returns zero port
+			expectError: false, // Should work, returns fallback 9092
 		},
 	}
 
@@ -61,13 +61,24 @@ func TestFindCoordinatorForGroup(t *testing.T) {
 				return
 			}
 
-			// For now, the function should always return the current gateway
-			if host != tt.brokerHost {
-				t.Errorf("Expected host %s, got %s", tt.brokerHost, host)
+			// The function should always return a valid gateway address (with fallbacks)
+			expectedHost := tt.brokerHost
+			expectedPort := tt.brokerPort
+
+			// GetBrokerAddress() provides fallbacks for empty/zero values
+			if expectedHost == "" {
+				expectedHost = "localhost"
+			}
+			if expectedPort == 0 {
+				expectedPort = 9092
 			}
 
-			if port != tt.brokerPort {
-				t.Errorf("Expected port %d, got %d", tt.brokerPort, port)
+			if host != expectedHost {
+				t.Errorf("Expected host %s, got %s", expectedHost, host)
+			}
+
+			if port != expectedPort {
+				t.Errorf("Expected port %d, got %d", expectedPort, port)
 			}
 
 			if nodeID != 1 {

@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"strconv"
 	"strings"
@@ -55,12 +56,13 @@ type Options struct {
 }
 
 type Server struct {
-	opts    Options
-	ln      net.Listener
-	wg      sync.WaitGroup
-	ctx     context.Context
-	cancel  context.CancelFunc
-	handler *protocol.Handler
+	opts         Options
+	ln           net.Listener
+	wg           sync.WaitGroup
+	ctx          context.Context
+	cancel       context.CancelFunc
+	handler      *protocol.Handler
+	registration *GatewayRegistration
 }
 
 func NewServer(opts Options) *Server {
@@ -100,6 +102,12 @@ func (s *Server) Start() error {
 	host, port := s.GetListenerAddr()
 	s.handler.SetBrokerAddress(host, port)
 	glog.V(1).Infof("Kafka gateway advertising broker at %s:%d", host, port)
+
+	// Register with SMQ broker leader
+	if err := s.registerWithBrokerLeader(host, port); err != nil {
+		glog.V(1).Infof("Failed to register with broker leader: %v", err)
+		// Continue without registration - gateway will work in standalone mode
+	}
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
@@ -132,6 +140,12 @@ func (s *Server) Wait() error {
 
 func (s *Server) Close() error {
 	s.cancel()
+
+	// Unregister from broker leader
+	if s.registration != nil {
+		s.registration.Stop()
+	}
+
 	if s.ln != nil {
 		_ = s.ln.Close()
 	}
@@ -156,6 +170,30 @@ func (s *Server) Close() error {
 		if err := s.handler.Close(); err != nil {
 			glog.Warningf("Error closing handler: %v", err)
 		}
+	}
+
+	return nil
+}
+
+// registerWithBrokerLeader registers this gateway with the SMQ broker leader
+func (s *Server) registerWithBrokerLeader(host string, port int) error {
+	// TODO: Discover broker leader address from masters
+	// For now, use the first master as broker address (simplified)
+	brokerAddress := s.opts.Masters
+	if brokerAddress == "" {
+		return fmt.Errorf("no broker address available for registration")
+	}
+
+	// Generate unique gateway ID
+	gatewayID := fmt.Sprintf("kafka-gateway-%s-%d", host, port)
+	gatewayAddress := fmt.Sprintf("%s:%d", host, port)
+
+	// Create registration manager
+	s.registration = NewGatewayRegistration(gatewayID, gatewayAddress, brokerAddress)
+
+	// Start registration process
+	if err := s.registration.Start(); err != nil {
+		return fmt.Errorf("failed to start gateway registration: %v", err)
 	}
 
 	return nil

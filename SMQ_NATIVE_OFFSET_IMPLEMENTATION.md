@@ -121,11 +121,8 @@ CREATE TABLE partition_metadata (
 ### Basic Offset Assignment
 
 ```go
-// Create offset manager with SQL storage
-manager, err := NewBrokerOffsetManagerWithSQL("/path/to/offsets.db")
-if err != nil {
-    log.Fatal(err)
-}
+// Create offset manager with filer storage
+manager := NewBrokerOffsetManagerWithFiler(filerAddress, namespace, topicName, grpcDialOption)
 defer manager.Shutdown()
 
 // Assign single offset
@@ -181,7 +178,7 @@ if err != nil {
 // Initialize broker with offset management
 broker := &MessageQueueBroker{
     // ... other fields
-    offsetManager: NewBrokerOffsetManagerWithSQL("/data/offsets.db"),
+    offsetManager: NewBrokerOffsetManagerWithFiler(filerAddress, namespace, topicName, grpcDialOption),
 }
 
 // Publishing with offset assignment (automatic)
@@ -269,8 +266,8 @@ currentVersion, err := migrationManager.GetCurrentVersion()
 // In-memory storage (development/testing)
 manager := NewBrokerOffsetManagerWithFiler(filerAddress, namespace, topicName, grpcDialOption)
 
-// SQL storage with custom path
-manager, err := NewBrokerOffsetManagerWithSQL("/data/offsets.db")
+// Filer storage (recommended for production)
+manager := NewBrokerOffsetManagerWithFiler(filerAddress, namespace, topicName, grpcDialOption)
 
 // Custom storage implementation (testing only)
 // Note: NewBrokerOffsetManagerWithStorage is only available in test files
