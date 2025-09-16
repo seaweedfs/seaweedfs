@@ -2279,7 +2279,7 @@ func (h *Handler) fetchOffsetFromSMQ(key offset.ConsumerOffsetKey) (int64, strin
 
 // DescribeConfigsResource represents a resource in a DescribeConfigs request
 type DescribeConfigsResource struct {
-	ResourceType int8   // 2 = Topic, 4 = Broker
+	ResourceType int8 // 2 = Topic, 4 = Broker
 	ResourceName string
 	ConfigNames  []string // Empty means return all configs
 }
