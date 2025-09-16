@@ -394,7 +394,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		// Handle the request based on API key and version
 		var response []byte
 		var err error
-		
+
 		// Record request start time for latency tracking
 		requestStart := time.Now()
 
