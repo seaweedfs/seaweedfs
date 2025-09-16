@@ -294,28 +294,38 @@ func TestProtobufSchema_Methods(t *testing.T) {
 		Dependencies:      []string{"common.proto"},
 	}
 
-	t.Run("GetMessageFields Not Implemented", func(t *testing.T) {
-		_, err := schema.GetMessageFields()
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "field information extraction not implemented in Phase E1")
+	t.Run("GetMessageFields Implemented", func(t *testing.T) {
+		fields, err := schema.GetMessageFields()
+		assert.NoError(t, err)
+		assert.Len(t, fields, 1)
+		assert.Equal(t, "field1", fields[0].Name)
+		assert.Equal(t, int32(1), fields[0].Number)
+		assert.Equal(t, "string", fields[0].Type)
+		assert.Equal(t, "optional", fields[0].Label)
 	})
 
-	t.Run("GetFieldByName Not Implemented", func(t *testing.T) {
-		_, err := schema.GetFieldByName("field1")
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "field information extraction not implemented in Phase E1")
+	t.Run("GetFieldByName Implemented", func(t *testing.T) {
+		field, err := schema.GetFieldByName("field1")
+		assert.NoError(t, err)
+		assert.Equal(t, "field1", field.Name)
+		assert.Equal(t, int32(1), field.Number)
+		assert.Equal(t, "string", field.Type)
+		assert.Equal(t, "optional", field.Label)
 	})
 
-	t.Run("GetFieldByNumber Not Implemented", func(t *testing.T) {
-		_, err := schema.GetFieldByNumber(1)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "field information extraction not implemented in Phase E1")
+	t.Run("GetFieldByNumber Implemented", func(t *testing.T) {
+		field, err := schema.GetFieldByNumber(1)
+		assert.NoError(t, err)
+		assert.Equal(t, "field1", field.Name)
+		assert.Equal(t, int32(1), field.Number)
+		assert.Equal(t, "string", field.Type)
+		assert.Equal(t, "optional", field.Label)
 	})
 
-	t.Run("ValidateMessage Not Implemented", func(t *testing.T) {
+	t.Run("ValidateMessage Requires MessageDescriptor", func(t *testing.T) {
 		err := schema.ValidateMessage([]byte("test message"))
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "message validation not implemented in Phase E1")
+		assert.Contains(t, err.Error(), "no message descriptor available for validation")
 	})
 }
 

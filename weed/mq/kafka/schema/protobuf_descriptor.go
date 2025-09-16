@@ -9,6 +9,7 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
 	"google.golang.org/protobuf/types/descriptorpb"
+	"google.golang.org/protobuf/types/dynamicpb"
 )
 
 // ProtobufSchema represents a parsed Protobuf schema with message type information
@@ -274,8 +275,35 @@ func (p *ProtobufDescriptorParser) extractDependencies(fds *descriptorpb.FileDes
 
 // GetMessageFields returns information about the fields in the message
 func (s *ProtobufSchema) GetMessageFields() ([]FieldInfo, error) {
-	// This will be implemented in Phase E2 when we have proper descriptor resolution
-	return nil, fmt.Errorf("field information extraction not implemented in Phase E1")
+	if s.FileDescriptorSet == nil {
+		return nil, fmt.Errorf("no FileDescriptorSet available")
+	}
+
+	// Find the message descriptor for this schema
+	messageDesc := s.findMessageDescriptor(s.MessageName)
+	if messageDesc == nil {
+		return nil, fmt.Errorf("message %s not found in descriptor set", s.MessageName)
+	}
+
+	// Extract field information
+	fields := make([]FieldInfo, 0, len(messageDesc.Field))
+	for _, field := range messageDesc.Field {
+		fieldInfo := FieldInfo{
+			Name:   field.GetName(),
+			Number: field.GetNumber(),
+			Type:   s.fieldTypeToString(field.GetType()),
+			Label:  s.fieldLabelToString(field.GetLabel()),
+		}
+
+		// Set TypeName for message/enum types
+		if field.GetTypeName() != "" {
+			fieldInfo.TypeName = field.GetTypeName()
+		}
+
+		fields = append(fields, fieldInfo)
+	}
+
+	return fields, nil
 }
 
 // FieldInfo represents information about a Protobuf field
@@ -319,10 +347,117 @@ func (s *ProtobufSchema) GetFieldByNumber(fieldNumber int32) (*FieldInfo, error)
 	return nil, fmt.Errorf("field number %d not found", fieldNumber)
 }
 
+// findMessageDescriptor finds a message descriptor by name in the FileDescriptorSet
+func (s *ProtobufSchema) findMessageDescriptor(messageName string) *descriptorpb.DescriptorProto {
+	if s.FileDescriptorSet == nil {
+		return nil
+	}
+
+	for _, file := range s.FileDescriptorSet.File {
+		// Check top-level messages
+		for _, message := range file.MessageType {
+			if message.GetName() == messageName {
+				return message
+			}
+			// Check nested messages
+			if nested := searchNestedMessages(message, messageName); nested != nil {
+				return nested
+			}
+		}
+	}
+
+	return nil
+}
+
+// searchNestedMessages recursively searches for nested message types
+func searchNestedMessages(messageType *descriptorpb.DescriptorProto, targetName string) *descriptorpb.DescriptorProto {
+	for _, nested := range messageType.NestedType {
+		if nested.Name != nil && *nested.Name == targetName {
+			return nested
+		}
+		// Recursively search deeper nesting
+		if found := searchNestedMessages(nested, targetName); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
+// fieldTypeToString converts a FieldDescriptorProto_Type to string
+func (s *ProtobufSchema) fieldTypeToString(fieldType descriptorpb.FieldDescriptorProto_Type) string {
+	switch fieldType {
+	case descriptorpb.FieldDescriptorProto_TYPE_DOUBLE:
+		return "double"
+	case descriptorpb.FieldDescriptorProto_TYPE_FLOAT:
+		return "float"
+	case descriptorpb.FieldDescriptorProto_TYPE_INT64:
+		return "int64"
+	case descriptorpb.FieldDescriptorProto_TYPE_UINT64:
+		return "uint64"
+	case descriptorpb.FieldDescriptorProto_TYPE_INT32:
+		return "int32"
+	case descriptorpb.FieldDescriptorProto_TYPE_FIXED64:
+		return "fixed64"
+	case descriptorpb.FieldDescriptorProto_TYPE_FIXED32:
+		return "fixed32"
+	case descriptorpb.FieldDescriptorProto_TYPE_BOOL:
+		return "bool"
+	case descriptorpb.FieldDescriptorProto_TYPE_STRING:
+		return "string"
+	case descriptorpb.FieldDescriptorProto_TYPE_GROUP:
+		return "group"
+	case descriptorpb.FieldDescriptorProto_TYPE_MESSAGE:
+		return "message"
+	case descriptorpb.FieldDescriptorProto_TYPE_BYTES:
+		return "bytes"
+	case descriptorpb.FieldDescriptorProto_TYPE_UINT32:
+		return "uint32"
+	case descriptorpb.FieldDescriptorProto_TYPE_ENUM:
+		return "enum"
+	case descriptorpb.FieldDescriptorProto_TYPE_SFIXED32:
+		return "sfixed32"
+	case descriptorpb.FieldDescriptorProto_TYPE_SFIXED64:
+		return "sfixed64"
+	case descriptorpb.FieldDescriptorProto_TYPE_SINT32:
+		return "sint32"
+	case descriptorpb.FieldDescriptorProto_TYPE_SINT64:
+		return "sint64"
+	default:
+		return "unknown"
+	}
+}
+
+// fieldLabelToString converts a FieldDescriptorProto_Label to string
+func (s *ProtobufSchema) fieldLabelToString(label descriptorpb.FieldDescriptorProto_Label) string {
+	switch label {
+	case descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL:
+		return "optional"
+	case descriptorpb.FieldDescriptorProto_LABEL_REQUIRED:
+		return "required"
+	case descriptorpb.FieldDescriptorProto_LABEL_REPEATED:
+		return "repeated"
+	default:
+		return "unknown"
+	}
+}
+
 // ValidateMessage validates that a message conforms to the schema
 func (s *ProtobufSchema) ValidateMessage(messageData []byte) error {
-	// This will be implemented in Phase E2 with proper message validation
-	return fmt.Errorf("message validation not implemented in Phase E1")
+	if s.MessageDescriptor == nil {
+		return fmt.Errorf("no message descriptor available for validation")
+	}
+
+	// Create a dynamic message from the descriptor
+	msgType := dynamicpb.NewMessageType(s.MessageDescriptor)
+	msg := msgType.New()
+
+	// Try to unmarshal the message data
+	if err := proto.Unmarshal(messageData, msg.Interface()); err != nil {
+		return fmt.Errorf("message validation failed: %w", err)
+	}
+
+	// Basic validation passed - the message can be unmarshaled with the schema
+	return nil
 }
 
 // ClearCache clears the descriptor cache
