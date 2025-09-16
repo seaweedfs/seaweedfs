@@ -444,6 +444,12 @@ func convertAvroComplexTypeWithRepeated(avroType map[string]interface{}) (*schem
 		return nil, false, fmt.Errorf("complex type must have a type field")
 	}
 
+	// Handle logical types - they are based on underlying primitive types
+	if _, hasLogicalType := avroType["logicalType"]; hasLogicalType {
+		// For logical types, use the underlying primitive type
+		return convertAvroSimpleTypeWithLogical(typeStr, avroType)
+	}
+
 	switch typeStr {
 	case "record":
 		// Nested record type
@@ -496,6 +502,68 @@ func convertAvroComplexTypeWithRepeated(avroType map[string]interface{}) (*schem
 
 	default:
 		return nil, false, fmt.Errorf("unsupported complex Avro type: %s", typeStr)
+	}
+}
+
+// convertAvroSimpleTypeWithLogical handles logical types based on their underlying primitive types
+func convertAvroSimpleTypeWithLogical(primitiveType string, avroType map[string]interface{}) (*schema_pb.Type, bool, error) {
+	logicalType, _ := avroType["logicalType"].(string)
+
+	// Map logical types to appropriate SeaweedMQ types
+	switch logicalType {
+	case "decimal":
+		// Decimal logical type - use bytes for precision
+		return &schema_pb.Type{
+			Kind: &schema_pb.Type_ScalarType{
+				ScalarType: schema_pb.ScalarType_BYTES,
+			},
+		}, false, nil
+	case "uuid":
+		// UUID logical type - use string
+		return &schema_pb.Type{
+			Kind: &schema_pb.Type_ScalarType{
+				ScalarType: schema_pb.ScalarType_STRING,
+			},
+		}, false, nil
+	case "date":
+		// Date logical type (int) - use int32
+		return &schema_pb.Type{
+			Kind: &schema_pb.Type_ScalarType{
+				ScalarType: schema_pb.ScalarType_INT32,
+			},
+		}, false, nil
+	case "time-millis":
+		// Time in milliseconds (int) - use int32
+		return &schema_pb.Type{
+			Kind: &schema_pb.Type_ScalarType{
+				ScalarType: schema_pb.ScalarType_INT32,
+			},
+		}, false, nil
+	case "time-micros":
+		// Time in microseconds (long) - use int64
+		return &schema_pb.Type{
+			Kind: &schema_pb.Type_ScalarType{
+				ScalarType: schema_pb.ScalarType_INT64,
+			},
+		}, false, nil
+	case "timestamp-millis":
+		// Timestamp in milliseconds (long) - use int64
+		return &schema_pb.Type{
+			Kind: &schema_pb.Type_ScalarType{
+				ScalarType: schema_pb.ScalarType_INT64,
+			},
+		}, false, nil
+	case "timestamp-micros":
+		// Timestamp in microseconds (long) - use int64
+		return &schema_pb.Type{
+			Kind: &schema_pb.Type_ScalarType{
+				ScalarType: schema_pb.ScalarType_INT64,
+			},
+		}, false, nil
+	default:
+		// For unknown logical types, fall back to the underlying primitive type
+		fieldType, err := convertAvroSimpleType(primitiveType)
+		return fieldType, false, err
 	}
 }
 
