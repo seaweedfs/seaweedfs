@@ -158,8 +158,7 @@ func (h *Handler) handleLeaveGroup(correlationID uint32, apiVersion uint16, requ
 			return h.buildLeaveGroupErrorResponse(correlationID, ErrorCodeFencedInstanceID, apiVersion), nil
 		}
 		// Unregister static member
-		h.groupCoordinator.UnregisterStaticMember(group, *member.GroupInstanceID)
-		fmt.Printf("DEBUG: LeaveGroup unregistered static member '%s' with instance ID '%s'\n", request.MemberID, *member.GroupInstanceID)
+		h.groupCoordinator.UnregisterStaticMemberLocked(group, *member.GroupInstanceID)
 	}
 
 	// Remove the member from the group
@@ -281,10 +280,20 @@ func (h *Handler) parseLeaveGroupRequest(data []byte) (*LeaveGroupRequest, error
 	memberID := string(data[offset : offset+memberIDLength])
 	offset += memberIDLength
 
+	// GroupInstanceID (string, v3+) - optional field
+	var groupInstanceID string
+	if offset+2 <= len(data) {
+		instanceIDLength := int(binary.BigEndian.Uint16(data[offset:]))
+		offset += 2
+		if instanceIDLength != 0xFFFF && offset+instanceIDLength <= len(data) {
+			groupInstanceID = string(data[offset : offset+instanceIDLength])
+		}
+	}
+
 	return &LeaveGroupRequest{
 		GroupID:         groupID,
 		MemberID:        memberID,
-		GroupInstanceID: "",                   // Simplified - would parse from remaining data
+		GroupInstanceID: groupInstanceID,
 		Members:         []LeaveGroupMember{}, // Would parse members array for batch operations
 	}, nil
 }

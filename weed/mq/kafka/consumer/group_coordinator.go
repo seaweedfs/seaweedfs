@@ -202,10 +202,22 @@ func (gc *GroupCoordinator) FindStaticMember(group *ConsumerGroup, instanceID st
 	if instanceID == "" {
 		return nil
 	}
-	
+
 	group.Mu.RLock()
 	defer group.Mu.RUnlock()
-	
+
+	if memberID, exists := group.StaticMembers[instanceID]; exists {
+		return group.Members[memberID]
+	}
+	return nil
+}
+
+// FindStaticMemberLocked finds a member by static instance ID (assumes group is already locked)
+func (gc *GroupCoordinator) FindStaticMemberLocked(group *ConsumerGroup, instanceID string) *GroupMember {
+	if instanceID == "" {
+		return nil
+	}
+
 	if memberID, exists := group.StaticMembers[instanceID]; exists {
 		return group.Members[memberID]
 	}
@@ -217,10 +229,19 @@ func (gc *GroupCoordinator) RegisterStaticMember(group *ConsumerGroup, member *G
 	if member.GroupInstanceID == nil || *member.GroupInstanceID == "" {
 		return
 	}
-	
+
 	group.Mu.Lock()
 	defer group.Mu.Unlock()
-	
+
+	group.StaticMembers[*member.GroupInstanceID] = member.ID
+}
+
+// RegisterStaticMemberLocked registers a static member in the group (assumes group is already locked)
+func (gc *GroupCoordinator) RegisterStaticMemberLocked(group *ConsumerGroup, member *GroupMember) {
+	if member.GroupInstanceID == nil || *member.GroupInstanceID == "" {
+		return
+	}
+
 	group.StaticMembers[*member.GroupInstanceID] = member.ID
 }
 
@@ -229,10 +250,19 @@ func (gc *GroupCoordinator) UnregisterStaticMember(group *ConsumerGroup, instanc
 	if instanceID == "" {
 		return
 	}
-	
+
 	group.Mu.Lock()
 	defer group.Mu.Unlock()
-	
+
+	delete(group.StaticMembers, instanceID)
+}
+
+// UnregisterStaticMemberLocked removes a static member from the group (assumes group is already locked)
+func (gc *GroupCoordinator) UnregisterStaticMemberLocked(group *ConsumerGroup, instanceID string) {
+	if instanceID == "" {
+		return
+	}
+
 	delete(group.StaticMembers, instanceID)
 }
 
@@ -269,10 +299,10 @@ func (gc *GroupCoordinator) cleanupRoutine() {
 // performCleanup removes expired members and empty groups
 func (gc *GroupCoordinator) performCleanup() {
 	now := time.Now()
-	
+
 	// Use rebalance timeout manager for more sophisticated timeout handling
 	gc.rebalanceTimeoutManager.CheckRebalanceTimeouts()
-	
+
 	gc.groupsMu.Lock()
 	defer gc.groupsMu.Unlock()
 
