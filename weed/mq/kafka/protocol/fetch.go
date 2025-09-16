@@ -218,14 +218,6 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 				recordBatch = []byte{} // No messages available
 			}
 
-			// Records size (4 bytes)
-			recordsSizeBytes := make([]byte, 4)
-			binary.BigEndian.PutUint32(recordsSizeBytes, uint32(len(recordBatch)))
-			response = append(response, recordsSizeBytes...)
-
-			// Records data
-			response = append(response, recordBatch...)
-
 			// Try to fetch schematized records if schema management is enabled
 			if h.IsSchemaEnabled() && h.isSchematizedTopic(topic.Name) {
 				schematizedMessages, err := h.fetchSchematizedRecords(topic.Name, partition.PartitionID, effectiveFetchOffset, partition.MaxBytes)
@@ -233,10 +225,24 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 					Debug("Failed to fetch schematized records for topic %s partition %d: %v", topic.Name, partition.PartitionID, err)
 				} else if len(schematizedMessages) > 0 {
 					Debug("Successfully fetched %d schematized messages for topic %s partition %d", len(schematizedMessages), topic.Name, partition.PartitionID)
-					// TODO: Integrate schematized messages into the record batch
-					// For now, just log that we found them
+					
+					// Create schematized record batch and replace the regular record batch
+					schematizedBatch := h.createSchematizedRecordBatch(schematizedMessages, effectiveFetchOffset)
+					if len(schematizedBatch) > 0 {
+						// Replace the record batch with the schematized version
+						recordBatch = schematizedBatch
+						Debug("Replaced record batch with schematized version: %d bytes for %d messages", len(recordBatch), len(schematizedMessages))
+					}
 				}
 			}
+
+			// Records size (4 bytes)
+			recordsSizeBytes := make([]byte, 4)
+			binary.BigEndian.PutUint32(recordsSizeBytes, uint32(len(recordBatch)))
+			response = append(response, recordsSizeBytes...)
+
+			// Records data
+			response = append(response, recordBatch...)
 		}
 	}
 
@@ -1035,6 +1041,11 @@ func (h *Handler) fetchSchematizedRecords(topicName string, partitionID int32, o
 		return [][]byte{}, nil
 	}
 
+	// Check if SeaweedMQ handler is available
+	if h.seaweedMQHandler == nil {
+		return nil, fmt.Errorf("SeaweedMQ handler not available")
+	}
+
 	// Fetch stored records from SeaweedMQ
 	maxRecords := 100 // Reasonable batch size limit
 	smqRecords, err := h.seaweedMQHandler.GetStoredRecords(topicName, partitionID, offset, maxRecords)
@@ -1251,7 +1262,6 @@ func (h *Handler) createRecordEntry(messageData []byte, offsetDelta int32, times
 	recordLength := encodeVarint(int64(len(record)))
 	return append(recordLength, record...)
 }
-
 
 // createRecordBatchWithCompressionAndCRC creates a Kafka record batch with proper compression and CRC
 func (h *Handler) createRecordBatchWithCompressionAndCRC(baseOffset int64, recordsData []byte, compressionType compression.CompressionCodec, recordCount int32) ([]byte, error) {
