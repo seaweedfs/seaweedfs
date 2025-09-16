@@ -152,7 +152,7 @@ func (h *Handler) Close() error {
 	// Close broker client if present
 	if h.brokerClient != nil {
 		if err := h.brokerClient.Close(); err != nil {
-			fmt.Printf("Warning: failed to close broker client: %v\n", err)
+			Warning("Failed to close broker client: %v", err)
 		}
 	}
 
@@ -166,14 +166,14 @@ func (h *Handler) Close() error {
 // StoreRecordBatch stores a record batch for later retrieval during Fetch operations
 func (h *Handler) StoreRecordBatch(topicName string, partition int32, baseOffset int64, recordBatch []byte) {
 	// Record batch storage is now handled by the SeaweedMQ handler
-	fmt.Printf("DEBUG: StoreRecordBatch delegated to SeaweedMQ handler - partition:%d, offset:%d\n",
+	Debug("StoreRecordBatch delegated to SeaweedMQ handler - partition:%d, offset:%d",
 		partition, baseOffset)
 }
 
 // GetRecordBatch retrieves a stored record batch that contains the requested offset
 func (h *Handler) GetRecordBatch(topicName string, partition int32, offset int64) ([]byte, bool) {
 	// Record batch retrieval is now handled by the SeaweedMQ handler
-	fmt.Printf("DEBUG: GetRecordBatch delegated to SeaweedMQ handler - partition:%d, offset:%d\n",
+	Debug("GetRecordBatch delegated to SeaweedMQ handler - partition:%d, offset:%d",
 		partition, offset)
 	return nil, false
 }
@@ -391,7 +391,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		var response []byte
 		var err error
 
-		fmt.Printf("DEBUG: *** API REQUEST *** Key: %d (%s), Version: %d, Correlation: %d\n", apiKey, getAPIName(apiKey), apiVersion, correlationID)
+		Debug("API REQUEST - Key: %d (%s), Version: %d, Correlation: %d", apiKey, getAPIName(apiKey), apiVersion, correlationID)
 		switch apiKey {
 		case 18: // ApiVersions
 			response, err = h.handleApiVersions(correlationID, apiVersion)
@@ -457,7 +457,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		case 13: // LeaveGroup
 			response, err = h.handleLeaveGroup(correlationID, apiVersion, requestBody)
 		default:
-			fmt.Printf("DEBUG: *** UNSUPPORTED API KEY *** %d (%s) v%d - Correlation: %d\n", apiKey, apiName, apiVersion, correlationID)
+			Warning("Unsupported API key: %d (%s) v%d - Correlation: %d", apiKey, apiName, apiVersion, correlationID)
 			err = fmt.Errorf("unsupported API key: %d (version %d)", apiKey, apiVersion)
 		}
 
@@ -466,10 +466,10 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		}
 
 		// Send response with timeout handling
-		fmt.Printf("DEBUG: [%s] Sending %s response: %d bytes\n", connectionID, getAPIName(apiKey), len(response))
+		Debug("[%s] Sending %s response: %d bytes", connectionID, getAPIName(apiKey), len(response))
 		if err := h.writeResponseWithTimeout(w, response, timeoutConfig.WriteTimeout); err != nil {
 			errorCode := HandleTimeoutError(err, "write")
-			fmt.Printf("DEBUG: [%s] Error sending response: %v (code: %d)\n", connectionID, err, errorCode)
+			Error("[%s] Error sending response: %v (code: %d)", connectionID, err, errorCode)
 			return fmt.Errorf("send response: %w", err)
 		}
 
@@ -627,7 +627,7 @@ func (h *Handler) handleApiVersions(correlationID uint32, apiVersion uint16) ([]
 		response = append(response, 0)
 	}
 
-	fmt.Printf("DEBUG: ApiVersions v%d response: %d bytes\n", apiVersion, len(response))
+	Debug("ApiVersions v%d response: %d bytes", apiVersion, len(response))
 	return response, nil
 }
 
