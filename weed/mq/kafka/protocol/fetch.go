@@ -942,8 +942,8 @@ func (h *Handler) getMultipleRecordBatches(topicName string, partitionID int32, 
 			// to be concatenated in the records field of a fetch response
 			combinedBatches = append(combinedBatches, batch...)
 			batchCount++
-			
-			Debug("Concatenated batch %d: offset=%d, size=%d bytes, total=%d bytes", 
+
+			Debug("Concatenated batch %d: offset=%d, size=%d bytes, total=%d bytes",
 				batchCount, offset, len(batch), len(combinedBatches))
 		} else {
 			Debug("No batch found at offset %d, stopping concatenation", offset)
@@ -961,14 +961,14 @@ func (h *Handler) isValidRecordBatch(batch []byte) bool {
 	if len(batch) < 17 {
 		return false
 	}
-	
+
 	// Check magic byte (should be 2 for record batch format v2)
 	magic := batch[16] // magic byte is at offset 16
 	if magic != 2 {
 		Debug("Invalid magic byte in record batch: %d (expected 2)", magic)
 		return false
 	}
-	
+
 	// Check batch length field consistency
 	batchLength := binary.BigEndian.Uint32(batch[8:12])
 	expectedTotalSize := int(batchLength) + 12 // batch_length doesn't include base_offset(8) + batch_length(4)
@@ -976,7 +976,7 @@ func (h *Handler) isValidRecordBatch(batch []byte) bool {
 		Debug("Record batch size mismatch: got %d bytes, expected %d", len(batch), expectedTotalSize)
 		return false
 	}
-	
+
 	return true
 }
 

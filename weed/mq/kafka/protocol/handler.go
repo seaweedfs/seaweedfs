@@ -456,6 +456,12 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			response, err = h.handleHeartbeat(correlationID, requestBody)
 		case 13: // LeaveGroup
 			response, err = h.handleLeaveGroup(correlationID, apiVersion, requestBody)
+		case 15: // DescribeGroups
+			Debug("DescribeGroups request received, correlation: %d, version: %d", correlationID, apiVersion)
+			response, err = h.handleDescribeGroups(correlationID, apiVersion, requestBody)
+		case 16: // ListGroups
+			Debug("ListGroups request received, correlation: %d, version: %d", correlationID, apiVersion)
+			response, err = h.handleListGroups(correlationID, apiVersion, requestBody)
 		default:
 			Warning("Unsupported API key: %d (%s) v%d - Correlation: %d", apiKey, apiName, apiVersion, correlationID)
 			err = fmt.Errorf("unsupported API key: %d (version %d)", apiKey, apiVersion)
@@ -493,13 +499,13 @@ func (h *Handler) handleApiVersions(correlationID uint32, apiVersion uint16) ([]
 	response = append(response, 0, 0)
 
 	// Number of API keys - use compact or regular array format based on version
-	apiKeysCount := uint32(14)
+	apiKeysCount := uint32(16)
 	if isFlexible {
 		// Compact array format for flexible versions
 		response = append(response, CompactArrayLength(apiKeysCount)...)
 	} else {
 		// Regular array format for older versions
-		response = append(response, 0, 0, 0, 14) // 14 API keys
+		response = append(response, 0, 0, 0, 16) // 16 API keys
 	}
 
 	// API Key 18 (ApiVersions): api_key(2) + min_version(2) + max_version(2)
@@ -610,6 +616,22 @@ func (h *Handler) handleApiVersions(correlationID uint32, apiVersion uint16) ([]
 
 	// API Key 13 (LeaveGroup): api_key(2) + min_version(2) + max_version(2)
 	response = append(response, 0, 13) // API key 13
+	response = append(response, 0, 0)  // min version 0
+	response = append(response, 0, 4)  // max version 4
+	if isFlexible {
+		response = append(response, 0)
+	}
+
+	// API Key 15 (DescribeGroups): api_key(2) + min_version(2) + max_version(2)
+	response = append(response, 0, 15) // API key 15
+	response = append(response, 0, 0)  // min version 0
+	response = append(response, 0, 5)  // max version 5
+	if isFlexible {
+		response = append(response, 0)
+	}
+
+	// API Key 16 (ListGroups): api_key(2) + min_version(2) + max_version(2)
+	response = append(response, 0, 16) // API key 16
 	response = append(response, 0, 0)  // min version 0
 	response = append(response, 0, 4)  // max version 4
 	if isFlexible {
@@ -2039,6 +2061,8 @@ func (h *Handler) validateAPIVersion(apiKey, apiVersion uint16) error {
 		9:  {0, 5}, // OffsetFetch: v0-v5 (updated to match implementation)
 		12: {0, 4}, // Heartbeat: v0-v4
 		13: {0, 4}, // LeaveGroup: v0-v4
+		15: {0, 5}, // DescribeGroups: v0-v5
+		16: {0, 4}, // ListGroups: v0-v4
 	}
 
 	if versionRange, exists := supportedVersions[apiKey]; exists {
@@ -2104,6 +2128,10 @@ func getAPIName(apiKey uint16) string {
 		return "LeaveGroup"
 	case 14:
 		return "SyncGroup"
+	case 15:
+		return "DescribeGroups"
+	case 16:
+		return "ListGroups"
 	case 18:
 		return "ApiVersions"
 	case 19:
