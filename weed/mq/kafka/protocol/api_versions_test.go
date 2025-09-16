@@ -33,7 +33,7 @@ func TestApiVersions_AdvertisedVersionsMatch(t *testing.T) {
 
 	// Check number of API keys
 	numAPIKeys := binary.BigEndian.Uint32(response[6:10])
-	expectedAPIKeys := uint32(14)
+	expectedAPIKeys := uint32(16)
 	if numAPIKeys != expectedAPIKeys {
 		t.Errorf("Expected %d API keys, got %d", expectedAPIKeys, numAPIKeys)
 	}
@@ -57,6 +57,8 @@ func TestApiVersions_AdvertisedVersionsMatch(t *testing.T) {
 		19: {0, 5}, // CreateTopics: should now be v0-v5
 		3:  {0, 7}, // Metadata: should be v0-v7
 		18: {0, 3}, // ApiVersions: should be v0-v3
+		15: {0, 5}, // DescribeGroups: v0-v5
+		16: {0, 4}, // ListGroups: v0-v4
 	}
 
 	for apiKey, expected := range expectedVersions {
@@ -281,8 +283,8 @@ func TestApiVersions_ResponseFormat(t *testing.T) {
 
 	// Number of API keys (4 bytes)
 	numAPIKeys := binary.BigEndian.Uint32(response[offset : offset+4])
-	if numAPIKeys != 14 {
-		t.Errorf("Wrong number of API keys: expected 14, got %d", numAPIKeys)
+	if numAPIKeys != 16 {
+		t.Errorf("Wrong number of API keys: expected 16, got %d", numAPIKeys)
 	}
 	offset += 4
 

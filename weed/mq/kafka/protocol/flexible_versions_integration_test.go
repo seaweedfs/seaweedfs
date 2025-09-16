@@ -66,8 +66,8 @@ func TestApiVersions_FlexibleVersionSupport(t *testing.T) {
 				offset += 4
 			}
 
-			if apiKeysCount != 14 {
-				t.Errorf("API keys count = %d, want 14", apiKeysCount)
+			if apiKeysCount != 16 {
+				t.Errorf("API keys count = %d, want 16", apiKeysCount)
 			}
 
 			// Verify that we have enough data for all API keys
