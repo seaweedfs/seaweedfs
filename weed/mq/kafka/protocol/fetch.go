@@ -1232,39 +1232,26 @@ func (h *Handler) createRecordEntry(messageData []byte, offsetDelta int32, times
 	record = append(record, 0)
 
 	// Timestamp delta (varint) - 0 for now (all messages have same timestamp)
-	record = append(record, h.encodeVarint(0)...)
+	record = append(record, encodeVarint(0)...)
 
 	// Offset delta (varint)
-	record = append(record, h.encodeVarint(int64(offsetDelta))...)
+	record = append(record, encodeVarint(int64(offsetDelta))...)
 
 	// Key length (varint) + key - no key for schematized messages
-	record = append(record, h.encodeVarint(-1)...) // -1 indicates null key
+	record = append(record, encodeVarint(-1)...) // -1 indicates null key
 
 	// Value length (varint) + value
-	record = append(record, h.encodeVarint(int64(len(messageData)))...)
+	record = append(record, encodeVarint(int64(len(messageData)))...)
 	record = append(record, messageData...)
 
 	// Headers count (varint) - no headers
-	record = append(record, h.encodeVarint(0)...)
+	record = append(record, encodeVarint(0)...)
 
 	// Prepend the total record length (varint)
-	recordLength := h.encodeVarint(int64(len(record)))
+	recordLength := encodeVarint(int64(len(record)))
 	return append(recordLength, record...)
 }
 
-// encodeVarint encodes an integer as a varint
-func (h *Handler) encodeVarint(value int64) []byte {
-	var result []byte
-	uvalue := uint64(value)
-
-	for uvalue >= 0x80 {
-		result = append(result, byte(uvalue)|0x80)
-		uvalue >>= 7
-	}
-	result = append(result, byte(uvalue))
-
-	return result
-}
 
 // createRecordBatchWithCompressionAndCRC creates a Kafka record batch with proper compression and CRC
 func (h *Handler) createRecordBatchWithCompressionAndCRC(baseOffset int64, recordsData []byte, compressionType compression.CompressionCodec, recordCount int32) ([]byte, error) {
