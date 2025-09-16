@@ -331,6 +331,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		correlationID := binary.BigEndian.Uint32(messageBuf[4:8])
 
 		apiName := getAPIName(apiKey)
+		
 
 		// Validate API version against what we support
 		if err := h.validateAPIVersion(apiKey, apiVersion); err != nil {
@@ -2133,11 +2134,12 @@ func getAPIName(apiKey uint16) string {
 func (h *Handler) handleDescribeConfigs(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
 	Debug("DescribeConfigs v%d - parsing request body (%d bytes)", apiVersion, len(requestBody))
 
-	// Parse request to extract resources
-	resources, err := h.parseDescribeConfigsRequest(requestBody)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse DescribeConfigs request: %w", err)
-	}
+		// Parse request to extract resources
+		resources, err := h.parseDescribeConfigsRequest(requestBody)
+		if err != nil {
+			Error("DescribeConfigs parsing error: %v", err)
+			return nil, fmt.Errorf("failed to parse DescribeConfigs request: %w", err)
+		}
 
 	Debug("DescribeConfigs - parsed %d resources", len(resources))
 
