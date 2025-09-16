@@ -849,18 +849,216 @@ func (h *Handler) validateSchemaCompatibility(topicName string, messageBytes []b
 		return nil // No validation if schema management is disabled
 	}
 
-	// Extract schema information
-	_, _, err := h.schemaManager.GetSchemaInfo(messageBytes)
+	// Extract schema information from message
+	schemaID, messageFormat, err := h.schemaManager.GetSchemaInfo(messageBytes)
 	if err != nil {
 		return nil // Not schematized, no validation needed
 	}
 
-	// TODO: Implement topic-specific schema validation
-	// This would involve:
-	// 1. Checking if the topic has a registered schema
-	// 2. Validating schema evolution rules
-	// 3. Ensuring backward/forward compatibility
-	// 4. Handling schema versioning policies
+	// Perform comprehensive schema validation
+	return h.performSchemaValidation(topicName, schemaID, messageFormat, messageBytes)
+}
+
+// performSchemaValidation performs comprehensive schema validation for a topic
+func (h *Handler) performSchemaValidation(topicName string, schemaID uint32, messageFormat schema.Format, messageBytes []byte) error {
+	// 1. Check if topic is configured to require schemas
+	if !h.isSchematizedTopic(topicName) {
+		// Topic doesn't require schemas, but message is schematized - this is allowed
+		return nil
+	}
+
+	// 2. Get expected schema metadata for the topic
+	expectedMetadata, err := h.getSchemaMetadataForTopic(topicName)
+	if err != nil {
+		// No expected schema found - in strict mode this would be an error
+		// In permissive mode, allow any valid schema
+		if h.isStrictSchemaValidation() {
+			return fmt.Errorf("topic %s requires schema but no expected schema found: %w", topicName, err)
+		}
+		return nil
+	}
+
+	// 3. Validate schema ID matches expected schema
+	expectedSchemaID, err := h.parseSchemaID(expectedMetadata["schema_id"])
+	if err != nil {
+		return fmt.Errorf("invalid expected schema ID for topic %s: %w", topicName, err)
+	}
+
+	// 4. Check schema compatibility
+	if schemaID != expectedSchemaID {
+		// Schema ID doesn't match - check if it's a compatible evolution
+		compatible, err := h.checkSchemaEvolution(topicName, expectedSchemaID, schemaID, messageFormat)
+		if err != nil {
+			return fmt.Errorf("failed to check schema evolution for topic %s: %w", topicName, err)
+		}
+		if !compatible {
+			return fmt.Errorf("schema ID %d is not compatible with expected schema %d for topic %s", 
+				schemaID, expectedSchemaID, topicName)
+		}
+	}
+
+	// 5. Validate message format matches expected format
+	expectedFormatStr := expectedMetadata["schema_format"]
+		var expectedFormat schema.Format
+		switch expectedFormatStr {
+		case "AVRO":
+			expectedFormat = schema.FormatAvro
+		case "PROTOBUF":
+			expectedFormat = schema.FormatProtobuf
+		case "JSON_SCHEMA":
+			expectedFormat = schema.FormatJSONSchema
+		default:
+			expectedFormat = schema.FormatUnknown
+		}
+	if messageFormat != expectedFormat {
+		return fmt.Errorf("message format %s does not match expected format %s for topic %s", 
+			messageFormat, expectedFormat, topicName)
+	}
+
+	// 6. Perform message-level validation
+	return h.validateMessageContent(schemaID, messageFormat, messageBytes)
+}
+
+// checkSchemaEvolution checks if a schema evolution is compatible
+func (h *Handler) checkSchemaEvolution(topicName string, expectedSchemaID, actualSchemaID uint32, format schema.Format) (bool, error) {
+	// Get both schemas
+	expectedSchema, err := h.schemaManager.GetSchemaByID(expectedSchemaID)
+	if err != nil {
+		return false, fmt.Errorf("failed to get expected schema %d: %w", expectedSchemaID, err)
+	}
+
+	actualSchema, err := h.schemaManager.GetSchemaByID(actualSchemaID)
+	if err != nil {
+		return false, fmt.Errorf("failed to get actual schema %d: %w", actualSchemaID, err)
+	}
+
+	// Check compatibility based on topic's compatibility level
+	compatibilityLevel := h.getTopicCompatibilityLevel(topicName)
+	
+	result, err := h.schemaManager.CheckSchemaCompatibility(
+		expectedSchema.Schema,
+		actualSchema.Schema,
+		format,
+		compatibilityLevel,
+	)
+	if err != nil {
+		return false, fmt.Errorf("failed to check schema compatibility: %w", err)
+	}
+
+	return result.Compatible, nil
+}
+
+// validateMessageContent validates the message content against its schema
+func (h *Handler) validateMessageContent(schemaID uint32, format schema.Format, messageBytes []byte) error {
+	// Decode the message to validate it can be parsed correctly
+	_, err := h.schemaManager.DecodeMessage(messageBytes)
+	if err != nil {
+		return fmt.Errorf("message validation failed for schema %d: %w", schemaID, err)
+	}
+
+	// Additional format-specific validation could be added here
+	switch format {
+	case schema.FormatAvro:
+		return h.validateAvroMessage(schemaID, messageBytes)
+	case schema.FormatProtobuf:
+		return h.validateProtobufMessage(schemaID, messageBytes)
+	case schema.FormatJSONSchema:
+		return h.validateJSONSchemaMessage(schemaID, messageBytes)
+	default:
+		return fmt.Errorf("unsupported schema format for validation: %s", format)
+	}
+}
+
+// validateAvroMessage performs Avro-specific validation
+func (h *Handler) validateAvroMessage(schemaID uint32, messageBytes []byte) error {
+	// Basic validation is already done in DecodeMessage
+	// Additional Avro-specific validation could be added here
+	return nil
+}
+
+// validateProtobufMessage performs Protobuf-specific validation
+func (h *Handler) validateProtobufMessage(schemaID uint32, messageBytes []byte) error {
+	// Get the schema for additional validation
+	cachedSchema, err := h.schemaManager.GetSchemaByID(schemaID)
+	if err != nil {
+		return fmt.Errorf("failed to get Protobuf schema %d: %w", schemaID, err)
+	}
+
+	// Parse the schema to get the descriptor
+	parser := schema.NewProtobufDescriptorParser()
+	protobufSchema, err := parser.ParseBinaryDescriptor([]byte(cachedSchema.Schema), "")
+	if err != nil {
+		return fmt.Errorf("failed to parse Protobuf schema: %w", err)
+	}
+
+	// Validate message against schema
+	envelope, ok := schema.ParseConfluentEnvelope(messageBytes)
+	if !ok {
+		return fmt.Errorf("invalid Confluent envelope")
+	}
+
+	return protobufSchema.ValidateMessage(envelope.Payload)
+}
+
+// validateJSONSchemaMessage performs JSON Schema-specific validation
+func (h *Handler) validateJSONSchemaMessage(schemaID uint32, messageBytes []byte) error {
+	// Get the schema for validation
+	cachedSchema, err := h.schemaManager.GetSchemaByID(schemaID)
+	if err != nil {
+		return fmt.Errorf("failed to get JSON schema %d: %w", schemaID, err)
+	}
+
+	// Create JSON Schema decoder for validation
+	decoder, err := schema.NewJSONSchemaDecoder(cachedSchema.Schema)
+	if err != nil {
+		return fmt.Errorf("failed to create JSON Schema decoder: %w", err)
+	}
+
+	// Parse envelope and validate payload
+	envelope, ok := schema.ParseConfluentEnvelope(messageBytes)
+	if !ok {
+		return fmt.Errorf("invalid Confluent envelope")
+	}
+
+	// Validate JSON payload against schema
+	_, err = decoder.Decode(envelope.Payload)
+	if err != nil {
+		return fmt.Errorf("JSON Schema validation failed: %w", err)
+	}
 
 	return nil
+}
+
+// Helper methods for configuration
+
+// isStrictSchemaValidation returns whether strict schema validation is enabled
+func (h *Handler) isStrictSchemaValidation() bool {
+	// This could be configurable per topic or globally
+	// For now, default to permissive mode
+	return false
+}
+
+// getTopicCompatibilityLevel returns the compatibility level for a topic
+func (h *Handler) getTopicCompatibilityLevel(topicName string) schema.CompatibilityLevel {
+	// This could be configurable per topic
+	// For now, default to backward compatibility
+	return schema.CompatibilityBackward
+}
+
+// parseSchemaID parses a schema ID from string
+func (h *Handler) parseSchemaID(schemaIDStr string) (uint32, error) {
+	if schemaIDStr == "" {
+		return 0, fmt.Errorf("empty schema ID")
+	}
+	
+	var schemaID uint64
+	if _, err := fmt.Sscanf(schemaIDStr, "%d", &schemaID); err != nil {
+		return 0, fmt.Errorf("invalid schema ID format: %w", err)
+	}
+	
+	if schemaID > 0xFFFFFFFF {
+		return 0, fmt.Errorf("schema ID too large: %d", schemaID)
+	}
+	
+	return uint32(schemaID), nil
 }

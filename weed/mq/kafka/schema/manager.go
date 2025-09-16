@@ -744,3 +744,13 @@ func (m *Manager) GetCompatibilityLevel(subject string) CompatibilityLevel {
 func (m *Manager) SetCompatibilityLevel(subject string, level CompatibilityLevel) error {
 	return m.evolutionChecker.SetCompatibilityLevel(subject, level)
 }
+
+// GetSchemaByID retrieves a schema by its ID
+func (m *Manager) GetSchemaByID(schemaID uint32) (*CachedSchema, error) {
+	return m.registryClient.GetSchemaByID(schemaID)
+}
+
+// GetLatestSchema retrieves the latest schema for a subject
+func (m *Manager) GetLatestSchema(subject string) (*CachedSubject, error) {
+	return m.registryClient.GetLatestSchema(subject)
+}

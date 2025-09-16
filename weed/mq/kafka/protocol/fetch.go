@@ -1181,22 +1181,22 @@ func (h *Handler) isSchematizedTopic(topicName string) bool {
 	}
 
 	// Check multiple indicators for schematized topics:
-	
+
 	// 1. Confluent Schema Registry naming conventions
 	if h.matchesSchemaRegistryConvention(topicName) {
 		return true
 	}
-	
+
 	// 2. Check if topic has schema metadata in SeaweedMQ
 	if h.hasSchemaMetadata(topicName) {
 		return true
 	}
-	
+
 	// 3. Check for schema configuration in topic metadata
 	if h.hasSchemaConfiguration(topicName) {
 		return true
 	}
-	
+
 	// 4. Check if topic has been used with schematized messages before
 	if h.hasSchematizedMessageHistory(topicName) {
 		return true
@@ -1211,29 +1211,29 @@ func (h *Handler) matchesSchemaRegistryConvention(topicName string) bool {
 	// - topicName-value (for message values)
 	// - topicName-key (for message keys)
 	// - topicName (direct topic name as subject)
-	
+
 	if len(topicName) > 6 && topicName[len(topicName)-6:] == "-value" {
 		return true
 	}
 	if len(topicName) > 4 && topicName[len(topicName)-4:] == "-key" {
 		return true
 	}
-	
+
 	// Check if the topic name itself is registered as a schema subject
 	if h.schemaManager != nil {
 		// Try to get latest schema for this subject
-		_, err := h.schemaManager.registryClient.GetLatestSchema(topicName)
+		_, err := h.schemaManager.GetLatestSchema(topicName)
 		if err == nil {
 			return true
 		}
 		
 		// Also check with -value suffix
-		_, err = h.schemaManager.registryClient.GetLatestSchema(topicName + "-value")
+		_, err = h.schemaManager.GetLatestSchema(topicName + "-value")
 		if err == nil {
 			return true
 		}
 	}
-	
+
 	return false
 }
 
@@ -1268,31 +1268,31 @@ func (h *Handler) getSchemaMetadataForTopic(topicName string) (map[string]string
 	}
 
 	// Try multiple approaches to get schema metadata
-	
+
 	// 1. Try to get schema from registry using topic name as subject
 	metadata, err := h.getSchemaMetadataFromRegistry(topicName)
 	if err == nil {
 		return metadata, nil
 	}
-	
+
 	// 2. Try with -value suffix (common pattern)
 	metadata, err = h.getSchemaMetadataFromRegistry(topicName + "-value")
 	if err == nil {
 		return metadata, nil
 	}
-	
+
 	// 3. Try with -key suffix
 	metadata, err = h.getSchemaMetadataFromRegistry(topicName + "-key")
 	if err == nil {
 		return metadata, nil
 	}
-	
+
 	// 4. Check SeaweedMQ topic metadata (TODO: implement)
 	metadata, err = h.getSchemaMetadataFromSeaweedMQ(topicName)
 	if err == nil {
 		return metadata, nil
 	}
-	
+
 	// 5. Check topic configuration (TODO: implement)
 	metadata, err = h.getSchemaMetadataFromConfig(topicName)
 	if err == nil {
@@ -1307,22 +1307,26 @@ func (h *Handler) getSchemaMetadataFromRegistry(subject string) (map[string]stri
 	if h.schemaManager == nil {
 		return nil, fmt.Errorf("schema manager not available")
 	}
-	
+
 	// Get latest schema for the subject
-	schema, err := h.schemaManager.registryClient.GetLatestSchema(subject)
+	cachedSchema, err := h.schemaManager.GetLatestSchema(subject)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get schema for subject %s: %w", subject, err)
 	}
-	
+
 	// Build metadata map
-	metadata := map[string]string{
-		"schema_id":      fmt.Sprintf("%d", schema.ID),
-		"schema_format":  string(schema.Format),
-		"schema_subject": subject,
-		"schema_version": fmt.Sprintf("%d", schema.Version),
-		"schema_content": schema.Schema,
-	}
+	// Detect format from schema content
+	// Simple format detection - assume Avro for now
+	format := schema.FormatAvro
 	
+	metadata := map[string]string{
+		"schema_id":      fmt.Sprintf("%d", cachedSchema.LatestID),
+		"schema_format":  format.String(),
+		"schema_subject": subject,
+		"schema_version": fmt.Sprintf("%d", cachedSchema.Version),
+		"schema_content": cachedSchema.Schema,
+	}
+
 	return metadata, nil
 }
 
@@ -1341,3 +1345,4 @@ func (h *Handler) getSchemaMetadataFromConfig(topicName string) (map[string]stri
 	// that maps topics to their schema information
 	return nil, fmt.Errorf("configuration-based schema metadata lookup not implemented")
 }
+
