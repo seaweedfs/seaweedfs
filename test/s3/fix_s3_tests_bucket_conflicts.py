@@ -172,8 +172,92 @@ def patch_s3_tests_init_file(file_path: str) -> bool:
     updated = updated.replace(old_client_func, new_client_func)
 
     if updated == content:
-        print("Warning: Expected patterns not found. No changes applied.")
-        return False
+        print("Patterns not found; appending override implementations to end of file.")
+        append_patch = '''
+
+# --- SeaweedFS override start ---
+from botocore.exceptions import ClientError as _Sw_ClientError
+
+
+# Idempotent create for provided name; generate unique only when no name given
+# Keep the bucket name stable when provided by the caller
+
+def _sw_get_new_bucket_resource(name=None):
+    s3 = boto3.resource('s3',
+                        aws_access_key_id=config.main_access_key,
+                        aws_secret_access_key=config.main_secret_key,
+                        endpoint_url=config.default_endpoint,
+                        use_ssl=config.default_is_secure,
+                        verify=config.default_ssl_verify)
+    if name is not None:
+        bucket = s3.Bucket(name)
+        try:
+            bucket.create()
+        except _Sw_ClientError as e:
+            code = e.response.get('Error', {}).get('Code')
+            if code in ('BucketAlreadyOwnedByYou', 'BucketAlreadyExists'):
+                return bucket
+            raise
+        else:
+            return bucket
+    # name not provided: generate unique
+    max_retries = 10
+    for attempt in range(max_retries):
+        gen_name = get_new_bucket_name()
+        bucket = s3.Bucket(gen_name)
+        try:
+            bucket.create()
+            return bucket
+        except _Sw_ClientError as e:
+            code = e.response.get('Error', {}).get('Code')
+            if code in ('BucketAlreadyExists', 'BucketAlreadyOwnedByYou'):
+                if attempt == max_retries - 1:
+                    raise Exception(f"Failed to create unique bucket after {max_retries} attempts")
+                continue
+            else:
+                raise
+
+
+from botocore.exceptions import ClientError as _Sw2_ClientError
+
+
+def _sw_get_new_bucket(client=None, name=None):
+    if client is None:
+        client = get_client()
+    if name is not None:
+        try:
+            client.create_bucket(Bucket=name)
+        except _Sw2_ClientError as e:
+            code = e.response.get('Error', {}).get('Code')
+            if code in ('BucketAlreadyOwnedByYou', 'BucketAlreadyExists'):
+                return name
+            raise
+        else:
+            return name
+    max_retries = 10
+    for attempt in range(max_retries):
+        gen_name = get_new_bucket_name()
+        try:
+            client.create_bucket(Bucket=gen_name)
+            return gen_name
+        except _Sw2_ClientError as e:
+            code = e.response.get('Error', {}).get('Code')
+            if code in ('BucketAlreadyExists', 'BucketAlreadyOwnedByYou'):
+                if attempt == max_retries - 1:
+                    raise Exception(f"Failed to create unique bucket after {max_retries} attempts")
+                continue
+            else:
+                raise
+
+# Override original helper functions
+get_new_bucket_resource = _sw_get_new_bucket_resource
+get_new_bucket = _sw_get_new_bucket
+# --- SeaweedFS override end ---
+'''
+        with open(file_path, "a", encoding="utf-8") as f:
+            f.write(append_patch)
+        print("Appended override implementations.")
+        return True
 
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(updated)
