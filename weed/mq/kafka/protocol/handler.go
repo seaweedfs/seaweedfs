@@ -331,7 +331,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		correlationID := binary.BigEndian.Uint32(messageBuf[4:8])
 
 		apiName := getAPIName(apiKey)
-		
+
 		// Validate API version against what we support
 		if err := h.validateAPIVersion(apiKey, apiVersion); err != nil {
 			// Return proper Kafka error response for unsupported version
@@ -2133,14 +2133,14 @@ func getAPIName(apiKey uint16) string {
 func (h *Handler) handleDescribeConfigs(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
 	Debug("DescribeConfigs v%d - parsing request body (%d bytes)", apiVersion, len(requestBody))
 
-		// Parse request to extract resources
-		resources, err := h.parseDescribeConfigsRequest(requestBody)
-		if err != nil {
-			Error("DescribeConfigs parsing error: %v", err)
-			return nil, fmt.Errorf("failed to parse DescribeConfigs request: %w", err)
-		}
-		
-		Debug("DescribeConfigs parsed %d resources", len(resources))
+	// Parse request to extract resources
+	resources, err := h.parseDescribeConfigsRequest(requestBody)
+	if err != nil {
+		Error("DescribeConfigs parsing error: %v", err)
+		return nil, fmt.Errorf("failed to parse DescribeConfigs request: %w", err)
+	}
+
+	Debug("DescribeConfigs parsed %d resources", len(resources))
 
 	// Build response
 	response := make([]byte, 0, 2048)
@@ -2162,7 +2162,7 @@ func (h *Handler) handleDescribeConfigs(correlationID uint32, apiVersion uint16,
 
 	// For each resource, return appropriate configs
 	for _, resource := range resources {
-		resourceResponse := h.buildDescribeConfigsResourceResponse(resource)
+		resourceResponse := h.buildDescribeConfigsResourceResponse(resource, apiVersion)
 		response = append(response, resourceResponse...)
 	}
 
@@ -2341,7 +2341,7 @@ func (h *Handler) parseDescribeConfigsRequest(requestBody []byte) ([]DescribeCon
 		if configNamesLength < -1 || configNamesLength > 1000 { // Reasonable limit
 			return nil, fmt.Errorf("invalid config names length: %d", configNamesLength)
 		}
-		
+
 		// Handle null array case
 		if configNamesLength == -1 {
 			configNamesLength = 0
@@ -2380,7 +2380,7 @@ func (h *Handler) parseDescribeConfigsRequest(requestBody []byte) ([]DescribeCon
 }
 
 // buildDescribeConfigsResourceResponse builds the response for a single resource
-func (h *Handler) buildDescribeConfigsResourceResponse(resource DescribeConfigsResource) []byte {
+func (h *Handler) buildDescribeConfigsResourceResponse(resource DescribeConfigsResource, apiVersion uint16) []byte {
 	response := make([]byte, 0, 512)
 
 	// Error code (0 = no error)
@@ -2412,7 +2412,7 @@ func (h *Handler) buildDescribeConfigsResourceResponse(resource DescribeConfigsR
 
 	// Add each config entry
 	for _, config := range configs {
-		configBytes := h.buildConfigEntry(config)
+		configBytes := h.buildConfigEntry(config, apiVersion)
 		response = append(response, configBytes...)
 	}
 
@@ -2561,7 +2561,7 @@ func (h *Handler) getBrokerConfigs(requestedConfigs []string) []ConfigEntry {
 }
 
 // buildConfigEntry builds the wire format for a single config entry
-func (h *Handler) buildConfigEntry(config ConfigEntry) []byte {
+func (h *Handler) buildConfigEntry(config ConfigEntry, apiVersion uint16) []byte {
 	entry := make([]byte, 0, 256)
 
 	// Config name
@@ -2583,11 +2583,20 @@ func (h *Handler) buildConfigEntry(config ConfigEntry) []byte {
 		entry = append(entry, 0)
 	}
 
-	// Is default flag
-	if config.IsDefault {
-		entry = append(entry, 1)
-	} else {
-		entry = append(entry, 0)
+	// Is default flag (only for version 0)
+	if apiVersion == 0 {
+		if config.IsDefault {
+			entry = append(entry, 1)
+		} else {
+			entry = append(entry, 0)
+		}
+	}
+
+	// Config source (for versions 1-3)
+	if apiVersion >= 1 && apiVersion <= 3 {
+		// ConfigSource: 1 = DYNAMIC_TOPIC_CONFIG, 2 = DYNAMIC_BROKER_CONFIG, 4 = STATIC_BROKER_CONFIG, 5 = DEFAULT_CONFIG
+		configSource := int8(5) // DEFAULT_CONFIG for all our configs since they're defaults
+		entry = append(entry, byte(configSource))
 	}
 
 	// Sensitive flag
@@ -2595,6 +2604,28 @@ func (h *Handler) buildConfigEntry(config ConfigEntry) []byte {
 		entry = append(entry, 1)
 	} else {
 		entry = append(entry, 0)
+	}
+
+	// Config synonyms (for versions 1-3)
+	if apiVersion >= 1 && apiVersion <= 3 {
+		// Empty synonyms array (4 bytes for array length = 0)
+		synonymsLength := make([]byte, 4)
+		binary.BigEndian.PutUint32(synonymsLength, 0)
+		entry = append(entry, synonymsLength...)
+	}
+
+	// Config type (for version 3 only)
+	if apiVersion == 3 {
+		configType := int8(1) // STRING type for all our configs
+		entry = append(entry, byte(configType))
+	}
+
+	// Config documentation (for version 3 only)
+	if apiVersion == 3 {
+		// Null documentation (length = -1)
+		docLength := make([]byte, 2)
+		binary.BigEndian.PutUint16(docLength, 0xFFFF) // -1 as uint16
+		entry = append(entry, docLength...)
 	}
 
 	return entry

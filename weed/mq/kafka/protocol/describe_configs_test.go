@@ -142,7 +142,7 @@ func TestDescribeConfigs_BuildConfigEntry(t *testing.T) {
 		Sensitive: false,
 	}
 
-	entry := handler.buildConfigEntry(config)
+	entry := handler.buildConfigEntry(config, 2) // Test with version 2
 
 	if len(entry) == 0 {
 		t.Fatal("Expected non-empty config entry")
