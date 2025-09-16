@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"time"
@@ -35,8 +36,8 @@ func main() {
 	log.Printf("Kafka Gateway URL: %s", kafkaGatewayURL)
 
 	// Wait for services to be ready
-	waitForService("Schema Registry", schemaRegistryURL+"/subjects")
-	waitForService("Kafka Gateway", "http://"+kafkaGatewayURL) // Basic connectivity check
+	waitForHTTPService("Schema Registry", schemaRegistryURL+"/subjects")
+	waitForTCPService("Kafka Gateway", kafkaGatewayURL) // TCP connectivity check for Kafka protocol
 
 	// Register test schemas
 	if err := registerSchemas(schemaRegistryURL); err != nil {
@@ -53,7 +54,7 @@ func getEnv(key, defaultValue string) string {
 	return defaultValue
 }
 
-func waitForService(name, url string) {
+func waitForHTTPService(name, url string) {
 	log.Printf("Waiting for %s to be ready...", name)
 	for i := 0; i < 60; i++ { // Wait up to 60 seconds
 		resp, err := http.Get(url)
@@ -64,6 +65,20 @@ func waitForService(name, url string) {
 		}
 		if resp != nil {
 			resp.Body.Close()
+		}
+		time.Sleep(1 * time.Second)
+	}
+	log.Fatalf("%s is not ready after 60 seconds", name)
+}
+
+func waitForTCPService(name, address string) {
+	log.Printf("Waiting for %s to be ready...", name)
+	for i := 0; i < 60; i++ { // Wait up to 60 seconds
+		conn, err := net.DialTimeout("tcp", address, 2*time.Second)
+		if err == nil {
+			conn.Close()
+			log.Printf("%s is ready", name)
+			return
 		}
 		time.Sleep(1 * time.Second)
 	}
