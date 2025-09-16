@@ -67,6 +67,58 @@ func ParseConfluentEnvelope(data []byte) (*ConfluentEnvelope, bool) {
 	return envelope, true
 }
 
+// ParseConfluentProtobufEnvelope parses a Confluent Protobuf envelope with indexes
+// This is a specialized version for Protobuf that handles message indexes
+// 
+// Note: This function uses heuristics to distinguish between index varints and
+// payload data, which may not be 100% reliable in all cases. For production use,
+// consider using ParseConfluentProtobufEnvelopeWithIndexCount if you know the
+// expected number of indexes.
+func ParseConfluentProtobufEnvelope(data []byte) (*ConfluentEnvelope, bool) {
+	// For now, assume no indexes to avoid parsing issues
+	// This can be enhanced later when we have better schema information
+	return ParseConfluentProtobufEnvelopeWithIndexCount(data, 0)
+}
+
+// ParseConfluentProtobufEnvelopeWithIndexCount parses a Confluent Protobuf envelope
+// when you know the expected number of indexes
+func ParseConfluentProtobufEnvelopeWithIndexCount(data []byte, expectedIndexCount int) (*ConfluentEnvelope, bool) {
+	if len(data) < 5 {
+		return nil, false
+	}
+
+	// Check for Confluent magic byte
+	if data[0] != 0x00 {
+		return nil, false
+	}
+
+	// Extract schema ID (big-endian uint32)
+	schemaID := binary.BigEndian.Uint32(data[1:5])
+
+	envelope := &ConfluentEnvelope{
+		Format:        FormatProtobuf,
+		SchemaID:      schemaID,
+		Indexes:       nil,
+		Payload:       data[5:], // Default: payload starts after schema ID
+		OriginalBytes: data,
+	}
+
+	// Parse the expected number of indexes
+	offset := 5
+	for i := 0; i < expectedIndexCount && offset < len(data); i++ {
+		index, bytesRead := readVarint(data[offset:])
+		if bytesRead == 0 {
+			// Invalid varint, stop parsing
+			break
+		}
+		envelope.Indexes = append(envelope.Indexes, int(index))
+		offset += bytesRead
+	}
+
+	envelope.Payload = data[offset:]
+	return envelope, true
+}
+
 // IsSchematized checks if the given bytes represent a Confluent-framed message
 func IsSchematized(data []byte) bool {
 	_, ok := ParseConfluentEnvelope(data)
@@ -89,10 +141,12 @@ func CreateConfluentEnvelope(format Format, schemaID uint32, indexes []int, payl
 	result[0] = 0x00 // Magic byte
 	binary.BigEndian.PutUint32(result[1:5], schemaID)
 
-	// For Protobuf, add indexes as varints (simplified for Phase 1)
+	// For Protobuf, add indexes as varints
 	if format == FormatProtobuf && len(indexes) > 0 {
-		// TODO: Implement proper varint encoding for Protobuf indexes in Phase 5
-		// For now, we'll just append the payload
+		for _, index := range indexes {
+			varintBytes := encodeVarint(uint64(index))
+			result = append(result, varintBytes...)
+		}
 	}
 
 	// Append the actual payload
@@ -147,4 +201,49 @@ func (e *ConfluentEnvelope) Metadata() map[string]string {
 	}
 
 	return metadata
+}
+
+// encodeVarint encodes a uint64 as a varint
+func encodeVarint(value uint64) []byte {
+	if value == 0 {
+		return []byte{0}
+	}
+
+	var result []byte
+	for value > 0 {
+		b := byte(value & 0x7F)
+		value >>= 7
+
+		if value > 0 {
+			b |= 0x80 // Set continuation bit
+		}
+
+		result = append(result, b)
+	}
+
+	return result
+}
+
+// readVarint reads a varint from the byte slice and returns the value and bytes consumed
+func readVarint(data []byte) (uint64, int) {
+	var result uint64
+	var shift uint
+
+	for i, b := range data {
+		if i >= 10 { // Prevent overflow (max varint is 10 bytes)
+			return 0, 0
+		}
+
+		result |= uint64(b&0x7F) << shift
+
+		if b&0x80 == 0 {
+			// Last byte (MSB is 0)
+			return result, i + 1
+		}
+
+		shift += 7
+	}
+
+	// Incomplete varint
+	return 0, 0
 }

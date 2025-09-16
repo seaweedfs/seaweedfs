@@ -1226,7 +1226,7 @@ func (h *Handler) matchesSchemaRegistryConvention(topicName string) bool {
 		if err == nil {
 			return true
 		}
-		
+
 		// Also check with -value suffix
 		_, err = h.schemaManager.GetLatestSchema(topicName + "-value")
 		if err == nil {
@@ -1318,7 +1318,7 @@ func (h *Handler) getSchemaMetadataFromRegistry(subject string) (map[string]stri
 	// Detect format from schema content
 	// Simple format detection - assume Avro for now
 	format := schema.FormatAvro
-	
+
 	metadata := map[string]string{
 		"schema_id":      fmt.Sprintf("%d", cachedSchema.LatestID),
 		"schema_format":  format.String(),
@@ -1345,4 +1345,3 @@ func (h *Handler) getSchemaMetadataFromConfig(topicName string) (map[string]stri
 	// that maps topics to their schema information
 	return nil, fmt.Errorf("configuration-based schema metadata lookup not implemented")
 }
-
