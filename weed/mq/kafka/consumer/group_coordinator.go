@@ -114,6 +114,9 @@ type GroupCoordinator struct {
 	sessionTimeoutMax  int32 // Maximum session timeout (ms)
 	rebalanceTimeoutMs int32 // Default rebalance timeout (ms)
 
+	// Timeout management
+	rebalanceTimeoutManager *RebalanceTimeoutManager
+
 	// Cleanup
 	cleanupTicker *time.Ticker
 	stopChan      chan struct{}
@@ -129,6 +132,9 @@ func NewGroupCoordinator() *GroupCoordinator {
 		rebalanceTimeoutMs: 300000, // 5 minutes
 		stopChan:           make(chan struct{}),
 	}
+
+	// Initialize rebalance timeout manager
+	gc.rebalanceTimeoutManager = NewRebalanceTimeoutManager(gc)
 
 	// Start cleanup routine
 	gc.cleanupTicker = time.NewTicker(30 * time.Second)
@@ -216,13 +222,17 @@ func (gc *GroupCoordinator) cleanupRoutine() {
 // performCleanup removes expired members and empty groups
 func (gc *GroupCoordinator) performCleanup() {
 	now := time.Now()
+	
+	// Use rebalance timeout manager for more sophisticated timeout handling
+	gc.rebalanceTimeoutManager.CheckRebalanceTimeouts()
+	
 	gc.groupsMu.Lock()
 	defer gc.groupsMu.Unlock()
 
 	for groupID, group := range gc.groups {
 		group.Mu.Lock()
 
-		// Check for expired members
+		// Check for expired members (session timeout)
 		expiredMembers := make([]string, 0)
 		for memberID, member := range group.Members {
 			sessionDuration := time.Duration(member.SessionTimeout) * time.Millisecond
@@ -250,6 +260,12 @@ func (gc *GroupCoordinator) performCleanup() {
 			if now.Sub(group.LastActivity) > 30*time.Minute {
 				group.State = GroupStateDead
 			}
+		}
+
+		// Check for stuck rebalances and force completion if necessary
+		maxRebalanceDuration := 10 * time.Minute // Maximum time allowed for rebalancing
+		if gc.rebalanceTimeoutManager.IsRebalanceStuck(group, maxRebalanceDuration) {
+			gc.rebalanceTimeoutManager.ForceCompleteRebalance(group)
 		}
 
 		group.Mu.Unlock()
@@ -297,4 +313,9 @@ func (gc *GroupCoordinator) GetGroupStats() map[string]interface{} {
 	}
 
 	return stats
+}
+
+// GetRebalanceStatus returns the rebalance status for a specific group
+func (gc *GroupCoordinator) GetRebalanceStatus(groupID string) *RebalanceStatus {
+	return gc.rebalanceTimeoutManager.GetRebalanceStatus(groupID)
 }

@@ -230,10 +230,45 @@ func testConsumerGroupOffsetCommitAndFetch(t *testing.T, addr string) {
 }
 
 func testConsumerGroupRebalancing(t *testing.T, addr string) {
-	// This would test adding/removing consumers and verifying rebalancing
-	// Implementation would be similar to the existing rebalancing test
-	// but using the new testutil framework
-	t.Skip("TODO: Implement rebalancing test with new framework")
+	topicName := testutil.GenerateUniqueTopicName("rebalancing-test")
+	groupID := testutil.GenerateUniqueGroupID("rebalance-group")
+
+	client := testutil.NewSaramaClient(t, addr)
+	msgGen := testutil.NewMessageGenerator()
+
+	// Create topic with multiple partitions for rebalancing
+	err := client.CreateTopic(topicName, 4, 1) // 4 partitions
+	testutil.AssertNoError(t, err, "Failed to create topic")
+
+	// Produce messages to all partitions
+	messages := msgGen.GenerateStringMessages(12) // 3 messages per partition
+	for i, msg := range messages {
+		partition := int32(i % 4)
+		err = client.ProduceMessageToPartition(topicName, partition, msg)
+		testutil.AssertNoError(t, err, "Failed to produce message")
+	}
+
+	t.Logf("Produced %d messages across 4 partitions", len(messages))
+
+	// Test scenario 1: Single consumer gets all partitions
+	t.Run("SingleConsumerAllPartitions", func(t *testing.T) {
+		testSingleConsumerAllPartitions(t, addr, topicName, groupID+"-single")
+	})
+
+	// Test scenario 2: Add second consumer, verify rebalancing
+	t.Run("TwoConsumersRebalance", func(t *testing.T) {
+		testTwoConsumersRebalance(t, addr, topicName, groupID+"-two")
+	})
+
+	// Test scenario 3: Remove consumer, verify rebalancing
+	t.Run("ConsumerLeaveRebalance", func(t *testing.T) {
+		testConsumerLeaveRebalance(t, addr, topicName, groupID+"-leave")
+	})
+
+	// Test scenario 4: Multiple consumers join simultaneously
+	t.Run("MultipleConsumersJoin", func(t *testing.T) {
+		testMultipleConsumersJoin(t, addr, topicName, groupID+"-multi")
+	})
 }
 
 // ConsumerGroupHandler implements sarama.ConsumerGroupHandler

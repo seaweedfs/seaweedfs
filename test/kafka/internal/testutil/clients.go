@@ -222,6 +222,32 @@ func (s *SaramaClient) ProduceMessages(topicName string, messages []string) erro
 	return nil
 }
 
+// ProduceMessageToPartition produces a single message to a specific partition using Sarama
+func (s *SaramaClient) ProduceMessageToPartition(topicName string, partition int32, message string) error {
+	s.t.Helper()
+
+	producer, err := sarama.NewSyncProducer([]string{s.brokerAddr}, s.config)
+	if err != nil {
+		return fmt.Errorf("create producer: %w", err)
+	}
+	defer producer.Close()
+
+	msg := &sarama.ProducerMessage{
+		Topic:     topicName,
+		Partition: partition,
+		Key:       sarama.StringEncoder(fmt.Sprintf("key-p%d", partition)),
+		Value:     sarama.StringEncoder(message),
+	}
+
+	actualPartition, offset, err := producer.SendMessage(msg)
+	if err != nil {
+		return fmt.Errorf("send message to partition %d: %w", partition, err)
+	}
+
+	s.t.Logf("Produced message to partition %d: actualPartition=%d, offset=%d", partition, actualPartition, offset)
+	return nil
+}
+
 // ConsumeMessages consumes messages using Sarama
 func (s *SaramaClient) ConsumeMessages(topicName string, partition int32, expectedCount int) ([]string, error) {
 	s.t.Helper()
