@@ -1036,14 +1036,19 @@ func (h *Handler) reconstructSchematizedMessage(recordValue *schema_pb.RecordVal
 
 // fetchSchematizedRecords fetches and reconstructs schematized records from SeaweedMQ
 func (h *Handler) fetchSchematizedRecords(topicName string, partitionID int32, offset int64, maxBytes int32) ([][]byte, error) {
-	// Only proceed if schema management is enabled
-	if !h.IsSchemaEnabled() {
+	// Only proceed when schema feature is toggled on
+	if !h.useSchema {
 		return [][]byte{}, nil
 	}
 
-	// Check if SeaweedMQ handler is available
+	// Check if SeaweedMQ handler is available when schema feature is in use
 	if h.seaweedMQHandler == nil {
 		return nil, fmt.Errorf("SeaweedMQ handler not available")
+	}
+
+	// If schema management isn't fully configured, return empty instead of error
+	if !h.IsSchemaEnabled() {
+		return [][]byte{}, nil
 	}
 
 	// Fetch stored records from SeaweedMQ
