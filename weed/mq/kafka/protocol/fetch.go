@@ -7,6 +7,7 @@ import (
 	"hash/crc32"
 	"time"
 
+	"google.golang.org/protobuf/proto"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/compression"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/schema"
@@ -226,8 +227,17 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 			// Records data
 			response = append(response, recordBatch...)
 
-			fmt.Printf("DEBUG: Would fetch schematized records - partition: %d, offset: %d, maxBytes: %d\n",
-				partition.PartitionID, partition.FetchOffset, partition.MaxBytes)
+			// Try to fetch schematized records if schema management is enabled
+			if h.IsSchemaEnabled() && h.isSchematizedTopic(topic.Name) {
+				schematizedMessages, err := h.fetchSchematizedRecords(topic.Name, partition.PartitionID, effectiveFetchOffset, partition.MaxBytes)
+				if err != nil {
+					Debug("Failed to fetch schematized records for topic %s partition %d: %v", topic.Name, partition.PartitionID, err)
+				} else if len(schematizedMessages) > 0 {
+					Debug("Successfully fetched %d schematized messages for topic %s partition %d", len(schematizedMessages), topic.Name, partition.PartitionID)
+					// TODO: Integrate schematized messages into the record batch
+					// For now, just log that we found them
+				}
+			}
 		}
 	}
 
@@ -1021,19 +1031,138 @@ func (h *Handler) reconstructSchematizedMessage(recordValue *schema_pb.RecordVal
 
 // fetchSchematizedRecords fetches and reconstructs schematized records from SeaweedMQ
 func (h *Handler) fetchSchematizedRecords(topicName string, partitionID int32, offset int64, maxBytes int32) ([][]byte, error) {
-	// This is a placeholder for Phase 7
-	// In Phase 8, this will integrate with SeaweedMQ to:
-	// 1. Fetch stored RecordValues and metadata from SeaweedMQ
-	// 2. Reconstruct original Kafka message format using schema information
-	// 3. Handle schema evolution and compatibility
-	// 4. Return properly formatted Kafka record batches
+	// Only proceed if schema management is enabled
+	if !h.IsSchemaEnabled() {
+		return [][]byte{}, nil
+	}
 
-	fmt.Printf("DEBUG: Would fetch schematized records - partition: %d, offset: %d, maxBytes: %d\n",
-		partitionID, offset, maxBytes)
+	// Fetch stored records from SeaweedMQ
+	maxRecords := 100 // Reasonable batch size limit
+	smqRecords, err := h.seaweedMQHandler.GetStoredRecords(topicName, partitionID, offset, maxRecords)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch SMQ records: %w", err)
+	}
 
-	// For Phase 7, return empty records
-	// In Phase 8, this will return actual reconstructed messages
-	return [][]byte{}, nil
+	if len(smqRecords) == 0 {
+		return [][]byte{}, nil
+	}
+
+	var reconstructedMessages [][]byte
+	totalBytes := int32(0)
+
+	for _, smqRecord := range smqRecords {
+		// Check if we've exceeded maxBytes limit
+		if maxBytes > 0 && totalBytes >= maxBytes {
+			break
+		}
+
+		// Try to reconstruct the schematized message
+		reconstructedMsg, err := h.reconstructSchematizedMessageFromSMQ(smqRecord)
+		if err != nil {
+			// Log error but continue with other messages
+			Error("Failed to reconstruct schematized message at offset %d: %v", smqRecord.GetOffset(), err)
+			continue
+		}
+
+		if reconstructedMsg != nil {
+			reconstructedMessages = append(reconstructedMessages, reconstructedMsg)
+			totalBytes += int32(len(reconstructedMsg))
+		}
+	}
+
+	Debug("Fetched %d schematized records for topic %s partition %d from offset %d", 
+		len(reconstructedMessages), topicName, partitionID, offset)
+
+	return reconstructedMessages, nil
+}
+
+// reconstructSchematizedMessageFromSMQ reconstructs a schematized message from an SMQRecord
+func (h *Handler) reconstructSchematizedMessageFromSMQ(smqRecord offset.SMQRecord) ([]byte, error) {
+	// Get the stored value (should be a serialized RecordValue)
+	valueBytes := smqRecord.GetValue()
+	if len(valueBytes) == 0 {
+		return nil, fmt.Errorf("empty value in SMQ record")
+	}
+
+	// Try to unmarshal as RecordValue
+	recordValue := &schema_pb.RecordValue{}
+	if err := proto.Unmarshal(valueBytes, recordValue); err != nil {
+		// If it's not a RecordValue, it might be a regular Kafka message
+		// Return it as-is (non-schematized)
+		return valueBytes, nil
+	}
+
+	// Extract schema metadata from the RecordValue fields
+	metadata := h.extractSchemaMetadataFromRecord(recordValue)
+	if len(metadata) == 0 {
+		// No schema metadata found, treat as regular message
+		return valueBytes, nil
+	}
+
+	// Remove Kafka metadata fields to get the original message content
+	originalRecord := h.removeKafkaMetadataFields(recordValue)
+
+	// Reconstruct the original Confluent envelope
+	return h.reconstructSchematizedMessage(originalRecord, metadata)
+}
+
+// extractSchemaMetadataFromRecord extracts schema metadata from RecordValue fields
+func (h *Handler) extractSchemaMetadataFromRecord(recordValue *schema_pb.RecordValue) map[string]string {
+	metadata := make(map[string]string)
+
+	// Look for schema metadata fields in the record
+	if schemaIDField := recordValue.Fields["_schema_id"]; schemaIDField != nil {
+		if schemaIDValue := schemaIDField.GetStringValue(); schemaIDValue != "" {
+			metadata["schema_id"] = schemaIDValue
+		}
+	}
+
+	if schemaFormatField := recordValue.Fields["_schema_format"]; schemaFormatField != nil {
+		if schemaFormatValue := schemaFormatField.GetStringValue(); schemaFormatValue != "" {
+			metadata["schema_format"] = schemaFormatValue
+		}
+	}
+
+	if schemaSubjectField := recordValue.Fields["_schema_subject"]; schemaSubjectField != nil {
+		if schemaSubjectValue := schemaSubjectField.GetStringValue(); schemaSubjectValue != "" {
+			metadata["schema_subject"] = schemaSubjectValue
+		}
+	}
+
+	if schemaVersionField := recordValue.Fields["_schema_version"]; schemaVersionField != nil {
+		if schemaVersionValue := schemaVersionField.GetStringValue(); schemaVersionValue != "" {
+			metadata["schema_version"] = schemaVersionValue
+		}
+	}
+
+	return metadata
+}
+
+// removeKafkaMetadataFields removes Kafka and schema metadata fields from RecordValue
+func (h *Handler) removeKafkaMetadataFields(recordValue *schema_pb.RecordValue) *schema_pb.RecordValue {
+	originalRecord := &schema_pb.RecordValue{
+		Fields: make(map[string]*schema_pb.Value),
+	}
+
+	// Copy all fields except metadata fields
+	for key, value := range recordValue.Fields {
+		if !h.isMetadataField(key) {
+			originalRecord.Fields[key] = value
+		}
+	}
+
+	return originalRecord
+}
+
+// isMetadataField checks if a field is a metadata field that should be excluded from the original message
+func (h *Handler) isMetadataField(fieldName string) bool {
+	return fieldName == "_kafka_offset" ||
+		fieldName == "_kafka_partition" ||
+		fieldName == "_kafka_timestamp" ||
+		fieldName == "_schema_id" ||
+		fieldName == "_schema_format" ||
+		fieldName == "_schema_subject" ||
+		fieldName == "_schema_version"
 }
 
 // createSchematizedRecordBatch creates a Kafka record batch from reconstructed schematized messages
@@ -1043,22 +1172,173 @@ func (h *Handler) createSchematizedRecordBatch(messages [][]byte, baseOffset int
 		return h.createEmptyRecordBatch(baseOffset)
 	}
 
-	// For Phase 7, create a simple record batch
-	// In Phase 8, this will properly format multiple messages into a record batch
-	// with correct headers, compression, and CRC validation
-
-	// Combine all messages into a single batch payload
-	var batchPayload []byte
-	for _, msg := range messages {
-		// Add message length prefix (for record batch format)
-		msgLen := len(msg)
-		lengthBytes := make([]byte, 4)
-		binary.BigEndian.PutUint32(lengthBytes, uint32(msgLen))
-		batchPayload = append(batchPayload, lengthBytes...)
-		batchPayload = append(batchPayload, msg...)
+	// Create individual record entries for the batch
+	var recordsData []byte
+	currentTimestamp := time.Now().UnixMilli()
+	
+	for i, msg := range messages {
+		// Create a record entry (Kafka record format v2)
+		record := h.createRecordEntry(msg, int32(i), currentTimestamp)
+		recordsData = append(recordsData, record...)
 	}
 
-	return h.createRecordBatchWithPayload(baseOffset, int32(len(messages)), batchPayload)
+	// Apply compression if the data is large enough to benefit
+	enableCompression := len(recordsData) > 100
+	var compressionType compression.CompressionCodec = compression.None
+	var finalRecordsData []byte
+	
+	if enableCompression {
+		compressed, err := compression.Compress(compression.Gzip, recordsData)
+		if err == nil && len(compressed) < len(recordsData) {
+			finalRecordsData = compressed
+			compressionType = compression.Gzip
+			Debug("Applied GZIP compression: %d -> %d bytes (%.1f%% reduction)", 
+				len(recordsData), len(compressed), 
+				100.0*(1.0-float64(len(compressed))/float64(len(recordsData))))
+		} else {
+			finalRecordsData = recordsData
+		}
+	} else {
+		finalRecordsData = recordsData
+	}
+
+	// Create the record batch with proper compression and CRC
+	batch, err := h.createRecordBatchWithCompressionAndCRC(baseOffset, finalRecordsData, compressionType, int32(len(messages)))
+	if err != nil {
+		// Fallback to simple batch creation
+		Debug("Failed to create compressed record batch, falling back: %v", err)
+		return h.createRecordBatchWithPayload(baseOffset, int32(len(messages)), finalRecordsData)
+	}
+
+	Debug("Created schematized record batch: %d messages, %d bytes, compression=%v", 
+		len(messages), len(batch), compressionType)
+
+	return batch
+}
+
+// createRecordEntry creates a single record entry in Kafka record format v2
+func (h *Handler) createRecordEntry(messageData []byte, offsetDelta int32, timestamp int64) []byte {
+	// Record format v2:
+	// - length (varint)
+	// - attributes (int8)
+	// - timestamp delta (varint)
+	// - offset delta (varint)
+	// - key length (varint) + key
+	// - value length (varint) + value
+	// - headers count (varint) + headers
+
+	var record []byte
+
+	// Attributes (1 byte) - no special attributes
+	record = append(record, 0)
+
+	// Timestamp delta (varint) - 0 for now (all messages have same timestamp)
+	record = append(record, h.encodeVarint(0)...)
+
+	// Offset delta (varint)
+	record = append(record, h.encodeVarint(int64(offsetDelta))...)
+
+	// Key length (varint) + key - no key for schematized messages
+	record = append(record, h.encodeVarint(-1)...) // -1 indicates null key
+
+	// Value length (varint) + value
+	record = append(record, h.encodeVarint(int64(len(messageData)))...)
+	record = append(record, messageData...)
+
+	// Headers count (varint) - no headers
+	record = append(record, h.encodeVarint(0)...)
+
+	// Prepend the total record length (varint)
+	recordLength := h.encodeVarint(int64(len(record)))
+	return append(recordLength, record...)
+}
+
+// encodeVarint encodes an integer as a varint
+func (h *Handler) encodeVarint(value int64) []byte {
+	var result []byte
+	uvalue := uint64(value)
+	
+	for uvalue >= 0x80 {
+		result = append(result, byte(uvalue)|0x80)
+		uvalue >>= 7
+	}
+	result = append(result, byte(uvalue))
+	
+	return result
+}
+
+// createRecordBatchWithCompressionAndCRC creates a Kafka record batch with proper compression and CRC
+func (h *Handler) createRecordBatchWithCompressionAndCRC(baseOffset int64, recordsData []byte, compressionType compression.CompressionCodec, recordCount int32) ([]byte, error) {
+	// Create record batch header
+	batch := make([]byte, 0, len(recordsData)+61) // 61 bytes for header
+
+	// Base offset (8 bytes)
+	baseOffsetBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(baseOffsetBytes, uint64(baseOffset))
+	batch = append(batch, baseOffsetBytes...)
+
+	// Batch length placeholder (4 bytes) - will be filled later
+	batchLengthPos := len(batch)
+	batch = append(batch, 0, 0, 0, 0)
+
+	// Partition leader epoch (4 bytes)
+	batch = append(batch, 0, 0, 0, 0)
+
+	// Magic byte (1 byte) - version 2
+	batch = append(batch, 2)
+
+	// CRC placeholder (4 bytes) - will be calculated later
+	crcPos := len(batch)
+	batch = append(batch, 0, 0, 0, 0)
+
+	// Attributes (2 bytes) - compression type and other flags
+	attributes := int16(compressionType) // Set compression type in lower 3 bits
+	attributesBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(attributesBytes, uint16(attributes))
+	batch = append(batch, attributesBytes...)
+
+	// Last offset delta (4 bytes)
+	lastOffsetDelta := uint32(recordCount - 1)
+	lastOffsetDeltaBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(lastOffsetDeltaBytes, lastOffsetDelta)
+	batch = append(batch, lastOffsetDeltaBytes...)
+
+	// First timestamp (8 bytes)
+	currentTimestamp := time.Now().UnixMilli()
+	firstTimestampBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(firstTimestampBytes, uint64(currentTimestamp))
+	batch = append(batch, firstTimestampBytes...)
+
+	// Max timestamp (8 bytes) - same as first for simplicity
+	batch = append(batch, firstTimestampBytes...)
+
+	// Producer ID (8 bytes) - -1 for non-transactional
+	batch = append(batch, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF)
+
+	// Producer epoch (2 bytes) - -1 for non-transactional
+	batch = append(batch, 0xFF, 0xFF)
+
+	// Base sequence (4 bytes) - -1 for non-transactional
+	batch = append(batch, 0xFF, 0xFF, 0xFF, 0xFF)
+
+	// Record count (4 bytes)
+	recordCountBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(recordCountBytes, uint32(recordCount))
+	batch = append(batch, recordCountBytes...)
+
+	// Records payload (compressed or uncompressed)
+	batch = append(batch, recordsData...)
+
+	// Calculate and set batch length (excluding base offset and batch length fields)
+	batchLength := len(batch) - 12 // 8 bytes base offset + 4 bytes batch length
+	binary.BigEndian.PutUint32(batch[batchLengthPos:batchLengthPos+4], uint32(batchLength))
+
+	// Calculate and set CRC32 (from partition leader epoch to end)
+	crcData := batch[16:] // Skip base offset (8) and batch length (4) and start from partition leader epoch
+	crc := crc32.ChecksumIEEE(crcData)
+	binary.BigEndian.PutUint32(batch[crcPos:crcPos+4], crc)
+
+	return batch, nil
 }
 
 // createEmptyRecordBatch creates an empty Kafka record batch using the new parser
