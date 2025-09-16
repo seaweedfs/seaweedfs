@@ -11,6 +11,22 @@ NC='\033[0m' # No Color
 
 echo -e "${BLUE}=== SeaweedFS PostgreSQL Test Setup ===${NC}"
 
+# Function to get the correct docker compose command
+get_docker_compose_cmd() {
+    if command -v docker &> /dev/null && docker compose version &> /dev/null 2>&1; then
+        echo "docker compose"
+    elif command -v docker-compose &> /dev/null; then
+        echo "docker-compose"
+    else
+        echo -e "${RED}✗ Neither 'docker compose' nor 'docker-compose' is available${NC}"
+        exit 1
+    fi
+}
+
+# Get the docker compose command to use
+DOCKER_COMPOSE_CMD=$(get_docker_compose_cmd)
+echo -e "${BLUE}Using: ${DOCKER_COMPOSE_CMD}${NC}"
+
 # Function to wait for service
 wait_for_service() {
     local service=$1
@@ -19,7 +35,7 @@ wait_for_service() {
     
     echo -e "${YELLOW}Waiting for $service to be ready...${NC}"
     while [ $count -lt $max_wait ]; do
-        if docker compose ps $service | grep -q "healthy\|Up"; then
+        if $DOCKER_COMPOSE_CMD ps $service | grep -q "healthy\|Up"; then
             echo -e "${GREEN}✓ $service is ready${NC}"
             return 0
         fi
@@ -36,7 +52,7 @@ wait_for_service() {
 show_logs() {
     local service=$1
     echo -e "${BLUE}=== $service logs ===${NC}"
-    docker compose logs --tail=20 $service
+    $DOCKER_COMPOSE_CMD logs --tail=20 $service
     echo
 }
 
@@ -44,7 +60,7 @@ show_logs() {
 case "$1" in
     "start")
         echo -e "${YELLOW}Starting SeaweedFS cluster and PostgreSQL server...${NC}"
-        docker compose up -d seaweedfs postgres-server
+        $DOCKER_COMPOSE_CMD up -d seaweedfs postgres-server
         
         wait_for_service "seaweedfs" 30
         wait_for_service "postgres-server" 15
@@ -61,7 +77,7 @@ case "$1" in
         
     "produce")
         echo -e "${YELLOW}Creating MQ test data...${NC}"
-        docker compose up --build mq-producer
+        $DOCKER_COMPOSE_CMD up --build mq-producer
         
         if [ $? -eq 0 ]; then
             echo -e "${GREEN}✓ Test data created successfully${NC}"
@@ -75,7 +91,7 @@ case "$1" in
         
     "test")
         echo -e "${YELLOW}Running PostgreSQL client tests...${NC}"
-        docker compose up --build postgres-client
+        $DOCKER_COMPOSE_CMD up --build postgres-client
         
         if [ $? -eq 0 ]; then
             echo -e "${GREEN}✓ Client tests completed${NC}"
@@ -87,7 +103,7 @@ case "$1" in
         
     "psql")
         echo -e "${YELLOW}Connecting to PostgreSQL with psql...${NC}"
-        docker compose run --rm psql-cli psql -h postgres-server -p 5432 -U seaweedfs -d default
+        $DOCKER_COMPOSE_CMD run --rm psql-cli psql -h postgres-server -p 5432 -U seaweedfs -d default
         ;;
         
     "logs")
@@ -97,18 +113,18 @@ case "$1" in
         
     "status")
         echo -e "${BLUE}=== Service Status ===${NC}"
-        docker compose ps
+        $DOCKER_COMPOSE_CMD ps
         ;;
         
     "stop")
         echo -e "${YELLOW}Stopping all services...${NC}"
-        docker compose down
+        $DOCKER_COMPOSE_CMD down
         echo -e "${GREEN}✓ All services stopped${NC}"
         ;;
         
     "clean")
         echo -e "${YELLOW}Cleaning up everything (including data)...${NC}"
-        docker compose down -v
+        $DOCKER_COMPOSE_CMD down -v
         docker system prune -f
         echo -e "${GREEN}✓ Cleanup completed${NC}"
         ;;
@@ -119,7 +135,7 @@ case "$1" in
         # Start services (wait_for_service ensures they're ready)
         $0 start
         
-        # Create data (docker compose up is synchronous)
+        # Create data ($DOCKER_COMPOSE_CMD up is synchronous)
         $0 produce
         
         # Run tests

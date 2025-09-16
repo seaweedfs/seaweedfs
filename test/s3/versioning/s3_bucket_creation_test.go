@@ -36,7 +36,7 @@ func TestBucketCreationBehavior(t *testing.T) {
 			expectedError:      "",
 		},
 		{
-			name: "Create bucket with same owner and same settings - should succeed (idempotent)",
+			name: "Create existing bucket with same owner - should return BucketAlreadyExists",
 			setupFunc: func(t *testing.T, bucketName string) {
 				// Create bucket first
 				_, err := client.CreateBucket(ctx, &s3.CreateBucketInput{
