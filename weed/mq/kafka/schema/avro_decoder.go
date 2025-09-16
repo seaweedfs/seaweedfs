@@ -1,6 +1,7 @@
 package schema
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"time"
@@ -258,40 +259,264 @@ func goValueToSchemaValue(value interface{}) *schema_pb.Value {
 
 // avroSchemaToRecordType converts an Avro schema to SeaweedMQ RecordType
 func avroSchemaToRecordType(schemaStr string) (*schema_pb.RecordType, error) {
-	// Parse the Avro schema JSON
-	codec, err := goavro.NewCodec(schemaStr)
+	// Validate the Avro schema by creating a codec (this ensures it's valid)
+	_, err := goavro.NewCodec(schemaStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse Avro schema: %w", err)
 	}
 
-	// For now, we'll create a simplified RecordType
-	// In a full implementation, we would parse the Avro schema JSON
-	// and extract field definitions to create proper SeaweedMQ field types
-
-	// This is a placeholder implementation that creates a flexible schema
-	// allowing any field types (which will be determined at runtime)
-	fields := []*schema_pb.Field{
-		{
-			Name:       "avro_data",
-			FieldIndex: 0,
-			Type: &schema_pb.Type{
-				Kind: &schema_pb.Type_RecordType{
-					RecordType: &schema_pb.RecordType{
-						Fields: []*schema_pb.Field{}, // Dynamic fields
-					},
-				},
-			},
-			IsRequired: false,
-			IsRepeated: false,
-		},
+	// Parse the schema JSON to extract field definitions
+	var avroSchema map[string]interface{}
+	if err := json.Unmarshal([]byte(schemaStr), &avroSchema); err != nil {
+		return nil, fmt.Errorf("failed to parse Avro schema JSON: %w", err)
 	}
 
-	// TODO: In Phase 4, we'll implement proper Avro schema parsing
-	// to extract field definitions and create accurate SeaweedMQ types
-	_ = codec // Use the codec to avoid unused variable warning
+	// Extract fields from the Avro schema
+	fields, err := extractAvroFields(avroSchema)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract Avro fields: %w", err)
+	}
 
 	return &schema_pb.RecordType{
 		Fields: fields,
+	}, nil
+}
+
+// extractAvroFields extracts field definitions from parsed Avro schema JSON
+func extractAvroFields(avroSchema map[string]interface{}) ([]*schema_pb.Field, error) {
+	// Check if this is a record type
+	schemaType, ok := avroSchema["type"].(string)
+	if !ok || schemaType != "record" {
+		return nil, fmt.Errorf("expected record type, got %v", schemaType)
+	}
+
+	// Extract fields array
+	fieldsInterface, ok := avroSchema["fields"]
+	if !ok {
+		return nil, fmt.Errorf("no fields found in Avro record schema")
+	}
+
+	fieldsArray, ok := fieldsInterface.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("fields must be an array")
+	}
+
+	// Convert each Avro field to SeaweedMQ field
+	fields := make([]*schema_pb.Field, 0, len(fieldsArray))
+	for i, fieldInterface := range fieldsArray {
+		fieldMap, ok := fieldInterface.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("field %d is not a valid object", i)
+		}
+
+		field, err := convertAvroFieldToSeaweedMQ(fieldMap, int32(i))
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert field %d: %w", i, err)
+		}
+
+		fields = append(fields, field)
+	}
+
+	return fields, nil
+}
+
+// convertAvroFieldToSeaweedMQ converts a single Avro field to SeaweedMQ Field
+func convertAvroFieldToSeaweedMQ(avroField map[string]interface{}, fieldIndex int32) (*schema_pb.Field, error) {
+	// Extract field name
+	name, ok := avroField["name"].(string)
+	if !ok {
+		return nil, fmt.Errorf("field name is required")
+	}
+
+	// Extract field type and check if it's an array
+	fieldType, isRepeated, err := convertAvroTypeToSeaweedMQWithRepeated(avroField["type"])
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert field type for %s: %w", name, err)
+	}
+
+	// Check if field has a default value (indicates it's optional)
+	_, hasDefault := avroField["default"]
+	isRequired := !hasDefault
+
+	return &schema_pb.Field{
+		Name:       name,
+		FieldIndex: fieldIndex,
+		Type:       fieldType,
+		IsRequired: isRequired,
+		IsRepeated: isRepeated,
+	}, nil
+}
+
+// convertAvroTypeToSeaweedMQ converts Avro type to SeaweedMQ Type
+func convertAvroTypeToSeaweedMQ(avroType interface{}) (*schema_pb.Type, error) {
+	fieldType, _, err := convertAvroTypeToSeaweedMQWithRepeated(avroType)
+	return fieldType, err
+}
+
+// convertAvroTypeToSeaweedMQWithRepeated converts Avro type to SeaweedMQ Type and returns if it's repeated
+func convertAvroTypeToSeaweedMQWithRepeated(avroType interface{}) (*schema_pb.Type, bool, error) {
+	switch t := avroType.(type) {
+	case string:
+		// Simple type
+		fieldType, err := convertAvroSimpleType(t)
+		return fieldType, false, err
+
+	case map[string]interface{}:
+		// Complex type (record, enum, array, map, fixed)
+		return convertAvroComplexTypeWithRepeated(t)
+
+	case []interface{}:
+		// Union type
+		fieldType, err := convertAvroUnionType(t)
+		return fieldType, false, err
+
+	default:
+		return nil, false, fmt.Errorf("unsupported Avro type: %T", avroType)
+	}
+}
+
+// convertAvroSimpleType converts simple Avro types to SeaweedMQ types
+func convertAvroSimpleType(avroType string) (*schema_pb.Type, error) {
+	switch avroType {
+	case "null":
+		return &schema_pb.Type{
+			Kind: &schema_pb.Type_ScalarType{
+				ScalarType: schema_pb.ScalarType_BYTES, // Use bytes for null
+			},
+		}, nil
+	case "boolean":
+		return &schema_pb.Type{
+			Kind: &schema_pb.Type_ScalarType{
+				ScalarType: schema_pb.ScalarType_BOOL,
+			},
+		}, nil
+	case "int":
+		return &schema_pb.Type{
+			Kind: &schema_pb.Type_ScalarType{
+				ScalarType: schema_pb.ScalarType_INT32,
+			},
+		}, nil
+	case "long":
+		return &schema_pb.Type{
+			Kind: &schema_pb.Type_ScalarType{
+				ScalarType: schema_pb.ScalarType_INT64,
+			},
+		}, nil
+	case "float":
+		return &schema_pb.Type{
+			Kind: &schema_pb.Type_ScalarType{
+				ScalarType: schema_pb.ScalarType_FLOAT,
+			},
+		}, nil
+	case "double":
+		return &schema_pb.Type{
+			Kind: &schema_pb.Type_ScalarType{
+				ScalarType: schema_pb.ScalarType_DOUBLE,
+			},
+		}, nil
+	case "bytes":
+		return &schema_pb.Type{
+			Kind: &schema_pb.Type_ScalarType{
+				ScalarType: schema_pb.ScalarType_BYTES,
+			},
+		}, nil
+	case "string":
+		return &schema_pb.Type{
+			Kind: &schema_pb.Type_ScalarType{
+				ScalarType: schema_pb.ScalarType_STRING,
+			},
+		}, nil
+	default:
+		return nil, fmt.Errorf("unsupported simple Avro type: %s", avroType)
+	}
+}
+
+// convertAvroComplexType converts complex Avro types to SeaweedMQ types
+func convertAvroComplexType(avroType map[string]interface{}) (*schema_pb.Type, error) {
+	fieldType, _, err := convertAvroComplexTypeWithRepeated(avroType)
+	return fieldType, err
+}
+
+// convertAvroComplexTypeWithRepeated converts complex Avro types to SeaweedMQ types and returns if it's repeated
+func convertAvroComplexTypeWithRepeated(avroType map[string]interface{}) (*schema_pb.Type, bool, error) {
+	typeStr, ok := avroType["type"].(string)
+	if !ok {
+		return nil, false, fmt.Errorf("complex type must have a type field")
+	}
+
+	switch typeStr {
+	case "record":
+		// Nested record type
+		fields, err := extractAvroFields(avroType)
+		if err != nil {
+			return nil, false, fmt.Errorf("failed to extract nested record fields: %w", err)
+		}
+		return &schema_pb.Type{
+			Kind: &schema_pb.Type_RecordType{
+				RecordType: &schema_pb.RecordType{
+					Fields: fields,
+				},
+			},
+		}, false, nil
+
+	case "enum":
+		// Enum type - treat as string for now
+		return &schema_pb.Type{
+			Kind: &schema_pb.Type_ScalarType{
+				ScalarType: schema_pb.ScalarType_STRING,
+			},
+		}, false, nil
+
+	case "array":
+		// Array type
+		itemsType, err := convertAvroTypeToSeaweedMQ(avroType["items"])
+		if err != nil {
+			return nil, false, fmt.Errorf("failed to convert array items type: %w", err)
+		}
+		// For arrays, we return the item type and set IsRepeated=true
+		return itemsType, true, nil
+
+	case "map":
+		// Map type - treat as record with dynamic fields
+		return &schema_pb.Type{
+			Kind: &schema_pb.Type_RecordType{
+				RecordType: &schema_pb.RecordType{
+					Fields: []*schema_pb.Field{}, // Dynamic fields
+				},
+			},
+		}, false, nil
+
+	case "fixed":
+		// Fixed-length bytes
+		return &schema_pb.Type{
+			Kind: &schema_pb.Type_ScalarType{
+				ScalarType: schema_pb.ScalarType_BYTES,
+			},
+		}, false, nil
+
+	default:
+		return nil, false, fmt.Errorf("unsupported complex Avro type: %s", typeStr)
+	}
+}
+
+// convertAvroUnionType converts Avro union types to SeaweedMQ types
+func convertAvroUnionType(unionTypes []interface{}) (*schema_pb.Type, error) {
+	// For unions, we'll use the first non-null type
+	// This is a simplification - in a full implementation, we might want to create a union type
+	for _, unionType := range unionTypes {
+		if typeStr, ok := unionType.(string); ok && typeStr == "null" {
+			continue // Skip null types
+		}
+
+		// Use the first non-null type
+		return convertAvroTypeToSeaweedMQ(unionType)
+	}
+
+	// If all types are null, return bytes type
+	return &schema_pb.Type{
+		Kind: &schema_pb.Type_ScalarType{
+			ScalarType: schema_pb.ScalarType_BYTES,
+		},
 	}, nil
 }
 
