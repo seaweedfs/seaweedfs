@@ -45,11 +45,26 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 		return err
 	}
 	response := &mq_pb.PublishMessageResponse{}
-	// TODO check whether current broker should be the leader for the topic partition
+
 	initMessage := req.GetInit()
 	if initMessage == nil {
-		response.Error = fmt.Sprintf("missing init message")
+		response.Error = "missing init message"
 		glog.Errorf("missing init message")
+		return stream.Send(response)
+	}
+
+	// Check whether current broker should be the leader for the topic partition
+	leaderBroker, err := b.findBrokerForTopicPartition(initMessage.Topic, initMessage.Partition)
+	if err != nil {
+		response.Error = fmt.Sprintf("failed to find leader for topic partition: %v", err)
+		glog.Errorf("failed to find leader for topic partition: %v", err)
+		return stream.Send(response)
+	}
+
+	currentBrokerAddress := fmt.Sprintf("%s:%d", b.option.Ip, b.option.Port)
+	if leaderBroker != currentBrokerAddress {
+		response.Error = fmt.Sprintf("not the leader for this partition, leader is: %s", leaderBroker)
+		glog.V(1).Infof("rejecting publish request: not the leader for partition, leader is: %s", leaderBroker)
 		return stream.Send(response)
 	}
 
