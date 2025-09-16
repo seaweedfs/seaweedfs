@@ -170,17 +170,17 @@ func (s *SMQOffsetStorage) Close() error {
 
 // parseTopicPartitionKey parses legacy "topic:partition" format into ConsumerOffsetKey
 func parseTopicPartitionKey(topicPartition string) (ConsumerOffsetKey, error) {
-	parts := strings.Split(topicPartition, ":")
-	if len(parts) != 2 {
+	lastColonIndex := strings.LastIndex(topicPartition, ":")
+	if lastColonIndex <= 0 || lastColonIndex == len(topicPartition)-1 {
 		return ConsumerOffsetKey{}, fmt.Errorf("invalid legacy format: expected 'topic:partition', got '%s'", topicPartition)
 	}
 	
-	topic := parts[0]
+	topic := topicPartition[:lastColonIndex]
 	if topic == "" {
 		return ConsumerOffsetKey{}, fmt.Errorf("empty topic in legacy format: '%s'", topicPartition)
 	}
 	
-	partitionStr := parts[1]
+	partitionStr := topicPartition[lastColonIndex+1:]
 	partition, err := strconv.ParseInt(partitionStr, 10, 32)
 	if err != nil {
 		return ConsumerOffsetKey{}, fmt.Errorf("invalid partition number in legacy format '%s': %w", topicPartition, err)

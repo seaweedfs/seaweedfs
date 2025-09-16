@@ -52,9 +52,24 @@ func TestParseTopicPartitionKey(t *testing.T) {
 			expectError: true,
 		},
 		{
-			name:        "too many colons",
-			input:       "my:topic:0",
-			expectError: true,
+			name:  "topic with colon in name",
+			input: "my:topic:0",
+			expected: ConsumerOffsetKey{
+				ConsumerGroup: "",
+				Topic:         "my:topic",
+				Partition:     0,
+			},
+			expectError: false,
+		},
+		{
+			name:  "topic with multiple colons in name",
+			input: "namespace:service:events:1",
+			expected: ConsumerOffsetKey{
+				ConsumerGroup: "",
+				Topic:         "namespace:service:events",
+				Partition:     1,
+			},
+			expectError: false,
 		},
 		{
 			name:        "empty string",
