@@ -363,12 +363,12 @@ func (e *networkError) Temporary() bool { return true }
 
 // Test timeout detection
 func TestTimeoutDetection(t *testing.T) {
-	// Test with context timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Millisecond)
+	// Test with context timeout - use longer timeout for reliability
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
 
-	// Wait for context to timeout
-	time.Sleep(2 * time.Millisecond)
+	// Wait for context to timeout with some buffer
+	time.Sleep(20 * time.Millisecond)
 
 	select {
 	case <-ctx.Done():
