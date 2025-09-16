@@ -60,7 +60,7 @@ func TestDescribeConfigs_TopicConfigs(t *testing.T) {
 
 	// Test getting all topic configs
 	configs := handler.getTopicConfigs("test-topic", []string{})
-	
+
 	if len(configs) == 0 {
 		t.Fatal("Expected some topic configs, got none")
 	}
@@ -105,7 +105,7 @@ func TestDescribeConfigs_BrokerConfigs(t *testing.T) {
 
 	// Test getting all broker configs
 	configs := handler.getBrokerConfigs([]string{})
-	
+
 	if len(configs) == 0 {
 		t.Fatal("Expected some broker configs, got none")
 	}
@@ -220,12 +220,12 @@ func TestDescribeConfigs_ConfigValues(t *testing.T) {
 
 	// Test that config values are reasonable
 	topicConfigs := handler.getTopicConfigs("test-topic", []string{})
-	
+
 	for _, config := range topicConfigs {
 		if config.Name == "" {
 			t.Error("Config name should not be empty")
 		}
-		
+
 		if config.Value == "" {
 			t.Errorf("Config value should not be empty for %s", config.Name)
 		}
@@ -246,7 +246,7 @@ func TestDescribeConfigs_ConfigValues(t *testing.T) {
 			}
 		}
 
-		t.Logf("Config: %s = %s (readonly=%v, default=%v, sensitive=%v)", 
+		t.Logf("Config: %s = %s (readonly=%v, default=%v, sensitive=%v)",
 			config.Name, config.Value, config.ReadOnly, config.IsDefault, config.Sensitive)
 	}
 }
