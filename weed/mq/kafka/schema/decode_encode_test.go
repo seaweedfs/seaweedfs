@@ -120,19 +120,18 @@ func TestSchemaDecodeEncode_Avro(t *testing.T) {
 			// Verify decoded fields match original data
 			verifyDecodedFields(t, tc.testData, decoded.RecordValue.Fields)
 
-			// TODO: Fix Avro union re-encoding issue - temporarily disabled
-			// reconstructed, err := manager.EncodeMessage(decoded.RecordValue, decoded.SchemaID, decoded.SchemaFormat)
-			// require.NoError(t, err)
+			// Test re-encoding (round-trip)
+			reconstructed, err := manager.EncodeMessage(decoded.RecordValue, decoded.SchemaID, decoded.SchemaFormat)
+			require.NoError(t, err)
 
-			// TODO: Uncomment after fixing Avro union re-encoding
-			// // Verify reconstructed envelope
-			// assert.Equal(t, envelope[:5], reconstructed[:5]) // Magic byte + schema ID
+			// Verify reconstructed envelope
+			assert.Equal(t, envelope[:5], reconstructed[:5]) // Magic byte + schema ID
 
-			// // Decode reconstructed data to verify round-trip integrity
-			// decodedAgain, err := manager.DecodeMessage(reconstructed)
-			// require.NoError(t, err)
-			// assert.Equal(t, decoded.SchemaID, decodedAgain.SchemaID)
-			// assert.Equal(t, decoded.SchemaFormat, decodedAgain.SchemaFormat)
+			// Decode reconstructed data to verify round-trip integrity
+			decodedAgain, err := manager.DecodeMessage(reconstructed)
+			require.NoError(t, err)
+			assert.Equal(t, decoded.SchemaID, decodedAgain.SchemaID)
+			assert.Equal(t, decoded.SchemaFormat, decodedAgain.SchemaFormat)
 
 			// // Verify fields are identical after round-trip
 			// verifyRecordValuesEqual(t, decoded.RecordValue, decodedAgain.RecordValue)
@@ -473,19 +472,32 @@ func verifyDecodedFields(t *testing.T, expected map[string]interface{}, actual m
 			// Check if this is an Avro union type (single key-value pair with type name)
 			if len(v) == 1 {
 				for unionType, unionValue := range v {
-					// Handle Avro union types
+					// Handle Avro union types - they are now stored as records
 					switch unionType {
 					case "int":
 						if intVal, ok := unionValue.(int32); ok {
-							assert.Equal(t, int64(intVal), actualValue.GetInt64Value(), "Field %s should match", key)
+							// Union values are now stored as records with the union type as field name
+							recordValue := actualValue.GetRecordValue()
+							require.NotNil(t, recordValue, "Field %s should be a union record", key)
+							unionField := recordValue.Fields[unionType]
+							require.NotNil(t, unionField, "Union field %s should exist", unionType)
+							assert.Equal(t, intVal, unionField.GetInt32Value(), "Field %s should match", key)
 						}
 					case "string":
 						if strVal, ok := unionValue.(string); ok {
-							assert.Equal(t, strVal, actualValue.GetStringValue(), "Field %s should match", key)
+							recordValue := actualValue.GetRecordValue()
+							require.NotNil(t, recordValue, "Field %s should be a union record", key)
+							unionField := recordValue.Fields[unionType]
+							require.NotNil(t, unionField, "Union field %s should exist", unionType)
+							assert.Equal(t, strVal, unionField.GetStringValue(), "Field %s should match", key)
 						}
 					case "long":
 						if longVal, ok := unionValue.(int64); ok {
-							assert.Equal(t, longVal, actualValue.GetInt64Value(), "Field %s should match", key)
+							recordValue := actualValue.GetRecordValue()
+							require.NotNil(t, recordValue, "Field %s should be a union record", key)
+							unionField := recordValue.Fields[unionType]
+							require.NotNil(t, unionField, "Union field %s should exist", unionType)
+							assert.Equal(t, longVal, unionField.GetInt64Value(), "Field %s should match", key)
 						}
 					default:
 						// If not a recognized union type, treat as regular nested record

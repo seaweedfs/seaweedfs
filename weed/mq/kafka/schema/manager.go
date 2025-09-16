@@ -639,7 +639,15 @@ func schemaValueToGoValueWithAvroContext(value *schema_pb.Value, preserveAvroUni
 		}
 		return result
 	case *schema_pb.Value_RecordValue:
-		return recordValueToMapWithAvroContext(v.RecordValue, preserveAvroUnions)
+		recordMap := recordValueToMapWithAvroContext(v.RecordValue, preserveAvroUnions)
+		
+		// Check if this record represents an Avro union
+		if preserveAvroUnions && isAvroUnionRecord(v.RecordValue) {
+			// Return the union map directly since it's already in the correct format
+			return recordMap
+		}
+		
+		return recordMap
 	case *schema_pb.Value_TimestampValue:
 		// Convert back to time if needed, or return as int64
 		return v.TimestampValue.TimestampMicros
@@ -647,6 +655,31 @@ func schemaValueToGoValueWithAvroContext(value *schema_pb.Value, preserveAvroUni
 		// Default to string representation
 		return fmt.Sprintf("%v", value)
 	}
+}
+
+
+// isAvroUnionRecord checks if a RecordValue represents an Avro union
+func isAvroUnionRecord(record *schema_pb.RecordValue) bool {
+	// A record represents an Avro union if it has exactly one field
+	// and the field name is an Avro type name
+	if len(record.Fields) != 1 {
+		return false
+	}
+	
+	for key := range record.Fields {
+		return isAvroUnionTypeName(key)
+	}
+	
+	return false
+}
+
+// isAvroUnionTypeName checks if a string is a valid Avro union type name
+func isAvroUnionTypeName(name string) bool {
+	switch name {
+	case "null", "boolean", "int", "long", "float", "double", "bytes", "string":
+		return true
+	}
+	return false
 }
 
 // CheckSchemaCompatibility checks if two schemas are compatible

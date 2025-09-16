@@ -90,8 +90,6 @@ func TestFullIntegration_AvroWorkflow(t *testing.T) {
 
 	// Test 2: Consumer workflow - reconstruct original message
 	t.Run("Consumer_Workflow", func(t *testing.T) {
-		// TODO: Fix Avro union re-encoding issue before enabling this test
-		t.Skip("Temporarily disabled due to Avro union re-encoding issue")
 		// Create test RecordValue (simulate what's stored in SeaweedMQ)
 		testData := map[string]interface{}{
 			"id":    int32(67890),
@@ -144,8 +142,6 @@ func TestFullIntegration_AvroWorkflow(t *testing.T) {
 
 	// Test 3: Round-trip integrity
 	t.Run("Round_Trip_Integrity", func(t *testing.T) {
-		// TODO: Fix Avro union re-encoding issue before enabling this test
-		t.Skip("Temporarily disabled due to Avro union re-encoding issue")
 		originalData := map[string]interface{}{
 			"id":    int32(99999),
 			"name":  "Charlie Brown",

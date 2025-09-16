@@ -145,38 +145,88 @@ func goValueToSchemaValue(value interface{}) *schema_pb.Value {
 				switch unionType {
 				case "int":
 					if intVal, ok := unionValue.(int32); ok {
+						// Store union as a record with the union type as field name
+						// This preserves the union information for re-encoding
 						return &schema_pb.Value{
-							Kind: &schema_pb.Value_Int64Value{Int64Value: int64(intVal)},
+							Kind: &schema_pb.Value_RecordValue{
+								RecordValue: &schema_pb.RecordValue{
+									Fields: map[string]*schema_pb.Value{
+										"int": {
+											Kind: &schema_pb.Value_Int32Value{Int32Value: intVal},
+										},
+									},
+								},
+							},
 						}
 					}
 				case "long":
 					if longVal, ok := unionValue.(int64); ok {
 						return &schema_pb.Value{
-							Kind: &schema_pb.Value_Int64Value{Int64Value: longVal},
+							Kind: &schema_pb.Value_RecordValue{
+								RecordValue: &schema_pb.RecordValue{
+									Fields: map[string]*schema_pb.Value{
+										"long": {
+											Kind: &schema_pb.Value_Int64Value{Int64Value: longVal},
+										},
+									},
+								},
+							},
 						}
 					}
 				case "float":
 					if floatVal, ok := unionValue.(float32); ok {
 						return &schema_pb.Value{
-							Kind: &schema_pb.Value_FloatValue{FloatValue: floatVal},
+							Kind: &schema_pb.Value_RecordValue{
+								RecordValue: &schema_pb.RecordValue{
+									Fields: map[string]*schema_pb.Value{
+										"float": {
+											Kind: &schema_pb.Value_FloatValue{FloatValue: floatVal},
+										},
+									},
+								},
+							},
 						}
 					}
 				case "double":
 					if doubleVal, ok := unionValue.(float64); ok {
 						return &schema_pb.Value{
-							Kind: &schema_pb.Value_DoubleValue{DoubleValue: doubleVal},
+							Kind: &schema_pb.Value_RecordValue{
+								RecordValue: &schema_pb.RecordValue{
+									Fields: map[string]*schema_pb.Value{
+										"double": {
+											Kind: &schema_pb.Value_DoubleValue{DoubleValue: doubleVal},
+										},
+									},
+								},
+							},
 						}
 					}
 				case "string":
 					if strVal, ok := unionValue.(string); ok {
 						return &schema_pb.Value{
-							Kind: &schema_pb.Value_StringValue{StringValue: strVal},
+							Kind: &schema_pb.Value_RecordValue{
+								RecordValue: &schema_pb.RecordValue{
+									Fields: map[string]*schema_pb.Value{
+										"string": {
+											Kind: &schema_pb.Value_StringValue{StringValue: strVal},
+										},
+									},
+								},
+							},
 						}
 					}
 				case "boolean":
 					if boolVal, ok := unionValue.(bool); ok {
 						return &schema_pb.Value{
-							Kind: &schema_pb.Value_BoolValue{BoolValue: boolVal},
+							Kind: &schema_pb.Value_RecordValue{
+								RecordValue: &schema_pb.RecordValue{
+									Fields: map[string]*schema_pb.Value{
+										"boolean": {
+											Kind: &schema_pb.Value_BoolValue{BoolValue: boolVal},
+										},
+									},
+								},
+							},
 						}
 					}
 				}
