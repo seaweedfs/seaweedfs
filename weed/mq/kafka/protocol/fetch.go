@@ -7,11 +7,11 @@ import (
 	"hash/crc32"
 	"time"
 
-	"google.golang.org/protobuf/proto"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/compression"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/schema"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
+	"google.golang.org/protobuf/proto"
 )
 
 func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
@@ -1070,7 +1070,7 @@ func (h *Handler) fetchSchematizedRecords(topicName string, partitionID int32, o
 		}
 	}
 
-	Debug("Fetched %d schematized records for topic %s partition %d from offset %d", 
+	Debug("Fetched %d schematized records for topic %s partition %d from offset %d",
 		len(reconstructedMessages), topicName, partitionID, offset)
 
 	return reconstructedMessages, nil
@@ -1175,7 +1175,7 @@ func (h *Handler) createSchematizedRecordBatch(messages [][]byte, baseOffset int
 	// Create individual record entries for the batch
 	var recordsData []byte
 	currentTimestamp := time.Now().UnixMilli()
-	
+
 	for i, msg := range messages {
 		// Create a record entry (Kafka record format v2)
 		record := h.createRecordEntry(msg, int32(i), currentTimestamp)
@@ -1186,14 +1186,14 @@ func (h *Handler) createSchematizedRecordBatch(messages [][]byte, baseOffset int
 	enableCompression := len(recordsData) > 100
 	var compressionType compression.CompressionCodec = compression.None
 	var finalRecordsData []byte
-	
+
 	if enableCompression {
 		compressed, err := compression.Compress(compression.Gzip, recordsData)
 		if err == nil && len(compressed) < len(recordsData) {
 			finalRecordsData = compressed
 			compressionType = compression.Gzip
-			Debug("Applied GZIP compression: %d -> %d bytes (%.1f%% reduction)", 
-				len(recordsData), len(compressed), 
+			Debug("Applied GZIP compression: %d -> %d bytes (%.1f%% reduction)",
+				len(recordsData), len(compressed),
 				100.0*(1.0-float64(len(compressed))/float64(len(recordsData))))
 		} else {
 			finalRecordsData = recordsData
@@ -1210,7 +1210,7 @@ func (h *Handler) createSchematizedRecordBatch(messages [][]byte, baseOffset int
 		return h.createRecordBatchWithPayload(baseOffset, int32(len(messages)), finalRecordsData)
 	}
 
-	Debug("Created schematized record batch: %d messages, %d bytes, compression=%v", 
+	Debug("Created schematized record batch: %d messages, %d bytes, compression=%v",
 		len(messages), len(batch), compressionType)
 
 	return batch
@@ -1257,13 +1257,13 @@ func (h *Handler) createRecordEntry(messageData []byte, offsetDelta int32, times
 func (h *Handler) encodeVarint(value int64) []byte {
 	var result []byte
 	uvalue := uint64(value)
-	
+
 	for uvalue >= 0x80 {
 		result = append(result, byte(uvalue)|0x80)
 		uvalue >>= 7
 	}
 	result = append(result, byte(uvalue))
-	
+
 	return result
 }
 
