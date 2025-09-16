@@ -90,45 +90,59 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 	// Update group's last activity
 	group.LastActivity = time.Now()
 
-	// Handle member ID logic
+	// Handle member ID logic with static membership support
 	var memberID string
 	var isNewMember bool
+	var existingMember *consumer.GroupMember
 
-	// Use deterministic client identifier based on group + session timeout + protocol
-	clientKey := fmt.Sprintf("%s-%d-%s", request.GroupID, request.SessionTimeout, request.ProtocolType)
-
-	if request.MemberID == "" {
-		// New member - check if we already have a member for this client
-
-		// Look for existing member with same client characteristics
-		var existingMemberID string
-		for existingID, member := range group.Members {
-			if member.ClientID == clientKey {
-				existingMemberID = existingID
-				break
-			}
-		}
-
-		if existingMemberID != "" {
-			// Reuse existing member ID for this client
-			memberID = existingMemberID
+	// Check for static membership first
+	if request.GroupInstanceID != "" {
+		existingMember = h.groupCoordinator.FindStaticMember(group, request.GroupInstanceID)
+		if existingMember != nil {
+			memberID = existingMember.ID
 			isNewMember = false
-			fmt.Printf("DEBUG: JoinGroup reusing existing member ID '%s' for client key '%s'\n", memberID, clientKey)
+			fmt.Printf("DEBUG: JoinGroup found existing static member ID '%s' for instance '%s'\n", memberID, request.GroupInstanceID)
 		} else {
-			// Generate new deterministic member ID
-			memberID = h.groupCoordinator.GenerateMemberID(clientKey, "consumer")
+			// New static member
+			memberID = h.groupCoordinator.GenerateMemberID(request.GroupInstanceID, "static")
 			isNewMember = true
-			fmt.Printf("DEBUG: JoinGroup generated new member ID '%s' for client key '%s'\n", memberID, clientKey)
+			fmt.Printf("DEBUG: JoinGroup generated new static member ID '%s' for instance '%s'\n", memberID, request.GroupInstanceID)
 		}
 	} else {
-		memberID = request.MemberID
-		// Check if member exists
-		if _, exists := group.Members[memberID]; !exists {
-			// Member ID provided but doesn't exist - reject
-			return h.buildJoinGroupErrorResponse(correlationID, ErrorCodeUnknownMemberID), nil
+		// Dynamic membership logic
+		clientKey := fmt.Sprintf("%s-%d-%s", request.GroupID, request.SessionTimeout, request.ProtocolType)
+
+		if request.MemberID == "" {
+			// New member - check if we already have a member for this client
+			var existingMemberID string
+			for existingID, member := range group.Members {
+				if member.ClientID == clientKey && !h.groupCoordinator.IsStaticMember(member) {
+					existingMemberID = existingID
+					break
+				}
+			}
+
+			if existingMemberID != "" {
+				// Reuse existing member ID for this client
+				memberID = existingMemberID
+				isNewMember = false
+				fmt.Printf("DEBUG: JoinGroup reusing existing member ID '%s' for client key '%s'\n", memberID, clientKey)
+			} else {
+				// Generate new deterministic member ID
+				memberID = h.groupCoordinator.GenerateMemberID(clientKey, "consumer")
+				isNewMember = true
+				fmt.Printf("DEBUG: JoinGroup generated new member ID '%s' for client key '%s'\n", memberID, clientKey)
+			}
+		} else {
+			memberID = request.MemberID
+			// Check if member exists
+			if _, exists := group.Members[memberID]; !exists {
+				// Member ID provided but doesn't exist - reject
+				return h.buildJoinGroupErrorResponse(correlationID, ErrorCodeUnknownMemberID), nil
+			}
+			isNewMember = false
+			fmt.Printf("DEBUG: JoinGroup using provided member ID '%s'\n", memberID)
 		}
-		isNewMember = false
-		fmt.Printf("DEBUG: JoinGroup using provided member ID '%s'\n", memberID)
 	}
 
 	// Check group state
@@ -158,10 +172,19 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 	fmt.Printf("DEBUG: JoinGroup extracted client host: %s\n", clientHost)
 
 	// Create or update member with enhanced metadata parsing
+	var groupInstanceID *string
+	if request.GroupInstanceID != "" {
+		groupInstanceID = &request.GroupInstanceID
+	}
+	
+	// Use deterministic client identifier based on group + session timeout + protocol
+	clientKey := fmt.Sprintf("%s-%d-%s", request.GroupID, request.SessionTimeout, request.ProtocolType)
+	
 	member := &consumer.GroupMember{
 		ID:               memberID,
 		ClientID:         clientKey,  // Use deterministic client key for member identification
 		ClientHost:       clientHost, // Now extracted from actual connection
+		GroupInstanceID:  groupInstanceID,
 		SessionTimeout:   request.SessionTimeout,
 		RebalanceTimeout: request.RebalanceTimeout,
 		Subscription:     h.extractSubscriptionFromProtocolsEnhanced(request.GroupProtocols),
@@ -202,6 +225,12 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 
 	// Add member to group
 	group.Members[memberID] = member
+	
+	// Register static member if applicable
+	if member.GroupInstanceID != nil && *member.GroupInstanceID != "" {
+		h.groupCoordinator.RegisterStaticMember(group, member)
+		fmt.Printf("DEBUG: JoinGroup registered static member '%s' with instance ID '%s'\n", memberID, *member.GroupInstanceID)
+	}
 
 	// Update group's subscribed topics
 	h.updateGroupSubscription(group)

@@ -85,7 +85,7 @@ func (h *Handler) describeGroup(groupID string) DescribeGroupsGroup {
 
 		members = append(members, DescribeGroupsMember{
 			MemberID:         memberID,
-			GroupInstanceID:  nil, // Static membership not implemented yet
+			GroupInstanceID:  member.GroupInstanceID, // Now supports static membership
 			ClientID:         member.ClientID,
 			ClientHost:       member.ClientHost,
 			MemberMetadata:   member.Metadata,

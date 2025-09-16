@@ -147,9 +147,19 @@ func (h *Handler) handleLeaveGroup(correlationID uint32, apiVersion uint16, requ
 	group.LastActivity = time.Now()
 
 	// Validate member exists
-	_, exists := group.Members[request.MemberID]
+	member, exists := group.Members[request.MemberID]
 	if !exists {
 		return h.buildLeaveGroupErrorResponse(correlationID, ErrorCodeUnknownMemberID, apiVersion), nil
+	}
+
+	// For static members, only remove if GroupInstanceID matches or is not provided
+	if h.groupCoordinator.IsStaticMember(member) {
+		if request.GroupInstanceID != "" && *member.GroupInstanceID != request.GroupInstanceID {
+			return h.buildLeaveGroupErrorResponse(correlationID, ErrorCodeFencedInstanceID, apiVersion), nil
+		}
+		// Unregister static member
+		h.groupCoordinator.UnregisterStaticMember(group, *member.GroupInstanceID)
+		fmt.Printf("DEBUG: LeaveGroup unregistered static member '%s' with instance ID '%s'\n", request.MemberID, *member.GroupInstanceID)
 	}
 
 	// Remove the member from the group
