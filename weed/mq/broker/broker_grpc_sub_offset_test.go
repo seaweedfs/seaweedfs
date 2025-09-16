@@ -13,11 +13,11 @@ func TestConvertOffsetToMessagePosition(t *testing.T) {
 	broker := &MessageQueueBroker{}
 
 	tests := []struct {
-		name           string
-		offsetType     schema_pb.OffsetType
-		currentOffset  int64
-		expectedBatch  int64
-		expectError    bool
+		name          string
+		offsetType    schema_pb.OffsetType
+		currentOffset int64
+		expectedBatch int64
+		expectError   bool
 	}{
 		{
 			name:          "reset to earliest",

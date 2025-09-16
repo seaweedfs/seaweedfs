@@ -192,34 +192,34 @@ func (b *MessageQueueBroker) SeekSubscription(subscriptionID string, offset int6
 // convertOffsetToMessagePosition converts a subscription's current offset to a MessagePosition for log_buffer
 func (b *MessageQueueBroker) convertOffsetToMessagePosition(subscription *offset.OffsetSubscription) (log_buffer.MessagePosition, error) {
 	currentOffset := subscription.GetNextOffset()
-	
+
 	// Handle special offset cases
 	switch subscription.OffsetType {
 	case schema_pb.OffsetType_RESET_TO_EARLIEST:
 		return log_buffer.NewMessagePosition(1, -3), nil
-		
+
 	case schema_pb.OffsetType_RESET_TO_LATEST:
 		return log_buffer.NewMessagePosition(time.Now().UnixNano(), -4), nil
-		
+
 	case schema_pb.OffsetType_EXACT_OFFSET, schema_pb.OffsetType_EXACT_TS_NS:
 		// For exact offsets, we need to convert the Kafka offset to a SeaweedMQ timestamp
 		// This requires access to the offset ledger for this topic/partition
-		
+
 		// Extract topic and partition info from the subscription
 		// For now, we'll use a simplified approach and start from the current time
 		// TODO: Integrate with the offset ledger to get the exact timestamp for this offset
-		
+
 		if currentOffset == 0 {
 			// Starting from beginning
 			return log_buffer.NewMessagePosition(1, -2), nil
 		}
-		
+
 		// For non-zero offsets, we should look up the timestamp in the offset ledger
 		// For now, use a reasonable approximation based on current time
 		// This is a temporary solution until proper offset-to-timestamp mapping is integrated
 		estimatedTimestamp := time.Now().Add(-time.Duration(currentOffset) * time.Millisecond).UnixNano()
 		return log_buffer.NewMessagePosition(estimatedTimestamp, -2), nil
-		
+
 	default:
 		// Default to starting from current time for unknown offset types
 		return log_buffer.NewMessagePosition(time.Now().UnixNano(), -2), nil

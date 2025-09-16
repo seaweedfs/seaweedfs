@@ -198,18 +198,18 @@ func (h *Handler) findCoordinatorForGroup(groupID string) (host string, port int
 	// For now, use a simple consistent hashing approach
 	// In the future, this could integrate with SeaweedMQ's broker discovery
 	_ = crc32.ChecksumIEEE([]byte(groupID)) // Calculate hash for future use
-	
+
 	// TODO: Replace this with actual broker discovery from SeaweedMQ
 	// For now, we'll use a simple modulo approach with known brokers
 	// This is a placeholder - in production, we'd query SeaweedMQ for available brokers
-	
+
 	// If we have access to SeaweedMQ broker discovery, use it
 	if h.seaweedMQHandler != nil {
 		// Try to get available brokers from SeaweedMQ
 		// For now, fall back to current gateway
 		return h.brokerHost, h.brokerPort, 1, nil
 	}
-	
+
 	// Fallback: return current gateway
 	// This ensures the coordinator is always available, even if not optimally distributed
 	return h.brokerHost, h.brokerPort, 1, nil

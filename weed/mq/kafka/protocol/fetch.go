@@ -225,7 +225,7 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 					Debug("Failed to fetch schematized records for topic %s partition %d: %v", topic.Name, partition.PartitionID, err)
 				} else if len(schematizedMessages) > 0 {
 					Debug("Successfully fetched %d schematized messages for topic %s partition %d", len(schematizedMessages), topic.Name, partition.PartitionID)
-					
+
 					// Create schematized record batch and replace the regular record batch
 					schematizedBatch := h.createSchematizedRecordBatch(schematizedMessages, effectiveFetchOffset)
 					if len(schematizedBatch) > 0 {

@@ -124,7 +124,7 @@ func TestFindCoordinatorV0Request(t *testing.T) {
 	// Format: coordinator_key_size (2 bytes) + coordinator_key
 	groupID := "test-group"
 	requestBody := make([]byte, 2+len(groupID))
-	requestBody[0] = 0 // High byte of length
+	requestBody[0] = 0                  // High byte of length
 	requestBody[1] = byte(len(groupID)) // Low byte of length
 	copy(requestBody[2:], []byte(groupID))
 
@@ -155,7 +155,7 @@ func TestFindCoordinatorV2Request(t *testing.T) {
 	// Format: coordinator_key_size (2 bytes) + coordinator_key + coordinator_type (1 byte)
 	groupID := "test-group"
 	requestBody := make([]byte, 2+len(groupID)+1)
-	requestBody[0] = 0 // High byte of length
+	requestBody[0] = 0                  // High byte of length
 	requestBody[1] = byte(len(groupID)) // Low byte of length
 	copy(requestBody[2:2+len(groupID)], []byte(groupID))
 	requestBody[2+len(groupID)] = 0 // Coordinator type (0 = consumer group)
