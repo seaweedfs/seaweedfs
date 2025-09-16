@@ -50,10 +50,10 @@ type MessageQueueBroker struct {
 	lockAsBalancer    *cluster.LiveLock
 	// TODO: Add native offset management to broker
 	// ASSUMPTION: BrokerOffsetManager handles all partition offset assignment
-	offsetManager     *BrokerOffsetManager
-	SubCoordinator    *sub_coordinator.SubCoordinator
-	accessLock        sync.Mutex
-	fca               *filer_client.FilerClientAccessor
+	offsetManager  *BrokerOffsetManager
+	SubCoordinator *sub_coordinator.SubCoordinator
+	accessLock     sync.Mutex
+	fca            *filer_client.FilerClientAccessor
 }
 
 func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.DialOption) (mqBroker *MessageQueueBroker, err error) {
@@ -69,7 +69,7 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 		localTopicManager: topic.NewLocalTopicManager(),
 		PubBalancer:       pubBalancer,
 		SubCoordinator:    subCoordinator,
-		offsetManager:     NewBrokerOffsetManager(),
+		// offsetManager will be set after filer is available
 	}
 	fca := &filer_client.FilerClientAccessor{
 		GetFiler:          mqBroker.GetFiler,
@@ -118,6 +118,11 @@ func (b *MessageQueueBroker) OnBrokerUpdate(update *master_pb.ClusterNodeUpdate,
 		b.filers[address] = struct{}{}
 		if b.currentFiler == "" {
 			b.currentFiler = address
+			// Initialize offset manager with filer storage now that filer is available
+			if b.offsetManager == nil {
+				b.offsetManager = NewBrokerOffsetManagerWithFiler(string(address), "kafka", "default", b.grpcDialOption)
+				glog.V(0).Infof("broker initialized offset manager with filer %s", address)
+			}
 		}
 	} else {
 		delete(b.filers, address)

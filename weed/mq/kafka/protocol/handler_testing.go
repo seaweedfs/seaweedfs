@@ -7,6 +7,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/consumer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
 // MessageRecord represents a stored message (TEST ONLY)
@@ -210,6 +211,10 @@ func (b *basicSeaweedMQHandler) GetStoredRecords(topic string, partition int32, 
 	return records, nil
 }
 
+func (b *basicSeaweedMQHandler) GetFilerClient() filer_pb.SeaweedFilerClient {
+	return nil // Test handler doesn't have filer access
+}
+
 func (b *basicSeaweedMQHandler) Close() error {
 	return nil
 }
@@ -288,6 +293,10 @@ func (t *testSeaweedMQHandler) ProduceRecord(topicName string, partitionID int32
 func (t *testSeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromOffset int64, maxRecords int) ([]offset.SMQRecord, error) {
 	// Test handler doesn't simulate message storage, return empty
 	return nil, nil
+}
+
+func (t *testSeaweedMQHandler) GetFilerClient() filer_pb.SeaweedFilerClient {
+	return nil // Test handler doesn't have filer access
 }
 
 func (t *testSeaweedMQHandler) Close() error {

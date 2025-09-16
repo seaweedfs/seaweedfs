@@ -267,12 +267,13 @@ currentVersion, err := migrationManager.GetCurrentVersion()
 
 ```go
 // In-memory storage (development/testing)
-manager := NewBrokerOffsetManager()
+manager := NewBrokerOffsetManagerWithFiler(filerAddress, namespace, topicName, grpcDialOption)
 
 // SQL storage with custom path
 manager, err := NewBrokerOffsetManagerWithSQL("/data/offsets.db")
 
-// Custom storage implementation
+// Custom storage implementation (testing only)
+// Note: NewBrokerOffsetManagerWithStorage is only available in test files
 customStorage := &MyCustomStorage{}
 manager := NewBrokerOffsetManagerWithStorage(customStorage)
 ```

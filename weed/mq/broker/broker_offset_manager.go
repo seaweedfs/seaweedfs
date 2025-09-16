@@ -15,30 +15,8 @@ import (
 type BrokerOffsetManager struct {
 	mu                   sync.RWMutex
 	offsetIntegration    *offset.SMQOffsetIntegration
-	partitionManagers    map[string]*offset.PartitionOffsetManager
 	storage              offset.OffsetStorage
 	consumerGroupStorage offset.ConsumerGroupOffsetStorage
-}
-
-// NewBrokerOffsetManager creates a new broker offset manager
-func NewBrokerOffsetManager() *BrokerOffsetManager {
-	return NewBrokerOffsetManagerWithStorage(nil)
-}
-
-// NewBrokerOffsetManagerWithStorage creates a new broker offset manager with custom storage
-func NewBrokerOffsetManagerWithStorage(storage offset.OffsetStorage) *BrokerOffsetManager {
-	// TODO: Add configuration for database path and type
-	// ASSUMPTION: Using in-memory storage as fallback, SQL storage preferred when available
-	if storage == nil {
-		storage = offset.NewInMemoryOffsetStorage()
-	}
-
-	return &BrokerOffsetManager{
-		offsetIntegration:    offset.NewSMQOffsetIntegration(storage),
-		partitionManagers:    make(map[string]*offset.PartitionOffsetManager),
-		storage:              storage,
-		consumerGroupStorage: nil, // Will be set separately if needed
-	}
 }
 
 // NewBrokerOffsetManagerWithFiler creates a new broker offset manager with filer storage
@@ -51,7 +29,6 @@ func NewBrokerOffsetManagerWithFiler(filerAddress string, namespace string, topi
 
 	return &BrokerOffsetManager{
 		offsetIntegration:    offset.NewSMQOffsetIntegration(filerStorage),
-		partitionManagers:    make(map[string]*offset.PartitionOffsetManager),
 		storage:              filerStorage,
 		consumerGroupStorage: consumerGroupStorage,
 	}
@@ -75,7 +52,6 @@ func NewBrokerOffsetManagerWithSQL(dbPath string) (*BrokerOffsetManager, error) 
 
 	return &BrokerOffsetManager{
 		offsetIntegration: offset.NewSMQOffsetIntegration(sqlStorage),
-		partitionManagers: make(map[string]*offset.PartitionOffsetManager),
 		storage:           sqlStorage,
 	}, nil
 }
@@ -206,9 +182,6 @@ func (bom *BrokerOffsetManager) GetOffsetMetrics() *offset.OffsetMetrics {
 func (bom *BrokerOffsetManager) Shutdown() {
 	bom.mu.Lock()
 	defer bom.mu.Unlock()
-
-	// Clear the partition managers map (now unused but kept for compatibility)
-	bom.partitionManagers = make(map[string]*offset.PartitionOffsetManager)
 
 	// Reset the underlying storage to ensure clean restart behavior
 	// This is important for testing where we want offsets to start from 0 after shutdown

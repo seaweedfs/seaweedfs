@@ -5,16 +5,21 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/consumer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/integration"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/schema"
+	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
 // TopicInfo holds basic information about a topic
@@ -30,6 +35,35 @@ type TopicPartitionKey struct {
 	Partition int32
 }
 
+// TopicMetadata holds schema and configuration information for a topic
+type TopicMetadata struct {
+	TopicName     string            `json:"topic_name"`
+	IsSchematized bool              `json:"is_schematized"`
+	SchemaFormat  string            `json:"schema_format,omitempty"`
+	SchemaContent string            `json:"schema_content,omitempty"`
+	Properties    map[string]string `json:"properties,omitempty"`
+	CreatedAt     time.Time         `json:"created_at"`
+	UpdatedAt     time.Time         `json:"updated_at"`
+}
+
+// CachedTopicMetadata holds topic metadata with cache timestamp
+type CachedTopicMetadata struct {
+	Metadata *TopicMetadata
+	CachedAt time.Time
+}
+
+const (
+	// KafkaMetadataFile is the filename for Kafka-specific metadata stored alongside SMQ's topic.conf
+	// This is separate from SMQ's topic.conf and contains Kafka-specific schema and configuration
+	KafkaMetadataFile = "kafka_metadata.json"
+
+	// DefaultKafkaNamespace is the default namespace for Kafka topics in SeaweedMQ
+	DefaultKafkaNamespace = "kafka"
+
+	// TopicMetadataCacheTTL is how long to cache topic metadata
+	TopicMetadataCacheTTL = 5 * time.Minute
+)
+
 // SeaweedMQHandlerInterface defines the interface for SeaweedMQ integration
 type SeaweedMQHandlerInterface interface {
 	TopicExists(topic string) bool
@@ -41,6 +75,8 @@ type SeaweedMQHandlerInterface interface {
 	ProduceRecord(topicName string, partitionID int32, key, value []byte) (int64, error)
 	// GetStoredRecords retrieves records from SMQ storage (optional - for advanced implementations)
 	GetStoredRecords(topic string, partition int32, fromOffset int64, maxRecords int) ([]offset.SMQRecord, error)
+	// GetFilerClient returns a filer client for accessing SeaweedMQ metadata (optional)
+	GetFilerClient() filer_pb.SeaweedFilerClient
 	Close() error
 }
 
@@ -59,6 +95,11 @@ type Handler struct {
 	schemaManager *schema.Manager
 	useSchema     bool
 	brokerClient  *schema.BrokerClient
+
+	// Topic metadata cache with TTL
+	topicMetadataCache map[string]*CachedTopicMetadata
+	metadataCacheMu    sync.RWMutex
+	filerClient        filer_pb.SeaweedFilerClient
 
 	// Dynamic broker address for Metadata responses
 	brokerHost string
@@ -89,10 +130,11 @@ func NewSeaweedMQHandler(agentAddress string) (*Handler, error) {
 	}
 
 	return &Handler{
-		seaweedMQHandler: smqHandler,
-		groupCoordinator: consumer.NewGroupCoordinator(),
-		brokerHost:       "localhost",
-		brokerPort:       9092,
+		seaweedMQHandler:   smqHandler,
+		groupCoordinator:   consumer.NewGroupCoordinator(),
+		topicMetadataCache: make(map[string]*CachedTopicMetadata),
+		brokerHost:         "", // Will be set by SetBrokerAddress() when server starts
+		brokerPort:         0,  // Will be set by SetBrokerAddress() when server starts
 	}, nil
 }
 
@@ -113,12 +155,20 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string) (*Handler, err
 		return nil, fmt.Errorf("failed to create SMQ offset storage: %w", err)
 	}
 
+	// Initialize filer client from SMQ handler if available
+	var filerClient filer_pb.SeaweedFilerClient
+	if smqHandler != nil {
+		filerClient = smqHandler.GetFilerClient()
+	}
+
 	return &Handler{
-		seaweedMQHandler: smqHandler,
-		smqOffsetStorage: smqOffsetStorage,
-		groupCoordinator: consumer.NewGroupCoordinator(),
-		brokerHost:       "localhost", // default fallback
-		brokerPort:       9092,        // default fallback
+		seaweedMQHandler:   smqHandler,
+		smqOffsetStorage:   smqOffsetStorage,
+		groupCoordinator:   consumer.NewGroupCoordinator(),
+		topicMetadataCache: make(map[string]*CachedTopicMetadata),
+		filerClient:        filerClient,
+		brokerHost:         "", // Will be set by SetBrokerAddress() when server starts
+		brokerPort:         0,  // Will be set by SetBrokerAddress() when server starts
 	}, nil
 }
 
@@ -198,6 +248,22 @@ func (h *Handler) getRecordCountFromBatch(batch []byte) int32 {
 func (h *Handler) SetBrokerAddress(host string, port int) {
 	h.brokerHost = host
 	h.brokerPort = port
+}
+
+// GetBrokerAddress returns the broker address, with fallbacks if not set
+func (h *Handler) GetBrokerAddress() (string, int) {
+	host := h.brokerHost
+	port := h.brokerPort
+
+	// Provide fallbacks if not set (for testing or before server starts)
+	if host == "" {
+		host = "localhost"
+	}
+	if port == 0 {
+		port = 9092
+	}
+
+	return host, port
 }
 
 // HandleConn processes a single client connection
@@ -2629,4 +2695,85 @@ func (h *Handler) buildConfigEntry(config ConfigEntry, apiVersion uint16) []byte
 	}
 
 	return entry
+}
+
+// getTopicMetadata retrieves topic metadata from filer with TTL cache
+func (h *Handler) getTopicMetadata(topicName string) (*TopicMetadata, error) {
+	// Check cache first
+	h.metadataCacheMu.RLock()
+	if cached, exists := h.topicMetadataCache[topicName]; exists {
+		if time.Since(cached.CachedAt) < TopicMetadataCacheTTL {
+			h.metadataCacheMu.RUnlock()
+			return cached.Metadata, nil
+		}
+	}
+	h.metadataCacheMu.RUnlock()
+
+	// Fetch from filer
+	metadata, err := h.fetchTopicMetadataFromFiler(topicName)
+	if err != nil {
+		return nil, err
+	}
+
+	// Cache the result
+	h.metadataCacheMu.Lock()
+	h.topicMetadataCache[topicName] = &CachedTopicMetadata{
+		Metadata: metadata,
+		CachedAt: time.Now(),
+	}
+	h.metadataCacheMu.Unlock()
+
+	return metadata, nil
+}
+
+// fetchTopicMetadataFromFiler retrieves topic metadata from SeaweedMQ filer
+func (h *Handler) fetchTopicMetadataFromFiler(topicName string) (*TopicMetadata, error) {
+	if h.filerClient == nil {
+		// If no filer client, return default metadata
+		return &TopicMetadata{
+			TopicName:     topicName,
+			IsSchematized: false,
+			Properties:    make(map[string]string),
+			CreatedAt:     time.Now(),
+			UpdatedAt:     time.Now(),
+		}, nil
+	}
+
+	// Create topic reference for SeaweedMQ (using default Kafka namespace)
+	t := topic.NewTopic(DefaultKafkaNamespace, topicName)
+
+	// Try to read Kafka metadata file (stored alongside SMQ's topic.conf)
+	data, err := filer.ReadInsideFiler(h.filerClient, t.Dir(), KafkaMetadataFile)
+	if err != nil {
+		// If metadata file doesn't exist, return default metadata
+		return &TopicMetadata{
+			TopicName:     topicName,
+			IsSchematized: false,
+			Properties:    make(map[string]string),
+			CreatedAt:     time.Now(),
+			UpdatedAt:     time.Now(),
+		}, nil
+	}
+
+	// Parse the metadata JSON
+	var metadata TopicMetadata
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return nil, fmt.Errorf("failed to parse topic metadata for topic %s: %w", topicName, err)
+	}
+
+	// Ensure the topic name matches
+	metadata.TopicName = topicName
+
+	return &metadata, nil
+}
+
+// isSchematizedTopicFromMetadata checks if a topic is schematized using cached metadata
+func (h *Handler) isSchematizedTopicFromMetadata(topicName string) bool {
+	metadata, err := h.getTopicMetadata(topicName)
+	if err != nil {
+		// Fallback to the existing schema detection logic
+		return h.isSchematizedTopic(topicName)
+	}
+
+	return metadata.IsSchematized
 }

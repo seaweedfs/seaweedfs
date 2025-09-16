@@ -179,7 +179,9 @@ func (s *Server) GetHandler() *protocol.Handler {
 // GetListenerAddr returns the actual listening address and port
 func (s *Server) GetListenerAddr() (string, int) {
 	if s.ln == nil {
-		return "localhost", 9092 // fallback
+		// Return empty values to indicate address not available yet
+		// The caller should handle this appropriately
+		return "", 0
 	}
 
 	addr := s.ln.Addr().String()
@@ -203,5 +205,7 @@ func (s *Server) GetListenerAddr() (string, int) {
 		}
 	}
 
-	return "localhost", 9092 // fallback
+	// This should not happen if the listener was set up correctly
+	glog.Warningf("Unable to parse listener address: %s", addr)
+	return "", 0
 }

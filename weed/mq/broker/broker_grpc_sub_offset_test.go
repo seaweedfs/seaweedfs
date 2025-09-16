@@ -224,7 +224,7 @@ func TestPartitionIdentityConsistency(t *testing.T) {
 func TestBrokerOffsetManager_GetSubscription_Fixed(t *testing.T) {
 	// Test that GetSubscription now works correctly after the fix
 
-	storage := offset.NewInMemoryOffsetStorage()
+	storage := NewInMemoryOffsetStorageForTesting()
 	offsetManager := NewBrokerOffsetManagerWithStorage(storage)
 
 	// Create test topic and partition
@@ -275,7 +275,7 @@ func TestBrokerOffsetManager_GetSubscription_Fixed(t *testing.T) {
 func TestBrokerOffsetManager_ListActiveSubscriptions_Fixed(t *testing.T) {
 	// Test that ListActiveSubscriptions now works correctly after the fix
 
-	storage := offset.NewInMemoryOffsetStorage()
+	storage := NewInMemoryOffsetStorageForTesting()
 	offsetManager := NewBrokerOffsetManagerWithStorage(storage)
 
 	// Create test topic and partition
@@ -340,7 +340,7 @@ func TestBrokerOffsetManager_ListActiveSubscriptions_Fixed(t *testing.T) {
 func TestMessageQueueBroker_ListActiveSubscriptions_Fixed(t *testing.T) {
 	// Test that the broker-level ListActiveSubscriptions now works correctly
 
-	storage := offset.NewInMemoryOffsetStorage()
+	storage := NewInMemoryOffsetStorageForTesting()
 	offsetManager := NewBrokerOffsetManagerWithStorage(storage)
 
 	broker := &MessageQueueBroker{
@@ -426,8 +426,8 @@ func TestSingleWriterPerPartitionCorrectness(t *testing.T) {
 	// Test that demonstrates correctness under single-writer-per-partition model
 
 	// Simulate two brokers with separate offset managers but same partition
-	storage1 := offset.NewInMemoryOffsetStorage()
-	storage2 := offset.NewInMemoryOffsetStorage()
+	storage1 := NewInMemoryOffsetStorageForTesting()
+	storage2 := NewInMemoryOffsetStorageForTesting()
 
 	offsetManager1 := NewBrokerOffsetManagerWithStorage(storage1)
 	offsetManager2 := NewBrokerOffsetManagerWithStorage(storage2)
@@ -527,7 +527,7 @@ func TestSingleWriterPerPartitionCorrectness(t *testing.T) {
 func TestEndToEndWorkflowAfterFixes(t *testing.T) {
 	// Test the complete workflow with all fixes applied
 
-	storage := offset.NewInMemoryOffsetStorage()
+	storage := NewInMemoryOffsetStorageForTesting()
 	offsetManager := NewBrokerOffsetManagerWithStorage(storage)
 
 	broker := &MessageQueueBroker{
