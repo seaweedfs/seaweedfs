@@ -4,10 +4,11 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/filer_client"
-	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
+	"github.com/seaweedfs/seaweedfs/weed/mq/kafka"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -47,10 +48,13 @@ func (s *SMQOffsetStorage) SaveConsumerOffset(key ConsumerOffsetKey, kafkaOffset
 		Name:      key.Topic,
 	}
 
+	// Use proper Kafka partition mapping for SMQ ranges
+	smqPartition := kafka.CreateSMQPartition(key.Partition, time.Now().UnixNano())
 	p := topic.Partition{
-		RingSize:   pub_balancer.MaxPartitionCount,
-		RangeStart: int32(key.Partition),
-		RangeStop:  int32(key.Partition),
+		RingSize:   smqPartition.RingSize,
+		RangeStart: smqPartition.RangeStart,
+		RangeStop:  smqPartition.RangeStop,
+		UnixTimeNs: smqPartition.UnixTimeNs,
 	}
 
 	partitionDir := topic.PartitionDir(t, p)
@@ -108,10 +112,13 @@ func (s *SMQOffsetStorage) getCommittedOffset(key ConsumerOffsetKey) (int64, err
 		Name:      key.Topic,
 	}
 
+	// Use proper Kafka partition mapping for SMQ ranges
+	smqPartition := kafka.CreateSMQPartition(key.Partition, time.Now().UnixNano())
 	p := topic.Partition{
-		RingSize:   pub_balancer.MaxPartitionCount,
-		RangeStart: int32(key.Partition),
-		RangeStop:  int32(key.Partition),
+		RingSize:   smqPartition.RingSize,
+		RangeStart: smqPartition.RangeStart,
+		RangeStop:  smqPartition.RangeStop,
+		UnixTimeNs: smqPartition.UnixTimeNs,
 	}
 
 	partitionDir := topic.PartitionDir(t, p)
