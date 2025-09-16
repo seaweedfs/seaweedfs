@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/mq/kafka"
 	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 )
@@ -34,15 +35,8 @@ func (m *KafkaToSMQMapper) KafkaOffsetToSMQPartitionOffset(
 		return nil, fmt.Errorf("failed to find SMQ timestamp for Kafka offset %d: %w", kafkaOffset, err)
 	}
 
-	// Step 2: Create SMQ Partition
-	// SMQ uses a ring-based partitioning scheme
-	rangeSize := int32(pub_balancer.MaxPartitionCount / 32) // Calculate dynamic range size
-	smqPartition := &schema_pb.Partition{
-		RingSize:   pub_balancer.MaxPartitionCount,          // Standard ring size
-		RangeStart: int32(kafkaPartition) * rangeSize,       // Map Kafka partition to ring range
-		RangeStop:  (int32(kafkaPartition)+1)*rangeSize - 1, // Each Kafka partition gets calculated slots
-		UnixTimeNs: smqTimestamp,                            // When this partition mapping was created
-	}
+	// Step 2: Create SMQ Partition using centralized utility
+	smqPartition := kafka.CreateSMQPartition(kafkaPartition, smqTimestamp)
 
 	// Step 3: Create PartitionOffset with the mapped timestamp
 	partitionOffset := &schema_pb.PartitionOffset{
@@ -114,14 +108,8 @@ func (m *KafkaToSMQMapper) CreateSMQSubscriptionRequest(
 		}
 	}
 
-	// Create SMQ partition mapping
-	rangeSize := int32(pub_balancer.MaxPartitionCount / 32) // Calculate dynamic range size
-	smqPartition := &schema_pb.Partition{
-		RingSize:   pub_balancer.MaxPartitionCount,
-		RangeStart: int32(kafkaPartition) * rangeSize,
-		RangeStop:  (int32(kafkaPartition)+1)*rangeSize - 1,
-		UnixTimeNs: time.Now().UnixNano(),
-	}
+	// Create SMQ partition mapping using centralized utility
+	smqPartition := kafka.CreateSMQPartition(kafkaPartition, time.Now().UnixNano())
 
 	partitionOffset := &schema_pb.PartitionOffset{
 		Partition: smqPartition,
@@ -133,9 +121,8 @@ func (m *KafkaToSMQMapper) CreateSMQSubscriptionRequest(
 
 // ExtractKafkaPartitionFromSMQPartition extracts the Kafka partition number from SMQ Partition
 func ExtractKafkaPartitionFromSMQPartition(smqPartition *schema_pb.Partition) int32 {
-	// Reverse the mapping: SMQ range → Kafka partition
-	rangeSize := int32(pub_balancer.MaxPartitionCount / 32)
-	return smqPartition.RangeStart / rangeSize
+	// Use centralized utility for consistent extraction
+	return kafka.ExtractKafkaPartitionFromSMQRange(smqPartition.RangeStart)
 }
 
 // OffsetMappingInfo provides debugging information about the mapping

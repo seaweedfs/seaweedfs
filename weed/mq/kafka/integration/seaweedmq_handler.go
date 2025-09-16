@@ -12,8 +12,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	"github.com/seaweedfs/seaweedfs/weed/mq/kafka"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
-	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
@@ -919,11 +919,7 @@ func (bc *BrokerClient) getOrCreatePublisher(topic string, partition int32) (*Br
 					Namespace: "kafka",
 					Name:      topic,
 				},
-				Partition: &schema_pb.Partition{
-					RingSize:   pub_balancer.MaxPartitionCount, // Use the standard ring size constant
-					RangeStart: partition * 32,
-					RangeStop:  (partition+1)*32 - 1,
-				},
+				Partition:     kafka.CreateSMQPartition(partition, time.Now().UnixNano()),
 				AckInterval:   100,
 				PublisherName: "kafka-gateway",
 			},
@@ -978,11 +974,7 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 					Name:      topic,
 				},
 				PartitionOffset: &schema_pb.PartitionOffset{
-					Partition: &schema_pb.Partition{
-						RingSize:   pub_balancer.MaxPartitionCount,
-						RangeStart: partition * 32,
-						RangeStop:  (partition+1)*32 - 1,
-					},
+					Partition: kafka.CreateSMQPartition(partition, time.Now().UnixNano()),
 					StartTsNs: startOffset,
 				},
 				OffsetType:        schema_pb.OffsetType_EXACT_TS_NS,

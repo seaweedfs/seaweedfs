@@ -9,8 +9,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/seaweedfs/seaweedfs/weed/mq/kafka"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
-	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_agent_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 )
@@ -311,13 +311,8 @@ func (ac *AgentClient) createSubscribeSession(topic string, partition int32, sta
 			},
 			PartitionOffsets: []*schema_pb.PartitionOffset{
 				{
-					// Map Kafka partition to specific SMQ ring range
-					// Calculate range size dynamically based on MaxPartitionCount
-					Partition: &schema_pb.Partition{
-						RingSize:   pub_balancer.MaxPartitionCount,                             // Standard ring size
-						RangeStart: partition * int32(pub_balancer.MaxPartitionCount/32),       // Map Kafka partition to ring range
-						RangeStop:  (partition+1)*int32(pub_balancer.MaxPartitionCount/32) - 1, // Dynamic range calculation
-					},
+					// Map Kafka partition to specific SMQ ring range using centralized utility
+					Partition: kafka.CreateSMQPartition(partition, time.Now().UnixNano()),
 					StartTsNs: startOffset, // Use offset as timestamp for now
 				},
 			},
