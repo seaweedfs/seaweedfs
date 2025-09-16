@@ -204,6 +204,9 @@ func (h *Handler) SetBrokerAddress(host string, port int) {
 func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 	connectionID := fmt.Sprintf("%s->%s", conn.RemoteAddr(), conn.LocalAddr())
 
+	// Record connection metrics
+	RecordConnectionMetrics()
+
 	// Set connection context for this connection
 	h.connContext = &ConnectionContext{
 		RemoteAddr:   conn.RemoteAddr(),
@@ -212,7 +215,8 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 	}
 
 	defer func() {
-		fmt.Printf("DEBUG: [%s] Connection closing\n", connectionID)
+		Debug("[%s] Connection closing", connectionID)
+		RecordDisconnectionMetrics()
 		h.connContext = nil // Clear connection context
 		conn.Close()
 	}()
@@ -390,6 +394,9 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		// Handle the request based on API key and version
 		var response []byte
 		var err error
+		
+		// Record request start time for latency tracking
+		requestStart := time.Now()
 
 		Debug("API REQUEST - Key: %d (%s), Version: %d, Correlation: %d", apiKey, getAPIName(apiKey), apiVersion, correlationID)
 		switch apiKey {
@@ -467,7 +474,10 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			err = fmt.Errorf("unsupported API key: %d (version %d)", apiKey, apiVersion)
 		}
 
+		// Record metrics based on success/error
+		requestLatency := time.Since(requestStart)
 		if err != nil {
+			RecordErrorMetrics(apiKey, requestLatency)
 			return fmt.Errorf("handle request: %w", err)
 		}
 
@@ -476,8 +486,12 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		if err := h.writeResponseWithTimeout(w, response, timeoutConfig.WriteTimeout); err != nil {
 			errorCode := HandleTimeoutError(err, "write")
 			Error("[%s] Error sending response: %v (code: %d)", connectionID, err, errorCode)
+			RecordErrorMetrics(apiKey, requestLatency)
 			return fmt.Errorf("send response: %w", err)
 		}
+
+		// Record successful request metrics
+		RecordRequestMetrics(apiKey, requestLatency)
 
 		// Minimal flush logging
 		// fmt.Printf("DEBUG: API %d flushed\n", apiKey)
