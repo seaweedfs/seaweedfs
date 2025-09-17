@@ -38,8 +38,6 @@ type testSeaweedMQHandler struct {
 func NewTestHandler() *Handler {
 	return &Handler{
 		groupCoordinator: consumer.NewGroupCoordinator(),
-		brokerHost:       "localhost",
-		brokerPort:       9092,
 		seaweedMQHandler: &basicSeaweedMQHandler{
 			topics:   make(map[string]bool),
 			ledgers:  make(map[string]*offset.Ledger),
@@ -53,8 +51,6 @@ func NewTestHandler() *Handler {
 func NewSimpleTestHandler() *Handler {
 	return &Handler{
 		groupCoordinator: consumer.NewGroupCoordinator(),
-		brokerHost:       "localhost",
-		brokerPort:       9092,
 		seaweedMQHandler: &testSeaweedMQHandler{
 			topics:  make(map[string]bool),
 			ledgers: make(map[string]*offset.Ledger),
@@ -215,7 +211,10 @@ func (b *basicSeaweedMQHandler) GetFilerClient() filer_pb.SeaweedFilerClient {
 	return nil // Test handler doesn't have filer access
 }
 
-// Removed GetAvailableBrokers and LookupTopicBrokers - coordinator selection simplified
+// GetBrokerAddresses returns the discovered SMQ broker addresses for Metadata responses
+func (b *basicSeaweedMQHandler) GetBrokerAddresses() []string {
+	return []string{"localhost:17777"} // Test broker address
+}
 
 func (b *basicSeaweedMQHandler) Close() error {
 	return nil
@@ -301,7 +300,10 @@ func (t *testSeaweedMQHandler) GetFilerClient() filer_pb.SeaweedFilerClient {
 	return nil // Test handler doesn't have filer access
 }
 
-// Removed GetAvailableBrokers and LookupTopicBrokers - coordinator selection simplified
+// GetBrokerAddresses returns the discovered SMQ broker addresses for Metadata responses
+func (t *testSeaweedMQHandler) GetBrokerAddresses() []string {
+	return []string{"localhost:17777"} // Test broker address
+}
 
 func (t *testSeaweedMQHandler) Close() error {
 	return nil

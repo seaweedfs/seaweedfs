@@ -26,6 +26,9 @@ type SeaweedMQHandler struct {
 	brokerClient *BrokerClient // For broker-based connections
 	useBroker    bool          // Flag to determine which client to use
 
+	// Discovered broker addresses (for Metadata responses)
+	brokerAddresses []string
+
 	// Topic registry - still keep track of Kafka topics
 	topicsMu sync.RWMutex
 	topics   map[string]*KafkaTopicInfo
@@ -186,7 +189,10 @@ func (h *SeaweedMQHandler) GetFilerClient() filer_pb.SeaweedFilerClient {
 	return nil
 }
 
-// Removed GetAvailableBrokers and LookupTopicBrokers - coordinator selection simplified
+// GetBrokerAddresses returns the discovered SMQ broker addresses
+func (h *SeaweedMQHandler) GetBrokerAddresses() []string {
+	return h.brokerAddresses
+}
 
 // Close shuts down the handler and all connections
 func (h *SeaweedMQHandler) Close() error {
@@ -748,10 +754,11 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string) (*SeaweedMQHan
 	}
 
 	return &SeaweedMQHandler{
-		brokerClient: brokerClient,
-		useBroker:    true,
-		topics:       make(map[string]*KafkaTopicInfo),
-		ledgers:      make(map[TopicPartitionKey]*offset.Ledger),
+		brokerClient:    brokerClient,
+		useBroker:       true,
+		topics:          make(map[string]*KafkaTopicInfo),
+		ledgers:         make(map[TopicPartitionKey]*offset.Ledger),
+		brokerAddresses: brokerAddresses, // Store all discovered broker addresses
 	}, nil
 }
 

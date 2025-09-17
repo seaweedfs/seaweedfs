@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -77,7 +78,8 @@ type SeaweedMQHandlerInterface interface {
 	GetStoredRecords(topic string, partition int32, fromOffset int64, maxRecords int) ([]offset.SMQRecord, error)
 	// GetFilerClient returns a filer client for accessing SeaweedMQ metadata (optional)
 	GetFilerClient() filer_pb.SeaweedFilerClient
-	// Removed GetAvailableBrokers and LookupTopicBrokers - coordinator selection simplified
+	// GetBrokerAddresses returns the discovered SMQ broker addresses for Metadata responses
+	GetBrokerAddresses() []string
 	Close() error
 }
 
@@ -105,9 +107,11 @@ type Handler struct {
 	metadataCacheMu    sync.RWMutex
 	filerClient        filer_pb.SeaweedFilerClient
 
-	// Dynamic broker address for Metadata responses
-	brokerHost string
-	brokerPort int
+	// SMQ broker addresses discovered from masters for Metadata responses
+	smqBrokerAddresses []string
+
+	// Gateway address for coordinator registry
+	gatewayAddress string
 
 	// Connection context for tracking client information
 	connContext *ConnectionContext
@@ -137,8 +141,7 @@ func NewSeaweedMQHandler(agentAddress string) (*Handler, error) {
 		seaweedMQHandler:   smqHandler,
 		groupCoordinator:   consumer.NewGroupCoordinator(),
 		topicMetadataCache: make(map[string]*CachedTopicMetadata),
-		brokerHost:         "", // Will be set by SetBrokerAddress() when server starts
-		brokerPort:         0,  // Will be set by SetBrokerAddress() when server starts
+		smqBrokerAddresses: nil, // Will be set by SetSMQBrokerAddresses() when server starts
 	}, nil
 }
 
@@ -171,8 +174,7 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string) (*Handler, err
 		groupCoordinator:   consumer.NewGroupCoordinator(),
 		topicMetadataCache: make(map[string]*CachedTopicMetadata),
 		filerClient:        filerClient,
-		brokerHost:         "", // Will be set by SetBrokerAddress() when server starts
-		brokerPort:         0,  // Will be set by SetBrokerAddress() when server starts
+		smqBrokerAddresses: nil, // Will be set by SetSMQBrokerAddresses() when server starts
 	}, nil
 }
 
@@ -248,32 +250,41 @@ func (h *Handler) getRecordCountFromBatch(batch []byte) int32 {
 	return int32(recordCount)
 }
 
-// SetBrokerAddress updates the broker address used in Metadata responses
-func (h *Handler) SetBrokerAddress(host string, port int) {
-	h.brokerHost = host
-	h.brokerPort = port
+// SetSMQBrokerAddresses updates the SMQ broker addresses used in Metadata responses
+func (h *Handler) SetSMQBrokerAddresses(brokerAddresses []string) {
+	h.smqBrokerAddresses = brokerAddresses
 }
 
-// GetBrokerAddress returns the broker address, with fallbacks if not set
-func (h *Handler) GetBrokerAddress() (string, int) {
-	host := h.brokerHost
-	port := h.brokerPort
-
-	// Provide fallbacks if not set (for testing or before server starts)
-	if host == "" {
-		host = "localhost"
-	}
-	if port == 0 {
-		port = 9092
+// GetSMQBrokerAddresses returns the SMQ broker addresses
+func (h *Handler) GetSMQBrokerAddresses() []string {
+	// First try to get from the SeaweedMQ handler (preferred)
+	if h.seaweedMQHandler != nil {
+		if brokerAddresses := h.seaweedMQHandler.GetBrokerAddresses(); len(brokerAddresses) > 0 {
+			return brokerAddresses
+		}
 	}
 
-	return host, port
+	// Fallback to manually set addresses
+	if len(h.smqBrokerAddresses) > 0 {
+		return h.smqBrokerAddresses
+	}
+
+	// Final fallback for testing
+	return []string{"localhost:17777"}
 }
 
-// GetGatewayAddress returns the current gateway address as a string
+// GetGatewayAddress returns the current gateway address as a string (for coordinator registry)
 func (h *Handler) GetGatewayAddress() string {
-	host, port := h.GetBrokerAddress()
-	return fmt.Sprintf("%s:%d", host, port)
+	if h.gatewayAddress != "" {
+		return h.gatewayAddress
+	}
+	// Fallback for testing
+	return "localhost:9092"
+}
+
+// SetGatewayAddress sets the gateway address for coordinator registry
+func (h *Handler) SetGatewayAddress(address string) {
+	h.gatewayAddress = address
 }
 
 // SetCoordinatorRegistry sets the coordinator registry for this handler
@@ -284,6 +295,25 @@ func (h *Handler) SetCoordinatorRegistry(registry CoordinatorRegistryInterface) 
 // GetCoordinatorRegistry returns the coordinator registry
 func (h *Handler) GetCoordinatorRegistry() CoordinatorRegistryInterface {
 	return h.coordinatorRegistry
+}
+
+// parseBrokerAddress parses a broker address string (host:port) into host and port
+func (h *Handler) parseBrokerAddress(address string) (host string, port int, err error) {
+	// Split by the last colon to handle IPv6 addresses
+	lastColon := strings.LastIndex(address, ":")
+	if lastColon == -1 {
+		return "", 0, fmt.Errorf("invalid broker address format: %s", address)
+	}
+
+	host = address[:lastColon]
+	portStr := address[lastColon+1:]
+
+	port, err = strconv.Atoi(portStr)
+	if err != nil {
+		return "", 0, fmt.Errorf("invalid port in broker address %s: %v", address, err)
+	}
+
+	return host, port, nil
 }
 
 // HandleConn processes a single client connection
@@ -736,26 +766,43 @@ func (h *Handler) HandleMetadataV0(correlationID uint32, requestBody []byte) ([]
 	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
 	response = append(response, correlationIDBytes...)
 
-	// Brokers array length (4 bytes) - 1 broker (this gateway)
-	response = append(response, 0, 0, 0, 1)
+	// Get SMQ broker addresses
+	brokerAddresses := h.GetSMQBrokerAddresses()
 
-	// Broker 0: node_id(4) + host(STRING) + port(4)
-	response = append(response, 0, 0, 0, 1) // node_id = 1 (consistent with partitions)
+	// Brokers array length (4 bytes)
+	brokerCount := len(brokerAddresses)
+	brokerCountBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(brokerCountBytes, uint32(brokerCount))
+	response = append(response, brokerCountBytes...)
 
-	// Use dynamic broker address set by the server
-	host := h.brokerHost
-	port := h.brokerPort
-	Debug("Advertising broker (v0) at %s:%d", host, port)
+	// Add each SMQ broker
+	for i, brokerAddr := range brokerAddresses {
+		nodeID := int32(i + 1) // Node IDs start from 1
 
-	// Host (STRING: 2 bytes length + bytes)
-	hostLen := uint16(len(host))
-	response = append(response, byte(hostLen>>8), byte(hostLen))
-	response = append(response, []byte(host)...)
+		// Parse broker address (host:port)
+		host, port, err := h.parseBrokerAddress(brokerAddr)
+		if err != nil {
+			Debug("Failed to parse broker address %s: %v", brokerAddr, err)
+			continue
+		}
 
-	// Port (4 bytes)
-	portBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(portBytes, uint32(port))
-	response = append(response, portBytes...)
+		Debug("Advertising SMQ broker (v0) node %d at %s:%d", nodeID, host, port)
+
+		// Broker: node_id(4) + host(STRING) + port(4)
+		nodeIDBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(nodeIDBytes, uint32(nodeID))
+		response = append(response, nodeIDBytes...)
+
+		// Host (STRING: 2 bytes length + bytes)
+		hostLen := uint16(len(host))
+		response = append(response, byte(hostLen>>8), byte(hostLen))
+		response = append(response, []byte(host)...)
+
+		// Port (4 bytes)
+		portBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(portBytes, uint32(port))
+		response = append(response, portBytes...)
+	}
 
 	// Parse requested topics (empty means all)
 	requestedTopics := h.parseMetadataTopics(requestBody)
@@ -846,29 +893,46 @@ func (h *Handler) HandleMetadataV1(correlationID uint32, requestBody []byte) ([]
 	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
 	response = append(response, correlationIDBytes...)
 
-	// Brokers array length (4 bytes) - 1 broker (this gateway)
-	response = append(response, 0, 0, 0, 1)
+	// Get SMQ broker addresses
+	brokerAddresses := h.GetSMQBrokerAddresses()
 
-	// Broker 0: node_id(4) + host(STRING) + port(4) + rack(STRING)
-	response = append(response, 0, 0, 0, 1) // node_id = 1
+	// Brokers array length (4 bytes)
+	brokerCount := len(brokerAddresses)
+	brokerCountBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(brokerCountBytes, uint32(brokerCount))
+	response = append(response, brokerCountBytes...)
 
-	// Use dynamic broker address set by the server
-	host := h.brokerHost
-	port := h.brokerPort
-	Debug("Advertising broker (v1) at %s:%d", host, port)
+	// Add each SMQ broker
+	for i, brokerAddr := range brokerAddresses {
+		nodeID := int32(i + 1) // Node IDs start from 1
 
-	// Host (STRING: 2 bytes length + bytes)
-	hostLen := uint16(len(host))
-	response = append(response, byte(hostLen>>8), byte(hostLen))
-	response = append(response, []byte(host)...)
+		// Parse broker address (host:port)
+		host, port, err := h.parseBrokerAddress(brokerAddr)
+		if err != nil {
+			Debug("Failed to parse broker address %s: %v", brokerAddr, err)
+			continue
+		}
 
-	// Port (4 bytes)
-	portBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(portBytes, uint32(port))
-	response = append(response, portBytes...)
+		Debug("Advertising SMQ broker (v1) node %d at %s:%d", nodeID, host, port)
 
-	// Rack (STRING: 2 bytes length + bytes) - v1 addition, non-nullable empty string
-	response = append(response, 0, 0) // empty string
+		// Broker: node_id(4) + host(STRING) + port(4) + rack(STRING)
+		nodeIDBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(nodeIDBytes, uint32(nodeID))
+		response = append(response, nodeIDBytes...)
+
+		// Host (STRING: 2 bytes length + bytes)
+		hostLen := uint16(len(host))
+		response = append(response, byte(hostLen>>8), byte(hostLen))
+		response = append(response, []byte(host)...)
+
+		// Port (4 bytes)
+		portBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(portBytes, uint32(port))
+		response = append(response, portBytes...)
+
+		// Rack (STRING: 2 bytes length + bytes) - v1 addition, non-nullable empty string
+		response = append(response, 0, 0) // empty string
+	}
 
 	// ControllerID (4 bytes) - v1 addition
 	response = append(response, 0, 0, 0, 1) // controller_id = 1

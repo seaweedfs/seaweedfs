@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"strconv"
 	"strings"
@@ -102,13 +103,15 @@ func (s *Server) Start() error {
 	}
 	s.ln = ln
 
-	// Update handler with actual broker address for Metadata responses
+	// Get gateway address for coordinator registry
 	host, port := s.GetListenerAddr()
-	s.handler.SetBrokerAddress(host, port)
-	glog.V(1).Infof("Kafka gateway advertising broker at %s:%d", host, port)
+	gatewayAddress := fmt.Sprintf("%s:%d", host, port)
+	glog.V(1).Infof("Kafka gateway started at %s, will advertise SMQ brokers in Metadata responses", gatewayAddress)
+
+	// Set gateway address in handler for coordinator registry
+	s.handler.SetGatewayAddress(gatewayAddress)
 
 	// Initialize coordinator registry for distributed coordinator assignment
-	gatewayAddress := s.handler.GetGatewayAddress()
 	seedFiler := pb.ServerAddress(strings.Split(s.opts.Masters, ",")[0]) // Use first master as seed filer
 	grpcDialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
 

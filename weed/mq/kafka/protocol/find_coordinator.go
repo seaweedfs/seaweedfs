@@ -3,6 +3,8 @@ package protocol
 import (
 	"encoding/binary"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -214,7 +216,12 @@ func (h *Handler) findCoordinatorForGroup(groupID string) (host string, port int
 	if registry == nil {
 		// Fallback to current gateway if no registry available
 		Debug("No coordinator registry available, using current gateway as coordinator for group %s", groupID)
-		host, port = h.GetBrokerAddress()
+		gatewayAddr := h.GetGatewayAddress()
+		host, port, err := h.parseGatewayAddress(gatewayAddr)
+		if err != nil {
+			Debug("Failed to parse gateway address %s: %v", gatewayAddr, err)
+			return "localhost", 9092, 1, nil
+		}
 		nodeID = 1
 		return host, port, nodeID, nil
 	}
@@ -242,7 +249,12 @@ func (h *Handler) handleCoordinatorAssignmentAsLeader(groupID string, registry C
 	if err != nil {
 		Debug("Failed to assign coordinator for group %s: %v", groupID, err)
 		// Fallback to current gateway
-		host, port = h.GetBrokerAddress()
+		gatewayAddr := h.GetGatewayAddress()
+		host, port, err := h.parseGatewayAddress(gatewayAddr)
+		if err != nil {
+			Debug("Failed to parse gateway address %s: %v", gatewayAddr, err)
+			return "localhost", 9092, 1, nil
+		}
 		nodeID = 1
 		return host, port, nodeID, nil
 	}
@@ -258,7 +270,12 @@ func (h *Handler) requestCoordinatorFromLeader(groupID string, registry Coordina
 	leaderAddress, err := h.waitForLeader(registry, 30*time.Second) // 30 second timeout
 	if err != nil {
 		Debug("Failed to wait for leader election: %v, falling back to current gateway for group %s", err, groupID)
-		host, port = h.GetBrokerAddress()
+		gatewayAddr := h.GetGatewayAddress()
+		host, port, err := h.parseGatewayAddress(gatewayAddr)
+		if err != nil {
+			Debug("Failed to parse gateway address %s: %v", gatewayAddr, err)
+			return "localhost", 9092, 1, nil
+		}
 		nodeID = 1
 		return host, port, nodeID, nil
 	}
@@ -276,7 +293,12 @@ func (h *Handler) requestCoordinatorFromLeader(groupID string, registry Coordina
 	// use current gateway as fallback. In a full implementation, this would make
 	// an RPC call to the leader gateway.
 	Debug("Using current gateway as coordinator for group %s (inter-gateway RPC not implemented)", groupID)
-	host, port = h.GetBrokerAddress()
+	gatewayAddr := h.GetGatewayAddress()
+	host, port, err := h.parseGatewayAddress(gatewayAddr)
+	if err != nil {
+		Debug("Failed to parse gateway address %s: %v", gatewayAddr, err)
+		return "localhost", 9092, 1, nil
+	}
 	nodeID = 1
 	return host, port, nodeID, nil
 }
@@ -294,6 +316,25 @@ func (h *Handler) waitForLeader(registry CoordinatorRegistryInterface, timeout t
 
 	Debug("Gateway leader elected: %s", leaderAddress)
 	return leaderAddress, nil
+}
+
+// parseGatewayAddress parses a gateway address string (host:port) into host and port
+func (h *Handler) parseGatewayAddress(address string) (host string, port int, err error) {
+	// Split by the last colon to handle IPv6 addresses
+	lastColon := strings.LastIndex(address, ":")
+	if lastColon == -1 {
+		return "", 0, fmt.Errorf("invalid gateway address format: %s", address)
+	}
+
+	host = address[:lastColon]
+	portStr := address[lastColon+1:]
+
+	port, err = strconv.Atoi(portStr)
+	if err != nil {
+		return "", 0, fmt.Errorf("invalid port in gateway address %s: %v", address, err)
+	}
+
+	return host, port, nil
 }
 
 // parseAddress parses a gateway address and returns host, port, and nodeID
