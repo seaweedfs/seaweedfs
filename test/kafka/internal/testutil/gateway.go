@@ -45,8 +45,12 @@ func NewGatewayTestServer(t *testing.T, opts GatewayOptions) *GatewayTestServer 
 			Masters: opts.Masters,
 		})
 	} else {
-		srv = gateway.NewTestServer(gateway.Options{
-			Listen: opts.Listen,
+		// For testing without real SeaweedMQ masters, use localhost masters
+		// This assumes a test environment where masters might not be available
+		// The test should handle connection failures gracefully
+		srv = gateway.NewServer(gateway.Options{
+			Listen:  opts.Listen,
+			Masters: "localhost:9333", // Default test master address
 		})
 	}
 

@@ -7,7 +7,7 @@ import (
 )
 
 // NewTestServer creates a server for testing with in-memory handlers
-// This should ONLY be used for testing - never in production  
+// This should ONLY be used for testing - never in production
 // WARNING: This function includes test-only components in production binary
 func NewTestServer(opts Options) *Server {
 	ctx, cancel := context.WithCancel(context.Background())
