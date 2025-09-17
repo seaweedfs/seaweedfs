@@ -192,7 +192,7 @@ func (h *Handler) handleFindCoordinatorV2(correlationID uint32, requestBody []by
 func (h *Handler) findCoordinatorForGroup(groupID string) (host string, port int, nodeID int32, err error) {
 	// Always use current gateway as coordinator - simple and reliable
 	host, port = h.GetBrokerAddress()
-	
+
 	// Use fixed node ID since we always use the current gateway
 	nodeID = 1
 	return host, port, nodeID, nil
