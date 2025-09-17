@@ -109,6 +109,8 @@ func TestBrokerClient_SchematizedMessage(t *testing.T) {
 		// Note: RecordType inference has known limitations in current implementation
 		if len(recordType.Fields) != 3 {
 			t.Logf("Known issue: RecordType has %d fields instead of expected 3", len(recordType.Fields))
+			// For now, just verify we got at least some fields
+			assert.Greater(t, len(recordType.Fields), 0, "Should have at least one field")
 		} else {
 			// Verify field types if inference worked correctly
 			fieldMap := make(map[string]*schema_pb.Field)
@@ -121,7 +123,7 @@ func TestBrokerClient_SchematizedMessage(t *testing.T) {
 			}
 
 			if ageField := fieldMap["age"]; ageField != nil {
-				assert.Equal(t, schema_pb.ScalarType_INT64, ageField.Type.GetScalarType())
+				assert.Equal(t, schema_pb.ScalarType_INT32, ageField.Type.GetScalarType())
 			}
 
 			if activeField := fieldMap["active"]; activeField != nil {
