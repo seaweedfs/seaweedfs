@@ -44,9 +44,15 @@ func TestFindCoordinatorForGroup(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			handler := &Handler{
-				brokerHost: tt.brokerHost,
-				brokerPort: tt.brokerPort,
+			handler := &Handler{}
+			if tt.brokerHost != "" && tt.brokerPort != 0 {
+				handler.SetGatewayAddress(tt.brokerHost + ":" + itoa(tt.brokerPort))
+			} else if tt.brokerHost == "" && tt.brokerPort != 0 {
+				// empty host -> default host, set only port to check fallback host
+				handler.SetGatewayAddress("localhost:" + itoa(tt.brokerPort))
+			} else if tt.brokerHost != "" && tt.brokerPort == 0 {
+				// zero port -> set empty port to trigger fallback parsing
+				handler.SetGatewayAddress(tt.brokerHost + ":")
 			}
 
 			host, port, nodeID, err := handler.findCoordinatorForGroup(tt.groupID)
@@ -92,10 +98,8 @@ func TestFindCoordinatorForGroup(t *testing.T) {
 
 func TestFindCoordinatorConsistency(t *testing.T) {
 	// Test that the same group ID always returns the same coordinator
-	handler := &Handler{
-		brokerHost: "localhost",
-		brokerPort: 9092,
-	}
+	handler := &Handler{}
+	handler.SetGatewayAddress("localhost:9092")
 
 	groupID := "consistent-test-group"
 
@@ -126,10 +130,8 @@ func TestFindCoordinatorConsistency(t *testing.T) {
 }
 
 func TestFindCoordinatorV0Request(t *testing.T) {
-	handler := &Handler{
-		brokerHost: "test-broker",
-		brokerPort: 9093,
-	}
+	handler := &Handler{}
+	handler.SetGatewayAddress("test-broker:9093")
 
 	// Create a simple FindCoordinator v0 request
 	// Format: coordinator_key_size (2 bytes) + coordinator_key
@@ -157,10 +159,8 @@ func TestFindCoordinatorV0Request(t *testing.T) {
 }
 
 func TestFindCoordinatorV2Request(t *testing.T) {
-	handler := &Handler{
-		brokerHost: "test-broker",
-		brokerPort: 9093,
-	}
+	handler := &Handler{}
+	handler.SetGatewayAddress("test-broker:9093")
 
 	// Create a simple FindCoordinator v2 request
 	// Format: coordinator_key_size (2 bytes) + coordinator_key + coordinator_type (1 byte)
@@ -186,4 +186,19 @@ func TestFindCoordinatorV2Request(t *testing.T) {
 	}
 
 	t.Logf("FindCoordinator v2 response: %d bytes", len(response))
+}
+
+// itoa is a tiny helper to avoid importing strconv in tests
+func itoa(i int) string {
+	if i == 0 {
+		return "0"
+	}
+	var buf [20]byte
+	pos := len(buf)
+	for i > 0 {
+		pos--
+		buf[pos] = byte('0' + i%10)
+		i /= 10
+	}
+	return string(buf[pos:])
 }
