@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -14,10 +13,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
 // SeaweedMQHandler integrates Kafka protocol handlers with real SeaweedMQ storage
@@ -25,6 +26,9 @@ type SeaweedMQHandler struct {
 	agentClient  *AgentClient  // For agent-based connections
 	brokerClient *BrokerClient // For broker-based connections
 	useBroker    bool          // Flag to determine which client to use
+
+	// Master client for service discovery
+	masterClient *wdclient.MasterClient
 
 	// Discovered broker addresses (for Metadata responses)
 	brokerAddresses []string
@@ -187,6 +191,15 @@ func (h *SeaweedMQHandler) GetFilerClient() filer_pb.SeaweedFilerClient {
 	}
 	// Agent client doesn't have filer access
 	return nil
+}
+
+// GetFilerAddress returns the filer address used by this handler
+func (h *SeaweedMQHandler) GetFilerAddress() string {
+	if h.useBroker && h.brokerClient != nil {
+		return h.brokerClient.GetFilerAddress()
+	}
+	// Agent client doesn't have filer access
+	return ""
 }
 
 // GetBrokerAddresses returns the discovered SMQ broker addresses
@@ -712,14 +725,20 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string) (*SeaweedMQHan
 		return nil, fmt.Errorf("masters required - SeaweedMQ infrastructure must be configured")
 	}
 
-	// Parse master addresses
-	masterAddresses := strings.Split(masters, ",")
-	if len(masterAddresses) == 0 {
-		return nil, fmt.Errorf("no master addresses provided")
+	// Parse master addresses using SeaweedFS utilities
+	masterServerAddresses := pb.ServerAddresses(masters).ToAddresses()
+	if len(masterServerAddresses) == 0 {
+		return nil, fmt.Errorf("no valid master addresses provided")
 	}
 
-	// Discover brokers from masters
-	brokerAddresses, err := discoverBrokers(masterAddresses, filerGroup)
+	// Create master client for service discovery
+	grpcDialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	masterDiscovery := pb.ServerAddresses(masters).ToServiceDiscovery()
+	clientHost := pb.ServerAddress("kafka-gateway") // Use a placeholder client host
+	masterClient := wdclient.NewMasterClient(grpcDialOption, filerGroup, "kafka-gateway", clientHost, "", "", *masterDiscovery)
+
+	// Discover brokers from masters using master client
+	brokerAddresses, err := discoverBrokersWithMasterClient(masterClient, filerGroup)
 	if err != nil {
 		return nil, fmt.Errorf("failed to discover brokers: %v", err)
 	}
@@ -728,8 +747,8 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string) (*SeaweedMQHan
 		return nil, fmt.Errorf("no brokers discovered from masters")
 	}
 
-	// Discover filers from masters
-	filerAddresses, err := discoverFilers(masterAddresses, filerGroup)
+	// Discover filers from masters using master client
+	filerAddresses, err := discoverFilersWithMasterClient(masterClient, filerGroup)
 	if err != nil {
 		return nil, fmt.Errorf("failed to discover filers: %v", err)
 	}
@@ -756,33 +775,25 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string) (*SeaweedMQHan
 	return &SeaweedMQHandler{
 		brokerClient:    brokerClient,
 		useBroker:       true,
+		masterClient:    masterClient,
 		topics:          make(map[string]*KafkaTopicInfo),
 		ledgers:         make(map[TopicPartitionKey]*offset.Ledger),
 		brokerAddresses: brokerAddresses, // Store all discovered broker addresses
 	}, nil
 }
 
-// discoverBrokers queries masters for available brokers
-func discoverBrokers(masterAddresses []string, filerGroup string) ([]string, error) {
+// discoverBrokersWithMasterClient queries masters for available brokers using reusable master client
+func discoverBrokersWithMasterClient(masterClient *wdclient.MasterClient, filerGroup string) ([]string, error) {
 	var brokers []string
 
-	// Try each master until we get a response
-	for _, masterAddr := range masterAddresses {
-		conn, err := grpc.Dial(masterAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-		if err != nil {
-			continue // Try next master
-		}
-		defer conn.Close()
-
-		client := master_pb.NewSeaweedClient(conn)
-
+	err := masterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
 			ClientType: cluster.BrokerType,
 			FilerGroup: filerGroup,
-			Limit:      100,
+			Limit:      1000,
 		})
 		if err != nil {
-			continue // Try next master
+			return err
 		}
 
 		// Extract broker addresses from response
@@ -792,35 +803,24 @@ func discoverBrokers(masterAddresses []string, filerGroup string) ([]string, err
 			}
 		}
 
-		if len(brokers) > 0 {
-			break // Found brokers, no need to try other masters
-		}
-	}
+		return nil
+	})
 
-	return brokers, nil
+	return brokers, err
 }
 
-// discoverFilers queries masters for available filers
-func discoverFilers(masterAddresses []string, filerGroup string) ([]string, error) {
+// discoverFilersWithMasterClient queries masters for available filers using reusable master client
+func discoverFilersWithMasterClient(masterClient *wdclient.MasterClient, filerGroup string) ([]string, error) {
 	var filers []string
 
-	// Try each master until we get a response
-	for _, masterAddr := range masterAddresses {
-		conn, err := grpc.Dial(masterAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-		if err != nil {
-			continue // Try next master
-		}
-		defer conn.Close()
-
-		client := master_pb.NewSeaweedClient(conn)
-
+	err := masterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
 			ClientType: cluster.FilerType,
 			FilerGroup: filerGroup,
-			Limit:      100,
+			Limit:      1000,
 		})
 		if err != nil {
-			continue // Try next master
+			return err
 		}
 
 		// Extract filer addresses from response
@@ -830,12 +830,10 @@ func discoverFilers(masterAddresses []string, filerGroup string) ([]string, erro
 			}
 		}
 
-		if len(filers) > 0 {
-			break // Found filers, no need to try other masters
-		}
-	}
+		return nil
+	})
 
-	return filers, nil
+	return filers, err
 }
 
 // BrokerClient wraps the SeaweedMQ Broker gRPC client for Kafka gateway integration
@@ -948,6 +946,11 @@ func (bc *BrokerClient) Close() error {
 // GetFilerClient returns the filer client for metadata access
 func (bc *BrokerClient) GetFilerClient() filer_pb.SeaweedFilerClient {
 	return bc.filerClient
+}
+
+// GetFilerAddress returns the filer address used by this broker client
+func (bc *BrokerClient) GetFilerAddress() string {
+	return bc.filerAddress
 }
 
 // PublishRecord publishes a single record to SeaweedMQ broker

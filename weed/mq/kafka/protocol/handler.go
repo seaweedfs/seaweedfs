@@ -153,20 +153,25 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string) (*Handler, err
 		return nil, err
 	}
 
-	// Create SMQ offset storage using the first master as filer address
-	masterAddresses := strings.Split(masters, ",")
-	filerAddress := masterAddresses[0] // Use first master as filer
+	// The integration layer already handles master address parsing and filer discovery
+	// Get filer client from SMQ handler for metadata access
+	filerClient := smqHandler.GetFilerClient()
+	if filerClient == nil {
+		return nil, fmt.Errorf("no filer client available from SMQ handler - filer discovery may have failed")
+	}
+
+	// Create SMQ offset storage using the proper filer address from integration layer
+	filerAddress := smqHandler.GetFilerAddress()
+	if filerAddress == "" {
+		return nil, fmt.Errorf("no filer address available from SMQ handler - filer discovery may have failed")
+	}
 
 	smqOffsetStorage, err := offset.NewSMQOffsetStorage(filerAddress)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create SMQ offset storage: %w", err)
+		return nil, fmt.Errorf("failed to create SMQ offset storage with filer %s: %w", filerAddress, err)
 	}
 
-	// Initialize filer client from SMQ handler if available
-	var filerClient filer_pb.SeaweedFilerClient
-	if smqHandler != nil {
-		filerClient = smqHandler.GetFilerClient()
-	}
+	// filerClient is already obtained above
 
 	return &Handler{
 		seaweedMQHandler:   smqHandler,
