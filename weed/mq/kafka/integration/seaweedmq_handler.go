@@ -12,7 +12,6 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -187,63 +186,7 @@ func (h *SeaweedMQHandler) GetFilerClient() filer_pb.SeaweedFilerClient {
 	return nil
 }
 
-// GetAvailableBrokers returns a list of available Kafka gateway addresses
-// This queries the SMQ broker leader for registered gateway instances via heartbeat registry
-func (h *SeaweedMQHandler) GetAvailableBrokers() ([]string, error) {
-	if h.useBroker && h.brokerClient != nil {
-		// For now, we need to add a method to get gateway addresses from the broker
-		// Since we removed ListKafkaGateways RPC, we'll use a simple approach:
-		// Try to get gateway addresses via a special heartbeat or fallback to broker address
-
-		// TODO: Add a simple RPC or use existing RPC to get gateway addresses
-		// For now, fallback to broker address (this will work but won't distribute load)
-		glog.V(1).Infof("Gateway registry not yet integrated with GetAvailableBrokers, using broker fallback")
-		return []string{h.brokerClient.brokerAddress}, nil
-	}
-
-	if h.agentClient != nil {
-		// For agent client, return the agent address as fallback
-		return []string{h.agentClient.agentAddress}, nil
-	}
-
-	return nil, fmt.Errorf("no active client available")
-}
-
-// LookupTopicBrokers queries SeaweedMQ to find which brokers handle a specific topic
-func (h *SeaweedMQHandler) LookupTopicBrokers(topicName string) (map[int32]string, error) {
-	if !h.useBroker || h.brokerClient == nil {
-		return nil, fmt.Errorf("broker client required for topic broker lookup")
-	}
-
-	// Create topic reference
-	pbTopic := &schema_pb.Topic{
-		Namespace: "kafka", // Default Kafka namespace
-		Name:      topicName,
-	}
-
-	// Call LookupTopicBrokers
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	resp, err := h.brokerClient.client.LookupTopicBrokers(ctx, &mq_pb.LookupTopicBrokersRequest{
-		Topic: pbTopic,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to lookup topic brokers: %v", err)
-	}
-
-	// Extract partition -> broker mapping
-	brokerMap := make(map[int32]string)
-	for _, assignment := range resp.BrokerPartitionAssignments {
-		if assignment.Partition != nil && assignment.LeaderBroker != "" {
-			// Convert SeaweedMQ partition to Kafka partition ID
-			kafkaPartition := kafka.DefaultPartitionMapper.ExtractKafkaPartitionFromSMQRange(assignment.Partition.RangeStart)
-			brokerMap[kafkaPartition] = assignment.LeaderBroker
-		}
-	}
-
-	return brokerMap, nil
-}
+// Removed GetAvailableBrokers and LookupTopicBrokers - coordinator selection simplified
 
 // Close shuts down the handler and all connections
 func (h *SeaweedMQHandler) Close() error {

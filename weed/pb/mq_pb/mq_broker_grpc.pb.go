@@ -37,7 +37,6 @@ const (
 	SeaweedMessaging_PublishFollowMe_FullMethodName            = "/messaging_pb.SeaweedMessaging/PublishFollowMe"
 	SeaweedMessaging_SubscribeFollowMe_FullMethodName          = "/messaging_pb.SeaweedMessaging/SubscribeFollowMe"
 	SeaweedMessaging_GetUnflushedMessages_FullMethodName       = "/messaging_pb.SeaweedMessaging/GetUnflushedMessages"
-	SeaweedMessaging_KafkaGatewayHeartbeat_FullMethodName      = "/messaging_pb.SeaweedMessaging/KafkaGatewayHeartbeat"
 )
 
 // SeaweedMessagingClient is the client API for SeaweedMessaging service.
@@ -70,8 +69,6 @@ type SeaweedMessagingClient interface {
 	SubscribeFollowMe(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[SubscribeFollowMeRequest, SubscribeFollowMeResponse], error)
 	// SQL query support - get unflushed messages from broker's in-memory buffer (streaming)
 	GetUnflushedMessages(ctx context.Context, in *GetUnflushedMessagesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GetUnflushedMessagesResponse], error)
-	// Kafka Gateway Registration (heartbeat-only approach)
-	KafkaGatewayHeartbeat(ctx context.Context, in *KafkaGatewayHeartbeatRequest, opts ...grpc.CallOption) (*KafkaGatewayHeartbeatResponse, error)
 }
 
 type seaweedMessagingClient struct {
@@ -289,16 +286,6 @@ func (c *seaweedMessagingClient) GetUnflushedMessages(ctx context.Context, in *G
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type SeaweedMessaging_GetUnflushedMessagesClient = grpc.ServerStreamingClient[GetUnflushedMessagesResponse]
 
-func (c *seaweedMessagingClient) KafkaGatewayHeartbeat(ctx context.Context, in *KafkaGatewayHeartbeatRequest, opts ...grpc.CallOption) (*KafkaGatewayHeartbeatResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(KafkaGatewayHeartbeatResponse)
-	err := c.cc.Invoke(ctx, SeaweedMessaging_KafkaGatewayHeartbeat_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 // SeaweedMessagingServer is the server API for SeaweedMessaging service.
 // All implementations must embed UnimplementedSeaweedMessagingServer
 // for forward compatibility.
@@ -329,8 +316,6 @@ type SeaweedMessagingServer interface {
 	SubscribeFollowMe(grpc.ClientStreamingServer[SubscribeFollowMeRequest, SubscribeFollowMeResponse]) error
 	// SQL query support - get unflushed messages from broker's in-memory buffer (streaming)
 	GetUnflushedMessages(*GetUnflushedMessagesRequest, grpc.ServerStreamingServer[GetUnflushedMessagesResponse]) error
-	// Kafka Gateway Registration (heartbeat-only approach)
-	KafkaGatewayHeartbeat(context.Context, *KafkaGatewayHeartbeatRequest) (*KafkaGatewayHeartbeatResponse, error)
 	mustEmbedUnimplementedSeaweedMessagingServer()
 }
 
@@ -394,9 +379,6 @@ func (UnimplementedSeaweedMessagingServer) SubscribeFollowMe(grpc.ClientStreamin
 }
 func (UnimplementedSeaweedMessagingServer) GetUnflushedMessages(*GetUnflushedMessagesRequest, grpc.ServerStreamingServer[GetUnflushedMessagesResponse]) error {
 	return status.Errorf(codes.Unimplemented, "method GetUnflushedMessages not implemented")
-}
-func (UnimplementedSeaweedMessagingServer) KafkaGatewayHeartbeat(context.Context, *KafkaGatewayHeartbeatRequest) (*KafkaGatewayHeartbeatResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method KafkaGatewayHeartbeat not implemented")
 }
 func (UnimplementedSeaweedMessagingServer) mustEmbedUnimplementedSeaweedMessagingServer() {}
 func (UnimplementedSeaweedMessagingServer) testEmbeddedByValue()                          {}
@@ -670,24 +652,6 @@ func _SeaweedMessaging_GetUnflushedMessages_Handler(srv interface{}, stream grpc
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type SeaweedMessaging_GetUnflushedMessagesServer = grpc.ServerStreamingServer[GetUnflushedMessagesResponse]
 
-func _SeaweedMessaging_KafkaGatewayHeartbeat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(KafkaGatewayHeartbeatRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(SeaweedMessagingServer).KafkaGatewayHeartbeat(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: SeaweedMessaging_KafkaGatewayHeartbeat_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SeaweedMessagingServer).KafkaGatewayHeartbeat(ctx, req.(*KafkaGatewayHeartbeatRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 // SeaweedMessaging_ServiceDesc is the grpc.ServiceDesc for SeaweedMessaging service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -738,10 +702,6 @@ var SeaweedMessaging_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CloseSubscribers",
 			Handler:    _SeaweedMessaging_CloseSubscribers_Handler,
-		},
-		{
-			MethodName: "KafkaGatewayHeartbeat",
-			Handler:    _SeaweedMessaging_KafkaGatewayHeartbeat_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

@@ -77,10 +77,7 @@ type SeaweedMQHandlerInterface interface {
 	GetStoredRecords(topic string, partition int32, fromOffset int64, maxRecords int) ([]offset.SMQRecord, error)
 	// GetFilerClient returns a filer client for accessing SeaweedMQ metadata (optional)
 	GetFilerClient() filer_pb.SeaweedFilerClient
-	// GetAvailableBrokers returns a list of available broker addresses for coordinator selection
-	GetAvailableBrokers() ([]string, error)
-	// LookupTopicBrokers returns a map of partition -> broker address for a specific topic
-	LookupTopicBrokers(topicName string) (map[int32]string, error)
+	// Removed GetAvailableBrokers and LookupTopicBrokers - coordinator selection simplified
 	Close() error
 }
 

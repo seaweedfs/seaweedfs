@@ -3,9 +3,6 @@ package protocol
 import (
 	"encoding/binary"
 	"fmt"
-	"hash/crc32"
-	"strconv"
-	"strings"
 )
 
 func (h *Handler) handleFindCoordinator(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
@@ -191,72 +188,16 @@ func (h *Handler) handleFindCoordinatorV2(correlationID uint32, requestBody []by
 }
 
 // findCoordinatorForGroup determines the coordinator gateway for a consumer group
-// Asks the SMQ broker leader to assign a gateway for this consumer group
+// Simplified approach: always use the current gateway as coordinator
 func (h *Handler) findCoordinatorForGroup(groupID string) (host string, port int, nodeID int32, err error) {
-	// If we don't have SeaweedMQ handler, fallback to current gateway
-	if h.seaweedMQHandler == nil {
-		host, port = h.GetBrokerAddress()
-		return host, port, 1, nil
-	}
-
-	// Ask SMQ brokers to assign a coordinator gateway for this consumer group
-	gatewayAddress, err := h.requestCoordinatorFromBroker(groupID)
-	if err != nil {
-		// Fallback to current gateway if broker coordination fails
-		host, port = h.GetBrokerAddress()
-		return host, port, 1, nil
-	}
-
-	// Parse the gateway address returned by the broker
-	host, port, parseErr := h.parseBrokerAddress(gatewayAddress)
-	if parseErr != nil {
-		// Fallback to current gateway if parsing fails
-		host, port = h.GetBrokerAddress()
-		return host, port, 1, nil
-	}
-
-	// Use consistent node ID based on group ID for this gateway
-	nodeID = h.generateNodeID(groupID)
+	// Always use current gateway as coordinator - simple and reliable
+	host, port = h.GetBrokerAddress()
+	
+	// Use fixed node ID since we always use the current gateway
+	nodeID = 1
 	return host, port, nodeID, nil
 }
 
-// requestCoordinatorFromBroker asks the SMQ broker leader to assign a coordinator gateway
-func (h *Handler) requestCoordinatorFromBroker(groupID string) (string, error) {
-	// TODO: Implement proper gateway registry with SMQ brokers
-	// For now, use GetAvailableBrokers as a placeholder that should return gateway addresses
-	gatewayAddresses, err := h.seaweedMQHandler.GetAvailableBrokers()
-	if err != nil || len(gatewayAddresses) == 0 {
-		return "", fmt.Errorf("no gateway instances available: %v", err)
-	}
+// Removed requestCoordinatorFromBroker and parseBrokerAddress - no longer needed with simplified approach
 
-	// Use consistent hashing to select a gateway for this consumer group
-	hash := crc32.ChecksumIEEE([]byte(groupID))
-	selectedIndex := int(hash) % len(gatewayAddresses)
-	selectedGateway := gatewayAddresses[selectedIndex]
-
-	return selectedGateway, nil
-}
-
-// parseBrokerAddress parses a broker address string into host and port
-func (h *Handler) parseBrokerAddress(brokerAddress string) (host string, port int, err error) {
-	// Split address into host:port
-	parts := strings.Split(brokerAddress, ":")
-	if len(parts) != 2 {
-		return "", 0, fmt.Errorf("invalid broker address format: %s", brokerAddress)
-	}
-
-	host = parts[0]
-	port, err = strconv.Atoi(parts[1])
-	if err != nil {
-		return "", 0, fmt.Errorf("invalid port in broker address %s: %v", brokerAddress, err)
-	}
-
-	return host, port, nil
-}
-
-// generateNodeID generates a consistent node ID for a gateway based on group ID
-func (h *Handler) generateNodeID(groupID string) int32 {
-	hash := crc32.ChecksumIEEE([]byte(groupID))
-	// Use hash to generate a node ID between 1-1000 for consistency
-	return int32(hash%1000) + 1
-}
+// Removed generateNodeID - using fixed node ID 1 for simplified approach

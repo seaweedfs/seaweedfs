@@ -215,14 +215,7 @@ func (b *basicSeaweedMQHandler) GetFilerClient() filer_pb.SeaweedFilerClient {
 	return nil // Test handler doesn't have filer access
 }
 
-func (b *basicSeaweedMQHandler) GetAvailableBrokers() ([]string, error) {
-	return []string{"localhost:9092"}, nil // Test handler returns single broker
-}
-
-func (b *basicSeaweedMQHandler) LookupTopicBrokers(topicName string) (map[int32]string, error) {
-	// Test handler returns single broker for all partitions
-	return map[int32]string{0: "localhost:9092"}, nil
-}
+// Removed GetAvailableBrokers and LookupTopicBrokers - coordinator selection simplified
 
 func (b *basicSeaweedMQHandler) Close() error {
 	return nil
@@ -308,14 +301,7 @@ func (t *testSeaweedMQHandler) GetFilerClient() filer_pb.SeaweedFilerClient {
 	return nil // Test handler doesn't have filer access
 }
 
-func (t *testSeaweedMQHandler) GetAvailableBrokers() ([]string, error) {
-	return []string{"localhost:9092"}, nil // Test handler returns single broker
-}
-
-func (t *testSeaweedMQHandler) LookupTopicBrokers(topicName string) (map[int32]string, error) {
-	// Test handler returns single broker for all partitions
-	return map[int32]string{0: "localhost:9092"}, nil
-}
+// Removed GetAvailableBrokers and LookupTopicBrokers - coordinator selection simplified
 
 func (t *testSeaweedMQHandler) Close() error {
 	return nil
