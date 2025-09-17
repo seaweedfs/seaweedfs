@@ -207,7 +207,7 @@ func (s *SaramaClient) ProduceMessages(topicName string, messages []string) erro
 	for i, msgText := range messages {
 		msg := &sarama.ProducerMessage{
 			Topic: topicName,
-			Key:   sarama.StringEncoder(fmt.Sprintf("key-%d", i)),
+			Key:   sarama.StringEncoder(fmt.Sprintf("Test message %d", i)),
 			Value: sarama.StringEncoder(msgText),
 		}
 

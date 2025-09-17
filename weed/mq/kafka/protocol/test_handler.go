@@ -10,10 +10,24 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
+// testSMQRecord implements the SMQRecord interface for testing
+type testSMQRecord struct {
+	offset    int64
+	timestamp int64
+	key       []byte
+	value     []byte
+}
+
+func (r *testSMQRecord) GetOffset() int64    { return r.offset }
+func (r *testSMQRecord) GetTimestamp() int64 { return r.timestamp }
+func (r *testSMQRecord) GetKey() []byte      { return r.key }
+func (r *testSMQRecord) GetValue() []byte    { return r.value }
+
 // testSeaweedMQHandlerForUnitTests is a minimal mock implementation for unit testing
 type testSeaweedMQHandlerForUnitTests struct {
 	topics  map[string]bool
 	ledgers map[string]*offset.Ledger
+	records map[string][]offset.SMQRecord // Store records for GetStoredRecords
 	mu      sync.RWMutex
 }
 
@@ -76,11 +90,46 @@ func (t *testSeaweedMQHandlerForUnitTests) ProduceRecord(topicName string, parti
 	if err := ledger.AppendRecord(kafkaOffset, timestamp, size); err != nil {
 		return -1, err
 	}
+
+	// Store the record for GetStoredRecords
+	t.mu.Lock()
+	recordKey := topicPartitionKeyForTest(topicName, partitionID)
+	if t.records == nil {
+		t.records = make(map[string][]offset.SMQRecord)
+	}
+	t.records[recordKey] = append(t.records[recordKey], &testSMQRecord{
+		offset:    kafkaOffset,
+		timestamp: timestamp,
+		key:       key,
+		value:     value,
+	})
+	t.mu.Unlock()
+
 	return kafkaOffset, nil
 }
 
 func (t *testSeaweedMQHandlerForUnitTests) GetStoredRecords(topic string, partition int32, fromOffset int64, maxRecords int) ([]offset.SMQRecord, error) {
-	return []offset.SMQRecord{}, nil // Empty for testing
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	recordKey := topicPartitionKeyForTest(topic, partition)
+	allRecords, exists := t.records[recordKey]
+	if !exists {
+		return []offset.SMQRecord{}, nil
+	}
+
+	// Filter records by offset range
+	var result []offset.SMQRecord
+	for _, record := range allRecords {
+		if record.GetOffset() >= fromOffset {
+			result = append(result, record)
+			if len(result) >= maxRecords {
+				break
+			}
+		}
+	}
+
+	return result, nil
 }
 
 func (t *testSeaweedMQHandlerForUnitTests) GetFilerClient() filer_pb.SeaweedFilerClient {
@@ -107,6 +156,7 @@ func NewHandlerForUnitTests() *Handler {
 		seaweedMQHandler: &testSeaweedMQHandlerForUnitTests{
 			topics:  make(map[string]bool),
 			ledgers: make(map[string]*offset.Ledger),
+			records: make(map[string][]offset.SMQRecord),
 		},
 		groupCoordinator:   consumer.NewGroupCoordinator(),
 		topicMetadataCache: make(map[string]*CachedTopicMetadata),
