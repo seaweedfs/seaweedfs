@@ -1,5 +1,11 @@
 version: '3.8'
 
+x-seaweedfs-build: &seaweedfs-build
+  build:
+    context: ../..
+    dockerfile: test/kafka/Dockerfile.seaweedfs
+  image: kafka-seaweedfs-dev
+
 services:
   # Zookeeper for Kafka
   zookeeper:
@@ -75,7 +81,7 @@ services:
 
   # SeaweedFS Master
   seaweedfs-master:
-    image: chrislusf/seaweedfs:latest
+    <<: *seaweedfs-build
     container_name: seaweedfs-master
     ports:
       - "9333:9333"
@@ -100,7 +106,7 @@ services:
 
   # SeaweedFS Volume Server
   seaweedfs-volume:
-    image: chrislusf/seaweedfs:latest
+    <<: *seaweedfs-build
     container_name: seaweedfs-volume
     ports:
       - "8080:8080"
@@ -129,7 +135,7 @@ services:
 
   # SeaweedFS Filer
   seaweedfs-filer:
-    image: chrislusf/seaweedfs:latest
+    <<: *seaweedfs-build
     container_name: seaweedfs-filer
     ports:
       - "8888:8888"
@@ -158,7 +164,7 @@ services:
 
   # SeaweedFS MQ Broker
   seaweedfs-mq-broker:
-    image: chrislusf/seaweedfs:latest
+    <<: *seaweedfs-build
     container_name: seaweedfs-mq-broker
     ports:
       - "17777:17777"  # MQ Broker port
@@ -183,15 +189,14 @@ services:
 
   # SeaweedFS MQ Agent
   seaweedfs-mq-agent:
-    image: chrislusf/seaweedfs:latest
+    <<: *seaweedfs-build
     container_name: seaweedfs-mq-agent
     ports:
       - "16777:16777"  # MQ Agent port
     command:
       - mq.agent
-      - -filer=seaweedfs-filer:8888
-      - -mq.broker=seaweedfs-mq-broker:17777
-      - -ip=seaweedfs-mq-agent
+      - -broker=seaweedfs-mq-broker:17777
+      - -ip=0.0.0.0
       - -port=16777
     depends_on:
       seaweedfs-mq-broker:
@@ -221,8 +226,8 @@ services:
       schema-registry:
         condition: service_healthy
     environment:
-      - SEAWEEDFS_FILER=seaweedfs-filer:8888
-      - SEAWEEDFS_MQ_BROKER=seaweedfs-mq-broker:17777
+      - SEAWEEDFS_MASTERS=seaweedfs-master:9333
+      - SEAWEEDFS_FILER_GROUP=
       - SCHEMA_REGISTRY_URL=http://schema-registry:8081
       - KAFKA_PORT=9093
     volumes:

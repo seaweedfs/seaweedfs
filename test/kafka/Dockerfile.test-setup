@@ -4,20 +4,14 @@ FROM golang:1.24-alpine AS builder
 # Install build dependencies
 RUN apk add --no-cache git make gcc musl-dev
 
-# Set working directory
+# Copy repository
 WORKDIR /app
-
-# Copy go mod files
-COPY go.mod go.sum ./
-
-# Download dependencies
-RUN go mod download
-
-# Copy source code
 COPY . .
 
-# Build test setup utility
-RUN CGO_ENABLED=1 GOOS=linux go build -o test-setup ./test/kafka/cmd/setup
+# Build test setup utility from the test module
+WORKDIR /app/test/kafka
+RUN go mod download
+RUN CGO_ENABLED=1 GOOS=linux go build -o /out/test-setup ./cmd/setup
 
 # Final stage
 FROM alpine:latest
@@ -26,10 +20,7 @@ FROM alpine:latest
 RUN apk --no-cache add ca-certificates curl jq netcat-openbsd
 
 # Copy binary from builder
-COPY --from=builder /app/test-setup /usr/bin/test-setup
-
-# Copy test data and schemas
-COPY test/kafka/testdata/ /testdata/
+COPY --from=builder /out/test-setup /usr/bin/test-setup
 
 # Make executable
 RUN chmod +x /usr/bin/test-setup

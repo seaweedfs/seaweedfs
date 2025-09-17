@@ -2,7 +2,9 @@
 # This replaces the existing Makefile with better organization
 
 # Configuration
-DOCKER_COMPOSE ?= docker-compose
+ifndef DOCKER_COMPOSE
+DOCKER_COMPOSE := $(if $(shell command -v docker-compose 2>/dev/null),docker-compose,docker compose)
+endif
 TEST_TIMEOUT ?= 10m
 KAFKA_BOOTSTRAP_SERVERS ?= localhost:9092
 KAFKA_GATEWAY_URL ?= localhost:9093
@@ -50,52 +52,52 @@ test: test-unit test-integration test-e2e ## Run all tests
 
 test-unit: ## Run unit tests
 	@echo "$(YELLOW)Running unit tests...$(NC)"
-	@cd ../../ && go test -v -timeout=$(TEST_TIMEOUT) ./test/kafka/unit/...
+	@go test -v -timeout=$(TEST_TIMEOUT) ./unit/...
 
 test-integration: ## Run integration tests
 	@echo "$(YELLOW)Running integration tests...$(NC)"
-	@cd ../../ && go test -v -timeout=$(TEST_TIMEOUT) ./test/kafka/integration/...
+	@go test -v -timeout=$(TEST_TIMEOUT) ./integration/...
 
 test-e2e: setup-schemas ## Run end-to-end tests
 	@echo "$(YELLOW)Running end-to-end tests...$(NC)"
-	@cd ../../ && KAFKA_BOOTSTRAP_SERVERS=$(KAFKA_BOOTSTRAP_SERVERS) \
+	@KAFKA_BOOTSTRAP_SERVERS=$(KAFKA_BOOTSTRAP_SERVERS) \
 		KAFKA_GATEWAY_URL=$(KAFKA_GATEWAY_URL) \
 		SCHEMA_REGISTRY_URL=$(SCHEMA_REGISTRY_URL) \
-		go test -v -timeout=$(TEST_TIMEOUT) ./test/kafka/e2e/...
+		go test -v -timeout=$(TEST_TIMEOUT) ./e2e/...
 
 test-docker: setup-schemas ## Run Docker integration tests
 	@echo "$(YELLOW)Running Docker integration tests...$(NC)"
-	@cd ../../ && KAFKA_BOOTSTRAP_SERVERS=$(KAFKA_BOOTSTRAP_SERVERS) \
+	@KAFKA_BOOTSTRAP_SERVERS=$(KAFKA_BOOTSTRAP_SERVERS) \
 		KAFKA_GATEWAY_URL=$(KAFKA_GATEWAY_URL) \
 		SCHEMA_REGISTRY_URL=$(SCHEMA_REGISTRY_URL) \
-		go test -v -timeout=$(TEST_TIMEOUT) ./test/kafka/integration/ -run Docker
+		go test -v -timeout=$(TEST_TIMEOUT) ./integration/ -run Docker
 
 # Schema-specific tests
 test-schema: setup-schemas ## Run schema registry integration tests
 	@echo "$(YELLOW)Running schema registry integration tests...$(NC)"
-	@cd ../../ && SCHEMA_REGISTRY_URL=$(SCHEMA_REGISTRY_URL) \
-		go test -v -timeout=$(TEST_TIMEOUT) ./test/kafka/integration/ -run Schema
+	@SCHEMA_REGISTRY_URL=$(SCHEMA_REGISTRY_URL) \
+		go test -v -timeout=$(TEST_TIMEOUT) ./integration/ -run Schema
 
 # Client-specific tests
 test-sarama: setup-schemas ## Run Sarama client tests
 	@echo "$(YELLOW)Running Sarama client tests...$(NC)"
-	@cd ../../ && KAFKA_BOOTSTRAP_SERVERS=$(KAFKA_BOOTSTRAP_SERVERS) \
+	@KAFKA_BOOTSTRAP_SERVERS=$(KAFKA_BOOTSTRAP_SERVERS) \
 		KAFKA_GATEWAY_URL=$(KAFKA_GATEWAY_URL) \
-		go test -v -timeout=$(TEST_TIMEOUT) ./test/kafka/integration/ -run Sarama
+		go test -v -timeout=$(TEST_TIMEOUT) ./integration/ -run Sarama
 
 test-kafka-go: setup-schemas ## Run kafka-go client tests
 	@echo "$(YELLOW)Running kafka-go client tests...$(NC)"
-	@cd ../../ && KAFKA_BOOTSTRAP_SERVERS=$(KAFKA_BOOTSTRAP_SERVERS) \
+	@KAFKA_BOOTSTRAP_SERVERS=$(KAFKA_BOOTSTRAP_SERVERS) \
 		KAFKA_GATEWAY_URL=$(KAFKA_GATEWAY_URL) \
-		go test -v -timeout=$(TEST_TIMEOUT) ./test/kafka/integration/ -run KafkaGo
+		go test -v -timeout=$(TEST_TIMEOUT) ./integration/ -run KafkaGo
 
 # Performance tests
 test-performance: setup-schemas ## Run performance benchmarks
 	@echo "$(YELLOW)Running Kafka performance benchmarks...$(NC)"
-	@cd ../../ && KAFKA_BOOTSTRAP_SERVERS=$(KAFKA_BOOTSTRAP_SERVERS) \
+	@KAFKA_BOOTSTRAP_SERVERS=$(KAFKA_BOOTSTRAP_SERVERS) \
 		KAFKA_GATEWAY_URL=$(KAFKA_GATEWAY_URL) \
 		SCHEMA_REGISTRY_URL=$(SCHEMA_REGISTRY_URL) \
-		go test -v -timeout=$(TEST_TIMEOUT) -bench=. ./test/kafka/...
+		go test -v -timeout=$(TEST_TIMEOUT) -bench=. ./...
 
 # Development targets
 dev-kafka: ## Start only Kafka ecosystem for development
@@ -110,7 +112,7 @@ dev-gateway: dev-seaweedfs ## Start Kafka Gateway for development
 	@$(DOCKER_COMPOSE) up -d kafka-gateway
 
 dev-test: dev-kafka ## Quick test with just Kafka ecosystem
-	@cd ../../ && SCHEMA_REGISTRY_URL=$(SCHEMA_REGISTRY_URL) go test -v -timeout=30s ./test/kafka/unit/...
+	@SCHEMA_REGISTRY_URL=$(SCHEMA_REGISTRY_URL) go test -v -timeout=30s ./unit/...
 
 # Cleanup
 clean: ## Clean up test environment
