@@ -294,9 +294,9 @@ func (h *Handler) requestCoordinatorFromLeader(groupID string, registry Coordina
 	// an RPC call to the leader gateway.
 	Debug("Using current gateway as coordinator for group %s (inter-gateway RPC not implemented)", groupID)
 	gatewayAddr := h.GetGatewayAddress()
-	host, port, err := h.parseGatewayAddress(gatewayAddr)
-	if err != nil {
-		Debug("Failed to parse gateway address %s: %v", gatewayAddr, err)
+	host, port, parseErr := h.parseGatewayAddress(gatewayAddr)
+	if parseErr != nil {
+		Debug("Failed to parse gateway address %s: %v", gatewayAddr, parseErr)
 		return "localhost", 9092, 1, nil
 	}
 	nodeID = 1

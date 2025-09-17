@@ -766,43 +766,31 @@ func (h *Handler) HandleMetadataV0(correlationID uint32, requestBody []byte) ([]
 	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
 	response = append(response, correlationIDBytes...)
 
-	// Get SMQ broker addresses
-	brokerAddresses := h.GetSMQBrokerAddresses()
+	// Brokers array length (4 bytes) - 1 broker (this gateway)
+	response = append(response, 0, 0, 0, 1)
 
-	// Brokers array length (4 bytes)
-	brokerCount := len(brokerAddresses)
-	brokerCountBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(brokerCountBytes, uint32(brokerCount))
-	response = append(response, brokerCountBytes...)
+	// Broker 0: node_id(4) + host(STRING) + port(4)
+	response = append(response, 0, 0, 0, 1) // node_id = 1 (consistent with partitions)
 
-	// Add each SMQ broker
-	for i, brokerAddr := range brokerAddresses {
-		nodeID := int32(i + 1) // Node IDs start from 1
-
-		// Parse broker address (host:port)
-		host, port, err := h.parseBrokerAddress(brokerAddr)
-		if err != nil {
-			Debug("Failed to parse broker address %s: %v", brokerAddr, err)
-			continue
-		}
-
-		Debug("Advertising SMQ broker (v0) node %d at %s:%d", nodeID, host, port)
-
-		// Broker: node_id(4) + host(STRING) + port(4)
-		nodeIDBytes := make([]byte, 4)
-		binary.BigEndian.PutUint32(nodeIDBytes, uint32(nodeID))
-		response = append(response, nodeIDBytes...)
-
-		// Host (STRING: 2 bytes length + bytes)
-		hostLen := uint16(len(host))
-		response = append(response, byte(hostLen>>8), byte(hostLen))
-		response = append(response, []byte(host)...)
-
-		// Port (4 bytes)
-		portBytes := make([]byte, 4)
-		binary.BigEndian.PutUint32(portBytes, uint32(port))
-		response = append(response, portBytes...)
+	// Use gateway address for Kafka protocol compatibility
+	gatewayAddr := h.GetGatewayAddress()
+	host, port, err := h.parseGatewayAddress(gatewayAddr)
+	if err != nil {
+		Debug("Failed to parse gateway address %s: %v", gatewayAddr, err)
+		// Fallback to default
+		host, port = "localhost", 9092
 	}
+	Debug("Advertising Kafka gateway (v0) at %s:%d", host, port)
+
+	// Host (STRING: 2 bytes length + bytes)
+	hostLen := uint16(len(host))
+	response = append(response, byte(hostLen>>8), byte(hostLen))
+	response = append(response, []byte(host)...)
+
+	// Port (4 bytes)
+	portBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(portBytes, uint32(port))
+	response = append(response, portBytes...)
 
 	// Parse requested topics (empty means all)
 	requestedTopics := h.parseMetadataTopics(requestBody)
@@ -856,7 +844,7 @@ func (h *Handler) HandleMetadataV0(correlationID uint32, requestBody []byte) ([]
 	Debug("Metadata v0 response for %d topics: %v", len(topicsToReturn), topicsToReturn)
 	Debug("*** METADATA v0 RESPONSE DETAILS ***")
 	Debug("Response size: %d bytes", len(response))
-	Debug("Broker: %s:%d", h.brokerHost, h.brokerPort)
+	Debug("Kafka Gateway: %s", h.GetGatewayAddress())
 	Debug("Topics: %v", topicsToReturn)
 	for i, topic := range topicsToReturn {
 		Debug("Topic[%d]: %s (1 partition)", i, topic)
@@ -893,46 +881,34 @@ func (h *Handler) HandleMetadataV1(correlationID uint32, requestBody []byte) ([]
 	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
 	response = append(response, correlationIDBytes...)
 
-	// Get SMQ broker addresses
-	brokerAddresses := h.GetSMQBrokerAddresses()
+	// Brokers array length (4 bytes) - 1 broker (this gateway)
+	response = append(response, 0, 0, 0, 1)
 
-	// Brokers array length (4 bytes)
-	brokerCount := len(brokerAddresses)
-	brokerCountBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(brokerCountBytes, uint32(brokerCount))
-	response = append(response, brokerCountBytes...)
+	// Broker 0: node_id(4) + host(STRING) + port(4) + rack(STRING)
+	response = append(response, 0, 0, 0, 1) // node_id = 1
 
-	// Add each SMQ broker
-	for i, brokerAddr := range brokerAddresses {
-		nodeID := int32(i + 1) // Node IDs start from 1
-
-		// Parse broker address (host:port)
-		host, port, err := h.parseBrokerAddress(brokerAddr)
-		if err != nil {
-			Debug("Failed to parse broker address %s: %v", brokerAddr, err)
-			continue
-		}
-
-		Debug("Advertising SMQ broker (v1) node %d at %s:%d", nodeID, host, port)
-
-		// Broker: node_id(4) + host(STRING) + port(4) + rack(STRING)
-		nodeIDBytes := make([]byte, 4)
-		binary.BigEndian.PutUint32(nodeIDBytes, uint32(nodeID))
-		response = append(response, nodeIDBytes...)
-
-		// Host (STRING: 2 bytes length + bytes)
-		hostLen := uint16(len(host))
-		response = append(response, byte(hostLen>>8), byte(hostLen))
-		response = append(response, []byte(host)...)
-
-		// Port (4 bytes)
-		portBytes := make([]byte, 4)
-		binary.BigEndian.PutUint32(portBytes, uint32(port))
-		response = append(response, portBytes...)
-
-		// Rack (STRING: 2 bytes length + bytes) - v1 addition, non-nullable empty string
-		response = append(response, 0, 0) // empty string
+	// Use gateway address for Kafka protocol compatibility
+	gatewayAddr := h.GetGatewayAddress()
+	host, port, err := h.parseGatewayAddress(gatewayAddr)
+	if err != nil {
+		Debug("Failed to parse gateway address %s: %v", gatewayAddr, err)
+		// Fallback to default
+		host, port = "localhost", 9092
 	}
+	Debug("Advertising Kafka gateway (v1) at %s:%d", host, port)
+
+	// Host (STRING: 2 bytes length + bytes)
+	hostLen := uint16(len(host))
+	response = append(response, byte(hostLen>>8), byte(hostLen))
+	response = append(response, []byte(host)...)
+
+	// Port (4 bytes)
+	portBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(portBytes, uint32(port))
+	response = append(response, portBytes...)
+
+	// Rack (STRING: 2 bytes length + bytes) - v1 addition, non-nullable empty string
+	response = append(response, 0, 0) // empty string
 
 	// ControllerID (4 bytes) - v1 addition
 	response = append(response, 0, 0, 0, 1) // controller_id = 1
@@ -1003,26 +979,42 @@ func (h *Handler) HandleMetadataV2(correlationID uint32, requestBody []byte) ([]
 	// Correlation ID (4 bytes)
 	binary.Write(&buf, binary.BigEndian, correlationID)
 
+	// Get SMQ broker addresses
+	brokerAddresses := h.GetSMQBrokerAddresses()
+
 	// Brokers array (4 bytes length + brokers)
-	binary.Write(&buf, binary.BigEndian, int32(1)) // 1 broker
+	binary.Write(&buf, binary.BigEndian, int32(len(brokerAddresses)))
 
-	// Broker 0
-	binary.Write(&buf, binary.BigEndian, int32(1)) // NodeID
+	// Add each SMQ broker
+	for i, brokerAddr := range brokerAddresses {
+		nodeID := int32(i + 1) // Node IDs start from 1
 
-	// Host (STRING: 2 bytes length + data)
-	host := h.brokerHost
-	binary.Write(&buf, binary.BigEndian, int16(len(host)))
-	buf.WriteString(host)
+		// Parse broker address (host:port)
+		host, port, err := h.parseBrokerAddress(brokerAddr)
+		if err != nil {
+			Debug("Failed to parse broker address %s: %v", brokerAddr, err)
+			continue
+		}
 
-	// Port (4 bytes)
-	binary.Write(&buf, binary.BigEndian, int32(h.brokerPort))
+		Debug("Advertising SMQ broker (v2) node %d at %s:%d", nodeID, host, port)
 
-	// Rack (STRING: 2 bytes length + data) - v1+ addition, non-nullable
-	binary.Write(&buf, binary.BigEndian, int16(0)) // Empty string
+		// Broker: node_id(4) + host(STRING) + port(4) + rack(STRING) + cluster_id(NULLABLE_STRING)
+		binary.Write(&buf, binary.BigEndian, nodeID)
 
-	// ClusterID (NULLABLE_STRING: 2 bytes length + data) - v2 addition
-	// Use -1 length to indicate null
-	binary.Write(&buf, binary.BigEndian, int16(-1)) // Null cluster ID
+		// Host (STRING: 2 bytes length + data)
+		binary.Write(&buf, binary.BigEndian, int16(len(host)))
+		buf.WriteString(host)
+
+		// Port (4 bytes)
+		binary.Write(&buf, binary.BigEndian, int32(port))
+
+		// Rack (STRING: 2 bytes length + data) - v1+ addition, non-nullable
+		binary.Write(&buf, binary.BigEndian, int16(0)) // Empty string
+
+		// ClusterID (NULLABLE_STRING: 2 bytes length + data) - v2 addition
+		// Use -1 length to indicate null
+		binary.Write(&buf, binary.BigEndian, int16(-1)) // Null cluster ID
+	}
 
 	// ControllerID (4 bytes) - v1+ addition
 	binary.Write(&buf, binary.BigEndian, int32(1))
@@ -1059,7 +1051,7 @@ func (h *Handler) HandleMetadataV2(correlationID uint32, requestBody []byte) ([]
 	}
 
 	response := buf.Bytes()
-	Debug("Advertising broker (v2) at %s:%d", h.brokerHost, h.brokerPort)
+	Debug("Advertising Kafka gateway: %s", h.GetGatewayAddress())
 	Debug("Metadata v2 response for %d topics: %v", len(topicsToReturn), topicsToReturn)
 
 	return response, nil
@@ -1093,26 +1085,42 @@ func (h *Handler) HandleMetadataV3V4(correlationID uint32, requestBody []byte) (
 	// ThrottleTimeMs (4 bytes) - v3+ addition
 	binary.Write(&buf, binary.BigEndian, int32(0)) // No throttling
 
+	// Get SMQ broker addresses
+	brokerAddresses := h.GetSMQBrokerAddresses()
+
 	// Brokers array (4 bytes length + brokers)
-	binary.Write(&buf, binary.BigEndian, int32(1)) // 1 broker
+	binary.Write(&buf, binary.BigEndian, int32(len(brokerAddresses)))
 
-	// Broker 0
-	binary.Write(&buf, binary.BigEndian, int32(1)) // NodeID
+	// Add each SMQ broker
+	for i, brokerAddr := range brokerAddresses {
+		nodeID := int32(i + 1) // Node IDs start from 1
 
-	// Host (STRING: 2 bytes length + data)
-	host := h.brokerHost
-	binary.Write(&buf, binary.BigEndian, int16(len(host)))
-	buf.WriteString(host)
+		// Parse broker address (host:port)
+		host, port, err := h.parseBrokerAddress(brokerAddr)
+		if err != nil {
+			Debug("Failed to parse broker address %s: %v", brokerAddr, err)
+			continue
+		}
 
-	// Port (4 bytes)
-	binary.Write(&buf, binary.BigEndian, int32(h.brokerPort))
+		Debug("Advertising SMQ broker (v3/v4) node %d at %s:%d", nodeID, host, port)
 
-	// Rack (STRING: 2 bytes length + data) - v1+ addition, non-nullable
-	binary.Write(&buf, binary.BigEndian, int16(0)) // Empty string
+		// Broker: node_id(4) + host(STRING) + port(4) + rack(STRING) + cluster_id(NULLABLE_STRING)
+		binary.Write(&buf, binary.BigEndian, nodeID)
 
-	// ClusterID (NULLABLE_STRING: 2 bytes length + data) - v2+ addition
-	// Use -1 length to indicate null
-	binary.Write(&buf, binary.BigEndian, int16(-1)) // Null cluster ID
+		// Host (STRING: 2 bytes length + data)
+		binary.Write(&buf, binary.BigEndian, int16(len(host)))
+		buf.WriteString(host)
+
+		// Port (4 bytes)
+		binary.Write(&buf, binary.BigEndian, int32(port))
+
+		// Rack (STRING: 2 bytes length + data) - v1+ addition, non-nullable
+		binary.Write(&buf, binary.BigEndian, int16(0)) // Empty string
+
+		// ClusterID (NULLABLE_STRING: 2 bytes length + data) - v2+ addition
+		// Use -1 length to indicate null
+		binary.Write(&buf, binary.BigEndian, int16(-1)) // Null cluster ID
+	}
 
 	// ControllerID (4 bytes) - v1+ addition
 	binary.Write(&buf, binary.BigEndian, int32(1))
@@ -1183,26 +1191,42 @@ func (h *Handler) HandleMetadataV5V6(correlationID uint32, requestBody []byte) (
 	// ThrottleTimeMs (4 bytes) - v3+ addition
 	binary.Write(&buf, binary.BigEndian, int32(0)) // No throttling
 
+	// Get SMQ broker addresses
+	brokerAddresses := h.GetSMQBrokerAddresses()
+
 	// Brokers array (4 bytes length + brokers)
-	binary.Write(&buf, binary.BigEndian, int32(1)) // 1 broker
+	binary.Write(&buf, binary.BigEndian, int32(len(brokerAddresses)))
 
-	// Broker 0
-	binary.Write(&buf, binary.BigEndian, int32(1)) // NodeID
+	// Add each SMQ broker
+	for i, brokerAddr := range brokerAddresses {
+		nodeID := int32(i + 1) // Node IDs start from 1
 
-	// Host (STRING: 2 bytes length + data)
-	host := h.brokerHost
-	binary.Write(&buf, binary.BigEndian, int16(len(host)))
-	buf.WriteString(host)
+		// Parse broker address (host:port)
+		host, port, err := h.parseBrokerAddress(brokerAddr)
+		if err != nil {
+			Debug("Failed to parse broker address %s: %v", brokerAddr, err)
+			continue
+		}
 
-	// Port (4 bytes)
-	binary.Write(&buf, binary.BigEndian, int32(h.brokerPort))
+		Debug("Advertising SMQ broker (v5/v6) node %d at %s:%d", nodeID, host, port)
 
-	// Rack (STRING: 2 bytes length + data) - v1+ addition, non-nullable
-	binary.Write(&buf, binary.BigEndian, int16(0)) // Empty string
+		// Broker: node_id(4) + host(STRING) + port(4) + rack(STRING) + cluster_id(NULLABLE_STRING)
+		binary.Write(&buf, binary.BigEndian, nodeID)
 
-	// ClusterID (NULLABLE_STRING: 2 bytes length + data) - v2+ addition
-	// Use -1 length to indicate null
-	binary.Write(&buf, binary.BigEndian, int16(-1)) // Null cluster ID
+		// Host (STRING: 2 bytes length + data)
+		binary.Write(&buf, binary.BigEndian, int16(len(host)))
+		buf.WriteString(host)
+
+		// Port (4 bytes)
+		binary.Write(&buf, binary.BigEndian, int32(port))
+
+		// Rack (STRING: 2 bytes length + data) - v1+ addition, non-nullable
+		binary.Write(&buf, binary.BigEndian, int16(0)) // Empty string
+
+		// ClusterID (NULLABLE_STRING: 2 bytes length + data) - v2+ addition
+		// Use -1 length to indicate null
+		binary.Write(&buf, binary.BigEndian, int16(-1)) // Null cluster ID
+	}
 
 	// ControllerID (4 bytes) - v1+ addition
 	binary.Write(&buf, binary.BigEndian, int32(1))
@@ -1242,7 +1266,7 @@ func (h *Handler) HandleMetadataV5V6(correlationID uint32, requestBody []byte) (
 	}
 
 	response := buf.Bytes()
-	Debug("Advertising broker (v5/v6) at %s:%d", h.brokerHost, h.brokerPort)
+	Debug("Advertising Kafka gateway: %s", h.GetGatewayAddress())
 	Debug("Metadata v5/v6 response for %d topics: %v", len(topicsToReturn), topicsToReturn)
 
 	return response, nil
@@ -1278,26 +1302,42 @@ func (h *Handler) HandleMetadataV7(correlationID uint32, requestBody []byte) ([]
 	// ThrottleTimeMs (4 bytes) - v3+ addition
 	binary.Write(&buf, binary.BigEndian, int32(0)) // No throttling
 
+	// Get SMQ broker addresses
+	brokerAddresses := h.GetSMQBrokerAddresses()
+
 	// Brokers array (4 bytes length + brokers)
-	binary.Write(&buf, binary.BigEndian, int32(1)) // 1 broker
+	binary.Write(&buf, binary.BigEndian, int32(len(brokerAddresses)))
 
-	// Broker 0
-	binary.Write(&buf, binary.BigEndian, int32(1)) // NodeID
+	// Add each SMQ broker
+	for i, brokerAddr := range brokerAddresses {
+		nodeID := int32(i + 1) // Node IDs start from 1
 
-	// Host (STRING: 2 bytes length + data)
-	host := h.brokerHost
-	binary.Write(&buf, binary.BigEndian, int16(len(host)))
-	buf.WriteString(host)
+		// Parse broker address (host:port)
+		host, port, err := h.parseBrokerAddress(brokerAddr)
+		if err != nil {
+			Debug("Failed to parse broker address %s: %v", brokerAddr, err)
+			continue
+		}
 
-	// Port (4 bytes)
-	binary.Write(&buf, binary.BigEndian, int32(h.brokerPort))
+		Debug("Advertising SMQ broker (v7) node %d at %s:%d", nodeID, host, port)
 
-	// Rack (STRING: 2 bytes length + data) - v1+ addition, non-nullable
-	binary.Write(&buf, binary.BigEndian, int16(0)) // Empty string
+		// Broker: node_id(4) + host(STRING) + port(4) + rack(STRING) + cluster_id(NULLABLE_STRING)
+		binary.Write(&buf, binary.BigEndian, nodeID)
 
-	// ClusterID (NULLABLE_STRING: 2 bytes length + data) - v2+ addition
-	// Use -1 length to indicate null
-	binary.Write(&buf, binary.BigEndian, int16(-1)) // Null cluster ID
+		// Host (STRING: 2 bytes length + data)
+		binary.Write(&buf, binary.BigEndian, int16(len(host)))
+		buf.WriteString(host)
+
+		// Port (4 bytes)
+		binary.Write(&buf, binary.BigEndian, int32(port))
+
+		// Rack (STRING: 2 bytes length + data) - v1+ addition, non-nullable
+		binary.Write(&buf, binary.BigEndian, int16(0)) // Empty string
+
+		// ClusterID (NULLABLE_STRING: 2 bytes length + data) - v2+ addition
+		// Use -1 length to indicate null
+		binary.Write(&buf, binary.BigEndian, int16(-1)) // Null cluster ID
+	}
 
 	// ControllerID (4 bytes) - v1+ addition
 	binary.Write(&buf, binary.BigEndian, int32(1))
@@ -1340,7 +1380,7 @@ func (h *Handler) HandleMetadataV7(correlationID uint32, requestBody []byte) ([]
 	}
 
 	response := buf.Bytes()
-	Debug("Advertising broker (v7) at %s:%d", h.brokerHost, h.brokerPort)
+	Debug("Advertising Kafka gateway: %s", h.GetGatewayAddress())
 	Debug("Metadata v7 response for %d topics: %v", len(topicsToReturn), topicsToReturn)
 
 	return response, nil
