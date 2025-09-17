@@ -231,6 +231,8 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	}
 	go grpcS.Serve(grpcL)
 
+	rootCtx, rootCancel := context.WithCancel(context.Background())
+
 	timeSleep := 1500 * time.Millisecond
 	if !*masterOption.raftHashicorp {
 		go func() {
@@ -245,8 +247,8 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		}()
 	}
 
-	go ms.MasterClient.KeepConnectedToMaster(context.Background())
-	go weed_server.CollectCollectionsStats(context.Background(), ms, *masterOption.intervalToCollectStats)
+	go ms.MasterClient.KeepConnectedToMaster(rootCtx)
+	statsShutdown := weed_server.CollectCollectionsStats(rootCtx, ms, *masterOption.intervalToCollectStats)
 
 	// start http server
 	var (
@@ -286,6 +288,15 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 
 	grace.OnInterrupt(ms.Shutdown)
 	grace.OnInterrupt(grpcS.Stop)
+	grace.OnInterrupt(func() {
+		rootCancel()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := statsShutdown(ctx); err != nil {
+			glog.Errorf("graceful shutdown of collections stats: %v", err)
+		}
+	})
 	grace.OnReload(func() {
 		if ms.Topo.HashicorpRaft != nil && ms.Topo.HashicorpRaft.State() == hashicorpRaft.Leader {
 			ms.Topo.HashicorpRaft.LeadershipTransfer()
