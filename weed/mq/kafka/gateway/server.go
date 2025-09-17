@@ -111,20 +111,24 @@ func (s *Server) Start() error {
 	// Set gateway address in handler for coordinator registry
 	s.handler.SetGatewayAddress(gatewayAddress)
 
-	// Initialize coordinator registry for distributed coordinator assignment
-	seedFiler := pb.ServerAddress(strings.Split(s.opts.Masters, ",")[0]) // Use first master as seed filer
-	grpcDialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	// Initialize coordinator registry for distributed coordinator assignment (only if masters are configured)
+	if s.opts.Masters != "" {
+		seedFiler := pb.ServerAddress(strings.Split(s.opts.Masters, ",")[0]) // Use first master as seed filer
+		grpcDialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
 
-	s.coordinatorRegistry = NewCoordinatorRegistry(gatewayAddress, seedFiler, grpcDialOption)
-	s.handler.SetCoordinatorRegistry(s.coordinatorRegistry)
+		s.coordinatorRegistry = NewCoordinatorRegistry(gatewayAddress, seedFiler, grpcDialOption)
+		s.handler.SetCoordinatorRegistry(s.coordinatorRegistry)
 
-	// Start coordinator registry
-	if err := s.coordinatorRegistry.Start(); err != nil {
-		glog.Errorf("Failed to start coordinator registry: %v", err)
-		return err
+		// Start coordinator registry
+		if err := s.coordinatorRegistry.Start(); err != nil {
+			glog.Errorf("Failed to start coordinator registry: %v", err)
+			return err
+		}
+
+		glog.V(1).Infof("Started coordinator registry for gateway %s", gatewayAddress)
+	} else {
+		glog.V(1).Infof("No masters configured, skipping coordinator registry setup (test mode)")
 	}
-
-	glog.V(1).Infof("Started coordinator registry for gateway %s", gatewayAddress)
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
