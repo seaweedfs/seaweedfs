@@ -10,6 +10,9 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/protocol"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // resolveAdvertisedAddress resolves the appropriate address to advertise to Kafka clients
@@ -55,13 +58,13 @@ type Options struct {
 }
 
 type Server struct {
-	opts    Options
-	ln      net.Listener
-	wg      sync.WaitGroup
-	ctx     context.Context
-	cancel  context.CancelFunc
-	handler *protocol.Handler
-	// Removed registration - no longer needed
+	opts                Options
+	ln                  net.Listener
+	wg                  sync.WaitGroup
+	ctx                 context.Context
+	cancel              context.CancelFunc
+	handler             *protocol.Handler
+	coordinatorRegistry *CoordinatorRegistry
 }
 
 func NewServer(opts Options) *Server {
@@ -82,12 +85,14 @@ func NewServer(opts Options) *Server {
 
 	glog.V(1).Infof("Created Kafka gateway with SeaweedMQ brokers via masters %s", opts.Masters)
 
-	return &Server{
+	server := &Server{
 		opts:    opts,
 		ctx:     ctx,
 		cancel:  cancel,
 		handler: handler,
 	}
+
+	return server
 }
 
 func (s *Server) Start() error {
@@ -102,7 +107,21 @@ func (s *Server) Start() error {
 	s.handler.SetBrokerAddress(host, port)
 	glog.V(1).Infof("Kafka gateway advertising broker at %s:%d", host, port)
 
-	// Removed broker registration - no longer needed
+	// Initialize coordinator registry for distributed coordinator assignment
+	gatewayAddress := s.handler.GetGatewayAddress()
+	seedFiler := pb.ServerAddress(strings.Split(s.opts.Masters, ",")[0]) // Use first master as seed filer
+	grpcDialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+
+	s.coordinatorRegistry = NewCoordinatorRegistry(gatewayAddress, seedFiler, grpcDialOption)
+	s.handler.SetCoordinatorRegistry(s.coordinatorRegistry)
+
+	// Start coordinator registry
+	if err := s.coordinatorRegistry.Start(); err != nil {
+		glog.Errorf("Failed to start coordinator registry: %v", err)
+		return err
+	}
+
+	glog.V(1).Infof("Started coordinator registry for gateway %s", gatewayAddress)
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
@@ -136,7 +155,12 @@ func (s *Server) Wait() error {
 func (s *Server) Close() error {
 	s.cancel()
 
-	// Removed broker unregistration - no longer needed
+	// Stop coordinator registry
+	if s.coordinatorRegistry != nil {
+		if err := s.coordinatorRegistry.Stop(); err != nil {
+			glog.Warningf("Error stopping coordinator registry: %v", err)
+		}
+	}
 
 	if s.ln != nil {
 		_ = s.ln.Close()

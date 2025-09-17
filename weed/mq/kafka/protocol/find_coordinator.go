@@ -3,7 +3,26 @@ package protocol
 import (
 	"encoding/binary"
 	"fmt"
+	"time"
 )
+
+// CoordinatorRegistryInterface defines the interface for coordinator registry operations
+type CoordinatorRegistryInterface interface {
+	IsLeader() bool
+	GetLeaderAddress() string
+	WaitForLeader(timeout time.Duration) (string, error)
+	AssignCoordinator(consumerGroup string, requestingGateway string) (*CoordinatorAssignment, error)
+	GetCoordinator(consumerGroup string) (*CoordinatorAssignment, error)
+}
+
+// CoordinatorAssignment represents a consumer group coordinator assignment
+type CoordinatorAssignment struct {
+	ConsumerGroup     string
+	CoordinatorAddr   string
+	CoordinatorNodeID int32
+	AssignedAt        time.Time
+	LastHeartbeat     time.Time
+}
 
 func (h *Handler) handleFindCoordinator(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
 	switch apiVersion {
@@ -188,16 +207,129 @@ func (h *Handler) handleFindCoordinatorV2(correlationID uint32, requestBody []by
 }
 
 // findCoordinatorForGroup determines the coordinator gateway for a consumer group
-// Simplified approach: always use the current gateway as coordinator
+// Uses gateway leader for distributed coordinator assignment (first-come-first-serve)
 func (h *Handler) findCoordinatorForGroup(groupID string) (host string, port int, nodeID int32, err error) {
-	// Always use current gateway as coordinator - simple and reliable
-	host, port = h.GetBrokerAddress()
+	// Get the coordinator registry from the handler
+	registry := h.GetCoordinatorRegistry()
+	if registry == nil {
+		// Fallback to current gateway if no registry available
+		Debug("No coordinator registry available, using current gateway as coordinator for group %s", groupID)
+		host, port = h.GetBrokerAddress()
+		nodeID = 1
+		return host, port, nodeID, nil
+	}
 
-	// Use fixed node ID since we always use the current gateway
+	// If this gateway is the leader, handle the assignment directly
+	if registry.IsLeader() {
+		return h.handleCoordinatorAssignmentAsLeader(groupID, registry)
+	}
+
+	// If not the leader, contact the leader to get/assign coordinator
+	return h.requestCoordinatorFromLeader(groupID, registry)
+}
+
+// handleCoordinatorAssignmentAsLeader handles coordinator assignment when this gateway is the leader
+func (h *Handler) handleCoordinatorAssignmentAsLeader(groupID string, registry CoordinatorRegistryInterface) (host string, port int, nodeID int32, err error) {
+	// Check if coordinator already exists
+	if assignment, err := registry.GetCoordinator(groupID); err == nil && assignment != nil {
+		Debug("Found existing coordinator %s (node %d) for group %s", assignment.CoordinatorAddr, assignment.CoordinatorNodeID, groupID)
+		return h.parseAddress(assignment.CoordinatorAddr, assignment.CoordinatorNodeID)
+	}
+
+	// No coordinator exists, assign the requesting gateway (first-come-first-serve)
+	currentGateway := h.GetGatewayAddress()
+	assignment, err := registry.AssignCoordinator(groupID, currentGateway)
+	if err != nil {
+		Debug("Failed to assign coordinator for group %s: %v", groupID, err)
+		// Fallback to current gateway
+		host, port = h.GetBrokerAddress()
+		nodeID = 1
+		return host, port, nodeID, nil
+	}
+
+	Debug("Assigned coordinator %s (node %d) for group %s", assignment.CoordinatorAddr, assignment.CoordinatorNodeID, groupID)
+	return h.parseAddress(assignment.CoordinatorAddr, assignment.CoordinatorNodeID)
+}
+
+// requestCoordinatorFromLeader requests coordinator assignment from the gateway leader
+// If no leader exists, it waits for leader election to complete
+func (h *Handler) requestCoordinatorFromLeader(groupID string, registry CoordinatorRegistryInterface) (host string, port int, nodeID int32, err error) {
+	// Wait for leader election to complete
+	leaderAddress, err := h.waitForLeader(registry, 30*time.Second) // 30 second timeout
+	if err != nil {
+		Debug("Failed to wait for leader election: %v, falling back to current gateway for group %s", err, groupID)
+		host, port = h.GetBrokerAddress()
+		nodeID = 1
+		return host, port, nodeID, nil
+	}
+
+	Debug("Gateway leader %s elected, requesting coordinator assignment for group %s", leaderAddress, groupID)
+
+	// Since we don't have direct RPC between gateways yet, and the leader might be this gateway,
+	// check if we became the leader during the wait
+	if registry.IsLeader() {
+		Debug("This gateway became the leader during wait, handling assignment directly for group %s", groupID)
+		return h.handleCoordinatorAssignmentAsLeader(groupID, registry)
+	}
+
+	// For now, if we can't directly contact the leader (no inter-gateway RPC yet),
+	// use current gateway as fallback. In a full implementation, this would make
+	// an RPC call to the leader gateway.
+	Debug("Using current gateway as coordinator for group %s (inter-gateway RPC not implemented)", groupID)
+	host, port = h.GetBrokerAddress()
 	nodeID = 1
 	return host, port, nodeID, nil
 }
 
-// Removed requestCoordinatorFromBroker and parseBrokerAddress - no longer needed with simplified approach
+// waitForLeader waits for a leader to be elected, with timeout
+func (h *Handler) waitForLeader(registry CoordinatorRegistryInterface, timeout time.Duration) (leaderAddress string, err error) {
+	Debug("Waiting for gateway leader election to complete...")
 
-// Removed generateNodeID - using fixed node ID 1 for simplified approach
+	// Use the registry's efficient wait mechanism
+	leaderAddress, err = registry.WaitForLeader(timeout)
+	if err != nil {
+		Debug("Failed to wait for leader: %v", err)
+		return "", err
+	}
+
+	Debug("Gateway leader elected: %s", leaderAddress)
+	return leaderAddress, nil
+}
+
+// parseAddress parses a gateway address and returns host, port, and nodeID
+func (h *Handler) parseAddress(address string, nodeID int32) (host string, port int, nid int32, err error) {
+	// Simple parsing - assume format "host:port"
+	parts := []string{address}
+	if len(address) > 0 && address[len(address)-1] != ':' {
+		// Try to split by ':'
+		for i := len(address) - 1; i >= 0; i-- {
+			if address[i] == ':' {
+				parts = []string{address[:i], address[i+1:]}
+				break
+			}
+		}
+	}
+
+	if len(parts) == 2 {
+		host = parts[0]
+		if parsedPort := 0; parsedPort > 0 && parsedPort < 65536 {
+			// Parse port from parts[1]
+			for _, char := range parts[1] {
+				if char >= '0' && char <= '9' {
+					parsedPort = parsedPort*10 + int(char-'0')
+				} else {
+					break
+				}
+			}
+			port = parsedPort
+		} else {
+			port = 9092 // Default Kafka port
+		}
+	} else {
+		host = address
+		port = 9092 // Default Kafka port
+	}
+
+	nid = nodeID
+	return host, port, nid, nil
+}

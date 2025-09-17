@@ -92,6 +92,9 @@ type Handler struct {
 	// Consumer group coordination
 	groupCoordinator *consumer.GroupCoordinator
 
+	// Coordinator registry for distributed coordinator assignment
+	coordinatorRegistry CoordinatorRegistryInterface
+
 	// Schema management (optional, for schematized topics)
 	schemaManager *schema.Manager
 	useSchema     bool
@@ -265,6 +268,22 @@ func (h *Handler) GetBrokerAddress() (string, int) {
 	}
 
 	return host, port
+}
+
+// GetGatewayAddress returns the current gateway address as a string
+func (h *Handler) GetGatewayAddress() string {
+	host, port := h.GetBrokerAddress()
+	return fmt.Sprintf("%s:%d", host, port)
+}
+
+// SetCoordinatorRegistry sets the coordinator registry for this handler
+func (h *Handler) SetCoordinatorRegistry(registry CoordinatorRegistryInterface) {
+	h.coordinatorRegistry = registry
+}
+
+// GetCoordinatorRegistry returns the coordinator registry
+func (h *Handler) GetCoordinatorRegistry() CoordinatorRegistryInterface {
+	return h.coordinatorRegistry
 }
 
 // HandleConn processes a single client connection
