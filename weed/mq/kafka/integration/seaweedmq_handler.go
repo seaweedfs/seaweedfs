@@ -122,12 +122,7 @@ func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromO
 			return nil, fmt.Errorf("failed to get broker subscriber: %v", subErr)
 		}
 
-		// Small delay to avoid race condition with broker flushing
-		// This gives time for recently published messages to be flushed to filer
-		if fromOffset == 0 {
-			time.Sleep(50 * time.Millisecond)
-			glog.V(1).Infof("🕑 Added small delay for broker flush synchronization")
-		}
+		// No artificial delay needed - the issue was wrong OffsetType usage, not timing
 
 		seaweedRecords, err = h.brokerClient.ReadRecords(brokerSubscriber, recordsToFetch)
 	} else if h.agentClient != nil {
@@ -1221,24 +1216,32 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 		return nil, fmt.Errorf("failed to get actual partition assignment for subscribe: %v", err)
 	}
 
-	// Convert Kafka offset to SeaweedMQ timestamp
-	// For consumer subscriptions, we need to translate Kafka offset to the appropriate timestamp
+	// Convert Kafka offset to appropriate SeaweedMQ OffsetType and parameters
+	var offsetType schema_pb.OffsetType
 	var startTimestamp int64
+
 	if startOffset == 0 {
-		// For offset 0, start from the beginning of available messages
-		startTimestamp = 0 // This will be handled as "from beginning" by SeaweedMQ
+		// For Kafka offset 0 (read from beginning), use RESET_TO_EARLIEST
+		// This tells SeaweedMQ to start from the very beginning regardless of timestamps
+		offsetType = schema_pb.OffsetType_RESET_TO_EARLIEST
+		startTimestamp = 0 // Not used with RESET_TO_EARLIEST, but set to 0 for clarity
+		glog.V(1).Infof("🔍 Using RESET_TO_EARLIEST for Kafka offset 0 (read from beginning)")
+	} else if startOffset == -1 {
+		// Kafka offset -1 typically means "latest"
+		offsetType = schema_pb.OffsetType_RESET_TO_LATEST
+		startTimestamp = 0 // Not used with RESET_TO_LATEST
+		glog.V(1).Infof("🔍 Using RESET_TO_LATEST for Kafka offset -1 (read latest)")
 	} else {
+		// For specific offsets, we still need timestamp mapping
 		// TODO: CRITICAL - Implement proper Kafka offset to SeaweedMQ timestamp mapping
 		// This requires maintaining an offset->timestamp ledger during produce operations
-		// and looking up the actual timestamp for the requested Kafka offset here.
-		// Current implementation is a temporary workaround that may miss messages.
-
-		// For now, use current time minus a reasonable window to catch recent messages
-		startTimestamp = time.Now().UnixNano() - int64(time.Hour) // Look back 1 hour max
+		offsetType = schema_pb.OffsetType_EXACT_TS_NS
+		startTimestamp = time.Now().UnixNano() - int64(24*time.Hour) // 24h lookback as fallback
+		glog.V(1).Infof("🔍 Using EXACT_TS_NS with 24h lookback for Kafka offset %d", startOffset)
 	}
 
-	glog.V(1).Infof("🔍 Creating subscriber for topic=%s partition=%d: Kafka offset %d -> SeaweedMQ timestamp %d",
-		topic, partition, startOffset, startTimestamp)
+	glog.V(1).Infof("🔍 Creating subscriber for topic=%s partition=%d: Kafka offset %d -> SeaweedMQ %s (timestamp=%d)",
+		topic, partition, startOffset, offsetType, startTimestamp)
 
 	// Send init message using the actual partition structure that the broker allocated
 	if err := stream.Send(&mq_pb.SubscribeMessageRequest{
@@ -1253,9 +1256,9 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 				},
 				PartitionOffset: &schema_pb.PartitionOffset{
 					Partition: actualPartition,
-					StartTsNs: startTimestamp, // Use proper SeaweedMQ timestamp instead of Kafka offset
+					StartTsNs: startTimestamp,
 				},
-				OffsetType:        schema_pb.OffsetType_EXACT_TS_NS,
+				OffsetType:        offsetType, // Use the correct offset type
 				SlidingWindowSize: 10,
 			},
 		},

@@ -114,16 +114,7 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 		stopTime := time.Unix(0, stopTsNs)
 		var processedTsNs int64
 		err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			glog.V(1).Infof("🔍 Starting SeaweedList for partition directory: %s", partitionDir)
-
-			entryCount := 0
-			listErr := filer_pb.SeaweedList(context.Background(), client, partitionDir, "", func(entry *filer_pb.Entry, isLast bool) error {
-				entryCount++
-				if entryCount <= 10 { // Log first 10 entries for debugging
-					glog.V(1).Infof("  📁 Found entry[%d]: %s (isDir=%t, size=%d)", entryCount, entry.Name, entry.IsDirectory, filer.TotalSize(entry.GetChunks()))
-				}
-
-				// Continue with original logic
+			return filer_pb.SeaweedList(context.Background(), client, partitionDir, "", func(entry *filer_pb.Entry, isLast bool) error {
 				if entry.IsDirectory {
 					return nil
 				}
@@ -147,38 +138,7 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 				return nil
 
 			}, startFileName, true, math.MaxInt32)
-
-			glog.V(1).Infof("🔍 SeaweedList completed for %s: found %d entries, err=%v", partitionDir, entryCount, listErr)
-			return listErr
 		})
-
-		if err != nil {
-			glog.V(0).Infof("⚠️  SeaweedList failed for partition %s: %v", partitionDir, err)
-
-			// Debug: Try to list parent directories to understand structure
-			parentPath := util.FullPath(partitionDir)
-			if parentPath != "/" {
-				lastSlash := strings.LastIndex(string(parentPath), "/")
-				if lastSlash >= 0 {
-					parentDir := string(parentPath[:lastSlash])
-					if parentDir == "" {
-						parentDir = "/"
-					}
-					glog.V(1).Infof("🔍 Attempting to list parent directory: %s", parentDir)
-					_ = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-						parentErr := filer_pb.SeaweedList(context.Background(), client, parentDir, "", func(entry *filer_pb.Entry, isLast bool) error {
-							glog.V(1).Infof("  📂 Parent entry: %s (isDir=%t)", entry.Name, entry.IsDirectory)
-							return nil
-						}, "", true, 50) // Limit to 50 entries
-
-						if parentErr != nil {
-							glog.V(1).Infof("  ❌ Parent directory listing also failed: %v", parentErr)
-						}
-						return nil // Don't propagate error, this is just debugging
-					})
-				}
-			}
-		}
 
 		lastReadPosition = log_buffer.NewMessagePosition(processedTsNs, -2)
 		return
