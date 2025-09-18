@@ -87,9 +87,9 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 	go mqBroker.MasterClient.KeepConnectedToMaster(context.Background())
 
 	// Initialize offset manager using the filer accessor
-	// This ensures offset assignment works and reuses the existing filer connection infrastructure
+	// The filer accessor will automatically use the current filer address as it gets discovered
 	mqBroker.offsetManager = NewBrokerOffsetManagerWithFilerAccessor(fca, "kafka", "default")
-	glog.V(0).Infof("broker initialized offset manager with filer accessor")
+	glog.V(0).Infof("broker initialized offset manager with filer accessor (current filer: %s)", mqBroker.GetFiler())
 
 	existingNodes := cluster.ListExistingPeerUpdates(mqBroker.MasterClient.GetMaster(context.Background()), grpcDialOption, option.FilerGroup, cluster.FilerType)
 	for _, newNode := range existingNodes {
@@ -127,13 +127,15 @@ func (b *MessageQueueBroker) OnBrokerUpdate(update *master_pb.ClusterNodeUpdate,
 		if b.currentFiler == "" {
 			b.currentFiler = address
 			// The offset manager will automatically use the updated filer through the filer accessor
-			glog.V(0).Infof("broker discovered filer %s (offset manager will use it via filer accessor)", address)
+			glog.V(0).Infof("broker discovered filer %s (offset manager will automatically use it via filer accessor)", address)
 		}
 	} else {
 		delete(b.filers, address)
 		if b.currentFiler == address {
 			for filer := range b.filers {
 				b.currentFiler = filer
+				// The offset manager will automatically use the new filer through the filer accessor
+				glog.V(0).Infof("broker switched to filer %s (offset manager will automatically use it)", filer)
 				break
 			}
 		}
