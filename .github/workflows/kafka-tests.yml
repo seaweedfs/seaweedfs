@@ -195,7 +195,7 @@ jobs:
         # Start MQ broker with more verbose logging for debugging
         echo "Starting MQ broker..."
         nohup weed -v 1 mq.broker \
-          -filer="127.0.0.1:8888" \
+          -master="127.0.0.1:9333" \
           -port=17777 \
           > /tmp/weed-mq-broker.log 2>&1 &
         
@@ -319,7 +319,7 @@ jobs:
         # Start MQ broker with more verbose logging for debugging
         echo "Starting MQ broker..."
         nohup weed -v 1 mq.broker \
-          -filer="127.0.0.1:8888" \
+          -master="127.0.0.1:9333" \
           -port=17777 \
           > /tmp/weed-mq-broker.log 2>&1 &
         
@@ -442,7 +442,7 @@ jobs:
         # Start MQ broker with more verbose logging for debugging
         echo "Starting MQ broker..."
         nohup weed -v 1 mq.broker \
-          -filer="127.0.0.1:8888" \
+          -master="127.0.0.1:9333" \
           -port=17777 \
           > /tmp/weed-mq-broker.log 2>&1 &
         
@@ -562,7 +562,7 @@ jobs:
         # Start MQ broker with more verbose logging for debugging
         echo "Starting MQ broker..."
         nohup weed -v 1 mq.broker \
-          -filer="127.0.0.1:8888" \
+          -master="127.0.0.1:9333" \
           -port=17777 \
           > /tmp/weed-mq-broker.log 2>&1 &
         

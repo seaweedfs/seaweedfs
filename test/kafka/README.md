@@ -40,7 +40,7 @@ Requires running SeaweedFS instance:
 weed server -dir=/tmp/seaweedfs-data -master.port=9333 -volume.port=8081 -filer.port=8888
 
 # Terminal 2: Start MQ broker  
-weed mq.broker -filer="127.0.0.1:8888" -port=17777
+weed mq.broker -master="127.0.0.1:9333" -port=17777
 ```
 
 2. **Run tests with SMQ backend:**
