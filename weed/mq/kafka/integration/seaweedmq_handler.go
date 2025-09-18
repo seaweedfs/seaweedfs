@@ -1213,6 +1213,25 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 		return nil, fmt.Errorf("failed to get actual partition assignment for subscribe: %v", err)
 	}
 
+	// Convert Kafka offset to SeaweedMQ timestamp
+	// For consumer subscriptions, we need to translate Kafka offset to the appropriate timestamp
+	var startTimestamp int64
+	if startOffset == 0 {
+		// For offset 0, start from the beginning of available messages
+		startTimestamp = 0 // This will be handled as "from beginning" by SeaweedMQ
+	} else {
+		// TODO: CRITICAL - Implement proper Kafka offset to SeaweedMQ timestamp mapping
+		// This requires maintaining an offset->timestamp ledger during produce operations
+		// and looking up the actual timestamp for the requested Kafka offset here.
+		// Current implementation is a temporary workaround that may miss messages.
+
+		// For now, use current time minus a reasonable window to catch recent messages
+		startTimestamp = time.Now().UnixNano() - int64(time.Hour) // Look back 1 hour max
+	}
+
+	glog.V(1).Infof("🔍 Creating subscriber for topic=%s partition=%d: Kafka offset %d -> SeaweedMQ timestamp %d",
+		topic, partition, startOffset, startTimestamp)
+
 	// Send init message using the actual partition structure that the broker allocated
 	if err := stream.Send(&mq_pb.SubscribeMessageRequest{
 		Message: &mq_pb.SubscribeMessageRequest_Init{
@@ -1226,7 +1245,7 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 				},
 				PartitionOffset: &schema_pb.PartitionOffset{
 					Partition: actualPartition,
-					StartTsNs: startOffset,
+					StartTsNs: startTimestamp, // Use proper SeaweedMQ timestamp instead of Kafka offset
 				},
 				OffsetType:        schema_pb.OffsetType_EXACT_TS_NS,
 				SlidingWindowSize: 10,
