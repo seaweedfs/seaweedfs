@@ -10,6 +10,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
@@ -734,18 +736,35 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string, clientHost str
 	// Create master client for service discovery
 	grpcDialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
 	masterDiscovery := pb.ServerAddresses(masters).ToServiceDiscovery()
-	
+
 	// Use provided client host for proper gRPC connection
 	// This is critical for MasterClient to establish streaming connections
 	clientHostAddr := pb.ServerAddress(clientHost)
-	
+
 	masterClient := wdclient.NewMasterClient(grpcDialOption, filerGroup, "kafka-gateway", clientHostAddr, "", "", *masterDiscovery)
 
+	glog.V(1).Infof("🚀 Created MasterClient with clientHost=%s, masters=%s", clientHost, masters)
+
+	// Start KeepConnectedToMaster in background to maintain connection
+	glog.V(1).Infof("🔄 Starting KeepConnectedToMaster background goroutine...")
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		defer cancel()
+		masterClient.KeepConnectedToMaster(ctx)
+	}()
+
+	// Give the connection a moment to establish
+	time.Sleep(2 * time.Second)
+	glog.V(1).Infof("⏱️ Initial connection delay completed")
+
 	// Discover brokers from masters using master client
+	glog.V(1).Infof("🔄 About to call discoverBrokersWithMasterClient...")
 	brokerAddresses, err := discoverBrokersWithMasterClient(masterClient, filerGroup)
 	if err != nil {
+		glog.Errorf("💥 Broker discovery failed: %v", err)
 		return nil, fmt.Errorf("failed to discover brokers: %v", err)
 	}
+	glog.V(1).Infof("✨ Broker discovery returned: %v", brokerAddresses)
 
 	if len(brokerAddresses) == 0 {
 		return nil, fmt.Errorf("no brokers discovered from masters")
@@ -790,25 +809,38 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string, clientHost str
 func discoverBrokersWithMasterClient(masterClient *wdclient.MasterClient, filerGroup string) ([]string, error) {
 	var brokers []string
 
+	glog.V(1).Infof("🔍 Starting broker discovery with MasterClient for filer group: %q", filerGroup)
+
 	err := masterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+		glog.V(1).Infof("📞 Inside MasterClient.WithClient callback - client obtained successfully")
 		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
 			ClientType: cluster.BrokerType,
 			FilerGroup: filerGroup,
 			Limit:      1000,
 		})
 		if err != nil {
+			glog.Errorf("❌ ListClusterNodes gRPC call failed: %v", err)
 			return err
 		}
+
+		glog.V(1).Infof("✅ ListClusterNodes successful - found %d cluster nodes", len(resp.ClusterNodes))
 
 		// Extract broker addresses from response
 		for _, node := range resp.ClusterNodes {
 			if node.Address != "" {
 				brokers = append(brokers, node.Address)
+				glog.V(1).Infof("🌐 Discovered broker: %s", node.Address)
 			}
 		}
 
 		return nil
 	})
+
+	if err != nil {
+		glog.Errorf("❌ MasterClient.WithClient failed: %v", err)
+	} else {
+		glog.V(1).Infof("🎉 Broker discovery completed successfully - found %d brokers: %v", len(brokers), brokers)
+	}
 
 	return brokers, err
 }
