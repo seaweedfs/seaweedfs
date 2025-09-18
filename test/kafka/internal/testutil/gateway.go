@@ -150,7 +150,7 @@ func NewGatewayTestServerWithSMQ(t *testing.T, mode SMQAvailabilityMode) *Gatewa
 		return newGatewayTestServerWithTimeout(t, GatewayOptions{
 			UseProduction: true,
 			Masters:       masters,
-		}, 30*time.Second)
+		}, 20*time.Second)
 
 	case SMQAvailable:
 		if smqAvailable {
@@ -158,7 +158,7 @@ func NewGatewayTestServerWithSMQ(t *testing.T, mode SMQAvailabilityMode) *Gatewa
 			return newGatewayTestServerWithTimeout(t, GatewayOptions{
 				UseProduction: true,
 				Masters:       masters,
-			}, 30*time.Second)
+			}, 15*time.Second)
 		} else {
 			t.Logf("SMQ not available, using mock gateway")
 			return NewGatewayTestServer(t, GatewayOptions{})
@@ -186,7 +186,9 @@ func newGatewayTestServerWithTimeout(t *testing.T, opts GatewayOptions, timeout 
 		}()
 
 		// Create the gateway in a goroutine so we can timeout if it hangs
+		t.Logf("Creating gateway with masters: %s (with %v timeout)", opts.Masters, timeout)
 		gateway := NewGatewayTestServer(t, opts)
+		t.Logf("Gateway created successfully")
 		done <- gateway
 	}()
 
@@ -196,7 +198,7 @@ func newGatewayTestServerWithTimeout(t *testing.T, opts GatewayOptions, timeout 
 	case err := <-errChan:
 		t.Fatalf("Error creating gateway: %v", err)
 	case <-ctx.Done():
-		t.Fatalf("Timeout creating gateway after %v - likely SMQ broker discovery failed", timeout)
+		t.Fatalf("Timeout creating gateway after %v - likely SMQ broker discovery failed. Check if MQ brokers are running and accessible.", timeout)
 	}
 
 	return nil // This should never be reached

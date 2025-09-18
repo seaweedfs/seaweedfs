@@ -184,20 +184,41 @@ jobs:
           echo "Waiting for SeaweedFS master... ($i/30)"; sleep 1
         done
         
-        # Start MQ broker
-        nohup weed -v 0 mq.broker \
+        # Wait for filer to be ready
+        for i in $(seq 1 30); do
+          if curl -s http://127.0.0.1:8888/status >/dev/null 2>&1; then
+            echo "SeaweedFS filer is up"; break
+          fi
+          echo "Waiting for SeaweedFS filer... ($i/30)"; sleep 1
+        done
+        
+        # Start MQ broker with more verbose logging for debugging
+        echo "Starting MQ broker..."
+        nohup weed -v 1 mq.broker \
           -filer="127.0.0.1:8888" \
           -port=17777 \
           > /tmp/weed-mq-broker.log 2>&1 &
-          
-        # Wait for broker to be ready  
-        sleep 3
-        for i in $(seq 1 15); do
+        
+        # Wait for broker to be ready with better error reporting
+        sleep 5
+        broker_ready=false
+        for i in $(seq 1 20); do
           if nc -z 127.0.0.1 17777; then
-            echo "SeaweedFS MQ broker is up"; break
+            echo "SeaweedFS MQ broker is up"
+            broker_ready=true
+            break
           fi
-          echo "Waiting for MQ broker... ($i/15)"; sleep 1
+          echo "Waiting for MQ broker... ($i/20)"; sleep 1
         done
+        
+        # Check if broker failed to start and show logs
+        if [ "$broker_ready" = false ]; then
+          echo "ERROR: MQ broker failed to start. Broker logs:"
+          cat /tmp/weed-mq-broker.log || echo "No broker logs found"
+          echo "Server logs:"  
+          tail -20 /tmp/weed-server.log || echo "No server logs found"
+          exit 1
+        fi
 
     - name: Run End-to-End Tests
       run: |
@@ -287,20 +308,41 @@ jobs:
           echo "Waiting for SeaweedFS master... ($i/30)"; sleep 1
         done
         
-        # Start MQ broker
-        nohup weed -v 0 mq.broker \
+        # Wait for filer to be ready
+        for i in $(seq 1 30); do
+          if curl -s http://127.0.0.1:8888/status >/dev/null 2>&1; then
+            echo "SeaweedFS filer is up"; break
+          fi
+          echo "Waiting for SeaweedFS filer... ($i/30)"; sleep 1
+        done
+        
+        # Start MQ broker with more verbose logging for debugging
+        echo "Starting MQ broker..."
+        nohup weed -v 1 mq.broker \
           -filer="127.0.0.1:8888" \
           -port=17777 \
           > /tmp/weed-mq-broker.log 2>&1 &
-          
-        # Wait for broker to be ready  
-        sleep 3
-        for i in $(seq 1 15); do
+        
+        # Wait for broker to be ready with better error reporting
+        sleep 5
+        broker_ready=false
+        for i in $(seq 1 20); do
           if nc -z 127.0.0.1 17777; then
-            echo "SeaweedFS MQ broker is up"; break
+            echo "SeaweedFS MQ broker is up"
+            broker_ready=true
+            break
           fi
-          echo "Waiting for MQ broker... ($i/15)"; sleep 1
+          echo "Waiting for MQ broker... ($i/20)"; sleep 1
         done
+        
+        # Check if broker failed to start and show logs
+        if [ "$broker_ready" = false ]; then
+          echo "ERROR: MQ broker failed to start. Broker logs:"
+          cat /tmp/weed-mq-broker.log || echo "No broker logs found"
+          echo "Server logs:"  
+          tail -20 /tmp/weed-server.log || echo "No server logs found"
+          exit 1
+        fi
 
     - name: Run Consumer Group Tests
       run: |
@@ -389,20 +431,41 @@ jobs:
           echo "Waiting for SeaweedFS master... ($i/30)"; sleep 1
         done
         
-        # Start MQ broker
-        nohup weed -v 0 mq.broker \
+        # Wait for filer to be ready
+        for i in $(seq 1 30); do
+          if curl -s http://127.0.0.1:8888/status >/dev/null 2>&1; then
+            echo "SeaweedFS filer is up"; break
+          fi
+          echo "Waiting for SeaweedFS filer... ($i/30)"; sleep 1
+        done
+        
+        # Start MQ broker with more verbose logging for debugging
+        echo "Starting MQ broker..."
+        nohup weed -v 1 mq.broker \
           -filer="127.0.0.1:8888" \
           -port=17777 \
           > /tmp/weed-mq-broker.log 2>&1 &
-          
-        # Wait for broker to be ready  
-        sleep 3
-        for i in $(seq 1 15); do
+        
+        # Wait for broker to be ready with better error reporting
+        sleep 5
+        broker_ready=false
+        for i in $(seq 1 20); do
           if nc -z 127.0.0.1 17777; then
-            echo "SeaweedFS MQ broker is up"; break
+            echo "SeaweedFS MQ broker is up"
+            broker_ready=true
+            break
           fi
-          echo "Waiting for MQ broker... ($i/15)"; sleep 1
+          echo "Waiting for MQ broker... ($i/20)"; sleep 1
         done
+        
+        # Check if broker failed to start and show logs
+        if [ "$broker_ready" = false ]; then
+          echo "ERROR: MQ broker failed to start. Broker logs:"
+          cat /tmp/weed-mq-broker.log || echo "No broker logs found"
+          echo "Server logs:"  
+          tail -20 /tmp/weed-server.log || echo "No server logs found"
+          exit 1
+        fi
 
     - name: Run Client Compatibility Tests
       run: |
@@ -488,20 +551,41 @@ jobs:
           echo "Waiting for SeaweedFS master... ($i/30)"; sleep 1
         done
         
-        # Start MQ broker
-        nohup weed -v 0 mq.broker \
+        # Wait for filer to be ready
+        for i in $(seq 1 30); do
+          if curl -s http://127.0.0.1:8888/status >/dev/null 2>&1; then
+            echo "SeaweedFS filer is up"; break
+          fi
+          echo "Waiting for SeaweedFS filer... ($i/30)"; sleep 1
+        done
+        
+        # Start MQ broker with more verbose logging for debugging
+        echo "Starting MQ broker..."
+        nohup weed -v 1 mq.broker \
           -filer="127.0.0.1:8888" \
           -port=17777 \
           > /tmp/weed-mq-broker.log 2>&1 &
-          
-        # Wait for broker to be ready  
-        sleep 3
-        for i in $(seq 1 15); do
+        
+        # Wait for broker to be ready with better error reporting
+        sleep 5
+        broker_ready=false
+        for i in $(seq 1 20); do
           if nc -z 127.0.0.1 17777; then
-            echo "SeaweedFS MQ broker is up"; break
+            echo "SeaweedFS MQ broker is up"
+            broker_ready=true
+            break
           fi
-          echo "Waiting for MQ broker... ($i/15)"; sleep 1
+          echo "Waiting for MQ broker... ($i/20)"; sleep 1
         done
+        
+        # Check if broker failed to start and show logs
+        if [ "$broker_ready" = false ]; then
+          echo "ERROR: MQ broker failed to start. Broker logs:"
+          cat /tmp/weed-mq-broker.log || echo "No broker logs found"
+          echo "Server logs:"  
+          tail -20 /tmp/weed-server.log || echo "No server logs found"
+          exit 1
+        fi
 
     - name: Run SMQ Integration Tests
       run: |

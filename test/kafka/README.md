@@ -1,298 +1,156 @@
-# Kafka Integration Testing - Refactored Structure
+# Kafka Gateway Tests with SMQ Integration
 
-This document describes the refactored Kafka integration testing structure for SeaweedFS.
+This directory contains tests for the SeaweedFS Kafka Gateway with full SeaweedMQ (SMQ) integration.
 
-## 🎯 **Refactoring Goals**
+## Test Types
 
-- **Better Organization**: Clear separation of unit, integration, and e2e tests
-- **Reduced Duplication**: Common utilities and helpers extracted
-- **Improved Maintainability**: Consistent patterns and naming conventions
-- **Enhanced Readability**: Well-documented and structured code
-- **Easier Development**: Simplified test creation and debugging
+### 🧪 **Unit Tests** (`./unit/`)
+- Basic gateway functionality
+- Protocol compatibility 
+- No SeaweedFS backend required
+- Uses mock handlers
 
-## 📁 **New Directory Structure**
+### 🔗 **Integration Tests** (`./integration/`)
+- **Mock Mode** (default): Uses in-memory handlers for protocol testing
+- **SMQ Mode** (with `SEAWEEDFS_MASTERS`): Uses real SeaweedFS backend for full integration
 
-```
-test/kafka/
-├── internal/testutil/          # Common test utilities (NEW)
-│   ├── gateway.go             # Gateway server utilities
-│   ├── clients.go             # Kafka client wrappers
-│   ├── messages.go            # Message generation and validation
-│   ├── docker.go              # Docker environment helpers
-│   └── assertions.go          # Custom test assertions
-├── unit/                      # Unit tests (NEW)
-│   └── gateway_test.go        # Gateway unit tests
-├── integration/               # Integration tests (NEW)
-│   ├── client_compatibility_test.go  # Client compatibility tests
-│   ├── consumer_groups_test.go       # Consumer group tests
-│   └── docker_test.go               # Docker integration tests
-├── e2e/                       # End-to-end tests (NEW)
-│   ├── comprehensive_test.go         # Comprehensive E2E scenarios
-│   └── offset_management_test.go     # Offset management E2E tests
-├── cmd/setup/                 # Test setup utilities (EXISTING)
-├── scripts/                   # Helper scripts (EXISTING)
-├── docker-compose.yml         # Docker setup (EXISTING)
-├── Makefile.new              # Refactored Makefile (NEW)
-└── README_REFACTORED.md      # This documentation (NEW)
-```
+### 🚀 **E2E Tests** (`./e2e/`)
+- End-to-end workflows
+- Automatically detects SMQ availability
+- Falls back to mock mode if SMQ unavailable
 
-## 🛠 **Common Test Utilities**
+## Running Tests Locally
 
-### **Gateway Utilities** (`internal/testutil/gateway.go`)
-
-```go
-// Create and manage test gateway servers
-gateway := testutil.NewGatewayTestServer(t, testutil.GatewayOptions{})
-defer gateway.CleanupAndClose()
-
-addr := gateway.StartAndWait()
-gateway.AddTestTopic("my-topic")
-```
-
-### **Client Utilities** (`internal/testutil/clients.go`)
-
-```go
-// Kafka-go client wrapper
-kafkaGoClient := testutil.NewKafkaGoClient(t, addr)
-err := kafkaGoClient.ProduceMessages(topic, messages)
-consumed, err := kafkaGoClient.ConsumeMessages(topic, count)
-
-// Sarama client wrapper
-saramaClient := testutil.NewSaramaClient(t, addr)
-err := saramaClient.CreateTopic(topic, partitions, replicationFactor)
-err := saramaClient.ProduceMessages(topic, stringMessages)
-```
-
-### **Message Utilities** (`internal/testutil/messages.go`)
-
-```go
-// Generate test messages
-msgGen := testutil.NewMessageGenerator()
-kafkaGoMessages := msgGen.GenerateKafkaGoMessages(5)
-stringMessages := msgGen.GenerateStringMessages(5)
-
-// Generate unique names
-topic := testutil.GenerateUniqueTopicName("test-topic")
-groupID := testutil.GenerateUniqueGroupID("test-group")
-
-// Validate message content
-err := testutil.ValidateKafkaGoMessageContent(expected, actual)
-err := testutil.ValidateMessageContent(expectedStrings, actualStrings)
-```
-
-### **Docker Utilities** (`internal/testutil/docker.go`)
-
-```go
-// Handle Docker environment
-env := testutil.NewDockerEnvironment(t)
-env.SkipIfNotAvailable(t)
-env.RequireKafka(t)
-env.RequireGateway(t)
-```
-
-### **Custom Assertions** (`internal/testutil/assertions.go`)
-
-```go
-// Enhanced assertions with better error messages
-testutil.AssertNoError(t, err, "Failed to create topic")
-testutil.AssertEqual(t, expected, actual, "Message count mismatch")
-testutil.AssertEventually(t, assertion, timeout, interval, "Condition not met")
-```
-
-## 📋 **Test Categories**
-
-### **Unit Tests** (`unit/`)
-- Test individual components in isolation
-- No external dependencies (Docker, real Kafka)
-- Fast execution
-- Focus on gateway functionality, protocol handling
-
-### **Integration Tests** (`integration/`)
-- Test component interactions
-- May use Docker environment
-- Test client compatibility, consumer groups
-- Focus on SeaweedFS Kafka Gateway integration
-
-### **End-to-End Tests** (`e2e/`)
-- Test complete workflows
-- Full environment setup required
-- Test real-world scenarios
-- Focus on user-facing functionality
-
-## 🚀 **Usage Examples**
-
-### **Running Tests**
-
+### Quick Protocol Testing (Mock Mode)
 ```bash
-# Run all tests
-make test
+# Run all integration tests with mock backend
+cd test/kafka
+go test ./integration/...
 
-# Run specific categories
-make test-unit
-make test-integration
-make test-e2e
-
-# Run Docker-based tests
-make test-docker
-
-# Run client-specific tests
-make test-sarama
-make test-kafka-go
+# Run specific test
+go test -v ./integration/ -run TestClientCompatibility
 ```
 
-### **Development Workflow**
+### Full Integration Testing (SMQ Mode)
+Requires running SeaweedFS instance:
 
+1. **Start SeaweedFS with MQ support:**
 ```bash
-# Start development environment
-make dev-kafka        # Just Kafka ecosystem
-make dev-seaweedfs     # Just SeaweedFS
-make dev-gateway       # Full gateway setup
+# Terminal 1: Start SeaweedFS server
+weed server -dir=/tmp/seaweedfs-data -master.port=9333 -volume.port=8081 -filer.port=8888
 
-# Quick development test
-make dev-test
-
-# Monitor services
-make status
-make logs-gateway
+# Terminal 2: Start MQ broker  
+weed mq.broker -filer="127.0.0.1:8888" -port=17777
 ```
 
-### **Writing New Tests**
+2. **Run tests with SMQ backend:**
+```bash
+cd test/kafka
+SEAWEEDFS_MASTERS=127.0.0.1:9333 go test ./integration/...
 
-#### **Unit Test Example**
-
-```go
-package unit
-
-import (
-    "testing"
-    "github.com/seaweedfs/seaweedfs/test/kafka/internal/testutil"
-)
-
-func TestMyFeature(t *testing.T) {
-    gateway := testutil.NewGatewayTestServer(t, testutil.GatewayOptions{})
-    defer gateway.CleanupAndClose()
-    
-    addr := gateway.StartAndWait()
-    
-    // Test implementation
-    client := testutil.NewKafkaGoClient(t, addr)
-    // ... test logic
-}
+# Run specific SMQ integration tests
+SEAWEEDFS_MASTERS=127.0.0.1:9333 go test -v ./integration/ -run TestSMQIntegration
 ```
 
-#### **Integration Test Example**
-
-```go
-package integration
-
-func TestClientCompatibility(t *testing.T) {
-    gateway := testutil.NewGatewayTestServer(t, testutil.GatewayOptions{})
-    defer gateway.CleanupAndClose()
-    
-    addr := gateway.StartAndWait()
-    topic := testutil.GenerateUniqueTopicName("compatibility-test")
-    gateway.AddTestTopic(topic)
-    
-    // Test cross-client compatibility
-    kafkaGoClient := testutil.NewKafkaGoClient(t, addr)
-    saramaClient := testutil.NewSaramaClient(t, addr)
-    // ... test logic
-}
+### Test Broker Startup
+If you're having broker startup issues:
+```bash
+# Debug broker startup locally
+./scripts/test-broker-startup.sh
 ```
 
-#### **E2E Test Example**
+## CI/CD Integration
 
-```go
-package e2e
+### GitHub Actions Jobs
 
-func TestCompleteWorkflow(t *testing.T) {
-    env := testutil.NewDockerEnvironment(t)
-    env.SkipIfNotAvailable(t)
-    
-    // Test complete end-to-end workflow
-    // ... test logic
-}
+1. **Unit Tests** - Fast protocol tests with mock backend
+2. **Integration Tests** - Mock mode by default  
+3. **E2E Tests (with SMQ)** - Full SeaweedFS + MQ broker stack
+4. **Client Compatibility (with SMQ)** - Tests different Kafka clients against real backend
+5. **Consumer Group Tests (with SMQ)** - Tests consumer group persistence
+6. **SMQ Integration Tests** - Dedicated SMQ-specific functionality tests
+
+### What Gets Tested with SMQ
+
+When `SEAWEEDFS_MASTERS` is available, tests exercise:
+
+✅ **Real Message Persistence** - Messages stored in SeaweedFS volumes  
+✅ **Offset Persistence** - Consumer group offsets stored in SeaweedFS filer  
+✅ **Topic Persistence** - Topic metadata persisted in SeaweedFS filer  
+✅ **Consumer Group Coordination** - Distributed coordinator assignment  
+✅ **Cross-Client Compatibility** - Sarama, kafka-go with real backend  
+✅ **Broker Discovery** - Gateway discovers MQ brokers via masters  
+
+## Test Infrastructure
+
+### `testutil.NewGatewayTestServerWithSMQ(t, mode)`
+
+Smart gateway creation that automatically:
+- Detects SMQ availability via `SEAWEEDFS_MASTERS`
+- Uses production handler when available
+- Falls back to mock when unavailable  
+- Provides timeout protection against hanging
+
+**Modes:**
+- `SMQRequired` - Skip test if SMQ unavailable
+- `SMQAvailable` - Use SMQ if available, otherwise mock
+- `SMQUnavailable` - Always use mock
+
+### Timeout Protection
+
+Gateway creation includes timeout protection to prevent CI hanging:
+- 20 second timeout for `SMQRequired` mode
+- 15 second timeout for `SMQAvailable` mode  
+- Clear error messages when broker discovery fails
+
+## Debugging Failed Tests
+
+### CI Logs to Check
+1. **"SeaweedFS master is up"** - Master started successfully
+2. **"SeaweedFS filer is up"** - Filer ready  
+3. **"SeaweedFS MQ broker is up"** - Broker started successfully
+4. **Broker/Server logs** - Shown on broker startup failure
+
+### Local Debugging
+1. Run `./scripts/test-broker-startup.sh` to test broker startup
+2. Check logs at `/tmp/weed-*.log` 
+3. Test individual components:
+   ```bash
+   # Test master
+   curl http://127.0.0.1:9333/cluster/status
+   
+   # Test filer  
+   curl http://127.0.0.1:8888/status
+   
+   # Test broker
+   nc -z 127.0.0.1 17777
+   ```
+
+### Common Issues
+- **Broker fails to start**: Check filer is ready before starting broker
+- **Gateway timeout**: Broker discovery fails, check broker is accessible  
+- **Test hangs**: Timeout protection not working, reduce timeout values
+
+## Architecture
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Kafka Client  │───▶│  Kafka Gateway  │───▶│ SeaweedMQ Broker│
+│   (Sarama,      │    │   (Protocol     │    │   (Message      │
+│    kafka-go)    │    │    Handler)     │    │   Persistence)  │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+                                │                      │
+                                ▼                      ▼
+                       ┌─────────────────┐    ┌─────────────────┐
+                       │ SeaweedFS Filer │    │ SeaweedFS Master│
+                       │ (Offset Storage)│    │ (Coordination)  │
+                       └─────────────────┘    └─────────────────┘
+                                │                      │
+                                ▼                      ▼  
+                       ┌─────────────────────────────────────────┐
+                       │        SeaweedFS Volumes                │
+                       │      (Message Storage)                  │
+                       └─────────────────────────────────────────┘
 ```
 
-## 🔄 **Migration Guide**
-
-### **From Old Structure to New Structure**
-
-1. **Extract Common Code**: Move repeated gateway setup, client creation, and message generation to `testutil` packages
-
-2. **Categorize Tests**: Move tests to appropriate directories:
-   - `*_debug_test.go` → Remove or convert to proper tests
-   - Basic functionality → `unit/`
-   - Client interactions → `integration/`
-   - Complete workflows → `e2e/`
-
-3. **Update Imports**: Change imports to use new `testutil` packages
-
-4. **Standardize Naming**: Use consistent naming patterns:
-   - `TestFeatureName` for test functions
-   - `testFeatureSpecificCase` for helper functions
-   - Descriptive test names that explain what is being tested
-
-5. **Use New Utilities**: Replace custom setup code with `testutil` functions
-
-### **Example Migration**
-
-**Before (old structure):**
-```go
-func TestSaramaBasic(t *testing.T) {
-    // 50 lines of gateway setup, client creation, message generation
-    srv := gateway.NewTestServer(gateway.Options{Listen: ":0"})
-    // ... lots of boilerplate
-}
-```
-
-**After (new structure):**
-```go
-func TestSaramaBasicFunctionality(t *testing.T) {
-    gateway := testutil.NewGatewayTestServer(t, testutil.GatewayOptions{})
-    defer gateway.CleanupAndClose()
-    
-    addr := gateway.StartAndWait()
-    client := testutil.NewSaramaClient(t, addr)
-    // ... focus on actual test logic
-}
-```
-
-## 📊 **Benefits of Refactoring**
-
-### **Before Refactoring**
-- ❌ 40+ test files in single directory
-- ❌ Massive code duplication
-- ❌ Inconsistent naming and patterns
-- ❌ Debug tests mixed with real tests
-- ❌ Hard to find and run specific test types
-- ❌ Difficult to maintain and extend
-
-### **After Refactoring**
-- ✅ Clear organization by test type
-- ✅ Reusable test utilities
-- ✅ Consistent patterns and naming
-- ✅ Separated debug/development tests
-- ✅ Easy to run specific test categories
-- ✅ Maintainable and extensible structure
-
-## 🎯 **Next Steps**
-
-1. **Complete Migration**: Move remaining tests to new structure
-2. **Remove Debug Tests**: Clean up or properly organize debug tests
-3. **Add More Utilities**: Extend `testutil` with more common patterns
-4. **Improve Documentation**: Add more examples and best practices
-5. **Performance Tests**: Add dedicated performance test category
-6. **Schema Tests**: Add comprehensive schema testing utilities
-
-## 🤝 **Contributing**
-
-When adding new tests:
-
-1. **Choose the Right Category**: Unit, Integration, or E2E
-2. **Use Common Utilities**: Leverage `testutil` packages
-3. **Follow Naming Conventions**: Descriptive and consistent names
-4. **Add Documentation**: Update this README for new patterns
-5. **Clean Up**: Remove any debug or temporary code
-
-This refactored structure provides a solid foundation for maintainable, scalable Kafka integration testing.
+This architecture ensures full integration testing of the entire Kafka → SeaweedFS message path.
