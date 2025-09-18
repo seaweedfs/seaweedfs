@@ -31,7 +31,8 @@ trap cleanup EXIT
 # Start SeaweedFS server
 echo "Starting SeaweedFS server..."
 /tmp/weed -v 1 server \
-  -ip.bind 127.0.0.1 \
+  -ip="127.0.0.1" \
+  -ip.bind="127.0.0.1" \
   -dir="$WEED_DATA_DIR" \
   -master.raftHashicorp \
   -master.port=9333 \

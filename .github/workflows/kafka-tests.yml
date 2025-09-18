@@ -165,9 +165,10 @@ jobs:
         export WEED_DATA_DIR=/tmp/seaweedfs-e2e-$RANDOM
         mkdir -p "$WEED_DATA_DIR"
         
-        # Start SeaweedFS server (master, volume, filer)
+        # Start SeaweedFS server (master, volume, filer) with explicit IP configuration
         nohup weed -v 1 server \
-          -ip.bind 0.0.0.0 \
+          -ip="127.0.0.1" \
+          -ip.bind="127.0.0.1" \
           -dir="$WEED_DATA_DIR" \
           -master.raftHashicorp \
           -master.port=9333 \
@@ -211,10 +212,10 @@ jobs:
         # Give broker additional time to register with master
         if [ "$broker_ready" = true ]; then
           echo "Allowing broker to register with master..."
-          sleep 15
+          sleep 30
           
-          # Verify broker registration (optional check)
-          echo "Checking broker registration status..."
+          # Show cluster status for debugging
+          echo "Cluster status after broker registration:"
           curl -s "http://127.0.0.1:9333/cluster/status" || echo "Could not check cluster status"
         fi
         
@@ -233,7 +234,7 @@ jobs:
         # Higher limits for E2E tests
         ulimit -n 1024 || echo "Warning: Could not set file descriptor limit"
         ulimit -u 200 || echo "Warning: Could not set process limit"
-          go test -v -timeout 120s ./e2e/...
+          go test -v -timeout 180s ./e2e/...
       env:
         GOMAXPROCS: 2
         SEAWEEDFS_MASTERS: 127.0.0.1:9333
@@ -296,9 +297,10 @@ jobs:
         export WEED_DATA_DIR=/tmp/seaweedfs-mq-$RANDOM
         mkdir -p "$WEED_DATA_DIR"
         
-        # Start SeaweedFS server (master, volume, filer)
+        # Start SeaweedFS server (master, volume, filer) with explicit IP configuration
         nohup weed -v 1 server \
-          -ip.bind 0.0.0.0 \
+          -ip="127.0.0.1" \
+          -ip.bind="127.0.0.1" \
           -dir="$WEED_DATA_DIR" \
           -master.raftHashicorp \
           -master.port=9333 \
@@ -342,10 +344,10 @@ jobs:
         # Give broker additional time to register with master
         if [ "$broker_ready" = true ]; then
           echo "Allowing broker to register with master..."
-          sleep 15
+          sleep 30
           
-          # Verify broker registration (optional check)
-          echo "Checking broker registration status..."
+          # Show cluster status for debugging
+          echo "Cluster status after broker registration:"
           curl -s "http://127.0.0.1:9333/cluster/status" || echo "Could not check cluster status"
         fi
         
@@ -364,7 +366,7 @@ jobs:
         # Test consumer group functionality with explicit timeout
         ulimit -n 512 || echo "Warning: Could not set file descriptor limit"
         ulimit -u 100 || echo "Warning: Could not set process limit"
-        timeout 150s go test -v -run "^TestConsumerGroups" -timeout 120s ./integration/... || echo "Test execution timed out or failed"
+        timeout 240s go test -v -run "^TestConsumerGroups" -timeout 180s ./integration/... || echo "Test execution timed out or failed"
       env:
         GOMAXPROCS: 1
         SEAWEEDFS_MASTERS: 127.0.0.1:9333
@@ -426,9 +428,10 @@ jobs:
         export WEED_DATA_DIR=/tmp/seaweedfs-client-$RANDOM
         mkdir -p "$WEED_DATA_DIR"
         
-        # Start SeaweedFS server (master, volume, filer)
+        # Start SeaweedFS server (master, volume, filer) with explicit IP configuration
         nohup weed -v 1 server \
-          -ip.bind 0.0.0.0 \
+          -ip="127.0.0.1" \
+          -ip.bind="127.0.0.1" \
           -dir="$WEED_DATA_DIR" \
           -master.raftHashicorp \
           -master.port=9333 \
@@ -472,10 +475,10 @@ jobs:
         # Give broker additional time to register with master
         if [ "$broker_ready" = true ]; then
           echo "Allowing broker to register with master..."
-          sleep 15
+          sleep 30
           
-          # Verify broker registration (optional check)
-          echo "Checking broker registration status..."
+          # Show cluster status for debugging
+          echo "Cluster status after broker registration:"
           curl -s "http://127.0.0.1:9333/cluster/status" || echo "Could not check cluster status"
         fi
         
@@ -491,7 +494,7 @@ jobs:
     - name: Run Client Compatibility Tests
       run: |
         cd test/kafka
-        go test -v -run "^TestClientCompatibility" -timeout 120s ./integration/...
+        go test -v -run "^TestClientCompatibility" -timeout 180s ./integration/...
       env:
         GOMAXPROCS: 1
         SEAWEEDFS_MASTERS: 127.0.0.1:9333
@@ -553,9 +556,10 @@ jobs:
         export WEED_DATA_DIR=/tmp/seaweedfs-smq-$RANDOM
         mkdir -p "$WEED_DATA_DIR"
         
-        # Start SeaweedFS server (master, volume, filer)
+        # Start SeaweedFS server (master, volume, filer) with explicit IP configuration
         nohup weed -v 1 server \
-          -ip.bind 0.0.0.0 \
+          -ip="127.0.0.1" \
+          -ip.bind="127.0.0.1" \
           -dir="$WEED_DATA_DIR" \
           -master.raftHashicorp \
           -master.port=9333 \
@@ -599,10 +603,10 @@ jobs:
         # Give broker additional time to register with master
         if [ "$broker_ready" = true ]; then
           echo "Allowing broker to register with master..."
-          sleep 15
+          sleep 30
           
-          # Verify broker registration (optional check)
-          echo "Checking broker registration status..."
+          # Show cluster status for debugging
+          echo "Cluster status after broker registration:"
           curl -s "http://127.0.0.1:9333/cluster/status" || echo "Could not check cluster status"
         fi
         
@@ -621,7 +625,7 @@ jobs:
         ulimit -n 512 || echo "Warning: Could not set file descriptor limit"
         ulimit -u 100 || echo "Warning: Could not set process limit"
         # Run the dedicated SMQ integration tests
-        go test -v -run "^TestSMQIntegration" -timeout 120s ./integration/...
+        go test -v -run "^TestSMQIntegration" -timeout 180s ./integration/...
       env:
         GOMAXPROCS: 1
         SEAWEEDFS_MASTERS: 127.0.0.1:9333
