@@ -45,7 +45,6 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 	localTopicPartition.Subscribers.AddSubscriber(clientName, subscriber)
 	glog.V(0).Infof("Subscriber %s connected on %v %v", clientName, t, partition)
 	isConnected := true
-	sleepIntervalCount := 0
 
 	var counter int64
 	defer func() {
@@ -160,30 +159,22 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 		if !isConnected {
 			return false
 		}
-		sleepIntervalCount++
-		if sleepIntervalCount > 32 {
-			sleepIntervalCount = 32
-		}
-		time.Sleep(time.Duration(sleepIntervalCount) * 137 * time.Millisecond)
 
-		// Check if the client has disconnected by monitoring the context
+		// Check if client disconnected (without sleep delays)
 		select {
 		case <-ctx.Done():
 			err := ctx.Err()
 			if errors.Is(err, context.Canceled) {
-				// Client disconnected
+				glog.V(1).Infof("Subscriber %s context canceled", clientName)
 				return false
 			}
 			glog.V(0).Infof("Subscriber %s disconnected: %v", clientName, err)
 			return false
 		default:
-			// Continue processing the request
+			// Continue processing immediately - no artificial delays
+			return true
 		}
-
-		return true
 	}, func(logEntry *filer_pb.LogEntry) (bool, error) {
-		// reset the sleep interval count
-		sleepIntervalCount = 0
 
 		for imt.IsInflight(logEntry.Key) {
 			time.Sleep(137 * time.Millisecond)

@@ -19,10 +19,10 @@ func mergeReadFuncs(readLogDirectFn, fromParquetFn log_buffer.LogReadFromDiskFun
 	var lastProcessedPosition log_buffer.MessagePosition
 	return func(startPosition log_buffer.MessagePosition, stopTsNs int64, eachLogEntryFn log_buffer.EachLogEntryFuncType) (lastReadPosition log_buffer.MessagePosition, isDone bool, err error) {
 		if !exhaustedLiveLogs {
-			// glog.V(4).Infof("reading from live logs startPosition: %v\n", startPosition.UTC())
 			lastReadPosition, isDone, err = readLogDirectFn(startPosition, stopTsNs, eachLogEntryFn)
-			// glog.V(4).Infof("read from live logs: %v %v %v %v\n", startPosition, lastReadPosition, isDone, err)
 			if isDone {
+				// For very early timestamps (like timestamp=1 for RESET_TO_EARLIEST),
+				// we want to continue to read from in-memory data
 				isDone = false
 			}
 			if err != nil {
@@ -36,8 +36,14 @@ func mergeReadFuncs(readLogDirectFn, fromParquetFn log_buffer.LogReadFromDiskFun
 			startPosition = lastProcessedPosition
 		}
 
-		// glog.V(4).Infof("reading from parquet startPosition: %v\n", startPosition.UTC())
 		lastReadPosition, isDone, err = fromParquetFn(startPosition, stopTsNs, eachLogEntryFn)
+
+		if isDone {
+			// For very early timestamps (like timestamp=1 for RESET_TO_EARLIEST),
+			// parquet files won't exist, but we want to continue to in-memory data reading
+			isDone = false
+		}
+
 		return
 	}
 }

@@ -11,11 +11,11 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
-	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
@@ -121,9 +121,6 @@ func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromO
 		if subErr != nil {
 			return nil, fmt.Errorf("failed to get broker subscriber: %v", subErr)
 		}
-
-		// No artificial delay needed - the issue was wrong OffsetType usage, not timing
-
 		seaweedRecords, err = h.brokerClient.ReadRecords(brokerSubscriber, recordsToFetch)
 	} else if h.agentClient != nil {
 		agentSubscriber, subErr := h.agentClient.GetOrCreateSubscriber(topic, partition, fromOffset)
@@ -136,12 +133,7 @@ func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromO
 	}
 
 	if err != nil {
-		// Return empty instead of error for better Kafka compatibility
-		return nil, nil
-	}
-
-	if len(seaweedRecords) == 0 {
-		return nil, nil
+		return nil, fmt.Errorf("failed to read records: %v", err)
 	}
 
 	// Convert SeaweedMQ records to SMQRecord interface with proper Kafka offsets
@@ -191,7 +183,7 @@ func (r *SeaweedSMQRecord) GetOffset() int64 {
 // GetFilerClient returns a filer client for accessing SeaweedMQ metadata
 func (h *SeaweedMQHandler) GetFilerClient() filer_pb.SeaweedFilerClient {
 	if h.useBroker && h.brokerClient != nil {
-		return h.brokerClient.GetFilerClient()
+		return h.brokerClient.filerClient
 	}
 	// Agent client doesn't have filer access
 	return nil
@@ -891,10 +883,15 @@ func discoverFilersWithMasterClient(masterClient *wdclient.MasterClient, filerGr
 			return err
 		}
 
-		// Extract filer addresses from response
+		// Extract filer addresses from response and convert to gRPC addresses
 		for _, node := range resp.ClusterNodes {
 			if node.Address != "" {
-				filers = append(filers, node.Address)
+				// Convert HTTP address to gRPC address
+				// SeaweedFS filer gRPC port is typically HTTP port + 10000
+				httpAddr := node.Address
+				grpcAddr := pb.ServerToGrpcAddress(httpAddr)
+				fmt.Printf("FILER DISCOVERY: Converted filer HTTP address %s to gRPC address %s\n", httpAddr, grpcAddr)
+				filers = append(filers, grpcAddr)
 			}
 		}
 
@@ -945,8 +942,13 @@ type BrokerSubscriberSession struct {
 func NewBrokerClient(brokerAddress, filerAddress string) (*BrokerClient, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// Use background context for gRPC connections to prevent them from being canceled
+	// when BrokerClient.Close() is called. This allows subscriber streams to continue
+	// operating even during client shutdown, which is important for testing scenarios.
+	dialCtx := context.Background()
+
 	// Connect to broker
-	conn, err := grpc.DialContext(ctx, brokerAddress,
+	conn, err := grpc.DialContext(dialCtx, brokerAddress,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
 	if err != nil {
@@ -960,7 +962,7 @@ func NewBrokerClient(brokerAddress, filerAddress string) (*BrokerClient, error) 
 	var filerConn *grpc.ClientConn
 	var filerClient filer_pb.SeaweedFilerClient
 	if filerAddress != "" {
-		filerConn, err = grpc.DialContext(ctx, filerAddress,
+		filerConn, err = grpc.DialContext(dialCtx, filerAddress,
 			grpc.WithTransportCredentials(insecure.NewCredentials()),
 		)
 		if err != nil {
@@ -1009,11 +1011,6 @@ func (bc *BrokerClient) Close() error {
 	}
 
 	return bc.conn.Close()
-}
-
-// GetFilerClient returns the filer client for metadata access
-func (bc *BrokerClient) GetFilerClient() filer_pb.SeaweedFilerClient {
-	return bc.filerClient
 }
 
 // GetFilerAddress returns the filer address used by this broker client
@@ -1205,7 +1202,11 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 		return session, nil
 	}
 
-	stream, err := bc.client.SubscribeMessage(bc.ctx)
+	// Create a dedicated context for this subscriber that won't be canceled with the main BrokerClient context
+	// This prevents subscriber streams from being canceled when BrokerClient.Close() is called during test cleanup
+	subscriberCtx := context.Background() // Use background context instead of bc.ctx
+
+	stream, err := bc.client.SubscribeMessage(subscriberCtx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create subscribe stream: %v", err)
 	}
@@ -1225,12 +1226,12 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 		// This tells SeaweedMQ to start from the very beginning regardless of timestamps
 		offsetType = schema_pb.OffsetType_RESET_TO_EARLIEST
 		startTimestamp = 0 // Not used with RESET_TO_EARLIEST, but set to 0 for clarity
-		glog.V(1).Infof("🔍 Using RESET_TO_EARLIEST for Kafka offset 0 (read from beginning)")
+		glog.V(1).Infof("DEBUG: Using RESET_TO_EARLIEST for Kafka offset 0")
 	} else if startOffset == -1 {
 		// Kafka offset -1 typically means "latest"
 		offsetType = schema_pb.OffsetType_RESET_TO_LATEST
 		startTimestamp = 0 // Not used with RESET_TO_LATEST
-		glog.V(1).Infof("🔍 Using RESET_TO_LATEST for Kafka offset -1 (read latest)")
+		glog.V(1).Infof("DEBUG: Using RESET_TO_LATEST for Kafka offset -1 (read latest)")
 	} else {
 		// For specific offsets, we still need timestamp mapping
 		// TODO: CRITICAL - Implement proper Kafka offset to SeaweedMQ timestamp mapping
@@ -1285,34 +1286,24 @@ func (bc *BrokerClient) ReadRecords(session *BrokerSubscriberSession, maxRecords
 	var records []*SeaweedRecord
 
 	for len(records) < maxRecords {
-		// Try to receive a message with timeout
-		ctx, cancel := context.WithTimeout(bc.ctx, 100*time.Millisecond)
+		resp, err := session.Stream.Recv()
 
-		select {
-		case <-ctx.Done():
-			cancel()
-			return records, nil // Return what we have so far
-		default:
-			resp, err := session.Stream.Recv()
-			cancel()
-
-			if err != nil {
-				// If we have some records, return them; otherwise return error
-				if len(records) > 0 {
-					return records, nil
-				}
-				return nil, fmt.Errorf("failed to receive record: %v", err)
+		if err != nil {
+			// If we have some records, return them; otherwise return error
+			if len(records) > 0 {
+				return records, nil
 			}
+			return nil, fmt.Errorf("failed to receive record: %v", err)
+		}
 
-			if dataMsg := resp.GetData(); dataMsg != nil {
-				record := &SeaweedRecord{
-					Key:       dataMsg.Key,
-					Value:     dataMsg.Value,
-					Timestamp: dataMsg.TsNs,
-					Sequence:  0, // Will be set by offset ledger
-				}
-				records = append(records, record)
+		if dataMsg := resp.GetData(); dataMsg != nil {
+			record := &SeaweedRecord{
+				Key:       dataMsg.Key,
+				Value:     dataMsg.Value,
+				Timestamp: dataMsg.TsNs,
+				Sequence:  0, // Will be set by offset ledger
 			}
+			records = append(records, record)
 		}
 	}
 
