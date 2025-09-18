@@ -13,12 +13,20 @@ import (
 )
 
 // TestClientCompatibility tests compatibility with different Kafka client libraries and versions
+// This test will use SMQ backend if SEAWEEDFS_MASTERS is available, otherwise mock
 func TestClientCompatibility(t *testing.T) {
-	gateway := testutil.NewGatewayTestServer(t, testutil.GatewayOptions{})
+	gateway := testutil.NewGatewayTestServerWithSMQ(t, testutil.SMQAvailable)
 	defer gateway.CleanupAndClose()
 
 	addr := gateway.StartAndWait()
 	time.Sleep(200 * time.Millisecond) // Allow gateway to be ready
+	
+	// Log which backend we're using
+	if gateway.IsSMQMode() {
+		t.Logf("Running client compatibility tests with SMQ backend")
+	} else {
+		t.Logf("Running client compatibility tests with mock backend")
+	}
 
 	t.Run("SaramaVersionCompatibility", func(t *testing.T) {
 		testSaramaVersionCompatibility(t, addr)

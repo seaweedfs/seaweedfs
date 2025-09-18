@@ -2,6 +2,7 @@ package testutil
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"testing"
 	"time"
@@ -99,4 +100,79 @@ func (g *GatewayTestServer) CleanupAndClose() {
 	if err := g.Close(); err != nil {
 		g.t.Errorf("Failed to close gateway: %v", err)
 	}
+}
+
+// SMQAvailabilityMode indicates whether SeaweedMQ is available for testing
+type SMQAvailabilityMode int
+
+const (
+	SMQUnavailable SMQAvailabilityMode = iota // Use mock handler only
+	SMQAvailable                              // SMQ is available, can use production mode
+	SMQRequired                               // SMQ is required, skip test if unavailable
+)
+
+// CheckSMQAvailability checks if SeaweedFS masters are available for testing
+func CheckSMQAvailability() (bool, string) {
+	masters := os.Getenv("SEAWEEDFS_MASTERS")
+	if masters == "" {
+		return false, ""
+	}
+
+	// Test if at least one master is reachable
+	masterAddresses := []string{masters}
+	if len(masterAddresses) > 0 {
+		// Try to connect to the first master to verify availability
+		conn, err := net.DialTimeout("tcp", masterAddresses[0], 2*time.Second)
+		if err != nil {
+			return false, masters // Masters specified but unreachable
+		}
+		conn.Close()
+		return true, masters
+	}
+	
+	return false, ""
+}
+
+// NewGatewayTestServerWithSMQ creates a gateway server that automatically uses SMQ if available
+func NewGatewayTestServerWithSMQ(t *testing.T, mode SMQAvailabilityMode) *GatewayTestServer {
+	smqAvailable, masters := CheckSMQAvailability()
+	
+	switch mode {
+	case SMQRequired:
+		if !smqAvailable {
+			if masters != "" {
+				t.Skipf("Skipping test: SEAWEEDFS_MASTERS=%s specified but unreachable", masters)
+			} else {
+				t.Skip("Skipping test: SEAWEEDFS_MASTERS required but not set")
+			}
+		}
+		t.Logf("Using SMQ-backed gateway with masters: %s", masters)
+		return NewGatewayTestServer(t, GatewayOptions{
+			UseProduction: true,
+			Masters:       masters,
+		})
+		
+	case SMQAvailable:
+		if smqAvailable {
+			t.Logf("SMQ available, using production gateway with masters: %s", masters)
+			return NewGatewayTestServer(t, GatewayOptions{
+				UseProduction: true,
+				Masters:       masters,
+			})
+		} else {
+			t.Logf("SMQ not available, using mock gateway")
+			return NewGatewayTestServer(t, GatewayOptions{})
+		}
+		
+	default: // SMQUnavailable
+		t.Logf("Using mock gateway (SMQ integration disabled)")
+		return NewGatewayTestServer(t, GatewayOptions{})
+	}
+}
+
+// IsSMQMode returns true if the gateway is using real SMQ backend
+// This is determined by checking if we have the SEAWEEDFS_MASTERS environment variable
+func (g *GatewayTestServer) IsSMQMode() bool {
+	available, _ := CheckSMQAvailability()
+	return available
 }

@@ -7,11 +7,19 @@ import (
 )
 
 // TestComprehensiveE2E tests complete end-to-end workflows
+// This test will use SMQ backend if SEAWEEDFS_MASTERS is available, otherwise mock
 func TestComprehensiveE2E(t *testing.T) {
-	gateway := testutil.NewGatewayTestServer(t, testutil.GatewayOptions{})
+	gateway := testutil.NewGatewayTestServerWithSMQ(t, testutil.SMQAvailable)
 	defer gateway.CleanupAndClose()
 
 	addr := gateway.StartAndWait()
+	
+	// Log which backend we're using
+	if gateway.IsSMQMode() {
+		t.Logf("Running comprehensive E2E tests with SMQ backend")
+	} else {
+		t.Logf("Running comprehensive E2E tests with mock backend")
+	}
 
 	// Create topics for different test scenarios
 	topics := []string{

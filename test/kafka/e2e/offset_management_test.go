@@ -7,11 +7,19 @@ import (
 )
 
 // TestOffsetManagement tests end-to-end offset management scenarios
+// This test will use SMQ backend if SEAWEEDFS_MASTERS is available, otherwise mock
 func TestOffsetManagement(t *testing.T) {
-	gateway := testutil.NewGatewayTestServer(t, testutil.GatewayOptions{})
+	gateway := testutil.NewGatewayTestServerWithSMQ(t, testutil.SMQAvailable)
 	defer gateway.CleanupAndClose()
 
 	addr := gateway.StartAndWait()
+	
+	// Log which backend we're using
+	if gateway.IsSMQMode() {
+		t.Logf("Running offset management tests with SMQ backend - offsets will be persisted")
+	} else {
+		t.Logf("Running offset management tests with mock backend - offsets are in-memory only")
+	}
 
 	topic := testutil.GenerateUniqueTopicName("offset-management")
 	groupID := testutil.GenerateUniqueGroupID("offset-test-group")
