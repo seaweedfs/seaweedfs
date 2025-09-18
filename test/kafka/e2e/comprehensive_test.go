@@ -13,7 +13,7 @@ func TestComprehensiveE2E(t *testing.T) {
 	defer gateway.CleanupAndClose()
 
 	addr := gateway.StartAndWait()
-	
+
 	// Log which backend we're using
 	if gateway.IsSMQMode() {
 		t.Logf("Running comprehensive E2E tests with SMQ backend")

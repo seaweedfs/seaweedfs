@@ -129,14 +129,14 @@ func CheckSMQAvailability() (bool, string) {
 		conn.Close()
 		return true, masters
 	}
-	
+
 	return false, ""
 }
 
 // NewGatewayTestServerWithSMQ creates a gateway server that automatically uses SMQ if available
 func NewGatewayTestServerWithSMQ(t *testing.T, mode SMQAvailabilityMode) *GatewayTestServer {
 	smqAvailable, masters := CheckSMQAvailability()
-	
+
 	switch mode {
 	case SMQRequired:
 		if !smqAvailable {
@@ -151,7 +151,7 @@ func NewGatewayTestServerWithSMQ(t *testing.T, mode SMQAvailabilityMode) *Gatewa
 			UseProduction: true,
 			Masters:       masters,
 		})
-		
+
 	case SMQAvailable:
 		if smqAvailable {
 			t.Logf("SMQ available, using production gateway with masters: %s", masters)
@@ -163,7 +163,7 @@ func NewGatewayTestServerWithSMQ(t *testing.T, mode SMQAvailabilityMode) *Gatewa
 			t.Logf("SMQ not available, using mock gateway")
 			return NewGatewayTestServer(t, GatewayOptions{})
 		}
-		
+
 	default: // SMQUnavailable
 		t.Logf("Using mock gateway (SMQ integration disabled)")
 		return NewGatewayTestServer(t, GatewayOptions{})

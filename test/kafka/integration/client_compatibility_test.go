@@ -20,7 +20,7 @@ func TestClientCompatibility(t *testing.T) {
 
 	addr := gateway.StartAndWait()
 	time.Sleep(200 * time.Millisecond) // Allow gateway to be ready
-	
+
 	// Log which backend we're using
 	if gateway.IsSMQMode() {
 		t.Logf("Running client compatibility tests with SMQ backend")
