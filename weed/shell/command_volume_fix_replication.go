@@ -363,7 +363,7 @@ func (c *commandVolumeFixReplication) fixOneUnderReplicatedVolume(commandEnv *Co
 						}
 					}
 					if resp.ProcessedBytes > 0 {
-						fmt.Fprintf(writer, "volume %d processed %d bytes\n", replica.info.Id, util.BytesToHumanReadable(uint64(resp.ProcessedBytes)))
+						fmt.Fprintf(writer, "volume %d processed %s bytes\n", replica.info.Id, util.BytesToHumanReadable(uint64(resp.ProcessedBytes)))
 					}
 				}
 
