@@ -1,7 +1,6 @@
 package iam
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"strings"
@@ -527,15 +526,6 @@ func TestS3IAMContextualPolicyEnforcement(t *testing.T) {
 	})
 }
 
-// Helper function to create test content of specific size
-func createTestContent(size int) *bytes.Reader {
-	content := make([]byte, size)
-	for i := range content {
-		content[i] = byte(i % 256)
-	}
-	return bytes.NewReader(content)
-}
-
 // TestS3IAMPresignedURLIntegration tests presigned URL generation with IAM
 func TestS3IAMPresignedURLIntegration(t *testing.T) {
 	framework := NewS3IAMTestFramework(t)
@@ -578,8 +568,8 @@ func TestS3IAMPresignedURLIntegration(t *testing.T) {
 		})
 		require.NoError(t, err, "Direct object access with JWT Bearer token works correctly")
 
-		t.Log("✅ JWT Bearer token authentication confirmed working for direct S3 API calls")
-		t.Log("ℹ️  Note: Presigned URLs are not supported with JWT Bearer authentication by design")
+		t.Log("JWT Bearer token authentication confirmed working for direct S3 API calls")
+		t.Log("Note: Presigned URLs are not supported with JWT Bearer authentication by design")
 	})
 
 	// Cleanup
