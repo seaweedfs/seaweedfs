@@ -362,7 +362,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		return "", filerErrorToS3Error(ret.Error), ""
 	}
 
-	stats_collect.RecordBucketActiveTime(bucket)
+	BucketTrafficReceived(ret.Size, r)
 
 	// Return the SSE type determined by the unified handler
 	return etag, s3err.ErrNone, sseResult.SSEType
