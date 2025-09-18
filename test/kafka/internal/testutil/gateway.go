@@ -1,6 +1,7 @@
 package testutil
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -119,10 +120,9 @@ func CheckSMQAvailability() (bool, string) {
 	}
 
 	// Test if at least one master is reachable
-	masterAddresses := []string{masters}
-	if len(masterAddresses) > 0 {
+	if masters != "" {
 		// Try to connect to the first master to verify availability
-		conn, err := net.DialTimeout("tcp", masterAddresses[0], 2*time.Second)
+		conn, err := net.DialTimeout("tcp", masters, 2*time.Second)
 		if err != nil {
 			return false, masters // Masters specified but unreachable
 		}
@@ -147,18 +147,18 @@ func NewGatewayTestServerWithSMQ(t *testing.T, mode SMQAvailabilityMode) *Gatewa
 			}
 		}
 		t.Logf("Using SMQ-backed gateway with masters: %s", masters)
-		return NewGatewayTestServer(t, GatewayOptions{
+		return newGatewayTestServerWithTimeout(t, GatewayOptions{
 			UseProduction: true,
 			Masters:       masters,
-		})
+		}, 30*time.Second)
 
 	case SMQAvailable:
 		if smqAvailable {
 			t.Logf("SMQ available, using production gateway with masters: %s", masters)
-			return NewGatewayTestServer(t, GatewayOptions{
+			return newGatewayTestServerWithTimeout(t, GatewayOptions{
 				UseProduction: true,
 				Masters:       masters,
-			})
+			}, 30*time.Second)
 		} else {
 			t.Logf("SMQ not available, using mock gateway")
 			return NewGatewayTestServer(t, GatewayOptions{})
@@ -168,6 +168,38 @@ func NewGatewayTestServerWithSMQ(t *testing.T, mode SMQAvailabilityMode) *Gatewa
 		t.Logf("Using mock gateway (SMQ integration disabled)")
 		return NewGatewayTestServer(t, GatewayOptions{})
 	}
+}
+
+// newGatewayTestServerWithTimeout creates a gateway server with a timeout to prevent hanging
+func newGatewayTestServerWithTimeout(t *testing.T, opts GatewayOptions, timeout time.Duration) *GatewayTestServer {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	done := make(chan *GatewayTestServer, 1)
+	errChan := make(chan error, 1)
+
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				errChan <- fmt.Errorf("panic creating gateway: %v", r)
+			}
+		}()
+
+		// Create the gateway in a goroutine so we can timeout if it hangs
+		gateway := NewGatewayTestServer(t, opts)
+		done <- gateway
+	}()
+
+	select {
+	case gateway := <-done:
+		return gateway
+	case err := <-errChan:
+		t.Fatalf("Error creating gateway: %v", err)
+	case <-ctx.Done():
+		t.Fatalf("Timeout creating gateway after %v - likely SMQ broker discovery failed", timeout)
+	}
+
+	return nil // This should never be reached
 }
 
 // IsSMQMode returns true if the gateway is using real SMQ backend
