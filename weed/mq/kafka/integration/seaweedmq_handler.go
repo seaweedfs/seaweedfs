@@ -13,7 +13,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
-	"github.com/seaweedfs/seaweedfs/weed/mq/kafka"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -1081,7 +1080,13 @@ func (bc *BrokerClient) getOrCreatePublisher(topic string, partition int32) (*Br
 		return nil, fmt.Errorf("failed to create publish stream: %v", err)
 	}
 
-	// Send init message
+	// Get the actual partition assignment from the broker instead of using Kafka partition mapping
+	actualPartition, err := bc.getActualPartitionAssignment(topic, partition)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get actual partition assignment: %v", err)
+	}
+
+	// Send init message using the actual partition structure that the broker allocated
 	if err := stream.Send(&mq_pb.PublishMessageRequest{
 		Message: &mq_pb.PublishMessageRequest_Init{
 			Init: &mq_pb.PublishMessageRequest_InitMessage{
@@ -1089,7 +1094,7 @@ func (bc *BrokerClient) getOrCreatePublisher(topic string, partition int32) (*Br
 					Namespace: "kafka",
 					Name:      topic,
 				},
-				Partition:     kafka.CreateSMQPartition(partition, time.Now().UnixNano()),
+				Partition:     actualPartition,
 				AckInterval:   100,
 				PublisherName: "kafka-gateway",
 			},
@@ -1106,6 +1111,76 @@ func (bc *BrokerClient) getOrCreatePublisher(topic string, partition int32) (*Br
 
 	bc.publishers[key] = session
 	return session, nil
+}
+
+// getActualPartitionAssignment looks up the actual partition assignment from the broker configuration
+func (bc *BrokerClient) getActualPartitionAssignment(topic string, kafkaPartition int32) (*schema_pb.Partition, error) {
+	// Look up the topic configuration from the broker to get the actual partition assignments
+	lookupResp, err := bc.client.LookupTopicBrokers(bc.ctx, &mq_pb.LookupTopicBrokersRequest{
+		Topic: &schema_pb.Topic{
+			Namespace: "kafka",
+			Name:      topic,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to lookup topic brokers: %v", err)
+	}
+
+	if len(lookupResp.BrokerPartitionAssignments) == 0 {
+		return nil, fmt.Errorf("no partition assignments found for topic %s", topic)
+	}
+
+	totalPartitions := int32(len(lookupResp.BrokerPartitionAssignments))
+	if kafkaPartition >= totalPartitions {
+		return nil, fmt.Errorf("kafka partition %d out of range, topic %s has %d partitions",
+			kafkaPartition, topic, totalPartitions)
+	}
+
+	// Calculate expected range for this Kafka partition
+	// Ring is divided equally among partitions, with last partition getting any remainder
+	const ringSize = int32(2520) // MaxPartitionCount constant
+	rangeSize := ringSize / totalPartitions
+	expectedRangeStart := kafkaPartition * rangeSize
+	var expectedRangeStop int32
+
+	if kafkaPartition == totalPartitions-1 {
+		// Last partition gets the remainder to fill the entire ring
+		expectedRangeStop = ringSize
+	} else {
+		expectedRangeStop = (kafkaPartition + 1) * rangeSize
+	}
+
+	glog.V(2).Infof("🔍 Looking for Kafka partition %d in topic %s: expected range [%d, %d] out of %d partitions",
+		kafkaPartition, topic, expectedRangeStart, expectedRangeStop, totalPartitions)
+
+	// Find the broker assignment that matches this range
+	for _, assignment := range lookupResp.BrokerPartitionAssignments {
+		if assignment.Partition == nil {
+			continue
+		}
+
+		// Check if this assignment's range matches our expected range
+		if assignment.Partition.RangeStart == expectedRangeStart && assignment.Partition.RangeStop == expectedRangeStop {
+			glog.V(1).Infof("🎯 Found matching partition assignment for %s[%d]: {RingSize: %d, RangeStart: %d, RangeStop: %d, UnixTimeNs: %d}",
+				topic, kafkaPartition, assignment.Partition.RingSize, assignment.Partition.RangeStart,
+				assignment.Partition.RangeStop, assignment.Partition.UnixTimeNs)
+			return assignment.Partition, nil
+		}
+	}
+
+	// If no exact match found, log all available assignments for debugging
+	glog.Warningf("❌ No partition assignment found for Kafka partition %d in topic %s with expected range [%d, %d]",
+		kafkaPartition, topic, expectedRangeStart, expectedRangeStop)
+	glog.Warningf("Available assignments:")
+	for i, assignment := range lookupResp.BrokerPartitionAssignments {
+		if assignment.Partition != nil {
+			glog.Warningf("  Assignment[%d]: {RangeStart: %d, RangeStop: %d, RingSize: %d}",
+				i, assignment.Partition.RangeStart, assignment.Partition.RangeStop, assignment.Partition.RingSize)
+		}
+	}
+
+	return nil, fmt.Errorf("no broker assignment found for Kafka partition %d with expected range [%d, %d]",
+		kafkaPartition, expectedRangeStart, expectedRangeStop)
 }
 
 // GetOrCreateSubscriber gets or creates a subscriber for offset tracking
@@ -1132,7 +1207,13 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 		return nil, fmt.Errorf("failed to create subscribe stream: %v", err)
 	}
 
-	// Send init message
+	// Get the actual partition assignment from the broker instead of using Kafka partition mapping
+	actualPartition, err := bc.getActualPartitionAssignment(topic, partition)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get actual partition assignment for subscribe: %v", err)
+	}
+
+	// Send init message using the actual partition structure that the broker allocated
 	if err := stream.Send(&mq_pb.SubscribeMessageRequest{
 		Message: &mq_pb.SubscribeMessageRequest_Init{
 			Init: &mq_pb.SubscribeMessageRequest_InitMessage{
@@ -1144,7 +1225,7 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 					Name:      topic,
 				},
 				PartitionOffset: &schema_pb.PartitionOffset{
-					Partition: kafka.CreateSMQPartition(partition, time.Now().UnixNano()),
+					Partition: actualPartition,
 					StartTsNs: startOffset,
 				},
 				OffsetType:        schema_pb.OffsetType_EXACT_TS_NS,
