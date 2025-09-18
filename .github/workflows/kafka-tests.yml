@@ -181,9 +181,19 @@ jobs:
         # Wait for master to be ready
         for i in $(seq 1 30); do
           if curl -s http://127.0.0.1:9333/cluster/status >/dev/null; then
-            echo "SeaweedFS master is up"; break
+            echo "SeaweedFS master HTTP is up"; break
           fi
-          echo "Waiting for SeaweedFS master... ($i/30)"; sleep 1
+          echo "Waiting for SeaweedFS master HTTP... ($i/30)"; sleep 1
+        done
+        
+        # Wait for master gRPC to be ready (this is what broker discovery uses)
+        echo "Waiting for master gRPC port..."
+        for i in $(seq 1 30); do
+          if nc -z 127.0.0.1 19333; then
+            echo "✓ SeaweedFS master gRPC is up (port 19333)"
+            break
+          fi
+          echo "  Waiting for master gRPC... ($i/30)"; sleep 1
         done
         
         # Give server time to initialize all components  
@@ -194,6 +204,7 @@ jobs:
         echo "Starting MQ broker..."
         nohup weed -v 1 mq.broker \
           -master="127.0.0.1:9333" \
+          -ip="127.0.0.1" \
           -port=17777 \
           > /tmp/weed-mq-broker.log 2>&1 &
         
@@ -313,9 +324,19 @@ jobs:
         # Wait for master to be ready
         for i in $(seq 1 30); do
           if curl -s http://127.0.0.1:9333/cluster/status >/dev/null; then
-            echo "SeaweedFS master is up"; break
+            echo "SeaweedFS master HTTP is up"; break
           fi
-          echo "Waiting for SeaweedFS master... ($i/30)"; sleep 1
+          echo "Waiting for SeaweedFS master HTTP... ($i/30)"; sleep 1
+        done
+        
+        # Wait for master gRPC to be ready (this is what broker discovery uses)
+        echo "Waiting for master gRPC port..."
+        for i in $(seq 1 30); do
+          if nc -z 127.0.0.1 19333; then
+            echo "✓ SeaweedFS master gRPC is up (port 19333)"
+            break
+          fi
+          echo "  Waiting for master gRPC... ($i/30)"; sleep 1
         done
         
         # Give server time to initialize all components  
@@ -326,6 +347,7 @@ jobs:
         echo "Starting MQ broker..."
         nohup weed -v 1 mq.broker \
           -master="127.0.0.1:9333" \
+          -ip="127.0.0.1" \
           -port=17777 \
           > /tmp/weed-mq-broker.log 2>&1 &
         
@@ -444,9 +466,19 @@ jobs:
         # Wait for master to be ready
         for i in $(seq 1 30); do
           if curl -s http://127.0.0.1:9333/cluster/status >/dev/null; then
-            echo "SeaweedFS master is up"; break
+            echo "SeaweedFS master HTTP is up"; break
           fi
-          echo "Waiting for SeaweedFS master... ($i/30)"; sleep 1
+          echo "Waiting for SeaweedFS master HTTP... ($i/30)"; sleep 1
+        done
+        
+        # Wait for master gRPC to be ready (this is what broker discovery uses)
+        echo "Waiting for master gRPC port..."
+        for i in $(seq 1 30); do
+          if nc -z 127.0.0.1 19333; then
+            echo "✓ SeaweedFS master gRPC is up (port 19333)"
+            break
+          fi
+          echo "  Waiting for master gRPC... ($i/30)"; sleep 1
         done
         
         # Give server time to initialize all components  
@@ -457,6 +489,7 @@ jobs:
         echo "Starting MQ broker..."
         nohup weed -v 1 mq.broker \
           -master="127.0.0.1:9333" \
+          -ip="127.0.0.1" \
           -port=17777 \
           > /tmp/weed-mq-broker.log 2>&1 &
         
@@ -572,9 +605,19 @@ jobs:
         # Wait for master to be ready
         for i in $(seq 1 30); do
           if curl -s http://127.0.0.1:9333/cluster/status >/dev/null; then
-            echo "SeaweedFS master is up"; break
+            echo "SeaweedFS master HTTP is up"; break
           fi
-          echo "Waiting for SeaweedFS master... ($i/30)"; sleep 1
+          echo "Waiting for SeaweedFS master HTTP... ($i/30)"; sleep 1
+        done
+        
+        # Wait for master gRPC to be ready (this is what broker discovery uses)
+        echo "Waiting for master gRPC port..."
+        for i in $(seq 1 30); do
+          if nc -z 127.0.0.1 19333; then
+            echo "✓ SeaweedFS master gRPC is up (port 19333)"
+            break
+          fi
+          echo "  Waiting for master gRPC... ($i/30)"; sleep 1
         done
         
         # Give server time to initialize all components  
@@ -585,6 +628,7 @@ jobs:
         echo "Starting MQ broker..."
         nohup weed -v 1 mq.broker \
           -master="127.0.0.1:9333" \
+          -ip="127.0.0.1" \
           -port=17777 \
           > /tmp/weed-mq-broker.log 2>&1 &
         

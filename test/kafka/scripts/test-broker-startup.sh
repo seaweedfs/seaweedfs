@@ -67,10 +67,11 @@ for i in $(seq 1 30); do
   sleep 1
 done
 
-# Start MQ broker
+# Start MQ broker  
 echo "Starting MQ broker..."
 /tmp/weed -v 2 mq.broker \
   -master="127.0.0.1:9333" \
+  -ip="127.0.0.1" \
   -port=17777 \
   > /tmp/weed-mq-broker-test.log 2>&1 &
 
