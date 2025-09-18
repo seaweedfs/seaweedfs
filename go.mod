@@ -124,7 +124,7 @@ require (
 	cloud.google.com/go/kms v1.22.0
 	github.com/Azure/azure-sdk-for-go/sdk/keyvault/azkeys v0.10.0
 	github.com/Jille/raft-grpc-transport v1.6.1
-	github.com/ThreeDotsLabs/watermill v1.5.0
+	github.com/ThreeDotsLabs/watermill v1.5.1
 	github.com/a-h/templ v0.3.943
 	github.com/arangodb/go-driver v1.6.6
 	github.com/armon/go-metrics v0.4.1
@@ -174,7 +174,7 @@ require (
 	github.com/bazelbuild/rules_go v0.46.0 // indirect
 	github.com/biogo/store v0.0.0-20201120204734-aad293a2328f // indirect
 	github.com/blevesearch/snowballstem v0.9.0 // indirect
-	github.com/cenkalti/backoff/v5 v5.0.2 // indirect
+	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cockroachdb/apd/v3 v3.1.0 // indirect
 	github.com/cockroachdb/errors v1.11.3 // indirect
 	github.com/cockroachdb/logtags v0.0.0-20241215232642-bb51bb14a506 // indirect
