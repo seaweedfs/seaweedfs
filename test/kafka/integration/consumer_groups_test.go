@@ -18,7 +18,7 @@ func TestConsumerGroups(t *testing.T) {
 	defer gateway.CleanupAndClose()
 
 	addr := gateway.StartAndWait()
-	
+
 	t.Logf("Running consumer group tests with SMQ backend for offset persistence")
 
 	t.Run("BasicFunctionality", func(t *testing.T) {

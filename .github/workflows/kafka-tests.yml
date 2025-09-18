@@ -358,6 +358,90 @@ jobs:
         GOMAXPROCS: 1
         SEAWEEDFS_MASTERS: 127.0.0.1:9333
 
+  kafka-smq-integration-tests:
+    name: Kafka SMQ Integration Tests (Full Stack)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        container-id: [smq-integration-1]
+    container:
+      image: golang:1.24-alpine
+      options: --cpus 1.0 --memory 2g --hostname kafka-smq-${{ matrix.container-id }}
+    env:
+      GOMAXPROCS: 1
+      CGO_ENABLED: 0
+      KAFKA_SMQ_INTEGRATION: "true"
+      CONTAINER_ID: ${{ matrix.container-id }}
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Set up Go 1.x
+      uses: actions/setup-go@v5
+      with:
+        go-version: ^1.24
+        cache: true
+        cache-dependency-path: |
+          **/go.sum
+      id: go
+
+    - name: Setup SMQ Integration Container Environment
+      run: |
+        apk add --no-cache git procps curl
+        ulimit -n 1024 || echo "Warning: Could not set file descriptor limit"
+        
+    - name: Warm Go module cache
+      run: |
+        # Warm cache for root module
+        go mod download || true
+        # Warm cache for kafka test module
+        cd test/kafka
+        go mod download || true
+
+    - name: Get dependencies
+      run: |
+        cd test/kafka
+        timeout 90s go mod download || echo "Warning: Dependency download timed out, continuing with cached modules"
+
+    - name: Build and start SeaweedFS MQ
+      run: |
+        set -e
+        cd $GITHUB_WORKSPACE
+        # Build weed binary
+        go build -o /usr/local/bin/weed ./weed
+        # Start SeaweedFS components for SMQ integration tests
+        export WEED_DATA_DIR=/tmp/seaweedfs-smq-$RANDOM
+        mkdir -p "$WEED_DATA_DIR"
+        nohup weed -v 0 server \
+          -ip.bind 0.0.0.0 \
+          -dir="$WEED_DATA_DIR" \
+          -master.raftHashicorp \
+          -master.port=9333 \
+          -volume.port=8081 \
+          -filer.port=8888 \
+          -metricsPort=9325 \
+          > /tmp/weed-smq.log 2>&1 &
+        # Wait for master to be ready
+        for i in $(seq 1 30); do
+          if curl -s http://127.0.0.1:9333/cluster/status >/dev/null; then
+            echo "SeaweedFS master is up"; break
+          fi
+          echo "Waiting for SeaweedFS master... ($i/30)"; sleep 1
+        done
+
+    - name: Run SMQ Integration Tests
+      run: |
+        cd test/kafka
+        ulimit -n 512 || echo "Warning: Could not set file descriptor limit"
+        ulimit -u 100 || echo "Warning: Could not set process limit"
+        # Run the dedicated SMQ integration tests
+        go test -v -run "^TestSMQIntegration" -timeout 60s ./integration/...
+      env:
+        GOMAXPROCS: 1
+        SEAWEEDFS_MASTERS: 127.0.0.1:9333
+
   kafka-protocol-tests:
     name: Kafka Protocol Tests (Isolated)
     runs-on: ubuntu-latest

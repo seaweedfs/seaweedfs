@@ -17,7 +17,7 @@ func TestSMQIntegration(t *testing.T) {
 	defer gateway.CleanupAndClose()
 
 	addr := gateway.StartAndWait()
-	
+
 	t.Logf("Running SMQ integration test with SeaweedFS backend")
 
 	t.Run("ProduceConsumeWithPersistence", func(t *testing.T) {
@@ -35,7 +35,7 @@ func TestSMQIntegration(t *testing.T) {
 
 func testProduceConsumeWithPersistence(t *testing.T, addr string) {
 	topicName := testutil.GenerateUniqueTopicName("smq-integration-produce-consume")
-	
+
 	client := testutil.NewSaramaClient(t, addr)
 	msgGen := testutil.NewMessageGenerator()
 
@@ -63,7 +63,7 @@ func testProduceConsumeWithPersistence(t *testing.T, addr string) {
 func testConsumerGroupOffsetPersistence(t *testing.T, addr string) {
 	topicName := testutil.GenerateUniqueTopicName("smq-integration-offset-persistence")
 	groupID := testutil.GenerateUniqueGroupID("smq-offset-group")
-	
+
 	client := testutil.NewSaramaClient(t, addr)
 	msgGen := testutil.NewMessageGenerator()
 
@@ -77,10 +77,10 @@ func testConsumerGroupOffsetPersistence(t *testing.T, addr string) {
 
 	// Phase 1: Consume first 5 messages with consumer group and commit offsets
 	t.Logf("Phase 1: Consuming first 5 messages and committing offsets")
-	
+
 	config := client.GetConfig()
 	config.Consumer.Offsets.Initial = sarama.OffsetOldest
-	
+
 	consumerGroup1, err := sarama.NewConsumerGroup([]string{addr}, groupID, config)
 	testutil.AssertNoError(t, err, "Failed to create first consumer group")
 
@@ -121,7 +121,7 @@ func testConsumerGroupOffsetPersistence(t *testing.T, addr string) {
 
 	// Phase 2: Start new consumer group with same ID - should resume from committed offset
 	t.Logf("Phase 2: Starting new consumer group to test offset persistence")
-	
+
 	consumerGroup2, err := sarama.NewConsumerGroup([]string{addr}, groupID, config)
 	testutil.AssertNoError(t, err, "Failed to create second consumer group")
 	defer consumerGroup2.Close()
@@ -171,7 +171,7 @@ func testConsumerGroupOffsetPersistence(t *testing.T, addr string) {
 
 func testTopicPersistence(t *testing.T, addr string) {
 	topicName := testutil.GenerateUniqueTopicName("smq-integration-topic-persistence")
-	
+
 	client := testutil.NewSaramaClient(t, addr)
 
 	// Create topic
