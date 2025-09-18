@@ -138,7 +138,7 @@ jobs:
 
     - name: Setup E2E Container Environment
       run: |
-        apk add --no-cache git procps curl
+        apk add --no-cache git procps curl netcat-openbsd
         ulimit -n 2048 || echo "Warning: Could not set file descriptor limit"
         
     - name: Warm Go module cache
@@ -161,9 +161,11 @@ jobs:
         cd $GITHUB_WORKSPACE
         # Build weed binary
         go build -o /usr/local/bin/weed ./weed
-        # Start SeaweedFS components (master, volume, filer) for MQ-backed tests
+        # Start SeaweedFS components with MQ brokers
         export WEED_DATA_DIR=/tmp/seaweedfs-e2e-$RANDOM
         mkdir -p "$WEED_DATA_DIR"
+        
+        # Start SeaweedFS server (master, volume, filer)
         nohup weed -v 0 server \
           -ip.bind 0.0.0.0 \
           -dir="$WEED_DATA_DIR" \
@@ -172,13 +174,29 @@ jobs:
           -volume.port=8081 \
           -filer.port=8888 \
           -metricsPort=9325 \
-          > /tmp/weed-e2e.log 2>&1 &
+          > /tmp/weed-server.log 2>&1 &
+          
         # Wait for master to be ready
         for i in $(seq 1 30); do
           if curl -s http://127.0.0.1:9333/cluster/status >/dev/null; then
             echo "SeaweedFS master is up"; break
           fi
           echo "Waiting for SeaweedFS master... ($i/30)"; sleep 1
+        done
+        
+        # Start MQ broker
+        nohup weed -v 0 mq.broker \
+          -filer="127.0.0.1:8888" \
+          -port=17777 \
+          > /tmp/weed-mq-broker.log 2>&1 &
+          
+        # Wait for broker to be ready  
+        sleep 3
+        for i in $(seq 1 15); do
+          if nc -z 127.0.0.1 17777; then
+            echo "SeaweedFS MQ broker is up"; break
+          fi
+          echo "Waiting for MQ broker... ($i/15)"; sleep 1
         done
 
     - name: Run End-to-End Tests
@@ -223,7 +241,7 @@ jobs:
 
     - name: Setup Consumer Group Container Environment
       run: |
-        apk add --no-cache git procps curl
+        apk add --no-cache git procps curl netcat-openbsd
         ulimit -n 256 || echo "Warning: Could not set file descriptor limit"
         
     - name: Warm Go module cache
@@ -246,9 +264,11 @@ jobs:
         cd $GITHUB_WORKSPACE
         # Build weed binary
         go build -o /usr/local/bin/weed ./weed
-        # Start SeaweedFS components (master, volume, filer) for MQ-backed offsets
+        # Start SeaweedFS components with MQ brokers
         export WEED_DATA_DIR=/tmp/seaweedfs-mq-$RANDOM
         mkdir -p "$WEED_DATA_DIR"
+        
+        # Start SeaweedFS server (master, volume, filer)
         nohup weed -v 0 server \
           -ip.bind 0.0.0.0 \
           -dir="$WEED_DATA_DIR" \
@@ -257,13 +277,29 @@ jobs:
           -volume.port=8081 \
           -filer.port=8888 \
           -metricsPort=9325 \
-          > /tmp/weed-mq.log 2>&1 &
+          > /tmp/weed-server.log 2>&1 &
+          
         # Wait for master to be ready
         for i in $(seq 1 30); do
           if curl -s http://127.0.0.1:9333/cluster/status >/dev/null; then
             echo "SeaweedFS master is up"; break
           fi
           echo "Waiting for SeaweedFS master... ($i/30)"; sleep 1
+        done
+        
+        # Start MQ broker
+        nohup weed -v 0 mq.broker \
+          -filer="127.0.0.1:8888" \
+          -port=17777 \
+          > /tmp/weed-mq-broker.log 2>&1 &
+          
+        # Wait for broker to be ready  
+        sleep 3
+        for i in $(seq 1 15); do
+          if nc -z 127.0.0.1 17777; then
+            echo "SeaweedFS MQ broker is up"; break
+          fi
+          echo "Waiting for MQ broker... ($i/15)"; sleep 1
         done
 
     - name: Run Consumer Group Tests
@@ -308,7 +344,7 @@ jobs:
 
     - name: Setup Client Container Environment
       run: |
-        apk add --no-cache git procps curl
+        apk add --no-cache git procps curl netcat-openbsd
         ulimit -n 1024 || echo "Warning: Could not set file descriptor limit"
 
     - name: Warm Go module cache
@@ -330,9 +366,11 @@ jobs:
         cd $GITHUB_WORKSPACE
         # Build weed binary
         go build -o /usr/local/bin/weed ./weed
-        # Start SeaweedFS components for client compatibility testing
+        # Start SeaweedFS components with MQ brokers
         export WEED_DATA_DIR=/tmp/seaweedfs-client-$RANDOM
         mkdir -p "$WEED_DATA_DIR"
+        
+        # Start SeaweedFS server (master, volume, filer)
         nohup weed -v 0 server \
           -ip.bind 0.0.0.0 \
           -dir="$WEED_DATA_DIR" \
@@ -341,13 +379,29 @@ jobs:
           -volume.port=8081 \
           -filer.port=8888 \
           -metricsPort=9325 \
-          > /tmp/weed-client.log 2>&1 &
+          > /tmp/weed-server.log 2>&1 &
+          
         # Wait for master to be ready
         for i in $(seq 1 30); do
           if curl -s http://127.0.0.1:9333/cluster/status >/dev/null; then
             echo "SeaweedFS master is up"; break
           fi
           echo "Waiting for SeaweedFS master... ($i/30)"; sleep 1
+        done
+        
+        # Start MQ broker
+        nohup weed -v 0 mq.broker \
+          -filer="127.0.0.1:8888" \
+          -port=17777 \
+          > /tmp/weed-mq-broker.log 2>&1 &
+          
+        # Wait for broker to be ready  
+        sleep 3
+        for i in $(seq 1 15); do
+          if nc -z 127.0.0.1 17777; then
+            echo "SeaweedFS MQ broker is up"; break
+          fi
+          echo "Waiting for MQ broker... ($i/15)"; sleep 1
         done
 
     - name: Run Client Compatibility Tests
@@ -389,7 +443,7 @@ jobs:
 
     - name: Setup SMQ Integration Container Environment
       run: |
-        apk add --no-cache git procps curl
+        apk add --no-cache git procps curl netcat-openbsd
         ulimit -n 1024 || echo "Warning: Could not set file descriptor limit"
         
     - name: Warm Go module cache
@@ -411,9 +465,11 @@ jobs:
         cd $GITHUB_WORKSPACE
         # Build weed binary
         go build -o /usr/local/bin/weed ./weed
-        # Start SeaweedFS components for SMQ integration tests
+        # Start SeaweedFS components with MQ brokers
         export WEED_DATA_DIR=/tmp/seaweedfs-smq-$RANDOM
         mkdir -p "$WEED_DATA_DIR"
+        
+        # Start SeaweedFS server (master, volume, filer)
         nohup weed -v 0 server \
           -ip.bind 0.0.0.0 \
           -dir="$WEED_DATA_DIR" \
@@ -422,13 +478,29 @@ jobs:
           -volume.port=8081 \
           -filer.port=8888 \
           -metricsPort=9325 \
-          > /tmp/weed-smq.log 2>&1 &
+          > /tmp/weed-server.log 2>&1 &
+          
         # Wait for master to be ready
         for i in $(seq 1 30); do
           if curl -s http://127.0.0.1:9333/cluster/status >/dev/null; then
             echo "SeaweedFS master is up"; break
           fi
           echo "Waiting for SeaweedFS master... ($i/30)"; sleep 1
+        done
+        
+        # Start MQ broker
+        nohup weed -v 0 mq.broker \
+          -filer="127.0.0.1:8888" \
+          -port=17777 \
+          > /tmp/weed-mq-broker.log 2>&1 &
+          
+        # Wait for broker to be ready  
+        sleep 3
+        for i in $(seq 1 15); do
+          if nc -z 127.0.0.1 17777; then
+            echo "SeaweedFS MQ broker is up"; break
+          fi
+          echo "Waiting for MQ broker... ($i/15)"; sleep 1
         done
 
     - name: Run SMQ Integration Tests
