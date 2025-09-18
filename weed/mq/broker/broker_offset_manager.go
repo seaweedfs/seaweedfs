@@ -5,10 +5,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer_client"
 	"github.com/seaweedfs/seaweedfs/weed/mq/offset"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
-	"google.golang.org/grpc"
 )
 
 // BrokerOffsetManager manages offset assignment for all partitions in a broker
@@ -19,13 +19,13 @@ type BrokerOffsetManager struct {
 	consumerGroupStorage offset.ConsumerGroupOffsetStorage
 }
 
-// NewBrokerOffsetManagerWithFiler creates a new broker offset manager with filer storage
-func NewBrokerOffsetManagerWithFiler(filerAddress string, namespace string, topicName string, grpcDialOption grpc.DialOption) *BrokerOffsetManager {
-	// Create filer storage for partition offsets
-	filerStorage := offset.NewFilerOffsetStorage(filerAddress, namespace, topicName, grpcDialOption)
+// NewBrokerOffsetManagerWithFilerAccessor creates a new broker offset manager using existing filer client accessor
+func NewBrokerOffsetManagerWithFilerAccessor(filerAccessor *filer_client.FilerClientAccessor, namespace string, topicName string) *BrokerOffsetManager {
+	// Create filer storage using the accessor directly - no duplicate connection management
+	filerStorage := offset.NewFilerOffsetStorageWithAccessor(filerAccessor, namespace, topicName)
 
-	// Create filer storage for consumer group offsets
-	consumerGroupStorage := offset.NewFilerConsumerGroupOffsetStorage(filerAddress, grpcDialOption)
+	// Create consumer group storage using the accessor directly
+	consumerGroupStorage := offset.NewFilerConsumerGroupOffsetStorageWithAccessor(filerAccessor)
 
 	return &BrokerOffsetManager{
 		offsetIntegration:    offset.NewSMQOffsetIntegration(filerStorage),

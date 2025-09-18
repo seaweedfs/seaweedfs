@@ -44,12 +44,21 @@ func NewFilerOffsetStorage(filerAddress string, namespace string, topicName stri
 	}
 }
 
+// NewFilerOffsetStorageWithAccessor creates a new filer-based offset storage using existing filer client accessor
+func NewFilerOffsetStorageWithAccessor(filerClientAccessor *filer_client.FilerClientAccessor, namespace string, topicName string) *FilerOffsetStorage {
+	return &FilerOffsetStorage{
+		filerClientAccessor: filerClientAccessor,
+		namespace:           namespace,
+		topicName:           topicName,
+	}
+}
+
 // SaveCheckpoint saves the checkpoint for a partition
 // Stores as: /topics/{namespace}/{topic}/{version}/{partition}/checkpoint.offset
 func (f *FilerOffsetStorage) SaveCheckpoint(partition *schema_pb.Partition, offset int64) error {
 	partitionDir := f.getPartitionDir(partition)
 	fileName := "checkpoint.offset"
-	
+
 	// Use SMQ's 8-byte offset format
 	offsetBytes := make([]byte, 8)
 	util.Uint64toBytes(offsetBytes, uint64(offset))
@@ -104,10 +113,10 @@ func (f *FilerOffsetStorage) Reset() error {
 func (f *FilerOffsetStorage) getPartitionDir(partition *schema_pb.Partition) string {
 	// Generate version from UnixTimeNs
 	version := time.Unix(0, partition.UnixTimeNs).UTC().Format("v2006-01-02-15-04-05")
-	
+
 	// Generate partition range string
 	partitionRange := fmt.Sprintf("%04d-%04d", partition.RangeStart, partition.RangeStop)
-	
+
 	return fmt.Sprintf("%s/%s/%s/%s/%s", filer.TopicsDir, f.namespace, f.topicName, version, partitionRange)
 }
 

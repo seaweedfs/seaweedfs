@@ -86,11 +86,10 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 
 	go mqBroker.MasterClient.KeepConnectedToMaster(context.Background())
 
-	// Initialize offset manager with default filer address immediately
-	// This ensures offset assignment works even before filer discovery completes
-	defaultFilerAddress := "127.0.0.1:8888" // Default filer address for CI/testing
-	mqBroker.offsetManager = NewBrokerOffsetManagerWithFiler(defaultFilerAddress, "kafka", "default", grpcDialOption)
-	glog.V(0).Infof("broker initialized offset manager with default filer %s (will update when filers are discovered)", defaultFilerAddress)
+	// Initialize offset manager using the filer accessor
+	// This ensures offset assignment works and reuses the existing filer connection infrastructure
+	mqBroker.offsetManager = NewBrokerOffsetManagerWithFilerAccessor(fca, "kafka", "default")
+	glog.V(0).Infof("broker initialized offset manager with filer accessor")
 
 	existingNodes := cluster.ListExistingPeerUpdates(mqBroker.MasterClient.GetMaster(context.Background()), grpcDialOption, option.FilerGroup, cluster.FilerType)
 	for _, newNode := range existingNodes {
@@ -127,10 +126,8 @@ func (b *MessageQueueBroker) OnBrokerUpdate(update *master_pb.ClusterNodeUpdate,
 		b.filers[address] = struct{}{}
 		if b.currentFiler == "" {
 			b.currentFiler = address
-			// Update offset manager with actual discovered filer address
-			// This replaces any default initialization done during broker startup
-			b.offsetManager = NewBrokerOffsetManagerWithFiler(string(address), "kafka", "default", b.grpcDialOption)
-			glog.V(0).Infof("broker updated offset manager with discovered filer %s", address)
+			// The offset manager will automatically use the updated filer through the filer accessor
+			glog.V(0).Infof("broker discovered filer %s (offset manager will use it via filer accessor)", address)
 		}
 	} else {
 		delete(b.filers, address)

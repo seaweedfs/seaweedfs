@@ -56,6 +56,13 @@ func NewFilerConsumerGroupOffsetStorage(filerAddress string, grpcDialOption grpc
 	}
 }
 
+// NewFilerConsumerGroupOffsetStorageWithAccessor creates a new filer-based consumer group offset storage using existing filer client accessor
+func NewFilerConsumerGroupOffsetStorageWithAccessor(filerClientAccessor *filer_client.FilerClientAccessor) *FilerConsumerGroupOffsetStorage {
+	return &FilerConsumerGroupOffsetStorage{
+		filerClientAccessor: filerClientAccessor,
+	}
+}
+
 // SaveConsumerGroupOffset saves the committed offset for a consumer group
 // Stores as: /topics/{namespace}/{topic}/{version}/{partition}/consumers/{consumer_group}.offset
 func (f *FilerConsumerGroupOffsetStorage) SaveConsumerGroupOffset(t topic.Topic, p topic.Partition, consumerGroup string, offset int64) error {
