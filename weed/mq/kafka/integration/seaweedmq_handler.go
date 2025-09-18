@@ -1238,7 +1238,7 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 		// This requires maintaining an offset->timestamp ledger during produce operations
 		offsetType = schema_pb.OffsetType_EXACT_TS_NS
 		startTimestamp = time.Now().UnixNano() - int64(24*time.Hour) // 24h lookback as fallback
-		glog.V(1).Infof("🔍 Using EXACT_TS_NS with 24h lookback for Kafka offset %d", startOffset)
+		glog.V(1).Infof("Using EXACT_TS_NS with 24h lookback for Kafka offset %d", startOffset)
 	}
 
 	glog.V(1).Infof("🔍 Creating subscriber for topic=%s partition=%d: Kafka offset %d -> SeaweedMQ %s (timestamp=%d)",
