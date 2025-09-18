@@ -235,6 +235,35 @@ func (h *SeaweedMQHandler) CreateTopic(name string, partitions int32) error {
 		Name:      name,
 	}
 
+	glog.V(1).Infof("🆕 Creating topic %s with %d partitions in SeaweedMQ broker", name, partitions)
+
+	// Configure topic with SeaweedMQ broker via gRPC
+	if len(h.brokerAddresses) > 0 {
+		brokerAddress := h.brokerAddresses[0] // Use first available broker
+		glog.V(1).Infof("📞 Configuring topic %s with broker %s", name, brokerAddress)
+
+		// Create gRPC dial option for broker connection
+		grpcDialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+
+		err := pb.WithBrokerGrpcClient(false, brokerAddress, grpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
+			_, err := client.ConfigureTopic(context.Background(), &mq_pb.ConfigureTopicRequest{
+				Topic:          seaweedTopic,
+				PartitionCount: partitions,
+			})
+			if err != nil {
+				glog.Errorf("❌ Failed to configure topic %s with broker: %v", name, err)
+				return fmt.Errorf("configure topic with broker: %w", err)
+			}
+			glog.V(1).Infof("✅ Successfully configured topic %s with broker", name)
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("failed to configure topic %s with broker %s: %w", name, brokerAddress, err)
+		}
+	} else {
+		glog.Warningf("⚠️ No brokers available - creating topic %s in gateway memory only (testing mode)", name)
+	}
+
 	// Create Kafka topic info
 	topicInfo := &KafkaTopicInfo{
 		Name:         name,
@@ -254,6 +283,7 @@ func (h *SeaweedMQHandler) CreateTopic(name string, partitions int32) error {
 		h.ledgersMu.Unlock()
 	}
 
+	glog.V(1).Infof("🎉 Topic %s created successfully with %d partitions", name, partitions)
 	return nil
 }
 
