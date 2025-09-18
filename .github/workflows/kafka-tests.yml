@@ -196,13 +196,17 @@ jobs:
           echo "  Waiting for master gRPC... ($i/30)"; sleep 1
         done
         
-        # Give server time to initialize all components  
+        # Give server time to initialize all components including gRPC services
         echo "Waiting for SeaweedFS components to initialize..."
+        sleep 15
+        
+        # Additional wait specifically for gRPC services to be ready for streaming
+        echo "Allowing extra time for master gRPC streaming services to initialize..."
         sleep 10
         
-        # Start MQ broker with more verbose logging for debugging
+        # Start MQ broker with maximum verbosity for debugging
         echo "Starting MQ broker..."
-        nohup weed -v 1 mq.broker \
+        nohup weed -v 3 mq.broker \
           -master="127.0.0.1:9333" \
           -ip="127.0.0.1" \
           -port=17777 \
@@ -225,9 +229,15 @@ jobs:
           echo "Allowing broker to register with master..."
           sleep 30
           
-          # Show cluster status for debugging
+          # Check if broker is properly registered by querying cluster nodes
           echo "Cluster status after broker registration:"
           curl -s "http://127.0.0.1:9333/cluster/status" || echo "Could not check cluster status"
+          
+          echo "Checking for registered brokers in cluster:"
+          curl -s "http://127.0.0.1:9333/cluster/nodes" || echo "Could not check cluster nodes"
+          
+          echo "Verifying broker discovery via master client debug:"
+          echo "If broker registration is successful, it should appear in cluster nodes list"
         fi
         
         # Check if broker failed to start and show logs
@@ -245,7 +255,20 @@ jobs:
         # Higher limits for E2E tests
         ulimit -n 1024 || echo "Warning: Could not set file descriptor limit"
         ulimit -u 200 || echo "Warning: Could not set process limit"
-          go test -v -timeout 180s ./e2e/...
+        
+        # Run tests and capture result
+        if ! go test -v -timeout 180s ./e2e/...; then
+          echo "========================================="
+          echo "Tests failed! Showing debug information:"
+          echo "========================================="
+          echo "Server logs (last 50 lines):"
+          tail -50 /tmp/weed-server.log || echo "No server logs"
+          echo "========================================="
+          echo "Broker logs (last 50 lines):"
+          tail -50 /tmp/weed-mq-broker.log || echo "No broker logs"
+          echo "========================================="
+          exit 1
+        fi
       env:
         GOMAXPROCS: 2
         SEAWEEDFS_MASTERS: 127.0.0.1:9333
@@ -339,13 +362,17 @@ jobs:
           echo "  Waiting for master gRPC... ($i/30)"; sleep 1
         done
         
-        # Give server time to initialize all components  
+        # Give server time to initialize all components including gRPC services
         echo "Waiting for SeaweedFS components to initialize..."
+        sleep 15
+        
+        # Additional wait specifically for gRPC services to be ready for streaming
+        echo "Allowing extra time for master gRPC streaming services to initialize..."
         sleep 10
         
-        # Start MQ broker with more verbose logging for debugging
+        # Start MQ broker with maximum verbosity for debugging
         echo "Starting MQ broker..."
-        nohup weed -v 1 mq.broker \
+        nohup weed -v 3 mq.broker \
           -master="127.0.0.1:9333" \
           -ip="127.0.0.1" \
           -port=17777 \
@@ -368,9 +395,15 @@ jobs:
           echo "Allowing broker to register with master..."
           sleep 30
           
-          # Show cluster status for debugging
+          # Check if broker is properly registered by querying cluster nodes
           echo "Cluster status after broker registration:"
           curl -s "http://127.0.0.1:9333/cluster/status" || echo "Could not check cluster status"
+          
+          echo "Checking for registered brokers in cluster:"
+          curl -s "http://127.0.0.1:9333/cluster/nodes" || echo "Could not check cluster nodes"
+          
+          echo "Verifying broker discovery via master client debug:"
+          echo "If broker registration is successful, it should appear in cluster nodes list"
         fi
         
         # Check if broker failed to start and show logs
@@ -481,13 +514,17 @@ jobs:
           echo "  Waiting for master gRPC... ($i/30)"; sleep 1
         done
         
-        # Give server time to initialize all components  
+        # Give server time to initialize all components including gRPC services
         echo "Waiting for SeaweedFS components to initialize..."
+        sleep 15
+        
+        # Additional wait specifically for gRPC services to be ready for streaming
+        echo "Allowing extra time for master gRPC streaming services to initialize..."
         sleep 10
         
-        # Start MQ broker with more verbose logging for debugging
+        # Start MQ broker with maximum verbosity for debugging
         echo "Starting MQ broker..."
-        nohup weed -v 1 mq.broker \
+        nohup weed -v 3 mq.broker \
           -master="127.0.0.1:9333" \
           -ip="127.0.0.1" \
           -port=17777 \
@@ -510,9 +547,15 @@ jobs:
           echo "Allowing broker to register with master..."
           sleep 30
           
-          # Show cluster status for debugging
+          # Check if broker is properly registered by querying cluster nodes
           echo "Cluster status after broker registration:"
           curl -s "http://127.0.0.1:9333/cluster/status" || echo "Could not check cluster status"
+          
+          echo "Checking for registered brokers in cluster:"
+          curl -s "http://127.0.0.1:9333/cluster/nodes" || echo "Could not check cluster nodes"
+          
+          echo "Verifying broker discovery via master client debug:"
+          echo "If broker registration is successful, it should appear in cluster nodes list"
         fi
         
         # Check if broker failed to start and show logs
@@ -620,13 +663,17 @@ jobs:
           echo "  Waiting for master gRPC... ($i/30)"; sleep 1
         done
         
-        # Give server time to initialize all components  
+        # Give server time to initialize all components including gRPC services
         echo "Waiting for SeaweedFS components to initialize..."
+        sleep 15
+        
+        # Additional wait specifically for gRPC services to be ready for streaming
+        echo "Allowing extra time for master gRPC streaming services to initialize..."
         sleep 10
         
-        # Start MQ broker with more verbose logging for debugging
+        # Start MQ broker with maximum verbosity for debugging
         echo "Starting MQ broker..."
-        nohup weed -v 1 mq.broker \
+        nohup weed -v 3 mq.broker \
           -master="127.0.0.1:9333" \
           -ip="127.0.0.1" \
           -port=17777 \
@@ -649,9 +696,15 @@ jobs:
           echo "Allowing broker to register with master..."
           sleep 30
           
-          # Show cluster status for debugging
+          # Check if broker is properly registered by querying cluster nodes
           echo "Cluster status after broker registration:"
           curl -s "http://127.0.0.1:9333/cluster/status" || echo "Could not check cluster status"
+          
+          echo "Checking for registered brokers in cluster:"
+          curl -s "http://127.0.0.1:9333/cluster/nodes" || echo "Could not check cluster nodes"
+          
+          echo "Verifying broker discovery via master client debug:"
+          echo "If broker registration is successful, it should appear in cluster nodes list"
         fi
         
         # Check if broker failed to start and show logs
