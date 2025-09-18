@@ -720,7 +720,7 @@ func (h *SeaweedMQHandler) convertSingleSeaweedRecord(seaweedRecord *SeaweedReco
 }
 
 // NewSeaweedMQBrokerHandler creates a new handler with SeaweedMQ broker integration
-func NewSeaweedMQBrokerHandler(masters string, filerGroup string) (*SeaweedMQHandler, error) {
+func NewSeaweedMQBrokerHandler(masters string, filerGroup string, clientHost string) (*SeaweedMQHandler, error) {
 	if masters == "" {
 		return nil, fmt.Errorf("masters required - SeaweedMQ infrastructure must be configured")
 	}
@@ -734,8 +734,12 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string) (*SeaweedMQHan
 	// Create master client for service discovery
 	grpcDialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
 	masterDiscovery := pb.ServerAddresses(masters).ToServiceDiscovery()
-	clientHost := pb.ServerAddress("kafka-gateway") // Use a placeholder client host
-	masterClient := wdclient.NewMasterClient(grpcDialOption, filerGroup, "kafka-gateway", clientHost, "", "", *masterDiscovery)
+	
+	// Use provided client host for proper gRPC connection
+	// This is critical for MasterClient to establish streaming connections
+	clientHostAddr := pb.ServerAddress(clientHost)
+	
+	masterClient := wdclient.NewMasterClient(grpcDialOption, filerGroup, "kafka-gateway", clientHostAddr, "", "", *masterDiscovery)
 
 	// Discover brokers from masters using master client
 	brokerAddresses, err := discoverBrokersWithMasterClient(masterClient, filerGroup)

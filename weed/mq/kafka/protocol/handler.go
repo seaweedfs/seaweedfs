@@ -146,9 +146,9 @@ func NewSeaweedMQHandler(agentAddress string) (*Handler, error) {
 }
 
 // NewSeaweedMQBrokerHandler creates a new handler with SeaweedMQ broker integration
-func NewSeaweedMQBrokerHandler(masters string, filerGroup string) (*Handler, error) {
+func NewSeaweedMQBrokerHandler(masters string, filerGroup string, clientHost string) (*Handler, error) {
 	// Set up SeaweedMQ integration
-	smqHandler, err := integration.NewSeaweedMQBrokerHandler(masters, filerGroup)
+	smqHandler, err := integration.NewSeaweedMQBrokerHandler(masters, filerGroup, clientHost)
 	if err != nil {
 		return nil, err
 	}

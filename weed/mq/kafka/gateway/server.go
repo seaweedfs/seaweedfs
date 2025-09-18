@@ -79,7 +79,13 @@ func NewServer(opts Options) *Server {
 		glog.Fatalf("SeaweedMQ masters are required for Kafka gateway - provide masters addresses")
 	}
 
-	handler, err = protocol.NewSeaweedMQBrokerHandler(opts.Masters, opts.FilerGroup)
+	// Use the intended listen address as the client host for master registration
+	clientHost := opts.Listen
+	if clientHost == "" {
+		clientHost = "127.0.0.1:9092" // Default Kafka port
+	}
+	
+	handler, err = protocol.NewSeaweedMQBrokerHandler(opts.Masters, opts.FilerGroup, clientHost)
 	if err != nil {
 		glog.Fatalf("Failed to create SeaweedMQ handler with masters %s: %v", opts.Masters, err)
 	}
