@@ -238,6 +238,18 @@ func (b *MessageQueueBroker) getRequestPosition(initMessage *mq_pb.SubscribeMess
 		return
 	}
 
+	// use exact offset (native offset-based positioning)
+	if offsetType == schema_pb.OffsetType_EXACT_OFFSET {
+		startPosition = log_buffer.NewMessagePositionFromOffset(offset.StartOffset)
+		return
+	}
+
+	// reset to specific offset
+	if offsetType == schema_pb.OffsetType_RESET_TO_OFFSET {
+		startPosition = log_buffer.NewMessagePositionFromOffset(offset.StartOffset)
+		return
+	}
+
 	// try to resume
 	if storedOffset, err := b.readConsumerGroupOffset(initMessage); err == nil {
 		glog.V(0).Infof("resume from saved offset %v %v %v: %v", initMessage.Topic, initMessage.PartitionOffset.Partition, initMessage.ConsumerGroup, storedOffset)

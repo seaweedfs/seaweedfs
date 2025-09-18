@@ -1220,25 +1220,26 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 	// Convert Kafka offset to appropriate SeaweedMQ OffsetType and parameters
 	var offsetType schema_pb.OffsetType
 	var startTimestamp int64
+	var startOffsetValue int64
 
 	if startOffset == 0 {
 		// For Kafka offset 0 (read from beginning), use RESET_TO_EARLIEST
-		// This tells SeaweedMQ to start from the very beginning regardless of timestamps
 		offsetType = schema_pb.OffsetType_RESET_TO_EARLIEST
-		startTimestamp = 0 // Not used with RESET_TO_EARLIEST, but set to 0 for clarity
-		glog.V(1).Infof("DEBUG: Using RESET_TO_EARLIEST for Kafka offset 0")
+		startTimestamp = 0   // Not used with RESET_TO_EARLIEST
+		startOffsetValue = 0 // Not used with RESET_TO_EARLIEST
+		glog.V(1).Infof("Using RESET_TO_EARLIEST for Kafka offset 0")
 	} else if startOffset == -1 {
 		// Kafka offset -1 typically means "latest"
 		offsetType = schema_pb.OffsetType_RESET_TO_LATEST
-		startTimestamp = 0 // Not used with RESET_TO_LATEST
-		glog.V(1).Infof("DEBUG: Using RESET_TO_LATEST for Kafka offset -1 (read latest)")
+		startTimestamp = 0   // Not used with RESET_TO_LATEST
+		startOffsetValue = 0 // Not used with RESET_TO_LATEST
+		glog.V(1).Infof("Using RESET_TO_LATEST for Kafka offset -1 (read latest)")
 	} else {
-		// For specific offsets, we still need timestamp mapping
-		// TODO: CRITICAL - Implement proper Kafka offset to SeaweedMQ timestamp mapping
-		// This requires maintaining an offset->timestamp ledger during produce operations
-		offsetType = schema_pb.OffsetType_EXACT_TS_NS
-		startTimestamp = time.Now().UnixNano() - int64(24*time.Hour) // 24h lookback as fallback
-		glog.V(1).Infof("Using EXACT_TS_NS with 24h lookback for Kafka offset %d", startOffset)
+		// For specific offsets, use native SeaweedMQ offset-based positioning
+		offsetType = schema_pb.OffsetType_EXACT_OFFSET
+		startTimestamp = 0             // Not used with EXACT_OFFSET
+		startOffsetValue = startOffset // Use the Kafka offset directly
+		glog.V(1).Infof("Using EXACT_OFFSET for Kafka offset %d (native offset-based positioning)", startOffset)
 	}
 
 	glog.V(1).Infof("🔍 Creating subscriber for topic=%s partition=%d: Kafka offset %d -> SeaweedMQ %s (timestamp=%d)",
@@ -1256,8 +1257,9 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 					Name:      topic,
 				},
 				PartitionOffset: &schema_pb.PartitionOffset{
-					Partition: actualPartition,
-					StartTsNs: startTimestamp,
+					Partition:   actualPartition,
+					StartTsNs:   startTimestamp,
+					StartOffset: startOffsetValue,
 				},
 				OffsetType:        offsetType, // Use the correct offset type
 				SlidingWindowSize: 10,

@@ -29,6 +29,28 @@ func NewMessagePosition(tsNs int64, batchIndex int64) MessagePosition {
 	}
 }
 
+// NewMessagePositionFromOffset creates a MessagePosition that represents a specific offset
+// Uses a special encoding: BatchIndex = -(offset + 10000) to distinguish from timestamp-based positions
+func NewMessagePositionFromOffset(offset int64) MessagePosition {
+	return MessagePosition{
+		Time:       time.Unix(0, 0).UTC(), // Use epoch time for offset-based positions
+		BatchIndex: -(offset + 10000),     // Encode offset as negative BatchIndex with offset to avoid collision
+	}
+}
+
+// IsOffsetBased returns true if this MessagePosition represents an offset rather than a timestamp
+func (mp MessagePosition) IsOffsetBased() bool {
+	return mp.Time.IsZero() && mp.BatchIndex <= -10000
+}
+
+// GetOffset extracts the offset from an offset-based MessagePosition
+func (mp MessagePosition) GetOffset() int64 {
+	if !mp.IsOffsetBased() {
+		return -1 // Not an offset-based position
+	}
+	return -(mp.BatchIndex + 10000)
+}
+
 func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition MessagePosition, stopTsNs int64,
 	waitForDataFn func() bool, eachLogDataFn EachLogEntryFuncType) (lastReadPosition MessagePosition, isDone bool, err error) {
 	// loop through all messages
@@ -104,6 +126,18 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 				pos += 4 + int(size)
 				continue
 			}
+
+			// Handle offset-based filtering for offset-based start positions
+			if startPosition.IsOffsetBased() {
+				startOffset := startPosition.GetOffset()
+				if logEntry.Offset < startOffset {
+					// Skip entries before the target offset
+					pos += 4 + int(size)
+					batchSize++
+					continue
+				}
+			}
+
 			if stopTsNs != 0 && logEntry.TsNs > stopTsNs {
 				isDone = true
 				// println("stopTsNs", stopTsNs, "logEntry.TsNs", logEntry.TsNs)
@@ -207,6 +241,18 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithBatchIndex(readerName string, 
 				pos += 4 + int(size)
 				continue
 			}
+
+			// Handle offset-based filtering for offset-based start positions
+			if startPosition.IsOffsetBased() {
+				startOffset := startPosition.GetOffset()
+				if logEntry.Offset < startOffset {
+					// Skip entries before the target offset
+					pos += 4 + int(size)
+					batchSize++
+					continue
+				}
+			}
+
 			if stopTsNs != 0 && logEntry.TsNs > stopTsNs {
 				isDone = true
 				// println("stopTsNs", stopTsNs, "logEntry.TsNs", logEntry.TsNs)
