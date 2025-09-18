@@ -121,6 +121,14 @@ func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromO
 		if subErr != nil {
 			return nil, fmt.Errorf("failed to get broker subscriber: %v", subErr)
 		}
+
+		// Small delay to avoid race condition with broker flushing
+		// This gives time for recently published messages to be flushed to filer
+		if fromOffset == 0 {
+			time.Sleep(50 * time.Millisecond)
+			glog.V(1).Infof("🕑 Added small delay for broker flush synchronization")
+		}
+
 		seaweedRecords, err = h.brokerClient.ReadRecords(brokerSubscriber, recordsToFetch)
 	} else if h.agentClient != nil {
 		agentSubscriber, subErr := h.agentClient.GetOrCreateSubscriber(topic, partition, fromOffset)
