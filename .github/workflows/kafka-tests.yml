@@ -165,10 +165,10 @@ jobs:
         export WEED_DATA_DIR=/tmp/seaweedfs-e2e-$RANDOM
         mkdir -p "$WEED_DATA_DIR"
         
-        # Start SeaweedFS server (master, volume, filer) with explicit IP configuration
+        # Start SeaweedFS server (master, volume, filer) with consistent IP advertising
         nohup weed -v 1 server \
           -ip="127.0.0.1" \
-          -ip.bind="127.0.0.1" \
+          -ip.bind="0.0.0.0" \
           -dir="$WEED_DATA_DIR" \
           -master.raftHashicorp \
           -master.port=9333 \
@@ -297,10 +297,10 @@ jobs:
         export WEED_DATA_DIR=/tmp/seaweedfs-mq-$RANDOM
         mkdir -p "$WEED_DATA_DIR"
         
-        # Start SeaweedFS server (master, volume, filer) with explicit IP configuration
+        # Start SeaweedFS server (master, volume, filer) with consistent IP advertising
         nohup weed -v 1 server \
           -ip="127.0.0.1" \
-          -ip.bind="127.0.0.1" \
+          -ip.bind="0.0.0.0" \
           -dir="$WEED_DATA_DIR" \
           -master.raftHashicorp \
           -master.port=9333 \
@@ -428,10 +428,10 @@ jobs:
         export WEED_DATA_DIR=/tmp/seaweedfs-client-$RANDOM
         mkdir -p "$WEED_DATA_DIR"
         
-        # Start SeaweedFS server (master, volume, filer) with explicit IP configuration
+        # Start SeaweedFS server (master, volume, filer) with consistent IP advertising
         nohup weed -v 1 server \
           -ip="127.0.0.1" \
-          -ip.bind="127.0.0.1" \
+          -ip.bind="0.0.0.0" \
           -dir="$WEED_DATA_DIR" \
           -master.raftHashicorp \
           -master.port=9333 \
@@ -556,10 +556,10 @@ jobs:
         export WEED_DATA_DIR=/tmp/seaweedfs-smq-$RANDOM
         mkdir -p "$WEED_DATA_DIR"
         
-        # Start SeaweedFS server (master, volume, filer) with explicit IP configuration
+        # Start SeaweedFS server (master, volume, filer) with consistent IP advertising
         nohup weed -v 1 server \
           -ip="127.0.0.1" \
-          -ip.bind="127.0.0.1" \
+          -ip.bind="0.0.0.0" \
           -dir="$WEED_DATA_DIR" \
           -master.raftHashicorp \
           -master.port=9333 \
