@@ -174,7 +174,7 @@ You can build and run the telemetry server using Docker locally or on a remote h
 docker compose -f telemetry/docker-compose.yml build telemetry-server
 ```
 
-- Using docker build directly:
+- Using docker build directly (from the repository root):
 
 ```bash
 docker build -t seaweedfs-telemetry \
@@ -202,7 +202,7 @@ Notes:
 
 - The container runs as a non-root user by default.
 - The image listens on port `8080` inside the container. Map it with `-p <host_port>:8080`.
-- You can pass flags to the server by appending them after the image name, e.g. `... seaweedfs-telemetry -port=8353 -dashboard=false`.
+- You can pass flags to the server by appending them after the image name, e.g. `docker run -d -p 8353:8080 seaweedfs-telemetry -port=8353 -dashboard=false`.
 
 ## Server Directory Structure
 

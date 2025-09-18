@@ -220,7 +220,6 @@ docker compose -f telemetry/docker-compose.yml up -d --scale telemetry-server=3
 
 ```bash
 # Build and run telemetry server (build from repo root to include all sources)
-cd ..   # ensure you're at the repo root (seaweedfs)
 docker build -t seaweedfs-telemetry -f telemetry/server/Dockerfile .
 docker run -p 8080:8080 seaweedfs-telemetry -port=8080 -dashboard=true
 ```
