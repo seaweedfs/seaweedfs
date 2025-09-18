@@ -57,7 +57,7 @@ func testKafkaGoToKafkaGo(t *testing.T, addr, topic string) {
 	err = testutil.ValidateKafkaGoMessageContent(messages, consumed)
 	testutil.AssertNoError(t, err, "Message content validation failed")
 
-	t.Logf("🎉 kafka-go to kafka-go test PASSED")
+	t.Logf("kafka-go to kafka-go test PASSED")
 }
 
 func testSaramaToSarama(t *testing.T, addr, topic string) {
@@ -79,7 +79,7 @@ func testSaramaToSarama(t *testing.T, addr, topic string) {
 	err = testutil.ValidateMessageContent(messages, consumed)
 	testutil.AssertNoError(t, err, "Message content validation failed")
 
-	t.Logf("🎉 Sarama to Sarama test PASSED")
+	t.Logf("Sarama to Sarama test PASSED")
 }
 
 func testKafkaGoToSarama(t *testing.T, addr, topic string) {
@@ -99,7 +99,7 @@ func testKafkaGoToSarama(t *testing.T, addr, topic string) {
 	// Validate that we got the expected number of messages
 	testutil.AssertEqual(t, len(messages), len(consumed), "Message count mismatch")
 
-	t.Logf("🎉 kafka-go to Sarama test PASSED")
+	t.Logf("kafka-go to Sarama test PASSED")
 }
 
 func testSaramaToKafkaGo(t *testing.T, addr, topic string) {
@@ -119,5 +119,5 @@ func testSaramaToKafkaGo(t *testing.T, addr, topic string) {
 	// Validate that we got the expected number of messages
 	testutil.AssertEqual(t, len(messages), len(consumed), "Message count mismatch")
 
-	t.Logf("🎉 Sarama to kafka-go test PASSED")
+	t.Logf("Sarama to kafka-go test PASSED")
 }

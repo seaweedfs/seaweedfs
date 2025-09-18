@@ -52,7 +52,7 @@ func testBasicOffsetCommitFetch(t *testing.T, addr, topic, groupID string) {
 	totalConsumed := len(consumed1) + len(consumed2)
 	testutil.AssertEqual(t, len(messages), totalConsumed, "Should consume all messages exactly once")
 
-	t.Logf("🎉 SUCCESS: Offset management test completed - consumed %d + %d messages", len(consumed1), len(consumed2))
+	t.Logf("SUCCESS: Offset management test completed - consumed %d + %d messages", len(consumed1), len(consumed2))
 }
 
 func testConsumerGroupResumption(t *testing.T, addr, topic, groupID string) {
@@ -76,5 +76,5 @@ func testConsumerGroupResumption(t *testing.T, addr, topic, groupID string) {
 	totalConsumed := len(consumed1) + len(consumed2)
 	testutil.AssertEqual(t, len(messages), totalConsumed, "Should consume all messages after restart")
 
-	t.Logf("🎉 SUCCESS: Consumer group resumption test completed")
+	t.Logf("SUCCESS: Consumer group resumption test completed")
 }
