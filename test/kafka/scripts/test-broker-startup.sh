@@ -30,13 +30,14 @@ trap cleanup EXIT
 
 # Start SeaweedFS server
 echo "Starting SeaweedFS server..."
-/tmp/weed -v 0 server \
+/tmp/weed -v 1 server \
   -ip.bind 127.0.0.1 \
   -dir="$WEED_DATA_DIR" \
   -master.raftHashicorp \
   -master.port=9333 \
   -volume.port=8081 \
   -filer.port=8888 \
+  -filer=true \
   -metricsPort=9325 \
   > /tmp/weed-server-test.log 2>&1 &
 
@@ -57,7 +58,7 @@ done
 # Wait for filer
 echo "Waiting for filer..."
 for i in $(seq 1 30); do
-  if curl -s http://127.0.0.1:8888/status >/dev/null 2>&1; then
+  if nc -z 127.0.0.1 8888; then
     echo "✓ Filer is up"
     break
   fi

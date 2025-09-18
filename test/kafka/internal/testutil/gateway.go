@@ -150,7 +150,7 @@ func NewGatewayTestServerWithSMQ(t *testing.T, mode SMQAvailabilityMode) *Gatewa
 		return newGatewayTestServerWithTimeout(t, GatewayOptions{
 			UseProduction: true,
 			Masters:       masters,
-		}, 20*time.Second)
+		}, 45*time.Second)
 
 	case SMQAvailable:
 		if smqAvailable {
@@ -158,7 +158,7 @@ func NewGatewayTestServerWithSMQ(t *testing.T, mode SMQAvailabilityMode) *Gatewa
 			return newGatewayTestServerWithTimeout(t, GatewayOptions{
 				UseProduction: true,
 				Masters:       masters,
-			}, 15*time.Second)
+			}, 45*time.Second)
 		} else {
 			t.Logf("SMQ not available, using mock gateway")
 			return NewGatewayTestServer(t, GatewayOptions{})

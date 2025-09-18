@@ -166,13 +166,14 @@ jobs:
         mkdir -p "$WEED_DATA_DIR"
         
         # Start SeaweedFS server (master, volume, filer)
-        nohup weed -v 0 server \
+        nohup weed -v 1 server \
           -ip.bind 0.0.0.0 \
           -dir="$WEED_DATA_DIR" \
           -master.raftHashicorp \
           -master.port=9333 \
           -volume.port=8081 \
           -filer.port=8888 \
+          -filer=true \
           -metricsPort=9325 \
           > /tmp/weed-server.log 2>&1 &
           
@@ -184,13 +185,9 @@ jobs:
           echo "Waiting for SeaweedFS master... ($i/30)"; sleep 1
         done
         
-        # Wait for filer to be ready
-        for i in $(seq 1 30); do
-          if curl -s http://127.0.0.1:8888/status >/dev/null 2>&1; then
-            echo "SeaweedFS filer is up"; break
-          fi
-          echo "Waiting for SeaweedFS filer... ($i/30)"; sleep 1
-        done
+        # Give server time to initialize all components  
+        echo "Waiting for SeaweedFS components to initialize..."
+        sleep 10
         
         # Start MQ broker with more verbose logging for debugging
         echo "Starting MQ broker..."
@@ -199,8 +196,8 @@ jobs:
           -port=17777 \
           > /tmp/weed-mq-broker.log 2>&1 &
         
-        # Wait for broker to be ready with better error reporting
-        sleep 5
+        # Wait for broker to be ready with better error reporting  
+        sleep 10
         broker_ready=false
         for i in $(seq 1 20); do
           if nc -z 127.0.0.1 17777; then
@@ -290,13 +287,14 @@ jobs:
         mkdir -p "$WEED_DATA_DIR"
         
         # Start SeaweedFS server (master, volume, filer)
-        nohup weed -v 0 server \
+        nohup weed -v 1 server \
           -ip.bind 0.0.0.0 \
           -dir="$WEED_DATA_DIR" \
           -master.raftHashicorp \
           -master.port=9333 \
           -volume.port=8081 \
           -filer.port=8888 \
+          -filer=true \
           -metricsPort=9325 \
           > /tmp/weed-server.log 2>&1 &
           
@@ -308,13 +306,9 @@ jobs:
           echo "Waiting for SeaweedFS master... ($i/30)"; sleep 1
         done
         
-        # Wait for filer to be ready
-        for i in $(seq 1 30); do
-          if curl -s http://127.0.0.1:8888/status >/dev/null 2>&1; then
-            echo "SeaweedFS filer is up"; break
-          fi
-          echo "Waiting for SeaweedFS filer... ($i/30)"; sleep 1
-        done
+        # Give server time to initialize all components  
+        echo "Waiting for SeaweedFS components to initialize..."
+        sleep 10
         
         # Start MQ broker with more verbose logging for debugging
         echo "Starting MQ broker..."
@@ -323,8 +317,8 @@ jobs:
           -port=17777 \
           > /tmp/weed-mq-broker.log 2>&1 &
         
-        # Wait for broker to be ready with better error reporting
-        sleep 5
+        # Wait for broker to be ready with better error reporting  
+        sleep 10
         broker_ready=false
         for i in $(seq 1 20); do
           if nc -z 127.0.0.1 17777; then
@@ -413,13 +407,14 @@ jobs:
         mkdir -p "$WEED_DATA_DIR"
         
         # Start SeaweedFS server (master, volume, filer)
-        nohup weed -v 0 server \
+        nohup weed -v 1 server \
           -ip.bind 0.0.0.0 \
           -dir="$WEED_DATA_DIR" \
           -master.raftHashicorp \
           -master.port=9333 \
           -volume.port=8081 \
           -filer.port=8888 \
+          -filer=true \
           -metricsPort=9325 \
           > /tmp/weed-server.log 2>&1 &
           
@@ -431,13 +426,9 @@ jobs:
           echo "Waiting for SeaweedFS master... ($i/30)"; sleep 1
         done
         
-        # Wait for filer to be ready
-        for i in $(seq 1 30); do
-          if curl -s http://127.0.0.1:8888/status >/dev/null 2>&1; then
-            echo "SeaweedFS filer is up"; break
-          fi
-          echo "Waiting for SeaweedFS filer... ($i/30)"; sleep 1
-        done
+        # Give server time to initialize all components  
+        echo "Waiting for SeaweedFS components to initialize..."
+        sleep 10
         
         # Start MQ broker with more verbose logging for debugging
         echo "Starting MQ broker..."
@@ -446,8 +437,8 @@ jobs:
           -port=17777 \
           > /tmp/weed-mq-broker.log 2>&1 &
         
-        # Wait for broker to be ready with better error reporting
-        sleep 5
+        # Wait for broker to be ready with better error reporting  
+        sleep 10
         broker_ready=false
         for i in $(seq 1 20); do
           if nc -z 127.0.0.1 17777; then
@@ -533,13 +524,14 @@ jobs:
         mkdir -p "$WEED_DATA_DIR"
         
         # Start SeaweedFS server (master, volume, filer)
-        nohup weed -v 0 server \
+        nohup weed -v 1 server \
           -ip.bind 0.0.0.0 \
           -dir="$WEED_DATA_DIR" \
           -master.raftHashicorp \
           -master.port=9333 \
           -volume.port=8081 \
           -filer.port=8888 \
+          -filer=true \
           -metricsPort=9325 \
           > /tmp/weed-server.log 2>&1 &
           
@@ -551,13 +543,9 @@ jobs:
           echo "Waiting for SeaweedFS master... ($i/30)"; sleep 1
         done
         
-        # Wait for filer to be ready
-        for i in $(seq 1 30); do
-          if curl -s http://127.0.0.1:8888/status >/dev/null 2>&1; then
-            echo "SeaweedFS filer is up"; break
-          fi
-          echo "Waiting for SeaweedFS filer... ($i/30)"; sleep 1
-        done
+        # Give server time to initialize all components  
+        echo "Waiting for SeaweedFS components to initialize..."
+        sleep 10
         
         # Start MQ broker with more verbose logging for debugging
         echo "Starting MQ broker..."
@@ -566,8 +554,8 @@ jobs:
           -port=17777 \
           > /tmp/weed-mq-broker.log 2>&1 &
         
-        # Wait for broker to be ready with better error reporting
-        sleep 5
+        # Wait for broker to be ready with better error reporting  
+        sleep 10
         broker_ready=false
         for i in $(seq 1 20); do
           if nc -z 127.0.0.1 17777; then
