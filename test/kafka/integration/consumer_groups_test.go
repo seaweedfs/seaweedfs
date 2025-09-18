@@ -3,7 +3,6 @@ package integration
 import (
 	"context"
 	"fmt"
-	"os"
 	"sync"
 	"testing"
 	"time"
@@ -13,17 +12,14 @@ import (
 )
 
 // TestConsumerGroups tests consumer group functionality
+// This test requires SeaweedFS masters to be running and will skip if not available
 func TestConsumerGroups(t *testing.T) {
-	// If SEAWEEDFS_MASTERS is set, use production gateway with SMQ-backed offsets.
-	// Otherwise skip here; this test should be run alongside the suite that brings SeaweedFS up.
-	masters := os.Getenv("SEAWEEDFS_MASTERS")
-	if masters == "" {
-		t.Skip("Skipping ConsumerGroups integration without SEAWEEDFS_MASTERS; run in suite that starts SeaweedFS MQ")
-	}
-	gateway := testutil.NewGatewayTestServer(t, testutil.GatewayOptions{UseProduction: true, Masters: masters})
+	gateway := testutil.NewGatewayTestServerWithSMQ(t, testutil.SMQRequired)
 	defer gateway.CleanupAndClose()
 
 	addr := gateway.StartAndWait()
+	
+	t.Logf("Running consumer group tests with SMQ backend for offset persistence")
 
 	t.Run("BasicFunctionality", func(t *testing.T) {
 		testConsumerGroupBasicFunctionality(t, addr)
