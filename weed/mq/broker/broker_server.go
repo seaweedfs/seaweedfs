@@ -88,7 +88,8 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 
 	// Initialize offset manager using the filer accessor
 	// The filer accessor will automatically use the current filer address as it gets discovered
-	mqBroker.offsetManager = NewBrokerOffsetManagerWithFilerAccessor(fca, "kafka", "default")
+	// No hardcoded namespace/topic - offset storage now derives paths from actual topic information
+	mqBroker.offsetManager = NewBrokerOffsetManagerWithFilerAccessor(fca)
 	glog.V(0).Infof("broker initialized offset manager with filer accessor (current filer: %s)", mqBroker.GetFiler())
 
 	existingNodes := cluster.ListExistingPeerUpdates(mqBroker.MasterClient.GetMaster(context.Background()), grpcDialOption, option.FilerGroup, cluster.FilerType)

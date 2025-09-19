@@ -11,6 +11,8 @@ import (
 // PartitionOffsetManager manages sequential offset assignment for a single partition
 type PartitionOffsetManager struct {
 	mu         sync.RWMutex
+	namespace  string
+	topicName  string
 	partition  *schema_pb.Partition
 	nextOffset int64
 
@@ -23,18 +25,21 @@ type PartitionOffsetManager struct {
 // OffsetStorage interface for persisting offset state
 type OffsetStorage interface {
 	// SaveCheckpoint persists the current offset state for recovery
-	SaveCheckpoint(partition *schema_pb.Partition, offset int64) error
+	// Takes topic information along with partition to determine the correct storage location
+	SaveCheckpoint(namespace, topicName string, partition *schema_pb.Partition, offset int64) error
 
 	// LoadCheckpoint retrieves the last saved offset state
-	LoadCheckpoint(partition *schema_pb.Partition) (int64, error)
+	LoadCheckpoint(namespace, topicName string, partition *schema_pb.Partition) (int64, error)
 
 	// GetHighestOffset scans storage to find the highest assigned offset
-	GetHighestOffset(partition *schema_pb.Partition) (int64, error)
+	GetHighestOffset(namespace, topicName string, partition *schema_pb.Partition) (int64, error)
 }
 
 // NewPartitionOffsetManager creates a new offset manager for a partition
-func NewPartitionOffsetManager(partition *schema_pb.Partition, storage OffsetStorage) (*PartitionOffsetManager, error) {
+func NewPartitionOffsetManager(namespace, topicName string, partition *schema_pb.Partition, storage OffsetStorage) (*PartitionOffsetManager, error) {
 	manager := &PartitionOffsetManager{
+		namespace:          namespace,
+		topicName:          topicName,
 		partition:          partition,
 		checkpointInterval: 1, // Checkpoint every offset for immediate persistence
 		storage:            storage,
@@ -115,12 +120,12 @@ func (m *PartitionOffsetManager) recover() error {
 	var highestOffset int64 = -1
 
 	// Try to load checkpoint
-	if offset, err := m.storage.LoadCheckpoint(m.partition); err == nil && offset >= 0 {
+	if offset, err := m.storage.LoadCheckpoint(m.namespace, m.topicName, m.partition); err == nil && offset >= 0 {
 		checkpointOffset = offset
 	}
 
 	// Try to scan storage for highest offset
-	if offset, err := m.storage.GetHighestOffset(m.partition); err == nil && offset >= 0 {
+	if offset, err := m.storage.GetHighestOffset(m.namespace, m.topicName, m.partition); err == nil && offset >= 0 {
 		highestOffset = offset
 	}
 
@@ -150,7 +155,7 @@ func (m *PartitionOffsetManager) recover() error {
 
 // checkpoint saves the current offset state
 func (m *PartitionOffsetManager) checkpoint(offset int64) {
-	if err := m.storage.SaveCheckpoint(m.partition, offset); err != nil {
+	if err := m.storage.SaveCheckpoint(m.namespace, m.topicName, m.partition, offset); err != nil {
 		// Log error but don't fail - checkpointing is for optimization
 		fmt.Printf("Failed to checkpoint offset %d: %v\n", offset, err)
 		return
@@ -177,7 +182,7 @@ func NewPartitionOffsetRegistry(storage OffsetStorage) *PartitionOffsetRegistry 
 }
 
 // GetManager returns the offset manager for a partition, creating it if needed
-func (r *PartitionOffsetRegistry) GetManager(partition *schema_pb.Partition) (*PartitionOffsetManager, error) {
+func (r *PartitionOffsetRegistry) GetManager(namespace, topicName string, partition *schema_pb.Partition) (*PartitionOffsetManager, error) {
 	key := partitionKey(partition)
 
 	r.mu.RLock()
@@ -197,7 +202,7 @@ func (r *PartitionOffsetRegistry) GetManager(partition *schema_pb.Partition) (*P
 		return manager, nil
 	}
 
-	manager, err := NewPartitionOffsetManager(partition, r.storage)
+	manager, err := NewPartitionOffsetManager(namespace, topicName, partition, r.storage)
 	if err != nil {
 		return nil, err
 	}
@@ -207,8 +212,8 @@ func (r *PartitionOffsetRegistry) GetManager(partition *schema_pb.Partition) (*P
 }
 
 // AssignOffset assigns an offset for the given partition
-func (r *PartitionOffsetRegistry) AssignOffset(partition *schema_pb.Partition) (int64, error) {
-	manager, err := r.GetManager(partition)
+func (r *PartitionOffsetRegistry) AssignOffset(namespace, topicName string, partition *schema_pb.Partition) (int64, error) {
+	manager, err := r.GetManager(namespace, topicName, partition)
 	if err != nil {
 		return 0, err
 	}
@@ -217,8 +222,8 @@ func (r *PartitionOffsetRegistry) AssignOffset(partition *schema_pb.Partition) (
 }
 
 // AssignOffsets assigns a batch of offsets for the given partition
-func (r *PartitionOffsetRegistry) AssignOffsets(partition *schema_pb.Partition, count int64) (baseOffset, lastOffset int64, err error) {
-	manager, err := r.GetManager(partition)
+func (r *PartitionOffsetRegistry) AssignOffsets(namespace, topicName string, partition *schema_pb.Partition, count int64) (baseOffset, lastOffset int64, err error) {
+	manager, err := r.GetManager(namespace, topicName, partition)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -228,8 +233,8 @@ func (r *PartitionOffsetRegistry) AssignOffsets(partition *schema_pb.Partition, 
 }
 
 // GetHighWaterMark returns the high water mark for a partition
-func (r *PartitionOffsetRegistry) GetHighWaterMark(partition *schema_pb.Partition) (int64, error) {
-	manager, err := r.GetManager(partition)
+func (r *PartitionOffsetRegistry) GetHighWaterMark(namespace, topicName string, partition *schema_pb.Partition) (int64, error) {
+	manager, err := r.GetManager(namespace, topicName, partition)
 	if err != nil {
 		return 0, err
 	}
@@ -279,8 +284,8 @@ func NewOffsetAssigner(storage OffsetStorage) *OffsetAssigner {
 }
 
 // AssignSingleOffset assigns a single offset with timestamp
-func (a *OffsetAssigner) AssignSingleOffset(partition *schema_pb.Partition) *AssignmentResult {
-	offset, err := a.registry.AssignOffset(partition)
+func (a *OffsetAssigner) AssignSingleOffset(namespace, topicName string, partition *schema_pb.Partition) *AssignmentResult {
+	offset, err := a.registry.AssignOffset(namespace, topicName, partition)
 	if err != nil {
 		return &AssignmentResult{Error: err}
 	}
@@ -295,8 +300,8 @@ func (a *OffsetAssigner) AssignSingleOffset(partition *schema_pb.Partition) *Ass
 }
 
 // AssignBatchOffsets assigns a batch of offsets with timestamp
-func (a *OffsetAssigner) AssignBatchOffsets(partition *schema_pb.Partition, count int64) *AssignmentResult {
-	baseOffset, lastOffset, err := a.registry.AssignOffsets(partition, count)
+func (a *OffsetAssigner) AssignBatchOffsets(namespace, topicName string, partition *schema_pb.Partition, count int64) *AssignmentResult {
+	baseOffset, lastOffset, err := a.registry.AssignOffsets(namespace, topicName, partition, count)
 	if err != nil {
 		return &AssignmentResult{Error: err}
 	}
@@ -313,6 +318,6 @@ func (a *OffsetAssigner) AssignBatchOffsets(partition *schema_pb.Partition, coun
 }
 
 // GetHighWaterMark returns the high water mark for a partition
-func (a *OffsetAssigner) GetHighWaterMark(partition *schema_pb.Partition) (int64, error) {
-	return a.registry.GetHighWaterMark(partition)
+func (a *OffsetAssigner) GetHighWaterMark(namespace, topicName string, partition *schema_pb.Partition) (int64, error) {
+	return a.registry.GetHighWaterMark(namespace, topicName, partition)
 }

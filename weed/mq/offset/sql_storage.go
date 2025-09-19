@@ -10,9 +10,9 @@ import (
 
 // OffsetEntry represents a mapping between Kafka offset and SMQ timestamp
 type OffsetEntry struct {
-	KafkaOffset   int64
-	SMQTimestamp  int64
-	MessageSize   int32
+	KafkaOffset  int64
+	SMQTimestamp int64
+	MessageSize  int32
 }
 
 // SQLOffsetStorage implements OffsetStorage using SQL database with _index column
@@ -23,12 +23,12 @@ type SQLOffsetStorage struct {
 // NewSQLOffsetStorage creates a new SQL-based offset storage
 func NewSQLOffsetStorage(db *sql.DB) (*SQLOffsetStorage, error) {
 	storage := &SQLOffsetStorage{db: db}
-	
+
 	// Initialize database schema
 	if err := storage.initializeSchema(); err != nil {
 		return nil, fmt.Errorf("failed to initialize schema: %w", err)
 	}
-	
+
 	return storage, nil
 }
 
@@ -36,7 +36,7 @@ func NewSQLOffsetStorage(db *sql.DB) (*SQLOffsetStorage, error) {
 func (s *SQLOffsetStorage) initializeSchema() error {
 	// TODO: Create offset storage tables with _index as hidden column
 	// ASSUMPTION: Using SQLite-compatible syntax, may need adaptation for other databases
-	
+
 	queries := []string{
 		// Partition offset checkpoints table
 		// TODO: Add _index as computed column when supported by database
@@ -50,7 +50,7 @@ func (s *SQLOffsetStorage) initializeSchema() error {
 			checkpoint_offset INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
 		)`,
-		
+
 		// Offset mappings table for detailed tracking
 		// TODO: Add _index as computed column when supported by database
 		`CREATE TABLE IF NOT EXISTS offset_mappings (
@@ -62,32 +62,32 @@ func (s *SQLOffsetStorage) initializeSchema() error {
 			created_at INTEGER NOT NULL,
 			UNIQUE(partition_key, kafka_offset)
 		)`,
-		
+
 		// Indexes for performance
 		`CREATE INDEX IF NOT EXISTS idx_partition_offset_checkpoints_partition 
 		 ON partition_offset_checkpoints(partition_key)`,
-		
+
 		`CREATE INDEX IF NOT EXISTS idx_offset_mappings_partition_offset 
 		 ON offset_mappings(partition_key, kafka_offset)`,
-		
+
 		`CREATE INDEX IF NOT EXISTS idx_offset_mappings_timestamp 
 		 ON offset_mappings(partition_key, smq_timestamp)`,
 	}
-	
+
 	for _, query := range queries {
 		if _, err := s.db.Exec(query); err != nil {
 			return fmt.Errorf("failed to execute schema query: %w", err)
 		}
 	}
-	
+
 	return nil
 }
 
 // SaveCheckpoint saves the checkpoint for a partition
-func (s *SQLOffsetStorage) SaveCheckpoint(partition *schema_pb.Partition, offset int64) error {
+func (s *SQLOffsetStorage) SaveCheckpoint(namespace, topicName string, partition *schema_pb.Partition, offset int64) error {
 	partitionKey := partitionKey(partition)
 	now := time.Now().UnixNano()
-	
+
 	// TODO: Use UPSERT for better performance
 	// ASSUMPTION: SQLite REPLACE syntax, may need adaptation for other databases
 	query := `
@@ -95,8 +95,8 @@ func (s *SQLOffsetStorage) SaveCheckpoint(partition *schema_pb.Partition, offset
 		(partition_key, ring_size, range_start, range_stop, unix_time_ns, checkpoint_offset, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 	`
-	
-	_, err := s.db.Exec(query, 
+
+	_, err := s.db.Exec(query,
 		partitionKey,
 		partition.RingSize,
 		partition.RangeStart,
@@ -105,42 +105,42 @@ func (s *SQLOffsetStorage) SaveCheckpoint(partition *schema_pb.Partition, offset
 		offset,
 		now,
 	)
-	
+
 	if err != nil {
 		return fmt.Errorf("failed to save checkpoint: %w", err)
 	}
-	
+
 	return nil
 }
 
 // LoadCheckpoint loads the checkpoint for a partition
-func (s *SQLOffsetStorage) LoadCheckpoint(partition *schema_pb.Partition) (int64, error) {
+func (s *SQLOffsetStorage) LoadCheckpoint(namespace, topicName string, partition *schema_pb.Partition) (int64, error) {
 	partitionKey := partitionKey(partition)
-	
+
 	query := `
 		SELECT checkpoint_offset 
 		FROM partition_offset_checkpoints 
 		WHERE partition_key = ?
 	`
-	
+
 	var checkpointOffset int64
 	err := s.db.QueryRow(query, partitionKey).Scan(&checkpointOffset)
-	
+
 	if err == sql.ErrNoRows {
 		return -1, fmt.Errorf("no checkpoint found")
 	}
-	
+
 	if err != nil {
 		return -1, fmt.Errorf("failed to load checkpoint: %w", err)
 	}
-	
+
 	return checkpointOffset, nil
 }
 
 // GetHighestOffset finds the highest offset in storage for a partition
-func (s *SQLOffsetStorage) GetHighestOffset(partition *schema_pb.Partition) (int64, error) {
+func (s *SQLOffsetStorage) GetHighestOffset(namespace, topicName string, partition *schema_pb.Partition) (int64, error) {
 	partitionKey := partitionKey(partition)
-	
+
 	// TODO: Use _index column for efficient querying
 	// ASSUMPTION: kafka_offset represents the sequential offset we're tracking
 	query := `
@@ -148,25 +148,25 @@ func (s *SQLOffsetStorage) GetHighestOffset(partition *schema_pb.Partition) (int
 		FROM offset_mappings 
 		WHERE partition_key = ?
 	`
-	
+
 	var highestOffset sql.NullInt64
 	err := s.db.QueryRow(query, partitionKey).Scan(&highestOffset)
-	
+
 	if err != nil {
 		return -1, fmt.Errorf("failed to get highest offset: %w", err)
 	}
-	
+
 	if !highestOffset.Valid {
 		return -1, fmt.Errorf("no records found")
 	}
-	
+
 	return highestOffset.Int64, nil
 }
 
 // SaveOffsetMapping stores an offset mapping (extends OffsetStorage interface)
 func (s *SQLOffsetStorage) SaveOffsetMapping(partitionKey string, kafkaOffset, smqTimestamp int64, size int32) error {
 	now := time.Now().UnixNano()
-	
+
 	// TODO: Handle duplicate key conflicts gracefully
 	// ASSUMPTION: Using INSERT OR REPLACE for conflict resolution
 	query := `
@@ -174,12 +174,12 @@ func (s *SQLOffsetStorage) SaveOffsetMapping(partitionKey string, kafkaOffset, s
 		(partition_key, kafka_offset, smq_timestamp, message_size, created_at)
 		VALUES (?, ?, ?, ?, ?)
 	`
-	
+
 	_, err := s.db.Exec(query, partitionKey, kafkaOffset, smqTimestamp, size, now)
 	if err != nil {
 		return fmt.Errorf("failed to save offset mapping: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -193,13 +193,13 @@ func (s *SQLOffsetStorage) LoadOffsetMappings(partitionKey string) ([]OffsetEntr
 		WHERE partition_key = ?
 		ORDER BY kafka_offset ASC
 	`
-	
+
 	rows, err := s.db.Query(query, partitionKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query offset mappings: %w", err)
 	}
 	defer rows.Close()
-	
+
 	var entries []OffsetEntry
 	for rows.Next() {
 		var entry OffsetEntry
@@ -209,11 +209,11 @@ func (s *SQLOffsetStorage) LoadOffsetMappings(partitionKey string) ([]OffsetEntr
 		}
 		entries = append(entries, entry)
 	}
-	
+
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating offset mappings: %w", err)
 	}
-	
+
 	return entries, nil
 }
 
@@ -226,13 +226,13 @@ func (s *SQLOffsetStorage) GetOffsetMappingsByRange(partitionKey string, startOf
 		WHERE partition_key = ? AND kafka_offset >= ? AND kafka_offset <= ?
 		ORDER BY kafka_offset ASC
 	`
-	
+
 	rows, err := s.db.Query(query, partitionKey, startOffset, endOffset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query offset range: %w", err)
 	}
 	defer rows.Close()
-	
+
 	var entries []OffsetEntry
 	for rows.Next() {
 		var entry OffsetEntry
@@ -242,7 +242,7 @@ func (s *SQLOffsetStorage) GetOffsetMappingsByRange(partitionKey string, startOf
 		}
 		entries = append(entries, entry)
 	}
-	
+
 	return entries, nil
 }
 
@@ -259,12 +259,12 @@ func (s *SQLOffsetStorage) GetPartitionStats(partitionKey string) (*PartitionSta
 		FROM offset_mappings 
 		WHERE partition_key = ?
 	`
-	
+
 	var stats PartitionStats
 	var earliestOffset, latestOffset sql.NullInt64
 	var totalSize sql.NullInt64
 	var firstRecordTime, lastRecordTime sql.NullInt64
-	
+
 	err := s.db.QueryRow(query, partitionKey).Scan(
 		&stats.RecordCount,
 		&earliestOffset,
@@ -273,19 +273,19 @@ func (s *SQLOffsetStorage) GetPartitionStats(partitionKey string) (*PartitionSta
 		&firstRecordTime,
 		&lastRecordTime,
 	)
-	
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to get partition stats: %w", err)
 	}
-	
+
 	stats.PartitionKey = partitionKey
-	
+
 	if earliestOffset.Valid {
 		stats.EarliestOffset = earliestOffset.Int64
 	} else {
 		stats.EarliestOffset = -1
 	}
-	
+
 	if latestOffset.Valid {
 		stats.LatestOffset = latestOffset.Int64
 		stats.HighWaterMark = latestOffset.Int64 + 1
@@ -293,19 +293,19 @@ func (s *SQLOffsetStorage) GetPartitionStats(partitionKey string) (*PartitionSta
 		stats.LatestOffset = -1
 		stats.HighWaterMark = 0
 	}
-	
+
 	if firstRecordTime.Valid {
 		stats.FirstRecordTime = firstRecordTime.Int64
 	}
-	
+
 	if lastRecordTime.Valid {
 		stats.LastRecordTime = lastRecordTime.Int64
 	}
-	
+
 	if totalSize.Valid {
 		stats.TotalSize = totalSize.Int64
 	}
-	
+
 	return &stats, nil
 }
 
@@ -317,18 +317,18 @@ func (s *SQLOffsetStorage) CleanupOldMappings(olderThanNs int64) error {
 		DELETE FROM offset_mappings 
 		WHERE created_at < ?
 	`
-	
+
 	result, err := s.db.Exec(query, olderThanNs)
 	if err != nil {
 		return fmt.Errorf("failed to cleanup old mappings: %w", err)
 	}
-	
+
 	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected > 0 {
 		// Log cleanup activity
 		fmt.Printf("Cleaned up %d old offset mappings\n", rowsAffected)
 	}
-	
+
 	return nil
 }
 
@@ -359,13 +359,13 @@ func (s *SQLOffsetStorage) GetAllPartitions() ([]string, error) {
 		FROM offset_mappings 
 		ORDER BY partition_key
 	`
-	
+
 	rows, err := s.db.Query(query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get all partitions: %w", err)
 	}
 	defer rows.Close()
-	
+
 	var partitions []string
 	for rows.Next() {
 		var partitionKey string
@@ -374,7 +374,7 @@ func (s *SQLOffsetStorage) GetAllPartitions() ([]string, error) {
 		}
 		partitions = append(partitions, partitionKey)
 	}
-	
+
 	return partitions, nil
 }
 
@@ -386,6 +386,6 @@ func (s *SQLOffsetStorage) Vacuum() error {
 	if err != nil {
 		return fmt.Errorf("failed to vacuum database: %w", err)
 	}
-	
+
 	return nil
 }

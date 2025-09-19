@@ -31,13 +31,14 @@ func NewSMQOffsetIntegration(storage OffsetStorage) *SMQOffsetIntegration {
 
 // PublishRecord publishes a record and assigns it an offset
 func (integration *SMQOffsetIntegration) PublishRecord(
+	namespace, topicName string,
 	partition *schema_pb.Partition,
 	key []byte,
 	value *schema_pb.RecordValue,
 ) (*mq_agent_pb.PublishRecordResponse, error) {
 
 	// Assign offset for this record
-	result := integration.offsetAssigner.AssignSingleOffset(partition)
+	result := integration.offsetAssigner.AssignSingleOffset(namespace, topicName, partition)
 	if result.Error != nil {
 		return &mq_agent_pb.PublishRecordResponse{
 			Error: fmt.Sprintf("Failed to assign offset: %v", result.Error),
@@ -60,6 +61,7 @@ func (integration *SMQOffsetIntegration) PublishRecord(
 
 // PublishRecordBatch publishes a batch of records and assigns them offsets
 func (integration *SMQOffsetIntegration) PublishRecordBatch(
+	namespace, topicName string,
 	partition *schema_pb.Partition,
 	records []PublishRecordRequest,
 ) (*mq_agent_pb.PublishRecordResponse, error) {
@@ -71,7 +73,7 @@ func (integration *SMQOffsetIntegration) PublishRecordBatch(
 	}
 
 	// Assign batch of offsets
-	result := integration.offsetAssigner.AssignBatchOffsets(partition, int64(len(records)))
+	result := integration.offsetAssigner.AssignBatchOffsets(namespace, topicName, partition, int64(len(records)))
 	if result.Error != nil {
 		return &mq_agent_pb.PublishRecordResponse{
 			Error: fmt.Sprintf("Failed to assign batch offsets: %v", result.Error),
@@ -99,8 +101,11 @@ func (integration *SMQOffsetIntegration) CreateSubscription(
 	startOffset int64,
 ) (*OffsetSubscription, error) {
 
+	// TODO: Pass actual namespace and topic name instead of defaults
+	// For now using defaults until the integration interface is updated
 	return integration.offsetSubscriber.CreateSubscription(
 		subscriptionID,
+		"kafka", "default", // Use default namespace/topic for now
 		partition,
 		offsetType,
 		startOffset,
@@ -153,8 +158,8 @@ func (integration *SMQOffsetIntegration) SubscribeRecords(
 }
 
 // GetHighWaterMark returns the high water mark for a partition
-func (integration *SMQOffsetIntegration) GetHighWaterMark(partition *schema_pb.Partition) (int64, error) {
-	return integration.offsetAssigner.GetHighWaterMark(partition)
+func (integration *SMQOffsetIntegration) GetHighWaterMark(namespace, topicName string, partition *schema_pb.Partition) (int64, error) {
+	return integration.offsetAssigner.GetHighWaterMark(namespace, topicName, partition)
 }
 
 // SeekSubscription seeks a subscription to a specific offset
@@ -188,16 +193,17 @@ func (integration *SMQOffsetIntegration) CloseSubscription(subscriptionID string
 
 // ValidateOffsetRange validates an offset range for a partition
 func (integration *SMQOffsetIntegration) ValidateOffsetRange(
+	namespace, topicName string,
 	partition *schema_pb.Partition,
 	startOffset, endOffset int64,
 ) error {
 
-	return integration.offsetSeeker.ValidateOffsetRange(partition, startOffset, endOffset)
+	return integration.offsetSeeker.ValidateOffsetRange(namespace, topicName, partition, startOffset, endOffset)
 }
 
 // GetAvailableOffsetRange returns the available offset range for a partition
-func (integration *SMQOffsetIntegration) GetAvailableOffsetRange(partition *schema_pb.Partition) (*OffsetRange, error) {
-	return integration.offsetSeeker.GetAvailableOffsetRange(partition)
+func (integration *SMQOffsetIntegration) GetAvailableOffsetRange(namespace, topicName string, partition *schema_pb.Partition) (*OffsetRange, error) {
+	return integration.offsetSeeker.GetAvailableOffsetRange(namespace, topicName, partition)
 }
 
 // PublishRecordRequest represents a record to be published
@@ -251,11 +257,12 @@ type OffsetInfo struct {
 
 // GetOffsetInfo returns detailed information about a specific offset
 func (integration *SMQOffsetIntegration) GetOffsetInfo(
+	namespace, topicName string,
 	partition *schema_pb.Partition,
 	offset int64,
 ) (*OffsetInfo, error) {
 
-	hwm, err := integration.GetHighWaterMark(partition)
+	hwm, err := integration.GetHighWaterMark(namespace, topicName, partition)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get high water mark: %w", err)
 	}
@@ -290,8 +297,8 @@ type PartitionOffsetInfo struct {
 }
 
 // GetPartitionOffsetInfo returns comprehensive offset information for a partition
-func (integration *SMQOffsetIntegration) GetPartitionOffsetInfo(partition *schema_pb.Partition) (*PartitionOffsetInfo, error) {
-	hwm, err := integration.GetHighWaterMark(partition)
+func (integration *SMQOffsetIntegration) GetPartitionOffsetInfo(namespace, topicName string, partition *schema_pb.Partition) (*PartitionOffsetInfo, error) {
+	hwm, err := integration.GetHighWaterMark(namespace, topicName, partition)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get high water mark: %w", err)
 	}
@@ -343,13 +350,13 @@ func (integration *SMQOffsetIntegration) ListActiveSubscriptions() ([]*OffsetSub
 }
 
 // AssignSingleOffset assigns a single offset for a partition
-func (integration *SMQOffsetIntegration) AssignSingleOffset(partition *schema_pb.Partition) *AssignmentResult {
-	return integration.offsetAssigner.AssignSingleOffset(partition)
+func (integration *SMQOffsetIntegration) AssignSingleOffset(namespace, topicName string, partition *schema_pb.Partition) *AssignmentResult {
+	return integration.offsetAssigner.AssignSingleOffset(namespace, topicName, partition)
 }
 
 // AssignBatchOffsets assigns a batch of offsets for a partition
-func (integration *SMQOffsetIntegration) AssignBatchOffsets(partition *schema_pb.Partition, count int64) *AssignmentResult {
-	return integration.offsetAssigner.AssignBatchOffsets(partition, count)
+func (integration *SMQOffsetIntegration) AssignBatchOffsets(namespace, topicName string, partition *schema_pb.Partition, count int64) *AssignmentResult {
+	return integration.offsetAssigner.AssignBatchOffsets(namespace, topicName, partition, count)
 }
 
 // Reset resets the integration layer state (for testing)

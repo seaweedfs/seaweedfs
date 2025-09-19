@@ -20,9 +20,9 @@ type BrokerOffsetManager struct {
 }
 
 // NewBrokerOffsetManagerWithFilerAccessor creates a new broker offset manager using existing filer client accessor
-func NewBrokerOffsetManagerWithFilerAccessor(filerAccessor *filer_client.FilerClientAccessor, namespace string, topicName string) *BrokerOffsetManager {
+func NewBrokerOffsetManagerWithFilerAccessor(filerAccessor *filer_client.FilerClientAccessor) *BrokerOffsetManager {
 	// Create filer storage using the accessor directly - no duplicate connection management
-	filerStorage := offset.NewFilerOffsetStorageWithAccessor(filerAccessor, namespace, topicName)
+	filerStorage := offset.NewFilerOffsetStorageWithAccessor(filerAccessor)
 
 	// Create consumer group storage using the accessor directly
 	consumerGroupStorage := offset.NewFilerConsumerGroupOffsetStorageWithAccessor(filerAccessor)
@@ -39,7 +39,7 @@ func (bom *BrokerOffsetManager) AssignOffset(t topic.Topic, p topic.Partition) (
 	partition := topicPartitionToSchemaPartition(t, p)
 
 	// Use the integration layer's offset assigner to ensure consistency with subscriptions
-	result := bom.offsetIntegration.AssignSingleOffset(partition)
+	result := bom.offsetIntegration.AssignSingleOffset(t.Namespace, t.Name, partition)
 	if result.Error != nil {
 		return 0, result.Error
 	}
@@ -52,7 +52,7 @@ func (bom *BrokerOffsetManager) AssignBatchOffsets(t topic.Topic, p topic.Partit
 	partition := topicPartitionToSchemaPartition(t, p)
 
 	// Use the integration layer's offset assigner to ensure consistency with subscriptions
-	result := bom.offsetIntegration.AssignBatchOffsets(partition, count)
+	result := bom.offsetIntegration.AssignBatchOffsets(t.Namespace, t.Name, partition, count)
 	if result.Error != nil {
 		return 0, 0, result.Error
 	}
@@ -65,7 +65,7 @@ func (bom *BrokerOffsetManager) GetHighWaterMark(t topic.Topic, p topic.Partitio
 	partition := topicPartitionToSchemaPartition(t, p)
 
 	// Use the integration layer's offset assigner to ensure consistency with subscriptions
-	return bom.offsetIntegration.GetHighWaterMark(partition)
+	return bom.offsetIntegration.GetHighWaterMark(t.Namespace, t.Name, partition)
 }
 
 // CreateSubscription creates an offset-based subscription
@@ -100,7 +100,7 @@ func (bom *BrokerOffsetManager) GetPartitionOffsetInfo(t topic.Topic, p topic.Pa
 	partition := topicPartitionToSchemaPartition(t, p)
 
 	// Use the integration layer to ensure consistency with subscriptions
-	return bom.offsetIntegration.GetPartitionOffsetInfo(partition)
+	return bom.offsetIntegration.GetPartitionOffsetInfo(t.Namespace, t.Name, partition)
 }
 
 // topicPartitionToSchemaPartition converts topic.Topic and topic.Partition to schema_pb.Partition

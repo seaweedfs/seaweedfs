@@ -16,14 +16,13 @@ import (
 // FilerOffsetStorage implements OffsetStorage using SeaweedFS filer
 // Stores offset data as files in the same directory structure as SMQ
 // Path: /topics/{namespace}/{topic}/{version}/{partition}/checkpoint.offset
+// The namespace and topic are derived from the actual partition information
 type FilerOffsetStorage struct {
 	filerClientAccessor *filer_client.FilerClientAccessor
-	namespace           string
-	topicName           string
 }
 
 // NewFilerOffsetStorage creates a new filer-based offset storage
-func NewFilerOffsetStorage(filerAddress string, namespace string, topicName string, grpcDialOption grpc.DialOption) *FilerOffsetStorage {
+func NewFilerOffsetStorage(filerAddress string, grpcDialOption grpc.DialOption) *FilerOffsetStorage {
 	if grpcDialOption == nil {
 		grpcDialOption = grpc.WithInsecure()
 	}
@@ -39,24 +38,20 @@ func NewFilerOffsetStorage(filerAddress string, namespace string, topicName stri
 
 	return &FilerOffsetStorage{
 		filerClientAccessor: filerClientAccessor,
-		namespace:           namespace,
-		topicName:           topicName,
 	}
 }
 
 // NewFilerOffsetStorageWithAccessor creates a new filer-based offset storage using existing filer client accessor
-func NewFilerOffsetStorageWithAccessor(filerClientAccessor *filer_client.FilerClientAccessor, namespace string, topicName string) *FilerOffsetStorage {
+func NewFilerOffsetStorageWithAccessor(filerClientAccessor *filer_client.FilerClientAccessor) *FilerOffsetStorage {
 	return &FilerOffsetStorage{
 		filerClientAccessor: filerClientAccessor,
-		namespace:           namespace,
-		topicName:           topicName,
 	}
 }
 
 // SaveCheckpoint saves the checkpoint for a partition
 // Stores as: /topics/{namespace}/{topic}/{version}/{partition}/checkpoint.offset
-func (f *FilerOffsetStorage) SaveCheckpoint(partition *schema_pb.Partition, offset int64) error {
-	partitionDir := f.getPartitionDir(partition)
+func (f *FilerOffsetStorage) SaveCheckpoint(namespace, topicName string, partition *schema_pb.Partition, offset int64) error {
+	partitionDir := f.getPartitionDir(namespace, topicName, partition)
 	fileName := "checkpoint.offset"
 
 	// Use SMQ's 8-byte offset format
@@ -69,8 +64,8 @@ func (f *FilerOffsetStorage) SaveCheckpoint(partition *schema_pb.Partition, offs
 }
 
 // LoadCheckpoint loads the checkpoint for a partition
-func (f *FilerOffsetStorage) LoadCheckpoint(partition *schema_pb.Partition) (int64, error) {
-	partitionDir := f.getPartitionDir(partition)
+func (f *FilerOffsetStorage) LoadCheckpoint(namespace, topicName string, partition *schema_pb.Partition) (int64, error) {
+	partitionDir := f.getPartitionDir(namespace, topicName, partition)
 	fileName := "checkpoint.offset"
 
 	var offset int64 = -1
@@ -95,8 +90,8 @@ func (f *FilerOffsetStorage) LoadCheckpoint(partition *schema_pb.Partition) (int
 
 // GetHighestOffset returns the highest offset stored for a partition
 // For filer storage, this is the same as the checkpoint since we don't store individual records
-func (f *FilerOffsetStorage) GetHighestOffset(partition *schema_pb.Partition) (int64, error) {
-	return f.LoadCheckpoint(partition)
+func (f *FilerOffsetStorage) GetHighestOffset(namespace, topicName string, partition *schema_pb.Partition) (int64, error) {
+	return f.LoadCheckpoint(namespace, topicName, partition)
 }
 
 // Reset clears all data for testing
@@ -110,14 +105,14 @@ func (f *FilerOffsetStorage) Reset() error {
 
 // getPartitionDir returns the directory path for a partition following SMQ convention
 // Format: /topics/{namespace}/{topic}/{version}/{partition}
-func (f *FilerOffsetStorage) getPartitionDir(partition *schema_pb.Partition) string {
+func (f *FilerOffsetStorage) getPartitionDir(namespace, topicName string, partition *schema_pb.Partition) string {
 	// Generate version from UnixTimeNs
 	version := time.Unix(0, partition.UnixTimeNs).UTC().Format("v2006-01-02-15-04-05")
 
 	// Generate partition range string
 	partitionRange := fmt.Sprintf("%04d-%04d", partition.RangeStart, partition.RangeStop)
 
-	return fmt.Sprintf("%s/%s/%s/%s/%s", filer.TopicsDir, f.namespace, f.topicName, version, partitionRange)
+	return fmt.Sprintf("%s/%s/%s/%s/%s", filer.TopicsDir, namespace, topicName, version, partitionRange)
 }
 
 // getPartitionKey generates a unique key for a partition
