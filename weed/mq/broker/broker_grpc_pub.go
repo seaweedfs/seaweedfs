@@ -157,7 +157,9 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 			continue
 		}
 
-		// Validate RecordValue structure for schema-based messages
+		// Validate RecordValue structure only for schema-based messages
+		// Note: Only messages sent via ProduceRecordValue should be in RecordValue format
+		// Regular Kafka messages and offset management messages are stored as raw bytes
 		if dataMessage.Value != nil {
 			record := &schema_pb.RecordValue{}
 			if err := proto.Unmarshal(dataMessage.Value, record); err == nil {
@@ -165,12 +167,9 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 				if err := b.validateRecordValue(record, initMessage.Topic); err != nil {
 					glog.V(1).Infof("RecordValue validation failed on topic %v partition %v: %v", initMessage.Topic, initMessage.Partition, err)
 				}
-			} else {
-				// For Kafka topics, messages should be RecordValue format
-				if initMessage.Topic.Namespace == "kafka" {
-					glog.V(1).Infof("Kafka message not in RecordValue format on topic %v partition %v: %v", initMessage.Topic, initMessage.Partition, err)
-				}
 			}
+			// Note: We don't log errors for non-RecordValue messages since most Kafka messages
+			// are raw bytes and should not be expected to be in RecordValue format
 		}
 
 		// The control message should still be sent to the follower
