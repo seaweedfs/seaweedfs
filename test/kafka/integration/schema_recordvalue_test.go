@@ -44,7 +44,7 @@ func TestSchemaBasedMessageFlowFallback(t *testing.T) {
 	// Step 3: Since schema management is not enabled, the message should be stored as raw bytes
 	storedRecord := smqRecords[0]
 	storedValue := storedRecord.GetValue()
-	
+
 	// Should be the original message since no schema processing occurred
 	if string(storedValue) != string(originalValue) {
 		t.Errorf("Stored value mismatch: expected '%s', got '%s'", string(originalValue), string(storedValue))

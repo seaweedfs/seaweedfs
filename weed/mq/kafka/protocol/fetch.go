@@ -1675,7 +1675,7 @@ func (h *Handler) encodeRecordValueToConfluentFormat(recordValue *schema_pb.Reco
 	// 1. Determining the schema ID and format from the RecordValue
 	// 2. Converting RecordValue back to the original data format (Avro, Protobuf, JSON)
 	// 3. Wrapping in Confluent envelope with magic byte and schema ID
-	
+
 	// For now, return an error to indicate this functionality needs implementation
 	return nil, fmt.Errorf("RecordValue to Confluent format encoding not yet implemented")
 }

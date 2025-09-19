@@ -11,10 +11,10 @@ import (
 func TestProduceSchemaBasedRecordWithoutSchema(t *testing.T) {
 	// Test that when schema management is disabled, it falls back to raw message handling
 	handler := &Handler{}
-	
+
 	key := []byte("test-key")
 	value := []byte("test-value")
-	
+
 	// Mock the seaweedMQHandler to capture the call
 	mockHandler := &testSeaweedMQHandlerForUnitTests{
 		topics:  make(map[string]bool),
@@ -23,13 +23,13 @@ func TestProduceSchemaBasedRecordWithoutSchema(t *testing.T) {
 	}
 	mockHandler.topics["test-topic"] = true
 	handler.seaweedMQHandler = mockHandler
-	
+
 	// Since schema management is not enabled, should call ProduceRecord
 	offset, err := handler.produceSchemaBasedRecord("test-topic", 0, key, value)
 	if err != nil {
 		t.Fatalf("Failed to produce record: %v", err)
 	}
-	
+
 	if offset < 0 {
 		t.Errorf("Expected non-negative offset, got %d", offset)
 	}
@@ -37,7 +37,7 @@ func TestProduceSchemaBasedRecordWithoutSchema(t *testing.T) {
 
 func TestDecodeRecordValueToKafkaMessageWithoutSchema(t *testing.T) {
 	handler := &Handler{}
-	
+
 	// Create a test RecordValue with schema-based fields (not fixed structure)
 	recordValue := &schema_pb.RecordValue{
 		Fields: map[string]*schema_pb.Value{
@@ -52,19 +52,19 @@ func TestDecodeRecordValueToKafkaMessageWithoutSchema(t *testing.T) {
 			},
 		},
 	}
-	
+
 	// Marshal to bytes
 	recordValueBytes, err := proto.Marshal(recordValue)
 	if err != nil {
 		t.Fatalf("Failed to marshal RecordValue: %v", err)
 	}
-	
+
 	// Decode back to Kafka message (should fallback to JSON since no schema manager)
 	decodedValue := handler.decodeRecordValueToKafkaMessage(recordValueBytes)
 	if decodedValue == nil {
 		t.Fatal("Decoded value is nil")
 	}
-	
+
 	// Should be JSON representation
 	decodedStr := string(decodedValue)
 	if !containsSubstring(decodedStr, `"user_name":"john_doe"`) {
@@ -77,7 +77,6 @@ func TestDecodeRecordValueToKafkaMessageWithoutSchema(t *testing.T) {
 		t.Errorf("Decoded JSON missing is_active field: %s", decodedStr)
 	}
 }
-
 
 func TestDecodeRecordValueBackwardCompatibility(t *testing.T) {
 	handler := &Handler{}
@@ -132,7 +131,6 @@ func TestRecordValueToJSON(t *testing.T) {
 		t.Errorf("JSON missing bytes field: %s", jsonStr)
 	}
 }
-
 
 // Helper function to check if a string contains a substring
 func containsSubstring(s, substr string) bool {

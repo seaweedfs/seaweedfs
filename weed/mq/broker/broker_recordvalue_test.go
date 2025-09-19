@@ -9,7 +9,7 @@ import (
 
 func TestValidateRecordValue(t *testing.T) {
 	broker := &MessageQueueBroker{}
-	
+
 	// Test valid schema-based RecordValue
 	validRecord := &schema_pb.RecordValue{
 		Fields: map[string]*schema_pb.Value{
@@ -24,12 +24,12 @@ func TestValidateRecordValue(t *testing.T) {
 			},
 		},
 	}
-	
+
 	kafkaTopic := &schema_pb.Topic{
 		Namespace: "kafka",
 		Name:      "test-topic",
 	}
-	
+
 	err := broker.validateRecordValue(validRecord, kafkaTopic)
 	if err != nil {
 		t.Errorf("Valid schema-based RecordValue should pass validation: %v", err)
@@ -38,17 +38,17 @@ func TestValidateRecordValue(t *testing.T) {
 
 func TestValidateRecordValueEmptyFields(t *testing.T) {
 	broker := &MessageQueueBroker{}
-	
+
 	kafkaTopic := &schema_pb.Topic{
 		Namespace: "kafka",
 		Name:      "test-topic",
 	}
-	
+
 	// Test empty fields
 	recordEmptyFields := &schema_pb.RecordValue{
 		Fields: map[string]*schema_pb.Value{},
 	}
-	
+
 	err := broker.validateRecordValue(recordEmptyFields, kafkaTopic)
 	if err == nil {
 		t.Error("RecordValue with empty fields should fail validation")

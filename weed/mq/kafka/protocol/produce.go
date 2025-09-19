@@ -1083,4 +1083,3 @@ func (h *Handler) produceSchemaBasedRecord(topic string, partition int32, key []
 	// Send to SeaweedMQ with RecordValue format
 	return h.seaweedMQHandler.ProduceRecordValue(topic, partition, key, recordValueBytes)
 }
-
