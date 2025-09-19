@@ -203,7 +203,7 @@ func TestSeaweedMQHandler_GetStoredRecords_MaxRecordsLimit(t *testing.T) {
 	records, err := handler.GetStoredRecords("test-topic", 0, 0, 3)
 
 	// Should handle gracefully when no client is available
-	expectedError := "no SeaweedMQ client available"
+	expectedError := "no broker client available"
 	if err == nil || err.Error() != expectedError {
 		t.Errorf("Expected error '%s', got: %v", expectedError, err)
 	}
