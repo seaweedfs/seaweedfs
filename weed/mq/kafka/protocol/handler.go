@@ -74,6 +74,7 @@ type SeaweedMQHandlerInterface interface {
 	GetOrCreateLedger(topic string, partition int32) *offset.Ledger
 	GetLedger(topic string, partition int32) *offset.Ledger
 	ProduceRecord(topicName string, partitionID int32, key, value []byte) (int64, error)
+	ProduceRecordValue(topicName string, partitionID int32, key []byte, recordValueBytes []byte) (int64, error)
 	// GetStoredRecords retrieves records from SMQ storage (optional - for advanced implementations)
 	GetStoredRecords(topic string, partition int32, fromOffset int64, maxRecords int) ([]offset.SMQRecord, error)
 	// GetFilerClient returns a filer client for accessing SeaweedMQ metadata (optional)

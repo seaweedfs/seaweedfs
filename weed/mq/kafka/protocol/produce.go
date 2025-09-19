@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/schema"
+	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
+	"google.golang.org/protobuf/proto"
 )
 
 func (h *Handler) handleProduce(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
@@ -232,8 +234,8 @@ func (h *Handler) produceToSeaweedMQ(topic string, partition int32, recordSetDat
 	// Extract first record from record set (simplified)
 	key, value := h.extractFirstRecord(recordSetData)
 
-	// Publish to SeaweedMQ
-	return h.seaweedMQHandler.ProduceRecord(topic, partition, key, value)
+	// Publish to SeaweedMQ using schema-based encoding
+	return h.produceSchemaBasedRecord(topic, partition, key, value)
 }
 
 // extractAllRecords parses a Kafka record batch and returns all records' key/value pairs
@@ -1052,4 +1054,90 @@ func (h *Handler) parseSchemaID(schemaIDStr string) (uint32, error) {
 	}
 
 	return uint32(schemaID), nil
+}
+
+// produceSchemaBasedRecord produces a record using schema-based encoding to RecordValue
+func (h *Handler) produceSchemaBasedRecord(topic string, partition int32, key []byte, value []byte) (int64, error) {
+	// Create RecordValue from Kafka message
+	recordValue, err := h.createRecordValueFromKafkaMessage(key, value)
+	if err != nil {
+		return 0, fmt.Errorf("failed to create RecordValue: %w", err)
+	}
+
+	// If schema management is enabled, decode and validate the message
+	if h.IsSchemaEnabled() {
+		if err := h.validateAndProcessSchematizedMessage(topic, value, recordValue); err != nil {
+			return 0, fmt.Errorf("schema validation failed: %w", err)
+		}
+	}
+
+	// Serialize RecordValue to bytes
+	recordValueBytes, err := proto.Marshal(recordValue)
+	if err != nil {
+		return 0, fmt.Errorf("failed to marshal RecordValue: %w", err)
+	}
+
+	// Send to SeaweedMQ with RecordValue format
+	return h.seaweedMQHandler.ProduceRecordValue(topic, partition, key, recordValueBytes)
+}
+
+// createRecordValueFromKafkaMessage creates a RecordValue from Kafka key/value
+func (h *Handler) createRecordValueFromKafkaMessage(key []byte, value []byte) (*schema_pb.RecordValue, error) {
+	// Get current timestamp
+	timestamp := time.Now().UnixNano()
+
+	// Create RecordValue with Kafka message structure
+	recordValue := &schema_pb.RecordValue{
+		Fields: map[string]*schema_pb.Value{
+			"key": {
+				Kind: &schema_pb.Value_BytesValue{BytesValue: key},
+			},
+			"value": {
+				Kind: &schema_pb.Value_BytesValue{BytesValue: value},
+			},
+			"timestamp": {
+				Kind: &schema_pb.Value_TimestampValue{
+					TimestampValue: &schema_pb.TimestampValue{
+						TimestampMicros: timestamp / 1000, // Convert nanoseconds to microseconds
+						IsUtc:           true,
+					},
+				},
+			},
+		},
+	}
+
+	return recordValue, nil
+}
+
+// validateAndProcessSchematizedMessage validates and processes schema-based messages
+func (h *Handler) validateAndProcessSchematizedMessage(topic string, value []byte, recordValue *schema_pb.RecordValue) error {
+	// Check if the value is a Confluent-framed message
+	if h.schemaManager.IsSchematized(value) {
+		// Decode the schematized message
+		decodedMsg, err := h.schemaManager.DecodeMessage(value)
+		if err != nil {
+			return fmt.Errorf("failed to decode schematized message: %w", err)
+		}
+
+		// Replace the raw value with the decoded RecordValue
+		recordValue.Fields["value"] = &schema_pb.Value{
+			Kind: &schema_pb.Value_RecordValue{
+				RecordValue: decodedMsg.RecordValue,
+			},
+		}
+
+		// Add schema metadata
+		recordValue.Fields["schema_id"] = &schema_pb.Value{
+			Kind: &schema_pb.Value_Int32Value{
+				Int32Value: int32(decodedMsg.SchemaID),
+			},
+		}
+		recordValue.Fields["schema_format"] = &schema_pb.Value{
+			Kind: &schema_pb.Value_StringValue{
+				StringValue: decodedMsg.SchemaFormat.String(),
+			},
+		}
+	}
+
+	return nil
 }

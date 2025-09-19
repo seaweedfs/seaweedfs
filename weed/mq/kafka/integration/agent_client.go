@@ -8,6 +8,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
@@ -259,6 +260,44 @@ func (ac *AgentClient) PublishRecord(topic string, partition int32, key []byte, 
 
 	if resp.Error != "" {
 		return 0, fmt.Errorf("publish error: %s", resp.Error)
+	}
+
+	session.LastSequence = resp.AckSequence
+	return resp.AckSequence, nil
+}
+
+// PublishRecordValue publishes a RecordValue message to SeaweedMQ via agent
+func (ac *AgentClient) PublishRecordValue(topic string, partition int32, key []byte, recordValueBytes []byte, timestamp int64) (int64, error) {
+	session, err := ac.GetOrCreatePublisher(topic, partition)
+	if err != nil {
+		return 0, err
+	}
+
+	// Unmarshal the RecordValue to send it properly
+	record := &schema_pb.RecordValue{}
+	if err := proto.Unmarshal(recordValueBytes, record); err != nil {
+		return 0, fmt.Errorf("failed to unmarshal RecordValue: %v", err)
+	}
+
+	// Send the RecordValue directly
+	req := &mq_agent_pb.PublishRecordRequest{
+		SessionId: session.SessionID,
+		Key:       key,
+		Value:     record,
+	}
+
+	if err := session.Stream.Send(req); err != nil {
+		return 0, fmt.Errorf("failed to send RecordValue: %v", err)
+	}
+
+	// Read acknowledgment
+	resp, err := session.Stream.Recv()
+	if err != nil {
+		return 0, fmt.Errorf("failed to receive RecordValue ack: %v", err)
+	}
+
+	if resp.Error != "" {
+		return 0, fmt.Errorf("RecordValue publish error: %s", resp.Error)
 	}
 
 	session.LastSequence = resp.AckSequence

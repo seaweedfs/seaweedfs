@@ -391,6 +391,46 @@ func (h *SeaweedMQHandler) ProduceRecord(topic string, partition int32, key []by
 	return kafkaOffset, nil
 }
 
+// ProduceRecordValue produces a record using RecordValue format to SeaweedMQ
+func (h *SeaweedMQHandler) ProduceRecordValue(topic string, partition int32, key []byte, recordValueBytes []byte) (int64, error) {
+	// Verify topic exists
+	if !h.TopicExists(topic) {
+		return 0, fmt.Errorf("topic %s does not exist", topic)
+	}
+
+	// Get current timestamp
+	timestamp := time.Now().UnixNano()
+
+	// Publish RecordValue to SeaweedMQ
+	var publishErr error
+	if h.useBroker && h.brokerClient != nil {
+		_, publishErr = h.brokerClient.PublishRecordValue(topic, partition, key, recordValueBytes, timestamp)
+	} else if h.agentClient != nil {
+		_, publishErr = h.agentClient.PublishRecordValue(topic, partition, key, recordValueBytes, timestamp)
+	} else {
+		publishErr = fmt.Errorf("no client available")
+	}
+
+	if publishErr != nil {
+		return 0, fmt.Errorf("failed to publish RecordValue to SeaweedMQ: %v", publishErr)
+	}
+
+	// Update offset ledger
+	ledger := h.GetOrCreateLedger(topic, partition)
+	kafkaOffset := ledger.AssignOffsets(1) // Assign one Kafka offset
+
+	// Map SeaweedMQ sequence to Kafka offset
+	if err := ledger.AppendRecord(kafkaOffset, timestamp, int32(len(recordValueBytes))); err != nil {
+		// Log the error but don't fail the produce operation
+		fmt.Printf("Warning: failed to update offset ledger: %v\n", err)
+	}
+
+	fmt.Printf("DEBUG:ProduceRecordValue topic=%s partition=%d assignedOffset=%d hwm=%d size=%d\n",
+		topic, partition, kafkaOffset, ledger.GetHighWaterMark(), len(recordValueBytes))
+
+	return kafkaOffset, nil
+}
+
 // GetOrCreateLedger returns the offset ledger for a topic-partition
 func (h *SeaweedMQHandler) GetOrCreateLedger(topic string, partition int32) *offset.Ledger {
 	key := TopicPartitionKey{Topic: topic, Partition: partition}
@@ -1208,6 +1248,41 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 
 	bc.subscribers[key] = session
 	return session, nil
+}
+
+// PublishRecordValue publishes a RecordValue message to SeaweedMQ via broker
+func (bc *BrokerClient) PublishRecordValue(topic string, partition int32, key []byte, recordValueBytes []byte, timestamp int64) (int64, error) {
+	session, err := bc.getOrCreatePublisher(topic, partition)
+	if err != nil {
+		return 0, err
+	}
+
+	// Send data message with RecordValue in the Value field
+	dataMsg := &mq_pb.DataMessage{
+		Key:   key,
+		Value: recordValueBytes, // This contains the marshaled RecordValue
+		TsNs:  timestamp,
+	}
+
+	if err := session.Stream.Send(&mq_pb.PublishMessageRequest{
+		Message: &mq_pb.PublishMessageRequest_Data{
+			Data: dataMsg,
+		},
+	}); err != nil {
+		return 0, fmt.Errorf("failed to send RecordValue data: %v", err)
+	}
+
+	// Read acknowledgment
+	resp, err := session.Stream.Recv()
+	if err != nil {
+		return 0, fmt.Errorf("failed to receive RecordValue ack: %v", err)
+	}
+
+	if resp.Error != "" {
+		return 0, fmt.Errorf("RecordValue publish error: %s", resp.Error)
+	}
+
+	return resp.AckSequence, nil
 }
 
 // ReadRecords reads available records from the subscriber stream
