@@ -64,7 +64,7 @@ func (at *ActiveTopology) assignTaskToDisk(task *taskState) {
 	}
 }
 
-// isDiskAvailable checks if a disk can accept new tasks
+// isDiskAvailable checks if a disk can accept new tasks (general availability)
 func (at *ActiveTopology) isDiskAvailable(disk *activeDisk, taskType TaskType) bool {
 	// Check if disk has too many pending and active tasks
 	activeLoad := len(disk.pendingTasks) + len(disk.assignedTasks)
@@ -72,9 +72,36 @@ func (at *ActiveTopology) isDiskAvailable(disk *activeDisk, taskType TaskType) b
 		return false
 	}
 
-	// Check for conflicting task types
+	// For general availability, only check disk capacity
+	// Volume-specific conflicts are checked in isDiskAvailableForVolume
+	return true
+}
+
+// isDiskAvailableForVolume checks if a disk can accept a new task for a specific volume
+func (at *ActiveTopology) isDiskAvailableForVolume(disk *activeDisk, taskType TaskType, volumeID uint32) bool {
+	// Check basic availability first
+	if !at.isDiskAvailable(disk, taskType) {
+		return false
+	}
+
+	// Check for volume-specific conflicts in ALL task states:
+	// 1. Pending tasks (queued but not yet started)
+	for _, task := range disk.pendingTasks {
+		if at.areTasksConflicting(task, taskType, volumeID) {
+			return false
+		}
+	}
+
+	// 2. Assigned/Active tasks (currently running)
 	for _, task := range disk.assignedTasks {
-		if at.areTaskTypesConflicting(task.TaskType, taskType) {
+		if at.areTasksConflicting(task, taskType, volumeID) {
+			return false
+		}
+	}
+
+	// 3. Recent tasks (just completed - avoid immediate re-scheduling on same volume)
+	for _, task := range disk.recentTasks {
+		if at.areTasksConflicting(task, taskType, volumeID) {
 			return false
 		}
 	}
@@ -82,16 +109,28 @@ func (at *ActiveTopology) isDiskAvailable(disk *activeDisk, taskType TaskType) b
 	return true
 }
 
-// areTaskTypesConflicting checks if two task types conflict
-func (at *ActiveTopology) areTaskTypesConflicting(existing, new TaskType) bool {
-	// Examples of conflicting task types
-	conflictMap := map[TaskType][]TaskType{
-		TaskTypeVacuum:        {TaskTypeBalance, TaskTypeErasureCoding},
-		TaskTypeBalance:       {TaskTypeVacuum, TaskTypeErasureCoding},
-		TaskTypeErasureCoding: {TaskTypeVacuum, TaskTypeBalance},
+// areTasksConflicting checks if a new task conflicts with an existing task
+func (at *ActiveTopology) areTasksConflicting(existingTask *taskState, newTaskType TaskType, newVolumeID uint32) bool {
+	// PRIMARY RULE: Tasks on the same volume always conflict (prevents race conditions)
+	if existingTask.VolumeID == newVolumeID {
+		return true
 	}
 
-	if conflicts, exists := conflictMap[existing]; exists {
+	// SECONDARY RULE: Some task types may have global conflicts (rare cases)
+	return at.areTaskTypesGloballyConflicting(existingTask.TaskType, newTaskType)
+}
+
+// areTaskTypesGloballyConflicting checks for rare global task type conflicts
+// These should be minimal - most conflicts should be volume-specific
+func (at *ActiveTopology) areTaskTypesGloballyConflicting(existing, new TaskType) bool {
+	// Define very limited global conflicts (cross-volume conflicts)
+	// Most conflicts should be volume-based, not global
+	globalConflictMap := map[TaskType][]TaskType{
+		// Example: Some hypothetical global resource conflicts could go here
+		// Currently empty - volume-based conflicts are sufficient
+	}
+
+	if conflicts, exists := globalConflictMap[existing]; exists {
 		for _, conflictType := range conflicts {
 			if conflictType == new {
 				return true

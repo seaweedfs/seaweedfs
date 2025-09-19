@@ -91,6 +91,8 @@ service VolumeServer {
     }
     rpc VolumeEcShardsInfo (VolumeEcShardsInfoRequest) returns (VolumeEcShardsInfoResponse) {
     }
+    rpc VolumeEcDeletionInfo (VolumeEcDeletionInfoRequest) returns (VolumeEcDeletionInfoResponse) {
+    }
 
     // tiered storage
     rpc VolumeTierMoveDatToRemote (VolumeTierMoveDatToRemoteRequest) returns (stream VolumeTierMoveDatToRemoteResponse) {
@@ -283,6 +285,7 @@ message CopyFileRequest {
     string collection = 5;
     bool is_ec_volume = 6;
     bool ignore_source_file_not_found = 7;
+    uint32 generation = 8; // generation of files to copy, defaults to 0 for backward compatibility
 }
 message CopyFileResponse {
     bytes file_content = 1;
@@ -303,6 +306,7 @@ message ReceiveFileInfo {
     bool is_ec_volume = 4;
     uint32 shard_id = 5;
     uint64 file_size = 6;
+    uint32 generation = 7; // generation for EC volume file naming, defaults to 0
 }
 
 message ReceiveFileResponse {
@@ -381,6 +385,7 @@ message VolumeTailReceiverResponse {
 message VolumeEcShardsGenerateRequest {
     uint32 volume_id = 1;
     string collection = 2;
+    uint32 generation = 3; // generation to create, defaults to 0
 }
 message VolumeEcShardsGenerateResponse {
 }
@@ -388,6 +393,7 @@ message VolumeEcShardsGenerateResponse {
 message VolumeEcShardsRebuildRequest {
     uint32 volume_id = 1;
     string collection = 2;
+    uint32 generation = 3; // generation to rebuild, defaults to 0
 }
 message VolumeEcShardsRebuildResponse {
     repeated uint32 rebuilt_shard_ids = 1;
@@ -402,6 +408,7 @@ message VolumeEcShardsCopyRequest {
     bool copy_ecj_file = 6;
     bool copy_vif_file = 7;
     uint32 disk_id = 8;  // Target disk ID for storing EC shards
+    uint32 generation = 9; // generation to copy, defaults to 0
 }
 message VolumeEcShardsCopyResponse {
 }
@@ -410,6 +417,7 @@ message VolumeEcShardsDeleteRequest {
     uint32 volume_id = 1;
     string collection = 2;
     repeated uint32 shard_ids = 3;
+    uint32 generation = 4; // Generation support for EC vacuum cleanup
 }
 message VolumeEcShardsDeleteResponse {
 }
@@ -418,6 +426,7 @@ message VolumeEcShardsMountRequest {
     uint32 volume_id = 1;
     string collection = 2;
     repeated uint32 shard_ids = 3;
+    uint32 generation = 4; // generation of shards to mount, defaults to 0
 }
 message VolumeEcShardsMountResponse {
 }
@@ -425,6 +434,7 @@ message VolumeEcShardsMountResponse {
 message VolumeEcShardsUnmountRequest {
     uint32 volume_id = 1;
     repeated uint32 shard_ids = 3;
+    uint32 generation = 4; // generation of shards to unmount, defaults to 0
 }
 message VolumeEcShardsUnmountResponse {
 }
@@ -435,6 +445,7 @@ message VolumeEcShardReadRequest {
     int64 offset = 3;
     int64 size = 4;
     uint64 file_key = 5;
+    uint32 generation = 6; // generation to read from, defaults to 0
 }
 message VolumeEcShardReadResponse {
     bytes data = 1;
@@ -453,6 +464,7 @@ message VolumeEcBlobDeleteResponse {
 message VolumeEcShardsToVolumeRequest {
     uint32 volume_id = 1;
     string collection = 2;
+    uint32 generation = 3; // generation to convert from, defaults to 0
 }
 message VolumeEcShardsToVolumeResponse {
 }
@@ -468,6 +480,18 @@ message EcShardInfo {
     uint32 shard_id = 1;
     int64 size = 2;
     string collection = 3;
+}
+
+message VolumeEcDeletionInfoRequest {
+    uint32 volume_id = 1;
+    string collection = 2;
+    uint32 generation = 3; // generation of EC volume, defaults to 0
+}
+message VolumeEcDeletionInfoResponse {
+    uint64 deleted_bytes = 1;
+    uint64 deleted_count = 2;
+    repeated uint64 deleted_needle_ids = 3; // list of deleted needle IDs for debugging
+    uint64 total_size = 4; // total size of the EC volume in bytes
 }
 
 message ReadVolumeFileStatusRequest {

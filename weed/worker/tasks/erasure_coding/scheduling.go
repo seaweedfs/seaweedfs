@@ -17,7 +17,7 @@ func Scheduling(task *types.TaskInput, runningTasks []*types.TaskInput, availabl
 	// Count running EC tasks
 	runningCount := 0
 	for _, runningTask := range runningTasks {
-		if runningTask.Type == types.TaskTypeErasureCoding {
+		if runningTask.Type == types.TaskType("erasure_coding") {
 			runningCount++
 		}
 	}
@@ -30,7 +30,7 @@ func Scheduling(task *types.TaskInput, runningTasks []*types.TaskInput, availabl
 	// Check if any worker can handle EC tasks
 	for _, worker := range availableWorkers {
 		for _, capability := range worker.Capabilities {
-			if capability == types.TaskTypeErasureCoding {
+			if capability == types.TaskType("erasure_coding") {
 				return true
 			}
 		}
