@@ -99,7 +99,7 @@ func (h *Handler) handleOffsetCommit(correlationID uint32, requestBody []byte) (
 	// Parse OffsetCommit request
 	req, err := h.parseOffsetCommitRequest(requestBody)
 	if err != nil {
-        fmt.Printf("DEBUG: OffsetCommit parse error: %v\n", err)
+		fmt.Printf("DEBUG: OffsetCommit parse error: %v\n", err)
 		return h.buildOffsetCommitErrorResponse(correlationID, ErrorCodeInvalidCommitOffsetSize), nil
 	}
 
@@ -135,7 +135,7 @@ func (h *Handler) handleOffsetCommit(correlationID uint32, requestBody []byte) (
 		Topics:        make([]OffsetCommitTopicResponse, 0, len(req.Topics)),
 	}
 
-    for _, t := range req.Topics {
+	for _, t := range req.Topics {
 		topicResp := OffsetCommitTopicResponse{
 			Name:       t.Name,
 			Partitions: make([]OffsetCommitPartitionResponse, 0, len(t.Partitions)),
@@ -152,7 +152,7 @@ func (h *Handler) handleOffsetCommit(correlationID uint32, requestBody []byte) (
 
 			// Commit offset using SMQ storage if available; fallback to memory
 			var errCode int16 = ErrorCodeNone
-            if generationMatches {
+			if generationMatches {
 				if h.seaweedMQHandler != nil && h.smqOffsetStorage != nil {
 					if err := h.commitOffsetToSMQ(key, p.Offset, p.Metadata); err != nil {
 						errCode = ErrorCodeOffsetMetadataTooLarge
@@ -184,7 +184,7 @@ func (h *Handler) handleOffsetCommit(correlationID uint32, requestBody []byte) (
 		resp.Topics = append(resp.Topics, topicResp)
 	}
 
-    fmt.Printf("DEBUG: OffsetCommit response - topics=%d\n", len(resp.Topics))
+	fmt.Printf("DEBUG: OffsetCommit response - topics=%d\n", len(resp.Topics))
 	return h.buildOffsetCommitResponse(resp), nil
 }
 
@@ -192,7 +192,7 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, req
 	// Parse OffsetFetch request
 	request, err := h.parseOffsetFetchRequest(requestBody)
 	if err != nil {
-        fmt.Printf("DEBUG: OffsetFetch parse error: %v\n", err)
+		fmt.Printf("DEBUG: OffsetFetch parse error: %v\n", err)
 		return h.buildOffsetFetchErrorResponse(correlationID, ErrorCodeInvalidGroupID), nil
 	}
 
@@ -220,7 +220,7 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, req
 		ErrorCode:     ErrorCodeNone,
 	}
 
-    for _, topic := range request.Topics {
+	for _, topic := range request.Topics {
 		topicResponse := OffsetFetchTopicResponse{
 			Name:       topic.Name,
 			Partitions: make([]OffsetFetchPartitionResponse, 0),
@@ -238,7 +238,7 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, req
 		}
 
 		// Fetch offsets for requested partitions
-        for _, partition := range partitionsToFetch {
+		for _, partition := range partitionsToFetch {
 			// Create consumer offset key for SMQ storage
 			key := offset.ConsumerOffsetKey{
 				Topic:                 topic.Name,
@@ -265,7 +265,7 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, req
 				}
 			}
 
-            partitionResponse := OffsetFetchPartitionResponse{
+			partitionResponse := OffsetFetchPartitionResponse{
 				Index:       partition,
 				Offset:      fetchedOffset,
 				LeaderEpoch: 0, // Default epoch for SeaweedMQ (single leader model)
@@ -278,7 +278,7 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, req
 		response.Topics = append(response.Topics, topicResponse)
 	}
 
-    fmt.Printf("DEBUG: OffsetFetch response - topics=%d\n", len(response.Topics))
+	fmt.Printf("DEBUG: OffsetFetch response - topics=%d\n", len(response.Topics))
 	return h.buildOffsetFetchResponse(response, apiVersion), nil
 }
 
