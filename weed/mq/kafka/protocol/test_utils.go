@@ -5,10 +5,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer_client"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/consumer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/integration"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // MessageRecord represents a stored message (TEST ONLY)
@@ -38,11 +42,17 @@ type testSeaweedMQHandler struct {
 // This should ONLY be used in tests - uses basicSeaweedMQHandler for message storage simulation
 // and real SMQ offset storage for realistic offset persistence testing
 func NewTestHandler() *Handler {
-	// Create real SMQ offset storage with HTTP address (will be converted to gRPC internally)
-	smqOffsetStorage, err := offset.NewSMQOffsetStorage("127.0.0.1:8888")
-	if err != nil {
-		panic(fmt.Sprintf("Failed to create test SMQ offset storage: %v", err))
+	// Create filer client accessor for test SMQ offset storage
+	filerClientAccessor := &filer_client.FilerClientAccessor{
+		GetFiler: func() pb.ServerAddress {
+			return pb.ServerAddress("127.0.0.1:8888")
+		},
+		GetGrpcDialOption: func() grpc.DialOption {
+			return grpc.WithTransportCredentials(insecure.NewCredentials())
+		},
 	}
+
+	smqOffsetStorage := offset.NewSMQOffsetStorage(filerClientAccessor)
 
 	return &Handler{
 		groupCoordinator: consumer.NewGroupCoordinator(),
@@ -59,11 +69,17 @@ func NewTestHandler() *Handler {
 // NewSimpleTestHandler creates a minimal test handler without message storage
 // This should ONLY be used for basic protocol tests that don't need message content
 func NewSimpleTestHandler() *Handler {
-	// Create real SMQ offset storage for consistency
-	smqOffsetStorage, err := offset.NewSMQOffsetStorage("127.0.0.1:8888")
-	if err != nil {
-		panic(fmt.Sprintf("Failed to create test SMQ offset storage: %v", err))
+	// Create filer client accessor for test SMQ offset storage
+	filerClientAccessor := &filer_client.FilerClientAccessor{
+		GetFiler: func() pb.ServerAddress {
+			return pb.ServerAddress("127.0.0.1:8888")
+		},
+		GetGrpcDialOption: func() grpc.DialOption {
+			return grpc.WithTransportCredentials(insecure.NewCredentials())
+		},
 	}
+
+	smqOffsetStorage := offset.NewSMQOffsetStorage(filerClientAccessor)
 
 	return &Handler{
 		groupCoordinator:   consumer.NewGroupCoordinator(),

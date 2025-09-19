@@ -10,12 +10,12 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	"github.com/seaweedfs/seaweedfs/weed/filer_client"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
@@ -801,6 +801,9 @@ func discoverFilersWithMasterClient(masterClient *wdclient.MasterClient, filerGr
 
 // BrokerClient wraps the SeaweedMQ Broker gRPC client for Kafka gateway integration
 type BrokerClient struct {
+	// Embedded FilerClientAccessor provides filer access methods
+	*filer_client.FilerClientAccessor
+
 	brokerAddress string
 	conn          *grpc.ClientConn
 	client        mq_pb.SeaweedMessagingClient
@@ -856,15 +859,29 @@ func NewBrokerClient(brokerAddress string, filerAddresses []pb.ServerAddress) (*
 
 	client := mq_pb.NewSeaweedMessagingClient(conn)
 
+	// Create embedded FilerClientAccessor
+	filerClientAccessor := &filer_client.FilerClientAccessor{
+		GetFiler: func() pb.ServerAddress {
+			if len(filerAddresses) > 0 {
+				return filerAddresses[0]
+			}
+			return ""
+		},
+		GetGrpcDialOption: func() grpc.DialOption {
+			return grpc.WithTransportCredentials(insecure.NewCredentials())
+		},
+	}
+
 	return &BrokerClient{
-		brokerAddress:  brokerAddress,
-		conn:           conn,
-		client:         client,
-		filerAddresses: filerAddresses,
-		publishers:     make(map[string]*BrokerPublisherSession),
-		subscribers:    make(map[string]*BrokerSubscriberSession),
-		ctx:            ctx,
-		cancel:         cancel,
+		FilerClientAccessor: filerClientAccessor,
+		brokerAddress:       brokerAddress,
+		conn:                conn,
+		client:              client,
+		filerAddresses:      filerAddresses,
+		publishers:          make(map[string]*BrokerPublisherSession),
+		subscribers:         make(map[string]*BrokerSubscriberSession),
+		ctx:                 ctx,
+		cancel:              cancel,
 	}, nil
 }
 
@@ -897,7 +914,7 @@ func (bc *BrokerClient) GetFilerAddress() string {
 	return ""
 }
 
-// WithFilerClient executes a function with a filer client, trying each filer until one succeeds
+// WithFilerClient overrides the embedded method to support multiple filer addresses with failover
 func (bc *BrokerClient) WithFilerClient(streamingMode bool, fn func(client filer_pb.SeaweedFilerClient) error) error {
 	if len(bc.filerAddresses) == 0 {
 		return fmt.Errorf("no filer addresses available")

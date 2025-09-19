@@ -9,10 +9,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer_client"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"google.golang.org/grpc"
 )
 
 // SMQOffsetStorage implements LedgerStorage using SMQ's native offset persistence
@@ -22,19 +20,10 @@ type SMQOffsetStorage struct {
 }
 
 // NewSMQOffsetStorage creates a storage backend that uses SMQ's native offset files
-func NewSMQOffsetStorage(filerAddress string) (*SMQOffsetStorage, error) {
-	filerClientAccessor := &filer_client.FilerClientAccessor{
-		GetFiler: func() pb.ServerAddress {
-			return pb.ServerAddress(filerAddress)
-		},
-		GetGrpcDialOption: func() grpc.DialOption {
-			return grpc.WithInsecure()
-		},
-	}
-
+func NewSMQOffsetStorage(filerClientAccessor *filer_client.FilerClientAccessor) *SMQOffsetStorage {
 	return &SMQOffsetStorage{
 		filerClientAccessor: filerClientAccessor,
-	}, nil
+	}
 }
 
 // SaveConsumerOffset saves the committed offset for a consumer group

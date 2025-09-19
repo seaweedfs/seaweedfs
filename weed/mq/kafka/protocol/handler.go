@@ -15,12 +15,16 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/filer_client"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/consumer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/integration"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/schema"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // TopicInfo holds basic information about a topic
@@ -157,14 +161,21 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string, clientHost str
 		return nil, fmt.Errorf("no filer address available from SMQ handler - filer discovery may have failed")
 	}
 
-	// Convert gRPC address back to HTTP format for NewSMQOffsetStorage
-	// SMQ handler returns gRPC address (e.g. 127.0.0.1:18888), but NewSMQOffsetStorage expects HTTP (e.g. 127.0.0.1:8888)
+	// Convert gRPC address back to HTTP format for FilerClientAccessor
+	// SMQ handler returns gRPC address (e.g. 127.0.0.1:18888), but accessor needs HTTP (e.g. 127.0.0.1:8888)
 	filerHttpAddress := grpcAddressToHttpAddress(filerGrpcAddress)
 
-	smqOffsetStorage, err := offset.NewSMQOffsetStorage(filerHttpAddress)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create SMQ offset storage with filer %s: %w", filerHttpAddress, err)
+	// Create filer client accessor for SMQ offset storage
+	filerClientAccessor := &filer_client.FilerClientAccessor{
+		GetFiler: func() pb.ServerAddress {
+			return pb.ServerAddress(filerHttpAddress)
+		},
+		GetGrpcDialOption: func() grpc.DialOption {
+			return grpc.WithTransportCredentials(insecure.NewCredentials())
+		},
 	}
+
+	smqOffsetStorage := offset.NewSMQOffsetStorage(filerClientAccessor)
 
 	return &Handler{
 		seaweedMQHandler:   smqHandler,
