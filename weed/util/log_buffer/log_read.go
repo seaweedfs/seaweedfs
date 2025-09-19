@@ -40,7 +40,9 @@ func NewMessagePositionFromOffset(offset int64) MessagePosition {
 
 // IsOffsetBased returns true if this MessagePosition represents an offset rather than a timestamp
 func (mp MessagePosition) IsOffsetBased() bool {
-	return mp.Time.IsZero() && mp.BatchIndex <= -10000
+	// Offset-based positions are represented by epoch time (Unix nanos == 0)
+	// instead of Go's zero time. Detect using UnixNano to avoid IsZero() mismatch.
+	return mp.Time.UnixNano() == 0 && mp.BatchIndex <= -10000
 }
 
 // GetOffset extracts the offset from an offset-based MessagePosition
