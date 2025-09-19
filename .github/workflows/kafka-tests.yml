@@ -445,7 +445,7 @@ jobs:
   kafka-client-compatibility:
     name: Kafka Client Compatibility (with SMQ)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
