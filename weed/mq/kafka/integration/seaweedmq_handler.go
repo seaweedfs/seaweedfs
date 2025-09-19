@@ -481,33 +481,6 @@ func (h *SeaweedMQHandler) FetchRecords(topic string, partition int32, fetchOffs
 	return h.convertSeaweedToKafkaRecordBatch(kafkaRecords, fetchOffset, maxBytes)
 }
 
-// constructSingleRecord creates a single Kafka record
-func (h *SeaweedMQHandler) constructSingleRecord(index, offset int64) []byte {
-	record := make([]byte, 0, 64)
-
-	// Record attributes
-	record = append(record, 0)
-
-	// Timestamp delta (varint - simplified)
-	record = append(record, byte(index))
-
-	// Offset delta (varint - simplified)
-	record = append(record, byte(index))
-
-	// Key length (-1 = null key)
-	record = append(record, 0xFF)
-
-	// Value (represents data that would come from SeaweedMQ)
-	value := fmt.Sprintf("seaweedmq-message-%d", offset)
-	record = append(record, byte(len(value)))
-	record = append(record, []byte(value)...)
-
-	// Headers count (0)
-	record = append(record, 0)
-
-	return record
-}
-
 // mapSeaweedToKafkaOffsets maps SeaweedMQ records to proper Kafka offsets
 func (h *SeaweedMQHandler) mapSeaweedToKafkaOffsets(topic string, partition int32, seaweedRecords []*SeaweedRecord, startOffset int64) ([]*SeaweedRecord, error) {
 	if len(seaweedRecords) == 0 {
