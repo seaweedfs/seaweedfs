@@ -108,6 +108,11 @@ func (t *testSeaweedMQHandlerForUnitTests) ProduceRecord(topicName string, parti
 	return kafkaOffset, nil
 }
 
+func (t *testSeaweedMQHandlerForUnitTests) ProduceRecordValue(topicName string, partitionID int32, key []byte, recordValueBytes []byte) (int64, error) {
+	// For testing, just delegate to ProduceRecord with the raw recordValueBytes
+	return t.ProduceRecord(topicName, partitionID, key, recordValueBytes)
+}
+
 func (t *testSeaweedMQHandlerForUnitTests) GetStoredRecords(topic string, partition int32, fromOffset int64, maxRecords int) ([]offset.SMQRecord, error) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()

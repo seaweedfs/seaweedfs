@@ -154,6 +154,11 @@ func (b *basicSeaweedMQHandler) ProduceRecord(topicName string, partitionID int3
 	return offset, nil
 }
 
+func (b *basicSeaweedMQHandler) ProduceRecordValue(topicName string, partitionID int32, key []byte, recordValueBytes []byte) (int64, error) {
+	// For testing, just delegate to ProduceRecord with the raw recordValueBytes
+	return b.ProduceRecord(topicName, partitionID, key, recordValueBytes)
+}
+
 // GetStoredMessages retrieves stored messages for a topic-partition from a given offset (TEST ONLY)
 func (b *basicSeaweedMQHandler) GetStoredMessages(topicName string, partitionID int32, fromOffset int64, maxMessages int) []*MessageRecord {
 	b.mu.RLock()
@@ -288,6 +293,11 @@ func (t *testSeaweedMQHandler) ProduceRecord(topicName string, partitionID int32
 	}
 
 	return offset, nil
+}
+
+func (t *testSeaweedMQHandler) ProduceRecordValue(topicName string, partitionID int32, key []byte, recordValueBytes []byte) (int64, error) {
+	// For testing, just delegate to ProduceRecord with the raw recordValueBytes
+	return t.ProduceRecord(topicName, partitionID, key, recordValueBytes)
 }
 
 // GetStoredRecords for testSeaweedMQHandler - returns empty (no storage simulation)

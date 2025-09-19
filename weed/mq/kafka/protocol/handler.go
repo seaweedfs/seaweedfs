@@ -2891,3 +2891,18 @@ func (h *Handler) isSchematizedTopicFromMetadata(topicName string) bool {
 
 	return metadata.IsSchematized
 }
+
+// ProduceSchemaBasedRecord exposes the schema-based record production for testing
+func (h *Handler) ProduceSchemaBasedRecord(topic string, partition int32, key []byte, value []byte) (int64, error) {
+	return h.produceSchemaBasedRecord(topic, partition, key, value)
+}
+
+// DecodeRecordValueToKafkaMessage exposes the RecordValue decoding for testing
+func (h *Handler) DecodeRecordValueToKafkaMessage(recordValueBytes []byte) []byte {
+	return h.decodeRecordValueToKafkaMessage(recordValueBytes)
+}
+
+// GetSeaweedMQHandler exposes the SeaweedMQ handler for testing
+func (h *Handler) GetSeaweedMQHandler() SeaweedMQHandlerInterface {
+	return h.seaweedMQHandler
+}
