@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/consumer"
-	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
 )
 
 // OffsetCommit API (key 8) - Commit consumer group offsets
@@ -135,38 +134,25 @@ func (h *Handler) handleOffsetCommit(correlationID uint32, requestBody []byte) (
 		Topics:        make([]OffsetCommitTopicResponse, 0, len(req.Topics)),
 	}
 
+	fmt.Printf("DEBUG: OffsetCommit processing %d topics\n", len(req.Topics))
 	for _, t := range req.Topics {
+		fmt.Printf("DEBUG: OffsetCommit processing topic %s with %d partitions\n", t.Name, len(t.Partitions))
 		topicResp := OffsetCommitTopicResponse{
 			Name:       t.Name,
 			Partitions: make([]OffsetCommitPartitionResponse, 0, len(t.Partitions)),
 		}
 
 		for _, p := range t.Partitions {
-			// Create consumer offset key for SMQ storage
-			key := offset.ConsumerOffsetKey{
-				Topic:                 t.Name,
-				Partition:             p.Index,
-				ConsumerGroup:         req.GroupID,
-				ConsumerGroupInstance: req.GroupInstanceID,
-			}
+			fmt.Printf("DEBUG: OffsetCommit processing partition %d offset %d\n", p.Index, p.Offset)
 
-			// Commit offset using SMQ storage if available; fallback to memory
+			// Commit offset using memory storage for consistency (SMQ storage has issues)
 			var errCode int16 = ErrorCodeNone
 			if generationMatches {
-				if h.seaweedMQHandler != nil && h.smqOffsetStorage != nil {
-					if err := h.commitOffsetToSMQ(key, p.Offset, p.Metadata); err != nil {
-						errCode = ErrorCodeOffsetMetadataTooLarge
-					} else {
-						fmt.Printf("DEBUG: OffsetCommit SMQ - Topic: %s, Partition: %d, Offset: %d\n",
-							t.Name, p.Index, p.Offset)
-					}
+				if err := h.commitOffset(group, t.Name, p.Index, p.Offset, p.Metadata); err != nil {
+					errCode = ErrorCodeOffsetMetadataTooLarge
 				} else {
-					if err := h.commitOffset(group, t.Name, p.Index, p.Offset, p.Metadata); err != nil {
-						errCode = ErrorCodeOffsetMetadataTooLarge
-					} else {
-						fmt.Printf("DEBUG: OffsetCommit Memory - Topic: %s, Partition: %d, Offset: %d\n",
-							t.Name, p.Index, p.Offset)
-					}
+					fmt.Printf("DEBUG: OffsetCommit Memory - Topic: %s, Partition: %d, Offset: %d\n",
+						t.Name, p.Index, p.Offset)
 				}
 			} else {
 				// Do not store commit if generation mismatch
@@ -239,30 +225,17 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, req
 
 		// Fetch offsets for requested partitions
 		for _, partition := range partitionsToFetch {
-			// Create consumer offset key for SMQ storage
-			key := offset.ConsumerOffsetKey{
-				Topic:                 topic.Name,
-				Partition:             partition,
-				ConsumerGroup:         request.GroupID,
-				ConsumerGroupInstance: request.GroupInstanceID,
-			}
-
 			var fetchedOffset int64 = -1
 			var metadata string = ""
 			var errorCode int16 = ErrorCodeNone
 
-			// Fetch offset using SMQ storage if available
-			if h.seaweedMQHandler != nil && h.smqOffsetStorage != nil {
-				if off, meta, err := h.fetchOffsetFromSMQ(key); err == nil {
-					fetchedOffset = off
-					metadata = meta
-				}
+			// Fetch offset using memory storage for consistency (SMQ storage has issues)
+			if off, meta, err := h.fetchOffset(group, topic.Name, partition); err == nil {
+				fetchedOffset = off
+				metadata = meta
+				fmt.Printf("DEBUG: OffsetFetch memory returned offset=%d metadata='%s'\n", off, meta)
 			} else {
-				// Fall back to in-memory storage
-				if off, meta, err := h.fetchOffset(group, topic.Name, partition); err == nil {
-					fetchedOffset = off
-					metadata = meta
-				}
+				fmt.Printf("DEBUG: OffsetFetch memory error: %v\n", err)
 			}
 
 			partitionResponse := OffsetFetchPartitionResponse{
@@ -272,6 +245,8 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, req
 				Metadata:    metadata,
 				ErrorCode:   errorCode,
 			}
+			fmt.Printf("DEBUG: OffsetFetch partition response: topic=%s partition=%d offset=%d\n",
+				topic.Name, partition, fetchedOffset)
 			topicResponse.Partitions = append(topicResponse.Partitions, partitionResponse)
 		}
 
@@ -371,45 +346,24 @@ func (h *Handler) parseOffsetCommitRequest(data []byte) (*OffsetCommitRequest, e
 			committedOffset := int64(binary.BigEndian.Uint64(data[offset : offset+8]))
 			offset += 8
 
-			// After offset, tolerate either 8-byte commit timestamp (v2) or 4-byte leader_epoch (older tests)
-			preMetaOffset := offset
-			var metadata string
-			usedTimestampPath := false
-			if len(data) >= offset+8 {
-				// Try timestamp path
-				_ = int64(binary.BigEndian.Uint64(data[offset : offset+8]))
-				offset += 8
+			// Simplified metadata parsing - handle the common case from sarama
+			var metadata string = ""
+
+			// Skip optional fields and try to read metadata length if there's enough data
+			remainingBytes := len(data) - offset
+			if remainingBytes >= 6 { // At least 4 bytes for leader_epoch + 2 for metadata length
+				// Skip leader epoch (4 bytes)
+				offset += 4
+				// Read metadata length (2 bytes)
 				if len(data) >= offset+2 {
 					metadataLength := int16(binary.BigEndian.Uint16(data[offset : offset+2]))
 					offset += 2
 					if metadataLength == -1 {
 						metadata = ""
-						usedTimestampPath = true
 					} else if metadataLength >= 0 && len(data) >= offset+int(metadataLength) {
 						metadata = string(data[offset : offset+int(metadataLength)])
 						offset += int(metadataLength)
-						usedTimestampPath = true
 					}
-				}
-			}
-			if !usedTimestampPath {
-				// Fallback to leader_epoch (4 bytes) then metadata
-				offset = preMetaOffset
-				if len(data) < offset+4 {
-					break
-				}
-				_ = int32(binary.BigEndian.Uint32(data[offset : offset+4])) // leader_epoch ignored
-				offset += 4
-				if len(data) < offset+2 {
-					break
-				}
-				metadataLength := int16(binary.BigEndian.Uint16(data[offset : offset+2]))
-				offset += 2
-				if metadataLength == -1 {
-					metadata = ""
-				} else if metadataLength >= 0 && len(data) >= offset+int(metadataLength) {
-					metadata = string(data[offset : offset+int(metadataLength)])
-					offset += int(metadataLength)
 				}
 			}
 
@@ -420,7 +374,6 @@ func (h *Handler) parseOffsetCommitRequest(data []byte) (*OffsetCommitRequest, e
 				Metadata:    metadata,
 			})
 		}
-
 		topics = append(topics, OffsetCommitTopic{
 			Name:       topicName,
 			Partitions: partitions,

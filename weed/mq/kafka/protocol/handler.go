@@ -71,6 +71,7 @@ type SeaweedMQHandlerInterface interface {
 	ListTopics() []string
 	CreateTopic(topic string, partitions int32) error
 	DeleteTopic(topic string) error
+	GetTopicInfo(topic string) (*integration.KafkaTopicInfo, bool)
 	GetOrCreateLedger(topic string, partition int32) *offset.Ledger
 	GetLedger(topic string, partition int32) *offset.Ledger
 	ProduceRecord(topicName string, partitionID int32, key, value []byte) (int64, error)
@@ -829,21 +830,38 @@ func (h *Handler) HandleMetadataV0(correlationID uint32, requestBody []byte) ([]
 		response = append(response, byte(nameLen>>8), byte(nameLen))
 		response = append(response, nameBytes...)
 
-		// partitions array length (4 bytes) - 1 partition
-		response = append(response, 0, 0, 0, 1)
+		// Get actual partition count from topic info
+		topicInfo, exists := h.seaweedMQHandler.GetTopicInfo(topicName)
+		partitionCount := int32(1) // Default to 1 partition
+		if exists && topicInfo != nil {
+			partitionCount = topicInfo.Partitions
+		}
 
-		// partition: error_code(2) + partition_id(4) + leader(4)
-		response = append(response, 0, 0)       // error_code
-		response = append(response, 0, 0, 0, 0) // partition_id = 0
-		response = append(response, 0, 0, 0, 1) // leader = 1 (this broker)
+		// partitions array length (4 bytes)
+		partitionsBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(partitionsBytes, uint32(partitionCount))
+		response = append(response, partitionsBytes...)
 
-		// replicas: array length(4) + one broker id (1)
-		response = append(response, 0, 0, 0, 1)
-		response = append(response, 0, 0, 0, 1)
+		// Create partition entries for each partition
+		for partitionID := int32(0); partitionID < partitionCount; partitionID++ {
+			// partition: error_code(2) + partition_id(4) + leader(4)
+			response = append(response, 0, 0) // error_code
 
-		// isr: array length(4) + one broker id (1)
-		response = append(response, 0, 0, 0, 1)
-		response = append(response, 0, 0, 0, 1)
+			// partition_id (4 bytes)
+			partitionIDBytes := make([]byte, 4)
+			binary.BigEndian.PutUint32(partitionIDBytes, uint32(partitionID))
+			response = append(response, partitionIDBytes...)
+
+			response = append(response, 0, 0, 0, 1) // leader = 1 (this broker)
+
+			// replicas: array length(4) + one broker id (1)
+			response = append(response, 0, 0, 0, 1)
+			response = append(response, 0, 0, 0, 1)
+
+			// isr: array length(4) + one broker id (1)
+			response = append(response, 0, 0, 0, 1)
+			response = append(response, 0, 0, 0, 1)
+		}
 	}
 
 	Debug("Metadata v0 response for %d topics: %v", len(topicsToReturn), topicsToReturn)
@@ -936,21 +954,38 @@ func (h *Handler) HandleMetadataV1(correlationID uint32, requestBody []byte) ([]
 		// is_internal (1 byte) - v1 addition
 		response = append(response, 0) // false
 
-		// partitions array length (4 bytes) - 1 partition
-		response = append(response, 0, 0, 0, 1)
+		// Get actual partition count from topic info
+		topicInfo, exists := h.seaweedMQHandler.GetTopicInfo(topicName)
+		partitionCount := int32(1) // Default to 1 partition
+		if exists && topicInfo != nil {
+			partitionCount = topicInfo.Partitions
+		}
 
-		// partition 0: error_code(2) + partition_id(4) + leader_id(4) + replicas(ARRAY) + isr(ARRAY)
-		response = append(response, 0, 0)       // error_code
-		response = append(response, 0, 0, 0, 0) // partition_id = 0
-		response = append(response, 0, 0, 0, 1) // leader_id = 1
+		// partitions array length (4 bytes)
+		partitionsBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(partitionsBytes, uint32(partitionCount))
+		response = append(response, partitionsBytes...)
 
-		// replicas: array length(4) + one broker id (1)
-		response = append(response, 0, 0, 0, 1)
-		response = append(response, 0, 0, 0, 1)
+		// Create partition entries for each partition
+		for partitionID := int32(0); partitionID < partitionCount; partitionID++ {
+			// partition: error_code(2) + partition_id(4) + leader_id(4) + replicas(ARRAY) + isr(ARRAY)
+			response = append(response, 0, 0) // error_code
 
-		// isr: array length(4) + one broker id (1)
-		response = append(response, 0, 0, 0, 1)
-		response = append(response, 0, 0, 0, 1)
+			// partition_id (4 bytes)
+			partitionIDBytes := make([]byte, 4)
+			binary.BigEndian.PutUint32(partitionIDBytes, uint32(partitionID))
+			response = append(response, partitionIDBytes...)
+
+			response = append(response, 0, 0, 0, 1) // leader_id = 1
+
+			// replicas: array length(4) + one broker id (1)
+			response = append(response, 0, 0, 0, 1)
+			response = append(response, 0, 0, 0, 1)
+
+			// isr: array length(4) + one broker id (1)
+			response = append(response, 0, 0, 0, 1)
+			response = append(response, 0, 0, 0, 1)
+		}
 	}
 
 	Debug("Metadata v1 response for %d topics: %v", len(topicsToReturn), topicsToReturn)
@@ -1033,21 +1068,30 @@ func (h *Handler) HandleMetadataV2(correlationID uint32, requestBody []byte) ([]
 		// IsInternal (1 byte) - v1+ addition
 		buf.WriteByte(0) // false
 
+		// Get actual partition count from topic info
+		topicInfo, exists := h.seaweedMQHandler.GetTopicInfo(topicName)
+		partitionCount := int32(1) // Default to 1 partition
+		if exists && topicInfo != nil {
+			partitionCount = topicInfo.Partitions
+		}
+
 		// Partitions array (4 bytes length + partitions)
-		binary.Write(&buf, binary.BigEndian, int32(1)) // 1 partition
+		binary.Write(&buf, binary.BigEndian, partitionCount)
 
-		// Partition 0
-		binary.Write(&buf, binary.BigEndian, int16(0)) // ErrorCode
-		binary.Write(&buf, binary.BigEndian, int32(0)) // PartitionIndex
-		binary.Write(&buf, binary.BigEndian, int32(1)) // LeaderID
+		// Create partition entries for each partition
+		for partitionID := int32(0); partitionID < partitionCount; partitionID++ {
+			binary.Write(&buf, binary.BigEndian, int16(0))    // ErrorCode
+			binary.Write(&buf, binary.BigEndian, partitionID) // PartitionIndex
+			binary.Write(&buf, binary.BigEndian, int32(1))    // LeaderID
 
-		// ReplicaNodes array (4 bytes length + nodes)
-		binary.Write(&buf, binary.BigEndian, int32(1)) // 1 replica
-		binary.Write(&buf, binary.BigEndian, int32(1)) // NodeID 1
+			// ReplicaNodes array (4 bytes length + nodes)
+			binary.Write(&buf, binary.BigEndian, int32(1)) // 1 replica
+			binary.Write(&buf, binary.BigEndian, int32(1)) // NodeID 1
 
-		// IsrNodes array (4 bytes length + nodes)
-		binary.Write(&buf, binary.BigEndian, int32(1)) // 1 ISR node
-		binary.Write(&buf, binary.BigEndian, int32(1)) // NodeID 1
+			// IsrNodes array (4 bytes length + nodes)
+			binary.Write(&buf, binary.BigEndian, int32(1)) // 1 ISR node
+			binary.Write(&buf, binary.BigEndian, int32(1)) // NodeID 1
+		}
 	}
 
 	response := buf.Bytes()
@@ -1134,21 +1178,30 @@ func (h *Handler) HandleMetadataV3V4(correlationID uint32, requestBody []byte) (
 		// IsInternal (1 byte) - v1+ addition
 		buf.WriteByte(0) // false
 
+		// Get actual partition count from topic info
+		topicInfo, exists := h.seaweedMQHandler.GetTopicInfo(topicName)
+		partitionCount := int32(1) // Default to 1 partition
+		if exists && topicInfo != nil {
+			partitionCount = topicInfo.Partitions
+		}
+
 		// Partitions array (4 bytes length + partitions)
-		binary.Write(&buf, binary.BigEndian, int32(1)) // 1 partition
+		binary.Write(&buf, binary.BigEndian, partitionCount)
 
-		// Partition 0
-		binary.Write(&buf, binary.BigEndian, int16(0)) // ErrorCode
-		binary.Write(&buf, binary.BigEndian, int32(0)) // PartitionIndex
-		binary.Write(&buf, binary.BigEndian, int32(1)) // LeaderID
+		// Create partition entries for each partition
+		for partitionID := int32(0); partitionID < partitionCount; partitionID++ {
+			binary.Write(&buf, binary.BigEndian, int16(0))    // ErrorCode
+			binary.Write(&buf, binary.BigEndian, partitionID) // PartitionIndex
+			binary.Write(&buf, binary.BigEndian, int32(1))    // LeaderID
 
-		// ReplicaNodes array (4 bytes length + nodes)
-		binary.Write(&buf, binary.BigEndian, int32(1)) // 1 replica
-		binary.Write(&buf, binary.BigEndian, int32(1)) // NodeID 1
+			// ReplicaNodes array (4 bytes length + nodes)
+			binary.Write(&buf, binary.BigEndian, int32(1)) // 1 replica
+			binary.Write(&buf, binary.BigEndian, int32(1)) // NodeID 1
 
-		// IsrNodes array (4 bytes length + nodes)
-		binary.Write(&buf, binary.BigEndian, int32(1)) // 1 ISR node
-		binary.Write(&buf, binary.BigEndian, int32(1)) // NodeID 1
+			// IsrNodes array (4 bytes length + nodes)
+			binary.Write(&buf, binary.BigEndian, int32(1)) // 1 ISR node
+			binary.Write(&buf, binary.BigEndian, int32(1)) // NodeID 1
+		}
 	}
 
 	response := buf.Bytes()
@@ -1235,24 +1288,33 @@ func (h *Handler) HandleMetadataV5V6(correlationID uint32, requestBody []byte) (
 		// IsInternal (1 byte) - v1+ addition
 		buf.WriteByte(0) // false
 
+		// Get actual partition count from topic info
+		topicInfo, exists := h.seaweedMQHandler.GetTopicInfo(topicName)
+		partitionCount := int32(1) // Default to 1 partition
+		if exists && topicInfo != nil {
+			partitionCount = topicInfo.Partitions
+		}
+
 		// Partitions array (4 bytes length + partitions)
-		binary.Write(&buf, binary.BigEndian, int32(1)) // 1 partition
+		binary.Write(&buf, binary.BigEndian, partitionCount)
 
-		// Partition 0
-		binary.Write(&buf, binary.BigEndian, int16(0)) // ErrorCode
-		binary.Write(&buf, binary.BigEndian, int32(0)) // PartitionIndex
-		binary.Write(&buf, binary.BigEndian, int32(1)) // LeaderID
+		// Create partition entries for each partition
+		for partitionID := int32(0); partitionID < partitionCount; partitionID++ {
+			binary.Write(&buf, binary.BigEndian, int16(0))    // ErrorCode
+			binary.Write(&buf, binary.BigEndian, partitionID) // PartitionIndex
+			binary.Write(&buf, binary.BigEndian, int32(1))    // LeaderID
 
-		// ReplicaNodes array (4 bytes length + nodes)
-		binary.Write(&buf, binary.BigEndian, int32(1)) // 1 replica
-		binary.Write(&buf, binary.BigEndian, int32(1)) // NodeID 1
+			// ReplicaNodes array (4 bytes length + nodes)
+			binary.Write(&buf, binary.BigEndian, int32(1)) // 1 replica
+			binary.Write(&buf, binary.BigEndian, int32(1)) // NodeID 1
 
-		// IsrNodes array (4 bytes length + nodes)
-		binary.Write(&buf, binary.BigEndian, int32(1)) // 1 ISR node
-		binary.Write(&buf, binary.BigEndian, int32(1)) // NodeID 1
+			// IsrNodes array (4 bytes length + nodes)
+			binary.Write(&buf, binary.BigEndian, int32(1)) // 1 ISR node
+			binary.Write(&buf, binary.BigEndian, int32(1)) // NodeID 1
 
-		// OfflineReplicas array (4 bytes length + nodes) - v5+ addition
-		binary.Write(&buf, binary.BigEndian, int32(0)) // No offline replicas
+			// OfflineReplicas array (4 bytes length + nodes) - v5+ addition
+			binary.Write(&buf, binary.BigEndian, int32(0)) // No offline replicas
+		}
 	}
 
 	response := buf.Bytes()
@@ -1341,27 +1403,36 @@ func (h *Handler) HandleMetadataV7(correlationID uint32, requestBody []byte) ([]
 		// IsInternal (1 byte) - v1+ addition
 		buf.WriteByte(0) // false
 
+		// Get actual partition count from topic info
+		topicInfo, exists := h.seaweedMQHandler.GetTopicInfo(topicName)
+		partitionCount := int32(1) // Default to 1 partition
+		if exists && topicInfo != nil {
+			partitionCount = topicInfo.Partitions
+		}
+
 		// Partitions array (4 bytes length + partitions)
-		binary.Write(&buf, binary.BigEndian, int32(1)) // 1 partition
+		binary.Write(&buf, binary.BigEndian, partitionCount)
 
-		// Partition 0
-		binary.Write(&buf, binary.BigEndian, int16(0)) // ErrorCode
-		binary.Write(&buf, binary.BigEndian, int32(0)) // PartitionIndex
-		binary.Write(&buf, binary.BigEndian, int32(1)) // LeaderID
+		// Create partition entries for each partition
+		for partitionID := int32(0); partitionID < partitionCount; partitionID++ {
+			binary.Write(&buf, binary.BigEndian, int16(0))    // ErrorCode
+			binary.Write(&buf, binary.BigEndian, partitionID) // PartitionIndex
+			binary.Write(&buf, binary.BigEndian, int32(1))    // LeaderID
 
-		// LeaderEpoch (4 bytes) - v7+ addition
-		binary.Write(&buf, binary.BigEndian, int32(0)) // Leader epoch 0
+			// LeaderEpoch (4 bytes) - v7+ addition
+			binary.Write(&buf, binary.BigEndian, int32(0)) // Leader epoch 0
 
-		// ReplicaNodes array (4 bytes length + nodes)
-		binary.Write(&buf, binary.BigEndian, int32(1)) // 1 replica
-		binary.Write(&buf, binary.BigEndian, int32(1)) // NodeID 1
+			// ReplicaNodes array (4 bytes length + nodes)
+			binary.Write(&buf, binary.BigEndian, int32(1)) // 1 replica
+			binary.Write(&buf, binary.BigEndian, int32(1)) // NodeID 1
 
-		// IsrNodes array (4 bytes length + nodes)
-		binary.Write(&buf, binary.BigEndian, int32(1)) // 1 ISR node
-		binary.Write(&buf, binary.BigEndian, int32(1)) // NodeID 1
+			// IsrNodes array (4 bytes length + nodes)
+			binary.Write(&buf, binary.BigEndian, int32(1)) // 1 ISR node
+			binary.Write(&buf, binary.BigEndian, int32(1)) // NodeID 1
 
-		// OfflineReplicas array (4 bytes length + nodes) - v5+ addition
-		binary.Write(&buf, binary.BigEndian, int32(0)) // No offline replicas
+			// OfflineReplicas array (4 bytes length + nodes) - v5+ addition
+			binary.Write(&buf, binary.BigEndian, int32(0)) // No offline replicas
+		}
 	}
 
 	response := buf.Bytes()
@@ -2426,31 +2497,50 @@ func (h *Handler) IsBrokerIntegrationEnabled() bool {
 // commitOffsetToSMQ commits offset using SMQ storage
 func (h *Handler) commitOffsetToSMQ(key offset.ConsumerOffsetKey, offsetValue int64, metadata string) error {
 	if h.smqOffsetStorage == nil {
+		fmt.Printf("DEBUG: commitOffsetToSMQ - SMQ offset storage not initialized\n")
 		return fmt.Errorf("SMQ offset storage not initialized")
 	}
 
+	fmt.Printf("DEBUG: commitOffsetToSMQ - saving offset=%d for group=%s topic=%s partition=%d\n",
+		offsetValue, key.ConsumerGroup, key.Topic, key.Partition)
+
 	// Save to SMQ storage - use current timestamp and size 0 as placeholders
 	// since SMQ storage primarily tracks the committed offset
-	return h.smqOffsetStorage.SaveConsumerOffset(key, offsetValue, time.Now().UnixNano(), 0)
+	err := h.smqOffsetStorage.SaveConsumerOffset(key, offsetValue, time.Now().UnixNano(), 0)
+	if err != nil {
+		fmt.Printf("DEBUG: commitOffsetToSMQ - save error: %v\n", err)
+		return err
+	}
+	fmt.Printf("DEBUG: commitOffsetToSMQ - successfully saved offset=%d\n", offsetValue)
+	return nil
 }
 
 // fetchOffsetFromSMQ fetches offset using SMQ storage
 func (h *Handler) fetchOffsetFromSMQ(key offset.ConsumerOffsetKey) (int64, string, error) {
 	if h.smqOffsetStorage == nil {
+		fmt.Printf("DEBUG: fetchOffsetFromSMQ - SMQ offset storage not initialized\n")
 		return -1, "", fmt.Errorf("SMQ offset storage not initialized")
 	}
 
+	fmt.Printf("DEBUG: fetchOffsetFromSMQ - loading offset for group=%s topic=%s partition=%d\n",
+		key.ConsumerGroup, key.Topic, key.Partition)
+
 	entries, err := h.smqOffsetStorage.LoadConsumerOffsets(key)
 	if err != nil {
+		fmt.Printf("DEBUG: fetchOffsetFromSMQ - load error: %v\n", err)
 		return -1, "", err
 	}
 
+	fmt.Printf("DEBUG: fetchOffsetFromSMQ - loaded %d entries\n", len(entries))
 	if len(entries) == 0 {
+		fmt.Printf("DEBUG: fetchOffsetFromSMQ - no committed offset found\n")
 		return -1, "", nil // No committed offset
 	}
 
+	offset := entries[0].KafkaOffset
+	fmt.Printf("DEBUG: fetchOffsetFromSMQ - returning offset=%d\n", offset)
 	// Return the committed offset (metadata is not stored in SMQ format)
-	return entries[0].KafkaOffset, "", nil
+	return offset, "", nil
 }
 
 // DescribeConfigsResource represents a resource in a DescribeConfigs request

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/consumer"
+	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/integration"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
@@ -59,6 +60,20 @@ func (t *testSeaweedMQHandlerForUnitTests) DeleteTopic(topic string) error {
 	defer t.mu.Unlock()
 	delete(t.topics, topic)
 	return nil
+}
+
+func (t *testSeaweedMQHandlerForUnitTests) GetTopicInfo(topic string) (*integration.KafkaTopicInfo, bool) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if !t.topics[topic] {
+		return nil, false
+	}
+	// For test handler, return basic info with 1 partition by default
+	return &integration.KafkaTopicInfo{
+		Name:       topic,
+		Partitions: 1,
+		CreatedAt:  time.Now().UnixNano(),
+	}, true
 }
 
 func (t *testSeaweedMQHandlerForUnitTests) GetOrCreateLedger(topic string, partition int32) *offset.Ledger {

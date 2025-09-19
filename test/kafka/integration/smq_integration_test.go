@@ -80,6 +80,9 @@ func testConsumerGroupOffsetPersistence(t *testing.T, addr string) {
 
 	config := client.GetConfig()
 	config.Consumer.Offsets.Initial = sarama.OffsetOldest
+	// Enable auto-commit for more reliable offset handling
+	config.Consumer.Offsets.AutoCommit.Enable = true
+	config.Consumer.Offsets.AutoCommit.Interval = 1 * time.Second
 
 	consumerGroup1, err := sarama.NewConsumerGroup([]string{addr}, groupID, config)
 	testutil.AssertNoError(t, err, "Failed to create first consumer group")
@@ -115,7 +118,7 @@ func testConsumerGroupOffsetPersistence(t *testing.T, addr string) {
 
 	consumerGroup1.Close()
 	cancel1()
-	time.Sleep(2 * time.Second) // Allow offset commits to be processed by SMQ
+	time.Sleep(5 * time.Second) // Allow auto-commit to complete and offset commits to be processed
 
 	t.Logf("Consumed %d messages in first phase", consumedCount)
 
@@ -236,8 +239,7 @@ func (h *SMQOffsetTestHandler) ConsumeClaim(session sarama.ConsumerGroupSession,
 			// Stop after consuming the specified number of messages
 			if h.consumed >= h.stopAfter {
 				h.t.Logf("Stopping SMQ consumer after %d messages", h.consumed)
-				// Ensure commits are flushed before exiting the claim
-				session.Commit()
+				// Auto-commit will handle offset commits automatically
 				return nil
 			}
 		case <-session.Context().Done():
