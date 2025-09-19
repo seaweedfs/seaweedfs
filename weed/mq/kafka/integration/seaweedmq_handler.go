@@ -385,6 +385,9 @@ func (h *SeaweedMQHandler) ProduceRecord(topic string, partition int32, key []by
 		fmt.Printf("Warning: failed to update offset ledger: %v\n", err)
 	}
 
+	fmt.Printf("DEBUG:ProduceRecord topic=%s partition=%d assignedOffset=%d hwm=%d size=%d\n",
+		topic, partition, kafkaOffset, ledger.GetHighWaterMark(), len(value))
+
 	return kafkaOffset, nil
 }
 
