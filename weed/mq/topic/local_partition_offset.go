@@ -5,7 +5,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // OffsetAssignmentFunc is a function type for assigning offsets to messages
@@ -45,29 +47,23 @@ func (p *LocalPartition) PublishWithOffset(message *mq_pb.DataMessage, assignOff
 
 // addToBufferWithOffset adds a message to the log buffer with a pre-assigned offset
 func (p *LocalPartition) addToBufferWithOffset(message *mq_pb.DataMessage, offset int64) error {
-	// TODO: This is a workaround until LogBuffer can be modified to handle offsets natively
-	// ASSUMPTION: We create the LogEntry here and then add it to the buffer
-
-	// Prepare timestamp
+	// Ensure we have a timestamp
 	processingTsNs := message.TsNs
 	if processingTsNs == 0 {
 		processingTsNs = time.Now().UnixNano()
 	}
 
-	// TODO: Create LogEntry with assigned offset - for now just using existing buffer
-	// ASSUMPTION: The offset will be preserved through parquet storage integration
-	// Future: LogEntry should be created here with the assigned offset
-
-	// For now, we still use the existing LogBuffer.AddToBuffer
-	// The offset information will be preserved in parquet files
-	// TODO: Modify LogBuffer to accept and preserve offset information
-	messageWithTimestamp := &mq_pb.DataMessage{
-		Key:   message.Key,
-		Value: message.Value,
-		TsNs:  processingTsNs,
+	// Build a LogEntry that preserves the assigned sequential offset
+	logEntry := &filer_pb.LogEntry{
+		TsNs:             processingTsNs,
+		PartitionKeyHash: util.HashToInt32(message.Key),
+		Data:             message.Value,
+		Key:              message.Key,
+		Offset:           offset,
 	}
 
-	p.LogBuffer.AddToBuffer(messageWithTimestamp)
+	// Add the entry to the buffer in a way that preserves offset on disk and in-memory
+	p.LogBuffer.AddLogEntryToBuffer(logEntry)
 
 	return nil
 }
