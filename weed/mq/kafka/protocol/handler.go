@@ -84,6 +84,12 @@ type SeaweedMQHandlerInterface interface {
 	Close() error
 }
 
+// TopicSchemaConfig holds schema configuration for a topic
+type TopicSchemaConfig struct {
+	SchemaID     uint32
+	SchemaFormat schema.Format
+}
+
 // Handler processes Kafka protocol requests from clients using SeaweedMQ
 type Handler struct {
 	// SeaweedMQ integration
@@ -102,6 +108,10 @@ type Handler struct {
 	schemaManager *schema.Manager
 	useSchema     bool
 	brokerClient  *schema.BrokerClient
+
+	// Topic schema configuration cache
+	topicSchemaConfigs   map[string]*TopicSchemaConfig
+	topicSchemaConfigMu  sync.RWMutex
 
 	// Topic metadata cache with TTL
 	topicMetadataCache map[string]*CachedTopicMetadata
@@ -2883,8 +2893,8 @@ func (h *Handler) ProduceSchemaBasedRecord(topic string, partition int32, key []
 }
 
 // DecodeRecordValueToKafkaMessage exposes the RecordValue decoding for testing
-func (h *Handler) DecodeRecordValueToKafkaMessage(recordValueBytes []byte) []byte {
-	return h.decodeRecordValueToKafkaMessage(recordValueBytes)
+func (h *Handler) DecodeRecordValueToKafkaMessage(topicName string, recordValueBytes []byte) []byte {
+	return h.decodeRecordValueToKafkaMessage(topicName, recordValueBytes)
 }
 
 // GetSeaweedMQHandler exposes the SeaweedMQ handler for testing

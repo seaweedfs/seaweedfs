@@ -60,7 +60,7 @@ func TestDecodeRecordValueToKafkaMessageWithoutSchema(t *testing.T) {
 	}
 
 	// Decode back to Kafka message (should fallback to JSON since no schema manager)
-	decodedValue := handler.decodeRecordValueToKafkaMessage(recordValueBytes)
+	decodedValue := handler.decodeRecordValueToKafkaMessage("test-topic", recordValueBytes)
 	if decodedValue == nil {
 		t.Fatal("Decoded value is nil")
 	}
@@ -83,7 +83,7 @@ func TestDecodeRecordValueBackwardCompatibility(t *testing.T) {
 
 	// Test with raw bytes (not RecordValue)
 	rawBytes := []byte("raw-kafka-message")
-	decodedValue := handler.decodeRecordValueToKafkaMessage(rawBytes)
+	decodedValue := handler.decodeRecordValueToKafkaMessage("test-topic", rawBytes)
 
 	if decodedValue == nil {
 		t.Fatal("Decoded value is nil")

@@ -216,7 +216,7 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 					// Fallback to original single batch logic
 					smqRecords, err := h.seaweedMQHandler.GetStoredRecords(topic.Name, partition.PartitionID, effectiveFetchOffset, 10)
 					if err == nil && len(smqRecords) > 0 {
-						recordBatch = h.constructRecordBatchFromSMQ(effectiveFetchOffset, smqRecords)
+						recordBatch = h.constructRecordBatchFromSMQ(topic.Name, effectiveFetchOffset, smqRecords)
 						Debug("Fallback single batch size: %d bytes", len(recordBatch))
 					} else {
 						recordBatch = h.constructSimpleRecordBatch(effectiveFetchOffset, highWaterMark)
@@ -698,7 +698,7 @@ func (h *Handler) constructSimpleRecordBatch(fetchOffset, highWaterMark int64) [
 }
 
 // constructRecordBatchFromSMQ creates a Kafka record batch from SeaweedMQ records
-func (h *Handler) constructRecordBatchFromSMQ(fetchOffset int64, smqRecords []offset.SMQRecord) []byte {
+func (h *Handler) constructRecordBatchFromSMQ(topicName string, fetchOffset int64, smqRecords []offset.SMQRecord) []byte {
 	if len(smqRecords) == 0 {
 		return []byte{}
 	}
@@ -789,7 +789,7 @@ func (h *Handler) constructRecordBatchFromSMQ(fetchOffset int64, smqRecords []of
 		}
 
 		// Value length and value (varint + data) - decode RecordValue to get original Kafka message
-		value := h.decodeRecordValueToKafkaMessage(smqRecord.GetValue())
+		value := h.decodeRecordValueToKafkaMessage(topicName, smqRecord.GetValue())
 		if value == nil {
 			recordBytes = append(recordBytes, encodeVarint(-1)...) // null value
 		} else {
@@ -1638,7 +1638,7 @@ func (h *Handler) getSchemaMetadataFromConfig(topicName string) (map[string]stri
 }
 
 // decodeRecordValueToKafkaMessage decodes a RecordValue back to the original Kafka message bytes
-func (h *Handler) decodeRecordValueToKafkaMessage(recordValueBytes []byte) []byte {
+func (h *Handler) decodeRecordValueToKafkaMessage(topicName string, recordValueBytes []byte) []byte {
 	if recordValueBytes == nil {
 		return nil
 	}
@@ -1653,7 +1653,7 @@ func (h *Handler) decodeRecordValueToKafkaMessage(recordValueBytes []byte) []byt
 
 	// If schema management is enabled, re-encode the RecordValue to Confluent format
 	if h.IsSchemaEnabled() {
-		if encodedMsg, err := h.encodeRecordValueToConfluentFormat(recordValue); err == nil {
+		if encodedMsg, err := h.encodeRecordValueToConfluentFormat(topicName, recordValue); err == nil {
 			return encodedMsg
 		} else {
 			Debug("Failed to encode RecordValue to Confluent format: %v", err)
@@ -1665,19 +1665,41 @@ func (h *Handler) decodeRecordValueToKafkaMessage(recordValueBytes []byte) []byt
 }
 
 // encodeRecordValueToConfluentFormat re-encodes a RecordValue back to Confluent format
-func (h *Handler) encodeRecordValueToConfluentFormat(recordValue *schema_pb.RecordValue) ([]byte, error) {
+func (h *Handler) encodeRecordValueToConfluentFormat(topicName string, recordValue *schema_pb.RecordValue) ([]byte, error) {
 	if recordValue == nil {
 		return nil, fmt.Errorf("RecordValue is nil")
 	}
 
-	// TODO: Implement proper RecordValue to Confluent format encoding
-	// This would require:
-	// 1. Determining the schema ID and format from the RecordValue
-	// 2. Converting RecordValue back to the original data format (Avro, Protobuf, JSON)
-	// 3. Wrapping in Confluent envelope with magic byte and schema ID
+	// Get schema configuration from topic config
+	schemaConfig, err := h.getTopicSchemaConfig(topicName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get topic schema config: %w", err)
+	}
 
-	// For now, return an error to indicate this functionality needs implementation
-	return nil, fmt.Errorf("RecordValue to Confluent format encoding not yet implemented")
+	// Use schema manager to encode RecordValue back to original format
+	encodedBytes, err := h.schemaManager.EncodeMessage(recordValue, schemaConfig.SchemaID, schemaConfig.SchemaFormat)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode RecordValue: %w", err)
+	}
+
+	return encodedBytes, nil
+}
+
+// getTopicSchemaConfig retrieves schema configuration for a topic
+func (h *Handler) getTopicSchemaConfig(topicName string) (*TopicSchemaConfig, error) {
+	h.topicSchemaConfigMu.RLock()
+	defer h.topicSchemaConfigMu.RUnlock()
+
+	if h.topicSchemaConfigs == nil {
+		return nil, fmt.Errorf("no schema configuration available for topic: %s", topicName)
+	}
+
+	config, exists := h.topicSchemaConfigs[topicName]
+	if !exists {
+		return nil, fmt.Errorf("no schema configuration found for topic: %s", topicName)
+	}
+
+	return config, nil
 }
 
 // recordValueToJSON converts a RecordValue to JSON bytes (fallback)

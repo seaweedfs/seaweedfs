@@ -51,7 +51,7 @@ func TestSchemaBasedMessageFlowFallback(t *testing.T) {
 	}
 
 	// Step 4: Test fetch path - should return the raw bytes
-	decodedValue := handler.DecodeRecordValueToKafkaMessage(storedValue)
+	decodedValue := handler.DecodeRecordValueToKafkaMessage(topic, storedValue)
 	if decodedValue == nil {
 		t.Fatal("Decoded value is nil")
 	}
@@ -171,7 +171,7 @@ func TestRecordValueRoundTripWithDifferentTypes(t *testing.T) {
 			}
 
 			// Decode back to Kafka message
-			decodedValue := handler.DecodeRecordValueToKafkaMessage(smqRecords[0].GetValue())
+			decodedValue := handler.DecodeRecordValueToKafkaMessage(topic, smqRecords[0].GetValue())
 
 			if string(decodedValue) != string(tc.value) {
 				t.Errorf("Round-trip failed for %s: expected '%s', got '%s'",
@@ -231,7 +231,7 @@ func TestBackwardCompatibilityWithRawMessages(t *testing.T) {
 
 	// Test that the decode function handles raw bytes (non-RecordValue) correctly
 	rawMessage := []byte("raw-kafka-message")
-	decodedValue := handler.DecodeRecordValueToKafkaMessage(rawMessage)
+	decodedValue := handler.DecodeRecordValueToKafkaMessage("test-topic", rawMessage)
 
 	if decodedValue == nil {
 		t.Fatal("Decoded value should not be nil for raw message")

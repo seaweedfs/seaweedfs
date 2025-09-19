@@ -1074,12 +1074,40 @@ func (h *Handler) produceSchemaBasedRecord(topic string, partition int32, key []
 		return 0, fmt.Errorf("failed to decode schematized message: %w", err)
 	}
 
-	// Use the decoded RecordValue directly (it's already in the correct schema format)
+	// Store the RecordValue directly - schema info is stored in topic configuration
 	recordValueBytes, err := proto.Marshal(decodedMsg.RecordValue)
 	if err != nil {
 		return 0, fmt.Errorf("failed to marshal RecordValue: %w", err)
 	}
 
+	// Store schema information in topic configuration for later retrieval
+	err = h.storeTopicSchemaConfig(topic, decodedMsg.SchemaID, decodedMsg.SchemaFormat)
+	if err != nil {
+		// Log warning but don't fail the produce operation
+		Debug("Failed to store topic schema config for %s: %v", topic, err)
+	}
+
 	// Send to SeaweedMQ with RecordValue format
 	return h.seaweedMQHandler.ProduceRecordValue(topic, partition, key, recordValueBytes)
+}
+
+// storeTopicSchemaConfig stores schema configuration for a topic
+func (h *Handler) storeTopicSchemaConfig(topic string, schemaID uint32, schemaFormat schema.Format) error {
+	// Store in memory cache for quick access
+	h.topicSchemaConfigMu.Lock()
+	defer h.topicSchemaConfigMu.Unlock()
+
+	if h.topicSchemaConfigs == nil {
+		h.topicSchemaConfigs = make(map[string]*TopicSchemaConfig)
+	}
+
+	h.topicSchemaConfigs[topic] = &TopicSchemaConfig{
+		SchemaID:     schemaID,
+		SchemaFormat: schemaFormat,
+	}
+
+	// TODO: Persist to filer or configuration store for durability
+	// This could be stored in the topic metadata in SeaweedMQ
+
+	return nil
 }
