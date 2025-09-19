@@ -2309,7 +2309,7 @@ func (h *Handler) validateAPIVersion(apiKey, apiVersion uint16) error {
 
 // buildUnsupportedVersionResponse creates a proper Kafka error response
 func (h *Handler) buildUnsupportedVersionResponse(correlationID uint32, apiKey, apiVersion uint16) ([]byte, error) {
-	errorMsg := fmt.Sprintf("Unsupported version %d for API key %d", apiVersion, apiKey)
+	errorMsg := fmt.Sprintf("Unsupported version %d for API key", apiVersion)
 	return BuildErrorResponseWithMessage(correlationID, ErrorCodeUnsupportedVersion, errorMsg), nil
 }
 
