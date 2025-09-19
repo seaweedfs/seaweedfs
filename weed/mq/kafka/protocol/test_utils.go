@@ -34,9 +34,16 @@ type testSeaweedMQHandler struct {
 	mu      sync.RWMutex
 }
 
-// NewTestHandler creates a handler for testing purposes without requiring SeaweedMQ masters
+// NewTestHandler creates a handler for integration testing with real SMQ storage
 // This should ONLY be used in tests - uses basicSeaweedMQHandler for message storage simulation
+// and real SMQ offset storage for realistic offset persistence testing
 func NewTestHandler() *Handler {
+	// Create real SMQ offset storage with HTTP address (will be converted to gRPC internally)
+	smqOffsetStorage, err := offset.NewSMQOffsetStorage("127.0.0.1:8888")
+	if err != nil {
+		panic(fmt.Sprintf("Failed to create test SMQ offset storage: %v", err))
+	}
+
 	return &Handler{
 		groupCoordinator: consumer.NewGroupCoordinator(),
 		seaweedMQHandler: &basicSeaweedMQHandler{
@@ -44,14 +51,24 @@ func NewTestHandler() *Handler {
 			ledgers:  make(map[string]*offset.Ledger),
 			messages: make(map[string]map[int32]map[int64]*MessageRecord),
 		},
+		smqOffsetStorage:   smqOffsetStorage,
+		topicMetadataCache: make(map[string]*CachedTopicMetadata),
 	}
 }
 
 // NewSimpleTestHandler creates a minimal test handler without message storage
 // This should ONLY be used for basic protocol tests that don't need message content
 func NewSimpleTestHandler() *Handler {
+	// Create real SMQ offset storage for consistency
+	smqOffsetStorage, err := offset.NewSMQOffsetStorage("127.0.0.1:8888")
+	if err != nil {
+		panic(fmt.Sprintf("Failed to create test SMQ offset storage: %v", err))
+	}
+
 	return &Handler{
-		groupCoordinator: consumer.NewGroupCoordinator(),
+		groupCoordinator:   consumer.NewGroupCoordinator(),
+		smqOffsetStorage:   smqOffsetStorage,
+		topicMetadataCache: make(map[string]*CachedTopicMetadata),
 		seaweedMQHandler: &testSeaweedMQHandler{
 			topics:  make(map[string]bool),
 			ledgers: make(map[string]*offset.Ledger),

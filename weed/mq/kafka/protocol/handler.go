@@ -97,7 +97,7 @@ type Handler struct {
 	seaweedMQHandler SeaweedMQHandlerInterface
 
 	// SMQ offset storage for consumer group offsets
-	smqOffsetStorage *offset.SMQOffsetStorage
+	smqOffsetStorage offset.LedgerStorage
 
 	// Consumer group coordination
 	groupCoordinator *consumer.GroupCoordinator

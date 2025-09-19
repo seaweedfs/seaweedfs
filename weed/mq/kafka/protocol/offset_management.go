@@ -247,13 +247,15 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, req
 			var metadata string = ""
 			var errorCode int16 = ErrorCodeNone
 
-			// Fetch offset using SMQ storage (persistent from filer)
-			if off, meta, err := h.fetchOffsetFromSMQ(key); err == nil {
+			// Fetch offset directly from SMQ storage (persistent storage)
+			// No cache needed - offset fetching is infrequent compared to commits
+			if off, meta, err := h.fetchOffsetFromSMQ(key); err == nil && off >= 0 {
 				fetchedOffset = off
 				metadata = meta
 				fmt.Printf("DEBUG: OffsetFetch SMQ returned offset=%d metadata='%s'\n", off, meta)
 			} else {
 				fmt.Printf("DEBUG: OffsetFetch SMQ error: %v\n", err)
+				// No offset found in persistent storage (-1 indicates no committed offset)
 			}
 
 			partitionResponse := OffsetFetchPartitionResponse{
