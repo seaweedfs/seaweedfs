@@ -157,13 +157,19 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 			continue
 		}
 
-		// Basic validation: ensure message can be unmarshaled as RecordValue
+		// Validate RecordValue structure for schema-based messages
 		if dataMessage.Value != nil {
 			record := &schema_pb.RecordValue{}
 			if err := proto.Unmarshal(dataMessage.Value, record); err == nil {
+				// Successfully unmarshaled as RecordValue - validate structure
+				if err := b.validateRecordValue(record, initMessage.Topic); err != nil {
+					glog.V(1).Infof("RecordValue validation failed on topic %v partition %v: %v", initMessage.Topic, initMessage.Partition, err)
+				}
 			} else {
-				// If unmarshaling fails, we skip validation but log a warning
-				glog.V(1).Infof("Could not unmarshal RecordValue for validation on topic %v partition %v: %v", initMessage.Topic, initMessage.Partition, err)
+				// For Kafka topics, messages should be RecordValue format
+				if initMessage.Topic.Namespace == "kafka" {
+					glog.V(1).Infof("Kafka message not in RecordValue format on topic %v partition %v: %v", initMessage.Topic, initMessage.Partition, err)
+				}
 			}
 		}
 
@@ -190,6 +196,33 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 	}
 
 	glog.V(0).Infof("topic %v partition %v publish stream from %s closed.", initMessage.Topic, initMessage.Partition, initMessage.PublisherName)
+
+	return nil
+}
+
+// validateRecordValue validates the structure and content of a RecordValue message
+func (b *MessageQueueBroker) validateRecordValue(record *schema_pb.RecordValue, topic *schema_pb.Topic) error {
+	if record == nil {
+		return fmt.Errorf("RecordValue is nil")
+	}
+
+	if record.Fields == nil {
+		return fmt.Errorf("RecordValue.Fields is nil")
+	}
+
+	// For Kafka topics, validate that essential fields are present
+	if topic.Namespace == "kafka" {
+		// Kafka messages should have key, value, and timestamp fields
+		if _, hasKey := record.Fields["key"]; !hasKey {
+			return fmt.Errorf("Kafka RecordValue missing 'key' field")
+		}
+		if _, hasValue := record.Fields["value"]; !hasValue {
+			return fmt.Errorf("Kafka RecordValue missing 'value' field")
+		}
+		if _, hasTimestamp := record.Fields["timestamp"]; !hasTimestamp {
+			return fmt.Errorf("Kafka RecordValue missing 'timestamp' field")
+		}
+	}
 
 	return nil
 }
