@@ -158,14 +158,18 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string, clientHost str
 	}
 
 	// Create SMQ offset storage using the proper filer address from integration layer
-	filerAddress := smqHandler.GetFilerAddress()
-	if filerAddress == "" {
+	filerGrpcAddress := smqHandler.GetFilerAddress()
+	if filerGrpcAddress == "" {
 		return nil, fmt.Errorf("no filer address available from SMQ handler - filer discovery may have failed")
 	}
 
-	smqOffsetStorage, err := offset.NewSMQOffsetStorage(filerAddress)
+	// Convert gRPC address back to HTTP format for NewSMQOffsetStorage
+	// SMQ handler returns gRPC address (e.g. 127.0.0.1:18888), but NewSMQOffsetStorage expects HTTP (e.g. 127.0.0.1:8888)
+	filerHttpAddress := grpcAddressToHttpAddress(filerGrpcAddress)
+	
+	smqOffsetStorage, err := offset.NewSMQOffsetStorage(filerHttpAddress)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create SMQ offset storage with filer %s: %w", filerAddress, err)
+		return nil, fmt.Errorf("failed to create SMQ offset storage with filer %s: %w", filerHttpAddress, err)
 	}
 
 	// filerClient is already obtained above
@@ -300,6 +304,30 @@ func (h *Handler) parseBrokerAddress(address string) (host string, port int, err
 	}
 
 	return host, port, nil
+}
+
+// grpcAddressToHttpAddress converts a gRPC address back to HTTP address
+// e.g., "127.0.0.1:18888" -> "127.0.0.1:8888" (subtracts 10000 from port)
+func grpcAddressToHttpAddress(grpcAddress string) string {
+	lastColon := strings.LastIndex(grpcAddress, ":")
+	if lastColon == -1 {
+		return grpcAddress // Return as-is if no port found
+	}
+	
+	host := grpcAddress[:lastColon]
+	portStr := grpcAddress[lastColon+1:]
+	
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return grpcAddress // Return as-is if port parsing fails
+	}
+	
+	httpPort := port - 10000
+	if httpPort <= 0 {
+		return grpcAddress // Return as-is if result would be invalid
+	}
+	
+	return net.JoinHostPort(host, strconv.Itoa(httpPort))
 }
 
 // HandleConn processes a single client connection
