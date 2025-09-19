@@ -87,7 +87,7 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 	group.Mu.Lock()
 	defer group.Mu.Unlock()
 
-	fmt.Printf("DEBUG: JoinGroup before - group='%s' gen=%d state=%v members=%d leader='%s'\n",
+	fmt.Printf("DEBUG: JoinGroup before - group='%s' gen=%d state=%s members=%d leader='%s'\n",
 		group.ID, group.Generation, group.State, len(group.Members), group.Leader)
 
 	// Update group's last activity
@@ -201,6 +201,8 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 		group.Members = make(map[string]*consumer.GroupMember)
 	}
 	group.Members[memberID] = member
+	fmt.Printf("DEBUG: JoinGroup added/updated member '%s' (static=%v, topics=%v)\n",
+		memberID, h.groupCoordinator.IsStaticMember(member), member.Subscription)
 
 	// Store protocol metadata for leader
 	if len(request.GroupProtocols) > 0 {
@@ -295,7 +297,10 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 		}
 	}
 
-	return h.buildJoinGroupResponse(response), nil
+	resp := h.buildJoinGroupResponse(response)
+	fmt.Printf("DEBUG: JoinGroup sending response - gen=%d leader='%s' members=%d version=%d size=%d\n",
+		response.GenerationID, response.GroupLeader, len(response.Members), response.Version, len(resp))
+	return resp, nil
 }
 
 func (h *Handler) parseJoinGroupRequest(data []byte, apiVersion uint16) (*JoinGroupRequest, error) {
@@ -722,8 +727,8 @@ func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, reque
 		return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeInvalidGroupID, apiVersion), nil
 	}
 
-	fmt.Printf("DEBUG: SyncGroup parsed request - GroupID: '%s', MemberID: '%s', GenerationID: %d\n",
-		request.GroupID, request.MemberID, request.GenerationID)
+	fmt.Printf("DEBUG: SyncGroup parsed request - GroupID: '%s', MemberID: '%s', GenerationID: %d assignments=%d\n",
+		request.GroupID, request.MemberID, request.GenerationID, len(request.GroupAssignments))
 
 	// Validate request
 	if request.GroupID == "" || request.MemberID == "" {
@@ -738,6 +743,9 @@ func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, reque
 
 	group.Mu.Lock()
 	defer group.Mu.Unlock()
+
+	fmt.Printf("DEBUG: SyncGroup pre-state - group='%s' gen=%d state=%s leader='%s' members=%d\n",
+		group.ID, group.Generation, group.State, group.Leader, len(group.Members))
 
 	// Update group's last activity
 	group.LastActivity = time.Now()
@@ -768,13 +776,16 @@ func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, reque
 		for _, m := range group.Members {
 			m.State = consumer.MemberStateStable
 		}
+		fmt.Printf("DEBUG: SyncGroup leader '%s' applied assignments; group now Stable\n", request.MemberID)
 	} else if group.State == consumer.GroupStateCompletingRebalance {
 		// Non-leader member waiting for assignments
 		// Assignments should already be processed by leader
+		fmt.Printf("DEBUG: SyncGroup non-leader '%s' waiting; group already CompletingRebalance\n", request.MemberID)
 	} else {
 		// Trigger partition assignment using built-in strategy
 		topicPartitions := h.getTopicPartitions(group)
 		group.AssignPartitions(topicPartitions)
+		fmt.Printf("DEBUG: SyncGroup auto-assigned partitions using '%s' strategy\n", group.Protocol)
 
 		group.State = consumer.GroupStateStable
 		for _, m := range group.Members {
@@ -784,6 +795,7 @@ func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, reque
 
 	// Get assignment for this member
 	assignment := h.serializeMemberAssignment(member.Assignment)
+	fmt.Printf("DEBUG: SyncGroup response assignment for member '%s': %v\n", member.ID, member.Assignment)
 
 	// Build response
 	response := SyncGroupResponse{
@@ -792,7 +804,9 @@ func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, reque
 		Assignment:    assignment,
 	}
 
-	return h.buildSyncGroupResponse(response, apiVersion), nil
+	resp := h.buildSyncGroupResponse(response, apiVersion)
+	fmt.Printf("DEBUG: SyncGroup sending response - size=%d error=%d\n", len(resp), response.ErrorCode)
+	return resp, nil
 }
 
 func (h *Handler) parseSyncGroupRequest(data []byte, apiVersion uint16) (*SyncGroupRequest, error) {

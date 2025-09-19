@@ -1,7 +1,8 @@
 package consumer
 
 import (
-	"sort"
+    "fmt"
+    "sort"
 )
 
 // AssignmentStrategy defines how partitions are assigned to consumers
@@ -28,6 +29,7 @@ func (r *RangeAssignmentStrategy) Assign(members []*GroupMember, topicPartitions
 		assignments[member.ID] = make([]PartitionAssignment, 0)
 	}
 	
+    fmt.Printf("DEBUG: Range assignor - members=%d topics=%d\n", len(members), len(topicPartitions))
 	// Sort members for consistent assignment
 	sortedMembers := make([]*GroupMember, len(members))
 	copy(sortedMembers, members)
@@ -70,6 +72,7 @@ func (r *RangeAssignmentStrategy) Assign(members []*GroupMember, topicPartitions
 			continue
 		}
 		
+        fmt.Printf("DEBUG: Range assignor - topic='%s' partitions=%d members=%d\n", topic, len(partitions), len(topicMembers))
 		// Assign partitions to members using range strategy
 		numPartitions := len(partitions)
 		numMembers := len(topicMembers)
@@ -93,6 +96,7 @@ func (r *RangeAssignmentStrategy) Assign(members []*GroupMember, topicPartitions
 				assignments[member.ID] = append(assignments[member.ID], assignment)
 				partitionIndex++
 			}
+            fmt.Printf("DEBUG: Range assignor - member='%s' assigned=%d (total so far=%d)\n", member.ID, memberPartitions, len(assignments[member.ID]))
 		}
 	}
 	

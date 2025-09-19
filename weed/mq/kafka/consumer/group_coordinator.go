@@ -1,10 +1,10 @@
 package consumer
 
 import (
-	"crypto/sha256"
-	"fmt"
-	"sync"
-	"time"
+    "crypto/sha256"
+    "fmt"
+    "sync"
+    "time"
 )
 
 // GroupState represents the state of a consumer group
@@ -309,7 +309,7 @@ func (gc *GroupCoordinator) performCleanup() {
 	for groupID, group := range gc.groups {
 		group.Mu.Lock()
 
-		// Check for expired members (session timeout)
+        // Check for expired members (session timeout)
 		expiredMembers := make([]string, 0)
 		for memberID, member := range group.Members {
 			sessionDuration := time.Duration(member.SessionTimeout) * time.Millisecond
@@ -320,6 +320,7 @@ func (gc *GroupCoordinator) performCleanup() {
 
 		// Remove expired members
 		for _, memberID := range expiredMembers {
+            fmt.Printf("DEBUG: Group cleanup - removing expired member '%s' from group '%s'\n", memberID, group.ID)
 			delete(group.Members, memberID)
 			if group.Leader == memberID {
 				group.Leader = ""
@@ -327,22 +328,25 @@ func (gc *GroupCoordinator) performCleanup() {
 		}
 
 		// Update group state based on member count
-		if len(group.Members) == 0 {
+        if len(group.Members) == 0 {
 			if group.State != GroupStateEmpty {
 				group.State = GroupStateEmpty
 				group.Generation++
+                fmt.Printf("DEBUG: Group cleanup - group '%s' transitioned to Empty (gen=%d)\n", group.ID, group.Generation)
 			}
 
 			// Mark group for deletion if empty for too long (30 minutes)
-			if now.Sub(group.LastActivity) > 30*time.Minute {
+            if now.Sub(group.LastActivity) > 30*time.Minute {
 				group.State = GroupStateDead
+                fmt.Printf("DEBUG: Group cleanup - group '%s' marked Dead due to inactivity\n", group.ID)
 			}
 		}
 
 		// Check for stuck rebalances and force completion if necessary
 		maxRebalanceDuration := 10 * time.Minute // Maximum time allowed for rebalancing
-		if gc.rebalanceTimeoutManager.IsRebalanceStuck(group, maxRebalanceDuration) {
+        if gc.rebalanceTimeoutManager.IsRebalanceStuck(group, maxRebalanceDuration) {
 			gc.rebalanceTimeoutManager.ForceCompleteRebalance(group)
+            fmt.Printf("DEBUG: Group cleanup - forced completion of stuck rebalance for group '%s'\n", group.ID)
 		}
 
 		group.Mu.Unlock()
