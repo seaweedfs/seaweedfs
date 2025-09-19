@@ -788,8 +788,8 @@ func (h *Handler) constructRecordBatchFromSMQ(fetchOffset int64, smqRecords []of
 			recordBytes = append(recordBytes, key...)
 		}
 
-		// Value length and value (varint + data)
-		value := smqRecord.GetValue()
+		// Value length and value (varint + data) - decode RecordValue to get original Kafka message
+		value := h.decodeRecordValueToKafkaMessage(smqRecord.GetValue())
 		if value == nil {
 			recordBytes = append(recordBytes, encodeVarint(-1)...) // null value
 		} else {
@@ -1635,4 +1635,143 @@ func (h *Handler) getSchemaMetadataFromConfig(topicName string) (map[string]stri
 	// This could read from a configuration file, database, or other source
 	// that maps topics to their schema information
 	return nil, fmt.Errorf("configuration-based schema metadata lookup not implemented")
+}
+
+// decodeRecordValueToKafkaMessage decodes a RecordValue back to the original Kafka message bytes
+func (h *Handler) decodeRecordValueToKafkaMessage(recordValueBytes []byte) []byte {
+	if recordValueBytes == nil {
+		return nil
+	}
+
+	// Try to unmarshal as RecordValue
+	recordValue := &schema_pb.RecordValue{}
+	if err := proto.Unmarshal(recordValueBytes, recordValue); err != nil {
+		// If it's not a RecordValue, return the raw bytes (backward compatibility)
+		Debug("Failed to unmarshal RecordValue, returning raw bytes: %v", err)
+		return recordValueBytes
+	}
+
+	// Extract the original Kafka message from RecordValue
+	return h.extractKafkaMessageFromRecordValue(recordValue)
+}
+
+// extractKafkaMessageFromRecordValue extracts the original Kafka message from RecordValue
+func (h *Handler) extractKafkaMessageFromRecordValue(recordValue *schema_pb.RecordValue) []byte {
+	if recordValue == nil || recordValue.Fields == nil {
+		return nil
+	}
+
+	// Look for the "value" field which contains the original Kafka message
+	valueField, exists := recordValue.Fields["value"]
+	if !exists {
+		Debug("RecordValue missing 'value' field")
+		return nil
+	}
+
+	// Handle different value types
+	switch v := valueField.Kind.(type) {
+	case *schema_pb.Value_BytesValue:
+		// Raw bytes - this is the original Kafka message
+		return v.BytesValue
+
+	case *schema_pb.Value_RecordValue:
+		// Nested RecordValue - this is a schematized message
+		return h.encodeSchematizedMessage(v.RecordValue, recordValue)
+
+	case *schema_pb.Value_StringValue:
+		// String value - convert to bytes
+		return []byte(v.StringValue)
+
+	default:
+		Debug("Unsupported value type in RecordValue: %T", v)
+		return nil
+	}
+}
+
+// encodeSchematizedMessage re-encodes a schematized message back to Confluent format
+func (h *Handler) encodeSchematizedMessage(decodedRecord *schema_pb.RecordValue, originalRecord *schema_pb.RecordValue) []byte {
+	// Check if we have schema metadata
+	schemaIDField, hasSchemaID := originalRecord.Fields["schema_id"]
+	schemaFormatField, hasSchemaFormat := originalRecord.Fields["schema_format"]
+
+	if !hasSchemaID || !hasSchemaFormat {
+		// No schema metadata, return as JSON
+		return h.recordValueToJSON(decodedRecord)
+	}
+
+	// Extract schema metadata
+	var schemaID uint32
+	var schemaFormat schema.Format
+
+	if idValue, ok := schemaIDField.Kind.(*schema_pb.Value_Int32Value); ok {
+		schemaID = uint32(idValue.Int32Value)
+	} else {
+		Debug("Invalid schema_id type in RecordValue")
+		return h.recordValueToJSON(decodedRecord)
+	}
+
+	if formatValue, ok := schemaFormatField.Kind.(*schema_pb.Value_StringValue); ok {
+		switch formatValue.StringValue {
+		case "AVRO":
+			schemaFormat = schema.FormatAvro
+		case "PROTOBUF":
+			schemaFormat = schema.FormatProtobuf
+		case "JSON_SCHEMA":
+			schemaFormat = schema.FormatJSONSchema
+		default:
+			schemaFormat = schema.FormatUnknown
+		}
+	} else {
+		Debug("Invalid schema_format type in RecordValue")
+		return h.recordValueToJSON(decodedRecord)
+	}
+
+	// If schema management is enabled, re-encode using schema
+	if h.IsSchemaEnabled() {
+		if encodedMsg, err := h.schemaManager.EncodeMessage(decodedRecord, schemaID, schemaFormat); err == nil {
+			return encodedMsg
+		} else {
+			Debug("Failed to re-encode schematized message: %v", err)
+		}
+	}
+
+	// Fallback to JSON
+	return h.recordValueToJSON(decodedRecord)
+}
+
+// recordValueToJSON converts a RecordValue to JSON bytes (fallback)
+func (h *Handler) recordValueToJSON(recordValue *schema_pb.RecordValue) []byte {
+	if recordValue == nil || recordValue.Fields == nil {
+		return []byte("{}")
+	}
+
+	// Simple JSON conversion - in a real implementation, this would be more sophisticated
+	jsonStr := "{"
+	first := true
+	for fieldName, fieldValue := range recordValue.Fields {
+		if !first {
+			jsonStr += ","
+		}
+		first = false
+
+		jsonStr += fmt.Sprintf(`"%s":`, fieldName)
+		
+		switch v := fieldValue.Kind.(type) {
+		case *schema_pb.Value_StringValue:
+			jsonStr += fmt.Sprintf(`"%s"`, v.StringValue)
+		case *schema_pb.Value_BytesValue:
+			jsonStr += fmt.Sprintf(`"%s"`, string(v.BytesValue))
+		case *schema_pb.Value_Int32Value:
+			jsonStr += fmt.Sprintf(`%d`, v.Int32Value)
+		case *schema_pb.Value_Int64Value:
+			jsonStr += fmt.Sprintf(`%d`, v.Int64Value)
+		case *schema_pb.Value_BoolValue:
+			jsonStr += fmt.Sprintf(`%t`, v.BoolValue)
+		default:
+			jsonStr += `null`
+		}
+	}
+	jsonStr += "}"
+
+	return []byte(jsonStr)
 }
