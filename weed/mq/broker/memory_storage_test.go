@@ -43,7 +43,7 @@ func NewInMemoryOffsetStorage() *InMemoryOffsetStorage {
 }
 
 // SaveCheckpoint saves the checkpoint for a partition
-func (s *InMemoryOffsetStorage) SaveCheckpoint(partition *schema_pb.Partition, offset int64) error {
+func (s *InMemoryOffsetStorage) SaveCheckpoint(namespace, topicName string, partition *schema_pb.Partition, offset int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -53,7 +53,7 @@ func (s *InMemoryOffsetStorage) SaveCheckpoint(partition *schema_pb.Partition, o
 }
 
 // LoadCheckpoint loads the checkpoint for a partition
-func (s *InMemoryOffsetStorage) LoadCheckpoint(partition *schema_pb.Partition) (int64, error) {
+func (s *InMemoryOffsetStorage) LoadCheckpoint(namespace, topicName string, partition *schema_pb.Partition) (int64, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -67,7 +67,7 @@ func (s *InMemoryOffsetStorage) LoadCheckpoint(partition *schema_pb.Partition) (
 }
 
 // GetHighestOffset finds the highest offset in storage for a partition
-func (s *InMemoryOffsetStorage) GetHighestOffset(partition *schema_pb.Partition) (int64, error) {
+func (s *InMemoryOffsetStorage) GetHighestOffset(namespace, topicName string, partition *schema_pb.Partition) (int64, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
