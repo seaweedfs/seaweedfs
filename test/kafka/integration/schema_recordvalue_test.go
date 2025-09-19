@@ -208,9 +208,9 @@ func TestRecordValueRoundTripWithDifferentTypes(t *testing.T) {
 
 			// Decode back to Kafka message
 			decodedValue := handler.DecodeRecordValueToKafkaMessage(smqRecords[0].GetValue())
-			
+
 			if string(decodedValue) != string(tc.value) {
-				t.Errorf("Round-trip failed for %s: expected '%s', got '%s'", 
+				t.Errorf("Round-trip failed for %s: expected '%s', got '%s'",
 					tc.name, string(tc.value), string(decodedValue))
 			}
 		})
@@ -274,7 +274,7 @@ func TestBackwardCompatibilityWithRawMessages(t *testing.T) {
 	}
 
 	if string(decodedValue) != string(rawMessage) {
-		t.Errorf("Raw message should pass through unchanged: expected '%s', got '%s'", 
+		t.Errorf("Raw message should pass through unchanged: expected '%s', got '%s'",
 			string(rawMessage), string(decodedValue))
 	}
 }

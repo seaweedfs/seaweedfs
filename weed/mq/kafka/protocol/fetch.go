@@ -1755,7 +1755,7 @@ func (h *Handler) recordValueToJSON(recordValue *schema_pb.RecordValue) []byte {
 		first = false
 
 		jsonStr += fmt.Sprintf(`"%s":`, fieldName)
-		
+
 		switch v := fieldValue.Kind.(type) {
 		case *schema_pb.Value_StringValue:
 			jsonStr += fmt.Sprintf(`"%s"`, v.StringValue)
