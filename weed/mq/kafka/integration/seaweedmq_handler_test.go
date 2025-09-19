@@ -251,10 +251,10 @@ func TestSeaweedMQHandler_ConvertSingleSeaweedRecord(t *testing.T) {
 
 // TestSeaweedMQHandler_Creation tests handler creation and shutdown
 func TestSeaweedMQHandler_Creation(t *testing.T) {
-	// Skip if no real agent available
-	t.Skip("Integration test requires real SeaweedMQ Agent - run manually with agent available")
+	// Skip if no real broker available
+	t.Skip("Integration test requires real SeaweedMQ Broker - run manually with broker available")
 
-	handler, err := NewSeaweedMQHandler("localhost:17777")
+	handler, err := NewSeaweedMQBrokerHandler("localhost:9333", "default", "localhost")
 	if err != nil {
 		t.Fatalf("Failed to create SeaweedMQ handler: %v", err)
 	}
@@ -271,9 +271,9 @@ func TestSeaweedMQHandler_Creation(t *testing.T) {
 
 // TestSeaweedMQHandler_TopicLifecycle tests topic creation and deletion
 func TestSeaweedMQHandler_TopicLifecycle(t *testing.T) {
-	t.Skip("Integration test requires real SeaweedMQ Agent - run manually with agent available")
+	t.Skip("Integration test requires real SeaweedMQ Broker - run manually with broker available")
 
-	handler, err := NewSeaweedMQHandler("localhost:17777")
+	handler, err := NewSeaweedMQBrokerHandler("localhost:9333", "default", "localhost")
 	if err != nil {
 		t.Fatalf("Failed to create SeaweedMQ handler: %v", err)
 	}
@@ -333,9 +333,9 @@ func TestSeaweedMQHandler_TopicLifecycle(t *testing.T) {
 
 // TestSeaweedMQHandler_ProduceRecord tests message production
 func TestSeaweedMQHandler_ProduceRecord(t *testing.T) {
-	t.Skip("Integration test requires real SeaweedMQ Agent - run manually with agent available")
+	t.Skip("Integration test requires real SeaweedMQ Broker - run manually with broker available")
 
-	handler, err := NewSeaweedMQHandler("localhost:17777")
+	handler, err := NewSeaweedMQBrokerHandler("localhost:9333", "default", "localhost")
 	if err != nil {
 		t.Fatalf("Failed to create SeaweedMQ handler: %v", err)
 	}
@@ -379,9 +379,9 @@ func TestSeaweedMQHandler_ProduceRecord(t *testing.T) {
 
 // TestSeaweedMQHandler_MultiplePartitions tests multiple partition handling
 func TestSeaweedMQHandler_MultiplePartitions(t *testing.T) {
-	t.Skip("Integration test requires real SeaweedMQ Agent - run manually with agent available")
+	t.Skip("Integration test requires real SeaweedMQ Broker - run manually with broker available")
 
-	handler, err := NewSeaweedMQHandler("localhost:17777")
+	handler, err := NewSeaweedMQBrokerHandler("localhost:9333", "default", "localhost")
 	if err != nil {
 		t.Fatalf("Failed to create SeaweedMQ handler: %v", err)
 	}
@@ -421,9 +421,9 @@ func TestSeaweedMQHandler_MultiplePartitions(t *testing.T) {
 
 // TestSeaweedMQHandler_FetchRecords tests record fetching with real SeaweedMQ data
 func TestSeaweedMQHandler_FetchRecords(t *testing.T) {
-	t.Skip("Integration test requires real SeaweedMQ Agent - run manually with agent available")
+	t.Skip("Integration test requires real SeaweedMQ Broker - run manually with broker available")
 
-	handler, err := NewSeaweedMQHandler("localhost:17777")
+	handler, err := NewSeaweedMQBrokerHandler("localhost:9333", "default", "localhost")
 	if err != nil {
 		t.Fatalf("Failed to create SeaweedMQ handler: %v", err)
 	}
@@ -513,9 +513,9 @@ func TestSeaweedMQHandler_FetchRecords(t *testing.T) {
 
 // TestSeaweedMQHandler_FetchRecords_ErrorHandling tests error cases for fetching
 func TestSeaweedMQHandler_FetchRecords_ErrorHandling(t *testing.T) {
-	t.Skip("Integration test requires real SeaweedMQ Agent - run manually with agent available")
+	t.Skip("Integration test requires real SeaweedMQ Broker - run manually with broker available")
 
-	handler, err := NewSeaweedMQHandler("localhost:17777")
+	handler, err := NewSeaweedMQBrokerHandler("localhost:9333", "default", "localhost")
 	if err != nil {
 		t.Fatalf("Failed to create SeaweedMQ handler: %v", err)
 	}
@@ -563,9 +563,9 @@ func TestSeaweedMQHandler_FetchRecords_ErrorHandling(t *testing.T) {
 
 // TestSeaweedMQHandler_ErrorHandling tests error conditions
 func TestSeaweedMQHandler_ErrorHandling(t *testing.T) {
-	t.Skip("Integration test requires real SeaweedMQ Agent - run manually with agent available")
+	t.Skip("Integration test requires real SeaweedMQ Broker - run manually with broker available")
 
-	handler, err := NewSeaweedMQHandler("localhost:17777")
+	handler, err := NewSeaweedMQBrokerHandler("localhost:9333", "default", "localhost")
 	if err != nil {
 		t.Fatalf("Failed to create SeaweedMQ handler: %v", err)
 	}

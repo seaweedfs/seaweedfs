@@ -24,9 +24,7 @@ import (
 
 // SeaweedMQHandler integrates Kafka protocol handlers with real SeaweedMQ storage
 type SeaweedMQHandler struct {
-	agentClient  *AgentClient  // For agent-based connections
 	brokerClient *BrokerClient // For broker-based connections
-	useBroker    bool          // Flag to determine which client to use
 
 	// Master client for service discovery
 	masterClient *wdclient.MasterClient
@@ -57,27 +55,6 @@ type KafkaTopicInfo struct {
 type TopicPartitionKey struct {
 	Topic     string
 	Partition int32
-}
-
-// NewSeaweedMQHandler creates a new handler with SeaweedMQ integration
-func NewSeaweedMQHandler(agentAddress string) (*SeaweedMQHandler, error) {
-	agentClient, err := NewAgentClient(agentAddress)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create agent client: %v", err)
-	}
-
-	// Test the connection
-	if err := agentClient.HealthCheck(); err != nil {
-		agentClient.Close()
-		return nil, fmt.Errorf("agent health check failed: %v", err)
-	}
-
-	return &SeaweedMQHandler{
-		agentClient: agentClient,
-		useBroker:   false,
-		topics:      make(map[string]*KafkaTopicInfo),
-		ledgers:     make(map[TopicPartitionKey]*offset.Ledger),
-	}, nil
 }
 
 // GetStoredRecords retrieves records from SeaweedMQ storage
@@ -121,28 +98,21 @@ func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromO
 	var seaweedRecords []*SeaweedRecord
 	var err error
 
-	// Read records using appropriate client (broker or agent)
-	if h.useBroker && h.brokerClient != nil {
-		brokerSubscriber, subErr := h.brokerClient.GetOrCreateSubscriber(topic, partition, fromOffset)
-		if subErr != nil {
-			return nil, fmt.Errorf("failed to get broker subscriber: %v", subErr)
-		}
-		seaweedRecords, err = h.brokerClient.ReadRecords(brokerSubscriber, recordsToFetch)
-	} else if h.agentClient != nil {
-		agentSubscriber, subErr := h.agentClient.GetOrCreateSubscriber(topic, partition, fromOffset)
-		if subErr != nil {
-			return nil, fmt.Errorf("failed to get agent subscriber: %v", subErr)
-		}
-		seaweedRecords, err = h.agentClient.ReadRecords(agentSubscriber, recordsToFetch)
-	} else {
-		return nil, fmt.Errorf("no SeaweedMQ client available")
+	// Read records using broker client
+	if h.brokerClient == nil {
+		return nil, fmt.Errorf("no broker client available")
 	}
+	brokerSubscriber, subErr := h.brokerClient.GetOrCreateSubscriber(topic, partition, fromOffset)
+	if subErr != nil {
+		return nil, fmt.Errorf("failed to get broker subscriber: %v", subErr)
+	}
+	seaweedRecords, err = h.brokerClient.ReadRecords(brokerSubscriber, recordsToFetch)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to read records: %v", err)
 	}
 
-	fmt.Printf("DEBUG:GetStoredRecords fetched %d seaweedRecords from broker/agent\n", len(seaweedRecords))
+	fmt.Printf("DEBUG:GetStoredRecords fetched %d seaweedRecords from broker\n", len(seaweedRecords))
 	// Convert SeaweedMQ records to SMQRecord interface with proper Kafka offsets
 	smqRecords := make([]offset.SMQRecord, 0, len(seaweedRecords))
 	for i, seaweedRecord := range seaweedRecords {
@@ -189,19 +159,17 @@ func (r *SeaweedSMQRecord) GetOffset() int64 {
 
 // GetFilerClient returns a filer client for accessing SeaweedMQ metadata
 func (h *SeaweedMQHandler) GetFilerClient() filer_pb.SeaweedFilerClient {
-	if h.useBroker && h.brokerClient != nil {
+	if h.brokerClient != nil {
 		return h.brokerClient.filerClient
 	}
-	// Agent client doesn't have filer access
 	return nil
 }
 
 // GetFilerAddress returns the filer address used by this handler
 func (h *SeaweedMQHandler) GetFilerAddress() string {
-	if h.useBroker && h.brokerClient != nil {
+	if h.brokerClient != nil {
 		return h.brokerClient.GetFilerAddress()
 	}
-	// Agent client doesn't have filer access
 	return ""
 }
 
@@ -212,10 +180,8 @@ func (h *SeaweedMQHandler) GetBrokerAddresses() []string {
 
 // Close shuts down the handler and all connections
 func (h *SeaweedMQHandler) Close() error {
-	if h.useBroker && h.brokerClient != nil {
+	if h.brokerClient != nil {
 		return h.brokerClient.Close()
-	} else if h.agentClient != nil {
-		return h.agentClient.Close()
 	}
 	return nil
 }
@@ -300,10 +266,8 @@ func (h *SeaweedMQHandler) DeleteTopic(name string) error {
 
 	// Close all publisher sessions for this topic
 	for partitionID := int32(0); partitionID < topicInfo.Partitions; partitionID++ {
-		if h.useBroker && h.brokerClient != nil {
+		if h.brokerClient != nil {
 			h.brokerClient.ClosePublisher(name, partitionID)
-		} else if h.agentClient != nil {
-			h.agentClient.ClosePublisher(name, partitionID)
 		}
 	}
 
@@ -363,12 +327,10 @@ func (h *SeaweedMQHandler) ProduceRecord(topic string, partition int32, key []by
 
 	// Publish to SeaweedMQ
 	var publishErr error
-	if h.useBroker && h.brokerClient != nil {
-		_, publishErr = h.brokerClient.PublishRecord(topic, partition, key, value, timestamp)
-	} else if h.agentClient != nil {
-		_, publishErr = h.agentClient.PublishRecord(topic, partition, key, value, timestamp)
+	if h.brokerClient == nil {
+		publishErr = fmt.Errorf("no broker client available")
 	} else {
-		publishErr = fmt.Errorf("no client available")
+		_, publishErr = h.brokerClient.PublishRecord(topic, partition, key, value, timestamp)
 	}
 
 	if publishErr != nil {
@@ -403,12 +365,10 @@ func (h *SeaweedMQHandler) ProduceRecordValue(topic string, partition int32, key
 
 	// Publish RecordValue to SeaweedMQ
 	var publishErr error
-	if h.useBroker && h.brokerClient != nil {
-		_, publishErr = h.brokerClient.PublishRecordValue(topic, partition, key, recordValueBytes, timestamp)
-	} else if h.agentClient != nil {
-		_, publishErr = h.agentClient.PublishRecordValue(topic, partition, key, recordValueBytes, timestamp)
+	if h.brokerClient == nil {
+		publishErr = fmt.Errorf("no broker client available")
 	} else {
-		publishErr = fmt.Errorf("no client available")
+		_, publishErr = h.brokerClient.PublishRecordValue(topic, partition, key, recordValueBytes, timestamp)
 	}
 
 	if publishErr != nil {
@@ -502,22 +462,15 @@ func (h *SeaweedMQHandler) FetchRecords(topic string, partition int32, fetchOffs
 		recordsToFetch = 100 // Limit batch size
 	}
 
-	// Read records using appropriate client
-	if h.useBroker && h.brokerClient != nil {
-		brokerSubscriber, subErr := h.brokerClient.GetOrCreateSubscriber(topic, partition, fetchOffset)
-		if subErr != nil {
-			return nil, fmt.Errorf("failed to get broker subscriber: %v", subErr)
-		}
-		seaweedRecords, err = h.brokerClient.ReadRecords(brokerSubscriber, recordsToFetch)
-	} else if h.agentClient != nil {
-		agentSubscriber, subErr := h.agentClient.GetOrCreateSubscriber(topic, partition, fetchOffset)
-		if subErr != nil {
-			return nil, fmt.Errorf("failed to get agent subscriber: %v", subErr)
-		}
-		seaweedRecords, err = h.agentClient.ReadRecords(agentSubscriber, recordsToFetch)
-	} else {
-		return nil, fmt.Errorf("no client available")
+	// Read records using broker client
+	if h.brokerClient == nil {
+		return nil, fmt.Errorf("no broker client available")
 	}
+	brokerSubscriber, subErr := h.brokerClient.GetOrCreateSubscriber(topic, partition, fetchOffset)
+	if subErr != nil {
+		return nil, fmt.Errorf("failed to get broker subscriber: %v", subErr)
+	}
+	seaweedRecords, err = h.brokerClient.ReadRecords(brokerSubscriber, recordsToFetch)
 
 	if err != nil {
 		// If no records available, return empty batch instead of error
@@ -773,7 +726,6 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string, clientHost str
 
 	return &SeaweedMQHandler{
 		brokerClient:    brokerClient,
-		useBroker:       true,
 		masterClient:    masterClient,
 		topics:          make(map[string]*KafkaTopicInfo),
 		ledgers:         make(map[TopicPartitionKey]*offset.Ledger),

@@ -131,21 +131,6 @@ func NewHandler() *Handler {
 
 // All test-related types and implementations moved to handler_test.go (test-only file)
 
-// NewSeaweedMQHandler creates a new handler with SeaweedMQ integration
-func NewSeaweedMQHandler(agentAddress string) (*Handler, error) {
-	smqHandler, err := integration.NewSeaweedMQHandler(agentAddress)
-	if err != nil {
-		return nil, err
-	}
-
-	return &Handler{
-		seaweedMQHandler:   smqHandler,
-		groupCoordinator:   consumer.NewGroupCoordinator(),
-		topicMetadataCache: make(map[string]*CachedTopicMetadata),
-		smqBrokerAddresses: nil, // Will be set by SetSMQBrokerAddresses() when server starts
-	}, nil
-}
-
 // NewSeaweedMQBrokerHandler creates a new handler with SeaweedMQ broker integration
 func NewSeaweedMQBrokerHandler(masters string, filerGroup string, clientHost string) (*Handler, error) {
 	// Set up SeaweedMQ integration
