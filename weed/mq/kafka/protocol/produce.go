@@ -88,7 +88,6 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 		partitionsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 		offset += 4
 
-
 		// Check if topic exists, auto-create if it doesn't (simulates auto.create.topics.enable=true)
 		topicExists := h.seaweedMQHandler.TopicExists(topicName)
 
@@ -139,7 +138,6 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 			var errorCode uint16 = 0
 			var baseOffset int64 = 0
 			currentTime := time.Now().UnixNano()
-
 
 			if !topicExists {
 				errorCode = 3 // UNKNOWN_TOPIC_OR_PARTITION
@@ -383,15 +381,13 @@ func (h *Handler) extractFirstRecord(recordSetData []byte) ([]byte, []byte) {
 	// + last_offset_delta(4) + first_timestamp(8) + max_timestamp(8) + producer_id(8) + producer_epoch(2)
 	// + base_sequence(4) + records_count(4) = 61 bytes header
 
-	offset += 8 // skip base_offset
+	offset += 8                                                // skip base_offset
 	_ = int32(binary.BigEndian.Uint32(recordSetData[offset:])) // batchLength unused
-	offset += 4 // batch_length
-
+	offset += 4                                                // batch_length
 
 	offset += 4 // skip partition_leader_epoch
 	magic := recordSetData[offset]
 	offset += 1 // magic byte
-
 
 	if magic != 2 {
 		// Fallback for older formats
@@ -411,7 +407,6 @@ func (h *Handler) extractFirstRecord(recordSetData []byte) ([]byte, []byte) {
 
 	recordsCount := int32(binary.BigEndian.Uint32(recordSetData[offset:]))
 	offset += 4 // records_count
-
 
 	if recordsCount == 0 {
 		key := []byte("kafka-key")
@@ -434,7 +429,6 @@ func (h *Handler) extractFirstRecord(recordSetData []byte) ([]byte, []byte) {
 		return key, []byte(value)
 	}
 	offset += varintLen
-
 
 	if offset+int(recordLength) > len(recordSetData) {
 		key := []byte("kafka-key")
@@ -572,27 +566,26 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 	// - Request: transactional_id field (nullable string) at the beginning
 	// - Response: throttle_time_ms field at the end (v1+)
 
-	// Parse Produce v7 request format (client_id is already handled by HandleConn)
-	// Format: transactional_id(NULLABLE_STRING) + acks(INT16) + timeout_ms(INT32) + topics(ARRAY)
+	// Parse Produce v2+ request format (client_id already stripped in HandleConn)
+	// v2: acks(INT16) + timeout_ms(INT32) + topics(ARRAY)
+	// v3+: transactional_id(NULLABLE_STRING) + acks(INT16) + timeout_ms(INT32) + topics(ARRAY)
 
 	offset := 0
 
-	// Parse transactional_id (NULLABLE_STRING: 2 bytes length + data, -1 = null)
-	if len(requestBody) < 2 {
-		return nil, fmt.Errorf("Produce v%d request too short for transactional_id", apiVersion)
-	}
-
-	txIDLen := int16(binary.BigEndian.Uint16(requestBody[offset : offset+2]))
-	offset += 2
-
-	if txIDLen == -1 {
-		// null transactional_id - skip
-	} else if txIDLen >= 0 {
-		if len(requestBody) < offset+int(txIDLen) {
-			return nil, fmt.Errorf("Produce v%d request transactional_id too short", apiVersion)
+	// transactional_id only exists in v3+
+	if apiVersion >= 3 {
+		if len(requestBody) < offset+2 {
+			return nil, fmt.Errorf("Produce v%d request too short for transactional_id", apiVersion)
 		}
-		// Skip transactional_id data
-		offset += int(txIDLen)
+		txIDLen := int16(binary.BigEndian.Uint16(requestBody[offset : offset+2]))
+		offset += 2
+		if txIDLen >= 0 {
+			if len(requestBody) < offset+int(txIDLen) {
+				return nil, fmt.Errorf("Produce v%d request transactional_id too short", apiVersion)
+			}
+			offset += int(txIDLen)
+		}
+		// txIDLen == -1 means null, nothing to skip
 	}
 
 	// Parse acks (INT16) and timeout_ms (INT32)
@@ -605,13 +598,15 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 	_ = binary.BigEndian.Uint32(requestBody[offset : offset+4]) // timeout unused
 	offset += 4
 
-
 	// Remember if this is fire-and-forget mode
 	isFireAndForget := acks == 0
 	if isFireAndForget {
 	} else {
 	}
 
+	if len(requestBody) < offset+4 {
+		return nil, fmt.Errorf("Produce v%d request missing topics count", apiVersion)
+	}
 	topicsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 	offset += 4
 
@@ -619,7 +614,6 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 	if topicsCount > 1000 {
 		return nil, fmt.Errorf("Produce v%d request has implausible topics count: %d", apiVersion, topicsCount)
 	}
-
 
 	// Build response
 	response := make([]byte, 0, 256)
@@ -658,7 +652,6 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 		partitionsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 		offset += 4
 
-
 		// Response: topic name (STRING: 2 bytes length + data)
 		response = append(response, byte(topicNameSize>>8), byte(topicNameSize))
 		response = append(response, []byte(topicName)...)
@@ -683,7 +676,6 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 			}
 			recordSetData := requestBody[offset : offset+int(recordSetSize)]
 			offset += int(recordSetSize)
-
 
 			// Process the record set and store in ledger
 			var errorCode uint16 = 0
@@ -784,7 +776,6 @@ func (h *Handler) processSchematizedMessage(topicName string, partitionID int32,
 	if !h.schemaManager.IsSchematized(messageBytes) {
 		return nil // Not schematized, continue with normal processing
 	}
-
 
 	// Decode the message
 	decodedMsg, err := h.schemaManager.DecodeMessage(messageBytes)
@@ -892,26 +883,26 @@ func (h *Handler) performSchemaValidation(topicName string, schemaID uint32, mes
 			return fmt.Errorf("failed to check schema evolution for topic %s: %w", topicName, err)
 		}
 		if !compatible {
-			return fmt.Errorf("schema ID %d is not compatible with expected schema %d for topic %s", 
+			return fmt.Errorf("schema ID %d is not compatible with expected schema %d for topic %s",
 				schemaID, expectedSchemaID, topicName)
 		}
 	}
 
 	// 5. Validate message format matches expected format
 	expectedFormatStr := expectedMetadata["schema_format"]
-		var expectedFormat schema.Format
-		switch expectedFormatStr {
-		case "AVRO":
-			expectedFormat = schema.FormatAvro
-		case "PROTOBUF":
-			expectedFormat = schema.FormatProtobuf
-		case "JSON_SCHEMA":
-			expectedFormat = schema.FormatJSONSchema
-		default:
-			expectedFormat = schema.FormatUnknown
-		}
+	var expectedFormat schema.Format
+	switch expectedFormatStr {
+	case "AVRO":
+		expectedFormat = schema.FormatAvro
+	case "PROTOBUF":
+		expectedFormat = schema.FormatProtobuf
+	case "JSON_SCHEMA":
+		expectedFormat = schema.FormatJSONSchema
+	default:
+		expectedFormat = schema.FormatUnknown
+	}
 	if messageFormat != expectedFormat {
-		return fmt.Errorf("message format %s does not match expected format %s for topic %s", 
+		return fmt.Errorf("message format %s does not match expected format %s for topic %s",
 			messageFormat, expectedFormat, topicName)
 	}
 
@@ -934,7 +925,7 @@ func (h *Handler) checkSchemaEvolution(topicName string, expectedSchemaID, actua
 
 	// Check compatibility based on topic's compatibility level
 	compatibilityLevel := h.getTopicCompatibilityLevel(topicName)
-	
+
 	result, err := h.schemaManager.CheckSchemaCompatibility(
 		expectedSchema.Schema,
 		actualSchema.Schema,
@@ -1050,15 +1041,15 @@ func (h *Handler) parseSchemaID(schemaIDStr string) (uint32, error) {
 	if schemaIDStr == "" {
 		return 0, fmt.Errorf("empty schema ID")
 	}
-	
+
 	var schemaID uint64
 	if _, err := fmt.Sscanf(schemaIDStr, "%d", &schemaID); err != nil {
 		return 0, fmt.Errorf("invalid schema ID format: %w", err)
 	}
-	
+
 	if schemaID > 0xFFFFFFFF {
 		return 0, fmt.Errorf("schema ID too large: %d", schemaID)
 	}
-	
+
 	return uint32(schemaID), nil
 }

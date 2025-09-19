@@ -936,6 +936,8 @@ type BrokerSubscriberSession struct {
 	Topic     string
 	Partition int32
 	Stream    mq_pb.SeaweedMessaging_SubscribeMessageClient
+	// Track the requested start offset used to initialize this stream
+	StartOffset int64
 }
 
 // NewBrokerClient creates a client that connects to a SeaweedMQ broker
@@ -1189,10 +1191,26 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 
 	bc.subscribersLock.RLock()
 	if session, exists := bc.subscribers[key]; exists {
+		// If the existing session was created with a different start offset,
+		// re-create the subscriber to honor the requested position.
+		if session.StartOffset != startOffset {
+			bc.subscribersLock.RUnlock()
+			// Close and delete the old session before creating a new one
+			bc.subscribersLock.Lock()
+			if old, ok := bc.subscribers[key]; ok {
+				if old.Stream != nil {
+					_ = old.Stream.CloseSend()
+				}
+				delete(bc.subscribers, key)
+			}
+			bc.subscribersLock.Unlock()
+		} else {
+			bc.subscribersLock.RUnlock()
+			return session, nil
+		}
+	} else {
 		bc.subscribersLock.RUnlock()
-		return session, nil
 	}
-	bc.subscribersLock.RUnlock()
 
 	// Create new subscriber stream
 	bc.subscribersLock.Lock()
@@ -1270,9 +1288,10 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 	}
 
 	session := &BrokerSubscriberSession{
-		Topic:     topic,
-		Partition: partition,
-		Stream:    stream,
+		Topic:       topic,
+		Partition:   partition,
+		Stream:      stream,
+		StartOffset: startOffset,
 	}
 
 	bc.subscribers[key] = session
