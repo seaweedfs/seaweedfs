@@ -83,22 +83,28 @@ func NewSeaweedMQHandler(agentAddress string) (*SeaweedMQHandler, error) {
 // GetStoredRecords retrieves records from SeaweedMQ storage
 // This implements the core integration between Kafka Fetch API and SeaweedMQ storage
 func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromOffset int64, maxRecords int) ([]offset.SMQRecord, error) {
+	fmt.Printf("DEBUG:GetStoredRecords topic=%s partition=%d fromOffset=%d maxRecords=%d\n", topic, partition, fromOffset, maxRecords)
 	// Verify topic exists
 	if !h.TopicExists(topic) {
+		fmt.Printf("DEBUG:GetStoredRecords topic %s does not exist in handler registry\n", topic)
 		return nil, fmt.Errorf("topic %s does not exist", topic)
 	}
 
 	// Get the offset ledger to translate Kafka offsets to SeaweedMQ timestamps
 	ledger := h.GetLedger(topic, partition)
 	if ledger == nil {
+		fmt.Printf("DEBUG:GetStoredRecords no ledger for %s[%d], returning empty\n", topic, partition)
 		// No messages yet, return empty
 		return nil, nil
 	}
 
 	highWaterMark := ledger.GetHighWaterMark()
+	fmt.Printf("DEBUG:GetStoredRecords ledger HWM=%d earliest=%d latest=%d entries=%d\n",
+		highWaterMark, ledger.GetEarliestOffset(), ledger.GetLatestOffset(), len(ledger.GetEntries()))
 
 	// If fromOffset is at or beyond high water mark, no records to return
 	if fromOffset >= highWaterMark {
+		fmt.Printf("DEBUG:GetStoredRecords fromOffset %d >= HWM %d, returning empty\n", fromOffset, highWaterMark)
 		return nil, nil
 	}
 
@@ -136,6 +142,7 @@ func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromO
 		return nil, fmt.Errorf("failed to read records: %v", err)
 	}
 
+	fmt.Printf("DEBUG:GetStoredRecords fetched %d seaweedRecords from broker/agent\n", len(seaweedRecords))
 	// Convert SeaweedMQ records to SMQRecord interface with proper Kafka offsets
 	smqRecords := make([]offset.SMQRecord, 0, len(seaweedRecords))
 	for i, seaweedRecord := range seaweedRecords {
@@ -421,6 +428,7 @@ func (h *SeaweedMQHandler) GetLedger(topic string, partition int32) *offset.Ledg
 
 // FetchRecords retrieves records from SeaweedMQ for a Kafka fetch request
 func (h *SeaweedMQHandler) FetchRecords(topic string, partition int32, fetchOffset int64, maxBytes int32) ([]byte, error) {
+	fmt.Printf("DEBUG:FetchRecords topic=%s partition=%d fetchOffset=%d maxBytes=%d\n", topic, partition, fetchOffset, maxBytes)
 	// Verify topic exists
 	if !h.TopicExists(topic) {
 		return nil, fmt.Errorf("topic %s does not exist", topic)
@@ -428,11 +436,13 @@ func (h *SeaweedMQHandler) FetchRecords(topic string, partition int32, fetchOffs
 
 	ledger := h.GetLedger(topic, partition)
 	if ledger == nil {
+		fmt.Printf("DEBUG:FetchRecords no ledger for %s[%d], returning empty batch\n", topic, partition)
 		// No messages yet, return empty record batch
 		return []byte{}, nil
 	}
 
 	highWaterMark := ledger.GetHighWaterMark()
+	fmt.Printf("DEBUG:FetchRecords ledger HWM=%d earliest=%d latest=%d\n", highWaterMark, ledger.GetEarliestOffset(), ledger.GetLatestOffset())
 
 	// If fetch offset is at or beyond high water mark, no records to return
 	if fetchOffset >= highWaterMark {
@@ -468,6 +478,7 @@ func (h *SeaweedMQHandler) FetchRecords(topic string, partition int32, fetchOffs
 
 	if err != nil {
 		// If no records available, return empty batch instead of error
+		fmt.Printf("DEBUG:FetchRecords read error: %v, returning empty batch\n", err)
 		return []byte{}, nil
 	}
 
@@ -478,6 +489,7 @@ func (h *SeaweedMQHandler) FetchRecords(topic string, partition int32, fetchOffs
 	}
 
 	// Convert mapped records to Kafka record batch format
+	fmt.Printf("DEBUG:FetchRecords converting %d kafkaRecords to record batch baseOffset=%d\n", len(kafkaRecords), fetchOffset)
 	return h.convertSeaweedToKafkaRecordBatch(kafkaRecords, fetchOffset, maxBytes)
 }
 
@@ -1222,6 +1234,13 @@ func (bc *BrokerClient) ReadRecords(session *BrokerSubscriberSession, maxRecords
 				Sequence:  0, // Will be set by offset ledger
 			}
 			records = append(records, record)
+
+			// Important: return early after receiving at least one record to avoid
+			// blocking while waiting for an entire batch in environments where data
+			// arrives slowly. The fetch layer will invoke subsequent reads as needed.
+			if len(records) >= 1 {
+				break
+			}
 		}
 	}
 

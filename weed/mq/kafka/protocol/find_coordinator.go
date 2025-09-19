@@ -76,6 +76,8 @@ func (h *Handler) handleFindCoordinatorV0(correlationID uint32, requestBody []by
 
 	// Find the appropriate coordinator for this group
 	coordinatorHost, coordinatorPort, nodeID, err := h.findCoordinatorForGroup(coordinatorKey)
+	fmt.Printf("DEBUG: FindCoordinator selected coordinator %s:%d (node %d) for group '%s'\n",
+		coordinatorHost, coordinatorPort, nodeID, coordinatorKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find coordinator for group %s: %w", coordinatorKey, err)
 	}

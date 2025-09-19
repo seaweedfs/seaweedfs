@@ -101,8 +101,8 @@ func (h *Handler) handleOffsetCommit(correlationID uint32, requestBody []byte) (
 	if err != nil {
 		return h.buildOffsetCommitErrorResponse(correlationID, ErrorCodeInvalidCommitOffsetSize), nil
 	}
-	
-	fmt.Printf("DEBUG: OffsetCommit request - GroupID: %s, GenerationID: %d, MemberID: %s\n", 
+
+	fmt.Printf("DEBUG: OffsetCommit request - GroupID: %s, GenerationID: %d, MemberID: %s\n",
 		req.GroupID, req.GenerationID, req.MemberID)
 
 	// Validate request
@@ -113,6 +113,7 @@ func (h *Handler) handleOffsetCommit(correlationID uint32, requestBody []byte) (
 	// Get consumer group
 	group := h.groupCoordinator.GetGroup(req.GroupID)
 	if group == nil {
+		fmt.Printf("DEBUG: OffsetCommit group '%s' not found\n", req.GroupID)
 		return h.buildOffsetCommitErrorResponse(correlationID, ErrorCodeInvalidGroupID), nil
 	}
 
@@ -124,6 +125,8 @@ func (h *Handler) handleOffsetCommit(correlationID uint32, requestBody []byte) (
 
 	// Require matching generation to store commits; return IllegalGeneration otherwise
 	generationMatches := (req.GenerationID == group.Generation)
+	fmt.Printf("DEBUG: OffsetCommit group='%s' group.Generation=%d matches=%v members=%d state=%v\n",
+		req.GroupID, group.Generation, generationMatches, len(group.Members), group.State)
 
 	// Process offset commits
 	resp := OffsetCommitResponse{
@@ -153,21 +156,21 @@ func (h *Handler) handleOffsetCommit(correlationID uint32, requestBody []byte) (
 					if err := h.commitOffsetToSMQ(key, p.Offset, p.Metadata); err != nil {
 						errCode = ErrorCodeOffsetMetadataTooLarge
 					} else {
-						fmt.Printf("DEBUG: OffsetCommit SMQ - Topic: %s, Partition: %d, Offset: %d\n", 
+						fmt.Printf("DEBUG: OffsetCommit SMQ - Topic: %s, Partition: %d, Offset: %d\n",
 							t.Name, p.Index, p.Offset)
 					}
 				} else {
 					if err := h.commitOffset(group, t.Name, p.Index, p.Offset, p.Metadata); err != nil {
 						errCode = ErrorCodeOffsetMetadataTooLarge
 					} else {
-						fmt.Printf("DEBUG: OffsetCommit Memory - Topic: %s, Partition: %d, Offset: %d\n", 
+						fmt.Printf("DEBUG: OffsetCommit Memory - Topic: %s, Partition: %d, Offset: %d\n",
 							t.Name, p.Index, p.Offset)
 					}
 				}
 			} else {
 				// Do not store commit if generation mismatch
 				errCode = 22 // IllegalGeneration
-				fmt.Printf("DEBUG: OffsetCommit rejected - generation mismatch (req: %d, group: %d)\n", 
+				fmt.Printf("DEBUG: OffsetCommit rejected - generation mismatch (req: %d, group: %d)\n",
 					req.GenerationID, group.Generation)
 			}
 
@@ -189,8 +192,8 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, req
 	if err != nil {
 		return h.buildOffsetFetchErrorResponse(correlationID, ErrorCodeInvalidGroupID), nil
 	}
-	
-	fmt.Printf("DEBUG: OffsetFetch request - GroupID: %s, Topics: %d\n", 
+
+	fmt.Printf("DEBUG: OffsetFetch request - GroupID: %s, Topics: %d\n",
 		request.GroupID, len(request.Topics))
 
 	// Validate request

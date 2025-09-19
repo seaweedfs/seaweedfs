@@ -87,6 +87,9 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 	group.Mu.Lock()
 	defer group.Mu.Unlock()
 
+	fmt.Printf("DEBUG: JoinGroup before - group='%s' gen=%d state=%v members=%d leader='%s'\n",
+		group.ID, group.Generation, group.State, len(group.Members), group.Leader)
+
 	// Update group's last activity
 	group.LastActivity = time.Now()
 
@@ -146,7 +149,7 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 	}
 
 	// Check group state
-	fmt.Printf("DEBUG: JoinGroup current group state: %s, generation: %d\n", group.State, group.Generation)
+	fmt.Printf("DEBUG: JoinGroup current group state: %s, generation: %d (members=%d)\n", group.State, group.Generation, len(group.Members))
 	switch group.State {
 	case consumer.GroupStateEmpty, consumer.GroupStateStable:
 		// Can join or trigger rebalance
