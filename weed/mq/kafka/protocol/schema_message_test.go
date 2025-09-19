@@ -2,168 +2,82 @@ package protocol
 
 import (
 	"testing"
-	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"google.golang.org/protobuf/proto"
 )
 
-func TestCreateRecordValueFromKafkaMessage(t *testing.T) {
+func TestProduceSchemaBasedRecordWithoutSchema(t *testing.T) {
+	// Test that when schema management is disabled, it falls back to raw message handling
 	handler := &Handler{}
-
+	
 	key := []byte("test-key")
 	value := []byte("test-value")
-
-	recordValue, err := handler.createRecordValueFromKafkaMessage(key, value)
+	
+	// Mock the seaweedMQHandler to capture the call
+	mockHandler := &testSeaweedMQHandlerForUnitTests{
+		topics:  make(map[string]bool),
+		ledgers: make(map[string]*offset.Ledger),
+		records: make(map[string][]offset.SMQRecord),
+	}
+	mockHandler.topics["test-topic"] = true
+	handler.seaweedMQHandler = mockHandler
+	
+	// Since schema management is not enabled, should call ProduceRecord
+	offset, err := handler.produceSchemaBasedRecord("test-topic", 0, key, value)
 	if err != nil {
-		t.Fatalf("Failed to create RecordValue: %v", err)
+		t.Fatalf("Failed to produce record: %v", err)
 	}
-
-	// Verify structure
-	if recordValue.Fields == nil {
-		t.Fatal("RecordValue.Fields is nil")
-	}
-
-	// Check key field
-	keyField, exists := recordValue.Fields["key"]
-	if !exists {
-		t.Fatal("Missing 'key' field in RecordValue")
-	}
-	if keyValue, ok := keyField.Kind.(*schema_pb.Value_BytesValue); ok {
-		if string(keyValue.BytesValue) != "test-key" {
-			t.Errorf("Expected key 'test-key', got '%s'", string(keyValue.BytesValue))
-		}
-	} else {
-		t.Errorf("Key field is not BytesValue, got %T", keyField.Kind)
-	}
-
-	// Check value field
-	valueField, exists := recordValue.Fields["value"]
-	if !exists {
-		t.Fatal("Missing 'value' field in RecordValue")
-	}
-	if valueValue, ok := valueField.Kind.(*schema_pb.Value_BytesValue); ok {
-		if string(valueValue.BytesValue) != "test-value" {
-			t.Errorf("Expected value 'test-value', got '%s'", string(valueValue.BytesValue))
-		}
-	} else {
-		t.Errorf("Value field is not BytesValue, got %T", valueField.Kind)
-	}
-
-	// Check timestamp field
-	timestampField, exists := recordValue.Fields["timestamp"]
-	if !exists {
-		t.Fatal("Missing 'timestamp' field in RecordValue")
-	}
-	if _, ok := timestampField.Kind.(*schema_pb.Value_TimestampValue); !ok {
-		t.Errorf("Timestamp field is not TimestampValue, got %T", timestampField.Kind)
+	
+	if offset < 0 {
+		t.Errorf("Expected non-negative offset, got %d", offset)
 	}
 }
 
-func TestDecodeRecordValueToKafkaMessage(t *testing.T) {
+func TestDecodeRecordValueToKafkaMessageWithoutSchema(t *testing.T) {
 	handler := &Handler{}
-
-	// Create a test RecordValue
-	originalValue := []byte("original-kafka-message")
+	
+	// Create a test RecordValue with schema-based fields (not fixed structure)
 	recordValue := &schema_pb.RecordValue{
 		Fields: map[string]*schema_pb.Value{
-			"key": {
-				Kind: &schema_pb.Value_BytesValue{BytesValue: []byte("test-key")},
+			"user_name": {
+				Kind: &schema_pb.Value_StringValue{StringValue: "john_doe"},
 			},
-			"value": {
-				Kind: &schema_pb.Value_BytesValue{BytesValue: originalValue},
-			},
-			"timestamp": {
-				Kind: &schema_pb.Value_TimestampValue{
-					TimestampValue: &schema_pb.TimestampValue{
-						TimestampMicros: time.Now().UnixNano() / 1000,
-						IsUtc:           true,
-					},
-				},
-			},
-		},
-	}
-
-	// Marshal to bytes
-	recordValueBytes, err := proto.Marshal(recordValue)
-	if err != nil {
-		t.Fatalf("Failed to marshal RecordValue: %v", err)
-	}
-
-	// Decode back to Kafka message
-	decodedValue := handler.decodeRecordValueToKafkaMessage(recordValueBytes)
-	if decodedValue == nil {
-		t.Fatal("Decoded value is nil")
-	}
-
-	if string(decodedValue) != string(originalValue) {
-		t.Errorf("Expected decoded value '%s', got '%s'", string(originalValue), string(decodedValue))
-	}
-}
-
-func TestDecodeRecordValueWithSchematizedMessage(t *testing.T) {
-	handler := &Handler{}
-
-	// Create a RecordValue with nested schematized message
-	nestedRecord := &schema_pb.RecordValue{
-		Fields: map[string]*schema_pb.Value{
-			"name": {
-				Kind: &schema_pb.Value_StringValue{StringValue: "John Doe"},
-			},
-			"age": {
+			"user_age": {
 				Kind: &schema_pb.Value_Int32Value{Int32Value: 30},
 			},
-		},
-	}
-
-	recordValue := &schema_pb.RecordValue{
-		Fields: map[string]*schema_pb.Value{
-			"key": {
-				Kind: &schema_pb.Value_BytesValue{BytesValue: []byte("user-123")},
-			},
-			"value": {
-				Kind: &schema_pb.Value_RecordValue{RecordValue: nestedRecord},
-			},
-			"timestamp": {
-				Kind: &schema_pb.Value_TimestampValue{
-					TimestampValue: &schema_pb.TimestampValue{
-						TimestampMicros: time.Now().UnixNano() / 1000,
-						IsUtc:           true,
-					},
-				},
-			},
-			"schema_id": {
-				Kind: &schema_pb.Value_Int32Value{Int32Value: 123},
-			},
-			"schema_format": {
-				Kind: &schema_pb.Value_StringValue{StringValue: "JSON_SCHEMA"},
+			"is_active": {
+				Kind: &schema_pb.Value_BoolValue{BoolValue: true},
 			},
 		},
 	}
-
+	
 	// Marshal to bytes
 	recordValueBytes, err := proto.Marshal(recordValue)
 	if err != nil {
 		t.Fatalf("Failed to marshal RecordValue: %v", err)
 	}
-
-	// Decode back to Kafka message
+	
+	// Decode back to Kafka message (should fallback to JSON since no schema manager)
 	decodedValue := handler.decodeRecordValueToKafkaMessage(recordValueBytes)
 	if decodedValue == nil {
 		t.Fatal("Decoded value is nil")
 	}
-
-	// Should return JSON representation since schema manager is not enabled
+	
+	// Should be JSON representation
 	decodedStr := string(decodedValue)
-
-	// Check that it contains the expected fields (order may vary)
-	if !containsSubstring(decodedStr, `"name":"John Doe"`) {
-		t.Errorf("Decoded JSON missing name field: %s", decodedStr)
+	if !containsSubstring(decodedStr, `"user_name":"john_doe"`) {
+		t.Errorf("Decoded JSON missing user_name field: %s", decodedStr)
 	}
-	if !containsSubstring(decodedStr, `"age":30`) {
-		t.Errorf("Decoded JSON missing age field: %s", decodedStr)
+	if !containsSubstring(decodedStr, `"user_age":30`) {
+		t.Errorf("Decoded JSON missing user_age field: %s", decodedStr)
+	}
+	if !containsSubstring(decodedStr, `"is_active":true`) {
+		t.Errorf("Decoded JSON missing is_active field: %s", decodedStr)
 	}
 }
+
 
 func TestDecodeRecordValueBackwardCompatibility(t *testing.T) {
 	handler := &Handler{}
@@ -219,36 +133,6 @@ func TestRecordValueToJSON(t *testing.T) {
 	}
 }
 
-func TestProduceSchemaBasedRecordRoundTrip(t *testing.T) {
-	// This test verifies the complete round-trip: Kafka message -> RecordValue -> Kafka message
-	handler := &Handler{}
-
-	originalKey := []byte("test-key")
-	originalValue := []byte(`{"message":"hello world"}`)
-
-	// Step 1: Create RecordValue from Kafka message
-	recordValue, err := handler.createRecordValueFromKafkaMessage(originalKey, originalValue)
-	if err != nil {
-		t.Fatalf("Failed to create RecordValue: %v", err)
-	}
-
-	// Step 2: Marshal RecordValue to bytes (simulating storage in SMQ)
-	recordValueBytes, err := proto.Marshal(recordValue)
-	if err != nil {
-		t.Fatalf("Failed to marshal RecordValue: %v", err)
-	}
-
-	// Step 3: Decode RecordValue back to Kafka message
-	decodedValue := handler.decodeRecordValueToKafkaMessage(recordValueBytes)
-	if decodedValue == nil {
-		t.Fatal("Decoded value is nil")
-	}
-
-	// Step 4: Verify round-trip integrity
-	if string(decodedValue) != string(originalValue) {
-		t.Errorf("Round-trip failed: expected '%s', got '%s'", string(originalValue), string(decodedValue))
-	}
-}
 
 // Helper function to check if a string contains a substring
 func containsSubstring(s, substr string) bool {

@@ -9,113 +9,51 @@ import (
 
 func TestValidateRecordValue(t *testing.T) {
 	broker := &MessageQueueBroker{}
-
-	// Test valid Kafka RecordValue
+	
+	// Test valid schema-based RecordValue
 	validRecord := &schema_pb.RecordValue{
 		Fields: map[string]*schema_pb.Value{
-			"key": {
-				Kind: &schema_pb.Value_BytesValue{BytesValue: []byte("test-key")},
+			"user_name": {
+				Kind: &schema_pb.Value_StringValue{StringValue: "john_doe"},
 			},
-			"value": {
-				Kind: &schema_pb.Value_BytesValue{BytesValue: []byte("test-value")},
+			"user_age": {
+				Kind: &schema_pb.Value_Int32Value{Int32Value: 30},
 			},
-			"timestamp": {
-				Kind: &schema_pb.Value_TimestampValue{
-					TimestampValue: &schema_pb.TimestampValue{
-						TimestampMicros: 1234567890,
-						IsUtc:           true,
-					},
-				},
+			"is_active": {
+				Kind: &schema_pb.Value_BoolValue{BoolValue: true},
 			},
 		},
 	}
-
+	
 	kafkaTopic := &schema_pb.Topic{
 		Namespace: "kafka",
 		Name:      "test-topic",
 	}
-
+	
 	err := broker.validateRecordValue(validRecord, kafkaTopic)
 	if err != nil {
-		t.Errorf("Valid Kafka RecordValue should pass validation: %v", err)
+		t.Errorf("Valid schema-based RecordValue should pass validation: %v", err)
 	}
 }
 
-func TestValidateRecordValueMissingFields(t *testing.T) {
+func TestValidateRecordValueEmptyFields(t *testing.T) {
 	broker := &MessageQueueBroker{}
-
+	
 	kafkaTopic := &schema_pb.Topic{
 		Namespace: "kafka",
 		Name:      "test-topic",
 	}
-
-	// Test missing key field
-	recordMissingKey := &schema_pb.RecordValue{
-		Fields: map[string]*schema_pb.Value{
-			"value": {
-				Kind: &schema_pb.Value_BytesValue{BytesValue: []byte("test-value")},
-			},
-			"timestamp": {
-				Kind: &schema_pb.Value_TimestampValue{
-					TimestampValue: &schema_pb.TimestampValue{
-						TimestampMicros: 1234567890,
-						IsUtc:           true,
-					},
-				},
-			},
-		},
+	
+	// Test empty fields
+	recordEmptyFields := &schema_pb.RecordValue{
+		Fields: map[string]*schema_pb.Value{},
 	}
-
-	err := broker.validateRecordValue(recordMissingKey, kafkaTopic)
+	
+	err := broker.validateRecordValue(recordEmptyFields, kafkaTopic)
 	if err == nil {
-		t.Error("RecordValue missing key field should fail validation")
+		t.Error("RecordValue with empty fields should fail validation")
 	}
-	if err.Error() != "Kafka RecordValue missing 'key' field" {
-		t.Errorf("Expected specific error message, got: %v", err)
-	}
-
-	// Test missing value field
-	recordMissingValue := &schema_pb.RecordValue{
-		Fields: map[string]*schema_pb.Value{
-			"key": {
-				Kind: &schema_pb.Value_BytesValue{BytesValue: []byte("test-key")},
-			},
-			"timestamp": {
-				Kind: &schema_pb.Value_TimestampValue{
-					TimestampValue: &schema_pb.TimestampValue{
-						TimestampMicros: 1234567890,
-						IsUtc:           true,
-					},
-				},
-			},
-		},
-	}
-
-	err = broker.validateRecordValue(recordMissingValue, kafkaTopic)
-	if err == nil {
-		t.Error("RecordValue missing value field should fail validation")
-	}
-	if err.Error() != "Kafka RecordValue missing 'value' field" {
-		t.Errorf("Expected specific error message, got: %v", err)
-	}
-
-	// Test missing timestamp field
-	recordMissingTimestamp := &schema_pb.RecordValue{
-		Fields: map[string]*schema_pb.Value{
-			"key": {
-				Kind: &schema_pb.Value_BytesValue{BytesValue: []byte("test-key")},
-			},
-			"value": {
-				Kind: &schema_pb.Value_BytesValue{BytesValue: []byte("test-value")},
-			},
-		},
-	}
-
-	err = broker.validateRecordValue(recordMissingTimestamp, kafkaTopic)
-	if err == nil {
-		t.Error("RecordValue missing timestamp field should fail validation")
-	}
-	if err.Error() != "Kafka RecordValue missing 'timestamp' field" {
+	if err.Error() != "RecordValue has no fields" {
 		t.Errorf("Expected specific error message, got: %v", err)
 	}
 }

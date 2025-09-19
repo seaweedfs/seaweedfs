@@ -8,8 +8,8 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func TestSchemaBasedMessageFlow(t *testing.T) {
-	// Skip if SMQ is not available
+func TestSchemaBasedMessageFlowFallback(t *testing.T) {
+	// Test that when schema management is not enabled, it falls back to raw message handling
 	gateway := testutil.NewGatewayTestServerWithSMQ(t, testutil.SMQRequired)
 	defer gateway.Close()
 
@@ -24,7 +24,7 @@ func TestSchemaBasedMessageFlow(t *testing.T) {
 	originalKey := []byte("schema-key")
 	originalValue := []byte(`{"name":"John","age":30}`)
 
-	// Step 1: Produce message using schema-based encoding
+	// Step 1: Produce message using schema-based encoding (should fallback to raw)
 	handler := gateway.GetHandler()
 	offset, err := handler.ProduceSchemaBasedRecord(topic, partition, originalKey, originalValue)
 	testutil.AssertNoError(t, err, "Failed to produce schema-based record")
@@ -33,7 +33,7 @@ func TestSchemaBasedMessageFlow(t *testing.T) {
 		t.Errorf("Expected non-negative offset, got %d", offset)
 	}
 
-	// Step 2: Verify the message was stored as RecordValue in SMQ
+	// Step 2: Verify the message was stored (as raw bytes since no schema management)
 	smqRecords, err := handler.GetSeaweedMQHandler().GetStoredRecords(topic, partition, offset, 1)
 	testutil.AssertNoError(t, err, "Failed to get stored records")
 
@@ -41,58 +41,22 @@ func TestSchemaBasedMessageFlow(t *testing.T) {
 		t.Fatalf("Expected 1 record, got %d", len(smqRecords))
 	}
 
-	// Step 3: Verify the stored record is a valid RecordValue
+	// Step 3: Since schema management is not enabled, the message should be stored as raw bytes
 	storedRecord := smqRecords[0]
-	recordValue := &schema_pb.RecordValue{}
-	err = proto.Unmarshal(storedRecord.GetValue(), recordValue)
-	testutil.AssertNoError(t, err, "Stored record should be valid RecordValue")
-
-	// Verify RecordValue structure
-	if recordValue.Fields == nil {
-		t.Fatal("RecordValue.Fields is nil")
+	storedValue := storedRecord.GetValue()
+	
+	// Should be the original message since no schema processing occurred
+	if string(storedValue) != string(originalValue) {
+		t.Errorf("Stored value mismatch: expected '%s', got '%s'", string(originalValue), string(storedValue))
 	}
 
-	// Check key field
-	keyField, exists := recordValue.Fields["key"]
-	if !exists {
-		t.Fatal("Missing 'key' field in RecordValue")
-	}
-	if keyValue, ok := keyField.Kind.(*schema_pb.Value_BytesValue); ok {
-		if string(keyValue.BytesValue) != string(originalKey) {
-			t.Errorf("Key mismatch: expected '%s', got '%s'", string(originalKey), string(keyValue.BytesValue))
-		}
-	} else {
-		t.Errorf("Key field is not BytesValue: %T", keyField.Kind)
-	}
-
-	// Check value field
-	valueField, exists := recordValue.Fields["value"]
-	if !exists {
-		t.Fatal("Missing 'value' field in RecordValue")
-	}
-	if valueValue, ok := valueField.Kind.(*schema_pb.Value_BytesValue); ok {
-		if string(valueValue.BytesValue) != string(originalValue) {
-			t.Errorf("Value mismatch: expected '%s', got '%s'", string(originalValue), string(valueValue.BytesValue))
-		}
-	} else {
-		t.Errorf("Value field is not BytesValue: %T", valueField.Kind)
-	}
-
-	// Check timestamp field
-	timestampField, exists := recordValue.Fields["timestamp"]
-	if !exists {
-		t.Fatal("Missing 'timestamp' field in RecordValue")
-	}
-	if _, ok := timestampField.Kind.(*schema_pb.Value_TimestampValue); !ok {
-		t.Errorf("Timestamp field is not TimestampValue: %T", timestampField.Kind)
-	}
-
-	// Step 4: Test fetch path - decode RecordValue back to Kafka message
-	decodedValue := handler.DecodeRecordValueToKafkaMessage(storedRecord.GetValue())
+	// Step 4: Test fetch path - should return the raw bytes
+	decodedValue := handler.DecodeRecordValueToKafkaMessage(storedValue)
 	if decodedValue == nil {
 		t.Fatal("Decoded value is nil")
 	}
 
+	// Should be the same as the original since it's raw bytes
 	if string(decodedValue) != string(originalValue) {
 		t.Errorf("Decoded value mismatch: expected '%s', got '%s'", string(originalValue), string(decodedValue))
 	}

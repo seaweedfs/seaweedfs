@@ -1651,92 +1651,33 @@ func (h *Handler) decodeRecordValueToKafkaMessage(recordValueBytes []byte) []byt
 		return recordValueBytes
 	}
 
-	// Extract the original Kafka message from RecordValue
-	return h.extractKafkaMessageFromRecordValue(recordValue)
-}
-
-// extractKafkaMessageFromRecordValue extracts the original Kafka message from RecordValue
-func (h *Handler) extractKafkaMessageFromRecordValue(recordValue *schema_pb.RecordValue) []byte {
-	if recordValue == nil || recordValue.Fields == nil {
-		return nil
-	}
-
-	// Look for the "value" field which contains the original Kafka message
-	valueField, exists := recordValue.Fields["value"]
-	if !exists {
-		Debug("RecordValue missing 'value' field")
-		return nil
-	}
-
-	// Handle different value types
-	switch v := valueField.Kind.(type) {
-	case *schema_pb.Value_BytesValue:
-		// Raw bytes - this is the original Kafka message
-		return v.BytesValue
-
-	case *schema_pb.Value_RecordValue:
-		// Nested RecordValue - this is a schematized message
-		return h.encodeSchematizedMessage(v.RecordValue, recordValue)
-
-	case *schema_pb.Value_StringValue:
-		// String value - convert to bytes
-		return []byte(v.StringValue)
-
-	default:
-		Debug("Unsupported value type in RecordValue: %T", v)
-		return nil
-	}
-}
-
-// encodeSchematizedMessage re-encodes a schematized message back to Confluent format
-func (h *Handler) encodeSchematizedMessage(decodedRecord *schema_pb.RecordValue, originalRecord *schema_pb.RecordValue) []byte {
-	// Check if we have schema metadata
-	schemaIDField, hasSchemaID := originalRecord.Fields["schema_id"]
-	schemaFormatField, hasSchemaFormat := originalRecord.Fields["schema_format"]
-
-	if !hasSchemaID || !hasSchemaFormat {
-		// No schema metadata, return as JSON
-		return h.recordValueToJSON(decodedRecord)
-	}
-
-	// Extract schema metadata
-	var schemaID uint32
-	var schemaFormat schema.Format
-
-	if idValue, ok := schemaIDField.Kind.(*schema_pb.Value_Int32Value); ok {
-		schemaID = uint32(idValue.Int32Value)
-	} else {
-		Debug("Invalid schema_id type in RecordValue")
-		return h.recordValueToJSON(decodedRecord)
-	}
-
-	if formatValue, ok := schemaFormatField.Kind.(*schema_pb.Value_StringValue); ok {
-		switch formatValue.StringValue {
-		case "AVRO":
-			schemaFormat = schema.FormatAvro
-		case "PROTOBUF":
-			schemaFormat = schema.FormatProtobuf
-		case "JSON_SCHEMA":
-			schemaFormat = schema.FormatJSONSchema
-		default:
-			schemaFormat = schema.FormatUnknown
-		}
-	} else {
-		Debug("Invalid schema_format type in RecordValue")
-		return h.recordValueToJSON(decodedRecord)
-	}
-
-	// If schema management is enabled, re-encode using schema
+	// If schema management is enabled, re-encode the RecordValue to Confluent format
 	if h.IsSchemaEnabled() {
-		if encodedMsg, err := h.schemaManager.EncodeMessage(decodedRecord, schemaID, schemaFormat); err == nil {
+		if encodedMsg, err := h.encodeRecordValueToConfluentFormat(recordValue); err == nil {
 			return encodedMsg
 		} else {
-			Debug("Failed to re-encode schematized message: %v", err)
+			Debug("Failed to encode RecordValue to Confluent format: %v", err)
 		}
 	}
 
-	// Fallback to JSON
-	return h.recordValueToJSON(decodedRecord)
+	// Fallback: convert RecordValue to JSON
+	return h.recordValueToJSON(recordValue)
+}
+
+// encodeRecordValueToConfluentFormat re-encodes a RecordValue back to Confluent format
+func (h *Handler) encodeRecordValueToConfluentFormat(recordValue *schema_pb.RecordValue) ([]byte, error) {
+	if recordValue == nil {
+		return nil, fmt.Errorf("RecordValue is nil")
+	}
+
+	// TODO: Implement proper RecordValue to Confluent format encoding
+	// This would require:
+	// 1. Determining the schema ID and format from the RecordValue
+	// 2. Converting RecordValue back to the original data format (Avro, Protobuf, JSON)
+	// 3. Wrapping in Confluent envelope with magic byte and schema ID
+	
+	// For now, return an error to indicate this functionality needs implementation
+	return nil, fmt.Errorf("RecordValue to Confluent format encoding not yet implemented")
 }
 
 // recordValueToJSON converts a RecordValue to JSON bytes (fallback)

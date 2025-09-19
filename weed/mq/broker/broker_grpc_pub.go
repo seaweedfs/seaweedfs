@@ -210,19 +210,15 @@ func (b *MessageQueueBroker) validateRecordValue(record *schema_pb.RecordValue, 
 		return fmt.Errorf("RecordValue.Fields is nil")
 	}
 
-	// For Kafka topics, validate that essential fields are present
-	if topic.Namespace == "kafka" {
-		// Kafka messages should have key, value, and timestamp fields
-		if _, hasKey := record.Fields["key"]; !hasKey {
-			return fmt.Errorf("Kafka RecordValue missing 'key' field")
-		}
-		if _, hasValue := record.Fields["value"]; !hasValue {
-			return fmt.Errorf("Kafka RecordValue missing 'value' field")
-		}
-		if _, hasTimestamp := record.Fields["timestamp"]; !hasTimestamp {
-			return fmt.Errorf("Kafka RecordValue missing 'timestamp' field")
-		}
+	// For schema-based RecordValue, the fields are determined by the actual schema
+	// from the schema registry, not fixed fields like "key", "value", "timestamp"
+	// Basic validation: ensure we have at least some fields
+	if len(record.Fields) == 0 {
+		return fmt.Errorf("RecordValue has no fields")
 	}
+
+	// Additional schema-specific validation could be added here
+	// based on the topic's schema requirements
 
 	return nil
 }
