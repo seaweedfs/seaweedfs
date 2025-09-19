@@ -148,6 +148,10 @@ func (s *Server) Start() error {
 					return
 				}
 			}
+			// Simple accept log to trace client connections (useful for JoinGroup debugging)
+			if conn != nil {
+				glog.V(1).Infof("accepted conn %s -> %s", conn.RemoteAddr(), conn.LocalAddr())
+			}
 			s.wg.Add(1)
 			go func(c net.Conn) {
 				defer s.wg.Done()

@@ -239,22 +239,6 @@ func (h *Handler) GetRecordBatch(topicName string, partition int32, offset int64
 	return nil, false
 }
 
-// getRecordCountFromBatch extracts the record count from a Kafka record batch
-func (h *Handler) getRecordCountFromBatch(batch []byte) int32 {
-	// Kafka record batch format:
-	// base_offset (8) + batch_length (4) + partition_leader_epoch (4) + magic (1) + crc (4) +
-	// attributes (2) + last_offset_delta (4) + first_timestamp (8) + max_timestamp (8) +
-	// producer_id (8) + producer_epoch (2) + base_sequence (4) + records_count (4) + records...
-
-	// The record count is at offset 57 (8+4+4+1+4+2+4+8+8+8+2+4 = 57)
-	if len(batch) < 61 { // 57 + 4 bytes for record count
-		return 0
-	}
-
-	recordCount := binary.BigEndian.Uint32(batch[57:61])
-	return int32(recordCount)
-}
-
 // SetSMQBrokerAddresses updates the SMQ broker addresses used in Metadata responses
 func (h *Handler) SetSMQBrokerAddresses(brokerAddresses []string) {
 	h.smqBrokerAddresses = brokerAddresses
@@ -522,8 +506,12 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		Debug("API REQUEST - Key: %d (%s), Version: %d, Correlation: %d", apiKey, getAPIName(apiKey), apiVersion, correlationID)
 		switch apiKey {
 		case 18: // ApiVersions
+			Debug("-> ApiVersions v%d", apiVersion)
+			fmt.Printf("DEBUG: ApiVersions v%d corr=%d\n", apiVersion, correlationID)
 			response, err = h.handleApiVersions(correlationID, apiVersion)
 		case 3: // Metadata
+			Debug("-> Metadata v%d", apiVersion)
+			fmt.Printf("DEBUG: Metadata v%d corr=%d\n", apiVersion, correlationID)
 			response, err = h.handleMetadata(correlationID, apiVersion, requestBody)
 		case 2: // ListOffsets
 			Debug("*** LISTOFFSETS REQUEST RECEIVED *** Correlation: %d, Version: %d", correlationID, apiVersion)
@@ -533,20 +521,36 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		case 20: // DeleteTopics
 			response, err = h.handleDeleteTopics(correlationID, requestBody)
 		case 0: // Produce
+			Debug("-> Produce v%d", apiVersion)
+			fmt.Printf("DEBUG: Produce v%d corr=%d\n", apiVersion, correlationID)
 			response, err = h.handleProduce(correlationID, apiVersion, requestBody)
 		case 1: // Fetch
+			Debug("-> Fetch v%d", apiVersion)
+			fmt.Printf("DEBUG: Fetch v%d corr=%d\n", apiVersion, correlationID)
 			response, err = h.handleFetch(ctx, correlationID, apiVersion, requestBody)
 		case 11: // JoinGroup
+			Debug("-> JoinGroup v%d", apiVersion)
+			fmt.Printf("DEBUG: JoinGroup v%d corr=%d\n", apiVersion, correlationID)
 			response, err = h.handleJoinGroup(correlationID, apiVersion, requestBody)
 		case 14: // SyncGroup
+			Debug("-> SyncGroup v%d", apiVersion)
+			fmt.Printf("DEBUG: SyncGroup v%d corr=%d\n", apiVersion, correlationID)
 			response, err = h.handleSyncGroup(correlationID, apiVersion, requestBody)
 		case 8: // OffsetCommit
+			Debug("-> OffsetCommit")
+			fmt.Printf("DEBUG: OffsetCommit corr=%d\n", correlationID)
 			response, err = h.handleOffsetCommit(correlationID, requestBody)
 		case 9: // OffsetFetch
+			Debug("-> OffsetFetch v%d", apiVersion)
+			fmt.Printf("DEBUG: OffsetFetch v%d corr=%d\n", apiVersion, correlationID)
 			response, err = h.handleOffsetFetch(correlationID, apiVersion, requestBody)
 		case 10: // FindCoordinator
+			Debug("-> FindCoordinator v%d", apiVersion)
+			fmt.Printf("DEBUG: FindCoordinator v%d corr=%d\n", apiVersion, correlationID)
 			response, err = h.handleFindCoordinator(correlationID, apiVersion, requestBody)
 		case 12: // Heartbeat
+			Debug("-> Heartbeat v%d", apiVersion)
+			fmt.Printf("DEBUG: Heartbeat v%d corr=%d\n", apiVersion, correlationID)
 			response, err = h.handleHeartbeat(correlationID, requestBody)
 		case 13: // LeaveGroup
 			response, err = h.handleLeaveGroup(correlationID, apiVersion, requestBody)
@@ -670,15 +674,15 @@ func (h *Handler) handleApiVersions(correlationID uint32, apiVersion uint16) ([]
 		response = append(response, 0)
 	}
 
-	// API Key 11 (JoinGroup): api_key(2) + min_version(2) + max_version(2)
+	// API Key 11 (JoinGroup): support v0-v9 (latest Kafka protocol version)
 	response = append(response, 0, 11) // API key 11
 	response = append(response, 0, 0)  // min version 0
-	response = append(response, 0, 7)  // max version 7
+	response = append(response, 0, 9)  // max version 9
 	if isFlexible {
 		response = append(response, 0)
 	}
 
-	// API Key 14 (SyncGroup): api_key(2) + min_version(2) + max_version(2)
+	// API Key 14 (SyncGroup): support v0-v5 (latest Kafka protocol version)
 	response = append(response, 0, 14) // API key 14
 	response = append(response, 0, 0)  // min version 0
 	response = append(response, 0, 5)  // max version 5

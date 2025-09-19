@@ -61,7 +61,7 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 	request, err := h.parseJoinGroupRequest(requestBody, apiVersion)
 	if err != nil {
 		fmt.Printf("DEBUG: JoinGroup parseJoinGroupRequest error: %v\n", err)
-		return h.buildJoinGroupErrorResponse(correlationID, ErrorCodeInvalidGroupID), nil
+		return h.buildJoinGroupErrorResponse(correlationID, ErrorCodeInvalidGroupID, apiVersion), nil
 	}
 
 	fmt.Printf("DEBUG: JoinGroup parsed request - GroupID: '%s', MemberID: '%s', SessionTimeout: %d\n",
@@ -74,11 +74,11 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 
 	// Validate request
 	if request.GroupID == "" {
-		return h.buildJoinGroupErrorResponse(correlationID, ErrorCodeInvalidGroupID), nil
+		return h.buildJoinGroupErrorResponse(correlationID, ErrorCodeInvalidGroupID, apiVersion), nil
 	}
 
 	if !h.groupCoordinator.ValidateSessionTimeout(request.SessionTimeout) {
-		return h.buildJoinGroupErrorResponse(correlationID, ErrorCodeInvalidSessionTimeout), nil
+		return h.buildJoinGroupErrorResponse(correlationID, ErrorCodeInvalidSessionTimeout, apiVersion), nil
 	}
 
 	// Get or create consumer group
@@ -141,7 +141,7 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 			// Check if member exists
 			if _, exists := group.Members[memberID]; !exists {
 				// Member ID provided but doesn't exist - reject
-				return h.buildJoinGroupErrorResponse(correlationID, ErrorCodeUnknownMemberID), nil
+				return h.buildJoinGroupErrorResponse(correlationID, ErrorCodeUnknownMemberID, apiVersion), nil
 			}
 			isNewMember = false
 			fmt.Printf("DEBUG: JoinGroup using provided member ID '%s'\n", memberID)
@@ -167,7 +167,7 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 	case consumer.GroupStateCompletingRebalance:
 		// Allow join but don't change generation until SyncGroup
 	case consumer.GroupStateDead:
-		return h.buildJoinGroupErrorResponse(correlationID, ErrorCodeInvalidGroupID), nil
+		return h.buildJoinGroupErrorResponse(correlationID, ErrorCodeInvalidGroupID, apiVersion), nil
 	}
 
 	// Extract client host from connection context
@@ -195,6 +195,12 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 		LastHeartbeat:    time.Now(),
 		JoinedAt:         time.Now(),
 	}
+
+	// Add or update the member in the group before computing subscriptions or leader
+	if group.Members == nil {
+		group.Members = make(map[string]*consumer.GroupMember)
+	}
+	group.Members[memberID] = member
 
 	// Store protocol metadata for leader
 	if len(request.GroupProtocols) > 0 {
@@ -259,7 +265,7 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 		fmt.Printf("DEBUG: JoinGroup keeping existing leader: '%s' for group '%s'\n", group.Leader, request.GroupID)
 	}
 
-	// Build response
+	// Build response - use the requested API version
 	response := JoinGroupResponse{
 		CorrelationID: correlationID,
 		ErrorCode:     ErrorCodeNone,
@@ -273,11 +279,20 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 	fmt.Printf("DEBUG: JoinGroup response - Generation: %d, Protocol: '%s', Leader: '%s', Member: '%s'\n",
 		response.GenerationID, response.GroupProtocol, response.GroupLeader, response.MemberID)
 
-	// If this member is the leader, include all member info
+	// If this member is the leader, include all member info for assignment
 	if memberID == group.Leader {
-		// TESTING: Try empty members array to see if that fixes the size issue
-		response.Members = make([]JoinGroupMember, 0)
-	} else {
+		response.Members = make([]JoinGroupMember, 0, len(group.Members))
+		for mid, m := range group.Members {
+			instanceID := ""
+			if m.GroupInstanceID != nil {
+				instanceID = *m.GroupInstanceID
+			}
+			response.Members = append(response.Members, JoinGroupMember{
+				MemberID:        mid,
+				GroupInstanceID: instanceID,
+				Metadata:        m.Metadata,
+			})
+		}
 	}
 
 	return h.buildJoinGroupResponse(response), nil
@@ -523,7 +538,7 @@ func (h *Handler) buildJoinGroupResponse(response JoinGroupResponse) []byte {
 	return result
 }
 
-func (h *Handler) buildJoinGroupErrorResponse(correlationID uint32, errorCode int16) []byte {
+func (h *Handler) buildJoinGroupErrorResponse(correlationID uint32, errorCode int16, apiVersion uint16) []byte {
 	response := JoinGroupResponse{
 		CorrelationID: correlationID,
 		ErrorCode:     errorCode,
@@ -531,7 +546,7 @@ func (h *Handler) buildJoinGroupErrorResponse(correlationID uint32, errorCode in
 		GroupProtocol: "",
 		GroupLeader:   "",
 		MemberID:      "",
-		Version:       2,
+		Version:       apiVersion,
 		Members:       []JoinGroupMember{},
 	}
 
