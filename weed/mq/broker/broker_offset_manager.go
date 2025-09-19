@@ -77,7 +77,7 @@ func (bom *BrokerOffsetManager) CreateSubscription(
 	startOffset int64,
 ) (*offset.OffsetSubscription, error) {
 	partition := topicPartitionToSchemaPartition(t, p)
-	return bom.offsetIntegration.CreateSubscription(subscriptionID, partition, offsetType, startOffset)
+	return bom.offsetIntegration.CreateSubscription(subscriptionID, t.Namespace, t.Name, partition, offsetType, startOffset)
 }
 
 // GetSubscription retrieves an existing subscription

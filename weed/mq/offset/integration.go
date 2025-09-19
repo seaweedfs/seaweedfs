@@ -96,16 +96,15 @@ func (integration *SMQOffsetIntegration) PublishRecordBatch(
 // CreateSubscription creates an offset-based subscription
 func (integration *SMQOffsetIntegration) CreateSubscription(
 	subscriptionID string,
+	namespace, topicName string,
 	partition *schema_pb.Partition,
 	offsetType schema_pb.OffsetType,
 	startOffset int64,
 ) (*OffsetSubscription, error) {
 
-	// TODO: Pass actual namespace and topic name instead of defaults
-	// For now using defaults until the integration interface is updated
 	return integration.offsetSubscriber.CreateSubscription(
 		subscriptionID,
-		"kafka", "default", // Use default namespace/topic for now
+		namespace, topicName,
 		partition,
 		offsetType,
 		startOffset,
