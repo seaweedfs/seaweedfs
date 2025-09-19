@@ -295,7 +295,7 @@ func WithGrpcFilerClient(streamingMode bool, signature int32, filerGrpcAddress S
 	return WithGrpcClient(streamingMode, signature, func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 		return fn(client)
-	}, string(filerGrpcAddress), false, grpcDialOption)
+	}, filerGrpcAddress.ToGrpcAddress(), false, grpcDialOption)
 
 }
 
