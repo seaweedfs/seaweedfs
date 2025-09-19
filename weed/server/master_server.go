@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/telemetry"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
@@ -436,4 +437,72 @@ func (ms *MasterServer) Reload() {
 	ms.guard.UpdateWhiteList(append(ms.option.WhiteList,
 		util.StringSplit(v.GetString("guard.white_list"), ",")...),
 	)
+}
+
+func CollectCollectionsStats(parent context.Context, ms *MasterServer, interval time.Duration) (shutdown func(ctx context.Context) error) {
+	ctx, cancel := context.WithCancel(parent)
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		req := &master_pb.VolumeListRequest{}
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				volumeList, err := ms.VolumeList(ctx, req)
+				if err != nil {
+					glog.Errorf("collect volume list: %v", err)
+					continue
+				}
+				if volumeList == nil || volumeList.TopologyInfo == nil {
+					continue
+				}
+
+				collectionInfos := make(map[string]*shell.CollectionInfo)
+				for _, dc := range volumeList.TopologyInfo.DataCenterInfos {
+					for _, r := range dc.RackInfos {
+						for _, dn := range r.DataNodeInfos {
+							for _, diskInfo := range dn.DiskInfos {
+								for _, vif := range diskInfo.VolumeInfos {
+									c := vif.Collection
+									cif := collectionInfos[c]
+									if cif == nil {
+										cif = &shell.CollectionInfo{}
+										collectionInfos[c] = cif
+									}
+									replicaPlacement, _ := super_block.NewReplicaPlacementFromByte(byte(vif.ReplicaPlacement))
+									copyCount := float64(replicaPlacement.GetCopyCount())
+									cif.Size += float64(vif.Size) / copyCount
+									cif.DeleteCount += float64(vif.DeleteCount) / copyCount
+									cif.FileCount += float64(vif.FileCount) / copyCount
+									cif.DeletedByteCount += float64(vif.DeletedByteCount) / copyCount
+									cif.VolumeCount++
+								}
+							}
+						}
+					}
+				}
+
+				for bucket, v := range collectionInfos {
+					stats.S3BucketFileCount.WithLabelValues(bucket).Set(v.FileCount - v.DeleteCount)
+					stats.S3BucketSize.WithLabelValues(bucket).Set(v.Size - v.DeletedByteCount)
+				}
+			}
+		}
+	}()
+
+	return func(ctx context.Context) error {
+		cancel()
+		select {
+		case <-done:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 }
