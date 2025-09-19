@@ -157,12 +157,12 @@ func (r *SeaweedSMQRecord) GetOffset() int64 {
 	return r.offset
 }
 
-// GetFilerClient returns a filer client for accessing SeaweedMQ metadata
-func (h *SeaweedMQHandler) GetFilerClient() filer_pb.SeaweedFilerClient {
-	if h.brokerClient != nil {
-		return h.brokerClient.filerClient
+// WithFilerClient executes a function with a filer client
+func (h *SeaweedMQHandler) WithFilerClient(streamingMode bool, fn func(client filer_pb.SeaweedFilerClient) error) error {
+	if h.brokerClient == nil {
+		return fmt.Errorf("no broker client available")
 	}
-	return nil
+	return h.brokerClient.WithFilerClient(streamingMode, fn)
 }
 
 // GetFilerAddress returns the filer address used by this handler
@@ -705,15 +705,11 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string, clientHost str
 		return nil, fmt.Errorf("failed to discover filers: %v", err)
 	}
 
-	// For now, use the first broker and first filer (can be enhanced later for load balancing)
+	// For now, use the first broker (can be enhanced later for load balancing)
 	brokerAddress := brokerAddresses[0]
-	var filerAddress string
-	if len(filerAddresses) > 0 {
-		filerAddress = filerAddresses[0]
-	}
 
-	// Create broker client with optional filer access
-	brokerClient, err := NewBrokerClient(brokerAddress, filerAddress)
+	// Create broker client with filer addresses
+	brokerClient, err := NewBrokerClient(brokerAddress, filerAddresses)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create broker client: %v", err)
 	}
@@ -774,8 +770,8 @@ func discoverBrokersWithMasterClient(masterClient *wdclient.MasterClient, filerG
 }
 
 // discoverFilersWithMasterClient queries masters for available filers using reusable master client
-func discoverFilersWithMasterClient(masterClient *wdclient.MasterClient, filerGroup string) ([]string, error) {
-	var filers []string
+func discoverFilersWithMasterClient(masterClient *wdclient.MasterClient, filerGroup string) ([]pb.ServerAddress, error) {
+	var filers []pb.ServerAddress
 
 	err := masterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
@@ -787,15 +783,13 @@ func discoverFilersWithMasterClient(masterClient *wdclient.MasterClient, filerGr
 			return err
 		}
 
-		// Extract filer addresses from response and convert to gRPC addresses
+		// Extract filer addresses from response - return as HTTP addresses (pb.ServerAddress)
 		for _, node := range resp.ClusterNodes {
 			if node.Address != "" {
-				// Convert HTTP address to gRPC address
-				// SeaweedFS filer gRPC port is typically HTTP port + 10000
-				httpAddr := node.Address
-				grpcAddr := pb.ServerToGrpcAddress(httpAddr)
-				fmt.Printf("FILER DISCOVERY: Converted filer HTTP address %s to gRPC address %s\n", httpAddr, grpcAddr)
-				filers = append(filers, grpcAddr)
+				// Return HTTP address as pb.ServerAddress (no pre-conversion to gRPC)
+				httpAddr := pb.ServerAddress(node.Address)
+				fmt.Printf("FILER DISCOVERY: Found filer HTTP address %s\n", httpAddr)
+				filers = append(filers, httpAddr)
 			}
 		}
 
@@ -811,10 +805,8 @@ type BrokerClient struct {
 	conn          *grpc.ClientConn
 	client        mq_pb.SeaweedMessagingClient
 
-	// Filer client for metadata access
-	filerAddress string
-	filerConn    *grpc.ClientConn
-	filerClient  filer_pb.SeaweedFilerClient
+	// Filer addresses for metadata access (lazy connection)
+	filerAddresses []pb.ServerAddress
 
 	// Publisher streams: topic-partition -> stream info
 	publishersLock sync.RWMutex
@@ -845,7 +837,7 @@ type BrokerSubscriberSession struct {
 }
 
 // NewBrokerClient creates a client that connects to a SeaweedMQ broker
-func NewBrokerClient(brokerAddress, filerAddress string) (*BrokerClient, error) {
+func NewBrokerClient(brokerAddress string, filerAddresses []pb.ServerAddress) (*BrokerClient, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Use background context for gRPC connections to prevent them from being canceled
@@ -864,32 +856,15 @@ func NewBrokerClient(brokerAddress, filerAddress string) (*BrokerClient, error) 
 
 	client := mq_pb.NewSeaweedMessagingClient(conn)
 
-	// Connect to filer if address provided
-	var filerConn *grpc.ClientConn
-	var filerClient filer_pb.SeaweedFilerClient
-	if filerAddress != "" {
-		filerConn, err = grpc.DialContext(dialCtx, filerAddress,
-			grpc.WithTransportCredentials(insecure.NewCredentials()),
-		)
-		if err != nil {
-			conn.Close()
-			cancel()
-			return nil, fmt.Errorf("failed to connect to filer %s: %v", filerAddress, err)
-		}
-		filerClient = filer_pb.NewSeaweedFilerClient(filerConn)
-	}
-
 	return &BrokerClient{
-		brokerAddress: brokerAddress,
-		conn:          conn,
-		client:        client,
-		filerAddress:  filerAddress,
-		filerConn:     filerConn,
-		filerClient:   filerClient,
-		publishers:    make(map[string]*BrokerPublisherSession),
-		subscribers:   make(map[string]*BrokerSubscriberSession),
-		ctx:           ctx,
-		cancel:        cancel,
+		brokerAddress:  brokerAddress,
+		conn:           conn,
+		client:         client,
+		filerAddresses: filerAddresses,
+		publishers:     make(map[string]*BrokerPublisherSession),
+		subscribers:    make(map[string]*BrokerSubscriberSession),
+		ctx:            ctx,
+		cancel:         cancel,
 	}, nil
 }
 
@@ -911,17 +886,34 @@ func (bc *BrokerClient) Close() error {
 	}
 	bc.subscribersLock.Unlock()
 
-	// Close filer connection if it exists
-	if bc.filerConn != nil {
-		bc.filerConn.Close()
-	}
-
 	return bc.conn.Close()
 }
 
-// GetFilerAddress returns the filer address used by this broker client
+// GetFilerAddress returns the first filer address used by this broker client (for backward compatibility)
 func (bc *BrokerClient) GetFilerAddress() string {
-	return bc.filerAddress
+	if len(bc.filerAddresses) > 0 {
+		return string(bc.filerAddresses[0])
+	}
+	return ""
+}
+
+// WithFilerClient executes a function with a filer client, trying each filer until one succeeds
+func (bc *BrokerClient) WithFilerClient(streamingMode bool, fn func(client filer_pb.SeaweedFilerClient) error) error {
+	if len(bc.filerAddresses) == 0 {
+		return fmt.Errorf("no filer addresses available")
+	}
+
+	var lastErr error
+	for _, filerAddress := range bc.filerAddresses {
+		err := pb.WithGrpcFilerClient(streamingMode, 0, filerAddress, grpc.WithTransportCredentials(insecure.NewCredentials()), fn)
+		if err == nil {
+			return nil // Success
+		}
+		lastErr = err
+		glog.V(1).Infof("Failed to connect to filer %s: %v, trying next", filerAddress, err)
+	}
+
+	return fmt.Errorf("failed to connect to any filer, last error: %v", lastErr)
 }
 
 // PublishRecord publishes a single record to SeaweedMQ broker

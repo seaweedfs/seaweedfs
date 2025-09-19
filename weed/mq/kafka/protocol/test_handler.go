@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"fmt"
 	"strconv"
 	"sync"
 	"time"
@@ -152,8 +153,8 @@ func (t *testSeaweedMQHandlerForUnitTests) GetStoredRecords(topic string, partit
 	return result, nil
 }
 
-func (t *testSeaweedMQHandlerForUnitTests) GetFilerClient() filer_pb.SeaweedFilerClient {
-	return nil
+func (t *testSeaweedMQHandlerForUnitTests) WithFilerClient(streamingMode bool, fn func(client filer_pb.SeaweedFilerClient) error) error {
+	return fmt.Errorf("test handler doesn't have filer access")
 }
 
 func (t *testSeaweedMQHandlerForUnitTests) GetBrokerAddresses() []string {

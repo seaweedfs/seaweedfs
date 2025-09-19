@@ -225,8 +225,8 @@ func (b *basicSeaweedMQHandler) GetStoredRecords(topic string, partition int32, 
 	return records, nil
 }
 
-func (b *basicSeaweedMQHandler) GetFilerClient() filer_pb.SeaweedFilerClient {
-	return nil // Test handler doesn't have filer access
+func (b *basicSeaweedMQHandler) WithFilerClient(streamingMode bool, fn func(client filer_pb.SeaweedFilerClient) error) error {
+	return fmt.Errorf("test handler doesn't have filer access")
 }
 
 // GetBrokerAddresses returns the discovered SMQ broker addresses for Metadata responses
@@ -331,8 +331,8 @@ func (t *testSeaweedMQHandler) GetStoredRecords(topic string, partition int32, f
 	return nil, nil
 }
 
-func (t *testSeaweedMQHandler) GetFilerClient() filer_pb.SeaweedFilerClient {
-	return nil // Test handler doesn't have filer access
+func (t *testSeaweedMQHandler) WithFilerClient(streamingMode bool, fn func(client filer_pb.SeaweedFilerClient) error) error {
+	return fmt.Errorf("test handler doesn't have filer access")
 }
 
 // GetBrokerAddresses returns the discovered SMQ broker addresses for Metadata responses

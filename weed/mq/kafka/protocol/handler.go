@@ -78,8 +78,8 @@ type SeaweedMQHandlerInterface interface {
 	ProduceRecordValue(topicName string, partitionID int32, key []byte, recordValueBytes []byte) (int64, error)
 	// GetStoredRecords retrieves records from SMQ storage (optional - for advanced implementations)
 	GetStoredRecords(topic string, partition int32, fromOffset int64, maxRecords int) ([]offset.SMQRecord, error)
-	// GetFilerClient returns a filer client for accessing SeaweedMQ metadata (optional)
-	GetFilerClient() filer_pb.SeaweedFilerClient
+	// WithFilerClient executes a function with a filer client for accessing SeaweedMQ metadata
+	WithFilerClient(streamingMode bool, fn func(client filer_pb.SeaweedFilerClient) error) error
 	// GetBrokerAddresses returns the discovered SMQ broker addresses for Metadata responses
 	GetBrokerAddresses() []string
 	Close() error
@@ -151,12 +151,6 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string, clientHost str
 	}
 
 	// The integration layer already handles master address parsing and filer discovery
-	// Get filer client from SMQ handler for metadata access
-	filerClient := smqHandler.GetFilerClient()
-	if filerClient == nil {
-		return nil, fmt.Errorf("no filer client available from SMQ handler - filer discovery may have failed")
-	}
-
 	// Create SMQ offset storage using the proper filer address from integration layer
 	filerGrpcAddress := smqHandler.GetFilerAddress()
 	if filerGrpcAddress == "" {
@@ -166,20 +160,17 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string, clientHost str
 	// Convert gRPC address back to HTTP format for NewSMQOffsetStorage
 	// SMQ handler returns gRPC address (e.g. 127.0.0.1:18888), but NewSMQOffsetStorage expects HTTP (e.g. 127.0.0.1:8888)
 	filerHttpAddress := grpcAddressToHttpAddress(filerGrpcAddress)
-	
+
 	smqOffsetStorage, err := offset.NewSMQOffsetStorage(filerHttpAddress)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create SMQ offset storage with filer %s: %w", filerHttpAddress, err)
 	}
-
-	// filerClient is already obtained above
 
 	return &Handler{
 		seaweedMQHandler:   smqHandler,
 		smqOffsetStorage:   smqOffsetStorage,
 		groupCoordinator:   consumer.NewGroupCoordinator(),
 		topicMetadataCache: make(map[string]*CachedTopicMetadata),
-		filerClient:        filerClient,
 		smqBrokerAddresses: nil, // Will be set by SetSMQBrokerAddresses() when server starts
 	}, nil
 }
@@ -313,20 +304,20 @@ func grpcAddressToHttpAddress(grpcAddress string) string {
 	if lastColon == -1 {
 		return grpcAddress // Return as-is if no port found
 	}
-	
+
 	host := grpcAddress[:lastColon]
 	portStr := grpcAddress[lastColon+1:]
-	
+
 	port, err := strconv.Atoi(portStr)
 	if err != nil {
 		return grpcAddress // Return as-is if port parsing fails
 	}
-	
+
 	httpPort := port - 10000
 	if httpPort <= 0 {
 		return grpcAddress // Return as-is if result would be invalid
 	}
-	
+
 	return net.JoinHostPort(host, strconv.Itoa(httpPort))
 }
 
