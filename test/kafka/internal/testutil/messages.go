@@ -2,8 +2,10 @@ package testutil
 
 import (
 	"fmt"
+	"os"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/schema"
 	"github.com/segmentio/kafka-go"
 )
 
@@ -23,10 +25,27 @@ func (m *MessageGenerator) GenerateKafkaGoMessages(count int) []kafka.Message {
 
 	for i := 0; i < count; i++ {
 		m.counter++
-		messages[i] = kafka.Message{
-			Key:   []byte(fmt.Sprintf("test-key-%d", m.counter)),
-			Value: []byte(fmt.Sprintf("test-message-%d-generated-at-%d", m.counter, time.Now().Unix())),
+		key := []byte(fmt.Sprintf("test-key-%d", m.counter))
+		val := []byte(fmt.Sprintf("{\"value\":\"test-message-%d-generated-at-%d\"}", m.counter, time.Now().Unix()))
+
+		// If schema mode is requested, ensure a test schema exists and wrap with Confluent envelope
+		if url := os.Getenv("SCHEMA_REGISTRY_URL"); url != "" {
+			subject := "offset-management-value"
+			schemaJSON := `{"type":"record","name":"TestRecord","fields":[{"name":"value","type":"string"}]}`
+			rc := schema.NewRegistryClient(schema.RegistryConfig{URL: url})
+			if _, err := rc.GetLatestSchema(subject); err != nil {
+				// Best-effort register schema
+				_, _ = rc.RegisterSchema(subject, schemaJSON)
+			}
+			if latest, err := rc.GetLatestSchema(subject); err == nil {
+				val = schema.CreateConfluentEnvelope(schema.FormatAvro, latest.LatestID, nil, val)
+			} else {
+				// fallback to schema id 1
+				val = schema.CreateConfluentEnvelope(schema.FormatAvro, 1, nil, val)
+			}
 		}
+
+		messages[i] = kafka.Message{Key: key, Value: val}
 	}
 
 	return messages

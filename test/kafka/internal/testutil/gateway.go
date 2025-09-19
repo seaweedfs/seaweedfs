@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/gateway"
+	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/schema"
 )
 
 // GatewayTestServer wraps the gateway server with common test utilities
@@ -65,6 +66,13 @@ func (g *GatewayTestServer) StartAndWait() string {
 
 	// Start server in goroutine
 	go func() {
+		// Enable schema mode automatically when SCHEMA_REGISTRY_URL is set
+		if url := os.Getenv("SCHEMA_REGISTRY_URL"); url != "" {
+			h := g.GetHandler()
+			if h != nil {
+				_ = h.EnableSchemaManagement(schema.ManagerConfig{RegistryURL: url})
+			}
+		}
 		if err := g.Start(); err != nil {
 			g.t.Errorf("Failed to start gateway: %v", err)
 		}

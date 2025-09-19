@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"os"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/test/kafka/internal/testutil"
@@ -13,7 +14,12 @@ func TestOffsetManagement(t *testing.T) {
 	defer gateway.CleanupAndClose()
 
 	addr := gateway.StartAndWait()
-	
+
+	// If schema registry is configured, ensure gateway is in schema mode and log
+	if v := os.Getenv("SCHEMA_REGISTRY_URL"); v != "" {
+		t.Logf("Schema Registry detected at %s - running offset tests in schematized mode", v)
+	}
+
 	// Log which backend we're using
 	if gateway.IsSMQMode() {
 		t.Logf("Running offset management tests with SMQ backend - offsets will be persisted")
@@ -40,6 +46,13 @@ func testBasicOffsetCommitFetch(t *testing.T, addr, topic, groupID string) {
 	msgGen := testutil.NewMessageGenerator()
 
 	// Produce test messages
+	if url := os.Getenv("SCHEMA_REGISTRY_URL"); url != "" {
+		if id, err := testutil.EnsureValueSchema(t, url, topic); err == nil {
+			t.Logf("Ensured value schema id=%d for subject %s-value", id, topic)
+		} else {
+			t.Logf("Schema registration failed (non-fatal for test): %v", err)
+		}
+	}
 	messages := msgGen.GenerateKafkaGoMessages(5)
 	err := client.ProduceMessages(topic, messages)
 	testutil.AssertNoError(t, err, "Failed to produce offset test messages")
