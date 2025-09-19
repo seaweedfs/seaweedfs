@@ -2,9 +2,10 @@ package broker
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -155,25 +156,34 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 		}
 	}()
 
+	var cancelOnce sync.Once
+
 	return localTopicPartition.Subscribe(clientName, startPosition, func() bool {
 		if !isConnected {
 			return false
 		}
 
-		// Check if client disconnected (without sleep delays)
-		select {
-		case <-ctx.Done():
-			err := ctx.Err()
-			if errors.Is(err, context.Canceled) {
-				glog.V(1).Infof("Subscriber %s context canceled", clientName)
-				return false
-			}
-			glog.V(0).Infof("Subscriber %s disconnected: %v", clientName, err)
+		// Ensure we will wake any Wait() when the client disconnects
+		cancelOnce.Do(func() {
+			go func() {
+				<-ctx.Done()
+				localTopicPartition.ListenersLock.Lock()
+				localTopicPartition.ListenersCond.Broadcast()
+				localTopicPartition.ListenersLock.Unlock()
+			}()
+		})
+
+		// Block until new data is available or the client disconnects
+		localTopicPartition.ListenersLock.Lock()
+		atomic.AddInt64(&localTopicPartition.ListenersWaits, 1)
+		localTopicPartition.ListenersCond.Wait()
+		atomic.AddInt64(&localTopicPartition.ListenersWaits, -1)
+		localTopicPartition.ListenersLock.Unlock()
+
+		if ctx.Err() != nil || !isConnected {
 			return false
-		default:
-			// Continue processing immediately - no artificial delays
-			return true
 		}
+		return true
 	}, func(logEntry *filer_pb.LogEntry) (bool, error) {
 
 		for imt.IsInflight(logEntry.Key) {
