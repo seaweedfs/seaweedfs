@@ -2497,22 +2497,12 @@ func (h *Handler) IsBrokerIntegrationEnabled() bool {
 // commitOffsetToSMQ commits offset using SMQ storage
 func (h *Handler) commitOffsetToSMQ(key offset.ConsumerOffsetKey, offsetValue int64, metadata string) error {
 	if h.smqOffsetStorage == nil {
-		fmt.Printf("DEBUG: commitOffsetToSMQ - SMQ offset storage not initialized\n")
 		return fmt.Errorf("SMQ offset storage not initialized")
 	}
 
-	fmt.Printf("DEBUG: commitOffsetToSMQ - saving offset=%d for group=%s topic=%s partition=%d\n",
-		offsetValue, key.ConsumerGroup, key.Topic, key.Partition)
-
 	// Save to SMQ storage - use current timestamp and size 0 as placeholders
 	// since SMQ storage primarily tracks the committed offset
-	err := h.smqOffsetStorage.SaveConsumerOffset(key, offsetValue, time.Now().UnixNano(), 0)
-	if err != nil {
-		fmt.Printf("DEBUG: commitOffsetToSMQ - save error: %v\n", err)
-		return err
-	}
-	fmt.Printf("DEBUG: commitOffsetToSMQ - successfully saved offset=%d\n", offsetValue)
-	return nil
+	return h.smqOffsetStorage.SaveConsumerOffset(key, offsetValue, time.Now().UnixNano(), 0)
 }
 
 // fetchOffsetFromSMQ fetches offset using SMQ storage

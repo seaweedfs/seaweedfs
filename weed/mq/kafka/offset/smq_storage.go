@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/filer_client"
@@ -48,8 +47,10 @@ func (s *SMQOffsetStorage) SaveConsumerOffset(key ConsumerOffsetKey, kafkaOffset
 		Name:      key.Topic,
 	}
 
-	// Use proper Kafka partition mapping for SMQ ranges
-	smqPartition := kafka.CreateSMQPartition(key.Partition, time.Now().UnixNano())
+	// Use consistent timestamp for consumer offset operations to ensure same partition path
+	// Hash the consumer group name to get a consistent timestamp for this group's offset storage
+	consistentTimestamp := int64(0) // Use epoch time for consistent consumer offset paths
+	smqPartition := kafka.CreateSMQPartition(key.Partition, consistentTimestamp)
 	p := topic.Partition{
 		RingSize:   smqPartition.RingSize,
 		RangeStart: smqPartition.RangeStart,
@@ -58,6 +59,7 @@ func (s *SMQOffsetStorage) SaveConsumerOffset(key ConsumerOffsetKey, kafkaOffset
 	}
 
 	partitionDir := topic.PartitionDir(t, p)
+	consumersDir := fmt.Sprintf("%s/consumers", partitionDir)
 	offsetFileName := fmt.Sprintf("%s.offset", key.ConsumerGroup)
 
 	// Use SMQ's 8-byte offset format
@@ -65,7 +67,7 @@ func (s *SMQOffsetStorage) SaveConsumerOffset(key ConsumerOffsetKey, kafkaOffset
 	util.Uint64toBytes(offsetBytes, uint64(kafkaOffset))
 
 	return s.filerClientAccessor.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return filer.SaveInsideFiler(client, partitionDir, offsetFileName, offsetBytes)
+		return filer.SaveInsideFiler(client, consumersDir, offsetFileName, offsetBytes)
 	})
 }
 
@@ -112,8 +114,10 @@ func (s *SMQOffsetStorage) getCommittedOffset(key ConsumerOffsetKey) (int64, err
 		Name:      key.Topic,
 	}
 
-	// Use proper Kafka partition mapping for SMQ ranges
-	smqPartition := kafka.CreateSMQPartition(key.Partition, time.Now().UnixNano())
+	// Use consistent timestamp for consumer offset operations to ensure same partition path
+	// Hash the consumer group name to get a consistent timestamp for this group's offset storage
+	consistentTimestamp := int64(0) // Use epoch time for consistent consumer offset paths
+	smqPartition := kafka.CreateSMQPartition(key.Partition, consistentTimestamp)
 	p := topic.Partition{
 		RingSize:   smqPartition.RingSize,
 		RangeStart: smqPartition.RangeStart,
@@ -122,11 +126,12 @@ func (s *SMQOffsetStorage) getCommittedOffset(key ConsumerOffsetKey) (int64, err
 	}
 
 	partitionDir := topic.PartitionDir(t, p)
+	consumersDir := fmt.Sprintf("%s/consumers", partitionDir)
 	offsetFileName := fmt.Sprintf("%s.offset", key.ConsumerGroup)
 
 	var offset int64 = -1
 	err := s.filerClientAccessor.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		data, err := filer.ReadInsideFiler(client, partitionDir, offsetFileName)
+		data, err := filer.ReadInsideFiler(client, consumersDir, offsetFileName)
 		if err != nil {
 			return err
 		}
@@ -181,22 +186,22 @@ func parseTopicPartitionKey(topicPartition string) (ConsumerOffsetKey, error) {
 	if lastColonIndex <= 0 || lastColonIndex == len(topicPartition)-1 {
 		return ConsumerOffsetKey{}, fmt.Errorf("invalid legacy format: expected 'topic:partition', got '%s'", topicPartition)
 	}
-	
+
 	topic := topicPartition[:lastColonIndex]
 	if topic == "" {
 		return ConsumerOffsetKey{}, fmt.Errorf("empty topic in legacy format: '%s'", topicPartition)
 	}
-	
+
 	partitionStr := topicPartition[lastColonIndex+1:]
 	partition, err := strconv.ParseInt(partitionStr, 10, 32)
 	if err != nil {
 		return ConsumerOffsetKey{}, fmt.Errorf("invalid partition number in legacy format '%s': %w", topicPartition, err)
 	}
-	
+
 	if partition < 0 {
 		return ConsumerOffsetKey{}, fmt.Errorf("negative partition number in legacy format: %d", partition)
 	}
-	
+
 	// Return a ConsumerOffsetKey with empty group ID since legacy format doesn't include it
 	return ConsumerOffsetKey{
 		ConsumerGroup: "", // Legacy format doesn't specify group

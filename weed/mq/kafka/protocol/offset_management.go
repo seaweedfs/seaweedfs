@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/consumer"
+	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
 )
 
 // OffsetCommit API (key 8) - Commit consumer group offsets
@@ -145,13 +146,22 @@ func (h *Handler) handleOffsetCommit(correlationID uint32, requestBody []byte) (
 		for _, p := range t.Partitions {
 			fmt.Printf("DEBUG: OffsetCommit processing partition %d offset %d\n", p.Index, p.Offset)
 
-			// Commit offset using memory storage for consistency (SMQ storage has issues)
+			// Create consumer offset key for SMQ storage
+			key := offset.ConsumerOffsetKey{
+				Topic:                 t.Name,
+				Partition:             p.Index,
+				ConsumerGroup:         req.GroupID,
+				ConsumerGroupInstance: req.GroupInstanceID,
+			}
+
+			// Commit offset using SMQ storage (persistent to filer)
 			var errCode int16 = ErrorCodeNone
 			if generationMatches {
-				if err := h.commitOffset(group, t.Name, p.Index, p.Offset, p.Metadata); err != nil {
+				if err := h.commitOffsetToSMQ(key, p.Offset, p.Metadata); err != nil {
+					fmt.Printf("DEBUG: OffsetCommit SMQ error: %v\n", err)
 					errCode = ErrorCodeOffsetMetadataTooLarge
 				} else {
-					fmt.Printf("DEBUG: OffsetCommit Memory - Topic: %s, Partition: %d, Offset: %d\n",
+					fmt.Printf("DEBUG: OffsetCommit SMQ - Topic: %s, Partition: %d, Offset: %d\n",
 						t.Name, p.Index, p.Offset)
 				}
 			} else {
@@ -225,17 +235,25 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, req
 
 		// Fetch offsets for requested partitions
 		for _, partition := range partitionsToFetch {
+			// Create consumer offset key for SMQ storage
+			key := offset.ConsumerOffsetKey{
+				Topic:                 topic.Name,
+				Partition:             partition,
+				ConsumerGroup:         request.GroupID,
+				ConsumerGroupInstance: request.GroupInstanceID,
+			}
+
 			var fetchedOffset int64 = -1
 			var metadata string = ""
 			var errorCode int16 = ErrorCodeNone
 
-			// Fetch offset using memory storage for consistency (SMQ storage has issues)
-			if off, meta, err := h.fetchOffset(group, topic.Name, partition); err == nil {
+			// Fetch offset using SMQ storage (persistent from filer)
+			if off, meta, err := h.fetchOffsetFromSMQ(key); err == nil {
 				fetchedOffset = off
 				metadata = meta
-				fmt.Printf("DEBUG: OffsetFetch memory returned offset=%d metadata='%s'\n", off, meta)
+				fmt.Printf("DEBUG: OffsetFetch SMQ returned offset=%d metadata='%s'\n", off, meta)
 			} else {
-				fmt.Printf("DEBUG: OffsetFetch memory error: %v\n", err)
+				fmt.Printf("DEBUG: OffsetFetch SMQ error: %v\n", err)
 			}
 
 			partitionResponse := OffsetFetchPartitionResponse{
