@@ -110,8 +110,8 @@ type Handler struct {
 	brokerClient  *schema.BrokerClient
 
 	// Topic schema configuration cache
-	topicSchemaConfigs   map[string]*TopicSchemaConfig
-	topicSchemaConfigMu  sync.RWMutex
+	topicSchemaConfigs  map[string]*TopicSchemaConfig
+	topicSchemaConfigMu sync.RWMutex
 
 	// Topic metadata cache with TTL
 	topicMetadataCache map[string]*CachedTopicMetadata
