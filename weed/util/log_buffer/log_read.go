@@ -29,20 +29,23 @@ func NewMessagePosition(tsNs int64, batchIndex int64) MessagePosition {
 	}
 }
 
+// Sentinel time value to clearly indicate offset-based positioning
+// Using Unix timestamp 1 (1970-01-01 00:00:01 UTC) as a clear, recognizable sentinel
+var OffsetBasedPositionSentinel = time.Unix(1, 0).UTC()
+
 // NewMessagePositionFromOffset creates a MessagePosition that represents a specific offset
-// Uses a special encoding: BatchIndex = -(offset + 10000) to distinguish from timestamp-based positions
+// Uses a clear sentinel time value and stores the offset directly in BatchIndex
 func NewMessagePositionFromOffset(offset int64) MessagePosition {
 	return MessagePosition{
-		Time:       time.Unix(0, 0).UTC(), // Use epoch time for offset-based positions
-		BatchIndex: -(offset + 10000),     // Encode offset as negative BatchIndex with offset to avoid collision
+		Time:       OffsetBasedPositionSentinel, // Clear sentinel time for offset-based positions
+		BatchIndex: offset,                      // Store offset directly - much clearer!
 	}
 }
 
 // IsOffsetBased returns true if this MessagePosition represents an offset rather than a timestamp
 func (mp MessagePosition) IsOffsetBased() bool {
-	// Offset-based positions are represented by epoch time (Unix nanos == 0)
-	// instead of Go's zero time. Detect using UnixNano to avoid IsZero() mismatch.
-	return mp.Time.UnixNano() == 0 && mp.BatchIndex <= -10000
+	// Offset-based positions use the clear sentinel time value
+	return mp.Time.Equal(OffsetBasedPositionSentinel)
 }
 
 // GetOffset extracts the offset from an offset-based MessagePosition
@@ -50,7 +53,7 @@ func (mp MessagePosition) GetOffset() int64 {
 	if !mp.IsOffsetBased() {
 		return -1 // Not an offset-based position
 	}
-	return -(mp.BatchIndex + 10000)
+	return mp.BatchIndex // Offset is stored directly in BatchIndex
 }
 
 func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition MessagePosition, stopTsNs int64,

@@ -40,14 +40,14 @@ func TestConvertOffsetToMessagePosition(t *testing.T) {
 			name:          "exact offset zero",
 			offsetType:    schema_pb.OffsetType_EXACT_OFFSET,
 			currentOffset: 0,
-			expectedBatch: -10000, // NewMessagePositionFromOffset encodes as -(offset + 10000)
+			expectedBatch: 0, // NewMessagePositionFromOffset stores offset directly in BatchIndex
 			expectError:   false,
 		},
 		{
 			name:          "exact offset non-zero",
 			offsetType:    schema_pb.OffsetType_EXACT_OFFSET,
 			currentOffset: 100,
-			expectedBatch: -10100, // NewMessagePositionFromOffset encodes as -(offset + 10000)
+			expectedBatch: 100, // NewMessagePositionFromOffset stores offset directly in BatchIndex
 			expectError:   false,
 		},
 		{
@@ -87,9 +87,9 @@ func TestConvertOffsetToMessagePosition(t *testing.T) {
 
 			// Verify that the timestamp is reasonable (not zero for most cases)
 			// Note: EXACT_OFFSET uses epoch time (zero) with NewMessagePositionFromOffset
-			if tt.offsetType != schema_pb.OffsetType_RESET_TO_EARLIEST && 
-			   tt.offsetType != schema_pb.OffsetType_EXACT_OFFSET && 
-			   position.Time.IsZero() {
+			if tt.offsetType != schema_pb.OffsetType_RESET_TO_EARLIEST &&
+				tt.offsetType != schema_pb.OffsetType_EXACT_OFFSET &&
+				position.Time.IsZero() {
 				t.Error("Expected non-zero timestamp")
 			}
 
@@ -104,14 +104,14 @@ func TestConvertOffsetToMessagePosition_OffsetEncoding(t *testing.T) {
 
 	// Test that offset-based positions encode the offset correctly in BatchIndex
 	testCases := []struct {
-		offset         int64
-		expectedBatch  int64
-		expectedIsZero bool // Should timestamp be epoch (zero)?
+		offset             int64
+		expectedBatch      int64
+		expectedIsSentinel bool // Should timestamp be the offset sentinel value?
 	}{
-		{10, -10010, true},
-		{100, -10100, true},
-		{0, -10000, true},
-		{42, -10042, true},
+		{10, 10, true},
+		{100, 100, true},
+		{0, 0, true},
+		{42, 42, true},
 	}
 
 	for _, tc := range testCases {
@@ -133,9 +133,10 @@ func TestConvertOffsetToMessagePosition_OffsetEncoding(t *testing.T) {
 				t.Errorf("Expected batch index %d, got %d", tc.expectedBatch, pos.BatchIndex)
 			}
 
-			// Check that timestamp is epoch for offset-based positions
-			if tc.expectedIsZero && !pos.Time.Equal(time.Unix(0, 0).UTC()) {
-				t.Errorf("Expected epoch timestamp for offset-based position, got %v", pos.Time)
+			// Check that timestamp is the sentinel value for offset-based positions
+			if tc.expectedIsSentinel && !pos.Time.Equal(log_buffer.OffsetBasedPositionSentinel) {
+				t.Errorf("Expected sentinel timestamp (%v) for offset-based position, got %v",
+					log_buffer.OffsetBasedPositionSentinel, pos.Time)
 			}
 
 			// Verify the offset can be extracted correctly using IsOffsetBased/GetOffset
@@ -147,7 +148,7 @@ func TestConvertOffsetToMessagePosition_OffsetEncoding(t *testing.T) {
 				t.Errorf("Expected extracted offset %d, got %d", tc.offset, extractedOffset)
 			}
 
-			t.Logf("Offset %d -> Position: time=%v, batch=%d, extracted_offset=%d", 
+			t.Logf("Offset %d -> Position: time=%v, batch=%d, extracted_offset=%d",
 				tc.offset, pos.Time, pos.BatchIndex, pos.GetOffset())
 		})
 	}
@@ -181,11 +182,12 @@ func TestConvertOffsetToMessagePosition_ConsistentResults(t *testing.T) {
 		}
 	}
 
-	// With NewMessagePositionFromOffset, timestamps should be identical (epoch time)
-	expectedTime := time.Unix(0, 0).UTC()
+	// With NewMessagePositionFromOffset, timestamps should be identical (sentinel time)
+	expectedTime := log_buffer.OffsetBasedPositionSentinel
 	for i := 0; i < len(positions); i++ {
 		if !positions[i].Time.Equal(expectedTime) {
-			t.Errorf("Expected all timestamps to be epoch time, got %v at index %d", positions[i].Time, i)
+			t.Errorf("Expected all timestamps to be sentinel time (%v), got %v at index %d",
+				expectedTime, positions[i].Time, i)
 		}
 	}
 
@@ -209,7 +211,7 @@ func TestConvertOffsetToMessagePosition_FixVerification(t *testing.T) {
 	// Call the function multiple times with delays to simulate real-world usage
 	var positions []log_buffer.MessagePosition
 	var timestamps []int64
-	
+
 	for i := 0; i < 10; i++ {
 		pos, err := broker.convertOffsetToMessagePosition(subscription)
 		if err != nil {
@@ -244,7 +246,7 @@ func TestConvertOffsetToMessagePosition_FixVerification(t *testing.T) {
 		}
 	}
 
-	t.Logf("✅ Fix verified: Offset %d produces consistent results across %d calls", 
+	t.Logf("✅ Fix verified: Offset %d produces consistent results across %d calls",
 		subscription.CurrentOffset, len(positions))
 	t.Logf("   BatchIndex: %d (consistent)", expectedBatch)
 	t.Logf("   Timestamp: %d (consistent)", expectedTimestamp)
