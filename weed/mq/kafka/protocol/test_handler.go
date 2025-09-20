@@ -179,7 +179,6 @@ func NewHandlerForUnitTests() *Handler {
 			ledgers: make(map[string]*offset.Ledger),
 			records: make(map[string][]offset.SMQRecord),
 		},
-		groupCoordinator:   consumer.NewGroupCoordinator(),
-		topicMetadataCache: make(map[string]*CachedTopicMetadata),
+		groupCoordinator: consumer.NewGroupCoordinator(),
 	}
 }

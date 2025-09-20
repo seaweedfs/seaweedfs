@@ -122,8 +122,8 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 		// Check if this topic uses schema management (topic-level check with filer metadata)
 		var isSchematizedTopic bool
 		if h.IsSchemaEnabled() {
-			// Try to get metadata from filer first, fallback to existing logic
-			isSchematizedTopic = h.isSchematizedTopicFromMetadata(topic.Name)
+			// Use existing schema detection logic
+			isSchematizedTopic = h.isSchematizedTopic(topic.Name)
 			if isSchematizedTopic {
 				Debug("Topic %s is schematized (from filer metadata), will fetch schematized records for all partitions", topic.Name)
 			}

@@ -544,7 +544,6 @@ func createHandlerWithMockLeaderRegistry(t *testing.T, brokerAddress string) *Ha
 		seaweedMQHandler:    mockSMQHandler,
 		coordinatorRegistry: mockRegistry,
 		topicSchemaConfigs:  make(map[string]*TopicSchemaConfig),
-		topicMetadataCache:  make(map[string]*CachedTopicMetadata),
 	}
 
 	return handler
@@ -565,7 +564,6 @@ func createHandlerWithMockNonLeaderRegistry(t *testing.T, brokerAddress string) 
 		seaweedMQHandler:    mockSMQHandler,
 		coordinatorRegistry: mockRegistry,
 		topicSchemaConfigs:  make(map[string]*TopicSchemaConfig),
-		topicMetadataCache:  make(map[string]*CachedTopicMetadata),
 	}
 
 	return handler
@@ -599,7 +597,6 @@ func createHandlerWithSchemaManager(t *testing.T, registryURL, brokerAddress str
 		schemaManager:       schemaManager,
 		useSchema:           true,
 		topicSchemaConfigs:  make(map[string]*TopicSchemaConfig),
-		topicMetadataCache:  make(map[string]*CachedTopicMetadata),
 	}
 
 	return handler

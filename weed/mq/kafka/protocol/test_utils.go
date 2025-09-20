@@ -57,8 +57,7 @@ func NewTestHandler() *Handler {
 			ledgers:  make(map[string]*offset.Ledger),
 			messages: make(map[string]map[int32]map[int64]*MessageRecord),
 		},
-		smqOffsetStorage:   smqOffsetStorage,
-		topicMetadataCache: make(map[string]*CachedTopicMetadata),
+		smqOffsetStorage: smqOffsetStorage,
 	}
 }
 
@@ -74,9 +73,8 @@ func NewSimpleTestHandler() *Handler {
 	smqOffsetStorage := offset.NewSMQOffsetStorage(filerClientAccessor)
 
 	return &Handler{
-		groupCoordinator:   consumer.NewGroupCoordinator(),
-		smqOffsetStorage:   smqOffsetStorage,
-		topicMetadataCache: make(map[string]*CachedTopicMetadata),
+		groupCoordinator: consumer.NewGroupCoordinator(),
+		smqOffsetStorage: smqOffsetStorage,
 		seaweedMQHandler: &testSeaweedMQHandler{
 			topics:  make(map[string]bool),
 			ledgers: make(map[string]*offset.Ledger),
