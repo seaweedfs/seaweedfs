@@ -74,10 +74,10 @@
 ### Deliverables
 - New command: `weed mq.kafka.gateway` (or `weed mq.kafka`) to start the Kafka Gateway.
 - Protocol handlers for ApiVersions/Metadata/CreateTopics/DeleteTopics/Produce/Fetch/ListOffsets (earliest/latest only).
-- Filer layout for Kafka compatibility metadata and ledgers under:
-  - `mq/kafka/<namespace>/<topic>/meta.json`
-  - `mq/kafka/<namespace>/<topic>/partitions/<pid>/ledger.log`
-  - `mq/kafka/<namespace>/<topic>/partitions/<pid>/ledger.index` (sparse; phase 2 fills)
+- Filer layout for Kafka compatibility using existing SMQ structure:
+  - `mq/kafka/<namespace>/<topic>/topic.conf` (SMQ topic configuration)
+  - `mq/kafka/<namespace>/<topic>/partitions/<pid>/` (partition directories)
+  - Note: No separate ledger or meta.json files - using SMQ native offsets and configuration
 - E2E tests using sarama and kafka-go for basic produce/fetch.
 
 ### Work Breakdown
