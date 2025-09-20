@@ -2,15 +2,15 @@ package shell
 
 import (
 	"flag"
+	"io"
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer_client"
 	"github.com/seaweedfs/seaweedfs/weed/mq/logstore"
 	"github.com/seaweedfs/seaweedfs/weed/mq/schema"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
-	"google.golang.org/grpc"
-	"io"
-	"time"
 )
 
 func init() {
@@ -63,14 +63,10 @@ func (c *commandMqTopicCompact) Do(args []string, commandEnv *CommandEnv, writer
 	}
 
 	// read topic configuration
-	fca := &filer_client.FilerClientAccessor{
-		GetFiler: func() pb.ServerAddress {
-			return commandEnv.option.FilerAddress
-		},
-		GetGrpcDialOption: func() grpc.DialOption {
-			return commandEnv.option.GrpcDialOption
-		},
-	}
+	fca := filer_client.NewFilerClientAccessor(
+		[]pb.ServerAddress{commandEnv.option.FilerAddress},
+		commandEnv.option.GrpcDialOption,
+	)
 	t := topic.NewTopic(*namespace, *topicName)
 	topicConf, err := fca.ReadTopicConfFromFiler(t)
 	if err != nil {

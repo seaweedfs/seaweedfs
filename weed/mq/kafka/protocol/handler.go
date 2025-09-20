@@ -166,14 +166,10 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string, clientHost str
 	filerHttpAddress := grpcAddressToHttpAddress(filerGrpcAddress)
 
 	// Create filer client accessor for SMQ offset storage
-	filerClientAccessor := &filer_client.FilerClientAccessor{
-		GetFiler: func() pb.ServerAddress {
-			return pb.ServerAddress(filerHttpAddress)
-		},
-		GetGrpcDialOption: func() grpc.DialOption {
-			return grpc.WithTransportCredentials(insecure.NewCredentials())
-		},
-	}
+	filerClientAccessor := filer_client.NewFilerClientAccessor(
+		[]pb.ServerAddress{pb.ServerAddress(filerHttpAddress)},
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
 
 	smqOffsetStorage := offset.NewSMQOffsetStorage(filerClientAccessor)
 

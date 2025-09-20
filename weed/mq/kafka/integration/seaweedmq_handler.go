@@ -859,18 +859,11 @@ func NewBrokerClient(brokerAddress string, filerAddresses []pb.ServerAddress) (*
 
 	client := mq_pb.NewSeaweedMessagingClient(conn)
 
-	// Create embedded FilerClientAccessor
-	filerClientAccessor := &filer_client.FilerClientAccessor{
-		GetFiler: func() pb.ServerAddress {
-			if len(filerAddresses) > 0 {
-				return filerAddresses[0]
-			}
-			return ""
-		},
-		GetGrpcDialOption: func() grpc.DialOption {
-			return grpc.WithTransportCredentials(insecure.NewCredentials())
-		},
-	}
+	// Create embedded multi-filer FilerClientAccessor with automatic failover
+	filerClientAccessor := filer_client.NewFilerClientAccessor(
+		filerAddresses,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
 
 	return &BrokerClient{
 		FilerClientAccessor: filerClientAccessor,
@@ -912,25 +905,6 @@ func (bc *BrokerClient) GetFilerAddress() string {
 		return string(bc.filerAddresses[0])
 	}
 	return ""
-}
-
-// WithFilerClient overrides the embedded method to support multiple filer addresses with failover
-func (bc *BrokerClient) WithFilerClient(streamingMode bool, fn func(client filer_pb.SeaweedFilerClient) error) error {
-	if len(bc.filerAddresses) == 0 {
-		return fmt.Errorf("no filer addresses available")
-	}
-
-	var lastErr error
-	for _, filerAddress := range bc.filerAddresses {
-		err := pb.WithGrpcFilerClient(streamingMode, 0, filerAddress, grpc.WithTransportCredentials(insecure.NewCredentials()), fn)
-		if err == nil {
-			return nil // Success
-		}
-		lastErr = err
-		glog.V(1).Infof("Failed to connect to filer %s: %v, trying next", filerAddress, err)
-	}
-
-	return fmt.Errorf("failed to connect to any filer, last error: %v", lastErr)
 }
 
 // PublishRecord publishes a single record to SeaweedMQ broker

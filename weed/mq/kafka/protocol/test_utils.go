@@ -43,14 +43,10 @@ type testSeaweedMQHandler struct {
 // and real SMQ offset storage for realistic offset persistence testing
 func NewTestHandler() *Handler {
 	// Create filer client accessor for test SMQ offset storage
-	filerClientAccessor := &filer_client.FilerClientAccessor{
-		GetFiler: func() pb.ServerAddress {
-			return pb.ServerAddress("127.0.0.1:8888")
-		},
-		GetGrpcDialOption: func() grpc.DialOption {
-			return grpc.WithTransportCredentials(insecure.NewCredentials())
-		},
-	}
+	filerClientAccessor := filer_client.NewFilerClientAccessor(
+		[]pb.ServerAddress{"127.0.0.1:8888"},
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
 
 	smqOffsetStorage := offset.NewSMQOffsetStorage(filerClientAccessor)
 
@@ -70,14 +66,10 @@ func NewTestHandler() *Handler {
 // This should ONLY be used for basic protocol tests that don't need message content
 func NewSimpleTestHandler() *Handler {
 	// Create filer client accessor for test SMQ offset storage
-	filerClientAccessor := &filer_client.FilerClientAccessor{
-		GetFiler: func() pb.ServerAddress {
-			return pb.ServerAddress("127.0.0.1:8888")
-		},
-		GetGrpcDialOption: func() grpc.DialOption {
-			return grpc.WithTransportCredentials(insecure.NewCredentials())
-		},
-	}
+	filerClientAccessor := filer_client.NewFilerClientAccessor(
+		[]pb.ServerAddress{"127.0.0.1:8888"},
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
 
 	smqOffsetStorage := offset.NewSMQOffsetStorage(filerClientAccessor)
 

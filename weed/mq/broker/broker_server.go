@@ -74,9 +74,16 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 		// This ensures offset assignment works even before filer discovery completes
 		offsetManager: nil, // Will be initialized below
 	}
+	// Create FilerClientAccessor that adapts broker's single filer to the new multi-filer interface
 	fca := &filer_client.FilerClientAccessor{
-		GetFiler:          mqBroker.GetFiler,
 		GetGrpcDialOption: mqBroker.GetGrpcDialOption,
+		GetFilers: func() []pb.ServerAddress {
+			filer := mqBroker.GetFiler()
+			if filer != "" {
+				return []pb.ServerAddress{filer}
+			}
+			return []pb.ServerAddress{}
+		},
 	}
 	mqBroker.fca = fca
 	subCoordinator.FilerClientAccessor = fca

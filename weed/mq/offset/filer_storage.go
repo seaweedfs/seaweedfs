@@ -27,14 +27,10 @@ func NewFilerOffsetStorage(filerAddress string, grpcDialOption grpc.DialOption) 
 		grpcDialOption = grpc.WithInsecure()
 	}
 
-	filerClientAccessor := &filer_client.FilerClientAccessor{
-		GetFiler: func() pb.ServerAddress {
-			return pb.ServerAddress(filerAddress)
-		},
-		GetGrpcDialOption: func() grpc.DialOption {
-			return grpcDialOption
-		},
-	}
+	filerClientAccessor := filer_client.NewFilerClientAccessor(
+		[]pb.ServerAddress{pb.ServerAddress(filerAddress)},
+		grpcDialOption,
+	)
 
 	return &FilerOffsetStorage{
 		filerClientAccessor: filerClientAccessor,
