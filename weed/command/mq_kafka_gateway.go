@@ -59,6 +59,7 @@ func runMqKafkaGateway(cmd *Command, args []string) bool {
 		FilerGroup: *mqKafkaGatewayOptions.filerGroup,
 	})
 
+	glog.Warningf("⚠️  EXPERIMENTAL FEATURE: MQ Kafka Gateway is experimental and should NOT be used in production environments. It currently supports only a minimal subset of Kafka protocol for development purposes.")
 	glog.V(0).Infof("Starting MQ Kafka Gateway on %s with SeaweedMQ brokers from masters (%s)", listenAddr, *mqKafkaGatewayOptions.master)
 	if err := srv.Start(); err != nil {
 		glog.Fatalf("mq kafka gateway start: %v", err)
