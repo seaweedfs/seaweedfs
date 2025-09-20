@@ -214,14 +214,26 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 	h.updateGroupSubscription(group)
 
 	// Select assignment protocol using enhanced selection logic
-	existingProtocols := make([]string, 0)
-	for range group.Members {
-		// Collect protocols from existing members (simplified - in real implementation
-		// we'd track each member's supported protocols)
-		existingProtocols = append(existingProtocols, "range") // placeholder
+	// If the group already has a selected protocol, enforce compatibility with it.
+	existingProtocols := make([]string, 0, 1)
+	if group.Protocol != "" {
+		existingProtocols = append(existingProtocols, group.Protocol)
 	}
 
 	groupProtocol := SelectBestProtocol(request.GroupProtocols, existingProtocols)
+
+	// If a protocol is already selected for the group, reject joins that do not support it.
+	if len(existingProtocols) > 0 && groupProtocol != group.Protocol {
+		// Rollback member addition and static registration before returning error
+		delete(group.Members, memberID)
+		if member.GroupInstanceID != nil && *member.GroupInstanceID != "" {
+			h.groupCoordinator.UnregisterStaticMemberLocked(group, *member.GroupInstanceID)
+		}
+		// Recompute group subscription without the rejected member
+		h.updateGroupSubscription(group)
+		return h.buildJoinGroupErrorResponse(correlationID, ErrorCodeInconsistentGroupProtocol, apiVersion), nil
+	}
+
 	group.Protocol = groupProtocol
 
 	// Select group leader (first member or keep existing if still present)
