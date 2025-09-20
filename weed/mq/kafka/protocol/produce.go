@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/schema"
+	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -1080,20 +1081,45 @@ func (h *Handler) produceSchemaBasedRecord(topic string, partition int32, key []
 		return 0, fmt.Errorf("failed to marshal RecordValue: %w", err)
 	}
 
-	// Store schema information in topic configuration for later retrieval
-	err = h.storeTopicSchemaConfig(topic, decodedMsg.SchemaID, decodedMsg.SchemaFormat)
-	if err != nil {
-		// Log warning but don't fail the produce operation
-		Debug("Failed to store topic schema config for %s: %v", topic, err)
+	// Store schema information in memory cache for fetch path performance
+	// Only store if not already cached to avoid mutex contention on hot path
+	if !h.hasTopicSchemaConfig(topic, decodedMsg.SchemaID, decodedMsg.SchemaFormat) {
+		err = h.storeTopicSchemaConfig(topic, decodedMsg.SchemaID, decodedMsg.SchemaFormat)
+		if err != nil {
+			Debug("Failed to store topic schema config for %s: %v", topic, err)
+		}
+
+		// Schedule schema registration in background (leader-only, non-blocking)
+		h.scheduleSchemaRegistration(topic, decodedMsg.RecordType)
 	}
 
 	// Send to SeaweedMQ with RecordValue format
 	return h.seaweedMQHandler.ProduceRecordValue(topic, partition, key, recordValueBytes)
 }
 
-// storeTopicSchemaConfig stores schema configuration for a topic
+// hasTopicSchemaConfig checks if schema config already exists (read-only, fast path)
+func (h *Handler) hasTopicSchemaConfig(topic string, schemaID uint32, schemaFormat schema.Format) bool {
+	h.topicSchemaConfigMu.RLock()
+	defer h.topicSchemaConfigMu.RUnlock()
+
+	if h.topicSchemaConfigs == nil {
+		return false
+	}
+
+	config, exists := h.topicSchemaConfigs[topic]
+	if !exists {
+		return false
+	}
+
+	// Check if the schema matches (avoid re-registration of same schema)
+	return config.SchemaID == schemaID && config.SchemaFormat == schemaFormat
+}
+
+// storeTopicSchemaConfig stores original Kafka schema metadata (ID + format) for fetch path
+// This is kept in memory for performance when reconstructing Confluent messages during fetch.
+// The translated RecordType is persisted via background schema registration.
 func (h *Handler) storeTopicSchemaConfig(topic string, schemaID uint32, schemaFormat schema.Format) error {
-	// Store in memory cache for quick access
+	// Store in memory cache for quick access during fetch operations
 	h.topicSchemaConfigMu.Lock()
 	defer h.topicSchemaConfigMu.Unlock()
 
@@ -1106,8 +1132,15 @@ func (h *Handler) storeTopicSchemaConfig(topic string, schemaID uint32, schemaFo
 		SchemaFormat: schemaFormat,
 	}
 
-	// TODO: Persist to filer or configuration store for durability
-	// This could be stored in the topic metadata in SeaweedMQ
-
 	return nil
+}
+
+// scheduleSchemaRegistration schedules background schema registration to avoid blocking data path
+func (h *Handler) scheduleSchemaRegistration(topicName string, recordType *schema_pb.RecordType) {
+	// Use goroutine to avoid blocking the produce path
+	go func() {
+		if err := h.registerSchemaViaBrokerAPI(topicName, recordType); err != nil {
+			Debug("Background schema registration failed for %s: %v", topicName, err)
+		}
+	}()
 }

@@ -20,7 +20,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/schema"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // TopicInfo holds basic information about a topic
@@ -2974,4 +2979,66 @@ func (h *Handler) DecodeRecordValueToKafkaMessage(topicName string, recordValueB
 // GetSeaweedMQHandler exposes the SeaweedMQ handler for testing
 func (h *Handler) GetSeaweedMQHandler() SeaweedMQHandlerInterface {
 	return h.seaweedMQHandler
+}
+
+// registerSchemaViaBrokerAPI registers the translated schema via the broker's ConfigureTopic API
+// Only the gateway leader performs the registration to avoid concurrent updates.
+func (h *Handler) registerSchemaViaBrokerAPI(topicName string, recordType *schema_pb.RecordType) error {
+	if recordType == nil {
+		return nil
+	}
+
+	// Gate by coordinator registry leadership
+	if reg := h.GetCoordinatorRegistry(); reg != nil && !reg.IsLeader() {
+		return nil
+	}
+
+	// Require SeaweedMQ integration to access broker
+	if h.seaweedMQHandler == nil {
+		return fmt.Errorf("no SeaweedMQ handler available for broker access")
+	}
+
+	// Get broker addresses
+	brokerAddresses := h.seaweedMQHandler.GetBrokerAddresses()
+	if len(brokerAddresses) == 0 {
+		return fmt.Errorf("no broker addresses available")
+	}
+
+	// Use the first available broker
+	brokerAddress := brokerAddresses[0]
+
+	// Load security configuration
+	util.LoadSecurityConfiguration()
+	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.mq")
+
+	// Get current topic configuration to preserve partition count
+	seaweedTopic := &schema_pb.Topic{
+		Namespace: DefaultKafkaNamespace,
+		Name:      topicName,
+	}
+
+	return pb.WithBrokerGrpcClient(false, brokerAddress, grpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
+		// First get current configuration
+		getResp, err := client.GetTopicConfiguration(context.Background(), &mq_pb.GetTopicConfigurationRequest{
+			Topic: seaweedTopic,
+		})
+		if err != nil {
+			// If topic doesn't exist, create it with default partition count
+			_, err := client.ConfigureTopic(context.Background(), &mq_pb.ConfigureTopicRequest{
+				Topic:          seaweedTopic,
+				PartitionCount: 1, // Default partition count
+				RecordType:     recordType,
+			})
+			return err
+		}
+
+		// Update existing topic with new schema
+		_, err = client.ConfigureTopic(context.Background(), &mq_pb.ConfigureTopicRequest{
+			Topic:          seaweedTopic,
+			PartitionCount: getResp.PartitionCount,
+			RecordType:     recordType,
+			Retention:      getResp.Retention,
+		})
+		return err
+	})
 }
