@@ -574,8 +574,7 @@ func TestS3IAMPresignedURLIntegration(t *testing.T) {
 
 	// Cleanup
 	_, err = adminClient.DeleteObject(&s3.DeleteObjectInput{
-		Bucket: aws.String(testBucketPrefix),
-		Key:    aws.String(testObjectKey),
+Bucket: aws.String(testBucket),
 	})
 	require.NoError(t, err)
 
