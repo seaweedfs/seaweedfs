@@ -8,10 +8,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/filer_client"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"google.golang.org/grpc"
 )
 
 // ConsumerGroupOffsetStorage handles consumer group offset persistence
@@ -36,23 +34,7 @@ type FilerConsumerGroupOffsetStorage struct {
 	filerClientAccessor *filer_client.FilerClientAccessor
 }
 
-// NewFilerConsumerGroupOffsetStorage creates a new filer-based consumer group offset storage
-func NewFilerConsumerGroupOffsetStorage(filerAddress string, grpcDialOption grpc.DialOption) *FilerConsumerGroupOffsetStorage {
-	if grpcDialOption == nil {
-		grpcDialOption = grpc.WithInsecure()
-	}
-
-	filerClientAccessor := filer_client.NewFilerClientAccessor(
-		[]pb.ServerAddress{pb.ServerAddress(filerAddress)},
-		grpcDialOption,
-	)
-
-	return &FilerConsumerGroupOffsetStorage{
-		filerClientAccessor: filerClientAccessor,
-	}
-}
-
-// NewFilerConsumerGroupOffsetStorageWithAccessor creates a new filer-based consumer group offset storage using existing filer client accessor
+// NewFilerConsumerGroupOffsetStorageWithAccessor creates storage using a shared filer client accessor
 func NewFilerConsumerGroupOffsetStorageWithAccessor(filerClientAccessor *filer_client.FilerClientAccessor) *FilerConsumerGroupOffsetStorage {
 	return &FilerConsumerGroupOffsetStorage{
 		filerClientAccessor: filerClientAccessor,

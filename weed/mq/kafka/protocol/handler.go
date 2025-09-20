@@ -15,16 +15,12 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/filer_client"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/consumer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/integration"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/schema"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 // TopicInfo holds basic information about a topic
@@ -154,24 +150,14 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string, clientHost str
 		return nil, err
 	}
 
-	// The integration layer already handles master address parsing and filer discovery
-	// Create SMQ offset storage using the proper filer address from integration layer
-	filerGrpcAddress := smqHandler.GetFilerAddress()
-	if filerGrpcAddress == "" {
-		return nil, fmt.Errorf("no filer address available from SMQ handler - filer discovery may have failed")
+	// Use the shared filer client accessor from SeaweedMQHandler
+	sharedFilerAccessor := smqHandler.GetFilerClientAccessor()
+	if sharedFilerAccessor == nil {
+		return nil, fmt.Errorf("no shared filer client accessor available from SMQ handler")
 	}
 
-	// Convert gRPC address back to HTTP format for FilerClientAccessor
-	// SMQ handler returns gRPC address (e.g. 127.0.0.1:18888), but accessor needs HTTP (e.g. 127.0.0.1:8888)
-	filerHttpAddress := grpcAddressToHttpAddress(filerGrpcAddress)
-
-	// Create filer client accessor for SMQ offset storage
-	filerClientAccessor := filer_client.NewFilerClientAccessor(
-		[]pb.ServerAddress{pb.ServerAddress(filerHttpAddress)},
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
-
-	smqOffsetStorage := offset.NewSMQOffsetStorage(filerClientAccessor)
+	// Create SMQ offset storage using the shared filer client accessor
+	smqOffsetStorage := offset.NewSMQOffsetStorage(sharedFilerAccessor)
 
 	return &Handler{
 		seaweedMQHandler:   smqHandler,

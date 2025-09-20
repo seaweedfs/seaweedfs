@@ -6,11 +6,9 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/filer_client"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"google.golang.org/grpc"
 )
 
 // FilerOffsetStorage implements OffsetStorage using SeaweedFS filer
@@ -19,22 +17,6 @@ import (
 // The namespace and topic are derived from the actual partition information
 type FilerOffsetStorage struct {
 	filerClientAccessor *filer_client.FilerClientAccessor
-}
-
-// NewFilerOffsetStorage creates a new filer-based offset storage
-func NewFilerOffsetStorage(filerAddress string, grpcDialOption grpc.DialOption) *FilerOffsetStorage {
-	if grpcDialOption == nil {
-		grpcDialOption = grpc.WithInsecure()
-	}
-
-	filerClientAccessor := filer_client.NewFilerClientAccessor(
-		[]pb.ServerAddress{pb.ServerAddress(filerAddress)},
-		grpcDialOption,
-	)
-
-	return &FilerOffsetStorage{
-		filerClientAccessor: filerClientAccessor,
-	}
 }
 
 // NewFilerOffsetStorageWithAccessor creates a new filer-based offset storage using existing filer client accessor

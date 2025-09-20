@@ -24,6 +24,9 @@ import (
 
 // SeaweedMQHandler integrates Kafka protocol handlers with real SeaweedMQ storage
 type SeaweedMQHandler struct {
+	// Shared filer client accessor for all components
+	filerClientAccessor *filer_client.FilerClientAccessor
+
 	brokerClient *BrokerClient // For broker-based connections
 
 	// Master client for service discovery
@@ -705,11 +708,17 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string, clientHost str
 		return nil, fmt.Errorf("failed to discover filers: %v", err)
 	}
 
+	// Create shared filer client accessor for all components
+	sharedFilerAccessor := filer_client.NewFilerClientAccessor(
+		filerAddresses,
+		grpcDialOption,
+	)
+
 	// For now, use the first broker (can be enhanced later for load balancing)
 	brokerAddress := brokerAddresses[0]
 
-	// Create broker client with filer addresses
-	brokerClient, err := NewBrokerClient(brokerAddress, filerAddresses)
+	// Create broker client with shared filer accessor
+	brokerClient, err := NewBrokerClientWithFilerAccessor(brokerAddress, sharedFilerAccessor)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create broker client: %v", err)
 	}
@@ -721,11 +730,12 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string, clientHost str
 	}
 
 	return &SeaweedMQHandler{
-		brokerClient:    brokerClient,
-		masterClient:    masterClient,
-		topics:          make(map[string]*KafkaTopicInfo),
-		ledgers:         make(map[TopicPartitionKey]*offset.Ledger),
-		brokerAddresses: brokerAddresses, // Store all discovered broker addresses
+		filerClientAccessor: sharedFilerAccessor,
+		brokerClient:        brokerClient,
+		masterClient:        masterClient,
+		topics:              make(map[string]*KafkaTopicInfo),
+		ledgers:             make(map[TopicPartitionKey]*offset.Ledger),
+		brokerAddresses:     brokerAddresses, // Store all discovered broker addresses
 	}, nil
 }
 
@@ -799,10 +809,15 @@ func discoverFilersWithMasterClient(masterClient *wdclient.MasterClient, filerGr
 	return filers, err
 }
 
+// GetFilerClientAccessor returns the shared filer client accessor
+func (h *SeaweedMQHandler) GetFilerClientAccessor() *filer_client.FilerClientAccessor {
+	return h.filerClientAccessor
+}
+
 // BrokerClient wraps the SeaweedMQ Broker gRPC client for Kafka gateway integration
 type BrokerClient struct {
-	// Embedded FilerClientAccessor provides filer access methods
-	*filer_client.FilerClientAccessor
+	// Reference to shared filer client accessor
+	filerClientAccessor *filer_client.FilerClientAccessor
 
 	brokerAddress string
 	conn          *grpc.ClientConn
@@ -839,8 +854,8 @@ type BrokerSubscriberSession struct {
 	StartOffset int64
 }
 
-// NewBrokerClient creates a client that connects to a SeaweedMQ broker
-func NewBrokerClient(brokerAddress string, filerAddresses []pb.ServerAddress) (*BrokerClient, error) {
+// NewBrokerClientWithFilerAccessor creates a client with a shared filer accessor
+func NewBrokerClientWithFilerAccessor(brokerAddress string, filerClientAccessor *filer_client.FilerClientAccessor) (*BrokerClient, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Use background context for gRPC connections to prevent them from being canceled
@@ -859,14 +874,14 @@ func NewBrokerClient(brokerAddress string, filerAddresses []pb.ServerAddress) (*
 
 	client := mq_pb.NewSeaweedMessagingClient(conn)
 
-	// Create embedded multi-filer FilerClientAccessor with automatic failover
-	filerClientAccessor := filer_client.NewFilerClientAccessor(
-		filerAddresses,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
+	// Extract filer addresses from the accessor for backward compatibility
+	var filerAddresses []pb.ServerAddress
+	if filerClientAccessor.GetFilers != nil {
+		filerAddresses = filerClientAccessor.GetFilers()
+	}
 
 	return &BrokerClient{
-		FilerClientAccessor: filerClientAccessor,
+		filerClientAccessor: filerClientAccessor,
 		brokerAddress:       brokerAddress,
 		conn:                conn,
 		client:              client,
@@ -905,6 +920,19 @@ func (bc *BrokerClient) GetFilerAddress() string {
 		return string(bc.filerAddresses[0])
 	}
 	return ""
+}
+
+// Delegate methods to the shared filer client accessor
+func (bc *BrokerClient) WithFilerClient(streamingMode bool, fn func(client filer_pb.SeaweedFilerClient) error) error {
+	return bc.filerClientAccessor.WithFilerClient(streamingMode, fn)
+}
+
+func (bc *BrokerClient) GetFilers() []pb.ServerAddress {
+	return bc.filerClientAccessor.GetFilers()
+}
+
+func (bc *BrokerClient) GetGrpcDialOption() grpc.DialOption {
+	return bc.filerClientAccessor.GetGrpcDialOption()
 }
 
 // PublishRecord publishes a single record to SeaweedMQ broker
