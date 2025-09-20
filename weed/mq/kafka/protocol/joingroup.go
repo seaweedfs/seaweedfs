@@ -713,15 +713,55 @@ func (h *Handler) parseSyncGroupRequest(data []byte, apiVersion uint16) (*SyncGr
 		}
 	}
 
-	// For simplicity, we'll parse basic fields
-	// In a full implementation, we'd parse the full group assignments array
+	// Parse assignments array if present (leader sends assignments)
+	assignments := make([]GroupAssignment, 0)
+
+	if offset+4 <= len(data) {
+		assignmentsCount := int(binary.BigEndian.Uint32(data[offset:]))
+		offset += 4
+
+		// Basic sanity check to avoid very large allocations
+		if assignmentsCount >= 0 && assignmentsCount < 10000 {
+			for i := 0; i < assignmentsCount && offset < len(data); i++ {
+				// member_id (string)
+				if offset+2 > len(data) {
+					break
+				}
+				memberLen := int(binary.BigEndian.Uint16(data[offset:]))
+				offset += 2
+				if memberLen < 0 || offset+memberLen > len(data) {
+					break
+				}
+				mID := string(data[offset : offset+memberLen])
+				offset += memberLen
+
+				// assignment (bytes)
+				if offset+4 > len(data) {
+					break
+				}
+				assignLen := int(binary.BigEndian.Uint32(data[offset:]))
+				offset += 4
+				if assignLen < 0 || offset+assignLen > len(data) {
+					break
+				}
+				var assign []byte
+				if assignLen > 0 {
+					assign = make([]byte, assignLen)
+					copy(assign, data[offset:offset+assignLen])
+				}
+				offset += assignLen
+
+				assignments = append(assignments, GroupAssignment{MemberID: mID, Assignment: assign})
+			}
+		}
+	}
 
 	return &SyncGroupRequest{
 		GroupID:          groupID,
 		GenerationID:     generationID,
 		MemberID:         memberID,
 		GroupInstanceID:  groupInstanceID,
-		GroupAssignments: []GroupAssignment{},
+		GroupAssignments: assignments,
 	}, nil
 }
 
@@ -766,14 +806,95 @@ func (h *Handler) buildSyncGroupErrorResponse(correlationID uint32, errorCode in
 }
 
 func (h *Handler) processGroupAssignments(group *consumer.ConsumerGroup, assignments []GroupAssignment) error {
-	// In a full implementation, we'd deserialize the assignment data
-	// and update each member's partition assignment
-	// For now, we'll trigger our own assignment logic
+	// Apply leader-provided assignments
+	// Clear current assignments
+	for _, m := range group.Members {
+		m.Assignment = nil
+	}
 
-	topicPartitions := h.getTopicPartitions(group)
-	group.AssignPartitions(topicPartitions)
+	for _, ga := range assignments {
+		m, ok := group.Members[ga.MemberID]
+		if !ok {
+			// Skip unknown members
+			continue
+		}
+
+		parsed, err := h.parseMemberAssignment(ga.Assignment)
+		if err != nil {
+			return err
+		}
+		m.Assignment = parsed
+	}
 
 	return nil
+}
+
+// parseMemberAssignment decodes ConsumerGroupMemberAssignment bytes into assignments
+func (h *Handler) parseMemberAssignment(data []byte) ([]consumer.PartitionAssignment, error) {
+	if len(data) < 2+4 {
+		// Empty or missing; treat as no assignment
+		return []consumer.PartitionAssignment{}, nil
+	}
+
+	offset := 0
+
+	// Version (2 bytes)
+	if offset+2 > len(data) {
+		return nil, fmt.Errorf("assignment too short for version")
+	}
+	_ = int16(binary.BigEndian.Uint16(data[offset : offset+2]))
+	offset += 2
+
+	// Number of topics (4 bytes)
+	if offset+4 > len(data) {
+		return nil, fmt.Errorf("assignment too short for topics count")
+	}
+	topicsCount := int(binary.BigEndian.Uint32(data[offset:]))
+	offset += 4
+
+	if topicsCount < 0 || topicsCount > 100000 {
+		return nil, fmt.Errorf("unreasonable topics count in assignment: %d", topicsCount)
+	}
+
+	result := make([]consumer.PartitionAssignment, 0)
+
+	for i := 0; i < topicsCount && offset < len(data); i++ {
+		// topic string
+		if offset+2 > len(data) {
+			return nil, fmt.Errorf("assignment truncated reading topic len")
+		}
+		tlen := int(binary.BigEndian.Uint16(data[offset:]))
+		offset += 2
+		if tlen < 0 || offset+tlen > len(data) {
+			return nil, fmt.Errorf("assignment truncated reading topic name")
+		}
+		topic := string(data[offset : offset+tlen])
+		offset += tlen
+
+		// partitions array length
+		if offset+4 > len(data) {
+			return nil, fmt.Errorf("assignment truncated reading partitions len")
+		}
+		numPartitions := int(binary.BigEndian.Uint32(data[offset:]))
+		offset += 4
+		if numPartitions < 0 || numPartitions > 1000000 {
+			return nil, fmt.Errorf("unreasonable partitions count: %d", numPartitions)
+		}
+
+		for p := 0; p < numPartitions; p++ {
+			if offset+4 > len(data) {
+				return nil, fmt.Errorf("assignment truncated reading partition id")
+			}
+			pid := int32(binary.BigEndian.Uint32(data[offset:]))
+			offset += 4
+			result = append(result, consumer.PartitionAssignment{Topic: topic, Partition: pid})
+		}
+	}
+
+	// Optional UserData: bytes length + data. Safe to ignore.
+	// If present but truncated, ignore silently.
+
+	return result, nil
 }
 
 func (h *Handler) getTopicPartitions(group *consumer.ConsumerGroup) map[string][]int32 {
