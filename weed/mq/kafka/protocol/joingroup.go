@@ -3,6 +3,7 @@ package protocol
 import (
 	"encoding/binary"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/consumer"
@@ -937,8 +938,16 @@ func (h *Handler) serializeMemberAssignment(assignments []consumer.PartitionAssi
 	binary.BigEndian.PutUint32(numTopicsBytes, uint32(len(topicAssignments)))
 	result = append(result, numTopicsBytes...)
 
+	// Get sorted topic names to ensure deterministic order
+	topics := make([]string, 0, len(topicAssignments))
+	for topic := range topicAssignments {
+		topics = append(topics, topic)
+	}
+	sort.Strings(topics)
+
 	// Topics - each topic follows Kafka string + int32 array format
-	for topic, partitions := range topicAssignments {
+	for _, topic := range topics {
+		partitions := topicAssignments[topic]
 		// Topic name as Kafka string: length(2) + content
 		topicLenBytes := make([]byte, 2)
 		binary.BigEndian.PutUint16(topicLenBytes, uint16(len(topic)))

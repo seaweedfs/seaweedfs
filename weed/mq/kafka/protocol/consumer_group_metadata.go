@@ -231,8 +231,21 @@ func SelectBestProtocol(protocols []GroupProtocol, groupProtocols []string) stri
 		}
 	}
 
-	// If group has existing protocols, only return a protocol if it's supported by both
+	// If group has existing protocols, find a protocol supported by both client and group
 	if len(groupProtocols) > 0 {
+		// Try to find a protocol that both client and group support
+		for _, preferred := range protocolPriority {
+			if clientProtocols[preferred] && groupProtocolSet[preferred] {
+				return preferred
+			}
+		}
+
+		// No common protocol found - handle special fallback case
+		// If client supports nothing we validate, but group supports "range", use "range"
+		if len(clientProtocols) == 0 && groupProtocolSet["range"] {
+			return "range"
+		}
+
 		// Return empty string to indicate no compatible protocol found
 		return ""
 	}
