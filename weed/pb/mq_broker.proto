@@ -62,6 +62,8 @@ service SeaweedMessaging {
     // SQL query support - get unflushed messages from broker's in-memory buffer (streaming)
     rpc GetUnflushedMessages (GetUnflushedMessagesRequest) returns (stream GetUnflushedMessagesResponse) {
     }
+
+    // Removed Kafka Gateway Registration - no longer needed
 }
 
 //////////////////////////////////////////////////
@@ -269,6 +271,7 @@ message PublishMessageResponse {
     int64 ack_sequence = 1;
     string error = 2;
     bool should_close = 3;
+    int32 error_code = 4; // Structured error code for reliable error mapping
 }
 message PublishFollowMeRequest {
     message InitMessage {
@@ -376,3 +379,5 @@ message LogEntry {
     bytes data = 3;
     uint32 partition_key_hash = 4;
 }
+
+// Removed Kafka Gateway Registration messages - no longer needed

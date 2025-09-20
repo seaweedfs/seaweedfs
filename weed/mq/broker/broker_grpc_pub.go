@@ -45,11 +45,26 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 		return err
 	}
 	response := &mq_pb.PublishMessageResponse{}
-	// TODO check whether current broker should be the leader for the topic partition
+
 	initMessage := req.GetInit()
 	if initMessage == nil {
-		response.Error = fmt.Sprintf("missing init message")
+		response.ErrorCode, response.Error = CreateBrokerError(BrokerErrorInvalidRecord, "missing init message")
 		glog.Errorf("missing init message")
+		return stream.Send(response)
+	}
+
+	// Check whether current broker should be the leader for the topic partition
+	leaderBroker, err := b.findBrokerForTopicPartition(initMessage.Topic, initMessage.Partition)
+	if err != nil {
+		response.ErrorCode, response.Error = CreateBrokerError(BrokerErrorTopicNotFound, fmt.Sprintf("failed to find leader for topic partition: %v", err))
+		glog.Errorf("failed to find leader for topic partition: %v", err)
+		return stream.Send(response)
+	}
+
+	currentBrokerAddress := fmt.Sprintf("%s:%d", b.option.Ip, b.option.Port)
+	if leaderBroker != currentBrokerAddress {
+		response.ErrorCode, response.Error = CreateBrokerError(BrokerErrorNotLeaderOrFollower, fmt.Sprintf("not the leader for this partition, leader is: %s", leaderBroker))
+		glog.V(1).Infof("rejecting publish request: not the leader for partition, leader is: %s", leaderBroker)
 		return stream.Send(response)
 	}
 
@@ -57,14 +72,14 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 	t, p := topic.FromPbTopic(initMessage.Topic), topic.FromPbPartition(initMessage.Partition)
 	localTopicPartition, getOrGenErr := b.GetOrGenerateLocalPartition(t, p)
 	if getOrGenErr != nil {
-		response.Error = fmt.Sprintf("topic %v not found: %v", t, getOrGenErr)
+		response.ErrorCode, response.Error = CreateBrokerError(BrokerErrorTopicNotFound, fmt.Sprintf("topic %v not found: %v", t, getOrGenErr))
 		glog.Errorf("topic %v not found: %v", t, getOrGenErr)
 		return stream.Send(response)
 	}
 
 	// connect to follower brokers
 	if followerErr := localTopicPartition.MaybeConnectToFollowers(initMessage, b.grpcDialOption); followerErr != nil {
-		response.Error = followerErr.Error()
+		response.ErrorCode, response.Error = CreateBrokerError(BrokerErrorFollowerConnectionFailed, followerErr.Error())
 		glog.Errorf("MaybeConnectToFollowers: %v", followerErr)
 		return stream.Send(response)
 	}
@@ -142,29 +157,67 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 			continue
 		}
 
-		// Basic validation: ensure message can be unmarshaled as RecordValue
+		// Validate RecordValue structure only for schema-based messages
+		// Note: Only messages sent via ProduceRecordValue should be in RecordValue format
+		// Regular Kafka messages and offset management messages are stored as raw bytes
 		if dataMessage.Value != nil {
 			record := &schema_pb.RecordValue{}
 			if err := proto.Unmarshal(dataMessage.Value, record); err == nil {
-			} else {
-				// If unmarshaling fails, we skip validation but log a warning
-				glog.V(1).Infof("Could not unmarshal RecordValue for validation on topic %v partition %v: %v", initMessage.Topic, initMessage.Partition, err)
+				// Successfully unmarshaled as RecordValue - validate structure
+				if err := b.validateRecordValue(record, initMessage.Topic); err != nil {
+					glog.V(1).Infof("RecordValue validation failed on topic %v partition %v: %v", initMessage.Topic, initMessage.Partition, err)
+				}
 			}
+			// Note: We don't log errors for non-RecordValue messages since most Kafka messages
+			// are raw bytes and should not be expected to be in RecordValue format
 		}
 
 		// The control message should still be sent to the follower
 		// to avoid timing issue when ack messages.
 
-		// send to the local partition
-		if err = localTopicPartition.Publish(dataMessage); err != nil {
+		// Send to the local partition with offset assignment
+		t, p := topic.FromPbTopic(initMessage.Topic), topic.FromPbPartition(initMessage.Partition)
+
+		// Create offset assignment function for this partition
+		assignOffsetFn := func() (int64, error) {
+			return b.offsetManager.AssignOffset(t, p)
+		}
+
+		// Use offset-aware publishing
+		assignedOffset, err := localTopicPartition.PublishWithOffset(dataMessage, assignOffsetFn)
+		if err != nil {
 			return fmt.Errorf("topic %v partition %v publish error: %w", initMessage.Topic, initMessage.Partition, err)
 		}
 
 		// Update published offset and last seen time for this publisher
-		publisher.UpdatePublishedOffset(dataMessage.TsNs)
+		// Use the actual assigned offset instead of timestamp
+		publisher.UpdatePublishedOffset(assignedOffset)
 	}
 
 	glog.V(0).Infof("topic %v partition %v publish stream from %s closed.", initMessage.Topic, initMessage.Partition, initMessage.PublisherName)
+
+	return nil
+}
+
+// validateRecordValue validates the structure and content of a RecordValue message
+func (b *MessageQueueBroker) validateRecordValue(record *schema_pb.RecordValue, topic *schema_pb.Topic) error {
+	if record == nil {
+		return fmt.Errorf("RecordValue is nil")
+	}
+
+	if record.Fields == nil {
+		return fmt.Errorf("RecordValue.Fields is nil")
+	}
+
+	// For schema-based RecordValue, the fields are determined by the actual schema
+	// from the schema registry, not fixed fields like "key", "value", "timestamp"
+	// Basic validation: ensure we have at least some fields
+	if len(record.Fields) == 0 {
+		return fmt.Errorf("RecordValue has no fields")
+	}
+
+	// Additional schema-specific validation could be added here
+	// based on the topic's schema requirements
 
 	return nil
 }
@@ -183,4 +236,3 @@ func findClientAddress(ctx context.Context) string {
 	}
 	return pr.Addr.String()
 }
-

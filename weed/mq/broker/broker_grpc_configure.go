@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 // ConfigureTopic Runs on any broker, but proxied to the balancer if not the balancer
@@ -47,8 +48,31 @@ func (b *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *mq_pb.
 	}
 
 	if readErr == nil && assignErr == nil && len(resp.BrokerPartitionAssignments) == int(request.PartitionCount) {
-		glog.V(0).Infof("existing topic partitions %d: %+v", len(resp.BrokerPartitionAssignments), resp.BrokerPartitionAssignments)
-		return
+		// Check if schema (RecordType) needs to be updated
+		schemaChanged := false
+		if request.RecordType != nil && resp.RecordType != nil {
+			// Compare schemas using proto.Equal
+			if !proto.Equal(request.RecordType, resp.RecordType) {
+				schemaChanged = true
+			}
+		} else if request.RecordType != nil || resp.RecordType != nil {
+			// One is nil, the other is not
+			schemaChanged = true
+		}
+
+		if !schemaChanged {
+			glog.V(0).Infof("existing topic partitions %d: %+v", len(resp.BrokerPartitionAssignments), resp.BrokerPartitionAssignments)
+			return
+		}
+
+		// Update schema in existing configuration
+		resp.RecordType = request.RecordType
+		if err := b.fca.SaveTopicConfToFiler(t, resp); err != nil {
+			return nil, fmt.Errorf("update topic schema: %w", err)
+		}
+
+		glog.V(0).Infof("updated schema for topic %s", request.Topic)
+		return resp, nil
 	}
 
 	if resp != nil && len(resp.BrokerPartitionAssignments) > 0 {

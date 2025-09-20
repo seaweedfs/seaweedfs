@@ -3,6 +3,8 @@ package broker
 import (
 	"context"
 	"fmt"
+	"sync"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/logstore"
 	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
@@ -10,7 +12,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
-	"sync"
 )
 
 // AssignTopicPartitions Runs on the assigned broker, to execute the topic partition assignment

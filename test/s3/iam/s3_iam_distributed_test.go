@@ -243,7 +243,7 @@ func TestS3IAMDistributedTests(t *testing.T) {
 
 		// Report results
 		if len(errorList) == 0 {
-			t.Logf("🎉 All %d concurrent operations completed successfully with retry mechanisms!", totalOperations)
+			t.Logf("All %d concurrent operations completed successfully with retry mechanisms!", totalOperations)
 		} else {
 			t.Logf("Concurrent operations summary:")
 			t.Logf("  Total operations: %d", totalOperations)

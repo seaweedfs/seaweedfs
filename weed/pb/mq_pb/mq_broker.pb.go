@@ -1878,6 +1878,7 @@ type PublishMessageResponse struct {
 	AckSequence   int64                  `protobuf:"varint,1,opt,name=ack_sequence,json=ackSequence,proto3" json:"ack_sequence,omitempty"`
 	Error         string                 `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
 	ShouldClose   bool                   `protobuf:"varint,3,opt,name=should_close,json=shouldClose,proto3" json:"should_close,omitempty"`
+	ErrorCode     int32                  `protobuf:"varint,4,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"` // Structured error code for reliable error mapping
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1931,6 +1932,13 @@ func (x *PublishMessageResponse) GetShouldClose() bool {
 		return x.ShouldClose
 	}
 	return false
+}
+
+func (x *PublishMessageResponse) GetErrorCode() int32 {
+	if x != nil {
+		return x.ErrorCode
+	}
+	return 0
 }
 
 type PublishFollowMeRequest struct {
@@ -3785,11 +3793,13 @@ const file_mq_broker_proto_rawDesc = "" +
 	"\fack_interval\x18\x03 \x01(\x05R\vackInterval\x12'\n" +
 	"\x0ffollower_broker\x18\x04 \x01(\tR\x0efollowerBroker\x12%\n" +
 	"\x0epublisher_name\x18\x05 \x01(\tR\rpublisherNameB\t\n" +
-	"\amessage\"t\n" +
+	"\amessage\"\x93\x01\n" +
 	"\x16PublishMessageResponse\x12!\n" +
 	"\fack_sequence\x18\x01 \x01(\x03R\vackSequence\x12\x14\n" +
 	"\x05error\x18\x02 \x01(\tR\x05error\x12!\n" +
-	"\fshould_close\x18\x03 \x01(\bR\vshouldClose\"\xd2\x03\n" +
+	"\fshould_close\x18\x03 \x01(\bR\vshouldClose\x12\x1d\n" +
+	"\n" +
+	"error_code\x18\x04 \x01(\x05R\terrorCode\"\xd2\x03\n" +
 	"\x16PublishFollowMeRequest\x12F\n" +
 	"\x04init\x18\x01 \x01(\v20.messaging_pb.PublishFollowMeRequest.InitMessageH\x00R\x04init\x12/\n" +
 	"\x04data\x18\x02 \x01(\v2\x19.messaging_pb.DataMessageH\x00R\x04data\x12I\n" +

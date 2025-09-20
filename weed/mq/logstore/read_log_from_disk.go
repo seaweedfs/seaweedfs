@@ -139,6 +139,7 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 
 			}, startFileName, true, math.MaxInt32)
 		})
+
 		lastReadPosition = log_buffer.NewMessagePosition(processedTsNs, -2)
 		return
 	}

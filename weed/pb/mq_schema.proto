@@ -30,11 +30,15 @@ enum OffsetType {
     EXACT_TS_NS = 10;
     RESET_TO_LATEST = 15;
     RESUME_OR_LATEST = 20;
+    // Offset-based positioning
+    EXACT_OFFSET = 25;
+    RESET_TO_OFFSET = 30;
 }
 
 message PartitionOffset {
     Partition partition = 1;
     int64 start_ts_ns = 2;
+    int64 start_offset = 3;  // For offset-based positioning
 }
 
 ///////////////////////////

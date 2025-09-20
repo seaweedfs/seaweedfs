@@ -1,0 +1,29 @@
+# Dockerfile for Kafka Integration Test Setup
+FROM golang:1.24-alpine AS builder
+
+# Install build dependencies
+RUN apk add --no-cache git make gcc musl-dev
+
+# Copy repository
+WORKDIR /app
+COPY . .
+
+# Build test setup utility from the test module
+WORKDIR /app/test/kafka
+RUN go mod download
+RUN CGO_ENABLED=1 GOOS=linux go build -o /out/test-setup ./cmd/setup
+
+# Final stage
+FROM alpine:latest
+
+# Install runtime dependencies
+RUN apk --no-cache add ca-certificates curl jq netcat-openbsd
+
+# Copy binary from builder
+COPY --from=builder /out/test-setup /usr/bin/test-setup
+
+# Make executable
+RUN chmod +x /usr/bin/test-setup
+
+# Default command
+CMD ["/usr/bin/test-setup"]

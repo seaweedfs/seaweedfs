@@ -2,9 +2,10 @@ package broker
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -45,7 +46,6 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 	localTopicPartition.Subscribers.AddSubscriber(clientName, subscriber)
 	glog.V(0).Infof("Subscriber %s connected on %v %v", clientName, t, partition)
 	isConnected := true
-	sleepIntervalCount := 0
 
 	var counter int64
 	defer func() {
@@ -156,34 +156,35 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 		}
 	}()
 
+	var cancelOnce sync.Once
+
 	return localTopicPartition.Subscribe(clientName, startPosition, func() bool {
 		if !isConnected {
 			return false
 		}
-		sleepIntervalCount++
-		if sleepIntervalCount > 32 {
-			sleepIntervalCount = 32
-		}
-		time.Sleep(time.Duration(sleepIntervalCount) * 137 * time.Millisecond)
 
-		// Check if the client has disconnected by monitoring the context
-		select {
-		case <-ctx.Done():
-			err := ctx.Err()
-			if errors.Is(err, context.Canceled) {
-				// Client disconnected
-				return false
-			}
-			glog.V(0).Infof("Subscriber %s disconnected: %v", clientName, err)
+		// Ensure we will wake any Wait() when the client disconnects
+		cancelOnce.Do(func() {
+			go func() {
+				<-ctx.Done()
+				localTopicPartition.ListenersLock.Lock()
+				localTopicPartition.ListenersCond.Broadcast()
+				localTopicPartition.ListenersLock.Unlock()
+			}()
+		})
+
+		// Block until new data is available or the client disconnects
+		localTopicPartition.ListenersLock.Lock()
+		atomic.AddInt64(&localTopicPartition.ListenersWaits, 1)
+		localTopicPartition.ListenersCond.Wait()
+		atomic.AddInt64(&localTopicPartition.ListenersWaits, -1)
+		localTopicPartition.ListenersLock.Unlock()
+
+		if ctx.Err() != nil || !isConnected {
 			return false
-		default:
-			// Continue processing the request
 		}
-
 		return true
 	}, func(logEntry *filer_pb.LogEntry) (bool, error) {
-		// reset the sleep interval count
-		sleepIntervalCount = 0
 
 		for imt.IsInflight(logEntry.Key) {
 			time.Sleep(137 * time.Millisecond)
@@ -244,6 +245,18 @@ func (b *MessageQueueBroker) getRequestPosition(initMessage *mq_pb.SubscribeMess
 	// use the exact timestamp
 	if offsetType == schema_pb.OffsetType_EXACT_TS_NS {
 		startPosition = log_buffer.NewMessagePosition(offset.StartTsNs, -2)
+		return
+	}
+
+	// use exact offset (native offset-based positioning)
+	if offsetType == schema_pb.OffsetType_EXACT_OFFSET {
+		startPosition = log_buffer.NewMessagePositionFromOffset(offset.StartOffset)
+		return
+	}
+
+	// reset to specific offset
+	if offsetType == schema_pb.OffsetType_RESET_TO_OFFSET {
+		startPosition = log_buffer.NewMessagePositionFromOffset(offset.StartOffset)
 		return
 	}
 

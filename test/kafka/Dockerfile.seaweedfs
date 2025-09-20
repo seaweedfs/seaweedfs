@@ -1,0 +1,25 @@
+# Dockerfile for building SeaweedFS components from the current workspace
+FROM golang:1.24-alpine AS builder
+
+RUN apk add --no-cache git make gcc musl-dev sqlite-dev
+
+WORKDIR /app
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+RUN CGO_ENABLED=1 GOOS=linux go build -o /out/weed ./weed
+
+FROM alpine:latest
+
+RUN apk --no-cache add ca-certificates curl wget netcat-openbsd sqlite
+
+COPY --from=builder /out/weed /usr/bin/weed
+
+WORKDIR /data
+
+EXPOSE 9333 19333 8080 18080 8888 18888 16777 17777
+
+ENTRYPOINT ["/usr/bin/weed"]
