@@ -231,7 +231,13 @@ func SelectBestProtocol(protocols []GroupProtocol, groupProtocols []string) stri
 		}
 	}
 
-	// Fallback to first supported protocol from client
+	// If group has existing protocols, only return a protocol if it's supported by both
+	if len(groupProtocols) > 0 {
+		// Return empty string to indicate no compatible protocol found
+		return ""
+	}
+
+	// Fallback to first supported protocol from client (only when group has no existing protocols)
 	for _, protocol := range protocols {
 		if ValidateAssignmentStrategy(protocol.Name) {
 			return protocol.Name

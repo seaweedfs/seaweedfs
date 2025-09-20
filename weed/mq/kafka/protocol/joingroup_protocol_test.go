@@ -73,7 +73,7 @@ func TestJoinGroup_ProtocolEnforcement(t *testing.T) {
 	if len(resp1) < 10 {
 		t.Fatalf("response too short")
 	}
-	if ec := binary.BigEndian.Uint16(resp1[4:6]); ec != 0 {
+	if ec := binary.BigEndian.Uint16(resp1[8:10]); ec != 0 {
 		t.Fatalf("expected error code 0, got %d", ec)
 	}
 
@@ -87,7 +87,8 @@ func TestJoinGroup_ProtocolEnforcement(t *testing.T) {
 	}
 
 	// Second join: client that does NOT support sticky should be rejected with InconsistentGroupProtocol
-	req2 := buildJoinGroupBody(groupID, "", "", "consumer", []GroupProtocol{
+	// Use different protocol type to ensure different client key
+	req2 := buildJoinGroupBody(groupID, "", "", "consumer2", []GroupProtocol{
 		{Name: "range", Metadata: []byte{}},
 		{Name: "roundrobin", Metadata: []byte{}},
 	}, 30000, 300000)
@@ -99,14 +100,14 @@ func TestJoinGroup_ProtocolEnforcement(t *testing.T) {
 	if len(resp2) < 10 {
 		t.Fatalf("response too short")
 	}
-	if ec := binary.BigEndian.Uint16(resp2[4:6]); ec != uint16(ErrorCodeInconsistentGroupProtocol) {
-		t.Fatalf("expected InconsistentGroupProtocol, got %d", ec)
+	if ec := binary.BigEndian.Uint16(resp2[8:10]); ec != uint16(ErrorCodeInconsistentGroupProtocol) {
+		t.Fatalf("expected InconsistentGroupProtocol (%d), got %d", ErrorCodeInconsistentGroupProtocol, ec)
 	}
 
 	// Third join: client that supports sticky should succeed
 	req3 := buildJoinGroupBody(groupID, "", "", "consumer", []GroupProtocol{
 		{Name: "sticky", Metadata: []byte{}},
-	}, 30000, 300000)
+	}, 30002, 300000)
 
 	resp3, err := h.handleJoinGroup(3, 5, req3)
 	if err != nil {
@@ -115,7 +116,7 @@ func TestJoinGroup_ProtocolEnforcement(t *testing.T) {
 	if len(resp3) < 10 {
 		t.Fatalf("response too short")
 	}
-	if ec := binary.BigEndian.Uint16(resp3[4:6]); ec != 0 {
+	if ec := binary.BigEndian.Uint16(resp3[8:10]); ec != 0 {
 		t.Fatalf("expected success, got error code %d", ec)
 	}
 }
@@ -365,20 +366,20 @@ func TestHandleSyncGroup_LeaderAssignments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("JoinGroup failed: %v", err)
 	}
-	if binary.BigEndian.Uint16(resp1[4:6]) != 0 {
+	if binary.BigEndian.Uint16(resp1[8:10]) != 0 {
 		t.Fatal("JoinGroup should succeed")
 	}
 
-	// Member 2 joins
+	// Member 2 joins (use different session timeout to get different client key)
 	req2 := buildJoinGroupBody(groupID, "", "", "consumer", []GroupProtocol{
 		{Name: "range", Metadata: []byte{}},
-	}, 30000, 300000)
+	}, 30001, 300000)
 
 	resp2, err := h.handleJoinGroup(2, 5, req2)
 	if err != nil {
 		t.Fatalf("JoinGroup failed: %v", err)
 	}
-	if binary.BigEndian.Uint16(resp2[4:6]) != 0 {
+	if binary.BigEndian.Uint16(resp2[8:10]) != 0 {
 		t.Fatal("JoinGroup should succeed")
 	}
 

@@ -223,7 +223,7 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 	groupProtocol := SelectBestProtocol(request.GroupProtocols, existingProtocols)
 
 	// If a protocol is already selected for the group, reject joins that do not support it.
-	if len(existingProtocols) > 0 && groupProtocol != group.Protocol {
+	if len(existingProtocols) > 0 && (groupProtocol == "" || groupProtocol != group.Protocol) {
 		// Rollback member addition and static registration before returning error
 		delete(group.Members, memberID)
 		if member.GroupInstanceID != nil && *member.GroupInstanceID != "" {
