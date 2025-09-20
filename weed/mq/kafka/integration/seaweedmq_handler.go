@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/filer_client"
@@ -19,6 +18,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
@@ -212,8 +213,9 @@ func (h *SeaweedMQHandler) CreateTopic(name string, partitions int32) error {
 		brokerAddress := h.brokerAddresses[0] // Use first available broker
 		glog.V(1).Infof("📞 Configuring topic %s with broker %s", name, brokerAddress)
 
-		// Create gRPC dial option for broker connection
-		grpcDialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+		// Load security configuration for broker connection
+		util.LoadSecurityConfiguration()
+		grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.mq")
 
 		err := pb.WithBrokerGrpcClient(false, brokerAddress, grpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
 			_, err := client.ConfigureTopic(context.Background(), &mq_pb.ConfigureTopicRequest{
@@ -665,8 +667,9 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string, clientHost str
 		return nil, fmt.Errorf("no valid master addresses provided")
 	}
 
-	// Create master client for service discovery
-	grpcDialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	// Load security configuration for gRPC connections
+	util.LoadSecurityConfiguration()
+	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.mq")
 	masterDiscovery := pb.ServerAddresses(masters).ToServiceDiscovery()
 
 	// Use provided client host for proper gRPC connection
@@ -864,8 +867,12 @@ func NewBrokerClientWithFilerAccessor(brokerAddress string, filerClientAccessor 
 	dialCtx := context.Background()
 
 	// Connect to broker
+	// Load security configuration for broker connection
+	util.LoadSecurityConfiguration()
+	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.mq")
+
 	conn, err := grpc.DialContext(dialCtx, brokerAddress,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpcDialOption,
 	)
 	if err != nil {
 		cancel()
