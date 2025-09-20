@@ -137,7 +137,6 @@ func (bc *BrokerClient) FetchSchematizedMessages(topicName string, maxMessages i
 		// Reconstruct Confluent envelope from RecordValue
 		envelope, err := bc.reconstructConfluentEnvelope(recordValue)
 		if err != nil {
-			fmt.Printf("Warning: failed to reconstruct envelope: %v\n", err)
 			continue
 		}
 

@@ -55,21 +55,11 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 	if dumpLen > 100 {
 		dumpLen = 100
 	}
-	fmt.Printf("DEBUG: JoinGroup request hex dump (first %d bytes): %x\n", dumpLen, requestBody[:dumpLen])
 
 	// Parse JoinGroup request
 	request, err := h.parseJoinGroupRequest(requestBody, apiVersion)
 	if err != nil {
-		fmt.Printf("DEBUG: JoinGroup parseJoinGroupRequest error: %v\n", err)
 		return h.buildJoinGroupErrorResponse(correlationID, ErrorCodeInvalidGroupID, apiVersion), nil
-	}
-
-	fmt.Printf("DEBUG: JoinGroup parsed request - GroupID: '%s', MemberID: '%s', SessionTimeout: %d\n",
-		request.GroupID, request.MemberID, request.SessionTimeout)
-	fmt.Printf("DEBUG: JoinGroup protocols count: %d\n", len(request.GroupProtocols))
-	for i, protocol := range request.GroupProtocols {
-		fmt.Printf("DEBUG: JoinGroup protocol[%d]: name='%s', metadata_len=%d, metadata_hex=%x\n",
-			i, protocol.Name, len(protocol.Metadata), protocol.Metadata)
 	}
 
 	// Validate request
@@ -87,9 +77,6 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 	group.Mu.Lock()
 	defer group.Mu.Unlock()
 
-	fmt.Printf("DEBUG: JoinGroup before - group='%s' gen=%d state=%s members=%d leader='%s'\n",
-		group.ID, group.Generation, group.State, len(group.Members), group.Leader)
-
 	// Update group's last activity
 	group.LastActivity = time.Now()
 
@@ -104,12 +91,10 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 		if existingMember != nil {
 			memberID = existingMember.ID
 			isNewMember = false
-			fmt.Printf("DEBUG: JoinGroup found existing static member ID '%s' for instance '%s'\n", memberID, request.GroupInstanceID)
 		} else {
 			// New static member
 			memberID = h.groupCoordinator.GenerateMemberID(request.GroupInstanceID, "static")
 			isNewMember = true
-			fmt.Printf("DEBUG: JoinGroup generated new static member ID '%s' for instance '%s'\n", memberID, request.GroupInstanceID)
 		}
 	} else {
 		// Dynamic membership logic
@@ -129,12 +114,10 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 				// Reuse existing member ID for this client
 				memberID = existingMemberID
 				isNewMember = false
-				fmt.Printf("DEBUG: JoinGroup reusing existing member ID '%s' for client key '%s'\n", memberID, clientKey)
 			} else {
 				// Generate new deterministic member ID
 				memberID = h.groupCoordinator.GenerateMemberID(clientKey, "consumer")
 				isNewMember = true
-				fmt.Printf("DEBUG: JoinGroup generated new member ID '%s' for client key '%s'\n", memberID, clientKey)
 			}
 		} else {
 			memberID = request.MemberID
@@ -144,25 +127,21 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 				return h.buildJoinGroupErrorResponse(correlationID, ErrorCodeUnknownMemberID, apiVersion), nil
 			}
 			isNewMember = false
-			fmt.Printf("DEBUG: JoinGroup using provided member ID '%s'\n", memberID)
 		}
 	}
 
 	// Check group state
-	fmt.Printf("DEBUG: JoinGroup current group state: %s, generation: %d (members=%d)\n", group.State, group.Generation, len(group.Members))
 	switch group.State {
 	case consumer.GroupStateEmpty, consumer.GroupStateStable:
 		// Can join or trigger rebalance
 		if isNewMember || len(group.Members) == 0 {
 			group.State = consumer.GroupStatePreparingRebalance
 			group.Generation++
-			fmt.Printf("DEBUG: JoinGroup transitioned to PreparingRebalance, new generation: %d\n", group.Generation)
 		}
 	case consumer.GroupStatePreparingRebalance:
 		// Rebalance in progress - if this is the leader and we have members, transition to CompletingRebalance
 		if len(group.Members) > 0 && memberID == group.Leader {
 			group.State = consumer.GroupStateCompletingRebalance
-			fmt.Printf("DEBUG: JoinGroup leader '%s' transitioning group to CompletingRebalance (ready for SyncGroup)\n", memberID)
 		}
 	case consumer.GroupStateCompletingRebalance:
 		// Allow join but don't change generation until SyncGroup
@@ -172,7 +151,6 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 
 	// Extract client host from connection context
 	clientHost := ExtractClientHost(h.connContext)
-	fmt.Printf("DEBUG: JoinGroup extracted client host: %s\n", clientHost)
 
 	// Create or update member with enhanced metadata parsing
 	var groupInstanceID *string
@@ -201,15 +179,12 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 		group.Members = make(map[string]*consumer.GroupMember)
 	}
 	group.Members[memberID] = member
-	fmt.Printf("DEBUG: JoinGroup added/updated member '%s' (static=%v, topics=%v)\n",
-		memberID, h.groupCoordinator.IsStaticMember(member), member.Subscription)
 
 	// Store protocol metadata for leader
 	if len(request.GroupProtocols) > 0 {
 		if len(request.GroupProtocols[0].Metadata) == 0 {
 			// Generate subscription metadata for available topics
 			availableTopics := h.getAvailableTopics()
-			fmt.Printf("DEBUG: JoinGroup generating subscription metadata for topics: %v\n", availableTopics)
 
 			metadata := make([]byte, 0, 64)
 			// Version (2 bytes) - use version 0
@@ -228,7 +203,6 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 			// UserData length (4 bytes) - empty
 			metadata = append(metadata, 0, 0, 0, 0)
 			member.Metadata = metadata
-			fmt.Printf("DEBUG: JoinGroup generated metadata (%d bytes): %x\n", len(metadata), metadata)
 		} else {
 			member.Metadata = request.GroupProtocols[0].Metadata
 		}
@@ -240,7 +214,6 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 	// Register static member if applicable
 	if member.GroupInstanceID != nil && *member.GroupInstanceID != "" {
 		h.groupCoordinator.RegisterStaticMemberLocked(group, member)
-		fmt.Printf("DEBUG: JoinGroup registered static member '%s' with instance ID '%s'\n", memberID, *member.GroupInstanceID)
 	}
 
 	// Update group's subscribed topics
@@ -256,15 +229,11 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 
 	groupProtocol := SelectBestProtocol(request.GroupProtocols, existingProtocols)
 	group.Protocol = groupProtocol
-	fmt.Printf("DEBUG: JoinGroup selected protocol: %s (from %d client protocols)\n",
-		groupProtocol, len(request.GroupProtocols))
 
 	// Select group leader (first member or keep existing if still present)
 	if group.Leader == "" || group.Members[group.Leader] == nil {
 		group.Leader = memberID
-		fmt.Printf("DEBUG: JoinGroup elected new leader: '%s' for group '%s'\n", memberID, request.GroupID)
 	} else {
-		fmt.Printf("DEBUG: JoinGroup keeping existing leader: '%s' for group '%s'\n", group.Leader, request.GroupID)
 	}
 
 	// Build response - use the requested API version
@@ -277,9 +246,6 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 		MemberID:      memberID,
 		Version:       apiVersion,
 	}
-
-	fmt.Printf("DEBUG: JoinGroup response - Generation: %d, Protocol: '%s', Leader: '%s', Member: '%s'\n",
-		response.GenerationID, response.GroupProtocol, response.GroupLeader, response.MemberID)
 
 	// If this member is the leader, include all member info for assignment
 	if memberID == group.Leader {
@@ -298,8 +264,6 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 	}
 
 	resp := h.buildJoinGroupResponse(response)
-	fmt.Printf("DEBUG: JoinGroup sending response - gen=%d leader='%s' members=%d version=%d size=%d\n",
-		response.GenerationID, response.GroupLeader, len(response.Members), response.Version, len(resp))
 	return resp, nil
 }
 
@@ -393,9 +357,6 @@ func (h *Handler) parseJoinGroupRequest(data []byte, apiVersion uint16) (*JoinGr
 	protocolsCount := binary.BigEndian.Uint32(data[offset : offset+4])
 	offset += 4
 
-	fmt.Printf("DEBUG: JoinGroup - GroupID: %s, SessionTimeout: %d, RebalanceTimeout: %d, MemberID: %s, ProtocolType: %s, ProtocolsCount: %d\n",
-		groupID, sessionTimeout, rebalanceTimeout, memberID, protocolType, protocolsCount)
-
 	protocols := make([]GroupProtocol, 0, protocolsCount)
 
 	for i := uint32(0); i < protocolsCount && offset < len(data); i++ {
@@ -431,7 +392,6 @@ func (h *Handler) parseJoinGroupRequest(data []byte, apiVersion uint16) (*JoinGr
 			Metadata: metadata,
 		})
 
-		fmt.Printf("DEBUG: JoinGroup - Protocol: %s, MetadataLength: %d\n", protocolName, metadataLength)
 	}
 
 	return &JoinGroupRequest{
@@ -602,7 +562,6 @@ func (h *Handler) buildMinimalJoinGroupResponse(correlationID uint32, apiVersion
 	// Member metadata (BYTES) - empty
 	response = append(response, 0, 0, 0, 0) // 0 bytes
 
-	fmt.Printf("DEBUG: JoinGroup minimal response (%d bytes): %x\n", len(response), response)
 	return response
 }
 
@@ -617,17 +576,13 @@ func (h *Handler) extractSubscriptionFromProtocolsEnhanced(protocols []GroupProt
 	debugInfo := AnalyzeProtocolMetadata(protocols)
 	for _, info := range debugInfo {
 		if info.ParsedOK {
-			fmt.Printf("DEBUG: Protocol %s parsed successfully: version=%d, topics=%v\n",
-				info.Strategy, info.Version, info.Topics)
 		} else {
-			fmt.Printf("DEBUG: Protocol %s parse failed: %s\n", info.Strategy, info.ParseError)
 		}
 	}
 
 	// Extract topics using enhanced parsing
 	topics := ExtractTopicsFromMetadata(protocols, h.getAvailableTopics())
 
-	fmt.Printf("DEBUG: Enhanced subscription extraction result: %v\n", topics)
 	return topics
 }
 
@@ -640,6 +595,7 @@ func (h *Handler) parseConsumerProtocolMetadata(metadata []byte) []string {
 
 	// Parse version (2 bytes)
 	version := binary.BigEndian.Uint16(metadata[offset : offset+2])
+	_ = version // Version used for compatibility checks elsewhere
 	offset += 2
 
 	// Parse topics array
@@ -648,8 +604,6 @@ func (h *Handler) parseConsumerProtocolMetadata(metadata []byte) []string {
 	}
 	topicsCount := binary.BigEndian.Uint32(metadata[offset : offset+4])
 	offset += 4
-
-	fmt.Printf("DEBUG: Consumer protocol metadata - Version: %d, TopicsCount: %d\n", version, topicsCount)
 
 	topics := make([]string, 0, topicsCount)
 
@@ -668,7 +622,6 @@ func (h *Handler) parseConsumerProtocolMetadata(metadata []byte) []string {
 		offset += int(topicNameLength)
 
 		topics = append(topics, topicName)
-		fmt.Printf("DEBUG: Consumer subscribed to topic: %s\n", topicName)
 	}
 
 	return topics
@@ -718,17 +671,12 @@ func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, reque
 	if dumpLen > 100 {
 		dumpLen = 100
 	}
-	fmt.Printf("DEBUG: SyncGroup request hex dump (first %d bytes): %x\n", dumpLen, requestBody[:dumpLen])
 
 	// Parse SyncGroup request
 	request, err := h.parseSyncGroupRequest(requestBody, apiVersion)
 	if err != nil {
-		fmt.Printf("DEBUG: SyncGroup parseSyncGroupRequest error: %v\n", err)
 		return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeInvalidGroupID, apiVersion), nil
 	}
-
-	fmt.Printf("DEBUG: SyncGroup parsed request - GroupID: '%s', MemberID: '%s', GenerationID: %d assignments=%d\n",
-		request.GroupID, request.MemberID, request.GenerationID, len(request.GroupAssignments))
 
 	// Validate request
 	if request.GroupID == "" || request.MemberID == "" {
@@ -743,9 +691,6 @@ func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, reque
 
 	group.Mu.Lock()
 	defer group.Mu.Unlock()
-
-	fmt.Printf("DEBUG: SyncGroup pre-state - group='%s' gen=%d state=%s leader='%s' members=%d\n",
-		group.ID, group.Generation, group.State, group.Leader, len(group.Members))
 
 	// Update group's last activity
 	group.LastActivity = time.Now()
@@ -776,16 +721,13 @@ func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, reque
 		for _, m := range group.Members {
 			m.State = consumer.MemberStateStable
 		}
-		fmt.Printf("DEBUG: SyncGroup leader '%s' applied assignments; group now Stable\n", request.MemberID)
 	} else if group.State == consumer.GroupStateCompletingRebalance {
 		// Non-leader member waiting for assignments
 		// Assignments should already be processed by leader
-		fmt.Printf("DEBUG: SyncGroup non-leader '%s' waiting; group already CompletingRebalance\n", request.MemberID)
 	} else {
 		// Trigger partition assignment using built-in strategy
 		topicPartitions := h.getTopicPartitions(group)
 		group.AssignPartitions(topicPartitions)
-		fmt.Printf("DEBUG: SyncGroup auto-assigned partitions using '%s' strategy\n", group.Protocol)
 
 		group.State = consumer.GroupStateStable
 		for _, m := range group.Members {
@@ -795,7 +737,6 @@ func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, reque
 
 	// Get assignment for this member
 	assignment := h.serializeMemberAssignment(member.Assignment)
-	fmt.Printf("DEBUG: SyncGroup response assignment for member '%s': %v\n", member.ID, member.Assignment)
 
 	// Build response
 	response := SyncGroupResponse{
@@ -805,7 +746,6 @@ func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, reque
 	}
 
 	resp := h.buildSyncGroupResponse(response, apiVersion)
-	fmt.Printf("DEBUG: SyncGroup sending response - size=%d error=%d\n", len(resp), response.ErrorCode)
 	return resp, nil
 }
 
@@ -994,7 +934,6 @@ func (h *Handler) serializeMemberAssignment(assignments []consumer.PartitionAssi
 	// For empty user data, just put length = 0
 	result = append(result, 0, 0, 0, 0)
 
-	fmt.Printf("DEBUG: Generated assignment bytes (%d): %x\n", len(result), result)
 	return result
 }
 

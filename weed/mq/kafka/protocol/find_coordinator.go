@@ -45,7 +45,6 @@ func (h *Handler) handleFindCoordinatorV0(correlationID uint32, requestBody []by
 	if dumpLen > 50 {
 		dumpLen = 50
 	}
-	fmt.Printf("DEBUG: FindCoordinator v0 request hex dump (first %d bytes): %x\n", dumpLen, requestBody[:dumpLen])
 
 	if len(requestBody) < 2 { // need at least Key length
 		return nil, fmt.Errorf("FindCoordinator request too short")
@@ -59,7 +58,6 @@ func (h *Handler) handleFindCoordinatorV0(correlationID uint32, requestBody []by
 
 	// Parse coordinator key (group ID for consumer groups)
 	coordinatorKeySize := binary.BigEndian.Uint16(requestBody[offset : offset+2])
-	fmt.Printf("DEBUG: FindCoordinator coordinator_key_size: %d, offset: %d\n", coordinatorKeySize, offset)
 	offset += 2
 
 	if len(requestBody) < offset+int(coordinatorKeySize) {
@@ -70,14 +68,10 @@ func (h *Handler) handleFindCoordinatorV0(correlationID uint32, requestBody []by
 	offset += int(coordinatorKeySize)
 
 	// Parse coordinator type (v1+ only, default to 0 for consumer groups in v0)
-	coordinatorType := int8(0) // Consumer group coordinator
-
-	fmt.Printf("DEBUG: FindCoordinator request for key '%s' (type: %d)\n", coordinatorKey, coordinatorType)
+	_ = int8(0) // Consumer group coordinator (unused in v0)
 
 	// Find the appropriate coordinator for this group
 	coordinatorHost, coordinatorPort, nodeID, err := h.findCoordinatorForGroup(coordinatorKey)
-	fmt.Printf("DEBUG: FindCoordinator selected coordinator %s:%d (node %d) for group '%s'\n",
-		coordinatorHost, coordinatorPort, nodeID, coordinatorKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find coordinator for group %s: %w", coordinatorKey, err)
 	}
@@ -114,9 +108,6 @@ func (h *Handler) handleFindCoordinatorV0(correlationID uint32, requestBody []by
 	binary.BigEndian.PutUint32(portBytes, uint32(coordinatorPort))
 	response = append(response, portBytes...)
 
-	fmt.Printf("DEBUG: FindCoordinator v0 response: coordinator at %s:%d (node %d)\n", coordinatorHost, coordinatorPort, nodeID)
-	fmt.Printf("DEBUG: FindCoordinator v0 response hex dump (%d bytes): %x\n", len(response), response)
-
 	return response, nil
 }
 
@@ -128,7 +119,6 @@ func (h *Handler) handleFindCoordinatorV2(correlationID uint32, requestBody []by
 	if dumpLen > 50 {
 		dumpLen = 50
 	}
-	fmt.Printf("DEBUG: FindCoordinator request hex dump (first %d bytes): %x\n", dumpLen, requestBody[:dumpLen])
 
 	if len(requestBody) < 2 { // need at least Key length
 		return nil, fmt.Errorf("FindCoordinator request too short")
@@ -142,7 +132,6 @@ func (h *Handler) handleFindCoordinatorV2(correlationID uint32, requestBody []by
 
 	// Parse coordinator key (group ID for consumer groups)
 	coordinatorKeySize := binary.BigEndian.Uint16(requestBody[offset : offset+2])
-	fmt.Printf("DEBUG: FindCoordinator coordinator_key_size: %d, offset: %d\n", coordinatorKeySize, offset)
 	offset += 2
 
 	if len(requestBody) < offset+int(coordinatorKeySize) {
@@ -156,8 +145,8 @@ func (h *Handler) handleFindCoordinatorV2(correlationID uint32, requestBody []by
 	var coordinatorType byte = 0
 	if offset < len(requestBody) {
 		coordinatorType = requestBody[offset]
+		_ = coordinatorType // Used for validation but not in current logic
 	}
-	fmt.Printf("DEBUG: FindCoordinator request for key '%s' (type: %d)\n", coordinatorKey, coordinatorType)
 
 	// Find the appropriate coordinator for this group
 	coordinatorHost, coordinatorPort, nodeID, err := h.findCoordinatorForGroup(coordinatorKey)
@@ -203,9 +192,6 @@ func (h *Handler) handleFindCoordinatorV2(correlationID uint32, requestBody []by
 	portBytes := make([]byte, 4)
 	binary.BigEndian.PutUint32(portBytes, uint32(coordinatorPort))
 	response = append(response, portBytes...)
-
-	fmt.Printf("DEBUG: FindCoordinator v2 response: coordinator at %s:%d (node %d)\n", coordinatorHost, coordinatorPort, nodeID)
-	fmt.Printf("DEBUG: FindCoordinator response hex dump (%d bytes): %x\n", len(response), response)
 
 	return response, nil
 }

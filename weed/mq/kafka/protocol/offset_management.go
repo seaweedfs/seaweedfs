@@ -99,12 +99,9 @@ func (h *Handler) handleOffsetCommit(correlationID uint32, requestBody []byte) (
 	// Parse OffsetCommit request
 	req, err := h.parseOffsetCommitRequest(requestBody)
 	if err != nil {
-		fmt.Printf("DEBUG: OffsetCommit parse error: %v\n", err)
 		return h.buildOffsetCommitErrorResponse(correlationID, ErrorCodeInvalidCommitOffsetSize), nil
 	}
 
-	fmt.Printf("DEBUG: OffsetCommit request - GroupID: %s, GenerationID: %d, MemberID: %s\n",
-		req.GroupID, req.GenerationID, req.MemberID)
 
 	// Validate request
 	if req.GroupID == "" || req.MemberID == "" {
@@ -114,7 +111,6 @@ func (h *Handler) handleOffsetCommit(correlationID uint32, requestBody []byte) (
 	// Get consumer group
 	group := h.groupCoordinator.GetGroup(req.GroupID)
 	if group == nil {
-		fmt.Printf("DEBUG: OffsetCommit group '%s' not found\n", req.GroupID)
 		return h.buildOffsetCommitErrorResponse(correlationID, ErrorCodeInvalidGroupID), nil
 	}
 
@@ -126,8 +122,6 @@ func (h *Handler) handleOffsetCommit(correlationID uint32, requestBody []byte) (
 
 	// Require matching generation to store commits; return IllegalGeneration otherwise
 	generationMatches := (req.GenerationID == group.Generation)
-	fmt.Printf("DEBUG: OffsetCommit group='%s' group.Generation=%d matches=%v members=%d state=%v\n",
-		req.GroupID, group.Generation, generationMatches, len(group.Members), group.State)
 
 	// Process offset commits
 	resp := OffsetCommitResponse{
@@ -135,16 +129,13 @@ func (h *Handler) handleOffsetCommit(correlationID uint32, requestBody []byte) (
 		Topics:        make([]OffsetCommitTopicResponse, 0, len(req.Topics)),
 	}
 
-	fmt.Printf("DEBUG: OffsetCommit processing %d topics\n", len(req.Topics))
 	for _, t := range req.Topics {
-		fmt.Printf("DEBUG: OffsetCommit processing topic %s with %d partitions\n", t.Name, len(t.Partitions))
 		topicResp := OffsetCommitTopicResponse{
 			Name:       t.Name,
 			Partitions: make([]OffsetCommitPartitionResponse, 0, len(t.Partitions)),
 		}
 
 		for _, p := range t.Partitions {
-			fmt.Printf("DEBUG: OffsetCommit processing partition %d offset %d\n", p.Index, p.Offset)
 
 			// Create consumer offset key for SMQ storage
 			key := offset.ConsumerOffsetKey{
@@ -158,17 +149,12 @@ func (h *Handler) handleOffsetCommit(correlationID uint32, requestBody []byte) (
 			var errCode int16 = ErrorCodeNone
 			if generationMatches {
 				if err := h.commitOffsetToSMQ(key, p.Offset, p.Metadata); err != nil {
-					fmt.Printf("DEBUG: OffsetCommit SMQ error: %v\n", err)
 					errCode = ErrorCodeOffsetMetadataTooLarge
 				} else {
-					fmt.Printf("DEBUG: OffsetCommit SMQ - Topic: %s, Partition: %d, Offset: %d\n",
-						t.Name, p.Index, p.Offset)
 				}
 			} else {
 				// Do not store commit if generation mismatch
 				errCode = 22 // IllegalGeneration
-				fmt.Printf("DEBUG: OffsetCommit rejected - generation mismatch (req: %d, group: %d)\n",
-					req.GenerationID, group.Generation)
 			}
 
 			topicResp.Partitions = append(topicResp.Partitions, OffsetCommitPartitionResponse{
@@ -180,7 +166,6 @@ func (h *Handler) handleOffsetCommit(correlationID uint32, requestBody []byte) (
 		resp.Topics = append(resp.Topics, topicResp)
 	}
 
-	fmt.Printf("DEBUG: OffsetCommit response - topics=%d\n", len(resp.Topics))
 	return h.buildOffsetCommitResponse(resp), nil
 }
 
@@ -188,12 +173,9 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, req
 	// Parse OffsetFetch request
 	request, err := h.parseOffsetFetchRequest(requestBody)
 	if err != nil {
-		fmt.Printf("DEBUG: OffsetFetch parse error: %v\n", err)
 		return h.buildOffsetFetchErrorResponse(correlationID, ErrorCodeInvalidGroupID), nil
 	}
 
-	fmt.Printf("DEBUG: OffsetFetch request - GroupID: %s, Topics: %d\n",
-		request.GroupID, len(request.Topics))
 
 	// Validate request
 	if request.GroupID == "" {
@@ -252,9 +234,7 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, req
 			if off, meta, err := h.fetchOffsetFromSMQ(key); err == nil && off >= 0 {
 				fetchedOffset = off
 				metadata = meta
-				fmt.Printf("DEBUG: OffsetFetch SMQ returned offset=%d metadata='%s'\n", off, meta)
 			} else {
-				fmt.Printf("DEBUG: OffsetFetch SMQ error: %v\n", err)
 				// No offset found in persistent storage (-1 indicates no committed offset)
 			}
 
@@ -265,15 +245,12 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, req
 				Metadata:    metadata,
 				ErrorCode:   errorCode,
 			}
-			fmt.Printf("DEBUG: OffsetFetch partition response: topic=%s partition=%d offset=%d\n",
-				topic.Name, partition, fetchedOffset)
 			topicResponse.Partitions = append(topicResponse.Partitions, partitionResponse)
 		}
 
 		response.Topics = append(response.Topics, topicResponse)
 	}
 
-	fmt.Printf("DEBUG: OffsetFetch response - topics=%d\n", len(response.Topics))
 	return h.buildOffsetFetchResponse(response, apiVersion), nil
 }
 

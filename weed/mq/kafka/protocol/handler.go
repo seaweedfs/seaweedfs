@@ -516,11 +516,9 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		switch apiKey {
 		case 18: // ApiVersions
 			Debug("-> ApiVersions v%d", apiVersion)
-			fmt.Printf("DEBUG: ApiVersions v%d corr=%d\n", apiVersion, correlationID)
 			response, err = h.handleApiVersions(correlationID, apiVersion)
 		case 3: // Metadata
 			Debug("-> Metadata v%d", apiVersion)
-			fmt.Printf("DEBUG: Metadata v%d corr=%d\n", apiVersion, correlationID)
 			response, err = h.handleMetadata(correlationID, apiVersion, requestBody)
 		case 2: // ListOffsets
 			Debug("*** LISTOFFSETS REQUEST RECEIVED *** Correlation: %d, Version: %d", correlationID, apiVersion)
@@ -531,35 +529,27 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			response, err = h.handleDeleteTopics(correlationID, requestBody)
 		case 0: // Produce
 			Debug("-> Produce v%d", apiVersion)
-			fmt.Printf("DEBUG: Produce v%d corr=%d\n", apiVersion, correlationID)
 			response, err = h.handleProduce(correlationID, apiVersion, requestBody)
 		case 1: // Fetch
 			Debug("-> Fetch v%d", apiVersion)
-			fmt.Printf("DEBUG: Fetch v%d corr=%d\n", apiVersion, correlationID)
 			response, err = h.handleFetch(ctx, correlationID, apiVersion, requestBody)
 		case 11: // JoinGroup
 			Debug("-> JoinGroup v%d", apiVersion)
-			fmt.Printf("DEBUG: JoinGroup v%d corr=%d\n", apiVersion, correlationID)
 			response, err = h.handleJoinGroup(correlationID, apiVersion, requestBody)
 		case 14: // SyncGroup
 			Debug("-> SyncGroup v%d", apiVersion)
-			fmt.Printf("DEBUG: SyncGroup v%d corr=%d\n", apiVersion, correlationID)
 			response, err = h.handleSyncGroup(correlationID, apiVersion, requestBody)
 		case 8: // OffsetCommit
 			Debug("-> OffsetCommit")
-			fmt.Printf("DEBUG: OffsetCommit corr=%d\n", correlationID)
 			response, err = h.handleOffsetCommit(correlationID, requestBody)
 		case 9: // OffsetFetch
 			Debug("-> OffsetFetch v%d", apiVersion)
-			fmt.Printf("DEBUG: OffsetFetch v%d corr=%d\n", apiVersion, correlationID)
 			response, err = h.handleOffsetFetch(correlationID, apiVersion, requestBody)
 		case 10: // FindCoordinator
 			Debug("-> FindCoordinator v%d", apiVersion)
-			fmt.Printf("DEBUG: FindCoordinator v%d corr=%d\n", apiVersion, correlationID)
 			response, err = h.handleFindCoordinator(correlationID, apiVersion, requestBody)
 		case 12: // Heartbeat
 			Debug("-> Heartbeat v%d", apiVersion)
-			fmt.Printf("DEBUG: Heartbeat v%d corr=%d\n", apiVersion, correlationID)
 			response, err = h.handleHeartbeat(correlationID, requestBody)
 		case 13: // LeaveGroup
 			response, err = h.handleLeaveGroup(correlationID, apiVersion, requestBody)
@@ -2520,27 +2510,19 @@ func (h *Handler) commitOffsetToSMQ(key offset.ConsumerOffsetKey, offsetValue in
 // fetchOffsetFromSMQ fetches offset using SMQ storage
 func (h *Handler) fetchOffsetFromSMQ(key offset.ConsumerOffsetKey) (int64, string, error) {
 	if h.smqOffsetStorage == nil {
-		fmt.Printf("DEBUG: fetchOffsetFromSMQ - SMQ offset storage not initialized\n")
 		return -1, "", fmt.Errorf("SMQ offset storage not initialized")
 	}
 
-	fmt.Printf("DEBUG: fetchOffsetFromSMQ - loading offset for group=%s topic=%s partition=%d\n",
-		key.ConsumerGroup, key.Topic, key.Partition)
-
 	entries, err := h.smqOffsetStorage.LoadConsumerOffsets(key)
 	if err != nil {
-		fmt.Printf("DEBUG: fetchOffsetFromSMQ - load error: %v\n", err)
 		return -1, "", err
 	}
 
-	fmt.Printf("DEBUG: fetchOffsetFromSMQ - loaded %d entries\n", len(entries))
 	if len(entries) == 0 {
-		fmt.Printf("DEBUG: fetchOffsetFromSMQ - no committed offset found\n")
 		return -1, "", nil // No committed offset
 	}
 
 	offset := entries[0].KafkaOffset
-	fmt.Printf("DEBUG: fetchOffsetFromSMQ - returning offset=%d\n", offset)
 	// Return the committed offset (metadata is not stored in SMQ format)
 	return offset, "", nil
 }

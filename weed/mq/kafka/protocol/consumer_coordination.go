@@ -63,12 +63,9 @@ func (h *Handler) handleHeartbeat(correlationID uint32, requestBody []byte) ([]b
 	// Parse Heartbeat request
 	request, err := h.parseHeartbeatRequest(requestBody)
 	if err != nil {
-		fmt.Printf("DEBUG: Heartbeat parse error: %v\n", err)
 		return h.buildHeartbeatErrorResponse(correlationID, ErrorCodeInvalidGroupID), nil
 	}
 
-	fmt.Printf("DEBUG: Heartbeat request - GroupID: '%s', MemberID: '%s', GenerationID: %d\n",
-		request.GroupID, request.MemberID, request.GenerationID)
 
 	// Validate request
 	if request.GroupID == "" || request.MemberID == "" {
@@ -78,7 +75,6 @@ func (h *Handler) handleHeartbeat(correlationID uint32, requestBody []byte) ([]b
 	// Get consumer group
 	group := h.groupCoordinator.GetGroup(request.GroupID)
 	if group == nil {
-		fmt.Printf("DEBUG: Heartbeat group '%s' not found\n", request.GroupID)
 		return h.buildHeartbeatErrorResponse(correlationID, ErrorCodeInvalidGroupID), nil
 	}
 
@@ -88,26 +84,20 @@ func (h *Handler) handleHeartbeat(correlationID uint32, requestBody []byte) ([]b
 	// Update group's last activity
 	group.LastActivity = time.Now()
 
-	fmt.Printf("DEBUG: Heartbeat pre-check - group='%s' gen=%d state=%s members=%d leader='%s'\n",
-		group.ID, group.Generation, group.State, len(group.Members), group.Leader)
 
 	// Validate member exists
 	member, exists := group.Members[request.MemberID]
 	if !exists {
-		fmt.Printf("DEBUG: Heartbeat unknown member '%s' in group '%s' (gen=%d)\n", request.MemberID, group.ID, group.Generation)
 		return h.buildHeartbeatErrorResponse(correlationID, ErrorCodeUnknownMemberID), nil
 	}
 
 	// Validate generation
 	if request.GenerationID != group.Generation {
-		fmt.Printf("DEBUG: Heartbeat illegal generation - req=%d, group=%d\n", request.GenerationID, group.Generation)
 		return h.buildHeartbeatErrorResponse(correlationID, ErrorCodeIllegalGeneration), nil
 	}
 
 	// Update member's last heartbeat
 	member.LastHeartbeat = time.Now()
-	fmt.Printf("DEBUG: Heartbeat accepted - member='%s' state=%s lastHeartbeat=%v\n",
-		member.ID, member.State, member.LastHeartbeat)
 
 	// Check if rebalancing is in progress
 	var errorCode int16 = ErrorCodeNone
@@ -131,8 +121,6 @@ func (h *Handler) handleHeartbeat(correlationID uint32, requestBody []byte) ([]b
 		ErrorCode:     errorCode,
 	}
 
-	fmt.Printf("DEBUG: Heartbeat response - group='%s' gen=%d state=%s errorCode=%d\n",
-		group.ID, group.Generation, group.State, errorCode)
 
 	return h.buildHeartbeatResponse(response), nil
 }
@@ -141,12 +129,9 @@ func (h *Handler) handleLeaveGroup(correlationID uint32, apiVersion uint16, requ
 	// Parse LeaveGroup request
 	request, err := h.parseLeaveGroupRequest(requestBody)
 	if err != nil {
-		fmt.Printf("DEBUG: LeaveGroup parse error: %v\n", err)
 		return h.buildLeaveGroupErrorResponse(correlationID, ErrorCodeInvalidGroupID, apiVersion), nil
 	}
 
-	fmt.Printf("DEBUG: LeaveGroup request - GroupID: '%s', MemberID: '%s', InstanceID: '%s'\n",
-		request.GroupID, request.MemberID, request.GroupInstanceID)
 
 	// Validate request
 	if request.GroupID == "" || request.MemberID == "" {
@@ -156,7 +141,6 @@ func (h *Handler) handleLeaveGroup(correlationID uint32, apiVersion uint16, requ
 	// Get consumer group
 	group := h.groupCoordinator.GetGroup(request.GroupID)
 	if group == nil {
-		fmt.Printf("DEBUG: LeaveGroup group '%s' not found\n", request.GroupID)
 		return h.buildLeaveGroupErrorResponse(correlationID, ErrorCodeInvalidGroupID, apiVersion), nil
 	}
 
@@ -166,8 +150,6 @@ func (h *Handler) handleLeaveGroup(correlationID uint32, apiVersion uint16, requ
 	// Update group's last activity
 	group.LastActivity = time.Now()
 
-	fmt.Printf("DEBUG: LeaveGroup pre-state - group='%s' gen=%d state=%s members=%d leader='%s'\n",
-		group.ID, group.Generation, group.State, len(group.Members), group.Leader)
 
 	// Validate member exists
 	member, exists := group.Members[request.MemberID]
@@ -213,8 +195,6 @@ func (h *Handler) handleLeaveGroup(correlationID uint32, apiVersion uint16, requ
 		}
 	}
 
-	fmt.Printf("DEBUG: LeaveGroup post-state - group='%s' gen=%d state=%s members=%d leader='%s'\n",
-		group.ID, group.Generation, group.State, len(group.Members), group.Leader)
 
 	// Update group's subscribed topics (may have changed with member leaving)
 	h.updateGroupSubscriptionFromMembers(group)
@@ -232,8 +212,6 @@ func (h *Handler) handleLeaveGroup(correlationID uint32, apiVersion uint16, requ
 		},
 	}
 
-	fmt.Printf("DEBUG: LeaveGroup response - group='%s' gen=%d state=%s remainingMembers=%d\n",
-		group.ID, group.Generation, group.State, len(group.Members))
 
 	return h.buildLeaveGroupResponse(response, apiVersion), nil
 }

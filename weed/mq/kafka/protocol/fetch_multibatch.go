@@ -46,9 +46,6 @@ func (f *MultiBatchFetcher) FetchMultipleBatches(topicName string, partitionID i
 		maxBytes = minResponseSize
 	}
 
-	fmt.Printf("DEBUG: MultiBatch - partition:%d, startOffset:%d, highWaterMark:%d, maxBytes:%d\n",
-		partitionID, startOffset, highWaterMark, maxBytes)
-
 	var combinedBatches []byte
 	currentOffset := startOffset
 	totalSize := int32(0)
@@ -62,7 +59,6 @@ func (f *MultiBatchFetcher) FetchMultipleBatches(topicName string, partitionID i
 		// Calculate remaining space
 		remainingBytes := maxBytes - totalSize
 		if remainingBytes < 100 { // Need at least 100 bytes for a minimal batch
-			fmt.Printf("DEBUG: MultiBatch - insufficient space remaining: %d bytes\n", remainingBytes)
 			break
 		}
 
@@ -81,26 +77,17 @@ func (f *MultiBatchFetcher) FetchMultipleBatches(topicName string, partitionID i
 		// Fetch records for this batch
 		smqRecords, err := f.handler.seaweedMQHandler.GetStoredRecords(topicName, partitionID, currentOffset, int(recordsToFetch))
 		if err != nil || len(smqRecords) == 0 {
-			fmt.Printf("DEBUG: MultiBatch - no more records available at offset %d\n", currentOffset)
 			break
 		}
 
-		// Estimate batch size before construction to better respect maxBytes
-		estimatedBatchSize := f.estimateBatchSize(smqRecords)
-
-		// Note: we do not stop based on estimate; we will check actual size after constructing the batch
+		// Note: we construct the batch and check actual size after construction
 
 		// Construct record batch
 		batch := f.constructSingleRecordBatch(currentOffset, smqRecords)
 		batchSize := int32(len(batch))
 
-		fmt.Printf("DEBUG: MultiBatch - constructed batch %d: %d records, %d bytes (estimated %d), offset %d\n",
-			batchCount+1, len(smqRecords), batchSize, estimatedBatchSize, currentOffset)
-
 		// Double-check actual size doesn't exceed maxBytes
 		if totalSize+batchSize > maxBytes && batchCount > 0 {
-			fmt.Printf("DEBUG: MultiBatch - actual batch would exceed limit (%d + %d > %d), stopping\n",
-				totalSize, batchSize, maxBytes)
 			break
 		}
 
@@ -112,7 +99,6 @@ func (f *MultiBatchFetcher) FetchMultipleBatches(topicName string, partitionID i
 
 		// If this is a small batch, we might be at the end
 		if len(smqRecords) < int(recordsPerBatch) {
-			fmt.Printf("DEBUG: MultiBatch - reached end with partial batch\n")
 			break
 		}
 	}
@@ -123,9 +109,6 @@ func (f *MultiBatchFetcher) FetchMultipleBatches(topicName string, partitionID i
 		TotalSize:     totalSize,
 		BatchCount:    batchCount,
 	}
-
-	fmt.Printf("DEBUG: MultiBatch - completed: %d batches, %d total bytes, next offset %d\n",
-		result.BatchCount, result.TotalSize, result.NextOffset)
 
 	return result, nil
 }
@@ -344,7 +327,6 @@ func (f *MultiBatchFetcher) CreateCompressedBatch(baseOffset int64, smqRecords [
 	compressedData, err := f.compressData(originalBatch, codec)
 	if err != nil {
 		// Fall back to uncompressed if compression fails
-		fmt.Printf("DEBUG: Compression failed, falling back to uncompressed: %v\n", err)
 		return &CompressedBatchResult{
 			CompressedData: originalBatch,
 			OriginalSize:   originalSize,
@@ -506,20 +488,20 @@ func (f *MultiBatchFetcher) compressData(data []byte, codec compression.Compress
 		// Implement actual GZIP compression
 		var buf bytes.Buffer
 		gzipWriter := gzip.NewWriter(&buf)
-		
+
 		if _, err := gzipWriter.Write(data); err != nil {
 			gzipWriter.Close()
 			return nil, fmt.Errorf("gzip compression write failed: %w", err)
 		}
-		
+
 		if err := gzipWriter.Close(); err != nil {
 			return nil, fmt.Errorf("gzip compression close failed: %w", err)
 		}
-		
+
 		compressed := buf.Bytes()
-		Debug("GZIP compression: %d bytes -> %d bytes (%.1f%% reduction)", 
+		Debug("GZIP compression: %d bytes -> %d bytes (%.1f%% reduction)",
 			len(data), len(compressed), 100.0*(1.0-float64(len(compressed))/float64(len(data))))
-		
+
 		return compressed, nil
 	default:
 		return nil, fmt.Errorf("unsupported compression codec: %d", codec)

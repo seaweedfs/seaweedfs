@@ -320,7 +320,6 @@ func (gc *GroupCoordinator) performCleanup() {
 
 		// Remove expired members
 		for _, memberID := range expiredMembers {
-            fmt.Printf("DEBUG: Group cleanup - removing expired member '%s' from group '%s'\n", memberID, group.ID)
 			delete(group.Members, memberID)
 			if group.Leader == memberID {
 				group.Leader = ""
@@ -332,13 +331,11 @@ func (gc *GroupCoordinator) performCleanup() {
 			if group.State != GroupStateEmpty {
 				group.State = GroupStateEmpty
 				group.Generation++
-                fmt.Printf("DEBUG: Group cleanup - group '%s' transitioned to Empty (gen=%d)\n", group.ID, group.Generation)
 			}
 
 			// Mark group for deletion if empty for too long (30 minutes)
             if now.Sub(group.LastActivity) > 30*time.Minute {
 				group.State = GroupStateDead
-                fmt.Printf("DEBUG: Group cleanup - group '%s' marked Dead due to inactivity\n", group.ID)
 			}
 		}
 
@@ -346,7 +343,6 @@ func (gc *GroupCoordinator) performCleanup() {
 		maxRebalanceDuration := 10 * time.Minute // Maximum time allowed for rebalancing
         if gc.rebalanceTimeoutManager.IsRebalanceStuck(group, maxRebalanceDuration) {
 			gc.rebalanceTimeoutManager.ForceCompleteRebalance(group)
-            fmt.Printf("DEBUG: Group cleanup - forced completion of stuck rebalance for group '%s'\n", group.ID)
 		}
 
 		group.Mu.Unlock()

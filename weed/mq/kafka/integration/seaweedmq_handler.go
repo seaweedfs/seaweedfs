@@ -64,28 +64,22 @@ type TopicPartitionKey struct {
 // GetStoredRecords retrieves records from SeaweedMQ storage
 // This implements the core integration between Kafka Fetch API and SeaweedMQ storage
 func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromOffset int64, maxRecords int) ([]offset.SMQRecord, error) {
-	fmt.Printf("DEBUG:GetStoredRecords topic=%s partition=%d fromOffset=%d maxRecords=%d\n", topic, partition, fromOffset, maxRecords)
 	// Verify topic exists
 	if !h.TopicExists(topic) {
-		fmt.Printf("DEBUG:GetStoredRecords topic %s does not exist in handler registry\n", topic)
 		return nil, fmt.Errorf("topic %s does not exist", topic)
 	}
 
 	// Get the offset ledger to translate Kafka offsets to SeaweedMQ timestamps
 	ledger := h.GetLedger(topic, partition)
 	if ledger == nil {
-		fmt.Printf("DEBUG:GetStoredRecords no ledger for %s[%d], returning empty\n", topic, partition)
 		// No messages yet, return empty
 		return nil, nil
 	}
 
 	highWaterMark := ledger.GetHighWaterMark()
-	fmt.Printf("DEBUG:GetStoredRecords ledger HWM=%d earliest=%d latest=%d entries=%d\n",
-		highWaterMark, ledger.GetEarliestOffset(), ledger.GetLatestOffset(), len(ledger.GetEntries()))
 
 	// If fromOffset is at or beyond high water mark, no records to return
 	if fromOffset >= highWaterMark {
-		fmt.Printf("DEBUG:GetStoredRecords fromOffset %d >= HWM %d, returning empty\n", fromOffset, highWaterMark)
 		return nil, nil
 	}
 
@@ -116,7 +110,6 @@ func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromO
 		return nil, fmt.Errorf("failed to read records: %v", err)
 	}
 
-	fmt.Printf("DEBUG:GetStoredRecords fetched %d seaweedRecords from broker\n", len(seaweedRecords))
 	// Convert SeaweedMQ records to SMQRecord interface with proper Kafka offsets
 	smqRecords := make([]offset.SMQRecord, 0, len(seaweedRecords))
 	for i, seaweedRecord := range seaweedRecords {
@@ -349,11 +342,7 @@ func (h *SeaweedMQHandler) ProduceRecord(topic string, partition int32, key []by
 	// Map SeaweedMQ sequence to Kafka offset
 	if err := ledger.AppendRecord(kafkaOffset, timestamp, int32(len(value))); err != nil {
 		// Log the error but don't fail the produce operation
-		fmt.Printf("Warning: failed to update offset ledger: %v\n", err)
 	}
-
-	fmt.Printf("DEBUG:ProduceRecord topic=%s partition=%d assignedOffset=%d hwm=%d size=%d\n",
-		topic, partition, kafkaOffset, ledger.GetHighWaterMark(), len(value))
 
 	return kafkaOffset, nil
 }
@@ -387,11 +376,7 @@ func (h *SeaweedMQHandler) ProduceRecordValue(topic string, partition int32, key
 	// Map SeaweedMQ sequence to Kafka offset
 	if err := ledger.AppendRecord(kafkaOffset, timestamp, int32(len(recordValueBytes))); err != nil {
 		// Log the error but don't fail the produce operation
-		fmt.Printf("Warning: failed to update offset ledger: %v\n", err)
 	}
-
-	fmt.Printf("DEBUG:ProduceRecordValue topic=%s partition=%d assignedOffset=%d hwm=%d size=%d\n",
-		topic, partition, kafkaOffset, ledger.GetHighWaterMark(), len(recordValueBytes))
 
 	return kafkaOffset, nil
 }
@@ -436,7 +421,6 @@ func (h *SeaweedMQHandler) GetLedger(topic string, partition int32) *offset.Ledg
 
 // FetchRecords retrieves records from SeaweedMQ for a Kafka fetch request
 func (h *SeaweedMQHandler) FetchRecords(topic string, partition int32, fetchOffset int64, maxBytes int32) ([]byte, error) {
-	fmt.Printf("DEBUG:FetchRecords topic=%s partition=%d fetchOffset=%d maxBytes=%d\n", topic, partition, fetchOffset, maxBytes)
 	// Verify topic exists
 	if !h.TopicExists(topic) {
 		return nil, fmt.Errorf("topic %s does not exist", topic)
@@ -444,13 +428,11 @@ func (h *SeaweedMQHandler) FetchRecords(topic string, partition int32, fetchOffs
 
 	ledger := h.GetLedger(topic, partition)
 	if ledger == nil {
-		fmt.Printf("DEBUG:FetchRecords no ledger for %s[%d], returning empty batch\n", topic, partition)
 		// No messages yet, return empty record batch
 		return []byte{}, nil
 	}
 
 	highWaterMark := ledger.GetHighWaterMark()
-	fmt.Printf("DEBUG:FetchRecords ledger HWM=%d earliest=%d latest=%d\n", highWaterMark, ledger.GetEarliestOffset(), ledger.GetLatestOffset())
 
 	// If fetch offset is at or beyond high water mark, no records to return
 	if fetchOffset >= highWaterMark {
@@ -479,7 +461,6 @@ func (h *SeaweedMQHandler) FetchRecords(topic string, partition int32, fetchOffs
 
 	if err != nil {
 		// If no records available, return empty batch instead of error
-		fmt.Printf("DEBUG:FetchRecords read error: %v, returning empty batch\n", err)
 		return []byte{}, nil
 	}
 
@@ -490,7 +471,6 @@ func (h *SeaweedMQHandler) FetchRecords(topic string, partition int32, fetchOffs
 	}
 
 	// Convert mapped records to Kafka record batch format
-	fmt.Printf("DEBUG:FetchRecords converting %d kafkaRecords to record batch baseOffset=%d\n", len(kafkaRecords), fetchOffset)
 	return h.convertSeaweedToKafkaRecordBatch(kafkaRecords, fetchOffset, maxBytes)
 }
 
@@ -521,8 +501,6 @@ func (h *SeaweedMQHandler) mapSeaweedToKafkaOffsets(topic string, partition int3
 		recordSize := int32(len(seaweedRecord.Value))
 		if err := ledger.AppendRecord(currentKafkaOffset, seaweedRecord.Timestamp, recordSize); err != nil {
 			// Log warning but continue processing
-			fmt.Printf("Warning: failed to update offset ledger for topic %s partition %d offset %d: %v\n",
-				topic, partition, currentKafkaOffset, err)
 		}
 
 		mappedRecords = append(mappedRecords, mappedRecord)
