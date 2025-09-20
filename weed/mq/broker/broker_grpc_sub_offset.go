@@ -110,8 +110,6 @@ func (b *MessageQueueBroker) subscribeWithOffsetSubscription(
 			// Check if this message matches our offset requirements
 			currentOffset := subscription.GetNextOffset()
 
-			// TODO: Map LogEntry to offset - for now using timestamp as proxy
-			// ASSUMPTION: LogEntry.Offset field should be populated by the publish flow
 			if logEntry.Offset < currentOffset {
 				// Skip messages before our current offset
 				return false, nil
