@@ -50,12 +50,6 @@ type JoinGroupMember struct {
 // Error codes for JoinGroup are imported from errors.go
 
 func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
-	// DEBUG: Hex dump the request to understand format
-	dumpLen := len(requestBody)
-	if dumpLen > 100 {
-		dumpLen = 100
-	}
-
 	// Parse JoinGroup request
 	request, err := h.parseJoinGroupRequest(requestBody, apiVersion)
 	if err != nil {
