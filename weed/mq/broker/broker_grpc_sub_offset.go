@@ -220,20 +220,14 @@ func (b *MessageQueueBroker) convertOffsetToMessagePosition(subscription *offset
 	case schema_pb.OffsetType_RESET_TO_LATEST:
 		return log_buffer.NewMessagePosition(time.Now().UnixNano(), -4), nil
 
-	case schema_pb.OffsetType_EXACT_OFFSET, schema_pb.OffsetType_EXACT_TS_NS:
-		// For exact offsets, we need to convert the Kafka offset to a SeaweedMQ timestamp
-		// TODO: This should use proper offset ledger lookup: ledger.GetRecord(currentOffset)
-		// For now, implement proper offset-based timestamp approximation
+	case schema_pb.OffsetType_EXACT_OFFSET:
+		// Use proper offset-based positioning that provides consistent results
+		// This uses the same approach as the main subscription handler in broker_grpc_sub.go
+		return log_buffer.NewMessagePositionFromOffset(currentOffset), nil
 
-		// Use current time as base and subtract offset-based duration
-		// Higher offsets get older timestamps (further back in time)
-		baseTime := time.Now()
-
-		// Approximate each offset as 1 millisecond back in time
-		// This ensures proper progression: higher offset = older timestamp
-		timestampNs := baseTime.Add(-time.Duration(currentOffset) * time.Millisecond).UnixNano()
-
-		return log_buffer.NewMessagePosition(timestampNs, -2), nil
+	case schema_pb.OffsetType_EXACT_TS_NS:
+		// For exact timestamps, use the timestamp directly
+		return log_buffer.NewMessagePosition(currentOffset, -2), nil
 
 	default:
 		// Default to starting from current time for unknown offset types
