@@ -40,14 +40,14 @@ func TestConvertOffsetToMessagePosition(t *testing.T) {
 			name:          "exact offset zero",
 			offsetType:    schema_pb.OffsetType_EXACT_OFFSET,
 			currentOffset: 0,
-			expectedBatch: -2,
+			expectedBatch: -10000, // NewMessagePositionFromOffset encodes as -(offset + 10000)
 			expectError:   false,
 		},
 		{
 			name:          "exact offset non-zero",
 			offsetType:    schema_pb.OffsetType_EXACT_OFFSET,
 			currentOffset: 100,
-			expectedBatch: -2,
+			expectedBatch: -10100, // NewMessagePositionFromOffset encodes as -(offset + 10000)
 			expectError:   false,
 		},
 		{
@@ -86,7 +86,10 @@ func TestConvertOffsetToMessagePosition(t *testing.T) {
 			}
 
 			// Verify that the timestamp is reasonable (not zero for most cases)
-			if tt.offsetType != schema_pb.OffsetType_RESET_TO_EARLIEST && position.Time.IsZero() {
+			// Note: EXACT_OFFSET uses epoch time (zero) with NewMessagePositionFromOffset
+			if tt.offsetType != schema_pb.OffsetType_RESET_TO_EARLIEST && 
+			   tt.offsetType != schema_pb.OffsetType_EXACT_OFFSET && 
+			   position.Time.IsZero() {
 				t.Error("Expected non-zero timestamp")
 			}
 
@@ -96,37 +99,57 @@ func TestConvertOffsetToMessagePosition(t *testing.T) {
 	}
 }
 
-func TestConvertOffsetToMessagePosition_TimestampProgression(t *testing.T) {
+func TestConvertOffsetToMessagePosition_OffsetEncoding(t *testing.T) {
 	broker := &MessageQueueBroker{}
 
-	// Test that higher offsets result in more recent timestamps (for the approximation)
-	subscription1 := &offset.OffsetSubscription{
-		ID:            "test-1",
-		CurrentOffset: 10,
-		OffsetType:    schema_pb.OffsetType_EXACT_OFFSET,
-		IsActive:      true,
+	// Test that offset-based positions encode the offset correctly in BatchIndex
+	testCases := []struct {
+		offset         int64
+		expectedBatch  int64
+		expectedIsZero bool // Should timestamp be epoch (zero)?
+	}{
+		{10, -10010, true},
+		{100, -10100, true},
+		{0, -10000, true},
+		{42, -10042, true},
 	}
 
-	subscription2 := &offset.OffsetSubscription{
-		ID:            "test-2",
-		CurrentOffset: 100,
-		OffsetType:    schema_pb.OffsetType_EXACT_OFFSET,
-		IsActive:      true,
-	}
+	for _, tc := range testCases {
+		t.Run(fmt.Sprintf("offset_%d", tc.offset), func(t *testing.T) {
+			subscription := &offset.OffsetSubscription{
+				ID:            fmt.Sprintf("test-%d", tc.offset),
+				CurrentOffset: tc.offset,
+				OffsetType:    schema_pb.OffsetType_EXACT_OFFSET,
+				IsActive:      true,
+			}
 
-	pos1, err1 := broker.convertOffsetToMessagePosition(subscription1)
-	pos2, err2 := broker.convertOffsetToMessagePosition(subscription2)
+			pos, err := broker.convertOffsetToMessagePosition(subscription)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
 
-	if err1 != nil || err2 != nil {
-		t.Fatalf("Unexpected errors: %v, %v", err1, err2)
-	}
+			// Check BatchIndex encoding
+			if pos.BatchIndex != tc.expectedBatch {
+				t.Errorf("Expected batch index %d, got %d", tc.expectedBatch, pos.BatchIndex)
+			}
 
-	// For the current approximation, higher offsets should result in older timestamps
-	// (since we subtract offset * millisecond from current time)
-	if !pos1.Time.After(pos2.Time) {
-		t.Errorf("Expected offset 10 to have more recent timestamp than offset 100")
-		t.Logf("Offset 10: %v", pos1.Time)
-		t.Logf("Offset 100: %v", pos2.Time)
+			// Check that timestamp is epoch for offset-based positions
+			if tc.expectedIsZero && !pos.Time.Equal(time.Unix(0, 0).UTC()) {
+				t.Errorf("Expected epoch timestamp for offset-based position, got %v", pos.Time)
+			}
+
+			// Verify the offset can be extracted correctly using IsOffsetBased/GetOffset
+			if !pos.IsOffsetBased() {
+				t.Error("Position should be detected as offset-based")
+			}
+
+			if extractedOffset := pos.GetOffset(); extractedOffset != tc.offset {
+				t.Errorf("Expected extracted offset %d, got %d", tc.offset, extractedOffset)
+			}
+
+			t.Logf("Offset %d -> Position: time=%v, batch=%d, extracted_offset=%d", 
+				tc.offset, pos.Time, pos.BatchIndex, pos.GetOffset())
+		})
 	}
 }
 
@@ -158,20 +181,74 @@ func TestConvertOffsetToMessagePosition_ConsistentResults(t *testing.T) {
 		}
 	}
 
-	// Timestamps should be very close (within a reasonable range)
-	maxDiff := 100 * time.Millisecond
-	for i := 1; i < len(positions); i++ {
-		diff := positions[i].Time.Sub(positions[0].Time)
-		if diff < 0 {
-			diff = -diff
-		}
-		if diff > maxDiff {
-			t.Errorf("Timestamp difference too large: %v", diff)
+	// With NewMessagePositionFromOffset, timestamps should be identical (epoch time)
+	expectedTime := time.Unix(0, 0).UTC()
+	for i := 0; i < len(positions); i++ {
+		if !positions[i].Time.Equal(expectedTime) {
+			t.Errorf("Expected all timestamps to be epoch time, got %v at index %d", positions[i].Time, i)
 		}
 	}
 
-	t.Logf("Consistent results for offset 42: batch=%d, time range=%v",
-		positions[0].BatchIndex, positions[len(positions)-1].Time.Sub(positions[0].Time))
+	t.Logf("Consistent results for offset 42: batch=%d, time=%v (deterministic)",
+		positions[0].BatchIndex, positions[0].Time)
+}
+
+func TestConvertOffsetToMessagePosition_FixVerification(t *testing.T) {
+	// This test specifically verifies that the fix addresses the issue mentioned:
+	// "The calculated timestamp for a given offset will change every time the function is called"
+
+	broker := &MessageQueueBroker{}
+
+	subscription := &offset.OffsetSubscription{
+		ID:            "fix-verification",
+		CurrentOffset: 123,
+		OffsetType:    schema_pb.OffsetType_EXACT_OFFSET,
+		IsActive:      true,
+	}
+
+	// Call the function multiple times with delays to simulate real-world usage
+	var positions []log_buffer.MessagePosition
+	var timestamps []int64
+	
+	for i := 0; i < 10; i++ {
+		pos, err := broker.convertOffsetToMessagePosition(subscription)
+		if err != nil {
+			t.Fatalf("Unexpected error on iteration %d: %v", i, err)
+		}
+		positions = append(positions, pos)
+		timestamps = append(timestamps, pos.Time.UnixNano())
+		time.Sleep(2 * time.Millisecond) // Small delay to ensure time progression
+	}
+
+	// Verify ALL timestamps are identical (no time-based variance)
+	expectedTimestamp := timestamps[0]
+	for i, ts := range timestamps {
+		if ts != expectedTimestamp {
+			t.Errorf("Timestamp variance detected at call %d: expected %d, got %d", i, expectedTimestamp, ts)
+		}
+	}
+
+	// Verify ALL BatchIndex values are identical
+	expectedBatch := positions[0].BatchIndex
+	for i, pos := range positions {
+		if pos.BatchIndex != expectedBatch {
+			t.Errorf("BatchIndex variance detected at call %d: expected %d, got %d", i, expectedBatch, pos.BatchIndex)
+		}
+	}
+
+	// Verify the offset can be consistently extracted
+	expectedOffset := subscription.CurrentOffset
+	for i, pos := range positions {
+		if extractedOffset := pos.GetOffset(); extractedOffset != expectedOffset {
+			t.Errorf("Extracted offset variance at call %d: expected %d, got %d", i, expectedOffset, extractedOffset)
+		}
+	}
+
+	t.Logf("✅ Fix verified: Offset %d produces consistent results across %d calls", 
+		subscription.CurrentOffset, len(positions))
+	t.Logf("   BatchIndex: %d (consistent)", expectedBatch)
+	t.Logf("   Timestamp: %d (consistent)", expectedTimestamp)
+	t.Logf("   Extracted offset: %d (consistent)", expectedOffset)
 }
 
 func TestPartitionIdentityConsistency(t *testing.T) {
