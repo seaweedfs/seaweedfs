@@ -61,6 +61,14 @@ type TopicPartitionKey struct {
 	Partition int32
 }
 
+// SeaweedRecord represents a record received from SeaweedMQ
+type SeaweedRecord struct {
+	Key       []byte
+	Value     []byte
+	Timestamp int64
+	Sequence  int64
+}
+
 // GetStoredRecords retrieves records from SeaweedMQ storage
 // This implements the core integration between Kafka Fetch API and SeaweedMQ storage
 func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromOffset int64, maxRecords int) ([]offset.SMQRecord, error) {

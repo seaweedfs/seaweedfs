@@ -196,7 +196,7 @@ func TestSeaweedMQHandler_GetStoredRecords_MaxRecordsLimit(t *testing.T) {
 	}
 
 	// Note: This test demonstrates the logic but won't work without a real client
-	// In practice, GetStoredRecords needs either agentClient or brokerClient
+	// In practice, GetStoredRecords needs brokerClient
 	// The test would need to be enhanced with a mock client
 
 	// For now, test that the method handles the no-client case gracefully
