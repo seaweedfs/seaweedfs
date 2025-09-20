@@ -194,8 +194,6 @@ func (logBuffer *LogBuffer) AddDataToBuffer(partitionKey, data []byte, processin
 	copy(logBuffer.buf[logBuffer.pos+4:logBuffer.pos+4+size], logEntryData)
 	logBuffer.pos += size + 4
 
-	// fmt.Printf("partitionKey %v entry size %d total %d count %d\n", string(partitionKey), size, m.pos, len(m.idx))
-
 }
 
 func (logBuffer *LogBuffer) IsStopping() bool {
@@ -252,7 +250,6 @@ func (logBuffer *LogBuffer) loopInterval() {
 func (logBuffer *LogBuffer) copyToFlush() *dataToFlush {
 
 	if logBuffer.pos > 0 {
-		// fmt.Printf("flush buffer %d pos %d empty space %d\n", len(m.buf), m.pos, len(m.buf)-m.pos)
 		var d *dataToFlush
 		if logBuffer.flushFn != nil {
 			d = &dataToFlush{
@@ -317,7 +314,6 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 		}
 	}
 	if tsMemory.IsZero() { // case 2.2
-		// println("2.2 no data")
 		return nil, -2, nil
 	} else if lastReadPosition.Before(tsMemory) && lastReadPosition.BatchIndex+1 < tsBatchIndex { // case 2.3
 		if !logBuffer.lastFlushDataTime.IsZero() {
@@ -336,16 +332,13 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 		return nil, logBuffer.batchIndex, nil
 	}
 	if lastReadPosition.Before(logBuffer.startTime) {
-		// println("checking ", lastReadPosition.UnixNano())
 		for _, buf := range logBuffer.prevBuffers.buffers {
 			if buf.startTime.After(lastReadPosition.Time) {
 				// glog.V(4).Infof("%s return the %d sealed buffer %v", m.name, i, buf.startTime)
-				// println("return the", i, "th in memory", buf.startTime.UnixNano())
 				return copiedBytes(buf.buf[:buf.size]), buf.batchIndex, nil
 			}
 			if !buf.startTime.After(lastReadPosition.Time) && buf.stopTime.After(lastReadPosition.Time) {
 				pos := buf.locateByTs(lastReadPosition.Time)
-				// fmt.Printf("locate buffer[%d] pos %d\n", i, pos)
 				return copiedBytes(buf.buf[pos:buf.size]), buf.batchIndex, nil
 			}
 		}
@@ -365,9 +358,7 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 			if entry == nil {
 				entry = event.EventNotification.NewEntry
 			}
-			fmt.Printf("entry %d ts: %v offset:%d dir:%s name:%s\n", i, time.Unix(0, ts), pos, event.Directory, entry.Name)
 		}
-		fmt.Printf("l=%d, h=%d\n", l, h)
 	*/
 
 	for l <= h {
@@ -382,16 +373,13 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 				_, prevT = readTs(logBuffer.buf, logBuffer.idx[mid-1])
 			}
 			if prevT <= lastTs {
-				// fmt.Printf("found l=%d, m-1=%d(ts=%d), m=%d(ts=%d), h=%d [%d, %d) \n", l, mid-1, prevT, mid, t, h, pos, m.pos)
 				return copiedBytes(logBuffer.buf[pos:logBuffer.pos]), logBuffer.batchIndex, nil
 			}
 			h = mid
 		}
-		// fmt.Printf("l=%d, h=%d\n", l, h)
 	}
 
 	// FIXME: this could be that the buffer has been flushed already
-	println("Not sure why no data", lastReadPosition.BatchIndex, tsBatchIndex)
 	return nil, -2, nil
 
 }

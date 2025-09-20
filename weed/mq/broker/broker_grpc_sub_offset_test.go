@@ -93,8 +93,6 @@ func TestConvertOffsetToMessagePosition(t *testing.T) {
 				t.Error("Expected non-zero timestamp")
 			}
 
-			t.Logf("Offset %d (type %v) -> Position: time=%v, batch=%d",
-				tt.currentOffset, tt.offsetType, position.Time, position.BatchIndex)
 		})
 	}
 }
@@ -148,8 +146,6 @@ func TestConvertOffsetToMessagePosition_OffsetEncoding(t *testing.T) {
 				t.Errorf("Expected extracted offset %d, got %d", tc.offset, extractedOffset)
 			}
 
-			t.Logf("Offset %d -> Position: time=%v, batch=%d, extracted_offset=%d",
-				tc.offset, pos.Time, pos.BatchIndex, pos.GetOffset())
 		})
 	}
 }
@@ -191,8 +187,6 @@ func TestConvertOffsetToMessagePosition_ConsistentResults(t *testing.T) {
 		}
 	}
 
-	t.Logf("Consistent results for offset 42: batch=%d, time=%v (deterministic)",
-		positions[0].BatchIndex, positions[0].Time)
 }
 
 func TestConvertOffsetToMessagePosition_FixVerification(t *testing.T) {
@@ -246,11 +240,6 @@ func TestConvertOffsetToMessagePosition_FixVerification(t *testing.T) {
 		}
 	}
 
-	t.Logf("✅ Fix verified: Offset %d produces consistent results across %d calls",
-		subscription.CurrentOffset, len(positions))
-	t.Logf("   BatchIndex: %d (consistent)", expectedBatch)
-	t.Logf("   Timestamp: %d (consistent)", expectedTimestamp)
-	t.Logf("   Extracted offset: %d (consistent)", expectedOffset)
 }
 
 func TestPartitionIdentityConsistency(t *testing.T) {
@@ -297,7 +286,6 @@ func TestPartitionIdentityConsistency(t *testing.T) {
 		t.Errorf("Partition key mismatch: expected %s, got %s", expectedKey, actualKey)
 	}
 
-	t.Logf("Partition identity preserved: key=%s", actualKey)
 }
 
 func TestBrokerOffsetManager_GetSubscription_Fixed(t *testing.T) {
@@ -348,7 +336,6 @@ func TestBrokerOffsetManager_GetSubscription_Fixed(t *testing.T) {
 		t.Errorf("Expected offset type %v, got %v", subscription.OffsetType, retrievedSub.OffsetType)
 	}
 
-	t.Logf("GetSubscription working correctly after fix: %s", retrievedSub.ID)
 }
 
 func TestBrokerOffsetManager_ListActiveSubscriptions_Fixed(t *testing.T) {
@@ -413,7 +400,6 @@ func TestBrokerOffsetManager_ListActiveSubscriptions_Fixed(t *testing.T) {
 		}
 	}
 
-	t.Logf("ListActiveSubscriptions working correctly after fix: %d subscriptions", len(subscriptions))
 }
 
 func TestMessageQueueBroker_ListActiveSubscriptions_Fixed(t *testing.T) {
@@ -497,7 +483,6 @@ func TestMessageQueueBroker_ListActiveSubscriptions_Fixed(t *testing.T) {
 			t.Errorf("Expected is_active to be true, got %v", info["is_active"])
 		}
 
-		t.Logf("Subscription info working correctly: %+v", info)
 	}
 }
 
@@ -597,10 +582,6 @@ func TestSingleWriterPerPartitionCorrectness(t *testing.T) {
 		t.Errorf("Expected lag 0 on follower subscription (no local data), got %d", lag2)
 	}
 
-	t.Logf("Single-writer correctness verified:")
-	t.Logf("  Leader (broker1): HWM=%d, lag=%d", hwm1, lag1)
-	t.Logf("  Follower (broker2): HWM=%d, lag=%d", hwm2, lag2)
-	t.Logf("  This demonstrates why subscriptions should route to partition leaders")
 }
 
 func TestEndToEndWorkflowAfterFixes(t *testing.T) {
@@ -681,13 +662,6 @@ func TestEndToEndWorkflowAfterFixes(t *testing.T) {
 		t.Fatalf("Failed to assign offsets: %v", err)
 	}
 
-	// Debug: Check HWM after assignment
-	hwm, err := broker.offsetManager.GetHighWaterMark(testTopic, testPartition)
-	if err != nil {
-		t.Fatalf("Failed to get HWM: %v", err)
-	}
-	t.Logf("HWM after assignment: %d", hwm)
-
 	// 6. Seek subscription
 	newOffset := int64(42)
 	err = broker.SeekSubscription(subscriptionID, newOffset)
@@ -731,8 +705,4 @@ func TestEndToEndWorkflowAfterFixes(t *testing.T) {
 		t.Errorf("Partition key inconsistency: %s != %s", partitionKey1, partitionKey2)
 	}
 
-	t.Logf("End-to-end test completed successfully:")
-	t.Logf("  Subscription: %s at offset %d", subscriptionID, newOffset)
-	t.Logf("  Position: time=%v, batch=%d", position.Time, position.BatchIndex)
-	t.Logf("  Partition key: %s", partitionKey1)
 }
