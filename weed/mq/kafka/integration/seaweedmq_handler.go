@@ -948,8 +948,12 @@ func (bc *BrokerClient) PublishRecord(topic string, partition int32, key []byte,
 		return 0, fmt.Errorf("failed to receive ack: %v", err)
 	}
 
-	if resp.Error != "" {
-		return 0, fmt.Errorf("publish error: %s", resp.Error)
+	// Handle structured broker errors
+	if kafkaErrorCode, errorMsg, handleErr := HandleBrokerResponse(resp); handleErr != nil {
+		return 0, handleErr
+	} else if kafkaErrorCode != 0 {
+		// Return error with Kafka error code information for better debugging
+		return 0, fmt.Errorf("broker error (Kafka code %d): %s", kafkaErrorCode, errorMsg)
 	}
 
 	return resp.AckSequence, nil
@@ -1226,8 +1230,12 @@ func (bc *BrokerClient) PublishRecordValue(topic string, partition int32, key []
 		return 0, fmt.Errorf("failed to receive RecordValue ack: %v", err)
 	}
 
-	if resp.Error != "" {
-		return 0, fmt.Errorf("RecordValue publish error: %s", resp.Error)
+	// Handle structured broker errors
+	if kafkaErrorCode, errorMsg, handleErr := HandleBrokerResponse(resp); handleErr != nil {
+		return 0, handleErr
+	} else if kafkaErrorCode != 0 {
+		// Return error with Kafka error code information for better debugging
+		return 0, fmt.Errorf("RecordValue broker error (Kafka code %d): %s", kafkaErrorCode, errorMsg)
 	}
 
 	return resp.AckSequence, nil

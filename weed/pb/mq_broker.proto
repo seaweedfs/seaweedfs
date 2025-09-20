@@ -271,6 +271,7 @@ message PublishMessageResponse {
     int64 ack_sequence = 1;
     string error = 2;
     bool should_close = 3;
+    int32 error_code = 4; // Structured error code for reliable error mapping
 }
 message PublishFollowMeRequest {
     message InitMessage {

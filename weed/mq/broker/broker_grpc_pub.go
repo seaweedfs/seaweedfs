@@ -48,7 +48,7 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 
 	initMessage := req.GetInit()
 	if initMessage == nil {
-		response.Error = "missing init message"
+		response.ErrorCode, response.Error = CreateBrokerError(BrokerErrorInvalidRecord, "missing init message")
 		glog.Errorf("missing init message")
 		return stream.Send(response)
 	}
@@ -56,14 +56,14 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 	// Check whether current broker should be the leader for the topic partition
 	leaderBroker, err := b.findBrokerForTopicPartition(initMessage.Topic, initMessage.Partition)
 	if err != nil {
-		response.Error = fmt.Sprintf("failed to find leader for topic partition: %v", err)
+		response.ErrorCode, response.Error = CreateBrokerError(BrokerErrorTopicNotFound, fmt.Sprintf("failed to find leader for topic partition: %v", err))
 		glog.Errorf("failed to find leader for topic partition: %v", err)
 		return stream.Send(response)
 	}
 
 	currentBrokerAddress := fmt.Sprintf("%s:%d", b.option.Ip, b.option.Port)
 	if leaderBroker != currentBrokerAddress {
-		response.Error = fmt.Sprintf("not the leader for this partition, leader is: %s", leaderBroker)
+		response.ErrorCode, response.Error = CreateBrokerError(BrokerErrorNotLeaderOrFollower, fmt.Sprintf("not the leader for this partition, leader is: %s", leaderBroker))
 		glog.V(1).Infof("rejecting publish request: not the leader for partition, leader is: %s", leaderBroker)
 		return stream.Send(response)
 	}
@@ -72,14 +72,14 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 	t, p := topic.FromPbTopic(initMessage.Topic), topic.FromPbPartition(initMessage.Partition)
 	localTopicPartition, getOrGenErr := b.GetOrGenerateLocalPartition(t, p)
 	if getOrGenErr != nil {
-		response.Error = fmt.Sprintf("topic %v not found: %v", t, getOrGenErr)
+		response.ErrorCode, response.Error = CreateBrokerError(BrokerErrorTopicNotFound, fmt.Sprintf("topic %v not found: %v", t, getOrGenErr))
 		glog.Errorf("topic %v not found: %v", t, getOrGenErr)
 		return stream.Send(response)
 	}
 
 	// connect to follower brokers
 	if followerErr := localTopicPartition.MaybeConnectToFollowers(initMessage, b.grpcDialOption); followerErr != nil {
-		response.Error = followerErr.Error()
+		response.ErrorCode, response.Error = CreateBrokerError(BrokerErrorFollowerConnectionFailed, followerErr.Error())
 		glog.Errorf("MaybeConnectToFollowers: %v", followerErr)
 		return stream.Send(response)
 	}
