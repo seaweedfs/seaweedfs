@@ -193,6 +193,11 @@ func (h *SeaweedMQHandler) Close() error {
 
 // CreateTopic creates a new topic in both Kafka registry and SeaweedMQ
 func (h *SeaweedMQHandler) CreateTopic(name string, partitions int32) error {
+	return h.CreateTopicWithSchema(name, partitions, nil)
+}
+
+// CreateTopicWithSchema creates a topic with optional schema
+func (h *SeaweedMQHandler) CreateTopicWithSchema(name string, partitions int32, recordType *schema_pb.RecordType) error {
 	h.topicsMu.Lock()
 	defer h.topicsMu.Unlock()
 
@@ -222,6 +227,7 @@ func (h *SeaweedMQHandler) CreateTopic(name string, partitions int32) error {
 			_, err := client.ConfigureTopic(context.Background(), &mq_pb.ConfigureTopicRequest{
 				Topic:          seaweedTopic,
 				PartitionCount: partitions,
+				RecordType:     recordType,
 			})
 			if err != nil {
 				glog.Errorf("❌ Failed to configure topic %s with broker: %v", name, err)
