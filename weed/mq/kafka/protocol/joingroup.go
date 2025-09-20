@@ -215,7 +215,7 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 
 	// Select assignment protocol using enhanced selection logic
 	existingProtocols := make([]string, 0)
-	for _ = range group.Members {
+	for range group.Members {
 		// Collect protocols from existing members (simplified - in real implementation
 		// we'd track each member's supported protocols)
 		existingProtocols = append(existingProtocols, "range") // placeholder
@@ -512,58 +512,6 @@ func (h *Handler) buildJoinGroupErrorResponse(correlationID uint32, errorCode in
 	return h.buildJoinGroupResponse(response)
 }
 
-// buildMinimalJoinGroupResponse creates a minimal hardcoded response for testing
-func (h *Handler) buildMinimalJoinGroupResponse(correlationID uint32, apiVersion uint16) []byte {
-	// Create the absolute minimal JoinGroup response that should work with kafka-go
-	response := make([]byte, 0, 64)
-
-	// Correlation ID (4 bytes)
-	correlationIDBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
-	response = append(response, correlationIDBytes...)
-
-	// Throttle time (4 bytes) - v2+ only
-	if apiVersion >= 2 {
-		response = append(response, 0, 0, 0, 0) // No throttling
-	}
-
-	// Error code (2 bytes) - 0 = success
-	response = append(response, 0, 0)
-
-	// Generation ID (4 bytes) - use 1
-	response = append(response, 0, 0, 0, 1)
-
-	// Group protocol (STRING) - "range"
-	response = append(response, 0, 5) // length
-	response = append(response, []byte("range")...)
-
-	// Group leader (STRING) - "test-member"
-	response = append(response, 0, 11) // length
-	response = append(response, []byte("test-member")...)
-
-	// Member ID (STRING) - "test-member" (same as leader)
-	response = append(response, 0, 11) // length
-	response = append(response, []byte("test-member")...)
-
-	// Members array (4 bytes count + members)
-	response = append(response, 0, 0, 0, 1) // 1 member
-
-	// Member 0:
-	// Member ID (STRING) - "test-member"
-	response = append(response, 0, 11) // length
-	response = append(response, []byte("test-member")...)
-
-	// Member metadata (BYTES) - empty
-	response = append(response, 0, 0, 0, 0) // 0 bytes
-
-	return response
-}
-
-// extractSubscriptionFromProtocols - legacy method for backward compatibility
-func (h *Handler) extractSubscriptionFromProtocols(protocols []GroupProtocol) []string {
-	return h.extractSubscriptionFromProtocolsEnhanced(protocols)
-}
-
 // extractSubscriptionFromProtocolsEnhanced uses improved metadata parsing with better error handling
 func (h *Handler) extractSubscriptionFromProtocolsEnhanced(protocols []GroupProtocol) []string {
 	// Analyze protocol metadata for debugging
@@ -576,47 +524,6 @@ func (h *Handler) extractSubscriptionFromProtocolsEnhanced(protocols []GroupProt
 
 	// Extract topics using enhanced parsing
 	topics := ExtractTopicsFromMetadata(protocols, h.getAvailableTopics())
-
-	return topics
-}
-
-func (h *Handler) parseConsumerProtocolMetadata(metadata []byte) []string {
-	if len(metadata) < 6 { // version(2) + topics_count(4)
-		return nil
-	}
-
-	offset := 0
-
-	// Parse version (2 bytes)
-	version := binary.BigEndian.Uint16(metadata[offset : offset+2])
-	_ = version // Version used for compatibility checks elsewhere
-	offset += 2
-
-	// Parse topics array
-	if len(metadata) < offset+4 {
-		return nil
-	}
-	topicsCount := binary.BigEndian.Uint32(metadata[offset : offset+4])
-	offset += 4
-
-	topics := make([]string, 0, topicsCount)
-
-	for i := uint32(0); i < topicsCount && offset < len(metadata); i++ {
-		// Parse topic name
-		if len(metadata) < offset+2 {
-			break
-		}
-		topicNameLength := binary.BigEndian.Uint16(metadata[offset : offset+2])
-		offset += 2
-
-		if len(metadata) < offset+int(topicNameLength) {
-			break
-		}
-		topicName := string(metadata[offset : offset+int(topicNameLength)])
-		offset += int(topicNameLength)
-
-		topics = append(topics, topicName)
-	}
 
 	return topics
 }
@@ -660,12 +567,6 @@ type SyncGroupResponse struct {
 // Error codes for SyncGroup are imported from errors.go
 
 func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
-	// DEBUG: Hex dump the request to understand format
-	dumpLen := len(requestBody)
-	if dumpLen > 100 {
-		dumpLen = 100
-	}
-
 	// Parse SyncGroup request
 	request, err := h.parseSyncGroupRequest(requestBody, apiVersion)
 	if err != nil {
