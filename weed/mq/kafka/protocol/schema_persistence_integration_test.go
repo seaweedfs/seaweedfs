@@ -40,7 +40,8 @@ func TestSchemaPersistenceIntegration(t *testing.T) {
 		testSchema := &schema_pb.RecordType{
 			Fields: []*schema_pb.Field{
 				{
-					Name: "id",
+					Name:       "id",
+					FieldIndex: 0,
 					Type: &schema_pb.Type{
 						Kind: &schema_pb.Type_ScalarType{
 							ScalarType: schema_pb.ScalarType_INT32,
@@ -48,7 +49,8 @@ func TestSchemaPersistenceIntegration(t *testing.T) {
 					},
 				},
 				{
-					Name: "name",
+					Name:       "name",
+					FieldIndex: 1,
 					Type: &schema_pb.Type{
 						Kind: &schema_pb.Type_ScalarType{
 							ScalarType: schema_pb.ScalarType_STRING,
@@ -250,7 +252,8 @@ func TestSchemaProducePathIntegration(t *testing.T) {
 		testSchema := &schema_pb.RecordType{
 			Fields: []*schema_pb.Field{
 				{
-					Name: "user_id",
+					Name:       "user_id",
+					FieldIndex: 0,
 					Type: &schema_pb.Type{
 						Kind: &schema_pb.Type_ScalarType{
 							ScalarType: schema_pb.ScalarType_INT64,
@@ -258,7 +261,8 @@ func TestSchemaProducePathIntegration(t *testing.T) {
 					},
 				},
 				{
-					Name: "username",
+					Name:       "username",
+					FieldIndex: 1,
 					Type: &schema_pb.Type{
 						Kind: &schema_pb.Type_ScalarType{
 							ScalarType: schema_pb.ScalarType_STRING,
