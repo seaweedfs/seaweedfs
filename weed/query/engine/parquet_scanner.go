@@ -55,9 +55,13 @@ func NewParquetScanner(filerClient filer_pb.FilerClient, namespace, topicName st
 		return nil, fmt.Errorf("failed to read topic config: %v", err)
 	}
 
-	// Build complete schema with system columns
-	recordType := topicConf.GetRecordType()
-	if recordType == nil {
+	// Build complete schema with system columns - combine key and value schemas
+	valueRecordType := topicConf.GetValueRecordType()
+	keyRecordType := topicConf.GetKeyRecordType()
+
+	// Create combined schema that includes both key and value fields
+	recordType := schema.CreateCombinedRecordType(keyRecordType, valueRecordType)
+	if recordType == nil || len(recordType.Fields) == 0 {
 		return nil, NoSchemaError{Namespace: namespace, Topic: topicName}
 	}
 

@@ -73,8 +73,10 @@ func (c *commandMqTopicCompact) Do(args []string, commandEnv *CommandEnv, writer
 		return err
 	}
 
-	// get record type
-	recordType := topicConf.GetRecordType()
+	// get record type - combine key and value schemas for compaction
+	valueRecordType := topicConf.GetValueRecordType()
+	keyRecordType := topicConf.GetKeyRecordType()
+	recordType := schema.CreateCombinedRecordType(keyRecordType, valueRecordType)
 	recordType = schema.NewRecordTypeBuilder(recordType).
 		WithField(logstore.SW_COLUMN_NAME_TS, schema.TypeInt64).
 		WithField(logstore.SW_COLUMN_NAME_KEY, schema.TypeBytes).

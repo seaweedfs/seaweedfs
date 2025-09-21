@@ -196,7 +196,7 @@ func (h *SeaweedMQHandler) CreateTopic(name string, partitions int32) error {
 	return h.CreateTopicWithSchema(name, partitions, nil)
 }
 
-// CreateTopicWithSchema creates a topic with optional value schema (deprecated: use CreateTopicWithSchemas)
+// CreateTopicWithSchema creates a topic with optional value schema
 func (h *SeaweedMQHandler) CreateTopicWithSchema(name string, partitions int32, recordType *schema_pb.RecordType) error {
 	return h.CreateTopicWithSchemas(name, partitions, recordType, nil)
 }
@@ -232,9 +232,8 @@ func (h *SeaweedMQHandler) CreateTopicWithSchemas(name string, partitions int32,
 			_, err := client.ConfigureTopic(context.Background(), &mq_pb.ConfigureTopicRequest{
 				Topic:           seaweedTopic,
 				PartitionCount:  partitions,
-				RecordType:      valueRecordType, // Backward compatibility
-				ValueRecordType: valueRecordType, // New field for value schema
-				KeyRecordType:   keyRecordType,   // New field for key schema
+				KeyRecordType:   keyRecordType,
+				ValueRecordType: valueRecordType,
 			})
 			if err != nil {
 				glog.Errorf("❌ Failed to configure topic %s with broker: %v", name, err)

@@ -2940,10 +2940,9 @@ func (h *Handler) registerSchemasViaBrokerAPI(topicName string, valueRecordType 
 			// If topic doesn't exist, create it with default partition count
 			_, err := client.ConfigureTopic(context.Background(), &mq_pb.ConfigureTopicRequest{
 				Topic:           seaweedTopic,
-				PartitionCount:  1,               // Default partition count
-				RecordType:      valueRecordType, // Backward compatibility
-				ValueRecordType: valueRecordType,
+				PartitionCount:  1, // Default partition count
 				KeyRecordType:   keyRecordType,
+				ValueRecordType: valueRecordType,
 			})
 			return err
 		}
@@ -2952,9 +2951,8 @@ func (h *Handler) registerSchemasViaBrokerAPI(topicName string, valueRecordType 
 		_, err = client.ConfigureTopic(context.Background(), &mq_pb.ConfigureTopicRequest{
 			Topic:           seaweedTopic,
 			PartitionCount:  getResp.PartitionCount,
-			RecordType:      valueRecordType, // Backward compatibility
-			ValueRecordType: valueRecordType,
 			KeyRecordType:   keyRecordType,
+			ValueRecordType: valueRecordType,
 			Retention:       getResp.Retention,
 		})
 		return err

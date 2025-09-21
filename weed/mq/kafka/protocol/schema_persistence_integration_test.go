@@ -279,12 +279,12 @@ func TestSchemaProducePathIntegration(t *testing.T) {
 			t.Fatal("Failed to retrieve topic configuration")
 		}
 
-		if retrievedConfig.RecordType == nil {
+		if retrievedConfig.ValueRecordType == nil {
 			t.Fatal("Retrieved configuration has no schema")
 		}
 
 		// Verify retrieved schema matches original
-		if !proto.Equal(retrievedConfig.RecordType, testSchema) {
+		if !proto.Equal(retrievedConfig.ValueRecordType, testSchema) {
 			t.Error("Retrieved schema does not match original schema")
 		}
 
@@ -440,7 +440,7 @@ func (m *MockBrokerForSchemaPersistence) Stop() {
 // ConfigureTopic implements the broker's ConfigureTopic method
 func (m *MockBrokerForSchemaPersistence) ConfigureTopic(ctx context.Context, req *mq_pb.ConfigureTopicRequest) (*mq_pb.ConfigureTopicResponse, error) {
 	topicKey := fmt.Sprintf("%s.%s", req.Topic.Namespace, req.Topic.Name)
-	m.t.Logf("MockBroker: ConfigureTopic called for %s with schema: %v", topicKey, req.RecordType != nil)
+	m.t.Logf("MockBroker: ConfigureTopic called for %s with schema: %v", topicKey, req.ValueRecordType != nil || req.KeyRecordType != nil)
 
 	// Get existing config or create new one
 	config, exists := m.topicConfigs[topicKey]
@@ -478,8 +478,9 @@ func (m *MockBrokerForSchemaPersistence) ConfigureTopic(ctx context.Context, req
 	}
 
 	// Update schema if provided
-	if req.RecordType != nil {
-		config.RecordType = req.RecordType
+	if req.ValueRecordType != nil || req.KeyRecordType != nil {
+		config.ValueRecordType = req.ValueRecordType
+		config.KeyRecordType = req.KeyRecordType
 	}
 
 	// Update retention if provided
@@ -505,7 +506,8 @@ func (m *MockBrokerForSchemaPersistence) GetTopicConfiguration(ctx context.Conte
 	return &mq_pb.GetTopicConfigurationResponse{
 		Topic:                      req.Topic,
 		PartitionCount:             int32(len(config.BrokerPartitionAssignments)),
-		RecordType:                 config.RecordType,
+		ValueRecordType:            config.ValueRecordType,
+		KeyRecordType:              config.KeyRecordType,
 		BrokerPartitionAssignments: config.BrokerPartitionAssignments,
 		CreatedAtNs:                time.Now().UnixNano(),
 		LastUpdatedNs:              time.Now().UnixNano(),
@@ -520,7 +522,7 @@ func (m *MockBrokerForSchemaPersistence) GetPersistedSchema(topicName string) *s
 	if !exists {
 		return nil
 	}
-	return config.RecordType
+	return config.ValueRecordType
 }
 
 func (m *MockBrokerForSchemaPersistence) GetTopicConfigurationHelper(topicName string) *mq_pb.ConfigureTopicResponse {

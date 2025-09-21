@@ -306,11 +306,11 @@ func (c *BrokerClient) GetTopicSchema(ctx context.Context, namespace, topicName 
 			return fmt.Errorf("failed to unmarshal topic %s.%s configuration: %v", namespace, topicName, err)
 		}
 
-		// Extract the record type (schema)
-		if conf.RecordType != nil {
-			recordType = conf.RecordType
+		// Extract the record type (schema) - prefer ValueRecordType
+		if conf.ValueRecordType != nil {
+			recordType = conf.ValueRecordType
 		} else {
-			return fmt.Errorf("no schema found for topic %s.%s", namespace, topicName)
+			return fmt.Errorf("no value schema found for topic %s.%s", namespace, topicName)
 		}
 
 		return nil
@@ -325,6 +325,55 @@ func (c *BrokerClient) GetTopicSchema(ctx context.Context, namespace, topicName 
 	}
 
 	return recordType, nil
+}
+
+// GetTopicSchemas retrieves both key and value schema information for a specific topic
+// Returns (keySchema, valueSchema, error) - either schema can be nil if not defined
+func (c *BrokerClient) GetTopicSchemas(ctx context.Context, namespace, topicName string) (*schema_pb.RecordType, *schema_pb.RecordType, error) {
+	// Get filer client to read topic configuration
+	filerClient, err := c.GetFilerClient()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get filer client: %v", err)
+	}
+
+	var valueRecordType, keyRecordType *schema_pb.RecordType
+	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		// Read topic.conf file from /topics/{namespace}/{topic}/topic.conf
+		topicDir := fmt.Sprintf("/topics/%s/%s", namespace, topicName)
+
+		// First check if topic directory exists
+		_, err := client.LookupDirectoryEntry(ctx, &filer_pb.LookupDirectoryEntryRequest{
+			Directory: topicDir,
+			Name:      "topic.conf",
+		})
+		if err != nil {
+			return fmt.Errorf("topic %s.%s not found: %v", namespace, topicName, err)
+		}
+
+		// Read the topic.conf file content
+		data, err := filer.ReadInsideFiler(client, topicDir, "topic.conf")
+		if err != nil {
+			return fmt.Errorf("failed to read topic.conf for %s.%s: %v", namespace, topicName, err)
+		}
+
+		// Parse the configuration
+		conf := &mq_pb.ConfigureTopicResponse{}
+		if err = jsonpb.Unmarshal(data, conf); err != nil {
+			return fmt.Errorf("failed to unmarshal topic %s.%s configuration: %v", namespace, topicName, err)
+		}
+
+		// Extract both schemas
+		valueRecordType = conf.ValueRecordType
+		keyRecordType = conf.KeyRecordType
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return keyRecordType, valueRecordType, nil
 }
 
 // ConfigureTopic creates or modifies a topic configuration
@@ -348,8 +397,8 @@ func (c *BrokerClient) ConfigureTopic(ctx context.Context, namespace, topicName 
 			Namespace: namespace,
 			Name:      topicName,
 		},
-		PartitionCount: partitionCount,
-		RecordType:     recordType,
+		PartitionCount:  partitionCount,
+		ValueRecordType: recordType,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to configure topic %s.%s: %v", namespace, topicName, err)

@@ -1106,14 +1106,17 @@ func (h *Handler) produceSchemaBasedRecord(topic string, partition int32, key []
 		}
 	}
 
-	// Process value schema if present
+	// Process value schema if present and create combined RecordValue with key fields
 	var recordValueBytes []byte
 	if valueDecodedMsg != nil {
-		// Store the RecordValue directly - schema info is stored in topic configuration
+		// Create combined RecordValue that includes both key and value fields
+		combinedRecordValue := h.createCombinedRecordValue(keyDecodedMsg, valueDecodedMsg)
+
+		// Store the combined RecordValue - schema info is stored in topic configuration
 		var err error
-		recordValueBytes, err = proto.Marshal(valueDecodedMsg.RecordValue)
+		recordValueBytes, err = proto.Marshal(combinedRecordValue)
 		if err != nil {
-			return 0, fmt.Errorf("failed to marshal RecordValue: %w", err)
+			return 0, fmt.Errorf("failed to marshal combined RecordValue: %w", err)
 		}
 
 		// Store value schema information in memory cache for fetch path performance
@@ -1126,6 +1129,15 @@ func (h *Handler) produceSchemaBasedRecord(topic string, partition int32, key []
 
 			// Schedule value schema registration in background (leader-only, non-blocking)
 			h.scheduleSchemaRegistration(topic, valueDecodedMsg.RecordType)
+		}
+	} else if keyDecodedMsg != nil {
+		// If only key is schematized, create RecordValue with just key fields
+		combinedRecordValue := h.createCombinedRecordValue(keyDecodedMsg, nil)
+
+		var err error
+		recordValueBytes, err = proto.Marshal(combinedRecordValue)
+		if err != nil {
+			return 0, fmt.Errorf("failed to marshal key-only RecordValue: %w", err)
 		}
 	} else {
 		// If value is not schematized, use raw value
@@ -1144,11 +1156,11 @@ func (h *Handler) produceSchemaBasedRecord(topic string, partition int32, key []
 	}
 
 	// Send to SeaweedMQ
-	if valueDecodedMsg != nil {
-		// Send with RecordValue format for schematized value
+	if valueDecodedMsg != nil || keyDecodedMsg != nil {
+		// Send with RecordValue format for schematized key or value
 		return h.seaweedMQHandler.ProduceRecordValue(topic, partition, finalKey, recordValueBytes)
 	} else {
-		// Send with raw format for non-schematized value
+		// Send with raw format for non-schematized data
 		return h.seaweedMQHandler.ProduceRecord(topic, partition, finalKey, recordValueBytes)
 	}
 }
@@ -1375,6 +1387,30 @@ func (h *Handler) getRecordTypeHash(recordType *schema_pb.RecordType) uint32 {
 	}
 
 	return hash
+}
+
+// createCombinedRecordValue creates a RecordValue that combines fields from both key and value decoded messages
+// Key fields are prefixed with "key_" to distinguish them from value fields
+func (h *Handler) createCombinedRecordValue(keyDecodedMsg *schema.DecodedMessage, valueDecodedMsg *schema.DecodedMessage) *schema_pb.RecordValue {
+	combinedFields := make(map[string]*schema_pb.Value)
+
+	// Add key fields with "key_" prefix
+	if keyDecodedMsg != nil && keyDecodedMsg.RecordValue != nil {
+		for fieldName, fieldValue := range keyDecodedMsg.RecordValue.Fields {
+			combinedFields["key_"+fieldName] = fieldValue
+		}
+	}
+
+	// Add value fields (no prefix)
+	if valueDecodedMsg != nil && valueDecodedMsg.RecordValue != nil {
+		for fieldName, fieldValue := range valueDecodedMsg.RecordValue.Fields {
+			combinedFields[fieldName] = fieldValue
+		}
+	}
+
+	return &schema_pb.RecordValue{
+		Fields: combinedFields,
+	}
 }
 
 // inferRecordTypeFromCachedSchema attempts to infer RecordType from a cached schema

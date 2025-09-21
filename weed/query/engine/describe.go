@@ -27,8 +27,8 @@ func (e *SQLEngine) executeDescribeStatement(ctx context.Context, tableName stri
 		}
 	}
 
-	// Get topic schema from broker
-	recordType, err := e.catalog.brokerClient.GetTopicSchema(ctx, database, tableName)
+	// Get both key and value schemas from broker
+	keySchema, valueSchema, err := e.catalog.brokerClient.GetTopicSchemas(ctx, database, tableName)
 	if err != nil {
 		return &QueryResult{Error: err}, err
 	}
@@ -44,38 +44,67 @@ func (e *SQLEngine) executeDescribeStatement(ctx context.Context, tableName stri
 		{"_source", "VARCHAR(255)", "System column: Data source (parquet/log)"},
 	}
 
-	// Format schema as DESCRIBE output (regular fields + system columns)
-	totalRows := len(recordType.Fields) + len(systemColumns)
+	// Calculate total rows: value fields + key fields (if exists) + system columns
+	totalRows := len(systemColumns)
+	if valueSchema != nil {
+		totalRows += len(valueSchema.Fields)
+	}
+	keyFieldCount := 0
+	if keySchema != nil {
+		keyFieldCount = len(keySchema.Fields)
+		totalRows += keyFieldCount
+	}
+
 	result := &QueryResult{
 		Columns: []string{"Field", "Type", "Null", "Key", "Default", "Extra"},
 		Rows:    make([][]sqltypes.Value, totalRows),
 	}
 
-	// Add regular fields
-	for i, field := range recordType.Fields {
-		sqlType := e.convertMQTypeToSQL(field.Type)
+	rowIndex := 0
 
-		result.Rows[i] = []sqltypes.Value{
-			sqltypes.NewVarChar(field.Name), // Field
-			sqltypes.NewVarChar(sqlType),    // Type
-			sqltypes.NewVarChar("YES"),      // Null (assume nullable)
-			sqltypes.NewVarChar(""),         // Key (no keys for now)
-			sqltypes.NewVarChar("NULL"),     // Default
-			sqltypes.NewVarChar(""),         // Extra
+	// Add key schema fields first (if present)
+	if keySchema != nil {
+		for _, field := range keySchema.Fields {
+			sqlType := e.convertMQTypeToSQL(field.Type)
+			result.Rows[rowIndex] = []sqltypes.Value{
+				sqltypes.NewVarChar(field.Name + "_key"), // Field - add suffix to distinguish from value fields
+				sqltypes.NewVarChar(sqlType),             // Type
+				sqltypes.NewVarChar("YES"),               // Null
+				sqltypes.NewVarChar("KEY"),               // Key - mark as key schema field
+				sqltypes.NewVarChar("NULL"),              // Default
+				sqltypes.NewVarChar("Key schema field"),  // Extra
+			}
+			rowIndex++
+		}
+	}
+
+	// Add value schema fields (if present)
+	if valueSchema != nil {
+		for _, field := range valueSchema.Fields {
+			sqlType := e.convertMQTypeToSQL(field.Type)
+			result.Rows[rowIndex] = []sqltypes.Value{
+				sqltypes.NewVarChar(field.Name),           // Field
+				sqltypes.NewVarChar(sqlType),              // Type
+				sqltypes.NewVarChar("YES"),                // Null
+				sqltypes.NewVarChar("VALUE"),              // Key - mark as value schema field
+				sqltypes.NewVarChar("NULL"),               // Default
+				sqltypes.NewVarChar("Value schema field"), // Extra
+			}
+			rowIndex++
 		}
 	}
 
 	// Add system columns
-	for i, sysCol := range systemColumns {
-		rowIndex := len(recordType.Fields) + i
+	for _, sysCol := range systemColumns {
 		result.Rows[rowIndex] = []sqltypes.Value{
 			sqltypes.NewVarChar(sysCol.Name),  // Field
 			sqltypes.NewVarChar(sysCol.Type),  // Type
 			sqltypes.NewVarChar("YES"),        // Null
-			sqltypes.NewVarChar(""),           // Key
+			sqltypes.NewVarChar("SYS"),        // Key - mark as system column
 			sqltypes.NewVarChar("NULL"),       // Default
 			sqltypes.NewVarChar(sysCol.Extra), // Extra - description
 		}
+		rowIndex++
 	}
 
 	return result, nil

@@ -68,8 +68,12 @@ func GenParquetReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p topic
 			return startPosition, true, nil
 		}
 	}
-	recordType := topicConf.GetRecordType()
-	if recordType == nil {
+	// Create combined schema that includes both key and value fields
+	valueRecordType := topicConf.GetValueRecordType()
+	keyRecordType := topicConf.GetKeyRecordType()
+	recordType := schema.CreateCombinedRecordType(keyRecordType, valueRecordType)
+
+	if recordType == nil || len(recordType.Fields) == 0 {
 		// Return a no-op function if no schema is available
 		return func(startPosition log_buffer.MessagePosition, stopTsNs int64, eachLogEntryFn log_buffer.EachLogEntryFuncType) (log_buffer.MessagePosition, bool, error) {
 			return startPosition, true, nil
