@@ -28,7 +28,7 @@ func (e *SQLEngine) executeDescribeStatement(ctx context.Context, tableName stri
 	}
 
 	// Get flat schema and key columns from broker
-	flatSchema, keyColumns, err := e.catalog.brokerClient.GetTopicRecordType(ctx, database, tableName)
+	flatSchema, keyColumns, err := e.catalog.brokerClient.GetTopicSchema(ctx, database, tableName)
 	if err != nil {
 		return &QueryResult{Error: err}, err
 	}

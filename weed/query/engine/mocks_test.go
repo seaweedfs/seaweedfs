@@ -892,8 +892,8 @@ func (m *MockBrokerClient) GetTopicSchema(ctx context.Context, namespace, topic 
 	return nil, fmt.Errorf("topic %s not found", key)
 }
 
-// GetTopicRecordType returns flat schema and key columns for a topic
-func (m *MockBrokerClient) GetTopicRecordType(ctx context.Context, namespace, topic string) (*schema_pb.RecordType, []string, error) {
+// GetTopicSchema returns flat schema and key columns for a topic
+func (m *MockBrokerClient) GetTopicSchema(ctx context.Context, namespace, topic string) (*schema_pb.RecordType, []string, error) {
 	if m.shouldFail {
 		return nil, nil, fmt.Errorf("mock broker failure: %s", m.failMessage)
 	}
@@ -910,8 +910,8 @@ func (m *MockBrokerClient) GetTopicRecordType(ctx context.Context, namespace, to
 	return nil, nil, fmt.Errorf("topic %s not found", key)
 }
 
-// ConfigureTopicWithRecordType creates or modifies a topic using flat schema format
-func (m *MockBrokerClient) ConfigureTopicWithRecordType(ctx context.Context, namespace, topicName string, partitionCount int32, flatSchema *schema_pb.RecordType, keyColumns []string) error {
+// ConfigureTopic creates or modifies a topic using flat schema format
+func (m *MockBrokerClient) ConfigureTopic(ctx context.Context, namespace, topicName string, partitionCount int32, flatSchema *schema_pb.RecordType, keyColumns []string) error {
 	if m.shouldFail {
 		return fmt.Errorf("mock broker failure: %s", m.failMessage)
 	}

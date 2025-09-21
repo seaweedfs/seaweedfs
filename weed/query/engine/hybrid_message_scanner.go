@@ -60,7 +60,7 @@ func NewHybridMessageScanner(filerClient filer_pb.FilerClient, brokerClient Brok
 	}
 
 	// Get flat schema from broker client
-	recordType, _, err := brokerClient.GetTopicRecordType(context.Background(), namespace, topicName)
+	recordType, _, err := brokerClient.GetTopicSchema(context.Background(), namespace, topicName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get topic record type: %v", err)
 	}

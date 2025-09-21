@@ -271,9 +271,9 @@ func (c *BrokerClient) ListTopics(ctx context.Context, namespace string) ([]stri
 	return topics, nil
 }
 
-// GetTopicRecordType retrieves the flat schema and key columns for a topic
+// GetTopicSchema retrieves the flat schema and key columns for a topic
 // Returns (flatSchema, keyColumns, error)
-func (c *BrokerClient) GetTopicRecordType(ctx context.Context, namespace, topicName string) (*schema_pb.RecordType, []string, error) {
+func (c *BrokerClient) GetTopicSchema(ctx context.Context, namespace, topicName string) (*schema_pb.RecordType, []string, error) {
 	// Get filer client to read topic configuration
 	filerClient, err := c.GetFilerClient()
 	if err != nil {
@@ -321,8 +321,8 @@ func (c *BrokerClient) GetTopicRecordType(ctx context.Context, namespace, topicN
 	return flatSchema, keyColumns, nil
 }
 
-// ConfigureTopicWithRecordType creates or modifies a topic using flat schema format
-func (c *BrokerClient) ConfigureTopicWithRecordType(ctx context.Context, namespace, topicName string, partitionCount int32, flatSchema *schema_pb.RecordType, keyColumns []string) error {
+// ConfigureTopic creates or modifies a topic using flat schema format
+func (c *BrokerClient) ConfigureTopic(ctx context.Context, namespace, topicName string, partitionCount int32, flatSchema *schema_pb.RecordType, keyColumns []string) error {
 	if err := c.findBrokerBalancer(); err != nil {
 		return err
 	}
