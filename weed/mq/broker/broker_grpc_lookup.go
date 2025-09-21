@@ -7,6 +7,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/mq/schema"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -175,11 +176,26 @@ func (b *MessageQueueBroker) GetTopicConfiguration(ctx context.Context, request 
 	}
 
 	// Build the response with complete configuration including metadata
+	// Populate both legacy and new schema formats for backwards compatibility
+	var flatSchema *schema_pb.RecordType
+	var keyColumns []string
+	
+	if conf.MessageRecordType != nil && len(conf.KeyColumns) > 0 {
+		// New format is available - use it
+		flatSchema = conf.MessageRecordType
+		keyColumns = conf.KeyColumns
+	} else if conf.KeyRecordType != nil || conf.ValueRecordType != nil {
+		// Only legacy format is available - synthesize flat schema
+		flatSchema, keyColumns = schema.CombineFlatSchemaFromKeyValue(conf.KeyRecordType, conf.ValueRecordType)
+	}
+	
 	ret := &mq_pb.GetTopicConfigurationResponse{
 		Topic:                      request.Topic,
 		PartitionCount:             int32(len(conf.BrokerPartitionAssignments)),
 		KeyRecordType:              conf.KeyRecordType,
 		ValueRecordType:            conf.ValueRecordType,
+		MessageRecordType:          flatSchema,
+		KeyColumns:                 keyColumns,
 		BrokerPartitionAssignments: conf.BrokerPartitionAssignments,
 		CreatedAtNs:                createdAtNs,
 		LastUpdatedNs:              modifiedAtNs,

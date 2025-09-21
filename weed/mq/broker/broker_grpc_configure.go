@@ -6,9 +6,11 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
+	"github.com/seaweedfs/seaweedfs/weed/mq/schema"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
@@ -29,12 +31,31 @@ func (b *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *mq_pb.
 		return resp, err
 	}
 
-	// validate the schemas
-	if request.ValueRecordType != nil {
-		// TODO: Add validation for value schema
-	}
-	if request.KeyRecordType != nil {
-		// TODO: Add validation for key schema
+	// Validate and normalize schemas
+	// Handle both new flat schema format and legacy dual schema format
+	var normalizedKeySchema *schema_pb.RecordType
+	var normalizedValueSchema *schema_pb.RecordType
+	var normalizedFlatSchema *schema_pb.RecordType
+	var normalizedKeyColumns []string
+	
+	if request.MessageRecordType != nil && len(request.KeyColumns) > 0 {
+		// New flat schema format
+		if err := schema.ValidateKeyColumns(request.MessageRecordType, request.KeyColumns); err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "invalid key columns: %v", err)
+		}
+		
+		var err error
+		normalizedKeySchema, normalizedValueSchema, err = schema.SplitFlatSchemaToKeyValue(request.MessageRecordType, request.KeyColumns)
+		if err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "failed to split flat schema: %v", err)
+		}
+		normalizedFlatSchema = request.MessageRecordType
+		normalizedKeyColumns = request.KeyColumns
+	} else if request.KeyRecordType != nil || request.ValueRecordType != nil {
+		// Legacy dual schema format
+		normalizedKeySchema = request.KeyRecordType
+		normalizedValueSchema = request.ValueRecordType
+		normalizedFlatSchema, normalizedKeyColumns = schema.CombineFlatSchemaFromKeyValue(request.KeyRecordType, request.ValueRecordType)
 	}
 
 	t := topic.FromPbTopic(request.Topic)
@@ -52,41 +73,56 @@ func (b *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *mq_pb.
 	}
 
 	if readErr == nil && assignErr == nil && len(resp.BrokerPartitionAssignments) == int(request.PartitionCount) {
-		// Check if schemas (key or value) need to be updated
-		keySchemaChanged := false
-		valueSchemaChanged := false
-
-		// Check value schema changes
-		if request.ValueRecordType != nil && resp.ValueRecordType != nil {
-			if !proto.Equal(request.ValueRecordType, resp.ValueRecordType) {
-				valueSchemaChanged = true
+		// Check if schemas need to be updated
+		schemaChanged := false
+		
+		// Compare flat schemas if available
+		if normalizedFlatSchema != nil && resp.MessageRecordType != nil {
+			if !proto.Equal(normalizedFlatSchema, resp.MessageRecordType) {
+				schemaChanged = true
 			}
-		} else if request.ValueRecordType != nil || resp.ValueRecordType != nil {
-			valueSchemaChanged = true
-		}
-
-		// Check key schema changes
-		if request.KeyRecordType != nil && resp.KeyRecordType != nil {
-			if !proto.Equal(request.KeyRecordType, resp.KeyRecordType) {
+		} else if normalizedFlatSchema != nil || resp.MessageRecordType != nil {
+			schemaChanged = true
+		} else {
+			// Fall back to comparing individual key/value schemas
+			keySchemaChanged := false
+			valueSchemaChanged := false
+			
+			if normalizedKeySchema != nil && resp.KeyRecordType != nil {
+				if !proto.Equal(normalizedKeySchema, resp.KeyRecordType) {
+					keySchemaChanged = true
+				}
+			} else if normalizedKeySchema != nil || resp.KeyRecordType != nil {
 				keySchemaChanged = true
 			}
-		} else if request.KeyRecordType != nil || resp.KeyRecordType != nil {
-			keySchemaChanged = true
+			
+			if normalizedValueSchema != nil && resp.ValueRecordType != nil {
+				if !proto.Equal(normalizedValueSchema, resp.ValueRecordType) {
+					valueSchemaChanged = true
+				}
+			} else if normalizedValueSchema != nil || resp.ValueRecordType != nil {
+				valueSchemaChanged = true
+			}
+			
+			schemaChanged = keySchemaChanged || valueSchemaChanged
 		}
 
-		if !keySchemaChanged && !valueSchemaChanged {
+		if !schemaChanged {
 			glog.V(0).Infof("existing topic partitions %d: %+v", len(resp.BrokerPartitionAssignments), resp.BrokerPartitionAssignments)
-			return
+			return resp, nil
 		}
 
-		// Update schemas in existing configuration
-		resp.KeyRecordType = request.KeyRecordType
-		resp.ValueRecordType = request.ValueRecordType
+		// Update schemas in existing configuration - populate both formats for compatibility
+		resp.KeyRecordType = normalizedKeySchema
+		resp.ValueRecordType = normalizedValueSchema
+		resp.MessageRecordType = normalizedFlatSchema
+		resp.KeyColumns = normalizedKeyColumns
+		
 		if err := b.fca.SaveTopicConfToFiler(t, resp); err != nil {
 			return nil, fmt.Errorf("update topic schemas: %w", err)
 		}
 
-		glog.V(0).Infof("updated schemas for topic %s (key: %v, value: %v)", request.Topic, keySchemaChanged, valueSchemaChanged)
+		glog.V(0).Infof("updated schemas for topic %s", request.Topic)
 		return resp, nil
 	}
 
@@ -100,8 +136,11 @@ func (b *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *mq_pb.
 		return nil, status.Errorf(codes.Unavailable, "no broker available: %v", pub_balancer.ErrNoBroker)
 	}
 	resp.BrokerPartitionAssignments = pub_balancer.AllocateTopicPartitions(b.PubBalancer.Brokers, request.PartitionCount)
-	resp.KeyRecordType = request.KeyRecordType
-	resp.ValueRecordType = request.ValueRecordType
+	// Populate both legacy and new schema formats for compatibility
+	resp.KeyRecordType = normalizedKeySchema
+	resp.ValueRecordType = normalizedValueSchema
+	resp.MessageRecordType = normalizedFlatSchema
+	resp.KeyColumns = normalizedKeyColumns
 	resp.Retention = request.Retention
 
 	// save the topic configuration on filer
