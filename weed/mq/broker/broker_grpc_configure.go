@@ -29,8 +29,12 @@ func (b *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *mq_pb.
 		return resp, err
 	}
 
-	// validate the schema
-	if request.RecordType != nil {
+	// validate the schemas
+	if request.ValueRecordType != nil {
+		// TODO: Add validation for value schema
+	}
+	if request.KeyRecordType != nil {
+		// TODO: Add validation for key schema
 	}
 
 	t := topic.FromPbTopic(request.Topic)
@@ -48,30 +52,41 @@ func (b *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *mq_pb.
 	}
 
 	if readErr == nil && assignErr == nil && len(resp.BrokerPartitionAssignments) == int(request.PartitionCount) {
-		// Check if schema (RecordType) needs to be updated
-		schemaChanged := false
-		if request.RecordType != nil && resp.RecordType != nil {
-			// Compare schemas using proto.Equal
-			if !proto.Equal(request.RecordType, resp.RecordType) {
-				schemaChanged = true
+		// Check if schemas (key or value) need to be updated
+		keySchemaChanged := false
+		valueSchemaChanged := false
+
+		// Check value schema changes
+		if request.ValueRecordType != nil && resp.ValueRecordType != nil {
+			if !proto.Equal(request.ValueRecordType, resp.ValueRecordType) {
+				valueSchemaChanged = true
 			}
-		} else if request.RecordType != nil || resp.RecordType != nil {
-			// One is nil, the other is not
-			schemaChanged = true
+		} else if request.ValueRecordType != nil || resp.ValueRecordType != nil {
+			valueSchemaChanged = true
 		}
 
-		if !schemaChanged {
+		// Check key schema changes
+		if request.KeyRecordType != nil && resp.KeyRecordType != nil {
+			if !proto.Equal(request.KeyRecordType, resp.KeyRecordType) {
+				keySchemaChanged = true
+			}
+		} else if request.KeyRecordType != nil || resp.KeyRecordType != nil {
+			keySchemaChanged = true
+		}
+
+		if !keySchemaChanged && !valueSchemaChanged {
 			glog.V(0).Infof("existing topic partitions %d: %+v", len(resp.BrokerPartitionAssignments), resp.BrokerPartitionAssignments)
 			return
 		}
 
-		// Update schema in existing configuration
-		resp.RecordType = request.RecordType
+		// Update schemas in existing configuration
+		resp.KeyRecordType = request.KeyRecordType
+		resp.ValueRecordType = request.ValueRecordType
 		if err := b.fca.SaveTopicConfToFiler(t, resp); err != nil {
-			return nil, fmt.Errorf("update topic schema: %w", err)
+			return nil, fmt.Errorf("update topic schemas: %w", err)
 		}
 
-		glog.V(0).Infof("updated schema for topic %s", request.Topic)
+		glog.V(0).Infof("updated schemas for topic %s (key: %v, value: %v)", request.Topic, keySchemaChanged, valueSchemaChanged)
 		return resp, nil
 	}
 
@@ -85,7 +100,8 @@ func (b *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *mq_pb.
 		return nil, status.Errorf(codes.Unavailable, "no broker available: %v", pub_balancer.ErrNoBroker)
 	}
 	resp.BrokerPartitionAssignments = pub_balancer.AllocateTopicPartitions(b.PubBalancer.Brokers, request.PartitionCount)
-	resp.RecordType = request.RecordType
+	resp.KeyRecordType = request.KeyRecordType
+	resp.ValueRecordType = request.ValueRecordType
 	resp.Retention = request.Retention
 
 	// save the topic configuration on filer

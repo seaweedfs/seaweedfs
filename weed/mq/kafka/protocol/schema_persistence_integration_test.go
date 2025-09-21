@@ -440,7 +440,7 @@ func (m *MockBrokerForSchemaPersistence) Stop() {
 // ConfigureTopic implements the broker's ConfigureTopic method
 func (m *MockBrokerForSchemaPersistence) ConfigureTopic(ctx context.Context, req *mq_pb.ConfigureTopicRequest) (*mq_pb.ConfigureTopicResponse, error) {
 	topicKey := fmt.Sprintf("%s.%s", req.Topic.Namespace, req.Topic.Name)
-	m.t.Logf("MockBroker: ConfigureTopic called for %s with schema: %v", topicKey, req.ValueRecordType != nil || req.KeyRecordType != nil)
+	m.t.Logf("MockBroker: ConfigureTopic called for %s with schema: %v", topicKey, req.KeyRecordType != nil || req.ValueRecordType != nil)
 
 	// Get existing config or create new one
 	config, exists := m.topicConfigs[topicKey]
@@ -478,9 +478,9 @@ func (m *MockBrokerForSchemaPersistence) ConfigureTopic(ctx context.Context, req
 	}
 
 	// Update schema if provided
-	if req.ValueRecordType != nil || req.KeyRecordType != nil {
-		config.ValueRecordType = req.ValueRecordType
+	if req.KeyRecordType != nil || req.ValueRecordType != nil {
 		config.KeyRecordType = req.KeyRecordType
+		config.ValueRecordType = req.ValueRecordType
 	}
 
 	// Update retention if provided
@@ -506,8 +506,8 @@ func (m *MockBrokerForSchemaPersistence) GetTopicConfiguration(ctx context.Conte
 	return &mq_pb.GetTopicConfigurationResponse{
 		Topic:                      req.Topic,
 		PartitionCount:             int32(len(config.BrokerPartitionAssignments)),
-		ValueRecordType:            config.ValueRecordType,
 		KeyRecordType:              config.KeyRecordType,
+		ValueRecordType:            config.ValueRecordType,
 		BrokerPartitionAssignments: config.BrokerPartitionAssignments,
 		CreatedAtNs:                time.Now().UnixNano(),
 		LastUpdatedNs:              time.Now().UnixNano(),

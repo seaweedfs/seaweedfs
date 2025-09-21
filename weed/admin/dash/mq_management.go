@@ -214,10 +214,12 @@ func (s *AdminServer) GetTopicDetails(namespace, topicName string) (*TopicDetail
 			}
 		}
 
-		// Process schema from RecordType
-		if configResp.RecordType != nil {
-			topicDetails.Schema = convertRecordTypeToSchemaFields(configResp.RecordType)
-		}
+		// TODO: Process schemas from both key and value RecordTypes
+		// Schema display functionality will need to be implemented
+		// For now, just set to empty to avoid compilation errors
+		// if configResp.ValueRecordType != nil || configResp.KeyRecordType != nil {
+		//     // Schema processing would go here
+		// }
 
 		// Get publishers information
 		publishersResp, err := client.GetTopicPublishers(ctx, &mq_pb.GetTopicPublishersRequest{
