@@ -59,14 +59,12 @@ func NewHybridMessageScanner(filerClient filer_pb.FilerClient, brokerClient Brok
 		Name:      topicName,
 	}
 
-	// Get both key and value schemas from broker client
-	keyRecordType, valueRecordType, err := brokerClient.GetTopicSchemas(context.Background(), namespace, topicName)
+	// Get flat schema from broker client  
+	recordType, _, err := brokerClient.GetTopicRecordType(context.Background(), namespace, topicName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get topic schemas: %v", err)
+		return nil, fmt.Errorf("failed to get topic record type: %v", err)
 	}
-
-	// Create combined schema that includes both key and value fields
-	recordType := schema.CreateCombinedRecordType(keyRecordType, valueRecordType)
+	
 	if recordType == nil || len(recordType.Fields) == 0 {
 		return nil, NoSchemaError{Namespace: namespace, Topic: topicName}
 	}

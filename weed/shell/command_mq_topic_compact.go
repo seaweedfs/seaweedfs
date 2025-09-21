@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 )
 
 func init() {
@@ -73,10 +74,15 @@ func (c *commandMqTopicCompact) Do(args []string, commandEnv *CommandEnv, writer
 		return err
 	}
 
-	// get record type - combine key and value schemas for compaction
-	valueRecordType := topicConf.GetValueRecordType()
-	keyRecordType := topicConf.GetKeyRecordType()
-	recordType := schema.CreateCombinedRecordType(keyRecordType, valueRecordType)
+	// get record type - prefer flat schema if available
+	var recordType *schema_pb.RecordType
+	if topicConf.GetMessageRecordType() != nil {
+		// New flat schema format - use directly
+		recordType = topicConf.GetMessageRecordType()
+	} else if topicConf.GetKeyRecordType() != nil || topicConf.GetValueRecordType() != nil {
+		// Legacy dual schema format - combine them
+		recordType = schema.CreateCombinedRecordType(topicConf.GetKeyRecordType(), topicConf.GetValueRecordType())
+	}
 	recordType = schema.NewRecordTypeBuilder(recordType).
 		WithField(logstore.SW_COLUMN_NAME_TS, schema.TypeInt64).
 		WithField(logstore.SW_COLUMN_NAME_KEY, schema.TypeBytes).

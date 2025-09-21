@@ -272,6 +272,71 @@ func (h *SeaweedMQHandler) CreateTopicWithSchemas(name string, partitions int32,
 	return nil
 }
 
+// CreateTopicWithRecordType creates a topic with flat schema and key columns
+func (h *SeaweedMQHandler) CreateTopicWithRecordType(name string, partitions int32, flatSchema *schema_pb.RecordType, keyColumns []string) error {
+	h.topicsMu.Lock()
+	defer h.topicsMu.Unlock()
+
+	// Check if topic already exists
+	if _, exists := h.topics[name]; exists {
+		return fmt.Errorf("topic %s already exists", name)
+	}
+
+	// Create SeaweedMQ topic reference
+	seaweedTopic := &schema_pb.Topic{
+		Namespace: "kafka",
+		Name:      name,
+	}
+
+	glog.V(1).Infof("🆕 Creating topic %s with %d partitions in SeaweedMQ broker using flat schema", name, partitions)
+
+	// Configure topic with SeaweedMQ broker via gRPC
+	if len(h.brokerAddresses) > 0 {
+		brokerAddress := h.brokerAddresses[0] // Use first available broker
+		glog.V(1).Infof("📞 Configuring topic %s with broker %s", name, brokerAddress)
+
+		// Load security configuration for broker connection
+		util.LoadSecurityConfiguration()
+		grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.mq")
+
+		err := pb.WithBrokerGrpcClient(false, brokerAddress, grpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
+			_, err := client.ConfigureTopic(context.Background(), &mq_pb.ConfigureTopicRequest{
+				Topic:             seaweedTopic,
+				PartitionCount:    partitions,
+				MessageRecordType: flatSchema,
+				KeyColumns:        keyColumns,
+			})
+			if err != nil {
+				glog.Errorf("❌ Failed to configure topic %s with broker: %v", name, err)
+				return fmt.Errorf("failed to configure topic: %w", err)
+			}
+
+			glog.V(1).Infof("✅ Successfully configured topic %s with broker", name)
+			return nil
+		})
+
+		if err != nil {
+			return err
+		}
+	} else {
+		glog.Warningf("⚠️  No broker addresses configured, topic %s not created in SeaweedMQ", name)
+	}
+
+	// Create Kafka topic info
+	topicInfo := &KafkaTopicInfo{
+		Name:         name,
+		Partitions:   partitions,
+		CreatedAt:    time.Now().UnixNano(),
+		SeaweedTopic: seaweedTopic,
+	}
+
+	// Store in topics map
+	h.topics[name] = topicInfo
+
+	glog.V(1).Infof("🎉 Topic %s created successfully with %d partitions using flat schema", name, partitions)
+	return nil
+}
+
 // DeleteTopic removes a topic from both Kafka registry and SeaweedMQ
 func (h *SeaweedMQHandler) DeleteTopic(name string) error {
 	h.topicsMu.Lock()

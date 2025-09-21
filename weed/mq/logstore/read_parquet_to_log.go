@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/schema"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
@@ -68,10 +69,15 @@ func GenParquetReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p topic
 			return startPosition, true, nil
 		}
 	}
-	// Create combined schema that includes both key and value fields
-	valueRecordType := topicConf.GetValueRecordType()
-	keyRecordType := topicConf.GetKeyRecordType()
-	recordType := schema.CreateCombinedRecordType(keyRecordType, valueRecordType)
+	// Get schema - prefer flat schema if available
+	var recordType *schema_pb.RecordType
+	if topicConf.GetMessageRecordType() != nil {
+		// New flat schema format - use directly
+		recordType = topicConf.GetMessageRecordType()
+	} else if topicConf.GetKeyRecordType() != nil || topicConf.GetValueRecordType() != nil {
+		// Legacy dual schema format - combine them
+		recordType = schema.CreateCombinedRecordType(topicConf.GetKeyRecordType(), topicConf.GetValueRecordType())
+	}
 
 	if recordType == nil || len(recordType.Fields) == 0 {
 		// Return a no-op function if no schema is available

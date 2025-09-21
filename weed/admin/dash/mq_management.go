@@ -214,12 +214,64 @@ func (s *AdminServer) GetTopicDetails(namespace, topicName string) (*TopicDetail
 			}
 		}
 
-		// TODO: Process schemas from both key and value RecordTypes
-		// Schema display functionality will need to be implemented
-		// For now, just set to empty to avoid compilation errors
-		// if configResp.ValueRecordType != nil || configResp.KeyRecordType != nil {
-		//     // Schema processing would go here
-		// }
+		// Process schemas - prefer flat schema format if available
+		if configResp.MessageRecordType != nil {
+			// New flat schema format with key columns
+			for _, field := range configResp.MessageRecordType.Fields {
+				isKey := false
+				for _, keyCol := range configResp.KeyColumns {
+					if field.Name == keyCol {
+						isKey = true
+						break
+					}
+				}
+				
+				fieldType := "UNKNOWN"
+				if field.Type != nil && field.Type.Kind != nil {
+					fieldType = getFieldTypeName(field.Type)
+				}
+				
+				schemaField := SchemaFieldInfo{
+					Name: field.Name,
+					Type: fieldType,
+				}
+				
+				if isKey {
+					topicDetails.KeySchema = append(topicDetails.KeySchema, schemaField)
+				} else {
+					topicDetails.ValueSchema = append(topicDetails.ValueSchema, schemaField)
+				}
+			}
+		} else if configResp.KeyRecordType != nil || configResp.ValueRecordType != nil {
+			// Legacy dual schema format
+			if configResp.KeyRecordType != nil {
+				for _, field := range configResp.KeyRecordType.Fields {
+					fieldType := "UNKNOWN"
+					if field.Type != nil && field.Type.Kind != nil {
+						fieldType = getFieldTypeName(field.Type)
+					}
+					
+					topicDetails.KeySchema = append(topicDetails.KeySchema, SchemaFieldInfo{
+						Name: field.Name,
+						Type: fieldType,
+					})
+				}
+			}
+			
+			if configResp.ValueRecordType != nil {
+				for _, field := range configResp.ValueRecordType.Fields {
+					fieldType := "UNKNOWN"
+					if field.Type != nil && field.Type.Kind != nil {
+						fieldType = getFieldTypeName(field.Type)
+					}
+					
+					topicDetails.ValueSchema = append(topicDetails.ValueSchema, SchemaFieldInfo{
+						Name: field.Name,
+						Type: fieldType,
+					})
+				}
+			}
+		}
 
 		// Get publishers information
 		publishersResp, err := client.GetTopicPublishers(ctx, &mq_pb.GetTopicPublishersRequest{
@@ -613,5 +665,48 @@ func convertTopicRetention(retention *mq_pb.TopicRetention) TopicRetentionInfo {
 		RetentionSeconds: seconds,
 		DisplayValue:     displayValue,
 		DisplayUnit:      displayUnit,
+	}
+}
+
+// getFieldTypeName converts a schema_pb.Type to a human-readable type name
+func getFieldTypeName(fieldType *schema_pb.Type) string {
+	if fieldType.Kind == nil {
+		return "UNKNOWN"
+	}
+	
+	switch kind := fieldType.Kind.(type) {
+	case *schema_pb.Type_ScalarType:
+		switch kind.ScalarType {
+		case schema_pb.ScalarType_BOOL:
+			return "BOOLEAN"
+		case schema_pb.ScalarType_INT32:
+			return "INT32"
+		case schema_pb.ScalarType_INT64:
+			return "INT64"
+		case schema_pb.ScalarType_FLOAT:
+			return "FLOAT"
+		case schema_pb.ScalarType_DOUBLE:
+			return "DOUBLE"
+		case schema_pb.ScalarType_BYTES:
+			return "BYTES"
+		case schema_pb.ScalarType_STRING:
+			return "STRING"
+		case schema_pb.ScalarType_TIMESTAMP:
+			return "TIMESTAMP"
+		case schema_pb.ScalarType_DATE:
+			return "DATE"
+		case schema_pb.ScalarType_TIME:
+			return "TIME"
+		case schema_pb.ScalarType_DECIMAL:
+			return "DECIMAL"
+		default:
+			return "SCALAR"
+		}
+	case *schema_pb.Type_ListType:
+		return "LIST"
+	case *schema_pb.Type_RecordType:
+		return "RECORD"
+	default:
+		return "UNKNOWN"
 	}
 }
