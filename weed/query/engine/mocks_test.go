@@ -892,21 +892,6 @@ func (m *MockBrokerClient) GetTopicSchema(ctx context.Context, namespace, topic 
 	return nil, fmt.Errorf("topic %s not found", key)
 }
 
-// GetTopicSchemas returns both key and value schemas for a topic
-// For testing, we return nil as key schema and the stored schema as value schema by default
-func (m *MockBrokerClient) GetTopicSchemas(ctx context.Context, namespace, topic string) (*schema_pb.RecordType, *schema_pb.RecordType, error) {
-	if m.shouldFail {
-		return nil, nil, fmt.Errorf("mock broker failure: %s", m.failMessage)
-	}
-
-	key := fmt.Sprintf("%s.%s", namespace, topic)
-	if schema, exists := m.schemas[key]; exists {
-		// Return nil as key schema, schema as value schema for most tests
-		return nil, schema, nil
-	}
-	return nil, nil, fmt.Errorf("topic %s not found", key)
-}
-
 // GetTopicRecordType returns flat schema and key columns for a topic
 func (m *MockBrokerClient) GetTopicRecordType(ctx context.Context, namespace, topic string) (*schema_pb.RecordType, []string, error) {
 	if m.shouldFail {

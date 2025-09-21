@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer_client"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
+	"github.com/seaweedfs/seaweedfs/weed/mq/schema"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -229,11 +230,18 @@ func (h *SeaweedMQHandler) CreateTopicWithSchemas(name string, partitions int32,
 		grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.mq")
 
 		err := pb.WithBrokerGrpcClient(false, brokerAddress, grpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
+			// Convert dual schemas to flat schema format
+			var flatSchema *schema_pb.RecordType
+			var keyColumns []string
+			if keyRecordType != nil || valueRecordType != nil {
+				flatSchema, keyColumns = schema.CombineFlatSchemaFromKeyValue(keyRecordType, valueRecordType)
+			}
+
 			_, err := client.ConfigureTopic(context.Background(), &mq_pb.ConfigureTopicRequest{
-				Topic:           seaweedTopic,
-				PartitionCount:  partitions,
-				KeyRecordType:   keyRecordType,
-				ValueRecordType: valueRecordType,
+				Topic:             seaweedTopic,
+				PartitionCount:    partitions,
+				MessageRecordType: flatSchema,
+				KeyColumns:        keyColumns,
 			})
 			if err != nil {
 				glog.Errorf("❌ Failed to configure topic %s with broker: %v", name, err)

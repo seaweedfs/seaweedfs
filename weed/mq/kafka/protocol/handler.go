@@ -17,6 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/integration"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/schema"
+	mqschema "github.com/seaweedfs/seaweedfs/weed/mq/schema"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
@@ -2937,23 +2938,37 @@ func (h *Handler) registerSchemasViaBrokerAPI(topicName string, valueRecordType 
 			Topic: seaweedTopic,
 		})
 		if err != nil {
+			// Convert dual schemas to flat schema format
+			var flatSchema *schema_pb.RecordType
+			var keyColumns []string
+			if keyRecordType != nil || valueRecordType != nil {
+				flatSchema, keyColumns = mqschema.CombineFlatSchemaFromKeyValue(keyRecordType, valueRecordType)
+			}
+
 			// If topic doesn't exist, create it with default partition count
 			_, err := client.ConfigureTopic(context.Background(), &mq_pb.ConfigureTopicRequest{
-				Topic:           seaweedTopic,
-				PartitionCount:  1, // Default partition count
-				KeyRecordType:   keyRecordType,
-				ValueRecordType: valueRecordType,
+				Topic:             seaweedTopic,
+				PartitionCount:    1, // Default partition count
+				MessageRecordType: flatSchema,
+				KeyColumns:        keyColumns,
 			})
 			return err
 		}
 
+		// Convert dual schemas to flat schema format for update
+		var flatSchema *schema_pb.RecordType
+		var keyColumns []string
+		if keyRecordType != nil || valueRecordType != nil {
+			flatSchema, keyColumns = mqschema.CombineFlatSchemaFromKeyValue(keyRecordType, valueRecordType)
+		}
+
 		// Update existing topic with new schema
 		_, err = client.ConfigureTopic(context.Background(), &mq_pb.ConfigureTopicRequest{
-			Topic:           seaweedTopic,
-			PartitionCount:  getResp.PartitionCount,
-			KeyRecordType:   keyRecordType,
-			ValueRecordType: valueRecordType,
-			Retention:       getResp.Retention,
+			Topic:             seaweedTopic,
+			PartitionCount:    getResp.PartitionCount,
+			MessageRecordType: flatSchema,
+			KeyColumns:        keyColumns,
+			Retention:         getResp.Retention,
 		})
 		return err
 	})

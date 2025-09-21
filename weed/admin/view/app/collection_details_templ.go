@@ -42,7 +42,7 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 		var templ_7745c5c3_Var2 string
 		templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinStringErrs(data.CollectionName)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 13, Col: 83}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/collection_details.templ`, Line: 13, Col: 83}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var2))
 		if templ_7745c5c3_Err != nil {
@@ -55,7 +55,7 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 		var templ_7745c5c3_Var3 string
 		templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(data.CollectionName)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 19, Col: 80}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/collection_details.templ`, Line: 19, Col: 80}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 		if templ_7745c5c3_Err != nil {
@@ -68,7 +68,7 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 		var templ_7745c5c3_Var4 string
 		templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalVolumes))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 43, Col: 61}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/collection_details.templ`, Line: 43, Col: 61}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 		if templ_7745c5c3_Err != nil {
@@ -81,7 +81,7 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 		var templ_7745c5c3_Var5 string
 		templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalEcVolumes))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 59, Col: 63}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/collection_details.templ`, Line: 59, Col: 63}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 		if templ_7745c5c3_Err != nil {
@@ -94,7 +94,7 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 		var templ_7745c5c3_Var6 string
 		templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalFiles))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 75, Col: 59}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/collection_details.templ`, Line: 75, Col: 59}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 		if templ_7745c5c3_Err != nil {
@@ -107,7 +107,7 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 		var templ_7745c5c3_Var7 string
 		templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(util.BytesToHumanReadable(uint64(data.TotalSize)))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 91, Col: 74}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/collection_details.templ`, Line: 91, Col: 74}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 		if templ_7745c5c3_Err != nil {
@@ -120,7 +120,7 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 		var templ_7745c5c3_Var8 string
 		templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", (data.Page-1)*data.PageSize+1))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 115, Col: 63}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/collection_details.templ`, Line: 115, Col: 63}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 		if templ_7745c5c3_Err != nil {
@@ -140,7 +140,7 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 			return end
 		}()))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 122, Col: 8}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/collection_details.templ`, Line: 122, Col: 8}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 		if templ_7745c5c3_Err != nil {
@@ -153,7 +153,7 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 		var templ_7745c5c3_Var10 string
 		templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalVolumes+data.TotalEcVolumes))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 122, Col: 72}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/collection_details.templ`, Line: 122, Col: 72}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 		if templ_7745c5c3_Err != nil {
@@ -255,7 +255,7 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 			var templ_7745c5c3_Var11 string
 			templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", volume.Id))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 182, Col: 44}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/collection_details.templ`, Line: 182, Col: 44}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 			if templ_7745c5c3_Err != nil {
@@ -268,7 +268,7 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 			var templ_7745c5c3_Var12 string
 			templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(util.BytesToHumanReadable(volume.Size))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 190, Col: 46}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/collection_details.templ`, Line: 190, Col: 46}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 			if templ_7745c5c3_Err != nil {
@@ -281,7 +281,7 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 			var templ_7745c5c3_Var13 string
 			templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", volume.FileCount))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 193, Col: 43}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/collection_details.templ`, Line: 193, Col: 43}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var13))
 			if templ_7745c5c3_Err != nil {
@@ -309,7 +309,7 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 			var templ_7745c5c3_Var14 string
 			templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", volume.Id))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 206, Col: 55}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/collection_details.templ`, Line: 206, Col: 55}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var14))
 			if templ_7745c5c3_Err != nil {
@@ -322,7 +322,7 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 			var templ_7745c5c3_Var15 string
 			templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(volume.Server)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 207, Col: 37}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/collection_details.templ`, Line: 207, Col: 37}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var15))
 			if templ_7745c5c3_Err != nil {
@@ -341,7 +341,7 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 			var templ_7745c5c3_Var16 string
 			templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", ecVolume.VolumeID))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 220, Col: 52}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/collection_details.templ`, Line: 220, Col: 52}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
 			if templ_7745c5c3_Err != nil {
@@ -354,7 +354,7 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 			var templ_7745c5c3_Var17 string
 			templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d/14", ecVolume.TotalShards))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 228, Col: 81}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/collection_details.templ`, Line: 228, Col: 81}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
 			if templ_7745c5c3_Err != nil {
@@ -377,7 +377,7 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 				var templ_7745c5c3_Var18 string
 				templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(ecVolume.MissingShards)))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 241, Col: 64}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/collection_details.templ`, Line: 241, Col: 64}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var18))
 				if templ_7745c5c3_Err != nil {
@@ -395,7 +395,7 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 			var templ_7745c5c3_Var19 string
 			templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", ecVolume.VolumeID))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 249, Col: 63}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/collection_details.templ`, Line: 249, Col: 63}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var19))
 			if templ_7745c5c3_Err != nil {
@@ -413,7 +413,7 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 				var templ_7745c5c3_Var20 string
 				templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", ecVolume.VolumeID))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 256, Col: 64}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/collection_details.templ`, Line: 256, Col: 64}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var20))
 				if templ_7745c5c3_Err != nil {
@@ -437,7 +437,7 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 			var templ_7745c5c3_Var21 string
 			templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinStringErrs(data.CollectionName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 271, Col: 60}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/collection_details.templ`, Line: 271, Col: 60}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var21))
 			if templ_7745c5c3_Err != nil {
@@ -465,7 +465,7 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 				var templ_7745c5c3_Var22 string
 				templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.Page-1))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 288, Col: 104}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/collection_details.templ`, Line: 288, Col: 104}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var22))
 				if templ_7745c5c3_Err != nil {
@@ -485,7 +485,7 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 					var templ_7745c5c3_Var23 string
 					templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", i))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 295, Col: 52}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/collection_details.templ`, Line: 295, Col: 52}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var23))
 					if templ_7745c5c3_Err != nil {
@@ -503,7 +503,7 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 					var templ_7745c5c3_Var24 string
 					templ_7745c5c3_Var24, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", i))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 299, Col: 95}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/collection_details.templ`, Line: 299, Col: 95}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var24))
 					if templ_7745c5c3_Err != nil {
@@ -516,7 +516,7 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 					var templ_7745c5c3_Var25 string
 					templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", i))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 299, Col: 119}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/collection_details.templ`, Line: 299, Col: 119}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var25))
 					if templ_7745c5c3_Err != nil {
@@ -546,7 +546,7 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 				var templ_7745c5c3_Var26 string
 				templ_7745c5c3_Var26, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.Page+1))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 314, Col: 104}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/collection_details.templ`, Line: 314, Col: 104}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var26))
 				if templ_7745c5c3_Err != nil {
@@ -559,7 +559,7 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 				var templ_7745c5c3_Var27 string
 				templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalPages))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 317, Col: 108}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/collection_details.templ`, Line: 317, Col: 108}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var27))
 				if templ_7745c5c3_Err != nil {

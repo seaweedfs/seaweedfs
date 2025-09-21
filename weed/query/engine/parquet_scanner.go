@@ -57,15 +57,12 @@ func NewParquetScanner(filerClient filer_pb.FilerClient, namespace, topicName st
 
 	// Build complete schema with system columns - prefer flat schema if available
 	var recordType *schema_pb.RecordType
-	
+
 	if topicConf.GetMessageRecordType() != nil {
 		// New flat schema format - use directly
 		recordType = topicConf.GetMessageRecordType()
-	} else if topicConf.GetKeyRecordType() != nil || topicConf.GetValueRecordType() != nil {
-		// Legacy dual schema format - combine them
-		recordType = schema.CreateCombinedRecordType(topicConf.GetKeyRecordType(), topicConf.GetValueRecordType())
 	}
-	
+
 	if recordType == nil || len(recordType.Fields) == 0 {
 		return nil, NoSchemaError{Namespace: namespace, Topic: topicName}
 	}

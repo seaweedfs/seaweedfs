@@ -239,9 +239,9 @@ func (p *TopicPublisher) doConfigureTopic() (err error) {
 			p.grpcDialOption,
 			func(client mq_pb.SeaweedMessagingClient) error {
 				_, err := client.ConfigureTopic(context.Background(), &mq_pb.ConfigureTopicRequest{
-					Topic:           p.config.Topic.ToPbTopic(),
-					PartitionCount:  p.config.PartitionCount,
-					ValueRecordType: p.config.RecordType, // Value schema
+					Topic:             p.config.Topic.ToPbTopic(),
+					PartitionCount:    p.config.PartitionCount,
+					MessageRecordType: p.config.RecordType, // Flat schema
 				})
 				return err
 			})

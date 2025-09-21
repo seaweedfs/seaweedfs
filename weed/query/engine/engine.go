@@ -3848,7 +3848,7 @@ func (e *SQLEngine) createTable(ctx context.Context, stmt *DDLStatement) (*Query
 
 	// Create the topic via broker using configurable partition count
 	partitionCount := e.catalog.GetDefaultPartitionCount()
-	err := e.catalog.brokerClient.ConfigureTopic(ctx, database, tableName, partitionCount, recordType)
+	err := e.catalog.brokerClient.ConfigureTopicWithRecordType(ctx, database, tableName, partitionCount, recordType, nil)
 	if err != nil {
 		return &QueryResult{Error: err}, err
 	}
@@ -4782,7 +4782,7 @@ func (e *SQLEngine) findColumnValue(result HybridScanResult, columnName string) 
 // discoverAndRegisterTopic attempts to discover an existing topic and register it in the SQL catalog
 func (e *SQLEngine) discoverAndRegisterTopic(ctx context.Context, database, tableName string) error {
 	// First, check if topic exists by trying to get its schema from the broker/filer
-	recordType, err := e.catalog.brokerClient.GetTopicSchema(ctx, database, tableName)
+	recordType, _, err := e.catalog.brokerClient.GetTopicRecordType(ctx, database, tableName)
 	if err != nil {
 		return fmt.Errorf("topic %s.%s not found or no schema available: %v", database, tableName, err)
 	}

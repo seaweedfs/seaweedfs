@@ -181,7 +181,6 @@ func (s *AdminServer) GetTopicDetails(namespace, topicName string) (*TopicDetail
 			Namespace:            namespace,
 			Name:                 topicName,
 			Partitions:           []PartitionInfo{},
-			Schema:               []SchemaFieldInfo{},
 			Publishers:           []PublisherInfo{},
 			Subscribers:          []TopicSubscriberInfo{},
 			ConsumerGroupOffsets: []ConsumerGroupOffsetInfo{},
@@ -214,9 +213,8 @@ func (s *AdminServer) GetTopicDetails(namespace, topicName string) (*TopicDetail
 			}
 		}
 
-		// Process schemas - prefer flat schema format if available
+		// Process flat schema format
 		if configResp.MessageRecordType != nil {
-			// New flat schema format with key columns
 			for _, field := range configResp.MessageRecordType.Fields {
 				isKey := false
 				for _, keyCol := range configResp.KeyColumns {
@@ -225,50 +223,21 @@ func (s *AdminServer) GetTopicDetails(namespace, topicName string) (*TopicDetail
 						break
 					}
 				}
-				
+
 				fieldType := "UNKNOWN"
 				if field.Type != nil && field.Type.Kind != nil {
 					fieldType = getFieldTypeName(field.Type)
 				}
-				
+
 				schemaField := SchemaFieldInfo{
 					Name: field.Name,
 					Type: fieldType,
 				}
-				
+
 				if isKey {
 					topicDetails.KeySchema = append(topicDetails.KeySchema, schemaField)
 				} else {
 					topicDetails.ValueSchema = append(topicDetails.ValueSchema, schemaField)
-				}
-			}
-		} else if configResp.KeyRecordType != nil || configResp.ValueRecordType != nil {
-			// Legacy dual schema format
-			if configResp.KeyRecordType != nil {
-				for _, field := range configResp.KeyRecordType.Fields {
-					fieldType := "UNKNOWN"
-					if field.Type != nil && field.Type.Kind != nil {
-						fieldType = getFieldTypeName(field.Type)
-					}
-					
-					topicDetails.KeySchema = append(topicDetails.KeySchema, SchemaFieldInfo{
-						Name: field.Name,
-						Type: fieldType,
-					})
-				}
-			}
-			
-			if configResp.ValueRecordType != nil {
-				for _, field := range configResp.ValueRecordType.Fields {
-					fieldType := "UNKNOWN"
-					if field.Type != nil && field.Type.Kind != nil {
-						fieldType = getFieldTypeName(field.Type)
-					}
-					
-					topicDetails.ValueSchema = append(topicDetails.ValueSchema, SchemaFieldInfo{
-						Name: field.Name,
-						Type: fieldType,
-					})
 				}
 			}
 		}
@@ -673,7 +642,7 @@ func getFieldTypeName(fieldType *schema_pb.Type) string {
 	if fieldType.Kind == nil {
 		return "UNKNOWN"
 	}
-	
+
 	switch kind := fieldType.Kind.(type) {
 	case *schema_pb.Type_ScalarType:
 		switch kind.ScalarType {

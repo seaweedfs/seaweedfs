@@ -117,18 +117,14 @@ message ConfigureTopicRequest {
     schema_pb.Topic topic = 1;
     int32 partition_count = 2;
     TopicRetention retention = 3;
-    schema_pb.RecordType key_record_type = 4;    // Key schema (deprecated, use message_record_type + key_columns)
-    schema_pb.RecordType value_record_type = 5;  // Value schema (deprecated, use message_record_type + key_columns)
-    schema_pb.RecordType message_record_type = 6;  // Complete flat schema for the message
-    repeated string key_columns = 7;              // Names of columns that form the key
+    schema_pb.RecordType message_record_type = 4;  // Complete flat schema for the message
+    repeated string key_columns = 5;              // Names of columns that form the key
 }
 message ConfigureTopicResponse {
     repeated BrokerPartitionAssignment broker_partition_assignments = 2;
     TopicRetention retention = 3;
-    schema_pb.RecordType key_record_type = 4;    // Key schema (deprecated, use message_record_type + key_columns)
-    schema_pb.RecordType value_record_type = 5;  // Value schema (deprecated, use message_record_type + key_columns)
-    schema_pb.RecordType message_record_type = 6;  // Complete flat schema for the message
-    repeated string key_columns = 7;              // Names of columns that form the key
+    schema_pb.RecordType message_record_type = 4;  // Complete flat schema for the message
+    repeated string key_columns = 5;              // Names of columns that form the key
 }
 message ListTopicsRequest {
 }
@@ -157,10 +153,8 @@ message GetTopicConfigurationResponse {
     int64 created_at_ns = 4;
     int64 last_updated_ns = 5;
     TopicRetention retention = 6;
-    schema_pb.RecordType key_record_type = 7;    // Key schema (deprecated, use message_record_type + key_columns)
-    schema_pb.RecordType value_record_type = 8;  // Value schema (deprecated, use message_record_type + key_columns)
-    schema_pb.RecordType message_record_type = 9;  // Complete flat schema for the message
-    repeated string key_columns = 10;             // Names of columns that form the key
+    schema_pb.RecordType message_record_type = 7;  // Complete flat schema for the message
+    repeated string key_columns = 8;              // Names of columns that form the key
 }
 
 message GetTopicPublishersRequest {

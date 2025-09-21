@@ -79,9 +79,6 @@ func (c *commandMqTopicCompact) Do(args []string, commandEnv *CommandEnv, writer
 	if topicConf.GetMessageRecordType() != nil {
 		// New flat schema format - use directly
 		recordType = topicConf.GetMessageRecordType()
-	} else if topicConf.GetKeyRecordType() != nil || topicConf.GetValueRecordType() != nil {
-		// Legacy dual schema format - combine them
-		recordType = schema.CreateCombinedRecordType(topicConf.GetKeyRecordType(), topicConf.GetValueRecordType())
 	}
 	recordType = schema.NewRecordTypeBuilder(recordType).
 		WithField(logstore.SW_COLUMN_NAME_TS, schema.TypeInt64).
