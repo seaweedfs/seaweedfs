@@ -19,6 +19,9 @@ type BrokerClientInterface interface {
 	ListTopics(ctx context.Context, namespace string) ([]string, error)
 	GetTopicSchema(ctx context.Context, namespace, topic string) (*schema_pb.RecordType, error)
 	GetTopicSchemas(ctx context.Context, namespace, topic string) (*schema_pb.RecordType, *schema_pb.RecordType, error) // Returns (keySchema, valueSchema, error)
+	// New flat schema methods
+	GetTopicRecordType(ctx context.Context, namespace, topic string) (*schema_pb.RecordType, []string, error) // Returns (flatSchema, keyColumns, error)
+	ConfigureTopicWithRecordType(ctx context.Context, namespace, topicName string, partitionCount int32, flatSchema *schema_pb.RecordType, keyColumns []string) error
 	GetFilerClient() (filer_pb.FilerClient, error)
 	ConfigureTopic(ctx context.Context, namespace, topicName string, partitionCount int32, recordType *schema_pb.RecordType) error
 	DeleteTopic(ctx context.Context, namespace, topicName string) error

@@ -907,6 +907,53 @@ func (m *MockBrokerClient) GetTopicSchemas(ctx context.Context, namespace, topic
 	return nil, nil, fmt.Errorf("topic %s not found", key)
 }
 
+// GetTopicRecordType returns flat schema and key columns for a topic
+func (m *MockBrokerClient) GetTopicRecordType(ctx context.Context, namespace, topic string) (*schema_pb.RecordType, []string, error) {
+	if m.shouldFail {
+		return nil, nil, fmt.Errorf("mock broker failure: %s", m.failMessage)
+	}
+
+	key := fmt.Sprintf("%s.%s", namespace, topic)
+	if schema, exists := m.schemas[key]; exists {
+		// For testing, assume first field is key column
+		var keyColumns []string
+		if len(schema.Fields) > 0 {
+			keyColumns = []string{schema.Fields[0].Name}
+		}
+		return schema, keyColumns, nil
+	}
+	return nil, nil, fmt.Errorf("topic %s not found", key)
+}
+
+// ConfigureTopicWithRecordType creates or modifies a topic using flat schema format
+func (m *MockBrokerClient) ConfigureTopicWithRecordType(ctx context.Context, namespace, topicName string, partitionCount int32, flatSchema *schema_pb.RecordType, keyColumns []string) error {
+	if m.shouldFail {
+		return fmt.Errorf("mock broker failure: %s", m.failMessage)
+	}
+
+	// Store the schema for future retrieval
+	key := fmt.Sprintf("%s.%s", namespace, topicName)
+	m.schemas[key] = flatSchema
+
+	// Add topic to namespace if it doesn't exist
+	if topics, exists := m.topics[namespace]; exists {
+		found := false
+		for _, t := range topics {
+			if t == topicName {
+				found = true
+				break
+			}
+		}
+		if !found {
+			m.topics[namespace] = append(topics, topicName)
+		}
+	} else {
+		m.topics[namespace] = []string{topicName}
+	}
+
+	return nil
+}
+
 // GetFilerClient returns a mock filer client
 func (m *MockBrokerClient) GetFilerClient() (filer_pb.FilerClient, error) {
 	if m.shouldFail {

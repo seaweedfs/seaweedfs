@@ -27,8 +27,8 @@ func (e *SQLEngine) executeDescribeStatement(ctx context.Context, tableName stri
 		}
 	}
 
-	// Get both key and value schemas from broker
-	keySchema, valueSchema, err := e.catalog.brokerClient.GetTopicSchemas(ctx, database, tableName)
+	// Get flat schema and key columns from broker
+	flatSchema, keyColumns, err := e.catalog.brokerClient.GetTopicRecordType(ctx, database, tableName)
 	if err != nil {
 		return &QueryResult{Error: err}, err
 	}
@@ -44,15 +44,16 @@ func (e *SQLEngine) executeDescribeStatement(ctx context.Context, tableName stri
 		{"_source", "VARCHAR(255)", "System column: Data source (parquet/log)"},
 	}
 
-	// Calculate total rows: value fields + key fields (if exists) + system columns
+	// Calculate total rows: schema fields + system columns
 	totalRows := len(systemColumns)
-	if valueSchema != nil {
-		totalRows += len(valueSchema.Fields)
+	if flatSchema != nil {
+		totalRows += len(flatSchema.Fields)
 	}
-	keyFieldCount := 0
-	if keySchema != nil {
-		keyFieldCount = len(keySchema.Fields)
-		totalRows += keyFieldCount
+
+	// Create key column lookup map
+	keyColumnMap := make(map[string]bool)
+	for _, keyCol := range keyColumns {
+		keyColumnMap[keyCol] = true
 	}
 
 	result := &QueryResult{
@@ -62,33 +63,27 @@ func (e *SQLEngine) executeDescribeStatement(ctx context.Context, tableName stri
 
 	rowIndex := 0
 
-	// Add key schema fields first (if present)
-	if keySchema != nil {
-		for _, field := range keySchema.Fields {
+	// Add schema fields - mark key columns appropriately
+	if flatSchema != nil {
+		for _, field := range flatSchema.Fields {
 			sqlType := e.convertMQTypeToSQL(field.Type)
-			result.Rows[rowIndex] = []sqltypes.Value{
-				sqltypes.NewVarChar(field.Name + "_key"), // Field - add suffix to distinguish from value fields
-				sqltypes.NewVarChar(sqlType),             // Type
-				sqltypes.NewVarChar("YES"),               // Null
-				sqltypes.NewVarChar("KEY"),               // Key - mark as key schema field
-				sqltypes.NewVarChar("NULL"),              // Default
-				sqltypes.NewVarChar("Key schema field"),  // Extra
+			isKey := keyColumnMap[field.Name]
+			keyType := ""
+			if isKey {
+				keyType = "PRI" // Primary key
 			}
-			rowIndex++
-		}
-	}
+			extra := "Data field"
+			if isKey {
+				extra = "Key field"
+			}
 
-	// Add value schema fields (if present)
-	if valueSchema != nil {
-		for _, field := range valueSchema.Fields {
-			sqlType := e.convertMQTypeToSQL(field.Type)
 			result.Rows[rowIndex] = []sqltypes.Value{
-				sqltypes.NewVarChar(field.Name),           // Field
-				sqltypes.NewVarChar(sqlType),              // Type
-				sqltypes.NewVarChar("YES"),                // Null
-				sqltypes.NewVarChar("VALUE"),              // Key - mark as value schema field
-				sqltypes.NewVarChar("NULL"),               // Default
-				sqltypes.NewVarChar("Value schema field"), // Extra
+				sqltypes.NewVarChar(field.Name),
+				sqltypes.NewVarChar(sqlType),
+				sqltypes.NewVarChar("YES"),
+				sqltypes.NewVarChar(keyType),
+				sqltypes.NewVarChar("NULL"),
+				sqltypes.NewVarChar(extra),
 			}
 			rowIndex++
 		}

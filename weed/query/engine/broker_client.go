@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
+	"github.com/seaweedfs/seaweedfs/weed/mq/schema"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -374,6 +375,92 @@ func (c *BrokerClient) GetTopicSchemas(ctx context.Context, namespace, topicName
 	}
 
 	return keyRecordType, valueRecordType, nil
+}
+
+// GetTopicRecordType retrieves the flat schema and key columns for a topic
+// Returns (flatSchema, keyColumns, error)
+func (c *BrokerClient) GetTopicRecordType(ctx context.Context, namespace, topicName string) (*schema_pb.RecordType, []string, error) {
+	// Get filer client to read topic configuration
+	filerClient, err := c.GetFilerClient()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get filer client: %v", err)
+	}
+
+	var flatSchema *schema_pb.RecordType
+	var keyColumns []string
+	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		// Read topic.conf file from /topics/{namespace}/{topic}/topic.conf
+		topicDir := fmt.Sprintf("/topics/%s/%s", namespace, topicName)
+
+		// First check if topic directory exists
+		_, err := client.LookupDirectoryEntry(ctx, &filer_pb.LookupDirectoryEntryRequest{
+			Directory: topicDir,
+			Name:      "topic.conf",
+		})
+		if err != nil {
+			return fmt.Errorf("topic %s.%s not found: %v", namespace, topicName, err)
+		}
+
+		// Read the topic.conf file content
+		data, err := filer.ReadInsideFiler(client, topicDir, "topic.conf")
+		if err != nil {
+			return fmt.Errorf("failed to read topic.conf for %s.%s: %v", namespace, topicName, err)
+		}
+
+		// Parse the configuration
+		conf := &mq_pb.ConfigureTopicResponse{}
+		if err = jsonpb.Unmarshal(data, conf); err != nil {
+			return fmt.Errorf("failed to unmarshal topic %s.%s configuration: %v", namespace, topicName, err)
+		}
+
+		// Extract flat schema and key columns - prefer new format
+		if conf.MessageRecordType != nil && len(conf.KeyColumns) > 0 {
+			flatSchema = conf.MessageRecordType
+			keyColumns = conf.KeyColumns
+		} else if conf.KeyRecordType != nil || conf.ValueRecordType != nil {
+			// Fall back to combining legacy schemas
+			flatSchema, keyColumns = schema.CombineFlatSchemaFromKeyValue(conf.KeyRecordType, conf.ValueRecordType)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return flatSchema, keyColumns, nil
+}
+
+// ConfigureTopicWithRecordType creates or modifies a topic using flat schema format
+func (c *BrokerClient) ConfigureTopicWithRecordType(ctx context.Context, namespace, topicName string, partitionCount int32, flatSchema *schema_pb.RecordType, keyColumns []string) error {
+	if err := c.findBrokerBalancer(); err != nil {
+		return err
+	}
+
+	conn, err := grpc.Dial(c.brokerAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return fmt.Errorf("failed to connect to broker at %s: %v", c.brokerAddress, err)
+	}
+	defer conn.Close()
+
+	client := mq_pb.NewSeaweedMessagingClient(conn)
+
+	// Create topic configuration using flat schema format
+	_, err = client.ConfigureTopic(ctx, &mq_pb.ConfigureTopicRequest{
+		Topic: &schema_pb.Topic{
+			Namespace: namespace,
+			Name:      topicName,
+		},
+		PartitionCount:    partitionCount,
+		MessageRecordType: flatSchema,
+		KeyColumns:        keyColumns,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to configure topic %s.%s: %v", namespace, topicName, err)
+	}
+
+	return nil
 }
 
 // ConfigureTopic creates or modifies a topic configuration
