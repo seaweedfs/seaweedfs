@@ -1521,11 +1521,19 @@ func (h *Handler) matchesSchemaRegistryConvention(topicName string) bool {
 			return true
 		}
 
-		// Also check with -value suffix
+		// Check with -value suffix (common pattern for value schemas)
 		latestSchemaValue, err := h.schemaManager.GetLatestSchema(topicName + "-value")
 		if err == nil {
 			// Since we retrieved schema from registry, ensure topic config is updated
 			h.ensureTopicSchemaFromLatestSchema(topicName, latestSchemaValue)
+			return true
+		}
+
+		// Check with -key suffix (for key schemas)
+		latestSchemaKey, err := h.schemaManager.GetLatestSchema(topicName + "-key")
+		if err == nil {
+			// Since we retrieved key schema from registry, ensure topic config is updated
+			h.ensureTopicKeySchemaFromLatestSchema(topicName, latestSchemaKey)
 			return true
 		}
 	}
@@ -1683,6 +1691,27 @@ func (h *Handler) extractTopicFromSubject(subject string) string {
 	return subject
 }
 
+// ensureTopicKeySchemaFromLatestSchema ensures topic configuration is updated when key schema is retrieved
+func (h *Handler) ensureTopicKeySchemaFromLatestSchema(topicName string, latestSchema *schema.CachedSubject) {
+	if latestSchema == nil {
+		return
+	}
+
+	// Convert CachedSubject to CachedSchema format for reuse
+	// Note: CachedSubject has different field structure than expected
+	cachedSchema := &schema.CachedSchema{
+		ID:       latestSchema.LatestID,
+		Schema:   latestSchema.Schema,
+		Subject:  latestSchema.Subject,
+		Version:  latestSchema.Version,
+		Format:   schema.FormatAvro, // Default to Avro, could be improved with format detection
+		CachedAt: latestSchema.CachedAt,
+	}
+
+	// Use existing function to handle the key schema update
+	h.ensureTopicKeySchemaFromRegistryCache(topicName, cachedSchema)
+}
+
 // decodeRecordValueToKafkaMessage decodes a RecordValue back to the original Kafka message bytes
 func (h *Handler) decodeRecordValueToKafkaMessage(topicName string, recordValueBytes []byte) []byte {
 	if recordValueBytes == nil {
@@ -1723,7 +1752,7 @@ func (h *Handler) encodeRecordValueToConfluentFormat(topicName string, recordVal
 	}
 
 	// Use schema manager to encode RecordValue back to original format
-	encodedBytes, err := h.schemaManager.EncodeMessage(recordValue, schemaConfig.SchemaID, schemaConfig.SchemaFormat)
+	encodedBytes, err := h.schemaManager.EncodeMessage(recordValue, schemaConfig.ValueSchemaID, schemaConfig.ValueSchemaFormat)
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode RecordValue: %w", err)
 	}
@@ -1746,6 +1775,62 @@ func (h *Handler) getTopicSchemaConfig(topicName string) (*TopicSchemaConfig, er
 	}
 
 	return config, nil
+}
+
+// decodeRecordValueToKafkaKey decodes a key RecordValue back to the original Kafka key bytes
+func (h *Handler) decodeRecordValueToKafkaKey(topicName string, keyRecordValueBytes []byte) []byte {
+	if keyRecordValueBytes == nil {
+		return nil
+	}
+
+	// Try to get topic schema config
+	schemaConfig, err := h.getTopicSchemaConfig(topicName)
+	if err != nil || !schemaConfig.HasKeySchema {
+		// No key schema config available, return raw bytes
+		return keyRecordValueBytes
+	}
+
+	// Try to unmarshal as RecordValue
+	recordValue := &schema_pb.RecordValue{}
+	if err := proto.Unmarshal(keyRecordValueBytes, recordValue); err != nil {
+		// If it's not a RecordValue, return the raw bytes
+		return keyRecordValueBytes
+	}
+
+	// If key schema management is enabled, re-encode the RecordValue to Confluent format
+	if h.IsSchemaEnabled() {
+		if encodedKey, err := h.encodeKeyRecordValueToConfluentFormat(topicName, recordValue); err == nil {
+			return encodedKey
+		}
+	}
+
+	// Fallback: convert RecordValue to JSON
+	return h.recordValueToJSON(recordValue)
+}
+
+// encodeKeyRecordValueToConfluentFormat re-encodes a key RecordValue back to Confluent format
+func (h *Handler) encodeKeyRecordValueToConfluentFormat(topicName string, recordValue *schema_pb.RecordValue) ([]byte, error) {
+	if recordValue == nil {
+		return nil, fmt.Errorf("key RecordValue is nil")
+	}
+
+	// Get schema configuration from topic config
+	schemaConfig, err := h.getTopicSchemaConfig(topicName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get topic schema config: %w", err)
+	}
+
+	if !schemaConfig.HasKeySchema {
+		return nil, fmt.Errorf("no key schema configured for topic: %s", topicName)
+	}
+
+	// Use schema manager to encode RecordValue back to original format
+	encodedBytes, err := h.schemaManager.EncodeMessage(recordValue, schemaConfig.KeySchemaID, schemaConfig.KeySchemaFormat)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode key RecordValue: %w", err)
+	}
+
+	return encodedBytes, nil
 }
 
 // recordValueToJSON converts a RecordValue to JSON bytes (fallback)

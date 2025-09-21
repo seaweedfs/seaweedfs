@@ -65,8 +65,23 @@ type SeaweedMQHandlerInterface interface {
 
 // TopicSchemaConfig holds schema configuration for a topic
 type TopicSchemaConfig struct {
-	SchemaID     uint32
-	SchemaFormat schema.Format
+	// Value schema configuration
+	ValueSchemaID     uint32
+	ValueSchemaFormat schema.Format
+
+	// Key schema configuration (optional)
+	KeySchemaID     uint32
+	KeySchemaFormat schema.Format
+	HasKeySchema    bool // indicates if key schema is configured
+}
+
+// Legacy accessors for backward compatibility
+func (c *TopicSchemaConfig) SchemaID() uint32 {
+	return c.ValueSchemaID
+}
+
+func (c *TopicSchemaConfig) SchemaFormat() schema.Format {
+	return c.ValueSchemaFormat
 }
 
 // Handler processes Kafka protocol requests from clients using SeaweedMQ
@@ -91,6 +106,10 @@ type Handler struct {
 	// Topic schema configuration cache
 	topicSchemaConfigs  map[string]*TopicSchemaConfig
 	topicSchemaConfigMu sync.RWMutex
+
+	// Track registered schemas to prevent duplicate registrations
+	registeredSchemas   map[string]bool // key: "topic:schemaID" or "topic-key:schemaID"
+	registeredSchemasMu sync.RWMutex
 
 	filerClient filer_pb.SeaweedFilerClient
 
@@ -139,6 +158,7 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string, clientHost str
 		smqOffsetStorage:   smqOffsetStorage,
 		groupCoordinator:   consumer.NewGroupCoordinator(),
 		smqBrokerAddresses: nil, // Will be set by SetSMQBrokerAddresses() when server starts
+		registeredSchemas:  make(map[string]bool),
 	}, nil
 }
 
@@ -2872,7 +2892,13 @@ func (h *Handler) GetSeaweedMQHandler() SeaweedMQHandlerInterface {
 // registerSchemaViaBrokerAPI registers the translated schema via the broker's ConfigureTopic API
 // Only the gateway leader performs the registration to avoid concurrent updates.
 func (h *Handler) registerSchemaViaBrokerAPI(topicName string, recordType *schema_pb.RecordType) error {
-	if recordType == nil {
+	return h.registerSchemasViaBrokerAPI(topicName, recordType, nil)
+}
+
+// registerSchemasViaBrokerAPI registers both key and value schemas via the broker's ConfigureTopic API
+// Only the gateway leader performs the registration to avoid concurrent updates.
+func (h *Handler) registerSchemasViaBrokerAPI(topicName string, valueRecordType *schema_pb.RecordType, keyRecordType *schema_pb.RecordType) error {
+	if valueRecordType == nil && keyRecordType == nil {
 		return nil
 	}
 
@@ -2913,19 +2939,23 @@ func (h *Handler) registerSchemaViaBrokerAPI(topicName string, recordType *schem
 		if err != nil {
 			// If topic doesn't exist, create it with default partition count
 			_, err := client.ConfigureTopic(context.Background(), &mq_pb.ConfigureTopicRequest{
-				Topic:          seaweedTopic,
-				PartitionCount: 1, // Default partition count
-				RecordType:     recordType,
+				Topic:           seaweedTopic,
+				PartitionCount:  1,               // Default partition count
+				RecordType:      valueRecordType, // Backward compatibility
+				ValueRecordType: valueRecordType,
+				KeyRecordType:   keyRecordType,
 			})
 			return err
 		}
 
 		// Update existing topic with new schema
 		_, err = client.ConfigureTopic(context.Background(), &mq_pb.ConfigureTopicRequest{
-			Topic:          seaweedTopic,
-			PartitionCount: getResp.PartitionCount,
-			RecordType:     recordType,
-			Retention:      getResp.Retention,
+			Topic:           seaweedTopic,
+			PartitionCount:  getResp.PartitionCount,
+			RecordType:      valueRecordType, // Backward compatibility
+			ValueRecordType: valueRecordType,
+			KeyRecordType:   keyRecordType,
+			Retention:       getResp.Retention,
 		})
 		return err
 	})

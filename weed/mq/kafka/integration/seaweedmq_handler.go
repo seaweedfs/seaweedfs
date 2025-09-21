@@ -196,8 +196,13 @@ func (h *SeaweedMQHandler) CreateTopic(name string, partitions int32) error {
 	return h.CreateTopicWithSchema(name, partitions, nil)
 }
 
-// CreateTopicWithSchema creates a topic with optional schema
+// CreateTopicWithSchema creates a topic with optional value schema (deprecated: use CreateTopicWithSchemas)
 func (h *SeaweedMQHandler) CreateTopicWithSchema(name string, partitions int32, recordType *schema_pb.RecordType) error {
+	return h.CreateTopicWithSchemas(name, partitions, recordType, nil)
+}
+
+// CreateTopicWithSchemas creates a topic with optional key and value schemas
+func (h *SeaweedMQHandler) CreateTopicWithSchemas(name string, partitions int32, valueRecordType *schema_pb.RecordType, keyRecordType *schema_pb.RecordType) error {
 	h.topicsMu.Lock()
 	defer h.topicsMu.Unlock()
 
@@ -225,9 +230,11 @@ func (h *SeaweedMQHandler) CreateTopicWithSchema(name string, partitions int32, 
 
 		err := pb.WithBrokerGrpcClient(false, brokerAddress, grpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
 			_, err := client.ConfigureTopic(context.Background(), &mq_pb.ConfigureTopicRequest{
-				Topic:          seaweedTopic,
-				PartitionCount: partitions,
-				RecordType:     recordType,
+				Topic:           seaweedTopic,
+				PartitionCount:  partitions,
+				RecordType:      valueRecordType, // Backward compatibility
+				ValueRecordType: valueRecordType, // New field for value schema
+				KeyRecordType:   keyRecordType,   // New field for key schema
 			})
 			if err != nil {
 				glog.Errorf("❌ Failed to configure topic %s with broker: %v", name, err)

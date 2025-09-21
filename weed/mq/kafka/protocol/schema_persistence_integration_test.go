@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -597,6 +598,8 @@ func createHandlerWithSchemaManager(t *testing.T, registryURL, brokerAddress str
 		schemaManager:       schemaManager,
 		useSchema:           true,
 		topicSchemaConfigs:  make(map[string]*TopicSchemaConfig),
+		registeredSchemas:   make(map[string]bool),
+		registeredSchemasMu: sync.RWMutex{},
 	}
 
 	return handler

@@ -1066,38 +1066,91 @@ func (h *Handler) produceSchemaBasedRecord(topic string, partition int32, key []
 		return h.seaweedMQHandler.ProduceRecord(topic, partition, key, value)
 	}
 
-	// Check if the message is schematized (Confluent-framed)
-	if !h.schemaManager.IsSchematized(value) {
-		// Not schematized - fall back to raw message handling
+	var keyDecodedMsg *schema.DecodedMessage
+	var valueDecodedMsg *schema.DecodedMessage
+
+	// Check and decode key if schematized
+	if key != nil && h.schemaManager.IsSchematized(key) {
+		var err error
+		keyDecodedMsg, err = h.schemaManager.DecodeMessage(key)
+		if err != nil {
+			return 0, fmt.Errorf("failed to decode schematized key: %w", err)
+		}
+	}
+
+	// Check and decode value if schematized
+	if value != nil && h.schemaManager.IsSchematized(value) {
+		var err error
+		valueDecodedMsg, err = h.schemaManager.DecodeMessage(value)
+		if err != nil {
+			return 0, fmt.Errorf("failed to decode schematized value: %w", err)
+		}
+	}
+
+	// If neither key nor value is schematized, fall back to raw message handling
+	if keyDecodedMsg == nil && valueDecodedMsg == nil {
 		return h.seaweedMQHandler.ProduceRecord(topic, partition, key, value)
 	}
 
-	// Decode the schematized message to get RecordValue
-	decodedMsg, err := h.schemaManager.DecodeMessage(value)
-	if err != nil {
-		return 0, fmt.Errorf("failed to decode schematized message: %w", err)
+	// Process key schema if present
+	if keyDecodedMsg != nil {
+		// Store key schema information in memory cache for fetch path performance
+		if !h.hasTopicKeySchemaConfig(topic, keyDecodedMsg.SchemaID, keyDecodedMsg.SchemaFormat) {
+			err := h.storeTopicKeySchemaConfig(topic, keyDecodedMsg.SchemaID, keyDecodedMsg.SchemaFormat)
+			if err != nil {
+				Debug("Failed to store topic key schema config for %s: %v", topic, err)
+			}
+
+			// Schedule key schema registration in background (leader-only, non-blocking)
+			h.scheduleKeySchemaRegistration(topic, keyDecodedMsg.RecordType)
+		}
 	}
 
-	// Store the RecordValue directly - schema info is stored in topic configuration
-	recordValueBytes, err := proto.Marshal(decodedMsg.RecordValue)
-	if err != nil {
-		return 0, fmt.Errorf("failed to marshal RecordValue: %w", err)
-	}
-
-	// Store schema information in memory cache for fetch path performance
-	// Only store if not already cached to avoid mutex contention on hot path
-	if !h.hasTopicSchemaConfig(topic, decodedMsg.SchemaID, decodedMsg.SchemaFormat) {
-		err = h.storeTopicSchemaConfig(topic, decodedMsg.SchemaID, decodedMsg.SchemaFormat)
+	// Process value schema if present
+	var recordValueBytes []byte
+	if valueDecodedMsg != nil {
+		// Store the RecordValue directly - schema info is stored in topic configuration
+		var err error
+		recordValueBytes, err = proto.Marshal(valueDecodedMsg.RecordValue)
 		if err != nil {
-			Debug("Failed to store topic schema config for %s: %v", topic, err)
+			return 0, fmt.Errorf("failed to marshal RecordValue: %w", err)
 		}
 
-		// Schedule schema registration in background (leader-only, non-blocking)
-		h.scheduleSchemaRegistration(topic, decodedMsg.RecordType)
+		// Store value schema information in memory cache for fetch path performance
+		// Only store if not already cached to avoid mutex contention on hot path
+		if !h.hasTopicSchemaConfig(topic, valueDecodedMsg.SchemaID, valueDecodedMsg.SchemaFormat) {
+			err = h.storeTopicSchemaConfig(topic, valueDecodedMsg.SchemaID, valueDecodedMsg.SchemaFormat)
+			if err != nil {
+				Debug("Failed to store topic schema config for %s: %v", topic, err)
+			}
+
+			// Schedule value schema registration in background (leader-only, non-blocking)
+			h.scheduleSchemaRegistration(topic, valueDecodedMsg.RecordType)
+		}
+	} else {
+		// If value is not schematized, use raw value
+		recordValueBytes = value
 	}
 
-	// Send to SeaweedMQ with RecordValue format
-	return h.seaweedMQHandler.ProduceRecordValue(topic, partition, key, recordValueBytes)
+	// Prepare final key for storage
+	finalKey := key
+	if keyDecodedMsg != nil {
+		// If key was schematized, convert back to raw bytes for storage
+		keyBytes, err := proto.Marshal(keyDecodedMsg.RecordValue)
+		if err != nil {
+			return 0, fmt.Errorf("failed to marshal key RecordValue: %w", err)
+		}
+		finalKey = keyBytes
+	}
+
+	// Send to SeaweedMQ
+	if valueDecodedMsg != nil {
+		// Send with RecordValue format for schematized value
+		return h.seaweedMQHandler.ProduceRecordValue(topic, partition, finalKey, recordValueBytes)
+	} else {
+		// Send with raw format for non-schematized value
+		return h.seaweedMQHandler.ProduceRecord(topic, partition, finalKey, recordValueBytes)
+	}
 }
 
 // hasTopicSchemaConfig checks if schema config already exists (read-only, fast path)
@@ -1115,7 +1168,7 @@ func (h *Handler) hasTopicSchemaConfig(topic string, schemaID uint32, schemaForm
 	}
 
 	// Check if the schema matches (avoid re-registration of same schema)
-	return config.SchemaID == schemaID && config.SchemaFormat == schemaFormat
+	return config.ValueSchemaID == schemaID && config.ValueSchemaFormat == schemaFormat
 }
 
 // storeTopicSchemaConfig stores original Kafka schema metadata (ID + format) for fetch path
@@ -1130,22 +1183,129 @@ func (h *Handler) storeTopicSchemaConfig(topic string, schemaID uint32, schemaFo
 		h.topicSchemaConfigs = make(map[string]*TopicSchemaConfig)
 	}
 
-	h.topicSchemaConfigs[topic] = &TopicSchemaConfig{
-		SchemaID:     schemaID,
-		SchemaFormat: schemaFormat,
+	config, exists := h.topicSchemaConfigs[topic]
+	if !exists {
+		config = &TopicSchemaConfig{}
+		h.topicSchemaConfigs[topic] = config
 	}
+
+	config.ValueSchemaID = schemaID
+	config.ValueSchemaFormat = schemaFormat
 
 	return nil
 }
 
-// scheduleSchemaRegistration schedules background schema registration to avoid blocking data path
+// storeTopicKeySchemaConfig stores key schema configuration
+func (h *Handler) storeTopicKeySchemaConfig(topic string, schemaID uint32, schemaFormat schema.Format) error {
+	h.topicSchemaConfigMu.Lock()
+	defer h.topicSchemaConfigMu.Unlock()
+
+	if h.topicSchemaConfigs == nil {
+		h.topicSchemaConfigs = make(map[string]*TopicSchemaConfig)
+	}
+
+	config, exists := h.topicSchemaConfigs[topic]
+	if !exists {
+		config = &TopicSchemaConfig{}
+		h.topicSchemaConfigs[topic] = config
+	}
+
+	config.KeySchemaID = schemaID
+	config.KeySchemaFormat = schemaFormat
+	config.HasKeySchema = true
+
+	return nil
+}
+
+// hasTopicKeySchemaConfig checks if key schema config already exists
+func (h *Handler) hasTopicKeySchemaConfig(topic string, schemaID uint32, schemaFormat schema.Format) bool {
+	h.topicSchemaConfigMu.RLock()
+	defer h.topicSchemaConfigMu.RUnlock()
+
+	config, exists := h.topicSchemaConfigs[topic]
+	if !exists {
+		return false
+	}
+
+	// Check if the key schema matches
+	return config.HasKeySchema && config.KeySchemaID == schemaID && config.KeySchemaFormat == schemaFormat
+}
+
+// scheduleSchemaRegistration registers value schema once per topic-schema combination
 func (h *Handler) scheduleSchemaRegistration(topicName string, recordType *schema_pb.RecordType) {
-	// Use goroutine to avoid blocking the produce path
-	go func() {
-		if err := h.registerSchemaViaBrokerAPI(topicName, recordType); err != nil {
-			Debug("Background schema registration failed for %s: %v", topicName, err)
-		}
-	}()
+	if recordType == nil {
+		return
+	}
+
+	// Create a unique key for this value schema registration
+	schemaKey := fmt.Sprintf("%s:value:%d", topicName, h.getRecordTypeHash(recordType))
+
+	// Check if already registered
+	h.registeredSchemasMu.RLock()
+	if h.registeredSchemas[schemaKey] {
+		h.registeredSchemasMu.RUnlock()
+		return // Already registered
+	}
+	h.registeredSchemasMu.RUnlock()
+
+	// Double-check with write lock to prevent race condition
+	h.registeredSchemasMu.Lock()
+	defer h.registeredSchemasMu.Unlock()
+
+	if h.registeredSchemas[schemaKey] {
+		return // Already registered by another goroutine
+	}
+
+	// Mark as registered before attempting registration
+	h.registeredSchemas[schemaKey] = true
+
+	// Perform synchronous registration
+	if err := h.registerSchemasViaBrokerAPI(topicName, recordType, nil); err != nil {
+		Debug("Schema registration failed for %s: %v", topicName, err)
+		// Remove from registered map on failure so it can be retried
+		delete(h.registeredSchemas, schemaKey)
+	} else {
+		Debug("Successfully registered value schema for %s", topicName)
+	}
+}
+
+// scheduleKeySchemaRegistration registers key schema once per topic-schema combination
+func (h *Handler) scheduleKeySchemaRegistration(topicName string, recordType *schema_pb.RecordType) {
+	if recordType == nil {
+		return
+	}
+
+	// Create a unique key for this key schema registration
+	schemaKey := fmt.Sprintf("%s:key:%d", topicName, h.getRecordTypeHash(recordType))
+
+	// Check if already registered
+	h.registeredSchemasMu.RLock()
+	if h.registeredSchemas[schemaKey] {
+		h.registeredSchemasMu.RUnlock()
+		return // Already registered
+	}
+	h.registeredSchemasMu.RUnlock()
+
+	// Double-check with write lock to prevent race condition
+	h.registeredSchemasMu.Lock()
+	defer h.registeredSchemasMu.Unlock()
+
+	if h.registeredSchemas[schemaKey] {
+		return // Already registered by another goroutine
+	}
+
+	// Mark as registered before attempting registration
+	h.registeredSchemas[schemaKey] = true
+
+	// Register key schema to the same topic (not a phantom "-key" topic)
+	// This uses the extended ConfigureTopicRequest with separate key/value RecordTypes
+	if err := h.registerSchemasViaBrokerAPI(topicName, nil, recordType); err != nil {
+		Debug("Key schema registration failed for %s: %v", topicName, err)
+		// Remove from registered map on failure so it can be retried
+		delete(h.registeredSchemas, schemaKey)
+	} else {
+		Debug("Successfully registered key schema for %s", topicName)
+	}
 }
 
 // ensureTopicSchemaFromRegistryCache ensures topic configuration is updated when schemas are retrieved from registry
@@ -1171,6 +1331,50 @@ func (h *Handler) ensureTopicSchemaFromRegistryCache(topicName string, schemas .
 	if recordType != nil {
 		h.scheduleSchemaRegistration(topicName, recordType)
 	}
+}
+
+// ensureTopicKeySchemaFromRegistryCache ensures topic configuration is updated when key schemas are retrieved from registry
+func (h *Handler) ensureTopicKeySchemaFromRegistryCache(topicName string, schemas ...*schema.CachedSchema) {
+	if len(schemas) == 0 {
+		return
+	}
+
+	// Use the latest/most relevant schema (last one in the list)
+	latestSchema := schemas[len(schemas)-1]
+	if latestSchema == nil {
+		return
+	}
+
+	// Try to infer RecordType from the cached schema
+	recordType, err := h.inferRecordTypeFromCachedSchema(latestSchema)
+	if err != nil {
+		Debug("Failed to infer RecordType from cached key schema for topic %s: %v", topicName, err)
+		return
+	}
+
+	// Schedule key schema registration to update topic.conf
+	if recordType != nil {
+		h.scheduleKeySchemaRegistration(topicName, recordType)
+	}
+}
+
+// getRecordTypeHash generates a simple hash for RecordType to use as a key
+func (h *Handler) getRecordTypeHash(recordType *schema_pb.RecordType) uint32 {
+	if recordType == nil {
+		return 0
+	}
+
+	// Simple hash based on field count and first field name
+	hash := uint32(len(recordType.Fields))
+	if len(recordType.Fields) > 0 {
+		// Use first field name for additional uniqueness
+		firstFieldName := recordType.Fields[0].Name
+		for _, char := range firstFieldName {
+			hash = hash*31 + uint32(char)
+		}
+	}
+
+	return hash
 }
 
 // inferRecordTypeFromCachedSchema attempts to infer RecordType from a cached schema
