@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/compression"
@@ -1513,14 +1514,18 @@ func (h *Handler) matchesSchemaRegistryConvention(topicName string) bool {
 	// Check if the topic name itself is registered as a schema subject
 	if h.schemaManager != nil {
 		// Try to get latest schema for this subject
-		_, err := h.schemaManager.GetLatestSchema(topicName)
+		latestSchema, err := h.schemaManager.GetLatestSchema(topicName)
 		if err == nil {
+			// Since we retrieved schema from registry, ensure topic config is updated
+			h.ensureTopicSchemaFromLatestSchema(topicName, latestSchema)
 			return true
 		}
 
 		// Also check with -value suffix
-		_, err = h.schemaManager.GetLatestSchema(topicName + "-value")
+		latestSchemaValue, err := h.schemaManager.GetLatestSchema(topicName + "-value")
 		if err == nil {
+			// Since we retrieved schema from registry, ensure topic config is updated
+			h.ensureTopicSchemaFromLatestSchema(topicName, latestSchemaValue)
 			return true
 		}
 	}
@@ -1605,6 +1610,13 @@ func (h *Handler) getSchemaMetadataFromRegistry(subject string) (map[string]stri
 		return nil, fmt.Errorf("failed to get schema for subject %s: %w", subject, err)
 	}
 
+	// Since we retrieved schema from registry, ensure topic config is updated
+	// Extract topic name from subject (remove -key or -value suffix if present)
+	topicName := h.extractTopicFromSubject(subject)
+	if topicName != "" {
+		h.ensureTopicSchemaFromLatestSchema(topicName, cachedSchema)
+	}
+
 	// Build metadata map
 	// Detect format from schema content
 	// Simple format detection - assume Avro for now
@@ -1635,6 +1647,40 @@ func (h *Handler) getSchemaMetadataFromConfig(topicName string) (map[string]stri
 	// This could read from a configuration file, database, or other source
 	// that maps topics to their schema information
 	return nil, fmt.Errorf("configuration-based schema metadata lookup not implemented")
+}
+
+// ensureTopicSchemaFromLatestSchema ensures topic configuration is updated when latest schema is retrieved
+func (h *Handler) ensureTopicSchemaFromLatestSchema(topicName string, latestSchema *schema.CachedSubject) {
+	if latestSchema == nil {
+		return
+	}
+
+	// Convert CachedSubject to CachedSchema format for reuse
+	// Note: CachedSubject has different field structure than expected
+	cachedSchema := &schema.CachedSchema{
+		ID:       latestSchema.LatestID,
+		Schema:   latestSchema.Schema,
+		Subject:  latestSchema.Subject,
+		Version:  latestSchema.Version,
+		Format:   schema.FormatAvro, // Default to Avro, could be improved with format detection
+		CachedAt: latestSchema.CachedAt,
+	}
+
+	// Use existing function to handle the schema update
+	h.ensureTopicSchemaFromRegistryCache(topicName, cachedSchema)
+}
+
+// extractTopicFromSubject extracts the topic name from a schema registry subject
+func (h *Handler) extractTopicFromSubject(subject string) string {
+	// Remove common suffixes used in schema registry
+	if strings.HasSuffix(subject, "-value") {
+		return strings.TrimSuffix(subject, "-value")
+	}
+	if strings.HasSuffix(subject, "-key") {
+		return strings.TrimSuffix(subject, "-key")
+	}
+	// If no suffix, assume subject name is the topic name
+	return subject
 }
 
 // decodeRecordValueToKafkaMessage decodes a RecordValue back to the original Kafka message bytes

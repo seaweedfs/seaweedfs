@@ -925,6 +925,9 @@ func (h *Handler) checkSchemaEvolution(topicName string, expectedSchemaID, actua
 		return false, fmt.Errorf("failed to get actual schema %d: %w", actualSchemaID, err)
 	}
 
+	// Since we're accessing schema from registry for this topic, ensure topic config is updated
+	h.ensureTopicSchemaFromRegistryCache(topicName, expectedSchema, actualSchema)
+
 	// Check compatibility based on topic's compatibility level
 	compatibilityLevel := h.getTopicCompatibilityLevel(topicName)
 
@@ -1143,4 +1146,74 @@ func (h *Handler) scheduleSchemaRegistration(topicName string, recordType *schem
 			Debug("Background schema registration failed for %s: %v", topicName, err)
 		}
 	}()
+}
+
+// ensureTopicSchemaFromRegistryCache ensures topic configuration is updated when schemas are retrieved from registry
+func (h *Handler) ensureTopicSchemaFromRegistryCache(topicName string, schemas ...*schema.CachedSchema) {
+	if len(schemas) == 0 {
+		return
+	}
+
+	// Use the latest/most relevant schema (last one in the list)
+	latestSchema := schemas[len(schemas)-1]
+	if latestSchema == nil {
+		return
+	}
+
+	// Try to infer RecordType from the cached schema
+	recordType, err := h.inferRecordTypeFromCachedSchema(latestSchema)
+	if err != nil {
+		Debug("Failed to infer RecordType from cached schema for topic %s: %v", topicName, err)
+		return
+	}
+
+	// Schedule schema registration to update topic.conf
+	if recordType != nil {
+		h.scheduleSchemaRegistration(topicName, recordType)
+	}
+}
+
+// inferRecordTypeFromCachedSchema attempts to infer RecordType from a cached schema
+func (h *Handler) inferRecordTypeFromCachedSchema(cachedSchema *schema.CachedSchema) (*schema_pb.RecordType, error) {
+	if cachedSchema == nil {
+		return nil, fmt.Errorf("cached schema is nil")
+	}
+
+	switch cachedSchema.Format {
+	case schema.FormatAvro:
+		return h.inferRecordTypeFromAvroSchema(cachedSchema.Schema)
+	case schema.FormatProtobuf:
+		return h.inferRecordTypeFromProtobufSchema(cachedSchema.Schema)
+	case schema.FormatJSONSchema:
+		return h.inferRecordTypeFromJSONSchema(cachedSchema.Schema)
+	default:
+		return nil, fmt.Errorf("unsupported schema format for inference: %v", cachedSchema.Format)
+	}
+}
+
+// inferRecordTypeFromAvroSchema infers RecordType from Avro schema string
+func (h *Handler) inferRecordTypeFromAvroSchema(avroSchema string) (*schema_pb.RecordType, error) {
+	decoder, err := schema.NewAvroDecoder(avroSchema)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Avro decoder: %w", err)
+	}
+	return decoder.InferRecordType()
+}
+
+// inferRecordTypeFromProtobufSchema infers RecordType from Protobuf schema
+func (h *Handler) inferRecordTypeFromProtobufSchema(protobufSchema string) (*schema_pb.RecordType, error) {
+	decoder, err := schema.NewProtobufDecoder([]byte(protobufSchema))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Protobuf decoder: %w", err)
+	}
+	return decoder.InferRecordType()
+}
+
+// inferRecordTypeFromJSONSchema infers RecordType from JSON Schema string
+func (h *Handler) inferRecordTypeFromJSONSchema(jsonSchema string) (*schema_pb.RecordType, error) {
+	decoder, err := schema.NewJSONSchemaDecoder(jsonSchema)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create JSON Schema decoder: %w", err)
+	}
+	return decoder.InferRecordType()
 }
