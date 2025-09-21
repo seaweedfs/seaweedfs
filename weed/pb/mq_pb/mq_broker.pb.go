@@ -483,14 +483,16 @@ func (x *TopicRetention) GetEnabled() bool {
 }
 
 type ConfigureTopicRequest struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	Topic           *schema_pb.Topic       `protobuf:"bytes,1,opt,name=topic,proto3" json:"topic,omitempty"`
-	PartitionCount  int32                  `protobuf:"varint,2,opt,name=partition_count,json=partitionCount,proto3" json:"partition_count,omitempty"`
-	Retention       *TopicRetention        `protobuf:"bytes,3,opt,name=retention,proto3" json:"retention,omitempty"`
-	KeyRecordType   *schema_pb.RecordType  `protobuf:"bytes,4,opt,name=key_record_type,json=keyRecordType,proto3" json:"key_record_type,omitempty"`       // Key schema
-	ValueRecordType *schema_pb.RecordType  `protobuf:"bytes,5,opt,name=value_record_type,json=valueRecordType,proto3" json:"value_record_type,omitempty"` // Value schema
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Topic             *schema_pb.Topic       `protobuf:"bytes,1,opt,name=topic,proto3" json:"topic,omitempty"`
+	PartitionCount    int32                  `protobuf:"varint,2,opt,name=partition_count,json=partitionCount,proto3" json:"partition_count,omitempty"`
+	Retention         *TopicRetention        `protobuf:"bytes,3,opt,name=retention,proto3" json:"retention,omitempty"`
+	KeyRecordType     *schema_pb.RecordType  `protobuf:"bytes,4,opt,name=key_record_type,json=keyRecordType,proto3" json:"key_record_type,omitempty"`             // Key schema (deprecated, use message_record_type + key_columns)
+	ValueRecordType   *schema_pb.RecordType  `protobuf:"bytes,5,opt,name=value_record_type,json=valueRecordType,proto3" json:"value_record_type,omitempty"`       // Value schema (deprecated, use message_record_type + key_columns)
+	MessageRecordType *schema_pb.RecordType  `protobuf:"bytes,6,opt,name=message_record_type,json=messageRecordType,proto3" json:"message_record_type,omitempty"` // Complete flat schema for the message
+	KeyColumns        []string               `protobuf:"bytes,7,rep,name=key_columns,json=keyColumns,proto3" json:"key_columns,omitempty"`                        // Names of columns that form the key
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *ConfigureTopicRequest) Reset() {
@@ -558,12 +560,28 @@ func (x *ConfigureTopicRequest) GetValueRecordType() *schema_pb.RecordType {
 	return nil
 }
 
+func (x *ConfigureTopicRequest) GetMessageRecordType() *schema_pb.RecordType {
+	if x != nil {
+		return x.MessageRecordType
+	}
+	return nil
+}
+
+func (x *ConfigureTopicRequest) GetKeyColumns() []string {
+	if x != nil {
+		return x.KeyColumns
+	}
+	return nil
+}
+
 type ConfigureTopicResponse struct {
 	state                      protoimpl.MessageState       `protogen:"open.v1"`
 	BrokerPartitionAssignments []*BrokerPartitionAssignment `protobuf:"bytes,2,rep,name=broker_partition_assignments,json=brokerPartitionAssignments,proto3" json:"broker_partition_assignments,omitempty"`
 	Retention                  *TopicRetention              `protobuf:"bytes,3,opt,name=retention,proto3" json:"retention,omitempty"`
-	KeyRecordType              *schema_pb.RecordType        `protobuf:"bytes,4,opt,name=key_record_type,json=keyRecordType,proto3" json:"key_record_type,omitempty"`       // Key schema
-	ValueRecordType            *schema_pb.RecordType        `protobuf:"bytes,5,opt,name=value_record_type,json=valueRecordType,proto3" json:"value_record_type,omitempty"` // Value schema
+	KeyRecordType              *schema_pb.RecordType        `protobuf:"bytes,4,opt,name=key_record_type,json=keyRecordType,proto3" json:"key_record_type,omitempty"`             // Key schema (deprecated, use message_record_type + key_columns)
+	ValueRecordType            *schema_pb.RecordType        `protobuf:"bytes,5,opt,name=value_record_type,json=valueRecordType,proto3" json:"value_record_type,omitempty"`       // Value schema (deprecated, use message_record_type + key_columns)
+	MessageRecordType          *schema_pb.RecordType        `protobuf:"bytes,6,opt,name=message_record_type,json=messageRecordType,proto3" json:"message_record_type,omitempty"` // Complete flat schema for the message
+	KeyColumns                 []string                     `protobuf:"bytes,7,rep,name=key_columns,json=keyColumns,proto3" json:"key_columns,omitempty"`                        // Names of columns that form the key
 	unknownFields              protoimpl.UnknownFields
 	sizeCache                  protoimpl.SizeCache
 }
@@ -622,6 +640,20 @@ func (x *ConfigureTopicResponse) GetKeyRecordType() *schema_pb.RecordType {
 func (x *ConfigureTopicResponse) GetValueRecordType() *schema_pb.RecordType {
 	if x != nil {
 		return x.ValueRecordType
+	}
+	return nil
+}
+
+func (x *ConfigureTopicResponse) GetMessageRecordType() *schema_pb.RecordType {
+	if x != nil {
+		return x.MessageRecordType
+	}
+	return nil
+}
+
+func (x *ConfigureTopicResponse) GetKeyColumns() []string {
+	if x != nil {
+		return x.KeyColumns
 	}
 	return nil
 }
@@ -914,8 +946,10 @@ type GetTopicConfigurationResponse struct {
 	CreatedAtNs                int64                        `protobuf:"varint,4,opt,name=created_at_ns,json=createdAtNs,proto3" json:"created_at_ns,omitempty"`
 	LastUpdatedNs              int64                        `protobuf:"varint,5,opt,name=last_updated_ns,json=lastUpdatedNs,proto3" json:"last_updated_ns,omitempty"`
 	Retention                  *TopicRetention              `protobuf:"bytes,6,opt,name=retention,proto3" json:"retention,omitempty"`
-	KeyRecordType              *schema_pb.RecordType        `protobuf:"bytes,7,opt,name=key_record_type,json=keyRecordType,proto3" json:"key_record_type,omitempty"`       // Key schema
-	ValueRecordType            *schema_pb.RecordType        `protobuf:"bytes,8,opt,name=value_record_type,json=valueRecordType,proto3" json:"value_record_type,omitempty"` // Value schema
+	KeyRecordType              *schema_pb.RecordType        `protobuf:"bytes,7,opt,name=key_record_type,json=keyRecordType,proto3" json:"key_record_type,omitempty"`             // Key schema (deprecated, use message_record_type + key_columns)
+	ValueRecordType            *schema_pb.RecordType        `protobuf:"bytes,8,opt,name=value_record_type,json=valueRecordType,proto3" json:"value_record_type,omitempty"`       // Value schema (deprecated, use message_record_type + key_columns)
+	MessageRecordType          *schema_pb.RecordType        `protobuf:"bytes,9,opt,name=message_record_type,json=messageRecordType,proto3" json:"message_record_type,omitempty"` // Complete flat schema for the message
+	KeyColumns                 []string                     `protobuf:"bytes,10,rep,name=key_columns,json=keyColumns,proto3" json:"key_columns,omitempty"`                       // Names of columns that form the key
 	unknownFields              protoimpl.UnknownFields
 	sizeCache                  protoimpl.SizeCache
 }
@@ -1002,6 +1036,20 @@ func (x *GetTopicConfigurationResponse) GetKeyRecordType() *schema_pb.RecordType
 func (x *GetTopicConfigurationResponse) GetValueRecordType() *schema_pb.RecordType {
 	if x != nil {
 		return x.ValueRecordType
+	}
+	return nil
+}
+
+func (x *GetTopicConfigurationResponse) GetMessageRecordType() *schema_pb.RecordType {
+	if x != nil {
+		return x.MessageRecordType
+	}
+	return nil
+}
+
+func (x *GetTopicConfigurationResponse) GetKeyColumns() []string {
+	if x != nil {
+		return x.KeyColumns
 	}
 	return nil
 }
@@ -3699,18 +3747,24 @@ const file_mq_broker_proto_rawDesc = "" +
 	"\x15BalanceTopicsResponse\"W\n" +
 	"\x0eTopicRetention\x12+\n" +
 	"\x11retention_seconds\x18\x01 \x01(\x03R\x10retentionSeconds\x12\x18\n" +
-	"\aenabled\x18\x02 \x01(\bR\aenabled\"\xa6\x02\n" +
+	"\aenabled\x18\x02 \x01(\bR\aenabled\"\x8e\x03\n" +
 	"\x15ConfigureTopicRequest\x12&\n" +
 	"\x05topic\x18\x01 \x01(\v2\x10.schema_pb.TopicR\x05topic\x12'\n" +
 	"\x0fpartition_count\x18\x02 \x01(\x05R\x0epartitionCount\x12:\n" +
 	"\tretention\x18\x03 \x01(\v2\x1c.messaging_pb.TopicRetentionR\tretention\x12=\n" +
 	"\x0fkey_record_type\x18\x04 \x01(\v2\x15.schema_pb.RecordTypeR\rkeyRecordType\x12A\n" +
-	"\x11value_record_type\x18\x05 \x01(\v2\x15.schema_pb.RecordTypeR\x0fvalueRecordType\"\xc1\x02\n" +
+	"\x11value_record_type\x18\x05 \x01(\v2\x15.schema_pb.RecordTypeR\x0fvalueRecordType\x12E\n" +
+	"\x13message_record_type\x18\x06 \x01(\v2\x15.schema_pb.RecordTypeR\x11messageRecordType\x12\x1f\n" +
+	"\vkey_columns\x18\a \x03(\tR\n" +
+	"keyColumns\"\xa9\x03\n" +
 	"\x16ConfigureTopicResponse\x12i\n" +
 	"\x1cbroker_partition_assignments\x18\x02 \x03(\v2'.messaging_pb.BrokerPartitionAssignmentR\x1abrokerPartitionAssignments\x12:\n" +
 	"\tretention\x18\x03 \x01(\v2\x1c.messaging_pb.TopicRetentionR\tretention\x12=\n" +
 	"\x0fkey_record_type\x18\x04 \x01(\v2\x15.schema_pb.RecordTypeR\rkeyRecordType\x12A\n" +
-	"\x11value_record_type\x18\x05 \x01(\v2\x15.schema_pb.RecordTypeR\x0fvalueRecordType\"\x13\n" +
+	"\x11value_record_type\x18\x05 \x01(\v2\x15.schema_pb.RecordTypeR\x0fvalueRecordType\x12E\n" +
+	"\x13message_record_type\x18\x06 \x01(\v2\x15.schema_pb.RecordTypeR\x11messageRecordType\x12\x1f\n" +
+	"\vkey_columns\x18\a \x03(\tR\n" +
+	"keyColumns\"\x13\n" +
 	"\x11ListTopicsRequest\">\n" +
 	"\x12ListTopicsResponse\x12(\n" +
 	"\x06topics\x18\x01 \x03(\v2\x10.schema_pb.TopicR\x06topics\"C\n" +
@@ -3724,7 +3778,7 @@ const file_mq_broker_proto_rawDesc = "" +
 	"\rleader_broker\x18\x02 \x01(\tR\fleaderBroker\x12'\n" +
 	"\x0ffollower_broker\x18\x03 \x01(\tR\x0efollowerBroker\"F\n" +
 	"\x1cGetTopicConfigurationRequest\x12&\n" +
-	"\x05topic\x18\x01 \x01(\v2\x10.schema_pb.TopicR\x05topic\"\xe5\x03\n" +
+	"\x05topic\x18\x01 \x01(\v2\x10.schema_pb.TopicR\x05topic\"\xcd\x04\n" +
 	"\x1dGetTopicConfigurationResponse\x12&\n" +
 	"\x05topic\x18\x01 \x01(\v2\x10.schema_pb.TopicR\x05topic\x12'\n" +
 	"\x0fpartition_count\x18\x02 \x01(\x05R\x0epartitionCount\x12i\n" +
@@ -3733,7 +3787,11 @@ const file_mq_broker_proto_rawDesc = "" +
 	"\x0flast_updated_ns\x18\x05 \x01(\x03R\rlastUpdatedNs\x12:\n" +
 	"\tretention\x18\x06 \x01(\v2\x1c.messaging_pb.TopicRetentionR\tretention\x12=\n" +
 	"\x0fkey_record_type\x18\a \x01(\v2\x15.schema_pb.RecordTypeR\rkeyRecordType\x12A\n" +
-	"\x11value_record_type\x18\b \x01(\v2\x15.schema_pb.RecordTypeR\x0fvalueRecordType\"C\n" +
+	"\x11value_record_type\x18\b \x01(\v2\x15.schema_pb.RecordTypeR\x0fvalueRecordType\x12E\n" +
+	"\x13message_record_type\x18\t \x01(\v2\x15.schema_pb.RecordTypeR\x11messageRecordType\x12\x1f\n" +
+	"\vkey_columns\x18\n" +
+	" \x03(\tR\n" +
+	"keyColumns\"C\n" +
 	"\x19GetTopicPublishersRequest\x12&\n" +
 	"\x05topic\x18\x01 \x01(\v2\x10.schema_pb.TopicR\x05topic\"Z\n" +
 	"\x1aGetTopicPublishersResponse\x12<\n" +
@@ -4019,109 +4077,112 @@ var file_mq_broker_proto_depIdxs = []int32{
 	8,  // 6: messaging_pb.ConfigureTopicRequest.retention:type_name -> messaging_pb.TopicRetention
 	64, // 7: messaging_pb.ConfigureTopicRequest.key_record_type:type_name -> schema_pb.RecordType
 	64, // 8: messaging_pb.ConfigureTopicRequest.value_record_type:type_name -> schema_pb.RecordType
-	15, // 9: messaging_pb.ConfigureTopicResponse.broker_partition_assignments:type_name -> messaging_pb.BrokerPartitionAssignment
-	8,  // 10: messaging_pb.ConfigureTopicResponse.retention:type_name -> messaging_pb.TopicRetention
-	64, // 11: messaging_pb.ConfigureTopicResponse.key_record_type:type_name -> schema_pb.RecordType
-	64, // 12: messaging_pb.ConfigureTopicResponse.value_record_type:type_name -> schema_pb.RecordType
-	62, // 13: messaging_pb.ListTopicsResponse.topics:type_name -> schema_pb.Topic
-	62, // 14: messaging_pb.LookupTopicBrokersRequest.topic:type_name -> schema_pb.Topic
-	62, // 15: messaging_pb.LookupTopicBrokersResponse.topic:type_name -> schema_pb.Topic
-	15, // 16: messaging_pb.LookupTopicBrokersResponse.broker_partition_assignments:type_name -> messaging_pb.BrokerPartitionAssignment
-	63, // 17: messaging_pb.BrokerPartitionAssignment.partition:type_name -> schema_pb.Partition
-	62, // 18: messaging_pb.GetTopicConfigurationRequest.topic:type_name -> schema_pb.Topic
-	62, // 19: messaging_pb.GetTopicConfigurationResponse.topic:type_name -> schema_pb.Topic
-	15, // 20: messaging_pb.GetTopicConfigurationResponse.broker_partition_assignments:type_name -> messaging_pb.BrokerPartitionAssignment
-	8,  // 21: messaging_pb.GetTopicConfigurationResponse.retention:type_name -> messaging_pb.TopicRetention
-	64, // 22: messaging_pb.GetTopicConfigurationResponse.key_record_type:type_name -> schema_pb.RecordType
-	64, // 23: messaging_pb.GetTopicConfigurationResponse.value_record_type:type_name -> schema_pb.RecordType
-	62, // 24: messaging_pb.GetTopicPublishersRequest.topic:type_name -> schema_pb.Topic
-	22, // 25: messaging_pb.GetTopicPublishersResponse.publishers:type_name -> messaging_pb.TopicPublisher
-	62, // 26: messaging_pb.GetTopicSubscribersRequest.topic:type_name -> schema_pb.Topic
-	23, // 27: messaging_pb.GetTopicSubscribersResponse.subscribers:type_name -> messaging_pb.TopicSubscriber
-	63, // 28: messaging_pb.TopicPublisher.partition:type_name -> schema_pb.Partition
-	63, // 29: messaging_pb.TopicSubscriber.partition:type_name -> schema_pb.Partition
-	62, // 30: messaging_pb.AssignTopicPartitionsRequest.topic:type_name -> schema_pb.Topic
-	15, // 31: messaging_pb.AssignTopicPartitionsRequest.broker_partition_assignments:type_name -> messaging_pb.BrokerPartitionAssignment
-	47, // 32: messaging_pb.SubscriberToSubCoordinatorRequest.init:type_name -> messaging_pb.SubscriberToSubCoordinatorRequest.InitMessage
-	49, // 33: messaging_pb.SubscriberToSubCoordinatorRequest.ack_assignment:type_name -> messaging_pb.SubscriberToSubCoordinatorRequest.AckAssignmentMessage
-	48, // 34: messaging_pb.SubscriberToSubCoordinatorRequest.ack_un_assignment:type_name -> messaging_pb.SubscriberToSubCoordinatorRequest.AckUnAssignmentMessage
-	50, // 35: messaging_pb.SubscriberToSubCoordinatorResponse.assignment:type_name -> messaging_pb.SubscriberToSubCoordinatorResponse.Assignment
-	51, // 36: messaging_pb.SubscriberToSubCoordinatorResponse.un_assignment:type_name -> messaging_pb.SubscriberToSubCoordinatorResponse.UnAssignment
-	28, // 37: messaging_pb.DataMessage.ctrl:type_name -> messaging_pb.ControlMessage
-	52, // 38: messaging_pb.PublishMessageRequest.init:type_name -> messaging_pb.PublishMessageRequest.InitMessage
-	29, // 39: messaging_pb.PublishMessageRequest.data:type_name -> messaging_pb.DataMessage
-	53, // 40: messaging_pb.PublishFollowMeRequest.init:type_name -> messaging_pb.PublishFollowMeRequest.InitMessage
-	29, // 41: messaging_pb.PublishFollowMeRequest.data:type_name -> messaging_pb.DataMessage
-	54, // 42: messaging_pb.PublishFollowMeRequest.flush:type_name -> messaging_pb.PublishFollowMeRequest.FlushMessage
-	55, // 43: messaging_pb.PublishFollowMeRequest.close:type_name -> messaging_pb.PublishFollowMeRequest.CloseMessage
-	56, // 44: messaging_pb.SubscribeMessageRequest.init:type_name -> messaging_pb.SubscribeMessageRequest.InitMessage
-	57, // 45: messaging_pb.SubscribeMessageRequest.ack:type_name -> messaging_pb.SubscribeMessageRequest.AckMessage
-	58, // 46: messaging_pb.SubscribeMessageResponse.ctrl:type_name -> messaging_pb.SubscribeMessageResponse.SubscribeCtrlMessage
-	29, // 47: messaging_pb.SubscribeMessageResponse.data:type_name -> messaging_pb.DataMessage
-	59, // 48: messaging_pb.SubscribeFollowMeRequest.init:type_name -> messaging_pb.SubscribeFollowMeRequest.InitMessage
-	60, // 49: messaging_pb.SubscribeFollowMeRequest.ack:type_name -> messaging_pb.SubscribeFollowMeRequest.AckMessage
-	61, // 50: messaging_pb.SubscribeFollowMeRequest.close:type_name -> messaging_pb.SubscribeFollowMeRequest.CloseMessage
-	62, // 51: messaging_pb.ClosePublishersRequest.topic:type_name -> schema_pb.Topic
-	62, // 52: messaging_pb.CloseSubscribersRequest.topic:type_name -> schema_pb.Topic
-	62, // 53: messaging_pb.GetUnflushedMessagesRequest.topic:type_name -> schema_pb.Topic
-	63, // 54: messaging_pb.GetUnflushedMessagesRequest.partition:type_name -> schema_pb.Partition
-	44, // 55: messaging_pb.GetUnflushedMessagesResponse.message:type_name -> messaging_pb.LogEntry
-	3,  // 56: messaging_pb.BrokerStats.StatsEntry.value:type_name -> messaging_pb.TopicPartitionStats
-	62, // 57: messaging_pb.SubscriberToSubCoordinatorRequest.InitMessage.topic:type_name -> schema_pb.Topic
-	63, // 58: messaging_pb.SubscriberToSubCoordinatorRequest.AckUnAssignmentMessage.partition:type_name -> schema_pb.Partition
-	63, // 59: messaging_pb.SubscriberToSubCoordinatorRequest.AckAssignmentMessage.partition:type_name -> schema_pb.Partition
-	15, // 60: messaging_pb.SubscriberToSubCoordinatorResponse.Assignment.partition_assignment:type_name -> messaging_pb.BrokerPartitionAssignment
-	63, // 61: messaging_pb.SubscriberToSubCoordinatorResponse.UnAssignment.partition:type_name -> schema_pb.Partition
-	62, // 62: messaging_pb.PublishMessageRequest.InitMessage.topic:type_name -> schema_pb.Topic
-	63, // 63: messaging_pb.PublishMessageRequest.InitMessage.partition:type_name -> schema_pb.Partition
-	62, // 64: messaging_pb.PublishFollowMeRequest.InitMessage.topic:type_name -> schema_pb.Topic
-	63, // 65: messaging_pb.PublishFollowMeRequest.InitMessage.partition:type_name -> schema_pb.Partition
-	62, // 66: messaging_pb.SubscribeMessageRequest.InitMessage.topic:type_name -> schema_pb.Topic
-	65, // 67: messaging_pb.SubscribeMessageRequest.InitMessage.partition_offset:type_name -> schema_pb.PartitionOffset
-	66, // 68: messaging_pb.SubscribeMessageRequest.InitMessage.offset_type:type_name -> schema_pb.OffsetType
-	62, // 69: messaging_pb.SubscribeFollowMeRequest.InitMessage.topic:type_name -> schema_pb.Topic
-	63, // 70: messaging_pb.SubscribeFollowMeRequest.InitMessage.partition:type_name -> schema_pb.Partition
-	0,  // 71: messaging_pb.SeaweedMessaging.FindBrokerLeader:input_type -> messaging_pb.FindBrokerLeaderRequest
-	4,  // 72: messaging_pb.SeaweedMessaging.PublisherToPubBalancer:input_type -> messaging_pb.PublisherToPubBalancerRequest
-	6,  // 73: messaging_pb.SeaweedMessaging.BalanceTopics:input_type -> messaging_pb.BalanceTopicsRequest
-	11, // 74: messaging_pb.SeaweedMessaging.ListTopics:input_type -> messaging_pb.ListTopicsRequest
-	9,  // 75: messaging_pb.SeaweedMessaging.ConfigureTopic:input_type -> messaging_pb.ConfigureTopicRequest
-	13, // 76: messaging_pb.SeaweedMessaging.LookupTopicBrokers:input_type -> messaging_pb.LookupTopicBrokersRequest
-	16, // 77: messaging_pb.SeaweedMessaging.GetTopicConfiguration:input_type -> messaging_pb.GetTopicConfigurationRequest
-	18, // 78: messaging_pb.SeaweedMessaging.GetTopicPublishers:input_type -> messaging_pb.GetTopicPublishersRequest
-	20, // 79: messaging_pb.SeaweedMessaging.GetTopicSubscribers:input_type -> messaging_pb.GetTopicSubscribersRequest
-	24, // 80: messaging_pb.SeaweedMessaging.AssignTopicPartitions:input_type -> messaging_pb.AssignTopicPartitionsRequest
-	38, // 81: messaging_pb.SeaweedMessaging.ClosePublishers:input_type -> messaging_pb.ClosePublishersRequest
-	40, // 82: messaging_pb.SeaweedMessaging.CloseSubscribers:input_type -> messaging_pb.CloseSubscribersRequest
-	26, // 83: messaging_pb.SeaweedMessaging.SubscriberToSubCoordinator:input_type -> messaging_pb.SubscriberToSubCoordinatorRequest
-	30, // 84: messaging_pb.SeaweedMessaging.PublishMessage:input_type -> messaging_pb.PublishMessageRequest
-	34, // 85: messaging_pb.SeaweedMessaging.SubscribeMessage:input_type -> messaging_pb.SubscribeMessageRequest
-	32, // 86: messaging_pb.SeaweedMessaging.PublishFollowMe:input_type -> messaging_pb.PublishFollowMeRequest
-	36, // 87: messaging_pb.SeaweedMessaging.SubscribeFollowMe:input_type -> messaging_pb.SubscribeFollowMeRequest
-	42, // 88: messaging_pb.SeaweedMessaging.GetUnflushedMessages:input_type -> messaging_pb.GetUnflushedMessagesRequest
-	1,  // 89: messaging_pb.SeaweedMessaging.FindBrokerLeader:output_type -> messaging_pb.FindBrokerLeaderResponse
-	5,  // 90: messaging_pb.SeaweedMessaging.PublisherToPubBalancer:output_type -> messaging_pb.PublisherToPubBalancerResponse
-	7,  // 91: messaging_pb.SeaweedMessaging.BalanceTopics:output_type -> messaging_pb.BalanceTopicsResponse
-	12, // 92: messaging_pb.SeaweedMessaging.ListTopics:output_type -> messaging_pb.ListTopicsResponse
-	10, // 93: messaging_pb.SeaweedMessaging.ConfigureTopic:output_type -> messaging_pb.ConfigureTopicResponse
-	14, // 94: messaging_pb.SeaweedMessaging.LookupTopicBrokers:output_type -> messaging_pb.LookupTopicBrokersResponse
-	17, // 95: messaging_pb.SeaweedMessaging.GetTopicConfiguration:output_type -> messaging_pb.GetTopicConfigurationResponse
-	19, // 96: messaging_pb.SeaweedMessaging.GetTopicPublishers:output_type -> messaging_pb.GetTopicPublishersResponse
-	21, // 97: messaging_pb.SeaweedMessaging.GetTopicSubscribers:output_type -> messaging_pb.GetTopicSubscribersResponse
-	25, // 98: messaging_pb.SeaweedMessaging.AssignTopicPartitions:output_type -> messaging_pb.AssignTopicPartitionsResponse
-	39, // 99: messaging_pb.SeaweedMessaging.ClosePublishers:output_type -> messaging_pb.ClosePublishersResponse
-	41, // 100: messaging_pb.SeaweedMessaging.CloseSubscribers:output_type -> messaging_pb.CloseSubscribersResponse
-	27, // 101: messaging_pb.SeaweedMessaging.SubscriberToSubCoordinator:output_type -> messaging_pb.SubscriberToSubCoordinatorResponse
-	31, // 102: messaging_pb.SeaweedMessaging.PublishMessage:output_type -> messaging_pb.PublishMessageResponse
-	35, // 103: messaging_pb.SeaweedMessaging.SubscribeMessage:output_type -> messaging_pb.SubscribeMessageResponse
-	33, // 104: messaging_pb.SeaweedMessaging.PublishFollowMe:output_type -> messaging_pb.PublishFollowMeResponse
-	37, // 105: messaging_pb.SeaweedMessaging.SubscribeFollowMe:output_type -> messaging_pb.SubscribeFollowMeResponse
-	43, // 106: messaging_pb.SeaweedMessaging.GetUnflushedMessages:output_type -> messaging_pb.GetUnflushedMessagesResponse
-	89, // [89:107] is the sub-list for method output_type
-	71, // [71:89] is the sub-list for method input_type
-	71, // [71:71] is the sub-list for extension type_name
-	71, // [71:71] is the sub-list for extension extendee
-	0,  // [0:71] is the sub-list for field type_name
+	64, // 9: messaging_pb.ConfigureTopicRequest.message_record_type:type_name -> schema_pb.RecordType
+	15, // 10: messaging_pb.ConfigureTopicResponse.broker_partition_assignments:type_name -> messaging_pb.BrokerPartitionAssignment
+	8,  // 11: messaging_pb.ConfigureTopicResponse.retention:type_name -> messaging_pb.TopicRetention
+	64, // 12: messaging_pb.ConfigureTopicResponse.key_record_type:type_name -> schema_pb.RecordType
+	64, // 13: messaging_pb.ConfigureTopicResponse.value_record_type:type_name -> schema_pb.RecordType
+	64, // 14: messaging_pb.ConfigureTopicResponse.message_record_type:type_name -> schema_pb.RecordType
+	62, // 15: messaging_pb.ListTopicsResponse.topics:type_name -> schema_pb.Topic
+	62, // 16: messaging_pb.LookupTopicBrokersRequest.topic:type_name -> schema_pb.Topic
+	62, // 17: messaging_pb.LookupTopicBrokersResponse.topic:type_name -> schema_pb.Topic
+	15, // 18: messaging_pb.LookupTopicBrokersResponse.broker_partition_assignments:type_name -> messaging_pb.BrokerPartitionAssignment
+	63, // 19: messaging_pb.BrokerPartitionAssignment.partition:type_name -> schema_pb.Partition
+	62, // 20: messaging_pb.GetTopicConfigurationRequest.topic:type_name -> schema_pb.Topic
+	62, // 21: messaging_pb.GetTopicConfigurationResponse.topic:type_name -> schema_pb.Topic
+	15, // 22: messaging_pb.GetTopicConfigurationResponse.broker_partition_assignments:type_name -> messaging_pb.BrokerPartitionAssignment
+	8,  // 23: messaging_pb.GetTopicConfigurationResponse.retention:type_name -> messaging_pb.TopicRetention
+	64, // 24: messaging_pb.GetTopicConfigurationResponse.key_record_type:type_name -> schema_pb.RecordType
+	64, // 25: messaging_pb.GetTopicConfigurationResponse.value_record_type:type_name -> schema_pb.RecordType
+	64, // 26: messaging_pb.GetTopicConfigurationResponse.message_record_type:type_name -> schema_pb.RecordType
+	62, // 27: messaging_pb.GetTopicPublishersRequest.topic:type_name -> schema_pb.Topic
+	22, // 28: messaging_pb.GetTopicPublishersResponse.publishers:type_name -> messaging_pb.TopicPublisher
+	62, // 29: messaging_pb.GetTopicSubscribersRequest.topic:type_name -> schema_pb.Topic
+	23, // 30: messaging_pb.GetTopicSubscribersResponse.subscribers:type_name -> messaging_pb.TopicSubscriber
+	63, // 31: messaging_pb.TopicPublisher.partition:type_name -> schema_pb.Partition
+	63, // 32: messaging_pb.TopicSubscriber.partition:type_name -> schema_pb.Partition
+	62, // 33: messaging_pb.AssignTopicPartitionsRequest.topic:type_name -> schema_pb.Topic
+	15, // 34: messaging_pb.AssignTopicPartitionsRequest.broker_partition_assignments:type_name -> messaging_pb.BrokerPartitionAssignment
+	47, // 35: messaging_pb.SubscriberToSubCoordinatorRequest.init:type_name -> messaging_pb.SubscriberToSubCoordinatorRequest.InitMessage
+	49, // 36: messaging_pb.SubscriberToSubCoordinatorRequest.ack_assignment:type_name -> messaging_pb.SubscriberToSubCoordinatorRequest.AckAssignmentMessage
+	48, // 37: messaging_pb.SubscriberToSubCoordinatorRequest.ack_un_assignment:type_name -> messaging_pb.SubscriberToSubCoordinatorRequest.AckUnAssignmentMessage
+	50, // 38: messaging_pb.SubscriberToSubCoordinatorResponse.assignment:type_name -> messaging_pb.SubscriberToSubCoordinatorResponse.Assignment
+	51, // 39: messaging_pb.SubscriberToSubCoordinatorResponse.un_assignment:type_name -> messaging_pb.SubscriberToSubCoordinatorResponse.UnAssignment
+	28, // 40: messaging_pb.DataMessage.ctrl:type_name -> messaging_pb.ControlMessage
+	52, // 41: messaging_pb.PublishMessageRequest.init:type_name -> messaging_pb.PublishMessageRequest.InitMessage
+	29, // 42: messaging_pb.PublishMessageRequest.data:type_name -> messaging_pb.DataMessage
+	53, // 43: messaging_pb.PublishFollowMeRequest.init:type_name -> messaging_pb.PublishFollowMeRequest.InitMessage
+	29, // 44: messaging_pb.PublishFollowMeRequest.data:type_name -> messaging_pb.DataMessage
+	54, // 45: messaging_pb.PublishFollowMeRequest.flush:type_name -> messaging_pb.PublishFollowMeRequest.FlushMessage
+	55, // 46: messaging_pb.PublishFollowMeRequest.close:type_name -> messaging_pb.PublishFollowMeRequest.CloseMessage
+	56, // 47: messaging_pb.SubscribeMessageRequest.init:type_name -> messaging_pb.SubscribeMessageRequest.InitMessage
+	57, // 48: messaging_pb.SubscribeMessageRequest.ack:type_name -> messaging_pb.SubscribeMessageRequest.AckMessage
+	58, // 49: messaging_pb.SubscribeMessageResponse.ctrl:type_name -> messaging_pb.SubscribeMessageResponse.SubscribeCtrlMessage
+	29, // 50: messaging_pb.SubscribeMessageResponse.data:type_name -> messaging_pb.DataMessage
+	59, // 51: messaging_pb.SubscribeFollowMeRequest.init:type_name -> messaging_pb.SubscribeFollowMeRequest.InitMessage
+	60, // 52: messaging_pb.SubscribeFollowMeRequest.ack:type_name -> messaging_pb.SubscribeFollowMeRequest.AckMessage
+	61, // 53: messaging_pb.SubscribeFollowMeRequest.close:type_name -> messaging_pb.SubscribeFollowMeRequest.CloseMessage
+	62, // 54: messaging_pb.ClosePublishersRequest.topic:type_name -> schema_pb.Topic
+	62, // 55: messaging_pb.CloseSubscribersRequest.topic:type_name -> schema_pb.Topic
+	62, // 56: messaging_pb.GetUnflushedMessagesRequest.topic:type_name -> schema_pb.Topic
+	63, // 57: messaging_pb.GetUnflushedMessagesRequest.partition:type_name -> schema_pb.Partition
+	44, // 58: messaging_pb.GetUnflushedMessagesResponse.message:type_name -> messaging_pb.LogEntry
+	3,  // 59: messaging_pb.BrokerStats.StatsEntry.value:type_name -> messaging_pb.TopicPartitionStats
+	62, // 60: messaging_pb.SubscriberToSubCoordinatorRequest.InitMessage.topic:type_name -> schema_pb.Topic
+	63, // 61: messaging_pb.SubscriberToSubCoordinatorRequest.AckUnAssignmentMessage.partition:type_name -> schema_pb.Partition
+	63, // 62: messaging_pb.SubscriberToSubCoordinatorRequest.AckAssignmentMessage.partition:type_name -> schema_pb.Partition
+	15, // 63: messaging_pb.SubscriberToSubCoordinatorResponse.Assignment.partition_assignment:type_name -> messaging_pb.BrokerPartitionAssignment
+	63, // 64: messaging_pb.SubscriberToSubCoordinatorResponse.UnAssignment.partition:type_name -> schema_pb.Partition
+	62, // 65: messaging_pb.PublishMessageRequest.InitMessage.topic:type_name -> schema_pb.Topic
+	63, // 66: messaging_pb.PublishMessageRequest.InitMessage.partition:type_name -> schema_pb.Partition
+	62, // 67: messaging_pb.PublishFollowMeRequest.InitMessage.topic:type_name -> schema_pb.Topic
+	63, // 68: messaging_pb.PublishFollowMeRequest.InitMessage.partition:type_name -> schema_pb.Partition
+	62, // 69: messaging_pb.SubscribeMessageRequest.InitMessage.topic:type_name -> schema_pb.Topic
+	65, // 70: messaging_pb.SubscribeMessageRequest.InitMessage.partition_offset:type_name -> schema_pb.PartitionOffset
+	66, // 71: messaging_pb.SubscribeMessageRequest.InitMessage.offset_type:type_name -> schema_pb.OffsetType
+	62, // 72: messaging_pb.SubscribeFollowMeRequest.InitMessage.topic:type_name -> schema_pb.Topic
+	63, // 73: messaging_pb.SubscribeFollowMeRequest.InitMessage.partition:type_name -> schema_pb.Partition
+	0,  // 74: messaging_pb.SeaweedMessaging.FindBrokerLeader:input_type -> messaging_pb.FindBrokerLeaderRequest
+	4,  // 75: messaging_pb.SeaweedMessaging.PublisherToPubBalancer:input_type -> messaging_pb.PublisherToPubBalancerRequest
+	6,  // 76: messaging_pb.SeaweedMessaging.BalanceTopics:input_type -> messaging_pb.BalanceTopicsRequest
+	11, // 77: messaging_pb.SeaweedMessaging.ListTopics:input_type -> messaging_pb.ListTopicsRequest
+	9,  // 78: messaging_pb.SeaweedMessaging.ConfigureTopic:input_type -> messaging_pb.ConfigureTopicRequest
+	13, // 79: messaging_pb.SeaweedMessaging.LookupTopicBrokers:input_type -> messaging_pb.LookupTopicBrokersRequest
+	16, // 80: messaging_pb.SeaweedMessaging.GetTopicConfiguration:input_type -> messaging_pb.GetTopicConfigurationRequest
+	18, // 81: messaging_pb.SeaweedMessaging.GetTopicPublishers:input_type -> messaging_pb.GetTopicPublishersRequest
+	20, // 82: messaging_pb.SeaweedMessaging.GetTopicSubscribers:input_type -> messaging_pb.GetTopicSubscribersRequest
+	24, // 83: messaging_pb.SeaweedMessaging.AssignTopicPartitions:input_type -> messaging_pb.AssignTopicPartitionsRequest
+	38, // 84: messaging_pb.SeaweedMessaging.ClosePublishers:input_type -> messaging_pb.ClosePublishersRequest
+	40, // 85: messaging_pb.SeaweedMessaging.CloseSubscribers:input_type -> messaging_pb.CloseSubscribersRequest
+	26, // 86: messaging_pb.SeaweedMessaging.SubscriberToSubCoordinator:input_type -> messaging_pb.SubscriberToSubCoordinatorRequest
+	30, // 87: messaging_pb.SeaweedMessaging.PublishMessage:input_type -> messaging_pb.PublishMessageRequest
+	34, // 88: messaging_pb.SeaweedMessaging.SubscribeMessage:input_type -> messaging_pb.SubscribeMessageRequest
+	32, // 89: messaging_pb.SeaweedMessaging.PublishFollowMe:input_type -> messaging_pb.PublishFollowMeRequest
+	36, // 90: messaging_pb.SeaweedMessaging.SubscribeFollowMe:input_type -> messaging_pb.SubscribeFollowMeRequest
+	42, // 91: messaging_pb.SeaweedMessaging.GetUnflushedMessages:input_type -> messaging_pb.GetUnflushedMessagesRequest
+	1,  // 92: messaging_pb.SeaweedMessaging.FindBrokerLeader:output_type -> messaging_pb.FindBrokerLeaderResponse
+	5,  // 93: messaging_pb.SeaweedMessaging.PublisherToPubBalancer:output_type -> messaging_pb.PublisherToPubBalancerResponse
+	7,  // 94: messaging_pb.SeaweedMessaging.BalanceTopics:output_type -> messaging_pb.BalanceTopicsResponse
+	12, // 95: messaging_pb.SeaweedMessaging.ListTopics:output_type -> messaging_pb.ListTopicsResponse
+	10, // 96: messaging_pb.SeaweedMessaging.ConfigureTopic:output_type -> messaging_pb.ConfigureTopicResponse
+	14, // 97: messaging_pb.SeaweedMessaging.LookupTopicBrokers:output_type -> messaging_pb.LookupTopicBrokersResponse
+	17, // 98: messaging_pb.SeaweedMessaging.GetTopicConfiguration:output_type -> messaging_pb.GetTopicConfigurationResponse
+	19, // 99: messaging_pb.SeaweedMessaging.GetTopicPublishers:output_type -> messaging_pb.GetTopicPublishersResponse
+	21, // 100: messaging_pb.SeaweedMessaging.GetTopicSubscribers:output_type -> messaging_pb.GetTopicSubscribersResponse
+	25, // 101: messaging_pb.SeaweedMessaging.AssignTopicPartitions:output_type -> messaging_pb.AssignTopicPartitionsResponse
+	39, // 102: messaging_pb.SeaweedMessaging.ClosePublishers:output_type -> messaging_pb.ClosePublishersResponse
+	41, // 103: messaging_pb.SeaweedMessaging.CloseSubscribers:output_type -> messaging_pb.CloseSubscribersResponse
+	27, // 104: messaging_pb.SeaweedMessaging.SubscriberToSubCoordinator:output_type -> messaging_pb.SubscriberToSubCoordinatorResponse
+	31, // 105: messaging_pb.SeaweedMessaging.PublishMessage:output_type -> messaging_pb.PublishMessageResponse
+	35, // 106: messaging_pb.SeaweedMessaging.SubscribeMessage:output_type -> messaging_pb.SubscribeMessageResponse
+	33, // 107: messaging_pb.SeaweedMessaging.PublishFollowMe:output_type -> messaging_pb.PublishFollowMeResponse
+	37, // 108: messaging_pb.SeaweedMessaging.SubscribeFollowMe:output_type -> messaging_pb.SubscribeFollowMeResponse
+	43, // 109: messaging_pb.SeaweedMessaging.GetUnflushedMessages:output_type -> messaging_pb.GetUnflushedMessagesResponse
+	92, // [92:110] is the sub-list for method output_type
+	74, // [74:92] is the sub-list for method input_type
+	74, // [74:74] is the sub-list for extension type_name
+	74, // [74:74] is the sub-list for extension extendee
+	0,  // [0:74] is the sub-list for field type_name
 }
 
 func init() { file_mq_broker_proto_init() }
