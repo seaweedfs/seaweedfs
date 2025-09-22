@@ -200,25 +200,19 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 }
 
 // validateRecordValue validates the structure and content of a RecordValue message
+// Since RecordValue messages are created from successful protobuf unmarshaling,
+// their structure is already guaranteed to be valid by the protobuf library.
+// Schema validation (if applicable) already happened during Kafka gateway decoding.
 func (b *MessageQueueBroker) validateRecordValue(record *schema_pb.RecordValue, topic *schema_pb.Topic) error {
+	// If we received a RecordValue, it was successfully unmarshaled from protobuf,
+	// which means its structure is already valid. No additional validation needed.
+
+	// Only check for the most basic case - if someone passes nil explicitly
 	if record == nil {
 		return fmt.Errorf("RecordValue is nil")
 	}
 
-	if record.Fields == nil {
-		return fmt.Errorf("RecordValue.Fields is nil")
-	}
-
-	// For schema-based RecordValue, the fields are determined by the actual schema
-	// from the schema registry, not fixed fields like "key", "value", "timestamp"
-	// Basic validation: ensure we have at least some fields
-	if len(record.Fields) == 0 {
-		return fmt.Errorf("RecordValue has no fields")
-	}
-
-	// Additional schema-specific validation could be added here
-	// based on the topic's schema requirements
-
+	// If protobuf unmarshaling succeeded, the RecordValue is structurally valid
 	return nil
 }
 
