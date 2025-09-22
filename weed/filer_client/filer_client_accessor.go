@@ -44,14 +44,6 @@ func (fh *filerHealth) recordFailure() {
 	glog.V(1).Infof("Filer %v failed %d times, backing off for %ds", fh.address, count, backoffSeconds)
 }
 
-// minInt returns the minimum of two integers
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // recordSuccess resets failure count and clears backoff
 func (fh *filerHealth) recordSuccess() {
 	atomic.StoreInt32(&fh.failureCount, 0)
