@@ -166,9 +166,62 @@ func (c *DirectBrokerClient) ConfigureTopic(topicName string, partitions int32) 
 		Name:      topicName,
 	}
 
+	// Create schema for MockTestRecord
+	recordType := &schema_pb.RecordType{
+		Fields: []*schema_pb.Field{
+			{
+				Name:       "id",
+				FieldIndex: 0,
+				Type: &schema_pb.Type{
+					Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_STRING},
+				},
+			},
+			{
+				Name:       "user_id",
+				FieldIndex: 1,
+				Type: &schema_pb.Type{
+					Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_INT64},
+				},
+			},
+			{
+				Name:       "timestamp",
+				FieldIndex: 2,
+				Type: &schema_pb.Type{
+					Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_INT64},
+				},
+			},
+			{
+				Name:       "event",
+				FieldIndex: 3,
+				Type: &schema_pb.Type{
+					Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_STRING},
+				},
+			},
+			{
+				Name:       "data",
+				FieldIndex: 4,
+				Type: &schema_pb.Type{
+					Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_STRING}, // JSON string
+				},
+			},
+			{
+				Name:       "metadata",
+				FieldIndex: 5,
+				Type: &schema_pb.Type{
+					Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_STRING}, // JSON string
+				},
+			},
+		},
+	}
+
+	// Use user_id as the key column for partitioning
+	keyColumns := []string{"user_id"}
+
 	_, err := c.client.ConfigureTopic(c.ctx, &mq_pb.ConfigureTopicRequest{
-		Topic:          topic,
-		PartitionCount: partitions,
+		Topic:             topic,
+		PartitionCount:    partitions,
+		MessageRecordType: recordType,
+		KeyColumns:        keyColumns,
 	})
 	return err
 }
