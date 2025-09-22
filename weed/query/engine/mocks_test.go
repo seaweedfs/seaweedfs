@@ -879,19 +879,6 @@ func (m *MockBrokerClient) ListTopics(ctx context.Context, namespace string) ([]
 	return []string{}, nil
 }
 
-// GetTopicSchema returns the mock schema for a topic (value schema only for backward compatibility)
-func (m *MockBrokerClient) GetTopicSchema(ctx context.Context, namespace, topic string) (*schema_pb.RecordType, error) {
-	if m.shouldFail {
-		return nil, fmt.Errorf("mock broker failure: %s", m.failMessage)
-	}
-
-	key := fmt.Sprintf("%s.%s", namespace, topic)
-	if schema, exists := m.schemas[key]; exists {
-		return schema, nil
-	}
-	return nil, fmt.Errorf("topic %s not found", key)
-}
-
 // GetTopicSchema returns flat schema and key columns for a topic
 func (m *MockBrokerClient) GetTopicSchema(ctx context.Context, namespace, topic string) (*schema_pb.RecordType, []string, error) {
 	if m.shouldFail {
@@ -1005,31 +992,6 @@ func NewTestHybridMessageScanner(topicName string) *TestHybridMessageScanner {
 func (t *TestHybridMessageScanner) ScanMessages(ctx context.Context, options HybridScanOptions) ([]HybridScanResult, error) {
 	// Return sample data based on topic name
 	return generateSampleHybridData(t.topicName, options), nil
-}
-
-// ConfigureTopic creates or updates a topic configuration (mock implementation)
-func (m *MockBrokerClient) ConfigureTopic(ctx context.Context, namespace, topicName string, partitionCount int32, recordType *schema_pb.RecordType) error {
-	if m.shouldFail {
-		return fmt.Errorf("mock broker failure: %s", m.failMessage)
-	}
-
-	// Store the schema in our mock data
-	key := fmt.Sprintf("%s.%s", namespace, topicName)
-	m.schemas[key] = recordType
-
-	// Add to topics list if not already present
-	if topics, exists := m.topics[namespace]; exists {
-		for _, topic := range topics {
-			if topic == topicName {
-				return nil // Already exists
-			}
-		}
-		m.topics[namespace] = append(topics, topicName)
-	} else {
-		m.topics[namespace] = []string{topicName}
-	}
-
-	return nil
 }
 
 // DeleteTopic removes a topic and all its data (mock implementation)
