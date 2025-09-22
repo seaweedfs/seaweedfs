@@ -2,6 +2,8 @@ package gateway
 
 import (
 	"fmt"
+	"hash/fnv"
+	"sort"
 	"sync"
 	"time"
 
@@ -97,7 +99,7 @@ func (cr *CoordinatorRegistry) Stop() error {
 
 	// Release leader lock if held
 	if cr.leaderLock != nil {
-		cr.leaderLock.StopShortLivedLock()
+		cr.leaderLock.Stop()
 	}
 
 	return nil
@@ -226,7 +228,10 @@ func (cr *CoordinatorRegistry) WaitForLeader(timeout time.Duration) (string, err
 	return "", fmt.Errorf("timeout waiting for leader election after %v", timeout)
 }
 
-// AssignCoordinator assigns a coordinator for a consumer group (first-come-first-serve)
+// AssignCoordinator assigns a coordinator for a consumer group using a balanced strategy.
+// The coordinator is selected deterministically via consistent hashing of the
+// consumer group across the set of healthy gateways. This spreads groups evenly
+// and avoids hot-spotting on the first requester.
 func (cr *CoordinatorRegistry) AssignCoordinator(consumerGroup string, requestingGateway string) (*protocol.CoordinatorAssignment, error) {
 	if !cr.IsLeader() {
 		return nil, fmt.Errorf("not the coordinator registry leader")
@@ -247,16 +252,20 @@ func (cr *CoordinatorRegistry) AssignCoordinator(consumerGroup string, requestin
 		}
 	}
 
-	// Verify requesting gateway is healthy
+	// Verify requesting gateway is healthy (sanity check for the caller)
 	if !cr.isGatewayHealthy(requestingGateway) {
 		return nil, fmt.Errorf("requesting gateway %s is not healthy", requestingGateway)
 	}
 
-	// Assign the requesting gateway as coordinator (first-come-first-serve)
-	nodeID := cr.getGatewayNodeID(requestingGateway)
+	// Choose a balanced coordinator via consistent hashing across healthy gateways
+	chosenAddr, nodeID, err := cr.chooseCoordinatorAddrForGroup(consumerGroup)
+	if err != nil {
+		return nil, err
+	}
+
 	assignment := &protocol.CoordinatorAssignment{
 		ConsumerGroup:     consumerGroup,
-		CoordinatorAddr:   requestingGateway,
+		CoordinatorAddr:   chosenAddr,
 		CoordinatorNodeID: nodeID,
 		AssignedAt:        time.Now(),
 		LastHeartbeat:     time.Now(),
@@ -264,7 +273,7 @@ func (cr *CoordinatorRegistry) AssignCoordinator(consumerGroup string, requestin
 
 	cr.assignments[consumerGroup] = assignment
 
-	glog.V(1).Infof("Assigned coordinator %s (node %d) for consumer group %s", requestingGateway, nodeID, consumerGroup)
+	glog.V(1).Infof("Assigned coordinator %s (node %d) for consumer group %s via consistent hashing", chosenAddr, nodeID, consumerGroup)
 	return assignment, nil
 }
 
@@ -359,6 +368,43 @@ func (cr *CoordinatorRegistry) getGatewayNodeID(gatewayAddress string) int32 {
 	}
 
 	return 1 // Default node ID
+}
+
+// getHealthyGatewaysSorted returns a stable-sorted list of healthy gateway addresses.
+func (cr *CoordinatorRegistry) getHealthyGatewaysSorted() []string {
+	cr.gatewaysMutex.RLock()
+	defer cr.gatewaysMutex.RUnlock()
+
+	addresses := make([]string, 0, len(cr.activeGateways))
+	for addr, info := range cr.activeGateways {
+		if info.IsHealthy && time.Since(info.LastHeartbeat) < GatewayTimeout {
+			addresses = append(addresses, addr)
+		}
+	}
+
+	sort.Strings(addresses)
+	return addresses
+}
+
+// chooseCoordinatorAddrForGroup selects a coordinator address using consistent hashing.
+func (cr *CoordinatorRegistry) chooseCoordinatorAddrForGroup(consumerGroup string) (string, int32, error) {
+	healthy := cr.getHealthyGatewaysSorted()
+	if len(healthy) == 0 {
+		return "", 0, fmt.Errorf("no healthy gateways available for coordinator assignment")
+	}
+	idx := hashStringToIndex(consumerGroup, len(healthy))
+	addr := healthy[idx]
+	return addr, cr.getGatewayNodeID(addr), nil
+}
+
+// hashStringToIndex hashes a string to an index in [0, modulo).
+func hashStringToIndex(s string, modulo int) int {
+	if modulo <= 0 {
+		return 0
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(s))
+	return int(h.Sum32() % uint32(modulo))
 }
 
 // startCleanupLoop starts the cleanup loop for stale assignments and gateways
