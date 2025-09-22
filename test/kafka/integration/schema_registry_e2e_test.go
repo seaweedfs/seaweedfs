@@ -136,7 +136,7 @@ func TestSchemaRegistryE2E(t *testing.T) {
 		t.Errorf("Email field is not StringValue: %T", emailField.Kind)
 	}
 
-	t.Logf("✅ RecordValue correctly contains schema-based fields: name=%s, age=%d, email=%s",
+	t.Logf("RecordValue correctly contains schema-based fields: name=%s, age=%d, email=%s",
 		recordValue.Fields["name"].Kind.(*schema_pb.Value_StringValue).StringValue,
 		recordValue.Fields["age"].Kind.(*schema_pb.Value_Int32Value).Int32Value,
 		recordValue.Fields["email"].Kind.(*schema_pb.Value_StringValue).StringValue)
@@ -161,7 +161,7 @@ func TestSchemaRegistryE2E(t *testing.T) {
 		t.Errorf("Expected Avro format, got %v", envelope.Format)
 	}
 
-	t.Logf("✅ Successfully decoded RecordValue back to Confluent format with schema ID %d", envelope.SchemaID)
+	t.Logf("Successfully decoded RecordValue back to Confluent format with schema ID %d", envelope.SchemaID)
 
 	// Step 8: Verify the payload can be decoded back to original data
 	decodedUser := make(map[string]interface{})
@@ -181,8 +181,8 @@ func TestSchemaRegistryE2E(t *testing.T) {
 		t.Errorf("Email mismatch: expected '%s', got '%s'", testUser["email"], decodedUser["email"])
 	}
 
-	t.Logf("✅ Complete round-trip successful: Original → Confluent → RecordValue → Confluent → Original")
-	t.Logf("✅ Schema-based message handling working correctly with real Schema Registry!")
+	t.Logf("Complete round-trip successful: Original -> Confluent -> RecordValue -> Confluent -> Original")
+	t.Logf("Schema-based message handling working correctly with real Schema Registry!")
 }
 
 func TestSchemaRegistryTopicConfiguration(t *testing.T) {
@@ -290,7 +290,7 @@ func TestSchemaRegistryTopicConfiguration(t *testing.T) {
 		t.Error("Topic2 RecordValue missing 'price' field from product schema")
 	}
 
-	t.Logf("✅ Topic-based schema configuration working correctly!")
+	t.Logf("Topic-based schema configuration working correctly!")
 	t.Logf("   Topic1 has user schema (id, name)")
 	t.Logf("   Topic2 has product schema (sku, price)")
 }

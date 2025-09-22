@@ -141,9 +141,9 @@ func TestECEncodingVolumeLocationTimingBug(t *testing.T) {
 
 		// The key test: check if the fix prevents the timing issue
 		if contains(outputStr, "Collecting volume locations") && contains(outputStr, "before EC encoding") {
-			t.Logf("✅ FIX DETECTED: Volume locations collected BEFORE EC encoding (timing bug prevented)")
+			t.Logf("FIX DETECTED: Volume locations collected BEFORE EC encoding (timing bug prevented)")
 		} else {
-			t.Logf("❌ NO FIX: Volume locations NOT collected before EC encoding (timing bug may occur)")
+			t.Logf("NO FIX: Volume locations NOT collected before EC encoding (timing bug may occur)")
 		}
 
 		// After EC encoding, try to get volume locations - this simulates the timing bug
@@ -324,10 +324,10 @@ func TestECEncodingMasterTimingRaceCondition(t *testing.T) {
 
 		// Check if our fix is present (volume locations collected before EC encoding)
 		if contains(outputStr, "Collecting volume locations") && contains(outputStr, "before EC encoding") {
-			t.Logf("✅ TIMING FIX DETECTED: Volume locations collected BEFORE EC encoding")
+			t.Logf("TIMING FIX DETECTED: Volume locations collected BEFORE EC encoding")
 			t.Logf("This prevents the race condition where master metadata is updated before location collection")
 		} else {
-			t.Logf("❌ NO TIMING FIX: Volume locations may be collected AFTER master metadata update")
+			t.Logf("NO TIMING FIX: Volume locations may be collected AFTER master metadata update")
 			t.Logf("This could cause the race condition leading to cleanup failure and storage waste")
 		}
 

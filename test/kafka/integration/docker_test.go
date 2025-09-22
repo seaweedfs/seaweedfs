@@ -60,7 +60,7 @@ func testDockerKafkaConnectivity(t *testing.T, bootstrap string) {
 	err := client.CreateTopic(topicName, 1, 1)
 	testutil.AssertNoError(t, err, "Failed to create topic for connectivity test")
 
-	t.Logf("✅ Kafka connectivity test passed")
+	t.Logf("Kafka connectivity test passed")
 }
 
 func testDockerSchemaRegistryConnectivity(t *testing.T, registryURL string) {
@@ -124,7 +124,7 @@ func testDockerKafkaGatewayConnectivity(t *testing.T, gatewayURL string) {
 	err := client.CreateTopic(topicName, 1, 1)
 	testutil.AssertNoError(t, err, "Failed to create topic via gateway")
 
-	t.Logf("✅ Kafka Gateway connectivity test passed")
+	t.Logf("Kafka Gateway connectivity test passed")
 }
 
 func testDockerSaramaProduceConsume(t *testing.T, bootstrap string) {
@@ -148,7 +148,7 @@ func testDockerSaramaProduceConsume(t *testing.T, bootstrap string) {
 	err = testutil.ValidateMessageContent(messages, consumed)
 	testutil.AssertNoError(t, err, "Message validation failed")
 
-	t.Logf("✅ Sarama produce/consume test passed")
+	t.Logf("Sarama produce/consume test passed")
 }
 
 func testDockerKafkaGoProduceConsume(t *testing.T, bootstrap string) {
@@ -172,7 +172,7 @@ func testDockerKafkaGoProduceConsume(t *testing.T, bootstrap string) {
 	err = testutil.ValidateKafkaGoMessageContent(messages, consumed)
 	testutil.AssertNoError(t, err, "Message validation failed")
 
-	t.Logf("✅ kafka-go produce/consume test passed")
+	t.Logf("kafka-go produce/consume test passed")
 }
 
 func testDockerGatewayProduceConsume(t *testing.T, gatewayURL string) {
@@ -192,7 +192,7 @@ func testDockerGatewayProduceConsume(t *testing.T, gatewayURL string) {
 	err = testutil.ValidateMessageContent(messages, consumed)
 	testutil.AssertNoError(t, err, "Message validation failed")
 
-	t.Logf("✅ Gateway produce/consume test passed")
+	t.Logf("Gateway produce/consume test passed")
 }
 
 func testDockerCrossClientCompatibility(t *testing.T, kafkaBootstrap, gatewayURL string) {
@@ -212,5 +212,5 @@ func testDockerCrossClientCompatibility(t *testing.T, kafkaBootstrap, gatewayURL
 
 	// This tests the integration between Kafka and the Gateway
 	// In a real scenario, messages would be replicated or bridged
-	t.Logf("✅ Cross-client compatibility test passed")
+	t.Logf("Cross-client compatibility test passed")
 }
