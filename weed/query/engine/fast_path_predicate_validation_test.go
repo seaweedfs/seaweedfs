@@ -139,7 +139,7 @@ func TestFastPathPredicateValidation(t *testing.T) {
 				t.Errorf("Expected stopTimeNs=%d, got %d", tc.expectedStopTimeNs, stopTimeNs)
 			}
 
-			t.Logf("✅ %s: onlyTimePredicates=%v, startTimeNs=%d, stopTimeNs=%d",
+			t.Logf("%s: onlyTimePredicates=%v, startTimeNs=%d, stopTimeNs=%d",
 				tc.name, onlyTimePredicates, startTimeNs, stopTimeNs)
 		})
 	}
@@ -212,7 +212,7 @@ func TestFastPathAggregationSafety(t *testing.T) {
 					tc.shouldUseFastPath, canAttemptFastPath, tc.description)
 			}
 
-			t.Logf("✅ %s: canAttemptFastPath=%v (onlyTimePredicates=%v, startTimeNs=%d, stopTimeNs=%d)",
+			t.Logf("%s: canAttemptFastPath=%v (onlyTimePredicates=%v, startTimeNs=%d, stopTimeNs=%d)",
 				tc.name, canAttemptFastPath, onlyTimePredicates, startTimeNs, stopTimeNs)
 		})
 	}
@@ -266,7 +266,7 @@ func TestTimestampColumnDetection(t *testing.T) {
 				t.Errorf("Expected isTimestampColumn(%s)=%v, got %v. %s",
 					tc.columnName, tc.isTimestamp, isTimestamp, tc.description)
 			}
-			t.Logf("✅ Column '%s': isTimestamp=%v", tc.columnName, isTimestamp)
+			t.Logf("Column '%s': isTimestamp=%v", tc.columnName, isTimestamp)
 		})
 	}
 }

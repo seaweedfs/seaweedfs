@@ -37,9 +37,9 @@ func TestWhereClauseValidation(t *testing.T) {
 
 	t.Logf("WHERE id = %s: %d rows", firstId, len(specificResult.Rows))
 	if len(specificResult.Rows) == 1 {
-		t.Logf("✅ Specific ID filtering works correctly")
+		t.Logf("Specific ID filtering works correctly")
 	} else {
-		t.Errorf("❌ Expected 1 row, got %d rows", len(specificResult.Rows))
+		t.Errorf("Expected 1 row, got %d rows", len(specificResult.Rows))
 	}
 
 	// Test 3: Range filtering (find actual data ranges)
@@ -73,16 +73,16 @@ func TestWhereClauseValidation(t *testing.T) {
 	for _, row := range rangeResult.Rows {
 		if idVal, err := strconv.ParseInt(row[0].ToString(), 10, 64); err == nil {
 			if idVal <= threshold {
-				t.Errorf("❌ Found ID %d which should be filtered out (≤ %d)", idVal, threshold)
+				t.Errorf("Found ID %d which should be filtered out (<= %d)", idVal, threshold)
 				allCorrect = false
 			}
 		}
 	}
 
 	if allCorrect && len(rangeResult.Rows) > 0 {
-		t.Logf("✅ Range filtering works correctly - all returned IDs > %d", threshold)
+		t.Logf("Range filtering works correctly - all returned IDs > %d", threshold)
 	} else if len(rangeResult.Rows) == 0 {
-		t.Logf("✅ Range filtering works correctly - no IDs > %d in data", threshold)
+		t.Logf("Range filtering works correctly - no IDs > %d in data", threshold)
 	}
 
 	// Test 4: String filtering
@@ -98,17 +98,17 @@ func TestWhereClauseValidation(t *testing.T) {
 	statusCorrect := true
 	for _, row := range statusResult.Rows {
 		if len(row) > 1 && row[1].ToString() != "active" {
-			t.Errorf("❌ Found status '%s' which should be filtered out", row[1].ToString())
+			t.Errorf("Found status '%s' which should be filtered out", row[1].ToString())
 			statusCorrect = false
 		}
 	}
 
 	if statusCorrect {
-		t.Logf("✅ String filtering works correctly")
+		t.Logf("String filtering works correctly")
 	}
 
 	// Test 5: Comparison with actual real-world case
-	t.Log("\n🎯 TESTING REAL-WORLD CASE:")
+	t.Log("\nTESTING REAL-WORLD CASE:")
 	realWorldResult, err := engine.ExecuteSQL(context.Background(),
 		"SELECT id FROM user_events WHERE id > 10000000 LIMIT 10 OFFSET 5")
 	if err != nil {
@@ -128,9 +128,9 @@ func TestWhereClauseValidation(t *testing.T) {
 	}
 
 	if violationCount == 0 {
-		t.Logf("✅ Real-world case FIXED: No violations found")
+		t.Logf("Real-world case FIXED: No violations found")
 	} else {
-		t.Errorf("❌ Real-world case FAILED: %d violations found", violationCount)
+		t.Errorf("Real-world case FAILED: %d violations found", violationCount)
 	}
 }
 
@@ -168,7 +168,7 @@ func TestWhereClauseComparisonOperators(t *testing.T) {
 		result, err := engine.ExecuteSQL(context.Background(), sql)
 
 		if err != nil {
-			t.Errorf("❌ Operator %s failed: %v", op.op, err)
+			t.Errorf("Operator %s failed: %v", op.op, err)
 			continue
 		}
 
@@ -176,7 +176,7 @@ func TestWhereClauseComparisonOperators(t *testing.T) {
 
 		// Basic validation - should not return more rows than baseline
 		if len(result.Rows) > len(baselineResult.Rows) {
-			t.Errorf("❌ Operator %s returned more rows than baseline", op.op)
+			t.Errorf("Operator %s returned more rows than baseline", op.op)
 		}
 	}
 }

@@ -29,7 +29,7 @@ func TestQuickPerformance_10K(t *testing.T) {
 	topicName := fmt.Sprintf("quick-test-%d", time.Now().Unix())
 
 	// Create topic
-	glog.Infof("🚀 Creating topic %s with %d partitions", topicName, numPartitions)
+	glog.Infof("Creating topic %s with %d partitions", topicName, numPartitions)
 	err = client.ConfigureTopic(topicName, numPartitions)
 	if err != nil {
 		t.Fatalf("Failed to configure topic: %v", err)
@@ -75,7 +75,7 @@ func TestQuickPerformance_10K(t *testing.T) {
 	}
 
 	// Start concurrent producers
-	glog.Infof("⚡ Starting %d producers for %d records total", numProducers, totalRecords)
+	glog.Infof("Starting %d producers for %d records total", numProducers, totalRecords)
 
 	var wg sync.WaitGroup
 	recordsPerProducer := totalRecords / numProducers
@@ -103,7 +103,7 @@ func TestQuickPerformance_10K(t *testing.T) {
 	throughputMBPerSec := dataVolumeMB / produceTime.Seconds()
 
 	glog.Infof("\n"+
-		"🎉 QUICK PERFORMANCE TEST RESULTS 🎉\n"+
+		"QUICK PERFORMANCE TEST RESULTS\n"+
 		"=====================================\n"+
 		"Records produced: %d / %d\n"+
 		"Production time: %v\n"+
@@ -135,5 +135,5 @@ func TestQuickPerformance_10K(t *testing.T) {
 		t.Errorf("Too many errors: %d > %d (10%% of target)", finalErrors, int64(float64(totalRecords)*0.10))
 	}
 
-	glog.Infof("✅ Performance test passed! Ready for million-record test.")
+	glog.Infof("Performance test passed! Ready for million-record test.")
 }

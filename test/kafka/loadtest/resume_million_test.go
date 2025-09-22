@@ -30,7 +30,7 @@ func TestResumeMillionRecords_Fixed(t *testing.T) {
 	topicName := fmt.Sprintf("resume-million-test-%d", time.Now().Unix())
 
 	// Create topic
-	glog.Infof("🚀 Creating topic %s with %d partitions for RESUMED test", topicName, numPartitions)
+	glog.Infof("Creating topic %s with %d partitions for RESUMED test", topicName, numPartitions)
 	err = client.ConfigureTopic(topicName, numPartitions)
 	if err != nil {
 		t.Fatalf("Failed to configure topic: %v", err)
@@ -53,7 +53,7 @@ func TestResumeMillionRecords_Fixed(t *testing.T) {
 			rate := float64(produced) / elapsed.Seconds()
 			progressPercent := float64(produced) / float64(totalRecords) * 100
 
-			glog.Infof("🔥 PROGRESS: %d/%d records (%.1f%%), rate: %.0f records/sec, errors: %d",
+			glog.Infof("PROGRESS: %d/%d records (%.1f%%), rate: %.0f records/sec, errors: %d",
 				produced, totalRecords, progressPercent, rate, errors)
 
 			if produced >= totalRecords {
@@ -64,7 +64,7 @@ func TestResumeMillionRecords_Fixed(t *testing.T) {
 
 	// Fixed producer function with better error handling
 	producer := func(producerID int, recordsPerProducer int) error {
-		defer glog.Infof("✅ Producer %d FINISHED", producerID)
+		defer glog.Infof("Producer %d FINISHED", producerID)
 
 		// Create dedicated clients per producer to avoid contention
 		producerClient, err := NewDirectBrokerClient(brokerAddr)
@@ -125,7 +125,7 @@ func TestResumeMillionRecords_Fixed(t *testing.T) {
 	}
 
 	// Start concurrent producers
-	glog.Infof("⚡ Starting FIXED %d producers for %d records total", numProducers, totalRecords)
+	glog.Infof("Starting FIXED %d producers for %d records total", numProducers, totalRecords)
 
 	var wg sync.WaitGroup
 	recordsPerProducer := totalRecords / numProducers
@@ -135,7 +135,7 @@ func TestResumeMillionRecords_Fixed(t *testing.T) {
 		go func(producerID int) {
 			defer wg.Done()
 			if err := producer(producerID, recordsPerProducer); err != nil {
-				glog.Errorf("❌ Producer %d FAILED: %v", producerID, err)
+				glog.Errorf("Producer %d FAILED: %v", producerID, err)
 			}
 		}(i)
 	}
@@ -149,9 +149,9 @@ func TestResumeMillionRecords_Fixed(t *testing.T) {
 
 	select {
 	case <-done:
-		glog.Infof("✅ All producers completed normally")
+		glog.Infof("All producers completed normally")
 	case <-time.After(30 * time.Minute): // 30-minute timeout
-		glog.Errorf("❌ Test timed out after 30 minutes")
+		glog.Errorf("Test timed out after 30 minutes")
 		t.Errorf("Test timed out")
 		return
 	}
@@ -167,7 +167,7 @@ func TestResumeMillionRecords_Fixed(t *testing.T) {
 	successRate := float64(finalProduced) / float64(totalRecords) * 100
 
 	glog.Infof("\n"+
-		"🎉 === FINAL MILLION RECORD TEST RESULTS === 🎉\n"+
+		"=== FINAL MILLION RECORD TEST RESULTS ===\n"+
 		"==========================================\n"+
 		"Records produced: %d / %d\n"+
 		"Production time: %v\n"+
