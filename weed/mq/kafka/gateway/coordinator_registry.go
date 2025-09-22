@@ -1,16 +1,23 @@
 package gateway
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
+	"io"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/filer_client"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/protocol"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"google.golang.org/grpc"
 )
 
@@ -23,8 +30,8 @@ type CoordinatorRegistry struct {
 	leaderMutex      sync.RWMutex
 	leadershipChange chan string // Notifies when leadership changes
 
-	// Coordinator assignments
-	assignments      map[string]*protocol.CoordinatorAssignment // consumerGroup -> assignment
+	// No in-memory assignments - read/write directly to filer
+	// assignmentsMutex still needed for coordinating file operations
 	assignmentsMutex sync.RWMutex
 
 	// Gateway registry
@@ -32,8 +39,9 @@ type CoordinatorRegistry struct {
 	gatewaysMutex  sync.RWMutex
 
 	// Configuration
-	gatewayAddress string
-	lockClient     *cluster.LockClient
+	gatewayAddress      string
+	lockClient          *cluster.LockClient
+	filerClientAccessor *filer_client.FilerClientAccessor
 
 	// Control
 	stopChan chan struct{}
@@ -55,6 +63,9 @@ const (
 	GatewayLeaderLockKey = "kafka-gateway-leader"
 	HeartbeatInterval    = 10 * time.Second
 	GatewayTimeout       = 30 * time.Second
+
+	// Filer paths for coordinator assignment persistence
+	CoordinatorAssignmentsDir = "/topics/kafka/.meta/coordinators"
 )
 
 // NewCoordinatorRegistry creates a new coordinator registry
@@ -62,12 +73,21 @@ func NewCoordinatorRegistry(gatewayAddress string, seedFiler pb.ServerAddress, g
 	lockClient := cluster.NewLockClient(grpcDialOption, seedFiler)
 
 	registry := &CoordinatorRegistry{
-		assignments:      make(map[string]*protocol.CoordinatorAssignment),
 		activeGateways:   make(map[string]*GatewayInfo),
 		gatewayAddress:   gatewayAddress,
 		lockClient:       lockClient,
 		stopChan:         make(chan struct{}),
 		leadershipChange: make(chan string, 10), // Buffered channel for leadership notifications
+	}
+
+	// Create filer client accessor for coordinator assignment persistence
+	registry.filerClientAccessor = &filer_client.FilerClientAccessor{
+		GetGrpcDialOption: func() grpc.DialOption {
+			return grpcDialOption
+		},
+		GetFilers: func() []pb.ServerAddress {
+			return []pb.ServerAddress{seedFiler}
+		},
 	}
 
 	return registry
@@ -151,11 +171,10 @@ func (cr *CoordinatorRegistry) onLeadershipChange(newLeader string) {
 
 // onBecameLeader handles becoming the leader
 func (cr *CoordinatorRegistry) onBecameLeader() {
-	// Clear stale assignments and gateways
-	cr.assignmentsMutex.Lock()
-	cr.assignments = make(map[string]*protocol.CoordinatorAssignment)
-	cr.assignmentsMutex.Unlock()
+	// Assignments are now read directly from files - no need to load into memory
+	glog.V(1).Info("Leader election complete - coordinator assignments will be read from filer as needed")
 
+	// Clear gateway registry since it's ephemeral (gateways need to re-register)
 	cr.gatewaysMutex.Lock()
 	cr.activeGateways = make(map[string]*GatewayInfo)
 	cr.gatewaysMutex.Unlock()
@@ -166,10 +185,8 @@ func (cr *CoordinatorRegistry) onBecameLeader() {
 
 // onLostLeadership handles losing leadership
 func (cr *CoordinatorRegistry) onLostLeadership() {
-	// Clear local state since we're no longer the leader
-	cr.assignmentsMutex.Lock()
-	cr.assignments = make(map[string]*protocol.CoordinatorAssignment)
-	cr.assignmentsMutex.Unlock()
+	// No in-memory assignments to clear - assignments are stored in filer
+	glog.V(1).Info("Lost leadership - no longer managing coordinator assignments")
 }
 
 // IsLeader returns whether this gateway is the coordinator registry leader
@@ -241,33 +258,28 @@ func (cr *CoordinatorRegistry) AssignCoordinator(consumerGroup string, requestin
 		return nil, fmt.Errorf("requesting gateway %s is not healthy", requestingGateway)
 	}
 
-	// Lock assignments mutex first (consistent lock order: assignments -> gateways)
+	// Lock assignments mutex to coordinate file operations
 	cr.assignmentsMutex.Lock()
 	defer cr.assignmentsMutex.Unlock()
 
-	// Check if coordinator already assigned
-	if existing, exists := cr.assignments[consumerGroup]; exists {
-		// Check health with separate lock acquisition to avoid nested locks
-		cr.assignmentsMutex.Unlock()
-		isHealthy := cr.isGatewayHealthy(existing.CoordinatorAddr)
-		cr.assignmentsMutex.Lock()
-		
-		// Re-check assignment still exists after re-acquiring lock
-		if existing, stillExists := cr.assignments[consumerGroup]; stillExists && isHealthy {
-			glog.V(2).Infof("Consumer group %s already has coordinator %s", consumerGroup, existing.CoordinatorAddr)
+	// Check if coordinator already assigned by trying to load from file
+	existing, err := cr.loadCoordinatorAssignment(consumerGroup)
+	if err == nil && existing != nil {
+		// Assignment exists, check if coordinator is still healthy
+		if cr.isGatewayHealthy(existing.CoordinatorAddr) {
+			glog.V(2).Infof("Consumer group %s already has healthy coordinator %s", consumerGroup, existing.CoordinatorAddr)
 			return existing, nil
-		} else if stillExists && !isHealthy {
+		} else {
 			glog.V(1).Infof("Existing coordinator %s for group %s is unhealthy, reassigning", existing.CoordinatorAddr, consumerGroup)
-			delete(cr.assignments, consumerGroup)
+			// Delete the existing assignment file
+			if delErr := cr.deleteCoordinatorAssignment(consumerGroup); delErr != nil {
+				glog.Warningf("Failed to delete stale assignment for group %s: %v", consumerGroup, delErr)
+			}
 		}
 	}
 
 	// Choose a balanced coordinator via consistent hashing across healthy gateways
-	// This will acquire gatewaysMutex internally
-	cr.assignmentsMutex.Unlock()
 	chosenAddr, nodeID, err := cr.chooseCoordinatorAddrForGroup(consumerGroup)
-	cr.assignmentsMutex.Lock()
-	
 	if err != nil {
 		return nil, err
 	}
@@ -280,7 +292,10 @@ func (cr *CoordinatorRegistry) AssignCoordinator(consumerGroup string, requestin
 		LastHeartbeat:     time.Now(),
 	}
 
-	cr.assignments[consumerGroup] = assignment
+	// Persist the new assignment to individual file
+	if err := cr.saveCoordinatorAssignment(consumerGroup, assignment); err != nil {
+		return nil, fmt.Errorf("failed to persist coordinator assignment for group %s: %w", consumerGroup, err)
+	}
 
 	glog.V(1).Infof("Assigned coordinator %s (node %d) for consumer group %s via consistent hashing", chosenAddr, nodeID, consumerGroup)
 	return assignment, nil
@@ -292,12 +307,10 @@ func (cr *CoordinatorRegistry) GetCoordinator(consumerGroup string) (*protocol.C
 		return nil, fmt.Errorf("not the coordinator registry leader")
 	}
 
-	cr.assignmentsMutex.RLock()
-	defer cr.assignmentsMutex.RUnlock()
-
-	assignment, exists := cr.assignments[consumerGroup]
-	if !exists {
-		return nil, fmt.Errorf("no coordinator assigned for consumer group %s", consumerGroup)
+	// Load assignment directly from file
+	assignment, err := cr.loadCoordinatorAssignment(consumerGroup)
+	if err != nil {
+		return nil, fmt.Errorf("no coordinator assigned for consumer group %s: %w", consumerGroup, err)
 	}
 
 	return assignment, nil
@@ -338,7 +351,7 @@ func (cr *CoordinatorRegistry) HeartbeatGateway(gatewayAddress string) error {
 	}
 
 	cr.gatewaysMutex.Lock()
-	
+
 	if gateway, exists := cr.activeGateways[gatewayAddress]; exists {
 		gateway.LastHeartbeat = time.Now()
 		gateway.IsHealthy = true
@@ -476,29 +489,57 @@ func (cr *CoordinatorRegistry) cleanupStaleEntries() {
 	}
 	cr.gatewaysMutex.Unlock()
 
-	// Then, identify assignments with unhealthy coordinators
-	var staleAssignments []string
+	// Then, identify assignments with unhealthy coordinators and reassign them
 	cr.assignmentsMutex.Lock()
-	for group, assignment := range cr.assignments {
-		// Check health without nested locks by temporarily releasing assignments lock
-		cr.assignmentsMutex.Unlock()
-		isHealthy := cr.isGatewayHealthy(assignment.CoordinatorAddr)
-		cr.assignmentsMutex.Lock()
-		
-		// Re-check assignment still exists and is still unhealthy
-		if currentAssignment, exists := cr.assignments[group]; exists && 
-			currentAssignment.CoordinatorAddr == assignment.CoordinatorAddr && !isHealthy {
-			staleAssignments = append(staleAssignments, group)
+	defer cr.assignmentsMutex.Unlock()
+
+	// Get list of all consumer groups with assignments
+	consumerGroups, err := cr.listAllCoordinatorAssignments()
+	if err != nil {
+		glog.Warningf("Failed to list coordinator assignments during cleanup: %v", err)
+		return
+	}
+
+	for _, group := range consumerGroups {
+		// Load assignment from file
+		assignment, err := cr.loadCoordinatorAssignment(group)
+		if err != nil {
+			glog.Warningf("Failed to load assignment for group %s during cleanup: %v", group, err)
+			continue
+		}
+
+		// Check if coordinator is healthy
+		if !cr.isGatewayHealthy(assignment.CoordinatorAddr) {
+			glog.V(1).Infof("Coordinator %s for group %s is unhealthy, attempting reassignment", assignment.CoordinatorAddr, group)
+
+			// Try to reassign to a healthy gateway
+			newAddr, newNodeID, err := cr.chooseCoordinatorAddrForGroup(group)
+			if err != nil {
+				// No healthy gateways available, remove the assignment for now
+				glog.Warningf("No healthy gateways available for reassignment of group %s, removing assignment", group)
+				if delErr := cr.deleteCoordinatorAssignment(group); delErr != nil {
+					glog.Warningf("Failed to delete assignment for group %s: %v", group, delErr)
+				}
+			} else if newAddr != assignment.CoordinatorAddr {
+				// Reassign to the new healthy coordinator
+				newAssignment := &protocol.CoordinatorAssignment{
+					ConsumerGroup:     group,
+					CoordinatorAddr:   newAddr,
+					CoordinatorNodeID: newNodeID,
+					AssignedAt:        time.Now(),
+					LastHeartbeat:     time.Now(),
+				}
+
+				// Save new assignment to file
+				if saveErr := cr.saveCoordinatorAssignment(group, newAssignment); saveErr != nil {
+					glog.Warningf("Failed to save reassignment for group %s: %v", group, saveErr)
+				} else {
+					glog.V(0).Infof("Reassigned coordinator for group %s from unhealthy %s to healthy %s",
+						group, assignment.CoordinatorAddr, newAddr)
+				}
+			}
 		}
 	}
-	// Remove stale assignments
-	for _, group := range staleAssignments {
-		if assignment, exists := cr.assignments[group]; exists {
-			glog.V(1).Infof("Removing assignment for group %s (unhealthy coordinator %s)", group, assignment.CoordinatorAddr)
-			delete(cr.assignments, group)
-		}
-	}
-	cr.assignmentsMutex.Unlock()
 }
 
 // GetStats returns registry statistics
@@ -507,10 +548,20 @@ func (cr *CoordinatorRegistry) GetStats() map[string]interface{} {
 	cr.gatewaysMutex.RLock()
 	gatewayCount := len(cr.activeGateways)
 	cr.gatewaysMutex.RUnlock()
-	
-	cr.assignmentsMutex.RLock()
-	assignmentCount := len(cr.assignments)
-	cr.assignmentsMutex.RUnlock()
+
+	// Count assignments from files
+	var assignmentCount int
+	if cr.IsLeader() {
+		consumerGroups, err := cr.listAllCoordinatorAssignments()
+		if err != nil {
+			glog.Warningf("Failed to count coordinator assignments: %v", err)
+			assignmentCount = -1 // Indicate error
+		} else {
+			assignmentCount = len(consumerGroups)
+		}
+	} else {
+		assignmentCount = 0 // Non-leader doesn't track assignments
+	}
 
 	return map[string]interface{}{
 		"is_leader":       cr.IsLeader(),
@@ -519,4 +570,166 @@ func (cr *CoordinatorRegistry) GetStats() map[string]interface{} {
 		"assignments":     assignmentCount,
 		"gateway_address": cr.gatewayAddress,
 	}
+}
+
+// Persistence methods for coordinator assignments
+
+// saveCoordinatorAssignment saves a single coordinator assignment to its individual file
+func (cr *CoordinatorRegistry) saveCoordinatorAssignment(consumerGroup string, assignment *protocol.CoordinatorAssignment) error {
+	if !cr.IsLeader() {
+		// Only leader should save assignments
+		return nil
+	}
+
+	return cr.filerClientAccessor.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		// Convert assignment to JSON
+		assignmentData, err := json.Marshal(assignment)
+		if err != nil {
+			return fmt.Errorf("failed to marshal assignment for group %s: %w", consumerGroup, err)
+		}
+
+		// Save to individual file: /topics/kafka/.meta/coordinators/<consumer-group>_assignments.json
+		fileName := fmt.Sprintf("%s_assignments.json", consumerGroup)
+		return filer.SaveInsideFiler(client, CoordinatorAssignmentsDir, fileName, assignmentData)
+	})
+}
+
+// loadCoordinatorAssignment loads a single coordinator assignment from its individual file
+func (cr *CoordinatorRegistry) loadCoordinatorAssignment(consumerGroup string) (*protocol.CoordinatorAssignment, error) {
+	return cr.loadCoordinatorAssignmentWithClient(consumerGroup, cr.filerClientAccessor)
+}
+
+// loadCoordinatorAssignmentWithClient loads a single coordinator assignment using provided client
+func (cr *CoordinatorRegistry) loadCoordinatorAssignmentWithClient(consumerGroup string, clientAccessor *filer_client.FilerClientAccessor) (*protocol.CoordinatorAssignment, error) {
+	var assignment *protocol.CoordinatorAssignment
+
+	err := clientAccessor.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		// Load from individual file: /topics/kafka/.meta/coordinators/<consumer-group>_assignments.json
+		fileName := fmt.Sprintf("%s_assignments.json", consumerGroup)
+		data, err := filer.ReadInsideFiler(client, CoordinatorAssignmentsDir, fileName)
+		if err != nil {
+			return fmt.Errorf("assignment file not found for group %s: %w", consumerGroup, err)
+		}
+
+		// Parse JSON
+		if err := json.Unmarshal(data, &assignment); err != nil {
+			return fmt.Errorf("failed to unmarshal assignment for group %s: %w", consumerGroup, err)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return assignment, nil
+}
+
+// listAllCoordinatorAssignments lists all coordinator assignment files
+func (cr *CoordinatorRegistry) listAllCoordinatorAssignments() ([]string, error) {
+	var consumerGroups []string
+
+	err := cr.filerClientAccessor.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		request := &filer_pb.ListEntriesRequest{
+			Directory: CoordinatorAssignmentsDir,
+		}
+
+		stream, streamErr := client.ListEntries(context.Background(), request)
+		if streamErr != nil {
+			// Directory might not exist yet, that's okay
+			return nil
+		}
+
+		for {
+			resp, recvErr := stream.Recv()
+			if recvErr != nil {
+				if recvErr == io.EOF {
+					break
+				}
+				return fmt.Errorf("failed to receive entry: %v", recvErr)
+			}
+
+			// Only include assignment files (ending with _assignments.json)
+			if resp.Entry != nil && !resp.Entry.IsDirectory &&
+				strings.HasSuffix(resp.Entry.Name, "_assignments.json") {
+				// Extract consumer group name by removing _assignments.json suffix
+				consumerGroup := strings.TrimSuffix(resp.Entry.Name, "_assignments.json")
+				consumerGroups = append(consumerGroups, consumerGroup)
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to list coordinator assignments: %w", err)
+	}
+
+	return consumerGroups, nil
+}
+
+// deleteCoordinatorAssignment removes a coordinator assignment file
+func (cr *CoordinatorRegistry) deleteCoordinatorAssignment(consumerGroup string) error {
+	if !cr.IsLeader() {
+		return nil
+	}
+
+	return cr.filerClientAccessor.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		fileName := fmt.Sprintf("%s_assignments.json", consumerGroup)
+		filePath := fmt.Sprintf("%s/%s", CoordinatorAssignmentsDir, fileName)
+
+		_, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
+			Directory: CoordinatorAssignmentsDir,
+			Name:      fileName,
+		})
+
+		if err != nil {
+			return fmt.Errorf("failed to delete assignment file %s: %w", filePath, err)
+		}
+
+		return nil
+	})
+}
+
+// ReassignCoordinator manually reassigns a coordinator for a consumer group
+// This can be called when a coordinator gateway becomes unavailable
+func (cr *CoordinatorRegistry) ReassignCoordinator(consumerGroup string) (*protocol.CoordinatorAssignment, error) {
+	if !cr.IsLeader() {
+		return nil, fmt.Errorf("not the coordinator registry leader")
+	}
+
+	cr.assignmentsMutex.Lock()
+	defer cr.assignmentsMutex.Unlock()
+
+	// Check if assignment exists by loading from file
+	existing, err := cr.loadCoordinatorAssignment(consumerGroup)
+	if err != nil {
+		return nil, fmt.Errorf("no existing assignment for consumer group %s: %w", consumerGroup, err)
+	}
+
+	// Choose a new coordinator
+	newAddr, newNodeID, err := cr.chooseCoordinatorAddrForGroup(consumerGroup)
+	if err != nil {
+		return nil, fmt.Errorf("failed to choose new coordinator: %w", err)
+	}
+
+	// Create new assignment
+	newAssignment := &protocol.CoordinatorAssignment{
+		ConsumerGroup:     consumerGroup,
+		CoordinatorAddr:   newAddr,
+		CoordinatorNodeID: newNodeID,
+		AssignedAt:        time.Now(),
+		LastHeartbeat:     time.Now(),
+	}
+
+	// Persist the new assignment to individual file
+	if err := cr.saveCoordinatorAssignment(consumerGroup, newAssignment); err != nil {
+		return nil, fmt.Errorf("failed to persist coordinator reassignment for group %s: %w", consumerGroup, err)
+	}
+
+	glog.V(0).Infof("Manually reassigned coordinator for group %s from %s to %s",
+		consumerGroup, existing.CoordinatorAddr, newAddr)
+
+	return newAssignment, nil
 }

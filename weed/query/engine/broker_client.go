@@ -204,8 +204,8 @@ func (c *BrokerClient) ListNamespaces(ctx context.Context) ([]string, error) {
 				return fmt.Errorf("failed to receive entry: %v", recvErr)
 			}
 
-			// Only include directories (namespaces), skip files
-			if resp.Entry != nil && resp.Entry.IsDirectory {
+			// Only include directories (namespaces), skip files and system directories (starting with .)
+			if resp.Entry != nil && resp.Entry.IsDirectory && !strings.HasPrefix(resp.Entry.Name, ".") {
 				namespaces = append(namespaces, resp.Entry.Name)
 			}
 		}
