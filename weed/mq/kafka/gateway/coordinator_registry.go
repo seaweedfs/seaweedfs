@@ -39,9 +39,10 @@ type CoordinatorRegistry struct {
 	gatewaysMutex  sync.RWMutex
 
 	// Configuration
-	gatewayAddress      string
-	lockClient          *cluster.LockClient
-	filerClientAccessor *filer_client.FilerClientAccessor
+	gatewayAddress        string
+	lockClient            *cluster.LockClient
+	filerClientAccessor   *filer_client.FilerClientAccessor
+	filerDiscoveryService *filer_client.FilerDiscoveryService
 
 	// Control
 	stopChan chan struct{}
@@ -69,24 +70,30 @@ const (
 )
 
 // NewCoordinatorRegistry creates a new coordinator registry
-func NewCoordinatorRegistry(gatewayAddress string, seedFiler pb.ServerAddress, grpcDialOption grpc.DialOption) *CoordinatorRegistry {
+func NewCoordinatorRegistry(gatewayAddress string, masters []pb.ServerAddress, grpcDialOption grpc.DialOption) *CoordinatorRegistry {
+	// Use first master as seed for lock client (temporarily, until we fully migrate)
+	seedFiler := masters[0]
 	lockClient := cluster.NewLockClient(grpcDialOption, seedFiler)
 
+	// Create filer discovery service that will periodically refresh filers from all masters
+	filerDiscoveryService := filer_client.NewFilerDiscoveryService(masters, grpcDialOption)
+
 	registry := &CoordinatorRegistry{
-		activeGateways:   make(map[string]*GatewayInfo),
-		gatewayAddress:   gatewayAddress,
-		lockClient:       lockClient,
-		stopChan:         make(chan struct{}),
-		leadershipChange: make(chan string, 10), // Buffered channel for leadership notifications
+		activeGateways:        make(map[string]*GatewayInfo),
+		gatewayAddress:        gatewayAddress,
+		lockClient:            lockClient,
+		stopChan:              make(chan struct{}),
+		leadershipChange:      make(chan string, 10), // Buffered channel for leadership notifications
+		filerDiscoveryService: filerDiscoveryService,
 	}
 
-	// Create filer client accessor for coordinator assignment persistence
+	// Create filer client accessor that uses dynamic filer discovery
 	registry.filerClientAccessor = &filer_client.FilerClientAccessor{
 		GetGrpcDialOption: func() grpc.DialOption {
 			return grpcDialOption
 		},
 		GetFilers: func() []pb.ServerAddress {
-			return []pb.ServerAddress{seedFiler}
+			return registry.filerDiscoveryService.GetFilers()
 		},
 	}
 
@@ -96,6 +103,11 @@ func NewCoordinatorRegistry(gatewayAddress string, seedFiler pb.ServerAddress, g
 // Start begins the coordinator registry operations
 func (cr *CoordinatorRegistry) Start() error {
 	glog.V(1).Infof("Starting coordinator registry for gateway %s", cr.gatewayAddress)
+
+	// Start filer discovery service first
+	if err := cr.filerDiscoveryService.Start(); err != nil {
+		return fmt.Errorf("failed to start filer discovery service: %w", err)
+	}
 
 	// Start leader election
 	cr.startLeaderElection()
@@ -119,6 +131,11 @@ func (cr *CoordinatorRegistry) Stop() error {
 	// Release leader lock if held
 	if cr.leaderLock != nil {
 		cr.leaderLock.Stop()
+	}
+
+	// Stop filer discovery service
+	if err := cr.filerDiscoveryService.Stop(); err != nil {
+		glog.Warningf("Failed to stop filer discovery service: %v", err)
 	}
 
 	return nil

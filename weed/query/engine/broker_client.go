@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"strconv"
 	"strings"
 	"time"
 
@@ -13,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
@@ -39,8 +39,9 @@ type BrokerClient struct {
 // NewBrokerClient creates a new MQ broker client
 // Uses master HTTP address and converts it to gRPC address for service discovery
 func NewBrokerClient(masterHTTPAddress string) *BrokerClient {
-	// Convert HTTP address to gRPC address (typically HTTP port + 10000)
-	masterGRPCAddress := convertHTTPToGRPC(masterHTTPAddress)
+	// Convert HTTP address to gRPC address using pb.ServerAddress method
+	httpAddr := pb.ServerAddress(masterHTTPAddress)
+	masterGRPCAddress := httpAddr.ToGrpcAddress()
 
 	return &BrokerClient{
 		masterAddress:  masterGRPCAddress,
@@ -48,20 +49,7 @@ func NewBrokerClient(masterHTTPAddress string) *BrokerClient {
 	}
 }
 
-// convertHTTPToGRPC converts HTTP address to gRPC address
-// Follows SeaweedFS convention: gRPC port = HTTP port + 10000
-func convertHTTPToGRPC(httpAddress string) string {
-	if strings.Contains(httpAddress, ":") {
-		parts := strings.Split(httpAddress, ":")
-		if len(parts) == 2 {
-			if port, err := strconv.Atoi(parts[1]); err == nil {
-				return fmt.Sprintf("%s:%d", parts[0], port+10000)
-			}
-		}
-	}
-	// Fallback: return original address if conversion fails
-	return httpAddress
-}
+// No need for convertHTTPToGRPC - pb.ServerAddress.ToGrpcAddress() already handles this
 
 // discoverFiler finds a filer from the master server
 func (c *BrokerClient) discoverFiler() error {
@@ -92,7 +80,8 @@ func (c *BrokerClient) discoverFiler() error {
 
 	// Use the first available filer and convert HTTP address to gRPC
 	filerHTTPAddress := resp.ClusterNodes[0].Address
-	c.filerAddress = convertHTTPToGRPC(filerHTTPAddress)
+	httpAddr := pb.ServerAddress(filerHTTPAddress)
+	c.filerAddress = httpAddr.ToGrpcAddress()
 
 	return nil
 }

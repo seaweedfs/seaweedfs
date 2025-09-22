@@ -119,10 +119,12 @@ func (s *Server) Start() error {
 
 	// Initialize coordinator registry for distributed coordinator assignment (only if masters are configured)
 	if s.opts.Masters != "" {
-		seedFiler := pb.ServerAddress(strings.Split(s.opts.Masters, ",")[0]) // Use first master as seed filer
+		// Parse all masters from the comma-separated list using pb.ServerAddresses
+		masters := pb.ServerAddresses(s.opts.Masters).ToAddresses()
+
 		grpcDialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
 
-		s.coordinatorRegistry = NewCoordinatorRegistry(gatewayAddress, seedFiler, grpcDialOption)
+		s.coordinatorRegistry = NewCoordinatorRegistry(gatewayAddress, masters, grpcDialOption)
 		s.handler.SetCoordinatorRegistry(s.coordinatorRegistry)
 
 		// Start coordinator registry
