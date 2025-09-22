@@ -279,6 +279,11 @@ func (c *SchemaCatalog) RegisterTopic(namespace, topicName string, mqSchema *sch
 // 2. Complex types (arrays, maps) are serialized as JSON strings
 // 3. All fields are nullable unless specifically marked otherwise
 func (c *SchemaCatalog) convertMQSchemaToTableInfo(namespace, topicName string, mqSchema *schema.Schema) (*TableInfo, error) {
+	// Check if the schema has a valid RecordType
+	if mqSchema == nil || mqSchema.RecordType == nil {
+		return nil, fmt.Errorf("topic %s.%s has no schema defined", namespace, topicName)
+	}
+
 	columns := make([]ColumnInfo, len(mqSchema.RecordType.Fields))
 
 	for i, field := range mqSchema.RecordType.Fields {

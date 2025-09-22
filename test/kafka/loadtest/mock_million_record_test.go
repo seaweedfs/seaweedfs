@@ -328,18 +328,18 @@ func TestDirectBroker_MillionRecordsIntegration(t *testing.T) {
 		brokerAddr    = "localhost:17777"
 	)
 
-	// Create direct broker client
-	client, err := NewDirectBrokerClient(brokerAddr)
+	// Create direct broker client for topic configuration
+	configClient, err := NewDirectBrokerClient(brokerAddr)
 	if err != nil {
 		t.Fatalf("Failed to create direct broker client: %v", err)
 	}
-	defer client.Close()
+	defer configClient.Close()
 
 	topicName := fmt.Sprintf("million-records-direct-test-%d", time.Now().Unix())
 
 	// Create topic
 	glog.Infof("Creating topic %s with %d partitions", topicName, numPartitions)
-	err = client.ConfigureTopic(topicName, numPartitions)
+	err = configClient.ConfigureTopic(topicName, numPartitions)
 	if err != nil {
 		t.Fatalf("Failed to configure topic: %v", err)
 	}
@@ -378,9 +378,18 @@ func TestDirectBroker_MillionRecordsIntegration(t *testing.T) {
 			glog.Infof("Producer %d finished", producerID)
 		}()
 
+		// Create dedicated client for this producer
+		producerClient, err := NewDirectBrokerClient(brokerAddr)
+		if err != nil {
+			return fmt.Errorf("Producer %d failed to create client: %v", producerID, err)
+		}
+		defer producerClient.Close()
+
 		// Add timeout context for each producer
 		producerCtx, producerCancel := context.WithTimeout(ctx, 10*time.Minute)
 		defer producerCancel()
+
+		glog.Infof("Producer %d: About to start producing %d records with dedicated client", producerID, recordsPerProducer)
 
 		for i := 0; i < recordsPerProducer; i++ {
 			// Check if context is cancelled or timed out
@@ -389,6 +398,11 @@ func TestDirectBroker_MillionRecordsIntegration(t *testing.T) {
 				glog.Errorf("Producer %d timed out or cancelled after %d records", producerID, i)
 				return producerCtx.Err()
 			default:
+			}
+
+			// Debug progress for all producers every 50k records
+			if i > 0 && i%50000 == 0 {
+				glog.Infof("Producer %d: Progress %d/%d records (%.1f%%)", producerID, i, recordsPerProducer, float64(i)/float64(recordsPerProducer)*100)
 			}
 			// Calculate global record ID
 			recordID := producerID*recordsPerProducer + i
@@ -400,11 +414,16 @@ func TestDirectBroker_MillionRecordsIntegration(t *testing.T) {
 			// Distribute across partitions based on user ID
 			partition := int32(testRecord.UserID % int64(numPartitions))
 
+			// Debug first few records for each producer
+			if i < 3 {
+				glog.Infof("Producer %d: Record %d -> UserID %d -> Partition %d", producerID, i, testRecord.UserID, partition)
+			}
+
 			// Produce the record with retry logic
 			var err error
 			maxRetries := 3
 			for retry := 0; retry < maxRetries; retry++ {
-				err = client.PublishRecord(topicName, partition, key, value)
+				err = producerClient.PublishRecord(topicName, partition, key, value)
 				if err == nil {
 					break // Success
 				}
@@ -421,8 +440,15 @@ func TestDirectBroker_MillionRecordsIntegration(t *testing.T) {
 
 			if err != nil {
 				atomic.AddInt64(&totalErrors, 1)
-				if atomic.LoadInt64(&totalErrors) < 10 { // Log first few errors
-					glog.Errorf("Producer %d failed to produce record %d after %d retries: %v", producerID, recordID, maxRetries, err)
+				errorCount := atomic.LoadInt64(&totalErrors)
+				if errorCount < 20 { // Log first 20 errors to get more insight
+					glog.Errorf("Producer %d failed to produce record %d (i=%d) after %d retries: %v", producerID, recordID, i, maxRetries, err)
+				}
+				// Don't continue - this might be causing producers to exit early
+				// Let's see what happens if we return the error instead
+				if errorCount > 1000 { // If too many errors, give up
+					glog.Errorf("Producer %d giving up after %d errors", producerID, errorCount)
+					return fmt.Errorf("too many errors: %d", errorCount)
 				}
 				continue
 			}
@@ -435,6 +461,7 @@ func TestDirectBroker_MillionRecordsIntegration(t *testing.T) {
 			}
 		}
 
+		glog.Infof("Producer %d: Completed loop, produced %d records successfully", producerID, recordsPerProducer)
 		return nil
 	}
 
@@ -448,6 +475,7 @@ func TestDirectBroker_MillionRecordsIntegration(t *testing.T) {
 		wg.Add(1)
 		go func(producerID int) {
 			defer wg.Done()
+			glog.Infof("Producer %d starting with %d records to produce", producerID, recordsPerProducer)
 			if err := producer(producerID, recordsPerProducer); err != nil {
 				glog.Errorf("Producer %d failed: %v", producerID, err)
 			}
