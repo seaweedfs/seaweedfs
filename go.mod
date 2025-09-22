@@ -7,7 +7,7 @@ toolchain go1.24.1
 require (
 	cloud.google.com/go v0.121.6 // indirect
 	cloud.google.com/go/pubsub v1.50.1
-	cloud.google.com/go/storage v1.56.1
+	cloud.google.com/go/storage v1.56.2
 	github.com/Azure/azure-pipeline-go v0.2.3
 	github.com/Azure/azure-storage-blob-go v0.15.0
 	github.com/Shopify/sarama v1.38.1
