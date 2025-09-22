@@ -55,7 +55,6 @@ const (
 	GatewayLeaderLockKey = "kafka-gateway-leader"
 	HeartbeatInterval    = 10 * time.Second
 	GatewayTimeout       = 30 * time.Second
-	AssignmentTimeout    = 60 * time.Second
 )
 
 // NewCoordinatorRegistry creates a new coordinator registry
@@ -237,28 +236,38 @@ func (cr *CoordinatorRegistry) AssignCoordinator(consumerGroup string, requestin
 		return nil, fmt.Errorf("not the coordinator registry leader")
 	}
 
+	// First check if requesting gateway is healthy without holding assignments lock
+	if !cr.isGatewayHealthy(requestingGateway) {
+		return nil, fmt.Errorf("requesting gateway %s is not healthy", requestingGateway)
+	}
+
+	// Lock assignments mutex first (consistent lock order: assignments -> gateways)
 	cr.assignmentsMutex.Lock()
 	defer cr.assignmentsMutex.Unlock()
 
 	// Check if coordinator already assigned
 	if existing, exists := cr.assignments[consumerGroup]; exists {
-		// Verify the assigned coordinator is still healthy
-		if cr.isGatewayHealthy(existing.CoordinatorAddr) {
+		// Check health with separate lock acquisition to avoid nested locks
+		cr.assignmentsMutex.Unlock()
+		isHealthy := cr.isGatewayHealthy(existing.CoordinatorAddr)
+		cr.assignmentsMutex.Lock()
+		
+		// Re-check assignment still exists after re-acquiring lock
+		if existing, stillExists := cr.assignments[consumerGroup]; stillExists && isHealthy {
 			glog.V(2).Infof("Consumer group %s already has coordinator %s", consumerGroup, existing.CoordinatorAddr)
 			return existing, nil
-		} else {
+		} else if stillExists && !isHealthy {
 			glog.V(1).Infof("Existing coordinator %s for group %s is unhealthy, reassigning", existing.CoordinatorAddr, consumerGroup)
 			delete(cr.assignments, consumerGroup)
 		}
 	}
 
-	// Verify requesting gateway is healthy (sanity check for the caller)
-	if !cr.isGatewayHealthy(requestingGateway) {
-		return nil, fmt.Errorf("requesting gateway %s is not healthy", requestingGateway)
-	}
-
 	// Choose a balanced coordinator via consistent hashing across healthy gateways
+	// This will acquire gatewaysMutex internally
+	cr.assignmentsMutex.Unlock()
 	chosenAddr, nodeID, err := cr.chooseCoordinatorAddrForGroup(consumerGroup)
+	cr.assignmentsMutex.Lock()
+	
 	if err != nil {
 		return nil, err
 	}
@@ -309,7 +318,7 @@ func (cr *CoordinatorRegistry) registerGateway(gatewayAddress string) {
 	cr.gatewaysMutex.Lock()
 	defer cr.gatewaysMutex.Unlock()
 
-	nodeID := int32(len(cr.activeGateways) + 1) // Simple node ID assignment
+	nodeID := generateDeterministicNodeID(gatewayAddress)
 
 	cr.activeGateways[gatewayAddress] = &GatewayInfo{
 		Address:       gatewayAddress,
@@ -319,7 +328,7 @@ func (cr *CoordinatorRegistry) registerGateway(gatewayAddress string) {
 		IsHealthy:     true,
 	}
 
-	glog.V(1).Infof("Registered gateway %s with node ID %d", gatewayAddress, nodeID)
+	glog.V(1).Infof("Registered gateway %s with deterministic node ID %d", gatewayAddress, nodeID)
 }
 
 // HeartbeatGateway updates the heartbeat for a gateway
@@ -329,17 +338,16 @@ func (cr *CoordinatorRegistry) HeartbeatGateway(gatewayAddress string) error {
 	}
 
 	cr.gatewaysMutex.Lock()
-	defer cr.gatewaysMutex.Unlock()
-
+	
 	if gateway, exists := cr.activeGateways[gatewayAddress]; exists {
 		gateway.LastHeartbeat = time.Now()
 		gateway.IsHealthy = true
+		cr.gatewaysMutex.Unlock()
 		glog.V(3).Infof("Updated heartbeat for gateway %s", gatewayAddress)
 	} else {
-		// Auto-register unknown gateway
+		// Auto-register unknown gateway - unlock first to avoid double unlock
 		cr.gatewaysMutex.Unlock()
 		cr.registerGateway(gatewayAddress)
-		cr.gatewaysMutex.Lock()
 	}
 
 	return nil
@@ -350,6 +358,12 @@ func (cr *CoordinatorRegistry) isGatewayHealthy(gatewayAddress string) bool {
 	cr.gatewaysMutex.RLock()
 	defer cr.gatewaysMutex.RUnlock()
 
+	return cr.isGatewayHealthyUnsafe(gatewayAddress)
+}
+
+// isGatewayHealthyUnsafe checks if a gateway is healthy without acquiring locks
+// Caller must hold gatewaysMutex.RLock() or gatewaysMutex.Lock()
+func (cr *CoordinatorRegistry) isGatewayHealthyUnsafe(gatewayAddress string) bool {
 	gateway, exists := cr.activeGateways[gatewayAddress]
 	if !exists {
 		return false
@@ -363,6 +377,12 @@ func (cr *CoordinatorRegistry) getGatewayNodeID(gatewayAddress string) int32 {
 	cr.gatewaysMutex.RLock()
 	defer cr.gatewaysMutex.RUnlock()
 
+	return cr.getGatewayNodeIDUnsafe(gatewayAddress)
+}
+
+// getGatewayNodeIDUnsafe returns the node ID for a gateway without acquiring locks
+// Caller must hold gatewaysMutex.RLock() or gatewaysMutex.Lock()
+func (cr *CoordinatorRegistry) getGatewayNodeIDUnsafe(gatewayAddress string) int32 {
 	if gateway, exists := cr.activeGateways[gatewayAddress]; exists {
 		return gateway.NodeID
 	}
@@ -407,6 +427,14 @@ func hashStringToIndex(s string, modulo int) int {
 	return int(h.Sum32() % uint32(modulo))
 }
 
+// generateDeterministicNodeID generates a stable node ID based on gateway address
+func generateDeterministicNodeID(gatewayAddress string) int32 {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(gatewayAddress))
+	// Use only positive values and avoid 0
+	return int32(h.Sum32()&0x7fffffff) + 1
+}
+
 // startCleanupLoop starts the cleanup loop for stale assignments and gateways
 func (cr *CoordinatorRegistry) startCleanupLoop() {
 	cr.wg.Add(1)
@@ -433,20 +461,39 @@ func (cr *CoordinatorRegistry) startCleanupLoop() {
 func (cr *CoordinatorRegistry) cleanupStaleEntries() {
 	now := time.Now()
 
-	// Clean up stale gateways
+	// First, identify stale gateways
+	var staleGateways []string
 	cr.gatewaysMutex.Lock()
 	for addr, gateway := range cr.activeGateways {
 		if now.Sub(gateway.LastHeartbeat) > GatewayTimeout {
-			glog.V(1).Infof("Removing stale gateway %s (last heartbeat: %v)", addr, gateway.LastHeartbeat)
-			delete(cr.activeGateways, addr)
+			staleGateways = append(staleGateways, addr)
 		}
+	}
+	// Remove stale gateways
+	for _, addr := range staleGateways {
+		glog.V(1).Infof("Removing stale gateway %s", addr)
+		delete(cr.activeGateways, addr)
 	}
 	cr.gatewaysMutex.Unlock()
 
-	// Clean up assignments for unhealthy coordinators
+	// Then, identify assignments with unhealthy coordinators
+	var staleAssignments []string
 	cr.assignmentsMutex.Lock()
 	for group, assignment := range cr.assignments {
-		if !cr.isGatewayHealthy(assignment.CoordinatorAddr) {
+		// Check health without nested locks by temporarily releasing assignments lock
+		cr.assignmentsMutex.Unlock()
+		isHealthy := cr.isGatewayHealthy(assignment.CoordinatorAddr)
+		cr.assignmentsMutex.Lock()
+		
+		// Re-check assignment still exists and is still unhealthy
+		if currentAssignment, exists := cr.assignments[group]; exists && 
+			currentAssignment.CoordinatorAddr == assignment.CoordinatorAddr && !isHealthy {
+			staleAssignments = append(staleAssignments, group)
+		}
+	}
+	// Remove stale assignments
+	for _, group := range staleAssignments {
+		if assignment, exists := cr.assignments[group]; exists {
 			glog.V(1).Infof("Removing assignment for group %s (unhealthy coordinator %s)", group, assignment.CoordinatorAddr)
 			delete(cr.assignments, group)
 		}
@@ -456,16 +503,20 @@ func (cr *CoordinatorRegistry) cleanupStaleEntries() {
 
 // GetStats returns registry statistics
 func (cr *CoordinatorRegistry) GetStats() map[string]interface{} {
+	// Read counts separately to avoid holding locks while calling IsLeader()
 	cr.gatewaysMutex.RLock()
+	gatewayCount := len(cr.activeGateways)
+	cr.gatewaysMutex.RUnlock()
+	
 	cr.assignmentsMutex.RLock()
-	defer cr.gatewaysMutex.RUnlock()
-	defer cr.assignmentsMutex.RUnlock()
+	assignmentCount := len(cr.assignments)
+	cr.assignmentsMutex.RUnlock()
 
 	return map[string]interface{}{
 		"is_leader":       cr.IsLeader(),
 		"leader_address":  cr.GetLeaderAddress(),
-		"active_gateways": len(cr.activeGateways),
-		"assignments":     len(cr.assignments),
+		"active_gateways": gatewayCount,
+		"assignments":     assignmentCount,
 		"gateway_address": cr.gatewayAddress,
 	}
 }

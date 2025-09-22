@@ -3,8 +3,8 @@ package protocol
 import (
 	"encoding/binary"
 	"fmt"
+	"net"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -316,57 +316,27 @@ func (h *Handler) waitForLeader(registry CoordinatorRegistryInterface, timeout t
 
 // parseGatewayAddress parses a gateway address string (host:port) into host and port
 func (h *Handler) parseGatewayAddress(address string) (host string, port int, err error) {
-	// Split by the last colon to handle IPv6 addresses
-	lastColon := strings.LastIndex(address, ":")
-	if lastColon == -1 {
+	// Use net.SplitHostPort for proper IPv6 support
+	hostStr, portStr, err := net.SplitHostPort(address)
+	if err != nil {
 		return "", 0, fmt.Errorf("invalid gateway address format: %s", address)
 	}
-
-	host = address[:lastColon]
-	portStr := address[lastColon+1:]
 
 	port, err = strconv.Atoi(portStr)
 	if err != nil {
 		return "", 0, fmt.Errorf("invalid port in gateway address %s: %v", address, err)
 	}
 
-	return host, port, nil
+	return hostStr, port, nil
 }
 
 // parseAddress parses a gateway address and returns host, port, and nodeID
 func (h *Handler) parseAddress(address string, nodeID int32) (host string, port int, nid int32, err error) {
-	// Simple parsing - assume format "host:port"
-	parts := []string{address}
-	if len(address) > 0 && address[len(address)-1] != ':' {
-		// Try to split by ':'
-		for i := len(address) - 1; i >= 0; i-- {
-			if address[i] == ':' {
-				parts = []string{address[:i], address[i+1:]}
-				break
-			}
-		}
+	// Reuse the correct parseGatewayAddress implementation
+	host, port, err = h.parseGatewayAddress(address)
+	if err != nil {
+		return "", 0, 0, err
 	}
-
-	if len(parts) == 2 {
-		host = parts[0]
-		if parsedPort := 0; parsedPort > 0 && parsedPort < 65536 {
-			// Parse port from parts[1]
-			for _, char := range parts[1] {
-				if char >= '0' && char <= '9' {
-					parsedPort = parsedPort*10 + int(char-'0')
-				} else {
-					break
-				}
-			}
-			port = parsedPort
-		} else {
-			port = 9092 // Default Kafka port
-		}
-	} else {
-		host = address
-		port = 9092 // Default Kafka port
-	}
-
 	nid = nodeID
 	return host, port, nid, nil
 }
