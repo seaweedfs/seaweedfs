@@ -2174,11 +2174,22 @@ func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint
 		binary.BigEndian.PutUint16(eb, errCode)
 		response = append(response, eb...)
 
-		// error_message (compact nullable string) - empty for flexible format
-		response = append(response, 1) // Empty string = 1
+		// error_message (compact nullable string) - null when no error
+		response = append(response, 0) // Null string = 0 (not 1 for empty string!)
 
-		// topic configs (compact array) - empty
-		response = append(response, 1) // Empty array = 1
+		// ADDED FOR V5: num_partitions (int32)
+		partBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(partBytes, t.partitions)
+		response = append(response, partBytes...)
+
+		// ADDED FOR V5: replication_factor (int16)
+		replBytes := make([]byte, 2)
+		binary.BigEndian.PutUint16(replBytes, t.replication)
+		response = append(response, replBytes...)
+
+		// ADDED FOR V5: configs (compact array with proper structure)
+		// For now, return empty configs but with proper format
+		response = append(response, 1) // Empty configs array = 1 in compact format
 
 		// Tagged fields for each topic (empty)
 		response = append(response, 0) // Empty tagged fields = 0

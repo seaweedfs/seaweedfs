@@ -794,3 +794,343 @@ func BenchmarkCreateTopicsV0(b *testing.B) {
 		}
 	}
 }
+
+// TestCreateTopicsV5_ResponseFormat tests the CreateTopics v5 response format fixes
+func TestCreateTopicsV5_ResponseFormat(t *testing.T) {
+	handler := NewTestHandler()
+	defer handler.Close()
+
+	// Build a simple v5 request to get a response
+	request := []byte{
+		// Tagged fields count at start
+		0x00,
+
+		// Topics compact array (1 topic)
+		0x02, // compact array length: 1 topic + 1 = 2
+
+		// Topic: "test-response"
+		0x0e, 0x74, 0x65, 0x73, 0x74, 0x2d, 0x72, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, // "test-response" (13 chars + 1)
+
+		// num_partitions = 2
+		0x00, 0x00, 0x00, 0x02,
+
+		// replication_factor = 1
+		0x00, 0x01,
+
+		// assignments (empty compact array)
+		0x01, // empty array = 1
+
+		// configs (empty compact array)
+		0x01, // empty array = 1
+
+		// tagged fields for topic (empty)
+		0x00,
+
+		// timeout_ms = 5000
+		0x00, 0x00, 0x13, 0x88,
+
+		// validate_only = false
+		0x00,
+
+		// top-level tagged fields (empty)
+		0x00,
+	}
+
+	// Call the handler
+	response, err := handler.handleCreateTopicsV2Plus(12345, 5, request)
+
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if len(response) < 20 {
+		t.Fatalf("Response too short: %d bytes, expected at least 20", len(response))
+	}
+
+	// Parse response to verify v5 format
+	offset := 0
+
+	// Check correlation ID
+	correlationID := binary.BigEndian.Uint32(response[offset : offset+4])
+	if correlationID != 12345 {
+		t.Errorf("Expected correlation ID 12345, got %d", correlationID)
+	}
+	offset += 4
+
+	// Check throttle_time_ms
+	throttleTime := binary.BigEndian.Uint32(response[offset : offset+4])
+	if throttleTime != 0 {
+		t.Errorf("Expected throttle_time_ms 0, got %d", throttleTime)
+	}
+	offset += 4
+
+	// Check topics compact array length
+	topicsArrayLen := response[offset]
+	if topicsArrayLen != 2 { // 1 topic + 1 for compact format
+		t.Errorf("Expected topics array length 2 (1+1), got %d", topicsArrayLen)
+	}
+	offset += 1
+
+	// Parse topic response
+	// Topic name length (compact string)
+	topicNameLen := response[offset] - 1 // compact format
+	offset += 1
+
+	// Topic name
+	topicName := string(response[offset : offset+int(topicNameLen)])
+	if topicName != "test-response" {
+		t.Errorf("Expected topic name 'test-response', got '%s'", topicName)
+	}
+	offset += int(topicNameLen)
+
+	// error_code (int16)
+	errorCode := binary.BigEndian.Uint16(response[offset : offset+2])
+	if errorCode != 0 {
+		t.Errorf("Expected error_code 0, got %d", errorCode)
+	}
+	offset += 2
+
+	// error_message (compact nullable string) - should be null (0) for success
+	errorMessageMarker := response[offset]
+	if errorMessageMarker != 0 {
+		t.Errorf("Expected error_message null (0), got %d", errorMessageMarker)
+	}
+	offset += 1
+
+	// NEW v5 FIELDS: num_partitions (int32)
+	numPartitions := binary.BigEndian.Uint32(response[offset : offset+4])
+	if numPartitions != 2 {
+		t.Errorf("Expected num_partitions 2, got %d", numPartitions)
+	}
+	offset += 4
+
+	// NEW v5 FIELDS: replication_factor (int16)
+	replicationFactor := binary.BigEndian.Uint16(response[offset : offset+2])
+	if replicationFactor != 1 {
+		t.Errorf("Expected replication_factor 1, got %d", replicationFactor)
+	}
+	offset += 2
+
+	// configs (compact array) - should be empty (1)
+	configsArrayLen := response[offset]
+	if configsArrayLen != 1 {
+		t.Errorf("Expected configs array length 1 (empty), got %d", configsArrayLen)
+	}
+	offset += 1
+
+	// topic tagged fields (empty)
+	topicTaggedFields := response[offset]
+	if topicTaggedFields != 0 {
+		t.Errorf("Expected topic tagged fields 0, got %d", topicTaggedFields)
+	}
+	offset += 1
+
+	// top-level tagged fields (empty)
+	if offset < len(response) {
+		topLevelTaggedFields := response[offset]
+		if topLevelTaggedFields != 0 {
+			t.Errorf("Expected top-level tagged fields 0, got %d", topLevelTaggedFields)
+		}
+	}
+
+	t.Logf("✅ CreateTopics v5 response format validated successfully!")
+	t.Logf("   • Response length: %d bytes", len(response))
+	t.Logf("   • num_partitions: %d", numPartitions)
+	t.Logf("   • replication_factor: %d", replicationFactor)
+	t.Logf("   • error_message: null (correct encoding)")
+}
+
+// TestCreateTopicsV5_ResponseFormatErrorCase tests v5 response with error
+func TestCreateTopicsV5_ResponseFormatErrorCase(t *testing.T) {
+	handler := NewTestHandler()
+	defer handler.Close()
+
+	// Create a topic that already exists first
+	existingTopic := "existing-topic"
+	err := handler.seaweedMQHandler.CreateTopic(existingTopic, 1)
+	if err != nil {
+		t.Fatalf("Failed to create existing topic: %v", err)
+	}
+
+	// Build v5 request for the existing topic
+	request := []byte{
+		// Tagged fields count at start
+		0x00,
+
+		// Topics compact array (1 topic)
+		0x02, // compact array length: 1 topic + 1 = 2
+
+		// Topic: "existing-topic" (14 chars)
+		0x0f, 0x65, 0x78, 0x69, 0x73, 0x74, 0x69, 0x6e, 0x67, 0x2d, 0x74, 0x6f, 0x70, 0x69, 0x63,
+
+		// num_partitions = 3
+		0x00, 0x00, 0x00, 0x03,
+
+		// replication_factor = 1
+		0x00, 0x01,
+
+		// assignments (empty compact array)
+		0x01, // empty array = 1
+
+		// configs (empty compact array)
+		0x01, // empty array = 1
+
+		// tagged fields for topic (empty)
+		0x00,
+
+		// timeout_ms = 5000
+		0x00, 0x00, 0x13, 0x88,
+
+		// validate_only = false
+		0x00,
+
+		// top-level tagged fields (empty)
+		0x00,
+	}
+
+	// Call the handler
+	response, err := handler.handleCreateTopicsV2Plus(12346, 5, request)
+
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Parse response to verify error handling
+	offset := 4 + 4 + 1 // Skip correlation ID, throttle time, topics array length
+
+	// Skip topic name
+	topicNameLen := response[offset] - 1
+	offset += 1 + int(topicNameLen)
+
+	// Check error_code - should be 36 (TOPIC_ALREADY_EXISTS)
+	errorCode := binary.BigEndian.Uint16(response[offset : offset+2])
+	if errorCode != 36 {
+		t.Errorf("Expected error_code 36 (TOPIC_ALREADY_EXISTS), got %d", errorCode)
+	}
+	offset += 2
+
+	// error_message should still be null for our implementation
+	errorMessageMarker := response[offset]
+	if errorMessageMarker != 0 {
+		t.Errorf("Expected error_message null (0), got %d", errorMessageMarker)
+	}
+	offset += 1
+
+	// Verify num_partitions and replication_factor are still present even with error
+	numPartitions := binary.BigEndian.Uint32(response[offset : offset+4])
+	if numPartitions != 3 {
+		t.Errorf("Expected num_partitions 3, got %d", numPartitions)
+	}
+	offset += 4
+
+	replicationFactor := binary.BigEndian.Uint16(response[offset : offset+2])
+	if replicationFactor != 1 {
+		t.Errorf("Expected replication_factor 1, got %d", replicationFactor)
+	}
+
+	t.Logf("✅ CreateTopics v5 error response format validated successfully!")
+	t.Logf("   • Error code: %d (TOPIC_ALREADY_EXISTS)", errorCode)
+	t.Logf("   • num_partitions: %d", numPartitions)
+	t.Logf("   • replication_factor: %d", replicationFactor)
+}
+
+// TestCreateTopicsV5_SchemaRegistryIntegration tests the complete Schema Registry workflow
+func TestCreateTopicsV5_SchemaRegistryIntegration(t *testing.T) {
+	handler := NewTestHandler()
+	defer handler.Close()
+
+	// This test simulates the complete workflow that Schema Registry uses:
+	// 1. Check metadata for existing topics
+	// 2. Send CreateTopics v5 request for missing topics
+	// 3. Process response and continue
+
+	t.Log("🧪 Testing complete Schema Registry workflow...")
+
+	// Step 1: Schema Registry checks metadata (should find no topics)
+	metadataRequest := []byte{
+		0x01, // No topics requested (empty array + 1 for compact format)
+		0x01, // allow_auto_topic_creation = true
+		0x01, // include_cluster_authorized_operations = true
+		0x01, // include_topic_authorized_operations = true
+		0x00, // tagged fields
+	}
+
+	metadataResponse, err := handler.HandleMetadataV5V6(67890, metadataRequest)
+	if err != nil {
+		t.Fatalf("Metadata request failed: %v", err)
+	}
+
+	t.Logf("   • Metadata response: %d bytes", len(metadataResponse))
+
+	// Step 2: Schema Registry sends CreateTopics v5 for _schemas topic
+	// (This is the exact format that was failing before our fixes)
+	createTopicsRequest := []byte{
+		// FIX 1 VERIFICATION: Tagged fields count at start (this was causing "0 topics found")
+		0x00,
+
+		// Topics compact array (1 topic)
+		0x02, // 1 topic + 1 = 2
+
+		// Topic: "_schemas" (8 chars)
+		0x09, 0x5f, 0x73, 0x63, 0x68, 0x65, 0x6d, 0x61, 0x73, // "_schemas"
+
+		// num_partitions = 1
+		0x00, 0x00, 0x00, 0x01,
+
+		// replication_factor = 1
+		0x00, 0x01,
+
+		// FIX 2 VERIFICATION: assignments array (this was missing!)
+		0x01, // empty assignments array
+
+		// configs array with cleanup.policy=compact
+		0x02,                                                                                     // 1 config + 1 = 2
+		0x0f, 0x63, 0x6c, 0x65, 0x61, 0x6e, 0x75, 0x70, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, // "cleanup.policy"
+		0x08, 0x63, 0x6f, 0x6d, 0x70, 0x61, 0x63, 0x74, // "compact"
+		0x00, // config tagged fields
+
+		// topic tagged fields
+		0x00,
+
+		// timeout_ms = 30000
+		0x00, 0x00, 0x75, 0x30,
+
+		// validate_only = false
+		0x00,
+
+		// top-level tagged fields
+		0x00,
+	}
+
+	createTopicsResponse, err := handler.handleCreateTopicsV2Plus(67891, 5, createTopicsRequest)
+	if err != nil {
+		t.Fatalf("CreateTopics request failed: %v", err)
+	}
+
+	// Step 3: Verify the response is in correct v5 format
+	if len(createTopicsResponse) < 20 {
+		t.Fatalf("CreateTopics response too short: %d bytes", len(createTopicsResponse))
+	}
+
+	// Parse the response to ensure it's correct
+	offset := 8 // Skip correlation ID + throttle_time_ms
+	topicsLen := createTopicsResponse[offset]
+	if topicsLen != 2 { // 1 topic + 1
+		t.Errorf("Expected 1 topic in response, got %d", topicsLen-1)
+	}
+
+	t.Logf("   • CreateTopics response: %d bytes", len(createTopicsResponse))
+
+	// Step 4: Verify topic was actually created
+	if !handler.seaweedMQHandler.TopicExists("_schemas") {
+		t.Errorf("Topic '_schemas' was not created")
+	}
+
+	t.Log("✅ Schema Registry integration test passed!")
+	t.Log("   • Metadata check: ✅")
+	t.Log("   • CreateTopics v5 parsing: ✅")
+	t.Log("   • Response format: ✅")
+	t.Log("   • Topic creation: ✅")
+	t.Log("")
+	t.Log("🎯 The CreateTopics v5 fixes enable Schema Registry compatibility!")
+}
