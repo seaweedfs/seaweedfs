@@ -1951,13 +1951,15 @@ func (h *Handler) handleCreateTopicsV0V1(correlationID uint32, requestBody []byt
 func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
 	offset := 0
 
-	// FIX 1: Skip tagged fields count if present (first byte = 0x00)
-	// The schema registry sends a tagged fields count before the topics array
-	if len(requestBody) > 0 && requestBody[0] == 0x00 {
-		offset += 1
+	// FIX: Skip top-level tagged fields for CreateTopics v5+ flexible protocol
+	// The request body starts with tagged fields count (usually 0x00 = empty)
+	_, consumed, err := DecodeTaggedFields(requestBody[offset:])
+	if err != nil {
+		return nil, fmt.Errorf("CreateTopics v%d: decode top-level tagged fields: %w", apiVersion, err)
 	}
+	offset += consumed
 
-	// Topics (compact array)
+	// Topics (compact array) - Now correctly positioned after tagged fields
 	topicsCount, consumed, err := DecodeCompactArrayLength(requestBody[offset:])
 	if err != nil {
 		return nil, fmt.Errorf("CreateTopics v%d: decode topics compact array: %w", apiVersion, err)
@@ -2064,6 +2066,11 @@ func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint
 		topics = append(topics, topicSpec{name: name, partitions: partitions, replication: replication})
 	}
 
+	Debug("CreateTopics v%d: Successfully parsed %d topics", apiVersion, len(topics))
+	for i, topic := range topics {
+		Debug("CreateTopics v%d: Topic[%d]: name='%s', partitions=%d, replication=%d", apiVersion, i, topic.name, topic.partitions, topic.replication)
+	}
+
 	// timeout_ms (int32)
 	if len(requestBody) < offset+4 {
 		return nil, fmt.Errorf("CreateTopics v%d: missing timeout_ms", apiVersion)
@@ -2132,31 +2139,25 @@ func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint
 	binary.BigEndian.PutUint32(cid, correlationID)
 	response = append(response, cid...)
 
+	// Add flexible response header tagged fields (required for v5+)
+	response = append(response, 0) // Empty tagged fields = 0
+
 	// throttle_time_ms (4 bytes)
 	response = append(response, 0, 0, 0, 0)
 
-	// topics array - V5 FLEXIBLE FORMAT (compact array)
-	compactArrayLength := make([]byte, 0, 5)
-	topicCount := uint32(len(topics))
+	// topics (compact array) - V5 FLEXIBLE FORMAT
+	topicCount := len(topics)
+	Debug("CreateTopics v%d: Generating response for %d topics", apiVersion, topicCount)
 
-	// Encode compact array length (topics count + 1 for flexible format)
-	if topicCount == 0 {
-		compactArrayLength = append(compactArrayLength, 1) // Empty array = 1 in compact format
-	} else {
-		compactArrayLength = append(compactArrayLength, byte(topicCount+1)) // Non-empty = count + 1
-	}
-	response = append(response, compactArrayLength...)
+	// Compact array: length is encoded as UNSIGNED_VARINT(actualLength + 1)
+	response = append(response, EncodeUvarint(uint32(topicCount+1))...)
 
-	// For each topic (flexible format)
+	// For each topic
 	for _, t := range topics {
-		// topic name (compact string) - flexible format
-		nameLen := len(t.name)
-		if nameLen == 0 {
-			response = append(response, 1) // Empty string = 1 in compact format
-		} else {
-			response = append(response, byte(nameLen+1)) // Non-empty = length + 1
-		}
-		response = append(response, []byte(t.name)...)
+		// name (compact string): length is encoded as UNSIGNED_VARINT(actualLength + 1)
+		nameBytes := []byte(t.name)
+		response = append(response, EncodeUvarint(uint32(len(nameBytes)+1))...)
+		response = append(response, nameBytes...)
 		// error_code (int16)
 		var errCode uint16 = 0
 		if h.seaweedMQHandler.TopicExists(t.name) {
@@ -2187,9 +2188,9 @@ func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint
 		binary.BigEndian.PutUint16(replBytes, t.replication)
 		response = append(response, replBytes...)
 
-		// ADDED FOR V5: configs (compact array with proper structure)
-		// For now, return empty configs but with proper format
-		response = append(response, 1) // Empty configs array = 1 in compact format
+		// configs (compact array of CreatableTopicConfigs, nullable) - ADDED FOR V5
+		// For now, return null configs
+		response = append(response, 0) // Null configs array = 0 in compact format
 
 		// Tagged fields for each topic (empty)
 		response = append(response, 0) // Empty tagged fields = 0

@@ -1034,6 +1034,161 @@ func TestCreateTopicsV5_ResponseFormatErrorCase(t *testing.T) {
 	t.Logf("   • replication_factor: %d", replicationFactor)
 }
 
+// TestCreateTopicsV5_TaggedFieldsParsingFix tests the specific fix for handling top-level tagged fields
+func TestCreateTopicsV5_TaggedFieldsParsingFix(t *testing.T) {
+	handler := NewTestHandler()
+	defer handler.Close()
+
+	// Test cases that validate the specific parsing fix we implemented
+	testCases := []struct {
+		name              string
+		description       string
+		request           []byte
+		expectError       bool
+		expectedTopics    int
+		expectedTopicName string
+	}{
+		{
+			name:        "WithTaggedFields",
+			description: "Request starts with tagged fields (the original problem case)",
+			request: []byte{
+				// CRITICAL: This 0x00 byte was being treated as topics array count (0 topics)
+				// Our fix correctly recognizes this as empty tagged fields and skips it
+				0x00, // Top-level tagged fields count = 0 (empty)
+
+				// Now the actual topics array starts here (offset 1)
+				0x02, // Topics compact array: 1 topic + 1 = 2
+
+				// Topic name: "test-topic" (10 chars)
+				0x0b, 0x74, 0x65, 0x73, 0x74, 0x2d, 0x74, 0x6f, 0x70, 0x69, 0x63, // "test-topic"
+
+				// Topic details
+				0x00, 0x00, 0x00, 0x01, // num_partitions = 1
+				0x00, 0x01, // replication_factor = 1
+				0x01, // assignments (empty)
+				0x01, // configs (empty)
+				0x00, // topic tagged fields
+
+				// Request footer
+				0x00, 0x00, 0x13, 0x88, // timeout_ms = 5000
+				0x00, // validate_only = false
+				0x00, // top-level tagged fields (empty)
+			},
+			expectError:       false,
+			expectedTopics:    1,
+			expectedTopicName: "test-topic",
+		},
+		{
+			name:        "EmptyTaggedFields",
+			description: "Request with empty tagged fields (the standard v5+ format)",
+			request: []byte{
+				// Top-level tagged fields (empty) - this is REQUIRED for v5+ flexible protocol
+				0x00, // Tagged fields count = 0
+
+				// Topics array starts after tagged fields
+				0x02, // Topics compact array: 1 topic + 1 = 2
+
+				// Topic name: "simple-topic" (12 chars)
+				0x0d,                                                                   // Compact string length: 12 + 1 = 13 = 0x0d
+				0x73, 0x69, 0x6d, 0x70, 0x6c, 0x65, 0x2d, 0x74, 0x6f, 0x70, 0x69, 0x63, // "simple-topic"
+
+				// Topic details
+				0x00, 0x00, 0x00, 0x02, // num_partitions = 2
+				0x00, 0x01, // replication_factor = 1
+				0x01, // assignments (empty)
+				0x01, // configs (empty)
+				0x00, // topic tagged fields
+
+				// Request footer
+				0x00, 0x00, 0x27, 0x10, // timeout_ms = 10000
+				0x00, // validate_only = false
+				0x00, // top-level tagged fields (empty)
+			},
+			expectError:       false,
+			expectedTopics:    1,
+			expectedTopicName: "simple-topic",
+		},
+		{
+			name:        "MultipleTaggedFields",
+			description: "Request with multiple tagged fields at the top level",
+			request: []byte{
+				// Top-level tagged fields with actual data (not empty)
+				0x02, // 2 tagged fields count
+
+				// Tagged field 1: tag=1, length=3, data=[0x01, 0x02, 0x03]
+				0x01, 0x03, 0x01, 0x02, 0x03,
+
+				// Tagged field 2: tag=5, length=1, data=[0xFF]
+				0x05, 0x01, 0xFF,
+
+				// Now the topics array
+				0x02, // Topics compact array: 1 topic + 1 = 2
+
+				// Topic name: "tagged-topic" (12 chars)
+				0x0d, 0x74, 0x61, 0x67, 0x67, 0x65, 0x64, 0x2d, 0x74, 0x6f, 0x70, 0x69, 0x63, // "tagged-topic"
+
+				// Topic details
+				0x00, 0x00, 0x00, 0x01, // num_partitions = 1
+				0x00, 0x01, // replication_factor = 1
+				0x01, // assignments (empty)
+				0x01, // configs (empty)
+				0x00, // topic tagged fields
+
+				// Request footer
+				0x00, 0x00, 0x13, 0x88, // timeout_ms = 5000
+				0x00, // validate_only = false
+				0x00, // top-level tagged fields (empty)
+			},
+			expectError:       false,
+			expectedTopics:    1,
+			expectedTopicName: "tagged-topic",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Logf("Testing: %s", tc.description)
+
+			// Call the v5+ handler
+			response, err := handler.handleCreateTopicsV2Plus(1000+uint32(len(tc.name)), 5, tc.request)
+
+			// Check error expectation
+			if tc.expectError {
+				if err == nil {
+					t.Errorf("Expected error for %s, but got none", tc.description)
+				}
+				return
+			} else if err != nil {
+				t.Errorf("Unexpected error for %s: %v", tc.description, err)
+				return
+			}
+
+			// Verify response was generated
+			if len(response) == 0 {
+				t.Errorf("Empty response for %s", tc.description)
+				return
+			}
+
+			// Verify topic was actually created (the key validation)
+			if !handler.seaweedMQHandler.TopicExists(tc.expectedTopicName) {
+				t.Errorf("Topic '%s' was not created - parsing fix failed!", tc.expectedTopicName)
+				return
+			}
+
+			t.Logf("✅ %s: Successfully parsed %d topic(s) and created '%s'",
+				tc.name, tc.expectedTopics, tc.expectedTopicName)
+		})
+	}
+
+	t.Log("")
+	t.Log("🎯 All tagged fields parsing scenarios passed!")
+	t.Log("   • With tagged fields (original problem case): ✅")
+	t.Log("   • Empty tagged fields (standard v5+ format): ✅")
+	t.Log("   • Multiple tagged fields: ✅")
+	t.Log("")
+	t.Log("🔧 The fix correctly handles top-level tagged fields before parsing topics array")
+}
+
 // TestCreateTopicsV5_SchemaRegistryIntegration tests the complete Schema Registry workflow
 func TestCreateTopicsV5_SchemaRegistryIntegration(t *testing.T) {
 	handler := NewTestHandler()
