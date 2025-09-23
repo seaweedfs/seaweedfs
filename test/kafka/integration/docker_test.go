@@ -66,52 +66,52 @@ func testDockerKafkaConnectivity(t *testing.T, bootstrap string) {
 func testDockerSchemaRegistryConnectivity(t *testing.T, registryURL string) {
 	// Test basic HTTP connectivity to Schema Registry
 	client := &http.Client{Timeout: 10 * time.Second}
-	
+
 	// Test 1: Check if Schema Registry is responding
 	resp, err := client.Get(registryURL + "/subjects")
 	if err != nil {
 		t.Fatalf("Failed to connect to Schema Registry at %s: %v", registryURL, err)
 	}
 	defer resp.Body.Close()
-	
+
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("Schema Registry returned status %d, expected 200", resp.StatusCode)
 	}
-	
+
 	// Test 2: Verify response is valid JSON array
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("Failed to read response body: %v", err)
 	}
-	
+
 	var subjects []string
 	if err := json.Unmarshal(body, &subjects); err != nil {
 		t.Fatalf("Schema Registry response is not valid JSON array: %v", err)
 	}
-	
+
 	t.Logf("Schema Registry is accessible with %d subjects", len(subjects))
-	
+
 	// Test 3: Check config endpoint
 	configResp, err := client.Get(registryURL + "/config")
 	if err != nil {
 		t.Fatalf("Failed to get Schema Registry config: %v", err)
 	}
 	defer configResp.Body.Close()
-	
+
 	if configResp.StatusCode != http.StatusOK {
 		t.Fatalf("Schema Registry config endpoint returned status %d", configResp.StatusCode)
 	}
-	
+
 	configBody, err := io.ReadAll(configResp.Body)
 	if err != nil {
 		t.Fatalf("Failed to read config response: %v", err)
 	}
-	
+
 	var config map[string]interface{}
 	if err := json.Unmarshal(configBody, &config); err != nil {
 		t.Fatalf("Schema Registry config response is not valid JSON: %v", err)
 	}
-	
+
 	t.Logf("Schema Registry config: %v", config)
 	t.Logf("Schema Registry connectivity test passed")
 }

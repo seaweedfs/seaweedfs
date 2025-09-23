@@ -40,8 +40,8 @@ func TestSchemaRegistryE2E(t *testing.T) {
 
 	// Test data
 	testUser := map[string]interface{}{
-		"name": "John Doe",
-		"age":  30,
+		"name":  "John Doe",
+		"age":   30,
 		"email": "john.doe@example.com",
 	}
 
@@ -72,7 +72,7 @@ func TestSchemaRegistryE2E(t *testing.T) {
 	// Step 3: Produce schematized message
 	handler := gateway.GetHandler()
 	key := []byte("user-123")
-	
+
 	offset, err := handler.ProduceSchemaBasedRecord(topic, partition, key, confluentMessage)
 	testutil.AssertNoError(t, err, "Failed to produce schematized record")
 	t.Logf("Produced schematized message at offset: %d", offset)
