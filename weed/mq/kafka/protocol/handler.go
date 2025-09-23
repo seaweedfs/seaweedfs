@@ -584,13 +584,13 @@ func (h *Handler) handleApiVersions(correlationID uint32, apiVersion uint16) ([]
 	response = append(response, 0, 0)
 
 	// Number of API keys - use compact or regular array format based on version
-	apiKeysCount := uint32(16)
+	apiKeysCount := uint32(17)
 	if isFlexible {
 		// Compact array format for flexible versions
 		response = append(response, CompactArrayLength(apiKeysCount)...)
 	} else {
 		// Regular array format for older versions
-		response = append(response, 0, 0, 0, 16) // 16 API keys
+		response = append(response, 0, 0, 0, 17) // 17 API keys
 	}
 
 	// API Key 18 (ApiVersions): api_key(2) + min_version(2) + max_version(2)
@@ -717,6 +717,14 @@ func (h *Handler) handleApiVersions(correlationID uint32, apiVersion uint16) ([]
 
 	// API Key 16 (ListGroups): api_key(2) + min_version(2) + max_version(2)
 	response = append(response, 0, 16) // API key 16
+	response = append(response, 0, 0)  // min version 0
+	response = append(response, 0, 4)  // max version 4
+	if isFlexible {
+		response = append(response, 0)
+	}
+
+	// API Key 32 (DescribeConfigs): api_key(2) + min_version(2) + max_version(2)
+	response = append(response, 0, 32) // API key 32
 	response = append(response, 0, 0)  // min version 0
 	response = append(response, 0, 4)  // max version 4
 	if isFlexible {
@@ -2139,10 +2147,7 @@ func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint
 	binary.BigEndian.PutUint32(cid, correlationID)
 	response = append(response, cid...)
 
-	// Add flexible response header tagged fields (required for v5+)
-	response = append(response, 0) // Empty tagged fields = 0
-
-	// throttle_time_ms (4 bytes)
+	// throttle_time_ms (4 bytes) - comes directly after correlation ID in v5
 	response = append(response, 0, 0, 0, 0)
 
 	// topics (compact array) - V5 FLEXIBLE FORMAT

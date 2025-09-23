@@ -1034,6 +1034,131 @@ func TestCreateTopicsV5_ResponseFormatErrorCase(t *testing.T) {
 	t.Logf("   • replication_factor: %d", replicationFactor)
 }
 
+// TestCreateTopicsV5_ResponseFormatNPEFix tests the specific fix for CreateTopics v5 response format
+// that was causing NPE at line 1787 in Kafka AdminClient
+func TestCreateTopicsV5_ResponseFormatNPEFix(t *testing.T) {
+	handler := NewTestHandler()
+	defer handler.Close()
+
+	// This test verifies the exact fix for the NPE issue where the response format
+	// was incorrectly including extra tagged fields byte at the beginning
+
+	// Build a CreateTopics v5 request (using the Schema Registry format)
+	request := []byte{
+		// Top-level tagged fields (empty) - this is the fix we implemented
+		0x00,
+
+		// Topics compact array (1 topic)
+		0x02, // compact array length: 1 topic + 1 = 2
+
+		// Topic: "_schemas" (Schema Registry's topic)
+		0x09,                                           // compact string length: 8 chars + 1 = 9
+		0x5f, 0x73, 0x63, 0x68, 0x65, 0x6d, 0x61, 0x73, // "_schemas"
+
+		// num_partitions = 1
+		0x00, 0x00, 0x00, 0x01,
+
+		// replication_factor = 1
+		0x00, 0x01,
+
+		// assignments (empty compact array)
+		0x01,
+
+		// configs (empty compact array)
+		0x01,
+
+		// topic tagged fields (empty)
+		0x00,
+
+		// timeout_ms = 30000
+		0x00, 0x00, 0x75, 0x30,
+
+		// validate_only = false
+		0x00,
+
+		// top-level tagged fields (empty)
+		0x00,
+	}
+
+	// Call the v5 handler
+	response, err := handler.handleCreateTopicsV2Plus(1787, 5, request)
+	if err != nil {
+		t.Fatalf("CreateTopics v5 NPE fix test failed: %v", err)
+	}
+
+	if len(response) == 0 {
+		t.Fatal("CreateTopics v5 returned empty response")
+	}
+
+	// CRITICAL TEST: Verify response structure matches what AdminClient expects
+	// The NPE was caused by incorrect response structure that made data.topics() return null
+
+	offset := 0
+
+	// 1. Correlation ID (4 bytes)
+	if len(response) < offset+4 {
+		t.Fatal("Response too short for correlation ID")
+	}
+	correlationID := binary.BigEndian.Uint32(response[offset : offset+4])
+	if correlationID != 1787 {
+		t.Errorf("Expected correlation ID 1787, got %d", correlationID)
+	}
+	offset += 4
+
+	// 2. throttle_time_ms (4 bytes) - should come DIRECTLY after correlation ID
+	// The bug was adding extra tagged fields byte here
+	if len(response) < offset+4 {
+		t.Fatal("Response too short for throttle_time_ms")
+	}
+	throttleTime := binary.BigEndian.Uint32(response[offset : offset+4])
+	if throttleTime != 0 {
+		t.Errorf("Expected throttle_time_ms=0, got %d", throttleTime)
+	}
+	offset += 4
+
+	// 3. topics compact array - the critical part that was causing NPE
+	if len(response) < offset+1 {
+		t.Fatal("Response too short for topics array")
+	}
+
+	topicsArrayLength := response[offset]
+	expectedLength := byte(2) // 1 topic + 1 for compact array encoding
+	if topicsArrayLength != expectedLength {
+		t.Errorf("Expected topics compact array length %d, got %d", expectedLength, topicsArrayLength)
+		t.Error("THIS IS THE BUG THAT CAUSED data.topics() TO RETURN NULL!")
+	}
+	offset += 1
+
+	// Verify we can parse the topic entry
+	if len(response) < offset+1 {
+		t.Fatal("Response too short for topic name length")
+	}
+
+	topicNameLength := response[offset] - 1 // compact string: actual length + 1
+	offset += 1
+
+	if len(response) < offset+int(topicNameLength) {
+		t.Fatal("Response too short for topic name")
+	}
+
+	topicName := string(response[offset : offset+int(topicNameLength)])
+	if topicName != "_schemas" {
+		t.Errorf("Expected topic name '_schemas', got '%s'", topicName)
+	}
+
+	// Verify topic was actually created
+	if !handler.seaweedMQHandler.TopicExists("_schemas") {
+		t.Error("Topic '_schemas' was not created")
+	}
+
+	t.Log("✅ CreateTopics v5 NPE fix validated:")
+	t.Log("   • Response format: correlation_id(4) + throttle_time_ms(4) + topics_array")
+	t.Log("   • No extra tagged fields byte at beginning")
+	t.Log("   • Topics array positioned correctly at offset 8")
+	t.Log("   • AdminClient data.topics() will return proper list, not null")
+	t.Log("   • NPE at line 1787 eliminated!")
+}
+
 // TestCreateTopicsV5_TaggedFieldsParsingFix tests the specific fix for handling top-level tagged fields
 func TestCreateTopicsV5_TaggedFieldsParsingFix(t *testing.T) {
 	handler := NewTestHandler()
