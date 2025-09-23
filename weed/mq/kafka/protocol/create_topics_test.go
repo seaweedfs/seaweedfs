@@ -189,6 +189,7 @@ func TestCreateTopicsV2Plus_CompactFormat(t *testing.T) {
 	defer handler.Close()
 
 	// Build a CreateTopics v2 request (compact format)
+	// FIXED: Added missing assignments array between replication_factor and configs
 	request := make([]byte, 0, 256)
 
 	// Topics array count (compact: count + 1, so 1 topic = 2)
@@ -205,8 +206,11 @@ func TestCreateTopicsV2Plus_CompactFormat(t *testing.T) {
 	// replication_factor = 1
 	request = append(request, 0x00, 0x01)
 
-	// configs array (compact: empty = 0)
-	request = append(request, 0x00)
+	// FIX: assignments array (compact: empty = 1) - this was missing before!
+	request = append(request, 0x01)
+
+	// configs array (compact: empty = 1) - was 0x00 before, should be 0x01
+	request = append(request, 0x01)
 
 	// tagged fields (empty)
 	request = append(request, 0x00)
@@ -248,6 +252,7 @@ func TestCreateTopicsV2Plus_MultipleTopics(t *testing.T) {
 	defer handler.Close()
 
 	// Build a CreateTopics v2 request with 2 topics
+	// FIXED: Added missing assignments arrays for both topics
 	request := make([]byte, 0, 512)
 
 	// Topics array count (compact: 2 topics = 3)
@@ -264,8 +269,11 @@ func TestCreateTopicsV2Plus_MultipleTopics(t *testing.T) {
 	// replication_factor = 1
 	request = append(request, 0x00, 0x01)
 
-	// configs array (compact: empty = 0)
-	request = append(request, 0x00)
+	// FIX: assignments array (compact: empty = 1) - was missing!
+	request = append(request, 0x01)
+
+	// configs array (compact: empty = 1) - was 0x00, should be 0x01
+	request = append(request, 0x01)
 
 	// tagged fields (empty)
 	request = append(request, 0x00)
@@ -281,8 +289,11 @@ func TestCreateTopicsV2Plus_MultipleTopics(t *testing.T) {
 	// replication_factor = 1
 	request = append(request, 0x00, 0x01)
 
-	// configs array (compact: empty = 0)
-	request = append(request, 0x00)
+	// FIX: assignments array (compact: empty = 1) - was missing!
+	request = append(request, 0x01)
+
+	// configs array (compact: empty = 1) - was 0x00, should be 0x01
+	request = append(request, 0x01)
 
 	// tagged fields (empty)
 	request = append(request, 0x00)
@@ -368,6 +379,7 @@ func TestCreateTopics_Integration(t *testing.T) {
 				request = append(request, 0x00, 0x00, 0x13, 0x88)
 			} else {
 				// Build v2+ format request (compact)
+				// FIXED: Added missing assignments array
 				request = make([]byte, 0, 256)
 
 				// Topics array count (compact: 1 topic = 2)
@@ -385,8 +397,11 @@ func TestCreateTopics_Integration(t *testing.T) {
 				// replication_factor = 1
 				request = append(request, 0x00, 0x01)
 
-				// configs array (compact: empty = 0)
-				request = append(request, 0x00)
+				// FIX: assignments array (compact: empty = 1) - was missing!
+				request = append(request, 0x01)
+
+				// configs array (compact: empty = 1) - was 0x00, should be 0x01
+				request = append(request, 0x01)
 
 				// tagged fields (empty)
 				request = append(request, 0x00)
@@ -422,6 +437,318 @@ func TestCreateTopics_Integration(t *testing.T) {
 				ledger := handler.seaweedMQHandler.GetOrCreateLedger(tc.topicName, partitionID)
 				if ledger == nil {
 					t.Errorf("Failed to get/create ledger for topic '%s' partition %d", tc.topicName, partitionID)
+				}
+			}
+		})
+	}
+}
+
+// TestCreateTopicsV5_SchemaRegistryFormat tests the actual format sent by Confluent Schema Registry
+func TestCreateTopicsV5_SchemaRegistryFormat(t *testing.T) {
+	handler := NewTestHandler()
+	defer handler.Close()
+
+	// This test replicates the exact request format that Confluent Schema Registry
+	// sends for CreateTopics v5, which revealed the parsing bugs we fixed.
+
+	// Build actual schema registry CreateTopics v5 request format
+	// HEX: 0002095f736368656d617300000001000101020f636c65616e75702e706f6c69637908636f6d706163740000000075300000
+	request := []byte{
+		// FIX 1: Tagged fields count at start (was causing "0 topics found")
+		0x00, // tagged fields count - we now skip this correctly
+
+		// Topics compact array (1 topic)
+		0x02, // compact array length: 1 topic + 1 = 2
+
+		// Topic: "_schemas"
+		0x09,                                           // compact string length: 8 chars + 1 = 9
+		0x5f, 0x73, 0x63, 0x68, 0x65, 0x6d, 0x61, 0x73, // "_schemas"
+
+		// num_partitions = 1
+		0x00, 0x00, 0x00, 0x01,
+
+		// replication_factor = 1
+		0x00, 0x01,
+
+		// FIX 2: Assignments compact array (was missing, causing offset errors)
+		0x01, // compact array length: 0 assignments + 1 = 1 (empty array)
+
+		// Configs compact array (1 config)
+		0x02, // compact array length: 1 config + 1 = 2
+
+		// Config name: "cleanup.policy" (compact string)
+		0x0f,                                                                               // compact string length: 14 chars + 1 = 15
+		0x63, 0x6c, 0x65, 0x61, 0x6e, 0x75, 0x70, 0x2e, 0x70, 0x6f, 0x6c, 0x69, 0x63, 0x79, // "cleanup.policy"
+
+		// Config value: "compact" (compact string)
+		0x08,                                     // compact string length: 7 chars + 1 = 8
+		0x63, 0x6f, 0x6d, 0x70, 0x61, 0x63, 0x74, // "compact"
+
+		// Config tagged fields (empty)
+		0x00,
+
+		// Topic tagged fields (empty)
+		0x00,
+
+		// timeout_ms = 30000
+		0x00, 0x00, 0x75, 0x30,
+
+		// validate_only = false
+		0x00,
+
+		// Top-level tagged fields (empty)
+		0x00,
+	}
+
+	// Call the v5 handler
+	response, err := handler.handleCreateTopicsV2Plus(1234, 5, request)
+
+	if err != nil {
+		t.Fatalf("CreateTopics v5 failed with actual schema registry format: %v", err)
+	}
+
+	if len(response) == 0 {
+		t.Fatal("CreateTopics v5 returned empty response")
+	}
+
+	// Verify correlation ID
+	correlationID := binary.BigEndian.Uint32(response[0:4])
+	if correlationID != 1234 {
+		t.Errorf("Expected correlation ID 1234, got %d", correlationID)
+	}
+
+	// Verify topic was created successfully
+	if !handler.seaweedMQHandler.TopicExists("_schemas") {
+		t.Error("Topic '_schemas' was not created")
+	}
+
+	// Verify the response format is correct for v5 flexible protocol
+	// Should be: correlation_id(4) + throttle_time_ms(4) + topics_compact_array + topic_data + top_level_tagged_fields
+	if len(response) < 8 {
+		t.Fatalf("Response too short: %d bytes", len(response))
+	}
+
+	// Check throttle_time_ms is 0
+	throttleTime := binary.BigEndian.Uint32(response[4:8])
+	if throttleTime != 0 {
+		t.Errorf("Expected throttle_time_ms=0, got %d", throttleTime)
+	}
+
+	// Verify topics array starts with compact array length
+	if len(response) < 9 {
+		t.Fatal("Response too short for topics array")
+	}
+
+	topicsArrayLength := response[8]
+	if topicsArrayLength != 2 { // 1 topic + 1 for compact array encoding
+		t.Errorf("Expected topics compact array length 2, got %d", topicsArrayLength)
+	}
+}
+
+// TestCreateTopicsV5_WithoutTaggedFieldsCount tests v5 format without the initial tagged fields count
+func TestCreateTopicsV5_WithoutTaggedFieldsCount(t *testing.T) {
+	handler := NewTestHandler()
+	defer handler.Close()
+
+	// Test the v5 format without the initial 0x00 byte (tagged fields count)
+	// This should also work with our implementation
+	request := []byte{
+		// Topics compact array (1 topic) - no initial tagged fields count
+		0x02, // compact array length: 1 topic + 1 = 2
+
+		// Topic: "test-topic"
+		0x0b,                                                       // compact string length: 10 chars + 1 = 11
+		0x74, 0x65, 0x73, 0x74, 0x2d, 0x74, 0x6f, 0x70, 0x69, 0x63, // "test-topic"
+
+		// num_partitions = 3
+		0x00, 0x00, 0x00, 0x03,
+
+		// replication_factor = 1
+		0x00, 0x01,
+
+		// Assignments compact array (empty)
+		0x01, // compact array length: 0 assignments + 1 = 1
+
+		// Configs compact array (empty)
+		0x01, // compact array length: 0 configs + 1 = 1
+
+		// Topic tagged fields (empty)
+		0x00,
+
+		// timeout_ms = 5000
+		0x00, 0x00, 0x13, 0x88,
+
+		// validate_only = false
+		0x00,
+
+		// Top-level tagged fields (empty)
+		0x00,
+	}
+
+	_, err := handler.handleCreateTopicsV2Plus(5678, 5, request)
+
+	if err != nil {
+		t.Fatalf("CreateTopics v5 without initial tagged fields failed: %v", err)
+	}
+
+	// Verify topic was created
+	if !handler.seaweedMQHandler.TopicExists("test-topic") {
+		t.Error("Topic 'test-topic' was not created")
+	}
+}
+
+// TestCreateTopicsV5_MultipleTopicsWithConfigs tests v5 with multiple topics and various configs
+func TestCreateTopicsV5_MultipleTopicsWithConfigs(t *testing.T) {
+	handler := NewTestHandler()
+	defer handler.Close()
+
+	// Build v5 request with 2 topics, each with different configs
+	request := make([]byte, 0, 512)
+
+	// Tagged fields count at start
+	request = append(request, 0x00)
+
+	// Topics compact array (2 topics)
+	request = append(request, 0x03) // 2 topics + 1 = 3
+
+	// Topic 1: "topic-with-config"
+	topic1 := "topic-with-config"
+	request = append(request, byte(len(topic1)+1)) // compact string
+	request = append(request, []byte(topic1)...)
+
+	// num_partitions = 2
+	request = append(request, 0x00, 0x00, 0x00, 0x02)
+
+	// replication_factor = 1
+	request = append(request, 0x00, 0x01)
+
+	// Assignments (empty)
+	request = append(request, 0x01)
+
+	// Configs (1 config)
+	request = append(request, 0x02) // 1 config + 1 = 2
+
+	// Config: retention.ms = "86400000"
+	configName := "retention.ms"
+	request = append(request, byte(len(configName)+1))
+	request = append(request, []byte(configName)...)
+
+	configValue := "86400000"
+	request = append(request, byte(len(configValue)+1))
+	request = append(request, []byte(configValue)...)
+
+	// Config tagged fields
+	request = append(request, 0x00)
+
+	// Topic tagged fields
+	request = append(request, 0x00)
+
+	// Topic 2: "topic-no-config"
+	topic2 := "topic-no-config"
+	request = append(request, byte(len(topic2)+1))
+	request = append(request, []byte(topic2)...)
+
+	// num_partitions = 1
+	request = append(request, 0x00, 0x00, 0x00, 0x01)
+
+	// replication_factor = 1
+	request = append(request, 0x00, 0x01)
+
+	// Assignments (empty)
+	request = append(request, 0x01)
+
+	// Configs (empty)
+	request = append(request, 0x01)
+
+	// Topic tagged fields
+	request = append(request, 0x00)
+
+	// timeout_ms = 10000
+	request = append(request, 0x00, 0x00, 0x27, 0x10)
+
+	// validate_only = false
+	request = append(request, 0x00)
+
+	// Top-level tagged fields
+	request = append(request, 0x00)
+
+	_, err := handler.handleCreateTopicsV2Plus(9999, 5, request)
+
+	if err != nil {
+		t.Fatalf("CreateTopics v5 with multiple topics failed: %v", err)
+	}
+
+	// Verify both topics were created
+	if !handler.seaweedMQHandler.TopicExists("topic-with-config") {
+		t.Error("Topic 'topic-with-config' was not created")
+	}
+
+	if !handler.seaweedMQHandler.TopicExists("topic-no-config") {
+		t.Error("Topic 'topic-no-config' was not created")
+	}
+}
+
+// TestCreateTopicsV5_ErrorCases tests various error conditions with v5 format
+func TestCreateTopicsV5_ErrorCases(t *testing.T) {
+	handler := NewTestHandler()
+	defer handler.Close()
+
+	testCases := []struct {
+		name        string
+		request     []byte
+		expectError bool
+		description string
+	}{
+		{
+			name: "TruncatedRequest",
+			request: []byte{
+				0x00, // tagged fields count
+				0x02, // topics array
+				// Missing topic data - should fail
+			},
+			expectError: true,
+			description: "Request truncated in topics array",
+		},
+		{
+			name: "InvalidCompactArrayLength",
+			request: []byte{
+				0x00, // tagged fields count
+				0x00, // invalid compact array length (would be null array)
+				// Should fail because null arrays aren't valid for CreateTopics
+			},
+			expectError: true,
+			description: "Invalid compact array length",
+		},
+		{
+			name: "MissingTimeoutMs",
+			request: []byte{
+				0x00,                   // tagged fields count
+				0x02,                   // topics array (1 topic)
+				0x05,                   // topic name "test" (4 chars + 1)
+				0x74, 0x65, 0x73, 0x74, // "test"
+				0x00, 0x00, 0x00, 0x01, // partitions = 1
+				0x00, 0x01, // replication = 1
+				0x01, // assignments (empty)
+				0x01, // configs (empty)
+				0x00, // topic tagged fields
+				// Missing timeout_ms and beyond - should fail
+			},
+			expectError: true,
+			description: "Missing timeout_ms field",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := handler.handleCreateTopicsV2Plus(1111, 5, tc.request)
+
+			if tc.expectError {
+				if err == nil {
+					t.Errorf("Expected error for %s, but got none", tc.description)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Unexpected error for %s: %v", tc.description, err)
 				}
 			}
 		})

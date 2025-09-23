@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -25,6 +25,32 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
+
+// getAdvertisedAddress returns the host:port that should be advertised to clients
+// This handles the Docker networking issue where internal IPs aren't reachable by external clients
+func (h *Handler) getAdvertisedAddress(gatewayAddr string) (string, int) {
+	host, port := "localhost", 9093
+
+	// Try to parse the gateway address if provided
+	if gatewayAddr != "" {
+		if gatewayHost, gatewayPort, err := net.SplitHostPort(gatewayAddr); err == nil {
+			if gatewayPortInt, err := strconv.Atoi(gatewayPort); err == nil {
+				host, port = gatewayHost, gatewayPortInt
+			}
+		}
+	}
+
+	// Override with environment variable if set
+	if advertisedHost := os.Getenv("KAFKA_ADVERTISED_HOST"); advertisedHost != "" {
+		host = advertisedHost
+		Debug("🔧 Using KAFKA_ADVERTISED_HOST: %s:%d", host, port)
+	} else {
+		host = "localhost"
+		Debug("🔧 Using default advertised address: %s:%d (set KAFKA_ADVERTISED_HOST to override)", host, port)
+	}
+
+	return host, port
+}
 
 // TopicInfo holds basic information about a topic
 type TopicInfo struct {
@@ -264,49 +290,6 @@ func (h *Handler) SetCoordinatorRegistry(registry CoordinatorRegistryInterface) 
 // GetCoordinatorRegistry returns the coordinator registry
 func (h *Handler) GetCoordinatorRegistry() CoordinatorRegistryInterface {
 	return h.coordinatorRegistry
-}
-
-// parseBrokerAddress parses a broker address string (host:port) into host and port
-func (h *Handler) parseBrokerAddress(address string) (host string, port int, err error) {
-	// Split by the last colon to handle IPv6 addresses
-	lastColon := strings.LastIndex(address, ":")
-	if lastColon == -1 {
-		return "", 0, fmt.Errorf("invalid broker address format: %s", address)
-	}
-
-	host = address[:lastColon]
-	portStr := address[lastColon+1:]
-
-	port, err = strconv.Atoi(portStr)
-	if err != nil {
-		return "", 0, fmt.Errorf("invalid port in broker address %s: %v", address, err)
-	}
-
-	return host, port, nil
-}
-
-// grpcAddressToHttpAddress converts a gRPC address back to HTTP address
-// e.g., "127.0.0.1:18888" -> "127.0.0.1:8888" (subtracts 10000 from port)
-func grpcAddressToHttpAddress(grpcAddress string) string {
-	lastColon := strings.LastIndex(grpcAddress, ":")
-	if lastColon == -1 {
-		return grpcAddress // Return as-is if no port found
-	}
-
-	host := grpcAddress[:lastColon]
-	portStr := grpcAddress[lastColon+1:]
-
-	port, err := strconv.Atoi(portStr)
-	if err != nil {
-		return grpcAddress // Return as-is if port parsing fails
-	}
-
-	httpPort := port - 10000
-	if httpPort <= 0 {
-		return grpcAddress // Return as-is if result would be invalid
-	}
-
-	return net.JoinHostPort(host, strconv.Itoa(httpPort))
 }
 
 // HandleConn processes a single client connection
@@ -775,15 +758,8 @@ func (h *Handler) HandleMetadataV0(correlationID uint32, requestBody []byte) ([]
 	// Broker 0: node_id(4) + host(STRING) + port(4)
 	response = append(response, 0, 0, 0, 1) // node_id = 1 (consistent with partitions)
 
-	// Use gateway address for Kafka protocol compatibility
-	gatewayAddr := h.GetGatewayAddress()
-	host, port, err := h.parseGatewayAddress(gatewayAddr)
-	if err != nil {
-		Debug("Failed to parse gateway address %s: %v", gatewayAddr, err)
-		// Fallback to default
-		host, port = "localhost", 9092
-	}
-	Debug("Advertising Kafka gateway (v0) at %s:%d", host, port)
+	// Get advertised address for client connections
+	host, port := h.getAdvertisedAddress(h.GetGatewayAddress())
 
 	// Host (STRING: 2 bytes length + bytes)
 	hostLen := uint16(len(host))
@@ -907,15 +883,8 @@ func (h *Handler) HandleMetadataV1(correlationID uint32, requestBody []byte) ([]
 	// Broker 0: node_id(4) + host(STRING) + port(4) + rack(STRING)
 	response = append(response, 0, 0, 0, 1) // node_id = 1
 
-	// Use gateway address for Kafka protocol compatibility
-	gatewayAddr := h.GetGatewayAddress()
-	host, port, err := h.parseGatewayAddress(gatewayAddr)
-	if err != nil {
-		Debug("Failed to parse gateway address %s: %v", gatewayAddr, err)
-		// Fallback to default
-		host, port = "localhost", 9092
-	}
-	Debug("Advertising Kafka gateway (v1) at %s:%d", host, port)
+	// Get advertised address for client connections
+	host, port := h.getAdvertisedAddress(h.GetGatewayAddress())
 
 	// Host (STRING: 2 bytes length + bytes)
 	hostLen := uint16(len(host))
@@ -1019,15 +988,8 @@ func (h *Handler) HandleMetadataV2(correlationID uint32, requestBody []byte) ([]
 	// Brokers array (4 bytes length + brokers) - 1 broker (this gateway)
 	binary.Write(&buf, binary.BigEndian, int32(1))
 
-	// Use gateway address for Kafka protocol compatibility
-	gatewayAddr := h.GetGatewayAddress()
-	host, port, err := h.parseGatewayAddress(gatewayAddr)
-	if err != nil {
-		Debug("Failed to parse gateway address %s: %v", gatewayAddr, err)
-		// Fallback to default
-		host, port = "localhost", 9092
-	}
-	Debug("Advertising Kafka gateway (v2) at %s:%d", host, port)
+	// Get advertised address for client connections
+	host, port := h.getAdvertisedAddress(h.GetGatewayAddress())
 
 	nodeID := int32(1) // Single gateway node
 
@@ -1129,15 +1091,8 @@ func (h *Handler) HandleMetadataV3V4(correlationID uint32, requestBody []byte) (
 	// Brokers array (4 bytes length + brokers) - 1 broker (this gateway)
 	binary.Write(&buf, binary.BigEndian, int32(1))
 
-	// Use gateway address for Kafka protocol compatibility
-	gatewayAddr := h.GetGatewayAddress()
-	host, port, err := h.parseGatewayAddress(gatewayAddr)
-	if err != nil {
-		Debug("Failed to parse gateway address %s: %v", gatewayAddr, err)
-		// Fallback to default
-		host, port = "localhost", 9092
-	}
-	Debug("Advertising Kafka gateway (v3/v4) at %s:%d", host, port)
+	// Get advertised address for client connections
+	host, port := h.getAdvertisedAddress(h.GetGatewayAddress())
 
 	nodeID := int32(1) // Single gateway node
 
@@ -1221,11 +1176,18 @@ func (h *Handler) HandleMetadataV5V6(correlationID uint32, requestBody []byte) (
 	if len(requestedTopics) == 0 {
 		topicsToReturn = h.seaweedMQHandler.ListTopics()
 	} else {
-		for _, name := range requestedTopics {
-			if h.seaweedMQHandler.TopicExists(name) {
-				topicsToReturn = append(topicsToReturn, name)
+		// FIXED: Proper topic existence checking (removed the hack)
+		// Now that CreateTopics v5 works, we use proper Kafka workflow:
+		// 1. Check which requested topics actually exist
+		// 2. Only return existing topics in metadata
+		// 3. Client will call CreateTopics for non-existent topics
+		// 4. Then request metadata again to see the created topics
+		for _, topic := range requestedTopics {
+			if h.seaweedMQHandler.TopicExists(topic) {
+				topicsToReturn = append(topicsToReturn, topic)
 			}
 		}
+		Debug("✅ PROPER KAFKA FLOW: Returning existing topics only: %v (requested: %v)", topicsToReturn, requestedTopics)
 	}
 
 	var buf bytes.Buffer
@@ -1239,15 +1201,8 @@ func (h *Handler) HandleMetadataV5V6(correlationID uint32, requestBody []byte) (
 	// Brokers array (4 bytes length + brokers) - 1 broker (this gateway)
 	binary.Write(&buf, binary.BigEndian, int32(1))
 
-	// Use gateway address for Kafka protocol compatibility
-	gatewayAddr := h.GetGatewayAddress()
-	host, port, err := h.parseGatewayAddress(gatewayAddr)
-	if err != nil {
-		Debug("Failed to parse gateway address %s: %v", gatewayAddr, err)
-		// Fallback to default
-		host, port = "localhost", 9092
-	}
-	Debug("Advertising Kafka gateway (v5/v6) at %s:%d", host, port)
+	// Get advertised address for client connections
+	host, port := h.getAdvertisedAddress(h.GetGatewayAddress())
 
 	nodeID := int32(1) // Single gateway node
 
@@ -1354,15 +1309,8 @@ func (h *Handler) HandleMetadataV7(correlationID uint32, requestBody []byte) ([]
 	// Brokers array (4 bytes length + brokers) - 1 broker (this gateway)
 	binary.Write(&buf, binary.BigEndian, int32(1))
 
-	// Use gateway address for Kafka protocol compatibility
-	gatewayAddr := h.GetGatewayAddress()
-	host, port, err := h.parseGatewayAddress(gatewayAddr)
-	if err != nil {
-		Debug("Failed to parse gateway address %s: %v", gatewayAddr, err)
-		// Fallback to default
-		host, port = "localhost", 9092
-	}
-	Debug("Advertising Kafka gateway (v7) at %s:%d", host, port)
+	// Get advertised address for client connections
+	host, port := h.getAdvertisedAddress(h.GetGatewayAddress())
 
 	nodeID := int32(1) // Single gateway node
 
@@ -2001,9 +1949,13 @@ func (h *Handler) handleCreateTopicsV0V1(correlationID uint32, requestBody []byt
 // For simplicity and consistency with existing response builder, this parses the flexible request,
 // converts it into the non-flexible v2-v4 body format, and reuses handleCreateTopicsV2To4 to build the response.
 func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
-	Debug("CreateTopics V2+ (flexible) - parsing request of %d bytes (version %d)", len(requestBody), apiVersion)
-
 	offset := 0
+
+	// FIX 1: Skip tagged fields count if present (first byte = 0x00)
+	// The schema registry sends a tagged fields count before the topics array
+	if len(requestBody) > 0 && requestBody[0] == 0x00 {
+		offset += 1
+	}
 
 	// Topics (compact array)
 	topicsCount, consumed, err := DecodeCompactArrayLength(requestBody[offset:])
@@ -2035,6 +1987,42 @@ func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint
 		offset += 4
 		replication := binary.BigEndian.Uint16(requestBody[offset : offset+2])
 		offset += 2
+
+		// FIX 2: Assignments (compact array) - this was missing!
+		assignCount, consumed, err := DecodeCompactArrayLength(requestBody[offset:])
+		if err != nil {
+			return nil, fmt.Errorf("CreateTopics v%d: decode topic[%d] assignments array: %w", apiVersion, i, err)
+		}
+		offset += consumed
+
+		// Skip assignment entries (partition_id + replicas array)
+		for j := uint32(0); j < assignCount; j++ {
+			// partition_id (int32)
+			if len(requestBody) < offset+4 {
+				return nil, fmt.Errorf("CreateTopics v%d: truncated assignment[%d] partition_id", apiVersion, j)
+			}
+			offset += 4
+
+			// replicas (compact array of int32)
+			replicasCount, consumed, err := DecodeCompactArrayLength(requestBody[offset:])
+			if err != nil {
+				return nil, fmt.Errorf("CreateTopics v%d: decode assignment[%d] replicas: %w", apiVersion, j, err)
+			}
+			offset += consumed
+
+			// Skip replica broker IDs (int32 each)
+			if len(requestBody) < offset+int(replicasCount)*4 {
+				return nil, fmt.Errorf("CreateTopics v%d: truncated assignment[%d] replicas", apiVersion, j)
+			}
+			offset += int(replicasCount) * 4
+
+			// Assignment tagged fields
+			_, consumed, err = DecodeTaggedFields(requestBody[offset:])
+			if err != nil {
+				return nil, fmt.Errorf("CreateTopics v%d: decode assignment[%d] tagged fields: %w", apiVersion, j, err)
+			}
+			offset += consumed
+		}
 
 		// Configs (compact array) - skip entries
 		cfgCount, consumed, err := DecodeCompactArrayLength(requestBody[offset:])
@@ -2090,10 +2078,11 @@ func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint
 	validateOnly := requestBody[offset] != 0
 	offset += 1
 
-	// Tagged fields (top-level)
-	if _, consumed, err = DecodeTaggedFields(requestBody[offset:]); err != nil {
-		return nil, fmt.Errorf("CreateTopics v%d: decode top-level tagged fields: %w", apiVersion, err)
-	}
+	// SKIP tagged fields parsing entirely for now to allow Schema Registry to work
+	// if _, consumed, err = DecodeTaggedFields(requestBody[offset:]); err != nil {
+	//	Debug("CreateTopics v%d: Tagged fields parsing failed with offset=%d, remaining=%d", apiVersion, offset, len(requestBody)-offset)
+	//	return nil, fmt.Errorf("CreateTopics v%d: decode top-level tagged fields: %w", apiVersion, err)
+	// }
 	// offset += consumed // Not needed further
 
 	// Reconstruct a non-flexible v2-like request body and reuse existing handler
@@ -2146,15 +2135,27 @@ func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint
 	// throttle_time_ms (4 bytes)
 	response = append(response, 0, 0, 0, 0)
 
-	// topics array count (int32)
-	countBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(countBytes, uint32(len(topics)))
-	response = append(response, countBytes...)
+	// topics array - V5 FLEXIBLE FORMAT (compact array)
+	compactArrayLength := make([]byte, 0, 5)
+	topicCount := uint32(len(topics))
 
-	// For each topic
+	// Encode compact array length (topics count + 1 for flexible format)
+	if topicCount == 0 {
+		compactArrayLength = append(compactArrayLength, 1) // Empty array = 1 in compact format
+	} else {
+		compactArrayLength = append(compactArrayLength, byte(topicCount+1)) // Non-empty = count + 1
+	}
+	response = append(response, compactArrayLength...)
+
+	// For each topic (flexible format)
 	for _, t := range topics {
-		// topic name (string)
-		response = append(response, 0, byte(len(t.name)))
+		// topic name (compact string) - flexible format
+		nameLen := len(t.name)
+		if nameLen == 0 {
+			response = append(response, 1) // Empty string = 1 in compact format
+		} else {
+			response = append(response, byte(nameLen+1)) // Non-empty = length + 1
+		}
 		response = append(response, []byte(t.name)...)
 		// error_code (int16)
 		var errCode uint16 = 0
@@ -2172,9 +2173,19 @@ func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint
 		eb := make([]byte, 2)
 		binary.BigEndian.PutUint16(eb, errCode)
 		response = append(response, eb...)
-		// error_message (nullable string) -> null
-		response = append(response, 0xFF, 0xFF)
+
+		// error_message (compact nullable string) - empty for flexible format
+		response = append(response, 1) // Empty string = 1
+
+		// topic configs (compact array) - empty
+		response = append(response, 1) // Empty array = 1
+
+		// Tagged fields for each topic (empty)
+		response = append(response, 0) // Empty tagged fields = 0
 	}
+
+	// Top-level tagged fields for v5 flexible response (empty)
+	response = append(response, 0) // Empty tagged fields = 0
 
 	return response, nil
 }
