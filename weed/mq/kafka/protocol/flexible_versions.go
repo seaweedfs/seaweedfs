@@ -180,7 +180,8 @@ func DecodeTaggedFields(data []byte) (*TaggedFields, int, error) {
 
 		// Data
 		if offset+int(size) > len(data) {
-			return nil, 0, fmt.Errorf("tagged field %d data truncated", i)
+			// More detailed error information
+			return nil, 0, fmt.Errorf("tagged field %d data truncated: need %d bytes at offset %d, but only %d total bytes available", i, size, offset, len(data))
 		}
 
 		fields[i] = TaggedField{
