@@ -16,6 +16,10 @@ import (
 const (
 	// FilerDiscoveryInterval is the interval for refreshing filer list from masters
 	FilerDiscoveryInterval = 30 * time.Second
+	// InitialDiscoveryInterval is the faster interval for initial discovery
+	InitialDiscoveryInterval = 5 * time.Second
+	// InitialDiscoveryRetries is the number of fast retries during startup
+	InitialDiscoveryRetries = 6 // 6 retries * 5 seconds = 30 seconds total
 )
 
 // FilerDiscoveryService handles dynamic discovery and refresh of filers from masters
@@ -27,6 +31,7 @@ type FilerDiscoveryService struct {
 	refreshTicker  *time.Ticker
 	stopChan       chan struct{}
 	wg             sync.WaitGroup
+	initialRetries int
 }
 
 // NewFilerDiscoveryService creates a new filer discovery service
@@ -134,8 +139,17 @@ func (fds *FilerDiscoveryService) Start() error {
 	// Initial discovery
 	fds.refreshFilers()
 
+	// Start with faster discovery during startup
+	fds.initialRetries = InitialDiscoveryRetries
+	interval := InitialDiscoveryInterval
+	if len(fds.GetFilers()) > 0 {
+		// If we found filers immediately, use normal interval
+		interval = FilerDiscoveryInterval
+		fds.initialRetries = 0
+	}
+
 	// Start periodic refresh
-	fds.refreshTicker = time.NewTicker(FilerDiscoveryInterval)
+	fds.refreshTicker = time.NewTicker(interval)
 	fds.wg.Add(1)
 	go func() {
 		defer fds.wg.Done()
@@ -143,6 +157,16 @@ func (fds *FilerDiscoveryService) Start() error {
 			select {
 			case <-fds.refreshTicker.C:
 				fds.refreshFilers()
+
+				// Switch to normal interval after initial retries
+				if fds.initialRetries > 0 {
+					fds.initialRetries--
+					if fds.initialRetries == 0 || len(fds.GetFilers()) > 0 {
+						glog.V(1).Info("Switching to normal filer discovery interval")
+						fds.refreshTicker.Stop()
+						fds.refreshTicker = time.NewTicker(FilerDiscoveryInterval)
+					}
+				}
 			case <-fds.stopChan:
 				glog.V(1).Info("Filer discovery service stopping")
 				return
