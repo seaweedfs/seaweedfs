@@ -1,6 +1,7 @@
 package chunk_cache
 
 import (
+	"encoding/binary"
 	"errors"
 	"sync"
 
@@ -10,6 +11,15 @@ import (
 )
 
 var ErrorOutOfBounds = errors.New("attempt to read out of bounds")
+
+const cacheHeaderSize = 8 // 4 bytes volumeId + 4 bytes cookie
+
+// parseCacheHeader extracts volume ID and cookie from the 8-byte cache header
+func parseCacheHeader(header []byte) (needle.VolumeId, types.Cookie) {
+	volumeId := needle.VolumeId(binary.BigEndian.Uint32(header[0:4]))
+	cookie := types.BytesToCookie(header[4:8])
+	return volumeId, cookie
+}
 
 type ChunkCache interface {
 	ReadChunkAt(data []byte, fileId string, offset uint64) (n int, err error)
@@ -81,14 +91,11 @@ func (c *TieredChunkCache) IsInCache(fileId string, lockNeeded bool) (answer boo
 	for i, diskCacheLayer := range c.diskCaches {
 		for k, v := range diskCacheLayer.diskCaches {
 			if nv, ok := v.nm.Get(fid.Key); ok {
-				// Read first 8 bytes to check volume ID and cookie
-				headerBytes := make([]byte, 8)
-				if readN, readErr := v.DataBackend.ReadAt(headerBytes, nv.Offset.ToActualOffset()); readErr == nil && readN == 8 {
-					// Extract volume ID from first 4 bytes
-					storedVolumeId := needle.VolumeId(uint32(headerBytes[0])<<24 | uint32(headerBytes[1])<<16 |
-						uint32(headerBytes[2])<<8 | uint32(headerBytes[3]))
-					// Extract cookie from next 4 bytes
-					storedCookie := types.BytesToCookie(headerBytes[4:8])
+				// Read cache header to check volume ID and cookie
+				headerBytes := make([]byte, cacheHeaderSize)
+				if readN, readErr := v.DataBackend.ReadAt(headerBytes, nv.Offset.ToActualOffset()); readErr == nil && readN == cacheHeaderSize {
+					// Parse volume ID and cookie from header
+					storedVolumeId, storedCookie := parseCacheHeader(headerBytes)
 
 					if storedVolumeId == fid.VolumeId && storedCookie == fid.Cookie {
 						glog.V(4).Infof("fileId %s is in diskCaches[%d].volume[%d]", fileId, i, k)
@@ -185,12 +192,9 @@ func (c *TieredChunkCache) doSetChunk(fileId string, data []byte) {
 
 	// Prepend volume ID and cookie to data for disk cache
 	// Format: [4-byte volumeId][4-byte cookie][chunk data]
-	headerBytes := make([]byte, 8) // 4 bytes volumeId + 4 bytes cookie
-	// Store volume ID in first 4 bytes
-	headerBytes[0] = byte(fid.VolumeId >> 24)
-	headerBytes[1] = byte(fid.VolumeId >> 16)
-	headerBytes[2] = byte(fid.VolumeId >> 8)
-	headerBytes[3] = byte(fid.VolumeId)
+	headerBytes := make([]byte, cacheHeaderSize)
+	// Store volume ID in first 4 bytes using big-endian
+	binary.BigEndian.PutUint32(headerBytes[0:4], uint32(fid.VolumeId))
 	// Store cookie in next 4 bytes
 	types.CookieToBytes(headerBytes[4:8], fid.Cookie)
 	dataWithHeader := append(headerBytes, data...)
@@ -219,8 +223,8 @@ func (c *TieredChunkCache) Shutdown() {
 
 // readChunkAtWithHeaderValidation reads from disk cache with volume ID and cookie validation
 func (c *TieredChunkCache) readChunkAtWithHeaderValidation(data []byte, fid *needle.FileId, offset uint64, cacheLevel int) (n int, err error) {
-	// Step 1: Read and validate header (volume ID + cookie, first 8 bytes)
-	headerBuffer := make([]byte, 8)
+	// Step 1: Read and validate header (volume ID + cookie)
+	headerBuffer := make([]byte, cacheHeaderSize)
 	headerRead, err := c.diskCaches[cacheLevel].readChunkAt(headerBuffer, fid.Key, 0)
 
 	if err != nil {
@@ -229,30 +233,26 @@ func (c *TieredChunkCache) readChunkAtWithHeaderValidation(data []byte, fid *nee
 		return 0, err
 	}
 
-	if headerRead < 8 {
+	if headerRead < cacheHeaderSize {
 		glog.V(4).Infof("insufficient data for header validation for %s from cache level %d: read %d bytes",
 			fid.String(), cacheLevel, headerRead)
-		return 0, nil // Not enough data for header
+		return 0, nil // Not enough data for header - likely old format, treat as cache miss
 	}
 
-	// Extract volume ID from first 4 bytes
-	storedVolumeId := needle.VolumeId(uint32(headerBuffer[0])<<24 | uint32(headerBuffer[1])<<16 |
-		uint32(headerBuffer[2])<<8 | uint32(headerBuffer[3]))
-
-	// Extract cookie from next 4 bytes
-	storedCookie := types.BytesToCookie(headerBuffer[4:8])
+	// Parse volume ID and cookie from header
+	storedVolumeId, storedCookie := parseCacheHeader(headerBuffer)
 
 	// Validate both volume ID and cookie
 	if storedVolumeId != fid.VolumeId || storedCookie != fid.Cookie {
-		glog.V(4).Infof("header mismatch for %s in cache level %d: stored volume %d cookie %x, expected volume %d cookie %x",
+		glog.V(4).Infof("header mismatch for %s in cache level %d: stored volume %d cookie %x, expected volume %d cookie %x (possible old format)",
 			fid.String(), cacheLevel, storedVolumeId, storedCookie, fid.VolumeId, fid.Cookie)
-		return 0, nil // Treat as cache miss
+		return 0, nil // Treat as cache miss - could be old format or actual mismatch
 	}
 
-	// Step 2: Read actual data from the offset position (after 8-byte header)
+	// Step 2: Read actual data from the offset position (after header)
 	// The disk cache has format: [4-byte volumeId][4-byte cookie][actual chunk data]
-	// We want to read from position: 8 + offset
-	dataOffset := 8 + offset
+	// We want to read from position: cacheHeaderSize + offset
+	dataOffset := cacheHeaderSize + offset
 	n, err = c.diskCaches[cacheLevel].readChunkAt(data, fid.Key, dataOffset)
 
 	if err != nil {
