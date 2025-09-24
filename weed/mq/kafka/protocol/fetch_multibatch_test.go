@@ -13,14 +13,14 @@ func TestHandler_getMultipleRecordBatches(t *testing.T) {
 
 	// Test the concatenation logic directly by creating a custom handler
 	handler := &Handler{}
-	
+
 	// Store batches in a test map
 	testBatches := map[int64][]byte{
 		100: batch1,
 		101: batch2,
 		102: batch3,
 	}
-	
+
 	// Create a test version of getMultipleRecordBatches that uses our test data
 	getMultipleRecordBatchesTest := func(topicName string, partitionID int32, startOffset, highWaterMark int64) []byte {
 		var combinedBatches []byte
@@ -105,7 +105,7 @@ func TestHandler_getMultipleRecordBatches(t *testing.T) {
 				} else {
 					expectedFirstBatch = batch1
 				}
-				
+
 				// Check that we can parse the first batch in the result
 				if len(result) >= len(expectedFirstBatch) {
 					if !handler.isValidRecordBatch(result[:len(expectedFirstBatch)]) {
@@ -115,6 +115,21 @@ func TestHandler_getMultipleRecordBatches(t *testing.T) {
 			}
 		})
 	}
+}
+
+// isValidRecordBatch validates a record batch for testing purposes
+func (h *Handler) isValidRecordBatch(data []byte) bool {
+	if len(data) < 61 { // Minimum record batch header size
+		return false
+	}
+
+	// Check magic byte (at offset 16)
+	magic := int8(data[16])
+	if magic != 2 {
+		return false
+	}
+
+	return true
 }
 
 func TestHandler_isValidRecordBatch(t *testing.T) {

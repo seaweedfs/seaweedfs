@@ -255,13 +255,23 @@ func parseCompactString(data []byte) ([]byte, int) {
 	}
 
 	if length == 0 {
-		// Null string
+		// Null string (length 0 means null)
 		return nil, consumed
 	}
 
-	// Adjust for compact string encoding (length includes +1)
+	// In compact strings, length is actual length + 1
+	// So length 1 means empty string, length > 1 means non-empty
 	actualLength := int(length) - 1
-	if actualLength < 0 || consumed+actualLength > len(data) {
+	if actualLength < 0 {
+		return nil, 0
+	}
+
+	if actualLength == 0 {
+		// Empty string (length was 1)
+		return []byte{}, consumed
+	}
+
+	if consumed+actualLength > len(data) {
 		return nil, 0
 	}
 
