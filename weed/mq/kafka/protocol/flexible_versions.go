@@ -145,7 +145,9 @@ func (tf *TaggedFields) Encode() []byte {
 // DecodeTaggedFields decodes tagged fields from flexible versions
 func DecodeTaggedFields(data []byte) (*TaggedFields, int, error) {
 	if len(data) == 0 {
-		return &TaggedFields{}, 0, fmt.Errorf("no data for tagged fields")
+		// Return empty tagged fields instead of error - this is a common case
+		// when parsing requests that don't have tagged fields data available yet
+		return &TaggedFields{}, 0, nil
 	}
 
 	if data[0] == 0 {
