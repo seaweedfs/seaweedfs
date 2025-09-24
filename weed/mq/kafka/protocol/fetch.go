@@ -215,7 +215,9 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 				} else {
 					Debug("Multi-batch failed or empty, falling back to single batch")
 					// Fallback to original single batch logic
+					Debug("GetStoredRecords: topic='%s', partition=%d, offset=%d, limit=10", topic.Name, partition.PartitionID, effectiveFetchOffset)
 					smqRecords, err := h.seaweedMQHandler.GetStoredRecords(topic.Name, partition.PartitionID, effectiveFetchOffset, 10)
+					Debug("GetStoredRecords result: records=%d, err=%v", len(smqRecords), err)
 					if err == nil && len(smqRecords) > 0 {
 						recordBatch = h.constructRecordBatchFromSMQ(topic.Name, effectiveFetchOffset, smqRecords)
 						Debug("Fallback single batch size: %d bytes", len(recordBatch))

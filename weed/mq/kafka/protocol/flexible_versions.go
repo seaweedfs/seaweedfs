@@ -254,6 +254,9 @@ func parseCompactString(data []byte) ([]byte, int) {
 		return nil, 0
 	}
 
+	// Debug logging for compact string parsing
+	Debug("parseCompactString: data[0:8]=%v, varint=%d, consumed=%d", data[:min(8, len(data))], length, consumed)
+
 	if length == 0 {
 		// Null string (length 0 means null)
 		return nil, consumed
@@ -266,16 +269,28 @@ func parseCompactString(data []byte) ([]byte, int) {
 		return nil, 0
 	}
 
+	Debug("parseCompactString: actualLength=%d, dataLen=%d, needBytes=%d", actualLength, len(data), consumed+actualLength)
+
 	if actualLength == 0 {
 		// Empty string (length was 1)
 		return []byte{}, consumed
 	}
 
 	if consumed+actualLength > len(data) {
+		Debug("parseCompactString: not enough data - need %d bytes, have %d", consumed+actualLength, len(data))
 		return nil, 0
 	}
 
-	return data[consumed : consumed+actualLength], consumed + actualLength
+	result := data[consumed : consumed+actualLength]
+	Debug("parseCompactString: result='%s', totalConsumed=%d", string(result), consumed+actualLength)
+	return result, consumed + actualLength
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // FlexibleNullableString encodes a nullable string for flexible versions
