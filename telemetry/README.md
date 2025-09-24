@@ -75,11 +75,11 @@ message TelemetryData {
 ```bash
 # Clone and start the complete monitoring stack
 git clone https://github.com/seaweedfs/seaweedfs.git
-cd seaweedfs/telemetry
-docker-compose up -d
+cd seaweedfs
+docker compose -f telemetry/docker-compose.yml up -d
 
 # Or run the server directly
-cd server
+cd telemetry/server
 go run . -port=8080 -dashboard=true
 ```
 
@@ -183,7 +183,9 @@ GET /metrics
 version: '3.8'
 services:
   telemetry-server:
-    build: ./server
+    build:
+      context: ../
+      dockerfile: telemetry/server/Dockerfile
     ports:
       - "8080:8080"
     command: ["-port=8080", "-dashboard=true", "-cleanup=24h"]
@@ -208,18 +210,17 @@ services:
 
 ```bash
 # Deploy the stack
-docker-compose up -d
+docker compose -f telemetry/docker-compose.yml up -d
 
 # Scale telemetry server if needed
-docker-compose up -d --scale telemetry-server=3
+docker compose -f telemetry/docker-compose.yml up -d --scale telemetry-server=3
 ```
 
 ### Server Only
 
 ```bash
-# Build and run telemetry server
-cd server
-docker build -t seaweedfs-telemetry .
+# Build and run telemetry server (build from repo root to include all sources)
+docker build -t seaweedfs-telemetry -f telemetry/server/Dockerfile .
 docker run -p 8080:8080 seaweedfs-telemetry -port=8080 -dashboard=true
 ```
 

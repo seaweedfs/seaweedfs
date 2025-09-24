@@ -53,6 +53,8 @@ jobs:
           context: ./docker
           push: ${{ github.event_name != 'pull_request' }}
           file: ./docker/Dockerfile.rocksdb_large
+          build-args: |
+            BRANCH=${{ github.sha }}
           platforms: linux/amd64
           tags: ${{ steps.docker_meta.outputs.tags }}
           labels: ${{ steps.docker_meta.outputs.labels }}

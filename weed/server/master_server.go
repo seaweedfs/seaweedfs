@@ -57,7 +57,7 @@ type MasterOption struct {
 	IsFollower              bool
 	TelemetryUrl            string
 	TelemetryEnabled        bool
-	VolumeGrowthDisabled      bool
+	VolumeGrowthDisabled    bool
 }
 
 type MasterServer struct {
@@ -251,15 +251,18 @@ func (ms *MasterServer) proxyToLeader(f http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		targetUrl, err := url.Parse("http://" + raftServerLeader)
+		// determine the scheme based on HTTPS client configuration
+		scheme := util_http.GetGlobalHttpClient().GetHttpScheme()
+
+		targetUrl, err := url.Parse(scheme + "://" + raftServerLeader)
 		if err != nil {
 			writeJsonError(w, r, http.StatusInternalServerError,
-				fmt.Errorf("Leader URL http://%s Parse Error: %v", raftServerLeader, err))
+				fmt.Errorf("Leader URL %s://%s Parse Error: %v", scheme, raftServerLeader, err))
 			return
 		}
 
 		// proxy to leader
-		glog.V(4).Infoln("proxying to leader", raftServerLeader)
+		glog.V(4).Infoln("proxying to leader", raftServerLeader, "using", scheme)
 		proxy := httputil.NewSingleHostReverseProxy(targetUrl)
 		proxy.Transport = util_http.GetGlobalHttpClient().GetClientTransport()
 		proxy.ServeHTTP(w, r)
