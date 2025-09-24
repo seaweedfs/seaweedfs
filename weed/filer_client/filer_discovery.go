@@ -48,9 +48,13 @@ func NewFilerDiscoveryService(masters []pb.ServerAddress, grpcDialOption grpc.Di
 
 // discoverFilersFromMaster discovers filers from a single master
 func (fds *FilerDiscoveryService) discoverFilersFromMaster(masterAddr pb.ServerAddress) ([]pb.ServerAddress, error) {
-	conn, err := grpc.Dial(string(masterAddr), fds.grpcDialOption)
+	// Convert HTTP master address to gRPC address (HTTP port + 10000)
+	grpcAddr := masterAddr.ToGrpcAddress()
+	glog.Infof("FILER DISCOVERY: Connecting to master gRPC at %s (converted from HTTP %s)", grpcAddr, masterAddr)
+
+	conn, err := grpc.Dial(grpcAddr, fds.grpcDialOption)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to master at %s: %v", masterAddr, err)
+		return nil, fmt.Errorf("failed to connect to master at %s: %v", grpcAddr, err)
 	}
 	defer conn.Close()
 
@@ -62,16 +66,23 @@ func (fds *FilerDiscoveryService) discoverFilersFromMaster(masterAddr pb.ServerA
 		ClientType: cluster.FilerType,
 	})
 	if err != nil {
+		glog.Errorf("FILER DISCOVERY: ListClusterNodes failed for master %s: %v", masterAddr, err)
 		return nil, fmt.Errorf("failed to list filers from master %s: %v", masterAddr, err)
 	}
 
+	glog.Infof("FILER DISCOVERY: ListClusterNodes returned %d nodes from master %s", len(resp.ClusterNodes), masterAddr)
+
 	var filers []pb.ServerAddress
 	for _, node := range resp.ClusterNodes {
+		glog.Infof("FILER DISCOVERY: Found filer HTTP address %s", node.Address)
 		// Convert HTTP address to gRPC address using pb.ServerAddress method
 		httpAddr := pb.ServerAddress(node.Address)
 		grpcAddr := httpAddr.ToGrpcAddress()
+		glog.Infof("FILER DISCOVERY: Converted to gRPC address %s", grpcAddr)
 		filers = append(filers, pb.ServerAddress(grpcAddr))
 	}
+
+	glog.Infof("FILER DISCOVERY: Returning %d filers from master %s", len(filers), masterAddr)
 
 	return filers, nil
 }
