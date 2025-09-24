@@ -223,6 +223,11 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 
 	groupProtocol := SelectBestProtocol(request.GroupProtocols, existingProtocols)
 
+	// Ensure we have a valid protocol - fallback to "range" if empty
+	if groupProtocol == "" {
+		groupProtocol = "range"
+	}
+
 	// If a protocol is already selected for the group, reject joins that do not support it.
 	if len(existingProtocols) > 0 && (groupProtocol == "" || groupProtocol != group.Protocol) {
 		// Rollback member addition and static registration before returning error
@@ -254,6 +259,10 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 		Version:       apiVersion,
 	}
 
+	// Debug logging for JoinGroup response
+	Debug("JoinGroup v%d response: protocol=%s, leader=%s, memberID=%s",
+		apiVersion, groupProtocol, group.Leader, memberID)
+
 	// If this member is the leader, include all member info for assignment
 	if memberID == group.Leader {
 		response.Members = make([]JoinGroupMember, 0, len(group.Members))
@@ -280,20 +289,34 @@ func (h *Handler) parseJoinGroupRequest(data []byte, apiVersion uint16) (*JoinGr
 	}
 
 	offset := 0
+	isFlexible := IsFlexibleVersion(11, apiVersion)
+	Debug("JoinGroup v%d parsing: isFlexible=%v, dataLen=%d", apiVersion, isFlexible, len(data))
 
-	// JoinGroup v5 body starts with GroupID according to Kafka spec
+	// GroupID (string or compact string)
+	var groupID string
+	if isFlexible {
+		// Flexible protocol uses compact strings
+		groupIDBytes, consumed := parseCompactString(data[offset:])
+		if consumed == 0 {
+			return nil, fmt.Errorf("invalid group ID compact string")
+		}
+		groupID = string(groupIDBytes)
+		offset += consumed
+	} else {
+		// Non-flexible protocol uses regular strings
+		if offset+2 > len(data) {
+			return nil, fmt.Errorf("missing group ID length")
+		}
+		groupIDLength := int(binary.BigEndian.Uint16(data[offset:]))
+		offset += 2
+		if offset+groupIDLength > len(data) {
+			return nil, fmt.Errorf("invalid group ID length")
+		}
+		groupID = string(data[offset : offset+groupIDLength])
+		offset += groupIDLength
+	}
 
-	// GroupID (string)
-	if offset+2 > len(data) {
-		return nil, fmt.Errorf("missing group ID length")
-	}
-	groupIDLength := int(binary.BigEndian.Uint16(data[offset:]))
-	offset += 2
-	if offset+groupIDLength > len(data) {
-		return nil, fmt.Errorf("invalid group ID length")
-	}
-	groupID := string(data[offset : offset+groupIDLength])
-	offset += groupIDLength
+	Debug("JoinGroup v%d parsed GroupID: '%s'", apiVersion, groupID)
 
 	// Session timeout (4 bytes)
 	if offset+4 > len(data) {
@@ -309,19 +332,32 @@ func (h *Handler) parseJoinGroupRequest(data []byte, apiVersion uint16) (*JoinGr
 		offset += 4
 	}
 
-	// MemberID (string)
-	if offset+2 > len(data) {
-		return nil, fmt.Errorf("missing member ID length")
-	}
-	memberIDLength := int(binary.BigEndian.Uint16(data[offset:]))
-	offset += 2
-	memberID := ""
-	if memberIDLength > 0 {
-		if offset+memberIDLength > len(data) {
-			return nil, fmt.Errorf("invalid member ID length")
+	// MemberID (string or compact string)
+	var memberID string
+	if isFlexible {
+		// Flexible protocol uses compact strings
+		memberIDBytes, consumed := parseCompactString(data[offset:])
+		if consumed == 0 {
+			return nil, fmt.Errorf("invalid member ID compact string")
 		}
-		memberID = string(data[offset : offset+memberIDLength])
-		offset += memberIDLength
+		if memberIDBytes != nil {
+			memberID = string(memberIDBytes)
+		}
+		offset += consumed
+	} else {
+		// Non-flexible protocol uses regular strings
+		if offset+2 > len(data) {
+			return nil, fmt.Errorf("missing member ID length")
+		}
+		memberIDLength := int(binary.BigEndian.Uint16(data[offset:]))
+		offset += 2
+		if memberIDLength > 0 {
+			if offset+memberIDLength > len(data) {
+				return nil, fmt.Errorf("invalid member ID length")
+			}
+			memberID = string(data[offset : offset+memberIDLength])
+			offset += memberIDLength
+		}
 	}
 
 	// Parse Group Instance ID (nullable string) - for JoinGroup v5+
@@ -413,6 +449,90 @@ func (h *Handler) parseJoinGroupRequest(data []byte, apiVersion uint16) (*JoinGr
 }
 
 func (h *Handler) buildJoinGroupResponse(response JoinGroupResponse) []byte {
+	// Debug logging for JoinGroup response
+	Debug("Building JoinGroup v%d response: protocol=%s, leader=%s, memberID=%s, errorCode=%d",
+		response.Version, response.GroupProtocol, response.GroupLeader, response.MemberID, response.ErrorCode)
+
+	// Flexible response for v6+
+	if IsFlexibleVersion(11, response.Version) {
+		out := make([]byte, 0, 256)
+
+		// Correlation ID
+		cid := make([]byte, 4)
+		binary.BigEndian.PutUint32(cid, response.CorrelationID)
+		out = append(out, cid...)
+
+		// Flexible response header tagged fields (empty)
+		out = append(out, 0)
+
+		// throttle_time_ms (int32)
+		out = append(out, 0, 0, 0, 0)
+
+		// error_code (int16)
+		eb := make([]byte, 2)
+		binary.BigEndian.PutUint16(eb, uint16(response.ErrorCode))
+		out = append(out, eb...)
+
+		// generation_id (int32)
+		gb := make([]byte, 4)
+		binary.BigEndian.PutUint32(gb, uint32(response.GenerationID))
+		out = append(out, gb...)
+
+		// ProtocolType (v7+ nullable compact string). Use "consumer".
+		if response.Version >= 7 {
+			pt := "consumer"
+			out = append(out, FlexibleNullableString(&pt)...)
+		}
+
+		// ProtocolName
+		if response.Version >= 7 {
+			// nullable compact string in v7+
+			if response.GroupProtocol == "" {
+				out = append(out, 0)
+			} else {
+				out = append(out, FlexibleString(response.GroupProtocol)...)
+			}
+		} else {
+			// compact string in v6
+			out = append(out, FlexibleString(response.GroupProtocol)...)
+		}
+
+		// leader (compact string)
+		out = append(out, FlexibleString(response.GroupLeader)...)
+
+		// SkipAssignment (bool) v9+
+		if response.Version >= 9 {
+			out = append(out, 0) // false
+		}
+
+		// member_id (compact string)
+		out = append(out, FlexibleString(response.MemberID)...)
+
+		// members (compact array)
+		out = append(out, EncodeUvarint(uint32(len(response.Members)+1))...)
+		for _, m := range response.Members {
+			// member_id (compact string)
+			out = append(out, FlexibleString(m.MemberID)...)
+			// group_instance_id (compact nullable string)
+			if m.GroupInstanceID == "" {
+				out = append(out, 0)
+			} else {
+				out = append(out, FlexibleString(m.GroupInstanceID)...)
+			}
+			// metadata (compact bytes)
+			out = append(out, EncodeUvarint(uint32(len(m.Metadata)+1))...)
+			out = append(out, m.Metadata...)
+			// member tagged fields (empty)
+			out = append(out, 0)
+		}
+
+		// top-level tagged fields (empty)
+		out = append(out, 0)
+
+		return out
+	}
+
+	// Legacy (non-flexible) response path
 	// Estimate response size
 	estimatedSize := 0
 	// CorrelationID(4) + (optional throttle 4) + error_code(2) + generation_id(4)
@@ -515,9 +635,9 @@ func (h *Handler) buildJoinGroupErrorResponse(correlationID uint32, errorCode in
 		CorrelationID: correlationID,
 		ErrorCode:     errorCode,
 		GenerationID:  -1,
-		GroupProtocol: "",
-		GroupLeader:   "",
-		MemberID:      "",
+		GroupProtocol: "range",   // Use "range" as default protocol instead of empty string
+		GroupLeader:   "unknown", // Use "unknown" instead of empty string for non-nullable field
+		MemberID:      "unknown", // Use "unknown" instead of empty string for non-nullable field
 		Version:       apiVersion,
 		Members:       []JoinGroupMember{},
 	}

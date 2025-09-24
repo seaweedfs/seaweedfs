@@ -241,6 +241,33 @@ func FlexibleString(s string) []byte {
 	return buf
 }
 
+// parseCompactString parses a compact string from flexible protocol
+// Returns the string bytes and the number of bytes consumed
+func parseCompactString(data []byte) ([]byte, int) {
+	if len(data) == 0 {
+		return nil, 0
+	}
+
+	// Parse compact string length (varint)
+	length, consumed := decodeVarint(data)
+	if consumed == 0 {
+		return nil, 0
+	}
+
+	if length == 0 {
+		// Null string
+		return nil, consumed
+	}
+
+	// Adjust for compact string encoding (length includes +1)
+	actualLength := int(length) - 1
+	if actualLength < 0 || consumed+actualLength > len(data) {
+		return nil, 0
+	}
+
+	return data[consumed : consumed+actualLength], consumed + actualLength
+}
+
 // FlexibleNullableString encodes a nullable string for flexible versions
 func FlexibleNullableString(s *string) []byte {
 	if s == nil {

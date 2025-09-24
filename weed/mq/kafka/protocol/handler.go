@@ -656,10 +656,10 @@ func (h *Handler) handleApiVersions(correlationID uint32, apiVersion uint16) ([]
 		response = append(response, 0)
 	}
 
-	// API Key 11 (JoinGroup): support v0-v9 (latest Kafka protocol version)
+	// API Key 11 (JoinGroup): support v0-v6 (cap to first flexible version)
 	response = append(response, 0, 11) // API key 11
 	response = append(response, 0, 0)  // min version 0
-	response = append(response, 0, 9)  // max version 9
+	response = append(response, 0, 6)  // max version 6
 	if isFlexible {
 		response = append(response, 0)
 	}
@@ -2152,8 +2152,8 @@ func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint
 	binary.BigEndian.PutUint32(cid, correlationID)
 	response = append(response, cid...)
 
-	// Response header tagged fields for flexible protocol v5 (MISSING in original code!)
-	response = append(response, 0) // Empty tagged fields count
+	// Add flexible response header tagged fields (empty)
+	response = append(response, 0)
 
 	// throttle_time_ms (4 bytes) - comes after header tagged fields in v5
 	response = append(response, 0, 0, 0, 0)
@@ -2410,7 +2410,7 @@ func (h *Handler) validateAPIVersion(apiKey, apiVersion uint16) error {
 		19: {0, 5}, // CreateTopics: v0-v5 (updated to match implementation)
 		20: {0, 4}, // DeleteTopics: v0-v4
 		10: {0, 2}, // FindCoordinator: v0-v2
-		11: {0, 7}, // JoinGroup: v0-v7
+		11: {0, 6}, // JoinGroup: cap to v6 (first flexible version)
 		14: {0, 5}, // SyncGroup: v0-v5
 		8:  {0, 2}, // OffsetCommit: v0-v2
 		9:  {0, 5}, // OffsetFetch: v0-v5 (updated to match implementation)
@@ -2552,6 +2552,9 @@ func (h *Handler) handleDescribeConfigs(correlationID uint32, apiVersion uint16,
 	binary.BigEndian.PutUint32(cid, correlationID)
 	response = append(response, cid...)
 
+	// Add flexible response header tagged fields (empty)
+	response = append(response, 0)
+
 	// throttle_time_ms (4 bytes) - placed directly after correlation ID to match prior flexible handling
 	response = append(response, 0, 0, 0, 0)
 
@@ -2569,8 +2572,79 @@ func (h *Handler) handleDescribeConfigs(correlationID uint32, apiVersion uint16,
 		nameBytes := []byte(res.ResourceName)
 		response = append(response, EncodeUvarint(uint32(len(nameBytes)+1))...)
 		response = append(response, nameBytes...)
-		// Configs (compact array) - empty
-		response = append(response, 1) // 0 elements => length = 1
+
+		// Build configs for this resource
+		var cfgs []ConfigEntry
+		if res.ResourceType == 2 { // Topic
+			cfgs = h.getTopicConfigs(res.ResourceName, res.ConfigNames)
+			// Ensure cleanup.policy is compact for _schemas
+			if res.ResourceName == "_schemas" {
+				replaced := false
+				for i := range cfgs {
+					if cfgs[i].Name == "cleanup.policy" {
+						cfgs[i].Value = "compact"
+						replaced = true
+						break
+					}
+				}
+				if !replaced {
+					cfgs = append(cfgs, ConfigEntry{Name: "cleanup.policy", Value: "compact"})
+				}
+			}
+		} else if res.ResourceType == 4 { // Broker
+			cfgs = h.getBrokerConfigs(res.ConfigNames)
+		} else {
+			cfgs = []ConfigEntry{}
+		}
+
+		// Configs (compact array)
+		response = append(response, EncodeUvarint(uint32(len(cfgs)+1))...)
+
+		for _, cfg := range cfgs {
+			// name (compact string)
+			cb := []byte(cfg.Name)
+			response = append(response, EncodeUvarint(uint32(len(cb)+1))...)
+			response = append(response, cb...)
+
+			// value (compact nullable string)
+			vb := []byte(cfg.Value)
+			if len(vb) == 0 {
+				response = append(response, 0) // null
+			} else {
+				response = append(response, EncodeUvarint(uint32(len(vb)+1))...)
+				response = append(response, vb...)
+			}
+
+			// readOnly (bool)
+			if cfg.ReadOnly {
+				response = append(response, 1)
+			} else {
+				response = append(response, 0)
+			}
+
+			// configSource (int8): DEFAULT_CONFIG = 5
+			response = append(response, byte(5))
+
+			// isSensitive (bool)
+			if cfg.Sensitive {
+				response = append(response, 1)
+			} else {
+				response = append(response, 0)
+			}
+
+			// synonyms (compact array) - empty
+			response = append(response, 1)
+
+			// config_type (int8) - STRING = 1
+			response = append(response, byte(1))
+
+			// documentation (compact nullable string) - null
+			response = append(response, 0)
+
+			// per-config tagged fields (empty)
+			response = append(response, 0)
+		}
+
 		// Per-result tagged fields (empty)
 		response = append(response, 0)
 	}

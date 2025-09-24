@@ -86,6 +86,9 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 		topicName := string(requestBody[offset : offset+int(topicNameSize)])
 		offset += int(topicNameSize)
 
+		// Debug: log topic being produced to
+		Debug("Produce v%d - writing to topic: %s", apiVersion, topicName)
+
 		// Parse partitions count
 		partitionsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 		offset += 4
@@ -233,6 +236,9 @@ func (h *Handler) produceToSeaweedMQ(topic string, partition int32, recordSetDat
 
 	// Extract first record from record set (simplified)
 	key, value := h.extractFirstRecord(recordSetData)
+	if key == nil && value == nil {
+		return 0, fmt.Errorf("failed to parse Kafka record set")
+	}
 
 	// Publish to SeaweedMQ using schema-based encoding
 	return h.produceSchemaBasedRecord(topic, partition, key, value)
@@ -245,7 +251,9 @@ func (h *Handler) extractAllRecords(recordSetData []byte) []struct{ Key, Value [
 	if len(recordSetData) < 61 {
 		// Too small to be a full batch; treat as single opaque record
 		key, value := h.extractFirstRecord(recordSetData)
-		results = append(results, struct{ Key, Value []byte }{Key: key, Value: value})
+		if key != nil || value != nil {
+			results = append(results, struct{ Key, Value []byte }{Key: key, Value: value})
+		}
 		return results
 	}
 
@@ -263,7 +271,9 @@ func (h *Handler) extractAllRecords(recordSetData []byte) []struct{ Key, Value [
 	if magic != 2 {
 		// Unsupported, fallback
 		key, value := h.extractFirstRecord(recordSetData)
-		results = append(results, struct{ Key, Value []byte }{Key: key, Value: value})
+		if key != nil || value != nil {
+			results = append(results, struct{ Key, Value []byte }{Key: key, Value: value})
+		}
 		return results
 	}
 
@@ -370,10 +380,8 @@ func (h *Handler) extractAllRecords(recordSetData []byte) []struct{ Key, Value [
 func (h *Handler) extractFirstRecord(recordSetData []byte) ([]byte, []byte) {
 
 	if len(recordSetData) < 61 {
-		// Fallback to placeholder
-		key := []byte("kafka-key")
-		value := fmt.Sprintf("kafka-message-data-%d", time.Now().UnixNano())
-		return key, []byte(value)
+		// Record set too small to contain a valid Kafka v2 batch
+		return nil, nil
 	}
 
 	offset := 0
@@ -392,10 +400,8 @@ func (h *Handler) extractFirstRecord(recordSetData []byte) ([]byte, []byte) {
 	offset += 1 // magic byte
 
 	if magic != 2 {
-		// Fallback for older formats
-		key := []byte("kafka-key")
-		value := fmt.Sprintf("kafka-message-data-%d", time.Now().UnixNano())
-		return key, []byte(value)
+		// Unsupported magic byte - only Kafka v2 format is supported
+		return nil, nil
 	}
 
 	offset += 4 // skip crc
@@ -411,31 +417,27 @@ func (h *Handler) extractFirstRecord(recordSetData []byte) ([]byte, []byte) {
 	offset += 4 // records_count
 
 	if recordsCount == 0 {
-		key := []byte("kafka-key")
-		value := fmt.Sprintf("kafka-message-data-%d", time.Now().UnixNano())
-		return key, []byte(value)
+		// No records in batch
+		return nil, nil
 	}
 
 	// Parse first record
 	if offset >= len(recordSetData) {
-		key := []byte("kafka-key")
-		value := fmt.Sprintf("kafka-message-data-%d", time.Now().UnixNano())
-		return key, []byte(value)
+		// Not enough data to parse record
+		return nil, nil
 	}
 
 	// Read record length (varint)
 	recordLength, varintLen := decodeVarint(recordSetData[offset:])
 	if varintLen == 0 {
-		key := []byte("kafka-key")
-		value := fmt.Sprintf("kafka-message-data-%d", time.Now().UnixNano())
-		return key, []byte(value)
+		// Invalid varint encoding
+		return nil, nil
 	}
 	offset += varintLen
 
 	if offset+int(recordLength) > len(recordSetData) {
-		key := []byte("kafka-key")
-		value := fmt.Sprintf("kafka-message-data-%d", time.Now().UnixNano())
-		return key, []byte(value)
+		// Record length exceeds available data
+		return nil, nil
 	}
 
 	recordData := recordSetData[offset : offset+int(recordLength)]
@@ -447,27 +449,24 @@ func (h *Handler) extractFirstRecord(recordSetData []byte) ([]byte, []byte) {
 	// Skip timestamp_delta (varint)
 	_, varintLen = decodeVarint(recordData[recordOffset:])
 	if varintLen == 0 {
-		key := []byte("kafka-key")
-		value := fmt.Sprintf("kafka-message-data-%d", time.Now().UnixNano())
-		return key, []byte(value)
+		// Invalid timestamp_delta varint
+		return nil, nil
 	}
 	recordOffset += varintLen
 
 	// Skip offset_delta (varint)
 	_, varintLen = decodeVarint(recordData[recordOffset:])
 	if varintLen == 0 {
-		key := []byte("kafka-key")
-		value := fmt.Sprintf("kafka-message-data-%d", time.Now().UnixNano())
-		return key, []byte(value)
+		// Invalid offset_delta varint
+		return nil, nil
 	}
 	recordOffset += varintLen
 
 	// Read key length and key
 	keyLength, varintLen := decodeVarint(recordData[recordOffset:])
 	if varintLen == 0 {
-		key := []byte("kafka-key")
-		value := fmt.Sprintf("kafka-message-data-%d", time.Now().UnixNano())
-		return key, []byte(value)
+		// Invalid key length varint
+		return nil, nil
 	}
 	recordOffset += varintLen
 
@@ -478,9 +477,8 @@ func (h *Handler) extractFirstRecord(recordSetData []byte) ([]byte, []byte) {
 		key = []byte{} // empty key
 	} else {
 		if recordOffset+int(keyLength) > len(recordData) {
-			key = []byte("kafka-key")
-			value := fmt.Sprintf("kafka-message-data-%d", time.Now().UnixNano())
-			return key, []byte(value)
+			// Key length exceeds available data
+			return nil, nil
 		}
 		key = recordData[recordOffset : recordOffset+int(keyLength)]
 		recordOffset += int(keyLength)
@@ -489,11 +487,8 @@ func (h *Handler) extractFirstRecord(recordSetData []byte) ([]byte, []byte) {
 	// Read value length and value
 	valueLength, varintLen := decodeVarint(recordData[recordOffset:])
 	if varintLen == 0 {
-		if key == nil {
-			key = []byte("kafka-key")
-		}
-		value := fmt.Sprintf("kafka-message-data-%d", time.Now().UnixNano())
-		return key, []byte(value)
+		// Invalid value length varint
+		return nil, nil
 	}
 	recordOffset += varintLen
 
@@ -504,11 +499,8 @@ func (h *Handler) extractFirstRecord(recordSetData []byte) ([]byte, []byte) {
 		value = []byte{} // empty value
 	} else {
 		if recordOffset+int(valueLength) > len(recordData) {
-			if key == nil {
-				key = []byte("kafka-key")
-			}
-			value := fmt.Sprintf("kafka-message-data-%d", time.Now().UnixNano())
-			return key, []byte(value)
+			// Value length exceeds available data
+			return nil, nil
 		}
 		value = recordData[recordOffset : recordOffset+int(valueLength)]
 	}
@@ -556,6 +548,7 @@ func decodeVarint(data []byte) (int64, int) {
 
 // handleProduceV2Plus handles Produce API v2-v7 (Kafka 0.11+)
 func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
+	Debug("PRODUCE DEBUG: handleProduceV2Plus called - correlationID=%d, apiVersion=%d, bodyLen=%d", correlationID, apiVersion, len(requestBody))
 
 	// DEBUG: Hex dump first 100 bytes to understand actual request format
 	dumpLen := len(requestBody)
@@ -700,7 +693,9 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 					if len(records) == 0 {
 						// Fallback to first record extraction
 						key, value := h.extractFirstRecord(recordSetData)
-						records = append(records, struct{ Key, Value []byte }{Key: key, Value: value})
+						if key != nil || value != nil {
+							records = append(records, struct{ Key, Value []byte }{Key: key, Value: value})
+						}
 					}
 
 					var firstOffsetSet bool
