@@ -192,6 +192,9 @@ func TestCreateTopicsV2Plus_CompactFormat(t *testing.T) {
 	// FIXED: Added missing assignments array between replication_factor and configs
 	request := make([]byte, 0, 256)
 
+	// Tagged fields (empty) - REQUIRED at the beginning for v2+
+	request = append(request, 0x00)
+
 	// Topics array count (compact: count + 1, so 1 topic = 2)
 	request = append(request, 0x02)
 
@@ -254,6 +257,9 @@ func TestCreateTopicsV2Plus_MultipleTopics(t *testing.T) {
 	// Build a CreateTopics v2 request with 2 topics
 	// FIXED: Added missing assignments arrays for both topics
 	request := make([]byte, 0, 512)
+
+	// Tagged fields (empty) - REQUIRED at the beginning for v2+
+	request = append(request, 0x00)
 
 	// Topics array count (compact: 2 topics = 3)
 	request = append(request, 0x03)
@@ -381,6 +387,9 @@ func TestCreateTopics_Integration(t *testing.T) {
 				// Build v2+ format request (compact)
 				// FIXED: Added missing assignments array
 				request = make([]byte, 0, 256)
+
+				// Tagged fields (empty) - REQUIRED at the beginning for v2+
+				request = append(request, 0x00)
 
 				// Topics array count (compact: 1 topic = 2)
 				request = append(request, 0x02)
@@ -550,10 +559,12 @@ func TestCreateTopicsV5_WithoutTaggedFieldsCount(t *testing.T) {
 	handler := NewTestHandler()
 	defer handler.Close()
 
-	// Test the v5 format without the initial 0x00 byte (tagged fields count)
-	// This should also work with our implementation
+	// Test the v5 format with the initial 0x00 byte (tagged fields count)
+	// This is REQUIRED for proper v5 format
 	request := []byte{
-		// Topics compact array (1 topic) - no initial tagged fields count
+		// Tagged fields (empty) - REQUIRED at the beginning for v5+
+		0x00,
+		// Topics compact array (1 topic)
 		0x02, // compact array length: 1 topic + 1 = 2
 
 		// Topic: "test-topic"
@@ -605,7 +616,7 @@ func TestCreateTopicsV5_MultipleTopicsWithConfigs(t *testing.T) {
 	// Build v5 request with 2 topics, each with different configs
 	request := make([]byte, 0, 512)
 
-	// Tagged fields count at start
+	// Tagged fields (empty) - REQUIRED at the beginning for v5+
 	request = append(request, 0x00)
 
 	// Topics compact array (2 topics)
@@ -1151,12 +1162,12 @@ func TestCreateTopicsV5_ResponseFormatNPEFix(t *testing.T) {
 		t.Error("Topic '_schemas' was not created")
 	}
 
-	t.Log("✅ CreateTopics v5 NPE fix validated:")
-	t.Log("   • Response format: correlation_id(4) + throttle_time_ms(4) + topics_array")
-	t.Log("   • No extra tagged fields byte at beginning")
-	t.Log("   • Topics array positioned correctly at offset 8")
-	t.Log("   • AdminClient data.topics() will return proper list, not null")
-	t.Log("   • NPE at line 1787 eliminated!")
+	t.Log("CreateTopics v5 NPE fix validated:")
+	t.Log("   Response format: correlation_id(4) + throttle_time_ms(4) + topics_array")
+	t.Log("   No extra tagged fields byte at beginning")
+	t.Log("   Topics array positioned correctly at offset 8")
+	t.Log("   AdminClient data.topics() will return proper list, not null")
+	t.Log("   NPE at line 1787 eliminated!")
 }
 
 // TestCreateTopicsV5_TaggedFieldsParsingFix tests the specific fix for handling top-level tagged fields
@@ -1324,7 +1335,7 @@ func TestCreateTopicsV5_SchemaRegistryIntegration(t *testing.T) {
 	// 2. Send CreateTopics v5 request for missing topics
 	// 3. Process response and continue
 
-	t.Log("🧪 Testing complete Schema Registry workflow...")
+	t.Log("Testing complete Schema Registry workflow...")
 
 	// Step 1: Schema Registry checks metadata (should find no topics)
 	metadataRequest := []byte{
@@ -1340,7 +1351,7 @@ func TestCreateTopicsV5_SchemaRegistryIntegration(t *testing.T) {
 		t.Fatalf("Metadata request failed: %v", err)
 	}
 
-	t.Logf("   • Metadata response: %d bytes", len(metadataResponse))
+	t.Logf("   Metadata response: %d bytes", len(metadataResponse))
 
 	// Step 2: Schema Registry sends CreateTopics v5 for _schemas topic
 	// (This is the exact format that was failing before our fixes)
@@ -1399,18 +1410,18 @@ func TestCreateTopicsV5_SchemaRegistryIntegration(t *testing.T) {
 		t.Errorf("Expected 1 topic in response, got %d", topicsLen-1)
 	}
 
-	t.Logf("   • CreateTopics response: %d bytes", len(createTopicsResponse))
+	t.Logf("   CreateTopics response: %d bytes", len(createTopicsResponse))
 
 	// Step 4: Verify topic was actually created
 	if !handler.seaweedMQHandler.TopicExists("_schemas") {
 		t.Errorf("Topic '_schemas' was not created")
 	}
 
-	t.Log("✅ Schema Registry integration test passed!")
-	t.Log("   • Metadata check: ✅")
-	t.Log("   • CreateTopics v5 parsing: ✅")
-	t.Log("   • Response format: ✅")
-	t.Log("   • Topic creation: ✅")
+	t.Log("Schema Registry integration test passed!")
+	t.Log("   Metadata check: passed")
+	t.Log("   CreateTopics v5 parsing: passed")
+	t.Log("   Response format: passed")
+	t.Log("   Topic creation: passed")
 	t.Log("")
-	t.Log("🎯 The CreateTopics v5 fixes enable Schema Registry compatibility!")
+	t.Log("The CreateTopics v5 fixes enable Schema Registry compatibility!")
 }

@@ -175,6 +175,9 @@ func TestCreateTopics_V5Support(t *testing.T) {
 	requestBody := make([]byte, 0, 128)
 
 	// Build v5 request (compact format)
+	// Tagged fields (empty) - REQUIRED at the beginning for v5+
+	requestBody = append(requestBody, 0x00)
+
 	// Topics array (compact: 1 topic = 2)
 	requestBody = append(requestBody, 0x02)
 
@@ -189,10 +192,13 @@ func TestCreateTopics_V5Support(t *testing.T) {
 	// replication_factor = 1
 	requestBody = append(requestBody, 0x00, 0x01)
 
-	// configs array (compact: empty = 0)
-	requestBody = append(requestBody, 0x00)
+	// assignments array (compact: empty = 1)
+	requestBody = append(requestBody, 0x01)
 
-	// tagged fields (empty)
+	// configs array (compact: empty = 1)
+	requestBody = append(requestBody, 0x01)
+
+	// topic tagged fields (empty)
 	requestBody = append(requestBody, 0x00)
 
 	// timeout_ms = 5000
@@ -322,10 +328,10 @@ func TestDescribeConfigs_NPEFix(t *testing.T) {
 		t.Errorf("DESCRIBE_CONFIGS correlation ID mismatch: expected 12346, got %d", correlationID)
 	}
 
-	t.Log("✅ DESCRIBE_CONFIGS NPE fix validated:")
-	t.Log("   • API key 32 properly advertised in ApiVersions")
-	t.Log("   • DESCRIBE_CONFIGS requests handled successfully")
-	t.Log("   • Schema Registry should no longer get 'broker does not support DESCRIBE_CONFIGS' error")
+	t.Log("DESCRIBE_CONFIGS NPE fix validated:")
+	t.Log("   API key 32 properly advertised in ApiVersions")
+	t.Log("   DESCRIBE_CONFIGS requests handled successfully")
+	t.Log("   Schema Registry should no longer get 'broker does not support DESCRIBE_CONFIGS' error")
 }
 
 // TestSchemaRegistry_NPEFixesIntegration tests both NPE fixes working together
@@ -334,7 +340,7 @@ func TestSchemaRegistry_NPEFixesIntegration(t *testing.T) {
 	handler := NewTestHandler()
 	defer handler.Close()
 
-	t.Log("🧪 Testing Schema Registry NPE fixes integration...")
+	t.Log("Testing Schema Registry NPE fixes integration...")
 
 	// Phase 1: Schema Registry checks ApiVersions for DESCRIBE_CONFIGS support
 	t.Log("Phase 1: Schema Registry checks ApiVersions for DESCRIBE_CONFIGS...")
@@ -359,9 +365,9 @@ func TestSchemaRegistry_NPEFixesIntegration(t *testing.T) {
 	}
 
 	if !foundDescribeConfigs {
-		t.Fatal("❌ Fix #1 FAILED: DESCRIBE_CONFIGS not advertised")
+		t.Fatal("Fix #1 FAILED: DESCRIBE_CONFIGS not advertised")
 	}
-	t.Log("   ✅ DESCRIBE_CONFIGS (API 32) found in ApiVersions response")
+	t.Log("   DESCRIBE_CONFIGS (API 32) found in ApiVersions response")
 
 	// Phase 2: Schema Registry calls DESCRIBE_CONFIGS successfully
 	t.Log("Phase 2: Schema Registry calls DESCRIBE_CONFIGS...")
@@ -375,9 +381,9 @@ func TestSchemaRegistry_NPEFixesIntegration(t *testing.T) {
 
 	_, err = handler.handleDescribeConfigs(1001, 0, describeRequest)
 	if err != nil {
-		t.Fatalf("❌ Fix #1 FAILED: DESCRIBE_CONFIGS call failed: %v", err)
+		t.Fatalf("Fix #1 FAILED: DESCRIBE_CONFIGS call failed: %v", err)
 	}
-	t.Log("   ✅ DESCRIBE_CONFIGS request succeeded")
+	t.Log("   DESCRIBE_CONFIGS request succeeded")
 
 	// Phase 3: Schema Registry calls CreateTopics v5 without NPE
 	t.Log("Phase 3: Schema Registry calls CreateTopics v5...")
@@ -399,12 +405,12 @@ func TestSchemaRegistry_NPEFixesIntegration(t *testing.T) {
 
 	createResponse, err := handler.handleCreateTopicsV2Plus(1002, 5, createTopicsRequest)
 	if err != nil {
-		t.Fatalf("❌ Fix #2 FAILED: CreateTopics v5 failed: %v", err)
+		t.Fatalf("Fix #2 FAILED: CreateTopics v5 failed: %v", err)
 	}
 
 	// Verify response structure prevents NPE (fix #2)
 	if len(createResponse) < 9 {
-		t.Fatal("❌ Fix #2 FAILED: Response too short")
+		t.Fatal("Fix #2 FAILED: Response too short")
 	}
 
 	// Check response structure: correlation_id(4) + throttle_time_ms(4) + topics_array
@@ -413,33 +419,33 @@ func TestSchemaRegistry_NPEFixesIntegration(t *testing.T) {
 	topicsArrayLength := createResponse[8]
 
 	if correlationID != 1002 {
-		t.Errorf("❌ Fix #2 FAILED: Wrong correlation ID: %d", correlationID)
+		t.Errorf("Fix #2 FAILED: Wrong correlation ID: %d", correlationID)
 	}
 	if throttleTime != 0 {
-		t.Errorf("❌ Fix #2 FAILED: Wrong throttle time: %d", throttleTime)
+		t.Errorf("Fix #2 FAILED: Wrong throttle time: %d", throttleTime)
 	}
 	if topicsArrayLength != 2 { // 1 topic + 1 for compact encoding
-		t.Fatalf("❌ Fix #2 FAILED: Topics array length %d causes data.topics() to return null", topicsArrayLength)
+		t.Fatalf("Fix #2 FAILED: Topics array length %d causes data.topics() to return null", topicsArrayLength)
 	}
 
-	t.Log("   ✅ CreateTopics v5 response format correct - no NPE at line 1787")
+	t.Log("   CreateTopics v5 response format correct - no NPE at line 1787")
 
 	// Phase 4: Verify topic was created
 	if !handler.seaweedMQHandler.TopicExists("_schemas") {
-		t.Error("❌ Topic creation failed")
+		t.Error("Topic creation failed")
 	}
-	t.Log("   ✅ Topic '_schemas' successfully created")
+	t.Log("   Topic '_schemas' successfully created")
 
 	t.Log("")
-	t.Log("🎉 SCHEMA REGISTRY NPE FIXES INTEGRATION - COMPLETE SUCCESS!")
-	t.Log("   ✅ Fix #1: DESCRIBE_CONFIGS properly advertised and working")
-	t.Log("   ✅ Fix #2: CreateTopics v5 response format prevents NPE")
-	t.Log("   ✅ Schema Registry workflow: ApiVersions → DescribeConfigs → CreateTopics")
-	t.Log("   ✅ No more 'broker does not support DESCRIBE_CONFIGS' error")
-	t.Log("   ✅ No more NPE at org.apache.kafka.clients.admin.KafkaAdminClient:1787")
-	t.Log("   ✅ data.topics() returns proper list, not null")
+	t.Log("SCHEMA REGISTRY NPE FIXES INTEGRATION - COMPLETE SUCCESS!")
+	t.Log("   Fix #1: DESCRIBE_CONFIGS properly advertised and working")
+	t.Log("   Fix #2: CreateTopics v5 response format prevents NPE")
+	t.Log("   Schema Registry workflow: ApiVersions -> DescribeConfigs -> CreateTopics")
+	t.Log("   No more 'broker does not support DESCRIBE_CONFIGS' error")
+	t.Log("   No more NPE at org.apache.kafka.clients.admin.KafkaAdminClient:1787")
+	t.Log("   data.topics() returns proper list, not null")
 	t.Log("")
-	t.Log("🚀 Schema Registry can now successfully connect to SeaweedFS Kafka Gateway!")
+	t.Log("Schema Registry can now successfully connect to SeaweedFS Kafka Gateway!")
 }
 
 func TestApiVersions_ResponseFormat(t *testing.T) {

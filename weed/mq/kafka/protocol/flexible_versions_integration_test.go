@@ -204,6 +204,9 @@ func TestCreateTopics_FlexibleVersionConsistency(t *testing.T) {
 	// Build CreateTopics v2 request using flexible version utilities
 	var requestData []byte
 
+	// Tagged fields (empty) - REQUIRED at the beginning for v2+
+	requestData = append(requestData, 0)
+
 	// Topics array (compact: 1 topic = 2)
 	requestData = append(requestData, 2)
 
@@ -217,10 +220,13 @@ func TestCreateTopics_FlexibleVersionConsistency(t *testing.T) {
 	// Replication factor (2 bytes)
 	requestData = append(requestData, 0, 1)
 
-	// Configs array (compact: empty = 0)
-	requestData = append(requestData, 0)
+	// Assignments array (compact: empty = 1)
+	requestData = append(requestData, 1)
 
-	// Tagged fields (empty)
+	// Configs array (compact: empty = 1)
+	requestData = append(requestData, 1)
+
+	// Topic tagged fields (empty)
 	requestData = append(requestData, 0)
 
 	// Timeout (4 bytes)

@@ -248,8 +248,8 @@ func parseCompactString(data []byte) ([]byte, int) {
 		return nil, 0
 	}
 
-	// Parse compact string length (varint)
-	length, consumed := decodeVarint(data)
+	// Parse compact string length (unsigned varint - no zigzag decoding!)
+	length, consumed := decodeUnsignedVarint(data)
 	if consumed == 0 {
 		return nil, 0
 	}
@@ -264,7 +264,10 @@ func parseCompactString(data []byte) ([]byte, int) {
 
 	// In compact strings, length is actual length + 1
 	// So length 1 means empty string, length > 1 means non-empty
-	actualLength := int(length) - 1
+	if length == 0 {
+		return nil, consumed // Already handled above
+	}
+	actualLength := int(length - 1)
 	if actualLength < 0 {
 		return nil, 0
 	}
@@ -291,6 +294,35 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// decodeUnsignedVarint decodes an unsigned varint (no zigzag decoding)
+func decodeUnsignedVarint(data []byte) (uint64, int) {
+	if len(data) == 0 {
+		return 0, 0
+	}
+
+	var result uint64
+	var shift uint
+	var bytesRead int
+
+	for i, b := range data {
+		if i > 9 { // varints can be at most 10 bytes
+			return 0, 0 // invalid varint
+		}
+
+		bytesRead++
+		result |= uint64(b&0x7F) << shift
+
+		if (b & 0x80) == 0 {
+			// Most significant bit is 0, we're done
+			return result, bytesRead
+		}
+
+		shift += 7
+	}
+
+	return 0, 0 // incomplete varint
 }
 
 // FlexibleNullableString encodes a nullable string for flexible versions

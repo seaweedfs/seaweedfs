@@ -2152,10 +2152,7 @@ func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint
 	binary.BigEndian.PutUint32(cid, correlationID)
 	response = append(response, cid...)
 
-	// Add flexible response header tagged fields (empty)
-	response = append(response, 0)
-
-	// throttle_time_ms (4 bytes) - comes after header tagged fields in v5
+	// throttle_time_ms (4 bytes) - comes directly after correlation ID in CreateTopics responses
 	response = append(response, 0, 0, 0, 0)
 
 	// topics (compact array) - V5 FLEXIBLE FORMAT
