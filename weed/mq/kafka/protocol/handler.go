@@ -444,31 +444,48 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			continue
 		}
 
-		// Parse header using flexible version utilities for validation and client ID extraction
-		header, requestBody, parseErr := ParseRequestHeader(messageBuf)
-		if parseErr != nil {
-			// Fall back to basic header parsing if flexible version parsing fails
-			Debug("Flexible header parsing failed, using basic parsing: %v", parseErr)
+		// Extract request body - special handling for ApiVersions requests
+		var requestBody []byte
+		if apiKey == 18 && apiVersion >= 3 {
+			// ApiVersions v3+ uses client_software_name + client_software_version, not client_id
+			bodyOffset := 8 // Skip api_key(2) + api_version(2) + correlation_id(4)
 
-			// Basic header parsing fallback (original logic)
-			bodyOffset := 8
-			if len(messageBuf) < bodyOffset+2 {
-				return fmt.Errorf("invalid header: missing client_id length")
-			}
-			clientIDLen := int16(binary.BigEndian.Uint16(messageBuf[bodyOffset : bodyOffset+2]))
-			bodyOffset += 2
-			if clientIDLen >= 0 {
-				if len(messageBuf) < bodyOffset+int(clientIDLen) {
-					return fmt.Errorf("invalid header: client_id truncated")
+			// Skip client_software_name (compact string)
+			if len(messageBuf) > bodyOffset {
+				clientNameLen := int(messageBuf[bodyOffset]) // compact string length
+				if clientNameLen > 0 {
+					clientNameLen-- // compact strings encode length+1
+					bodyOffset += 1 + clientNameLen
+				} else {
+					bodyOffset += 1 // just the length byte for null/empty
 				}
-				bodyOffset += int(clientIDLen)
 			}
+
+			// Skip client_software_version (compact string)
+			if len(messageBuf) > bodyOffset {
+				clientVersionLen := int(messageBuf[bodyOffset]) // compact string length
+				if clientVersionLen > 0 {
+					clientVersionLen-- // compact strings encode length+1
+					bodyOffset += 1 + clientVersionLen
+				} else {
+					bodyOffset += 1 // just the length byte for null/empty
+				}
+			}
+
+			// Skip tagged fields (should be 0x00 for ApiVersions)
+			if len(messageBuf) > bodyOffset {
+				bodyOffset += 1 // tagged fields byte
+			}
+
 			requestBody = messageBuf[bodyOffset:]
 		} else {
-			// Validate parsed header matches what we already extracted
-			if header.APIKey != apiKey || header.APIVersion != apiVersion || header.CorrelationID != correlationID {
-				Debug("Header parsing mismatch - using basic parsing as fallback")
-				// Fall back to basic parsing rather than failing
+			// Parse header using flexible version utilities for other APIs
+			header, parsedRequestBody, parseErr := ParseRequestHeader(messageBuf)
+			if parseErr != nil {
+				// Fall back to basic header parsing if flexible version parsing fails
+				Debug("Flexible header parsing failed, using basic parsing: %v", parseErr)
+
+				// Basic header parsing fallback (original logic)
 				bodyOffset := 8
 				if len(messageBuf) < bodyOffset+2 {
 					return fmt.Errorf("invalid header: missing client_id length")
@@ -482,9 +499,31 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 					bodyOffset += int(clientIDLen)
 				}
 				requestBody = messageBuf[bodyOffset:]
-			} else if header.ClientID != nil {
-				// Log client ID if available and parsing was successful
-				Debug("Client ID: %s", *header.ClientID)
+			} else {
+				// Use the successfully parsed request body
+				requestBody = parsedRequestBody
+
+				// Validate parsed header matches what we already extracted
+				if header.APIKey != apiKey || header.APIVersion != apiVersion || header.CorrelationID != correlationID {
+					Debug("Header parsing mismatch - using basic parsing as fallback")
+					// Fall back to basic parsing rather than failing
+					bodyOffset := 8
+					if len(messageBuf) < bodyOffset+2 {
+						return fmt.Errorf("invalid header: missing client_id length")
+					}
+					clientIDLen := int16(binary.BigEndian.Uint16(messageBuf[bodyOffset : bodyOffset+2]))
+					bodyOffset += 2
+					if clientIDLen >= 0 {
+						if len(messageBuf) < bodyOffset+int(clientIDLen) {
+							return fmt.Errorf("invalid header: client_id truncated")
+						}
+						bodyOffset += int(clientIDLen)
+					}
+					requestBody = messageBuf[bodyOffset:]
+				} else if header.ClientID != nil {
+					// Log client ID if available and parsing was successful
+					Debug("Client ID: %s", *header.ClientID)
+				}
 			}
 		}
 
@@ -575,179 +614,63 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 }
 
 func (h *Handler) handleApiVersions(correlationID uint32, apiVersion uint16) ([]byte, error) {
-	// Build ApiVersions response supporting flexible versions (v3+)
-	isFlexible := IsFlexibleVersion(18, apiVersion)
+	// Send correct flexible or non-flexible response based on API version
+	// This fixes the AdminClient "collection size 2184558" error by using proper varint encoding
+	response := make([]byte, 0, 512)
 
-	response := make([]byte, 0, 128)
-
-	// Correlation ID
+	// === RESPONSE HEADER ===
+	// Correlation ID (4 bytes) - always fixed-length
 	correlationIDBytes := make([]byte, 4)
 	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
 	response = append(response, correlationIDBytes...)
 
-	// Error code (0 = no error)
-	response = append(response, 0, 0)
+	// ADMINLICENT COMPATIBILITY FIX:
+	// AdminClient expects response header version 0 (no tagged fields) even for v3+
+	// This technically violates protocol but achieves practical compatibility
+	// if apiVersion >= 3 {
+	//	response = append(response, 0x00) // Empty tagged fields (varint: single byte 0)
+	// }
 
-	// Number of API keys - use compact or regular array format based on version
-	apiKeysCount := uint32(17)
-	if isFlexible {
-		// Compact array format for flexible versions
-		response = append(response, CompactArrayLength(apiKeysCount)...)
+	// === RESPONSE BODY ===
+	// Error code (2 bytes) - always fixed-length
+	response = append(response, 0, 0) // No error
+
+	// API Keys Array - CRITICAL FIX: Use correct encoding based on version
+	if apiVersion >= 3 {
+		// FLEXIBLE FORMAT: Compact array with varint length - THIS FIXES THE ADMINCLIENT BUG!
+		response = append(response, CompactArrayLength(uint32(len(SupportedApiKeys)))...)
+
+		// Add API key entries with per-element tagged fields
+		for _, api := range SupportedApiKeys {
+			response = append(response, byte(api.ApiKey>>8), byte(api.ApiKey))         // api_key (2 bytes)
+			response = append(response, byte(api.MinVersion>>8), byte(api.MinVersion)) // min_version (2 bytes)
+			response = append(response, byte(api.MaxVersion>>8), byte(api.MaxVersion)) // max_version (2 bytes)
+			response = append(response, 0x00)                                          // Per-element tagged fields (varint: empty)
+		}
+
 	} else {
-		// Regular array format for older versions
-		response = append(response, 0, 0, 0, 17) // 17 API keys
+		// NON-FLEXIBLE FORMAT: Regular array with fixed 4-byte length
+		response = append(response, 0, 0, 0, byte(len(SupportedApiKeys))) // Array length (4 bytes)
+
+		// Add API key entries without tagged fields
+		for _, api := range SupportedApiKeys {
+			response = append(response, byte(api.ApiKey>>8), byte(api.ApiKey))         // api_key (2 bytes)
+			response = append(response, byte(api.MinVersion>>8), byte(api.MinVersion)) // min_version (2 bytes)
+			response = append(response, byte(api.MaxVersion>>8), byte(api.MaxVersion)) // max_version (2 bytes)
+		}
 	}
 
-	// API Key 18 (ApiVersions): api_key(2) + min_version(2) + max_version(2)
-	response = append(response, 0, 18) // API key 18
-	response = append(response, 0, 0)  // min version 0
-	response = append(response, 0, 3)  // max version 3
-	if isFlexible {
-		// per-element tagged fields (empty)
-		response = append(response, 0)
-	}
-
-	// API Key 3 (Metadata): api_key(2) + min_version(2) + max_version(2)
-	response = append(response, 0, 3) // API key 3
-	response = append(response, 0, 0) // min version 0
-	response = append(response, 0, 7) // max version 7
-	if isFlexible {
-		response = append(response, 0)
-	}
-
-	// API Key 2 (ListOffsets): limit to v2 (implemented and tested)
-	response = append(response, 0, 2) // API key 2
-	response = append(response, 0, 0) // min version 0
-	response = append(response, 0, 2) // max version 2
-	if isFlexible {
-		response = append(response, 0)
-	}
-
-	// API Key 19 (CreateTopics): api_key(2) + min_version(2) + max_version(2)
-	response = append(response, 0, 19) // API key 19
-	response = append(response, 0, 0)  // min version 0
-	response = append(response, 0, 5)  // max version 5
-	if isFlexible {
-		response = append(response, 0)
-	}
-
-	// API Key 20 (DeleteTopics): api_key(2) + min_version(2) + max_version(2)
-	response = append(response, 0, 20) // API key 20
-	response = append(response, 0, 0)  // min version 0
-	response = append(response, 0, 4)  // max version 4
-	if isFlexible {
-		response = append(response, 0)
-	}
-
-	// API Key 0 (Produce): api_key(2) + min_version(2) + max_version(2)
-	// Support v7 for Sarama compatibility (Kafka 2.1.0)
-	response = append(response, 0, 0) // API key 0
-	response = append(response, 0, 0) // min version 0
-	response = append(response, 0, 7) // max version 7
-	if isFlexible {
-		response = append(response, 0)
-	}
-
-	// API Key 1 (Fetch): limit to v7 (current handler semantics)
-	response = append(response, 0, 1) // API key 1
-	response = append(response, 0, 0) // min version 0
-	response = append(response, 0, 7) // max version 7
-	if isFlexible {
-		response = append(response, 0)
-	}
-
-	// API Key 11 (JoinGroup): support v0-v6 (cap to first flexible version)
-	response = append(response, 0, 11) // API key 11
-	response = append(response, 0, 0)  // min version 0
-	response = append(response, 0, 6)  // max version 6
-	if isFlexible {
-		response = append(response, 0)
-	}
-
-	// API Key 14 (SyncGroup): support v0-v5 (latest Kafka protocol version)
-	response = append(response, 0, 14) // API key 14
-	response = append(response, 0, 0)  // min version 0
-	response = append(response, 0, 5)  // max version 5
-	if isFlexible {
-		response = append(response, 0)
-	}
-
-	// API Key 8 (OffsetCommit): limit to v2 for current implementation
-	response = append(response, 0, 8) // API key 8
-	response = append(response, 0, 0) // min version 0
-	response = append(response, 0, 2) // max version 2
-	if isFlexible {
-		response = append(response, 0)
-	}
-
-	// API Key 9 (OffsetFetch): supports up to v5 (with leader epoch and throttle time)
-	response = append(response, 0, 9) // API key 9
-	response = append(response, 0, 0) // min version 0
-	response = append(response, 0, 5) // max version 5
-	if isFlexible {
-		response = append(response, 0)
-	}
-
-	// API Key 10 (FindCoordinator): limit to v2 (implemented)
-	response = append(response, 0, 10) // API key 10
-	response = append(response, 0, 0)  // min version 0
-	response = append(response, 0, 2)  // max version 2
-	if isFlexible {
-		response = append(response, 0)
-	}
-
-	// API Key 12 (Heartbeat): api_key(2) + min_version(2) + max_version(2)
-	response = append(response, 0, 12) // API key 12
-	response = append(response, 0, 0)  // min version 0
-	response = append(response, 0, 4)  // max version 4
-	if isFlexible {
-		response = append(response, 0)
-	}
-
-	// API Key 13 (LeaveGroup): api_key(2) + min_version(2) + max_version(2)
-	response = append(response, 0, 13) // API key 13
-	response = append(response, 0, 0)  // min version 0
-	response = append(response, 0, 4)  // max version 4
-	if isFlexible {
-		response = append(response, 0)
-	}
-
-	// API Key 15 (DescribeGroups): api_key(2) + min_version(2) + max_version(2)
-	response = append(response, 0, 15) // API key 15
-	response = append(response, 0, 0)  // min version 0
-	response = append(response, 0, 5)  // max version 5
-	if isFlexible {
-		response = append(response, 0)
-	}
-
-	// API Key 16 (ListGroups): api_key(2) + min_version(2) + max_version(2)
-	response = append(response, 0, 16) // API key 16
-	response = append(response, 0, 0)  // min version 0
-	response = append(response, 0, 4)  // max version 4
-	if isFlexible {
-		response = append(response, 0)
-	}
-
-	// API Key 32 (DescribeConfigs): api_key(2) + min_version(2) + max_version(2)
-	response = append(response, 0, 32) // API key 32
-	response = append(response, 0, 0)  // min version 0
-	response = append(response, 0, 4)  // max version 4
-	if isFlexible {
-		response = append(response, 0)
-	}
-
-	// ApiVersions v1+ include throttle_time_ms
+	// Throttle time (for v1+) - always fixed-length
 	if apiVersion >= 1 {
-		response = append(response, 0, 0, 0, 0) // throttle_time_ms = 0
+		response = append(response, 0, 0, 0, 0) // throttle_time_ms = 0 (4 bytes)
 	}
 
-	// Add tagged fields for flexible versions
-	if isFlexible {
-		// Empty tagged fields for now (response-level)
-		response = append(response, 0)
+	// Response-level tagged fields (for v3+ flexible versions)
+	if apiVersion >= 3 {
+		response = append(response, 0x00) // Empty response-level tagged fields (varint: single byte 0)
 	}
 
-	Debug("ApiVersions v%d response: %d bytes", apiVersion, len(response))
+	Debug("ApiVersions v%d response: %d bytes (flexible: %t) - ADMINCLIENT COMPATIBILITY FIX", apiVersion, len(response), apiVersion >= 3)
 	return response, nil
 }
 
