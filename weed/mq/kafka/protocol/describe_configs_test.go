@@ -32,7 +32,7 @@ func TestDescribeConfigs_ParseRequest(t *testing.T) {
 	request = append(request, configNamesCount...)
 
 	// Parse the request
-	resources, err := handler.parseDescribeConfigsRequest(request)
+	resources, err := handler.parseDescribeConfigsRequest(request, 0)
 	if err != nil {
 		t.Fatalf("Failed to parse request: %v", err)
 	}

@@ -2405,7 +2405,7 @@ func (h *Handler) handleDescribeConfigs(correlationID uint32, apiVersion uint16,
 	Debug("DescribeConfigs v%d - parsing request body (%d bytes)", apiVersion, len(requestBody))
 
 	// Parse request to extract resources
-	resources, err := h.parseDescribeConfigsRequest(requestBody)
+	resources, err := h.parseDescribeConfigsRequest(requestBody, apiVersion)
 	if err != nil {
 		Error("DescribeConfigs parsing error: %v", err)
 		return nil, fmt.Errorf("failed to parse DescribeConfigs request: %w", err)
@@ -2413,31 +2413,71 @@ func (h *Handler) handleDescribeConfigs(correlationID uint32, apiVersion uint16,
 
 	Debug("DescribeConfigs parsed %d resources", len(resources))
 
-	// Build response
+	isFlexible := apiVersion >= 4
+	if !isFlexible {
+		// Legacy (non-flexible) response for v0-3
+		response := make([]byte, 0, 2048)
+
+		// Correlation ID
+		correlationIDBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
+		response = append(response, correlationIDBytes...)
+
+		// Throttle time (0ms)
+		throttleBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(throttleBytes, 0)
+		response = append(response, throttleBytes...)
+
+		// Resources array length
+		resourcesBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(resourcesBytes, uint32(len(resources)))
+		response = append(response, resourcesBytes...)
+
+		// For each resource, return appropriate configs
+		for _, resource := range resources {
+			resourceResponse := h.buildDescribeConfigsResourceResponse(resource, apiVersion)
+			response = append(response, resourceResponse...)
+		}
+
+		Debug("DescribeConfigs v%d response constructed, size: %d bytes", apiVersion, len(response))
+		return response, nil
+	}
+
+	// Flexible response for v4+
 	response := make([]byte, 0, 2048)
 
 	// Correlation ID
-	correlationIDBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
-	response = append(response, correlationIDBytes...)
+	cid := make([]byte, 4)
+	binary.BigEndian.PutUint32(cid, correlationID)
+	response = append(response, cid...)
 
-	// Throttle time (0ms)
-	throttleBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(throttleBytes, 0)
-	response = append(response, throttleBytes...)
+	// throttle_time_ms (4 bytes) - placed directly after correlation ID to match prior flexible handling
+	response = append(response, 0, 0, 0, 0)
 
-	// Resources array length
-	resourcesBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(resourcesBytes, uint32(len(resources)))
-	response = append(response, resourcesBytes...)
+	// Results (compact array)
+	response = append(response, EncodeUvarint(uint32(len(resources)+1))...)
 
-	// For each resource, return appropriate configs
-	for _, resource := range resources {
-		resourceResponse := h.buildDescribeConfigsResourceResponse(resource, apiVersion)
-		response = append(response, resourceResponse...)
+	for _, res := range resources {
+		// ErrorCode (int16) = 0
+		response = append(response, 0, 0)
+		// ErrorMessage (compact nullable string) = null (0)
+		response = append(response, 0)
+		// ResourceType (int8)
+		response = append(response, byte(res.ResourceType))
+		// ResourceName (compact string)
+		nameBytes := []byte(res.ResourceName)
+		response = append(response, EncodeUvarint(uint32(len(nameBytes)+1))...)
+		response = append(response, nameBytes...)
+		// Configs (compact array) - empty
+		response = append(response, 1) // 0 elements => length = 1
+		// Per-result tagged fields (empty)
+		response = append(response, 0)
 	}
 
-	Debug("DescribeConfigs v%d response constructed, size: %d bytes", apiVersion, len(response))
+	// Top-level tagged fields (empty)
+	response = append(response, 0)
+
+	Debug("DescribeConfigs v%d flexible response constructed, size: %d bytes", apiVersion, len(response))
 	return response, nil
 }
 
@@ -2558,23 +2598,43 @@ type DescribeConfigsResource struct {
 }
 
 // parseDescribeConfigsRequest parses a DescribeConfigs request body
-func (h *Handler) parseDescribeConfigsRequest(requestBody []byte) ([]DescribeConfigsResource, error) {
-	if len(requestBody) < 4 {
+func (h *Handler) parseDescribeConfigsRequest(requestBody []byte, apiVersion uint16) ([]DescribeConfigsResource, error) {
+	if len(requestBody) < 1 {
 		return nil, fmt.Errorf("request too short")
 	}
 
 	offset := 0
-	resourcesLength := int32(binary.BigEndian.Uint32(requestBody[offset : offset+4]))
-	offset += 4
+
+	// DescribeConfigs v4+ uses flexible protocol (compact arrays with varint)
+	isFlexible := apiVersion >= 4
+
+	var resourcesLength uint32
+	if isFlexible {
+		// Compact array: length is encoded as UNSIGNED_VARINT(actualLength + 1)
+		var consumed int
+		var err error
+		resourcesLength, consumed, err = DecodeCompactArrayLength(requestBody[offset:])
+		if err != nil {
+			return nil, fmt.Errorf("decode resources compact array: %w", err)
+		}
+		offset += consumed
+	} else {
+		// Regular array: length is int32
+		if len(requestBody) < 4 {
+			return nil, fmt.Errorf("request too short for regular array")
+		}
+		resourcesLength = binary.BigEndian.Uint32(requestBody[offset : offset+4])
+		offset += 4
+	}
 
 	// Validate resources length to prevent panic
-	if resourcesLength < 0 || resourcesLength > 100 { // Reasonable limit
+	if resourcesLength > 100 { // Reasonable limit
 		return nil, fmt.Errorf("invalid resources length: %d", resourcesLength)
 	}
 
 	resources := make([]DescribeConfigsResource, 0, resourcesLength)
 
-	for i := int32(0); i < resourcesLength; i++ {
+	for i := uint32(0); i < resourcesLength; i++ {
 		if offset+1 > len(requestBody) {
 			return nil, fmt.Errorf("insufficient data for resource type")
 		}
@@ -2583,62 +2643,98 @@ func (h *Handler) parseDescribeConfigsRequest(requestBody []byte) ([]DescribeCon
 		resourceType := int8(requestBody[offset])
 		offset++
 
-		// Resource name (string)
-		if offset+2 > len(requestBody) {
-			return nil, fmt.Errorf("insufficient data for resource name length")
-		}
-		nameLength := int(binary.BigEndian.Uint16(requestBody[offset : offset+2]))
-		offset += 2
-
-		// Validate name length to prevent panic
-		if nameLength < 0 || nameLength > 1000 { // Reasonable limit
-			return nil, fmt.Errorf("invalid resource name length: %d", nameLength)
-		}
-
-		if offset+nameLength > len(requestBody) {
-			return nil, fmt.Errorf("insufficient data for resource name")
-		}
-		resourceName := string(requestBody[offset : offset+nameLength])
-		offset += nameLength
-
-		// Config names array (optional filter)
-		if offset+4 > len(requestBody) {
-			return nil, fmt.Errorf("insufficient data for config names length")
-		}
-		configNamesLength := int32(binary.BigEndian.Uint32(requestBody[offset : offset+4]))
-		offset += 4
-
-		// Validate config names length to prevent panic
-		// Note: -1 means null/empty array in Kafka protocol
-		if configNamesLength < -1 || configNamesLength > 1000 { // Reasonable limit
-			return nil, fmt.Errorf("invalid config names length: %d", configNamesLength)
-		}
-
-		// Handle null array case
-		if configNamesLength == -1 {
-			configNamesLength = 0
-		}
-
-		configNames := make([]string, 0, configNamesLength)
-		for j := int32(0); j < configNamesLength; j++ {
-			if offset+2 > len(requestBody) {
-				return nil, fmt.Errorf("insufficient data for config name length")
+		// Resource name (string - compact for v4+, regular for v0-3)
+		var resourceName string
+		if isFlexible {
+			// Compact string: length is encoded as UNSIGNED_VARINT(actualLength + 1)
+			name, consumed, err := DecodeFlexibleString(requestBody[offset:])
+			if err != nil {
+				return nil, fmt.Errorf("decode resource name compact string: %w", err)
 			}
-			configNameLength := int(binary.BigEndian.Uint16(requestBody[offset : offset+2]))
+			resourceName = name
+			offset += consumed
+		} else {
+			// Regular string: length is int16
+			if offset+2 > len(requestBody) {
+				return nil, fmt.Errorf("insufficient data for resource name length")
+			}
+			nameLength := int(binary.BigEndian.Uint16(requestBody[offset : offset+2]))
 			offset += 2
 
-			// Validate config name length to prevent panic
-			if configNameLength < 0 || configNameLength > 500 { // Reasonable limit
-				return nil, fmt.Errorf("invalid config name length: %d", configNameLength)
+			// Validate name length to prevent panic
+			if nameLength < 0 || nameLength > 1000 { // Reasonable limit
+				return nil, fmt.Errorf("invalid resource name length: %d", nameLength)
 			}
 
-			if offset+configNameLength > len(requestBody) {
-				return nil, fmt.Errorf("insufficient data for config name")
+			if offset+nameLength > len(requestBody) {
+				return nil, fmt.Errorf("insufficient data for resource name")
 			}
-			configName := string(requestBody[offset : offset+configNameLength])
-			offset += configNameLength
+			resourceName = string(requestBody[offset : offset+nameLength])
+			offset += nameLength
+		}
 
-			configNames = append(configNames, configName)
+		// Config names array (compact for v4+, regular for v0-3)
+		var configNames []string
+		if isFlexible {
+			// Compact array: length is encoded as UNSIGNED_VARINT(actualLength + 1)
+			// For nullable arrays, 0 means null, 1 means empty
+			configNamesCount, consumed, err := DecodeCompactArrayLength(requestBody[offset:])
+			if err != nil {
+				return nil, fmt.Errorf("decode config names compact array: %w", err)
+			}
+			offset += consumed
+
+			// Parse each config name as compact string (if not null)
+			if configNamesCount > 0 {
+				for j := uint32(0); j < configNamesCount; j++ {
+					configName, consumed, err := DecodeFlexibleString(requestBody[offset:])
+					if err != nil {
+						return nil, fmt.Errorf("decode config name[%d] compact string: %w", j, err)
+					}
+					offset += consumed
+					configNames = append(configNames, configName)
+				}
+			}
+		} else {
+			// Regular array: length is int32
+			if offset+4 > len(requestBody) {
+				return nil, fmt.Errorf("insufficient data for config names length")
+			}
+			configNamesLength := int32(binary.BigEndian.Uint32(requestBody[offset : offset+4]))
+			offset += 4
+
+			// Validate config names length to prevent panic
+			// Note: -1 means null/empty array in Kafka protocol
+			if configNamesLength < -1 || configNamesLength > 1000 { // Reasonable limit
+				return nil, fmt.Errorf("invalid config names length: %d", configNamesLength)
+			}
+
+			// Handle null array case
+			if configNamesLength == -1 {
+				configNamesLength = 0
+			}
+
+			configNames = make([]string, 0, configNamesLength)
+			for j := int32(0); j < configNamesLength; j++ {
+				if offset+2 > len(requestBody) {
+					return nil, fmt.Errorf("insufficient data for config name length")
+				}
+				configNameLength := int(binary.BigEndian.Uint16(requestBody[offset : offset+2]))
+				offset += 2
+
+				// Validate config name length to prevent panic
+				if configNameLength < 0 || configNameLength > 500 { // Reasonable limit
+					return nil, fmt.Errorf("invalid config name length: %d", configNameLength)
+				}
+
+				if offset+configNameLength > len(requestBody) {
+					return nil, fmt.Errorf("insufficient data for config name")
+				}
+				configName := string(requestBody[offset : offset+configNameLength])
+				offset += configNameLength
+
+				configNames = append(configNames, configName)
+			}
 		}
 
 		resources = append(resources, DescribeConfigsResource{
