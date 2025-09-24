@@ -3,9 +3,10 @@ package chunk_cache
 import (
 	"bytes"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 	"math/rand"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 )
 
 func TestOnDisk(t *testing.T) {
