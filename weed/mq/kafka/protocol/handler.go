@@ -111,6 +111,11 @@ func (c *TopicSchemaConfig) SchemaFormat() schema.Format {
 	return c.ValueSchemaFormat
 }
 
+// stringPtr returns a pointer to the given string
+func stringPtr(s string) *string {
+	return &s
+}
+
 // Handler processes Kafka protocol requests from clients using SeaweedMQ
 type Handler struct {
 	// SeaweedMQ integration
@@ -2147,15 +2152,25 @@ func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint
 	binary.BigEndian.PutUint32(cid, correlationID)
 	response = append(response, cid...)
 
-	// throttle_time_ms (4 bytes) - comes directly after correlation ID in v5
+	// Response header tagged fields for flexible protocol v5 (MISSING in original code!)
+	response = append(response, 0) // Empty tagged fields count
+
+	// throttle_time_ms (4 bytes) - comes after header tagged fields in v5
 	response = append(response, 0, 0, 0, 0)
 
 	// topics (compact array) - V5 FLEXIBLE FORMAT
 	topicCount := len(topics)
 	Debug("CreateTopics v%d: Generating response for %d topics", apiVersion, topicCount)
 
+	// Debug: log response size at each step
+	debugResponseSize := func(step string) {
+		Debug("CreateTopics v%d: %s - response size: %d bytes", apiVersion, step, len(response))
+	}
+	debugResponseSize("After correlation ID and throttle_time_ms")
+
 	// Compact array: length is encoded as UNSIGNED_VARINT(actualLength + 1)
 	response = append(response, EncodeUvarint(uint32(topicCount+1))...)
+	debugResponseSize("After topics array length")
 
 	// For each topic
 	for _, t := range topics {
@@ -2163,6 +2178,10 @@ func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint
 		nameBytes := []byte(t.name)
 		response = append(response, EncodeUvarint(uint32(len(nameBytes)+1))...)
 		response = append(response, nameBytes...)
+
+		// TopicId (16 bytes UUID) - Only for v7+, NOT for v5
+		// Skip TopicId for v5
+
 		// error_code (int16)
 		var errCode uint16 = 0
 		if h.seaweedMQHandler.TopicExists(t.name) {
@@ -2194,15 +2213,97 @@ func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint
 		response = append(response, replBytes...)
 
 		// configs (compact array of CreatableTopicConfigs, nullable) - ADDED FOR V5
-		// For now, return null configs
-		response = append(response, 0) // Null configs array = 0 in compact format
+		// Use 2 configs to match Java reference (84 bytes total)
+		defaultConfigs := []struct {
+			name         string
+			value        *string
+			readOnly     bool
+			configSource int8
+			isSensitive  bool
+		}{
+			{
+				name:         "cleanup.policy",
+				value:        stringPtr("delete"),
+				readOnly:     false,
+				configSource: 5, // DEFAULT_CONFIG
+				isSensitive:  false,
+			},
+			{
+				name:         "retention.ms",
+				value:        stringPtr("604800000"), // 7 days
+				readOnly:     false,
+				configSource: 5, // DEFAULT_CONFIG
+				isSensitive:  false,
+			},
+		}
 
-		// Tagged fields for each topic (empty)
-		response = append(response, 0) // Empty tagged fields = 0
+		// Write configs array length (compact array: length + 1)
+		response = append(response, EncodeUvarint(uint32(len(defaultConfigs)+1))...)
+
+		// Write each config following Java CreatableTopicConfigs.write() logic
+		for _, config := range defaultConfigs {
+			// name (compact string)
+			nameBytes := []byte(config.name)
+			response = append(response, EncodeUvarint(uint32(len(nameBytes)+1))...)
+			response = append(response, nameBytes...)
+
+			// value (compact nullable string)
+			if config.value == nil {
+				response = append(response, 0) // null
+			} else {
+				valueBytes := []byte(*config.value)
+				response = append(response, EncodeUvarint(uint32(len(valueBytes)+1))...)
+				response = append(response, valueBytes...)
+			}
+
+			// readOnly (bool)
+			if config.readOnly {
+				response = append(response, 1)
+			} else {
+				response = append(response, 0)
+			}
+
+			// configSource (int8)
+			response = append(response, byte(config.configSource))
+
+			// isSensitive (bool)
+			if config.isSensitive {
+				response = append(response, 1)
+			} else {
+				response = append(response, 0)
+			}
+
+			// tagged fields for each config (empty)
+			response = append(response, 0)
+		}
+
+		// Tagged fields for each topic - V5 format per Kafka source
+		// Count tagged fields (topicConfigErrorCode only if != 0)
+		topicConfigErrorCode := uint16(0) // No error
+		numTaggedFields := 0
+		if topicConfigErrorCode != 0 {
+			numTaggedFields = 1
+		}
+
+		// Write tagged fields count
+		response = append(response, EncodeUvarint(uint32(numTaggedFields))...)
+
+		// Write tagged fields (only if topicConfigErrorCode != 0)
+		if topicConfigErrorCode != 0 {
+			// Tag 0: TopicConfigErrorCode
+			response = append(response, EncodeUvarint(0)...) // Tag number 0
+			response = append(response, EncodeUvarint(2)...) // Length (int16 = 2 bytes)
+			topicConfigErrBytes := make([]byte, 2)
+			binary.BigEndian.PutUint16(topicConfigErrBytes, topicConfigErrorCode)
+			response = append(response, topicConfigErrBytes...)
+		}
+
+		debugResponseSize(fmt.Sprintf("After topic '%s'", t.name))
 	}
 
 	// Top-level tagged fields for v5 flexible response (empty)
 	response = append(response, 0) // Empty tagged fields = 0
+	debugResponseSize("Final response")
 
 	return response, nil
 }
@@ -2610,13 +2711,27 @@ func (h *Handler) parseDescribeConfigsRequest(requestBody []byte, apiVersion uin
 
 	var resourcesLength uint32
 	if isFlexible {
-		// Compact array: length is encoded as UNSIGNED_VARINT(actualLength + 1)
-		var consumed int
-		var err error
+		// Debug: log the first 8 bytes of the request body
+		debugBytes := requestBody[offset:]
+		if len(debugBytes) > 8 {
+			debugBytes = debugBytes[:8]
+		}
+		Debug("DescribeConfigs v4 request bytes: %x", debugBytes)
+
+		// FIX: Skip top-level tagged fields for DescribeConfigs v4+ flexible protocol
+		// The request body starts with tagged fields count (usually 0x00 = empty)
+		_, consumed, err := DecodeTaggedFields(requestBody[offset:])
+		if err != nil {
+			return nil, fmt.Errorf("DescribeConfigs v%d: decode top-level tagged fields: %w", apiVersion, err)
+		}
+		offset += consumed
+
+		// Resources (compact array) - Now correctly positioned after tagged fields
 		resourcesLength, consumed, err = DecodeCompactArrayLength(requestBody[offset:])
 		if err != nil {
 			return nil, fmt.Errorf("decode resources compact array: %w", err)
 		}
+		Debug("DescribeConfigs v4 parsed resources length: %d, consumed: %d bytes", resourcesLength, consumed)
 		offset += consumed
 	} else {
 		// Regular array: length is int32
