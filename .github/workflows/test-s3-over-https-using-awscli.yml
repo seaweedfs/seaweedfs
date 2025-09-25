@@ -60,14 +60,32 @@ jobs:
         run: |
           aws --no-verify-ssl s3api create-bucket --bucket bucket
 
-      - name: Test PutObject
+      - name: Test Write-only User
         run: |
           set -e
           dd if=/dev/urandom of=generated bs=1M count=2
-          aws --no-verify-ssl s3api put-object --bucket bucket --key test-putobject --body generated
-          aws --no-verify-ssl s3api get-object --bucket bucket --key test-putobject downloaded
+          aws --no-verify-ssl s3api put-object --bucket bucket --key test-obj --body generated
+          if ! aws --no-verify-ssl s3api get-object --bucket bucket --key test-obj downloaded 2>&1 | grep -q AccessDenied; then
+            echo 'GetObject should fail with AccessDenied'
+            exit 1
+          fi
+        env:
+          AWS_ACCESS_KEY_ID: some_access_key4
+          AWS_SECRET_ACCESS_KEY: some_secret_key4
+
+      - name: Test Read-only User
+        run: |
+          set -e
+          if ! aws --no-verify-ssl s3api put-object --bucket bucket --key test-obj --body generated 2>&1 | grep -q AccessDenied; then
+            echo 'PutObject should fail with AccessDenied'
+            exit 1
+          fi
+          aws --no-verify-ssl s3api get-object --bucket bucket --key test-obj downloaded
           diff -q generated downloaded
           rm -f generated downloaded
+        env:
+          AWS_ACCESS_KEY_ID: some_access_key2
+          AWS_SECRET_ACCESS_KEY: some_secret_key2
 
       - name: Test Multi-part Upload
         run: |
