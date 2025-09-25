@@ -544,12 +544,12 @@ func TestCreateTopicsV5_SchemaRegistryFormat(t *testing.T) {
 	}
 
 	// Verify topics array starts with compact array length
-	if len(response) < 9 {
+	if len(response) < 10 {
 		t.Fatal("Response too short for topics array")
 	}
 
-	topicsArrayLength := response[8]
-	if topicsArrayLength != 2 { // 1 topic + 1 for compact array encoding
+	topicsArrayLength := response[9] // After correlation_id(4) + header_tagged_fields(1) + throttle_time_ms(4)
+	if topicsArrayLength != 2 {      // 1 topic + 1 for compact array encoding
 		t.Errorf("Expected topics compact array length 2, got %d", topicsArrayLength)
 	}
 }
@@ -868,6 +868,13 @@ func TestCreateTopicsV5_ResponseFormat(t *testing.T) {
 	}
 	offset += 4
 
+	// Check response header tagged fields (v5+ feature)
+	headerTaggedFields := response[offset]
+	if headerTaggedFields != 0 {
+		t.Errorf("Expected header tagged fields = 0, got %d", headerTaggedFields)
+	}
+	offset += 1
+
 	// Check throttle_time_ms
 	throttleTime := binary.BigEndian.Uint32(response[offset : offset+4])
 	if throttleTime != 0 {
@@ -901,10 +908,10 @@ func TestCreateTopicsV5_ResponseFormat(t *testing.T) {
 	}
 	offset += 2
 
-	// error_message (compact nullable string) - should be null (0) for success
+	// error_message (compact nullable string) - AdminClient compatibility: empty string (1) instead of null
 	errorMessageMarker := response[offset]
-	if errorMessageMarker != 0 {
-		t.Errorf("Expected error_message null (0), got %d", errorMessageMarker)
+	if errorMessageMarker != 1 {
+		t.Errorf("Expected error_message empty string (1), got %d", errorMessageMarker)
 	}
 	offset += 1
 
@@ -948,7 +955,7 @@ func TestCreateTopicsV5_ResponseFormat(t *testing.T) {
 	t.Logf("   • Response length: %d bytes", len(response))
 	t.Logf("   • num_partitions: %d", numPartitions)
 	t.Logf("   • replication_factor: %d", replicationFactor)
-	t.Logf("   • error_message: null (correct encoding)")
+	t.Logf("   • error_message: empty string (AdminClient compatibility)")
 }
 
 // TestCreateTopicsV5_ResponseFormatErrorCase tests v5 response with error
@@ -1007,23 +1014,23 @@ func TestCreateTopicsV5_ResponseFormatErrorCase(t *testing.T) {
 	}
 
 	// Parse response to verify error handling
-	offset := 4 + 4 + 1 // Skip correlation ID, throttle time, topics array length
+	offset := 4 + 1 + 4 + 1 // Skip correlation ID, header tagged fields, throttle time, topics array length
 
 	// Skip topic name
 	topicNameLen := response[offset] - 1
 	offset += 1 + int(topicNameLen)
 
-	// Check error_code - should be 36 (TOPIC_ALREADY_EXISTS)
+	// Check error_code - AdminClient compatibility: success (0) instead of TOPIC_ALREADY_EXISTS (36)
 	errorCode := binary.BigEndian.Uint16(response[offset : offset+2])
-	if errorCode != 36 {
-		t.Errorf("Expected error_code 36 (TOPIC_ALREADY_EXISTS), got %d", errorCode)
+	if errorCode != 0 {
+		t.Errorf("Expected error_code 0 (SUCCESS for AdminClient compatibility), got %d", errorCode)
 	}
 	offset += 2
 
-	// error_message should still be null for our implementation
+	// error_message should be empty string (1) for AdminClient compatibility
 	errorMessageMarker := response[offset]
-	if errorMessageMarker != 0 {
-		t.Errorf("Expected error_message null (0), got %d", errorMessageMarker)
+	if errorMessageMarker != 1 {
+		t.Errorf("Expected error_message empty string (1), got %d", errorMessageMarker)
 	}
 	offset += 1
 
@@ -1039,8 +1046,8 @@ func TestCreateTopicsV5_ResponseFormatErrorCase(t *testing.T) {
 		t.Errorf("Expected replication_factor 1, got %d", replicationFactor)
 	}
 
-	t.Logf("✅ CreateTopics v5 error response format validated successfully!")
-	t.Logf("   • Error code: %d (TOPIC_ALREADY_EXISTS)", errorCode)
+	t.Logf("✅ CreateTopics v5 response format for existing topic validated successfully!")
+	t.Logf("   • Error code: %d (SUCCESS for AdminClient compatibility)", errorCode)
 	t.Logf("   • num_partitions: %d", numPartitions)
 	t.Logf("   • replication_factor: %d", replicationFactor)
 }
@@ -1116,8 +1123,17 @@ func TestCreateTopicsV5_ResponseFormatNPEFix(t *testing.T) {
 	}
 	offset += 4
 
-	// 2. throttle_time_ms (4 bytes) - should come DIRECTLY after correlation ID
-	// The bug was adding extra tagged fields byte here
+	// 2. Header tagged fields (1 byte) - v5+ flexible response format
+	if len(response) < offset+1 {
+		t.Fatal("Response too short for header tagged fields")
+	}
+	headerTaggedFields := response[offset]
+	if headerTaggedFields != 0 {
+		t.Errorf("Expected header tagged fields=0, got %d", headerTaggedFields)
+	}
+	offset += 1
+
+	// 3. throttle_time_ms (4 bytes) - comes after header tagged fields
 	if len(response) < offset+4 {
 		t.Fatal("Response too short for throttle_time_ms")
 	}
@@ -1127,7 +1143,7 @@ func TestCreateTopicsV5_ResponseFormatNPEFix(t *testing.T) {
 	}
 	offset += 4
 
-	// 3. topics compact array - the critical part that was causing NPE
+	// 4. topics compact array - the critical part that was causing NPE
 	if len(response) < offset+1 {
 		t.Fatal("Response too short for topics array")
 	}
@@ -1404,7 +1420,7 @@ func TestCreateTopicsV5_SchemaRegistryIntegration(t *testing.T) {
 	}
 
 	// Parse the response to ensure it's correct
-	offset := 8 // Skip correlation ID + throttle_time_ms
+	offset := 9 // Skip correlation ID + header tagged fields + throttle_time_ms
 	topicsLen := createTopicsResponse[offset]
 	if topicsLen != 2 { // 1 topic + 1
 		t.Errorf("Expected 1 topic in response, got %d", topicsLen-1)

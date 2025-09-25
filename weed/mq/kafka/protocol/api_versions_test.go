@@ -409,17 +409,21 @@ func TestSchemaRegistry_NPEFixesIntegration(t *testing.T) {
 	}
 
 	// Verify response structure prevents NPE (fix #2)
-	if len(createResponse) < 9 {
+	if len(createResponse) < 10 {
 		t.Fatal("Fix #2 FAILED: Response too short")
 	}
 
-	// Check response structure: correlation_id(4) + throttle_time_ms(4) + topics_array
+	// Check response structure: correlation_id(4) + header_tagged_fields(1) + throttle_time_ms(4) + topics_array
 	correlationID := binary.BigEndian.Uint32(createResponse[0:4])
-	throttleTime := binary.BigEndian.Uint32(createResponse[4:8])
-	topicsArrayLength := createResponse[8]
+	headerTaggedFields := createResponse[4]
+	throttleTime := binary.BigEndian.Uint32(createResponse[5:9])
+	topicsArrayLength := createResponse[9]
 
 	if correlationID != 1002 {
 		t.Errorf("Fix #2 FAILED: Wrong correlation ID: %d", correlationID)
+	}
+	if headerTaggedFields != 0 {
+		t.Errorf("Fix #2 FAILED: Wrong header tagged fields: %d", headerTaggedFields)
 	}
 	if throttleTime != 0 {
 		t.Errorf("Fix #2 FAILED: Wrong throttle time: %d", throttleTime)

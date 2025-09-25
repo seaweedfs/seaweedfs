@@ -17,13 +17,27 @@ func TestHandler_handleFetch(t *testing.T) {
 	// Mock SeaweedMQ handler for testing - in real tests, this would use a proper mock
 	// For now, just comment out the topic creation as it's handled by SeaweedMQ handler
 
-	// Add some records to the ledger
-	ledger := h.GetOrCreateLedger(topicName, 0)
-	baseOffset := ledger.AssignOffsets(3)
-	currentTime := time.Now().UnixNano()
-	ledger.AppendRecord(baseOffset+0, currentTime+0, 100)
-	ledger.AppendRecord(baseOffset+1, currentTime+1000, 200)
-	ledger.AppendRecord(baseOffset+2, currentTime+2000, 150)
+	// Add some records through the handler (which stores both ledger metadata and message content)
+	key1 := []byte("key1")
+	value1 := []byte("Hello, World! This is test message 1.")
+	baseOffset, err := h.seaweedMQHandler.ProduceRecord(topicName, 0, key1, value1)
+	if err != nil {
+		t.Fatalf("Failed to produce test record 1: %v", err)
+	}
+
+	key2 := []byte("key2")
+	value2 := []byte("Hello, World! This is test message 2.")
+	_, err = h.seaweedMQHandler.ProduceRecord(topicName, 0, key2, value2)
+	if err != nil {
+		t.Fatalf("Failed to produce test record 2: %v", err)
+	}
+
+	key3 := []byte("key3")
+	value3 := []byte("Hello, World! This is test message 3.")
+	_, err = h.seaweedMQHandler.ProduceRecord(topicName, 0, key3, value3)
+	if err != nil {
+		t.Fatalf("Failed to produce test record 3: %v", err)
+	}
 
 	// Build a Fetch request
 	requestBody := make([]byte, 0, 256)

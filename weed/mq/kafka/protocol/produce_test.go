@@ -48,14 +48,34 @@ func TestHandler_handleProduce(t *testing.T) {
 	// Partition 0
 	requestBody = append(requestBody, 0, 0, 0, 0) // partition ID
 
-	// Record set (simplified - just dummy data)
-	recordSet := make([]byte, 32)
-	// Basic record batch header structure for parsing
-	binary.BigEndian.PutUint64(recordSet[0:8], 0)   // base offset
-	binary.BigEndian.PutUint32(recordSet[8:12], 24) // batch length
-	binary.BigEndian.PutUint32(recordSet[12:16], 0) // partition leader epoch
-	recordSet[16] = 2                               // magic byte
-	binary.BigEndian.PutUint32(recordSet[16:20], 1) // record count at offset 16
+	// Create a minimal valid Kafka record batch (v2 format)
+	// This is the minimum required for the produce handler to extract records properly
+	recordSet := make([]byte, 80) // Larger size for valid v2 batch
+
+	// Record batch header (61 bytes minimum)
+	binary.BigEndian.PutUint64(recordSet[0:8], 0)   // base_offset
+	binary.BigEndian.PutUint32(recordSet[8:12], 72) // batch_length (total - 8)
+	binary.BigEndian.PutUint32(recordSet[12:16], 0) // partition_leader_epoch
+	recordSet[16] = 2                               // magic byte (v2)
+	binary.BigEndian.PutUint32(recordSet[17:21], 0) // crc32 (placeholder)
+	binary.BigEndian.PutUint16(recordSet[21:23], 0) // attributes
+	binary.BigEndian.PutUint32(recordSet[23:27], 0) // last_offset_delta
+	binary.BigEndian.PutUint64(recordSet[27:35], 0) // first_timestamp
+	binary.BigEndian.PutUint64(recordSet[35:43], 0) // max_timestamp
+	binary.BigEndian.PutUint64(recordSet[43:51], 0) // producer_id
+	binary.BigEndian.PutUint16(recordSet[51:53], 0) // producer_epoch
+	binary.BigEndian.PutUint32(recordSet[53:57], 0) // base_sequence
+	binary.BigEndian.PutUint32(recordSet[57:61], 1) // records_count = 1
+
+	// Simple record (19 bytes): length + attributes + timestamp_delta + offset_delta + key + value + headers
+	recordSet[61] = 18                         // record length (varint, 1 byte)
+	recordSet[62] = 0                          // attributes
+	recordSet[63] = 0                          // timestamp_delta (varint)
+	recordSet[64] = 0                          // offset_delta (varint)
+	recordSet[65] = 8                          // key length (varint) = 4 * 2 - 1 = 7, but let's use 8 for "test-key"
+	copy(recordSet[66:74], []byte("test-key")) // key: "test-key"
+	recordSet[74] = 10                         // value length (varint) = 5 * 2 - 1 = 9, but use 10 for "test-value"
+	copy(recordSet[75:], []byte("test-value")) // value: "test-value"
 
 	recordSetSize := uint32(len(recordSet))
 	requestBody = append(requestBody, byte(recordSetSize>>24), byte(recordSetSize>>16), byte(recordSetSize>>8), byte(recordSetSize))
@@ -228,8 +248,33 @@ func TestHandler_handleProduce_FireAndForget(t *testing.T) {
 	// Partition 0 with record set
 	requestBody = append(requestBody, 0, 0, 0, 0) // partition ID
 
-	recordSet := make([]byte, 32)
-	binary.BigEndian.PutUint32(recordSet[16:20], 1) // record count
+	// Create a minimal valid Kafka record batch (v2 format) for fire-and-forget
+	recordSet := make([]byte, 80)
+
+	// Record batch header (61 bytes minimum)
+	binary.BigEndian.PutUint64(recordSet[0:8], 0)   // base_offset
+	binary.BigEndian.PutUint32(recordSet[8:12], 72) // batch_length (total - 8)
+	binary.BigEndian.PutUint32(recordSet[12:16], 0) // partition_leader_epoch
+	recordSet[16] = 2                               // magic byte (v2)
+	binary.BigEndian.PutUint32(recordSet[17:21], 0) // crc32 (placeholder)
+	binary.BigEndian.PutUint16(recordSet[21:23], 0) // attributes
+	binary.BigEndian.PutUint32(recordSet[23:27], 0) // last_offset_delta
+	binary.BigEndian.PutUint64(recordSet[27:35], 0) // first_timestamp
+	binary.BigEndian.PutUint64(recordSet[35:43], 0) // max_timestamp
+	binary.BigEndian.PutUint64(recordSet[43:51], 0) // producer_id
+	binary.BigEndian.PutUint16(recordSet[51:53], 0) // producer_epoch
+	binary.BigEndian.PutUint32(recordSet[53:57], 0) // base_sequence
+	binary.BigEndian.PutUint32(recordSet[57:61], 1) // records_count = 1
+
+	// Simple record
+	recordSet[61] = 18                         // record length (varint)
+	recordSet[62] = 0                          // attributes
+	recordSet[63] = 0                          // timestamp_delta (varint)
+	recordSet[64] = 0                          // offset_delta (varint)
+	recordSet[65] = 8                          // key length (varint)
+	copy(recordSet[66:74], []byte("fire-key")) // key
+	recordSet[74] = 10                         // value length (varint)
+	copy(recordSet[75:], []byte("fire-value")) // value
 	recordSetSize := uint32(len(recordSet))
 	requestBody = append(requestBody, byte(recordSetSize>>24), byte(recordSetSize>>16), byte(recordSetSize>>8), byte(recordSetSize))
 	requestBody = append(requestBody, recordSet...)
