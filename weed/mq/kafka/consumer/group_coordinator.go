@@ -316,8 +316,6 @@ func (gc *GroupCoordinator) performCleanup() {
 			timeSinceHeartbeat := now.Sub(member.LastHeartbeat)
 			if timeSinceHeartbeat > sessionDuration {
 				expiredMembers = append(expiredMembers, memberID)
-				fmt.Printf("[CLEANUP] Member '%s' in group '%s' expired: %v since heartbeat > %v session timeout\n",
-					memberID, groupID, timeSinceHeartbeat, sessionDuration)
 			}
 		}
 
