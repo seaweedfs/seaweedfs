@@ -60,22 +60,31 @@ type LeaveGroupMemberResponse struct {
 // Error codes specific to consumer coordination are imported from errors.go
 
 func (h *Handler) handleHeartbeat(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
+	Debug("Heartbeat v%d: Starting request processing", apiVersion)
+
 	// Parse Heartbeat request
-	request, err := h.parseHeartbeatRequest(requestBody)
+	request, err := h.parseHeartbeatRequest(requestBody, apiVersion)
 	if err != nil {
+		Debug("Heartbeat v%d: Request parsing failed: %v", apiVersion, err)
 		return h.buildHeartbeatErrorResponseV(correlationID, ErrorCodeInvalidGroupID, apiVersion), nil
 	}
 
+	Debug("Heartbeat v%d: Parsed request - GroupID='%s', MemberID='%s', GenerationID=%d", apiVersion, request.GroupID, request.MemberID, request.GenerationID)
+
 	// Validate request
 	if request.GroupID == "" || request.MemberID == "" {
+		Debug("Heartbeat v%d: Invalid request - empty GroupID or MemberID", apiVersion)
 		return h.buildHeartbeatErrorResponseV(correlationID, ErrorCodeInvalidGroupID, apiVersion), nil
 	}
 
 	// Get consumer group
 	group := h.groupCoordinator.GetGroup(request.GroupID)
 	if group == nil {
+		Debug("Heartbeat v%d: Group '%s' not found", apiVersion, request.GroupID)
 		return h.buildHeartbeatErrorResponseV(correlationID, ErrorCodeInvalidGroupID, apiVersion), nil
 	}
+
+	Debug("Heartbeat v%d: Found group '%s' - State=%v, Generation=%d, Leader='%s'", apiVersion, request.GroupID, group.State, group.Generation, group.Leader)
 
 	group.Mu.Lock()
 	defer group.Mu.Unlock()
@@ -86,16 +95,22 @@ func (h *Handler) handleHeartbeat(correlationID uint32, apiVersion uint16, reque
 	// Validate member exists
 	member, exists := group.Members[request.MemberID]
 	if !exists {
+		Debug("Heartbeat v%d: Member '%s' not found in group '%s'", apiVersion, request.MemberID, request.GroupID)
 		return h.buildHeartbeatErrorResponseV(correlationID, ErrorCodeUnknownMemberID, apiVersion), nil
 	}
 
+	Debug("Heartbeat v%d: Member '%s' found - State=%v", apiVersion, request.MemberID, member.State)
+
 	// Validate generation
 	if request.GenerationID != group.Generation {
+		Debug("Heartbeat v%d: Generation mismatch - request=%d, group=%d", apiVersion, request.GenerationID, group.Generation)
 		return h.buildHeartbeatErrorResponseV(correlationID, ErrorCodeIllegalGeneration, apiVersion), nil
 	}
 
 	// Update member's last heartbeat
+	oldHeartbeat := member.LastHeartbeat
 	member.LastHeartbeat = time.Now()
+	Debug("Heartbeat v%d: Updated member '%s' heartbeat from %v to %v (session timeout: %dms)", apiVersion, request.MemberID, oldHeartbeat, member.LastHeartbeat, member.SessionTimeout)
 
 	// Check if rebalancing is in progress
 	var errorCode int16 = ErrorCodeNone
@@ -209,46 +224,141 @@ func (h *Handler) handleLeaveGroup(correlationID uint32, apiVersion uint16, requ
 	return h.buildLeaveGroupResponse(response, apiVersion), nil
 }
 
-func (h *Handler) parseHeartbeatRequest(data []byte) (*HeartbeatRequest, error) {
+func (h *Handler) parseHeartbeatRequest(data []byte, apiVersion uint16) (*HeartbeatRequest, error) {
 	if len(data) < 8 {
 		return nil, fmt.Errorf("request too short")
 	}
 
 	offset := 0
+	isFlexible := IsFlexibleVersion(12, apiVersion) // Heartbeat API key = 12
+	Debug("Heartbeat v%d: parsing request, isFlexible=%t, data length=%d", apiVersion, isFlexible, len(data))
 
-	// GroupID (string)
-	groupIDLength := int(binary.BigEndian.Uint16(data[offset:]))
-	offset += 2
-	if offset+groupIDLength > len(data) {
-		return nil, fmt.Errorf("invalid group ID length")
+	// ADMINCLIENT COMPATIBILITY FIX: Parse top-level tagged fields at the beginning for flexible versions
+	if isFlexible {
+		Debug("Heartbeat v%d: AdminClient format - parsing top-level tagged fields at start", apiVersion)
+		_, consumed, err := DecodeTaggedFields(data[offset:])
+		if err == nil {
+			offset += consumed
+			Debug("Heartbeat v%d: parsed initial tagged fields, consumed %d bytes", apiVersion, consumed)
+		} else {
+			Debug("Heartbeat v%d: initial tagged fields parsing failed: %v", apiVersion, err)
+		}
 	}
-	groupID := string(data[offset : offset+groupIDLength])
-	offset += groupIDLength
 
-	// Generation ID (4 bytes)
+	// Parse GroupID
+	var groupID string
+	if isFlexible {
+		// FLEXIBLE V4+ FIX: GroupID is a compact string
+		groupIDBytes, consumed := parseCompactString(data[offset:])
+		if consumed == 0 {
+			return nil, fmt.Errorf("invalid group ID compact string")
+		}
+		if groupIDBytes != nil {
+			groupID = string(groupIDBytes)
+		}
+		offset += consumed
+		Debug("Heartbeat v%d: parsed GroupID='%s' (flexible)", apiVersion, groupID)
+	} else {
+		// Non-flexible parsing (v0-v3)
+		groupIDLength := int(binary.BigEndian.Uint16(data[offset:]))
+		offset += 2
+		if offset+groupIDLength > len(data) {
+			return nil, fmt.Errorf("invalid group ID length")
+		}
+		groupID = string(data[offset : offset+groupIDLength])
+		offset += groupIDLength
+		Debug("Heartbeat v%d: parsed GroupID='%s' (non-flexible)", apiVersion, groupID)
+	}
+
+	// Generation ID (4 bytes) - always fixed-length
 	if offset+4 > len(data) {
 		return nil, fmt.Errorf("missing generation ID")
 	}
 	generationID := int32(binary.BigEndian.Uint32(data[offset:]))
 	offset += 4
+	Debug("Heartbeat v%d: parsed GenerationID=%d", apiVersion, generationID)
 
-	// MemberID (string)
-	if offset+2 > len(data) {
-		return nil, fmt.Errorf("missing member ID length")
+	// Parse MemberID
+	var memberID string
+	if isFlexible {
+		// FLEXIBLE V4+ FIX: MemberID is a compact string
+		memberIDBytes, consumed := parseCompactString(data[offset:])
+		if consumed == 0 {
+			return nil, fmt.Errorf("invalid member ID compact string")
+		}
+		if memberIDBytes != nil {
+			memberID = string(memberIDBytes)
+		}
+		offset += consumed
+		Debug("Heartbeat v%d: parsed MemberID='%s' (flexible)", apiVersion, memberID)
+	} else {
+		// Non-flexible parsing (v0-v3)
+		if offset+2 > len(data) {
+			return nil, fmt.Errorf("missing member ID length")
+		}
+		memberIDLength := int(binary.BigEndian.Uint16(data[offset:]))
+		offset += 2
+		if offset+memberIDLength > len(data) {
+			return nil, fmt.Errorf("invalid member ID length")
+		}
+		memberID = string(data[offset : offset+memberIDLength])
+		offset += memberIDLength
+		Debug("Heartbeat v%d: parsed MemberID='%s' (non-flexible)", apiVersion, memberID)
 	}
-	memberIDLength := int(binary.BigEndian.Uint16(data[offset:]))
-	offset += 2
-	if offset+memberIDLength > len(data) {
-		return nil, fmt.Errorf("invalid member ID length")
+
+	// Parse GroupInstanceID (nullable string) - for Heartbeat v1+
+	var groupInstanceID string
+	if apiVersion >= 1 {
+		if isFlexible {
+			// FLEXIBLE V4+ FIX: GroupInstanceID is a compact nullable string
+			groupInstanceIDBytes, consumed := parseCompactString(data[offset:])
+			if consumed == 0 && len(data) > offset && data[offset] == 0x00 {
+				groupInstanceID = "" // null
+				offset += 1
+				Debug("Heartbeat v%d: GroupInstanceID is null (flexible)", apiVersion)
+			} else {
+				if groupInstanceIDBytes != nil {
+					groupInstanceID = string(groupInstanceIDBytes)
+				}
+				offset += consumed
+				Debug("Heartbeat v%d: parsed GroupInstanceID='%s' (flexible)", apiVersion, groupInstanceID)
+			}
+		} else {
+			// Non-flexible v1-v3: regular nullable string
+			if offset+2 <= len(data) {
+				instanceIDLength := int16(binary.BigEndian.Uint16(data[offset:]))
+				offset += 2
+				if instanceIDLength == -1 {
+					groupInstanceID = "" // null string
+				} else if instanceIDLength >= 0 && offset+int(instanceIDLength) <= len(data) {
+					groupInstanceID = string(data[offset : offset+int(instanceIDLength)])
+					offset += int(instanceIDLength)
+				}
+				Debug("Heartbeat v%d: parsed GroupInstanceID='%s' (non-flexible)", apiVersion, groupInstanceID)
+			}
+		}
 	}
-	memberID := string(data[offset : offset+memberIDLength])
-	offset += memberIDLength
+
+	// Parse request-level tagged fields (v4+)
+	if isFlexible {
+		if offset < len(data) {
+			_, consumed, err := DecodeTaggedFields(data[offset:])
+			if err != nil {
+				Debug("Heartbeat v%d: request-level tagged fields parsing failed: %v", apiVersion, err)
+			} else {
+				offset += consumed
+				Debug("Heartbeat v%d: parsed request-level tagged fields, consumed %d bytes", apiVersion, consumed)
+			}
+		}
+	}
+
+	Debug("Heartbeat v%d: ✅ Parsing succeeded - GroupID='%s', MemberID='%s', GenerationID=%d", apiVersion, groupID, memberID, generationID)
 
 	return &HeartbeatRequest{
 		GroupID:         groupID,
 		GenerationID:    generationID,
 		MemberID:        memberID,
-		GroupInstanceID: "", // Simplified - would parse from remaining data
+		GroupInstanceID: groupInstanceID,
 	}, nil
 }
 

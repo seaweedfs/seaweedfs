@@ -1,10 +1,10 @@
 package consumer
 
 import (
-    "crypto/sha256"
-    "fmt"
-    "sync"
-    "time"
+	"crypto/sha256"
+	"fmt"
+	"sync"
+	"time"
 )
 
 // GroupState represents the state of a consumer group
@@ -309,12 +309,15 @@ func (gc *GroupCoordinator) performCleanup() {
 	for groupID, group := range gc.groups {
 		group.Mu.Lock()
 
-        // Check for expired members (session timeout)
+		// Check for expired members (session timeout)
 		expiredMembers := make([]string, 0)
 		for memberID, member := range group.Members {
 			sessionDuration := time.Duration(member.SessionTimeout) * time.Millisecond
-			if now.Sub(member.LastHeartbeat) > sessionDuration {
+			timeSinceHeartbeat := now.Sub(member.LastHeartbeat)
+			if timeSinceHeartbeat > sessionDuration {
 				expiredMembers = append(expiredMembers, memberID)
+				fmt.Printf("[CLEANUP] Member '%s' in group '%s' expired: %v since heartbeat > %v session timeout\n",
+					memberID, groupID, timeSinceHeartbeat, sessionDuration)
 			}
 		}
 
@@ -327,21 +330,21 @@ func (gc *GroupCoordinator) performCleanup() {
 		}
 
 		// Update group state based on member count
-        if len(group.Members) == 0 {
+		if len(group.Members) == 0 {
 			if group.State != GroupStateEmpty {
 				group.State = GroupStateEmpty
 				group.Generation++
 			}
 
 			// Mark group for deletion if empty for too long (30 minutes)
-            if now.Sub(group.LastActivity) > 30*time.Minute {
+			if now.Sub(group.LastActivity) > 30*time.Minute {
 				group.State = GroupStateDead
 			}
 		}
 
 		// Check for stuck rebalances and force completion if necessary
 		maxRebalanceDuration := 10 * time.Minute // Maximum time allowed for rebalancing
-        if gc.rebalanceTimeoutManager.IsRebalanceStuck(group, maxRebalanceDuration) {
+		if gc.rebalanceTimeoutManager.IsRebalanceStuck(group, maxRebalanceDuration) {
 			gc.rebalanceTimeoutManager.ForceCompleteRebalance(group)
 		}
 

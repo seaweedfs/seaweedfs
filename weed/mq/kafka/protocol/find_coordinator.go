@@ -262,8 +262,8 @@ func (h *Handler) handleCoordinatorAssignmentAsLeader(groupID string, registry C
 // requestCoordinatorFromLeader requests coordinator assignment from the gateway leader
 // If no leader exists, it waits for leader election to complete
 func (h *Handler) requestCoordinatorFromLeader(groupID string, registry CoordinatorRegistryInterface) (host string, port int, nodeID int32, err error) {
-	// Wait for leader election to complete with a shorter timeout for better client experience
-	leaderAddress, err := h.waitForLeader(registry, 2*time.Second) // 2 second timeout
+	// Wait for leader election to complete with a longer timeout for Schema Registry compatibility
+	leaderAddress, err := h.waitForLeader(registry, 10*time.Second) // 10 second timeout for enterprise clients
 	if err != nil {
 		Debug("Failed to wait for leader election: %v, falling back to current gateway for group %s", err, groupID)
 		gatewayAddr := h.GetGatewayAddress()
