@@ -3,6 +3,7 @@ package protocol
 import (
 	"encoding/binary"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/schema"
@@ -764,6 +765,11 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 
 // processSchematizedMessage processes a message that may contain schema information
 func (h *Handler) processSchematizedMessage(topicName string, partitionID int32, messageBytes []byte) error {
+	// System topics should bypass schema processing entirely
+	if h.isSystemTopic(topicName) {
+		return nil // Skip schema processing for system topics
+	}
+
 	// Only process if schema management is enabled
 	if !h.IsSchemaEnabled() {
 		return nil // Skip schema processing
@@ -1054,8 +1060,32 @@ func (h *Handler) parseSchemaID(schemaIDStr string) (uint32, error) {
 	return uint32(schemaID), nil
 }
 
+// isSystemTopic checks if a topic should bypass schema processing
+func (h *Handler) isSystemTopic(topicName string) bool {
+	// System topics that should be stored as-is without schema processing
+	systemTopics := []string{
+		"_schemas",            // Schema Registry topic
+		"__consumer_offsets",  // Kafka consumer offsets topic
+		"__transaction_state", // Kafka transaction state topic
+	}
+
+	for _, systemTopic := range systemTopics {
+		if topicName == systemTopic {
+			return true
+		}
+	}
+
+	// Also check for topics with system prefixes
+	return strings.HasPrefix(topicName, "_") || strings.HasPrefix(topicName, "__")
+}
+
 // produceSchemaBasedRecord produces a record using schema-based encoding to RecordValue
 func (h *Handler) produceSchemaBasedRecord(topic string, partition int32, key []byte, value []byte) (int64, error) {
+	// System topics should always bypass schema processing and be stored as-is
+	if h.isSystemTopic(topic) {
+		return h.seaweedMQHandler.ProduceRecord(topic, partition, key, value)
+	}
+
 	// If schema management is not enabled, fall back to raw message handling
 	if !h.IsSchemaEnabled() {
 		return h.seaweedMQHandler.ProduceRecord(topic, partition, key, value)
