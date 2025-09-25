@@ -16,6 +16,7 @@ type EcVolumeInfo struct {
 	DiskId      uint32  // ID of the disk this EC volume is on
 	ExpireAtSec uint64  // ec volume destroy time, calculated from the ec volume was created
 	ShardSizes  []int64 // optimized: sizes for shards in order of set bits in ShardBits
+	Generation  uint32  // generation of this EC volume, defaults to 0 for backward compatibility
 }
 
 func (ecInfo *EcVolumeInfo) AddShardId(id ShardId) {
@@ -80,6 +81,7 @@ func (ecInfo *EcVolumeInfo) Minus(other *EcVolumeInfo) *EcVolumeInfo {
 		DiskType:    ecInfo.DiskType,
 		DiskId:      ecInfo.DiskId,
 		ExpireAtSec: ecInfo.ExpireAtSec,
+		Generation:  ecInfo.Generation,
 	}
 
 	// Initialize optimized ShardSizes for the result
@@ -107,6 +109,7 @@ func (ecInfo *EcVolumeInfo) ToVolumeEcShardInformationMessage() (ret *master_pb.
 		DiskType:    ecInfo.DiskType,
 		ExpireAtSec: ecInfo.ExpireAtSec,
 		DiskId:      ecInfo.DiskId,
+		Generation:  ecInfo.Generation,
 	}
 
 	// Directly set the optimized ShardSizes
