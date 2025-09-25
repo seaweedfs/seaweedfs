@@ -1219,7 +1219,7 @@ func (h *Handler) HandleMetadataV7(correlationID uint32, requestBody []byte) ([]
 	// Each partition now includes: error_code(2) + partition_index(4) + leader_id(4) + leader_epoch(4) + replica_nodes(COMPACT_ARRAY) + isr_nodes(COMPACT_ARRAY) + offline_replicas(COMPACT_ARRAY) + tagged_fields
 
 	Debug("🚀 HANDLEMETADATAV7 CALLED - FLEXIBLE FORMAT IMPLEMENTATION")
-	
+
 	// Parse requested topics (empty means all)
 	requestedTopics := h.parseMetadataTopics(requestBody)
 	Debug("🔍 METADATA v7 REQUEST (FLEXIBLE) - Requested: %v (empty=all)", requestedTopics)
@@ -1227,13 +1227,17 @@ func (h *Handler) HandleMetadataV7(correlationID uint32, requestBody []byte) ([]
 	// Determine topics to return using SeaweedMQ handler
 	var topicsToReturn []string
 	if len(requestedTopics) == 0 {
+		fmt.Printf("🔍 METADATA V7: About to call ListTopics()\n")
 		topicsToReturn = h.seaweedMQHandler.ListTopics()
+		fmt.Printf("🔍 METADATA V7: ListTopics() returned %d topics: %v\n", len(topicsToReturn), topicsToReturn)
 	} else {
+		fmt.Printf("🔍 METADATA V7: Checking specific topics: %v\n", requestedTopics)
 		for _, name := range requestedTopics {
 			if h.seaweedMQHandler.TopicExists(name) {
 				topicsToReturn = append(topicsToReturn, name)
 			}
 		}
+		fmt.Printf("🔍 METADATA V7: Found %d existing topics: %v\n", len(topicsToReturn), topicsToReturn)
 	}
 
 	var buf bytes.Buffer
