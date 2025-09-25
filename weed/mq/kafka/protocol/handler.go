@@ -2138,8 +2138,8 @@ func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint
 		response = append(response, EncodeUvarint(uint32(len(nameBytes)+1))...)
 		response = append(response, nameBytes...)
 
-		// TopicId (16 bytes UUID) - Only for v7+, NOT for v5
-		// Skip TopicId for v5
+		// TopicId - Not present in v5, only added in v7+
+		// v5 CreateTopics response does not include TopicId field
 
 		// error_code (int16)
 		var errCode uint16 = 0
