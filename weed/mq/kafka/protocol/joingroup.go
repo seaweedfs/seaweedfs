@@ -53,13 +53,17 @@ type JoinGroupMember struct {
 
 func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
 	// Parse JoinGroup request
+	Debug("JoinGroup v%d: Starting request parsing for correlation %d", apiVersion, correlationID)
 	request, err := h.parseJoinGroupRequest(requestBody, apiVersion)
 	if err != nil {
+		Debug("JoinGroup v%d: ❌ PARSING FAILED - %s", apiVersion, err.Error())
 		return h.buildJoinGroupErrorResponse(correlationID, ErrorCodeInvalidGroupID, apiVersion), nil
 	}
+	Debug("JoinGroup v%d: ✅ Parsing succeeded - GroupID='%s'", apiVersion, request.GroupID)
 
 	// Validate request
 	if request.GroupID == "" {
+		Debug("JoinGroup v%d: ❌ EMPTY GROUP ID - rejecting request", apiVersion)
 		return h.buildJoinGroupErrorResponse(correlationID, ErrorCodeInvalidGroupID, apiVersion), nil
 	}
 
@@ -340,11 +344,13 @@ func (h *Handler) parseJoinGroupRequest(data []byte, apiVersion uint16) (*JoinGr
 	Debug("JoinGroup v%d parsed GroupID: '%s'", apiVersion, groupID)
 
 	// Session timeout (4 bytes)
+	Debug("JoinGroup v%d: parsing SessionTimeout at offset %d, remaining bytes: %d", apiVersion, offset, len(data)-offset)
 	if offset+4 > len(data) {
 		return nil, fmt.Errorf("missing session timeout")
 	}
 	sessionTimeout := int32(binary.BigEndian.Uint32(data[offset:]))
 	offset += 4
+	Debug("JoinGroup v%d: parsed SessionTimeout=%d", apiVersion, sessionTimeout)
 
 	// Rebalance timeout (4 bytes) - for v1+ versions
 	rebalanceTimeout := sessionTimeout // Default to session timeout for v0
@@ -354,6 +360,7 @@ func (h *Handler) parseJoinGroupRequest(data []byte, apiVersion uint16) (*JoinGr
 	}
 
 	// MemberID (string or compact string)
+	Debug("JoinGroup v%d: parsing MemberID at offset %d, remaining bytes: %d", apiVersion, offset, len(data)-offset)
 	var memberID string
 	if isFlexible {
 		// Flexible protocol uses compact strings
@@ -365,6 +372,7 @@ func (h *Handler) parseJoinGroupRequest(data []byte, apiVersion uint16) (*JoinGr
 			memberID = string(memberIDBytes)
 		}
 		offset += consumed
+		Debug("JoinGroup v%d: parsed MemberID='%s' (flexible)", apiVersion, memberID)
 	} else {
 		// Non-flexible protocol uses regular strings
 		if offset+2 > len(data) {
@@ -384,71 +392,175 @@ func (h *Handler) parseJoinGroupRequest(data []byte, apiVersion uint16) (*JoinGr
 	// Parse Group Instance ID (nullable string) - for JoinGroup v5+
 	var groupInstanceID string
 	if apiVersion >= 5 {
-		if offset+2 > len(data) {
-			return nil, fmt.Errorf("missing group instance ID length")
-		}
-		instanceIDLength := int16(binary.BigEndian.Uint16(data[offset:]))
-		offset += 2
-
-		if instanceIDLength == -1 {
-			groupInstanceID = "" // null string
-		} else if instanceIDLength >= 0 {
-			if offset+int(instanceIDLength) > len(data) {
-				return nil, fmt.Errorf("invalid group instance ID length")
+		if isFlexible {
+			// FLEXIBLE V6+ FIX: GroupInstanceID is a compact nullable string
+			Debug("JoinGroup v%d: parsing GroupInstanceID (flexible) at offset %d", apiVersion, offset)
+			groupInstanceIDBytes, consumed := parseCompactString(data[offset:])
+			if consumed == 0 && len(data) > offset {
+				// Check if it's a null compact string (0x00)
+				if data[offset] == 0x00 {
+					groupInstanceID = "" // null
+					offset += 1
+					Debug("JoinGroup v%d: GroupInstanceID is null", apiVersion)
+				} else {
+					return nil, fmt.Errorf("JoinGroup v%d: invalid group instance ID compact string", apiVersion)
+				}
+			} else {
+				if groupInstanceIDBytes != nil {
+					groupInstanceID = string(groupInstanceIDBytes)
+				}
+				offset += consumed
+				Debug("JoinGroup v%d: parsed GroupInstanceID='%s' (flexible)", apiVersion, groupInstanceID)
 			}
-			groupInstanceID = string(data[offset : offset+int(instanceIDLength)])
-			offset += int(instanceIDLength)
+		} else {
+			// Non-flexible v5: regular nullable string
+			if offset+2 > len(data) {
+				return nil, fmt.Errorf("missing group instance ID length")
+			}
+			instanceIDLength := int16(binary.BigEndian.Uint16(data[offset:]))
+			offset += 2
+
+			if instanceIDLength == -1 {
+				groupInstanceID = "" // null string
+			} else if instanceIDLength >= 0 {
+				if offset+int(instanceIDLength) > len(data) {
+					return nil, fmt.Errorf("invalid group instance ID length")
+				}
+				groupInstanceID = string(data[offset : offset+int(instanceIDLength)])
+				offset += int(instanceIDLength)
+			}
 		}
 	}
 
 	// Parse Protocol Type
-	if len(data) < offset+2 {
-		return nil, fmt.Errorf("JoinGroup request missing protocol type")
-	}
-	protocolTypeLength := binary.BigEndian.Uint16(data[offset : offset+2])
-	offset += 2
+	var protocolType string
+	if isFlexible {
+		// FLEXIBLE V6+ FIX: ProtocolType is a compact string, not regular string
+		endIdx := offset + 10
+		if endIdx > len(data) {
+			endIdx = len(data)
+		}
+		Debug("JoinGroup v%d: parsing ProtocolType at offset %d, next bytes: %v", apiVersion, offset, data[offset:endIdx])
+		protocolTypeBytes, consumed := parseCompactString(data[offset:])
+		Debug("JoinGroup v%d: parseCompactString result: consumed=%d, bytes=%v", apiVersion, consumed, protocolTypeBytes)
+		if consumed == 0 {
+			return nil, fmt.Errorf("JoinGroup v%d: invalid protocol type compact string", apiVersion)
+		}
+		if protocolTypeBytes != nil {
+			protocolType = string(protocolTypeBytes)
+		}
+		offset += consumed
+		Debug("JoinGroup v%d: parsed ProtocolType='%s' (flexible)", apiVersion, protocolType)
+	} else {
+		// Non-flexible parsing (v0-v5)
+		if len(data) < offset+2 {
+			return nil, fmt.Errorf("JoinGroup request missing protocol type")
+		}
+		protocolTypeLength := binary.BigEndian.Uint16(data[offset : offset+2])
+		offset += 2
 
-	if len(data) < offset+int(protocolTypeLength) {
-		return nil, fmt.Errorf("JoinGroup request protocol type too short")
+		if len(data) < offset+int(protocolTypeLength) {
+			return nil, fmt.Errorf("JoinGroup request protocol type too short")
+		}
+		protocolType = string(data[offset : offset+int(protocolTypeLength)])
+		offset += int(protocolTypeLength)
 	}
-	protocolType := string(data[offset : offset+int(protocolTypeLength)])
-	offset += int(protocolTypeLength)
 
 	// Parse Group Protocols array
-	if len(data) < offset+4 {
-		return nil, fmt.Errorf("JoinGroup request missing group protocols")
+	var protocolsCount uint32
+	if isFlexible {
+		// FLEXIBLE V6+ FIX: GroupProtocols is a compact array, not regular array
+		compactLength, consumed, err := DecodeCompactArrayLength(data[offset:])
+		if err != nil {
+			return nil, fmt.Errorf("JoinGroup v%d: invalid group protocols compact array: %w", apiVersion, err)
+		}
+		protocolsCount = compactLength
+		offset += consumed
+		Debug("JoinGroup v%d: parsed GroupProtocols count=%d (flexible)", apiVersion, protocolsCount)
+	} else {
+		// Non-flexible parsing (v0-v5)
+		if len(data) < offset+4 {
+			return nil, fmt.Errorf("JoinGroup request missing group protocols")
+		}
+		protocolsCount = binary.BigEndian.Uint32(data[offset : offset+4])
+		offset += 4
 	}
-	protocolsCount := binary.BigEndian.Uint32(data[offset : offset+4])
-	offset += 4
 
 	protocols := make([]GroupProtocol, 0, protocolsCount)
 
 	for i := uint32(0); i < protocolsCount && offset < len(data); i++ {
 		// Parse protocol name
-		if len(data) < offset+2 {
-			break
-		}
-		protocolNameLength := binary.BigEndian.Uint16(data[offset : offset+2])
-		offset += 2
+		var protocolName string
+		if isFlexible {
+			// FLEXIBLE V6+ FIX: Protocol name is a compact string
+			endIdx := offset + 10
+			if endIdx > len(data) {
+				endIdx = len(data)
+			}
+			Debug("JoinGroup v%d: parsing protocol[%d] name at offset %d, next bytes: %v", apiVersion, i, offset, data[offset:endIdx])
+			protocolNameBytes, consumed := parseCompactString(data[offset:])
+			Debug("JoinGroup v%d: protocol[%d] parseCompactString result: consumed=%d, bytes=%v", apiVersion, i, consumed, protocolNameBytes)
+			if consumed == 0 {
+				return nil, fmt.Errorf("JoinGroup v%d: invalid protocol name compact string", apiVersion)
+			}
+			if protocolNameBytes != nil {
+				protocolName = string(protocolNameBytes)
+			}
+			offset += consumed
+		} else {
+			// Non-flexible parsing
+			if len(data) < offset+2 {
+				break
+			}
+			protocolNameLength := binary.BigEndian.Uint16(data[offset : offset+2])
+			offset += 2
 
-		if len(data) < offset+int(protocolNameLength) {
-			break
+			if len(data) < offset+int(protocolNameLength) {
+				break
+			}
+			protocolName = string(data[offset : offset+int(protocolNameLength)])
+			offset += int(protocolNameLength)
 		}
-		protocolName := string(data[offset : offset+int(protocolNameLength)])
-		offset += int(protocolNameLength)
 
 		// Parse protocol metadata
-		if len(data) < offset+4 {
-			break
-		}
-		metadataLength := binary.BigEndian.Uint32(data[offset : offset+4])
-		offset += 4
-
 		var metadata []byte
-		if metadataLength > 0 && len(data) >= offset+int(metadataLength) {
-			metadata = make([]byte, metadataLength)
-			copy(metadata, data[offset:offset+int(metadataLength)])
-			offset += int(metadataLength)
+		if isFlexible {
+			// FLEXIBLE V6+ FIX: Protocol metadata is compact bytes
+			metadataLength, consumed, err := DecodeCompactArrayLength(data[offset:])
+			if err != nil {
+				return nil, fmt.Errorf("JoinGroup v%d: invalid protocol metadata compact bytes: %w", apiVersion, err)
+			}
+			offset += consumed
+
+			if metadataLength > 0 && len(data) >= offset+int(metadataLength) {
+				metadata = make([]byte, metadataLength)
+				copy(metadata, data[offset:offset+int(metadataLength)])
+				offset += int(metadataLength)
+			}
+		} else {
+			// Non-flexible parsing
+			if len(data) < offset+4 {
+				break
+			}
+			metadataLength := binary.BigEndian.Uint32(data[offset : offset+4])
+			offset += 4
+
+			if metadataLength > 0 && len(data) >= offset+int(metadataLength) {
+				metadata = make([]byte, metadataLength)
+				copy(metadata, data[offset:offset+int(metadataLength)])
+				offset += int(metadataLength)
+			}
+		}
+
+		// Parse per-protocol tagged fields (v6+)
+		if isFlexible {
+			_, consumed, err := DecodeTaggedFields(data[offset:])
+			if err != nil {
+				Debug("JoinGroup v%d: protocol[%d] tagged fields parsing failed: %v", apiVersion, i, err)
+				// Don't fail - some clients might not send tagged fields
+			} else {
+				offset += consumed
+			}
 		}
 
 		protocols = append(protocols, GroupProtocol{
@@ -456,6 +568,19 @@ func (h *Handler) parseJoinGroupRequest(data []byte, apiVersion uint16) (*JoinGr
 			Metadata: metadata,
 		})
 
+	}
+
+	// Parse request-level tagged fields (v6+)
+	if isFlexible {
+		if offset < len(data) {
+			_, consumed, err := DecodeTaggedFields(data[offset:])
+			if err != nil {
+				Debug("JoinGroup v%d: request-level tagged fields parsing failed: %v", apiVersion, err)
+				// Don't fail - some clients might not send tagged fields
+			} else {
+				Debug("JoinGroup v%d: parsed request-level tagged fields, consumed %d bytes", apiVersion, consumed)
+			}
+		}
 	}
 
 	return &JoinGroupRequest{
@@ -732,22 +857,31 @@ type SyncGroupResponse struct {
 // Error codes for SyncGroup are imported from errors.go
 
 func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
+	Debug("SyncGroup v%d: Starting request processing", apiVersion)
+	
 	// Parse SyncGroup request
 	request, err := h.parseSyncGroupRequest(requestBody, apiVersion)
 	if err != nil {
+		Debug("SyncGroup v%d: Request parsing failed: %v", apiVersion, err)
 		return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeInvalidGroupID, apiVersion), nil
 	}
 
+	Debug("SyncGroup v%d: Parsed request - GroupID='%s', MemberID='%s', GenerationID=%d", apiVersion, request.GroupID, request.MemberID, request.GenerationID)
+
 	// Validate request
 	if request.GroupID == "" || request.MemberID == "" {
+		Debug("SyncGroup v%d: Invalid request - empty GroupID or MemberID", apiVersion)
 		return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeInvalidGroupID, apiVersion), nil
 	}
 
 	// Get consumer group
 	group := h.groupCoordinator.GetGroup(request.GroupID)
 	if group == nil {
+		Debug("SyncGroup v%d: Group '%s' not found", apiVersion, request.GroupID)
 		return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeInvalidGroupID, apiVersion), nil
 	}
+
+	Debug("SyncGroup v%d: Found group '%s' - State=%v, Generation=%d, Leader='%s'", apiVersion, request.GroupID, group.State, group.Generation, group.Leader)
 
 	group.Mu.Lock()
 	defer group.Mu.Unlock()
@@ -758,11 +892,15 @@ func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, reque
 	// Validate member exists
 	member, exists := group.Members[request.MemberID]
 	if !exists {
+		Debug("SyncGroup v%d: Member '%s' not found in group '%s'", apiVersion, request.MemberID, request.GroupID)
 		return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeUnknownMemberID, apiVersion), nil
 	}
 
+	Debug("SyncGroup v%d: Member '%s' found - State=%v", apiVersion, request.MemberID, member.State)
+
 	// Validate generation
 	if request.GenerationID != group.Generation {
+		Debug("SyncGroup v%d: Generation mismatch - request=%d, group=%d", apiVersion, request.GenerationID, group.Generation)
 		return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeIllegalGeneration, apiVersion), nil
 	}
 
@@ -805,7 +943,9 @@ func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, reque
 		Assignment:    assignment,
 	}
 
+	Debug("SyncGroup v%d: Building successful response - Assignment length=%d bytes", apiVersion, len(assignment))
 	resp := h.buildSyncGroupResponse(response, apiVersion)
+	Debug("SyncGroup v%d: Response built - %d bytes total", apiVersion, len(resp))
 	return resp, nil
 }
 
@@ -927,6 +1067,12 @@ func (h *Handler) buildSyncGroupResponse(response SyncGroupResponse, apiVersion 
 	binary.BigEndian.PutUint32(correlationIDBytes, response.CorrelationID)
 	result = append(result, correlationIDBytes...)
 
+	// RESPONSE HEADER TAGGED FIELDS for flexible versions (v4+)
+	if IsFlexibleVersion(14, apiVersion) {
+		// Empty header tagged fields (varint 0)
+		result = append(result, 0x00)
+	}
+
 	// SyncGroup v1+ has throttle_time_ms at the beginning
 	// SyncGroup v0 does NOT include throttle_time_ms
 	if apiVersion >= 1 {
@@ -939,11 +1085,38 @@ func (h *Handler) buildSyncGroupResponse(response SyncGroupResponse, apiVersion 
 	binary.BigEndian.PutUint16(errorCodeBytes, uint16(response.ErrorCode))
 	result = append(result, errorCodeBytes...)
 
-	// Assignment (bytes)
-	assignmentLength := make([]byte, 4)
-	binary.BigEndian.PutUint32(assignmentLength, uint32(len(response.Assignment)))
-	result = append(result, assignmentLength...)
-	result = append(result, response.Assignment...)
+	// SyncGroup v5 adds protocol_type and protocol_name (compact nullable strings)
+	if apiVersion >= 5 {
+		// protocol_type = null (varint 0)
+		result = append(result, 0x00)
+		// protocol_name = null (varint 0)
+		result = append(result, 0x00)
+	}
+
+	// Assignment - FLEXIBLE V4+ FIX
+	if IsFlexibleVersion(14, apiVersion) {
+		// FLEXIBLE FORMAT: Assignment as compact bytes
+		// BUFFER UNDERFLOW FIX: Properly encode compact bytes for assignment
+		assignmentLen := len(response.Assignment)
+		if assignmentLen == 0 {
+			// BUFFER UNDERFLOW FIX: Send empty assignment for non-leader members
+			// Empty compact bytes = length 0, encoded as 0x01 (0 + 1)
+			result = append(result, 0x01) // Empty compact bytes
+		} else {
+			// Non-empty assignment: encode length + data
+			compactLength := CompactArrayLength(uint32(assignmentLen))
+			result = append(result, compactLength...)
+			result = append(result, response.Assignment...)
+		}
+		// Add response-level tagged fields for flexible format
+		result = append(result, 0x00) // Empty tagged fields (varint: 0)
+	} else {
+		// NON-FLEXIBLE FORMAT: Assignment as regular bytes
+		assignmentLength := make([]byte, 4)
+		binary.BigEndian.PutUint32(assignmentLength, uint32(len(response.Assignment)))
+		result = append(result, assignmentLength...)
+		result = append(result, response.Assignment...)
+	}
 
 	return result
 }

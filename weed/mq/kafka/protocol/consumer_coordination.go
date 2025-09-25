@@ -59,23 +59,22 @@ type LeaveGroupMemberResponse struct {
 
 // Error codes specific to consumer coordination are imported from errors.go
 
-func (h *Handler) handleHeartbeat(correlationID uint32, requestBody []byte) ([]byte, error) {
+func (h *Handler) handleHeartbeat(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
 	// Parse Heartbeat request
 	request, err := h.parseHeartbeatRequest(requestBody)
 	if err != nil {
-		return h.buildHeartbeatErrorResponse(correlationID, ErrorCodeInvalidGroupID), nil
+		return h.buildHeartbeatErrorResponseV(correlationID, ErrorCodeInvalidGroupID, apiVersion), nil
 	}
-
 
 	// Validate request
 	if request.GroupID == "" || request.MemberID == "" {
-		return h.buildHeartbeatErrorResponse(correlationID, ErrorCodeInvalidGroupID), nil
+		return h.buildHeartbeatErrorResponseV(correlationID, ErrorCodeInvalidGroupID, apiVersion), nil
 	}
 
 	// Get consumer group
 	group := h.groupCoordinator.GetGroup(request.GroupID)
 	if group == nil {
-		return h.buildHeartbeatErrorResponse(correlationID, ErrorCodeInvalidGroupID), nil
+		return h.buildHeartbeatErrorResponseV(correlationID, ErrorCodeInvalidGroupID, apiVersion), nil
 	}
 
 	group.Mu.Lock()
@@ -84,16 +83,15 @@ func (h *Handler) handleHeartbeat(correlationID uint32, requestBody []byte) ([]b
 	// Update group's last activity
 	group.LastActivity = time.Now()
 
-
 	// Validate member exists
 	member, exists := group.Members[request.MemberID]
 	if !exists {
-		return h.buildHeartbeatErrorResponse(correlationID, ErrorCodeUnknownMemberID), nil
+		return h.buildHeartbeatErrorResponseV(correlationID, ErrorCodeUnknownMemberID, apiVersion), nil
 	}
 
 	// Validate generation
 	if request.GenerationID != group.Generation {
-		return h.buildHeartbeatErrorResponse(correlationID, ErrorCodeIllegalGeneration), nil
+		return h.buildHeartbeatErrorResponseV(correlationID, ErrorCodeIllegalGeneration, apiVersion), nil
 	}
 
 	// Update member's last heartbeat
@@ -121,8 +119,7 @@ func (h *Handler) handleHeartbeat(correlationID uint32, requestBody []byte) ([]b
 		ErrorCode:     errorCode,
 	}
 
-
-	return h.buildHeartbeatResponse(response), nil
+	return h.buildHeartbeatResponseV(response, apiVersion), nil
 }
 
 func (h *Handler) handleLeaveGroup(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
@@ -131,7 +128,6 @@ func (h *Handler) handleLeaveGroup(correlationID uint32, apiVersion uint16, requ
 	if err != nil {
 		return h.buildLeaveGroupErrorResponse(correlationID, ErrorCodeInvalidGroupID, apiVersion), nil
 	}
-
 
 	// Validate request
 	if request.GroupID == "" || request.MemberID == "" {
@@ -149,7 +145,6 @@ func (h *Handler) handleLeaveGroup(correlationID uint32, apiVersion uint16, requ
 
 	// Update group's last activity
 	group.LastActivity = time.Now()
-
 
 	// Validate member exists
 	member, exists := group.Members[request.MemberID]
@@ -195,7 +190,6 @@ func (h *Handler) handleLeaveGroup(correlationID uint32, apiVersion uint16, requ
 		}
 	}
 
-
 	// Update group's subscribed topics (may have changed with member leaving)
 	h.updateGroupSubscriptionFromMembers(group)
 
@@ -211,7 +205,6 @@ func (h *Handler) handleLeaveGroup(correlationID uint32, apiVersion uint16, requ
 			},
 		},
 	}
-
 
 	return h.buildLeaveGroupResponse(response, apiVersion), nil
 }
@@ -324,6 +317,49 @@ func (h *Handler) buildHeartbeatResponse(response HeartbeatResponse) []byte {
 	return result
 }
 
+func (h *Handler) buildHeartbeatResponseV(response HeartbeatResponse, apiVersion uint16) []byte {
+	isFlexible := IsFlexibleVersion(12, apiVersion) // Heartbeat API key = 12
+	result := make([]byte, 0, 16)
+
+	// Correlation ID (4 bytes) - always first
+	correlationIDBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(correlationIDBytes, response.CorrelationID)
+	result = append(result, correlationIDBytes...)
+
+	if isFlexible {
+		// FLEXIBLE V4+ FORMAT: CRITICAL FIX - Add response header tagged fields!
+		// AdminClient expects header version 1 for Heartbeat v4+
+		result = append(result, 0x00) // Response header tagged fields (varint: empty)
+		
+		// Throttle time (4 bytes, 0 = no throttling) - comes first in flexible format
+		result = append(result, 0, 0, 0, 0)
+		
+		// Error code (2 bytes)
+		errorCodeBytes := make([]byte, 2)
+		binary.BigEndian.PutUint16(errorCodeBytes, uint16(response.ErrorCode))
+		result = append(result, errorCodeBytes...)
+		
+		// Response body tagged fields (varint: 0x00 = empty)
+		result = append(result, 0x00)
+		
+		Debug("Heartbeat v%d response: %d bytes (flexible format: header_tagged_fields, throttle_time_ms, error_code, body_tagged_fields)", apiVersion, len(result))
+	} else {
+		// NON-FLEXIBLE V0-V3 FORMAT: error_code BEFORE throttle_time_ms (legacy format)
+		
+		// Error code (2 bytes)
+		errorCodeBytes := make([]byte, 2)
+		binary.BigEndian.PutUint16(errorCodeBytes, uint16(response.ErrorCode))
+		result = append(result, errorCodeBytes...)
+		
+		// Throttle time (4 bytes, 0 = no throttling) - comes after error_code in non-flexible
+		result = append(result, 0, 0, 0, 0)
+		
+		Debug("Heartbeat v%d response: %d bytes (non-flexible format: error_code, throttle_time_ms)", apiVersion, len(result))
+	}
+
+	return result
+}
+
 func (h *Handler) buildLeaveGroupResponse(response LeaveGroupResponse, apiVersion uint16) []byte {
 	// LeaveGroup v0 only includes correlation_id and error_code (no throttle_time_ms, no members)
 	if apiVersion == 0 {
@@ -412,6 +448,15 @@ func (h *Handler) buildHeartbeatErrorResponse(correlationID uint32, errorCode in
 	}
 
 	return h.buildHeartbeatResponse(response)
+}
+
+func (h *Handler) buildHeartbeatErrorResponseV(correlationID uint32, errorCode int16, apiVersion uint16) []byte {
+	response := HeartbeatResponse{
+		CorrelationID: correlationID,
+		ErrorCode:     errorCode,
+	}
+
+	return h.buildHeartbeatResponseV(response, apiVersion)
 }
 
 func (h *Handler) buildLeaveGroupErrorResponse(correlationID uint32, errorCode int16, apiVersion uint16) []byte {
