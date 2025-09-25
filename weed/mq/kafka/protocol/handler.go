@@ -907,13 +907,17 @@ func (h *Handler) HandleMetadataV2(correlationID uint32, requestBody []byte) ([]
 	// Determine topics to return using SeaweedMQ handler
 	var topicsToReturn []string
 	if len(requestedTopics) == 0 {
+		fmt.Printf("METADATA V2: About to call ListTopics()\n")
 		topicsToReturn = h.seaweedMQHandler.ListTopics()
+		fmt.Printf("METADATA V2: ListTopics() returned %d topics: %v\n", len(topicsToReturn), topicsToReturn)
 	} else {
+		fmt.Printf("METADATA V2: Checking specific topics: %v\n", requestedTopics)
 		for _, name := range requestedTopics {
 			if h.seaweedMQHandler.TopicExists(name) {
 				topicsToReturn = append(topicsToReturn, name)
 			}
 		}
+		fmt.Printf("METADATA V2: Found %d existing topics: %v\n", len(topicsToReturn), topicsToReturn)
 	}
 
 	var buf bytes.Buffer

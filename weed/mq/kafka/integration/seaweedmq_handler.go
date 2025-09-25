@@ -37,9 +37,9 @@ type SeaweedMQHandler struct {
 	// Discovered broker addresses (for Metadata responses)
 	brokerAddresses []string
 
-	// Topic registry - still keep track of Kafka topics
-	topicsMu sync.RWMutex
-	topics   map[string]*KafkaTopicInfo
+	// Topic registry removed - always read directly from filer for consistency
+	// topicsMu sync.RWMutex  // No longer needed
+	// topics   map[string]*KafkaTopicInfo  // No longer needed
 
 	// Offset ledgers for Kafka offset translation
 	ledgersMu sync.RWMutex
@@ -204,11 +204,8 @@ func (h *SeaweedMQHandler) CreateTopicWithSchema(name string, partitions int32, 
 
 // CreateTopicWithSchemas creates a topic with optional key and value schemas
 func (h *SeaweedMQHandler) CreateTopicWithSchemas(name string, partitions int32, valueRecordType *schema_pb.RecordType, keyRecordType *schema_pb.RecordType) error {
-	h.topicsMu.Lock()
-	defer h.topicsMu.Unlock()
-
-	// Check if topic already exists
-	if _, exists := h.topics[name]; exists {
+	// Check if topic already exists in filer
+	if h.checkTopicInFiler(name) {
 		return fmt.Errorf("topic %s already exists", name)
 	}
 
@@ -218,12 +215,12 @@ func (h *SeaweedMQHandler) CreateTopicWithSchemas(name string, partitions int32,
 		Name:      name,
 	}
 
-	glog.V(1).Infof("🆕 Creating topic %s with %d partitions in SeaweedMQ broker", name, partitions)
+	glog.V(1).Infof("Creating topic %s with %d partitions in SeaweedMQ broker", name, partitions)
 
 	// Configure topic with SeaweedMQ broker via gRPC
 	if len(h.brokerAddresses) > 0 {
 		brokerAddress := h.brokerAddresses[0] // Use first available broker
-		glog.V(1).Infof("📞 Configuring topic %s with broker %s", name, brokerAddress)
+		glog.V(1).Infof("Configuring topic %s with broker %s", name, brokerAddress)
 
 		// Load security configuration for broker connection
 		util.LoadSecurityConfiguration()
@@ -254,19 +251,11 @@ func (h *SeaweedMQHandler) CreateTopicWithSchemas(name string, partitions int32,
 			return fmt.Errorf("failed to configure topic %s with broker %s: %w", name, brokerAddress, err)
 		}
 	} else {
-		glog.Warningf("⚠️ No brokers available - creating topic %s in gateway memory only (testing mode)", name)
+		glog.Warningf("No brokers available - creating topic %s in gateway memory only (testing mode)", name)
 	}
 
-	// Create Kafka topic info
-	topicInfo := &KafkaTopicInfo{
-		Name:         name,
-		Partitions:   partitions,
-		CreatedAt:    time.Now().UnixNano(),
-		SeaweedTopic: seaweedTopic,
-	}
-
-	// Store in registry
-	h.topics[name] = topicInfo
+	// Topic is now stored in filer only via SeaweedMQ broker
+	// No need to create in-memory topic info structure
 
 	// Initialize offset ledgers for all partitions
 	for partitionID := int32(0); partitionID < partitions; partitionID++ {
@@ -276,17 +265,14 @@ func (h *SeaweedMQHandler) CreateTopicWithSchemas(name string, partitions int32,
 		h.ledgersMu.Unlock()
 	}
 
-	glog.V(1).Infof("🎉 Topic %s created successfully with %d partitions", name, partitions)
+	glog.V(1).Infof("Topic %s created successfully with %d partitions", name, partitions)
 	return nil
 }
 
 // CreateTopicWithRecordType creates a topic with flat schema and key columns
 func (h *SeaweedMQHandler) CreateTopicWithRecordType(name string, partitions int32, flatSchema *schema_pb.RecordType, keyColumns []string) error {
-	h.topicsMu.Lock()
-	defer h.topicsMu.Unlock()
-
-	// Check if topic already exists
-	if _, exists := h.topics[name]; exists {
+	// Check if topic already exists in filer
+	if h.checkTopicInFiler(name) {
 		return fmt.Errorf("topic %s already exists", name)
 	}
 
@@ -296,12 +282,12 @@ func (h *SeaweedMQHandler) CreateTopicWithRecordType(name string, partitions int
 		Name:      name,
 	}
 
-	glog.V(1).Infof("🆕 Creating topic %s with %d partitions in SeaweedMQ broker using flat schema", name, partitions)
+	glog.V(1).Infof("Creating topic %s with %d partitions in SeaweedMQ broker using flat schema", name, partitions)
 
 	// Configure topic with SeaweedMQ broker via gRPC
 	if len(h.brokerAddresses) > 0 {
 		brokerAddress := h.brokerAddresses[0] // Use first available broker
-		glog.V(1).Infof("📞 Configuring topic %s with broker %s", name, brokerAddress)
+		glog.V(1).Infof("Configuring topic %s with broker %s", name, brokerAddress)
 
 		// Load security configuration for broker connection
 		util.LoadSecurityConfiguration()
@@ -327,32 +313,27 @@ func (h *SeaweedMQHandler) CreateTopicWithRecordType(name string, partitions int
 			return err
 		}
 	} else {
-		glog.Warningf("⚠️  No broker addresses configured, topic %s not created in SeaweedMQ", name)
+		glog.Warningf("No broker addresses configured, topic %s not created in SeaweedMQ", name)
 	}
 
-	// Create Kafka topic info
-	topicInfo := &KafkaTopicInfo{
-		Name:         name,
-		Partitions:   partitions,
-		CreatedAt:    time.Now().UnixNano(),
-		SeaweedTopic: seaweedTopic,
-	}
+	// Topic is now stored in filer only via SeaweedMQ broker
+	// No need to create in-memory topic info structure
 
-	// Store in topics map
-	h.topics[name] = topicInfo
-
-	glog.V(1).Infof("🎉 Topic %s created successfully with %d partitions using flat schema", name, partitions)
+	glog.V(1).Infof("Topic %s created successfully with %d partitions using flat schema", name, partitions)
 	return nil
 }
 
 // DeleteTopic removes a topic from both Kafka registry and SeaweedMQ
 func (h *SeaweedMQHandler) DeleteTopic(name string) error {
-	h.topicsMu.Lock()
-	defer h.topicsMu.Unlock()
-
-	topicInfo, exists := h.topics[name]
-	if !exists {
+	// Check if topic exists in filer
+	if !h.checkTopicInFiler(name) {
 		return fmt.Errorf("topic %s does not exist", name)
+	}
+
+	// Get topic info to determine partition count for cleanup
+	topicInfo, exists := h.GetTopicInfo(name)
+	if !exists {
+		return fmt.Errorf("topic %s info not found", name)
 	}
 
 	// Close all publisher sessions for this topic
@@ -362,8 +343,8 @@ func (h *SeaweedMQHandler) DeleteTopic(name string) error {
 		}
 	}
 
-	// Remove from registry
-	delete(h.topics, name)
+	// Topic removal from filer would be handled by SeaweedMQ broker
+	// No in-memory cache to clean up
 
 	// Clean up offset ledgers
 	h.ledgersMu.Lock()
@@ -376,33 +357,35 @@ func (h *SeaweedMQHandler) DeleteTopic(name string) error {
 	return nil
 }
 
-// TopicExists checks if a topic exists
+// TopicExists checks if a topic exists in filer directly
 func (h *SeaweedMQHandler) TopicExists(name string) bool {
-	h.topicsMu.RLock()
-	defer h.topicsMu.RUnlock()
-
-	_, exists := h.topics[name]
-	return exists
+	// Always check filer directly for consistency
+	return h.checkTopicInFiler(name)
 }
 
-// GetTopicInfo returns information about a topic
+// GetTopicInfo returns information about a topic from filer
 func (h *SeaweedMQHandler) GetTopicInfo(name string) (*KafkaTopicInfo, bool) {
-	h.topicsMu.RLock()
-	defer h.topicsMu.RUnlock()
+	// Check if topic exists in filer
+	if !h.checkTopicInFiler(name) {
+		return nil, false
+	}
 
-	info, exists := h.topics[name]
-	return info, exists
+	// Create basic topic info - in a real implementation, this could read
+	// topic configuration from filer metadata
+	topicInfo := &KafkaTopicInfo{
+		Name:       name,
+		Partitions: 1, // Default to 1 partition
+		CreatedAt:  0, // Could be read from filer metadata
+	}
+
+	return topicInfo, true
 }
 
-// ListTopics returns all topic names
+// ListTopics returns all topic names from filer directly
 func (h *SeaweedMQHandler) ListTopics() []string {
-	h.topicsMu.RLock()
-	defer h.topicsMu.RUnlock()
-
-	topics := make([]string, 0, len(h.topics))
-	for name := range h.topics {
-		topics = append(topics, name)
-	}
+	// Always read directly from filer for consistency
+	topics := h.listTopicsFromFiler()
+	fmt.Printf("ListTopics: Found %d topics from filer: %v\n", len(topics), topics)
 	return topics
 }
 
@@ -761,16 +744,16 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string, clientHost str
 
 	// Give the connection a moment to establish
 	time.Sleep(2 * time.Second)
-	glog.V(1).Infof("⏱️ Initial connection delay completed")
+	glog.V(1).Infof("Initial connection delay completed")
 
 	// Discover brokers from masters using master client
-	glog.V(1).Infof("🔄 About to call discoverBrokersWithMasterClient...")
+	glog.V(1).Infof("About to call discoverBrokersWithMasterClient...")
 	brokerAddresses, err := discoverBrokersWithMasterClient(masterClient, filerGroup)
 	if err != nil {
-		glog.Errorf("💥 Broker discovery failed: %v", err)
+		glog.Errorf("Broker discovery failed: %v", err)
 		return nil, fmt.Errorf("failed to discover brokers: %v", err)
 	}
-	glog.V(1).Infof("✨ Broker discovery returned: %v", brokerAddresses)
+	glog.V(1).Infof("Broker discovery returned: %v", brokerAddresses)
 
 	if len(brokerAddresses) == 0 {
 		return nil, fmt.Errorf("no brokers discovered from masters")
@@ -807,9 +790,9 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string, clientHost str
 		filerClientAccessor: sharedFilerAccessor,
 		brokerClient:        brokerClient,
 		masterClient:        masterClient,
-		topics:              make(map[string]*KafkaTopicInfo),
-		ledgers:             make(map[TopicPartitionKey]*offset.Ledger),
-		brokerAddresses:     brokerAddresses, // Store all discovered broker addresses
+		// topics map removed - always read from filer directly
+		ledgers:         make(map[TopicPartitionKey]*offset.Ledger),
+		brokerAddresses: brokerAddresses, // Store all discovered broker addresses
 	}, nil
 }
 
@@ -817,10 +800,10 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string, clientHost str
 func discoverBrokersWithMasterClient(masterClient *wdclient.MasterClient, filerGroup string) ([]string, error) {
 	var brokers []string
 
-	glog.V(1).Infof("🔍 Starting broker discovery with MasterClient for filer group: %q", filerGroup)
+	glog.V(1).Infof("Starting broker discovery with MasterClient for filer group: %q", filerGroup)
 
 	err := masterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
-		glog.V(1).Infof("📞 Inside MasterClient.WithClient callback - client obtained successfully")
+		glog.V(1).Infof("Inside MasterClient.WithClient callback - client obtained successfully")
 		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
 			ClientType: cluster.BrokerType,
 			FilerGroup: filerGroup,
@@ -845,9 +828,9 @@ func discoverBrokersWithMasterClient(masterClient *wdclient.MasterClient, filerG
 	})
 
 	if err != nil {
-		glog.Errorf("❌ MasterClient.WithClient failed: %v", err)
+		glog.Errorf("MasterClient.WithClient failed: %v", err)
 	} else {
-		glog.V(1).Infof("🎉 Broker discovery completed successfully - found %d brokers: %v", len(brokers), brokers)
+		glog.V(1).Infof("Broker discovery completed successfully - found %d brokers: %v", len(brokers), brokers)
 	}
 
 	return brokers, err
@@ -881,6 +864,70 @@ func discoverFilersWithMasterClient(masterClient *wdclient.MasterClient, filerGr
 	})
 
 	return filers, err
+}
+
+// checkTopicInFiler checks if a topic exists in the filer
+func (h *SeaweedMQHandler) checkTopicInFiler(topicName string) bool {
+	if h.filerClientAccessor == nil {
+		return false
+	}
+
+	var exists bool
+	h.filerClientAccessor.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		request := &filer_pb.LookupDirectoryEntryRequest{
+			Directory: "/topics/kafka",
+			Name:      topicName,
+		}
+
+		_, err := client.LookupDirectoryEntry(context.Background(), request)
+		exists = (err == nil)
+		return nil // Don't propagate error, just check existence
+	})
+
+	return exists
+}
+
+// listTopicsFromFiler lists all topics from the filer
+func (h *SeaweedMQHandler) listTopicsFromFiler() []string {
+	if h.filerClientAccessor == nil {
+		fmt.Printf("listTopicsFromFiler: filerClientAccessor is nil\n")
+		return []string{}
+	}
+
+	var topics []string
+	fmt.Printf("listTopicsFromFiler: Attempting to list entries in /topics/kafka\n")
+
+	h.filerClientAccessor.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		request := &filer_pb.ListEntriesRequest{
+			Directory: "/topics/kafka",
+		}
+
+		stream, err := client.ListEntries(context.Background(), request)
+		if err != nil {
+			glog.V(1).Infof("listTopicsFromFiler: ListEntries failed: %v", err)
+			return nil // Don't propagate error, just return empty list
+		}
+
+		glog.V(1).Infof("listTopicsFromFiler: ListEntries stream created successfully")
+		for {
+			resp, err := stream.Recv()
+			if err != nil {
+				glog.V(1).Infof("listTopicsFromFiler: Stream recv ended: %v", err)
+				break // End of stream or error
+			}
+
+			if resp.Entry != nil && resp.Entry.IsDirectory {
+				glog.V(1).Infof("listTopicsFromFiler: Found directory: %s", resp.Entry.Name)
+				topics = append(topics, resp.Entry.Name)
+			} else if resp.Entry != nil {
+				glog.V(1).Infof("listTopicsFromFiler: Found non-directory: %s (isDir=%v)", resp.Entry.Name, resp.Entry.IsDirectory)
+			}
+		}
+		return nil
+	})
+
+	glog.V(1).Infof("listTopicsFromFiler: Returning %d topics: %v", len(topics), topics)
+	return topics
 }
 
 // GetFilerClientAccessor returns the shared filer client accessor
@@ -1149,7 +1196,7 @@ func (bc *BrokerClient) getActualPartitionAssignment(topic string, kafkaPartitio
 		expectedRangeStop = (kafkaPartition + 1) * rangeSize
 	}
 
-	glog.V(2).Infof("🔍 Looking for Kafka partition %d in topic %s: expected range [%d, %d] out of %d partitions",
+	glog.V(2).Infof("Looking for Kafka partition %d in topic %s: expected range [%d, %d] out of %d partitions",
 		kafkaPartition, topic, expectedRangeStart, expectedRangeStop, totalPartitions)
 
 	// Find the broker assignment that matches this range
@@ -1257,7 +1304,7 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 		glog.V(1).Infof("Using EXACT_OFFSET for Kafka offset %d (native offset-based positioning)", startOffset)
 	}
 
-	glog.V(1).Infof("🔍 Creating subscriber for topic=%s partition=%d: Kafka offset %d -> SeaweedMQ %s (timestamp=%d)",
+	glog.V(1).Infof("Creating subscriber for topic=%s partition=%d: Kafka offset %d -> SeaweedMQ %s (timestamp=%d)",
 		topic, partition, startOffset, offsetType, startTimestamp)
 
 	// Send init message using the actual partition structure that the broker allocated
