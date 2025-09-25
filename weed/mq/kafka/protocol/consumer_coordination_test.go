@@ -29,7 +29,7 @@ func TestHandler_handleHeartbeat(t *testing.T) {
 	requestBody := createHeartbeatRequestBody("test-group", 1, "member1")
 
 	correlationID := uint32(123)
-	response, err := h.handleHeartbeat(correlationID, requestBody)
+	response, err := h.handleHeartbeat(correlationID, 0, requestBody)
 
 	if err != nil {
 		t.Fatalf("handleHeartbeat failed: %v", err)
@@ -79,7 +79,7 @@ func TestHandler_handleHeartbeat_RebalanceInProgress(t *testing.T) {
 	requestBody := createHeartbeatRequestBody("test-group", 1, "member1")
 
 	correlationID := uint32(124)
-	response, err := h.handleHeartbeat(correlationID, requestBody)
+	response, err := h.handleHeartbeat(correlationID, 0, requestBody)
 
 	if err != nil {
 		t.Fatalf("handleHeartbeat failed: %v", err)
@@ -116,7 +116,7 @@ func TestHandler_handleHeartbeat_WrongGeneration(t *testing.T) {
 	requestBody := createHeartbeatRequestBody("test-group", 1, "member1")
 
 	correlationID := uint32(125)
-	response, err := h.handleHeartbeat(correlationID, requestBody)
+	response, err := h.handleHeartbeat(correlationID, 0, requestBody)
 
 	if err != nil {
 		t.Fatalf("handleHeartbeat failed: %v", err)
@@ -144,7 +144,7 @@ func TestHandler_handleHeartbeat_UnknownMember(t *testing.T) {
 	requestBody := createHeartbeatRequestBody("test-group", 1, "unknown-member")
 
 	correlationID := uint32(126)
-	response, err := h.handleHeartbeat(correlationID, requestBody)
+	response, err := h.handleHeartbeat(correlationID, 0, requestBody)
 
 	if err != nil {
 		t.Fatalf("handleHeartbeat failed: %v", err)
@@ -343,7 +343,7 @@ func TestHandler_parseHeartbeatRequest(t *testing.T) {
 
 	requestBody := createHeartbeatRequestBody("test-group", 1, "member1")
 
-	request, err := h.parseHeartbeatRequest(requestBody)
+	request, err := h.parseHeartbeatRequest(requestBody, 0)
 	if err != nil {
 		t.Fatalf("parseHeartbeatRequest failed: %v", err)
 	}
@@ -471,7 +471,7 @@ func TestHandler_HeartbeatLeaveGroup_EndToEnd(t *testing.T) {
 
 	// Test heartbeat
 	heartbeatRequestBody := createHeartbeatRequestBody("test-group", 1, "member1")
-	heartbeatResponse, err := server.handleHeartbeat(456, heartbeatRequestBody)
+	heartbeatResponse, err := server.handleHeartbeat(456, 0, heartbeatRequestBody)
 	if err != nil {
 		t.Fatalf("heartbeat failed: %v", err)
 	}
