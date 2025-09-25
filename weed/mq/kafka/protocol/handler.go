@@ -2439,7 +2439,7 @@ func (h *Handler) handleMetadata(correlationID uint32, apiVersion uint16, reques
 	case 5, 6:
 		return h.HandleMetadataV5V6(correlationID, requestBody)
 	case 7:
-		return h.HandleMetadataV5V6(correlationID, requestBody)
+		return h.HandleMetadataV7(correlationID, requestBody)
 	default:
 		return nil, fmt.Errorf("metadata version %d not implemented yet", apiVersion)
 	}

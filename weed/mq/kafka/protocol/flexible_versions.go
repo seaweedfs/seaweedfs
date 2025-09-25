@@ -199,7 +199,7 @@ func IsFlexibleVersion(apiKey, apiVersion uint16) bool {
 	case 18: // ApiVersions
 		return apiVersion >= 3
 	case 3: // Metadata
-		return apiVersion >= 9
+		return apiVersion >= 7
 	case 1: // Fetch
 		return apiVersion >= 12
 	case 0: // Produce
