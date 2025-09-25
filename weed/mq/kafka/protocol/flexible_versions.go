@@ -9,11 +9,9 @@ import (
 // Flexible versions use compact arrays/strings and tagged fields for backward compatibility
 
 // CompactArrayLength encodes a length for compact arrays
-// Compact arrays encode length as length+1, where 0 means empty array
+// Compact arrays encode length as length+1, where 0 means null array
+// For empty arrays (0 elements), we encode as 1 (0+1)
 func CompactArrayLength(length uint32) []byte {
-	if length == 0 {
-		return []byte{0} // Empty array
-	}
 	return EncodeUvarint(length + 1)
 }
 
@@ -145,9 +143,7 @@ func (tf *TaggedFields) Encode() []byte {
 // DecodeTaggedFields decodes tagged fields from flexible versions
 func DecodeTaggedFields(data []byte) (*TaggedFields, int, error) {
 	if len(data) == 0 {
-		// Return empty tagged fields instead of error - this is a common case
-		// when parsing requests that don't have tagged fields data available yet
-		return &TaggedFields{}, 0, nil
+		return &TaggedFields{}, 0, fmt.Errorf("no data for tagged fields")
 	}
 
 	if data[0] == 0 {
@@ -196,61 +192,48 @@ func DecodeTaggedFields(data []byte) (*TaggedFields, int, error) {
 	return &TaggedFields{Fields: fields}, offset, nil
 }
 
-// ApiKeyInfo contains version information for a Kafka API
-type ApiKeyInfo struct {
-	ApiKey              uint16
-	MinVersion          uint16
-	MaxVersion          uint16
-	FlexibleFromVersion uint16 // Version from which flexible format is used
-}
-
-// SupportedApiKeys defines all supported API keys and their version ranges
-var SupportedApiKeys = []ApiKeyInfo{
-	{18, 0, 3, 3},  // ApiVersions - flexible from v3
-	{3, 0, 7, 9},   // Metadata - flexible from v9 (AdminClient 7.4.0-ce compatibility: V7 uses non-flexible)
-	{2, 0, 2, 99},  // ListOffsets - never flexible in our range
-	{19, 0, 5, 2},  // CreateTopics - flexible from v2
-	{20, 0, 4, 4},  // DeleteTopics - flexible from v4
-	{0, 0, 7, 9},   // Produce - flexible from v9
-	{1, 0, 7, 12},  // Fetch - flexible from v12
-	{11, 0, 6, 6},  // JoinGroup - flexible from v6
-	{14, 0, 5, 4},  // SyncGroup - flexible from v4
-	{8, 0, 2, 8},   // OffsetCommit - flexible from v8
-	{9, 0, 5, 6},   // OffsetFetch - flexible from v6
-	{10, 0, 2, 3},  // FindCoordinator - flexible from v3
-	{12, 0, 4, 4},  // Heartbeat - flexible from v4
-	{13, 0, 4, 4},  // LeaveGroup - flexible from v4
-	{15, 0, 5, 99}, // DescribeGroups - never flexible in our range
-	{16, 0, 4, 99}, // ListGroups - never flexible in our range
-	{32, 0, 4, 99}, // DescribeConfigs - never flexible in our range
-}
-
-// GetApiKeyInfo returns the API key info for a given API key, or nil if not found
-func GetApiKeyInfo(apiKey uint16) *ApiKeyInfo {
-	for i := range SupportedApiKeys {
-		if SupportedApiKeys[i].ApiKey == apiKey {
-			return &SupportedApiKeys[i]
-		}
-	}
-	return nil
-}
-
 // IsFlexibleVersion determines if an API version uses flexible versions
 // This is API-specific and based on when each API adopted flexible versions
 func IsFlexibleVersion(apiKey, apiVersion uint16) bool {
-	info := GetApiKeyInfo(apiKey)
-	if info == nil {
-		return false // Unsupported API key
+	switch apiKey {
+	case 18: // ApiVersions
+		return apiVersion >= 3
+	case 3: // Metadata
+		return apiVersion >= 9
+	case 1: // Fetch
+		return apiVersion >= 12
+	case 0: // Produce
+		return apiVersion >= 9
+	case 11: // JoinGroup
+		return apiVersion >= 6
+	case 14: // SyncGroup
+		return apiVersion >= 4
+	case 8: // OffsetCommit
+		return apiVersion >= 8
+	case 9: // OffsetFetch
+		return apiVersion >= 6
+	case 10: // FindCoordinator
+		return apiVersion >= 3
+	case 12: // Heartbeat
+		return apiVersion >= 4
+	case 13: // LeaveGroup
+		return apiVersion >= 4
+	case 19: // CreateTopics
+		return apiVersion >= 2
+	case 20: // DeleteTopics
+		return apiVersion >= 4
+	case 22: // InitProducerId
+		return apiVersion >= 4
+	default:
+		return false
 	}
-	return apiVersion >= info.FlexibleFromVersion
 }
 
 // FlexibleString encodes a string for flexible versions (compact format)
 func FlexibleString(s string) []byte {
-	// For compact strings:
-	// - Empty string (length 0) should be encoded as length+1 = 1
-	// - Null string should be encoded as 0
-	// This function handles non-null strings only
+	if s == "" {
+		return []byte{0} // Null string
+	}
 
 	var buf []byte
 	buf = append(buf, CompactStringLength(len(s))...)

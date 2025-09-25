@@ -417,9 +417,14 @@ func (h *SeaweedMQHandler) ProduceRecord(topic string, partition int32, key []by
 
 	// Map SeaweedMQ sequence to Kafka offset
 	if err := ledger.AppendRecord(kafkaOffset, timestamp, int32(len(value))); err != nil {
-		// Log the error but don't fail the produce operation
+		// CRITICAL: AppendRecord failed - this breaks offset consistency!
+		glog.Errorf("CRITICAL: Failed to append record to ledger for topic %s partition %d offset %d: %v",
+			topic, partition, kafkaOffset, err)
+		return 0, fmt.Errorf("failed to append record to ledger: %v", err)
 	}
 
+	glog.V(2).Infof("Successfully produced record to topic %s partition %d at offset %d (HWM: %d)",
+		topic, partition, kafkaOffset, ledger.GetHighWaterMark())
 	return kafkaOffset, nil
 }
 
@@ -451,9 +456,14 @@ func (h *SeaweedMQHandler) ProduceRecordValue(topic string, partition int32, key
 
 	// Map SeaweedMQ sequence to Kafka offset
 	if err := ledger.AppendRecord(kafkaOffset, timestamp, int32(len(recordValueBytes))); err != nil {
-		// Log the error but don't fail the produce operation
+		// CRITICAL: AppendRecord failed - this breaks offset consistency!
+		glog.Errorf("CRITICAL: Failed to append RecordValue to ledger for topic %s partition %d offset %d: %v",
+			topic, partition, kafkaOffset, err)
+		return 0, fmt.Errorf("failed to append RecordValue to ledger: %v", err)
 	}
 
+	glog.V(2).Infof("Successfully produced RecordValue to topic %s partition %d at offset %d (HWM: %d)",
+		topic, partition, kafkaOffset, ledger.GetHighWaterMark())
 	return kafkaOffset, nil
 }
 

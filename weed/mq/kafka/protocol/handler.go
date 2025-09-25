@@ -299,6 +299,7 @@ func (h *Handler) GetCoordinatorRegistry() CoordinatorRegistryInterface {
 
 // HandleConn processes a single client connection
 func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
+	Debug("🚀 KAFKA 8.0.0 DEBUG: NEW HANDLER CODE ACTIVE - %s", time.Now().Format("15:04:05"))
 	connectionID := fmt.Sprintf("%s->%s", conn.RemoteAddr(), conn.LocalAddr())
 
 	// Record connection metrics
@@ -417,6 +418,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			Debug("[%s] Error reading message body: %v (code: %d)", connectionID, err, errorCode)
 			return fmt.Errorf("read message: %w", err)
 		}
+		Debug("[%s] 🚀 SUCCESSFULLY READ MESSAGE BODY: %d bytes", connectionID, len(messageBuf))
 
 		// Parse at least the basic header to get API key and correlation ID
 		if len(messageBuf) < 8 {
@@ -430,7 +432,9 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		apiName := getAPIName(apiKey)
 
 		// Validate API version against what we support
+		Debug("🔍 VALIDATING API VERSION: Key=%d, Version=%d", apiKey, apiVersion)
 		if err := h.validateAPIVersion(apiKey, apiVersion); err != nil {
+			fmt.Printf("❌ API VERSION VALIDATION FAILED: Key=%d, Version=%d, Error=%v\n", apiKey, apiVersion, err)
 			// Return proper Kafka error response for unsupported version
 			response, writeErr := h.buildUnsupportedVersionResponse(correlationID, apiKey, apiVersion)
 			if writeErr != nil {
@@ -441,8 +445,10 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 				Debug("[%s] Failed to send unsupported version response: %v", connectionID, writeErr)
 				return fmt.Errorf("send error response: %w", writeErr)
 			}
+			fmt.Printf("✅ SENT UNSUPPORTED VERSION RESPONSE, CONTINUING\n")
 			continue
 		}
+		fmt.Printf("✅ API VERSION VALIDATION PASSED: Key=%d, Version=%d\n", apiKey, apiVersion)
 
 		// Extract request body - special handling for ApiVersions requests
 		var requestBody []byte
@@ -535,13 +541,105 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		requestStart := time.Now()
 
 		Debug("API REQUEST - Key: %d (%s), Version: %d, Correlation: %d", apiKey, getAPIName(apiKey), apiVersion, correlationID)
+
+		// CRITICAL DEBUG: Log every API request to see if we're reaching this point
+		Debug("🚨 PROCESSING API REQUEST: Key=%d (%s), Version=%d, Correlation=%d", apiKey, apiName, apiVersion, correlationID)
+
 		switch apiKey {
 		case 18: // ApiVersions
 			Debug("-> ApiVersions v%d", apiVersion)
+
+			// KAFKA 8.0.0 DEBUG: Log the exact request bytes
+			fmt.Printf("=== KAFKA 8.0.0 ApiVersions REQUEST ===\n")
+			fmt.Printf("API Key: %d, Version: %d, Correlation: %d\n", apiKey, apiVersion, correlationID)
+			fmt.Printf("Request bytes (%d total):\n", len(messageBuf))
+			for i := 0; i < len(messageBuf); i += 16 {
+				end := i + 16
+				if end > len(messageBuf) {
+					end = len(messageBuf)
+				}
+				fmt.Printf("  %04x: ", i)
+				for j := i; j < end; j++ {
+					fmt.Printf("%02x ", messageBuf[j])
+				}
+				for j := end; j < i+16; j++ {
+					fmt.Printf("   ")
+				}
+				fmt.Printf(" |")
+				for j := i; j < end; j++ {
+					if messageBuf[j] >= 32 && messageBuf[j] <= 126 {
+						fmt.Printf("%c", messageBuf[j])
+					} else {
+						fmt.Printf(".")
+					}
+				}
+				fmt.Printf("|\n")
+			}
+
 			response, err = h.handleApiVersions(correlationID, apiVersion)
+
+			if err == nil {
+				// KAFKA 8.0.0 DEBUG: Log the exact response bytes
+				fmt.Printf("=== KAFKA 8.0.0 ApiVersions RESPONSE ===\n")
+				fmt.Printf("Response bytes (%d total):\n", len(response))
+				for i := 0; i < len(response); i += 16 {
+					end := i + 16
+					if end > len(response) {
+						end = len(response)
+					}
+					fmt.Printf("  %04x: ", i)
+					for j := i; j < end; j++ {
+						fmt.Printf("%02x ", response[j])
+					}
+					for j := end; j < i+16; j++ {
+						fmt.Printf("   ")
+					}
+					fmt.Printf(" |")
+					for j := i; j < end; j++ {
+						if response[j] >= 32 && response[j] <= 126 {
+							fmt.Printf("%c", response[j])
+						} else {
+							fmt.Printf(".")
+						}
+					}
+					fmt.Printf("|\n")
+				}
+				fmt.Printf("=== END ApiVersions RESPONSE ===\n")
+			} else {
+				fmt.Printf("❌ ApiVersions v%d failed: %v\n", apiVersion, err)
+			}
 		case 3: // Metadata
 			Debug("-> Metadata v%d", apiVersion)
+			fmt.Printf("🔍 KAFKA 8.0.0 DEBUG: Processing Metadata v%d request\n", apiVersion)
 			response, err = h.handleMetadata(correlationID, apiVersion, requestBody)
+			if err == nil {
+				fmt.Printf("🔍 KAFKA 8.0.0 DEBUG: Metadata v%d response (%d bytes):\n", apiVersion, len(response))
+				for i := 0; i < len(response) && i < 128; i += 16 {
+					end := i + 16
+					if end > len(response) {
+						end = len(response)
+					}
+					if end > 128 {
+						end = 128
+					}
+					fmt.Printf("  %04x: ", i)
+					for j := i; j < end; j++ {
+						fmt.Printf("%02x ", response[j])
+					}
+					for j := end; j < i+16; j++ {
+						fmt.Printf("   ")
+					}
+					fmt.Printf(" |")
+					for j := i; j < end; j++ {
+						if response[j] >= 32 && response[j] <= 126 {
+							fmt.Printf("%c", response[j])
+						} else {
+							fmt.Printf(".")
+						}
+					}
+					fmt.Printf("|\n")
+				}
+			}
 		case 2: // ListOffsets
 			Debug("*** LISTOFFSETS REQUEST RECEIVED *** Correlation: %d, Version: %d", correlationID, apiVersion)
 			response, err = h.handleListOffsets(correlationID, apiVersion, requestBody)
@@ -584,6 +682,9 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		case 32: // DescribeConfigs
 			Debug("DescribeConfigs request received, correlation: %d, version: %d", correlationID, apiVersion)
 			response, err = h.handleDescribeConfigs(correlationID, apiVersion, requestBody)
+		case 22: // InitProducerId
+			Debug("-> InitProducerId v%d", apiVersion)
+			response, err = h.handleInitProducerId(correlationID, apiVersion, requestBody)
 		default:
 			Warning("Unsupported API key: %d (%s) v%d - Correlation: %d", apiKey, apiName, apiVersion, correlationID)
 			err = fmt.Errorf("unsupported API key: %d (version %d)", apiKey, apiVersion)
@@ -611,6 +712,35 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		// Minimal flush logging
 		// Debug("API %d flushed", apiKey)
 	}
+}
+
+// ApiKeyInfo represents supported API key information
+type ApiKeyInfo struct {
+	ApiKey     uint16
+	MinVersion uint16
+	MaxVersion uint16
+}
+
+// SupportedApiKeys defines all supported API keys and their version ranges
+var SupportedApiKeys = []ApiKeyInfo{
+	{18, 0, 4}, // ApiVersions - support up to v4 for Kafka 8.0.0 compatibility
+	{3, 0, 7},  // Metadata
+	{0, 0, 7},  // Produce
+	{1, 0, 7},  // Fetch
+	{2, 0, 2},  // ListOffsets
+	{19, 0, 5}, // CreateTopics
+	{20, 0, 4}, // DeleteTopics
+	{10, 0, 2}, // FindCoordinator
+	{11, 0, 6}, // JoinGroup
+	{14, 0, 5}, // SyncGroup
+	{8, 0, 2},  // OffsetCommit
+	{9, 0, 5},  // OffsetFetch
+	{12, 0, 4}, // Heartbeat
+	{13, 0, 4}, // LeaveGroup
+	{15, 0, 5}, // DescribeGroups
+	{16, 0, 4}, // ListGroups
+	{32, 0, 4}, // DescribeConfigs
+	{22, 0, 4}, // InitProducerId - support up to v4 for transactional producers
 }
 
 func (h *Handler) handleApiVersions(correlationID uint32, apiVersion uint16) ([]byte, error) {
@@ -671,6 +801,7 @@ func (h *Handler) handleApiVersions(correlationID uint32, apiVersion uint16) ([]
 	}
 
 	Debug("ApiVersions v%d response: %d bytes (flexible: %t) - ADMINCLIENT COMPATIBILITY FIX", apiVersion, len(response), apiVersion >= 3)
+
 	return response, nil
 }
 
@@ -2349,7 +2480,7 @@ func (h *Handler) handleDeleteTopics(correlationID uint32, requestBody []byte) (
 // validateAPIVersion checks if we support the requested API version
 func (h *Handler) validateAPIVersion(apiKey, apiVersion uint16) error {
 	supportedVersions := map[uint16][2]uint16{
-		18: {0, 3}, // ApiVersions: v0-v3
+		18: {0, 4}, // ApiVersions: v0-v4 (Kafka 8.0.0 compatibility)
 		3:  {0, 7}, // Metadata: v0-v7
 		0:  {0, 7}, // Produce: v0-v7
 		1:  {0, 7}, // Fetch: v0-v7
@@ -2366,6 +2497,7 @@ func (h *Handler) validateAPIVersion(apiKey, apiVersion uint16) error {
 		15: {0, 5}, // DescribeGroups: v0-v5
 		16: {0, 4}, // ListGroups: v0-v4
 		32: {0, 4}, // DescribeConfigs: v0-v4
+		22: {0, 4}, // InitProducerId: v0-v4
 	}
 
 	if versionRange, exists := supportedVersions[apiKey]; exists {
@@ -2397,8 +2529,9 @@ func (h *Handler) handleMetadata(correlationID uint32, apiVersion uint16, reques
 		return h.HandleMetadataV2(correlationID, requestBody)
 	case 3, 4:
 		return h.HandleMetadataV3V4(correlationID, requestBody)
-	case 5, 6, 7:
-		// AdminClient 7.4.0-ce compatibility: V7 uses non-flexible format like V5/V6
+	case 5, 6:
+		return h.HandleMetadataV5V6(correlationID, requestBody)
+	case 7:
 		return h.HandleMetadataV5V6(correlationID, requestBody)
 	default:
 		return nil, fmt.Errorf("metadata version %d not implemented yet", apiVersion)
@@ -2442,6 +2575,8 @@ func getAPIName(apiKey uint16) string {
 		return "DeleteTopics"
 	case 32:
 		return "DescribeConfigs"
+	case 22:
+		return "InitProducerId"
 	default:
 		return "Unknown"
 	}
@@ -3231,4 +3366,130 @@ func (h *Handler) registerSchemasViaBrokerAPI(topicName string, valueRecordType 
 		})
 		return err
 	})
+}
+
+// handleInitProducerId handles InitProducerId API requests (API key 22)
+// This API is used to initialize a producer for transactional or idempotent operations
+func (h *Handler) handleInitProducerId(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
+	Debug("InitProducerId v%d request received, correlation: %d, bodyLen: %d", apiVersion, correlationID, len(requestBody))
+
+	// InitProducerId Request Format (varies by version):
+	// v0-v1: transactional_id(NULLABLE_STRING) + transaction_timeout_ms(INT32)
+	// v2+: transactional_id(NULLABLE_STRING) + transaction_timeout_ms(INT32) + producer_id(INT64) + producer_epoch(INT16)
+	// v4+: Uses flexible format with tagged fields
+
+	offset := 0
+
+	// Parse transactional_id (NULLABLE_STRING or COMPACT_NULLABLE_STRING for flexible versions)
+	var transactionalId *string
+	if apiVersion >= 4 {
+		// Flexible version - use compact nullable string
+		if len(requestBody) < offset+1 {
+			return nil, fmt.Errorf("InitProducerId request too short for transactional_id")
+		}
+
+		length := int(requestBody[offset])
+		offset++
+
+		if length == 0 {
+			// Null string
+			transactionalId = nil
+		} else {
+			// Non-null string (length is encoded as length+1 in compact format)
+			actualLength := length - 1
+			if len(requestBody) < offset+actualLength {
+				return nil, fmt.Errorf("InitProducerId request transactional_id too short")
+			}
+			if actualLength > 0 {
+				id := string(requestBody[offset : offset+actualLength])
+				transactionalId = &id
+				offset += actualLength
+			} else {
+				// Empty string
+				id := ""
+				transactionalId = &id
+			}
+		}
+	} else {
+		// Non-flexible version - use regular nullable string
+		if len(requestBody) < offset+2 {
+			return nil, fmt.Errorf("InitProducerId request too short for transactional_id length")
+		}
+
+		length := int(binary.BigEndian.Uint16(requestBody[offset : offset+2]))
+		offset += 2
+
+		if length == 0xFFFF {
+			// Null string (-1 as uint16)
+			transactionalId = nil
+		} else {
+			if len(requestBody) < offset+length {
+				return nil, fmt.Errorf("InitProducerId request transactional_id too short")
+			}
+			if length > 0 {
+				id := string(requestBody[offset : offset+length])
+				transactionalId = &id
+				offset += length
+			} else {
+				// Empty string
+				id := ""
+				transactionalId = &id
+			}
+		}
+	}
+
+	// Parse transaction_timeout_ms (INT32)
+	if len(requestBody) < offset+4 {
+		return nil, fmt.Errorf("InitProducerId request too short for transaction_timeout_ms")
+	}
+	transactionTimeoutMs := binary.BigEndian.Uint32(requestBody[offset : offset+4])
+	offset += 4
+
+	// For v2+, there might be additional fields, but we'll ignore them for now
+	// as we're providing a basic implementation
+
+	Debug("InitProducerId parsed - transactionalId: %v, timeoutMs: %d", transactionalId, transactionTimeoutMs)
+
+	// Build response
+	response := make([]byte, 0, 64)
+
+	// Correlation ID (4 bytes)
+	correlationIDBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
+	response = append(response, correlationIDBytes...)
+
+	// For flexible versions (v4+), add response header tagged fields
+	if apiVersion >= 4 {
+		response = append(response, 0x00) // Empty response header tagged fields
+	}
+
+	// InitProducerId Response Format:
+	// throttle_time_ms(INT32) + error_code(INT16) + producer_id(INT64) + producer_epoch(INT16)
+	// + tagged_fields (for flexible versions)
+
+	// Throttle time (4 bytes) - v1+
+	if apiVersion >= 1 {
+		response = append(response, 0, 0, 0, 0) // No throttling
+	}
+
+	// Error code (2 bytes) - SUCCESS
+	response = append(response, 0, 0) // No error
+
+	// Producer ID (8 bytes) - generate a simple producer ID
+	// In a real implementation, this would be managed by a transaction coordinator
+	producerId := int64(1000) // Simple fixed producer ID for now
+	producerIdBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(producerIdBytes, uint64(producerId))
+	response = append(response, producerIdBytes...)
+
+	// Producer epoch (2 bytes) - start with epoch 0
+	response = append(response, 0, 0) // Epoch 0
+
+	// For flexible versions (v4+), add response body tagged fields
+	if apiVersion >= 4 {
+		response = append(response, 0x00) // Empty response body tagged fields
+	}
+
+	Debug("InitProducerId v%d response: %d bytes, producerId: %d, epoch: 0", apiVersion, len(response), producerId)
+	return response, nil
 }

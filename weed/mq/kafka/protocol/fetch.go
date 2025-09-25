@@ -36,7 +36,7 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 	hasDataAvailable := func() bool {
 		for _, topic := range fetchRequest.Topics {
 			for _, p := range topic.Partitions {
-				ledger := h.GetLedger(topic.Name, p.PartitionID)
+				ledger := h.GetOrCreateLedger(topic.Name, p.PartitionID)
 				if ledger == nil {
 					continue
 				}
@@ -142,11 +142,15 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 			response = append(response, 0, 0)
 
 			// Get ledger for this topic-partition to determine high water mark
-			// Use GetLedger (not GetOrCreateLedger) to avoid creating topics that don't exist
-			ledger := h.GetLedger(topic.Name, partition.PartitionID)
+			// Use GetOrCreateLedger to ensure we get the same ledger instance as Produce
+			ledger := h.GetOrCreateLedger(topic.Name, partition.PartitionID)
 			var highWaterMark int64 = 0
 			if ledger != nil {
 				highWaterMark = ledger.GetHighWaterMark()
+				if strings.HasPrefix(topic.Name, "_") {
+					fmt.Printf("🔍 SYSTEM TOPIC FETCH: topic=%s partition=%d HWM=%d ledger=%p\n",
+						topic.Name, partition.PartitionID, highWaterMark, ledger)
+				}
 			}
 
 			// Normalize special fetch offsets: -2 = earliest, -1 = latest

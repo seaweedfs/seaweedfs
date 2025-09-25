@@ -241,6 +241,9 @@ func (h *Handler) produceToSeaweedMQ(topic string, partition int32, recordSetDat
 		return 0, fmt.Errorf("failed to parse Kafka record set")
 	}
 
+	fmt.Printf("🚀 PRODUCE TO SEAWEEDMQ: topic=%s partition=%d keyLen=%d valueLen=%d\n",
+		topic, partition, len(key), len(value))
+
 	// Publish to SeaweedMQ using schema-based encoding
 	return h.produceSchemaBasedRecord(topic, partition, key, value)
 }
@@ -550,6 +553,7 @@ func decodeVarint(data []byte) (int64, int) {
 // handleProduceV2Plus handles Produce API v2-v7 (Kafka 0.11+)
 func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
 	Debug("PRODUCE DEBUG: handleProduceV2Plus called - correlationID=%d, apiVersion=%d, bodyLen=%d", correlationID, apiVersion, len(requestBody))
+	fmt.Printf("🚨 PRODUCE START: correlationID=%d apiVersion=%d bodyLen=%d\n", correlationID, apiVersion, len(requestBody))
 
 	// DEBUG: Hex dump first 100 bytes to understand actual request format
 	dumpLen := len(requestBody)
@@ -628,6 +632,7 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 	response = append(response, topicsCountBytes...)
 
 	// Process each topic with correct parsing and response format
+	fmt.Printf("🔄 PROCESSING TOPICS: count=%d\n", topicsCount)
 	for i := uint32(0); i < topicsCount && offset < len(requestBody); i++ {
 		// Parse topic name
 		if len(requestBody) < offset+2 {
@@ -680,31 +685,46 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 
 			// Check if topic exists; for v2+ do NOT auto-create
 			topicExists := h.seaweedMQHandler.TopicExists(topicName)
+			fmt.Printf("🔍 TOPIC CHECK: topic=%s exists=%v\n", topicName, topicExists)
 
 			if !topicExists {
+				fmt.Printf("❌ TOPIC NOT FOUND: topic=%s\n", topicName)
 				errorCode = 3 // UNKNOWN_TOPIC_OR_PARTITION
 			} else {
 				// Process the record set (lenient parsing)
 				recordCount, _, parseErr := h.parseRecordSet(recordSetData) // totalSize unused
+				fmt.Printf("📊 PARSE RESULT: topic=%s recordCount=%d parseErr=%v\n",
+					topicName, recordCount, parseErr)
 				if parseErr != nil {
+					fmt.Printf("❌ PARSE ERROR: topic=%s error=%v\n", topicName, parseErr)
 					errorCode = 42 // INVALID_RECORD
 				} else if recordCount > 0 {
+					fmt.Printf("📦 RECORD PROCESSING: topic=%s partition=%d recordCount=%d\n",
+						topicName, partitionID, recordCount)
 					// Extract all records from the record set and publish each one
 					records := h.extractAllRecords(recordSetData)
+					fmt.Printf("📋 EXTRACTED RECORDS: topic=%s count=%d\n", topicName, len(records))
 					if len(records) == 0 {
 						// Fallback to first record extraction
 						key, value := h.extractFirstRecord(recordSetData)
 						if key != nil || value != nil {
 							records = append(records, struct{ Key, Value []byte }{Key: key, Value: value})
+							fmt.Printf("🔄 FALLBACK RECORD: topic=%s keyLen=%d valueLen=%d\n",
+								topicName, len(key), len(value))
 						}
 					}
 
 					var firstOffsetSet bool
 					for idx, kv := range records {
+						fmt.Printf("🎯 DIRECT PRODUCE: topic=%s partition=%d keyLen=%d valueLen=%d\n",
+							topicName, partitionID, len(kv.Key), len(kv.Value))
 						offsetProduced, prodErr := h.seaweedMQHandler.ProduceRecord(topicName, int32(partitionID), kv.Key, kv.Value)
 						if prodErr != nil {
+							fmt.Printf("❌ DIRECT PRODUCE FAILED: topic=%s error=%v\n", topicName, prodErr)
 							errorCode = 1 // UNKNOWN_SERVER_ERROR
 							break
+						} else {
+							fmt.Printf("✅ DIRECT PRODUCE SUCCESS: topic=%s offset=%d\n", topicName, offsetProduced)
 						}
 						if idx == 0 {
 							baseOffset = offsetProduced
@@ -1083,7 +1103,15 @@ func (h *Handler) isSystemTopic(topicName string) bool {
 func (h *Handler) produceSchemaBasedRecord(topic string, partition int32, key []byte, value []byte) (int64, error) {
 	// System topics should always bypass schema processing and be stored as-is
 	if h.isSystemTopic(topic) {
-		return h.seaweedMQHandler.ProduceRecord(topic, partition, key, value)
+		fmt.Printf("🔧 SYSTEM TOPIC PRODUCE: topic=%s partition=%d keyLen=%d valueLen=%d\n",
+			topic, partition, len(key), len(value))
+		offset, err := h.seaweedMQHandler.ProduceRecord(topic, partition, key, value)
+		if err != nil {
+			fmt.Printf("❌ SYSTEM TOPIC PRODUCE FAILED: topic=%s error=%v\n", topic, err)
+		} else {
+			fmt.Printf("✅ SYSTEM TOPIC PRODUCE SUCCESS: topic=%s offset=%d\n", topic, offset)
+		}
+		return offset, err
 	}
 
 	// If schema management is not enabled, fall back to raw message handling
