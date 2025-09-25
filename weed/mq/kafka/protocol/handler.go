@@ -635,7 +635,7 @@ type ApiKeyInfo struct {
 // SupportedApiKeys defines all supported API keys and their version ranges
 var SupportedApiKeys = []ApiKeyInfo{
 	{18, 0, 4}, // ApiVersions - support up to v4 for Kafka 8.0.0 compatibility
-	{3, 0, 7},  // Metadata
+	{3, 0, 7},  // Metadata - support up to v7
 	{0, 0, 7},  // Produce
 	{1, 0, 7},  // Fetch
 	{2, 0, 2},  // ListOffsets
@@ -1374,9 +1374,8 @@ func (h *Handler) HandleMetadataV7(correlationID uint32, requestBody []byte) ([]
 		buf.WriteByte(0x00)
 	}
 
-	// Response-level tagged fields (empty) - REMOVED for AdminClient compatibility
-	// AdminClient 7.4.0-ce expects response header version 0 (no tagged fields) even for flexible Metadata V7
-	// buf.WriteByte(0x00)
+	// Response-level tagged fields (empty) - Required for Sarama v1.46.1 compatibility
+	buf.WriteByte(0x00)
 
 	response := buf.Bytes()
 	Debug("Advertising Kafka gateway: %s", h.GetGatewayAddress())
@@ -2439,8 +2438,12 @@ func (h *Handler) handleMetadata(correlationID uint32, apiVersion uint16, reques
 	case 5, 6:
 		return h.HandleMetadataV5V6(correlationID, requestBody)
 	case 7:
-		return h.HandleMetadataV7(correlationID, requestBody)
+		return h.HandleMetadataV5V6(correlationID, requestBody)
 	default:
+		// For versions > 7, use the V7 handler (flexible format)
+		if apiVersion > 7 {
+			return h.HandleMetadataV7(correlationID, requestBody)
+		}
 		return nil, fmt.Errorf("metadata version %d not implemented yet", apiVersion)
 	}
 }

@@ -231,10 +231,6 @@ func IsFlexibleVersion(apiKey, apiVersion uint16) bool {
 
 // FlexibleString encodes a string for flexible versions (compact format)
 func FlexibleString(s string) []byte {
-	if s == "" {
-		return []byte{0} // Null string
-	}
-
 	var buf []byte
 	buf = append(buf, CompactStringLength(len(s))...)
 	buf = append(buf, []byte(s)...)
