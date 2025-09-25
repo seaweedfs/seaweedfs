@@ -330,30 +330,30 @@ func (h *Handler) buildHeartbeatResponseV(response HeartbeatResponse, apiVersion
 		// FLEXIBLE V4+ FORMAT: CRITICAL FIX - Add response header tagged fields!
 		// AdminClient expects header version 1 for Heartbeat v4+
 		result = append(result, 0x00) // Response header tagged fields (varint: empty)
-		
+
 		// Throttle time (4 bytes, 0 = no throttling) - comes first in flexible format
 		result = append(result, 0, 0, 0, 0)
-		
+
 		// Error code (2 bytes)
 		errorCodeBytes := make([]byte, 2)
 		binary.BigEndian.PutUint16(errorCodeBytes, uint16(response.ErrorCode))
 		result = append(result, errorCodeBytes...)
-		
+
 		// Response body tagged fields (varint: 0x00 = empty)
 		result = append(result, 0x00)
-		
+
 		Debug("Heartbeat v%d response: %d bytes (flexible format: header_tagged_fields, throttle_time_ms, error_code, body_tagged_fields)", apiVersion, len(result))
 	} else {
 		// NON-FLEXIBLE V0-V3 FORMAT: error_code BEFORE throttle_time_ms (legacy format)
-		
+
 		// Error code (2 bytes)
 		errorCodeBytes := make([]byte, 2)
 		binary.BigEndian.PutUint16(errorCodeBytes, uint16(response.ErrorCode))
 		result = append(result, errorCodeBytes...)
-		
+
 		// Throttle time (4 bytes, 0 = no throttling) - comes after error_code in non-flexible
 		result = append(result, 0, 0, 0, 0)
-		
+
 		Debug("Heartbeat v%d response: %d bytes (non-flexible format: error_code, throttle_time_ms)", apiVersion, len(result))
 	}
 
