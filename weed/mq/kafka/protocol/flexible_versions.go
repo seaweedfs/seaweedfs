@@ -207,7 +207,7 @@ type ApiKeyInfo struct {
 // SupportedApiKeys defines all supported API keys and their version ranges
 var SupportedApiKeys = []ApiKeyInfo{
 	{18, 0, 3, 3},  // ApiVersions - flexible from v3
-	{3, 0, 7, 9},   // Metadata - flexible from v9
+	{3, 0, 7, 7},   // Metadata - flexible from v7 (Sarama compatibility)
 	{2, 0, 2, 99},  // ListOffsets - never flexible in our range
 	{19, 0, 5, 2},  // CreateTopics - flexible from v2
 	{20, 0, 4, 4},  // DeleteTopics - flexible from v4

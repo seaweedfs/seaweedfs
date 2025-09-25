@@ -1212,15 +1212,17 @@ func (h *Handler) HandleMetadataV5V6(correlationID uint32, requestBody []byte) (
 	return response, nil
 }
 
-// HandleMetadataV7 implements Metadata API v7 with LeaderEpoch field
+// HandleMetadataV7 implements Metadata API v7 with LeaderEpoch field (FLEXIBLE FORMAT)
 func (h *Handler) HandleMetadataV7(correlationID uint32, requestBody []byte) ([]byte, error) {
-	// Metadata v7 adds LeaderEpoch field to partitions
-	// v7 response layout: correlation_id(4) + throttle_time_ms(4) + brokers(ARRAY) + cluster_id(NULLABLE_STRING) + controller_id(4) + topics(ARRAY)
-	// Each partition now includes: error_code(2) + partition_index(4) + leader_id(4) + leader_epoch(4) + replica_nodes(ARRAY) + isr_nodes(ARRAY) + offline_replicas(ARRAY)
+	// Metadata v7 adds LeaderEpoch field to partitions and uses FLEXIBLE FORMAT
+	// v7 response layout: correlation_id(4) + throttle_time_ms(4) + brokers(COMPACT_ARRAY) + cluster_id(COMPACT_NULLABLE_STRING) + controller_id(4) + topics(COMPACT_ARRAY) + tagged_fields
+	// Each partition now includes: error_code(2) + partition_index(4) + leader_id(4) + leader_epoch(4) + replica_nodes(COMPACT_ARRAY) + isr_nodes(COMPACT_ARRAY) + offline_replicas(COMPACT_ARRAY) + tagged_fields
 
+	Debug("🚀 HANDLEMETADATAV7 CALLED - FLEXIBLE FORMAT IMPLEMENTATION")
+	
 	// Parse requested topics (empty means all)
 	requestedTopics := h.parseMetadataTopics(requestBody)
-	Debug("🔍 METADATA v7 REQUEST - Requested: %v (empty=all)", requestedTopics)
+	Debug("🔍 METADATA v7 REQUEST (FLEXIBLE) - Requested: %v (empty=all)", requestedTopics)
 
 	// Determine topics to return using SeaweedMQ handler
 	var topicsToReturn []string
@@ -1242,44 +1244,45 @@ func (h *Handler) HandleMetadataV7(correlationID uint32, requestBody []byte) ([]
 	// ThrottleTimeMs (4 bytes) - v3+ addition
 	binary.Write(&buf, binary.BigEndian, int32(0)) // No throttling
 
-	// Brokers array (4 bytes length + brokers) - 1 broker (this gateway)
-	binary.Write(&buf, binary.BigEndian, int32(1))
+	// Brokers array (COMPACT_ARRAY: varint length + brokers) - 1 broker (this gateway)
+	buf.Write(CompactArrayLength(1)) // 1 broker
 
 	// Get advertised address for client connections
 	host, port := h.getAdvertisedAddress(h.GetGatewayAddress())
 
 	nodeID := int32(1) // Single gateway node
 
-	// Broker: node_id(4) + host(STRING) + port(4) + rack(STRING) + cluster_id(NULLABLE_STRING)
+	// Broker: node_id(4) + host(COMPACT_STRING) + port(4) + rack(COMPACT_STRING) + tagged_fields
 	binary.Write(&buf, binary.BigEndian, nodeID)
 
-	// Host (STRING: 2 bytes length + data)
-	binary.Write(&buf, binary.BigEndian, int16(len(host)))
-	buf.WriteString(host)
+	// Host (COMPACT_STRING: varint length + data)
+	buf.Write(FlexibleString(host))
 
 	// Port (4 bytes)
 	binary.Write(&buf, binary.BigEndian, int32(port))
 
-	// Rack (STRING: 2 bytes length + data) - v1+ addition, non-nullable
-	binary.Write(&buf, binary.BigEndian, int16(0)) // Empty string
+	// Rack (COMPACT_STRING: varint length + data) - v1+ addition, non-nullable
+	buf.Write(FlexibleString("")) // Empty string
 
-	// ClusterID (NULLABLE_STRING: 2 bytes length + data) - v2+ addition
-	// Use -1 length to indicate null
-	binary.Write(&buf, binary.BigEndian, int16(-1)) // Null cluster ID
+	// Broker tagged fields (empty)
+	buf.WriteByte(0x00)
 
-	// ControllerID (4 bytes) - v1+ addition
+	// ClusterID (COMPACT_NULLABLE_STRING: varint length + data) - v2+ addition, AFTER all brokers
+	// Use 0x00 to indicate null
+	buf.WriteByte(0x00) // Null cluster ID
+
+	// ControllerID (4 bytes) - v1+ addition, AFTER ClusterID
 	binary.Write(&buf, binary.BigEndian, int32(1))
 
-	// Topics array (4 bytes length + topics)
-	binary.Write(&buf, binary.BigEndian, int32(len(topicsToReturn)))
+	// Topics array (COMPACT_ARRAY: varint length + topics)
+	buf.Write(CompactArrayLength(uint32(len(topicsToReturn))))
 
 	for _, topicName := range topicsToReturn {
 		// ErrorCode (2 bytes)
 		binary.Write(&buf, binary.BigEndian, int16(0))
 
-		// Name (STRING: 2 bytes length + data)
-		binary.Write(&buf, binary.BigEndian, int16(len(topicName)))
-		buf.WriteString(topicName)
+		// Name (COMPACT_STRING: varint length + data)
+		buf.Write(FlexibleString(topicName))
 
 		// IsInternal (1 byte) - v1+ addition
 		buf.WriteByte(0) // false
@@ -1291,8 +1294,8 @@ func (h *Handler) HandleMetadataV7(correlationID uint32, requestBody []byte) ([]
 			partitionCount = topicInfo.Partitions
 		}
 
-		// Partitions array (4 bytes length + partitions)
-		binary.Write(&buf, binary.BigEndian, partitionCount)
+		// Partitions array (COMPACT_ARRAY: varint length + partitions)
+		buf.Write(CompactArrayLength(uint32(partitionCount)))
 
 		// Create partition entries for each partition
 		for partitionID := int32(0); partitionID < partitionCount; partitionID++ {
@@ -1303,22 +1306,32 @@ func (h *Handler) HandleMetadataV7(correlationID uint32, requestBody []byte) ([]
 			// LeaderEpoch (4 bytes) - v7+ addition
 			binary.Write(&buf, binary.BigEndian, int32(0)) // Leader epoch 0
 
-			// ReplicaNodes array (4 bytes length + nodes)
-			binary.Write(&buf, binary.BigEndian, int32(1)) // 1 replica
+			// ReplicaNodes array (COMPACT_ARRAY: varint length + nodes)
+			buf.Write(CompactArrayLength(1))               // 1 replica
 			binary.Write(&buf, binary.BigEndian, int32(1)) // NodeID 1
 
-			// IsrNodes array (4 bytes length + nodes)
-			binary.Write(&buf, binary.BigEndian, int32(1)) // 1 ISR node
+			// IsrNodes array (COMPACT_ARRAY: varint length + nodes)
+			buf.Write(CompactArrayLength(1))               // 1 ISR node
 			binary.Write(&buf, binary.BigEndian, int32(1)) // NodeID 1
 
-			// OfflineReplicas array (4 bytes length + nodes) - v5+ addition
-			binary.Write(&buf, binary.BigEndian, int32(0)) // No offline replicas
+			// OfflineReplicas array (COMPACT_ARRAY: varint length + nodes) - v5+ addition
+			buf.Write(CompactArrayLength(0)) // No offline replicas
+
+			// Partition tagged fields (empty)
+			buf.WriteByte(0x00)
 		}
+
+		// Topic tagged fields (empty)
+		buf.WriteByte(0x00)
 	}
+
+	// Response-level tagged fields (empty)
+	buf.WriteByte(0x00)
 
 	response := buf.Bytes()
 	Debug("Advertising Kafka gateway: %s", h.GetGatewayAddress())
-	Debug("Metadata v7 response for %d topics: %v", len(topicsToReturn), topicsToReturn)
+	Debug("🎯 METADATA V7 FLEXIBLE RESPONSE: %d bytes, %d topics: %v", len(response), len(topicsToReturn), topicsToReturn)
+	Debug("🔍 METADATA V7 RESPONSE BYTES: %x", response)
 
 	return response, nil
 }
@@ -2194,36 +2207,10 @@ func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint
 			apiVersion, len(topics)-1, actualPartitions, actualReplication, errCode)
 
 		// configs (compact nullable array) - ADDED FOR V5
-		// For byte-level compatibility with Java reference implementation,
-		// return default configs for "_schemas" topic
-		if t.name == "_schemas" {
-			// Return 2 default configs for "_schemas" topic to match Java reference
-			response = append(response, EncodeUvarint(3)...) // 2 configs + 1 = 3
-
-			// Config 1: cleanup.policy = delete
-			response = append(response, EncodeUvarint(uint32(len("cleanup.policy")+1))...)
-			response = append(response, []byte("cleanup.policy")...)
-			response = append(response, EncodeUvarint(uint32(len("delete")+1))...)
-			response = append(response, []byte("delete")...)
-			response = append(response, 0) // readOnly = false
-			response = append(response, 5) // configSource = DEFAULT_CONFIG
-			response = append(response, 0) // isSensitive = false
-			response = append(response, 0) // config tagged fields (empty)
-
-			// Config 2: retention.ms = 604800000 (7 days)
-			response = append(response, EncodeUvarint(uint32(len("retention.ms")+1))...)
-			response = append(response, []byte("retention.ms")...)
-			response = append(response, EncodeUvarint(uint32(len("604800000")+1))...)
-			response = append(response, []byte("604800000")...)
-			response = append(response, 0) // readOnly = false
-			response = append(response, 5) // configSource = DEFAULT_CONFIG
-			response = append(response, 0) // isSensitive = false
-			response = append(response, 0) // config tagged fields (empty)
-		} else {
-			// ADMINCLIENT 7.4.0-CE NPE FIX: Send empty configs array instead of null
-			// AdminClient 7.4.0-ce may have NPE when configs=null but were requested
-			response = append(response, 1) // Empty configs array = 1 (0 configs + 1)
-		}
+		// ADMINCLIENT 7.4.0-CE NPE FIX: Send empty configs array instead of null
+		// AdminClient 7.4.0-ce has NPE when configs=null but were requested
+		// Empty array = 1 (0 configs + 1), still achieves ~30-byte response
+		response = append(response, 1) // Empty configs array = 1 (0 configs + 1)
 
 		// Tagged fields for each topic - V5 format per Kafka source
 		// Count tagged fields (topicConfigErrorCode only if != 0)
