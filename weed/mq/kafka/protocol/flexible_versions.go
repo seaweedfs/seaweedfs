@@ -207,7 +207,7 @@ type ApiKeyInfo struct {
 // SupportedApiKeys defines all supported API keys and their version ranges
 var SupportedApiKeys = []ApiKeyInfo{
 	{18, 0, 3, 3},  // ApiVersions - flexible from v3
-	{3, 0, 7, 7},   // Metadata - flexible from v7 (Sarama compatibility)
+	{3, 0, 7, 9},   // Metadata - flexible from v9 (AdminClient 7.4.0-ce compatibility: V7 uses non-flexible)
 	{2, 0, 2, 99},  // ListOffsets - never flexible in our range
 	{19, 0, 5, 2},  // CreateTopics - flexible from v2
 	{20, 0, 4, 4},  // DeleteTopics - flexible from v4
@@ -247,9 +247,10 @@ func IsFlexibleVersion(apiKey, apiVersion uint16) bool {
 
 // FlexibleString encodes a string for flexible versions (compact format)
 func FlexibleString(s string) []byte {
-	if s == "" {
-		return []byte{0} // Null string
-	}
+	// For compact strings:
+	// - Empty string (length 0) should be encoded as length+1 = 1
+	// - Null string should be encoded as 0
+	// This function handles non-null strings only
 
 	var buf []byte
 	buf = append(buf, CompactStringLength(len(s))...)

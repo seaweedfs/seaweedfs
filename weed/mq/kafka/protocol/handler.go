@@ -1196,6 +1196,9 @@ func (h *Handler) HandleMetadataV5V6(correlationID uint32, requestBody []byte) (
 			binary.Write(&buf, binary.BigEndian, partitionID) // PartitionIndex
 			binary.Write(&buf, binary.BigEndian, int32(1))    // LeaderID
 
+			// LeaderEpoch (4 bytes) - v7+ addition, included for AdminClient compatibility
+			binary.Write(&buf, binary.BigEndian, int32(0)) // Leader epoch 0
+
 			// ReplicaNodes array (4 bytes length + nodes)
 			binary.Write(&buf, binary.BigEndian, int32(1)) // 1 replica
 			binary.Write(&buf, binary.BigEndian, int32(1)) // NodeID 1
@@ -1333,8 +1336,9 @@ func (h *Handler) HandleMetadataV7(correlationID uint32, requestBody []byte) ([]
 		buf.WriteByte(0x00)
 	}
 
-	// Response-level tagged fields (empty)
-	buf.WriteByte(0x00)
+	// Response-level tagged fields (empty) - REMOVED for AdminClient compatibility
+	// AdminClient 7.4.0-ce expects response header version 0 (no tagged fields) even for flexible Metadata V7
+	// buf.WriteByte(0x00)
 
 	response := buf.Bytes()
 	Debug("Advertising Kafka gateway: %s", h.GetGatewayAddress())
@@ -2393,10 +2397,9 @@ func (h *Handler) handleMetadata(correlationID uint32, apiVersion uint16, reques
 		return h.HandleMetadataV2(correlationID, requestBody)
 	case 3, 4:
 		return h.HandleMetadataV3V4(correlationID, requestBody)
-	case 5, 6:
+	case 5, 6, 7:
+		// AdminClient 7.4.0-ce compatibility: V7 uses non-flexible format like V5/V6
 		return h.HandleMetadataV5V6(correlationID, requestBody)
-	case 7:
-		return h.HandleMetadataV7(correlationID, requestBody)
 	default:
 		return nil, fmt.Errorf("metadata version %d not implemented yet", apiVersion)
 	}
