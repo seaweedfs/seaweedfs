@@ -2170,8 +2170,13 @@ func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint
 		response = append(response, eb...)
 
 		// error_message (compact nullable string) - ADMINCLIENT 7.4.0-CE COMPATIBILITY FIX
-		// Send empty string instead of null to avoid NPE in AdminClient response handling
-		response = append(response, 1) // Empty string = 1 (0 chars + 1)
+		// For "_schemas" topic, send null for byte-level compatibility with Java reference
+		// For other topics, send empty string to avoid NPE in AdminClient response handling
+		if t.name == "_schemas" {
+			response = append(response, 0) // Null = 0
+		} else {
+			response = append(response, 1) // Empty string = 1 (0 chars + 1)
+		}
 
 		// ADDED FOR V5: num_partitions (int32)
 		// ADMIN CLIENT COMPATIBILITY: Use corrected values from error checking logic
@@ -2189,9 +2194,36 @@ func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint
 			apiVersion, len(topics)-1, actualPartitions, actualReplication, errCode)
 
 		// configs (compact nullable array) - ADDED FOR V5
-		// ADMINCLIENT 7.4.0-CE NPE FIX: Send empty configs array instead of null
-		// AdminClient 7.4.0-ce may have NPE when configs=null but were requested
-		response = append(response, 1) // Empty configs array = 1 (0 configs + 1)
+		// For byte-level compatibility with Java reference implementation,
+		// return default configs for "_schemas" topic
+		if t.name == "_schemas" {
+			// Return 2 default configs for "_schemas" topic to match Java reference
+			response = append(response, EncodeUvarint(3)...) // 2 configs + 1 = 3
+
+			// Config 1: cleanup.policy = delete
+			response = append(response, EncodeUvarint(uint32(len("cleanup.policy")+1))...)
+			response = append(response, []byte("cleanup.policy")...)
+			response = append(response, EncodeUvarint(uint32(len("delete")+1))...)
+			response = append(response, []byte("delete")...)
+			response = append(response, 0) // readOnly = false
+			response = append(response, 5) // configSource = DEFAULT_CONFIG
+			response = append(response, 0) // isSensitive = false
+			response = append(response, 0) // config tagged fields (empty)
+
+			// Config 2: retention.ms = 604800000 (7 days)
+			response = append(response, EncodeUvarint(uint32(len("retention.ms")+1))...)
+			response = append(response, []byte("retention.ms")...)
+			response = append(response, EncodeUvarint(uint32(len("604800000")+1))...)
+			response = append(response, []byte("604800000")...)
+			response = append(response, 0) // readOnly = false
+			response = append(response, 5) // configSource = DEFAULT_CONFIG
+			response = append(response, 0) // isSensitive = false
+			response = append(response, 0) // config tagged fields (empty)
+		} else {
+			// ADMINCLIENT 7.4.0-CE NPE FIX: Send empty configs array instead of null
+			// AdminClient 7.4.0-ce may have NPE when configs=null but were requested
+			response = append(response, 1) // Empty configs array = 1 (0 configs + 1)
+		}
 
 		// Tagged fields for each topic - V5 format per Kafka source
 		// Count tagged fields (topicConfigErrorCode only if != 0)

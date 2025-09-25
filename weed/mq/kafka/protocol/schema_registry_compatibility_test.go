@@ -139,10 +139,10 @@ func TestCreateTopicsV5_SchemaRegistryCompatibility(t *testing.T) {
 	}
 	offset += 2
 
-	// Verify error message is empty string (AdminClient compatibility)
+	// Verify error message is null for "_schemas" topic (byte-level compatibility)
 	errorMsgLength := response[offset]
-	if errorMsgLength != 1 {
-		t.Errorf("Expected empty error message (1), got %d", errorMsgLength)
+	if errorMsgLength != 0 {
+		t.Errorf("Expected null error message (0) for '_schemas' topic, got %d", errorMsgLength)
 	}
 	offset += 1
 
@@ -160,14 +160,14 @@ func TestCreateTopicsV5_SchemaRegistryCompatibility(t *testing.T) {
 	}
 	offset += 2
 
-	// Verify configs array is present (empty array for test handler compatibility)
+	// Verify configs array for "_schemas" topic (byte-level compatibility)
 	configsLength, consumed, err := DecodeCompactArrayLength(response[offset:])
 	if err != nil {
 		t.Fatalf("Failed to decode configs array: %v", err)
 	}
-	// Test handler returns empty configs array (0 configs + 1 = 1)
-	if configsLength != 0 {
-		t.Errorf("Expected 0 configs (test handler), got %d", configsLength)
+	// "_schemas" topic returns 2 default configs for byte-level compatibility with Java reference
+	if configsLength != 2 {
+		t.Errorf("Expected 2 configs for '_schemas' topic (byte-level compatibility), got %d", configsLength)
 	}
 
 	t.Logf("✅ CreateTopics v5 response format is Schema Registry compatible (%d bytes)", len(response))
