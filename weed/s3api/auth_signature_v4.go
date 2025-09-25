@@ -37,13 +37,13 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
-func (iam *IdentityAccessManagement) reqSignatureV4Verify(r *http.Request) (*Identity, s3err.ErrorCode) {
+func (iam *IdentityAccessManagement) reqSignatureV4Verify(r *http.Request, action Action) (*Identity, s3err.ErrorCode) {
 	sha256sum := getContentSha256Cksum(r)
 	switch {
 	case isRequestSignatureV4(r):
-		return iam.doesSignatureMatch(sha256sum, r)
+		return iam.doesSignatureMatch(sha256sum, r, action)
 	case isRequestPresignedSignatureV4(r):
-		return iam.doesPresignedSignatureMatch(sha256sum, r)
+		return iam.doesPresignedSignatureMatch(sha256sum, r, action)
 	}
 	return nil, s3err.ErrAccessDenied
 }
@@ -155,7 +155,7 @@ func parseSignV4(v4Auth string) (sv signValues, aec s3err.ErrorCode) {
 }
 
 // doesSignatureMatch verifies the request signature.
-func (iam *IdentityAccessManagement) doesSignatureMatch(hashedPayload string, r *http.Request) (*Identity, s3err.ErrorCode) {
+func (iam *IdentityAccessManagement) doesSignatureMatch(hashedPayload string, r *http.Request, action Action) (*Identity, s3err.ErrorCode) {
 
 	// Copy request
 	req := *r
@@ -191,7 +191,7 @@ func (iam *IdentityAccessManagement) doesSignatureMatch(hashedPayload string, r 
 	}
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
-	canDoResult := identity.canDo(s3_constants.ACTION_WRITE, bucket, object)
+	canDoResult := identity.canDo(action, bucket, object)
 	if !canDoResult {
 		return nil, s3err.ErrAccessDenied
 	}
@@ -289,7 +289,7 @@ func (iam *IdentityAccessManagement) verifyPresignedSignatureWithPath(extractedS
 }
 
 // Simple implementation for presigned signature verification
-func (iam *IdentityAccessManagement) doesPresignedSignatureMatch(hashedPayload string, r *http.Request) (*Identity, s3err.ErrorCode) {
+func (iam *IdentityAccessManagement) doesPresignedSignatureMatch(hashedPayload string, r *http.Request, action Action) (*Identity, s3err.ErrorCode) {
 	// Parse presigned signature values from query parameters
 	query := r.URL.Query()
 
@@ -333,7 +333,7 @@ func (iam *IdentityAccessManagement) doesPresignedSignatureMatch(hashedPayload s
 
 	// Check permissions
 	bucket, object := s3_constants.GetBucketAndObject(r)
-	if !identity.canDo(s3_constants.ACTION_READ, bucket, object) {
+	if !identity.canDo(action, bucket, object) {
 		return nil, s3err.ErrAccessDenied
 	}
 

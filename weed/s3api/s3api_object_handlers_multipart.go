@@ -306,7 +306,7 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	dataReader, s3ErrCode := getRequestDataReader(s3a, r)
+	dataReader, s3ErrCode := getRequestDataReader(s3a, r, s3_constants.ACTION_WRITE)
 	if s3ErrCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, s3ErrCode)
 		return
