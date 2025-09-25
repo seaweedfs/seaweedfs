@@ -147,10 +147,6 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 			var highWaterMark int64 = 0
 			if ledger != nil {
 				highWaterMark = ledger.GetHighWaterMark()
-				if strings.HasPrefix(topic.Name, "_") {
-					fmt.Printf("🔍 SYSTEM TOPIC FETCH: topic=%s partition=%d HWM=%d ledger=%p\n",
-						topic.Name, partition.PartitionID, highWaterMark, ledger)
-				}
 			}
 
 			// Normalize special fetch offsets: -2 = earliest, -1 = latest

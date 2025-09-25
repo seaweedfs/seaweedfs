@@ -43,10 +43,10 @@ func (h *Handler) getAdvertisedAddress(gatewayAddr string) (string, int) {
 	// Override with environment variable if set
 	if advertisedHost := os.Getenv("KAFKA_ADVERTISED_HOST"); advertisedHost != "" {
 		host = advertisedHost
-		Debug("🔧 Using KAFKA_ADVERTISED_HOST: %s:%d", host, port)
+		Debug("Using KAFKA_ADVERTISED_HOST: %s:%d", host, port)
 	} else {
 		host = "localhost"
-		Debug("🔧 Using default advertised address: %s:%d (set KAFKA_ADVERTISED_HOST to override)", host, port)
+		Debug("Using default advertised address: %s:%d (set KAFKA_ADVERTISED_HOST to override)", host, port)
 	}
 
 	return host, port
@@ -299,7 +299,7 @@ func (h *Handler) GetCoordinatorRegistry() CoordinatorRegistryInterface {
 
 // HandleConn processes a single client connection
 func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
-	Debug("🚀 KAFKA 8.0.0 DEBUG: NEW HANDLER CODE ACTIVE - %s", time.Now().Format("15:04:05"))
+	Debug("KAFKA 8.0.0 DEBUG: NEW HANDLER CODE ACTIVE - %s", time.Now().Format("15:04:05"))
 	connectionID := fmt.Sprintf("%s->%s", conn.RemoteAddr(), conn.LocalAddr())
 
 	// Record connection metrics
@@ -418,7 +418,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			Debug("[%s] Error reading message body: %v (code: %d)", connectionID, err, errorCode)
 			return fmt.Errorf("read message: %w", err)
 		}
-		Debug("[%s] 🚀 SUCCESSFULLY READ MESSAGE BODY: %d bytes", connectionID, len(messageBuf))
+		Debug("[%s] SUCCESSFULLY READ MESSAGE BODY: %d bytes", connectionID, len(messageBuf))
 
 		// Parse at least the basic header to get API key and correlation ID
 		if len(messageBuf) < 8 {
@@ -432,9 +432,8 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		apiName := getAPIName(apiKey)
 
 		// Validate API version against what we support
-		Debug("🔍 VALIDATING API VERSION: Key=%d, Version=%d", apiKey, apiVersion)
+		Debug("VALIDATING API VERSION: Key=%d, Version=%d", apiKey, apiVersion)
 		if err := h.validateAPIVersion(apiKey, apiVersion); err != nil {
-			fmt.Printf("❌ API VERSION VALIDATION FAILED: Key=%d, Version=%d, Error=%v\n", apiKey, apiVersion, err)
 			// Return proper Kafka error response for unsupported version
 			response, writeErr := h.buildUnsupportedVersionResponse(correlationID, apiKey, apiVersion)
 			if writeErr != nil {
@@ -445,10 +444,8 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 				Debug("[%s] Failed to send unsupported version response: %v", connectionID, writeErr)
 				return fmt.Errorf("send error response: %w", writeErr)
 			}
-			fmt.Printf("✅ SENT UNSUPPORTED VERSION RESPONSE, CONTINUING\n")
 			continue
 		}
-		fmt.Printf("✅ API VERSION VALIDATION PASSED: Key=%d, Version=%d\n", apiKey, apiVersion)
 
 		// Extract request body - special handling for ApiVersions requests
 		var requestBody []byte
@@ -543,103 +540,17 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		Debug("API REQUEST - Key: %d (%s), Version: %d, Correlation: %d", apiKey, getAPIName(apiKey), apiVersion, correlationID)
 
 		// CRITICAL DEBUG: Log every API request to see if we're reaching this point
-		Debug("🚨 PROCESSING API REQUEST: Key=%d (%s), Version=%d, Correlation=%d", apiKey, apiName, apiVersion, correlationID)
+		Debug("PROCESSING API REQUEST: Key=%d (%s), Version=%d, Correlation=%d", apiKey, apiName, apiVersion, correlationID)
 
 		switch apiKey {
 		case 18: // ApiVersions
 			Debug("-> ApiVersions v%d", apiVersion)
 
-			// KAFKA 8.0.0 DEBUG: Log the exact request bytes
-			fmt.Printf("=== KAFKA 8.0.0 ApiVersions REQUEST ===\n")
-			fmt.Printf("API Key: %d, Version: %d, Correlation: %d\n", apiKey, apiVersion, correlationID)
-			fmt.Printf("Request bytes (%d total):\n", len(messageBuf))
-			for i := 0; i < len(messageBuf); i += 16 {
-				end := i + 16
-				if end > len(messageBuf) {
-					end = len(messageBuf)
-				}
-				fmt.Printf("  %04x: ", i)
-				for j := i; j < end; j++ {
-					fmt.Printf("%02x ", messageBuf[j])
-				}
-				for j := end; j < i+16; j++ {
-					fmt.Printf("   ")
-				}
-				fmt.Printf(" |")
-				for j := i; j < end; j++ {
-					if messageBuf[j] >= 32 && messageBuf[j] <= 126 {
-						fmt.Printf("%c", messageBuf[j])
-					} else {
-						fmt.Printf(".")
-					}
-				}
-				fmt.Printf("|\n")
-			}
-
 			response, err = h.handleApiVersions(correlationID, apiVersion)
 
-			if err == nil {
-				// KAFKA 8.0.0 DEBUG: Log the exact response bytes
-				fmt.Printf("=== KAFKA 8.0.0 ApiVersions RESPONSE ===\n")
-				fmt.Printf("Response bytes (%d total):\n", len(response))
-				for i := 0; i < len(response); i += 16 {
-					end := i + 16
-					if end > len(response) {
-						end = len(response)
-					}
-					fmt.Printf("  %04x: ", i)
-					for j := i; j < end; j++ {
-						fmt.Printf("%02x ", response[j])
-					}
-					for j := end; j < i+16; j++ {
-						fmt.Printf("   ")
-					}
-					fmt.Printf(" |")
-					for j := i; j < end; j++ {
-						if response[j] >= 32 && response[j] <= 126 {
-							fmt.Printf("%c", response[j])
-						} else {
-							fmt.Printf(".")
-						}
-					}
-					fmt.Printf("|\n")
-				}
-				fmt.Printf("=== END ApiVersions RESPONSE ===\n")
-			} else {
-				fmt.Printf("❌ ApiVersions v%d failed: %v\n", apiVersion, err)
-			}
 		case 3: // Metadata
 			Debug("-> Metadata v%d", apiVersion)
-			fmt.Printf("🔍 KAFKA 8.0.0 DEBUG: Processing Metadata v%d request\n", apiVersion)
 			response, err = h.handleMetadata(correlationID, apiVersion, requestBody)
-			if err == nil {
-				fmt.Printf("🔍 KAFKA 8.0.0 DEBUG: Metadata v%d response (%d bytes):\n", apiVersion, len(response))
-				for i := 0; i < len(response) && i < 128; i += 16 {
-					end := i + 16
-					if end > len(response) {
-						end = len(response)
-					}
-					if end > 128 {
-						end = 128
-					}
-					fmt.Printf("  %04x: ", i)
-					for j := i; j < end; j++ {
-						fmt.Printf("%02x ", response[j])
-					}
-					for j := end; j < i+16; j++ {
-						fmt.Printf("   ")
-					}
-					fmt.Printf(" |")
-					for j := i; j < end; j++ {
-						if response[j] >= 32 && response[j] <= 126 {
-							fmt.Printf("%c", response[j])
-						} else {
-							fmt.Printf(".")
-						}
-					}
-					fmt.Printf("|\n")
-				}
-			}
 		case 2: // ListOffsets
 			Debug("*** LISTOFFSETS REQUEST RECEIVED *** Correlation: %d, Version: %d", correlationID, apiVersion)
 			response, err = h.handleListOffsets(correlationID, apiVersion, requestBody)
@@ -840,7 +751,7 @@ func (h *Handler) HandleMetadataV0(correlationID uint32, requestBody []byte) ([]
 
 	// Parse requested topics (empty means all)
 	requestedTopics := h.parseMetadataTopics(requestBody)
-	Debug("🔍 METADATA v0 REQUEST - Requested: %v (empty=all)", requestedTopics)
+	Debug("METADATA v0 REQUEST - Requested: %v (empty=all)", requestedTopics)
 
 	// Determine topics to return using SeaweedMQ handler
 	var topicsToReturn []string
@@ -922,7 +833,7 @@ func (h *Handler) HandleMetadataV1(correlationID uint32, requestBody []byte) ([]
 
 	// Parse requested topics (empty means all)
 	requestedTopics := h.parseMetadataTopics(requestBody)
-	Debug("🔍 METADATA v1 REQUEST - Requested: %v (empty=all)", requestedTopics)
+	Debug("METADATA v1 REQUEST - Requested: %v (empty=all)", requestedTopics)
 
 	// Determine topics to return using SeaweedMQ handler
 	var topicsToReturn []string
@@ -1033,7 +944,7 @@ func (h *Handler) HandleMetadataV2(correlationID uint32, requestBody []byte) ([]
 
 	// Parse requested topics (empty means all)
 	requestedTopics := h.parseMetadataTopics(requestBody)
-	Debug("🔍 METADATA v2 REQUEST - Requested: %v (empty=all)", requestedTopics)
+	Debug("METADATA v2 REQUEST - Requested: %v (empty=all)", requestedTopics)
 
 	// Determine topics to return using SeaweedMQ handler
 	var topicsToReturn []string
@@ -1240,7 +1151,7 @@ func (h *Handler) HandleMetadataV5V6(correlationID uint32, requestBody []byte) (
 
 	// Parse requested topics (empty means all)
 	requestedTopics := h.parseMetadataTopics(requestBody)
-	Debug("🔍 METADATA v5/v6 REQUEST - Requested: %v (empty=all)", requestedTopics)
+	Debug("METADATA v5/v6 REQUEST - Requested: %v (empty=all)", requestedTopics)
 
 	// Determine topics to return using SeaweedMQ handler
 	var topicsToReturn []string
@@ -1258,7 +1169,7 @@ func (h *Handler) HandleMetadataV5V6(correlationID uint32, requestBody []byte) (
 				topicsToReturn = append(topicsToReturn, topic)
 			}
 		}
-		Debug("✅ PROPER KAFKA FLOW: Returning existing topics only: %v (requested: %v)", topicsToReturn, requestedTopics)
+		Debug("PROPER KAFKA FLOW: Returning existing topics only: %v (requested: %v)", topicsToReturn, requestedTopics)
 	}
 
 	var buf bytes.Buffer
@@ -1356,26 +1267,22 @@ func (h *Handler) HandleMetadataV7(correlationID uint32, requestBody []byte) ([]
 	// v7 response layout: correlation_id(4) + throttle_time_ms(4) + brokers(COMPACT_ARRAY) + cluster_id(COMPACT_NULLABLE_STRING) + controller_id(4) + topics(COMPACT_ARRAY) + tagged_fields
 	// Each partition now includes: error_code(2) + partition_index(4) + leader_id(4) + leader_epoch(4) + replica_nodes(COMPACT_ARRAY) + isr_nodes(COMPACT_ARRAY) + offline_replicas(COMPACT_ARRAY) + tagged_fields
 
-	Debug("🚀 HANDLEMETADATAV7 CALLED - FLEXIBLE FORMAT IMPLEMENTATION")
+	Debug("HANDLEMETADATAV7 CALLED - FLEXIBLE FORMAT IMPLEMENTATION")
 
 	// Parse requested topics (empty means all)
 	requestedTopics := h.parseMetadataTopics(requestBody)
-	Debug("🔍 METADATA v7 REQUEST (FLEXIBLE) - Requested: %v (empty=all)", requestedTopics)
+	Debug("METADATA v7 REQUEST (FLEXIBLE) - Requested: %v (empty=all)", requestedTopics)
 
 	// Determine topics to return using SeaweedMQ handler
 	var topicsToReturn []string
 	if len(requestedTopics) == 0 {
-		fmt.Printf("🔍 METADATA V7: About to call ListTopics()\n")
 		topicsToReturn = h.seaweedMQHandler.ListTopics()
-		fmt.Printf("🔍 METADATA V7: ListTopics() returned %d topics: %v\n", len(topicsToReturn), topicsToReturn)
 	} else {
-		fmt.Printf("🔍 METADATA V7: Checking specific topics: %v\n", requestedTopics)
 		for _, name := range requestedTopics {
 			if h.seaweedMQHandler.TopicExists(name) {
 				topicsToReturn = append(topicsToReturn, name)
 			}
 		}
-		fmt.Printf("🔍 METADATA V7: Found %d existing topics: %v\n", len(topicsToReturn), topicsToReturn)
 	}
 
 	var buf bytes.Buffer
@@ -1473,8 +1380,8 @@ func (h *Handler) HandleMetadataV7(correlationID uint32, requestBody []byte) ([]
 
 	response := buf.Bytes()
 	Debug("Advertising Kafka gateway: %s", h.GetGatewayAddress())
-	Debug("🎯 METADATA V7 FLEXIBLE RESPONSE: %d bytes, %d topics: %v", len(response), len(topicsToReturn), topicsToReturn)
-	Debug("🔍 METADATA V7 RESPONSE BYTES: %x", response)
+	Debug("METADATA V7 FLEXIBLE RESPONSE: %d bytes, %d topics: %v", len(response), len(topicsToReturn), topicsToReturn)
+	Debug("METADATA V7 RESPONSE BYTES: %x", response)
 
 	return response, nil
 }
