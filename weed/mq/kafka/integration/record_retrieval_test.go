@@ -95,7 +95,6 @@ func TestSeaweedSMQRecord_Interface(t *testing.T) {
 func TestSeaweedMQHandler_GetStoredRecords_EmptyTopic(t *testing.T) {
 	// Test behavior with non-existent topic
 	handler := &SeaweedMQHandler{
-		topics:  make(map[string]*KafkaTopicInfo),
 		ledgers: make(map[TopicPartitionKey]*offset.Ledger),
 	}
 
@@ -113,42 +112,30 @@ func TestSeaweedMQHandler_GetStoredRecords_EmptyTopic(t *testing.T) {
 func TestSeaweedMQHandler_GetStoredRecords_EmptyPartition(t *testing.T) {
 	// Test behavior with topic but no messages
 	handler := &SeaweedMQHandler{
-		topics:  make(map[string]*KafkaTopicInfo),
 		ledgers: make(map[TopicPartitionKey]*offset.Ledger),
 	}
 
-	// Create topic but no ledger (simulates topic with no messages)
-	handler.topics["test-topic"] = &KafkaTopicInfo{
-		Name:       "test-topic",
-		Partitions: 1,
-		CreatedAt:  time.Now().UnixNano(),
-	}
-
+	// Note: Topics are now managed directly in filer, not in memory
+	// Without filer connection, topic existence check will fail
 	records, err := handler.GetStoredRecords("test-topic", 0, 0, 10)
 
-	if err != nil {
-		t.Errorf("Unexpected error: %v", err)
+	if err == nil {
+		t.Error("Expected error for non-existent topic (no filer connection)")
 	}
 
 	if records != nil {
-		t.Error("Expected nil records for topic with no messages")
+		t.Error("Expected nil records for non-existent topic")
 	}
 }
 
 func TestSeaweedMQHandler_GetStoredRecords_OffsetBeyondHighWaterMark(t *testing.T) {
 	// Test behavior when fetch offset is beyond available messages
 	handler := &SeaweedMQHandler{
-		topics:  make(map[string]*KafkaTopicInfo),
 		ledgers: make(map[TopicPartitionKey]*offset.Ledger),
 	}
 
-	// Create topic with ledger containing 3 messages
-	handler.topics["test-topic"] = &KafkaTopicInfo{
-		Name:       "test-topic",
-		Partitions: 1,
-		CreatedAt:  time.Now().UnixNano(),
-	}
-
+	// Note: Topics are now managed directly in filer, not in memory
+	// Without filer connection, topic existence check will fail
 	ledger := offset.NewLedger()
 	key := TopicPartitionKey{Topic: "test-topic", Partition: 0}
 	handler.ledgers[key] = ledger
@@ -159,31 +146,26 @@ func TestSeaweedMQHandler_GetStoredRecords_OffsetBeyondHighWaterMark(t *testing.
 		ledger.AppendRecord(offset, time.Now().UnixNano(), 100)
 	}
 
-	// Try to fetch from offset 5 (beyond high water mark of 3)
+	// Try to fetch from offset 5 - but topic existence check will fail first
 	records, err := handler.GetStoredRecords("test-topic", 0, 5, 10)
 
-	if err != nil {
-		t.Errorf("Unexpected error: %v", err)
+	if err == nil {
+		t.Error("Expected error for non-existent topic (no filer connection)")
 	}
 
 	if records != nil {
-		t.Error("Expected nil records when offset is beyond high water mark")
+		t.Error("Expected nil records for non-existent topic")
 	}
 }
 
 func TestSeaweedMQHandler_GetStoredRecords_MaxRecordsLimit(t *testing.T) {
 	// Test that maxRecords parameter is respected
 	handler := &SeaweedMQHandler{
-		topics:  make(map[string]*KafkaTopicInfo),
 		ledgers: make(map[TopicPartitionKey]*offset.Ledger),
 	}
 
-	// Create topic with ledger containing 10 messages
-	handler.topics["test-topic"] = &KafkaTopicInfo{
-		Name:       "test-topic",
-		Partitions: 1,
-		CreatedAt:  time.Now().UnixNano(),
-	}
+	// Note: Topics are now managed directly in filer, not in memory
+	// Create ledger with 10 messages to simulate topic with messages
 
 	ledger := offset.NewLedger()
 	key := TopicPartitionKey{Topic: "test-topic", Partition: 0}
@@ -202,14 +184,14 @@ func TestSeaweedMQHandler_GetStoredRecords_MaxRecordsLimit(t *testing.T) {
 	// For now, test that the method handles the no-client case gracefully
 	records, err := handler.GetStoredRecords("test-topic", 0, 0, 3)
 
-	// Should handle gracefully when no client is available
-	expectedError := "no broker client available"
+	// Should handle gracefully when no filer connection is available (topic existence check fails first)
+	expectedError := "topic test-topic does not exist"
 	if err == nil || err.Error() != expectedError {
 		t.Errorf("Expected error '%s', got: %v", expectedError, err)
 	}
 
 	if records != nil {
-		t.Error("Expected nil records when no client available")
+		t.Error("Expected nil records for non-existent topic")
 	}
 }
 
