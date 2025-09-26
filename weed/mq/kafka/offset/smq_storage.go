@@ -1,6 +1,7 @@
 package offset
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -27,9 +28,8 @@ func NewSMQOffsetStorage(filerClientAccessor *filer_client.FilerClientAccessor) 
 }
 
 // SaveConsumerOffset saves the committed offset for a consumer group
-// Uses the same file format and location as SMQ brokers:
+// Uses a JSON payload to preserve Kafka offset metadata (offset, timestamp, size)
 // Path: <topic-dir>/<partition-dir>/<consumerGroup>.offset
-// Content: 8-byte big-endian offset
 func (s *SMQOffsetStorage) SaveConsumerOffset(key ConsumerOffsetKey, kafkaOffset, smqTimestamp int64, size int32) error {
 	t := topic.Topic{
 		Namespace: "kafka", // Use kafka namespace for Kafka topics
@@ -51,53 +51,48 @@ func (s *SMQOffsetStorage) SaveConsumerOffset(key ConsumerOffsetKey, kafkaOffset
 	consumersDir := fmt.Sprintf("%s/consumers", partitionDir)
 	offsetFileName := fmt.Sprintf("%s.offset", key.ConsumerGroup)
 
-	// Use SMQ's 8-byte offset format
-	offsetBytes := make([]byte, 8)
-	util.Uint64toBytes(offsetBytes, uint64(kafkaOffset))
+	entry := OffsetEntry{
+		KafkaOffset: kafkaOffset,
+		Timestamp:   smqTimestamp,
+		Size:        size,
+	}
+
+	data, err := json.Marshal(entry)
+	if err != nil {
+		return err
+	}
 
 	return s.filerClientAccessor.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return filer.SaveInsideFiler(client, consumersDir, offsetFileName, offsetBytes)
+		return filer.SaveInsideFiler(client, consumersDir, offsetFileName, data)
 	})
 }
 
 // LoadConsumerOffsets loads the committed offset for a consumer group
 // Returns empty slice since we only track the committed offset, not the mapping history
+
 func (s *SMQOffsetStorage) LoadConsumerOffsets(key ConsumerOffsetKey) ([]OffsetEntry, error) {
-	offset, err := s.getCommittedOffset(key)
-	if err != nil {
-		return []OffsetEntry{}, nil // No committed offset found
+	latest, err := s.getCommittedEntry(key)
+	if err != nil || latest.KafkaOffset < 0 {
+		return []OffsetEntry{}, nil
 	}
 
-	if offset < 0 {
-		return []OffsetEntry{}, nil // No valid offset
-	}
-
-	// Return single entry representing the committed offset
-	return []OffsetEntry{
-		{
-			KafkaOffset: offset,
-			Timestamp:   0, // SMQ doesn't store timestamp mapping
-			Size:        0, // SMQ doesn't store size mapping
-		},
-	}, nil
+	return []OffsetEntry{latest}, nil
 }
 
 // GetConsumerHighWaterMark returns the next offset after the committed offset
 func (s *SMQOffsetStorage) GetConsumerHighWaterMark(key ConsumerOffsetKey) (int64, error) {
-	offset, err := s.getCommittedOffset(key)
-	if err != nil {
-		return 0, nil // Start from beginning if no committed offset
+	entry, err := s.getCommittedEntry(key)
+	if err != nil || entry.KafkaOffset < 0 {
+		return 0, nil
 	}
 
-	if offset < 0 {
-		return 0, nil // Start from beginning
-	}
-
-	return offset + 1, nil // Next offset after committed
+	return entry.KafkaOffset + 1, nil
 }
 
-// getCommittedOffset reads the committed offset from SMQ's filer location
-func (s *SMQOffsetStorage) getCommittedOffset(key ConsumerOffsetKey) (int64, error) {
+// getCommittedEntry reads the committed offset entry from SMQ's filer location
+func (s *SMQOffsetStorage) getCommittedEntry(key ConsumerOffsetKey) (OffsetEntry, error) {
+	result := OffsetEntry{KafkaOffset: -1}
+
 	t := topic.Topic{
 		Namespace: "kafka",
 		Name:      key.Topic,
@@ -118,24 +113,34 @@ func (s *SMQOffsetStorage) getCommittedOffset(key ConsumerOffsetKey) (int64, err
 	consumersDir := fmt.Sprintf("%s/consumers", partitionDir)
 	offsetFileName := fmt.Sprintf("%s.offset", key.ConsumerGroup)
 
-	var offset int64 = -1
 	err := s.filerClientAccessor.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		data, err := filer.ReadInsideFiler(client, consumersDir, offsetFileName)
 		if err != nil {
 			return err
 		}
-		if len(data) != 8 {
-			return fmt.Errorf("invalid offset file format")
+
+		// Try JSON format first
+		var entry OffsetEntry
+		if jsonErr := json.Unmarshal(data, &entry); jsonErr == nil {
+			result = entry
+			return nil
 		}
-		offset = int64(util.BytesToUint64(data))
-		return nil
+
+		// Fallback to legacy 8-byte format (offset only)
+		if len(data) == 8 {
+			offset := int64(util.BytesToUint64(data))
+			result = OffsetEntry{KafkaOffset: offset}
+			return nil
+		}
+
+		return fmt.Errorf("invalid offset file format")
 	})
 
 	if err != nil {
-		return -1, err
+		return OffsetEntry{KafkaOffset: -1}, err
 	}
 
-	return offset, nil
+	return result, nil
 }
 
 // Legacy methods for backward compatibility

@@ -13,8 +13,9 @@ import (
 func TestSeaweedMQHandler_MapSeaweedToKafkaOffsets(t *testing.T) {
 	// Create a mock handler for testing
 	handler := &SeaweedMQHandler{
-		topics:  make(map[string]*KafkaTopicInfo),
-		ledgers: make(map[TopicPartitionKey]*offset.Ledger),
+		ledgers:           make(map[TopicPartitionKey]*offset.Ledger),
+		persistentLedgers: make(map[TopicPartitionKey]*offset.PersistentLedger),
+		ledgersStorage:    offset.NewSeaweedMQStorage(),
 	}
 
 	topic := "test-topic"
@@ -91,8 +92,9 @@ func TestSeaweedMQHandler_MapSeaweedToKafkaOffsets(t *testing.T) {
 // TestSeaweedMQHandler_MapSeaweedToKafkaOffsets_EmptyRecords tests empty record handling
 func TestSeaweedMQHandler_MapSeaweedToKafkaOffsets_EmptyRecords(t *testing.T) {
 	handler := &SeaweedMQHandler{
-		topics:  make(map[string]*KafkaTopicInfo),
-		ledgers: make(map[TopicPartitionKey]*offset.Ledger),
+		ledgers:           make(map[TopicPartitionKey]*offset.Ledger),
+		persistentLedgers: make(map[TopicPartitionKey]*offset.PersistentLedger),
+		ledgersStorage:    offset.NewSeaweedMQStorage(),
 	}
 
 	mappedRecords, err := handler.mapSeaweedToKafkaOffsets("test-topic", 0, []*SeaweedRecord{}, 0)

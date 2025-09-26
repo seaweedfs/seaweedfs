@@ -9,9 +9,11 @@ import (
 // Flexible versions use compact arrays/strings and tagged fields for backward compatibility
 
 // CompactArrayLength encodes a length for compact arrays
-// Compact arrays encode length as length+1, where 0 means null array
-// For empty arrays (0 elements), we encode as 1 (0+1)
+// Compact arrays encode length as length+1, where 0 means empty array
 func CompactArrayLength(length uint32) []byte {
+	if length == 0 {
+		return []byte{0} // Empty array
+	}
 	return EncodeUvarint(length + 1)
 }
 
@@ -199,7 +201,7 @@ func IsFlexibleVersion(apiKey, apiVersion uint16) bool {
 	case 18: // ApiVersions
 		return apiVersion >= 3
 	case 3: // Metadata
-		return apiVersion >= 7
+		return apiVersion >= 9
 	case 1: // Fetch
 		return apiVersion >= 12
 	case 0: // Produce
@@ -222,8 +224,6 @@ func IsFlexibleVersion(apiKey, apiVersion uint16) bool {
 		return apiVersion >= 2
 	case 20: // DeleteTopics
 		return apiVersion >= 4
-	case 22: // InitProducerId
-		return apiVersion >= 4
 	default:
 		return false
 	}
@@ -231,6 +231,10 @@ func IsFlexibleVersion(apiKey, apiVersion uint16) bool {
 
 // FlexibleString encodes a string for flexible versions (compact format)
 func FlexibleString(s string) []byte {
+	if s == "" {
+		return []byte{0} // Null string
+	}
+
 	var buf []byte
 	buf = append(buf, CompactStringLength(len(s))...)
 	buf = append(buf, []byte(s)...)

@@ -42,9 +42,22 @@ type SeaweedMQHandler struct {
 	// topicsMu sync.RWMutex  // No longer needed
 	// topics   map[string]*KafkaTopicInfo  // No longer needed
 
-	// Offset ledgers for Kafka offset translation
+	// Offset ledgers for Kafka offset translation (in-memory view)
 	ledgersMu sync.RWMutex
 	ledgers   map[TopicPartitionKey]*offset.Ledger
+
+	// Persistent ledger wrappers for durable offset tracking
+	persistentLedgers map[TopicPartitionKey]*offset.PersistentLedger
+
+	// Shared ledger storage (lazy initialized) used by persistent ledgers
+	ledgersStorage offset.LedgerStorage
+}
+
+func (h *SeaweedMQHandler) getLockedPersistentLedger(topic string, partition int32) *offset.PersistentLedger {
+	h.ledgersMu.RLock()
+	defer h.ledgersMu.RUnlock()
+
+	return h.persistentLedgers[TopicPartitionKey{Topic: topic, Partition: partition}]
 }
 
 // KafkaTopicInfo holds Kafka-specific topic information
@@ -431,12 +444,17 @@ func (h *SeaweedMQHandler) ProduceRecord(topic string, partition int32, key []by
 		return 0, fmt.Errorf("failed to publish to SeaweedMQ: %v", publishErr)
 	}
 
-	// Update Kafka offset ledger
-	ledger := h.GetOrCreateLedger(topic, partition)
-	kafkaOffset := ledger.AssignOffsets(1) // Assign one Kafka offset
+	// Ensure ledger exists before mapping offsets
+	h.GetOrCreateLedger(topic, partition)
 
 	// Map SeaweedMQ sequence to Kafka offset
-	if err := ledger.AppendRecord(kafkaOffset, timestamp, int32(len(value))); err != nil {
+	persistent := h.getLockedPersistentLedger(topic, partition)
+	if persistent == nil {
+		return 0, fmt.Errorf("persistent ledger not initialized for %s-%d", topic, partition)
+	}
+	kafkaOffset := persistent.AssignOffsets(1)
+
+	if err := persistent.AddEntry(kafkaOffset, timestamp, int32(len(value))); err != nil {
 		// CRITICAL: AppendRecord failed - this breaks offset consistency!
 		glog.Errorf("CRITICAL: Failed to append record to ledger for topic %s partition %d offset %d: %v",
 			topic, partition, kafkaOffset, err)
@@ -444,7 +462,7 @@ func (h *SeaweedMQHandler) ProduceRecord(topic string, partition int32, key []by
 	}
 
 	glog.V(2).Infof("Successfully produced record to topic %s partition %d at offset %d (HWM: %d)",
-		topic, partition, kafkaOffset, ledger.GetHighWaterMark())
+		topic, partition, kafkaOffset, persistent.Ledger.GetHighWaterMark())
 	return kafkaOffset, nil
 }
 
@@ -470,12 +488,17 @@ func (h *SeaweedMQHandler) ProduceRecordValue(topic string, partition int32, key
 		return 0, fmt.Errorf("failed to publish RecordValue to SeaweedMQ: %v", publishErr)
 	}
 
-	// Update offset ledger
-	ledger := h.GetOrCreateLedger(topic, partition)
-	kafkaOffset := ledger.AssignOffsets(1) // Assign one Kafka offset
+	// Ensure ledger exists before mapping offsets
+	h.GetOrCreateLedger(topic, partition)
 
 	// Map SeaweedMQ sequence to Kafka offset
-	if err := ledger.AppendRecord(kafkaOffset, timestamp, int32(len(recordValueBytes))); err != nil {
+	persistent := h.getLockedPersistentLedger(topic, partition)
+	if persistent == nil {
+		return 0, fmt.Errorf("persistent ledger not initialized for %s-%d", topic, partition)
+	}
+	kafkaOffset := persistent.AssignOffsets(1)
+
+	if err := persistent.AddEntry(kafkaOffset, timestamp, int32(len(recordValueBytes))); err != nil {
 		// CRITICAL: AppendRecord failed - this breaks offset consistency!
 		glog.Errorf("CRITICAL: Failed to append RecordValue to ledger for topic %s partition %d offset %d: %v",
 			topic, partition, kafkaOffset, err)
@@ -483,7 +506,7 @@ func (h *SeaweedMQHandler) ProduceRecordValue(topic string, partition int32, key
 	}
 
 	glog.V(2).Infof("Successfully produced RecordValue to topic %s partition %d at offset %d (HWM: %d)",
-		topic, partition, kafkaOffset, ledger.GetHighWaterMark())
+		topic, partition, kafkaOffset, persistent.Ledger.GetHighWaterMark())
 	return kafkaOffset, nil
 }
 
@@ -494,9 +517,10 @@ func (h *SeaweedMQHandler) GetOrCreateLedger(topic string, partition int32) *off
 	// Try to get existing ledger
 	h.ledgersMu.RLock()
 	ledger, exists := h.ledgers[key]
+	_, hasPersistent := h.persistentLedgers[key]
 	h.ledgersMu.RUnlock()
 
-	if exists {
+	if exists && hasPersistent {
 		return ledger
 	}
 
@@ -506,17 +530,27 @@ func (h *SeaweedMQHandler) GetOrCreateLedger(topic string, partition int32) *off
 
 	// Double-check after acquiring write lock
 	if ledger, exists := h.ledgers[key]; exists {
-		return ledger
+		if persistent, ok := h.persistentLedgers[key]; ok {
+			persistent.RebuildInMemoryLedger()
+			return ledger
+		}
 	}
 
 	// Create persistent ledger with filer-backed storage
 	topicPartition := fmt.Sprintf("%s-%d", topic, partition)
 
-	// Create a producer ledger storage using a special consumer group for producer state
-	producerStorage := offset.NewSMQOffsetStorage(h.filerClientAccessor)
-	persistentLedger := offset.NewPersistentLedger(topicPartition, producerStorage)
+	var storage offset.LedgerStorage
+	if h.ledgersStorage != nil {
+		storage = h.ledgersStorage
+	} else {
+		storage = offset.NewSMQOffsetStorage(h.filerClientAccessor)
+		h.ledgersStorage = storage
+	}
 
-	// Store the underlying Ledger for the interface compatibility
+	persistentLedger := offset.NewPersistentLedger(topicPartition, storage)
+
+	// Store both persistent ledger and underlying ledger for compatibility
+	h.persistentLedgers[key] = persistentLedger
 	ledger = persistentLedger.Ledger
 	h.ledgers[key] = ledger
 	return ledger
@@ -611,7 +645,11 @@ func (h *SeaweedMQHandler) mapSeaweedToKafkaOffsets(topic string, partition int3
 		return seaweedRecords, nil
 	}
 
-	ledger := h.GetOrCreateLedger(topic, partition)
+	persistent := h.getLockedPersistentLedger(topic, partition)
+	if persistent != nil {
+		_ = persistent // persistent ledger keeps the authoritative mapping
+	}
+
 	mappedRecords := make([]*SeaweedRecord, 0, len(seaweedRecords))
 
 	// Assign the required offsets first (this ensures offsets are reserved in sequence)
@@ -628,11 +666,7 @@ func (h *SeaweedMQHandler) mapSeaweedToKafkaOffsets(topic string, partition int3
 			Sequence:  currentKafkaOffset, // Use Kafka offset as sequence for consistency
 		}
 
-		// Update the offset ledger to track the mapping between SeaweedMQ sequence and Kafka offset
-		recordSize := int32(len(seaweedRecord.Value))
-		if err := ledger.AppendRecord(currentKafkaOffset, seaweedRecord.Timestamp, recordSize); err != nil {
-			// Log warning but continue processing
-		}
+		_ = persistent // persistence already contains mapping from produce; no additional mutation needed
 
 		mappedRecords = append(mappedRecords, mappedRecord)
 	}
@@ -846,8 +880,9 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string, clientHost str
 		brokerClient:        brokerClient,
 		masterClient:        masterClient,
 		// topics map removed - always read from filer directly
-		ledgers:         make(map[TopicPartitionKey]*offset.Ledger),
-		brokerAddresses: brokerAddresses, // Store all discovered broker addresses
+		ledgers:           make(map[TopicPartitionKey]*offset.Ledger),
+		persistentLedgers: make(map[TopicPartitionKey]*offset.PersistentLedger),
+		brokerAddresses:   brokerAddresses, // Store all discovered broker addresses
 	}, nil
 }
 

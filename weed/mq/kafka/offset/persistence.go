@@ -160,14 +160,50 @@ func NewPersistentLedger(topicPartition string, storage LedgerStorage) *Persiste
 		Storage:        storage,
 	}
 
-	// Load existing mappings using new consumer offset method
-	if entries, err := storage.LoadConsumerOffsets(consumerKey); err == nil {
-		for _, entry := range entries {
-			pl.Ledger.AppendRecord(entry.KafkaOffset, entry.Timestamp, entry.Size)
-		}
-	}
+	pl.RebuildInMemoryLedger()
 
 	return pl
+}
+
+// RebuildInMemoryLedger reloads entries from persistent storage into the in-memory ledger.
+// This is safe to call multiple times; the underlying entries slice is reset first.
+func (pl *PersistentLedger) RebuildInMemoryLedger() {
+	pl.Ledger.mu.Lock()
+	// Reset ledger state
+	pl.Ledger.entries = pl.Ledger.entries[:0]
+	pl.Ledger.nextOffset = 0
+	pl.Ledger.earliestTime = 0
+	pl.Ledger.latestTime = 0
+	pl.Ledger.mu.Unlock()
+
+	entries, err := pl.Storage.LoadConsumerOffsets(pl.ConsumerKey)
+	if err != nil {
+		return
+	}
+
+	pl.Ledger.mu.Lock()
+	for _, entry := range entries {
+		// Ensure entries are in order; skip invalid ones
+		if entry.KafkaOffset < 0 {
+			continue
+		}
+		// Append respecting sequential offsets
+		if entry.KafkaOffset >= pl.Ledger.nextOffset {
+			pl.Ledger.nextOffset = entry.KafkaOffset + 1
+		}
+		pl.Ledger.entries = append(pl.Ledger.entries, OffsetEntry{
+			KafkaOffset: entry.KafkaOffset,
+			Timestamp:   entry.Timestamp,
+			Size:        entry.Size,
+		})
+		if pl.Ledger.earliestTime == 0 || entry.Timestamp < pl.Ledger.earliestTime {
+			pl.Ledger.earliestTime = entry.Timestamp
+		}
+		if entry.Timestamp > pl.Ledger.latestTime {
+			pl.Ledger.latestTime = entry.Timestamp
+		}
+	}
+	pl.Ledger.mu.Unlock()
 }
 
 // AddEntry adds an offset mapping and persists it
