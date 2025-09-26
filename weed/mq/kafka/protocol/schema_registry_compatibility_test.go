@@ -9,6 +9,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/integration"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 )
 
 // mockSeaweedMQHandler provides a minimal implementation for testing
@@ -24,6 +25,11 @@ func (m *mockSeaweedMQHandler) ListTopics() []string {
 
 func (m *mockSeaweedMQHandler) CreateTopic(topic string, partitions int32) error {
 	return nil // Always succeed
+}
+
+func (m *mockSeaweedMQHandler) CreateTopicWithSchemas(name string, partitions int32, valueRecordType *schema_pb.RecordType, keyRecordType *schema_pb.RecordType) error {
+	// For test handler, just delegate to CreateTopic (ignore schemas)
+	return m.CreateTopic(name, partitions)
 }
 
 func (m *mockSeaweedMQHandler) DeleteTopic(topic string) error {

@@ -630,7 +630,11 @@ func (m *MockSeaweedMQHandler) ProduceRecordValue(topicName string, partitionID 
 func (m *MockSeaweedMQHandler) TopicExists(topic string) bool                    { return true }
 func (m *MockSeaweedMQHandler) ListTopics() []string                             { return []string{} }
 func (m *MockSeaweedMQHandler) CreateTopic(topic string, partitions int32) error { return nil }
-func (m *MockSeaweedMQHandler) DeleteTopic(topic string) error                   { return nil }
+func (m *MockSeaweedMQHandler) CreateTopicWithSchemas(name string, partitions int32, valueRecordType *schema_pb.RecordType, keyRecordType *schema_pb.RecordType) error {
+	// For test handler, just delegate to CreateTopic (ignore schemas)
+	return m.CreateTopic(name, partitions)
+}
+func (m *MockSeaweedMQHandler) DeleteTopic(topic string) error { return nil }
 func (m *MockSeaweedMQHandler) GetTopicInfo(topic string) (*integration.KafkaTopicInfo, bool) {
 	return nil, false
 }
