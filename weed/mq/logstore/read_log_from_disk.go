@@ -78,28 +78,37 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 			}
 			urlStrings, err = lookupFileIdFn(context.Background(), chunk.FileId)
 			if err != nil {
+				glog.Errorf("DEBUG: lookup %s failed: %v", chunk.FileId, err)
 				err = fmt.Errorf("lookup %s: %v", chunk.FileId, err)
 				return
 			}
 			if len(urlStrings) == 0 {
+				glog.Errorf("DEBUG: no url found for %s", chunk.FileId)
 				err = fmt.Errorf("no url found for %s", chunk.FileId)
 				return
 			}
+			glog.V(1).Infof("DEBUG: lookup %s returned %d URLs: %v", chunk.FileId, len(urlStrings), urlStrings)
 
 			// try one of the urlString until util.Get(urlString) succeeds
 			var processed bool
 			for _, urlString := range urlStrings {
 				// TODO optimization opportunity: reuse the buffer
 				var data []byte
+				glog.V(1).Infof("DEBUG: trying to fetch data from %s", urlString)
 				if data, _, err = util_http.Get(urlString); err == nil {
+					glog.V(1).Infof("DEBUG: successfully fetched %d bytes from %s", len(data), urlString)
 					processed = true
 					if processedTsNs, err = eachChunkFn(data, eachLogEntryFn, starTsNs, stopTsNs); err != nil {
+						glog.Errorf("DEBUG: eachChunkFn failed: %v", err)
 						return
 					}
 					break
+				} else {
+					glog.Errorf("DEBUG: failed to fetch from %s: %v", urlString, err)
 				}
 			}
 			if !processed {
+				glog.Errorf("DEBUG: no data processed for %s %s - all URLs failed", entry.Name, chunk.FileId)
 				err = fmt.Errorf("no data processed for %s %s", entry.Name, chunk.FileId)
 				return
 			}
@@ -129,7 +138,9 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 					isDone = true
 					return nil
 				}
-				if entry.Name < startPosition.UTC().Format(topic.TIME_FORMAT) {
+				// For very early start positions (like RESET_TO_EARLIEST with timestamp=1),
+				// we should read all files, not skip based on filename comparison
+				if startPosition.Time.Unix() > 86400 && entry.Name < startPosition.UTC().Format(topic.TIME_FORMAT) {
 					return nil
 				}
 				if processedTsNs, err = eachFileFn(entry, eachLogEntryFn, startTsNs, stopTsNs); err != nil {

@@ -682,8 +682,12 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 			// Check if topic exists; for v2+ do NOT auto-create
 			topicExists := h.seaweedMQHandler.TopicExists(topicName)
 
+			Debug("Produce v%d - Topic: %s, Partition: %d, TopicExists: %v, RecordSetSize: %d",
+				apiVersion, topicName, partitionID, topicExists, recordSetSize)
+
 			if !topicExists {
 				errorCode = 3 // UNKNOWN_TOPIC_OR_PARTITION
+				Debug("Produce v%d - Topic %s does not exist, returning UNKNOWN_TOPIC_OR_PARTITION", apiVersion, topicName)
 			} else {
 				// Process the record set (lenient parsing)
 				recordCount, _, parseErr := h.parseRecordSet(recordSetData) // totalSize unused
@@ -703,13 +707,16 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 					var firstOffsetSet bool
 					for idx, kv := range records {
 						offsetProduced, prodErr := h.seaweedMQHandler.ProduceRecord(topicName, int32(partitionID), kv.Key, kv.Value)
+						Debug("Produce v%d - Record %d: offset=%d, error=%v", apiVersion, idx, offsetProduced, prodErr)
 						if prodErr != nil {
 							errorCode = 1 // UNKNOWN_SERVER_ERROR
+							Debug("Produce v%d - ProduceRecord failed: %v", apiVersion, prodErr)
 							break
 						}
 						if idx == 0 {
 							baseOffset = offsetProduced
 							firstOffsetSet = true
+							Debug("Produce v%d - Set baseOffset to: %d", apiVersion, baseOffset)
 						}
 					}
 

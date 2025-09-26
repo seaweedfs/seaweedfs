@@ -1541,6 +1541,11 @@ func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, req
 			var responseTimestamp int64
 			var responseOffset int64
 
+			// Get ledger stats for debugging
+			entryCount, _, _, hwm := ledger.GetStats()
+			Debug("ListOffsets - Topic: %s, Partition: %d, Timestamp: %d, Entries: %d, HWM: %d",
+				string(topicName), partitionID, timestamp, entryCount, hwm)
+
 			switch timestamp {
 			case -2: // earliest offset
 				responseOffset = ledger.GetEarliestOffset()
@@ -1555,6 +1560,7 @@ func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, req
 						responseTimestamp = time.Now().UnixNano()
 					}
 				}
+				Debug("ListOffsets EARLIEST - returning offset: %d, timestamp: %d", responseOffset, responseTimestamp)
 			case -1: // latest offset
 				responseOffset = ledger.GetLatestOffset()
 				if responseOffset == 0 && ledger.GetHighWaterMark() == 0 {
@@ -1569,9 +1575,11 @@ func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, req
 						responseTimestamp = time.Now().UnixNano()
 					}
 				}
+				Debug("ListOffsets LATEST - returning offset: %d, timestamp: %d", responseOffset, responseTimestamp)
 			default: // specific timestamp - find offset by timestamp
 				responseOffset = ledger.FindOffsetByTimestamp(timestamp)
 				responseTimestamp = timestamp
+				Debug("ListOffsets BY_TIMESTAMP - returning offset: %d, timestamp: %d", responseOffset, responseTimestamp)
 			}
 
 			timestampBytes := make([]byte, 8)

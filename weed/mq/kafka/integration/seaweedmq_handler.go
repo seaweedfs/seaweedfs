@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -105,7 +106,7 @@ func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromO
 	var seaweedRecords []*SeaweedRecord
 	var err error
 
-	// Read records using broker client
+	// Read records using broker client with retry for timing issues
 	if h.brokerClient == nil {
 		return nil, fmt.Errorf("no broker client available")
 	}
@@ -113,9 +114,28 @@ func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromO
 	if subErr != nil {
 		return nil, fmt.Errorf("failed to get broker subscriber: %v", subErr)
 	}
-	seaweedRecords, err = h.brokerClient.ReadRecords(brokerSubscriber, recordsToFetch)
 
-	if err != nil {
+	// Retry mechanism for timing issues between producer and consumer
+	maxRetries := 3
+	retryDelay := 100 * time.Millisecond
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		seaweedRecords, err = h.brokerClient.ReadRecords(brokerSubscriber, recordsToFetch)
+
+		if err == nil {
+			break // Success
+		}
+
+		// Check if this is a timing-related error
+		if strings.Contains(err.Error(), "no data processed") && attempt < maxRetries-1 {
+			glog.V(2).Infof("Timing issue reading records for topic %s partition %d (attempt %d/%d): %v",
+				topic, partition, attempt+1, maxRetries, err)
+			time.Sleep(retryDelay)
+			retryDelay *= 2 // Exponential backoff
+			continue
+		}
+
+		// Non-timing error or final attempt
 		return nil, fmt.Errorf("failed to read records: %v", err)
 	}
 
@@ -480,7 +500,7 @@ func (h *SeaweedMQHandler) GetOrCreateLedger(topic string, partition int32) *off
 		return ledger
 	}
 
-	// Create new ledger
+	// Create new ledger with persistence
 	h.ledgersMu.Lock()
 	defer h.ledgersMu.Unlock()
 
@@ -489,8 +509,15 @@ func (h *SeaweedMQHandler) GetOrCreateLedger(topic string, partition int32) *off
 		return ledger
 	}
 
-	// Create and store new ledger
-	ledger = offset.NewLedger()
+	// Create persistent ledger with filer-backed storage
+	topicPartition := fmt.Sprintf("%s-%d", topic, partition)
+
+	// Create a producer ledger storage using a special consumer group for producer state
+	producerStorage := offset.NewSMQOffsetStorage(h.filerClientAccessor)
+	persistentLedger := offset.NewPersistentLedger(topicPartition, producerStorage)
+
+	// Store the underlying Ledger for the interface compatibility
+	ledger = persistentLedger.Ledger
 	h.ledgers[key] = ledger
 	return ledger
 }
@@ -535,7 +562,7 @@ func (h *SeaweedMQHandler) FetchRecords(topic string, partition int32, fetchOffs
 		recordsToFetch = 100 // Limit batch size
 	}
 
-	// Read records using broker client
+	// Read records using broker client with retry for timing issues
 	if h.brokerClient == nil {
 		return nil, fmt.Errorf("no broker client available")
 	}
@@ -543,10 +570,28 @@ func (h *SeaweedMQHandler) FetchRecords(topic string, partition int32, fetchOffs
 	if subErr != nil {
 		return nil, fmt.Errorf("failed to get broker subscriber: %v", subErr)
 	}
-	seaweedRecords, err = h.brokerClient.ReadRecords(brokerSubscriber, recordsToFetch)
 
-	if err != nil {
-		// If no records available, return empty batch instead of error
+	// Retry mechanism for timing issues between producer and consumer
+	maxRetries := 3
+	retryDelay := 100 * time.Millisecond
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		seaweedRecords, err = h.brokerClient.ReadRecords(brokerSubscriber, recordsToFetch)
+
+		if err == nil {
+			break // Success
+		}
+
+		// Check if this is a timing-related error
+		if strings.Contains(err.Error(), "no data processed") && attempt < maxRetries-1 {
+			glog.V(2).Infof("Timing issue fetching records for topic %s partition %d (attempt %d/%d): %v",
+				topic, partition, attempt+1, maxRetries, err)
+			time.Sleep(retryDelay)
+			retryDelay *= 2 // Exponential backoff
+			continue
+		}
+
+		// Non-timing error or final attempt - return empty batch instead of error
 		return []byte{}, nil
 	}
 
