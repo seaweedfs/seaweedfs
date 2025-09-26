@@ -198,6 +198,13 @@ func startAdminServer(ctx context.Context, options AdminOptions) error {
 		return fmt.Errorf("failed to generate session key: %w", err)
 	}
 	store := cookie.NewStore(sessionKeyBytes)
+
+	// Configure session options to ensure cookies are properly saved
+	store.Options(sessions.Options{
+		Path:   "/",
+		MaxAge: 3600 * 24, // 24 hours
+	})
+
 	r.Use(sessions.Sessions("admin-session", store))
 
 	// Static files - serve from embedded filesystem
