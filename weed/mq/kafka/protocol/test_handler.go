@@ -10,6 +10,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/integration"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 )
 
 // testSMQRecord implements the SMQRecord interface for testing
@@ -54,6 +55,11 @@ func (t *testSeaweedMQHandlerForUnitTests) CreateTopic(topic string, partitions 
 	defer t.mu.Unlock()
 	t.topics[topic] = true
 	return nil
+}
+
+func (t *testSeaweedMQHandlerForUnitTests) CreateTopicWithSchemas(name string, partitions int32, valueRecordType *schema_pb.RecordType, keyRecordType *schema_pb.RecordType) error {
+	// For test handler, just delegate to CreateTopic (ignore schemas)
+	return t.CreateTopic(name, partitions)
 }
 
 func (t *testSeaweedMQHandlerForUnitTests) DeleteTopic(topic string) error {

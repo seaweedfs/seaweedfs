@@ -75,6 +75,7 @@ type SeaweedMQHandlerInterface interface {
 	TopicExists(topic string) bool
 	ListTopics() []string
 	CreateTopic(topic string, partitions int32) error
+	CreateTopicWithSchemas(name string, partitions int32, valueRecordType *schema_pb.RecordType, keyRecordType *schema_pb.RecordType) error
 	DeleteTopic(topic string) error
 	GetTopicInfo(topic string) (*integration.KafkaTopicInfo, bool)
 	GetOrCreateLedger(topic string, partition int32) *offset.Ledger
@@ -1915,8 +1916,8 @@ func (h *Handler) handleCreateTopicsV0V1(correlationID uint32, requestBody []byt
 		} else if replicationFactor <= 0 {
 			errorCode = 38 // INVALID_REPLICATION_FACTOR
 		} else {
-			// Create the topic in SeaweedMQ
-			if err := h.seaweedMQHandler.CreateTopic(topicName, int32(numPartitions)); err != nil {
+			// Create the topic in SeaweedMQ with schema support
+			if err := h.createTopicWithSchemaSupport(topicName, int32(numPartitions)); err != nil {
 				errorCode = 1 // UNKNOWN_SERVER_ERROR
 			}
 		}
@@ -2222,8 +2223,8 @@ func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint
 			Debug("CreateTopics v%d: Topic '%s' already exists - returning success for AdminClient compatibility", apiVersion, t.name)
 			errCode = 0 // SUCCESS - AdminClient can handle this gracefully
 		} else {
-			// Use corrected values for error checking and topic creation
-			if err := h.seaweedMQHandler.CreateTopic(t.name, int32(actualPartitions)); err != nil {
+			// Use corrected values for error checking and topic creation with schema support
+			if err := h.createTopicWithSchemaSupport(t.name, int32(actualPartitions)); err != nil {
 				errCode = 1 // UNKNOWN_SERVER_ERROR
 			}
 		}
@@ -3402,4 +3403,153 @@ func (h *Handler) handleInitProducerId(correlationID uint32, apiVersion uint16, 
 
 	Debug("InitProducerId v%d response: %d bytes, producerId: %d, epoch: 0", apiVersion, len(response), producerId)
 	return response, nil
+}
+
+// createTopicWithSchemaSupport creates a topic with optional schema integration
+// This function attempts to fetch schema information from Schema Registry if available
+func (h *Handler) createTopicWithSchemaSupport(topicName string, partitions int32) error {
+	Debug("Creating topic %s with schema support", topicName)
+
+	// For system topics like _schemas, __consumer_offsets, etc., create without schema
+	if isSystemTopic(topicName) {
+		Debug("System topic %s - creating without schema", topicName)
+		return h.seaweedMQHandler.CreateTopic(topicName, partitions)
+	}
+
+	// For regular topics, try to fetch schema from Schema Registry if available
+	if h.IsSchemaEnabled() && h.schemaManager != nil {
+		Debug("Schema management enabled - attempting to fetch schema for topic %s", topicName)
+
+		// Try to fetch schema information from Schema Registry
+		keyRecordType, valueRecordType, err := h.fetchSchemaForTopic(topicName)
+		if err != nil {
+			Debug("No schema found for topic %s in Schema Registry: %v - creating without schema", topicName, err)
+			// Create topic without schema if no schema is found
+			return h.seaweedMQHandler.CreateTopic(topicName, partitions)
+		}
+
+		if keyRecordType != nil || valueRecordType != nil {
+			Debug("Found schema for topic %s - creating with schema configuration", topicName)
+			// Create topic with schema using the existing method
+			return h.seaweedMQHandler.CreateTopicWithSchemas(topicName, partitions, keyRecordType, valueRecordType)
+		}
+	}
+
+	// Fallback: create topic without schema (backward compatibility)
+	Debug("Regular topic %s - creating without schema (no Schema Registry or schema not found)", topicName)
+	return h.seaweedMQHandler.CreateTopic(topicName, partitions)
+}
+
+// fetchSchemaForTopic attempts to fetch schema information for a topic from Schema Registry
+// Returns key and value RecordTypes if schemas are found
+func (h *Handler) fetchSchemaForTopic(topicName string) (*schema_pb.RecordType, *schema_pb.RecordType, error) {
+	if h.schemaManager == nil {
+		return nil, nil, fmt.Errorf("schema manager not available")
+	}
+
+	var keyRecordType *schema_pb.RecordType
+	var valueRecordType *schema_pb.RecordType
+
+	// Try to fetch value schema (most common case)
+	// Common subject naming patterns: topicName-value, topicName
+	valueSubjects := []string{topicName + "-value", topicName}
+	for _, subject := range valueSubjects {
+		cachedSchema, err := h.schemaManager.GetLatestSchema(subject)
+		if err == nil && cachedSchema != nil {
+			Debug("Found value schema for topic %s using subject %s (ID: %d)", topicName, subject, cachedSchema.LatestID)
+
+			// Convert schema to RecordType
+			recordType, err := h.convertSchemaToRecordType(cachedSchema.Schema, cachedSchema.LatestID)
+			if err != nil {
+				Debug("Failed to convert value schema for topic %s: %v", topicName, err)
+				continue
+			}
+			valueRecordType = recordType
+
+			// Store schema configuration for later use
+			h.storeTopicSchemaConfig(topicName, cachedSchema.LatestID, schema.FormatAvro)
+			break
+		}
+	}
+
+	// Try to fetch key schema (optional)
+	keySubject := topicName + "-key"
+	cachedSchema, err := h.schemaManager.GetLatestSchema(keySubject)
+	if err == nil && cachedSchema != nil {
+		Debug("Found key schema for topic %s using subject %s (ID: %d)", topicName, keySubject, cachedSchema.LatestID)
+
+		// Convert schema to RecordType
+		recordType, err := h.convertSchemaToRecordType(cachedSchema.Schema, cachedSchema.LatestID)
+		if err != nil {
+			Debug("Failed to convert key schema for topic %s: %v", topicName, err)
+		} else {
+			keyRecordType = recordType
+
+			// Store key schema configuration for later use
+			h.storeTopicKeySchemaConfig(topicName, cachedSchema.LatestID, schema.FormatAvro)
+		}
+	}
+
+	// Return error if no schemas found
+	if keyRecordType == nil && valueRecordType == nil {
+		return nil, nil, fmt.Errorf("no schemas found for topic %s", topicName)
+	}
+
+	return keyRecordType, valueRecordType, nil
+}
+
+// convertSchemaToRecordType converts a schema string to a RecordType
+func (h *Handler) convertSchemaToRecordType(schemaStr string, schemaID uint32) (*schema_pb.RecordType, error) {
+	// Get the cached schema to determine format
+	cachedSchema, err := h.schemaManager.GetSchemaByID(schemaID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get cached schema: %w", err)
+	}
+
+	// Create appropriate decoder and infer RecordType based on format
+	switch cachedSchema.Format {
+	case schema.FormatAvro:
+		// Create Avro decoder and infer RecordType
+		decoder, err := schema.NewAvroDecoder(schemaStr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Avro decoder: %w", err)
+		}
+		return decoder.InferRecordType()
+
+	case schema.FormatJSONSchema:
+		// Create JSON Schema decoder and infer RecordType
+		decoder, err := schema.NewJSONSchemaDecoder(schemaStr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create JSON Schema decoder: %w", err)
+		}
+		return decoder.InferRecordType()
+
+	case schema.FormatProtobuf:
+		// For Protobuf, we need the binary descriptor, not string
+		// This is a limitation - Protobuf schemas in Schema Registry are typically stored as binary descriptors
+		return nil, fmt.Errorf("Protobuf schema conversion from string not supported - requires binary descriptor")
+
+	default:
+		return nil, fmt.Errorf("unsupported schema format: %v", cachedSchema.Format)
+	}
+}
+
+// isSystemTopic checks if a topic is a Kafka system topic
+func isSystemTopic(topicName string) bool {
+	systemTopics := []string{
+		"_schemas",
+		"__consumer_offsets",
+		"__transaction_state",
+		"_confluent-ksql-default__command_topic",
+		"_confluent-metrics",
+	}
+
+	for _, systemTopic := range systemTopics {
+		if topicName == systemTopic {
+			return true
+		}
+	}
+
+	// Check for topics starting with underscore (common system topic pattern)
+	return len(topicName) > 0 && topicName[0] == '_'
 }

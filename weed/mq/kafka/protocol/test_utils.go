@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -99,6 +100,11 @@ func (b *basicSeaweedMQHandler) ListTopics() []string {
 func (b *basicSeaweedMQHandler) CreateTopic(topic string, partitions int32) error {
 	b.topics[topic] = true
 	return nil
+}
+
+func (b *basicSeaweedMQHandler) CreateTopicWithSchemas(name string, partitions int32, valueRecordType *schema_pb.RecordType, keyRecordType *schema_pb.RecordType) error {
+	// For test handler, just delegate to CreateTopic (ignore schemas)
+	return b.CreateTopic(name, partitions)
 }
 
 func (b *basicSeaweedMQHandler) DeleteTopic(topic string) error {
@@ -278,6 +284,11 @@ func (t *testSeaweedMQHandler) ListTopics() []string {
 func (t *testSeaweedMQHandler) CreateTopic(topic string, partitions int32) error {
 	t.topics[topic] = true
 	return nil
+}
+
+func (t *testSeaweedMQHandler) CreateTopicWithSchemas(name string, partitions int32, valueRecordType *schema_pb.RecordType, keyRecordType *schema_pb.RecordType) error {
+	// For test handler, just delegate to CreateTopic (ignore schemas)
+	return t.CreateTopic(name, partitions)
 }
 
 func (t *testSeaweedMQHandler) DeleteTopic(topic string) error {

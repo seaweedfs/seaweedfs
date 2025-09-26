@@ -428,12 +428,13 @@ func (h *Handler) extractFirstRecord(recordSetData []byte) ([]byte, []byte) {
 		return nil, nil
 	}
 
-	// Read record length (varint)
-	recordLength, varintLen := decodeVarint(recordSetData[offset:])
-	if varintLen == 0 {
+	// Read record length (unsigned varint)
+	recordLengthU32, varintLen, err := DecodeUvarint(recordSetData[offset:])
+	if err != nil || varintLen == 0 {
 		// Invalid varint encoding
 		return nil, nil
 	}
+	recordLength := int64(recordLengthU32)
 	offset += varintLen
 
 	if offset+int(recordLength) > len(recordSetData) {
