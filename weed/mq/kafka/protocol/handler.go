@@ -313,6 +313,8 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		ConnectionID: connectionID,
 	}
 
+	Debug("[%s] NEW CONNECTION ESTABLISHED", connectionID)
+
 	defer func() {
 		Debug("[%s] Connection closing", connectionID)
 		RecordDisconnectionMetrics()
@@ -381,7 +383,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		var sizeBytes [4]byte
 		if _, err := io.ReadFull(r, sizeBytes[:]); err != nil {
 			if err == io.EOF {
-				Debug("[%s] Client closed connection (clean EOF)", connectionID)
+				Debug("[%s] Client closed connection (clean EOF) - no request sent", connectionID)
 				return nil
 			}
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
