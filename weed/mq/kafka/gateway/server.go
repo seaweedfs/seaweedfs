@@ -53,9 +53,11 @@ func resolveAdvertisedAddress() string {
 }
 
 type Options struct {
-	Listen     string
-	Masters    string // SeaweedFS master servers
-	FilerGroup string // filer group name (optional)
+	Listen            string
+	Masters           string // SeaweedFS master servers
+	FilerGroup        string // filer group name (optional)
+	SchemaRegistryURL string // Schema Registry URL (required)
+	DefaultPartitions int    // Default number of partitions for auto-created topics
 }
 
 type Server struct {
@@ -85,12 +87,17 @@ func NewServer(opts Options) *Server {
 		clientHost = "127.0.0.1:9092" // Default Kafka port
 	}
 
-	handler, err = protocol.NewSeaweedMQBrokerHandler(opts.Masters, opts.FilerGroup, clientHost)
+	handler, err = protocol.NewSeaweedMQBrokerHandlerWithDefaults(opts.Masters, opts.FilerGroup, clientHost, int32(opts.DefaultPartitions))
 	if err != nil {
 		glog.Fatalf("Failed to create SeaweedMQ handler with masters %s: %v", opts.Masters, err)
 	}
 
+	// Store schema registry URL for later initialization
+	// We'll enable schema management after the server starts to avoid circular dependency
+	handler.SetSchemaRegistryURL(opts.SchemaRegistryURL)
+
 	glog.V(1).Infof("Created Kafka gateway with SeaweedMQ brokers via masters %s", opts.Masters)
+	glog.V(1).Infof("Schema Registry URL configured: %s (will initialize on first use)", opts.SchemaRegistryURL)
 
 	server := &Server{
 		opts:    opts,

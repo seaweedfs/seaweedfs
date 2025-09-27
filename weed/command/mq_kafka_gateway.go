@@ -14,11 +14,13 @@ var (
 )
 
 type mqKafkaGatewayOpts struct {
-	ip         *string
-	ipBind     *string
-	port       *int
-	master     *string
-	filerGroup *string
+	ip                *string
+	ipBind            *string
+	port              *int
+	master            *string
+	filerGroup        *string
+	schemaRegistryURL *string
+	defaultPartitions *int
 }
 
 func init() {
@@ -28,35 +30,44 @@ func init() {
 	mqKafkaGatewayOptions.port = cmdMqKafkaGateway.Flag.Int("port", 9092, "Kafka gateway listen port")
 	mqKafkaGatewayOptions.master = cmdMqKafkaGateway.Flag.String("master", "localhost:9333", "comma-separated SeaweedFS master servers")
 	mqKafkaGatewayOptions.filerGroup = cmdMqKafkaGateway.Flag.String("filerGroup", "", "filer group name")
+	mqKafkaGatewayOptions.schemaRegistryURL = cmdMqKafkaGateway.Flag.String("schema-registry-url", "", "Schema Registry URL (required for schema management)")
+	mqKafkaGatewayOptions.defaultPartitions = cmdMqKafkaGateway.Flag.Int("default-partitions", 4, "Default number of partitions for auto-created topics")
 }
 
 var cmdMqKafkaGateway = &Command{
-	UsageLine: "mq.kafka.gateway [-ip=<host>] [-ip.bind=<bind_addr>] [-port=9092] [-master=<master_servers>] [-filerGroup=<group>]",
-	Short:     "start a Kafka wire-protocol gateway for SeaweedMQ",
+	UsageLine: "mq.kafka.gateway [-ip=<host>] [-ip.bind=<bind_addr>] [-port=9092] [-master=<master_servers>] [-filerGroup=<group>] [-default-partitions=4] -schema-registry-url=<url>",
+	Short:     "start a Kafka wire-protocol gateway for SeaweedMQ with schema management",
 	Long: `Start a Kafka wire-protocol gateway translating Kafka client requests to SeaweedMQ.
 
-Connects to SeaweedFS master servers to discover available brokers. Use -master=<addresses> 
-to specify comma-separated master locations.
+Connects to SeaweedFS master servers to discover available brokers and integrates with
+Schema Registry for schema-aware topic management.
 
 Options:
-  -ip          Advertised host address that clients should connect to (default: auto-detected)
-  -ip.bind     Bind address for the gateway to listen on (default: same as -ip)
-               Use 0.0.0.0 to bind to all interfaces while advertising specific IP
-  -port        Listen port (default: 9092)
+  -ip                  Advertised host address that clients should connect to (default: auto-detected)
+  -ip.bind             Bind address for the gateway to listen on (default: same as -ip)
+                       Use 0.0.0.0 to bind to all interfaces while advertising specific IP
+  -port                Listen port (default: 9092)
+  -default-partitions  Default number of partitions for auto-created topics (default: 4)
+  -schema-registry-url Schema Registry URL (REQUIRED for schema management)
 
 Examples:
-  weed mq.kafka.gateway -ip=gateway1 -port=9092 -master=master1:9333,master2:9333
-  weed mq.kafka.gateway -port=9092 -master=localhost:9333
-  weed mq.kafka.gateway -ip=external.host.com -ip.bind=0.0.0.0 -master=localhost:9333
+  weed mq.kafka.gateway -ip=gateway1 -port=9092 -master=master1:9333,master2:9333 -schema-registry-url=http://schema-registry:8081
+  weed mq.kafka.gateway -port=9092 -master=localhost:9333 -schema-registry-url=http://localhost:8081
+  weed mq.kafka.gateway -ip=external.host.com -ip.bind=0.0.0.0 -master=localhost:9333 -schema-registry-url=http://schema-registry:8081
 
 This is experimental and currently supports a minimal subset for development.
 `,
 }
 
 func runMqKafkaGateway(cmd *Command, args []string) bool {
-	// Validate options - master address is now required
+	// Validate required options
 	if *mqKafkaGatewayOptions.master == "" {
 		glog.Fatalf("SeaweedFS master address is required (-master)")
+		return false
+	}
+
+	if *mqKafkaGatewayOptions.schemaRegistryURL == "" {
+		glog.Fatalf("Schema Registry URL is required (-schema-registry-url)")
 		return false
 	}
 
@@ -75,9 +86,11 @@ func runMqKafkaGateway(cmd *Command, args []string) bool {
 	}
 
 	srv := gateway.NewServer(gateway.Options{
-		Listen:     listenAddr,
-		Masters:    *mqKafkaGatewayOptions.master,
-		FilerGroup: *mqKafkaGatewayOptions.filerGroup,
+		Listen:            listenAddr,
+		Masters:           *mqKafkaGatewayOptions.master,
+		FilerGroup:        *mqKafkaGatewayOptions.filerGroup,
+		SchemaRegistryURL: *mqKafkaGatewayOptions.schemaRegistryURL,
+		DefaultPartitions: *mqKafkaGatewayOptions.defaultPartitions,
 	})
 
 	glog.Warningf("⚠️  EXPERIMENTAL FEATURE: MQ Kafka Gateway is experimental and should NOT be used in production environments. It currently supports only a minimal subset of Kafka protocol for development purposes.")

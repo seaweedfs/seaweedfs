@@ -27,10 +27,13 @@ type CoordinatorAssignment struct {
 }
 
 func (h *Handler) handleFindCoordinator(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
+	Debug("FindCoordinator - Version: %d, Correlation: %d", apiVersion, correlationID)
 	switch apiVersion {
 	case 0:
+		Debug("FindCoordinator - Routing to V0 handler")
 		return h.handleFindCoordinatorV0(correlationID, requestBody)
 	case 1, 2:
+		Debug("FindCoordinator - Routing to V2 handler")
 		return h.handleFindCoordinatorV2(correlationID, requestBody)
 	default:
 		return nil, fmt.Errorf("FindCoordinator version %d not supported", apiVersion)
@@ -38,6 +41,7 @@ func (h *Handler) handleFindCoordinator(correlationID uint32, apiVersion uint16,
 }
 
 func (h *Handler) handleFindCoordinatorV0(correlationID uint32, requestBody []byte) ([]byte, error) {
+	Debug("FindCoordinator V0 - Processing request, correlation: %d", correlationID)
 	// Parse FindCoordinator v0 request: Key (STRING) only
 
 	// DEBUG: Hex dump the request to understand format
@@ -76,6 +80,10 @@ func (h *Handler) handleFindCoordinatorV0(correlationID uint32, requestBody []by
 		return nil, fmt.Errorf("failed to find coordinator for group %s: %w", coordinatorKey, err)
 	}
 
+	// CRITICAL FIX: Return hostname instead of IP address for client connectivity
+	// Clients need to connect to the same hostname they originally connected to
+	coordinatorHost = h.getClientConnectableHost(coordinatorHost)
+
 	// Build response
 	response := make([]byte, 0, 64)
 
@@ -112,6 +120,7 @@ func (h *Handler) handleFindCoordinatorV0(correlationID uint32, requestBody []by
 }
 
 func (h *Handler) handleFindCoordinatorV2(correlationID uint32, requestBody []byte) ([]byte, error) {
+	Debug("FindCoordinator V2 - Processing request, correlation: %d", correlationID)
 	// Parse FindCoordinator request (v0-2 non-flex): Key (STRING), v1+ adds KeyType (INT8)
 
 	// DEBUG: Hex dump the request to understand format
@@ -145,7 +154,10 @@ func (h *Handler) handleFindCoordinatorV2(correlationID uint32, requestBody []by
 	var coordinatorType byte = 0
 	if offset < len(requestBody) {
 		coordinatorType = requestBody[offset]
-		_ = coordinatorType // Used for validation but not in current logic
+		offset++ // Move past the coordinator type byte
+		Debug("FindCoordinator v2 - Coordinator type: %d", coordinatorType)
+	} else {
+		Debug("FindCoordinator v2 - No coordinator type in request, using default 0")
 	}
 
 	// Find the appropriate coordinator for this group
@@ -153,6 +165,10 @@ func (h *Handler) handleFindCoordinatorV2(correlationID uint32, requestBody []by
 	if err != nil {
 		return nil, fmt.Errorf("failed to find coordinator for group %s: %w", coordinatorKey, err)
 	}
+
+	// CRITICAL FIX: Return hostname instead of IP address for client connectivity
+	// Clients need to connect to the same hostname they originally connected to
+	coordinatorHost = h.getClientConnectableHost(coordinatorHost)
 
 	response := make([]byte, 0, 64)
 
@@ -339,4 +355,28 @@ func (h *Handler) parseAddress(address string, nodeID int32) (host string, port 
 	}
 	nid = nodeID
 	return host, port, nid, nil
+}
+
+// getClientConnectableHost returns the hostname that clients can connect to
+// This ensures that FindCoordinator returns the same hostname the client originally connected to
+func (h *Handler) getClientConnectableHost(coordinatorHost string) string {
+	// If the coordinator host is an IP address, return the original gateway hostname
+	// This prevents clients from switching to IP addresses which creates new connections
+	if net.ParseIP(coordinatorHost) != nil {
+		// It's an IP address, return the original gateway hostname
+		gatewayAddr := h.GetGatewayAddress()
+		if host, _, err := h.parseGatewayAddress(gatewayAddr); err == nil {
+			// If the gateway address is also an IP, try to use a hostname
+			if net.ParseIP(host) != nil {
+				// Both are IPs, use a default hostname that clients can connect to
+				return "kafka-gateway"
+			}
+			return host
+		}
+		// Fallback to a known hostname
+		return "kafka-gateway"
+	}
+
+	// It's already a hostname, return as-is
+	return coordinatorHost
 }

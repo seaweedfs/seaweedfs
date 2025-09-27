@@ -271,3 +271,4 @@ func decodeSchematizedMessage(data []byte) (*SchematizedMessage, error) {
 		Payload:  payload,
 	}, nil
 }
+

@@ -154,6 +154,12 @@ type Handler struct {
 
 	// Connection context for tracking client information
 	connContext *ConnectionContext
+
+	// Schema Registry URL for delayed initialization
+	schemaRegistryURL string
+
+	// Default partition count for auto-created topics
+	defaultPartitions int32
 }
 
 // NewHandler creates a basic Kafka handler with in-memory storage
@@ -171,6 +177,11 @@ func NewHandler() *Handler {
 
 // NewSeaweedMQBrokerHandler creates a new handler with SeaweedMQ broker integration
 func NewSeaweedMQBrokerHandler(masters string, filerGroup string, clientHost string) (*Handler, error) {
+	return NewSeaweedMQBrokerHandlerWithDefaults(masters, filerGroup, clientHost, 4) // Default to 4 partitions
+}
+
+// NewSeaweedMQBrokerHandlerWithDefaults creates a new handler with SeaweedMQ broker integration and custom defaults
+func NewSeaweedMQBrokerHandlerWithDefaults(masters string, filerGroup string, clientHost string, defaultPartitions int32) (*Handler, error) {
 	// Set up SeaweedMQ integration
 	smqHandler, err := integration.NewSeaweedMQBrokerHandler(masters, filerGroup, clientHost)
 	if err != nil {
@@ -192,6 +203,7 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string, clientHost str
 		groupCoordinator:   consumer.NewGroupCoordinator(),
 		smqBrokerAddresses: nil, // Will be set by SetSMQBrokerAddresses() when server starts
 		registeredSchemas:  make(map[string]bool),
+		defaultPartitions:  defaultPartitions,
 	}, nil
 }
 
@@ -786,7 +798,7 @@ func (h *Handler) HandleMetadataV0(correlationID uint32, requestBody []byte) ([]
 
 		// Get actual partition count from topic info
 		topicInfo, exists := h.seaweedMQHandler.GetTopicInfo(topicName)
-		partitionCount := int32(1) // Default to 1 partition
+		partitionCount := h.GetDefaultPartitions() // Use configurable default
 		if exists && topicInfo != nil {
 			partitionCount = topicInfo.Partitions
 		}
@@ -903,7 +915,7 @@ func (h *Handler) HandleMetadataV1(correlationID uint32, requestBody []byte) ([]
 
 		// Get actual partition count from topic info
 		topicInfo, exists := h.seaweedMQHandler.GetTopicInfo(topicName)
-		partitionCount := int32(1) // Default to 1 partition
+		partitionCount := h.GetDefaultPartitions() // Use configurable default
 		if exists && topicInfo != nil {
 			partitionCount = topicInfo.Partitions
 		}
@@ -1014,7 +1026,7 @@ func (h *Handler) HandleMetadataV2(correlationID uint32, requestBody []byte) ([]
 
 		// Get actual partition count from topic info
 		topicInfo, exists := h.seaweedMQHandler.GetTopicInfo(topicName)
-		partitionCount := int32(1) // Default to 1 partition
+		partitionCount := h.GetDefaultPartitions() // Use configurable default
 		if exists && topicInfo != nil {
 			partitionCount = topicInfo.Partitions
 		}
@@ -1117,7 +1129,7 @@ func (h *Handler) HandleMetadataV3V4(correlationID uint32, requestBody []byte) (
 
 		// Get actual partition count from topic info
 		topicInfo, exists := h.seaweedMQHandler.GetTopicInfo(topicName)
-		partitionCount := int32(1) // Default to 1 partition
+		partitionCount := h.GetDefaultPartitions() // Use configurable default
 		if exists && topicInfo != nil {
 			partitionCount = topicInfo.Partitions
 		}
@@ -1227,7 +1239,7 @@ func (h *Handler) HandleMetadataV5V6(correlationID uint32, requestBody []byte) (
 
 		// Get actual partition count from topic info
 		topicInfo, exists := h.seaweedMQHandler.GetTopicInfo(topicName)
-		partitionCount := int32(1) // Default to 1 partition
+		partitionCount := h.GetDefaultPartitions() // Use configurable default
 		if exists && topicInfo != nil {
 			partitionCount = topicInfo.Partitions
 		}
@@ -1341,7 +1353,7 @@ func (h *Handler) HandleMetadataV7(correlationID uint32, requestBody []byte) ([]
 
 		// Get actual partition count from topic info
 		topicInfo, exists := h.seaweedMQHandler.GetTopicInfo(topicName)
-		partitionCount := int32(1) // Default to 1 partition
+		partitionCount := h.GetDefaultPartitions() // Use configurable default
 		if exists && topicInfo != nil {
 			partitionCount = topicInfo.Partitions
 		}
@@ -1792,7 +1804,8 @@ func (h *Handler) handleCreateTopicsV2To4(correlationID uint32, requestBody []by
 		} else if t.replication == 0 {
 			errCode = 38 // INVALID_REPLICATION_FACTOR
 		} else {
-			if err := h.seaweedMQHandler.CreateTopic(t.name, int32(t.partitions)); err != nil {
+			// Use schema-aware topic creation
+			if err := h.createTopicWithSchemaSupport(t.name, int32(t.partitions)); err != nil {
 				errCode = 1 // UNKNOWN_SERVER_ERROR
 			}
 		}
@@ -1918,13 +1931,17 @@ func (h *Handler) handleCreateTopicsV0V1(correlationID uint32, requestBody []byt
 		// Determine error code and message
 		var errorCode uint16 = 0
 
+		// Apply defaults for invalid values
+		if numPartitions <= 0 {
+			numPartitions = uint32(h.GetDefaultPartitions()) // Use configurable default
+		}
+		if replicationFactor <= 0 {
+			replicationFactor = 1 // Default to 1 replica
+		}
+
 		// Use SeaweedMQ integration
 		if h.seaweedMQHandler.TopicExists(topicName) {
 			errorCode = 36 // TOPIC_ALREADY_EXISTS
-		} else if numPartitions <= 0 {
-			errorCode = 37 // INVALID_PARTITIONS
-		} else if replicationFactor <= 0 {
-			errorCode = 38 // INVALID_REPLICATION_FACTOR
 		} else {
 			// Create the topic in SeaweedMQ with schema support
 			if err := h.createTopicWithSchemaSupport(topicName, int32(numPartitions)); err != nil {
@@ -2027,6 +2044,14 @@ func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint
 		if replication == 256 {
 			replication = 1 // AdminClient sent 0x01 0x00, intended as little-endian 1
 			Debug("CreateTopics v%d: AdminClient replication factor compatibility - corrected 256 → 1", apiVersion)
+		}
+
+		// Apply defaults for invalid values
+		if partitions <= 0 {
+			partitions = uint32(h.GetDefaultPartitions()) // Use configurable default
+		}
+		if replication <= 0 {
+			replication = 1 // Default to 1 replica
 		}
 
 		// DEBUG: Log parsed values to understand AdminClient request format
@@ -2726,9 +2751,50 @@ func (h *Handler) DisableSchemaManagement() {
 	fmt.Println("Schema management disabled")
 }
 
+// SetSchemaRegistryURL sets the Schema Registry URL for delayed initialization
+func (h *Handler) SetSchemaRegistryURL(url string) {
+	h.schemaRegistryURL = url
+}
+
+// SetDefaultPartitions sets the default partition count for auto-created topics
+func (h *Handler) SetDefaultPartitions(partitions int32) {
+	h.defaultPartitions = partitions
+}
+
+// GetDefaultPartitions returns the default partition count for auto-created topics
+func (h *Handler) GetDefaultPartitions() int32 {
+	if h.defaultPartitions <= 0 {
+		return 4 // Fallback default
+	}
+	return h.defaultPartitions
+}
+
 // IsSchemaEnabled returns whether schema management is enabled
 func (h *Handler) IsSchemaEnabled() bool {
+	// Try to initialize schema management if not already done
+	if !h.useSchema && h.schemaRegistryURL != "" {
+		h.tryInitializeSchemaManagement()
+	}
 	return h.useSchema && h.schemaManager != nil
+}
+
+// tryInitializeSchemaManagement attempts to initialize schema management
+// This is called lazily when schema functionality is first needed
+func (h *Handler) tryInitializeSchemaManagement() {
+	if h.useSchema || h.schemaRegistryURL == "" {
+		return // Already initialized or no URL provided
+	}
+
+	schemaConfig := schema.ManagerConfig{
+		RegistryURL: h.schemaRegistryURL,
+	}
+
+	if err := h.EnableSchemaManagement(schemaConfig); err != nil {
+		Debug("Schema management initialization failed (will retry later): %v", err)
+		return
+	}
+
+	Debug("Schema management successfully initialized with registry: %s", h.schemaRegistryURL)
 }
 
 // IsBrokerIntegrationEnabled returns true if broker integration is enabled
@@ -3260,10 +3326,10 @@ func (h *Handler) registerSchemasViaBrokerAPI(topicName string, valueRecordType 
 				flatSchema, keyColumns = mqschema.CombineFlatSchemaFromKeyValue(keyRecordType, valueRecordType)
 			}
 
-			// If topic doesn't exist, create it with default partition count
+			// If topic doesn't exist, create it with configurable default partition count
 			_, err := client.ConfigureTopic(context.Background(), &mq_pb.ConfigureTopicRequest{
 				Topic:             seaweedTopic,
-				PartitionCount:    1, // Default partition count
+				PartitionCount:    h.GetDefaultPartitions(), // Use configurable default
 				MessageRecordType: flatSchema,
 				KeyColumns:        keyColumns,
 			})

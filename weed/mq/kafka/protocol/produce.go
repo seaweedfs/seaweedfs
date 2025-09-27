@@ -100,10 +100,15 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 		// Debug: show all existing topics
 		_ = h.seaweedMQHandler.ListTopics() // existingTopics
 		if !topicExists {
-			if err := h.seaweedMQHandler.CreateTopic(topicName, 1); err != nil {
+			// Use schema-aware topic creation for auto-created topics with configurable default partitions
+			defaultPartitions := h.GetDefaultPartitions()
+			if err := h.createTopicWithSchemaSupport(topicName, defaultPartitions); err != nil {
+				Debug("Failed to auto-create topic %s with schema support: %v", topicName, err)
 			} else {
-				// Initialize ledger for partition 0
-				h.GetOrCreateLedger(topicName, 0)
+				// Initialize ledgers for all partitions
+				for i := int32(0); i < defaultPartitions; i++ {
+					h.GetOrCreateLedger(topicName, i)
+				}
 				topicExists = true // CRITICAL FIX: Update the flag after creating the topic
 			}
 		}
