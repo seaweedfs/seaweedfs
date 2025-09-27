@@ -105,7 +105,7 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 		lastAckTime := time.Now()
 		for !isClosed {
 			receivedSequence = atomic.LoadInt64(&localTopicPartition.AckTsNs)
-			if acknowledgedSequence < receivedSequence && (receivedSequence-acknowledgedSequence >= ackInterval || time.Since(lastAckTime) > 1*time.Second) {
+			if acknowledgedSequence < receivedSequence && (receivedSequence-acknowledgedSequence >= ackInterval || time.Since(lastAckTime) > 100*time.Millisecond) {
 				acknowledgedSequence = receivedSequence
 				response := &mq_pb.PublishMessageResponse{
 					AckSequence: acknowledgedSequence,
@@ -118,7 +118,7 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 				// println("sent ack", acknowledgedSequence, "=>", initMessage.PublisherName)
 				lastAckTime = time.Now()
 			} else {
-				time.Sleep(1 * time.Second)
+				time.Sleep(10 * time.Millisecond) // Reduced from 1s to 10ms for faster acknowledgments
 			}
 		}
 	}()

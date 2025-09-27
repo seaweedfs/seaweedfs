@@ -167,6 +167,7 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 				}
 			}
 
+			fetchStartTime := time.Now()
 			Debug("Fetch v%d - Topic: %s, partition: %d, fetchOffset: %d (effective: %d), highWaterMark: %d, maxBytes: %d",
 				apiVersion, topic.Name, partition.PartitionID, partition.FetchOffset, effectiveFetchOffset, highWaterMark, partition.MaxBytes)
 
@@ -200,6 +201,7 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 
 				// Use multi-batch fetcher for better MaxBytes compliance
 				multiFetcher := NewMultiBatchFetcher(h)
+				multiBatchStartTime := time.Now()
 				result, err := multiFetcher.FetchMultipleBatches(
 					topic.Name,
 					partition.PartitionID,
@@ -207,17 +209,20 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 					highWaterMark,
 					partition.MaxBytes,
 				)
+				multiBatchDuration := time.Since(multiBatchStartTime)
 
 				if err == nil && result.TotalSize > 0 {
-					Debug("Multi-batch result - %d batches, %d bytes, next offset %d",
-						result.BatchCount, result.TotalSize, result.NextOffset)
+					Debug("Multi-batch result - %d batches, %d bytes, next offset %d, duration=%v",
+						result.BatchCount, result.TotalSize, result.NextOffset, multiBatchDuration)
 					recordBatch = result.RecordBatches
 				} else {
-					Debug("Multi-batch failed or empty, falling back to single batch")
+					Debug("Multi-batch failed or empty, falling back to single batch, duration=%v", multiBatchDuration)
 					// Fallback to original single batch logic
 					Debug("GetStoredRecords: topic='%s', partition=%d, offset=%d, limit=10", topic.Name, partition.PartitionID, effectiveFetchOffset)
+					startTime := time.Now()
 					smqRecords, err := h.seaweedMQHandler.GetStoredRecords(topic.Name, partition.PartitionID, effectiveFetchOffset, 10)
-					Debug("GetStoredRecords result: records=%d, err=%v", len(smqRecords), err)
+					duration := time.Since(startTime)
+					Debug("GetStoredRecords result: records=%d, err=%v, duration=%v", len(smqRecords), err, duration)
 					if err == nil && len(smqRecords) > 0 {
 						recordBatch = h.constructRecordBatchFromSMQ(topic.Name, effectiveFetchOffset, smqRecords)
 						Debug("Fallback single batch size: %d bytes", len(recordBatch))
@@ -249,6 +254,10 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 					}
 				}
 			}
+
+			fetchDuration := time.Since(fetchStartTime)
+			Debug("Fetch v%d - Partition processing completed: topic=%s, partition=%d, duration=%v, recordBatchSize=%d",
+				apiVersion, topic.Name, partition.PartitionID, fetchDuration, len(recordBatch))
 
 			// Records size (4 bytes)
 			recordsSizeBytes := make([]byte, 4)

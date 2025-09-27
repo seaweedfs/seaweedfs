@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/compression"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
@@ -97,8 +98,10 @@ func (f *MultiBatchFetcher) FetchMultipleBatches(topicName string, partitionID i
 		}
 
 		// Fetch records for this batch
+		getRecordsStartTime := time.Now()
 		smqRecords, err := f.handler.seaweedMQHandler.GetStoredRecords(topicName, partitionID, currentOffset, int(recordsToFetch))
-		Debug("[DEBUG_MULTIBATCH] GetStoredRecords returned: records=%d err=%v", len(smqRecords), err)
+		getRecordsDuration := time.Since(getRecordsStartTime)
+		Debug("[DEBUG_MULTIBATCH] GetStoredRecords returned: records=%d err=%v duration=%v", len(smqRecords), err, getRecordsDuration)
 
 		if err != nil || len(smqRecords) == 0 {
 			Debug("[DEBUG_MULTIBATCH] Breaking loop: err=%v recordCount=%d", err, len(smqRecords))
