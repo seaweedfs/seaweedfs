@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -1806,6 +1807,7 @@ func (h *Handler) handleCreateTopicsV2To4(correlationID uint32, requestBody []by
 		} else {
 			// Use schema-aware topic creation
 			if err := h.createTopicWithSchemaSupport(t.name, int32(t.partitions)); err != nil {
+				Debug("Failed to create topic %s with schema support: %v", t.name, err)
 				errCode = 1 // UNKNOWN_SERVER_ERROR
 			}
 		}
@@ -3482,38 +3484,82 @@ func (h *Handler) handleInitProducerId(correlationID uint32, apiVersion uint16, 
 }
 
 // createTopicWithSchemaSupport creates a topic with optional schema integration
-// This function attempts to fetch schema information from Schema Registry if available
+// This function creates topics with schema support when schema management is enabled
 func (h *Handler) createTopicWithSchemaSupport(topicName string, partitions int32) error {
 	Debug("Creating topic %s with schema support", topicName)
 
-	// For system topics like _schemas, __consumer_offsets, etc., create without schema
+	// For system topics like _schemas, __consumer_offsets, etc., use default schema
 	if isSystemTopic(topicName) {
-		Debug("System topic %s - creating without schema", topicName)
-		return h.seaweedMQHandler.CreateTopic(topicName, partitions)
+		Debug("System topic %s - creating with default schema", topicName)
+		return h.createTopicWithDefaultFlexibleSchema(topicName, partitions)
 	}
 
-	// For regular topics, try to fetch schema from Schema Registry if available
-	if h.IsSchemaEnabled() && h.schemaManager != nil {
-		Debug("Schema management enabled - attempting to fetch schema for topic %s", topicName)
+	// Check if Schema Registry URL is configured
+	if h.schemaRegistryURL != "" {
+		Debug("Schema Registry URL configured (%s) - enforcing schema-first approach for topic %s", h.schemaRegistryURL, topicName)
+		
+		// Try to initialize schema management if not already done
+		if h.schemaManager == nil {
+			h.tryInitializeSchemaManagement()
+		}
+		
+		// If schema manager is still nil after initialization attempt, Schema Registry is unavailable
+		if h.schemaManager == nil {
+			Debug("Schema Registry is unavailable - failing fast for topic %s", topicName)
+			return fmt.Errorf("Schema Registry is configured at %s but unavailable - cannot create topic %s without schema validation", h.schemaRegistryURL, topicName)
+		}
 
-		// Try to fetch schema information from Schema Registry
+		// Schema Registry is available - try to fetch existing schema
+		Debug("Schema Registry available - looking up schema for topic %s", topicName)
 		keyRecordType, valueRecordType, err := h.fetchSchemaForTopic(topicName)
 		if err != nil {
-			Debug("No schema found for topic %s in Schema Registry: %v - creating without schema", topicName, err)
-			// Create topic without schema if no schema is found
-			return h.seaweedMQHandler.CreateTopic(topicName, partitions)
+			// Check if this is a connection error vs schema not found
+			if h.isSchemaRegistryConnectionError(err) {
+				Debug("Schema Registry connection error for topic %s: %v", topicName, err)
+				return fmt.Errorf("Schema Registry is unavailable: %w", err)
+			}
+			// Schema not found - this is an error when schema management is enforced
+			Debug("No schema found for topic %s in Schema Registry - schema is required", topicName)
+			return fmt.Errorf("schema is required for topic %s but no schema found in Schema Registry", topicName)
 		}
 
 		if keyRecordType != nil || valueRecordType != nil {
-			Debug("Found schema for topic %s - creating with schema configuration", topicName)
-			// Create topic with schema using the existing method
+			Debug("Found schema for topic %s in Schema Registry - creating with schema configuration", topicName)
+			// Create topic with schema from Schema Registry
 			return h.seaweedMQHandler.CreateTopicWithSchemas(topicName, partitions, keyRecordType, valueRecordType)
 		}
+
+		// No schemas found - this is an error when schema management is enforced
+		Debug("No schemas found for topic %s in Schema Registry - schema is required", topicName)
+		return fmt.Errorf("schema is required for topic %s but no schema found in Schema Registry", topicName)
 	}
 
-	// Fallback: create topic without schema (backward compatibility)
-	Debug("Regular topic %s - creating without schema (no Schema Registry or schema not found)", topicName)
+	// Schema Registry URL not configured - create topic without schema (backward compatibility)
+	Debug("Schema Registry URL not configured - creating topic %s without schema", topicName)
 	return h.seaweedMQHandler.CreateTopic(topicName, partitions)
+}
+
+// createTopicWithDefaultFlexibleSchema creates a topic with a flexible default schema
+// that can handle both Avro and JSON messages when schema management is enabled
+func (h *Handler) createTopicWithDefaultFlexibleSchema(topicName string, partitions int32) error {
+	// Create a flexible schema that can handle various message formats
+	// This schema has a single "value" field that can store any data
+	flexibleSchema := &schema_pb.RecordType{
+		Fields: []*schema_pb.Field{
+			{
+				Name: "value",
+				Type: &schema_pb.Type{
+					Kind: &schema_pb.Type_ScalarType{
+						ScalarType: schema_pb.ScalarType_BYTES,
+					},
+				},
+			},
+		},
+	}
+
+	// Create topic with the flexible schema
+	// This ensures the topic.conf will have messageRecordType set
+	return h.seaweedMQHandler.CreateTopicWithSchemas(topicName, partitions, nil, flexibleSchema)
 }
 
 // fetchSchemaForTopic attempts to fetch schema information for a topic from Schema Registry
@@ -3525,13 +3571,26 @@ func (h *Handler) fetchSchemaForTopic(topicName string) (*schema_pb.RecordType, 
 
 	var keyRecordType *schema_pb.RecordType
 	var valueRecordType *schema_pb.RecordType
+	var lastConnectionError error
 
 	// Try to fetch value schema (most common case)
 	// Common subject naming patterns: topicName-value, topicName
 	valueSubjects := []string{topicName + "-value", topicName}
 	for _, subject := range valueSubjects {
 		cachedSchema, err := h.schemaManager.GetLatestSchema(subject)
-		if err == nil && cachedSchema != nil {
+		if err != nil {
+			// Check if this is a connection error (Schema Registry unavailable)
+			if h.isSchemaRegistryConnectionError(err) {
+				Debug("Schema Registry connection error for subject %s: %v", subject, err)
+				lastConnectionError = err
+				continue
+			}
+			// This is likely a 404 (schema not found) - continue trying other subjects
+			Debug("Schema not found for subject %s: %v", subject, err)
+			continue
+		}
+
+		if cachedSchema != nil {
 			Debug("Found value schema for topic %s using subject %s (ID: %d)", topicName, subject, cachedSchema.LatestID)
 
 			// Convert schema to RecordType
@@ -3551,7 +3610,14 @@ func (h *Handler) fetchSchemaForTopic(topicName string) (*schema_pb.RecordType, 
 	// Try to fetch key schema (optional)
 	keySubject := topicName + "-key"
 	cachedSchema, err := h.schemaManager.GetLatestSchema(keySubject)
-	if err == nil && cachedSchema != nil {
+	if err != nil {
+		if h.isSchemaRegistryConnectionError(err) {
+			Debug("Schema Registry connection error for key subject %s: %v", keySubject, err)
+			lastConnectionError = err
+		} else {
+			Debug("Key schema not found for subject %s: %v", keySubject, err)
+		}
+	} else if cachedSchema != nil {
 		Debug("Found key schema for topic %s using subject %s (ID: %d)", topicName, keySubject, cachedSchema.LatestID)
 
 		// Convert schema to RecordType
@@ -3566,12 +3632,53 @@ func (h *Handler) fetchSchemaForTopic(topicName string) (*schema_pb.RecordType, 
 		}
 	}
 
-	// Return error if no schemas found
+	// If we encountered connection errors, fail fast
+	if lastConnectionError != nil && keyRecordType == nil && valueRecordType == nil {
+		return nil, nil, fmt.Errorf("Schema Registry is unavailable: %w", lastConnectionError)
+	}
+
+	// Return error if no schemas found (but Schema Registry was reachable)
 	if keyRecordType == nil && valueRecordType == nil {
 		return nil, nil, fmt.Errorf("no schemas found for topic %s", topicName)
 	}
 
 	return keyRecordType, valueRecordType, nil
+}
+
+// isSchemaRegistryConnectionError determines if an error is due to Schema Registry being unavailable
+// vs a schema not being found (404)
+func (h *Handler) isSchemaRegistryConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	
+	errStr := err.Error()
+	
+	// Connection errors (network issues, DNS resolution, etc.)
+	if strings.Contains(errStr, "failed to fetch") && 
+	   (strings.Contains(errStr, "connection refused") || 
+	    strings.Contains(errStr, "no such host") ||
+	    strings.Contains(errStr, "timeout") ||
+	    strings.Contains(errStr, "network is unreachable")) {
+		return true
+	}
+	
+	// HTTP 5xx errors (server errors)
+	if strings.Contains(errStr, "schema registry error 5") {
+		return true
+	}
+	
+	// HTTP 404 errors are "schema not found", not connection errors
+	if strings.Contains(errStr, "schema registry error 404") {
+		return false
+	}
+	
+	// Other HTTP errors (401, 403, etc.) should be treated as connection/config issues
+	if strings.Contains(errStr, "schema registry error") {
+		return true
+	}
+	
+	return false
 }
 
 // convertSchemaToRecordType converts a schema string to a RecordType
