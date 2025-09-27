@@ -724,14 +724,16 @@ func (h *SeaweedMQHandler) convertSeaweedToKafkaRecordBatch(seaweedRecords []*Se
 	binary.BigEndian.PutUint32(lastOffsetDeltaBytes, lastOffsetDelta)
 	batch = append(batch, lastOffsetDeltaBytes...)
 
-	// Timestamps - use actual timestamps from SeaweedMQ records
+	// Timestamps - convert from SeaweedMQ nanoseconds to Kafka milliseconds
 	var firstTimestamp, maxTimestamp int64
 	if len(seaweedRecords) > 0 {
-		firstTimestamp = seaweedRecords[0].Timestamp
+		// Convert nanoseconds to milliseconds for Kafka compatibility
+		firstTimestamp = seaweedRecords[0].Timestamp / 1000000
 		maxTimestamp = firstTimestamp
 		for _, record := range seaweedRecords {
-			if record.Timestamp > maxTimestamp {
-				maxTimestamp = record.Timestamp
+			recordTimestampMs := record.Timestamp / 1000000
+			if recordTimestampMs > maxTimestamp {
+				maxTimestamp = recordTimestampMs
 			}
 		}
 	}
@@ -776,14 +778,15 @@ func (h *SeaweedMQHandler) convertSeaweedToKafkaRecordBatch(seaweedRecords []*Se
 }
 
 // convertSingleSeaweedRecord converts a single SeaweedMQ record to Kafka format
-func (h *SeaweedMQHandler) convertSingleSeaweedRecord(seaweedRecord *SeaweedRecord, index, baseTimestamp int64) []byte {
+func (h *SeaweedMQHandler) convertSingleSeaweedRecord(seaweedRecord *SeaweedRecord, index, baseTimestampMs int64) []byte {
 	record := make([]byte, 0, 64)
 
 	// Record attributes
 	record = append(record, 0)
 
-	// Timestamp delta (varint - simplified)
-	timestampDelta := seaweedRecord.Timestamp - baseTimestamp // Calculate delta from base timestamp
+	// Timestamp delta (varint - simplified) - convert nanoseconds to milliseconds and calculate delta
+	recordTimestampMs := seaweedRecord.Timestamp / 1000000 // Convert nanoseconds to milliseconds
+	timestampDelta := recordTimestampMs - baseTimestampMs  // Calculate delta from base timestamp (both in ms)
 	if timestampDelta < 0 {
 		timestampDelta = 0
 	}

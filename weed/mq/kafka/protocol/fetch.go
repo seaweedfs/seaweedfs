@@ -459,16 +459,16 @@ func (h *Handler) constructRecordBatchFromSMQ(topicName string, fetchOffset int6
 	binary.BigEndian.PutUint32(lastOffsetDeltaBytes, uint32(lastOffsetDelta))
 	batch = append(batch, lastOffsetDeltaBytes...)
 
-	// Base timestamp (8 bytes) - use first record timestamp
-	baseTimestamp := smqRecords[0].GetTimestamp()
+	// Base timestamp (8 bytes) - convert from nanoseconds to milliseconds for Kafka compatibility
+	baseTimestamp := smqRecords[0].GetTimestamp() / 1000000 // Convert nanoseconds to milliseconds
 	baseTimestampBytes := make([]byte, 8)
 	binary.BigEndian.PutUint64(baseTimestampBytes, uint64(baseTimestamp))
 	batch = append(batch, baseTimestampBytes...)
 
-	// Max timestamp (8 bytes) - use last record timestamp or same as base
+	// Max timestamp (8 bytes) - convert from nanoseconds to milliseconds for Kafka compatibility
 	maxTimestamp := baseTimestamp
 	if len(smqRecords) > 1 {
-		maxTimestamp = smqRecords[len(smqRecords)-1].GetTimestamp()
+		maxTimestamp = smqRecords[len(smqRecords)-1].GetTimestamp() / 1000000 // Convert nanoseconds to milliseconds
 	}
 	maxTimestampBytes := make([]byte, 8)
 	binary.BigEndian.PutUint64(maxTimestampBytes, uint64(maxTimestamp))
@@ -496,8 +496,9 @@ func (h *Handler) constructRecordBatchFromSMQ(topicName string, fetchOffset int6
 		// Record attributes (1 byte)
 		recordBytes = append(recordBytes, 0)
 
-		// Timestamp delta (varint) - calculate from base timestamp
-		timestampDelta := smqRecord.GetTimestamp() - baseTimestamp
+		// Timestamp delta (varint) - calculate from base timestamp (both in milliseconds)
+		recordTimestampMs := smqRecord.GetTimestamp() / 1000000 // Convert nanoseconds to milliseconds
+		timestampDelta := recordTimestampMs - baseTimestamp     // Both in milliseconds now
 		recordBytes = append(recordBytes, encodeVarint(timestampDelta)...)
 
 		// Offset delta (varint)
