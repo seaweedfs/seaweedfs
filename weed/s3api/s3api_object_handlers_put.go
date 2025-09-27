@@ -64,12 +64,6 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 	// http://docs.aws.amazon.com/AmazonS3/latest/dev/UploadingObjects.html
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
-	authHeader := r.Header.Get("Authorization")
-	authPreview := authHeader
-	if len(authHeader) > 50 {
-		authPreview = authHeader[:50] + "..."
-	}
-	glog.V(0).Infof("PutObjectHandler: Starting PUT %s/%s (Auth: %s)", bucket, object, authPreview)
 	glog.V(3).Infof("PutObjectHandler %s %s", bucket, object)
 
 	_, err := validateContentMd5(r.Header)
@@ -140,8 +134,6 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		versioningEnabled := (versioningState == s3_constants.VersioningEnabled)
 		versioningConfigured := (versioningState != "")
 
-		glog.V(1).Infof("PutObjectHandler: bucket %s, object %s, versioningState=%s", bucket, object, versioningState)
-
 		// Validate object lock headers before processing
 		if err := s3a.validateObjectLockHeaders(r, versioningEnabled); err != nil {
 			glog.V(2).Infof("PutObjectHandler: object lock header validation failed for bucket %s, object %s: %v", bucket, object, err)
@@ -162,7 +154,6 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 		if versioningState == s3_constants.VersioningEnabled {
 			// Handle enabled versioning - create new versions with real version IDs
-			glog.V(1).Infof("PutObjectHandler: using versioned PUT for %s/%s", bucket, object)
 			versionId, etag, errCode := s3a.putVersionedObject(r, bucket, object, dataReader, objectContentType)
 			if errCode != s3err.ErrNone {
 				s3err.WriteErrorResponse(w, r, errCode)
@@ -178,7 +169,6 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			setEtag(w, etag)
 		} else if versioningState == s3_constants.VersioningSuspended {
 			// Handle suspended versioning - overwrite with "null" version ID but preserve existing versions
-			glog.V(1).Infof("PutObjectHandler: using suspended versioning PUT for %s/%s", bucket, object)
 			etag, errCode := s3a.putSuspendedVersioningObject(r, bucket, object, dataReader, objectContentType)
 			if errCode != s3err.ErrNone {
 				s3err.WriteErrorResponse(w, r, errCode)
@@ -192,7 +182,6 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			setEtag(w, etag)
 		} else {
 			// Handle regular PUT (never configured versioning)
-			glog.V(1).Infof("PutObjectHandler: using regular PUT for %s/%s", bucket, object)
 			uploadUrl := s3a.toFilerUrl(bucket, object)
 			if objectContentType == "" {
 				dataReader = mimeDetect(r, dataReader)
@@ -556,15 +545,29 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 	// Generate version ID
 	versionId = generateVersionId()
 
-	glog.V(2).Infof("putVersionedObject: creating version %s for %s/%s", versionId, bucket, object)
+	// Normalize object path to ensure consistency with toFilerUrl behavior
+	normalizedObject := removeDuplicateSlashes(object)
+
+	glog.V(2).Infof("putVersionedObject: creating version %s for %s/%s (normalized: %s)", versionId, bucket, object, normalizedObject)
 
 	// Create the version file name
 	versionFileName := s3a.getVersionFileName(versionId)
 
 	// Upload directly to the versions directory
 	// We need to construct the object path relative to the bucket
-	versionObjectPath := object + ".versions/" + versionFileName
+	versionObjectPath := normalizedObject + ".versions/" + versionFileName
 	versionUploadUrl := s3a.toFilerUrl(bucket, versionObjectPath)
+
+	// Ensure the .versions directory exists before uploading
+	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	versionsDir := normalizedObject + ".versions"
+	err := s3a.mkdir(bucketDir, versionsDir, func(entry *filer_pb.Entry) {
+		entry.Attributes.Mime = s3_constants.FolderMimeType
+	})
+	if err != nil {
+		glog.Errorf("putVersionedObject: failed to create .versions directory: %v", err)
+		return "", "", s3err.ErrInternalError
+	}
 
 	hash := md5.New()
 	var body = io.TeeReader(dataReader, hash)
@@ -581,7 +584,6 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 	}
 
 	// Get the uploaded entry to add versioning metadata
-	bucketDir := s3a.option.BucketsPath + "/" + bucket
 	versionEntry, err := s3a.getEntry(bucketDir, versionObjectPath)
 	if err != nil {
 		glog.Errorf("putVersionedObject: failed to get version entry: %v", err)
@@ -621,13 +623,12 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 	}
 
 	// Update the .versions directory metadata to indicate this is the latest version
-	err = s3a.updateLatestVersionInDirectory(bucket, object, versionId, versionFileName)
+	err = s3a.updateLatestVersionInDirectory(bucket, normalizedObject, versionId, versionFileName)
 	if err != nil {
 		glog.Errorf("putVersionedObject: failed to update latest version in directory: %v", err)
 		return "", "", s3err.ErrInternalError
 	}
-
-	glog.V(2).Infof("putVersionedObject: successfully created version %s for %s/%s", versionId, bucket, object)
+	glog.V(2).Infof("putVersionedObject: successfully created version %s for %s/%s (normalized: %s)", versionId, bucket, object, normalizedObject)
 	return versionId, etag, s3err.ErrNone
 }
 
@@ -636,11 +637,26 @@ func (s3a *S3ApiServer) updateLatestVersionInDirectory(bucket, object, versionId
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
 	versionsObjectPath := object + ".versions"
 
-	// Get the current .versions directory entry
-	versionsEntry, err := s3a.getEntry(bucketDir, versionsObjectPath)
+	// Get the current .versions directory entry with retry logic for filer consistency
+	var versionsEntry *filer_pb.Entry
+	var err error
+	maxRetries := 8
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		versionsEntry, err = s3a.getEntry(bucketDir, versionsObjectPath)
+		if err == nil {
+			break
+		}
+
+		if attempt < maxRetries {
+			// Exponential backoff with higher base: 100ms, 200ms, 400ms, 800ms, 1600ms, 3200ms, 6400ms
+			delay := time.Millisecond * time.Duration(100*(1<<(attempt-1)))
+			time.Sleep(delay)
+		}
+	}
+
 	if err != nil {
-		glog.Errorf("updateLatestVersionInDirectory: failed to get .versions entry: %v", err)
-		return fmt.Errorf("failed to get .versions entry: %w", err)
+		glog.Errorf("updateLatestVersionInDirectory: failed to get .versions directory for %s/%s after %d attempts: %v", bucket, object, maxRetries, err)
+		return fmt.Errorf("failed to get .versions directory after %d attempts: %w", maxRetries, err)
 	}
 
 	// Add or update the latest version metadata

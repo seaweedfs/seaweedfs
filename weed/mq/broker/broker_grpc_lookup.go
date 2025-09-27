@@ -178,7 +178,8 @@ func (b *MessageQueueBroker) GetTopicConfiguration(ctx context.Context, request 
 	ret := &mq_pb.GetTopicConfigurationResponse{
 		Topic:                      request.Topic,
 		PartitionCount:             int32(len(conf.BrokerPartitionAssignments)),
-		RecordType:                 conf.RecordType,
+		MessageRecordType:          conf.MessageRecordType,
+		KeyColumns:                 conf.KeyColumns,
 		BrokerPartitionAssignments: conf.BrokerPartitionAssignments,
 		CreatedAtNs:                createdAtNs,
 		LastUpdatedNs:              modifiedAtNs,

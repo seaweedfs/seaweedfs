@@ -483,13 +483,14 @@ func (x *TopicRetention) GetEnabled() bool {
 }
 
 type ConfigureTopicRequest struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	Topic          *schema_pb.Topic       `protobuf:"bytes,1,opt,name=topic,proto3" json:"topic,omitempty"`
-	PartitionCount int32                  `protobuf:"varint,2,opt,name=partition_count,json=partitionCount,proto3" json:"partition_count,omitempty"`
-	RecordType     *schema_pb.RecordType  `protobuf:"bytes,3,opt,name=record_type,json=recordType,proto3" json:"record_type,omitempty"`
-	Retention      *TopicRetention        `protobuf:"bytes,4,opt,name=retention,proto3" json:"retention,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Topic             *schema_pb.Topic       `protobuf:"bytes,1,opt,name=topic,proto3" json:"topic,omitempty"`
+	PartitionCount    int32                  `protobuf:"varint,2,opt,name=partition_count,json=partitionCount,proto3" json:"partition_count,omitempty"`
+	Retention         *TopicRetention        `protobuf:"bytes,3,opt,name=retention,proto3" json:"retention,omitempty"`
+	MessageRecordType *schema_pb.RecordType  `protobuf:"bytes,4,opt,name=message_record_type,json=messageRecordType,proto3" json:"message_record_type,omitempty"` // Complete flat schema for the message
+	KeyColumns        []string               `protobuf:"bytes,5,rep,name=key_columns,json=keyColumns,proto3" json:"key_columns,omitempty"`                        // Names of columns that form the key
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *ConfigureTopicRequest) Reset() {
@@ -536,13 +537,6 @@ func (x *ConfigureTopicRequest) GetPartitionCount() int32 {
 	return 0
 }
 
-func (x *ConfigureTopicRequest) GetRecordType() *schema_pb.RecordType {
-	if x != nil {
-		return x.RecordType
-	}
-	return nil
-}
-
 func (x *ConfigureTopicRequest) GetRetention() *TopicRetention {
 	if x != nil {
 		return x.Retention
@@ -550,11 +544,26 @@ func (x *ConfigureTopicRequest) GetRetention() *TopicRetention {
 	return nil
 }
 
+func (x *ConfigureTopicRequest) GetMessageRecordType() *schema_pb.RecordType {
+	if x != nil {
+		return x.MessageRecordType
+	}
+	return nil
+}
+
+func (x *ConfigureTopicRequest) GetKeyColumns() []string {
+	if x != nil {
+		return x.KeyColumns
+	}
+	return nil
+}
+
 type ConfigureTopicResponse struct {
 	state                      protoimpl.MessageState       `protogen:"open.v1"`
 	BrokerPartitionAssignments []*BrokerPartitionAssignment `protobuf:"bytes,2,rep,name=broker_partition_assignments,json=brokerPartitionAssignments,proto3" json:"broker_partition_assignments,omitempty"`
-	RecordType                 *schema_pb.RecordType        `protobuf:"bytes,3,opt,name=record_type,json=recordType,proto3" json:"record_type,omitempty"`
-	Retention                  *TopicRetention              `protobuf:"bytes,4,opt,name=retention,proto3" json:"retention,omitempty"`
+	Retention                  *TopicRetention              `protobuf:"bytes,3,opt,name=retention,proto3" json:"retention,omitempty"`
+	MessageRecordType          *schema_pb.RecordType        `protobuf:"bytes,4,opt,name=message_record_type,json=messageRecordType,proto3" json:"message_record_type,omitempty"` // Complete flat schema for the message
+	KeyColumns                 []string                     `protobuf:"bytes,5,rep,name=key_columns,json=keyColumns,proto3" json:"key_columns,omitempty"`                        // Names of columns that form the key
 	unknownFields              protoimpl.UnknownFields
 	sizeCache                  protoimpl.SizeCache
 }
@@ -596,16 +605,23 @@ func (x *ConfigureTopicResponse) GetBrokerPartitionAssignments() []*BrokerPartit
 	return nil
 }
 
-func (x *ConfigureTopicResponse) GetRecordType() *schema_pb.RecordType {
+func (x *ConfigureTopicResponse) GetRetention() *TopicRetention {
 	if x != nil {
-		return x.RecordType
+		return x.Retention
 	}
 	return nil
 }
 
-func (x *ConfigureTopicResponse) GetRetention() *TopicRetention {
+func (x *ConfigureTopicResponse) GetMessageRecordType() *schema_pb.RecordType {
 	if x != nil {
-		return x.Retention
+		return x.MessageRecordType
+	}
+	return nil
+}
+
+func (x *ConfigureTopicResponse) GetKeyColumns() []string {
+	if x != nil {
+		return x.KeyColumns
 	}
 	return nil
 }
@@ -894,11 +910,12 @@ type GetTopicConfigurationResponse struct {
 	state                      protoimpl.MessageState       `protogen:"open.v1"`
 	Topic                      *schema_pb.Topic             `protobuf:"bytes,1,opt,name=topic,proto3" json:"topic,omitempty"`
 	PartitionCount             int32                        `protobuf:"varint,2,opt,name=partition_count,json=partitionCount,proto3" json:"partition_count,omitempty"`
-	RecordType                 *schema_pb.RecordType        `protobuf:"bytes,3,opt,name=record_type,json=recordType,proto3" json:"record_type,omitempty"`
-	BrokerPartitionAssignments []*BrokerPartitionAssignment `protobuf:"bytes,4,rep,name=broker_partition_assignments,json=brokerPartitionAssignments,proto3" json:"broker_partition_assignments,omitempty"`
-	CreatedAtNs                int64                        `protobuf:"varint,5,opt,name=created_at_ns,json=createdAtNs,proto3" json:"created_at_ns,omitempty"`
-	LastUpdatedNs              int64                        `protobuf:"varint,6,opt,name=last_updated_ns,json=lastUpdatedNs,proto3" json:"last_updated_ns,omitempty"`
-	Retention                  *TopicRetention              `protobuf:"bytes,7,opt,name=retention,proto3" json:"retention,omitempty"`
+	BrokerPartitionAssignments []*BrokerPartitionAssignment `protobuf:"bytes,3,rep,name=broker_partition_assignments,json=brokerPartitionAssignments,proto3" json:"broker_partition_assignments,omitempty"`
+	CreatedAtNs                int64                        `protobuf:"varint,4,opt,name=created_at_ns,json=createdAtNs,proto3" json:"created_at_ns,omitempty"`
+	LastUpdatedNs              int64                        `protobuf:"varint,5,opt,name=last_updated_ns,json=lastUpdatedNs,proto3" json:"last_updated_ns,omitempty"`
+	Retention                  *TopicRetention              `protobuf:"bytes,6,opt,name=retention,proto3" json:"retention,omitempty"`
+	MessageRecordType          *schema_pb.RecordType        `protobuf:"bytes,7,opt,name=message_record_type,json=messageRecordType,proto3" json:"message_record_type,omitempty"` // Complete flat schema for the message
+	KeyColumns                 []string                     `protobuf:"bytes,8,rep,name=key_columns,json=keyColumns,proto3" json:"key_columns,omitempty"`                        // Names of columns that form the key
 	unknownFields              protoimpl.UnknownFields
 	sizeCache                  protoimpl.SizeCache
 }
@@ -947,13 +964,6 @@ func (x *GetTopicConfigurationResponse) GetPartitionCount() int32 {
 	return 0
 }
 
-func (x *GetTopicConfigurationResponse) GetRecordType() *schema_pb.RecordType {
-	if x != nil {
-		return x.RecordType
-	}
-	return nil
-}
-
 func (x *GetTopicConfigurationResponse) GetBrokerPartitionAssignments() []*BrokerPartitionAssignment {
 	if x != nil {
 		return x.BrokerPartitionAssignments
@@ -978,6 +988,20 @@ func (x *GetTopicConfigurationResponse) GetLastUpdatedNs() int64 {
 func (x *GetTopicConfigurationResponse) GetRetention() *TopicRetention {
 	if x != nil {
 		return x.Retention
+	}
+	return nil
+}
+
+func (x *GetTopicConfigurationResponse) GetMessageRecordType() *schema_pb.RecordType {
+	if x != nil {
+		return x.MessageRecordType
+	}
+	return nil
+}
+
+func (x *GetTopicConfigurationResponse) GetKeyColumns() []string {
+	if x != nil {
+		return x.KeyColumns
 	}
 	return nil
 }
@@ -1878,6 +1902,7 @@ type PublishMessageResponse struct {
 	AckSequence   int64                  `protobuf:"varint,1,opt,name=ack_sequence,json=ackSequence,proto3" json:"ack_sequence,omitempty"`
 	Error         string                 `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
 	ShouldClose   bool                   `protobuf:"varint,3,opt,name=should_close,json=shouldClose,proto3" json:"should_close,omitempty"`
+	ErrorCode     int32                  `protobuf:"varint,4,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"` // Structured error code for reliable error mapping
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1931,6 +1956,13 @@ func (x *PublishMessageResponse) GetShouldClose() bool {
 		return x.ShouldClose
 	}
 	return false
+}
+
+func (x *PublishMessageResponse) GetErrorCode() int32 {
+	if x != nil {
+		return x.ErrorCode
+	}
+	return 0
 }
 
 type PublishFollowMeRequest struct {
@@ -3667,18 +3699,20 @@ const file_mq_broker_proto_rawDesc = "" +
 	"\x15BalanceTopicsResponse\"W\n" +
 	"\x0eTopicRetention\x12+\n" +
 	"\x11retention_seconds\x18\x01 \x01(\x03R\x10retentionSeconds\x12\x18\n" +
-	"\aenabled\x18\x02 \x01(\bR\aenabled\"\xdc\x01\n" +
+	"\aenabled\x18\x02 \x01(\bR\aenabled\"\x8c\x02\n" +
 	"\x15ConfigureTopicRequest\x12&\n" +
 	"\x05topic\x18\x01 \x01(\v2\x10.schema_pb.TopicR\x05topic\x12'\n" +
-	"\x0fpartition_count\x18\x02 \x01(\x05R\x0epartitionCount\x126\n" +
-	"\vrecord_type\x18\x03 \x01(\v2\x15.schema_pb.RecordTypeR\n" +
-	"recordType\x12:\n" +
-	"\tretention\x18\x04 \x01(\v2\x1c.messaging_pb.TopicRetentionR\tretention\"\xf7\x01\n" +
+	"\x0fpartition_count\x18\x02 \x01(\x05R\x0epartitionCount\x12:\n" +
+	"\tretention\x18\x03 \x01(\v2\x1c.messaging_pb.TopicRetentionR\tretention\x12E\n" +
+	"\x13message_record_type\x18\x04 \x01(\v2\x15.schema_pb.RecordTypeR\x11messageRecordType\x12\x1f\n" +
+	"\vkey_columns\x18\x05 \x03(\tR\n" +
+	"keyColumns\"\xa7\x02\n" +
 	"\x16ConfigureTopicResponse\x12i\n" +
-	"\x1cbroker_partition_assignments\x18\x02 \x03(\v2'.messaging_pb.BrokerPartitionAssignmentR\x1abrokerPartitionAssignments\x126\n" +
-	"\vrecord_type\x18\x03 \x01(\v2\x15.schema_pb.RecordTypeR\n" +
-	"recordType\x12:\n" +
-	"\tretention\x18\x04 \x01(\v2\x1c.messaging_pb.TopicRetentionR\tretention\"\x13\n" +
+	"\x1cbroker_partition_assignments\x18\x02 \x03(\v2'.messaging_pb.BrokerPartitionAssignmentR\x1abrokerPartitionAssignments\x12:\n" +
+	"\tretention\x18\x03 \x01(\v2\x1c.messaging_pb.TopicRetentionR\tretention\x12E\n" +
+	"\x13message_record_type\x18\x04 \x01(\v2\x15.schema_pb.RecordTypeR\x11messageRecordType\x12\x1f\n" +
+	"\vkey_columns\x18\x05 \x03(\tR\n" +
+	"keyColumns\"\x13\n" +
 	"\x11ListTopicsRequest\">\n" +
 	"\x12ListTopicsResponse\x12(\n" +
 	"\x06topics\x18\x01 \x03(\v2\x10.schema_pb.TopicR\x06topics\"C\n" +
@@ -3692,16 +3726,17 @@ const file_mq_broker_proto_rawDesc = "" +
 	"\rleader_broker\x18\x02 \x01(\tR\fleaderBroker\x12'\n" +
 	"\x0ffollower_broker\x18\x03 \x01(\tR\x0efollowerBroker\"F\n" +
 	"\x1cGetTopicConfigurationRequest\x12&\n" +
-	"\x05topic\x18\x01 \x01(\v2\x10.schema_pb.TopicR\x05topic\"\x9b\x03\n" +
+	"\x05topic\x18\x01 \x01(\v2\x10.schema_pb.TopicR\x05topic\"\xcb\x03\n" +
 	"\x1dGetTopicConfigurationResponse\x12&\n" +
 	"\x05topic\x18\x01 \x01(\v2\x10.schema_pb.TopicR\x05topic\x12'\n" +
-	"\x0fpartition_count\x18\x02 \x01(\x05R\x0epartitionCount\x126\n" +
-	"\vrecord_type\x18\x03 \x01(\v2\x15.schema_pb.RecordTypeR\n" +
-	"recordType\x12i\n" +
-	"\x1cbroker_partition_assignments\x18\x04 \x03(\v2'.messaging_pb.BrokerPartitionAssignmentR\x1abrokerPartitionAssignments\x12\"\n" +
-	"\rcreated_at_ns\x18\x05 \x01(\x03R\vcreatedAtNs\x12&\n" +
-	"\x0flast_updated_ns\x18\x06 \x01(\x03R\rlastUpdatedNs\x12:\n" +
-	"\tretention\x18\a \x01(\v2\x1c.messaging_pb.TopicRetentionR\tretention\"C\n" +
+	"\x0fpartition_count\x18\x02 \x01(\x05R\x0epartitionCount\x12i\n" +
+	"\x1cbroker_partition_assignments\x18\x03 \x03(\v2'.messaging_pb.BrokerPartitionAssignmentR\x1abrokerPartitionAssignments\x12\"\n" +
+	"\rcreated_at_ns\x18\x04 \x01(\x03R\vcreatedAtNs\x12&\n" +
+	"\x0flast_updated_ns\x18\x05 \x01(\x03R\rlastUpdatedNs\x12:\n" +
+	"\tretention\x18\x06 \x01(\v2\x1c.messaging_pb.TopicRetentionR\tretention\x12E\n" +
+	"\x13message_record_type\x18\a \x01(\v2\x15.schema_pb.RecordTypeR\x11messageRecordType\x12\x1f\n" +
+	"\vkey_columns\x18\b \x03(\tR\n" +
+	"keyColumns\"C\n" +
 	"\x19GetTopicPublishersRequest\x12&\n" +
 	"\x05topic\x18\x01 \x01(\v2\x10.schema_pb.TopicR\x05topic\"Z\n" +
 	"\x1aGetTopicPublishersResponse\x12<\n" +
@@ -3785,11 +3820,13 @@ const file_mq_broker_proto_rawDesc = "" +
 	"\fack_interval\x18\x03 \x01(\x05R\vackInterval\x12'\n" +
 	"\x0ffollower_broker\x18\x04 \x01(\tR\x0efollowerBroker\x12%\n" +
 	"\x0epublisher_name\x18\x05 \x01(\tR\rpublisherNameB\t\n" +
-	"\amessage\"t\n" +
+	"\amessage\"\x93\x01\n" +
 	"\x16PublishMessageResponse\x12!\n" +
 	"\fack_sequence\x18\x01 \x01(\x03R\vackSequence\x12\x14\n" +
 	"\x05error\x18\x02 \x01(\tR\x05error\x12!\n" +
-	"\fshould_close\x18\x03 \x01(\bR\vshouldClose\"\xd2\x03\n" +
+	"\fshould_close\x18\x03 \x01(\bR\vshouldClose\x12\x1d\n" +
+	"\n" +
+	"error_code\x18\x04 \x01(\x05R\terrorCode\"\xd2\x03\n" +
 	"\x16PublishFollowMeRequest\x12F\n" +
 	"\x04init\x18\x01 \x01(\v20.messaging_pb.PublishFollowMeRequest.InitMessageH\x00R\x04init\x12/\n" +
 	"\x04data\x18\x02 \x01(\v2\x19.messaging_pb.DataMessageH\x00R\x04data\x12I\n" +
@@ -3982,11 +4019,11 @@ var file_mq_broker_proto_depIdxs = []int32{
 	46, // 3: messaging_pb.PublisherToPubBalancerRequest.init:type_name -> messaging_pb.PublisherToPubBalancerRequest.InitMessage
 	2,  // 4: messaging_pb.PublisherToPubBalancerRequest.stats:type_name -> messaging_pb.BrokerStats
 	62, // 5: messaging_pb.ConfigureTopicRequest.topic:type_name -> schema_pb.Topic
-	64, // 6: messaging_pb.ConfigureTopicRequest.record_type:type_name -> schema_pb.RecordType
-	8,  // 7: messaging_pb.ConfigureTopicRequest.retention:type_name -> messaging_pb.TopicRetention
+	8,  // 6: messaging_pb.ConfigureTopicRequest.retention:type_name -> messaging_pb.TopicRetention
+	64, // 7: messaging_pb.ConfigureTopicRequest.message_record_type:type_name -> schema_pb.RecordType
 	15, // 8: messaging_pb.ConfigureTopicResponse.broker_partition_assignments:type_name -> messaging_pb.BrokerPartitionAssignment
-	64, // 9: messaging_pb.ConfigureTopicResponse.record_type:type_name -> schema_pb.RecordType
-	8,  // 10: messaging_pb.ConfigureTopicResponse.retention:type_name -> messaging_pb.TopicRetention
+	8,  // 9: messaging_pb.ConfigureTopicResponse.retention:type_name -> messaging_pb.TopicRetention
+	64, // 10: messaging_pb.ConfigureTopicResponse.message_record_type:type_name -> schema_pb.RecordType
 	62, // 11: messaging_pb.ListTopicsResponse.topics:type_name -> schema_pb.Topic
 	62, // 12: messaging_pb.LookupTopicBrokersRequest.topic:type_name -> schema_pb.Topic
 	62, // 13: messaging_pb.LookupTopicBrokersResponse.topic:type_name -> schema_pb.Topic
@@ -3994,9 +4031,9 @@ var file_mq_broker_proto_depIdxs = []int32{
 	63, // 15: messaging_pb.BrokerPartitionAssignment.partition:type_name -> schema_pb.Partition
 	62, // 16: messaging_pb.GetTopicConfigurationRequest.topic:type_name -> schema_pb.Topic
 	62, // 17: messaging_pb.GetTopicConfigurationResponse.topic:type_name -> schema_pb.Topic
-	64, // 18: messaging_pb.GetTopicConfigurationResponse.record_type:type_name -> schema_pb.RecordType
-	15, // 19: messaging_pb.GetTopicConfigurationResponse.broker_partition_assignments:type_name -> messaging_pb.BrokerPartitionAssignment
-	8,  // 20: messaging_pb.GetTopicConfigurationResponse.retention:type_name -> messaging_pb.TopicRetention
+	15, // 18: messaging_pb.GetTopicConfigurationResponse.broker_partition_assignments:type_name -> messaging_pb.BrokerPartitionAssignment
+	8,  // 19: messaging_pb.GetTopicConfigurationResponse.retention:type_name -> messaging_pb.TopicRetention
+	64, // 20: messaging_pb.GetTopicConfigurationResponse.message_record_type:type_name -> schema_pb.RecordType
 	62, // 21: messaging_pb.GetTopicPublishersRequest.topic:type_name -> schema_pb.Topic
 	22, // 22: messaging_pb.GetTopicPublishersResponse.publishers:type_name -> messaging_pb.TopicPublisher
 	62, // 23: messaging_pb.GetTopicSubscribersRequest.topic:type_name -> schema_pb.Topic

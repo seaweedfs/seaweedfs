@@ -62,6 +62,8 @@ service SeaweedMessaging {
     // SQL query support - get unflushed messages from broker's in-memory buffer (streaming)
     rpc GetUnflushedMessages (GetUnflushedMessagesRequest) returns (stream GetUnflushedMessagesResponse) {
     }
+
+    // Removed Kafka Gateway Registration - no longer needed
 }
 
 //////////////////////////////////////////////////
@@ -114,13 +116,15 @@ message TopicRetention {
 message ConfigureTopicRequest {
     schema_pb.Topic topic = 1;
     int32 partition_count = 2;
-    schema_pb.RecordType record_type = 3;
-    TopicRetention retention = 4;
+    TopicRetention retention = 3;
+    schema_pb.RecordType message_record_type = 4;  // Complete flat schema for the message
+    repeated string key_columns = 5;              // Names of columns that form the key
 }
 message ConfigureTopicResponse {
     repeated BrokerPartitionAssignment broker_partition_assignments = 2;
-    schema_pb.RecordType record_type = 3;
-    TopicRetention retention = 4;
+    TopicRetention retention = 3;
+    schema_pb.RecordType message_record_type = 4;  // Complete flat schema for the message
+    repeated string key_columns = 5;              // Names of columns that form the key
 }
 message ListTopicsRequest {
 }
@@ -145,11 +149,12 @@ message GetTopicConfigurationRequest {
 message GetTopicConfigurationResponse {
     schema_pb.Topic topic = 1;
     int32 partition_count = 2;
-    schema_pb.RecordType record_type = 3;
-    repeated BrokerPartitionAssignment broker_partition_assignments = 4;
-    int64 created_at_ns = 5;
-    int64 last_updated_ns = 6;
-    TopicRetention retention = 7;
+    repeated BrokerPartitionAssignment broker_partition_assignments = 3;
+    int64 created_at_ns = 4;
+    int64 last_updated_ns = 5;
+    TopicRetention retention = 6;
+    schema_pb.RecordType message_record_type = 7;  // Complete flat schema for the message
+    repeated string key_columns = 8;              // Names of columns that form the key
 }
 
 message GetTopicPublishersRequest {
@@ -269,6 +274,7 @@ message PublishMessageResponse {
     int64 ack_sequence = 1;
     string error = 2;
     bool should_close = 3;
+    int32 error_code = 4; // Structured error code for reliable error mapping
 }
 message PublishFollowMeRequest {
     message InitMessage {
@@ -376,3 +382,5 @@ message LogEntry {
     bytes data = 3;
     uint32 partition_key_hash = 4;
 }
+
+// Removed Kafka Gateway Registration messages - no longer needed

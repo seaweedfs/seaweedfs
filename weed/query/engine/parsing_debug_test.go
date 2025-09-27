@@ -36,7 +36,7 @@ func TestBasicParsing(t *testing.T) {
 				if selectStmt.Where != nil {
 					t.Logf("  WHERE expression type: %T", selectStmt.Where.Expr)
 				} else {
-					t.Logf("  ❌ WHERE clause is NIL - this is the bug!")
+					t.Logf("  WHERE clause is NIL - this is the bug!")
 				}
 			} else {
 				t.Errorf("Expected SelectStatement, got %T", stmt)
@@ -62,10 +62,10 @@ func TestCockroachParserDirectly(t *testing.T) {
 
 	if selectStmt, ok := stmt.(*SelectStatement); ok {
 		if selectStmt.Where == nil {
-			t.Errorf("❌ Our ParseSQL is not extracting WHERE clauses!")
+			t.Errorf("Our ParseSQL is not extracting WHERE clauses!")
 			t.Errorf("This means the issue is in our CockroachDB AST conversion")
 		} else {
-			t.Logf("✅ Our ParseSQL extracted WHERE clause: %T", selectStmt.Where.Expr)
+			t.Logf("Our ParseSQL extracted WHERE clause: %T", selectStmt.Where.Expr)
 		}
 	}
 }

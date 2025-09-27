@@ -30,7 +30,7 @@ func TestObjectLockValidation(t *testing.T) {
 	})
 	require.NoError(t, err, "Bucket creation should succeed")
 	defer client.DeleteBucket(context.TODO(), &s3.DeleteBucketInput{Bucket: aws.String(bucketName)})
-	t.Log("   ✅ Bucket created successfully")
+	t.Log("   Bucket created successfully")
 
 	// Step 2: Check if Object Lock is supported (standard S3 client behavior)
 	t.Log("\n2. Testing Object Lock support detection")
@@ -38,7 +38,7 @@ func TestObjectLockValidation(t *testing.T) {
 		Bucket: aws.String(bucketName),
 	})
 	require.NoError(t, err, "GetObjectLockConfiguration should succeed for Object Lock enabled bucket")
-	t.Log("   ✅ GetObjectLockConfiguration succeeded - Object Lock is properly enabled")
+	t.Log("   GetObjectLockConfiguration succeeded - Object Lock is properly enabled")
 
 	// Step 3: Verify versioning is enabled (required for Object Lock)
 	t.Log("\n3. Verifying versioning is automatically enabled")
@@ -47,7 +47,7 @@ func TestObjectLockValidation(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, types.BucketVersioningStatusEnabled, versioningResp.Status, "Versioning should be automatically enabled")
-	t.Log("   ✅ Versioning automatically enabled")
+	t.Log("   Versioning automatically enabled")
 
 	// Step 4: Test actual Object Lock functionality
 	t.Log("\n4. Testing Object Lock retention functionality")
@@ -62,7 +62,7 @@ func TestObjectLockValidation(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, putResp.VersionId, "Object should have a version ID")
-	t.Log("   ✅ Object created with versioning")
+	t.Log("   Object created with versioning")
 
 	// Apply Object Lock retention
 	retentionUntil := time.Now().Add(24 * time.Hour)
@@ -75,7 +75,7 @@ func TestObjectLockValidation(t *testing.T) {
 		},
 	})
 	require.NoError(t, err, "Setting Object Lock retention should succeed")
-	t.Log("   ✅ Object Lock retention applied successfully")
+	t.Log("   Object Lock retention applied successfully")
 
 	// Verify retention allows simple DELETE (creates delete marker) but blocks version deletion
 	// AWS S3 behavior: Simple DELETE (without version ID) is ALWAYS allowed and creates delete marker
@@ -84,7 +84,7 @@ func TestObjectLockValidation(t *testing.T) {
 		Key:    aws.String(key),
 	})
 	require.NoError(t, err, "Simple DELETE should succeed and create delete marker (AWS S3 behavior)")
-	t.Log("   ✅ Simple DELETE succeeded (creates delete marker - correct AWS behavior)")
+	t.Log("   Simple DELETE succeeded (creates delete marker - correct AWS behavior)")
 
 	// Now verify that DELETE with version ID is properly blocked by retention
 	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
@@ -93,7 +93,7 @@ func TestObjectLockValidation(t *testing.T) {
 		VersionId: putResp.VersionId,
 	})
 	require.Error(t, err, "DELETE with version ID should be blocked by COMPLIANCE retention")
-	t.Log("   ✅ Object version is properly protected by retention policy")
+	t.Log("   Object version is properly protected by retention policy")
 
 	// Verify we can read the object version (should still work)
 	// Note: Need to specify version ID since latest version is now a delete marker
@@ -104,14 +104,14 @@ func TestObjectLockValidation(t *testing.T) {
 	})
 	require.NoError(t, err, "Reading protected object version should still work")
 	defer getResp.Body.Close()
-	t.Log("   ✅ Protected object can still be read")
+	t.Log("   Protected object can still be read")
 
-	t.Log("\n🎉 S3 OBJECT LOCK VALIDATION SUCCESSFUL!")
+	t.Log("\nS3 OBJECT LOCK VALIDATION SUCCESSFUL!")
 	t.Log("   - Bucket creation with Object Lock header works")
 	t.Log("   - Object Lock support detection works (GetObjectLockConfiguration succeeds)")
 	t.Log("   - Versioning is automatically enabled")
 	t.Log("   - Object Lock retention functionality works")
 	t.Log("   - Objects are properly protected from deletion")
 	t.Log("")
-	t.Log("✅ S3 clients will now recognize SeaweedFS as supporting Object Lock!")
+	t.Log("S3 clients will now recognize SeaweedFS as supporting Object Lock!")
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 	"google.golang.org/protobuf/proto"
@@ -68,8 +69,14 @@ func GenParquetReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p topic
 			return startPosition, true, nil
 		}
 	}
-	recordType := topicConf.GetRecordType()
-	if recordType == nil {
+	// Get schema - prefer flat schema if available
+	var recordType *schema_pb.RecordType
+	if topicConf.GetMessageRecordType() != nil {
+		// New flat schema format - use directly
+		recordType = topicConf.GetMessageRecordType()
+	}
+
+	if recordType == nil || len(recordType.Fields) == 0 {
 		// Return a no-op function if no schema is available
 		return func(startPosition log_buffer.MessagePosition, stopTsNs int64, eachLogEntryFn log_buffer.EachLogEntryFuncType) (log_buffer.MessagePosition, bool, error) {
 			return startPosition, true, nil
@@ -78,6 +85,7 @@ func GenParquetReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p topic
 	recordType = schema.NewRecordTypeBuilder(recordType).
 		WithField(SW_COLUMN_NAME_TS, schema.TypeInt64).
 		WithField(SW_COLUMN_NAME_KEY, schema.TypeBytes).
+		WithField(SW_COLUMN_NAME_OFFSET, schema.TypeInt64).
 		RecordTypeEnd()
 
 	parquetLevels, err := schema.ToParquetLevels(recordType)
@@ -121,10 +129,17 @@ func GenParquetReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p topic
 					return processedTsNs, fmt.Errorf("marshal record value: %w", marshalErr)
 				}
 
+				// Get offset from parquet, default to 0 if not present (backward compatibility)
+				var offset int64 = 0
+				if offsetValue, exists := recordValue.Fields[SW_COLUMN_NAME_OFFSET]; exists {
+					offset = offsetValue.GetInt64Value()
+				}
+
 				logEntry := &filer_pb.LogEntry{
-					Key:  recordValue.Fields[SW_COLUMN_NAME_KEY].GetBytesValue(),
-					TsNs: processedTsNs,
-					Data: data,
+					Key:    recordValue.Fields[SW_COLUMN_NAME_KEY].GetBytesValue(),
+					TsNs:   processedTsNs,
+					Data:   data,
+					Offset: offset,
 				}
 
 				// Skip control entries without actual data

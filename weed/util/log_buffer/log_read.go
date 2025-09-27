@@ -29,6 +29,33 @@ func NewMessagePosition(tsNs int64, batchIndex int64) MessagePosition {
 	}
 }
 
+// Sentinel time value to clearly indicate offset-based positioning
+// Using Unix timestamp 1 (1970-01-01 00:00:01 UTC) as a clear, recognizable sentinel
+var OffsetBasedPositionSentinel = time.Unix(1, 0).UTC()
+
+// NewMessagePositionFromOffset creates a MessagePosition that represents a specific offset
+// Uses a clear sentinel time value and stores the offset directly in BatchIndex
+func NewMessagePositionFromOffset(offset int64) MessagePosition {
+	return MessagePosition{
+		Time:       OffsetBasedPositionSentinel, // Clear sentinel time for offset-based positions
+		BatchIndex: offset,                      // Store offset directly - much clearer!
+	}
+}
+
+// IsOffsetBased returns true if this MessagePosition represents an offset rather than a timestamp
+func (mp MessagePosition) IsOffsetBased() bool {
+	// Offset-based positions use the clear sentinel time value
+	return mp.Time.Equal(OffsetBasedPositionSentinel)
+}
+
+// GetOffset extracts the offset from an offset-based MessagePosition
+func (mp MessagePosition) GetOffset() int64 {
+	if !mp.IsOffsetBased() {
+		return -1 // Not an offset-based position
+	}
+	return mp.BatchIndex // Offset is stored directly in BatchIndex
+}
+
 func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition MessagePosition, stopTsNs int64,
 	waitForDataFn func() bool, eachLogDataFn EachLogEntryFuncType) (lastReadPosition MessagePosition, isDone bool, err error) {
 	// loop through all messages
@@ -104,6 +131,24 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 				pos += 4 + int(size)
 				continue
 			}
+
+			// Handle offset-based filtering for offset-based start positions
+			if startPosition.IsOffsetBased() {
+				startOffset := startPosition.GetOffset()
+				glog.V(2).Infof("[DEBUG_FETCH] Checking offset-based position: logEntry.Offset=%d startOffset=%d", logEntry.Offset, startOffset)
+				if logEntry.Offset < startOffset {
+					glog.V(2).Infof("[DEBUG_FETCH] Skipping entry with offset %d (before startOffset %d)", logEntry.Offset, startOffset)
+					// Skip entries before the starting offset
+					pos += 4 + int(size)
+					batchSize++
+					// advance the start position so subsequent entries use timestamp-based flow
+					startPosition = NewMessagePosition(logEntry.TsNs, batchIndex)
+					continue
+				} else {
+					glog.V(2).Infof("[DEBUG_FETCH] Found entry with offset %d >= startOffset %d, will process", logEntry.Offset, startOffset)
+				}
+			}
+
 			if stopTsNs != 0 && logEntry.TsNs > stopTsNs {
 				isDone = true
 				// println("stopTsNs", stopTsNs, "logEntry.TsNs", logEntry.TsNs)
@@ -207,6 +252,18 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithBatchIndex(readerName string, 
 				pos += 4 + int(size)
 				continue
 			}
+
+			// Handle offset-based filtering for offset-based start positions
+			if startPosition.IsOffsetBased() {
+				startOffset := startPosition.GetOffset()
+				if logEntry.Offset < startOffset {
+					// Skip entries before the starting offset
+					pos += 4 + int(size)
+					batchSize++
+					continue
+				}
+			}
+
 			if stopTsNs != 0 && logEntry.TsNs > stopTsNs {
 				isDone = true
 				// println("stopTsNs", stopTsNs, "logEntry.TsNs", logEntry.TsNs)

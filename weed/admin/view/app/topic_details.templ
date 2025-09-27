@@ -36,7 +36,7 @@ templ TopicDetails(data dash.TopicDetailsData) {
                         <div class="card text-center">
                             <div class="card-body">
                                 <h5 class="card-title">Schema Fields</h5>
-                                <h3 class="text-info">{fmt.Sprintf("%d", len(data.Schema))}</h3>
+                                <h3 class="text-info">{fmt.Sprintf("%d", len(data.KeySchema) + len(data.ValueSchema))}</h3>
                             </div>
                         </div>
                     </div>
@@ -152,7 +152,7 @@ templ TopicDetails(data dash.TopicDetailsData) {
                                 <h5 class="mb-0">Schema Definition</h5>
                             </div>
                             <div class="card-body">
-                                if len(data.Schema) == 0 {
+                                if len(data.KeySchema) == 0 && len(data.ValueSchema) == 0 {
                                     <p class="text-muted">No schema information available</p>
                                 } else {
                                     <div class="table-responsive">
@@ -162,10 +162,11 @@ templ TopicDetails(data dash.TopicDetailsData) {
                                                     <th>Field</th>
                                                     <th>Type</th>
                                                     <th>Required</th>
+                                                    <th>Schema Part</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                for _, field := range data.Schema {
+                                                for _, field := range data.KeySchema {
                                                     <tr>
                                                         <td><code>{field.Name}</code></td>
                                                         <td><span class="badge bg-secondary">{field.Type}</span></td>
@@ -176,6 +177,21 @@ templ TopicDetails(data dash.TopicDetailsData) {
                                                                 <i class="fas fa-times text-muted"></i>
                                                             }
                                                         </td>
+                                                        <td><span class="badge bg-primary">Key</span></td>
+                                                    </tr>
+                                                }
+                                                for _, field := range data.ValueSchema {
+                                                    <tr>
+                                                        <td><code>{field.Name}</code></td>
+                                                        <td><span class="badge bg-secondary">{field.Type}</span></td>
+                                                        <td>
+                                                            if field.Required {
+                                                                <i class="fas fa-check text-success"></i>
+                                                            } else {
+                                                                <i class="fas fa-times text-muted"></i>
+                                                            }
+                                                        </td>
+                                                        <td><span class="badge bg-info">Value</span></td>
                                                     </tr>
                                                 }
                                             </tbody>

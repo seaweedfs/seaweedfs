@@ -138,6 +138,20 @@ func (lock *LiveLock) StopShortLivedLock() error {
 	})
 }
 
+// Stop stops a long-lived lock by closing the cancel channel and releasing the lock
+func (lock *LiveLock) Stop() error {
+	// Close the cancel channel to stop the long-lived lock goroutine
+	select {
+	case <-lock.cancelCh:
+		// Already closed
+	default:
+		close(lock.cancelCh)
+	}
+	
+	// Also release the lock if held
+	return lock.StopShortLivedLock()
+}
+
 func (lock *LiveLock) doLock(lockDuration time.Duration) (errorMessage string, err error) {
 	err = pb.WithFilerClient(false, 0, lock.hostFiler, lock.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		resp, err := client.DistributedLock(context.Background(), &filer_pb.LockRequest{

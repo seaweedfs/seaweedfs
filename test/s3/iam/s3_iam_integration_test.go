@@ -1,7 +1,6 @@
 package iam
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"strings"
@@ -15,15 +14,11 @@ import (
 )
 
 const (
-	testEndpoint     = "http://localhost:8333"
-	testRegion       = "us-west-2"
-	testBucketPrefix = "test-iam-bucket"
-	testObjectKey    = "test-object.txt"
-	testObjectData   = "Hello, SeaweedFS IAM Integration!"
-)
-
-var (
-	testBucket = testBucketPrefix
+	testEndpoint   = "http://localhost:8333"
+	testRegion     = "us-west-2"
+	testBucket     = "test-iam-bucket"
+	testObjectKey  = "test-object.txt"
+	testObjectData = "Hello, SeaweedFS IAM Integration!"
 )
 
 // TestS3IAMAuthentication tests S3 API authentication with IAM JWT tokens
@@ -527,15 +522,6 @@ func TestS3IAMContextualPolicyEnforcement(t *testing.T) {
 	})
 }
 
-// Helper function to create test content of specific size
-func createTestContent(size int) *bytes.Reader {
-	content := make([]byte, size)
-	for i := range content {
-		content[i] = byte(i % 256)
-	}
-	return bytes.NewReader(content)
-}
-
 // TestS3IAMPresignedURLIntegration tests presigned URL generation with IAM
 func TestS3IAMPresignedURLIntegration(t *testing.T) {
 	framework := NewS3IAMTestFramework(t)
@@ -546,12 +532,12 @@ func TestS3IAMPresignedURLIntegration(t *testing.T) {
 	require.NoError(t, err)
 
 	// Use static bucket name but with cleanup to handle conflicts
-	err = framework.CreateBucketWithCleanup(adminClient, testBucketPrefix)
+	err = framework.CreateBucketWithCleanup(adminClient, testBucket)
 	require.NoError(t, err)
 
 	// Put test object
 	_, err = adminClient.PutObject(&s3.PutObjectInput{
-		Bucket: aws.String(testBucketPrefix),
+		Bucket: aws.String(testBucket),
 		Key:    aws.String(testObjectKey),
 		Body:   strings.NewReader(testObjectData),
 	})
@@ -573,13 +559,13 @@ func TestS3IAMPresignedURLIntegration(t *testing.T) {
 
 		// Test direct object access with JWT Bearer token (recommended approach)
 		_, err := adminClient.GetObject(&s3.GetObjectInput{
-			Bucket: aws.String(testBucketPrefix),
+			Bucket: aws.String(testBucket),
 			Key:    aws.String(testObjectKey),
 		})
 		require.NoError(t, err, "Direct object access with JWT Bearer token works correctly")
 
-		t.Log("✅ JWT Bearer token authentication confirmed working for direct S3 API calls")
-		t.Log("ℹ️  Note: Presigned URLs are not supported with JWT Bearer authentication by design")
+		t.Log("JWT Bearer token authentication confirmed working for direct S3 API calls")
+		t.Log("Note: Presigned URLs are not supported with JWT Bearer authentication by design")
 	})
 
 	// Cleanup

@@ -143,7 +143,7 @@ func TestRaceConditionStress(t *testing.T) {
 			successfulAllocations, failedAllocations, concurrentRequests)
 	}
 
-	t.Logf("✅ Race condition test passed: Capacity limits respected with %d concurrent requests",
+	t.Logf("Race condition test passed: Capacity limits respected with %d concurrent requests",
 		concurrentRequests)
 }
 
@@ -247,7 +247,7 @@ func TestCapacityJudgmentAccuracy(t *testing.T) {
 		t.Error("Expected reservation to fail when at capacity")
 	}
 
-	t.Logf("✅ Capacity judgment accuracy test passed")
+	t.Logf("Capacity judgment accuracy test passed")
 }
 
 // TestReservationSystemPerformance measures the performance impact of reservations
@@ -301,6 +301,6 @@ func TestReservationSystemPerformance(t *testing.T) {
 	if avgDuration > time.Millisecond {
 		t.Errorf("Reservation system performance concern: %v per reservation", avgDuration)
 	} else {
-		t.Logf("✅ Performance test passed: %v per reservation", avgDuration)
+		t.Logf("Performance test passed: %v per reservation", avgDuration)
 	}
 }
