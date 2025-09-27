@@ -139,8 +139,9 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 					return nil
 				}
 				// For very early start positions (like RESET_TO_EARLIEST with timestamp=1),
-				// we should read all files, not skip based on filename comparison
-				if startPosition.Time.Unix() > 86400 && entry.Name < startPosition.UTC().Format(topic.TIME_FORMAT) {
+				// or for system topics (like _schemas), we should read all files, not skip based on filename comparison
+				isSystemTopic := strings.HasPrefix(t.Name, "_")
+				if !isSystemTopic && startPosition.Time.Unix() > 86400 && entry.Name < startPosition.UTC().Format(topic.TIME_FORMAT) {
 					return nil
 				}
 				if processedTsNs, err = eachFileFn(entry, eachLogEntryFn, startTsNs, stopTsNs); err != nil {
