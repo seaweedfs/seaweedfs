@@ -135,11 +135,17 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 			// Handle offset-based filtering for offset-based start positions
 			if startPosition.IsOffsetBased() {
 				startOffset := startPosition.GetOffset()
+				glog.V(2).Infof("[DEBUG_FETCH] Checking offset-based position: logEntry.Offset=%d startOffset=%d", logEntry.Offset, startOffset)
 				if logEntry.Offset < startOffset {
-					// Skip entries before the target offset
+					glog.V(2).Infof("[DEBUG_FETCH] Skipping entry with offset %d (before startOffset %d)", logEntry.Offset, startOffset)
+					// Skip entries before the starting offset
 					pos += 4 + int(size)
 					batchSize++
+					// advance the start position so subsequent entries use timestamp-based flow
+					startPosition = NewMessagePosition(logEntry.TsNs, batchIndex)
 					continue
+				} else {
+					glog.V(2).Infof("[DEBUG_FETCH] Found entry with offset %d >= startOffset %d, will process", logEntry.Offset, startOffset)
 				}
 			}
 
@@ -251,7 +257,7 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithBatchIndex(readerName string, 
 			if startPosition.IsOffsetBased() {
 				startOffset := startPosition.GetOffset()
 				if logEntry.Offset < startOffset {
-					// Skip entries before the target offset
+					// Skip entries before the starting offset
 					pos += 4 + int(size)
 					batchSize++
 					continue

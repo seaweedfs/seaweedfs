@@ -87,22 +87,28 @@ type SeaweedRecord struct {
 // GetStoredRecords retrieves records from SeaweedMQ storage
 // This implements the core integration between Kafka Fetch API and SeaweedMQ storage
 func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromOffset int64, maxRecords int) ([]offset.SMQRecord, error) {
+	glog.V(1).Infof("[DEBUG_FETCH] GetStoredRecords: topic=%s partition=%d fromOffset=%d maxRecords=%d", topic, partition, fromOffset, maxRecords)
+
 	// Verify topic exists
 	if !h.TopicExists(topic) {
+		glog.V(1).Infof("[DEBUG_FETCH] Topic %s does not exist", topic)
 		return nil, fmt.Errorf("topic %s does not exist", topic)
 	}
 
 	// Get the offset ledger to translate Kafka offsets to SeaweedMQ timestamps
 	ledger := h.GetLedger(topic, partition)
 	if ledger == nil {
+		glog.V(1).Infof("[DEBUG_FETCH] No ledger found for topic=%s partition=%d", topic, partition)
 		// No messages yet, return empty
 		return nil, nil
 	}
 
 	highWaterMark := ledger.GetHighWaterMark()
+	glog.V(1).Infof("[DEBUG_FETCH] topic=%s partition=%d highWaterMark=%d fromOffset=%d", topic, partition, highWaterMark, fromOffset)
 
 	// If fromOffset is at or beyond high water mark, no records to return
 	if fromOffset >= highWaterMark {
+		glog.V(1).Infof("[DEBUG_FETCH] fromOffset %d >= highWaterMark %d, returning empty", fromOffset, highWaterMark)
 		return nil, nil
 	}
 
@@ -114,6 +120,7 @@ func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromO
 	if recordsToFetch > 100 {
 		recordsToFetch = 100 // Reasonable batch size limit
 	}
+	glog.V(1).Infof("[DEBUG_FETCH] Will try to fetch %d records", recordsToFetch)
 
 	// Get or create subscriber session for this topic/partition
 	var seaweedRecords []*SeaweedRecord
@@ -132,12 +139,18 @@ func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromO
 	maxRetries := 3
 	retryDelay := 100 * time.Millisecond
 
+	glog.V(1).Infof("[DEBUG_FETCH] Starting read with subscriber for topic=%s partition=%d recordsToFetch=%d", topic, partition, recordsToFetch)
+
 	for attempt := 0; attempt < maxRetries; attempt++ {
+		glog.V(1).Infof("[DEBUG_FETCH] ReadRecords attempt %d/%d", attempt+1, maxRetries)
 		seaweedRecords, err = h.brokerClient.ReadRecords(brokerSubscriber, recordsToFetch)
 
 		if err == nil {
+			glog.V(1).Infof("[DEBUG_FETCH] ReadRecords successful, got %d records", len(seaweedRecords))
 			break // Success
 		}
+
+		glog.V(1).Infof("[DEBUG_FETCH] ReadRecords failed on attempt %d: %v", attempt+1, err)
 
 		// Check if this is a timing-related error
 		if strings.Contains(err.Error(), "no data processed") && attempt < maxRetries-1 {
@@ -1394,8 +1407,8 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 		glog.V(1).Infof("Using EXACT_OFFSET for Kafka offset %d (native offset-based positioning)", startOffset)
 	}
 
-	glog.V(1).Infof("Creating subscriber for topic=%s partition=%d: Kafka offset %d -> SeaweedMQ %s (timestamp=%d)",
-		topic, partition, startOffset, offsetType, startTimestamp)
+	glog.V(1).Infof("[DEBUG_FETCH] Creating subscriber for topic=%s partition=%d: Kafka offset %d -> SeaweedMQ %s (timestamp=%d, startOffsetValue=%d)",
+		topic, partition, startOffset, offsetType, startTimestamp, startOffsetValue)
 
 	// Send init message using the actual partition structure that the broker allocated
 	if err := stream.Send(&mq_pb.SubscribeMessageRequest{
@@ -1418,8 +1431,11 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 			},
 		},
 	}); err != nil {
+		glog.V(1).Infof("[DEBUG_FETCH] Failed to send subscribe init: %v", err)
 		return nil, fmt.Errorf("failed to send subscribe init: %v", err)
 	}
+
+	glog.V(1).Infof("[DEBUG_FETCH] Successfully sent subscribe init message for topic=%s partition=%d", topic, partition)
 
 	session := &BrokerSubscriberSession{
 		Topic:       topic,
@@ -1477,20 +1493,29 @@ func (bc *BrokerClient) ReadRecords(session *BrokerSubscriberSession, maxRecords
 		return nil, fmt.Errorf("subscriber session cannot be nil")
 	}
 
+	glog.V(1).Infof("[DEBUG_FETCH] ReadRecords: topic=%s partition=%d maxRecords=%d startOffset=%d",
+		session.Topic, session.Partition, maxRecords, session.StartOffset)
+
 	var records []*SeaweedRecord
 
 	for len(records) < maxRecords {
+		glog.V(2).Infof("[DEBUG_FETCH] Calling session.Stream.Recv() for topic=%s partition=%d (records so far: %d)",
+			session.Topic, session.Partition, len(records))
 		resp, err := session.Stream.Recv()
 
 		if err != nil {
+			glog.V(1).Infof("[DEBUG_FETCH] Stream.Recv() failed: %v (records collected: %d)", err, len(records))
 			// If we have some records, return them; otherwise return error
 			if len(records) > 0 {
+				glog.V(1).Infof("[DEBUG_FETCH] Returning %d records despite error", len(records))
 				return records, nil
 			}
 			return nil, fmt.Errorf("failed to receive record: %v", err)
 		}
 
 		if dataMsg := resp.GetData(); dataMsg != nil {
+			glog.V(2).Infof("[DEBUG_FETCH] Received data message: key_len=%d value_len=%d ts=%d",
+				len(dataMsg.Key), len(dataMsg.Value), dataMsg.TsNs)
 			record := &SeaweedRecord{
 				Key:       dataMsg.Key,
 				Value:     dataMsg.Value,
@@ -1503,11 +1528,15 @@ func (bc *BrokerClient) ReadRecords(session *BrokerSubscriberSession, maxRecords
 			// blocking while waiting for an entire batch in environments where data
 			// arrives slowly. The fetch layer will invoke subsequent reads as needed.
 			if len(records) >= 1 {
+				glog.V(2).Infof("[DEBUG_FETCH] Got first record, breaking early")
 				break
 			}
+		} else {
+			glog.V(2).Infof("[DEBUG_FETCH] Received non-data message from stream")
 		}
 	}
 
+	glog.V(1).Infof("[DEBUG_FETCH] ReadRecords returning %d records", len(records))
 	return records, nil
 }
 
