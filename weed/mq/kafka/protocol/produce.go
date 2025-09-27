@@ -257,9 +257,9 @@ func (h *Handler) extractAllRecords(recordSetData []byte) []struct{ Key, Value [
 	if len(recordSetData) < 61 {
 		// Too small to be a full batch; treat as single opaque record
 		key, value := h.extractFirstRecord(recordSetData)
-		if key != nil || value != nil {
-			results = append(results, struct{ Key, Value []byte }{Key: key, Value: value})
-		}
+		// Always include records, even if both key and value are null
+		// Schema Registry Noop records may have null values
+		results = append(results, struct{ Key, Value []byte }{Key: key, Value: value})
 		return results
 	}
 
@@ -277,9 +277,8 @@ func (h *Handler) extractAllRecords(recordSetData []byte) []struct{ Key, Value [
 	if magic != 2 {
 		// Unsupported, fallback
 		key, value := h.extractFirstRecord(recordSetData)
-		if key != nil || value != nil {
-			results = append(results, struct{ Key, Value []byte }{Key: key, Value: value})
-		}
+		// Always include records, even if both key and value are null
+		results = append(results, struct{ Key, Value []byte }{Key: key, Value: value})
 		return results
 	}
 
@@ -512,13 +511,8 @@ func (h *Handler) extractFirstRecord(recordSetData []byte) ([]byte, []byte) {
 		value = recordData[recordOffset : recordOffset+int(valueLength)]
 	}
 
-	if key == nil {
-		key = []byte{} // convert null key to empty for consistency
-	}
-	if value == nil {
-		value = []byte{} // convert null value to empty for consistency
-	}
-
+	// Preserve null semantics - don't convert null to empty
+	// Schema Registry Noop records specifically use null values
 	return key, value
 }
 
@@ -555,7 +549,9 @@ func decodeVarint(data []byte) (int64, int) {
 
 // handleProduceV2Plus handles Produce API v2-v7 (Kafka 0.11+)
 func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
+	startTime := time.Now()
 	Debug("PRODUCE DEBUG: handleProduceV2Plus called - correlationID=%d, apiVersion=%d, bodyLen=%d", correlationID, apiVersion, len(requestBody))
+	Debug("PRODUCE DEBUG: Function entry confirmed - about to start parsing")
 
 	// DEBUG: Hex dump first 100 bytes to understand actual request format
 	dumpLen := len(requestBody)
@@ -576,36 +572,49 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 
 	// transactional_id only exists in v3+
 	if apiVersion >= 3 {
+		Debug("Produce v%d - Parsing transactional_id, offset=%d, bodyLen=%d", apiVersion, offset, len(requestBody))
 		if len(requestBody) < offset+2 {
 			return nil, fmt.Errorf("Produce v%d request too short for transactional_id", apiVersion)
 		}
 		txIDLen := int16(binary.BigEndian.Uint16(requestBody[offset : offset+2]))
+		Debug("Produce v%d - transactional_id length: %d", apiVersion, txIDLen)
 		offset += 2
 		if txIDLen >= 0 {
 			if len(requestBody) < offset+int(txIDLen) {
 				return nil, fmt.Errorf("Produce v%d request transactional_id too short", apiVersion)
 			}
+			txID := string(requestBody[offset : offset+int(txIDLen)])
+			Debug("Produce v%d - transactional_id: '%s'", apiVersion, txID)
 			offset += int(txIDLen)
+		} else {
+			Debug("Produce v%d - transactional_id is null", apiVersion)
 		}
-		// txIDLen == -1 means null, nothing to skip
+		Debug("Produce v%d - After transactional_id parsing, offset=%d", apiVersion, offset)
 	}
 
 	// Parse acks (INT16) and timeout_ms (INT32)
+	Debug("Produce v%d - About to parse acks, offset=%d, bodyLen=%d", apiVersion, offset, len(requestBody))
 	if len(requestBody) < offset+6 {
 		return nil, fmt.Errorf("Produce v%d request missing acks/timeout", apiVersion)
 	}
 
 	acks := int16(binary.BigEndian.Uint16(requestBody[offset : offset+2]))
 	offset += 2
-	_ = binary.BigEndian.Uint32(requestBody[offset : offset+4]) // timeout unused
+	timeout := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 	offset += 4
+
+	// Debug: Log acks and timeout values
+	Debug("Produce v%d - acks=%d, timeout=%d", apiVersion, acks, timeout)
 
 	// Remember if this is fire-and-forget mode
 	isFireAndForget := acks == 0
 	if isFireAndForget {
+		Debug("Produce v%d - Fire-and-forget mode (acks=0)", apiVersion)
 	} else {
+		Debug("Produce v%d - Acknowledgment required (acks=%d)", apiVersion, acks)
 	}
 
+	Debug("Produce v%d - About to parse topics, offset=%d", apiVersion, offset)
 	if len(requestBody) < offset+4 {
 		return nil, fmt.Errorf("Produce v%d request missing topics count", apiVersion)
 	}
@@ -625,10 +634,7 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
 	response = append(response, correlationIDBytes...)
 
-	// NOTE: For v1+, Sarama expects throttle_time_ms at the END of the response body.
-	// We will append topics array first, and add throttle_time_ms just before returning.
-
-	// Topics array length
+	// Topics array length (comes after correlation ID)
 	topicsCountBytes := make([]byte, 4)
 	binary.BigEndian.PutUint32(topicsCountBytes, topicsCount)
 	response = append(response, topicsCountBytes...)
@@ -766,13 +772,16 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 		return []byte{}, nil
 	}
 
-	// Append throttle_time_ms at the END for v1+
+	// Append throttle_time_ms at the END for v1+ (as per original Kafka protocol)
 	if apiVersion >= 1 {
-		response = append(response, 0, 0, 0, 0)
+		response = append(response, 0, 0, 0, 0) // throttle_time_ms = 0
 	}
 
 	if len(response) < 20 {
 	}
+
+	duration := time.Since(startTime)
+	Debug("PRODUCE DEBUG: handleProduceV2Plus completed - correlationID=%d, duration=%v", correlationID, duration)
 	return response, nil
 }
 

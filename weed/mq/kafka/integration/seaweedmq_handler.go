@@ -1252,7 +1252,7 @@ func (bc *BrokerClient) getOrCreatePublisher(topic string, partition int32) (*Br
 					Name:      topic,
 				},
 				Partition:     actualPartition,
-				AckInterval:   100,
+				AckInterval:   1, // Fast acknowledgments for Kafka Gateway (Schema Registry needs < 500ms)
 				PublisherName: "kafka-gateway",
 			},
 		},
