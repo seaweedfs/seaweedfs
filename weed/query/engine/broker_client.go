@@ -416,15 +416,21 @@ func (c *BrokerClient) ListTopicPartitions(ctx context.Context, namespace, topic
 // Uses buffer_start metadata from disk files for precise deduplication
 // This prevents double-counting when combining with disk-based data
 func (c *BrokerClient) GetUnflushedMessages(ctx context.Context, namespace, topicName string, partition topic.Partition, startTimeNs int64) ([]*filer_pb.LogEntry, error) {
+	fmt.Printf("DEBUG: GetUnflushedMessages called for %s/%s, partition: RangeStart=%d, RangeStop=%d\n",
+		namespace, topicName, partition.RangeStart, partition.RangeStop)
+
 	// Step 1: Find the broker that hosts this partition
 	if err := c.findBrokerBalancer(); err != nil {
+		fmt.Printf("DEBUG: Failed to find broker balancer: %v\n", err)
 		// Return empty slice if we can't find broker - prevents double-counting
 		return []*filer_pb.LogEntry{}, nil
 	}
+	fmt.Printf("DEBUG: Found broker at address: %s\n", c.brokerAddress)
 
 	// Step 2: Connect to broker
 	conn, err := grpc.Dial(c.brokerAddress, c.grpcDialOption)
 	if err != nil {
+		fmt.Printf("DEBUG: Failed to connect to broker %s: %v\n", c.brokerAddress, err)
 		// Return empty slice if connection fails - prevents double-counting
 		return []*filer_pb.LogEntry{}, nil
 	}
@@ -435,10 +441,14 @@ func (c *BrokerClient) GetUnflushedMessages(ctx context.Context, namespace, topi
 	// Step 3: Get earliest buffer_start from disk files for precise deduplication
 	topicObj := topic.Topic{Namespace: namespace, Name: topicName}
 	partitionPath := topic.PartitionDir(topicObj, partition)
+	fmt.Printf("DEBUG: Getting buffer start from partition path: %s\n", partitionPath)
 	earliestBufferIndex, err := c.getEarliestBufferStart(ctx, partitionPath)
 	if err != nil {
+		fmt.Printf("DEBUG: Failed to get buffer start: %v, using 0\n", err)
 		// If we can't get buffer info, use 0 (get all unflushed data)
 		earliestBufferIndex = 0
+	} else {
+		fmt.Printf("DEBUG: Using earliest buffer index: %d\n", earliestBufferIndex)
 	}
 
 	// Step 4: Prepare request using buffer index filtering only
@@ -457,8 +467,10 @@ func (c *BrokerClient) GetUnflushedMessages(ctx context.Context, namespace, topi
 	}
 
 	// Step 5: Call the broker streaming API
+	fmt.Printf("DEBUG: Calling GetUnflushedMessages gRPC with StartBufferIndex=%d\n", earliestBufferIndex)
 	stream, err := client.GetUnflushedMessages(ctx, request)
 	if err != nil {
+		fmt.Printf("DEBUG: GetUnflushedMessages gRPC call failed: %v\n", err)
 		// Return empty slice if gRPC call fails - prevents double-counting
 		return []*filer_pb.LogEntry{}, nil
 	}

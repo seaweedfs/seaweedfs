@@ -128,9 +128,12 @@ func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromO
 
 	// Read records using broker client with retry for timing issues
 	if h.brokerClient == nil {
+		glog.V(1).Infof("[DEBUG_FETCH] ERROR: No broker client available")
 		return nil, fmt.Errorf("no broker client available")
 	}
+	glog.V(1).Infof("[DEBUG_FETCH] About to call GetOrCreateSubscriber: topic=%s partition=%d fromOffset=%d", topic, partition, fromOffset)
 	brokerSubscriber, subErr := h.brokerClient.GetOrCreateSubscriber(topic, partition, fromOffset)
+	glog.V(1).Infof("[DEBUG_FETCH] GetOrCreateSubscriber returned: subscriber=%v err=%v", brokerSubscriber != nil, subErr)
 	if subErr != nil {
 		return nil, fmt.Errorf("failed to get broker subscriber: %v", subErr)
 	}
@@ -510,6 +513,7 @@ func (h *SeaweedMQHandler) ProduceRecordValue(topic string, partition int32, key
 		return 0, fmt.Errorf("persistent ledger not initialized for %s-%d", topic, partition)
 	}
 	kafkaOffset := persistent.AssignOffsets(1)
+	glog.V(1).Infof("[DEBUG_PRODUCE] AssignOffsets returned offset %d for topic %s partition %d", kafkaOffset, topic, partition)
 
 	if err := persistent.AddEntry(kafkaOffset, timestamp, int32(len(recordValueBytes))); err != nil {
 		// CRITICAL: AppendRecord failed - this breaks offset consistency!
@@ -518,6 +522,7 @@ func (h *SeaweedMQHandler) ProduceRecordValue(topic string, partition int32, key
 		return 0, fmt.Errorf("failed to append RecordValue to ledger: %v", err)
 	}
 
+	glog.V(1).Infof("[DEBUG_PRODUCE] Successfully added entry to ledger for topic %s partition %d offset %d", topic, partition, kafkaOffset)
 	glog.V(2).Infof("Successfully produced RecordValue to topic %s partition %d at offset %d (HWM: %d)",
 		topic, partition, kafkaOffset, persistent.Ledger.GetHighWaterMark())
 	return kafkaOffset, nil
@@ -751,7 +756,7 @@ func (h *SeaweedMQHandler) convertSeaweedToKafkaRecordBatch(seaweedRecords []*Se
 
 	// Add actual records from SeaweedMQ
 	for i, seaweedRecord := range seaweedRecords {
-		record := h.convertSingleSeaweedRecord(seaweedRecord, int64(i), fetchOffset)
+		record := h.convertSingleSeaweedRecord(seaweedRecord, int64(i), firstTimestamp)
 		recordLength := byte(len(record))
 		batch = append(batch, recordLength)
 		batch = append(batch, record...)
@@ -771,14 +776,14 @@ func (h *SeaweedMQHandler) convertSeaweedToKafkaRecordBatch(seaweedRecords []*Se
 }
 
 // convertSingleSeaweedRecord converts a single SeaweedMQ record to Kafka format
-func (h *SeaweedMQHandler) convertSingleSeaweedRecord(seaweedRecord *SeaweedRecord, index, baseOffset int64) []byte {
+func (h *SeaweedMQHandler) convertSingleSeaweedRecord(seaweedRecord *SeaweedRecord, index, baseTimestamp int64) []byte {
 	record := make([]byte, 0, 64)
 
 	// Record attributes
 	record = append(record, 0)
 
 	// Timestamp delta (varint - simplified)
-	timestampDelta := seaweedRecord.Timestamp - baseOffset // Simple delta calculation
+	timestampDelta := seaweedRecord.Timestamp - baseTimestamp // Calculate delta from base timestamp
 	if timestampDelta < 0 {
 		timestampDelta = 0
 	}
