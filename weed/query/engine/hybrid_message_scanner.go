@@ -356,9 +356,7 @@ func (hms *HybridMessageScanner) scanUnflushedDataWithStats(ctx context.Context,
 	}
 
 	// Step 2: Process unflushed entries (already deduplicated by broker)
-	fmt.Printf("DEBUG: Processing %d unflushed entries from broker\n", len(unflushedEntries))
-	for i, logEntry := range unflushedEntries {
-		fmt.Printf("DEBUG: Processing unflushed entry %d/%d\n", i+1, len(unflushedEntries))
+	for _, logEntry := range unflushedEntries {
 		// Skip control entries without actual data
 		if hms.isControlEntry(logEntry) {
 			continue // Skip this entry
@@ -472,9 +470,7 @@ func (hms *HybridMessageScanner) discoverTopicPartitions(ctx context.Context) ([
 
 	// Scan the topic directory for actual partition versions (timestamped directories)
 	// List all version directories in the topic directory
-	fmt.Printf("DEBUG: Scanning topic directory: %s\n", hms.topic.Dir())
 	err = filer_pb.ReadDirAllEntries(ctx, hms.filerClient, util.FullPath(hms.topic.Dir()), "", func(versionEntry *filer_pb.Entry, isLast bool) error {
-		fmt.Printf("DEBUG: Found directory entry: %s (isDir: %v)\n", versionEntry.Name, versionEntry.IsDirectory)
 		if !versionEntry.IsDirectory {
 			return nil // Skip non-directories
 		}
@@ -482,17 +478,13 @@ func (hms *HybridMessageScanner) discoverTopicPartitions(ctx context.Context) ([
 		// Parse version timestamp from directory name (e.g., "v2025-09-01-07-16-34")
 		versionTime, parseErr := topic.ParseTopicVersion(versionEntry.Name)
 		if parseErr != nil {
-			fmt.Printf("DEBUG: Skipping directory %s - not a valid version format: %v\n", versionEntry.Name, parseErr)
 			// Skip directories that don't match the version format
 			return nil
 		}
-		fmt.Printf("DEBUG: Processing version directory: %s (timestamp: %v)\n", versionEntry.Name, versionTime)
 
 		// Scan partition directories within this version
 		versionDir := fmt.Sprintf("%s/%s", hms.topic.Dir(), versionEntry.Name)
-		fmt.Printf("DEBUG: Scanning version directory: %s\n", versionDir)
 		return filer_pb.ReadDirAllEntries(ctx, hms.filerClient, util.FullPath(versionDir), "", func(partitionEntry *filer_pb.Entry, isLast bool) error {
-			fmt.Printf("DEBUG: Found partition entry: %s (isDir: %v)\n", partitionEntry.Name, partitionEntry.IsDirectory)
 			if !partitionEntry.IsDirectory {
 				return nil // Skip non-directories
 			}
@@ -500,7 +492,6 @@ func (hms *HybridMessageScanner) discoverTopicPartitions(ctx context.Context) ([
 			// Parse partition boundary from directory name (e.g., "0000-0630")
 			rangeStart, rangeStop := topic.ParsePartitionBoundary(partitionEntry.Name)
 			if rangeStart == rangeStop {
-				fmt.Printf("DEBUG: Skipping partition %s - invalid boundary\n", partitionEntry.Name)
 				return nil // Skip invalid partition names
 			}
 
@@ -512,7 +503,6 @@ func (hms *HybridMessageScanner) discoverTopicPartitions(ctx context.Context) ([
 				UnixTimeNs: versionTime.UnixNano(),
 			}
 
-			fmt.Printf("DEBUG: Added partition: %+v (timestamp: %s)\n", partition, versionEntry.Name)
 			allPartitions = append(allPartitions, partition)
 			return nil
 		})
@@ -529,10 +519,6 @@ func (hms *HybridMessageScanner) discoverTopicPartitions(ctx context.Context) ([
 	}
 
 	fmt.Printf("Discovered %d partitions for topic %s\n", len(allPartitions), hms.topic.String())
-	for i, part := range allPartitions {
-		fmt.Printf("DEBUG: Partition %d: RangeStart=%d, RangeStop=%d, UnixTimeNs=%d\n",
-			i, part.RangeStart, part.RangeStop, part.UnixTimeNs)
-	}
 	return allPartitions, nil
 }
 
@@ -716,34 +702,7 @@ func (hms *HybridMessageScanner) convertLogEntryToRecordValue(logEntry *filer_pb
 		return recordValue, "parquet_archive", nil
 	}
 
-	// Try to unmarshal as DataMessage (system topics like _schemas)
-	dataMessage := &mq_pb.DataMessage{}
-	if err := proto.Unmarshal(logEntry.Data, dataMessage); err == nil {
-		// For _schemas topic and other system topics, the data is stored as DataMessage
-		recordValue := &schema_pb.RecordValue{
-			Fields: make(map[string]*schema_pb.Value),
-		}
-
-		// Add system columns
-		recordValue.Fields[SW_COLUMN_NAME_TIMESTAMP] = &schema_pb.Value{
-			Kind: &schema_pb.Value_Int64Value{Int64Value: logEntry.TsNs},
-		}
-		recordValue.Fields[SW_COLUMN_NAME_KEY] = &schema_pb.Value{
-			Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Key},
-		}
-
-		// Add the key and value fields from DataMessage
-		recordValue.Fields["key"] = &schema_pb.Value{
-			Kind: &schema_pb.Value_BytesValue{BytesValue: dataMessage.Key},
-		}
-		recordValue.Fields["value"] = &schema_pb.Value{
-			Kind: &schema_pb.Value_BytesValue{BytesValue: dataMessage.Value},
-		}
-
-		return recordValue, "live_log", nil
-	}
-
-	// If not a RecordValue or DataMessage, this is raw live message data - parse with schema
+	// If not a RecordValue, this is raw live message data - parse with schema
 	return hms.parseRawMessageWithSchema(logEntry)
 }
 

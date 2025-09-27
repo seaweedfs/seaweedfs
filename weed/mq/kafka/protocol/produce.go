@@ -2,7 +2,6 @@ package protocol
 
 import (
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -712,11 +711,11 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 
 					var firstOffsetSet bool
 					for idx, kv := range records {
-						offsetProduced, prodErr := h.produceSchemaBasedRecord(topicName, int32(partitionID), kv.Key, kv.Value)
+						offsetProduced, prodErr := h.seaweedMQHandler.ProduceRecord(topicName, int32(partitionID), kv.Key, kv.Value)
 						Debug("Produce v%d - Record %d: offset=%d, error=%v", apiVersion, idx, offsetProduced, prodErr)
 						if prodErr != nil {
 							errorCode = 1 // UNKNOWN_SERVER_ERROR
-							Debug("Produce v%d - ProduceSchemaBasedRecord failed: %v", apiVersion, prodErr)
+							Debug("Produce v%d - ProduceRecord failed: %v", apiVersion, prodErr)
 							break
 						}
 						if idx == 0 {
@@ -825,18 +824,13 @@ func (h *Handler) storeDecodedMessage(topicName string, partitionID int32, decod
 
 	// Use SeaweedMQ integration
 	if h.seaweedMQHandler != nil {
-		// Extract key from the original envelope (simplified)
+		// Extract key and value from the original envelope (simplified)
 		key := []byte(fmt.Sprintf("kafka-key-%d", time.Now().UnixNano()))
+		value := decodedMsg.Envelope.Payload
 
-		// Convert RecordValue to protobuf bytes for storage in SMQ
-		recordValueBytes, err := proto.Marshal(decodedMsg.RecordValue)
+		_, err := h.seaweedMQHandler.ProduceRecord(topicName, partitionID, key, value)
 		if err != nil {
-			return fmt.Errorf("failed to marshal RecordValue to protobuf: %w", err)
-		}
-
-		_, err = h.seaweedMQHandler.ProduceRecordValue(topicName, partitionID, key, recordValueBytes)
-		if err != nil {
-			return fmt.Errorf("failed to produce RecordValue to SeaweedMQ: %w", err)
+			return fmt.Errorf("failed to produce to SeaweedMQ: %w", err)
 		}
 
 		return nil
@@ -1100,9 +1094,12 @@ func (h *Handler) isSystemTopic(topicName string) bool {
 
 // produceSchemaBasedRecord produces a record using schema-based encoding to RecordValue
 func (h *Handler) produceSchemaBasedRecord(topic string, partition int32, key []byte, value []byte) (int64, error) {
-	// All topics (including system topics) should be converted to protobuf RecordValue format
-	// System topics will use their default key/value bytes schema for conversion
-	
+	// System topics should always bypass schema processing and be stored as-is
+	if h.isSystemTopic(topic) {
+		offset, err := h.seaweedMQHandler.ProduceRecord(topic, partition, key, value)
+		return offset, err
+	}
+
 	// If schema management is not enabled, fall back to raw message handling
 	if !h.IsSchemaEnabled() {
 		return h.seaweedMQHandler.ProduceRecord(topic, partition, key, value)
@@ -1129,27 +1126,9 @@ func (h *Handler) produceSchemaBasedRecord(topic string, partition int32, key []
 		}
 	}
 
-	// If neither key nor value is schematized, convert raw data to RecordValue using topic schema
+	// If neither key nor value is schematized, fall back to raw message handling
 	if keyDecodedMsg == nil && valueDecodedMsg == nil {
-		// For non-schematized messages, we should still convert to RecordValue format
-		// using the topic's configured schema if available
-		recordValue, err := h.convertRawDataToRecordValue(topic, key, value)
-		if err != nil {
-			Debug("Failed to convert raw data to RecordValue for topic %s: %v", topic, err)
-			// Fall back to raw message handling if conversion fails
-			return h.seaweedMQHandler.ProduceRecord(topic, partition, key, value)
-		}
-		
-		// Convert RecordValue to protobuf bytes
-		recordValueBytes, err := proto.Marshal(recordValue)
-		if err != nil {
-			Debug("Failed to marshal RecordValue for topic %s: %v", topic, err)
-			// Fall back to raw message handling if marshaling fails
-			return h.seaweedMQHandler.ProduceRecord(topic, partition, key, value)
-		}
-		
-		// Send as RecordValue to SMQ
-		return h.seaweedMQHandler.ProduceRecordValue(topic, partition, key, recordValueBytes)
+		return h.seaweedMQHandler.ProduceRecord(topic, partition, key, value)
 	}
 
 	// Process key schema if present
@@ -1447,136 +1426,6 @@ func (h *Handler) getRecordTypeHash(recordType *schema_pb.RecordType) uint32 {
 	}
 
 	return hash
-}
-
-// getTopicConfiguration retrieves the topic configuration from SeaweedMQ
-func (h *Handler) getTopicConfiguration(topic string) (*TopicConfiguration, error) {
-	// This is a simplified implementation - in a real system, this would
-	// fetch the topic configuration from the SeaweedMQ broker
-	// For now, we'll return nil to indicate no schema is configured
-	return nil, nil
-}
-
-// TopicConfiguration represents the configuration of a topic
-type TopicConfiguration struct {
-	MessageRecordType *schema_pb.RecordType
-	KeyColumns        []string
-}
-
-// convertRawDataToRecordValue converts raw key/value bytes to RecordValue using topic schema
-func (h *Handler) convertRawDataToRecordValue(topic string, key []byte, value []byte) (*schema_pb.RecordValue, error) {
-	// Get topic configuration to determine the schema
-	topicConfig, err := h.getTopicConfiguration(topic)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get topic configuration: %w", err)
-	}
-	
-	// If topic has no schema configured, create a simple byte-based RecordValue
-	if topicConfig == nil || topicConfig.MessageRecordType == nil {
-		return h.createRawBytesRecordValue(key, value), nil
-	}
-	
-	// Try to parse value as JSON and convert to RecordValue based on topic schema
-	recordValue, err := h.parseJSONToRecordValue(value, topicConfig.MessageRecordType)
-	if err != nil {
-		Debug("Failed to parse JSON to RecordValue: %v", err)
-		// Fall back to raw bytes RecordValue
-		return h.createRawBytesRecordValue(key, value), nil
-	}
-	
-	return recordValue, nil
-}
-
-// createRawBytesRecordValue creates a RecordValue with raw key and value as byte fields
-func (h *Handler) createRawBytesRecordValue(key []byte, value []byte) *schema_pb.RecordValue {
-	fields := make(map[string]*schema_pb.Value)
-	
-	// Add key field if present
-	if key != nil {
-		fields["key"] = &schema_pb.Value{
-			Kind: &schema_pb.Value_BytesValue{BytesValue: key},
-		}
-	}
-	
-	// Add value field if present
-	if value != nil {
-		fields["value"] = &schema_pb.Value{
-			Kind: &schema_pb.Value_BytesValue{BytesValue: value},
-		}
-	}
-	
-	return &schema_pb.RecordValue{
-		Fields: fields,
-	}
-}
-
-// parseJSONToRecordValue parses JSON bytes and converts to RecordValue based on schema
-func (h *Handler) parseJSONToRecordValue(jsonBytes []byte, recordType *schema_pb.RecordType) (*schema_pb.RecordValue, error) {
-	if jsonBytes == nil || recordType == nil {
-		return nil, fmt.Errorf("invalid input: jsonBytes or recordType is nil")
-	}
-	
-	// Parse JSON
-	var jsonData map[string]interface{}
-	if err := json.Unmarshal(jsonBytes, &jsonData); err != nil {
-		return nil, fmt.Errorf("failed to parse JSON: %w", err)
-	}
-	
-	// Convert JSON data to RecordValue fields based on schema
-	fields := make(map[string]*schema_pb.Value)
-	for _, field := range recordType.Fields {
-		if jsonValue, exists := jsonData[field.Name]; exists {
-			protoValue, err := h.convertJSONValueToProtoValue(jsonValue, field.Type)
-			if err != nil {
-				Debug("Failed to convert field %s: %v", field.Name, err)
-				continue
-			}
-			fields[field.Name] = protoValue
-		}
-	}
-	
-	return &schema_pb.RecordValue{
-		Fields: fields,
-	}, nil
-}
-
-// convertJSONValueToProtoValue converts a JSON value to a protobuf Value based on field type
-func (h *Handler) convertJSONValueToProtoValue(jsonValue interface{}, fieldType *schema_pb.Type) (*schema_pb.Value, error) {
-	if fieldType == nil {
-		return nil, fmt.Errorf("field type is nil")
-	}
-	
-	switch fieldType.Kind.(type) {
-	case *schema_pb.Type_ScalarType:
-		scalarType := fieldType.GetScalarType()
-		switch scalarType {
-		case schema_pb.ScalarType_STRING:
-			if str, ok := jsonValue.(string); ok {
-				return &schema_pb.Value{Kind: &schema_pb.Value_StringValue{StringValue: str}}, nil
-			}
-		case schema_pb.ScalarType_INT32:
-			if num, ok := jsonValue.(float64); ok {
-				return &schema_pb.Value{Kind: &schema_pb.Value_Int32Value{Int32Value: int32(num)}}, nil
-			}
-		case schema_pb.ScalarType_INT64:
-			if num, ok := jsonValue.(float64); ok {
-				return &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: int64(num)}}, nil
-			}
-		case schema_pb.ScalarType_BOOL:
-			if b, ok := jsonValue.(bool); ok {
-				return &schema_pb.Value{Kind: &schema_pb.Value_BoolValue{BoolValue: b}}, nil
-			}
-		case schema_pb.ScalarType_BYTES:
-			if str, ok := jsonValue.(string); ok {
-				return &schema_pb.Value{Kind: &schema_pb.Value_BytesValue{BytesValue: []byte(str)}}, nil
-			}
-		}
-	}
-	
-	// Default: convert to string representation
-	return &schema_pb.Value{
-		Kind: &schema_pb.Value_StringValue{StringValue: fmt.Sprintf("%v", jsonValue)},
-	}, nil
 }
 
 // createCombinedRecordValue creates a RecordValue that combines fields from both key and value decoded messages

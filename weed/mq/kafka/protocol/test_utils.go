@@ -107,11 +107,6 @@ func (b *basicSeaweedMQHandler) CreateTopicWithSchemas(name string, partitions i
 	return b.CreateTopic(name, partitions)
 }
 
-func (b *basicSeaweedMQHandler) CreateTopicWithRecordType(name string, partitions int32, flatSchema *schema_pb.RecordType, keyColumns []string) error {
-	// For test handler, just delegate to CreateTopic (ignore schema and key columns)
-	return b.CreateTopic(name, partitions)
-}
-
 func (b *basicSeaweedMQHandler) DeleteTopic(topic string) error {
 	delete(b.topics, topic)
 	return nil
@@ -293,11 +288,6 @@ func (t *testSeaweedMQHandler) CreateTopic(topic string, partitions int32) error
 
 func (t *testSeaweedMQHandler) CreateTopicWithSchemas(name string, partitions int32, valueRecordType *schema_pb.RecordType, keyRecordType *schema_pb.RecordType) error {
 	// For test handler, just delegate to CreateTopic (ignore schemas)
-	return t.CreateTopic(name, partitions)
-}
-
-func (t *testSeaweedMQHandler) CreateTopicWithRecordType(name string, partitions int32, flatSchema *schema_pb.RecordType, keyColumns []string) error {
-	// For test handler, just delegate to CreateTopic (ignore schema and key columns)
 	return t.CreateTopic(name, partitions)
 }
 

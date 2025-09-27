@@ -62,11 +62,6 @@ func (t *testSeaweedMQHandlerForUnitTests) CreateTopicWithSchemas(name string, p
 	return t.CreateTopic(name, partitions)
 }
 
-func (t *testSeaweedMQHandlerForUnitTests) CreateTopicWithRecordType(name string, partitions int32, flatSchema *schema_pb.RecordType, keyColumns []string) error {
-	// For test handler, just delegate to CreateTopic (ignore schema and key columns)
-	return t.CreateTopic(name, partitions)
-}
-
 func (t *testSeaweedMQHandlerForUnitTests) DeleteTopic(topic string) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()

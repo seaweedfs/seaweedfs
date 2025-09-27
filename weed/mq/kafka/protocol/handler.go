@@ -76,7 +76,6 @@ type SeaweedMQHandlerInterface interface {
 	ListTopics() []string
 	CreateTopic(topic string, partitions int32) error
 	CreateTopicWithSchemas(name string, partitions int32, valueRecordType *schema_pb.RecordType, keyRecordType *schema_pb.RecordType) error
-	CreateTopicWithRecordType(name string, partitions int32, flatSchema *schema_pb.RecordType, keyColumns []string) error
 	DeleteTopic(topic string) error
 	GetTopicInfo(topic string) (*integration.KafkaTopicInfo, bool)
 	GetOrCreateLedger(topic string, partition int32) *offset.Ledger
@@ -3487,10 +3486,10 @@ func (h *Handler) handleInitProducerId(correlationID uint32, apiVersion uint16, 
 func (h *Handler) createTopicWithSchemaSupport(topicName string, partitions int32) error {
 	Debug("Creating topic %s with schema support", topicName)
 
-	// All system topics use the default key/value bytes schema
+	// For system topics like _schemas, __consumer_offsets, etc., create without schema
 	if isSystemTopic(topicName) {
-		Debug("System topic %s - creating with default key/value bytes schema", topicName)
-		return h.createSystemTopicWithDefaultSchema(topicName, partitions)
+		Debug("System topic %s - creating without schema", topicName)
+		return h.seaweedMQHandler.CreateTopic(topicName, partitions)
 	}
 
 	// For regular topics, try to fetch schema from Schema Registry if available
@@ -3609,55 +3608,6 @@ func (h *Handler) convertSchemaToRecordType(schemaStr string, schemaID uint32) (
 	default:
 		return nil, fmt.Errorf("unsupported schema format: %v", cachedSchema.Format)
 	}
-}
-
-// createSystemTopicWithDefaultSchema creates system topics with the default key/value bytes schema
-// All system topics use the same schema: key (BYTES, required) and value (BYTES, optional)
-func (h *Handler) createSystemTopicWithDefaultSchema(topicName string, partitions int32) error {
-	Debug("Creating system topic %s with default key/value bytes schema", topicName)
-
-	// Create RecordType with key and value byte fields
-	recordType := &schema_pb.RecordType{
-		Fields: []*schema_pb.Field{
-			{
-				Name:       "key",
-				FieldIndex: 0,
-				Type: &schema_pb.Type{
-					Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_BYTES},
-				},
-				IsRequired: true,
-			},
-			{
-				Name:       "value",
-				FieldIndex: 1,
-				Type: &schema_pb.Type{
-					Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_BYTES},
-				},
-				IsRequired: false, // Value can be null for tombstone records
-			},
-		},
-	}
-
-	Debug("System topic %s schema - key: BYTES (required), value: BYTES (optional)", topicName)
-
-	// For system topics, we need to specify that "key" field is used for partitioning
-	// This creates a flat schema with key and value fields, where key is used for partitioning
-	return h.createSystemTopicWithKeyColumns(topicName, partitions, recordType)
-}
-
-// createSystemTopicWithKeyColumns creates system topics with proper key column specification
-func (h *Handler) createSystemTopicWithKeyColumns(topicName string, partitions int32, recordType *schema_pb.RecordType) error {
-	Debug("Creating system topic %s with key columns: [key]", topicName)
-
-	// Use the existing CreateTopicWithRecordType function which properly saves to filer
-	err := h.seaweedMQHandler.CreateTopicWithRecordType(topicName, partitions, recordType, []string{"key"})
-	if err != nil {
-		Debug("❌ Failed to create system topic %s with schema: %v", topicName, err)
-		return fmt.Errorf("create system topic %s with schema: %w", topicName, err)
-	}
-
-	Debug("✅ Successfully created system topic %s with key/value bytes schema and key columns", topicName)
-	return nil
 }
 
 // isSystemTopic checks if a topic is a Kafka system topic
