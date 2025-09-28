@@ -1170,11 +1170,27 @@ func (h *Handler) HandleMetadataV5V6(correlationID uint32, requestBody []byte) (
 		// FIXED: Proper topic existence checking (removed the hack)
 		// Now that CreateTopics v5 works, we use proper Kafka workflow:
 		// 1. Check which requested topics actually exist
-		// 2. Only return existing topics in metadata
-		// 3. Client will call CreateTopics for non-existent topics
-		// 4. Then request metadata again to see the created topics
+		// 2. Auto-create system topics if they don't exist
+		// 3. Only return existing topics in metadata
+		// 4. Client will call CreateTopics for non-existent topics
+		// 5. Then request metadata again to see the created topics
 		for _, topic := range requestedTopics {
-			if h.seaweedMQHandler.TopicExists(topic) {
+			if isSystemTopic(topic) {
+				// Always try to auto-create system topics during metadata requests
+				Debug("Metadata: Ensuring system topic %s exists during metadata request", topic)
+				if !h.seaweedMQHandler.TopicExists(topic) {
+					Debug("Metadata: Auto-creating system topic %s during metadata request", topic)
+					if err := h.createTopicWithSchemaSupport(topic, 1); err != nil {
+						Debug("Metadata: Failed to auto-create system topic %s: %v", topic, err)
+						// Continue without adding to topicsToReturn - client will get UNKNOWN_TOPIC_OR_PARTITION
+					} else {
+						Debug("Metadata: Successfully auto-created system topic %s", topic)
+					}
+				} else {
+					Debug("Metadata: System topic %s already exists", topic)
+				}
+				topicsToReturn = append(topicsToReturn, topic)
+			} else if h.seaweedMQHandler.TopicExists(topic) {
 				topicsToReturn = append(topicsToReturn, topic)
 			}
 		}
@@ -1553,12 +1569,12 @@ func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, req
 
 			switch timestamp {
 			case -2: // earliest offset
-				responseOffset = 0 // SMQ starts from offset 0
-				responseTimestamp = time.Now().UnixNano()
+				responseOffset = 0    // SMQ starts from offset 0
+				responseTimestamp = 0 // No messages yet, so timestamp is 0
 				Debug("ListOffsets EARLIEST - returning offset: %d, timestamp: %d", responseOffset, responseTimestamp)
 			case -1: // latest offset
-				responseOffset = 1000 // Reasonable default for latest
-				responseTimestamp = time.Now().UnixNano()
+				responseOffset = 0    // For empty topics, latest offset is 0
+				responseTimestamp = 0 // No messages yet, so timestamp is 0
 				Debug("ListOffsets LATEST - returning offset: %d, timestamp: %d", responseOffset, responseTimestamp)
 			default: // specific timestamp - find offset by timestamp
 				responseOffset = 0 // SMQ will handle timestamp-based lookup internally
@@ -2433,6 +2449,7 @@ func (h *Handler) buildUnsupportedVersionResponse(correlationID uint32, apiKey, 
 
 // handleMetadata routes to the appropriate version-specific handler
 func (h *Handler) handleMetadata(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
+	Debug("METADATA REQUEST: apiVersion=%d, bodySize=%d", apiVersion, len(requestBody))
 	switch apiVersion {
 	case 0:
 		return h.HandleMetadataV0(correlationID, requestBody)
@@ -3242,6 +3259,33 @@ func (h *Handler) GetSeaweedMQHandler() SeaweedMQHandlerInterface {
 	return h.seaweedMQHandler
 }
 
+// PreCreateSystemTopics creates essential system topics that external services expect to exist
+// This is called during gateway startup to ensure topics like _schemas are available before
+// services like Schema Registry attempt to use them
+func (h *Handler) PreCreateSystemTopics() error {
+	Debug("Pre-creating system topics...")
+
+	// List of system topics that should be pre-created
+	systemTopics := []string{"_schemas"}
+
+	for _, topicName := range systemTopics {
+		if h.seaweedMQHandler.TopicExists(topicName) {
+			Debug("System topic %s already exists, skipping", topicName)
+			continue
+		}
+
+		Debug("Creating system topic %s", topicName)
+		if err := h.createTopicWithSchemaSupport(topicName, 1); err != nil {
+			Debug("Failed to create system topic %s: %v", topicName, err)
+			return fmt.Errorf("create system topic %s: %w", topicName, err)
+		}
+		Debug("Successfully created system topic %s", topicName)
+	}
+
+	Debug("System topics pre-creation completed")
+	return nil
+}
+
 // registerSchemaViaBrokerAPI registers the translated schema via the broker's ConfigureTopic API
 // Only the gateway leader performs the registration to avoid concurrent updates.
 func (h *Handler) registerSchemaViaBrokerAPI(topicName string, recordType *schema_pb.RecordType) error {
@@ -3511,24 +3555,57 @@ func (h *Handler) createTopicWithSchemaSupport(topicName string, partitions int3
 // createTopicWithDefaultFlexibleSchema creates a topic with a flexible default schema
 // that can handle both Avro and JSON messages when schema management is enabled
 func (h *Handler) createTopicWithDefaultFlexibleSchema(topicName string, partitions int32) error {
-	// Create a flexible schema that can handle various message formats
-	// This schema has a single "value" field that can store any data
-	flexibleSchema := &schema_pb.RecordType{
-		Fields: []*schema_pb.Field{
-			{
-				Name: "value",
-				Type: &schema_pb.Type{
-					Kind: &schema_pb.Type_ScalarType{
-						ScalarType: schema_pb.ScalarType_BYTES,
+	// For system topics like _schemas, create both key and value fields
+	// Schema Registry messages have structured keys and values
+	var keySchema, valueSchema *schema_pb.RecordType
+
+	if topicName == "_schemas" {
+		// _schemas topic needs both key and value fields
+		// Key contains metadata (magicByte, keytype, subject, version)
+		keySchema = &schema_pb.RecordType{
+			Fields: []*schema_pb.Field{
+				{
+					Name: "key",
+					Type: &schema_pb.Type{
+						Kind: &schema_pb.Type_ScalarType{
+							ScalarType: schema_pb.ScalarType_BYTES,
+						},
 					},
 				},
 			},
-		},
+		}
+
+		// Value contains schema data
+		valueSchema = &schema_pb.RecordType{
+			Fields: []*schema_pb.Field{
+				{
+					Name: "value",
+					Type: &schema_pb.Type{
+						Kind: &schema_pb.Type_ScalarType{
+							ScalarType: schema_pb.ScalarType_BYTES,
+						},
+					},
+				},
+			},
+		}
+	} else {
+		// For other system topics, use flexible schema with just value
+		valueSchema = &schema_pb.RecordType{
+			Fields: []*schema_pb.Field{
+				{
+					Name: "value",
+					Type: &schema_pb.Type{
+						Kind: &schema_pb.Type_ScalarType{
+							ScalarType: schema_pb.ScalarType_BYTES,
+						},
+					},
+				},
+			},
+		}
 	}
 
-	// Create topic with the flexible schema
-	// This ensures the topic.conf will have messageRecordType set
-	return h.seaweedMQHandler.CreateTopicWithSchemas(topicName, partitions, nil, flexibleSchema)
+	// Create topic with the schemas
+	return h.seaweedMQHandler.CreateTopicWithSchemas(topicName, partitions, keySchema, valueSchema)
 }
 
 // fetchSchemaForTopic attempts to fetch schema information for a topic from Schema Registry

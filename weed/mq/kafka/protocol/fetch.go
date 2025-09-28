@@ -123,6 +123,7 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 
 		// Process each requested partition
 		for _, partition := range topic.Partitions {
+			Debug("Processing fetch for topic %s partition %d", topic.Name, partition.PartitionID)
 			// Partition ID
 			partitionIDBytes := make([]byte, 4)
 			binary.BigEndian.PutUint32(partitionIDBytes, uint32(partition.PartitionID))
@@ -134,7 +135,19 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 
 			// Use direct SMQ reading - no ledgers needed
 			// SMQ handles high water mark and offset management internally
-			var highWaterMark int64 = partition.FetchOffset + 1000 // Reasonable default for fetch attempts
+			// For empty topics, high water mark should be 0
+			// For topics with data, we'll use a reasonable default and let SMQ handle it
+			var highWaterMark int64
+			if partition.FetchOffset == 0 {
+				highWaterMark = 0 // Empty topic
+				Debug("Setting highWaterMark to 0 for empty topic %s partition %d", topic.Name, partition.PartitionID)
+				if strings.HasPrefix(topic.Name, "_") {
+					Debug("SYSTEM TOPIC: %s is a system topic, ensuring it has proper empty response", topic.Name)
+				}
+			} else {
+				highWaterMark = partition.FetchOffset + 1000 // Reasonable default for topics with data
+				Debug("Setting highWaterMark to %d for topic %s partition %d with fetchOffset %d", highWaterMark, topic.Name, partition.PartitionID, partition.FetchOffset)
+			}
 
 			// Normalize special fetch offsets: -2 = earliest, -1 = latest
 			effectiveFetchOffset := partition.FetchOffset
@@ -166,10 +179,27 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 				response = append(response, 0, 0, 0, 0)
 			}
 
-			// If topic does not exist, patch error to UNKNOWN_TOPIC_OR_PARTITION
+			// If topic does not exist, check if it's a system topic that should be auto-created
 			if !h.seaweedMQHandler.TopicExists(topic.Name) {
-				response[errorPos] = 0
-				response[errorPos+1] = 3 // UNKNOWN_TOPIC_OR_PARTITION
+				Debug("Topic %s does not exist, checking if it's a system topic", topic.Name)
+				if isSystemTopic(topic.Name) {
+					// Auto-create system topics
+					Debug("Auto-creating system topic %s during fetch", topic.Name)
+					if err := h.createTopicWithSchemaSupport(topic.Name, 1); err != nil {
+						Debug("Failed to auto-create system topic %s: %v", topic.Name, err)
+						response[errorPos] = 0
+						response[errorPos+1] = 3 // UNKNOWN_TOPIC_OR_PARTITION
+					} else {
+						Debug("Successfully auto-created system topic %s", topic.Name)
+						// Topic now exists, continue with fetch
+					}
+				} else {
+					Debug("Topic %s does not exist and is not a system topic", topic.Name)
+					response[errorPos] = 0
+					response[errorPos+1] = 3 // UNKNOWN_TOPIC_OR_PARTITION
+				}
+			} else {
+				Debug("Topic %s exists", topic.Name)
 			}
 
 			// Records - get actual stored record batches using multi-batch fetcher

@@ -144,6 +144,14 @@ func (s *Server) Start() error {
 	} else {
 		glog.V(1).Infof("No masters configured, skipping coordinator registry setup (test mode)")
 	}
+
+	// Pre-create system topics with initial data that Schema Registry expects
+	// This ensures _schemas topic is available and populated before Schema Registry starts
+	if err := s.preCreateSystemTopicsWithInitialData(); err != nil {
+		glog.Errorf("Failed to pre-create system topics: %v", err)
+		// Don't fail startup, just log the error
+	}
+
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
@@ -266,4 +274,64 @@ func (s *Server) GetListenerAddr() (string, int) {
 	// This should not happen if the listener was set up correctly
 	glog.Warningf("Unable to parse listener address: %s", addr)
 	return "", 0
+}
+
+// preCreateSystemTopicsWithInitialData creates essential system topics and populates them with initial data
+// This ensures Schema Registry can properly initialize
+func (s *Server) preCreateSystemTopicsWithInitialData() error {
+	glog.Infof("SCHEMA REGISTRY FIX: Pre-creating system topics with initial data...")
+	glog.V(1).Infof("Pre-creating system topics with initial data...")
+
+	// For _schemas topic, we need to create it and write an initial record
+	topicName := "_schemas"
+
+	if !s.handler.GetSeaweedMQHandler().TopicExists(topicName) {
+		glog.V(1).Infof("Creating system topic %s", topicName)
+		if err := s.handler.PreCreateSystemTopics(); err != nil {
+			glog.Errorf("Failed to create system topic %s: %v", topicName, err)
+			return fmt.Errorf("create system topic %s: %w", topicName, err)
+		}
+		glog.V(1).Infof("Successfully created system topic %s", topicName)
+	} else {
+		glog.V(1).Infof("System topic %s already exists", topicName)
+	}
+
+	// Write an initial "Noop" record to _schemas topic to satisfy Schema Registry
+	// This simulates what Schema Registry would write during its own initialization
+	glog.V(1).Infof("Writing initial Noop record to %s topic", topicName)
+	if err := s.writeInitialSchemasRecord(); err != nil {
+		glog.Errorf("Failed to write initial record to %s: %v", topicName, err)
+		// Don't fail completely, Schema Registry might still work
+		glog.Warningf("Continuing without initial record - Schema Registry may have issues")
+	} else {
+		glog.V(1).Infof("Successfully wrote initial record to %s", topicName)
+	}
+
+	glog.V(1).Infof("System topics pre-creation completed")
+	return nil
+}
+
+// writeInitialSchemasRecord writes an initial Noop record to the _schemas topic
+func (s *Server) writeInitialSchemasRecord() error {
+	glog.V(1).Infof("writeInitialSchemasRecord: Starting to write initial record")
+
+	// Create a simple Noop record in the format Schema Registry expects
+	// Key: {"keytype":"NOOP","magic":0}
+	// Value: empty or minimal data
+
+	keyData := `{"keytype":"NOOP","magic":0}`
+	valueData := ""
+
+	glog.V(1).Infof("writeInitialSchemasRecord: Key=%s, Value=%s", keyData, valueData)
+
+	// Use the handler to produce a message directly
+	// This bypasses the normal Produce API path and writes directly to SMQ
+	offset, err := s.handler.GetSeaweedMQHandler().ProduceRecord("_schemas", 0, []byte(keyData), []byte(valueData))
+	if err != nil {
+		glog.Errorf("writeInitialSchemasRecord: ProduceRecord failed: %v", err)
+		return fmt.Errorf("failed to produce initial record: %w", err)
+	}
+
+	glog.V(1).Infof("writeInitialSchemasRecord: Successfully wrote initial Noop record to _schemas topic at offset %d", offset)
+	return nil
 }

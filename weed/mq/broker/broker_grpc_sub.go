@@ -41,6 +41,9 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 	if getOrGenErr != nil {
 		return getOrGenErr
 	}
+	if localTopicPartition == nil {
+		return fmt.Errorf("failed to get or generate local partition for topic %v partition %v", t, partition)
+	}
 
 	subscriber := topic.NewLocalSubscriber()
 	localTopicPartition.Subscribers.AddSubscriber(clientName, subscriber)

@@ -332,7 +332,9 @@ func (h *SeaweedMQHandler) DeleteTopic(name string) error {
 // TopicExists checks if a topic exists in filer directly
 func (h *SeaweedMQHandler) TopicExists(name string) bool {
 	// Always check filer directly for consistency
-	return h.checkTopicInFiler(name)
+	result := h.checkTopicInFiler(name)
+	glog.V(1).Infof("TopicExists: topic=%s, result=%v", name, result)
+	return result
 }
 
 // GetTopicInfo returns information about a topic from filer
@@ -762,6 +764,7 @@ func (h *SeaweedMQHandler) checkTopicInFiler(topicName string) bool {
 
 		_, err := client.LookupDirectoryEntry(context.Background(), request)
 		exists = (err == nil)
+		glog.V(1).Infof("checkTopicInFiler: topic=%s, directory=/topics/kafka, exists=%v, err=%v", topicName, exists, err)
 		return nil // Don't propagate error, just check existence
 	})
 
