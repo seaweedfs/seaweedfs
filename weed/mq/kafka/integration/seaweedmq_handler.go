@@ -119,7 +119,7 @@ func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromO
 // GetEarliestOffset returns the earliest available offset for a topic partition
 func (h *SeaweedMQHandler) GetEarliestOffset(topic string, partition int32) (int64, error) {
 	// For now, assume earliest offset is always 0
-	// TODO: Implement proper earliest offset lookup from chunk metadata
+	// TODO: Enhance getHighWaterMarkFromChunkMetadata to also return earliest offset
 	return 0, nil
 }
 
@@ -133,21 +133,32 @@ func (h *SeaweedMQHandler) GetLatestOffset(topic string, partition int32) (int64
 		return 0, nil // Empty topic
 	}
 
-	// Use SeaweedMQ's native offset management instead of external ledgers
-	if h.brokerClient == nil {
-		glog.Infof("[DEBUG_OFFSET] No broker client available")
-		return 0, nil
+	// Primary approach: Use chunk metadata for offset information
+	if h.brokerClient != nil {
+		glog.Infof("[DEBUG_OFFSET] BrokerClient is available, calling GetHighWaterMark")
+		latestOffset, err := h.brokerClient.GetHighWaterMark(topic, partition)
+		if err == nil {
+			glog.Infof("[DEBUG_OFFSET] Got high water mark from chunk metadata: %d", latestOffset)
+			return latestOffset, nil
+		}
+		glog.Infof("[DEBUG_OFFSET] Chunk metadata approach failed: %v, falling back to ledger", err)
+	} else {
+		glog.Infof("[DEBUG_OFFSET] BrokerClient is nil, skipping chunk metadata approach")
 	}
 
-	// Get the high water mark directly from SeaweedMQ broker
-	latestOffset, err := h.brokerClient.GetHighWaterMark(topic, partition)
-	if err != nil {
-		glog.Infof("[DEBUG_OFFSET] Error getting high water mark from broker: %v", err)
-		return 0, nil
+	// Fallback approach: Use ledger system for backward compatibility
+	glog.Infof("[DEBUG_OFFSET] Falling back to ledger-based offset lookup")
+	ledger := h.GetLedger(topic, partition)
+	if ledger != nil {
+		latestOffset := ledger.GetHighWaterMark()
+		glog.Infof("[DEBUG_OFFSET] Got offset from ledger: %d", latestOffset)
+		return latestOffset, nil
 	}
+	glog.Infof("[DEBUG_OFFSET] No ledger found for topic %s partition %d", topic, partition)
 
-	glog.Infof("[DEBUG_OFFSET] Final latest offset for topic %s partition %d: %d", topic, partition, latestOffset)
-	return latestOffset, nil
+	// Final fallback: Return 0 for empty topics
+	glog.Infof("[DEBUG_OFFSET] Final latest offset for topic %s partition %d: 0 (no data found)", topic, partition)
+	return 0, nil
 }
 
 // SeaweedSMQRecord implements the offset.SMQRecord interface for SeaweedMQ records
@@ -1067,9 +1078,16 @@ func (bc *BrokerClient) Close() error {
 // GetHighWaterMark gets the high water mark for a topic partition by reading chunk metadata
 func (bc *BrokerClient) GetHighWaterMark(topic string, partition int32) (int64, error) {
 	glog.Infof("[DEBUG_OFFSET] GetHighWaterMark called for topic=%s partition=%d", topic, partition)
-
+	
 	// Read offset ranges from chunk Extended attributes
-	return bc.getHighWaterMarkFromChunkMetadata(topic, partition)
+	highWaterMark, err := bc.getHighWaterMarkFromChunkMetadata(topic, partition)
+	if err != nil {
+		glog.Infof("[DEBUG_OFFSET] Failed to get high water mark from chunk metadata: %v", err)
+		return 0, err
+	}
+	
+	glog.Infof("[DEBUG_OFFSET] Successfully got high water mark from chunk metadata: %d", highWaterMark)
+	return highWaterMark, nil
 }
 
 // getHighWaterMarkFromChunkMetadata reads chunk metadata to find the highest offset
@@ -1151,10 +1169,11 @@ func (bc *BrokerClient) getHighWaterMarkFromChunkMetadata(topic string, partitio
 		return 0, nil
 	}
 
-	// Scan all message files to find the highest offset_max
+	// Scan all message files to find the highest offset_max and lowest offset_min
 	partitionPath := fmt.Sprintf("%s/%s", versionPath, partitionDir)
 	var highWaterMark int64 = 0
-
+	var earliestOffset int64 = -1 // -1 indicates no data found yet
+	
 	err = bc.filerClientAccessor.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
 			Directory: partitionPath,
@@ -1172,18 +1191,29 @@ func (bc *BrokerClient) getHighWaterMarkFromChunkMetadata(topic string, partitio
 				return err
 			}
 			if !resp.Entry.IsDirectory && resp.Entry.Name != "checkpoint.offset" {
-				// Check for offset_max in Extended attributes (both log files and parquet files)
+				// Check for offset ranges in Extended attributes (both log files and parquet files)
 				if resp.Entry.Extended != nil {
+					fileType := "log"
+					if strings.HasSuffix(resp.Entry.Name, ".parquet") {
+						fileType = "parquet"
+					}
+					
+					// Track maximum offset for high water mark
 					if maxOffsetBytes, exists := resp.Entry.Extended[mq.ExtendedAttrOffsetMax]; exists && len(maxOffsetBytes) == 8 {
 						maxOffset := int64(binary.BigEndian.Uint64(maxOffsetBytes))
 						if maxOffset > highWaterMark {
 							highWaterMark = maxOffset
 						}
-						fileType := "log"
-						if strings.HasSuffix(resp.Entry.Name, ".parquet") {
-							fileType = "parquet"
-						}
 						glog.Infof("[DEBUG_OFFSET] %s file %s has offset_max=%d", fileType, resp.Entry.Name, maxOffset)
+					}
+					
+					// Track minimum offset for earliest offset
+					if minOffsetBytes, exists := resp.Entry.Extended[mq.ExtendedAttrOffsetMin]; exists && len(minOffsetBytes) == 8 {
+						minOffset := int64(binary.BigEndian.Uint64(minOffsetBytes))
+						if earliestOffset == -1 || minOffset < earliestOffset {
+							earliestOffset = minOffset
+						}
+						glog.Infof("[DEBUG_OFFSET] %s file %s has offset_min=%d", fileType, resp.Entry.Name, minOffset)
 					}
 				}
 			}
