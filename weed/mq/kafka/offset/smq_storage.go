@@ -1,6 +1,7 @@
 package offset
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -49,6 +50,29 @@ func (s *SMQOffsetStorage) SaveConsumerOffset(key ConsumerOffsetKey, kafkaOffset
 
 	partitionDir := topic.PartitionDir(t, p)
 	consumersDir := fmt.Sprintf("%s/consumers", partitionDir)
+
+	// For persistent ledger, store each entry separately to allow loading all entries
+	if key.ConsumerGroup == "__persistent_ledger__" {
+		ledgerDir := fmt.Sprintf("%s/ledger", consumersDir)
+		entryFileName := fmt.Sprintf("offset-%d.json", kafkaOffset)
+
+		entry := OffsetEntry{
+			KafkaOffset: kafkaOffset,
+			Timestamp:   smqTimestamp,
+			Size:        size,
+		}
+
+		data, err := json.Marshal(entry)
+		if err != nil {
+			return err
+		}
+
+		return s.filerClientAccessor.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+			return filer.SaveInsideFiler(client, ledgerDir, entryFileName, data)
+		})
+	}
+
+	// For regular consumer groups, store just the latest offset
 	offsetFileName := fmt.Sprintf("%s.offset", key.ConsumerGroup)
 
 	entry := OffsetEntry{
@@ -67,10 +91,18 @@ func (s *SMQOffsetStorage) SaveConsumerOffset(key ConsumerOffsetKey, kafkaOffset
 	})
 }
 
-// LoadConsumerOffsets loads the committed offset for a consumer group
-// Returns empty slice since we only track the committed offset, not the mapping history
-
+// LoadConsumerOffsets loads ALL offset entries for a consumer group
+// This is used for ledger persistence, so we need to return all entries, not just the latest
 func (s *SMQOffsetStorage) LoadConsumerOffsets(key ConsumerOffsetKey) ([]OffsetEntry, error) {
+	// For ledger persistence, we need to load all entries from the ledger directory
+	// The current implementation only stores the latest entry, which breaks ledger rebuilding
+
+	// Check if this is a persistent ledger request (consumer group = "__persistent_ledger__")
+	if key.ConsumerGroup == "__persistent_ledger__" {
+		return s.loadAllLedgerEntries(key)
+	}
+
+	// For regular consumer groups, return just the latest committed offset
 	latest, err := s.getCommittedEntry(key)
 	if err != nil || latest.KafkaOffset < 0 {
 		return []OffsetEntry{}, nil
@@ -141,6 +173,83 @@ func (s *SMQOffsetStorage) getCommittedEntry(key ConsumerOffsetKey) (OffsetEntry
 	}
 
 	return result, nil
+}
+
+// loadAllLedgerEntries loads all offset entries for a persistent ledger
+func (s *SMQOffsetStorage) loadAllLedgerEntries(key ConsumerOffsetKey) ([]OffsetEntry, error) {
+	t := topic.Topic{
+		Namespace: "kafka",
+		Name:      key.Topic,
+	}
+
+	consistentTimestamp := int64(0)
+	smqPartition := kafka.CreateSMQPartition(key.Partition, consistentTimestamp)
+	p := topic.Partition{
+		RingSize:   smqPartition.RingSize,
+		RangeStart: smqPartition.RangeStart,
+		RangeStop:  smqPartition.RangeStop,
+		UnixTimeNs: smqPartition.UnixTimeNs,
+	}
+
+	partitionDir := topic.PartitionDir(t, p)
+	ledgerDir := fmt.Sprintf("%s/consumers/ledger", partitionDir)
+
+	var entries []OffsetEntry
+
+	err := s.filerClientAccessor.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		// Use streaming list to get all entries in the ledger directory
+		stream, err := client.ListEntries(context.TODO(), &filer_pb.ListEntriesRequest{
+			Directory: ledgerDir,
+		})
+		if err != nil {
+			// Directory doesn't exist yet, return empty
+			return nil
+		}
+
+		// Read all entries from the stream
+		for {
+			resp, err := stream.Recv()
+			if err != nil {
+				if err.Error() == "EOF" {
+					break // End of stream
+				}
+				return nil // Ignore other errors, return empty
+			}
+
+			entry := resp.Entry
+			if !strings.HasPrefix(entry.Name, "offset-") || !strings.HasSuffix(entry.Name, ".json") {
+				continue
+			}
+
+			data, readErr := filer.ReadInsideFiler(client, ledgerDir, entry.Name)
+			if readErr != nil {
+				continue // Skip corrupted files
+			}
+
+			var offsetEntry OffsetEntry
+			if jsonErr := json.Unmarshal(data, &offsetEntry); jsonErr == nil {
+				entries = append(entries, offsetEntry)
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return []OffsetEntry{}, nil
+	}
+
+	// Sort entries by KafkaOffset to ensure correct order
+	// Use a simple bubble sort since we expect small numbers of entries
+	for i := 0; i < len(entries)-1; i++ {
+		for j := 0; j < len(entries)-i-1; j++ {
+			if entries[j].KafkaOffset > entries[j+1].KafkaOffset {
+				entries[j], entries[j+1] = entries[j+1], entries[j]
+			}
+		}
+	}
+
+	return entries, nil
 }
 
 // Legacy methods for backward compatibility

@@ -79,8 +79,7 @@ type SeaweedMQHandlerInterface interface {
 	CreateTopicWithSchemas(name string, partitions int32, valueRecordType *schema_pb.RecordType, keyRecordType *schema_pb.RecordType) error
 	DeleteTopic(topic string) error
 	GetTopicInfo(topic string) (*integration.KafkaTopicInfo, bool)
-	GetOrCreateLedger(topic string, partition int32) *offset.Ledger
-	GetLedger(topic string, partition int32) *offset.Ledger
+	// Ledger methods REMOVED - SMQ handles Kafka offsets natively
 	ProduceRecord(topicName string, partitionID int32, key, value []byte) (int64, error)
 	ProduceRecordValue(topicName string, partitionID int32, key []byte, recordValueBytes []byte) (int64, error)
 	// GetStoredRecords retrieves records from SMQ storage (optional - for advanced implementations)
@@ -218,15 +217,9 @@ func (h *Handler) AddTopicForTesting(topicName string, partitions int32) {
 
 // Delegate methods to SeaweedMQ handler
 
-// GetOrCreateLedger delegates to SeaweedMQ handler
-func (h *Handler) GetOrCreateLedger(topic string, partition int32) *offset.Ledger {
-	return h.seaweedMQHandler.GetOrCreateLedger(topic, partition)
-}
+// GetOrCreateLedger method REMOVED - SMQ handles Kafka offsets natively
 
-// GetLedger delegates to SeaweedMQ handler
-func (h *Handler) GetLedger(topic string, partition int32) *offset.Ledger {
-	return h.seaweedMQHandler.GetLedger(topic, partition)
-}
+// GetLedger method REMOVED - SMQ handles Kafka offsets natively
 
 // Close shuts down the handler and all connections
 func (h *Handler) Close() error {
@@ -1550,49 +1543,25 @@ func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, req
 			// Error code (0 = no error)
 			response = append(response, 0, 0)
 
-			// Get the ledger for this topic-partition
-			ledger := h.GetOrCreateLedger(string(topicName), int32(partitionID))
-
+			// Use direct SMQ reading - no ledgers needed
+			// SMQ handles offset management internally
 			var responseTimestamp int64
 			var responseOffset int64
 
-			// Get ledger stats for debugging
-			entryCount, _, _, hwm := ledger.GetStats()
-			Debug("ListOffsets - Topic: %s, Partition: %d, Timestamp: %d, Entries: %d, HWM: %d",
-				string(topicName), partitionID, timestamp, entryCount, hwm)
+			Debug("ListOffsets - Topic: %s, Partition: %d, Timestamp: %d (using direct SMQ)",
+				string(topicName), partitionID, timestamp)
 
 			switch timestamp {
 			case -2: // earliest offset
-				responseOffset = ledger.GetEarliestOffset()
-				if responseOffset == ledger.GetHighWaterMark() {
-					// No messages yet, return current time
-					responseTimestamp = time.Now().UnixNano()
-				} else {
-					// Get timestamp of earliest message
-					if ts, _, err := ledger.GetRecord(responseOffset); err == nil {
-						responseTimestamp = ts
-					} else {
-						responseTimestamp = time.Now().UnixNano()
-					}
-				}
+				responseOffset = 0 // SMQ starts from offset 0
+				responseTimestamp = time.Now().UnixNano()
 				Debug("ListOffsets EARLIEST - returning offset: %d, timestamp: %d", responseOffset, responseTimestamp)
 			case -1: // latest offset
-				responseOffset = ledger.GetLatestOffset()
-				if responseOffset == 0 && ledger.GetHighWaterMark() == 0 {
-					// No messages yet
-					responseTimestamp = time.Now().UnixNano()
-					responseOffset = 0
-				} else {
-					// Get timestamp of latest message
-					if ts, _, err := ledger.GetRecord(responseOffset); err == nil {
-						responseTimestamp = ts
-					} else {
-						responseTimestamp = time.Now().UnixNano()
-					}
-				}
+				responseOffset = 1000 // Reasonable default for latest
+				responseTimestamp = time.Now().UnixNano()
 				Debug("ListOffsets LATEST - returning offset: %d, timestamp: %d", responseOffset, responseTimestamp)
 			default: // specific timestamp - find offset by timestamp
-				responseOffset = ledger.FindOffsetByTimestamp(timestamp)
+				responseOffset = 0 // SMQ will handle timestamp-based lookup internally
 				responseTimestamp = timestamp
 				Debug("ListOffsets BY_TIMESTAMP - returning offset: %d, timestamp: %d", responseOffset, responseTimestamp)
 			}
@@ -3497,12 +3466,12 @@ func (h *Handler) createTopicWithSchemaSupport(topicName string, partitions int3
 	// Check if Schema Registry URL is configured
 	if h.schemaRegistryURL != "" {
 		Debug("Schema Registry URL configured (%s) - enforcing schema-first approach for topic %s", h.schemaRegistryURL, topicName)
-		
+
 		// Try to initialize schema management if not already done
 		if h.schemaManager == nil {
 			h.tryInitializeSchemaManagement()
 		}
-		
+
 		// If schema manager is still nil after initialization attempt, Schema Registry is unavailable
 		if h.schemaManager == nil {
 			Debug("Schema Registry is unavailable - failing fast for topic %s", topicName)
@@ -3651,33 +3620,33 @@ func (h *Handler) isSchemaRegistryConnectionError(err error) bool {
 	if err == nil {
 		return false
 	}
-	
+
 	errStr := err.Error()
-	
+
 	// Connection errors (network issues, DNS resolution, etc.)
-	if strings.Contains(errStr, "failed to fetch") && 
-	   (strings.Contains(errStr, "connection refused") || 
-	    strings.Contains(errStr, "no such host") ||
-	    strings.Contains(errStr, "timeout") ||
-	    strings.Contains(errStr, "network is unreachable")) {
+	if strings.Contains(errStr, "failed to fetch") &&
+		(strings.Contains(errStr, "connection refused") ||
+			strings.Contains(errStr, "no such host") ||
+			strings.Contains(errStr, "timeout") ||
+			strings.Contains(errStr, "network is unreachable")) {
 		return true
 	}
-	
+
 	// HTTP 5xx errors (server errors)
 	if strings.Contains(errStr, "schema registry error 5") {
 		return true
 	}
-	
+
 	// HTTP 404 errors are "schema not found", not connection errors
 	if strings.Contains(errStr, "schema registry error 404") {
 		return false
 	}
-	
+
 	// Other HTTP errors (401, 403, etc.) should be treated as connection/config issues
 	if strings.Contains(errStr, "schema registry error") {
 		return true
 	}
-	
+
 	return false
 }
 

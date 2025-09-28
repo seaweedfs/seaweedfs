@@ -105,10 +105,7 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 			if err := h.createTopicWithSchemaSupport(topicName, defaultPartitions); err != nil {
 				Debug("Failed to auto-create topic %s with schema support: %v", topicName, err)
 			} else {
-				// Initialize ledgers for all partitions
-				for i := int32(0); i < defaultPartitions; i++ {
-					h.GetOrCreateLedger(topicName, i)
-				}
+				// Ledger initialization REMOVED - SMQ handles offsets natively
 				topicExists = true // CRITICAL FIX: Update the flag after creating the topic
 			}
 		}

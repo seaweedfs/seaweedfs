@@ -143,18 +143,7 @@ func (b *basicSeaweedMQHandler) GetOrCreateLedger(topic string, partition int32)
 	return ledger
 }
 
-func (b *basicSeaweedMQHandler) GetLedger(topic string, partition int32) *offset.Ledger {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-
-	key := fmt.Sprintf("%s-%d", topic, partition)
-	if ledger, exists := b.ledgers[key]; exists {
-		return ledger
-	}
-
-	// Return nil if ledger doesn't exist (topic doesn't exist)
-	return nil
-}
+// GetLedger method REMOVED - SMQ handles Kafka offsets natively
 
 func (b *basicSeaweedMQHandler) ProduceRecord(topicName string, partitionID int32, key, value []byte) (int64, error) {
 	// Get or create the ledger first (this will acquire and release the lock)

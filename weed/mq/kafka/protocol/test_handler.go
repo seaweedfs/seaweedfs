@@ -95,12 +95,7 @@ func (t *testSeaweedMQHandlerForUnitTests) GetOrCreateLedger(topic string, parti
 	return ledger
 }
 
-func (t *testSeaweedMQHandlerForUnitTests) GetLedger(topic string, partition int32) *offset.Ledger {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	key := topicPartitionKeyForTest(topic, partition)
-	return t.ledgers[key]
-}
+// GetLedger method REMOVED - SMQ handles Kafka offsets natively
 
 func (t *testSeaweedMQHandlerForUnitTests) ProduceRecord(topicName string, partitionID int32, key, value []byte) (int64, error) {
 	ledger := t.GetOrCreateLedger(topicName, partitionID)

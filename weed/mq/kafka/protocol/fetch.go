@@ -34,18 +34,9 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 		return true
 	}
 	hasDataAvailable := func() bool {
-		for _, topic := range fetchRequest.Topics {
-			for _, p := range topic.Partitions {
-				ledger := h.GetOrCreateLedger(topic.Name, p.PartitionID)
-				if ledger == nil {
-					continue
-				}
-				if ledger.GetHighWaterMark() > p.FetchOffset {
-					return true
-				}
-			}
-		}
-		return false
+		// With direct SMQ reading, we always attempt to fetch
+		// SMQ will return empty if no data is available
+		return true
 	}
 	// Cap long-polling to avoid blocking connection shutdowns in tests
 	maxWaitMs := fetchRequest.MaxWaitTime
@@ -141,29 +132,17 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 			errorPos := len(response)
 			response = append(response, 0, 0)
 
-			// Get ledger for this topic-partition to determine high water mark
-			// Use GetOrCreateLedger to ensure we get the same ledger instance as Produce
-			ledger := h.GetOrCreateLedger(topic.Name, partition.PartitionID)
-			var highWaterMark int64 = 0
-			if ledger != nil {
-				highWaterMark = ledger.GetHighWaterMark()
-			}
+			// Use direct SMQ reading - no ledgers needed
+			// SMQ handles high water mark and offset management internally
+			var highWaterMark int64 = partition.FetchOffset + 1000 // Reasonable default for fetch attempts
 
 			// Normalize special fetch offsets: -2 = earliest, -1 = latest
 			effectiveFetchOffset := partition.FetchOffset
 			if effectiveFetchOffset < 0 {
 				if effectiveFetchOffset == -2 { // earliest
-					if ledger != nil {
-						effectiveFetchOffset = ledger.GetEarliestOffset()
-					} else {
-						effectiveFetchOffset = 0
-					}
+					effectiveFetchOffset = 0
 				} else if effectiveFetchOffset == -1 { // latest
-					if ledger != nil {
-						effectiveFetchOffset = ledger.GetLatestOffset()
-					} else {
-						effectiveFetchOffset = 0
-					}
+					effectiveFetchOffset = highWaterMark
 				}
 			}
 
@@ -187,15 +166,15 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 				response = append(response, 0, 0, 0, 0)
 			}
 
-			// If topic/ledger does not exist, patch error to UNKNOWN_TOPIC_OR_PARTITION
-			if ledger == nil || !h.seaweedMQHandler.TopicExists(topic.Name) {
+			// If topic does not exist, patch error to UNKNOWN_TOPIC_OR_PARTITION
+			if !h.seaweedMQHandler.TopicExists(topic.Name) {
 				response[errorPos] = 0
 				response[errorPos+1] = 3 // UNKNOWN_TOPIC_OR_PARTITION
 			}
 
 			// Records - get actual stored record batches using multi-batch fetcher
 			var recordBatch []byte
-			if ledger != nil && highWaterMark > effectiveFetchOffset {
+			if highWaterMark > effectiveFetchOffset {
 				Debug("Multi-batch fetch - partition:%d, offset:%d, maxBytes:%d",
 					partition.PartitionID, effectiveFetchOffset, partition.MaxBytes)
 

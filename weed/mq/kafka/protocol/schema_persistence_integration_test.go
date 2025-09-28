@@ -641,7 +641,8 @@ func (m *MockSeaweedMQHandler) GetTopicInfo(topic string) (*integration.KafkaTop
 func (m *MockSeaweedMQHandler) GetOrCreateLedger(topic string, partition int32) *offset.Ledger {
 	return nil
 }
-func (m *MockSeaweedMQHandler) GetLedger(topic string, partition int32) *offset.Ledger { return nil }
+
+// GetLedger method REMOVED - SMQ handles Kafka offsets natively
 func (m *MockSeaweedMQHandler) ProduceRecord(topicName string, partitionID int32, key, value []byte) (int64, error) {
 	return 0, nil
 }
