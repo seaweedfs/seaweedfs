@@ -237,3 +237,31 @@ func findClientAddress(ctx context.Context) string {
 	}
 	return pr.Addr.String()
 }
+
+// GetPartitionOffsetInfo returns comprehensive offset information for a partition using native offset manager (gRPC handler)
+func (b *MessageQueueBroker) GetPartitionOffsetInfo(ctx context.Context, req *mq_pb.GetPartitionOffsetInfoRequest) (*mq_pb.GetPartitionOffsetInfoResponse, error) {
+	if req.Topic == nil || req.Partition == nil {
+		return &mq_pb.GetPartitionOffsetInfoResponse{
+			Error: "topic and partition are required",
+		}, nil
+	}
+
+	t := topic.FromPbTopic(req.Topic)
+	p := topic.FromPbPartition(req.Partition)
+
+	// Use the broker's internal GetPartitionOffsetInfoInternal method
+	info, err := b.GetPartitionOffsetInfoInternal(t, p)
+	if err != nil {
+		return &mq_pb.GetPartitionOffsetInfoResponse{
+			Error: fmt.Sprintf("failed to get partition offset info: %v", err),
+		}, nil
+	}
+
+	return &mq_pb.GetPartitionOffsetInfoResponse{
+		EarliestOffset:      info.EarliestOffset,
+		LatestOffset:        info.LatestOffset,
+		HighWaterMark:       info.HighWaterMark,
+		RecordCount:         info.RecordCount,
+		ActiveSubscriptions: info.ActiveSubscriptions,
+	}, nil
+}

@@ -77,8 +77,8 @@ func (b *MessageQueueBroker) addLogEntryToBuffer(
 	return nil
 }
 
-// GetPartitionOffsetInfo returns offset information for a partition
-func (b *MessageQueueBroker) GetPartitionOffsetInfo(t topic.Topic, p topic.Partition) (*PartitionOffsetInfo, error) {
+// GetPartitionOffsetInfoInternal returns offset information for a partition (internal method)
+func (b *MessageQueueBroker) GetPartitionOffsetInfoInternal(t topic.Topic, p topic.Partition) (*PartitionOffsetInfo, error) {
 	info, err := b.offsetManager.GetPartitionOffsetInfo(t, p)
 	if err != nil {
 		return nil, err

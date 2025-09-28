@@ -63,6 +63,10 @@ service SeaweedMessaging {
     rpc GetUnflushedMessages (GetUnflushedMessagesRequest) returns (stream GetUnflushedMessagesResponse) {
     }
 
+    // Get partition offset information from SeaweedMQ's native offset manager
+    rpc GetPartitionOffsetInfo (GetPartitionOffsetInfoRequest) returns (GetPartitionOffsetInfoResponse) {
+    }
+
     // Removed Kafka Gateway Registration - no longer needed
 }
 
@@ -275,6 +279,7 @@ message PublishMessageResponse {
     string error = 2;
     bool should_close = 3;
     int32 error_code = 4; // Structured error code for reliable error mapping
+    int64 assigned_offset = 5; // The actual offset assigned by SeaweedMQ for this message
 }
 message PublishFollowMeRequest {
     message InitMessage {
@@ -381,6 +386,23 @@ message LogEntry {
     bytes key = 2;
     bytes data = 3;
     uint32 partition_key_hash = 4;
+}
+
+//////////////////////////////////////////////////
+// Partition offset information messages
+
+message GetPartitionOffsetInfoRequest {
+    schema_pb.Topic topic = 1;
+    schema_pb.Partition partition = 2;
+}
+
+message GetPartitionOffsetInfoResponse {
+    int64 earliest_offset = 1;
+    int64 latest_offset = 2;
+    int64 high_water_mark = 3;
+    int64 record_count = 4;
+    int64 active_subscriptions = 5;
+    string error = 6;
 }
 
 // Removed Kafka Gateway Registration messages - no longer needed
