@@ -117,11 +117,18 @@ func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromO
 	return smqRecords, nil
 }
 
-// PartitionOffsetInfo contains comprehensive offset information for a partition
-type PartitionOffsetInfo struct {
-	EarliestOffset      int64
-	LatestOffset        int64
-	HighWaterMark       int64
+// PartitionRangeInfo contains comprehensive range information for a partition
+type PartitionRangeInfo struct {
+	// Offset range information
+	EarliestOffset int64
+	LatestOffset   int64
+	HighWaterMark  int64
+
+	// Timestamp range information
+	EarliestTimestampNs int64
+	LatestTimestampNs   int64
+
+	// Partition metadata
 	RecordCount         int64
 	ActiveSubscriptions int64
 }
@@ -1123,9 +1130,9 @@ func (bc *BrokerClient) Close() error {
 	return bc.conn.Close()
 }
 
-// GetPartitionOffsetInfo gets comprehensive offset information from SeaweedMQ broker's native offset manager
-func (bc *BrokerClient) GetPartitionOffsetInfo(topic string, partition int32) (*PartitionOffsetInfo, error) {
-	glog.Infof("[DEBUG_OFFSET] GetPartitionOffsetInfo called for topic=%s partition=%d", topic, partition)
+// GetPartitionRangeInfo gets comprehensive range information from SeaweedMQ broker's native range manager
+func (bc *BrokerClient) GetPartitionRangeInfo(topic string, partition int32) (*PartitionRangeInfo, error) {
+	glog.Infof("[DEBUG_OFFSET] GetPartitionRangeInfo called for topic=%s partition=%d", topic, partition)
 
 	if bc.client == nil {
 		return nil, fmt.Errorf("broker client not connected")
@@ -1144,13 +1151,13 @@ func (bc *BrokerClient) GetPartitionOffsetInfo(topic string, partition int32) (*
 	}
 
 	// Call the broker's gRPC method
-	resp, err := bc.client.GetPartitionOffsetInfo(context.Background(), &mq_pb.GetPartitionOffsetInfoRequest{
+	resp, err := bc.client.GetPartitionRangeInfo(context.Background(), &mq_pb.GetPartitionRangeInfoRequest{
 		Topic:     pbTopic,
 		Partition: actualPartition,
 	})
 	if err != nil {
-		glog.Infof("[DEBUG_OFFSET] Failed to call GetPartitionOffsetInfo gRPC: %v", err)
-		return nil, fmt.Errorf("failed to get partition offset info from broker: %v", err)
+		glog.Infof("[DEBUG_OFFSET] Failed to call GetPartitionRangeInfo gRPC: %v", err)
+		return nil, fmt.Errorf("failed to get partition range info from broker: %v", err)
 	}
 
 	if resp.Error != "" {
@@ -1158,16 +1165,34 @@ func (bc *BrokerClient) GetPartitionOffsetInfo(topic string, partition int32) (*
 		return nil, fmt.Errorf("broker error: %s", resp.Error)
 	}
 
-	info := &PartitionOffsetInfo{
-		EarliestOffset:      resp.EarliestOffset,
-		LatestOffset:        resp.LatestOffset,
-		HighWaterMark:       resp.HighWaterMark,
+	// Extract offset range information
+	var earliestOffset, latestOffset, highWaterMark int64
+	if resp.OffsetRange != nil {
+		earliestOffset = resp.OffsetRange.EarliestOffset
+		latestOffset = resp.OffsetRange.LatestOffset
+		highWaterMark = resp.OffsetRange.HighWaterMark
+	}
+
+	// Extract timestamp range information
+	var earliestTimestampNs, latestTimestampNs int64
+	if resp.TimestampRange != nil {
+		earliestTimestampNs = resp.TimestampRange.EarliestTimestampNs
+		latestTimestampNs = resp.TimestampRange.LatestTimestampNs
+	}
+
+	info := &PartitionRangeInfo{
+		EarliestOffset:      earliestOffset,
+		LatestOffset:        latestOffset,
+		HighWaterMark:       highWaterMark,
+		EarliestTimestampNs: earliestTimestampNs,
+		LatestTimestampNs:   latestTimestampNs,
 		RecordCount:         resp.RecordCount,
 		ActiveSubscriptions: resp.ActiveSubscriptions,
 	}
 
-	glog.Infof("[DEBUG_OFFSET] Got offset info from broker: earliest=%d, latest=%d, hwm=%d, records=%d",
-		info.EarliestOffset, info.LatestOffset, info.HighWaterMark, info.RecordCount)
+	glog.Infof("[DEBUG_OFFSET] Got range info from broker: earliest=%d, latest=%d, hwm=%d, records=%d, ts_range=[%d,%d]",
+		info.EarliestOffset, info.LatestOffset, info.HighWaterMark, info.RecordCount,
+		info.EarliestTimestampNs, info.LatestTimestampNs)
 	return info, nil
 }
 
@@ -1175,8 +1200,8 @@ func (bc *BrokerClient) GetPartitionOffsetInfo(topic string, partition int32) (*
 func (bc *BrokerClient) GetHighWaterMark(topic string, partition int32) (int64, error) {
 	glog.Infof("[DEBUG_OFFSET] GetHighWaterMark called for topic=%s partition=%d", topic, partition)
 
-	// Primary approach: Use SeaweedMQ's native offset manager via gRPC
-	info, err := bc.GetPartitionOffsetInfo(topic, partition)
+	// Primary approach: Use SeaweedMQ's native range manager via gRPC
+	info, err := bc.GetPartitionRangeInfo(topic, partition)
 	if err != nil {
 		glog.Infof("[DEBUG_OFFSET] Failed to get offset info from broker, falling back to chunk metadata: %v", err)
 		// Fallback to chunk metadata approach
@@ -1351,8 +1376,8 @@ func (bc *BrokerClient) getHighWaterMarkFromChunkMetadata(topic string, partitio
 func (bc *BrokerClient) GetEarliestOffset(topic string, partition int32) (int64, error) {
 	glog.Infof("[DEBUG_OFFSET] BrokerClient.GetEarliestOffset called for topic=%s partition=%d", topic, partition)
 
-	// Primary approach: Use SeaweedMQ's native offset manager via gRPC
-	info, err := bc.GetPartitionOffsetInfo(topic, partition)
+	// Primary approach: Use SeaweedMQ's native range manager via gRPC
+	info, err := bc.GetPartitionRangeInfo(topic, partition)
 	if err != nil {
 		glog.Infof("[DEBUG_OFFSET] Failed to get offset info from broker, falling back to chunk metadata: %v", err)
 		// Fallback to chunk metadata approach

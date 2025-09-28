@@ -37,7 +37,7 @@ const (
 	SeaweedMessaging_PublishFollowMe_FullMethodName            = "/messaging_pb.SeaweedMessaging/PublishFollowMe"
 	SeaweedMessaging_SubscribeFollowMe_FullMethodName          = "/messaging_pb.SeaweedMessaging/SubscribeFollowMe"
 	SeaweedMessaging_GetUnflushedMessages_FullMethodName       = "/messaging_pb.SeaweedMessaging/GetUnflushedMessages"
-	SeaweedMessaging_GetPartitionOffsetInfo_FullMethodName     = "/messaging_pb.SeaweedMessaging/GetPartitionOffsetInfo"
+	SeaweedMessaging_GetPartitionRangeInfo_FullMethodName      = "/messaging_pb.SeaweedMessaging/GetPartitionRangeInfo"
 )
 
 // SeaweedMessagingClient is the client API for SeaweedMessaging service.
@@ -70,8 +70,8 @@ type SeaweedMessagingClient interface {
 	SubscribeFollowMe(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[SubscribeFollowMeRequest, SubscribeFollowMeResponse], error)
 	// SQL query support - get unflushed messages from broker's in-memory buffer (streaming)
 	GetUnflushedMessages(ctx context.Context, in *GetUnflushedMessagesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GetUnflushedMessagesResponse], error)
-	// Get partition offset information from SeaweedMQ's native offset manager
-	GetPartitionOffsetInfo(ctx context.Context, in *GetPartitionOffsetInfoRequest, opts ...grpc.CallOption) (*GetPartitionOffsetInfoResponse, error)
+	// Get comprehensive partition range information (offsets, timestamps, and other fields)
+	GetPartitionRangeInfo(ctx context.Context, in *GetPartitionRangeInfoRequest, opts ...grpc.CallOption) (*GetPartitionRangeInfoResponse, error)
 }
 
 type seaweedMessagingClient struct {
@@ -289,10 +289,10 @@ func (c *seaweedMessagingClient) GetUnflushedMessages(ctx context.Context, in *G
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type SeaweedMessaging_GetUnflushedMessagesClient = grpc.ServerStreamingClient[GetUnflushedMessagesResponse]
 
-func (c *seaweedMessagingClient) GetPartitionOffsetInfo(ctx context.Context, in *GetPartitionOffsetInfoRequest, opts ...grpc.CallOption) (*GetPartitionOffsetInfoResponse, error) {
+func (c *seaweedMessagingClient) GetPartitionRangeInfo(ctx context.Context, in *GetPartitionRangeInfoRequest, opts ...grpc.CallOption) (*GetPartitionRangeInfoResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(GetPartitionOffsetInfoResponse)
-	err := c.cc.Invoke(ctx, SeaweedMessaging_GetPartitionOffsetInfo_FullMethodName, in, out, cOpts...)
+	out := new(GetPartitionRangeInfoResponse)
+	err := c.cc.Invoke(ctx, SeaweedMessaging_GetPartitionRangeInfo_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -329,8 +329,8 @@ type SeaweedMessagingServer interface {
 	SubscribeFollowMe(grpc.ClientStreamingServer[SubscribeFollowMeRequest, SubscribeFollowMeResponse]) error
 	// SQL query support - get unflushed messages from broker's in-memory buffer (streaming)
 	GetUnflushedMessages(*GetUnflushedMessagesRequest, grpc.ServerStreamingServer[GetUnflushedMessagesResponse]) error
-	// Get partition offset information from SeaweedMQ's native offset manager
-	GetPartitionOffsetInfo(context.Context, *GetPartitionOffsetInfoRequest) (*GetPartitionOffsetInfoResponse, error)
+	// Get comprehensive partition range information (offsets, timestamps, and other fields)
+	GetPartitionRangeInfo(context.Context, *GetPartitionRangeInfoRequest) (*GetPartitionRangeInfoResponse, error)
 	mustEmbedUnimplementedSeaweedMessagingServer()
 }
 
@@ -395,8 +395,8 @@ func (UnimplementedSeaweedMessagingServer) SubscribeFollowMe(grpc.ClientStreamin
 func (UnimplementedSeaweedMessagingServer) GetUnflushedMessages(*GetUnflushedMessagesRequest, grpc.ServerStreamingServer[GetUnflushedMessagesResponse]) error {
 	return status.Errorf(codes.Unimplemented, "method GetUnflushedMessages not implemented")
 }
-func (UnimplementedSeaweedMessagingServer) GetPartitionOffsetInfo(context.Context, *GetPartitionOffsetInfoRequest) (*GetPartitionOffsetInfoResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetPartitionOffsetInfo not implemented")
+func (UnimplementedSeaweedMessagingServer) GetPartitionRangeInfo(context.Context, *GetPartitionRangeInfoRequest) (*GetPartitionRangeInfoResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetPartitionRangeInfo not implemented")
 }
 func (UnimplementedSeaweedMessagingServer) mustEmbedUnimplementedSeaweedMessagingServer() {}
 func (UnimplementedSeaweedMessagingServer) testEmbeddedByValue()                          {}
@@ -670,20 +670,20 @@ func _SeaweedMessaging_GetUnflushedMessages_Handler(srv interface{}, stream grpc
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type SeaweedMessaging_GetUnflushedMessagesServer = grpc.ServerStreamingServer[GetUnflushedMessagesResponse]
 
-func _SeaweedMessaging_GetPartitionOffsetInfo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetPartitionOffsetInfoRequest)
+func _SeaweedMessaging_GetPartitionRangeInfo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetPartitionRangeInfoRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(SeaweedMessagingServer).GetPartitionOffsetInfo(ctx, in)
+		return srv.(SeaweedMessagingServer).GetPartitionRangeInfo(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: SeaweedMessaging_GetPartitionOffsetInfo_FullMethodName,
+		FullMethod: SeaweedMessaging_GetPartitionRangeInfo_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SeaweedMessagingServer).GetPartitionOffsetInfo(ctx, req.(*GetPartitionOffsetInfoRequest))
+		return srv.(SeaweedMessagingServer).GetPartitionRangeInfo(ctx, req.(*GetPartitionRangeInfoRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -740,8 +740,8 @@ var SeaweedMessaging_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _SeaweedMessaging_CloseSubscribers_Handler,
 		},
 		{
-			MethodName: "GetPartitionOffsetInfo",
-			Handler:    _SeaweedMessaging_GetPartitionOffsetInfo_Handler,
+			MethodName: "GetPartitionRangeInfo",
+			Handler:    _SeaweedMessaging_GetPartitionRangeInfo_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

@@ -238,10 +238,10 @@ func findClientAddress(ctx context.Context) string {
 	return pr.Addr.String()
 }
 
-// GetPartitionOffsetInfo returns comprehensive offset information for a partition using native offset manager (gRPC handler)
-func (b *MessageQueueBroker) GetPartitionOffsetInfo(ctx context.Context, req *mq_pb.GetPartitionOffsetInfoRequest) (*mq_pb.GetPartitionOffsetInfoResponse, error) {
+// GetPartitionRangeInfo returns comprehensive range information for a partition (offsets, timestamps, etc.)
+func (b *MessageQueueBroker) GetPartitionRangeInfo(ctx context.Context, req *mq_pb.GetPartitionRangeInfoRequest) (*mq_pb.GetPartitionRangeInfoResponse, error) {
 	if req.Topic == nil || req.Partition == nil {
-		return &mq_pb.GetPartitionOffsetInfoResponse{
+		return &mq_pb.GetPartitionRangeInfoResponse{
 			Error: "topic and partition are required",
 		}, nil
 	}
@@ -249,18 +249,29 @@ func (b *MessageQueueBroker) GetPartitionOffsetInfo(ctx context.Context, req *mq
 	t := topic.FromPbTopic(req.Topic)
 	p := topic.FromPbPartition(req.Partition)
 
-	// Use the broker's internal GetPartitionOffsetInfoInternal method
+	// Get offset information from the broker's internal method
 	info, err := b.GetPartitionOffsetInfoInternal(t, p)
 	if err != nil {
-		return &mq_pb.GetPartitionOffsetInfoResponse{
-			Error: fmt.Sprintf("failed to get partition offset info: %v", err),
+		return &mq_pb.GetPartitionRangeInfoResponse{
+			Error: fmt.Sprintf("failed to get partition range info: %v", err),
 		}, nil
 	}
 
-	return &mq_pb.GetPartitionOffsetInfoResponse{
-		EarliestOffset:      info.EarliestOffset,
-		LatestOffset:        info.LatestOffset,
-		HighWaterMark:       info.HighWaterMark,
+	// TODO: Get timestamp range information from chunk metadata or log buffer
+	// For now, we'll return zero values for timestamps - this can be enhanced later
+	// to read from Extended attributes (ts_min, ts_max) from filer metadata
+	timestampRange := &mq_pb.TimestampRangeInfo{
+		EarliestTimestampNs: 0, // TODO: Read from chunk metadata ts_min
+		LatestTimestampNs:   0, // TODO: Read from chunk metadata ts_max
+	}
+
+	return &mq_pb.GetPartitionRangeInfoResponse{
+		OffsetRange: &mq_pb.OffsetRangeInfo{
+			EarliestOffset: info.EarliestOffset,
+			LatestOffset:   info.LatestOffset,
+			HighWaterMark:  info.HighWaterMark,
+		},
+		TimestampRange:      timestampRange,
 		RecordCount:         info.RecordCount,
 		ActiveSubscriptions: info.ActiveSubscriptions,
 	}, nil

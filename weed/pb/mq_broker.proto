@@ -63,8 +63,8 @@ service SeaweedMessaging {
     rpc GetUnflushedMessages (GetUnflushedMessagesRequest) returns (stream GetUnflushedMessagesResponse) {
     }
 
-    // Get partition offset information from SeaweedMQ's native offset manager
-    rpc GetPartitionOffsetInfo (GetPartitionOffsetInfoRequest) returns (GetPartitionOffsetInfoResponse) {
+    // Get comprehensive partition range information (offsets, timestamps, and other fields)
+    rpc GetPartitionRangeInfo (GetPartitionRangeInfoRequest) returns (GetPartitionRangeInfoResponse) {
     }
 
     // Removed Kafka Gateway Registration - no longer needed
@@ -389,20 +389,45 @@ message LogEntry {
 }
 
 //////////////////////////////////////////////////
-// Partition offset information messages
+// Partition range information messages
 
-message GetPartitionOffsetInfoRequest {
+message GetPartitionRangeInfoRequest {
     schema_pb.Topic topic = 1;
     schema_pb.Partition partition = 2;
 }
 
-message GetPartitionOffsetInfoResponse {
+message GetPartitionRangeInfoResponse {
+    // Offset range information
+    OffsetRangeInfo offset_range = 1;
+    
+    // Timestamp range information
+    TimestampRangeInfo timestamp_range = 2;
+    
+    // Future: ID range information (for ordered IDs, UUIDs, etc.)
+    // IdRangeInfo id_range = 3;
+    
+    // Partition metadata
+    int64 record_count = 10;
+    int64 active_subscriptions = 11;
+    string error = 12;
+}
+
+message OffsetRangeInfo {
     int64 earliest_offset = 1;
     int64 latest_offset = 2;
     int64 high_water_mark = 3;
-    int64 record_count = 4;
-    int64 active_subscriptions = 5;
-    string error = 6;
 }
+
+message TimestampRangeInfo {
+    int64 earliest_timestamp_ns = 1;  // Earliest message timestamp in nanoseconds
+    int64 latest_timestamp_ns = 2;    // Latest message timestamp in nanoseconds
+}
+
+// Future extension for ID ranges
+// message IdRangeInfo {
+//     string earliest_id = 1;
+//     string latest_id = 2;
+//     string id_type = 3;  // "uuid", "sequential", "custom", etc.
+// }
 
 // Removed Kafka Gateway Registration messages - no longer needed
