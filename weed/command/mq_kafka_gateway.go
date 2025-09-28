@@ -66,9 +66,9 @@ func runMqKafkaGateway(cmd *Command, args []string) bool {
 		return false
 	}
 
+	// Schema Registry URL is optional - if not provided, schema enforcement is disabled
 	if *mqKafkaGatewayOptions.schemaRegistryURL == "" {
-		glog.Fatalf("Schema Registry URL is required (-schema-registry-url)")
-		return false
+		glog.V(1).Infof("Schema Registry URL not provided - schema enforcement disabled")
 	}
 
 	// Determine bind address - default to advertised IP if not specified
@@ -90,7 +90,7 @@ func runMqKafkaGateway(cmd *Command, args []string) bool {
 		Masters:           *mqKafkaGatewayOptions.master,
 		FilerGroup:        *mqKafkaGatewayOptions.filerGroup,
 		SchemaRegistryURL: *mqKafkaGatewayOptions.schemaRegistryURL,
-		DefaultPartitions: *mqKafkaGatewayOptions.defaultPartitions,
+		DefaultPartitions: int32(*mqKafkaGatewayOptions.defaultPartitions),
 	})
 
 	glog.Warningf("⚠️  EXPERIMENTAL FEATURE: MQ Kafka Gateway is experimental and should NOT be used in production environments. It currently supports only a minimal subset of Kafka protocol for development purposes.")

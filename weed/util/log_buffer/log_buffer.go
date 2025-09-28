@@ -21,11 +21,13 @@ type dataToFlush struct {
 	startTime time.Time
 	stopTime  time.Time
 	data      *bytes.Buffer
+	minOffset int64
+	maxOffset int64
 }
 
 type EachLogEntryFuncType func(logEntry *filer_pb.LogEntry) (isDone bool, err error)
 type EachLogEntryWithBatchIndexFuncType func(logEntry *filer_pb.LogEntry, batchIndex int64) (isDone bool, err error)
-type LogFlushFuncType func(logBuffer *LogBuffer, startTime, stopTime time.Time, buf []byte)
+type LogFlushFuncType func(logBuffer *LogBuffer, startTime, stopTime time.Time, buf []byte, minOffset, maxOffset int64)
 type LogReadFromDiskFuncType func(startPosition MessagePosition, stopTsNs int64, eachLogEntryFn EachLogEntryFuncType) (lastReadPosition MessagePosition, isDone bool, err error)
 
 type LogBuffer struct {
@@ -48,6 +50,10 @@ type LogBuffer struct {
 	isAllFlushed      bool
 	flushChan         chan *dataToFlush
 	LastTsNs          atomic.Int64
+	// Offset range tracking for Kafka integration
+	minOffset         int64
+	maxOffset         int64
+	hasOffsets        bool
 	sync.RWMutex
 }
 
@@ -109,6 +115,24 @@ func (logBuffer *LogBuffer) AddLogEntryToBuffer(logEntry *filer_pb.LogEntry) {
 
 	if logBuffer.pos == 0 {
 		logBuffer.startTime = ts
+		// Reset offset tracking for new buffer
+		logBuffer.hasOffsets = false
+	}
+
+	// Track offset ranges for Kafka integration
+	if logEntry.Offset > 0 {
+		if !logBuffer.hasOffsets {
+			logBuffer.minOffset = logEntry.Offset
+			logBuffer.maxOffset = logEntry.Offset
+			logBuffer.hasOffsets = true
+		} else {
+			if logEntry.Offset < logBuffer.minOffset {
+				logBuffer.minOffset = logEntry.Offset
+			}
+			if logEntry.Offset > logBuffer.maxOffset {
+				logBuffer.maxOffset = logEntry.Offset
+			}
+		}
 	}
 
 	if logBuffer.startTime.Add(logBuffer.flushInterval).Before(ts) || len(logBuffer.buf)-logBuffer.pos < size+4 {
@@ -220,7 +244,7 @@ func (logBuffer *LogBuffer) loopFlush() {
 	for d := range logBuffer.flushChan {
 		if d != nil {
 			// glog.V(4).Infof("%s flush [%v, %v] size %d", m.name, d.startTime, d.stopTime, len(d.data.Bytes()))
-			logBuffer.flushFn(logBuffer, d.startTime, d.stopTime, d.data.Bytes())
+			logBuffer.flushFn(logBuffer, d.startTime, d.stopTime, d.data.Bytes(), d.minOffset, d.maxOffset)
 			d.releaseMemory()
 			// local logbuffer is different from aggregate logbuffer here
 			logBuffer.lastFlushDataTime = d.stopTime
@@ -256,6 +280,8 @@ func (logBuffer *LogBuffer) copyToFlush() *dataToFlush {
 				startTime: logBuffer.startTime,
 				stopTime:  logBuffer.stopTime,
 				data:      copiedBytes(logBuffer.buf[:logBuffer.pos]),
+				minOffset: logBuffer.minOffset,
+				maxOffset: logBuffer.maxOffset,
 			}
 			// glog.V(4).Infof("%s flushing [0,%d) with %d entries [%v, %v]", m.name, m.pos, len(m.idx), m.startTime, m.stopTime)
 		} else {
@@ -268,6 +294,10 @@ func (logBuffer *LogBuffer) copyToFlush() *dataToFlush {
 		logBuffer.pos = 0
 		logBuffer.idx = logBuffer.idx[:0]
 		logBuffer.batchIndex++
+		// Reset offset tracking
+		logBuffer.hasOffsets = false
+		logBuffer.minOffset = 0
+		logBuffer.maxOffset = 0
 		return d
 	}
 	return nil

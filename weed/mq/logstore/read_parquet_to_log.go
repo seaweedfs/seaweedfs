@@ -10,6 +10,7 @@ import (
 
 	"github.com/parquet-go/parquet-go"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/mq"
 	"github.com/seaweedfs/seaweedfs/weed/mq/schema"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -186,14 +187,14 @@ func GenParquetReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p topic
 				}
 
 				// read minTs from the parquet file
-				minTsBytes := entry.Extended["min"]
+				minTsBytes := entry.Extended[mq.ExtendedAttrTimestampMin]
 				if len(minTsBytes) != 8 {
 					return nil
 				}
 				minTsNs := int64(binary.BigEndian.Uint64(minTsBytes))
 
 				// read max ts
-				maxTsBytes := entry.Extended["max"]
+				maxTsBytes := entry.Extended[mq.ExtendedAttrTimestampMax]
 				if len(maxTsBytes) != 8 {
 					return nil
 				}

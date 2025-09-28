@@ -91,7 +91,7 @@ func (e *SQLEngine) getSystemColumnGlobalMin(columnName string, allFileStats map
 	switch lowerName {
 	case SW_COLUMN_NAME_TIMESTAMP:
 		// For timestamps, find the earliest timestamp across all files
-		// This should match what's in the Extended["min"] metadata
+		// This should match what's in the Extended[mq.ExtendedAttrTimestampMin] metadata
 		var minTimestamp *int64
 		for _, fileStats := range allFileStats {
 			for _, fileStat := range fileStats {
@@ -128,7 +128,7 @@ func (e *SQLEngine) getSystemColumnGlobalMax(columnName string, allFileStats map
 	switch lowerName {
 	case SW_COLUMN_NAME_TIMESTAMP:
 		// For timestamps, find the latest timestamp across all files
-		// This should match what's in the Extended["max"] metadata
+		// This should match what's in the Extended[mq.ExtendedAttrTimestampMax] metadata
 		var maxTimestamp *int64
 		for _, fileStats := range allFileStats {
 			for _, fileStat := range fileStats {

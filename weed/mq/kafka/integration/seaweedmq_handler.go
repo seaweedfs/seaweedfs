@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/filer_client"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/mq"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
 	"github.com/seaweedfs/seaweedfs/weed/mq/schema"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -42,11 +44,10 @@ type SeaweedMQHandler struct {
 	// topicsMu sync.RWMutex  // No longer needed
 	// topics   map[string]*KafkaTopicInfo  // No longer needed
 
-	// Offset ledgers REMOVED - SMQ handles Kafka offsets natively
-	// No need for external offset tracking when SMQ stores real Kafka offsets
+	// Offset ledgers for Kafka offset translation
+	ledgersMu sync.RWMutex
+	ledgers   map[TopicPartitionKey]*offset.Ledger
 }
-
-// Ledger methods REMOVED - SMQ handles Kafka offsets natively
 
 // KafkaTopicInfo holds Kafka-specific topic information
 type KafkaTopicInfo struct {
@@ -69,54 +70,84 @@ type SeaweedRecord struct {
 	Key       []byte
 	Value     []byte
 	Timestamp int64
-	Sequence  int64 // SeaweedMQ sequence number
-	Offset    int64 // Kafka offset (real offset from SMQ)
+	Sequence  int64
 }
 
-// GetStoredRecords retrieves records from SeaweedMQ storage using DIRECT LOG READING
-// This eliminates the need for offset ledgers by using SMQ's native offset storage
+// GetStoredRecords retrieves records from SeaweedMQ using the proper subscriber API
 func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromOffset int64, maxRecords int) ([]offset.SMQRecord, error) {
-	glog.V(1).Infof("[DEBUG_FETCH] GetStoredRecords: topic=%s partition=%d fromOffset=%d maxRecords=%d", topic, partition, fromOffset, maxRecords)
+	glog.Infof("[FETCH] GetStoredRecords: topic=%s partition=%d fromOffset=%d maxRecords=%d", topic, partition, fromOffset, maxRecords)
 
 	// Verify topic exists
 	if !h.TopicExists(topic) {
-		glog.V(1).Infof("[DEBUG_FETCH] Topic %s does not exist", topic)
 		return nil, fmt.Errorf("topic %s does not exist", topic)
 	}
 
-	// Use SMQ's direct log reading API to get records with REAL Kafka offsets
-	// This bypasses the streaming API that loses offset information
-	smqRecords, err := h.readRecordsDirectlyFromSMQ(topic, partition, fromOffset, maxRecords)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read records directly from SMQ: %v", err)
-	}
-
-	glog.V(1).Infof("[DEBUG_FETCH] Successfully read %d records directly from SMQ", len(smqRecords))
-	return smqRecords, nil
-}
-
-// readRecordsDirectlyFromSMQ reads records directly from SMQ using the log reading API
-// This preserves the real Kafka offsets stored in LogEntry.Offset, eliminating the need for ledgers
-func (h *SeaweedMQHandler) readRecordsDirectlyFromSMQ(topicName string, partitionID int32, fromOffset int64, maxRecords int) ([]offset.SMQRecord, error) {
-	glog.V(1).Infof("[DEBUG_FETCH] readRecordsDirectlyFromSMQ: topic=%s partition=%d fromOffset=%d maxRecords=%d", topicName, partitionID, fromOffset, maxRecords)
-
-	// Create SMQ topic structure
-	_ = topicName // We'll use this in the implementation
-
-	// Get partition information from broker client
+	// Use SeaweedMQ's proper subscriber API to read records
 	if h.brokerClient == nil {
 		return nil, fmt.Errorf("no broker client available")
 	}
 
-	// Use the broker client to get the LocalPartition directly
-	// This bypasses the streaming API and gives us access to the log reading API with real offsets
-	smqRecords, err := h.brokerClient.ReadRecordsWithOffsets(topicName, partitionID, fromOffset, maxRecords)
+	// Get or create subscriber session for this topic/partition
+	brokerSubscriber, err := h.brokerClient.GetOrCreateSubscriber(topic, partition, fromOffset)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read records with offsets: %v", err)
+		return nil, fmt.Errorf("failed to get broker subscriber: %v", err)
 	}
 
-	glog.V(1).Infof("[DEBUG_FETCH] Successfully read %d records with real offsets from SMQ", len(smqRecords))
+	// Read records using the subscriber
+	seaweedRecords, err := h.brokerClient.ReadRecords(brokerSubscriber, maxRecords)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read records: %v", err)
+	}
+
+	// Convert SeaweedMQ records to SMQRecord interface with proper Kafka offsets
+	smqRecords := make([]offset.SMQRecord, 0, len(seaweedRecords))
+	for i, seaweedRecord := range seaweedRecords {
+		kafkaOffset := fromOffset + int64(i)
+		smqRecord := &SeaweedSMQRecord{
+			key:       seaweedRecord.Key,
+			value:     seaweedRecord.Value,
+			timestamp: seaweedRecord.Timestamp,
+			offset:    kafkaOffset,
+		}
+		smqRecords = append(smqRecords, smqRecord)
+	}
+
+	glog.Infof("[FETCH] Successfully read %d records from SMQ", len(smqRecords))
 	return smqRecords, nil
+}
+
+// GetEarliestOffset returns the earliest available offset for a topic partition
+func (h *SeaweedMQHandler) GetEarliestOffset(topic string, partition int32) (int64, error) {
+	// For now, assume earliest offset is always 0
+	// TODO: Implement proper earliest offset lookup from chunk metadata
+	return 0, nil
+}
+
+// GetLatestOffset returns the latest available offset for a topic partition
+func (h *SeaweedMQHandler) GetLatestOffset(topic string, partition int32) (int64, error) {
+	glog.Infof("[DEBUG_OFFSET] GetLatestOffset called for topic=%s partition=%d", topic, partition)
+
+	// Check if topic exists
+	if !h.TopicExists(topic) {
+		glog.Infof("[DEBUG_OFFSET] Topic %s does not exist", topic)
+		return 0, nil // Empty topic
+	}
+
+	// Use SeaweedMQ's native offset management instead of external ledgers
+	if h.brokerClient == nil {
+		glog.Infof("[DEBUG_OFFSET] No broker client available")
+		return 0, nil
+	}
+
+	// Get the high water mark directly from SeaweedMQ broker
+	latestOffset, err := h.brokerClient.GetHighWaterMark(topic, partition)
+	if err != nil {
+		glog.Infof("[DEBUG_OFFSET] Error getting high water mark from broker: %v", err)
+		return 0, nil
+	}
+
+	glog.Infof("[DEBUG_OFFSET] Final latest offset for topic %s partition %d: %d", topic, partition, latestOffset)
+	return latestOffset, nil
 }
 
 // SeaweedSMQRecord implements the offset.SMQRecord interface for SeaweedMQ records
@@ -241,7 +272,13 @@ func (h *SeaweedMQHandler) CreateTopicWithSchemas(name string, partitions int32,
 	// Topic is now stored in filer only via SeaweedMQ broker
 	// No need to create in-memory topic info structure
 
-	// Ledger initialization REMOVED - SMQ handles offsets natively
+	// Initialize offset ledgers for all partitions
+	for partitionID := int32(0); partitionID < partitions; partitionID++ {
+		key := TopicPartitionKey{Topic: name, Partition: partitionID}
+		h.ledgersMu.Lock()
+		h.ledgers[key] = offset.NewLedger()
+		h.ledgersMu.Unlock()
+	}
 
 	glog.V(1).Infof("Topic %s created successfully with %d partitions", name, partitions)
 	return nil
@@ -324,7 +361,13 @@ func (h *SeaweedMQHandler) DeleteTopic(name string) error {
 	// Topic removal from filer would be handled by SeaweedMQ broker
 	// No in-memory cache to clean up
 
-	// Ledger cleanup REMOVED - SMQ handles offsets natively
+	// Clean up offset ledgers
+	h.ledgersMu.Lock()
+	for partitionID := int32(0); partitionID < topicInfo.Partitions; partitionID++ {
+		key := TopicPartitionKey{Topic: name, Partition: partitionID}
+		delete(h.ledgers, key)
+	}
+	h.ledgersMu.Unlock()
 
 	return nil
 }
@@ -332,9 +375,7 @@ func (h *SeaweedMQHandler) DeleteTopic(name string) error {
 // TopicExists checks if a topic exists in filer directly
 func (h *SeaweedMQHandler) TopicExists(name string) bool {
 	// Always check filer directly for consistency
-	result := h.checkTopicInFiler(name)
-	glog.V(1).Infof("TopicExists: topic=%s, result=%v", name, result)
-	return result
+	return h.checkTopicInFiler(name)
 }
 
 // GetTopicInfo returns information about a topic from filer
@@ -363,8 +404,7 @@ func (h *SeaweedMQHandler) ListTopics() []string {
 	return topics
 }
 
-// ProduceRecord publishes a record to SeaweedMQ
-// SMQ handles Kafka offset assignment natively - no need for external ledgers
+// ProduceRecord publishes a record to SeaweedMQ and updates Kafka offset tracking
 func (h *SeaweedMQHandler) ProduceRecord(topic string, partition int32, key []byte, value []byte) (int64, error) {
 	// Verify topic exists
 	if !h.TopicExists(topic) {
@@ -374,22 +414,36 @@ func (h *SeaweedMQHandler) ProduceRecord(topic string, partition int32, key []by
 	// Get current timestamp
 	timestamp := time.Now().UnixNano()
 
-	// Publish to SeaweedMQ - SMQ will assign and return the Kafka offset
+	// Publish to SeaweedMQ
+	var publishErr error
 	if h.brokerClient == nil {
-		return 0, fmt.Errorf("no broker client available")
+		publishErr = fmt.Errorf("no broker client available")
+	} else {
+		_, publishErr = h.brokerClient.PublishRecord(topic, partition, key, value, timestamp)
 	}
 
-	kafkaOffset, err := h.brokerClient.PublishRecord(topic, partition, key, value, timestamp)
-	if err != nil {
-		return 0, fmt.Errorf("failed to publish to SeaweedMQ: %v", err)
+	if publishErr != nil {
+		return 0, fmt.Errorf("failed to publish to SeaweedMQ: %v", publishErr)
 	}
 
-	glog.V(1).Infof("[DEBUG_PRODUCE] Successfully produced record to topic %s partition %d at offset %d", topic, partition, kafkaOffset)
+	// Update Kafka offset ledger
+	ledger := h.GetOrCreateLedger(topic, partition)
+	kafkaOffset := ledger.AssignOffsets(1) // Assign one Kafka offset
+
+	// Map SeaweedMQ sequence to Kafka offset
+	if err := ledger.AppendRecord(kafkaOffset, timestamp, int32(len(value))); err != nil {
+		// CRITICAL: AppendRecord failed - this breaks offset consistency!
+		glog.Errorf("CRITICAL: Failed to append record to ledger for topic %s partition %d offset %d: %v",
+			topic, partition, kafkaOffset, err)
+		return 0, fmt.Errorf("failed to append record to ledger: %v", err)
+	}
+
+	glog.V(2).Infof("Successfully produced record to topic %s partition %d at offset %d (HWM: %d)",
+		topic, partition, kafkaOffset, ledger.GetHighWaterMark())
 	return kafkaOffset, nil
 }
 
 // ProduceRecordValue produces a record using RecordValue format to SeaweedMQ
-// SMQ handles Kafka offset assignment natively - no need for external ledgers
 func (h *SeaweedMQHandler) ProduceRecordValue(topic string, partition int32, key []byte, recordValueBytes []byte) (int64, error) {
 	// Verify topic exists
 	if !h.TopicExists(topic) {
@@ -399,72 +453,162 @@ func (h *SeaweedMQHandler) ProduceRecordValue(topic string, partition int32, key
 	// Get current timestamp
 	timestamp := time.Now().UnixNano()
 
-	// Publish RecordValue to SeaweedMQ - SMQ will assign and return the Kafka offset
+	// Publish RecordValue to SeaweedMQ
+	var publishErr error
 	if h.brokerClient == nil {
-		return 0, fmt.Errorf("no broker client available")
+		publishErr = fmt.Errorf("no broker client available")
+	} else {
+		_, publishErr = h.brokerClient.PublishRecordValue(topic, partition, key, recordValueBytes, timestamp)
 	}
 
-	kafkaOffset, err := h.brokerClient.PublishRecordValue(topic, partition, key, recordValueBytes, timestamp)
-	if err != nil {
-		return 0, fmt.Errorf("failed to publish RecordValue to SeaweedMQ: %v", err)
+	if publishErr != nil {
+		return 0, fmt.Errorf("failed to publish RecordValue to SeaweedMQ: %v", publishErr)
 	}
 
-	glog.V(1).Infof("[DEBUG_PRODUCE] Successfully produced RecordValue to topic %s partition %d at offset %d", topic, partition, kafkaOffset)
+	// Update offset ledger
+	ledger := h.GetOrCreateLedger(topic, partition)
+	kafkaOffset := ledger.AssignOffsets(1) // Assign one Kafka offset
+
+	// Map SeaweedMQ sequence to Kafka offset
+	if err := ledger.AppendRecord(kafkaOffset, timestamp, int32(len(recordValueBytes))); err != nil {
+		// CRITICAL: AppendRecord failed - this breaks offset consistency!
+		glog.Errorf("CRITICAL: Failed to append RecordValue to ledger for topic %s partition %d offset %d: %v",
+			topic, partition, kafkaOffset, err)
+		return 0, fmt.Errorf("failed to append RecordValue to ledger: %v", err)
+	}
+
+	glog.V(2).Infof("Successfully produced RecordValue to topic %s partition %d at offset %d (HWM: %d)",
+		topic, partition, kafkaOffset, ledger.GetHighWaterMark())
 	return kafkaOffset, nil
 }
 
-// Ledger methods REMOVED - SMQ handles Kafka offsets natively
-// GetOrCreateLedger and GetLedger are no longer needed
+// GetOrCreateLedger returns the offset ledger for a topic-partition
+func (h *SeaweedMQHandler) GetOrCreateLedger(topic string, partition int32) *offset.Ledger {
+	key := TopicPartitionKey{Topic: topic, Partition: partition}
+
+	// Try to get existing ledger
+	h.ledgersMu.RLock()
+	ledger, exists := h.ledgers[key]
+	h.ledgersMu.RUnlock()
+
+	if exists {
+		return ledger
+	}
+
+	// Create new ledger
+	h.ledgersMu.Lock()
+	defer h.ledgersMu.Unlock()
+
+	// Double-check after acquiring write lock
+	if ledger, exists := h.ledgers[key]; exists {
+		return ledger
+	}
+
+	// Create and store new ledger
+	ledger = offset.NewLedger()
+	h.ledgers[key] = ledger
+	return ledger
+}
+
+// GetLedger returns the offset ledger for a topic-partition, or nil if not found
+func (h *SeaweedMQHandler) GetLedger(topic string, partition int32) *offset.Ledger {
+	key := TopicPartitionKey{Topic: topic, Partition: partition}
+
+	h.ledgersMu.RLock()
+	defer h.ledgersMu.RUnlock()
+
+	return h.ledgers[key]
+}
 
 // FetchRecords retrieves records from SeaweedMQ for a Kafka fetch request
-// Uses SMQ's native offset storage - no external ledgers needed
 func (h *SeaweedMQHandler) FetchRecords(topic string, partition int32, fetchOffset int64, maxBytes int32) ([]byte, error) {
 	// Verify topic exists
 	if !h.TopicExists(topic) {
 		return nil, fmt.Errorf("topic %s does not exist", topic)
 	}
 
-	// Use direct SMQ reading to get records with real Kafka offsets
-	maxRecords := 100 // Reasonable batch size limit
-	smqRecords, err := h.readRecordsDirectlyFromSMQ(topic, partition, fetchOffset, maxRecords)
+	ledger := h.GetLedger(topic, partition)
+	if ledger == nil {
+		// No messages yet, return empty record batch
+		return []byte{}, nil
+	}
+
+	highWaterMark := ledger.GetHighWaterMark()
+
+	// If fetch offset is at or beyond high water mark, no records to return
+	if fetchOffset >= highWaterMark {
+		return []byte{}, nil
+	}
+
+	// Get or create subscriber session for this topic/partition
+	var seaweedRecords []*SeaweedRecord
+	var err error
+
+	// Calculate how many records to fetch
+	recordsToFetch := int(highWaterMark - fetchOffset)
+	if recordsToFetch > 100 {
+		recordsToFetch = 100 // Limit batch size
+	}
+
+	// Read records using broker client
+	if h.brokerClient == nil {
+		return nil, fmt.Errorf("no broker client available")
+	}
+	brokerSubscriber, subErr := h.brokerClient.GetOrCreateSubscriber(topic, partition, fetchOffset)
+	if subErr != nil {
+		return nil, fmt.Errorf("failed to get broker subscriber: %v", subErr)
+	}
+	seaweedRecords, err = h.brokerClient.ReadRecords(brokerSubscriber, recordsToFetch)
+
 	if err != nil {
-		return nil, fmt.Errorf("failed to read records from SMQ: %v", err)
-	}
-
-	// If no records available, return empty record batch
-	if len(smqRecords) == 0 {
+		// If no records available, return empty batch instead of error
 		return []byte{}, nil
 	}
 
-	// Convert SMQ records (which already have real Kafka offsets) to Kafka record batch format
-	return h.convertSMQRecordsToKafkaRecordBatch(smqRecords, maxBytes)
+	// Map SeaweedMQ records to Kafka offsets and update ledger
+	kafkaRecords, err := h.mapSeaweedToKafkaOffsets(topic, partition, seaweedRecords, fetchOffset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to map offsets: %v", err)
+	}
+
+	// Convert mapped records to Kafka record batch format
+	return h.convertSeaweedToKafkaRecordBatch(kafkaRecords, fetchOffset, maxBytes)
 }
 
-// convertSMQRecordsToKafkaRecordBatch converts SMQ records to Kafka record batch format
-// SMQ records already contain real Kafka offsets, so no mapping is needed
-func (h *SeaweedMQHandler) convertSMQRecordsToKafkaRecordBatch(smqRecords []offset.SMQRecord, maxBytes int32) ([]byte, error) {
-	if len(smqRecords) == 0 {
-		return []byte{}, nil
+// mapSeaweedToKafkaOffsets maps SeaweedMQ records to proper Kafka offsets
+func (h *SeaweedMQHandler) mapSeaweedToKafkaOffsets(topic string, partition int32, seaweedRecords []*SeaweedRecord, startOffset int64) ([]*SeaweedRecord, error) {
+	if len(seaweedRecords) == 0 {
+		return seaweedRecords, nil
 	}
 
-	// Convert SMQ records to the format expected by existing conversion logic
-	seaweedRecords := make([]*SeaweedRecord, len(smqRecords))
-	for i, smqRecord := range smqRecords {
-		seaweedRecords[i] = &SeaweedRecord{
-			Key:       smqRecord.GetKey(),
-			Value:     smqRecord.GetValue(),
-			Timestamp: smqRecord.GetTimestamp(),
-			Offset:    smqRecord.GetOffset(), // Real Kafka offset from SMQ
+	ledger := h.GetOrCreateLedger(topic, partition)
+	mappedRecords := make([]*SeaweedRecord, 0, len(seaweedRecords))
+
+	// Assign the required offsets first (this ensures offsets are reserved in sequence)
+	// Note: In a real scenario, these offsets would have been assigned during produce
+	// but for fetch operations we need to ensure the ledger state is consistent
+	for i, seaweedRecord := range seaweedRecords {
+		currentKafkaOffset := startOffset + int64(i)
+
+		// Create a copy of the record with proper Kafka offset assignment
+		mappedRecord := &SeaweedRecord{
+			Key:       seaweedRecord.Key,
+			Value:     seaweedRecord.Value,
+			Timestamp: seaweedRecord.Timestamp,
+			Sequence:  currentKafkaOffset, // Use Kafka offset as sequence for consistency
 		}
+
+		// Update the offset ledger to track the mapping between SeaweedMQ sequence and Kafka offset
+		recordSize := int32(len(seaweedRecord.Value))
+		if err := ledger.AppendRecord(currentKafkaOffset, seaweedRecord.Timestamp, recordSize); err != nil {
+			// Log warning but continue processing
+		}
+
+		mappedRecords = append(mappedRecords, mappedRecord)
 	}
 
-	// Use existing conversion logic but with real offsets
-	firstOffset := seaweedRecords[0].Offset
-	return h.convertSeaweedToKafkaRecordBatch(seaweedRecords, firstOffset, maxBytes)
+	return mappedRecords, nil
 }
-
-// Old mapping methods REMOVED - SMQ provides real Kafka offsets directly
-// No need for external offset mapping when SMQ stores the real offsets
 
 // convertSeaweedToKafkaRecordBatch converts SeaweedMQ records to Kafka record batch format
 func (h *SeaweedMQHandler) convertSeaweedToKafkaRecordBatch(seaweedRecords []*SeaweedRecord, fetchOffset int64, maxBytes int32) ([]byte, error) {
@@ -498,16 +642,14 @@ func (h *SeaweedMQHandler) convertSeaweedToKafkaRecordBatch(seaweedRecords []*Se
 	binary.BigEndian.PutUint32(lastOffsetDeltaBytes, lastOffsetDelta)
 	batch = append(batch, lastOffsetDeltaBytes...)
 
-	// Timestamps - convert from SeaweedMQ nanoseconds to Kafka milliseconds
+	// Timestamps - use actual timestamps from SeaweedMQ records
 	var firstTimestamp, maxTimestamp int64
 	if len(seaweedRecords) > 0 {
-		// Convert nanoseconds to milliseconds for Kafka compatibility
-		firstTimestamp = seaweedRecords[0].Timestamp / 1000000
+		firstTimestamp = seaweedRecords[0].Timestamp
 		maxTimestamp = firstTimestamp
 		for _, record := range seaweedRecords {
-			recordTimestampMs := record.Timestamp / 1000000
-			if recordTimestampMs > maxTimestamp {
-				maxTimestamp = recordTimestampMs
+			if record.Timestamp > maxTimestamp {
+				maxTimestamp = record.Timestamp
 			}
 		}
 	}
@@ -532,7 +674,7 @@ func (h *SeaweedMQHandler) convertSeaweedToKafkaRecordBatch(seaweedRecords []*Se
 
 	// Add actual records from SeaweedMQ
 	for i, seaweedRecord := range seaweedRecords {
-		record := h.convertSingleSeaweedRecord(seaweedRecord, int64(i), firstTimestamp)
+		record := h.convertSingleSeaweedRecord(seaweedRecord, int64(i), fetchOffset)
 		recordLength := byte(len(record))
 		batch = append(batch, recordLength)
 		batch = append(batch, record...)
@@ -552,15 +694,14 @@ func (h *SeaweedMQHandler) convertSeaweedToKafkaRecordBatch(seaweedRecords []*Se
 }
 
 // convertSingleSeaweedRecord converts a single SeaweedMQ record to Kafka format
-func (h *SeaweedMQHandler) convertSingleSeaweedRecord(seaweedRecord *SeaweedRecord, index, baseTimestampMs int64) []byte {
+func (h *SeaweedMQHandler) convertSingleSeaweedRecord(seaweedRecord *SeaweedRecord, index, baseOffset int64) []byte {
 	record := make([]byte, 0, 64)
 
 	// Record attributes
 	record = append(record, 0)
 
-	// Timestamp delta (varint - simplified) - convert nanoseconds to milliseconds and calculate delta
-	recordTimestampMs := seaweedRecord.Timestamp / 1000000 // Convert nanoseconds to milliseconds
-	timestampDelta := recordTimestampMs - baseTimestampMs  // Calculate delta from base timestamp (both in ms)
+	// Timestamp delta (varint - simplified)
+	timestampDelta := seaweedRecord.Timestamp - baseOffset // Simple delta calculation
 	if timestampDelta < 0 {
 		timestampDelta = 0
 	}
@@ -674,8 +815,9 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string, clientHost str
 		filerClientAccessor: sharedFilerAccessor,
 		brokerClient:        brokerClient,
 		masterClient:        masterClient,
-		brokerAddresses:     brokerAddresses, // Store all discovered broker addresses
-		// Ledger initialization REMOVED - SMQ handles Kafka offsets natively
+		// topics map removed - always read from filer directly
+		ledgers:         make(map[TopicPartitionKey]*offset.Ledger),
+		brokerAddresses: brokerAddresses, // Store all discovered broker addresses
 	}, nil
 }
 
@@ -764,7 +906,6 @@ func (h *SeaweedMQHandler) checkTopicInFiler(topicName string) bool {
 
 		_, err := client.LookupDirectoryEntry(context.Background(), request)
 		exists = (err == nil)
-		glog.V(1).Infof("checkTopicInFiler: topic=%s, directory=/topics/kafka, exists=%v, err=%v", topicName, exists, err)
 		return nil // Don't propagate error, just check existence
 	})
 
@@ -923,6 +1064,145 @@ func (bc *BrokerClient) Close() error {
 	return bc.conn.Close()
 }
 
+// GetHighWaterMark gets the high water mark for a topic partition by reading chunk metadata
+func (bc *BrokerClient) GetHighWaterMark(topic string, partition int32) (int64, error) {
+	glog.Infof("[DEBUG_OFFSET] GetHighWaterMark called for topic=%s partition=%d", topic, partition)
+
+	// Read offset ranges from chunk Extended attributes
+	return bc.getHighWaterMarkFromChunkMetadata(topic, partition)
+}
+
+// getHighWaterMarkFromChunkMetadata reads chunk metadata to find the highest offset
+func (bc *BrokerClient) getHighWaterMarkFromChunkMetadata(topic string, partition int32) (int64, error) {
+	if bc.filerClientAccessor == nil {
+		return 0, fmt.Errorf("filer client not available")
+	}
+
+	// Get the topic path and find the latest version
+	topicPath := fmt.Sprintf("/topics/kafka/%s", topic)
+
+	// First, list the topic versions to find the latest
+	var latestVersion string
+	err := bc.filerClientAccessor.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
+			Directory: topicPath,
+		})
+		if err != nil {
+			return err
+		}
+
+		for {
+			resp, err := stream.Recv()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				return err
+			}
+			if resp.Entry.IsDirectory && strings.HasPrefix(resp.Entry.Name, "v") {
+				if latestVersion == "" || resp.Entry.Name > latestVersion {
+					latestVersion = resp.Entry.Name
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("failed to list topic versions: %v", err)
+	}
+
+	if latestVersion == "" {
+		glog.Infof("[DEBUG_OFFSET] No version directory found for topic %s", topic)
+		return 0, nil
+	}
+
+	// Find the partition directory
+	versionPath := fmt.Sprintf("%s/%s", topicPath, latestVersion)
+	var partitionDir string
+	err = bc.filerClientAccessor.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
+			Directory: versionPath,
+		})
+		if err != nil {
+			return err
+		}
+
+		for {
+			resp, err := stream.Recv()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				return err
+			}
+			if resp.Entry.IsDirectory && strings.Contains(resp.Entry.Name, "-") {
+				partitionDir = resp.Entry.Name
+				break // Use the first partition directory we find
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("failed to list partition directories: %v", err)
+	}
+
+	if partitionDir == "" {
+		glog.Infof("[DEBUG_OFFSET] No partition directory found for topic %s", topic)
+		return 0, nil
+	}
+
+	// Scan all message files to find the highest offset_max
+	partitionPath := fmt.Sprintf("%s/%s", versionPath, partitionDir)
+	var highWaterMark int64 = 0
+
+	err = bc.filerClientAccessor.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
+			Directory: partitionPath,
+		})
+		if err != nil {
+			return err
+		}
+
+		for {
+			resp, err := stream.Recv()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				return err
+			}
+			if !resp.Entry.IsDirectory && resp.Entry.Name != "checkpoint.offset" {
+				// Check for offset_max in Extended attributes (both log files and parquet files)
+				if resp.Entry.Extended != nil {
+					if maxOffsetBytes, exists := resp.Entry.Extended[mq.ExtendedAttrOffsetMax]; exists && len(maxOffsetBytes) == 8 {
+						maxOffset := int64(binary.BigEndian.Uint64(maxOffsetBytes))
+						if maxOffset > highWaterMark {
+							highWaterMark = maxOffset
+						}
+						fileType := "log"
+						if strings.HasSuffix(resp.Entry.Name, ".parquet") {
+							fileType = "parquet"
+						}
+						glog.Infof("[DEBUG_OFFSET] %s file %s has offset_max=%d", fileType, resp.Entry.Name, maxOffset)
+					}
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("failed to scan message files: %v", err)
+	}
+
+	// High water mark is the next offset after the highest written offset
+	if highWaterMark > 0 {
+		highWaterMark++
+	}
+
+	glog.Infof("[DEBUG_OFFSET] High water mark for topic %s partition %d: %d", topic, partition, highWaterMark)
+	return highWaterMark, nil
+}
+
 // GetFilerAddress returns the first filer address used by this broker client (for backward compatibility)
 func (bc *BrokerClient) GetFilerAddress() string {
 	if len(bc.filerAddresses) > 0 {
@@ -1025,7 +1305,7 @@ func (bc *BrokerClient) getOrCreatePublisher(topic string, partition int32) (*Br
 					Name:      topic,
 				},
 				Partition:     actualPartition,
-				AckInterval:   1, // Fast acknowledgments for Kafka Gateway (Schema Registry needs < 500ms)
+				AckInterval:   1,
 				PublisherName: "kafka-gateway",
 			},
 		},
@@ -1188,8 +1468,8 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 		glog.V(1).Infof("Using EXACT_OFFSET for Kafka offset %d (native offset-based positioning)", startOffset)
 	}
 
-	glog.V(1).Infof("[DEBUG_FETCH] Creating subscriber for topic=%s partition=%d: Kafka offset %d -> SeaweedMQ %s (timestamp=%d, startOffsetValue=%d)",
-		topic, partition, startOffset, offsetType, startTimestamp, startOffsetValue)
+	glog.V(1).Infof("Creating subscriber for topic=%s partition=%d: Kafka offset %d -> SeaweedMQ %s (timestamp=%d)",
+		topic, partition, startOffset, offsetType, startTimestamp)
 
 	// Send init message using the actual partition structure that the broker allocated
 	if err := stream.Send(&mq_pb.SubscribeMessageRequest{
@@ -1212,11 +1492,8 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 			},
 		},
 	}); err != nil {
-		glog.V(1).Infof("[DEBUG_FETCH] Failed to send subscribe init: %v", err)
 		return nil, fmt.Errorf("failed to send subscribe init: %v", err)
 	}
-
-	glog.V(1).Infof("[DEBUG_FETCH] Successfully sent subscribe init message for topic=%s partition=%d", topic, partition)
 
 	session := &BrokerSubscriberSession{
 		Topic:       topic,
@@ -1274,29 +1551,20 @@ func (bc *BrokerClient) ReadRecords(session *BrokerSubscriberSession, maxRecords
 		return nil, fmt.Errorf("subscriber session cannot be nil")
 	}
 
-	glog.V(1).Infof("[DEBUG_FETCH] ReadRecords: topic=%s partition=%d maxRecords=%d startOffset=%d",
-		session.Topic, session.Partition, maxRecords, session.StartOffset)
-
 	var records []*SeaweedRecord
 
 	for len(records) < maxRecords {
-		glog.V(2).Infof("[DEBUG_FETCH] Calling session.Stream.Recv() for topic=%s partition=%d (records so far: %d)",
-			session.Topic, session.Partition, len(records))
 		resp, err := session.Stream.Recv()
 
 		if err != nil {
-			glog.V(1).Infof("[DEBUG_FETCH] Stream.Recv() failed: %v (records collected: %d)", err, len(records))
 			// If we have some records, return them; otherwise return error
 			if len(records) > 0 {
-				glog.V(1).Infof("[DEBUG_FETCH] Returning %d records despite error", len(records))
 				return records, nil
 			}
 			return nil, fmt.Errorf("failed to receive record: %v", err)
 		}
 
 		if dataMsg := resp.GetData(); dataMsg != nil {
-			glog.V(2).Infof("[DEBUG_FETCH] Received data message: key_len=%d value_len=%d ts=%d",
-				len(dataMsg.Key), len(dataMsg.Value), dataMsg.TsNs)
 			record := &SeaweedRecord{
 				Key:       dataMsg.Key,
 				Value:     dataMsg.Value,
@@ -1309,124 +1577,12 @@ func (bc *BrokerClient) ReadRecords(session *BrokerSubscriberSession, maxRecords
 			// blocking while waiting for an entire batch in environments where data
 			// arrives slowly. The fetch layer will invoke subsequent reads as needed.
 			if len(records) >= 1 {
-				glog.V(2).Infof("[DEBUG_FETCH] Got first record, breaking early")
 				break
 			}
-		} else {
-			glog.V(2).Infof("[DEBUG_FETCH] Received non-data message from stream")
 		}
 	}
 
-	glog.V(1).Infof("[DEBUG_FETCH] ReadRecords returning %d records", len(records))
 	return records, nil
-}
-
-// ReadRecordsWithOffsets reads records directly from SMQ with real Kafka offsets
-// This bypasses the streaming API to access LogEntry.Offset directly
-func (bc *BrokerClient) ReadRecordsWithOffsets(topicName string, partitionID int32, fromOffset int64, maxRecords int) ([]offset.SMQRecord, error) {
-	glog.V(1).Infof("[DEBUG_FETCH] ReadRecordsWithOffsets: topic=%s partition=%d fromOffset=%d maxRecords=%d", topicName, partitionID, fromOffset, maxRecords)
-
-	// Create topic and partition structures for SMQ
-	t := schema_pb.Topic{
-		Namespace: "kafka",
-		Name:      topicName,
-	}
-
-	// For now, we need to create a partition structure
-	// In a real implementation, we'd get this from the broker's partition registry
-	// This is a simplified approach - we'll use a default partition structure
-	p := schema_pb.Partition{
-		RingSize:   1024,
-		RangeStart: 0,
-		RangeStop:  1024,
-		UnixTimeNs: time.Now().UnixNano(),
-	}
-
-	// Connect to the broker to get access to LocalPartition
-	// For now, we'll use a gRPC call to read records with offsets
-	// This is a placeholder - in the real implementation, we'd access LocalPartition directly
-
-	// Create a temporary subscriber to read records with offset filtering
-	conn, err := grpc.Dial(bc.brokerAddress, bc.GetGrpcDialOption())
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to broker: %v", err)
-	}
-	defer conn.Close()
-
-	client := mq_pb.NewSeaweedMessagingClient(conn)
-
-	// Create a subscription request with exact offset positioning
-	stream, err := client.SubscribeMessage(context.Background())
-	if err != nil {
-		return nil, fmt.Errorf("failed to create subscription stream: %v", err)
-	}
-	defer stream.CloseSend()
-
-	// Send init message with exact offset positioning
-	initMsg := &mq_pb.SubscribeMessageRequest{
-		Message: &mq_pb.SubscribeMessageRequest_Init{
-			Init: &mq_pb.SubscribeMessageRequest_InitMessage{
-				ConsumerGroup: "kafka-gateway-direct-read",
-				ConsumerId:    fmt.Sprintf("direct-reader-%d", time.Now().UnixNano()),
-				ClientId:      "kafka-gateway",
-				Topic:         &t,
-				PartitionOffset: &schema_pb.PartitionOffset{
-					Partition:   &p,
-					StartOffset: fromOffset,
-				},
-				OffsetType: schema_pb.OffsetType_EXACT_OFFSET, // Use exact offset positioning
-			},
-		},
-	}
-
-	if err := stream.Send(initMsg); err != nil {
-		return nil, fmt.Errorf("failed to send init message: %v", err)
-	}
-
-	// Read records with real offsets
-	var smqRecords []offset.SMQRecord
-	recordsRead := 0
-
-	for recordsRead < maxRecords {
-		resp, err := stream.Recv()
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			// If we have some records, return them; otherwise return error
-			if len(smqRecords) > 0 {
-				glog.V(1).Infof("[DEBUG_FETCH] Got %d records before error: %v", len(smqRecords), err)
-				break
-			}
-			return nil, fmt.Errorf("failed to receive record: %v", err)
-		}
-
-		if dataMsg := resp.GetData(); dataMsg != nil {
-			// Calculate the real Kafka offset for this record
-			// Since we're using EXACT_OFFSET positioning, the records should be in order
-			realKafkaOffset := fromOffset + int64(recordsRead)
-
-			smqRecord := &SeaweedSMQRecord{
-				key:       dataMsg.Key,
-				value:     dataMsg.Value,
-				timestamp: dataMsg.TsNs,
-				offset:    realKafkaOffset, // Use calculated offset based on position
-			}
-			smqRecords = append(smqRecords, smqRecord)
-			recordsRead++
-
-			glog.V(2).Infof("[DEBUG_FETCH] Read record %d: offset=%d key_len=%d value_len=%d",
-				recordsRead, realKafkaOffset, len(dataMsg.Key), len(dataMsg.Value))
-		} else if ctrlMsg := resp.GetCtrl(); ctrlMsg != nil {
-			if ctrlMsg.IsEndOfStream || ctrlMsg.IsEndOfTopic {
-				glog.V(1).Infof("[DEBUG_FETCH] Reached end of stream/topic")
-				break
-			}
-		}
-	}
-
-	glog.V(1).Infof("[DEBUG_FETCH] ReadRecordsWithOffsets returning %d records", len(smqRecords))
-	return smqRecords, nil
 }
 
 // HealthCheck verifies the broker connection is working

@@ -13,6 +13,7 @@ import (
 	"github.com/parquet-go/parquet-go"
 	"github.com/parquet-go/parquet-go/compress/zstd"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/mq"
 	"github.com/seaweedfs/seaweedfs/weed/mq/schema"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -186,7 +187,7 @@ func readAllParquetFiles(filerClient filer_pb.FilerClient, partitionDir string) 
 		}
 
 		// read min ts
-		minTsBytes := entry.Extended["min"]
+		minTsBytes := entry.Extended[mq.ExtendedAttrTimestampMin]
 		if len(minTsBytes) != 8 {
 			return nil
 		}
@@ -196,7 +197,7 @@ func readAllParquetFiles(filerClient filer_pb.FilerClient, partitionDir string) 
 		}
 
 		// read max ts
-		maxTsBytes := entry.Extended["max"]
+		maxTsBytes := entry.Extended[mq.ExtendedAttrTimestampMax]
 		if len(maxTsBytes) != 8 {
 			return nil
 		}
@@ -228,6 +229,8 @@ func writeLogFilesToParquet(filerClient filer_pb.FilerClient, partitionDir strin
 	rowBuilder := parquet.NewRowBuilder(parquetSchema)
 
 	var startTsNs, stopTsNs int64
+	var minOffset, maxOffset int64
+	var hasOffsets bool
 
 	for _, logFile := range logFileGroups {
 		var rows []parquet.Row
@@ -242,6 +245,22 @@ func writeLogFilesToParquet(filerClient filer_pb.FilerClient, partitionDir strin
 				startTsNs = entry.TsNs
 			}
 			stopTsNs = entry.TsNs
+
+			// Track offset ranges for Kafka integration
+			if entry.Offset > 0 {
+				if !hasOffsets {
+					minOffset = entry.Offset
+					maxOffset = entry.Offset
+					hasOffsets = true
+				} else {
+					if entry.Offset < minOffset {
+						minOffset = entry.Offset
+					}
+					if entry.Offset > maxOffset {
+						maxOffset = entry.Offset
+					}
+				}
+			}
 
 			// write to parquet file
 			rowBuilder.Reset()
@@ -332,7 +351,7 @@ func writeLogFilesToParquet(filerClient filer_pb.FilerClient, partitionDir strin
 		}
 	}
 
-	if err := saveParquetFileToPartitionDir(filerClient, tempFile, partitionDir, parquetFileName, preference, startTsNs, stopTsNs, sourceLogFiles, earliestBufferStart); err != nil {
+	if err := saveParquetFileToPartitionDir(filerClient, tempFile, partitionDir, parquetFileName, preference, startTsNs, stopTsNs, sourceLogFiles, earliestBufferStart, minOffset, maxOffset, hasOffsets); err != nil {
 		return fmt.Errorf("save parquet file %s: %v", parquetFileName, err)
 	}
 
@@ -340,7 +359,7 @@ func writeLogFilesToParquet(filerClient filer_pb.FilerClient, partitionDir strin
 
 }
 
-func saveParquetFileToPartitionDir(filerClient filer_pb.FilerClient, sourceFile *os.File, partitionDir, parquetFileName string, preference *operation.StoragePreference, startTsNs, stopTsNs int64, sourceLogFiles []string, earliestBufferStart int64) error {
+func saveParquetFileToPartitionDir(filerClient filer_pb.FilerClient, sourceFile *os.File, partitionDir, parquetFileName string, preference *operation.StoragePreference, startTsNs, stopTsNs int64, sourceLogFiles []string, earliestBufferStart int64, minOffset, maxOffset int64, hasOffsets bool) error {
 	uploader, err := operation.NewUploader()
 	if err != nil {
 		return fmt.Errorf("new uploader: %w", err)
@@ -368,22 +387,33 @@ func saveParquetFileToPartitionDir(filerClient filer_pb.FilerClient, sourceFile 
 	entry.Extended = make(map[string][]byte)
 	minTsBytes := make([]byte, 8)
 	binary.BigEndian.PutUint64(minTsBytes, uint64(startTsNs))
-	entry.Extended["min"] = minTsBytes
+	entry.Extended[mq.ExtendedAttrTimestampMin] = minTsBytes
 	maxTsBytes := make([]byte, 8)
 	binary.BigEndian.PutUint64(maxTsBytes, uint64(stopTsNs))
-	entry.Extended["max"] = maxTsBytes
+	entry.Extended[mq.ExtendedAttrTimestampMax] = maxTsBytes
+
+	// Add offset range metadata for Kafka integration (same as regular log files)
+	if hasOffsets && minOffset > 0 && maxOffset >= minOffset {
+		minOffsetBytes := make([]byte, 8)
+		binary.BigEndian.PutUint64(minOffsetBytes, uint64(minOffset))
+		entry.Extended[mq.ExtendedAttrOffsetMin] = minOffsetBytes
+
+		maxOffsetBytes := make([]byte, 8)
+		binary.BigEndian.PutUint64(maxOffsetBytes, uint64(maxOffset))
+		entry.Extended[mq.ExtendedAttrOffsetMax] = maxOffsetBytes
+	}
 
 	// Store source log files for deduplication (JSON-encoded list)
 	if len(sourceLogFiles) > 0 {
 		sourceLogFilesJson, _ := json.Marshal(sourceLogFiles)
-		entry.Extended["sources"] = sourceLogFilesJson
+		entry.Extended[mq.ExtendedAttrSources] = sourceLogFilesJson
 	}
 
 	// Store earliest buffer_start for precise broker deduplication
 	if earliestBufferStart > 0 {
 		bufferStartBytes := make([]byte, 8)
 		binary.BigEndian.PutUint64(bufferStartBytes, uint64(earliestBufferStart))
-		entry.Extended["buffer_start"] = bufferStartBytes
+		entry.Extended[mq.ExtendedAttrBufferStart] = bufferStartBytes
 	}
 
 	for i := int64(0); i < chunkCount; i++ {

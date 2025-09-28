@@ -20,7 +20,7 @@ type LogBufferStart struct {
 func (b *MessageQueueBroker) genLogFlushFunc(t topic.Topic, p topic.Partition) log_buffer.LogFlushFuncType {
 	partitionDir := topic.PartitionDir(t, p)
 
-	return func(logBuffer *log_buffer.LogBuffer, startTime, stopTime time.Time, buf []byte) {
+	return func(logBuffer *log_buffer.LogBuffer, startTime, stopTime time.Time, buf []byte, minOffset, maxOffset int64) {
 		if len(buf) == 0 {
 			return
 		}
@@ -33,7 +33,7 @@ func (b *MessageQueueBroker) genLogFlushFunc(t topic.Topic, p topic.Partition) l
 		bufferIndex := logBuffer.GetBatchIndex()
 
 		for {
-			if err := b.appendToFileWithBufferIndex(targetFile, buf, bufferIndex); err != nil {
+			if err := b.appendToFileWithBufferIndex(targetFile, buf, bufferIndex, minOffset, maxOffset); err != nil {
 				glog.V(0).Infof("metadata log write failed %s: %v", targetFile, err)
 				time.Sleep(737 * time.Millisecond)
 			} else {

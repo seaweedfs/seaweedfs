@@ -70,6 +70,16 @@ func (m *mockSeaweedMQHandler) Close() error {
 	return nil
 }
 
+// GetEarliestOffset returns the earliest available offset for a topic partition
+func (m *mockSeaweedMQHandler) GetEarliestOffset(topic string, partition int32) (int64, error) {
+	return 0, nil
+}
+
+// GetLatestOffset returns the latest available offset for a topic partition
+func (m *mockSeaweedMQHandler) GetLatestOffset(topic string, partition int32) (int64, error) {
+	return 0, nil
+}
+
 // TestCreateTopicsV5_SchemaRegistryCompatibility tests the exact byte-level compatibility
 // with Schema Registry's expectations for CreateTopics v5 responses.
 // This test covers the critical fix for missing response header tagged fields.

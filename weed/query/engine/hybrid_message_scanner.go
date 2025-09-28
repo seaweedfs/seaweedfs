@@ -15,6 +15,7 @@ import (
 
 	"github.com/parquet-go/parquet-go"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/mq"
 	"github.com/seaweedfs/seaweedfs/weed/mq/logstore"
 	"github.com/seaweedfs/seaweedfs/weed/mq/schema"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
@@ -1124,10 +1125,10 @@ func (h *HybridMessageScanner) extractParquetFileStats(entry *filer_pb.Entry, lo
 	}
 	// Populate optional min/max from filer extended attributes (writer stores ns timestamps)
 	if entry != nil && entry.Extended != nil {
-		if minBytes, ok := entry.Extended["min"]; ok && len(minBytes) == 8 {
+		if minBytes, ok := entry.Extended[mq.ExtendedAttrTimestampMin]; ok && len(minBytes) == 8 {
 			fileStats.MinTimestampNs = int64(binary.BigEndian.Uint64(minBytes))
 		}
-		if maxBytes, ok := entry.Extended["max"]; ok && len(maxBytes) == 8 {
+		if maxBytes, ok := entry.Extended[mq.ExtendedAttrTimestampMax]; ok && len(maxBytes) == 8 {
 			fileStats.MaxTimestampNs = int64(binary.BigEndian.Uint64(maxBytes))
 		}
 	}

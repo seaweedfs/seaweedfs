@@ -256,6 +256,44 @@ func (b *basicSeaweedMQHandler) Close() error {
 	return nil
 }
 
+// GetEarliestOffset returns the earliest available offset for a topic partition
+func (b *basicSeaweedMQHandler) GetEarliestOffset(topic string, partition int32) (int64, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	
+	if b.messages[topic] == nil || b.messages[topic][partition] == nil {
+		return 0, nil // Empty topic
+	}
+	
+	// Find the minimum offset
+	minOffset := int64(0)
+	for offset := range b.messages[topic][partition] {
+		if offset < minOffset {
+			minOffset = offset
+		}
+	}
+	return minOffset, nil
+}
+
+// GetLatestOffset returns the latest available offset for a topic partition
+func (b *basicSeaweedMQHandler) GetLatestOffset(topic string, partition int32) (int64, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	
+	if b.messages[topic] == nil || b.messages[topic][partition] == nil {
+		return 0, nil // Empty topic
+	}
+	
+	// Find the maximum offset + 1 (Kafka convention)
+	maxOffset := int64(-1)
+	for offset := range b.messages[topic][partition] {
+		if offset > maxOffset {
+			maxOffset = offset
+		}
+	}
+	return maxOffset + 1, nil
+}
+
 // ===== testSeaweedMQHandler implementation (TEST ONLY) =====
 
 func (t *testSeaweedMQHandler) TopicExists(topic string) bool {
@@ -365,4 +403,14 @@ func (t *testSeaweedMQHandler) GetBrokerAddresses() []string {
 
 func (t *testSeaweedMQHandler) Close() error {
 	return nil
+}
+
+// GetEarliestOffset returns the earliest available offset for a topic partition
+func (t *testSeaweedMQHandler) GetEarliestOffset(topic string, partition int32) (int64, error) {
+	return 0, nil // Test implementation always returns 0
+}
+
+// GetLatestOffset returns the latest available offset for a topic partition  
+func (t *testSeaweedMQHandler) GetLatestOffset(topic string, partition int32) (int64, error) {
+	return 0, nil // Test implementation always returns 0
 }

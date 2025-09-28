@@ -9,6 +9,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/mq"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -18,7 +19,13 @@ func (b *MessageQueueBroker) appendToFile(targetFile string, data []byte) error 
 	return b.appendToFileWithBufferIndex(targetFile, data, 0)
 }
 
-func (b *MessageQueueBroker) appendToFileWithBufferIndex(targetFile string, data []byte, bufferIndex int64) error {
+func (b *MessageQueueBroker) appendToFileWithBufferIndex(targetFile string, data []byte, bufferIndex int64, offsetArgs ...int64) error {
+	// Extract optional offset parameters (minOffset, maxOffset)
+	var minOffset, maxOffset int64
+	if len(offsetArgs) >= 2 {
+		minOffset = offsetArgs[0]
+		maxOffset = offsetArgs[1]
+	}
 
 	fileId, uploadResult, err2 := b.assignAndUpload(targetFile, data)
 	if err2 != nil {
@@ -48,7 +55,21 @@ func (b *MessageQueueBroker) appendToFileWithBufferIndex(targetFile string, data
 			entry.Extended = make(map[string][]byte)
 			bufferStartBytes := make([]byte, 8)
 			binary.BigEndian.PutUint64(bufferStartBytes, uint64(bufferIndex))
-			entry.Extended["buffer_start"] = bufferStartBytes
+			entry.Extended[mq.ExtendedAttrBufferStart] = bufferStartBytes
+		}
+
+		// Add offset range metadata for Kafka integration
+		if minOffset > 0 && maxOffset >= minOffset {
+			if entry.Extended == nil {
+				entry.Extended = make(map[string][]byte)
+			}
+			minOffsetBytes := make([]byte, 8)
+			binary.BigEndian.PutUint64(minOffsetBytes, uint64(minOffset))
+			entry.Extended[mq.ExtendedAttrOffsetMin] = minOffsetBytes
+
+			maxOffsetBytes := make([]byte, 8)
+			binary.BigEndian.PutUint64(maxOffsetBytes, uint64(maxOffset))
+			entry.Extended[mq.ExtendedAttrOffsetMax] = maxOffsetBytes
 		}
 	} else if err != nil {
 		return fmt.Errorf("find %s: %v", fullpath, err)
@@ -62,7 +83,7 @@ func (b *MessageQueueBroker) appendToFileWithBufferIndex(targetFile string, data
 			}
 
 			// Check for existing buffer start (binary format)
-			if existingData, exists := entry.Extended["buffer_start"]; exists {
+			if existingData, exists := entry.Extended[mq.ExtendedAttrBufferStart]; exists {
 				if len(existingData) == 8 {
 					existingStartIndex := int64(binary.BigEndian.Uint64(existingData))
 
@@ -81,7 +102,40 @@ func (b *MessageQueueBroker) appendToFileWithBufferIndex(targetFile string, data
 				// No existing buffer start, create new one (shouldn't happen for existing files)
 				bufferStartBytes := make([]byte, 8)
 				binary.BigEndian.PutUint64(bufferStartBytes, uint64(bufferIndex))
-				entry.Extended["buffer_start"] = bufferStartBytes
+				entry.Extended[mq.ExtendedAttrBufferStart] = bufferStartBytes
+			}
+		}
+
+		// Update offset range metadata for existing files
+		if minOffset > 0 && maxOffset >= minOffset {
+			// Update minimum offset if this chunk has a lower minimum
+			if existingMinData, exists := entry.Extended[mq.ExtendedAttrOffsetMin]; exists && len(existingMinData) == 8 {
+				existingMin := int64(binary.BigEndian.Uint64(existingMinData))
+				if minOffset < existingMin {
+					minOffsetBytes := make([]byte, 8)
+					binary.BigEndian.PutUint64(minOffsetBytes, uint64(minOffset))
+					entry.Extended[mq.ExtendedAttrOffsetMin] = minOffsetBytes
+				}
+			} else {
+				// No existing minimum, set it
+				minOffsetBytes := make([]byte, 8)
+				binary.BigEndian.PutUint64(minOffsetBytes, uint64(minOffset))
+				entry.Extended[mq.ExtendedAttrOffsetMin] = minOffsetBytes
+			}
+
+			// Update maximum offset if this chunk has a higher maximum
+			if existingMaxData, exists := entry.Extended[mq.ExtendedAttrOffsetMax]; exists && len(existingMaxData) == 8 {
+				existingMax := int64(binary.BigEndian.Uint64(existingMaxData))
+				if maxOffset > existingMax {
+					maxOffsetBytes := make([]byte, 8)
+					binary.BigEndian.PutUint64(maxOffsetBytes, uint64(maxOffset))
+					entry.Extended[mq.ExtendedAttrOffsetMax] = maxOffsetBytes
+				}
+			} else {
+				// No existing maximum, set it
+				maxOffsetBytes := make([]byte, 8)
+				binary.BigEndian.PutUint64(maxOffsetBytes, uint64(maxOffset))
+				entry.Extended[mq.ExtendedAttrOffsetMax] = maxOffsetBytes
 			}
 		}
 	}

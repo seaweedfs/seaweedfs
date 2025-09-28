@@ -134,19 +134,22 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 			response = append(response, 0, 0)
 
 			// Use direct SMQ reading - no ledgers needed
-			// SMQ handles high water mark and offset management internally
-			// For empty topics, high water mark should be 0
-			// For topics with data, we'll use a reasonable default and let SMQ handle it
-			var highWaterMark int64
-			if partition.FetchOffset == 0 {
-				highWaterMark = 0 // Empty topic
-				Debug("Setting highWaterMark to 0 for empty topic %s partition %d", topic.Name, partition.PartitionID)
-				if strings.HasPrefix(topic.Name, "_") {
-					Debug("SYSTEM TOPIC: %s is a system topic, ensuring it has proper empty response", topic.Name)
+			// CRITICAL DEBUG: This should appear in logs if the new binary is running
+			Debug("🔥🔥🔥 FETCH HANDLER NEW CODE IS RUNNING 🔥🔥🔥")
+			
+			// Get the actual high water mark from SeaweedMQ using the same method as ListOffsets
+			highWaterMark, err := h.seaweedMQHandler.GetLatestOffset(topic.Name, partition.PartitionID)
+			if err != nil {
+				Debug("Failed to get latest offset for topic %s partition %d: %v", topic.Name, partition.PartitionID, err)
+				highWaterMark = 0 // Fallback to 0 if we can't determine the offset
+			}
+			Debug("*** FETCH: Got highWaterMark %d for topic %s partition %d", highWaterMark, topic.Name, partition.PartitionID)
+			
+			if strings.HasPrefix(topic.Name, "_") {
+				Debug("SYSTEM TOPIC: %s is a system topic, highWaterMark=%d", topic.Name, highWaterMark)
+				if strings.HasPrefix(topic.Name, "_schemas") {
+					Debug("SCHEMA REGISTRY: Fetch request for _schemas topic from offset %d, highWaterMark=%d", partition.FetchOffset, highWaterMark)
 				}
-			} else {
-				highWaterMark = partition.FetchOffset + 1000 // Reasonable default for topics with data
-				Debug("Setting highWaterMark to %d for topic %s partition %d with fetchOffset %d", highWaterMark, topic.Name, partition.PartitionID, partition.FetchOffset)
 			}
 
 			// Normalize special fetch offsets: -2 = earliest, -1 = latest

@@ -166,6 +166,16 @@ func (t *testSeaweedMQHandlerForUnitTests) Close() error {
 	return nil
 }
 
+// GetEarliestOffset returns the earliest available offset for a topic partition
+func (t *testSeaweedMQHandlerForUnitTests) GetEarliestOffset(topic string, partition int32) (int64, error) {
+	return 0, nil // Test implementation always returns 0
+}
+
+// GetLatestOffset returns the latest available offset for a topic partition
+func (t *testSeaweedMQHandlerForUnitTests) GetLatestOffset(topic string, partition int32) (int64, error) {
+	return 0, nil // Test implementation always returns 0
+}
+
 // topicPartitionKeyForTest creates a unique key for topic-partition combination
 func topicPartitionKeyForTest(topic string, partition int32) string {
 	return topic + "-" + strconv.Itoa(int(partition))

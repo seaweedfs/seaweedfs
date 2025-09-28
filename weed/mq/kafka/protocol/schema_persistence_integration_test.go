@@ -654,6 +654,16 @@ func (m *MockSeaweedMQHandler) WithFilerClient(streamingMode bool, fn func(clien
 }
 func (m *MockSeaweedMQHandler) Close() error { return nil }
 
+// GetEarliestOffset returns the earliest available offset for a topic partition
+func (m *MockSeaweedMQHandler) GetEarliestOffset(topic string, partition int32) (int64, error) {
+	return 0, nil
+}
+
+// GetLatestOffset returns the latest available offset for a topic partition
+func (m *MockSeaweedMQHandler) GetLatestOffset(topic string, partition int32) (int64, error) {
+	return 0, nil
+}
+
 type MockCoordinatorRegistry struct {
 	isLeader bool
 }

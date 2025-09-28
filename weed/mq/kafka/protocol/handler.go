@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/consumer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/integration"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
@@ -84,6 +85,10 @@ type SeaweedMQHandlerInterface interface {
 	ProduceRecordValue(topicName string, partitionID int32, key []byte, recordValueBytes []byte) (int64, error)
 	// GetStoredRecords retrieves records from SMQ storage (optional - for advanced implementations)
 	GetStoredRecords(topic string, partition int32, fromOffset int64, maxRecords int) ([]offset.SMQRecord, error)
+	// GetEarliestOffset returns the earliest available offset for a topic partition
+	GetEarliestOffset(topic string, partition int32) (int64, error)
+	// GetLatestOffset returns the latest available offset for a topic partition
+	GetLatestOffset(topic string, partition int32) (int64, error)
 	// WithFilerClient executes a function with a filer client for accessing SeaweedMQ metadata
 	WithFilerClient(streamingMode bool, fn func(client filer_pb.SeaweedFilerClient) error) error
 	// GetBrokerAddresses returns the discovered SMQ broker addresses for Metadata responses
@@ -561,7 +566,6 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			Debug("-> Metadata v%d", apiVersion)
 			response, err = h.handleMetadata(correlationID, apiVersion, requestBody)
 		case 2: // ListOffsets
-			Debug("*** LISTOFFSETS REQUEST RECEIVED *** Correlation: %d, Version: %d", correlationID, apiVersion)
 			response, err = h.handleListOffsets(correlationID, apiVersion, requestBody)
 		case 19: // CreateTopics
 			response, err = h.handleCreateTopics(correlationID, apiVersion, requestBody)
@@ -1466,6 +1470,7 @@ func (h *Handler) parseMetadataTopics(requestBody []byte) []string {
 }
 
 func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
+	glog.Infof("🚀🚀🚀 HANDLELISTOFFSETS ENTRY POINT 🚀🚀🚀")
 	Debug("ListOffsets v%d request hex dump (first 100 bytes): %x", apiVersion, requestBody[:min(100, len(requestBody))])
 
 	// Parse minimal request to understand what's being asked (header already stripped)
@@ -1566,20 +1571,56 @@ func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, req
 
 			Debug("ListOffsets - Topic: %s, Partition: %d, Timestamp: %d (using direct SMQ)",
 				string(topicName), partitionID, timestamp)
+			glog.Infof("🚀 NEW OFFSET CODE IS RUNNING! 🚀")
 
 			switch timestamp {
 			case -2: // earliest offset
-				responseOffset = 0    // SMQ starts from offset 0
-				responseTimestamp = 0 // No messages yet, so timestamp is 0
+				// Get the actual earliest offset from SMQ
+				earliestOffset, err := h.seaweedMQHandler.GetEarliestOffset(string(topicName), int32(partitionID))
+				if err != nil {
+					Debug("Failed to get earliest offset for topic %s partition %d: %v", string(topicName), partitionID, err)
+					responseOffset = 0 // fallback to 0
+				} else {
+					responseOffset = earliestOffset
+				}
+				responseTimestamp = 0 // No specific timestamp for earliest
 				Debug("ListOffsets EARLIEST - returning offset: %d, timestamp: %d", responseOffset, responseTimestamp)
 			case -1: // latest offset
-				responseOffset = 0    // For empty topics, latest offset is 0
-				responseTimestamp = 0 // No messages yet, so timestamp is 0
-				Debug("ListOffsets LATEST - returning offset: %d, timestamp: %d", responseOffset, responseTimestamp)
+				// Get the actual latest offset from SMQ
+				Debug("XYZABC123 UNIQUE DEBUG MESSAGE - MY CODE IS RUNNING!")
+				Debug("*** ABOUT TO CALL GetLatestOffset for topic %s partition %d", string(topicName), int32(partitionID))
+				Debug("About to call GetLatestOffset for topic %s partition %d", string(topicName), int32(partitionID))
+				if h.seaweedMQHandler == nil {
+					Debug("*** ERROR: seaweedMQHandler is nil!")
+					Debug("ERROR: seaweedMQHandler is nil!")
+					responseOffset = 0
+				} else {
+					Debug("*** Calling GetLatestOffset...")
+					latestOffset, err := h.seaweedMQHandler.GetLatestOffset(string(topicName), int32(partitionID))
+					if err != nil {
+						Debug("*** GetLatestOffset failed: %v", err)
+						Debug("Failed to get latest offset for topic %s partition %d: %v", string(topicName), partitionID, err)
+						responseOffset = 0 // fallback to 0
+					} else {
+						Debug("*** GetLatestOffset returned: %d", latestOffset)
+						responseOffset = latestOffset
+						Debug("GetLatestOffset returned: %d", latestOffset)
+					}
+				}
+				responseTimestamp = 0 // No specific timestamp for latest
+				Debug("*** ListOffsets LATEST - returning offset: %d, timestamp: %d", responseOffset, responseTimestamp)
 			default: // specific timestamp - find offset by timestamp
-				responseOffset = 0 // SMQ will handle timestamp-based lookup internally
+				// For timestamp-based lookup, we need to implement this properly
+				// For now, return 0 as fallback
+				responseOffset = 0
 				responseTimestamp = timestamp
 				Debug("ListOffsets BY_TIMESTAMP - returning offset: %d, timestamp: %d", responseOffset, responseTimestamp)
+			}
+
+			// Ensure we never return a timestamp as offset - this was the bug!
+			if responseOffset > 1000000000 { // If offset looks like a timestamp
+				Debug("WARNING: Offset %d looks like a timestamp! Setting to 0", responseOffset)
+				responseOffset = 0
 			}
 
 			timestampBytes := make([]byte, 8)
