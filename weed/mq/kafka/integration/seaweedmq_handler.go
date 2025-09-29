@@ -500,7 +500,7 @@ func (h *SeaweedMQHandler) ListTopics() []string {
 	return []string{}
 }
 
-// ProduceRecord publishes a record to SeaweedMQ and updates Kafka offset tracking
+// ProduceRecord publishes a record to SeaweedMQ and lets SMQ generate the offset
 func (h *SeaweedMQHandler) ProduceRecord(topic string, partition int32, key []byte, value []byte) (int64, error) {
 	fmt.Printf("🔥 PRODUCE DEBUG: Starting ProduceRecord for topic=%s partition=%d\n", topic, partition)
 
@@ -514,36 +514,26 @@ func (h *SeaweedMQHandler) ProduceRecord(topic string, partition int32, key []by
 	// Get current timestamp
 	timestamp := time.Now().UnixNano()
 
-	// Publish to SeaweedMQ
+	// Publish to SeaweedMQ and let SMQ generate the offset
+	var smqOffset int64
 	var publishErr error
 	if h.brokerClient == nil {
 		fmt.Printf("🔥 PRODUCE DEBUG: No broker client available\n")
 		publishErr = fmt.Errorf("no broker client available")
 	} else {
 		fmt.Printf("🔥 PRODUCE DEBUG: Calling brokerClient.PublishRecord\n")
-		_, publishErr = h.brokerClient.PublishRecord(topic, partition, key, value, timestamp)
-		fmt.Printf("🔥 PRODUCE DEBUG: brokerClient.PublishRecord returned, err=%v\n", publishErr)
+		smqOffset, publishErr = h.brokerClient.PublishRecord(topic, partition, key, value, timestamp)
+		fmt.Printf("🔥 PRODUCE DEBUG: brokerClient.PublishRecord returned offset=%d, err=%v\n", smqOffset, publishErr)
 	}
 
 	if publishErr != nil {
 		return 0, fmt.Errorf("failed to publish to SeaweedMQ: %v", publishErr)
 	}
 
-	// Update Kafka offset ledger
-	ledger := h.GetOrCreateLedger(topic, partition)
-	kafkaOffset := ledger.AssignOffsets(1) // Assign one Kafka offset
-
-	// Map SeaweedMQ sequence to Kafka offset
-	if err := ledger.AppendRecord(kafkaOffset, timestamp, int32(len(value))); err != nil {
-		// CRITICAL: AppendRecord failed - this breaks offset consistency!
-		glog.Errorf("CRITICAL: Failed to append record to ledger for topic %s partition %d offset %d: %v",
-			topic, partition, kafkaOffset, err)
-		return 0, fmt.Errorf("failed to append record to ledger: %v", err)
-	}
-
-	glog.V(2).Infof("Successfully produced record to topic %s partition %d at offset %d (HWM: %d)",
-		topic, partition, kafkaOffset, ledger.GetHighWaterMark())
-	return kafkaOffset, nil
+	// SMQ should have generated and returned the offset - use it directly as the Kafka offset
+	glog.V(2).Infof("Successfully produced record to topic %s partition %d at SMQ offset %d",
+		topic, partition, smqOffset)
+	return smqOffset, nil
 }
 
 // ProduceRecordValue produces a record using RecordValue format to SeaweedMQ
@@ -1503,7 +1493,8 @@ func (bc *BrokerClient) PublishRecord(topic string, partition int32, key []byte,
 		return 0, fmt.Errorf("broker error (Kafka code %d): %s", kafkaErrorCode, errorMsg)
 	}
 
-	return resp.AckTsNs, nil
+	// Use the assigned offset from SMQ, not the timestamp
+	return resp.AssignedOffset, nil
 }
 
 // getOrCreatePublisher gets or creates a publisher stream for a topic-partition
@@ -1779,7 +1770,8 @@ func (bc *BrokerClient) PublishRecordValue(topic string, partition int32, key []
 		return 0, fmt.Errorf("RecordValue broker error (Kafka code %d): %s", kafkaErrorCode, errorMsg)
 	}
 
-	return resp.AckTsNs, nil
+	// Use the assigned offset from SMQ, not the timestamp
+	return resp.AssignedOffset, nil
 }
 
 // ReadRecords reads available records from the subscriber stream
