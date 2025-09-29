@@ -767,19 +767,19 @@ func (hms *HybridMessageScanner) parseRawMessageWithSchema(logEntry *filer_pb.Lo
 		return recordValue, "live_log", nil
 	}
 
-	// Attempt schema-aware parsing
-	// Strategy 1: Try JSON parsing first (most common for live messages)
-	if parsedRecord, err := hms.parseJSONMessage(logEntry.Data); err == nil {
-		// Successfully parsed as JSON, merge with system columns
+	// Strategy 1: Try protobuf parsing (binary messages)
+	if parsedRecord, err := hms.parseProtobufMessage(logEntry.Data); err == nil {
+		// Successfully parsed as protobuf, merge with system columns
 		for fieldName, fieldValue := range parsedRecord.Fields {
 			recordValue.Fields[fieldName] = fieldValue
 		}
 		return recordValue, "live_log", nil
 	}
 
-	// Strategy 2: Try protobuf parsing (binary messages)
-	if parsedRecord, err := hms.parseProtobufMessage(logEntry.Data); err == nil {
-		// Successfully parsed as protobuf, merge with system columns
+	// Attempt schema-aware parsing
+	// Strategy 2: Try JSON parsing first (most common for live messages)
+	if parsedRecord, err := hms.parseJSONMessage(logEntry.Data); err == nil {
+		// Successfully parsed as JSON, merge with system columns
 		for fieldName, fieldValue := range parsedRecord.Fields {
 			recordValue.Fields[fieldName] = fieldValue
 		}
