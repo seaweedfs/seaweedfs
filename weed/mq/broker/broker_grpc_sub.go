@@ -119,12 +119,12 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 				// skip ack for control messages
 				continue
 			}
-			imt.AcknowledgeMessage(ack.GetAck().Key, ack.GetAck().Sequence)
+			imt.AcknowledgeMessage(ack.GetAck().Key, ack.GetAck().TsNs)
 
 			currentLastOffset := imt.GetOldestAckedTimestamp()
 			// Update acknowledged offset and last seen time for this subscriber when it sends an ack
 			subscriber.UpdateAckedOffset(currentLastOffset)
-			// fmt.Printf("%+v recv (%s,%d), oldest %d\n", partition, string(ack.GetAck().Key), ack.GetAck().Sequence, currentLastOffset)
+			// fmt.Printf("%+v recv (%s,%d), oldest %d\n", partition, string(ack.GetAck().Key), ack.GetAck().TsNs, currentLastOffset)
 			if subscribeFollowMeStream != nil && currentLastOffset > lastOffset {
 				if err := subscribeFollowMeStream.Send(&mq_pb.SubscribeFollowMeRequest{
 					Message: &mq_pb.SubscribeFollowMeRequest_Ack{

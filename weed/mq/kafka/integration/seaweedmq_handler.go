@@ -1503,7 +1503,7 @@ func (bc *BrokerClient) PublishRecord(topic string, partition int32, key []byte,
 		return 0, fmt.Errorf("broker error (Kafka code %d): %s", kafkaErrorCode, errorMsg)
 	}
 
-	return resp.AckSequence, nil
+	return resp.AckTsNs, nil
 }
 
 // getOrCreatePublisher gets or creates a publisher stream for a topic-partition
@@ -1784,7 +1784,7 @@ func (bc *BrokerClient) PublishRecordValue(topic string, partition int32, key []
 		return 0, fmt.Errorf("RecordValue broker error (Kafka code %d): %s", kafkaErrorCode, errorMsg)
 	}
 
-	return resp.AckSequence, nil
+	return resp.AckTsNs, nil
 }
 
 // ReadRecords reads available records from the subscriber stream

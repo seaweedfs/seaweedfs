@@ -283,7 +283,7 @@ message PublishMessageRequest {
     }
 }
 message PublishMessageResponse {
-    int64 ack_sequence = 1;
+    int64 ack_ts_ns = 1;  // Acknowledgment timestamp in nanoseconds
     string error = 2;
     bool should_close = 3;
     int32 error_code = 4; // Structured error code for reliable error mapping
@@ -322,7 +322,7 @@ message SubscribeMessageRequest {
         int32 sliding_window_size = 12;
     }
     message AckMessage {
-        int64 sequence = 1;
+        int64 ts_ns = 1;  // Timestamp in nanoseconds for acknowledgment tracking
         bytes key = 2;
     }
     oneof message {

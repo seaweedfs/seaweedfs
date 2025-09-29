@@ -108,7 +108,7 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 			if acknowledgedSequence < receivedSequence && (receivedSequence-acknowledgedSequence >= ackInterval || time.Since(lastAckTime) > 100*time.Millisecond) {
 				acknowledgedSequence = receivedSequence
 				response := &mq_pb.PublishMessageResponse{
-					AckSequence: acknowledgedSequence,
+					AckTsNs: acknowledgedSequence,
 				}
 				if err := stream.Send(response); err != nil {
 					glog.Errorf("Error sending response %v: %v", response, err)

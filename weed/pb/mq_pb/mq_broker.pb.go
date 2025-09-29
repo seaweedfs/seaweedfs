@@ -1987,7 +1987,7 @@ func (*PublishMessageRequest_Data) isPublishMessageRequest_Message() {}
 
 type PublishMessageResponse struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
-	AckSequence    int64                  `protobuf:"varint,1,opt,name=ack_sequence,json=ackSequence,proto3" json:"ack_sequence,omitempty"`
+	AckTsNs        int64                  `protobuf:"varint,1,opt,name=ack_ts_ns,json=ackTsNs,proto3" json:"ack_ts_ns,omitempty"` // Acknowledgment timestamp in nanoseconds
 	Error          string                 `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
 	ShouldClose    bool                   `protobuf:"varint,3,opt,name=should_close,json=shouldClose,proto3" json:"should_close,omitempty"`
 	ErrorCode      int32                  `protobuf:"varint,4,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`                // Structured error code for reliable error mapping
@@ -2026,9 +2026,9 @@ func (*PublishMessageResponse) Descriptor() ([]byte, []int) {
 	return file_mq_broker_proto_rawDescGZIP(), []int{33}
 }
 
-func (x *PublishMessageResponse) GetAckSequence() int64 {
+func (x *PublishMessageResponse) GetAckTsNs() int64 {
 	if x != nil {
-		return x.AckSequence
+		return x.AckTsNs
 	}
 	return 0
 }
@@ -3754,7 +3754,7 @@ func (x *SubscribeMessageRequest_InitMessage) GetSlidingWindowSize() int32 {
 
 type SubscribeMessageRequest_AckMessage struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Sequence      int64                  `protobuf:"varint,1,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	TsNs          int64                  `protobuf:"varint,1,opt,name=ts_ns,json=tsNs,proto3" json:"ts_ns,omitempty"` // Timestamp in nanoseconds for acknowledgment tracking
 	Key           []byte                 `protobuf:"bytes,2,opt,name=key,proto3" json:"key,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -3790,9 +3790,9 @@ func (*SubscribeMessageRequest_AckMessage) Descriptor() ([]byte, []int) {
 	return file_mq_broker_proto_rawDescGZIP(), []int{36, 1}
 }
 
-func (x *SubscribeMessageRequest_AckMessage) GetSequence() int64 {
+func (x *SubscribeMessageRequest_AckMessage) GetTsNs() int64 {
 	if x != nil {
-		return x.Sequence
+		return x.TsNs
 	}
 	return 0
 }
@@ -4163,9 +4163,9 @@ const file_mq_broker_proto_rawDesc = "" +
 	"\fack_interval\x18\x03 \x01(\x05R\vackInterval\x12'\n" +
 	"\x0ffollower_broker\x18\x04 \x01(\tR\x0efollowerBroker\x12%\n" +
 	"\x0epublisher_name\x18\x05 \x01(\tR\rpublisherNameB\t\n" +
-	"\amessage\"\xbc\x01\n" +
-	"\x16PublishMessageResponse\x12!\n" +
-	"\fack_sequence\x18\x01 \x01(\x03R\vackSequence\x12\x14\n" +
+	"\amessage\"\xb5\x01\n" +
+	"\x16PublishMessageResponse\x12\x1a\n" +
+	"\tack_ts_ns\x18\x01 \x01(\x03R\aackTsNs\x12\x14\n" +
 	"\x05error\x18\x02 \x01(\tR\x05error\x12!\n" +
 	"\fshould_close\x18\x03 \x01(\bR\vshouldClose\x12\x1d\n" +
 	"\n" +
@@ -4184,7 +4184,7 @@ const file_mq_broker_proto_rawDesc = "" +
 	"\fCloseMessageB\t\n" +
 	"\amessage\"5\n" +
 	"\x17PublishFollowMeResponse\x12\x1a\n" +
-	"\tack_ts_ns\x18\x01 \x01(\x03R\aackTsNs\"\xfc\x04\n" +
+	"\tack_ts_ns\x18\x01 \x01(\x03R\aackTsNs\"\xf5\x04\n" +
 	"\x17SubscribeMessageRequest\x12G\n" +
 	"\x04init\x18\x01 \x01(\v21.messaging_pb.SubscribeMessageRequest.InitMessageH\x00R\x04init\x12D\n" +
 	"\x03ack\x18\x02 \x01(\v20.messaging_pb.SubscribeMessageRequest.AckMessageH\x00R\x03ack\x1a\x8a\x03\n" +
@@ -4200,10 +4200,10 @@ const file_mq_broker_proto_rawDesc = "" +
 	"\x06filter\x18\n" +
 	" \x01(\tR\x06filter\x12'\n" +
 	"\x0ffollower_broker\x18\v \x01(\tR\x0efollowerBroker\x12.\n" +
-	"\x13sliding_window_size\x18\f \x01(\x05R\x11slidingWindowSize\x1a:\n" +
+	"\x13sliding_window_size\x18\f \x01(\x05R\x11slidingWindowSize\x1a3\n" +
 	"\n" +
-	"AckMessage\x12\x1a\n" +
-	"\bsequence\x18\x01 \x01(\x03R\bsequence\x12\x10\n" +
+	"AckMessage\x12\x13\n" +
+	"\x05ts_ns\x18\x01 \x01(\x03R\x04tsNs\x12\x10\n" +
 	"\x03key\x18\x02 \x01(\fR\x03keyB\t\n" +
 	"\amessage\"\xa7\x02\n" +
 	"\x18SubscribeMessageResponse\x12Q\n" +
