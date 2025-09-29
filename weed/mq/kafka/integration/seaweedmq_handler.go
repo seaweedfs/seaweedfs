@@ -103,7 +103,16 @@ func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromO
 	// Convert SeaweedMQ records to SMQRecord interface with proper Kafka offsets
 	smqRecords := make([]offset.SMQRecord, 0, len(seaweedRecords))
 	for i, seaweedRecord := range seaweedRecords {
-		kafkaOffset := fromOffset + int64(i)
+		// CRITICAL FIX: Use the actual offset from SeaweedMQ
+		// The SeaweedRecord.Sequence field now contains the correct offset from the subscriber
+		kafkaOffset := seaweedRecord.Sequence
+
+		// Validate that the offset makes sense
+		expectedOffset := fromOffset + int64(i)
+		if kafkaOffset != expectedOffset {
+			glog.Warningf("[FETCH] Offset mismatch for record %d: got=%d, expected=%d", i, kafkaOffset, expectedOffset)
+		}
+
 		smqRecord := &SeaweedSMQRecord{
 			key:       seaweedRecord.Key,
 			value:     seaweedRecord.Value,
@@ -111,6 +120,8 @@ func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromO
 			offset:    kafkaOffset,
 		}
 		smqRecords = append(smqRecords, smqRecord)
+
+		glog.Infof("[FETCH] Record %d: offset=%d, keyLen=%d, valueLen=%d", i, kafkaOffset, len(seaweedRecord.Key), len(seaweedRecord.Value))
 	}
 
 	glog.Infof("[FETCH] Successfully read %d records from SMQ", len(smqRecords))
@@ -492,7 +503,7 @@ func (h *SeaweedMQHandler) ListTopics() []string {
 // ProduceRecord publishes a record to SeaweedMQ and updates Kafka offset tracking
 func (h *SeaweedMQHandler) ProduceRecord(topic string, partition int32, key []byte, value []byte) (int64, error) {
 	fmt.Printf("🔥 PRODUCE DEBUG: Starting ProduceRecord for topic=%s partition=%d\n", topic, partition)
-	
+
 	// Verify topic exists
 	if !h.TopicExists(topic) {
 		fmt.Printf("🔥 PRODUCE DEBUG: Topic %s does not exist\n", topic)
@@ -1450,7 +1461,7 @@ func (bc *BrokerClient) GetGrpcDialOption() grpc.DialOption {
 // PublishRecord publishes a single record to SeaweedMQ broker
 func (bc *BrokerClient) PublishRecord(topic string, partition int32, key []byte, value []byte, timestamp int64) (int64, error) {
 	fmt.Printf("🔥 BROKER DEBUG: Starting PublishRecord for topic=%s partition=%d\n", topic, partition)
-	
+
 	session, err := bc.getOrCreatePublisher(topic, partition)
 	if err != nil {
 		fmt.Printf("🔥 BROKER DEBUG: getOrCreatePublisher failed: %v\n", err)
@@ -1782,12 +1793,17 @@ func (bc *BrokerClient) ReadRecords(session *BrokerSubscriberSession, maxRecords
 		return nil, fmt.Errorf("subscriber session cannot be nil")
 	}
 
+	glog.Infof("[FETCH] ReadRecords: topic=%s partition=%d startOffset=%d maxRecords=%d",
+		session.Topic, session.Partition, session.StartOffset, maxRecords)
+
 	var records []*SeaweedRecord
+	currentOffset := session.StartOffset
 
 	for len(records) < maxRecords {
 		resp, err := session.Stream.Recv()
 
 		if err != nil {
+			glog.Infof("[FETCH] Stream.Recv() error after %d records: %v", len(records), err)
 			// If we have some records, return them; otherwise return error
 			if len(records) > 0 {
 				return records, nil
@@ -1796,13 +1812,19 @@ func (bc *BrokerClient) ReadRecords(session *BrokerSubscriberSession, maxRecords
 		}
 
 		if dataMsg := resp.GetData(); dataMsg != nil {
+			// CRITICAL FIX: Assign the correct offset based on the subscriber's start offset
+			// Since SeaweedMQ DataMessage doesn't contain offset, we track it ourselves
 			record := &SeaweedRecord{
 				Key:       dataMsg.Key,
 				Value:     dataMsg.Value,
 				Timestamp: dataMsg.TsNs,
-				Sequence:  0, // Will be set by offset ledger
+				Sequence:  currentOffset, // Use the tracked offset
 			}
 			records = append(records, record)
+			currentOffset++ // Increment for next record
+
+			glog.Infof("[FETCH] Received record: offset=%d, keyLen=%d, valueLen=%d",
+				record.Sequence, len(record.Key), len(record.Value))
 
 			// Important: return early after receiving at least one record to avoid
 			// blocking while waiting for an entire batch in environments where data
@@ -1813,6 +1835,7 @@ func (bc *BrokerClient) ReadRecords(session *BrokerSubscriberSession, maxRecords
 		}
 	}
 
+	glog.Infof("[FETCH] ReadRecords returning %d records", len(records))
 	return records, nil
 }
 

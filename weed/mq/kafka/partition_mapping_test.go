@@ -76,31 +76,6 @@ func (pm *PartitionMapper) GetPartitionMappingInfo() map[string]interface{} {
 // Global instance for consistent usage across the test codebase
 var DefaultPartitionMapper = NewPartitionMapper()
 
-// Convenience functions that use the default mapper
-func MapKafkaPartitionToSMQRange(kafkaPartition int32) (rangeStart, rangeStop int32) {
-	return DefaultPartitionMapper.MapKafkaPartitionToSMQRange(kafkaPartition)
-}
-
-func CreateSMQPartition(kafkaPartition int32, unixTimeNs int64) *schema_pb.Partition {
-	return DefaultPartitionMapper.CreateSMQPartition(kafkaPartition, unixTimeNs)
-}
-
-func ExtractKafkaPartitionFromSMQRange(rangeStart int32) int32 {
-	return DefaultPartitionMapper.ExtractKafkaPartitionFromSMQRange(rangeStart)
-}
-
-func ValidateKafkaPartition(kafkaPartition int32) bool {
-	return DefaultPartitionMapper.ValidateKafkaPartition(kafkaPartition)
-}
-
-func GetRangeSize() int32 {
-	return DefaultPartitionMapper.GetRangeSize()
-}
-
-func GetMaxKafkaPartitions() int32 {
-	return DefaultPartitionMapper.GetMaxKafkaPartitions()
-}
-
 func TestPartitionMapper_GetRangeSize(t *testing.T) {
 	mapper := NewPartitionMapper()
 	rangeSize := mapper.GetRangeSize()
