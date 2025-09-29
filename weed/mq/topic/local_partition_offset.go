@@ -77,7 +77,7 @@ func (p *LocalPartition) GetOffsetInfo() map[string]interface{} {
 		"partition_range_stop":  p.RangeStop,
 		"partition_unix_time":   p.UnixTimeNs,
 		"buffer_name":           p.LogBuffer.GetName(),
-		"buffer_batch_index":    p.LogBuffer.GetBatchIndex(),
+		"buffer_offset":         p.LogBuffer.GetOffset(),
 	}
 }
 

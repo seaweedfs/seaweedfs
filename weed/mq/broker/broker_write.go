@@ -19,7 +19,7 @@ func (b *MessageQueueBroker) appendToFile(targetFile string, data []byte) error 
 	return b.appendToFileWithBufferIndex(targetFile, data, 0)
 }
 
-func (b *MessageQueueBroker) appendToFileWithBufferIndex(targetFile string, data []byte, bufferIndex int64, offsetArgs ...int64) error {
+func (b *MessageQueueBroker) appendToFileWithBufferIndex(targetFile string, data []byte, bufferOffset int64, offsetArgs ...int64) error {
 	// Extract optional offset parameters (minOffset, maxOffset)
 	var minOffset, maxOffset int64
 	if len(offsetArgs) >= 2 {
@@ -50,11 +50,11 @@ func (b *MessageQueueBroker) appendToFileWithBufferIndex(targetFile string, data
 			},
 		}
 
-		// Add buffer start index for deduplication tracking (binary format)
-		if bufferIndex != 0 {
+		// Add buffer start offset for deduplication tracking (binary format)
+		if bufferOffset != 0 {
 			entry.Extended = make(map[string][]byte)
 			bufferStartBytes := make([]byte, 8)
-			binary.BigEndian.PutUint64(bufferStartBytes, uint64(bufferIndex))
+			binary.BigEndian.PutUint64(bufferStartBytes, uint64(bufferOffset))
 			entry.Extended[mq.ExtendedAttrBufferStart] = bufferStartBytes
 		}
 
@@ -76,8 +76,8 @@ func (b *MessageQueueBroker) appendToFileWithBufferIndex(targetFile string, data
 	} else {
 		offset = int64(filer.TotalSize(entry.GetChunks()))
 
-		// Verify buffer index continuity for existing files (append operations)
-		if bufferIndex != 0 {
+		// Verify buffer offset continuity for existing files (append operations)
+		if bufferOffset != 0 {
 			if entry.Extended == nil {
 				entry.Extended = make(map[string][]byte)
 			}
@@ -87,21 +87,21 @@ func (b *MessageQueueBroker) appendToFileWithBufferIndex(targetFile string, data
 				if len(existingData) == 8 {
 					existingStartIndex := int64(binary.BigEndian.Uint64(existingData))
 
-					// Verify that the new buffer index is consecutive
-					// Expected index = start + number of existing chunks
-					expectedIndex := existingStartIndex + int64(len(entry.GetChunks()))
-					if bufferIndex != expectedIndex {
+					// Verify that the new buffer offset is consecutive
+					// Expected offset = start + number of existing chunks
+					expectedOffset := existingStartIndex + int64(len(entry.GetChunks()))
+					if bufferOffset != expectedOffset {
 						// This shouldn't happen in normal operation
 						// Log warning but continue (don't crash the system)
-						glog.Warningf("non-consecutive buffer index for %s. Expected %d, got %d",
-							fullpath, expectedIndex, bufferIndex)
+						glog.Warningf("non-consecutive buffer offset for %s. Expected %d, got %d",
+							fullpath, expectedOffset, bufferOffset)
 					}
-					// Note: We don't update the start index - it stays the same
+					// Note: We don't update the start offset - it stays the same
 				}
 			} else {
 				// No existing buffer start, create new one (shouldn't happen for existing files)
 				bufferStartBytes := make([]byte, 8)
-				binary.BigEndian.PutUint64(bufferStartBytes, uint64(bufferIndex))
+				binary.BigEndian.PutUint64(bufferStartBytes, uint64(bufferOffset))
 				entry.Extended[mq.ExtendedAttrBufferStart] = bufferStartBytes
 			}
 		}

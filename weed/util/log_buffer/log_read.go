@@ -176,19 +176,20 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 
 }
 
-// LoopProcessLogDataWithBatchIndex is similar to LoopProcessLogData but provides batchIndex to the callback
-func (logBuffer *LogBuffer) LoopProcessLogDataWithBatchIndex(readerName string, startPosition MessagePosition, stopTsNs int64,
-	waitForDataFn func() bool, eachLogDataFn EachLogEntryWithBatchIndexFuncType) (lastReadPosition MessagePosition, isDone bool, err error) {
+// LoopProcessLogDataWithOffset is similar to LoopProcessLogData but provides offset to the callback
+func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, startPosition MessagePosition, stopTsNs int64,
+	waitForDataFn func() bool, eachLogDataFn EachLogEntryWithOffsetFuncType) (lastReadPosition MessagePosition, isDone bool, err error) {
+	glog.V(0).Infof("🔍 DEBUG: LoopProcessLogDataWithOffset started for %s, startPosition=%v", readerName, startPosition)
 	// loop through all messages
 	var bytesBuf *bytes.Buffer
-	var batchIndex int64
+	var offset int64
 	lastReadPosition = startPosition
 	var entryCounter int64
 	defer func() {
 		if bytesBuf != nil {
 			logBuffer.ReleaseMemory(bytesBuf)
 		}
-		// println("LoopProcessLogDataWithBatchIndex", readerName, "sent messages total", entryCounter)
+		// println("LoopProcessLogDataWithOffset", readerName, "sent messages total", entryCounter)
 	}()
 
 	for {
@@ -196,7 +197,8 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithBatchIndex(readerName string, 
 		if bytesBuf != nil {
 			logBuffer.ReleaseMemory(bytesBuf)
 		}
-		bytesBuf, batchIndex, err = logBuffer.ReadFromBuffer(lastReadPosition)
+		bytesBuf, offset, err = logBuffer.ReadFromBuffer(lastReadPosition)
+		glog.V(0).Infof("🔍 DEBUG: ReadFromBuffer returned bytesBuf=%v, offset=%d, err=%v", bytesBuf != nil, offset, err)
 		if err == ResumeFromDiskError {
 			time.Sleep(1127 * time.Millisecond)
 			return lastReadPosition, isDone, ResumeFromDiskError
@@ -205,10 +207,10 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithBatchIndex(readerName string, 
 		if bytesBuf != nil {
 			readSize = bytesBuf.Len()
 		}
-		glog.V(4).Infof("%s ReadFromBuffer at %v batch %d. Read bytes %v batch %d", readerName, lastReadPosition, lastReadPosition.BatchIndex, readSize, batchIndex)
+		glog.V(0).Infof("🔍 DEBUG: %s ReadFromBuffer at %v batch %d. Read bytes %v offset %d", readerName, lastReadPosition, lastReadPosition.BatchIndex, readSize, offset)
 		if bytesBuf == nil {
-			if batchIndex >= 0 {
-				lastReadPosition = NewMessagePosition(lastReadPosition.UnixNano(), batchIndex)
+			if offset >= 0 {
+				lastReadPosition = NewMessagePosition(lastReadPosition.UnixNano(), offset)
 			}
 			if stopTsNs != 0 {
 				isDone = true
@@ -233,6 +235,7 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithBatchIndex(readerName string, 
 
 		buf := bytesBuf.Bytes()
 		// fmt.Printf("ReadFromBuffer %s by %v size %d\n", readerName, lastReadPosition, len(buf))
+		glog.V(0).Infof("🔍 DEBUG: Processing buffer with %d bytes for %s", len(buf), readerName)
 
 		batchSize := 0
 
@@ -241,7 +244,7 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithBatchIndex(readerName string, 
 			size := util.BytesToUint32(buf[pos : pos+4])
 			if pos+4+int(size) > len(buf) {
 				err = ResumeError
-				glog.Errorf("LoopProcessLogDataWithBatchIndex: %s read buffer %v read %d entries [%d,%d) from [0,%d)", readerName, lastReadPosition, batchSize, pos, pos+int(size)+4, len(buf))
+				glog.Errorf("LoopProcessLogDataWithOffset: %s read buffer %v read %d entries [%d,%d) from [0,%d)", readerName, lastReadPosition, batchSize, pos, pos+int(size)+4, len(buf))
 				return
 			}
 			entryData := buf[pos+4 : pos+4+int(size)]
@@ -253,11 +256,15 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithBatchIndex(readerName string, 
 				continue
 			}
 
+			glog.V(0).Infof("🔍 DEBUG: Unmarshaled log entry %d: TsNs=%d, Offset=%d, Key=%s", batchSize+1, logEntry.TsNs, logEntry.Offset, string(logEntry.Key))
+
 			// Handle offset-based filtering for offset-based start positions
 			if startPosition.IsOffsetBased() {
 				startOffset := startPosition.GetOffset()
+				glog.V(0).Infof("🔍 DEBUG: Offset-based filtering: logEntry.Offset=%d, startOffset=%d", logEntry.Offset, startOffset)
 				if logEntry.Offset < startOffset {
 					// Skip entries before the starting offset
+					glog.V(0).Infof("🔍 DEBUG: Skipping entry due to offset filter")
 					pos += 4 + int(size)
 					batchSize++
 					continue
@@ -265,18 +272,20 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithBatchIndex(readerName string, 
 			}
 
 			if stopTsNs != 0 && logEntry.TsNs > stopTsNs {
+				glog.V(0).Infof("🔍 DEBUG: Stopping due to stopTsNs")
 				isDone = true
 				// println("stopTsNs", stopTsNs, "logEntry.TsNs", logEntry.TsNs)
 				return
 			}
-			lastReadPosition = NewMessagePosition(logEntry.TsNs, batchIndex)
+			lastReadPosition = NewMessagePosition(logEntry.TsNs, offset)
 
-			if isDone, err = eachLogDataFn(logEntry, batchIndex); err != nil {
-				glog.Errorf("LoopProcessLogDataWithBatchIndex: %s process log entry %d %v: %v", readerName, batchSize+1, logEntry, err)
+			glog.V(0).Infof("🔍 DEBUG: Calling eachLogDataFn for entry at offset %d", offset)
+			if isDone, err = eachLogDataFn(logEntry, offset); err != nil {
+				glog.Errorf("LoopProcessLogDataWithOffset: %s process log entry %d %v: %v", readerName, batchSize+1, logEntry, err)
 				return
 			}
 			if isDone {
-				glog.V(0).Infof("LoopProcessLogDataWithBatchIndex: %s process log entry %d", readerName, batchSize+1)
+				glog.V(0).Infof("LoopProcessLogDataWithOffset: %s process log entry %d", readerName, batchSize+1)
 				return
 			}
 

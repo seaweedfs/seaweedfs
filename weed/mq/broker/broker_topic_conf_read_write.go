@@ -40,13 +40,22 @@ func (b *MessageQueueBroker) doGetOrGenLocalPartition(t topic.Topic, partition t
 
 func (b *MessageQueueBroker) genLocalPartitionFromFiler(t topic.Topic, partition topic.Partition, conf *mq_pb.ConfigureTopicResponse) (localPartition *topic.LocalPartition, isGenerated bool, err error) {
 	self := b.option.BrokerAddress()
+	glog.V(0).Infof("🔍 DEBUG: genLocalPartitionFromFiler for %s %s, self=%s", t, partition, self)
+	glog.V(0).Infof("🔍 DEBUG: conf.BrokerPartitionAssignments: %v", conf.BrokerPartitionAssignments)
 	for _, assignment := range conf.BrokerPartitionAssignments {
+		glog.V(0).Infof("🔍 DEBUG: checking assignment: LeaderBroker=%s, Partition=%s", assignment.LeaderBroker, topic.FromPbPartition(assignment.Partition))
 		if assignment.LeaderBroker == string(self) && partition.Equals(topic.FromPbPartition(assignment.Partition)) {
+			glog.V(0).Infof("🔍 DEBUG: Creating local partition for %s %s", t, partition)
 			localPartition = topic.NewLocalPartition(partition, b.genLogFlushFunc(t, partition), logstore.GenMergedReadFunc(b, t, partition))
 			b.localTopicManager.AddLocalPartition(t, localPartition)
 			isGenerated = true
+			glog.V(0).Infof("🔍 DEBUG: Successfully added local partition %s %s to localTopicManager", t, partition)
 			break
 		}
+	}
+
+	if !isGenerated {
+		glog.V(0).Infof("🔍 DEBUG: No matching assignment found for %s %s", t, partition)
 	}
 
 	return localPartition, isGenerated, nil

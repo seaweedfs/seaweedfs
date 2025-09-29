@@ -2702,12 +2702,12 @@ func (*CloseSubscribersResponse) Descriptor() ([]byte, []int) {
 }
 
 type GetUnflushedMessagesRequest struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	Topic            *schema_pb.Topic       `protobuf:"bytes,1,opt,name=topic,proto3" json:"topic,omitempty"`
-	Partition        *schema_pb.Partition   `protobuf:"bytes,2,opt,name=partition,proto3" json:"partition,omitempty"`
-	StartBufferIndex int64                  `protobuf:"varint,3,opt,name=start_buffer_index,json=startBufferIndex,proto3" json:"start_buffer_index,omitempty"` // Filter by buffer index (messages from buffers >= this index)
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Topic             *schema_pb.Topic       `protobuf:"bytes,1,opt,name=topic,proto3" json:"topic,omitempty"`
+	Partition         *schema_pb.Partition   `protobuf:"bytes,2,opt,name=partition,proto3" json:"partition,omitempty"`
+	StartBufferOffset int64                  `protobuf:"varint,3,opt,name=start_buffer_offset,json=startBufferOffset,proto3" json:"start_buffer_offset,omitempty"` // Filter by buffer offset (messages from buffers >= this offset)
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *GetUnflushedMessagesRequest) Reset() {
@@ -2754,9 +2754,9 @@ func (x *GetUnflushedMessagesRequest) GetPartition() *schema_pb.Partition {
 	return nil
 }
 
-func (x *GetUnflushedMessagesRequest) GetStartBufferIndex() int64 {
+func (x *GetUnflushedMessagesRequest) GetStartBufferOffset() int64 {
 	if x != nil {
-		return x.StartBufferIndex
+		return x.StartBufferOffset
 	}
 	return 0
 }
@@ -4238,11 +4238,11 @@ const file_mq_broker_proto_rawDesc = "" +
 	"\x05topic\x18\x01 \x01(\v2\x10.schema_pb.TopicR\x05topic\x12 \n" +
 	"\funix_time_ns\x18\x02 \x01(\x03R\n" +
 	"unixTimeNs\"\x1a\n" +
-	"\x18CloseSubscribersResponse\"\xa7\x01\n" +
+	"\x18CloseSubscribersResponse\"\xa9\x01\n" +
 	"\x1bGetUnflushedMessagesRequest\x12&\n" +
 	"\x05topic\x18\x01 \x01(\v2\x10.schema_pb.TopicR\x05topic\x122\n" +
-	"\tpartition\x18\x02 \x01(\v2\x14.schema_pb.PartitionR\tpartition\x12,\n" +
-	"\x12start_buffer_index\x18\x03 \x01(\x03R\x10startBufferIndex\"\x8a\x01\n" +
+	"\tpartition\x18\x02 \x01(\v2\x14.schema_pb.PartitionR\tpartition\x12.\n" +
+	"\x13start_buffer_offset\x18\x03 \x01(\x03R\x11startBufferOffset\"\x8a\x01\n" +
 	"\x1cGetUnflushedMessagesResponse\x120\n" +
 	"\amessage\x18\x01 \x01(\v2\x16.messaging_pb.LogEntryR\amessage\x12\x14\n" +
 	"\x05error\x18\x02 \x01(\tR\x05error\x12\"\n" +

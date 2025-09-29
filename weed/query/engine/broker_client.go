@@ -438,20 +438,20 @@ func (c *BrokerClient) GetUnflushedMessages(ctx context.Context, namespace, topi
 
 	client := mq_pb.NewSeaweedMessagingClient(conn)
 
-	// Step 3: Get earliest buffer_start from disk files for precise deduplication
+	// Step 3: For unflushed messages, always start from 0 to get all in-memory data
+	// The buffer_start metadata in log files uses timestamp-based indices for uniqueness,
+	// but the broker's LogBuffer uses sequential indices internally (0, 1, 2, 3...)
+	// For unflushed data queries, we want all messages in the buffer regardless of their
+	// timestamp-based buffer indices, so we always use 0.
 	topicObj := topic.Topic{Namespace: namespace, Name: topicName}
 	partitionPath := topic.PartitionDir(topicObj, partition)
 	fmt.Printf("DEBUG: Getting buffer start from partition path: %s\n", partitionPath)
-	earliestBufferIndex, err := c.getEarliestBufferStart(ctx, partitionPath)
-	if err != nil {
-		fmt.Printf("DEBUG: Failed to get buffer start: %v, using 0\n", err)
-		// If we can't get buffer info, use 0 (get all unflushed data)
-		earliestBufferIndex = 0
-	} else {
-		fmt.Printf("DEBUG: Using earliest buffer index: %d\n", earliestBufferIndex)
-	}
 
-	// Step 4: Prepare request using buffer index filtering only
+	// Always use 0 for unflushed messages to ensure we get all in-memory data
+	earliestBufferOffset := int64(0)
+	fmt.Printf("DEBUG: Using StartBufferOffset=0 for unflushed messages (buffer offsets are sequential internally)\n")
+
+	// Step 4: Prepare request using buffer offset filtering only
 	request := &mq_pb.GetUnflushedMessagesRequest{
 		Topic: &schema_pb.Topic{
 			Namespace: namespace,
@@ -463,11 +463,11 @@ func (c *BrokerClient) GetUnflushedMessages(ctx context.Context, namespace, topi
 			RangeStop:  partition.RangeStop,
 			UnixTimeNs: partition.UnixTimeNs,
 		},
-		StartBufferIndex: earliestBufferIndex,
+		StartBufferOffset: earliestBufferOffset,
 	}
 
 	// Step 5: Call the broker streaming API
-	fmt.Printf("DEBUG: Calling GetUnflushedMessages gRPC with StartBufferIndex=%d\n", earliestBufferIndex)
+	fmt.Printf("DEBUG: Calling GetUnflushedMessages gRPC with StartBufferOffset=%d\n", earliestBufferOffset)
 	stream, err := client.GetUnflushedMessages(ctx, request)
 	if err != nil {
 		fmt.Printf("DEBUG: GetUnflushedMessages gRPC call failed: %v\n", err)

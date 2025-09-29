@@ -26,7 +26,7 @@ type dataToFlush struct {
 }
 
 type EachLogEntryFuncType func(logEntry *filer_pb.LogEntry) (isDone bool, err error)
-type EachLogEntryWithBatchIndexFuncType func(logEntry *filer_pb.LogEntry, batchIndex int64) (isDone bool, err error)
+type EachLogEntryWithOffsetFuncType func(logEntry *filer_pb.LogEntry, offset int64) (isDone bool, err error)
 type LogFlushFuncType func(logBuffer *LogBuffer, startTime, stopTime time.Time, buf []byte, minOffset, maxOffset int64)
 type LogReadFromDiskFuncType func(startPosition MessagePosition, stopTsNs int64, eachLogEntryFn EachLogEntryFuncType) (lastReadPosition MessagePosition, isDone bool, err error)
 
@@ -35,7 +35,7 @@ type LogBuffer struct {
 	name              string
 	prevBuffers       *SealedBuffers
 	buf               []byte
-	batchIndex        int64
+	offset            int64 // Sequential offset counter (0, 1, 2, 3...)
 	idx               []int
 	pos               int
 	startTime         time.Time
@@ -51,9 +51,9 @@ type LogBuffer struct {
 	flushChan         chan *dataToFlush
 	LastTsNs          atomic.Int64
 	// Offset range tracking for Kafka integration
-	minOffset         int64
-	maxOffset         int64
-	hasOffsets        bool
+	minOffset  int64
+	maxOffset  int64
+	hasOffsets bool
 	sync.RWMutex
 }
 
@@ -70,7 +70,7 @@ func NewLogBuffer(name string, flushInterval time.Duration, flushFn LogFlushFunc
 		notifyFn:       notifyFn,
 		flushChan:      make(chan *dataToFlush, 256),
 		isStopping:     new(atomic.Bool),
-		batchIndex:     time.Now().UnixNano(), // Initialize with creation time for uniqueness across restarts
+		offset:         0, // Start with sequential offset 0
 	}
 	go lb.loopFlush()
 	go lb.loopInterval()
@@ -150,7 +150,7 @@ func (logBuffer *LogBuffer) AddLogEntryToBuffer(logEntry *filer_pb.LogEntry) {
 	copy(logBuffer.buf[logBuffer.pos+4:logBuffer.pos+4+size], logEntryData)
 	logBuffer.pos += size + 4
 
-	logBuffer.batchIndex++
+	logBuffer.offset++
 }
 
 func (logBuffer *LogBuffer) AddDataToBuffer(partitionKey, data []byte, processingTsNs int64) {
@@ -203,7 +203,7 @@ func (logBuffer *LogBuffer) AddDataToBuffer(partitionKey, data []byte, processin
 	}
 
 	if logBuffer.startTime.Add(logBuffer.flushInterval).Before(ts) || len(logBuffer.buf)-logBuffer.pos < size+4 {
-		// glog.V(0).Infof("%s copyToFlush1 batch:%d count:%d start time %v, ts %v, remaining %d bytes", logBuffer.name, logBuffer.batchIndex, len(logBuffer.idx), logBuffer.startTime, ts, len(logBuffer.buf)-logBuffer.pos)
+		// glog.V(0).Infof("%s copyToFlush1 offset:%d count:%d start time %v, ts %v, remaining %d bytes", logBuffer.name, logBuffer.offset, len(logBuffer.idx), logBuffer.startTime, ts, len(logBuffer.buf)-logBuffer.pos)
 		toFlush = logBuffer.copyToFlush()
 		logBuffer.startTime = ts
 		if len(logBuffer.buf) < size+4 {
@@ -288,12 +288,12 @@ func (logBuffer *LogBuffer) copyToFlush() *dataToFlush {
 			// glog.V(4).Infof("%s removed from memory [0,%d) with %d entries [%v, %v]", m.name, m.pos, len(m.idx), m.startTime, m.stopTime)
 			logBuffer.lastFlushDataTime = logBuffer.stopTime
 		}
-		logBuffer.buf = logBuffer.prevBuffers.SealBuffer(logBuffer.startTime, logBuffer.stopTime, logBuffer.buf, logBuffer.pos, logBuffer.batchIndex)
+		logBuffer.buf = logBuffer.prevBuffers.SealBuffer(logBuffer.startTime, logBuffer.stopTime, logBuffer.buf, logBuffer.pos, logBuffer.offset)
 		logBuffer.startTime = time.Unix(0, 0)
 		logBuffer.stopTime = time.Unix(0, 0)
 		logBuffer.pos = 0
 		logBuffer.idx = logBuffer.idx[:0]
-		logBuffer.batchIndex++
+		logBuffer.offset++
 		// Reset offset tracking
 		logBuffer.hasOffsets = false
 		logBuffer.minOffset = 0
@@ -309,7 +309,7 @@ func (logBuffer *LogBuffer) GetEarliestTime() time.Time {
 func (logBuffer *LogBuffer) GetEarliestPosition() MessagePosition {
 	return MessagePosition{
 		Time:       logBuffer.startTime,
-		BatchIndex: logBuffer.batchIndex,
+		BatchIndex: logBuffer.offset,
 	}
 }
 
@@ -335,12 +335,12 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 	var tsBatchIndex int64
 	if !logBuffer.startTime.IsZero() {
 		tsMemory = logBuffer.startTime
-		tsBatchIndex = logBuffer.batchIndex
+		tsBatchIndex = logBuffer.offset
 	}
 	for _, prevBuf := range logBuffer.prevBuffers.buffers {
 		if !prevBuf.startTime.IsZero() && prevBuf.startTime.Before(tsMemory) {
 			tsMemory = prevBuf.startTime
-			tsBatchIndex = prevBuf.batchIndex
+			tsBatchIndex = prevBuf.offset
 		}
 	}
 	if tsMemory.IsZero() { // case 2.2
@@ -355,25 +355,25 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 	// the following is case 2.1
 
 	if lastReadPosition.Equal(logBuffer.stopTime) {
-		return nil, logBuffer.batchIndex, nil
+		return nil, logBuffer.offset, nil
 	}
 	if lastReadPosition.After(logBuffer.stopTime) {
 		// glog.Fatalf("unexpected last read time %v, older than latest %v", lastReadPosition, m.stopTime)
-		return nil, logBuffer.batchIndex, nil
+		return nil, logBuffer.offset, nil
 	}
 	if lastReadPosition.Before(logBuffer.startTime) {
 		for _, buf := range logBuffer.prevBuffers.buffers {
 			if buf.startTime.After(lastReadPosition.Time) {
 				// glog.V(4).Infof("%s return the %d sealed buffer %v", m.name, i, buf.startTime)
-				return copiedBytes(buf.buf[:buf.size]), buf.batchIndex, nil
+				return copiedBytes(buf.buf[:buf.size]), buf.offset, nil
 			}
 			if !buf.startTime.After(lastReadPosition.Time) && buf.stopTime.After(lastReadPosition.Time) {
 				pos := buf.locateByTs(lastReadPosition.Time)
-				return copiedBytes(buf.buf[pos:buf.size]), buf.batchIndex, nil
+				return copiedBytes(buf.buf[pos:buf.size]), buf.offset, nil
 			}
 		}
 		// glog.V(4).Infof("%s return the current buf %v", m.name, lastReadPosition)
-		return copiedBytes(logBuffer.buf[:logBuffer.pos]), logBuffer.batchIndex, nil
+		return copiedBytes(logBuffer.buf[:logBuffer.pos]), logBuffer.offset, nil
 	}
 
 	lastTs := lastReadPosition.UnixNano()
@@ -403,7 +403,7 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 				_, prevT = readTs(logBuffer.buf, logBuffer.idx[mid-1])
 			}
 			if prevT <= lastTs {
-				return copiedBytes(logBuffer.buf[pos:logBuffer.pos]), logBuffer.batchIndex, nil
+				return copiedBytes(logBuffer.buf[pos:logBuffer.pos]), logBuffer.offset, nil
 			}
 			h = mid
 		}
@@ -424,11 +424,11 @@ func (logBuffer *LogBuffer) GetName() string {
 	return logBuffer.name
 }
 
-// GetBatchIndex returns the current batch index for metadata tracking
-func (logBuffer *LogBuffer) GetBatchIndex() int64 {
+// GetOffset returns the current offset for metadata tracking
+func (logBuffer *LogBuffer) GetOffset() int64 {
 	logBuffer.RLock()
 	defer logBuffer.RUnlock()
-	return logBuffer.batchIndex
+	return logBuffer.offset
 }
 
 var bufferPool = sync.Pool{
