@@ -49,10 +49,14 @@ func (wfs *WFS) Read(cancel <-chan struct{}, in *fuse.ReadIn, buff []byte) (fuse
 
 	// Create a context that will be cancelled when the cancel channel receives a signal
 	ctx, cancelFunc := context.WithCancel(context.Background())
+	defer cancelFunc()
+	
 	go func() {
 		select {
 		case <-cancel:
 			cancelFunc()
+		case <-ctx.Done():
+			// Context already cancelled, exit goroutine
 		}
 	}()
 
