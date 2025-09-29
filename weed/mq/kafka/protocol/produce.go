@@ -158,6 +158,11 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 					// Use SeaweedMQ integration
 					offset, err := h.produceToSeaweedMQ(topicName, int32(partitionID), recordSetData)
 					if err != nil {
+						// Check if this is a schema validation error and add delay to prevent overloading
+						if h.isSchemaValidationError(err) {
+							Debug("Schema validation failed for topic %s: %v - adding delay to prevent gateway overload", topicName, err)
+							time.Sleep(200 * time.Millisecond) // Brief delay for schema validation failures
+						}
 						errorCode = 1 // UNKNOWN_SERVER_ERROR
 					} else {
 						baseOffset = offset
@@ -717,6 +722,11 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 						offsetProduced, prodErr := h.seaweedMQHandler.ProduceRecord(topicName, int32(partitionID), kv.Key, kv.Value)
 						Debug("Produce v%d - Record %d: offset=%d, error=%v", apiVersion, idx, offsetProduced, prodErr)
 						if prodErr != nil {
+							// Check if this is a schema validation error and add delay to prevent overloading
+							if h.isSchemaValidationError(prodErr) {
+								Debug("Schema validation failed for topic %s: %v - adding delay to prevent gateway overload", topicName, prodErr)
+								time.Sleep(200 * time.Millisecond) // Brief delay for schema validation failures
+							}
 							errorCode = 1 // UNKNOWN_SERVER_ERROR
 							Debug("Produce v%d - ProduceRecord failed: %v", apiVersion, prodErr)
 							break
@@ -892,6 +902,8 @@ func (h *Handler) performSchemaValidation(topicName string, schemaID uint32, mes
 		// No expected schema found - in strict mode this would be an error
 		// In permissive mode, allow any valid schema
 		if h.isStrictSchemaValidation() {
+			// Add delay before returning schema validation error to prevent overloading
+			time.Sleep(100 * time.Millisecond)
 			return fmt.Errorf("topic %s requires schema but no expected schema found: %w", topicName, err)
 		}
 		return nil
@@ -900,6 +912,8 @@ func (h *Handler) performSchemaValidation(topicName string, schemaID uint32, mes
 	// 3. Validate schema ID matches expected schema
 	expectedSchemaID, err := h.parseSchemaID(expectedMetadata["schema_id"])
 	if err != nil {
+		// Add delay before returning schema validation error to prevent overloading
+		time.Sleep(100 * time.Millisecond)
 		return fmt.Errorf("invalid expected schema ID for topic %s: %w", topicName, err)
 	}
 
@@ -908,9 +922,13 @@ func (h *Handler) performSchemaValidation(topicName string, schemaID uint32, mes
 		// Schema ID doesn't match - check if it's a compatible evolution
 		compatible, err := h.checkSchemaEvolution(topicName, expectedSchemaID, schemaID, messageFormat)
 		if err != nil {
+			// Add delay before returning schema validation error to prevent overloading
+			time.Sleep(100 * time.Millisecond)
 			return fmt.Errorf("failed to check schema evolution for topic %s: %w", topicName, err)
 		}
 		if !compatible {
+			// Add delay before returning schema validation error to prevent overloading
+			time.Sleep(100 * time.Millisecond)
 			return fmt.Errorf("schema ID %d is not compatible with expected schema %d for topic %s",
 				schemaID, expectedSchemaID, topicName)
 		}
@@ -1053,6 +1071,21 @@ func (h *Handler) validateJSONSchemaMessage(schemaID uint32, messageBytes []byte
 
 // Helper methods for configuration
 
+// isSchemaValidationError checks if an error is related to schema validation
+func (h *Handler) isSchemaValidationError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "schema") ||
+		strings.Contains(errStr, "decode") ||
+		strings.Contains(errStr, "validation") ||
+		strings.Contains(errStr, "registry") ||
+		strings.Contains(errStr, "avro") ||
+		strings.Contains(errStr, "protobuf") ||
+		strings.Contains(errStr, "json schema")
+}
+
 // isStrictSchemaValidation returns whether strict schema validation is enabled
 func (h *Handler) isStrictSchemaValidation() bool {
 	// This could be configurable per topic or globally
@@ -1125,6 +1158,8 @@ func (h *Handler) produceSchemaBasedRecord(topic string, partition int32, key []
 		var err error
 		keyDecodedMsg, err = h.schemaManager.DecodeMessage(key)
 		if err != nil {
+			// Add delay before returning schema decoding error to prevent overloading
+			time.Sleep(100 * time.Millisecond)
 			return 0, fmt.Errorf("failed to decode schematized key: %w", err)
 		}
 	}
@@ -1134,6 +1169,8 @@ func (h *Handler) produceSchemaBasedRecord(topic string, partition int32, key []
 		var err error
 		valueDecodedMsg, err = h.schemaManager.DecodeMessage(value)
 		if err != nil {
+			// Add delay before returning schema decoding error to prevent overloading
+			time.Sleep(100 * time.Millisecond)
 			return 0, fmt.Errorf("failed to decode schematized value: %w", err)
 		}
 	}
