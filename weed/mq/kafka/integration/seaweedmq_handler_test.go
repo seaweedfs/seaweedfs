@@ -62,8 +62,8 @@ func TestSeaweedMQHandler_MapSeaweedToKafkaOffsets(t *testing.T) {
 	// Verify Kafka offsets are sequential starting from startOffset
 	for i, record := range mappedRecords {
 		expectedOffset := startOffset + int64(i)
-		if record.Sequence != expectedOffset {
-			t.Errorf("Offset mismatch for record %d: got %d, want %d", i, record.Sequence, expectedOffset)
+		if record.Offset != expectedOffset {
+			t.Errorf("Offset mismatch for record %d: got %d, want %d", i, record.Offset, expectedOffset)
 		}
 
 		// Verify data is preserved

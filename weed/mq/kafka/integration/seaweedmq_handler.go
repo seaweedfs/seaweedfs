@@ -71,7 +71,7 @@ type SeaweedRecord struct {
 	Key       []byte
 	Value     []byte
 	Timestamp int64
-	Sequence  int64
+	Offset    int64
 }
 
 // GetStoredRecords retrieves records from SeaweedMQ using the proper subscriber API
@@ -104,8 +104,8 @@ func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromO
 	smqRecords := make([]offset.SMQRecord, 0, len(seaweedRecords))
 	for i, seaweedRecord := range seaweedRecords {
 		// CRITICAL FIX: Use the actual offset from SeaweedMQ
-		// The SeaweedRecord.Sequence field now contains the correct offset from the subscriber
-		kafkaOffset := seaweedRecord.Sequence
+		// The SeaweedRecord.Offset field now contains the correct offset from the subscriber
+		kafkaOffset := seaweedRecord.Offset
 
 		// Validate that the offset makes sense
 		expectedOffset := fromOffset + int64(i)
@@ -698,7 +698,7 @@ func (h *SeaweedMQHandler) mapSeaweedToKafkaOffsets(topic string, partition int3
 			Key:       seaweedRecord.Key,
 			Value:     seaweedRecord.Value,
 			Timestamp: seaweedRecord.Timestamp,
-			Sequence:  currentKafkaOffset, // Use Kafka offset as sequence for consistency
+			Offset:    currentKafkaOffset, // Use Kafka offset for consistency
 		}
 
 		// Update the offset ledger to track the mapping between SeaweedMQ sequence and Kafka offset
@@ -1818,13 +1818,13 @@ func (bc *BrokerClient) ReadRecords(session *BrokerSubscriberSession, maxRecords
 				Key:       dataMsg.Key,
 				Value:     dataMsg.Value,
 				Timestamp: dataMsg.TsNs,
-				Sequence:  currentOffset, // Use the tracked offset
+				Offset:    currentOffset, // Use the tracked offset
 			}
 			records = append(records, record)
 			currentOffset++ // Increment for next record
 
 			glog.Infof("[FETCH] Received record: offset=%d, keyLen=%d, valueLen=%d",
-				record.Sequence, len(record.Key), len(record.Value))
+				record.Offset, len(record.Key), len(record.Value))
 
 			// Important: return early after receiving at least one record to avoid
 			// blocking while waiting for an entire batch in environments where data

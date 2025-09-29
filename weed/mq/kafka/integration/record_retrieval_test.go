@@ -30,7 +30,7 @@ func (m *MockSeaweedClient) AddRecord(topic string, partition int32, key []byte,
 		Key:       key,
 		Value:     value,
 		Timestamp: timestamp,
-		Sequence:  int64(len(m.records[topic][partition])), // Simple sequence numbering
+		Offset:    int64(len(m.records[topic][partition])), // Simple offset numbering
 	}
 
 	m.records[topic][partition] = append(m.records[topic][partition], record)
