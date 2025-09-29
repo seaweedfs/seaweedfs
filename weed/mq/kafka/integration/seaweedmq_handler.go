@@ -1697,14 +1697,12 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 		startOffsetValue = 0 // Not used with RESET_TO_LATEST
 		glog.V(1).Infof("Using RESET_TO_LATEST for Kafka offset -1 (read latest)")
 	} else {
-		// CRITICAL FIX: Always use RESET_TO_EARLIEST for all specific offsets
-		// This avoids the offset mapping problem between Kafka and SeaweedMQ native offsets
-		// We'll skip records in ReadRecords until we reach the desired Kafka offset
-		// TODO: Future optimization - use chunk metadata to skip entire chunks
-		offsetType = schema_pb.OffsetType_RESET_TO_EARLIEST
-		startTimestamp = 0   // Not used with RESET_TO_EARLIEST
-		startOffsetValue = 0 // Not used with RESET_TO_EARLIEST
-		glog.V(1).Infof("Using RESET_TO_EARLIEST for Kafka offset %d (will skip to desired offset in ReadRecords)", startOffset)
+		// CRITICAL FIX: Use EXACT_OFFSET to position subscriber at the exact Kafka offset
+		// This allows the subscriber to read from both buffer and disk at the correct position
+		offsetType = schema_pb.OffsetType_EXACT_OFFSET
+		startTimestamp = 0             // Not used with EXACT_OFFSET
+		startOffsetValue = startOffset // Use the exact Kafka offset
+		glog.V(1).Infof("Using EXACT_OFFSET for Kafka offset %d (direct positioning)", startOffset)
 	}
 
 	glog.V(1).Infof("Creating subscriber for topic=%s partition=%d: Kafka offset %d -> SeaweedMQ %s (timestamp=%d)",
@@ -1794,8 +1792,7 @@ func (bc *BrokerClient) ReadRecords(session *BrokerSubscriberSession, maxRecords
 		session.Topic, session.Partition, session.StartOffset, maxRecords)
 
 	var records []*SeaweedRecord
-	currentOffset := int64(0) // Always start from 0 since we use RESET_TO_EARLIEST
-	targetOffset := session.StartOffset
+	currentOffset := session.StartOffset // Start from the exact offset requested
 
 	for len(records) < maxRecords {
 		resp, err := session.Stream.Recv()
@@ -1810,19 +1807,13 @@ func (bc *BrokerClient) ReadRecords(session *BrokerSubscriberSession, maxRecords
 		}
 
 		if dataMsg := resp.GetData(); dataMsg != nil {
-			// CRITICAL FIX: Skip records until we reach the target Kafka offset
-			if currentOffset < targetOffset {
-				glog.V(2).Infof("[FETCH] Skipping record at offset %d (target: %d)", currentOffset, targetOffset)
-				currentOffset++
-				continue
-			}
-
-			// Create record with the correct Kafka offset
+			// Create record with the current Kafka offset
+			// Since we use EXACT_OFFSET, the subscriber is positioned correctly
 			record := &SeaweedRecord{
 				Key:       dataMsg.Key,
 				Value:     dataMsg.Value,
 				Timestamp: dataMsg.TsNs,
-				Offset:    currentOffset, // Use the tracked Kafka offset
+				Offset:    currentOffset, // Use the current Kafka offset
 			}
 			records = append(records, record)
 			currentOffset++ // Increment for next record
