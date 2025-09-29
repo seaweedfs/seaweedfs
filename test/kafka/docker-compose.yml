@@ -1,5 +1,3 @@
-version: '3.8'
-
 x-seaweedfs-build: &seaweedfs-build
   build:
     context: ../..
