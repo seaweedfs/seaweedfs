@@ -760,9 +760,9 @@ func (hms *HybridMessageScanner) parseRawMessageWithSchema(logEntry *filer_pb.Lo
 
 	// Parse message data based on schema
 	if hms.recordSchema == nil || len(hms.recordSchema.Fields) == 0 {
-		// Fallback: No schema available, treat as single "data" field
-		recordValue.Fields["data"] = &schema_pb.Value{
-			Kind: &schema_pb.Value_StringValue{StringValue: string(logEntry.Data)},
+		// Fallback: No schema available, treat as single "value" field for Kafka compatibility
+		recordValue.Fields["value"] = &schema_pb.Value{
+			Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Data},
 		}
 		return recordValue, "live_log", nil
 	}
@@ -797,9 +797,9 @@ func (hms *HybridMessageScanner) parseRawMessageWithSchema(logEntry *filer_pb.Lo
 		}
 	}
 
-	// Final fallback: treat as string data field
-	recordValue.Fields["data"] = &schema_pb.Value{
-		Kind: &schema_pb.Value_StringValue{StringValue: string(logEntry.Data)},
+	// Final fallback: treat as bytes value field for Kafka compatibility
+	recordValue.Fields["value"] = &schema_pb.Value{
+		Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Data},
 	}
 
 	return recordValue, "live_log", nil
