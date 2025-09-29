@@ -409,6 +409,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		// Successfully read the message size
 		size := binary.BigEndian.Uint32(sizeBytes[:])
 		Debug("[%s] Read message size header: %d bytes", connectionID, size)
+		fmt.Printf("🔥 PROTOCOL DEBUG: Read message size: %d bytes\n", size)
 		if size == 0 || size > 1024*1024 { // 1MB limit
 			// Use standardized error for message size limit
 			Debug("[%s] Invalid message size: %d (limit: 1MB)", connectionID, size)
@@ -444,6 +445,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		correlationID := binary.BigEndian.Uint32(messageBuf[4:8])
 
 		apiName := getAPIName(apiKey)
+		fmt.Printf("🔥 PROTOCOL DEBUG: Parsed header - API Key: %d (%s), Version: %d, Correlation: %d\n", apiKey, apiName, apiVersion, correlationID)
 
 		// Validate API version against what we support
 		Debug("VALIDATING API VERSION: Key=%d, Version=%d", apiKey, apiVersion)
@@ -564,7 +566,9 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 
 		case 3: // Metadata
 			Debug("-> Metadata v%d", apiVersion)
+			fmt.Printf("🔥 PROTOCOL DEBUG: Calling handleMetadata v%d for correlation %d\n", apiVersion, correlationID)
 			response, err = h.handleMetadata(correlationID, apiVersion, requestBody)
+			fmt.Printf("🔥 PROTOCOL DEBUG: handleMetadata returned, err=%v, responseLen=%d\n", err, len(response))
 		case 2: // ListOffsets
 			response, err = h.handleListOffsets(correlationID, apiVersion, requestBody)
 		case 19: // CreateTopics
@@ -573,7 +577,9 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			response, err = h.handleDeleteTopics(correlationID, requestBody)
 		case 0: // Produce
 			Debug("-> Produce v%d", apiVersion)
+			fmt.Printf("🔥 PROTOCOL DEBUG: Calling handleProduce for correlation %d\n", correlationID)
 			response, err = h.handleProduce(correlationID, apiVersion, requestBody)
+			fmt.Printf("🔥 PROTOCOL DEBUG: handleProduce returned, err=%v\n", err)
 		case 1: // Fetch
 			Debug("-> Fetch v%d", apiVersion)
 			response, err = h.handleFetch(ctx, correlationID, apiVersion, requestBody)
@@ -608,7 +614,9 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			response, err = h.handleDescribeConfigs(correlationID, apiVersion, requestBody)
 		case 22: // InitProducerId
 			Debug("-> InitProducerId v%d", apiVersion)
+			fmt.Printf("🔥 PROTOCOL DEBUG: Calling handleInitProducerId for correlation %d\n", correlationID)
 			response, err = h.handleInitProducerId(correlationID, apiVersion, requestBody)
+			fmt.Printf("🔥 PROTOCOL DEBUG: handleInitProducerId returned, err=%v, responseLen=%d\n", err, len(response))
 		default:
 			Warning("Unsupported API key: %d (%s) v%d - Correlation: %d", apiKey, apiName, apiVersion, correlationID)
 			err = fmt.Errorf("unsupported API key: %d (version %d)", apiKey, apiVersion)
@@ -623,6 +631,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 
 		// Send response with timeout handling
 		Debug("[%s] Sending %s response: %d bytes", connectionID, getAPIName(apiKey), len(response))
+		fmt.Printf("🔥 PROTOCOL DEBUG: Sending %s response: %d bytes for correlation %d\n", getAPIName(apiKey), len(response), correlationID)
 		if err := h.writeResponseWithTimeout(w, response, timeoutConfig.WriteTimeout); err != nil {
 			errorCode := HandleTimeoutError(err, "write")
 			Error("[%s] Error sending response: %v (code: %d)", connectionID, err, errorCode)
@@ -1297,21 +1306,27 @@ func (h *Handler) HandleMetadataV7(correlationID uint32, requestBody []byte) ([]
 	// Each partition now includes: error_code(2) + partition_index(4) + leader_id(4) + leader_epoch(4) + replica_nodes(COMPACT_ARRAY) + isr_nodes(COMPACT_ARRAY) + offline_replicas(COMPACT_ARRAY) + tagged_fields
 
 	Debug("HANDLEMETADATAV7 CALLED - FLEXIBLE FORMAT IMPLEMENTATION")
+	fmt.Printf("🔥 METADATA V7 DEBUG: Starting HandleMetadataV7\n")
 
 	// Parse requested topics (empty means all)
 	requestedTopics := h.parseMetadataTopics(requestBody)
 	Debug("METADATA v7 REQUEST (FLEXIBLE) - Requested: %v (empty=all)", requestedTopics)
+	fmt.Printf("🔥 METADATA V7 DEBUG: Requested topics: %v\n", requestedTopics)
 
 	// Determine topics to return using SeaweedMQ handler
 	var topicsToReturn []string
 	if len(requestedTopics) == 0 {
+		fmt.Printf("🔥 METADATA V7 DEBUG: Calling ListTopics() for all topics\n")
 		topicsToReturn = h.seaweedMQHandler.ListTopics()
+		fmt.Printf("🔥 METADATA V7 DEBUG: ListTopics() returned %d topics: %v\n", len(topicsToReturn), topicsToReturn)
 	} else {
+		fmt.Printf("🔥 METADATA V7 DEBUG: Checking specific topics: %v\n", requestedTopics)
 		for _, name := range requestedTopics {
 			if h.seaweedMQHandler.TopicExists(name) {
 				topicsToReturn = append(topicsToReturn, name)
 			}
 		}
+		fmt.Printf("🔥 METADATA V7 DEBUG: Found %d existing topics: %v\n", len(topicsToReturn), topicsToReturn)
 	}
 
 	var buf bytes.Buffer

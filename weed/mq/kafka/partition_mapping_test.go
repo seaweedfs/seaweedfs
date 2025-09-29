@@ -5,14 +5,108 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
+	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 )
+
+// PartitionMapper provides consistent Kafka partition to SeaweedMQ ring mapping
+// NOTE: This is test-only code and not used in the actual Kafka Gateway implementation
+type PartitionMapper struct{}
+
+// NewPartitionMapper creates a new partition mapper
+func NewPartitionMapper() *PartitionMapper {
+	return &PartitionMapper{}
+}
+
+// GetRangeSize returns the consistent range size for Kafka partition mapping
+// This ensures all components use the same calculation
+func (pm *PartitionMapper) GetRangeSize() int32 {
+	// Use a range size that divides evenly into MaxPartitionCount (2520)
+	// Range size 35 gives us exactly 72 Kafka partitions: 2520 / 35 = 72
+	// This provides a good balance between partition granularity and ring utilization
+	return 35
+}
+
+// GetMaxKafkaPartitions returns the maximum number of Kafka partitions supported
+func (pm *PartitionMapper) GetMaxKafkaPartitions() int32 {
+	// With range size 35, we can support: 2520 / 35 = 72 Kafka partitions
+	return int32(pub_balancer.MaxPartitionCount) / pm.GetRangeSize()
+}
+
+// MapKafkaPartitionToSMQRange maps a Kafka partition to SeaweedMQ ring range
+func (pm *PartitionMapper) MapKafkaPartitionToSMQRange(kafkaPartition int32) (rangeStart, rangeStop int32) {
+	rangeSize := pm.GetRangeSize()
+	rangeStart = kafkaPartition * rangeSize
+	rangeStop = rangeStart + rangeSize - 1
+	return rangeStart, rangeStop
+}
+
+// CreateSMQPartition creates a SeaweedMQ partition from a Kafka partition
+func (pm *PartitionMapper) CreateSMQPartition(kafkaPartition int32, unixTimeNs int64) *schema_pb.Partition {
+	rangeStart, rangeStop := pm.MapKafkaPartitionToSMQRange(kafkaPartition)
+
+	return &schema_pb.Partition{
+		RingSize:   pub_balancer.MaxPartitionCount,
+		RangeStart: rangeStart,
+		RangeStop:  rangeStop,
+		UnixTimeNs: unixTimeNs,
+	}
+}
+
+// ExtractKafkaPartitionFromSMQRange extracts the Kafka partition from SeaweedMQ range
+func (pm *PartitionMapper) ExtractKafkaPartitionFromSMQRange(rangeStart int32) int32 {
+	rangeSize := pm.GetRangeSize()
+	return rangeStart / rangeSize
+}
+
+// ValidateKafkaPartition validates that a Kafka partition is within supported range
+func (pm *PartitionMapper) ValidateKafkaPartition(kafkaPartition int32) bool {
+	return kafkaPartition >= 0 && kafkaPartition < pm.GetMaxKafkaPartitions()
+}
+
+// GetPartitionMappingInfo returns debug information about the partition mapping
+func (pm *PartitionMapper) GetPartitionMappingInfo() map[string]interface{} {
+	return map[string]interface{}{
+		"ring_size":            pub_balancer.MaxPartitionCount,
+		"range_size":           pm.GetRangeSize(),
+		"max_kafka_partitions": pm.GetMaxKafkaPartitions(),
+		"ring_utilization":     float64(pm.GetMaxKafkaPartitions()*pm.GetRangeSize()) / float64(pub_balancer.MaxPartitionCount),
+	}
+}
+
+// Global instance for consistent usage across the test codebase
+var DefaultPartitionMapper = NewPartitionMapper()
+
+// Convenience functions that use the default mapper
+func MapKafkaPartitionToSMQRange(kafkaPartition int32) (rangeStart, rangeStop int32) {
+	return DefaultPartitionMapper.MapKafkaPartitionToSMQRange(kafkaPartition)
+}
+
+func CreateSMQPartition(kafkaPartition int32, unixTimeNs int64) *schema_pb.Partition {
+	return DefaultPartitionMapper.CreateSMQPartition(kafkaPartition, unixTimeNs)
+}
+
+func ExtractKafkaPartitionFromSMQRange(rangeStart int32) int32 {
+	return DefaultPartitionMapper.ExtractKafkaPartitionFromSMQRange(rangeStart)
+}
+
+func ValidateKafkaPartition(kafkaPartition int32) bool {
+	return DefaultPartitionMapper.ValidateKafkaPartition(kafkaPartition)
+}
+
+func GetRangeSize() int32 {
+	return DefaultPartitionMapper.GetRangeSize()
+}
+
+func GetMaxKafkaPartitions() int32 {
+	return DefaultPartitionMapper.GetMaxKafkaPartitions()
+}
 
 func TestPartitionMapper_GetRangeSize(t *testing.T) {
 	mapper := NewPartitionMapper()
 	rangeSize := mapper.GetRangeSize()
 
-	if rangeSize != 32 {
-		t.Errorf("Expected range size 32, got %d", rangeSize)
+	if rangeSize != 35 {
+		t.Errorf("Expected range size 35, got %d", rangeSize)
 	}
 
 	// Verify that the range size divides evenly into available partitions
@@ -35,10 +129,10 @@ func TestPartitionMapper_MapKafkaPartitionToSMQRange(t *testing.T) {
 		expectedStart  int32
 		expectedStop   int32
 	}{
-		{0, 0, 31},
-		{1, 32, 63},
-		{2, 64, 95},
-		{10, 320, 351},
+		{0, 0, 34},
+		{1, 35, 69},
+		{2, 70, 104},
+		{10, 350, 384},
 	}
 
 	for _, tt := range tests {
@@ -70,9 +164,9 @@ func TestPartitionMapper_ExtractKafkaPartitionFromSMQRange(t *testing.T) {
 		expectedKafka int32
 	}{
 		{0, 0},
-		{32, 1},
-		{64, 2},
-		{320, 10},
+		{35, 1},
+		{70, 2},
+		{350, 10},
 	}
 
 	for _, tt := range tests {
