@@ -43,8 +43,14 @@ func (b *MessageQueueBroker) genLocalPartitionFromFiler(t topic.Topic, partition
 	glog.V(0).Infof("🔍 DEBUG: genLocalPartitionFromFiler for %s %s, self=%s", t, partition, self)
 	glog.V(0).Infof("🔍 DEBUG: conf.BrokerPartitionAssignments: %v", conf.BrokerPartitionAssignments)
 	for _, assignment := range conf.BrokerPartitionAssignments {
-		glog.V(0).Infof("🔍 DEBUG: checking assignment: LeaderBroker=%s, Partition=%s", assignment.LeaderBroker, topic.FromPbPartition(assignment.Partition))
-		if assignment.LeaderBroker == string(self) && partition.Equals(topic.FromPbPartition(assignment.Partition)) {
+		assignmentPartition := topic.FromPbPartition(assignment.Partition)
+		glog.V(0).Infof("🔍 DEBUG: checking assignment: LeaderBroker=%s, Partition=%s", assignment.LeaderBroker, assignmentPartition)
+		glog.V(0).Infof("🔍 DEBUG: comparing self=%s with LeaderBroker=%s: %v", self, assignment.LeaderBroker, assignment.LeaderBroker == string(self))
+		glog.V(0).Infof("🔍 DEBUG: comparing partition=%s with assignmentPartition=%s: %v", partition.String(), assignmentPartition.String(), partition.Equals(assignmentPartition))
+		glog.V(0).Infof("🔍 DEBUG: logical comparison (RangeStart, RangeStop only): %v", partition.LogicalEquals(assignmentPartition))
+		glog.V(0).Infof("🔍 DEBUG: partition details: RangeStart=%d, RangeStop=%d, RingSize=%d, UnixTimeNs=%d", partition.RangeStart, partition.RangeStop, partition.RingSize, partition.UnixTimeNs)
+		glog.V(0).Infof("🔍 DEBUG: assignmentPartition details: RangeStart=%d, RangeStop=%d, RingSize=%d, UnixTimeNs=%d", assignmentPartition.RangeStart, assignmentPartition.RangeStop, assignmentPartition.RingSize, assignmentPartition.UnixTimeNs)
+		if assignment.LeaderBroker == string(self) && partition.LogicalEquals(assignmentPartition) {
 			glog.V(0).Infof("🔍 DEBUG: Creating local partition for %s %s", t, partition)
 			localPartition = topic.NewLocalPartition(partition, b.genLogFlushFunc(t, partition), logstore.GenMergedReadFunc(b, t, partition))
 			b.localTopicManager.AddLocalPartition(t, localPartition)

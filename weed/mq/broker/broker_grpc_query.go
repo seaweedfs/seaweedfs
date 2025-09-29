@@ -38,10 +38,18 @@ func (b *MessageQueueBroker) GetUnflushedMessages(req *mq_pb.GetUnflushedMessage
 
 	glog.V(0).Infof("🔍 DEBUG: GetUnflushedMessages request for %v %v, StartBufferOffset=%d", t, partition, req.StartBufferOffset)
 
-	// Get the local partition for this topic/partition
-	b.accessLock.Lock()
-	localPartition := b.localTopicManager.GetLocalPartition(t, partition)
-	b.accessLock.Unlock()
+	// Get or generate the local partition for this topic/partition (similar to subscriber flow)
+	glog.V(0).Infof("🔍 DEBUG: Calling GetOrGenerateLocalPartition for %s %s", t, partition)
+	localPartition, getOrGenErr := b.GetOrGenerateLocalPartition(t, partition)
+	if getOrGenErr != nil {
+		glog.V(0).Infof("🔍 DEBUG: GetOrGenerateLocalPartition failed: %v", getOrGenErr)
+		// Fall back to the original logic for broker routing
+		b.accessLock.Lock()
+		localPartition = b.localTopicManager.GetLocalPartition(t, partition)
+		b.accessLock.Unlock()
+	} else {
+		glog.V(0).Infof("🔍 DEBUG: GetOrGenerateLocalPartition succeeded, localPartition=%v", localPartition != nil)
+	}
 
 	glog.V(0).Infof("🔍 DEBUG: LocalPartition lookup result: %v", localPartition != nil)
 
