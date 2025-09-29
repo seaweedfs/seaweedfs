@@ -358,8 +358,17 @@ func (hms *HybridMessageScanner) scanUnflushedDataWithStats(ctx context.Context,
 
 	// Step 2: Process unflushed entries (already deduplicated by broker)
 	for _, logEntry := range unflushedEntries {
+		// Pre-decode DataMessage for reuse in both control check and conversion
+		var dataMessage *mq_pb.DataMessage
+		if len(logEntry.Data) > 0 {
+			dataMessage = &mq_pb.DataMessage{}
+			if err := proto.Unmarshal(logEntry.Data, dataMessage); err != nil {
+				dataMessage = nil // Failed to decode, treat as raw data
+			}
+		}
+
 		// Skip control entries without actual data
-		if hms.isControlEntry(logEntry) {
+		if hms.isControlEntryWithDecoded(logEntry, dataMessage) {
 			continue // Skip this entry
 		}
 
@@ -372,7 +381,7 @@ func (hms *HybridMessageScanner) scanUnflushedDataWithStats(ctx context.Context,
 		}
 
 		// Convert LogEntry to RecordValue format (same as disk data)
-		recordValue, _, err := hms.convertLogEntryToRecordValue(logEntry)
+		recordValue, _, err := hms.convertLogEntryToRecordValueWithDecoded(logEntry, dataMessage)
 		if err != nil {
 			if isDebugMode(ctx) {
 				fmt.Printf("Debug: Failed to convert unflushed log entry: %v\n", err)
@@ -656,21 +665,28 @@ func (hms *HybridMessageScanner) countLiveLogFiles(partition topic.Partition) (i
 // 2. Entries with empty keys (as filtered by subscriber)
 // NOTE: Messages with empty data but valid keys (like NOOP messages) are NOT control entries
 func (hms *HybridMessageScanner) isControlEntry(logEntry *filer_pb.LogEntry) bool {
+	// Pre-decode DataMessage if needed
+	var dataMessage *mq_pb.DataMessage
+	if len(logEntry.Data) > 0 {
+		dataMessage = &mq_pb.DataMessage{}
+		if err := proto.Unmarshal(logEntry.Data, dataMessage); err != nil {
+			dataMessage = nil // Failed to decode, treat as raw data
+		}
+	}
+	return hms.isControlEntryWithDecoded(logEntry, dataMessage)
+}
+
+// isControlEntryWithDecoded checks if a log entry is a control entry using pre-decoded DataMessage
+// This avoids duplicate protobuf unmarshaling when the DataMessage is already decoded
+func (hms *HybridMessageScanner) isControlEntryWithDecoded(logEntry *filer_pb.LogEntry, dataMessage *mq_pb.DataMessage) bool {
 	// Skip entries with empty keys (same logic as subscriber)
 	if len(logEntry.Key) == 0 {
 		return true
 	}
 
 	// Check if this is a DataMessage with control field populated
-	// Only check this if we have data to unmarshal
-	if len(logEntry.Data) > 0 {
-		dataMessage := &mq_pb.DataMessage{}
-		if err := proto.Unmarshal(logEntry.Data, dataMessage); err == nil {
-			// If it has a control field, it's a control message
-			if dataMessage.Ctrl != nil {
-				return true
-			}
-		}
+	if dataMessage != nil && dataMessage.Ctrl != nil {
+		return true
 	}
 
 	// Messages with valid keys (even if data is empty) are legitimate messages
@@ -787,6 +803,39 @@ func (hms *HybridMessageScanner) parseRawMessageWithSchema(logEntry *filer_pb.Lo
 	}
 
 	return recordValue, "live_log", nil
+}
+
+// convertLogEntryToRecordValueWithDecoded converts a filer_pb.LogEntry to schema_pb.RecordValue
+// using a pre-decoded DataMessage to avoid duplicate protobuf unmarshaling
+func (hms *HybridMessageScanner) convertLogEntryToRecordValueWithDecoded(logEntry *filer_pb.LogEntry, dataMessage *mq_pb.DataMessage) (*schema_pb.RecordValue, string, error) {
+	// If we have a decoded DataMessage, check if it contains a RecordValue
+	if dataMessage != nil && dataMessage.Value != nil {
+		// This is a DataMessage containing a RecordValue (live message format)
+		// dataMessage.Value is []byte, so we need to unmarshal it
+		recordValue := &schema_pb.RecordValue{}
+		if err := proto.Unmarshal(dataMessage.Value, recordValue); err != nil {
+			// If unmarshaling fails, fallback to original logic
+			return hms.convertLogEntryToRecordValue(logEntry)
+		}
+
+		// Ensure Fields map exists
+		if recordValue.Fields == nil {
+			recordValue.Fields = make(map[string]*schema_pb.Value)
+		}
+
+		// Add system columns from LogEntry
+		recordValue.Fields[SW_COLUMN_NAME_TIMESTAMP] = &schema_pb.Value{
+			Kind: &schema_pb.Value_Int64Value{Int64Value: logEntry.TsNs},
+		}
+		recordValue.Fields[SW_COLUMN_NAME_KEY] = &schema_pb.Value{
+			Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Key},
+		}
+
+		return recordValue, "live_log", nil
+	}
+
+	// Fallback to original conversion logic for non-DataMessage formats
+	return hms.convertLogEntryToRecordValue(logEntry)
 }
 
 // parseJSONMessage attempts to parse raw data as JSON and map to schema fields
@@ -1560,13 +1609,22 @@ func (s *StreamingFlushedDataSource) startStreaming() {
 
 		// Message processing function
 		eachLogEntryFn := func(logEntry *filer_pb.LogEntry) (isDone bool, err error) {
+			// Pre-decode DataMessage for reuse in both control check and conversion
+			var dataMessage *mq_pb.DataMessage
+			if len(logEntry.Data) > 0 {
+				dataMessage = &mq_pb.DataMessage{}
+				if err := proto.Unmarshal(logEntry.Data, dataMessage); err != nil {
+					dataMessage = nil // Failed to decode, treat as raw data
+				}
+			}
+
 			// Skip control entries without actual data
-			if s.hms.isControlEntry(logEntry) {
+			if s.hms.isControlEntryWithDecoded(logEntry, dataMessage) {
 				return false, nil // Skip this entry
 			}
 
 			// Convert log entry to schema_pb.RecordValue for consistent processing
-			recordValue, source, convertErr := s.hms.convertLogEntryToRecordValue(logEntry)
+			recordValue, source, convertErr := s.hms.convertLogEntryToRecordValueWithDecoded(logEntry, dataMessage)
 			if convertErr != nil {
 				return false, fmt.Errorf("failed to convert log entry: %v", convertErr)
 			}
