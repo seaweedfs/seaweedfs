@@ -654,28 +654,48 @@ func (hms *HybridMessageScanner) countLiveLogFiles(partition topic.Partition) (i
 // Based on MQ system analysis, control entries are:
 // 1. DataMessages with populated Ctrl field (publisher close signals)
 // 2. Entries with empty keys (as filtered by subscriber)
-// 3. Entries with no data
+// NOTE: Messages with empty data but valid keys (like NOOP messages) are NOT control entries
 func (hms *HybridMessageScanner) isControlEntry(logEntry *filer_pb.LogEntry) bool {
-	// Skip entries with no data
-	if len(logEntry.Data) == 0 {
-		return true
-	}
-
 	// Skip entries with empty keys (same logic as subscriber)
 	if len(logEntry.Key) == 0 {
 		return true
 	}
 
 	// Check if this is a DataMessage with control field populated
-	dataMessage := &mq_pb.DataMessage{}
-	if err := proto.Unmarshal(logEntry.Data, dataMessage); err == nil {
-		// If it has a control field, it's a control message
-		if dataMessage.Ctrl != nil {
-			return true
+	// Only check this if we have data to unmarshal
+	if len(logEntry.Data) > 0 {
+		dataMessage := &mq_pb.DataMessage{}
+		if err := proto.Unmarshal(logEntry.Data, dataMessage); err == nil {
+			// If it has a control field, it's a control message
+			if dataMessage.Ctrl != nil {
+				return true
+			}
 		}
 	}
 
+	// Messages with valid keys (even if data is empty) are legitimate messages
+	// Examples: NOOP messages from Schema Registry
 	return false
+}
+
+// isNullOrEmpty checks if a schema_pb.Value is null or empty
+func isNullOrEmpty(value *schema_pb.Value) bool {
+	if value == nil {
+		return true
+	}
+
+	switch v := value.Kind.(type) {
+	case *schema_pb.Value_StringValue:
+		return v.StringValue == ""
+	case *schema_pb.Value_BytesValue:
+		return len(v.BytesValue) == 0
+	case *schema_pb.Value_ListValue:
+		return v.ListValue == nil || len(v.ListValue.Values) == 0
+	case nil:
+		return true // No kind set means null
+	default:
+		return false
+	}
 }
 
 // convertLogEntryToRecordValue converts a filer_pb.LogEntry to schema_pb.RecordValue
