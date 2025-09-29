@@ -123,9 +123,7 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 		stopTime := time.Unix(0, stopTsNs)
 		var processedTsNs int64
 		err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			glog.V(1).Infof("DEBUG_DISK_READ: About to list directory %s with startFileName=%s", partitionDir, startFileName)
 			return filer_pb.SeaweedList(context.Background(), client, partitionDir, "", func(entry *filer_pb.Entry, isLast bool) error {
-				glog.V(1).Infof("DEBUG_DISK_READ: Found file in directory: %s (isDirectory=%v)", entry.Name, entry.IsDirectory)
 				if entry.IsDirectory {
 					return nil
 				}
@@ -147,17 +145,12 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 					topicName = topicName[dotIndex+1:] // Remove namespace prefix
 				}
 				isSystemTopic := strings.HasPrefix(topicName, "_")
-				glog.V(1).Infof("DEBUG_DISK_READ: Processing file %s, topicName=%s, isSystemTopic=%v, startPosition.Time.Unix()=%d", entry.Name, topicName, isSystemTopic, startPosition.Time.Unix())
 				if !isSystemTopic && startPosition.Time.Unix() > 86400 && entry.Name < startPosition.UTC().Format(topic.TIME_FORMAT) {
-					glog.V(1).Infof("DEBUG_DISK_READ: Skipping file %s (not system topic and time-based skip)", entry.Name)
 					return nil
 				}
-				glog.V(1).Infof("DEBUG_DISK_READ: About to process file %s with eachFileFn", entry.Name)
 				if processedTsNs, err = eachFileFn(entry, eachLogEntryFn, startTsNs, stopTsNs); err != nil {
-					glog.V(1).Infof("DEBUG_DISK_READ: Error processing file %s: %v", entry.Name, err)
 					return err
 				}
-				glog.V(1).Infof("DEBUG_DISK_READ: Successfully processed file %s, processedTsNs=%d", entry.Name, processedTsNs)
 				return nil
 
 			}, startFileName, true, math.MaxInt32)
