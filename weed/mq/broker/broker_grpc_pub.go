@@ -126,7 +126,8 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 	defer func() {
 		// remove the publisher
 		localTopicPartition.Publishers.RemovePublisher(clientName)
-		if localTopicPartition.MaybeShutdownLocalPartition() {
+		// Use topic-aware shutdown logic to prevent aggressive removal of system topics
+		if localTopicPartition.MaybeShutdownLocalPartitionForTopic(t.Name) {
 			b.localTopicManager.RemoveLocalPartition(t, p)
 			glog.V(0).Infof("Removed local topic %v partition %v", initMessage.Topic, initMessage.Partition)
 		}

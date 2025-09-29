@@ -503,6 +503,15 @@ func (h *SeaweedMQHandler) ListTopics() []string {
 // ProduceRecord publishes a record to SeaweedMQ and lets SMQ generate the offset
 func (h *SeaweedMQHandler) ProduceRecord(topic string, partition int32, key []byte, value []byte) (int64, error) {
 	fmt.Printf("🔥 PRODUCE DEBUG: Starting ProduceRecord for topic=%s partition=%d\n", topic, partition)
+	fmt.Printf("🔥 PRODUCE DEBUG: Key length=%d, Value length=%d\n", len(key), len(value))
+	if len(key) > 0 {
+		fmt.Printf("🔥 PRODUCE DEBUG: Key content: %s\n", string(key))
+	}
+	if len(value) > 0 {
+		fmt.Printf("🔥 PRODUCE DEBUG: Value content: %s\n", string(value))
+	} else {
+		fmt.Printf("🔥 PRODUCE DEBUG: Value is empty or nil!\n")
+	}
 
 	// Verify topic exists
 	if !h.TopicExists(topic) {
@@ -1467,6 +1476,12 @@ func (bc *BrokerClient) PublishRecord(topic string, partition int32, key []byte,
 	}
 
 	fmt.Printf("🔥 BROKER DEBUG: Sending data message to stream\n")
+	fmt.Printf("🔥 BROKER DEBUG: DataMessage Key length=%d, Value length=%d\n", len(dataMsg.Key), len(dataMsg.Value))
+	if len(dataMsg.Value) > 0 {
+		fmt.Printf("🔥 BROKER DEBUG: DataMessage Value content: %s\n", string(dataMsg.Value))
+	} else {
+		fmt.Printf("🔥 BROKER DEBUG: DataMessage Value is empty or nil!\n")
+	}
 	if err := session.Stream.Send(&mq_pb.PublishMessageRequest{
 		Message: &mq_pb.PublishMessageRequest_Data{
 			Data: dataMsg,

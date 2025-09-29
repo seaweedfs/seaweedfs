@@ -441,13 +441,8 @@ func TestCreateTopics_Integration(t *testing.T) {
 				t.Errorf("Topic '%s' was not created in v%d", tc.topicName, tc.version)
 			}
 
-			// Check partition count (create ledgers on-demand to verify partition setup)
-			for partitionID := int32(0); partitionID < tc.partitions; partitionID++ {
-				ledger := handler.seaweedMQHandler.GetOrCreateLedger(tc.topicName, partitionID)
-				if ledger == nil {
-					t.Errorf("Failed to get/create ledger for topic '%s' partition %d", tc.topicName, partitionID)
-				}
-			}
+			// Note: Ledger system removed, SMQ handles partitions natively
+			// Topic creation verification is sufficient
 		})
 	}
 }

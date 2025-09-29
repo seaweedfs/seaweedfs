@@ -53,9 +53,9 @@ func TestHandleBrokerResponse(t *testing.T) {
 		{
 			name: "No error",
 			response: &mq_pb.PublishMessageResponse{
-				AckSequence: 123,
-				Error:       "",
-				ErrorCode:   0,
+				AckTsNs:   123,
+				Error:     "",
+				ErrorCode: 0,
 			},
 			expectedKafkaCode: kafkaErrorCodeNone,
 			expectedError:     "",
@@ -64,9 +64,9 @@ func TestHandleBrokerResponse(t *testing.T) {
 		{
 			name: "Structured error - Not leader",
 			response: &mq_pb.PublishMessageResponse{
-				AckSequence: 0,
-				Error:       "not the leader for this partition, leader is: broker2:9092",
-				ErrorCode:   6, // BrokerErrorNotLeaderOrFollower
+				AckTsNs:   0,
+				Error:     "not the leader for this partition, leader is: broker2:9092",
+				ErrorCode: 6, // BrokerErrorNotLeaderOrFollower
 			},
 			expectedKafkaCode: kafkaErrorCodeNotLeaderOrFollower,
 			expectedError:     "not the leader for this partition, leader is: broker2:9092",
@@ -75,9 +75,9 @@ func TestHandleBrokerResponse(t *testing.T) {
 		{
 			name: "Structured error - Topic not found",
 			response: &mq_pb.PublishMessageResponse{
-				AckSequence: 0,
-				Error:       "topic test-topic not found",
-				ErrorCode:   2, // BrokerErrorTopicNotFound
+				AckTsNs:   0,
+				Error:     "topic test-topic not found",
+				ErrorCode: 2, // BrokerErrorTopicNotFound
 			},
 			expectedKafkaCode: kafkaErrorCodeUnknownTopicOrPartition,
 			expectedError:     "topic test-topic not found",
@@ -86,9 +86,9 @@ func TestHandleBrokerResponse(t *testing.T) {
 		{
 			name: "Fallback string parsing - Not leader",
 			response: &mq_pb.PublishMessageResponse{
-				AckSequence: 0,
-				Error:       "not the leader for this partition",
-				ErrorCode:   0, // No structured error code
+				AckTsNs:   0,
+				Error:     "not the leader for this partition",
+				ErrorCode: 0, // No structured error code
 			},
 			expectedKafkaCode: kafkaErrorCodeNotLeaderOrFollower,
 			expectedError:     "not the leader for this partition",
@@ -97,9 +97,9 @@ func TestHandleBrokerResponse(t *testing.T) {
 		{
 			name: "Fallback string parsing - Topic not found",
 			response: &mq_pb.PublishMessageResponse{
-				AckSequence: 0,
-				Error:       "topic does not exist",
-				ErrorCode:   0, // No structured error code
+				AckTsNs:   0,
+				Error:     "topic does not exist",
+				ErrorCode: 0, // No structured error code
 			},
 			expectedKafkaCode: kafkaErrorCodeUnknownTopicOrPartition,
 			expectedError:     "topic does not exist",
@@ -108,9 +108,9 @@ func TestHandleBrokerResponse(t *testing.T) {
 		{
 			name: "Fallback string parsing - Unknown error",
 			response: &mq_pb.PublishMessageResponse{
-				AckSequence: 0,
-				Error:       "some unknown error occurred",
-				ErrorCode:   0, // No structured error code
+				AckTsNs:   0,
+				Error:     "some unknown error occurred",
+				ErrorCode: 0, // No structured error code
 			},
 			expectedKafkaCode: kafkaErrorCodeUnknownServerError,
 			expectedError:     "some unknown error occurred",

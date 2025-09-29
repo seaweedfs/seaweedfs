@@ -3,6 +3,7 @@ package topic
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -220,6 +221,37 @@ func (p *LocalPartition) MaybeShutdownLocalPartition() (hasShutdown bool) {
 
 	glog.V(0).Infof("local partition %v Publisher:%d Subscriber:%d follower:%s shutdown %v", p.Partition, p.Publishers.Size(), p.Subscribers.Size(), p.Follower, hasShutdown)
 	return
+}
+
+// MaybeShutdownLocalPartitionForTopic is a topic-aware version that considers system topic retention
+func (p *LocalPartition) MaybeShutdownLocalPartitionForTopic(topicName string) (hasShutdown bool) {
+	// For system topics like _schemas, be more conservative about shutdown
+	if isSystemTopic(topicName) {
+		glog.V(0).Infof("System topic %s - skipping aggressive shutdown for partition %v (Publishers:%d Subscribers:%d)", 
+			topicName, p.Partition, p.Publishers.Size(), p.Subscribers.Size())
+		return false
+	}
+
+	// For regular topics, use the standard shutdown logic
+	return p.MaybeShutdownLocalPartition()
+}
+
+// isSystemTopic checks if a topic should have special retention behavior
+func isSystemTopic(topicName string) bool {
+	systemTopics := []string{
+		"_schemas",            // Schema Registry topic
+		"__consumer_offsets",  // Kafka consumer offsets topic
+		"__transaction_state", // Kafka transaction state topic
+	}
+
+	for _, systemTopic := range systemTopics {
+		if topicName == systemTopic {
+			return true
+		}
+	}
+
+	// Also check for topics with system prefixes
+	return strings.HasPrefix(topicName, "_") || strings.HasPrefix(topicName, "__")
 }
 
 func (p *LocalPartition) Shutdown() {

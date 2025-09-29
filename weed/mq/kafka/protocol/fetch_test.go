@@ -234,9 +234,8 @@ func TestHandler_handleFetch_EmptyPartition(t *testing.T) {
 	// Mock SeaweedMQ handler for testing - in real tests, this would use a proper mock
 	// For now, just comment out the topic creation as it's handled by SeaweedMQ handler
 
-	// Get ledger but don't add records
-	ledger := h.GetOrCreateLedger(topicName, 0)
-	_ = ledger // ledger exists but is empty
+	// Note: Ledger system removed, SMQ handles offsets natively
+	// Topic should exist for fetch to work
 
 	// Build Fetch request
 	requestBody := make([]byte, 0, 128)

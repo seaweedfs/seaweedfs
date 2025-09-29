@@ -3,108 +3,21 @@ package integration
 import (
 	"testing"
 	"time"
-
-	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
 )
 
 // Unit tests for new FetchRecords functionality
 
 // TestSeaweedMQHandler_MapSeaweedToKafkaOffsets tests offset mapping logic
 func TestSeaweedMQHandler_MapSeaweedToKafkaOffsets(t *testing.T) {
-	// Create a mock handler for testing
-	handler := &SeaweedMQHandler{
-		ledgers:           make(map[TopicPartitionKey]*offset.Ledger),
-		persistentLedgers: make(map[TopicPartitionKey]*offset.PersistentLedger),
-		ledgersStorage:    offset.NewSeaweedMQStorage(),
-	}
-
-	topic := "test-topic"
-	partition := int32(0)
-
-	// Create sample SeaweedMQ records
-	seaweedRecords := []*SeaweedRecord{
-		{
-			Key:       []byte("key1"),
-			Value:     []byte("value1"),
-			Timestamp: 1000000000,
-			Sequence:  100, // Original SeaweedMQ sequence
-		},
-		{
-			Key:       []byte("key2"),
-			Value:     []byte("value2"),
-			Timestamp: 1000000001,
-			Sequence:  101,
-		},
-		{
-			Key:       []byte("key3"),
-			Value:     []byte("value3"),
-			Timestamp: 1000000002,
-			Sequence:  102,
-		},
-	}
-
-	// Pre-assign offsets to simulate previous produces (ledger needs sequential offsets from 0)
-	ledger := handler.GetOrCreateLedger(topic, partition)
-	baseOffset := ledger.AssignOffsets(int64(len(seaweedRecords) + 5)) // Assign more offsets to simulate previous activity
-
-	startOffset := baseOffset + 5 // Starting Kafka offset after some activity
-
-	// Test mapping
-	mappedRecords, err := handler.mapSeaweedToKafkaOffsets(topic, partition, seaweedRecords, startOffset)
-	if err != nil {
-		t.Fatalf("Failed to map offsets: %v", err)
-	}
-
-	if len(mappedRecords) != len(seaweedRecords) {
-		t.Errorf("Record count mismatch: got %d, want %d", len(mappedRecords), len(seaweedRecords))
-	}
-
-	// Verify Kafka offsets are sequential starting from startOffset
-	for i, record := range mappedRecords {
-		expectedOffset := startOffset + int64(i)
-		if record.Offset != expectedOffset {
-			t.Errorf("Offset mismatch for record %d: got %d, want %d", i, record.Offset, expectedOffset)
-		}
-
-		// Verify data is preserved
-		if string(record.Key) != string(seaweedRecords[i].Key) {
-			t.Errorf("Key mismatch for record %d: got %s, want %s", i, string(record.Key), string(seaweedRecords[i].Key))
-		}
-		if string(record.Value) != string(seaweedRecords[i].Value) {
-			t.Errorf("Value mismatch for record %d: got %s, want %s", i, string(record.Value), string(seaweedRecords[i].Value))
-		}
-		if record.Timestamp != seaweedRecords[i].Timestamp {
-			t.Errorf("Timestamp mismatch for record %d: got %d, want %d", i, record.Timestamp, seaweedRecords[i].Timestamp)
-		}
-	}
-
-	// Verify ledger was updated correctly
-	hwm := ledger.GetHighWaterMark()
-	expectedHwm := startOffset + int64(len(seaweedRecords))
-	if hwm != expectedHwm {
-		t.Errorf("High water mark mismatch: got %d, want %d", hwm, expectedHwm)
-	}
-
-	t.Logf("Successfully mapped %d records with offsets %d-%d",
-		len(mappedRecords), startOffset, startOffset+int64(len(mappedRecords))-1)
+	// Note: This test is now obsolete since the ledger system has been removed
+	// SMQ now uses native offsets directly, so no mapping is needed
+	t.Skip("Test obsolete: ledger system removed, SMQ uses native offsets")
 }
 
 // TestSeaweedMQHandler_MapSeaweedToKafkaOffsets_EmptyRecords tests empty record handling
 func TestSeaweedMQHandler_MapSeaweedToKafkaOffsets_EmptyRecords(t *testing.T) {
-	handler := &SeaweedMQHandler{
-		ledgers:           make(map[TopicPartitionKey]*offset.Ledger),
-		persistentLedgers: make(map[TopicPartitionKey]*offset.PersistentLedger),
-		ledgersStorage:    offset.NewSeaweedMQStorage(),
-	}
-
-	mappedRecords, err := handler.mapSeaweedToKafkaOffsets("test-topic", 0, []*SeaweedRecord{}, 0)
-	if err != nil {
-		t.Errorf("Mapping empty records should not fail: %v", err)
-	}
-
-	if len(mappedRecords) != 0 {
-		t.Errorf("Expected 0 mapped records, got %d", len(mappedRecords))
-	}
+	// Note: This test is now obsolete since the ledger system has been removed
+	t.Skip("Test obsolete: ledger system removed, SMQ uses native offsets")
 }
 
 // TestSeaweedMQHandler_ConvertSeaweedToKafkaRecordBatch tests record batch conversion
@@ -117,13 +30,13 @@ func TestSeaweedMQHandler_ConvertSeaweedToKafkaRecordBatch(t *testing.T) {
 			Key:       []byte("batch-key1"),
 			Value:     []byte("batch-value1"),
 			Timestamp: 1000000000,
-			Sequence:  0,
+			Offset:    0,
 		},
 		{
 			Key:       []byte("batch-key2"),
 			Value:     []byte("batch-value2"),
 			Timestamp: 1000000001,
-			Sequence:  1,
+			Offset:    1,
 		},
 	}
 
@@ -184,7 +97,7 @@ func TestSeaweedMQHandler_ConvertSingleSeaweedRecord(t *testing.T) {
 				Key:       []byte("test-key"),
 				Value:     []byte("test-value"),
 				Timestamp: 1000000000,
-				Sequence:  5,
+				Offset:    5,
 			},
 			index: 0,
 			base:  5,
@@ -195,7 +108,7 @@ func TestSeaweedMQHandler_ConvertSingleSeaweedRecord(t *testing.T) {
 				Key:       nil,
 				Value:     []byte("test-value-no-key"),
 				Timestamp: 1000000001,
-				Sequence:  6,
+				Offset:    6,
 			},
 			index: 1,
 			base:  5,
@@ -206,7 +119,7 @@ func TestSeaweedMQHandler_ConvertSingleSeaweedRecord(t *testing.T) {
 				Key:       []byte("test-key-empty-value"),
 				Value:     []byte{},
 				Timestamp: 1000000002,
-				Sequence:  7,
+				Offset:    7,
 			},
 			index: 2,
 			base:  5,

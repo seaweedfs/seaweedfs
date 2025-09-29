@@ -58,7 +58,8 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 		isConnected = false
 		localTopicPartition.Subscribers.RemoveSubscriber(clientName)
 		glog.V(0).Infof("Subscriber %s on %v %v disconnected, sent %d", clientName, t, partition, counter)
-		if localTopicPartition.MaybeShutdownLocalPartition() {
+		// Use topic-aware shutdown logic to prevent aggressive removal of system topics
+		if localTopicPartition.MaybeShutdownLocalPartitionForTopic(t.Name) {
 			b.localTopicManager.RemoveLocalPartition(t, partition)
 		}
 	}()

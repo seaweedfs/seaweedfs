@@ -16,9 +16,8 @@ func TestHandler_handleProduce(t *testing.T) {
 	// CreatedAt:  time.Now().UnixNano(),
 	// }
 
-	// Create the topic by getting a ledger
+	// Note: Ledger system removed, SMQ handles topics natively
 	topicName := "test-topic"
-	h.GetOrCreateLedger(topicName, 0)
 
 	// Build a simple Produce request with minimal record
 	clientID := "test-producer"
@@ -210,9 +209,8 @@ func TestHandler_handleProduce_FireAndForget(t *testing.T) {
 	// CreatedAt:  time.Now().UnixNano(),
 	// }
 
-	// Create the topic by getting a ledger
+	// Note: Ledger system removed, SMQ handles topics natively
 	topicName := "test-topic"
-	h.GetOrCreateLedger(topicName, 0)
 
 	// Build Produce request with acks=0 (fire and forget)
 	clientID := "test-producer"
