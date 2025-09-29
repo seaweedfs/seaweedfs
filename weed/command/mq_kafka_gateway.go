@@ -51,8 +51,8 @@ Options:
   -schema-registry-url Schema Registry URL (REQUIRED for schema management)
 
 Examples:
-  weed mq.kafka.gateway -ip=gateway1 -port=9092 -master=master1:9333,master2:9333 -schema-registry-url=http://schema-registry:8081
   weed mq.kafka.gateway -port=9092 -master=localhost:9333 -schema-registry-url=http://localhost:8081
+  weed mq.kafka.gateway -ip=gateway1 -port=9092 -master=master1:9333,master2:9333 -schema-registry-url=http://schema-registry:8081
   weed mq.kafka.gateway -ip=external.host.com -ip.bind=0.0.0.0 -master=localhost:9333 -schema-registry-url=http://schema-registry:8081
 
 This is experimental and currently supports a minimal subset for development.
@@ -66,9 +66,10 @@ func runMqKafkaGateway(cmd *Command, args []string) bool {
 		return false
 	}
 
-	// Schema Registry URL is optional - if not provided, schema enforcement is disabled
+	// Schema Registry URL is required for schema management
 	if *mqKafkaGatewayOptions.schemaRegistryURL == "" {
-		glog.V(1).Infof("Schema Registry URL not provided - schema enforcement disabled")
+		glog.Fatalf("Schema Registry URL is required (-schema-registry-url)")
+		return false
 	}
 
 	// Determine bind address - default to advertised IP if not specified

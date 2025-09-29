@@ -102,7 +102,13 @@ func (b *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *mq_pb.
 
 	b.PubBalancer.OnPartitionChange(request.Topic, resp.BrokerPartitionAssignments)
 
+	// Actually assign the new partitions to brokers and add to localTopicManager
+	if assignErr := b.assignTopicPartitionsToBrokers(ctx, request.Topic, resp.BrokerPartitionAssignments, true); assignErr != nil {
+		glog.Errorf("assign topic %s partitions to brokers: %v", request.Topic, assignErr)
+		return nil, fmt.Errorf("assign topic partitions: %w", assignErr)
+	}
+
 	glog.V(0).Infof("ConfigureTopic: topic %s partition assignments: %v", request.Topic, resp.BrokerPartitionAssignments)
 
-	return resp, err
+	return resp, nil
 }

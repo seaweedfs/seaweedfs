@@ -438,10 +438,20 @@ func (h *SeaweedMQHandler) DeleteTopic(name string) error {
 	return nil
 }
 
-// TopicExists checks if a topic exists in filer directly
+// TopicExists checks if a topic exists in SeaweedMQ broker (includes in-memory topics)
 func (h *SeaweedMQHandler) TopicExists(name string) bool {
-	// Always check filer directly for consistency
-	return h.checkTopicInFiler(name)
+	// Check via SeaweedMQ broker (includes in-memory topics)
+	if h.brokerClient != nil {
+		exists, err := h.brokerClient.TopicExists(name)
+		if err == nil {
+			return exists
+		}
+		fmt.Printf("TopicExists: Failed to check topic %s via SMQ broker: %v\n", name, err)
+	}
+
+	// Return false if broker is unavailable
+	fmt.Printf("TopicExists: No broker client available for topic %s\n", name)
+	return false
 }
 
 // GetTopicInfo returns information about a topic from filer
@@ -462,20 +472,33 @@ func (h *SeaweedMQHandler) GetTopicInfo(name string) (*KafkaTopicInfo, bool) {
 	return topicInfo, true
 }
 
-// ListTopics returns all topic names from filer directly
+// ListTopics returns all topic names from SeaweedMQ broker (includes in-memory topics)
 func (h *SeaweedMQHandler) ListTopics() []string {
-	// Always read directly from filer for consistency
-	topics := h.listTopicsFromFiler()
-	fmt.Printf("ListTopics: Found %d topics from filer: %v\n", len(topics), topics)
-	return topics
+	// Get topics from SeaweedMQ broker (includes in-memory topics)
+	if h.brokerClient != nil {
+		topics, err := h.brokerClient.ListTopics()
+		if err == nil {
+			fmt.Printf("ListTopics: Found %d topics from SMQ broker: %v\n", len(topics), topics)
+			return topics
+		}
+		fmt.Printf("ListTopics: Failed to get topics from SMQ broker: %v\n", err)
+	}
+
+	// Return empty list if broker is unavailable
+	fmt.Printf("ListTopics: No broker client available, returning empty list\n")
+	return []string{}
 }
 
 // ProduceRecord publishes a record to SeaweedMQ and updates Kafka offset tracking
 func (h *SeaweedMQHandler) ProduceRecord(topic string, partition int32, key []byte, value []byte) (int64, error) {
+	fmt.Printf("🔥 PRODUCE DEBUG: Starting ProduceRecord for topic=%s partition=%d\n", topic, partition)
+	
 	// Verify topic exists
 	if !h.TopicExists(topic) {
+		fmt.Printf("🔥 PRODUCE DEBUG: Topic %s does not exist\n", topic)
 		return 0, fmt.Errorf("topic %s does not exist", topic)
 	}
+	fmt.Printf("🔥 PRODUCE DEBUG: Topic %s exists, proceeding\n", topic)
 
 	// Get current timestamp
 	timestamp := time.Now().UnixNano()
@@ -483,9 +506,12 @@ func (h *SeaweedMQHandler) ProduceRecord(topic string, partition int32, key []by
 	// Publish to SeaweedMQ
 	var publishErr error
 	if h.brokerClient == nil {
+		fmt.Printf("🔥 PRODUCE DEBUG: No broker client available\n")
 		publishErr = fmt.Errorf("no broker client available")
 	} else {
+		fmt.Printf("🔥 PRODUCE DEBUG: Calling brokerClient.PublishRecord\n")
 		_, publishErr = h.brokerClient.PublishRecord(topic, partition, key, value, timestamp)
+		fmt.Printf("🔥 PRODUCE DEBUG: brokerClient.PublishRecord returned, err=%v\n", publishErr)
 	}
 
 	if publishErr != nil {
@@ -1423,10 +1449,14 @@ func (bc *BrokerClient) GetGrpcDialOption() grpc.DialOption {
 
 // PublishRecord publishes a single record to SeaweedMQ broker
 func (bc *BrokerClient) PublishRecord(topic string, partition int32, key []byte, value []byte, timestamp int64) (int64, error) {
+	fmt.Printf("🔥 BROKER DEBUG: Starting PublishRecord for topic=%s partition=%d\n", topic, partition)
+	
 	session, err := bc.getOrCreatePublisher(topic, partition)
 	if err != nil {
+		fmt.Printf("🔥 BROKER DEBUG: getOrCreatePublisher failed: %v\n", err)
 		return 0, err
 	}
+	fmt.Printf("🔥 BROKER DEBUG: Got publisher session successfully\n")
 
 	// Send data message using broker API format
 	dataMsg := &mq_pb.DataMessage{
@@ -1435,19 +1465,24 @@ func (bc *BrokerClient) PublishRecord(topic string, partition int32, key []byte,
 		TsNs:  timestamp,
 	}
 
+	fmt.Printf("🔥 BROKER DEBUG: Sending data message to stream\n")
 	if err := session.Stream.Send(&mq_pb.PublishMessageRequest{
 		Message: &mq_pb.PublishMessageRequest_Data{
 			Data: dataMsg,
 		},
 	}); err != nil {
+		fmt.Printf("🔥 BROKER DEBUG: Stream.Send failed: %v\n", err)
 		return 0, fmt.Errorf("failed to send data: %v", err)
 	}
+	fmt.Printf("🔥 BROKER DEBUG: Data message sent, waiting for ack\n")
 
 	// Read acknowledgment
 	resp, err := session.Stream.Recv()
 	if err != nil {
+		fmt.Printf("🔥 BROKER DEBUG: Stream.Recv failed: %v\n", err)
 		return 0, fmt.Errorf("failed to receive ack: %v", err)
 	}
+	fmt.Printf("🔥 BROKER DEBUG: Received ack successfully\n")
 
 	// Handle structured broker errors
 	if kafkaErrorCode, errorMsg, handleErr := HandleBrokerResponse(resp); handleErr != nil {
@@ -1813,4 +1848,51 @@ func (bc *BrokerClient) ClosePublisher(topic string, partition int32) error {
 	}
 	delete(bc.publishers, key)
 	return nil
+}
+
+// ListTopics gets all topics from SeaweedMQ broker (includes in-memory topics)
+func (bc *BrokerClient) ListTopics() ([]string, error) {
+	if bc.client == nil {
+		return nil, fmt.Errorf("broker client not connected")
+	}
+
+	ctx, cancel := context.WithTimeout(bc.ctx, 5*time.Second)
+	defer cancel()
+
+	resp, err := bc.client.ListTopics(ctx, &mq_pb.ListTopicsRequest{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list topics from broker: %v", err)
+	}
+
+	var topics []string
+	for _, topic := range resp.Topics {
+		// Filter for kafka namespace topics
+		if topic.Namespace == "kafka" {
+			topics = append(topics, topic.Name)
+		}
+	}
+
+	return topics, nil
+}
+
+// TopicExists checks if a topic exists in SeaweedMQ broker (includes in-memory topics)
+func (bc *BrokerClient) TopicExists(topicName string) (bool, error) {
+	if bc.client == nil {
+		return false, fmt.Errorf("broker client not connected")
+	}
+
+	ctx, cancel := context.WithTimeout(bc.ctx, 5*time.Second)
+	defer cancel()
+
+	resp, err := bc.client.TopicExists(ctx, &mq_pb.TopicExistsRequest{
+		Topic: &schema_pb.Topic{
+			Namespace: "kafka",
+			Name:      topicName,
+		},
+	})
+	if err != nil {
+		return false, fmt.Errorf("failed to check topic existence: %v", err)
+	}
+
+	return resp.Exists, nil
 }

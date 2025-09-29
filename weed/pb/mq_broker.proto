@@ -25,6 +25,8 @@ service SeaweedMessaging {
     // control plane for topic partitions
     rpc ListTopics (ListTopicsRequest) returns (ListTopicsResponse) {
     }
+    rpc TopicExists (TopicExistsRequest) returns (TopicExistsResponse) {
+    }
     rpc ConfigureTopic (ConfigureTopicRequest) returns (ConfigureTopicResponse) {
     }
     rpc LookupTopicBrokers (LookupTopicBrokersRequest) returns (LookupTopicBrokersResponse) {
@@ -134,6 +136,12 @@ message ListTopicsRequest {
 }
 message ListTopicsResponse {
     repeated schema_pb.Topic topics = 1;
+}
+message TopicExistsRequest {
+    schema_pb.Topic topic = 1;
+}
+message TopicExistsResponse {
+    bool exists = 1;
 }
 message LookupTopicBrokersRequest {
     schema_pb.Topic topic = 1;

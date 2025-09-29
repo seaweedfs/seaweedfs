@@ -71,6 +71,21 @@ func (manager *LocalTopicManager) CloseSubscribers(topic Topic, unixTsNs int64) 
 	return localTopic.closePartitionSubscribers(unixTsNs)
 }
 
+// ListTopicsInMemory returns all topics currently tracked in memory
+func (manager *LocalTopicManager) ListTopicsInMemory() []Topic {
+	var topics []Topic
+	for item := range manager.topics.IterBuffered() {
+		topics = append(topics, item.Val.Topic)
+	}
+	return topics
+}
+
+// TopicExistsInMemory checks if a topic exists in memory (not flushed data)
+func (manager *LocalTopicManager) TopicExistsInMemory(topic Topic) bool {
+	_, exists := manager.topics.Get(topic.String())
+	return exists
+}
+
 func (manager *LocalTopicManager) CollectStats(duration time.Duration) *mq_pb.BrokerStats {
 	stats := &mq_pb.BrokerStats{
 		Stats: make(map[string]*mq_pb.TopicPartitionStats),

@@ -23,6 +23,7 @@ const (
 	SeaweedMessaging_PublisherToPubBalancer_FullMethodName     = "/messaging_pb.SeaweedMessaging/PublisherToPubBalancer"
 	SeaweedMessaging_BalanceTopics_FullMethodName              = "/messaging_pb.SeaweedMessaging/BalanceTopics"
 	SeaweedMessaging_ListTopics_FullMethodName                 = "/messaging_pb.SeaweedMessaging/ListTopics"
+	SeaweedMessaging_TopicExists_FullMethodName                = "/messaging_pb.SeaweedMessaging/TopicExists"
 	SeaweedMessaging_ConfigureTopic_FullMethodName             = "/messaging_pb.SeaweedMessaging/ConfigureTopic"
 	SeaweedMessaging_LookupTopicBrokers_FullMethodName         = "/messaging_pb.SeaweedMessaging/LookupTopicBrokers"
 	SeaweedMessaging_GetTopicConfiguration_FullMethodName      = "/messaging_pb.SeaweedMessaging/GetTopicConfiguration"
@@ -51,6 +52,7 @@ type SeaweedMessagingClient interface {
 	BalanceTopics(ctx context.Context, in *BalanceTopicsRequest, opts ...grpc.CallOption) (*BalanceTopicsResponse, error)
 	// control plane for topic partitions
 	ListTopics(ctx context.Context, in *ListTopicsRequest, opts ...grpc.CallOption) (*ListTopicsResponse, error)
+	TopicExists(ctx context.Context, in *TopicExistsRequest, opts ...grpc.CallOption) (*TopicExistsResponse, error)
 	ConfigureTopic(ctx context.Context, in *ConfigureTopicRequest, opts ...grpc.CallOption) (*ConfigureTopicResponse, error)
 	LookupTopicBrokers(ctx context.Context, in *LookupTopicBrokersRequest, opts ...grpc.CallOption) (*LookupTopicBrokersResponse, error)
 	GetTopicConfiguration(ctx context.Context, in *GetTopicConfigurationRequest, opts ...grpc.CallOption) (*GetTopicConfigurationResponse, error)
@@ -119,6 +121,16 @@ func (c *seaweedMessagingClient) ListTopics(ctx context.Context, in *ListTopicsR
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListTopicsResponse)
 	err := c.cc.Invoke(ctx, SeaweedMessaging_ListTopics_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedMessagingClient) TopicExists(ctx context.Context, in *TopicExistsRequest, opts ...grpc.CallOption) (*TopicExistsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TopicExistsResponse)
+	err := c.cc.Invoke(ctx, SeaweedMessaging_TopicExists_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -310,6 +322,7 @@ type SeaweedMessagingServer interface {
 	BalanceTopics(context.Context, *BalanceTopicsRequest) (*BalanceTopicsResponse, error)
 	// control plane for topic partitions
 	ListTopics(context.Context, *ListTopicsRequest) (*ListTopicsResponse, error)
+	TopicExists(context.Context, *TopicExistsRequest) (*TopicExistsResponse, error)
 	ConfigureTopic(context.Context, *ConfigureTopicRequest) (*ConfigureTopicResponse, error)
 	LookupTopicBrokers(context.Context, *LookupTopicBrokersRequest) (*LookupTopicBrokersResponse, error)
 	GetTopicConfiguration(context.Context, *GetTopicConfigurationRequest) (*GetTopicConfigurationResponse, error)
@@ -352,6 +365,9 @@ func (UnimplementedSeaweedMessagingServer) BalanceTopics(context.Context, *Balan
 }
 func (UnimplementedSeaweedMessagingServer) ListTopics(context.Context, *ListTopicsRequest) (*ListTopicsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListTopics not implemented")
+}
+func (UnimplementedSeaweedMessagingServer) TopicExists(context.Context, *TopicExistsRequest) (*TopicExistsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method TopicExists not implemented")
 }
 func (UnimplementedSeaweedMessagingServer) ConfigureTopic(context.Context, *ConfigureTopicRequest) (*ConfigureTopicResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ConfigureTopic not implemented")
@@ -476,6 +492,24 @@ func _SeaweedMessaging_ListTopics_Handler(srv interface{}, ctx context.Context, 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(SeaweedMessagingServer).ListTopics(ctx, req.(*ListTopicsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedMessaging_TopicExists_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TopicExistsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedMessagingServer).TopicExists(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedMessaging_TopicExists_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedMessagingServer).TopicExists(ctx, req.(*TopicExistsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -706,6 +740,10 @@ var SeaweedMessaging_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListTopics",
 			Handler:    _SeaweedMessaging_ListTopics_Handler,
+		},
+		{
+			MethodName: "TopicExists",
+			Handler:    _SeaweedMessaging_TopicExists_Handler,
 		},
 		{
 			MethodName: "ConfigureTopic",

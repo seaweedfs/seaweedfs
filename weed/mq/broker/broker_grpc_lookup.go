@@ -55,7 +55,19 @@ func (b *MessageQueueBroker) ListTopics(ctx context.Context, request *mq_pb.List
 
 	ret := &mq_pb.ListTopicsResponse{}
 
-	// Scan the filer directory structure to find all topics
+	// First, get topics from in-memory state (includes unflushed topics)
+	inMemoryTopics := b.localTopicManager.ListTopicsInMemory()
+	topicMap := make(map[string]*schema_pb.Topic)
+
+	// Add in-memory topics to the result
+	for _, topic := range inMemoryTopics {
+		topicMap[topic.String()] = &schema_pb.Topic{
+			Namespace: topic.Namespace,
+			Name:      topic.Name,
+		}
+	}
+
+	// Then, scan the filer directory structure to find persisted topics (fallback for topics not in memory)
 	err = b.fca.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// List all namespaces under /topics
 		stream, err := client.ListEntries(ctx, &filer_pb.ListEntriesRequest{
@@ -123,12 +135,14 @@ func (b *MessageQueueBroker) ListTopics(ctx context.Context, request *mq_pb.List
 				}
 
 				if confResp.Entry != nil {
-					// This is a valid topic
-					topic := &schema_pb.Topic{
-						Namespace: namespaceName,
-						Name:      topicName,
+					// This is a valid persisted topic - add to map if not already present
+					topicKey := fmt.Sprintf("%s.%s", namespaceName, topicName)
+					if _, exists := topicMap[topicKey]; !exists {
+						topicMap[topicKey] = &schema_pb.Topic{
+							Namespace: namespaceName,
+							Name:      topicName,
+						}
 					}
-					ret.Topics = append(ret.Topics, topic)
 				}
 			}
 		}
@@ -136,13 +150,69 @@ func (b *MessageQueueBroker) ListTopics(ctx context.Context, request *mq_pb.List
 		return nil
 	})
 
+	// Convert map to slice for response (combines in-memory and persisted topics)
+	for _, topic := range topicMap {
+		ret.Topics = append(ret.Topics, topic)
+	}
+
 	if err != nil {
 		glog.V(0).Infof("list topics from filer: %v", err)
-		// Return empty response on error
-		return &mq_pb.ListTopicsResponse{}, nil
+		// Still return in-memory topics even if filer fails
 	}
 
 	return ret, nil
+}
+
+// TopicExists checks if a topic exists in memory or filer
+func (b *MessageQueueBroker) TopicExists(ctx context.Context, request *mq_pb.TopicExistsRequest) (*mq_pb.TopicExistsResponse, error) {
+	if !b.isLockOwner() {
+		var resp *mq_pb.TopicExistsResponse
+		var err error
+		proxyErr := b.withBrokerClient(false, pb.ServerAddress(b.lockAsBalancer.LockOwner()), func(client mq_pb.SeaweedMessagingClient) error {
+			resp, err = client.TopicExists(ctx, request)
+			return nil
+		})
+		if proxyErr != nil {
+			return nil, proxyErr
+		}
+		return resp, err
+	}
+
+	if request.Topic == nil {
+		return &mq_pb.TopicExistsResponse{Exists: false}, nil
+	}
+
+	// Convert schema_pb.Topic to topic.Topic
+	topicObj := topic.Topic{
+		Namespace: request.Topic.Namespace,
+		Name:      request.Topic.Name,
+	}
+
+	// First check in-memory state (includes unflushed topics)
+	if b.localTopicManager.TopicExistsInMemory(topicObj) {
+		return &mq_pb.TopicExistsResponse{Exists: true}, nil
+	}
+
+	// Fallback: check filer for persisted topics
+	exists := false
+	err := b.fca.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		topicPath := fmt.Sprintf("%s/%s/%s", filer.TopicsDir, request.Topic.Namespace, request.Topic.Name)
+		confResp, err := client.LookupDirectoryEntry(ctx, &filer_pb.LookupDirectoryEntryRequest{
+			Directory: topicPath,
+			Name:      filer.TopicConfFile,
+		})
+		if err == nil && confResp.Entry != nil {
+			exists = true
+		}
+		return nil // Don't propagate error, just check existence
+	})
+
+	if err != nil {
+		glog.V(0).Infof("check topic existence in filer: %v", err)
+		// Return false on filer error (topic doesn't exist if we can't verify)
+	}
+
+	return &mq_pb.TopicExistsResponse{Exists: exists}, nil
 }
 
 // GetTopicConfiguration returns the complete configuration of a topic including schema and partition assignments
