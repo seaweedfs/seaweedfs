@@ -783,7 +783,7 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 }
 
 // processSchematizedMessage processes a message that may contain schema information
-func (h *Handler) processSchematizedMessage(topicName string, partitionID int32, messageBytes []byte) error {
+func (h *Handler) processSchematizedMessage(topicName string, partitionID int32, originalKey []byte, messageBytes []byte) error {
 	// System topics should bypass schema processing entirely
 	if h.isSystemTopic(topicName) {
 		return nil // Skip schema processing for system topics
@@ -809,15 +809,18 @@ func (h *Handler) processSchematizedMessage(topicName string, partitionID int32,
 	}
 
 	// Store the decoded message using SeaweedMQ
-	return h.storeDecodedMessage(topicName, partitionID, decodedMsg)
+	return h.storeDecodedMessage(topicName, partitionID, originalKey, decodedMsg)
 }
 
 // storeDecodedMessage stores a decoded message using mq.broker integration
-func (h *Handler) storeDecodedMessage(topicName string, partitionID int32, decodedMsg *schema.DecodedMessage) error {
+func (h *Handler) storeDecodedMessage(topicName string, partitionID int32, originalKey []byte, decodedMsg *schema.DecodedMessage) error {
 	// Use broker client if available
 	if h.IsBrokerIntegrationEnabled() {
-		// Extract key from the original envelope (simplified for now)
-		key := []byte(fmt.Sprintf("kafka-key-%d", time.Now().UnixNano()))
+		// Use the original Kafka message key
+		key := originalKey
+		if key == nil {
+			key = []byte{} // Use empty byte slice for null keys
+		}
 
 		// Publish the decoded RecordValue to mq.broker
 		err := h.brokerClient.PublishSchematizedMessage(topicName, key, decodedMsg.Envelope.OriginalBytes)
@@ -830,8 +833,11 @@ func (h *Handler) storeDecodedMessage(topicName string, partitionID int32, decod
 
 	// Use SeaweedMQ integration
 	if h.seaweedMQHandler != nil {
-		// Extract key and value from the original envelope (simplified)
-		key := []byte(fmt.Sprintf("kafka-key-%d", time.Now().UnixNano()))
+		// Use the original Kafka message key
+		key := originalKey
+		if key == nil {
+			key = []byte{} // Use empty byte slice for null keys
+		}
 		value := decodedMsg.Envelope.Payload
 
 		_, err := h.seaweedMQHandler.ProduceRecord(topicName, partitionID, key, value)

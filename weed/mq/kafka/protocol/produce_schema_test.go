@@ -64,7 +64,8 @@ func TestProduceHandler_SchemaIntegration(t *testing.T) {
 		envelope := createProduceTestEnvelope(schemaID, avroBinary)
 
 		// Test schema processing (without broker integration)
-		err = handler.processSchematizedMessage("test-topic", 0, envelope)
+		testKey := []byte("test-key")
+		err = handler.processSchematizedMessage("test-topic", 0, testKey, envelope)
 		require.NoError(t, err)
 
 		// Verify handler state (schema enabled but no broker integration for this test)
@@ -77,7 +78,8 @@ func TestProduceHandler_SchemaIntegration(t *testing.T) {
 		rawMessage := []byte("This is not schematized")
 
 		// Should not fail, just skip schema processing
-		err := handler.processSchematizedMessage("test-topic", 0, rawMessage)
+		testKey := []byte("raw-key")
+		err := handler.processSchematizedMessage("test-topic", 0, testKey, rawMessage)
 		require.NoError(t, err)
 	})
 
@@ -114,7 +116,8 @@ func TestProduceHandler_SchemaIntegration(t *testing.T) {
 		// Test with invalid schema ID
 		invalidEnvelope := createProduceTestEnvelope(999, []byte("invalid"))
 
-		err := handler.processSchematizedMessage("error-topic", 0, invalidEnvelope)
+		testKey := []byte("error-key")
+		err := handler.processSchematizedMessage("error-topic", 0, testKey, invalidEnvelope)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "schema decoding failed")
 	})

@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -24,8 +25,15 @@ func TestSchematizedFetchIntegration(t *testing.T) {
 	}
 
 	// Test createSchematizedRecordBatch
-	recordBatch := handler.createSchematizedRecordBatch(testMessages, baseOffset)
-	
+	testRecords := make([]*SchematizedRecord, len(testMessages))
+	for i, msg := range testMessages {
+		testRecords[i] = &SchematizedRecord{
+			Key:   []byte(fmt.Sprintf("test-key-%d", i)),
+			Value: msg,
+		}
+	}
+	recordBatch := handler.createSchematizedRecordBatch(testRecords, baseOffset)
+
 	if len(recordBatch) == 0 {
 		t.Fatal("Expected non-empty record batch")
 	}
@@ -49,13 +57,13 @@ func TestFetchSchematizedRecords_EmptyResult(t *testing.T) {
 	}
 
 	messages, err := handler.fetchSchematizedRecords("test-topic", 0, 0, 1000)
-	
+
 	// When SeaweedMQ handler is nil, it should return an error
 	if err == nil {
 		t.Error("Expected error when SeaweedMQ handler is nil")
 		return
 	}
-	
+
 	// Error case should return nil messages
 	if messages != nil {
 		t.Errorf("Expected nil messages on error, got %d", len(messages))
@@ -64,22 +72,23 @@ func TestFetchSchematizedRecords_EmptyResult(t *testing.T) {
 
 func TestCreateRecordEntry_ZigZagEncoding(t *testing.T) {
 	handler := &Handler{}
-	
+
 	testMessage := []byte("test message")
 	offsetDelta := int32(5)
 	timestamp := time.Now().UnixMilli()
-	
-	record := handler.createRecordEntry(testMessage, offsetDelta, timestamp)
-	
+
+	testKey := []byte("test-key")
+	record := handler.createRecordEntry(testKey, testMessage, offsetDelta, timestamp)
+
 	if len(record) == 0 {
 		t.Fatal("Expected non-empty record")
 	}
-	
+
 	// Verify that the record contains the message data
 	// The exact structure is complex, but we can check that it's not empty
 	// and contains our test message somewhere
 	messageStr := string(testMessage)
-	
+
 	// The message should be embedded in the record
 	found := false
 	for i := 0; i <= len(record)-len(testMessage); i++ {
@@ -88,20 +97,20 @@ func TestCreateRecordEntry_ZigZagEncoding(t *testing.T) {
 			break
 		}
 	}
-	
+
 	if !found {
 		t.Error("Test message not found in record entry")
 	}
-	
+
 	t.Logf("Created record entry: %d bytes for message: %s", len(record), messageStr)
 }
 
 func TestIsSchematizedTopic(t *testing.T) {
 	tests := []struct {
-		name           string
-		topicName      string
-		schemaEnabled  bool
-		expected       bool
+		name          string
+		topicName     string
+		schemaEnabled bool
+		expected      bool
 	}{
 		{
 			name:          "schema disabled",
@@ -130,7 +139,7 @@ func TestIsSchematizedTopic(t *testing.T) {
 				handler.useSchema = true
 				handler.schemaManager = createMockSchemaManager(t)
 			}
-			
+
 			result := handler.isSchematizedTopic(tt.topicName)
 			if result != tt.expected {
 				t.Errorf("Expected %v, got %v for topic %s", tt.expected, result, tt.topicName)

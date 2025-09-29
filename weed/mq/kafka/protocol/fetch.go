@@ -136,7 +136,7 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 			// Use direct SMQ reading - no ledgers needed
 			// CRITICAL DEBUG: This should appear in logs if the new binary is running
 			Debug("🔥🔥🔥 FETCH HANDLER NEW CODE IS RUNNING 🔥🔥🔥")
-			
+
 			// Get the actual high water mark from SeaweedMQ using the same method as ListOffsets
 			highWaterMark, err := h.seaweedMQHandler.GetLatestOffset(topic.Name, partition.PartitionID)
 			if err != nil {
@@ -144,7 +144,7 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 				highWaterMark = 0 // Fallback to 0 if we can't determine the offset
 			}
 			Debug("*** FETCH: Got highWaterMark %d for topic %s partition %d", highWaterMark, topic.Name, partition.PartitionID)
-			
+
 			if strings.HasPrefix(topic.Name, "_") {
 				Debug("SYSTEM TOPIC: %s is a system topic, highWaterMark=%d", topic.Name, highWaterMark)
 				if strings.HasPrefix(topic.Name, "_schemas") {
@@ -251,18 +251,18 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 
 			// Try to fetch schematized records if this topic uses schema management
 			if isSchematizedTopic {
-				schematizedMessages, err := h.fetchSchematizedRecords(topic.Name, partition.PartitionID, effectiveFetchOffset, partition.MaxBytes)
+				schematizedRecords, err := h.fetchSchematizedRecords(topic.Name, partition.PartitionID, effectiveFetchOffset, partition.MaxBytes)
 				if err != nil {
 					Debug("Failed to fetch schematized records for topic %s partition %d: %v", topic.Name, partition.PartitionID, err)
-				} else if len(schematizedMessages) > 0 {
-					Debug("Successfully fetched %d schematized messages for topic %s partition %d", len(schematizedMessages), topic.Name, partition.PartitionID)
+				} else if len(schematizedRecords) > 0 {
+					Debug("Successfully fetched %d schematized records for topic %s partition %d", len(schematizedRecords), topic.Name, partition.PartitionID)
 
 					// Create schematized record batch and replace the regular record batch
-					schematizedBatch := h.createSchematizedRecordBatch(schematizedMessages, effectiveFetchOffset)
+					schematizedBatch := h.createSchematizedRecordBatch(schematizedRecords, effectiveFetchOffset)
 					if len(schematizedBatch) > 0 {
 						// Replace the record batch with the schematized version
 						recordBatch = schematizedBatch
-						Debug("Replaced record batch with schematized version: %d bytes for %d messages", len(recordBatch), len(schematizedMessages))
+						Debug("Replaced record batch with schematized version: %d bytes for %d messages", len(recordBatch), len(schematizedRecords))
 					}
 				}
 			}
@@ -619,11 +619,17 @@ func (h *Handler) reconstructSchematizedMessage(recordValue *schema_pb.RecordVal
 	return h.schemaManager.EncodeMessage(recordValue, schemaID, format)
 }
 
+// SchematizedRecord holds both key and value for schematized messages
+type SchematizedRecord struct {
+	Key   []byte
+	Value []byte
+}
+
 // fetchSchematizedRecords fetches and reconstructs schematized records from SeaweedMQ
-func (h *Handler) fetchSchematizedRecords(topicName string, partitionID int32, offset int64, maxBytes int32) ([][]byte, error) {
+func (h *Handler) fetchSchematizedRecords(topicName string, partitionID int32, offset int64, maxBytes int32) ([]*SchematizedRecord, error) {
 	// Only proceed when schema feature is toggled on
 	if !h.useSchema {
-		return [][]byte{}, nil
+		return []*SchematizedRecord{}, nil
 	}
 
 	// Check if SeaweedMQ handler is available when schema feature is in use
@@ -633,7 +639,7 @@ func (h *Handler) fetchSchematizedRecords(topicName string, partitionID int32, o
 
 	// If schema management isn't fully configured, return empty instead of error
 	if !h.IsSchemaEnabled() {
-		return [][]byte{}, nil
+		return []*SchematizedRecord{}, nil
 	}
 
 	// Fetch stored records from SeaweedMQ
@@ -644,10 +650,10 @@ func (h *Handler) fetchSchematizedRecords(topicName string, partitionID int32, o
 	}
 
 	if len(smqRecords) == 0 {
-		return [][]byte{}, nil
+		return []*SchematizedRecord{}, nil
 	}
 
-	var reconstructedMessages [][]byte
+	var reconstructedRecords []*SchematizedRecord
 	totalBytes := int32(0)
 
 	for _, smqRecord := range smqRecords {
@@ -656,24 +662,29 @@ func (h *Handler) fetchSchematizedRecords(topicName string, partitionID int32, o
 			break
 		}
 
-		// Try to reconstruct the schematized message
-		reconstructedMsg, err := h.reconstructSchematizedMessageFromSMQ(smqRecord)
+		// Try to reconstruct the schematized message value
+		reconstructedValue, err := h.reconstructSchematizedMessageFromSMQ(smqRecord)
 		if err != nil {
 			// Log error but continue with other messages
 			Error("Failed to reconstruct schematized message at offset %d: %v", smqRecord.GetOffset(), err)
 			continue
 		}
 
-		if reconstructedMsg != nil {
-			reconstructedMessages = append(reconstructedMessages, reconstructedMsg)
-			totalBytes += int32(len(reconstructedMsg))
+		if reconstructedValue != nil {
+			// Create SchematizedRecord with both key and reconstructed value
+			record := &SchematizedRecord{
+				Key:   smqRecord.GetKey(), // Preserve the original key
+				Value: reconstructedValue, // Use the reconstructed value
+			}
+			reconstructedRecords = append(reconstructedRecords, record)
+			totalBytes += int32(len(record.Key) + len(record.Value))
 		}
 	}
 
 	Debug("Fetched %d schematized records for topic %s partition %d from offset %d",
-		len(reconstructedMessages), topicName, partitionID, offset)
+		len(reconstructedRecords), topicName, partitionID, offset)
 
-	return reconstructedMessages, nil
+	return reconstructedRecords, nil
 }
 
 // reconstructSchematizedMessageFromSMQ reconstructs a schematized message from an SMQRecord
@@ -766,8 +777,8 @@ func (h *Handler) isMetadataField(fieldName string) bool {
 }
 
 // createSchematizedRecordBatch creates a Kafka record batch from reconstructed schematized messages
-func (h *Handler) createSchematizedRecordBatch(messages [][]byte, baseOffset int64) []byte {
-	if len(messages) == 0 {
+func (h *Handler) createSchematizedRecordBatch(records []*SchematizedRecord, baseOffset int64) []byte {
+	if len(records) == 0 {
 		// Return empty record batch
 		return h.createEmptyRecordBatch(baseOffset)
 	}
@@ -776,10 +787,10 @@ func (h *Handler) createSchematizedRecordBatch(messages [][]byte, baseOffset int
 	var recordsData []byte
 	currentTimestamp := time.Now().UnixMilli()
 
-	for i, msg := range messages {
-		// Create a record entry (Kafka record format v2)
-		record := h.createRecordEntry(msg, int32(i), currentTimestamp)
-		recordsData = append(recordsData, record...)
+	for i, record := range records {
+		// Create a record entry (Kafka record format v2) with both key and value
+		recordEntry := h.createRecordEntry(record.Key, record.Value, int32(i), currentTimestamp)
+		recordsData = append(recordsData, recordEntry...)
 	}
 
 	// Apply compression if the data is large enough to benefit
@@ -803,21 +814,21 @@ func (h *Handler) createSchematizedRecordBatch(messages [][]byte, baseOffset int
 	}
 
 	// Create the record batch with proper compression and CRC
-	batch, err := h.createRecordBatchWithCompressionAndCRC(baseOffset, finalRecordsData, compressionType, int32(len(messages)))
+	batch, err := h.createRecordBatchWithCompressionAndCRC(baseOffset, finalRecordsData, compressionType, int32(len(records)))
 	if err != nil {
 		// Fallback to simple batch creation
 		Debug("Failed to create compressed record batch, falling back: %v", err)
-		return h.createRecordBatchWithPayload(baseOffset, int32(len(messages)), finalRecordsData)
+		return h.createRecordBatchWithPayload(baseOffset, int32(len(records)), finalRecordsData)
 	}
 
 	Debug("Created schematized record batch: %d messages, %d bytes, compression=%v",
-		len(messages), len(batch), compressionType)
+		len(records), len(batch), compressionType)
 
 	return batch
 }
 
 // createRecordEntry creates a single record entry in Kafka record format v2
-func (h *Handler) createRecordEntry(messageData []byte, offsetDelta int32, timestamp int64) []byte {
+func (h *Handler) createRecordEntry(messageKey []byte, messageData []byte, offsetDelta int32, timestamp int64) []byte {
 	// Record format v2:
 	// - length (varint)
 	// - attributes (int8)
@@ -838,8 +849,13 @@ func (h *Handler) createRecordEntry(messageData []byte, offsetDelta int32, times
 	// Offset delta (varint)
 	record = append(record, encodeVarint(int64(offsetDelta))...)
 
-	// Key length (varint) + key - no key for schematized messages
-	record = append(record, encodeVarint(-1)...) // -1 indicates null key
+	// Key length (varint) + key
+	if messageKey == nil || len(messageKey) == 0 {
+		record = append(record, encodeVarint(-1)...) // -1 indicates null key
+	} else {
+		record = append(record, encodeVarint(int64(len(messageKey)))...)
+		record = append(record, messageKey...)
+	}
 
 	// Value length (varint) + value
 	record = append(record, encodeVarint(int64(len(messageData)))...)
@@ -1026,16 +1042,16 @@ func (h *Handler) handleSchematizedFetch(topicName string, partitionID int32, of
 	}
 
 	// Fetch schematized records from SeaweedMQ
-	messages, err := h.fetchSchematizedRecords(topicName, partitionID, offset, maxBytes)
+	records, err := h.fetchSchematizedRecords(topicName, partitionID, offset, maxBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch schematized records: %w", err)
 	}
 
-	// Create record batch from reconstructed messages
-	recordBatch := h.createSchematizedRecordBatch(messages, offset)
+	// Create record batch from reconstructed records
+	recordBatch := h.createSchematizedRecordBatch(records, offset)
 
-	Debug("Created schematized record batch: %d bytes for %d messages",
-		len(recordBatch), len(messages))
+	Debug("Created schematized record batch: %d bytes for %d records",
+		len(recordBatch), len(records))
 
 	return recordBatch, nil
 }
