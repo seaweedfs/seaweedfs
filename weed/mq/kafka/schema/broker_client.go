@@ -182,7 +182,7 @@ func (bc *BrokerClient) getOrCreateSubscriber(topicName string) (*sub_client.Top
 	}
 
 	// Create partition offset channel
-	partitionOffsetChan := make(chan sub_client.KeyedOffset, 100)
+	partitionOffsetChan := make(chan sub_client.KeyedTimestamp, 100)
 
 	// Create the subscriber
 	_ = sub_client.NewTopicSubscriber(
