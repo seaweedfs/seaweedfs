@@ -140,7 +140,11 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 				}
 				// For very early start positions (like RESET_TO_EARLIEST with timestamp=1),
 				// or for system topics (like _schemas), we should read all files, not skip based on filename comparison
-				isSystemTopic := strings.HasPrefix(t.Name, "_")
+				topicName := t.Name
+				if dotIndex := strings.LastIndex(topicName, "."); dotIndex != -1 {
+					topicName = topicName[dotIndex+1:] // Remove namespace prefix
+				}
+				isSystemTopic := strings.HasPrefix(topicName, "_")
 				if !isSystemTopic && startPosition.Time.Unix() > 86400 && entry.Name < startPosition.UTC().Format(topic.TIME_FORMAT) {
 					return nil
 				}
