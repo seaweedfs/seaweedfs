@@ -93,12 +93,12 @@ func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromO
 	// but that session may have already consumed past the requested offset, causing stale/empty reads.
 	// This was the root cause of Schema Registry seeing empty values for offsets 2-11.
 	glog.Infof("[FETCH] Creating fresh subscriber for topic=%s partition=%d fromOffset=%d", topic, partition, fromOffset)
-	
+
 	// Pass consumer group and client ID to SMQ for proper tracking
 	// For fetch requests, we don't have actual consumer group info, so use a default
 	consumerGroup := "kafka-fetch-consumer"
 	consumerID := fmt.Sprintf("kafka-fetch-%d", time.Now().UnixNano())
-	
+
 	brokerSubscriber, err := h.brokerClient.CreateFreshSubscriber(topic, partition, fromOffset, consumerGroup, consumerID)
 	if err != nil {
 		glog.Errorf("[FETCH] Failed to create fresh subscriber: %v", err)
@@ -1669,7 +1669,7 @@ func (bc *BrokerClient) getActualPartitionAssignment(topic string, kafkaPartitio
 // This ensures each fetch gets fresh data from the requested offset
 // consumerGroup and consumerID are passed from Kafka client for proper tracking in SMQ
 func (bc *BrokerClient) CreateFreshSubscriber(topic string, partition int32, startOffset int64, consumerGroup string, consumerID string) (*BrokerSubscriberSession, error) {
-	glog.Infof("🔍 CreateFreshSubscriber: topic=%s partition=%d startOffset=%d consumerGroup=%s consumerID=%s", 
+	glog.Infof("🔍 CreateFreshSubscriber: topic=%s partition=%d startOffset=%d consumerGroup=%s consumerID=%s",
 		topic, partition, startOffset, consumerGroup, consumerID)
 
 	// Create a dedicated context for this subscriber
