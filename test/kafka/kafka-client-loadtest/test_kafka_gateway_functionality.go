@@ -168,3 +168,8 @@ func testSystemTopicProduceConsume() {
 		fmt.Printf("⚠️  Consume timeout - message may not have been consumed\n")
 	}
 }
+
+<<<<<<< Updated upstream
+
+=======
+>>>>>>> Stashed changes

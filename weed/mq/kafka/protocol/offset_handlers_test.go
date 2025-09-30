@@ -48,17 +48,17 @@ func TestOffsetCommitToSMQ_WithoutStorage(t *testing.T) {
 
 	err := handler.commitOffsetToSMQ(key, 100, "test-metadata")
 	if err == nil {
-		t.Error("Expected error when SMQ storage not initialized, got nil")
+		t.Error("Expected error when offset storage not initialized, got nil")
 	}
 
-	expectedError := "SMQ offset storage not initialized"
+	expectedError := "offset storage not initialized"
 	if err.Error() != expectedError {
 		t.Errorf("Expected error '%s', got '%s'", expectedError, err.Error())
 	}
 }
 
 func TestFetchOffsetFromSMQ_WithoutStorage(t *testing.T) {
-	// Test error handling when SMQ storage is not initialized
+	// Test error handling when offset storage is not initialized
 	handler := &Handler{
 		smqOffsetStorage: nil, // Not initialized
 	}

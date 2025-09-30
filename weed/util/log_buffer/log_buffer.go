@@ -108,6 +108,10 @@ func (logBuffer *LogBuffer) AddToBuffer(message *mq_pb.DataMessage) {
 
 // AddLogEntryToBuffer directly adds a LogEntry to the buffer, preserving offset information
 func (logBuffer *LogBuffer) AddLogEntryToBuffer(logEntry *filer_pb.LogEntry) {
+	// DEBUG: Log ALL writes to understand buffer naming
+	glog.Infof("📝 ADD TO BUFFER: buffer=%s offset=%d keyLen=%d valueLen=%d",
+		logBuffer.name, logEntry.Offset, len(logEntry.Key), len(logEntry.Data))
+	
 	logEntryData, _ := proto.Marshal(logEntry)
 
 	var toFlush *dataToFlush
@@ -334,7 +338,7 @@ func (logBuffer *LogBuffer) GetEarliestTime() time.Time {
 func (logBuffer *LogBuffer) GetEarliestPosition() MessagePosition {
 	return MessagePosition{
 		Time:       logBuffer.startTime,
-		BatchIndex: logBuffer.offset,
+		Offset: logBuffer.offset,
 	}
 }
 
@@ -377,7 +381,7 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 	if tsMemory.IsZero() { // case 2.2
 		glog.V(0).Infof("🔍 DEBUG: No memory data available - returning nil")
 		return nil, -2, nil
-	} else if lastReadPosition.Before(tsMemory) && lastReadPosition.BatchIndex+1 < tsBatchIndex { // case 2.3
+	} else if lastReadPosition.Before(tsMemory) && lastReadPosition.Offset+1 < tsBatchIndex { // case 2.3
 		if !logBuffer.lastFlushDataTime.IsZero() {
 			glog.V(0).Infof("🔍 DEBUG: Need to resume from disk - lastFlushDataTime=%v", logBuffer.lastFlushDataTime)
 			glog.V(0).Infof("resume with last flush time: %v", logBuffer.lastFlushDataTime)

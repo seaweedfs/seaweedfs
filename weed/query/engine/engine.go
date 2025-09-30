@@ -4496,6 +4496,11 @@ func (e *SQLEngine) convertLogEntryToRecordValue(logEntry *filer_pb.LogEntry) (*
 		Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Data},
 	}
 
+	// Also add "key" field for consistency (same as _key for non-schematized messages)
+	recordValue.Fields["key"] = &schema_pb.Value{
+		Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Key},
+	}
+
 	return recordValue, "live_log", nil
 }
 

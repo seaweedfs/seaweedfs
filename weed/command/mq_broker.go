@@ -18,15 +18,16 @@ var (
 )
 
 type MessageQueueBrokerOptions struct {
-	masters       map[string]pb.ServerAddress
-	mastersString *string
-	filerGroup    *string
-	ip            *string
-	port          *int
-	dataCenter    *string
-	rack          *string
-	cpuprofile    *string
-	memprofile    *string
+	masters          map[string]pb.ServerAddress
+	mastersString    *string
+	filerGroup       *string
+	ip               *string
+	port             *int
+	dataCenter       *string
+	rack             *string
+	cpuprofile       *string
+	memprofile       *string
+	logFlushInterval *int
 }
 
 func init() {
@@ -39,6 +40,7 @@ func init() {
 	mqBrokerStandaloneOptions.rack = cmdMqBroker.Flag.String("rack", "", "prefer to write to volumes in this rack")
 	mqBrokerStandaloneOptions.cpuprofile = cmdMqBroker.Flag.String("cpuprofile", "", "cpu profile output file")
 	mqBrokerStandaloneOptions.memprofile = cmdMqBroker.Flag.String("memprofile", "", "memory profile output file")
+	mqBrokerStandaloneOptions.logFlushInterval = cmdMqBroker.Flag.Int("logFlushInterval", 5, "log buffer flush interval in seconds")
 }
 
 var cmdMqBroker = &Command{
@@ -77,6 +79,7 @@ func (mqBrokerOpt *MessageQueueBrokerOptions) startQueueServer() bool {
 		MaxMB:              0,
 		Ip:                 *mqBrokerOpt.ip,
 		Port:               *mqBrokerOpt.port,
+		LogFlushInterval:   *mqBrokerOpt.logFlushInterval,
 	}, grpcDialOption)
 	if err != nil {
 		glog.Fatalf("failed to create new message broker for queue server: %v", err)

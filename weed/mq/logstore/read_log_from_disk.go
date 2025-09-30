@@ -22,7 +22,7 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 
 	lookupFileIdFn := filer.LookupFn(filerClient)
 
-	eachChunkFn := func(buf []byte, eachLogEntryFn log_buffer.EachLogEntryFuncType, starTsNs, stopTsNs int64) (processedTsNs int64, err error) {
+	eachChunkFn := func(buf []byte, eachLogEntryFn log_buffer.EachLogEntryFuncType, starTsNs, stopTsNs int64, startOffset int64, isOffsetBased bool) (processedTsNs int64, err error) {
 		for pos := 0; pos+4 < len(buf); {
 
 			size := util.BytesToUint32(buf[pos : pos+4])
@@ -38,13 +38,23 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 				err = fmt.Errorf("unexpected unmarshal mq_pb.Message: %w", err)
 				return
 			}
-			if logEntry.TsNs <= starTsNs {
-				pos += 4 + int(size)
-				continue
-			}
-			if stopTsNs != 0 && logEntry.TsNs > stopTsNs {
-				println("stopTsNs", stopTsNs, "logEntry.TsNs", logEntry.TsNs)
-				return
+
+			// Filter by offset if this is an offset-based subscription
+			if isOffsetBased {
+				if logEntry.Offset < startOffset {
+					pos += 4 + int(size)
+					continue
+				}
+			} else {
+				// Filter by timestamp for timestamp-based subscriptions
+				if logEntry.TsNs <= starTsNs {
+					pos += 4 + int(size)
+					continue
+				}
+				if stopTsNs != 0 && logEntry.TsNs > stopTsNs {
+					println("stopTsNs", stopTsNs, "logEntry.TsNs", logEntry.TsNs)
+					return
+				}
 			}
 
 			// fmt.Printf(" read logEntry: %v, ts %v\n", string(logEntry.Key), time.Unix(0, logEntry.TsNs).UTC())
@@ -62,7 +72,7 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 		return
 	}
 
-	eachFileFn := func(entry *filer_pb.Entry, eachLogEntryFn log_buffer.EachLogEntryFuncType, starTsNs, stopTsNs int64) (processedTsNs int64, err error) {
+	eachFileFn := func(entry *filer_pb.Entry, eachLogEntryFn log_buffer.EachLogEntryFuncType, starTsNs, stopTsNs int64, startOffset int64, isOffsetBased bool) (processedTsNs int64, err error) {
 		if len(entry.Content) > 0 {
 			// skip .offset files
 			return
@@ -98,7 +108,7 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 				if data, _, err = util_http.Get(urlString); err == nil {
 					glog.V(1).Infof("DEBUG: successfully fetched %d bytes from %s", len(data), urlString)
 					processed = true
-					if processedTsNs, err = eachChunkFn(data, eachLogEntryFn, starTsNs, stopTsNs); err != nil {
+					if processedTsNs, err = eachChunkFn(data, eachLogEntryFn, starTsNs, stopTsNs, startOffset, isOffsetBased); err != nil {
 						glog.Errorf("DEBUG: eachChunkFn failed: %v", err)
 						return
 					}
@@ -122,6 +132,19 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 		startTsNs := startPosition.Time.UnixNano()
 		stopTime := time.Unix(0, stopTsNs)
 		var processedTsNs int64
+
+		// Check if this is an offset-based subscription
+		isOffsetBased := startPosition.IsOffsetBased()
+		var startOffset int64
+		if isOffsetBased {
+			startOffset = startPosition.Offset
+			glog.Infof("📍 OFFSET-BASED READ: topic=%s partition=%v startOffset=%d startPosition.Time=%v",
+				t.Name, p, startOffset, startPosition.Time)
+		} else {
+			glog.Infof("📍 TIMESTAMP-BASED READ: topic=%s partition=%v startTime=%v startTsNs=%d",
+				t.Name, p, startPosition.Time, startTsNs)
+		}
+
 		err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 			return filer_pb.SeaweedList(context.Background(), client, partitionDir, "", func(entry *filer_pb.Entry, isLast bool) error {
 				if entry.IsDirectory {
@@ -145,10 +168,10 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 					topicName = topicName[dotIndex+1:] // Remove namespace prefix
 				}
 				isSystemTopic := strings.HasPrefix(topicName, "_")
-				if !isSystemTopic && startPosition.Time.Unix() > 86400 && entry.Name < startPosition.UTC().Format(topic.TIME_FORMAT) {
+				if !isSystemTopic && !isOffsetBased && startPosition.Time.Unix() > 86400 && entry.Name < startPosition.UTC().Format(topic.TIME_FORMAT) {
 					return nil
 				}
-				if processedTsNs, err = eachFileFn(entry, eachLogEntryFn, startTsNs, stopTsNs); err != nil {
+				if processedTsNs, err = eachFileFn(entry, eachLogEntryFn, startTsNs, stopTsNs, startOffset, isOffsetBased); err != nil {
 					return err
 				}
 				return nil

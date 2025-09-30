@@ -16,6 +16,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/consumer"
+	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/consumer_offset"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/integration"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/schema"
@@ -96,6 +97,28 @@ type SeaweedMQHandlerInterface interface {
 	Close() error
 }
 
+// ConsumerOffsetStorage defines the interface for storing consumer offsets
+// This is used by OffsetCommit and OffsetFetch protocol handlers
+type ConsumerOffsetStorage interface {
+	CommitOffset(group, topic string, partition int32, offset int64, metadata string) error
+	FetchOffset(group, topic string, partition int32) (int64, string, error)
+	FetchAllOffsets(group string) (map[TopicPartition]OffsetMetadata, error)
+	DeleteGroup(group string) error
+	Close() error
+}
+
+// TopicPartition uniquely identifies a topic partition for offset storage
+type TopicPartition struct {
+	Topic     string
+	Partition int32
+}
+
+// OffsetMetadata contains offset and associated metadata
+type OffsetMetadata struct {
+	Offset   int64
+	Metadata string
+}
+
 // TopicSchemaConfig holds schema configuration for a topic
 type TopicSchemaConfig struct {
 	// Value schema configuration
@@ -129,6 +152,9 @@ type Handler struct {
 
 	// SMQ offset storage for consumer group offsets
 	smqOffsetStorage offset.LedgerStorage
+
+	// Consumer offset storage for Kafka protocol OffsetCommit/OffsetFetch
+	consumerOffsetStorage ConsumerOffsetStorage
 
 	// Consumer group coordination
 	groupCoordinator *consumer.GroupCoordinator
@@ -202,13 +228,20 @@ func NewSeaweedMQBrokerHandlerWithDefaults(masters string, filerGroup string, cl
 	// Create SMQ offset storage using the shared filer client accessor
 	smqOffsetStorage := offset.NewSMQOffsetStorage(sharedFilerAccessor)
 
+	// Create consumer offset storage (for OffsetCommit/OffsetFetch protocol)
+	// Use filer-based storage for persistence across restarts
+	consumerOffsetStorage := newOffsetStorageAdapter(
+		consumer_offset.NewFilerStorage(sharedFilerAccessor),
+	)
+
 	return &Handler{
-		seaweedMQHandler:   smqHandler,
-		smqOffsetStorage:   smqOffsetStorage,
-		groupCoordinator:   consumer.NewGroupCoordinator(),
-		smqBrokerAddresses: nil, // Will be set by SetSMQBrokerAddresses() when server starts
-		registeredSchemas:  make(map[string]bool),
-		defaultPartitions:  defaultPartitions,
+		seaweedMQHandler:      smqHandler,
+		smqOffsetStorage:      smqOffsetStorage,
+		consumerOffsetStorage: consumerOffsetStorage,
+		groupCoordinator:      consumer.NewGroupCoordinator(),
+		smqBrokerAddresses:    nil, // Will be set by SetSMQBrokerAddresses() when server starts
+		registeredSchemas:     make(map[string]bool),
+		defaultPartitions:     defaultPartitions,
 	}, nil
 }
 
@@ -1588,18 +1621,21 @@ func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, req
 				string(topicName), partitionID, timestamp)
 			glog.Infof("🚀 NEW OFFSET CODE IS RUNNING! 🚀")
 
-			switch timestamp {
-			case -2: // earliest offset
-				// Get the actual earliest offset from SMQ
-				earliestOffset, err := h.seaweedMQHandler.GetEarliestOffset(string(topicName), int32(partitionID))
-				if err != nil {
-					Debug("Failed to get earliest offset for topic %s partition %d: %v", string(topicName), partitionID, err)
-					responseOffset = 0 // fallback to 0
-				} else {
-					responseOffset = earliestOffset
-				}
-				responseTimestamp = 0 // No specific timestamp for earliest
-				Debug("ListOffsets EARLIEST - returning offset: %d, timestamp: %d", responseOffset, responseTimestamp)
+		switch timestamp {
+		case -2: // earliest offset
+			// Get the actual earliest offset from SMQ
+			earliestOffset, err := h.seaweedMQHandler.GetEarliestOffset(string(topicName), int32(partitionID))
+			if err != nil {
+				Debug("Failed to get earliest offset for topic %s partition %d: %v", string(topicName), partitionID, err)
+				responseOffset = 0 // fallback to 0
+			} else {
+				responseOffset = earliestOffset
+			}
+			responseTimestamp = 0 // No specific timestamp for earliest
+			if strings.HasPrefix(string(topicName), "_schemas") {
+				glog.Infof("📍 SCHEMA REGISTRY LISTOFFSETS EARLIEST: topic=%s partition=%d returning offset=%d", string(topicName), partitionID, responseOffset)
+			}
+			Debug("ListOffsets EARLIEST - returning offset: %d, timestamp: %d", responseOffset, responseTimestamp)
 			case -1: // latest offset
 				// Get the actual latest offset from SMQ
 				Debug("XYZABC123 UNIQUE DEBUG MESSAGE - MY CODE IS RUNNING!")
@@ -2848,19 +2884,29 @@ func (h *Handler) IsBrokerIntegrationEnabled() bool {
 
 // commitOffsetToSMQ commits offset using SMQ storage
 func (h *Handler) commitOffsetToSMQ(key offset.ConsumerOffsetKey, offsetValue int64, metadata string) error {
-	if h.smqOffsetStorage == nil {
-		return fmt.Errorf("SMQ offset storage not initialized")
+	// Use new consumer offset storage if available, fall back to SMQ storage
+	if h.consumerOffsetStorage != nil {
+		return h.consumerOffsetStorage.CommitOffset(key.ConsumerGroup, key.Topic, key.Partition, offsetValue, metadata)
 	}
 
-	// Save to SMQ storage - use current timestamp and size 0 as placeholders
+	if h.smqOffsetStorage == nil {
+		return fmt.Errorf("offset storage not initialized")
+	}
+
+	// Fallback: Save to SMQ storage - use current timestamp and size 0 as placeholders
 	// since SMQ storage primarily tracks the committed offset
 	return h.smqOffsetStorage.SaveConsumerOffset(key, offsetValue, time.Now().UnixNano(), 0)
 }
 
 // fetchOffsetFromSMQ fetches offset using SMQ storage
 func (h *Handler) fetchOffsetFromSMQ(key offset.ConsumerOffsetKey) (int64, string, error) {
+	// Use new consumer offset storage if available, fall back to SMQ storage
+	if h.consumerOffsetStorage != nil {
+		return h.consumerOffsetStorage.FetchOffset(key.ConsumerGroup, key.Topic, key.Partition)
+	}
+
 	if h.smqOffsetStorage == nil {
-		return -1, "", fmt.Errorf("SMQ offset storage not initialized")
+		return -1, "", fmt.Errorf("offset storage not initialized")
 	}
 
 	entries, err := h.smqOffsetStorage.LoadConsumerOffsets(key)

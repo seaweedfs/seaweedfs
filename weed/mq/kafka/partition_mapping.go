@@ -51,3 +51,5 @@ func GetRangeSize() int32 {
 func GetMaxKafkaPartitions() int32 {
 	return int32(pub_balancer.MaxPartitionCount) / 35 // 72 partitions
 }
+
+

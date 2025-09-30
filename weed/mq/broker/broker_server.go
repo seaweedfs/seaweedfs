@@ -32,6 +32,7 @@ type MessageQueueBrokerOption struct {
 	Port               int
 	Cipher             bool
 	VolumeServerAccess string // how to access volume servers
+	LogFlushInterval   int    // log buffer flush interval in seconds
 }
 
 func (option *MessageQueueBrokerOption) BrokerAddress() pb.ServerAddress {

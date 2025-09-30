@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/compression"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/schema"
@@ -152,18 +153,23 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 				}
 			}
 
-			// Normalize special fetch offsets: -2 = earliest, -1 = latest
-			effectiveFetchOffset := partition.FetchOffset
-			if effectiveFetchOffset < 0 {
-				if effectiveFetchOffset == -2 { // earliest
-					effectiveFetchOffset = 0
-				} else if effectiveFetchOffset == -1 { // latest
-					effectiveFetchOffset = highWaterMark
-				}
+		// Normalize special fetch offsets: -2 = earliest, -1 = latest
+		effectiveFetchOffset := partition.FetchOffset
+		if effectiveFetchOffset < 0 {
+			if effectiveFetchOffset == -2 { // earliest
+				effectiveFetchOffset = 0
+			} else if effectiveFetchOffset == -1 { // latest
+				effectiveFetchOffset = highWaterMark
 			}
+		}
+		
+		if strings.HasPrefix(topic.Name, "_schemas") {
+			glog.Infof("📍 SR FETCH REQUEST: topic=%s partition=%d requestOffset=%d effectiveOffset=%d highWaterMark=%d", 
+				topic.Name, partition.PartitionID, partition.FetchOffset, effectiveFetchOffset, highWaterMark)
+		}
 
-			fetchStartTime := time.Now()
-			Debug("Fetch v%d - Topic: %s, partition: %d, fetchOffset: %d (effective: %d), highWaterMark: %d, maxBytes: %d",
+		fetchStartTime := time.Now()
+		Debug("Fetch v%d - Topic: %s, partition: %d, fetchOffset: %d (effective: %d), highWaterMark: %d, maxBytes: %d",
 				apiVersion, topic.Name, partition.PartitionID, partition.FetchOffset, effectiveFetchOffset, highWaterMark, partition.MaxBytes)
 
 			// High water mark (8 bytes)
@@ -227,6 +233,10 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 					Debug("Multi-batch result - %d batches, %d bytes, next offset %d, duration=%v",
 						result.BatchCount, result.TotalSize, result.NextOffset, multiBatchDuration)
 					recordBatch = result.RecordBatches
+					if strings.HasPrefix(topic.Name, "_schemas") {
+						glog.Infof("📍 SR FETCH RESPONSE: topic=%s partition=%d fetchOffset=%d batches=%d bytes=%d nextOffset=%d", 
+							topic.Name, partition.PartitionID, effectiveFetchOffset, result.BatchCount, result.TotalSize, result.NextOffset)
+					}
 				} else {
 					Debug("Multi-batch failed or empty, falling back to single batch, duration=%v", multiBatchDuration)
 					// Fallback to original single batch logic
@@ -526,8 +536,8 @@ func (h *Handler) constructRecordBatchFromSMQ(topicName string, fetchOffset int6
 		offsetDelta := int64(i)
 		recordBytes = append(recordBytes, encodeVarint(offsetDelta)...)
 
-		// Key length and key (varint + data)
-		key := smqRecord.GetKey()
+		// Key length and key (varint + data) - decode RecordValue to get original Kafka message
+		key := h.decodeRecordValueToKafkaMessage(topicName, smqRecord.GetKey())
 		if key == nil {
 			recordBytes = append(recordBytes, encodeVarint(-1)...) // null key
 		} else {
@@ -537,6 +547,13 @@ func (h *Handler) constructRecordBatchFromSMQ(topicName string, fetchOffset int6
 
 		// Value length and value (varint + data) - decode RecordValue to get original Kafka message
 		value := h.decodeRecordValueToKafkaMessage(topicName, smqRecord.GetValue())
+		
+		// DEBUG: Show response being sent for _schemas topic
+		if strings.Contains(topicName, "_schemas") {
+			glog.Infof("📦 FETCH RESPONSE: topic=%s offset=%d rawKey=%d rawValue=%d decodedKey=%d decodedValue=%d keyContent=%q",
+				topicName, smqRecord.GetOffset(), len(smqRecord.GetKey()), len(smqRecord.GetValue()), len(key), len(value), string(key))
+		}
+		
 		if value == nil {
 			recordBytes = append(recordBytes, encodeVarint(-1)...) // null value
 		} else {
@@ -1306,6 +1323,19 @@ func (h *Handler) ensureTopicKeySchemaFromLatestSchema(topicName string, latestS
 func (h *Handler) decodeRecordValueToKafkaMessage(topicName string, recordValueBytes []byte) []byte {
 	if recordValueBytes == nil {
 		return nil
+	}
+
+	// CRITICAL FIX: For system topics like _schemas, _consumer_offsets, etc.,
+	// return the raw bytes as-is. These topics store Kafka's internal format (Avro, etc.)
+	// and should NOT be processed as RecordValue protobuf messages.
+	if strings.HasPrefix(topicName, "_") {
+		Debug("System topic %s: returning raw bytes without RecordValue processing", topicName)
+		// DEBUG: Show response content for offset 0 debugging
+		if strings.Contains(topicName, "_schemas") {
+			glog.Infof("📤 RESPONSE DEBUG: topic=%s valueLen=%d valueHex=%x valueStr=%q",
+				topicName, len(recordValueBytes), recordValueBytes, string(recordValueBytes))
+		}
+		return recordValueBytes
 	}
 
 	// Try to unmarshal as RecordValue

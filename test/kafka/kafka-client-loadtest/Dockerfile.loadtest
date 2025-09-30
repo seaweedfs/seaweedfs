@@ -1,0 +1,59 @@
+# Kafka Client Load Test Runner Dockerfile
+FROM --platform=linux/amd64 golang:1.24-bullseye AS builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    git \
+    gcc \
+    libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /app
+
+# Copy go.mod and go.sum
+COPY test/kafka/kafka-client-loadtest/go.mod .
+COPY test/kafka/kafka-client-loadtest/go.sum .
+
+# Download dependencies
+RUN go mod download
+
+# Copy source code
+COPY test/kafka/kafka-client-loadtest/ .
+
+# Build the load test binary
+RUN CGO_ENABLED=1 go build \
+    -ldflags="-s -w" \
+    -o /usr/local/bin/kafka-loadtest \
+    ./cmd/loadtest
+
+# Runtime image
+FROM --platform=linux/amd64 ubuntu:22.04
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    curl \
+    jq \
+    bash \
+    netcat \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy load test binary
+COPY --from=builder /usr/local/bin/kafka-loadtest /usr/local/bin/kafka-loadtest
+
+# Copy scripts and configuration
+COPY test/kafka/kafka-client-loadtest/scripts/ /scripts/
+COPY test/kafka/kafka-client-loadtest/config/ /config/
+
+# Create results directory
+RUN mkdir -p /test-results
+
+# Make scripts executable
+RUN chmod +x /scripts/*.sh
+
+WORKDIR /app
+
+# Default command runs the comprehensive load test
+CMD ["/usr/local/bin/kafka-loadtest", "-config", "/config/loadtest.yaml"]
+

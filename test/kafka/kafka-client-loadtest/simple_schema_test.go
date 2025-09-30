@@ -272,3 +272,8 @@ func decodeSchematizedMessage(data []byte) (*SchematizedMessage, error) {
 	}, nil
 }
 
+
+<<<<<<< Updated upstream
+
+=======
+>>>>>>> Stashed changes

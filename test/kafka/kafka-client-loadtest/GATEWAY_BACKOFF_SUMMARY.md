@@ -117,3 +117,5 @@ The improvements can be verified by:
 - **Enhanced Observability**: Clear logging of backoff behavior for debugging
 
 This comprehensive approach ensures the Kafka Gateway remains stable and responsive even when schema validation consistently fails, providing protection at both the server and client levels.
+
+

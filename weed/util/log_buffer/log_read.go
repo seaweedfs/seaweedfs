@@ -18,14 +18,14 @@ var (
 )
 
 type MessagePosition struct {
-	time.Time        // this is the timestamp of the message
-	BatchIndex int64 // this is only used when the timestamp is not enough to identify the next message, when the timestamp is in the previous batch.
+	time.Time      // this is the timestamp of the message
+	Offset    int64 // Kafka offset for offset-based positioning, or batch index for timestamp-based
 }
 
-func NewMessagePosition(tsNs int64, batchIndex int64) MessagePosition {
+func NewMessagePosition(tsNs int64, offset int64) MessagePosition {
 	return MessagePosition{
-		Time:       time.Unix(0, tsNs).UTC(),
-		BatchIndex: batchIndex,
+		Time:   time.Unix(0, tsNs).UTC(),
+		Offset: offset,
 	}
 }
 
@@ -34,11 +34,11 @@ func NewMessagePosition(tsNs int64, batchIndex int64) MessagePosition {
 var OffsetBasedPositionSentinel = time.Unix(1, 0).UTC()
 
 // NewMessagePositionFromOffset creates a MessagePosition that represents a specific offset
-// Uses a clear sentinel time value and stores the offset directly in BatchIndex
+// Uses a clear sentinel time value and stores the offset directly
 func NewMessagePositionFromOffset(offset int64) MessagePosition {
 	return MessagePosition{
-		Time:       OffsetBasedPositionSentinel, // Clear sentinel time for offset-based positions
-		BatchIndex: offset,                      // Store offset directly - much clearer!
+		Time:   OffsetBasedPositionSentinel, // Clear sentinel time for offset-based positions
+		Offset: offset,                      // Store offset directly
 	}
 }
 
@@ -53,7 +53,7 @@ func (mp MessagePosition) GetOffset() int64 {
 	if !mp.IsOffsetBased() {
 		return -1 // Not an offset-based position
 	}
-	return mp.BatchIndex // Offset is stored directly in BatchIndex
+	return mp.Offset // Offset is stored directly
 }
 
 func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition MessagePosition, stopTsNs int64,
@@ -84,7 +84,7 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 		if bytesBuf != nil {
 			readSize = bytesBuf.Len()
 		}
-		glog.V(4).Infof("%s ReadFromBuffer at %v batch %d. Read bytes %v batch %d", readerName, lastReadPosition, lastReadPosition.BatchIndex, readSize, batchIndex)
+		glog.V(4).Infof("%s ReadFromBuffer at %v offset %d. Read bytes %v batchIndex %d", readerName, lastReadPosition, lastReadPosition.Offset, readSize, batchIndex)
 		if bytesBuf == nil {
 			if batchIndex >= 0 {
 				lastReadPosition = NewMessagePosition(lastReadPosition.UnixNano(), batchIndex)
@@ -135,17 +135,16 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 			// Handle offset-based filtering for offset-based start positions
 			if startPosition.IsOffsetBased() {
 				startOffset := startPosition.GetOffset()
-				glog.V(2).Infof("[DEBUG_FETCH] Checking offset-based position: logEntry.Offset=%d startOffset=%d", logEntry.Offset, startOffset)
+				glog.Infof("📍 MEMORY OFFSET CHECK: logEntry.Offset=%d startOffset=%d readerName=%s",
+					logEntry.Offset, startOffset, readerName)
 				if logEntry.Offset < startOffset {
-					glog.V(2).Infof("[DEBUG_FETCH] Skipping entry with offset %d (before startOffset %d)", logEntry.Offset, startOffset)
+					glog.Infof("📍 SKIPPING: entry offset %d < startOffset %d", logEntry.Offset, startOffset)
 					// Skip entries before the starting offset
 					pos += 4 + int(size)
 					batchSize++
-					// advance the start position so subsequent entries use timestamp-based flow
-					startPosition = NewMessagePosition(logEntry.TsNs, batchIndex)
 					continue
 				} else {
-					glog.V(2).Infof("[DEBUG_FETCH] Found entry with offset %d >= startOffset %d, will process", logEntry.Offset, startOffset)
+					glog.Infof("📍 PROCESSING: entry offset %d >= startOffset %d", logEntry.Offset, startOffset)
 				}
 			}
 
@@ -207,7 +206,7 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 		if bytesBuf != nil {
 			readSize = bytesBuf.Len()
 		}
-		glog.V(0).Infof("🔍 DEBUG: %s ReadFromBuffer at %v batch %d. Read bytes %v offset %d", readerName, lastReadPosition, lastReadPosition.BatchIndex, readSize, offset)
+		glog.V(0).Infof("🔍 DEBUG: %s ReadFromBuffer at %v posOffset %d. Read bytes %v bufferOffset %d", readerName, lastReadPosition, lastReadPosition.Offset, readSize, offset)
 		if bytesBuf == nil {
 			if offset >= 0 {
 				lastReadPosition = NewMessagePosition(lastReadPosition.UnixNano(), offset)

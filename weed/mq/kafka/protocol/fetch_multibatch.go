@@ -6,8 +6,10 @@ import (
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
+	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/compression"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
 )
@@ -111,8 +113,25 @@ func (f *MultiBatchFetcher) FetchMultipleBatches(topicName string, partitionID i
 		// Note: we construct the batch and check actual size after construction
 
 		// Construct record batch
-		batch := f.constructSingleRecordBatch(currentOffset, smqRecords)
+		batch := f.constructSingleRecordBatch(topicName, currentOffset, smqRecords)
 		batchSize := int32(len(batch))
+
+		if strings.HasPrefix(topicName, "_schemas") {
+			glog.Infof("📍 SR BATCH CONSTRUCTED: baseOffset=%d recordCount=%d batchSize=%d",
+				currentOffset, len(smqRecords), batchSize)
+
+			// Log first record details for debugging deserialization
+			if len(smqRecords) > 0 {
+				for i, rec := range smqRecords {
+					if i < 3 { // Log first 3 records
+						glog.Infof("📍 SR RECORD[%d]: keyLen=%d valueLen=%d keyHex=%x valueHex=%x",
+							i, len(rec.GetKey()), len(rec.GetValue()),
+							rec.GetKey()[:min(20, len(rec.GetKey()))],
+							rec.GetValue()[:min(50, len(rec.GetValue()))])
+					}
+				}
+			}
+		}
 
 		// Double-check actual size doesn't exceed maxBytes
 		if totalSize+batchSize > maxBytes && batchCount > 0 {
@@ -142,7 +161,7 @@ func (f *MultiBatchFetcher) FetchMultipleBatches(topicName string, partitionID i
 }
 
 // constructSingleRecordBatch creates a single record batch from SMQ records
-func (f *MultiBatchFetcher) constructSingleRecordBatch(baseOffset int64, smqRecords []offset.SMQRecord) []byte {
+func (f *MultiBatchFetcher) constructSingleRecordBatch(topicName string, baseOffset int64, smqRecords []offset.SMQRecord) []byte {
 	if len(smqRecords) == 0 {
 		return f.constructEmptyRecordBatch(baseOffset)
 	}
@@ -224,8 +243,8 @@ func (f *MultiBatchFetcher) constructSingleRecordBatch(baseOffset int64, smqReco
 		offsetDelta := int64(i)
 		recordBytes = append(recordBytes, encodeVarint(offsetDelta)...)
 
-		// Key length and key (varint + data)
-		key := smqRecord.GetKey()
+		// Key length and key (varint + data) - decode RecordValue to get original Kafka message
+		key := f.handler.decodeRecordValueToKafkaMessage(topicName, smqRecord.GetKey())
 		if key == nil {
 			recordBytes = append(recordBytes, encodeVarint(-1)...) // null key
 		} else {
@@ -233,8 +252,23 @@ func (f *MultiBatchFetcher) constructSingleRecordBatch(baseOffset int64, smqReco
 			recordBytes = append(recordBytes, key...)
 		}
 
-		// Value length and value (varint + data)
-		value := smqRecord.GetValue()
+		// Value length and value (varint + data) - decode RecordValue to get original Kafka message
+		value := f.handler.decodeRecordValueToKafkaMessage(topicName, smqRecord.GetValue())
+
+		// DEBUG: Show response being sent for _schemas topic (multibatch path)
+		if strings.Contains(topicName, "_schemas") {
+			keyStr := ""
+			if len(key) > 0 {
+				keyStr = string(key)
+			}
+			valueStr := ""
+			if len(value) > 0 {
+				valueStr = string(value)
+			}
+			glog.Infof("📦 MULTIBATCH RESPONSE: topic=%s offset=%d rawKey=%d rawValue=%d decodedKey=%d decodedValue=%d keyStr=%q valueStr=%q",
+				topicName, smqRecord.GetOffset(), len(smqRecord.GetKey()), len(smqRecord.GetValue()), len(key), len(value), keyStr, valueStr)
+		}
+
 		if value == nil {
 			recordBytes = append(recordBytes, encodeVarint(-1)...) // null value
 		} else {
@@ -340,7 +374,7 @@ type CompressedBatchResult struct {
 func (f *MultiBatchFetcher) CreateCompressedBatch(baseOffset int64, smqRecords []offset.SMQRecord, codec compression.CompressionCodec) (*CompressedBatchResult, error) {
 	if codec == compression.None {
 		// No compression requested
-		batch := f.constructSingleRecordBatch(baseOffset, smqRecords)
+		batch := f.constructSingleRecordBatch("", baseOffset, smqRecords)
 		return &CompressedBatchResult{
 			CompressedData: batch,
 			OriginalSize:   int32(len(batch)),
@@ -350,7 +384,7 @@ func (f *MultiBatchFetcher) CreateCompressedBatch(baseOffset int64, smqRecords [
 	}
 
 	// For Phase 5, implement basic GZIP compression support
-	originalBatch := f.constructSingleRecordBatch(baseOffset, smqRecords)
+	originalBatch := f.constructSingleRecordBatch("", baseOffset, smqRecords)
 	originalSize := int32(len(originalBatch))
 
 	compressedData, err := f.compressData(originalBatch, codec)

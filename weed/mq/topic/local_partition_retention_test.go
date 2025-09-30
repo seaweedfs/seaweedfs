@@ -128,3 +128,5 @@ func TestSchemaRegistryScenario(t *testing.T) {
 
 	t.Logf("✅ Schema Registry scenario test passed - _schemas partition preserved")
 }
+
+

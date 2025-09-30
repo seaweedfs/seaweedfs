@@ -832,6 +832,11 @@ func (hms *HybridMessageScanner) convertLogEntryToRecordValueWithDecoded(logEntr
 				Kind: &schema_pb.Value_BytesValue{BytesValue: dataMessage.Value},
 			}
 
+			// Also add "key" field for consistency (same as _key for non-schematized messages)
+			recordValue.Fields["key"] = &schema_pb.Value{
+				Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Key},
+			}
+
 			return recordValue, "live_log", nil
 		}
 
@@ -846,6 +851,13 @@ func (hms *HybridMessageScanner) convertLogEntryToRecordValueWithDecoded(logEntr
 		}
 		recordValue.Fields[SW_COLUMN_NAME_KEY] = &schema_pb.Value{
 			Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Key},
+		}
+
+		// Also add "key" field if not already present (for system topics and non-schematized messages)
+		if _, exists := recordValue.Fields["key"]; !exists {
+			recordValue.Fields["key"] = &schema_pb.Value{
+				Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Key},
+			}
 		}
 
 		return recordValue, "live_log", nil
@@ -867,6 +879,11 @@ func (hms *HybridMessageScanner) convertLogEntryToRecordValueWithDecoded(logEntr
 	// Add the raw data as the "value" field for Kafka compatibility
 	recordValue.Fields["value"] = &schema_pb.Value{
 		Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Data},
+	}
+
+	// Also add "key" field for consistency (same as _key for non-schematized messages)
+	recordValue.Fields["key"] = &schema_pb.Value{
+		Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Key},
 	}
 
 	return recordValue, "live_log", nil

@@ -58,7 +58,7 @@ func (b *MessageQueueBroker) genLocalPartitionFromFiler(t topic.Topic, partition
 		glog.V(0).Infof("🔍 DEBUG: assignmentPartition details: RangeStart=%d, RangeStop=%d, RingSize=%d, UnixTimeNs=%d", assignmentPartition.RangeStart, assignmentPartition.RangeStop, assignmentPartition.RingSize, assignmentPartition.UnixTimeNs)
 		if assignment.LeaderBroker == string(self) && partition.LogicalEquals(assignmentPartition) {
 			glog.V(0).Infof("🔍 DEBUG: Creating local partition for %s %s", t, partition)
-			localPartition = topic.NewLocalPartition(partition, b.genLogFlushFunc(t, partition), logstore.GenMergedReadFunc(b, t, partition))
+			localPartition = topic.NewLocalPartition(partition, b.option.LogFlushInterval, b.genLogFlushFunc(t, partition), logstore.GenMergedReadFunc(b, t, partition))
 
 			// Initialize offset from existing data to ensure continuity on restart
 			b.initializePartitionOffsetFromExistingData(localPartition, t, partition)

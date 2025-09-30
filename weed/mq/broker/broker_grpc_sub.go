@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -65,6 +66,8 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 	}()
 
 	startPosition := b.getRequestPosition(req.GetInit())
+	glog.Infof("📍 SUB START POSITION: topic=%s partition=%v startPosition.Time=%v startPosition.Offset=%d isOffsetBased=%v",
+		t, partition, startPosition.Time, startPosition.Offset, startPosition.IsOffsetBased())
 	imt := sub_coordinator.NewInflightMessageTracker(int(req.GetInit().SlidingWindowSize))
 
 	// connect to the follower
@@ -213,12 +216,35 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 			imt.EnflightMessage(logEntry.Key, logEntry.TsNs)
 		}
 
+		// DEBUG: Log what we're sending for _schemas topic
+		topicName := t.String()
+		if strings.Contains(topicName, "_schemas") {
+			glog.Infof("🔥 SUB DEBUG: Sending _schemas record - keyLen=%d valueLen=%d offset=%d", 
+				len(logEntry.Key), len(logEntry.Data), logEntry.Offset)
+			if len(logEntry.Data) > 0 {
+				glog.Infof("🔥 SUB DEBUG: Value content (first 50 bytes): %x", logEntry.Data[:min(50, len(logEntry.Data))])
+			} else {
+				glog.Infof("🔥 SUB DEBUG: Value is EMPTY!")
+			}
+		}
+		
+		// Create the message to send
+		dataMsg := &mq_pb.DataMessage{
+			Key:   logEntry.Key,
+			Value: logEntry.Data,
+			TsNs:  logEntry.TsNs,
+		}
+		
+		// DEBUG: Log the DataMessage we're about to send
+		if strings.Contains(topicName, "_schemas") {
+			glog.Infof("🔥 SUB DEBUG PRESEND: DataMessage - keyLen=%d valueLen=%d key=%x value=%x",
+				len(dataMsg.Key), len(dataMsg.Value),
+				dataMsg.Key[:min(20, len(dataMsg.Key))],
+				dataMsg.Value[:min(50, len(dataMsg.Value))])
+		}
+		
 		if err := stream.Send(&mq_pb.SubscribeMessageResponse{Message: &mq_pb.SubscribeMessageResponse_Data{
-			Data: &mq_pb.DataMessage{
-				Key:   logEntry.Key,
-				Value: logEntry.Data,
-				TsNs:  logEntry.TsNs,
-			},
+			Data: dataMsg,
 		}}); err != nil {
 			glog.Errorf("Error sending data: %v", err)
 			return false, err
