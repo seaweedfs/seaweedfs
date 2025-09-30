@@ -1479,6 +1479,7 @@ func (h *Handler) getRecordTypeHash(recordType *schema_pb.RecordType) uint32 {
 
 // createCombinedRecordValue creates a RecordValue that combines fields from both key and value decoded messages
 // Key fields are prefixed with "key_" to distinguish them from value fields
+// Also stores the full key RecordValue as a "key" field for SQL queries
 func (h *Handler) createCombinedRecordValue(keyDecodedMsg *schema.DecodedMessage, valueDecodedMsg *schema.DecodedMessage) *schema_pb.RecordValue {
 	combinedFields := make(map[string]*schema_pb.Value)
 
@@ -1486,6 +1487,12 @@ func (h *Handler) createCombinedRecordValue(keyDecodedMsg *schema.DecodedMessage
 	if keyDecodedMsg != nil && keyDecodedMsg.RecordValue != nil {
 		for fieldName, fieldValue := range keyDecodedMsg.RecordValue.Fields {
 			combinedFields["key_"+fieldName] = fieldValue
+		}
+
+		// Also add the full key RecordValue as a "key" field
+		// This allows SQL queries to access the key directly
+		combinedFields["key"] = &schema_pb.Value{
+			Kind: &schema_pb.Value_RecordValue{RecordValue: keyDecodedMsg.RecordValue},
 		}
 	}
 
