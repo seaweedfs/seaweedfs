@@ -4477,15 +4477,9 @@ func (e *SQLEngine) eachLogEntryInFile(filerClient filer_pb.FilerClient, filePat
 
 // convertLogEntryToRecordValue helper method (reuse existing logic)
 func (e *SQLEngine) convertLogEntryToRecordValue(logEntry *filer_pb.LogEntry) (*schema_pb.RecordValue, string, error) {
-	// Parse the log entry data as Protocol Buffer (not JSON!)
-	recordValue := &schema_pb.RecordValue{}
-	if err := proto.Unmarshal(logEntry.Data, recordValue); err != nil {
-		return nil, "", fmt.Errorf("failed to unmarshal log entry protobuf: %v", err)
-	}
-
-	// Ensure Fields map exists
-	if recordValue.Fields == nil {
-		recordValue.Fields = make(map[string]*schema_pb.Value)
+	// Create RecordValue with proper Kafka-compatible column mapping
+	recordValue := &schema_pb.RecordValue{
+		Fields: make(map[string]*schema_pb.Value),
 	}
 
 	// Add system columns
@@ -4496,8 +4490,11 @@ func (e *SQLEngine) convertLogEntryToRecordValue(logEntry *filer_pb.LogEntry) (*
 		Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Key},
 	}
 
-	// User data fields are already present in the protobuf-deserialized recordValue
-	// No additional processing needed since proto.Unmarshal already populated the Fields map
+	// Add the raw data as the "value" field for Kafka compatibility
+	// logEntry.Data contains the raw message value, not a protobuf RecordValue
+	recordValue.Fields["value"] = &schema_pb.Value{
+		Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Data},
+	}
 
 	return recordValue, "live_log", nil
 }

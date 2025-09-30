@@ -814,8 +814,25 @@ func (hms *HybridMessageScanner) convertLogEntryToRecordValueWithDecoded(logEntr
 		// dataMessage.Value is []byte, so we need to unmarshal it
 		recordValue := &schema_pb.RecordValue{}
 		if err := proto.Unmarshal(dataMessage.Value, recordValue); err != nil {
-			// If unmarshaling fails, fallback to original logic
-			return hms.convertLogEntryToRecordValue(logEntry)
+			// If unmarshaling fails, treat dataMessage.Value as raw data and create value field
+			recordValue = &schema_pb.RecordValue{
+				Fields: make(map[string]*schema_pb.Value),
+			}
+
+			// Add system columns
+			recordValue.Fields[SW_COLUMN_NAME_TIMESTAMP] = &schema_pb.Value{
+				Kind: &schema_pb.Value_Int64Value{Int64Value: logEntry.TsNs},
+			}
+			recordValue.Fields[SW_COLUMN_NAME_KEY] = &schema_pb.Value{
+				Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Key},
+			}
+
+			// Add the raw value as the "value" field for Kafka compatibility
+			recordValue.Fields["value"] = &schema_pb.Value{
+				Kind: &schema_pb.Value_BytesValue{BytesValue: dataMessage.Value},
+			}
+
+			return recordValue, "live_log", nil
 		}
 
 		// Ensure Fields map exists
@@ -834,8 +851,25 @@ func (hms *HybridMessageScanner) convertLogEntryToRecordValueWithDecoded(logEntr
 		return recordValue, "live_log", nil
 	}
 
-	// Fallback to original conversion logic for non-DataMessage formats
-	return hms.convertLogEntryToRecordValue(logEntry)
+	// For cases where dataMessage is nil, create RecordValue directly from logEntry.Data
+	recordValue := &schema_pb.RecordValue{
+		Fields: make(map[string]*schema_pb.Value),
+	}
+
+	// Add system columns
+	recordValue.Fields[SW_COLUMN_NAME_TIMESTAMP] = &schema_pb.Value{
+		Kind: &schema_pb.Value_Int64Value{Int64Value: logEntry.TsNs},
+	}
+	recordValue.Fields[SW_COLUMN_NAME_KEY] = &schema_pb.Value{
+		Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Key},
+	}
+
+	// Add the raw data as the "value" field for Kafka compatibility
+	recordValue.Fields["value"] = &schema_pb.Value{
+		Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Data},
+	}
+
+	return recordValue, "live_log", nil
 }
 
 // parseJSONMessage attempts to parse raw data as JSON and map to schema fields

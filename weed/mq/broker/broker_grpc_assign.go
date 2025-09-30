@@ -32,6 +32,10 @@ func (b *MessageQueueBroker) AssignTopicPartitions(c context.Context, request *m
 			if localPartition = b.localTopicManager.GetLocalPartition(t, partition); localPartition == nil {
 				glog.V(0).Infof("🔍 DEBUG: Creating new local partition %s %s", t, partition)
 				localPartition = topic.NewLocalPartition(partition, b.genLogFlushFunc(t, partition), logstore.GenMergedReadFunc(b, t, partition))
+
+				// Initialize offset from existing data to ensure continuity on restart
+				b.initializePartitionOffsetFromExistingData(localPartition, t, partition)
+
 				b.localTopicManager.AddLocalPartition(t, localPartition)
 				glog.V(0).Infof("🔍 DEBUG: Added local partition %s %s to localTopicManager", t, partition)
 			} else {

@@ -33,16 +33,16 @@ import (
 func (h *Handler) getAdvertisedAddress(gatewayAddr string) (string, int) {
 	host, port := "localhost", 9093
 
-	// Try to parse the gateway address if provided
+	// Try to parse the gateway address if provided to get the port
 	if gatewayAddr != "" {
-		if gatewayHost, gatewayPort, err := net.SplitHostPort(gatewayAddr); err == nil {
+		if _, gatewayPort, err := net.SplitHostPort(gatewayAddr); err == nil {
 			if gatewayPortInt, err := strconv.Atoi(gatewayPort); err == nil {
-				host, port = gatewayHost, gatewayPortInt
+				port = gatewayPortInt // Only use the port, not the host
 			}
 		}
 	}
 
-	// Override with environment variable if set
+	// Override with environment variable if set, otherwise always use localhost for external clients
 	if advertisedHost := os.Getenv("KAFKA_ADVERTISED_HOST"); advertisedHost != "" {
 		host = advertisedHost
 		Debug("Using KAFKA_ADVERTISED_HOST: %s:%d", host, port)

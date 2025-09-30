@@ -70,11 +70,36 @@ func NewLogBuffer(name string, flushInterval time.Duration, flushFn LogFlushFunc
 		notifyFn:       notifyFn,
 		flushChan:      make(chan *dataToFlush, 256),
 		isStopping:     new(atomic.Bool),
-		offset:         0, // Start with sequential offset 0
+		offset:         0, // Will be initialized from existing data if available
 	}
 	go lb.loopFlush()
 	go lb.loopInterval()
 	return lb
+}
+
+// InitializeOffsetFromExistingData initializes the offset counter from existing data on disk
+// This should be called after LogBuffer creation to ensure offset continuity on restart
+func (logBuffer *LogBuffer) InitializeOffsetFromExistingData(getHighestOffsetFn func() (int64, error)) error {
+	if getHighestOffsetFn == nil {
+		return nil // No initialization function provided
+	}
+
+	highestOffset, err := getHighestOffsetFn()
+	if err != nil {
+		glog.V(0).Infof("Failed to get highest offset for %s: %v, starting from 0", logBuffer.name, err)
+		return nil // Continue with offset 0 if we can't read existing data
+	}
+
+	if highestOffset >= 0 {
+		// Set the next offset to be one after the highest existing offset
+		nextOffset := highestOffset + 1
+		logBuffer.offset = nextOffset
+		glog.V(0).Infof("Initialized LogBuffer %s offset to %d (highest existing: %d)", logBuffer.name, nextOffset, highestOffset)
+	} else {
+		glog.V(0).Infof("No existing data found for %s, starting from offset 0", logBuffer.name)
+	}
+
+	return nil
 }
 
 func (logBuffer *LogBuffer) AddToBuffer(message *mq_pb.DataMessage) {
