@@ -106,7 +106,7 @@ require (
 	golang.org/x/oauth2 v0.30.0 // indirect
 	golang.org/x/sys v0.36.0
 	golang.org/x/text v0.29.0 // indirect
-	golang.org/x/tools v0.36.0
+	golang.org/x/tools v0.37.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	google.golang.org/api v0.247.0
 	google.golang.org/genproto v0.0.0-20250715232539-7130f93afb79 // indirect
@@ -162,6 +162,7 @@ require (
 	go.etcd.io/etcd/client/pkg/v3 v3.6.4
 	go.uber.org/atomic v1.11.0
 	golang.org/x/sync v0.17.0
+	golang.org/x/tools/godoc v0.1.0-deprecated
 	google.golang.org/grpc/security/advancedtls v1.0.0
 )
 
@@ -216,7 +217,7 @@ require (
 	go.uber.org/mock v0.5.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
-	golang.org/x/mod v0.27.0 // indirect
+	golang.org/x/mod v0.28.0 // indirect
 	gonum.org/v1/gonum v0.16.0 // indirect
 )
 
