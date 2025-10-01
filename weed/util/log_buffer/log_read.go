@@ -18,7 +18,7 @@ var (
 )
 
 type MessagePosition struct {
-	time.Time      // this is the timestamp of the message
+	time.Time       // this is the timestamp of the message
 	Offset    int64 // Kafka offset for offset-based positioning, or batch index for timestamp-based
 }
 
@@ -276,10 +276,12 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 				// println("stopTsNs", stopTsNs, "logEntry.TsNs", logEntry.TsNs)
 				return
 			}
-			lastReadPosition = NewMessagePosition(logEntry.TsNs, offset)
+			// CRITICAL FIX: Use logEntry.Offset + 1 to move PAST the current entry
+			// This prevents infinite loops where we keep requesting the same offset
+			lastReadPosition = NewMessagePosition(logEntry.TsNs, logEntry.Offset+1)
 
-			glog.V(0).Infof("🔍 DEBUG: Calling eachLogDataFn for entry at offset %d", offset)
-			if isDone, err = eachLogDataFn(logEntry, offset); err != nil {
+			glog.V(0).Infof("🔍 DEBUG: Calling eachLogDataFn for entry at offset %d, next position will be %d", logEntry.Offset, logEntry.Offset+1)
+			if isDone, err = eachLogDataFn(logEntry, logEntry.Offset); err != nil {
 				glog.Errorf("LoopProcessLogDataWithOffset: %s process log entry %d %v: %v", readerName, batchSize+1, logEntry, err)
 				return
 			}

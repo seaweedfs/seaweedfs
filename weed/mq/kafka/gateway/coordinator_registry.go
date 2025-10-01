@@ -18,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/protocol"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"google.golang.org/grpc"
 )
 
@@ -71,12 +72,39 @@ const (
 
 // NewCoordinatorRegistry creates a new coordinator registry
 func NewCoordinatorRegistry(gatewayAddress string, masters []pb.ServerAddress, grpcDialOption grpc.DialOption) *CoordinatorRegistry {
-	// Use first master as seed for lock client (temporarily, until we fully migrate)
-	seedFiler := masters[0]
-	lockClient := cluster.NewLockClient(grpcDialOption, seedFiler)
-
 	// Create filer discovery service that will periodically refresh filers from all masters
 	filerDiscoveryService := filer_client.NewFilerDiscoveryService(masters, grpcDialOption)
+
+	// CRITICAL FIX: Discover filers NOW to get a real filer address for the lock client
+	// The lock client needs to talk to a FILER, not a MASTER
+	// Manually discover filers from each master until we find one
+	var seedFiler pb.ServerAddress
+	for _, master := range masters {
+		// Use the same discovery logic as filer_discovery.go
+		grpcAddr := master.ToGrpcAddress()
+		conn, err := grpc.Dial(grpcAddr, grpcDialOption)
+		if err != nil {
+			continue
+		}
+
+		client := master_pb.NewSeaweedClient(conn)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		resp, err := client.ListClusterNodes(ctx, &master_pb.ListClusterNodesRequest{
+			ClientType: cluster.FilerType,
+		})
+		cancel()
+		conn.Close()
+
+		if err == nil && len(resp.ClusterNodes) > 0 {
+			// Found a filer - use its gRPC address
+			httpAddr := pb.ServerAddress(resp.ClusterNodes[0].Address)
+			seedFiler = pb.ServerAddress(httpAddr.ToGrpcAddress())
+			glog.V(1).Infof("🔧 Using filer %s as seed for distributed locking (discovered from master %s)", seedFiler, master)
+			break
+		}
+	}
+
+	lockClient := cluster.NewLockClient(grpcDialOption, seedFiler)
 
 	registry := &CoordinatorRegistry{
 		activeGateways:        make(map[string]*GatewayInfo),

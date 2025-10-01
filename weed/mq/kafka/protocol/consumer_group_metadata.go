@@ -17,9 +17,12 @@ type ConsumerProtocolMetadata struct {
 
 // ConnectionContext holds connection-specific information for requests
 type ConnectionContext struct {
-	RemoteAddr   net.Addr // Client's remote address
-	LocalAddr    net.Addr // Server's local address
-	ConnectionID string   // Connection identifier
+	RemoteAddr    net.Addr // Client's remote address
+	LocalAddr     net.Addr // Server's local address
+	ConnectionID  string   // Connection identifier
+	ClientID      string   // Kafka client ID from request headers
+	ConsumerGroup string   // Consumer group (set by JoinGroup)
+	MemberID      string   // Consumer group member ID (set by JoinGroup)
 }
 
 // ExtractClientHost extracts the client hostname/IP from connection context

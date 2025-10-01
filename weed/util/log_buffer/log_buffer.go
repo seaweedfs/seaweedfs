@@ -35,7 +35,8 @@ type LogBuffer struct {
 	name              string
 	prevBuffers       *SealedBuffers
 	buf               []byte
-	offset            int64 // Sequential offset counter (0, 1, 2, 3...)
+	offset            int64 // Last offset in current buffer (endOffset)
+	bufferStartOffset int64 // First offset in current buffer
 	idx               []int
 	pos               int
 	startTime         time.Time
@@ -94,8 +95,10 @@ func (logBuffer *LogBuffer) InitializeOffsetFromExistingData(getHighestOffsetFn 
 		// Set the next offset to be one after the highest existing offset
 		nextOffset := highestOffset + 1
 		logBuffer.offset = nextOffset
+		logBuffer.bufferStartOffset = nextOffset // Current buffer starts at this offset
 		glog.V(0).Infof("Initialized LogBuffer %s offset to %d (highest existing: %d)", logBuffer.name, nextOffset, highestOffset)
 	} else {
+		logBuffer.bufferStartOffset = 0 // Start from offset 0
 		glog.V(0).Infof("No existing data found for %s, starting from offset 0", logBuffer.name)
 	}
 
@@ -111,7 +114,7 @@ func (logBuffer *LogBuffer) AddLogEntryToBuffer(logEntry *filer_pb.LogEntry) {
 	// DEBUG: Log ALL writes to understand buffer naming
 	glog.Infof("📝 ADD TO BUFFER: buffer=%s offset=%d keyLen=%d valueLen=%d",
 		logBuffer.name, logEntry.Offset, len(logEntry.Key), len(logEntry.Data))
-	
+
 	logEntryData, _ := proto.Marshal(logEntry)
 
 	var toFlush *dataToFlush
@@ -317,12 +320,17 @@ func (logBuffer *LogBuffer) copyToFlush() *dataToFlush {
 			// glog.V(4).Infof("%s removed from memory [0,%d) with %d entries [%v, %v]", m.name, m.pos, len(m.idx), m.startTime, m.stopTime)
 			logBuffer.lastFlushDataTime = logBuffer.stopTime
 		}
-		logBuffer.buf = logBuffer.prevBuffers.SealBuffer(logBuffer.startTime, logBuffer.stopTime, logBuffer.buf, logBuffer.pos, logBuffer.offset)
+		// CRITICAL: logBuffer.offset is the "next offset to assign", so last offset in buffer is offset-1
+		lastOffsetInBuffer := logBuffer.offset - 1
+		logBuffer.buf = logBuffer.prevBuffers.SealBuffer(logBuffer.startTime, logBuffer.stopTime, logBuffer.buf, logBuffer.pos, logBuffer.bufferStartOffset, lastOffsetInBuffer)
+		glog.V(0).Infof("🔒 SEALED BUFFER: [%d-%d] with %d bytes", logBuffer.bufferStartOffset, lastOffsetInBuffer, logBuffer.pos)
 		logBuffer.startTime = time.Unix(0, 0)
 		logBuffer.stopTime = time.Unix(0, 0)
 		logBuffer.pos = 0
 		logBuffer.idx = logBuffer.idx[:0]
-		logBuffer.offset++
+		// DON'T increment offset - it's already pointing to the next offset!
+		// logBuffer.offset++ // REMOVED - this was causing offset gaps!
+		logBuffer.bufferStartOffset = logBuffer.offset // Next buffer starts at current offset (which is already the next one)
 		// Reset offset tracking
 		logBuffer.hasOffsets = false
 		logBuffer.minOffset = 0
@@ -337,7 +345,7 @@ func (logBuffer *LogBuffer) GetEarliestTime() time.Time {
 }
 func (logBuffer *LogBuffer) GetEarliestPosition() MessagePosition {
 	return MessagePosition{
-		Time:       logBuffer.startTime,
+		Time:   logBuffer.startTime,
 		Offset: logBuffer.offset,
 	}
 }
@@ -351,10 +359,66 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 	logBuffer.RLock()
 	defer logBuffer.RUnlock()
 
-	glog.V(0).Infof("🔍 DEBUG: ReadFromBuffer called for %s, lastReadPosition=%v", logBuffer.name, lastReadPosition)
+	isOffsetBased := lastReadPosition.IsOffsetBased()
+	glog.V(0).Infof("🔍 DEBUG: ReadFromBuffer called for %s, lastReadPosition=%v isOffsetBased=%v offset=%d",
+		logBuffer.name, lastReadPosition, isOffsetBased, lastReadPosition.Offset)
 	glog.V(0).Infof("🔍 DEBUG: Buffer state - startTime=%v, stopTime=%v, pos=%d, offset=%d", logBuffer.startTime, logBuffer.stopTime, logBuffer.pos, logBuffer.offset)
 	glog.V(0).Infof("🔍 DEBUG: PrevBuffers count=%d", len(logBuffer.prevBuffers.buffers))
 
+	// CRITICAL FIX: For offset-based subscriptions, use offset comparisons, not time comparisons!
+	if isOffsetBased {
+		requestedOffset := lastReadPosition.Offset
+		glog.V(0).Infof("🔥 OFFSET-BASED READ: Requested offset=%d, current buffer [%d-%d]",
+			requestedOffset, logBuffer.bufferStartOffset, logBuffer.offset)
+
+		// Check if we have any data in memory
+		if logBuffer.pos == 0 && len(logBuffer.prevBuffers.buffers) == 0 {
+			glog.V(0).Infof("🔍 DEBUG: No memory data available - returning nil")
+			return nil, -2, nil
+		}
+
+		// Check if the requested offset is in the current buffer
+		if requestedOffset >= logBuffer.bufferStartOffset && requestedOffset <= logBuffer.offset {
+			glog.V(0).Infof("✅ OFFSET-BASED: Returning current buffer [%d-%d] for offset %d",
+				logBuffer.bufferStartOffset, logBuffer.offset, requestedOffset)
+			return copiedBytes(logBuffer.buf[:logBuffer.pos]), logBuffer.offset, nil
+		}
+
+		// Check previous buffers for the requested offset
+		for i, buf := range logBuffer.prevBuffers.buffers {
+			if requestedOffset >= buf.startOffset && requestedOffset <= buf.offset {
+				glog.V(0).Infof("✅ OFFSET-BASED: Returning prevBuffer[%d] [%d-%d] for offset %d",
+					i, buf.startOffset, buf.offset, requestedOffset)
+				return copiedBytes(buf.buf[:buf.size]), buf.offset, nil
+			}
+		}
+
+		// Offset not found in any buffer
+		if requestedOffset < logBuffer.bufferStartOffset {
+			// Check if there are any prevBuffers
+			if len(logBuffer.prevBuffers.buffers) > 0 {
+				firstBuf := logBuffer.prevBuffers.buffers[0]
+				if requestedOffset < firstBuf.startOffset {
+					glog.V(0).Infof("⚠️  OFFSET-BASED: Requested offset %d < earliest buffer offset %d - data might be on disk",
+						requestedOffset, firstBuf.startOffset)
+					return nil, -2, ResumeFromDiskError
+				}
+			}
+		}
+
+		if requestedOffset > logBuffer.offset {
+			// Future data, not available yet
+			glog.V(0).Infof("🔍 DEBUG: Requested offset %d > latest offset %d - returning nil", requestedOffset, logBuffer.offset)
+			return nil, logBuffer.offset, nil
+		}
+
+		// This shouldn't happen, but log it
+		glog.Errorf("⚠️  OFFSET-BASED: Could not find buffer for offset %d (current: [%d-%d])",
+			requestedOffset, logBuffer.bufferStartOffset, logBuffer.offset)
+		return nil, logBuffer.offset, nil
+	}
+
+	// TIMESTAMP-BASED READ (original logic)
 	// Read from disk and memory
 	//	1. read from disk, last time is = td
 	//	2. in memory, the earliest time = tm

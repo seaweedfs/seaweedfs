@@ -136,9 +136,10 @@ func (batch *RecordBatch) ValidateCRC32(originalData []byte) error {
 
 	// CRC32 is calculated over the data starting after the CRC field
 	// Skip: BaseOffset(8) + BatchLength(4) + PartitionLeaderEpoch(4) + Magic(1) + CRC(4) = 21 bytes
+	// Kafka uses Castagnoli (CRC-32C) algorithm for record batch CRC
 	dataForCRC := originalData[21:]
 
-	calculatedCRC := crc32.ChecksumIEEE(dataForCRC)
+	calculatedCRC := crc32.Checksum(dataForCRC, crc32.MakeTable(crc32.Castagnoli))
 
 	if calculatedCRC != batch.CRC32 {
 		return fmt.Errorf("CRC32 mismatch: expected %x, got %x", batch.CRC32, calculatedCRC)
@@ -280,8 +281,9 @@ func CreateRecordBatch(baseOffset int64, records []byte, codec compression.Compr
 	batch = append(batch, compressedRecords...)
 
 	// Calculate and set CRC32
+	// Kafka uses Castagnoli (CRC-32C) algorithm for record batch CRC
 	dataForCRC := batch[21:] // Everything after CRC field
-	crc := crc32.ChecksumIEEE(dataForCRC)
+	crc := crc32.Checksum(dataForCRC, crc32.MakeTable(crc32.Castagnoli))
 	binary.BigEndian.PutUint32(batch[crcPos:crcPos+4], crc)
 
 	return batch, nil

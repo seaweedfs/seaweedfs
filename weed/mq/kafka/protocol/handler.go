@@ -18,7 +18,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/consumer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/consumer_offset"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/integration"
-	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/schema"
 	mqschema "github.com/seaweedfs/seaweedfs/weed/mq/schema"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -85,7 +84,7 @@ type SeaweedMQHandlerInterface interface {
 	ProduceRecord(topicName string, partitionID int32, key, value []byte) (int64, error)
 	ProduceRecordValue(topicName string, partitionID int32, key []byte, recordValueBytes []byte) (int64, error)
 	// GetStoredRecords retrieves records from SMQ storage (optional - for advanced implementations)
-	GetStoredRecords(topic string, partition int32, fromOffset int64, maxRecords int) ([]offset.SMQRecord, error)
+	GetStoredRecords(topic string, partition int32, fromOffset int64, maxRecords int) ([]integration.SMQRecord, error)
 	// GetEarliestOffset returns the earliest available offset for a topic partition
 	GetEarliestOffset(topic string, partition int32) (int64, error)
 	// GetLatestOffset returns the latest available offset for a topic partition
@@ -150,8 +149,7 @@ type Handler struct {
 	// SeaweedMQ integration
 	seaweedMQHandler SeaweedMQHandlerInterface
 
-	// SMQ offset storage for consumer group offsets
-	smqOffsetStorage offset.LedgerStorage
+	// SMQ offset storage removed - using ConsumerOffsetStorage instead
 
 	// Consumer offset storage for Kafka protocol OffsetCommit/OffsetFetch
 	consumerOffsetStorage ConsumerOffsetStorage
@@ -225,24 +223,25 @@ func NewSeaweedMQBrokerHandlerWithDefaults(masters string, filerGroup string, cl
 		return nil, fmt.Errorf("no shared filer client accessor available from SMQ handler")
 	}
 
-	// Create SMQ offset storage using the shared filer client accessor
-	smqOffsetStorage := offset.NewSMQOffsetStorage(sharedFilerAccessor)
-
 	// Create consumer offset storage (for OffsetCommit/OffsetFetch protocol)
 	// Use filer-based storage for persistence across restarts
 	consumerOffsetStorage := newOffsetStorageAdapter(
 		consumer_offset.NewFilerStorage(sharedFilerAccessor),
 	)
 
-	return &Handler{
+	handler := &Handler{
 		seaweedMQHandler:      smqHandler,
-		smqOffsetStorage:      smqOffsetStorage,
 		consumerOffsetStorage: consumerOffsetStorage,
 		groupCoordinator:      consumer.NewGroupCoordinator(),
 		smqBrokerAddresses:    nil, // Will be set by SetSMQBrokerAddresses() when server starts
 		registeredSchemas:     make(map[string]bool),
 		defaultPartitions:     defaultPartitions,
-	}, nil
+	}
+
+	// Set protocol handler reference in SMQ handler for connection context access
+	smqHandler.SetProtocolHandler(handler)
+
+	return handler, nil
 }
 
 // AddTopicForTesting creates a topic for testing purposes
@@ -340,6 +339,19 @@ func (h *Handler) SetCoordinatorRegistry(registry CoordinatorRegistryInterface) 
 // GetCoordinatorRegistry returns the coordinator registry
 func (h *Handler) GetCoordinatorRegistry() CoordinatorRegistryInterface {
 	return h.coordinatorRegistry
+}
+
+// GetConnectionContext returns the current connection context as integration.ConnectionContext
+// This implements the integration.ProtocolHandler interface
+func (h *Handler) GetConnectionContext() *integration.ConnectionContext {
+	if h.connContext == nil {
+		return nil
+	}
+	return &integration.ConnectionContext{
+		ClientID:      h.connContext.ClientID,
+		ConsumerGroup: h.connContext.ConsumerGroup,
+		MemberID:      h.connContext.MemberID,
+	}
 }
 
 // HandleConn processes a single client connection
@@ -573,7 +585,10 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 					}
 					requestBody = messageBuf[bodyOffset:]
 				} else if header.ClientID != nil {
-					// Log client ID if available and parsing was successful
+					// Store client ID in connection context for use in fetch requests
+					if h.connContext != nil {
+						h.connContext.ClientID = *header.ClientID
+					}
 					Debug("Client ID: %s", *header.ClientID)
 				}
 			}
@@ -1621,21 +1636,21 @@ func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, req
 				string(topicName), partitionID, timestamp)
 			glog.Infof("🚀 NEW OFFSET CODE IS RUNNING! 🚀")
 
-		switch timestamp {
-		case -2: // earliest offset
-			// Get the actual earliest offset from SMQ
-			earliestOffset, err := h.seaweedMQHandler.GetEarliestOffset(string(topicName), int32(partitionID))
-			if err != nil {
-				Debug("Failed to get earliest offset for topic %s partition %d: %v", string(topicName), partitionID, err)
-				responseOffset = 0 // fallback to 0
-			} else {
-				responseOffset = earliestOffset
-			}
-			responseTimestamp = 0 // No specific timestamp for earliest
-			if strings.HasPrefix(string(topicName), "_schemas") {
-				glog.Infof("📍 SCHEMA REGISTRY LISTOFFSETS EARLIEST: topic=%s partition=%d returning offset=%d", string(topicName), partitionID, responseOffset)
-			}
-			Debug("ListOffsets EARLIEST - returning offset: %d, timestamp: %d", responseOffset, responseTimestamp)
+			switch timestamp {
+			case -2: // earliest offset
+				// Get the actual earliest offset from SMQ
+				earliestOffset, err := h.seaweedMQHandler.GetEarliestOffset(string(topicName), int32(partitionID))
+				if err != nil {
+					Debug("Failed to get earliest offset for topic %s partition %d: %v", string(topicName), partitionID, err)
+					responseOffset = 0 // fallback to 0
+				} else {
+					responseOffset = earliestOffset
+				}
+				responseTimestamp = 0 // No specific timestamp for earliest
+				if strings.HasPrefix(string(topicName), "_schemas") {
+					glog.Infof("📍 SCHEMA REGISTRY LISTOFFSETS EARLIEST: topic=%s partition=%d returning offset=%d", string(topicName), partitionID, responseOffset)
+				}
+				Debug("ListOffsets EARLIEST - returning offset: %d, timestamp: %d", responseOffset, responseTimestamp)
 			case -1: // latest offset
 				// Get the actual latest offset from SMQ
 				Debug("XYZABC123 UNIQUE DEBUG MESSAGE - MY CODE IS RUNNING!")
@@ -2883,44 +2898,25 @@ func (h *Handler) IsBrokerIntegrationEnabled() bool {
 }
 
 // commitOffsetToSMQ commits offset using SMQ storage
-func (h *Handler) commitOffsetToSMQ(key offset.ConsumerOffsetKey, offsetValue int64, metadata string) error {
+func (h *Handler) commitOffsetToSMQ(key ConsumerOffsetKey, offsetValue int64, metadata string) error {
 	// Use new consumer offset storage if available, fall back to SMQ storage
 	if h.consumerOffsetStorage != nil {
 		return h.consumerOffsetStorage.CommitOffset(key.ConsumerGroup, key.Topic, key.Partition, offsetValue, metadata)
 	}
 
-	if h.smqOffsetStorage == nil {
-		return fmt.Errorf("offset storage not initialized")
-	}
-
-	// Fallback: Save to SMQ storage - use current timestamp and size 0 as placeholders
-	// since SMQ storage primarily tracks the committed offset
-	return h.smqOffsetStorage.SaveConsumerOffset(key, offsetValue, time.Now().UnixNano(), 0)
+	// No SMQ offset storage - only use consumer offset storage
+	return fmt.Errorf("offset storage not initialized")
 }
 
 // fetchOffsetFromSMQ fetches offset using SMQ storage
-func (h *Handler) fetchOffsetFromSMQ(key offset.ConsumerOffsetKey) (int64, string, error) {
+func (h *Handler) fetchOffsetFromSMQ(key ConsumerOffsetKey) (int64, string, error) {
 	// Use new consumer offset storage if available, fall back to SMQ storage
 	if h.consumerOffsetStorage != nil {
 		return h.consumerOffsetStorage.FetchOffset(key.ConsumerGroup, key.Topic, key.Partition)
 	}
 
-	if h.smqOffsetStorage == nil {
-		return -1, "", fmt.Errorf("offset storage not initialized")
-	}
-
-	entries, err := h.smqOffsetStorage.LoadConsumerOffsets(key)
-	if err != nil {
-		return -1, "", err
-	}
-
-	if len(entries) == 0 {
-		return -1, "", nil // No committed offset
-	}
-
-	offset := entries[0].KafkaOffset
-	// Return the committed offset (metadata is not stored in SMQ format)
-	return offset, "", nil
+	// SMQ offset storage removed - no fallback
+	return -1, "", fmt.Errorf("offset storage not initialized")
 }
 
 // DescribeConfigsResource represents a resource in a DescribeConfigs request
@@ -3401,9 +3397,24 @@ func (h *Handler) registerSchemasViaBrokerAPI(topicName string, valueRecordType 
 		return nil
 	}
 
-	// Gate by coordinator registry leadership
-	if reg := h.GetCoordinatorRegistry(); reg != nil && !reg.IsLeader() {
-		return nil
+	// Check coordinator registry for multi-gateway deployments
+	// In single-gateway mode, coordinator registry may not be initialized - that's OK
+	if reg := h.GetCoordinatorRegistry(); reg != nil {
+		// Multi-gateway mode - check if we're the leader
+		isLeader := reg.IsLeader()
+
+		if !isLeader {
+			// Not leader - in production multi-gateway setups, skip to avoid conflicts
+			// In single-gateway setups where leader election fails, log warning but proceed
+			// This ensures schema registration works even if distributed locking has issues
+			Debug("Not leader for schema registration of %s - proceeding anyway (may be single-gateway with lock issues)", topicName)
+			// Note: Schema registration is idempotent, so duplicate registrations are safe
+		} else {
+			Debug("Registering schema for %s as elected leader", topicName)
+		}
+	} else {
+		// No coordinator registry - definitely single-gateway mode
+		Debug("Registering schema for %s (single-gateway mode, no coordinator)", topicName)
 	}
 
 	// Require SeaweedMQ integration to access broker

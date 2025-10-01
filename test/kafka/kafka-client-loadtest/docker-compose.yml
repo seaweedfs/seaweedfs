@@ -208,14 +208,16 @@ services:
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=kafka-gateway:9093
       - SCHEMA_REGISTRY_URL=http://schema-registry:8081
-      - TEST_DURATION=300s
-      - PRODUCER_COUNT=10
-      - CONSUMER_COUNT=5
-      - MESSAGE_RATE=1000
-      - MESSAGE_SIZE=1024
-      - TOPIC_COUNT=5
-      - PARTITIONS_PER_TOPIC=3
-      - TEST_MODE=comprehensive
+      - TEST_DURATION=${TEST_DURATION:-300s}
+      - PRODUCER_COUNT=${PRODUCER_COUNT:-10}
+      - CONSUMER_COUNT=${CONSUMER_COUNT:-5}
+      - MESSAGE_RATE=${MESSAGE_RATE:-1000}
+      - MESSAGE_SIZE=${MESSAGE_SIZE:-1024}
+      - TOPIC_COUNT=${TOPIC_COUNT:-5}
+      - PARTITIONS_PER_TOPIC=${PARTITIONS_PER_TOPIC:-3}
+      - TEST_MODE=${TEST_MODE:-comprehensive}
+      - SCHEMAS_ENABLED=true
+      - VALUE_TYPE=${VALUE_TYPE:-avro}
     profiles:
       - loadtest
     volumes:

@@ -136,8 +136,23 @@ func (c *Consumer) initConfluentConsumer() error {
 
 // initAvroCodec initializes the Avro codec for schema-based messages
 func (c *Consumer) initAvroCodec() error {
-	// Use the user event schema for testing
-	codec, err := goavro.NewCodec(c.config.Schemas.UserEvent.Schema)
+	// Use the LoadTestMessage schema (matches what producer uses)
+	loadTestSchema := `{
+		"type": "record",
+		"name": "LoadTestMessage",
+		"namespace": "com.seaweedfs.loadtest",
+		"fields": [
+			{"name": "id", "type": "string"},
+			{"name": "timestamp", "type": "long"},
+			{"name": "producer_id", "type": "int"},
+			{"name": "counter", "type": "long"},
+			{"name": "user_id", "type": "string"},
+			{"name": "event_type", "type": "string"},
+			{"name": "properties", "type": {"type": "map", "values": "string"}}
+		]
+	}`
+
+	codec, err := goavro.NewCodec(loadTestSchema)
 	if err != nil {
 		return fmt.Errorf("failed to create Avro codec: %w", err)
 	}

@@ -3,6 +3,7 @@ package broker
 import (
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
@@ -84,14 +85,45 @@ func (b *MessageQueueBroker) GetPartitionOffsetInfoInternal(t topic.Topic, p top
 		return nil, err
 	}
 
-	// Convert to broker-specific format if needed
+	// CRITICAL FIX: Also check LogBuffer for in-memory messages
+	// The offset manager only tracks assigned offsets from persistent storage
+	// But the LogBuffer contains recently written messages that haven't been flushed yet
+	localPartition := b.localTopicManager.GetLocalPartition(t, p)
+	logBufferHWM := int64(-1)
+	if localPartition != nil && localPartition.LogBuffer != nil {
+		logBufferHWM = localPartition.LogBuffer.GetOffset()
+		glog.V(4).Infof("🔍 DEBUG: topic=%v partition=%v offsetManagerHWM=%d logBufferHWM=%d", t, p, info.HighWaterMark, logBufferHWM)
+	} else {
+		glog.V(4).Infof("🔍 DEBUG: topic=%v partition=%v offsetManagerHWM=%d logBuffer=nil", t, p, info.HighWaterMark)
+	}
+
+	// Use the MAX of offset manager HWM and LogBuffer HWM
+	// This ensures we report the correct HWM even if data hasn't been flushed to disk yet
+	// IMPORTANT: Use >= not > because when they're equal, we still want the correct value
+	highWaterMark := info.HighWaterMark
+	if logBufferHWM >= 0 && logBufferHWM > highWaterMark {
+		glog.V(2).Infof("🔥 CRITICAL: Using LogBuffer HWM %d instead of offset manager HWM %d", logBufferHWM, highWaterMark)
+		highWaterMark = logBufferHWM
+	} else if logBufferHWM >= 0 && logBufferHWM == highWaterMark && highWaterMark > 0 {
+		glog.V(4).Infof("✅ OK: LogBuffer HWM %d matches offset manager HWM %d", logBufferHWM, highWaterMark)
+	} else if logBufferHWM >= 0 {
+		glog.V(3).Infof("⚠️  WARNING: NOT using LogBuffer HWM %d (offsetManager=%d)", logBufferHWM, info.HighWaterMark)
+	}
+
+	// Latest offset is HWM - 1 (last assigned offset)
+	latestOffset := highWaterMark - 1
+	if highWaterMark == 0 {
+		latestOffset = -1 // No records
+	}
+
+	// Convert to broker-specific format
 	return &PartitionOffsetInfo{
 		Topic:               t,
 		Partition:           p,
 		EarliestOffset:      info.EarliestOffset,
-		LatestOffset:        info.LatestOffset,
-		HighWaterMark:       info.HighWaterMark,
-		RecordCount:         info.RecordCount,
+		LatestOffset:        latestOffset,
+		HighWaterMark:       highWaterMark,
+		RecordCount:         highWaterMark, // HWM equals record count (offsets 0 to HWM-1)
 		ActiveSubscriptions: info.ActiveSubscriptions,
 	}, nil
 }

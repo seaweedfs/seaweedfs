@@ -6,8 +6,15 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/consumer"
-	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
 )
+
+// ConsumerOffsetKey uniquely identifies a consumer offset
+type ConsumerOffsetKey struct {
+	ConsumerGroup         string
+	Topic                 string
+	Partition             int32
+	ConsumerGroupInstance string // Optional - for static group membership
+}
 
 // OffsetCommit API (key 8) - Commit consumer group offsets
 // This API allows consumers to persist their current position in topic partitions
@@ -138,7 +145,7 @@ func (h *Handler) handleOffsetCommit(correlationID uint32, requestBody []byte) (
 		for _, p := range t.Partitions {
 
 			// Create consumer offset key for SMQ storage
-			key := offset.ConsumerOffsetKey{
+			key := ConsumerOffsetKey{
 				Topic:                 t.Name,
 				Partition:             p.Index,
 				ConsumerGroup:         req.GroupID,
@@ -218,7 +225,7 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, req
 		// Fetch offsets for requested partitions
 		for _, partition := range partitionsToFetch {
 			// Create consumer offset key for SMQ storage
-			key := offset.ConsumerOffsetKey{
+			key := ConsumerOffsetKey{
 				Topic:                 topic.Name,
 				Partition:             partition,
 				ConsumerGroup:         request.GroupID,

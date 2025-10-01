@@ -11,7 +11,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/compression"
-	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
+	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/integration"
 )
 
 // MultiBatchFetcher handles fetching multiple record batches with size limits
@@ -161,7 +161,7 @@ func (f *MultiBatchFetcher) FetchMultipleBatches(topicName string, partitionID i
 }
 
 // constructSingleRecordBatch creates a single record batch from SMQ records
-func (f *MultiBatchFetcher) constructSingleRecordBatch(topicName string, baseOffset int64, smqRecords []offset.SMQRecord) []byte {
+func (f *MultiBatchFetcher) constructSingleRecordBatch(topicName string, baseOffset int64, smqRecords []integration.SMQRecord) []byte {
 	if len(smqRecords) == 0 {
 		return f.constructEmptyRecordBatch(baseOffset)
 	}
@@ -289,11 +289,42 @@ func (f *MultiBatchFetcher) constructSingleRecordBatch(topicName string, baseOff
 	batchLength := uint32(len(batch) - batchLengthPos - 4)
 	binary.BigEndian.PutUint32(batch[batchLengthPos:batchLengthPos+4], batchLength)
 
+	// Log reconstructed batch size and detailed field breakdown
+	fmt.Printf("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+	fmt.Printf("📏 RECONSTRUCTED BATCH: topic=%s baseOffset=%d size=%d bytes, recordCount=%d\n", 
+		topicName, baseOffset, len(batch), len(smqRecords))
+	
+	if len(batch) >= 61 {
+		fmt.Printf("  Header Structure:\n")
+		fmt.Printf("    Base Offset (0-7):     %x\n", batch[0:8])
+		fmt.Printf("    Batch Length (8-11):   %x\n", batch[8:12])
+		fmt.Printf("    Leader Epoch (12-15):  %x\n", batch[12:16])
+		fmt.Printf("    Magic (16):            %x\n", batch[16:17])
+		fmt.Printf("    CRC (17-20):           %x (WILL BE CALCULATED)\n", batch[17:21])
+		fmt.Printf("    Attributes (21-22):    %x\n", batch[21:23])
+		fmt.Printf("    Last Offset Delta (23-26): %x\n", batch[23:27])
+		fmt.Printf("    Base Timestamp (27-34): %x\n", batch[27:35])
+		fmt.Printf("    Max Timestamp (35-42):  %x\n", batch[35:43])
+		fmt.Printf("    Producer ID (43-50):    %x\n", batch[43:51])
+		fmt.Printf("    Producer Epoch (51-52): %x\n", batch[51:53])
+		fmt.Printf("    Base Sequence (53-56):  %x\n", batch[53:57])
+		fmt.Printf("    Record Count (57-60):   %x\n", batch[57:61])
+		if len(batch) > 61 {
+			fmt.Printf("    Records Section (61+):  %x... (%d bytes)\n", 
+				batch[61:min(81, len(batch))], len(batch)-61)
+		}
+	}
+
 	// Calculate CRC32 for the batch
-	crcStartPos := crcPos + 4 // start after the CRC field
-	crcData := batch[crcStartPos:]
+	// Kafka CRC calculation covers: partition leader epoch + magic + attributes + ... (everything after batch length)
+	// Skip: BaseOffset(8) + BatchLength(4) = 12 bytes
+	crcData := batch[12:crcPos]                    // Partition leader epoch through to CRC field
+	crcData = append(crcData, batch[crcPos+4:]...) // Skip CRC field itself, include rest
 	crc := crc32.Checksum(crcData, crc32.MakeTable(crc32.Castagnoli))
 	binary.BigEndian.PutUint32(batch[crcPos:crcPos+4], crc)
+	
+	fmt.Printf("    Final CRC (17-20):     %x (calculated over %d bytes)\n", batch[17:21], len(crcData))
+	fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
 
 	return batch
 }
@@ -354,8 +385,10 @@ func (f *MultiBatchFetcher) constructEmptyRecordBatch(baseOffset int64) []byte {
 	binary.BigEndian.PutUint32(batch[lengthPos:lengthPos+4], uint32(batchLength))
 
 	// Calculate CRC32 for the batch
-	crcStartPos := crcPos + 4
-	crcData := batch[crcStartPos:]
+	// Kafka CRC calculation covers: partition leader epoch + magic + attributes + ... (everything after batch length)
+	// Skip: BaseOffset(8) + BatchLength(4) = 12 bytes
+	crcData := batch[12:crcPos]                    // Partition leader epoch through to CRC field
+	crcData = append(crcData, batch[crcPos+4:]...) // Skip CRC field itself, include rest
 	crc := crc32.Checksum(crcData, crc32.MakeTable(crc32.Castagnoli))
 	binary.BigEndian.PutUint32(batch[crcPos:crcPos+4], crc)
 
@@ -371,7 +404,7 @@ type CompressedBatchResult struct {
 }
 
 // CreateCompressedBatch creates a compressed record batch (basic support)
-func (f *MultiBatchFetcher) CreateCompressedBatch(baseOffset int64, smqRecords []offset.SMQRecord, codec compression.CompressionCodec) (*CompressedBatchResult, error) {
+func (f *MultiBatchFetcher) CreateCompressedBatch(baseOffset int64, smqRecords []integration.SMQRecord, codec compression.CompressionCodec) (*CompressedBatchResult, error) {
 	if codec == compression.None {
 		// No compression requested
 		batch := f.constructSingleRecordBatch("", baseOffset, smqRecords)
@@ -473,9 +506,11 @@ func (f *MultiBatchFetcher) constructCompressedRecordBatch(baseOffset int64, com
 	batchLength := uint32(len(batch) - batchLengthPos - 4)
 	binary.BigEndian.PutUint32(batch[batchLengthPos:batchLengthPos+4], batchLength)
 
-	// Calculate CRC32 for the batch (excluding the CRC field itself)
-	crcStartPos := crcPos + 4
-	crcData := batch[crcStartPos:]
+	// Calculate CRC32 for the batch
+	// Kafka CRC calculation covers: partition leader epoch + magic + attributes + ... (everything after batch length)
+	// Skip: BaseOffset(8) + BatchLength(4) = 12 bytes
+	crcData := batch[12:crcPos]                    // Partition leader epoch through to CRC field
+	crcData = append(crcData, batch[crcPos+4:]...) // Skip CRC field itself, include rest
 	crc := crc32.Checksum(crcData, crc32.MakeTable(crc32.Castagnoli))
 	binary.BigEndian.PutUint32(batch[crcPos:crcPos+4], crc)
 
@@ -483,7 +518,7 @@ func (f *MultiBatchFetcher) constructCompressedRecordBatch(baseOffset int64, com
 }
 
 // estimateBatchSize estimates the size of a record batch before constructing it
-func (f *MultiBatchFetcher) estimateBatchSize(smqRecords []offset.SMQRecord) int32 {
+func (f *MultiBatchFetcher) estimateBatchSize(smqRecords []integration.SMQRecord) int32 {
 	if len(smqRecords) == 0 {
 		return 61 // empty batch header size
 	}

@@ -299,10 +299,19 @@ func (p *Producer) produceSaramaMessage(topic string, message []byte, startTime 
 	if p.config.Schemas.Enabled && p.config.Producers.ValueType == "avro" {
 		if schemaID, exists := p.schemaIDs[topic]; exists {
 			messageValue = p.createConfluentWireFormat(schemaID, message)
+			// Log wire format creation
+			firstBytes := "N/A"
+			if len(messageValue) >= 10 {
+				firstBytes = fmt.Sprintf("%x", messageValue[:10])
+			}
+			log.Printf("🔥 WIRE FORMAT CREATED: topic=%s, schemaID=%d, msgLen=%d->%d, first10bytes=%s", 
+				topic, schemaID, len(message), len(messageValue), firstBytes)
 		} else {
 			return fmt.Errorf("schema ID not found for topic %s", topic)
 		}
 	} else {
+		log.Printf("⚠️  NO WIRE FORMAT: SchemasEnabled=%v, ValueType=%s, using raw message len=%d", 
+			p.config.Schemas.Enabled, p.config.Producers.ValueType, len(message))
 		messageValue = message
 	}
 
@@ -373,16 +382,17 @@ func (p *Producer) generateJSONMessage() ([]byte, error) {
 		},
 	}
 
-	// Pad message to desired size
+	// Marshal to JSON (no padding - let natural message size be used)
 	messageBytes, err := json.Marshal(msg)
 	if err != nil {
 		return nil, err
 	}
 
-	return p.padMessage(messageBytes), nil
+	return messageBytes, nil
 }
 
 // generateAvroMessage generates an Avro-encoded message with Confluent Wire Format
+// NOTE: Avro messages are NOT padded - they have their own binary format
 func (p *Producer) generateAvroMessage() ([]byte, error) {
 	if p.avroCodec == nil {
 		return nil, fmt.Errorf("Avro codec not initialized")
@@ -415,12 +425,11 @@ func (p *Producer) generateAvroMessage() ([]byte, error) {
 	return avroBytes, nil
 }
 
-// generateBinaryMessage generates a binary test message
+// generateBinaryMessage generates a binary test message (no padding)
 func (p *Producer) generateBinaryMessage() ([]byte, error) {
 	// Create a simple binary message format:
-	// [producer_id:4][counter:8][timestamp:8][random_data:...]
-
-	message := make([]byte, p.config.Producers.MessageSize)
+	// [producer_id:4][counter:8][timestamp:8]
+	message := make([]byte, 20)
 
 	// Producer ID (4 bytes)
 	message[0] = byte(p.id >> 24)
@@ -439,11 +448,6 @@ func (p *Producer) generateBinaryMessage() ([]byte, error) {
 		message[12+i] = byte(timestamp >> (56 - i*8))
 	}
 
-	// Fill the rest with random data
-	if len(message) > 20 {
-		p.random.Read(message[20:])
-	}
-
 	return message, nil
 }
 
@@ -457,23 +461,6 @@ func (p *Producer) generateMessageKey() string {
 	default: // random
 		return fmt.Sprintf("key-%d", p.random.Intn(10000))
 	}
-}
-
-// padMessage pads the message to the desired size
-func (p *Producer) padMessage(message []byte) []byte {
-	if len(message) >= p.config.Producers.MessageSize {
-		return message[:p.config.Producers.MessageSize]
-	}
-
-	padded := make([]byte, p.config.Producers.MessageSize)
-	copy(padded, message)
-
-	// Fill the rest with padding
-	padding := make([]byte, p.config.Producers.MessageSize-len(message))
-	p.random.Read(padding)
-	copy(padded[len(message):], padding)
-
-	return padded
 }
 
 // createTopics creates the test topics if they don't exist

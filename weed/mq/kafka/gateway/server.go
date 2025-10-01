@@ -11,6 +11,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/protocol"
+	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/schema"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -93,6 +94,22 @@ func NewServer(opts Options) *Server {
 	}
 
 	glog.V(1).Infof("Created Kafka gateway with SeaweedMQ brokers via masters %s", opts.Masters)
+
+	// Initialize schema management if Schema Registry URL is provided
+	// Note: This is done lazily on first use if it fails here (e.g., if Schema Registry isn't ready yet)
+	if opts.SchemaRegistryURL != "" {
+		schemaConfig := schema.ManagerConfig{
+			RegistryURL: opts.SchemaRegistryURL,
+		}
+		if err := handler.EnableSchemaManagement(schemaConfig); err != nil {
+			glog.Warningf("Schema management initialization deferred (Schema Registry may not be ready yet): %v", err)
+			glog.V(1).Infof("Will retry schema management initialization on first schema-related operation")
+			// Store schema registry URL for lazy initialization
+			handler.SetSchemaRegistryURL(opts.SchemaRegistryURL)
+		} else {
+			glog.V(1).Infof("✅ Schema management enabled with Schema Registry at %s", opts.SchemaRegistryURL)
+		}
+	}
 
 	server := &Server{
 		opts:    opts,

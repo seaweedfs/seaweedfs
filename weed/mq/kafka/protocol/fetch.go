@@ -10,7 +10,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/compression"
-	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/offset"
+	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/integration"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/schema"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"google.golang.org/protobuf/proto"
@@ -92,25 +92,43 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 		response = append(response, 0, 0, 0, 0) // session_id (4 bytes, 0 = no session)
 	}
 
+	// Check if this version uses flexible format (v12+)
+	isFlexible := IsFlexibleVersion(1, apiVersion) // API key 1 = Fetch
+
 	// Topics count
 	topicsCount := len(fetchRequest.Topics)
-	topicsCountBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(topicsCountBytes, uint32(topicsCount))
-	response = append(response, topicsCountBytes...)
+	if isFlexible {
+		// Flexible versions use compact array format (count + 1)
+		response = append(response, EncodeUvarint(uint32(topicsCount+1))...)
+	} else {
+		topicsCountBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(topicsCountBytes, uint32(topicsCount))
+		response = append(response, topicsCountBytes...)
+	}
 
 	// Process each requested topic
 	for _, topic := range fetchRequest.Topics {
 		topicNameBytes := []byte(topic.Name)
 
 		// Topic name length and name
-		response = append(response, byte(len(topicNameBytes)>>8), byte(len(topicNameBytes)))
+		if isFlexible {
+			// Flexible versions use compact string format (length + 1)
+			response = append(response, EncodeUvarint(uint32(len(topicNameBytes)+1))...)
+		} else {
+			response = append(response, byte(len(topicNameBytes)>>8), byte(len(topicNameBytes)))
+		}
 		response = append(response, topicNameBytes...)
 
 		// Partitions count for this topic
 		partitionsCount := len(topic.Partitions)
-		partitionsCountBytes := make([]byte, 4)
-		binary.BigEndian.PutUint32(partitionsCountBytes, uint32(partitionsCount))
-		response = append(response, partitionsCountBytes...)
+		if isFlexible {
+			// Flexible versions use compact array format (count + 1)
+			response = append(response, EncodeUvarint(uint32(partitionsCount+1))...)
+		} else {
+			partitionsCountBytes := make([]byte, 4)
+			binary.BigEndian.PutUint32(partitionsCountBytes, uint32(partitionsCount))
+			response = append(response, partitionsCountBytes...)
+		}
 
 		// Check if this topic uses schema management (topic-level check with filer metadata)
 		var isSchematizedTopic bool
@@ -281,18 +299,33 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 			Debug("Fetch v%d - Partition processing completed: topic=%s, partition=%d, duration=%v, recordBatchSize=%d",
 				apiVersion, topic.Name, partition.PartitionID, fetchDuration, len(recordBatch))
 
-			// Records size (4 bytes)
-			recordsSizeBytes := make([]byte, 4)
-			binary.BigEndian.PutUint32(recordsSizeBytes, uint32(len(recordBatch)))
-			response = append(response, recordsSizeBytes...)
+		// Records size (4 bytes)
+		recordsSizeBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(recordsSizeBytes, uint32(len(recordBatch)))
+		response = append(response, recordsSizeBytes...)
 
-			// Records data
-			response = append(response, recordBatch...)
+		// Records data
+		response = append(response, recordBatch...)
+
+		// Tagged fields for flexible versions (v12+) after each partition
+		if isFlexible {
+			response = append(response, 0) // Empty tagged fields
 		}
 	}
 
-	Debug("Fetch v%d response constructed, size: %d bytes", apiVersion, len(response))
-	return response, nil
+	// Tagged fields for flexible versions (v12+) after each topic
+	if isFlexible {
+		response = append(response, 0) // Empty tagged fields
+	}
+}
+
+// Tagged fields for flexible versions (v12+) at the end of response
+if isFlexible {
+	response = append(response, 0) // Empty tagged fields
+}
+
+Debug("Fetch v%d response constructed, size: %d bytes (flexible: %v)", apiVersion, len(response), isFlexible)
+return response, nil
 }
 
 // FetchRequest represents a parsed Kafka Fetch request
@@ -454,7 +487,7 @@ func (h *Handler) parseFetchRequest(apiVersion uint16, requestBody []byte) (*Fet
 }
 
 // constructRecordBatchFromSMQ creates a Kafka record batch from SeaweedMQ records
-func (h *Handler) constructRecordBatchFromSMQ(topicName string, fetchOffset int64, smqRecords []offset.SMQRecord) []byte {
+func (h *Handler) constructRecordBatchFromSMQ(topicName string, fetchOffset int64, smqRecords []integration.SMQRecord) []byte {
 	if len(smqRecords) == 0 {
 		return []byte{}
 	}
@@ -575,8 +608,10 @@ func (h *Handler) constructRecordBatchFromSMQ(topicName string, fetchOffset int6
 	binary.BigEndian.PutUint32(batch[batchLengthPos:batchLengthPos+4], batchLength)
 
 	// Calculate CRC32 for the batch
-	crcStartPos := crcPos + 4 // start after the CRC field
-	crcData := batch[crcStartPos:]
+	// Kafka CRC calculation covers: partition leader epoch + magic + attributes + ... (everything after batch length)
+	// Skip: BaseOffset(8) + BatchLength(4) = 12 bytes
+	crcData := batch[12:crcPos] // Partition leader epoch through to CRC field
+	crcData = append(crcData, batch[crcPos+4:]...) // Skip CRC field itself, include rest
 	crc := crc32.Checksum(crcData, crc32.MakeTable(crc32.Castagnoli))
 	binary.BigEndian.PutUint32(batch[crcPos:crcPos+4], crc)
 
@@ -705,7 +740,7 @@ func (h *Handler) fetchSchematizedRecords(topicName string, partitionID int32, o
 }
 
 // reconstructSchematizedMessageFromSMQ reconstructs a schematized message from an SMQRecord
-func (h *Handler) reconstructSchematizedMessageFromSMQ(smqRecord offset.SMQRecord) ([]byte, error) {
+func (h *Handler) reconstructSchematizedMessageFromSMQ(smqRecord integration.SMQRecord) ([]byte, error) {
 	// Get the stored value (should be a serialized RecordValue)
 	valueBytes := smqRecord.GetValue()
 	if len(valueBytes) == 0 {
@@ -953,8 +988,9 @@ func (h *Handler) createRecordBatchWithCompressionAndCRC(baseOffset int64, recor
 	binary.BigEndian.PutUint32(batch[batchLengthPos:batchLengthPos+4], uint32(batchLength))
 
 	// Calculate and set CRC32 (from partition leader epoch to end)
+	// Kafka uses Castagnoli (CRC-32C) algorithm, not IEEE
 	crcData := batch[16:] // Skip base offset (8) and batch length (4) and start from partition leader epoch
-	crc := crc32.ChecksumIEEE(crcData)
+	crc := crc32.Checksum(crcData, crc32.MakeTable(crc32.Castagnoli))
 	binary.BigEndian.PutUint32(batch[crcPos:crcPos+4], crc)
 
 	return batch, nil
@@ -1489,3 +1525,4 @@ func (h *Handler) recordValueToJSON(recordValue *schema_pb.RecordValue) []byte {
 
 	return []byte(jsonStr)
 }
+

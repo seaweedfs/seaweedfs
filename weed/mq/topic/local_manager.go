@@ -36,15 +36,15 @@ func (manager *LocalTopicManager) AddLocalPartition(topic Topic, localPartition 
 
 // GetLocalPartition gets a topic from the local topic manager
 func (manager *LocalTopicManager) GetLocalPartition(topic Topic, partition Partition) *LocalPartition {
-	glog.V(0).Infof("🔍 DEBUG: GetLocalPartition called for topic=%s, partition=%s", topic.String(), partition.String())
+	glog.V(4).Infof("🔍 DEBUG: GetLocalPartition called for topic=%s, partition=%s", topic.String(), partition.String())
 	localTopic, ok := manager.topics.Get(topic.String())
 	if !ok {
-		glog.V(0).Infof("🔍 DEBUG: Topic %s not found in localTopicManager", topic.String())
+		glog.V(4).Infof("🔍 DEBUG: Topic %s not found in localTopicManager", topic.String())
 		return nil
 	}
-	glog.V(0).Infof("🔍 DEBUG: Topic %s found, searching for partition %s", topic.String(), partition.String())
+	glog.V(4).Infof("🔍 DEBUG: Topic %s found, searching for partition %s", topic.String(), partition.String())
 	result := localTopic.findPartition(partition)
-	glog.V(0).Infof("🔍 DEBUG: Partition search result: %v", result != nil)
+	glog.V(4).Infof("🔍 DEBUG: Partition search result: %v", result != nil)
 	return result
 }
 

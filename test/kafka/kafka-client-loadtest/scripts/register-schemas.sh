@@ -120,14 +120,15 @@ register_loadtest_schemas() {
     local loadtest_value_schema='{
         "type": "record",
         "name": "LoadTestMessage",
-        "namespace": "io.seaweedfs.kafka.loadtest",
+        "namespace": "com.seaweedfs.loadtest",
         "fields": [
             {"name": "id", "type": "string"},
             {"name": "timestamp", "type": "long"},
             {"name": "producer_id", "type": "int"},
-            {"name": "sequence", "type": "long"},
-            {"name": "payload", "type": "string"},
-            {"name": "metadata", "type": {"type": "map", "values": "string"}, "default": {}}
+            {"name": "counter", "type": "long"},
+            {"name": "user_id", "type": "string"},
+            {"name": "event_type", "type": "string"},
+            {"name": "properties", "type": {"type": "map", "values": "string"}}
         ]
     }'
     

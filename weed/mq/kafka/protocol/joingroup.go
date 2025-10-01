@@ -180,6 +180,13 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 	}
 	group.Members[memberID] = member
 
+	// Store consumer group and member ID in connection context for use in fetch requests
+	if h.connContext != nil {
+		h.connContext.ConsumerGroup = request.GroupID
+		h.connContext.MemberID = memberID
+		Debug("JoinGroup: Stored consumer group '%s' and member ID '%s' in connection context", request.GroupID, memberID)
+	}
+
 	// Store protocol metadata for leader
 	if len(request.GroupProtocols) > 0 {
 		if len(request.GroupProtocols[0].Metadata) == 0 {

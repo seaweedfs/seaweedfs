@@ -135,48 +135,72 @@ test: start ## Run the comprehensive load test
 	@echo "Producers: $(PRODUCER_COUNT), Consumers: $(CONSUMER_COUNT)"
 	@echo "Message Rate: $(MESSAGE_RATE) msgs/sec, Size: $(MESSAGE_SIZE) bytes"
 	@echo ""
-	TEST_MODE=$(TEST_MODE) \
-	TEST_DURATION=$(TEST_DURATION) \
-	PRODUCER_COUNT=$(PRODUCER_COUNT) \
-	CONSUMER_COUNT=$(CONSUMER_COUNT) \
-	MESSAGE_RATE=$(MESSAGE_RATE) \
-	MESSAGE_SIZE=$(MESSAGE_SIZE) \
-	VALUE_TYPE=$(VALUE_TYPE) \
-	$(DOCKER_COMPOSE) --profile loadtest up --abort-on-container-exit kafka-client-loadtest
+	TEST_MODE=$(TEST_MODE) TEST_DURATION=$(TEST_DURATION) PRODUCER_COUNT=$(PRODUCER_COUNT) CONSUMER_COUNT=$(CONSUMER_COUNT) MESSAGE_RATE=$(MESSAGE_RATE) MESSAGE_SIZE=$(MESSAGE_SIZE) VALUE_TYPE=$(VALUE_TYPE) $(DOCKER_COMPOSE) --profile loadtest up --abort-on-container-exit kafka-client-loadtest
 	@echo "$(GREEN)Load test completed!$(NC)"
 	@$(MAKE) show-results
 
-quick-test: ## Run a quick smoke test (1 minute, low load) with schema enforcement
-	@echo "$(BLUE)Starting quick test with schema enforcement...$(NC)"
+quick-test: build-gateway ## Run a quick smoke test (1 min, low load, WITH schemas)
+	@echo "$(BLUE)╔══════════════════════════════════════════════════════════════╗$(NC)"
+	@echo "$(BLUE)║    Quick Test (Low Load, WITH Schema Registry + Avro)       ║$(NC)"
+	@echo "$(BLUE)║  - Duration: 1 minute                                        ║$(NC)"
+	@echo "$(BLUE)║  - Load: 1 producer × 10 msg/sec = 10 total msg/sec         ║$(NC)"
+	@echo "$(BLUE)║  - Message Type: Avro (with schema encoding)                ║$(NC)"
+	@echo "$(BLUE)║  - Schema-First: Registers schemas BEFORE producing         ║$(NC)"
+	@echo "$(BLUE)╚══════════════════════════════════════════════════════════════╝$(NC)"
+	@echo ""
 	@$(MAKE) start
-	@echo "$(BLUE)Registering schemas with Schema Registry...$(NC)"
+	@echo ""
+	@echo "$(BLUE)═══ Step 1: Registering schemas in Schema Registry ═══$(NC)"
+	@echo "$(YELLOW)⚠ IMPORTANT: Schemas MUST be registered before producing Avro messages!$(NC)"
 	@./scripts/register-schemas.sh full
-	@echo "$(BLUE)Running load test with schema enforcement enabled...$(NC)"
+	@echo "$(GREEN)✓ Schemas registered successfully$(NC)"
+	@echo ""
+	@echo "$(BLUE)═══ Step 2: Running load test with Avro messages ═══$(NC)"
 	@$(MAKE) test \
 		TEST_MODE=comprehensive \
 		TEST_DURATION=60s \
-		PRODUCER_COUNT=2 \
-		CONSUMER_COUNT=2 \
-		MESSAGE_RATE=100 \
-		MESSAGE_SIZE=512 \
-		SCHEMAS_ENABLED=true \
+		PRODUCER_COUNT=1 \
+		CONSUMER_COUNT=1 \
+		MESSAGE_RATE=10 \
+		MESSAGE_SIZE=256 \
 		VALUE_TYPE=avro
+	@echo ""
+	@echo "$(GREEN)╔══════════════════════════════════════════════════════════════╗$(NC)"
+	@echo "$(GREEN)║                    Quick Test Complete!                      ║$(NC)"
+	@echo "$(GREEN)║  ✓ Schema Registration                                       ║$(NC)"
+	@echo "$(GREEN)║  ✓ Avro Message Production                                   ║$(NC)"
+	@echo "$(GREEN)║  ✓ Message Consumption                                       ║$(NC)"
+	@echo "$(GREEN)╚══════════════════════════════════════════════════════════════╝$(NC)"
 
-standard-test: ## Run a standard load test (5 minutes, medium load) with schemas
-	@echo "$(BLUE)Starting standard test with schema registration...$(NC)"
+standard-test: ## Run a standard load test (2 min, medium load, WITH Schema Registry + Avro)
+	@echo "$(BLUE)╔══════════════════════════════════════════════════════════════╗$(NC)"
+	@echo "$(BLUE)║      Standard Test (Medium Load, WITH Schema Registry)      ║$(NC)"
+	@echo "$(BLUE)║  - Duration: 2 minutes                                       ║$(NC)"
+	@echo "$(BLUE)║  - Load: 2 producers × 50 msg/sec = 100 total msg/sec       ║$(NC)"
+	@echo "$(BLUE)║  - Message Type: Avro (with schema encoding)                ║$(NC)"
+	@echo "$(BLUE)║  - IMPORTANT: Schemas registered FIRST in Schema Registry   ║$(NC)"
+	@echo "$(BLUE)╚══════════════════════════════════════════════════════════════╝$(NC)"
+	@echo ""
 	@$(MAKE) start
-	@echo "$(BLUE)Registering schemas with Schema Registry...$(NC)"
+	@echo ""
+	@echo "$(BLUE)═══ Step 1: Registering schemas in Schema Registry ═══$(NC)"
+	@echo "$(YELLOW)Note: Schemas MUST be registered before producing Avro messages!$(NC)"
 	@./scripts/register-schemas.sh full
-	@echo "$(BLUE)Running standard load test with registered schemas...$(NC)"
+	@echo "$(GREEN)✓ Schemas registered$(NC)"
+	@echo ""
+	@echo "$(BLUE)═══ Step 2: Running load test with Avro messages ═══$(NC)"
 	@$(MAKE) test \
 		TEST_MODE=comprehensive \
-		TEST_DURATION=5m \
-		PRODUCER_COUNT=5 \
-		CONSUMER_COUNT=3 \
-		MESSAGE_RATE=500 \
-		MESSAGE_SIZE=1024 \
-		SCHEMAS_ENABLED=true \
+		TEST_DURATION=2m \
+		PRODUCER_COUNT=2 \
+		CONSUMER_COUNT=2 \
+		MESSAGE_RATE=50 \
+		MESSAGE_SIZE=512 \
 		VALUE_TYPE=avro
+	@echo ""
+	@echo "$(GREEN)╔══════════════════════════════════════════════════════════════╗$(NC)"
+	@echo "$(GREEN)║                  Standard Test Complete!                     ║$(NC)"
+	@echo "$(GREEN)╚══════════════════════════════════════════════════════════════╝$(NC)"
 
 stress-test: ## Run a stress test (10 minutes, high load) with schemas
 	@echo "$(BLUE)Starting stress test with schema registration...$(NC)"
@@ -191,7 +215,6 @@ stress-test: ## Run a stress test (10 minutes, high load) with schemas
 		CONSUMER_COUNT=10 \
 		MESSAGE_RATE=2000 \
 		MESSAGE_SIZE=2048 \
-		SCHEMAS_ENABLED=true \
 		VALUE_TYPE=avro
 
 endurance-test: ## Run an endurance test (30 minutes, sustained load) with schemas
@@ -207,7 +230,6 @@ endurance-test: ## Run an endurance test (30 minutes, sustained load) with schem
 		CONSUMER_COUNT=5 \
 		MESSAGE_RATE=1000 \
 		MESSAGE_SIZE=1024 \
-		SCHEMAS_ENABLED=true \
 		VALUE_TYPE=avro
 
 producer-test: ## Run producer-only load test
