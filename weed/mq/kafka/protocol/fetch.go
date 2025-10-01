@@ -610,8 +610,7 @@ func (h *Handler) constructRecordBatchFromSMQ(topicName string, fetchOffset int6
 	// Calculate CRC32 for the batch
 	// Kafka CRC calculation covers: partition leader epoch + magic + attributes + ... (everything after batch length)
 	// Skip: BaseOffset(8) + BatchLength(4) = 12 bytes
-	crcData := batch[12:crcPos] // Partition leader epoch through to CRC field
-	crcData = append(crcData, batch[crcPos+4:]...) // Skip CRC field itself, include rest
+	crcData := batch[crcPos+4:] // CRC covers ONLY from attributes (byte 21) onwards // Skip CRC field itself, include rest
 	crc := crc32.Checksum(crcData, crc32.MakeTable(crc32.Castagnoli))
 	binary.BigEndian.PutUint32(batch[crcPos:crcPos+4], crc)
 

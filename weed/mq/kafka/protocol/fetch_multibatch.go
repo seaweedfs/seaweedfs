@@ -316,10 +316,9 @@ func (f *MultiBatchFetcher) constructSingleRecordBatch(topicName string, baseOff
 	}
 
 	// Calculate CRC32 for the batch
-	// Kafka CRC calculation covers: partition leader epoch + magic + attributes + ... (everything after batch length)
-	// Skip: BaseOffset(8) + BatchLength(4) = 12 bytes
-	crcData := batch[12:crcPos]                    // Partition leader epoch through to CRC field
-	crcData = append(crcData, batch[crcPos+4:]...) // Skip CRC field itself, include rest
+	// Per Kafka spec: CRC covers ONLY from attributes offset (byte 21) onwards
+	// See: DefaultRecordBatch.java computeChecksum() - Crc32C.compute(buffer, ATTRIBUTES_OFFSET, ...)
+	crcData := batch[crcPos+4:] // Skip CRC field itself, include rest
 	crc := crc32.Checksum(crcData, crc32.MakeTable(crc32.Castagnoli))
 	binary.BigEndian.PutUint32(batch[crcPos:crcPos+4], crc)
 	
@@ -385,10 +384,9 @@ func (f *MultiBatchFetcher) constructEmptyRecordBatch(baseOffset int64) []byte {
 	binary.BigEndian.PutUint32(batch[lengthPos:lengthPos+4], uint32(batchLength))
 
 	// Calculate CRC32 for the batch
-	// Kafka CRC calculation covers: partition leader epoch + magic + attributes + ... (everything after batch length)
-	// Skip: BaseOffset(8) + BatchLength(4) = 12 bytes
-	crcData := batch[12:crcPos]                    // Partition leader epoch through to CRC field
-	crcData = append(crcData, batch[crcPos+4:]...) // Skip CRC field itself, include rest
+	// Per Kafka spec: CRC covers ONLY from attributes offset (byte 21) onwards
+	// See: DefaultRecordBatch.java computeChecksum() - Crc32C.compute(buffer, ATTRIBUTES_OFFSET, ...)
+	crcData := batch[crcPos+4:] // Skip CRC field itself, include rest
 	crc := crc32.Checksum(crcData, crc32.MakeTable(crc32.Castagnoli))
 	binary.BigEndian.PutUint32(batch[crcPos:crcPos+4], crc)
 
@@ -507,10 +505,9 @@ func (f *MultiBatchFetcher) constructCompressedRecordBatch(baseOffset int64, com
 	binary.BigEndian.PutUint32(batch[batchLengthPos:batchLengthPos+4], batchLength)
 
 	// Calculate CRC32 for the batch
-	// Kafka CRC calculation covers: partition leader epoch + magic + attributes + ... (everything after batch length)
-	// Skip: BaseOffset(8) + BatchLength(4) = 12 bytes
-	crcData := batch[12:crcPos]                    // Partition leader epoch through to CRC field
-	crcData = append(crcData, batch[crcPos+4:]...) // Skip CRC field itself, include rest
+	// Per Kafka spec: CRC covers ONLY from attributes offset (byte 21) onwards
+	// See: DefaultRecordBatch.java computeChecksum() - Crc32C.compute(buffer, ATTRIBUTES_OFFSET, ...)
+	crcData := batch[crcPos+4:] // Skip CRC field itself, include rest
 	crc := crc32.Checksum(crcData, crc32.MakeTable(crc32.Castagnoli))
 	binary.BigEndian.PutUint32(batch[crcPos:crcPos+4], crc)
 
