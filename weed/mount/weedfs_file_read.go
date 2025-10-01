@@ -56,7 +56,6 @@ func (wfs *WFS) Read(cancel <-chan struct{}, in *fuse.ReadIn, buff []byte) (fuse
 		case <-cancel:
 			cancelFunc()
 		case <-ctx.Done():
-			// Clean exit when read operation completes
 		}
 	}()
 
