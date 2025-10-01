@@ -21,14 +21,12 @@ func init() {
 	// 1KB ~ 256MB
 	pools = make([]*sync.Pool, bitCount(1024*1024*256))
 	for i := 0; i < len(pools); i++ {
-		slotSize := 1024 << i // Capture the current value
+		slotSize := 1024 << i
 		pools[i] = &sync.Pool{
-			New: func(size int) func() interface{} {
-				return func() interface{} {
-					buffer := make([]byte, size)
-					return &buffer
-				}
-			}(slotSize), // Immediately invoke to capture slotSize correctly
+			New: func() interface{} {
+				buffer := make([]byte, slotSize)
+				return &buffer
+			},
 		}
 	}
 }
