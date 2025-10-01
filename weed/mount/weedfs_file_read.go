@@ -51,15 +51,11 @@ func (wfs *WFS) Read(cancel <-chan struct{}, in *fuse.ReadIn, buff []byte) (fuse
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	defer cancelFunc() // Ensure cleanup
 
-	// Use a channel to signal when we're done to avoid goroutine leak
-	done := make(chan struct{})
-	defer close(done)
-
 	go func() {
 		select {
 		case <-cancel:
 			cancelFunc()
-		case <-done:
+		case <-ctx.Done():
 			// Clean exit when read operation completes
 		}
 	}()
