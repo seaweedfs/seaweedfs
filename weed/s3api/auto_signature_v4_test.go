@@ -92,7 +92,7 @@ func TestIsReqAuthenticated(t *testing.T) {
 
 	// Validates all testcases.
 	for i, testCase := range testCases {
-		if _, s3Error := iam.reqSignatureV4Verify(testCase.req); s3Error != testCase.s3Error {
+		if _, s3Error := iam.reqSignatureV4Verify(testCase.req, s3_constants.ACTION_READ); s3Error != testCase.s3Error {
 			io.ReadAll(testCase.req.Body)
 			t.Fatalf("Test %d: Unexpected S3 error: want %d - got %d", i, testCase.s3Error, s3Error)
 		}
@@ -160,7 +160,7 @@ func TestCheckAdminRequestAuthType(t *testing.T) {
 		{Request: mustNewPresignedRequest(iam, http.MethodGet, "http://127.0.0.1:9000", 0, nil, t), ErrCode: s3err.ErrNone},
 	}
 	for i, testCase := range testCases {
-		if _, s3Error := iam.reqSignatureV4Verify(testCase.Request); s3Error != testCase.ErrCode {
+		if _, s3Error := iam.reqSignatureV4Verify(testCase.Request, s3_constants.ACTION_READ); s3Error != testCase.ErrCode {
 			t.Errorf("Test %d: Unexpected s3error returned wanted %d, got %d", i, testCase.ErrCode, s3Error)
 		}
 	}
@@ -314,7 +314,7 @@ func TestSignatureV4WithForwardedPrefix(t *testing.T) {
 			signV4WithPath(r, "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", tt.expectedPath)
 
 			// Test signature verification
-			_, errCode := iam.doesSignatureMatch(getContentSha256Cksum(r), r)
+			_, errCode := iam.doesSignatureMatch(getContentSha256Cksum(r), r, s3_constants.ACTION_READ)
 			if errCode != s3err.ErrNone {
 				t.Errorf("Expected successful signature validation with X-Forwarded-Prefix %q, got error: %v (code: %d)", tt.forwardedPrefix, errCode, int(errCode))
 			}
@@ -380,7 +380,7 @@ func TestSignatureV4WithForwardedPrefixTrailingSlash(t *testing.T) {
 			signV4WithPath(r, "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", tt.expectedPath)
 
 			// Test signature verification - this should succeed even with trailing slashes
-			_, errCode := iam.doesSignatureMatch(getContentSha256Cksum(r), r)
+			_, errCode := iam.doesSignatureMatch(getContentSha256Cksum(r), r, s3_constants.ACTION_READ)
 			if errCode != s3err.ErrNone {
 				t.Errorf("Expected successful signature validation with trailing slash in path %q, got error: %v (code: %d)", tt.urlPath, errCode, int(errCode))
 			}
@@ -475,7 +475,7 @@ func TestSignatureV4WithForwardedPort(t *testing.T) {
 			signV4WithPath(r, "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", r.URL.Path)
 
 			// Test signature verification
-			_, errCode := iam.doesSignatureMatch(getContentSha256Cksum(r), r)
+			_, errCode := iam.doesSignatureMatch(getContentSha256Cksum(r), r, s3_constants.ACTION_READ)
 			if errCode != s3err.ErrNone {
 				t.Errorf("Expected successful signature validation with forwarded port, got error: %v (code: %d)", errCode, int(errCode))
 			}
@@ -508,7 +508,7 @@ func TestPresignedSignatureV4Basic(t *testing.T) {
 	}
 
 	// Test presigned signature verification
-	_, errCode := iam.doesPresignedSignatureMatch(getContentSha256Cksum(r), r)
+	_, errCode := iam.doesPresignedSignatureMatch(getContentSha256Cksum(r), r, s3_constants.ACTION_READ)
 	if errCode != s3err.ErrNone {
 		t.Errorf("Expected successful presigned signature validation, got error: %v (code: %d)", errCode, int(errCode))
 	}
@@ -573,7 +573,7 @@ func TestPresignedSignatureV4WithForwardedPrefix(t *testing.T) {
 			r.Header.Set("X-Forwarded-Host", "example.com")
 
 			// Test presigned signature verification
-			_, errCode := iam.doesPresignedSignatureMatch(getContentSha256Cksum(r), r)
+			_, errCode := iam.doesPresignedSignatureMatch(getContentSha256Cksum(r), r, s3_constants.ACTION_READ)
 			if errCode != s3err.ErrNone {
 				t.Errorf("Expected successful presigned signature validation with X-Forwarded-Prefix %q, got error: %v (code: %d)", tt.forwardedPrefix, errCode, int(errCode))
 			}
@@ -640,7 +640,7 @@ func TestPresignedSignatureV4WithForwardedPrefixTrailingSlash(t *testing.T) {
 			r.Header.Set("X-Forwarded-Host", "example.com")
 
 			// Test presigned signature verification - this should succeed with trailing slashes
-			_, errCode := iam.doesPresignedSignatureMatch(getContentSha256Cksum(r), r)
+			_, errCode := iam.doesPresignedSignatureMatch(getContentSha256Cksum(r), r, s3_constants.ACTION_READ)
 			if errCode != s3err.ErrNone {
 				t.Errorf("Expected successful presigned signature validation with trailing slash in path %q, got error: %v (code: %d)", tt.strippedPath, errCode, int(errCode))
 			}
@@ -1079,7 +1079,7 @@ func TestIAMPayloadHashComputation(t *testing.T) {
 
 	// Test the doesSignatureMatch function directly
 	// This should now compute the correct payload hash for IAM requests
-	identity, errCode := iam.doesSignatureMatch(expectedHashStr, req)
+	identity, errCode := iam.doesSignatureMatch(expectedHashStr, req, s3_constants.ACTION_WRITE)
 
 	// Even though the signature will fail (dummy signature),
 	// the fact that we get past the credential parsing means the payload hash was computed correctly
@@ -1141,7 +1141,7 @@ func TestS3PayloadHashNoRegression(t *testing.T) {
 	req.Header.Set("Authorization", authHeader)
 
 	// This should use the emptySHA256 hash and not try to read the body
-	identity, errCode := iam.doesSignatureMatch(emptySHA256, req)
+	identity, errCode := iam.doesSignatureMatch(emptySHA256, req, s3_constants.ACTION_READ)
 
 	// Should get signature mismatch (because of dummy signature) but not other errors
 	assert.Equal(t, s3err.ErrSignatureDoesNotMatch, errCode)
@@ -1192,7 +1192,7 @@ func TestIAMEmptyBodyPayloadHash(t *testing.T) {
 	req.Header.Set("Authorization", authHeader)
 
 	// Even with an IAM request, empty body should result in emptySHA256
-	identity, errCode := iam.doesSignatureMatch(emptySHA256, req)
+	identity, errCode := iam.doesSignatureMatch(emptySHA256, req, s3_constants.ACTION_WRITE)
 
 	// Should get signature mismatch (because of dummy signature) but not other errors
 	assert.Equal(t, s3err.ErrSignatureDoesNotMatch, errCode)
@@ -1252,7 +1252,7 @@ func TestSTSPayloadHashComputation(t *testing.T) {
 
 	// Test the doesSignatureMatch function
 	// This should compute the correct payload hash for STS requests (non-S3 service)
-	identity, errCode := iam.doesSignatureMatch(expectedHashStr, req)
+	identity, errCode := iam.doesSignatureMatch(expectedHashStr, req, s3_constants.ACTION_WRITE)
 
 	// Should get signature mismatch (dummy signature) but payload hash should be computed correctly
 	assert.Equal(t, s3err.ErrSignatureDoesNotMatch, errCode)
@@ -1317,7 +1317,7 @@ func TestGitHubIssue7080Scenario(t *testing.T) {
 
 	// Since we're using a dummy signature, we expect signature mismatch, but the important
 	// thing is that it doesn't fail earlier due to payload hash computation issues
-	identity, errCode := iam.doesSignatureMatch(emptySHA256, req)
+	identity, errCode := iam.doesSignatureMatch(emptySHA256, req, s3_constants.ACTION_WRITE)
 
 	// The error should be signature mismatch, not payload related
 	assert.Equal(t, s3err.ErrSignatureDoesNotMatch, errCode)
@@ -1391,7 +1391,7 @@ func TestIAMSignatureServiceMatching(t *testing.T) {
 	req.Header.Set("Authorization", authHeader)
 
 	// Now test that SeaweedFS computes the same signature with our fix
-	identity, errCode := iam.doesSignatureMatch(actualPayloadHash, req)
+	identity, errCode := iam.doesSignatureMatch(actualPayloadHash, req, s3_constants.ACTION_WRITE)
 
 	// With the fix, the signatures should match and we should get a successful authentication
 	assert.Equal(t, s3err.ErrNone, errCode)
@@ -1481,7 +1481,7 @@ func TestIAMLargeBodySecurityLimit(t *testing.T) {
 	req.Header.Set("Authorization", authHeader)
 
 	// The function should complete successfully but limit the body to 10 MiB
-	identity, errCode := iam.doesSignatureMatch(emptySHA256, req)
+	identity, errCode := iam.doesSignatureMatch(emptySHA256, req, s3_constants.ACTION_WRITE)
 
 	// Should get signature mismatch (dummy signature) but not internal error
 	assert.Equal(t, s3err.ErrSignatureDoesNotMatch, errCode)

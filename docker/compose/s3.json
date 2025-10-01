@@ -103,13 +103,25 @@
         "Tagging",
         "Write"
       ]
+    },
+    {
+      "name": "some_write_only_user",
+      "credentials": [
+        {
+          "accessKey": "some_access_key4",
+          "secretKey": "some_secret_key4"
+        }
+      ],
+      "actions": [
+        "Write"
+      ]
     }
   ],
   "accounts": [
-      {
-        "id" : "testid",
-        "displayName": "M. Tester",
-        "emailAddress": "tester@ceph.com"
-      }
-    ]
+    {
+      "id": "testid",
+      "displayName": "M. Tester",
+      "emailAddress": "tester@ceph.com"
+    }
+  ]
 }
