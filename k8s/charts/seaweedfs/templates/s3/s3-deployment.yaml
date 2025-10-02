@@ -152,7 +152,10 @@ spec:
               {{- if .Values.s3.auditLogConfig }}
               -auditLogConfig=/etc/sw/s3_auditLogConfig.json \
               {{- end }}
-              -filer={{ template "seaweedfs.name" . }}-filer-client.{{ .Release.Namespace }}:{{ .Values.filer.port }}
+              -filer={{ template "seaweedfs.name" . }}-filer-client.{{ .Release.Namespace }}:{{ .Values.filer.port }} \
+              {{- range .Values.s3.extraArgs }}
+              {{ . }} \
+              {{- end }}
           volumeMounts:
             {{- if or (eq .Values.s3.logs.type "hostPath") (eq .Values.s3.logs.type "emptyDir") }}
             - name: logs
