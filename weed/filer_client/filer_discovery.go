@@ -75,11 +75,8 @@ func (fds *FilerDiscoveryService) discoverFilersFromMaster(masterAddr pb.ServerA
 	var filers []pb.ServerAddress
 	for _, node := range resp.ClusterNodes {
 		glog.Infof("FILER DISCOVERY: Found filer HTTP address %s", node.Address)
-		// Convert HTTP address to gRPC address using pb.ServerAddress method
-		httpAddr := pb.ServerAddress(node.Address)
-		grpcAddr := httpAddr.ToGrpcAddress()
-		glog.Infof("FILER DISCOVERY: Converted to gRPC address %s", grpcAddr)
-		filers = append(filers, pb.ServerAddress(grpcAddr))
+		// Return HTTP address (lock client will convert to gRPC when needed)
+		filers = append(filers, pb.ServerAddress(node.Address))
 	}
 
 	glog.Infof("FILER DISCOVERY: Returning %d filers from master %s", len(filers), masterAddr)

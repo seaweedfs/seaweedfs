@@ -119,6 +119,11 @@ func (h *Handler) handleFindCoordinatorV0(correlationID uint32, requestBody []by
 	binary.BigEndian.PutUint32(portBytes, uint32(coordinatorPort))
 	response = append(response, portBytes...)
 
+	// Log the complete response for debugging
+	Debug("FindCoordinator v0 RESPONSE BYTES (len=%d): correlationID=%d errorCode=0 nodeID=%d host=%s port=%d",
+		len(response), correlationID, nodeID, coordinatorHost, coordinatorPort)
+	Debug("FindCoordinator v0 RESPONSE HEX: %x", response)
+
 	return response, nil
 }
 
@@ -215,6 +220,11 @@ func (h *Handler) handleFindCoordinatorV2(correlationID uint32, requestBody []by
 	binary.BigEndian.PutUint32(portBytes, uint32(coordinatorPort))
 	response = append(response, portBytes...)
 
+	// Log the complete response for debugging
+	Debug("FindCoordinator v2 RESPONSE BYTES (len=%d): correlationID=%d errorCode=0 nodeID=%d host=%s port=%d",
+		len(response), correlationID, nodeID, coordinatorHost, coordinatorPort)
+	Debug("FindCoordinator v2 RESPONSE HEX: %x", response)
+
 	return response, nil
 }
 
@@ -237,24 +247,42 @@ func (h *Handler) findCoordinatorForGroup(groupID string) (host string, port int
 	}
 
 	// If this gateway is the leader, handle the assignment directly
-	if registry.IsLeader() {
+	isLeader := registry.IsLeader()
+	Debug("findCoordinatorForGroup: registry.IsLeader() = %v for group %s", isLeader, groupID)
+	if isLeader {
 		return h.handleCoordinatorAssignmentAsLeader(groupID, registry)
 	}
 
 	// If not the leader, contact the leader to get/assign coordinator
 	// But first check if we can quickly become the leader or if there's already a leader
-	if leader := registry.GetLeaderAddress(); leader != "" {
+	leader := registry.GetLeaderAddress()
+	Debug("GetLeaderAddress returned: '%s' (empty=%v) for group %s", leader, leader == "", groupID)
+	if leader != "" {
 		Debug("Found existing leader %s for group %s", leader, groupID)
 		// If the leader is this gateway, handle assignment directly
 		if leader == h.GetGatewayAddress() {
 			return h.handleCoordinatorAssignmentAsLeader(groupID, registry)
 		}
+		return h.requestCoordinatorFromLeader(groupID, registry)
 	}
-	return h.requestCoordinatorFromLeader(groupID, registry)
+
+	// No leader exists yet - use current gateway as coordinator immediately
+	// to avoid 10-second timeout that causes client disconnections
+	Debug("No leader elected yet, using current gateway as coordinator for group %s", groupID)
+	gatewayAddr := h.GetGatewayAddress()
+	var parseErr error
+	host, port, parseErr = h.parseGatewayAddress(gatewayAddr)
+	if parseErr != nil {
+		Debug("Failed to parse gateway address %s: %v", gatewayAddr, parseErr)
+		return "localhost", 9092, 1, nil
+	}
+	nodeID = 1
+	return host, port, nodeID, nil
 }
 
 // handleCoordinatorAssignmentAsLeader handles coordinator assignment when this gateway is the leader
 func (h *Handler) handleCoordinatorAssignmentAsLeader(groupID string, registry CoordinatorRegistryInterface) (host string, port int, nodeID int32, err error) {
+	Debug("handleCoordinatorAssignmentAsLeader: entered for group %s", groupID)
 	// Check if coordinator already exists
 	if assignment, err := registry.GetCoordinator(groupID); err == nil && assignment != nil {
 		Debug("Found existing coordinator %s (node %d) for group %s", assignment.CoordinatorAddr, assignment.CoordinatorNodeID, groupID)
@@ -263,7 +291,9 @@ func (h *Handler) handleCoordinatorAssignmentAsLeader(groupID string, registry C
 
 	// No coordinator exists, assign the requesting gateway (first-come-first-serve)
 	currentGateway := h.GetGatewayAddress()
+	Debug("handleCoordinatorAssignmentAsLeader: About to call AssignCoordinator for group %s", groupID)
 	assignment, err := registry.AssignCoordinator(groupID, currentGateway)
+	Debug("handleCoordinatorAssignmentAsLeader: AssignCoordinator returned err=%v for group %s", err, groupID)
 	if err != nil {
 		Debug("Failed to assign coordinator for group %s: %v", groupID, err)
 		// Fallback to current gateway
