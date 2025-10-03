@@ -18,39 +18,31 @@ var (
 )
 
 type MessagePosition struct {
-	time.Time       // this is the timestamp of the message
-	Offset    int64 // Kafka offset for offset-based positioning, or batch index for timestamp-based
+	Time          time.Time // timestamp of the message
+	Offset        int64     // Kafka offset for offset-based positioning, or batch index for timestamp-based
+	IsOffsetBased bool      // true if this position is offset-based, false if timestamp-based
 }
 
 func NewMessagePosition(tsNs int64, offset int64) MessagePosition {
 	return MessagePosition{
-		Time:   time.Unix(0, tsNs).UTC(),
-		Offset: offset,
+		Time:          time.Unix(0, tsNs).UTC(),
+		Offset:        offset,
+		IsOffsetBased: false, // timestamp-based by default
 	}
 }
-
-// Sentinel time value to clearly indicate offset-based positioning
-// Using Unix timestamp 1 (1970-01-01 00:00:01 UTC) as a clear, recognizable sentinel
-var OffsetBasedPositionSentinel = time.Unix(1, 0).UTC()
 
 // NewMessagePositionFromOffset creates a MessagePosition that represents a specific offset
-// Uses a clear sentinel time value and stores the offset directly
 func NewMessagePositionFromOffset(offset int64) MessagePosition {
 	return MessagePosition{
-		Time:   OffsetBasedPositionSentinel, // Clear sentinel time for offset-based positions
-		Offset: offset,                      // Store offset directly
+		Time:          time.Time{}, // Zero time for offset-based positions
+		Offset:        offset,
+		IsOffsetBased: true,
 	}
-}
-
-// IsOffsetBased returns true if this MessagePosition represents an offset rather than a timestamp
-func (mp MessagePosition) IsOffsetBased() bool {
-	// Offset-based positions use the clear sentinel time value
-	return mp.Time.Equal(OffsetBasedPositionSentinel)
 }
 
 // GetOffset extracts the offset from an offset-based MessagePosition
 func (mp MessagePosition) GetOffset() int64 {
-	if !mp.IsOffsetBased() {
+	if !mp.IsOffsetBased {
 		return -1 // Not an offset-based position
 	}
 	return mp.Offset // Offset is stored directly
@@ -87,7 +79,7 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 		glog.V(4).Infof("%s ReadFromBuffer at %v offset %d. Read bytes %v batchIndex %d", readerName, lastReadPosition, lastReadPosition.Offset, readSize, batchIndex)
 		if bytesBuf == nil {
 			if batchIndex >= 0 {
-				lastReadPosition = NewMessagePosition(lastReadPosition.UnixNano(), batchIndex)
+				lastReadPosition = NewMessagePosition(lastReadPosition.Time.UnixNano(), batchIndex)
 			}
 			if stopTsNs != 0 {
 				isDone = true
@@ -133,7 +125,7 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 			}
 
 			// Handle offset-based filtering for offset-based start positions
-			if startPosition.IsOffsetBased() {
+			if startPosition.IsOffsetBased {
 				startOffset := startPosition.GetOffset()
 				glog.Infof("📍 MEMORY OFFSET CHECK: logEntry.Offset=%d startOffset=%d readerName=%s",
 					logEntry.Offset, startOffset, readerName)
@@ -209,12 +201,22 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 		glog.V(0).Infof("🔍 DEBUG: %s ReadFromBuffer at %v posOffset %d. Read bytes %v bufferOffset %d", readerName, lastReadPosition, lastReadPosition.Offset, readSize, offset)
 		if bytesBuf == nil {
 			if offset >= 0 {
-				lastReadPosition = NewMessagePosition(lastReadPosition.UnixNano(), offset)
+				lastReadPosition = NewMessagePosition(lastReadPosition.Time.UnixNano(), offset)
 			}
 			if stopTsNs != 0 {
 				isDone = true
 				return
 			}
+
+			// CRITICAL FIX: If we're reading offset-based and there's no data in LogBuffer,
+			// return ResumeFromDiskError to let Subscribe try reading from disk again.
+			// This prevents infinite blocking when all data is on disk (e.g., after restart).
+			if startPosition.IsOffsetBased {
+				glog.V(0).Infof("🔍 DEBUG: No data in LogBuffer for offset-based read at %v, returning ResumeFromDiskError", lastReadPosition)
+				time.Sleep(1127 * time.Millisecond)
+				return lastReadPosition, isDone, ResumeFromDiskError
+			}
+
 			lastTsNs := logBuffer.LastTsNs.Load()
 
 			for lastTsNs == logBuffer.LastTsNs.Load() {
@@ -258,7 +260,7 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 			glog.V(0).Infof("🔍 DEBUG: Unmarshaled log entry %d: TsNs=%d, Offset=%d, Key=%s", batchSize+1, logEntry.TsNs, logEntry.Offset, string(logEntry.Key))
 
 			// Handle offset-based filtering for offset-based start positions
-			if startPosition.IsOffsetBased() {
+			if startPosition.IsOffsetBased {
 				startOffset := startPosition.GetOffset()
 				glog.V(0).Infof("🔍 DEBUG: Offset-based filtering: logEntry.Offset=%d, startOffset=%d", logEntry.Offset, startOffset)
 				if logEntry.Offset < startOffset {

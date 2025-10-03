@@ -81,13 +81,19 @@ func (f *MultiBatchFetcher) FetchMultipleBatches(topicName string, partitionID i
 
 		// Calculate how many records to fetch for this batch
 		recordsAvailable := highWaterMark - currentOffset
+		if recordsAvailable <= 0 {
+			Debug("[DEBUG_MULTIBATCH] No records available (currentOffset=%d >= highWaterMark=%d), breaking",
+				currentOffset, highWaterMark)
+			break
+		}
+
 		recordsToFetch := recordsPerBatch
 		if int64(recordsToFetch) > recordsAvailable {
 			recordsToFetch = int32(recordsAvailable)
 		}
 
-		Debug("[DEBUG_MULTIBATCH] About to call GetStoredRecords: topic=%s partition=%d offset=%d count=%d",
-			topicName, partitionID, currentOffset, recordsToFetch)
+		Debug("[DEBUG_MULTIBATCH] About to call GetStoredRecords: topic=%s partition=%d offset=%d count=%d (available=%d)",
+			topicName, partitionID, currentOffset, recordsToFetch, recordsAvailable)
 
 		// Check if handler is nil
 		if f.handler == nil {
@@ -156,6 +162,9 @@ func (f *MultiBatchFetcher) FetchMultipleBatches(topicName string, partitionID i
 		TotalSize:     totalSize,
 		BatchCount:    batchCount,
 	}
+
+	glog.Infof("🎯 FetchMultipleBatches COMPLETE: topic=%s partition=%d batches=%d totalSize=%d responseSize=%d nextOffset=%d",
+		topicName, partitionID, batchCount, totalSize, len(combinedBatches), currentOffset)
 
 	return result, nil
 }
@@ -291,9 +300,9 @@ func (f *MultiBatchFetcher) constructSingleRecordBatch(topicName string, baseOff
 
 	// Log reconstructed batch size and detailed field breakdown
 	fmt.Printf("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-	fmt.Printf("📏 RECONSTRUCTED BATCH: topic=%s baseOffset=%d size=%d bytes, recordCount=%d\n", 
+	fmt.Printf("📏 RECONSTRUCTED BATCH: topic=%s baseOffset=%d size=%d bytes, recordCount=%d\n",
 		topicName, baseOffset, len(batch), len(smqRecords))
-	
+
 	if len(batch) >= 61 {
 		fmt.Printf("  Header Structure:\n")
 		fmt.Printf("    Base Offset (0-7):     %x\n", batch[0:8])
@@ -310,7 +319,7 @@ func (f *MultiBatchFetcher) constructSingleRecordBatch(topicName string, baseOff
 		fmt.Printf("    Base Sequence (53-56):  %x\n", batch[53:57])
 		fmt.Printf("    Record Count (57-60):   %x\n", batch[57:61])
 		if len(batch) > 61 {
-			fmt.Printf("    Records Section (61+):  %x... (%d bytes)\n", 
+			fmt.Printf("    Records Section (61+):  %x... (%d bytes)\n",
 				batch[61:min(81, len(batch))], len(batch)-61)
 		}
 	}
@@ -320,9 +329,97 @@ func (f *MultiBatchFetcher) constructSingleRecordBatch(topicName string, baseOff
 	// See: DefaultRecordBatch.java computeChecksum() - Crc32C.compute(buffer, ATTRIBUTES_OFFSET, ...)
 	crcData := batch[crcPos+4:] // Skip CRC field itself, include rest
 	crc := crc32.Checksum(crcData, crc32.MakeTable(crc32.Castagnoli))
+
+	// === COMPREHENSIVE CRC DEBUG ===
+	batchLengthValue := binary.BigEndian.Uint32(batch[8:12])
+	expectedTotalSize := 12 + int(batchLengthValue)
+	actualTotalSize := len(batch)
+
+	fmt.Printf("\n  🔍 === CRC CALCULATION DEBUG ===\n")
+	fmt.Printf("    Batch length field (bytes 8-11): %d\n", batchLengthValue)
+	fmt.Printf("    Expected total batch size: %d bytes (12 + %d)\n", expectedTotalSize, batchLengthValue)
+	fmt.Printf("    Actual batch size: %d bytes\n", actualTotalSize)
+	fmt.Printf("    CRC position: byte %d\n", crcPos)
+	fmt.Printf("    CRC data range: bytes %d to %d (%d bytes)\n", crcPos+4, actualTotalSize-1, len(crcData))
+
+	if expectedTotalSize != actualTotalSize {
+		fmt.Printf("    ⚠️  SIZE MISMATCH: %d bytes difference!\n", actualTotalSize-expectedTotalSize)
+	}
+
+	if crcPos != 17 {
+		fmt.Printf("    ⚠️  CRC POSITION WRONG: expected 17, got %d!\n", crcPos)
+	}
+
+	fmt.Printf("    CRC data (first 100 bytes of %d):\n", len(crcData))
+	dumpSize := 100
+	if len(crcData) < dumpSize {
+		dumpSize = len(crcData)
+	}
+	for i := 0; i < dumpSize; i += 20 {
+		end := i + 20
+		if end > dumpSize {
+			end = dumpSize
+		}
+		fmt.Printf("      [%3d-%3d]: %x\n", i, end-1, crcData[i:end])
+	}
+
+	manualCRC := crc32.Checksum(crcData, crc32.MakeTable(crc32.Castagnoli))
+	fmt.Printf("    Calculated CRC: 0x%08x\n", crc)
+	fmt.Printf("    Manual verify:  0x%08x", manualCRC)
+	if crc == manualCRC {
+		fmt.Printf(" ✅\n")
+	} else {
+		fmt.Printf(" ❌ MISMATCH!\n")
+	}
+
+	if actualTotalSize <= 200 {
+		fmt.Printf("    Complete batch hex dump (%d bytes):\n", actualTotalSize)
+		for i := 0; i < actualTotalSize; i += 16 {
+			end := i + 16
+			if end > actualTotalSize {
+				end = actualTotalSize
+			}
+			fmt.Printf("      %04d: %x\n", i, batch[i:end])
+		}
+	}
+	fmt.Printf("  === END CRC DEBUG ===\n\n")
 	binary.BigEndian.PutUint32(batch[crcPos:crcPos+4], crc)
-	
+
 	fmt.Printf("    Final CRC (17-20):     %x (calculated over %d bytes)\n", batch[17:21], len(crcData))
+
+	// VERIFICATION: Read back what we just wrote
+	writtenCRC := binary.BigEndian.Uint32(batch[17:21])
+	fmt.Printf("    ⚠️  VERIFICATION: CRC we calculated=0x%x, CRC written to batch=0x%x", crc, writtenCRC)
+	if crc == writtenCRC {
+		fmt.Printf(" ✅\n")
+	} else {
+		fmt.Printf(" ❌ MISMATCH!\n")
+	}
+
+	// DEBUG: Hash the entire batch to check if reconstructions are identical
+	batchHash := crc32.ChecksumIEEE(batch)
+	fmt.Printf("    🔍 BATCH IDENTITY: hash=0x%08x size=%d topic=%s baseOffset=%d recordCount=%d\n",
+		batchHash, len(batch), topicName, baseOffset, len(smqRecords))
+
+	// DEBUG: Show first few record keys/values to verify consistency
+	if len(smqRecords) > 0 && strings.Contains(topicName, "loadtest") {
+		fmt.Printf("    📝 RECORD SAMPLES:\n")
+		for i := 0; i < min(3, len(smqRecords)); i++ {
+			keyPreview := smqRecords[i].GetKey()
+			if len(keyPreview) > 20 {
+				keyPreview = keyPreview[:20]
+			}
+			valuePreview := smqRecords[i].GetValue()
+			if len(valuePreview) > 40 {
+				valuePreview = valuePreview[:40]
+			}
+			fmt.Printf("      [%d] keyLen=%d valueLen=%d keyHex=%x valueHex=%x\n",
+				i, len(smqRecords[i].GetKey()), len(smqRecords[i].GetValue()),
+				keyPreview, valuePreview)
+		}
+	}
+
+	fmt.Printf("    Batch for topic=%s baseOffset=%d recordCount=%d\n", topicName, baseOffset, len(smqRecords))
 	fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
 
 	return batch

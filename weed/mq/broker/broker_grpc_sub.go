@@ -67,7 +67,7 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 
 	startPosition := b.getRequestPosition(req.GetInit())
 	glog.Infof("📍 SUB START POSITION: topic=%s partition=%v startPosition.Time=%v startPosition.Offset=%d isOffsetBased=%v",
-		t, partition, startPosition.Time, startPosition.Offset, startPosition.IsOffsetBased())
+		t, partition, startPosition.Time, startPosition.Offset, startPosition.IsOffsetBased)
 	imt := sub_coordinator.NewInflightMessageTracker(int(req.GetInit().SlidingWindowSize))
 
 	// connect to the follower
@@ -195,6 +195,9 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 		}
 		return true
 	}, func(logEntry *filer_pb.LogEntry) (bool, error) {
+		topicName := t.String()
+		glog.Infof("🔥 SUB CALLBACK: topic=%s partition=%v offset=%d keyLen=%d valueLen=%d",
+			topicName, partition, logEntry.Offset, len(logEntry.Key), len(logEntry.Data))
 
 		for imt.IsInflight(logEntry.Key) {
 			time.Sleep(137 * time.Millisecond)
@@ -217,9 +220,8 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 		}
 
 		// DEBUG: Log what we're sending for _schemas topic
-		topicName := t.String()
 		if strings.Contains(topicName, "_schemas") {
-			glog.Infof("🔥 SUB DEBUG: Sending _schemas record - keyLen=%d valueLen=%d offset=%d", 
+			glog.Infof("🔥 SUB DEBUG: Sending _schemas record - keyLen=%d valueLen=%d offset=%d",
 				len(logEntry.Key), len(logEntry.Data), logEntry.Offset)
 			if len(logEntry.Data) > 0 {
 				glog.Infof("🔥 SUB DEBUG: Value content (first 50 bytes): %x", logEntry.Data[:min(50, len(logEntry.Data))])
@@ -227,14 +229,14 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 				glog.Infof("🔥 SUB DEBUG: Value is EMPTY!")
 			}
 		}
-		
+
 		// Create the message to send
 		dataMsg := &mq_pb.DataMessage{
 			Key:   logEntry.Key,
 			Value: logEntry.Data,
 			TsNs:  logEntry.TsNs,
 		}
-		
+
 		// DEBUG: Log the DataMessage we're about to send
 		if strings.Contains(topicName, "_schemas") {
 			glog.Infof("🔥 SUB DEBUG PRESEND: DataMessage - keyLen=%d valueLen=%d key=%x value=%x",
@@ -242,7 +244,7 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 				dataMsg.Key[:min(20, len(dataMsg.Key))],
 				dataMsg.Value[:min(50, len(dataMsg.Value))])
 		}
-		
+
 		if err := stream.Send(&mq_pb.SubscribeMessageResponse{Message: &mq_pb.SubscribeMessageResponse_Data{
 			Data: dataMsg,
 		}}); err != nil {

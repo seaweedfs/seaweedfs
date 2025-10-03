@@ -131,15 +131,14 @@ func TestConvertOffsetToMessagePosition_OffsetEncoding(t *testing.T) {
 				t.Errorf("Expected batch index %d, got %d", tc.expectedBatch, pos.BatchIndex)
 			}
 
-			// Check that timestamp is the sentinel value for offset-based positions
-			if tc.expectedIsSentinel && !pos.Time.Equal(log_buffer.OffsetBasedPositionSentinel) {
-				t.Errorf("Expected sentinel timestamp (%v) for offset-based position, got %v",
-					log_buffer.OffsetBasedPositionSentinel, pos.Time)
+			// Verify the offset can be extracted correctly using IsOffsetBased/GetOffset
+			if !pos.IsOffsetBased {
+				t.Error("Position should be detected as offset-based")
 			}
 
-			// Verify the offset can be extracted correctly using IsOffsetBased/GetOffset
-			if !pos.IsOffsetBased() {
-				t.Error("Position should be detected as offset-based")
+			// Check that IsOffsetBased flag is set correctly
+			if tc.expectedIsSentinel && !pos.IsOffsetBased {
+				t.Error("Expected offset-based position but IsOffsetBased=false")
 			}
 
 			if extractedOffset := pos.GetOffset(); extractedOffset != tc.offset {

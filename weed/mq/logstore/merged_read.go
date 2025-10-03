@@ -32,7 +32,7 @@ func mergeReadFuncs(readLogDirectFn, fromParquetFn log_buffer.LogReadFromDiskFun
 		}
 		exhaustedLiveLogs = true
 
-		if startPosition.Before(lastProcessedPosition.Time) {
+		if startPosition.Time.Before(lastProcessedPosition.Time) {
 			startPosition = lastProcessedPosition
 		}
 

@@ -28,9 +28,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-// getAdvertisedAddress returns the host:port that should be advertised to clients
+// GetAdvertisedAddress returns the host:port that should be advertised to clients
 // This handles the Docker networking issue where internal IPs aren't reachable by external clients
-func (h *Handler) getAdvertisedAddress(gatewayAddr string) (string, int) {
+func (h *Handler) GetAdvertisedAddress(gatewayAddr string) (string, int) {
 	host, port := "localhost", 9093
 
 	// Try to parse the gateway address if provided to get the port
@@ -67,6 +67,22 @@ type TopicPartitionKey struct {
 	Partition int32
 }
 
+// kafkaRequest represents a Kafka API request to be processed
+type kafkaRequest struct {
+	correlationID uint32
+	apiKey        uint16
+	apiVersion    uint16
+	requestBody   []byte
+	ctx           context.Context
+}
+
+// kafkaResponse represents a Kafka API response
+type kafkaResponse struct {
+	correlationID uint32
+	response      []byte
+	err           error
+}
+
 const (
 	// DefaultKafkaNamespace is the default namespace for Kafka topics in SeaweedMQ
 	DefaultKafkaNamespace = "kafka"
@@ -93,6 +109,10 @@ type SeaweedMQHandlerInterface interface {
 	WithFilerClient(streamingMode bool, fn func(client filer_pb.SeaweedFilerClient) error) error
 	// GetBrokerAddresses returns the discovered SMQ broker addresses for Metadata responses
 	GetBrokerAddresses() []string
+	// CreatePerConnectionBrokerClient creates an isolated BrokerClient for each TCP connection
+	CreatePerConnectionBrokerClient() (*integration.BrokerClient, error)
+	// SetProtocolHandler sets the protocol handler reference for connection context access
+	SetProtocolHandler(handler integration.ProtocolHandler)
 	Close() error
 }
 
@@ -341,23 +361,39 @@ func (h *Handler) GetCoordinatorRegistry() CoordinatorRegistryInterface {
 	return h.coordinatorRegistry
 }
 
-// GetConnectionContext returns the current connection context as integration.ConnectionContext
+// isDataPlaneAPI returns true if the API key is a data plane operation (Fetch, Produce)
+// Data plane operations can be slow and may block on I/O
+func isDataPlaneAPI(apiKey uint16) bool {
+	switch apiKey {
+	case 0: // Produce
+		return true
+	case 1: // Fetch
+		return true
+	default:
+		return false
+	}
+}
+
+// GetConnectionContext returns the current connection context converted to integration.ConnectionContext
 // This implements the integration.ProtocolHandler interface
 func (h *Handler) GetConnectionContext() *integration.ConnectionContext {
 	if h.connContext == nil {
 		return nil
 	}
+	// Convert protocol.ConnectionContext to integration.ConnectionContext
 	return &integration.ConnectionContext{
 		ClientID:      h.connContext.ClientID,
 		ConsumerGroup: h.connContext.ConsumerGroup,
 		MemberID:      h.connContext.MemberID,
+		BrokerClient:  h.connContext.BrokerClient,
 	}
 }
 
 // HandleConn processes a single client connection
 func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
-	Debug("KAFKA 8.0.0 DEBUG: NEW HANDLER CODE ACTIVE - %s", time.Now().Format("15:04:05"))
 	connectionID := fmt.Sprintf("%s->%s", conn.RemoteAddr(), conn.LocalAddr())
+	fmt.Printf("🔥🔥🔥 HandleConn START: %s\n", connectionID)
+	Debug("KAFKA 8.0.0 DEBUG: NEW HANDLER CODE ACTIVE - %s", time.Now().Format("15:04:05"))
 
 	// Record connection metrics
 	RecordConnectionMetrics()
@@ -369,10 +405,30 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		ConnectionID: connectionID,
 	}
 
+	// CRITICAL: Create per-connection BrokerClient for isolated gRPC streams
+	// This prevents different connections from interfering with each other's Fetch requests
+	fmt.Printf("🔥🔥🔥 [%s] [BROKER_CLIENT] Creating per-connection BrokerClient\n", connectionID)
+	glog.Infof("[%s] [BROKER_CLIENT] Creating per-connection BrokerClient", connectionID)
+	connBrokerClient, err := h.seaweedMQHandler.CreatePerConnectionBrokerClient()
+	if err != nil {
+		fmt.Printf("🔥🔥🔥 [%s] [BROKER_CLIENT] Failed: %v\n", connectionID, err)
+		glog.Errorf("[%s] [BROKER_CLIENT] Failed to create per-connection BrokerClient: %v", connectionID, err)
+		return fmt.Errorf("failed to create broker client: %w", err)
+	}
+	h.connContext.BrokerClient = connBrokerClient
+	fmt.Printf("🔥🔥🔥 [%s] [BROKER_CLIENT] Per-connection BrokerClient created successfully\n", connectionID)
+	glog.Infof("[%s] [BROKER_CLIENT] Per-connection BrokerClient created successfully", connectionID)
+
 	Debug("[%s] NEW CONNECTION ESTABLISHED", connectionID)
 
 	defer func() {
-		Debug("[%s] Connection closing", connectionID)
+		Debug("[%s] Connection closing, cleaning up BrokerClient", connectionID)
+		// Close the per-connection broker client
+		if connBrokerClient != nil {
+			if closeErr := connBrokerClient.Close(); closeErr != nil {
+				Error("[%s] Error closing BrokerClient: %v", connectionID, closeErr)
+			}
+		}
 		RecordDisconnectionMetrics()
 		h.connContext = nil // Clear connection context
 		conn.Close()
@@ -384,6 +440,82 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 
 	// Use default timeout config
 	timeoutConfig := DefaultTimeoutConfig()
+
+	// CRITICAL: Separate control plane from data plane
+	// Control plane: Metadata, Heartbeat, JoinGroup, etc. (must be fast, never block)
+	// Data plane: Fetch, Produce (can be slow, may block on I/O)
+	//
+	// Architecture:
+	// - Main loop routes requests to appropriate channel based on API key
+	// - Control goroutine processes control messages (fast, sequential)
+	// - Data goroutine processes data messages (can be slow)
+	// - Response writer handles responses in order using correlation IDs
+	controlChan := make(chan *kafkaRequest, 10)
+	dataChan := make(chan *kafkaRequest, 10)
+	responseChan := make(chan *kafkaResponse, 100)
+	var wg sync.WaitGroup
+
+	// Response writer - sends responses as they're ready
+	// CRITICAL: Kafka protocol does NOT require sequential correlation IDs!
+	// Clients may send correlation IDs like 0, 2, 5, 7 (skipping 1, 3, 4, 6)
+	// We must send each response immediately when ready, not wait for missing IDs
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for resp := range responseChan {
+			if resp.err != nil {
+				Error("[%s] Error processing correlation=%d: %v", connectionID, resp.correlationID, resp.err)
+			} else {
+				Debug("[%s] Sending response correlation=%d: %d bytes", connectionID, resp.correlationID, len(resp.response))
+				if writeErr := h.writeResponseWithTimeout(w, resp.response, timeoutConfig.WriteTimeout); writeErr != nil {
+					Error("[%s] Write error correlation=%d: %v", connectionID, resp.correlationID, writeErr)
+					return
+				}
+			}
+		}
+	}()
+
+	// Control plane processor - fast operations, never blocks
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for req := range controlChan {
+			glog.Infof("[%s] Control plane processing correlation=%d", connectionID, req.correlationID)
+			response, err := h.processRequestSync(req)
+			glog.Infof("[%s] Control plane completed correlation=%d, sending to responseChan", connectionID, req.correlationID)
+			select {
+			case responseChan <- &kafkaResponse{
+				correlationID: req.correlationID,
+				response:      response,
+				err:           err,
+			}:
+				glog.Infof("[%s] Control plane sent correlation=%d to responseChan", connectionID, req.correlationID)
+			case <-time.After(5 * time.Second):
+				glog.Errorf("[%s] DEADLOCK: Control plane timeout sending correlation=%d to responseChan (buffer full?)", connectionID, req.correlationID)
+			}
+		}
+	}()
+
+	// Data plane processor - can block on I/O
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for req := range dataChan {
+			response, err := h.processRequestSync(req)
+			responseChan <- &kafkaResponse{
+				correlationID: req.correlationID,
+				response:      response,
+				err:           err,
+			}
+		}
+	}()
+
+	defer func() {
+		close(controlChan)
+		close(dataChan)
+		wg.Wait()
+		close(responseChan)
+	}()
 
 	for {
 		// Check if context is cancelled
@@ -500,12 +632,19 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			if writeErr != nil {
 				return fmt.Errorf("build error response: %w", writeErr)
 			}
-			// Send error response and continue to next request
-			if writeErr := h.writeResponseWithTimeout(w, response, timeoutConfig.WriteTimeout); writeErr != nil {
-				Debug("[%s] Failed to send unsupported version response: %v", connectionID, writeErr)
-				return fmt.Errorf("send error response: %w", writeErr)
+			// CRITICAL: Send error response through response queue to maintain sequential ordering
+			// This prevents deadlocks in the response writer which expects all correlation IDs in sequence
+			select {
+			case responseChan <- &kafkaResponse{
+				correlationID: correlationID,
+				response:      response,
+				err:           nil,
+			}:
+				// Error response queued successfully, continue reading next request
+				continue
+			case <-ctx.Done():
+				return ctx.Err()
 			}
-			continue
 		}
 
 		// Extract request body - special handling for ApiVersions requests
@@ -594,105 +733,133 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			}
 		}
 
-		// Handle the request based on API key and version
-		var response []byte
-		var err error
-
-		// Record request start time for latency tracking
-		requestStart := time.Now()
-
+		// CRITICAL: Route request to appropriate processor
+		// Control plane: Fast, never blocks (Metadata, Heartbeat, etc.)
+		// Data plane: Can be slow (Fetch, Produce)
 		Debug("API REQUEST - Key: %d (%s), Version: %d, Correlation: %d", apiKey, getAPIName(apiKey), apiVersion, correlationID)
 
-		// CRITICAL DEBUG: Log every API request to see if we're reaching this point
-		Debug("PROCESSING API REQUEST: Key=%d (%s), Version=%d, Correlation=%d", apiKey, apiName, apiVersion, correlationID)
-
-		switch apiKey {
-		case 18: // ApiVersions
-			Debug("-> ApiVersions v%d", apiVersion)
-
-			response, err = h.handleApiVersions(correlationID, apiVersion)
-
-		case 3: // Metadata
-			Debug("-> Metadata v%d", apiVersion)
-			fmt.Printf("🔥 PROTOCOL DEBUG: Calling handleMetadata v%d for correlation %d\n", apiVersion, correlationID)
-			response, err = h.handleMetadata(correlationID, apiVersion, requestBody)
-			fmt.Printf("🔥 PROTOCOL DEBUG: handleMetadata returned, err=%v, responseLen=%d\n", err, len(response))
-		case 2: // ListOffsets
-			response, err = h.handleListOffsets(correlationID, apiVersion, requestBody)
-		case 19: // CreateTopics
-			response, err = h.handleCreateTopics(correlationID, apiVersion, requestBody)
-		case 20: // DeleteTopics
-			response, err = h.handleDeleteTopics(correlationID, requestBody)
-		case 0: // Produce
-			Debug("-> Produce v%d", apiVersion)
-			fmt.Printf("🔥 PROTOCOL DEBUG: Calling handleProduce for correlation %d\n", correlationID)
-			response, err = h.handleProduce(correlationID, apiVersion, requestBody)
-			fmt.Printf("🔥 PROTOCOL DEBUG: handleProduce returned, err=%v\n", err)
-		case 1: // Fetch
-			Debug("-> Fetch v%d", apiVersion)
-			response, err = h.handleFetch(ctx, correlationID, apiVersion, requestBody)
-		case 11: // JoinGroup
-			Debug("-> JoinGroup v%d", apiVersion)
-			response, err = h.handleJoinGroup(correlationID, apiVersion, requestBody)
-		case 14: // SyncGroup
-			Debug("-> SyncGroup v%d", apiVersion)
-			response, err = h.handleSyncGroup(correlationID, apiVersion, requestBody)
-		case 8: // OffsetCommit
-			Debug("-> OffsetCommit")
-			response, err = h.handleOffsetCommit(correlationID, requestBody)
-		case 9: // OffsetFetch
-			Debug("-> OffsetFetch v%d", apiVersion)
-			response, err = h.handleOffsetFetch(correlationID, apiVersion, requestBody)
-		case 10: // FindCoordinator
-			Debug("-> FindCoordinator v%d", apiVersion)
-			response, err = h.handleFindCoordinator(correlationID, apiVersion, requestBody)
-		case 12: // Heartbeat
-			Debug("-> Heartbeat v%d", apiVersion)
-			response, err = h.handleHeartbeat(correlationID, apiVersion, requestBody)
-		case 13: // LeaveGroup
-			response, err = h.handleLeaveGroup(correlationID, apiVersion, requestBody)
-		case 15: // DescribeGroups
-			Debug("DescribeGroups request received, correlation: %d, version: %d", correlationID, apiVersion)
-			response, err = h.handleDescribeGroups(correlationID, apiVersion, requestBody)
-		case 16: // ListGroups
-			Debug("ListGroups request received, correlation: %d, version: %d", correlationID, apiVersion)
-			response, err = h.handleListGroups(correlationID, apiVersion, requestBody)
-		case 32: // DescribeConfigs
-			Debug("DescribeConfigs request received, correlation: %d, version: %d", correlationID, apiVersion)
-			response, err = h.handleDescribeConfigs(correlationID, apiVersion, requestBody)
-		case 22: // InitProducerId
-			Debug("-> InitProducerId v%d", apiVersion)
-			fmt.Printf("🔥 PROTOCOL DEBUG: Calling handleInitProducerId for correlation %d\n", correlationID)
-			response, err = h.handleInitProducerId(correlationID, apiVersion, requestBody)
-			fmt.Printf("🔥 PROTOCOL DEBUG: handleInitProducerId returned, err=%v, responseLen=%d\n", err, len(response))
-		default:
-			Warning("Unsupported API key: %d (%s) v%d - Correlation: %d", apiKey, apiName, apiVersion, correlationID)
-			err = fmt.Errorf("unsupported API key: %d (version %d)", apiKey, apiVersion)
+		req := &kafkaRequest{
+			correlationID: correlationID,
+			apiKey:        apiKey,
+			apiVersion:    apiVersion,
+			requestBody:   requestBody,
+			ctx:           ctx,
 		}
 
-		// Record metrics based on success/error
-		requestLatency := time.Since(requestStart)
-		if err != nil {
-			RecordErrorMetrics(apiKey, requestLatency)
-			return fmt.Errorf("handle request: %w", err)
+		// Route to appropriate channel based on API key
+		var targetChan chan *kafkaRequest
+		if isDataPlaneAPI(apiKey) {
+			targetChan = dataChan
+			Debug("[%s] Routing correlation=%d to DATA plane", connectionID, correlationID)
+		} else {
+			targetChan = controlChan
+			Debug("[%s] Routing correlation=%d to CONTROL plane", connectionID, correlationID)
 		}
 
-		// Send response with timeout handling
-		Debug("[%s] Sending %s response: %d bytes", connectionID, getAPIName(apiKey), len(response))
-		fmt.Printf("🔥 PROTOCOL DEBUG: Sending %s response: %d bytes for correlation %d\n", getAPIName(apiKey), len(response), correlationID)
-		if err := h.writeResponseWithTimeout(w, response, timeoutConfig.WriteTimeout); err != nil {
-			errorCode := HandleTimeoutError(err, "write")
-			Error("[%s] Error sending response: %v (code: %d)", connectionID, err, errorCode)
-			RecordErrorMetrics(apiKey, requestLatency)
-			return fmt.Errorf("send response: %w", err)
+		select {
+		case targetChan <- req:
+			// Request queued successfully, continue reading next request
+		case <-ctx.Done():
+			return ctx.Err()
 		}
-
-		// Record successful request metrics
-		RecordRequestMetrics(apiKey, requestLatency)
-
-		// Minimal flush logging
-		// Debug("API %d flushed", apiKey)
 	}
+}
+
+// processRequestSync processes a single Kafka API request synchronously and returns the response
+func (h *Handler) processRequestSync(req *kafkaRequest) ([]byte, error) {
+	// Record request start time for latency tracking
+	requestStart := time.Now()
+	apiName := getAPIName(req.apiKey)
+
+	Debug("PROCESSING API REQUEST: Key=%d (%s), Version=%d, Correlation=%d",
+		req.apiKey, apiName, req.apiVersion, req.correlationID)
+
+	var response []byte
+	var err error
+
+	switch req.apiKey {
+	case 18: // ApiVersions
+		Debug("-> ApiVersions v%d", req.apiVersion)
+		response, err = h.handleApiVersions(req.correlationID, req.apiVersion)
+
+	case 3: // Metadata
+		Debug("-> Metadata v%d", req.apiVersion)
+		response, err = h.handleMetadata(req.correlationID, req.apiVersion, req.requestBody)
+
+	case 2: // ListOffsets
+		response, err = h.handleListOffsets(req.correlationID, req.apiVersion, req.requestBody)
+
+	case 19: // CreateTopics
+		response, err = h.handleCreateTopics(req.correlationID, req.apiVersion, req.requestBody)
+
+	case 20: // DeleteTopics
+		response, err = h.handleDeleteTopics(req.correlationID, req.requestBody)
+
+	case 0: // Produce
+		Debug("-> Produce v%d", req.apiVersion)
+		response, err = h.handleProduce(req.correlationID, req.apiVersion, req.requestBody)
+
+	case 1: // Fetch
+		Debug("-> Fetch v%d", req.apiVersion)
+		response, err = h.handleFetch(req.ctx, req.correlationID, req.apiVersion, req.requestBody)
+
+	case 11: // JoinGroup
+		Debug("-> JoinGroup v%d", req.apiVersion)
+		response, err = h.handleJoinGroup(req.correlationID, req.apiVersion, req.requestBody)
+
+	case 14: // SyncGroup
+		Debug("-> SyncGroup v%d", req.apiVersion)
+		response, err = h.handleSyncGroup(req.correlationID, req.apiVersion, req.requestBody)
+
+	case 8: // OffsetCommit
+		Debug("-> OffsetCommit")
+		response, err = h.handleOffsetCommit(req.correlationID, req.requestBody)
+
+	case 9: // OffsetFetch
+		Debug("-> OffsetFetch v%d", req.apiVersion)
+		response, err = h.handleOffsetFetch(req.correlationID, req.apiVersion, req.requestBody)
+
+	case 10: // FindCoordinator
+		Debug("-> FindCoordinator v%d", req.apiVersion)
+		response, err = h.handleFindCoordinator(req.correlationID, req.apiVersion, req.requestBody)
+
+	case 12: // Heartbeat
+		Debug("-> Heartbeat v%d", req.apiVersion)
+		response, err = h.handleHeartbeat(req.correlationID, req.apiVersion, req.requestBody)
+
+	case 13: // LeaveGroup
+		response, err = h.handleLeaveGroup(req.correlationID, req.apiVersion, req.requestBody)
+
+	case 15: // DescribeGroups
+		Debug("DescribeGroups request received, correlation: %d, version: %d", req.correlationID, req.apiVersion)
+		response, err = h.handleDescribeGroups(req.correlationID, req.apiVersion, req.requestBody)
+
+	case 16: // ListGroups
+		Debug("ListGroups request received, correlation: %d, version: %d", req.correlationID, req.apiVersion)
+		response, err = h.handleListGroups(req.correlationID, req.apiVersion, req.requestBody)
+
+	case 32: // DescribeConfigs
+		Debug("DescribeConfigs request received, correlation: %d, version: %d", req.correlationID, req.apiVersion)
+		response, err = h.handleDescribeConfigs(req.correlationID, req.apiVersion, req.requestBody)
+
+	case 22: // InitProducerId
+		Debug("-> InitProducerId v%d", req.apiVersion)
+		response, err = h.handleInitProducerId(req.correlationID, req.apiVersion, req.requestBody)
+
+	default:
+		Warning("Unsupported API key: %d (%s) v%d - Correlation: %d", req.apiKey, apiName, req.apiVersion, req.correlationID)
+		err = fmt.Errorf("unsupported API key: %d (version %d)", req.apiKey, req.apiVersion)
+	}
+
+	// Record metrics
+	requestLatency := time.Since(requestStart)
+	if err != nil {
+		RecordErrorMetrics(req.apiKey, requestLatency)
+	} else {
+		RecordRequestMetrics(req.apiKey, requestLatency)
+	}
+
+	return response, err
 }
 
 // ApiKeyInfo represents supported API key information
@@ -807,7 +974,7 @@ func (h *Handler) HandleMetadataV0(correlationID uint32, requestBody []byte) ([]
 	response = append(response, 0, 0, 0, 1) // node_id = 1 (consistent with partitions)
 
 	// Get advertised address for client connections
-	host, port := h.getAdvertisedAddress(h.GetGatewayAddress())
+	host, port := h.GetAdvertisedAddress(h.GetGatewayAddress())
 
 	// Host (STRING: 2 bytes length + bytes)
 	hostLen := uint16(len(host))
@@ -932,7 +1099,7 @@ func (h *Handler) HandleMetadataV1(correlationID uint32, requestBody []byte) ([]
 	response = append(response, 0, 0, 0, 1) // node_id = 1
 
 	// Get advertised address for client connections
-	host, port := h.getAdvertisedAddress(h.GetGatewayAddress())
+	host, port := h.GetAdvertisedAddress(h.GetGatewayAddress())
 
 	// Host (STRING: 2 bytes length + bytes)
 	hostLen := uint16(len(host))
@@ -1041,7 +1208,7 @@ func (h *Handler) HandleMetadataV2(correlationID uint32, requestBody []byte) ([]
 	binary.Write(&buf, binary.BigEndian, int32(1))
 
 	// Get advertised address for client connections
-	host, port := h.getAdvertisedAddress(h.GetGatewayAddress())
+	host, port := h.GetAdvertisedAddress(h.GetGatewayAddress())
 
 	nodeID := int32(1) // Single gateway node
 
@@ -1059,8 +1226,10 @@ func (h *Handler) HandleMetadataV2(correlationID uint32, requestBody []byte) ([]
 	binary.Write(&buf, binary.BigEndian, int16(0)) // Empty string
 
 	// ClusterID (NULLABLE_STRING: 2 bytes length + data) - v2 addition
-	// Use -1 length to indicate null
-	binary.Write(&buf, binary.BigEndian, int16(-1)) // Null cluster ID
+	// Schema Registry requires a non-null cluster ID
+	clusterID := "seaweedfs-kafka-gateway"
+	binary.Write(&buf, binary.BigEndian, int16(len(clusterID)))
+	buf.WriteString(clusterID)
 
 	// ControllerID (4 bytes) - v1+ addition
 	binary.Write(&buf, binary.BigEndian, int32(1))
@@ -1144,7 +1313,7 @@ func (h *Handler) HandleMetadataV3V4(correlationID uint32, requestBody []byte) (
 	binary.Write(&buf, binary.BigEndian, int32(1))
 
 	// Get advertised address for client connections
-	host, port := h.getAdvertisedAddress(h.GetGatewayAddress())
+	host, port := h.GetAdvertisedAddress(h.GetGatewayAddress())
 
 	nodeID := int32(1) // Single gateway node
 
@@ -1162,8 +1331,10 @@ func (h *Handler) HandleMetadataV3V4(correlationID uint32, requestBody []byte) (
 	binary.Write(&buf, binary.BigEndian, int16(0)) // Empty string
 
 	// ClusterID (NULLABLE_STRING: 2 bytes length + data) - v2+ addition
-	// Use -1 length to indicate null
-	binary.Write(&buf, binary.BigEndian, int16(-1)) // Null cluster ID
+	// Schema Registry requires a non-null cluster ID
+	clusterID := "seaweedfs-kafka-gateway"
+	binary.Write(&buf, binary.BigEndian, int16(len(clusterID)))
+	buf.WriteString(clusterID)
 
 	// ControllerID (4 bytes) - v1+ addition
 	binary.Write(&buf, binary.BigEndian, int32(1))
@@ -1270,7 +1441,7 @@ func (h *Handler) HandleMetadataV5V6(correlationID uint32, requestBody []byte) (
 	binary.Write(&buf, binary.BigEndian, int32(1))
 
 	// Get advertised address for client connections
-	host, port := h.getAdvertisedAddress(h.GetGatewayAddress())
+	host, port := h.GetAdvertisedAddress(h.GetGatewayAddress())
 
 	nodeID := int32(1) // Single gateway node
 
@@ -1288,8 +1459,10 @@ func (h *Handler) HandleMetadataV5V6(correlationID uint32, requestBody []byte) (
 	binary.Write(&buf, binary.BigEndian, int16(0)) // Empty string
 
 	// ClusterID (NULLABLE_STRING: 2 bytes length + data) - v2+ addition
-	// Use -1 length to indicate null
-	binary.Write(&buf, binary.BigEndian, int16(-1)) // Null cluster ID
+	// Schema Registry requires a non-null cluster ID
+	clusterID := "seaweedfs-kafka-gateway"
+	binary.Write(&buf, binary.BigEndian, int16(len(clusterID)))
+	buf.WriteString(clusterID)
 
 	// ControllerID (4 bytes) - v1+ addition
 	binary.Write(&buf, binary.BigEndian, int32(1))
@@ -1389,7 +1562,7 @@ func (h *Handler) HandleMetadataV7(correlationID uint32, requestBody []byte) ([]
 	buf.Write(CompactArrayLength(1)) // 1 broker
 
 	// Get advertised address for client connections
-	host, port := h.getAdvertisedAddress(h.GetGatewayAddress())
+	host, port := h.GetAdvertisedAddress(h.GetGatewayAddress())
 
 	nodeID := int32(1) // Single gateway node
 

@@ -128,13 +128,13 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 	}
 
 	return func(startPosition log_buffer.MessagePosition, stopTsNs int64, eachLogEntryFn log_buffer.EachLogEntryFuncType) (lastReadPosition log_buffer.MessagePosition, isDone bool, err error) {
-		startFileName := startPosition.UTC().Format(topic.TIME_FORMAT)
+		startFileName := startPosition.Time.UTC().Format(topic.TIME_FORMAT)
 		startTsNs := startPosition.Time.UnixNano()
 		stopTime := time.Unix(0, stopTsNs)
 		var processedTsNs int64
 
 		// Check if this is an offset-based subscription
-		isOffsetBased := startPosition.IsOffsetBased()
+		isOffsetBased := startPosition.IsOffsetBased
 		var startOffset int64
 		if isOffsetBased {
 			startOffset = startPosition.Offset
@@ -168,7 +168,7 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 					topicName = topicName[dotIndex+1:] // Remove namespace prefix
 				}
 				isSystemTopic := strings.HasPrefix(topicName, "_")
-				if !isSystemTopic && !isOffsetBased && startPosition.Time.Unix() > 86400 && entry.Name < startPosition.UTC().Format(topic.TIME_FORMAT) {
+				if !isSystemTopic && !isOffsetBased && startPosition.Time.Unix() > 86400 && entry.Name < startPosition.Time.UTC().Format(topic.TIME_FORMAT) {
 					return nil
 				}
 				if processedTsNs, err = eachFileFn(entry, eachLogEntryFn, startTsNs, stopTsNs, startOffset, isOffsetBased); err != nil {

@@ -782,7 +782,7 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 					// Log original batch size and detailed field breakdown
 					fmt.Printf("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
 					fmt.Printf("📏 ORIGINAL BATCH: topic=%s partition=%d size=%d bytes\n", topicName, partitionID, len(recordSetData))
-					
+
 					if len(recordSetData) >= 61 {
 						fmt.Printf("  Header Structure:\n")
 						fmt.Printf("    Base Offset (0-7):     %x\n", recordSetData[0:8])
@@ -799,12 +799,12 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 						fmt.Printf("    Base Sequence (53-56):  %x\n", recordSetData[53:57])
 						fmt.Printf("    Record Count (57-60):   %x\n", recordSetData[57:61])
 						if len(recordSetData) > 61 {
-							fmt.Printf("    Records Section (61+):  %x... (%d bytes)\n", 
+							fmt.Printf("    Records Section (61+):  %x... (%d bytes)\n",
 								recordSetData[61:min(81, len(recordSetData))], len(recordSetData)-61)
 						}
 					}
 					fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
-					
+
 					// Extract all records from the record set and publish each one
 					records := h.extractAllRecords(recordSetData)
 					Debug("🔥 EXTRACT DEBUG: extractAllRecords returned %d records from %d bytes", len(records), len(recordSetData))
@@ -1285,22 +1285,25 @@ func (h *Handler) produceSchemaBasedRecord(topic string, partition int32, key []
 	}
 
 	// Check and decode value if schematized
-	if value != nil {
+	if value != nil && len(value) > 0 {
 		isSchematized := h.schemaManager.IsSchematized(value)
 		fmt.Printf("🔍 SCHEMA CHECK: topic=%s value len=%d, isSchematized=%v, firstByte=%#x\n", topic, len(value), isSchematized, value[0])
 		if isSchematized {
 			var err error
 			valueDecodedMsg, err = h.schemaManager.DecodeMessage(value)
 			if err != nil {
-				// Add delay before returning schema decoding error to prevent overloading
+				// CRITICAL: If message has schema ID (magic byte 0x00), decoding MUST succeed
+				// Do not fall back to raw storage - this would corrupt the data model
+				fmt.Printf("❌ SCHEMA ERROR: Message has schema ID but decoding failed: %v\n", err)
 				time.Sleep(100 * time.Millisecond)
-				return 0, fmt.Errorf("failed to decode schematized value: %w", err)
+				return 0, fmt.Errorf("message has schema ID but decoding failed (schema registry may be unavailable): %w", err)
 			}
 			fmt.Printf("✅ SCHEMA: Successfully decoded value for topic %s\n", topic)
 		}
 	}
 
 	// If neither key nor value is schematized, fall back to raw message handling
+	// This is OK for non-schematized messages (no magic byte 0x00)
 	if keyDecodedMsg == nil && valueDecodedMsg == nil {
 		fmt.Printf("⚠️  SCHEMA: Neither key nor value is schematized for topic %s - falling back to raw storage\n", topic)
 		return h.seaweedMQHandler.ProduceRecord(topic, partition, key, value)

@@ -10,6 +10,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 	"google.golang.org/grpc"
@@ -81,6 +82,54 @@ func (p *LocalPartition) Subscribe(clientName string, startPosition log_buffer.M
 	var readInMemoryLogErr error
 	var isDone bool
 
+	// CRITICAL FIX: If this is an offset-based subscription, use LoopProcessLogDataWithOffset
+	if startPosition.IsOffsetBased {
+		glog.V(0).Infof("🔥 BROKER: Using OFFSET-BASED subscription for %s starting at offset %d", clientName, startPosition.Offset)
+
+		// Wrap eachMessageFn to match EachLogEntryWithOffsetFuncType (which takes an additional offset parameter)
+		eachMessageFnWithOffset := func(logEntry *filer_pb.LogEntry, offset int64) (bool, error) {
+			return eachMessageFn(logEntry)
+		}
+
+		for {
+			// For offset-based subscriptions, ReadFromDiskFn already supports offset-based reads
+			// Pass startPosition directly - the disk reader will filter by offset
+			processedPosition, isDone, readPersistedLogErr = p.LogBuffer.ReadFromDiskFn(startPosition, 0, eachMessageFn)
+			if readPersistedLogErr != nil {
+				glog.V(0).Infof("%s read %v persisted log (offset-based): %v", clientName, p.Partition, readPersistedLogErr)
+				return readPersistedLogErr
+			}
+			if isDone {
+				return nil
+			}
+
+			// Update startPosition after disk read
+			if processedPosition.Offset > 0 {
+				startPosition = processedPosition
+				glog.V(0).Infof("🔥 BROKER: Updated startPosition after disk read to offset %d", startPosition.Offset)
+			}
+
+			// Now read from memory
+			processedPosition, isDone, readInMemoryLogErr = p.LogBuffer.LoopProcessLogDataWithOffset(clientName, startPosition, 0, onNoMessageFn, eachMessageFnWithOffset)
+			if isDone {
+				return nil
+			}
+			if processedPosition.Offset > 0 {
+				startPosition = processedPosition
+			}
+
+			if readInMemoryLogErr == log_buffer.ResumeFromDiskError {
+				glog.V(0).Infof("🔥 BROKER: Got ResumeFromDiskError, continuing loop for offset-based read")
+				continue
+			}
+			if readInMemoryLogErr != nil {
+				glog.V(0).Infof("%s read %v in memory log (offset-based): %v", clientName, p.Partition, readInMemoryLogErr)
+				return readInMemoryLogErr
+			}
+		}
+	}
+
+	// TIMESTAMP-BASED subscription (original logic)
 	for {
 		processedPosition, isDone, readPersistedLogErr = p.LogBuffer.ReadFromDiskFn(startPosition, 0, eachMessageFn)
 		if readPersistedLogErr != nil {
@@ -227,7 +276,7 @@ func (p *LocalPartition) MaybeShutdownLocalPartition() (hasShutdown bool) {
 func (p *LocalPartition) MaybeShutdownLocalPartitionForTopic(topicName string) (hasShutdown bool) {
 	// For system topics like _schemas, be more conservative about shutdown
 	if isSystemTopic(topicName) {
-		glog.V(0).Infof("System topic %s - skipping aggressive shutdown for partition %v (Publishers:%d Subscribers:%d)", 
+		glog.V(0).Infof("System topic %s - skipping aggressive shutdown for partition %v (Publishers:%d Subscribers:%d)",
 			topicName, p.Partition, p.Publishers.Size(), p.Subscribers.Size())
 		return false
 	}

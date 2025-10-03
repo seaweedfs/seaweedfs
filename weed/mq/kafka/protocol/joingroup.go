@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/consumer"
 )
 
@@ -961,6 +962,14 @@ func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, reque
 	}
 
 	Debug("SyncGroup v%d: Building successful response - Assignment length=%d bytes", apiVersion, len(assignment))
+
+	// Log assignment details for debugging
+	assignmentPreview := assignment
+	if len(assignmentPreview) > 100 {
+		assignmentPreview = assignment[:100]
+	}
+	glog.Infof("🎯 SYNC GROUP ASSIGNMENT: groupID=%s memberID=%s assignmentSize=%d assignmentHex=%x", request.GroupID, request.MemberID, len(assignment), assignmentPreview)
+
 	resp := h.buildSyncGroupResponse(response, apiVersion)
 	Debug("SyncGroup v%d: Response built - %d bytes total", apiVersion, len(resp))
 	return resp, nil

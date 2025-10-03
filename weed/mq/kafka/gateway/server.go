@@ -129,9 +129,10 @@ func (s *Server) Start() error {
 	s.ln = ln
 
 	// Get gateway address for coordinator registry
-	host, port := s.GetListenerAddr()
+	// Use the advertised address that will be returned in Metadata responses
+	host, port := s.handler.GetAdvertisedAddress(s.opts.Listen)
 	gatewayAddress := fmt.Sprintf("%s:%d", host, port)
-	glog.V(1).Infof("Kafka gateway started at %s, will advertise SMQ brokers in Metadata responses", gatewayAddress)
+	glog.V(1).Infof("Kafka gateway listening on %s, advertising as %s in Metadata responses", s.opts.Listen, gatewayAddress)
 
 	// Set gateway address in handler for coordinator registry
 	s.handler.SetGatewayAddress(gatewayAddress)

@@ -169,7 +169,7 @@ func GenParquetReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p topic
 	}
 
 	return func(startPosition log_buffer.MessagePosition, stopTsNs int64, eachLogEntryFn log_buffer.EachLogEntryFuncType) (lastReadPosition log_buffer.MessagePosition, isDone bool, err error) {
-		startFileName := startPosition.UTC().Format(topic.TIME_FORMAT)
+		startFileName := startPosition.Time.UTC().Format(topic.TIME_FORMAT)
 		startTsNs := startPosition.Time.UnixNano()
 		var processedTsNs int64
 

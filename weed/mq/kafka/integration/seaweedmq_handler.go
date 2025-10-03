@@ -61,9 +61,10 @@ type SeaweedMQHandler struct {
 // ConnectionContext holds connection-specific information for requests
 // This is a local copy to avoid circular dependency with protocol package
 type ConnectionContext struct {
-	ClientID      string // Kafka client ID from request headers
-	ConsumerGroup string // Consumer group (set by JoinGroup)
-	MemberID      string // Consumer group member ID (set by JoinGroup)
+	ClientID      string      // Kafka client ID from request headers
+	ConsumerGroup string      // Consumer group (set by JoinGroup)
+	MemberID      string      // Consumer group member ID (set by JoinGroup)
+	BrokerClient  interface{} // Per-connection broker client (*BrokerClient)
 }
 
 // ProtocolHandler interface for accessing Handler's connection context
@@ -104,26 +105,25 @@ func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromO
 		return nil, fmt.Errorf("topic %s does not exist", topic)
 	}
 
-	// Use SeaweedMQ's proper subscriber API to read records
-	if h.brokerClient == nil {
-		return nil, fmt.Errorf("no broker client available")
-	}
-
-	// CRITICAL FIX: Create a FRESH subscriber session for each fetch request
-	// Previously, GetOrCreateSubscriber would reuse a cached session if the startOffset matched,
-	// but that session may have already consumed past the requested offset, causing stale/empty reads.
-	// This was the root cause of Schema Registry seeing empty values for offsets 2-11.
-	glog.Infof("[FETCH] Creating fresh subscriber for topic=%s partition=%d fromOffset=%d", topic, partition, fromOffset)
-
-	// Extract consumer group and client ID from Handler's connection context if available
-	// These values are set by JoinGroup (consumer group) and parsed from request headers (client ID)
+	// CRITICAL: Use per-connection BrokerClient to prevent gRPC stream interference
+	// Each Kafka connection has its own isolated BrokerClient instance
+	var brokerClient *BrokerClient
 	consumerGroup := "kafka-fetch-consumer"                            // default
 	consumerID := fmt.Sprintf("kafka-fetch-%d", time.Now().UnixNano()) // default
 
-	// Try to get actual values from Handler's connection context
+	// Get the per-connection broker client from connection context
 	if h.protocolHandler != nil {
 		connCtx := h.protocolHandler.GetConnectionContext()
 		if connCtx != nil {
+			// Extract per-connection broker client
+			if connCtx.BrokerClient != nil {
+				if bc, ok := connCtx.BrokerClient.(*BrokerClient); ok {
+					brokerClient = bc
+					glog.Infof("[FETCH] Using per-connection BrokerClient for topic=%s partition=%d", topic, partition)
+				}
+			}
+
+			// Extract consumer group and client ID
 			if connCtx.ConsumerGroup != "" {
 				consumerGroup = connCtx.ConsumerGroup
 				glog.Infof("[FETCH] Using actual consumer group from context: %s", consumerGroup)
@@ -139,7 +139,22 @@ func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromO
 		}
 	}
 
-	brokerSubscriber, err := h.brokerClient.CreateFreshSubscriber(topic, partition, fromOffset, consumerGroup, consumerID)
+	// Fallback to shared broker client if per-connection client not available
+	if brokerClient == nil {
+		glog.Warningf("[FETCH] No per-connection BrokerClient, falling back to shared client")
+		brokerClient = h.brokerClient
+		if brokerClient == nil {
+			return nil, fmt.Errorf("no broker client available")
+		}
+	}
+
+	// CRITICAL FIX: Create a FRESH subscriber session for each fetch request
+	// Previously, GetOrCreateSubscriber would reuse a cached session if the startOffset matched,
+	// but that session may have already consumed past the requested offset, causing stale/empty reads.
+	// This was the root cause of Schema Registry seeing empty values for offsets 2-11.
+	glog.Infof("[FETCH] Creating fresh subscriber for topic=%s partition=%d fromOffset=%d", topic, partition, fromOffset)
+
+	brokerSubscriber, err := brokerClient.CreateFreshSubscriber(topic, partition, fromOffset, consumerGroup, consumerID)
 	if err != nil {
 		glog.Errorf("[FETCH] Failed to create fresh subscriber: %v", err)
 		return nil, fmt.Errorf("failed to create fresh subscriber: %v", err)
@@ -156,7 +171,7 @@ func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromO
 
 	// Read records using the subscriber
 	glog.Infof("[FETCH] Calling ReadRecords for topic=%s partition=%d maxRecords=%d", topic, partition, maxRecords)
-	seaweedRecords, err := h.brokerClient.ReadRecords(brokerSubscriber, maxRecords)
+	seaweedRecords, err := brokerClient.ReadRecords(brokerSubscriber, maxRecords)
 	if err != nil {
 		glog.Errorf("[FETCH] ReadRecords failed: %v", err)
 		return nil, fmt.Errorf("failed to read records: %v", err)
@@ -318,6 +333,29 @@ func (h *SeaweedMQHandler) Close() error {
 		return h.brokerClient.Close()
 	}
 	return nil
+}
+
+// CreatePerConnectionBrokerClient creates a new BrokerClient instance for a specific connection
+// CRITICAL: Each Kafka TCP connection gets its own BrokerClient to prevent gRPC stream interference
+// This fixes the deadlock where CreateFreshSubscriber would block all connections
+func (h *SeaweedMQHandler) CreatePerConnectionBrokerClient() (*BrokerClient, error) {
+	// Use the same broker addresses as the shared client
+	if len(h.brokerAddresses) == 0 {
+		return nil, fmt.Errorf("no broker addresses available")
+	}
+
+	// Use the first broker address (in production, could use load balancing)
+	brokerAddress := h.brokerAddresses[0]
+	glog.Infof("[BROKER_CLIENT] Creating per-connection client to %s", brokerAddress)
+
+	// Create a new client with the shared filer accessor
+	client, err := NewBrokerClientWithFilerAccessor(brokerAddress, h.filerClientAccessor)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create broker client: %w", err)
+	}
+
+	glog.Infof("[BROKER_CLIENT] Successfully created per-connection client")
+	return client, nil
 }
 
 // CreateTopic creates a new topic in both Kafka registry and SeaweedMQ
@@ -1088,6 +1126,9 @@ type BrokerSubscriberSession struct {
 	Stream    mq_pb.SeaweedMessaging_SubscribeMessageClient
 	// Track the requested start offset used to initialize this stream
 	StartOffset int64
+	// Context for canceling reads (used for timeout)
+	Ctx    context.Context
+	Cancel context.CancelFunc
 }
 
 // NewBrokerClientWithFilerAccessor creates a client with a shared filer accessor
@@ -1880,6 +1921,7 @@ func (bc *BrokerClient) ReadRecords(session *BrokerSubscriberSession, maxRecords
 	var records []*SeaweedRecord
 	currentOffset := session.StartOffset // Start from the exact offset requested
 
+	// Read loop with early return on first record
 	for len(records) < maxRecords {
 		resp, err := session.Stream.Recv()
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/consumer"
 )
 
@@ -109,7 +110,6 @@ func (h *Handler) handleOffsetCommit(correlationID uint32, requestBody []byte) (
 		return h.buildOffsetCommitErrorResponse(correlationID, ErrorCodeInvalidCommitOffsetSize), nil
 	}
 
-
 	// Validate request
 	if req.GroupID == "" || req.MemberID == "" {
 		return h.buildOffsetCommitErrorResponse(correlationID, ErrorCodeInvalidGroupID), nil
@@ -183,7 +183,6 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, req
 		return h.buildOffsetFetchErrorResponse(correlationID, ErrorCodeInvalidGroupID), nil
 	}
 
-
 	// Validate request
 	if request.GroupID == "" {
 		return h.buildOffsetFetchErrorResponse(correlationID, ErrorCodeInvalidGroupID), nil
@@ -252,6 +251,11 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, req
 				Metadata:    metadata,
 				ErrorCode:   errorCode,
 			}
+
+			// Log the offset being returned
+			glog.Infof("🎯 OFFSET FETCH RESPONSE: group=%s topic=%s partition=%d offset=%d metadata=%q",
+				request.GroupID, topic.Name, partition, fetchedOffset, metadata)
+
 			topicResponse.Partitions = append(topicResponse.Partitions, partitionResponse)
 		}
 

@@ -73,6 +73,7 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 
 	// Build the response
 	response := make([]byte, 0, 1024)
+	totalAppendedRecordBytes := 0
 
 	// Correlation ID (4 bytes)
 	correlationIDBytes := make([]byte, 4)
@@ -171,23 +172,23 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 				}
 			}
 
-		// Normalize special fetch offsets: -2 = earliest, -1 = latest
-		effectiveFetchOffset := partition.FetchOffset
-		if effectiveFetchOffset < 0 {
-			if effectiveFetchOffset == -2 { // earliest
-				effectiveFetchOffset = 0
-			} else if effectiveFetchOffset == -1 { // latest
-				effectiveFetchOffset = highWaterMark
+			// Normalize special fetch offsets: -2 = earliest, -1 = latest
+			effectiveFetchOffset := partition.FetchOffset
+			if effectiveFetchOffset < 0 {
+				if effectiveFetchOffset == -2 { // earliest
+					effectiveFetchOffset = 0
+				} else if effectiveFetchOffset == -1 { // latest
+					effectiveFetchOffset = highWaterMark
+				}
 			}
-		}
-		
-		if strings.HasPrefix(topic.Name, "_schemas") {
-			glog.Infof("📍 SR FETCH REQUEST: topic=%s partition=%d requestOffset=%d effectiveOffset=%d highWaterMark=%d", 
-				topic.Name, partition.PartitionID, partition.FetchOffset, effectiveFetchOffset, highWaterMark)
-		}
 
-		fetchStartTime := time.Now()
-		Debug("Fetch v%d - Topic: %s, partition: %d, fetchOffset: %d (effective: %d), highWaterMark: %d, maxBytes: %d",
+			if strings.HasPrefix(topic.Name, "_schemas") {
+				glog.Infof("📍 SR FETCH REQUEST: topic=%s partition=%d requestOffset=%d effectiveOffset=%d highWaterMark=%d",
+					topic.Name, partition.PartitionID, partition.FetchOffset, effectiveFetchOffset, highWaterMark)
+			}
+
+			fetchStartTime := time.Now()
+			Debug("Fetch v%d - Topic: %s, partition: %d, fetchOffset: %d (effective: %d), highWaterMark: %d, maxBytes: %d",
 				apiVersion, topic.Name, partition.PartitionID, partition.FetchOffset, effectiveFetchOffset, highWaterMark, partition.MaxBytes)
 
 			// High water mark (8 bytes)
@@ -251,8 +252,12 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 					Debug("Multi-batch result - %d batches, %d bytes, next offset %d, duration=%v",
 						result.BatchCount, result.TotalSize, result.NextOffset, multiBatchDuration)
 					recordBatch = result.RecordBatches
+					if strings.Contains(topic.Name, "loadtest") {
+						glog.Infof("🎁 FETCH PAYLOAD READY: topic=%s partition=%d fetchOffset=%d batches=%d bytes=%d nextOffset=%d",
+							topic.Name, partition.PartitionID, effectiveFetchOffset, result.BatchCount, result.TotalSize, result.NextOffset)
+					}
 					if strings.HasPrefix(topic.Name, "_schemas") {
-						glog.Infof("📍 SR FETCH RESPONSE: topic=%s partition=%d fetchOffset=%d batches=%d bytes=%d nextOffset=%d", 
+						glog.Infof("📍 SR FETCH RESPONSE: topic=%s partition=%d fetchOffset=%d batches=%d bytes=%d nextOffset=%d",
 							topic.Name, partition.PartitionID, effectiveFetchOffset, result.BatchCount, result.TotalSize, result.NextOffset)
 					}
 				} else {
@@ -278,11 +283,18 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 			}
 
 			// Try to fetch schematized records if this topic uses schema management
-			if isSchematizedTopic {
+			// BUT ONLY if we don't already have a recordBatch from the multi-batch fetcher
+			// to avoid double-fetching which causes blocking
+			if isSchematizedTopic && len(recordBatch) == 0 {
+				glog.Infof("🔮 SCHEMA PATH: topic=%s partition=%d offset=%d isSchematizedTopic=true, recordBatch empty, attempting fetchSchematizedRecords",
+					topic.Name, partition.PartitionID, effectiveFetchOffset)
 				schematizedRecords, err := h.fetchSchematizedRecords(topic.Name, partition.PartitionID, effectiveFetchOffset, partition.MaxBytes)
 				if err != nil {
+					glog.Infof("🔮 SCHEMA PATH ERROR: topic=%s partition=%d err=%v", topic.Name, partition.PartitionID, err)
 					Debug("Failed to fetch schematized records for topic %s partition %d: %v", topic.Name, partition.PartitionID, err)
 				} else if len(schematizedRecords) > 0 {
+					glog.Infof("🔮 SCHEMA PATH SUCCESS: topic=%s partition=%d schematizedRecords=%d, creating batch",
+						topic.Name, partition.PartitionID, len(schematizedRecords))
 					Debug("Successfully fetched %d schematized records for topic %s partition %d", len(schematizedRecords), topic.Name, partition.PartitionID)
 
 					// Create schematized record batch and replace the regular record batch
@@ -290,42 +302,68 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 					if len(schematizedBatch) > 0 {
 						// Replace the record batch with the schematized version
 						recordBatch = schematizedBatch
+						glog.Infof("🔮 SCHEMA PATH REPLACED: topic=%s partition=%d recordBatchSize=%d",
+							topic.Name, partition.PartitionID, len(schematizedBatch))
 						Debug("Replaced record batch with schematized version: %d bytes for %d messages", len(recordBatch), len(schematizedRecords))
+					} else {
+						glog.Infof("🔮 SCHEMA PATH BATCH EMPTY: topic=%s partition=%d schematizedBatch=0 bytes, NOT replacing",
+							topic.Name, partition.PartitionID)
 					}
+				} else {
+					glog.Infof("🔮 SCHEMA PATH EMPTY: topic=%s partition=%d schematizedRecords=0, keeping original recordBatch=%d bytes",
+						topic.Name, partition.PartitionID, len(recordBatch))
 				}
+			} else if isSchematizedTopic && len(recordBatch) > 0 {
+				glog.Infof("🔮 SCHEMA PATH SKIPPED: topic=%s partition=%d already has recordBatch=%d bytes from multi-batch fetch, using it as-is",
+					topic.Name, partition.PartitionID, len(recordBatch))
 			}
 
 			fetchDuration := time.Since(fetchStartTime)
 			Debug("Fetch v%d - Partition processing completed: topic=%s, partition=%d, duration=%v, recordBatchSize=%d",
 				apiVersion, topic.Name, partition.PartitionID, fetchDuration, len(recordBatch))
 
-		// Records size (4 bytes)
-		recordsSizeBytes := make([]byte, 4)
-		binary.BigEndian.PutUint32(recordsSizeBytes, uint32(len(recordBatch)))
-		response = append(response, recordsSizeBytes...)
+			// Records size - flexible versions (v12+) use compact format: varint(size+1)
+			if isFlexible {
+				if len(recordBatch) == 0 {
+					response = append(response, 0) // null records = 0 in compact format
+				} else {
+					response = append(response, EncodeUvarint(uint32(len(recordBatch)+1))...)
+				}
+			} else {
+				// Non-flexible versions use int32(size)
+				recordsSizeBytes := make([]byte, 4)
+				binary.BigEndian.PutUint32(recordsSizeBytes, uint32(len(recordBatch)))
+				response = append(response, recordsSizeBytes...)
+			}
 
-		// Records data
-		response = append(response, recordBatch...)
+			// Records data
+			response = append(response, recordBatch...)
+			totalAppendedRecordBytes += len(recordBatch)
+			// Always log per-topic appended bytes for visibility
+			glog.Infof("FETCH TOPIC APPENDED: corr=%d topic=%s partition=%d bytes=%d flexible=%v",
+				correlationID, topic.Name, partition.PartitionID, len(recordBatch), isFlexible)
 
-		// Tagged fields for flexible versions (v12+) after each partition
+			// Tagged fields for flexible versions (v12+) after each partition
+			if isFlexible {
+				response = append(response, 0) // Empty tagged fields
+			}
+		}
+
+		// Tagged fields for flexible versions (v12+) after each topic
 		if isFlexible {
 			response = append(response, 0) // Empty tagged fields
 		}
 	}
 
-	// Tagged fields for flexible versions (v12+) after each topic
+	// Tagged fields for flexible versions (v12+) at the end of response
 	if isFlexible {
 		response = append(response, 0) // Empty tagged fields
 	}
-}
 
-// Tagged fields for flexible versions (v12+) at the end of response
-if isFlexible {
-	response = append(response, 0) // Empty tagged fields
-}
-
-Debug("Fetch v%d response constructed, size: %d bytes (flexible: %v)", apiVersion, len(response), isFlexible)
-return response, nil
+	Debug("Fetch v%d response constructed, size: %d bytes (flexible: %v)", apiVersion, len(response), isFlexible)
+	glog.Infof("FETCH RESPONSE SUMMARY: correlationID=%d topics=%d totalRecordBytes=%d totalResponseBytes=%d", correlationID, topicsCount, totalAppendedRecordBytes, len(response))
+	glog.Infof("✅ FETCH RESPONSE COMPLETE: correlationID=%d version=%d size=%d bytes", correlationID, apiVersion, len(response))
+	return response, nil
 }
 
 // FetchRequest represents a parsed Kafka Fetch request
@@ -580,13 +618,13 @@ func (h *Handler) constructRecordBatchFromSMQ(topicName string, fetchOffset int6
 
 		// Value length and value (varint + data) - decode RecordValue to get original Kafka message
 		value := h.decodeRecordValueToKafkaMessage(topicName, smqRecord.GetValue())
-		
+
 		// DEBUG: Show response being sent for _schemas topic
 		if strings.Contains(topicName, "_schemas") {
 			glog.Infof("📦 FETCH RESPONSE: topic=%s offset=%d rawKey=%d rawValue=%d decodedKey=%d decodedValue=%d keyContent=%q",
 				topicName, smqRecord.GetOffset(), len(smqRecord.GetKey()), len(smqRecord.GetValue()), len(key), len(value), string(key))
 		}
-		
+
 		if value == nil {
 			recordBytes = append(recordBytes, encodeVarint(-1)...) // null value
 		} else {
@@ -678,28 +716,36 @@ type SchematizedRecord struct {
 
 // fetchSchematizedRecords fetches and reconstructs schematized records from SeaweedMQ
 func (h *Handler) fetchSchematizedRecords(topicName string, partitionID int32, offset int64, maxBytes int32) ([]*SchematizedRecord, error) {
+	glog.Infof("🔬 fetchSchematizedRecords: topic=%s partition=%d offset=%d maxBytes=%d", topicName, partitionID, offset, maxBytes)
+
 	// Only proceed when schema feature is toggled on
 	if !h.useSchema {
+		glog.Infof("🔬 fetchSchematizedRecords EARLY RETURN: useSchema=false")
 		return []*SchematizedRecord{}, nil
 	}
 
 	// Check if SeaweedMQ handler is available when schema feature is in use
 	if h.seaweedMQHandler == nil {
+		glog.Infof("🔬 fetchSchematizedRecords ERROR: seaweedMQHandler is nil")
 		return nil, fmt.Errorf("SeaweedMQ handler not available")
 	}
 
 	// If schema management isn't fully configured, return empty instead of error
 	if !h.IsSchemaEnabled() {
+		glog.Infof("🔬 fetchSchematizedRecords EARLY RETURN: IsSchemaEnabled()=false")
 		return []*SchematizedRecord{}, nil
 	}
 
 	// Fetch stored records from SeaweedMQ
 	maxRecords := 100 // Reasonable batch size limit
+	glog.Infof("🔬 fetchSchematizedRecords: calling GetStoredRecords maxRecords=%d", maxRecords)
 	smqRecords, err := h.seaweedMQHandler.GetStoredRecords(topicName, partitionID, offset, maxRecords)
 	if err != nil {
+		glog.Infof("🔬 fetchSchematizedRecords ERROR: GetStoredRecords failed: %v", err)
 		return nil, fmt.Errorf("failed to fetch SMQ records: %w", err)
 	}
 
+	glog.Infof("🔬 fetchSchematizedRecords: GetStoredRecords returned %d records", len(smqRecords))
 	if len(smqRecords) == 0 {
 		return []*SchematizedRecord{}, nil
 	}
@@ -865,7 +911,7 @@ func (h *Handler) createSchematizedRecordBatch(records []*SchematizedRecord, bas
 	}
 
 	// Create the record batch with proper compression and CRC
-	batch, err := h.createRecordBatchWithCompressionAndCRC(baseOffset, finalRecordsData, compressionType, int32(len(records)))
+	batch, err := h.createRecordBatchWithCompressionAndCRC(baseOffset, finalRecordsData, compressionType, int32(len(records)), currentTimestamp)
 	if err != nil {
 		// Fallback to simple batch creation
 		Debug("Failed to create compressed record batch, falling back: %v", err)
@@ -921,7 +967,7 @@ func (h *Handler) createRecordEntry(messageKey []byte, messageData []byte, offse
 }
 
 // createRecordBatchWithCompressionAndCRC creates a Kafka record batch with proper compression and CRC
-func (h *Handler) createRecordBatchWithCompressionAndCRC(baseOffset int64, recordsData []byte, compressionType compression.CompressionCodec, recordCount int32) ([]byte, error) {
+func (h *Handler) createRecordBatchWithCompressionAndCRC(baseOffset int64, recordsData []byte, compressionType compression.CompressionCodec, recordCount int32, baseTimestampMs int64) ([]byte, error) {
 	// Create record batch header
 	batch := make([]byte, 0, len(recordsData)+61) // 61 bytes for header
 
@@ -956,10 +1002,9 @@ func (h *Handler) createRecordBatchWithCompressionAndCRC(baseOffset int64, recor
 	binary.BigEndian.PutUint32(lastOffsetDeltaBytes, lastOffsetDelta)
 	batch = append(batch, lastOffsetDeltaBytes...)
 
-	// First timestamp (8 bytes)
-	currentTimestamp := time.Now().UnixMilli()
+	// First timestamp (8 bytes) - use the same timestamp used to build record entries
 	firstTimestampBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(firstTimestampBytes, uint64(currentTimestamp))
+	binary.BigEndian.PutUint64(firstTimestampBytes, uint64(baseTimestampMs))
 	batch = append(batch, firstTimestampBytes...)
 
 	// Max timestamp (8 bytes) - same as first for simplicity
@@ -986,9 +1031,10 @@ func (h *Handler) createRecordBatchWithCompressionAndCRC(baseOffset int64, recor
 	batchLength := len(batch) - 12 // 8 bytes base offset + 4 bytes batch length
 	binary.BigEndian.PutUint32(batch[batchLengthPos:batchLengthPos+4], uint32(batchLength))
 
-	// Calculate and set CRC32 (from partition leader epoch to end)
-	// Kafka uses Castagnoli (CRC-32C) algorithm, not IEEE
-	crcData := batch[16:] // Skip base offset (8) and batch length (4) and start from partition leader epoch
+	// Calculate and set CRC32 over attributes..end (exclude CRC field itself)
+	// Kafka uses Castagnoli (CRC-32C) algorithm. CRC covers ONLY from attributes offset (byte 21) onwards.
+	// See: DefaultRecordBatch.java computeChecksum() - Crc32C.compute(buffer, ATTRIBUTES_OFFSET, ...)
+	crcData := batch[crcPos+4:] // Skip CRC field itself (bytes 17..20) and include the rest
 	crc := crc32.Checksum(crcData, crc32.MakeTable(crc32.Castagnoli))
 	binary.BigEndian.PutUint32(batch[crcPos:crcPos+4], crc)
 
@@ -1111,6 +1157,7 @@ func (h *Handler) handleSchematizedFetch(topicName string, partitionID int32, of
 // isSchematizedTopic checks if a topic uses schema management
 func (h *Handler) isSchematizedTopic(topicName string) bool {
 	if !h.IsSchemaEnabled() {
+		glog.Infof("🔍 isSchematizedTopic(%s): IsSchemaEnabled=false, returning false", topicName)
 		return false
 	}
 
@@ -1118,24 +1165,29 @@ func (h *Handler) isSchematizedTopic(topicName string) bool {
 
 	// 1. Confluent Schema Registry naming conventions
 	if h.matchesSchemaRegistryConvention(topicName) {
+		glog.Infof("🔍 isSchematizedTopic(%s): matchesSchemaRegistryConvention=true, returning true", topicName)
 		return true
 	}
 
 	// 2. Check if topic has schema metadata in SeaweedMQ
 	if h.hasSchemaMetadata(topicName) {
+		glog.Infof("🔍 isSchematizedTopic(%s): hasSchemaMetadata=true, returning true", topicName)
 		return true
 	}
 
 	// 3. Check for schema configuration in topic metadata
 	if h.hasSchemaConfiguration(topicName) {
+		glog.Infof("🔍 isSchematizedTopic(%s): hasSchemaConfiguration=true, returning true", topicName)
 		return true
 	}
 
 	// 4. Check if topic has been used with schematized messages before
 	if h.hasSchematizedMessageHistory(topicName) {
+		glog.Infof("🔍 isSchematizedTopic(%s): hasSchematizedMessageHistory=true, returning true", topicName)
 		return true
 	}
 
+	glog.Infof("🔍 isSchematizedTopic(%s): all checks false, returning false", topicName)
 	return false
 }
 
@@ -1524,4 +1576,3 @@ func (h *Handler) recordValueToJSON(recordValue *schema_pb.RecordValue) []byte {
 
 	return []byte(jsonStr)
 }
-

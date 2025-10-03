@@ -359,7 +359,7 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 	logBuffer.RLock()
 	defer logBuffer.RUnlock()
 
-	isOffsetBased := lastReadPosition.IsOffsetBased()
+	isOffsetBased := lastReadPosition.IsOffsetBased
 	glog.V(0).Infof("🔍 DEBUG: ReadFromBuffer called for %s, lastReadPosition=%v isOffsetBased=%v offset=%d",
 		logBuffer.name, lastReadPosition, isOffsetBased, lastReadPosition.Offset)
 	glog.V(0).Infof("🔍 DEBUG: Buffer state - startTime=%v, stopTime=%v, pos=%d, offset=%d", logBuffer.startTime, logBuffer.stopTime, logBuffer.pos, logBuffer.offset)
@@ -445,7 +445,7 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 	if tsMemory.IsZero() { // case 2.2
 		glog.V(0).Infof("🔍 DEBUG: No memory data available - returning nil")
 		return nil, -2, nil
-	} else if lastReadPosition.Before(tsMemory) && lastReadPosition.Offset+1 < tsBatchIndex { // case 2.3
+	} else if lastReadPosition.Time.Before(tsMemory) && lastReadPosition.Offset+1 < tsBatchIndex { // case 2.3
 		if !logBuffer.lastFlushDataTime.IsZero() {
 			glog.V(0).Infof("🔍 DEBUG: Need to resume from disk - lastFlushDataTime=%v", logBuffer.lastFlushDataTime)
 			glog.V(0).Infof("resume with last flush time: %v", logBuffer.lastFlushDataTime)
@@ -455,16 +455,16 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 
 	// the following is case 2.1
 
-	if lastReadPosition.Equal(logBuffer.stopTime) {
+	if lastReadPosition.Time.Equal(logBuffer.stopTime) {
 		glog.V(0).Infof("🔍 DEBUG: lastReadPosition equals stopTime - returning nil")
 		return nil, logBuffer.offset, nil
 	}
-	if lastReadPosition.After(logBuffer.stopTime) {
+	if lastReadPosition.Time.After(logBuffer.stopTime) {
 		glog.V(0).Infof("🔍 DEBUG: lastReadPosition after stopTime - returning nil")
 		// glog.Fatalf("unexpected last read time %v, older than latest %v", lastReadPosition, m.stopTime)
 		return nil, logBuffer.offset, nil
 	}
-	if lastReadPosition.Before(logBuffer.startTime) {
+	if lastReadPosition.Time.Before(logBuffer.startTime) {
 		for _, buf := range logBuffer.prevBuffers.buffers {
 			if buf.startTime.After(lastReadPosition.Time) {
 				// glog.V(4).Infof("%s return the %d sealed buffer %v", m.name, i, buf.startTime)
@@ -479,7 +479,7 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 		return copiedBytes(logBuffer.buf[:logBuffer.pos]), logBuffer.offset, nil
 	}
 
-	lastTs := lastReadPosition.UnixNano()
+	lastTs := lastReadPosition.Time.UnixNano()
 	l, h := 0, len(logBuffer.idx)-1
 
 	/*
