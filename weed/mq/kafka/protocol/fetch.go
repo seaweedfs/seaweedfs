@@ -35,9 +35,31 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 		return true
 	}
 	hasDataAvailable := func() bool {
-		// With direct SMQ reading, we always attempt to fetch
-		// SMQ will return empty if no data is available
-		return true
+		// Check if any requested partition has data available
+		// Compare fetch offset with high water mark
+		for _, topic := range fetchRequest.Topics {
+			if !h.seaweedMQHandler.TopicExists(topic.Name) {
+				continue
+			}
+			for _, partition := range topic.Partitions {
+				hwm, err := h.seaweedMQHandler.GetLatestOffset(topic.Name, partition.PartitionID)
+				if err != nil {
+					continue
+				}
+				// Normalize fetch offset
+				effectiveOffset := partition.FetchOffset
+				if effectiveOffset == -2 { // earliest
+					effectiveOffset = 0
+				} else if effectiveOffset == -1 { // latest
+					effectiveOffset = hwm
+				}
+				// If fetch offset < hwm, data is available
+				if effectiveOffset < hwm {
+					return true
+				}
+			}
+		}
+		return false
 	}
 	// Cap long-polling to avoid blocking connection shutdowns in tests
 	maxWaitMs := fetchRequest.MaxWaitTime
@@ -321,6 +343,12 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 			fetchDuration := time.Since(fetchStartTime)
 			Debug("Fetch v%d - Partition processing completed: topic=%s, partition=%d, duration=%v, recordBatchSize=%d",
 				apiVersion, topic.Name, partition.PartitionID, fetchDuration, len(recordBatch))
+
+			// Log for loadtest topics to debug zero consumption issue
+			if strings.HasPrefix(topic.Name, "loadtest-topic") {
+				glog.Infof("🔍 LOADTEST FETCH: topic=%s partition=%d requestOffset=%d effectiveOffset=%d hwm=%d recordBatchBytes=%d",
+					topic.Name, partition.PartitionID, partition.FetchOffset, effectiveFetchOffset, highWaterMark, len(recordBatch))
+			}
 
 			// Records size - flexible versions (v12+) use compact format: varint(size+1)
 			if isFlexible {
@@ -1156,6 +1184,12 @@ func (h *Handler) handleSchematizedFetch(topicName string, partitionID int32, of
 
 // isSchematizedTopic checks if a topic uses schema management
 func (h *Handler) isSchematizedTopic(topicName string) bool {
+	// System topics (_schemas, __consumer_offsets, etc.) should NEVER use schema encoding
+	// They have their own internal formats and should be passed through as-is
+	if h.isSystemTopic(topicName) {
+		return false
+	}
+
 	if !h.IsSchemaEnabled() {
 		glog.Infof("🔍 isSchematizedTopic(%s): IsSchemaEnabled=false, returning false", topicName)
 		return false

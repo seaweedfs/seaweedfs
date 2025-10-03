@@ -455,23 +455,49 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 	responseChan := make(chan *kafkaResponse, 100)
 	var wg sync.WaitGroup
 
-	// Response writer - sends responses as they're ready
-	// CRITICAL: Kafka protocol does NOT require sequential correlation IDs!
-	// Clients may send correlation IDs like 0, 2, 5, 7 (skipping 1, 3, 4, 6)
-	// We must send each response immediately when ready, not wait for missing IDs
+	// Response writer - maintains request/response order per connection
+	// CRITICAL: While we process requests concurrently (control/data plane),
+	// we MUST track the order requests arrive and send responses in that same order.
+	// Solution: Track received correlation IDs in a queue, send responses in that queue order.
+	correlationQueue := make([]uint32, 0, 100)
+	correlationQueueMu := &sync.Mutex{}
+
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		pendingResponses := make(map[uint32]*kafkaResponse)
+		nextToSend := 0 // Index in correlationQueue
+
 		for resp := range responseChan {
-			if resp.err != nil {
-				Error("[%s] Error processing correlation=%d: %v", connectionID, resp.correlationID, resp.err)
-			} else {
-				Debug("[%s] Sending response correlation=%d: %d bytes", connectionID, resp.correlationID, len(resp.response))
-				if writeErr := h.writeResponseWithTimeout(w, resp.response, timeoutConfig.WriteTimeout); writeErr != nil {
-					Error("[%s] Write error correlation=%d: %v", connectionID, resp.correlationID, writeErr)
-					return
+			correlationQueueMu.Lock()
+			pendingResponses[resp.correlationID] = resp
+
+			// Send all responses we can in queue order
+			for nextToSend < len(correlationQueue) {
+				expectedID := correlationQueue[nextToSend]
+				readyResp, exists := pendingResponses[expectedID]
+				if !exists {
+					// Response not ready yet, stop sending
+					break
 				}
+
+				// Send this response
+				if readyResp.err != nil {
+					Error("[%s] Error processing correlation=%d: %v", connectionID, readyResp.correlationID, readyResp.err)
+				} else {
+					Debug("[%s] Sending response correlation=%d: %d bytes (in order)", connectionID, readyResp.correlationID, len(readyResp.response))
+					if writeErr := h.writeResponseWithTimeout(w, readyResp.response, timeoutConfig.WriteTimeout); writeErr != nil {
+						Error("[%s] Write error correlation=%d: %v", connectionID, readyResp.correlationID, writeErr)
+						correlationQueueMu.Unlock()
+						return
+					}
+				}
+
+				// Remove from pending and advance
+				delete(pendingResponses, expectedID)
+				nextToSend++
 			}
+			correlationQueueMu.Unlock()
 		}
 	}()
 
@@ -745,6 +771,11 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			requestBody:   requestBody,
 			ctx:           ctx,
 		}
+
+		// Track this correlation ID in the order queue for response ordering
+		correlationQueueMu.Lock()
+		correlationQueue = append(correlationQueue, correlationID)
+		correlationQueueMu.Unlock()
 
 		// Route to appropriate channel based on API key
 		var targetChan chan *kafkaRequest

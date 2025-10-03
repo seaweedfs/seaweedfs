@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/IBM/sarama"
-	"github.com/confluentinc/confluent-kafka-go/kafka"
 	"github.com/linkedin/goavro/v2"
 	"github.com/seaweedfs/seaweedfs/test/kafka/kafka-client-loadtest/internal/config"
 	"github.com/seaweedfs/seaweedfs/test/kafka/kafka-client-loadtest/internal/metrics"
@@ -18,15 +17,14 @@ import (
 
 // Consumer represents a Kafka consumer for load testing
 type Consumer struct {
-	id                int
-	config            *config.Config
-	metricsCollector  *metrics.Collector
-	saramaConsumer    sarama.ConsumerGroup
-	confluentConsumer *kafka.Consumer
-	useConfluent      bool
-	topics            []string
-	consumerGroup     string
-	avroCodec         *goavro.Codec
+	id               int
+	config           *config.Config
+	metricsCollector *metrics.Collector
+	saramaConsumer   sarama.ConsumerGroup
+	useConfluent     bool // Always false, Sarama only
+	topics           []string
+	consumerGroup    string
+	avroCodec        *goavro.Codec
 
 	// Processing tracking
 	messagesProcessed int64
@@ -110,28 +108,8 @@ func (c *Consumer) initSaramaConsumer() error {
 
 // initConfluentConsumer initializes the Confluent Kafka Go consumer
 func (c *Consumer) initConfluentConsumer() error {
-	configMap := kafka.ConfigMap{
-		"bootstrap.servers":       joinStrings(c.config.Kafka.BootstrapServers, ","),
-		"group.id":                c.consumerGroup,
-		"auto.offset.reset":       c.config.Consumers.AutoOffsetReset,
-		"enable.auto.commit":      c.config.Consumers.EnableAutoCommit,
-		"auto.commit.interval.ms": c.config.Consumers.AutoCommitIntervalMs,
-		"session.timeout.ms":      c.config.Consumers.SessionTimeoutMs,
-		"heartbeat.interval.ms":   c.config.Consumers.HeartbeatIntervalMs,
-		"max.poll.records":        c.config.Consumers.MaxPollRecords,
-		"max.poll.interval.ms":    c.config.Consumers.MaxPollIntervalMs,
-		"fetch.min.bytes":         c.config.Consumers.FetchMinBytes,
-		"fetch.max.bytes":         c.config.Consumers.FetchMaxBytes,
-		"fetch.wait.max.ms":       c.config.Consumers.FetchMaxWaitMs,
-	}
-
-	consumer, err := kafka.NewConsumer(&configMap)
-	if err != nil {
-		return fmt.Errorf("failed to create Confluent consumer: %w", err)
-	}
-
-	c.confluentConsumer = consumer
-	return nil
+	// Confluent consumer disabled, using Sarama only
+	return fmt.Errorf("confluent consumer not enabled")
 }
 
 // initAvroCodec initializes the Avro codec for schema-based messages
@@ -238,56 +216,8 @@ func (c *Consumer) runSaramaConsumer(ctx context.Context) {
 
 // runConfluentConsumer runs the Confluent consumer
 func (c *Consumer) runConfluentConsumer(ctx context.Context) {
-	// Subscribe to topics
-	err := c.confluentConsumer.SubscribeTopics(c.topics, nil)
-	if err != nil {
-		log.Printf("Consumer %d: Failed to subscribe to topics: %v", c.id, err)
-		c.metricsCollector.RecordConsumerError()
-		return
-	}
-
-	var wg sync.WaitGroup
-
-	// Start lag monitoring
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		c.monitorConsumerLag(ctx)
-	}()
-
-	// Main consumption loop
-	for {
-		select {
-		case <-ctx.Done():
-			log.Printf("Consumer %d: Context cancelled, stopping consumption", c.id)
-			wg.Wait()
-			return
-		default:
-			msg, err := c.confluentConsumer.ReadMessage(1000 * time.Millisecond) // 1 second timeout
-			if err != nil {
-				if err.(kafka.Error).Code() == kafka.ErrTimedOut {
-					continue // Normal timeout, continue polling
-				}
-				log.Printf("Consumer %d: Error reading message: %v", c.id, err)
-				c.metricsCollector.RecordConsumerError()
-				continue
-			}
-
-			// Process message
-			if err := c.processMessage(msg.TopicPartition.Topic, msg.TopicPartition.Partition, int64(msg.TopicPartition.Offset), msg.Key, msg.Value); err != nil {
-				log.Printf("Consumer %d: Error processing message: %v", c.id, err)
-				c.metricsCollector.RecordConsumerError()
-
-				// Add a small delay for schema validation or other processing errors to avoid overloading
-				select {
-				case <-time.After(100 * time.Millisecond):
-					// Continue after brief delay
-				case <-ctx.Done():
-					return
-				}
-			}
-		}
-	}
+	// Confluent consumer disabled, using Sarama only
+	log.Printf("Consumer %d: Confluent consumer not enabled", c.id)
 }
 
 // processMessage processes a consumed message
@@ -487,11 +417,7 @@ func (c *Consumer) reportConsumerLag() {
 func (c *Consumer) Close() error {
 	log.Printf("Consumer %d: Closing", c.id)
 
-	if c.useConfluent && c.confluentConsumer != nil {
-		return c.confluentConsumer.Close()
-	}
-
-	if !c.useConfluent && c.saramaConsumer != nil {
+	if c.saramaConsumer != nil {
 		return c.saramaConsumer.Close()
 	}
 
@@ -517,17 +443,21 @@ func (h *ConsumerGroupHandler) Cleanup(sarama.ConsumerGroupSession) error {
 
 // ConsumeClaim must start a consumer loop of ConsumerGroupClaim's Messages()
 func (h *ConsumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
-	log.Printf("Consumer %d: Starting to consume from %s[%d]",
-		h.consumer.id, claim.Topic(), claim.Partition())
+	log.Printf("🔍 LOADTEST DEBUG: ConsumeClaim CALLED for Consumer %d, topic=%s partition=%d, initialOffset=%d",
+		h.consumer.id, claim.Topic(), claim.Partition(), claim.InitialOffset())
 
+	msgCount := 0
 	for {
 		select {
 		case message, ok := <-claim.Messages():
 			if !ok {
-				log.Printf("Consumer %d: Message channel closed for %s[%d]",
-					h.consumer.id, claim.Topic(), claim.Partition())
+				log.Printf("🔍 LOADTEST DEBUG: Message channel closed for Consumer %d, %s[%d], received %d messages total",
+					h.consumer.id, claim.Topic(), claim.Partition(), msgCount)
 				return nil
 			}
+			msgCount++
+			log.Printf("🔍 LOADTEST DEBUG: Consumer %d received message #%d from %s[%d] offset=%d",
+				h.consumer.id, msgCount, claim.Topic(), claim.Partition(), message.Offset)
 
 			// Process the message
 			var key []byte

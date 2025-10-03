@@ -55,9 +55,9 @@ build: ## Build the load test application
 	@echo "$(GREEN)Build completed$(NC)"
 
 build-binary: ## Build the SeaweedFS binary locally for Linux
-	@echo "$(BLUE)Building SeaweedFS binary locally for Linux...$(NC)"
+	@echo "$(BLUE)Building SeaweedFS binary locally for Linux ARM64...$(NC)"
 	cd ../../.. && \
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build \
 		-ldflags="-s -w" \
 		-tags "5BytesOffset" \
 		-o test/kafka/kafka-client-loadtest/weed-linux-amd64 \

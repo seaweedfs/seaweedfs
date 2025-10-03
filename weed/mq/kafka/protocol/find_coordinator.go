@@ -82,7 +82,10 @@ func (h *Handler) handleFindCoordinatorV0(correlationID uint32, requestBody []by
 
 	// CRITICAL FIX: Return hostname instead of IP address for client connectivity
 	// Clients need to connect to the same hostname they originally connected to
+	originalHost := coordinatorHost
 	coordinatorHost = h.getClientConnectableHost(coordinatorHost)
+	Debug("FindCoordinator v0 - Group: %s, Original coordinator: %s:%d, Returned to client: %s:%d",
+		coordinatorKey, originalHost, coordinatorPort, coordinatorHost, coordinatorPort)
 
 	// Build response
 	response := make([]byte, 0, 64)
@@ -168,7 +171,10 @@ func (h *Handler) handleFindCoordinatorV2(correlationID uint32, requestBody []by
 
 	// CRITICAL FIX: Return hostname instead of IP address for client connectivity
 	// Clients need to connect to the same hostname they originally connected to
+	originalHost := coordinatorHost
 	coordinatorHost = h.getClientConnectableHost(coordinatorHost)
+	Debug("FindCoordinator v2 - Group: %s, Original coordinator: %s:%d, Returned to client: %s:%d",
+		coordinatorKey, originalHost, coordinatorPort, coordinatorHost, coordinatorPort)
 
 	response := make([]byte, 0, 64)
 

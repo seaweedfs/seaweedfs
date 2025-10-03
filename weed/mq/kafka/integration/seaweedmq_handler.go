@@ -35,6 +35,12 @@ type SMQRecord interface {
 	GetOffset() int64
 }
 
+// hwmCacheEntry represents a cached high water mark value
+type hwmCacheEntry struct {
+	value     int64
+	expiresAt time.Time
+}
+
 // SeaweedMQHandler integrates Kafka protocol handlers with real SeaweedMQ storage
 type SeaweedMQHandler struct {
 	// Shared filer client accessor for all components
@@ -56,6 +62,11 @@ type SeaweedMQHandler struct {
 
 	// Reference to protocol handler for accessing connection context
 	protocolHandler ProtocolHandler
+
+	// High water mark cache to reduce broker queries
+	hwmCache    map[string]*hwmCacheEntry // key: "topic:partition"
+	hwmCacheMu  sync.RWMutex
+	hwmCacheTTL time.Duration
 }
 
 // ConnectionContext holds connection-specific information for requests
@@ -253,23 +264,45 @@ func (h *SeaweedMQHandler) GetEarliestOffset(topic string, partition int32) (int
 // GetLatestOffset returns the latest available offset for a topic partition
 // ALWAYS queries SMQ broker directly - no ledger involved
 func (h *SeaweedMQHandler) GetLatestOffset(topic string, partition int32) (int64, error) {
-	glog.Infof("[DEBUG_OFFSET] GetLatestOffset called for topic=%s partition=%d", topic, partition)
+	glog.V(4).Infof("[DEBUG_OFFSET] GetLatestOffset called for topic=%s partition=%d", topic, partition)
 
 	// Check if topic exists
 	if !h.TopicExists(topic) {
-		glog.Infof("[DEBUG_OFFSET] Topic %s does not exist", topic)
+		glog.V(4).Infof("[DEBUG_OFFSET] Topic %s does not exist", topic)
 		return 0, nil // Empty topic
 	}
 
-	// ALWAYS query SMQ broker directly for latest offset (high water mark)
+	// Check cache first
+	cacheKey := fmt.Sprintf("%s:%d", topic, partition)
+	h.hwmCacheMu.RLock()
+	if entry, exists := h.hwmCache[cacheKey]; exists {
+		if time.Now().Before(entry.expiresAt) {
+			// Cache hit - return cached value
+			h.hwmCacheMu.RUnlock()
+			glog.V(4).Infof("[DEBUG_OFFSET] Cache hit for %s: hwm=%d", cacheKey, entry.value)
+			return entry.value, nil
+		}
+	}
+	h.hwmCacheMu.RUnlock()
+
+	// Cache miss or expired - query SMQ broker
 	if h.brokerClient != nil {
-		glog.Infof("[DEBUG_OFFSET] Querying SMQ broker for high water mark...")
+		glog.V(4).Infof("[DEBUG_OFFSET] Cache miss for %s, querying SMQ broker...", cacheKey)
 		latestOffset, err := h.brokerClient.GetHighWaterMark(topic, partition)
 		if err != nil {
 			glog.Errorf("[DEBUG_OFFSET] Failed to get high water mark from broker: %v", err)
 			return 0, err
 		}
-		glog.Infof("[DEBUG_OFFSET] Got high water mark from broker: %d", latestOffset)
+
+		// Update cache
+		h.hwmCacheMu.Lock()
+		h.hwmCache[cacheKey] = &hwmCacheEntry{
+			value:     latestOffset,
+			expiresAt: time.Now().Add(h.hwmCacheTTL),
+		}
+		h.hwmCacheMu.Unlock()
+
+		glog.V(4).Infof("[DEBUG_OFFSET] Got high water mark from broker and cached: %d (TTL=%v)", latestOffset, h.hwmCacheTTL)
 		return latestOffset, nil
 	}
 
@@ -604,6 +637,15 @@ func (h *SeaweedMQHandler) ProduceRecord(topic string, partition int32, key []by
 	// SMQ should have generated and returned the offset - use it directly as the Kafka offset
 	glog.V(2).Infof("Successfully produced record to topic %s partition %d at SMQ offset %d",
 		topic, partition, smqOffset)
+
+	// Invalidate HWM cache for this partition to ensure fresh reads
+	// This is critical for read-your-own-write scenarios (e.g., Schema Registry)
+	cacheKey := fmt.Sprintf("%s:%d", topic, partition)
+	h.hwmCacheMu.Lock()
+	delete(h.hwmCache, cacheKey)
+	h.hwmCacheMu.Unlock()
+	glog.V(4).Infof("[DEBUG_OFFSET] Invalidated HWM cache for %s after produce at offset %d", cacheKey, smqOffset)
+
 	return smqOffset, nil
 }
 
@@ -634,6 +676,15 @@ func (h *SeaweedMQHandler) ProduceRecordValue(topic string, partition int32, key
 	// SMQ broker has assigned the offset - use it directly as the Kafka offset
 	glog.V(2).Infof("Successfully produced RecordValue to topic %s partition %d at SMQ offset %d",
 		topic, partition, smqOffset)
+
+	// Invalidate HWM cache for this partition to ensure fresh reads
+	// This is critical for read-your-own-write scenarios (e.g., Schema Registry)
+	cacheKey := fmt.Sprintf("%s:%d", topic, partition)
+	h.hwmCacheMu.Lock()
+	delete(h.hwmCache, cacheKey)
+	h.hwmCacheMu.Unlock()
+	glog.V(4).Infof("[DEBUG_OFFSET] Invalidated HWM cache for %s after produce at offset %d", cacheKey, smqOffset)
+
 	return smqOffset, nil
 }
 
@@ -934,6 +985,8 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string, clientHost str
 		// topics map removed - always read from filer directly
 		// ledgers removed - SMQ broker handles all offset management
 		brokerAddresses: brokerAddresses, // Store all discovered broker addresses
+		hwmCache:        make(map[string]*hwmCacheEntry),
+		hwmCacheTTL:     2 * time.Second, // 2 second cache TTL to reduce broker queries
 	}, nil
 }
 
@@ -1910,6 +1963,7 @@ func (bc *BrokerClient) PublishRecordValue(topic string, partition int32, key []
 }
 
 // ReadRecords reads available records from the subscriber stream
+// Uses a timeout-based approach to read multiple records without blocking indefinitely
 func (bc *BrokerClient) ReadRecords(session *BrokerSubscriberSession, maxRecords int) ([]*SeaweedRecord, error) {
 	if session == nil {
 		return nil, fmt.Errorf("subscriber session cannot be nil")
@@ -1919,52 +1973,76 @@ func (bc *BrokerClient) ReadRecords(session *BrokerSubscriberSession, maxRecords
 		session.Topic, session.Partition, session.StartOffset, maxRecords)
 
 	var records []*SeaweedRecord
-	currentOffset := session.StartOffset // Start from the exact offset requested
+	currentOffset := session.StartOffset
 
-	// Read loop with early return on first record
+	// Use a channel to receive records from the stream
+	type recvResult struct {
+		resp *mq_pb.SubscribeMessageResponse
+		err  error
+	}
+	recvChan := make(chan recvResult, 1)
+
+	// Read records with timeout after first record
+	readTimeout := 50 * time.Millisecond // Wait 50ms for additional records after first one
+	var timer *time.Timer
+
 	for len(records) < maxRecords {
-		resp, err := session.Stream.Recv()
+		// Start async recv
+		go func() {
+			resp, err := session.Stream.Recv()
+			recvChan <- recvResult{resp: resp, err: err}
+		}()
 
-		if err != nil {
-			glog.Infof("[FETCH] Stream.Recv() error after %d records: %v", len(records), err)
-			// If we have some records, return them; otherwise return error
+		// Wait for response or timeout
+		var result recvResult
+		if len(records) == 0 {
+			// First record - wait indefinitely (no timeout)
+			result = <-recvChan
+		} else {
+			// Subsequent records - use timeout
+			if timer == nil {
+				timer = time.NewTimer(readTimeout)
+			} else {
+				timer.Reset(readTimeout)
+			}
+
+			select {
+			case result = <-recvChan:
+				timer.Stop()
+			case <-timer.C:
+				// Timeout - return what we have
+				glog.V(4).Infof("[FETCH] Read timeout after %d records, returning batch", len(records))
+				return records, nil
+			}
+		}
+
+		if result.err != nil {
+			glog.Infof("[FETCH] Stream.Recv() error after %d records: %v", len(records), result.err)
 			if len(records) > 0 {
 				return records, nil
 			}
-			return nil, fmt.Errorf("failed to receive record: %v", err)
+			return nil, fmt.Errorf("failed to receive record: %v", result.err)
 		}
 
-		if dataMsg := resp.GetData(); dataMsg != nil {
-			// Log what we received from the broker
-			glog.Infof("[FETCH] DataMessage from broker: keyLen=%d, valueLen=%d, key=%x, value=%x",
-				len(dataMsg.Key), len(dataMsg.Value),
-				dataMsg.Key[:min(20, len(dataMsg.Key))],
-				dataMsg.Value[:min(50, len(dataMsg.Value))])
+		if dataMsg := result.resp.GetData(); dataMsg != nil {
+			glog.V(4).Infof("[FETCH] DataMessage from broker: keyLen=%d, valueLen=%d",
+				len(dataMsg.Key), len(dataMsg.Value))
 
-			// Create record with the current Kafka offset
-			// Since we use EXACT_OFFSET, the subscriber is positioned correctly
 			record := &SeaweedRecord{
 				Key:       dataMsg.Key,
 				Value:     dataMsg.Value,
 				Timestamp: dataMsg.TsNs,
-				Offset:    currentOffset, // Use the current Kafka offset
+				Offset:    currentOffset,
 			}
 			records = append(records, record)
-			currentOffset++ // Increment for next record
+			currentOffset++
 
 			glog.Infof("[FETCH] Received record: offset=%d, keyLen=%d, valueLen=%d",
 				record.Offset, len(record.Key), len(record.Value))
-
-			// Important: return early after receiving at least one record to avoid
-			// blocking while waiting for an entire batch in environments where data
-			// arrives slowly. The fetch layer will invoke subsequent reads as needed.
-			if len(records) >= 1 {
-				break
-			}
 		}
 	}
 
-	glog.Infof("[FETCH] ReadRecords returning %d records", len(records))
+	glog.Infof("[FETCH] ReadRecords returning %d records (maxRecords reached)", len(records))
 	return records, nil
 }
 
