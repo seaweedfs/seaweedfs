@@ -378,10 +378,8 @@ func (h *Handler) parseLeaveGroupRequest(data []byte) (*LeaveGroupRequest, error
 func (h *Handler) buildHeartbeatResponse(response HeartbeatResponse) []byte {
 	result := make([]byte, 0, 12)
 
-	// Correlation ID (4 bytes)
-	correlationIDBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(correlationIDBytes, response.CorrelationID)
-	result = append(result, correlationIDBytes...)
+	// NOTE: Correlation ID is handled by writeResponseWithCorrelationID
+	// Do NOT include it in the response body
 
 	// Error code (2 bytes)
 	errorCodeBytes := make([]byte, 2)
@@ -398,10 +396,8 @@ func (h *Handler) buildHeartbeatResponseV(response HeartbeatResponse, apiVersion
 	isFlexible := IsFlexibleVersion(12, apiVersion) // Heartbeat API key = 12
 	result := make([]byte, 0, 16)
 
-	// Correlation ID (4 bytes) - always first
-	correlationIDBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(correlationIDBytes, response.CorrelationID)
-	result = append(result, correlationIDBytes...)
+	// NOTE: Correlation ID is handled by writeResponseWithCorrelationID
+	// Do NOT include it in the response body
 
 	if isFlexible {
 		// FLEXIBLE V4+ FORMAT: CRITICAL FIX - Add response header tagged fields!
@@ -446,10 +442,8 @@ func (h *Handler) buildLeaveGroupResponse(response LeaveGroupResponse, apiVersio
 func (h *Handler) buildLeaveGroupV0Response(response LeaveGroupResponse) []byte {
 	result := make([]byte, 0, 6)
 
-	// Correlation ID (4 bytes)
-	correlationIDBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(correlationIDBytes, response.CorrelationID)
-	result = append(result, correlationIDBytes...)
+	// NOTE: Correlation ID is handled by writeResponseWithCorrelationID
+	// Do NOT include it in the response body
 
 	// Error code (2 bytes) - that's it for v0!
 	errorCodeBytes := make([]byte, 2)
@@ -467,10 +461,8 @@ func (h *Handler) buildLeaveGroupFullResponse(response LeaveGroupResponse) []byt
 
 	result := make([]byte, 0, estimatedSize)
 
-	// Correlation ID (4 bytes)
-	correlationIDBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(correlationIDBytes, response.CorrelationID)
-	result = append(result, correlationIDBytes...)
+	// NOTE: Correlation ID is handled by writeResponseWithCorrelationID
+	// Do NOT include it in the response body
 
 	// Error code (2 bytes)
 	errorCodeBytes := make([]byte, 2)

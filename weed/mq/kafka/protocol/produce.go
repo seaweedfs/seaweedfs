@@ -956,7 +956,9 @@ func (h *Handler) storeDecodedMessage(topicName string, partitionID int32, origi
 		if key == nil {
 			key = []byte{} // Use empty byte slice for null keys
 		}
-		value := decodedMsg.Envelope.Payload
+		// CRITICAL: Store the original Confluent Wire Format bytes (magic byte + schema ID + payload)
+		// NOT just the Avro payload, so we can return them as-is during fetch without re-encoding
+		value := decodedMsg.Envelope.OriginalBytes
 
 		_, err := h.seaweedMQHandler.ProduceRecord(topicName, partitionID, key, value)
 		if err != nil {
@@ -1381,8 +1383,12 @@ func (h *Handler) produceSchemaBasedRecord(topic string, partition int32, key []
 	}
 
 	// Send to SeaweedMQ
-	if valueDecodedMsg != nil || keyDecodedMsg != nil {
-		// Send with RecordValue format for schematized key or value
+	if valueDecodedMsg != nil {
+		// CRITICAL FIX: Store the ORIGINAL Confluent Wire Format bytes (not the decoded RecordValue protobuf)
+		// This ensures consumers receive the exact same bytes the producer sent, avoiding re-encoding issues
+		return h.seaweedMQHandler.ProduceRecord(topic, partition, finalKey, valueDecodedMsg.Envelope.OriginalBytes)
+	} else if keyDecodedMsg != nil {
+		// If only key was schematized, we still need to store it in RecordValue format
 		return h.seaweedMQHandler.ProduceRecordValue(topic, partition, finalKey, recordValueBytes)
 	} else {
 		// Send with raw format for non-schematized data

@@ -254,10 +254,8 @@ func IsRetriableError(code int16) bool {
 func BuildErrorResponse(correlationID uint32, errorCode int16) []byte {
 	response := make([]byte, 0, 8)
 
-	// Correlation ID (4 bytes)
-	correlationIDBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
-	response = append(response, correlationIDBytes...)
+	// NOTE: Correlation ID is handled by writeResponseWithCorrelationID
+	// Do NOT include it in the response body
 
 	// Error code (2 bytes)
 	errorCodeBytes := make([]byte, 2)

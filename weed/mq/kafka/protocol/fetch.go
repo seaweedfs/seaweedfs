@@ -97,10 +97,10 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 	response := make([]byte, 0, 1024)
 	totalAppendedRecordBytes := 0
 
-	// Correlation ID (4 bytes)
-	correlationIDBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
-	response = append(response, correlationIDBytes...)
+	// NOTE: Correlation ID is NOT included in the response body
+	// The wire protocol layer (writeResponseWithTimeout) writes: [Size][CorrelationID][Body]
+	// Kafka clients read the correlation ID separately from the 8-byte header, then read Size-4 bytes of body
+	// If we include correlation ID here, clients will see it twice and fail with "4 extra bytes" errors
 
 	// Fetch v1+ has throttle_time_ms at the beginning
 	if apiVersion >= 1 {

@@ -522,10 +522,8 @@ func (h *Handler) buildOffsetCommitResponse(response OffsetCommitResponse) []byt
 
 	result := make([]byte, 0, estimatedSize)
 
-	// Correlation ID (4 bytes)
-	correlationIDBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(correlationIDBytes, response.CorrelationID)
-	result = append(result, correlationIDBytes...)
+	// NOTE: Correlation ID is handled by writeResponseWithCorrelationID
+	// Do NOT include it in the response body
 
 	// Topics array length (4 bytes)
 	topicsLengthBytes := make([]byte, 4)
@@ -578,10 +576,8 @@ func (h *Handler) buildOffsetFetchResponse(response OffsetFetchResponse, apiVers
 
 	result := make([]byte, 0, estimatedSize)
 
-	// Correlation ID (4 bytes)
-	correlationIDBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(correlationIDBytes, response.CorrelationID)
-	result = append(result, correlationIDBytes...)
+	// NOTE: Correlation ID is handled by writeResponseWithCorrelationID
+	// Do NOT include it in the response body
 
 	// Throttle time (4 bytes) - for version 3+ this appears immediately after correlation ID
 	if apiVersion >= 3 {

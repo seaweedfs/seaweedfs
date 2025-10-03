@@ -722,10 +722,8 @@ func (h *Handler) buildJoinGroupResponse(response JoinGroupResponse) []byte {
 
 	result := make([]byte, 0, estimatedSize)
 
-	// Correlation ID (4 bytes)
-	correlationIDBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(correlationIDBytes, response.CorrelationID)
-	result = append(result, correlationIDBytes...)
+	// NOTE: Correlation ID is handled by writeResponseWithCorrelationID
+	// Do NOT include it in the response body
 
 	// JoinGroup v2 adds throttle_time_ms
 	if response.Version >= 2 {
@@ -1214,10 +1212,8 @@ func (h *Handler) buildSyncGroupResponse(response SyncGroupResponse, apiVersion 
 	estimatedSize := 16 + len(response.Assignment)
 	result := make([]byte, 0, estimatedSize)
 
-	// Correlation ID (4 bytes)
-	correlationIDBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(correlationIDBytes, response.CorrelationID)
-	result = append(result, correlationIDBytes...)
+	// NOTE: Correlation ID is handled by writeResponseWithCorrelationID
+	// Do NOT include it in the response body
 
 	// RESPONSE HEADER TAGGED FIELDS for flexible versions (v4+)
 	if IsFlexibleVersion(14, apiVersion) {

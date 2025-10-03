@@ -486,7 +486,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 					Error("[%s] Error processing correlation=%d: %v", connectionID, readyResp.correlationID, readyResp.err)
 				} else {
 					Debug("[%s] Sending response correlation=%d: %d bytes (in order)", connectionID, readyResp.correlationID, len(readyResp.response))
-					if writeErr := h.writeResponseWithTimeout(w, readyResp.response, timeoutConfig.WriteTimeout); writeErr != nil {
+					if writeErr := h.writeResponseWithCorrelationID(w, readyResp.correlationID, readyResp.response, timeoutConfig.WriteTimeout); writeErr != nil {
 						Error("[%s] Write error correlation=%d: %v", connectionID, readyResp.correlationID, writeErr)
 						correlationQueueMu.Unlock()
 						return
@@ -618,7 +618,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			Debug("[%s] Invalid message size: %d (limit: 1MB)", connectionID, size)
 			// Send error response for message too large
 			errorResponse := BuildErrorResponse(0, ErrorCodeMessageTooLarge) // correlation ID 0 since we can't parse it yet
-			if writeErr := h.writeResponseWithTimeout(w, errorResponse, timeoutConfig.WriteTimeout); writeErr != nil {
+			if writeErr := h.writeResponseWithCorrelationID(w, 0, errorResponse, timeoutConfig.WriteTimeout); writeErr != nil {
 				Debug("[%s] Failed to send message too large response: %v", connectionID, writeErr)
 			}
 			return fmt.Errorf("message size %d exceeds limit", size)
@@ -927,18 +927,8 @@ func (h *Handler) handleApiVersions(correlationID uint32, apiVersion uint16) ([]
 	// This fixes the AdminClient "collection size 2184558" error by using proper varint encoding
 	response := make([]byte, 0, 512)
 
-	// === RESPONSE HEADER ===
-	// Correlation ID (4 bytes) - always fixed-length
-	correlationIDBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
-	response = append(response, correlationIDBytes...)
-
-	// ADMINLICENT COMPATIBILITY FIX:
-	// AdminClient expects response header version 0 (no tagged fields) even for v3+
-	// This technically violates protocol but achieves practical compatibility
-	// if apiVersion >= 3 {
-	//	response = append(response, 0x00) // Empty tagged fields (varint: single byte 0)
-	// }
+	// NOTE: Correlation ID is handled by writeResponseWithCorrelationID
+	// Do NOT include it in the response body
 
 	// === RESPONSE BODY ===
 	// Error code (2 bytes) - always fixed-length
@@ -993,10 +983,8 @@ func (h *Handler) handleApiVersions(correlationID uint32, apiVersion uint16) ([]
 func (h *Handler) HandleMetadataV0(correlationID uint32, requestBody []byte) ([]byte, error) {
 	response := make([]byte, 0, 256)
 
-	// Correlation ID
-	correlationIDBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
-	response = append(response, correlationIDBytes...)
+	// NOTE: Correlation ID is handled by writeResponseWithCorrelationID
+	// Do NOT include it in the response body
 
 	// Brokers array length (4 bytes) - 1 broker (this gateway)
 	response = append(response, 0, 0, 0, 1)
@@ -1233,7 +1221,8 @@ func (h *Handler) HandleMetadataV2(correlationID uint32, requestBody []byte) ([]
 	var buf bytes.Buffer
 
 	// Correlation ID (4 bytes)
-	binary.Write(&buf, binary.BigEndian, correlationID)
+	// NOTE: Correlation ID is handled by writeResponseWithCorrelationID
+	// Do NOT include it in the response body
 
 	// Brokers array (4 bytes length + brokers) - 1 broker (this gateway)
 	binary.Write(&buf, binary.BigEndian, int32(1))
@@ -1335,7 +1324,8 @@ func (h *Handler) HandleMetadataV3V4(correlationID uint32, requestBody []byte) (
 	var buf bytes.Buffer
 
 	// Correlation ID (4 bytes)
-	binary.Write(&buf, binary.BigEndian, correlationID)
+	// NOTE: Correlation ID is handled by writeResponseWithCorrelationID
+	// Do NOT include it in the response body
 
 	// ThrottleTimeMs (4 bytes) - v3+ addition
 	binary.Write(&buf, binary.BigEndian, int32(0)) // No throttling
@@ -1463,7 +1453,8 @@ func (h *Handler) HandleMetadataV5V6(correlationID uint32, requestBody []byte) (
 	var buf bytes.Buffer
 
 	// Correlation ID (4 bytes)
-	binary.Write(&buf, binary.BigEndian, correlationID)
+	// NOTE: Correlation ID is handled by writeResponseWithCorrelationID
+	// Do NOT include it in the response body
 
 	// ThrottleTimeMs (4 bytes) - v3+ addition
 	binary.Write(&buf, binary.BigEndian, int32(0)) // No throttling
@@ -1584,7 +1575,8 @@ func (h *Handler) HandleMetadataV7(correlationID uint32, requestBody []byte) ([]
 	var buf bytes.Buffer
 
 	// Correlation ID (4 bytes)
-	binary.Write(&buf, binary.BigEndian, correlationID)
+	// NOTE: Correlation ID is handled by writeResponseWithCorrelationID
+	// Do NOT include it in the response body
 
 	// ThrottleTimeMs (4 bytes) - v3+ addition
 	binary.Write(&buf, binary.BigEndian, int32(0)) // No throttling
@@ -2982,10 +2974,49 @@ func (h *Handler) handleDescribeConfigs(correlationID uint32, apiVersion uint16,
 	return response, nil
 }
 
+// writeResponseWithCorrelationID writes a Kafka response following the wire protocol:
+// [Size: 4 bytes including correlation ID][Correlation ID: 4 bytes][Body: Size-4 bytes]
+func (h *Handler) writeResponseWithCorrelationID(w *bufio.Writer, correlationID uint32, responseBody []byte, timeout time.Duration) error {
+	// Kafka wire protocol format:
+	// [4 bytes: size = len(correlationID) + len(body)]
+	// [4 bytes: correlation ID]
+	// [N bytes: response body]
+
+	// Calculate total size: correlation ID (4) + body
+	totalSize := 4 + len(responseBody)
+
+	// Write size
+	sizeBuf := make([]byte, 4)
+	binary.BigEndian.PutUint32(sizeBuf, uint32(totalSize))
+	if _, err := w.Write(sizeBuf); err != nil {
+		return fmt.Errorf("write response size: %w", err)
+	}
+
+	// Write correlation ID
+	correlationBuf := make([]byte, 4)
+	binary.BigEndian.PutUint32(correlationBuf, correlationID)
+	if _, err := w.Write(correlationBuf); err != nil {
+		return fmt.Errorf("write correlation ID: %w", err)
+	}
+
+	// Write response body
+	if _, err := w.Write(responseBody); err != nil {
+		return fmt.Errorf("write response body: %w", err)
+	}
+
+	// Flush
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("flush response: %w", err)
+	}
+
+	return nil
+}
+
 // writeResponseWithTimeout writes a Kafka response with timeout handling
+// DEPRECATED: Use writeResponseWithCorrelationID instead
 func (h *Handler) writeResponseWithTimeout(w *bufio.Writer, response []byte, timeout time.Duration) error {
-	// Note: bufio.Writer doesn't support direct timeout setting
-	// Timeout handling should be done at the connection level before calling this function
+	// This old function expects response to include correlation ID at the start
+	// For backward compatibility with any remaining callers
 
 	// Write response size (4 bytes)
 	responseSizeBytes := make([]byte, 4)
