@@ -200,6 +200,14 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 		}
 		glog.V(0).Infof("🔍 DEBUG: %s ReadFromBuffer at %v posOffset %d. Read bytes %v bufferOffset %d", readerName, lastReadPosition, lastReadPosition.Offset, readSize, offset)
 		if bytesBuf == nil {
+			// CRITICAL: Check if subscription is still active BEFORE waiting
+			// This prevents infinite loops when client has disconnected
+			if !waitForDataFn() {
+				isDone = true
+				glog.V(0).Infof("🔍 DEBUG: waitForDataFn returned false, subscription ending")
+				return
+			}
+
 			if offset >= 0 {
 				lastReadPosition = NewMessagePosition(lastReadPosition.Time.UnixNano(), offset)
 			}

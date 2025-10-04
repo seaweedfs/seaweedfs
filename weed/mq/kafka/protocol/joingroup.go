@@ -611,13 +611,8 @@ func (h *Handler) buildJoinGroupResponse(response JoinGroupResponse) []byte {
 	if IsFlexibleVersion(11, response.Version) {
 		out := make([]byte, 0, 256)
 
-		// Correlation ID
-		cid := make([]byte, 4)
-		binary.BigEndian.PutUint32(cid, response.CorrelationID)
-		out = append(out, cid...)
-
-		// Flexible response header tagged fields (empty)
-		out = append(out, 0)
+		// NOTE: Correlation ID and header-level tagged fields are handled by writeResponseWithHeader
+		// Do NOT include them in the response body
 
 		// throttle_time_ms (int32) - versions 2+
 		if response.Version >= 2 {

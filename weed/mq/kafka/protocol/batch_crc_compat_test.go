@@ -22,7 +22,7 @@ func TestBatchConstruction(t *testing.T) {
 	batch := constructTestBatch(0, timestamp, key, value)
 
 	t.Logf("Batch size: %d bytes", len(batch))
-	t.Logf("Batch hex:\n%s", hexDump(batch))
+	t.Logf("Batch hex:\n%s", hexDumpTest(batch))
 
 	// Extract and verify CRC
 	if len(batch) < 21 {
@@ -239,7 +239,7 @@ func verifyField(t *testing.T, name string, bytes []byte, value interface{}) {
 }
 
 // hexDump formats bytes as hex dump
-func hexDump(data []byte) string {
+func hexDumpTest(data []byte) string {
 	var buf bytes.Buffer
 	for i := 0; i < len(data); i += 16 {
 		end := i + 16

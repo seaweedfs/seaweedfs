@@ -95,7 +95,7 @@ type SeaweedMQHandlerInterface interface {
 	TopicExists(topic string) bool
 	ListTopics() []string
 	CreateTopic(topic string, partitions int32) error
-	CreateTopicWithSchemas(name string, partitions int32, valueRecordType *schema_pb.RecordType, keyRecordType *schema_pb.RecordType) error
+	CreateTopicWithSchemas(name string, partitions int32, keyRecordType *schema_pb.RecordType, valueRecordType *schema_pb.RecordType) error
 	DeleteTopic(topic string) error
 	GetTopicInfo(topic string) (*integration.KafkaTopicInfo, bool)
 	// Ledger methods REMOVED - SMQ handles Kafka offsets natively
@@ -1616,8 +1616,9 @@ func (h *Handler) HandleMetadataV7(correlationID uint32, requestBody []byte) ([]
 	buf.WriteByte(0x00)
 
 	// ClusterID (COMPACT_NULLABLE_STRING: varint length + data) - v2+ addition, AFTER all brokers
-	// Use 0x00 to indicate null
-	buf.WriteByte(0x00) // Null cluster ID
+	// Schema Registry requires a non-null cluster ID
+	clusterID := "seaweedfs-kafka-gateway"
+	buf.Write(FlexibleString(clusterID))
 
 	// ControllerID (4 bytes) - v1+ addition, AFTER ClusterID
 	binary.Write(&buf, binary.BigEndian, int32(1))
@@ -2497,19 +2498,10 @@ func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint
 	// Build response directly instead of delegating to avoid circular dependency
 	response := make([]byte, 0, 128)
 
-	// Correlation ID
-	cid := make([]byte, 4)
-	binary.BigEndian.PutUint32(cid, correlationID)
-	response = append(response, cid...)
+	// NOTE: Correlation ID and header tagged fields are handled by writeResponseWithHeader
+	// Do NOT include them in the response body
 
-	// RESPONSE HEADER VERSION FIX:
-	// CreateTopics v5+ uses response header version 1 (with tagged fields)
-	// This is different from ApiVersions which uses header version 0 for AdminClient compatibility
-	if apiVersion >= 5 {
-		response = append(response, 0x00) // Empty header tagged fields (varint: single byte 0)
-	}
-
-	// throttle_time_ms (4 bytes) - comes directly after correlation ID in CreateTopics responses
+	// throttle_time_ms (4 bytes) - first field in CreateTopics response body
 	response = append(response, 0, 0, 0, 0)
 
 	// topics (compact array) - V5 FLEXIBLE FORMAT
@@ -2985,6 +2977,8 @@ func isFlexibleResponse(apiKey uint16, apiVersion uint16) bool {
 	case 1: // Fetch
 		return apiVersion >= 12
 	case 3: // Metadata
+		// COMPATIBILITY FIX: Even though Metadata v7+ uses compact arrays/strings in the body,
+		// the AdminClient expects NO flexible header for v7. Only v9+ should have flexible headers.
 		return apiVersion >= 9
 	case 8: // OffsetCommit
 		return apiVersion >= 8
@@ -3005,10 +2999,14 @@ func isFlexibleResponse(apiKey uint16, apiVersion uint16) bool {
 		// Even though ApiVersions v3+ technically supports flexible responses, AdminClient
 		// expects the header to NOT include tagged fields. This is a known quirk.
 		return false // Always use non-flexible header for ApiVersions
-	case 32: // DescribeConfigs
+	case 19: // CreateTopics
+		return apiVersion >= 5
+	case 20: // DeleteTopics
 		return apiVersion >= 4
 	case 22: // InitProducerId
 		return apiVersion >= 2 // Flexible from v2+ (KIP-360)
+	case 32: // DescribeConfigs
+		return apiVersion >= 4
 	case 60: // DescribeCluster
 		return true // All versions (0+) are flexible
 	default:
