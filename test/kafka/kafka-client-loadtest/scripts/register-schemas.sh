@@ -112,7 +112,7 @@ verify_schema() {
     fi
 }
 
-# Register load test schemas
+# Register load test schemas (optimized for batch registration)
 register_loadtest_schemas() {
     log_info "Registering load test schemas..."
     
@@ -141,19 +141,29 @@ register_loadtest_schemas() {
     local topics=("loadtest-topic-0" "loadtest-topic-1" "loadtest-topic-2" "loadtest-topic-3" "loadtest-topic-4")
     local success_count=0
     local total_schemas=0
+    local pids=()
+    
+    # OPTIMIZATION: Register all schemas in parallel to reduce total time
+    log_info "Starting parallel schema registration..."
     
     for topic in "${topics[@]}"; do
-        # Register value schema
-        if register_schema "${topic}-value" "$loadtest_value_schema" "AVRO"; then
-            ((success_count++))
-        fi
+        # Register value schema in background
+        (register_schema "${topic}-value" "$loadtest_value_schema" "AVRO") &
+        pids+=($!)
         ((total_schemas++))
         
-        # Register key schema
-        if register_schema "${topic}-key" "$loadtest_key_schema" "AVRO"; then
+        # Register key schema in background
+        (register_schema "${topic}-key" "$loadtest_key_schema" "AVRO") &
+        pids+=($!)
+        ((total_schemas++))
+    done
+    
+    # Wait for all background registrations to complete
+    log_info "Waiting for all schema registrations to complete..."
+    for pid in "${pids[@]}"; do
+        if wait "$pid"; then
             ((success_count++))
         fi
-        ((total_schemas++))
     done
     
     log_info "Schema registration summary: $success_count/$total_schemas schemas registered successfully"

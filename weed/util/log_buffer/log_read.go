@@ -193,9 +193,9 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 		bytesBuf, offset, err = logBuffer.ReadFromBuffer(lastReadPosition)
 		glog.V(0).Infof("🔍 DEBUG: ReadFromBuffer returned bytesBuf=%v, offset=%d, err=%v", bytesBuf != nil, offset, err)
 		if err == ResumeFromDiskError {
-			// OPTIMIZATION: Reduced sleep time from 1127ms to 50ms for faster disk reads
-			// The disk read itself will take time, so we don't need a long sleep here
-			time.Sleep(50 * time.Millisecond)
+			// OPTIMIZATION: Reduced sleep time to 10ms for faster disk reads
+			// This balances responsiveness with CPU usage
+			time.Sleep(10 * time.Millisecond)
 			return lastReadPosition, isDone, ResumeFromDiskError
 		}
 		readSize := 0
@@ -225,8 +225,8 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 			// This prevents infinite blocking when all data is on disk (e.g., after restart).
 			if startPosition.IsOffsetBased {
 				glog.V(0).Infof("🔍 DEBUG: No data in LogBuffer for offset-based read at %v, returning ResumeFromDiskError", lastReadPosition)
-				// OPTIMIZATION: Reduced sleep time from 1127ms to 50ms for faster disk reads
-				time.Sleep(50 * time.Millisecond)
+				// OPTIMIZATION: Reduced sleep time to 10ms for faster disk reads
+				time.Sleep(10 * time.Millisecond)
 				return lastReadPosition, isDone, ResumeFromDiskError
 			}
 
