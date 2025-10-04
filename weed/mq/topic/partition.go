@@ -2,8 +2,9 @@ package topic
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 )
 
 const PartitionCount = 4096
@@ -38,6 +39,13 @@ func (partition Partition) Equals(other Partition) bool {
 		return false
 	}
 	return true
+}
+
+// LogicalEquals compares only the partition boundaries (RangeStart, RangeStop)
+// This is useful when comparing partitions that may have different timestamps or ring sizes
+// but represent the same logical partition range
+func (partition Partition) LogicalEquals(other Partition) bool {
+	return partition.RangeStart == other.RangeStart && partition.RangeStop == other.RangeStop
 }
 
 func FromPbPartition(partition *schema_pb.Partition) Partition {

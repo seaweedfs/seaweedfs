@@ -3,6 +3,7 @@ package topic
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -37,7 +38,7 @@ type LocalPartition struct {
 var TIME_FORMAT = "2006-01-02-15-04-05"
 var PartitionGenerationFormat = "v2006-01-02-15-04-05"
 
-func NewLocalPartition(partition Partition, logFlushFn log_buffer.LogFlushFuncType, readFromDiskFn log_buffer.LogReadFromDiskFuncType) *LocalPartition {
+func NewLocalPartition(partition Partition, logFlushInterval int, logFlushFn log_buffer.LogFlushFuncType, readFromDiskFn log_buffer.LogReadFromDiskFuncType) *LocalPartition {
 	lp := &LocalPartition{
 		Partition:   partition,
 		Publishers:  NewLocalPartitionPublishers(),
@@ -45,7 +46,7 @@ func NewLocalPartition(partition Partition, logFlushFn log_buffer.LogFlushFuncTy
 	}
 	lp.ListenersCond = sync.NewCond(&lp.ListenersLock)
 	lp.LogBuffer = log_buffer.NewLogBuffer(fmt.Sprintf("%d/%04d-%04d", partition.UnixTimeNs, partition.RangeStart, partition.RangeStop),
-		2*time.Minute, logFlushFn, readFromDiskFn, func() {
+		time.Duration(logFlushInterval)*time.Second, logFlushFn, readFromDiskFn, func() {
 			if atomic.LoadInt64(&lp.ListenersWaits) > 0 {
 				lp.ListenersCond.Broadcast()
 			}
@@ -220,6 +221,37 @@ func (p *LocalPartition) MaybeShutdownLocalPartition() (hasShutdown bool) {
 
 	glog.V(0).Infof("local partition %v Publisher:%d Subscriber:%d follower:%s shutdown %v", p.Partition, p.Publishers.Size(), p.Subscribers.Size(), p.Follower, hasShutdown)
 	return
+}
+
+// MaybeShutdownLocalPartitionForTopic is a topic-aware version that considers system topic retention
+func (p *LocalPartition) MaybeShutdownLocalPartitionForTopic(topicName string) (hasShutdown bool) {
+	// For system topics like _schemas, be more conservative about shutdown
+	if isSystemTopic(topicName) {
+		glog.V(0).Infof("System topic %s - skipping aggressive shutdown for partition %v (Publishers:%d Subscribers:%d)",
+			topicName, p.Partition, p.Publishers.Size(), p.Subscribers.Size())
+		return false
+	}
+
+	// For regular topics, use the standard shutdown logic
+	return p.MaybeShutdownLocalPartition()
+}
+
+// isSystemTopic checks if a topic should have special retention behavior
+func isSystemTopic(topicName string) bool {
+	systemTopics := []string{
+		"_schemas",            // Schema Registry topic
+		"__consumer_offsets",  // Kafka consumer offsets topic
+		"__transaction_state", // Kafka transaction state topic
+	}
+
+	for _, systemTopic := range systemTopics {
+		if topicName == systemTopic {
+			return true
+		}
+	}
+
+	// Also check for topics with system prefixes
+	return strings.HasPrefix(topicName, "_") || strings.HasPrefix(topicName, "__")
 }
 
 func (p *LocalPartition) Shutdown() {

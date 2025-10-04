@@ -69,7 +69,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		if processedTsNs != 0 {
 			lastReadTime = log_buffer.NewMessagePosition(processedTsNs, -2)
 		} else {
-			nextDayTs := util.GetNextDayTsNano(lastReadTime.UnixNano())
+			nextDayTs := util.GetNextDayTsNano(lastReadTime.Time.UnixNano())
 			position := log_buffer.NewMessagePosition(nextDayTs, -2)
 			found, err := fs.filer.HasPersistedLogFiles(position)
 			if err != nil {
@@ -171,7 +171,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 				continue
 			}
 			// If no persisted entries were read for this day, check the next day for logs
-			nextDayTs := util.GetNextDayTsNano(lastReadTime.UnixNano())
+			nextDayTs := util.GetNextDayTsNano(lastReadTime.Time.UnixNano())
 			position := log_buffer.NewMessagePosition(nextDayTs, -2)
 			found, err := fs.filer.HasPersistedLogFiles(position)
 			if err != nil {

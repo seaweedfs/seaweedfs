@@ -2,11 +2,12 @@ package sub_client
 
 import (
 	"context"
+	"sync"
+
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"google.golang.org/grpc"
-	"sync"
 )
 
 type SubscriberConfiguration struct {
@@ -44,10 +45,10 @@ type TopicSubscriber struct {
 	bootstrapBrokers                 []string
 	activeProcessors                 map[topic.Partition]*ProcessorState
 	activeProcessorsLock             sync.Mutex
-	PartitionOffsetChan              chan KeyedOffset
+	PartitionOffsetChan              chan KeyedTimestamp
 }
 
-func NewTopicSubscriber(ctx context.Context, bootstrapBrokers []string, subscriber *SubscriberConfiguration, content *ContentConfiguration, partitionOffsetChan chan KeyedOffset) *TopicSubscriber {
+func NewTopicSubscriber(ctx context.Context, bootstrapBrokers []string, subscriber *SubscriberConfiguration, content *ContentConfiguration, partitionOffsetChan chan KeyedTimestamp) *TopicSubscriber {
 	return &TopicSubscriber{
 		ctx:                              ctx,
 		SubscriberConfig:                 subscriber,

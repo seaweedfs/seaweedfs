@@ -203,11 +203,11 @@ func TestWhereClauseEndToEnd(t *testing.T) {
 
 	// CRITICAL TEST: This should detect the WHERE clause bug
 	if impossibleCount == baselineCount {
-		t.Errorf("❌ WHERE CLAUSE BUG CONFIRMED:")
+		t.Errorf("WHERE CLAUSE BUG CONFIRMED:")
 		t.Errorf("   Impossible condition returned same row count as no WHERE clause")
 		t.Errorf("   This proves WHERE filtering is not being applied")
 	} else if impossibleCount == 0 {
-		t.Logf("✅ Impossible WHERE condition correctly returns 0 rows")
+		t.Logf("Impossible WHERE condition correctly returns 0 rows")
 	}
 
 	// Test 3: Specific ID filtering
@@ -222,11 +222,11 @@ func TestWhereClauseEndToEnd(t *testing.T) {
 		t.Logf("WHERE id = %s: %d rows", firstId, specificCount)
 
 		if specificCount == baselineCount {
-			t.Errorf("❌ WHERE clause bug: Specific ID filter returned all rows")
+			t.Errorf("WHERE clause bug: Specific ID filter returned all rows")
 		} else if specificCount == 1 {
-			t.Logf("✅ Specific ID WHERE clause working correctly")
+			t.Logf("Specific ID WHERE clause working correctly")
 		} else {
-			t.Logf("❓ Unexpected: Specific ID returned %d rows", specificCount)
+			t.Logf("Unexpected: Specific ID returned %d rows", specificCount)
 		}
 	}
 
@@ -250,10 +250,10 @@ func TestWhereClauseEndToEnd(t *testing.T) {
 	}
 
 	if nonMatchingCount > 0 {
-		t.Errorf("❌ WHERE clause bug: %d rows have id <= 10,000,000 but should be filtered out", nonMatchingCount)
+		t.Errorf("WHERE clause bug: %d rows have id <= 10,000,000 but should be filtered out", nonMatchingCount)
 		t.Errorf("   Sample IDs that should be filtered: %v", getSampleIds(rangeResult, 3))
 	} else {
-		t.Logf("✅ WHERE id > 10000000 correctly filtered results")
+		t.Logf("WHERE id > 10000000 correctly filtered results")
 	}
 }
 
@@ -317,14 +317,14 @@ func TestSpecificWhereClauseBug(t *testing.T) {
 			t.Logf("Row %d: id = %d", i+1, idVal)
 			if idVal <= 10000000 {
 				bugDetected = true
-				t.Errorf("❌ BUG: id %d should be filtered out (≤ 10,000,000)", idVal)
+				t.Errorf("BUG: id %d should be filtered out (<= 10,000,000)", idVal)
 			}
 		}
 	}
 
 	if !bugDetected {
-		t.Log("✅ WHERE clause working correctly - all IDs > 10,000,000")
+		t.Log("WHERE clause working correctly - all IDs > 10,000,000")
 	} else {
-		t.Error("❌ WHERE clause bug confirmed: Returned IDs that should be filtered out")
+		t.Error("WHERE clause bug confirmed: Returned IDs that should be filtered out")
 	}
 }

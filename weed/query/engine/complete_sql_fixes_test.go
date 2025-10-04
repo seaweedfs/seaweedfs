@@ -228,14 +228,14 @@ func TestSQLFixesSummary(t *testing.T) {
 
 		// What works now
 		stmt, err := ParseSQL(failingSQL)
-		assert.NoError(t, err, "✅ SQL parsing works")
+		assert.NoError(t, err, "SQL parsing works")
 
 		selectStmt := stmt.(*SelectStatement)
 		predicate, err := engine.buildPredicateWithContext(selectStmt.Where.Expr, selectStmt.SelectExprs)
-		assert.NoError(t, err, "✅ Predicate building works with aliases")
+		assert.NoError(t, err, "Predicate building works with aliases")
 
 		result := predicate(testRecord)
-		assert.True(t, result, "✅ Originally failing query now works perfectly")
+		assert.True(t, result, "Originally failing query now works perfectly")
 
 		// Verify precision is maintained
 		testRecordOffBy1 := &schema_pb.RecordValue{
@@ -246,15 +246,15 @@ func TestSQLFixesSummary(t *testing.T) {
 		}
 
 		result2 := predicate(testRecordOffBy1)
-		assert.False(t, result2, "✅ Nanosecond precision maintained")
+		assert.False(t, result2, "Nanosecond precision maintained")
 
-		t.Log("🎉 ALL SQL FIXES VERIFIED:")
-		t.Log("  ✅ Timestamp precision for large int64 values")
-		t.Log("  ✅ SQL alias resolution in WHERE clauses")
-		t.Log("  ✅ Scan boundary fixes for equality queries")
-		t.Log("  ✅ Range query fixes for equal boundaries")
-		t.Log("  ✅ Hybrid scanner time range handling")
-		t.Log("  ✅ Backward compatibility maintained")
-		t.Log("  ✅ Production stability verified")
+		t.Log("ALL SQL FIXES VERIFIED:")
+		t.Log("  Timestamp precision for large int64 values")
+		t.Log("  SQL alias resolution in WHERE clauses")
+		t.Log("  Scan boundary fixes for equality queries")
+		t.Log("  Range query fixes for equal boundaries")
+		t.Log("  Hybrid scanner time range handling")
+		t.Log("  Backward compatibility maintained")
+		t.Log("  Production stability verified")
 	})
 }

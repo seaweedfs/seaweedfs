@@ -15,6 +15,7 @@ import (
 
 	"github.com/parquet-go/parquet-go"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/mq"
 	"github.com/seaweedfs/seaweedfs/weed/mq/logstore"
 	"github.com/seaweedfs/seaweedfs/weed/mq/schema"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
@@ -59,12 +60,13 @@ func NewHybridMessageScanner(filerClient filer_pb.FilerClient, brokerClient Brok
 		Name:      topicName,
 	}
 
-	// Get topic schema from broker client (works with both real and mock clients)
-	recordType, err := brokerClient.GetTopicSchema(context.Background(), namespace, topicName)
+	// Get flat schema from broker client
+	recordType, _, err := brokerClient.GetTopicSchema(context.Background(), namespace, topicName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get topic schema: %v", err)
+		return nil, fmt.Errorf("failed to get topic record type: %v", err)
 	}
-	if recordType == nil {
+
+	if recordType == nil || len(recordType.Fields) == 0 {
 		return nil, NoSchemaError{Namespace: namespace, Topic: topicName}
 	}
 
@@ -356,8 +358,17 @@ func (hms *HybridMessageScanner) scanUnflushedDataWithStats(ctx context.Context,
 
 	// Step 2: Process unflushed entries (already deduplicated by broker)
 	for _, logEntry := range unflushedEntries {
+		// Pre-decode DataMessage for reuse in both control check and conversion
+		var dataMessage *mq_pb.DataMessage
+		if len(logEntry.Data) > 0 {
+			dataMessage = &mq_pb.DataMessage{}
+			if err := proto.Unmarshal(logEntry.Data, dataMessage); err != nil {
+				dataMessage = nil // Failed to decode, treat as raw data
+			}
+		}
+
 		// Skip control entries without actual data
-		if hms.isControlEntry(logEntry) {
+		if hms.isControlEntryWithDecoded(logEntry, dataMessage) {
 			continue // Skip this entry
 		}
 
@@ -370,7 +381,7 @@ func (hms *HybridMessageScanner) scanUnflushedDataWithStats(ctx context.Context,
 		}
 
 		// Convert LogEntry to RecordValue format (same as disk data)
-		recordValue, _, err := hms.convertLogEntryToRecordValue(logEntry)
+		recordValue, _, err := hms.convertLogEntryToRecordValueWithDecoded(logEntry, dataMessage)
 		if err != nil {
 			if isDebugMode(ctx) {
 				fmt.Printf("Debug: Failed to convert unflushed log entry: %v\n", err)
@@ -652,28 +663,55 @@ func (hms *HybridMessageScanner) countLiveLogFiles(partition topic.Partition) (i
 // Based on MQ system analysis, control entries are:
 // 1. DataMessages with populated Ctrl field (publisher close signals)
 // 2. Entries with empty keys (as filtered by subscriber)
-// 3. Entries with no data
+// NOTE: Messages with empty data but valid keys (like NOOP messages) are NOT control entries
 func (hms *HybridMessageScanner) isControlEntry(logEntry *filer_pb.LogEntry) bool {
-	// Skip entries with no data
-	if len(logEntry.Data) == 0 {
-		return true
+	// Pre-decode DataMessage if needed
+	var dataMessage *mq_pb.DataMessage
+	if len(logEntry.Data) > 0 {
+		dataMessage = &mq_pb.DataMessage{}
+		if err := proto.Unmarshal(logEntry.Data, dataMessage); err != nil {
+			dataMessage = nil // Failed to decode, treat as raw data
+		}
 	}
+	return hms.isControlEntryWithDecoded(logEntry, dataMessage)
+}
 
+// isControlEntryWithDecoded checks if a log entry is a control entry using pre-decoded DataMessage
+// This avoids duplicate protobuf unmarshaling when the DataMessage is already decoded
+func (hms *HybridMessageScanner) isControlEntryWithDecoded(logEntry *filer_pb.LogEntry, dataMessage *mq_pb.DataMessage) bool {
 	// Skip entries with empty keys (same logic as subscriber)
 	if len(logEntry.Key) == 0 {
 		return true
 	}
 
 	// Check if this is a DataMessage with control field populated
-	dataMessage := &mq_pb.DataMessage{}
-	if err := proto.Unmarshal(logEntry.Data, dataMessage); err == nil {
-		// If it has a control field, it's a control message
-		if dataMessage.Ctrl != nil {
-			return true
-		}
+	if dataMessage != nil && dataMessage.Ctrl != nil {
+		return true
 	}
 
+	// Messages with valid keys (even if data is empty) are legitimate messages
+	// Examples: NOOP messages from Schema Registry
 	return false
+}
+
+// isNullOrEmpty checks if a schema_pb.Value is null or empty
+func isNullOrEmpty(value *schema_pb.Value) bool {
+	if value == nil {
+		return true
+	}
+
+	switch v := value.Kind.(type) {
+	case *schema_pb.Value_StringValue:
+		return v.StringValue == ""
+	case *schema_pb.Value_BytesValue:
+		return len(v.BytesValue) == 0
+	case *schema_pb.Value_ListValue:
+		return v.ListValue == nil || len(v.ListValue.Values) == 0
+	case nil:
+		return true // No kind set means null
+	default:
+		return false
+	}
 }
 
 // convertLogEntryToRecordValue converts a filer_pb.LogEntry to schema_pb.RecordValue
@@ -722,26 +760,26 @@ func (hms *HybridMessageScanner) parseRawMessageWithSchema(logEntry *filer_pb.Lo
 
 	// Parse message data based on schema
 	if hms.recordSchema == nil || len(hms.recordSchema.Fields) == 0 {
-		// Fallback: No schema available, treat as single "data" field
-		recordValue.Fields["data"] = &schema_pb.Value{
-			Kind: &schema_pb.Value_StringValue{StringValue: string(logEntry.Data)},
+		// Fallback: No schema available, treat as single "value" field for Kafka compatibility
+		recordValue.Fields["value"] = &schema_pb.Value{
+			Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Data},
 		}
 		return recordValue, "live_log", nil
 	}
 
-	// Attempt schema-aware parsing
-	// Strategy 1: Try JSON parsing first (most common for live messages)
-	if parsedRecord, err := hms.parseJSONMessage(logEntry.Data); err == nil {
-		// Successfully parsed as JSON, merge with system columns
+	// Strategy 1: Try protobuf parsing (binary messages)
+	if parsedRecord, err := hms.parseProtobufMessage(logEntry.Data); err == nil {
+		// Successfully parsed as protobuf, merge with system columns
 		for fieldName, fieldValue := range parsedRecord.Fields {
 			recordValue.Fields[fieldName] = fieldValue
 		}
 		return recordValue, "live_log", nil
 	}
 
-	// Strategy 2: Try protobuf parsing (binary messages)
-	if parsedRecord, err := hms.parseProtobufMessage(logEntry.Data); err == nil {
-		// Successfully parsed as protobuf, merge with system columns
+	// Attempt schema-aware parsing
+	// Strategy 2: Try JSON parsing first (most common for live messages)
+	if parsedRecord, err := hms.parseJSONMessage(logEntry.Data); err == nil {
+		// Successfully parsed as JSON, merge with system columns
 		for fieldName, fieldValue := range parsedRecord.Fields {
 			recordValue.Fields[fieldName] = fieldValue
 		}
@@ -759,9 +797,93 @@ func (hms *HybridMessageScanner) parseRawMessageWithSchema(logEntry *filer_pb.Lo
 		}
 	}
 
-	// Final fallback: treat as string data field
-	recordValue.Fields["data"] = &schema_pb.Value{
-		Kind: &schema_pb.Value_StringValue{StringValue: string(logEntry.Data)},
+	// Final fallback: treat as bytes value field for Kafka compatibility
+	recordValue.Fields["value"] = &schema_pb.Value{
+		Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Data},
+	}
+
+	return recordValue, "live_log", nil
+}
+
+// convertLogEntryToRecordValueWithDecoded converts a filer_pb.LogEntry to schema_pb.RecordValue
+// using a pre-decoded DataMessage to avoid duplicate protobuf unmarshaling
+func (hms *HybridMessageScanner) convertLogEntryToRecordValueWithDecoded(logEntry *filer_pb.LogEntry, dataMessage *mq_pb.DataMessage) (*schema_pb.RecordValue, string, error) {
+	// If we have a decoded DataMessage, check if it contains a RecordValue
+	if dataMessage != nil && dataMessage.Value != nil {
+		// This is a DataMessage containing a RecordValue (live message format)
+		// dataMessage.Value is []byte, so we need to unmarshal it
+		recordValue := &schema_pb.RecordValue{}
+		if err := proto.Unmarshal(dataMessage.Value, recordValue); err != nil {
+			// If unmarshaling fails, treat dataMessage.Value as raw data and create value field
+			recordValue = &schema_pb.RecordValue{
+				Fields: make(map[string]*schema_pb.Value),
+			}
+
+			// Add system columns
+			recordValue.Fields[SW_COLUMN_NAME_TIMESTAMP] = &schema_pb.Value{
+				Kind: &schema_pb.Value_Int64Value{Int64Value: logEntry.TsNs},
+			}
+			recordValue.Fields[SW_COLUMN_NAME_KEY] = &schema_pb.Value{
+				Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Key},
+			}
+
+			// Add the raw value as the "value" field for Kafka compatibility
+			recordValue.Fields["value"] = &schema_pb.Value{
+				Kind: &schema_pb.Value_BytesValue{BytesValue: dataMessage.Value},
+			}
+
+			// Also add "key" field for consistency (same as _key for non-schematized messages)
+			recordValue.Fields["key"] = &schema_pb.Value{
+				Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Key},
+			}
+
+			return recordValue, "live_log", nil
+		}
+
+		// Ensure Fields map exists
+		if recordValue.Fields == nil {
+			recordValue.Fields = make(map[string]*schema_pb.Value)
+		}
+
+		// Add system columns from LogEntry
+		recordValue.Fields[SW_COLUMN_NAME_TIMESTAMP] = &schema_pb.Value{
+			Kind: &schema_pb.Value_Int64Value{Int64Value: logEntry.TsNs},
+		}
+		recordValue.Fields[SW_COLUMN_NAME_KEY] = &schema_pb.Value{
+			Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Key},
+		}
+
+		// Also add "key" field if not already present (for system topics and non-schematized messages)
+		if _, exists := recordValue.Fields["key"]; !exists {
+			recordValue.Fields["key"] = &schema_pb.Value{
+				Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Key},
+			}
+		}
+
+		return recordValue, "live_log", nil
+	}
+
+	// For cases where dataMessage is nil, create RecordValue directly from logEntry.Data
+	recordValue := &schema_pb.RecordValue{
+		Fields: make(map[string]*schema_pb.Value),
+	}
+
+	// Add system columns
+	recordValue.Fields[SW_COLUMN_NAME_TIMESTAMP] = &schema_pb.Value{
+		Kind: &schema_pb.Value_Int64Value{Int64Value: logEntry.TsNs},
+	}
+	recordValue.Fields[SW_COLUMN_NAME_KEY] = &schema_pb.Value{
+		Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Key},
+	}
+
+	// Add the raw data as the "value" field for Kafka compatibility
+	recordValue.Fields["value"] = &schema_pb.Value{
+		Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Data},
+	}
+
+	// Also add "key" field for consistency (same as _key for non-schematized messages)
+	recordValue.Fields["key"] = &schema_pb.Value{
+		Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Key},
 	}
 
 	return recordValue, "live_log", nil
@@ -1123,10 +1245,10 @@ func (h *HybridMessageScanner) extractParquetFileStats(entry *filer_pb.Entry, lo
 	}
 	// Populate optional min/max from filer extended attributes (writer stores ns timestamps)
 	if entry != nil && entry.Extended != nil {
-		if minBytes, ok := entry.Extended["min"]; ok && len(minBytes) == 8 {
+		if minBytes, ok := entry.Extended[mq.ExtendedAttrTimestampMin]; ok && len(minBytes) == 8 {
 			fileStats.MinTimestampNs = int64(binary.BigEndian.Uint64(minBytes))
 		}
-		if maxBytes, ok := entry.Extended["max"]; ok && len(maxBytes) == 8 {
+		if maxBytes, ok := entry.Extended[mq.ExtendedAttrTimestampMax]; ok && len(maxBytes) == 8 {
 			fileStats.MaxTimestampNs = int64(binary.BigEndian.Uint64(maxBytes))
 		}
 	}
@@ -1538,13 +1660,22 @@ func (s *StreamingFlushedDataSource) startStreaming() {
 
 		// Message processing function
 		eachLogEntryFn := func(logEntry *filer_pb.LogEntry) (isDone bool, err error) {
+			// Pre-decode DataMessage for reuse in both control check and conversion
+			var dataMessage *mq_pb.DataMessage
+			if len(logEntry.Data) > 0 {
+				dataMessage = &mq_pb.DataMessage{}
+				if err := proto.Unmarshal(logEntry.Data, dataMessage); err != nil {
+					dataMessage = nil // Failed to decode, treat as raw data
+				}
+			}
+
 			// Skip control entries without actual data
-			if s.hms.isControlEntry(logEntry) {
+			if s.hms.isControlEntryWithDecoded(logEntry, dataMessage) {
 				return false, nil // Skip this entry
 			}
 
 			// Convert log entry to schema_pb.RecordValue for consistent processing
-			recordValue, source, convertErr := s.hms.convertLogEntryToRecordValue(logEntry)
+			recordValue, source, convertErr := s.hms.convertLogEntryToRecordValueWithDecoded(logEntry, dataMessage)
 			if convertErr != nil {
 				return false, fmt.Errorf("failed to convert log entry: %v", convertErr)
 			}

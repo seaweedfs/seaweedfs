@@ -86,7 +86,7 @@ func (f *Filer) logMetaEvent(ctx context.Context, fullpath string, eventNotifica
 
 }
 
-func (f *Filer) logFlushFunc(logBuffer *log_buffer.LogBuffer, startTime, stopTime time.Time, buf []byte) {
+func (f *Filer) logFlushFunc(logBuffer *log_buffer.LogBuffer, startTime, stopTime time.Time, buf []byte, minOffset, maxOffset int64) {
 
 	if len(buf) == 0 {
 		return

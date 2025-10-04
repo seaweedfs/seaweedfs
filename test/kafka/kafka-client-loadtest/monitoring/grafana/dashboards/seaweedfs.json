@@ -1,0 +1,62 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "SeaweedFS Cluster Dashboard",
+    "tags": ["seaweedfs", "storage"],
+    "timezone": "browser", 
+    "panels": [
+      {
+        "id": 1,
+        "title": "Master Status",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "up{job=\"seaweedfs-master\"}",
+            "legendFormat": "Master Up"
+          }
+        ],
+        "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0}
+      },
+      {
+        "id": 2, 
+        "title": "Volume Status",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "up{job=\"seaweedfs-volume\"}",
+            "legendFormat": "Volume Up"
+          }
+        ],
+        "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0}
+      },
+      {
+        "id": 3,
+        "title": "Filer Status", 
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "up{job=\"seaweedfs-filer\"}",
+            "legendFormat": "Filer Up"
+          }
+        ],
+        "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0}
+      },
+      {
+        "id": 4,
+        "title": "MQ Broker Status",
+        "type": "stat", 
+        "targets": [
+          {
+            "expr": "up{job=\"seaweedfs-mq-broker\"}",
+            "legendFormat": "MQ Broker Up"
+          }
+        ],
+        "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0}
+      }
+    ],
+    "time": {"from": "now-30m", "to": "now"},
+    "refresh": "10s",
+    "schemaVersion": 16,
+    "version": 0
+  }
+}

@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # SeaweedFS Master
   seaweedfs-master:

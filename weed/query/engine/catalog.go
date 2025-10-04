@@ -17,9 +17,9 @@ import (
 type BrokerClientInterface interface {
 	ListNamespaces(ctx context.Context) ([]string, error)
 	ListTopics(ctx context.Context, namespace string) ([]string, error)
-	GetTopicSchema(ctx context.Context, namespace, topic string) (*schema_pb.RecordType, error)
+	GetTopicSchema(ctx context.Context, namespace, topic string) (*schema_pb.RecordType, []string, error) // Returns (flatSchema, keyColumns, error)
+	ConfigureTopic(ctx context.Context, namespace, topicName string, partitionCount int32, flatSchema *schema_pb.RecordType, keyColumns []string) error
 	GetFilerClient() (filer_pb.FilerClient, error)
-	ConfigureTopic(ctx context.Context, namespace, topicName string, partitionCount int32, recordType *schema_pb.RecordType) error
 	DeleteTopic(ctx context.Context, namespace, topicName string) error
 	// GetUnflushedMessages returns only messages that haven't been flushed to disk yet
 	// This prevents double-counting when combining with disk-based data
@@ -185,7 +185,7 @@ func (c *SchemaCatalog) GetTableInfo(database, table string) (*TableInfo, error)
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		recordType, err := c.brokerClient.GetTopicSchema(ctx, database, table)
+		recordType, _, err := c.brokerClient.GetTopicSchema(ctx, database, table)
 		if err != nil {
 			// If broker unavailable and we have expired cached data, return it
 			if exists {
@@ -279,6 +279,11 @@ func (c *SchemaCatalog) RegisterTopic(namespace, topicName string, mqSchema *sch
 // 2. Complex types (arrays, maps) are serialized as JSON strings
 // 3. All fields are nullable unless specifically marked otherwise
 func (c *SchemaCatalog) convertMQSchemaToTableInfo(namespace, topicName string, mqSchema *schema.Schema) (*TableInfo, error) {
+	// Check if the schema has a valid RecordType
+	if mqSchema == nil || mqSchema.RecordType == nil {
+		return nil, fmt.Errorf("topic %s.%s has no schema defined", namespace, topicName)
+	}
+
 	columns := make([]ColumnInfo, len(mqSchema.RecordType.Fields))
 
 	for i, field := range mqSchema.RecordType.Fields {

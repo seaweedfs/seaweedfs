@@ -55,9 +55,15 @@ func NewParquetScanner(filerClient filer_pb.FilerClient, namespace, topicName st
 		return nil, fmt.Errorf("failed to read topic config: %v", err)
 	}
 
-	// Build complete schema with system columns
-	recordType := topicConf.GetRecordType()
-	if recordType == nil {
+	// Build complete schema with system columns - prefer flat schema if available
+	var recordType *schema_pb.RecordType
+
+	if topicConf.GetMessageRecordType() != nil {
+		// New flat schema format - use directly
+		recordType = topicConf.GetMessageRecordType()
+	}
+
+	if recordType == nil || len(recordType.Fields) == 0 {
 		return nil, NoSchemaError{Namespace: namespace, Topic: topicName}
 	}
 

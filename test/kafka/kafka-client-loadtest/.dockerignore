@@ -1,0 +1,69 @@
+# Docker ignore file for SeaweedFS Kafka Gateway builds
+# This reduces build context size and speeds up builds
+
+# Git files
+.git
+.gitignore
+.gitattributes
+
+# Documentation
+*.md
+docs/
+README*
+CHANGELOG*
+LICENSE*
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Build artifacts (except our Linux binary)
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.txt
+
+# Test files and directories
+*_test.go
+test-results/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.log
+
+# Node modules (if any)
+node_modules/
+
+# Python files (if any)
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+
+# Docker files in subdirectories (avoid recursion)
+**/Dockerfile*
+**/docker-compose*
+**/.dockerignore
+
+# Source code (not needed since we copy pre-built binary)
+weed/
+cmd/
+pkg/
+internal/
+go.mod
+go.sum
+
+# Keep only the Linux binary
+!weed-linux-amd64

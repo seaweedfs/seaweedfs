@@ -169,7 +169,7 @@ func TestSSEKMSOpenBaoAvailability(t *testing.T) {
 		t.Skipf("OpenBao KMS not available for testing: %v", err)
 	}
 
-	t.Logf("✅ OpenBao KMS is available and working")
+	t.Logf("OpenBao KMS is available and working")
 
 	// Verify we can retrieve the object
 	getResp, err := client.GetObject(ctx, &s3.GetObjectInput{
@@ -180,5 +180,5 @@ func TestSSEKMSOpenBaoAvailability(t *testing.T) {
 	defer getResp.Body.Close()
 
 	assert.Equal(t, types.ServerSideEncryptionAwsKms, getResp.ServerSideEncryption)
-	t.Logf("✅ KMS encryption/decryption working correctly")
+	t.Logf("KMS encryption/decryption working correctly")
 }

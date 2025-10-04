@@ -2,9 +2,11 @@ package broker
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -36,28 +38,36 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 
 	glog.V(0).Infof("Subscriber %s on %v %v connected", req.GetInit().ConsumerId, t, partition)
 
+	glog.V(0).Infof("🔍 DEBUG: Calling GetOrGenerateLocalPartition for %s %s", t, partition)
 	localTopicPartition, getOrGenErr := b.GetOrGenerateLocalPartition(t, partition)
 	if getOrGenErr != nil {
+		glog.V(0).Infof("🔍 DEBUG: GetOrGenerateLocalPartition failed: %v", getOrGenErr)
 		return getOrGenErr
+	}
+	glog.V(0).Infof("🔍 DEBUG: GetOrGenerateLocalPartition succeeded, localTopicPartition=%v", localTopicPartition != nil)
+	if localTopicPartition == nil {
+		return fmt.Errorf("failed to get or generate local partition for topic %v partition %v", t, partition)
 	}
 
 	subscriber := topic.NewLocalSubscriber()
 	localTopicPartition.Subscribers.AddSubscriber(clientName, subscriber)
 	glog.V(0).Infof("Subscriber %s connected on %v %v", clientName, t, partition)
 	isConnected := true
-	sleepIntervalCount := 0
 
 	var counter int64
 	defer func() {
 		isConnected = false
 		localTopicPartition.Subscribers.RemoveSubscriber(clientName)
 		glog.V(0).Infof("Subscriber %s on %v %v disconnected, sent %d", clientName, t, partition, counter)
-		if localTopicPartition.MaybeShutdownLocalPartition() {
+		// Use topic-aware shutdown logic to prevent aggressive removal of system topics
+		if localTopicPartition.MaybeShutdownLocalPartitionForTopic(t.Name) {
 			b.localTopicManager.RemoveLocalPartition(t, partition)
 		}
 	}()
 
 	startPosition := b.getRequestPosition(req.GetInit())
+	glog.Infof("📍 SUB START POSITION: topic=%s partition=%v startPosition.Time=%v startPosition.Offset=%d isOffsetBased=%v",
+		t, partition, startPosition.Time, startPosition.Offset, startPosition.IsOffsetBased)
 	imt := sub_coordinator.NewInflightMessageTracker(int(req.GetInit().SlidingWindowSize))
 
 	// connect to the follower
@@ -116,12 +126,12 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 				// skip ack for control messages
 				continue
 			}
-			imt.AcknowledgeMessage(ack.GetAck().Key, ack.GetAck().Sequence)
+			imt.AcknowledgeMessage(ack.GetAck().Key, ack.GetAck().TsNs)
 
 			currentLastOffset := imt.GetOldestAckedTimestamp()
 			// Update acknowledged offset and last seen time for this subscriber when it sends an ack
 			subscriber.UpdateAckedOffset(currentLastOffset)
-			// fmt.Printf("%+v recv (%s,%d), oldest %d\n", partition, string(ack.GetAck().Key), ack.GetAck().Sequence, currentLastOffset)
+			// fmt.Printf("%+v recv (%s,%d), oldest %d\n", partition, string(ack.GetAck().Key), ack.GetAck().TsNs, currentLastOffset)
 			if subscribeFollowMeStream != nil && currentLastOffset > lastOffset {
 				if err := subscribeFollowMeStream.Send(&mq_pb.SubscribeFollowMeRequest{
 					Message: &mq_pb.SubscribeFollowMeRequest_Ack{
@@ -156,34 +166,56 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 		}
 	}()
 
-	return localTopicPartition.Subscribe(clientName, startPosition, func() bool {
-		if !isConnected {
-			return false
-		}
-		sleepIntervalCount++
-		if sleepIntervalCount > 32 {
-			sleepIntervalCount = 32
-		}
-		time.Sleep(time.Duration(sleepIntervalCount) * 137 * time.Millisecond)
+	var cancelOnce sync.Once
 
-		// Check if the client has disconnected by monitoring the context
+	return localTopicPartition.Subscribe(clientName, startPosition, func() bool {
+		// Check if context is cancelled FIRST before any blocking operations
 		select {
 		case <-ctx.Done():
-			err := ctx.Err()
-			if errors.Is(err, context.Canceled) {
-				// Client disconnected
-				return false
-			}
-			glog.V(0).Infof("Subscriber %s disconnected: %v", clientName, err)
+			glog.V(0).Infof("🔍 WAIT: %s - ctx.Done() detected immediately, returning false", clientName)
 			return false
 		default:
-			// Continue processing the request
 		}
 
+		if !isConnected {
+			glog.V(0).Infof("🔍 WAIT: %s - isConnected=false, returning false", clientName)
+			return false
+		}
+
+		// Ensure we will wake any Wait() when the client disconnects
+		cancelOnce.Do(func() {
+			go func() {
+				<-ctx.Done()
+				glog.V(0).Infof("🔍 CTX DONE: %s - context cancelled, broadcasting", clientName)
+				localTopicPartition.ListenersLock.Lock()
+				localTopicPartition.ListenersCond.Broadcast()
+				localTopicPartition.ListenersLock.Unlock()
+			}()
+		})
+
+		// Block until new data is available or the client disconnects
+		localTopicPartition.ListenersLock.Lock()
+		atomic.AddInt64(&localTopicPartition.ListenersWaits, 1)
+		localTopicPartition.ListenersCond.Wait()
+		atomic.AddInt64(&localTopicPartition.ListenersWaits, -1)
+		localTopicPartition.ListenersLock.Unlock()
+
+		// Add a small sleep to avoid CPU busy-wait when checking for new data
+		time.Sleep(10 * time.Millisecond)
+
+		if ctx.Err() != nil {
+			glog.V(0).Infof("🔍 WAIT: %s - ctx.Err()=%v, returning false", clientName, ctx.Err())
+			return false
+		}
+		if !isConnected {
+			glog.V(0).Infof("🔍 WAIT: %s - isConnected=false after wait, returning false", clientName)
+			return false
+		}
 		return true
 	}, func(logEntry *filer_pb.LogEntry) (bool, error) {
-		// reset the sleep interval count
-		sleepIntervalCount = 0
+		topicName := t.String()
+		glog.Infof("🔥 SUB CALLBACK: topic=%s partition=%v offset=%d keyLen=%d valueLen=%d",
+			topicName, partition, logEntry.Offset, len(logEntry.Key), len(logEntry.Data))
 
 		for imt.IsInflight(logEntry.Key) {
 			time.Sleep(137 * time.Millisecond)
@@ -205,12 +237,34 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 			imt.EnflightMessage(logEntry.Key, logEntry.TsNs)
 		}
 
+		// DEBUG: Log what we're sending for _schemas topic
+		if strings.Contains(topicName, "_schemas") {
+			glog.Infof("🔥 SUB DEBUG: Sending _schemas record - keyLen=%d valueLen=%d offset=%d",
+				len(logEntry.Key), len(logEntry.Data), logEntry.Offset)
+			if len(logEntry.Data) > 0 {
+				glog.Infof("🔥 SUB DEBUG: Value content (first 50 bytes): %x", logEntry.Data[:min(50, len(logEntry.Data))])
+			} else {
+				glog.Infof("🔥 SUB DEBUG: Value is EMPTY!")
+			}
+		}
+
+		// Create the message to send
+		dataMsg := &mq_pb.DataMessage{
+			Key:   logEntry.Key,
+			Value: logEntry.Data,
+			TsNs:  logEntry.TsNs,
+		}
+
+		// DEBUG: Log the DataMessage we're about to send
+		if strings.Contains(topicName, "_schemas") {
+			glog.Infof("🔥 SUB DEBUG PRESEND: DataMessage - keyLen=%d valueLen=%d key=%x value=%x",
+				len(dataMsg.Key), len(dataMsg.Value),
+				dataMsg.Key[:min(20, len(dataMsg.Key))],
+				dataMsg.Value[:min(50, len(dataMsg.Value))])
+		}
+
 		if err := stream.Send(&mq_pb.SubscribeMessageResponse{Message: &mq_pb.SubscribeMessageResponse_Data{
-			Data: &mq_pb.DataMessage{
-				Key:   logEntry.Key,
-				Value: logEntry.Data,
-				TsNs:  logEntry.TsNs,
-			},
+			Data: dataMsg,
 		}}); err != nil {
 			glog.Errorf("Error sending data: %v", err)
 			return false, err
@@ -244,6 +298,18 @@ func (b *MessageQueueBroker) getRequestPosition(initMessage *mq_pb.SubscribeMess
 	// use the exact timestamp
 	if offsetType == schema_pb.OffsetType_EXACT_TS_NS {
 		startPosition = log_buffer.NewMessagePosition(offset.StartTsNs, -2)
+		return
+	}
+
+	// use exact offset (native offset-based positioning)
+	if offsetType == schema_pb.OffsetType_EXACT_OFFSET {
+		startPosition = log_buffer.NewMessagePositionFromOffset(offset.StartOffset)
+		return
+	}
+
+	// reset to specific offset
+	if offsetType == schema_pb.OffsetType_RESET_TO_OFFSET {
+		startPosition = log_buffer.NewMessagePositionFromOffset(offset.StartOffset)
 		return
 	}
 

@@ -4,6 +4,7 @@ import (
 	"time"
 
 	cmap "github.com/orcaman/concurrent-map/v2"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/shirou/gopsutil/v3/cpu"
@@ -35,11 +36,16 @@ func (manager *LocalTopicManager) AddLocalPartition(topic Topic, localPartition 
 
 // GetLocalPartition gets a topic from the local topic manager
 func (manager *LocalTopicManager) GetLocalPartition(topic Topic, partition Partition) *LocalPartition {
+	glog.V(4).Infof("🔍 DEBUG: GetLocalPartition called for topic=%s, partition=%s", topic.String(), partition.String())
 	localTopic, ok := manager.topics.Get(topic.String())
 	if !ok {
+		glog.V(4).Infof("🔍 DEBUG: Topic %s not found in localTopicManager", topic.String())
 		return nil
 	}
-	return localTopic.findPartition(partition)
+	glog.V(4).Infof("🔍 DEBUG: Topic %s found, searching for partition %s", topic.String(), partition.String())
+	result := localTopic.findPartition(partition)
+	glog.V(4).Infof("🔍 DEBUG: Partition search result: %v", result != nil)
+	return result
 }
 
 // RemoveTopic removes a topic from the local topic manager
@@ -69,6 +75,21 @@ func (manager *LocalTopicManager) CloseSubscribers(topic Topic, unixTsNs int64) 
 		return false
 	}
 	return localTopic.closePartitionSubscribers(unixTsNs)
+}
+
+// ListTopicsInMemory returns all topics currently tracked in memory
+func (manager *LocalTopicManager) ListTopicsInMemory() []Topic {
+	var topics []Topic
+	for item := range manager.topics.IterBuffered() {
+		topics = append(topics, item.Val.Topic)
+	}
+	return topics
+}
+
+// TopicExistsInMemory checks if a topic exists in memory (not flushed data)
+func (manager *LocalTopicManager) TopicExistsInMemory(topic Topic) bool {
+	_, exists := manager.topics.Get(topic.String())
+	return exists
 }
 
 func (manager *LocalTopicManager) CollectStats(duration time.Duration) *mq_pb.BrokerStats {

@@ -1,0 +1,32 @@
+# Kafka Client Load Test Runner Dockerfile
+# This Dockerfile expects kafka-loadtest-linux binary to be pre-built locally
+FROM --platform=linux/arm64 ubuntu:22.04
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    curl \
+    jq \
+    bash \
+    netcat \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy pre-built load test binary
+COPY test/kafka/kafka-client-loadtest/kafka-loadtest-linux /usr/local/bin/kafka-loadtest
+RUN chmod +x /usr/local/bin/kafka-loadtest
+
+# Copy scripts and configuration
+COPY test/kafka/kafka-client-loadtest/scripts/ /scripts/
+COPY test/kafka/kafka-client-loadtest/config/ /config/
+
+# Create results directory
+RUN mkdir -p /test-results
+
+# Make scripts executable
+RUN chmod +x /scripts/*.sh
+
+WORKDIR /app
+
+# Default command runs the comprehensive load test
+CMD ["/usr/local/bin/kafka-loadtest", "-config", "/config/loadtest.yaml"]
+

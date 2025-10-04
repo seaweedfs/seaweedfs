@@ -1,0 +1,8 @@
+FROM alpine:3.18
+
+RUN apk add --no-cache ca-certificates
+
+# Copy pre-built debug consumer binary
+COPY test/kafka/kafka-client-loadtest/debug_consumer /usr/local/bin/
+
+ENTRYPOINT ["/usr/local/bin/debug_consumer"]

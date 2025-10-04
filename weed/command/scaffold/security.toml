@@ -104,6 +104,11 @@ cert = ""
 key = ""
 allowed_commonNames = ""    # comma-separated SSL certificate common names
 
+[grpc.mq]
+cert = ""
+key = ""
+allowed_commonNames = ""    # comma-separated SSL certificate common names
+
 # use this for any place needs a grpc client
 # i.e., "weed backup|benchmark|filer.copy|filer.replicate|mount|s3|upload"
 [grpc.client]
