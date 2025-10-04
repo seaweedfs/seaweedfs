@@ -169,6 +169,14 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 	var cancelOnce sync.Once
 
 	return localTopicPartition.Subscribe(clientName, startPosition, func() bool {
+		// Check if context is cancelled FIRST before any blocking operations
+		select {
+		case <-ctx.Done():
+			glog.V(0).Infof("🔍 WAIT: %s - ctx.Done() detected immediately, returning false", clientName)
+			return false
+		default:
+		}
+
 		if !isConnected {
 			glog.V(0).Infof("🔍 WAIT: %s - isConnected=false, returning false", clientName)
 			return false

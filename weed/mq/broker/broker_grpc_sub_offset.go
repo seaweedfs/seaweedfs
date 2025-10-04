@@ -93,6 +93,14 @@ func (b *MessageQueueBroker) subscribeWithOffsetSubscription(
 	return localPartition.Subscribe(clientName,
 		startPosition,
 		func() bool {
+			// Check if context is cancelled (client disconnected)
+			select {
+			case <-ctx.Done():
+				glog.V(0).Infof("🔍 OFFSET-SUB: %s - context cancelled, stopping waitForDataFn", clientName)
+				return false
+			default:
+			}
+
 			// Check if subscription is still active and not at end
 			if !subscription.IsActive {
 				return false

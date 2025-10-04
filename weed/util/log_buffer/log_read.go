@@ -85,16 +85,18 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 				isDone = true
 				return
 			}
-			lastTsNs := logBuffer.LastTsNs.Load()
+		lastTsNs := logBuffer.LastTsNs.Load()
 
-			for lastTsNs == logBuffer.LastTsNs.Load() {
-				if waitForDataFn() {
-					continue
-				} else {
-					isDone = true
-					return
-				}
+		for lastTsNs == logBuffer.LastTsNs.Load() {
+			if waitForDataFn() {
+				// Sleep to avoid CPU busy-wait if waitForDataFn returns true but no new data yet
+				time.Sleep(10 * time.Millisecond)
+				continue
+			} else {
+				isDone = true
+				return
 			}
+		}
 			if logBuffer.IsStopping() {
 				isDone = true
 				return
@@ -225,16 +227,18 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 				return lastReadPosition, isDone, ResumeFromDiskError
 			}
 
-			lastTsNs := logBuffer.LastTsNs.Load()
+		lastTsNs := logBuffer.LastTsNs.Load()
 
-			for lastTsNs == logBuffer.LastTsNs.Load() {
-				if waitForDataFn() {
-					continue
-				} else {
-					isDone = true
-					return
-				}
+		for lastTsNs == logBuffer.LastTsNs.Load() {
+			if waitForDataFn() {
+				// Sleep to avoid CPU busy-wait if waitForDataFn returns true but no new data yet
+				time.Sleep(10 * time.Millisecond)
+				continue
+			} else {
+				isDone = true
+				return
 			}
+		}
 			if logBuffer.IsStopping() {
 				isDone = true
 				return
