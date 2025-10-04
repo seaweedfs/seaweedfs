@@ -79,6 +79,8 @@ type kafkaRequest struct {
 // kafkaResponse represents a Kafka API response
 type kafkaResponse struct {
 	correlationID uint32
+	apiKey        uint16
+	apiVersion    uint16
 	response      []byte
 	err           error
 }
@@ -486,7 +488,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 					Error("[%s] Error processing correlation=%d: %v", connectionID, readyResp.correlationID, readyResp.err)
 				} else {
 					Debug("[%s] Sending response correlation=%d: %d bytes (in order)", connectionID, readyResp.correlationID, len(readyResp.response))
-					if writeErr := h.writeResponseWithCorrelationID(w, readyResp.correlationID, readyResp.response, timeoutConfig.WriteTimeout); writeErr != nil {
+					if writeErr := h.writeResponseWithHeader(w, readyResp.correlationID, readyResp.apiKey, readyResp.apiVersion, readyResp.response, timeoutConfig.WriteTimeout); writeErr != nil {
 						Error("[%s] Write error correlation=%d: %v", connectionID, readyResp.correlationID, writeErr)
 						correlationQueueMu.Unlock()
 						return
@@ -512,6 +514,8 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			select {
 			case responseChan <- &kafkaResponse{
 				correlationID: req.correlationID,
+				apiKey:        req.apiKey,
+				apiVersion:    req.apiVersion,
 				response:      response,
 				err:           err,
 			}:
@@ -530,6 +534,8 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			response, err := h.processRequestSync(req)
 			responseChan <- &kafkaResponse{
 				correlationID: req.correlationID,
+				apiKey:        req.apiKey,
+				apiVersion:    req.apiVersion,
 				response:      response,
 				err:           err,
 			}
@@ -663,6 +669,8 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			select {
 			case responseChan <- &kafkaResponse{
 				correlationID: correlationID,
+				apiKey:        apiKey,
+				apiVersion:    apiVersion,
 				response:      response,
 				err:           nil,
 			}:
@@ -873,6 +881,10 @@ func (h *Handler) processRequestSync(req *kafkaRequest) ([]byte, error) {
 		Debug("DescribeConfigs request received, correlation: %d, version: %d", req.correlationID, req.apiVersion)
 		response, err = h.handleDescribeConfigs(req.correlationID, req.apiVersion, req.requestBody)
 
+	case 60: // DescribeCluster
+		Debug("-> DescribeCluster v%d", req.apiVersion)
+		response, err = h.handleDescribeCluster(req.correlationID, req.apiVersion, req.requestBody)
+
 	case 22: // InitProducerId
 		Debug("-> InitProducerId v%d", req.apiVersion)
 		response, err = h.handleInitProducerId(req.correlationID, req.apiVersion, req.requestBody)
@@ -920,6 +932,7 @@ var SupportedApiKeys = []ApiKeyInfo{
 	{16, 0, 4}, // ListGroups
 	{32, 0, 4}, // DescribeConfigs
 	{22, 0, 4}, // InitProducerId - support up to v4 for transactional producers
+	{60, 0, 1}, // DescribeCluster - for AdminClient compatibility (KIP-919)
 }
 
 func (h *Handler) handleApiVersions(correlationID uint32, apiVersion uint16) ([]byte, error) {
@@ -1106,10 +1119,8 @@ func (h *Handler) HandleMetadataV1(correlationID uint32, requestBody []byte) ([]
 	// Build response using same approach as v0 but with v1 additions
 	response := make([]byte, 0, 256)
 
-	// Correlation ID (4 bytes)
-	correlationIDBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
-	response = append(response, correlationIDBytes...)
+	// NOTE: Correlation ID is handled by writeResponseWithHeader
+	// Do NOT include it in the response body
 
 	// Brokers array length (4 bytes) - 1 broker (this gateway)
 	response = append(response, 0, 0, 0, 1)
@@ -1764,10 +1775,8 @@ func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, req
 
 	response := make([]byte, 0, 256)
 
-	// Correlation ID
-	correlationIDBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
-	response = append(response, correlationIDBytes...)
+	// NOTE: Correlation ID is handled by writeResponseWithHeader
+	// Do NOT include it in the response body
 
 	// Throttle time (4 bytes, 0 = no throttling) - v2+ only
 	if apiVersion >= 2 {
@@ -2128,10 +2137,8 @@ func (h *Handler) handleCreateTopicsV0V1(correlationID uint32, requestBody []byt
 	// Build response
 	response := make([]byte, 0, 256)
 
-	// Correlation ID
-	correlationIDBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
-	response = append(response, correlationIDBytes...)
+	// NOTE: Correlation ID is handled by writeResponseWithHeader
+	// Do NOT include it in the response body
 
 	// Topics array count (4 bytes in v0/v1)
 	topicsCountBytes := make([]byte, 4)
@@ -2642,10 +2649,8 @@ func (h *Handler) handleDeleteTopics(correlationID uint32, requestBody []byte) (
 
 	response := make([]byte, 0, 256)
 
-	// Correlation ID
-	correlationIDBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
-	response = append(response, correlationIDBytes...)
+	// NOTE: Correlation ID is handled by writeResponseWithHeader
+	// Do NOT include it in the response body
 
 	// Throttle time (4 bytes, 0 = no throttling)
 	response = append(response, 0, 0, 0, 0)
@@ -2730,6 +2735,7 @@ func (h *Handler) validateAPIVersion(apiKey, apiVersion uint16) error {
 		16: {0, 4}, // ListGroups: v0-v4
 		32: {0, 4}, // DescribeConfigs: v0-v4
 		22: {0, 4}, // InitProducerId: v0-v4
+		60: {0, 1}, // DescribeCluster: v0-v1 (KIP-919, AdminClient compatibility)
 	}
 
 	if versionRange, exists := supportedVersions[apiKey]; exists {
@@ -2837,10 +2843,8 @@ func (h *Handler) handleDescribeConfigs(correlationID uint32, apiVersion uint16,
 		// Legacy (non-flexible) response for v0-3
 		response := make([]byte, 0, 2048)
 
-		// Correlation ID
-		correlationIDBytes := make([]byte, 4)
-		binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
-		response = append(response, correlationIDBytes...)
+		// NOTE: Correlation ID is handled by writeResponseWithHeader
+		// Do NOT include it in the response body
 
 		// Throttle time (0ms)
 		throttleBytes := make([]byte, 4)
@@ -2974,34 +2978,99 @@ func (h *Handler) handleDescribeConfigs(correlationID uint32, apiVersion uint16,
 	return response, nil
 }
 
-// writeResponseWithCorrelationID writes a Kafka response following the wire protocol:
-// [Size: 4 bytes including correlation ID][Correlation ID: 4 bytes][Body: Size-4 bytes]
-func (h *Handler) writeResponseWithCorrelationID(w *bufio.Writer, correlationID uint32, responseBody []byte, timeout time.Duration) error {
-	// Kafka wire protocol format:
-	// [4 bytes: size = len(correlationID) + len(body)]
+// isFlexibleResponse determines if an API response should use flexible format (with header tagged fields)
+// Based on Kafka protocol specifications: most APIs become flexible at v3+, but some differ
+func isFlexibleResponse(apiKey uint16, apiVersion uint16) bool {
+	// Reference: kafka-go/protocol/response.go:119 and sarama/response_header.go:21
+	// Flexible responses have headerVersion >= 1, which adds tagged fields after correlation ID
+
+	switch apiKey {
+	case 0: // Produce
+		return apiVersion >= 9
+	case 1: // Fetch
+		return apiVersion >= 12
+	case 3: // Metadata
+		return apiVersion >= 9
+	case 8: // OffsetCommit
+		return apiVersion >= 8
+	case 9: // OffsetFetch
+		return apiVersion >= 6
+	case 10: // FindCoordinator
+		return apiVersion >= 3
+	case 11: // JoinGroup
+		return apiVersion >= 6
+	case 12: // Heartbeat
+		return apiVersion >= 4
+	case 13: // LeaveGroup
+		return apiVersion >= 4
+	case 14: // SyncGroup
+		return apiVersion >= 4
+	case 18: // ApiVersions
+		// CRITICAL: AdminClient compatibility requires header version 0 (no tagged fields)
+		// Even though ApiVersions v3+ technically supports flexible responses, AdminClient
+		// expects the header to NOT include tagged fields. This is a known quirk.
+		return false // Always use non-flexible header for ApiVersions
+	case 32: // DescribeConfigs
+		return apiVersion >= 4
+	case 60: // DescribeCluster
+		return true // All versions (0+) are flexible
+	default:
+		// For unknown APIs, assume non-flexible (safer default)
+		return false
+	}
+}
+
+// writeResponseWithHeader writes a Kafka response following the wire protocol:
+// [Size: 4 bytes][Correlation ID: 4 bytes][Tagged Fields (if flexible)][Body]
+func (h *Handler) writeResponseWithHeader(w *bufio.Writer, correlationID uint32, apiKey uint16, apiVersion uint16, responseBody []byte, timeout time.Duration) error {
+	// Kafka wire protocol format (from kafka-go/protocol/response.go:116-138 and sarama/response_header.go:10-27):
+	// [4 bytes: size = len(everything after this)]
 	// [4 bytes: correlation ID]
+	// [varint: header tagged fields (0x00 for empty) - ONLY for flexible responses with headerVersion >= 1]
 	// [N bytes: response body]
 
-	// Calculate total size: correlation ID (4) + body
+	// Determine if this response should be flexible
+	isFlexible := isFlexibleResponse(apiKey, apiVersion)
+
+	// Calculate total size: correlation ID (4) + tagged fields (1 if flexible) + body
 	totalSize := 4 + len(responseBody)
+	if isFlexible {
+		totalSize += 1 // Add 1 byte for empty tagged fields (0x00)
+	}
+
+	// Build complete response in memory for hex dump logging
+	fullResponse := make([]byte, 0, 4+totalSize)
 
 	// Write size
 	sizeBuf := make([]byte, 4)
 	binary.BigEndian.PutUint32(sizeBuf, uint32(totalSize))
-	if _, err := w.Write(sizeBuf); err != nil {
-		return fmt.Errorf("write response size: %w", err)
-	}
+	fullResponse = append(fullResponse, sizeBuf...)
 
 	// Write correlation ID
 	correlationBuf := make([]byte, 4)
 	binary.BigEndian.PutUint32(correlationBuf, correlationID)
-	if _, err := w.Write(correlationBuf); err != nil {
-		return fmt.Errorf("write correlation ID: %w", err)
+	fullResponse = append(fullResponse, correlationBuf...)
+
+	// Write header-level tagged fields for flexible responses
+	if isFlexible {
+		// Empty tagged fields = 0x00 (varint 0)
+		fullResponse = append(fullResponse, 0x00)
 	}
 
 	// Write response body
-	if _, err := w.Write(responseBody); err != nil {
-		return fmt.Errorf("write response body: %w", err)
+	fullResponse = append(fullResponse, responseBody...)
+
+	// Hex dump for debugging (first 64 bytes)
+	dumpLen := len(fullResponse)
+	if dumpLen > 64 {
+		dumpLen = 64
+	}
+	Debug("🔍 API %d v%d response wire format (first %d bytes):\n%s", apiKey, apiVersion, dumpLen, hexDump(fullResponse[:dumpLen]))
+	Debug("Wrote API %d response v%d: size=%d, flexible=%t, correlationID=%d, totalBytes=%d", apiKey, apiVersion, totalSize, isFlexible, correlationID, len(fullResponse))
+
+	// Write to connection
+	if _, err := w.Write(fullResponse); err != nil {
+		return fmt.Errorf("write response: %w", err)
 	}
 
 	// Flush
@@ -3010,6 +3079,47 @@ func (h *Handler) writeResponseWithCorrelationID(w *bufio.Writer, correlationID 
 	}
 
 	return nil
+}
+
+// hexDump formats bytes as a hex dump with ASCII representation
+func hexDump(data []byte) string {
+	var result strings.Builder
+	for i := 0; i < len(data); i += 16 {
+		// Offset
+		result.WriteString(fmt.Sprintf("%04x  ", i))
+
+		// Hex bytes
+		for j := 0; j < 16; j++ {
+			if i+j < len(data) {
+				result.WriteString(fmt.Sprintf("%02x ", data[i+j]))
+			} else {
+				result.WriteString("   ")
+			}
+			if j == 7 {
+				result.WriteString(" ")
+			}
+		}
+
+		// ASCII representation
+		result.WriteString(" |")
+		for j := 0; j < 16 && i+j < len(data); j++ {
+			b := data[i+j]
+			if b >= 32 && b < 127 {
+				result.WriteByte(b)
+			} else {
+				result.WriteByte('.')
+			}
+		}
+		result.WriteString("|\n")
+	}
+	return result.String()
+}
+
+// writeResponseWithCorrelationID is deprecated - use writeResponseWithHeader instead
+// Kept for compatibility with direct callers that don't have API info
+func (h *Handler) writeResponseWithCorrelationID(w *bufio.Writer, correlationID uint32, responseBody []byte, timeout time.Duration) error {
+	// Assume non-flexible for backward compatibility
+	return h.writeResponseWithHeader(w, correlationID, 0, 0, responseBody, timeout)
 }
 
 // writeResponseWithTimeout writes a Kafka response with timeout handling
@@ -3803,15 +3913,9 @@ func (h *Handler) handleInitProducerId(correlationID uint32, apiVersion uint16, 
 	// Build response
 	response := make([]byte, 0, 64)
 
-	// Correlation ID (4 bytes)
-	correlationIDBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
-	response = append(response, correlationIDBytes...)
-
-	// For flexible versions (v4+), add response header tagged fields
-	if apiVersion >= 4 {
-		response = append(response, 0x00) // Empty response header tagged fields
-	}
+	// NOTE: Correlation ID is handled by writeResponseWithHeader
+	// Do NOT include it in the response body
+	// Note: Header tagged fields are also handled by writeResponseWithHeader for flexible versions
 
 	// InitProducerId Response Format:
 	// throttle_time_ms(INT32) + error_code(INT16) + producer_id(INT64) + producer_epoch(INT16)
