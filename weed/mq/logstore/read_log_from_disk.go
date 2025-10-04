@@ -258,19 +258,42 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 		}
 
 		// Second pass: process the filtered files
+		// CRITICAL: For offset-based reads, process ALL candidate files in one call
+		// This prevents multiple ReadFromDiskFn calls with 1.127s overhead each
+		var filesProcessed int
+		var lastProcessedOffset int64
 		for _, entry := range candidateFiles {
-			if processedTsNs, err = eachFileFn(entry, eachLogEntryFn, startTsNs, stopTsNs, startOffset, isOffsetBased); err != nil {
+			var fileTsNs int64
+			if fileTsNs, err = eachFileFn(entry, eachLogEntryFn, startTsNs, stopTsNs, startOffset, isOffsetBased); err != nil {
 				return lastReadPosition, isDone, err
 			}
-			// For offset-based reads, once we've processed data, we can stop
-			// (all subsequent offsets will be in memory or later files)
-			if isOffsetBased && processedTsNs > 0 {
-				glog.V(1).Infof("✅ OFFSET-BASED: Processed data from file %s, continuing to next file", entry.Name)
-				// Don't break - continue reading subsequent files to get more offsets
+			if fileTsNs > 0 {
+				processedTsNs = fileTsNs
+				filesProcessed++
+			}
+
+			// For offset-based reads, track the last processed offset
+			// We need to continue reading ALL files to avoid multiple disk read calls
+			if isOffsetBased {
+				// Extract the last offset from the file's extended attributes
+				if maxOffsetBytes, hasMax := entry.Extended["offset_max"]; hasMax && len(maxOffsetBytes) == 8 {
+					fileMaxOffset := int64(binary.BigEndian.Uint64(maxOffsetBytes))
+					if fileMaxOffset > lastProcessedOffset {
+						lastProcessedOffset = fileMaxOffset
+					}
+				}
 			}
 		}
 
-		lastReadPosition = log_buffer.NewMessagePosition(processedTsNs, -2)
+		if isOffsetBased && filesProcessed > 0 {
+			glog.Infof("✅ OFFSET-BASED: Processed %d files (out of %d candidates), last offset=%d, startOffset was %d",
+				filesProcessed, len(candidateFiles), lastProcessedOffset, startOffset)
+			// Return a position that indicates we've read all disk data up to lastProcessedOffset
+			// This prevents the subscription from calling ReadFromDiskFn again for these offsets
+			lastReadPosition = log_buffer.NewMessagePositionFromOffset(lastProcessedOffset + 1)
+		} else {
+			lastReadPosition = log_buffer.NewMessagePosition(processedTsNs, -2)
+		}
 		return
 	}
 }
