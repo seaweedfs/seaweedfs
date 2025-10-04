@@ -2869,15 +2869,10 @@ func (h *Handler) handleDescribeConfigs(correlationID uint32, apiVersion uint16,
 	// Flexible response for v4+
 	response := make([]byte, 0, 2048)
 
-	// Correlation ID
-	cid := make([]byte, 4)
-	binary.BigEndian.PutUint32(cid, correlationID)
-	response = append(response, cid...)
+	// NOTE: Correlation ID is handled by writeResponseWithHeader
+	// Do NOT include it in the response body
 
-	// Add flexible response header tagged fields (empty)
-	response = append(response, 0)
-
-	// throttle_time_ms (4 bytes) - placed directly after correlation ID to match prior flexible handling
+	// throttle_time_ms (4 bytes)
 	response = append(response, 0, 0, 0, 0)
 
 	// Results (compact array)
