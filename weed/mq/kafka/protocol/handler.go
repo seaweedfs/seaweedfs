@@ -3007,6 +3007,8 @@ func isFlexibleResponse(apiKey uint16, apiVersion uint16) bool {
 		return false // Always use non-flexible header for ApiVersions
 	case 32: // DescribeConfigs
 		return apiVersion >= 4
+	case 22: // InitProducerId
+		return apiVersion >= 2 // Flexible from v2+ (KIP-360)
 	case 60: // DescribeCluster
 		return true // All versions (0+) are flexible
 	default:

@@ -66,10 +66,8 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 
 	response := make([]byte, 0, 1024)
 
-	// Correlation ID
-	correlationIDBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
-	response = append(response, correlationIDBytes...)
+	// NOTE: Correlation ID is handled by writeResponseWithHeader
+	// Do NOT include it in the response body
 
 	// Topics count (same as request)
 	topicsCountBytes := make([]byte, 4)
@@ -703,12 +701,10 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 	// Build response
 	response := make([]byte, 0, 256)
 
-	// Correlation ID (always first)
-	correlationIDBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
-	response = append(response, correlationIDBytes...)
+	// NOTE: Correlation ID is handled by writeResponseWithHeader
+	// Do NOT include it in the response body
 
-	// Topics array length (comes after correlation ID)
+	// Topics array length (first field in response body)
 	topicsCountBytes := make([]byte, 4)
 	binary.BigEndian.PutUint32(topicsCountBytes, topicsCount)
 	response = append(response, topicsCountBytes...)

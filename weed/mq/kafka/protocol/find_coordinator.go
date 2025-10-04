@@ -181,10 +181,8 @@ func (h *Handler) handleFindCoordinatorV2(correlationID uint32, requestBody []by
 
 	response := make([]byte, 0, 64)
 
-	// Correlation ID
-	correlationIDBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
-	response = append(response, correlationIDBytes...)
+	// NOTE: Correlation ID is handled by writeResponseWithHeader
+	// Do NOT include it in the response body
 
 	// FindCoordinator v2 Response Format:
 	// - throttle_time_ms (INT32)
