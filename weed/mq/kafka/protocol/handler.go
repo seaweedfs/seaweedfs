@@ -424,16 +424,20 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 	Debug("[%s] NEW CONNECTION ESTABLISHED", connectionID)
 
 	defer func() {
+		glog.V(0).Infof("🔍 [%s] Connection closing, cleaning up BrokerClient", connectionID)
 		Debug("[%s] Connection closing, cleaning up BrokerClient", connectionID)
 		// Close the per-connection broker client
 		if connBrokerClient != nil {
+			glog.V(0).Infof("🔍 [%s] Calling BrokerClient.Close()", connectionID)
 			if closeErr := connBrokerClient.Close(); closeErr != nil {
+				glog.Errorf("🔍 [%s] Error closing BrokerClient: %v", connectionID, closeErr)
 				Error("[%s] Error closing BrokerClient: %v", connectionID, closeErr)
 			}
 		}
 		RecordDisconnectionMetrics()
 		h.connContext = nil // Clear connection context
 		conn.Close()
+		glog.V(0).Infof("🔍 [%s] Connection cleanup complete", connectionID)
 	}()
 
 	r := bufio.NewReader(conn)
@@ -2077,10 +2081,8 @@ func (h *Handler) handleCreateTopicsV2To4(correlationID uint32, requestBody []by
 
 	// Build response
 	response := make([]byte, 0, 128)
-	// Correlation ID
-	cid := make([]byte, 4)
-	binary.BigEndian.PutUint32(cid, correlationID)
-	response = append(response, cid...)
+	// NOTE: Correlation ID is handled by writeResponseWithHeader
+	// Do NOT include it in the response body
 	// throttle_time_ms (4 bytes)
 	response = append(response, 0, 0, 0, 0)
 	// topics array count (int32)
@@ -3060,7 +3062,9 @@ func (h *Handler) writeResponseWithHeader(w *bufio.Writer, correlationID uint32,
 	if dumpLen > 64 {
 		dumpLen = 64
 	}
-	Debug("🔍 API %d v%d response wire format (first %d bytes):\n%s", apiKey, apiVersion, dumpLen, hexDump(fullResponse[:dumpLen]))
+	if apiKey == 1 || apiKey == 19 { // Fetch or CreateTopics
+		glog.Infof("🔍 API %d v%d response wire format (first %d bytes):\n%s", apiKey, apiVersion, dumpLen, hexDump(fullResponse[:dumpLen]))
+	}
 	Debug("Wrote API %d response v%d: size=%d, flexible=%t, correlationID=%d, totalBytes=%d", apiKey, apiVersion, totalSize, isFlexible, correlationID, len(fullResponse))
 
 	// Write to connection

@@ -1,6 +1,10 @@
 package command
 
 import (
+	"fmt"
+	"net/http"
+	_ "net/http/pprof"
+
 	"google.golang.org/grpc/reflection"
 
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
@@ -108,6 +112,17 @@ func (mqBrokerOpt *MessageQueueBrokerOptions) startQueueServer() bool {
 			}
 		}()
 	}
+
+	// Start HTTP profiling server
+	pprofPort := *mqBrokerOpt.port + 1000 // e.g., 18777 for profiling if broker is on 17777
+	go func() {
+		pprofAddr := fmt.Sprintf(":%d", pprofPort)
+		glog.V(0).Infof("MQ Broker pprof server listening on %s", pprofAddr)
+		glog.V(0).Infof("Access profiling at: http://localhost:%d/debug/pprof/", pprofPort)
+		if err := http.ListenAndServe(pprofAddr, nil); err != nil {
+			glog.Errorf("pprof server error: %v", err)
+		}
+	}()
 
 	glog.V(0).Infof("MQ Broker listening on %s:%d", *mqBrokerOpt.ip, *mqBrokerOpt.port)
 	grpcS.Serve(grpcL)

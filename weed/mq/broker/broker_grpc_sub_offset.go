@@ -104,7 +104,13 @@ func (b *MessageQueueBroker) subscribeWithOffsetSubscription(
 				return false
 			}
 
-			return !atEnd
+			if atEnd {
+				return false
+			}
+
+			// Add a small sleep to avoid CPU busy-wait when checking for new data
+			time.Sleep(10 * time.Millisecond)
+			return true
 		},
 		func(logEntry *filer_pb.LogEntry) (bool, error) {
 			// Check if this message matches our offset requirements

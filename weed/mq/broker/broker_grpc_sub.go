@@ -170,6 +170,7 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 
 	return localTopicPartition.Subscribe(clientName, startPosition, func() bool {
 		if !isConnected {
+			glog.V(0).Infof("🔍 WAIT: %s - isConnected=false, returning false", clientName)
 			return false
 		}
 
@@ -177,6 +178,7 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 		cancelOnce.Do(func() {
 			go func() {
 				<-ctx.Done()
+				glog.V(0).Infof("🔍 CTX DONE: %s - context cancelled, broadcasting", clientName)
 				localTopicPartition.ListenersLock.Lock()
 				localTopicPartition.ListenersCond.Broadcast()
 				localTopicPartition.ListenersLock.Unlock()
@@ -190,7 +192,15 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 		atomic.AddInt64(&localTopicPartition.ListenersWaits, -1)
 		localTopicPartition.ListenersLock.Unlock()
 
-		if ctx.Err() != nil || !isConnected {
+		// Add a small sleep to avoid CPU busy-wait when checking for new data
+		time.Sleep(10 * time.Millisecond)
+
+		if ctx.Err() != nil {
+			glog.V(0).Infof("🔍 WAIT: %s - ctx.Err()=%v, returning false", clientName, ctx.Err())
+			return false
+		}
+		if !isConnected {
+			glog.V(0).Infof("🔍 WAIT: %s - isConnected=false after wait, returning false", clientName)
 			return false
 		}
 		return true

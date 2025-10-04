@@ -121,13 +121,17 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 	// Topics count - write the actual number of topics in the request
 	// Kafka protocol: we MUST return all requested topics in the response (even with empty data)
 	topicsCount := len(fetchRequest.Topics)
+	glog.Infof("🔍 FETCH CORR=%d: Writing topics count=%d at offset=%d, isFlexible=%v", correlationID, topicsCount, len(response), isFlexible)
 	if isFlexible {
 		// Flexible versions use compact array format (count + 1)
 		response = append(response, EncodeUvarint(uint32(topicsCount+1))...)
 	} else {
 		topicsCountBytes := make([]byte, 4)
 		binary.BigEndian.PutUint32(topicsCountBytes, uint32(topicsCount))
+		glog.Infof("🔍 FETCH CORR=%d: topicsCountBytes = %02x %02x %02x %02x", correlationID, topicsCountBytes[0], topicsCountBytes[1], topicsCountBytes[2], topicsCountBytes[3])
 		response = append(response, topicsCountBytes...)
+		glog.Infof("🔍 FETCH CORR=%d: After appending topics count, response length=%d, response[10-13]=%02x %02x %02x %02x",
+			correlationID, len(response), response[10], response[11], response[12], response[13])
 	}
 
 	// Process each requested topic
@@ -388,6 +392,18 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 	// Tagged fields for flexible versions (v12+) at the end of response
 	if isFlexible {
 		response = append(response, 0) // Empty tagged fields
+	}
+
+	// Verify topics count hasn't been corrupted
+	if !isFlexible && len(response) >= 14 {
+		actualTopicsCount := binary.BigEndian.Uint32(response[10:14])
+		if actualTopicsCount != uint32(topicsCount) {
+			glog.Errorf("🚨 FETCH CORR=%d: Topics count CORRUPTED! Expected %d, found %d at response[10:14]=%02x %02x %02x %02x",
+				correlationID, topicsCount, actualTopicsCount, response[10], response[11], response[12], response[13])
+		} else {
+			glog.Infof("✅ FETCH CORR=%d: Topics count verified OK: %d at response[10:14]=%02x %02x %02x %02x",
+				correlationID, topicsCount, response[10], response[11], response[12], response[13])
+		}
 	}
 
 	Debug("Fetch v%d response constructed, size: %d bytes (flexible: %v)", apiVersion, len(response), isFlexible)
