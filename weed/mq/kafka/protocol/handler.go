@@ -394,7 +394,6 @@ func (h *Handler) GetConnectionContext() *integration.ConnectionContext {
 // HandleConn processes a single client connection
 func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 	connectionID := fmt.Sprintf("%s->%s", conn.RemoteAddr(), conn.LocalAddr())
-	fmt.Printf("🔥🔥🔥 HandleConn START: %s\n", connectionID)
 	Debug("KAFKA 8.0.0 DEBUG: NEW HANDLER CODE ACTIVE - %s", time.Now().Format("15:04:05"))
 
 	// Record connection metrics
@@ -409,35 +408,28 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 
 	// CRITICAL: Create per-connection BrokerClient for isolated gRPC streams
 	// This prevents different connections from interfering with each other's Fetch requests
-	fmt.Printf("🔥🔥🔥 [%s] [BROKER_CLIENT] Creating per-connection BrokerClient\n", connectionID)
-	glog.Infof("[%s] [BROKER_CLIENT] Creating per-connection BrokerClient", connectionID)
+	glog.V(4).Infof("[%s] [BROKER_CLIENT] Creating per-connection BrokerClient", connectionID)
 	connBrokerClient, err := h.seaweedMQHandler.CreatePerConnectionBrokerClient()
 	if err != nil {
-		fmt.Printf("🔥🔥🔥 [%s] [BROKER_CLIENT] Failed: %v\n", connectionID, err)
 		glog.Errorf("[%s] [BROKER_CLIENT] Failed to create per-connection BrokerClient: %v", connectionID, err)
 		return fmt.Errorf("failed to create broker client: %w", err)
 	}
 	h.connContext.BrokerClient = connBrokerClient
-	fmt.Printf("🔥🔥🔥 [%s] [BROKER_CLIENT] Per-connection BrokerClient created successfully\n", connectionID)
-	glog.Infof("[%s] [BROKER_CLIENT] Per-connection BrokerClient created successfully", connectionID)
+	glog.V(4).Infof("[%s] [BROKER_CLIENT] Per-connection BrokerClient created successfully", connectionID)
 
 	Debug("[%s] NEW CONNECTION ESTABLISHED", connectionID)
 
 	defer func() {
-		glog.V(0).Infof("🔍 [%s] Connection closing, cleaning up BrokerClient", connectionID)
 		Debug("[%s] Connection closing, cleaning up BrokerClient", connectionID)
 		// Close the per-connection broker client
 		if connBrokerClient != nil {
-			glog.V(0).Infof("🔍 [%s] Calling BrokerClient.Close()", connectionID)
 			if closeErr := connBrokerClient.Close(); closeErr != nil {
-				glog.Errorf("🔍 [%s] Error closing BrokerClient: %v", connectionID, closeErr)
 				Error("[%s] Error closing BrokerClient: %v", connectionID, closeErr)
 			}
 		}
 		RecordDisconnectionMetrics()
 		h.connContext = nil // Clear connection context
 		conn.Close()
-		glog.V(0).Infof("🔍 [%s] Connection cleanup complete", connectionID)
 	}()
 
 	r := bufio.NewReader(conn)
@@ -549,8 +541,8 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 	defer func() {
 		close(controlChan)
 		close(dataChan)
+		close(responseChan) // Close BEFORE wg.Wait() so response writer can exit
 		wg.Wait()
-		close(responseChan)
 	}()
 
 	for {
@@ -622,7 +614,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		// Successfully read the message size
 		size := binary.BigEndian.Uint32(sizeBytes[:])
 		Debug("[%s] Read message size header: %d bytes", connectionID, size)
-		fmt.Printf("🔥 PROTOCOL DEBUG: Read message size: %d bytes\n", size)
+		// Debug("Read message size: %d bytes", size)
 		if size == 0 || size > 1024*1024 { // 1MB limit
 			// Use standardized error for message size limit
 			Debug("[%s] Invalid message size: %d (limit: 1MB)", connectionID, size)
@@ -657,8 +649,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		apiVersion := binary.BigEndian.Uint16(messageBuf[2:4])
 		correlationID := binary.BigEndian.Uint32(messageBuf[4:8])
 
-		apiName := getAPIName(apiKey)
-		fmt.Printf("🔥 PROTOCOL DEBUG: Parsed header - API Key: %d (%s), Version: %d, Correlation: %d\n", apiKey, apiName, apiVersion, correlationID)
+		// Debug("Parsed header - API Key: %d (%s), Version: %d, Correlation: %d", apiKey, getAPIName(apiKey), apiVersion, correlationID)
 
 		// Validate API version against what we support
 		Debug("VALIDATING API VERSION: Key=%d, Version=%d", apiKey, apiVersion)
@@ -3057,14 +3048,17 @@ func (h *Handler) writeResponseWithHeader(w *bufio.Writer, correlationID uint32,
 	// Write response body
 	fullResponse = append(fullResponse, responseBody...)
 
-	// Hex dump for debugging (first 64 bytes)
-	dumpLen := len(fullResponse)
-	if dumpLen > 64 {
-		dumpLen = 64
-	}
-	if apiKey == 1 || apiKey == 19 { // Fetch or CreateTopics
-		glog.Infof("🔍 API %d v%d response wire format (first %d bytes):\n%s", apiKey, apiVersion, dumpLen, hexDump(fullResponse[:dumpLen]))
-	}
+	// Hex dump for debugging (disabled for production to reduce CPU)
+	// Uncomment for debugging protocol issues
+	/*
+		dumpLen := len(fullResponse)
+		if dumpLen > 64 {
+			dumpLen = 64
+		}
+		if apiKey == 1 || apiKey == 19 { // Fetch or CreateTopics
+			glog.V(4).Infof("API %d v%d response wire format (first %d bytes):\n%s", apiKey, apiVersion, dumpLen, hexDump(fullResponse[:dumpLen]))
+		}
+	*/
 	Debug("Wrote API %d response v%d: size=%d, flexible=%t, correlationID=%d, totalBytes=%d", apiKey, apiVersion, totalSize, isFlexible, correlationID, len(fullResponse))
 
 	// Write to connection

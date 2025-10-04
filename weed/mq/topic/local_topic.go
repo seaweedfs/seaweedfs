@@ -2,6 +2,7 @@ package topic
 
 import (
 	"sync"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
@@ -22,15 +23,15 @@ func (localTopic *LocalTopic) findPartition(partition Partition) *LocalPartition
 	localTopic.partitionLock.RLock()
 	defer localTopic.partitionLock.RUnlock()
 
-	glog.V(0).Infof("🔍 DEBUG: findPartition searching for %s in %d partitions", partition.String(), len(localTopic.Partitions))
+	glog.V(4).Infof("findPartition searching for %s in %d partitions", partition.String(), len(localTopic.Partitions))
 	for i, localPartition := range localTopic.Partitions {
-		glog.V(0).Infof("🔍 DEBUG: Comparing partition[%d]: %s with target %s", i, localPartition.Partition.String(), partition.String())
+		glog.V(4).Infof("Comparing partition[%d]: %s with target %s", i, localPartition.Partition.String(), partition.String())
 		if localPartition.Partition.LogicalEquals(partition) {
-			glog.V(0).Infof("🔍 DEBUG: Found matching partition at index %d", i)
+			glog.V(4).Infof("Found matching partition at index %d", i)
 			return localPartition
 		}
 	}
-	glog.V(0).Infof("🔍 DEBUG: No matching partition found for %s", partition.String())
+	glog.V(4).Infof("No matching partition found for %s", partition.String())
 	return nil
 }
 func (localTopic *LocalTopic) removePartition(partition Partition) bool {

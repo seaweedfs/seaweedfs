@@ -177,11 +177,9 @@ func (s *Server) Start() error {
 			s.wg.Add(1)
 			go func(c net.Conn) {
 				defer s.wg.Done()
-				fmt.Printf("🔥 GATEWAY DEBUG: About to call handler.HandleConn for %s\n", c.RemoteAddr())
 				if err := s.handler.HandleConn(s.ctx, c); err != nil {
 					glog.V(1).Infof("handle conn %v: %v", c.RemoteAddr(), err)
 				}
-				fmt.Printf("🔥 GATEWAY DEBUG: handler.HandleConn completed for %s\n", c.RemoteAddr())
 			}(conn)
 		}
 	}()

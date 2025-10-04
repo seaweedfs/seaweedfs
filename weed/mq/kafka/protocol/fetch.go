@@ -61,21 +61,33 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 		}
 		return false
 	}
-	// Cap long-polling to avoid blocking connection shutdowns in tests
+	// Long-poll when client requests it via MaxWaitTime and there's no data
+	// Even if MinBytes=0, we should honor MaxWaitTime to reduce polling overhead
 	maxWaitMs := fetchRequest.MaxWaitTime
-	if maxWaitMs > 1000 {
-		maxWaitMs = 1000
+	// For production, allow longer wait times to reduce CPU usage
+	// Only cap at 30 seconds to be reasonable
+	if maxWaitMs > 30000 {
+		maxWaitMs = 30000
 	}
-	shouldLongPoll := fetchRequest.MinBytes > 0 && maxWaitMs > 0 && !hasDataAvailable() && allTopicsExist()
+	// Long-poll if: (1) client wants to wait (maxWaitMs > 0), (2) no data available, (3) topics exist
+	// NOTE: We long-poll even if MinBytes=0, since the client specified a wait time
+	hasData := hasDataAvailable()
+	topicsExist := allTopicsExist()
+	shouldLongPoll := maxWaitMs > 0 && !hasData && topicsExist
+	// Debug Schema Registry polling (disabled for production)
+	// Uncomment for debugging long-poll behavior
+	/*
+		if len(fetchRequest.Topics) > 0 && strings.HasPrefix(fetchRequest.Topics[0].Name, "_schemas") {
+			glog.V(4).Infof("SR Fetch: maxWaitMs=%d minBytes=%d hasData=%v topicsExist=%v shouldLongPoll=%v",
+				maxWaitMs, fetchRequest.MinBytes, hasData, topicsExist, shouldLongPoll)
+		}
+	*/
 	if shouldLongPoll {
 		start := time.Now()
-		// Limit polling time to maximum 2 seconds to prevent hanging in CI
+		// Use the client's requested wait time (already capped at 30s)
 		maxPollTime := time.Duration(maxWaitMs) * time.Millisecond
-		if maxPollTime > 2*time.Second {
-			maxPollTime = 2 * time.Second
-			Debug("Limiting fetch polling to 2 seconds to prevent hanging")
-		}
 		deadline := start.Add(maxPollTime)
+		glog.V(4).Infof("Fetch long-polling: maxWaitMs=%d, deadline=%v", maxWaitMs, deadline)
 		for time.Now().Before(deadline) {
 			// Use context-aware sleep instead of blocking time.Sleep
 			select {
@@ -121,22 +133,22 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 	// Topics count - write the actual number of topics in the request
 	// Kafka protocol: we MUST return all requested topics in the response (even with empty data)
 	topicsCount := len(fetchRequest.Topics)
-	glog.Infof("🔍 FETCH CORR=%d: Writing topics count=%d at offset=%d, isFlexible=%v", correlationID, topicsCount, len(response), isFlexible)
+	glog.V(4).Infof("FETCH CORR=%d: Writing topics count=%d at offset=%d, isFlexible=%v", correlationID, topicsCount, len(response), isFlexible)
 	if isFlexible {
 		// Flexible versions use compact array format (count + 1)
 		response = append(response, EncodeUvarint(uint32(topicsCount+1))...)
 	} else {
 		topicsCountBytes := make([]byte, 4)
 		binary.BigEndian.PutUint32(topicsCountBytes, uint32(topicsCount))
-		glog.Infof("🔍 FETCH CORR=%d: topicsCountBytes = %02x %02x %02x %02x", correlationID, topicsCountBytes[0], topicsCountBytes[1], topicsCountBytes[2], topicsCountBytes[3])
+		glog.V(4).Infof("FETCH CORR=%d: topicsCountBytes = %02x %02x %02x %02x", correlationID, topicsCountBytes[0], topicsCountBytes[1], topicsCountBytes[2], topicsCountBytes[3])
 		response = append(response, topicsCountBytes...)
-		glog.Infof("🔍 FETCH CORR=%d: After appending topics count, response length=%d, response[10-13]=%02x %02x %02x %02x",
+		glog.V(4).Infof("FETCH CORR=%d: After appending topics count, response length=%d, response[10-13]=%02x %02x %02x %02x",
 			correlationID, len(response), response[10], response[11], response[12], response[13])
 	}
 
 	// Process each requested topic
 	for topicIdx, topic := range fetchRequest.Topics {
-		glog.Infof("FETCH: Processing topic %d/%d: %s (partitions: %d)", topicIdx+1, len(fetchRequest.Topics), topic.Name, len(topic.Partitions))
+		glog.V(4).Infof("FETCH: Processing topic %d/%d: %s (partitions: %d)", topicIdx+1, len(fetchRequest.Topics), topic.Name, len(topic.Partitions))
 		topicNameBytes := []byte(topic.Name)
 
 		// Topic name length and name
@@ -211,7 +223,7 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 			}
 
 			if strings.HasPrefix(topic.Name, "_schemas") {
-				glog.Infof("📍 SR FETCH REQUEST: topic=%s partition=%d requestOffset=%d effectiveOffset=%d highWaterMark=%d",
+				glog.V(4).Infof("SR FETCH REQUEST: topic=%s partition=%d requestOffset=%d effectiveOffset=%d highWaterMark=%d",
 					topic.Name, partition.PartitionID, partition.FetchOffset, effectiveFetchOffset, highWaterMark)
 			}
 
@@ -374,7 +386,7 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 			response = append(response, recordBatch...)
 			totalAppendedRecordBytes += len(recordBatch)
 			// Always log per-topic appended bytes for visibility
-			glog.Infof("FETCH TOPIC APPENDED: corr=%d topic=%s partition=%d bytes=%d flexible=%v",
+			glog.V(4).Infof("FETCH TOPIC APPENDED: corr=%d topic=%s partition=%d bytes=%d flexible=%v",
 				correlationID, topic.Name, partition.PartitionID, len(recordBatch), isFlexible)
 
 			// Tagged fields for flexible versions (v12+) after each partition
@@ -401,106 +413,32 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 			glog.Errorf("🚨 FETCH CORR=%d: Topics count CORRUPTED! Expected %d, found %d at response[10:14]=%02x %02x %02x %02x",
 				correlationID, topicsCount, actualTopicsCount, response[10], response[11], response[12], response[13])
 		} else {
-			glog.Infof("✅ FETCH CORR=%d: Topics count verified OK: %d at response[10:14]=%02x %02x %02x %02x",
+			glog.V(4).Infof("FETCH CORR=%d: Topics count verified OK: %d at response[10:14]=%02x %02x %02x %02x",
 				correlationID, topicsCount, response[10], response[11], response[12], response[13])
 		}
 	}
 
 	Debug("Fetch v%d response constructed, size: %d bytes (flexible: %v)", apiVersion, len(response), isFlexible)
-	glog.Infof("FETCH RESPONSE SUMMARY: correlationID=%d topics=%d totalRecordBytes=%d totalResponseBytes=%d", correlationID, topicsCount, totalAppendedRecordBytes, len(response))
+	glog.V(4).Infof("FETCH RESPONSE SUMMARY: correlationID=%d topics=%d totalRecordBytes=%d totalResponseBytes=%d", correlationID, topicsCount, totalAppendedRecordBytes, len(response))
 
-	// CRITICAL BYTE ANALYSIS for offset 32 error
-	if len(response) > 36 {
-		fmt.Printf("\n🔍🔍🔍 CRITICAL: Analyzing bytes around offset 32:\n")
-		fmt.Printf("  Offset 28-31 (should be after first topic name): %02x %02x %02x %02x\n",
-			response[28], response[29], response[30], response[31])
-		fmt.Printf("  Offset 32-35 (ERROR LOCATION): %02x %02x %02x %02x\n",
-			response[32], response[33], response[34], response[35])
-		fmt.Printf("  Offset 36-39 (should be partition ID or next field): %02x %02x %02x %02x\n",
-			response[36], response[37], response[38], response[39])
-
-		// Decode as int32 (what partition count/ID would be)
-		val32at32 := binary.BigEndian.Uint32(response[32:36])
-		fmt.Printf("  Value at offset 32 as int32: %d (0x%08x)\n", val32at32, val32at32)
-
-		// Decode as int16 (what a string length would be)
-		val16at32 := binary.BigEndian.Uint16(response[32:34])
-		fmt.Printf("  Value at offset 32 as int16: %d (0x%04x)\n", val16at32, val16at32)
-	}
-
-	// HEX DUMP for debugging decode errors: dump first 100 bytes of response to diagnose "invalid length (off=32, len=36)" error
-	if len(response) > 0 && len(response) <= 200 {
-		// Full dump for small responses (likely empty/error responses)
-		fmt.Printf("\n🔍 FETCH RESPONSE HEX DUMP (FULL - %d bytes):\n", len(response))
-		for i := 0; i < len(response); i += 16 {
-			end := i + 16
-			if end > len(response) {
-				end = len(response)
-			}
-			fmt.Printf("  %04d: %02x\n", i, response[i:end])
-		}
-
-		// Decode structure for Fetch v7 (non-flexible)
-		if !isFlexible && len(response) >= 40 {
-			fmt.Printf("  Decoded structure:\n")
-			fmt.Printf("    [0-3]   Throttle time ms:  %d\n", int32(binary.BigEndian.Uint32(response[0:4])))
-			fmt.Printf("    [4-7]   Num topics:        %d\n", int32(binary.BigEndian.Uint32(response[4:8])))
-
-			if len(response) >= 12 {
-				topicNameLen := int32(binary.BigEndian.Uint16(response[8:10]))
-				fmt.Printf("    [8-9]   Topic name len:    %d\n", topicNameLen)
-				if topicNameLen > 0 && 10+topicNameLen <= int32(len(response)) {
-					fmt.Printf("    [10-%d] Topic name:        %s\n", 10+topicNameLen-1, string(response[10:10+topicNameLen]))
-
-					partitionsOffset := 10 + topicNameLen
-					if int(partitionsOffset)+4 <= len(response) {
-						numPartitions := int32(binary.BigEndian.Uint32(response[partitionsOffset : partitionsOffset+4]))
-						fmt.Printf("    [%d-%d] Num partitions:    %d\n", partitionsOffset, partitionsOffset+3, numPartitions)
-
-						// First partition data starts here
-						partDataOffset := partitionsOffset + 4
-						if int(partDataOffset)+32 <= len(response) {
-							fmt.Printf("    [%d]   *** BYTE 32 area (ERROR LOCATION) ***\n", 32)
-							if 32 < len(response) {
-								fmt.Printf("      Byte[32] = 0x%02x (%d)\n", response[32], response[32])
-							}
-							if 33 < len(response) {
-								fmt.Printf("      Byte[33] = 0x%02x (%d)\n", response[33], response[33])
-							}
-							if 34 < len(response) {
-								fmt.Printf("      Byte[34] = 0x%02x (%d)\n", response[34], response[34])
-							}
-							if 35 < len(response) {
-								fmt.Printf("      Byte[35] = 0x%02x (%d)\n", response[35], response[35])
-							}
-						}
-					}
-				}
-			}
-		}
-	} else if len(response) > 200 {
-		// Partial dump for large responses
-		fmt.Printf("\n🔍 FETCH RESPONSE HEX DUMP (FIRST 64 bytes of %d total):\n", len(response))
-		dumpSize := 64
-		if len(response) < dumpSize {
-			dumpSize = len(response)
-		}
-		for i := 0; i < dumpSize; i += 16 {
-			end := i + 16
-			if end > dumpSize {
-				end = dumpSize
-			}
-			fmt.Printf("  %04d: %02x\n", i, response[i:end])
-		}
-
-		// Always show byte 32 area since that's where the error occurs
+	// Debug byte analysis (disabled for production to reduce CPU usage)
+	// Uncomment for debugging protocol issues
+	/*
 		if len(response) > 36 {
-			fmt.Printf("  *** BYTE 32 area (ERROR LOCATION) ***\n")
-			fmt.Printf("  0032: %02x\n", response[32:36])
+			glog.V(4).Infof("FETCH CORR=%d: Offset 32-35: %02x %02x %02x %02x",
+				correlationID, response[32], response[33], response[34], response[35])
 		}
-	}
+	*/
 
-	glog.Infof("✅ FETCH RESPONSE COMPLETE: correlationID=%d version=%d size=%d bytes", correlationID, apiVersion, len(response))
+	// HEX DUMP disabled for production (causes high CPU)
+	// Uncomment for debugging protocol issues
+	/*
+		if len(response) > 0 {
+			// Debug hex dump code here...
+		}
+	*/
+
+	glog.V(4).Infof("FETCH RESPONSE COMPLETE: correlationID=%d version=%d size=%d bytes", correlationID, apiVersion, len(response))
 	return response, nil
 }
 

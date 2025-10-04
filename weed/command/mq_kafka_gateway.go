@@ -2,6 +2,8 @@ package command
 
 import (
 	"fmt"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -104,6 +106,17 @@ func runMqKafkaGateway(cmd *Command, args []string) bool {
 		glog.V(0).Infof("Starting MQ Kafka Gateway on %s", listenAddr)
 	}
 	glog.V(0).Infof("Using SeaweedMQ brokers from masters: %s", *mqKafkaGatewayOptions.master)
+
+	// Start HTTP profiling server
+	pprofPort := *mqKafkaGatewayOptions.port + 1000 // e.g., 10093 for profiling if gateway is on 9093
+	go func() {
+		pprofAddr := fmt.Sprintf(":%d", pprofPort)
+		glog.V(0).Infof("Kafka Gateway pprof server listening on %s", pprofAddr)
+		glog.V(0).Infof("Access profiling at: http://localhost:%d/debug/pprof/", pprofPort)
+		if err := http.ListenAndServe(pprofAddr, nil); err != nil {
+			glog.Errorf("pprof server error: %v", err)
+		}
+	}()
 
 	if err := srv.Start(); err != nil {
 		glog.Fatalf("mq kafka gateway start: %v", err)
