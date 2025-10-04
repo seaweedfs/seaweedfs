@@ -10,6 +10,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 	"google.golang.org/grpc"
@@ -81,6 +82,49 @@ func (p *LocalPartition) Subscribe(clientName string, startPosition log_buffer.M
 	var readInMemoryLogErr error
 	var isDone bool
 
+	// CRITICAL FIX: Use offset-based functions if startPosition is offset-based
+	// This allows reading historical data by offset, not just by timestamp
+	if startPosition.IsOffsetBased {
+		glog.V(0).Infof("🔍 SUBSCRIBE: Using offset-based subscription for %s at offset %d", clientName, startPosition.GetOffset())
+		// Wrap eachMessageFn to match the signature expected by LoopProcessLogDataWithOffset
+		eachMessageWithOffsetFn := func(logEntry *filer_pb.LogEntry, offset int64) (bool, error) {
+			return eachMessageFn(logEntry)
+		}
+
+		for {
+			// Use the existing ReadFromDiskFn - it will read from disk and call eachMessageFn
+			// The offset filtering happens in LoopProcessLogDataWithOffset
+			processedPosition, isDone, readPersistedLogErr = p.LogBuffer.ReadFromDiskFn(startPosition, 0, eachMessageFn)
+			if readPersistedLogErr != nil {
+				glog.V(0).Infof("%s read %v persisted log: %v", clientName, p.Partition, readPersistedLogErr)
+				return readPersistedLogErr
+			}
+			if isDone {
+				return nil
+			}
+
+			if processedPosition.Time.UnixNano() != 0 {
+				startPosition = processedPosition
+			}
+			processedPosition, isDone, readInMemoryLogErr = p.LogBuffer.LoopProcessLogDataWithOffset(clientName, startPosition, 0, onNoMessageFn, eachMessageWithOffsetFn)
+			if isDone {
+				return nil
+			}
+			if processedPosition.Time.UnixNano() != 0 {
+				startPosition = processedPosition
+			}
+
+			if readInMemoryLogErr == log_buffer.ResumeFromDiskError {
+				continue
+			}
+			if readInMemoryLogErr != nil {
+				glog.V(0).Infof("%s read %v in memory log: %v", clientName, p.Partition, readInMemoryLogErr)
+				return readInMemoryLogErr
+			}
+		}
+	}
+
+	// Original timestamp-based subscription logic
 	for {
 		processedPosition, isDone, readPersistedLogErr = p.LogBuffer.ReadFromDiskFn(startPosition, 0, eachMessageFn)
 		if readPersistedLogErr != nil {

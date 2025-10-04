@@ -71,15 +71,25 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 	}
 	// Long-poll if: (1) client wants to wait (maxWaitMs > 0), (2) no data available, (3) topics exist
 	// NOTE: We long-poll even if MinBytes=0, since the client specified a wait time
+	// EXCEPTION: For Schema Registry bootstrap (offset 0 on _schemas topic), return immediately
 	hasData := hasDataAvailable()
 	topicsExist := allTopicsExist()
-	shouldLongPoll := maxWaitMs > 0 && !hasData && topicsExist
+	isSchemaRegistryBootstrap := false
+	if len(fetchRequest.Topics) == 1 && fetchRequest.Topics[0].Name == "_schemas" {
+		for _, partition := range fetchRequest.Topics[0].Partitions {
+			if partition.FetchOffset == 0 {
+				isSchemaRegistryBootstrap = true
+				break
+			}
+		}
+	}
+	shouldLongPoll := maxWaitMs > 0 && !hasData && topicsExist && !isSchemaRegistryBootstrap
 	// Debug Schema Registry polling (disabled for production)
 	// Uncomment for debugging long-poll behavior
 	/*
 		if len(fetchRequest.Topics) > 0 && strings.HasPrefix(fetchRequest.Topics[0].Name, "_schemas") {
-			glog.V(4).Infof("SR Fetch: maxWaitMs=%d minBytes=%d hasData=%v topicsExist=%v shouldLongPoll=%v",
-				maxWaitMs, fetchRequest.MinBytes, hasData, topicsExist, shouldLongPoll)
+			glog.V(4).Infof("SR Fetch: maxWaitMs=%d minBytes=%d hasData=%v topicsExist=%v isSchemaRegistryBootstrap=%v shouldLongPoll=%v",
+				maxWaitMs, fetchRequest.MinBytes, hasData, topicsExist, isSchemaRegistryBootstrap, shouldLongPoll)
 		}
 	*/
 	if shouldLongPoll {

@@ -2,6 +2,7 @@ package logstore
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"math"
 	"strings"
@@ -138,14 +139,20 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 		var startOffset int64
 		if isOffsetBased {
 			startOffset = startPosition.Offset
-			glog.Infof("📍 OFFSET-BASED READ: topic=%s partition=%v startOffset=%d startPosition.Time=%v",
+			glog.V(1).Infof("📍 OFFSET-BASED READ: topic=%s partition=%v startOffset=%d startPosition.Time=%v",
 				t.Name, p, startOffset, startPosition.Time)
 		} else {
-			glog.Infof("📍 TIMESTAMP-BASED READ: topic=%s partition=%v startTime=%v startTsNs=%d",
+			glog.V(1).Infof("📍 TIMESTAMP-BASED READ: topic=%s partition=%v startTime=%v startTsNs=%d",
 				t.Name, p, startPosition.Time, startTsNs)
 		}
 
+		// OPTIMIZATION: For offset-based reads, collect all files with their offset ranges first
+		// Then use binary search to find the right file, and skip files that don't contain the offset
+		var candidateFiles []*filer_pb.Entry
+		var foundStartFile bool
+
 		err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+			// First pass: collect all relevant files with their metadata
 			return filer_pb.SeaweedList(context.Background(), client, partitionDir, "", func(entry *filer_pb.Entry, isLast bool) error {
 				if entry.IsDirectory {
 					return nil
@@ -153,31 +160,115 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 				if strings.HasSuffix(entry.Name, ".parquet") {
 					return nil
 				}
-				// FIXME: this is a hack to skip the .offset files
 				if strings.HasSuffix(entry.Name, ".offset") {
 					return nil
 				}
 				if stopTsNs != 0 && entry.Name > stopTime.UTC().Format(topic.TIME_FORMAT) {
-					isDone = true
 					return nil
 				}
-				// For very early start positions (like RESET_TO_EARLIEST with timestamp=1),
-				// or for system topics (like _schemas), we should read all files, not skip based on filename comparison
-				topicName := t.Name
-				if dotIndex := strings.LastIndex(topicName, "."); dotIndex != -1 {
-					topicName = topicName[dotIndex+1:] // Remove namespace prefix
+
+				// OPTIMIZATION: For offset-based reads, check if this file contains the requested offset
+				if isOffsetBased {
+					// Check if file has offset range metadata
+					if minOffsetBytes, hasMin := entry.Extended["offset_min"]; hasMin && len(minOffsetBytes) == 8 {
+						if maxOffsetBytes, hasMax := entry.Extended["offset_max"]; hasMax && len(maxOffsetBytes) == 8 {
+							fileMinOffset := int64(binary.BigEndian.Uint64(minOffsetBytes))
+							fileMaxOffset := int64(binary.BigEndian.Uint64(maxOffsetBytes))
+
+							// Skip files that don't contain our offset range
+							if startOffset > fileMaxOffset {
+								glog.V(2).Infof("⏭️  SKIP: File %s [%d-%d] is before requested offset %d",
+									entry.Name, fileMinOffset, fileMaxOffset, startOffset)
+								return nil
+							}
+
+							// If we haven't found the start file yet, check if this file contains it
+							if !foundStartFile && startOffset >= fileMinOffset && startOffset <= fileMaxOffset {
+								foundStartFile = true
+								glog.V(1).Infof("🎯 FOUND START FILE: %s contains offset %d [%d-%d]",
+									entry.Name, startOffset, fileMinOffset, fileMaxOffset)
+							}
+						}
+					}
+					// If file doesn't have offset metadata, include it (might be old format)
+				} else {
+					// Timestamp-based filtering
+					topicName := t.Name
+					if dotIndex := strings.LastIndex(topicName, "."); dotIndex != -1 {
+						topicName = topicName[dotIndex+1:]
+					}
+					isSystemTopic := strings.HasPrefix(topicName, "_")
+					if !isSystemTopic && startPosition.Time.Unix() > 86400 && entry.Name < startPosition.Time.UTC().Format(topic.TIME_FORMAT) {
+						return nil
+					}
 				}
-				isSystemTopic := strings.HasPrefix(topicName, "_")
-				if !isSystemTopic && !isOffsetBased && startPosition.Time.Unix() > 86400 && entry.Name < startPosition.Time.UTC().Format(topic.TIME_FORMAT) {
-					return nil
-				}
-				if processedTsNs, err = eachFileFn(entry, eachLogEntryFn, startTsNs, stopTsNs, startOffset, isOffsetBased); err != nil {
-					return err
-				}
+
+				// Add file to candidates for processing
+				candidateFiles = append(candidateFiles, entry)
 				return nil
 
 			}, startFileName, true, math.MaxInt32)
 		})
+
+		if err != nil {
+			return
+		}
+
+		// OPTIMIZATION: For offset-based reads with many files, use binary search to find start file
+		if isOffsetBased && len(candidateFiles) > 10 {
+			glog.V(1).Infof("🔍 BINARY SEARCH: %d candidate files, searching for offset %d", len(candidateFiles), startOffset)
+			// Binary search to find the first file that might contain our offset
+			left, right := 0, len(candidateFiles)-1
+			startIdx := 0
+
+			for left <= right {
+				mid := (left + right) / 2
+				entry := candidateFiles[mid]
+
+				if minOffsetBytes, hasMin := entry.Extended["offset_min"]; hasMin && len(minOffsetBytes) == 8 {
+					if maxOffsetBytes, hasMax := entry.Extended["offset_max"]; hasMax && len(maxOffsetBytes) == 8 {
+						fileMinOffset := int64(binary.BigEndian.Uint64(minOffsetBytes))
+						fileMaxOffset := int64(binary.BigEndian.Uint64(maxOffsetBytes))
+
+						if startOffset < fileMinOffset {
+							// Our offset is before this file, search left
+							right = mid - 1
+						} else if startOffset > fileMaxOffset {
+							// Our offset is after this file, search right
+							left = mid + 1
+							startIdx = left
+						} else {
+							// Found the file containing our offset
+							startIdx = mid
+							glog.V(1).Infof("✅ BINARY SEARCH: Found file at index %d: %s [%d-%d]",
+								mid, entry.Name, fileMinOffset, fileMaxOffset)
+							break
+						}
+					} else {
+						break
+					}
+				} else {
+					break
+				}
+			}
+
+			// Process files starting from the found index
+			glog.V(1).Infof("📂 Processing %d files starting from index %d", len(candidateFiles)-startIdx, startIdx)
+			candidateFiles = candidateFiles[startIdx:]
+		}
+
+		// Second pass: process the filtered files
+		for _, entry := range candidateFiles {
+			if processedTsNs, err = eachFileFn(entry, eachLogEntryFn, startTsNs, stopTsNs, startOffset, isOffsetBased); err != nil {
+				return lastReadPosition, isDone, err
+			}
+			// For offset-based reads, once we've processed data, we can stop
+			// (all subsequent offsets will be in memory or later files)
+			if isOffsetBased && processedTsNs > 0 {
+				glog.V(1).Infof("✅ OFFSET-BASED: Processed data from file %s, continuing to next file", entry.Name)
+				// Don't break - continue reading subsequent files to get more offsets
+			}
+		}
 
 		lastReadPosition = log_buffer.NewMessagePosition(processedTsNs, -2)
 		return
