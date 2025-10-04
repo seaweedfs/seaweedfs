@@ -1207,14 +1207,8 @@ func (h *Handler) buildSyncGroupResponse(response SyncGroupResponse, apiVersion 
 	estimatedSize := 16 + len(response.Assignment)
 	result := make([]byte, 0, estimatedSize)
 
-	// NOTE: Correlation ID is handled by writeResponseWithCorrelationID
-	// Do NOT include it in the response body
-
-	// RESPONSE HEADER TAGGED FIELDS for flexible versions (v4+)
-	if IsFlexibleVersion(14, apiVersion) {
-		// Empty header tagged fields (varint 0)
-		result = append(result, 0x00)
-	}
+	// NOTE: Correlation ID and header-level tagged fields are handled by writeResponseWithHeader
+	// Do NOT include them in the response body
 
 	// SyncGroup v1+ has throttle_time_ms at the beginning
 	// SyncGroup v0 does NOT include throttle_time_ms
