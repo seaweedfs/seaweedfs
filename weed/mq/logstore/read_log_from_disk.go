@@ -21,6 +21,10 @@ import (
 func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p topic.Partition) log_buffer.LogReadFromDiskFuncType {
 	partitionDir := topic.PartitionDir(t, p)
 
+	// Create a small cache for recently-read file chunks (3 files, 60s TTL)
+	// This significantly reduces Filer load when multiple consumers are catching up
+	fileCache := log_buffer.NewDiskBufferCache(3, 60*time.Second)
+
 	lookupFileIdFn := filer.LookupFn(filerClient)
 
 	eachChunkFn := func(buf []byte, eachLogEntryFn log_buffer.EachLogEntryFuncType, starTsNs, stopTsNs int64, startOffset int64, isOffsetBased bool) (processedTsNs int64, err error) {
@@ -100,7 +104,24 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 			}
 			glog.V(1).Infof("DEBUG: lookup %s returned %d URLs: %v", chunk.FileId, len(urlStrings), urlStrings)
 
-			// try one of the urlString until util.Get(urlString) succeeds
+			// Try to get data from cache first
+			cacheKey := fmt.Sprintf("%s/%s/%d/%s", t.Name, p.String(), p.RangeStart, chunk.FileId)
+			if cachedData, _, found := fileCache.Get(cacheKey); found {
+				if cachedData == nil {
+					// Negative cache hit - data doesn't exist
+					glog.V(3).Infof("📦 CACHE HIT (NEGATIVE): Skipping non-existent %s/%s", entry.Name, chunk.FileId)
+					continue
+				}
+				// Positive cache hit - data exists
+				glog.V(3).Infof("📦 CACHE HIT: Using cached data for %s/%s (size=%d)", entry.Name, chunk.FileId, len(cachedData))
+				if processedTsNs, err = eachChunkFn(cachedData, eachLogEntryFn, starTsNs, stopTsNs, startOffset, isOffsetBased); err != nil {
+					glog.Errorf("DEBUG: eachChunkFn failed on cached data: %v", err)
+					return
+				}
+				continue
+			}
+
+			// Cache miss - try one of the urlString until util.Get(urlString) succeeds
 			var processed bool
 			for _, urlString := range urlStrings {
 				// TODO optimization opportunity: reuse the buffer
@@ -109,6 +130,11 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 				if data, _, err = util_http.Get(urlString); err == nil {
 					glog.V(1).Infof("DEBUG: successfully fetched %d bytes from %s", len(data), urlString)
 					processed = true
+
+					// Store in cache for future reads
+					fileCache.Put(cacheKey, data, startOffset)
+					glog.V(3).Infof("📦 CACHE PUT: Stored data for %s/%s (size=%d)", entry.Name, chunk.FileId, len(data))
+
 					if processedTsNs, err = eachChunkFn(data, eachLogEntryFn, starTsNs, stopTsNs, startOffset, isOffsetBased); err != nil {
 						glog.Errorf("DEBUG: eachChunkFn failed: %v", err)
 						return
@@ -119,6 +145,9 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 				}
 			}
 			if !processed {
+				// Store negative cache entry - data doesn't exist or all URLs failed
+				fileCache.Put(cacheKey, nil, startOffset)
+				glog.V(3).Infof("📦 CACHE PUT (NEGATIVE): Data not found for %s/%s", entry.Name, chunk.FileId)
 				glog.Errorf("DEBUG: no data processed for %s %s - all URLs failed", entry.Name, chunk.FileId)
 				err = fmt.Errorf("no data processed for %s %s", entry.Name, chunk.FileId)
 				return
@@ -330,12 +359,20 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 			// This prevents the subscription from calling ReadFromDiskFn again for these offsets
 			lastReadPosition = log_buffer.NewMessagePositionFromOffset(lastProcessedOffset + 1)
 		} else {
-			// DETAILED LOGGING for _schemas topic - this is the ERROR case
-			if strings.Contains(t.Name, "_schemas") || (isOffsetBased && startOffset <= 2) {
-				glog.Errorf("❌ OFFSET-BASED FAILED: topic=%s partition=%v startOffset=%d filesProcessed=%d candidateFiles=%d - returning offset=-2",
-					t.Name, p, startOffset, filesProcessed, len(candidateFiles))
+			// CRITICAL FIX: If no files were processed (e.g., all data already consumed),
+			// return the requested offset to prevent busy loop
+			if isOffsetBased {
+				// For offset-based reads with no data, return the requested offset
+				// This signals "I've checked, there's no data at this offset, move forward"
+				glog.V(2).Infof("📭 NO DATA: topic=%s partition=%v startOffset=%d - no files to process (already consumed or doesn't exist)",
+					t.Name, p, startOffset)
+				lastReadPosition = log_buffer.NewMessagePositionFromOffset(startOffset)
+			} else {
+				// For timestamp-based reads, return error (-2)
+				glog.V(2).Infof("❌ NO DATA: topic=%s partition=%v startTs=%v - no files to process",
+					t.Name, p, startPosition.Time)
+				lastReadPosition = log_buffer.NewMessagePosition(processedTsNs, -2)
 			}
-			lastReadPosition = log_buffer.NewMessagePosition(processedTsNs, -2)
 		}
 		return
 	}

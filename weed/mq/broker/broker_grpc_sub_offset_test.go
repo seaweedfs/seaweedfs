@@ -40,14 +40,14 @@ func TestConvertOffsetToMessagePosition(t *testing.T) {
 			name:          "exact offset zero",
 			offsetType:    schema_pb.OffsetType_EXACT_OFFSET,
 			currentOffset: 0,
-			expectedBatch: 0, // NewMessagePositionFromOffset stores offset directly in BatchIndex
+			expectedBatch: 0, // NewMessagePositionFromOffset stores offset directly in Offset field
 			expectError:   false,
 		},
 		{
 			name:          "exact offset non-zero",
 			offsetType:    schema_pb.OffsetType_EXACT_OFFSET,
 			currentOffset: 100,
-			expectedBatch: 100, // NewMessagePositionFromOffset stores offset directly in BatchIndex
+			expectedBatch: 100, // NewMessagePositionFromOffset stores offset directly in Offset field
 			expectError:   false,
 		},
 		{
@@ -81,8 +81,8 @@ func TestConvertOffsetToMessagePosition(t *testing.T) {
 				return
 			}
 
-			if position.BatchIndex != tt.expectedBatch {
-				t.Errorf("Expected batch index %d, got %d", tt.expectedBatch, position.BatchIndex)
+			if position.Offset != tt.expectedBatch {
+				t.Errorf("Expected batch index %d, got %d", tt.expectedBatch, position.Offset)
 			}
 
 			// Verify that the timestamp is reasonable (not zero for most cases)
@@ -100,7 +100,7 @@ func TestConvertOffsetToMessagePosition(t *testing.T) {
 func TestConvertOffsetToMessagePosition_OffsetEncoding(t *testing.T) {
 	broker := &MessageQueueBroker{}
 
-	// Test that offset-based positions encode the offset correctly in BatchIndex
+	// Test that offset-based positions encode the offset correctly in Offset field
 	testCases := []struct {
 		offset             int64
 		expectedBatch      int64
@@ -126,9 +126,9 @@ func TestConvertOffsetToMessagePosition_OffsetEncoding(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 
-			// Check BatchIndex encoding
-			if pos.BatchIndex != tc.expectedBatch {
-				t.Errorf("Expected batch index %d, got %d", tc.expectedBatch, pos.BatchIndex)
+			// Check Offset encoding
+			if pos.Offset != tc.expectedBatch {
+				t.Errorf("Expected batch index %d, got %d", tc.expectedBatch, pos.Offset)
 			}
 
 			// Verify the offset can be extracted correctly using IsOffsetBased/GetOffset
@@ -170,15 +170,15 @@ func TestConvertOffsetToMessagePosition_ConsistentResults(t *testing.T) {
 		time.Sleep(1 * time.Millisecond) // Small delay
 	}
 
-	// All positions should have the same BatchIndex
+	// All positions should have the same Offset
 	for i := 1; i < len(positions); i++ {
-		if positions[i].BatchIndex != positions[0].BatchIndex {
-			t.Errorf("Inconsistent BatchIndex: %d vs %d", positions[0].BatchIndex, positions[i].BatchIndex)
+		if positions[i].Offset != positions[0].Offset {
+			t.Errorf("Inconsistent Offset: %d vs %d", positions[0].Offset, positions[i].Offset)
 		}
 	}
 
-	// With NewMessagePositionFromOffset, timestamps should be identical (sentinel time)
-	expectedTime := log_buffer.OffsetBasedPositionSentinel
+	// With NewMessagePositionFromOffset, timestamps should be identical (zero time for offset-based)
+	expectedTime := time.Time{}
 	for i := 0; i < len(positions); i++ {
 		if !positions[i].Time.Equal(expectedTime) {
 			t.Errorf("Expected all timestamps to be sentinel time (%v), got %v at index %d",
@@ -223,11 +223,11 @@ func TestConvertOffsetToMessagePosition_FixVerification(t *testing.T) {
 		}
 	}
 
-	// Verify ALL BatchIndex values are identical
-	expectedBatch := positions[0].BatchIndex
+	// Verify ALL Offset values are identical
+	expectedBatch := positions[0].Offset
 	for i, pos := range positions {
-		if pos.BatchIndex != expectedBatch {
-			t.Errorf("BatchIndex variance detected at call %d: expected %d, got %d", i, expectedBatch, pos.BatchIndex)
+		if pos.Offset != expectedBatch {
+			t.Errorf("Offset variance detected at call %d: expected %d, got %d", i, expectedBatch, pos.Offset)
 		}
 	}
 

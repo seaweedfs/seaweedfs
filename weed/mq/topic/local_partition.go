@@ -91,43 +91,74 @@ func (p *LocalPartition) Subscribe(clientName string, startPosition log_buffer.M
 			return eachMessageFn(logEntry)
 		}
 
+		// PROPER FIX: Read from disk ONCE to catch up, then stay in memory buffer
+		// This prevents the busy loop that was causing 1388% Filer CPU
+
+		// Step 1: Read all available historical data from disk (one-time catchup)
+		glog.V(4).Infof("📂 SUBSCRIBE: Reading historical data from disk for %s at offset %d", clientName, startPosition.Offset)
+		processedPosition, isDone, readPersistedLogErr = p.LogBuffer.ReadFromDiskFn(startPosition, 0, eachMessageFn)
+		if readPersistedLogErr != nil {
+			glog.V(2).Infof("%s read %v persisted log: %v", clientName, p.Partition, readPersistedLogErr)
+			return readPersistedLogErr
+		}
+		if isDone {
+			glog.V(4).Infof("✅ SUBSCRIBE: ReadFromDiskFn returned isDone=true for %s", clientName)
+			return nil
+		}
+
+		// Update position after reading from disk
+		if processedPosition.Time.UnixNano() != 0 {
+			startPosition = processedPosition
+			glog.V(4).Infof("📂 SUBSCRIBE: Disk read complete, updated position to %v (offset %d)", startPosition, startPosition.Offset)
+		}
+
+		// Step 2: Enter the main loop - read from in-memory buffer, occasionally checking disk
 		for {
-			// Use the existing ReadFromDiskFn - it will read from disk and call eachMessageFn
-			// The offset filtering happens in LoopProcessLogDataWithOffset
-			glog.V(0).Infof("🔄 SUBSCRIBE LOOP: Calling ReadFromDiskFn for %s at position %v (offset %d)", clientName, startPosition, startPosition.Offset)
-			processedPosition, isDone, readPersistedLogErr = p.LogBuffer.ReadFromDiskFn(startPosition, 0, eachMessageFn)
-			if readPersistedLogErr != nil {
-				glog.V(0).Infof("%s read %v persisted log: %v", clientName, p.Partition, readPersistedLogErr)
-				return readPersistedLogErr
-			}
-			if isDone {
-				glog.V(0).Infof("🔄 SUBSCRIBE LOOP: ReadFromDiskFn returned isDone=true for %s", clientName)
-				return nil
-			}
-			glog.V(0).Infof("🔄 SUBSCRIBE LOOP: ReadFromDiskFn completed for %s, processedPosition=%v", clientName, processedPosition)
-
-			if processedPosition.Time.UnixNano() != 0 {
-				startPosition = processedPosition
-			}
-			glog.V(0).Infof("🔄 SUBSCRIBE LOOP: Calling LoopProcessLogDataWithOffset for %s at position %v (offset %d)", clientName, startPosition, startPosition.Offset)
+			// Read from in-memory buffer (this is the hot path - handles streaming data)
+			glog.V(4).Infof("💾 SUBSCRIBE: Reading from in-memory buffer for %s at offset %d", clientName, startPosition.Offset)
 			processedPosition, isDone, readInMemoryLogErr = p.LogBuffer.LoopProcessLogDataWithOffset(clientName, startPosition, 0, onNoMessageFn, eachMessageWithOffsetFn)
+
 			if isDone {
-				glog.V(0).Infof("🔄 SUBSCRIBE LOOP: LoopProcessLogDataWithOffset returned isDone=true for %s", clientName)
+				glog.V(4).Infof("✅ SUBSCRIBE: LoopProcessLogDataWithOffset returned isDone=true for %s", clientName)
 				return nil
 			}
+
+			// Update position
 			if processedPosition.Time.UnixNano() != 0 {
 				startPosition = processedPosition
 			}
-			glog.V(0).Infof("🔄 SUBSCRIBE LOOP: LoopProcessLogDataWithOffset completed for %s, err=%v", clientName, readInMemoryLogErr)
 
+			// If we get ResumeFromDiskError, it means data was flushed to disk
+			// Read from disk ONCE to catch up, then continue with in-memory buffer
 			if readInMemoryLogErr == log_buffer.ResumeFromDiskError {
-				glog.V(0).Infof("🔄 SUBSCRIBE LOOP: Got ResumeFromDiskError, continuing loop to read from disk for %s", clientName)
+				glog.V(4).Infof("🔄 SUBSCRIBE: ResumeFromDiskError - reading flushed data from disk for %s at offset %d", clientName, startPosition.Offset)
+				processedPosition, isDone, readPersistedLogErr = p.LogBuffer.ReadFromDiskFn(startPosition, 0, eachMessageFn)
+				if readPersistedLogErr != nil {
+					glog.V(2).Infof("%s read %v persisted log after flush: %v", clientName, p.Partition, readPersistedLogErr)
+					return readPersistedLogErr
+				}
+				if isDone {
+					glog.V(4).Infof("✅ SUBSCRIBE: ReadFromDiskFn returned isDone=true after flush for %s", clientName)
+					return nil
+				}
+
+				// Update position and continue the loop (back to in-memory buffer)
+				if processedPosition.Time.UnixNano() != 0 {
+					startPosition = processedPosition
+					glog.V(4).Infof("📂 SUBSCRIBE: Disk catchup complete, position now at offset %d", startPosition.Offset)
+				}
+				// Loop continues - back to reading from in-memory buffer
 				continue
 			}
+
+			// Any other error is a real error
 			if readInMemoryLogErr != nil {
-				glog.V(0).Infof("%s read %v in memory log: %v", clientName, p.Partition, readInMemoryLogErr)
+				glog.V(2).Infof("%s read %v in memory log: %v", clientName, p.Partition, readInMemoryLogErr)
 				return readInMemoryLogErr
 			}
+
+			// If we get here with no error and not done, something is wrong
+			glog.V(1).Infof("⚠️  SUBSCRIBE: Unexpected state for %s - no error but not done, continuing", clientName)
 		}
 	}
 
