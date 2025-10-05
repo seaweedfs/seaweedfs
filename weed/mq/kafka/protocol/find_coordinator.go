@@ -33,8 +33,11 @@ func (h *Handler) handleFindCoordinator(correlationID uint32, apiVersion uint16,
 		Debug("FindCoordinator - Routing to V0 handler")
 		return h.handleFindCoordinatorV0(correlationID, requestBody)
 	case 1, 2:
-		Debug("FindCoordinator - Routing to V2 handler")
+		Debug("FindCoordinator - Routing to V1-2 handler (non-flexible)")
 		return h.handleFindCoordinatorV2(correlationID, requestBody)
+	case 3:
+		Debug("FindCoordinator - Routing to V3 handler (flexible)")
+		return h.handleFindCoordinatorV3(correlationID, requestBody)
 	default:
 		return nil, fmt.Errorf("FindCoordinator version %d not supported", apiVersion)
 	}
@@ -90,8 +93,10 @@ func (h *Handler) handleFindCoordinatorV0(correlationID uint32, requestBody []by
 	// Build response
 	response := make([]byte, 0, 64)
 
-	// NOTE: Correlation ID is handled by writeResponseWithCorrelationID
-	// Do NOT include it in the response body
+	// Correlation ID (4 bytes)
+	correlationIDBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
+	response = append(response, correlationIDBytes...)
 
 	// FindCoordinator v0 Response Format (NO throttle_time_ms, NO error_message):
 	// - error_code (INT16)
@@ -116,11 +121,6 @@ func (h *Handler) handleFindCoordinatorV0(correlationID uint32, requestBody []by
 	portBytes := make([]byte, 4)
 	binary.BigEndian.PutUint32(portBytes, uint32(coordinatorPort))
 	response = append(response, portBytes...)
-
-	// Log the complete response for debugging
-	Debug("FindCoordinator v0 RESPONSE BYTES (len=%d): correlationID=%d errorCode=0 nodeID=%d host=%s port=%d",
-		len(response), correlationID, nodeID, coordinatorHost, coordinatorPort)
-	Debug("FindCoordinator v0 RESPONSE HEX: %x", response)
 
 	return response, nil
 }
@@ -181,8 +181,10 @@ func (h *Handler) handleFindCoordinatorV2(correlationID uint32, requestBody []by
 
 	response := make([]byte, 0, 64)
 
-	// NOTE: Correlation ID is handled by writeResponseWithHeader
-	// Do NOT include it in the response body
+	// Correlation ID
+	correlationIDBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(correlationIDBytes, correlationID)
+	response = append(response, correlationIDBytes...)
 
 	// FindCoordinator v2 Response Format:
 	// - throttle_time_ms (INT32)
@@ -216,11 +218,115 @@ func (h *Handler) handleFindCoordinatorV2(correlationID uint32, requestBody []by
 	binary.BigEndian.PutUint32(portBytes, uint32(coordinatorPort))
 	response = append(response, portBytes...)
 
-	// Log the complete response for debugging
-	Debug("FindCoordinator v2 RESPONSE BYTES (len=%d): correlationID=%d errorCode=0 nodeID=%d host=%s port=%d",
-		len(response), correlationID, nodeID, coordinatorHost, coordinatorPort)
-	Debug("FindCoordinator v2 RESPONSE HEX: %x", response)
+	return response, nil
+}
 
+func (h *Handler) handleFindCoordinatorV3(correlationID uint32, requestBody []byte) ([]byte, error) {
+	Debug("FindCoordinator V3 (flexible) - Processing request, correlation: %d", correlationID)
+	// Parse FindCoordinator v3 request (flexible version):
+	// - Key (COMPACT_STRING with varint length+1)
+	// - KeyType (INT8)
+	// - Tagged fields (varint)
+
+	if len(requestBody) < 2 {
+		return nil, fmt.Errorf("FindCoordinator v3 request too short")
+	}
+
+	offset := 0
+
+	// Parse coordinator key (compact string: varint length+1)
+	coordinatorKeyLen, bytesRead, err := DecodeUvarint(requestBody[offset:])
+	if err != nil || bytesRead <= 0 {
+		return nil, fmt.Errorf("failed to decode coordinator key length: %w", err)
+	}
+	offset += bytesRead
+
+	if coordinatorKeyLen == 0 {
+		return nil, fmt.Errorf("coordinator key cannot be null in v3")
+	}
+	coordinatorKeyLen-- // Compact string: actual length = varint - 1
+
+	if len(requestBody) < offset+int(coordinatorKeyLen) {
+		return nil, fmt.Errorf("FindCoordinator v3 request missing coordinator key")
+	}
+
+	coordinatorKey := string(requestBody[offset : offset+int(coordinatorKeyLen)])
+	offset += int(coordinatorKeyLen)
+
+	// Parse coordinator type (INT8)
+	var coordinatorType byte = 0
+	if offset < len(requestBody) {
+		coordinatorType = requestBody[offset]
+		offset++
+		Debug("FindCoordinator v3 - Coordinator type: %d", coordinatorType)
+	}
+
+	// Skip tagged fields (we don't need them for now)
+	if offset < len(requestBody) {
+		taggedFieldsCount, bytesRead, tagErr := DecodeUvarint(requestBody[offset:])
+		if tagErr == nil && bytesRead > 0 {
+			offset += bytesRead
+			Debug("FindCoordinator v3 - Tagged fields count: %d", taggedFieldsCount)
+			// TODO: Parse tagged fields if needed
+		}
+	}
+
+	// Find the appropriate coordinator for this group
+	coordinatorHost, coordinatorPort, nodeID, err := h.findCoordinatorForGroup(coordinatorKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find coordinator for group %s: %w", coordinatorKey, err)
+	}
+
+	// Return hostname instead of IP address for client connectivity
+	originalHost := coordinatorHost
+	coordinatorHost = h.getClientConnectableHost(coordinatorHost)
+	Debug("FindCoordinator v3 - Group: %s, Original coordinator: %s:%d, Returned to client: %s:%d",
+		coordinatorKey, originalHost, coordinatorPort, coordinatorHost, coordinatorPort)
+
+	// Build response (v3 is flexible, uses compact strings and tagged fields)
+	response := make([]byte, 0, 64)
+
+	// NOTE: Correlation ID is handled by writeResponseWithHeader
+	// Do NOT include it in the response body
+
+	// FindCoordinator v3 Response Format (FLEXIBLE):
+	// - throttle_time_ms (INT32)
+	// - error_code (INT16)
+	// - error_message (COMPACT_NULLABLE_STRING with varint length+1, 0 = null)
+	// - node_id (INT32)
+	// - host (COMPACT_STRING with varint length+1)
+	// - port (INT32)
+	// - tagged_fields (varint, 0 = no tags)
+
+	// Throttle time (4 bytes, 0 = no throttling)
+	response = append(response, 0, 0, 0, 0)
+
+	// Error code (2 bytes, 0 = no error)
+	response = append(response, 0, 0)
+
+	// Error message (compact nullable string) - null for success
+	// Compact nullable string: 0 = null, 1 = empty string, n+1 = string of length n
+	response = append(response, 0) // 0 = null
+
+	// Coordinator node_id (4 bytes)
+	nodeIDBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(nodeIDBytes, uint32(nodeID))
+	response = append(response, nodeIDBytes...)
+
+	// Coordinator host (compact string: varint length+1)
+	hostLen := uint32(len(coordinatorHost))
+	response = append(response, EncodeUvarint(hostLen+1)...) // +1 for compact string encoding
+	response = append(response, []byte(coordinatorHost)...)
+
+	// Coordinator port (4 bytes)
+	portBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(portBytes, uint32(coordinatorPort))
+	response = append(response, portBytes...)
+
+	// Tagged fields (0 = no tags)
+	response = append(response, 0)
+
+	Debug("FindCoordinator v3 - Response built: %d bytes", len(response))
 	return response, nil
 }
 
@@ -243,42 +349,24 @@ func (h *Handler) findCoordinatorForGroup(groupID string) (host string, port int
 	}
 
 	// If this gateway is the leader, handle the assignment directly
-	isLeader := registry.IsLeader()
-	Debug("findCoordinatorForGroup: registry.IsLeader() = %v for group %s", isLeader, groupID)
-	if isLeader {
+	if registry.IsLeader() {
 		return h.handleCoordinatorAssignmentAsLeader(groupID, registry)
 	}
 
 	// If not the leader, contact the leader to get/assign coordinator
 	// But first check if we can quickly become the leader or if there's already a leader
-	leader := registry.GetLeaderAddress()
-	Debug("GetLeaderAddress returned: '%s' (empty=%v) for group %s", leader, leader == "", groupID)
-	if leader != "" {
+	if leader := registry.GetLeaderAddress(); leader != "" {
 		Debug("Found existing leader %s for group %s", leader, groupID)
 		// If the leader is this gateway, handle assignment directly
 		if leader == h.GetGatewayAddress() {
 			return h.handleCoordinatorAssignmentAsLeader(groupID, registry)
 		}
-		return h.requestCoordinatorFromLeader(groupID, registry)
 	}
-
-	// No leader exists yet - use current gateway as coordinator immediately
-	// to avoid 10-second timeout that causes client disconnections
-	Debug("No leader elected yet, using current gateway as coordinator for group %s", groupID)
-	gatewayAddr := h.GetGatewayAddress()
-	var parseErr error
-	host, port, parseErr = h.parseGatewayAddress(gatewayAddr)
-	if parseErr != nil {
-		Debug("Failed to parse gateway address %s: %v", gatewayAddr, parseErr)
-		return "localhost", 9092, 1, nil
-	}
-	nodeID = 1
-	return host, port, nodeID, nil
+	return h.requestCoordinatorFromLeader(groupID, registry)
 }
 
 // handleCoordinatorAssignmentAsLeader handles coordinator assignment when this gateway is the leader
 func (h *Handler) handleCoordinatorAssignmentAsLeader(groupID string, registry CoordinatorRegistryInterface) (host string, port int, nodeID int32, err error) {
-	Debug("handleCoordinatorAssignmentAsLeader: entered for group %s", groupID)
 	// Check if coordinator already exists
 	if assignment, err := registry.GetCoordinator(groupID); err == nil && assignment != nil {
 		Debug("Found existing coordinator %s (node %d) for group %s", assignment.CoordinatorAddr, assignment.CoordinatorNodeID, groupID)
@@ -287,9 +375,7 @@ func (h *Handler) handleCoordinatorAssignmentAsLeader(groupID string, registry C
 
 	// No coordinator exists, assign the requesting gateway (first-come-first-serve)
 	currentGateway := h.GetGatewayAddress()
-	Debug("handleCoordinatorAssignmentAsLeader: About to call AssignCoordinator for group %s", groupID)
 	assignment, err := registry.AssignCoordinator(groupID, currentGateway)
-	Debug("handleCoordinatorAssignmentAsLeader: AssignCoordinator returned err=%v for group %s", err, groupID)
 	if err != nil {
 		Debug("Failed to assign coordinator for group %s: %v", groupID, err)
 		// Fallback to current gateway

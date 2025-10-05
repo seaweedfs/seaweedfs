@@ -94,27 +94,34 @@ func (p *LocalPartition) Subscribe(clientName string, startPosition log_buffer.M
 		for {
 			// Use the existing ReadFromDiskFn - it will read from disk and call eachMessageFn
 			// The offset filtering happens in LoopProcessLogDataWithOffset
+			glog.V(0).Infof("🔄 SUBSCRIBE LOOP: Calling ReadFromDiskFn for %s at position %v (offset %d)", clientName, startPosition, startPosition.Offset)
 			processedPosition, isDone, readPersistedLogErr = p.LogBuffer.ReadFromDiskFn(startPosition, 0, eachMessageFn)
 			if readPersistedLogErr != nil {
 				glog.V(0).Infof("%s read %v persisted log: %v", clientName, p.Partition, readPersistedLogErr)
 				return readPersistedLogErr
 			}
 			if isDone {
+				glog.V(0).Infof("🔄 SUBSCRIBE LOOP: ReadFromDiskFn returned isDone=true for %s", clientName)
 				return nil
 			}
+			glog.V(0).Infof("🔄 SUBSCRIBE LOOP: ReadFromDiskFn completed for %s, processedPosition=%v", clientName, processedPosition)
 
 			if processedPosition.Time.UnixNano() != 0 {
 				startPosition = processedPosition
 			}
+			glog.V(0).Infof("🔄 SUBSCRIBE LOOP: Calling LoopProcessLogDataWithOffset for %s at position %v (offset %d)", clientName, startPosition, startPosition.Offset)
 			processedPosition, isDone, readInMemoryLogErr = p.LogBuffer.LoopProcessLogDataWithOffset(clientName, startPosition, 0, onNoMessageFn, eachMessageWithOffsetFn)
 			if isDone {
+				glog.V(0).Infof("🔄 SUBSCRIBE LOOP: LoopProcessLogDataWithOffset returned isDone=true for %s", clientName)
 				return nil
 			}
 			if processedPosition.Time.UnixNano() != 0 {
 				startPosition = processedPosition
 			}
+			glog.V(0).Infof("🔄 SUBSCRIBE LOOP: LoopProcessLogDataWithOffset completed for %s, err=%v", clientName, readInMemoryLogErr)
 
 			if readInMemoryLogErr == log_buffer.ResumeFromDiskError {
+				glog.V(0).Infof("🔄 SUBSCRIBE LOOP: Got ResumeFromDiskError, continuing loop to read from disk for %s", clientName)
 				continue
 			}
 			if readInMemoryLogErr != nil {

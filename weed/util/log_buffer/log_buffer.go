@@ -95,8 +95,11 @@ func (logBuffer *LogBuffer) InitializeOffsetFromExistingData(getHighestOffsetFn 
 		// Set the next offset to be one after the highest existing offset
 		nextOffset := highestOffset + 1
 		logBuffer.offset = nextOffset
-		logBuffer.bufferStartOffset = nextOffset // Current buffer starts at this offset
-		glog.V(0).Infof("Initialized LogBuffer %s offset to %d (highest existing: %d)", logBuffer.name, nextOffset, highestOffset)
+		// CRITICAL FIX: bufferStartOffset should always be 0 to allow reading all existing data
+		// The offset field tracks the next offset to assign, but the buffer should be able to
+		// read from offset 0 onwards (existing data will be read from disk)
+		logBuffer.bufferStartOffset = 0
+		glog.V(0).Infof("Initialized LogBuffer %s offset to %d (highest existing: %d), buffer starts at 0", logBuffer.name, nextOffset, highestOffset)
 	} else {
 		logBuffer.bufferStartOffset = 0 // Start from offset 0
 		glog.V(0).Infof("No existing data found for %s, starting from offset 0", logBuffer.name)
@@ -387,6 +390,12 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 		// Check previous buffers for the requested offset
 		for i, buf := range logBuffer.prevBuffers.buffers {
 			if requestedOffset >= buf.startOffset && requestedOffset <= buf.offset {
+				// CRITICAL FIX: If the prevBuffer is empty (flushed to disk), read from disk
+				if buf.size == 0 {
+					glog.V(0).Infof("⚠️  OFFSET-BASED: prevBuffer[%d] [%d-%d] is empty (flushed) - reading from disk for offset %d",
+						i, buf.startOffset, buf.offset, requestedOffset)
+					return nil, -2, ResumeFromDiskError
+				}
 				glog.V(0).Infof("✅ OFFSET-BASED: Returning prevBuffer[%d] [%d-%d] for offset %d",
 					i, buf.startOffset, buf.offset, requestedOffset)
 				return copiedBytes(buf.buf[:buf.size]), buf.offset, nil

@@ -112,3 +112,4 @@ func (h *Handler) handleDescribeCluster(correlationID uint32, apiVersion uint16,
 
 	return response, nil
 }
+

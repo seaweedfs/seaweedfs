@@ -2,15 +2,27 @@ package offset
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/filer_client"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 )
+
+// ConsumerGroupPosition represents a consumer's position in a partition
+// This can be either a timestamp or an offset
+type ConsumerGroupPosition struct {
+	Type        string `json:"type"`         // "offset" or "timestamp"
+	Value       int64  `json:"value"`        // The actual offset or timestamp value
+	OffsetType  string `json:"offset_type"`  // Optional: OffsetType enum name (e.g., "EXACT_OFFSET")
+	CommittedAt int64  `json:"committed_at"` // Unix timestamp in milliseconds when committed
+	Metadata    string `json:"metadata"`     // Optional: application-specific metadata
+}
 
 // ConsumerGroupOffsetStorage handles consumer group offset persistence
 // Each consumer group gets its own offset file in a dedicated consumers/ subfolder:
@@ -19,8 +31,14 @@ type ConsumerGroupOffsetStorage interface {
 	// SaveConsumerGroupOffset saves the committed offset for a consumer group
 	SaveConsumerGroupOffset(t topic.Topic, p topic.Partition, consumerGroup string, offset int64) error
 
-	// LoadConsumerGroupOffset loads the committed offset for a consumer group
+	// SaveConsumerGroupPosition saves the committed position (offset or timestamp) for a consumer group
+	SaveConsumerGroupPosition(t topic.Topic, p topic.Partition, consumerGroup string, position *ConsumerGroupPosition) error
+
+	// LoadConsumerGroupOffset loads the committed offset for a consumer group (backward compatible)
 	LoadConsumerGroupOffset(t topic.Topic, p topic.Partition, consumerGroup string) (int64, error)
+
+	// LoadConsumerGroupPosition loads the committed position for a consumer group
+	LoadConsumerGroupPosition(t topic.Topic, p topic.Partition, consumerGroup string) (*ConsumerGroupPosition, error)
 
 	// ListConsumerGroups returns all consumer groups for a topic partition
 	ListConsumerGroups(t topic.Topic, p topic.Partition) ([]string, error)
@@ -43,44 +61,72 @@ func NewFilerConsumerGroupOffsetStorageWithAccessor(filerClientAccessor *filer_c
 
 // SaveConsumerGroupOffset saves the committed offset for a consumer group
 // Stores as: /topics/{namespace}/{topic}/{version}/{partition}/consumers/{consumer_group}.offset
+// This is a convenience method that wraps SaveConsumerGroupPosition
 func (f *FilerConsumerGroupOffsetStorage) SaveConsumerGroupOffset(t topic.Topic, p topic.Partition, consumerGroup string, offset int64) error {
+	position := &ConsumerGroupPosition{
+		Type:        "offset",
+		Value:       offset,
+		OffsetType:  schema_pb.OffsetType_EXACT_OFFSET.String(),
+		CommittedAt: time.Now().UnixMilli(),
+	}
+	return f.SaveConsumerGroupPosition(t, p, consumerGroup, position)
+}
+
+// SaveConsumerGroupPosition saves the committed position (offset or timestamp) for a consumer group
+// Stores as JSON: /topics/{namespace}/{topic}/{version}/{partition}/consumers/{consumer_group}.offset
+func (f *FilerConsumerGroupOffsetStorage) SaveConsumerGroupPosition(t topic.Topic, p topic.Partition, consumerGroup string, position *ConsumerGroupPosition) error {
 	partitionDir := topic.PartitionDir(t, p)
 	consumersDir := fmt.Sprintf("%s/consumers", partitionDir)
 	offsetFileName := fmt.Sprintf("%s.offset", consumerGroup)
 
-	// Use SMQ's 8-byte offset format
-	offsetBytes := make([]byte, 8)
-	util.Uint64toBytes(offsetBytes, uint64(offset))
+	// Marshal position to JSON
+	jsonBytes, err := json.Marshal(position)
+	if err != nil {
+		return fmt.Errorf("failed to marshal position to JSON: %w", err)
+	}
 
 	return f.filerClientAccessor.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return filer.SaveInsideFiler(client, consumersDir, offsetFileName, offsetBytes)
+		return filer.SaveInsideFiler(client, consumersDir, offsetFileName, jsonBytes)
 	})
 }
 
 // LoadConsumerGroupOffset loads the committed offset for a consumer group
+// This method provides backward compatibility and returns just the offset value
 func (f *FilerConsumerGroupOffsetStorage) LoadConsumerGroupOffset(t topic.Topic, p topic.Partition, consumerGroup string) (int64, error) {
+	position, err := f.LoadConsumerGroupPosition(t, p, consumerGroup)
+	if err != nil {
+		return -1, err
+	}
+	return position.Value, nil
+}
+
+// LoadConsumerGroupPosition loads the committed position for a consumer group
+func (f *FilerConsumerGroupOffsetStorage) LoadConsumerGroupPosition(t topic.Topic, p topic.Partition, consumerGroup string) (*ConsumerGroupPosition, error) {
 	partitionDir := topic.PartitionDir(t, p)
 	consumersDir := fmt.Sprintf("%s/consumers", partitionDir)
 	offsetFileName := fmt.Sprintf("%s.offset", consumerGroup)
 
-	var offset int64 = -1
+	var position *ConsumerGroupPosition
 	err := f.filerClientAccessor.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		data, err := filer.ReadInsideFiler(client, consumersDir, offsetFileName)
 		if err != nil {
 			return err
 		}
-		if len(data) != 8 {
-			return fmt.Errorf("invalid consumer group offset file format: expected 8 bytes, got %d", len(data))
+
+		// Parse JSON format
+		position = &ConsumerGroupPosition{}
+		if err := json.Unmarshal(data, position); err != nil {
+			return fmt.Errorf("invalid consumer group offset file format: %w", err)
 		}
-		offset = int64(util.BytesToUint64(data))
+
 		return nil
 	})
 
 	if err != nil {
-		return -1, err
+		return nil, err
 	}
 
-	return offset, nil
+	return position, nil
 }
 
 // ListConsumerGroups returns all consumer groups for a topic partition

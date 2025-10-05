@@ -2,6 +2,7 @@ package consumer_offset
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -12,9 +13,18 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
+// KafkaConsumerPosition represents a Kafka consumer's position
+// Can be either offset-based or timestamp-based
+type KafkaConsumerPosition struct {
+	Type        string `json:"type"`         // "offset" or "timestamp"
+	Value       int64  `json:"value"`        // The actual offset or timestamp value
+	CommittedAt int64  `json:"committed_at"` // Unix timestamp in milliseconds when committed
+	Metadata    string `json:"metadata"`     // Optional: application-specific metadata
+}
+
 // FilerStorage implements OffsetStorage using SeaweedFS filer
-// Offsets are stored in: /kafka/consumer_offsets/{group}/{topic}/{partition}/offset
-// Metadata is stored in: /kafka/consumer_offsets/{group}/{topic}/{partition}/metadata
+// Offsets are stored in JSON format: /kafka/consumer_offsets/{group}/{topic}/{partition}/offset
+// Supports both offset and timestamp positioning
 type FilerStorage struct {
 	fca    *filer_client.FilerClientAccessor
 	closed bool
@@ -29,6 +39,7 @@ func NewFilerStorage(fca *filer_client.FilerClientAccessor) *FilerStorage {
 }
 
 // CommitOffset commits an offset for a consumer group
+// Now stores as JSON to support both offset and timestamp positioning
 func (f *FilerStorage) CommitOffset(group, topic string, partition int32, offset int64, metadata string) error {
 	if f.closed {
 		return ErrStorageClosed
@@ -43,17 +54,24 @@ func (f *FilerStorage) CommitOffset(group, topic string, partition int32, offset
 	}
 
 	offsetPath := f.getOffsetPath(group, topic, partition)
-	metadataPath := f.getMetadataPath(group, topic, partition)
 
-	// Store offset
-	offsetData := fmt.Sprintf("%d", offset)
-	if err := f.writeFile(offsetPath, []byte(offsetData)); err != nil {
-		return fmt.Errorf("failed to write offset: %w", err)
+	// Create position structure
+	position := &KafkaConsumerPosition{
+		Type:        "offset",
+		Value:       offset,
+		CommittedAt: time.Now().UnixMilli(),
+		Metadata:    metadata,
 	}
 
-	// Store metadata
-	if err := f.writeFile(metadataPath, []byte(metadata)); err != nil {
-		return fmt.Errorf("failed to write metadata: %w", err)
+	// Marshal to JSON
+	jsonBytes, err := json.Marshal(position)
+	if err != nil {
+		return fmt.Errorf("failed to marshal offset to JSON: %w", err)
+	}
+
+	// Store as single JSON file
+	if err := f.writeFile(offsetPath, jsonBytes); err != nil {
+		return fmt.Errorf("failed to write offset: %w", err)
 	}
 
 	return nil
@@ -66,29 +84,21 @@ func (f *FilerStorage) FetchOffset(group, topic string, partition int32) (int64,
 	}
 
 	offsetPath := f.getOffsetPath(group, topic, partition)
-	metadataPath := f.getMetadataPath(group, topic, partition)
 
-	// Read offset
+	// Read offset file
 	offsetData, err := f.readFile(offsetPath)
 	if err != nil {
 		// File doesn't exist, no offset committed
 		return -1, "", nil
 	}
 
-	var offset int64
-	_, err = fmt.Sscanf(string(offsetData), "%d", &offset)
-	if err != nil {
-		return -1, "", fmt.Errorf("failed to parse offset: %w", err)
+	// Parse JSON format
+	var position KafkaConsumerPosition
+	if err := json.Unmarshal(offsetData, &position); err != nil {
+		return -1, "", fmt.Errorf("failed to parse offset JSON: %w", err)
 	}
 
-	// Read metadata
-	metadataData, err := f.readFile(metadataPath)
-	metadata := ""
-	if err == nil {
-		metadata = string(metadataData)
-	}
-
-	return offset, metadata, nil
+	return position.Value, position.Metadata, nil
 }
 
 // FetchAllOffsets fetches all committed offsets for a consumer group
@@ -176,10 +186,6 @@ func (f *FilerStorage) getPartitionPath(group, topic string, partition int32) st
 
 func (f *FilerStorage) getOffsetPath(group, topic string, partition int32) string {
 	return fmt.Sprintf("%s/offset", f.getPartitionPath(group, topic, partition))
-}
-
-func (f *FilerStorage) getMetadataPath(group, topic string, partition int32) string {
-	return fmt.Sprintf("%s/metadata", f.getPartitionPath(group, topic, partition))
 }
 
 func (f *FilerStorage) writeFile(path string, data []byte) error {

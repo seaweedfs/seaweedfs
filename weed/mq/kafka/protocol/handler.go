@@ -928,7 +928,7 @@ var SupportedApiKeys = []ApiKeyInfo{
 	{2, 0, 2},  // ListOffsets
 	{19, 0, 5}, // CreateTopics
 	{20, 0, 4}, // DeleteTopics
-	{10, 0, 2}, // FindCoordinator
+	{10, 0, 3}, // FindCoordinator - v3+ supports flexible responses
 	{11, 0, 6}, // JoinGroup
 	{14, 0, 5}, // SyncGroup
 	{8, 0, 2},  // OffsetCommit
