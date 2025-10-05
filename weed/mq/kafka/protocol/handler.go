@@ -1445,13 +1445,28 @@ func (h *Handler) HandleMetadataV3V4(correlationID uint32, requestBody []byte) (
 
 // HandleMetadataV5V6 implements Metadata API v5/v6 with OfflineReplicas field
 func (h *Handler) HandleMetadataV5V6(correlationID uint32, requestBody []byte) ([]byte, error) {
-	// Metadata v5/v6 adds OfflineReplicas field to partitions
-	// v5/v6 response layout: correlation_id(4) + throttle_time_ms(4) + brokers(ARRAY) + cluster_id(NULLABLE_STRING) + controller_id(4) + topics(ARRAY)
-	// Each partition now includes: error_code(2) + partition_index(4) + leader_id(4) + replica_nodes(ARRAY) + isr_nodes(ARRAY) + offline_replicas(ARRAY)
+	return h.handleMetadataV5ToV8(correlationID, requestBody, 5)
+}
+
+// HandleMetadataV7 implements Metadata API v7 with LeaderEpoch field (REGULAR FORMAT, NOT FLEXIBLE)
+func (h *Handler) HandleMetadataV7(correlationID uint32, requestBody []byte) ([]byte, error) {
+	// CRITICAL: Metadata v7 uses REGULAR arrays/strings (like v5/v6), NOT compact format
+	// Only v9+ uses compact format (flexible responses)
+	return h.handleMetadataV5ToV8(correlationID, requestBody, 7)
+}
+
+// handleMetadataV5ToV8 handles Metadata v5-v8 with regular (non-compact) encoding
+// v5/v6: adds OfflineReplicas field to partitions
+// v7: adds LeaderEpoch field to partitions
+// v8: adds ClusterAuthorizedOperations field
+// All use REGULAR arrays/strings (NOT compact) - only v9+ uses compact format
+func (h *Handler) handleMetadataV5ToV8(correlationID uint32, requestBody []byte, apiVersion int) ([]byte, error) {
+	// v5-v8 response layout: throttle_time_ms(4) + brokers(ARRAY) + cluster_id(NULLABLE_STRING) + controller_id(4) + topics(ARRAY) [+ cluster_authorized_operations(4) for v8]
+	// Each partition includes: error_code(2) + partition_index(4) + leader_id(4) [+ leader_epoch(4) for v7+] + replica_nodes(ARRAY) + isr_nodes(ARRAY) + offline_replicas(ARRAY)
 
 	// Parse requested topics (empty means all)
 	requestedTopics := h.parseMetadataTopics(requestBody)
-	Debug("METADATA v5/v6 REQUEST - Requested: %v (empty=all)", requestedTopics)
+	Debug("METADATA v%d REQUEST - Requested: %v (empty=all)", apiVersion, requestedTopics)
 
 	// Determine topics to return using SeaweedMQ handler
 	var topicsToReturn []string
@@ -1557,8 +1572,10 @@ func (h *Handler) HandleMetadataV5V6(correlationID uint32, requestBody []byte) (
 			binary.Write(&buf, binary.BigEndian, partitionID) // PartitionIndex
 			binary.Write(&buf, binary.BigEndian, int32(1))    // LeaderID
 
-			// LeaderEpoch (4 bytes) - v7+ addition, included for AdminClient compatibility
-			binary.Write(&buf, binary.BigEndian, int32(0)) // Leader epoch 0
+			// LeaderEpoch (4 bytes) - v7+ addition
+			if apiVersion >= 7 {
+				binary.Write(&buf, binary.BigEndian, int32(0)) // Leader epoch 0
+			}
 
 			// ReplicaNodes array (4 bytes length + nodes)
 			binary.Write(&buf, binary.BigEndian, int32(1)) // 1 replica
@@ -1573,141 +1590,14 @@ func (h *Handler) HandleMetadataV5V6(correlationID uint32, requestBody []byte) (
 		}
 	}
 
-	response := buf.Bytes()
-	Debug("Advertising Kafka gateway: %s", h.GetGatewayAddress())
-	Debug("Metadata v5/v6 response for %d topics: %v", len(topicsToReturn), topicsToReturn)
-
-	return response, nil
-}
-
-// HandleMetadataV7 implements Metadata API v7 with LeaderEpoch field (FLEXIBLE FORMAT)
-func (h *Handler) HandleMetadataV7(correlationID uint32, requestBody []byte) ([]byte, error) {
-	// Metadata v7 adds LeaderEpoch field to partitions and uses FLEXIBLE FORMAT
-	// v7 response layout: correlation_id(4) + throttle_time_ms(4) + brokers(COMPACT_ARRAY) + cluster_id(COMPACT_NULLABLE_STRING) + controller_id(4) + topics(COMPACT_ARRAY) + tagged_fields
-	// Each partition now includes: error_code(2) + partition_index(4) + leader_id(4) + leader_epoch(4) + replica_nodes(COMPACT_ARRAY) + isr_nodes(COMPACT_ARRAY) + offline_replicas(COMPACT_ARRAY) + tagged_fields
-
-	Debug("HANDLEMETADATAV7 CALLED - FLEXIBLE FORMAT IMPLEMENTATION")
-	fmt.Printf("🔥 METADATA V7 DEBUG: Starting HandleMetadataV7\n")
-
-	// Parse requested topics (empty means all)
-	requestedTopics := h.parseMetadataTopics(requestBody)
-	Debug("METADATA v7 REQUEST (FLEXIBLE) - Requested: %v (empty=all)", requestedTopics)
-	fmt.Printf("🔥 METADATA V7 DEBUG: Requested topics: %v\n", requestedTopics)
-
-	// Determine topics to return using SeaweedMQ handler
-	var topicsToReturn []string
-	if len(requestedTopics) == 0 {
-		fmt.Printf("🔥 METADATA V7 DEBUG: Calling ListTopics() for all topics\n")
-		topicsToReturn = h.seaweedMQHandler.ListTopics()
-		fmt.Printf("🔥 METADATA V7 DEBUG: ListTopics() returned %d topics: %v\n", len(topicsToReturn), topicsToReturn)
-	} else {
-		fmt.Printf("🔥 METADATA V7 DEBUG: Checking specific topics: %v\n", requestedTopics)
-		for _, name := range requestedTopics {
-			if h.seaweedMQHandler.TopicExists(name) {
-				topicsToReturn = append(topicsToReturn, name)
-			}
-		}
-		fmt.Printf("🔥 METADATA V7 DEBUG: Found %d existing topics: %v\n", len(topicsToReturn), topicsToReturn)
+	// ClusterAuthorizedOperations (4 bytes) - v8+ addition
+	if apiVersion >= 8 {
+		binary.Write(&buf, binary.BigEndian, int32(-2147483648)) // All operations allowed (bit mask)
 	}
-
-	var buf bytes.Buffer
-
-	// Correlation ID (4 bytes)
-	// NOTE: Correlation ID is handled by writeResponseWithCorrelationID
-	// Do NOT include it in the response body
-
-	// ThrottleTimeMs (4 bytes) - v3+ addition
-	binary.Write(&buf, binary.BigEndian, int32(0)) // No throttling
-
-	// Brokers array (COMPACT_ARRAY: varint length + brokers) - 1 broker (this gateway)
-	buf.Write(CompactArrayLength(1)) // 1 broker
-
-	// Get advertised address for client connections
-	host, port := h.GetAdvertisedAddress(h.GetGatewayAddress())
-
-	nodeID := int32(1) // Single gateway node
-
-	// Broker: node_id(4) + host(COMPACT_STRING) + port(4) + rack(COMPACT_STRING) + tagged_fields
-	binary.Write(&buf, binary.BigEndian, nodeID)
-
-	// Host (COMPACT_STRING: varint length + data)
-	buf.Write(FlexibleString(host))
-
-	// Port (4 bytes)
-	binary.Write(&buf, binary.BigEndian, int32(port))
-
-	// Rack (COMPACT_NULLABLE_STRING: varint length + data) - v1+ addition, nullable
-	buf.Write(FlexibleNullableString(nil)) // Null (no rack assigned)
-
-	// Broker tagged fields (empty)
-	buf.WriteByte(0x00)
-
-	// ClusterID (COMPACT_NULLABLE_STRING: varint length + data) - v2+ addition, AFTER all brokers
-	// Schema Registry requires a non-null cluster ID
-	clusterID := "seaweedfs-kafka-gateway"
-	buf.Write(FlexibleString(clusterID))
-
-	// ControllerID (4 bytes) - v1+ addition, AFTER ClusterID
-	binary.Write(&buf, binary.BigEndian, int32(1))
-
-	// Topics array (COMPACT_ARRAY: varint length + topics)
-	buf.Write(CompactArrayLength(uint32(len(topicsToReturn))))
-
-	for _, topicName := range topicsToReturn {
-		// ErrorCode (2 bytes)
-		binary.Write(&buf, binary.BigEndian, int16(0))
-
-		// Name (COMPACT_STRING: varint length + data)
-		buf.Write(FlexibleString(topicName))
-
-		// IsInternal (1 byte) - v1+ addition
-		buf.WriteByte(0) // false
-
-		// Get actual partition count from topic info
-		topicInfo, exists := h.seaweedMQHandler.GetTopicInfo(topicName)
-		partitionCount := h.GetDefaultPartitions() // Use configurable default
-		if exists && topicInfo != nil {
-			partitionCount = topicInfo.Partitions
-		}
-
-		// Partitions array (COMPACT_ARRAY: varint length + partitions)
-		buf.Write(CompactArrayLength(uint32(partitionCount)))
-
-		// Create partition entries for each partition
-		for partitionID := int32(0); partitionID < partitionCount; partitionID++ {
-			binary.Write(&buf, binary.BigEndian, int16(0))    // ErrorCode
-			binary.Write(&buf, binary.BigEndian, partitionID) // PartitionIndex
-			binary.Write(&buf, binary.BigEndian, int32(1))    // LeaderID
-
-			// LeaderEpoch (4 bytes) - v7+ addition
-			binary.Write(&buf, binary.BigEndian, int32(0)) // Leader epoch 0
-
-			// ReplicaNodes array (COMPACT_ARRAY: varint length + nodes)
-			buf.Write(CompactArrayLength(1))               // 1 replica
-			binary.Write(&buf, binary.BigEndian, int32(1)) // NodeID 1
-
-			// IsrNodes array (COMPACT_ARRAY: varint length + nodes)
-			buf.Write(CompactArrayLength(1))               // 1 ISR node
-			binary.Write(&buf, binary.BigEndian, int32(1)) // NodeID 1
-
-			// OfflineReplicas array (COMPACT_ARRAY: varint length + nodes) - v5+ addition
-			buf.Write(CompactArrayLength(0)) // No offline replicas
-
-			// Partition tagged fields (empty)
-			buf.WriteByte(0x00)
-		}
-
-		// Topic tagged fields (empty)
-		buf.WriteByte(0x00)
-	}
-
-	// Response-level tagged fields (empty) - Required for Sarama v1.46.1 compatibility
-	buf.WriteByte(0x00)
 
 	response := buf.Bytes()
 	Debug("Advertising Kafka gateway: %s", h.GetGatewayAddress())
-	Debug("METADATA V7 FLEXIBLE RESPONSE: %d bytes, %d topics: %v", len(response), len(topicsToReturn), topicsToReturn)
-	Debug("METADATA V7 RESPONSE BYTES: %x", response)
+	Debug("Metadata v%d response for %d topics: %v", apiVersion, len(topicsToReturn), topicsToReturn)
 
 	return response, nil
 }
