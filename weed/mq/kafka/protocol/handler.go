@@ -555,10 +555,14 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 	}()
 
 	defer func() {
+		// CRITICAL: Close channels in correct order to avoid panics
+		// 1. Close input channels to stop accepting new requests
 		close(controlChan)
 		close(dataChan)
-		close(responseChan) // Close BEFORE wg.Wait() so response writer can exit
+		// 2. Wait for worker goroutines to finish processing and sending responses
 		wg.Wait()
+		// 3. NOW close responseChan to signal response writer to exit
+		close(responseChan)
 	}()
 
 	for {
@@ -1632,8 +1636,8 @@ func (h *Handler) HandleMetadataV7(correlationID uint32, requestBody []byte) ([]
 	// Port (4 bytes)
 	binary.Write(&buf, binary.BigEndian, int32(port))
 
-	// Rack (COMPACT_STRING: varint length + data) - v1+ addition, non-nullable
-	buf.Write(FlexibleString("")) // Empty string
+	// Rack (COMPACT_NULLABLE_STRING: varint length + data) - v1+ addition, nullable
+	buf.Write(FlexibleNullableString(nil)) // Null (no rack assigned)
 
 	// Broker tagged fields (empty)
 	buf.WriteByte(0x00)
@@ -2784,7 +2788,7 @@ func (h *Handler) handleMetadata(correlationID uint32, apiVersion uint16, reques
 	case 5, 6:
 		return h.HandleMetadataV5V6(correlationID, requestBody)
 	case 7:
-		return h.HandleMetadataV5V6(correlationID, requestBody)
+		return h.HandleMetadataV7(correlationID, requestBody)
 	default:
 		// For versions > 7, use the V7 handler (flexible format)
 		if apiVersion > 7 {
@@ -2998,8 +3002,7 @@ func isFlexibleResponse(apiKey uint16, apiVersion uint16) bool {
 	case 1: // Fetch
 		return apiVersion >= 12
 	case 3: // Metadata
-		// COMPATIBILITY FIX: Even though Metadata v7+ uses compact arrays/strings in the body,
-		// the AdminClient expects NO flexible header for v7. Only v9+ should have flexible headers.
+		// Metadata v9+ uses flexible responses (v7-8 use compact arrays/strings but NOT flexible headers)
 		return apiVersion >= 9
 	case 8: // OffsetCommit
 		return apiVersion >= 8
@@ -3076,14 +3079,22 @@ func (h *Handler) writeResponseWithHeader(w *bufio.Writer, correlationID uint32,
 	// Write response body
 	fullResponse = append(fullResponse, responseBody...)
 
-	// Hex dump for debugging (enabled for FindCoordinator)
+	// Hex dump for debugging (enabled for FindCoordinator and Fetch)
 	dumpLen := len(fullResponse)
-	if dumpLen > 64 {
-		dumpLen = 64
+	if dumpLen > 128 {
+		dumpLen = 128
 	}
 	if apiKey == 10 { // FindCoordinator
 		glog.Infof("🔍 FindCoordinator v%d response wire format (first %d bytes):\n%s", apiVersion, dumpLen, hexDump(fullResponse[:dumpLen]))
 		glog.Infof("🔍 FindCoordinator v%d: totalSize=%d, bodyLen=%d, flexible=%t, fullResponseLen=%d", apiVersion, totalSize, len(responseBody), isFlexible, len(fullResponse))
+	}
+	if apiKey == 1 { // Fetch - log ALL responses to debug invalid length errors
+		glog.Infof("🔍 Fetch v%d response wire format (first %d bytes):\n%s", apiVersion, dumpLen, hexDump(fullResponse[:dumpLen]))
+		glog.Infof("🔍 Fetch v%d: totalSize=%d, bodyLen=%d, flexible=%t, fullResponseLen=%d", apiVersion, totalSize, len(responseBody), isFlexible, len(fullResponse))
+	}
+	if apiKey == 3 { // Metadata - log v7+ responses to debug AdminClient compatibility
+		glog.Infof("🔍 Metadata v%d response wire format (first %d bytes):\n%s", apiVersion, dumpLen, hexDump(fullResponse[:dumpLen]))
+		glog.Infof("🔍 Metadata v%d: totalSize=%d, bodyLen=%d, flexible=%t, fullResponseLen=%d", apiVersion, totalSize, len(responseBody), isFlexible, len(fullResponse))
 	}
 	Debug("Wrote API %d response v%d: size=%d, flexible=%t, correlationID=%d, totalBytes=%d", apiKey, apiVersion, totalSize, isFlexible, correlationID, len(fullResponse))
 

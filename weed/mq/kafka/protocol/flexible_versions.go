@@ -11,9 +11,8 @@ import (
 // CompactArrayLength encodes a length for compact arrays
 // Compact arrays encode length as length+1, where 0 means empty array
 func CompactArrayLength(length uint32) []byte {
-	if length == 0 {
-		return []byte{0} // Empty array
-	}
+	// Compact arrays use length+1 encoding (0 = null, 1 = empty, n+1 = array of length n)
+	// For an empty array (length=0), we return 1 (not 0, which would be null)
 	return EncodeUvarint(length + 1)
 }
 
@@ -231,10 +230,8 @@ func IsFlexibleVersion(apiKey, apiVersion uint16) bool {
 
 // FlexibleString encodes a string for flexible versions (compact format)
 func FlexibleString(s string) []byte {
-	if s == "" {
-		return []byte{0} // Null string
-	}
-
+	// Compact strings use length+1 encoding (0 = null, 1 = empty, n+1 = string of length n)
+	// For an empty string (s=""), we return length+1 = 1 (not 0, which would be null)
 	var buf []byte
 	buf = append(buf, CompactStringLength(len(s))...)
 	buf = append(buf, []byte(s)...)
