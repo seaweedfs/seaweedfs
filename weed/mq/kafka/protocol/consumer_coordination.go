@@ -400,9 +400,9 @@ func (h *Handler) buildHeartbeatResponseV(response HeartbeatResponse, apiVersion
 	// Do NOT include it in the response body
 
 	if isFlexible {
-		// FLEXIBLE V4+ FORMAT: CRITICAL FIX - Add response header tagged fields!
-		// AdminClient expects header version 1 for Heartbeat v4+
-		result = append(result, 0x00) // Response header tagged fields (varint: empty)
+		// FLEXIBLE V4+ FORMAT
+		// NOTE: Response header tagged fields are handled by writeResponseWithHeader
+		// Do NOT include them in the response body
 
 		// Throttle time (4 bytes, 0 = no throttling) - comes first in flexible format
 		result = append(result, 0, 0, 0, 0)

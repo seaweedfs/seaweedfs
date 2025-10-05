@@ -668,6 +668,7 @@ func (h *Handler) buildJoinGroupResponse(response JoinGroupResponse) []byte {
 		out = append(out, FlexibleString(response.MemberID)...)
 
 		// members (compact array)
+		// Compact arrays use length+1 encoding (0 = null, 1 = empty, n+1 = array of length n)
 		out = append(out, EncodeUvarint(uint32(len(response.Members)+1))...)
 		for _, m := range response.Members {
 			// member_id (compact string)
@@ -679,6 +680,7 @@ func (h *Handler) buildJoinGroupResponse(response JoinGroupResponse) []byte {
 				out = append(out, FlexibleString(m.GroupInstanceID)...)
 			}
 			// metadata (compact bytes)
+			// Compact bytes use length+1 encoding (0 = null, 1 = empty, n+1 = bytes of length n)
 			out = append(out, EncodeUvarint(uint32(len(m.Metadata)+1))...)
 			out = append(out, m.Metadata...)
 			// member tagged fields (empty)
@@ -1233,15 +1235,16 @@ func (h *Handler) buildSyncGroupResponse(response SyncGroupResponse, apiVersion 
 	// Assignment - FLEXIBLE V4+ FIX
 	if IsFlexibleVersion(14, apiVersion) {
 		// FLEXIBLE FORMAT: Assignment as compact bytes
-		// BUFFER UNDERFLOW FIX: Properly encode compact bytes for assignment
+		// CRITICAL FIX: Use CompactStringLength for compact bytes (not CompactArrayLength)
+		// Compact bytes use the same encoding as compact strings: 0 = null, 1 = empty, n+1 = length n
 		assignmentLen := len(response.Assignment)
 		if assignmentLen == 0 {
-			// BUFFER UNDERFLOW FIX: Send empty assignment for non-leader members
 			// Empty compact bytes = length 0, encoded as 0x01 (0 + 1)
 			result = append(result, 0x01) // Empty compact bytes
 		} else {
 			// Non-empty assignment: encode length + data
-			compactLength := CompactArrayLength(uint32(assignmentLen))
+			// Use CompactStringLength which correctly encodes as length+1
+			compactLength := CompactStringLength(assignmentLen)
 			result = append(result, compactLength...)
 			result = append(result, response.Assignment...)
 		}

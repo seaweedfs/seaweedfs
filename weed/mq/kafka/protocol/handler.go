@@ -399,13 +399,6 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 	// Record connection metrics
 	RecordConnectionMetrics()
 
-	// Set connection context for this connection
-	h.connContext = &ConnectionContext{
-		RemoteAddr:   conn.RemoteAddr(),
-		LocalAddr:    conn.LocalAddr(),
-		ConnectionID: connectionID,
-	}
-
 	// CRITICAL: Create per-connection BrokerClient for isolated gRPC streams
 	// This prevents different connections from interfering with each other's Fetch requests
 	glog.V(4).Infof("[%s] [BROKER_CLIENT] Creating per-connection BrokerClient", connectionID)
@@ -414,7 +407,18 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		glog.Errorf("[%s] [BROKER_CLIENT] Failed to create per-connection BrokerClient: %v", connectionID, err)
 		return fmt.Errorf("failed to create broker client: %w", err)
 	}
-	h.connContext.BrokerClient = connBrokerClient
+
+	// RACE CONDITION FIX: Create connection-local context instead of using shared field
+	// Store it in a local variable that won't be overwritten by other connections
+	connContext := &ConnectionContext{
+		RemoteAddr:   conn.RemoteAddr(),
+		LocalAddr:    conn.LocalAddr(),
+		ConnectionID: connectionID,
+		BrokerClient: connBrokerClient,
+	}
+	// Temporarily set h.connContext for backward compatibility with existing code
+	// TODO: Refactor to pass connContext as parameter to all functions
+	h.connContext = connContext
 	glog.V(4).Infof("[%s] [BROKER_CLIENT] Per-connection BrokerClient created successfully", connectionID)
 
 	Debug("[%s] NEW CONNECTION ESTABLISHED", connectionID)
