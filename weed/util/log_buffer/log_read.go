@@ -224,7 +224,13 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 			// return ResumeFromDiskError to let Subscribe try reading from disk again.
 			// This prevents infinite blocking when all data is on disk (e.g., after restart).
 			if startPosition.IsOffsetBased {
-				glog.V(0).Infof("🔍 DEBUG: No data in LogBuffer for offset-based read at %v, returning ResumeFromDiskError", lastReadPosition)
+				glog.V(0).Infof("🔍 DEBUG: No data in LogBuffer for offset-based read at %v, checking if client still connected", lastReadPosition)
+				// Check if client is still connected before busy-looping
+				if !waitForDataFn() {
+					glog.V(0).Infof("🔍 DEBUG: Client disconnected, stopping offset-based read")
+					isDone = true
+					return
+				}
 				// OPTIMIZATION: Reduced sleep time to 10ms for faster disk reads
 				time.Sleep(10 * time.Millisecond)
 				return lastReadPosition, isDone, ResumeFromDiskError
@@ -252,6 +258,19 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 		buf := bytesBuf.Bytes()
 		// fmt.Printf("ReadFromBuffer %s by %v size %d\n", readerName, lastReadPosition, len(buf))
 		glog.V(0).Infof("🔍 DEBUG: Processing buffer with %d bytes for %s", len(buf), readerName)
+
+		// If buffer is empty, check if client is still connected before looping
+		if len(buf) == 0 {
+			glog.V(0).Infof("🔍 DEBUG: Empty buffer for %s, checking if client still connected", readerName)
+			if !waitForDataFn() {
+				glog.V(0).Infof("🔍 DEBUG: Client disconnected, stopping read for %s", readerName)
+				isDone = true
+				return
+			}
+			// Sleep to avoid busy-wait on empty buffer
+			time.Sleep(10 * time.Millisecond)
+			continue
+		}
 
 		batchSize := 0
 
