@@ -139,6 +139,9 @@ func (cr *CoordinatorRegistry) Start() error {
 	// Start leader election
 	cr.startLeaderElection()
 
+	// Start heartbeat loop to keep this gateway healthy
+	cr.startHeartbeatLoop()
+
 	// Start cleanup goroutine
 	cr.startCleanupLoop()
 
@@ -490,6 +493,31 @@ func generateDeterministicNodeID(gatewayAddress string) int32 {
 	_, _ = h.Write([]byte(gatewayAddress))
 	// Use only positive values and avoid 0
 	return int32(h.Sum32()&0x7fffffff) + 1
+}
+
+// startHeartbeatLoop starts the heartbeat loop for this gateway
+func (cr *CoordinatorRegistry) startHeartbeatLoop() {
+	cr.wg.Add(1)
+	go func() {
+		defer cr.wg.Done()
+
+		ticker := time.NewTicker(HeartbeatInterval / 2) // Send heartbeats more frequently than timeout
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-cr.stopChan:
+				return
+			case <-ticker.C:
+				if cr.IsLeader() {
+					// Send heartbeat for this gateway to keep it healthy
+					if err := cr.HeartbeatGateway(cr.gatewayAddress); err != nil {
+						glog.V(2).Infof("Failed to send heartbeat for gateway %s: %v", cr.gatewayAddress, err)
+					}
+				}
+			}
+		}
+	}()
 }
 
 // startCleanupLoop starts the cleanup loop for stale assignments and gateways
