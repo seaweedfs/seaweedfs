@@ -139,8 +139,14 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 		var startOffset int64
 		if isOffsetBased {
 			startOffset = startPosition.Offset
-			glog.V(1).Infof("📍 OFFSET-BASED READ: topic=%s partition=%v startOffset=%d startPosition.Time=%v",
-				t.Name, p, startOffset, startPosition.Time)
+			// DETAILED LOGGING for _schemas topic and offset 0-2
+			if strings.Contains(t.Name, "_schemas") || startOffset <= 2 {
+				glog.Infof("📍 OFFSET-BASED READ START: topic=%s partition=%v startOffset=%d startPosition.Time=%v partitionDir=%s",
+					t.Name, p, startOffset, startPosition.Time, partitionDir)
+			} else {
+				glog.V(1).Infof("📍 OFFSET-BASED READ: topic=%s partition=%v startOffset=%d startPosition.Time=%v",
+					t.Name, p, startOffset, startPosition.Time)
+			}
 		} else {
 			glog.V(1).Infof("📍 TIMESTAMP-BASED READ: topic=%s partition=%v startTime=%v startTsNs=%d",
 				t.Name, p, startPosition.Time, startTsNs)
@@ -154,6 +160,21 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 		err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 			// First pass: collect all relevant files with their metadata
 			return filer_pb.SeaweedList(context.Background(), client, partitionDir, "", func(entry *filer_pb.Entry, isLast bool) error {
+				// DETAILED LOGGING for _schemas topic
+				if strings.Contains(t.Name, "_schemas") && isOffsetBased && startOffset <= 2 {
+					glog.Infof("📂 FILE FOUND: %s isDir=%v size=%d chunks=%d",
+						entry.Name, entry.IsDirectory, len(entry.Content), len(entry.Chunks))
+					if entry.Extended != nil {
+						if minBytes, hasMin := entry.Extended["offset_min"]; hasMin && len(minBytes) == 8 {
+							if maxBytes, hasMax := entry.Extended["offset_max"]; hasMax && len(maxBytes) == 8 {
+								fileMin := int64(binary.BigEndian.Uint64(minBytes))
+								fileMax := int64(binary.BigEndian.Uint64(maxBytes))
+								glog.Infof("   📊 Offset range: [%d-%d]", fileMin, fileMax)
+							}
+						}
+					}
+				}
+
 				if entry.IsDirectory {
 					return nil
 				}
@@ -211,7 +232,18 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 		})
 
 		if err != nil {
+			// DETAILED LOGGING for _schemas topic
+			if strings.Contains(t.Name, "_schemas") && isOffsetBased && startOffset <= 2 {
+				glog.Errorf("❌ FILE LISTING ERROR: topic=%s partition=%v startOffset=%d error=%v",
+					t.Name, p, startOffset, err)
+			}
 			return
+		}
+
+		// DETAILED LOGGING for _schemas topic
+		if strings.Contains(t.Name, "_schemas") && isOffsetBased && startOffset <= 2 {
+			glog.Infof("📋 FILE LISTING COMPLETE: topic=%s partition=%v startOffset=%d candidateFiles=%d",
+				t.Name, p, startOffset, len(candidateFiles))
 		}
 
 		// OPTIMIZATION: For offset-based reads with many files, use binary search to find start file
@@ -286,12 +318,23 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 		}
 
 		if isOffsetBased && filesProcessed > 0 {
-			glog.Infof("✅ OFFSET-BASED: Processed %d files (out of %d candidates), last offset=%d, startOffset was %d",
-				filesProcessed, len(candidateFiles), lastProcessedOffset, startOffset)
+			// DETAILED LOGGING for _schemas topic
+			if strings.Contains(t.Name, "_schemas") || startOffset <= 2 {
+				glog.Infof("✅ OFFSET-BASED SUCCESS: topic=%s partition=%v processed=%d files (out of %d candidates), lastOffset=%d, startOffset=%d",
+					t.Name, p, filesProcessed, len(candidateFiles), lastProcessedOffset, startOffset)
+			} else {
+				glog.Infof("✅ OFFSET-BASED: Processed %d files (out of %d candidates), last offset=%d, startOffset was %d",
+					filesProcessed, len(candidateFiles), lastProcessedOffset, startOffset)
+			}
 			// Return a position that indicates we've read all disk data up to lastProcessedOffset
 			// This prevents the subscription from calling ReadFromDiskFn again for these offsets
 			lastReadPosition = log_buffer.NewMessagePositionFromOffset(lastProcessedOffset + 1)
 		} else {
+			// DETAILED LOGGING for _schemas topic - this is the ERROR case
+			if strings.Contains(t.Name, "_schemas") || (isOffsetBased && startOffset <= 2) {
+				glog.Errorf("❌ OFFSET-BASED FAILED: topic=%s partition=%v startOffset=%d filesProcessed=%d candidateFiles=%d - returning offset=-2",
+					t.Name, p, startOffset, filesProcessed, len(candidateFiles))
+			}
 			lastReadPosition = log_buffer.NewMessagePosition(processedTsNs, -2)
 		}
 		return

@@ -666,6 +666,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		// Validate API version against what we support
 		Debug("VALIDATING API VERSION: Key=%d, Version=%d", apiKey, apiVersion)
 		if err := h.validateAPIVersion(apiKey, apiVersion); err != nil {
+			glog.Errorf("❌ API VERSION VALIDATION FAILED: Key=%d (%s), Version=%d, error=%v", apiKey, getAPIName(apiKey), apiVersion, err)
 			// Return proper Kafka error response for unsupported version
 			response, writeErr := h.buildUnsupportedVersionResponse(correlationID, apiKey, apiVersion)
 			if writeErr != nil {
@@ -687,6 +688,10 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 				return ctx.Err()
 			}
 		}
+
+		// CRITICAL DEBUG: Log that validation passed
+		glog.Infof("✅ API VERSION VALIDATION PASSED: Key=%d (%s), Version=%d, Correlation=%d - proceeding to header parsing",
+			apiKey, getAPIName(apiKey), apiVersion, correlationID)
 
 		// Extract request body - special handling for ApiVersions requests
 		var requestBody []byte
@@ -726,23 +731,30 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			// Parse header using flexible version utilities for other APIs
 			header, parsedRequestBody, parseErr := ParseRequestHeader(messageBuf)
 			if parseErr != nil {
+				// CRITICAL: Log the parsing error for debugging
+				glog.Errorf("❌ REQUEST HEADER PARSING FAILED: API=%d (%s) v%d, correlation=%d, error=%v, msgLen=%d",
+					apiKey, getAPIName(apiKey), apiVersion, correlationID, parseErr, len(messageBuf))
+
 				// Fall back to basic header parsing if flexible version parsing fails
 				Debug("Flexible header parsing failed, using basic parsing: %v", parseErr)
 
 				// Basic header parsing fallback (original logic)
 				bodyOffset := 8
 				if len(messageBuf) < bodyOffset+2 {
+					glog.Errorf("❌ FALLBACK PARSING FAILED: missing client_id length, msgLen=%d", len(messageBuf))
 					return fmt.Errorf("invalid header: missing client_id length")
 				}
 				clientIDLen := int16(binary.BigEndian.Uint16(messageBuf[bodyOffset : bodyOffset+2]))
 				bodyOffset += 2
 				if clientIDLen >= 0 {
 					if len(messageBuf) < bodyOffset+int(clientIDLen) {
+						glog.Errorf("❌ FALLBACK PARSING FAILED: client_id truncated, clientIDLen=%d, msgLen=%d", clientIDLen, len(messageBuf))
 						return fmt.Errorf("invalid header: client_id truncated")
 					}
 					bodyOffset += int(clientIDLen)
 				}
 				requestBody = messageBuf[bodyOffset:]
+				glog.Infof("✅ FALLBACK PARSING SUCCESS: API=%d (%s) v%d, bodyLen=%d", apiKey, getAPIName(apiKey), apiVersion, len(requestBody))
 			} else {
 				// Use the successfully parsed request body
 				requestBody = parsedRequestBody
@@ -2721,7 +2733,7 @@ func (h *Handler) validateAPIVersion(apiKey, apiVersion uint16) error {
 		2:  {0, 2}, // ListOffsets: v0-v2
 		19: {0, 5}, // CreateTopics: v0-v5 (updated to match implementation)
 		20: {0, 4}, // DeleteTopics: v0-v4
-		10: {0, 2}, // FindCoordinator: v0-v2
+		10: {0, 3}, // FindCoordinator: v0-v3 (v3+ uses flexible format)
 		11: {0, 6}, // JoinGroup: cap to v6 (first flexible version)
 		14: {0, 5}, // SyncGroup: v0-v5
 		8:  {0, 2}, // OffsetCommit: v0-v2
