@@ -216,6 +216,10 @@ func (h *Handler) handleFindCoordinatorV2(correlationID uint32, requestBody []by
 	binary.BigEndian.PutUint32(portBytes, uint32(coordinatorPort))
 	response = append(response, portBytes...)
 
+	// Debug logging
+	glog.Infof("🔍 FindCoordinator v2: Built response - bodyLen=%d, host='%s' (len=%d), port=%d, nodeID=%d",
+		len(response), coordinatorHost, len(coordinatorHost), coordinatorPort, nodeID)
+
 	return response, nil
 }
 

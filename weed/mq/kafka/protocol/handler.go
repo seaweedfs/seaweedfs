@@ -3076,17 +3076,15 @@ func (h *Handler) writeResponseWithHeader(w *bufio.Writer, correlationID uint32,
 	// Write response body
 	fullResponse = append(fullResponse, responseBody...)
 
-	// Hex dump for debugging (disabled for production to reduce CPU)
-	// Uncomment for debugging protocol issues
-	/*
-		dumpLen := len(fullResponse)
-		if dumpLen > 64 {
-			dumpLen = 64
-		}
-		if apiKey == 1 || apiKey == 19 { // Fetch or CreateTopics
-			glog.V(4).Infof("API %d v%d response wire format (first %d bytes):\n%s", apiKey, apiVersion, dumpLen, hexDump(fullResponse[:dumpLen]))
-		}
-	*/
+	// Hex dump for debugging (enabled for FindCoordinator)
+	dumpLen := len(fullResponse)
+	if dumpLen > 64 {
+		dumpLen = 64
+	}
+	if apiKey == 10 { // FindCoordinator
+		glog.Infof("🔍 FindCoordinator v%d response wire format (first %d bytes):\n%s", apiVersion, dumpLen, hexDump(fullResponse[:dumpLen]))
+		glog.Infof("🔍 FindCoordinator v%d: totalSize=%d, bodyLen=%d, flexible=%t, fullResponseLen=%d", apiVersion, totalSize, len(responseBody), isFlexible, len(fullResponse))
+	}
 	Debug("Wrote API %d response v%d: size=%d, flexible=%t, correlationID=%d, totalBytes=%d", apiKey, apiVersion, totalSize, isFlexible, correlationID, len(fullResponse))
 
 	// Write to connection
