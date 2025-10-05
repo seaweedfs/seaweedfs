@@ -172,7 +172,7 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 // LoopProcessLogDataWithOffset is similar to LoopProcessLogData but provides offset to the callback
 func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, startPosition MessagePosition, stopTsNs int64,
 	waitForDataFn func() bool, eachLogDataFn EachLogEntryWithOffsetFuncType) (lastReadPosition MessagePosition, isDone bool, err error) {
-	glog.V(0).Infof("🔍 DEBUG: LoopProcessLogDataWithOffset started for %s, startPosition=%v", readerName, startPosition)
+	glog.V(4).Infof("🔍 DEBUG: LoopProcessLogDataWithOffset started for %s, startPosition=%v", readerName, startPosition)
 	// loop through all messages
 	var bytesBuf *bytes.Buffer
 	var offset int64
@@ -191,7 +191,7 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 			logBuffer.ReleaseMemory(bytesBuf)
 		}
 		bytesBuf, offset, err = logBuffer.ReadFromBuffer(lastReadPosition)
-		glog.V(0).Infof("🔍 DEBUG: ReadFromBuffer returned bytesBuf=%v, offset=%d, err=%v", bytesBuf != nil, offset, err)
+		glog.V(4).Infof("🔍 DEBUG: ReadFromBuffer returned bytesBuf=%v, offset=%d, err=%v", bytesBuf != nil, offset, err)
 		if err == ResumeFromDiskError {
 			// OPTIMIZATION: Reduced sleep time to 10ms for faster disk reads
 			// This balances responsiveness with CPU usage
@@ -202,13 +202,13 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 		if bytesBuf != nil {
 			readSize = bytesBuf.Len()
 		}
-		glog.V(0).Infof("🔍 DEBUG: %s ReadFromBuffer at %v posOffset %d. Read bytes %v bufferOffset %d", readerName, lastReadPosition, lastReadPosition.Offset, readSize, offset)
+		glog.V(4).Infof("🔍 DEBUG: %s ReadFromBuffer at %v posOffset %d. Read bytes %v bufferOffset %d", readerName, lastReadPosition, lastReadPosition.Offset, readSize, offset)
 		if bytesBuf == nil {
 			// CRITICAL: Check if subscription is still active BEFORE waiting
 			// This prevents infinite loops when client has disconnected
 			if !waitForDataFn() {
 				isDone = true
-				glog.V(0).Infof("🔍 DEBUG: waitForDataFn returned false, subscription ending")
+				glog.V(4).Infof("🔍 DEBUG: waitForDataFn returned false, subscription ending")
 				return
 			}
 
@@ -224,10 +224,10 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 			// return ResumeFromDiskError to let Subscribe try reading from disk again.
 			// This prevents infinite blocking when all data is on disk (e.g., after restart).
 			if startPosition.IsOffsetBased {
-				glog.V(0).Infof("🔍 DEBUG: No data in LogBuffer for offset-based read at %v, checking if client still connected", lastReadPosition)
+				glog.V(4).Infof("🔍 DEBUG: No data in LogBuffer for offset-based read at %v, checking if client still connected", lastReadPosition)
 				// Check if client is still connected before busy-looping
 				if !waitForDataFn() {
-					glog.V(0).Infof("🔍 DEBUG: Client disconnected, stopping offset-based read")
+					glog.V(4).Infof("🔍 DEBUG: Client disconnected, stopping offset-based read")
 					isDone = true
 					return
 				}
@@ -257,13 +257,13 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 
 		buf := bytesBuf.Bytes()
 		// fmt.Printf("ReadFromBuffer %s by %v size %d\n", readerName, lastReadPosition, len(buf))
-		glog.V(0).Infof("🔍 DEBUG: Processing buffer with %d bytes for %s", len(buf), readerName)
+		glog.V(4).Infof("🔍 DEBUG: Processing buffer with %d bytes for %s", len(buf), readerName)
 
 		// If buffer is empty, check if client is still connected before looping
 		if len(buf) == 0 {
-			glog.V(0).Infof("🔍 DEBUG: Empty buffer for %s, checking if client still connected", readerName)
+			glog.V(4).Infof("🔍 DEBUG: Empty buffer for %s, checking if client still connected", readerName)
 			if !waitForDataFn() {
-				glog.V(0).Infof("🔍 DEBUG: Client disconnected, stopping read for %s", readerName)
+				glog.V(4).Infof("🔍 DEBUG: Client disconnected, stopping read for %s", readerName)
 				isDone = true
 				return
 			}
@@ -291,15 +291,15 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 				continue
 			}
 
-			glog.V(0).Infof("🔍 DEBUG: Unmarshaled log entry %d: TsNs=%d, Offset=%d, Key=%s", batchSize+1, logEntry.TsNs, logEntry.Offset, string(logEntry.Key))
+			glog.V(4).Infof("🔍 DEBUG: Unmarshaled log entry %d: TsNs=%d, Offset=%d, Key=%s", batchSize+1, logEntry.TsNs, logEntry.Offset, string(logEntry.Key))
 
 			// Handle offset-based filtering for offset-based start positions
 			if startPosition.IsOffsetBased {
 				startOffset := startPosition.GetOffset()
-				glog.V(0).Infof("🔍 DEBUG: Offset-based filtering: logEntry.Offset=%d, startOffset=%d", logEntry.Offset, startOffset)
+				glog.V(4).Infof("🔍 DEBUG: Offset-based filtering: logEntry.Offset=%d, startOffset=%d", logEntry.Offset, startOffset)
 				if logEntry.Offset < startOffset {
 					// Skip entries before the starting offset
-					glog.V(0).Infof("🔍 DEBUG: Skipping entry due to offset filter")
+					glog.V(4).Infof("🔍 DEBUG: Skipping entry due to offset filter")
 					pos += 4 + int(size)
 					batchSize++
 					continue
@@ -307,7 +307,7 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 			}
 
 			if stopTsNs != 0 && logEntry.TsNs > stopTsNs {
-				glog.V(0).Infof("🔍 DEBUG: Stopping due to stopTsNs")
+				glog.V(4).Infof("🔍 DEBUG: Stopping due to stopTsNs")
 				isDone = true
 				// println("stopTsNs", stopTsNs, "logEntry.TsNs", logEntry.TsNs)
 				return
@@ -316,7 +316,7 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 			// This prevents infinite loops where we keep requesting the same offset
 			lastReadPosition = NewMessagePosition(logEntry.TsNs, logEntry.Offset+1)
 
-			glog.V(0).Infof("🔍 DEBUG: Calling eachLogDataFn for entry at offset %d, next position will be %d", logEntry.Offset, logEntry.Offset+1)
+			glog.V(4).Infof("🔍 DEBUG: Calling eachLogDataFn for entry at offset %d, next position will be %d", logEntry.Offset, logEntry.Offset+1)
 			if isDone, err = eachLogDataFn(logEntry, logEntry.Offset); err != nil {
 				glog.Errorf("LoopProcessLogDataWithOffset: %s process log entry %d %v: %v", readerName, batchSize+1, logEntry, err)
 				return

@@ -29,19 +29,19 @@ type CoordinatorAssignment struct {
 }
 
 func (h *Handler) handleFindCoordinator(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
-	fmt.Printf("🔍 FindCoordinator ENTRY: version=%d, correlation=%d, bodyLen=%d\n", apiVersion, correlationID, len(requestBody))
+	glog.V(4).Infof("🔍 FindCoordinator ENTRY: version=%d, correlation=%d, bodyLen=%d", apiVersion, correlationID, len(requestBody))
 	Debug("FindCoordinator - Version: %d, Correlation: %d", apiVersion, correlationID)
 	switch apiVersion {
 	case 0:
-		fmt.Printf("🔍 FindCoordinator - Routing to V0 handler\n")
+		glog.V(4).Infof("🔍 FindCoordinator - Routing to V0 handler")
 		Debug("FindCoordinator - Routing to V0 handler")
 		return h.handleFindCoordinatorV0(correlationID, requestBody)
 	case 1, 2:
-		fmt.Printf("🔍 FindCoordinator - Routing to V1-2 handler (non-flexible)\n")
+		glog.V(4).Infof("🔍 FindCoordinator - Routing to V1-2 handler (non-flexible)")
 		Debug("FindCoordinator - Routing to V1-2 handler (non-flexible)")
 		return h.handleFindCoordinatorV2(correlationID, requestBody)
 	case 3:
-		fmt.Printf("🔍 FindCoordinator - Routing to V3 handler (flexible)\n")
+		glog.V(4).Infof("🔍 FindCoordinator - Routing to V3 handler (flexible)")
 		Debug("FindCoordinator - Routing to V3 handler (flexible)")
 		return h.handleFindCoordinatorV3(correlationID, requestBody)
 	default:
@@ -220,16 +220,11 @@ func (h *Handler) handleFindCoordinatorV2(correlationID uint32, requestBody []by
 	binary.BigEndian.PutUint32(portBytes, uint32(coordinatorPort))
 	response = append(response, portBytes...)
 
-	// Debug logging with hex dump
-	fmt.Printf("🔍 FindCoordinator v2: Built response - bodyLen=%d, host='%s' (len=%d), port=%d, nodeID=%d\n",
-		len(response), coordinatorHost, len(coordinatorHost), coordinatorPort, nodeID)
-
-	// Hex dump for debugging
-	v2DumpLen := len(response)
-	if v2DumpLen > 64 {
-		v2DumpLen = 64
+	// Debug logging (hex dump removed to reduce CPU usage)
+	if glog.V(4) {
+		glog.Infof("🔍 FindCoordinator v2: Built response - bodyLen=%d, host='%s' (len=%d), port=%d, nodeID=%d",
+			len(response), coordinatorHost, len(coordinatorHost), coordinatorPort, nodeID)
 	}
-	fmt.Printf("🔍 FindCoordinator v2 response hex (first %d bytes):\n%s\n", v2DumpLen, hexDump(response[:v2DumpLen]))
 
 	return response, nil
 }

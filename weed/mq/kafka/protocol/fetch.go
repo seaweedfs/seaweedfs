@@ -64,11 +64,9 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 	// Long-poll when client requests it via MaxWaitTime and there's no data
 	// Even if MinBytes=0, we should honor MaxWaitTime to reduce polling overhead
 	maxWaitMs := fetchRequest.MaxWaitTime
-	// For production, allow longer wait times to reduce CPU usage
-	// Only cap at 30 seconds to be reasonable
-	if maxWaitMs > 30000 {
-		maxWaitMs = 30000
-	}
+	// TEMPORARY: Disable long-polling to eliminate 500ms delays
+	// The HWM cache can be stale, causing unnecessary waits
+	maxWaitMs = 0
 	// Long-poll if: (1) client wants to wait (maxWaitMs > 0), (2) no data available, (3) topics exist
 	// NOTE: We long-poll even if MinBytes=0, since the client specified a wait time
 	// EXCEPTION: For Schema Registry bootstrap (offset 0 on _schemas topic), return immediately
@@ -94,10 +92,10 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 	*/
 	if shouldLongPoll {
 		start := time.Now()
-		// Use the client's requested wait time (already capped at 30s)
+		// Use the client's requested wait time (already capped at 1s)
 		maxPollTime := time.Duration(maxWaitMs) * time.Millisecond
 		deadline := start.Add(maxPollTime)
-		glog.V(4).Infof("Fetch long-polling: maxWaitMs=%d, deadline=%v", maxWaitMs, deadline)
+		glog.V(4).Infof("🕐 LONG-POLL START: maxWaitMs=%d, deadline=%v", maxWaitMs, deadline)
 		for time.Now().Before(deadline) {
 			// Use context-aware sleep instead of blocking time.Sleep
 			select {
@@ -109,10 +107,13 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 				// Continue with polling
 			}
 			if hasDataAvailable() {
+				glog.V(4).Infof("🕐 LONG-POLL DATA AVAILABLE after %dms", time.Since(start)/time.Millisecond)
 				break
 			}
 		}
-		throttleTimeMs = int32(time.Since(start) / time.Millisecond)
+		elapsed := time.Since(start)
+		throttleTimeMs = int32(elapsed / time.Millisecond)
+		glog.V(4).Infof("🕐 LONG-POLL END: waited %dms (maxWaitMs=%d)", elapsed/time.Millisecond, maxWaitMs)
 	}
 
 	// Build the response

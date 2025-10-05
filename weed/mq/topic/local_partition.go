@@ -107,7 +107,8 @@ func (p *LocalPartition) Subscribe(clientName string, startPosition log_buffer.M
 		}
 
 		// Update position after reading from disk
-		if processedPosition.Time.UnixNano() != 0 {
+		// CRITICAL FIX: For offset-based reads, Time is zero, so check Offset instead
+		if processedPosition.Time.UnixNano() != 0 || processedPosition.IsOffsetBased {
 			startPosition = processedPosition
 			glog.V(4).Infof("📂 SUBSCRIBE: Disk read complete, updated position to %v (offset %d)", startPosition, startPosition.Offset)
 		}
@@ -124,7 +125,8 @@ func (p *LocalPartition) Subscribe(clientName string, startPosition log_buffer.M
 			}
 
 			// Update position
-			if processedPosition.Time.UnixNano() != 0 {
+			// CRITICAL FIX: For offset-based reads, Time is zero, so check Offset instead
+			if processedPosition.Time.UnixNano() != 0 || processedPosition.IsOffsetBased {
 				startPosition = processedPosition
 			}
 
@@ -143,7 +145,8 @@ func (p *LocalPartition) Subscribe(clientName string, startPosition log_buffer.M
 				}
 
 				// Update position and continue the loop (back to in-memory buffer)
-				if processedPosition.Time.UnixNano() != 0 {
+				// CRITICAL FIX: For offset-based reads, Time is zero, so check Offset instead
+				if processedPosition.Time.UnixNano() != 0 || processedPosition.IsOffsetBased {
 					startPosition = processedPosition
 					glog.V(4).Infof("📂 SUBSCRIBE: Disk catchup complete, position now at offset %d", startPosition.Offset)
 				}
@@ -173,14 +176,16 @@ func (p *LocalPartition) Subscribe(clientName string, startPosition log_buffer.M
 			return nil
 		}
 
-		if processedPosition.Time.UnixNano() != 0 {
+		// CRITICAL FIX: For offset-based reads, Time is zero, so check Offset instead
+		if processedPosition.Time.UnixNano() != 0 || processedPosition.IsOffsetBased {
 			startPosition = processedPosition
 		}
 		processedPosition, isDone, readInMemoryLogErr = p.LogBuffer.LoopProcessLogData(clientName, startPosition, 0, onNoMessageFn, eachMessageFn)
 		if isDone {
 			return nil
 		}
-		if processedPosition.Time.UnixNano() != 0 {
+		// CRITICAL FIX: For offset-based reads, Time is zero, so check Offset instead
+		if processedPosition.Time.UnixNano() != 0 || processedPosition.IsOffsetBased {
 			startPosition = processedPosition
 		}
 

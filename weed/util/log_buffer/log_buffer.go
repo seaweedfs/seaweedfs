@@ -371,7 +371,7 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 	// CRITICAL FIX: For offset-based subscriptions, use offset comparisons, not time comparisons!
 	if isOffsetBased {
 		requestedOffset := lastReadPosition.Offset
-		glog.V(0).Infof("🔥 OFFSET-BASED READ: Requested offset=%d, current buffer [%d-%d]",
+		glog.V(4).Infof("🔥 OFFSET-BASED READ: Requested offset=%d, current buffer [%d-%d]",
 			requestedOffset, logBuffer.bufferStartOffset, logBuffer.offset)
 
 		// Check if we have any data in memory
@@ -392,7 +392,7 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 			if requestedOffset >= buf.startOffset && requestedOffset <= buf.offset {
 				// CRITICAL FIX: If the prevBuffer is empty (flushed to disk), read from disk
 				if buf.size == 0 {
-					glog.V(0).Infof("⚠️  OFFSET-BASED: prevBuffer[%d] [%d-%d] is empty (flushed) - reading from disk for offset %d",
+					glog.V(4).Infof("⚠️  OFFSET-BASED: prevBuffer[%d] [%d-%d] is empty (flushed) - reading from disk for offset %d",
 						i, buf.startOffset, buf.offset, requestedOffset)
 					return nil, -2, ResumeFromDiskError
 				}
@@ -408,7 +408,7 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 			if len(logBuffer.prevBuffers.buffers) > 0 {
 				firstBuf := logBuffer.prevBuffers.buffers[0]
 				if requestedOffset < firstBuf.startOffset {
-					glog.V(0).Infof("⚠️  OFFSET-BASED: Requested offset %d < earliest buffer offset %d - data might be on disk",
+					glog.V(4).Infof("⚠️  OFFSET-BASED: Requested offset %d < earliest buffer offset %d - data might be on disk",
 						requestedOffset, firstBuf.startOffset)
 					return nil, -2, ResumeFromDiskError
 				}

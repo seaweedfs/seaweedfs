@@ -179,6 +179,10 @@ type Handler struct {
 	// Consumer group coordination
 	groupCoordinator *consumer.GroupCoordinator
 
+	// Response caching to reduce CPU usage for repeated requests
+	metadataCache    *ResponseCache
+	coordinatorCache *ResponseCache
+
 	// Coordinator registry for distributed coordinator assignment
 	coordinatorRegistry CoordinatorRegistryInterface
 
@@ -251,6 +255,16 @@ func NewSeaweedMQBrokerHandlerWithDefaults(masters string, filerGroup string, cl
 		consumer_offset.NewFilerStorage(sharedFilerAccessor),
 	)
 
+	// Create response caches to reduce CPU usage
+	// Metadata cache: 5 second TTL (Schema Registry polls frequently)
+	// Coordinator cache: 10 second TTL (less frequent, more stable)
+	metadataCache := NewResponseCache(5 * time.Second)
+	coordinatorCache := NewResponseCache(10 * time.Second)
+
+	// Start cleanup loops
+	metadataCache.StartCleanupLoop(30 * time.Second)
+	coordinatorCache.StartCleanupLoop(60 * time.Second)
+
 	handler := &Handler{
 		seaweedMQHandler:      smqHandler,
 		consumerOffsetStorage: consumerOffsetStorage,
@@ -258,6 +272,8 @@ func NewSeaweedMQBrokerHandlerWithDefaults(masters string, filerGroup string, cl
 		smqBrokerAddresses:    nil, // Will be set by SetSMQBrokerAddresses() when server starts
 		registeredSchemas:     make(map[string]bool),
 		defaultPartitions:     defaultPartitions,
+		metadataCache:         metadataCache,
+		coordinatorCache:      coordinatorCache,
 	}
 
 	// Set protocol handler reference in SMQ handler for connection context access
@@ -508,7 +524,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 	go func() {
 		defer wg.Done()
 		for req := range controlChan {
-			glog.Infof("[%s] Control plane processing correlation=%d", connectionID, req.correlationID)
+			glog.Infof("[%s] Control plane processing correlation=%d, apiKey=%d", connectionID, req.correlationID, req.apiKey)
 			response, err := h.processRequestSync(req)
 			glog.Infof("[%s] Control plane completed correlation=%d, sending to responseChan", connectionID, req.correlationID)
 			select {
@@ -698,7 +714,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		}
 
 		// CRITICAL DEBUG: Log that validation passed
-		glog.Infof("✅ API VERSION VALIDATION PASSED: Key=%d (%s), Version=%d, Correlation=%d - proceeding to header parsing",
+		glog.V(4).Infof("✅ API VERSION VALIDATION PASSED: Key=%d (%s), Version=%d, Correlation=%d - proceeding to header parsing",
 			apiKey, getAPIName(apiKey), apiVersion, correlationID)
 
 		// Extract request body - special handling for ApiVersions requests
@@ -2969,22 +2985,17 @@ func (h *Handler) writeResponseWithHeader(w *bufio.Writer, correlationID uint32,
 	// Write response body
 	fullResponse = append(fullResponse, responseBody...)
 
-	// Hex dump for debugging (enabled for FindCoordinator and Fetch)
-	dumpLen := len(fullResponse)
-	if dumpLen > 128 {
-		dumpLen = 128
-	}
-	if apiKey == 10 { // FindCoordinator
-		glog.Infof("🔍 FindCoordinator v%d response wire format (first %d bytes):\n%s", apiVersion, dumpLen, hexDump(fullResponse[:dumpLen]))
-		glog.Infof("🔍 FindCoordinator v%d: totalSize=%d, bodyLen=%d, flexible=%t, fullResponseLen=%d", apiVersion, totalSize, len(responseBody), isFlexible, len(fullResponse))
-	}
-	if apiKey == 1 { // Fetch - log ALL responses to debug invalid length errors
-		glog.Infof("🔍 Fetch v%d response wire format (first %d bytes):\n%s", apiVersion, dumpLen, hexDump(fullResponse[:dumpLen]))
-		glog.Infof("🔍 Fetch v%d: totalSize=%d, bodyLen=%d, flexible=%t, fullResponseLen=%d", apiVersion, totalSize, len(responseBody), isFlexible, len(fullResponse))
-	}
-	if apiKey == 3 { // Metadata - log v7+ responses to debug AdminClient compatibility
-		glog.Infof("🔍 Metadata v%d response wire format (first %d bytes):\n%s", apiVersion, dumpLen, hexDump(fullResponse[:dumpLen]))
-		glog.Infof("🔍 Metadata v%d: totalSize=%d, bodyLen=%d, flexible=%t, fullResponseLen=%d", apiVersion, totalSize, len(responseBody), isFlexible, len(fullResponse))
+	// Debug logging for response format (hex dump removed to reduce CPU usage)
+	if glog.V(4) {
+		if apiKey == 10 { // FindCoordinator
+			glog.Infof("🔍 FindCoordinator v%d: totalSize=%d, bodyLen=%d, flexible=%t, fullResponseLen=%d", apiVersion, totalSize, len(responseBody), isFlexible, len(fullResponse))
+		}
+		if apiKey == 1 { // Fetch
+			glog.Infof("🔍 Fetch v%d: totalSize=%d, bodyLen=%d, flexible=%t, fullResponseLen=%d", apiVersion, totalSize, len(responseBody), isFlexible, len(fullResponse))
+		}
+		if apiKey == 3 { // Metadata
+			glog.Infof("🔍 Metadata v%d: totalSize=%d, bodyLen=%d, flexible=%t, fullResponseLen=%d", apiVersion, totalSize, len(responseBody), isFlexible, len(fullResponse))
+		}
 	}
 	Debug("Wrote API %d response v%d: size=%d, flexible=%t, correlationID=%d, totalBytes=%d", apiKey, apiVersion, totalSize, isFlexible, correlationID, len(fullResponse))
 
