@@ -41,7 +41,7 @@ all: ## Run complete test suite (start -> produce -> test)
 # Development targets
 dev-start: ## Start services for development
 	@echo "Starting development environment..."
-	@docker compose up -d seaweedfs postgres-server
+	@docker compose up -d seaweedfs postgres-server || (echo "=== Container startup failed, showing logs ===" && docker compose logs && exit 1)
 	@echo "Services started. Run 'make dev-logs' to watch logs."
 
 dev-logs: ## Follow logs for development
