@@ -631,19 +631,32 @@ func (h *SeaweedMQHandler) InvalidateTopicExistsCache(name string) {
 	glog.V(4).Infof("Invalidated TopicExists cache for %s", name)
 }
 
-// GetTopicInfo returns information about a topic from filer
+// GetTopicInfo returns information about a topic from broker
 func (h *SeaweedMQHandler) GetTopicInfo(name string) (*KafkaTopicInfo, bool) {
-	// Check if topic exists in filer
+	// Get topic configuration from broker
+	if h.brokerClient != nil {
+		config, err := h.brokerClient.GetTopicConfiguration(name)
+		if err == nil && config != nil {
+			topicInfo := &KafkaTopicInfo{
+				Name:       name,
+				Partitions: config.PartitionCount,
+				CreatedAt:  config.CreatedAtNs,
+			}
+			return topicInfo, true
+		}
+		glog.V(2).Infof("Failed to get topic configuration for %s from broker: %v", name, err)
+	}
+
+	// Fallback: check if topic exists in filer (for backward compatibility)
 	if !h.checkTopicInFiler(name) {
 		return nil, false
 	}
 
-	// Create basic topic info - in a real implementation, this could read
-	// topic configuration from filer metadata
+	// Return default info if broker query failed but topic exists in filer
 	topicInfo := &KafkaTopicInfo{
 		Name:       name,
-		Partitions: 1, // Default to 1 partition
-		CreatedAt:  0, // Could be read from filer metadata
+		Partitions: 1, // Default to 1 partition if broker query failed
+		CreatedAt:  0,
 	}
 
 	return topicInfo, true
@@ -2279,6 +2292,28 @@ func (bc *BrokerClient) ListTopics() ([]string, error) {
 	}
 
 	return topics, nil
+}
+
+// GetTopicConfiguration gets topic configuration including partition count from the broker
+func (bc *BrokerClient) GetTopicConfiguration(topicName string) (*mq_pb.GetTopicConfigurationResponse, error) {
+	if bc.client == nil {
+		return nil, fmt.Errorf("broker client not connected")
+	}
+
+	ctx, cancel := context.WithTimeout(bc.ctx, 5*time.Second)
+	defer cancel()
+
+	resp, err := bc.client.GetTopicConfiguration(ctx, &mq_pb.GetTopicConfigurationRequest{
+		Topic: &schema_pb.Topic{
+			Namespace: "kafka",
+			Name:      topicName,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get topic configuration from broker: %v", err)
+	}
+
+	return resp, nil
 }
 
 // TopicExists checks if a topic exists in SeaweedMQ broker (includes in-memory topics)
