@@ -11,18 +11,18 @@ type Metrics struct {
 	// Request counters by API key
 	requestCounts map[uint16]*int64
 	errorCounts   map[uint16]*int64
-	
+
 	// Latency tracking
 	latencySum   map[uint16]*int64 // Total latency in microseconds
 	latencyCount map[uint16]*int64 // Number of requests for average calculation
-	
+
 	// Connection metrics
 	activeConnections int64
 	totalConnections  int64
-	
+
 	// Mutex for map operations
 	mu sync.RWMutex
-	
+
 	// Start time for uptime calculation
 	startTime time.Time
 }
@@ -38,10 +38,10 @@ type APIMetrics struct {
 
 // ConnectionMetrics represents connection-related metrics
 type ConnectionMetrics struct {
-	ActiveConnections int64         `json:"active_connections"`
-	TotalConnections  int64         `json:"total_connections"`
-	UptimeSeconds     int64         `json:"uptime_seconds"`
-	StartTime         time.Time     `json:"start_time"`
+	ActiveConnections int64     `json:"active_connections"`
+	TotalConnections  int64     `json:"total_connections"`
+	UptimeSeconds     int64     `json:"uptime_seconds"`
+	StartTime         time.Time `json:"start_time"`
 }
 
 // MetricsSnapshot represents a complete metrics snapshot
@@ -65,7 +65,7 @@ func NewMetrics() *Metrics {
 // RecordRequest records a successful request with latency
 func (m *Metrics) RecordRequest(apiKey uint16, latency time.Duration) {
 	m.ensureCounters(apiKey)
-	
+
 	atomic.AddInt64(m.requestCounts[apiKey], 1)
 	atomic.AddInt64(m.latencySum[apiKey], latency.Microseconds())
 	atomic.AddInt64(m.latencyCount[apiKey], 1)
@@ -74,7 +74,7 @@ func (m *Metrics) RecordRequest(apiKey uint16, latency time.Duration) {
 // RecordError records an error for a specific API
 func (m *Metrics) RecordError(apiKey uint16, latency time.Duration) {
 	m.ensureCounters(apiKey)
-	
+
 	atomic.AddInt64(m.requestCounts[apiKey], 1)
 	atomic.AddInt64(m.errorCounts[apiKey], 1)
 	atomic.AddInt64(m.latencySum[apiKey], latency.Microseconds())
@@ -96,29 +96,29 @@ func (m *Metrics) RecordDisconnection() {
 func (m *Metrics) GetSnapshot() MetricsSnapshot {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	
+
 	apis := make([]APIMetrics, 0, len(m.requestCounts))
-	
+
 	for apiKey, requestCount := range m.requestCounts {
 		requests := atomic.LoadInt64(requestCount)
 		errors := atomic.LoadInt64(m.errorCounts[apiKey])
 		latencySum := atomic.LoadInt64(m.latencySum[apiKey])
 		latencyCount := atomic.LoadInt64(m.latencyCount[apiKey])
-		
+
 		var avgLatencyMs float64
 		if latencyCount > 0 {
 			avgLatencyMs = float64(latencySum) / float64(latencyCount) / 1000.0 // Convert to milliseconds
 		}
-		
+
 		apis = append(apis, APIMetrics{
 			APIKey:       apiKey,
-			APIName:      getAPIName(apiKey),
+			APIName:      getAPIName(APIKey(apiKey)),
 			RequestCount: requests,
 			ErrorCount:   errors,
 			AvgLatencyMs: avgLatencyMs,
 		})
 	}
-	
+
 	return MetricsSnapshot{
 		APIs: apis,
 		Connections: ConnectionMetrics{
@@ -134,20 +134,20 @@ func (m *Metrics) GetSnapshot() MetricsSnapshot {
 // GetAPIMetrics returns metrics for a specific API
 func (m *Metrics) GetAPIMetrics(apiKey uint16) APIMetrics {
 	m.ensureCounters(apiKey)
-	
+
 	requests := atomic.LoadInt64(m.requestCounts[apiKey])
 	errors := atomic.LoadInt64(m.errorCounts[apiKey])
 	latencySum := atomic.LoadInt64(m.latencySum[apiKey])
 	latencyCount := atomic.LoadInt64(m.latencyCount[apiKey])
-	
+
 	var avgLatencyMs float64
 	if latencyCount > 0 {
 		avgLatencyMs = float64(latencySum) / float64(latencyCount) / 1000.0
 	}
-	
+
 	return APIMetrics{
 		APIKey:       apiKey,
-		APIName:      getAPIName(apiKey),
+		APIName:      getAPIName(APIKey(apiKey)),
 		RequestCount: requests,
 		ErrorCount:   errors,
 		AvgLatencyMs: avgLatencyMs,
@@ -168,14 +168,14 @@ func (m *Metrics) GetConnectionMetrics() ConnectionMetrics {
 func (m *Metrics) Reset() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	for apiKey := range m.requestCounts {
 		atomic.StoreInt64(m.requestCounts[apiKey], 0)
 		atomic.StoreInt64(m.errorCounts[apiKey], 0)
 		atomic.StoreInt64(m.latencySum[apiKey], 0)
 		atomic.StoreInt64(m.latencyCount[apiKey], 0)
 	}
-	
+
 	atomic.StoreInt64(&m.activeConnections, 0)
 	atomic.StoreInt64(&m.totalConnections, 0)
 	m.startTime = time.Now()
@@ -189,15 +189,15 @@ func (m *Metrics) ensureCounters(apiKey uint16) {
 		return
 	}
 	m.mu.RUnlock()
-	
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	// Double-check after acquiring write lock
 	if _, exists := m.requestCounts[apiKey]; exists {
 		return
 	}
-	
+
 	m.requestCounts[apiKey] = new(int64)
 	m.errorCounts[apiKey] = new(int64)
 	m.latencySum[apiKey] = new(int64)

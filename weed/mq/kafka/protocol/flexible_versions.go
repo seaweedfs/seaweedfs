@@ -196,32 +196,32 @@ func DecodeTaggedFields(data []byte) (*TaggedFields, int, error) {
 // IsFlexibleVersion determines if an API version uses flexible versions
 // This is API-specific and based on when each API adopted flexible versions
 func IsFlexibleVersion(apiKey, apiVersion uint16) bool {
-	switch apiKey {
-	case 18: // ApiVersions
+	switch APIKey(apiKey) {
+	case APIKeyApiVersions:
 		return apiVersion >= 3
-	case 3: // Metadata
+	case APIKeyMetadata:
 		return apiVersion >= 9
-	case 1: // Fetch
+	case APIKeyFetch:
 		return apiVersion >= 12
-	case 0: // Produce
+	case APIKeyProduce:
 		return apiVersion >= 9
-	case 11: // JoinGroup
+	case APIKeyJoinGroup:
 		return apiVersion >= 6
-	case 14: // SyncGroup
+	case APIKeySyncGroup:
 		return apiVersion >= 4
-	case 8: // OffsetCommit
+	case APIKeyOffsetCommit:
 		return apiVersion >= 8
-	case 9: // OffsetFetch
+	case APIKeyOffsetFetch:
 		return apiVersion >= 6
-	case 10: // FindCoordinator
+	case APIKeyFindCoordinator:
 		return apiVersion >= 3
-	case 12: // Heartbeat
+	case APIKeyHeartbeat:
 		return apiVersion >= 4
-	case 13: // LeaveGroup
+	case APIKeyLeaveGroup:
 		return apiVersion >= 4
-	case 19: // CreateTopics
+	case APIKeyCreateTopics:
 		return apiVersion >= 2
-	case 20: // DeleteTopics
+	case APIKeyDeleteTopics:
 		return apiVersion >= 4
 	default:
 		return false
