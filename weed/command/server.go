@@ -192,6 +192,7 @@ func init() {
 	webdavOptions.filerRootPath = cmdServer.Flag.String("webdav.filer.path", "/", "use this remote path from filer server")
 
 	mqBrokerOptions.port = cmdServer.Flag.Int("mq.broker.port", 17777, "message queue broker gRPC listen port")
+	mqBrokerOptions.logFlushInterval = cmdServer.Flag.Int("mq.broker.logFlushInterval", 5, "log buffer flush interval in seconds")
 
 	mqAgentServerOptions.brokersString = cmdServer.Flag.String("mq.agent.brokers", "localhost:17777", "comma-separated message queue brokers")
 	mqAgentServerOptions.port = cmdServer.Flag.Int("mq.agent.port", 16777, "message queue agent gRPC listen port")
