@@ -222,7 +222,7 @@ func (h *Handler) handleFindCoordinatorV2(correlationID uint32, requestBody []by
 
 	// Debug logging (hex dump removed to reduce CPU usage)
 	if glog.V(4) {
-		glog.Infof("🔍 FindCoordinator v2: Built response - bodyLen=%d, host='%s' (len=%d), port=%d, nodeID=%d",
+		glog.V(4).Infof("🔍 FindCoordinator v2: Built response - bodyLen=%d, host='%s' (len=%d), port=%d, nodeID=%d",
 			len(response), coordinatorHost, len(coordinatorHost), coordinatorPort, nodeID)
 	}
 
@@ -241,28 +241,28 @@ func (h *Handler) handleFindCoordinatorV3(correlationID uint32, requestBody []by
 	}
 
 	// HEX DUMP for debugging
-	glog.Infof("🔍 FindCoordinator V3 request body (first 50 bytes): % x", requestBody[:min(50, len(requestBody))])
-	glog.Infof("🔍 FindCoordinator V3 request body length: %d", len(requestBody))
+	glog.V(4).Infof("🔍 FindCoordinator V3 request body (first 50 bytes): % x", requestBody[:min(50, len(requestBody))])
+	glog.V(4).Infof("🔍 FindCoordinator V3 request body length: %d", len(requestBody))
 
 	offset := 0
 
 	// CRITICAL FIX: The first byte is the tagged fields from the REQUEST HEADER that weren't consumed
 	// Skip the tagged fields count (should be 0x00 for no tagged fields)
 	if len(requestBody) > 0 && requestBody[0] == 0x00 {
-		glog.Infof("🔍 FindCoordinator V3: Skipping header tagged fields byte (0x00)")
+		glog.V(4).Infof("🔍 FindCoordinator V3: Skipping header tagged fields byte (0x00)")
 		offset = 1
 	}
 
 	// Parse coordinator key (compact string: varint length+1)
-	glog.Infof("🔍 FindCoordinator V3: About to decode varint from bytes: % x", requestBody[offset:min(offset+5, len(requestBody))])
+	glog.V(4).Infof("🔍 FindCoordinator V3: About to decode varint from bytes: % x", requestBody[offset:min(offset+5, len(requestBody))])
 	coordinatorKeyLen, bytesRead, err := DecodeUvarint(requestBody[offset:])
 	if err != nil || bytesRead <= 0 {
 		return nil, fmt.Errorf("failed to decode coordinator key length: %w (bytes: % x)", err, requestBody[offset:min(offset+5, len(requestBody))])
 	}
 	offset += bytesRead
 
-	glog.Infof("🔍 FindCoordinator V3: coordinatorKeyLen (varint)=%d, bytesRead=%d, offset now=%d", coordinatorKeyLen, bytesRead, offset)
-	glog.Infof("🔍 FindCoordinator V3: Next bytes after varint: % x", requestBody[offset:min(offset+20, len(requestBody))])
+	glog.V(4).Infof("🔍 FindCoordinator V3: coordinatorKeyLen (varint)=%d, bytesRead=%d, offset now=%d", coordinatorKeyLen, bytesRead, offset)
+	glog.V(4).Infof("🔍 FindCoordinator V3: Next bytes after varint: % x", requestBody[offset:min(offset+20, len(requestBody))])
 
 	if coordinatorKeyLen == 0 {
 		return nil, fmt.Errorf("coordinator key cannot be null in v3")
@@ -271,7 +271,7 @@ func (h *Handler) handleFindCoordinatorV3(correlationID uint32, requestBody []by
 	// The varint is the actual length. The +1 is only for distinguishing null vs empty string.
 	// coordinatorKeyLen-- // Compact string: actual length = varint - 1
 
-	glog.Infof("🔍 FindCoordinator V3: using coordinatorKeyLen as-is: %d", coordinatorKeyLen)
+	glog.V(4).Infof("🔍 FindCoordinator V3: using coordinatorKeyLen as-is: %d", coordinatorKeyLen)
 
 	if len(requestBody) < offset+int(coordinatorKeyLen) {
 		return nil, fmt.Errorf("FindCoordinator v3 request missing coordinator key")

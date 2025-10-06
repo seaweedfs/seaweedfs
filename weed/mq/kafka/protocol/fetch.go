@@ -158,8 +158,7 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 	}
 
 	// Process each requested topic
-	for topicIdx, topic := range fetchRequest.Topics {
-		glog.V(4).Infof("FETCH: Processing topic %d/%d: %s (partitions: %d)", topicIdx+1, len(fetchRequest.Topics), topic.Name, len(topic.Partitions))
+	for _, topic := range fetchRequest.Topics {
 		topicNameBytes := []byte(topic.Name)
 
 		// Topic name length and name
@@ -375,7 +374,7 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 
 			// Log for loadtest topics to debug zero consumption issue
 			if strings.HasPrefix(topic.Name, "loadtest-topic") {
-				glog.Infof("🔍 LOADTEST FETCH: topic=%s partition=%d requestOffset=%d effectiveOffset=%d hwm=%d recordBatchBytes=%d",
+				glog.V(4).Infof("🔍 LOADTEST FETCH: topic=%s partition=%d requestOffset=%d effectiveOffset=%d hwm=%d recordBatchBytes=%d",
 					topic.Name, partition.PartitionID, partition.FetchOffset, effectiveFetchOffset, highWaterMark, len(recordBatch))
 			}
 
@@ -430,26 +429,6 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 	}
 
 	Debug("Fetch v%d response constructed, size: %d bytes (flexible: %v)", apiVersion, len(response), isFlexible)
-	glog.V(4).Infof("FETCH RESPONSE SUMMARY: correlationID=%d topics=%d totalRecordBytes=%d totalResponseBytes=%d", correlationID, topicsCount, totalAppendedRecordBytes, len(response))
-
-	// Debug byte analysis (disabled for production to reduce CPU usage)
-	// Uncomment for debugging protocol issues
-	/*
-		if len(response) > 36 {
-			glog.V(4).Infof("FETCH CORR=%d: Offset 32-35: %02x %02x %02x %02x",
-				correlationID, response[32], response[33], response[34], response[35])
-		}
-	*/
-
-	// HEX DUMP disabled for production (causes high CPU)
-	// Uncomment for debugging protocol issues
-	/*
-		if len(response) > 0 {
-			// Debug hex dump code here...
-		}
-	*/
-
-	glog.V(4).Infof("FETCH RESPONSE COMPLETE: correlationID=%d version=%d size=%d bytes", correlationID, apiVersion, len(response))
 	return response, nil
 }
 
@@ -1250,7 +1229,7 @@ func (h *Handler) isSchematizedTopic(topicName string) bool {
 	}
 
 	if !h.IsSchemaEnabled() {
-		glog.Infof("🔍 isSchematizedTopic(%s): IsSchemaEnabled=false, returning false", topicName)
+		glog.V(4).Infof("🔍 isSchematizedTopic(%s): IsSchemaEnabled=false, returning false", topicName)
 		return false
 	}
 
@@ -1258,29 +1237,29 @@ func (h *Handler) isSchematizedTopic(topicName string) bool {
 
 	// 1. Confluent Schema Registry naming conventions
 	if h.matchesSchemaRegistryConvention(topicName) {
-		glog.Infof("🔍 isSchematizedTopic(%s): matchesSchemaRegistryConvention=true, returning true", topicName)
+		glog.V(4).Infof("🔍 isSchematizedTopic(%s): matchesSchemaRegistryConvention=true, returning true", topicName)
 		return true
 	}
 
 	// 2. Check if topic has schema metadata in SeaweedMQ
 	if h.hasSchemaMetadata(topicName) {
-		glog.Infof("🔍 isSchematizedTopic(%s): hasSchemaMetadata=true, returning true", topicName)
+		glog.V(4).Infof("🔍 isSchematizedTopic(%s): hasSchemaMetadata=true, returning true", topicName)
 		return true
 	}
 
 	// 3. Check for schema configuration in topic metadata
 	if h.hasSchemaConfiguration(topicName) {
-		glog.Infof("🔍 isSchematizedTopic(%s): hasSchemaConfiguration=true, returning true", topicName)
+		glog.V(4).Infof("🔍 isSchematizedTopic(%s): hasSchemaConfiguration=true, returning true", topicName)
 		return true
 	}
 
 	// 4. Check if topic has been used with schematized messages before
 	if h.hasSchematizedMessageHistory(topicName) {
-		glog.Infof("🔍 isSchematizedTopic(%s): hasSchematizedMessageHistory=true, returning true", topicName)
+		glog.V(4).Infof("🔍 isSchematizedTopic(%s): hasSchematizedMessageHistory=true, returning true", topicName)
 		return true
 	}
 
-	glog.Infof("🔍 isSchematizedTopic(%s): all checks false, returning false", topicName)
+	glog.V(4).Infof("🔍 isSchematizedTopic(%s): all checks false, returning false", topicName)
 	return false
 }
 

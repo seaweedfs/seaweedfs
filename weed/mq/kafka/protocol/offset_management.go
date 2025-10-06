@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/consumer"
 )
 
@@ -102,22 +103,22 @@ type OffsetFetchPartitionResponse struct {
 
 // Error codes specific to offset management are imported from errors.go
 
-func (h *Handler) handleOffsetCommit(correlationID uint32, requestBody []byte) ([]byte, error) {
+func (h *Handler) handleOffsetCommit(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
 	// Parse OffsetCommit request
 	req, err := h.parseOffsetCommitRequest(requestBody)
 	if err != nil {
-		return h.buildOffsetCommitErrorResponse(correlationID, ErrorCodeInvalidCommitOffsetSize), nil
+		return h.buildOffsetCommitErrorResponse(correlationID, ErrorCodeInvalidCommitOffsetSize, apiVersion), nil
 	}
 
 	// Validate request
 	if req.GroupID == "" || req.MemberID == "" {
-		return h.buildOffsetCommitErrorResponse(correlationID, ErrorCodeInvalidGroupID), nil
+		return h.buildOffsetCommitErrorResponse(correlationID, ErrorCodeInvalidGroupID, apiVersion), nil
 	}
 
 	// Get consumer group
 	group := h.groupCoordinator.GetGroup(req.GroupID)
 	if group == nil {
-		return h.buildOffsetCommitErrorResponse(correlationID, ErrorCodeInvalidGroupID), nil
+		return h.buildOffsetCommitErrorResponse(correlationID, ErrorCodeInvalidGroupID, apiVersion), nil
 	}
 
 	group.Mu.Lock()
@@ -172,7 +173,7 @@ func (h *Handler) handleOffsetCommit(correlationID uint32, requestBody []byte) (
 		resp.Topics = append(resp.Topics, topicResp)
 	}
 
-	return h.buildOffsetCommitResponse(resp), nil
+	return h.buildOffsetCommitResponse(resp, apiVersion), nil
 }
 
 func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
@@ -256,7 +257,20 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, req
 		response.Topics = append(response.Topics, topicResponse)
 	}
 
-	return h.buildOffsetFetchResponse(response, apiVersion), nil
+	result := h.buildOffsetFetchResponse(response, apiVersion)
+	glog.Infof("🔵 handleOffsetFetch: apiVersion=%d, topics=%d, partitions=%d, result size=%d bytes",
+		apiVersion, len(response.Topics),
+		func() int {
+			if len(response.Topics) > 0 {
+				return len(response.Topics[0].Partitions)
+			}
+			return 0
+		}(),
+		len(result))
+	if len(result) == 36 {
+		glog.Errorf("🔵 handleOffsetFetch: Returning 36-byte result for apiVersion=%d!", apiVersion)
+	}
+	return result, nil
 }
 
 func (h *Handler) parseOffsetCommitRequest(data []byte) (*OffsetCommitRequest, error) {
@@ -514,7 +528,7 @@ func (h *Handler) fetchOffset(group *consumer.ConsumerGroup, topic string, parti
 	return offsetCommit.Offset, offsetCommit.Metadata, nil
 }
 
-func (h *Handler) buildOffsetCommitResponse(response OffsetCommitResponse) []byte {
+func (h *Handler) buildOffsetCommitResponse(response OffsetCommitResponse, apiVersion uint16) []byte {
 	estimatedSize := 16
 	for _, topic := range response.Topics {
 		estimatedSize += len(topic.Name) + 8 + len(topic.Partitions)*8
@@ -525,61 +539,7 @@ func (h *Handler) buildOffsetCommitResponse(response OffsetCommitResponse) []byt
 	// NOTE: Correlation ID is handled by writeResponseWithCorrelationID
 	// Do NOT include it in the response body
 
-	// Topics array length (4 bytes)
-	topicsLengthBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(topicsLengthBytes, uint32(len(response.Topics)))
-	result = append(result, topicsLengthBytes...)
-
-	// Topics
-	for _, topic := range response.Topics {
-		// Topic name length (2 bytes)
-		nameLength := make([]byte, 2)
-		binary.BigEndian.PutUint16(nameLength, uint16(len(topic.Name)))
-		result = append(result, nameLength...)
-
-		// Topic name
-		result = append(result, []byte(topic.Name)...)
-
-		// Partitions array length (4 bytes)
-		partitionsLength := make([]byte, 4)
-		binary.BigEndian.PutUint32(partitionsLength, uint32(len(topic.Partitions)))
-		result = append(result, partitionsLength...)
-
-		// Partitions
-		for _, partition := range topic.Partitions {
-			// Partition index (4 bytes)
-			indexBytes := make([]byte, 4)
-			binary.BigEndian.PutUint32(indexBytes, uint32(partition.Index))
-			result = append(result, indexBytes...)
-
-			// Error code (2 bytes)
-			errorBytes := make([]byte, 2)
-			binary.BigEndian.PutUint16(errorBytes, uint16(partition.ErrorCode))
-			result = append(result, errorBytes...)
-		}
-	}
-
-	// Throttle time (4 bytes, 0 = no throttling)
-	result = append(result, 0, 0, 0, 0)
-
-	return result
-}
-
-func (h *Handler) buildOffsetFetchResponse(response OffsetFetchResponse, apiVersion uint16) []byte {
-	estimatedSize := 32
-	for _, topic := range response.Topics {
-		estimatedSize += len(topic.Name) + 16 + len(topic.Partitions)*32
-		for _, partition := range topic.Partitions {
-			estimatedSize += len(partition.Metadata)
-		}
-	}
-
-	result := make([]byte, 0, estimatedSize)
-
-	// NOTE: Correlation ID is handled by writeResponseWithCorrelationID
-	// Do NOT include it in the response body
-
-	// Throttle time (4 bytes) - for version 3+ this appears immediately after correlation ID
+	// Throttle time (4 bytes) - ONLY for version 3+, and it goes at the BEGINNING
 	if apiVersion >= 3 {
 		result = append(result, 0, 0, 0, 0) // throttle_time_ms = 0
 	}
@@ -611,10 +571,79 @@ func (h *Handler) buildOffsetFetchResponse(response OffsetFetchResponse, apiVers
 			binary.BigEndian.PutUint32(indexBytes, uint32(partition.Index))
 			result = append(result, indexBytes...)
 
+			// Error code (2 bytes)
+			errorBytes := make([]byte, 2)
+			binary.BigEndian.PutUint16(errorBytes, uint16(partition.ErrorCode))
+			result = append(result, errorBytes...)
+		}
+	}
+
+	return result
+}
+
+func (h *Handler) buildOffsetFetchResponse(response OffsetFetchResponse, apiVersion uint16) []byte {
+	estimatedSize := 32
+	for _, topic := range response.Topics {
+		estimatedSize += len(topic.Name) + 16 + len(topic.Partitions)*32
+		for _, partition := range topic.Partitions {
+			estimatedSize += len(partition.Metadata)
+		}
+	}
+
+	result := make([]byte, 0, estimatedSize)
+
+	// NOTE: Correlation ID is handled by writeResponseWithCorrelationID
+	// Do NOT include it in the response body
+
+	// Throttle time (4 bytes) - for version 3+ this appears immediately after correlation ID
+	if apiVersion >= 3 {
+		result = append(result, 0, 0, 0, 0) // throttle_time_ms = 0
+	}
+
+	// Topics array length (4 bytes)
+	topicsLengthBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(topicsLengthBytes, uint32(len(response.Topics)))
+	result = append(result, topicsLengthBytes...)
+
+	// Debug: Log if we have topics but no partitions
+	if len(response.Topics) > 0 && len(response.Topics[0].Partitions) == 0 {
+		glog.Infof("⚠️  OffsetFetch v%d: Topic %s has 0 partitions!\n", apiVersion, response.Topics[0].Name)
+	}
+
+	// Topics
+	for _, topic := range response.Topics {
+		// Topic name length (2 bytes)
+		nameLength := make([]byte, 2)
+		binary.BigEndian.PutUint16(nameLength, uint16(len(topic.Name)))
+		result = append(result, nameLength...)
+
+		// Topic name
+		result = append(result, []byte(topic.Name)...)
+
+		// Partitions array length (4 bytes)
+		partitionsLength := make([]byte, 4)
+		binary.BigEndian.PutUint32(partitionsLength, uint32(len(topic.Partitions)))
+		result = append(result, partitionsLength...)
+
+		// Partitions
+		for _, partition := range topic.Partitions {
+			lenBeforePartition := len(result)
+
+			// Partition index (4 bytes)
+			indexBytes := make([]byte, 4)
+			binary.BigEndian.PutUint32(indexBytes, uint32(partition.Index))
+			result = append(result, indexBytes...)
+			lenAfterIndex := len(result)
+
 			// Committed offset (8 bytes)
 			offsetBytes := make([]byte, 8)
 			binary.BigEndian.PutUint64(offsetBytes, uint64(partition.Offset))
+			lenBeforeAppend := len(result)
 			result = append(result, offsetBytes...)
+			lenAfterOffset := len(result)
+
+			glog.Infof("📊 OffsetFetch v%d: Partition %d: index added %d bytes, offset added %d bytes (offsetBytes len=%d, offset value=%d)\n",
+				apiVersion, partition.Index, lenAfterIndex-lenBeforePartition, lenAfterOffset-lenBeforeAppend, len(offsetBytes), partition.Offset)
 
 			// Leader epoch (4 bytes) - only included in version 5+
 			if apiVersion >= 5 {
@@ -645,10 +674,23 @@ func (h *Handler) buildOffsetFetchResponse(response OffsetFetchResponse, apiVers
 		result = append(result, groupErrorBytes...)
 	}
 
+	// Debug: Log final size
+	if len(result) == 36 {
+		glog.Infof("🚨 OffsetFetch v%d: Returning 36-byte response! Topics=%d, Partitions=%d\n",
+			apiVersion, len(response.Topics),
+			func() int {
+				if len(response.Topics) > 0 {
+					return len(response.Topics[0].Partitions)
+				}
+				return 0
+			}())
+		glog.Infof("🚨 Response hex: %02x\n", result)
+	}
+
 	return result
 }
 
-func (h *Handler) buildOffsetCommitErrorResponse(correlationID uint32, errorCode int16) []byte {
+func (h *Handler) buildOffsetCommitErrorResponse(correlationID uint32, errorCode int16, apiVersion uint16) []byte {
 	response := OffsetCommitResponse{
 		CorrelationID: correlationID,
 		Topics: []OffsetCommitTopicResponse{
@@ -661,7 +703,7 @@ func (h *Handler) buildOffsetCommitErrorResponse(correlationID uint32, errorCode
 		},
 	}
 
-	return h.buildOffsetCommitResponse(response)
+	return h.buildOffsetCommitResponse(response, apiVersion)
 }
 
 func (h *Handler) buildOffsetFetchErrorResponse(correlationID uint32, errorCode int16) []byte {
@@ -671,5 +713,7 @@ func (h *Handler) buildOffsetFetchErrorResponse(correlationID uint32, errorCode 
 		ErrorCode:     errorCode,
 	}
 
-	return h.buildOffsetFetchResponse(response, 0)
+	result := h.buildOffsetFetchResponse(response, 0)
+	glog.Infof("🔴 buildOffsetFetchErrorResponse: Returning %d bytes for error %d\n", len(result), errorCode)
+	return result
 }
