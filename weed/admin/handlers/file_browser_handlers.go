@@ -565,29 +565,35 @@ func (h *FileBrowserHandlers) ViewFile(c *gin.Context) {
 			// Get file content from filer
 			filerAddress := h.adminServer.GetFilerAddress()
 			if filerAddress != "" {
-				cleanFilePath, err := h.validateAndCleanFilePath(filePath)
-				if err == nil {
-					fileURL := fmt.Sprintf("http://%s%s", filerAddress, cleanFilePath)
+				// Validate filer address to prevent SSRF
+				if err := h.validateFilerAddress(filerAddress); err != nil {
+					viewable = false
+					reason = "Invalid filer address configuration"
+				} else {
+					cleanFilePath, err := h.validateAndCleanFilePath(filePath)
+					if err == nil {
+						fileURL := fmt.Sprintf("http://%s%s", filerAddress, cleanFilePath)
 
-					client := &http.Client{Timeout: 30 * time.Second}
-					resp, err := client.Get(fileURL)
-					if err == nil && resp.StatusCode == http.StatusOK {
-						defer resp.Body.Close()
-						contentBytes, err := io.ReadAll(resp.Body)
-						if err == nil {
-							content = string(contentBytes)
-							viewable = true
+						client := &http.Client{Timeout: 30 * time.Second}
+						resp, err := client.Get(fileURL)
+						if err == nil && resp.StatusCode == http.StatusOK {
+							defer resp.Body.Close()
+							contentBytes, err := io.ReadAll(resp.Body)
+							if err == nil {
+								content = string(contentBytes)
+								viewable = true
+							} else {
+								viewable = false
+								reason = "Failed to read file content"
+							}
 						} else {
 							viewable = false
-							reason = "Failed to read file content"
+							reason = "Failed to fetch file from filer"
 						}
 					} else {
 						viewable = false
-						reason = "Failed to fetch file from filer"
+						reason = "Invalid file path"
 					}
-				} else {
-					viewable = false
-					reason = "Invalid file path"
 				}
 			} else {
 				viewable = false
@@ -873,6 +879,12 @@ func (h *FileBrowserHandlers) determineMimeType(filename string) string {
 func (h *FileBrowserHandlers) isLikelyTextFile(filePath string, maxCheckSize int64) bool {
 	filerAddress := h.adminServer.GetFilerAddress()
 	if filerAddress == "" {
+		return false
+	}
+
+	// Validate filer address to prevent SSRF
+	if err := h.validateFilerAddress(filerAddress); err != nil {
+		glog.Errorf("Invalid filer address: %v", err)
 		return false
 	}
 

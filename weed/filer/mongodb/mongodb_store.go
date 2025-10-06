@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -156,6 +157,13 @@ func (store *MongodbStore) InsertEntry(ctx context.Context, entry *filer.Entry) 
 
 func (store *MongodbStore) UpdateEntry(ctx context.Context, entry *filer.Entry) (err error) {
 	dir, name := entry.FullPath.DirAndName()
+
+	// Validate directory and name to prevent potential injection
+	// Note: BSON library already provides type safety, but we validate for defense in depth
+	if strings.ContainsAny(dir, "\x00") || strings.ContainsAny(name, "\x00") {
+		return fmt.Errorf("invalid path contains null bytes: %s", entry.FullPath)
+	}
+
 	meta, err := entry.EncodeAttributesAndChunks()
 	if err != nil {
 		return fmt.Errorf("encode %s: %s", entry.FullPath, err)
@@ -168,8 +176,9 @@ func (store *MongodbStore) UpdateEntry(ctx context.Context, entry *filer.Entry) 
 	c := store.connect.Database(store.database).Collection(store.collectionName)
 
 	opts := options.Update().SetUpsert(true)
-	filter := bson.D{{"directory", dir}, {"name", name}}
-	update := bson.D{{"$set", bson.D{{"meta", meta}}}}
+	// Use BSON builders for type-safe query construction (prevents injection)
+	filter := bson.D{{Key: "directory", Value: dir}, {Key: "name", Value: name}}
+	update := bson.D{{Key: "$set", Value: bson.D{{Key: "meta", Value: meta}}}}
 
 	_, err = c.UpdateOne(ctx, filter, update, opts)
 
@@ -182,8 +191,16 @@ func (store *MongodbStore) UpdateEntry(ctx context.Context, entry *filer.Entry) 
 
 func (store *MongodbStore) FindEntry(ctx context.Context, fullpath util.FullPath) (entry *filer.Entry, err error) {
 	dir, name := fullpath.DirAndName()
+
+	// Validate directory and name to prevent potential injection
+	// Note: BSON library already provides type safety, but we validate for defense in depth
+	if strings.ContainsAny(dir, "\x00") || strings.ContainsAny(name, "\x00") {
+		return nil, fmt.Errorf("invalid path contains null bytes: %s", fullpath)
+	}
+
 	var data Model
 
+	// Use BSON builders for type-safe query construction (prevents injection)
 	var where = bson.M{"directory": dir, "name": name}
 	err = store.connect.Database(store.database).Collection(store.collectionName).FindOne(ctx, where).Decode(&data)
 	if err != mongo.ErrNoDocuments && err != nil {

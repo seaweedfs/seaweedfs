@@ -83,7 +83,10 @@ func (h *Handler) handleDescribeCluster(correlationID uint32, apiVersion uint16,
 	response = append(response, CompactArrayLength(uint32(len(host)))...)
 	response = append(response, []byte(host)...)
 
-	// Port (int32)
+	// Port (int32) - validate port range
+	if port < 0 || port > 65535 {
+		return nil, fmt.Errorf("invalid port number: %d", port)
+	}
 	portBytes := make([]byte, 4)
 	binary.BigEndian.PutUint32(portBytes, uint32(port))
 	response = append(response, portBytes...)
@@ -112,4 +115,3 @@ func (h *Handler) handleDescribeCluster(correlationID uint32, apiVersion uint16,
 
 	return response, nil
 }
-

@@ -3,6 +3,8 @@ package schema
 import (
 	"encoding/binary"
 	"fmt"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
 // Format represents the schema format type
@@ -69,7 +71,7 @@ func ParseConfluentEnvelope(data []byte) (*ConfluentEnvelope, bool) {
 
 // ParseConfluentProtobufEnvelope parses a Confluent Protobuf envelope with indexes
 // This is a specialized version for Protobuf that handles message indexes
-// 
+//
 // Note: This function uses heuristics to distinguish between index varints and
 // payload data, which may not be 100% reliable in all cases. For production use,
 // consider using ParseConfluentProtobufEnvelopeWithIndexCount if you know the
@@ -137,7 +139,15 @@ func ExtractSchemaID(data []byte) (uint32, bool) {
 // This will be useful for reconstructing messages on the Fetch path
 func CreateConfluentEnvelope(format Format, schemaID uint32, indexes []int, payload []byte) []byte {
 	// Start with magic byte + schema ID (5 bytes minimum)
-	result := make([]byte, 5, 5+len(payload)+len(indexes)*4)
+	// Validate sizes to prevent overflow
+	const maxSize = 1 << 30 // 1 GB limit
+	indexSize := len(indexes) * 4
+	totalCapacity := 5 + len(payload) + indexSize
+	if len(payload) > maxSize || indexSize > maxSize || totalCapacity < 0 || totalCapacity > maxSize {
+		glog.Errorf("Envelope size too large: payload=%d, indexes=%d", len(payload), len(indexes))
+		return nil
+	}
+	result := make([]byte, 5, totalCapacity)
 	result[0] = 0x00 // Magic byte
 	binary.BigEndian.PutUint32(result[1:5], schemaID)
 

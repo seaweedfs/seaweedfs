@@ -111,9 +111,9 @@ func (h *Handler) handleFindCoordinatorV0(correlationID uint32, requestBody []by
 	// Error code (2 bytes, 0 = no error)
 	response = append(response, 0, 0)
 
-	// Coordinator node_id (4 bytes)
+	// Coordinator node_id (4 bytes) - use direct bit conversion for int32 to uint32
 	nodeIDBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(nodeIDBytes, uint32(nodeID))
+	binary.BigEndian.PutUint32(nodeIDBytes, uint32(int32(nodeID)))
 	response = append(response, nodeIDBytes...)
 
 	// Coordinator host (string)
@@ -121,7 +121,10 @@ func (h *Handler) handleFindCoordinatorV0(correlationID uint32, requestBody []by
 	response = append(response, byte(hostLen>>8), byte(hostLen))
 	response = append(response, []byte(coordinatorHost)...)
 
-	// Coordinator port (4 bytes)
+	// Coordinator port (4 bytes) - validate port range
+	if coordinatorPort < 0 || coordinatorPort > 65535 {
+		return nil, fmt.Errorf("invalid port number: %d", coordinatorPort)
+	}
 	portBytes := make([]byte, 4)
 	binary.BigEndian.PutUint32(portBytes, uint32(coordinatorPort))
 	response = append(response, portBytes...)
@@ -205,9 +208,9 @@ func (h *Handler) handleFindCoordinatorV2(correlationID uint32, requestBody []by
 	// Error message (nullable string) - null for success
 	response = append(response, 0xff, 0xff) // -1 length indicates null
 
-	// Coordinator node_id (4 bytes)
+	// Coordinator node_id (4 bytes) - use direct bit conversion for int32 to uint32
 	nodeIDBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(nodeIDBytes, uint32(nodeID))
+	binary.BigEndian.PutUint32(nodeIDBytes, uint32(int32(nodeID)))
 	response = append(response, nodeIDBytes...)
 
 	// Coordinator host (string)
@@ -215,7 +218,10 @@ func (h *Handler) handleFindCoordinatorV2(correlationID uint32, requestBody []by
 	response = append(response, byte(hostLen>>8), byte(hostLen))
 	response = append(response, []byte(coordinatorHost)...)
 
-	// Coordinator port (4 bytes)
+	// Coordinator port (4 bytes) - validate port range
+	if coordinatorPort < 0 || coordinatorPort > 65535 {
+		return nil, fmt.Errorf("invalid port number: %d", coordinatorPort)
+	}
 	portBytes := make([]byte, 4)
 	binary.BigEndian.PutUint32(portBytes, uint32(coordinatorPort))
 	response = append(response, portBytes...)
@@ -335,9 +341,9 @@ func (h *Handler) handleFindCoordinatorV3(correlationID uint32, requestBody []by
 	// Compact nullable string: 0 = null, 1 = empty string, n+1 = string of length n
 	response = append(response, 0) // 0 = null
 
-	// Coordinator node_id (4 bytes)
+	// Coordinator node_id (4 bytes) - use direct bit conversion for int32 to uint32
 	nodeIDBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(nodeIDBytes, uint32(nodeID))
+	binary.BigEndian.PutUint32(nodeIDBytes, uint32(int32(nodeID)))
 	response = append(response, nodeIDBytes...)
 
 	// Coordinator host (compact string: varint length+1)
@@ -345,7 +351,10 @@ func (h *Handler) handleFindCoordinatorV3(correlationID uint32, requestBody []by
 	response = append(response, EncodeUvarint(hostLen+1)...) // +1 for compact string encoding
 	response = append(response, []byte(coordinatorHost)...)
 
-	// Coordinator port (4 bytes)
+	// Coordinator port (4 bytes) - validate port range
+	if coordinatorPort < 0 || coordinatorPort > 65535 {
+		return nil, fmt.Errorf("invalid port number: %d", coordinatorPort)
+	}
 	portBytes := make([]byte, 4)
 	binary.BigEndian.PutUint32(portBytes, uint32(coordinatorPort))
 	response = append(response, portBytes...)

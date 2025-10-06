@@ -392,6 +392,10 @@ func (s *AdminServer) GetVolumeDetails(volumeID int, server string) (*VolumeDeta
 
 // VacuumVolume performs a vacuum operation on a specific volume
 func (s *AdminServer) VacuumVolume(volumeID int, server string) error {
+	// Validate volumeID range before converting to uint32
+	if volumeID < 0 || volumeID > 0xFFFFFFFF {
+		return fmt.Errorf("volume ID out of range: %d", volumeID)
+	}
 	return s.WithMasterClient(func(client master_pb.SeaweedClient) error {
 		_, err := client.VacuumVolume(context.Background(), &master_pb.VacuumVolumeRequest{
 			VolumeId:         uint32(volumeID),

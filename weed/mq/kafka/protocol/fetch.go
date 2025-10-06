@@ -1035,6 +1035,11 @@ func (h *Handler) createRecordEntry(messageKey []byte, messageData []byte, offse
 // createRecordBatchWithCompressionAndCRC creates a Kafka record batch with proper compression and CRC
 func (h *Handler) createRecordBatchWithCompressionAndCRC(baseOffset int64, recordsData []byte, compressionType compression.CompressionCodec, recordCount int32, baseTimestampMs int64) ([]byte, error) {
 	// Create record batch header
+	// Validate size to prevent overflow
+	const maxBatchSize = 1 << 30 // 1 GB limit
+	if len(recordsData) > maxBatchSize-61 {
+		return nil, fmt.Errorf("records data too large: %d bytes", len(recordsData))
+	}
 	batch := make([]byte, 0, len(recordsData)+61) // 61 bytes for header
 
 	// Base offset (8 bytes)

@@ -124,6 +124,11 @@ func (l *DiskLocation) loadEcShards(shards []string, collection string, vid need
 			return fmt.Errorf("failed to parse ec shard name %v: %w", shard, err)
 		}
 
+		// Validate shardId range before converting to uint8
+		if shardId < 0 || shardId > 255 {
+			return fmt.Errorf("shard ID out of range: %d", shardId)
+		}
+
 		_, err = l.LoadEcShard(collection, vid, erasure_coding.ShardId(shardId))
 		if err != nil {
 			return fmt.Errorf("failed to load ec shard %v: %w", shard, err)

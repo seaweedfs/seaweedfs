@@ -539,6 +539,12 @@ func (f *MultiBatchFetcher) CreateCompressedBatch(baseOffset int64, smqRecords [
 
 // constructCompressedRecordBatch creates a record batch with compressed records
 func (f *MultiBatchFetcher) constructCompressedRecordBatch(baseOffset int64, compressedRecords []byte, codec compression.CompressionCodec, originalSize int32) []byte {
+	// Validate size to prevent overflow
+	const maxBatchSize = 1 << 30 // 1 GB limit
+	if len(compressedRecords) > maxBatchSize-100 {
+		glog.Errorf("Compressed records too large: %d bytes", len(compressedRecords))
+		return nil
+	}
 	batch := make([]byte, 0, len(compressedRecords)+100)
 
 	// Record batch header is similar to regular batch
