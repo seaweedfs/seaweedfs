@@ -304,45 +304,51 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 			if strings.HasSuffix(entry.Name, ".versions") {
 				// Extract object name from .versions directory name
 				objectKey := strings.TrimSuffix(entryPath, ".versions")
+				normalizedObjectKey := removeDuplicateSlashes(objectKey)
+				// Mark both keys as processed for backward compatibility
 				processedObjects[objectKey] = true
+				processedObjects[normalizedObjectKey] = true
 
-				glog.V(2).Infof("findVersionsRecursively: found .versions directory for object %s", objectKey)
+				glog.V(0).Infof("DEBUG: Found .versions directory for object %s (normalized: %s)", objectKey, normalizedObjectKey)
 
-				versions, err := s3a.getObjectVersionList(bucket, objectKey)
+				versions, err := s3a.getObjectVersionList(bucket, normalizedObjectKey)
 				if err != nil {
-					glog.Warningf("Failed to get versions for object %s: %v", objectKey, err)
+					glog.Warningf("Failed to get versions for object %s (normalized: %s): %v", objectKey, normalizedObjectKey, err)
 					continue
 				}
 
 				for _, version := range versions {
 					// Check for duplicate version IDs and skip if already seen
-					versionKey := objectKey + ":" + version.VersionId
+					// Use normalized key for deduplication
+					versionKey := normalizedObjectKey + ":" + version.VersionId
 					if seenVersionIds[versionKey] {
-						glog.Warningf("findVersionsRecursively: duplicate version %s for object %s detected, skipping", version.VersionId, objectKey)
+						glog.V(0).Infof("DEBUG: Skipping duplicate version %s for object %s (normalized: %s, versionKey=%s)", version.VersionId, objectKey, normalizedObjectKey, versionKey)
 						continue
 					}
 					seenVersionIds[versionKey] = true
 
 					if version.IsDeleteMarker {
 						deleteMarker := &DeleteMarkerEntry{
-							Key:          objectKey,
+							Key:          normalizedObjectKey, // Use normalized key for consistency
 							VersionId:    version.VersionId,
 							IsLatest:     version.IsLatest,
 							LastModified: version.LastModified,
-							Owner:        s3a.getObjectOwnerFromVersion(version, bucket, objectKey),
+							Owner:        s3a.getObjectOwnerFromVersion(version, bucket, normalizedObjectKey),
 						}
+						glog.V(0).Infof("DEBUG: Adding delete marker from .versions for %s (normalized: %s) versionId=%s, IsLatest=%v, versionKey=%s", objectKey, normalizedObjectKey, version.VersionId, version.IsLatest, versionKey)
 						*allVersions = append(*allVersions, deleteMarker)
 					} else {
 						versionEntry := &VersionEntry{
-							Key:          objectKey,
+							Key:          normalizedObjectKey, // Use normalized key for consistency
 							VersionId:    version.VersionId,
 							IsLatest:     version.IsLatest,
 							LastModified: version.LastModified,
 							ETag:         version.ETag,
 							Size:         version.Size,
-							Owner:        s3a.getObjectOwnerFromVersion(version, bucket, objectKey),
+							Owner:        s3a.getObjectOwnerFromVersion(version, bucket, normalizedObjectKey),
 							StorageClass: "STANDARD",
 						}
+						glog.V(0).Infof("DEBUG: Adding version from .versions for %s (normalized: %s) versionId=%s, IsLatest=%v, ETag=%s, versionKey=%s", objectKey, normalizedObjectKey, version.VersionId, version.IsLatest, version.ETag, versionKey)
 						*allVersions = append(*allVersions, versionEntry)
 					}
 				}
@@ -387,8 +393,13 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 			// This is a regular file - check if it's a pre-versioning object
 			objectKey := entryPath
 
+			// Normalize object key to ensure consistency with other version operations
+			normalizedObjectKey := removeDuplicateSlashes(objectKey)
+
 			// Skip if this object already has a .versions directory (already processed)
-			if processedObjects[objectKey] {
+			// Check both normalized and original keys for backward compatibility
+			if processedObjects[objectKey] || processedObjects[normalizedObjectKey] {
+				glog.V(0).Infof("DEBUG: Skipping object %s (normalized: %s) because it has .versions directory (already processed)", objectKey, normalizedObjectKey)
 				continue
 			}
 
@@ -400,34 +411,35 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 					versionIdFromMeta = string(vidBytes)
 				}
 			}
-			glog.V(2).Infof("findVersionsRecursively: found pre-versioning object %s (has version metadata: %v, versionId=%s)", objectKey, versionIdFromMeta != "", versionIdFromMeta)
+			glog.V(0).Infof("DEBUG: Processing regular file %s (normalized: %s, entryPath=%s, has version metadata: %v, versionId=%s)", objectKey, normalizedObjectKey, entryPath, versionIdFromMeta != "", versionIdFromMeta)
 
 			// Check if this null version should be marked as latest
 			// It's only latest if there's no .versions directory OR no latest version metadata
 			isLatest := true
-			versionsObjectPath := objectKey + ".versions"
+			versionsObjectPath := normalizedObjectKey + ".versions"
 			if versionsEntry, err := s3a.getEntry(currentPath, versionsObjectPath); err == nil {
 				// .versions directory exists, check if there's latest version metadata
 				if versionsEntry.Extended != nil {
 					if _, hasLatest := versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey]; hasLatest {
 						// There is a latest version in the .versions directory, so null is not latest
 						isLatest = false
-						glog.V(2).Infof("findVersionsRecursively: null version for %s is not latest due to versioned objects", objectKey)
+						glog.V(2).Infof("findVersionsRecursively: null version for %s is not latest due to versioned objects", normalizedObjectKey)
 					}
 				}
 			}
 
 			// Check for duplicate version IDs and skip if already seen
-			versionKey := objectKey + ":null"
+			// Use normalized key for deduplication to match how other version operations work
+			versionKey := normalizedObjectKey + ":null"
 			if seenVersionIds[versionKey] {
-				glog.Warningf("findVersionsRecursively: duplicate null version for object %s detected, skipping", objectKey)
+				glog.V(0).Infof("DEBUG: Skipping duplicate null version for object %s (normalized: %s, versionKey=%s)", objectKey, normalizedObjectKey, versionKey)
 				continue
 			}
 			seenVersionIds[versionKey] = true
 
 			etag := s3a.calculateETagFromChunks(entry.Chunks)
 			versionEntry := &VersionEntry{
-				Key:          objectKey,
+				Key:          normalizedObjectKey, // Use normalized key for consistency
 				VersionId:    "null",
 				IsLatest:     isLatest,
 				LastModified: time.Unix(entry.Attributes.Mtime, 0),
@@ -436,7 +448,7 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 				Owner:        s3a.getObjectOwnerFromEntry(entry),
 				StorageClass: "STANDARD",
 			}
-			glog.V(0).Infof("DEBUG: Adding version entry for %s with IsLatest=%v, Mtime=%d, ETag=%s", objectKey, isLatest, entry.Attributes.Mtime, etag)
+			glog.V(0).Infof("DEBUG: Adding null version entry for %s (normalized: %s) with IsLatest=%v, Mtime=%d, ETag=%s, versionKey=%s, path=%s", objectKey, normalizedObjectKey, isLatest, entry.Attributes.Mtime, etag, versionKey, entryPath)
 			*allVersions = append(*allVersions, versionEntry)
 		}
 	}
