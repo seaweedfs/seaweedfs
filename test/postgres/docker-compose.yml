@@ -16,6 +16,8 @@ services:
     volumes:
       - seaweedfs_data:/data
     command: >
+      sh -c "
+      mkdir -p /data &&
       ./weed server
       -dir=/data
       -master.volumeSizeLimitMB=50
@@ -33,6 +35,7 @@ services:
       -mq.broker=true
       -mq.agent=true
       -ip=seaweedfs
+      "
     networks:
       - seaweedfs-net
     healthcheck:
