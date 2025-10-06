@@ -1,7 +1,6 @@
 package gateway
 
 import (
-	"context"
 	"fmt"
 	"sync"
 
@@ -20,10 +19,10 @@ type mockRecord struct {
 	offset    int64
 }
 
-func (r *mockRecord) GetKey() []byte       { return r.key }
-func (r *mockRecord) GetValue() []byte     { return r.value }
-func (r *mockRecord) GetTimestamp() int64  { return r.timestamp }
-func (r *mockRecord) GetOffset() int64     { return r.offset }
+func (r *mockRecord) GetKey() []byte      { return r.key }
+func (r *mockRecord) GetValue() []byte    { return r.value }
+func (r *mockRecord) GetTimestamp() int64 { return r.timestamp }
+func (r *mockRecord) GetOffset() int64    { return r.offset }
 
 // mockSeaweedMQHandler is a stateful mock for unit testing without real SeaweedMQ
 type mockSeaweedMQHandler struct {
@@ -217,24 +216,8 @@ func (m *mockSeaweedMQHandler) Close() error { return nil }
 
 func (m *mockSeaweedMQHandler) SetProtocolHandler(h integration.ProtocolHandler) {}
 
-// newMinimalTestHandler creates a minimal handler for unit testing
+// NewMinimalTestHandler creates a minimal handler for unit testing
 // that won't actually process Kafka protocol requests
-func newMinimalTestHandler() *protocol.Handler {
+func NewMinimalTestHandler() *protocol.Handler {
 	return protocol.NewTestHandlerWithMock(newMockSeaweedMQHandler())
-}
-
-// NewTestServerForUnitTests creates a test server with a minimal mock handler for unit tests
-// This allows basic gateway functionality testing without requiring SeaweedMQ masters
-func NewTestServerForUnitTests(opts Options) *Server {
-	ctx, cancel := context.WithCancel(context.Background())
-
-	// Create a minimal handler with mock SeaweedMQ backend
-	handler := newMinimalTestHandler()
-
-	return &Server{
-		opts:    opts,
-		ctx:     ctx,
-		cancel:  cancel,
-		handler: handler,
-	}
 }
