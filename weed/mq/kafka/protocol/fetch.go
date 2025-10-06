@@ -153,8 +153,12 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 		binary.BigEndian.PutUint32(topicsCountBytes, uint32(topicsCount))
 		glog.V(4).Infof("FETCH CORR=%d: topicsCountBytes = %02x %02x %02x %02x", correlationID, topicsCountBytes[0], topicsCountBytes[1], topicsCountBytes[2], topicsCountBytes[3])
 		response = append(response, topicsCountBytes...)
-		glog.V(4).Infof("FETCH CORR=%d: After appending topics count, response length=%d, response[10-13]=%02x %02x %02x %02x",
-			correlationID, len(response), response[10], response[11], response[12], response[13])
+		if len(response) >= 14 {
+			glog.V(4).Infof("FETCH CORR=%d: After appending topics count, response length=%d, response[10-13]=%02x %02x %02x %02x",
+				correlationID, len(response), response[10], response[11], response[12], response[13])
+		} else {
+			glog.V(4).Infof("FETCH CORR=%d: After appending topics count, response length=%d", correlationID, len(response))
+		}
 	}
 
 	// Process each requested topic
