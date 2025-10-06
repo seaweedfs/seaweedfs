@@ -121,6 +121,22 @@ func NewServer(opts Options) *Server {
 	return server
 }
 
+// NewTestServerForUnitTests creates a test server with a minimal mock handler for unit tests
+// This allows basic gateway functionality testing without requiring SeaweedMQ masters
+func NewTestServerForUnitTests(opts Options) *Server {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Create a minimal handler with mock SeaweedMQ backend
+	handler := NewMinimalTestHandler()
+
+	return &Server{
+		opts:    opts,
+		ctx:     ctx,
+		cancel:  cancel,
+		handler: handler,
+	}
+}
+
 func (s *Server) Start() error {
 	ln, err := net.Listen("tcp", s.opts.Listen)
 	if err != nil {

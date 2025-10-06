@@ -230,6 +230,19 @@ func NewHandler() *Handler {
 
 // All test-related types and implementations moved to handler_test.go (test-only file)
 
+// NewTestHandlerWithMock creates a test handler with a custom SeaweedMQHandlerInterface
+// This is useful for unit tests that need a handler but don't want to connect to real SeaweedMQ
+func NewTestHandlerWithMock(mockHandler SeaweedMQHandlerInterface) *Handler {
+	return &Handler{
+		seaweedMQHandler:      mockHandler,
+		consumerOffsetStorage: nil, // Unit tests don't need offset storage
+		groupCoordinator:      consumer.NewGroupCoordinator(),
+		registeredSchemas:     make(map[string]bool),
+		topicSchemaConfigs:    make(map[string]*TopicSchemaConfig),
+		defaultPartitions:     1,
+	}
+}
+
 // NewSeaweedMQBrokerHandler creates a new handler with SeaweedMQ broker integration
 func NewSeaweedMQBrokerHandler(masters string, filerGroup string, clientHost string) (*Handler, error) {
 	return NewSeaweedMQBrokerHandlerWithDefaults(masters, filerGroup, clientHost, 4) // Default to 4 partitions
