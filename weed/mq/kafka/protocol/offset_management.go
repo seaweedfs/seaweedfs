@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/consumer"
 )
 
@@ -257,20 +256,7 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, req
 		response.Topics = append(response.Topics, topicResponse)
 	}
 
-	result := h.buildOffsetFetchResponse(response, apiVersion)
-	glog.Infof("🔵 handleOffsetFetch: apiVersion=%d, topics=%d, partitions=%d, result size=%d bytes",
-		apiVersion, len(response.Topics),
-		func() int {
-			if len(response.Topics) > 0 {
-				return len(response.Topics[0].Partitions)
-			}
-			return 0
-		}(),
-		len(result))
-	if len(result) == 36 {
-		glog.Errorf("🔵 handleOffsetFetch: Returning 36-byte result for apiVersion=%d!", apiVersion)
-	}
-	return result, nil
+	return h.buildOffsetFetchResponse(response, apiVersion), nil
 }
 
 func (h *Handler) parseOffsetCommitRequest(data []byte) (*OffsetCommitRequest, error) {
@@ -605,11 +591,6 @@ func (h *Handler) buildOffsetFetchResponse(response OffsetFetchResponse, apiVers
 	binary.BigEndian.PutUint32(topicsLengthBytes, uint32(len(response.Topics)))
 	result = append(result, topicsLengthBytes...)
 
-	// Debug: Log if we have topics but no partitions
-	if len(response.Topics) > 0 && len(response.Topics[0].Partitions) == 0 {
-		glog.Infof("⚠️  OffsetFetch v%d: Topic %s has 0 partitions!\n", apiVersion, response.Topics[0].Name)
-	}
-
 	// Topics
 	for _, topic := range response.Topics {
 		// Topic name length (2 bytes)
@@ -627,23 +608,15 @@ func (h *Handler) buildOffsetFetchResponse(response OffsetFetchResponse, apiVers
 
 		// Partitions
 		for _, partition := range topic.Partitions {
-			lenBeforePartition := len(result)
-
 			// Partition index (4 bytes)
 			indexBytes := make([]byte, 4)
 			binary.BigEndian.PutUint32(indexBytes, uint32(partition.Index))
 			result = append(result, indexBytes...)
-			lenAfterIndex := len(result)
 
 			// Committed offset (8 bytes)
 			offsetBytes := make([]byte, 8)
 			binary.BigEndian.PutUint64(offsetBytes, uint64(partition.Offset))
-			lenBeforeAppend := len(result)
 			result = append(result, offsetBytes...)
-			lenAfterOffset := len(result)
-
-			glog.Infof("📊 OffsetFetch v%d: Partition %d: index added %d bytes, offset added %d bytes (offsetBytes len=%d, offset value=%d)\n",
-				apiVersion, partition.Index, lenAfterIndex-lenBeforePartition, lenAfterOffset-lenBeforeAppend, len(offsetBytes), partition.Offset)
 
 			// Leader epoch (4 bytes) - only included in version 5+
 			if apiVersion >= 5 {
@@ -674,19 +647,6 @@ func (h *Handler) buildOffsetFetchResponse(response OffsetFetchResponse, apiVers
 		result = append(result, groupErrorBytes...)
 	}
 
-	// Debug: Log final size
-	if len(result) == 36 {
-		glog.Infof("🚨 OffsetFetch v%d: Returning 36-byte response! Topics=%d, Partitions=%d\n",
-			apiVersion, len(response.Topics),
-			func() int {
-				if len(response.Topics) > 0 {
-					return len(response.Topics[0].Partitions)
-				}
-				return 0
-			}())
-		glog.Infof("🚨 Response hex: %02x\n", result)
-	}
-
 	return result
 }
 
@@ -713,7 +673,5 @@ func (h *Handler) buildOffsetFetchErrorResponse(correlationID uint32, errorCode 
 		ErrorCode:     errorCode,
 	}
 
-	result := h.buildOffsetFetchResponse(response, 0)
-	glog.Infof("🔴 buildOffsetFetchErrorResponse: Returning %d bytes for error %d\n", len(result), errorCode)
-	return result
+	return h.buildOffsetFetchResponse(response, 0)
 }

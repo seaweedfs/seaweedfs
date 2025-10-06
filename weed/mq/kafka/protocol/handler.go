@@ -895,12 +895,10 @@ func (h *Handler) processRequestSync(req *kafkaRequest) ([]byte, error) {
 
 	case 8: // OffsetCommit
 		Debug("-> OffsetCommit")
-		glog.Infof("🟢 API 8 (OffsetCommit) v%d CORR=%d", req.apiVersion, req.correlationID)
 		response, err = h.handleOffsetCommit(req.correlationID, req.apiVersion, req.requestBody)
 
 	case 9: // OffsetFetch
 		Debug("-> OffsetFetch v%d", req.apiVersion)
-		glog.Infof("🟢 API 9 (OffsetFetch) v%d CORR=%d", req.apiVersion, req.correlationID)
 		response, err = h.handleOffsetFetch(req.correlationID, req.apiVersion, req.requestBody)
 
 	case 10: // FindCoordinator
@@ -2986,14 +2984,6 @@ func (h *Handler) writeResponseWithHeader(w *bufio.Writer, correlationID uint32,
 
 	// Write response body
 	fullResponse = append(fullResponse, responseBody...)
-
-	// CRITICAL: Detect 36-byte responses that cause "invalid length (off=32, len=36)" errors
-	if len(responseBody) == 36 {
-		glog.Errorf("🚨 API %d v%d CORR=%d: 36-BYTE RESPONSE BODY DETECTED! This causes 'invalid length' error in Sarama",
-			apiKey, apiVersion, correlationID)
-		glog.Errorf("🚨 Response body (36 bytes): %02x", responseBody)
-		glog.Errorf("🚨 Full wire response (%d bytes): %02x", len(fullResponse), fullResponse)
-	}
 
 	// Debug logging for response format (hex dump removed to reduce CPU usage)
 	if glog.V(4) {
