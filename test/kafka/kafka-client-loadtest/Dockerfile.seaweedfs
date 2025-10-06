@@ -11,9 +11,10 @@ RUN apk add --no-cache \
     tzdata \
     && rm -rf /var/cache/apk/*
 
-# Copy pre-built SeaweedFS binary (built locally for linux/amd64)
+# Copy pre-built SeaweedFS binary (built locally for linux/amd64 or linux/arm64)
 # Force cache bust: 2025-10-03-WIRE-FINAL
-COPY weed-linux-arm64 /usr/local/bin/weed
+ARG TARGETARCH=arm64
+COPY weed-linux-${TARGETARCH} /usr/local/bin/weed
 RUN chmod +x /usr/local/bin/weed
 
 # Create data directory

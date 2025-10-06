@@ -54,7 +54,8 @@ jobs:
         # 2. Starting all services (SeaweedFS, MQ broker, Schema Registry)
         # 3. Registering Avro schemas
         # 4. Running a 1-minute load test with Avro messages
-        make quick-test
+        # Override GOARCH to build for AMD64 (GitHub Actions runners are x86_64)
+        GOARCH=amd64 make quick-test
       env:
         # Docker Compose settings
         COMPOSE_HTTP_TIMEOUT: 300

@@ -8,6 +8,10 @@ DOCKER_COMPOSE := docker compose
 PROJECT_NAME := kafka-client-loadtest
 CONFIG_FILE := config/loadtest.yaml
 
+# Build configuration
+GOARCH ?= arm64
+GOOS ?= linux
+
 # Default test parameters
 TEST_MODE ?= comprehensive
 TEST_DURATION ?= 300s
@@ -55,14 +59,14 @@ build: ## Build the load test application
 	@echo "$(GREEN)Build completed$(NC)"
 
 build-binary: ## Build the SeaweedFS binary locally for Linux
-	@echo "$(BLUE)Building SeaweedFS binary locally for Linux ARM64...$(NC)"
+	@echo "$(BLUE)Building SeaweedFS binary locally for $(GOOS) $(GOARCH)...$(NC)"
 	cd ../../.. && \
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build \
+	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build \
 		-ldflags="-s -w" \
 		-tags "5BytesOffset" \
-		-o test/kafka/kafka-client-loadtest/weed-linux-arm64 \
+		-o test/kafka/kafka-client-loadtest/weed-$(GOOS)-$(GOARCH) \
 		weed/weed.go
-	@echo "$(GREEN)Binary build completed: weed-linux-arm64$(NC)"
+	@echo "$(GREEN)Binary build completed: weed-$(GOOS)-$(GOARCH)$(NC)"
 
 build-gateway: build-binary ## Build the Kafka Gateway with latest changes
 	@echo "$(BLUE)Building Kafka Gateway Docker image...$(NC)"
