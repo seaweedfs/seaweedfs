@@ -2,6 +2,7 @@ package log_buffer
 
 import (
 	"bytes"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -174,10 +175,10 @@ func (logBuffer *LogBuffer) AddLogEntryToBuffer(logEntry *filer_pb.LogEntry) {
 		toFlush = logBuffer.copyToFlush()
 		logBuffer.startTime = ts
 		if len(logBuffer.buf) < size+4 {
-			// Validate size to prevent overflow BEFORE computation
-			const maxBufferSize = 1 << 30 // 1 GB limit
-			// Check size bounds before any arithmetic to prevent overflow
-			if size < 0 || size > maxBufferSize/2-2 {
+			// Validate size to prevent integer overflow in computation BEFORE allocation
+			const maxBufferSize = 1 << 30 // 1 GiB practical limit
+			// Ensure 2*size + 4 won't overflow int and stays within practical bounds
+			if size < 0 || size > (math.MaxInt-4)/2 || size > (maxBufferSize-4)/2 {
 				glog.Errorf("Buffer size out of valid range: %d bytes, skipping", size)
 				return
 			}
@@ -251,10 +252,10 @@ func (logBuffer *LogBuffer) AddDataToBuffer(partitionKey, data []byte, processin
 		toFlush = logBuffer.copyToFlush()
 		logBuffer.startTime = ts
 		if len(logBuffer.buf) < size+4 {
-			// Validate size to prevent overflow BEFORE computation
-			const maxBufferSize = 1 << 30 // 1 GB limit
-			// Check size bounds before any arithmetic to prevent overflow
-			if size < 0 || size > maxBufferSize/2-2 {
+			// Validate size to prevent integer overflow in computation BEFORE allocation
+			const maxBufferSize = 1 << 30 // 1 GiB practical limit
+			// Ensure 2*size + 4 won't overflow int and stays within practical bounds
+			if size < 0 || size > (math.MaxInt-4)/2 || size > (maxBufferSize-4)/2 {
 				glog.Errorf("Buffer size out of valid range: %d bytes, skipping", size)
 				return
 			}
