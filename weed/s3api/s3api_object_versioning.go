@@ -393,7 +393,14 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 			}
 
 			// This is a pre-versioning object - treat it as a version with VersionId="null"
-			glog.V(2).Infof("findVersionsRecursively: found pre-versioning object %s", objectKey)
+			// Check if it has version metadata (from suspended versioning)
+			var versionIdFromMeta string
+			if entry.Extended != nil {
+				if vidBytes, ok := entry.Extended[s3_constants.ExtVersionIdKey]; ok {
+					versionIdFromMeta = string(vidBytes)
+				}
+			}
+			glog.V(2).Infof("findVersionsRecursively: found pre-versioning object %s (has version metadata: %v, versionId=%s)", objectKey, versionIdFromMeta != "", versionIdFromMeta)
 
 			// Check if this null version should be marked as latest
 			// It's only latest if there's no .versions directory OR no latest version metadata
@@ -410,6 +417,14 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 				}
 			}
 
+			// Check for duplicate version IDs and skip if already seen
+			versionKey := objectKey + ":null"
+			if seenVersionIds[versionKey] {
+				glog.Warningf("findVersionsRecursively: duplicate null version for object %s detected, skipping", objectKey)
+				continue
+			}
+			seenVersionIds[versionKey] = true
+
 			etag := s3a.calculateETagFromChunks(entry.Chunks)
 			versionEntry := &VersionEntry{
 				Key:          objectKey,
@@ -421,6 +436,7 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 				Owner:        s3a.getObjectOwnerFromEntry(entry),
 				StorageClass: "STANDARD",
 			}
+			glog.V(0).Infof("DEBUG: Adding version entry for %s with IsLatest=%v, Mtime=%d, ETag=%s", objectKey, isLatest, entry.Attributes.Mtime, etag)
 			*allVersions = append(*allVersions, versionEntry)
 		}
 	}
