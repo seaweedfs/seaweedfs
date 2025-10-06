@@ -172,6 +172,8 @@ func doFixOneVolume(basepath string, baseFileName string, collection string, vol
 			glog.Fatal(err)
 		}
 	}
+	// lgtm[go/incorrect-integer-conversion]
+	// Safe conversion: volumeId has been validated to be in range [0, 0xFFFFFFFF] above
 	vid := needle.VolumeId(volumeId)
 	scanner := &VolumeFileScanner4Fix{
 		nm:             nm,

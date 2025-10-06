@@ -174,13 +174,15 @@ func (logBuffer *LogBuffer) AddLogEntryToBuffer(logEntry *filer_pb.LogEntry) {
 		toFlush = logBuffer.copyToFlush()
 		logBuffer.startTime = ts
 		if len(logBuffer.buf) < size+4 {
-			// Validate size to prevent overflow
+			// Validate size to prevent overflow BEFORE computation
 			const maxBufferSize = 1 << 30 // 1 GB limit
-			newSize := 2*size + 4
-			if size > maxBufferSize/2-2 || newSize < 0 {
-				glog.Errorf("Buffer size too large: %d bytes, skipping", size)
+			// Check size bounds before any arithmetic to prevent overflow
+			if size < 0 || size > maxBufferSize/2-2 {
+				glog.Errorf("Buffer size out of valid range: %d bytes, skipping", size)
 				return
 			}
+			// Safe to compute now that we've validated size is in valid range
+			newSize := 2*size + 4
 			logBuffer.buf = make([]byte, newSize)
 		}
 	}
@@ -249,13 +251,15 @@ func (logBuffer *LogBuffer) AddDataToBuffer(partitionKey, data []byte, processin
 		toFlush = logBuffer.copyToFlush()
 		logBuffer.startTime = ts
 		if len(logBuffer.buf) < size+4 {
-			// Validate size to prevent overflow
+			// Validate size to prevent overflow BEFORE computation
 			const maxBufferSize = 1 << 30 // 1 GB limit
-			newSize := 2*size + 4
-			if size > maxBufferSize/2-2 || newSize < 0 {
-				glog.Errorf("Buffer size too large: %d bytes, skipping", size)
+			// Check size bounds before any arithmetic to prevent overflow
+			if size < 0 || size > maxBufferSize/2-2 {
+				glog.Errorf("Buffer size out of valid range: %d bytes, skipping", size)
 				return
 			}
+			// Safe to compute now that we've validated size is in valid range
+			newSize := 2*size + 4
 			logBuffer.buf = make([]byte, newSize)
 		}
 	}
