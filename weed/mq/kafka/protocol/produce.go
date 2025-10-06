@@ -369,8 +369,7 @@ func (h *Handler) extractAllRecords(recordSetData []byte) []struct{ Key, Value [
 
 	// Iterate records
 	for i := 0; i < recordsCount && offset < len(recordsData); i++ {
-		// record_length is a SIGNED zigzag-encoded varint (Kafka uses ByteUtils.writeVarint which applies zigzag)
-		// NOT an unsigned varint as the spec comment suggests!
+		// record_length is a SIGNED zigzag-encoded varint (like all varints in Kafka record format)
 		recLen, n := decodeVarint(recordsData[offset:])
 		fmt.Printf("🔥 EXTRACT: Record %d - recLen=%d (zigzag decoded), n=%d, offset=%d\n", i, recLen, n, offset)
 		if n == 0 || recLen <= 0 {
