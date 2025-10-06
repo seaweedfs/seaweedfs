@@ -15,35 +15,24 @@ services:
       - "27777:17777" # MQ Broker port (mapped to avoid conflicts)
     volumes:
       - seaweedfs_data:/data
-    entrypoint: ["/bin/sh", "-c"]
     command:
-      - |
-        set -x
-        echo "=== Starting SeaweedFS Server ==="
-        echo "Current directory: $(pwd)"
-        echo "Checking /data directory..."
-        mkdir -p /data
-        ls -la /data
-        echo "Checking weed binary..."
-        ls -la ./weed
-        echo "Starting weed server with arguments..."
-        exec ./weed server \
-          -dir=/data \
-          -master.volumeSizeLimitMB=50 \
-          -master.port=9333 \
-          -metricsPort=9533 \
-          -volume.max=0 \
-          -volume.port=8085 \
-          -volume.preStopSeconds=1 \
-          -filer=true \
-          -filer.port=8888 \
-          -s3=true \
-          -s3.port=8333 \
-          -webdav=false \
-          -s3.allowEmptyFolder=false \
-          -mq.broker=true \
-          -mq.agent=true \
-          -ip=seaweedfs 2>&1
+      - server
+      - -dir=/data
+      - -master.volumeSizeLimitMB=50
+      - -master.port=9333
+      - -metricsPort=9533
+      - -volume.max=0
+      - -volume.port=8085
+      - -volume.preStopSeconds=1
+      - -filer=true
+      - -filer.port=8888
+      - -s3=true
+      - -s3.port=8333
+      - -webdav=false
+      - -s3.allowEmptyFolder=false
+      - -mq.broker=true
+      - -mq.agent=true
+      - -ip=seaweedfs
     networks:
       - seaweedfs-net
     healthcheck:
