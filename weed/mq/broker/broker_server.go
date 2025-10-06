@@ -39,6 +39,11 @@ func (option *MessageQueueBrokerOption) BrokerAddress() pb.ServerAddress {
 	return pb.NewServerAddress(option.Ip, option.Port, 0)
 }
 
+type topicExistsCacheEntry struct {
+	exists    bool
+	expiresAt time.Time
+}
+
 type MessageQueueBroker struct {
 	mq_pb.UnimplementedSeaweedMessagingServer
 	option            *MessageQueueBrokerOption
@@ -56,6 +61,11 @@ type MessageQueueBroker struct {
 	// Removed gatewayRegistry - no longer needed
 	accessLock sync.Mutex
 	fca        *filer_client.FilerClientAccessor
+	// TopicExists cache to reduce filer lookups
+	// Caches both positive (topic exists) and negative (topic doesn't exist) results
+	topicExistsCache    map[string]*topicExistsCacheEntry
+	topicExistsCacheMu  sync.RWMutex
+	topicExistsCacheTTL time.Duration
 }
 
 func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.DialOption) (mqBroker *MessageQueueBroker, err error) {
@@ -64,16 +74,16 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 	subCoordinator := sub_coordinator.NewSubCoordinator()
 
 	mqBroker = &MessageQueueBroker{
-		option:            option,
-		grpcDialOption:    grpcDialOption,
-		MasterClient:      wdclient.NewMasterClient(grpcDialOption, option.FilerGroup, cluster.BrokerType, option.BrokerAddress(), option.DataCenter, option.Rack, *pb.NewServiceDiscoveryFromMap(option.Masters)),
-		filers:            make(map[pb.ServerAddress]struct{}),
-		localTopicManager: topic.NewLocalTopicManager(),
-		PubBalancer:       pubBalancer,
-		SubCoordinator:    subCoordinator,
-		// Initialize offset manager immediately with default filer address
-		// This ensures offset assignment works even before filer discovery completes
-		offsetManager: nil, // Will be initialized below
+		option:              option,
+		grpcDialOption:      grpcDialOption,
+		MasterClient:        wdclient.NewMasterClient(grpcDialOption, option.FilerGroup, cluster.BrokerType, option.BrokerAddress(), option.DataCenter, option.Rack, *pb.NewServiceDiscoveryFromMap(option.Masters)),
+		filers:              make(map[pb.ServerAddress]struct{}),
+		localTopicManager:   topic.NewLocalTopicManager(),
+		PubBalancer:         pubBalancer,
+		SubCoordinator:      subCoordinator,
+		offsetManager:       nil, // Will be initialized below
+		topicExistsCache:    make(map[string]*topicExistsCacheEntry),
+		topicExistsCacheTTL: 30 * time.Second, // Cache for 30 seconds to reduce filer load
 	}
 	// Create FilerClientAccessor that adapts broker's single filer to the new multi-filer interface
 	fca := &filer_client.FilerClientAccessor{
