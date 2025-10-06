@@ -38,7 +38,7 @@ services:
     networks:
       - seaweedfs-net
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://seaweedfs:9333/cluster/status"]
+      test: ["CMD", "curl", "--fail", "--silent", "http://seaweedfs:9333/cluster/status"]
       interval: 10s
       timeout: 5s
       retries: 5
