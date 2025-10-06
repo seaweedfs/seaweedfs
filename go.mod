@@ -156,7 +156,7 @@ require (
 	github.com/rdleal/intervalst v1.5.0
 	github.com/redis/go-redis/v9 v9.12.1
 	github.com/schollz/progressbar/v3 v3.18.0
-	github.com/shirou/gopsutil/v3 v3.24.5
+	github.com/shirou/gopsutil/v4 v4.25.9
 	github.com/tarantool/go-tarantool/v2 v2.4.0
 	github.com/tikv/client-go/v2 v2.0.7
 	github.com/xeipuuv/gojsonschema v1.2.0
@@ -297,7 +297,7 @@ require (
 	github.com/d4l3k/messagediff v1.2.1 // indirect
 	github.com/dgryski/go-farm v0.0.0-20200201041132-a6ae2369ad13 // indirect
 	github.com/dropbox/dropbox-sdk-go-unofficial/v6 v6.0.5 // indirect
-	github.com/ebitengine/purego v0.8.4 // indirect
+	github.com/ebitengine/purego v0.9.0 // indirect
 	github.com/elastic/gosigar v0.14.3 // indirect
 	github.com/emersion/go-message v0.18.2 // indirect
 	github.com/emersion/go-vcard v0.0.0-20241024213814-c9703dde27ff // indirect
@@ -400,8 +400,6 @@ require (
 	github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06 // indirect
 	github.com/sagikazarmark/locafero v0.7.0 // indirect
 	github.com/samber/lo v1.51.0 // indirect
-	github.com/shirou/gopsutil/v4 v4.25.7 // indirect
-	github.com/shoenig/go-m1cpu v0.1.6 // indirect
 	github.com/skratchdot/open-golang v0.0.0-20200116055534-eef842397966 // indirect
 	github.com/smartystreets/goconvey v1.8.1 // indirect
 	github.com/sony/gobreaker v1.0.0 // indirect
