@@ -3618,54 +3618,6 @@ func (h *Handler) buildConfigEntry(config ConfigEntry, apiVersion uint16) []byte
 	return entry
 }
 
-// ProduceSchemaBasedRecord exposes the schema-based record production for testing
-func (h *Handler) ProduceSchemaBasedRecord(topic string, partition int32, key []byte, value []byte) (int64, error) {
-	return h.produceSchemaBasedRecord(topic, partition, key, value)
-}
-
-// DecodeRecordValueToKafkaMessage exposes the RecordValue decoding for testing
-func (h *Handler) DecodeRecordValueToKafkaMessage(topicName string, recordValueBytes []byte) []byte {
-	return h.decodeRecordValueToKafkaMessage(topicName, recordValueBytes)
-}
-
-// GetSeaweedMQHandler exposes the SeaweedMQ handler for testing
-func (h *Handler) GetSeaweedMQHandler() SeaweedMQHandlerInterface {
-	return h.seaweedMQHandler
-}
-
-// PreCreateSystemTopics creates essential system topics that external services expect to exist
-// This is called during gateway startup to ensure topics like _schemas are available before
-// services like Schema Registry attempt to use them
-func (h *Handler) PreCreateSystemTopics() error {
-	Debug("Pre-creating system topics...")
-
-	// List of system topics that should be pre-created
-	systemTopics := []string{"_schemas"}
-
-	for _, topicName := range systemTopics {
-		if h.seaweedMQHandler.TopicExists(topicName) {
-			Debug("System topic %s already exists, skipping", topicName)
-			continue
-		}
-
-		Debug("Creating system topic %s", topicName)
-		if err := h.createTopicWithSchemaSupport(topicName, 1); err != nil {
-			Debug("Failed to create system topic %s: %v", topicName, err)
-			return fmt.Errorf("create system topic %s: %w", topicName, err)
-		}
-		Debug("Successfully created system topic %s", topicName)
-	}
-
-	Debug("System topics pre-creation completed")
-	return nil
-}
-
-// registerSchemaViaBrokerAPI registers the translated schema via the broker's ConfigureTopic API
-// Only the gateway leader performs the registration to avoid concurrent updates.
-func (h *Handler) registerSchemaViaBrokerAPI(topicName string, recordType *schema_pb.RecordType) error {
-	return h.registerSchemasViaBrokerAPI(topicName, recordType, nil)
-}
-
 // registerSchemasViaBrokerAPI registers both key and value schemas via the broker's ConfigureTopic API
 // Only the gateway leader performs the registration to avoid concurrent updates.
 func (h *Handler) registerSchemasViaBrokerAPI(topicName string, valueRecordType *schema_pb.RecordType, keyRecordType *schema_pb.RecordType) error {
