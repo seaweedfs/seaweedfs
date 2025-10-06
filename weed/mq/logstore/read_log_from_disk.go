@@ -109,11 +109,9 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 			if cachedData, _, found := fileCache.Get(cacheKey); found {
 				if cachedData == nil {
 					// Negative cache hit - data doesn't exist
-					glog.V(3).Infof("📦 CACHE HIT (NEGATIVE): Skipping non-existent %s/%s", entry.Name, chunk.FileId)
 					continue
 				}
 				// Positive cache hit - data exists
-				glog.V(3).Infof("📦 CACHE HIT: Using cached data for %s/%s (size=%d)", entry.Name, chunk.FileId, len(cachedData))
 				if processedTsNs, err = eachChunkFn(cachedData, eachLogEntryFn, starTsNs, stopTsNs, startOffset, isOffsetBased); err != nil {
 					glog.Errorf("DEBUG: eachChunkFn failed on cached data: %v", err)
 					return
@@ -133,7 +131,6 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 
 					// Store in cache for future reads
 					fileCache.Put(cacheKey, data, startOffset)
-					glog.V(3).Infof("📦 CACHE PUT: Stored data for %s/%s (size=%d)", entry.Name, chunk.FileId, len(data))
 
 					if processedTsNs, err = eachChunkFn(data, eachLogEntryFn, starTsNs, stopTsNs, startOffset, isOffsetBased); err != nil {
 						glog.Errorf("DEBUG: eachChunkFn failed: %v", err)
@@ -147,7 +144,6 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 			if !processed {
 				// Store negative cache entry - data doesn't exist or all URLs failed
 				fileCache.Put(cacheKey, nil, startOffset)
-				glog.V(3).Infof("📦 CACHE PUT (NEGATIVE): Data not found for %s/%s", entry.Name, chunk.FileId)
 				glog.Errorf("DEBUG: no data processed for %s %s - all URLs failed", entry.Name, chunk.FileId)
 				err = fmt.Errorf("no data processed for %s %s", entry.Name, chunk.FileId)
 				return
@@ -168,17 +164,6 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 		var startOffset int64
 		if isOffsetBased {
 			startOffset = startPosition.Offset
-			// DETAILED LOGGING for _schemas topic and offset 0-2
-			if strings.Contains(t.Name, "_schemas") || startOffset <= 2 {
-				glog.Infof("📍 OFFSET-BASED READ START: topic=%s partition=%v startOffset=%d startPosition.Time=%v partitionDir=%s",
-					t.Name, p, startOffset, startPosition.Time, partitionDir)
-			} else {
-				glog.V(1).Infof("📍 OFFSET-BASED READ: topic=%s partition=%v startOffset=%d startPosition.Time=%v",
-					t.Name, p, startOffset, startPosition.Time)
-			}
-		} else {
-			glog.V(1).Infof("📍 TIMESTAMP-BASED READ: topic=%s partition=%v startTime=%v startTsNs=%d",
-				t.Name, p, startPosition.Time, startTsNs)
 		}
 
 		// OPTIMIZATION: For offset-based reads, collect all files with their offset ranges first
@@ -189,20 +174,6 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 		err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 			// First pass: collect all relevant files with their metadata
 			return filer_pb.SeaweedList(context.Background(), client, partitionDir, "", func(entry *filer_pb.Entry, isLast bool) error {
-				// DETAILED LOGGING for _schemas topic
-				if strings.Contains(t.Name, "_schemas") && isOffsetBased && startOffset <= 2 {
-					glog.Infof("📂 FILE FOUND: %s isDir=%v size=%d chunks=%d",
-						entry.Name, entry.IsDirectory, len(entry.Content), len(entry.Chunks))
-					if entry.Extended != nil {
-						if minBytes, hasMin := entry.Extended["offset_min"]; hasMin && len(minBytes) == 8 {
-							if maxBytes, hasMax := entry.Extended["offset_max"]; hasMax && len(maxBytes) == 8 {
-								fileMin := int64(binary.BigEndian.Uint64(minBytes))
-								fileMax := int64(binary.BigEndian.Uint64(maxBytes))
-								glog.Infof("   📊 Offset range: [%d-%d]", fileMin, fileMax)
-							}
-						}
-					}
-				}
 
 				if entry.IsDirectory {
 					return nil
@@ -227,16 +198,12 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 
 							// Skip files that don't contain our offset range
 							if startOffset > fileMaxOffset {
-								glog.V(2).Infof("⏭️  SKIP: File %s [%d-%d] is before requested offset %d",
-									entry.Name, fileMinOffset, fileMaxOffset, startOffset)
 								return nil
 							}
 
 							// If we haven't found the start file yet, check if this file contains it
 							if !foundStartFile && startOffset >= fileMinOffset && startOffset <= fileMaxOffset {
 								foundStartFile = true
-								glog.V(1).Infof("🎯 FOUND START FILE: %s contains offset %d [%d-%d]",
-									entry.Name, startOffset, fileMinOffset, fileMaxOffset)
 							}
 						}
 					}
@@ -261,23 +228,11 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 		})
 
 		if err != nil {
-			// DETAILED LOGGING for _schemas topic
-			if strings.Contains(t.Name, "_schemas") && isOffsetBased && startOffset <= 2 {
-				glog.Errorf("❌ FILE LISTING ERROR: topic=%s partition=%v startOffset=%d error=%v",
-					t.Name, p, startOffset, err)
-			}
 			return
-		}
-
-		// DETAILED LOGGING for _schemas topic
-		if strings.Contains(t.Name, "_schemas") && isOffsetBased && startOffset <= 2 {
-			glog.Infof("📋 FILE LISTING COMPLETE: topic=%s partition=%v startOffset=%d candidateFiles=%d",
-				t.Name, p, startOffset, len(candidateFiles))
 		}
 
 		// OPTIMIZATION: For offset-based reads with many files, use binary search to find start file
 		if isOffsetBased && len(candidateFiles) > 10 {
-			glog.V(1).Infof("🔍 BINARY SEARCH: %d candidate files, searching for offset %d", len(candidateFiles), startOffset)
 			// Binary search to find the first file that might contain our offset
 			left, right := 0, len(candidateFiles)-1
 			startIdx := 0
@@ -301,8 +256,6 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 						} else {
 							// Found the file containing our offset
 							startIdx = mid
-							glog.V(1).Infof("✅ BINARY SEARCH: Found file at index %d: %s [%d-%d]",
-								mid, entry.Name, fileMinOffset, fileMaxOffset)
 							break
 						}
 					} else {
@@ -314,7 +267,6 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 			}
 
 			// Process files starting from the found index
-			glog.V(1).Infof("📂 Processing %d files starting from index %d", len(candidateFiles)-startIdx, startIdx)
 			candidateFiles = candidateFiles[startIdx:]
 		}
 
@@ -347,14 +299,6 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 		}
 
 		if isOffsetBased && filesProcessed > 0 {
-			// DETAILED LOGGING for _schemas topic
-			if strings.Contains(t.Name, "_schemas") || startOffset <= 2 {
-				glog.Infof("✅ OFFSET-BASED SUCCESS: topic=%s partition=%v processed=%d files (out of %d candidates), lastOffset=%d, startOffset=%d",
-					t.Name, p, filesProcessed, len(candidateFiles), lastProcessedOffset, startOffset)
-			} else {
-				glog.Infof("✅ OFFSET-BASED: Processed %d files (out of %d candidates), last offset=%d, startOffset was %d",
-					filesProcessed, len(candidateFiles), lastProcessedOffset, startOffset)
-			}
 			// Return a position that indicates we've read all disk data up to lastProcessedOffset
 			// This prevents the subscription from calling ReadFromDiskFn again for these offsets
 			lastReadPosition = log_buffer.NewMessagePositionFromOffset(lastProcessedOffset + 1)
@@ -364,13 +308,9 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 			if isOffsetBased {
 				// For offset-based reads with no data, return the requested offset
 				// This signals "I've checked, there's no data at this offset, move forward"
-				glog.V(2).Infof("📭 NO DATA: topic=%s partition=%v startOffset=%d - no files to process (already consumed or doesn't exist)",
-					t.Name, p, startOffset)
 				lastReadPosition = log_buffer.NewMessagePositionFromOffset(startOffset)
 			} else {
 				// For timestamp-based reads, return error (-2)
-				glog.V(2).Infof("❌ NO DATA: topic=%s partition=%v startTs=%v - no files to process",
-					t.Name, p, startPosition.Time)
 				lastReadPosition = log_buffer.NewMessagePosition(processedTsNs, -2)
 			}
 		}

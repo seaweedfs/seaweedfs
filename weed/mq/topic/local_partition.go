@@ -85,7 +85,6 @@ func (p *LocalPartition) Subscribe(clientName string, startPosition log_buffer.M
 	// CRITICAL FIX: Use offset-based functions if startPosition is offset-based
 	// This allows reading historical data by offset, not just by timestamp
 	if startPosition.IsOffsetBased {
-		glog.V(0).Infof("🔍 SUBSCRIBE: Using offset-based subscription for %s at offset %d", clientName, startPosition.GetOffset())
 		// Wrap eachMessageFn to match the signature expected by LoopProcessLogDataWithOffset
 		eachMessageWithOffsetFn := func(logEntry *filer_pb.LogEntry, offset int64) (bool, error) {
 			return eachMessageFn(logEntry)
@@ -95,14 +94,12 @@ func (p *LocalPartition) Subscribe(clientName string, startPosition log_buffer.M
 		// This prevents the busy loop that was causing 1388% Filer CPU
 
 		// Step 1: Read all available historical data from disk (one-time catchup)
-		glog.V(4).Infof("📂 SUBSCRIBE: Reading historical data from disk for %s at offset %d", clientName, startPosition.Offset)
 		processedPosition, isDone, readPersistedLogErr = p.LogBuffer.ReadFromDiskFn(startPosition, 0, eachMessageFn)
 		if readPersistedLogErr != nil {
 			glog.V(2).Infof("%s read %v persisted log: %v", clientName, p.Partition, readPersistedLogErr)
 			return readPersistedLogErr
 		}
 		if isDone {
-			glog.V(4).Infof("✅ SUBSCRIBE: ReadFromDiskFn returned isDone=true for %s", clientName)
 			return nil
 		}
 
@@ -110,7 +107,6 @@ func (p *LocalPartition) Subscribe(clientName string, startPosition log_buffer.M
 		// CRITICAL FIX: For offset-based reads, Time is zero, so check Offset instead
 		if processedPosition.Time.UnixNano() != 0 || processedPosition.IsOffsetBased {
 			startPosition = processedPosition
-			glog.V(4).Infof("📂 SUBSCRIBE: Disk read complete, updated position to %v (offset %d)", startPosition, startPosition.Offset)
 		}
 
 		// Step 2: Enter the main loop - read from in-memory buffer, occasionally checking disk
@@ -120,7 +116,6 @@ func (p *LocalPartition) Subscribe(clientName string, startPosition log_buffer.M
 			processedPosition, isDone, readInMemoryLogErr = p.LogBuffer.LoopProcessLogDataWithOffset(clientName, startPosition, 0, onNoMessageFn, eachMessageWithOffsetFn)
 
 			if isDone {
-				glog.V(4).Infof("✅ SUBSCRIBE: LoopProcessLogDataWithOffset returned isDone=true for %s", clientName)
 				return nil
 			}
 
@@ -140,7 +135,6 @@ func (p *LocalPartition) Subscribe(clientName string, startPosition log_buffer.M
 					return readPersistedLogErr
 				}
 				if isDone {
-					glog.V(4).Infof("✅ SUBSCRIBE: ReadFromDiskFn returned isDone=true after flush for %s", clientName)
 					return nil
 				}
 
@@ -148,7 +142,6 @@ func (p *LocalPartition) Subscribe(clientName string, startPosition log_buffer.M
 				// CRITICAL FIX: For offset-based reads, Time is zero, so check Offset instead
 				if processedPosition.Time.UnixNano() != 0 || processedPosition.IsOffsetBased {
 					startPosition = processedPosition
-					glog.V(4).Infof("📂 SUBSCRIBE: Disk catchup complete, position now at offset %d", startPosition.Offset)
 				}
 				// Loop continues - back to reading from in-memory buffer
 				continue

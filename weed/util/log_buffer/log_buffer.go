@@ -115,10 +115,6 @@ func (logBuffer *LogBuffer) AddToBuffer(message *mq_pb.DataMessage) {
 
 // AddLogEntryToBuffer directly adds a LogEntry to the buffer, preserving offset information
 func (logBuffer *LogBuffer) AddLogEntryToBuffer(logEntry *filer_pb.LogEntry) {
-	// DEBUG: Log ALL writes to understand buffer naming
-	glog.Infof("📝 ADD TO BUFFER: buffer=%s offset=%d keyLen=%d valueLen=%d",
-		logBuffer.name, logEntry.Offset, len(logEntry.Key), len(logEntry.Data))
-
 	logEntryData, _ := proto.Marshal(logEntry)
 
 	var toFlush *dataToFlush
@@ -345,7 +341,6 @@ func (logBuffer *LogBuffer) copyToFlush() *dataToFlush {
 		// CRITICAL: logBuffer.offset is the "next offset to assign", so last offset in buffer is offset-1
 		lastOffsetInBuffer := logBuffer.offset - 1
 		logBuffer.buf = logBuffer.prevBuffers.SealBuffer(logBuffer.startTime, logBuffer.stopTime, logBuffer.buf, logBuffer.pos, logBuffer.bufferStartOffset, lastOffsetInBuffer)
-		glog.V(0).Infof("🔒 SEALED BUFFER: [%d-%d] with %d bytes", logBuffer.bufferStartOffset, lastOffsetInBuffer, logBuffer.pos)
 		logBuffer.startTime = time.Unix(0, 0)
 		logBuffer.stopTime = time.Unix(0, 0)
 		logBuffer.pos = 0
@@ -382,41 +377,28 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 	defer logBuffer.RUnlock()
 
 	isOffsetBased := lastReadPosition.IsOffsetBased
-	glog.V(4).Infof("🔍 DEBUG: ReadFromBuffer called for %s, lastReadPosition=%v isOffsetBased=%v offset=%d",
-		logBuffer.name, lastReadPosition, isOffsetBased, lastReadPosition.Offset)
-	glog.V(4).Infof("🔍 DEBUG: Buffer state - startTime=%v, stopTime=%v, pos=%d, offset=%d", logBuffer.startTime, logBuffer.stopTime, logBuffer.pos, logBuffer.offset)
-	glog.V(4).Infof("🔍 DEBUG: PrevBuffers count=%d", len(logBuffer.prevBuffers.buffers))
 
 	// CRITICAL FIX: For offset-based subscriptions, use offset comparisons, not time comparisons!
 	if isOffsetBased {
 		requestedOffset := lastReadPosition.Offset
-		glog.V(4).Infof("🔥 OFFSET-BASED READ: Requested offset=%d, current buffer [%d-%d]",
-			requestedOffset, logBuffer.bufferStartOffset, logBuffer.offset)
 
 		// Check if we have any data in memory
 		if logBuffer.pos == 0 && len(logBuffer.prevBuffers.buffers) == 0 {
-			glog.V(4).Infof("🔍 DEBUG: No memory data available - returning nil")
 			return nil, -2, nil
 		}
 
 		// Check if the requested offset is in the current buffer
 		if requestedOffset >= logBuffer.bufferStartOffset && requestedOffset <= logBuffer.offset {
-			glog.V(0).Infof("✅ OFFSET-BASED: Returning current buffer [%d-%d] for offset %d",
-				logBuffer.bufferStartOffset, logBuffer.offset, requestedOffset)
 			return copiedBytes(logBuffer.buf[:logBuffer.pos]), logBuffer.offset, nil
 		}
 
 		// Check previous buffers for the requested offset
-		for i, buf := range logBuffer.prevBuffers.buffers {
+		for _, buf := range logBuffer.prevBuffers.buffers {
 			if requestedOffset >= buf.startOffset && requestedOffset <= buf.offset {
 				// CRITICAL FIX: If the prevBuffer is empty (flushed to disk), read from disk
 				if buf.size == 0 {
-					glog.V(4).Infof("⚠️  OFFSET-BASED: prevBuffer[%d] [%d-%d] is empty (flushed) - reading from disk for offset %d",
-						i, buf.startOffset, buf.offset, requestedOffset)
 					return nil, -2, ResumeFromDiskError
 				}
-				glog.V(0).Infof("✅ OFFSET-BASED: Returning prevBuffer[%d] [%d-%d] for offset %d",
-					i, buf.startOffset, buf.offset, requestedOffset)
 				return copiedBytes(buf.buf[:buf.size]), buf.offset, nil
 			}
 		}
@@ -427,8 +409,6 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 			if len(logBuffer.prevBuffers.buffers) > 0 {
 				firstBuf := logBuffer.prevBuffers.buffers[0]
 				if requestedOffset < firstBuf.startOffset {
-					glog.V(4).Infof("⚠️  OFFSET-BASED: Requested offset %d < earliest buffer offset %d - data might be on disk",
-						requestedOffset, firstBuf.startOffset)
 					return nil, -2, ResumeFromDiskError
 				}
 			}
@@ -436,13 +416,10 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 
 		if requestedOffset > logBuffer.offset {
 			// Future data, not available yet
-			glog.V(4).Infof("🔍 DEBUG: Requested offset %d > latest offset %d - returning nil", requestedOffset, logBuffer.offset)
 			return nil, logBuffer.offset, nil
 		}
 
-		// This shouldn't happen, but log it
-		glog.Errorf("⚠️  OFFSET-BASED: Could not find buffer for offset %d (current: [%d-%d])",
-			requestedOffset, logBuffer.bufferStartOffset, logBuffer.offset)
+		// Offset not found - return nil
 		return nil, logBuffer.offset, nil
 	}
 
@@ -461,21 +438,17 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 	if !logBuffer.startTime.IsZero() {
 		tsMemory = logBuffer.startTime
 		tsBatchIndex = logBuffer.offset
-		glog.V(4).Infof("🔍 DEBUG: Current buffer has data - startTime=%v, offset=%d", tsMemory, tsBatchIndex)
 	}
-	for i, prevBuf := range logBuffer.prevBuffers.buffers {
+	for _, prevBuf := range logBuffer.prevBuffers.buffers {
 		if !prevBuf.startTime.IsZero() && prevBuf.startTime.Before(tsMemory) {
 			tsMemory = prevBuf.startTime
 			tsBatchIndex = prevBuf.offset
-			glog.V(4).Infof("🔍 DEBUG: PrevBuffer[%d] has earlier data - startTime=%v, offset=%d", i, tsMemory, tsBatchIndex)
 		}
 	}
 	if tsMemory.IsZero() { // case 2.2
-		glog.V(4).Infof("🔍 DEBUG: No memory data available - returning nil")
 		return nil, -2, nil
 	} else if lastReadPosition.Time.Before(tsMemory) && lastReadPosition.Offset+1 < tsBatchIndex { // case 2.3
 		if !logBuffer.lastFlushDataTime.IsZero() {
-			glog.V(4).Infof("🔍 DEBUG: Need to resume from disk - lastFlushDataTime=%v", logBuffer.lastFlushDataTime)
 			glog.V(0).Infof("resume with last flush time: %v", logBuffer.lastFlushDataTime)
 			return nil, -2, ResumeFromDiskError
 		}
@@ -484,11 +457,9 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 	// the following is case 2.1
 
 	if lastReadPosition.Time.Equal(logBuffer.stopTime) {
-		glog.V(4).Infof("🔍 DEBUG: lastReadPosition equals stopTime - returning nil")
 		return nil, logBuffer.offset, nil
 	}
 	if lastReadPosition.Time.After(logBuffer.stopTime) {
-		glog.V(4).Infof("🔍 DEBUG: lastReadPosition after stopTime - returning nil")
 		// glog.Fatalf("unexpected last read time %v, older than latest %v", lastReadPosition, m.stopTime)
 		return nil, logBuffer.offset, nil
 	}

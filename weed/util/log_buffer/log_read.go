@@ -129,16 +129,11 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 			// Handle offset-based filtering for offset-based start positions
 			if startPosition.IsOffsetBased {
 				startOffset := startPosition.GetOffset()
-				glog.Infof("📍 MEMORY OFFSET CHECK: logEntry.Offset=%d startOffset=%d readerName=%s",
-					logEntry.Offset, startOffset, readerName)
 				if logEntry.Offset < startOffset {
-					glog.Infof("📍 SKIPPING: entry offset %d < startOffset %d", logEntry.Offset, startOffset)
 					// Skip entries before the starting offset
 					pos += 4 + int(size)
 					batchSize++
 					continue
-				} else {
-					glog.Infof("📍 PROCESSING: entry offset %d >= startOffset %d", logEntry.Offset, startOffset)
 				}
 			}
 

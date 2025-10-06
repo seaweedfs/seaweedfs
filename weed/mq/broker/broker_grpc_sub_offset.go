@@ -96,7 +96,6 @@ func (b *MessageQueueBroker) subscribeWithOffsetSubscription(
 			// Check if context is cancelled (client disconnected)
 			select {
 			case <-ctx.Done():
-				glog.V(0).Infof("🔍 OFFSET-SUB: %s - context cancelled, stopping waitForDataFn", clientName)
 				return false
 			default:
 			}

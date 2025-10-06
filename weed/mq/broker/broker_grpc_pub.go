@@ -39,24 +39,19 @@ import (
 // Each subscription may not get data. It can act as a backup.
 
 func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_PublishMessageServer) error {
-	fmt.Printf("🔥 BROKER PUB: PublishMessage handler called\n")
 
 	req, err := stream.Recv()
 	if err != nil {
-		fmt.Printf("🔥 BROKER PUB: stream.Recv() failed: %v\n", err)
 		return err
 	}
-	fmt.Printf("🔥 BROKER PUB: Received first message\n")
 	response := &mq_pb.PublishMessageResponse{}
 
 	initMessage := req.GetInit()
 	if initMessage == nil {
-		fmt.Printf("🔥 BROKER PUB: Init message is nil!\n")
 		response.ErrorCode, response.Error = CreateBrokerError(BrokerErrorInvalidRecord, "missing init message")
 		glog.Errorf("missing init message")
 		return stream.Send(response)
 	}
-	fmt.Printf("🔥 BROKER PUB: Init message received for topic=%s partition=%v\n", initMessage.Topic.Name, initMessage.Partition)
 
 	// Check whether current broker should be the leader for the topic partition
 	leaderBroker, err := b.findBrokerForTopicPartition(initMessage.Topic, initMessage.Partition)
@@ -160,10 +155,8 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 		// Process the received message
 		dataMessage := req.GetData()
 		if dataMessage == nil {
-			fmt.Printf("🔥 BROKER PUB: Received non-data message for topic=%s\n", initMessage.Topic.Name)
 			continue
 		}
-		fmt.Printf("🔥 BROKER PUB: Received data message for topic=%s, key len=%d, value len=%d\n", initMessage.Topic.Name, len(dataMessage.Key), len(dataMessage.Value))
 
 		// Validate RecordValue structure only for schema-based messages
 		// Note: Only messages sent via ProduceRecordValue should be in RecordValue format

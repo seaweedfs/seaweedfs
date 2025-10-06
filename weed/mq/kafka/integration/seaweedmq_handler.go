@@ -454,7 +454,6 @@ func (h *SeaweedMQHandler) CreateTopicWithSchemas(name string, partitions int32,
 				KeyColumns:        keyColumns,
 			})
 			if err != nil {
-				glog.Errorf("❌ Failed to configure topic %s with broker: %v", name, err)
 				return fmt.Errorf("configure topic with broker: %w", err)
 			}
 			glog.V(1).Infof("✅ Successfully configured topic %s with broker", name)
@@ -509,7 +508,6 @@ func (h *SeaweedMQHandler) CreateTopicWithRecordType(name string, partitions int
 				KeyColumns:        keyColumns,
 			})
 			if err != nil {
-				glog.Errorf("❌ Failed to configure topic %s with broker: %v", name, err)
 				return fmt.Errorf("failed to configure topic: %w", err)
 			}
 
@@ -1043,7 +1041,6 @@ func discoverBrokersWithMasterClient(masterClient *wdclient.MasterClient, filerG
 			Limit:      1000,
 		})
 		if err != nil {
-			glog.Errorf("❌ ListClusterNodes gRPC call failed: %v", err)
 			return err
 		}
 
@@ -1728,28 +1725,19 @@ func (bc *BrokerClient) getActualPartitionAssignment(topic string, kafkaPartitio
 // This ensures each fetch gets fresh data from the requested offset
 // consumerGroup and consumerID are passed from Kafka client for proper tracking in SMQ
 func (bc *BrokerClient) CreateFreshSubscriber(topic string, partition int32, startOffset int64, consumerGroup string, consumerID string) (*BrokerSubscriberSession, error) {
-	glog.Infof("🔍 CreateFreshSubscriber: topic=%s partition=%d startOffset=%d consumerGroup=%s consumerID=%s",
-		topic, partition, startOffset, consumerGroup, consumerID)
-
 	// Create a dedicated context for this subscriber
 	subscriberCtx := context.Background()
 
-	glog.Infof("🔍 CreateFreshSubscriber: Calling SubscribeMessage for topic=%s", topic)
 	stream, err := bc.client.SubscribeMessage(subscriberCtx)
 	if err != nil {
-		glog.Errorf("🔍 CreateFreshSubscriber: SubscribeMessage FAILED: %v", err)
 		return nil, fmt.Errorf("failed to create subscribe stream: %v", err)
 	}
-	glog.Infof("🔍 CreateFreshSubscriber: SubscribeMessage SUCCESS for topic=%s", topic)
 
 	// Get the actual partition assignment from the broker
-	glog.Infof("🔍 CreateFreshSubscriber: Getting actual partition assignment for topic=%s partition=%d", topic, partition)
 	actualPartition, err := bc.getActualPartitionAssignment(topic, partition)
 	if err != nil {
-		glog.Errorf("🔍 CreateFreshSubscriber: getActualPartitionAssignment FAILED: %v", err)
 		return nil, fmt.Errorf("failed to get actual partition assignment for subscribe: %v", err)
 	}
-	glog.Infof("🔍 CreateFreshSubscriber: Got actual partition: %v", actualPartition)
 
 	// Convert Kafka offset to SeaweedMQ OffsetType
 	var offsetType schema_pb.OffsetType
@@ -1783,19 +1771,15 @@ func (bc *BrokerClient) CreateFreshSubscriber(topic string, partition int32, sta
 		},
 	}
 
-	glog.Infof("🔍 CreateFreshSubscriber: Sending init request for topic=%s offset=%d", topic, startOffset)
 	if err := stream.Send(initReq); err != nil {
-		glog.Errorf("🔍 CreateFreshSubscriber: stream.Send FAILED: %v", err)
 		return nil, fmt.Errorf("failed to send subscribe init: %v", err)
 	}
-	glog.Infof("🔍 CreateFreshSubscriber: Init request sent, waiting for response...")
 
 	// IMPORTANT: Don't wait for init response here!
 	// The broker may send the first data record as the "init response"
 	// If we call Recv() here, we'll consume that first record and ReadRecords will block
 	// waiting for the second record, causing a 30-second timeout.
 	// Instead, let ReadRecords handle all Recv() calls.
-	glog.Infof("🔍 CreateFreshSubscriber: Init request sent, NOT waiting for response (ReadRecords will handle it)")
 
 	session := &BrokerSubscriberSession{
 		Stream:      stream,
@@ -1804,7 +1788,6 @@ func (bc *BrokerClient) CreateFreshSubscriber(topic string, partition int32, sta
 		StartOffset: startOffset,
 	}
 
-	glog.Infof("🔍 CreateFreshSubscriber: Session created successfully for topic=%s partition=%d offset=%d", topic, partition, startOffset)
 	return session, nil
 }
 

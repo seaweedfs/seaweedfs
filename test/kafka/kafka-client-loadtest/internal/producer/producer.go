@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -18,6 +19,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/test/kafka/kafka-client-loadtest/internal/config"
 	"github.com/seaweedfs/seaweedfs/test/kafka/kafka-client-loadtest/internal/metrics"
 )
+
+// ErrCircuitBreakerOpen indicates that the circuit breaker is open due to consecutive failures
+var ErrCircuitBreakerOpen = errors.New("circuit breaker is open")
 
 // Producer represents a Kafka producer for load testing
 type Producer struct {
@@ -260,7 +264,7 @@ func (p *Producer) produceMessages(ctx context.Context) error {
 					if p.consecutiveFailures >= 3 {
 						log.Printf("Producer %d: Circuit breaker is open - stopping producer after %d consecutive failures",
 							p.id, p.consecutiveFailures)
-						return fmt.Errorf("circuit breaker is open: stopping producer after %d consecutive failures", p.consecutiveFailures)
+						return fmt.Errorf("%w: stopping producer after %d consecutive failures", ErrCircuitBreakerOpen, p.consecutiveFailures)
 					}
 				} else {
 					// Reset counter for non-circuit breaker errors
@@ -677,9 +681,5 @@ func (p *Producer) createConfluentWireFormat(schemaID int, avroData []byte) []by
 
 // isCircuitBreakerError checks if an error indicates that the circuit breaker is open
 func (p *Producer) isCircuitBreakerError(err error) bool {
-	if err == nil {
-		return false
-	}
-	errStr := err.Error()
-	return errStr == "circuit breaker is open"
+	return errors.Is(err, ErrCircuitBreakerOpen)
 }

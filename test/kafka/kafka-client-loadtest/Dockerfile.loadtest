@@ -1,6 +1,23 @@
 # Kafka Client Load Test Runner Dockerfile
-# This Dockerfile expects kafka-loadtest-linux binary to be pre-built locally
-FROM --platform=linux/arm64 ubuntu:22.04
+# Multi-stage build for cross-platform support
+
+# Stage 1: Builder
+FROM golang:1.24-alpine AS builder
+
+WORKDIR /app
+
+# Copy go module files
+COPY test/kafka/kafka-client-loadtest/go.mod test/kafka/kafka-client-loadtest/go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY test/kafka/kafka-client-loadtest/ ./
+
+# Build the loadtest binary
+RUN CGO_ENABLED=0 GOOS=linux go build -o /kafka-loadtest ./cmd/loadtest
+
+# Stage 2: Runtime
+FROM ubuntu:22.04
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
@@ -11,8 +28,8 @@ RUN apt-get update && apt-get install -y \
     netcat \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy pre-built load test binary
-COPY test/kafka/kafka-client-loadtest/kafka-loadtest-linux /usr/local/bin/kafka-loadtest
+# Copy built binary from builder stage
+COPY --from=builder /kafka-loadtest /usr/local/bin/kafka-loadtest
 RUN chmod +x /usr/local/bin/kafka-loadtest
 
 # Copy scripts and configuration
