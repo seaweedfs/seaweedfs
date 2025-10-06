@@ -5,13 +5,13 @@ package app
 
 //lint:file-ignore SA4006 This context is only used if a nested component is present.
 
+import "github.com/a-h/templ"
+import templruntime "github.com/a-h/templ/runtime"
+
 import (
 	"fmt"
-	"time"
-
-	"github.com/a-h/templ"
-	templruntime "github.com/a-h/templ/runtime"
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
+	"time"
 )
 
 func MaintenanceWorkers(data *dash.MaintenanceWorkersData) templ.Component {
@@ -105,7 +105,7 @@ func MaintenanceWorkers(data *dash.MaintenanceWorkersData) templ.Component {
 			return templ_7745c5c3_Err
 		}
 		if len(data.Workers) == 0 {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "<div class=\"text-center py-4\"><i class=\"fas fa-users fa-3x text-gray-300 mb-3\"></i><h5 class=\"text-gray-600\">No Workers Found</h5><p class=\"text-muted\">No maintenance workers are currently registered.</p><div class=\"alert alert-info mt-3\"><strong>Tip:</strong> To start a worker, run:<br><code>weed worker -admin=&lt;admin_server&gt; -capabilities=vacuum,ec,replication</code></div></div>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "<div class=\"text-center py-4\"><i class=\"fas fa-users fa-3x text-gray-300 mb-3\"></i><h5 class=\"text-gray-600\">No Workers Found</h5><p class=\"text-muted\">No maintenance workers are currently registered.</p><div class=\"alert alert-info mt-3\"><strong>💡 Tip:</strong> To start a worker, run:<br><code>weed worker -admin=&lt;admin_server&gt; -capabilities=vacuum,ec,replication</code></div></div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -264,7 +264,7 @@ func MaintenanceWorkers(data *dash.MaintenanceWorkersData) templ.Component {
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, "</td><td><small><div>[OK] ")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, "</td><td><small><div>✅ ")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
@@ -277,7 +277,7 @@ func MaintenanceWorkers(data *dash.MaintenanceWorkersData) templ.Component {
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 27, "</div><div>[FAIL] ")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 27, "</div><div>❌ ")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
@@ -290,7 +290,7 @@ func MaintenanceWorkers(data *dash.MaintenanceWorkersData) templ.Component {
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 28, "</div><div>[STATS] ")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 28, "</div><div>📊 ")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
