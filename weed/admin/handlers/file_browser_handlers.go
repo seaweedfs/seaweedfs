@@ -380,6 +380,12 @@ func (h *FileBrowserHandlers) validateFilerAddress(address string) error {
 		return fmt.Errorf("filer address cannot be empty")
 	}
 
+	// CRITICAL: Only allow the configured filer address to prevent SSRF
+	configuredFiler := h.adminServer.GetFilerAddress()
+	if address != configuredFiler {
+		return fmt.Errorf("address does not match configured filer: got %s, expected %s", address, configuredFiler)
+	}
+
 	// Parse the address to validate it's a proper host:port format
 	host, port, err := net.SplitHostPort(address)
 	if err != nil {
@@ -403,18 +409,6 @@ func (h *FileBrowserHandlers) validateFilerAddress(address string) error {
 
 	if portNum < 1 || portNum > 65535 {
 		return fmt.Errorf("port number must be between 1 and 65535")
-	}
-
-	// Additional security: prevent private network access unless explicitly allowed
-	// This helps prevent SSRF attacks to internal services
-	ip := net.ParseIP(host)
-	if ip != nil {
-		// Check for localhost, private networks, and other dangerous addresses
-		if ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() {
-			// Only allow if it's the configured filer (trusted)
-			// In production, you might want to be more restrictive
-			glog.V(2).Infof("Allowing access to private/local address: %s (configured filer)", address)
-		}
 	}
 
 	return nil
