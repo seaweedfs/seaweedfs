@@ -278,13 +278,12 @@ func TestSeaweedMQHandler_ProduceRecord(t *testing.T) {
 		t.Errorf("Invalid offset: %d", offset)
 	}
 
-	// Check ledger was updated
-	ledger := handler.GetLedger(topicName, 0)
-	if ledger == nil {
-		t.Errorf("Ledger should exist after producing")
+	// Check high water mark from broker (ledgers removed - broker handles offset management)
+	hwm, err := handler.GetLatestOffset(topicName, 0)
+	if err != nil {
+		t.Errorf("Failed to get high water mark: %v", err)
 	}
 
-	hwm := ledger.GetHighWaterMark()
 	if hwm != offset+1 {
 		t.Errorf("High water mark mismatch: got %d, want %d", hwm, offset+1)
 	}
@@ -322,10 +321,12 @@ func TestSeaweedMQHandler_MultiplePartitions(t *testing.T) {
 			t.Fatalf("Failed to produce to partition %d: %v", partitionID, err)
 		}
 
-		// Verify ledger
-		ledger := handler.GetLedger(topicName, partitionID)
-		if ledger == nil {
-			t.Errorf("Ledger should exist for partition %d", partitionID)
+		// Verify offset from broker (ledgers removed - broker handles offset management)
+		hwm, err := handler.GetLatestOffset(topicName, partitionID)
+		if err != nil {
+			t.Errorf("Failed to get high water mark for partition %d: %v", partitionID, err)
+		} else if hwm <= offset {
+			t.Errorf("High water mark should be greater than produced offset for partition %d: hwm=%d, offset=%d", partitionID, hwm, offset)
 		}
 
 		t.Logf("Partition %d: produced at offset %d", partitionID, offset)
@@ -410,9 +411,11 @@ func TestSeaweedMQHandler_FetchRecords(t *testing.T) {
 		t.Logf("Fetched %d bytes starting from offset %d", len(partialBatch), producedOffsets[1])
 	}
 
-	// Test fetching beyond high water mark
-	ledger := handler.GetLedger(topicName, 0)
-	hwm := ledger.GetHighWaterMark()
+	// Test fetching beyond high water mark (ledgers removed - use broker offset management)
+	hwm, err := handler.GetLatestOffset(topicName, 0)
+	if err != nil {
+		t.Fatalf("Failed to get high water mark: %v", err)
+	}
 
 	emptyBatch, err := handler.FetchRecords(topicName, 0, hwm, 1024)
 	if err != nil {
