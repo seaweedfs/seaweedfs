@@ -227,6 +227,11 @@ func (store *MongodbStore) FindEntry(ctx context.Context, fullpath util.FullPath
 func (store *MongodbStore) DeleteEntry(ctx context.Context, fullpath util.FullPath) error {
 	dir, name := fullpath.DirAndName()
 
+	// Validate directory and name to prevent potential injection
+	if strings.ContainsAny(dir, "\x00") || strings.ContainsAny(name, "\x00") {
+		return fmt.Errorf("invalid path contains null bytes: %s", fullpath)
+	}
+
 	where := bson.M{"directory": dir, "name": name}
 	_, err := store.connect.Database(store.database).Collection(store.collectionName).DeleteMany(ctx, where)
 	if err != nil {
@@ -237,6 +242,11 @@ func (store *MongodbStore) DeleteEntry(ctx context.Context, fullpath util.FullPa
 }
 
 func (store *MongodbStore) DeleteFolderChildren(ctx context.Context, fullpath util.FullPath) error {
+	// Validate path to prevent potential injection
+	if strings.ContainsAny(string(fullpath), "\x00") {
+		return fmt.Errorf("invalid path contains null bytes: %s", fullpath)
+	}
+
 	where := bson.M{"directory": fullpath}
 	_, err := store.connect.Database(store.database).Collection(store.collectionName).DeleteMany(ctx, where)
 	if err != nil {
@@ -247,6 +257,11 @@ func (store *MongodbStore) DeleteFolderChildren(ctx context.Context, fullpath ut
 }
 
 func (store *MongodbStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
+	// Validate inputs to prevent potential injection
+	if strings.ContainsAny(string(dirPath), "\x00") || strings.ContainsAny(startFileName, "\x00") || strings.ContainsAny(prefix, "\x00") {
+		return "", fmt.Errorf("invalid path contains null bytes")
+	}
+
 	where := bson.M{
 		"directory": string(dirPath),
 	}
@@ -311,6 +326,7 @@ func (store *MongodbStore) ListDirectoryEntries(ctx context.Context, dirPath uti
 }
 
 func (store *MongodbStore) Shutdown() {
-	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	store.connect.Disconnect(ctx)
 }

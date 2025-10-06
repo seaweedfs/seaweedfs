@@ -249,7 +249,14 @@ func (logBuffer *LogBuffer) AddDataToBuffer(partitionKey, data []byte, processin
 		toFlush = logBuffer.copyToFlush()
 		logBuffer.startTime = ts
 		if len(logBuffer.buf) < size+4 {
-			logBuffer.buf = make([]byte, 2*size+4)
+			// Validate size to prevent overflow
+			const maxBufferSize = 1 << 30 // 1 GB limit
+			newSize := 2*size + 4
+			if size > maxBufferSize/2-2 || newSize < 0 {
+				glog.Errorf("Buffer size too large: %d bytes, skipping", size)
+				return
+			}
+			logBuffer.buf = make([]byte, newSize)
 		}
 	}
 	logBuffer.stopTime = ts
