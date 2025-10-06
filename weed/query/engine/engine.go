@@ -4477,31 +4477,29 @@ func (e *SQLEngine) eachLogEntryInFile(filerClient filer_pb.FilerClient, filePat
 
 // convertLogEntryToRecordValue helper method (reuse existing logic)
 func (e *SQLEngine) convertLogEntryToRecordValue(logEntry *filer_pb.LogEntry) (*schema_pb.RecordValue, string, error) {
-	// Create RecordValue with proper Kafka-compatible column mapping
-	recordValue := &schema_pb.RecordValue{
-		Fields: make(map[string]*schema_pb.Value),
+	// Try to unmarshal as RecordValue first (schematized data)
+	recordValue := &schema_pb.RecordValue{}
+	err := proto.Unmarshal(logEntry.Data, recordValue)
+	if err == nil {
+		// Successfully unmarshaled as RecordValue (valid protobuf)
+		// Initialize Fields map if nil
+		if recordValue.Fields == nil {
+			recordValue.Fields = make(map[string]*schema_pb.Value)
+		}
+
+		// Add system columns from LogEntry
+		recordValue.Fields[SW_COLUMN_NAME_TIMESTAMP] = &schema_pb.Value{
+			Kind: &schema_pb.Value_Int64Value{Int64Value: logEntry.TsNs},
+		}
+		recordValue.Fields[SW_COLUMN_NAME_KEY] = &schema_pb.Value{
+			Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Key},
+		}
+
+		return recordValue, "live_log", nil
 	}
 
-	// Add system columns
-	recordValue.Fields[SW_COLUMN_NAME_TIMESTAMP] = &schema_pb.Value{
-		Kind: &schema_pb.Value_Int64Value{Int64Value: logEntry.TsNs},
-	}
-	recordValue.Fields[SW_COLUMN_NAME_KEY] = &schema_pb.Value{
-		Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Key},
-	}
-
-	// Add the raw data as the "value" field for Kafka compatibility
-	// logEntry.Data contains the raw message value, not a protobuf RecordValue
-	recordValue.Fields["value"] = &schema_pb.Value{
-		Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Data},
-	}
-
-	// Also add "key" field for consistency (same as _key for non-schematized messages)
-	recordValue.Fields["key"] = &schema_pb.Value{
-		Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Key},
-	}
-
-	return recordValue, "live_log", nil
+	// Failed to unmarshal as RecordValue - invalid protobuf data
+	return nil, "", fmt.Errorf("failed to unmarshal log entry protobuf: %w", err)
 }
 
 // extractTimestampFromFilename extracts timestamp from parquet filename
