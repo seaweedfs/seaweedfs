@@ -60,9 +60,9 @@ build-binary: ## Build the SeaweedFS binary locally for Linux
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build \
 		-ldflags="-s -w" \
 		-tags "5BytesOffset" \
-		-o test/kafka/kafka-client-loadtest/weed-linux-amd64 \
+		-o test/kafka/kafka-client-loadtest/weed-linux-arm64 \
 		weed/weed.go
-	@echo "$(GREEN)Binary build completed: weed-linux-amd64$(NC)"
+	@echo "$(GREEN)Binary build completed: weed-linux-arm64$(NC)"
 
 build-gateway: build-binary ## Build the Kafka Gateway with latest changes
 	@echo "$(BLUE)Building Kafka Gateway Docker image...$(NC)"
@@ -107,19 +107,19 @@ clean: ## Clean up all resources (containers, volumes, networks, local data)
 	@echo "$(BLUE)Cleaning up all resources...$(NC)"
 	$(DOCKER_COMPOSE) --profile loadtest --profile monitoring down -v --remove-orphans
 	docker system prune -f
-	@if [ -f "weed-linux-amd64" ]; then \
+	@if [ -f "weed-linux-arm64" ]; then \
 		echo "$(BLUE)Removing local binary...$(NC)"; \
-		rm -f weed-linux-amd64; \
+		rm -f weed-linux-arm64; \
 	fi
 	@if [ -d "data" ]; then \
-		echo "$(BLUE)Removing local data directories...$(NC)"; \
-		rm -rf data/seaweedfs-*/ data/kafka-gateway/; \
+		echo "$(BLUE)Removing ALL local data directories (including offset state)...$(NC)"; \
+		rm -rf data/*; \
 	fi
-	@echo "$(GREEN)Cleanup completed$(NC)"
+	@echo "$(GREEN)Cleanup completed - all data removed$(NC)"
 
 clean-binary: ## Clean up only the local binary
 	@echo "$(BLUE)Removing local binary...$(NC)"
-	@rm -f weed-linux-amd64
+	@rm -f weed-linux-arm64
 	@echo "$(GREEN)Binary cleanup completed$(NC)"
 
 status: ## Show service status

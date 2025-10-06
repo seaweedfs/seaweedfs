@@ -143,27 +143,20 @@ register_loadtest_schemas() {
     local total_schemas=0
     local pids=()
     
-    # OPTIMIZATION: Register all schemas in parallel to reduce total time
-    log_info "Starting parallel schema registration..."
-    
+    # Register schemas sequentially to avoid overwhelming Schema Registry
+    # This is more reliable than parallel registration for small numbers of schemas
     for topic in "${topics[@]}"; do
-        # Register value schema in background
-        (register_schema "${topic}-value" "$loadtest_value_schema" "AVRO") &
-        pids+=($!)
-        ((total_schemas++))
-        
-        # Register key schema in background
-        (register_schema "${topic}-key" "$loadtest_key_schema" "AVRO") &
-        pids+=($!)
-        ((total_schemas++))
-    done
-    
-    # Wait for all background registrations to complete
-    log_info "Waiting for all schema registrations to complete..."
-    for pid in "${pids[@]}"; do
-        if wait "$pid"; then
+        # Register value schema
+        if register_schema "${topic}-value" "$loadtest_value_schema" "AVRO"; then
             ((success_count++))
         fi
+        ((total_schemas++))
+        
+        # Register key schema
+        if register_schema "${topic}-key" "$loadtest_key_schema" "AVRO"; then
+            ((success_count++))
+        fi
+        ((total_schemas++))
     done
     
     log_info "Schema registration summary: $success_count/$total_schemas schemas registered successfully"

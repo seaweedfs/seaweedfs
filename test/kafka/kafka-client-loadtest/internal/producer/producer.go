@@ -28,6 +28,7 @@ type Producer struct {
 	useConfluent     bool
 	topics           []string
 	avroCodec        *goavro.Codec
+	startTime        time.Time // Test run start time for generating unique keys
 
 	// Schema management
 	schemaIDs map[string]int // topic -> schema ID mapping
@@ -64,6 +65,7 @@ func New(cfg *config.Config, collector *metrics.Collector, id int) (*Producer, e
 		random:           rand.New(rand.NewSource(time.Now().UnixNano() + int64(id))),
 		useConfluent:     false, // Use Sarama by default, can be made configurable
 		schemaIDs:        make(map[string]int),
+		startTime:        time.Now(), // Record test start time for unique key generation
 	}
 
 	// Set up rate limiter if specified
@@ -299,18 +301,11 @@ func (p *Producer) produceSaramaMessage(topic string, message []byte, startTime 
 	if p.config.Schemas.Enabled && p.config.Producers.ValueType == "avro" {
 		if schemaID, exists := p.schemaIDs[topic]; exists {
 			messageValue = p.createConfluentWireFormat(schemaID, message)
-			// Log wire format creation
-			firstBytes := "N/A"
-			if len(messageValue) >= 10 {
-				firstBytes = fmt.Sprintf("%x", messageValue[:10])
-			}
-			log.Printf("🔥 WIRE FORMAT CREATED: topic=%s, schemaID=%d, msgLen=%d->%d, first10bytes=%s", 
-				topic, schemaID, len(message), len(messageValue), firstBytes)
 		} else {
 			return fmt.Errorf("schema ID not found for topic %s", topic)
 		}
 	} else {
-		log.Printf("⚠️  NO WIRE FORMAT: SchemasEnabled=%v, ValueType=%s, using raw message len=%d", 
+		log.Printf("⚠️  NO WIRE FORMAT: SchemasEnabled=%v, ValueType=%s, using raw message len=%d",
 			p.config.Schemas.Enabled, p.config.Producers.ValueType, len(message))
 		messageValue = message
 	}
@@ -339,10 +334,9 @@ func (p *Producer) produceSaramaMessage(topic string, message []byte, startTime 
 	latency := time.Since(startTime)
 	p.metricsCollector.RecordProducedMessage(len(message), latency)
 
-	// Log success (debug)
-	if p.id == 0 && p.messageCounter%1000 == 0 {
-		log.Printf("Producer %d: Produced message to %s[%d]@%d", p.id, topic, partition, offset)
-	}
+	// Log produced message with key for tracking
+	log.Printf("📤 PRODUCED: Producer %d topic=%s[%d] offset=%d key=%s valueLen=%d",
+		p.id, topic, partition, offset, key, len(messageValue))
 
 	return nil
 }
@@ -452,14 +446,18 @@ func (p *Producer) generateBinaryMessage() ([]byte, error) {
 }
 
 // generateMessageKey generates a message key based on the configured distribution
+// Keys are prefixed with a test run ID to track messages across test runs
 func (p *Producer) generateMessageKey() string {
+	// Use test start time as run ID (format: YYYYMMDD-HHMMSS)
+	runID := p.startTime.Format("20060102-150405")
+
 	switch p.config.Producers.KeyDistribution {
 	case "sequential":
-		return fmt.Sprintf("key-%d", p.messageCounter)
+		return fmt.Sprintf("run-%s-key-%d", runID, p.messageCounter)
 	case "uuid":
-		return fmt.Sprintf("uuid-%d-%d-%d", p.id, time.Now().UnixNano(), p.random.Intn(1000000))
+		return fmt.Sprintf("run-%s-uuid-%d-%d-%d", runID, p.id, time.Now().UnixNano(), p.random.Intn(1000000))
 	default: // random
-		return fmt.Sprintf("key-%d", p.random.Intn(10000))
+		return fmt.Sprintf("run-%s-key-%d", runID, p.random.Intn(10000))
 	}
 }
 

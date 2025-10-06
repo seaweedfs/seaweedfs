@@ -456,8 +456,17 @@ func (h *ConsumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSession,
 				return nil
 			}
 			msgCount++
-			log.Printf("🔍 LOADTEST DEBUG: Consumer %d received message #%d from %s[%d] offset=%d",
-				h.consumer.id, msgCount, claim.Topic(), claim.Partition(), message.Offset)
+
+			keyLen := 0
+			keyStr := ""
+			if message.Key != nil {
+				keyLen = len(message.Key)
+				keyStr = string(message.Key)
+			}
+			valueLen := len(message.Value)
+
+			log.Printf("📥 CONSUMED: Consumer %d msg#%d topic=%s[%d] offset=%d key=%s keyLen=%d valueLen=%d",
+				h.consumer.id, msgCount, claim.Topic(), claim.Partition(), message.Offset, keyStr, keyLen, valueLen)
 
 			// Process the message
 			var key []byte
@@ -470,12 +479,12 @@ func (h *ConsumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSession,
 				h.consumer.metricsCollector.RecordConsumerError()
 
 				// Add a small delay for schema validation or other processing errors to avoid overloading
-				select {
-				case <-time.After(100 * time.Millisecond):
-					// Continue after brief delay
-				case <-session.Context().Done():
-					return nil
-				}
+				// select {
+				// case <-time.After(100 * time.Millisecond):
+				// 	// Continue after brief delay
+				// case <-session.Context().Done():
+				// 	return nil
+				// }
 			} else {
 				// Mark message as processed
 				session.MarkMessage(message, "")

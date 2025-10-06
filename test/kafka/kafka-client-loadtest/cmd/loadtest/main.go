@@ -206,6 +206,10 @@ func runComprehensiveTest(ctx context.Context, cancel context.CancelFunc, cfg *c
 
 	errChan := make(chan error, cfg.Producers.Count)
 
+	// Create separate contexts for producers and consumers
+	producerCtx, producerCancel := context.WithCancel(ctx)
+	consumerCtx, consumerCancel := context.WithCancel(ctx)
+
 	// Start producers
 	for i := 0; i < cfg.Producers.Count; i++ {
 		wg.Add(1)
@@ -220,7 +224,7 @@ func runComprehensiveTest(ctx context.Context, cancel context.CancelFunc, cfg *c
 			}
 			defer prod.Close()
 
-			if err := prod.Run(ctx); err != nil {
+			if err := prod.Run(producerCtx); err != nil {
 				log.Printf("Producer %d failed: %v", id, err)
 				errChan <- err
 				return
@@ -244,7 +248,7 @@ func runComprehensiveTest(ctx context.Context, cancel context.CancelFunc, cfg *c
 			}
 			defer cons.Close()
 
-			cons.Run(ctx)
+			cons.Run(consumerCtx)
 		}(i)
 	}
 
@@ -257,7 +261,7 @@ func runComprehensiveTest(ctx context.Context, cancel context.CancelFunc, cfg *c
 		// No immediate error, continue
 	}
 
-	// If duration is set, cancel context after duration
+	// If duration is set, stop producers first, then allow consumers extra time to drain
 	if cfg.Duration > 0 {
 		go func() {
 			timer := time.NewTimer(cfg.Duration)
@@ -265,10 +269,21 @@ func runComprehensiveTest(ctx context.Context, cancel context.CancelFunc, cfg *c
 
 			select {
 			case <-timer.C:
-				log.Printf("Test duration (%v) reached, stopping test", cfg.Duration)
+				log.Printf("⏱️  Test duration (%v) reached, stopping producers", cfg.Duration)
+				producerCancel()
+
+				// Allow consumers extra time to drain remaining messages
+				drainTime := 30 * time.Second
+				log.Printf("⏳ Allowing %v for consumers to drain remaining messages...", drainTime)
+				time.Sleep(drainTime)
+
+				log.Printf("🛑 Stopping consumers after drain period")
+				consumerCancel()
 				cancel()
 			case <-ctx.Done():
 				// Context already cancelled
+				producerCancel()
+				consumerCancel()
 			}
 		}()
 	}

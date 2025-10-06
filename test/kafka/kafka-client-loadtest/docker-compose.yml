@@ -32,6 +32,8 @@ services:
       SCHEMA_REGISTRY_KAFKASTORE_TIMEOUT: "60000"
       SCHEMA_REGISTRY_REQUEST_TIMEOUT_MS: "60000"
       SCHEMA_REGISTRY_RETRY_BACKOFF_MS: "1000"
+      # Force IPv4 to work around Java IPv6 issues
+      KAFKA_OPTS: "-Djava.net.preferIPv4Stack=true -Djava.net.preferIPv4Addresses=true"
       SCHEMA_REGISTRY_KAFKASTORE_WRITE_TIMEOUT_MS: "60000"
       SCHEMA_REGISTRY_KAFKASTORE_INIT_RETRY_BACKOFF_MS: "5000"
       SCHEMA_REGISTRY_KAFKASTORE_CONSUMER_AUTO_OFFSET_RESET: "earliest"
@@ -111,12 +113,14 @@ services:
     ports:
       - "8888:8888"
       - "18888:18888"
+      - "18889:18889"
     command:
       - filer
       - -master=seaweedfs-master:9333
       - -ip=seaweedfs-filer
       - -port=8888
       - -port.grpc=18888
+      - -metricsPort=18889
       - -defaultReplicaPlacement=000
     depends_on:
       seaweedfs-master:
@@ -140,6 +144,7 @@ services:
     container_name: loadtest-seaweedfs-mq-broker
     ports:
       - "17777:17777"
+      - "18777:18777"  # pprof profiling port
     command:
       - mq.broker
       - -master=seaweedfs-master:9333
@@ -166,6 +171,7 @@ services:
     container_name: loadtest-kafka-gateway
     ports:
       - "9093:9093"
+      - "10093:10093"  # pprof profiling port
     command:
       - mq.kafka.gateway
       - -master=seaweedfs-master:9333
@@ -181,7 +187,7 @@ services:
         condition: service_healthy
     environment:
       - SEAWEEDFS_MASTERS=seaweedfs-master:9333
-      - KAFKA_DEBUG=1
+      # - KAFKA_DEBUG=1  # Disabled to reduce CPU usage from excessive logging
       - KAFKA_ADVERTISED_HOST=kafka-gateway
     volumes:
       - ./data/kafka-gateway:/data
