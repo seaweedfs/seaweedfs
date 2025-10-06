@@ -16,6 +16,7 @@ services:
     volumes:
       - seaweedfs_data:/data
     command:
+      - ./weed
       - server
       - -dir=/data
       - -master.volumeSizeLimitMB=50
