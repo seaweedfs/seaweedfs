@@ -36,22 +36,15 @@ func (b *MessageQueueBroker) GetUnflushedMessages(req *mq_pb.GetUnflushedMessage
 	t := topic.FromPbTopic(req.Topic)
 	partition := topic.FromPbPartition(req.Partition)
 
-	glog.V(0).Infof("🔍 DEBUG: GetUnflushedMessages request for %v %v, StartBufferOffset=%d", t, partition, req.StartBufferOffset)
-
 	// Get or generate the local partition for this topic/partition (similar to subscriber flow)
-	glog.V(0).Infof("🔍 DEBUG: Calling GetOrGenerateLocalPartition for %s %s", t, partition)
 	localPartition, getOrGenErr := b.GetOrGenerateLocalPartition(t, partition)
 	if getOrGenErr != nil {
-		glog.V(0).Infof("🔍 DEBUG: GetOrGenerateLocalPartition failed: %v", getOrGenErr)
 		// Fall back to the original logic for broker routing
 		b.accessLock.Lock()
 		localPartition = b.localTopicManager.GetLocalPartition(t, partition)
 		b.accessLock.Unlock()
 	} else {
-		glog.V(0).Infof("🔍 DEBUG: GetOrGenerateLocalPartition succeeded, localPartition=%v", localPartition != nil)
 	}
-
-	glog.V(0).Infof("🔍 DEBUG: LocalPartition lookup result: %v", localPartition != nil)
 
 	if localPartition == nil {
 		// Topic/partition not found locally, attempt to find the correct broker and redirect
@@ -100,13 +93,9 @@ func (b *MessageQueueBroker) GetUnflushedMessages(req *mq_pb.GetUnflushedMessage
 	startBufferOffset := req.StartBufferOffset
 	startTimeNs := lastFlushTsNs // Still respect last flush time for safety
 
-	glog.V(0).Infof("🔍 DEBUG: Streaming unflushed messages for %v %v, buffer >= %d, timestamp >= %d (safety), excluding %d flushed buffer ranges",
-		t, partition, startBufferOffset, startTimeNs, len(flushedBufferRanges))
-
 	// Stream messages from LogBuffer with filtering
 	messageCount := 0
 	startPosition := log_buffer.NewMessagePosition(startTimeNs, startBufferOffset)
-	glog.V(0).Infof("🔍 DEBUG: Created MessagePosition: time=%d, offset=%d", startTimeNs, startBufferOffset)
 
 	// Use the new LoopProcessLogDataWithOffset method to avoid code duplication
 	_, _, err = localPartition.LogBuffer.LoopProcessLogDataWithOffset(
@@ -115,21 +104,16 @@ func (b *MessageQueueBroker) GetUnflushedMessages(req *mq_pb.GetUnflushedMessage
 		0,                            // stopTsNs = 0 means process all available data
 		func() bool { return false }, // waitForDataFn = false means don't wait for new data
 		func(logEntry *filer_pb.LogEntry, offset int64) (isDone bool, err error) {
-			glog.V(0).Infof("🔍 DEBUG: Processing message at offset %d, startBufferOffset=%d", offset, startBufferOffset)
 
 			// Apply buffer offset filtering if specified
 			if startBufferOffset > 0 && offset < startBufferOffset {
-				glog.V(0).Infof("🔍 DEBUG: Skipping message from buffer offset %d (< %d)", offset, startBufferOffset)
 				return false, nil
 			}
 
 			// Check if this message is from a buffer range that's already been flushed
 			if b.isBufferOffsetFlushed(offset, flushedBufferRanges) {
-				glog.V(0).Infof("🔍 DEBUG: Skipping message from flushed buffer offset %d", offset)
 				return false, nil
 			}
-
-			glog.V(0).Infof("🔍 DEBUG: Streaming message at offset %d, key=%s", offset, string(logEntry.Key))
 
 			// Stream this message
 			err = stream.Send(&mq_pb.GetUnflushedMessagesResponse{
@@ -148,7 +132,6 @@ func (b *MessageQueueBroker) GetUnflushedMessages(req *mq_pb.GetUnflushedMessage
 			}
 
 			messageCount++
-			glog.V(0).Infof("🔍 DEBUG: Successfully streamed message %d", messageCount)
 			return false, nil // Continue processing
 		},
 	)
@@ -175,7 +158,6 @@ func (b *MessageQueueBroker) GetUnflushedMessages(req *mq_pb.GetUnflushedMessage
 		return err
 	}
 
-	glog.V(0).Infof("🔍 DEBUG: Completed GetUnflushedMessages - streamed %d messages for %v %v", messageCount, t, partition)
 	return nil
 }
 

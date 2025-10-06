@@ -86,7 +86,6 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 	// Uncomment for debugging long-poll behavior
 	/*
 		if len(fetchRequest.Topics) > 0 && strings.HasPrefix(fetchRequest.Topics[0].Name, "_schemas") {
-			glog.V(4).Infof("SR Fetch: maxWaitMs=%d minBytes=%d hasData=%v topicsExist=%v isSchemaRegistryBootstrap=%v shouldLongPoll=%v",
 				maxWaitMs, fetchRequest.MinBytes, hasData, topicsExist, isSchemaRegistryBootstrap, shouldLongPoll)
 		}
 	*/
@@ -95,7 +94,6 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 		// Use the client's requested wait time (already capped at 1s)
 		maxPollTime := time.Duration(maxWaitMs) * time.Millisecond
 		deadline := start.Add(maxPollTime)
-		glog.V(4).Infof("LONG-POLL START: maxWaitMs=%d, deadline=%v", maxWaitMs, deadline)
 		for time.Now().Before(deadline) {
 			// Use context-aware sleep instead of blocking time.Sleep
 			select {
@@ -107,13 +105,11 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 				// Continue with polling
 			}
 			if hasDataAvailable() {
-				glog.V(4).Infof("LONG-POLL DATA AVAILABLE after %dms", time.Since(start)/time.Millisecond)
 				break
 			}
 		}
 		elapsed := time.Since(start)
 		throttleTimeMs = int32(elapsed / time.Millisecond)
-		glog.V(4).Infof("LONG-POLL END: waited %dms (maxWaitMs=%d)", elapsed/time.Millisecond, maxWaitMs)
 	}
 
 	// Build the response
@@ -144,21 +140,13 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 	// Topics count - write the actual number of topics in the request
 	// Kafka protocol: we MUST return all requested topics in the response (even with empty data)
 	topicsCount := len(fetchRequest.Topics)
-	glog.V(4).Infof("FETCH CORR=%d: Writing topics count=%d at offset=%d, isFlexible=%v", correlationID, topicsCount, len(response), isFlexible)
 	if isFlexible {
 		// Flexible versions use compact array format (count + 1)
 		response = append(response, EncodeUvarint(uint32(topicsCount+1))...)
 	} else {
 		topicsCountBytes := make([]byte, 4)
 		binary.BigEndian.PutUint32(topicsCountBytes, uint32(topicsCount))
-		glog.V(4).Infof("FETCH CORR=%d: topicsCountBytes = %02x %02x %02x %02x", correlationID, topicsCountBytes[0], topicsCountBytes[1], topicsCountBytes[2], topicsCountBytes[3])
 		response = append(response, topicsCountBytes...)
-		if len(response) >= 14 {
-			glog.V(4).Infof("FETCH CORR=%d: After appending topics count, response length=%d, response[10-13]=%02x %02x %02x %02x",
-				correlationID, len(response), response[10], response[11], response[12], response[13])
-		} else {
-			glog.V(4).Infof("FETCH CORR=%d: After appending topics count, response length=%d", correlationID, len(response))
-		}
 	}
 
 	// Process each requested topic
@@ -209,7 +197,6 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 
 			// Use direct SMQ reading - no ledgers needed
 			// CRITICAL DEBUG: This should appear in logs if the new binary is running
-			Debug("FETCH HANDLER NEW CODE IS RUNNING")
 
 			// Get the actual high water mark from SeaweedMQ using the same method as ListOffsets
 			highWaterMark, err := h.seaweedMQHandler.GetLatestOffset(topic.Name, partition.PartitionID)
@@ -234,11 +221,6 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 				} else if effectiveFetchOffset == -1 { // latest
 					effectiveFetchOffset = highWaterMark
 				}
-			}
-
-			if strings.HasPrefix(topic.Name, "_schemas") {
-				glog.V(4).Infof("SR FETCH REQUEST: topic=%s partition=%d requestOffset=%d effectiveOffset=%d highWaterMark=%d",
-					topic.Name, partition.PartitionID, partition.FetchOffset, effectiveFetchOffset, highWaterMark)
 			}
 
 			fetchStartTime := time.Now()
@@ -376,12 +358,6 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 			Debug("Fetch v%d - Partition processing completed: topic=%s, partition=%d, duration=%v, recordBatchSize=%d",
 				apiVersion, topic.Name, partition.PartitionID, fetchDuration, len(recordBatch))
 
-			// Log for loadtest topics to debug zero consumption issue
-			if strings.HasPrefix(topic.Name, "loadtest-topic") {
-				glog.V(4).Infof("LOADTEST FETCH: topic=%s partition=%d requestOffset=%d effectiveOffset=%d hwm=%d recordBatchBytes=%d",
-					topic.Name, partition.PartitionID, partition.FetchOffset, effectiveFetchOffset, highWaterMark, len(recordBatch))
-			}
-
 			// Records size - flexible versions (v12+) use compact format: varint(size+1)
 			if isFlexible {
 				if len(recordBatch) == 0 {
@@ -399,9 +375,6 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 			// Records data
 			response = append(response, recordBatch...)
 			totalAppendedRecordBytes += len(recordBatch)
-			// Always log per-topic appended bytes for visibility
-			glog.V(4).Infof("FETCH TOPIC APPENDED: corr=%d topic=%s partition=%d bytes=%d flexible=%v",
-				correlationID, topic.Name, partition.PartitionID, len(recordBatch), isFlexible)
 
 			// Tagged fields for flexible versions (v12+) after each partition
 			if isFlexible {
@@ -426,9 +399,6 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 		if actualTopicsCount != uint32(topicsCount) {
 			glog.Errorf("FETCH CORR=%d: Topics count CORRUPTED! Expected %d, found %d at response[10:14]=%02x %02x %02x %02x",
 				correlationID, topicsCount, actualTopicsCount, response[10], response[11], response[12], response[13])
-		} else {
-			glog.V(4).Infof("FETCH CORR=%d: Topics count verified OK: %d at response[10:14]=%02x %02x %02x %02x",
-				correlationID, topicsCount, response[10], response[11], response[12], response[13])
 		}
 	}
 
@@ -688,12 +658,6 @@ func (h *Handler) constructRecordBatchFromSMQ(topicName string, fetchOffset int6
 
 		// Value length and value (varint + data) - decode RecordValue to get original Kafka message
 		value := h.decodeRecordValueToKafkaMessage(topicName, smqRecord.GetValue())
-
-		// DEBUG: Show response being sent for _schemas topic
-		if strings.Contains(topicName, "_schemas") {
-			glog.Infof("FETCH RESPONSE: topic=%s offset=%d rawKey=%d rawValue=%d decodedKey=%d decodedValue=%d keyContent=%q",
-				topicName, smqRecord.GetOffset(), len(smqRecord.GetKey()), len(smqRecord.GetValue()), len(key), len(value), string(key))
-		}
 
 		if value == nil {
 			recordBytes = append(recordBytes, encodeVarint(-1)...) // null value
@@ -1238,7 +1202,6 @@ func (h *Handler) isSchematizedTopic(topicName string) bool {
 	}
 
 	if !h.IsSchemaEnabled() {
-		glog.V(4).Infof("isSchematizedTopic(%s): IsSchemaEnabled=false, returning false", topicName)
 		return false
 	}
 
@@ -1246,29 +1209,24 @@ func (h *Handler) isSchematizedTopic(topicName string) bool {
 
 	// 1. Confluent Schema Registry naming conventions
 	if h.matchesSchemaRegistryConvention(topicName) {
-		glog.V(4).Infof("isSchematizedTopic(%s): matchesSchemaRegistryConvention=true, returning true", topicName)
 		return true
 	}
 
 	// 2. Check if topic has schema metadata in SeaweedMQ
 	if h.hasSchemaMetadata(topicName) {
-		glog.V(4).Infof("isSchematizedTopic(%s): hasSchemaMetadata=true, returning true", topicName)
 		return true
 	}
 
 	// 3. Check for schema configuration in topic metadata
 	if h.hasSchemaConfiguration(topicName) {
-		glog.V(4).Infof("isSchematizedTopic(%s): hasSchemaConfiguration=true, returning true", topicName)
 		return true
 	}
 
 	// 4. Check if topic has been used with schematized messages before
 	if h.hasSchematizedMessageHistory(topicName) {
-		glog.V(4).Infof("isSchematizedTopic(%s): hasSchematizedMessageHistory=true, returning true", topicName)
 		return true
 	}
 
-	glog.V(4).Infof("isSchematizedTopic(%s): all checks false, returning false", topicName)
 	return false
 }
 
@@ -1498,11 +1456,6 @@ func (h *Handler) decodeRecordValueToKafkaMessage(topicName string, recordValueB
 	// and should NOT be processed as RecordValue protobuf messages.
 	if strings.HasPrefix(topicName, "_") {
 		Debug("System topic %s: returning raw bytes without RecordValue processing", topicName)
-		// DEBUG: Show response content for offset 0 debugging
-		if strings.Contains(topicName, "_schemas") {
-			glog.Infof("RESPONSE DEBUG: topic=%s valueLen=%d valueHex=%x valueStr=%q",
-				topicName, len(recordValueBytes), recordValueBytes, string(recordValueBytes))
-		}
 		return recordValueBytes
 	}
 

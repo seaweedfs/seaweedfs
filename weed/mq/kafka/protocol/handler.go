@@ -423,7 +423,6 @@ func (h *Handler) GetConnectionContext() *integration.ConnectionContext {
 // HandleConn processes a single client connection
 func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 	connectionID := fmt.Sprintf("%s->%s", conn.RemoteAddr(), conn.LocalAddr())
-	Debug("KAFKA 8.0.0 DEBUG: NEW HANDLER CODE ACTIVE - %s", time.Now().Format("15:04:05"))
 
 	// Record connection metrics
 	RecordConnectionMetrics()
@@ -432,14 +431,10 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 	// This prevents different connections from interfering with each other's Fetch requests
 	// In mock/unit test mode, this may not be available, so we continue without it
 	var connBrokerClient *integration.BrokerClient
-	glog.V(4).Infof("[%s] [BROKER_CLIENT] Creating per-connection BrokerClient", connectionID)
 	connBrokerClient, err := h.seaweedMQHandler.CreatePerConnectionBrokerClient()
 	if err != nil {
-		glog.V(2).Infof("[%s] [BROKER_CLIENT] Per-connection BrokerClient not available (likely mock mode): %v", connectionID, err)
 		// Continue without broker client for unit test/mock mode
 		connBrokerClient = nil
-	} else {
-		glog.V(4).Infof("[%s] [BROKER_CLIENT] Per-connection BrokerClient created successfully", connectionID)
 	}
 
 	// RACE CONDITION FIX: Create connection-local context instead of using shared field
@@ -1288,17 +1283,13 @@ func (h *Handler) HandleMetadataV2(correlationID uint32, requestBody []byte) ([]
 	// Determine topics to return using SeaweedMQ handler
 	var topicsToReturn []string
 	if len(requestedTopics) == 0 {
-		fmt.Printf("METADATA V2: About to call ListTopics()\n")
 		topicsToReturn = h.seaweedMQHandler.ListTopics()
-		fmt.Printf("METADATA V2: ListTopics() returned %d topics: %v\n", len(topicsToReturn), topicsToReturn)
 	} else {
-		fmt.Printf("METADATA V2: Checking specific topics: %v\n", requestedTopics)
 		for _, name := range requestedTopics {
 			if h.seaweedMQHandler.TopicExists(name) {
 				topicsToReturn = append(topicsToReturn, name)
 			}
 		}
-		fmt.Printf("METADATA V2: Found %d existing topics: %v\n", len(topicsToReturn), topicsToReturn)
 	}
 
 	var buf bytes.Buffer
@@ -2253,21 +2244,6 @@ func (h *Handler) handleCreateTopicsV0V1(correlationID uint32, requestBody []byt
 func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
 	offset := 0
 
-	// DEBUG: Log the raw request bytes to understand AdminClient format
-	Debug("CreateTopics v%d: Raw request bytes (%d total):", apiVersion, len(requestBody))
-	for i := 0; i < len(requestBody) && i < 32; i++ {
-		if i%16 == 0 {
-			Debug("  %02d: ", i)
-		}
-		Debug("%02x ", requestBody[i])
-		if (i+1)%16 == 0 {
-			Debug("")
-		}
-	}
-	if len(requestBody)%16 != 0 || len(requestBody) > 32 {
-		Debug("")
-	}
-
 	// ADMIN CLIENT COMPATIBILITY FIX:
 	// AdminClient's CreateTopics v5 request DOES start with top-level tagged fields (usually empty)
 	// Parse them first, then the topics compact array
@@ -2329,10 +2305,6 @@ func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint
 		if replication <= 0 {
 			replication = 1 // Default to 1 replica
 		}
-
-		// DEBUG: Log parsed values to understand AdminClient request format
-		Debug("CreateTopics v%d: Parsed topic[%d] - partitions=%d, replication=%d (corrected) (bytes at offset %d--%d)",
-			apiVersion, i, partitions, replication, offset-6, offset-1)
 
 		// FIX 2: Assignments (compact array) - this was missing!
 		assignCount, consumed, err := DecodeCompactArrayLength(requestBody[offset:])
@@ -2553,10 +2525,6 @@ func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint
 		replBytes := make([]byte, 2)
 		binary.BigEndian.PutUint16(replBytes, actualReplication)
 		response = append(response, replBytes...)
-
-		// DEBUG: Log response values
-		Debug("CreateTopics v%d: Response topic[%d] - partitions=%d, replication=%d, error_code=%d",
-			apiVersion, len(topics)-1, actualPartitions, actualReplication, errCode)
 
 		// configs (compact nullable array) - ADDED FOR V5
 		// ADMINCLIENT 7.4.0-CE NPE FIX: Send empty configs array instead of null
@@ -3032,18 +3000,6 @@ func (h *Handler) writeResponseWithHeader(w *bufio.Writer, correlationID uint32,
 	// Write response body
 	fullResponse = append(fullResponse, responseBody...)
 
-	// Debug logging for response format (hex dump removed to reduce CPU usage)
-	if glog.V(4) {
-		if apiKey == 10 { // FindCoordinator
-			glog.V(4).Infof("FindCoordinator v%d: totalSize=%d, bodyLen=%d, flexible=%t, fullResponseLen=%d", apiVersion, totalSize, len(responseBody), isFlexible, len(fullResponse))
-		}
-		if apiKey == 1 { // Fetch
-			glog.V(4).Infof("Fetch v%d: totalSize=%d, bodyLen=%d, flexible=%t, fullResponseLen=%d", apiVersion, totalSize, len(responseBody), isFlexible, len(fullResponse))
-		}
-		if apiKey == 3 { // Metadata
-			glog.V(4).Infof("Metadata v%d: totalSize=%d, bodyLen=%d, flexible=%t, fullResponseLen=%d", apiVersion, totalSize, len(responseBody), isFlexible, len(fullResponse))
-		}
-	}
 	Debug("Wrote API %d response v%d: size=%d, flexible=%t, correlationID=%d, totalBytes=%d", apiKey, apiVersion, totalSize, isFlexible, correlationID, len(fullResponse))
 
 	// Write to connection
@@ -3137,7 +3093,6 @@ func (h *Handler) EnableSchemaManagement(config schema.ManagerConfig) error {
 	h.schemaManager = manager
 	h.useSchema = true
 
-	fmt.Printf("Schema management enabled with registry: %s\n", config.RegistryURL)
 	return nil
 }
 
@@ -3153,7 +3108,6 @@ func (h *Handler) EnableBrokerIntegration(brokers []string) error {
 	})
 
 	h.brokerClient = brokerClient
-	fmt.Printf("Broker integration enabled with brokers: %v\n", brokers)
 	return nil
 }
 
@@ -3162,11 +3116,9 @@ func (h *Handler) DisableSchemaManagement() {
 	if h.brokerClient != nil {
 		h.brokerClient.Close()
 		h.brokerClient = nil
-		fmt.Println("Broker integration disabled")
 	}
 	h.schemaManager = nil
 	h.useSchema = false
-	fmt.Println("Schema management disabled")
 }
 
 // SetSchemaRegistryURL sets the Schema Registry URL for delayed initialization

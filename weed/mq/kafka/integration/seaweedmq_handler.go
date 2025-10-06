@@ -267,39 +267,31 @@ type PartitionRangeInfo struct {
 // GetEarliestOffset returns the earliest available offset for a topic partition
 // ALWAYS queries SMQ broker directly - no ledger involved
 func (h *SeaweedMQHandler) GetEarliestOffset(topic string, partition int32) (int64, error) {
-	glog.V(4).Infof("[DEBUG_OFFSET] GetEarliestOffset called for topic=%s partition=%d", topic, partition)
 
 	// Check if topic exists
 	if !h.TopicExists(topic) {
-		glog.V(4).Infof("[DEBUG_OFFSET] Topic %s does not exist", topic)
 		return 0, nil // Empty topic starts at offset 0
 	}
 
 	// ALWAYS query SMQ broker directly for earliest offset
 	if h.brokerClient != nil {
-		glog.V(4).Infof("[DEBUG_OFFSET] Querying SMQ broker for earliest offset...")
 		earliestOffset, err := h.brokerClient.GetEarliestOffset(topic, partition)
 		if err != nil {
-			glog.Errorf("[DEBUG_OFFSET] Failed to get earliest offset from broker: %v", err)
 			return 0, err
 		}
-		glog.V(4).Infof("[DEBUG_OFFSET] Got earliest offset from broker: %d", earliestOffset)
 		return earliestOffset, nil
 	}
 
 	// No broker client - this shouldn't happen in production
-	glog.Errorf("[DEBUG_OFFSET] BrokerClient is nil - cannot query SMQ")
 	return 0, fmt.Errorf("broker client not available")
 }
 
 // GetLatestOffset returns the latest available offset for a topic partition
 // ALWAYS queries SMQ broker directly - no ledger involved
 func (h *SeaweedMQHandler) GetLatestOffset(topic string, partition int32) (int64, error) {
-	glog.V(4).Infof("[DEBUG_OFFSET] GetLatestOffset called for topic=%s partition=%d", topic, partition)
 
 	// Check if topic exists
 	if !h.TopicExists(topic) {
-		glog.V(4).Infof("[DEBUG_OFFSET] Topic %s does not exist", topic)
 		return 0, nil // Empty topic
 	}
 
@@ -310,7 +302,6 @@ func (h *SeaweedMQHandler) GetLatestOffset(topic string, partition int32) (int64
 		if time.Now().Before(entry.expiresAt) {
 			// Cache hit - return cached value
 			h.hwmCacheMu.RUnlock()
-			glog.V(4).Infof("[DEBUG_OFFSET] Cache hit for %s: hwm=%d", cacheKey, entry.value)
 			return entry.value, nil
 		}
 	}
@@ -318,10 +309,8 @@ func (h *SeaweedMQHandler) GetLatestOffset(topic string, partition int32) (int64
 
 	// Cache miss or expired - query SMQ broker
 	if h.brokerClient != nil {
-		glog.V(4).Infof("[DEBUG_OFFSET] Cache miss for %s, querying SMQ broker...", cacheKey)
 		latestOffset, err := h.brokerClient.GetHighWaterMark(topic, partition)
 		if err != nil {
-			glog.Errorf("[DEBUG_OFFSET] Failed to get high water mark from broker: %v", err)
 			return 0, err
 		}
 
@@ -333,12 +322,10 @@ func (h *SeaweedMQHandler) GetLatestOffset(topic string, partition int32) (int64
 		}
 		h.hwmCacheMu.Unlock()
 
-		glog.V(4).Infof("[DEBUG_OFFSET] Got high water mark from broker and cached: %d (TTL=%v)", latestOffset, h.hwmCacheTTL)
 		return latestOffset, nil
 	}
 
 	// No broker client - this shouldn't happen in production
-	glog.Errorf("[DEBUG_OFFSET] BrokerClient is nil - cannot query SMQ")
 	return 0, fmt.Errorf("broker client not available")
 }
 
@@ -410,7 +397,6 @@ func (h *SeaweedMQHandler) CreatePerConnectionBrokerClient() (*BrokerClient, err
 
 	// Use the first broker address (in production, could use load balancing)
 	brokerAddress := h.brokerAddresses[0]
-	glog.V(4).Infof("[BROKER_CLIENT] Creating per-connection client to %s", brokerAddress)
 
 	// Create a new client with the shared filer accessor
 	client, err := NewBrokerClientWithFilerAccessor(brokerAddress, h.filerClientAccessor)
@@ -418,7 +404,6 @@ func (h *SeaweedMQHandler) CreatePerConnectionBrokerClient() (*BrokerClient, err
 		return nil, fmt.Errorf("failed to create broker client: %w", err)
 	}
 
-	glog.V(4).Infof("[BROKER_CLIENT] Successfully created per-connection client")
 	return client, nil
 }
 
@@ -444,8 +429,6 @@ func (h *SeaweedMQHandler) CreateTopicWithSchemas(name string, partitions int32,
 		Namespace: "kafka",
 		Name:      name,
 	}
-
-	glog.V(1).Infof("Creating topic %s with %d partitions in SeaweedMQ broker", name, partitions)
 
 	// Configure topic with SeaweedMQ broker via gRPC
 	if len(h.brokerAddresses) > 0 {
@@ -508,8 +491,6 @@ func (h *SeaweedMQHandler) CreateTopicWithRecordType(name string, partitions int
 		Namespace: "kafka",
 		Name:      name,
 	}
-
-	glog.V(1).Infof("Creating topic %s with %d partitions in SeaweedMQ broker using flat schema", name, partitions)
 
 	// Configure topic with SeaweedMQ broker via gRPC
 	if len(h.brokerAddresses) > 0 {
@@ -586,14 +567,12 @@ func (h *SeaweedMQHandler) TopicExists(name string) bool {
 	if entry, found := h.topicExistsCache[name]; found {
 		if time.Now().Before(entry.expiresAt) {
 			h.topicExistsCacheMu.RUnlock()
-			glog.V(4).Infof("TopicExists cache HIT for %s: %v", name, entry.exists)
 			return entry.exists
 		}
 	}
 	h.topicExistsCacheMu.RUnlock()
 
 	// Cache miss or expired - query broker
-	glog.V(4).Infof("TopicExists cache MISS for %s, querying broker", name)
 
 	var exists bool
 	// Check via SeaweedMQ broker (includes in-memory topics)
@@ -601,13 +580,11 @@ func (h *SeaweedMQHandler) TopicExists(name string) bool {
 		var err error
 		exists, err = h.brokerClient.TopicExists(name)
 		if err != nil {
-			fmt.Printf("TopicExists: Failed to check topic %s via SMQ broker: %v\n", name, err)
 			// Don't cache errors
 			return false
 		}
 	} else {
 		// Return false if broker is unavailable
-		fmt.Printf("TopicExists: No broker client available for topic %s\n", name)
 		return false
 	}
 
@@ -628,7 +605,6 @@ func (h *SeaweedMQHandler) InvalidateTopicExistsCache(name string) {
 	h.topicExistsCacheMu.Lock()
 	delete(h.topicExistsCache, name)
 	h.topicExistsCacheMu.Unlock()
-	glog.V(4).Infof("Invalidated TopicExists cache for %s", name)
 }
 
 // GetTopicInfo returns information about a topic from broker
@@ -668,36 +644,26 @@ func (h *SeaweedMQHandler) ListTopics() []string {
 	if h.brokerClient != nil {
 		topics, err := h.brokerClient.ListTopics()
 		if err == nil {
-			fmt.Printf("ListTopics: Found %d topics from SMQ broker: %v\n", len(topics), topics)
 			return topics
 		}
-		fmt.Printf("ListTopics: Failed to get topics from SMQ broker: %v\n", err)
 	}
 
 	// Return empty list if broker is unavailable
-	fmt.Printf("ListTopics: No broker client available, returning empty list\n")
 	return []string{}
 }
 
 // ProduceRecord publishes a record to SeaweedMQ and lets SMQ generate the offset
 func (h *SeaweedMQHandler) ProduceRecord(topic string, partition int32, key []byte, value []byte) (int64, error) {
-	fmt.Printf("🔥 PRODUCE DEBUG: Starting ProduceRecord for topic=%s partition=%d\n", topic, partition)
-	fmt.Printf("🔥 PRODUCE DEBUG: Key length=%d, Value length=%d\n", len(key), len(value))
 	if len(key) > 0 {
-		fmt.Printf("🔥 PRODUCE DEBUG: Key content: %s\n", string(key))
 	}
 	if len(value) > 0 {
-		fmt.Printf("🔥 PRODUCE DEBUG: Value content: %s\n", string(value))
 	} else {
-		fmt.Printf("🔥 PRODUCE DEBUG: Value is empty or nil!\n")
 	}
 
 	// Verify topic exists
 	if !h.TopicExists(topic) {
-		fmt.Printf("🔥 PRODUCE DEBUG: Topic %s does not exist\n", topic)
 		return 0, fmt.Errorf("topic %s does not exist", topic)
 	}
-	fmt.Printf("🔥 PRODUCE DEBUG: Topic %s exists, proceeding\n", topic)
 
 	// Get current timestamp
 	timestamp := time.Now().UnixNano()
@@ -706,12 +672,9 @@ func (h *SeaweedMQHandler) ProduceRecord(topic string, partition int32, key []by
 	var smqOffset int64
 	var publishErr error
 	if h.brokerClient == nil {
-		fmt.Printf("🔥 PRODUCE DEBUG: No broker client available\n")
 		publishErr = fmt.Errorf("no broker client available")
 	} else {
-		fmt.Printf("🔥 PRODUCE DEBUG: Calling brokerClient.PublishRecord\n")
 		smqOffset, publishErr = h.brokerClient.PublishRecord(topic, partition, key, value, timestamp)
-		fmt.Printf("🔥 PRODUCE DEBUG: brokerClient.PublishRecord returned offset=%d, err=%v\n", smqOffset, publishErr)
 	}
 
 	if publishErr != nil {
@@ -719,8 +682,6 @@ func (h *SeaweedMQHandler) ProduceRecord(topic string, partition int32, key []by
 	}
 
 	// SMQ should have generated and returned the offset - use it directly as the Kafka offset
-	glog.V(2).Infof("Successfully produced record to topic %s partition %d at SMQ offset %d",
-		topic, partition, smqOffset)
 
 	// Invalidate HWM cache for this partition to ensure fresh reads
 	// This is critical for read-your-own-write scenarios (e.g., Schema Registry)
@@ -728,7 +689,6 @@ func (h *SeaweedMQHandler) ProduceRecord(topic string, partition int32, key []by
 	h.hwmCacheMu.Lock()
 	delete(h.hwmCache, cacheKey)
 	h.hwmCacheMu.Unlock()
-	glog.V(4).Infof("[DEBUG_OFFSET] Invalidated HWM cache for %s after produce at offset %d", cacheKey, smqOffset)
 
 	return smqOffset, nil
 }
@@ -758,8 +718,6 @@ func (h *SeaweedMQHandler) ProduceRecordValue(topic string, partition int32, key
 	}
 
 	// SMQ broker has assigned the offset - use it directly as the Kafka offset
-	glog.V(2).Infof("Successfully produced RecordValue to topic %s partition %d at SMQ offset %d",
-		topic, partition, smqOffset)
 
 	// Invalidate HWM cache for this partition to ensure fresh reads
 	// This is critical for read-your-own-write scenarios (e.g., Schema Registry)
@@ -767,7 +725,6 @@ func (h *SeaweedMQHandler) ProduceRecordValue(topic string, partition int32, key
 	h.hwmCacheMu.Lock()
 	delete(h.hwmCache, cacheKey)
 	h.hwmCacheMu.Unlock()
-	glog.V(4).Infof("[DEBUG_OFFSET] Invalidated HWM cache for %s after produce at offset %d", cacheKey, smqOffset)
 
 	return smqOffset, nil
 }
@@ -1047,14 +1004,12 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string, clientHost str
 
 	// For now, use the first broker (can be enhanced later for load balancing)
 	brokerAddress := brokerAddresses[0]
-	fmt.Printf("🔥 GATEWAY: Connecting to broker at %s\n", brokerAddress)
 
 	// Create broker client with shared filer accessor
 	brokerClient, err := NewBrokerClientWithFilerAccessor(brokerAddress, sharedFilerAccessor)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create broker client: %v", err)
 	}
-	fmt.Printf("🔥 GATEWAY: Successfully created broker client to %s\n", brokerAddress)
 
 	// Test the connection
 	if err := brokerClient.HealthCheck(); err != nil {
@@ -1079,8 +1034,6 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string, clientHost str
 // discoverBrokersWithMasterClient queries masters for available brokers using reusable master client
 func discoverBrokersWithMasterClient(masterClient *wdclient.MasterClient, filerGroup string) ([]string, error) {
 	var brokers []string
-
-	glog.V(1).Infof("Starting broker discovery with MasterClient for filer group: %q", filerGroup)
 
 	err := masterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 		glog.V(1).Infof("Inside MasterClient.WithClient callback - client obtained successfully")
@@ -1120,8 +1073,6 @@ func discoverBrokersWithMasterClient(masterClient *wdclient.MasterClient, filerG
 func discoverFilersWithMasterClient(masterClient *wdclient.MasterClient, filerGroup string) ([]pb.ServerAddress, error) {
 	var filers []pb.ServerAddress
 
-	fmt.Printf("🔥 FILER DISCOVERY: Requesting filers with filerGroup='%s'\n", filerGroup)
-
 	err := masterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
 			ClientType: cluster.FilerType,
@@ -1129,19 +1080,14 @@ func discoverFilersWithMasterClient(masterClient *wdclient.MasterClient, filerGr
 			Limit:      1000,
 		})
 		if err != nil {
-			fmt.Printf("🔥 FILER DISCOVERY: ListClusterNodes failed: %v\n", err)
 			return err
 		}
 
-		fmt.Printf("🔥 FILER DISCOVERY: ListClusterNodes returned %d nodes\n", len(resp.ClusterNodes))
-
 		// Extract filer addresses from response - return as HTTP addresses (pb.ServerAddress)
 		for _, node := range resp.ClusterNodes {
-			fmt.Printf("🔥 FILER DISCOVERY: Found node - Address=%s, DataCenter=%s\n", node.Address, node.DataCenter)
 			if node.Address != "" {
 				// Return HTTP address as pb.ServerAddress (no pre-conversion to gRPC)
 				httpAddr := pb.ServerAddress(node.Address)
-				fmt.Printf("🔥 FILER DISCOVERY: Adding filer HTTP address %s\n", httpAddr)
 				filers = append(filers, httpAddr)
 			}
 		}
@@ -1149,7 +1095,6 @@ func discoverFilersWithMasterClient(masterClient *wdclient.MasterClient, filerGr
 		return nil
 	})
 
-	fmt.Printf("🔥 FILER DISCOVERY: Returning %d filers, err=%v\n", len(filers), err)
 	return filers, err
 }
 
@@ -1177,12 +1122,10 @@ func (h *SeaweedMQHandler) checkTopicInFiler(topicName string) bool {
 // listTopicsFromFiler lists all topics from the filer
 func (h *SeaweedMQHandler) listTopicsFromFiler() []string {
 	if h.filerClientAccessor == nil {
-		fmt.Printf("listTopicsFromFiler: filerClientAccessor is nil\n")
 		return []string{}
 	}
 
 	var topics []string
-	fmt.Printf("listTopicsFromFiler: Attempting to list entries in /topics/kafka\n")
 
 	h.filerClientAccessor.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		request := &filer_pb.ListEntriesRequest{
@@ -1191,29 +1134,23 @@ func (h *SeaweedMQHandler) listTopicsFromFiler() []string {
 
 		stream, err := client.ListEntries(context.Background(), request)
 		if err != nil {
-			glog.V(1).Infof("listTopicsFromFiler: ListEntries failed: %v", err)
 			return nil // Don't propagate error, just return empty list
 		}
 
-		glog.V(1).Infof("listTopicsFromFiler: ListEntries stream created successfully")
 		for {
 			resp, err := stream.Recv()
 			if err != nil {
-				glog.V(1).Infof("listTopicsFromFiler: Stream recv ended: %v", err)
 				break // End of stream or error
 			}
 
 			if resp.Entry != nil && resp.Entry.IsDirectory {
-				glog.V(1).Infof("listTopicsFromFiler: Found directory: %s", resp.Entry.Name)
 				topics = append(topics, resp.Entry.Name)
 			} else if resp.Entry != nil {
-				glog.V(1).Infof("listTopicsFromFiler: Found non-directory: %s (isDir=%v)", resp.Entry.Name, resp.Entry.IsDirectory)
 			}
 		}
 		return nil
 	})
 
-	glog.V(1).Infof("listTopicsFromFiler: Returning %d topics: %v", len(topics), topics)
 	return topics
 }
 
@@ -1350,7 +1287,6 @@ func (bc *BrokerClient) Close() error {
 
 // GetPartitionRangeInfo gets comprehensive range information from SeaweedMQ broker's native range manager
 func (bc *BrokerClient) GetPartitionRangeInfo(topic string, partition int32) (*PartitionRangeInfo, error) {
-	glog.V(4).Infof("[DEBUG_OFFSET] GetPartitionRangeInfo called for topic=%s partition=%d", topic, partition)
 
 	if bc.client == nil {
 		return nil, fmt.Errorf("broker client not connected")
@@ -1374,12 +1310,10 @@ func (bc *BrokerClient) GetPartitionRangeInfo(topic string, partition int32) (*P
 		Partition: actualPartition,
 	})
 	if err != nil {
-		glog.V(4).Infof("[DEBUG_OFFSET] Failed to call GetPartitionRangeInfo gRPC: %v", err)
 		return nil, fmt.Errorf("failed to get partition range info from broker: %v", err)
 	}
 
 	if resp.Error != "" {
-		glog.V(4).Infof("[DEBUG_OFFSET] Broker returned error: %s", resp.Error)
 		return nil, fmt.Errorf("broker error: %s", resp.Error)
 	}
 
@@ -1408,31 +1342,23 @@ func (bc *BrokerClient) GetPartitionRangeInfo(topic string, partition int32) (*P
 		ActiveSubscriptions: resp.ActiveSubscriptions,
 	}
 
-	glog.V(4).Infof("[DEBUG_OFFSET] Got range info from broker: earliest=%d, latest=%d, hwm=%d, records=%d, ts_range=[%d,%d]",
-		info.EarliestOffset, info.LatestOffset, info.HighWaterMark, info.RecordCount,
-		info.EarliestTimestampNs, info.LatestTimestampNs)
 	return info, nil
 }
 
 // GetHighWaterMark gets the high water mark for a topic partition
 func (bc *BrokerClient) GetHighWaterMark(topic string, partition int32) (int64, error) {
-	glog.V(4).Infof("[DEBUG_OFFSET] GetHighWaterMark called for topic=%s partition=%d", topic, partition)
 
 	// Primary approach: Use SeaweedMQ's native range manager via gRPC
 	info, err := bc.GetPartitionRangeInfo(topic, partition)
 	if err != nil {
-		glog.V(4).Infof("[DEBUG_OFFSET] Failed to get offset info from broker, falling back to chunk metadata: %v", err)
 		// Fallback to chunk metadata approach
 		highWaterMark, err := bc.getHighWaterMarkFromChunkMetadata(topic, partition)
 		if err != nil {
-			glog.V(4).Infof("[DEBUG_OFFSET] Failed to get high water mark from chunk metadata: %v", err)
 			return 0, err
 		}
-		glog.V(4).Infof("[DEBUG_OFFSET] Got high water mark from chunk metadata fallback: %d", highWaterMark)
 		return highWaterMark, nil
 	}
 
-	glog.V(4).Infof("[DEBUG_OFFSET] Successfully got high water mark from broker: %d", info.HighWaterMark)
 	return info.HighWaterMark, nil
 }
 
@@ -1476,7 +1402,6 @@ func (bc *BrokerClient) getOffsetRangeFromChunkMetadata(topic string, partition 
 	}
 
 	if latestVersion == "" {
-		glog.V(4).Infof("[DEBUG_OFFSET] No version directory found for topic %s", topic)
 		return 0, 0, nil
 	}
 
@@ -1511,7 +1436,6 @@ func (bc *BrokerClient) getOffsetRangeFromChunkMetadata(topic string, partition 
 	}
 
 	if partitionDir == "" {
-		glog.V(4).Infof("[DEBUG_OFFSET] No partition directory found for topic %s", topic)
 		return 0, 0, nil
 	}
 
@@ -1539,18 +1463,12 @@ func (bc *BrokerClient) getOffsetRangeFromChunkMetadata(topic string, partition 
 			if !resp.Entry.IsDirectory && resp.Entry.Name != "checkpoint.offset" {
 				// Check for offset ranges in Extended attributes (both log files and parquet files)
 				if resp.Entry.Extended != nil {
-					fileType := "log"
-					if strings.HasSuffix(resp.Entry.Name, ".parquet") {
-						fileType = "parquet"
-					}
-
 					// Track maximum offset for high water mark
 					if maxOffsetBytes, exists := resp.Entry.Extended[mq.ExtendedAttrOffsetMax]; exists && len(maxOffsetBytes) == 8 {
 						maxOffset := int64(binary.BigEndian.Uint64(maxOffsetBytes))
 						if maxOffset > highWaterMark {
 							highWaterMark = maxOffset
 						}
-						glog.V(4).Infof("[DEBUG_OFFSET] %s file %s has offset_max=%d", fileType, resp.Entry.Name, maxOffset)
 					}
 
 					// Track minimum offset for earliest offset
@@ -1559,7 +1477,6 @@ func (bc *BrokerClient) getOffsetRangeFromChunkMetadata(topic string, partition 
 						if earliestOffset == -1 || minOffset < earliestOffset {
 							earliestOffset = minOffset
 						}
-						glog.V(4).Infof("[DEBUG_OFFSET] %s file %s has offset_min=%d", fileType, resp.Entry.Name, minOffset)
 					}
 				}
 			}
@@ -1580,7 +1497,6 @@ func (bc *BrokerClient) getOffsetRangeFromChunkMetadata(topic string, partition 
 		earliestOffset = 0
 	}
 
-	glog.V(4).Infof("[DEBUG_OFFSET] Offset range for topic %s partition %d: earliest=%d, highWaterMark=%d", topic, partition, earliestOffset, highWaterMark)
 	return earliestOffset, highWaterMark, nil
 }
 
@@ -1592,23 +1508,18 @@ func (bc *BrokerClient) getHighWaterMarkFromChunkMetadata(topic string, partitio
 
 // GetEarliestOffset gets the earliest offset from SeaweedMQ broker's native offset manager
 func (bc *BrokerClient) GetEarliestOffset(topic string, partition int32) (int64, error) {
-	glog.V(4).Infof("[DEBUG_OFFSET] BrokerClient.GetEarliestOffset called for topic=%s partition=%d", topic, partition)
 
 	// Primary approach: Use SeaweedMQ's native range manager via gRPC
 	info, err := bc.GetPartitionRangeInfo(topic, partition)
 	if err != nil {
-		glog.V(4).Infof("[DEBUG_OFFSET] Failed to get offset info from broker, falling back to chunk metadata: %v", err)
 		// Fallback to chunk metadata approach
 		earliestOffset, err := bc.getEarliestOffsetFromChunkMetadata(topic, partition)
 		if err != nil {
-			glog.V(4).Infof("[DEBUG_OFFSET] Failed to get earliest offset from chunk metadata: %v", err)
 			return 0, err
 		}
-		glog.V(4).Infof("[DEBUG_OFFSET] Got earliest offset from chunk metadata fallback: %d", earliestOffset)
 		return earliestOffset, nil
 	}
 
-	glog.V(4).Infof("[DEBUG_OFFSET] Successfully got earliest offset from broker: %d", info.EarliestOffset)
 	return info.EarliestOffset, nil
 }
 
@@ -1641,14 +1552,11 @@ func (bc *BrokerClient) GetGrpcDialOption() grpc.DialOption {
 
 // PublishRecord publishes a single record to SeaweedMQ broker
 func (bc *BrokerClient) PublishRecord(topic string, partition int32, key []byte, value []byte, timestamp int64) (int64, error) {
-	fmt.Printf("🔥 BROKER DEBUG: Starting PublishRecord for topic=%s partition=%d\n", topic, partition)
 
 	session, err := bc.getOrCreatePublisher(topic, partition)
 	if err != nil {
-		fmt.Printf("🔥 BROKER DEBUG: getOrCreatePublisher failed: %v\n", err)
 		return 0, err
 	}
-	fmt.Printf("🔥 BROKER DEBUG: Got publisher session successfully\n")
 
 	// Send data message using broker API format
 	dataMsg := &mq_pb.DataMessage{
@@ -1657,30 +1565,22 @@ func (bc *BrokerClient) PublishRecord(topic string, partition int32, key []byte,
 		TsNs:  timestamp,
 	}
 
-	fmt.Printf("🔥 BROKER DEBUG: Sending data message to stream\n")
-	fmt.Printf("🔥 BROKER DEBUG: DataMessage Key length=%d, Value length=%d\n", len(dataMsg.Key), len(dataMsg.Value))
 	if len(dataMsg.Value) > 0 {
-		fmt.Printf("🔥 BROKER DEBUG: DataMessage Value content: %s\n", string(dataMsg.Value))
 	} else {
-		fmt.Printf("🔥 BROKER DEBUG: DataMessage Value is empty or nil!\n")
 	}
 	if err := session.Stream.Send(&mq_pb.PublishMessageRequest{
 		Message: &mq_pb.PublishMessageRequest_Data{
 			Data: dataMsg,
 		},
 	}); err != nil {
-		fmt.Printf("🔥 BROKER DEBUG: Stream.Send failed: %v\n", err)
 		return 0, fmt.Errorf("failed to send data: %v", err)
 	}
-	fmt.Printf("🔥 BROKER DEBUG: Data message sent, waiting for ack\n")
 
 	// Read acknowledgment
 	resp, err := session.Stream.Recv()
 	if err != nil {
-		fmt.Printf("🔥 BROKER DEBUG: Stream.Recv failed: %v\n", err)
 		return 0, fmt.Errorf("failed to receive ack: %v", err)
 	}
-	fmt.Printf("🔥 BROKER DEBUG: Received ack successfully, AssignedOffset=%d\n", resp.AssignedOffset)
 
 	// Handle structured broker errors
 	if kafkaErrorCode, errorMsg, handleErr := HandleBrokerResponse(resp); handleErr != nil {
@@ -1691,7 +1591,6 @@ func (bc *BrokerClient) PublishRecord(topic string, partition int32, key []byte,
 	}
 
 	// Use the assigned offset from SMQ, not the timestamp
-	fmt.Printf("🔥 BROKER DEBUG: Returning offset=%d to caller\n", resp.AssignedOffset)
 	return resp.AssignedOffset, nil
 }
 
@@ -1717,20 +1616,16 @@ func (bc *BrokerClient) getOrCreatePublisher(topic string, partition int32) (*Br
 	}
 
 	// Create the stream
-	fmt.Printf("🔥 PUBLISHER: Creating publish stream to broker=%s for topic=%s partition=%d\n", bc.brokerAddress, topic, partition)
 	stream, err := bc.client.PublishMessage(bc.ctx)
 	if err != nil {
-		fmt.Printf("🔥 PUBLISHER: Failed to create publish stream: %v\n", err)
 		return nil, fmt.Errorf("failed to create publish stream: %v", err)
 	}
-	fmt.Printf("🔥 PUBLISHER: Stream created successfully\n")
 
 	// Get the actual partition assignment from the broker instead of using Kafka partition mapping
 	actualPartition, err := bc.getActualPartitionAssignment(topic, partition)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get actual partition assignment: %v", err)
 	}
-	fmt.Printf("🔥 PUBLISHER: Sending init message for topic=%s actualPartition=%v\n", topic, actualPartition)
 
 	// Send init message using the actual partition structure that the broker allocated
 	if err := stream.Send(&mq_pb.PublishMessageRequest{
@@ -1746,10 +1641,8 @@ func (bc *BrokerClient) getOrCreatePublisher(topic string, partition int32) (*Br
 			},
 		},
 	}); err != nil {
-		fmt.Printf("🔥 PUBLISHER: Failed to send init message: %v\n", err)
 		return nil, fmt.Errorf("failed to send init message: %v", err)
 	}
-	fmt.Printf("🔥 PUBLISHER: Init message sent successfully\n")
 
 	session := &BrokerPublisherSession{
 		Topic:     topic,

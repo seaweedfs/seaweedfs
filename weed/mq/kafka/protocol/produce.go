@@ -13,18 +13,14 @@ import (
 )
 
 func (h *Handler) handleProduce(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
-	fmt.Printf("PRODUCE: handleProduce called - correlation=%d, version=%d, bodyLen=%d\n", correlationID, apiVersion, len(requestBody))
 
 	// Version-specific handling
 	switch apiVersion {
 	case 0, 1:
-		fmt.Printf("PRODUCE: Routing to handleProduceV0V1\n")
 		return h.handleProduceV0V1(correlationID, apiVersion, requestBody)
 	case 2, 3, 4, 5, 6, 7:
-		fmt.Printf("PRODUCE: Routing to handleProduceV2Plus\n")
 		return h.handleProduceV2Plus(correlationID, apiVersion, requestBody)
 	default:
-		fmt.Printf("PRODUCE: Unsupported version %d\n", apiVersion)
 		return nil, fmt.Errorf("produce version %d not implemented yet", apiVersion)
 	}
 }
@@ -92,7 +88,6 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 		offset += int(topicNameSize)
 
 		// Debug: log topic being produced to
-		Debug("Produce v%d - writing to topic: %s", apiVersion, topicName)
 
 		// Parse partitions count
 		partitionsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
@@ -208,46 +203,36 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 // - CRC32 validation
 // - Individual record extraction
 func (h *Handler) parseRecordSet(recordSetData []byte) (recordCount int32, totalSize int32, err error) {
-	fmt.Printf("PARSE DEBUG: parseRecordSet called with %d bytes\n", len(recordSetData))
 
 	// Heuristic: permit short inputs for tests
 	if len(recordSetData) < 61 {
 		// If very small, decide error vs fallback
 		if len(recordSetData) < 8 {
-			fmt.Printf("PARSE DEBUG: Too small (< 8 bytes), returning error\n")
 			return 0, 0, fmt.Errorf("failed to parse record batch: record set too small: %d bytes", len(recordSetData))
 		}
 		// If we have at least 20 bytes, attempt to read a count at [16:20]
 		if len(recordSetData) >= 20 {
 			cnt := int32(binary.BigEndian.Uint32(recordSetData[16:20]))
-			fmt.Printf("PARSE DEBUG: Read count from offset 16: %d\n", cnt)
 			if cnt <= 0 || cnt > 1000000 {
 				cnt = 1
 			}
-			fmt.Printf("PARSE DEBUG: Returning count=%d (short path)\n", cnt)
 			return cnt, int32(len(recordSetData)), nil
 		}
 		// Otherwise default to 1 record
-		fmt.Printf("PARSE DEBUG: Defaulting to count=1 (very short)\n")
 		return 1, int32(len(recordSetData)), nil
 	}
 
-	fmt.Printf("PARSE DEBUG: Using full parser for %d bytes\n", len(recordSetData))
 	parser := NewRecordBatchParser()
 
 	// Parse the record batch with CRC validation
 	batch, err := parser.ParseRecordBatchWithValidation(recordSetData, true)
 	if err != nil {
-		fmt.Printf("PARSE DEBUG: ParseRecordBatchWithValidation failed: %v, trying without validation\n", err)
 		// If CRC validation fails, try without validation for backward compatibility
 		batch, err = parser.ParseRecordBatch(recordSetData)
 		if err != nil {
-			fmt.Printf("PARSE DEBUG: ParseRecordBatch also failed: %v\n", err)
 			return 0, 0, fmt.Errorf("failed to parse record batch: %w", err)
 		}
 	}
-
-	fmt.Printf("PARSE DEBUG: Successfully parsed, RecordCount=%d\n", batch.RecordCount)
 
 	return batch.RecordCount, int32(len(recordSetData)), nil
 }
@@ -271,14 +256,11 @@ func (h *Handler) produceToSeaweedMQ(topic string, partition int32, recordSetDat
 func (h *Handler) extractAllRecords(recordSetData []byte) []struct{ Key, Value []byte } {
 	results := make([]struct{ Key, Value []byte }, 0, 8)
 
-	fmt.Printf("BATCH ANALYSIS: Total recordSetData length = %d bytes\n", len(recordSetData))
 	if len(recordSetData) > 0 {
-		fmt.Printf("BATCH HEX DUMP (first 96 bytes): % x\n", recordSetData[:min(96, len(recordSetData))])
 	}
 
 	if len(recordSetData) < 61 {
 		// Too small to be a full batch; treat as single opaque record
-		fmt.Printf("BATCH: Too small (%d < 61), using extractFirstRecord\n", len(recordSetData))
 		key, value := h.extractFirstRecord(recordSetData)
 		// Always include records, even if both key and value are null
 		// Schema Registry Noop records may have null values
@@ -288,27 +270,21 @@ func (h *Handler) extractAllRecords(recordSetData []byte) []struct{ Key, Value [
 
 	// Parse record batch header (Kafka v2)
 	offset := 0
-	baseOffset := int64(binary.BigEndian.Uint64(recordSetData[offset:]))
-	offset += 8 // base_offset
-	batchLength := binary.BigEndian.Uint32(recordSetData[offset:])
-	offset += 4 // batch_length
-	partitionLeaderEpoch := binary.BigEndian.Uint32(recordSetData[offset:])
-	offset += 4 // partition_leader_epoch
-
-	fmt.Printf("HEADER: baseOffset=%d, batchLength=%d, partitionLeaderEpoch=%d, offset=%d\n",
-		baseOffset, batchLength, partitionLeaderEpoch, offset)
+	_ = int64(binary.BigEndian.Uint64(recordSetData[offset:])) // baseOffset
+	offset += 8                                                // base_offset
+	_ = binary.BigEndian.Uint32(recordSetData[offset:])        // batchLength
+	offset += 4                                                // batch_length
+	_ = binary.BigEndian.Uint32(recordSetData[offset:])        // partitionLeaderEpoch
+	offset += 4                                                // partition_leader_epoch
 
 	if offset >= len(recordSetData) {
-		fmt.Printf("HEADER: offset=%d >= len=%d, returning empty\n", offset, len(recordSetData))
 		return results
 	}
 	magic := recordSetData[offset] // magic
 	offset += 1
-	fmt.Printf("HEADER: magic=%d, offset now=%d\n", magic, offset)
 
 	if magic != 2 {
 		// Unsupported, fallback
-		fmt.Printf("HEADER: Unsupported magic %d, using extractFirstRecord\n", magic)
 		key, value := h.extractFirstRecord(recordSetData)
 		// Always include records, even if both key and value are null
 		results = append(results, struct{ Key, Value []byte }{Key: key, Value: value})
@@ -322,7 +298,6 @@ func (h *Handler) extractAllRecords(recordSetData []byte) []struct{ Key, Value [
 
 	// Check compression codec from attributes (bits 0-2)
 	compressionCodec := compression.CompressionCodec(attributes & 0x07)
-	fmt.Printf("EXTRACT: Compression codec = %d (0=none, 1=gzip, 2=snappy, 3=lz4, 4=zstd)\n", compressionCodec)
 
 	offset += 4 // last_offset_delta
 	offset += 8 // first_timestamp
@@ -333,52 +308,38 @@ func (h *Handler) extractAllRecords(recordSetData []byte) []struct{ Key, Value [
 
 	// records_count
 	if offset+4 > len(recordSetData) {
-		fmt.Printf("HEADER: Can't read records_count, offset=%d+4 > len=%d\n", offset, len(recordSetData))
 		return results
 	}
 	recordsCount := int(binary.BigEndian.Uint32(recordSetData[offset:]))
 	offset += 4
 
-	fmt.Printf("HEADER: recordsCount=%d, offset now=%d (header complete)\n", recordsCount, offset)
-	fmt.Printf("HEADER: Remaining bytes for records section = %d\n", len(recordSetData)-offset)
-
 	// Extract and decompress the records section
 	recordsData := recordSetData[offset:]
-	fmt.Printf("RECORDS: recordsData extracted from offset %d, length=%d\n", offset, len(recordsData))
 	if compressionCodec != compression.None {
-		fmt.Printf("EXTRACT: Decompressing %d bytes with codec %d\n", len(recordsData), compressionCodec)
 		decompressed, err := compression.Decompress(compressionCodec, recordsData)
 		if err != nil {
-			fmt.Printf("EXTRACT: Decompression failed: %v\n", err)
 			// Fallback to extractFirstRecord
 			key, value := h.extractFirstRecord(recordSetData)
 			results = append(results, struct{ Key, Value []byte }{Key: key, Value: value})
 			return results
 		}
 		recordsData = decompressed
-		fmt.Printf("EXTRACT: Decompressed to %d bytes\n", len(recordsData))
 	}
 	// Reset offset to start of records data (whether compressed or not)
 	offset = 0
 
-	fmt.Printf("EXTRACT: Starting record iteration - recordsCount=%d, recordsDataLen=%d\n", recordsCount, len(recordsData))
 	if len(recordsData) > 0 {
-		fmt.Printf("EXTRACT: First 20 bytes of recordsData: %v\n", recordsData[:min(20, len(recordsData))])
 	}
-	fmt.Printf("EXTRACT: Full recordsData (%d bytes): %v\n", len(recordsData), recordsData)
 
 	// Iterate records
 	for i := 0; i < recordsCount && offset < len(recordsData); i++ {
 		// record_length is a SIGNED zigzag-encoded varint (like all varints in Kafka record format)
 		recLen, n := decodeVarint(recordsData[offset:])
-		fmt.Printf("EXTRACT: Record %d - recLen=%d (zigzag decoded), n=%d, offset=%d\n", i, recLen, n, offset)
 		if n == 0 || recLen <= 0 {
-			fmt.Printf("EXTRACT: Breaking - invalid recLen or varint decode failed\n")
 			break
 		}
 		offset += n
 		if offset+int(recLen) > len(recordsData) {
-			fmt.Printf("EXTRACT: Record length %d exceeds available data %d, breaking\n", recLen, len(recordsData)-offset)
 			break
 		}
 		rec := recordsData[offset : offset+int(recLen)]
@@ -407,7 +368,6 @@ func (h *Handler) extractAllRecords(recordSetData []byte) []struct{ Key, Value [
 
 		// key
 		keyLen, nBytes := decodeVarint(rec[rpos:])
-		fmt.Printf("EXTRACT: keyLen=%d, nBytes=%d, rpos=%d\n", keyLen, nBytes, rpos)
 		if nBytes == 0 {
 			continue
 		}
@@ -420,11 +380,9 @@ func (h *Handler) extractAllRecords(recordSetData []byte) []struct{ Key, Value [
 			key = rec[rpos : rpos+int(keyLen)]
 			rpos += int(keyLen)
 		}
-		fmt.Printf("EXTRACT: key=%v (len=%d, nil=%v)\n", key, len(key), key == nil)
 
 		// value
 		valLen, nBytes := decodeVarint(rec[rpos:])
-		fmt.Printf("EXTRACT: valLen=%d, nBytes=%d, rpos=%d\n", valLen, nBytes, rpos)
 		if nBytes == 0 {
 			continue
 		}
@@ -621,8 +579,6 @@ func decodeVarint(data []byte) (int64, int) {
 // handleProduceV2Plus handles Produce API v2-v7 (Kafka 0.11+)
 func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
 	startTime := time.Now()
-	Debug("PRODUCE DEBUG: handleProduceV2Plus called - correlationID=%d, apiVersion=%d, bodyLen=%d", correlationID, apiVersion, len(requestBody))
-	Debug("PRODUCE DEBUG: Function entry confirmed - about to start parsing")
 
 	// DEBUG: Hex dump first 100 bytes to understand actual request format
 	dumpLen := len(requestBody)
@@ -643,49 +599,38 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 
 	// transactional_id only exists in v3+
 	if apiVersion >= 3 {
-		Debug("Produce v%d - Parsing transactional_id, offset=%d, bodyLen=%d", apiVersion, offset, len(requestBody))
 		if len(requestBody) < offset+2 {
 			return nil, fmt.Errorf("Produce v%d request too short for transactional_id", apiVersion)
 		}
 		txIDLen := int16(binary.BigEndian.Uint16(requestBody[offset : offset+2]))
-		Debug("Produce v%d - transactional_id length: %d", apiVersion, txIDLen)
 		offset += 2
 		if txIDLen >= 0 {
 			if len(requestBody) < offset+int(txIDLen) {
 				return nil, fmt.Errorf("Produce v%d request transactional_id too short", apiVersion)
 			}
-			txID := string(requestBody[offset : offset+int(txIDLen)])
-			Debug("Produce v%d - transactional_id: '%s'", apiVersion, txID)
+			_ = string(requestBody[offset : offset+int(txIDLen)]) // txID
 			offset += int(txIDLen)
-		} else {
-			Debug("Produce v%d - transactional_id is null", apiVersion)
 		}
-		Debug("Produce v%d - After transactional_id parsing, offset=%d", apiVersion, offset)
 	}
 
 	// Parse acks (INT16) and timeout_ms (INT32)
-	Debug("Produce v%d - About to parse acks, offset=%d, bodyLen=%d", apiVersion, offset, len(requestBody))
 	if len(requestBody) < offset+6 {
 		return nil, fmt.Errorf("Produce v%d request missing acks/timeout", apiVersion)
 	}
 
 	acks := int16(binary.BigEndian.Uint16(requestBody[offset : offset+2]))
 	offset += 2
-	timeout := binary.BigEndian.Uint32(requestBody[offset : offset+4])
+	_ = binary.BigEndian.Uint32(requestBody[offset : offset+4]) // timeout
 	offset += 4
 
 	// Debug: Log acks and timeout values
-	Debug("Produce v%d - acks=%d, timeout=%d", apiVersion, acks, timeout)
 
 	// Remember if this is fire-and-forget mode
 	isFireAndForget := acks == 0
 	if isFireAndForget {
-		Debug("Produce v%d - Fire-and-forget mode (acks=0)", apiVersion)
 	} else {
-		Debug("Produce v%d - Acknowledgment required (acks=%d)", apiVersion, acks)
 	}
 
-	Debug("Produce v%d - About to parse topics, offset=%d", apiVersion, offset)
 	if len(requestBody) < offset+4 {
 		return nil, fmt.Errorf("Produce v%d request missing topics count", apiVersion)
 	}
@@ -762,51 +707,18 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 			// Check if topic exists; for v2+ do NOT auto-create
 			topicExists := h.seaweedMQHandler.TopicExists(topicName)
 
-			Debug("Produce v%d - Topic: %s, Partition: %d, TopicExists: %v, RecordSetSize: %d",
-				apiVersion, topicName, partitionID, topicExists, recordSetSize)
-
 			if !topicExists {
 				errorCode = 3 // UNKNOWN_TOPIC_OR_PARTITION
-				Debug("Produce v%d - Topic %s does not exist, returning UNKNOWN_TOPIC_OR_PARTITION", apiVersion, topicName)
 			} else {
 				// Process the record set (lenient parsing)
 				recordCount, _, parseErr := h.parseRecordSet(recordSetData) // totalSize unused
 				if parseErr != nil {
 					errorCode = 42 // INVALID_RECORD
 				} else if recordCount > 0 {
-					// Log original batch size and detailed field breakdown
-					fmt.Printf("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-					fmt.Printf("ORIGINAL BATCH: topic=%s partition=%d size=%d bytes\n", topicName, partitionID, len(recordSetData))
-
-					if len(recordSetData) >= 61 {
-						fmt.Printf("  Header Structure:\n")
-						fmt.Printf("    Base Offset (0-7):     %x\n", recordSetData[0:8])
-						fmt.Printf("    Batch Length (8-11):   %x\n", recordSetData[8:12])
-						fmt.Printf("    Leader Epoch (12-15):  %x\n", recordSetData[12:16])
-						fmt.Printf("    Magic (16):            %x\n", recordSetData[16:17])
-						fmt.Printf("    CRC (17-20):           %x\n", recordSetData[17:21])
-						fmt.Printf("    Attributes (21-22):    %x\n", recordSetData[21:23])
-						fmt.Printf("    Last Offset Delta (23-26): %x\n", recordSetData[23:27])
-						fmt.Printf("    Base Timestamp (27-34): %x\n", recordSetData[27:35])
-						fmt.Printf("    Max Timestamp (35-42):  %x\n", recordSetData[35:43])
-						fmt.Printf("    Producer ID (43-50):    %x\n", recordSetData[43:51])
-						fmt.Printf("    Producer Epoch (51-52): %x\n", recordSetData[51:53])
-						fmt.Printf("    Base Sequence (53-56):  %x\n", recordSetData[53:57])
-						fmt.Printf("    Record Count (57-60):   %x\n", recordSetData[57:61])
-						if len(recordSetData) > 61 {
-							fmt.Printf("    Records Section (61+):  %x... (%d bytes)\n",
-								recordSetData[61:min(81, len(recordSetData))], len(recordSetData)-61)
-						}
-					}
-					fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
-
 					// Extract all records from the record set and publish each one
 					records := h.extractAllRecords(recordSetData)
-					Debug("EXTRACT DEBUG: extractAllRecords returned %d records from %d bytes", len(records), len(recordSetData))
 					if len(records) > 0 {
-						Debug("EXTRACT DEBUG: First record - Key len=%d, Value len=%d", len(records[0].Key), len(records[0].Value))
 						if len(records[0].Value) > 0 {
-							Debug("EXTRACT DEBUG: First record Value: %s", string(records[0].Value))
 						}
 					}
 					if len(records) == 0 {
@@ -819,11 +731,7 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 
 					var firstOffsetSet bool
 					for idx, kv := range records {
-						Debug("EXTRACT DEBUG: Publishing record %d - Key len=%d, Value len=%d", idx, len(kv.Key), len(kv.Value))
-						fmt.Printf("PRODUCE: About to call produceSchemaBasedRecord - topic=%s, partition=%d, keyLen=%d, valueLen=%d\n", topicName, partitionID, len(kv.Key), len(kv.Value))
 						offsetProduced, prodErr := h.produceSchemaBasedRecord(topicName, int32(partitionID), kv.Key, kv.Value)
-						fmt.Printf("PRODUCE: produceSchemaBasedRecord returned - offset=%d, error=%v\n", offsetProduced, prodErr)
-						Debug("Produce v%d - Record %d: offset=%d, error=%v", apiVersion, idx, offsetProduced, prodErr)
 						if prodErr != nil {
 							// Check if this is a schema validation error and add delay to prevent overloading
 							if h.isSchemaValidationError(prodErr) {
@@ -831,13 +739,11 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 								time.Sleep(200 * time.Millisecond) // Brief delay for schema validation failures
 							}
 							errorCode = 1 // UNKNOWN_SERVER_ERROR
-							Debug("Produce v%d - ProduceRecord failed: %v", apiVersion, prodErr)
 							break
 						}
 						if idx == 0 {
 							baseOffset = offsetProduced
 							firstOffsetSet = true
-							Debug("Produce v%d - Set baseOffset to: %d", apiVersion, baseOffset)
 						}
 					}
 
@@ -890,8 +796,7 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 	if len(response) < 20 {
 	}
 
-	duration := time.Since(startTime)
-	Debug("PRODUCE DEBUG: handleProduceV2Plus completed - correlationID=%d, duration=%v", correlationID, duration)
+	_ = time.Since(startTime) // duration
 	return response, nil
 }
 
@@ -915,7 +820,6 @@ func (h *Handler) processSchematizedMessage(topicName string, partitionID int32,
 	// Decode the message
 	decodedMsg, err := h.schemaManager.DecodeMessage(messageBytes)
 	if err != nil {
-		fmt.Printf("ERROR: Failed to decode schematized message: %v\n", err)
 		// In permissive mode, we could continue with raw bytes
 		// In strict mode, we should reject the message
 		return fmt.Errorf("schema decoding failed: %w", err)
@@ -1244,23 +1148,18 @@ func (h *Handler) isSystemTopic(topicName string) bool {
 
 // produceSchemaBasedRecord produces a record using schema-based encoding to RecordValue
 func (h *Handler) produceSchemaBasedRecord(topic string, partition int32, key []byte, value []byte) (int64, error) {
-	fmt.Printf("produceSchemaBasedRecord: topic=%s, partition=%d, keyLen=%d, valueLen=%d\n", topic, partition, len(key), len(value))
 
 	// System topics should always bypass schema processing and be stored as-is
 	if h.isSystemTopic(topic) {
-		fmt.Printf("produceSchemaBasedRecord: %s is a system topic, bypassing schema processing\n", topic)
 		offset, err := h.seaweedMQHandler.ProduceRecord(topic, partition, key, value)
 		return offset, err
 	}
 
 	// If schema management is not enabled, fall back to raw message handling
 	isEnabled := h.IsSchemaEnabled()
-	fmt.Printf("produceSchemaBasedRecord: IsSchemaEnabled()=%v, schemaManager=%v\n", isEnabled, h.schemaManager != nil)
 	if !isEnabled {
-		fmt.Printf("produceSchemaBasedRecord: Schema management NOT enabled, falling back to raw storage\n")
 		return h.seaweedMQHandler.ProduceRecord(topic, partition, key, value)
 	}
-	fmt.Printf("produceSchemaBasedRecord: Schema management IS enabled, will check message format\n")
 
 	var keyDecodedMsg *schema.DecodedMessage
 	var valueDecodedMsg *schema.DecodedMessage

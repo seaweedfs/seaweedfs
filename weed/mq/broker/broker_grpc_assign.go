@@ -28,18 +28,14 @@ func (b *MessageQueueBroker) AssignTopicPartitions(c context.Context, request *m
 			b.localTopicManager.RemoveLocalPartition(t, partition)
 		} else {
 			var localPartition *topic.LocalPartition
-			glog.V(0).Infof("🔍 DEBUG: Checking for existing local partition %s %s", t, partition)
 			if localPartition = b.localTopicManager.GetLocalPartition(t, partition); localPartition == nil {
-				glog.V(0).Infof("🔍 DEBUG: Creating new local partition %s %s", t, partition)
 				localPartition = topic.NewLocalPartition(partition, b.option.LogFlushInterval, b.genLogFlushFunc(t, partition), logstore.GenMergedReadFunc(b, t, partition))
 
 				// Initialize offset from existing data to ensure continuity on restart
 				b.initializePartitionOffsetFromExistingData(localPartition, t, partition)
 
 				b.localTopicManager.AddLocalPartition(t, localPartition)
-				glog.V(0).Infof("🔍 DEBUG: Added local partition %s %s to localTopicManager", t, partition)
 			} else {
-				glog.V(0).Infof("🔍 DEBUG: Local partition %s %s already exists", t, partition)
 			}
 		}
 		b.accessLock.Unlock()
@@ -60,7 +56,6 @@ func (b *MessageQueueBroker) AssignTopicPartitions(c context.Context, request *m
 		}
 	}
 
-	glog.V(0).Infof("🔍 DEBUG: AssignTopicPartitions completed: topic %s partition assignments: %v", request.Topic, request.BrokerPartitionAssignments)
 	return ret, nil
 }
 
