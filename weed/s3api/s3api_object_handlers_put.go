@@ -414,9 +414,12 @@ func (s3a *S3ApiServer) setObjectOwnerFromRequest(r *http.Request, entry *filer_
 // where all versions (including latest) are stored in the .versions directory
 func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, object string, dataReader io.Reader, objectContentType string) (etag string, errCode s3err.ErrorCode) {
 	// For suspended versioning, store as regular object (version ID "null") but preserve existing versions
-	glog.V(2).Infof("putSuspendedVersioningObject: creating null version for %s/%s", bucket, object)
+	// Normalize object path to ensure consistency with toFilerUrl behavior (same as putVersionedObject)
+	normalizedObject := removeDuplicateSlashes(object)
 
-	uploadUrl := s3a.toFilerUrl(bucket, object)
+	glog.V(2).Infof("putSuspendedVersioningObject: creating null version for %s/%s (normalized: %s)", bucket, object, normalizedObject)
+
+	uploadUrl := s3a.toFilerUrl(bucket, normalizedObject)
 	if objectContentType == "" {
 		dataReader = mimeDetect(r, dataReader)
 	}
@@ -429,7 +432,7 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 
 	// Get the uploaded entry to add version metadata indicating this is "null" version
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
-	entry, err := s3a.getEntry(bucketDir, object)
+	entry, err := s3a.getEntry(bucketDir, normalizedObject)
 	if err != nil {
 		glog.Errorf("putSuspendedVersioningObject: failed to get object entry: %v", err)
 		return "", s3err.ErrInternalError
@@ -451,7 +454,7 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 	}
 
 	// Update the entry with metadata
-	err = s3a.mkFile(bucketDir, object, entry.Chunks, func(updatedEntry *filer_pb.Entry) {
+	err = s3a.mkFile(bucketDir, normalizedObject, entry.Chunks, func(updatedEntry *filer_pb.Entry) {
 		updatedEntry.Extended = entry.Extended
 		updatedEntry.Attributes = entry.Attributes
 		updatedEntry.Chunks = entry.Chunks
@@ -462,7 +465,7 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 	}
 
 	// Update all existing versions/delete markers to set IsLatest=false since "null" is now latest
-	err = s3a.updateIsLatestFlagsForSuspendedVersioning(bucket, object)
+	err = s3a.updateIsLatestFlagsForSuspendedVersioning(bucket, normalizedObject)
 	if err != nil {
 		glog.Warningf("putSuspendedVersioningObject: failed to update IsLatest flags: %v", err)
 		// Don't fail the request, but log the warning
