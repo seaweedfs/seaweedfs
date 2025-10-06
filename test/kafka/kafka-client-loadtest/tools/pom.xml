@@ -11,7 +11,7 @@
     <properties>
         <maven.compiler.source>11</maven.compiler.source>
         <maven.compiler.target>11</maven.compiler.target>
-        <kafka.version>3.6.0</kafka.version>
+        <kafka.version>3.9.0</kafka.version>
     </properties>
 
     <dependencies>
