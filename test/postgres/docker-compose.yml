@@ -18,7 +18,15 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
+        set -x
+        echo "=== Starting SeaweedFS Server ==="
+        echo "Current directory: $(pwd)"
+        echo "Checking /data directory..."
         mkdir -p /data
+        ls -la /data
+        echo "Checking weed binary..."
+        ls -la ./weed
+        echo "Starting weed server with arguments..."
         exec ./weed server \
           -dir=/data \
           -master.volumeSizeLimitMB=50 \
@@ -35,7 +43,7 @@ services:
           -s3.allowEmptyFolder=false \
           -mq.broker=true \
           -mq.agent=true \
-          -ip=seaweedfs
+          -ip=seaweedfs 2>&1
     networks:
       - seaweedfs-net
     healthcheck:
