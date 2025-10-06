@@ -445,8 +445,11 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		ConnectionID: connectionID,
 		BrokerClient: connBrokerClient,
 	}
-	// Temporarily set h.connContext for backward compatibility with existing code
-	// TODO: Refactor to pass connContext as parameter to all functions
+	// KNOWN ISSUE: Setting shared h.connContext creates race condition with concurrent connections
+	// Multiple connections can overwrite each other's context (e.g., ClientID, ConsumerGroup, MemberID)
+	// This is especially problematic in JoinGroup which writes to h.connContext during request processing
+	// TODO: Refactor to pass connContext as parameter through all handler methods to eliminate race
+	// For now, this works in most cases but can cause incorrect context association under high concurrency
 	h.connContext = connContext
 
 	Debug("[%s] NEW CONNECTION ESTABLISHED", connectionID)

@@ -1207,27 +1207,8 @@ func (h *Handler) isSchematizedTopic(topicName string) bool {
 
 	// Check multiple indicators for schematized topics:
 
-	// 1. Confluent Schema Registry naming conventions
-	if h.matchesSchemaRegistryConvention(topicName) {
-		return true
-	}
-
-	// 2. Check if topic has schema metadata in SeaweedMQ
-	if h.hasSchemaMetadata(topicName) {
-		return true
-	}
-
-	// 3. Check for schema configuration in topic metadata
-	if h.hasSchemaConfiguration(topicName) {
-		return true
-	}
-
-	// 4. Check if topic has been used with schematized messages before
-	if h.hasSchematizedMessageHistory(topicName) {
-		return true
-	}
-
-	return false
+	// Check Confluent Schema Registry naming conventions
+	return h.matchesSchemaRegistryConvention(topicName)
 }
 
 // matchesSchemaRegistryConvention checks Confluent Schema Registry naming patterns
@@ -1274,37 +1255,13 @@ func (h *Handler) matchesSchemaRegistryConvention(topicName string) bool {
 	return false
 }
 
-// hasSchemaMetadata checks if topic has schema metadata in SeaweedMQ
-func (h *Handler) hasSchemaMetadata(topicName string) bool {
-	// This would integrate with SeaweedMQ's topic metadata system
-	// For now, return false as this requires SeaweedMQ integration
-	// TODO: Implement SeaweedMQ topic metadata lookup
-	return false
-}
-
-// hasSchemaConfiguration checks topic-level schema configuration
-func (h *Handler) hasSchemaConfiguration(topicName string) bool {
-	// This would check for topic-level configuration that enables schemas
-	// Could be stored in SeaweedMQ topic configuration or external config
-	// TODO: Implement configuration-based schema detection
-	return false
-}
-
-// hasSchematizedMessageHistory checks if topic has been used with schemas before
-func (h *Handler) hasSchematizedMessageHistory(topicName string) bool {
-	// This could maintain a cache of topics that have had schematized messages
-	// For now, return false as this requires persistent state
-	// TODO: Implement schema usage history tracking
-	return false
-}
-
 // getSchemaMetadataForTopic retrieves schema metadata for a topic
 func (h *Handler) getSchemaMetadataForTopic(topicName string) (map[string]string, error) {
 	if !h.IsSchemaEnabled() {
 		return nil, fmt.Errorf("schema management not enabled")
 	}
 
-	// Try multiple approaches to get schema metadata
+	// Try multiple approaches to get schema metadata from Schema Registry
 
 	// 1. Try to get schema from registry using topic name as subject
 	metadata, err := h.getSchemaMetadataFromRegistry(topicName)
@@ -1324,19 +1281,7 @@ func (h *Handler) getSchemaMetadataForTopic(topicName string) (map[string]string
 		return metadata, nil
 	}
 
-	// 4. Check SeaweedMQ topic metadata (TODO: implement)
-	metadata, err = h.getSchemaMetadataFromSeaweedMQ(topicName)
-	if err == nil {
-		return metadata, nil
-	}
-
-	// 5. Check topic configuration (TODO: implement)
-	metadata, err = h.getSchemaMetadataFromConfig(topicName)
-	if err == nil {
-		return metadata, nil
-	}
-
-	return nil, fmt.Errorf("no schema metadata found for topic %s", topicName)
+	return nil, fmt.Errorf("no schema found in registry for topic %s (tried %s, %s-value, %s-key)", topicName, topicName, topicName, topicName)
 }
 
 // getSchemaMetadataFromRegistry retrieves schema metadata from Schema Registry
@@ -1372,22 +1317,6 @@ func (h *Handler) getSchemaMetadataFromRegistry(subject string) (map[string]stri
 	}
 
 	return metadata, nil
-}
-
-// getSchemaMetadataFromSeaweedMQ retrieves schema metadata from SeaweedMQ topic metadata
-func (h *Handler) getSchemaMetadataFromSeaweedMQ(topicName string) (map[string]string, error) {
-	// TODO: Implement SeaweedMQ topic metadata integration
-	// This would query SeaweedMQ's topic metadata system to get schema information
-	// that might be stored as topic-level configuration
-	return nil, fmt.Errorf("SeaweedMQ schema metadata lookup not implemented")
-}
-
-// getSchemaMetadataFromConfig retrieves schema metadata from configuration
-func (h *Handler) getSchemaMetadataFromConfig(topicName string) (map[string]string, error) {
-	// TODO: Implement configuration-based schema metadata lookup
-	// This could read from a configuration file, database, or other source
-	// that maps topics to their schema information
-	return nil, fmt.Errorf("configuration-based schema metadata lookup not implemented")
 }
 
 // ensureTopicSchemaFromLatestSchema ensures topic configuration is updated when latest schema is retrieved

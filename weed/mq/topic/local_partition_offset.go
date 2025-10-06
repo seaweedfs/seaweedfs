@@ -14,8 +14,7 @@ import (
 type OffsetAssignmentFunc func() (int64, error)
 
 // PublishWithOffset publishes a message with offset assignment
-// TODO: This extends LocalPartition with offset support
-// ASSUMPTION: This will eventually be integrated into the main Publish method
+// This method is used by the Kafka gateway integration for sequential offset assignment
 func (p *LocalPartition) PublishWithOffset(message *mq_pb.DataMessage, assignOffsetFn OffsetAssignmentFunc) (int64, error) {
 	// Assign offset for this message
 	offset, err := assignOffsetFn()
@@ -69,7 +68,7 @@ func (p *LocalPartition) addToBufferWithOffset(message *mq_pb.DataMessage, offse
 }
 
 // GetOffsetInfo returns offset information for this partition
-// TODO: This should integrate with the broker's offset manager
+// Used for debugging and monitoring partition offset state
 func (p *LocalPartition) GetOffsetInfo() map[string]interface{} {
 	return map[string]interface{}{
 		"partition_ring_size":   p.RingSize,

@@ -511,7 +511,8 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 		}
 	}
 
-	// FIXME: this could be that the buffer has been flushed already
+	// Binary search didn't find the timestamp - data may have been flushed to disk already
+	// Returning -2 signals to caller that data is not available in memory
 	return nil, -2, nil
 
 }
