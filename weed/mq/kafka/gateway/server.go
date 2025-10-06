@@ -145,10 +145,12 @@ func (s *Server) Start() error {
 	s.ln = ln
 
 	// Get gateway address for coordinator registry
-	// Use the advertised address that will be returned in Metadata responses
-	host, port := s.handler.GetAdvertisedAddress(s.opts.Listen)
+	// CRITICAL FIX: Use the actual bound address from listener, not the requested listen address
+	// This is important when using port 0 (random port) for testing
+	actualListenAddr := s.ln.Addr().String()
+	host, port := s.handler.GetAdvertisedAddress(actualListenAddr)
 	gatewayAddress := fmt.Sprintf("%s:%d", host, port)
-	glog.V(1).Infof("Kafka gateway listening on %s, advertising as %s in Metadata responses", s.opts.Listen, gatewayAddress)
+	glog.V(1).Infof("Kafka gateway listening on %s, advertising as %s in Metadata responses", actualListenAddr, gatewayAddress)
 
 	// Set gateway address in handler for coordinator registry
 	s.handler.SetGatewayAddress(gatewayAddress)
