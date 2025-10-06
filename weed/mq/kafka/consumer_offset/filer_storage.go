@@ -188,6 +188,10 @@ func (f *FilerStorage) getOffsetPath(group, topic string, partition int32) strin
 	return fmt.Sprintf("%s/offset", f.getPartitionPath(group, topic, partition))
 }
 
+func (f *FilerStorage) getMetadataPath(group, topic string, partition int32) string {
+	return fmt.Sprintf("%s/metadata", f.getPartitionPath(group, topic, partition))
+}
+
 func (f *FilerStorage) writeFile(path string, data []byte) error {
 	fullPath := util.FullPath(path)
 	dir, name := fullPath.DirAndName()

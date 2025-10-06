@@ -6,21 +6,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/protocol"
 )
 
-// NewTestServer creates a server for testing with in-memory handlers
-// This should ONLY be used for testing
-func NewTestServer(opts Options) *Server {
-	ctx, cancel := context.WithCancel(context.Background())
-
-	// Use test handler with storage capability
-	handler := protocol.NewTestHandler()
-
-	return &Server{
-		opts:    opts,
-		ctx:     ctx,
-		cancel:  cancel,
-		handler: handler,
-	}
-}
+// Note: These test helper functions are currently not used
+// Integration tests should use real SeaweedMQ broker handlers instead
 
 // NewTestServerWithHandler creates a test server with a custom handler
 // This allows tests to inject specific handlers for different scenarios
