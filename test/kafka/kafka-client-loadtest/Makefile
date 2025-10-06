@@ -151,9 +151,9 @@ quick-test: build-gateway ## Run a quick smoke test (1 min, low load, WITH schem
 	@$(MAKE) start
 	@echo ""
 	@echo "$(BLUE)═══ Step 1: Registering schemas in Schema Registry ═══$(NC)"
-	@echo "$(YELLOW)⚠ IMPORTANT: Schemas MUST be registered before producing Avro messages!$(NC)"
+	@echo "$(YELLOW)[WARN] IMPORTANT: Schemas MUST be registered before producing Avro messages!$(NC)"
 	@./scripts/register-schemas.sh full
-	@echo "$(GREEN)✓ Schemas registered successfully$(NC)"
+	@echo "$(GREEN)- Schemas registered successfully$(NC)"
 	@echo ""
 	@echo "$(BLUE)═══ Step 2: Running load test with Avro messages ═══$(NC)"
 	@$(MAKE) test \
@@ -167,9 +167,9 @@ quick-test: build-gateway ## Run a quick smoke test (1 min, low load, WITH schem
 	@echo ""
 	@echo "$(GREEN)╔══════════════════════════════════════════════════════════════╗$(NC)"
 	@echo "$(GREEN)║                    Quick Test Complete!                      ║$(NC)"
-	@echo "$(GREEN)║  ✓ Schema Registration                                       ║$(NC)"
-	@echo "$(GREEN)║  ✓ Avro Message Production                                   ║$(NC)"
-	@echo "$(GREEN)║  ✓ Message Consumption                                       ║$(NC)"
+	@echo "$(GREEN)║  - Schema Registration                                       ║$(NC)"
+	@echo "$(GREEN)║  - Avro Message Production                                   ║$(NC)"
+	@echo "$(GREEN)║  - Message Consumption                                       ║$(NC)"
 	@echo "$(GREEN)╚══════════════════════════════════════════════════════════════╝$(NC)"
 
 standard-test: ## Run a standard load test (2 min, medium load, WITH Schema Registry + Avro)
@@ -186,7 +186,7 @@ standard-test: ## Run a standard load test (2 min, medium load, WITH Schema Regi
 	@echo "$(BLUE)═══ Step 1: Registering schemas in Schema Registry ═══$(NC)"
 	@echo "$(YELLOW)Note: Schemas MUST be registered before producing Avro messages!$(NC)"
 	@./scripts/register-schemas.sh full
-	@echo "$(GREEN)✓ Schemas registered$(NC)"
+	@echo "$(GREEN)- Schemas registered$(NC)"
 	@echo ""
 	@echo "$(BLUE)═══ Step 2: Running load test with Avro messages ═══$(NC)"
 	@$(MAKE) test \
@@ -370,18 +370,18 @@ validate-setup: ## Validate the test setup
 	@echo ""
 	@echo "Checking configuration file..."
 	@if [ -f "$(CONFIG_FILE)" ]; then \
-		echo "✓ Configuration file exists: $(CONFIG_FILE)"; \
+		echo "- Configuration file exists: $(CONFIG_FILE)"; \
 	else \
-		echo "✗ Configuration file not found: $(CONFIG_FILE)"; \
+		echo "x Configuration file not found: $(CONFIG_FILE)"; \
 		exit 1; \
 	fi
 	@echo ""
 	@echo "Checking scripts..."
 	@for script in scripts/*.sh; do \
 		if [ -x "$$script" ]; then \
-			echo "✓ $$script is executable"; \
+			echo "- $$script is executable"; \
 		else \
-			echo "✗ $$script is not executable"; \
+			echo "x $$script is not executable"; \
 		fi; \
 	done
 	@echo "$(GREEN)Setup validation completed$(NC)"

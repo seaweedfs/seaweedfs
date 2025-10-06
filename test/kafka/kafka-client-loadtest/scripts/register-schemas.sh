@@ -81,10 +81,10 @@ EOF
     if echo "$response" | jq -e '.id' >/dev/null 2>&1; then
         local schema_id
         schema_id=$(echo "$response" | jq -r '.id')
-        log_success "✓ Schema registered for $subject with ID: $schema_id"
+        log_success "- Schema registered for $subject with ID: $schema_id"
         return 0
     else
-        log_error "✗ Failed to register schema for $subject"
+        log_error "x Failed to register schema for $subject"
         log_error "Response: $response"
         return 1
     fi
@@ -104,10 +104,10 @@ verify_schema() {
         local version
         schema_id=$(echo "$response" | jq -r '.id')
         version=$(echo "$response" | jq -r '.version')
-        log_success "✓ Schema verified for $subject (ID: $schema_id, Version: $version)"
+        log_success "- Schema verified for $subject (ID: $schema_id, Version: $version)"
         return 0
     else
-        log_error "✗ Schema not found for $subject"
+        log_error "x Schema not found for $subject"
         return 1
     fi
 }

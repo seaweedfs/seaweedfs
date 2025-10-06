@@ -82,7 +82,7 @@ func main() {
 			continue
 		}
 
-		fmt.Printf("✓ Published message %d: %s\n", i+1, string(valueBytes))
+		fmt.Printf("-Published message %d: %s\n", i+1, string(valueBytes))
 
 		// Small delay between messages
 		time.Sleep(100 * time.Millisecond)
@@ -118,10 +118,10 @@ func main() {
 			log.Printf("Failed to write raw message %d: %v", i+1, err)
 			continue
 		}
-		fmt.Printf("✓ Published raw message %d: key=%s, value=%s\n",
+		fmt.Printf("-Published raw message %d: key=%s, value=%s\n",
 			i+1, string(msg.Key), string(msg.Value))
 	}
 
-	fmt.Println("\n🎉 All test messages published to topic with '_' prefix!")
+	fmt.Println("\nAll test messages published to topic with '_' prefix!")
 	fmt.Println("These messages should be stored as raw bytes without schema validation.")
 }

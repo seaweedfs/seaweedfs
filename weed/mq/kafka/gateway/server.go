@@ -107,7 +107,7 @@ func NewServer(opts Options) *Server {
 			// Store schema registry URL for lazy initialization
 			handler.SetSchemaRegistryURL(opts.SchemaRegistryURL)
 		} else {
-			glog.V(1).Infof("✅ Schema management enabled with Schema Registry at %s", opts.SchemaRegistryURL)
+			glog.V(1).Infof("Schema management enabled with Schema Registry at %s", opts.SchemaRegistryURL)
 		}
 	}
 

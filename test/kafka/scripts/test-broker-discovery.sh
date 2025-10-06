@@ -85,7 +85,7 @@ for i in $(seq 1 20); do
 done
 
 if [ "$broker_ready" = false ]; then
-  echo "❌ MQ broker failed to start"
+  echo "[FAIL] MQ broker failed to start"
   echo "Server logs:"
   cat /tmp/weed-discovery-server.log
   echo "Broker logs:"  
@@ -108,10 +108,10 @@ cd test/kafka
 SEAWEEDFS_MASTERS=127.0.0.1:9333 timeout 30s go test -v -run "TestOffsetManagement" -timeout 25s ./e2e/... > /tmp/broker-discovery-test.log 2>&1 && discovery_success=true || discovery_success=false
 
 if [ "$discovery_success" = true ]; then
-  echo "✅ Broker discovery test PASSED!"
+  echo "[OK] Broker discovery test PASSED!"
   echo "Gateway was able to discover and connect to MQ brokers"
 else
-  echo "❌ Broker discovery test FAILED"
+  echo "[FAIL] Broker discovery test FAILED"
   echo "Last few lines of test output:"
   tail -20 /tmp/broker-discovery-test.log || echo "No test logs available"
 fi

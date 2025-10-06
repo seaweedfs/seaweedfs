@@ -48,7 +48,7 @@ public class JavaKafkaConsumer {
 
                     for (ConsumerRecord<String, String> record : records) {
                         messageCount++;
-                        System.out.printf("✅ Message #%d: topic=%s partition=%d offset=%d key=%s value=%s%n",
+                        System.out.printf("Message #%d: topic=%s partition=%d offset=%d key=%s value=%s%n",
                                 messageCount, record.topic(), record.partition(), record.offset(),
                                 record.key(), record.value());
                     }
@@ -56,7 +56,7 @@ public class JavaKafkaConsumer {
                     // Stop after 100 messages or 60 seconds
                     if (messageCount >= 100 || (System.currentTimeMillis() - startTime) > 60000) {
                         long duration = System.currentTimeMillis() - startTime;
-                        System.out.printf("%n✅ Successfully consumed %d messages in %dms%n", messageCount, duration);
+                        System.out.printf("%nSuccessfully consumed %d messages in %dms%n", messageCount, duration);
                         System.out.printf("Success rate: %.1f%% (%d/%d including errors)%n",
                                 (double) messageCount / (messageCount + errorCount) * 100, messageCount,
                                 messageCount + errorCount);
@@ -64,13 +64,13 @@ public class JavaKafkaConsumer {
                     }
                 } catch (Exception e) {
                     errorCount++;
-                    System.err.printf("❌ Error during poll #%d: %s%n", errorCount, e.getMessage());
+                    System.err.printf("Error during poll #%d: %s%n", errorCount, e.getMessage());
                     e.printStackTrace();
 
                     // Stop after 10 consecutive errors or 60 seconds
                     if (errorCount > 10 || (System.currentTimeMillis() - startTime) > 60000) {
                         long duration = System.currentTimeMillis() - startTime;
-                        System.err.printf("%n⚠️  Stopping after %d errors in %dms%n", errorCount, duration);
+                        System.err.printf("%nStopping after %d errors in %dms%n", errorCount, duration);
                         break;
                     }
                 }
@@ -80,4 +80,3 @@ public class JavaKafkaConsumer {
         }
     }
 }
-

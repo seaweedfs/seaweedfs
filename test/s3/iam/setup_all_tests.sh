@@ -30,12 +30,12 @@ check_prerequisites() {
     done
     
     if [ ${#missing_tools[@]} -gt 0 ]; then
-        echo -e "${RED}❌ Missing required tools: ${missing_tools[*]}${NC}"
+        echo -e "${RED}[FAIL] Missing required tools: ${missing_tools[*]}${NC}"
         echo -e "${YELLOW}Please install the missing tools and try again${NC}"
         exit 1
     fi
     
-    echo -e "${GREEN}✅ All prerequisites met${NC}"
+    echo -e "${GREEN}[OK] All prerequisites met${NC}"
 }
 
 # Set up Keycloak for OIDC testing
@@ -43,11 +43,11 @@ setup_keycloak() {
     echo -e "\n${BLUE}1. Setting up Keycloak for OIDC testing...${NC}"
     
     if ! "${SCRIPT_DIR}/setup_keycloak.sh"; then
-        echo -e "${RED}❌ Failed to set up Keycloak${NC}"
+        echo -e "${RED}[FAIL] Failed to set up Keycloak${NC}"
         return 1
     fi
     
-    echo -e "${GREEN}✅ Keycloak setup completed${NC}"
+    echo -e "${GREEN}[OK] Keycloak setup completed${NC}"
 }
 
 # Set up SeaweedFS test cluster
@@ -58,7 +58,7 @@ setup_seaweedfs_cluster() {
     echo -e "${YELLOW}🔧 Building SeaweedFS binary...${NC}"
     cd "${SCRIPT_DIR}/../../../"  # Go to seaweedfs root
     if ! make > /dev/null 2>&1; then
-        echo -e "${RED}❌ Failed to build SeaweedFS binary${NC}"
+        echo -e "${RED}[FAIL] Failed to build SeaweedFS binary${NC}"
         return 1
     fi
     
@@ -68,7 +68,7 @@ setup_seaweedfs_cluster() {
     echo -e "${YELLOW}🧹 Cleaning up existing test data...${NC}"
     rm -rf test-volume-data/* 2>/dev/null || true
     
-    echo -e "${GREEN}✅ SeaweedFS cluster setup completed${NC}"
+    echo -e "${GREEN}[OK] SeaweedFS cluster setup completed${NC}"
 }
 
 # Set up test data and configurations
@@ -79,18 +79,18 @@ setup_test_configurations() {
     if [ ! -f "${SCRIPT_DIR}/iam_config.json" ]; then
         echo -e "${YELLOW}⚠️  IAM configuration not found, using default config${NC}"
         cp "${SCRIPT_DIR}/iam_config.local.json" "${SCRIPT_DIR}/iam_config.json" 2>/dev/null || {
-            echo -e "${RED}❌ No IAM configuration files found${NC}"
+            echo -e "${RED}[FAIL] No IAM configuration files found${NC}"
             return 1
         }
     fi
     
     # Validate configuration
     if ! jq . "${SCRIPT_DIR}/iam_config.json" >/dev/null; then
-        echo -e "${RED}❌ Invalid IAM configuration JSON${NC}"
+        echo -e "${RED}[FAIL] Invalid IAM configuration JSON${NC}"
         return 1
     fi
     
-    echo -e "${GREEN}✅ Test configurations set up${NC}"
+    echo -e "${GREEN}[OK] Test configurations set up${NC}"
 }
 
 # Verify services are ready
@@ -113,13 +113,13 @@ verify_services() {
     done
     
     if [ "$keycloak_ready" = true ]; then
-        echo -e "${GREEN}✅ Keycloak is ready${NC}"
+        echo -e "${GREEN}[OK] Keycloak is ready${NC}"
     else
         echo -e "${YELLOW}⚠️  Keycloak may not be fully ready yet${NC}"
         echo -e "${YELLOW}This is okay - tests will wait for Keycloak when needed${NC}"
     fi
     
-    echo -e "${GREEN}✅ Service verification completed${NC}"
+    echo -e "${GREEN}[OK] Service verification completed${NC}"
 }
 
 # Set up environment variables
@@ -145,7 +145,7 @@ export TEST_TIMEOUT=60m
 export CGO_ENABLED=0
 EOF
     
-    echo -e "${GREEN}✅ Environment variables set${NC}"
+    echo -e "${GREEN}[OK] Environment variables set${NC}"
 }
 
 # Display setup summary
@@ -157,7 +157,7 @@ display_summary() {
     echo -e "Test Timeout: ${TEST_TIMEOUT:-60m}"
     echo -e "IAM Config: ${SCRIPT_DIR}/iam_config.json"
     echo -e ""
-    echo -e "${GREEN}✅ Complete test environment setup finished!${NC}"
+    echo -e "${GREEN}[OK] Complete test environment setup finished!${NC}"
     echo -e "${YELLOW}💡 You can now run tests with: make run-all-tests${NC}"
     echo -e "${YELLOW}💡 Or run specific tests with: go test -v -timeout=60m -run TestName${NC}"
     echo -e "${YELLOW}💡 To stop Keycloak: docker stop keycloak-iam-test${NC}"
@@ -173,21 +173,21 @@ main() {
     if setup_keycloak; then
         setup_steps+=("keycloak")
     else
-        echo -e "${RED}❌ Failed to set up Keycloak${NC}"
+        echo -e "${RED}[FAIL] Failed to set up Keycloak${NC}"
         exit 1
     fi
     
     if setup_seaweedfs_cluster; then
         setup_steps+=("seaweedfs")
     else
-        echo -e "${RED}❌ Failed to set up SeaweedFS cluster${NC}"
+        echo -e "${RED}[FAIL] Failed to set up SeaweedFS cluster${NC}"
         exit 1
     fi
     
     if setup_test_configurations; then
         setup_steps+=("config")
     else
-        echo -e "${RED}❌ Failed to set up test configurations${NC}"
+        echo -e "${RED}[FAIL] Failed to set up test configurations${NC}"
         exit 1
     fi
     

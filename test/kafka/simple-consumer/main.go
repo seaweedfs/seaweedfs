@@ -75,7 +75,7 @@ func main() {
 			messageCount++
 
 			// Display message details
-			fmt.Printf("\n📨 Message #%d:\n", messageCount)
+			fmt.Printf("\nMessage #%d:\n", messageCount)
 			fmt.Printf("   Partition: %d, Offset: %d\n", message.Partition, message.Offset)
 			fmt.Printf("   Key: %s\n", string(message.Key))
 			fmt.Printf("   Value: %s\n", string(message.Value))

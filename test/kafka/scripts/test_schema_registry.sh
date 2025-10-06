@@ -45,11 +45,11 @@ sleep 3
 
 # Check if services are running
 if ! curl -s http://localhost:9333/cluster/status > /dev/null; then
-    echo "❌ SeaweedFS server not ready"
+    echo "[FAIL] SeaweedFS server not ready"
     exit 1
 fi
 
-echo "✅ SeaweedFS infrastructure ready"
+echo "[OK] SeaweedFS infrastructure ready"
 
 # Run the schema registry E2E tests
 echo "🧪 Running Schema Registry E2E tests..."
@@ -59,10 +59,10 @@ export SEAWEEDFS_MASTERS=127.0.0.1:9333
 
 # Run the tests
 if go test -v ./integration -run TestSchemaRegistryE2E -timeout 5m; then
-    echo "✅ Schema Registry E2E tests PASSED!"
+    echo "[OK] Schema Registry E2E tests PASSED!"
     TEST_RESULT=0
 else
-    echo "❌ Schema Registry E2E tests FAILED!"
+    echo "[FAIL] Schema Registry E2E tests FAILED!"
     TEST_RESULT=1
 fi
 

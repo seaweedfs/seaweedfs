@@ -82,7 +82,7 @@ func main() {
 		if err := registerSchemas(cfg); err != nil {
 			log.Fatalf("Failed to register schemas: %v", err)
 		}
-		log.Printf("✅ Schemas registered successfully")
+		log.Printf("Schemas registered successfully")
 	}
 
 	var wg sync.WaitGroup
@@ -277,7 +277,7 @@ func runComprehensiveTest(ctx context.Context, cancel context.CancelFunc, cfg *c
 				log.Printf("⏳ Allowing %v for consumers to drain remaining messages...", drainTime)
 				time.Sleep(drainTime)
 
-				log.Printf("🛑 Stopping consumers after drain period")
+				log.Printf("Stopping consumers after drain period")
 				consumerCancel()
 				cancel()
 			case <-ctx.Done():
@@ -348,7 +348,7 @@ func registerSchemas(cfg *config.Config) error {
 		if err := registerTopicSchema(cfg.SchemaRegistry.URL, topic); err != nil {
 			return fmt.Errorf("failed to register schema for topic %s: %w", topic, err)
 		}
-		log.Printf("📝 Schema registered for topic: %s", topic)
+		log.Printf("Schema registered for topic: %s", topic)
 	}
 
 	return nil

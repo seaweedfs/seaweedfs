@@ -13,18 +13,18 @@ import (
 )
 
 func (h *Handler) handleProduce(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
-	fmt.Printf("🔥 PRODUCE: handleProduce called - correlation=%d, version=%d, bodyLen=%d\n", correlationID, apiVersion, len(requestBody))
+	fmt.Printf("PRODUCE: handleProduce called - correlation=%d, version=%d, bodyLen=%d\n", correlationID, apiVersion, len(requestBody))
 
 	// Version-specific handling
 	switch apiVersion {
 	case 0, 1:
-		fmt.Printf("🔥 PRODUCE: Routing to handleProduceV0V1\n")
+		fmt.Printf("PRODUCE: Routing to handleProduceV0V1\n")
 		return h.handleProduceV0V1(correlationID, apiVersion, requestBody)
 	case 2, 3, 4, 5, 6, 7:
-		fmt.Printf("🔥 PRODUCE: Routing to handleProduceV2Plus\n")
+		fmt.Printf("PRODUCE: Routing to handleProduceV2Plus\n")
 		return h.handleProduceV2Plus(correlationID, apiVersion, requestBody)
 	default:
-		fmt.Printf("🔥 PRODUCE: Unsupported version %d\n", apiVersion)
+		fmt.Printf("PRODUCE: Unsupported version %d\n", apiVersion)
 		return nil, fmt.Errorf("produce version %d not implemented yet", apiVersion)
 	}
 }
@@ -208,46 +208,46 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 // - CRC32 validation
 // - Individual record extraction
 func (h *Handler) parseRecordSet(recordSetData []byte) (recordCount int32, totalSize int32, err error) {
-	fmt.Printf("🔥 PARSE DEBUG: parseRecordSet called with %d bytes\n", len(recordSetData))
+	fmt.Printf("PARSE DEBUG: parseRecordSet called with %d bytes\n", len(recordSetData))
 
 	// Heuristic: permit short inputs for tests
 	if len(recordSetData) < 61 {
 		// If very small, decide error vs fallback
 		if len(recordSetData) < 8 {
-			fmt.Printf("🔥 PARSE DEBUG: Too small (< 8 bytes), returning error\n")
+			fmt.Printf("PARSE DEBUG: Too small (< 8 bytes), returning error\n")
 			return 0, 0, fmt.Errorf("failed to parse record batch: record set too small: %d bytes", len(recordSetData))
 		}
 		// If we have at least 20 bytes, attempt to read a count at [16:20]
 		if len(recordSetData) >= 20 {
 			cnt := int32(binary.BigEndian.Uint32(recordSetData[16:20]))
-			fmt.Printf("🔥 PARSE DEBUG: Read count from offset 16: %d\n", cnt)
+			fmt.Printf("PARSE DEBUG: Read count from offset 16: %d\n", cnt)
 			if cnt <= 0 || cnt > 1000000 {
 				cnt = 1
 			}
-			fmt.Printf("🔥 PARSE DEBUG: Returning count=%d (short path)\n", cnt)
+			fmt.Printf("PARSE DEBUG: Returning count=%d (short path)\n", cnt)
 			return cnt, int32(len(recordSetData)), nil
 		}
 		// Otherwise default to 1 record
-		fmt.Printf("🔥 PARSE DEBUG: Defaulting to count=1 (very short)\n")
+		fmt.Printf("PARSE DEBUG: Defaulting to count=1 (very short)\n")
 		return 1, int32(len(recordSetData)), nil
 	}
 
-	fmt.Printf("🔥 PARSE DEBUG: Using full parser for %d bytes\n", len(recordSetData))
+	fmt.Printf("PARSE DEBUG: Using full parser for %d bytes\n", len(recordSetData))
 	parser := NewRecordBatchParser()
 
 	// Parse the record batch with CRC validation
 	batch, err := parser.ParseRecordBatchWithValidation(recordSetData, true)
 	if err != nil {
-		fmt.Printf("🔥 PARSE DEBUG: ParseRecordBatchWithValidation failed: %v, trying without validation\n", err)
+		fmt.Printf("PARSE DEBUG: ParseRecordBatchWithValidation failed: %v, trying without validation\n", err)
 		// If CRC validation fails, try without validation for backward compatibility
 		batch, err = parser.ParseRecordBatch(recordSetData)
 		if err != nil {
-			fmt.Printf("🔥 PARSE DEBUG: ParseRecordBatch also failed: %v\n", err)
+			fmt.Printf("PARSE DEBUG: ParseRecordBatch also failed: %v\n", err)
 			return 0, 0, fmt.Errorf("failed to parse record batch: %w", err)
 		}
 	}
 
-	fmt.Printf("🔥 PARSE DEBUG: Successfully parsed, RecordCount=%d\n", batch.RecordCount)
+	fmt.Printf("PARSE DEBUG: Successfully parsed, RecordCount=%d\n", batch.RecordCount)
 
 	return batch.RecordCount, int32(len(recordSetData)), nil
 }
@@ -271,14 +271,14 @@ func (h *Handler) produceToSeaweedMQ(topic string, partition int32, recordSetDat
 func (h *Handler) extractAllRecords(recordSetData []byte) []struct{ Key, Value []byte } {
 	results := make([]struct{ Key, Value []byte }, 0, 8)
 
-	fmt.Printf("🔍 BATCH ANALYSIS: Total recordSetData length = %d bytes\n", len(recordSetData))
+	fmt.Printf("BATCH ANALYSIS: Total recordSetData length = %d bytes\n", len(recordSetData))
 	if len(recordSetData) > 0 {
-		fmt.Printf("🔍 BATCH HEX DUMP (first 96 bytes): % x\n", recordSetData[:min(96, len(recordSetData))])
+		fmt.Printf("BATCH HEX DUMP (first 96 bytes): % x\n", recordSetData[:min(96, len(recordSetData))])
 	}
 
 	if len(recordSetData) < 61 {
 		// Too small to be a full batch; treat as single opaque record
-		fmt.Printf("🔍 BATCH: Too small (%d < 61), using extractFirstRecord\n", len(recordSetData))
+		fmt.Printf("BATCH: Too small (%d < 61), using extractFirstRecord\n", len(recordSetData))
 		key, value := h.extractFirstRecord(recordSetData)
 		// Always include records, even if both key and value are null
 		// Schema Registry Noop records may have null values
@@ -295,20 +295,20 @@ func (h *Handler) extractAllRecords(recordSetData []byte) []struct{ Key, Value [
 	partitionLeaderEpoch := binary.BigEndian.Uint32(recordSetData[offset:])
 	offset += 4 // partition_leader_epoch
 
-	fmt.Printf("🔍 HEADER: baseOffset=%d, batchLength=%d, partitionLeaderEpoch=%d, offset=%d\n",
+	fmt.Printf("HEADER: baseOffset=%d, batchLength=%d, partitionLeaderEpoch=%d, offset=%d\n",
 		baseOffset, batchLength, partitionLeaderEpoch, offset)
 
 	if offset >= len(recordSetData) {
-		fmt.Printf("🔍 HEADER: offset=%d >= len=%d, returning empty\n", offset, len(recordSetData))
+		fmt.Printf("HEADER: offset=%d >= len=%d, returning empty\n", offset, len(recordSetData))
 		return results
 	}
 	magic := recordSetData[offset] // magic
 	offset += 1
-	fmt.Printf("🔍 HEADER: magic=%d, offset now=%d\n", magic, offset)
+	fmt.Printf("HEADER: magic=%d, offset now=%d\n", magic, offset)
 
 	if magic != 2 {
 		// Unsupported, fallback
-		fmt.Printf("🔍 HEADER: Unsupported magic %d, using extractFirstRecord\n", magic)
+		fmt.Printf("HEADER: Unsupported magic %d, using extractFirstRecord\n", magic)
 		key, value := h.extractFirstRecord(recordSetData)
 		// Always include records, even if both key and value are null
 		results = append(results, struct{ Key, Value []byte }{Key: key, Value: value})
@@ -322,7 +322,7 @@ func (h *Handler) extractAllRecords(recordSetData []byte) []struct{ Key, Value [
 
 	// Check compression codec from attributes (bits 0-2)
 	compressionCodec := compression.CompressionCodec(attributes & 0x07)
-	fmt.Printf("🔥 EXTRACT: Compression codec = %d (0=none, 1=gzip, 2=snappy, 3=lz4, 4=zstd)\n", compressionCodec)
+	fmt.Printf("EXTRACT: Compression codec = %d (0=none, 1=gzip, 2=snappy, 3=lz4, 4=zstd)\n", compressionCodec)
 
 	offset += 4 // last_offset_delta
 	offset += 8 // first_timestamp
@@ -333,52 +333,52 @@ func (h *Handler) extractAllRecords(recordSetData []byte) []struct{ Key, Value [
 
 	// records_count
 	if offset+4 > len(recordSetData) {
-		fmt.Printf("🔍 HEADER: Can't read records_count, offset=%d+4 > len=%d\n", offset, len(recordSetData))
+		fmt.Printf("HEADER: Can't read records_count, offset=%d+4 > len=%d\n", offset, len(recordSetData))
 		return results
 	}
 	recordsCount := int(binary.BigEndian.Uint32(recordSetData[offset:]))
 	offset += 4
 
-	fmt.Printf("🔍 HEADER: recordsCount=%d, offset now=%d (header complete)\n", recordsCount, offset)
-	fmt.Printf("🔍 HEADER: Remaining bytes for records section = %d\n", len(recordSetData)-offset)
+	fmt.Printf("HEADER: recordsCount=%d, offset now=%d (header complete)\n", recordsCount, offset)
+	fmt.Printf("HEADER: Remaining bytes for records section = %d\n", len(recordSetData)-offset)
 
 	// Extract and decompress the records section
 	recordsData := recordSetData[offset:]
-	fmt.Printf("🔍 RECORDS: recordsData extracted from offset %d, length=%d\n", offset, len(recordsData))
+	fmt.Printf("RECORDS: recordsData extracted from offset %d, length=%d\n", offset, len(recordsData))
 	if compressionCodec != compression.None {
-		fmt.Printf("🔥 EXTRACT: Decompressing %d bytes with codec %d\n", len(recordsData), compressionCodec)
+		fmt.Printf("EXTRACT: Decompressing %d bytes with codec %d\n", len(recordsData), compressionCodec)
 		decompressed, err := compression.Decompress(compressionCodec, recordsData)
 		if err != nil {
-			fmt.Printf("🔥 EXTRACT: Decompression failed: %v\n", err)
+			fmt.Printf("EXTRACT: Decompression failed: %v\n", err)
 			// Fallback to extractFirstRecord
 			key, value := h.extractFirstRecord(recordSetData)
 			results = append(results, struct{ Key, Value []byte }{Key: key, Value: value})
 			return results
 		}
 		recordsData = decompressed
-		fmt.Printf("🔥 EXTRACT: Decompressed to %d bytes\n", len(recordsData))
+		fmt.Printf("EXTRACT: Decompressed to %d bytes\n", len(recordsData))
 	}
 	// Reset offset to start of records data (whether compressed or not)
 	offset = 0
 
-	fmt.Printf("🔥 EXTRACT: Starting record iteration - recordsCount=%d, recordsDataLen=%d\n", recordsCount, len(recordsData))
+	fmt.Printf("EXTRACT: Starting record iteration - recordsCount=%d, recordsDataLen=%d\n", recordsCount, len(recordsData))
 	if len(recordsData) > 0 {
-		fmt.Printf("🔥 EXTRACT: First 20 bytes of recordsData: %v\n", recordsData[:min(20, len(recordsData))])
+		fmt.Printf("EXTRACT: First 20 bytes of recordsData: %v\n", recordsData[:min(20, len(recordsData))])
 	}
-	fmt.Printf("🔥 EXTRACT: Full recordsData (%d bytes): %v\n", len(recordsData), recordsData)
+	fmt.Printf("EXTRACT: Full recordsData (%d bytes): %v\n", len(recordsData), recordsData)
 
 	// Iterate records
 	for i := 0; i < recordsCount && offset < len(recordsData); i++ {
 		// record_length is a SIGNED zigzag-encoded varint (like all varints in Kafka record format)
 		recLen, n := decodeVarint(recordsData[offset:])
-		fmt.Printf("🔥 EXTRACT: Record %d - recLen=%d (zigzag decoded), n=%d, offset=%d\n", i, recLen, n, offset)
+		fmt.Printf("EXTRACT: Record %d - recLen=%d (zigzag decoded), n=%d, offset=%d\n", i, recLen, n, offset)
 		if n == 0 || recLen <= 0 {
-			fmt.Printf("🔥 EXTRACT: Breaking - invalid recLen or varint decode failed\n")
+			fmt.Printf("EXTRACT: Breaking - invalid recLen or varint decode failed\n")
 			break
 		}
 		offset += n
 		if offset+int(recLen) > len(recordsData) {
-			fmt.Printf("🔥 EXTRACT: Record length %d exceeds available data %d, breaking\n", recLen, len(recordsData)-offset)
+			fmt.Printf("EXTRACT: Record length %d exceeds available data %d, breaking\n", recLen, len(recordsData)-offset)
 			break
 		}
 		rec := recordsData[offset : offset+int(recLen)]
@@ -407,7 +407,7 @@ func (h *Handler) extractAllRecords(recordSetData []byte) []struct{ Key, Value [
 
 		// key
 		keyLen, nBytes := decodeVarint(rec[rpos:])
-		fmt.Printf("🔥 EXTRACT: keyLen=%d, nBytes=%d, rpos=%d\n", keyLen, nBytes, rpos)
+		fmt.Printf("EXTRACT: keyLen=%d, nBytes=%d, rpos=%d\n", keyLen, nBytes, rpos)
 		if nBytes == 0 {
 			continue
 		}
@@ -420,11 +420,11 @@ func (h *Handler) extractAllRecords(recordSetData []byte) []struct{ Key, Value [
 			key = rec[rpos : rpos+int(keyLen)]
 			rpos += int(keyLen)
 		}
-		fmt.Printf("🔥 EXTRACT: key=%v (len=%d, nil=%v)\n", key, len(key), key == nil)
+		fmt.Printf("EXTRACT: key=%v (len=%d, nil=%v)\n", key, len(key), key == nil)
 
 		// value
 		valLen, nBytes := decodeVarint(rec[rpos:])
-		fmt.Printf("🔥 EXTRACT: valLen=%d, nBytes=%d, rpos=%d\n", valLen, nBytes, rpos)
+		fmt.Printf("EXTRACT: valLen=%d, nBytes=%d, rpos=%d\n", valLen, nBytes, rpos)
 		if nBytes == 0 {
 			continue
 		}
@@ -776,7 +776,7 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 				} else if recordCount > 0 {
 					// Log original batch size and detailed field breakdown
 					fmt.Printf("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-					fmt.Printf("📏 ORIGINAL BATCH: topic=%s partition=%d size=%d bytes\n", topicName, partitionID, len(recordSetData))
+					fmt.Printf("ORIGINAL BATCH: topic=%s partition=%d size=%d bytes\n", topicName, partitionID, len(recordSetData))
 
 					if len(recordSetData) >= 61 {
 						fmt.Printf("  Header Structure:\n")
@@ -802,11 +802,11 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 
 					// Extract all records from the record set and publish each one
 					records := h.extractAllRecords(recordSetData)
-					Debug("🔥 EXTRACT DEBUG: extractAllRecords returned %d records from %d bytes", len(records), len(recordSetData))
+					Debug("EXTRACT DEBUG: extractAllRecords returned %d records from %d bytes", len(records), len(recordSetData))
 					if len(records) > 0 {
-						Debug("🔥 EXTRACT DEBUG: First record - Key len=%d, Value len=%d", len(records[0].Key), len(records[0].Value))
+						Debug("EXTRACT DEBUG: First record - Key len=%d, Value len=%d", len(records[0].Key), len(records[0].Value))
 						if len(records[0].Value) > 0 {
-							Debug("🔥 EXTRACT DEBUG: First record Value: %s", string(records[0].Value))
+							Debug("EXTRACT DEBUG: First record Value: %s", string(records[0].Value))
 						}
 					}
 					if len(records) == 0 {
@@ -819,10 +819,10 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 
 					var firstOffsetSet bool
 					for idx, kv := range records {
-						Debug("🔥 EXTRACT DEBUG: Publishing record %d - Key len=%d, Value len=%d", idx, len(kv.Key), len(kv.Value))
-						fmt.Printf("🔥 PRODUCE: About to call produceSchemaBasedRecord - topic=%s, partition=%d, keyLen=%d, valueLen=%d\n", topicName, partitionID, len(kv.Key), len(kv.Value))
+						Debug("EXTRACT DEBUG: Publishing record %d - Key len=%d, Value len=%d", idx, len(kv.Key), len(kv.Value))
+						fmt.Printf("PRODUCE: About to call produceSchemaBasedRecord - topic=%s, partition=%d, keyLen=%d, valueLen=%d\n", topicName, partitionID, len(kv.Key), len(kv.Value))
 						offsetProduced, prodErr := h.produceSchemaBasedRecord(topicName, int32(partitionID), kv.Key, kv.Value)
-						fmt.Printf("🔥 PRODUCE: produceSchemaBasedRecord returned - offset=%d, error=%v\n", offsetProduced, prodErr)
+						fmt.Printf("PRODUCE: produceSchemaBasedRecord returned - offset=%d, error=%v\n", offsetProduced, prodErr)
 						Debug("Produce v%d - Record %d: offset=%d, error=%v", apiVersion, idx, offsetProduced, prodErr)
 						if prodErr != nil {
 							// Check if this is a schema validation error and add delay to prevent overloading
@@ -1244,23 +1244,23 @@ func (h *Handler) isSystemTopic(topicName string) bool {
 
 // produceSchemaBasedRecord produces a record using schema-based encoding to RecordValue
 func (h *Handler) produceSchemaBasedRecord(topic string, partition int32, key []byte, value []byte) (int64, error) {
-	fmt.Printf("🔥 produceSchemaBasedRecord: topic=%s, partition=%d, keyLen=%d, valueLen=%d\n", topic, partition, len(key), len(value))
+	fmt.Printf("produceSchemaBasedRecord: topic=%s, partition=%d, keyLen=%d, valueLen=%d\n", topic, partition, len(key), len(value))
 
 	// System topics should always bypass schema processing and be stored as-is
 	if h.isSystemTopic(topic) {
-		fmt.Printf("🔥 produceSchemaBasedRecord: %s is a system topic, bypassing schema processing\n", topic)
+		fmt.Printf("produceSchemaBasedRecord: %s is a system topic, bypassing schema processing\n", topic)
 		offset, err := h.seaweedMQHandler.ProduceRecord(topic, partition, key, value)
 		return offset, err
 	}
 
 	// If schema management is not enabled, fall back to raw message handling
 	isEnabled := h.IsSchemaEnabled()
-	fmt.Printf("🔥 produceSchemaBasedRecord: IsSchemaEnabled()=%v, schemaManager=%v\n", isEnabled, h.schemaManager != nil)
+	fmt.Printf("produceSchemaBasedRecord: IsSchemaEnabled()=%v, schemaManager=%v\n", isEnabled, h.schemaManager != nil)
 	if !isEnabled {
-		fmt.Printf("⚠️  produceSchemaBasedRecord: Schema management NOT enabled, falling back to raw storage\n")
+		fmt.Printf("produceSchemaBasedRecord: Schema management NOT enabled, falling back to raw storage\n")
 		return h.seaweedMQHandler.ProduceRecord(topic, partition, key, value)
 	}
-	fmt.Printf("✅ produceSchemaBasedRecord: Schema management IS enabled, will check message format\n")
+	fmt.Printf("produceSchemaBasedRecord: Schema management IS enabled, will check message format\n")
 
 	var keyDecodedMsg *schema.DecodedMessage
 	var valueDecodedMsg *schema.DecodedMessage
@@ -1268,7 +1268,7 @@ func (h *Handler) produceSchemaBasedRecord(topic string, partition int32, key []
 	// Check and decode key if schematized
 	if key != nil {
 		isSchematized := h.schemaManager.IsSchematized(key)
-		fmt.Printf("🔍 SCHEMA CHECK: topic=%s key len=%d, isSchematized=%v, firstByte=%#x\n", topic, len(key), isSchematized, key[0])
+		fmt.Printf("SCHEMA CHECK: topic=%s key len=%d, isSchematized=%v, firstByte=%#x\n", topic, len(key), isSchematized, key[0])
 		if isSchematized {
 			var err error
 			keyDecodedMsg, err = h.schemaManager.DecodeMessage(key)
@@ -1277,32 +1277,32 @@ func (h *Handler) produceSchemaBasedRecord(topic string, partition int32, key []
 				time.Sleep(100 * time.Millisecond)
 				return 0, fmt.Errorf("failed to decode schematized key: %w", err)
 			}
-			fmt.Printf("✅ SCHEMA: Successfully decoded key for topic %s\n", topic)
+			fmt.Printf("SCHEMA: Successfully decoded key for topic %s\n", topic)
 		}
 	}
 
 	// Check and decode value if schematized
 	if value != nil && len(value) > 0 {
 		isSchematized := h.schemaManager.IsSchematized(value)
-		fmt.Printf("🔍 SCHEMA CHECK: topic=%s value len=%d, isSchematized=%v, firstByte=%#x\n", topic, len(value), isSchematized, value[0])
+		fmt.Printf("SCHEMA CHECK: topic=%s value len=%d, isSchematized=%v, firstByte=%#x\n", topic, len(value), isSchematized, value[0])
 		if isSchematized {
 			var err error
 			valueDecodedMsg, err = h.schemaManager.DecodeMessage(value)
 			if err != nil {
 				// CRITICAL: If message has schema ID (magic byte 0x00), decoding MUST succeed
 				// Do not fall back to raw storage - this would corrupt the data model
-				fmt.Printf("❌ SCHEMA ERROR: Message has schema ID but decoding failed: %v\n", err)
+				fmt.Printf("SCHEMA ERROR: Message has schema ID but decoding failed: %v\n", err)
 				time.Sleep(100 * time.Millisecond)
 				return 0, fmt.Errorf("message has schema ID but decoding failed (schema registry may be unavailable): %w", err)
 			}
-			fmt.Printf("✅ SCHEMA: Successfully decoded value for topic %s\n", topic)
+			fmt.Printf("SCHEMA: Successfully decoded value for topic %s\n", topic)
 		}
 	}
 
 	// If neither key nor value is schematized, fall back to raw message handling
 	// This is OK for non-schematized messages (no magic byte 0x00)
 	if keyDecodedMsg == nil && valueDecodedMsg == nil {
-		fmt.Printf("⚠️  SCHEMA: Neither key nor value is schematized for topic %s - falling back to raw storage\n", topic)
+		fmt.Printf("SCHEMA: Neither key nor value is schematized for topic %s - falling back to raw storage\n", topic)
 		return h.seaweedMQHandler.ProduceRecord(topic, partition, key, value)
 	}
 
@@ -1336,21 +1336,21 @@ func (h *Handler) produceSchemaBasedRecord(topic string, partition int32, key []
 		// Store value schema information in memory cache for fetch path performance
 		// Only store if not already cached to avoid mutex contention on hot path
 		hasConfig := h.hasTopicSchemaConfig(topic, valueDecodedMsg.SchemaID, valueDecodedMsg.SchemaFormat)
-		fmt.Printf("🔍 SCHEMA CONFIG CHECK: topic=%s, hasConfig=%v, schemaID=%d\n", topic, hasConfig, valueDecodedMsg.SchemaID)
+		fmt.Printf("SCHEMA CONFIG CHECK: topic=%s, hasConfig=%v, schemaID=%d\n", topic, hasConfig, valueDecodedMsg.SchemaID)
 		if !hasConfig {
 			err = h.storeTopicSchemaConfig(topic, valueDecodedMsg.SchemaID, valueDecodedMsg.SchemaFormat)
 			if err != nil {
 				Debug("Failed to store topic schema config for %s: %v", topic, err)
-				fmt.Printf("❌ Failed to store topic schema config for %s: %v\n", topic, err)
+				fmt.Printf("Failed to store topic schema config for %s: %v\n", topic, err)
 			} else {
-				fmt.Printf("✅ Stored topic schema config for %s\n", topic)
+				fmt.Printf("Stored topic schema config for %s\n", topic)
 			}
 
 			// Schedule value schema registration in background (leader-only, non-blocking)
-			fmt.Printf("🔥 Calling scheduleSchemaRegistration for topic=%s\n", topic)
+			fmt.Printf("Calling scheduleSchemaRegistration for topic=%s\n", topic)
 			h.scheduleSchemaRegistration(topic, valueDecodedMsg.RecordType)
 		} else {
-			fmt.Printf("ℹ️  Schema config already cached for topic=%s, skipping registration\n", topic)
+			fmt.Printf("Schema config already cached for topic=%s, skipping registration\n", topic)
 		}
 	} else if keyDecodedMsg != nil {
 		// If only key is schematized, create RecordValue with just key fields
@@ -1472,19 +1472,19 @@ func (h *Handler) hasTopicKeySchemaConfig(topic string, schemaID uint32, schemaF
 // scheduleSchemaRegistration registers value schema once per topic-schema combination
 func (h *Handler) scheduleSchemaRegistration(topicName string, recordType *schema_pb.RecordType) {
 	if recordType == nil {
-		fmt.Printf("⚠️  scheduleSchemaRegistration: recordType is nil for topic %s\n", topicName)
+		fmt.Printf("scheduleSchemaRegistration: recordType is nil for topic %s\n", topicName)
 		return
 	}
 
 	// Create a unique key for this value schema registration
 	schemaKey := fmt.Sprintf("%s:value:%d", topicName, h.getRecordTypeHash(recordType))
-	fmt.Printf("🔥 scheduleSchemaRegistration: topic=%s, schemaKey=%s\n", topicName, schemaKey)
+	fmt.Printf("scheduleSchemaRegistration: topic=%s, schemaKey=%s\n", topicName, schemaKey)
 
 	// Check if already registered
 	h.registeredSchemasMu.RLock()
 	if h.registeredSchemas[schemaKey] {
 		h.registeredSchemasMu.RUnlock()
-		fmt.Printf("✅ scheduleSchemaRegistration: Schema already registered for %s\n", schemaKey)
+		fmt.Printf("scheduleSchemaRegistration: Schema already registered for %s\n", schemaKey)
 		return // Already registered
 	}
 	h.registeredSchemasMu.RUnlock()
@@ -1494,7 +1494,7 @@ func (h *Handler) scheduleSchemaRegistration(topicName string, recordType *schem
 	defer h.registeredSchemasMu.Unlock()
 
 	if h.registeredSchemas[schemaKey] {
-		fmt.Printf("✅ scheduleSchemaRegistration: Schema already registered (race check) for %s\n", schemaKey)
+		fmt.Printf("scheduleSchemaRegistration: Schema already registered (race check) for %s\n", schemaKey)
 		return // Already registered by another goroutine
 	}
 
@@ -1502,14 +1502,14 @@ func (h *Handler) scheduleSchemaRegistration(topicName string, recordType *schem
 	h.registeredSchemas[schemaKey] = true
 
 	// Perform synchronous registration
-	fmt.Printf("🔥 scheduleSchemaRegistration: Calling registerSchemasViaBrokerAPI for %s\n", topicName)
+	fmt.Printf("scheduleSchemaRegistration: Calling registerSchemasViaBrokerAPI for %s\n", topicName)
 	if err := h.registerSchemasViaBrokerAPI(topicName, recordType, nil); err != nil {
-		fmt.Printf("❌ Schema registration failed for %s: %v\n", topicName, err)
+		fmt.Printf("Schema registration failed for %s: %v\n", topicName, err)
 		Debug("Schema registration failed for %s: %v", topicName, err)
 		// Remove from registered map on failure so it can be retried
 		delete(h.registeredSchemas, schemaKey)
 	} else {
-		fmt.Printf("✅ Successfully registered value schema for %s\n", topicName)
+		fmt.Printf("Successfully registered value schema for %s\n", topicName)
 		Debug("Successfully registered value schema for %s", topicName)
 	}
 }

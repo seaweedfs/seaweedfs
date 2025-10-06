@@ -41,11 +41,11 @@ func main() {
 		m, err := r.ReadMessage(ctx)
 		if err != nil {
 			errorCount++
-			log.Printf("❌ Error reading message #%d: %v", messageCount+1, err)
+			log.Printf("Error reading message #%d: %v", messageCount+1, err)
 
 			// Stop after 10 consecutive errors or 60 seconds
 			if errorCount > 10 || time.Since(startTime) > 60*time.Second {
-				log.Printf("\n⚠️  Stopping after %d errors in %v", errorCount, time.Since(startTime))
+				log.Printf("\nStopping after %d errors in %v", errorCount, time.Since(startTime))
 				break
 			}
 			continue
@@ -55,16 +55,15 @@ func main() {
 		errorCount = 0
 		messageCount++
 
-		log.Printf("✅ Message #%d: topic=%s partition=%d offset=%d key=%s value=%s",
+		log.Printf("Message #%d: topic=%s partition=%d offset=%d key=%s value=%s",
 			messageCount, m.Topic, m.Partition, m.Offset, string(m.Key), string(m.Value))
 
 		// Stop after 100 messages or 60 seconds
 		if messageCount >= 100 || time.Since(startTime) > 60*time.Second {
-			log.Printf("\n✅ Successfully consumed %d messages in %v", messageCount, time.Since(startTime))
+			log.Printf("\nSuccessfully consumed %d messages in %v", messageCount, time.Since(startTime))
 			log.Printf("Success rate: %.1f%% (%d/%d including errors)",
 				float64(messageCount)/float64(messageCount+errorCount)*100, messageCount, messageCount+errorCount)
 			break
 		}
 	}
 }
-

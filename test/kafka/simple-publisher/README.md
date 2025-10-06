@@ -32,17 +32,17 @@ go run main.go
 ```
 Publishing messages to topic '_raw_messages' on broker 'localhost:17777'
 Publishing messages...
-✓ Published message 1: {"id":1,"message":"Hello from kafka-go client",...}
-✓ Published message 2: {"id":2,"message":"Raw message without schema validation",...}
-✓ Published message 3: {"id":3,"message":"Testing SMQ with underscore prefix topic",...}
+- Published message 1: {"id":1,"message":"Hello from kafka-go client",...}
+- Published message 2: {"id":2,"message":"Raw message without schema validation",...}
+- Published message 3: {"id":3,"message":"Testing SMQ with underscore prefix topic",...}
 
 Publishing different raw message formats...
-✓ Published raw message 1: key=binary_key, value=Simple string message
-✓ Published raw message 2: key=json_key, value={"raw_field": "raw_value", "number": 42}
-✓ Published raw message 3: key=empty_key, value=
-✓ Published raw message 4: key=, value=Message with no key
+- Published raw message 1: key=binary_key, value=Simple string message
+- Published raw message 2: key=json_key, value={"raw_field": "raw_value", "number": 42}
+- Published raw message 3: key=empty_key, value=
+- Published raw message 4: key=, value=Message with no key
 
-🎉 All test messages published to topic with '_' prefix!
+All test messages published to topic with '_' prefix!
 These messages should be stored as raw bytes without schema validation.
 ```
 

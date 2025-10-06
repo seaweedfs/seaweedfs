@@ -43,7 +43,7 @@ public class AdminClientDebugger {
             InputStream in = socket.getInputStream();
             OutputStream out = socket.getOutputStream();
 
-            System.out.println("✅ Connected to " + broker);
+            System.out.println("Connected to " + broker);
 
             // Build ApiVersions request (v4)
             // Format:
@@ -79,7 +79,7 @@ public class AdminClientDebugger {
             out.write(request);
             out.flush();
 
-            System.out.println("\n📤 SENT ApiVersions v4 Request:");
+            System.out.println("\nSENT ApiVersions v4 Request:");
             System.out.println("   Size: " + request.length + " bytes");
             hexDump("   Request", request, Math.min(64, request.length));
 
@@ -87,12 +87,12 @@ public class AdminClientDebugger {
             byte[] sizeBytes = new byte[4];
             int read = in.read(sizeBytes);
             if (read != 4) {
-                System.out.println("❌ Failed to read response size (got " + read + " bytes)");
+                System.out.println("Failed to read response size (got " + read + " bytes)");
                 return;
             }
 
             int responseSize = ByteBuffer.wrap(sizeBytes).getInt();
-            System.out.println("\n📥 RECEIVED Response:");
+            System.out.println("\nRECEIVED Response:");
             System.out.println("   Size: " + responseSize + " bytes");
 
             // Read response body
@@ -101,16 +101,16 @@ public class AdminClientDebugger {
             while (totalRead < responseSize) {
                 int n = in.read(responseBytes, totalRead, responseSize - totalRead);
                 if (n == -1) {
-                    System.out.println("❌ Unexpected EOF after " + totalRead + " bytes");
+                    System.out.println("Unexpected EOF after " + totalRead + " bytes");
                     return;
                 }
                 totalRead += n;
             }
 
-            System.out.println("   ✅ Read complete response: " + totalRead + " bytes");
+            System.out.println("   Read complete response: " + totalRead + " bytes");
 
             // Decode response
-            System.out.println("\n🔍 RESPONSE STRUCTURE:");
+            System.out.println("\nRESPONSE STRUCTURE:");
             decodeApiVersionsResponse(responseBytes);
 
             // Try to read more (should timeout or get EOF)
@@ -121,14 +121,14 @@ public class AdminClientDebugger {
                 if (nextByte == -1) {
                     System.out.println("   Server closed connection (EOF)");
                 } else {
-                    System.out.println("   ⚠️  Unexpected data: " + nextByte);
+                    System.out.println("   Unexpected data: " + nextByte);
                 }
             } catch (SocketTimeoutException e) {
                 System.out.println("   Timeout - no additional data");
             }
 
         } catch (Exception e) {
-            System.out.println("❌ Error: " + e.getMessage());
+            System.out.println("Error: " + e.getMessage());
             e.printStackTrace();
         }
     }
@@ -144,18 +144,18 @@ public class AdminClientDebugger {
         props.forEach((k, v) -> System.out.println("  " + k + " = " + v));
 
         try (AdminClient adminClient = AdminClient.create(props)) {
-            System.out.println("✅ AdminClient created");
+            System.out.println("AdminClient created");
 
             // Give the thread time to start
             Thread.sleep(1000);
 
-            System.out.println("\n📞 Calling describeCluster()...");
+            System.out.println("\nCalling describeCluster()...");
             DescribeClusterResult result = adminClient.describeCluster();
 
             System.out.println("   Waiting for nodes...");
             Collection<Node> nodes = result.nodes().get();
 
-            System.out.println("✅ Cluster description retrieved:");
+            System.out.println("Cluster description retrieved:");
             System.out.println("   Nodes: " + nodes.size());
             for (Node node : nodes) {
                 System.out.println("     - Node " + node.id() + ": " + node.host() + ":" + node.port());
@@ -169,10 +169,10 @@ public class AdminClientDebugger {
             }
 
         } catch (ExecutionException e) {
-            System.out.println("❌ Execution error: " + e.getCause().getMessage());
+            System.out.println("Execution error: " + e.getCause().getMessage());
             e.getCause().printStackTrace();
         } catch (Exception e) {
-            System.out.println("❌ Error: " + e.getMessage());
+            System.out.println("Error: " + e.getMessage());
             e.printStackTrace();
         }
     }
@@ -218,13 +218,13 @@ public class AdminClientDebugger {
             }
 
             System.out.println("   ... (showing first 5 of " + apiKeysLength + " APIs)");
-            System.out.println("   ✅ Response structure is valid!");
+            System.out.println("   Response structure is valid!");
 
             // Hex dump of first 64 bytes
             hexDump("\n   First 64 bytes", data, Math.min(64, data.length));
 
         } catch (Exception e) {
-            System.out.println("   ❌ Failed to decode at offset " + offset + ": " + e.getMessage());
+            System.out.println("   Failed to decode at offset " + offset + ": " + e.getMessage());
             hexDump("   Raw bytes", data, Math.min(128, data.length));
         }
     }
@@ -288,4 +288,3 @@ public class AdminClientDebugger {
         }
     }
 }
-

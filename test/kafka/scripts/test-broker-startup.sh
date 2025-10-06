@@ -106,6 +106,6 @@ fi
 echo "✓ Broker started successfully and accepting connections"
 
 echo
-echo "✅ All tests passed!"
+echo "[OK] All tests passed!"
 echo "Server logs: /tmp/weed-server-test.log"  
 echo "Broker logs: /tmp/weed-mq-broker-test.log"

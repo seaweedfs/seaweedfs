@@ -127,5 +127,5 @@ echo "  pkill -f \"weed master\""
 echo "  pkill -f \"weed filer\""
 echo "  pkill -f \"weed mq.broker\""
 echo ""
-echo "✅ SeaweedFS infrastructure is ready for testing!"
+echo "[OK] SeaweedFS infrastructure is ready for testing!"
 

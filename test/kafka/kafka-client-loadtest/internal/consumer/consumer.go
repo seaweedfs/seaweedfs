@@ -443,7 +443,7 @@ func (h *ConsumerGroupHandler) Cleanup(sarama.ConsumerGroupSession) error {
 
 // ConsumeClaim must start a consumer loop of ConsumerGroupClaim's Messages()
 func (h *ConsumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
-	log.Printf("🔍 LOADTEST DEBUG: ConsumeClaim CALLED for Consumer %d, topic=%s partition=%d, initialOffset=%d",
+	log.Printf("LOADTEST DEBUG: ConsumeClaim CALLED for Consumer %d, topic=%s partition=%d, initialOffset=%d",
 		h.consumer.id, claim.Topic(), claim.Partition(), claim.InitialOffset())
 
 	msgCount := 0
@@ -451,7 +451,7 @@ func (h *ConsumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSession,
 		select {
 		case message, ok := <-claim.Messages():
 			if !ok {
-				log.Printf("🔍 LOADTEST DEBUG: Message channel closed for Consumer %d, %s[%d], received %d messages total",
+				log.Printf("LOADTEST DEBUG: Message channel closed for Consumer %d, %s[%d], received %d messages total",
 					h.consumer.id, claim.Topic(), claim.Partition(), msgCount)
 				return nil
 			}
@@ -465,7 +465,7 @@ func (h *ConsumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSession,
 			}
 			valueLen := len(message.Value)
 
-			log.Printf("📥 CONSUMED: Consumer %d msg#%d topic=%s[%d] offset=%d key=%s keyLen=%d valueLen=%d",
+			log.Printf("CONSUMED: Consumer %d msg#%d topic=%s[%d] offset=%d key=%s keyLen=%d valueLen=%d",
 				h.consumer.id, msgCount, claim.Topic(), claim.Partition(), message.Offset, keyStr, keyLen, valueLen)
 
 			// Process the message

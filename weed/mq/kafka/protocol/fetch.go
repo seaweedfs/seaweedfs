@@ -95,7 +95,7 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 		// Use the client's requested wait time (already capped at 1s)
 		maxPollTime := time.Duration(maxWaitMs) * time.Millisecond
 		deadline := start.Add(maxPollTime)
-		glog.V(4).Infof("🕐 LONG-POLL START: maxWaitMs=%d, deadline=%v", maxWaitMs, deadline)
+		glog.V(4).Infof("LONG-POLL START: maxWaitMs=%d, deadline=%v", maxWaitMs, deadline)
 		for time.Now().Before(deadline) {
 			// Use context-aware sleep instead of blocking time.Sleep
 			select {
@@ -107,13 +107,13 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 				// Continue with polling
 			}
 			if hasDataAvailable() {
-				glog.V(4).Infof("🕐 LONG-POLL DATA AVAILABLE after %dms", time.Since(start)/time.Millisecond)
+				glog.V(4).Infof("LONG-POLL DATA AVAILABLE after %dms", time.Since(start)/time.Millisecond)
 				break
 			}
 		}
 		elapsed := time.Since(start)
 		throttleTimeMs = int32(elapsed / time.Millisecond)
-		glog.V(4).Infof("🕐 LONG-POLL END: waited %dms (maxWaitMs=%d)", elapsed/time.Millisecond, maxWaitMs)
+		glog.V(4).Infof("LONG-POLL END: waited %dms (maxWaitMs=%d)", elapsed/time.Millisecond, maxWaitMs)
 	}
 
 	// Build the response
@@ -205,7 +205,7 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 
 			// Use direct SMQ reading - no ledgers needed
 			// CRITICAL DEBUG: This should appear in logs if the new binary is running
-			Debug("🔥🔥🔥 FETCH HANDLER NEW CODE IS RUNNING 🔥🔥🔥")
+			Debug("FETCH HANDLER NEW CODE IS RUNNING")
 
 			// Get the actual high water mark from SeaweedMQ using the same method as ListOffsets
 			highWaterMark, err := h.seaweedMQHandler.GetLatestOffset(topic.Name, partition.PartitionID)
@@ -303,11 +303,11 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 						result.BatchCount, result.TotalSize, result.NextOffset, multiBatchDuration)
 					recordBatch = result.RecordBatches
 					if strings.Contains(topic.Name, "loadtest") {
-						glog.Infof("🎁 FETCH PAYLOAD READY: topic=%s partition=%d fetchOffset=%d batches=%d bytes=%d nextOffset=%d",
+						glog.Infof("FETCH PAYLOAD READY: topic=%s partition=%d fetchOffset=%d batches=%d bytes=%d nextOffset=%d",
 							topic.Name, partition.PartitionID, effectiveFetchOffset, result.BatchCount, result.TotalSize, result.NextOffset)
 					}
 					if strings.HasPrefix(topic.Name, "_schemas") {
-						glog.Infof("📍 SR FETCH RESPONSE: topic=%s partition=%d fetchOffset=%d batches=%d bytes=%d nextOffset=%d",
+						glog.Infof("SR FETCH RESPONSE: topic=%s partition=%d fetchOffset=%d batches=%d bytes=%d nextOffset=%d",
 							topic.Name, partition.PartitionID, effectiveFetchOffset, result.BatchCount, result.TotalSize, result.NextOffset)
 					}
 				} else {
@@ -336,14 +336,14 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 			// BUT ONLY if we don't already have a recordBatch from the multi-batch fetcher
 			// to avoid double-fetching which causes blocking
 			if isSchematizedTopic && len(recordBatch) == 0 {
-				glog.Infof("🔮 SCHEMA PATH: topic=%s partition=%d offset=%d isSchematizedTopic=true, recordBatch empty, attempting fetchSchematizedRecords",
+				glog.Infof("SCHEMA PATH: topic=%s partition=%d offset=%d isSchematizedTopic=true, recordBatch empty, attempting fetchSchematizedRecords",
 					topic.Name, partition.PartitionID, effectiveFetchOffset)
 				schematizedRecords, err := h.fetchSchematizedRecords(topic.Name, partition.PartitionID, effectiveFetchOffset, partition.MaxBytes)
 				if err != nil {
-					glog.Infof("🔮 SCHEMA PATH ERROR: topic=%s partition=%d err=%v", topic.Name, partition.PartitionID, err)
+					glog.Infof("SCHEMA PATH ERROR: topic=%s partition=%d err=%v", topic.Name, partition.PartitionID, err)
 					Debug("Failed to fetch schematized records for topic %s partition %d: %v", topic.Name, partition.PartitionID, err)
 				} else if len(schematizedRecords) > 0 {
-					glog.Infof("🔮 SCHEMA PATH SUCCESS: topic=%s partition=%d schematizedRecords=%d, creating batch",
+					glog.Infof("SCHEMA PATH SUCCESS: topic=%s partition=%d schematizedRecords=%d, creating batch",
 						topic.Name, partition.PartitionID, len(schematizedRecords))
 					Debug("Successfully fetched %d schematized records for topic %s partition %d", len(schematizedRecords), topic.Name, partition.PartitionID)
 
@@ -352,19 +352,19 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 					if len(schematizedBatch) > 0 {
 						// Replace the record batch with the schematized version
 						recordBatch = schematizedBatch
-						glog.Infof("🔮 SCHEMA PATH REPLACED: topic=%s partition=%d recordBatchSize=%d",
+						glog.Infof("SCHEMA PATH REPLACED: topic=%s partition=%d recordBatchSize=%d",
 							topic.Name, partition.PartitionID, len(schematizedBatch))
 						Debug("Replaced record batch with schematized version: %d bytes for %d messages", len(recordBatch), len(schematizedRecords))
 					} else {
-						glog.Infof("🔮 SCHEMA PATH BATCH EMPTY: topic=%s partition=%d schematizedBatch=0 bytes, NOT replacing",
+						glog.Infof("SCHEMA PATH BATCH EMPTY: topic=%s partition=%d schematizedBatch=0 bytes, NOT replacing",
 							topic.Name, partition.PartitionID)
 					}
 				} else {
-					glog.Infof("🔮 SCHEMA PATH EMPTY: topic=%s partition=%d schematizedRecords=0, keeping original recordBatch=%d bytes",
+					glog.Infof("SCHEMA PATH EMPTY: topic=%s partition=%d schematizedRecords=0, keeping original recordBatch=%d bytes",
 						topic.Name, partition.PartitionID, len(recordBatch))
 				}
 			} else if isSchematizedTopic && len(recordBatch) > 0 {
-				glog.Infof("🔮 SCHEMA PATH SKIPPED: topic=%s partition=%d already has recordBatch=%d bytes from multi-batch fetch, using it as-is",
+				glog.Infof("SCHEMA PATH SKIPPED: topic=%s partition=%d already has recordBatch=%d bytes from multi-batch fetch, using it as-is",
 					topic.Name, partition.PartitionID, len(recordBatch))
 			}
 
@@ -374,7 +374,7 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 
 			// Log for loadtest topics to debug zero consumption issue
 			if strings.HasPrefix(topic.Name, "loadtest-topic") {
-				glog.V(4).Infof("🔍 LOADTEST FETCH: topic=%s partition=%d requestOffset=%d effectiveOffset=%d hwm=%d recordBatchBytes=%d",
+				glog.V(4).Infof("LOADTEST FETCH: topic=%s partition=%d requestOffset=%d effectiveOffset=%d hwm=%d recordBatchBytes=%d",
 					topic.Name, partition.PartitionID, partition.FetchOffset, effectiveFetchOffset, highWaterMark, len(recordBatch))
 			}
 
@@ -420,7 +420,7 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 	if !isFlexible && len(response) >= 14 {
 		actualTopicsCount := binary.BigEndian.Uint32(response[10:14])
 		if actualTopicsCount != uint32(topicsCount) {
-			glog.Errorf("🚨 FETCH CORR=%d: Topics count CORRUPTED! Expected %d, found %d at response[10:14]=%02x %02x %02x %02x",
+			glog.Errorf("FETCH CORR=%d: Topics count CORRUPTED! Expected %d, found %d at response[10:14]=%02x %02x %02x %02x",
 				correlationID, topicsCount, actualTopicsCount, response[10], response[11], response[12], response[13])
 		} else {
 			glog.V(4).Infof("FETCH CORR=%d: Topics count verified OK: %d at response[10:14]=%02x %02x %02x %02x",
@@ -687,7 +687,7 @@ func (h *Handler) constructRecordBatchFromSMQ(topicName string, fetchOffset int6
 
 		// DEBUG: Show response being sent for _schemas topic
 		if strings.Contains(topicName, "_schemas") {
-			glog.Infof("📦 FETCH RESPONSE: topic=%s offset=%d rawKey=%d rawValue=%d decodedKey=%d decodedValue=%d keyContent=%q",
+			glog.Infof("FETCH RESPONSE: topic=%s offset=%d rawKey=%d rawValue=%d decodedKey=%d decodedValue=%d keyContent=%q",
 				topicName, smqRecord.GetOffset(), len(smqRecord.GetKey()), len(smqRecord.GetValue()), len(key), len(value), string(key))
 		}
 
@@ -782,36 +782,36 @@ type SchematizedRecord struct {
 
 // fetchSchematizedRecords fetches and reconstructs schematized records from SeaweedMQ
 func (h *Handler) fetchSchematizedRecords(topicName string, partitionID int32, offset int64, maxBytes int32) ([]*SchematizedRecord, error) {
-	glog.Infof("🔬 fetchSchematizedRecords: topic=%s partition=%d offset=%d maxBytes=%d", topicName, partitionID, offset, maxBytes)
+	glog.Infof("fetchSchematizedRecords: topic=%s partition=%d offset=%d maxBytes=%d", topicName, partitionID, offset, maxBytes)
 
 	// Only proceed when schema feature is toggled on
 	if !h.useSchema {
-		glog.Infof("🔬 fetchSchematizedRecords EARLY RETURN: useSchema=false")
+		glog.Infof("fetchSchematizedRecords EARLY RETURN: useSchema=false")
 		return []*SchematizedRecord{}, nil
 	}
 
 	// Check if SeaweedMQ handler is available when schema feature is in use
 	if h.seaweedMQHandler == nil {
-		glog.Infof("🔬 fetchSchematizedRecords ERROR: seaweedMQHandler is nil")
+		glog.Infof("fetchSchematizedRecords ERROR: seaweedMQHandler is nil")
 		return nil, fmt.Errorf("SeaweedMQ handler not available")
 	}
 
 	// If schema management isn't fully configured, return empty instead of error
 	if !h.IsSchemaEnabled() {
-		glog.Infof("🔬 fetchSchematizedRecords EARLY RETURN: IsSchemaEnabled()=false")
+		glog.Infof("fetchSchematizedRecords EARLY RETURN: IsSchemaEnabled()=false")
 		return []*SchematizedRecord{}, nil
 	}
 
 	// Fetch stored records from SeaweedMQ
 	maxRecords := 100 // Reasonable batch size limit
-	glog.Infof("🔬 fetchSchematizedRecords: calling GetStoredRecords maxRecords=%d", maxRecords)
+	glog.Infof("fetchSchematizedRecords: calling GetStoredRecords maxRecords=%d", maxRecords)
 	smqRecords, err := h.seaweedMQHandler.GetStoredRecords(topicName, partitionID, offset, maxRecords)
 	if err != nil {
-		glog.Infof("🔬 fetchSchematizedRecords ERROR: GetStoredRecords failed: %v", err)
+		glog.Infof("fetchSchematizedRecords ERROR: GetStoredRecords failed: %v", err)
 		return nil, fmt.Errorf("failed to fetch SMQ records: %w", err)
 	}
 
-	glog.Infof("🔬 fetchSchematizedRecords: GetStoredRecords returned %d records", len(smqRecords))
+	glog.Infof("fetchSchematizedRecords: GetStoredRecords returned %d records", len(smqRecords))
 	if len(smqRecords) == 0 {
 		return []*SchematizedRecord{}, nil
 	}
@@ -1229,7 +1229,7 @@ func (h *Handler) isSchematizedTopic(topicName string) bool {
 	}
 
 	if !h.IsSchemaEnabled() {
-		glog.V(4).Infof("🔍 isSchematizedTopic(%s): IsSchemaEnabled=false, returning false", topicName)
+		glog.V(4).Infof("isSchematizedTopic(%s): IsSchemaEnabled=false, returning false", topicName)
 		return false
 	}
 
@@ -1237,29 +1237,29 @@ func (h *Handler) isSchematizedTopic(topicName string) bool {
 
 	// 1. Confluent Schema Registry naming conventions
 	if h.matchesSchemaRegistryConvention(topicName) {
-		glog.V(4).Infof("🔍 isSchematizedTopic(%s): matchesSchemaRegistryConvention=true, returning true", topicName)
+		glog.V(4).Infof("isSchematizedTopic(%s): matchesSchemaRegistryConvention=true, returning true", topicName)
 		return true
 	}
 
 	// 2. Check if topic has schema metadata in SeaweedMQ
 	if h.hasSchemaMetadata(topicName) {
-		glog.V(4).Infof("🔍 isSchematizedTopic(%s): hasSchemaMetadata=true, returning true", topicName)
+		glog.V(4).Infof("isSchematizedTopic(%s): hasSchemaMetadata=true, returning true", topicName)
 		return true
 	}
 
 	// 3. Check for schema configuration in topic metadata
 	if h.hasSchemaConfiguration(topicName) {
-		glog.V(4).Infof("🔍 isSchematizedTopic(%s): hasSchemaConfiguration=true, returning true", topicName)
+		glog.V(4).Infof("isSchematizedTopic(%s): hasSchemaConfiguration=true, returning true", topicName)
 		return true
 	}
 
 	// 4. Check if topic has been used with schematized messages before
 	if h.hasSchematizedMessageHistory(topicName) {
-		glog.V(4).Infof("🔍 isSchematizedTopic(%s): hasSchematizedMessageHistory=true, returning true", topicName)
+		glog.V(4).Infof("isSchematizedTopic(%s): hasSchematizedMessageHistory=true, returning true", topicName)
 		return true
 	}
 
-	glog.V(4).Infof("🔍 isSchematizedTopic(%s): all checks false, returning false", topicName)
+	glog.V(4).Infof("isSchematizedTopic(%s): all checks false, returning false", topicName)
 	return false
 }
 
@@ -1491,7 +1491,7 @@ func (h *Handler) decodeRecordValueToKafkaMessage(topicName string, recordValueB
 		Debug("System topic %s: returning raw bytes without RecordValue processing", topicName)
 		// DEBUG: Show response content for offset 0 debugging
 		if strings.Contains(topicName, "_schemas") {
-			glog.Infof("📤 RESPONSE DEBUG: topic=%s valueLen=%d valueHex=%x valueStr=%q",
+			glog.Infof("RESPONSE DEBUG: topic=%s valueLen=%d valueHex=%x valueStr=%q",
 				topicName, len(recordValueBytes), recordValueBytes, string(recordValueBytes))
 		}
 		return recordValueBytes

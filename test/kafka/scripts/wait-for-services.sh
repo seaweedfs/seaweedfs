@@ -33,7 +33,7 @@ wait_for_service() {
     local count=0
     while [ $count -lt $timeout ]; do
         if eval "$check_command" > /dev/null 2>&1; then
-            echo -e "${GREEN}✅ ${service_name} is ready${NC}"
+            echo -e "${GREEN}[OK] ${service_name} is ready${NC}"
             return 0
         fi
         
@@ -45,7 +45,7 @@ wait_for_service() {
         count=$((count + 1))
     done
     
-    echo -e "${RED}❌ ${service_name} failed to start within ${timeout} seconds${NC}"
+    echo -e "${RED}[FAIL] ${service_name} failed to start within ${timeout} seconds${NC}"
     return 1
 }
 
@@ -96,32 +96,32 @@ echo "=== Final Verification ==="
 echo "Testing Kafka topic operations..."
 TEST_TOPIC="health-check-$(date +%s)"
 if kafka-topics --create --topic "$TEST_TOPIC" --bootstrap-server "${KAFKA_HOST}:${KAFKA_PORT}" --partitions 1 --replication-factor 1 > /dev/null 2>&1; then
-    echo -e "${GREEN}✅ Kafka topic creation works${NC}"
+    echo -e "${GREEN}[OK] Kafka topic creation works${NC}"
     kafka-topics --delete --topic "$TEST_TOPIC" --bootstrap-server "${KAFKA_HOST}:${KAFKA_PORT}" > /dev/null 2>&1 || true
 else
-    echo -e "${RED}❌ Kafka topic creation failed${NC}"
+    echo -e "${RED}[FAIL] Kafka topic creation failed${NC}"
     exit 1
 fi
 
 # Test Schema Registry
 echo "Testing Schema Registry..."
 if curl -f "${SCHEMA_REGISTRY_URL}/subjects" > /dev/null 2>&1; then
-    echo -e "${GREEN}✅ Schema Registry is accessible${NC}"
+    echo -e "${GREEN}[OK] Schema Registry is accessible${NC}"
 else
-    echo -e "${RED}❌ Schema Registry is not accessible${NC}"
+    echo -e "${RED}[FAIL] Schema Registry is not accessible${NC}"
     exit 1
 fi
 
 # Test Kafka Gateway connectivity
 echo "Testing Kafka Gateway..."
 if nc -z "${KAFKA_GATEWAY_HOST}" "${KAFKA_GATEWAY_PORT}"; then
-    echo -e "${GREEN}✅ Kafka Gateway is accessible${NC}"
+    echo -e "${GREEN}[OK] Kafka Gateway is accessible${NC}"
 else
-    echo -e "${RED}❌ Kafka Gateway is not accessible${NC}"
+    echo -e "${RED}[FAIL] Kafka Gateway is not accessible${NC}"
     exit 1
 fi
 
-echo -e "${GREEN}🎉 All services are ready!${NC}"
+echo -e "${GREEN}All services are ready!${NC}"
 echo ""
 echo "Service endpoints:"
 echo "  Kafka: ${KAFKA_HOST}:${KAFKA_PORT}"

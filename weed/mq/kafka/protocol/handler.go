@@ -703,7 +703,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		// Validate API version against what we support
 		Debug("VALIDATING API VERSION: Key=%d, Version=%d", apiKey, apiVersion)
 		if err := h.validateAPIVersion(apiKey, apiVersion); err != nil {
-			glog.Errorf("❌ API VERSION VALIDATION FAILED: Key=%d (%s), Version=%d, error=%v", apiKey, getAPIName(apiKey), apiVersion, err)
+			glog.Errorf("API VERSION VALIDATION FAILED: Key=%d (%s), Version=%d, error=%v", apiKey, getAPIName(apiKey), apiVersion, err)
 			// Return proper Kafka error response for unsupported version
 			response, writeErr := h.buildUnsupportedVersionResponse(correlationID, apiKey, apiVersion)
 			if writeErr != nil {
@@ -727,7 +727,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		}
 
 		// CRITICAL DEBUG: Log that validation passed
-		glog.V(4).Infof("✅ API VERSION VALIDATION PASSED: Key=%d (%s), Version=%d, Correlation=%d - proceeding to header parsing",
+		glog.V(4).Infof("API VERSION VALIDATION PASSED: Key=%d (%s), Version=%d, Correlation=%d - proceeding to header parsing",
 			apiKey, getAPIName(apiKey), apiVersion, correlationID)
 
 		// Extract request body - special handling for ApiVersions requests
@@ -769,7 +769,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			header, parsedRequestBody, parseErr := ParseRequestHeader(messageBuf)
 			if parseErr != nil {
 				// CRITICAL: Log the parsing error for debugging
-				glog.Errorf("❌ REQUEST HEADER PARSING FAILED: API=%d (%s) v%d, correlation=%d, error=%v, msgLen=%d",
+				glog.Errorf("REQUEST HEADER PARSING FAILED: API=%d (%s) v%d, correlation=%d, error=%v, msgLen=%d",
 					apiKey, getAPIName(apiKey), apiVersion, correlationID, parseErr, len(messageBuf))
 
 				// Fall back to basic header parsing if flexible version parsing fails
@@ -778,20 +778,20 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 				// Basic header parsing fallback (original logic)
 				bodyOffset := 8
 				if len(messageBuf) < bodyOffset+2 {
-					glog.Errorf("❌ FALLBACK PARSING FAILED: missing client_id length, msgLen=%d", len(messageBuf))
+					glog.Errorf("FALLBACK PARSING FAILED: missing client_id length, msgLen=%d", len(messageBuf))
 					return fmt.Errorf("invalid header: missing client_id length")
 				}
 				clientIDLen := int16(binary.BigEndian.Uint16(messageBuf[bodyOffset : bodyOffset+2]))
 				bodyOffset += 2
 				if clientIDLen >= 0 {
 					if len(messageBuf) < bodyOffset+int(clientIDLen) {
-						glog.Errorf("❌ FALLBACK PARSING FAILED: client_id truncated, clientIDLen=%d, msgLen=%d", clientIDLen, len(messageBuf))
+						glog.Errorf("FALLBACK PARSING FAILED: client_id truncated, clientIDLen=%d, msgLen=%d", clientIDLen, len(messageBuf))
 						return fmt.Errorf("invalid header: client_id truncated")
 					}
 					bodyOffset += int(clientIDLen)
 				}
 				requestBody = messageBuf[bodyOffset:]
-				glog.Infof("✅ FALLBACK PARSING SUCCESS: API=%d (%s) v%d, bodyLen=%d", apiKey, getAPIName(apiKey), apiVersion, len(requestBody))
+				glog.Infof("FALLBACK PARSING SUCCESS: API=%d (%s) v%d, bodyLen=%d", apiKey, getAPIName(apiKey), apiVersion, len(requestBody))
 			} else {
 				// Use the successfully parsed request body
 				requestBody = parsedRequestBody
@@ -1687,7 +1687,7 @@ func (h *Handler) parseMetadataTopics(requestBody []byte) []string {
 }
 
 func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
-	glog.Infof("🚀🚀🚀 HANDLELISTOFFSETS ENTRY POINT 🚀🚀🚀")
+	glog.Infof("HANDLELISTOFFSETS ENTRY POINT")
 	Debug("ListOffsets v%d request hex dump (first 100 bytes): %x", apiVersion, requestBody[:min(100, len(requestBody))])
 
 	// Parse minimal request to understand what's being asked (header already stripped)
@@ -1786,7 +1786,7 @@ func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, req
 
 			Debug("ListOffsets - Topic: %s, Partition: %d, Timestamp: %d (using direct SMQ)",
 				string(topicName), partitionID, timestamp)
-			glog.Infof("🚀 NEW OFFSET CODE IS RUNNING! 🚀")
+			glog.Infof("NEW OFFSET CODE IS RUNNING!")
 
 			switch timestamp {
 			case -2: // earliest offset
@@ -1800,7 +1800,7 @@ func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, req
 				}
 				responseTimestamp = 0 // No specific timestamp for earliest
 				if strings.HasPrefix(string(topicName), "_schemas") {
-					glog.Infof("📍 SCHEMA REGISTRY LISTOFFSETS EARLIEST: topic=%s partition=%d returning offset=%d", string(topicName), partitionID, responseOffset)
+					glog.Infof("SCHEMA REGISTRY LISTOFFSETS EARLIEST: topic=%s partition=%d returning offset=%d", string(topicName), partitionID, responseOffset)
 				}
 				Debug("ListOffsets EARLIEST - returning offset: %d, timestamp: %d", responseOffset, responseTimestamp)
 			case -1: // latest offset
@@ -3001,13 +3001,13 @@ func (h *Handler) writeResponseWithHeader(w *bufio.Writer, correlationID uint32,
 	// Debug logging for response format (hex dump removed to reduce CPU usage)
 	if glog.V(4) {
 		if apiKey == 10 { // FindCoordinator
-			glog.V(4).Infof("🔍 FindCoordinator v%d: totalSize=%d, bodyLen=%d, flexible=%t, fullResponseLen=%d", apiVersion, totalSize, len(responseBody), isFlexible, len(fullResponse))
+			glog.V(4).Infof("FindCoordinator v%d: totalSize=%d, bodyLen=%d, flexible=%t, fullResponseLen=%d", apiVersion, totalSize, len(responseBody), isFlexible, len(fullResponse))
 		}
 		if apiKey == 1 { // Fetch
-			glog.V(4).Infof("🔍 Fetch v%d: totalSize=%d, bodyLen=%d, flexible=%t, fullResponseLen=%d", apiVersion, totalSize, len(responseBody), isFlexible, len(fullResponse))
+			glog.V(4).Infof("Fetch v%d: totalSize=%d, bodyLen=%d, flexible=%t, fullResponseLen=%d", apiVersion, totalSize, len(responseBody), isFlexible, len(fullResponse))
 		}
 		if apiKey == 3 { // Metadata
-			glog.V(4).Infof("🔍 Metadata v%d: totalSize=%d, bodyLen=%d, flexible=%t, fullResponseLen=%d", apiVersion, totalSize, len(responseBody), isFlexible, len(fullResponse))
+			glog.V(4).Infof("Metadata v%d: totalSize=%d, bodyLen=%d, flexible=%t, fullResponseLen=%d", apiVersion, totalSize, len(responseBody), isFlexible, len(fullResponse))
 		}
 	}
 	Debug("Wrote API %d response v%d: size=%d, flexible=%t, correlationID=%d, totalBytes=%d", apiKey, apiVersion, totalSize, isFlexible, correlationID, len(fullResponse))

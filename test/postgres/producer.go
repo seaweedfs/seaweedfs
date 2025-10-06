@@ -103,7 +103,7 @@ func main() {
 			log.Printf("Error creating topic %s.%s: %v",
 				topicConfig.namespace, topicConfig.topic, err)
 		} else {
-			log.Printf("✓ Successfully created %s.%s",
+			log.Printf("-Successfully created %s.%s",
 				topicConfig.namespace, topicConfig.topic)
 		}
 
@@ -111,7 +111,7 @@ func main() {
 		time.Sleep(2 * time.Second)
 	}
 
-	log.Println("✓ MQ test data creation completed!")
+	log.Println("-MQ test data creation completed!")
 	log.Println("\nCreated namespaces:")
 	log.Println("  - analytics (user_events, system_logs, metrics)")
 	log.Println("  - ecommerce (product_views, user_events)")

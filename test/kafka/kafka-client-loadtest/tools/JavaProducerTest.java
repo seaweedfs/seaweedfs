@@ -12,7 +12,7 @@ public class JavaProducerTest {
         String bootstrapServers = args.length > 0 ? args[0] : "localhost:9093";
         String topicName = args.length > 1 ? args[1] : "test-topic";
 
-        System.out.println("🔍 Testing Kafka Producer with broker: " + bootstrapServers);
+        System.out.println("Testing Kafka Producer with broker: " + bootstrapServers);
         System.out.println("    Topic: " + topicName);
 
         Properties props = new Properties();
@@ -28,7 +28,7 @@ public class JavaProducerTest {
         props.forEach((k, v) -> System.out.println("  " + k + " = " + v));
 
         try (KafkaProducer<String, String> producer = new KafkaProducer<>(props)) {
-            System.out.println("✅ Producer created successfully");
+            System.out.println("Producer created successfully");
 
             // Try to send a test message
             System.out.println("\n=== Test: Send Message ===");
@@ -38,12 +38,12 @@ public class JavaProducerTest {
                 Future<RecordMetadata> future = producer.send(record);
 
                 RecordMetadata metadata = future.get(); // This will block and wait for response
-                System.out.println("✅ Message sent successfully!");
+                System.out.println("Message sent successfully!");
                 System.out.println("  Topic: " + metadata.topic());
                 System.out.println("  Partition: " + metadata.partition());
                 System.out.println("  Offset: " + metadata.offset());
             } catch (Exception e) {
-                System.err.println("❌ Send failed: " + e.getMessage());
+                System.err.println("Send failed: " + e.getMessage());
                 e.printStackTrace();
 
                 // Print cause chain
@@ -57,10 +57,10 @@ public class JavaProducerTest {
                 }
             }
 
-            System.out.println("\n🎉 Test completed!");
+            System.out.println("\nTest completed!");
 
         } catch (Exception e) {
-            System.err.println("❌ Producer creation or operation failed: " + e.getMessage());
+            System.err.println("Producer creation or operation failed: " + e.getMessage());
             e.printStackTrace();
             System.exit(1);
         }

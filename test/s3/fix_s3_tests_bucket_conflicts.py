@@ -269,7 +269,7 @@ get_new_bucket = _sw_get_new_bucket
 def main() -> int:
     s3_tests_path = os.environ.get("S3_TESTS_PATH", "s3-tests")
     init_file_path = os.path.join(s3_tests_path, "s3tests_boto3", "functional", "__init__.py")
-    print("🔧 Applying s3-tests patch for bucket creation idempotency...")
+    print("Applying s3-tests patch for bucket creation idempotency...")
     print(f"Target repo path: {s3_tests_path}")
     if not os.path.exists(s3_tests_path):
         print(f"Error: s3-tests directory not found at {s3_tests_path}")

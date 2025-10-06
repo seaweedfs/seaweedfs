@@ -48,7 +48,7 @@ func TestReproduceObjectLockIssue(t *testing.T) {
 		t.Logf("   When this fails, clients conclude that Object Lock is not supported")
 
 		// This failure demonstrates the bug - the bucket was created but Object Lock wasn't enabled
-		t.Logf("\n🐛 BUG CONFIRMED:")
+		t.Logf("\nBUG CONFIRMED:")
 		t.Logf("   - Bucket creation with ObjectLockEnabledForBucket=true succeeded")
 		t.Logf("   - But GetObjectLockConfiguration fails")
 		t.Logf("   - This means the x-amz-bucket-object-lock-enabled header was ignored")
@@ -69,7 +69,7 @@ func TestReproduceObjectLockIssue(t *testing.T) {
 
 	t.Logf("   Versioning status: %v", versioningResp.Status)
 	if versioningResp.Status != "Enabled" {
-		t.Logf("   ⚠️  Versioning should be automatically enabled when Object Lock is enabled")
+		t.Logf("   Versioning should be automatically enabled when Object Lock is enabled")
 	}
 
 	// Cleanup

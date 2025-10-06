@@ -13,11 +13,11 @@ echo "🕐 Waiting for services to be ready..."
 echo "   Waiting for OpenBao at $OPENBAO_ADDR..."
 for i in $(seq 1 $MAX_WAIT); do
     if curl -s "$OPENBAO_ADDR/v1/sys/health" >/dev/null 2>&1; then
-        echo "   ✅ OpenBao is ready!"
+        echo "   [OK] OpenBao is ready!"
         break
     fi
     if [ $i -eq $MAX_WAIT ]; then
-        echo "   ❌ Timeout waiting for OpenBao"
+        echo "   [FAIL] Timeout waiting for OpenBao"
         exit 1
     fi
     sleep 1
@@ -27,11 +27,11 @@ done
 echo "   Waiting for SeaweedFS Master at http://127.0.0.1:9333..."
 for i in $(seq 1 $MAX_WAIT); do
     if curl -s "http://127.0.0.1:9333/cluster/status" >/dev/null 2>&1; then
-        echo "   ✅ SeaweedFS Master is ready!"
+        echo "   [OK] SeaweedFS Master is ready!"
         break
     fi
     if [ $i -eq $MAX_WAIT ]; then
-        echo "   ❌ Timeout waiting for SeaweedFS Master"
+        echo "   [FAIL] Timeout waiting for SeaweedFS Master"
         exit 1
     fi
     sleep 1
@@ -41,11 +41,11 @@ done
 echo "   Waiting for SeaweedFS Volume Server at http://127.0.0.1:8080..."
 for i in $(seq 1 $MAX_WAIT); do
     if curl -s "http://127.0.0.1:8080/status" >/dev/null 2>&1; then
-        echo "   ✅ SeaweedFS Volume Server is ready!"
+        echo "   [OK] SeaweedFS Volume Server is ready!"
         break
     fi
     if [ $i -eq $MAX_WAIT ]; then
-        echo "   ❌ Timeout waiting for SeaweedFS Volume Server"
+        echo "   [FAIL] Timeout waiting for SeaweedFS Volume Server"
         exit 1
     fi
     sleep 1
@@ -55,11 +55,11 @@ done
 echo "   Waiting for SeaweedFS S3 API at $SEAWEEDFS_S3_ENDPOINT..."
 for i in $(seq 1 $MAX_WAIT); do
     if curl -s "$SEAWEEDFS_S3_ENDPOINT/" >/dev/null 2>&1; then
-        echo "   ✅ SeaweedFS S3 API is ready!"
+        echo "   [OK] SeaweedFS S3 API is ready!"
         break
     fi
     if [ $i -eq $MAX_WAIT ]; then
-        echo "   ❌ Timeout waiting for SeaweedFS S3 API"
+        echo "   [FAIL] Timeout waiting for SeaweedFS S3 API"
         exit 1
     fi
     sleep 1
