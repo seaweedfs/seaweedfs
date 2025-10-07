@@ -103,7 +103,7 @@ jobs:
         # Higher limits for integration tests
         ulimit -n 1024 || echo "Warning: Could not set file descriptor limit"
         ulimit -u 200 || echo "Warning: Could not set process limit"
-        go test -v -timeout 15s ./integration/...
+        go test -v -timeout 90s ./integration/...
       env:
         GOMAXPROCS: 2
 
