@@ -65,24 +65,12 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 	// Even if MinBytes=0, we should honor MaxWaitTime to reduce polling overhead
 	maxWaitMs := fetchRequest.MaxWaitTime
 
-	// CRITICAL: Disable long-polling for _schemas topic to prevent Schema Registry deadlock
-	// Schema Registry internally polls _schemas with high MaxWaitTime (60s), which can cause
-	// timeouts when it's waiting for its own produce to become visible.
+	// Track _schemas topic for debug logging
 	isSchemasTopic := false
 	if len(fetchRequest.Topics) == 1 && fetchRequest.Topics[0].Name == "_schemas" {
 		isSchemasTopic = true
-		// Always return immediately for _schemas topic, regardless of offset
-		// BUT add a small sleep (50ms) to prevent tight polling loop that burns CPU
-		maxWaitMs = 50
-		glog.V(0).Infof("SR FETCH: Setting backoff wait for _schemas (original maxWaitMs=%d, minBytes=%d, using %dms backoff)",
-			fetchRequest.MaxWaitTime, fetchRequest.MinBytes, maxWaitMs)
 	}
 
-	// TEMPORARY: Disable long-polling for all other topics to eliminate 500ms delays
-	// The HWM cache can be stale, causing unnecessary waits
-	if !isSchemasTopic {
-		maxWaitMs = 0
-	}
 
 	// Long-poll if: (1) client wants to wait (maxWaitMs > 0), (2) no data available, (3) topics exist
 	// NOTE: We long-poll even if MinBytes=0, since the client specified a wait time
