@@ -587,25 +587,36 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		for req := range controlChan {
-			glog.Infof("[%s] Control plane processing correlation=%d, apiKey=%d", connectionID, req.correlationID, req.apiKey)
-			response, err := h.processRequestSync(req)
-			glog.Infof("[%s] Control plane completed correlation=%d, sending to responseChan", connectionID, req.correlationID)
+		for {
 			select {
-			case responseChan <- &kafkaResponse{
-				correlationID: req.correlationID,
-				apiKey:        req.apiKey,
-				apiVersion:    req.apiVersion,
-				response:      response,
-				err:           err,
-			}:
-				glog.Infof("[%s] Control plane sent correlation=%d to responseChan", connectionID, req.correlationID)
+			case req, ok := <-controlChan:
+				if !ok {
+					// Channel closed, exit
+					return
+				}
+				glog.Infof("[%s] Control plane processing correlation=%d, apiKey=%d", connectionID, req.correlationID, req.apiKey)
+				response, err := h.processRequestSync(req)
+				glog.Infof("[%s] Control plane completed correlation=%d, sending to responseChan", connectionID, req.correlationID)
+				select {
+				case responseChan <- &kafkaResponse{
+					correlationID: req.correlationID,
+					apiKey:        req.apiKey,
+					apiVersion:    req.apiVersion,
+					response:      response,
+					err:           err,
+				}:
+					glog.Infof("[%s] Control plane sent correlation=%d to responseChan", connectionID, req.correlationID)
+				case <-ctx.Done():
+					// Connection closed, stop processing
+					Debug("[%s] Control plane: context cancelled, discarding response for correlation=%d", connectionID, req.correlationID)
+					return
+				case <-time.After(5 * time.Second):
+					glog.Errorf("[%s] DEADLOCK: Control plane timeout sending correlation=%d to responseChan (buffer full?)", connectionID, req.correlationID)
+				}
 			case <-ctx.Done():
-				// Connection closed, stop processing
-				Debug("[%s] Control plane: context cancelled, discarding response for correlation=%d", connectionID, req.correlationID)
+				// Context cancelled, exit immediately
+				glog.Infof("[%s] Control plane: context cancelled, exiting", connectionID)
 				return
-			case <-time.After(5 * time.Second):
-				glog.Errorf("[%s] DEADLOCK: Control plane timeout sending correlation=%d to responseChan (buffer full?)", connectionID, req.correlationID)
 			}
 		}
 	}()
@@ -614,26 +625,37 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		for req := range dataChan {
-			glog.Infof("[%s] Data plane processing correlation=%d, apiKey=%d", connectionID, req.correlationID, req.apiKey)
-			response, err := h.processRequestSync(req)
-			glog.Infof("[%s] Data plane completed correlation=%d, sending to responseChan", connectionID, req.correlationID)
-			// Use select with context to avoid sending on closed channel
+		for {
 			select {
-			case responseChan <- &kafkaResponse{
-				correlationID: req.correlationID,
-				apiKey:        req.apiKey,
-				apiVersion:    req.apiVersion,
-				response:      response,
-				err:           err,
-			}:
-				glog.Infof("[%s] Data plane sent correlation=%d to responseChan", connectionID, req.correlationID)
+			case req, ok := <-dataChan:
+				if !ok {
+					// Channel closed, exit
+					return
+				}
+				glog.Infof("[%s] Data plane processing correlation=%d, apiKey=%d", connectionID, req.correlationID, req.apiKey)
+				response, err := h.processRequestSync(req)
+				glog.Infof("[%s] Data plane completed correlation=%d, sending to responseChan", connectionID, req.correlationID)
+				// Use select with context to avoid sending on closed channel
+				select {
+				case responseChan <- &kafkaResponse{
+					correlationID: req.correlationID,
+					apiKey:        req.apiKey,
+					apiVersion:    req.apiVersion,
+					response:      response,
+					err:           err,
+				}:
+					glog.Infof("[%s] Data plane sent correlation=%d to responseChan", connectionID, req.correlationID)
+				case <-ctx.Done():
+					// Connection closed, stop processing
+					Debug("[%s] Data plane: context cancelled, discarding response for correlation=%d", connectionID, req.correlationID)
+					return
+				case <-time.After(5 * time.Second):
+					glog.Errorf("[%s] DEADLOCK: Data plane timeout sending correlation=%d to responseChan (buffer full?)", connectionID, req.correlationID)
+				}
 			case <-ctx.Done():
-				// Connection closed, stop processing
-				Debug("[%s] Data plane: context cancelled, discarding response for correlation=%d", connectionID, req.correlationID)
+				// Context cancelled, exit immediately
+				glog.Infof("[%s] Data plane: context cancelled, exiting", connectionID)
 				return
-			case <-time.After(5 * time.Second):
-				glog.Errorf("[%s] DEADLOCK: Data plane timeout sending correlation=%d to responseChan (buffer full?)", connectionID, req.correlationID)
 			}
 		}
 	}()
