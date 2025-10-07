@@ -426,6 +426,30 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 
 	glog.V(2).Infof("putSuspendedVersioningObject: creating null version for %s/%s (normalized: %s)", bucket, object, normalizedObject)
 
+	bucketDir := s3a.option.BucketsPath + "/" + bucket
+
+	// Check if there's an existing null version in .versions directory and delete it
+	// This ensures suspended versioning properly overwrites the null version as per S3 spec
+	versionsObjectPath := normalizedObject + ".versions"
+	versionsDir := bucketDir + "/" + versionsObjectPath
+	entries, _, err := s3a.list(versionsDir, "", "", false, 1000)
+	if err == nil {
+		// .versions directory exists, check for existing null version
+		for _, entry := range entries {
+			if entry.Extended != nil {
+				if versionIdBytes, ok := entry.Extended[s3_constants.ExtVersionIdKey]; ok && string(versionIdBytes) == "null" {
+					// Found existing null version in .versions, delete it
+					glog.V(2).Infof("putSuspendedVersioningObject: deleting existing null version from .versions for %s/%s", bucket, object)
+					err := s3a.rm(versionsDir, entry.Name, true, false)
+					if err != nil {
+						glog.Warningf("putSuspendedVersioningObject: failed to delete old null version: %v", err)
+					}
+					break
+				}
+			}
+		}
+	}
+
 	uploadUrl := s3a.toFilerUrl(bucket, normalizedObject)
 	if objectContentType == "" {
 		dataReader = mimeDetect(r, dataReader)
@@ -438,7 +462,6 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 	}
 
 	// Get the uploaded entry to add version metadata indicating this is "null" version
-	bucketDir := s3a.option.BucketsPath + "/" + bucket
 	entry, err := s3a.getEntry(bucketDir, normalizedObject)
 	if err != nil {
 		glog.Errorf("putSuspendedVersioningObject: failed to get object entry: %v", err)
