@@ -190,6 +190,15 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 			return fmt.Errorf("topic %v partition %v publish error: %w", initMessage.Topic, initMessage.Partition, err)
 		}
 
+		// CRITICAL: Force immediate flush for _schemas topic to prevent Schema Registry deadlock
+		// Schema Registry needs immediate visibility of registered schemas
+		if initMessage.Topic != nil && initMessage.Topic.Name == "_schemas" {
+			if localTopicPartition.LogBuffer != nil {
+				localTopicPartition.LogBuffer.ForceFlush()
+				glog.V(2).Infof("Force flushed _schemas topic after offset %d", assignedOffset)
+			}
+		}
+
 		// CRITICAL FIX: Send immediate acknowledgment with the assigned offset
 		// This ensures read-after-write consistency for Kafka Gateway
 		response := &mq_pb.PublishMessageResponse{

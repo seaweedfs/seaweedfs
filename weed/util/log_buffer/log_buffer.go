@@ -274,6 +274,30 @@ func (logBuffer *LogBuffer) IsStopping() bool {
 	return logBuffer.isStopping.Load()
 }
 
+// ForceFlush immediately flushes the current buffer content without waiting for the flush interval
+// This is useful for critical topics that need immediate persistence (e.g., _schemas for Schema Registry)
+func (logBuffer *LogBuffer) ForceFlush() {
+	if logBuffer.isStopping.Load() {
+		return // Don't flush if we're shutting down
+	}
+
+	logBuffer.Lock()
+	toFlush := logBuffer.copyToFlush()
+	logBuffer.Unlock()
+
+	if toFlush != nil {
+		// Send to flush channel (non-blocking with timeout to avoid deadlock)
+		select {
+		case logBuffer.flushChan <- toFlush:
+			// Successfully queued for flush
+		case <-time.After(100 * time.Millisecond):
+			// Flush channel is full or blocked - skip this flush
+			// Data will be flushed on next interval anyway
+			glog.V(1).Infof("ForceFlush skipped for %s - flush channel busy", logBuffer.name)
+		}
+	}
+}
+
 // ShutdownLogBuffer flushes the buffer and stops the log buffer
 func (logBuffer *LogBuffer) ShutdownLogBuffer() {
 	isAlreadyStopped := logBuffer.isStopping.Swap(true)
