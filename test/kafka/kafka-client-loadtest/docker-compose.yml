@@ -15,6 +15,7 @@ services:
   schema-registry:
     image: confluentinc/cp-schema-registry:8.0.0
     container_name: loadtest-schema-registry
+    restart: on-failure:5
     ports:
       - "8081:8081"
     environment:
@@ -23,7 +24,7 @@ services:
       SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: 'kafka-gateway:9093'
       SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
       SCHEMA_REGISTRY_KAFKASTORE_TOPIC: _schemas
-      SCHEMA_REGISTRY_DEBUG: "false"
+      SCHEMA_REGISTRY_DEBUG: "true"
       SCHEMA_REGISTRY_SCHEMA_COMPATIBILITY_LEVEL: "full"
       SCHEMA_REGISTRY_LEADER_ELIGIBILITY: "true"
       SCHEMA_REGISTRY_MODE: "READWRITE"
@@ -35,7 +36,10 @@ services:
       SCHEMA_REGISTRY_REQUEST_TIMEOUT_MS: "60000"
       SCHEMA_REGISTRY_RETRY_BACKOFF_MS: "1000"
       # Force IPv4 to work around Java IPv6 issues
-      KAFKA_OPTS: "-Djava.net.preferIPv4Stack=true -Djava.net.preferIPv4Addresses=true"
+      # Enable verbose logging and set reasonable memory limits
+      KAFKA_OPTS: "-Djava.net.preferIPv4Stack=true -Djava.net.preferIPv4Addresses=true -Xmx512M -Xms256M"
+      KAFKA_LOG4J_OPTS: "-Dlog4j.configuration=file:/etc/kafka/log4j.properties"
+      SCHEMA_REGISTRY_LOG4J_ROOT_LOGLEVEL: "INFO"
       SCHEMA_REGISTRY_KAFKASTORE_WRITE_TIMEOUT_MS: "60000"
       SCHEMA_REGISTRY_KAFKASTORE_INIT_RETRY_BACKOFF_MS: "5000"
       SCHEMA_REGISTRY_KAFKASTORE_CONSUMER_AUTO_OFFSET_RESET: "earliest"
@@ -47,7 +51,7 @@ services:
       start_period: 30s
     depends_on:
       kafka-gateway:
-        condition: service_started
+        condition: service_healthy
     networks:
       - kafka-loadtest-net
 
