@@ -529,10 +529,13 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		glog.Infof("[%s] Response writer started", connectionID)
+		defer glog.Infof("[%s] Response writer exiting", connectionID)
 		pendingResponses := make(map[uint32]*kafkaResponse)
 		nextToSend := 0 // Index in correlationQueue
 
 		for resp := range responseChan {
+			glog.Infof("[%s] Response writer received correlation=%d from responseChan", connectionID, resp.correlationID)
 			correlationQueueMu.Lock()
 			pendingResponses[resp.correlationID] = resp
 
@@ -542,6 +545,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 				readyResp, exists := pendingResponses[expectedID]
 				if !exists {
 					// Response not ready yet, stop sending
+					glog.Infof("[%s] Response writer: waiting for correlation=%d (nextToSend=%d, queueLen=%d)", connectionID, expectedID, nextToSend, len(correlationQueue))
 					break
 				}
 
@@ -549,12 +553,15 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 				if readyResp.err != nil {
 					Error("[%s] Error processing correlation=%d: %v", connectionID, readyResp.correlationID, readyResp.err)
 				} else {
+					glog.Infof("[%s] Response writer: about to write correlation=%d (%d bytes)", connectionID, readyResp.correlationID, len(readyResp.response))
 					Debug("[%s] Sending response correlation=%d: %d bytes (in order)", connectionID, readyResp.correlationID, len(readyResp.response))
 					if writeErr := h.writeResponseWithHeader(w, readyResp.correlationID, readyResp.apiKey, readyResp.apiVersion, readyResp.response, timeoutConfig.WriteTimeout); writeErr != nil {
+						glog.Errorf("[%s] Response writer: WRITE ERROR correlation=%d: %v - EXITING", connectionID, readyResp.correlationID, writeErr)
 						Error("[%s] Write error correlation=%d: %v", connectionID, readyResp.correlationID, writeErr)
 						correlationQueueMu.Unlock()
 						return
 					}
+					glog.Infof("[%s] Response writer: successfully wrote correlation=%d", connectionID, readyResp.correlationID)
 				}
 
 				// Remove from pending and advance
