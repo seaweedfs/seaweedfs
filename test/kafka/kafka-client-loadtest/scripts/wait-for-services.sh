@@ -182,7 +182,14 @@ check_all_services() {
     elif check_schema_registry; then
         log_success "✓ Schema Registry is healthy"
     else
-        log_error "✗ Schema Registry is not ready"
+        # Check if it's still starting up (healthcheck start_period)
+        local health_status
+        health_status=$(docker inspect loadtest-schema-registry --format='{{.State.Health.Status}}' 2>/dev/null || echo "unknown")
+        if [[ "$health_status" == "starting" ]]; then
+            log_warning "⏳ Schema Registry is starting (waiting for healthcheck...)"
+        else
+            log_error "✗ Schema Registry is not ready (status: $health_status)"
+        fi
         all_healthy=false
     fi
     
