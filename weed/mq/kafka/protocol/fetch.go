@@ -72,9 +72,10 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 	if len(fetchRequest.Topics) == 1 && fetchRequest.Topics[0].Name == "_schemas" {
 		isSchemasTopic = true
 		// Always return immediately for _schemas topic, regardless of offset
-		maxWaitMs = 0
-		glog.V(0).Infof("SR FETCH: Disabling long-poll for _schemas (original maxWaitMs=%d, minBytes=%d)",
-			fetchRequest.MaxWaitTime, fetchRequest.MinBytes)
+		// BUT add a small sleep (50ms) to prevent tight polling loop that burns CPU
+		maxWaitMs = 50
+		glog.V(0).Infof("SR FETCH: Setting backoff wait for _schemas (original maxWaitMs=%d, minBytes=%d, using %dms backoff)",
+			fetchRequest.MaxWaitTime, fetchRequest.MinBytes, maxWaitMs)
 	}
 
 	// TEMPORARY: Disable long-polling for all other topics to eliminate 500ms delays
