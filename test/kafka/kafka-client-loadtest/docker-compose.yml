@@ -7,6 +7,7 @@ x-seaweedfs-build: &seaweedfs-build
     dockerfile: Dockerfile.seaweedfs
     args:
       TARGETARCH: ${GOARCH:-arm64}
+      CACHE_BUST: ${CACHE_BUST:-latest}
   image: kafka-client-loadtest-seaweedfs
 
 services:

@@ -12,8 +12,10 @@ RUN apk add --no-cache \
     && rm -rf /var/cache/apk/*
 
 # Copy pre-built SeaweedFS binary (built locally for linux/amd64 or linux/arm64)
-# Force cache bust: 2025-10-03-WIRE-FINAL
+# Cache-busting: Use build arg to force layer rebuild on every build
 ARG TARGETARCH=arm64
+ARG CACHE_BUST=unknown
+RUN echo "Building with cache bust: ${CACHE_BUST}"
 COPY weed-linux-${TARGETARCH} /usr/local/bin/weed
 RUN chmod +x /usr/local/bin/weed
 

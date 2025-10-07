@@ -70,7 +70,7 @@ build-binary: ## Build the SeaweedFS binary locally for Linux
 
 build-gateway: build-binary ## Build the Kafka Gateway with latest changes
 	@echo "$(BLUE)Building Kafka Gateway Docker image...$(NC)"
-	$(DOCKER_COMPOSE) build kafka-gateway
+	CACHE_BUST=$$(date +%s) $(DOCKER_COMPOSE) build kafka-gateway
 	@echo "$(GREEN)Kafka Gateway build completed$(NC)"
 
 build-gateway-clean: build-binary ## Build the Kafka Gateway with no cache (force fresh build)
