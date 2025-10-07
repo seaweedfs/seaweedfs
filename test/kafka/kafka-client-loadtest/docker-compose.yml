@@ -97,6 +97,7 @@ services:
       - -publicUrl=seaweedfs-volume:8080
       - -preStopSeconds=1
       - -compactionMBps=50
+      - -max=0
       - -dir=/data
     depends_on:
       seaweedfs-master:
