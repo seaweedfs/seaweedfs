@@ -280,11 +280,11 @@ func (h *Handler) handleFindCoordinatorV3(correlationID uint32, requestBody []by
 	if coordinatorKeyLen == 0 {
 		return nil, fmt.Errorf("coordinator key cannot be null in v3")
 	}
-	// CRITICAL FIX: Compact strings in Kafka v3+ do NOT use length+1 encoding for the varint itself
-	// The varint is the actual length. The +1 is only for distinguishing null vs empty string.
-	// coordinatorKeyLen-- // Compact string: actual length = varint - 1
+	// Compact strings in Kafka use length+1 encoding:
+	// varint=0 means null, varint=1 means empty string, varint=n+1 means string of length n
+	coordinatorKeyLen-- // Decode: actual length = varint - 1
 
-	glog.V(4).Infof("🔍 FindCoordinator V3: using coordinatorKeyLen as-is: %d", coordinatorKeyLen)
+	glog.V(4).Infof("🔍 FindCoordinator V3: actual coordinatorKeyLen after decoding: %d", coordinatorKeyLen)
 
 	if len(requestBody) < offset+int(coordinatorKeyLen) {
 		return nil, fmt.Errorf("FindCoordinator v3 request missing coordinator key")
@@ -550,9 +550,9 @@ func (h *Handler) getClientConnectableHost(coordinatorHost string) string {
 func sanitizeCoordinatorKey(key string) string {
 	// Remove null bytes - these cause issues with filenames and URLs
 	key = strings.ReplaceAll(key, "\x00", "")
-	
+
 	// Trim leading and trailing whitespace
 	key = strings.TrimSpace(key)
-	
+
 	return key
 }

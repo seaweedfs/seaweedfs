@@ -918,8 +918,10 @@ func (h *Handler) processRequestSync(req *kafkaRequest) ([]byte, error) {
 
 	switch APIKey(req.apiKey) {
 	case APIKeyApiVersions:
+		glog.Infof("processRequestSync: About to call handleApiVersions for correlation=%d", req.correlationID)
 		Debug("-> ApiVersions v%d", req.apiVersion)
 		response, err = h.handleApiVersions(req.correlationID, req.apiVersion)
+		glog.Infof("processRequestSync: handleApiVersions returned for correlation=%d, response len=%d, err=%v", req.correlationID, len(response), err)
 
 	case APIKeyMetadata:
 		Debug("-> Metadata v%d", req.apiVersion)
@@ -994,6 +996,7 @@ func (h *Handler) processRequestSync(req *kafkaRequest) ([]byte, error) {
 		err = fmt.Errorf("unsupported API key: %d (version %d)", req.apiKey, req.apiVersion)
 	}
 
+	glog.Infof("processRequestSync: Switch completed for correlation=%d, about to record metrics", req.correlationID)
 	// Record metrics
 	requestLatency := time.Since(requestStart)
 	if err != nil {
@@ -1001,6 +1004,7 @@ func (h *Handler) processRequestSync(req *kafkaRequest) ([]byte, error) {
 	} else {
 		RecordRequestMetrics(req.apiKey, requestLatency)
 	}
+	glog.Infof("processRequestSync: Metrics recorded for correlation=%d, about to return", req.correlationID)
 
 	return response, err
 }
