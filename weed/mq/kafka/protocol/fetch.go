@@ -64,31 +64,35 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 	// Long-poll when client requests it via MaxWaitTime and there's no data
 	// Even if MinBytes=0, we should honor MaxWaitTime to reduce polling overhead
 	maxWaitMs := fetchRequest.MaxWaitTime
-	// TEMPORARY: Disable long-polling to eliminate 500ms delays
+	
+	// CRITICAL: Disable long-polling for _schemas topic to prevent Schema Registry deadlock
+	// Schema Registry internally polls _schemas with high MaxWaitTime (60s), which can cause
+	// timeouts when it's waiting for its own produce to become visible.
+	isSchemasTopic := false
+	if len(fetchRequest.Topics) == 1 && fetchRequest.Topics[0].Name == "_schemas" {
+		isSchemasTopic = true
+		// Always return immediately for _schemas topic, regardless of offset
+		maxWaitMs = 0
+		glog.V(2).Infof("Schema Registry fetch detected, disabling long-poll (original maxWaitMs=%d)", fetchRequest.MaxWaitTime)
+	}
+	
+	// TEMPORARY: Disable long-polling for all other topics to eliminate 500ms delays
 	// The HWM cache can be stale, causing unnecessary waits
-	maxWaitMs = 0
+	if !isSchemasTopic {
+		maxWaitMs = 0
+	}
+	
 	// Long-poll if: (1) client wants to wait (maxWaitMs > 0), (2) no data available, (3) topics exist
 	// NOTE: We long-poll even if MinBytes=0, since the client specified a wait time
-	// EXCEPTION: For Schema Registry bootstrap (offset 0 on _schemas topic), return immediately
 	hasData := hasDataAvailable()
 	topicsExist := allTopicsExist()
-	isSchemaRegistryBootstrap := false
-	if len(fetchRequest.Topics) == 1 && fetchRequest.Topics[0].Name == "_schemas" {
-		for _, partition := range fetchRequest.Topics[0].Partitions {
-			if partition.FetchOffset == 0 {
-				isSchemaRegistryBootstrap = true
-				break
-			}
-		}
+	shouldLongPoll := maxWaitMs > 0 && !hasData && topicsExist
+	
+	// Debug Schema Registry polling
+	if isSchemasTopic && len(fetchRequest.Topics) > 0 {
+		glog.V(2).Infof("SR FETCH REQUEST: topic=%s maxWaitMs(original)=%d maxWaitMs(effective)=%d minBytes=%d hasData=%v topicsExist=%v shouldLongPoll=%v",
+			fetchRequest.Topics[0].Name, fetchRequest.MaxWaitTime, maxWaitMs, fetchRequest.MinBytes, hasData, topicsExist, shouldLongPoll)
 	}
-	shouldLongPoll := maxWaitMs > 0 && !hasData && topicsExist && !isSchemaRegistryBootstrap
-	// Debug Schema Registry polling (disabled for production)
-	// Uncomment for debugging long-poll behavior
-	/*
-		if len(fetchRequest.Topics) > 0 && strings.HasPrefix(fetchRequest.Topics[0].Name, "_schemas") {
-				maxWaitMs, fetchRequest.MinBytes, hasData, topicsExist, isSchemaRegistryBootstrap, shouldLongPoll)
-		}
-	*/
 	if shouldLongPoll {
 		start := time.Now()
 		// Use the client's requested wait time (already capped at 1s)
