@@ -1829,8 +1829,12 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 		return session, nil
 	}
 
-	// Create a cancellable context for this subscriber so it can be cleaned up when the connection closes
-	subscriberCtx, subscriberCancel := context.WithCancel(bc.ctx)
+	// CRITICAL FIX: Use background context for subscriber to prevent premature cancellation
+	// Subscribers need to continue reading data even when the connection is closing,
+	// otherwise Schema Registry and other clients can't read existing data.
+	// The subscriber will be cleaned up when the stream is explicitly closed.
+	subscriberCtx := context.Background()
+	subscriberCancel := func() {} // No-op cancel
 
 	stream, err := bc.client.SubscribeMessage(subscriberCtx)
 	if err != nil {

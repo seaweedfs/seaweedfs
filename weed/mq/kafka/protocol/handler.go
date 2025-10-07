@@ -618,9 +618,36 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 					glog.Errorf("[%s] DEADLOCK: Control plane timeout sending correlation=%d to responseChan (buffer full?)", connectionID, req.correlationID)
 				}
 			case <-ctx.Done():
-				// Context cancelled, exit immediately
-				glog.Infof("[%s] Control plane: context cancelled, exiting", connectionID)
-				return
+				// Context cancelled, drain remaining requests before exiting
+				glog.Infof("[%s] Control plane: context cancelled, draining remaining requests", connectionID)
+				for {
+					select {
+					case req, ok := <-controlChan:
+						if !ok {
+							return
+						}
+						// Process remaining requests with a short timeout
+						glog.Infof("[%s] Control plane: processing drained request correlation=%d", connectionID, req.correlationID)
+						response, err := h.processRequestSync(req)
+						select {
+						case responseChan <- &kafkaResponse{
+							correlationID: req.correlationID,
+							apiKey:        req.apiKey,
+							apiVersion:    req.apiVersion,
+							response:      response,
+							err:           err,
+						}:
+							glog.Infof("[%s] Control plane: sent drained response correlation=%d", connectionID, req.correlationID)
+						case <-time.After(1 * time.Second):
+							glog.Warningf("[%s] Control plane: timeout sending drained response correlation=%d, discarding", connectionID, req.correlationID)
+							return
+						}
+					default:
+						// Channel empty, safe to exit
+						glog.Infof("[%s] Control plane: drain complete, exiting", connectionID)
+						return
+					}
+				}
 			}
 		}
 	}()
@@ -657,9 +684,36 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 					glog.Errorf("[%s] DEADLOCK: Data plane timeout sending correlation=%d to responseChan (buffer full?)", connectionID, req.correlationID)
 				}
 			case <-ctx.Done():
-				// Context cancelled, exit immediately
-				glog.Infof("[%s] Data plane: context cancelled, exiting", connectionID)
-				return
+				// Context cancelled, drain remaining requests before exiting
+				glog.Infof("[%s] Data plane: context cancelled, draining remaining requests", connectionID)
+				for {
+					select {
+					case req, ok := <-dataChan:
+						if !ok {
+							return
+						}
+						// Process remaining requests with a short timeout
+						glog.Infof("[%s] Data plane: processing drained request correlation=%d", connectionID, req.correlationID)
+						response, err := h.processRequestSync(req)
+						select {
+						case responseChan <- &kafkaResponse{
+							correlationID: req.correlationID,
+							apiKey:        req.apiKey,
+							apiVersion:    req.apiVersion,
+							response:      response,
+							err:           err,
+						}:
+							glog.Infof("[%s] Data plane: sent drained response correlation=%d", connectionID, req.correlationID)
+						case <-time.After(1 * time.Second):
+							glog.Warningf("[%s] Data plane: timeout sending drained response correlation=%d, discarding", connectionID, req.correlationID)
+							return
+						}
+					default:
+						// Channel empty, safe to exit
+						glog.Infof("[%s] Data plane: drain complete, exiting", connectionID)
+						return
+					}
+				}
 			}
 		}
 	}()
