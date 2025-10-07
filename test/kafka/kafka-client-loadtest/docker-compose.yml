@@ -177,7 +177,7 @@ services:
       - -master=seaweedfs-master:9333
       - -ip=seaweedfs-mq-broker
       - -port=17777
-      - -logFlushInterval=5
+      - -logFlushInterval=0
     depends_on:
       seaweedfs-filer:
         condition: service_healthy

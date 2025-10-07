@@ -210,6 +210,7 @@ jobs:
           -master="127.0.0.1:9333" \
           -ip="127.0.0.1" \
           -port=17777 \
+          -logFlushInterval=0 \
           > /tmp/weed-mq-broker.log 2>&1 &
         
         # Wait for broker to be ready with better error reporting  
@@ -386,6 +387,7 @@ jobs:
           -master="127.0.0.1:9333" \
           -ip="127.0.0.1" \
           -port=17777 \
+          -logFlushInterval=0 \
           > /tmp/weed-mq-broker.log 2>&1 &
         
         # Wait for broker to be ready with better error reporting  
@@ -544,6 +546,7 @@ jobs:
           -master="127.0.0.1:9333" \
           -ip="127.0.0.1" \
           -port=17777 \
+          -logFlushInterval=0 \
           > /tmp/weed-mq-broker.log 2>&1 &
         
         # Wait for broker to be ready with better error reporting  
@@ -699,6 +702,7 @@ jobs:
           -master="127.0.0.1:9333" \
           -ip="127.0.0.1" \
           -port=17777 \
+          -logFlushInterval=0 \
           > /tmp/weed-mq-broker.log 2>&1 &
         
         # Wait for broker to be ready with better error reporting  
