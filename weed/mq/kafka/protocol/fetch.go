@@ -90,18 +90,19 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 		// Use the client's requested wait time (already capped at 1s)
 		maxPollTime := time.Duration(maxWaitMs) * time.Millisecond
 		deadline := start.Add(maxPollTime)
+	pollLoop:
 		for time.Now().Before(deadline) {
 			// Use context-aware sleep instead of blocking time.Sleep
 			select {
 			case <-ctx.Done():
 				Debug("Fetch polling cancelled due to context cancellation")
 				throttleTimeMs = int32(time.Since(start) / time.Millisecond)
-				break
+				break pollLoop
 			case <-time.After(10 * time.Millisecond):
 				// Continue with polling
 			}
 			if hasDataAvailable() {
-				break
+				break pollLoop
 			}
 		}
 		elapsed := time.Since(start)

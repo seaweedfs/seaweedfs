@@ -453,6 +453,11 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 	// Record connection metrics
 	RecordConnectionMetrics()
 
+	// Create cancellable context for this connection
+	// This ensures all requests are cancelled when the connection closes
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	// CRITICAL: Create per-connection BrokerClient for isolated gRPC streams
 	// This prevents different connections from interfering with each other's Fetch requests
 	// In mock/unit test mode, this may not be available, so we continue without it
