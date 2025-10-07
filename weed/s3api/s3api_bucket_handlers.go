@@ -366,9 +366,11 @@ func (s3a *S3ApiServer) isBucketPublicRead(bucket string) bool {
 	// Get bucket configuration which contains cached public-read status
 	config, errCode := s3a.getBucketConfig(bucket)
 	if errCode != s3err.ErrNone {
+		glog.V(4).Infof("isBucketPublicRead: failed to get bucket config for %s: %v", bucket, errCode)
 		return false
 	}
 
+	glog.V(4).Infof("isBucketPublicRead: bucket=%s, IsPublicRead=%v", bucket, config.IsPublicRead)
 	// Return the cached public-read status (no JSON parsing needed)
 	return config.IsPublicRead
 }
@@ -394,13 +396,18 @@ func (s3a *S3ApiServer) AuthWithPublicRead(handler http.HandlerFunc, action Acti
 		authType := getRequestAuthType(r)
 		isAnonymous := authType == authTypeAnonymous
 
+		glog.V(4).Infof("AuthWithPublicRead: bucket=%s, authType=%v, isAnonymous=%v", bucket, authType, isAnonymous)
+
 		// For anonymous requests, check if bucket allows public read
 		if isAnonymous {
 			isPublic := s3a.isBucketPublicRead(bucket)
+			glog.V(4).Infof("AuthWithPublicRead: bucket=%s, isPublic=%v", bucket, isPublic)
 			if isPublic {
+				glog.V(3).Infof("AuthWithPublicRead: allowing anonymous access to public-read bucket %s", bucket)
 				handler(w, r)
 				return
 			}
+			glog.V(3).Infof("AuthWithPublicRead: bucket %s is not public-read, falling back to IAM auth", bucket)
 		}
 
 		// For all authenticated requests and anonymous requests to non-public buckets,
