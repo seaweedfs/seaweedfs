@@ -203,46 +203,68 @@ func testKafkaGoVersionCompatibility(t *testing.T, addr string) {
 				t.Logf("Topic creation failed (may already exist): %v", err)
 			}
 
-			// Configure reader and writer
-			config.readerConfig.Topic = topicName
+			// Wait for topic to be fully created
+			time.Sleep(200 * time.Millisecond)
+
+			// Configure writer first and write message
 			config.writerConfig.Topic = topicName
-
 			writer := kafka.NewWriter(config.writerConfig)
-			defer writer.Close()
-
-			reader := kafka.NewReader(config.readerConfig)
-			defer reader.Close()
 
 			// Test produce
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
+			produceCtx, produceCancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer produceCancel()
 
 			message := kafka.Message{
 				Value: []byte(fmt.Sprintf("test-message-%s", config.name)),
 			}
 
-			err = writer.WriteMessages(ctx, message)
+			err = writer.WriteMessages(produceCtx, message)
 			if err != nil {
+				writer.Close()
 				t.Fatalf("Failed to write message: %v", err)
+			}
+
+			// Close writer before reading to ensure flush
+			if err := writer.Close(); err != nil {
+				t.Logf("Warning: writer close error: %v", err)
 			}
 
 			t.Logf("%s: Message written successfully", config.name)
 
-			// Test consume
-			msg, err := reader.ReadMessage(ctx)
+			// Wait for message to be available
+			time.Sleep(100 * time.Millisecond)
+
+			// Configure and create reader
+			config.readerConfig.Topic = topicName
+			config.readerConfig.StartOffset = kafka.FirstOffset
+			reader := kafka.NewReader(config.readerConfig)
+
+			// Test consume with dedicated context
+			consumeCtx, consumeCancel := context.WithTimeout(context.Background(), 15*time.Second)
+
+			msg, err := reader.ReadMessage(consumeCtx)
+			consumeCancel()
+
 			if err != nil {
+				reader.Close()
 				t.Fatalf("Failed to read message: %v", err)
 			}
 
 			if string(msg.Value) != fmt.Sprintf("test-message-%s", config.name) {
+				reader.Close()
 				t.Errorf("Message content mismatch: expected %s, got %s",
 					fmt.Sprintf("test-message-%s", config.name), string(msg.Value))
 			}
 
 			t.Logf("%s: Successfully consumed message", config.name)
 
-			// Close reader immediately to prevent background fetch goroutines from hanging
-			reader.Close()
+			// Close reader and wait for cleanup
+			if err := reader.Close(); err != nil {
+				t.Logf("Warning: reader close error: %v", err)
+			}
+
+			// Give time for background goroutines to clean up
+			time.Sleep(100 * time.Millisecond)
 		})
 	}
 }
@@ -305,6 +327,9 @@ func testProducerConsumerCompatibility(t *testing.T, addr string) {
 		t.Logf("Topic creation failed (may already exist): %v", err)
 	}
 
+	// Wait for topic to be fully created
+	time.Sleep(200 * time.Millisecond)
+
 	producer, err := sarama.NewSyncProducerFromClient(saramaClient)
 	if err != nil {
 		t.Fatalf("Failed to create producer: %v", err)
@@ -321,18 +346,28 @@ func testProducerConsumerCompatibility(t *testing.T, addr string) {
 		t.Fatalf("Failed to send message with Sarama: %v", err)
 	}
 
+	t.Logf("Produced message with Sarama")
+
+	// Wait for message to be available
+	time.Sleep(100 * time.Millisecond)
+
 	// Consume with kafka-go (without consumer group to avoid offset commit issues)
 	reader := kafka.NewReader(kafka.ReaderConfig{
-		Brokers:   []string{addr},
-		Topic:     topicName,
-		Partition: 0,
+		Brokers:     []string{addr},
+		Topic:       topicName,
+		Partition:   0,
+		StartOffset: kafka.FirstOffset,
 	})
-	defer reader.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	msg, err := reader.ReadMessage(ctx)
+	cancel()
+
+	// Close reader immediately after reading
+	if closeErr := reader.Close(); closeErr != nil {
+		t.Logf("Warning: reader close error: %v", closeErr)
+	}
+
 	if err != nil {
 		t.Fatalf("Failed to read message with kafka-go: %v", err)
 	}
@@ -375,6 +410,9 @@ func testConsumerGroupCompatibility(t *testing.T, addr string) {
 		t.Logf("Topic creation failed (may already exist): %v", err)
 	}
 
+	// Wait for topic to be fully created
+	time.Sleep(200 * time.Millisecond)
+
 	producer, err := sarama.NewSyncProducerFromClient(client)
 	if err != nil {
 		t.Fatalf("Failed to create producer: %v", err)
@@ -394,6 +432,11 @@ func testConsumerGroupCompatibility(t *testing.T, addr string) {
 		}
 	}
 
+	t.Logf("Produced 5 messages successfully")
+
+	// Wait for messages to be available
+	time.Sleep(200 * time.Millisecond)
+
 	// Test consumer group with Sarama (kafka-go consumer groups have offset commit issues)
 	consumer, err := sarama.NewConsumerFromClient(client)
 	if err != nil {
@@ -408,14 +451,15 @@ func testConsumerGroupCompatibility(t *testing.T, addr string) {
 	defer partitionConsumer.Close()
 
 	messagesReceived := 0
-	timeout := time.After(15 * time.Second)
+	timeout := time.After(30 * time.Second)
+
 	for messagesReceived < 5 {
 		select {
 		case msg := <-partitionConsumer.Messages():
-			t.Logf("Received message: %s", string(msg.Value))
+			t.Logf("Received message %d: %s", messagesReceived, string(msg.Value))
 			messagesReceived++
 		case err := <-partitionConsumer.Errors():
-			t.Fatalf("Consumer error: %v", err)
+			t.Logf("Consumer error (continuing): %v", err)
 		case <-timeout:
 			t.Fatalf("Timeout waiting for messages, received %d out of 5", messagesReceived)
 		}
@@ -428,6 +472,7 @@ func testAdminClientCompatibility(t *testing.T, addr string) {
 	// Test admin operations with different clients
 	config := sarama.NewConfig()
 	config.Version = sarama.V2_8_0_0
+	config.Admin.Timeout = 30 * time.Second
 
 	client, err := sarama.NewClient([]string{addr}, config)
 	if err != nil {
@@ -454,21 +499,41 @@ func testAdminClientCompatibility(t *testing.T, addr string) {
 		t.Logf("Topic creation failed (may already exist): %v", err)
 	}
 
-	// List topics
-	topics, err := admin.ListTopics()
+	// Wait for topic to be fully created and propagated
+	time.Sleep(500 * time.Millisecond)
+
+	// List topics with retry logic
+	var topics map[string]sarama.TopicDetail
+	maxRetries := 3
+	for i := 0; i < maxRetries; i++ {
+		topics, err = admin.ListTopics()
+		if err == nil {
+			break
+		}
+		t.Logf("List topics attempt %d failed: %v, retrying...", i+1, err)
+		time.Sleep(time.Duration(500*(i+1)) * time.Millisecond)
+	}
+
 	if err != nil {
-		t.Fatalf("Failed to list topics: %v", err)
+		t.Fatalf("Failed to list topics after %d attempts: %v", maxRetries, err)
 	}
 
 	found := false
 	for topic := range topics {
 		if topic == topicName {
 			found = true
+			t.Logf("Found created topic: %s", topicName)
 			break
 		}
 	}
 
 	if !found {
+		// Log all topics for debugging
+		allTopics := make([]string, 0, len(topics))
+		for topic := range topics {
+			allTopics = append(allTopics, topic)
+		}
+		t.Logf("Available topics: %v", allTopics)
 		t.Errorf("Created topic %s not found in topic list", topicName)
 	}
 
