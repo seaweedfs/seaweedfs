@@ -505,6 +505,10 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 	// Use default timeout config
 	timeoutConfig := DefaultTimeoutConfig()
 
+	// Track consecutive read timeouts to detect stale/CLOSE_WAIT connections
+	consecutiveTimeouts := 0
+	const maxConsecutiveTimeouts = 3 // Give up after 3 timeouts in a row
+
 	// CRITICAL: Separate control plane from data plane
 	// Control plane: Metadata, Heartbeat, JoinGroup, etc. (must be fast, never block)
 	// Data plane: Fetch, Produce (can be slow, may block on I/O)
@@ -729,13 +733,26 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 				return nil
 			}
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				// CRITICAL FIX: Track consecutive timeouts to detect CLOSE_WAIT connections
+				// When remote peer closes, connection enters CLOSE_WAIT and reads keep timing out
+				// After several consecutive timeouts with no data, assume connection is dead
+				consecutiveTimeouts++
+				if consecutiveTimeouts >= maxConsecutiveTimeouts {
+					Debug("[%s] Too many consecutive read timeouts (%d), assuming connection is closed (likely CLOSE_WAIT)",
+						connectionID, consecutiveTimeouts)
+					return nil
+				}
 				// Idle timeout while waiting for next request; keep connection open
-				Debug("[%s] Read timeout waiting for request, continuing", connectionID)
+				Debug("[%s] Read timeout waiting for request (%d/%d), continuing",
+					connectionID, consecutiveTimeouts, maxConsecutiveTimeouts)
 				continue
 			}
 			Debug("[%s] Read error: %v", connectionID, err)
 			return fmt.Errorf("read message size: %w", err)
 		}
+
+		// Successfully read data, reset timeout counter
+		consecutiveTimeouts = 0
 
 		// Successfully read the message size
 		size := binary.BigEndian.Uint32(sizeBytes[:])
