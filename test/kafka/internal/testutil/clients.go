@@ -103,6 +103,7 @@ func (k *KafkaGoClient) ConsumeMessages(topicName string, expectedCount int) ([]
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:     []string{k.brokerAddr},
 		Topic:       topicName,
+		Partition:   0, // Explicitly set partition 0 for simple consumption
 		StartOffset: kafka.FirstOffset,
 		MinBytes:    1,
 		MaxBytes:    10e6,
