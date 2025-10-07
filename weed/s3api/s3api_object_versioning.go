@@ -408,18 +408,33 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 			versionsObjectPath := normalizedObjectKey + ".versions"
 			_, versionsErr := s3a.getEntry(currentPath, versionsObjectPath)
 			if versionsErr == nil {
-				// .versions directory exists - this means the object has been versioned
-				// Skip the pre-versioning file entirely, as all versions (including any null version)
-				// should be retrieved from the .versions directory
-				glog.V(2).Infof("findVersionsRecursively: skipping pre-versioning file for %s, .versions directory exists", normalizedObjectKey)
-
-				// Mark as processed to prevent duplicate processing
-				processedObjects[objectKey] = true
-				processedObjects[normalizedObjectKey] = true
-				continue
+				// .versions directory exists - check if there's already a null version in .versions
+				// If there is, skip this file (it's a duplicate pre-versioning file)
+				// If there isn't, include it (it's a suspended versioning file that should be listed)
+				versions, err := s3a.getObjectVersionList(bucket, normalizedObjectKey)
+				if err == nil {
+					hasNullVersion := false
+					for _, v := range versions {
+						if v.VersionId == "null" {
+							hasNullVersion = true
+							break
+						}
+					}
+					if hasNullVersion {
+						// There's already a null version in .versions, skip this duplicate file
+						glog.V(2).Infof("findVersionsRecursively: skipping pre-versioning file for %s, null version exists in .versions", normalizedObjectKey)
+						processedObjects[objectKey] = true
+						processedObjects[normalizedObjectKey] = true
+						continue
+					}
+				}
+				// No null version in .versions, so this is a suspended versioning file
+				// Continue to add it below with IsLatest=true
+				glog.V(2).Infof("findVersionsRecursively: including suspended versioning file for %s", normalizedObjectKey)
 			}
 
-			// No .versions directory exists, so this is a true pre-versioning object
+			// This is either a true pre-versioning object (no .versions directory)
+			// or a suspended versioning object (has .versions but no null version in it)
 			// Add it as a null version with IsLatest=true
 			isLatest := true
 
