@@ -73,7 +73,8 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 		isSchemasTopic = true
 		// Always return immediately for _schemas topic, regardless of offset
 		maxWaitMs = 0
-		glog.V(2).Infof("Schema Registry fetch detected, disabling long-poll (original maxWaitMs=%d)", fetchRequest.MaxWaitTime)
+		glog.V(0).Infof("SR FETCH: Disabling long-poll for _schemas (original maxWaitMs=%d, minBytes=%d)",
+			fetchRequest.MaxWaitTime, fetchRequest.MinBytes)
 	}
 
 	// TEMPORARY: Disable long-polling for all other topics to eliminate 500ms delays
@@ -90,8 +91,11 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 
 	// Debug Schema Registry polling
 	if isSchemasTopic && len(fetchRequest.Topics) > 0 {
-		glog.V(2).Infof("SR FETCH REQUEST: topic=%s maxWaitMs(original)=%d maxWaitMs(effective)=%d minBytes=%d hasData=%v topicsExist=%v shouldLongPoll=%v",
-			fetchRequest.Topics[0].Name, fetchRequest.MaxWaitTime, maxWaitMs, fetchRequest.MinBytes, hasData, topicsExist, shouldLongPoll)
+		for _, partition := range fetchRequest.Topics[0].Partitions {
+			glog.V(0).Infof("SR FETCH: topic=%s partition=%d offset=%d maxWaitMs=%d->%d minBytes=%d hasData=%v topicsExist=%v",
+				fetchRequest.Topics[0].Name, partition.PartitionID, partition.FetchOffset,
+				fetchRequest.MaxWaitTime, maxWaitMs, fetchRequest.MinBytes, hasData, topicsExist)
+		}
 	}
 	if shouldLongPoll {
 		start := time.Now()
@@ -205,16 +209,23 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 			// Get the actual high water mark from SeaweedMQ using the same method as ListOffsets
 			highWaterMark, err := h.seaweedMQHandler.GetLatestOffset(topic.Name, partition.PartitionID)
 			if err != nil {
-				Debug("Failed to get latest offset for topic %s partition %d: %v", topic.Name, partition.PartitionID, err)
+				if isSchemasTopic {
+					glog.Errorf("SR ERROR: Failed to get HWM for %s partition %d: %v", topic.Name, partition.PartitionID, err)
+				} else {
+					Debug("Failed to get latest offset for topic %s partition %d: %v", topic.Name, partition.PartitionID, err)
+				}
 				highWaterMark = 0 // Fallback to 0 if we can't determine the offset
 			}
-			Debug("*** FETCH: Got highWaterMark %d for topic %s partition %d", highWaterMark, topic.Name, partition.PartitionID)
+
+			if isSchemasTopic {
+				glog.V(0).Infof("SR HWM: topic=%s partition=%d fetchOffset=%d highWaterMark=%d",
+					topic.Name, partition.PartitionID, partition.FetchOffset, highWaterMark)
+			} else {
+				Debug("*** FETCH: Got highWaterMark %d for topic %s partition %d", highWaterMark, topic.Name, partition.PartitionID)
+			}
 
 			if strings.HasPrefix(topic.Name, "_") {
 				Debug("SYSTEM TOPIC: %s is a system topic, highWaterMark=%d", topic.Name, highWaterMark)
-				if strings.HasPrefix(topic.Name, "_schemas") {
-					Debug("SCHEMA REGISTRY: Fetch request for _schemas topic from offset %d, highWaterMark=%d", partition.FetchOffset, highWaterMark)
-				}
 			}
 
 			// Normalize special fetch offsets: -2 = earliest, -1 = latest
@@ -249,16 +260,15 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 
 			// If topic does not exist, check if it's a system topic that should be auto-created
 			if !h.seaweedMQHandler.TopicExists(topic.Name) {
-				Debug("Topic %s does not exist, checking if it's a system topic", topic.Name)
 				if isSystemTopic(topic.Name) {
 					// Auto-create system topics
-					Debug("Auto-creating system topic %s during fetch", topic.Name)
+					glog.V(0).Infof("SR TOPIC: Auto-creating system topic %s during fetch", topic.Name)
 					if err := h.createTopicWithSchemaSupport(topic.Name, 1); err != nil {
-						Debug("Failed to auto-create system topic %s: %v", topic.Name, err)
+						glog.Errorf("SR ERROR: Failed to auto-create system topic %s: %v", topic.Name, err)
 						response[errorPos] = 0
 						response[errorPos+1] = 3 // UNKNOWN_TOPIC_OR_PARTITION
 					} else {
-						Debug("Successfully auto-created system topic %s", topic.Name)
+						glog.V(0).Infof("SR TOPIC: Successfully auto-created system topic %s", topic.Name)
 						// Topic now exists, continue with fetch
 					}
 				} else {
@@ -267,7 +277,11 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 					response[errorPos+1] = 3 // UNKNOWN_TOPIC_OR_PARTITION
 				}
 			} else {
-				Debug("Topic %s exists", topic.Name)
+				if isSchemasTopic {
+					glog.V(0).Infof("SR TOPIC: Topic %s exists", topic.Name)
+				} else {
+					Debug("Topic %s exists", topic.Name)
+				}
 			}
 
 			// Records - get actual stored record batches using multi-batch fetcher
@@ -297,10 +311,15 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 							topic.Name, partition.PartitionID, effectiveFetchOffset, result.BatchCount, result.TotalSize, result.NextOffset)
 					}
 					if strings.HasPrefix(topic.Name, "_schemas") {
-						glog.Infof("SR FETCH RESPONSE: topic=%s partition=%d fetchOffset=%d batches=%d bytes=%d nextOffset=%d",
+						glog.V(0).Infof("SR FETCH DATA: topic=%s partition=%d fetchOffset=%d batches=%d bytes=%d nextOffset=%d",
 							topic.Name, partition.PartitionID, effectiveFetchOffset, result.BatchCount, result.TotalSize, result.NextOffset)
 					}
 				} else {
+					if isSchemasTopic && err != nil {
+						glog.Errorf("SR ERROR: Multi-batch fetch failed for %s: %v, duration=%v", topic.Name, err, multiBatchDuration)
+					} else if isSchemasTopic {
+						glog.V(0).Infof("SR FETCH: No data in multi-batch (empty topic), falling back to single batch")
+					}
 					Debug("Multi-batch failed or empty, falling back to single batch, duration=%v", multiBatchDuration)
 					// Fallback to original single batch logic
 					Debug("GetStoredRecords: topic='%s', partition=%d, offset=%d, limit=10", topic.Name, partition.PartitionID, effectiveFetchOffset)
@@ -310,14 +329,27 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 					Debug("GetStoredRecords result: records=%d, err=%v, duration=%v", len(smqRecords), err, duration)
 					if err == nil && len(smqRecords) > 0 {
 						recordBatch = h.constructRecordBatchFromSMQ(topic.Name, effectiveFetchOffset, smqRecords)
+						if isSchemasTopic {
+							glog.V(0).Infof("SR FETCH FALLBACK: Got %d records, batch size: %d bytes", len(smqRecords), len(recordBatch))
+						}
 						Debug("Fallback single batch size: %d bytes", len(recordBatch))
 					} else {
 						// No records available - return empty batch instead of generating test data
 						recordBatch = []byte{}
+						if isSchemasTopic {
+							if err != nil {
+								glog.Errorf("SR ERROR: GetStoredRecords failed: %v", err)
+							} else {
+								glog.V(0).Infof("SR FETCH EMPTY: No records at offset %d (HWM=%d)", effectiveFetchOffset, highWaterMark)
+							}
+						}
 						Debug("No records available - returning empty batch")
 					}
 				}
 			} else {
+				if isSchemasTopic {
+					glog.V(0).Infof("SR FETCH: No data available - fetchOffset=%d >= HWM=%d", effectiveFetchOffset, highWaterMark)
+				}
 				Debug("No messages available - effective fetchOffset %d >= highWaterMark %d", effectiveFetchOffset, highWaterMark)
 				recordBatch = []byte{} // No messages available
 			}

@@ -195,7 +195,7 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 		if initMessage.Topic != nil && initMessage.Topic.Name == "_schemas" {
 			if localTopicPartition.LogBuffer != nil {
 				localTopicPartition.LogBuffer.ForceFlush()
-				glog.V(2).Infof("Force flushed _schemas topic after offset %d", assignedOffset)
+				glog.V(0).Infof("SR PUBLISH: Force flushed _schemas after offset %d", assignedOffset)
 			}
 		}
 
