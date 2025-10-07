@@ -344,9 +344,6 @@ func (h *Handler) parseLeaveGroupRequest(data []byte) (*LeaveGroupRequest, error
 	}
 	groupID := string(data[offset : offset+groupIDLength])
 	offset += groupIDLength
-	
-	// Sanitize group ID - remove null bytes and trim whitespace
-	groupID = sanitizeCoordinatorKey(groupID)
 
 	// MemberID (string)
 	if offset+2 > len(data) {
