@@ -193,6 +193,28 @@ wait_for_services() {
     log_error "Services did not become ready within ${TIMEOUT} seconds"
     log_error "Final service status:"
     check_all_services
+    
+    # Dump Schema Registry logs if it's not healthy
+    if ! check_schema_registry; then
+        log_error "==========================================="
+        log_error "Network Connectivity Check:"
+        log_error "==========================================="
+        log_error "Can Schema Registry reach Kafka Gateway?"
+        docker compose exec -T schema-registry ping -c 3 kafka-gateway 2>&1 || echo "Ping failed"
+        docker compose exec -T schema-registry nc -zv kafka-gateway 9093 2>&1 || echo "Port 9093 unreachable"
+        log_error "==========================================="
+        
+        log_error "Schema Registry Logs (last 100 lines):"
+        log_error "==========================================="
+        docker compose logs --tail=100 schema-registry 2>&1 || echo "Failed to get Schema Registry logs"
+        log_error "==========================================="
+        
+        log_error "Kafka Gateway Logs (last 50 lines with 'SR' prefix):"
+        log_error "==========================================="
+        docker compose logs --tail=200 kafka-gateway 2>&1 | grep -i "SR" | tail -50 || echo "No SR-related logs found in Kafka Gateway"
+        log_error "==========================================="
+    fi
+    
     return 1
 }
 
