@@ -474,6 +474,10 @@ func (s3a *S3ApiServer) PutBucketAclHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	glog.V(3).Infof("PutBucketAclHandler: bucket=%s, extracted %d grants", bucket, len(grants))
+	isPublic := isPublicReadGrants(grants)
+	glog.V(3).Infof("PutBucketAclHandler: bucket=%s, isPublicReadGrants=%v", bucket, isPublic)
+
 	// Store the bucket ACL in bucket metadata
 	errCode = s3a.updateBucketConfig(bucket, func(config *BucketConfig) error {
 		if len(grants) > 0 {
@@ -485,6 +489,7 @@ func (s3a *S3ApiServer) PutBucketAclHandler(w http.ResponseWriter, r *http.Reque
 			config.ACL = grantsBytes
 			// Cache the public-read status to avoid JSON parsing on every request
 			config.IsPublicRead = isPublicReadGrants(grants)
+			glog.V(4).Infof("PutBucketAclHandler: bucket=%s, setting IsPublicRead=%v", bucket, config.IsPublicRead)
 		} else {
 			config.ACL = nil
 			config.IsPublicRead = false
