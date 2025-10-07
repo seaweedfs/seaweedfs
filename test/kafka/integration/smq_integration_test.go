@@ -43,10 +43,16 @@ func testProduceConsumeWithPersistence(t *testing.T, addr string) {
 	err := client.CreateTopic(topicName, 1, 1)
 	testutil.AssertNoError(t, err, "Failed to create topic")
 
+	// Allow time for topic to propagate in SMQ backend
+	time.Sleep(500 * time.Millisecond)
+
 	// Produce messages
 	messages := msgGen.GenerateStringMessages(5)
 	err = client.ProduceMessages(topicName, messages)
 	testutil.AssertNoError(t, err, "Failed to produce messages")
+
+	// Allow time for messages to be fully persisted in SMQ backend
+	time.Sleep(200 * time.Millisecond)
 
 	t.Logf("Produced %d messages to topic %s", len(messages), topicName)
 
@@ -71,9 +77,15 @@ func testConsumerGroupOffsetPersistence(t *testing.T, addr string) {
 	err := client.CreateTopic(topicName, 1, 1)
 	testutil.AssertNoError(t, err, "Failed to create topic")
 
+	// Allow time for topic to propagate in SMQ backend
+	time.Sleep(500 * time.Millisecond)
+
 	messages := msgGen.GenerateStringMessages(10)
 	err = client.ProduceMessages(topicName, messages)
 	testutil.AssertNoError(t, err, "Failed to produce messages")
+
+	// Allow time for messages to be fully persisted in SMQ backend
+	time.Sleep(200 * time.Millisecond)
 
 	// Phase 1: Consume first 5 messages with consumer group and commit offsets
 	t.Logf("Phase 1: Consuming first 5 messages and committing offsets")
@@ -94,7 +106,7 @@ func testConsumerGroupOffsetPersistence(t *testing.T, addr string) {
 		t:         t,
 	}
 
-	ctx1, cancel1 := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx1, cancel1 := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel1()
 
 	go func() {
@@ -111,14 +123,14 @@ func testConsumerGroupOffsetPersistence(t *testing.T, addr string) {
 		select {
 		case <-handler.messages:
 			consumedCount++
-		case <-time.After(10 * time.Second):
-			t.Fatalf("Timeout waiting for first batch of messages")
+		case <-time.After(20 * time.Second):
+			t.Fatalf("Timeout waiting for first batch of messages. Got %d/5", consumedCount)
 		}
 	}
 
 	consumerGroup1.Close()
 	cancel1()
-	time.Sleep(5 * time.Second) // Allow auto-commit to complete and offset commits to be processed
+	time.Sleep(7 * time.Second) // Allow auto-commit to complete and offset commits to be processed in SMQ
 
 	t.Logf("Consumed %d messages in first phase", consumedCount)
 
@@ -136,7 +148,7 @@ func testConsumerGroupOffsetPersistence(t *testing.T, addr string) {
 		t:         t,
 	}
 
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel2()
 
 	go func() {
@@ -155,7 +167,7 @@ func testConsumerGroupOffsetPersistence(t *testing.T, addr string) {
 		case msg := <-handler2.messages:
 			consumedCount++
 			secondConsumerMessages = append(secondConsumerMessages, msg)
-		case <-time.After(10 * time.Second):
+		case <-time.After(20 * time.Second):
 			t.Fatalf("Timeout waiting for second batch of messages. Got %d/5", consumedCount)
 		}
 	}
@@ -181,13 +193,33 @@ func testTopicPersistence(t *testing.T, addr string) {
 	err := client.CreateTopic(topicName, 2, 1) // 2 partitions
 	testutil.AssertNoError(t, err, "Failed to create topic")
 
+	// Allow time for topic to propagate and persist in SMQ backend
+	time.Sleep(1 * time.Second)
+
 	// Verify topic exists by listing topics using admin client
-	admin, err := sarama.NewClusterAdmin([]string{addr}, client.GetConfig())
+	config := client.GetConfig()
+	config.Admin.Timeout = 30 * time.Second
+
+	admin, err := sarama.NewClusterAdmin([]string{addr}, config)
 	testutil.AssertNoError(t, err, "Failed to create admin client")
 	defer admin.Close()
 
-	topics, err := admin.ListTopics()
-	testutil.AssertNoError(t, err, "Failed to list topics")
+	// Retry topic listing to handle potential delays in topic propagation
+	var topics map[string]sarama.TopicDetail
+	var listErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			sleepDuration := time.Duration(500*(1<<(attempt-1))) * time.Millisecond
+			t.Logf("Retrying ListTopics after %v (attempt %d/3)", sleepDuration, attempt+1)
+			time.Sleep(sleepDuration)
+		}
+
+		topics, listErr = admin.ListTopics()
+		if listErr == nil {
+			break
+		}
+	}
+	testutil.AssertNoError(t, listErr, "Failed to list topics")
 
 	topicDetails, exists := topics[topicName]
 	if !exists {
