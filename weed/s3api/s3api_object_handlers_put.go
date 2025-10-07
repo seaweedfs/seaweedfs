@@ -134,6 +134,8 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		versioningEnabled := (versioningState == s3_constants.VersioningEnabled)
 		versioningConfigured := (versioningState != "")
 
+		glog.V(3).Infof("PutObjectHandler: bucket=%s, object=%s, versioningState=%s, versioningEnabled=%v", bucket, object, versioningState, versioningEnabled)
+
 		// Validate object lock headers before processing
 		if err := s3a.validateObjectLockHeaders(r, versioningEnabled); err != nil {
 			glog.V(2).Infof("PutObjectHandler: object lock header validation failed for bucket %s, object %s: %v", bucket, object, err)
@@ -160,9 +162,14 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 				return
 			}
 
+			glog.V(3).Infof("PutObjectHandler: versioning enabled, versionId=%s, etag=%s for %s/%s", versionId, etag, bucket, object)
+
 			// Set version ID in response header
 			if versionId != "" {
 				w.Header().Set("x-amz-version-id", versionId)
+				glog.V(3).Infof("PutObjectHandler: set x-amz-version-id header to %s", versionId)
+			} else {
+				glog.Warningf("PutObjectHandler: versionId is empty for versioned bucket %s, object %s", bucket, object)
 			}
 
 			// Set ETag in response
