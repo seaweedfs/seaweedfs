@@ -12,10 +12,28 @@ x-seaweedfs-build: &seaweedfs-build
 services:
   # Schema Registry (for Avro/Protobuf support) 
   # Using host networking to connect to localhost:9093 (where our gateway advertises)
+  # WORKAROUND: Schema Registry hangs on empty _schemas topic during bootstrap
+  # Pre-create the topic first to avoid "wait to catch up" hang
+  schema-registry-init:
+    image: confluentinc/cp-kafka:8.0.0
+    container_name: loadtest-schema-registry-init
+    networks:
+      - kafka-loadtest-net
+    depends_on:
+      kafka-gateway:
+        condition: service_healthy
+    command: >
+      bash -c "
+      echo 'Creating _schemas topic...';
+      kafka-topics --create --topic _schemas --partitions 1 --replication-factor 1 \
+        --bootstrap-server kafka-gateway:9093 --if-not-exists || exit 0;
+      echo '_schemas topic created successfully';
+      "
+  
   schema-registry:
     image: confluentinc/cp-schema-registry:8.0.0
     container_name: loadtest-schema-registry
-    restart: on-failure:5
+    restart: on-failure:3
     ports:
       - "8081:8081"
     environment:
@@ -50,6 +68,8 @@ services:
       retries: 10
       start_period: 30s
     depends_on:
+      schema-registry-init:
+        condition: service_completed_successfully
       kafka-gateway:
         condition: service_healthy
     networks:

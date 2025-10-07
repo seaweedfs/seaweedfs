@@ -3920,57 +3920,12 @@ func (h *Handler) createTopicWithSchemaSupport(topicName string, partitions int3
 // createTopicWithDefaultFlexibleSchema creates a topic with a flexible default schema
 // that can handle both Avro and JSON messages when schema management is enabled
 func (h *Handler) createTopicWithDefaultFlexibleSchema(topicName string, partitions int32) error {
-	// For system topics like _schemas, create both key and value fields
-	// Schema Registry messages have structured keys and values
-	var keySchema, valueSchema *schema_pb.RecordType
+	// CRITICAL FIX: System topics like _schemas should be PLAIN Kafka topics without schema management
+	// Schema Registry uses _schemas to STORE schemas, so it can't have schema management itself
+	// This was causing issues with Schema Registry bootstrap
 
-	if topicName == "_schemas" {
-		// _schemas topic needs both key and value fields
-		// Key contains metadata (magicByte, keytype, subject, version)
-		keySchema = &schema_pb.RecordType{
-			Fields: []*schema_pb.Field{
-				{
-					Name: "key",
-					Type: &schema_pb.Type{
-						Kind: &schema_pb.Type_ScalarType{
-							ScalarType: schema_pb.ScalarType_BYTES,
-						},
-					},
-				},
-			},
-		}
-
-		// Value contains schema data
-		valueSchema = &schema_pb.RecordType{
-			Fields: []*schema_pb.Field{
-				{
-					Name: "value",
-					Type: &schema_pb.Type{
-						Kind: &schema_pb.Type_ScalarType{
-							ScalarType: schema_pb.ScalarType_BYTES,
-						},
-					},
-				},
-			},
-		}
-	} else {
-		// For other system topics, use flexible schema with just value
-		valueSchema = &schema_pb.RecordType{
-			Fields: []*schema_pb.Field{
-				{
-					Name: "value",
-					Type: &schema_pb.Type{
-						Kind: &schema_pb.Type_ScalarType{
-							ScalarType: schema_pb.ScalarType_BYTES,
-						},
-					},
-				},
-			},
-		}
-	}
-
-	// Create topic with the schemas
-	return h.seaweedMQHandler.CreateTopicWithSchemas(topicName, partitions, keySchema, valueSchema)
+	glog.V(0).Infof("Creating system topic %s as PLAIN topic (no schema management)", topicName)
+	return h.seaweedMQHandler.CreateTopic(topicName, partitions)
 }
 
 // fetchSchemaForTopic attempts to fetch schema information for a topic from Schema Registry

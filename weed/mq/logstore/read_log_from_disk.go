@@ -164,6 +164,11 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 		var startOffset int64
 		if isOffsetBased {
 			startOffset = startPosition.Offset
+			// CRITICAL FIX: For offset-based reads, ignore startFileName (which is based on Time)
+			// and list all files from the beginning to find the right offset
+			startFileName = ""
+			glog.V(0).Infof("📖 DISK READ START: topic=%s partition=%s startOffset=%d (using empty startFileName for offset-based read)", 
+				t.Name, p, startOffset)
 		}
 
 		// OPTIMIZATION: For offset-based reads, collect all files with their offset ranges first
@@ -173,6 +178,7 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 
 		err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 			// First pass: collect all relevant files with their metadata
+			glog.V(0).Infof("📁 DISK READ: Listing directory %s for offset %d startFileName=%q", partitionDir, startOffset, startFileName)
 			return filer_pb.SeaweedList(context.Background(), client, partitionDir, "", func(entry *filer_pb.Entry, isLast bool) error {
 
 				if entry.IsDirectory {
@@ -190,6 +196,7 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 
 				// OPTIMIZATION: For offset-based reads, check if this file contains the requested offset
 				if isOffsetBased {
+					glog.V(0).Infof("📄 DISK READ: Found file %s", entry.Name)
 					// Check if file has offset range metadata
 					if minOffsetBytes, hasMin := entry.Extended["offset_min"]; hasMin && len(minOffsetBytes) == 8 {
 						if maxOffsetBytes, hasMax := entry.Extended["offset_max"]; hasMax && len(maxOffsetBytes) == 8 {
@@ -222,13 +229,23 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 
 				// Add file to candidates for processing
 				candidateFiles = append(candidateFiles, entry)
+				glog.V(0).Infof("✅ DISK READ: Added candidate file %s (total=%d)", entry.Name, len(candidateFiles))
 				return nil
 
 			}, startFileName, true, math.MaxInt32)
 		})
 
 		if err != nil {
+			glog.Errorf("❌ DISK READ: Failed to list directory %s: %v", partitionDir, err)
 			return
+		}
+
+		glog.V(0).Infof("📊 DISK READ: Found %d candidate files for topic=%s partition=%s offset=%d", 
+			len(candidateFiles), t.Name, p, startOffset)
+		
+		if len(candidateFiles) == 0 {
+			glog.V(0).Infof("⚠️  DISK READ: No files found in %s", partitionDir)
+			return startPosition, isDone, nil
 		}
 
 		// OPTIMIZATION: For offset-based reads with many files, use binary search to find start file

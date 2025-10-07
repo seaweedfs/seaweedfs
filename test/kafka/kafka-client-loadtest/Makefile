@@ -91,6 +91,7 @@ start: build-gateway ## Start the infrastructure services (without load test)
 		seaweedfs-filer \
 		seaweedfs-mq-broker \
 		kafka-gateway \
+		schema-registry-init \
 		schema-registry
 	@echo "$(GREEN)Infrastructure started$(NC)"
 	@echo "Waiting for services to be ready..."
