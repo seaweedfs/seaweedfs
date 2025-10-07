@@ -477,31 +477,34 @@ func (h *Handler) parseFetchRequest(apiVersion uint16, requestBody []byte) (*Fet
 	offset := 0
 	request := &FetchRequest{}
 
+	// Check if this version uses flexible format (v12+)
+	isFlexible := IsFlexibleVersion(1, apiVersion) // API key 1 = Fetch
+
 	// NOTE: client_id is already handled by HandleConn and stripped from requestBody
 	// Request body starts directly with fetch-specific fields
 
-	// Replica ID (4 bytes)
+	// Replica ID (4 bytes) - always fixed
 	if offset+4 > len(requestBody) {
 		return nil, fmt.Errorf("insufficient data for replica_id")
 	}
 	request.ReplicaID = int32(binary.BigEndian.Uint32(requestBody[offset : offset+4]))
 	offset += 4
 
-	// Max wait time (4 bytes)
+	// Max wait time (4 bytes) - always fixed
 	if offset+4 > len(requestBody) {
 		return nil, fmt.Errorf("insufficient data for max_wait_time")
 	}
 	request.MaxWaitTime = int32(binary.BigEndian.Uint32(requestBody[offset : offset+4]))
 	offset += 4
 
-	// Min bytes (4 bytes)
+	// Min bytes (4 bytes) - always fixed
 	if offset+4 > len(requestBody) {
 		return nil, fmt.Errorf("insufficient data for min_bytes")
 	}
 	request.MinBytes = int32(binary.BigEndian.Uint32(requestBody[offset : offset+4]))
 	offset += 4
 
-	// Max bytes (4 bytes) - only in v3+
+	// Max bytes (4 bytes) - only in v3+, always fixed
 	if apiVersion >= 3 {
 		if offset+4 > len(requestBody) {
 			return nil, fmt.Errorf("insufficient data for max_bytes")
@@ -510,7 +513,7 @@ func (h *Handler) parseFetchRequest(apiVersion uint16, requestBody []byte) (*Fet
 		offset += 4
 	}
 
-	// Isolation level (1 byte) - only in v4+
+	// Isolation level (1 byte) - only in v4+, always fixed
 	if apiVersion >= 4 {
 		if offset+1 > len(requestBody) {
 			return nil, fmt.Errorf("insufficient data for isolation_level")
@@ -519,7 +522,7 @@ func (h *Handler) parseFetchRequest(apiVersion uint16, requestBody []byte) (*Fet
 		offset += 1
 	}
 
-	// Session ID (4 bytes) and Session Epoch (4 bytes) - only in v7+
+	// Session ID (4 bytes) and Session Epoch (4 bytes) - only in v7+, always fixed
 	if apiVersion >= 7 {
 		if offset+8 > len(requestBody) {
 			return nil, fmt.Errorf("insufficient data for session_id and epoch")
@@ -527,48 +530,84 @@ func (h *Handler) parseFetchRequest(apiVersion uint16, requestBody []byte) (*Fet
 		offset += 8 // Skip session_id and session_epoch
 	}
 
-	// Topics count (4 bytes)
-	if offset+4 > len(requestBody) {
-		return nil, fmt.Errorf("insufficient data for topics count")
+	// Topics count - flexible uses compact array, non-flexible uses INT32
+	var topicsCount int
+	if isFlexible {
+		// Compact array: length+1 encoded as varint
+		length, consumed, err := DecodeCompactArrayLength(requestBody[offset:])
+		if err != nil {
+			return nil, fmt.Errorf("decode topics compact array: %w", err)
+		}
+		topicsCount = int(length)
+		offset += consumed
+	} else {
+		// Regular array: INT32 length
+		if offset+4 > len(requestBody) {
+			return nil, fmt.Errorf("insufficient data for topics count")
+		}
+		topicsCount = int(binary.BigEndian.Uint32(requestBody[offset : offset+4]))
+		offset += 4
 	}
-	topicsCount := int(binary.BigEndian.Uint32(requestBody[offset : offset+4]))
-	offset += 4
 
 	// Parse topics
 	request.Topics = make([]FetchTopic, topicsCount)
 	for i := 0; i < topicsCount; i++ {
-		// Topic name length (2 bytes)
-		if offset+2 > len(requestBody) {
-			return nil, fmt.Errorf("insufficient data for topic name length")
-		}
-		topicNameLength := int(binary.BigEndian.Uint16(requestBody[offset : offset+2]))
-		offset += 2
+		// Topic name - flexible uses compact string, non-flexible uses STRING (INT16 length)
+		var topicName string
+		if isFlexible {
+			// Compact string: length+1 encoded as varint
+			name, consumed, err := DecodeFlexibleString(requestBody[offset:])
+			if err != nil {
+				return nil, fmt.Errorf("decode topic name compact string: %w", err)
+			}
+			topicName = name
+			offset += consumed
+		} else {
+			// Regular string: INT16 length + bytes
+			if offset+2 > len(requestBody) {
+				return nil, fmt.Errorf("insufficient data for topic name length")
+			}
+			topicNameLength := int(binary.BigEndian.Uint16(requestBody[offset : offset+2]))
+			offset += 2
 
-		// Topic name
-		if offset+topicNameLength > len(requestBody) {
-			return nil, fmt.Errorf("insufficient data for topic name")
+			if offset+topicNameLength > len(requestBody) {
+				return nil, fmt.Errorf("insufficient data for topic name")
+			}
+			topicName = string(requestBody[offset : offset+topicNameLength])
+			offset += topicNameLength
 		}
-		request.Topics[i].Name = string(requestBody[offset : offset+topicNameLength])
-		offset += topicNameLength
+		request.Topics[i].Name = topicName
 
-		// Partitions count (4 bytes)
-		if offset+4 > len(requestBody) {
-			return nil, fmt.Errorf("insufficient data for partitions count")
+		// Partitions count - flexible uses compact array, non-flexible uses INT32
+		var partitionsCount int
+		if isFlexible {
+			// Compact array: length+1 encoded as varint
+			length, consumed, err := DecodeCompactArrayLength(requestBody[offset:])
+			if err != nil {
+				return nil, fmt.Errorf("decode partitions compact array: %w", err)
+			}
+			partitionsCount = int(length)
+			offset += consumed
+		} else {
+			// Regular array: INT32 length
+			if offset+4 > len(requestBody) {
+				return nil, fmt.Errorf("insufficient data for partitions count")
+			}
+			partitionsCount = int(binary.BigEndian.Uint32(requestBody[offset : offset+4]))
+			offset += 4
 		}
-		partitionsCount := int(binary.BigEndian.Uint32(requestBody[offset : offset+4]))
-		offset += 4
 
 		// Parse partitions
 		request.Topics[i].Partitions = make([]FetchPartition, partitionsCount)
 		for j := 0; j < partitionsCount; j++ {
-			// Partition ID (4 bytes)
+			// Partition ID (4 bytes) - always fixed
 			if offset+4 > len(requestBody) {
 				return nil, fmt.Errorf("insufficient data for partition ID")
 			}
 			request.Topics[i].Partitions[j].PartitionID = int32(binary.BigEndian.Uint32(requestBody[offset : offset+4]))
 			offset += 4
 
-			// Current leader epoch (4 bytes) - only in v9+
+			// Current leader epoch (4 bytes) - only in v9+, always fixed
 			if apiVersion >= 9 {
 				if offset+4 > len(requestBody) {
 					return nil, fmt.Errorf("insufficient data for current leader epoch")
@@ -576,14 +615,14 @@ func (h *Handler) parseFetchRequest(apiVersion uint16, requestBody []byte) (*Fet
 				offset += 4 // Skip current leader epoch
 			}
 
-			// Fetch offset (8 bytes)
+			// Fetch offset (8 bytes) - always fixed
 			if offset+8 > len(requestBody) {
 				return nil, fmt.Errorf("insufficient data for fetch offset")
 			}
 			request.Topics[i].Partitions[j].FetchOffset = int64(binary.BigEndian.Uint64(requestBody[offset : offset+8]))
 			offset += 8
 
-			// Log start offset (8 bytes) - only in v5+
+			// Log start offset (8 bytes) - only in v5+, always fixed
 			if apiVersion >= 5 {
 				if offset+8 > len(requestBody) {
 					return nil, fmt.Errorf("insufficient data for log start offset")
@@ -592,12 +631,123 @@ func (h *Handler) parseFetchRequest(apiVersion uint16, requestBody []byte) (*Fet
 				offset += 8
 			}
 
-			// Partition max bytes (4 bytes)
+			// Partition max bytes (4 bytes) - always fixed
 			if offset+4 > len(requestBody) {
 				return nil, fmt.Errorf("insufficient data for partition max bytes")
 			}
 			request.Topics[i].Partitions[j].MaxBytes = int32(binary.BigEndian.Uint32(requestBody[offset : offset+4]))
 			offset += 4
+
+			// Tagged fields for partition (only in flexible versions v12+)
+			if isFlexible {
+				_, consumed, err := DecodeTaggedFields(requestBody[offset:])
+				if err != nil {
+					return nil, fmt.Errorf("decode partition tagged fields: %w", err)
+				}
+				offset += consumed
+			}
+		}
+
+		// Tagged fields for topic (only in flexible versions v12+)
+		if isFlexible {
+			_, consumed, err := DecodeTaggedFields(requestBody[offset:])
+			if err != nil {
+				return nil, fmt.Errorf("decode topic tagged fields: %w", err)
+			}
+			offset += consumed
+		}
+	}
+
+	// Forgotten topics data (only in v7+)
+	if apiVersion >= 7 {
+		// Skip forgotten topics array - we don't use incremental fetch yet
+		var forgottenTopicsCount int
+		if isFlexible {
+			length, consumed, err := DecodeCompactArrayLength(requestBody[offset:])
+			if err != nil {
+				return nil, fmt.Errorf("decode forgotten topics compact array: %w", err)
+			}
+			forgottenTopicsCount = int(length)
+			offset += consumed
+		} else {
+			if offset+4 > len(requestBody) {
+				// End of request, no forgotten topics
+				return request, nil
+			}
+			forgottenTopicsCount = int(binary.BigEndian.Uint32(requestBody[offset : offset+4]))
+			offset += 4
+		}
+
+		// Skip forgotten topics if present
+		for i := 0; i < forgottenTopicsCount && offset < len(requestBody); i++ {
+			// Skip topic name
+			if isFlexible {
+				_, consumed, err := DecodeFlexibleString(requestBody[offset:])
+				if err != nil {
+					break
+				}
+				offset += consumed
+			} else {
+				if offset+2 > len(requestBody) {
+					break
+				}
+				nameLen := int(binary.BigEndian.Uint16(requestBody[offset : offset+2]))
+				offset += 2 + nameLen
+			}
+
+			// Skip partitions array
+			if isFlexible {
+				length, consumed, err := DecodeCompactArrayLength(requestBody[offset:])
+				if err != nil {
+					break
+				}
+				offset += consumed
+				// Skip partition IDs (4 bytes each)
+				offset += int(length) * 4
+			} else {
+				if offset+4 > len(requestBody) {
+					break
+				}
+				partCount := int(binary.BigEndian.Uint32(requestBody[offset : offset+4]))
+				offset += 4 + partCount*4
+			}
+
+			// Skip tagged fields if flexible
+			if isFlexible {
+				_, consumed, err := DecodeTaggedFields(requestBody[offset:])
+				if err != nil {
+					break
+				}
+				offset += consumed
+			}
+		}
+	}
+
+	// Rack ID (only in v11+) - optional string
+	if apiVersion >= 11 && offset < len(requestBody) {
+		if isFlexible {
+			_, consumed, err := DecodeFlexibleString(requestBody[offset:])
+			if err == nil {
+				offset += consumed
+			}
+		} else {
+			if offset+2 <= len(requestBody) {
+				rackIDLen := int(binary.BigEndian.Uint16(requestBody[offset : offset+2]))
+				if rackIDLen >= 0 && offset+2+rackIDLen <= len(requestBody) {
+					offset += 2 + rackIDLen
+				}
+			}
+		}
+	}
+
+	// Top-level tagged fields (only in flexible versions v12+)
+	if isFlexible && offset < len(requestBody) {
+		_, consumed, err := DecodeTaggedFields(requestBody[offset:])
+		if err != nil {
+			// Don't fail on trailing tagged fields parsing
+			Debug("Failed to parse trailing tagged fields: %v", err)
+		} else {
+			offset += consumed
 		}
 	}
 
