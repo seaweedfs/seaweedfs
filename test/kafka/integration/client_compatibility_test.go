@@ -240,6 +240,9 @@ func testKafkaGoVersionCompatibility(t *testing.T, addr string) {
 			}
 
 			t.Logf("%s: Successfully consumed message", config.name)
+
+			// Close reader immediately to prevent background fetch goroutines from hanging
+			reader.Close()
 		})
 	}
 }
