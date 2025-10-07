@@ -1555,6 +1555,10 @@ func (bc *BrokerClient) PublishRecord(topic string, partition int32, key []byte,
 		return 0, err
 	}
 
+	if session.Stream == nil {
+		return 0, fmt.Errorf("publisher session stream cannot be nil")
+	}
+
 	// Send data message using broker API format
 	dataMsg := &mq_pb.DataMessage{
 		Key:   key,
@@ -1915,6 +1919,10 @@ func (bc *BrokerClient) PublishRecordValue(topic string, partition int32, key []
 		return 0, err
 	}
 
+	if session.Stream == nil {
+		return 0, fmt.Errorf("publisher session stream cannot be nil")
+	}
+
 	// Send data message with RecordValue in the Value field
 	dataMsg := &mq_pb.DataMessage{
 		Key:   key,
@@ -1953,6 +1961,10 @@ func (bc *BrokerClient) PublishRecordValue(topic string, partition int32, key []
 func (bc *BrokerClient) ReadRecords(session *BrokerSubscriberSession, maxRecords int) ([]*SeaweedRecord, error) {
 	if session == nil {
 		return nil, fmt.Errorf("subscriber session cannot be nil")
+	}
+
+	if session.Stream == nil {
+		return nil, fmt.Errorf("subscriber session stream cannot be nil")
 	}
 
 	// CRITICAL: Lock to prevent concurrent reads from the same stream

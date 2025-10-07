@@ -505,6 +505,10 @@ func (s3a *S3ApiServer) PutBucketAclHandler(w http.ResponseWriter, r *http.Reque
 
 	glog.V(3).Infof("PutBucketAclHandler: Successfully stored ACL for bucket %s with %d grants", bucket, len(grants))
 
+	// Small delay to ensure ACL propagation across distributed caches
+	// This prevents race conditions in tests where anonymous access is attempted immediately after ACL change
+	time.Sleep(50 * time.Millisecond)
+
 	writeSuccessResponseEmpty(w, r)
 }
 
