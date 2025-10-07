@@ -80,9 +80,9 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 	// Debug Schema Registry polling
 	if isSchemasTopic && len(fetchRequest.Topics) > 0 {
 		for _, partition := range fetchRequest.Topics[0].Partitions {
-			glog.V(0).Infof("SR FETCH: topic=%s partition=%d offset=%d maxWaitMs=%d->%d minBytes=%d hasData=%v topicsExist=%v",
+			glog.Infof("SR FETCH REQUEST: topic=%s partition=%d offset=%d maxWaitMs=%d minBytes=%d hasData=%v topicsExist=%v shouldLongPoll=%v",
 				fetchRequest.Topics[0].Name, partition.PartitionID, partition.FetchOffset,
-				fetchRequest.MaxWaitTime, maxWaitMs, fetchRequest.MinBytes, hasData, topicsExist)
+				maxWaitMs, fetchRequest.MinBytes, hasData, topicsExist, shouldLongPoll)
 		}
 	}
 	if shouldLongPoll {
@@ -444,6 +444,13 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 	}
 
 	Debug("Fetch v%d response constructed, size: %d bytes (flexible: %v)", apiVersion, len(response), isFlexible)
+
+	// Log Schema Registry fetch responses
+	if isSchemasTopic {
+		glog.Infof("SR FETCH RESPONSE: responseSize=%d totalRecordBytes=%d topicsCount=%d apiVersion=%d",
+			len(response), totalAppendedRecordBytes, topicsCount, apiVersion)
+	}
+
 	return response, nil
 }
 

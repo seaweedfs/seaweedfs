@@ -122,17 +122,17 @@ func (f *MultiBatchFetcher) FetchMultipleBatches(topicName string, partitionID i
 		batch := f.constructSingleRecordBatch(topicName, currentOffset, smqRecords)
 		batchSize := int32(len(batch))
 
-	if strings.HasPrefix(topicName, "_schemas") {
-		// Log first record details for debugging deserialization
-		if len(smqRecords) > 0 {
-			for i, rec := range smqRecords {
-				if i < 3 { // Log first 3 records
-					_ = i
-					_ = rec
+		if strings.HasPrefix(topicName, "_schemas") {
+			// Log first record details for debugging deserialization
+			if len(smqRecords) > 0 {
+				for i, rec := range smqRecords {
+					if i < 3 { // Log first 3 records
+						_ = i
+						_ = rec
+					}
 				}
 			}
 		}
-	}
 
 		// Double-check actual size doesn't exceed maxBytes
 		if totalSize+batchSize > maxBytes && batchCount > 0 {
@@ -156,6 +156,12 @@ func (f *MultiBatchFetcher) FetchMultipleBatches(topicName string, partitionID i
 		NextOffset:    currentOffset,
 		TotalSize:     totalSize,
 		BatchCount:    batchCount,
+	}
+
+	// Log for _schemas topic
+	if strings.HasPrefix(topicName, "_schemas") {
+		glog.Infof("SR MULTIBATCH RESULT: topic=%s partition=%d startOffset=%d nextOffset=%d batchCount=%d totalSize=%d",
+			topicName, partitionID, startOffset, currentOffset, batchCount, totalSize)
 	}
 
 	return result, nil

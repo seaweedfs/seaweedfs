@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/compression"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/schema"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
@@ -13,6 +14,7 @@ import (
 )
 
 func (h *Handler) handleProduce(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
+	Debug("Produce v%d request received, correlationID=%d, bodySize=%d", apiVersion, correlationID, len(requestBody))
 
 	// Version-specific handling
 	switch apiVersion {
@@ -88,10 +90,16 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 		offset += int(topicNameSize)
 
 		// Debug: log topic being produced to
+		isSchemasTopic := strings.HasPrefix(topicName, "_schemas")
 
 		// Parse partitions count
 		partitionsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 		offset += 4
+
+		if isSchemasTopic {
+			glog.Infof("SR PRODUCE REQUEST: topic=%s partitionsCount=%d apiVersion=%d",
+				topicName, partitionsCount, apiVersion)
+		}
 
 		// Check if topic exists, auto-create if it doesn't (simulates auto.create.topics.enable=true)
 		topicExists := h.seaweedMQHandler.TopicExists(topicName)
@@ -148,12 +156,24 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 
 			if !topicExists {
 				errorCode = 3 // UNKNOWN_TOPIC_OR_PARTITION
+				if isSchemasTopic {
+					glog.Errorf("SR PRODUCE ERROR: topic=%s partition=%d - UNKNOWN_TOPIC_OR_PARTITION",
+						topicName, partitionID)
+				}
 			} else {
 				// Process the record set
 				recordCount, _, parseErr := h.parseRecordSet(recordSetData) // totalSize unused
 				if parseErr != nil {
 					errorCode = 42 // INVALID_RECORD
+					if isSchemasTopic {
+						glog.Errorf("SR PRODUCE ERROR: topic=%s partition=%d - INVALID_RECORD: %v",
+							topicName, partitionID, parseErr)
+					}
 				} else if recordCount > 0 {
+					if isSchemasTopic {
+						glog.Infof("SR PRODUCE: topic=%s partition=%d recordCount=%d recordSetSize=%d",
+							topicName, partitionID, recordCount, recordSetSize)
+					}
 					// Use SeaweedMQ integration
 					offset, err := h.produceToSeaweedMQ(topicName, int32(partitionID), recordSetData)
 					if err != nil {
@@ -163,8 +183,16 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 							time.Sleep(200 * time.Millisecond) // Brief delay for schema validation failures
 						}
 						errorCode = 1 // UNKNOWN_SERVER_ERROR
+						if isSchemasTopic {
+							glog.Errorf("SR PRODUCE ERROR: topic=%s partition=%d - produceToSeaweedMQ failed: %v",
+								topicName, partitionID, err)
+						}
 					} else {
 						baseOffset = offset
+						if isSchemasTopic {
+							glog.Infof("SR PRODUCE SUCCESS: topic=%s partition=%d baseOffset=%d",
+								topicName, partitionID, baseOffset)
+						}
 					}
 				}
 			}
@@ -670,9 +698,16 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 		topicName := string(requestBody[offset : offset+int(topicNameSize)])
 		offset += int(topicNameSize)
 
+		isSchemasTopic := strings.HasPrefix(topicName, "_schemas")
+
 		// Parse partitions count
 		partitionsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 		offset += 4
+
+		if isSchemasTopic {
+			glog.Infof("SR PRODUCE REQUEST V2+: topic=%s partitionsCount=%d apiVersion=%d",
+				topicName, partitionsCount, apiVersion)
+		}
 
 		// Response: topic name (STRING: 2 bytes length + data)
 		response = append(response, byte(topicNameSize>>8), byte(topicNameSize))
@@ -709,12 +744,24 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 
 			if !topicExists {
 				errorCode = 3 // UNKNOWN_TOPIC_OR_PARTITION
+				if isSchemasTopic {
+					glog.Errorf("SR PRODUCE ERROR V2+: topic=%s partition=%d - UNKNOWN_TOPIC_OR_PARTITION",
+						topicName, partitionID)
+				}
 			} else {
 				// Process the record set (lenient parsing)
 				recordCount, _, parseErr := h.parseRecordSet(recordSetData) // totalSize unused
 				if parseErr != nil {
 					errorCode = 42 // INVALID_RECORD
+					if isSchemasTopic {
+						glog.Errorf("SR PRODUCE ERROR V2+: topic=%s partition=%d - INVALID_RECORD: %v",
+							topicName, partitionID, parseErr)
+					}
 				} else if recordCount > 0 {
+					if isSchemasTopic {
+						glog.Infof("SR PRODUCE V2+: topic=%s partition=%d recordCount=%d recordSetSize=%d",
+							topicName, partitionID, recordCount, recordSetSize)
+					}
 					// Extract all records from the record set and publish each one
 					records := h.extractAllRecords(recordSetData)
 					if len(records) > 0 {
@@ -739,6 +786,10 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 								time.Sleep(200 * time.Millisecond) // Brief delay for schema validation failures
 							}
 							errorCode = 1 // UNKNOWN_SERVER_ERROR
+							if isSchemasTopic {
+								glog.Errorf("SR PRODUCE ERROR V2+: topic=%s partition=%d - produceSchemaBasedRecord failed: %v",
+									topicName, partitionID, prodErr)
+							}
 							break
 						}
 						if idx == 0 {
@@ -748,6 +799,10 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 					}
 
 					_ = firstOffsetSet
+					if isSchemasTopic && errorCode == 0 {
+						glog.Infof("SR PRODUCE SUCCESS V2+: topic=%s partition=%d baseOffset=%d recordCount=%d",
+							topicName, partitionID, baseOffset, len(records))
+					}
 				}
 			}
 
