@@ -309,7 +309,7 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 				processedObjects[objectKey] = true
 				processedObjects[normalizedObjectKey] = true
 
-				glog.V(0).Infof("Found .versions directory: objectKey=%s, normalizedObjectKey=%s, marked as processed", objectKey, normalizedObjectKey)
+				glog.V(2).Infof("Found .versions directory for object %s (normalized: %s)", objectKey, normalizedObjectKey)
 
 				versions, err := s3a.getObjectVersionList(bucket, normalizedObjectKey)
 				if err != nil {
@@ -397,49 +397,42 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 			// Skip if this object already has a .versions directory (already processed)
 			// Check both normalized and original keys for backward compatibility
 			if processedObjects[objectKey] || processedObjects[normalizedObjectKey] {
-				glog.V(0).Infof("Skipping already processed object: objectKey=%s, normalizedObjectKey=%s, inMap[objectKey]=%v, inMap[normalizedObjectKey]=%v",
-					objectKey, normalizedObjectKey, processedObjects[objectKey], processedObjects[normalizedObjectKey])
+				glog.V(2).Infof("Skipping already processed object %s (normalized: %s)", objectKey, normalizedObjectKey)
 				continue
 			}
 
 			// This is a pre-versioning object - treat it as a version with VersionId="null"
-			glog.V(0).Infof("Processing pre-versioning object: objectKey=%s, normalizedObjectKey=%s", objectKey, normalizedObjectKey)
+			glog.V(2).Infof("Processing pre-versioning object: objectKey=%s, normalizedObjectKey=%s", objectKey, normalizedObjectKey)
 
-			// Check if this null version should be marked as latest
-			// It's only latest if there's no .versions directory OR no latest version metadata
-			isLatest := true
+			// Check if a .versions directory exists for this object
 			versionsObjectPath := normalizedObjectKey + ".versions"
-			if versionsEntry, err := s3a.getEntry(currentPath, versionsObjectPath); err == nil {
-				// .versions directory exists, check if there's latest version metadata
-				if versionsEntry.Extended != nil {
-					if _, hasLatest := versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey]; hasLatest {
-						// There is a latest version in the .versions directory, so null is not latest
-						isLatest = false
-						glog.V(2).Infof("findVersionsRecursively: null version for %s is not latest due to versioned objects", normalizedObjectKey)
-					}
-				}
+			_, versionsErr := s3a.getEntry(currentPath, versionsObjectPath)
+			if versionsErr == nil {
+				// .versions directory exists - this means the object has been versioned
+				// Skip the pre-versioning file entirely, as all versions (including any null version)
+				// should be retrieved from the .versions directory
+				glog.V(2).Infof("findVersionsRecursively: skipping pre-versioning file for %s, .versions directory exists", normalizedObjectKey)
+
+				// Mark as processed to prevent duplicate processing
+				processedObjects[objectKey] = true
+				processedObjects[normalizedObjectKey] = true
+				continue
 			}
+
+			// No .versions directory exists, so this is a true pre-versioning object
+			// Add it as a null version with IsLatest=true
+			isLatest := true
 
 			// Check for duplicate version IDs and skip if already seen
 			// Use normalized key for deduplication to match how other version operations work
 			versionKey := normalizedObjectKey + ":null"
 			if seenVersionIds[versionKey] {
-				glog.Warningf("findVersionsRecursively: duplicate null version for object %s detected (objectKey=%s, normalizedObjectKey=%s, versionKey=%s), skipping", normalizedObjectKey, objectKey, normalizedObjectKey, versionKey)
+				glog.Warningf("findVersionsRecursively: duplicate null version for object %s detected, skipping", normalizedObjectKey)
 				continue
 			}
 			seenVersionIds[versionKey] = true
 
 			etag := s3a.calculateETagFromChunks(entry.Chunks)
-
-			// Log when adding null version to help debug duplicates
-			hasVersionMeta := false
-			if entry.Extended != nil {
-				if _, ok := entry.Extended[s3_constants.ExtVersionIdKey]; ok {
-					hasVersionMeta = true
-				}
-			}
-			glog.V(0).Infof("Adding null version: objectKey=%s, normalizedObjectKey=%s, versionKey=%s, isLatest=%v, mtime=%d, hasVersionMeta=%v, entryPath=%s",
-				objectKey, normalizedObjectKey, versionKey, isLatest, entry.Attributes.Mtime, hasVersionMeta, entryPath)
 
 			versionEntry := &VersionEntry{
 				Key:          normalizedObjectKey, // Use normalized key for consistency
