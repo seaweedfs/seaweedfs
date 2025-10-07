@@ -99,19 +99,35 @@ check_schema_registry() {
         return 0
     fi
     
-    if check_http_service "$SCHEMA_REGISTRY_URL/subjects" "Schema Registry"; then
-        # Additional check: ensure schema registry is connected to Kafka
-        local subjects
-        subjects=$(curl -s "$SCHEMA_REGISTRY_URL/subjects" 2>/dev/null || echo "[]")
-        
-        # Schema registry should at least return an empty array
-        if [[ "$subjects" == "[]" ]]; then
+    # FIXED: Wait for Docker healthcheck to report "healthy", not just "Up"
+    # Schema Registry has a 30s start_period, so we need to wait for the actual healthcheck
+    local health_status
+    health_status=$(docker inspect loadtest-schema-registry --format='{{.State.Health.Status}}' 2>/dev/null || echo "none")
+    
+    # If container has no healthcheck or healthcheck is not yet healthy, check HTTP directly
+    if [[ "$health_status" == "healthy" ]]; then
+        # Container reports healthy, do a final verification
+        if check_http_service "$SCHEMA_REGISTRY_URL/subjects" "Schema Registry"; then
             return 0
-        elif echo "$subjects" | grep -q '\['; then
-            return 0
-        else
-            log_warning "Schema Registry is not properly connected"
-            return 1
+        fi
+    elif [[ "$health_status" == "starting" ]]; then
+        # Still in startup period, wait longer
+        return 1
+    elif [[ "$health_status" == "none" ]]; then
+        # No healthcheck defined (shouldn't happen), fall back to HTTP check
+        if check_http_service "$SCHEMA_REGISTRY_URL/subjects" "Schema Registry"; then
+            local subjects
+            subjects=$(curl -s "$SCHEMA_REGISTRY_URL/subjects" 2>/dev/null || echo "[]")
+            
+            # Schema registry should at least return an empty array
+            if [[ "$subjects" == "[]" ]]; then
+                return 0
+            elif echo "$subjects" | grep -q '\['; then
+                return 0
+            else
+                log_warning "Schema Registry is not properly connected"
+                return 1
+            fi
         fi
     fi
     return 1
