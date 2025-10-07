@@ -597,7 +597,9 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 	go func() {
 		defer wg.Done()
 		for req := range dataChan {
+			glog.Infof("[%s] Data plane processing correlation=%d, apiKey=%d", connectionID, req.correlationID, req.apiKey)
 			response, err := h.processRequestSync(req)
+			glog.Infof("[%s] Data plane completed correlation=%d, sending to responseChan", connectionID, req.correlationID)
 			// Use select with context to avoid sending on closed channel
 			select {
 			case responseChan <- &kafkaResponse{
@@ -607,11 +609,13 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 				response:      response,
 				err:           err,
 			}:
-				// Successfully sent
+				glog.Infof("[%s] Data plane sent correlation=%d to responseChan", connectionID, req.correlationID)
 			case <-ctx.Done():
 				// Connection closed, stop processing
 				Debug("[%s] Data plane: context cancelled, discarding response for correlation=%d", connectionID, req.correlationID)
 				return
+			case <-time.After(5 * time.Second):
+				glog.Errorf("[%s] DEADLOCK: Data plane timeout sending correlation=%d to responseChan (buffer full?)", connectionID, req.correlationID)
 			}
 		}
 	}()
