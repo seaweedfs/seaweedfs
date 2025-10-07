@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -79,6 +80,9 @@ func (h *Handler) handleFindCoordinatorV0(correlationID uint32, requestBody []by
 
 	coordinatorKey := string(requestBody[offset : offset+int(coordinatorKeySize)])
 	offset += int(coordinatorKeySize)
+
+	// Sanitize coordinator key - remove null bytes and trim whitespace
+	coordinatorKey = sanitizeCoordinatorKey(coordinatorKey)
 
 	// Parse coordinator type (v1+ only, default to 0 for consumer groups in v0)
 	_ = int8(0) // Consumer group coordinator (unused in v0)
@@ -162,6 +166,9 @@ func (h *Handler) handleFindCoordinatorV2(correlationID uint32, requestBody []by
 
 	coordinatorKey := string(requestBody[offset : offset+int(coordinatorKeySize)])
 	offset += int(coordinatorKeySize)
+
+	// Sanitize coordinator key - remove null bytes and trim whitespace
+	coordinatorKey = sanitizeCoordinatorKey(coordinatorKey)
 
 	// Coordinator type present in v1+ (INT8). If absent, default 0.
 	var coordinatorType byte = 0
@@ -285,6 +292,9 @@ func (h *Handler) handleFindCoordinatorV3(correlationID uint32, requestBody []by
 
 	coordinatorKey := string(requestBody[offset : offset+int(coordinatorKeyLen)])
 	offset += int(coordinatorKeyLen)
+
+	// Sanitize coordinator key - remove null bytes and trim whitespace
+	coordinatorKey = sanitizeCoordinatorKey(coordinatorKey)
 
 	// Parse coordinator type (INT8)
 	var coordinatorType byte = 0
@@ -533,4 +543,16 @@ func (h *Handler) getClientConnectableHost(coordinatorHost string) string {
 
 	// It's already a hostname, return as-is
 	return coordinatorHost
+}
+
+// sanitizeCoordinatorKey removes null bytes and trims whitespace from coordinator keys
+// to prevent issues with filesystem paths and URL encoding
+func sanitizeCoordinatorKey(key string) string {
+	// Remove null bytes - these cause issues with filenames and URLs
+	key = strings.ReplaceAll(key, "\x00", "")
+	
+	// Trim leading and trailing whitespace
+	key = strings.TrimSpace(key)
+	
+	return key
 }

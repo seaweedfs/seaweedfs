@@ -1013,6 +1013,9 @@ func (h *Handler) parseSyncGroupRequest(data []byte, apiVersion uint16) (*SyncGr
 		offset += groupIDLength
 		Debug("SyncGroup v%d: parsed GroupID='%s' (non-flexible)", apiVersion, groupID)
 	}
+	
+	// Sanitize group ID - remove null bytes and trim whitespace
+	groupID = sanitizeCoordinatorKey(groupID)
 
 	// Generation ID (4 bytes) - always fixed-length
 	if offset+4 > len(data) {

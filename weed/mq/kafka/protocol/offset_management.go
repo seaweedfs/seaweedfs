@@ -274,6 +274,9 @@ func (h *Handler) parseOffsetCommitRequest(data []byte) (*OffsetCommitRequest, e
 	}
 	groupID := string(data[offset : offset+groupIDLength])
 	offset += groupIDLength
+	
+	// Sanitize group ID - remove null bytes and trim whitespace
+	groupID = sanitizeCoordinatorKey(groupID)
 
 	// Generation ID (4 bytes)
 	if offset+4 > len(data) {
@@ -406,6 +409,9 @@ func (h *Handler) parseOffsetFetchRequest(data []byte) (*OffsetFetchRequest, err
 	}
 	groupID := string(data[offset : offset+groupIDLength])
 	offset += groupIDLength
+	
+	// Sanitize group ID - remove null bytes and trim whitespace
+	groupID = sanitizeCoordinatorKey(groupID)
 
 	// Parse Topics array - classic encoding (INT32 count) for v0-v5
 	if len(data) < offset+4 {
