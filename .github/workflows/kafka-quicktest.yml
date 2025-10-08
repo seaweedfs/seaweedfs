@@ -83,19 +83,34 @@ jobs:
         echo "========================================="
         echo "Service Logs"
         echo "========================================="
-        docker compose logs --tail=100 seaweedfs-master || echo "No master logs"
+        
+        echo "Checking running containers..."
+        docker compose ps || true
+        
         echo "========================================="
-        docker compose logs --tail=100 seaweedfs-mq-broker || echo "No broker logs"
+        echo "Master Logs"
         echo "========================================="
-        echo "Kafka Gateway Logs (Full - Critical for Schema Registry debugging)"
+        docker compose logs --tail=100 seaweedfs-master 2>&1 || echo "No master logs available"
+        
         echo "========================================="
-        docker compose logs kafka-gateway || echo "No gateway logs"
+        echo "MQ Broker Logs (Last 100 lines)"
         echo "========================================="
-        echo "Schema Registry Logs (Full)"
+        docker compose logs --tail=100 seaweedfs-mq-broker 2>&1 || echo "No broker logs available"
+        
         echo "========================================="
-        docker compose logs schema-registry || echo "No schema registry logs"
+        echo "Kafka Gateway Logs (FULL - Critical for debugging)"
         echo "========================================="
-        docker compose logs --tail=100 kafka-client-loadtest || echo "No loadtest logs"
+        docker compose logs kafka-gateway 2>&1 || echo "ERROR: Could not retrieve kafka-gateway logs"
+        
+        echo "========================================="
+        echo "Schema Registry Logs (FULL)"
+        echo "========================================="
+        docker compose logs schema-registry 2>&1 || echo "ERROR: Could not retrieve schema-registry logs"
+        
+        echo "========================================="
+        echo "Load Test Logs"
+        echo "========================================="
+        docker compose logs --tail=100 kafka-client-loadtest 2>&1 || echo "No loadtest logs available"
 
     - name: Cleanup
       if: always()
