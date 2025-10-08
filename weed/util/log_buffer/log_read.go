@@ -192,7 +192,7 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 			logBuffer.ReleaseMemory(bytesBuf)
 		}
 		bytesBuf, offset, err = logBuffer.ReadFromBuffer(lastReadPosition)
-		glog.V(4).Infof("🔍 DEBUG: ReadFromBuffer returned bytesBuf=%v, offset=%d, err=%v", bytesBuf != nil, offset, err)
+		glog.V(4).Infof("ReadFromBuffer for %s returned bytesBuf=%v, offset=%d, err=%v", readerName, bytesBuf != nil, offset, err)
 		if err == ResumeFromDiskError {
 			// Try to read from disk if readFromDiskFn is available
 			if logBuffer.ReadFromDiskFn != nil {

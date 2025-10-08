@@ -396,3 +396,146 @@ func TestReadFromBuffer_InitializedFromDisk(t *testing.T) {
 		t.Logf("  This ensures Schema Registry reads correct data from disk instead of getting new messages")
 	}
 }
+
+// TestLoopProcessLogDataWithOffset_DiskReadRetry tests that when a subscriber
+// reads from disk before flush completes, it continues to retry disk reads
+// and eventually finds the data after flush completes.
+// This reproduces the Schema Registry timeout issue on first start.
+func TestLoopProcessLogDataWithOffset_DiskReadRetry(t *testing.T) {
+	diskReadCallCount := 0
+	diskReadMu := sync.Mutex{}
+	dataFlushedToDisk := false
+	var flushedData []*filer_pb.LogEntry
+
+	// Create a readFromDiskFn that simulates the race condition
+	readFromDiskFn := func(startPosition MessagePosition, stopTsNs int64, eachLogEntryFn EachLogEntryFuncType) (MessagePosition, bool, error) {
+		diskReadMu.Lock()
+		diskReadCallCount++
+		callNum := diskReadCallCount
+		hasData := dataFlushedToDisk
+		diskReadMu.Unlock()
+
+		t.Logf("📖 DISK READ #%d: startOffset=%d, dataFlushedToDisk=%v", callNum, startPosition.Offset, hasData)
+
+		if !hasData {
+			// Simulate: data not yet on disk (flush hasn't completed)
+			t.Logf("  → No data found (flush not completed yet)")
+			return startPosition, false, nil
+		}
+
+		// Data is now on disk, process it
+		t.Logf("  → Found %d entries on disk", len(flushedData))
+		for _, entry := range flushedData {
+			if entry.Offset >= startPosition.Offset {
+				isDone, err := eachLogEntryFn(entry)
+				if err != nil || isDone {
+					return NewMessagePositionFromOffset(entry.Offset + 1), isDone, err
+				}
+			}
+		}
+		return NewMessagePositionFromOffset(int64(len(flushedData))), false, nil
+	}
+
+	flushFn := func(logBuffer *LogBuffer, startTime, stopTime time.Time, buf []byte, minOffset, maxOffset int64) {
+		t.Logf("💾 FLUSH: minOffset=%d maxOffset=%d size=%d bytes", minOffset, maxOffset, len(buf))
+		// Simulate writing to disk
+		diskReadMu.Lock()
+		dataFlushedToDisk = true
+		// Parse the buffer and add entries to flushedData
+		// For this test, we'll just create mock entries
+		flushedData = append(flushedData, &filer_pb.LogEntry{
+			Key:    []byte("key-0"),
+			Data:   []byte("message-0"),
+			TsNs:   time.Now().UnixNano(),
+			Offset: 0,
+		})
+		diskReadMu.Unlock()
+	}
+
+	logBuffer := NewLogBuffer("test", 1*time.Minute, flushFn, readFromDiskFn, nil)
+	defer logBuffer.ShutdownLogBuffer()
+
+	// Simulate the race condition:
+	// 1. Subscriber starts reading from offset 0
+	// 2. Data is not yet flushed
+	// 3. Loop calls readFromDiskFn → no data found
+	// 4. A bit later, data gets flushed
+	// 5. Loop should continue and call readFromDiskFn again
+
+	receivedMessages := 0
+	mu := sync.Mutex{}
+	maxIterations := 50 // Allow up to 50 iterations (500ms with 10ms sleep each)
+	iterationCount := 0
+
+	waitForDataFn := func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		iterationCount++
+		// Stop after receiving message or max iterations
+		return receivedMessages == 0 && iterationCount < maxIterations
+	}
+
+	eachLogEntryFn := func(logEntry *filer_pb.LogEntry, offset int64) (bool, error) {
+		mu.Lock()
+		receivedMessages++
+		mu.Unlock()
+		t.Logf("✉️  RECEIVED: offset=%d key=%s", offset, string(logEntry.Key))
+		return true, nil // Stop after first message
+	}
+
+	// Start the reader in a goroutine
+	var readerWg sync.WaitGroup
+	readerWg.Add(1)
+	go func() {
+		defer readerWg.Done()
+		startPosition := NewMessagePositionFromOffset(0)
+		_, isDone, err := logBuffer.LoopProcessLogDataWithOffset("test-subscriber", startPosition, 0, waitForDataFn, eachLogEntryFn)
+		t.Logf("📋 Reader finished: isDone=%v, err=%v", isDone, err)
+	}()
+
+	// Wait a bit to let the first disk read happen (returns no data)
+	time.Sleep(50 * time.Millisecond)
+
+	// Now add data and flush it
+	t.Logf("➕ Adding message to buffer...")
+	logBuffer.AddToBuffer(&mq_pb.DataMessage{
+		Key:   []byte("key-0"),
+		Value: []byte("message-0"),
+		TsNs:  time.Now().UnixNano(),
+	})
+
+	// Force flush
+	t.Logf("🔄 Force flushing...")
+	logBuffer.ForceFlush()
+
+	// Wait for reader to finish
+	readerWg.Wait()
+
+	// Check results
+	diskReadMu.Lock()
+	finalDiskReadCount := diskReadCallCount
+	diskReadMu.Unlock()
+
+	mu.Lock()
+	finalReceivedMessages := receivedMessages
+	finalIterations := iterationCount
+	mu.Unlock()
+
+	t.Logf("\n📊 RESULTS:")
+	t.Logf("  Disk reads: %d", finalDiskReadCount)
+	t.Logf("  Received messages: %d", finalReceivedMessages)
+	t.Logf("  Loop iterations: %d", finalIterations)
+
+	if finalDiskReadCount < 2 {
+		t.Errorf("CRITICAL BUG REPRODUCED: Disk read was only called %d time(s)", finalDiskReadCount)
+		t.Errorf("Expected: Multiple disk reads as the loop continues after flush completes")
+		t.Errorf("This is why Schema Registry times out - it reads once before flush, never re-reads after flush")
+	}
+
+	if finalReceivedMessages == 0 {
+		t.Errorf("SCHEMA REGISTRY TIMEOUT REPRODUCED: No messages received even after flush")
+		t.Errorf("The subscriber is stuck because disk reads are not retried")
+	} else {
+		t.Logf("✓ SUCCESS: Message received after %d disk read attempts", finalDiskReadCount)
+	}
+}
