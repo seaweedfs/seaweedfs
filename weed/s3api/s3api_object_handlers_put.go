@@ -483,12 +483,8 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 		return "", s3err.ErrInvalidRequest
 	}
 
-	// Update the entry with metadata
-	err = s3a.mkFile(bucketDir, normalizedObject, entry.Chunks, func(updatedEntry *filer_pb.Entry) {
-		updatedEntry.Extended = entry.Extended
-		updatedEntry.Attributes = entry.Attributes
-		updatedEntry.Chunks = entry.Chunks
-	})
+	// Update the entry with metadata (use updateEntry instead of mkFile since the file already exists)
+	err = s3a.updateEntry(bucketDir, entry)
 	if err != nil {
 		glog.Errorf("putSuspendedVersioningObject: failed to update object metadata: %v", err)
 		return "", s3err.ErrInternalError
@@ -558,12 +554,8 @@ func (s3a *S3ApiServer) updateIsLatestFlagsForSuspendedVersioning(bucket, object
 		delete(versionsEntry.Extended, s3_constants.ExtLatestVersionIdKey)
 		delete(versionsEntry.Extended, s3_constants.ExtLatestVersionFileNameKey)
 
-		// Update the .versions directory entry
-		err = s3a.mkFile(bucketDir, versionsObjectPath, versionsEntry.Chunks, func(updatedEntry *filer_pb.Entry) {
-			updatedEntry.Extended = versionsEntry.Extended
-			updatedEntry.Attributes = versionsEntry.Attributes
-			updatedEntry.Chunks = versionsEntry.Chunks
-		})
+		// Update the .versions directory entry (use updateEntry since directory already exists)
+		err = s3a.updateEntry(bucketDir, versionsEntry)
 		if err != nil {
 			return fmt.Errorf("failed to update .versions directory metadata: %v", err)
 		}
@@ -699,12 +691,8 @@ func (s3a *S3ApiServer) updateLatestVersionInDirectory(bucket, object, versionId
 	versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey] = []byte(versionId)
 	versionsEntry.Extended[s3_constants.ExtLatestVersionFileNameKey] = []byte(versionFileName)
 
-	// Update the .versions directory entry with metadata
-	err = s3a.mkFile(bucketDir, versionsObjectPath, versionsEntry.Chunks, func(updatedEntry *filer_pb.Entry) {
-		updatedEntry.Extended = versionsEntry.Extended
-		updatedEntry.Attributes = versionsEntry.Attributes
-		updatedEntry.Chunks = versionsEntry.Chunks
-	})
+	// Update the .versions directory entry with metadata (use updateEntry since the directory already exists)
+	err = s3a.updateEntry(bucketDir, versionsEntry)
 	if err != nil {
 		glog.Errorf("updateLatestVersionInDirectory: failed to update .versions directory metadata: %v", err)
 		return fmt.Errorf("failed to update .versions directory metadata: %w", err)
