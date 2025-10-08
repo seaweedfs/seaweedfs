@@ -224,6 +224,42 @@ func TestReadFromBuffer_OldOffsetWithNoPrevBuffers(t *testing.T) {
 	}
 }
 
+// TestReadFromBuffer_EmptyBufferAtCurrentOffset tests Bug #2
+// where an empty buffer at the current offset would return empty data instead of ResumeFromDiskError
+func TestReadFromBuffer_EmptyBufferAtCurrentOffset(t *testing.T) {
+	lb := NewLogBuffer("_schemas", time.Hour, nil, nil, func() {})
+
+	// Simulate buffer state where data 0-3 was published and flushed, but buffer NOT advanced yet:
+	// - bufferStartOffset = 0 (buffer hasn't been advanced after flush)
+	// - offset = 4 (next offset to assign - data 0-3 exists)
+	// - pos = 0 (buffer is empty after flush)
+	// This happens in the window between flush and buffer advancement
+	lb.bufferStartOffset = 0
+	lb.offset = 4
+	lb.pos = 0
+
+	// Schema Registry requests offset 0 (which appears to be in range [0, 4])
+	requestPosition := NewMessagePositionFromOffset(0)
+
+	// BUG: Without fix, this returns empty buffer instead of checking disk
+	// FIX: Should return ResumeFromDiskError because buffer is empty (pos=0) despite valid range
+	buf, batchIdx, err := lb.ReadFromBuffer(requestPosition)
+
+	t.Logf("DEBUG: ReadFromBuffer returned: buf=%v, batchIdx=%d, err=%v", buf != nil, batchIdx, err)
+	t.Logf("DEBUG: Buffer state: bufferStartOffset=%d, offset=%d, pos=%d",
+		lb.bufferStartOffset, lb.offset, lb.pos)
+
+	if err != ResumeFromDiskError {
+		if buf == nil || len(buf.Bytes()) == 0 {
+			t.Errorf("CRITICAL BUG #2 REPRODUCED: Empty buffer should return ResumeFromDiskError, got err=%v, buf=%v\n"+
+				"Without the fix, Schema Registry gets empty data instead of reading from disk!",
+				err, buf != nil)
+		}
+	} else {
+		t.Logf("✓ BUG #2 FIX VERIFIED: Empty buffer correctly returns ResumeFromDiskError to check disk")
+	}
+}
+
 // TestReadFromBuffer_OffsetRanges tests various offset range scenarios
 func TestReadFromBuffer_OffsetRanges(t *testing.T) {
 	lb := NewLogBuffer("test", time.Hour, nil, nil, func() {})

@@ -413,6 +413,12 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 
 		// Check if the requested offset is in the current buffer
 		if requestedOffset >= logBuffer.bufferStartOffset && requestedOffset <= logBuffer.offset {
+			// CRITICAL FIX: If current buffer is empty AND has valid offset range (offset > 0),
+			// it means data was flushed. Check disk first.
+			// But if offset == 0 and bufferStartOffset == 0, this is a fresh empty buffer - wait for data.
+			if logBuffer.pos == 0 && logBuffer.offset > 0 {
+				return nil, -2, ResumeFromDiskError
+			}
 			return copiedBytes(logBuffer.buf[:logBuffer.pos]), logBuffer.offset, nil
 		}
 
