@@ -67,6 +67,14 @@ type TopicPartitionKey struct {
 	Partition int32
 }
 
+// contextKey is a type for context keys to avoid collisions
+type contextKey string
+
+const (
+	// connContextKey is the context key for storing ConnectionContext
+	connContextKey contextKey = "connectionContext"
+)
+
 // kafkaRequest represents a Kafka API request to be processed
 type kafkaRequest struct {
 	correlationID uint32
@@ -74,6 +82,7 @@ type kafkaRequest struct {
 	apiVersion    uint16
 	requestBody   []byte
 	ctx           context.Context
+	connContext   *ConnectionContext // Per-connection context to avoid race conditions
 }
 
 // kafkaResponse represents a Kafka API response
@@ -233,8 +242,9 @@ type Handler struct {
 	// Gateway address for coordinator registry
 	gatewayAddress string
 
-	// Connection context for tracking client information
-	connContext *ConnectionContext
+	// Connection contexts stored per connection ID (thread-safe)
+	// Replaces the race-prone shared connContext field
+	connContexts sync.Map // map[string]*ConnectionContext
 
 	// Schema Registry URL for delayed initialization
 	schemaRegistryURL string
@@ -433,16 +443,33 @@ func isDataPlaneAPI(apiKey uint16) bool {
 
 // GetConnectionContext returns the current connection context converted to integration.ConnectionContext
 // This implements the integration.ProtocolHandler interface
+//
+// NOTE: Since this method doesn't receive a context parameter, it returns a "best guess" connection context.
+// In single-connection scenarios (like tests), this works correctly. In high-concurrency scenarios with many
+// simultaneous connections, this may return a connection context from a different connection.
+// For a proper fix, the integration.ProtocolHandler interface would need to be updated to pass context.Context.
 func (h *Handler) GetConnectionContext() *integration.ConnectionContext {
-	if h.connContext == nil {
+	// Try to find any active connection context
+	// In most cases (single connection, or low concurrency), this will return the correct context
+	var connCtx *ConnectionContext
+	h.connContexts.Range(func(key, value interface{}) bool {
+		if ctx, ok := value.(*ConnectionContext); ok {
+			connCtx = ctx
+			return false // Stop iteration after finding first context
+		}
+		return true
+	})
+
+	if connCtx == nil {
 		return nil
 	}
+
 	// Convert protocol.ConnectionContext to integration.ConnectionContext
 	return &integration.ConnectionContext{
-		ClientID:      h.connContext.ClientID,
-		ConsumerGroup: h.connContext.ConsumerGroup,
-		MemberID:      h.connContext.MemberID,
-		BrokerClient:  h.connContext.BrokerClient,
+		ClientID:      connCtx.ClientID,
+		ConsumerGroup: connCtx.ConsumerGroup,
+		MemberID:      connCtx.MemberID,
+		BrokerClient:  connCtx.BrokerClient,
 	}
 }
 
@@ -468,20 +495,17 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		connBrokerClient = nil
 	}
 
-	// RACE CONDITION FIX: Create connection-local context instead of using shared field
-	// Store it in a local variable that won't be overwritten by other connections
+	// RACE CONDITION FIX: Create connection-local context and pass through request pipeline
+	// Store in thread-safe map to enable lookup from methods that don't have direct access
 	connContext := &ConnectionContext{
 		RemoteAddr:   conn.RemoteAddr(),
 		LocalAddr:    conn.LocalAddr(),
 		ConnectionID: connectionID,
 		BrokerClient: connBrokerClient,
 	}
-	// KNOWN ISSUE: Setting shared h.connContext creates race condition with concurrent connections
-	// Multiple connections can overwrite each other's context (e.g., ClientID, ConsumerGroup, MemberID)
-	// This is especially problematic in JoinGroup which writes to h.connContext during request processing
-	// TODO: Refactor to pass connContext as parameter through all handler methods to eliminate race
-	// For now, this works in most cases but can cause incorrect context association under high concurrency
-	h.connContext = connContext
+
+	// Store in thread-safe map for later retrieval
+	h.connContexts.Store(connectionID, connContext)
 
 	Debug("[%s] NEW CONNECTION ESTABLISHED", connectionID)
 
@@ -493,8 +517,9 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 				Error("[%s] Error closing BrokerClient: %v", connectionID, closeErr)
 			}
 		}
+		// Remove connection context from map
+		h.connContexts.Delete(connectionID)
 		RecordDisconnectionMetrics()
-		h.connContext = nil // Clear connection context
 		conn.Close()
 	}()
 
@@ -963,9 +988,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 					requestBody = messageBuf[bodyOffset:]
 				} else if header.ClientID != nil {
 					// Store client ID in connection context for use in fetch requests
-					if h.connContext != nil {
-						h.connContext.ClientID = *header.ClientID
-					}
+					connContext.ClientID = *header.ClientID
 					Debug("Client ID: %s", *header.ClientID)
 				}
 			}
@@ -976,12 +999,16 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		// Data plane: Can be slow (Fetch, Produce)
 		Debug("API REQUEST - Key: %d (%s), Version: %d, Correlation: %d", apiKey, getAPIName(APIKey(apiKey)), apiVersion, correlationID)
 
+		// Attach connection context to the Go context for retrieval in nested calls
+		ctxWithConn := context.WithValue(ctx, connContextKey, connContext)
+
 		req := &kafkaRequest{
 			correlationID: correlationID,
 			apiKey:        apiKey,
 			apiVersion:    apiVersion,
 			requestBody:   requestBody,
-			ctx:           ctx,
+			ctx:           ctxWithConn,
+			connContext:   connContext, // Pass per-connection context to avoid race conditions
 		}
 
 		// Track this correlation ID in the order queue for response ordering
@@ -1050,7 +1077,7 @@ func (h *Handler) processRequestSync(req *kafkaRequest) ([]byte, error) {
 
 	case APIKeyJoinGroup:
 		Debug("-> JoinGroup v%d", req.apiVersion)
-		response, err = h.handleJoinGroup(req.correlationID, req.apiVersion, req.requestBody)
+		response, err = h.handleJoinGroup(req.connContext, req.correlationID, req.apiVersion, req.requestBody)
 
 	case APIKeySyncGroup:
 		Debug("-> SyncGroup v%d", req.apiVersion)

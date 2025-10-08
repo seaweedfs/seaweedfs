@@ -52,7 +52,7 @@ type JoinGroupMember struct {
 
 // Error codes for JoinGroup are imported from errors.go
 
-func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
+func (h *Handler) handleJoinGroup(connContext *ConnectionContext, correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
 	// Parse JoinGroup request
 	Debug("JoinGroup v%d: Starting request parsing for correlation %d", apiVersion, correlationID)
 	request, err := h.parseJoinGroupRequest(requestBody, apiVersion)
@@ -151,7 +151,7 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 	}
 
 	// Extract client host from connection context
-	clientHost := ExtractClientHost(h.connContext)
+	clientHost := ExtractClientHost(connContext)
 
 	// Create or update member with enhanced metadata parsing
 	var groupInstanceID *string
@@ -182,11 +182,9 @@ func (h *Handler) handleJoinGroup(correlationID uint32, apiVersion uint16, reque
 	group.Members[memberID] = member
 
 	// Store consumer group and member ID in connection context for use in fetch requests
-	if h.connContext != nil {
-		h.connContext.ConsumerGroup = request.GroupID
-		h.connContext.MemberID = memberID
-		Debug("JoinGroup: Stored consumer group '%s' and member ID '%s' in connection context", request.GroupID, memberID)
-	}
+	connContext.ConsumerGroup = request.GroupID
+	connContext.MemberID = memberID
+	Debug("JoinGroup: Stored consumer group '%s' and member ID '%s' in connection context", request.GroupID, memberID)
 
 	// Store protocol metadata for leader
 	if len(request.GroupProtocols) > 0 {
@@ -1090,21 +1088,6 @@ func (h *Handler) parseSyncGroupRequest(data []byte, apiVersion uint16) (*SyncGr
 		}
 	}
 
-	// CRITICAL FIX: In flexible versions, parse tagged fields after group_instance_id and before assignments
-	if isFlexible && apiVersion >= 4 {
-		if offset < len(data) {
-			Debug("SyncGroup v%d: ABOUT TO PARSE member-level tagged fields - offset=%d, data[offset:offset+10]=%v", apiVersion, offset, data[offset:min(offset+10, len(data))])
-			_, consumed, err := DecodeTaggedFields(data[offset:])
-			if err == nil {
-				offset += consumed
-				Debug("SyncGroup v%d: parsed member-level tagged fields after group_instance_id, consumed %d bytes", apiVersion, consumed)
-			} else {
-				Debug("SyncGroup v%d: member-level tagged fields parsing FAILED at offset %d: %v", apiVersion, offset, err)
-				Debug("SyncGroup v%d: data at failed offset: %v", apiVersion, data[offset:min(offset+20, len(data))])
-			}
-		}
-	}
-
 	// Parse assignments array if present (leader sends assignments)
 	assignments := make([]GroupAssignment, 0)
 
@@ -1178,7 +1161,7 @@ func (h *Handler) parseSyncGroupRequest(data []byte, apiVersion uint16) (*SyncGr
 						copy(assign, data[offset:offset+int(assignLength)])
 						offset += int(assignLength)
 					}
-					
+
 					// CRITICAL FIX: Flexible format requires tagged fields after each assignment struct
 					if offset < len(data) {
 						_, taggedConsumed, tagErr := DecodeTaggedFields(data[offset:])
