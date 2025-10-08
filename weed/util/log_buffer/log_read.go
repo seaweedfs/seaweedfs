@@ -181,6 +181,12 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 	}()
 
 	for {
+		// Check stopTsNs at the beginning of each iteration
+		// This ensures we exit immediately if the stop time is in the past
+		if stopTsNs != 0 && time.Now().UnixNano() > stopTsNs {
+			isDone = true
+			return
+		}
 
 		if bytesBuf != nil {
 			logBuffer.ReleaseMemory(bytesBuf)
@@ -188,10 +194,34 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 		bytesBuf, offset, err = logBuffer.ReadFromBuffer(lastReadPosition)
 		glog.V(4).Infof("🔍 DEBUG: ReadFromBuffer returned bytesBuf=%v, offset=%d, err=%v", bytesBuf != nil, offset, err)
 		if err == ResumeFromDiskError {
+			// Try to read from disk if readFromDiskFn is available
+			if logBuffer.ReadFromDiskFn != nil {
+				// Wrap eachLogDataFn to match the expected signature
+				diskReadFn := func(logEntry *filer_pb.LogEntry) (bool, error) {
+					return eachLogDataFn(logEntry, logEntry.Offset)
+				}
+				lastReadPosition, isDone, err = logBuffer.ReadFromDiskFn(lastReadPosition, stopTsNs, diskReadFn)
+				if err != nil {
+					return lastReadPosition, isDone, err
+				}
+				if isDone {
+					return lastReadPosition, isDone, nil
+				}
+				// Continue to next iteration after disk read
+			}
+			
+			// Check if client is still connected
+			if !waitForDataFn() {
+				isDone = true
+				return lastReadPosition, isDone, nil
+			}
+			
 			// OPTIMIZATION: Reduced sleep time to 10ms for faster disk reads
 			// This balances responsiveness with CPU usage
 			time.Sleep(10 * time.Millisecond)
-			return lastReadPosition, isDone, ResumeFromDiskError
+			
+			// Continue to next iteration (don't return ResumeFromDiskError)
+			continue
 		}
 		readSize := 0
 		if bytesBuf != nil {
