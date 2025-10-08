@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"time"
@@ -940,7 +941,7 @@ func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, reque
 	var assignment []byte
 	if request.GroupID == "schema-registry" {
 		// Schema Registry expects JSON format assignment
-		assignment = h.serializeSchemaRegistryAssignment(member.Assignment)
+		assignment = h.serializeSchemaRegistryAssignment(group, member.Assignment)
 		Debug("SyncGroup v%d: Using Schema Registry JSON assignment format", apiVersion)
 	} else {
 		// Standard Kafka binary assignment format
@@ -975,7 +976,8 @@ func (h *Handler) parseSyncGroupRequest(data []byte, apiVersion uint16) (*SyncGr
 
 	offset := 0
 	isFlexible := IsFlexibleVersion(14, apiVersion) // SyncGroup API key = 14
-	Debug("SyncGroup v%d: parsing request, isFlexible=%t", apiVersion, isFlexible)
+	Debug("SyncGroup v%d: parsing request, isFlexible=%t, total data length=%d", apiVersion, isFlexible, len(data))
+	Debug("SyncGroup v%d: RAW REQUEST (first 60 bytes): %v", apiVersion, data[:min(60, len(data))])
 
 	// ADMINCLIENT COMPATIBILITY FIX: Parse top-level tagged fields at the beginning for flexible versions
 	if isFlexible {
@@ -1088,9 +1090,25 @@ func (h *Handler) parseSyncGroupRequest(data []byte, apiVersion uint16) (*SyncGr
 		}
 	}
 
+	// CRITICAL FIX: In flexible versions, parse tagged fields after group_instance_id and before assignments
+	if isFlexible && apiVersion >= 4 {
+		if offset < len(data) {
+			Debug("SyncGroup v%d: ABOUT TO PARSE member-level tagged fields - offset=%d, data[offset:offset+10]=%v", apiVersion, offset, data[offset:min(offset+10, len(data))])
+			_, consumed, err := DecodeTaggedFields(data[offset:])
+			if err == nil {
+				offset += consumed
+				Debug("SyncGroup v%d: parsed member-level tagged fields after group_instance_id, consumed %d bytes", apiVersion, consumed)
+			} else {
+				Debug("SyncGroup v%d: member-level tagged fields parsing FAILED at offset %d: %v", apiVersion, offset, err)
+				Debug("SyncGroup v%d: data at failed offset: %v", apiVersion, data[offset:min(offset+20, len(data))])
+			}
+		}
+	}
+
 	// Parse assignments array if present (leader sends assignments)
 	assignments := make([]GroupAssignment, 0)
 
+	Debug("SyncGroup v%d: BEFORE assignments parsing - offset=%d, len(data)=%d, remaining=%d", apiVersion, offset, len(data), len(data)-offset)
 	if offset < len(data) {
 		var assignmentsCount uint32
 		if isFlexible {
@@ -1114,6 +1132,7 @@ func (h *Handler) parseSyncGroupRequest(data []byte, apiVersion uint16) (*SyncGr
 
 		// Basic sanity check to avoid very large allocations
 		if assignmentsCount > 0 && assignmentsCount < 10000 {
+			Debug("SyncGroup v%d: BEGIN PARSING ASSIGNMENTS - count=%d, offset=%d, remaining bytes=%d", apiVersion, assignmentsCount, offset, len(data)-offset)
 			for i := uint32(0); i < assignmentsCount && offset < len(data); i++ {
 				var mID string
 				var assign []byte
@@ -1121,13 +1140,16 @@ func (h *Handler) parseSyncGroupRequest(data []byte, apiVersion uint16) (*SyncGr
 				// Parse member_id
 				if isFlexible {
 					// FLEXIBLE V4+ FIX: member_id is a compact string
+					Debug("SyncGroup v%d: [ASSIGNMENT %d] START - offset=%d, data[offset:offset+20]=%v", apiVersion, i, offset, data[offset:min(offset+20, len(data))])
 					memberIDBytes, consumed := parseCompactString(data[offset:])
 					if consumed == 0 {
+						Debug("SyncGroup v%d: parseCompactString returned consumed=0, breaking", apiVersion)
 						break
 					}
 					if memberIDBytes != nil {
 						mID = string(memberIDBytes)
 					}
+					Debug("SyncGroup v%d: parsed assignment[%d] member_id='%s', consumed=%d", apiVersion, i, mID, consumed)
 					offset += consumed
 				} else {
 					// Non-flexible: regular string
@@ -1155,6 +1177,15 @@ func (h *Handler) parseSyncGroupRequest(data []byte, apiVersion uint16) (*SyncGr
 						assign = make([]byte, assignLength)
 						copy(assign, data[offset:offset+int(assignLength)])
 						offset += int(assignLength)
+					}
+					
+					// CRITICAL FIX: Flexible format requires tagged fields after each assignment struct
+					if offset < len(data) {
+						_, taggedConsumed, tagErr := DecodeTaggedFields(data[offset:])
+						if tagErr == nil {
+							offset += taggedConsumed
+							Debug("SyncGroup v%d: parsed assignment[%d] tagged fields, consumed %d bytes", apiVersion, i, taggedConsumed)
+						}
 					}
 				} else {
 					// Non-flexible: regular bytes
@@ -1381,14 +1412,58 @@ func (h *Handler) getTopicPartitions(group *consumer.ConsumerGroup) map[string][
 	return topicPartitions
 }
 
-func (h *Handler) serializeSchemaRegistryAssignment(assignments []consumer.PartitionAssignment) []byte {
+func (h *Handler) serializeSchemaRegistryAssignment(group *consumer.ConsumerGroup, assignments []consumer.PartitionAssignment) []byte {
 	// Schema Registry expects a JSON assignment in the format:
 	// {"error":0,"master":"member-id","master_identity":{"host":"localhost","port":8081,"master_eligibility":true,"scheme":"http","version":"7.4.0-ce"}}
 
-	// For now, return a simple JSON assignment that Schema Registry can parse
-	// In a real implementation, this would include proper master election logic
-	// SCHEMA REGISTRY COMPATIBILITY FIX: version must be integer, not string
-	jsonAssignment := `{"error":0,"master":"consumer-583aa967a39ba810","master_identity":{"host":"localhost","port":8081,"master_eligibility":true,"scheme":"http","version":1}}`
+	// CRITICAL FIX: Extract the actual leader's identity from the leader's metadata
+	// to avoid localhost/hostname mismatch that causes Schema Registry to forward
+	// requests to itself
+	leaderMember, exists := group.Members[group.Leader]
+	if !exists {
+		// Fallback if leader not found (shouldn't happen)
+		Debug("Warning: Leader '%s' not found in group members", group.Leader)
+		jsonAssignment := `{"error":0,"master":"","master_identity":{"host":"localhost","port":8081,"master_eligibility":true,"scheme":"http","version":1}}`
+		return []byte(jsonAssignment)
+	}
+
+	// Parse the leader's metadata to extract the Schema Registry identity
+	// The metadata is the serialized SchemaRegistryIdentity JSON
+	var identity map[string]interface{}
+	err := json.Unmarshal(leaderMember.Metadata, &identity)
+	if err != nil {
+		Debug("Warning: Failed to parse leader metadata: %v", err)
+		// Fallback to basic assignment
+		jsonAssignment := fmt.Sprintf(`{"error":0,"master":"%s","master_identity":{"host":"localhost","port":8081,"master_eligibility":true,"scheme":"http","version":1}}`, group.Leader)
+		return []byte(jsonAssignment)
+	}
+
+	// Extract fields with defaults
+	host := "localhost"
+	port := 8081
+	scheme := "http"
+	version := 1
+	leaderEligibility := true
+
+	if h, ok := identity["host"].(string); ok {
+		host = h
+	}
+	if p, ok := identity["port"].(float64); ok {
+		port = int(p)
+	}
+	if s, ok := identity["scheme"].(string); ok {
+		scheme = s
+	}
+	if v, ok := identity["version"].(float64); ok {
+		version = int(v)
+	}
+	if le, ok := identity["master_eligibility"].(bool); ok {
+		leaderEligibility = le
+	}
+
+	// Build the assignment JSON with the actual leader identity
+	jsonAssignment := fmt.Sprintf(`{"error":0,"master":"%s","master_identity":{"host":"%s","port":%d,"master_eligibility":%t,"scheme":"%s","version":%d}}`,
+		group.Leader, host, port, leaderEligibility, scheme, version)
 
 	Debug("Schema Registry assignment JSON: %s", jsonAssignment)
 	return []byte(jsonAssignment)
