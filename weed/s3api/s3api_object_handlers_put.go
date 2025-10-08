@@ -20,6 +20,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
+	"github.com/seaweedfs/seaweedfs/weed/util/constants"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
@@ -380,6 +381,8 @@ func setEtag(w http.ResponseWriter, etag string) {
 
 func filerErrorToS3Error(errString string) s3err.ErrorCode {
 	switch {
+	case errString == constants.ErrMsgBadDigest:
+		return s3err.ErrBadDigest
 	case strings.HasPrefix(errString, "existing ") && strings.HasSuffix(errString, "is a directory"):
 		return s3err.ErrExistingObjectIsDirectory
 	case strings.HasSuffix(errString, "is a file"):
