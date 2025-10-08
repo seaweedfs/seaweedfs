@@ -227,18 +227,18 @@ func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromO
 		hwm, hwmErr := brokerClient.GetHighWaterMark(topic, partition)
 		if hwmErr == nil && hwm > fromOffset {
 			glog.Warningf("[FETCH] No records returned but HWM=%d > fromOffset=%d, recreating subscriber to force disk read", hwm, fromOffset)
-			
+
 			// Close the stuck subscriber
 			if brokerSubscriber.Stream != nil {
 				_ = brokerSubscriber.Stream.CloseSend()
 			}
-			
+
 			// Remove from cache
 			key := fmt.Sprintf("%s-%d", topic, partition)
 			brokerClient.subscribersLock.Lock()
 			delete(brokerClient.subscribers, key)
 			brokerClient.subscribersLock.Unlock()
-			
+
 			// Create fresh subscriber and try again ONE more time
 			brokerSubscriber, err = brokerClient.CreateFreshSubscriber(topic, partition, fromOffset, consumerGroup, consumerID)
 			if err != nil {
@@ -246,7 +246,7 @@ func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromO
 				return nil, fmt.Errorf("failed to recreate subscriber: %v", err)
 			}
 			glog.Infof("[FETCH] Recreated subscriber, retrying ReadRecords")
-			
+
 			seaweedRecords, err = brokerClient.ReadRecords(brokerSubscriber, maxRecords)
 			if err != nil {
 				glog.Errorf("[FETCH] ReadRecords failed after recreation: %v", err)
@@ -2099,10 +2099,28 @@ func (bc *BrokerClient) ReadRecords(session *BrokerSubscriberSession, maxRecords
 		return records, nil
 	}
 
-	// If we got the first record, try to get more with shorter timeout
-	additionalTimeout := 50 * time.Millisecond
+	// If we got the first record, try to get more with adaptive timeout
+	// CRITICAL: Schema Registry catch-up scenario - give generous timeout for the first batch
+	// Schema Registry needs to read multiple records quickly when catching up (e.g., offsets 3-6)
+	// The broker may be reading from disk, which introduces 10-20ms delay between records
+	//
+	// Strategy: Start with generous timeout (1 second) for first 5 records to allow broker
+	// to read from disk, then switch to fast mode (100ms) for streaming in-memory data
+	consecutiveReads := 0
+
 	for len(records) < maxRecords {
-		ctx2, cancel2 := context.WithTimeout(context.Background(), additionalTimeout)
+		// Adaptive timeout based on how many records we've already read
+		var currentTimeout time.Duration
+		if consecutiveReads < 5 {
+			// First 5 records: generous timeout for disk reads + network delays
+			currentTimeout = 1 * time.Second
+		} else {
+			// After 5 records: assume we're streaming from memory, use faster timeout
+			currentTimeout = 100 * time.Millisecond
+		}
+
+		readStart := time.Now()
+		ctx2, cancel2 := context.WithTimeout(context.Background(), currentTimeout)
 		recvChan2 := make(chan recvResult, 1)
 
 		go func() {
@@ -2117,6 +2135,8 @@ func (bc *BrokerClient) ReadRecords(session *BrokerSubscriberSession, maxRecords
 		select {
 		case result := <-recvChan2:
 			cancel2()
+			readDuration := time.Since(readStart)
+
 			if result.err != nil {
 				glog.Infof("[FETCH] Stream.Recv() error after %d records: %v", len(records), result.err)
 				// Update session offset before returning
@@ -2133,14 +2153,16 @@ func (bc *BrokerClient) ReadRecords(session *BrokerSubscriberSession, maxRecords
 				}
 				records = append(records, record)
 				currentOffset++
-				glog.Infof("[FETCH] Received record: offset=%d, keyLen=%d, valueLen=%d",
-					record.Offset, len(record.Key), len(record.Value))
+				consecutiveReads++ // Track number of successful reads for adaptive timeout
+
+				glog.V(4).Infof("[FETCH] Received record %d: offset=%d, keyLen=%d, valueLen=%d, readTime=%v",
+					len(records), record.Offset, len(record.Key), len(record.Value), readDuration)
 			}
 
 		case <-ctx2.Done():
 			cancel2()
 			// Timeout - return what we have
-			glog.V(4).Infof("[FETCH] Read timeout after %d records, returning batch", len(records))
+			glog.V(4).Infof("[FETCH] Read timeout after %d records (waited %v), returning batch", len(records), time.Since(readStart))
 			// CRITICAL: Update session offset so next fetch knows where we left off
 			session.StartOffset = currentOffset
 			return records, nil
