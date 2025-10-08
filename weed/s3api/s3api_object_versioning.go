@@ -249,15 +249,15 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 	for i, version := range allVersions {
 		switch v := version.(type) {
 		case *VersionEntry:
-			glog.V(2).Infof("listObjectVersions: adding version %d: key=%s, versionId=%s", i, v.Key, v.VersionId)
+			glog.V(0).Infof("listObjectVersions: adding version %d: key=%s, versionId=%s, isLatest=%v, size=%d", i, v.Key, v.VersionId, v.IsLatest, v.Size)
 			result.Versions = append(result.Versions, *v)
 		case *DeleteMarkerEntry:
-			glog.V(2).Infof("listObjectVersions: adding delete marker %d: key=%s, versionId=%s", i, v.Key, v.VersionId)
+			glog.V(0).Infof("listObjectVersions: adding delete marker %d: key=%s, versionId=%s", i, v.Key, v.VersionId)
 			result.DeleteMarkers = append(result.DeleteMarkers, *v)
 		}
 	}
 
-	glog.V(1).Infof("listObjectVersions: final result - %d versions, %d delete markers", len(result.Versions), len(result.DeleteMarkers))
+	glog.V(0).Infof("listObjectVersions: final result - %d versions, %d delete markers for bucket=%s, prefix=%s", len(result.Versions), len(result.DeleteMarkers), bucket, prefix)
 
 	return result, nil
 }

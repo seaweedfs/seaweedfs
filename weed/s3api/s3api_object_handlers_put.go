@@ -455,11 +455,13 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 		dataReader = mimeDetect(r, dataReader)
 	}
 
+	glog.V(0).Infof("putSuspendedVersioningObject: uploading to %s (this should OVERWRITE any existing file)", uploadUrl)
 	etag, errCode, _ = s3a.putToFiler(r, uploadUrl, dataReader, "", bucket, 1)
 	if errCode != s3err.ErrNone {
 		glog.Errorf("putSuspendedVersioningObject: failed to upload object: %v", errCode)
 		return "", errCode
 	}
+	glog.V(0).Infof("putSuspendedVersioningObject: successfully uploaded, etag=%s", etag)
 
 	// Get the uploaded entry to add version metadata indicating this is "null" version
 	entry, err := s3a.getEntry(bucketDir, normalizedObject)
@@ -484,11 +486,13 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 	}
 
 	// Update the entry with metadata (use updateEntry instead of mkFile since the file already exists)
+	glog.V(0).Infof("putSuspendedVersioningObject: updating entry metadata for %s, setting ExtVersionIdKey=null", normalizedObject)
 	err = s3a.updateEntry(bucketDir, entry)
 	if err != nil {
 		glog.Errorf("putSuspendedVersioningObject: failed to update object metadata: %v", err)
 		return "", s3err.ErrInternalError
 	}
+	glog.V(0).Infof("putSuspendedVersioningObject: successfully updated metadata")
 
 	// Update all existing versions/delete markers to set IsLatest=false since "null" is now latest
 	err = s3a.updateIsLatestFlagsForSuspendedVersioning(bucket, normalizedObject)
