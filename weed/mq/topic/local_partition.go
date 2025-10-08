@@ -46,8 +46,16 @@ func NewLocalPartition(partition Partition, logFlushInterval int, logFlushFn log
 		Subscribers: NewLocalPartitionSubscribers(),
 	}
 	lp.ListenersCond = sync.NewCond(&lp.ListenersLock)
+
+	// Ensure a minimum flush interval to prevent busy-loop when set to 0
+	// A flush interval of 0 would cause time.Sleep(0) creating a CPU-consuming busy loop
+	flushInterval := time.Duration(logFlushInterval) * time.Second
+	if flushInterval == 0 {
+		flushInterval = 2 * time.Minute // Default to 2 minutes if not specified
+	}
+
 	lp.LogBuffer = log_buffer.NewLogBuffer(fmt.Sprintf("%d/%04d-%04d", partition.UnixTimeNs, partition.RangeStart, partition.RangeStop),
-		time.Duration(logFlushInterval)*time.Second, logFlushFn, readFromDiskFn, func() {
+		flushInterval, logFlushFn, readFromDiskFn, func() {
 			if atomic.LoadInt64(&lp.ListenersWaits) > 0 {
 				lp.ListenersCond.Broadcast()
 			}

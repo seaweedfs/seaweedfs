@@ -347,6 +347,7 @@ func (logBuffer *LogBuffer) loopInterval() {
 		if logBuffer.IsStopping() {
 			return
 		}
+
 		logBuffer.Lock()
 		toFlush := logBuffer.copyToFlush()
 		logBuffer.Unlock()

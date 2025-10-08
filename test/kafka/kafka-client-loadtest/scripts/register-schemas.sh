@@ -136,7 +136,7 @@ verify_schema() {
 # Verify a schema exists with retry logic (handles Schema Registry consumer lag)
 verify_schema_with_retry() {
     local subject=$1
-    local max_attempts=5
+    local max_attempts=10
     local attempt=1
     
     log_info "Verifying schema for subject: $subject"
@@ -161,8 +161,8 @@ verify_schema_with_retry() {
         
         # Schema not found, wait and retry (handles Schema Registry consumer lag)
         if [[ $attempt -lt $max_attempts ]]; then
-            # Exponential backoff: 100ms, 200ms, 400ms, 800ms
-            local wait_time=$(echo "scale=3; 0.1 * (2 ^ ($attempt - 1))" | bc)
+            # Longer exponential backoff for Schema Registry consumer lag: 0.5s, 1s, 2s, 3s, 4s...
+            local wait_time=$(echo "scale=1; 0.5 * $attempt" | bc)
             sleep "$wait_time"
             attempt=$((attempt + 1))
         else
@@ -332,6 +332,9 @@ main() {
         "full")
             wait_for_schema_registry
             register_loadtest_schemas
+            # Wait for Schema Registry consumer to catch up before verification
+            log_info "Waiting 3 seconds for Schema Registry consumer to process all schemas..."
+            sleep 3
             verify_loadtest_schemas
             list_subjects
             ;;

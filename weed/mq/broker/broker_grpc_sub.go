@@ -29,7 +29,10 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 		return fmt.Errorf("missing init message")
 	}
 
-	ctx := stream.Context()
+	// Create a cancellable context so we can properly clean up when the client disconnects
+	ctx, cancel := context.WithCancel(stream.Context())
+	defer cancel() // Ensure context is cancelled when function exits
+
 	clientName := fmt.Sprintf("%s/%s-%s", req.GetInit().ConsumerGroup, req.GetInit().ConsumerId, req.GetInit().ClientId)
 
 	t := topic.FromPbTopic(req.GetInit().Topic)
@@ -224,7 +227,6 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 		if logEntry.Key != nil {
 			imt.EnflightMessage(logEntry.Key, logEntry.TsNs)
 		}
-
 
 		// Create the message to send
 		dataMsg := &mq_pb.DataMessage{
