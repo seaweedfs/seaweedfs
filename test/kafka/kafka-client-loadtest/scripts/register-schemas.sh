@@ -148,15 +148,15 @@ register_loadtest_schemas() {
     for topic in "${topics[@]}"; do
         # Register value schema
         if register_schema "${topic}-value" "$loadtest_value_schema" "AVRO"; then
-            ((success_count++))
+            success_count=$((success_count + 1))
         fi
-        ((total_schemas++))
+        total_schemas=$((total_schemas + 1))
         
         # Register key schema
         if register_schema "${topic}-key" "$loadtest_key_schema" "AVRO"; then
-            ((success_count++))
+            success_count=$((success_count + 1))
         fi
-        ((total_schemas++))
+        total_schemas=$((total_schemas + 1))
     done
     
     log_info "Schema registration summary: $success_count/$total_schemas schemas registered successfully"
@@ -181,15 +181,15 @@ verify_loadtest_schemas() {
     for topic in "${topics[@]}"; do
         # Verify value schema
         if verify_schema "${topic}-value"; then
-            ((success_count++))
+            success_count=$((success_count + 1))
         fi
-        ((total_schemas++))
+        total_schemas=$((total_schemas + 1))
         
         # Verify key schema
         if verify_schema "${topic}-key"; then
-            ((success_count++))
+            success_count=$((success_count + 1))
         fi
-        ((total_schemas++))
+        total_schemas=$((total_schemas + 1))
     done
     
     log_info "Schema verification summary: $success_count/$total_schemas schemas verified"

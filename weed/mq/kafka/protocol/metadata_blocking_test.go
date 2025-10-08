@@ -14,13 +14,13 @@ import (
 // TestMetadataRequestBlocking documents the original bug where Metadata requests hang
 // when the backend (broker/filer) ListTopics call blocks indefinitely.
 // This test is kept for documentation purposes and to verify the mock handler behavior.
-// 
+//
 // NOTE: The actual fix is in the broker's ListTopics implementation (weed/mq/broker/broker_grpc_lookup.go)
 // which adds a 2-second timeout for filer operations. This test uses a mock handler that
 // bypasses that fix, so it still demonstrates the original blocking behavior.
 func TestMetadataRequestBlocking(t *testing.T) {
 	t.Skip("This test documents the original bug. The fix is in the broker's ListTopics with filer timeout. Run TestMetadataRequestWithFastMock to verify fast path works.")
-	
+
 	t.Log("Testing Metadata handler with blocking backend...")
 
 	// Create a handler with a mock backend that blocks on ListTopics
