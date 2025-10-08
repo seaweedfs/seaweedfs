@@ -183,6 +183,7 @@ register_loadtest_schemas() {
     
     # Register schemas sequentially to avoid overwhelming Schema Registry
     # This is more reliable than parallel registration for small numbers of schemas
+    # Add small delay between registrations to allow Schema Registry consumer to catch up
     for topic in "${topics[@]}"; do
         # Register value schema
         if register_schema "${topic}-value" "$loadtest_value_schema" "AVRO"; then
@@ -190,11 +191,17 @@ register_loadtest_schemas() {
         fi
         total_schemas=$((total_schemas + 1))
         
+        # Small delay to let Schema Registry consumer process (prevents consumer lag)
+        sleep 0.2
+        
         # Register key schema
         if register_schema "${topic}-key" "$loadtest_key_schema" "AVRO"; then
             success_count=$((success_count + 1))
         fi
         total_schemas=$((total_schemas + 1))
+        
+        # Small delay to let Schema Registry consumer process (prevents consumer lag)
+        sleep 0.2
     done
     
     log_info "Schema registration summary: $success_count/$total_schemas schemas registered successfully"
