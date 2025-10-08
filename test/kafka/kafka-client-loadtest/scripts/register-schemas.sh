@@ -21,7 +21,7 @@ log_success() {
 }
 
 log_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
+    echo -e "${YELLOW}[WARN]${NC} $1"
 }
 
 log_error() {
@@ -39,7 +39,7 @@ wait_for_schema_registry() {
     
     local elapsed=0
     while [[ $elapsed -lt $TIMEOUT ]]; do
-        if curl -sf "$SCHEMA_REGISTRY_URL/subjects" >/dev/null 2>&1; then
+        if curl -sf --max-time 5 "$SCHEMA_REGISTRY_URL/subjects" >/dev/null 2>&1; then
             log_success "Schema Registry is ready!"
             return 0
         fi
@@ -58,6 +58,8 @@ register_schema() {
     local subject=$1
     local schema=$2
     local schema_type=${3:-"AVRO"}
+    local max_attempts=3
+    local attempt=1
     
     log_info "Registering schema for subject: $subject"
     
@@ -71,23 +73,43 @@ register_schema() {
 EOF
 )
     
-    # Register the schema
-    local response
-    response=$(curl -s -X POST \
-        -H "Content-Type: application/vnd.schemaregistry.v1+json" \
-        -d "$payload" \
-        "$SCHEMA_REGISTRY_URL/subjects/$subject/versions" 2>/dev/null)
+    while [[ $attempt -le $max_attempts ]]; do
+        # Register the schema (with 30 second timeout)
+        local response
+        response=$(curl -s --max-time 30 -X POST \
+            -H "Content-Type: application/vnd.schemaregistry.v1+json" \
+            -d "$payload" \
+            "$SCHEMA_REGISTRY_URL/subjects/$subject/versions" 2>/dev/null)
+        
+        if echo "$response" | jq -e '.id' >/dev/null 2>&1; then
+            local schema_id
+            schema_id=$(echo "$response" | jq -r '.id')
+            if [[ $attempt -gt 1 ]]; then
+                log_success "- Schema registered for $subject with ID: $schema_id [attempt $attempt]"
+            else
+                log_success "- Schema registered for $subject with ID: $schema_id"
+            fi
+            return 0
+        fi
+        
+        # Check if it's a consumer lag timeout (error_code 50002)
+        local error_code
+        error_code=$(echo "$response" | jq -r '.error_code // empty' 2>/dev/null)
+        
+        if [[ "$error_code" == "50002" && $attempt -lt $max_attempts ]]; then
+            # Consumer lag timeout - wait and retry
+            log_warning "Schema Registry consumer lag detected for $subject, retrying (attempt $attempt)..."
+            sleep 0.5  # Wait for consumer to catch up
+            attempt=$((attempt + 1))
+        else
+            # Other error or max attempts reached
+            log_error "x Failed to register schema for $subject"
+            log_error "Response: $response"
+            return 1
+        fi
+    done
     
-    if echo "$response" | jq -e '.id' >/dev/null 2>&1; then
-        local schema_id
-        schema_id=$(echo "$response" | jq -r '.id')
-        log_success "- Schema registered for $subject with ID: $schema_id"
-        return 0
-    else
-        log_error "x Failed to register schema for $subject"
-        log_error "Response: $response"
-        return 1
-    fi
+    return 1
 }
 
 # Verify a schema exists (single attempt)
@@ -95,7 +117,7 @@ verify_schema() {
     local subject=$1
     
     local response
-    response=$(curl -s "$SCHEMA_REGISTRY_URL/subjects/$subject/versions/latest" 2>/dev/null)
+    response=$(curl -s --max-time 10 "$SCHEMA_REGISTRY_URL/subjects/$subject/versions/latest" 2>/dev/null)
     
     if echo "$response" | jq -e '.id' >/dev/null 2>&1; then
         local schema_id
@@ -119,7 +141,7 @@ verify_schema_with_retry() {
     
     while [[ $attempt -le $max_attempts ]]; do
         local response
-        response=$(curl -s "$SCHEMA_REGISTRY_URL/subjects/$subject/versions/latest" 2>/dev/null)
+        response=$(curl -s --max-time 10 "$SCHEMA_REGISTRY_URL/subjects/$subject/versions/latest" 2>/dev/null)
         
         if echo "$response" | jq -e '.id' >/dev/null 2>&1; then
             local schema_id
@@ -253,7 +275,7 @@ list_subjects() {
     log_info "Listing all registered subjects..."
     
     local subjects
-    subjects=$(curl -s "$SCHEMA_REGISTRY_URL/subjects" 2>/dev/null)
+    subjects=$(curl -s --max-time 10 "$SCHEMA_REGISTRY_URL/subjects" 2>/dev/null)
     
     if echo "$subjects" | jq -e '.[]' >/dev/null 2>&1; then
         # Use process substitution instead of pipeline to avoid subshell exit code issues
@@ -274,13 +296,13 @@ cleanup_schemas() {
     local topics=("loadtest-topic-0" "loadtest-topic-1" "loadtest-topic-2" "loadtest-topic-3" "loadtest-topic-4")
     
     for topic in "${topics[@]}"; do
-        # Delete value schema
-        curl -s -X DELETE "$SCHEMA_REGISTRY_URL/subjects/${topic}-value" >/dev/null 2>&1 || true
-        curl -s -X DELETE "$SCHEMA_REGISTRY_URL/subjects/${topic}-value?permanent=true" >/dev/null 2>&1 || true
+        # Delete value schema (with timeout)
+        curl -s --max-time 10 -X DELETE "$SCHEMA_REGISTRY_URL/subjects/${topic}-value" >/dev/null 2>&1 || true
+        curl -s --max-time 10 -X DELETE "$SCHEMA_REGISTRY_URL/subjects/${topic}-value?permanent=true" >/dev/null 2>&1 || true
         
-        # Delete key schema
-        curl -s -X DELETE "$SCHEMA_REGISTRY_URL/subjects/${topic}-key" >/dev/null 2>&1 || true
-        curl -s -X DELETE "$SCHEMA_REGISTRY_URL/subjects/${topic}-key?permanent=true" >/dev/null 2>&1 || true
+        # Delete key schema (with timeout)
+        curl -s --max-time 10 -X DELETE "$SCHEMA_REGISTRY_URL/subjects/${topic}-key" >/dev/null 2>&1 || true
+        curl -s --max-time 10 -X DELETE "$SCHEMA_REGISTRY_URL/subjects/${topic}-key?permanent=true" >/dev/null 2>&1 || true
     done
     
     log_success "Schema cleanup completed"
