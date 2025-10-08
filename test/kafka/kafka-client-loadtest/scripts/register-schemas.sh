@@ -58,7 +58,7 @@ register_schema() {
     local subject=$1
     local schema=$2
     local schema_type=${3:-"AVRO"}
-    local max_attempts=3
+    local max_attempts=5
     local attempt=1
     
     log_info "Registering schema for subject: $subject"
@@ -97,9 +97,11 @@ EOF
         error_code=$(echo "$response" | jq -r '.error_code // empty' 2>/dev/null)
         
         if [[ "$error_code" == "50002" && $attempt -lt $max_attempts ]]; then
-            # Consumer lag timeout - wait and retry
-            log_warning "Schema Registry consumer lag detected for $subject, retrying (attempt $attempt)..."
-            sleep 0.5  # Wait for consumer to catch up
+            # Consumer lag timeout - wait longer for consumer to catch up
+            # Use exponential backoff: 1s, 2s, 4s, 8s
+            local wait_time=$(echo "2 ^ ($attempt - 1)" | bc)
+            log_warning "Schema Registry consumer lag detected for $subject, waiting ${wait_time}s before retry (attempt $attempt)..."
+            sleep "$wait_time"
             attempt=$((attempt + 1))
         else
             # Other error or max attempts reached
