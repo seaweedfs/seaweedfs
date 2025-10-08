@@ -869,7 +869,7 @@ filer:
     #     anonymousRead: false
 
 s3:
-  enabled: false
+  enabled: true
   imageOverride: null
   restartPolicy: null
   replicas: 1
@@ -971,6 +971,11 @@ s3:
     hostPathPrefix: /storage
 
   extraEnvironmentVars:
+
+  # Custom command line arguments to add to the s3 command
+  # Example to fix connection idle seconds:
+  extraArgs: ["-idleTimeout=30"]
+  #extraArgs: []
 
   # used to configure livenessProbe on s3 containers
   #
