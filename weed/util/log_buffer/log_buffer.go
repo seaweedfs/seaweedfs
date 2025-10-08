@@ -96,11 +96,11 @@ func (logBuffer *LogBuffer) InitializeOffsetFromExistingData(getHighestOffsetFn 
 		// Set the next offset to be one after the highest existing offset
 		nextOffset := highestOffset + 1
 		logBuffer.offset = nextOffset
-		// CRITICAL FIX: bufferStartOffset should always be 0 to allow reading all existing data
-		// The offset field tracks the next offset to assign, but the buffer should be able to
-		// read from offset 0 onwards (existing data will be read from disk)
-		logBuffer.bufferStartOffset = 0
-		glog.V(0).Infof("Initialized LogBuffer %s offset to %d (highest existing: %d), buffer starts at 0", logBuffer.name, nextOffset, highestOffset)
+		// CRITICAL FIX: bufferStartOffset should match offset after initialization
+		// This ensures that reads for old offsets (0...highestOffset) will trigger disk reads
+		// New data written after this will start at nextOffset
+		logBuffer.bufferStartOffset = nextOffset
+		glog.V(0).Infof("Initialized LogBuffer %s offset to %d (highest existing: %d), buffer starts at %d", logBuffer.name, nextOffset, highestOffset, nextOffset)
 	} else {
 		logBuffer.bufferStartOffset = 0 // Start from offset 0
 		glog.V(0).Infof("No existing data found for %s, starting from offset 0", logBuffer.name)

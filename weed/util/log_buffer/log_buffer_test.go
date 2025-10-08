@@ -330,3 +330,69 @@ func TestReadFromBuffer_OffsetRanges(t *testing.T) {
 		})
 	}
 }
+
+// TestReadFromBuffer_InitializedFromDisk tests Bug #3
+// where bufferStartOffset was incorrectly set to 0 after InitializeOffsetFromExistingData,
+// causing reads for old offsets to return new data instead of triggering a disk read.
+func TestReadFromBuffer_InitializedFromDisk(t *testing.T) {
+	// This reproduces the real Schema Registry bug scenario:
+	// 1. Broker restarts, finds 4 messages on disk (offsets 0-3)
+	// 2. InitializeOffsetFromExistingData sets offset=4
+	//    - BUG: bufferStartOffset=0 (wrong!)
+	//    - FIX: bufferStartOffset=4 (correct!)
+	// 3. First new message is written (offset 4)
+	// 4. Schema Registry reads offset 0
+	// 5. With FIX: requestedOffset=0 < bufferStartOffset=4 → ResumeFromDiskError (correct!)
+	// 6. Without FIX: requestedOffset=0 in range [0, 5] → returns wrong data (bug!)
+
+	lb := NewLogBuffer("_schemas", time.Hour, nil, nil, func() {})
+
+	// Use the actual InitializeOffsetFromExistingData to test the fix
+	err := lb.InitializeOffsetFromExistingData(func() (int64, error) {
+		return 3, nil // Simulate 4 messages on disk (offsets 0-3, highest=3)
+	})
+	if err != nil {
+		t.Fatalf("InitializeOffsetFromExistingData failed: %v", err)
+	}
+
+	t.Logf("After InitializeOffsetFromExistingData(highestOffset=3):")
+	t.Logf("  offset=%d (should be 4), bufferStartOffset=%d (FIX: should be 4, not 0)",
+		lb.offset, lb.bufferStartOffset)
+
+	// Now write a new message at offset 4
+	lb.AddToBuffer(&mq_pb.DataMessage{
+		Key:   []byte("new-key"),
+		Value: []byte("new-message-at-offset-4"),
+		TsNs:  time.Now().UnixNano(),
+	})
+	// After AddToBuffer: offset=5, pos>0
+
+	// Schema Registry tries to read offset 0 (should be on disk)
+	requestPosition := NewMessagePositionFromOffset(0)
+
+	buf, batchIdx, err := lb.ReadFromBuffer(requestPosition)
+
+	t.Logf("After writing new message:")
+	t.Logf("  bufferStartOffset=%d, offset=%d, pos=%d", lb.bufferStartOffset, lb.offset, lb.pos)
+	t.Logf("  Requested offset 0, got: buf=%v, batchIdx=%d, err=%v", buf != nil, batchIdx, err)
+
+	// EXPECTED BEHAVIOR (with fix):
+	// bufferStartOffset=4 after initialization, so requestedOffset=0 < bufferStartOffset=4
+	// → returns ResumeFromDiskError
+
+	// BUGGY BEHAVIOR (without fix):
+	// bufferStartOffset=0 after initialization, so requestedOffset=0 is in range [0, 5]
+	// → returns the NEW message (offset 4) instead of reading from disk!
+
+	if err != ResumeFromDiskError {
+		t.Errorf("CRITICAL BUG #3 REPRODUCED: Reading offset 0 after initialization from disk should return ResumeFromDiskError\n"+
+			"Instead got: err=%v, buf=%v, batchIdx=%d\n"+
+			"This means Schema Registry would receive WRONG data (offset 4) when requesting offset 0!",
+			err, buf != nil, batchIdx)
+		t.Errorf("Root cause: bufferStartOffset=%d should be 4 after InitializeOffsetFromExistingData(highestOffset=3)",
+			lb.bufferStartOffset)
+	} else {
+		t.Logf("✓ BUG #3 FIX VERIFIED: Reading old offset 0 correctly returns ResumeFromDiskError")
+		t.Logf("  This ensures Schema Registry reads correct data from disk instead of getting new messages")
+	}
+}
