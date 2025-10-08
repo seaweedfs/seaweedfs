@@ -43,7 +43,10 @@ func (b *MessageQueueBroker) LookupTopicBrokers(ctx context.Context, request *mq
 }
 
 func (b *MessageQueueBroker) ListTopics(ctx context.Context, request *mq_pb.ListTopicsRequest) (resp *mq_pb.ListTopicsResponse, err error) {
+	glog.V(4).Infof("📋 ListTopics called, isLockOwner=%v", b.isLockOwner())
+
 	if !b.isLockOwner() {
+		glog.V(4).Infof("📋 ListTopics proxying to lock owner: %s", b.lockAsBalancer.LockOwner())
 		proxyErr := b.withBrokerClient(false, pb.ServerAddress(b.lockAsBalancer.LockOwner()), func(client mq_pb.SeaweedMessagingClient) error {
 			resp, err = client.ListTopics(ctx, request)
 			return nil
@@ -54,10 +57,12 @@ func (b *MessageQueueBroker) ListTopics(ctx context.Context, request *mq_pb.List
 		return resp, err
 	}
 
+	glog.V(4).Infof("📋 ListTopics starting - getting in-memory topics")
 	ret := &mq_pb.ListTopicsResponse{}
 
 	// First, get topics from in-memory state (includes unflushed topics)
 	inMemoryTopics := b.localTopicManager.ListTopicsInMemory()
+	glog.V(4).Infof("📋 ListTopics found %d in-memory topics", len(inMemoryTopics))
 	topicMap := make(map[string]*schema_pb.Topic)
 
 	// Add in-memory topics to the result
@@ -69,9 +74,15 @@ func (b *MessageQueueBroker) ListTopics(ctx context.Context, request *mq_pb.List
 	}
 
 	// Then, scan the filer directory structure to find persisted topics (fallback for topics not in memory)
+	// Use a shorter timeout for filer scanning to ensure Metadata requests remain fast
+	filerCtx, filerCancel := context.WithTimeout(ctx, 2*time.Second)
+	defer filerCancel()
+
+	glog.V(4).Infof("📋 ListTopics scanning filer for persisted topics (2s timeout)")
 	err = b.fca.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// List all namespaces under /topics
-		stream, err := client.ListEntries(ctx, &filer_pb.ListEntriesRequest{
+		glog.V(4).Infof("📋 ListTopics calling ListEntries for %s", filer.TopicsDir)
+		stream, err := client.ListEntries(filerCtx, &filer_pb.ListEntriesRequest{
 			Directory: filer.TopicsDir,
 			Limit:     1000,
 		})
@@ -79,6 +90,7 @@ func (b *MessageQueueBroker) ListTopics(ctx context.Context, request *mq_pb.List
 			glog.V(0).Infof("list namespaces in %s: %v", filer.TopicsDir, err)
 			return err
 		}
+		glog.V(4).Infof("📋 ListTopics got ListEntries stream, processing namespaces...")
 
 		// Process each namespace
 		for {
@@ -98,7 +110,7 @@ func (b *MessageQueueBroker) ListTopics(ctx context.Context, request *mq_pb.List
 			namespacePath := fmt.Sprintf("%s/%s", filer.TopicsDir, namespaceName)
 
 			// List all topics in this namespace
-			topicStream, err := client.ListEntries(ctx, &filer_pb.ListEntriesRequest{
+			topicStream, err := client.ListEntries(filerCtx, &filer_pb.ListEntriesRequest{
 				Directory: namespacePath,
 				Limit:     1000,
 			})
@@ -126,7 +138,7 @@ func (b *MessageQueueBroker) ListTopics(ctx context.Context, request *mq_pb.List
 
 				// Check if topic.conf exists
 				topicPath := fmt.Sprintf("%s/%s", namespacePath, topicName)
-				confResp, err := client.LookupDirectoryEntry(ctx, &filer_pb.LookupDirectoryEntryRequest{
+				confResp, err := client.LookupDirectoryEntry(filerCtx, &filer_pb.LookupDirectoryEntryRequest{
 					Directory: topicPath,
 					Name:      filer.TopicConfFile,
 				})
@@ -157,8 +169,10 @@ func (b *MessageQueueBroker) ListTopics(ctx context.Context, request *mq_pb.List
 	}
 
 	if err != nil {
-		glog.V(0).Infof("list topics from filer: %v", err)
+		glog.V(0).Infof("📋 ListTopics: filer scan failed: %v (returning %d in-memory topics)", err, len(inMemoryTopics))
 		// Still return in-memory topics even if filer fails
+	} else {
+		glog.V(4).Infof("📋 ListTopics completed successfully: %d total topics (in-memory + persisted)", len(ret.Topics))
 	}
 
 	return ret, nil
