@@ -40,6 +40,7 @@ type S3Options struct {
 	portHttps                 *int
 	portGrpc                  *int
 	config                    *string
+	iamConfig                 *string
 	domainName                *string
 	allowedOrigins            *string
 	tlsPrivateKey             *string
@@ -69,6 +70,7 @@ func init() {
 	s3StandaloneOptions.allowedOrigins = cmdS3.Flag.String("allowedOrigins", "*", "comma separated list of allowed origins")
 	s3StandaloneOptions.dataCenter = cmdS3.Flag.String("dataCenter", "", "prefer to read and write to volumes in this data center")
 	s3StandaloneOptions.config = cmdS3.Flag.String("config", "", "path to the config file")
+	s3StandaloneOptions.iamConfig = cmdS3.Flag.String("iam.config", "", "path to the advanced IAM config file")
 	s3StandaloneOptions.auditLogConfig = cmdS3.Flag.String("auditLogConfig", "", "path to the audit log config file")
 	s3StandaloneOptions.tlsPrivateKey = cmdS3.Flag.String("key.file", "", "path to the TLS private key file")
 	s3StandaloneOptions.tlsCertificate = cmdS3.Flag.String("cert.file", "", "path to the TLS certificate file")
@@ -237,7 +239,19 @@ func (s3opt *S3Options) startS3Server() bool {
 	if s3opt.localFilerSocket != nil {
 		localFilerSocket = *s3opt.localFilerSocket
 	}
-	s3ApiServer, s3ApiServer_err := s3api.NewS3ApiServer(router, &s3api.S3ApiServerOption{
+	var s3ApiServer *s3api.S3ApiServer
+	var s3ApiServer_err error
+
+	// Create S3 server with optional advanced IAM integration
+	var iamConfigPath string
+	if s3opt.iamConfig != nil && *s3opt.iamConfig != "" {
+		iamConfigPath = *s3opt.iamConfig
+		glog.V(0).Infof("Starting S3 API Server with advanced IAM integration")
+	} else {
+		glog.V(0).Infof("Starting S3 API Server with standard IAM")
+	}
+
+	s3ApiServer, s3ApiServer_err = s3api.NewS3ApiServer(router, &s3api.S3ApiServerOption{
 		Filer:                     filerAddress,
 		Port:                      *s3opt.port,
 		Config:                    *s3opt.config,
@@ -250,6 +264,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		LocalFilerSocket:          localFilerSocket,
 		DataCenter:                *s3opt.dataCenter,
 		FilerGroup:                filerGroup,
+		IamConfig:                 iamConfigPath, // Advanced IAM config (optional)
 	})
 	if s3ApiServer_err != nil {
 		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)

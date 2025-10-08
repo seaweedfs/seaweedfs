@@ -3,7 +3,7 @@ package mount
 import (
 	"context"
 	"errors"
-	"math/rand"
+	"math/rand/v2"
 	"os"
 	"path"
 	"path/filepath"
@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -62,6 +63,14 @@ type Option struct {
 	Cipher             bool   // whether encrypt data on volume server
 	UidGidMapper       *meta_cache.UidGidMapper
 
+	// RDMA acceleration options
+	RdmaEnabled       bool
+	RdmaSidecarAddr   string
+	RdmaFallback      bool
+	RdmaReadOnly      bool
+	RdmaMaxConcurrent int
+	RdmaTimeoutMs     int
+
 	uniqueCacheDirForRead  string
 	uniqueCacheDirForWrite string
 }
@@ -86,6 +95,7 @@ type WFS struct {
 	fuseServer           *fuse.Server
 	IsOverQuota          bool
 	fhLockTable          *util.LockTable[FileHandleId]
+	rdmaClient           *RDMAMountClient
 	FilerConf            *filer.FilerConf
 }
 
@@ -100,7 +110,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		fhLockTable:   util.NewLockTable[FileHandleId](),
 	}
 
-	wfs.option.filerIndex = int32(rand.Intn(len(option.FilerAddresses)))
+	wfs.option.filerIndex = int32(rand.IntN(len(option.FilerAddresses)))
 	wfs.option.setupUniqueCacheDirectory()
 	if option.CacheSizeMBForRead > 0 {
 		wfs.chunkCache = chunk_cache.NewTieredChunkCache(256, option.getUniqueCacheDirForRead(), option.CacheSizeMBForRead, 1024*1024)
@@ -138,7 +148,27 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		wfs.metaCache.Shutdown()
 		os.RemoveAll(option.getUniqueCacheDirForWrite())
 		os.RemoveAll(option.getUniqueCacheDirForRead())
+		if wfs.rdmaClient != nil {
+			wfs.rdmaClient.Close()
+		}
 	})
+
+	// Initialize RDMA client if enabled
+	if option.RdmaEnabled && option.RdmaSidecarAddr != "" {
+		rdmaClient, err := NewRDMAMountClient(
+			option.RdmaSidecarAddr,
+			wfs.LookupFn(),
+			option.RdmaMaxConcurrent,
+			option.RdmaTimeoutMs,
+		)
+		if err != nil {
+			glog.Warningf("Failed to initialize RDMA client: %v", err)
+		} else {
+			wfs.rdmaClient = rdmaClient
+			glog.Infof("RDMA acceleration enabled: sidecar=%s, maxConcurrent=%d, timeout=%dms",
+				option.RdmaSidecarAddr, option.RdmaMaxConcurrent, option.RdmaTimeoutMs)
+		}
+	}
 
 	if wfs.option.ConcurrentWriters > 0 {
 		wfs.concurrentWriters = util.NewLimitedConcurrentExecutor(wfs.option.ConcurrentWriters)

@@ -216,7 +216,8 @@ func (iam *IdentityAccessManagement) doesSignatureMatch(hashedPayload string, r 
 	if forwardedPrefix := r.Header.Get("X-Forwarded-Prefix"); forwardedPrefix != "" {
 		// Try signature verification with the forwarded prefix first.
 		// This handles cases where reverse proxies strip URL prefixes and add the X-Forwarded-Prefix header.
-		errCode = iam.verifySignatureWithPath(extractedSignedHeaders, hashedPayload, queryStr, path.Clean(forwardedPrefix+req.URL.Path), req.Method, foundCred.SecretKey, t, signV4Values)
+		cleanedPath := buildPathWithForwardedPrefix(forwardedPrefix, req.URL.Path)
+		errCode = iam.verifySignatureWithPath(extractedSignedHeaders, hashedPayload, queryStr, cleanedPath, req.Method, foundCred.SecretKey, t, signV4Values)
 		if errCode == s3err.ErrNone {
 			return identity, errCode
 		}
@@ -231,6 +232,18 @@ func (iam *IdentityAccessManagement) doesSignatureMatch(hashedPayload string, r 
 	return nil, errCode
 }
 
+// buildPathWithForwardedPrefix combines forwarded prefix with URL path while preserving trailing slashes.
+// This ensures compatibility with S3 SDK signatures that include trailing slashes for directory operations.
+func buildPathWithForwardedPrefix(forwardedPrefix, urlPath string) string {
+	fullPath := forwardedPrefix + urlPath
+	hasTrailingSlash := strings.HasSuffix(urlPath, "/") && urlPath != "/"
+	cleanedPath := path.Clean(fullPath)
+	if hasTrailingSlash && !strings.HasSuffix(cleanedPath, "/") {
+		cleanedPath += "/"
+	}
+	return cleanedPath
+}
+
 // verifySignatureWithPath verifies signature with a given path (used for both normal and prefixed paths).
 func (iam *IdentityAccessManagement) verifySignatureWithPath(extractedSignedHeaders http.Header, hashedPayload, queryStr, urlPath, method, secretKey string, t time.Time, signV4Values signValues) s3err.ErrorCode {
 	// Get canonical request.
@@ -240,7 +253,7 @@ func (iam *IdentityAccessManagement) verifySignatureWithPath(extractedSignedHead
 	stringToSign := getStringToSign(canonicalRequest, t, signV4Values.Credential.getScope())
 
 	// Get hmac signing key.
-	signingKey := getSigningKey(secretKey, signV4Values.Credential.scope.date.Format(yyyymmdd), signV4Values.Credential.scope.region, "s3")
+	signingKey := getSigningKey(secretKey, signV4Values.Credential.scope.date.Format(yyyymmdd), signV4Values.Credential.scope.region, signV4Values.Credential.scope.service)
 
 	// Calculate signature.
 	newSignature := getSignature(signingKey, stringToSign)
@@ -262,7 +275,7 @@ func (iam *IdentityAccessManagement) verifyPresignedSignatureWithPath(extractedS
 	stringToSign := getStringToSign(canonicalRequest, t, credHeader.getScope())
 
 	// Get hmac signing key.
-	signingKey := getSigningKey(secretKey, credHeader.scope.date.Format(yyyymmdd), credHeader.scope.region, "s3")
+	signingKey := getSigningKey(secretKey, credHeader.scope.date.Format(yyyymmdd), credHeader.scope.region, credHeader.scope.service)
 
 	// Calculate expected signature.
 	expectedSignature := getSignature(signingKey, stringToSign)
@@ -351,7 +364,7 @@ func (iam *IdentityAccessManagement) doesPresignedSignatureMatch(hashedPayload s
 	extractedSignedHeaders := make(http.Header)
 	for _, header := range signedHeaders {
 		if header == "host" {
-			extractedSignedHeaders[header] = []string{r.Host}
+			extractedSignedHeaders[header] = []string{extractHostHeader(r)}
 			continue
 		}
 		if values := r.Header[http.CanonicalHeaderKey(header)]; len(values) > 0 {
@@ -369,7 +382,8 @@ func (iam *IdentityAccessManagement) doesPresignedSignatureMatch(hashedPayload s
 	if forwardedPrefix := r.Header.Get("X-Forwarded-Prefix"); forwardedPrefix != "" {
 		// Try signature verification with the forwarded prefix first.
 		// This handles cases where reverse proxies strip URL prefixes and add the X-Forwarded-Prefix header.
-		errCode = iam.verifyPresignedSignatureWithPath(extractedSignedHeaders, hashedPayload, queryStr, path.Clean(forwardedPrefix+r.URL.Path), r.Method, foundCred.SecretKey, t, credHeader, signature)
+		cleanedPath := buildPathWithForwardedPrefix(forwardedPrefix, r.URL.Path)
+		errCode = iam.verifyPresignedSignatureWithPath(extractedSignedHeaders, hashedPayload, queryStr, cleanedPath, r.Method, foundCred.SecretKey, t, credHeader, signature)
 		if errCode == s3err.ErrNone {
 			return identity, errCode
 		}
@@ -485,7 +499,7 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV4Match(formValues http.
 	}
 
 	// Get signing key.
-	signingKey := getSigningKey(cred.SecretKey, credHeader.scope.date.Format(yyyymmdd), credHeader.scope.region, "s3")
+	signingKey := getSigningKey(cred.SecretKey, credHeader.scope.date.Format(yyyymmdd), credHeader.scope.region, credHeader.scope.service)
 
 	// Get signature.
 	newSignature := getSignature(signingKey, formValues.Get("Policy"))
@@ -552,11 +566,11 @@ func extractHostHeader(r *http.Request) string {
 }
 
 // getScope generate a string of a specific date, an AWS region, and a service.
-func getScope(t time.Time, region string) string {
+func getScope(t time.Time, region string, service string) string {
 	scope := strings.Join([]string{
 		t.Format(yyyymmdd),
 		region,
-		"s3",
+		service,
 		"aws4_request",
 	}, "/")
 	return scope

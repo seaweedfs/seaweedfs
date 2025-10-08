@@ -105,36 +105,54 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 			return nil, nil // Skip this task if destination planning fails
 		}
 
-		// Create typed parameters with destination information
-		task.TypedParams = &worker_pb.TaskParams{
-			TaskId:     taskID, // Link to ActiveTopology pending task
-			VolumeId:   selectedVolume.VolumeID,
-			Server:     selectedVolume.Server,
-			Collection: selectedVolume.Collection,
-			VolumeSize: selectedVolume.Size, // Store original volume size for tracking changes
-			TaskParams: &worker_pb.TaskParams_BalanceParams{
-				BalanceParams: &worker_pb.BalanceTaskParams{
-					DestNode:           destinationPlan.TargetNode,
-					EstimatedSize:      destinationPlan.ExpectedSize,
-					PlacementScore:     destinationPlan.PlacementScore,
-					PlacementConflicts: destinationPlan.Conflicts,
-					ForceMove:          false,
-					TimeoutSeconds:     600, // 10 minutes default
-				},
-			},
-		}
-
-		glog.V(1).Infof("Planned balance destination for volume %d: %s -> %s (score: %.2f)",
-			selectedVolume.VolumeID, selectedVolume.Server, destinationPlan.TargetNode, destinationPlan.PlacementScore)
-
-		// Add pending balance task to ActiveTopology for capacity management
-
 		// Find the actual disk containing the volume on the source server
 		sourceDisk, found := base.FindVolumeDisk(clusterInfo.ActiveTopology, selectedVolume.VolumeID, selectedVolume.Collection, selectedVolume.Server)
 		if !found {
 			return nil, fmt.Errorf("BALANCE: Could not find volume %d (collection: %s) on source server %s - unable to create balance task",
 				selectedVolume.VolumeID, selectedVolume.Collection, selectedVolume.Server)
 		}
+
+		// Create typed parameters with unified source and target information
+		task.TypedParams = &worker_pb.TaskParams{
+			TaskId:     taskID, // Link to ActiveTopology pending task
+			VolumeId:   selectedVolume.VolumeID,
+			Collection: selectedVolume.Collection,
+			VolumeSize: selectedVolume.Size, // Store original volume size for tracking changes
+
+			// Unified sources and targets - the only way to specify locations
+			Sources: []*worker_pb.TaskSource{
+				{
+					Node:          selectedVolume.Server,
+					DiskId:        sourceDisk,
+					VolumeId:      selectedVolume.VolumeID,
+					EstimatedSize: selectedVolume.Size,
+					DataCenter:    selectedVolume.DataCenter,
+					Rack:          selectedVolume.Rack,
+				},
+			},
+			Targets: []*worker_pb.TaskTarget{
+				{
+					Node:          destinationPlan.TargetNode,
+					DiskId:        destinationPlan.TargetDisk,
+					VolumeId:      selectedVolume.VolumeID,
+					EstimatedSize: destinationPlan.ExpectedSize,
+					DataCenter:    destinationPlan.TargetDC,
+					Rack:          destinationPlan.TargetRack,
+				},
+			},
+
+			TaskParams: &worker_pb.TaskParams_BalanceParams{
+				BalanceParams: &worker_pb.BalanceTaskParams{
+					ForceMove:      false,
+					TimeoutSeconds: 600, // 10 minutes default
+				},
+			},
+		}
+
+		glog.V(1).Infof("Planned balance destination for volume %d: %s -> %s",
+			selectedVolume.VolumeID, selectedVolume.Server, destinationPlan.TargetNode)
+
+		// Add pending balance task to ActiveTopology for capacity management
 		targetDisk := destinationPlan.TargetDisk
 
 		err = clusterInfo.ActiveTopology.AddPendingTask(topology.TaskSpec{
@@ -220,7 +238,6 @@ func planBalanceDestination(activeTopology *topology.ActiveTopology, selectedVol
 		TargetDC:       bestDisk.DataCenter,
 		ExpectedSize:   selectedVolume.Size,
 		PlacementScore: bestScore,
-		Conflicts:      checkPlacementConflicts(bestDisk, sourceRack, sourceDC),
 	}, nil
 }
 
@@ -252,17 +269,4 @@ func calculateBalanceScore(disk *topology.DiskInfo, sourceRack, sourceDC string,
 	score += (10.0 - float64(disk.LoadCount)) // Up to 10 points for low load
 
 	return score
-}
-
-// checkPlacementConflicts checks for placement rule conflicts
-func checkPlacementConflicts(disk *topology.DiskInfo, sourceRack, sourceDC string) []string {
-	var conflicts []string
-
-	// For now, implement basic conflict detection
-	// This could be extended with more sophisticated placement rules
-	if disk.Rack == sourceRack && disk.DataCenter == sourceDC {
-		conflicts = append(conflicts, "same_rack_as_source")
-	}
-
-	return conflicts
 }

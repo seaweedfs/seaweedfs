@@ -1,8 +1,10 @@
 package mount
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/util"
+	"context"
 	"syscall"
+
+	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 
@@ -54,8 +56,21 @@ func (wfs *WFS) Lseek(cancel <-chan struct{}, in *fuse.LseekIn, out *fuse.LseekO
 		return ENXIO
 	}
 
+	// Create a context that will be cancelled when the cancel channel receives a signal
+	ctx, cancelFunc := context.WithCancel(context.Background())
+	defer cancelFunc() // Ensure cleanup
+
+	go func() {
+		select {
+		case <-cancel:
+			cancelFunc()
+		case <-ctx.Done():
+			// Clean exit when lseek operation completes
+		}
+	}()
+
 	// search chunks for the offset
-	found, offset := fh.entryChunkGroup.SearchChunks(offset, fileSize, in.Whence)
+	found, offset := fh.entryChunkGroup.SearchChunks(ctx, offset, fileSize, in.Whence)
 	if found {
 		out.Offset = uint64(offset)
 		return fuse.OK

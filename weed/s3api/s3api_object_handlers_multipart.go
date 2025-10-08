@@ -1,7 +1,10 @@
 package s3api
 
 import (
+	"crypto/rand"
 	"crypto/sha1"
+	"encoding/base64"
+	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -26,7 +29,6 @@ const (
 	maxObjectListSizeLimit = 1000  // Limit number of objects in a listObjectsResponse.
 	maxUploadsList         = 10000 // Limit number of uploads in a listUploadsResponse.
 	maxPartsList           = 10000 // Limit number of parts in a listPartsResponse.
-	globalMaxPartID        = 100000
 )
 
 // NewMultipartUploadHandler - New multipart upload.
@@ -109,6 +111,14 @@ func (s3a *S3ApiServer) CompleteMultipartUploadHandler(w http.ResponseWriter, r 
 	err := s3a.checkUploadId(object, uploadID)
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchUpload)
+		return
+	}
+
+	// Check conditional headers before completing multipart upload
+	// This implements AWS S3 behavior where conditional headers apply to CompleteMultipartUpload
+	if errCode := s3a.checkConditionalHeaders(r, bucket, object); errCode != s3err.ErrNone {
+		glog.V(3).Infof("CompleteMultipartUploadHandler: Conditional header check failed for %s/%s", bucket, object)
+		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
 
@@ -287,8 +297,12 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidPart)
 		return
 	}
-	if partID > globalMaxPartID {
-		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMaxParts)
+	if partID > s3_constants.MaxS3MultipartParts {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidPart)
+		return
+	}
+	if partID < 1 {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidPart)
 		return
 	}
 
@@ -301,6 +315,91 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 
 	glog.V(2).Infof("PutObjectPartHandler %s %s %04d", bucket, uploadID, partID)
 
+	// Check for SSE-C headers in the current request first
+	sseCustomerAlgorithm := r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerAlgorithm)
+	if sseCustomerAlgorithm != "" {
+		glog.Infof("PutObjectPartHandler: detected SSE-C headers, handling as SSE-C part upload")
+		// SSE-C part upload - headers are already present, let putToFiler handle it
+	} else {
+		// No SSE-C headers, check for SSE-KMS settings from upload directory
+		glog.Infof("PutObjectPartHandler: attempting to retrieve upload entry for bucket %s, uploadID %s", bucket, uploadID)
+		if uploadEntry, err := s3a.getEntry(s3a.genUploadsFolder(bucket), uploadID); err == nil {
+			glog.Infof("PutObjectPartHandler: upload entry found, Extended metadata: %v", uploadEntry.Extended != nil)
+			if uploadEntry.Extended != nil {
+				// Check if this upload uses SSE-KMS
+				glog.Infof("PutObjectPartHandler: checking for SSE-KMS key in extended metadata")
+				if keyIDBytes, exists := uploadEntry.Extended[s3_constants.SeaweedFSSSEKMSKeyID]; exists {
+					keyID := string(keyIDBytes)
+
+					// Build SSE-KMS metadata for this part
+					bucketKeyEnabled := false
+					if bucketKeyBytes, exists := uploadEntry.Extended[s3_constants.SeaweedFSSSEKMSBucketKeyEnabled]; exists && string(bucketKeyBytes) == "true" {
+						bucketKeyEnabled = true
+					}
+
+					var encryptionContext map[string]string
+					if contextBytes, exists := uploadEntry.Extended[s3_constants.SeaweedFSSSEKMSEncryptionContext]; exists {
+						// Parse the stored encryption context
+						if err := json.Unmarshal(contextBytes, &encryptionContext); err != nil {
+							glog.Errorf("Failed to parse encryption context for upload %s: %v", uploadID, err)
+							encryptionContext = BuildEncryptionContext(bucket, object, bucketKeyEnabled)
+						}
+					} else {
+						encryptionContext = BuildEncryptionContext(bucket, object, bucketKeyEnabled)
+					}
+
+					// Get the base IV for this multipart upload
+					var baseIV []byte
+					if baseIVBytes, exists := uploadEntry.Extended[s3_constants.SeaweedFSSSEKMSBaseIV]; exists {
+						// Decode the base64 encoded base IV
+						decodedIV, decodeErr := base64.StdEncoding.DecodeString(string(baseIVBytes))
+						if decodeErr == nil && len(decodedIV) == 16 {
+							baseIV = decodedIV
+							glog.V(4).Infof("Using stored base IV %x for multipart upload %s", baseIV[:8], uploadID)
+						} else {
+							glog.Errorf("Failed to decode base IV for multipart upload %s: %v", uploadID, decodeErr)
+						}
+					}
+
+					if len(baseIV) == 0 {
+						glog.Errorf("No valid base IV found for SSE-KMS multipart upload %s", uploadID)
+						// Generate a new base IV as fallback
+						baseIV = make([]byte, 16)
+						if _, err := rand.Read(baseIV); err != nil {
+							glog.Errorf("Failed to generate fallback base IV: %v", err)
+						}
+					}
+
+					// Add SSE-KMS headers to the request for putToFiler to handle encryption
+					r.Header.Set(s3_constants.AmzServerSideEncryption, "aws:kms")
+					r.Header.Set(s3_constants.AmzServerSideEncryptionAwsKmsKeyId, keyID)
+					if bucketKeyEnabled {
+						r.Header.Set(s3_constants.AmzServerSideEncryptionBucketKeyEnabled, "true")
+					}
+					if len(encryptionContext) > 0 {
+						if contextJSON, err := json.Marshal(encryptionContext); err == nil {
+							r.Header.Set(s3_constants.AmzServerSideEncryptionContext, base64.StdEncoding.EncodeToString(contextJSON))
+						}
+					}
+
+					// Pass the base IV to putToFiler via header
+					r.Header.Set(s3_constants.SeaweedFSSSEKMSBaseIVHeader, base64.StdEncoding.EncodeToString(baseIV))
+
+					glog.Infof("PutObjectPartHandler: inherited SSE-KMS settings from upload %s, keyID %s - letting putToFiler handle encryption", uploadID, keyID)
+				} else {
+					// Check if this upload uses SSE-S3
+					if err := s3a.handleSSES3MultipartHeaders(r, uploadEntry, uploadID); err != nil {
+						glog.Errorf("Failed to setup SSE-S3 multipart headers: %v", err)
+						s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+						return
+					}
+				}
+			}
+		} else {
+			glog.Infof("PutObjectPartHandler: failed to retrieve upload entry: %v", err)
+		}
+	}
+
 	uploadUrl := s3a.genPartUploadUrl(bucket, uploadID, partID)
 
 	if partID == 1 && r.Header.Get("Content-Type") == "" {
@@ -308,7 +407,7 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 	}
 	destination := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
 
-	etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader, destination, bucket)
+	etag, errCode, _ := s3a.putToFiler(r, uploadUrl, dataReader, destination, bucket, partID)
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
@@ -398,4 +497,48 @@ type CompleteMultipartUpload struct {
 type CompletedPart struct {
 	ETag       string
 	PartNumber int
+}
+
+// handleSSES3MultipartHeaders handles SSE-S3 multipart upload header setup to reduce nesting complexity
+func (s3a *S3ApiServer) handleSSES3MultipartHeaders(r *http.Request, uploadEntry *filer_pb.Entry, uploadID string) error {
+	glog.Infof("PutObjectPartHandler: checking for SSE-S3 settings in extended metadata")
+	if encryptionTypeBytes, exists := uploadEntry.Extended[s3_constants.SeaweedFSSSES3Encryption]; exists && string(encryptionTypeBytes) == s3_constants.SSEAlgorithmAES256 {
+		glog.Infof("PutObjectPartHandler: found SSE-S3 encryption type, setting up headers")
+
+		// Set SSE-S3 headers to indicate server-side encryption
+		r.Header.Set(s3_constants.AmzServerSideEncryption, s3_constants.SSEAlgorithmAES256)
+
+		// Retrieve and set base IV for consistent multipart encryption - REQUIRED for security
+		var baseIV []byte
+		if baseIVBytes, exists := uploadEntry.Extended[s3_constants.SeaweedFSSSES3BaseIV]; exists {
+			// Decode the base64 encoded base IV
+			decodedIV, decodeErr := base64.StdEncoding.DecodeString(string(baseIVBytes))
+			if decodeErr != nil {
+				return fmt.Errorf("failed to decode base IV for SSE-S3 multipart upload %s: %v", uploadID, decodeErr)
+			}
+			if len(decodedIV) != s3_constants.AESBlockSize {
+				return fmt.Errorf("invalid base IV length for SSE-S3 multipart upload %s: expected %d bytes, got %d", uploadID, s3_constants.AESBlockSize, len(decodedIV))
+			}
+			baseIV = decodedIV
+			glog.V(4).Infof("Using stored base IV %x for SSE-S3 multipart upload %s", baseIV[:8], uploadID)
+		} else {
+			return fmt.Errorf("no base IV found for SSE-S3 multipart upload %s - required for encryption consistency", uploadID)
+		}
+
+		// Retrieve and set key data for consistent multipart encryption - REQUIRED for decryption
+		if keyDataBytes, exists := uploadEntry.Extended[s3_constants.SeaweedFSSSES3KeyData]; exists {
+			// Key data is already base64 encoded, pass it directly
+			keyDataStr := string(keyDataBytes)
+			r.Header.Set(s3_constants.SeaweedFSSSES3KeyDataHeader, keyDataStr)
+			glog.V(4).Infof("Using stored key data for SSE-S3 multipart upload %s", uploadID)
+		} else {
+			return fmt.Errorf("no SSE-S3 key data found for multipart upload %s - required for encryption", uploadID)
+		}
+
+		// Pass the base IV to putToFiler via header for offset calculation
+		r.Header.Set(s3_constants.SeaweedFSSSES3BaseIVHeader, base64.StdEncoding.EncodeToString(baseIV))
+
+		glog.Infof("PutObjectPartHandler: inherited SSE-S3 settings from upload %s - letting putToFiler handle encryption", uploadID)
+	}
+	return nil
 }

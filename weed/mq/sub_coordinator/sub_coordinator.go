@@ -2,6 +2,7 @@ package sub_coordinator
 
 import (
 	"fmt"
+
 	cmap "github.com/orcaman/concurrent-map/v2"
 	"github.com/seaweedfs/seaweedfs/weed/filer_client"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"

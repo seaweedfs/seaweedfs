@@ -22,7 +22,7 @@ permissions:
   contents: read
 
 env:
-  GO_VERSION: '1.21'
+  GO_VERSION: '1.24'
   TEST_TIMEOUT: '45m'
 
 jobs:
@@ -33,10 +33,10 @@ jobs:
     
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
       
     - name: Set up Go ${{ env.GO_VERSION }}
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v6
       with:
         go-version: ${{ env.GO_VERSION }}
         

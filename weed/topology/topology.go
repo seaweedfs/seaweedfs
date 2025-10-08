@@ -67,6 +67,7 @@ func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, puls
 	t.NodeImpl.value = t
 	t.diskUsages = newDiskUsages()
 	t.children = make(map[NodeId]Node)
+	t.capacityReservations = newCapacityReservations()
 	t.collectionMap = util.NewConcurrentReadMap()
 	t.ecShardMap = make(map[needle.VolumeId]*EcShardLocations)
 	t.pulse = int64(pulse)

@@ -24,6 +24,7 @@ type dataToFlush struct {
 }
 
 type EachLogEntryFuncType func(logEntry *filer_pb.LogEntry) (isDone bool, err error)
+type EachLogEntryWithBatchIndexFuncType func(logEntry *filer_pb.LogEntry, batchIndex int64) (isDone bool, err error)
 type LogFlushFuncType func(logBuffer *LogBuffer, startTime, stopTime time.Time, buf []byte)
 type LogReadFromDiskFuncType func(startPosition MessagePosition, stopTsNs int64, eachLogEntryFn EachLogEntryFuncType) (lastReadPosition MessagePosition, isDone bool, err error)
 
@@ -63,6 +64,7 @@ func NewLogBuffer(name string, flushInterval time.Duration, flushFn LogFlushFunc
 		notifyFn:       notifyFn,
 		flushChan:      make(chan *dataToFlush, 256),
 		isStopping:     new(atomic.Bool),
+		batchIndex:     time.Now().UnixNano(), // Initialize with creation time for uniqueness across restarts
 	}
 	go lb.loopFlush()
 	go lb.loopInterval()
@@ -74,6 +76,24 @@ func (logBuffer *LogBuffer) AddToBuffer(message *mq_pb.DataMessage) {
 }
 
 func (logBuffer *LogBuffer) AddDataToBuffer(partitionKey, data []byte, processingTsNs int64) {
+
+	// PERFORMANCE OPTIMIZATION: Pre-process expensive operations OUTSIDE the lock
+	var ts time.Time
+	if processingTsNs == 0 {
+		ts = time.Now()
+		processingTsNs = ts.UnixNano()
+	} else {
+		ts = time.Unix(0, processingTsNs)
+	}
+
+	logEntry := &filer_pb.LogEntry{
+		TsNs:             processingTsNs, // Will be updated if needed
+		PartitionKeyHash: util.HashToInt32(partitionKey),
+		Data:             data,
+		Key:              partitionKey,
+	}
+
+	logEntryData, _ := proto.Marshal(logEntry)
 
 	var toFlush *dataToFlush
 	logBuffer.Lock()
@@ -87,28 +107,16 @@ func (logBuffer *LogBuffer) AddDataToBuffer(partitionKey, data []byte, processin
 		}
 	}()
 
-	// need to put the timestamp inside the lock
-	var ts time.Time
-	if processingTsNs == 0 {
-		ts = time.Now()
-		processingTsNs = ts.UnixNano()
-	} else {
-		ts = time.Unix(0, processingTsNs)
-	}
+	// Handle timestamp collision inside lock (rare case)
 	if logBuffer.LastTsNs.Load() >= processingTsNs {
-		// this is unlikely to happen, but just in case
 		processingTsNs = logBuffer.LastTsNs.Add(1)
 		ts = time.Unix(0, processingTsNs)
+		// Re-marshal with corrected timestamp
+		logEntry.TsNs = processingTsNs
+		logEntryData, _ = proto.Marshal(logEntry)
+	} else {
+		logBuffer.LastTsNs.Store(processingTsNs)
 	}
-	logBuffer.LastTsNs.Store(processingTsNs)
-	logEntry := &filer_pb.LogEntry{
-		TsNs:             processingTsNs,
-		PartitionKeyHash: util.HashToInt32(partitionKey),
-		Data:             data,
-		Key:              partitionKey,
-	}
-
-	logEntryData, _ := proto.Marshal(logEntry)
 
 	size := len(logEntryData)
 
@@ -335,6 +343,20 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 }
 func (logBuffer *LogBuffer) ReleaseMemory(b *bytes.Buffer) {
 	bufferPool.Put(b)
+}
+
+// GetName returns the log buffer name for metadata tracking
+func (logBuffer *LogBuffer) GetName() string {
+	logBuffer.RLock()
+	defer logBuffer.RUnlock()
+	return logBuffer.name
+}
+
+// GetBatchIndex returns the current batch index for metadata tracking
+func (logBuffer *LogBuffer) GetBatchIndex() int64 {
+	logBuffer.RLock()
+	defer logBuffer.RUnlock()
+	return logBuffer.batchIndex
 }
 
 var bufferPool = sync.Pool{

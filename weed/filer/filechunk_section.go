@@ -1,6 +1,7 @@
 package filer
 
 import (
+	"context"
 	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -62,7 +63,7 @@ func removeGarbageChunks(section *FileChunkSection, garbageFileIds map[string]st
 	}
 }
 
-func (section *FileChunkSection) setupForRead(group *ChunkGroup, fileSize int64) {
+func (section *FileChunkSection) setupForRead(ctx context.Context, group *ChunkGroup, fileSize int64) {
 	section.lock.Lock()
 	defer section.lock.Unlock()
 
@@ -84,25 +85,25 @@ func (section *FileChunkSection) setupForRead(group *ChunkGroup, fileSize int64)
 	}
 
 	if section.reader == nil {
-		section.reader = NewChunkReaderAtFromClient(group.readerCache, section.chunkViews, min(int64(section.sectionIndex+1)*SectionSize, fileSize))
+		section.reader = NewChunkReaderAtFromClient(ctx, group.readerCache, section.chunkViews, min(int64(section.sectionIndex+1)*SectionSize, fileSize))
 	}
 
 	section.isPrepared = true
 	section.reader.fileSize = fileSize
 }
 
-func (section *FileChunkSection) readDataAt(group *ChunkGroup, fileSize int64, buff []byte, offset int64) (n int, tsNs int64, err error) {
+func (section *FileChunkSection) readDataAt(ctx context.Context, group *ChunkGroup, fileSize int64, buff []byte, offset int64) (n int, tsNs int64, err error) {
 
-	section.setupForRead(group, fileSize)
+	section.setupForRead(ctx, group, fileSize)
 	section.lock.RLock()
 	defer section.lock.RUnlock()
 
-	return section.reader.ReadAtWithTime(buff, offset)
+	return section.reader.ReadAtWithTime(ctx, buff, offset)
 }
 
-func (section *FileChunkSection) DataStartOffset(group *ChunkGroup, offset int64, fileSize int64) int64 {
+func (section *FileChunkSection) DataStartOffset(ctx context.Context, group *ChunkGroup, offset int64, fileSize int64) int64 {
 
-	section.setupForRead(group, fileSize)
+	section.setupForRead(ctx, group, fileSize)
 	section.lock.RLock()
 	defer section.lock.RUnlock()
 
@@ -119,9 +120,9 @@ func (section *FileChunkSection) DataStartOffset(group *ChunkGroup, offset int64
 	return -1
 }
 
-func (section *FileChunkSection) NextStopOffset(group *ChunkGroup, offset int64, fileSize int64) int64 {
+func (section *FileChunkSection) NextStopOffset(ctx context.Context, group *ChunkGroup, offset int64, fileSize int64) int64 {
 
-	section.setupForRead(group, fileSize)
+	section.setupForRead(ctx, group, fileSize)
 	section.lock.RLock()
 	defer section.lock.RUnlock()
 

@@ -353,7 +353,7 @@ func (c *GrpcAdminClient) handleOutgoingWithReady(ready chan struct{}) {
 
 // handleIncoming processes incoming messages from admin
 func (c *GrpcAdminClient) handleIncoming() {
-	glog.V(1).Infof("📡 INCOMING HANDLER STARTED: Worker %s incoming message handler started", c.workerID)
+	glog.V(1).Infof("INCOMING HANDLER STARTED: Worker %s incoming message handler started", c.workerID)
 
 	for {
 		c.mutex.RLock()
@@ -362,17 +362,17 @@ func (c *GrpcAdminClient) handleIncoming() {
 		c.mutex.RUnlock()
 
 		if !connected {
-			glog.V(1).Infof("🔌 INCOMING HANDLER STOPPED: Worker %s stopping incoming handler - not connected", c.workerID)
+			glog.V(1).Infof("INCOMING HANDLER STOPPED: Worker %s stopping incoming handler - not connected", c.workerID)
 			break
 		}
 
-		glog.V(4).Infof("👂 LISTENING: Worker %s waiting for message from admin server", c.workerID)
+		glog.V(4).Infof("LISTENING: Worker %s waiting for message from admin server", c.workerID)
 		msg, err := stream.Recv()
 		if err != nil {
 			if err == io.EOF {
-				glog.Infof("🔚 STREAM CLOSED: Worker %s admin server closed the stream", c.workerID)
+				glog.Infof("STREAM CLOSED: Worker %s admin server closed the stream", c.workerID)
 			} else {
-				glog.Errorf("❌ RECEIVE ERROR: Worker %s failed to receive message from admin: %v", c.workerID, err)
+				glog.Errorf("RECEIVE ERROR: Worker %s failed to receive message from admin: %v", c.workerID, err)
 			}
 			c.mutex.Lock()
 			c.connected = false
@@ -380,18 +380,18 @@ func (c *GrpcAdminClient) handleIncoming() {
 			break
 		}
 
-		glog.V(4).Infof("📨 MESSAGE RECEIVED: Worker %s received message from admin server: %T", c.workerID, msg.Message)
+		glog.V(4).Infof("MESSAGE RECEIVED: Worker %s received message from admin server: %T", c.workerID, msg.Message)
 
 		// Route message to waiting goroutines or general handler
 		select {
 		case c.incoming <- msg:
-			glog.V(3).Infof("✅ MESSAGE ROUTED: Worker %s successfully routed message to handler", c.workerID)
+			glog.V(3).Infof("MESSAGE ROUTED: Worker %s successfully routed message to handler", c.workerID)
 		case <-time.After(time.Second):
-			glog.Warningf("🚫 MESSAGE DROPPED: Worker %s incoming message buffer full, dropping message: %T", c.workerID, msg.Message)
+			glog.Warningf("MESSAGE DROPPED: Worker %s incoming message buffer full, dropping message: %T", c.workerID, msg.Message)
 		}
 	}
 
-	glog.V(1).Infof("🏁 INCOMING HANDLER FINISHED: Worker %s incoming message handler finished", c.workerID)
+	glog.V(1).Infof("INCOMING HANDLER FINISHED: Worker %s incoming message handler finished", c.workerID)
 }
 
 // handleIncomingWithReady processes incoming messages and signals when ready
@@ -594,7 +594,7 @@ func (c *GrpcAdminClient) RequestTask(workerID string, capabilities []types.Task
 
 		if reconnecting {
 			// Don't treat as an error - reconnection is in progress
-			glog.V(2).Infof("🔄 RECONNECTING: Worker %s skipping task request during reconnection", workerID)
+			glog.V(2).Infof("RECONNECTING: Worker %s skipping task request during reconnection", workerID)
 			return nil, nil
 		}
 
@@ -626,21 +626,21 @@ func (c *GrpcAdminClient) RequestTask(workerID string, capabilities []types.Task
 
 	select {
 	case c.outgoing <- msg:
-		glog.V(3).Infof("✅ TASK REQUEST SENT: Worker %s successfully sent task request to admin server", workerID)
+		glog.V(3).Infof("TASK REQUEST SENT: Worker %s successfully sent task request to admin server", workerID)
 	case <-time.After(time.Second):
-		glog.Errorf("❌ TASK REQUEST TIMEOUT: Worker %s failed to send task request: timeout", workerID)
+		glog.Errorf("TASK REQUEST TIMEOUT: Worker %s failed to send task request: timeout", workerID)
 		return nil, fmt.Errorf("failed to send task request: timeout")
 	}
 
 	// Wait for task assignment
-	glog.V(3).Infof("⏳ WAITING FOR RESPONSE: Worker %s waiting for task assignment response (5s timeout)", workerID)
+	glog.V(3).Infof("WAITING FOR RESPONSE: Worker %s waiting for task assignment response (5s timeout)", workerID)
 	timeout := time.NewTimer(5 * time.Second)
 	defer timeout.Stop()
 
 	for {
 		select {
 		case response := <-c.incoming:
-			glog.V(3).Infof("📨 RESPONSE RECEIVED: Worker %s received response from admin server: %T", workerID, response.Message)
+			glog.V(3).Infof("RESPONSE RECEIVED: Worker %s received response from admin server: %T", workerID, response.Message)
 			if taskAssign := response.GetTaskAssignment(); taskAssign != nil {
 				glog.V(1).Infof("Worker %s received task assignment in response: %s (type: %s, volume: %d)",
 					workerID, taskAssign.TaskId, taskAssign.TaskType, taskAssign.Params.VolumeId)
@@ -651,7 +651,7 @@ func (c *GrpcAdminClient) RequestTask(workerID string, capabilities []types.Task
 					Type:       types.TaskType(taskAssign.TaskType),
 					Status:     types.TaskStatusAssigned,
 					VolumeID:   taskAssign.Params.VolumeId,
-					Server:     taskAssign.Params.Server,
+					Server:     getServerFromParams(taskAssign.Params),
 					Collection: taskAssign.Params.Collection,
 					Priority:   types.TaskPriority(taskAssign.Priority),
 					CreatedAt:  time.Unix(taskAssign.CreatedTime, 0),
@@ -660,10 +660,10 @@ func (c *GrpcAdminClient) RequestTask(workerID string, capabilities []types.Task
 				}
 				return task, nil
 			} else {
-				glog.V(3).Infof("📭 NON-TASK RESPONSE: Worker %s received non-task response: %T", workerID, response.Message)
+				glog.V(3).Infof("NON-TASK RESPONSE: Worker %s received non-task response: %T", workerID, response.Message)
 			}
 		case <-timeout.C:
-			glog.V(3).Infof("⏰ TASK REQUEST TIMEOUT: Worker %s - no task assignment received within 5 seconds", workerID)
+			glog.V(3).Infof("TASK REQUEST TIMEOUT: Worker %s - no task assignment received within 5 seconds", workerID)
 			return nil, nil // No task available
 		}
 	}
@@ -933,4 +933,12 @@ func (m *MockAdminClient) AddMockTask(task *types.TaskInput) {
 // CreateAdminClient creates an admin client with the provided dial option
 func CreateAdminClient(adminServer string, workerID string, dialOption grpc.DialOption) (AdminClient, error) {
 	return NewGrpcAdminClient(adminServer, workerID, dialOption), nil
+}
+
+// getServerFromParams extracts server address from unified sources
+func getServerFromParams(params *worker_pb.TaskParams) string {
+	if len(params.Sources) > 0 {
+		return params.Sources[0].Node
+	}
+	return ""
 }

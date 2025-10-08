@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -78,43 +77,39 @@ func GenerateOrLoadWorkerID(workingDir string) (string, error) {
 		}
 	}
 
-	// Generate new unique worker ID with host information
+	// Generate simplified worker ID
 	hostname, _ := os.Hostname()
 	if hostname == "" {
 		hostname = "unknown"
 	}
 
-	// Get local IP address for better host identification
-	var hostIP string
-	if addrs, err := net.InterfaceAddrs(); err == nil {
-		for _, addr := range addrs {
-			if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
-				if ipnet.IP.To4() != nil {
-					hostIP = ipnet.IP.String()
-					break
-				}
+	// Use short hostname - take first 6 chars or last part after dots
+	shortHostname := hostname
+	if len(hostname) > 6 {
+		if parts := strings.Split(hostname, "."); len(parts) > 1 {
+			// Use last part before domain (e.g., "worker1" from "worker1.example.com")
+			shortHostname = parts[0]
+			if len(shortHostname) > 6 {
+				shortHostname = shortHostname[:6]
 			}
+		} else {
+			// Use first 6 characters
+			shortHostname = hostname[:6]
 		}
 	}
-	if hostIP == "" {
-		hostIP = "noip"
-	}
 
-	// Create host identifier combining hostname and IP
-	hostID := fmt.Sprintf("%s@%s", hostname, hostIP)
-
-	// Generate random component for uniqueness
-	randomBytes := make([]byte, 4)
+	// Generate random component for uniqueness (2 bytes = 4 hex chars)
+	randomBytes := make([]byte, 2)
 	var workerID string
 	if _, err := rand.Read(randomBytes); err != nil {
-		// Fallback to timestamp if crypto/rand fails
-		workerID = fmt.Sprintf("worker-%s-%d", hostID, time.Now().Unix())
+		// Fallback to short timestamp if crypto/rand fails
+		timestamp := time.Now().Unix() % 10000 // last 4 digits
+		workerID = fmt.Sprintf("w-%s-%04d", shortHostname, timestamp)
 		glog.Infof("Generated fallback worker ID: %s", workerID)
 	} else {
-		// Use random bytes + timestamp for uniqueness
+		// Use random hex for uniqueness
 		randomHex := fmt.Sprintf("%x", randomBytes)
-		timestamp := time.Now().Unix()
-		workerID = fmt.Sprintf("worker-%s-%s-%d", hostID, randomHex, timestamp)
+		workerID = fmt.Sprintf("w-%s-%s", shortHostname, randomHex)
 		glog.Infof("Generated new worker ID: %s", workerID)
 	}
 
@@ -145,6 +140,10 @@ func NewWorker(config *types.WorkerConfig) (*Worker, error) {
 
 	// Initialize task log handler
 	logDir := filepath.Join(config.BaseWorkingDir, "task_logs")
+	// Ensure the base task log directory exists to avoid errors when admin requests logs
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		glog.Warningf("Failed to create task log base directory %s: %v", logDir, err)
+	}
 	taskLogHandler := tasks.NewTaskLogHandler(logDir)
 
 	worker := &Worker{
@@ -211,26 +210,26 @@ func (w *Worker) Start() error {
 	}
 
 	// Start connection attempt (will register immediately if successful)
-	glog.Infof("🚀 WORKER STARTING: Worker %s starting with capabilities %v, max concurrent: %d",
+	glog.Infof("WORKER STARTING: Worker %s starting with capabilities %v, max concurrent: %d",
 		w.id, w.config.Capabilities, w.config.MaxConcurrent)
 
 	// Try initial connection, but don't fail if it doesn't work immediately
 	if err := w.adminClient.Connect(); err != nil {
-		glog.Warningf("⚠️ INITIAL CONNECTION FAILED: Worker %s initial connection to admin server failed, will keep retrying: %v", w.id, err)
+		glog.Warningf("INITIAL CONNECTION FAILED: Worker %s initial connection to admin server failed, will keep retrying: %v", w.id, err)
 		// Don't return error - let the reconnection loop handle it
 	} else {
-		glog.Infof("✅ INITIAL CONNECTION SUCCESS: Worker %s successfully connected to admin server", w.id)
+		glog.Infof("INITIAL CONNECTION SUCCESS: Worker %s successfully connected to admin server", w.id)
 	}
 
 	// Start worker loops regardless of initial connection status
 	// They will handle connection failures gracefully
-	glog.V(1).Infof("🔄 STARTING LOOPS: Worker %s starting background loops", w.id)
+	glog.V(1).Infof("STARTING LOOPS: Worker %s starting background loops", w.id)
 	go w.heartbeatLoop()
 	go w.taskRequestLoop()
 	go w.connectionMonitorLoop()
 	go w.messageProcessingLoop()
 
-	glog.Infof("✅ WORKER STARTED: Worker %s started successfully (connection attempts will continue in background)", w.id)
+	glog.Infof("WORKER STARTED: Worker %s started successfully (connection attempts will continue in background)", w.id)
 	return nil
 }
 
@@ -327,7 +326,7 @@ func (w *Worker) HandleTask(task *types.TaskInput) error {
 	currentLoad := len(w.currentTasks)
 	if currentLoad >= w.config.MaxConcurrent {
 		w.mutex.Unlock()
-		glog.Errorf("❌ TASK REJECTED: Worker %s at capacity (%d/%d) - rejecting task %s",
+		glog.Errorf("TASK REJECTED: Worker %s at capacity (%d/%d) - rejecting task %s",
 			w.id, currentLoad, w.config.MaxConcurrent, task.ID)
 		return fmt.Errorf("worker is at capacity")
 	}
@@ -336,7 +335,7 @@ func (w *Worker) HandleTask(task *types.TaskInput) error {
 	newLoad := len(w.currentTasks)
 	w.mutex.Unlock()
 
-	glog.Infof("✅ TASK ACCEPTED: Worker %s accepted task %s - current load: %d/%d",
+	glog.Infof("TASK ACCEPTED: Worker %s accepted task %s - current load: %d/%d",
 		w.id, task.ID, newLoad, w.config.MaxConcurrent)
 
 	// Execute task in goroutine
@@ -381,11 +380,11 @@ func (w *Worker) executeTask(task *types.TaskInput) {
 		w.mutex.Unlock()
 
 		duration := time.Since(startTime)
-		glog.Infof("🏁 TASK EXECUTION FINISHED: Worker %s finished executing task %s after %v - current load: %d/%d",
+		glog.Infof("TASK EXECUTION FINISHED: Worker %s finished executing task %s after %v - current load: %d/%d",
 			w.id, task.ID, duration, currentLoad, w.config.MaxConcurrent)
 	}()
 
-	glog.Infof("🚀 TASK EXECUTION STARTED: Worker %s starting execution of task %s (type: %s, volume: %d, server: %s, collection: %s) at %v",
+	glog.Infof("TASK EXECUTION STARTED: Worker %s starting execution of task %s (type: %s, volume: %d, server: %s, collection: %s) at %v",
 		w.id, task.ID, task.Type, task.VolumeID, task.Server, task.Collection, startTime.Format(time.RFC3339))
 
 	// Report task start to admin server
@@ -406,6 +405,26 @@ func (w *Worker) executeTask(task *types.TaskInput) {
 
 	// Use new task execution system with unified Task interface
 	glog.V(1).Infof("Executing task %s with typed protobuf parameters", task.ID)
+
+	// Initialize a file-based task logger so admin can retrieve logs
+	// Build minimal params for logger metadata
+	loggerParams := types.TaskParams{
+		VolumeID:    task.VolumeID,
+		Collection:  task.Collection,
+		TypedParams: task.TypedParams,
+	}
+	loggerConfig := w.getTaskLoggerConfig()
+	fileLogger, logErr := tasks.NewTaskLogger(task.ID, task.Type, w.id, loggerParams, loggerConfig)
+	if logErr != nil {
+		glog.Warningf("Failed to initialize file logger for task %s: %v", task.ID, logErr)
+	} else {
+		defer func() {
+			if err := fileLogger.Close(); err != nil {
+				glog.V(1).Infof("Failed to close task logger for %s: %v", task.ID, err)
+			}
+		}()
+		fileLogger.Info("Task %s started (type=%s, server=%s, collection=%s)", task.ID, task.Type, task.Server, task.Collection)
+	}
 
 	taskFactory := w.registry.Get(task.Type)
 	if taskFactory == nil {
@@ -431,12 +450,27 @@ func (w *Worker) executeTask(task *types.TaskInput) {
 	// Task execution uses the new unified Task interface
 	glog.V(2).Infof("Executing task %s in working directory: %s", task.ID, taskWorkingDir)
 
+	// If we have a file logger, adapt it so task WithFields logs are captured into file
+	if fileLogger != nil {
+		if withLogger, ok := taskInstance.(interface{ SetLogger(types.Logger) }); ok {
+			withLogger.SetLogger(newTaskLoggerAdapter(fileLogger))
+		}
+	}
+
 	// Set progress callback that reports to admin server
-	taskInstance.SetProgressCallback(func(progress float64) {
+	taskInstance.SetProgressCallback(func(progress float64, stage string) {
 		// Report progress updates to admin server
-		glog.V(2).Infof("Task %s progress: %.1f%%", task.ID, progress)
+		glog.V(2).Infof("Task %s progress: %.1f%% - %s", task.ID, progress, stage)
 		if err := w.adminClient.UpdateTaskProgress(task.ID, progress); err != nil {
 			glog.V(1).Infof("Failed to report task progress to admin: %v", err)
+		}
+		if fileLogger != nil {
+			// Use meaningful stage description or fallback to generic message
+			message := stage
+			if message == "" {
+				message = fmt.Sprintf("Progress: %.1f%%", progress)
+			}
+			fileLogger.LogProgress(progress, message)
 		}
 	})
 
@@ -449,10 +483,17 @@ func (w *Worker) executeTask(task *types.TaskInput) {
 		w.completeTask(task.ID, false, err.Error())
 		w.tasksFailed++
 		glog.Errorf("Worker %s failed to execute task %s: %v", w.id, task.ID, err)
+		if fileLogger != nil {
+			fileLogger.LogStatus("failed", err.Error())
+			fileLogger.Error("Task %s failed: %v", task.ID, err)
+		}
 	} else {
 		w.completeTask(task.ID, true, "")
 		w.tasksCompleted++
 		glog.Infof("Worker %s completed task %s successfully", w.id, task.ID)
+		if fileLogger != nil {
+			fileLogger.Info("Task %s completed successfully", task.ID)
+		}
 	}
 }
 
@@ -518,29 +559,29 @@ func (w *Worker) requestTasks() {
 	w.mutex.RUnlock()
 
 	if currentLoad >= w.config.MaxConcurrent {
-		glog.V(3).Infof("🚫 TASK REQUEST SKIPPED: Worker %s at capacity (%d/%d)",
+		glog.V(3).Infof("TASK REQUEST SKIPPED: Worker %s at capacity (%d/%d)",
 			w.id, currentLoad, w.config.MaxConcurrent)
 		return // Already at capacity
 	}
 
 	if w.adminClient != nil {
-		glog.V(3).Infof("📞 REQUESTING TASK: Worker %s requesting task from admin server (current load: %d/%d, capabilities: %v)",
+		glog.V(3).Infof("REQUESTING TASK: Worker %s requesting task from admin server (current load: %d/%d, capabilities: %v)",
 			w.id, currentLoad, w.config.MaxConcurrent, w.config.Capabilities)
 
 		task, err := w.adminClient.RequestTask(w.id, w.config.Capabilities)
 		if err != nil {
-			glog.V(2).Infof("❌ TASK REQUEST FAILED: Worker %s failed to request task: %v", w.id, err)
+			glog.V(2).Infof("TASK REQUEST FAILED: Worker %s failed to request task: %v", w.id, err)
 			return
 		}
 
 		if task != nil {
-			glog.Infof("📨 TASK RESPONSE RECEIVED: Worker %s received task from admin server - ID: %s, Type: %s",
+			glog.Infof("TASK RESPONSE RECEIVED: Worker %s received task from admin server - ID: %s, Type: %s",
 				w.id, task.ID, task.Type)
 			if err := w.HandleTask(task); err != nil {
-				glog.Errorf("❌ TASK HANDLING FAILED: Worker %s failed to handle task %s: %v", w.id, task.ID, err)
+				glog.Errorf("TASK HANDLING FAILED: Worker %s failed to handle task %s: %v", w.id, task.ID, err)
 			}
 		} else {
-			glog.V(3).Infof("📭 NO TASK AVAILABLE: Worker %s - admin server has no tasks available", w.id)
+			glog.V(3).Infof("NO TASK AVAILABLE: Worker %s - admin server has no tasks available", w.id)
 		}
 	}
 }
@@ -582,7 +623,6 @@ func (w *Worker) registerWorker() {
 
 // connectionMonitorLoop monitors connection status
 func (w *Worker) connectionMonitorLoop() {
-	glog.V(1).Infof("🔍 CONNECTION MONITOR STARTED: Worker %s connection monitor loop started", w.id)
 	ticker := time.NewTicker(30 * time.Second) // Check every 30 seconds
 	defer ticker.Stop()
 
@@ -591,7 +631,7 @@ func (w *Worker) connectionMonitorLoop() {
 	for {
 		select {
 		case <-w.stopChan:
-			glog.V(1).Infof("🛑 CONNECTION MONITOR STOPPING: Worker %s connection monitor loop stopping", w.id)
+			glog.V(1).Infof("CONNECTION MONITOR STOPPING: Worker %s connection monitor loop stopping", w.id)
 			return
 		case <-ticker.C:
 			// Monitor connection status and log changes
@@ -599,16 +639,16 @@ func (w *Worker) connectionMonitorLoop() {
 
 			if currentConnectionStatus != lastConnectionStatus {
 				if currentConnectionStatus {
-					glog.Infof("🔗 CONNECTION RESTORED: Worker %s connection status changed: connected", w.id)
+					glog.Infof("CONNECTION RESTORED: Worker %s connection status changed: connected", w.id)
 				} else {
-					glog.Warningf("⚠️ CONNECTION LOST: Worker %s connection status changed: disconnected", w.id)
+					glog.Warningf("CONNECTION LOST: Worker %s connection status changed: disconnected", w.id)
 				}
 				lastConnectionStatus = currentConnectionStatus
 			} else {
 				if currentConnectionStatus {
-					glog.V(3).Infof("✅ CONNECTION OK: Worker %s connection status: connected", w.id)
+					glog.V(3).Infof("CONNECTION OK: Worker %s connection status: connected", w.id)
 				} else {
-					glog.V(1).Infof("🔌 CONNECTION DOWN: Worker %s connection status: disconnected, reconnection in progress", w.id)
+					glog.V(1).Infof("CONNECTION DOWN: Worker %s connection status: disconnected, reconnection in progress", w.id)
 				}
 			}
 		}
@@ -643,29 +683,29 @@ func (w *Worker) GetPerformanceMetrics() *types.WorkerPerformance {
 
 // messageProcessingLoop processes incoming admin messages
 func (w *Worker) messageProcessingLoop() {
-	glog.Infof("🔄 MESSAGE LOOP STARTED: Worker %s message processing loop started", w.id)
+	glog.Infof("MESSAGE LOOP STARTED: Worker %s message processing loop started", w.id)
 
 	// Get access to the incoming message channel from gRPC client
 	grpcClient, ok := w.adminClient.(*GrpcAdminClient)
 	if !ok {
-		glog.Warningf("⚠️ MESSAGE LOOP UNAVAILABLE: Worker %s admin client is not gRPC client, message processing not available", w.id)
+		glog.Warningf("MESSAGE LOOP UNAVAILABLE: Worker %s admin client is not gRPC client, message processing not available", w.id)
 		return
 	}
 
 	incomingChan := grpcClient.GetIncomingChannel()
-	glog.V(1).Infof("📡 MESSAGE CHANNEL READY: Worker %s connected to incoming message channel", w.id)
+	glog.V(1).Infof("MESSAGE CHANNEL READY: Worker %s connected to incoming message channel", w.id)
 
 	for {
 		select {
 		case <-w.stopChan:
-			glog.Infof("🛑 MESSAGE LOOP STOPPING: Worker %s message processing loop stopping", w.id)
+			glog.Infof("MESSAGE LOOP STOPPING: Worker %s message processing loop stopping", w.id)
 			return
 		case message := <-incomingChan:
 			if message != nil {
-				glog.V(3).Infof("📥 MESSAGE PROCESSING: Worker %s processing incoming message", w.id)
+				glog.V(3).Infof("MESSAGE PROCESSING: Worker %s processing incoming message", w.id)
 				w.processAdminMessage(message)
 			} else {
-				glog.V(3).Infof("📭 NULL MESSAGE: Worker %s received nil message", w.id)
+				glog.V(3).Infof("NULL MESSAGE: Worker %s received nil message", w.id)
 			}
 		}
 	}
@@ -673,17 +713,17 @@ func (w *Worker) messageProcessingLoop() {
 
 // processAdminMessage processes different types of admin messages
 func (w *Worker) processAdminMessage(message *worker_pb.AdminMessage) {
-	glog.V(4).Infof("📫 ADMIN MESSAGE RECEIVED: Worker %s received admin message: %T", w.id, message.Message)
+	glog.V(4).Infof("ADMIN MESSAGE RECEIVED: Worker %s received admin message: %T", w.id, message.Message)
 
 	switch msg := message.Message.(type) {
 	case *worker_pb.AdminMessage_RegistrationResponse:
-		glog.V(2).Infof("✅ REGISTRATION RESPONSE: Worker %s received registration response", w.id)
+		glog.V(2).Infof("REGISTRATION RESPONSE: Worker %s received registration response", w.id)
 		w.handleRegistrationResponse(msg.RegistrationResponse)
 	case *worker_pb.AdminMessage_HeartbeatResponse:
-		glog.V(3).Infof("💓 HEARTBEAT RESPONSE: Worker %s received heartbeat response", w.id)
+		glog.V(3).Infof("HEARTBEAT RESPONSE: Worker %s received heartbeat response", w.id)
 		w.handleHeartbeatResponse(msg.HeartbeatResponse)
 	case *worker_pb.AdminMessage_TaskLogRequest:
-		glog.V(1).Infof("📋 TASK LOG REQUEST: Worker %s received task log request for task %s", w.id, msg.TaskLogRequest.TaskId)
+		glog.V(1).Infof("TASK LOG REQUEST: Worker %s received task log request for task %s", w.id, msg.TaskLogRequest.TaskId)
 		w.handleTaskLogRequest(msg.TaskLogRequest)
 	case *worker_pb.AdminMessage_TaskAssignment:
 		taskAssign := msg.TaskAssignment
@@ -696,7 +736,7 @@ func (w *Worker) processAdminMessage(message *worker_pb.AdminMessage) {
 			Type:        types.TaskType(taskAssign.TaskType),
 			Status:      types.TaskStatusAssigned,
 			VolumeID:    taskAssign.Params.VolumeId,
-			Server:      taskAssign.Params.Server,
+			Server:      getServerFromParams(taskAssign.Params),
 			Collection:  taskAssign.Params.Collection,
 			Priority:    types.TaskPriority(taskAssign.Priority),
 			CreatedAt:   time.Unix(taskAssign.CreatedTime, 0),
@@ -704,16 +744,16 @@ func (w *Worker) processAdminMessage(message *worker_pb.AdminMessage) {
 		}
 
 		if err := w.HandleTask(task); err != nil {
-			glog.Errorf("❌ DIRECT TASK ASSIGNMENT FAILED: Worker %s failed to handle direct task assignment %s: %v", w.id, task.ID, err)
+			glog.Errorf("DIRECT TASK ASSIGNMENT FAILED: Worker %s failed to handle direct task assignment %s: %v", w.id, task.ID, err)
 		}
 	case *worker_pb.AdminMessage_TaskCancellation:
-		glog.Infof("🛑 TASK CANCELLATION: Worker %s received task cancellation for task %s", w.id, msg.TaskCancellation.TaskId)
+		glog.Infof("TASK CANCELLATION: Worker %s received task cancellation for task %s", w.id, msg.TaskCancellation.TaskId)
 		w.handleTaskCancellation(msg.TaskCancellation)
 	case *worker_pb.AdminMessage_AdminShutdown:
-		glog.Infof("🔄 ADMIN SHUTDOWN: Worker %s received admin shutdown message", w.id)
+		glog.Infof("ADMIN SHUTDOWN: Worker %s received admin shutdown message", w.id)
 		w.handleAdminShutdown(msg.AdminShutdown)
 	default:
-		glog.V(1).Infof("❓ UNKNOWN MESSAGE: Worker %s received unknown admin message type: %T", w.id, message.Message)
+		glog.V(1).Infof("UNKNOWN MESSAGE: Worker %s received unknown admin message type: %T", w.id, message.Message)
 	}
 }
 

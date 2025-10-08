@@ -202,6 +202,17 @@ func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind 
 
 // hasFreeDiskLocation checks if a disk location has free space
 func (s *Store) hasFreeDiskLocation(location *DiskLocation) bool {
+	// Check if disk space is low first
+	if location.isDiskSpaceLow {
+		return false
+	}
+
+	// If MaxVolumeCount is 0, it means unlimited volumes are allowed
+	if location.MaxVolumeCount == 0 {
+		return true
+	}
+
+	// Check if current volume count is below the maximum
 	return int64(location.VolumesLen()) < int64(location.MaxVolumeCount)
 }
 
@@ -239,7 +250,19 @@ func collectStatForOneVolume(vid needle.VolumeId, v *Volume) (s *VolumeInfo) {
 		DiskId:           v.diskId,
 	}
 	s.RemoteStorageName, s.RemoteStorageKey = v.RemoteStorageNameKey()
-	s.Size, _, _ = v.FileStat()
+
+	v.dataFileAccessLock.RLock()
+	defer v.dataFileAccessLock.RUnlock()
+
+	if v.nm == nil {
+		return
+	}
+
+	s.FileCount = v.nm.FileCount()
+	s.DeleteCount = v.nm.DeletedCount()
+	s.DeletedByteCount = v.nm.DeletedSize()
+	s.Size = v.nm.ContentSize()
+
 	return
 }
 

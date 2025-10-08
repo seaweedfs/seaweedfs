@@ -161,7 +161,7 @@ func NewLogFileEntryCollector(f *Filer, startPosition log_buffer.MessagePosition
 	startHourMinute := fmt.Sprintf("%02d-%02d", startPosition.Hour(), startPosition.Minute())
 	var stopDate, stopHourMinute string
 	if stopTsNs != 0 {
-		stopTime := time.Unix(0, stopTsNs+24*60*60*int64(time.Nanosecond)).UTC()
+		stopTime := time.Unix(0, stopTsNs+24*60*60*int64(time.Second)).UTC()
 		stopDate = fmt.Sprintf("%04d-%02d-%02d", stopTime.Year(), stopTime.Month(), stopTime.Day())
 		stopHourMinute = fmt.Sprintf("%02d-%02d", stopTime.Hour(), stopTime.Minute())
 	}
@@ -221,6 +221,10 @@ func (c *LogFileEntryCollector) collectMore(v *OrderedLogVisitor) (err error) {
 			continue
 		}
 		filerId := getFilerId(hourMinuteEntry.Name())
+		if filerId == "" {
+			glog.Warningf("Invalid log file name format: %s", hourMinuteEntry.Name())
+			continue // Skip files with invalid format
+		}
 		iter, found := v.perFilerIteratorMap[filerId]
 		if !found {
 			iter = newLogFileQueueIterator(c.f.MasterClient, util.NewQueue[*LogFileEntry](), c.startTsNs, c.stopTsNs)
@@ -245,7 +249,7 @@ func (c *LogFileEntryCollector) collectMore(v *OrderedLogVisitor) (err error) {
 			if nextErr == io.EOF {
 				// do nothing since the filer has no more log entries
 			} else {
-				return fmt.Errorf("failed to get next log entry for %v: %w", entryName, err)
+				return fmt.Errorf("failed to get next log entry for %v: %w", entryName, nextErr)
 			}
 		} else {
 			heap.Push(v.pq, &LogEntryItem{
@@ -303,6 +307,7 @@ func (iter *LogFileQueueIterator) getNext(v *OrderedLogVisitor) (logEntry *filer
 			if collectErr := v.logFileEntryCollector.collectMore(v); collectErr != nil && collectErr != io.EOF {
 				return nil, collectErr
 			}
+			next = iter.q.Peek() // Re-peek after collectMore
 		}
 		// skip the file if the next entry is before the startTsNs
 		if next != nil && next.TsNs <= iter.startTsNs {

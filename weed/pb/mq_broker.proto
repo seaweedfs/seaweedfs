@@ -58,6 +58,10 @@ service SeaweedMessaging {
     }
     rpc SubscribeFollowMe (stream SubscribeFollowMeRequest) returns (SubscribeFollowMeResponse) {
     }
+    
+    // SQL query support - get unflushed messages from broker's in-memory buffer (streaming)
+    rpc GetUnflushedMessages (GetUnflushedMessagesRequest) returns (stream GetUnflushedMessagesResponse) {
+    }
 }
 
 //////////////////////////////////////////////////
@@ -349,4 +353,26 @@ message CloseSubscribersRequest {
     int64 unix_time_ns = 2;
 }
 message CloseSubscribersResponse {
+}
+
+//////////////////////////////////////////////////
+// SQL query support messages
+
+message GetUnflushedMessagesRequest {
+    schema_pb.Topic topic = 1;
+    schema_pb.Partition partition = 2;
+    int64 start_buffer_index = 3; // Filter by buffer index (messages from buffers >= this index)
+}
+
+message GetUnflushedMessagesResponse {
+    LogEntry message = 1;       // Single message per response (streaming)
+    string error = 2;           // Error message if any
+    bool end_of_stream = 3;     // Indicates this is the final response
+}
+
+message LogEntry {
+    int64 ts_ns = 1;
+    bytes key = 2;
+    bytes data = 3;
+    uint32 partition_key_hash = 4;
 }

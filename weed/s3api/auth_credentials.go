@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -12,10 +13,18 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/kms"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+
+	// Import KMS providers to register them
+	_ "github.com/seaweedfs/seaweedfs/weed/kms/aws"
+	// _ "github.com/seaweedfs/seaweedfs/weed/kms/azure"  // TODO: Fix Azure SDK compatibility issues
+	_ "github.com/seaweedfs/seaweedfs/weed/kms/gcp"
+	_ "github.com/seaweedfs/seaweedfs/weed/kms/local"
+	_ "github.com/seaweedfs/seaweedfs/weed/kms/openbao"
 	"google.golang.org/grpc"
 )
 
@@ -41,6 +50,9 @@ type IdentityAccessManagement struct {
 	credentialManager *credential.CredentialManager
 	filerClient       filer_pb.SeaweedFilerClient
 	grpcDialOption    grpc.DialOption
+
+	// IAM Integration for advanced features
+	iamIntegration *S3IAMIntegration
 }
 
 type Identity struct {
@@ -48,6 +60,7 @@ type Identity struct {
 	Account     *Account
 	Credentials []*Credential
 	Actions     []Action
+	PrincipalArn string // ARN for IAM authorization (e.g., "arn:seaweed:iam::user/username")
 }
 
 // Account represents a system user, a system user can
@@ -140,6 +153,9 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 		if err := iam.loadS3ApiConfigurationFromFile(option.Config); err != nil {
 			glog.Fatalf("fail to load config file %s: %v", option.Config, err)
 		}
+		// Mark as loaded since an explicit config file was provided
+		// This prevents fallback to environment variables even if no identities were loaded
+		// (e.g., config file contains only KMS settings)
 		configLoaded = true
 	} else {
 		glog.V(3).Infof("no static config file specified... loading config from credential manager")
@@ -210,6 +226,12 @@ func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFile(fileName str
 		glog.Warningf("fail to read %s : %v", fileName, readErr)
 		return fmt.Errorf("fail to read %s : %v", fileName, readErr)
 	}
+
+	// Initialize KMS if configuration contains KMS settings
+	if err := iam.initializeKMSFromConfig(content); err != nil {
+		glog.Warningf("KMS initialization failed: %v", err)
+	}
+
 	return iam.LoadS3ApiConfigurationFromBytes(content)
 }
 
@@ -281,9 +303,10 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 	for _, ident := range config.Identities {
 		glog.V(3).Infof("loading identity %s", ident.Name)
 		t := &Identity{
-			Name:        ident.Name,
-			Credentials: nil,
-			Actions:     nil,
+			Name:         ident.Name,
+			Credentials:  nil,
+			Actions:      nil,
+			PrincipalArn: generatePrincipalArn(ident.Name),
 		}
 		switch {
 		case ident.Name == AccountAnonymous.Id:
@@ -355,6 +378,19 @@ func (iam *IdentityAccessManagement) lookupAnonymous() (identity *Identity, foun
 	return nil, false
 }
 
+// generatePrincipalArn generates an ARN for a user identity
+func generatePrincipalArn(identityName string) string {
+	// Handle special cases
+	switch identityName {
+	case AccountAnonymous.Id:
+		return "arn:seaweed:iam::user/anonymous"
+	case AccountAdmin.Id:
+		return "arn:seaweed:iam::user/admin"
+	default:
+		return fmt.Sprintf("arn:seaweed:iam::user/%s", identityName)
+	}
+}
+
 func (iam *IdentityAccessManagement) GetAccountNameById(canonicalId string) string {
 	iam.m.RLock()
 	defer iam.m.RUnlock()
@@ -421,9 +457,15 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 		glog.V(3).Infof("unsigned streaming upload")
 		return identity, s3err.ErrNone
 	case authTypeJWT:
-		glog.V(3).Infof("jwt auth type")
+		glog.V(3).Infof("jwt auth type detected, iamIntegration != nil? %t", iam.iamIntegration != nil)
 		r.Header.Set(s3_constants.AmzAuthType, "Jwt")
-		return identity, s3err.ErrNotImplemented
+		if iam.iamIntegration != nil {
+			identity, s3Err = iam.authenticateJWTWithIAM(r)
+			authType = "Jwt"
+		} else {
+			glog.V(0).Infof("IAM integration is nil, returning ErrNotImplemented")
+			return identity, s3err.ErrNotImplemented
+		}
 	case authTypeAnonymous:
 		authType = "Anonymous"
 		if identity, found = iam.lookupAnonymous(); !found {
@@ -460,8 +502,17 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 	if action == s3_constants.ACTION_LIST && bucket == "" {
 		// ListBuckets operation - authorization handled per-bucket in the handler
 	} else {
-		if !identity.canDo(action, bucket, object) {
-			return identity, s3err.ErrAccessDenied
+		// Use enhanced IAM authorization if available, otherwise fall back to legacy authorization
+		if iam.iamIntegration != nil {
+			// Always use IAM when available for unified authorization
+			if errCode := iam.authorizeWithIAM(r, identity, action, bucket, object); errCode != s3err.ErrNone {
+				return identity, errCode
+			}
+		} else {
+			// Fall back to existing authorization when IAM is not configured
+			if !identity.canDo(action, bucket, object) {
+				return identity, s3err.ErrAccessDenied
+			}
 		}
 	}
 
@@ -534,4 +585,97 @@ func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromCredentialManager
 	}
 
 	return iam.loadS3ApiConfiguration(s3ApiConfiguration)
+}
+
+// initializeKMSFromConfig loads KMS configuration from TOML format
+func (iam *IdentityAccessManagement) initializeKMSFromConfig(configContent []byte) error {
+	// JSON-only KMS configuration
+	if err := iam.initializeKMSFromJSON(configContent); err == nil {
+		glog.V(1).Infof("Successfully loaded KMS configuration from JSON format")
+		return nil
+	}
+
+	glog.V(2).Infof("No KMS configuration found in S3 config - SSE-KMS will not be available")
+	return nil
+}
+
+// initializeKMSFromJSON loads KMS configuration from JSON format when provided in the same file
+func (iam *IdentityAccessManagement) initializeKMSFromJSON(configContent []byte) error {
+	// Parse as generic JSON and extract optional "kms" block
+	var m map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(configContent))), &m); err != nil {
+		return err
+	}
+	kmsVal, ok := m["kms"]
+	if !ok {
+		return fmt.Errorf("no KMS section found")
+	}
+
+	// Load KMS configuration directly from the parsed JSON data
+	return kms.LoadKMSFromConfig(kmsVal)
+}
+
+// SetIAMIntegration sets the IAM integration for advanced authentication and authorization
+func (iam *IdentityAccessManagement) SetIAMIntegration(integration *S3IAMIntegration) {
+	iam.m.Lock()
+	defer iam.m.Unlock()
+	iam.iamIntegration = integration
+}
+
+// authenticateJWTWithIAM authenticates JWT tokens using the IAM integration
+func (iam *IdentityAccessManagement) authenticateJWTWithIAM(r *http.Request) (*Identity, s3err.ErrorCode) {
+	ctx := r.Context()
+
+	// Use IAM integration to authenticate JWT
+	iamIdentity, errCode := iam.iamIntegration.AuthenticateJWT(ctx, r)
+	if errCode != s3err.ErrNone {
+		return nil, errCode
+	}
+
+	// Convert IAMIdentity to existing Identity structure
+	identity := &Identity{
+		Name:    iamIdentity.Name,
+		Account: iamIdentity.Account,
+		Actions: []Action{}, // Empty - authorization handled by policy engine
+	}
+
+	// Store session info in request headers for later authorization
+	r.Header.Set("X-SeaweedFS-Session-Token", iamIdentity.SessionToken)
+	r.Header.Set("X-SeaweedFS-Principal", iamIdentity.Principal)
+
+	return identity, s3err.ErrNone
+}
+
+// authorizeWithIAM authorizes requests using the IAM integration policy engine
+func (iam *IdentityAccessManagement) authorizeWithIAM(r *http.Request, identity *Identity, action Action, bucket string, object string) s3err.ErrorCode {
+	ctx := r.Context()
+
+	// Get session info from request headers (for JWT-based authentication)
+	sessionToken := r.Header.Get("X-SeaweedFS-Session-Token")
+	principal := r.Header.Get("X-SeaweedFS-Principal")
+
+	// Create IAMIdentity for authorization
+	iamIdentity := &IAMIdentity{
+		Name:    identity.Name,
+		Account: identity.Account,
+	}
+
+	// Handle both session-based (JWT) and static-key-based (V4 signature) principals
+	if sessionToken != "" && principal != "" {
+		// JWT-based authentication - use session token and principal from headers
+		iamIdentity.Principal = principal
+		iamIdentity.SessionToken = sessionToken
+		glog.V(3).Infof("Using JWT-based IAM authorization for principal: %s", principal)
+	} else if identity.PrincipalArn != "" {
+		// V4 signature authentication - use principal ARN from identity
+		iamIdentity.Principal = identity.PrincipalArn
+		iamIdentity.SessionToken = "" // No session token for static credentials
+		glog.V(3).Infof("Using V4 signature IAM authorization for principal: %s", identity.PrincipalArn)
+	} else {
+		glog.V(3).Info("No valid principal information for IAM authorization")
+		return s3err.ErrAccessDenied
+	}
+
+	// Use IAM integration for authorization
+	return iam.iamIntegration.AuthorizeAction(ctx, iamIdentity, action, bucket, object, r)
 }

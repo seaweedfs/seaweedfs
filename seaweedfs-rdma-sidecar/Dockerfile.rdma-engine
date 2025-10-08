@@ -1,0 +1,63 @@
+# Multi-stage build for Rust RDMA Engine
+FROM rust:1.80-slim AS builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    libudev-dev \
+    build-essential \
+    libc6-dev \
+    linux-libc-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set work directory
+WORKDIR /app
+
+# Copy Rust project files
+COPY rdma-engine/Cargo.toml ./
+COPY rdma-engine/Cargo.lock ./
+COPY rdma-engine/src ./src
+
+# Build the release binary
+RUN cargo build --release
+
+# Runtime stage
+FROM debian:bookworm-slim
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    libssl3 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create app user
+RUN useradd -m -u 1001 appuser
+
+# Set work directory
+WORKDIR /app
+
+# Copy binary from builder stage
+COPY --from=builder /app/target/release/rdma-engine-server .
+
+# Change ownership
+RUN chown -R appuser:appuser /app
+
+# Set default socket path (can be overridden)
+ENV RDMA_SOCKET_PATH=/tmp/rdma/rdma-engine.sock
+
+# Create socket directory with proper permissions (before switching user)
+RUN mkdir -p /tmp/rdma && chown -R appuser:appuser /tmp/rdma
+
+USER appuser
+
+# Expose any needed ports (none for this service as it uses Unix sockets)
+# EXPOSE 18515
+
+# Health check - verify both process and socket using environment variable
+HEALTHCHECK --interval=5s --timeout=3s --start-period=10s --retries=3 \
+    CMD pgrep rdma-engine-server >/dev/null && test -S "$RDMA_SOCKET_PATH"
+
+# Default command using environment variable
+CMD sh -c "./rdma-engine-server --debug --ipc-socket \"$RDMA_SOCKET_PATH\""

@@ -1,0 +1,74 @@
+[package]
+name = "rdma-engine"
+version = "0.1.0"
+edition = "2021"
+authors = ["SeaweedFS Team <dev@seaweedfs.com>"]
+description = "High-performance RDMA engine for SeaweedFS sidecar"
+license = "Apache-2.0"
+
+[[bin]]
+name = "rdma-engine-server"
+path = "src/main.rs"
+
+[lib]
+name = "rdma_engine"
+path = "src/lib.rs"
+
+[dependencies]
+# UCX (Unified Communication X) for high-performance networking
+# Much better than direct libibverbs - provides unified API across transports
+libc = "0.2"
+libloading = "0.8"  # Dynamic loading of UCX libraries
+
+# Async runtime and networking
+tokio = { version = "1.0", features = ["full"] }
+tokio-util = "0.7"
+
+# Serialization for IPC
+serde = { version = "1.0", features = ["derive"] }
+bincode = "1.3"
+rmp-serde = "1.1"  # MessagePack for efficient IPC
+
+# Error handling and logging
+anyhow = "1.0"
+thiserror = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# UUID and time handling
+uuid = { version = "1.0", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Memory management and utilities
+memmap2 = "0.9"
+bytes = "1.0"
+parking_lot = "0.12"  # Fast mutexes
+
+# IPC and networking
+nix = { version = "0.27", features = ["mman"] }  # Unix domain sockets and system calls
+async-trait = "0.1"  # Async traits
+
+# Configuration
+clap = { version = "4.0", features = ["derive"] }
+config = "0.13"
+
+[dev-dependencies]
+proptest = "1.0"
+criterion = "0.5"
+tempfile = "3.0"
+
+[features]
+default = ["mock-ucx"]
+mock-ucx = []
+real-ucx = []  # UCX integration for production RDMA
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+
+
+
+[package.metadata.docs.rs]
+features = ["real-rdma"]

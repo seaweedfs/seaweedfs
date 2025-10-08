@@ -1,0 +1,103 @@
+version: '3.8'
+
+services:
+  # OpenBao server for KMS integration testing
+  openbao:
+    image: ghcr.io/openbao/openbao:latest
+    ports:
+      - "8200:8200"
+    environment:
+      - BAO_DEV_ROOT_TOKEN_ID=root-token-for-testing
+      - BAO_DEV_LISTEN_ADDRESS=0.0.0.0:8200
+      - BAO_LOCAL_CONFIG={"backend":{"file":{"path":"/bao/data"}},"default_lease_ttl":"168h","max_lease_ttl":"720h","ui":true,"disable_mlock":true}
+    command:
+      - bao
+      - server
+      - -dev
+      - -dev-root-token-id=root-token-for-testing
+      - -dev-listen-address=0.0.0.0:8200
+    volumes:
+      - openbao-data:/bao/data
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8200/v1/sys/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  # HashiCorp Vault for compatibility testing (alternative to OpenBao)
+  vault:
+    image: vault:latest
+    ports:
+      - "8201:8200"
+    environment:
+      - VAULT_DEV_ROOT_TOKEN_ID=root-token-for-testing
+      - VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200
+    command:
+      - vault
+      - server
+      - -dev
+      - -dev-root-token-id=root-token-for-testing
+      - -dev-listen-address=0.0.0.0:8200
+    cap_add:
+      - IPC_LOCK
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8200/v1/sys/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  # SeaweedFS components for end-to-end testing
+  seaweedfs-master:
+    image: chrislusf/seaweedfs:latest
+    ports:
+      - "9333:9333"
+    command: 
+      - master
+      - -ip=seaweedfs-master
+      - -volumeSizeLimitMB=1024
+    volumes:
+      - seaweedfs-master-data:/data
+
+  seaweedfs-volume:
+    image: chrislusf/seaweedfs:latest
+    ports:
+      - "8080:8080"
+    command:
+      - volume
+      - -mserver=seaweedfs-master:9333
+      - -ip=seaweedfs-volume
+      - -publicUrl=seaweedfs-volume:8080
+    depends_on:
+      - seaweedfs-master
+    volumes:
+      - seaweedfs-volume-data:/data
+
+  seaweedfs-filer:
+    image: chrislusf/seaweedfs:latest
+    ports:
+      - "8888:8888"
+      - "8333:8333" # S3 API port
+    command:
+      - filer
+      - -master=seaweedfs-master:9333
+      - -ip=seaweedfs-filer
+      - -s3
+      - -s3.port=8333
+    depends_on:
+      - seaweedfs-master
+      - seaweedfs-volume
+    volumes:
+      - ./filer.toml:/etc/seaweedfs/filer.toml
+      - seaweedfs-filer-data:/data
+
+volumes:
+  openbao-data:
+  seaweedfs-master-data:
+  seaweedfs-volume-data:
+  seaweedfs-filer-data:
+
+networks:
+  default:
+    name: seaweedfs-kms-test

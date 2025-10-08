@@ -2,15 +2,20 @@ package s3api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/iam/integration"
+	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
+	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 
@@ -38,12 +43,14 @@ type S3ApiServerOption struct {
 	LocalFilerSocket          string
 	DataCenter                string
 	FilerGroup                string
+	IamConfig                 string // Advanced IAM configuration file path
 }
 
 type S3ApiServer struct {
 	s3_pb.UnimplementedSeaweedS3Server
 	option            *S3ApiServerOption
 	iam               *IdentityAccessManagement
+	iamIntegration    *S3IAMIntegration // Advanced IAM integration for JWT authentication
 	cb                *CircuitBreaker
 	randomClientId    int32
 	filerGuard        *security.Guard
@@ -89,6 +96,29 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		cb:                NewCircuitBreaker(option),
 		credentialManager: iam.credentialManager,
 		bucketConfigCache: NewBucketConfigCache(60 * time.Minute), // Increased TTL since cache is now event-driven
+	}
+
+	// Initialize advanced IAM system if config is provided
+	if option.IamConfig != "" {
+		glog.V(0).Infof("Loading advanced IAM configuration from: %s", option.IamConfig)
+
+		iamManager, err := loadIAMManagerFromConfig(option.IamConfig, func() string {
+			return string(option.Filer)
+		})
+		if err != nil {
+			glog.Errorf("Failed to load IAM configuration: %v", err)
+		} else {
+			// Create S3 IAM integration with the loaded IAM manager
+			s3iam := NewS3IAMIntegration(iamManager, string(option.Filer))
+
+			// Set IAM integration in server
+			s3ApiServer.iamIntegration = s3iam
+
+			// Set the integration in the traditional IAM for compatibility
+			iam.SetIAMIntegration(s3iam)
+
+			glog.V(0).Infof("Advanced IAM system initialized successfully")
+		}
 	}
 
 	if option.Config != "" {
@@ -381,4 +411,84 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	// NotFound
 	apiRouter.NotFoundHandler = http.HandlerFunc(s3err.NotFoundHandler)
 
+}
+
+// loadIAMManagerFromConfig loads the advanced IAM manager from configuration file
+func loadIAMManagerFromConfig(configPath string, filerAddressProvider func() string) (*integration.IAMManager, error) {
+	// Read configuration file
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	// Parse configuration structure
+	var configRoot struct {
+		STS       *sts.STSConfig                `json:"sts"`
+		Policy    *policy.PolicyEngineConfig    `json:"policy"`
+		Providers []map[string]interface{}      `json:"providers"`
+		Roles     []*integration.RoleDefinition `json:"roles"`
+		Policies  []struct {
+			Name     string                 `json:"name"`
+			Document *policy.PolicyDocument `json:"document"`
+		} `json:"policies"`
+	}
+
+	if err := json.Unmarshal(configData, &configRoot); err != nil {
+		return nil, fmt.Errorf("failed to parse config: %w", err)
+	}
+
+	// Create IAM configuration
+	iamConfig := &integration.IAMConfig{
+		STS:    configRoot.STS,
+		Policy: configRoot.Policy,
+		Roles: &integration.RoleStoreConfig{
+			StoreType: "memory", // Use memory store for JSON config-based setup
+		},
+	}
+
+	// Initialize IAM manager
+	iamManager := integration.NewIAMManager()
+	if err := iamManager.Initialize(iamConfig, filerAddressProvider); err != nil {
+		return nil, fmt.Errorf("failed to initialize IAM manager: %w", err)
+	}
+
+	// Load identity providers
+	providerFactory := sts.NewProviderFactory()
+	for _, providerConfig := range configRoot.Providers {
+		provider, err := providerFactory.CreateProvider(&sts.ProviderConfig{
+			Name:    providerConfig["name"].(string),
+			Type:    providerConfig["type"].(string),
+			Enabled: true,
+			Config:  providerConfig["config"].(map[string]interface{}),
+		})
+		if err != nil {
+			glog.Warningf("Failed to create provider %s: %v", providerConfig["name"], err)
+			continue
+		}
+		if provider != nil {
+			if err := iamManager.RegisterIdentityProvider(provider); err != nil {
+				glog.Warningf("Failed to register provider %s: %v", providerConfig["name"], err)
+			} else {
+				glog.V(1).Infof("Registered identity provider: %s", providerConfig["name"])
+			}
+		}
+	}
+
+	// Load policies
+	for _, policyDef := range configRoot.Policies {
+		if err := iamManager.CreatePolicy(context.Background(), "", policyDef.Name, policyDef.Document); err != nil {
+			glog.Warningf("Failed to create policy %s: %v", policyDef.Name, err)
+		}
+	}
+
+	// Load roles
+	for _, roleDef := range configRoot.Roles {
+		if err := iamManager.CreateRole(context.Background(), "", roleDef.RoleName, roleDef); err != nil {
+			glog.Warningf("Failed to create role %s: %v", roleDef.RoleName, err)
+		}
+	}
+
+	glog.V(0).Infof("Loaded %d providers, %d policies and %d roles from config", len(configRoot.Providers), len(configRoot.Policies), len(configRoot.Roles))
+
+	return iamManager, nil
 }

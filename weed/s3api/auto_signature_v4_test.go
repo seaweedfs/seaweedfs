@@ -322,6 +322,72 @@ func TestSignatureV4WithForwardedPrefix(t *testing.T) {
 	}
 }
 
+// Test X-Forwarded-Prefix with trailing slash preservation (GitHub issue #7223)
+// This tests the specific bug where S3 SDK signs paths with trailing slashes
+// but path.Clean() would remove them, causing signature verification to fail
+func TestSignatureV4WithForwardedPrefixTrailingSlash(t *testing.T) {
+	tests := []struct {
+		name            string
+		forwardedPrefix string
+		urlPath         string
+		expectedPath    string
+	}{
+		{
+			name:            "bucket listObjects with trailing slash",
+			forwardedPrefix: "/oss-sf-nnct",
+			urlPath:         "/s3user-bucket1/",
+			expectedPath:    "/oss-sf-nnct/s3user-bucket1/",
+		},
+		{
+			name:            "prefix path with trailing slash",
+			forwardedPrefix: "/s3",
+			urlPath:         "/my-bucket/folder/",
+			expectedPath:    "/s3/my-bucket/folder/",
+		},
+		{
+			name:            "root bucket with trailing slash",
+			forwardedPrefix: "/api/s3",
+			urlPath:         "/test-bucket/",
+			expectedPath:    "/api/s3/test-bucket/",
+		},
+		{
+			name:            "nested folder with trailing slash",
+			forwardedPrefix: "/storage",
+			urlPath:         "/bucket/path/to/folder/",
+			expectedPath:    "/storage/bucket/path/to/folder/",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			iam := newTestIAM()
+
+			// Create a request with the URL path that has a trailing slash
+			r, err := newTestRequest("GET", "https://example.com"+tt.urlPath, 0, nil)
+			if err != nil {
+				t.Fatalf("Failed to create test request: %v", err)
+			}
+
+			// Manually set the URL path with trailing slash to ensure it's preserved
+			r.URL.Path = tt.urlPath
+
+			r.Header.Set("X-Forwarded-Prefix", tt.forwardedPrefix)
+			r.Header.Set("Host", "example.com")
+			r.Header.Set("X-Forwarded-Host", "example.com")
+
+			// Sign the request with the full path including the trailing slash
+			// This simulates what S3 SDK does for listObjects operations
+			signV4WithPath(r, "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", tt.expectedPath)
+
+			// Test signature verification - this should succeed even with trailing slashes
+			_, errCode := iam.doesSignatureMatch(getContentSha256Cksum(r), r)
+			if errCode != s3err.ErrNone {
+				t.Errorf("Expected successful signature validation with trailing slash in path %q, got error: %v (code: %d)", tt.urlPath, errCode, int(errCode))
+			}
+		})
+	}
+}
+
 // Test X-Forwarded-Port support for reverse proxy scenarios
 func TestSignatureV4WithForwardedPort(t *testing.T) {
 	tests := []struct {
@@ -510,6 +576,73 @@ func TestPresignedSignatureV4WithForwardedPrefix(t *testing.T) {
 			_, errCode := iam.doesPresignedSignatureMatch(getContentSha256Cksum(r), r)
 			if errCode != s3err.ErrNone {
 				t.Errorf("Expected successful presigned signature validation with X-Forwarded-Prefix %q, got error: %v (code: %d)", tt.forwardedPrefix, errCode, int(errCode))
+			}
+		})
+	}
+}
+
+// Test X-Forwarded-Prefix with trailing slash preservation for presigned URLs (GitHub issue #7223)
+func TestPresignedSignatureV4WithForwardedPrefixTrailingSlash(t *testing.T) {
+	tests := []struct {
+		name            string
+		forwardedPrefix string
+		originalPath    string
+		strippedPath    string
+	}{
+		{
+			name:            "bucket listObjects with trailing slash",
+			forwardedPrefix: "/oss-sf-nnct",
+			originalPath:    "/oss-sf-nnct/s3user-bucket1/",
+			strippedPath:    "/s3user-bucket1/",
+		},
+		{
+			name:            "prefix path with trailing slash",
+			forwardedPrefix: "/s3",
+			originalPath:    "/s3/my-bucket/folder/",
+			strippedPath:    "/my-bucket/folder/",
+		},
+		{
+			name:            "api path with trailing slash",
+			forwardedPrefix: "/api/s3",
+			originalPath:    "/api/s3/test-bucket/",
+			strippedPath:    "/test-bucket/",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			iam := newTestIAM()
+
+			// Create a presigned request that simulates reverse proxy scenario with trailing slashes:
+			// 1. Client generates presigned URL with prefixed path including trailing slash
+			// 2. Proxy strips prefix and forwards to SeaweedFS with X-Forwarded-Prefix header
+
+			// Start with the original request URL (what client sees) with trailing slash
+			r, err := newTestRequest("GET", "https://example.com"+tt.originalPath, 0, nil)
+			if err != nil {
+				t.Fatalf("Failed to create test request: %v", err)
+			}
+
+			// Generate presigned URL with the original prefixed path including trailing slash
+			err = preSignV4WithPath(iam, r, "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", 3600, tt.originalPath)
+			if err != nil {
+				t.Errorf("Failed to presign request: %v", err)
+				return
+			}
+
+			// Now simulate what the reverse proxy does:
+			// 1. Strip the prefix from the URL path but preserve the trailing slash
+			r.URL.Path = tt.strippedPath
+
+			// 2. Add the forwarded headers
+			r.Header.Set("X-Forwarded-Prefix", tt.forwardedPrefix)
+			r.Header.Set("Host", "example.com")
+			r.Header.Set("X-Forwarded-Host", "example.com")
+
+			// Test presigned signature verification - this should succeed with trailing slashes
+			_, errCode := iam.doesPresignedSignatureMatch(getContentSha256Cksum(r), r)
+			if errCode != s3err.ErrNone {
+				t.Errorf("Expected successful presigned signature validation with trailing slash in path %q, got error: %v (code: %d)", tt.strippedPath, errCode, int(errCode))
 			}
 		})
 	}
@@ -1196,6 +1329,109 @@ func TestGitHubIssue7080Scenario(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, len(testPayload), n)
 	assert.Equal(t, testPayload, string(bodyBytes))
+}
+
+// TestIAMSignatureServiceMatching tests that IAM requests use the correct service in signature computation
+// This reproduces the bug described in GitHub issue #7080 where the service was hardcoded to "s3"
+func TestIAMSignatureServiceMatching(t *testing.T) {
+	// Create test IAM instance
+	iam := &IdentityAccessManagement{}
+
+	// Load test configuration with credentials that match the logs
+	err := iam.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name: "power_user",
+				Credentials: []*iam_pb.Credential{
+					{
+						AccessKey: "power_user_key",
+						SecretKey: "power_user_secret",
+					},
+				},
+				Actions: []string{"Admin"},
+			},
+		},
+	})
+	assert.NoError(t, err)
+
+	// Use the exact payload and headers from the failing logs
+	testPayload := "Action=CreateAccessKey&UserName=admin&Version=2010-05-08"
+
+	// Create request exactly as shown in logs
+	req, err := http.NewRequest("POST", "http://localhost:8111/", strings.NewReader(testPayload))
+	assert.NoError(t, err)
+
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
+	req.Header.Set("Host", "localhost:8111")
+	req.Header.Set("X-Amz-Date", "20250805T082934Z")
+
+	// Calculate the expected signature using the correct IAM service
+	// This simulates what botocore/AWS SDK would calculate
+	credentialScope := "20250805/us-east-1/iam/aws4_request"
+
+	// Calculate the actual payload hash for our test payload
+	actualPayloadHash := getSHA256Hash([]byte(testPayload))
+
+	// Build the canonical request with the actual payload hash
+	canonicalRequest := "POST\n/\n\ncontent-type:application/x-www-form-urlencoded; charset=utf-8\nhost:localhost:8111\nx-amz-date:20250805T082934Z\n\ncontent-type;host;x-amz-date\n" + actualPayloadHash
+
+	// Calculate the canonical request hash
+	canonicalRequestHash := getSHA256Hash([]byte(canonicalRequest))
+
+	// Build the string to sign
+	stringToSign := "AWS4-HMAC-SHA256\n20250805T082934Z\n" + credentialScope + "\n" + canonicalRequestHash
+
+	// Calculate expected signature using IAM service (what client sends)
+	expectedSigningKey := getSigningKey("power_user_secret", "20250805", "us-east-1", "iam")
+	expectedSignature := getSignature(expectedSigningKey, stringToSign)
+
+	// Create authorization header with the correct signature
+	authHeader := "AWS4-HMAC-SHA256 Credential=power_user_key/" + credentialScope +
+		", SignedHeaders=content-type;host;x-amz-date, Signature=" + expectedSignature
+	req.Header.Set("Authorization", authHeader)
+
+	// Now test that SeaweedFS computes the same signature with our fix
+	identity, errCode := iam.doesSignatureMatch(actualPayloadHash, req)
+
+	// With the fix, the signatures should match and we should get a successful authentication
+	assert.Equal(t, s3err.ErrNone, errCode)
+	assert.NotNil(t, identity)
+	assert.Equal(t, "power_user", identity.Name)
+}
+
+// TestStreamingSignatureServiceField tests that the s3ChunkedReader struct correctly stores the service
+// This verifies the fix for streaming uploads where getChunkSignature was hardcoding "s3"
+func TestStreamingSignatureServiceField(t *testing.T) {
+	// Test that the s3ChunkedReader correctly uses the service field
+	// Create a mock s3ChunkedReader with IAM service
+	chunkedReader := &s3ChunkedReader{
+		seedDate:      time.Now(),
+		region:        "us-east-1",
+		service:       "iam", // This should be used instead of hardcoded "s3"
+		seedSignature: "testsignature",
+		cred: &Credential{
+			AccessKey: "testkey",
+			SecretKey: "testsecret",
+		},
+	}
+
+	// Test that getScope is called with the correct service
+	scope := getScope(chunkedReader.seedDate, chunkedReader.region, chunkedReader.service)
+	assert.Contains(t, scope, "/iam/aws4_request")
+	assert.NotContains(t, scope, "/s3/aws4_request")
+
+	// Test that getSigningKey would be called with the correct service
+	signingKey := getSigningKey(
+		chunkedReader.cred.SecretKey,
+		chunkedReader.seedDate.Format(yyyymmdd),
+		chunkedReader.region,
+		chunkedReader.service,
+	)
+	assert.NotNil(t, signingKey)
+
+	// The main point is that chunkedReader.service is "iam" and gets used correctly
+	// This ensures that IAM streaming uploads will use "iam" service instead of hardcoded "s3"
+	assert.Equal(t, "iam", chunkedReader.service)
 }
 
 // Test that large IAM request bodies are truncated for security (DoS prevention)

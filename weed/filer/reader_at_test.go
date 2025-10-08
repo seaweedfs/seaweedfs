@@ -2,6 +2,7 @@ package filer
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"math"
 	"strconv"
@@ -91,7 +92,7 @@ func testReadAt(t *testing.T, readerAt *ChunkReadAt, offset int64, size int, exp
 	if data == nil {
 		data = make([]byte, size)
 	}
-	n, _, err := readerAt.doReadAt(data, offset)
+	n, _, err := readerAt.doReadAt(context.Background(), data, offset)
 
 	if expectedN != n {
 		t.Errorf("unexpected read size: %d, expect: %d", n, expectedN)

@@ -115,3 +115,11 @@ test/s3/versioning/weed-test.log
 /docker/admin_integration/data
 docker/agent_pub_record
 docker/admin_integration/weed-local
+/seaweedfs-rdma-sidecar/bin
+/test/s3/encryption/filerldb2
+/test/s3/sse/filerldb2
+test/s3/sse/weed-test.log
+ADVANCED_IAM_DEVELOPMENT_PLAN.md
+/test/s3/iam/test-volume-data
+*.log
+weed-iam

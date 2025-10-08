@@ -1,0 +1,157 @@
+services:
+  # SeaweedFS Master Server
+  seaweedfs-master:
+    image: chrislusf/seaweedfs:latest
+    container_name: seaweedfs-master
+    command: master -ip=seaweedfs-master -port=9333 -mdir=/data
+    ports:
+      - "9333:9333"
+    volumes:
+      - master-data:/data
+    networks:
+      - seaweedfs-rdma
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9333/cluster/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # SeaweedFS Volume Server
+  seaweedfs-volume:
+    image: chrislusf/seaweedfs:latest
+    container_name: seaweedfs-volume
+    command: volume -mserver=seaweedfs-master:9333 -ip=seaweedfs-volume -port=8080 -dir=/data
+    ports:
+      - "8080:8080"
+    volumes:
+      - volume-data:/data
+    depends_on:
+      seaweedfs-master:
+        condition: service_healthy
+    networks:
+      - seaweedfs-rdma
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # Rust RDMA Engine
+  rdma-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile.rdma-engine.simple
+    container_name: rdma-engine
+    environment:
+      - RUST_LOG=debug
+      - RDMA_SOCKET_PATH=/tmp/rdma-engine.sock
+    volumes:
+      - rdma-socket:/tmp
+      # Note: hugepages mount commented out to avoid host system requirements
+      # - /dev/hugepages:/dev/hugepages
+    # Privileged mode for RDMA access (in production, use specific capabilities)
+    privileged: true
+    networks:
+      - seaweedfs-rdma
+    command: ["./rdma-engine-server", "--debug", "--ipc-socket", "/tmp/rdma-engine.sock"]
+    healthcheck:
+      test: ["CMD", "test", "-S", "/tmp/rdma-engine.sock"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  # Go RDMA Sidecar / Demo Server
+  rdma-sidecar:
+    build:
+      context: .
+      dockerfile: Dockerfile.sidecar
+    container_name: rdma-sidecar
+    ports:
+      - "8081:8081"
+    environment:
+      - RDMA_SOCKET_PATH=/tmp/rdma-engine.sock
+      - VOLUME_SERVER_URL=http://seaweedfs-volume:8080
+      - DEBUG=true
+    volumes:
+      - rdma-socket:/tmp
+    depends_on:
+      rdma-engine:
+        condition: service_healthy
+      seaweedfs-volume:
+        condition: service_healthy
+    networks:
+      - seaweedfs-rdma
+    command: [
+      "./demo-server",
+      "--port", "8081",
+      "--rdma-socket", "/tmp/rdma-engine.sock",
+      "--volume-server", "http://seaweedfs-volume:8080",
+      "--enable-rdma",
+      "--debug"
+    ]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # Test Client for Integration Testing
+  test-client:
+    build:
+      context: .
+      dockerfile: Dockerfile.test-client
+    container_name: test-client
+    environment:
+      - RDMA_SOCKET_PATH=/tmp/rdma-engine.sock
+      - SIDECAR_URL=http://rdma-sidecar:8081
+      - SEAWEEDFS_MASTER=http://seaweedfs-master:9333
+      - SEAWEEDFS_VOLUME=http://seaweedfs-volume:8080
+    volumes:
+      - rdma-socket:/tmp
+    depends_on:
+      rdma-sidecar:
+        condition: service_healthy
+    networks:
+      - seaweedfs-rdma
+    profiles:
+      - testing
+    command: ["tail", "-f", "/dev/null"]  # Keep container running for manual testing
+
+  # Integration Test Runner
+  integration-tests:
+    build:
+      context: .
+      dockerfile: Dockerfile.test-client
+    container_name: integration-tests
+    environment:
+      - RDMA_SOCKET_PATH=/tmp/rdma-engine.sock
+      - SIDECAR_URL=http://rdma-sidecar:8081
+      - SEAWEEDFS_MASTER=http://seaweedfs-master:9333
+      - SEAWEEDFS_VOLUME=http://seaweedfs-volume:8080
+    volumes:
+      - rdma-socket:/tmp
+      - ./tests:/tests
+    depends_on:
+      rdma-sidecar:
+        condition: service_healthy
+    networks:
+      - seaweedfs-rdma
+    profiles:
+      - testing
+    command: ["/tests/run-integration-tests.sh"]
+
+volumes:
+  master-data:
+    driver: local
+  volume-data:
+    driver: local
+  rdma-socket:
+    driver: local
+
+networks:
+  seaweedfs-rdma:
+    driver: bridge

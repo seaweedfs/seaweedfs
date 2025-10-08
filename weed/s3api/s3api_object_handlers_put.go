@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"crypto/md5"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"github.com/pquerna/cachecontrol/cacheobject"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/security"
@@ -44,16 +46,41 @@ var (
 	ErrDefaultRetentionYearsOutOfRange       = errors.New("default retention years must be between 0 and 100")
 )
 
+// hasExplicitEncryption checks if any explicit encryption was provided in the request.
+// This helper improves readability and makes the encryption check condition more explicit.
+func hasExplicitEncryption(customerKey *SSECustomerKey, sseKMSKey *SSEKMSKey, sseS3Key *SSES3Key) bool {
+	return customerKey != nil || sseKMSKey != nil || sseS3Key != nil
+}
+
+// BucketDefaultEncryptionResult holds the result of bucket default encryption processing
+type BucketDefaultEncryptionResult struct {
+	DataReader io.Reader
+	SSES3Key   *SSES3Key
+	SSEKMSKey  *SSEKMSKey
+}
+
 func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	// http://docs.aws.amazon.com/AmazonS3/latest/dev/UploadingObjects.html
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
+	authHeader := r.Header.Get("Authorization")
+	authPreview := authHeader
+	if len(authHeader) > 50 {
+		authPreview = authHeader[:50] + "..."
+	}
+	glog.V(0).Infof("PutObjectHandler: Starting PUT %s/%s (Auth: %s)", bucket, object, authPreview)
 	glog.V(3).Infof("PutObjectHandler %s %s", bucket, object)
 
 	_, err := validateContentMd5(r.Header)
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidDigest)
+		return
+	}
+
+	// Check conditional headers
+	if errCode := s3a.checkConditionalHeaders(r, bucket, object); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
 
@@ -171,7 +198,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 				dataReader = mimeDetect(r, dataReader)
 			}
 
-			etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader, "", bucket)
+			etag, errCode, sseType := s3a.putToFiler(r, uploadUrl, dataReader, "", bucket, 1)
 
 			if errCode != s3err.ErrNone {
 				s3err.WriteErrorResponse(w, r, errCode)
@@ -180,6 +207,11 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 			// No version ID header for never-configured versioning
 			setEtag(w, etag)
+
+			// Set SSE response headers based on encryption type used
+			if sseType == s3_constants.SSETypeS3 {
+				w.Header().Set(s3_constants.AmzServerSideEncryption, s3_constants.SSEAlgorithmAES256)
+			}
 		}
 	}
 	stats_collect.RecordBucketActiveTime(bucket)
@@ -188,7 +220,55 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 	writeSuccessResponseEmpty(w, r)
 }
 
-func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader io.Reader, destination string, bucket string) (etag string, code s3err.ErrorCode) {
+func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader io.Reader, destination string, bucket string, partNumber int) (etag string, code s3err.ErrorCode, sseType string) {
+	// Calculate unique offset for each part to prevent IV reuse in multipart uploads
+	// This is critical for CTR mode encryption security
+	partOffset := calculatePartOffset(partNumber)
+
+	// Handle all SSE encryption types in a unified manner to eliminate repetitive dataReader assignments
+	sseResult, sseErrorCode := s3a.handleAllSSEEncryption(r, dataReader, partOffset)
+	if sseErrorCode != s3err.ErrNone {
+		return "", sseErrorCode, ""
+	}
+
+	// Extract results from unified SSE handling
+	dataReader = sseResult.DataReader
+	customerKey := sseResult.CustomerKey
+	sseIV := sseResult.SSEIV
+	sseKMSKey := sseResult.SSEKMSKey
+	sseKMSMetadata := sseResult.SSEKMSMetadata
+	sseS3Key := sseResult.SSES3Key
+	sseS3Metadata := sseResult.SSES3Metadata
+
+	// Apply bucket default encryption if no explicit encryption was provided
+	// This implements AWS S3 behavior where bucket default encryption automatically applies
+	if !hasExplicitEncryption(customerKey, sseKMSKey, sseS3Key) {
+		glog.V(4).Infof("putToFiler: no explicit encryption detected, checking for bucket default encryption")
+
+		// Apply bucket default encryption and get the result
+		encryptionResult, applyErr := s3a.applyBucketDefaultEncryption(bucket, r, dataReader)
+		if applyErr != nil {
+			glog.Errorf("Failed to apply bucket default encryption: %v", applyErr)
+			return "", s3err.ErrInternalError, ""
+		}
+
+		// Update variables based on the result
+		dataReader = encryptionResult.DataReader
+		sseS3Key = encryptionResult.SSES3Key
+		sseKMSKey = encryptionResult.SSEKMSKey
+
+		// If SSE-S3 was applied by bucket default, prepare metadata (if not already done)
+		if sseS3Key != nil && len(sseS3Metadata) == 0 {
+			var metaErr error
+			sseS3Metadata, metaErr = SerializeSSES3Metadata(sseS3Key)
+			if metaErr != nil {
+				glog.Errorf("Failed to serialize SSE-S3 metadata for bucket default encryption: %v", metaErr)
+				return "", s3err.ErrInternalError, ""
+			}
+		}
+	} else {
+		glog.V(4).Infof("putToFiler: explicit encryption already applied, skipping bucket default encryption")
+	}
 
 	hash := md5.New()
 	var body = io.TeeReader(dataReader, hash)
@@ -197,7 +277,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 
 	if err != nil {
 		glog.Errorf("NewRequest %s: %v", uploadUrl, err)
-		return "", s3err.ErrInternalError
+		return "", s3err.ErrInternalError, ""
 	}
 
 	proxyReq.Header.Set("X-Forwarded-For", r.RemoteAddr)
@@ -224,6 +304,32 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		glog.V(2).Infof("putToFiler: setting owner header %s for object %s", amzAccountId, uploadUrl)
 	}
 
+	// Set SSE-C metadata headers for the filer if encryption was applied
+	if customerKey != nil && len(sseIV) > 0 {
+		proxyReq.Header.Set(s3_constants.AmzServerSideEncryptionCustomerAlgorithm, "AES256")
+		proxyReq.Header.Set(s3_constants.AmzServerSideEncryptionCustomerKeyMD5, customerKey.KeyMD5)
+		// Store IV in a custom header that the filer can use to store in entry metadata
+		proxyReq.Header.Set(s3_constants.SeaweedFSSSEIVHeader, base64.StdEncoding.EncodeToString(sseIV))
+	}
+
+	// Set SSE-KMS metadata headers for the filer if KMS encryption was applied
+	if sseKMSKey != nil {
+		// Use already-serialized SSE-KMS metadata from helper function
+		// Store serialized KMS metadata in a custom header that the filer can use
+		proxyReq.Header.Set(s3_constants.SeaweedFSSSEKMSKeyHeader, base64.StdEncoding.EncodeToString(sseKMSMetadata))
+
+		glog.V(3).Infof("putToFiler: storing SSE-KMS metadata for object %s with keyID %s", uploadUrl, sseKMSKey.KeyID)
+	} else {
+		glog.V(4).Infof("putToFiler: no SSE-KMS encryption detected")
+	}
+
+	// Set SSE-S3 metadata headers for the filer if S3 encryption was applied
+	if sseS3Key != nil && len(sseS3Metadata) > 0 {
+		// Store serialized S3 metadata in a custom header that the filer can use
+		proxyReq.Header.Set(s3_constants.SeaweedFSSSES3Key, base64.StdEncoding.EncodeToString(sseS3Metadata))
+		glog.V(3).Infof("putToFiler: storing SSE-S3 metadata for object %s with keyID %s", uploadUrl, sseS3Key.KeyID)
+	}
+
 	// ensure that the Authorization header is overriding any previous
 	// Authorization header which might be already present in proxyReq
 	s3a.maybeAddFilerJwtAuthorization(proxyReq, true)
@@ -232,9 +338,9 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	if postErr != nil {
 		glog.Errorf("post to filer: %v", postErr)
 		if strings.Contains(postErr.Error(), s3err.ErrMsgPayloadChecksumMismatch) {
-			return "", s3err.ErrInvalidDigest
+			return "", s3err.ErrInvalidDigest, ""
 		}
-		return "", s3err.ErrInternalError
+		return "", s3err.ErrInternalError, ""
 	}
 	defer resp.Body.Close()
 
@@ -243,21 +349,23 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	resp_body, ra_err := io.ReadAll(resp.Body)
 	if ra_err != nil {
 		glog.Errorf("upload to filer response read %d: %v", resp.StatusCode, ra_err)
-		return etag, s3err.ErrInternalError
+		return etag, s3err.ErrInternalError, ""
 	}
 	var ret weed_server.FilerPostResult
 	unmarshal_err := json.Unmarshal(resp_body, &ret)
 	if unmarshal_err != nil {
 		glog.Errorf("failing to read upload to %s : %v", uploadUrl, string(resp_body))
-		return "", s3err.ErrInternalError
+		return "", s3err.ErrInternalError, ""
 	}
 	if ret.Error != "" {
 		glog.Errorf("upload to filer error: %v", ret.Error)
-		return "", filerErrorToS3Error(ret.Error)
+		return "", filerErrorToS3Error(ret.Error), ""
 	}
 
-	stats_collect.RecordBucketActiveTime(bucket)
-	return etag, s3err.ErrNone
+	BucketTrafficReceived(ret.Size, r)
+
+	// Return the SSE type determined by the unified handler
+	return etag, s3err.ErrNone, sseResult.SSEType
 }
 
 func setEtag(w http.ResponseWriter, etag string) {
@@ -324,7 +432,7 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 		dataReader = mimeDetect(r, dataReader)
 	}
 
-	etag, errCode = s3a.putToFiler(r, uploadUrl, dataReader, "", bucket)
+	etag, errCode, _ = s3a.putToFiler(r, uploadUrl, dataReader, "", bucket, 1)
 	if errCode != s3err.ErrNone {
 		glog.Errorf("putSuspendedVersioningObject: failed to upload object: %v", errCode)
 		return "", errCode
@@ -466,7 +574,7 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 
 	glog.V(2).Infof("putVersionedObject: uploading %s/%s version %s to %s", bucket, object, versionId, versionUploadUrl)
 
-	etag, errCode = s3a.putToFiler(r, versionUploadUrl, body, "", bucket)
+	etag, errCode, _ = s3a.putToFiler(r, versionUploadUrl, body, "", bucket, 1)
 	if errCode != s3err.ErrNone {
 		glog.Errorf("putVersionedObject: failed to upload version: %v", errCode)
 		return "", "", errCode
@@ -606,6 +714,96 @@ func (s3a *S3ApiServer) extractObjectLockMetadataFromRequest(r *http.Request, en
 	}
 
 	return nil
+}
+
+// applyBucketDefaultEncryption applies bucket default encryption settings to a new object
+// This implements AWS S3 behavior where bucket default encryption automatically applies to new objects
+// when no explicit encryption headers are provided in the upload request.
+// Returns the modified dataReader and encryption keys instead of using pointer parameters for better code clarity.
+func (s3a *S3ApiServer) applyBucketDefaultEncryption(bucket string, r *http.Request, dataReader io.Reader) (*BucketDefaultEncryptionResult, error) {
+	// Check if bucket has default encryption configured
+	encryptionConfig, err := s3a.GetBucketEncryptionConfig(bucket)
+	if err != nil || encryptionConfig == nil {
+		// No default encryption configured, return original reader
+		return &BucketDefaultEncryptionResult{DataReader: dataReader}, nil
+	}
+
+	if encryptionConfig.SseAlgorithm == "" {
+		// No encryption algorithm specified
+		return &BucketDefaultEncryptionResult{DataReader: dataReader}, nil
+	}
+
+	glog.V(3).Infof("applyBucketDefaultEncryption: applying default encryption %s for bucket %s", encryptionConfig.SseAlgorithm, bucket)
+
+	switch encryptionConfig.SseAlgorithm {
+	case EncryptionTypeAES256:
+		// Apply SSE-S3 (AES256) encryption
+		return s3a.applySSES3DefaultEncryption(dataReader)
+
+	case EncryptionTypeKMS:
+		// Apply SSE-KMS encryption
+		return s3a.applySSEKMSDefaultEncryption(bucket, r, dataReader, encryptionConfig)
+
+	default:
+		return nil, fmt.Errorf("unsupported default encryption algorithm: %s", encryptionConfig.SseAlgorithm)
+	}
+}
+
+// applySSES3DefaultEncryption applies SSE-S3 encryption as bucket default
+func (s3a *S3ApiServer) applySSES3DefaultEncryption(dataReader io.Reader) (*BucketDefaultEncryptionResult, error) {
+	// Generate SSE-S3 key
+	keyManager := GetSSES3KeyManager()
+	key, err := keyManager.GetOrCreateKey("")
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate SSE-S3 key for default encryption: %v", err)
+	}
+
+	// Create encrypted reader
+	encryptedReader, iv, encErr := CreateSSES3EncryptedReader(dataReader, key)
+	if encErr != nil {
+		return nil, fmt.Errorf("failed to create SSE-S3 encrypted reader for default encryption: %v", encErr)
+	}
+
+	// Store IV on the key object for later decryption
+	key.IV = iv
+
+	// Store key in manager for later retrieval
+	keyManager.StoreKey(key)
+	glog.V(3).Infof("applySSES3DefaultEncryption: applied SSE-S3 default encryption with key ID: %s", key.KeyID)
+
+	return &BucketDefaultEncryptionResult{
+		DataReader: encryptedReader,
+		SSES3Key:   key,
+	}, nil
+}
+
+// applySSEKMSDefaultEncryption applies SSE-KMS encryption as bucket default
+func (s3a *S3ApiServer) applySSEKMSDefaultEncryption(bucket string, r *http.Request, dataReader io.Reader, encryptionConfig *s3_pb.EncryptionConfiguration) (*BucketDefaultEncryptionResult, error) {
+	// Use the KMS key ID from bucket configuration, or default if not specified
+	keyID := encryptionConfig.KmsKeyId
+	if keyID == "" {
+		keyID = "alias/aws/s3" // AWS default KMS key for S3
+	}
+
+	// Check if bucket key is enabled in configuration
+	bucketKeyEnabled := encryptionConfig.BucketKeyEnabled
+
+	// Build encryption context for KMS
+	bucket, object := s3_constants.GetBucketAndObject(r)
+	encryptionContext := BuildEncryptionContext(bucket, object, bucketKeyEnabled)
+
+	// Create SSE-KMS encrypted reader
+	encryptedReader, sseKey, encErr := CreateSSEKMSEncryptedReaderWithBucketKey(dataReader, keyID, encryptionContext, bucketKeyEnabled)
+	if encErr != nil {
+		return nil, fmt.Errorf("failed to create SSE-KMS encrypted reader for default encryption: %v", encErr)
+	}
+
+	glog.V(3).Infof("applySSEKMSDefaultEncryption: applied SSE-KMS default encryption with key ID: %s", keyID)
+
+	return &BucketDefaultEncryptionResult{
+		DataReader: encryptedReader,
+		SSEKMSKey:  sseKey,
+	}, nil
 }
 
 // applyBucketDefaultRetention applies bucket default retention settings to a new object
@@ -825,4 +1023,273 @@ func mapValidationErrorToS3Error(err error) s3err.ErrorCode {
 	}
 
 	return s3err.ErrInvalidRequest
+}
+
+// EntryGetter interface for dependency injection in tests
+// Simplified to only mock the data access dependency
+type EntryGetter interface {
+	getEntry(parentDirectoryPath, entryName string) (*filer_pb.Entry, error)
+}
+
+// conditionalHeaders holds parsed conditional header values
+type conditionalHeaders struct {
+	ifMatch           string
+	ifNoneMatch       string
+	ifModifiedSince   time.Time
+	ifUnmodifiedSince time.Time
+	isSet             bool // true if any conditional headers are present
+}
+
+// parseConditionalHeaders extracts and validates conditional headers from the request
+func parseConditionalHeaders(r *http.Request) (conditionalHeaders, s3err.ErrorCode) {
+	headers := conditionalHeaders{
+		ifMatch:     r.Header.Get(s3_constants.IfMatch),
+		ifNoneMatch: r.Header.Get(s3_constants.IfNoneMatch),
+	}
+
+	ifModifiedSinceStr := r.Header.Get(s3_constants.IfModifiedSince)
+	ifUnmodifiedSinceStr := r.Header.Get(s3_constants.IfUnmodifiedSince)
+
+	// Check if any conditional headers are present
+	headers.isSet = headers.ifMatch != "" || headers.ifNoneMatch != "" ||
+		ifModifiedSinceStr != "" || ifUnmodifiedSinceStr != ""
+
+	if !headers.isSet {
+		return headers, s3err.ErrNone
+	}
+
+	// Parse date headers with validation
+	var err error
+	if ifModifiedSinceStr != "" {
+		headers.ifModifiedSince, err = time.Parse(time.RFC1123, ifModifiedSinceStr)
+		if err != nil {
+			glog.V(3).Infof("parseConditionalHeaders: Invalid If-Modified-Since format: %v", err)
+			return headers, s3err.ErrInvalidRequest
+		}
+	}
+
+	if ifUnmodifiedSinceStr != "" {
+		headers.ifUnmodifiedSince, err = time.Parse(time.RFC1123, ifUnmodifiedSinceStr)
+		if err != nil {
+			glog.V(3).Infof("parseConditionalHeaders: Invalid If-Unmodified-Since format: %v", err)
+			return headers, s3err.ErrInvalidRequest
+		}
+	}
+
+	return headers, s3err.ErrNone
+}
+
+// S3ApiServer implements EntryGetter interface
+func (s3a *S3ApiServer) getObjectETag(entry *filer_pb.Entry) string {
+	// Try to get ETag from Extended attributes first
+	if etagBytes, hasETag := entry.Extended[s3_constants.ExtETagKey]; hasETag {
+		return string(etagBytes)
+	}
+	// Fallback: calculate ETag from chunks
+	return s3a.calculateETagFromChunks(entry.Chunks)
+}
+
+func (s3a *S3ApiServer) etagMatches(headerValue, objectETag string) bool {
+	// Clean the object ETag
+	objectETag = strings.Trim(objectETag, `"`)
+
+	// Split header value by commas to handle multiple ETags
+	etags := strings.Split(headerValue, ",")
+	for _, etag := range etags {
+		etag = strings.TrimSpace(etag)
+		etag = strings.Trim(etag, `"`)
+		if etag == objectETag {
+			return true
+		}
+	}
+	return false
+}
+
+// checkConditionalHeadersWithGetter is a testable method that accepts a simple EntryGetter
+// Uses the production getObjectETag and etagMatches methods to ensure testing of real logic
+func (s3a *S3ApiServer) checkConditionalHeadersWithGetter(getter EntryGetter, r *http.Request, bucket, object string) s3err.ErrorCode {
+	headers, errCode := parseConditionalHeaders(r)
+	if errCode != s3err.ErrNone {
+		glog.V(3).Infof("checkConditionalHeaders: Invalid date format")
+		return errCode
+	}
+	if !headers.isSet {
+		return s3err.ErrNone
+	}
+
+	// Get object entry for conditional checks.
+	bucketDir := "/buckets/" + bucket
+	entry, entryErr := getter.getEntry(bucketDir, object)
+	objectExists := entryErr == nil
+
+	// For PUT requests, all specified conditions must be met.
+	// The evaluation order follows AWS S3 behavior for consistency.
+
+	// 1. Check If-Match
+	if headers.ifMatch != "" {
+		if !objectExists {
+			glog.V(3).Infof("checkConditionalHeaders: If-Match failed - object %s/%s does not exist", bucket, object)
+			return s3err.ErrPreconditionFailed
+		}
+		// If `ifMatch` is "*", the condition is met if the object exists.
+		// Otherwise, we need to check the ETag.
+		if headers.ifMatch != "*" {
+			// Use production getObjectETag method
+			objectETag := s3a.getObjectETag(entry)
+			// Use production etagMatches method
+			if !s3a.etagMatches(headers.ifMatch, objectETag) {
+				glog.V(3).Infof("checkConditionalHeaders: If-Match failed for object %s/%s - expected ETag %s, got %s", bucket, object, headers.ifMatch, objectETag)
+				return s3err.ErrPreconditionFailed
+			}
+		}
+		glog.V(3).Infof("checkConditionalHeaders: If-Match passed for object %s/%s", bucket, object)
+	}
+
+	// 2. Check If-Unmodified-Since
+	if !headers.ifUnmodifiedSince.IsZero() {
+		if objectExists {
+			objectModTime := time.Unix(entry.Attributes.Mtime, 0)
+			if objectModTime.After(headers.ifUnmodifiedSince) {
+				glog.V(3).Infof("checkConditionalHeaders: If-Unmodified-Since failed - object modified after %s", r.Header.Get(s3_constants.IfUnmodifiedSince))
+				return s3err.ErrPreconditionFailed
+			}
+			glog.V(3).Infof("checkConditionalHeaders: If-Unmodified-Since passed - object not modified since %s", r.Header.Get(s3_constants.IfUnmodifiedSince))
+		}
+	}
+
+	// 3. Check If-None-Match
+	if headers.ifNoneMatch != "" {
+		if objectExists {
+			if headers.ifNoneMatch == "*" {
+				glog.V(3).Infof("checkConditionalHeaders: If-None-Match=* failed - object %s/%s exists", bucket, object)
+				return s3err.ErrPreconditionFailed
+			}
+			// Use production getObjectETag method
+			objectETag := s3a.getObjectETag(entry)
+			// Use production etagMatches method
+			if s3a.etagMatches(headers.ifNoneMatch, objectETag) {
+				glog.V(3).Infof("checkConditionalHeaders: If-None-Match failed - ETag matches %s", objectETag)
+				return s3err.ErrPreconditionFailed
+			}
+			glog.V(3).Infof("checkConditionalHeaders: If-None-Match passed - ETag %s doesn't match %s", objectETag, headers.ifNoneMatch)
+		} else {
+			glog.V(3).Infof("checkConditionalHeaders: If-None-Match passed - object %s/%s does not exist", bucket, object)
+		}
+	}
+
+	// 4. Check If-Modified-Since
+	if !headers.ifModifiedSince.IsZero() {
+		if objectExists {
+			objectModTime := time.Unix(entry.Attributes.Mtime, 0)
+			if !objectModTime.After(headers.ifModifiedSince) {
+				glog.V(3).Infof("checkConditionalHeaders: If-Modified-Since failed - object not modified since %s", r.Header.Get(s3_constants.IfModifiedSince))
+				return s3err.ErrPreconditionFailed
+			}
+			glog.V(3).Infof("checkConditionalHeaders: If-Modified-Since passed - object modified after %s", r.Header.Get(s3_constants.IfModifiedSince))
+		}
+	}
+
+	return s3err.ErrNone
+}
+
+// checkConditionalHeaders is the production method that uses the S3ApiServer as EntryGetter
+func (s3a *S3ApiServer) checkConditionalHeaders(r *http.Request, bucket, object string) s3err.ErrorCode {
+	return s3a.checkConditionalHeadersWithGetter(s3a, r, bucket, object)
+}
+
+// checkConditionalHeadersForReadsWithGetter is a testable method for read operations
+// Uses the production getObjectETag and etagMatches methods to ensure testing of real logic
+func (s3a *S3ApiServer) checkConditionalHeadersForReadsWithGetter(getter EntryGetter, r *http.Request, bucket, object string) ConditionalHeaderResult {
+	headers, errCode := parseConditionalHeaders(r)
+	if errCode != s3err.ErrNone {
+		glog.V(3).Infof("checkConditionalHeadersForReads: Invalid date format")
+		return ConditionalHeaderResult{ErrorCode: errCode}
+	}
+	if !headers.isSet {
+		return ConditionalHeaderResult{ErrorCode: s3err.ErrNone}
+	}
+
+	// Get object entry for conditional checks.
+	bucketDir := "/buckets/" + bucket
+	entry, entryErr := getter.getEntry(bucketDir, object)
+	objectExists := entryErr == nil
+
+	// If object doesn't exist, fail for If-Match and If-Unmodified-Since
+	if !objectExists {
+		if headers.ifMatch != "" {
+			glog.V(3).Infof("checkConditionalHeadersForReads: If-Match failed - object %s/%s does not exist", bucket, object)
+			return ConditionalHeaderResult{ErrorCode: s3err.ErrPreconditionFailed}
+		}
+		if !headers.ifUnmodifiedSince.IsZero() {
+			glog.V(3).Infof("checkConditionalHeadersForReads: If-Unmodified-Since failed - object %s/%s does not exist", bucket, object)
+			return ConditionalHeaderResult{ErrorCode: s3err.ErrPreconditionFailed}
+		}
+		// If-None-Match and If-Modified-Since succeed when object doesn't exist
+		return ConditionalHeaderResult{ErrorCode: s3err.ErrNone}
+	}
+
+	// Object exists - check all conditions
+	// The evaluation order follows AWS S3 behavior for consistency.
+
+	// 1. Check If-Match (412 Precondition Failed if fails)
+	if headers.ifMatch != "" {
+		// If `ifMatch` is "*", the condition is met if the object exists.
+		// Otherwise, we need to check the ETag.
+		if headers.ifMatch != "*" {
+			// Use production getObjectETag method
+			objectETag := s3a.getObjectETag(entry)
+			// Use production etagMatches method
+			if !s3a.etagMatches(headers.ifMatch, objectETag) {
+				glog.V(3).Infof("checkConditionalHeadersForReads: If-Match failed for object %s/%s - expected ETag %s, got %s", bucket, object, headers.ifMatch, objectETag)
+				return ConditionalHeaderResult{ErrorCode: s3err.ErrPreconditionFailed}
+			}
+		}
+		glog.V(3).Infof("checkConditionalHeadersForReads: If-Match passed for object %s/%s", bucket, object)
+	}
+
+	// 2. Check If-Unmodified-Since (412 Precondition Failed if fails)
+	if !headers.ifUnmodifiedSince.IsZero() {
+		objectModTime := time.Unix(entry.Attributes.Mtime, 0)
+		if objectModTime.After(headers.ifUnmodifiedSince) {
+			glog.V(3).Infof("checkConditionalHeadersForReads: If-Unmodified-Since failed - object modified after %s", r.Header.Get(s3_constants.IfUnmodifiedSince))
+			return ConditionalHeaderResult{ErrorCode: s3err.ErrPreconditionFailed}
+		}
+		glog.V(3).Infof("checkConditionalHeadersForReads: If-Unmodified-Since passed - object not modified since %s", r.Header.Get(s3_constants.IfUnmodifiedSince))
+	}
+
+	// 3. Check If-None-Match (304 Not Modified if fails)
+	if headers.ifNoneMatch != "" {
+		// Use production getObjectETag method
+		objectETag := s3a.getObjectETag(entry)
+
+		if headers.ifNoneMatch == "*" {
+			glog.V(3).Infof("checkConditionalHeadersForReads: If-None-Match=* failed - object %s/%s exists", bucket, object)
+			return ConditionalHeaderResult{ErrorCode: s3err.ErrNotModified, ETag: objectETag}
+		}
+		// Use production etagMatches method
+		if s3a.etagMatches(headers.ifNoneMatch, objectETag) {
+			glog.V(3).Infof("checkConditionalHeadersForReads: If-None-Match failed - ETag matches %s", objectETag)
+			return ConditionalHeaderResult{ErrorCode: s3err.ErrNotModified, ETag: objectETag}
+		}
+		glog.V(3).Infof("checkConditionalHeadersForReads: If-None-Match passed - ETag %s doesn't match %s", objectETag, headers.ifNoneMatch)
+	}
+
+	// 4. Check If-Modified-Since (304 Not Modified if fails)
+	if !headers.ifModifiedSince.IsZero() {
+		objectModTime := time.Unix(entry.Attributes.Mtime, 0)
+		if !objectModTime.After(headers.ifModifiedSince) {
+			// Use production getObjectETag method
+			objectETag := s3a.getObjectETag(entry)
+			glog.V(3).Infof("checkConditionalHeadersForReads: If-Modified-Since failed - object not modified since %s", r.Header.Get(s3_constants.IfModifiedSince))
+			return ConditionalHeaderResult{ErrorCode: s3err.ErrNotModified, ETag: objectETag}
+		}
+		glog.V(3).Infof("checkConditionalHeadersForReads: If-Modified-Since passed - object modified after %s", r.Header.Get(s3_constants.IfModifiedSince))
+	}
+
+	return ConditionalHeaderResult{ErrorCode: s3err.ErrNone}
+}
+
+// checkConditionalHeadersForReads is the production method that uses the S3ApiServer as EntryGetter
+func (s3a *S3ApiServer) checkConditionalHeadersForReads(r *http.Request, bucket, object string) ConditionalHeaderResult {
+	return s3a.checkConditionalHeadersForReadsWithGetter(s3a, r, bucket, object)
 }

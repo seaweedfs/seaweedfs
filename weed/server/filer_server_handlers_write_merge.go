@@ -15,6 +15,14 @@ import (
 const MergeChunkMinCount int = 1000
 
 func (fs *FilerServer) maybeMergeChunks(ctx context.Context, so *operation.StorageOption, inputChunks []*filer_pb.FileChunk) (mergedChunks []*filer_pb.FileChunk, err error) {
+	// Don't merge SSE-encrypted chunks to preserve per-chunk metadata
+	for _, chunk := range inputChunks {
+		if chunk.GetSseType() != 0 { // Any SSE type (SSE-C or SSE-KMS)
+			glog.V(3).InfofCtx(ctx, "Skipping chunk merge for SSE-encrypted chunks")
+			return inputChunks, nil
+		}
+	}
+
 	// Only merge small chunks more than half of the file
 	var chunkSize = fs.option.MaxMB * 1024 * 1024
 	var smallChunk, sumChunk int
@@ -44,7 +52,7 @@ func (fs *FilerServer) mergeChunks(ctx context.Context, so *operation.StorageOpt
 	if mergeErr != nil {
 		return nil, mergeErr
 	}
-	mergedChunks, _, _, mergeErr, _ = fs.uploadReaderToChunks(ctx, chunkedFileReader, chunkOffset, int32(fs.option.MaxMB*1024*1024), "", "", true, so)
+	mergedChunks, _, _, mergeErr, _ = fs.uploadReaderToChunks(ctx, nil, chunkedFileReader, chunkOffset, int32(fs.option.MaxMB*1024*1024), "", "", true, so)
 	if mergeErr != nil {
 		return
 	}

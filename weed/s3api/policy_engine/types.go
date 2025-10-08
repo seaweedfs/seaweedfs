@@ -407,10 +407,7 @@ func (cs *CompiledStatement) EvaluateStatement(args *PolicyEvaluationArgs) bool 
 		return false
 	}
 
-	// TODO: Add condition evaluation if needed
-	// if !cs.evaluateConditions(args.Conditions) {
-	//     return false
-	// }
+
 
 	return true
 }

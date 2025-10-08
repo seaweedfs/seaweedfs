@@ -35,6 +35,14 @@ type MountOptions struct {
 	disableXAttr       *bool
 	extraOptions       []string
 	fuseCommandPid     int
+
+	// RDMA acceleration options
+	rdmaEnabled       *bool
+	rdmaSidecarAddr   *string
+	rdmaFallback      *bool
+	rdmaReadOnly      *bool
+	rdmaMaxConcurrent *int
+	rdmaTimeoutMs     *int
 }
 
 var (
@@ -75,6 +83,14 @@ func init() {
 	mountOptions.disableXAttr = cmdMount.Flag.Bool("disableXAttr", false, "disable xattr")
 	mountOptions.fuseCommandPid = 0
 
+	// RDMA acceleration flags
+	mountOptions.rdmaEnabled = cmdMount.Flag.Bool("rdma.enabled", false, "enable RDMA acceleration for reads")
+	mountOptions.rdmaSidecarAddr = cmdMount.Flag.String("rdma.sidecar", "", "RDMA sidecar address (e.g., localhost:8081)")
+	mountOptions.rdmaFallback = cmdMount.Flag.Bool("rdma.fallback", true, "fallback to HTTP when RDMA fails")
+	mountOptions.rdmaReadOnly = cmdMount.Flag.Bool("rdma.readOnly", false, "use RDMA for reads only (writes use HTTP)")
+	mountOptions.rdmaMaxConcurrent = cmdMount.Flag.Int("rdma.maxConcurrent", 64, "max concurrent RDMA operations")
+	mountOptions.rdmaTimeoutMs = cmdMount.Flag.Int("rdma.timeoutMs", 5000, "RDMA operation timeout in milliseconds")
+
 	mountCpuProfile = cmdMount.Flag.String("cpuprofile", "", "cpu profile output file")
 	mountMemProfile = cmdMount.Flag.String("memprofile", "", "memory profile output file")
 	mountReadRetryTime = cmdMount.Flag.Duration("readRetryTime", 6*time.Second, "maximum read retry wait time")
@@ -94,6 +110,19 @@ var cmdMount = &Command{
   Linux, and OS X.
 
   On OS X, it requires OSXFUSE (https://osxfuse.github.io/).
+
+  RDMA Acceleration:
+  For ultra-fast reads, enable RDMA acceleration with an RDMA sidecar:
+    weed mount -filer=localhost:8888 -dir=/mnt/seaweedfs \
+      -rdma.enabled=true -rdma.sidecar=localhost:8081
+
+  RDMA Options:
+    -rdma.enabled=false          Enable RDMA acceleration for reads
+    -rdma.sidecar=""             RDMA sidecar address (required if enabled)
+    -rdma.fallback=true          Fallback to HTTP when RDMA fails
+    -rdma.readOnly=false         Use RDMA for reads only (writes use HTTP)
+    -rdma.maxConcurrent=64       Max concurrent RDMA operations
+    -rdma.timeoutMs=5000         RDMA operation timeout in milliseconds
 
   `,
 }

@@ -45,7 +45,7 @@ func (group *ChunkGroup) AddChunk(chunk *filer_pb.FileChunk) error {
 	return nil
 }
 
-func (group *ChunkGroup) ReadDataAt(fileSize int64, buff []byte, offset int64) (n int, tsNs int64, err error) {
+func (group *ChunkGroup) ReadDataAt(ctx context.Context, fileSize int64, buff []byte, offset int64) (n int, tsNs int64, err error) {
 	if offset >= fileSize {
 		return 0, 0, io.EOF
 	}
@@ -68,7 +68,7 @@ func (group *ChunkGroup) ReadDataAt(fileSize int64, buff []byte, offset int64) (
 			n = int(int64(n) + rangeStop - rangeStart)
 			continue
 		}
-		xn, xTsNs, xErr := section.readDataAt(group, fileSize, buff[rangeStart-offset:rangeStop-offset], rangeStart)
+		xn, xTsNs, xErr := section.readDataAt(ctx, group, fileSize, buff[rangeStart-offset:rangeStop-offset], rangeStart)
 		if xErr != nil {
 			return n + xn, max(tsNs, xTsNs), xErr
 		}
@@ -123,14 +123,14 @@ const (
 )
 
 // FIXME: needa tests
-func (group *ChunkGroup) SearchChunks(offset, fileSize int64, whence uint32) (found bool, out int64) {
+func (group *ChunkGroup) SearchChunks(ctx context.Context, offset, fileSize int64, whence uint32) (found bool, out int64) {
 	group.sectionsLock.RLock()
 	defer group.sectionsLock.RUnlock()
 
-	return group.doSearchChunks(offset, fileSize, whence)
+	return group.doSearchChunks(ctx, offset, fileSize, whence)
 }
 
-func (group *ChunkGroup) doSearchChunks(offset, fileSize int64, whence uint32) (found bool, out int64) {
+func (group *ChunkGroup) doSearchChunks(ctx context.Context, offset, fileSize int64, whence uint32) (found bool, out int64) {
 
 	sectionIndex, maxSectionIndex := SectionIndex(offset/SectionSize), SectionIndex(fileSize/SectionSize)
 	if whence == SEEK_DATA {
@@ -139,7 +139,7 @@ func (group *ChunkGroup) doSearchChunks(offset, fileSize int64, whence uint32) (
 			if !foundSection {
 				continue
 			}
-			sectionStart := section.DataStartOffset(group, offset, fileSize)
+			sectionStart := section.DataStartOffset(ctx, group, offset, fileSize)
 			if sectionStart == -1 {
 				continue
 			}
@@ -153,7 +153,7 @@ func (group *ChunkGroup) doSearchChunks(offset, fileSize int64, whence uint32) (
 			if !foundSection {
 				return true, offset
 			}
-			holeStart := section.NextStopOffset(group, offset, fileSize)
+			holeStart := section.NextStopOffset(ctx, group, offset, fileSize)
 			if holeStart%SectionSize == 0 {
 				continue
 			}

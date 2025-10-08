@@ -492,7 +492,7 @@ func (vs *VolumeServer) VolumeEcShardsInfo(ctx context.Context, req *volume_serv
 			for _, shardDetail := range shardDetails {
 				ecShardInfo := &volume_server_pb.EcShardInfo{
 					ShardId:    uint32(shardDetail.ShardId),
-					Size:       shardDetail.Size,
+					Size:       int64(shardDetail.Size),
 					Collection: v.Collection,
 				}
 				ecShardInfos = append(ecShardInfos, ecShardInfo)

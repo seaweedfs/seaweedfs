@@ -83,13 +83,7 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 		var filteredEcTotalSize int64
 
 		for _, volume := range volumes {
-			// Handle "default" collection filtering for empty collections
-			volumeCollection := volume.Collection
-			if volumeCollection == "" {
-				volumeCollection = "default"
-			}
-
-			if volumeCollection == collection {
+			if matchesCollection(volume.Collection, collection) {
 				filteredVolumes = append(filteredVolumes, volume)
 				filteredTotalSize += int64(volume.Size)
 			}
@@ -103,13 +97,7 @@ func (s *AdminServer) GetClusterVolumes(page int, pageSize int, sortBy string, s
 					for _, node := range rack.DataNodeInfos {
 						for _, diskInfo := range node.DiskInfos {
 							for _, ecShardInfo := range diskInfo.EcShardInfos {
-								// Handle "default" collection filtering for empty collections
-								ecCollection := ecShardInfo.Collection
-								if ecCollection == "" {
-									ecCollection = "default"
-								}
-
-								if ecCollection == collection {
+								if matchesCollection(ecShardInfo.Collection, collection) {
 									// Add all shard sizes for this EC volume
 									for _, shardSize := range ecShardInfo.ShardSizes {
 										filteredEcTotalSize += shardSize
@@ -500,7 +488,7 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 								ecInfo.EcIndexBits |= ecShardInfo.EcIndexBits
 
 								// Collect shard sizes from this disk
-                                shardBits := erasure_coding.ShardBits(ecShardInfo.EcIndexBits)
+								shardBits := erasure_coding.ShardBits(ecShardInfo.EcIndexBits)
 								shardBits.EachSetIndex(func(shardId erasure_coding.ShardId) {
 									if size, found := erasure_coding.GetShardSize(ecShardInfo, shardId); found {
 										allShardSizes[shardId] = size

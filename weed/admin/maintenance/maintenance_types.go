@@ -108,6 +108,57 @@ type MaintenanceTask struct {
 	Progress    float64                 `json:"progress"` // 0-100
 	RetryCount  int                     `json:"retry_count"`
 	MaxRetries  int                     `json:"max_retries"`
+
+	// Enhanced fields for detailed task tracking
+	CreatedBy         string                  `json:"created_by,omitempty"`         // Who/what created this task
+	CreationContext   string                  `json:"creation_context,omitempty"`   // Additional context about creation
+	AssignmentHistory []*TaskAssignmentRecord `json:"assignment_history,omitempty"` // History of worker assignments
+	DetailedReason    string                  `json:"detailed_reason,omitempty"`    // More detailed explanation than Reason
+	Tags              map[string]string       `json:"tags,omitempty"`               // Additional metadata tags
+}
+
+// TaskAssignmentRecord tracks when a task was assigned to a worker
+type TaskAssignmentRecord struct {
+	WorkerID      string     `json:"worker_id"`
+	WorkerAddress string     `json:"worker_address"`
+	AssignedAt    time.Time  `json:"assigned_at"`
+	UnassignedAt  *time.Time `json:"unassigned_at,omitempty"`
+	Reason        string     `json:"reason"` // Why was it assigned/unassigned
+}
+
+// TaskExecutionLog represents a log entry from task execution
+type TaskExecutionLog struct {
+	Timestamp time.Time `json:"timestamp"`
+	Level     string    `json:"level"` // "info", "warn", "error", "debug"
+	Message   string    `json:"message"`
+	Source    string    `json:"source"` // Which component logged this
+	TaskID    string    `json:"task_id"`
+	WorkerID  string    `json:"worker_id"`
+	// Optional structured fields carried from worker logs
+	Fields map[string]string `json:"fields,omitempty"`
+	// Optional progress/status carried from worker logs
+	Progress *float64 `json:"progress,omitempty"`
+	Status   string   `json:"status,omitempty"`
+}
+
+// TaskDetailData represents comprehensive information about a task for the detail view
+type TaskDetailData struct {
+	Task              *MaintenanceTask        `json:"task"`
+	AssignmentHistory []*TaskAssignmentRecord `json:"assignment_history"`
+	ExecutionLogs     []*TaskExecutionLog     `json:"execution_logs"`
+	RelatedTasks      []*MaintenanceTask      `json:"related_tasks,omitempty"`    // Other tasks on same volume/server
+	WorkerInfo        *MaintenanceWorker      `json:"worker_info,omitempty"`      // Current or last assigned worker
+	CreationMetrics   *TaskCreationMetrics    `json:"creation_metrics,omitempty"` // Metrics that led to task creation
+	LastUpdated       time.Time               `json:"last_updated"`
+}
+
+// TaskCreationMetrics holds metrics that led to the task being created
+type TaskCreationMetrics struct {
+	TriggerMetric  string                 `json:"trigger_metric"` // What metric triggered this task
+	MetricValue    float64                `json:"metric_value"`   // Value of the trigger metric
+	Threshold      float64                `json:"threshold"`      // Threshold that was exceeded
+	VolumeMetrics  *VolumeHealthMetrics   `json:"volume_metrics,omitempty"`
+	AdditionalData map[string]interface{} `json:"additional_data,omitempty"`
 }
 
 // MaintenanceConfig holds configuration for the maintenance system
@@ -121,6 +172,15 @@ type MaintenancePolicy = worker_pb.MaintenancePolicy
 // TaskPolicy represents configuration for a specific task type
 // DEPRECATED: Use worker_pb.TaskPolicy instead
 type TaskPolicy = worker_pb.TaskPolicy
+
+// TaskPersistence interface for task state persistence
+type TaskPersistence interface {
+	SaveTaskState(task *MaintenanceTask) error
+	LoadTaskState(taskID string) (*MaintenanceTask, error)
+	LoadAllTaskStates() ([]*MaintenanceTask, error)
+	DeleteTaskState(taskID string) error
+	CleanupCompletedTasks() error
+}
 
 // Default configuration values
 func DefaultMaintenanceConfig() *MaintenanceConfig {
@@ -273,6 +333,7 @@ type MaintenanceQueue struct {
 	mutex        sync.RWMutex
 	policy       *MaintenancePolicy
 	integration  *MaintenanceIntegration
+	persistence  TaskPersistence // Interface for task persistence
 }
 
 // MaintenanceScanner analyzes the cluster and generates maintenance tasks
@@ -301,8 +362,10 @@ type TaskDetectionResult struct {
 type VolumeHealthMetrics struct {
 	VolumeID         uint32        `json:"volume_id"`
 	Server           string        `json:"server"`
-	DiskType         string        `json:"disk_type"` // Disk type (e.g., "hdd", "ssd") or disk path (e.g., "/data1")
-	DiskId           uint32        `json:"disk_id"`   // ID of the disk in Store.Locations array
+	DiskType         string        `json:"disk_type"`   // Disk type (e.g., "hdd", "ssd") or disk path (e.g., "/data1")
+	DiskId           uint32        `json:"disk_id"`     // ID of the disk in Store.Locations array
+	DataCenter       string        `json:"data_center"` // Data center of the server
+	Rack             string        `json:"rack"`        // Rack of the server
 	Collection       string        `json:"collection"`
 	Size             uint64        `json:"size"`
 	DeletedBytes     uint64        `json:"deleted_bytes"`

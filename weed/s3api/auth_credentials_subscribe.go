@@ -166,5 +166,6 @@ func (s3a *S3ApiServer) invalidateBucketConfigCache(bucket string) {
 	}
 
 	s3a.bucketConfigCache.Remove(bucket)
+	s3a.bucketConfigCache.RemoveNegativeCache(bucket) // Also remove from negative cache
 	glog.V(2).Infof("invalidateBucketConfigCache: removed bucket %s from cache", bucket)
 }

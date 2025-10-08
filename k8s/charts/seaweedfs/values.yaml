@@ -3,6 +3,7 @@
 global:
   createClusterRole: true
   registry: ""
+  # if repository is set, it overrides the namespace part of imageName
   repository: ""
   imageName: chrislusf/seaweedfs
   imagePullPolicy: IfNotPresent
@@ -201,8 +202,7 @@ master:
   # nodeSelector labels for master pod assignment, formatted as a muli-line string.
   # ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#nodeselector
   # Example:
-  nodeSelector: |
-    kubernetes.io/arch: amd64
+  nodeSelector: ""
   # nodeSelector: |
   #   sw-backend: "true"
 
@@ -358,7 +358,7 @@ volume:
   # This will automatically create a job for patching Kubernetes resources if the dataDirs type is 'persistentVolumeClaim' and the size has changed.
   resizeHook:
     enabled: true
-    image: bitnami/kubectl
+    image: alpine/k8s:1.28.4
 
   # idx can be defined by:
   #
@@ -478,8 +478,7 @@ volume:
   # nodeSelector labels for server pod assignment, formatted as a muli-line string.
   # ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#nodeselector
   # Example:
-  nodeSelector: |
-   kubernetes.io/arch: amd64
+  nodeSelector: ""
   # nodeSelector: |
   #   sw-volume: "true"
 
@@ -735,8 +734,7 @@ filer:
   # nodeSelector labels for server pod assignment, formatted as a muli-line string.
   # ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#nodeselector
   # Example:
-  nodeSelector: |
-    kubernetes.io/arch: amd64
+  nodeSelector: ""
   # nodeSelector: |
   #   sw-backend: "true"
 
@@ -932,8 +930,7 @@ s3:
   # nodeSelector labels for server pod assignment, formatted as a muli-line string.
   # ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#nodeselector
   # Example:
-  nodeSelector: |
-    kubernetes.io/arch: amd64
+  nodeSelector: ""
   # nodeSelector: |
   #   sw-backend: "true"
 
@@ -1051,8 +1048,7 @@ sftp:
   annotations: {}
   resources: {}
   tolerations: ""
-  nodeSelector: |
-    kubernetes.io/arch: amd64
+  nodeSelector: ""
   priorityClassName: ""
   serviceAccountName: ""
   podSecurityContext: {}
@@ -1088,7 +1084,6 @@ allInOne:
   enabled: false
   imageOverride: null
   restartPolicy: Always
-  replicas: 1
 
   # Core configuration
   idleTimeout: 30  # Connection idle seconds
@@ -1180,8 +1175,7 @@ allInOne:
 
   # nodeSelector labels for master pod assignment, formatted as a muli-line string.
   # ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#nodeselector
-  nodeSelector: |
-    kubernetes.io/arch: amd64
+  nodeSelector: ""
 
   # Used to assign priority to master pods
   # ref: https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/

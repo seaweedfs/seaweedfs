@@ -180,5 +180,5 @@ func CommonRegisterUI[D, S any](
 	)
 
 	uiRegistry.RegisterUI(uiProvider)
-	glog.V(1).Infof("✅ Registered %s task UI provider", taskType)
+	glog.V(1).Infof("Registered %s task UI provider", taskType)
 }

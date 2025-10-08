@@ -70,6 +70,111 @@ templ MaintenanceQueue(data *maintenance.MaintenanceQueueData) {
             </div>
         </div>
 
+        <!-- Completed Tasks -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header bg-success text-white">
+                        <h5 class="mb-0">
+                            <i class="fas fa-check-circle me-2"></i>
+                            Completed Tasks
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        if data.Stats.CompletedToday == 0 && data.Stats.FailedToday == 0 {
+                            <div class="text-center text-muted py-4">
+                                <i class="fas fa-check-circle fa-3x mb-3"></i>
+                                <p>No completed maintenance tasks today</p>
+                                <small>Completed tasks will appear here after workers finish processing them</small>
+                            </div>
+                        } else {
+                            <div class="table-responsive">
+                                <table class="table table-hover">
+                                    <thead>
+                                        <tr>
+                                            <th>Type</th>
+                                            <th>Status</th>
+                                            <th>Volume</th>
+                                            <th>Worker</th>
+                                            <th>Duration</th>
+                                            <th>Completed</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        for _, task := range data.Tasks {
+                                            if string(task.Status) == "completed" || string(task.Status) == "failed" || string(task.Status) == "cancelled" {
+                                                if string(task.Status) == "failed" {
+                                                    <tr class="table-danger clickable-row" data-task-id={task.ID} onclick="navigateToTask(this)" style="cursor: pointer;">
+                                                        <td>
+                                                            @TaskTypeIcon(task.Type)
+                                                            {string(task.Type)}
+                                                        </td>
+                                                        <td>@StatusBadge(task.Status)</td>
+                                                        <td>{fmt.Sprintf("%d", task.VolumeID)}</td>
+                                                        <td>
+                                                            if task.WorkerID != "" {
+                                                                <small>{task.WorkerID}</small>
+                                                            } else {
+                                                                <span class="text-muted">-</span>
+                                                            }
+                                                        </td>
+                                                        <td>
+                                                            if task.StartedAt != nil && task.CompletedAt != nil {
+                                                                {formatDuration(task.CompletedAt.Sub(*task.StartedAt))}
+                                                            } else {
+                                                                <span class="text-muted">-</span>
+                                                            }
+                                                        </td>
+                                                        <td>
+                                                            if task.CompletedAt != nil {
+                                                                {task.CompletedAt.Format("2006-01-02 15:04")}
+                                                            } else {
+                                                                <span class="text-muted">-</span>
+                                                            }
+                                                        </td>
+                                                    </tr>
+                                                } else {
+                                                    <tr class="clickable-row" data-task-id={task.ID} onclick="navigateToTask(this)" style="cursor: pointer;">
+                                                        <td>
+                                                            @TaskTypeIcon(task.Type)
+                                                            {string(task.Type)}
+                                                        </td>
+                                                        <td>@StatusBadge(task.Status)</td>
+                                                        <td>{fmt.Sprintf("%d", task.VolumeID)}</td>
+                                                        <td>
+                                                            if task.WorkerID != "" {
+                                                                <small>{task.WorkerID}</small>
+                                                            } else {
+                                                                <span class="text-muted">-</span>
+                                                            }
+                                                        </td>
+                                                        <td>
+                                                            if task.StartedAt != nil && task.CompletedAt != nil {
+                                                                {formatDuration(task.CompletedAt.Sub(*task.StartedAt))}
+                                                            } else {
+                                                                <span class="text-muted">-</span>
+                                                            }
+                                                        </td>
+                                                        <td>
+                                                            if task.CompletedAt != nil {
+                                                                {task.CompletedAt.Format("2006-01-02 15:04")}
+                                                            } else {
+                                                                <span class="text-muted">-</span>
+                                                            }
+                                                        </td>
+                                                    </tr>
+                                                }
+                                            }
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Pending Tasks -->
         <div class="row mb-4">
             <div class="col-12">
@@ -103,7 +208,7 @@ templ MaintenanceQueue(data *maintenance.MaintenanceQueueData) {
                                     <tbody>
                                         for _, task := range data.Tasks {
                                             if string(task.Status) == "pending" {
-                                                <tr>
+                                                <tr class="clickable-row" data-task-id={task.ID} onclick="navigateToTask(this)" style="cursor: pointer;">
                                                     <td>
                                                         @TaskTypeIcon(task.Type)
                                                         {string(task.Type)}
@@ -158,7 +263,7 @@ templ MaintenanceQueue(data *maintenance.MaintenanceQueueData) {
                                     <tbody>
                                         for _, task := range data.Tasks {
                                             if string(task.Status) == "assigned" || string(task.Status) == "in_progress" {
-                                                <tr>
+                                                <tr class="clickable-row" data-task-id={task.ID} onclick="navigateToTask(this)" style="cursor: pointer;">
                                                     <td>
                                                         @TaskTypeIcon(task.Type)
                                                         {string(task.Type)}
@@ -181,111 +286,6 @@ templ MaintenanceQueue(data *maintenance.MaintenanceQueueData) {
                                                         }
                                                     </td>
                                                 </tr>
-                                            }
-                                        }
-                                    </tbody>
-                                </table>
-                            </div>
-                        }
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Completed Tasks -->
-        <div class="row mb-4">
-            <div class="col-12">
-                <div class="card">
-                    <div class="card-header bg-success text-white">
-                        <h5 class="mb-0">
-                            <i class="fas fa-check-circle me-2"></i>
-                            Completed Tasks
-                        </h5>
-                    </div>
-                    <div class="card-body">
-                        if data.Stats.CompletedToday == 0 && data.Stats.FailedToday == 0 {
-                            <div class="text-center text-muted py-4">
-                                <i class="fas fa-check-circle fa-3x mb-3"></i>
-                                <p>No completed maintenance tasks today</p>
-                                <small>Completed tasks will appear here after workers finish processing them</small>
-                            </div>
-                        } else {
-                            <div class="table-responsive">
-                                <table class="table table-hover">
-                                    <thead>
-                                        <tr>
-                                            <th>Type</th>
-                                            <th>Status</th>
-                                            <th>Volume</th>
-                                            <th>Worker</th>
-                                            <th>Duration</th>
-                                            <th>Completed</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        for _, task := range data.Tasks {
-                                            if string(task.Status) == "completed" || string(task.Status) == "failed" || string(task.Status) == "cancelled" {
-                                                if string(task.Status) == "failed" {
-                                                    <tr class="table-danger">
-                                                        <td>
-                                                            @TaskTypeIcon(task.Type)
-                                                            {string(task.Type)}
-                                                        </td>
-                                                        <td>@StatusBadge(task.Status)</td>
-                                                        <td>{fmt.Sprintf("%d", task.VolumeID)}</td>
-                                                        <td>
-                                                            if task.WorkerID != "" {
-                                                                <small>{task.WorkerID}</small>
-                                                            } else {
-                                                                <span class="text-muted">-</span>
-                                                            }
-                                                        </td>
-                                                        <td>
-                                                            if task.StartedAt != nil && task.CompletedAt != nil {
-                                                                {formatDuration(task.CompletedAt.Sub(*task.StartedAt))}
-                                                            } else {
-                                                                <span class="text-muted">-</span>
-                                                            }
-                                                        </td>
-                                                        <td>
-                                                            if task.CompletedAt != nil {
-                                                                {task.CompletedAt.Format("2006-01-02 15:04")}
-                                                            } else {
-                                                                <span class="text-muted">-</span>
-                                                            }
-                                                        </td>
-                                                    </tr>
-                                                } else {
-                                                    <tr>
-                                                        <td>
-                                                            @TaskTypeIcon(task.Type)
-                                                            {string(task.Type)}
-                                                        </td>
-                                                        <td>@StatusBadge(task.Status)</td>
-                                                        <td>{fmt.Sprintf("%d", task.VolumeID)}</td>
-                                                        <td>
-                                                            if task.WorkerID != "" {
-                                                                <small>{task.WorkerID}</small>
-                                                            } else {
-                                                                <span class="text-muted">-</span>
-                                                            }
-                                                        </td>
-                                                        <td>
-                                                            if task.StartedAt != nil && task.CompletedAt != nil {
-                                                                {formatDuration(task.CompletedAt.Sub(*task.StartedAt))}
-                                                            } else {
-                                                                <span class="text-muted">-</span>
-                                                            }
-                                                        </td>
-                                                        <td>
-                                                            if task.CompletedAt != nil {
-                                                                {task.CompletedAt.Format("2006-01-02 15:04")}
-                                                            } else {
-                                                                <span class="text-muted">-</span>
-                                                            }
-                                                        </td>
-                                                    </tr>
-                                                }
                                             }
                                         }
                                     </tbody>
@@ -334,6 +334,13 @@ templ MaintenanceQueue(data *maintenance.MaintenanceQueueData) {
         window.refreshPage = function() {
             console.log("refreshPage called");
             window.location.reload();
+        };
+
+        window.navigateToTask = function(element) {
+            const taskId = element.getAttribute('data-task-id');
+            if (taskId) {
+                window.location.href = '/maintenance/tasks/' + taskId;
+            }
         };
     </script>
 }

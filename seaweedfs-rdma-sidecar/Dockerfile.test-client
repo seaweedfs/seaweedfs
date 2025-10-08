@@ -1,0 +1,59 @@
+# Multi-stage build for Test Client
+FROM golang:1.23-alpine AS builder
+
+# Install build dependencies
+RUN apk add --no-cache git ca-certificates tzdata
+
+# Set work directory
+WORKDIR /app
+
+# Copy go mod files
+COPY go.mod go.sum ./
+
+# Download dependencies
+RUN go mod download
+
+# Copy source code
+COPY cmd/ ./cmd/
+COPY pkg/ ./pkg/
+
+# Build the test binaries
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o test-rdma ./cmd/test-rdma
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o demo-server ./cmd/demo-server
+
+# Runtime stage
+FROM alpine:3.18
+
+# Install runtime dependencies and testing tools
+RUN apk --no-cache add \
+    ca-certificates \
+    curl \
+    jq \
+    bash \
+    wget \
+    netcat-openbsd \
+    && rm -rf /var/cache/apk/*
+
+# Create app user
+RUN addgroup -g 1001 appgroup && \
+    adduser -D -s /bin/bash -u 1001 -G appgroup appuser
+
+# Set work directory
+WORKDIR /app
+
+# Copy binaries from builder stage
+COPY --from=builder /app/test-rdma .
+COPY --from=builder /app/demo-server .
+
+# Copy test scripts
+COPY tests/ ./tests/
+RUN chmod +x ./tests/*.sh
+
+# Change ownership
+RUN chown -R appuser:appgroup /app
+
+# Switch to app user
+USER appuser
+
+# Default command
+CMD ["/bin/bash"]

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"regexp"
 	"slices"
 	"sort"
 	"time"
@@ -932,8 +933,8 @@ func (ecb *ecBalancer) pickEcNodeToBalanceShardsInto(vid needle.VolumeId, existi
 		}
 
 		shards := nodeShards[node]
-		if ecb.replicaPlacement != nil && shards > ecb.replicaPlacement.SameRackCount {
-			details += fmt.Sprintf("  Skipped %s because shards %d > replica placement limit for the rack (%d)\n", node.info.Id, shards, ecb.replicaPlacement.SameRackCount)
+		if ecb.replicaPlacement != nil && shards > ecb.replicaPlacement.SameRackCount+1 {
+			details += fmt.Sprintf("  Skipped %s because shards %d > replica placement limit for the rack (%d + 1)\n", node.info.Id, shards, ecb.replicaPlacement.SameRackCount)
 			continue
 		}
 
@@ -1053,4 +1054,14 @@ func EcBalance(commandEnv *CommandEnv, collections []string, dc string, ecReplic
 	}
 
 	return nil
+}
+
+// compileCollectionPattern compiles a regex pattern for collection matching.
+// Empty patterns match empty collections only.
+func compileCollectionPattern(pattern string) (*regexp.Regexp, error) {
+	if pattern == "" {
+		// empty pattern matches empty collection
+		return regexp.Compile("^$")
+	}
+	return regexp.Compile(pattern)
 }

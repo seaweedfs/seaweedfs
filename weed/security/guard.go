@@ -3,10 +3,11 @@ package security
 import (
 	"errors"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"net"
 	"net/http"
 	"strings"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
 var (
@@ -75,18 +76,25 @@ func (g *Guard) WhiteList(f http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func GetActualRemoteHost(r *http.Request) (host string, err error) {
-	host = r.Header.Get("HTTP_X_FORWARDED_FOR")
-	if host == "" {
-		host = r.Header.Get("X-FORWARDED-FOR")
+func GetActualRemoteHost(r *http.Request) string {
+	// For security reasons, only use RemoteAddr to determine the client's IP address.
+	// Do not trust headers like X-Forwarded-For, as they can be easily spoofed by clients.
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil {
+		return host
 	}
-	if strings.Contains(host, ",") {
-		host = host[0:strings.Index(host, ",")]
+
+	// If SplitHostPort fails, it may be because of a missing port.
+	// We try to parse RemoteAddr as a raw host (IP or hostname).
+	host = strings.TrimSpace(r.RemoteAddr)
+	// It might be an IPv6 address without a port, but with brackets.
+	// e.g. "[::1]"
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		host = host[1 : len(host)-1]
 	}
-	if host == "" {
-		host, _, err = net.SplitHostPort(r.RemoteAddr)
-	}
-	return
+
+	// Return the host (can be IP or hostname, just like headers)
+	return host
 }
 
 func (g *Guard) checkWhiteList(w http.ResponseWriter, r *http.Request) error {
@@ -94,26 +102,27 @@ func (g *Guard) checkWhiteList(w http.ResponseWriter, r *http.Request) error {
 		return nil
 	}
 
-	host, err := GetActualRemoteHost(r)
-	if err != nil {
-		return fmt.Errorf("get actual remote host %s in checkWhiteList failed: %v", r.RemoteAddr, err)
-	}
+	host := GetActualRemoteHost(r)
 
+	// Check exact match first (works for both IPs and hostnames)
 	if _, ok := g.whiteListIp[host]; ok {
 		return nil
 	}
 
-	for _, cidrnet := range g.whiteListCIDR {
-		// If the whitelist entry contains a "/" it
-		// is a CIDR range, and we should check the
-		remote := net.ParseIP(host)
-		if cidrnet.Contains(remote) {
-			return nil
+	// Check CIDR ranges (only for valid IP addresses)
+	remote := net.ParseIP(host)
+	if remote != nil {
+		for _, cidrnet := range g.whiteListCIDR {
+			// If the whitelist entry contains a "/" it
+			// is a CIDR range, and we should check the
+			if cidrnet.Contains(remote) {
+				return nil
+			}
 		}
 	}
 
-	glog.V(0).Infof("Not in whitelist: %s", r.RemoteAddr)
-	return fmt.Errorf("Not in whitelist: %s", r.RemoteAddr)
+	glog.V(0).Infof("Not in whitelist: %s (original RemoteAddr: %s)", host, r.RemoteAddr)
+	return fmt.Errorf("Not in whitelist: %s", host)
 }
 
 func (g *Guard) UpdateWhiteList(whiteList []string) {

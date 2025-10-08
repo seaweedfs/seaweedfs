@@ -13,6 +13,17 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 )
 
+// matchesCollection checks if a volume/EC volume collection matches the filter collection.
+// Handles the special case where empty collection ("") represents the "default" collection.
+func matchesCollection(volumeCollection, filterCollection string) bool {
+	// Both empty means default collection matches default filter
+	if volumeCollection == "" && filterCollection == "" {
+		return true
+	}
+	// Direct string match for named collections
+	return volumeCollection == filterCollection
+}
+
 // GetClusterEcShards retrieves cluster EC shards data with pagination, sorting, and filtering
 func (s *AdminServer) GetClusterEcShards(page int, pageSize int, sortBy string, sortOrder string, collection string) (*ClusterEcShardsData, error) {
 	// Set defaults
@@ -403,7 +414,7 @@ func (s *AdminServer) GetClusterEcVolumes(page int, pageSize int, sortBy string,
 	var ecVolumes []EcVolumeWithShards
 	for _, volume := range volumeData {
 		// Filter by collection if specified
-		if collection == "" || volume.Collection == collection {
+		if collection == "" || matchesCollection(volume.Collection, collection) {
 			ecVolumes = append(ecVolumes, *volume)
 		}
 	}

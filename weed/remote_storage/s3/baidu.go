@@ -2,14 +2,16 @@ package s3
 
 import (
 	"fmt"
+	"os"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
+	v4 "github.com/aws/aws-sdk-go/aws/signer/v4"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"os"
 )
 
 func init() {
@@ -33,7 +35,7 @@ func (s BaiduRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storag
 	config := &aws.Config{
 		Endpoint:                      aws.String(conf.BaiduEndpoint),
 		Region:                        aws.String(conf.BaiduRegion),
-		S3ForcePathStyle:              aws.Bool(true),
+		S3ForcePathStyle:              aws.Bool(false),
 		S3DisableContentMD5Validation: aws.Bool(true),
 	}
 	if accessKey != "" && secretKey != "" {
@@ -44,6 +46,7 @@ func (s BaiduRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storag
 	if err != nil {
 		return nil, fmt.Errorf("create baidu session: %w", err)
 	}
+	sess.Handlers.Sign.PushBackNamed(v4.SignRequestHandler)
 	sess.Handlers.Build.PushFront(skipSha256PayloadSigning)
 	client.conn = s3.New(sess)
 	return client, nil

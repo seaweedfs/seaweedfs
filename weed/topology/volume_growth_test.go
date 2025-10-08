@@ -145,7 +145,7 @@ func TestFindEmptySlotsForOneVolume(t *testing.T) {
 		Rack:             "",
 		DataNode:         "",
 	}
-	servers, err := vg.findEmptySlotsForOneVolume(topo, volumeGrowOption)
+	servers, _, err := vg.findEmptySlotsForOneVolume(topo, volumeGrowOption, false)
 	if err != nil {
 		fmt.Println("finding empty slots error :", err)
 		t.Fail()
@@ -267,7 +267,7 @@ func TestReplication011(t *testing.T) {
 		Rack:             "",
 		DataNode:         "",
 	}
-	servers, err := vg.findEmptySlotsForOneVolume(topo, volumeGrowOption)
+	servers, _, err := vg.findEmptySlotsForOneVolume(topo, volumeGrowOption, false)
 	if err != nil {
 		fmt.Println("finding empty slots error :", err)
 		t.Fail()
@@ -345,7 +345,7 @@ func TestFindEmptySlotsForOneVolumeScheduleByWeight(t *testing.T) {
 	distribution := map[NodeId]int{}
 	// assign 1000 volumes
 	for i := 0; i < 1000; i++ {
-		servers, err := vg.findEmptySlotsForOneVolume(topo, volumeGrowOption)
+		servers, _, err := vg.findEmptySlotsForOneVolume(topo, volumeGrowOption, false)
 		if err != nil {
 			fmt.Println("finding empty slots error :", err)
 			t.Fail()

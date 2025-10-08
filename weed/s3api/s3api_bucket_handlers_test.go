@@ -2,8 +2,10 @@ package s3api
 
 import (
 	"encoding/json"
+	"encoding/xml"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -203,4 +205,46 @@ func (m *mockIamInterface) GetAccountNameById(canonicalId string) string {
 
 func (m *mockIamInterface) GetAccountIdByEmail(email string) string {
 	return "account-for-" + email
+}
+
+// TestListAllMyBucketsResultNamespace verifies that the ListAllMyBucketsResult
+// XML response includes the proper S3 namespace URI
+func TestListAllMyBucketsResultNamespace(t *testing.T) {
+	// Create a sample ListAllMyBucketsResult response
+	response := ListAllMyBucketsResult{
+		Owner: CanonicalUser{
+			ID:          "test-owner-id",
+			DisplayName: "test-owner",
+		},
+		Buckets: ListAllMyBucketsList{
+			Bucket: []ListAllMyBucketsEntry{
+				{
+					Name:         "test-bucket",
+					CreationDate: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+				},
+			},
+		},
+	}
+
+	// Marshal the response to XML
+	xmlData, err := xml.Marshal(response)
+	require.NoError(t, err, "Failed to marshal XML response")
+
+	xmlString := string(xmlData)
+
+	// Verify that the XML contains the proper namespace
+	assert.Contains(t, xmlString, `xmlns="http://s3.amazonaws.com/doc/2006-03-01/"`,
+		"XML response should contain the S3 namespace URI")
+
+	// Verify the root element has the correct name
+	assert.Contains(t, xmlString, "<ListAllMyBucketsResult",
+		"XML response should have ListAllMyBucketsResult root element")
+
+	// Verify structure contains expected elements
+	assert.Contains(t, xmlString, "<Owner>", "XML should contain Owner element")
+	assert.Contains(t, xmlString, "<Buckets>", "XML should contain Buckets element")
+	assert.Contains(t, xmlString, "<Bucket>", "XML should contain Bucket element")
+	assert.Contains(t, xmlString, "<Name>test-bucket</Name>", "XML should contain bucket name")
+
+	t.Logf("Generated XML:\n%s", xmlString)
 }

@@ -211,6 +211,12 @@ func retriedStreamFetchChunkData(ctx context.Context, writer io.Writer, urlStrin
 }
 
 func MaybeManifestize(saveFunc SaveDataAsChunkFunctionType, inputChunks []*filer_pb.FileChunk) (chunks []*filer_pb.FileChunk, err error) {
+	// Don't manifestize SSE-encrypted chunks to preserve per-chunk metadata
+	for _, chunk := range inputChunks {
+		if chunk.GetSseType() != 0 { // Any SSE type (SSE-C or SSE-KMS)
+			return inputChunks, nil
+		}
+	}
 	return doMaybeManifestize(saveFunc, inputChunks, ManifestBatch, mergeIntoManifest)
 }
 

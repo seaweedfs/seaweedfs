@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
@@ -19,6 +20,10 @@ type TaskLogHandler struct {
 func NewTaskLogHandler(baseLogDir string) *TaskLogHandler {
 	if baseLogDir == "" {
 		baseLogDir = "/tmp/seaweedfs/task_logs"
+	}
+	// Best-effort ensure the base directory exists so reads don't fail due to missing dir
+	if err := os.MkdirAll(baseLogDir, 0755); err != nil {
+		glog.Warningf("Failed to create base task log directory %s: %v", baseLogDir, err)
 	}
 	return &TaskLogHandler{
 		baseLogDir: baseLogDir,
@@ -38,6 +43,23 @@ func (h *TaskLogHandler) HandleLogRequest(request *worker_pb.TaskLogRequest) *wo
 	if err != nil {
 		response.ErrorMessage = fmt.Sprintf("Task log directory not found: %v", err)
 		glog.Warningf("Task log request failed for %s: %v", request.TaskId, err)
+
+		// Add diagnostic information to help debug the issue
+		response.LogEntries = []*worker_pb.TaskLogEntry{
+			{
+				Timestamp: time.Now().Unix(),
+				Level:     "WARNING",
+				Message:   fmt.Sprintf("Task logs not available: %v", err),
+				Fields:    map[string]string{"source": "task_log_handler"},
+			},
+			{
+				Timestamp: time.Now().Unix(),
+				Level:     "INFO",
+				Message:   fmt.Sprintf("This usually means the task was never executed on this worker or logs were cleaned up. Base log directory: %s", h.baseLogDir),
+				Fields:    map[string]string{"source": "task_log_handler"},
+			},
+		}
+		// response.Success remains false to indicate logs were not found
 		return response
 	}
 
@@ -71,17 +93,23 @@ func (h *TaskLogHandler) HandleLogRequest(request *worker_pb.TaskLogRequest) *wo
 func (h *TaskLogHandler) findTaskLogDirectory(taskID string) (string, error) {
 	entries, err := os.ReadDir(h.baseLogDir)
 	if err != nil {
-		return "", fmt.Errorf("failed to read base log directory: %w", err)
+		return "", fmt.Errorf("failed to read base log directory %s: %w", h.baseLogDir, err)
 	}
 
 	// Look for directories that start with the task ID
+	var candidateDirs []string
 	for _, entry := range entries {
-		if entry.IsDir() && strings.HasPrefix(entry.Name(), taskID+"_") {
-			return filepath.Join(h.baseLogDir, entry.Name()), nil
+		if entry.IsDir() {
+			candidateDirs = append(candidateDirs, entry.Name())
+			if strings.HasPrefix(entry.Name(), taskID+"_") {
+				return filepath.Join(h.baseLogDir, entry.Name()), nil
+			}
 		}
 	}
 
-	return "", fmt.Errorf("task log directory not found for task ID: %s", taskID)
+	// Enhanced error message with diagnostic information
+	return "", fmt.Errorf("task log directory not found for task ID: %s (searched %d directories in %s, directories found: %v)",
+		taskID, len(candidateDirs), h.baseLogDir, candidateDirs)
 }
 
 // readTaskMetadata reads task metadata from the log directory

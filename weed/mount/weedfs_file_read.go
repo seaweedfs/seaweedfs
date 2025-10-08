@@ -2,9 +2,11 @@ package mount
 
 import (
 	"bytes"
+	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"io"
+
+	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 
@@ -45,8 +47,20 @@ func (wfs *WFS) Read(cancel <-chan struct{}, in *fuse.ReadIn, buff []byte) (fuse
 	fhActiveLock := fh.wfs.fhLockTable.AcquireLock("Read", fh.fh, util.SharedLock)
 	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
 
+	// Create a context that will be cancelled when the cancel channel receives a signal
+	ctx, cancelFunc := context.WithCancel(context.Background())
+	defer cancelFunc() // Ensure cleanup
+
+	go func() {
+		select {
+		case <-cancel:
+			cancelFunc()
+		case <-ctx.Done():
+		}
+	}()
+
 	offset := int64(in.Offset)
-	totalRead, err := readDataByFileHandle(buff, fh, offset)
+	totalRead, err := readDataByFileHandleWithContext(ctx, buff, fh, offset)
 	if err != nil {
 		glog.Warningf("file handle read %s %d: %v", fh.FullPath(), totalRead, err)
 		return nil, fuse.EIO
@@ -59,7 +73,7 @@ func (wfs *WFS) Read(cancel <-chan struct{}, in *fuse.ReadIn, buff []byte) (fuse
 		if bytes.Compare(mirrorData, buff[:totalRead]) != 0 {
 
 			againBuff := make([]byte, len(buff))
-			againRead, _ := readDataByFileHandle(againBuff, fh, offset)
+			againRead, _ := readDataByFileHandleWithContext(ctx, againBuff, fh, offset)
 			againCorrect := bytes.Compare(mirrorData, againBuff[:againRead]) == 0
 			againSame := bytes.Compare(buff[:totalRead], againBuff[:againRead]) == 0
 
@@ -79,6 +93,23 @@ func readDataByFileHandle(buff []byte, fhIn *FileHandle, offset int64) (int64, e
 	defer fhIn.unlockForRead(offset, size)
 
 	n, tsNs, err := fhIn.readFromChunks(buff, offset)
+	if err == nil || err == io.EOF {
+		maxStop := fhIn.readFromDirtyPages(buff, offset, tsNs)
+		n = max(maxStop-offset, n)
+	}
+	if err == io.EOF {
+		err = nil
+	}
+	return n, err
+}
+
+func readDataByFileHandleWithContext(ctx context.Context, buff []byte, fhIn *FileHandle, offset int64) (int64, error) {
+	// read data from source file
+	size := len(buff)
+	fhIn.lockForRead(offset, size)
+	defer fhIn.unlockForRead(offset, size)
+
+	n, tsNs, err := fhIn.readFromChunksWithContext(ctx, buff, offset)
 	if err == nil || err == io.EOF {
 		maxStop := fhIn.readFromDirtyPages(buff, offset, tsNs)
 		n = max(maxStop-offset, n)
