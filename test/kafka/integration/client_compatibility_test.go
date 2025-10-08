@@ -48,6 +48,10 @@ func TestClientCompatibility(t *testing.T) {
 		testConsumerGroupCompatibility(t, addr)
 	})
 
+	// Add a brief pause to allow connections from previous tests to fully close
+	// This helps prevent race conditions in the handler's shared connContext
+	time.Sleep(500 * time.Millisecond)
+
 	t.Run("AdminClientCompatibility", func(t *testing.T) {
 		testAdminClientCompatibility(t, addr)
 	})
