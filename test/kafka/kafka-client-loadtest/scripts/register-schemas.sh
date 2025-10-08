@@ -211,12 +211,15 @@ list_subjects() {
     subjects=$(curl -s "$SCHEMA_REGISTRY_URL/subjects" 2>/dev/null)
     
     if echo "$subjects" | jq -e '.[]' >/dev/null 2>&1; then
-        echo "$subjects" | jq -r '.[]' | while read -r subject; do
+        # Use process substitution instead of pipeline to avoid subshell exit code issues
+        while IFS= read -r subject; do
             log_info "  - $subject"
-        done
+        done < <(echo "$subjects" | jq -r '.[]')
     else
         log_warning "No subjects found or Schema Registry not accessible"
     fi
+    
+    return 0
 }
 
 # Clean up schemas (for testing)
@@ -280,6 +283,8 @@ main() {
             exit 1
             ;;
     esac
+    
+    return 0
 }
 
 main "$@"
