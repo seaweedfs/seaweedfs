@@ -24,6 +24,7 @@ type dataToFlush struct {
 	data      *bytes.Buffer
 	minOffset int64
 	maxOffset int64
+	done      chan struct{} // Signal when flush completes
 }
 
 type EachLogEntryFuncType func(logEntry *filer_pb.LogEntry) (isDone bool, err error)
@@ -274,22 +275,31 @@ func (logBuffer *LogBuffer) IsStopping() bool {
 	return logBuffer.isStopping.Load()
 }
 
-// ForceFlush immediately flushes the current buffer content without waiting for the flush interval
+// ForceFlush immediately flushes the current buffer content and WAITS for completion
 // This is useful for critical topics that need immediate persistence (e.g., _schemas for Schema Registry)
+// CRITICAL: This function is now SYNCHRONOUS - it blocks until the flush completes
 func (logBuffer *LogBuffer) ForceFlush() {
 	if logBuffer.isStopping.Load() {
 		return // Don't flush if we're shutting down
 	}
 
 	logBuffer.Lock()
-	toFlush := logBuffer.copyToFlush()
+	toFlush := logBuffer.copyToFlushWithCallback()
 	logBuffer.Unlock()
 
 	if toFlush != nil {
 		// Send to flush channel (non-blocking with timeout to avoid deadlock)
 		select {
 		case logBuffer.flushChan <- toFlush:
-			// Successfully queued for flush
+			// Successfully queued for flush - now WAIT for it to complete
+			select {
+			case <-toFlush.done:
+				// Flush completed successfully
+				glog.V(1).Infof("ForceFlush completed for %s", logBuffer.name)
+			case <-time.After(5 * time.Second):
+				// Timeout waiting for flush - this shouldn't happen
+				glog.Warningf("ForceFlush timed out waiting for completion on %s", logBuffer.name)
+			}
 		case <-time.After(100 * time.Millisecond):
 			// Flush channel is full or blocked - skip this flush
 			// Data will be flushed on next interval anyway
@@ -322,6 +332,10 @@ func (logBuffer *LogBuffer) loopFlush() {
 			d.releaseMemory()
 			// local logbuffer is different from aggregate logbuffer here
 			logBuffer.lastFlushDataTime = d.stopTime
+			// Signal completion if there's a callback channel
+			if d.done != nil {
+				close(d.done)
+			}
 		}
 	}
 	logBuffer.isAllFlushed = true
@@ -346,6 +360,14 @@ func (logBuffer *LogBuffer) loopInterval() {
 }
 
 func (logBuffer *LogBuffer) copyToFlush() *dataToFlush {
+	return logBuffer.copyToFlushInternal(false)
+}
+
+func (logBuffer *LogBuffer) copyToFlushWithCallback() *dataToFlush {
+	return logBuffer.copyToFlushInternal(true)
+}
+
+func (logBuffer *LogBuffer) copyToFlushInternal(withCallback bool) *dataToFlush {
 
 	if logBuffer.pos > 0 {
 		var d *dataToFlush
@@ -356,6 +378,10 @@ func (logBuffer *LogBuffer) copyToFlush() *dataToFlush {
 				data:      copiedBytes(logBuffer.buf[:logBuffer.pos]),
 				minOffset: logBuffer.minOffset,
 				maxOffset: logBuffer.maxOffset,
+			}
+			// Add callback channel for synchronous ForceFlush
+			if withCallback {
+				d.done = make(chan struct{})
 			}
 			// glog.V(4).Infof("%s flushing [0,%d) with %d entries [%v, %v]", m.name, m.pos, len(m.idx), m.startTime, m.stopTime)
 		} else {
@@ -406,17 +432,13 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 	if isOffsetBased {
 		requestedOffset := lastReadPosition.Offset
 
-		// Check if we have any data in memory
-		if logBuffer.pos == 0 && len(logBuffer.prevBuffers.buffers) == 0 {
-			return nil, -2, nil
-		}
-
-		// Check if the requested offset is in the current buffer
+		// Check if the requested offset is in the current buffer range
 		if requestedOffset >= logBuffer.bufferStartOffset && requestedOffset <= logBuffer.offset {
-			// CRITICAL FIX: If current buffer is empty AND has valid offset range (offset > 0),
-			// it means data was flushed. Check disk first.
-			// But if offset == 0 and bufferStartOffset == 0, this is a fresh empty buffer - wait for data.
-			if logBuffer.pos == 0 && logBuffer.offset > 0 {
+			// CRITICAL FIX: If current buffer is empty (pos=0), check disk
+			// This handles two cases:
+			// 1. Fresh empty buffer (offset=0, bufferStartOffset=0) - no data yet, will find nothing on disk
+			// 2. Flushed buffer (offset>0, pos=0) - data was flushed, read from disk
+			if logBuffer.pos == 0 {
 				return nil, -2, ResumeFromDiskError
 			}
 			return copiedBytes(logBuffer.buf[:logBuffer.pos]), logBuffer.offset, nil

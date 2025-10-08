@@ -220,6 +220,42 @@ func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromO
 	}
 	glog.Infof("[FETCH] ReadRecords returned %d records", len(seaweedRecords))
 
+	// CRITICAL FIX: If ReadRecords returns 0 but data should exist (check HWM), recreate subscriber
+	// This handles the case where subscriber was created before data was published and flushed
+	if len(seaweedRecords) == 0 && brokerClient != nil {
+		// Check if data actually exists
+		hwm, hwmErr := brokerClient.GetHighWaterMark(topic, partition)
+		if hwmErr == nil && hwm > fromOffset {
+			glog.Warningf("[FETCH] No records returned but HWM=%d > fromOffset=%d, recreating subscriber to force disk read", hwm, fromOffset)
+			
+			// Close the stuck subscriber
+			if brokerSubscriber.Stream != nil {
+				_ = brokerSubscriber.Stream.CloseSend()
+			}
+			
+			// Remove from cache
+			key := fmt.Sprintf("%s-%d", topic, partition)
+			brokerClient.subscribersLock.Lock()
+			delete(brokerClient.subscribers, key)
+			brokerClient.subscribersLock.Unlock()
+			
+			// Create fresh subscriber and try again ONE more time
+			brokerSubscriber, err = brokerClient.CreateFreshSubscriber(topic, partition, fromOffset, consumerGroup, consumerID)
+			if err != nil {
+				glog.Errorf("[FETCH] Failed to recreate subscriber: %v", err)
+				return nil, fmt.Errorf("failed to recreate subscriber: %v", err)
+			}
+			glog.Infof("[FETCH] Recreated subscriber, retrying ReadRecords")
+			
+			seaweedRecords, err = brokerClient.ReadRecords(brokerSubscriber, maxRecords)
+			if err != nil {
+				glog.Errorf("[FETCH] ReadRecords failed after recreation: %v", err)
+				return nil, fmt.Errorf("failed to read records after recreation: %v", err)
+			}
+			glog.Infof("[FETCH] After recreation: ReadRecords returned %d records", len(seaweedRecords))
+		}
+	}
+
 	// Convert SeaweedMQ records to SMQRecord interface with proper Kafka offsets
 	smqRecords := make([]SMQRecord, 0, len(seaweedRecords))
 	for i, seaweedRecord := range seaweedRecords {
