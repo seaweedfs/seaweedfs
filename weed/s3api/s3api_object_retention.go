@@ -253,21 +253,14 @@ func (s3a *S3ApiServer) getObjectRetention(bucket, object, versionId string) (*O
 func (s3a *S3ApiServer) setObjectRetention(bucket, object, versionId string, retention *ObjectRetention, bypassGovernance bool) error {
 	var entry *filer_pb.Entry
 	var err error
-	var parentDir string
-
-	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	var entryPath string
 
 	if versionId != "" {
 		entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
 		if err != nil {
 			return fmt.Errorf("failed to get version %s for object %s/%s: %w", versionId, bucket, object, ErrVersionNotFound)
 		}
-		// For versioned objects, the parent directory is the .versions directory
-		if versionId != "null" {
-			parentDir = bucketDir + "/" + object + ".versions"
-		} else {
-			parentDir = bucketDir
-		}
+		entryPath = object + ".versions/" + s3a.getVersionFileName(versionId)
 	} else {
 		// Check if versioning is enabled
 		versioningEnabled, vErr := s3a.isVersioningEnabled(bucket)
@@ -281,25 +274,22 @@ func (s3a *S3ApiServer) setObjectRetention(bucket, object, versionId string, ret
 				return fmt.Errorf("failed to get latest version for object %s/%s: %w", bucket, object, ErrLatestVersionNotFound)
 			}
 			// Extract version ID from entry metadata
+			entryPath = object // default to regular object path
 			if entry.Extended != nil {
 				if versionIdBytes, exists := entry.Extended[s3_constants.ExtVersionIdKey]; exists {
 					versionId = string(versionIdBytes)
 					if versionId != "null" {
-						parentDir = bucketDir + "/" + object + ".versions"
-					} else {
-						parentDir = bucketDir
+						entryPath = object + ".versions/" + s3a.getVersionFileName(versionId)
 					}
 				}
 			}
-			if parentDir == "" {
-				parentDir = bucketDir
-			}
 		} else {
+			bucketDir := s3a.option.BucketsPath + "/" + bucket
 			entry, err = s3a.getEntry(bucketDir, object)
 			if err != nil {
 				return fmt.Errorf("failed to get object %s/%s: %w", bucket, object, ErrObjectNotFound)
 			}
-			parentDir = bucketDir
+			entryPath = object
 		}
 	}
 
@@ -365,10 +355,14 @@ func (s3a *S3ApiServer) setObjectRetention(bucket, object, versionId string, ret
 	// NOTE: Potential race condition exists if concurrent calls to PutObjectRetention
 	// and PutObjectLegalHold update the same object simultaneously, as they might
 	// overwrite each other's Extended map changes. This is mitigated by the fact
-	// that update operations are typically serialized at the filer level, but
+	// that mkFile operations are typically serialized at the filer level, but
 	// future implementations might consider using atomic update operations or
 	// entry-level locking for complete safety.
-	return s3a.updateEntry(parentDir, entry)
+	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	return s3a.mkFile(bucketDir, entryPath, entry.Chunks, func(updatedEntry *filer_pb.Entry) {
+		updatedEntry.Extended = entry.Extended
+		updatedEntry.WormEnforcedAtTsNs = entry.WormEnforcedAtTsNs
+	})
 }
 
 // ====================================================================
@@ -401,21 +395,14 @@ func (s3a *S3ApiServer) getObjectLegalHold(bucket, object, versionId string) (*O
 func (s3a *S3ApiServer) setObjectLegalHold(bucket, object, versionId string, legalHold *ObjectLegalHold) error {
 	var entry *filer_pb.Entry
 	var err error
-	var parentDir string
-
-	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	var entryPath string
 
 	if versionId != "" {
 		entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
 		if err != nil {
 			return fmt.Errorf("failed to get version %s for object %s/%s: %w", versionId, bucket, object, ErrVersionNotFound)
 		}
-		// For versioned objects, the parent directory is the .versions directory
-		if versionId != "null" {
-			parentDir = bucketDir + "/" + object + ".versions"
-		} else {
-			parentDir = bucketDir
-		}
+		entryPath = object + ".versions/" + s3a.getVersionFileName(versionId)
 	} else {
 		// Check if versioning is enabled
 		versioningEnabled, vErr := s3a.isVersioningEnabled(bucket)
@@ -429,25 +416,22 @@ func (s3a *S3ApiServer) setObjectLegalHold(bucket, object, versionId string, leg
 				return fmt.Errorf("failed to get latest version for object %s/%s: %w", bucket, object, ErrLatestVersionNotFound)
 			}
 			// Extract version ID from entry metadata
+			entryPath = object // default to regular object path
 			if entry.Extended != nil {
 				if versionIdBytes, exists := entry.Extended[s3_constants.ExtVersionIdKey]; exists {
 					versionId = string(versionIdBytes)
 					if versionId != "null" {
-						parentDir = bucketDir + "/" + object + ".versions"
-					} else {
-						parentDir = bucketDir
+						entryPath = object + ".versions/" + s3a.getVersionFileName(versionId)
 					}
 				}
 			}
-			if parentDir == "" {
-				parentDir = bucketDir
-			}
 		} else {
+			bucketDir := s3a.option.BucketsPath + "/" + bucket
 			entry, err = s3a.getEntry(bucketDir, object)
 			if err != nil {
 				return fmt.Errorf("failed to get object %s/%s: %w", bucket, object, ErrObjectNotFound)
 			}
-			parentDir = bucketDir
+			entryPath = object
 		}
 	}
 
@@ -462,10 +446,13 @@ func (s3a *S3ApiServer) setObjectLegalHold(bucket, object, versionId string, leg
 	// NOTE: Potential race condition exists if concurrent calls to PutObjectRetention
 	// and PutObjectLegalHold update the same object simultaneously, as they might
 	// overwrite each other's Extended map changes. This is mitigated by the fact
-	// that update operations are typically serialized at the filer level, but
+	// that mkFile operations are typically serialized at the filer level, but
 	// future implementations might consider using atomic update operations or
 	// entry-level locking for complete safety.
-	return s3a.updateEntry(parentDir, entry)
+	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	return s3a.mkFile(bucketDir, entryPath, entry.Chunks, func(updatedEntry *filer_pb.Entry) {
+		updatedEntry.Extended = entry.Extended
+	})
 }
 
 // ====================================================================
