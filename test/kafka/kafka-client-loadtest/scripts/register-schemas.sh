@@ -90,11 +90,9 @@ EOF
     fi
 }
 
-# Verify a schema exists
+# Verify a schema exists (single attempt)
 verify_schema() {
     local subject=$1
-    
-    log_info "Verifying schema for subject: $subject"
     
     local response
     response=$(curl -s "$SCHEMA_REGISTRY_URL/subjects/$subject/versions/latest" 2>/dev/null)
@@ -107,9 +105,49 @@ verify_schema() {
         log_success "- Schema verified for $subject (ID: $schema_id, Version: $version)"
         return 0
     else
-        log_error "x Schema not found for $subject"
         return 1
     fi
+}
+
+# Verify a schema exists with retry logic (handles Schema Registry consumer lag)
+verify_schema_with_retry() {
+    local subject=$1
+    local max_attempts=5
+    local attempt=1
+    
+    log_info "Verifying schema for subject: $subject"
+    
+    while [[ $attempt -le $max_attempts ]]; do
+        local response
+        response=$(curl -s "$SCHEMA_REGISTRY_URL/subjects/$subject/versions/latest" 2>/dev/null)
+        
+        if echo "$response" | jq -e '.id' >/dev/null 2>&1; then
+            local schema_id
+            local version
+            schema_id=$(echo "$response" | jq -r '.id')
+            version=$(echo "$response" | jq -r '.version')
+            
+            if [[ $attempt -gt 1 ]]; then
+                log_success "- Schema verified for $subject (ID: $schema_id, Version: $version) [attempt $attempt]"
+            else
+                log_success "- Schema verified for $subject (ID: $schema_id, Version: $version)"
+            fi
+            return 0
+        fi
+        
+        # Schema not found, wait and retry (handles Schema Registry consumer lag)
+        if [[ $attempt -lt $max_attempts ]]; then
+            # Exponential backoff: 100ms, 200ms, 400ms, 800ms
+            local wait_time=$(echo "scale=3; 0.1 * (2 ^ ($attempt - 1))" | bc)
+            sleep "$wait_time"
+            attempt=$((attempt + 1))
+        else
+            log_error "x Schema not found for $subject (tried $max_attempts times)"
+            return 1
+        fi
+    done
+    
+    return 1
 }
 
 # Register load test schemas (optimized for batch registration)
@@ -179,14 +217,14 @@ verify_loadtest_schemas() {
     local total_schemas=0
     
     for topic in "${topics[@]}"; do
-        # Verify value schema
-        if verify_schema "${topic}-value"; then
+        # Verify value schema with retry (handles Schema Registry consumer lag)
+        if verify_schema_with_retry "${topic}-value"; then
             success_count=$((success_count + 1))
         fi
         total_schemas=$((total_schemas + 1))
         
-        # Verify key schema
-        if verify_schema "${topic}-key"; then
+        # Verify key schema with retry (handles Schema Registry consumer lag)
+        if verify_schema_with_retry "${topic}-key"; then
             success_count=$((success_count + 1))
         fi
         total_schemas=$((total_schemas + 1))
