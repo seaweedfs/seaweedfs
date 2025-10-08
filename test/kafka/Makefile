@@ -40,12 +40,12 @@ setup: ## Set up test environment (Kafka + Schema Registry + SeaweedFS)
 	@$(DOCKER_COMPOSE) up -d kafka-gateway
 	@echo "$(BLUE)Waiting for Kafka Gateway to be ready...$(NC)"
 	@sleep 10
-	@echo "$(GREEN)✅ Test environment ready!$(NC)"
+	@echo "$(GREEN)Test environment ready!$(NC)"
 
 setup-schemas: setup ## Set up test environment and register schemas
 	@echo "$(YELLOW)Registering test schemas...$(NC)"
 	@$(DOCKER_COMPOSE) --profile setup run --rm test-setup
-	@echo "$(GREEN)✅ Schemas registered!$(NC)"
+	@echo "$(GREEN)Schemas registered!$(NC)"
 
 # Test Categories
 test: test-unit test-integration test-e2e ## Run all tests
@@ -119,7 +119,7 @@ clean: ## Clean up test environment
 	@echo "$(YELLOW)Cleaning up test environment...$(NC)"
 	@$(DOCKER_COMPOSE) down -v --remove-orphans
 	@docker system prune -f
-	@echo "$(GREEN)✅ Environment cleaned up!$(NC)"
+	@echo "$(GREEN)Environment cleaned up!$(NC)"
 
 # Monitoring and debugging
 logs: ## Show logs from all services
@@ -142,13 +142,13 @@ status: ## Show status of all services
 	@$(DOCKER_COMPOSE) ps
 	@echo ""
 	@echo "$(BLUE)Kafka Status:$(NC)"
-	@curl -s http://localhost:9092 > /dev/null && echo "✅ Kafka accessible" || echo "❌ Kafka not accessible"
+	@curl -s http://localhost:9092 > /dev/null && echo "Kafka accessible" || echo "Kafka not accessible"
 	@echo ""
 	@echo "$(BLUE)Schema Registry Status:$(NC)"
-	@curl -s $(SCHEMA_REGISTRY_URL)/subjects > /dev/null && echo "✅ Schema Registry accessible" || echo "❌ Schema Registry not accessible"
+	@curl -s $(SCHEMA_REGISTRY_URL)/subjects > /dev/null && echo "Schema Registry accessible" || echo "Schema Registry not accessible"
 	@echo ""
 	@echo "$(BLUE)Kafka Gateway Status:$(NC)"
-	@nc -z localhost 9093 && echo "✅ Kafka Gateway accessible" || echo "❌ Kafka Gateway not accessible"
+	@nc -z localhost 9093 && echo "Kafka Gateway accessible" || echo "Kafka Gateway not accessible"
 
 debug: ## Debug test environment
 	@echo "$(BLUE)Debug Information:$(NC)"
@@ -172,7 +172,7 @@ install-deps: ## Install required dependencies
 	@which docker-compose > /dev/null || (echo "$(RED)Docker Compose not found$(NC)" && exit 1)
 	@which curl > /dev/null || (echo "$(RED)curl not found$(NC)" && exit 1)
 	@which nc > /dev/null || (echo "$(RED)netcat not found$(NC)" && exit 1)
-	@echo "$(GREEN)✅ All dependencies available$(NC)"
+	@echo "$(GREEN)All dependencies available$(NC)"
 
 check-env: ## Check test environment setup
 	@echo "$(BLUE)Environment Check:$(NC)"

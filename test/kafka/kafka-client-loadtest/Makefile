@@ -145,22 +145,22 @@ test: start ## Run the comprehensive load test
 	@$(MAKE) show-results
 
 quick-test: build-gateway ## Run a quick smoke test (1 min, low load, WITH schemas)
-	@echo "$(BLUE)╔══════════════════════════════════════════════════════════════╗$(NC)"
-	@echo "$(BLUE)║    Quick Test (Low Load, WITH Schema Registry + Avro)       ║$(NC)"
-	@echo "$(BLUE)║  - Duration: 1 minute                                        ║$(NC)"
-	@echo "$(BLUE)║  - Load: 1 producer × 10 msg/sec = 10 total msg/sec         ║$(NC)"
-	@echo "$(BLUE)║  - Message Type: Avro (with schema encoding)                ║$(NC)"
-	@echo "$(BLUE)║  - Schema-First: Registers schemas BEFORE producing         ║$(NC)"
-	@echo "$(BLUE)╚══════════════════════════════════════════════════════════════╝$(NC)"
+	@echo "$(BLUE)================================================================$(NC)"
+	@echo "$(BLUE)    Quick Test (Low Load, WITH Schema Registry + Avro)       $(NC)"
+	@echo "$(BLUE)  - Duration: 1 minute                                        $(NC)"
+	@echo "$(BLUE)  - Load: 1 producer × 10 msg/sec = 10 total msg/sec         $(NC)"
+	@echo "$(BLUE)  - Message Type: Avro (with schema encoding)                $(NC)"
+	@echo "$(BLUE)  - Schema-First: Registers schemas BEFORE producing         $(NC)"
+	@echo "$(BLUE)================================================================$(NC)"
 	@echo ""
 	@$(MAKE) start
 	@echo ""
-	@echo "$(BLUE)═══ Step 1: Registering schemas in Schema Registry ═══$(NC)"
+	@echo "$(BLUE)=== Step 1: Registering schemas in Schema Registry ===$(NC)"
 	@echo "$(YELLOW)[WARN] IMPORTANT: Schemas MUST be registered before producing Avro messages!$(NC)"
 	@./scripts/register-schemas.sh full
 	@echo "$(GREEN)- Schemas registered successfully$(NC)"
 	@echo ""
-	@echo "$(BLUE)═══ Step 2: Running load test with Avro messages ═══$(NC)"
+	@echo "$(BLUE)=== Step 2: Running load test with Avro messages ===$(NC)"
 	@$(MAKE) test \
 		TEST_MODE=comprehensive \
 		TEST_DURATION=60s \
@@ -170,30 +170,30 @@ quick-test: build-gateway ## Run a quick smoke test (1 min, low load, WITH schem
 		MESSAGE_SIZE=256 \
 		VALUE_TYPE=avro
 	@echo ""
-	@echo "$(GREEN)╔══════════════════════════════════════════════════════════════╗$(NC)"
-	@echo "$(GREEN)║                    Quick Test Complete!                      ║$(NC)"
-	@echo "$(GREEN)║  - Schema Registration                                       ║$(NC)"
-	@echo "$(GREEN)║  - Avro Message Production                                   ║$(NC)"
-	@echo "$(GREEN)║  - Message Consumption                                       ║$(NC)"
-	@echo "$(GREEN)╚══════════════════════════════════════════════════════════════╝$(NC)"
+	@echo "$(GREEN)================================================================$(NC)"
+	@echo "$(GREEN)                    Quick Test Complete!                      $(NC)"
+	@echo "$(GREEN)  - Schema Registration                                       $(NC)"
+	@echo "$(GREEN)  - Avro Message Production                                   $(NC)"
+	@echo "$(GREEN)  - Message Consumption                                       $(NC)"
+	@echo "$(GREEN)================================================================$(NC)"
 
 standard-test: ## Run a standard load test (2 min, medium load, WITH Schema Registry + Avro)
-	@echo "$(BLUE)╔══════════════════════════════════════════════════════════════╗$(NC)"
-	@echo "$(BLUE)║      Standard Test (Medium Load, WITH Schema Registry)      ║$(NC)"
-	@echo "$(BLUE)║  - Duration: 2 minutes                                       ║$(NC)"
-	@echo "$(BLUE)║  - Load: 2 producers × 50 msg/sec = 100 total msg/sec       ║$(NC)"
-	@echo "$(BLUE)║  - Message Type: Avro (with schema encoding)                ║$(NC)"
-	@echo "$(BLUE)║  - IMPORTANT: Schemas registered FIRST in Schema Registry   ║$(NC)"
-	@echo "$(BLUE)╚══════════════════════════════════════════════════════════════╝$(NC)"
+	@echo "$(BLUE)================================================================$(NC)"
+	@echo "$(BLUE)      Standard Test (Medium Load, WITH Schema Registry)      $(NC)"
+	@echo "$(BLUE)  - Duration: 2 minutes                                       $(NC)"
+	@echo "$(BLUE)  - Load: 2 producers × 50 msg/sec = 100 total msg/sec       $(NC)"
+	@echo "$(BLUE)  - Message Type: Avro (with schema encoding)                $(NC)"
+	@echo "$(BLUE)  - IMPORTANT: Schemas registered FIRST in Schema Registry   $(NC)"
+	@echo "$(BLUE)================================================================$(NC)"
 	@echo ""
 	@$(MAKE) start
 	@echo ""
-	@echo "$(BLUE)═══ Step 1: Registering schemas in Schema Registry ═══$(NC)"
+	@echo "$(BLUE)=== Step 1: Registering schemas in Schema Registry ===$(NC)"
 	@echo "$(YELLOW)Note: Schemas MUST be registered before producing Avro messages!$(NC)"
 	@./scripts/register-schemas.sh full
 	@echo "$(GREEN)- Schemas registered$(NC)"
 	@echo ""
-	@echo "$(BLUE)═══ Step 2: Running load test with Avro messages ═══$(NC)"
+	@echo "$(BLUE)=== Step 2: Running load test with Avro messages ===$(NC)"
 	@$(MAKE) test \
 		TEST_MODE=comprehensive \
 		TEST_DURATION=2m \
@@ -203,9 +203,9 @@ standard-test: ## Run a standard load test (2 min, medium load, WITH Schema Regi
 		MESSAGE_SIZE=512 \
 		VALUE_TYPE=avro
 	@echo ""
-	@echo "$(GREEN)╔══════════════════════════════════════════════════════════════╗$(NC)"
-	@echo "$(GREEN)║                  Standard Test Complete!                     ║$(NC)"
-	@echo "$(GREEN)╚══════════════════════════════════════════════════════════════╝$(NC)"
+	@echo "$(GREEN)================================================================$(NC)"
+	@echo "$(GREEN)                  Standard Test Complete!                     $(NC)"
+	@echo "$(GREEN)================================================================$(NC)"
 
 stress-test: ## Run a stress test (10 minutes, high load) with schemas
 	@echo "$(BLUE)Starting stress test with schema registration...$(NC)"

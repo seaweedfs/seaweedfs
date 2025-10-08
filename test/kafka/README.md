@@ -4,17 +4,17 @@ This directory contains tests for the SeaweedFS Kafka Gateway with full SeaweedM
 
 ## Test Types
 
-### 🧪 **Unit Tests** (`./unit/`)
+### **Unit Tests** (`./unit/`)
 - Basic gateway functionality
 - Protocol compatibility 
 - No SeaweedFS backend required
 - Uses mock handlers
 
-### 🔗 **Integration Tests** (`./integration/`)
+### **Integration Tests** (`./integration/`)
 - **Mock Mode** (default): Uses in-memory handlers for protocol testing
 - **SMQ Mode** (with `SEAWEEDFS_MASTERS`): Uses real SeaweedFS backend for full integration
 
-### 🚀 **E2E Tests** (`./e2e/`)
+### **E2E Tests** (`./e2e/`)
 - End-to-end workflows
 - Automatically detects SMQ availability
 - Falls back to mock mode if SMQ unavailable
@@ -74,12 +74,12 @@ If you're having broker startup issues:
 
 When `SEAWEEDFS_MASTERS` is available, tests exercise:
 
-✅ **Real Message Persistence** - Messages stored in SeaweedFS volumes  
-✅ **Offset Persistence** - Consumer group offsets stored in SeaweedFS filer  
-✅ **Topic Persistence** - Topic metadata persisted in SeaweedFS filer  
-✅ **Consumer Group Coordination** - Distributed coordinator assignment  
-✅ **Cross-Client Compatibility** - Sarama, kafka-go with real backend  
-✅ **Broker Discovery** - Gateway discovers MQ brokers via masters  
+- **Real Message Persistence** - Messages stored in SeaweedFS volumes  
+- **Offset Persistence** - Consumer group offsets stored in SeaweedFS filer  
+- **Topic Persistence** - Topic metadata persisted in SeaweedFS filer  
+- **Consumer Group Coordination** - Distributed coordinator assignment  
+- **Cross-Client Compatibility** - Sarama, kafka-go with real backend  
+- **Broker Discovery** - Gateway discovers MQ brokers via masters  
 
 ## Test Infrastructure
 

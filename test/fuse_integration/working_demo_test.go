@@ -119,7 +119,7 @@ func (f *DemoFuseTestFramework) Cleanup() {
 // the framework concept works while Go module conflicts are resolved.
 func TestFrameworkDemo(t *testing.T) {
 	t.Log("SeaweedFS FUSE Integration Testing Framework Demo")
-	t.Log("ℹ️  This demo simulates FUSE operations using local filesystem")
+	t.Log("This demo simulates FUSE operations using local filesystem")
 
 	// Initialize demo framework
 	framework := NewDemoFuseTestFramework(t, DefaultDemoTestConfig())
@@ -141,13 +141,13 @@ func TestFrameworkDemo(t *testing.T) {
 		content := []byte("Hello, SeaweedFS FUSE Testing!")
 		filename := "demo_test.txt"
 
-		t.Log("📝 Creating test file...")
+		t.Log("Creating test file...")
 		framework.CreateTestFile(filename, content)
 
 		t.Log("Verifying file exists...")
 		framework.AssertFileExists(filename)
 
-		t.Log("📖 Verifying file content...")
+		t.Log("Verifying file content...")
 		framework.AssertFileContent(filename, content)
 
 		t.Log("Basic file operations test passed")
@@ -162,7 +162,7 @@ func TestFrameworkDemo(t *testing.T) {
 
 		filename := "large_file_demo.dat"
 
-		t.Log("📝 Creating large test file (1MB)...")
+		t.Log("Creating large test file (1MB)...")
 		framework.CreateTestFile(filename, largeContent)
 
 		t.Log("Verifying large file...")
@@ -176,7 +176,7 @@ func TestFrameworkDemo(t *testing.T) {
 		// Simulate concurrent operations
 		numFiles := 5
 
-		t.Logf("📝 Creating %d files concurrently...", numFiles)
+		t.Logf("Creating %d files concurrently...", numFiles)
 
 		for i := 0; i < numFiles; i++ {
 			filename := filepath.Join("concurrent", "file_"+string(rune('A'+i))+".txt")
@@ -198,5 +198,5 @@ func TestFrameworkDemo(t *testing.T) {
 	t.Log("   • Concurrent operations testing (simulated)")
 	t.Log("   • Error scenario validation (planned)")
 	t.Log("   • Performance validation (planned)")
-	t.Log("ℹ️  Full framework available in framework.go (pending module resolution)")
+	t.Log("Full framework available in framework.go (pending module resolution)")
 }
