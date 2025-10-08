@@ -429,13 +429,12 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 
 		// Offset not found in any buffer
 		if requestedOffset < logBuffer.bufferStartOffset {
-			// Check if there are any prevBuffers
-			if len(logBuffer.prevBuffers.buffers) > 0 {
-				firstBuf := logBuffer.prevBuffers.buffers[0]
-				if requestedOffset < firstBuf.startOffset {
-					return nil, -2, ResumeFromDiskError
-				}
-			}
+			// CRITICAL FIX: Data is older than what's in memory, must read from disk
+			// This fixes the Schema Registry hang issue where requesting offset 0 after data
+			// was flushed would return nil instead of ResumeFromDiskError, causing the
+			// subscriber to wait forever for data that's on disk.
+			// Test: TestReadFromBuffer_OldOffsetWithNoPrevBuffers reproduces this scenario.
+			return nil, -2, ResumeFromDiskError
 		}
 
 		if requestedOffset > logBuffer.offset {
