@@ -783,8 +783,12 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 		glog.V(2).Infof("updateLatestVersionAfterDeletion: no versions left for %s/%s", bucket, object)
 	}
 
-	// Update the .versions directory entry (use updateEntry since directory already exists)
-	err = s3a.updateEntry(bucketDir, versionsEntry)
+	// Update the .versions directory entry
+	err = s3a.mkFile(bucketDir, versionsObjectPath, versionsEntry.Chunks, func(updatedEntry *filer_pb.Entry) {
+		updatedEntry.Extended = versionsEntry.Extended
+		updatedEntry.Attributes = versionsEntry.Attributes
+		updatedEntry.Chunks = versionsEntry.Chunks
+	})
 	if err != nil {
 		return fmt.Errorf("failed to update .versions directory metadata: %v", err)
 	}

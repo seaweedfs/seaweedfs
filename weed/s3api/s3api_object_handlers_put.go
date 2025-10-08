@@ -691,8 +691,12 @@ func (s3a *S3ApiServer) updateLatestVersionInDirectory(bucket, object, versionId
 	versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey] = []byte(versionId)
 	versionsEntry.Extended[s3_constants.ExtLatestVersionFileNameKey] = []byte(versionFileName)
 
-	// Update the .versions directory entry with metadata (use updateEntry since the directory already exists)
-	err = s3a.updateEntry(bucketDir, versionsEntry)
+	// Update the .versions directory entry with metadata
+	err = s3a.mkFile(bucketDir, versionsObjectPath, versionsEntry.Chunks, func(updatedEntry *filer_pb.Entry) {
+		updatedEntry.Extended = versionsEntry.Extended
+		updatedEntry.Attributes = versionsEntry.Attributes
+		updatedEntry.Chunks = versionsEntry.Chunks
+	})
 	if err != nil {
 		glog.Errorf("updateLatestVersionInDirectory: failed to update .versions directory metadata: %v", err)
 		return fmt.Errorf("failed to update .versions directory metadata: %w", err)
