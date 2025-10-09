@@ -116,6 +116,10 @@ func (c *SchemaCatalog) ListDatabases() []string {
 		// Fallback to cached databases if broker unavailable
 		databases := make([]string, 0, len(c.databases))
 		for name := range c.databases {
+			// Skip .meta database
+			if name == ".meta" {
+				continue
+			}
 			databases = append(databases, name)
 		}
 
@@ -123,7 +127,15 @@ func (c *SchemaCatalog) ListDatabases() []string {
 		return databases
 	}
 
-	return namespaces
+	// Filter out .meta database from namespaces
+	filtered := make([]string, 0, len(namespaces))
+	for _, ns := range namespaces {
+		if ns != ".meta" {
+			filtered = append(filtered, ns)
+		}
+	}
+
+	return filtered
 }
 
 // ListTables returns all tables in a database (MQ topics in namespace)

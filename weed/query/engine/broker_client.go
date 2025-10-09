@@ -164,7 +164,6 @@ func (f *filerClientImpl) GetDataCenter() string {
 }
 
 // ListNamespaces retrieves all MQ namespaces (databases) from the filer
-// RESOLVED: Now queries actual topic directories instead of hardcoded values
 func (c *BrokerClient) ListNamespaces(ctx context.Context) ([]string, error) {
 	// Get filer client to list directories under /topics
 	filerClient, err := c.GetFilerClient()
@@ -211,7 +210,6 @@ func (c *BrokerClient) ListNamespaces(ctx context.Context) ([]string, error) {
 }
 
 // ListTopics retrieves all topics in a namespace from the filer
-// RESOLVED: Now queries actual topic directories instead of hardcoded values
 func (c *BrokerClient) ListTopics(ctx context.Context, namespace string) ([]string, error) {
 	// Get filer client to list directories under /topics/{namespace}
 	filerClient, err := c.GetFilerClient()
