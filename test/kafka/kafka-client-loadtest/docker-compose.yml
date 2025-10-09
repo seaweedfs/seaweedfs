@@ -215,7 +215,7 @@ services:
         condition: service_healthy
     environment:
       - SEAWEEDFS_MASTERS=seaweedfs-master:9333
-      - KAFKA_DEBUG=1  # Enable debug logging for Schema Registry troubleshooting
+      # - KAFKA_DEBUG=1  # Enable debug logging for Schema Registry troubleshooting
       - KAFKA_ADVERTISED_HOST=kafka-gateway
     volumes:
       - ./data/kafka-gateway:/data

@@ -80,7 +80,7 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 	// Debug Schema Registry polling
 	if isSchemasTopic && len(fetchRequest.Topics) > 0 {
 		for _, partition := range fetchRequest.Topics[0].Partitions {
-			glog.Infof("SR FETCH REQUEST: topic=%s partition=%d offset=%d maxWaitMs=%d minBytes=%d hasData=%v topicsExist=%v shouldLongPoll=%v",
+			glog.V(2).Infof("SR FETCH REQUEST: topic=%s partition=%d offset=%d maxWaitMs=%d minBytes=%d hasData=%v topicsExist=%v shouldLongPoll=%v",
 				fetchRequest.Topics[0].Name, partition.PartitionID, partition.FetchOffset,
 				maxWaitMs, fetchRequest.MinBytes, hasData, topicsExist, shouldLongPoll)
 		}
@@ -207,7 +207,7 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 			}
 
 			if isSchemasTopic {
-				glog.V(0).Infof("SR HWM: topic=%s partition=%d fetchOffset=%d highWaterMark=%d",
+				glog.V(2).Infof("SR HWM: topic=%s partition=%d fetchOffset=%d highWaterMark=%d",
 					topic.Name, partition.PartitionID, partition.FetchOffset, highWaterMark)
 			} else {
 				Debug("*** FETCH: Got highWaterMark %d for topic %s partition %d", highWaterMark, topic.Name, partition.PartitionID)
@@ -267,7 +267,7 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 				}
 			} else {
 				if isSchemasTopic {
-					glog.V(0).Infof("SR TOPIC: Topic %s exists", topic.Name)
+					glog.V(2).Infof("SR TOPIC: Topic %s exists", topic.Name)
 				} else {
 					Debug("Topic %s exists", topic.Name)
 				}
@@ -337,7 +337,7 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 				}
 			} else {
 				if isSchemasTopic {
-					glog.V(0).Infof("SR FETCH: No data available - fetchOffset=%d >= HWM=%d", effectiveFetchOffset, highWaterMark)
+					glog.V(2).Infof("SR FETCH: No data available - fetchOffset=%d >= HWM=%d", effectiveFetchOffset, highWaterMark)
 				}
 				Debug("No messages available - effective fetchOffset %d >= highWaterMark %d", effectiveFetchOffset, highWaterMark)
 				recordBatch = []byte{} // No messages available
@@ -447,7 +447,7 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 
 	// Log Schema Registry fetch responses
 	if isSchemasTopic {
-		glog.Infof("SR FETCH RESPONSE: responseSize=%d totalRecordBytes=%d topicsCount=%d apiVersion=%d",
+		glog.V(2).Infof("SR FETCH RESPONSE: responseSize=%d totalRecordBytes=%d topicsCount=%d apiVersion=%d",
 			len(response), totalAppendedRecordBytes, topicsCount, apiVersion)
 	}
 

@@ -570,7 +570,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 					// responseChan closed, exit
 					return
 				}
-				glog.Infof("[%s] Response writer received correlation=%d from responseChan", connectionID, resp.correlationID)
+				glog.V(2).Infof("[%s] Response writer received correlation=%d from responseChan", connectionID, resp.correlationID)
 				correlationQueueMu.Lock()
 				pendingResponses[resp.correlationID] = resp
 
@@ -588,7 +588,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 					if readyResp.err != nil {
 						Error("[%s] Error processing correlation=%d: %v", connectionID, readyResp.correlationID, readyResp.err)
 					} else {
-						glog.Infof("[%s] Response writer: about to write correlation=%d (%d bytes)", connectionID, readyResp.correlationID, len(readyResp.response))
+						glog.V(2).Infof("[%s] Response writer: about to write correlation=%d (%d bytes)", connectionID, readyResp.correlationID, len(readyResp.response))
 						Debug("[%s] Sending response correlation=%d: %d bytes (in order)", connectionID, readyResp.correlationID, len(readyResp.response))
 						if writeErr := h.writeResponseWithHeader(w, readyResp.correlationID, readyResp.apiKey, readyResp.apiVersion, readyResp.response, timeoutConfig.WriteTimeout); writeErr != nil {
 							glog.Errorf("[%s] Response writer: WRITE ERROR correlation=%d: %v - EXITING", connectionID, readyResp.correlationID, writeErr)
@@ -596,7 +596,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 							correlationQueueMu.Unlock()
 							return
 						}
-						glog.Infof("[%s] Response writer: successfully wrote correlation=%d", connectionID, readyResp.correlationID)
+						glog.V(2).Infof("[%s] Response writer: successfully wrote correlation=%d", connectionID, readyResp.correlationID)
 					}
 
 					// Remove from pending and advance
@@ -623,9 +623,9 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 					// Channel closed, exit
 					return
 				}
-				glog.Infof("[%s] Control plane processing correlation=%d, apiKey=%d", connectionID, req.correlationID, req.apiKey)
+				glog.V(2).Infof("[%s] Control plane processing correlation=%d, apiKey=%d", connectionID, req.correlationID, req.apiKey)
 				response, err := h.processRequestSync(req)
-				glog.Infof("[%s] Control plane completed correlation=%d, sending to responseChan", connectionID, req.correlationID)
+				glog.V(2).Infof("[%s] Control plane completed correlation=%d, sending to responseChan", connectionID, req.correlationID)
 				select {
 				case responseChan <- &kafkaResponse{
 					correlationID: req.correlationID,
@@ -634,7 +634,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 					response:      response,
 					err:           err,
 				}:
-					glog.Infof("[%s] Control plane sent correlation=%d to responseChan", connectionID, req.correlationID)
+					glog.V(2).Infof("[%s] Control plane sent correlation=%d to responseChan", connectionID, req.correlationID)
 				case <-ctx.Done():
 					// Connection closed, stop processing
 					Debug("[%s] Control plane: context cancelled, discarding response for correlation=%d", connectionID, req.correlationID)
@@ -688,9 +688,9 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 					// Channel closed, exit
 					return
 				}
-				glog.Infof("[%s] Data plane processing correlation=%d, apiKey=%d", connectionID, req.correlationID, req.apiKey)
+				glog.V(2).Infof("[%s] Data plane processing correlation=%d, apiKey=%d", connectionID, req.correlationID, req.apiKey)
 				response, err := h.processRequestSync(req)
-				glog.Infof("[%s] Data plane completed correlation=%d, sending to responseChan", connectionID, req.correlationID)
+				glog.V(2).Infof("[%s] Data plane completed correlation=%d, sending to responseChan", connectionID, req.correlationID)
 				// Use select with context to avoid sending on closed channel
 				select {
 				case responseChan <- &kafkaResponse{
@@ -700,7 +700,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 					response:      response,
 					err:           err,
 				}:
-					glog.Infof("[%s] Data plane sent correlation=%d to responseChan", connectionID, req.correlationID)
+					glog.V(2).Infof("[%s] Data plane sent correlation=%d to responseChan", connectionID, req.correlationID)
 				case <-ctx.Done():
 					// Connection closed, stop processing
 					Debug("[%s] Data plane: context cancelled, discarding response for correlation=%d", connectionID, req.correlationID)
@@ -1127,7 +1127,7 @@ func (h *Handler) processRequestSync(req *kafkaRequest) ([]byte, error) {
 		err = fmt.Errorf("unsupported API key: %d (version %d)", req.apiKey, req.apiVersion)
 	}
 
-	glog.Infof("processRequestSync: Switch completed for correlation=%d, about to record metrics", req.correlationID)
+	glog.V(2).Infof("processRequestSync: Switch completed for correlation=%d, about to record metrics", req.correlationID)
 	// Record metrics
 	requestLatency := time.Since(requestStart)
 	if err != nil {
@@ -1135,7 +1135,7 @@ func (h *Handler) processRequestSync(req *kafkaRequest) ([]byte, error) {
 	} else {
 		RecordRequestMetrics(req.apiKey, requestLatency)
 	}
-	glog.Infof("processRequestSync: Metrics recorded for correlation=%d, about to return", req.correlationID)
+	glog.V(2).Infof("processRequestSync: Metrics recorded for correlation=%d, about to return", req.correlationID)
 
 	return response, err
 }
