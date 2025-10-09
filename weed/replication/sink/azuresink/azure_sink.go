@@ -74,19 +74,10 @@ func (g *AzureSink) initialize(accountName, accountKey, container, dir string) e
 	}
 
 	serviceURL := fmt.Sprintf("https://%s.blob.core.windows.net/", accountName)
-client, err := azblob.NewClientWithSharedKeyCredential(serviceURL, credential, &azblob.ClientOptions{
-	ClientOptions: azcore.ClientOptions{
-		Retry: policy.RetryOptions{
-			MaxRetries:    10,
-			TryTimeout:    time.Minute,
-			RetryDelay:    2 * time.Second,
-			MaxRetryDelay: time.Minute,
-		},
-	},
-})
-if err != nil {
-	return fmt.Errorf("failed to create Azure client: %v", err)
-}
+	client, err := azblob.NewClientWithSharedKeyCredential(serviceURL, credential, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create Azure client: %v", err)
+	}
 
 	g.client = client
 
