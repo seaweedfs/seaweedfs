@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"regexp"
 	"strings"
 	"time"
 
@@ -28,6 +29,10 @@ const (
 	defaultBlockSize   = 4 * 1024 * 1024
 	defaultConcurrency = 16
 )
+
+// invalidMetadataChars matches any character that is not valid in Azure metadata keys.
+// Azure metadata keys must be valid C# identifiers: letters, digits, and underscores only.
+var invalidMetadataChars = regexp.MustCompile(`[^a-zA-Z0-9_]`)
 
 func init() {
 	remote_storage.RemoteStorageClientMakers["azure"] = new(azureRemoteStorageMaker)
@@ -226,9 +231,14 @@ func toMetadata(attributes map[string][]byte) map[string]*string {
 	metadata := make(map[string]*string)
 	for k, v := range attributes {
 		if strings.HasPrefix(k, s3_constants.AmzUserMetaPrefix) {
-			// S3 stores metadata keys in lowercase; normalize for consistency
-			key := strings.ReplaceAll(strings.ToLower(k[len(s3_constants.AmzUserMetaPrefix):]), "-", "_")
-			// Azure metadata keys must be valid C# identifiers, which cannot start with a digit.
+			// S3 stores metadata keys in lowercase; normalize for consistency.
+			key := strings.ToLower(k[len(s3_constants.AmzUserMetaPrefix):])
+
+			// Replace invalid characters to conform to Azure metadata key rules.
+			// Azure metadata keys must be valid C# identifiers: letters, digits, and underscores only.
+			key = invalidMetadataChars.ReplaceAllString(key, "_")
+
+			// Azure metadata keys cannot start with a digit.
 			if len(key) > 0 && key[0] >= '0' && key[0] <= '9' {
 				key = "_" + key
 			}

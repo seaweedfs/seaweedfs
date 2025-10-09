@@ -248,6 +248,23 @@ func TestToMetadata(t *testing.T) {
 			},
 		},
 		{
+			name: "keys with invalid characters",
+			input: map[string][]byte{
+				s3_constants.AmzUserMetaPrefix + "my.key":     []byte("value1"),
+				s3_constants.AmzUserMetaPrefix + "key+plus":   []byte("value2"),
+				s3_constants.AmzUserMetaPrefix + "key@symbol": []byte("value3"),
+				s3_constants.AmzUserMetaPrefix + "key-with.":  []byte("value4"),
+				s3_constants.AmzUserMetaPrefix + "key/slash":  []byte("value5"),
+			},
+			expected: map[string]*string{
+				"my_key":     stringPtr("value1"),
+				"key_plus":   stringPtr("value2"),
+				"key_symbol": stringPtr("value3"),
+				"key_with_":  stringPtr("value4"),
+				"key_slash":  stringPtr("value5"),
+			},
+		},
+		{
 			name:     "empty input",
 			input:    map[string][]byte{},
 			expected: map[string]*string{},
