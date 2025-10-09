@@ -455,22 +455,33 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 		dataReader = mimeDetect(r, dataReader)
 	}
 
-	glog.V(0).Infof("putSuspendedVersioningObject: uploading to %s (this should OVERWRITE any existing file)", uploadUrl)
 	etag, errCode, _ = s3a.putToFiler(r, uploadUrl, dataReader, "", bucket, 1)
 	if errCode != s3err.ErrNone {
 		glog.Errorf("putSuspendedVersioningObject: failed to upload object: %v", errCode)
 		return "", errCode
 	}
-	glog.V(0).Infof("putSuspendedVersioningObject: successfully uploaded, etag=%s", etag)
 
 	// Get the uploaded entry to add version metadata indicating this is "null" version
-	entry, err := s3a.getEntry(bucketDir, normalizedObject)
-	if err != nil {
-		glog.Errorf("putSuspendedVersioningObject: failed to get object entry: %v", err)
-		return "", s3err.ErrInternalError
+	// Use retry logic to handle filer consistency delays
+	var entry *filer_pb.Entry
+	maxRetries := 8
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		entry, err = s3a.getEntry(bucketDir, normalizedObject)
+		if err == nil {
+			break
+		}
+
+		if attempt < maxRetries {
+			// Exponential backoff: 10ms, 20ms, 40ms, 80ms, 160ms, 320ms, 640ms
+			delay := time.Millisecond * time.Duration(10*(1<<(attempt-1)))
+			time.Sleep(delay)
+		}
 	}
 
-	glog.V(0).Infof("putSuspendedVersioningObject: got entry, Name=%s, FileSize=%d", entry.Name, entry.Attributes.FileSize)
+	if err != nil {
+		glog.Errorf("putSuspendedVersioningObject: failed to get object entry after %d attempts: %v", maxRetries, err)
+		return "", s3err.ErrInternalError
+	}
 
 	// Add metadata to indicate this is a "null" version for suspended versioning
 	if entry.Extended == nil {
@@ -487,14 +498,16 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 		return "", s3err.ErrInvalidRequest
 	}
 
-	// Update the entry with metadata (use updateEntry instead of mkFile since the file already exists)
-	glog.V(0).Infof("putSuspendedVersioningObject: updating entry metadata for %s, setting ExtVersionIdKey=null", normalizedObject)
-	err = s3a.updateEntry(bucketDir, entry)
+	// Update the entry with metadata (use mkFile which handles create-or-update semantics properly)
+	err = s3a.mkFile(bucketDir, normalizedObject, entry.Chunks, func(updatedEntry *filer_pb.Entry) {
+		updatedEntry.Extended = entry.Extended
+		updatedEntry.Attributes = entry.Attributes
+		updatedEntry.Chunks = entry.Chunks
+	})
 	if err != nil {
 		glog.Errorf("putSuspendedVersioningObject: failed to update object metadata: %v", err)
 		return "", s3err.ErrInternalError
 	}
-	glog.V(0).Infof("putSuspendedVersioningObject: successfully updated metadata")
 
 	// Update all existing versions/delete markers to set IsLatest=false since "null" is now latest
 	err = s3a.updateIsLatestFlagsForSuspendedVersioning(bucket, normalizedObject)
@@ -560,8 +573,12 @@ func (s3a *S3ApiServer) updateIsLatestFlagsForSuspendedVersioning(bucket, object
 		delete(versionsEntry.Extended, s3_constants.ExtLatestVersionIdKey)
 		delete(versionsEntry.Extended, s3_constants.ExtLatestVersionFileNameKey)
 
-		// Update the .versions directory entry (use updateEntry since directory already exists)
-		err = s3a.updateEntry(bucketDir, versionsEntry)
+		// Update the .versions directory entry
+		err = s3a.mkFile(bucketDir, versionsObjectPath, versionsEntry.Chunks, func(updatedEntry *filer_pb.Entry) {
+			updatedEntry.Extended = versionsEntry.Extended
+			updatedEntry.Attributes = versionsEntry.Attributes
+			updatedEntry.Chunks = versionsEntry.Chunks
+		})
 		if err != nil {
 			return fmt.Errorf("failed to update .versions directory metadata: %v", err)
 		}
