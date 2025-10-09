@@ -3,24 +3,28 @@ package azuresink
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/replication/repl_util"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
-	"github.com/Azure/azure-storage-blob-go/azblob"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/streaming"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/appendblob"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blob"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/replication/repl_util"
 	"github.com/seaweedfs/seaweedfs/weed/replication/sink"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 type AzureSink struct {
-	containerURL  azblob.ContainerURL
+	client        *azblob.Client
 	container     string
 	dir           string
 	filerSource   *source.FilerSource
@@ -61,20 +65,19 @@ func (g *AzureSink) initialize(accountName, accountKey, container, dir string) e
 	g.container = container
 	g.dir = dir
 
-	// Use your Storage account's name and key to create a credential object.
+	// Create credential and client
 	credential, err := azblob.NewSharedKeyCredential(accountName, accountKey)
 	if err != nil {
-		glog.Fatalf("failed to create Azure credential with account name:%s: %v", accountName, err)
+		return fmt.Errorf("failed to create Azure credential with account name:%s: %v", accountName, err)
 	}
 
-	// Create a request pipeline that is used to process HTTP(S) requests and responses.
-	p := azblob.NewPipeline(credential, azblob.PipelineOptions{})
+	serviceURL := fmt.Sprintf("https://%s.blob.core.windows.net/", accountName)
+	client, err := azblob.NewClientWithSharedKeyCredential(serviceURL, credential, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create Azure client: %v", err)
+	}
 
-	// Create an ServiceURL object that wraps the service URL and a request pipeline.
-	u, _ := url.Parse(fmt.Sprintf("https://%s.blob.core.windows.net", accountName))
-	serviceURL := azblob.NewServiceURL(*u, p)
-
-	g.containerURL = serviceURL.NewContainerURL(g.container)
+	g.client = client
 
 	return nil
 }
@@ -87,13 +90,15 @@ func (g *AzureSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks boo
 		key = key + "/"
 	}
 
-	if _, err := g.containerURL.NewBlobURL(key).Delete(context.Background(),
-		azblob.DeleteSnapshotsOptionInclude, azblob.BlobAccessConditions{}); err != nil {
+	blobClient := g.client.ServiceClient().NewContainerClient(g.container).NewBlobClient(key)
+	_, err := blobClient.Delete(context.Background(), &blob.DeleteOptions{
+		DeleteSnapshots: &[]blob.DeleteSnapshotsOptionType{blob.DeleteSnapshotsOptionTypeInclude}[0],
+	})
+	if err != nil {
 		return fmt.Errorf("azure delete %s/%s: %v", g.container, key, err)
 	}
 
 	return nil
-
 }
 
 func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int32) error {
@@ -107,26 +112,34 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []
 	totalSize := filer.FileSize(entry)
 	chunkViews := filer.ViewFromChunks(context.Background(), g.filerSource.LookupFileId, entry.GetChunks(), 0, int64(totalSize))
 
-	// Create a URL that references a to-be-created blob in your
-	// Azure Storage account's container.
-	appendBlobURL := g.containerURL.NewAppendBlobURL(key)
+	// Create append blob client
+	appendBlobClient := g.client.ServiceClient().NewContainerClient(g.container).NewAppendBlobClient(key)
 
-	accessCondition := azblob.BlobAccessConditions{}
+	// Create blob with access conditions
+	accessConditions := &blob.AccessConditions{}
 	if entry.Attributes != nil && entry.Attributes.Mtime > 0 {
-		accessCondition.ModifiedAccessConditions.IfUnmodifiedSince = time.Unix(entry.Attributes.Mtime, 0)
+		modifiedTime := time.Unix(entry.Attributes.Mtime, 0)
+		accessConditions.ModifiedAccessConditions = &blob.ModifiedAccessConditions{
+			IfUnmodifiedSince: &modifiedTime,
+		}
 	}
 
-	res, err := appendBlobURL.Create(context.Background(), azblob.BlobHTTPHeaders{}, azblob.Metadata{}, accessCondition, azblob.BlobTagsMap{}, azblob.ClientProvidedKeyOptions{}, azblob.ImmutabilityPolicyOptions{})
-	if res != nil && res.StatusCode() == http.StatusPreconditionFailed {
-		glog.V(0).Infof("skip overwriting %s/%s: %v", g.container, key, err)
-		return nil
-	}
+	_, err := appendBlobClient.Create(context.Background(), &appendblob.CreateOptions{
+		AccessConditions: accessConditions,
+	})
+	
 	if err != nil {
-		return err
+		// Check if this is a precondition failed error (HTTP 412)
+		var respErr *azcore.ResponseError
+		if ok := errors.As(err, &respErr); ok && respErr.StatusCode == http.StatusPreconditionFailed {
+			glog.V(0).Infof("skip overwriting %s/%s: precondition failed", g.container, key)
+			return nil
+		}
+		return fmt.Errorf("azure create append blob %s/%s: %v", g.container, key, err)
 	}
 
 	writeFunc := func(data []byte) error {
-		_, writeErr := appendBlobURL.AppendBlock(context.Background(), bytes.NewReader(data), azblob.AppendBlobAccessConditions{}, nil, azblob.ClientProvidedKeyOptions{})
+		_, writeErr := appendBlobClient.AppendBlock(context.Background(), streaming.NopCloser(bytes.NewReader(data)), &appendblob.AppendBlockOptions{})
 		return writeErr
 	}
 
@@ -139,7 +152,6 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []
 	}
 
 	return nil
-
 }
 
 func (g *AzureSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool, signatures []int32) (foundExistingEntry bool, err error) {
