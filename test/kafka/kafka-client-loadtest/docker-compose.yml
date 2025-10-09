@@ -26,8 +26,7 @@ services:
     command: >
       bash -c "
       echo 'Creating _schemas topic...';
-      kafka-topics --create --topic _schemas --partitions 1 --replication-factor 1 \
-        --bootstrap-server kafka-gateway:9093 --if-not-exists || exit 0;
+      kafka-topics --create --topic _schemas --partitions 1 --replication-factor 1 --bootstrap-server kafka-gateway:9093 --if-not-exists || exit 0;
       echo '_schemas topic created successfully';
       "
   

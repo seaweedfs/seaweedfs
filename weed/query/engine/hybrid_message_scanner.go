@@ -720,28 +720,37 @@ func isNullOrEmpty(value *schema_pb.Value) bool {
 }
 
 // isSchemaless checks if the scanner is configured for a schema-less topic
-// Schema-less topics only have system fields: _timestamp_ns, _key, and _value
+// Schema-less topics only have system fields: _ts_ns, _key, and _value
 func (hms *HybridMessageScanner) isSchemaless() bool {
-	if hms.recordSchema == nil || len(hms.recordSchema.Fields) != 3 {
+	// Schema-less topics only have system fields: _ts_ns, _key, and _value
+	// System topics like _schemas are NOT schema-less - they have structured data
+	// We just need to map their fields during read
+
+	if hms.recordSchema == nil {
 		return false
 	}
 
-	hasTimestamp := false
-	hasKey := false
+	// Count only non-system data fields (exclude _ts_ns and _key which are always present)
+	// Schema-less topics should only have _value as the data field
 	hasValue := false
+	dataFieldCount := 0
 
 	for _, field := range hms.recordSchema.Fields {
 		switch field.Name {
-		case SW_COLUMN_NAME_TIMESTAMP:
-			hasTimestamp = true
-		case SW_COLUMN_NAME_KEY:
-			hasKey = true
+		case SW_COLUMN_NAME_TIMESTAMP, SW_COLUMN_NAME_KEY:
+			// System fields - ignore
+			continue
 		case SW_COLUMN_NAME_VALUE:
 			hasValue = true
+			dataFieldCount++
+		default:
+			// Any other field means it's not schema-less
+			dataFieldCount++
 		}
 	}
 
-	return hasTimestamp && hasKey && hasValue
+	// Schema-less = only has _value field as the data field (plus system fields)
+	return hasValue && dataFieldCount == 1
 }
 
 // convertLogEntryToRecordValue converts a filer_pb.LogEntry to schema_pb.RecordValue
@@ -808,9 +817,11 @@ func (hms *HybridMessageScanner) parseRawMessageWithSchema(logEntry *filer_pb.Lo
 
 	// Parse message data based on schema
 	if hms.recordSchema == nil || len(hms.recordSchema.Fields) == 0 {
-		// Fallback: No schema available, treat as single "value" field for Kafka compatibility
-		recordValue.Fields["value"] = &schema_pb.Value{
-			Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Data},
+		// Fallback: No schema available, use "_value" for schema-less topics only
+		if hms.isSchemaless() {
+			recordValue.Fields[SW_COLUMN_NAME_VALUE] = &schema_pb.Value{
+				Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Data},
+			}
 		}
 		return recordValue, "live_log", nil
 	}
@@ -845,9 +856,11 @@ func (hms *HybridMessageScanner) parseRawMessageWithSchema(logEntry *filer_pb.Lo
 		}
 	}
 
-	// Final fallback: treat as bytes value field for Kafka compatibility
-	recordValue.Fields["value"] = &schema_pb.Value{
-		Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Data},
+	// Final fallback: treat as bytes field for schema-less topics only
+	if hms.isSchemaless() {
+		recordValue.Fields[SW_COLUMN_NAME_VALUE] = &schema_pb.Value{
+			Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Data},
+		}
 	}
 
 	return recordValue, "live_log", nil
@@ -875,14 +888,11 @@ func (hms *HybridMessageScanner) convertLogEntryToRecordValueWithDecoded(logEntr
 				Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Key},
 			}
 
-			// Add the raw value as the "value" field for Kafka compatibility
-			recordValue.Fields["value"] = &schema_pb.Value{
-				Kind: &schema_pb.Value_BytesValue{BytesValue: dataMessage.Value},
-			}
-
-			// Also add "key" field for consistency (same as _key for non-schematized messages)
-			recordValue.Fields["key"] = &schema_pb.Value{
-				Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Key},
+			// For schema-less topics, use "_value" field directly
+			if hms.isSchemaless() {
+				recordValue.Fields[SW_COLUMN_NAME_VALUE] = &schema_pb.Value{
+					Kind: &schema_pb.Value_BytesValue{BytesValue: dataMessage.Value},
+				}
 			}
 
 			return recordValue, "live_log", nil
@@ -901,13 +911,6 @@ func (hms *HybridMessageScanner) convertLogEntryToRecordValueWithDecoded(logEntr
 			Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Key},
 		}
 
-		// Also add "key" field if not already present (for system topics and non-schematized messages)
-		if _, exists := recordValue.Fields["key"]; !exists {
-			recordValue.Fields["key"] = &schema_pb.Value{
-				Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Key},
-			}
-		}
-
 		return recordValue, "live_log", nil
 	}
 
@@ -924,14 +927,11 @@ func (hms *HybridMessageScanner) convertLogEntryToRecordValueWithDecoded(logEntr
 		Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Key},
 	}
 
-	// Add the raw data as the "value" field for Kafka compatibility
-	recordValue.Fields["value"] = &schema_pb.Value{
-		Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Data},
-	}
-
-	// Also add "key" field for consistency (same as _key for non-schematized messages)
-	recordValue.Fields["key"] = &schema_pb.Value{
-		Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Key},
+	// For schema-less topics, use "_value" field directly
+	if hms.isSchemaless() {
+		recordValue.Fields[SW_COLUMN_NAME_VALUE] = &schema_pb.Value{
+			Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Data},
+		}
 	}
 
 	return recordValue, "live_log", nil

@@ -212,28 +212,33 @@ func readAllParquetFiles(filerClient filer_pb.FilerClient, partitionDir string) 
 }
 
 // isSchemalessRecordType checks if the recordType represents a schema-less topic
-// Schema-less topics only have system fields: _timestamp_ns, _key, and _value
+// Schema-less topics only have system fields: _ts_ns, _key, and _value
 func isSchemalessRecordType(recordType *schema_pb.RecordType) bool {
-	if recordType == nil || len(recordType.Fields) != 3 {
+	if recordType == nil {
 		return false
 	}
 
-	hasTimestamp := false
-	hasKey := false
+	// Count only non-system data fields (exclude _ts_ns and _key which are always present)
+	// Schema-less topics should only have _value as the data field
 	hasValue := false
+	dataFieldCount := 0
 
 	for _, field := range recordType.Fields {
 		switch field.Name {
-		case SW_COLUMN_NAME_TS:
-			hasTimestamp = true
-		case SW_COLUMN_NAME_KEY:
-			hasKey = true
+		case SW_COLUMN_NAME_TS, SW_COLUMN_NAME_KEY, SW_COLUMN_NAME_OFFSET:
+			// System fields - ignore
+			continue
 		case SW_COLUMN_NAME_VALUE:
 			hasValue = true
+			dataFieldCount++
+		default:
+			// Any other field means it's not schema-less
+			dataFieldCount++
 		}
 	}
 
-	return hasTimestamp && hasKey && hasValue
+	// Schema-less = only has _value field as the data field (plus system fields)
+	return hasValue && dataFieldCount == 1
 }
 
 func writeLogFilesToParquet(filerClient filer_pb.FilerClient, partitionDir string, recordType *schema_pb.RecordType, logFileGroups []*filer_pb.Entry, parquetSchema *parquet.Schema, parquetLevels *schema.ParquetLevels, preference *operation.StoragePreference) (err error) {

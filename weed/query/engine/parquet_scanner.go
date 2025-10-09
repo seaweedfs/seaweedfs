@@ -21,7 +21,7 @@ import (
 // Assumptions:
 // 1. All MQ messages are stored in Parquet format in topic partitions
 // 2. Each partition directory contains dated Parquet files
-// 3. System columns (_timestamp_ns, _key) are added to user schema
+// 3. System columns (_ts_ns, _key) are added to user schema
 // 4. Predicate pushdown is used for efficient scanning
 type ParquetScanner struct {
 	filerClient   filer_pb.FilerClient
