@@ -99,7 +99,7 @@ func TestBufferQueryability(t *testing.T) {
 		t.Errorf("Offset mismatch: expected 1, got %d", retrievedEntry.Offset)
 	}
 
-	t.Logf("✅ Buffer queryability test passed - data is immediately readable")
+	t.Logf("Buffer queryability test passed - data is immediately readable")
 }
 
 // TestMultipleEntriesQueryability tests querying multiple entries from buffer
@@ -168,7 +168,7 @@ func TestMultipleEntriesQueryability(t *testing.T) {
 		t.Errorf("Expected 3 entries, found %d", entryCount)
 	}
 
-	t.Logf("✅ Multiple entries queryability test passed - found %d entries", entryCount)
+	t.Logf("Multiple entries queryability test passed - found %d entries", entryCount)
 }
 
 // TestSchemaRegistryScenario tests the specific scenario that was failing
@@ -234,5 +234,5 @@ func TestSchemaRegistryScenario(t *testing.T) {
 		t.Errorf("Schema value length mismatch! Expected: %d, Got: %d", len(schemaValue), len(retrievedEntry.Data))
 	}
 
-	t.Logf("✅ Schema registry scenario test passed - schema value preserved: %d bytes", len(retrievedEntry.Data))
+	t.Logf("Schema registry scenario test passed - schema value preserved: %d bytes", len(retrievedEntry.Data))
 }

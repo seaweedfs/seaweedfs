@@ -415,7 +415,7 @@ func TestLoopProcessLogDataWithOffset_DiskReadRetry(t *testing.T) {
 		hasData := dataFlushedToDisk
 		diskReadMu.Unlock()
 
-		t.Logf("📖 DISK READ #%d: startOffset=%d, dataFlushedToDisk=%v", callNum, startPosition.Offset, hasData)
+		t.Logf("DISK READ #%d: startOffset=%d, dataFlushedToDisk=%v", callNum, startPosition.Offset, hasData)
 
 		if !hasData {
 			// Simulate: data not yet on disk (flush hasn't completed)
@@ -437,7 +437,7 @@ func TestLoopProcessLogDataWithOffset_DiskReadRetry(t *testing.T) {
 	}
 
 	flushFn := func(logBuffer *LogBuffer, startTime, stopTime time.Time, buf []byte, minOffset, maxOffset int64) {
-		t.Logf("💾 FLUSH: minOffset=%d maxOffset=%d size=%d bytes", minOffset, maxOffset, len(buf))
+		t.Logf("FLUSH: minOffset=%d maxOffset=%d size=%d bytes", minOffset, maxOffset, len(buf))
 		// Simulate writing to disk
 		diskReadMu.Lock()
 		dataFlushedToDisk = true
@@ -505,7 +505,7 @@ func TestLoopProcessLogDataWithOffset_DiskReadRetry(t *testing.T) {
 	})
 
 	// Force flush
-	t.Logf("🔄 Force flushing...")
+	t.Logf("Force flushing...")
 	logBuffer.ForceFlush()
 
 	// Wait for reader to finish
@@ -521,7 +521,7 @@ func TestLoopProcessLogDataWithOffset_DiskReadRetry(t *testing.T) {
 	finalIterations := iterationCount
 	mu.Unlock()
 
-	t.Logf("\n📊 RESULTS:")
+	t.Logf("\nRESULTS:")
 	t.Logf("  Disk reads: %d", finalDiskReadCount)
 	t.Logf("  Received messages: %d", finalReceivedMessages)
 	t.Logf("  Loop iterations: %d", finalIterations)

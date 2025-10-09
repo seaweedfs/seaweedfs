@@ -269,12 +269,12 @@ func runComprehensiveTest(ctx context.Context, cancel context.CancelFunc, cfg *c
 
 			select {
 			case <-timer.C:
-				log.Printf("⏱️  Test duration (%v) reached, stopping producers", cfg.Duration)
+				log.Printf("Test duration (%v) reached, stopping producers", cfg.Duration)
 				producerCancel()
 
 				// Allow consumers extra time to drain remaining messages
-				drainTime := 120 * time.Second
-				log.Printf("⏳ Allowing %v for consumers to drain remaining messages...", drainTime)
+				drainTime := 30 * time.Second
+				log.Printf("Allowing %v for consumers to drain remaining messages...", drainTime)
 				time.Sleep(drainTime)
 
 				log.Printf("Stopping consumers after drain period")

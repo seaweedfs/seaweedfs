@@ -394,7 +394,7 @@ func (w *Worker) executeTask(task *types.TaskInput) {
 
 	// Determine task-specific working directory (BaseWorkingDir is guaranteed to be non-empty)
 	taskWorkingDir := filepath.Join(w.config.BaseWorkingDir, string(task.Type))
-	glog.V(2).Infof("📁 WORKING DIRECTORY: Task %s using working directory: %s", task.ID, taskWorkingDir)
+	glog.V(2).Infof("WORKING DIRECTORY: Task %s using working directory: %s", task.ID, taskWorkingDir)
 
 	// Check if we have typed protobuf parameters
 	if task.TypedParams == nil {

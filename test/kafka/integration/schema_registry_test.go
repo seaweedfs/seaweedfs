@@ -72,14 +72,14 @@ func TestSchemaRegistryEventualConsistency(t *testing.T) {
 		exists, id, version, err := verifySchema(schemaRegistryURL, subject)
 		if err != nil || !exists {
 			immediateFailures++
-			t.Logf("❌ Immediate verification failed for %s: exists=%v id=%d err=%v", subject, exists, id, err)
+			t.Logf("Immediate verification failed for %s: exists=%v id=%d err=%v", subject, exists, id, err)
 		} else {
-			t.Logf("✓ Immediate verification passed for %s: ID=%d Version=%d", subject, id, version)
+			t.Logf("Immediate verification passed for %s: ID=%d Version=%d", subject, id, version)
 		}
 	}
 
 	if immediateFailures > 0 {
-		t.Logf("🐛 BUG REPRODUCED: %d/%d schemas not immediately queryable after registration",
+		t.Logf("BUG REPRODUCED: %d/%d schemas not immediately queryable after registration",
 			immediateFailures, len(subjects))
 		t.Logf("  This is due to Schema Registry's KafkaStoreReaderThread lag")
 	}
@@ -186,7 +186,7 @@ func verifySchemaWithRetry(t *testing.T, registryURL, subject string, expectedID
 		time.Sleep(waitTime)
 	}
 
-	t.Logf("❌ %s verification timed out after %d attempts", subject, attempt)
+	t.Logf("%s verification timed out after %d attempts", subject, attempt)
 	return false
 }
 

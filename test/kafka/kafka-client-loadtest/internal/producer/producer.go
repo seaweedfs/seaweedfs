@@ -309,7 +309,7 @@ func (p *Producer) produceSaramaMessage(topic string, message []byte, startTime 
 			return fmt.Errorf("schema ID not found for topic %s", topic)
 		}
 	} else {
-		log.Printf("⚠️  NO WIRE FORMAT: SchemasEnabled=%v, ValueType=%s, using raw message len=%d",
+		log.Printf("NO WIRE FORMAT: SchemasEnabled=%v, ValueType=%s, using raw message len=%d",
 			p.config.Schemas.Enabled, p.config.Producers.ValueType, len(message))
 		messageValue = message
 	}
