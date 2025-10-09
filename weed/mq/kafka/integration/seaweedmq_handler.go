@@ -2050,10 +2050,10 @@ func (bc *BrokerClient) ReadRecords(session *BrokerSubscriberSession, maxRecords
 	}
 
 	// Read first record with timeout (important for empty topics)
-	// Use longer timeout to avoid creating too many concurrent subscribers
-	// Wait up to 10 seconds for first record
-	// Broker now properly detects closed subscriptions so this is safe
-	firstRecordTimeout := 10 * time.Second
+	// Use reasonable timeout to balance consumer responsiveness and producer needs
+	// Wait up to 2s for first record (allows Schema Registry producer to write+confirm)
+	// Reduced from 10s to prevent excessive consumer lag (5x improvement)
+	firstRecordTimeout := 2 * time.Second
 	ctx, cancel := context.WithTimeout(context.Background(), firstRecordTimeout)
 	defer cancel()
 

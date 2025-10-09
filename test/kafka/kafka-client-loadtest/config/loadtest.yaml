@@ -54,7 +54,7 @@ consumers:
   max_poll_interval_ms: 300000
   fetch_min_bytes: 1
   fetch_max_bytes: 52428800  # 50MB
-  fetch_max_wait_ms: 100  # Reduced from 500ms to minimize polling delays
+  fetch_max_wait_ms: 3000  # Increased to 3s to accommodate server's 2s first-record timeout + margin
 
 # Topic configuration
 topics:

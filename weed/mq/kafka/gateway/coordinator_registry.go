@@ -75,8 +75,6 @@ func NewCoordinatorRegistry(gatewayAddress string, masters []pb.ServerAddress, g
 	// Create filer discovery service that will periodically refresh filers from all masters
 	filerDiscoveryService := filer_client.NewFilerDiscoveryService(masters, grpcDialOption)
 
-	// CRITICAL FIX: Discover filers NOW to get a real filer address for the lock client
-	// The lock client needs to talk to a FILER, not a MASTER
 	// Manually discover filers from each master until we find one
 	var seedFiler pb.ServerAddress
 	for _, master := range masters {
