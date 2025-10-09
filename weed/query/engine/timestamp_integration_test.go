@@ -29,13 +29,13 @@ func TestTimestampIntegrationScenarios(t *testing.T) {
 				// Create a test record
 				record := &schema_pb.RecordValue{
 					Fields: map[string]*schema_pb.Value{
-						"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: ts.timestamp}},
-						"id":            {Kind: &schema_pb.Value_Int64Value{Int64Value: ts.id}},
+						"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: ts.timestamp}},
+						"id":     {Kind: &schema_pb.Value_Int64Value{Int64Value: ts.id}},
 					},
 				}
 
 				// Build SQL query
-				sql := "SELECT id, _timestamp_ns FROM test WHERE _timestamp_ns = " + strconv.FormatInt(ts.timestamp, 10)
+				sql := "SELECT id, _ts_ns FROM test WHERE _ts_ns = " + strconv.FormatInt(ts.timestamp, 10)
 				stmt, err := ParseSQL(sql)
 				assert.NoError(t, err)
 
@@ -57,8 +57,8 @@ func TestTimestampIntegrationScenarios(t *testing.T) {
 				// Test that close but different timestamps don't match
 				closeRecord := &schema_pb.RecordValue{
 					Fields: map[string]*schema_pb.Value{
-						"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: ts.timestamp + 1}},
-						"id":            {Kind: &schema_pb.Value_Int64Value{Int64Value: ts.id}},
+						"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: ts.timestamp + 1}},
+						"id":     {Kind: &schema_pb.Value_Int64Value{Int64Value: ts.id}},
 					},
 				}
 				result = predicate(closeRecord)
@@ -76,17 +76,17 @@ func TestTimestampIntegrationScenarios(t *testing.T) {
 		}{
 			{
 				name:      "RangeWithDifferentBounds",
-				sql:       "SELECT * FROM test WHERE _timestamp_ns >= 1756913789829292386 AND _timestamp_ns <= 1756947416566456262",
+				sql:       "SELECT * FROM test WHERE _ts_ns >= 1756913789829292386 AND _ts_ns <= 1756947416566456262",
 				shouldSet: struct{ start, stop bool }{true, true},
 			},
 			{
 				name:      "RangeWithSameBounds",
-				sql:       "SELECT * FROM test WHERE _timestamp_ns >= 1756913789829292386 AND _timestamp_ns <= 1756913789829292386",
+				sql:       "SELECT * FROM test WHERE _ts_ns >= 1756913789829292386 AND _ts_ns <= 1756913789829292386",
 				shouldSet: struct{ start, stop bool }{true, false}, // Fix #4: equal bounds should not set stop
 			},
 			{
 				name:      "OpenEndedRange",
-				sql:       "SELECT * FROM test WHERE _timestamp_ns >= 1756913789829292386",
+				sql:       "SELECT * FROM test WHERE _ts_ns >= 1756913789829292386",
 				shouldSet: struct{ start, stop bool }{true, false},
 			},
 		}
@@ -117,8 +117,8 @@ func TestTimestampIntegrationScenarios(t *testing.T) {
 	t.Run("ProductionScenarioReproduction", func(t *testing.T) {
 		// This test reproduces the exact production scenario that was failing
 
-		// Original failing query: WHERE _timestamp_ns = 1756947416566456262
-		sql := "SELECT id, _timestamp_ns FROM ecommerce.user_events WHERE _timestamp_ns = 1756947416566456262"
+		// Original failing query: WHERE _ts_ns = 1756947416566456262
+		sql := "SELECT id, _ts_ns FROM ecommerce.user_events WHERE _ts_ns = 1756947416566456262"
 		stmt, err := ParseSQL(sql)
 		assert.NoError(t, err, "Should parse the production query that was failing")
 
@@ -136,8 +136,8 @@ func TestTimestampIntegrationScenarios(t *testing.T) {
 		// Test with the actual record that exists in production
 		productionRecord := &schema_pb.RecordValue{
 			Fields: map[string]*schema_pb.Value{
-				"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756947416566456262}},
-				"id":            {Kind: &schema_pb.Value_Int64Value{Int64Value: 897795}},
+				"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756947416566456262}},
+				"id":     {Kind: &schema_pb.Value_Int64Value{Int64Value: 897795}},
 			},
 		}
 
@@ -147,8 +147,8 @@ func TestTimestampIntegrationScenarios(t *testing.T) {
 		// Verify precision - test that a timestamp differing by just 1 nanosecond doesn't match
 		slightlyDifferentRecord := &schema_pb.RecordValue{
 			Fields: map[string]*schema_pb.Value{
-				"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756947416566456263}},
-				"id":            {Kind: &schema_pb.Value_Int64Value{Int64Value: 897795}},
+				"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756947416566456263}},
+				"id":     {Kind: &schema_pb.Value_Int64Value{Int64Value: 897795}},
 			},
 		}
 
@@ -167,11 +167,11 @@ func TestRegressionPrevention(t *testing.T) {
 
 		record := &schema_pb.RecordValue{
 			Fields: map[string]*schema_pb.Value{
-				"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: smallTimestamp}},
+				"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: smallTimestamp}},
 			},
 		}
 
-		result := engine.valuesEqual(record.Fields["_timestamp_ns"], smallTimestamp)
+		result := engine.valuesEqual(record.Fields["_ts_ns"], smallTimestamp)
 		assert.True(t, result, "Small timestamps should continue to work")
 	})
 

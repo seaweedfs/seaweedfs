@@ -319,7 +319,7 @@ func (f *MultiBatchFetcher) constructSingleRecordBatch(topicName string, baseOff
 	expectedTotalSize := 12 + int(batchLengthValue)
 	actualTotalSize := len(batch)
 
-	fmt.Printf("\n  🔍 === CRC CALCULATION DEBUG ===\n")
+	fmt.Printf("\n  === CRC CALCULATION DEBUG ===\n")
 	fmt.Printf("    Batch length field (bytes 8-11): %d\n", batchLengthValue)
 	fmt.Printf("    Expected total batch size: %d bytes (12 + %d)\n", expectedTotalSize, batchLengthValue)
 	fmt.Printf("    Actual batch size: %d bytes\n", actualTotalSize)
@@ -327,11 +327,11 @@ func (f *MultiBatchFetcher) constructSingleRecordBatch(topicName string, baseOff
 	fmt.Printf("    CRC data range: bytes %d to %d (%d bytes)\n", crcPos+4, actualTotalSize-1, len(crcData))
 
 	if expectedTotalSize != actualTotalSize {
-		fmt.Printf("    ⚠️  SIZE MISMATCH: %d bytes difference!\n", actualTotalSize-expectedTotalSize)
+		fmt.Printf("    SIZE MISMATCH: %d bytes difference!\n", actualTotalSize-expectedTotalSize)
 	}
 
 	if crcPos != 17 {
-		fmt.Printf("    ⚠️  CRC POSITION WRONG: expected 17, got %d!\n", crcPos)
+		fmt.Printf("    CRC POSITION WRONG: expected 17, got %d!\n", crcPos)
 	}
 
 	fmt.Printf("    CRC data (first 100 bytes of %d):\n", len(crcData))
@@ -351,9 +351,9 @@ func (f *MultiBatchFetcher) constructSingleRecordBatch(topicName string, baseOff
 	fmt.Printf("    Calculated CRC: 0x%08x\n", crc)
 	fmt.Printf("    Manual verify:  0x%08x", manualCRC)
 	if crc == manualCRC {
-		fmt.Printf(" ✅\n")
+		fmt.Printf(" OK\n")
 	} else {
-		fmt.Printf(" ❌ MISMATCH!\n")
+		fmt.Printf(" MISMATCH!\n")
 	}
 
 	if actualTotalSize <= 200 {
@@ -373,21 +373,21 @@ func (f *MultiBatchFetcher) constructSingleRecordBatch(topicName string, baseOff
 
 	// VERIFICATION: Read back what we just wrote
 	writtenCRC := binary.BigEndian.Uint32(batch[17:21])
-	fmt.Printf("    ⚠️  VERIFICATION: CRC we calculated=0x%x, CRC written to batch=0x%x", crc, writtenCRC)
+	fmt.Printf("    VERIFICATION: CRC we calculated=0x%x, CRC written to batch=0x%x", crc, writtenCRC)
 	if crc == writtenCRC {
-		fmt.Printf(" ✅\n")
+		fmt.Printf(" OK\n")
 	} else {
-		fmt.Printf(" ❌ MISMATCH!\n")
+		fmt.Printf(" MISMATCH!\n")
 	}
 
 	// DEBUG: Hash the entire batch to check if reconstructions are identical
 	batchHash := crc32.ChecksumIEEE(batch)
-	fmt.Printf("    🔍 BATCH IDENTITY: hash=0x%08x size=%d topic=%s baseOffset=%d recordCount=%d\n",
+	fmt.Printf("    BATCH IDENTITY: hash=0x%08x size=%d topic=%s baseOffset=%d recordCount=%d\n",
 		batchHash, len(batch), topicName, baseOffset, len(smqRecords))
 
 	// DEBUG: Show first few record keys/values to verify consistency
 	if len(smqRecords) > 0 && strings.Contains(topicName, "loadtest") {
-		fmt.Printf("    📝 RECORD SAMPLES:\n")
+		fmt.Printf("    RECORD SAMPLES:\n")
 		for i := 0; i < min(3, len(smqRecords)); i++ {
 			keyPreview := smqRecords[i].GetKey()
 			if len(keyPreview) > 20 {

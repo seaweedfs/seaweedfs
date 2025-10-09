@@ -492,7 +492,7 @@ func (h *SeaweedMQHandler) CreateTopicWithSchemas(name string, partitions int32,
 			if err != nil {
 				return fmt.Errorf("configure topic with broker: %w", err)
 			}
-			glog.V(1).Infof("✅ Successfully configured topic %s with broker", name)
+			glog.V(1).Infof("successfully configured topic %s with broker", name)
 			return nil
 		})
 		if err != nil {
@@ -547,7 +547,7 @@ func (h *SeaweedMQHandler) CreateTopicWithRecordType(name string, partitions int
 				return fmt.Errorf("failed to configure topic: %w", err)
 			}
 
-			glog.V(1).Infof("✅ Successfully configured topic %s with broker", name)
+			glog.V(1).Infof("successfully configured topic %s with broker", name)
 			return nil
 		})
 
@@ -1080,13 +1080,13 @@ func discoverBrokersWithMasterClient(masterClient *wdclient.MasterClient, filerG
 			return err
 		}
 
-		glog.V(1).Infof("✅ ListClusterNodes successful - found %d cluster nodes", len(resp.ClusterNodes))
+		glog.V(1).Infof("list cluster nodes successful - found %d cluster nodes", len(resp.ClusterNodes))
 
 		// Extract broker addresses from response
 		for _, node := range resp.ClusterNodes {
 			if node.Address != "" {
 				brokers = append(brokers, node.Address)
-				glog.V(1).Infof("🌐 Discovered broker: %s", node.Address)
+				glog.V(1).Infof("discovered broker: %s", node.Address)
 			}
 		}
 
@@ -1738,7 +1738,7 @@ func (bc *BrokerClient) getActualPartitionAssignment(topic string, kafkaPartitio
 
 		// Check if this assignment's range matches our expected range
 		if assignment.Partition.RangeStart == expectedRangeStart && assignment.Partition.RangeStop == expectedRangeStop {
-			glog.V(1).Infof("🎯 Found matching partition assignment for %s[%d]: {RingSize: %d, RangeStart: %d, RangeStop: %d, UnixTimeNs: %d}",
+			glog.V(1).Infof("found matching partition assignment for %s[%d]: {RingSize: %d, RangeStart: %d, RangeStop: %d, UnixTimeNs: %d}",
 				topic, kafkaPartition, assignment.Partition.RingSize, assignment.Partition.RangeStart,
 				assignment.Partition.RangeStop, assignment.Partition.UnixTimeNs)
 			return assignment.Partition, nil
@@ -1746,7 +1746,7 @@ func (bc *BrokerClient) getActualPartitionAssignment(topic string, kafkaPartitio
 	}
 
 	// If no exact match found, log all available assignments for debugging
-	glog.Warningf("❌ No partition assignment found for Kafka partition %d in topic %s with expected range [%d, %d]",
+	glog.Warningf("no partition assignment found for Kafka partition %d in topic %s with expected range [%d, %d]",
 		kafkaPartition, topic, expectedRangeStart, expectedRangeStop)
 	glog.Warningf("Available assignments:")
 	for i, assignment := range lookupResp.BrokerPartitionAssignments {

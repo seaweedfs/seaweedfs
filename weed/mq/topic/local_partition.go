@@ -162,7 +162,7 @@ func (p *LocalPartition) Subscribe(clientName string, startPosition log_buffer.M
 			}
 
 			// If we get here with no error and not done, something is wrong
-			glog.V(1).Infof("⚠️  SUBSCRIBE: Unexpected state for %s - no error but not done, continuing", clientName)
+			glog.V(1).Infof("SUBSCRIBE: Unexpected state for %s - no error but not done, continuing", clientName)
 		}
 	}
 

@@ -57,14 +57,14 @@ func (h *Handler) handleJoinGroup(connContext *ConnectionContext, correlationID 
 	Debug("JoinGroup v%d: Starting request parsing for correlation %d", apiVersion, correlationID)
 	request, err := h.parseJoinGroupRequest(requestBody, apiVersion)
 	if err != nil {
-		Debug("JoinGroup v%d: ❌ PARSING FAILED - %s", apiVersion, err.Error())
+		Debug("JoinGroup v%d: PARSING FAILED - %s", apiVersion, err.Error())
 		return h.buildJoinGroupErrorResponse(correlationID, ErrorCodeInvalidGroupID, apiVersion), nil
 	}
-	Debug("JoinGroup v%d: ✅ Parsing succeeded - GroupID='%s'", apiVersion, request.GroupID)
+	Debug("JoinGroup v%d: Parsing succeeded - GroupID='%s'", apiVersion, request.GroupID)
 
 	// Validate request
 	if request.GroupID == "" {
-		Debug("JoinGroup v%d: ❌ EMPTY GROUP ID - rejecting request", apiVersion)
+		Debug("JoinGroup v%d: EMPTY GROUP ID - rejecting request", apiVersion)
 		return h.buildJoinGroupErrorResponse(correlationID, ErrorCodeInvalidGroupID, apiVersion), nil
 	}
 
@@ -1206,7 +1206,7 @@ func (h *Handler) parseSyncGroupRequest(data []byte, apiVersion uint16) (*SyncGr
 		}
 	}
 
-	Debug("SyncGroup v%d: ✅ Parsing succeeded - GroupID='%s', MemberID='%s', GenerationID=%d", apiVersion, groupID, memberID, generationID)
+	Debug("SyncGroup v%d: Parsing succeeded - GroupID='%s', MemberID='%s', GenerationID=%d", apiVersion, groupID, memberID, generationID)
 
 	return &SyncGroupRequest{
 		GroupID:          groupID,

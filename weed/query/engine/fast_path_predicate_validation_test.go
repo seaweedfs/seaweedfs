@@ -93,7 +93,7 @@ func TestFastPathPredicateValidation(t *testing.T) {
 		},
 		{
 			name:                "Internal timestamp column",
-			whereClause:         "_timestamp_ns > 1640995200000000000",
+			whereClause:         "_ts_ns > 1640995200000000000",
 			expectedTimeOnly:    true,
 			expectedStartTimeNs: 1640995200000000000,
 			description:         "Internal timestamp column should allow fast path",
@@ -233,7 +233,7 @@ func TestTimestampColumnDetection(t *testing.T) {
 			description: "System timestamp display column should be detected",
 		},
 		{
-			columnName:  "_timestamp_ns",
+			columnName:  "_ts_ns",
 			isTimestamp: true,
 			description: "Internal timestamp column should be detected",
 		},

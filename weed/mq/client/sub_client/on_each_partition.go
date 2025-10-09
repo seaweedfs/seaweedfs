@@ -80,7 +80,7 @@ func (sub *TopicSubscriber) onEachPartition(assigned *mq_pb.BrokerPartitionAssig
 						Message: &mq_pb.SubscribeMessageRequest_Ack{
 							Ack: &mq_pb.SubscribeMessageRequest_AckMessage{
 								Key:  ack.Key,
-								TsNs: ack.TsNs, // ✅ FIXED: Now correctly using timestamp
+								TsNs: ack.TsNs,
 							},
 						},
 					})
