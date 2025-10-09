@@ -19,6 +19,16 @@ func TestFilerErrorToS3Error(t *testing.T) {
 			expectedErr: s3err.ErrBadDigest,
 		},
 		{
+			name:        "Context canceled error",
+			errString:   "rpc error: code = Canceled desc = context canceled",
+			expectedErr: s3err.ErrInvalidRequest,
+		},
+		{
+			name:        "Context canceled error (simple)",
+			errString:   "context canceled",
+			expectedErr: s3err.ErrInvalidRequest,
+		},
+		{
 			name:        "Directory exists error",
 			errString:   "existing /path/to/file is a directory",
 			expectedErr: s3err.ErrExistingObjectIsDirectory,
