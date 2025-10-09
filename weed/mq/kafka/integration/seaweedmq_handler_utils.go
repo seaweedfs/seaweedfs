@@ -215,4 +215,3 @@ func (h *SeaweedMQHandler) CreatePerConnectionBrokerClient() (*BrokerClient, err
 
 	return client, nil
 }
-

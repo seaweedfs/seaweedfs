@@ -390,4 +390,3 @@ func (bc *BrokerClient) ReadRecords(session *BrokerSubscriberSession, maxRecords
 
 	return records, nil
 }
-

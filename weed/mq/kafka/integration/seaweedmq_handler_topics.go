@@ -3,8 +3,6 @@ package integration
 import (
 	"context"
 	"fmt"
-	"io"
-	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -315,4 +313,3 @@ func (h *SeaweedMQHandler) listTopicsFromFiler() []string {
 
 	return topics
 }
-

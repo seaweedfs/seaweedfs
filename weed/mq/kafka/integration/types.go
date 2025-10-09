@@ -186,4 +186,3 @@ type BrokerSubscriberSession struct {
 	consumedRecords  []*SeaweedRecord
 	nextOffsetToRead int64
 }
-

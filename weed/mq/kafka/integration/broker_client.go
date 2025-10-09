@@ -11,7 +11,6 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer_client"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -44,12 +43,6 @@ func NewBrokerClientWithFilerAccessor(brokerAddress string, filerClientAccessor 
 	}
 
 	client := mq_pb.NewSeaweedMessagingClient(conn)
-
-	// Extract filer addresses from the accessor for backward compatibility
-	var filerAddresses []pb.ServerAddress
-	if filerClientAccessor.GetFilers != nil {
-		filerAddresses = filerClientAccessor.GetFilers()
-	}
 
 	return &BrokerClient{
 		filerClientAccessor: filerClientAccessor,
@@ -444,4 +437,3 @@ func (bc *BrokerClient) TopicExists(topicName string) (bool, error) {
 
 	return resp.Exists, nil
 }
-

@@ -1,7 +1,6 @@
 package integration
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -249,4 +248,3 @@ func (bc *BrokerClient) getActualPartitionAssignment(topic string, kafkaPartitio
 	return nil, fmt.Errorf("no broker assignment found for Kafka partition %d with expected range [%d, %d]",
 		kafkaPartition, expectedRangeStart, expectedRangeStop)
 }
-
