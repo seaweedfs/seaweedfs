@@ -2,7 +2,7 @@
 
 # Test execution settings
 test_mode: "comprehensive"  # producer, consumer, comprehensive
-duration: "60s"  # Test duration (0 = run indefinitely) - producers will stop at this time, consumers get +30s to drain
+duration: "60s"  # Test duration (0 = run indefinitely) - producers will stop at this time, consumers get +60s to drain
 
 # Kafka cluster configuration
 kafka:

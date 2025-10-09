@@ -638,9 +638,24 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 	}
 
 	// Get the uploaded entry to add versioning metadata
-	versionEntry, err := s3a.getEntry(bucketDir, versionObjectPath)
+	// Use retry logic to handle filer consistency delays
+	var versionEntry *filer_pb.Entry
+	maxRetries := 8
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		versionEntry, err = s3a.getEntry(bucketDir, versionObjectPath)
+		if err == nil {
+			break
+		}
+
+		if attempt < maxRetries {
+			// Exponential backoff: 10ms, 20ms, 40ms, 80ms, 160ms, 320ms, 640ms
+			delay := time.Millisecond * time.Duration(10*(1<<(attempt-1)))
+			time.Sleep(delay)
+		}
+	}
+
 	if err != nil {
-		glog.Errorf("putVersionedObject: failed to get version entry: %v", err)
+		glog.Errorf("putVersionedObject: failed to get version entry after %d attempts: %v", maxRetries, err)
 		return "", "", s3err.ErrInternalError
 	}
 

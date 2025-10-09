@@ -38,7 +38,7 @@ func TestSuspendedVersioningNullOverwrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create pre-versioning object: %v", err)
 	}
-	t.Logf("✓ Created pre-versioning object")
+	t.Logf("Created pre-versioning object")
 
 	// Step 2: Enable versioning
 	_, err = client.PutBucketVersioning(ctx, &s3.PutBucketVersioningInput{
@@ -50,7 +50,7 @@ func TestSuspendedVersioningNullOverwrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to enable versioning: %v", err)
 	}
-	t.Logf("✓ Enabled versioning")
+	t.Logf("Enabled versioning")
 
 	// Step 3: Suspend versioning
 	_, err = client.PutBucketVersioning(ctx, &s3.PutBucketVersioningInput{
@@ -62,7 +62,7 @@ func TestSuspendedVersioningNullOverwrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to suspend versioning: %v", err)
 	}
-	t.Logf("✓ Suspended versioning")
+	t.Logf("Suspended versioning")
 
 	// Step 4: Overwrite the object during suspended versioning
 	content2 := []byte("zzz")
@@ -79,7 +79,7 @@ func TestSuspendedVersioningNullOverwrite(t *testing.T) {
 	if putResp.VersionId != nil {
 		t.Errorf("Suspended versioning should NOT return VersionId, but got: %s", *putResp.VersionId)
 	}
-	t.Logf("✓ Overwrote object during suspended versioning (no VersionId returned as expected)")
+	t.Logf("Overwrote object during suspended versioning (no VersionId returned as expected)")
 
 	// Step 5: Verify content is updated
 	getResp, err := client.GetObject(ctx, &s3.GetObjectInput{
@@ -96,7 +96,7 @@ func TestSuspendedVersioningNullOverwrite(t *testing.T) {
 	if !bytes.Equal(gotContent.Bytes(), content2) {
 		t.Errorf("Expected content %q, got %q", content2, gotContent.Bytes())
 	}
-	t.Logf("✓ Object content is correctly updated to: %q", content2)
+	t.Logf("Object content is correctly updated to: %q", content2)
 
 	// Step 6: List object versions - should have only 1 version
 	listResp, err := client.ListObjectVersions(ctx, &s3.ListObjectVersionsInput{
@@ -121,7 +121,7 @@ func TestSuspendedVersioningNullOverwrite(t *testing.T) {
 		t.Errorf("Expected 1 version after suspended versioning overwrite, got %d versions", versionCount)
 		t.Error("BUG: Duplicate null versions detected! The overwrite should have replaced the pre-versioning object.")
 	} else {
-		t.Logf("✓ PASS: Only 1 version found (no duplicate null versions)")
+		t.Logf("PASS: Only 1 version found (no duplicate null versions)")
 	}
 
 	if deleteMarkerCount != 0 {
@@ -133,7 +133,7 @@ func TestSuspendedVersioningNullOverwrite(t *testing.T) {
 		if listResp.Versions[0].VersionId == nil || *listResp.Versions[0].VersionId != "null" {
 			t.Errorf("Expected VersionId to be 'null', got %v", listResp.Versions[0].VersionId)
 		} else {
-			t.Logf("✓ Version ID is 'null' as expected")
+			t.Logf("Version ID is 'null' as expected")
 		}
 	}
 
@@ -146,7 +146,7 @@ func TestSuspendedVersioningNullOverwrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to delete null version: %v", err)
 	}
-	t.Logf("✓ Deleted null version")
+	t.Logf("Deleted null version")
 
 	// Step 8: Verify object no longer exists
 	_, err = client.GetObject(ctx, &s3.GetObjectInput{
@@ -156,7 +156,7 @@ func TestSuspendedVersioningNullOverwrite(t *testing.T) {
 	if err == nil {
 		t.Error("Expected object to not exist after deleting null version")
 	}
-	t.Logf("✓ Object no longer exists after deleting null version")
+	t.Logf("Object no longer exists after deleting null version")
 
 	// Step 9: Verify no versions remain
 	listResp, err = client.ListObjectVersions(ctx, &s3.ListObjectVersionsInput{
@@ -170,6 +170,88 @@ func TestSuspendedVersioningNullOverwrite(t *testing.T) {
 		t.Errorf("Expected no versions or delete markers, got %d versions and %d delete markers",
 			len(listResp.Versions), len(listResp.DeleteMarkers))
 	} else {
-		t.Logf("✓ No versions remain after deletion")
+		t.Logf("No versions remain after deletion")
+	}
+}
+
+// TestEnabledVersioningReturnsVersionId tests that when versioning is ENABLED,
+// every PutObject operation returns a version ID
+//
+// This test corresponds to the create_multiple_versions helper function
+func TestEnabledVersioningReturnsVersionId(t *testing.T) {
+	ctx := context.Background()
+	client := getS3Client(t)
+
+	// Create bucket
+	bucketName := getNewBucketName()
+	createBucket(t, client, bucketName)
+	defer deleteBucket(t, client, bucketName)
+
+	objectKey := "testobj"
+
+	// Enable versioning
+	_, err := client.PutBucketVersioning(ctx, &s3.PutBucketVersioningInput{
+		Bucket: aws.String(bucketName),
+		VersioningConfiguration: &types.VersioningConfiguration{
+			Status: types.BucketVersioningStatusEnabled,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Failed to enable versioning: %v", err)
+	}
+	t.Logf("Enabled versioning")
+
+	// Create multiple versions
+	numVersions := 3
+	versionIds := make([]string, 0, numVersions)
+
+	for i := 0; i < numVersions; i++ {
+		content := []byte("content-" + string(rune('0'+i)))
+		putResp, err := client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(objectKey),
+			Body:   bytes.NewReader(content),
+		})
+		if err != nil {
+			t.Fatalf("Failed to create version %d: %v", i, err)
+		}
+
+		// THIS IS THE KEY ASSERTION: VersionId MUST be returned for enabled versioning
+		if putResp.VersionId == nil {
+			t.Errorf("FAILED: PutObject with enabled versioning MUST return VersionId, but got nil for version %d", i)
+		} else {
+			versionId := *putResp.VersionId
+			if versionId == "" {
+				t.Errorf("FAILED: PutObject returned empty VersionId for version %d", i)
+			} else if versionId == "null" {
+				t.Errorf("FAILED: PutObject with enabled versioning should NOT return 'null' version ID, got: %s", versionId)
+			} else {
+				versionIds = append(versionIds, versionId)
+				t.Logf("Version %d created with VersionId: %s", i, versionId)
+			}
+		}
+	}
+
+	if len(versionIds) != numVersions {
+		t.Errorf("Expected %d version IDs, got %d", numVersions, len(versionIds))
+	}
+
+	// List versions to verify all were created
+	listResp, err := client.ListObjectVersions(ctx, &s3.ListObjectVersionsInput{
+		Bucket: aws.String(bucketName),
+	})
+	if err != nil {
+		t.Fatalf("Failed to list object versions: %v", err)
+	}
+
+	if len(listResp.Versions) != numVersions {
+		t.Errorf("Expected %d versions in list, got %d", numVersions, len(listResp.Versions))
+	} else {
+		t.Logf("All %d versions are listed", numVersions)
+	}
+
+	// Verify all version IDs match
+	for i, v := range listResp.Versions {
+		t.Logf("  Version %d: VersionId=%s, Size=%d, IsLatest=%v", i, *v.VersionId, v.Size, v.IsLatest)
 	}
 }
