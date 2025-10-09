@@ -29,6 +29,7 @@ const (
 	SW_COLUMN_NAME_TS     = "_ts_ns"
 	SW_COLUMN_NAME_KEY    = "_key"
 	SW_COLUMN_NAME_OFFSET = "_offset"
+	SW_COLUMN_NAME_VALUE  = "_value"
 )
 
 func CompactTopicPartitions(filerClient filer_pb.FilerClient, t topic.Topic, timeAgo time.Duration, recordType *schema_pb.RecordType, preference *operation.StoragePreference) error {
@@ -210,6 +211,31 @@ func readAllParquetFiles(filerClient filer_pb.FilerClient, partitionDir string) 
 	return
 }
 
+// isSchemalessRecordType checks if the recordType represents a schema-less topic
+// Schema-less topics only have system fields: _timestamp_ns, _key, and _value
+func isSchemalessRecordType(recordType *schema_pb.RecordType) bool {
+	if recordType == nil || len(recordType.Fields) != 3 {
+		return false
+	}
+
+	hasTimestamp := false
+	hasKey := false
+	hasValue := false
+
+	for _, field := range recordType.Fields {
+		switch field.Name {
+		case SW_COLUMN_NAME_TS:
+			hasTimestamp = true
+		case SW_COLUMN_NAME_KEY:
+			hasKey = true
+		case SW_COLUMN_NAME_VALUE:
+			hasValue = true
+		}
+	}
+
+	return hasTimestamp && hasKey && hasValue
+}
+
 func writeLogFilesToParquet(filerClient filer_pb.FilerClient, partitionDir string, recordType *schema_pb.RecordType, logFileGroups []*filer_pb.Entry, parquetSchema *parquet.Schema, parquetLevels *schema.ParquetLevels, preference *operation.StoragePreference) (err error) {
 
 	tempFile, err := os.CreateTemp(".", "t*.parquet")
@@ -231,6 +257,7 @@ func writeLogFilesToParquet(filerClient filer_pb.FilerClient, partitionDir strin
 	var startTsNs, stopTsNs int64
 	var minOffset, maxOffset int64
 	var hasOffsets bool
+	isSchemaless := isSchemalessRecordType(recordType)
 
 	for _, logFile := range logFileGroups {
 		var rows []parquet.Row
@@ -266,15 +293,36 @@ func writeLogFilesToParquet(filerClient filer_pb.FilerClient, partitionDir strin
 			rowBuilder.Reset()
 
 			record := &schema_pb.RecordValue{}
-			if err := proto.Unmarshal(entry.Data, record); err != nil {
-				return fmt.Errorf("unmarshal record value: %w", err)
-			}
 
-			// Initialize Fields map if nil (prevents nil map assignment panic)
-			if record.Fields == nil {
+			if isSchemaless {
+				// For schema-less topics, put raw entry.Data into _value field
 				record.Fields = make(map[string]*schema_pb.Value)
+				record.Fields[SW_COLUMN_NAME_VALUE] = &schema_pb.Value{
+					Kind: &schema_pb.Value_BytesValue{
+						BytesValue: entry.Data,
+					},
+				}
+			} else {
+				// For schematized topics, unmarshal entry.Data as RecordValue
+				if err := proto.Unmarshal(entry.Data, record); err != nil {
+					return fmt.Errorf("unmarshal record value: %w", err)
+				}
+
+				// Initialize Fields map if nil (prevents nil map assignment panic)
+				if record.Fields == nil {
+					record.Fields = make(map[string]*schema_pb.Value)
+				}
+
+				// Add offset field to parquet records for native offset support
+				// ASSUMPTION: LogEntry.Offset field is populated by broker during message publishing
+				record.Fields[SW_COLUMN_NAME_OFFSET] = &schema_pb.Value{
+					Kind: &schema_pb.Value_Int64Value{
+						Int64Value: entry.Offset,
+					},
+				}
 			}
 
+			// Add system columns (for both schematized and schema-less topics)
 			record.Fields[SW_COLUMN_NAME_TS] = &schema_pb.Value{
 				Kind: &schema_pb.Value_Int64Value{
 					Int64Value: entry.TsNs,
@@ -289,14 +337,6 @@ func writeLogFilesToParquet(filerClient filer_pb.FilerClient, partitionDir strin
 			record.Fields[SW_COLUMN_NAME_KEY] = &schema_pb.Value{
 				Kind: &schema_pb.Value_BytesValue{
 					BytesValue: keyBytes,
-				},
-			}
-
-			// Add offset field to parquet records for native offset support
-			// ASSUMPTION: LogEntry.Offset field is populated by broker during message publishing
-			record.Fields[SW_COLUMN_NAME_OFFSET] = &schema_pb.Value{
-				Kind: &schema_pb.Value_Int64Value{
-					Int64Value: entry.Offset,
 				},
 			}
 

@@ -64,14 +64,19 @@ func NewParquetScanner(filerClient filer_pb.FilerClient, namespace, topicName st
 	}
 
 	if recordType == nil || len(recordType.Fields) == 0 {
-		return nil, NoSchemaError{Namespace: namespace, Topic: topicName}
+		// For topics without schema, create a minimal schema with system fields and _value
+		recordType = schema.RecordTypeBegin().
+			WithField(SW_COLUMN_NAME_TIMESTAMP, schema.TypeInt64).
+			WithField(SW_COLUMN_NAME_KEY, schema.TypeBytes).
+			WithField(SW_COLUMN_NAME_VALUE, schema.TypeBytes). // Raw message value
+			RecordTypeEnd()
+	} else {
+		// Add system columns that MQ adds to all records
+		recordType = schema.NewRecordTypeBuilder(recordType).
+			WithField(SW_COLUMN_NAME_TIMESTAMP, schema.TypeInt64).
+			WithField(SW_COLUMN_NAME_KEY, schema.TypeBytes).
+			RecordTypeEnd()
 	}
-
-	// Add system columns that MQ adds to all records
-	recordType = schema.NewRecordTypeBuilder(recordType).
-		WithField(SW_COLUMN_NAME_TIMESTAMP, schema.TypeInt64).
-		WithField(SW_COLUMN_NAME_KEY, schema.TypeBytes).
-		RecordTypeEnd()
 
 	// Convert to Parquet levels for efficient reading
 	parquetLevels, err := schema.ToParquetLevels(recordType)

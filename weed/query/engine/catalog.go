@@ -278,10 +278,25 @@ func (c *SchemaCatalog) RegisterTopic(namespace, topicName string, mqSchema *sch
 // 1. MQ scalar types map directly to SQL types
 // 2. Complex types (arrays, maps) are serialized as JSON strings
 // 3. All fields are nullable unless specifically marked otherwise
+// 4. If no schema is defined, create a default schema with system fields and _value
 func (c *SchemaCatalog) convertMQSchemaToTableInfo(namespace, topicName string, mqSchema *schema.Schema) (*TableInfo, error) {
 	// Check if the schema has a valid RecordType
 	if mqSchema == nil || mqSchema.RecordType == nil {
-		return nil, fmt.Errorf("topic %s.%s has no schema defined", namespace, topicName)
+		// For topics without schema, create a default schema with system fields and _value
+		columns := []ColumnInfo{
+			{Name: SW_DISPLAY_NAME_TIMESTAMP, Type: "TIMESTAMP", Nullable: true},
+			{Name: SW_COLUMN_NAME_KEY, Type: "VARBINARY", Nullable: true},
+			{Name: SW_COLUMN_NAME_SOURCE, Type: "VARCHAR(255)", Nullable: true},
+			{Name: SW_COLUMN_NAME_VALUE, Type: "VARBINARY", Nullable: true},
+		}
+
+		return &TableInfo{
+			Name:       topicName,
+			Namespace:  namespace,
+			Schema:     nil, // No schema defined
+			Columns:    columns,
+			RevisionId: 0,
+		}, nil
 	}
 
 	columns := make([]ColumnInfo, len(mqSchema.RecordType.Fields))

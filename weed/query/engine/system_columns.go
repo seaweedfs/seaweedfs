@@ -12,6 +12,7 @@ const (
 	SW_COLUMN_NAME_TIMESTAMP = "_timestamp_ns" // Message timestamp in nanoseconds (internal)
 	SW_COLUMN_NAME_KEY       = "_key"          // Message key
 	SW_COLUMN_NAME_SOURCE    = "_source"       // Data source (live_log, parquet_archive, etc.)
+	SW_COLUMN_NAME_VALUE     = "_value"        // Raw message value (for schema-less topics)
 )
 
 // System column display names (what users see)

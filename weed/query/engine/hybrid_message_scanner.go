@@ -67,20 +67,25 @@ func NewHybridMessageScanner(filerClient filer_pb.FilerClient, brokerClient Brok
 	}
 
 	if recordType == nil || len(recordType.Fields) == 0 {
-		return nil, NoSchemaError{Namespace: namespace, Topic: topicName}
-	}
+		// For topics without schema, create a minimal schema with system fields and _value
+		recordType = schema.RecordTypeBegin().
+			WithField(SW_COLUMN_NAME_TIMESTAMP, schema.TypeInt64).
+			WithField(SW_COLUMN_NAME_KEY, schema.TypeBytes).
+			WithField(SW_COLUMN_NAME_VALUE, schema.TypeBytes). // Raw message value
+			RecordTypeEnd()
+	} else {
+		// Create a copy of the recordType to avoid modifying the original
+		recordTypeCopy := &schema_pb.RecordType{
+			Fields: make([]*schema_pb.Field, len(recordType.Fields)),
+		}
+		copy(recordTypeCopy.Fields, recordType.Fields)
 
-	// Create a copy of the recordType to avoid modifying the original
-	recordTypeCopy := &schema_pb.RecordType{
-		Fields: make([]*schema_pb.Field, len(recordType.Fields)),
+		// Add system columns that MQ adds to all records
+		recordType = schema.NewRecordTypeBuilder(recordTypeCopy).
+			WithField(SW_COLUMN_NAME_TIMESTAMP, schema.TypeInt64).
+			WithField(SW_COLUMN_NAME_KEY, schema.TypeBytes).
+			RecordTypeEnd()
 	}
-	copy(recordTypeCopy.Fields, recordType.Fields)
-
-	// Add system columns that MQ adds to all records
-	recordType = schema.NewRecordTypeBuilder(recordTypeCopy).
-		WithField(SW_COLUMN_NAME_TIMESTAMP, schema.TypeInt64).
-		WithField(SW_COLUMN_NAME_KEY, schema.TypeBytes).
-		RecordTypeEnd()
 
 	// Convert to Parquet levels for efficient reading
 	parquetLevels, err := schema.ToParquetLevels(recordType)
@@ -714,11 +719,54 @@ func isNullOrEmpty(value *schema_pb.Value) bool {
 	}
 }
 
+// isSchemaless checks if the scanner is configured for a schema-less topic
+// Schema-less topics only have system fields: _timestamp_ns, _key, and _value
+func (hms *HybridMessageScanner) isSchemaless() bool {
+	if hms.recordSchema == nil || len(hms.recordSchema.Fields) != 3 {
+		return false
+	}
+
+	hasTimestamp := false
+	hasKey := false
+	hasValue := false
+
+	for _, field := range hms.recordSchema.Fields {
+		switch field.Name {
+		case SW_COLUMN_NAME_TIMESTAMP:
+			hasTimestamp = true
+		case SW_COLUMN_NAME_KEY:
+			hasKey = true
+		case SW_COLUMN_NAME_VALUE:
+			hasValue = true
+		}
+	}
+
+	return hasTimestamp && hasKey && hasValue
+}
+
 // convertLogEntryToRecordValue converts a filer_pb.LogEntry to schema_pb.RecordValue
 // This handles both:
 // 1. Live log entries (raw message format)
 // 2. Parquet entries (already in schema_pb.RecordValue format)
+// 3. Schema-less topics (raw bytes in _value field)
 func (hms *HybridMessageScanner) convertLogEntryToRecordValue(logEntry *filer_pb.LogEntry) (*schema_pb.RecordValue, string, error) {
+	// For schema-less topics, put raw data directly into _value field
+	if hms.isSchemaless() {
+		recordValue := &schema_pb.RecordValue{
+			Fields: make(map[string]*schema_pb.Value),
+		}
+		recordValue.Fields[SW_COLUMN_NAME_TIMESTAMP] = &schema_pb.Value{
+			Kind: &schema_pb.Value_Int64Value{Int64Value: logEntry.TsNs},
+		}
+		recordValue.Fields[SW_COLUMN_NAME_KEY] = &schema_pb.Value{
+			Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Key},
+		}
+		recordValue.Fields[SW_COLUMN_NAME_VALUE] = &schema_pb.Value{
+			Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Data},
+		}
+		return recordValue, "live_log", nil
+	}
+
 	// Try to unmarshal as RecordValue first (Parquet format)
 	recordValue := &schema_pb.RecordValue{}
 	if err := proto.Unmarshal(logEntry.Data, recordValue); err == nil {

@@ -44,6 +44,15 @@ func (e *SQLEngine) executeDescribeStatement(ctx context.Context, tableName stri
 		{"_source", "VARCHAR(255)", "System column: Data source (parquet/log)"},
 	}
 
+	// If no schema is defined, include _value field
+	if flatSchema == nil {
+		systemColumns = append(systemColumns, struct {
+			Name  string
+			Type  string
+			Extra string
+		}{SW_COLUMN_NAME_VALUE, "VARBINARY", "Raw message value (no schema defined)"})
+	}
+
 	// Calculate total rows: schema fields + system columns
 	totalRows := len(systemColumns)
 	if flatSchema != nil {
