@@ -235,6 +235,19 @@ func TestToMetadata(t *testing.T) {
 			},
 		},
 		{
+			name: "uppercase and mixed case keys",
+			input: map[string][]byte{
+				s3_constants.AmzUserMetaPrefix + "My-Key":      []byte("value1"),
+				s3_constants.AmzUserMetaPrefix + "UPPERCASE":   []byte("value2"),
+				s3_constants.AmzUserMetaPrefix + "MiXeD-CaSe":  []byte("value3"),
+			},
+			expected: map[string]*string{
+				"my_key":      stringPtr("value1"),
+				"uppercase":   stringPtr("value2"),
+				"mixed_case":  stringPtr("value3"),
+			},
+		},
+		{
 			name:     "empty input",
 			input:    map[string][]byte{},
 			expected: map[string]*string{},
