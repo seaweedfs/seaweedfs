@@ -56,7 +56,7 @@ func (s azureRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storag
 	// Create credential and client
 	credential, err := azblob.NewSharedKeyCredential(accountName, accountKey)
 	if err != nil {
-		return nil, fmt.Errorf("invalid Azure credential with account name:%s: %v", accountName, err)
+		return nil, fmt.Errorf("invalid Azure credential with account name:%s: %w", accountName, err)
 	}
 
 	serviceURL := fmt.Sprintf("https://%s.blob.core.windows.net/", accountName)
@@ -71,7 +71,7 @@ func (s azureRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storag
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create Azure client: %v", err)
+		return nil, fmt.Errorf("failed to create Azure client: %w", err)
 	}
 
 	client.client = azClient
@@ -99,7 +99,7 @@ func (az *azureRemoteStorageClient) Traverse(loc *remote_pb.RemoteStorageLocatio
 	for pager.More() {
 		resp, err := pager.NextPage(context.Background())
 		if err != nil {
-			return fmt.Errorf("azure traverse %s%s: %v", loc.Bucket, loc.Path, err)
+			return fmt.Errorf("azure traverse %s%s: %w", loc.Bucket, loc.Path, err)
 		}
 
 		for _, blobItem := range resp.Segment.BlobItems {
@@ -126,7 +126,7 @@ func (az *azureRemoteStorageClient) Traverse(loc *remote_pb.RemoteStorageLocatio
 
 			err = visitFn(dir, name, false, remoteEntry)
 			if err != nil {
-				return fmt.Errorf("azure processing %s%s: %v", loc.Bucket, loc.Path, err)
+				return fmt.Errorf("azure processing %s%s: %w", loc.Bucket, loc.Path, err)
 			}
 		}
 	}
@@ -150,13 +150,13 @@ func (az *azureRemoteStorageClient) ReadFile(loc *remote_pb.RemoteStorageLocatio
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to download file %s%s: %v", loc.Bucket, loc.Path, err)
+		return nil, fmt.Errorf("failed to download file %s%s: %w", loc.Bucket, loc.Path, err)
 	}
 	defer downloadResp.Body.Close()
 
 	data, err = io.ReadAll(downloadResp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read download stream %s%s: %v", loc.Bucket, loc.Path, err)
+		return nil, fmt.Errorf("failed to read download stream %s%s: %w", loc.Bucket, loc.Path, err)
 	}
 
 	return
@@ -189,7 +189,7 @@ func (az *azureRemoteStorageClient) WriteFile(loc *remote_pb.RemoteStorageLocati
 		Metadata:    metadata,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("azure upload to %s%s: %v", loc.Bucket, loc.Path, err)
+		return nil, fmt.Errorf("azure upload to %s%s: %w", loc.Bucket, loc.Path, err)
 	}
 
 	// read back the remote entry
@@ -265,7 +265,7 @@ func (az *azureRemoteStorageClient) DeleteFile(loc *remote_pb.RemoteStorageLocat
 		if bloberror.HasCode(err, bloberror.BlobNotFound) {
 			return nil
 		}
-		return fmt.Errorf("azure delete %s%s: %v", loc.Bucket, loc.Path, err)
+		return fmt.Errorf("azure delete %s%s: %w", loc.Bucket, loc.Path, err)
 	}
 	return
 }
@@ -298,7 +298,7 @@ func (az *azureRemoteStorageClient) CreateBucket(name string) (err error) {
 	containerClient := az.client.ServiceClient().NewContainerClient(name)
 	_, err = containerClient.Create(context.Background(), nil)
 	if err != nil {
-		return fmt.Errorf("create bucket %s: %v", name, err)
+		return fmt.Errorf("create bucket %s: %w", name, err)
 	}
 	return
 }
@@ -307,7 +307,7 @@ func (az *azureRemoteStorageClient) DeleteBucket(name string) (err error) {
 	containerClient := az.client.ServiceClient().NewContainerClient(name)
 	_, err = containerClient.Delete(context.Background(), nil)
 	if err != nil {
-		return fmt.Errorf("delete bucket %s: %v", name, err)
+		return fmt.Errorf("delete bucket %s: %w", name, err)
 	}
 	return
 }

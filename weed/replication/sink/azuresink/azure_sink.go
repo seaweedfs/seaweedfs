@@ -71,7 +71,7 @@ func (g *AzureSink) initialize(accountName, accountKey, container, dir string) e
 	// Create credential and client
 	credential, err := azblob.NewSharedKeyCredential(accountName, accountKey)
 	if err != nil {
-		return fmt.Errorf("failed to create Azure credential with account name:%s: %v", accountName, err)
+		return fmt.Errorf("failed to create Azure credential with account name:%s: %w", accountName, err)
 	}
 
 	serviceURL := fmt.Sprintf("https://%s.blob.core.windows.net/", accountName)
@@ -86,7 +86,7 @@ func (g *AzureSink) initialize(accountName, accountKey, container, dir string) e
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create Azure client: %v", err)
+		return fmt.Errorf("failed to create Azure client: %w", err)
 	}
 
 	g.client = client
@@ -111,7 +111,7 @@ func (g *AzureSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks boo
 		if bloberror.HasCode(err, bloberror.BlobNotFound) {
 			return nil
 		}
-		return fmt.Errorf("azure delete %s/%s: %v", g.container, key, err)
+		return fmt.Errorf("azure delete %s/%s: %w", g.container, key, err)
 	}
 
 	return nil
@@ -154,7 +154,7 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []
 				glog.V(0).Infof("skip overwriting %s/%s: precondition failed", g.container, key)
 				return nil
 			}
-			return fmt.Errorf("azure create append blob %s/%s: %v", g.container, key, err)
+			return fmt.Errorf("azure create append blob %s/%s: %w", g.container, key, err)
 		}
 	}
 
