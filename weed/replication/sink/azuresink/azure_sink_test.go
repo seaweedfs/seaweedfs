@@ -70,7 +70,7 @@ func (m *mockConfiguration) SetDefault(key string, value interface{}) {
 // Test the AzureSink interface implementation
 func TestAzureSinkInterface(t *testing.T) {
 	sink := &AzureSink{}
-	
+
 	if sink.GetName() != "azure" {
 		t.Errorf("Expected name 'azure', got '%s'", sink.GetName())
 	}
@@ -338,7 +338,7 @@ func BenchmarkCleanKey(b *testing.B) {
 // Test error handling with invalid credentials
 func TestAzureSinkInvalidCredentials(t *testing.T) {
 	sink := &AzureSink{}
-	
+
 	err := sink.initialize("invalid-account", "aW52YWxpZGtleQ==", "test-container", "/test")
 	if err != nil {
 		t.Skip("Invalid credentials correctly rejected at initialization")

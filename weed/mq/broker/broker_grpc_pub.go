@@ -183,4 +183,3 @@ func findClientAddress(ctx context.Context) string {
 	}
 	return pr.Addr.String()
 }
-

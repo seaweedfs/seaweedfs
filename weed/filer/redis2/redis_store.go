@@ -61,14 +61,14 @@ func (store *Redis2Store) initialize(hostPort string, password string, database 
 
 		tlsConfig := &tls.Config{
 			Certificates: []tls.Certificate{clientCert},
-			RootCAs: caCertPool,
-			ServerName: redisHost,
-			MinVersion: tls.VersionTLS12,
+			RootCAs:      caCertPool,
+			ServerName:   redisHost,
+			MinVersion:   tls.VersionTLS12,
 		}
 		store.Client = redis.NewClient(&redis.Options{
-			Addr:     hostPort,
-			Password: password,
-			DB:       database,
+			Addr:      hostPort,
+			Password:  password,
+			DB:        database,
 			TLSConfig: tlsConfig,
 		})
 	} else {

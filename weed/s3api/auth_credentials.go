@@ -56,10 +56,10 @@ type IdentityAccessManagement struct {
 }
 
 type Identity struct {
-	Name        string
-	Account     *Account
-	Credentials []*Credential
-	Actions     []Action
+	Name         string
+	Account      *Account
+	Credentials  []*Credential
+	Actions      []Action
 	PrincipalArn string // ARN for IAM authorization (e.g., "arn:seaweed:iam::user/username")
 }
 

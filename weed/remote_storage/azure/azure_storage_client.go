@@ -108,7 +108,7 @@ func (az *azureRemoteStorageClient) Traverse(loc *remote_pb.RemoteStorageLocatio
 			}
 			key := "/" + *blobItem.Name
 			dir, name := util.FullPath(key).DirAndName()
-			
+
 			remoteEntry := &filer_pb.RemoteEntry{
 				StorageName: az.conf.Name,
 			}
@@ -123,7 +123,7 @@ func (az *azureRemoteStorageClient) Traverse(loc *remote_pb.RemoteStorageLocatio
 					remoteEntry.RemoteETag = string(*blobItem.Properties.ETag)
 				}
 			}
-			
+
 			err = visitFn(dir, name, false, remoteEntry)
 			if err != nil {
 				return fmt.Errorf("azure processing %s%s: %v", loc.Bucket, loc.Path, err)
@@ -208,7 +208,7 @@ func (az *azureRemoteStorageClient) readFileRemoteEntry(loc *remote_pb.RemoteSto
 	remoteEntry := &filer_pb.RemoteEntry{
 		StorageName: az.conf.Name,
 	}
-	
+
 	if props.LastModified != nil {
 		remoteEntry.RemoteMtime = props.LastModified.Unix()
 	}
@@ -251,7 +251,7 @@ func (az *azureRemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStor
 func (az *azureRemoteStorageClient) DeleteFile(loc *remote_pb.RemoteStorageLocation) (err error) {
 	key := loc.Path[1:]
 	blobClient := az.client.ServiceClient().NewContainerClient(loc.Bucket).NewBlobClient(key)
-	
+
 	_, err = blobClient.Delete(context.Background(), &blob.DeleteOptions{
 		DeleteSnapshots: to.Ptr(blob.DeleteSnapshotsOptionTypeInclude),
 	})
@@ -267,13 +267,13 @@ func (az *azureRemoteStorageClient) DeleteFile(loc *remote_pb.RemoteStorageLocat
 
 func (az *azureRemoteStorageClient) ListBuckets() (buckets []*remote_storage.Bucket, err error) {
 	pager := az.client.NewListContainersPager(nil)
-	
+
 	for pager.More() {
 		resp, err := pager.NextPage(context.Background())
 		if err != nil {
 			return buckets, err
 		}
-		
+
 		for _, containerItem := range resp.ContainerItems {
 			if containerItem.Name != nil {
 				bucket := &remote_storage.Bucket{

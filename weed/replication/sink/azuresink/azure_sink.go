@@ -143,7 +143,7 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []
 	_, err := appendBlobClient.Create(context.Background(), &appendblob.CreateOptions{
 		AccessConditions: accessConditions,
 	})
-	
+
 	if err != nil {
 		if bloberror.HasCode(err, bloberror.BlobAlreadyExists) {
 			// Blob already exists, which is fine for an append blob - we can append to it

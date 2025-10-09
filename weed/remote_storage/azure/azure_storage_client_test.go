@@ -129,8 +129,8 @@ func TestAzureStorageClientBasic(t *testing.T) {
 		}
 		newEntry := &filer_pb.Entry{
 			Extended: map[string][]byte{
-				"x-amz-meta-test-key":  []byte("test-value"),
-				"x-amz-meta-new-key":   []byte("new-value"),
+				"x-amz-meta-test-key": []byte("test-value"),
+				"x-amz-meta-new-key":  []byte("new-value"),
 			},
 		}
 		err := azClient.UpdateFileMetadata(loc, oldEntry, newEntry)
@@ -175,12 +175,12 @@ func TestAzureStorageClientBasic(t *testing.T) {
 	// Clean up: Try to delete the test container
 	// Comment out if you want to keep the container
 	/*
-	t.Run("DeleteBucket", func(t *testing.T) {
-		err := azClient.DeleteBucket(testContainer)
-		if err != nil {
-			t.Logf("Warning: Failed to delete bucket: %v", err)
-		}
-	})
+		t.Run("DeleteBucket", func(t *testing.T) {
+			err := azClient.DeleteBucket(testContainer)
+			if err != nil {
+				t.Logf("Warning: Failed to delete bucket: %v", err)
+			}
+		})
 	*/
 }
 
@@ -214,7 +214,7 @@ func TestToMetadata(t *testing.T) {
 		{
 			name: "non-metadata keys ignored",
 			input: map[string][]byte{
-				"some-other-key":                           []byte("ignored"),
+				"some-other-key": []byte("ignored"),
 				s3_constants.AmzUserMetaPrefix + "included": []byte("included"),
 			},
 			expected: map[string]*string{
@@ -275,7 +275,7 @@ func BenchmarkToMetadata(b *testing.B) {
 // Test that the maker implements the interface
 func TestAzureRemoteStorageMaker(t *testing.T) {
 	maker := azureRemoteStorageMaker{}
-	
+
 	if !maker.HasBucket() {
 		t.Error("Expected HasBucket() to return true")
 	}
