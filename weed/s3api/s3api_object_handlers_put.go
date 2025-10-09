@@ -182,8 +182,8 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 				return
 			}
 
-			// Note: Suspended versioning should NOT return x-amz-version-id header according to AWS S3 spec
-			// The object is stored with "null" version internally but no version header is returned
+			// Suspended versioning DOES return x-amz-version-id: null header per AWS S3 spec
+			w.Header().Set("x-amz-version-id", "null")
 
 			// Set ETag in response
 			setEtag(w, etag)
@@ -469,6 +469,8 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 		glog.Errorf("putSuspendedVersioningObject: failed to get object entry: %v", err)
 		return "", s3err.ErrInternalError
 	}
+
+	glog.V(0).Infof("putSuspendedVersioningObject: got entry, Name=%s, FileSize=%d", entry.Name, entry.Attributes.FileSize)
 
 	// Add metadata to indicate this is a "null" version for suspended versioning
 	if entry.Extended == nil {
