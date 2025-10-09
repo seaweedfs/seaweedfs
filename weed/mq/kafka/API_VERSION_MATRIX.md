@@ -3,26 +3,26 @@
 ## Summary
 This document audits the advertised API versions in `handleApiVersions()` against actual implementation support and identifies mismatches that need correction.
 
-## Current Status: MISMATCHES FOUND ⚠️
+## Current Status: MISMATCHES FOUND
 
 ### API Version Discrepancies
 
 | API Key | API Name | Advertised | Actually Implemented | Status | Action Needed |
 |---------|----------|------------|---------------------|--------|---------------|
-| 18 | ApiVersions | v0-v3 | v0-v3 | ✅ Match | None |
-| 3 | Metadata | v0-v7 | v0-v7 | ✅ Match | None |
-| 0 | Produce | v0-v7 | v0-v7 | ✅ Match | None |
-| 1 | Fetch | v0-v7 | v0-v7 | ✅ Match | None |
-| 2 | ListOffsets | v0-v2 | v0-v2 | ✅ Match | None |
-| 19 | CreateTopics | v0-v5 | v0-v5 | ✅ Match | None |
-| 20 | DeleteTopics | v0-v4 | v0-v4 | ✅ Match | None |
-| 11 | JoinGroup | v0-v7 | v0-v7 | ✅ Match | None |
-| 14 | SyncGroup | v0-v5 | v0-v5 | ✅ Match | None |
-| 8 | OffsetCommit | v0-v2 | v0-v2 | ✅ Match | None |
-| 9 | OffsetFetch | v0-v5 | v0-v5 | ✅ Match | None |
-| 10 | FindCoordinator | v0-v2 | v0-v2 | ✅ Match | None |
-| 12 | Heartbeat | v0-v4 | v0-v4 | ✅ Match | None |
-| 13 | LeaveGroup | v0-v4 | v0-v4 | ✅ Match | None |
+| 18 | ApiVersions | v0-v3 | v0-v3 | Match | None |
+| 3 | Metadata | v0-v7 | v0-v7 | Match | None |
+| 0 | Produce | v0-v7 | v0-v7 | Match | None |
+| 1 | Fetch | v0-v7 | v0-v7 | Match | None |
+| 2 | ListOffsets | v0-v2 | v0-v2 | Match | None |
+| 19 | CreateTopics | v0-v5 | v0-v5 | Match | None |
+| 20 | DeleteTopics | v0-v4 | v0-v4 | Match | None |
+| 11 | JoinGroup | v0-v7 | v0-v7 | Match | None |
+| 14 | SyncGroup | v0-v5 | v0-v5 | Match | None |
+| 8 | OffsetCommit | v0-v2 | v0-v2 | Match | None |
+| 9 | OffsetFetch | v0-v5 | v0-v5 | Match | None |
+| 10 | FindCoordinator | v0-v2 | v0-v2 | Match | None |
+| 12 | Heartbeat | v0-v4 | v0-v4 | Match | None |
+| 13 | LeaveGroup | v0-v4 | v0-v4 | Match | None |
 
 ## Detailed Analysis
 

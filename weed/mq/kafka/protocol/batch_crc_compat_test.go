@@ -54,7 +54,7 @@ func TestBatchConstruction(t *testing.T) {
 			t.Logf("  %04d: %x", i, crcData[i:end])
 		}
 	} else {
-		t.Log("✅ CRC verification PASSED")
+		t.Log("CRC verification PASSED")
 	}
 
 	// Verify batch structure
@@ -76,7 +76,7 @@ func TestBatchConstruction(t *testing.T) {
 	if expectedBatchLength != actualBatchLength {
 		t.Errorf("Batch length mismatch: expected=%d actual=%d", expectedBatchLength, actualBatchLength)
 	} else {
-		t.Logf("✅ Batch length correct: %d", actualBatchLength)
+		t.Logf("Batch length correct: %d", actualBatchLength)
 	}
 }
 
@@ -101,7 +101,7 @@ func TestMultipleRecordsBatch(t *testing.T) {
 		if storedCRC != calculatedCRC {
 			t.Errorf("Batch %d CRC mismatch: stored=0x%08x calculated=0x%08x", i+1, storedCRC, calculatedCRC)
 		} else {
-			t.Logf("✅ Batch %d CRC valid", i+1)
+			t.Logf("Batch %d CRC valid", i+1)
 		}
 	}
 }
@@ -128,7 +128,7 @@ func TestVarintEncoding(t *testing.T) {
 		if !bytes.Equal(result, tc.expected) {
 			t.Errorf("encodeVarint(%d) = %x, expected %x", tc.value, result, tc.expected)
 		} else {
-			t.Logf("✅ encodeVarint(%d) = %x", tc.value, result)
+			t.Logf("encodeVarint(%d) = %x", tc.value, result)
 		}
 	}
 }
@@ -277,7 +277,7 @@ func TestClientSideCRCValidation(t *testing.T) {
 			clientReadCRC, clientCalculatedCRC)
 		t.Log("This is the error consumers are seeing!")
 	} else {
-		t.Log("✅ CLIENT WOULD ACCEPT: CRC valid")
+		t.Log("CLIENT WOULD ACCEPT: CRC valid")
 	}
 }
 
@@ -313,7 +313,7 @@ func TestConcurrentBatchConstruction(t *testing.T) {
 	}
 
 	if allValid {
-		t.Logf("✅ All %d concurrent batches have valid CRCs", numBatches)
+		t.Logf("All %d concurrent batches have valid CRCs", numBatches)
 	}
 }
 
@@ -351,7 +351,7 @@ func TestProductionBatchConstruction(t *testing.T) {
 		t.Errorf("PRODUCTION CODE CRC INVALID: stored=0x%08x calculated=0x%08x", storedCRC, calculatedCRC)
 		t.Log("This means the production constructSingleRecordBatch has a bug!")
 	} else {
-		t.Log("✅ PRODUCTION CODE CRC VALID")
+		t.Log("PRODUCTION CODE CRC VALID")
 	}
 }
 

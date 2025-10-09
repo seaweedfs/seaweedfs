@@ -997,10 +997,10 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string, clientHost str
 
 	masterClient := wdclient.NewMasterClient(grpcDialOption, filerGroup, "kafka-gateway", clientHostAddr, "", "", *masterDiscovery)
 
-	glog.V(1).Infof("🚀 Created MasterClient with clientHost=%s, masters=%s", clientHost, masters)
+	glog.V(1).Infof("Created MasterClient with clientHost=%s, masters=%s", clientHost, masters)
 
 	// Start KeepConnectedToMaster in background to maintain connection
-	glog.V(1).Infof("🔄 Starting KeepConnectedToMaster background goroutine...")
+	glog.V(1).Infof("Starting KeepConnectedToMaster background goroutine...")
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		defer cancel()

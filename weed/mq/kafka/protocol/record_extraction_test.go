@@ -147,7 +147,7 @@ func TestExtractAllRecords_RealKafkaFormat(t *testing.T) {
 		t.Errorf("Value mismatch:\n  got:  %s\n  want: %s", string(result.Value), string(testValue))
 	}
 
-	t.Logf("✅ Successfully extracted record with value: %s", string(result.Value))
+	t.Logf("Successfully extracted record with value: %s", string(result.Value))
 }
 
 // TestExtractAllRecords_CompressedBatch tests extracting records from a compressed batch

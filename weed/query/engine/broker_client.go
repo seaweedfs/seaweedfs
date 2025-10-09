@@ -10,6 +10,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -414,21 +415,21 @@ func (c *BrokerClient) ListTopicPartitions(ctx context.Context, namespace, topic
 // Uses buffer_start metadata from disk files for precise deduplication
 // This prevents double-counting when combining with disk-based data
 func (c *BrokerClient) GetUnflushedMessages(ctx context.Context, namespace, topicName string, partition topic.Partition, startTimeNs int64) ([]*filer_pb.LogEntry, error) {
-	fmt.Printf("DEBUG: GetUnflushedMessages called for %s/%s, partition: RangeStart=%d, RangeStop=%d\n",
+	glog.V(2).Infof("GetUnflushedMessages called for %s/%s, partition: RangeStart=%d, RangeStop=%d",
 		namespace, topicName, partition.RangeStart, partition.RangeStop)
 
 	// Step 1: Find the broker that hosts this partition
 	if err := c.findBrokerBalancer(); err != nil {
-		fmt.Printf("DEBUG: Failed to find broker balancer: %v\n", err)
+		glog.V(2).Infof("Failed to find broker balancer: %v", err)
 		// Return empty slice if we can't find broker - prevents double-counting
 		return []*filer_pb.LogEntry{}, nil
 	}
-	fmt.Printf("DEBUG: Found broker at address: %s\n", c.brokerAddress)
+	glog.V(2).Infof("Found broker at address: %s", c.brokerAddress)
 
 	// Step 2: Connect to broker
 	conn, err := grpc.Dial(c.brokerAddress, c.grpcDialOption)
 	if err != nil {
-		fmt.Printf("DEBUG: Failed to connect to broker %s: %v\n", c.brokerAddress, err)
+		glog.V(2).Infof("Failed to connect to broker %s: %v", c.brokerAddress, err)
 		// Return empty slice if connection fails - prevents double-counting
 		return []*filer_pb.LogEntry{}, nil
 	}
@@ -443,11 +444,11 @@ func (c *BrokerClient) GetUnflushedMessages(ctx context.Context, namespace, topi
 	// timestamp-based buffer indices, so we always use 0.
 	topicObj := topic.Topic{Namespace: namespace, Name: topicName}
 	partitionPath := topic.PartitionDir(topicObj, partition)
-	fmt.Printf("DEBUG: Getting buffer start from partition path: %s\n", partitionPath)
+	glog.V(2).Infof("Getting buffer start from partition path: %s", partitionPath)
 
 	// Always use 0 for unflushed messages to ensure we get all in-memory data
 	earliestBufferOffset := int64(0)
-	fmt.Printf("DEBUG: Using StartBufferOffset=0 for unflushed messages (buffer offsets are sequential internally)\n")
+	glog.V(2).Infof("Using StartBufferOffset=0 for unflushed messages (buffer offsets are sequential internally)")
 
 	// Step 4: Prepare request using buffer offset filtering only
 	request := &mq_pb.GetUnflushedMessagesRequest{
@@ -465,10 +466,10 @@ func (c *BrokerClient) GetUnflushedMessages(ctx context.Context, namespace, topi
 	}
 
 	// Step 5: Call the broker streaming API
-	fmt.Printf("DEBUG: Calling GetUnflushedMessages gRPC with StartBufferOffset=%d\n", earliestBufferOffset)
+	glog.V(2).Infof("Calling GetUnflushedMessages gRPC with StartBufferOffset=%d", earliestBufferOffset)
 	stream, err := client.GetUnflushedMessages(ctx, request)
 	if err != nil {
-		fmt.Printf("DEBUG: GetUnflushedMessages gRPC call failed: %v\n", err)
+		glog.V(2).Infof("GetUnflushedMessages gRPC call failed: %v", err)
 		// Return empty slice if gRPC call fails - prevents double-counting
 		return []*filer_pb.LogEntry{}, nil
 	}

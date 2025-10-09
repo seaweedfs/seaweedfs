@@ -120,7 +120,7 @@ func (p *LocalPartition) Subscribe(clientName string, startPosition log_buffer.M
 		// Step 2: Enter the main loop - read from in-memory buffer, occasionally checking disk
 		for {
 			// Read from in-memory buffer (this is the hot path - handles streaming data)
-			glog.V(4).Infof("💾 SUBSCRIBE: Reading from in-memory buffer for %s at offset %d", clientName, startPosition.Offset)
+			glog.V(4).Infof("SUBSCRIBE: Reading from in-memory buffer for %s at offset %d", clientName, startPosition.Offset)
 			processedPosition, isDone, readInMemoryLogErr = p.LogBuffer.LoopProcessLogDataWithOffset(clientName, startPosition, 0, onNoMessageFn, eachMessageWithOffsetFn)
 
 			if isDone {
@@ -136,7 +136,7 @@ func (p *LocalPartition) Subscribe(clientName string, startPosition log_buffer.M
 			// If we get ResumeFromDiskError, it means data was flushed to disk
 			// Read from disk ONCE to catch up, then continue with in-memory buffer
 			if readInMemoryLogErr == log_buffer.ResumeFromDiskError {
-				glog.V(4).Infof("🔄 SUBSCRIBE: ResumeFromDiskError - reading flushed data from disk for %s at offset %d", clientName, startPosition.Offset)
+				glog.V(4).Infof("SUBSCRIBE: ResumeFromDiskError - reading flushed data from disk for %s at offset %d", clientName, startPosition.Offset)
 				processedPosition, isDone, readPersistedLogErr = p.LogBuffer.ReadFromDiskFn(startPosition, 0, eachMessageFn)
 				if readPersistedLogErr != nil {
 					glog.V(2).Infof("%s read %v persisted log after flush: %v", clientName, p.Partition, readPersistedLogErr)

@@ -96,7 +96,7 @@ func NewCoordinatorRegistry(gatewayAddress string, masters []pb.ServerAddress, g
 		if err == nil && len(resp.ClusterNodes) > 0 {
 			// Found a filer - use its HTTP address (WithFilerClient will convert to gRPC automatically)
 			seedFiler = pb.ServerAddress(resp.ClusterNodes[0].Address)
-			glog.V(1).Infof("🔧 Using filer %s as seed for distributed locking (discovered from master %s)", seedFiler, master)
+			glog.V(1).Infof("Using filer %s as seed for distributed locking (discovered from master %s)", seedFiler, master)
 			break
 		}
 	}
