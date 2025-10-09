@@ -504,12 +504,10 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 		return "", s3err.ErrInvalidRequest
 	}
 
-	// Update the entry with metadata (use mkFile which handles create-or-update semantics properly)
-	err = s3a.mkFile(bucketDir, normalizedObject, entry.Chunks, func(updatedEntry *filer_pb.Entry) {
-		updatedEntry.Extended = entry.Extended
-		updatedEntry.Attributes = entry.Attributes
-		updatedEntry.Chunks = entry.Chunks
-	})
+	// Update the entry with metadata (use updateEntry to modify existing entry without creating duplicate)
+	// The entry already has all the metadata we want (chunks, attributes, extended metadata)
+	entry.Name = normalizedObject
+	err = s3a.updateEntry(bucketDir, entry)
 	if err != nil {
 		glog.Errorf("putSuspendedVersioningObject: failed to update object metadata: %v", err)
 		return "", s3err.ErrInternalError
