@@ -16,7 +16,7 @@ import (
 func (e *SQLEngine) CurrentDate() (*schema_pb.Value, error) {
 	now := time.Now()
 	dateStr := now.Format("2006-01-02")
-	
+
 	return &schema_pb.Value{
 		Kind: &schema_pb.Value_StringValue{StringValue: dateStr},
 	}, nil
@@ -25,10 +25,10 @@ func (e *SQLEngine) CurrentDate() (*schema_pb.Value, error) {
 // CurrentTimestamp returns the current timestamp
 func (e *SQLEngine) CurrentTimestamp() (*schema_pb.Value, error) {
 	now := time.Now()
-	
+
 	// Return as TimestampValue with microseconds
 	timestampMicros := now.UnixMicro()
-	
+
 	return &schema_pb.Value{
 		Kind: &schema_pb.Value_TimestampValue{
 			TimestampValue: &schema_pb.TimestampValue{
@@ -42,7 +42,7 @@ func (e *SQLEngine) CurrentTimestamp() (*schema_pb.Value, error) {
 func (e *SQLEngine) CurrentTime() (*schema_pb.Value, error) {
 	now := time.Now()
 	timeStr := now.Format("15:04:05")
-	
+
 	return &schema_pb.Value{
 		Kind: &schema_pb.Value_StringValue{StringValue: timeStr},
 	}, nil
@@ -61,13 +61,13 @@ func (e *SQLEngine) Now() (*schema_pb.Value, error) {
 type DatePart string
 
 const (
-	PartYear     DatePart = "YEAR"
-	PartMonth    DatePart = "MONTH"
-	PartDay      DatePart = "DAY"
-	PartHour     DatePart = "HOUR"
-	PartMinute   DatePart = "MINUTE"
-	PartSecond   DatePart = "SECOND"
-	PartWeek     DatePart = "WEEK"
+	PartYear      DatePart = "YEAR"
+	PartMonth     DatePart = "MONTH"
+	PartDay       DatePart = "DAY"
+	PartHour      DatePart = "HOUR"
+	PartMinute    DatePart = "MINUTE"
+	PartSecond    DatePart = "SECOND"
+	PartWeek      DatePart = "WEEK"
 	PartDayOfYear DatePart = "DOY"
 	PartDayOfWeek DatePart = "DOW"
 	PartQuarter   DatePart = "QUARTER"
@@ -172,7 +172,7 @@ func (e *SQLEngine) DateTrunc(precision string, value *schema_pb.Value) (*schema
 	case "year", "years":
 		truncated = time.Date(t.Year(), 1, 1, 0, 0, 0, 0, t.Location())
 	case "decade", "decades":
-		year := (t.Year()/10) * 10
+		year := (t.Year() / 10) * 10
 		truncated = time.Date(year, 1, 1, 0, 0, 0, 0, t.Location())
 	case "century", "centuries":
 		year := ((t.Year()-1)/100)*100 + 1

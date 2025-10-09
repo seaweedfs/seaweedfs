@@ -294,7 +294,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 					ETag:         chunk.ETag,
 					IsCompressed: chunk.IsCompressed,
 					// Preserve SSE metadata with updated within-part offset
-					SseType:        chunk.SseType,
+					SseType:     chunk.SseType,
 					SseMetadata: sseKmsMetadata,
 				}
 				finalParts = append(finalParts, p)

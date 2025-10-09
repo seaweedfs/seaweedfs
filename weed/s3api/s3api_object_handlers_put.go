@@ -20,8 +20,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
-	"github.com/seaweedfs/seaweedfs/weed/util/constants"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/util/constants"
 )
 
 // Object lock validation errors
