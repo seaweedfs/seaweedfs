@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/streaming"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
@@ -74,7 +75,16 @@ func (g *AzureSink) initialize(accountName, accountKey, container, dir string) e
 	}
 
 	serviceURL := fmt.Sprintf("https://%s.blob.core.windows.net/", accountName)
-	client, err := azblob.NewClientWithSharedKeyCredential(serviceURL, credential, nil)
+	client, err := azblob.NewClientWithSharedKeyCredential(serviceURL, credential, &azblob.ClientOptions{
+		ClientOptions: azcore.ClientOptions{
+			Retry: policy.RetryOptions{
+				MaxRetries:    10, // Increased from default 3 for replication sink resiliency
+				TryTimeout:    time.Minute,
+				RetryDelay:    2 * time.Second,
+				MaxRetryDelay: time.Minute,
+			},
+		},
+	})
 	if err != nil {
 		return fmt.Errorf("failed to create Azure client: %v", err)
 	}
