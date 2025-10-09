@@ -45,8 +45,8 @@ RUN chmod +x /usr/bin/kafka-gateway-start.sh
 # Switch to non-root user
 USER seaweedfs
 
-# Expose Kafka protocol port
-EXPOSE 9093
+# Expose Kafka protocol port and pprof port
+EXPOSE 9093 10093
 
 # Health check
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 \

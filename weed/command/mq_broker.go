@@ -27,6 +27,7 @@ type MessageQueueBrokerOptions struct {
 	filerGroup       *string
 	ip               *string
 	port             *int
+	pprofPort        *int
 	dataCenter       *string
 	rack             *string
 	cpuprofile       *string
@@ -40,6 +41,7 @@ func init() {
 	mqBrokerStandaloneOptions.filerGroup = cmdMqBroker.Flag.String("filerGroup", "", "share metadata with other filers in the same filerGroup")
 	mqBrokerStandaloneOptions.ip = cmdMqBroker.Flag.String("ip", util.DetectedHostAddress(), "broker host address")
 	mqBrokerStandaloneOptions.port = cmdMqBroker.Flag.Int("port", 17777, "broker gRPC listen port")
+	mqBrokerStandaloneOptions.pprofPort = cmdMqBroker.Flag.Int("port.pprof", 0, "HTTP profiling port (0 to disable)")
 	mqBrokerStandaloneOptions.dataCenter = cmdMqBroker.Flag.String("dataCenter", "", "prefer to read and write to volumes in this data center")
 	mqBrokerStandaloneOptions.rack = cmdMqBroker.Flag.String("rack", "", "prefer to write to volumes in this rack")
 	mqBrokerStandaloneOptions.cpuprofile = cmdMqBroker.Flag.String("cpuprofile", "", "cpu profile output file")
@@ -113,16 +115,17 @@ func (mqBrokerOpt *MessageQueueBrokerOptions) startQueueServer() bool {
 		}()
 	}
 
-	// Start HTTP profiling server
-	pprofPort := *mqBrokerOpt.port + 1000 // e.g., 18777 for profiling if broker is on 17777
-	go func() {
-		pprofAddr := fmt.Sprintf(":%d", pprofPort)
-		glog.V(0).Infof("MQ Broker pprof server listening on %s", pprofAddr)
-		glog.V(0).Infof("Access profiling at: http://localhost:%d/debug/pprof/", pprofPort)
-		if err := http.ListenAndServe(pprofAddr, nil); err != nil {
-			glog.Errorf("pprof server error: %v", err)
-		}
-	}()
+	// Start HTTP profiling server if enabled
+	if *mqBrokerOpt.pprofPort > 0 {
+		go func() {
+			pprofAddr := fmt.Sprintf(":%d", *mqBrokerOpt.pprofPort)
+			glog.V(0).Infof("MQ Broker pprof server listening on %s", pprofAddr)
+			glog.V(0).Infof("Access profiling at: http://localhost:%d/debug/pprof/", *mqBrokerOpt.pprofPort)
+			if err := http.ListenAndServe(pprofAddr, nil); err != nil {
+				glog.Errorf("pprof server error: %v", err)
+			}
+		}()
+	}
 
 	glog.V(0).Infof("MQ Broker listening on %s:%d", *mqBrokerOpt.ip, *mqBrokerOpt.port)
 	grpcS.Serve(grpcL)

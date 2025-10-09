@@ -166,11 +166,13 @@ services:
     container_name: seaweedfs-mq-broker
     ports:
       - "17777:17777"  # MQ Broker port
+      - "18777:18777"  # pprof profiling port
     command:
       - mq.broker
       - -master=seaweedfs-master:9333
       - -ip=seaweedfs-mq-broker
       - -port=17777
+      - -port.pprof=18777
     depends_on:
       seaweedfs-filer:
         condition: service_healthy
@@ -218,6 +220,7 @@ services:
     container_name: kafka-gateway
     ports:
       - "9093:9093"  # Kafka protocol port
+      - "10093:10093"  # pprof profiling port
     depends_on:
       seaweedfs-mq-agent:
         condition: service_healthy
@@ -228,6 +231,7 @@ services:
       - SEAWEEDFS_FILER_GROUP=
       - SCHEMA_REGISTRY_URL=http://schema-registry:8081
       - KAFKA_PORT=9093
+      - PPROF_PORT=10093
     volumes:
       - kafka-gateway-data:/data
     healthcheck:

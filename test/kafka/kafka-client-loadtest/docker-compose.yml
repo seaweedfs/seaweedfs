@@ -179,6 +179,7 @@ services:
       - -ip=seaweedfs-mq-broker
       - -port=17777
       - -logFlushInterval=0
+      - -port.pprof=18777
     depends_on:
       seaweedfs-filer:
         condition: service_healthy
@@ -208,6 +209,7 @@ services:
       - -port=9093
       - -default-partitions=4
       - -schema-registry-url=http://schema-registry:8081
+      - -port.pprof=10093
     depends_on:
       seaweedfs-filer:
         condition: service_healthy

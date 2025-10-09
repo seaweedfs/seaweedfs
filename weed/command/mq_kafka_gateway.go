@@ -19,6 +19,7 @@ type mqKafkaGatewayOpts struct {
 	ip                *string
 	ipBind            *string
 	port              *int
+	pprofPort         *int
 	master            *string
 	filerGroup        *string
 	schemaRegistryURL *string
@@ -30,6 +31,7 @@ func init() {
 	mqKafkaGatewayOptions.ip = cmdMqKafkaGateway.Flag.String("ip", util.DetectedHostAddress(), "Kafka gateway advertised host address")
 	mqKafkaGatewayOptions.ipBind = cmdMqKafkaGateway.Flag.String("ip.bind", "", "Kafka gateway bind address (default: same as -ip)")
 	mqKafkaGatewayOptions.port = cmdMqKafkaGateway.Flag.Int("port", 9092, "Kafka gateway listen port")
+	mqKafkaGatewayOptions.pprofPort = cmdMqKafkaGateway.Flag.Int("port.pprof", 0, "HTTP profiling port (0 to disable)")
 	mqKafkaGatewayOptions.master = cmdMqKafkaGateway.Flag.String("master", "localhost:9333", "comma-separated SeaweedFS master servers")
 	mqKafkaGatewayOptions.filerGroup = cmdMqKafkaGateway.Flag.String("filerGroup", "", "filer group name")
 	mqKafkaGatewayOptions.schemaRegistryURL = cmdMqKafkaGateway.Flag.String("schema-registry-url", "", "Schema Registry URL (required for schema management)")
@@ -107,16 +109,17 @@ func runMqKafkaGateway(cmd *Command, args []string) bool {
 	}
 	glog.V(0).Infof("Using SeaweedMQ brokers from masters: %s", *mqKafkaGatewayOptions.master)
 
-	// Start HTTP profiling server
-	pprofPort := *mqKafkaGatewayOptions.port + 1000 // e.g., 10093 for profiling if gateway is on 9093
-	go func() {
-		pprofAddr := fmt.Sprintf(":%d", pprofPort)
-		glog.V(0).Infof("Kafka Gateway pprof server listening on %s", pprofAddr)
-		glog.V(0).Infof("Access profiling at: http://localhost:%d/debug/pprof/", pprofPort)
-		if err := http.ListenAndServe(pprofAddr, nil); err != nil {
-			glog.Errorf("pprof server error: %v", err)
-		}
-	}()
+	// Start HTTP profiling server if enabled
+	if *mqKafkaGatewayOptions.pprofPort > 0 {
+		go func() {
+			pprofAddr := fmt.Sprintf(":%d", *mqKafkaGatewayOptions.pprofPort)
+			glog.V(0).Infof("Kafka Gateway pprof server listening on %s", pprofAddr)
+			glog.V(0).Infof("Access profiling at: http://localhost:%d/debug/pprof/", *mqKafkaGatewayOptions.pprofPort)
+			if err := http.ListenAndServe(pprofAddr, nil); err != nil {
+				glog.Errorf("pprof server error: %v", err)
+			}
+		}()
+	}
 
 	if err := srv.Start(); err != nil {
 		glog.Fatalf("mq kafka gateway start: %v", err)

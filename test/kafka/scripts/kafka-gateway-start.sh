@@ -49,4 +49,6 @@ exec /usr/bin/weed mq.kafka.gateway \
   -master=${SEAWEEDFS_MASTERS} \
   -filerGroup=${SEAWEEDFS_FILER_GROUP} \
   -port=${KAFKA_PORT:-9093} \
+  -port.pprof=${PPROF_PORT:-10093} \
+  -schema-registry-url=${SCHEMA_REGISTRY_URL} \
   -ip=0.0.0.0
