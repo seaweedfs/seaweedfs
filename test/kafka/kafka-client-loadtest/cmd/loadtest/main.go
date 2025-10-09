@@ -273,7 +273,7 @@ func runComprehensiveTest(ctx context.Context, cancel context.CancelFunc, cfg *c
 				producerCancel()
 
 				// Allow consumers extra time to drain remaining messages
-				drainTime := 60 * time.Second
+				drainTime := 120 * time.Second
 				log.Printf("⏳ Allowing %v for consumers to drain remaining messages...", drainTime)
 				time.Sleep(drainTime)
 
