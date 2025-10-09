@@ -117,12 +117,7 @@ func (b *MessageQueueBroker) GetUnflushedMessages(req *mq_pb.GetUnflushedMessage
 
 			// Stream this message
 			err = stream.Send(&mq_pb.GetUnflushedMessagesResponse{
-				Message: &mq_pb.LogEntry{
-					TsNs:             logEntry.TsNs,
-					Key:              logEntry.Key,
-					Data:             logEntry.Data,
-					PartitionKeyHash: uint32(logEntry.PartitionKeyHash),
-				},
+				Message:     logEntry,
 				EndOfStream: false,
 			})
 
