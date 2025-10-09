@@ -34,6 +34,27 @@ const (
 // Azure metadata keys must be valid C# identifiers: letters, digits, and underscores only.
 var invalidMetadataChars = regexp.MustCompile(`[^a-zA-Z0-9_]`)
 
+// sanitizeMetadataKey converts an S3 metadata key to a valid Azure metadata key.
+// Azure metadata keys must be valid C# identifiers (letters, digits, underscores only, cannot start with digit).
+// To prevent collisions, invalid characters are replaced with their hex representation (_XX_).
+// Examples:
+//   - "my-key" -> "my_2d_key"
+//   - "my.key" -> "my_2e_key"
+//   - "key@value" -> "key_40_value"
+func sanitizeMetadataKey(key string) string {
+	// Replace each invalid character with _XX_ where XX is the hex code
+	result := invalidMetadataChars.ReplaceAllStringFunc(key, func(s string) string {
+		return fmt.Sprintf("_%02x_", s[0])
+	})
+
+	// Azure metadata keys cannot start with a digit
+	if len(result) > 0 && result[0] >= '0' && result[0] <= '9' {
+		result = "_" + result
+	}
+
+	return result
+}
+
 func init() {
 	remote_storage.RemoteStorageClientMakers["azure"] = new(azureRemoteStorageMaker)
 }
@@ -234,14 +255,9 @@ func toMetadata(attributes map[string][]byte) map[string]*string {
 			// S3 stores metadata keys in lowercase; normalize for consistency.
 			key := strings.ToLower(k[len(s3_constants.AmzUserMetaPrefix):])
 
-			// Replace invalid characters to conform to Azure metadata key rules.
-			// Azure metadata keys must be valid C# identifiers: letters, digits, and underscores only.
-			key = invalidMetadataChars.ReplaceAllString(key, "_")
+			// Sanitize key to prevent collisions and ensure Azure compliance
+			key = sanitizeMetadataKey(key)
 
-			// Azure metadata keys cannot start with a digit.
-			if len(key) > 0 && key[0] >= '0' && key[0] <= '9' {
-				key = "_" + key
-			}
 			val := string(v)
 			metadata[key] = &val
 		}

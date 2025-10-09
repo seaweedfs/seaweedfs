@@ -208,7 +208,7 @@ func TestToMetadata(t *testing.T) {
 				s3_constants.AmzUserMetaPrefix + "content-type": []byte("text/plain"),
 			},
 			expected: map[string]*string{
-				"content_type": stringPtr("text/plain"),
+				"content_2d_type": stringPtr("text/plain"), // dash (0x2d) -> _2d_
 			},
 		},
 		{
@@ -229,9 +229,9 @@ func TestToMetadata(t *testing.T) {
 				s3_constants.AmzUserMetaPrefix + "789":      []byte("value3"),
 			},
 			expected: map[string]*string{
-				"_123key":   stringPtr("value1"),
-				"_456_test": stringPtr("value2"),
-				"_789":      stringPtr("value3"),
+				"_123key":        stringPtr("value1"), // starts with digit -> prefix _
+				"_456_2d_test":   stringPtr("value2"), // starts with digit AND has dash
+				"_789":           stringPtr("value3"),
 			},
 		},
 		{
@@ -242,9 +242,9 @@ func TestToMetadata(t *testing.T) {
 				s3_constants.AmzUserMetaPrefix + "MiXeD-CaSe":  []byte("value3"),
 			},
 			expected: map[string]*string{
-				"my_key":      stringPtr("value1"),
-				"uppercase":   stringPtr("value2"),
-				"mixed_case":  stringPtr("value3"),
+				"my_2d_key":      stringPtr("value1"), // lowercase + dash -> _2d_
+				"uppercase":      stringPtr("value2"),
+				"mixed_2d_case":  stringPtr("value3"),
 			},
 		},
 		{
@@ -257,11 +257,24 @@ func TestToMetadata(t *testing.T) {
 				s3_constants.AmzUserMetaPrefix + "key/slash":  []byte("value5"),
 			},
 			expected: map[string]*string{
-				"my_key":     stringPtr("value1"),
-				"key_plus":   stringPtr("value2"),
-				"key_symbol": stringPtr("value3"),
-				"key_with_":  stringPtr("value4"),
-				"key_slash":  stringPtr("value5"),
+				"my_2e_key":       stringPtr("value1"), // dot (0x2e) -> _2e_
+				"key_2b_plus":     stringPtr("value2"), // plus (0x2b) -> _2b_
+				"key_40_symbol":   stringPtr("value3"), // @ (0x40) -> _40_
+				"key_2d_with_2e_": stringPtr("value4"), // dash and dot
+				"key_2f_slash":    stringPtr("value5"), // slash (0x2f) -> _2f_
+			},
+		},
+		{
+			name: "collision prevention",
+			input: map[string][]byte{
+				s3_constants.AmzUserMetaPrefix + "my-key": []byte("value1"),
+				s3_constants.AmzUserMetaPrefix + "my.key": []byte("value2"),
+				s3_constants.AmzUserMetaPrefix + "my_key": []byte("value3"),
+			},
+			expected: map[string]*string{
+				"my_2d_key": stringPtr("value1"), // dash (0x2d)
+				"my_2e_key": stringPtr("value2"), // dot (0x2e)
+				"my_key":    stringPtr("value3"), // underscore is valid, no encoding
 			},
 		},
 		{
