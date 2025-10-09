@@ -11,6 +11,7 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/streaming"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/appendblob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blob"
@@ -92,7 +93,7 @@ func (g *AzureSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks boo
 
 	blobClient := g.client.ServiceClient().NewContainerClient(g.container).NewBlobClient(key)
 	_, err := blobClient.Delete(context.Background(), &blob.DeleteOptions{
-		DeleteSnapshots: &[]blob.DeleteSnapshotsOptionType{blob.DeleteSnapshotsOptionTypeInclude}[0],
+		DeleteSnapshots: to.Ptr(blob.DeleteSnapshotsOptionTypeInclude),
 	})
 	if err != nil {
 		return fmt.Errorf("azure delete %s/%s: %v", g.container, key, err)

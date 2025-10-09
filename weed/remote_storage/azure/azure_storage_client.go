@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blockblob"
@@ -121,6 +122,9 @@ func (az *azureRemoteStorageClient) ReadFile(loc *remote_pb.RemoteStorageLocatio
 	blobClient := az.client.ServiceClient().NewContainerClient(loc.Bucket).NewBlockBlobClient(key)
 
 	count := size
+	if count == 0 {
+		count = blob.CountToEnd
+	}
 	downloadResp, err := blobClient.DownloadStream(context.Background(), &blob.DownloadStreamOptions{
 		Range: blob.HTTPRange{
 			Offset: offset,
@@ -231,7 +235,7 @@ func (az *azureRemoteStorageClient) DeleteFile(loc *remote_pb.RemoteStorageLocat
 	blobClient := az.client.ServiceClient().NewContainerClient(loc.Bucket).NewBlobClient(key)
 	
 	_, err = blobClient.Delete(context.Background(), &blob.DeleteOptions{
-		DeleteSnapshots: &[]blob.DeleteSnapshotsOptionType{blob.DeleteSnapshotsOptionTypeInclude}[0],
+		DeleteSnapshots: to.Ptr(blob.DeleteSnapshotsOptionTypeInclude),
 	})
 	if err != nil {
 		return fmt.Errorf("azure delete %s%s: %v", loc.Bucket, loc.Path, err)
