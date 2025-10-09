@@ -7,22 +7,25 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"net/http"
 	"strings"
 	"time"
-	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 // Downloads an item from an S3 Bucket in the region configured in the shared config
 // or AWS_REGION environment variable.
 //
 // Usage:
-//     go run presigned_put.go
+//
+//	go run presigned_put.go
+//
 // For this exampl to work, the domainName is needd
-//     weed s3 -domainName=localhost
+//
+//	weed s3 -domainName=localhost
 func main() {
 	util_http.InitGlobalHttpClient()
-	
+
 	h := md5.New()
 	content := strings.NewReader(stringContent)
 	content.WriteTo(h)

@@ -22,6 +22,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/constants"
 )
 
 func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *http.Request, contentLength int64, so *operation.StorageOption) {
@@ -50,13 +51,17 @@ func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *
 		reply, md5bytes, err = fs.doPutAutoChunk(ctx, w, r, chunkSize, contentLength, so)
 	}
 	if err != nil {
-		if err.Error() == "operation not permitted" {
+		errStr := err.Error()
+		switch {
+		case errStr == constants.ErrMsgOperationNotPermitted:
 			writeJsonError(w, r, http.StatusForbidden, err)
-		} else if strings.HasPrefix(err.Error(), "read input:") || err.Error() == io.ErrUnexpectedEOF.Error() {
+		case strings.HasPrefix(errStr, "read input:") || errStr == io.ErrUnexpectedEOF.Error():
 			writeJsonError(w, r, util.HttpStatusCancelled, err)
-		} else if strings.HasSuffix(err.Error(), "is a file") || strings.HasSuffix(err.Error(), "already exists") {
+		case strings.HasSuffix(errStr, "is a file") || strings.HasSuffix(errStr, "already exists"):
 			writeJsonError(w, r, http.StatusConflict, err)
-		} else {
+		case errStr == constants.ErrMsgBadDigest:
+			writeJsonError(w, r, http.StatusBadRequest, err)
+		default:
 			writeJsonError(w, r, http.StatusInternalServerError, err)
 		}
 	} else if reply != nil {
@@ -110,7 +115,7 @@ func (fs *FilerServer) doPostAutoChunk(ctx context.Context, w http.ResponseWrite
 	headerMd5 := r.Header.Get("Content-Md5")
 	if headerMd5 != "" && !(util.Base64Encode(md5bytes) == headerMd5 || fmt.Sprintf("%x", md5bytes) == headerMd5) {
 		fs.filer.DeleteUncommittedChunks(ctx, fileChunks)
-		return nil, nil, errors.New("The Content-Md5 you specified did not match what we received.")
+		return nil, nil, errors.New(constants.ErrMsgBadDigest)
 	}
 	filerResult, replyerr = fs.saveMetaData(ctx, r, fileName, contentType, so, md5bytes, fileChunks, chunkOffset, smallContent)
 	if replyerr != nil {
@@ -142,7 +147,7 @@ func (fs *FilerServer) doPutAutoChunk(ctx context.Context, w http.ResponseWriter
 	headerMd5 := r.Header.Get("Content-Md5")
 	if headerMd5 != "" && !(util.Base64Encode(md5bytes) == headerMd5 || fmt.Sprintf("%x", md5bytes) == headerMd5) {
 		fs.filer.DeleteUncommittedChunks(ctx, fileChunks)
-		return nil, nil, errors.New("The Content-Md5 you specified did not match what we received.")
+		return nil, nil, errors.New(constants.ErrMsgBadDigest)
 	}
 	filerResult, replyerr = fs.saveMetaData(ctx, r, fileName, contentType, so, md5bytes, fileChunks, chunkOffset, smallContent)
 	if replyerr != nil {
@@ -171,7 +176,7 @@ func (fs *FilerServer) checkPermissions(ctx context.Context, r *http.Request, fi
 		return err
 	} else if enforced {
 		// you cannot change a worm file
-		return errors.New("operation not permitted")
+		return errors.New(constants.ErrMsgOperationNotPermitted)
 	}
 
 	return nil

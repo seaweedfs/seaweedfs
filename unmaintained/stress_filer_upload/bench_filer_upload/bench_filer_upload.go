@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"io"
 	"log"
 	"math/rand"
@@ -13,7 +14,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 var (

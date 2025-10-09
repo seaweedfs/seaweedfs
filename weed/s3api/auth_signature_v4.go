@@ -216,13 +216,7 @@ func (iam *IdentityAccessManagement) doesSignatureMatch(hashedPayload string, r 
 	if forwardedPrefix := r.Header.Get("X-Forwarded-Prefix"); forwardedPrefix != "" {
 		// Try signature verification with the forwarded prefix first.
 		// This handles cases where reverse proxies strip URL prefixes and add the X-Forwarded-Prefix header.
-		// Preserve trailing slash if present in the original URL path to match S3 SDK signature
-		fullPath := forwardedPrefix + req.URL.Path
-		hasTrailingSlash := strings.HasSuffix(req.URL.Path, "/") && req.URL.Path != "/"
-		cleanedPath := path.Clean(fullPath)
-		if hasTrailingSlash && !strings.HasSuffix(cleanedPath, "/") {
-			cleanedPath += "/"
-		}
+		cleanedPath := buildPathWithForwardedPrefix(forwardedPrefix, req.URL.Path)
 		errCode = iam.verifySignatureWithPath(extractedSignedHeaders, hashedPayload, queryStr, cleanedPath, req.Method, foundCred.SecretKey, t, signV4Values)
 		if errCode == s3err.ErrNone {
 			return identity, errCode
@@ -236,6 +230,18 @@ func (iam *IdentityAccessManagement) doesSignatureMatch(hashedPayload string, r 
 	}
 
 	return nil, errCode
+}
+
+// buildPathWithForwardedPrefix combines forwarded prefix with URL path while preserving trailing slashes.
+// This ensures compatibility with S3 SDK signatures that include trailing slashes for directory operations.
+func buildPathWithForwardedPrefix(forwardedPrefix, urlPath string) string {
+	fullPath := forwardedPrefix + urlPath
+	hasTrailingSlash := strings.HasSuffix(urlPath, "/") && urlPath != "/"
+	cleanedPath := path.Clean(fullPath)
+	if hasTrailingSlash && !strings.HasSuffix(cleanedPath, "/") {
+		cleanedPath += "/"
+	}
+	return cleanedPath
 }
 
 // verifySignatureWithPath verifies signature with a given path (used for both normal and prefixed paths).
@@ -376,13 +382,7 @@ func (iam *IdentityAccessManagement) doesPresignedSignatureMatch(hashedPayload s
 	if forwardedPrefix := r.Header.Get("X-Forwarded-Prefix"); forwardedPrefix != "" {
 		// Try signature verification with the forwarded prefix first.
 		// This handles cases where reverse proxies strip URL prefixes and add the X-Forwarded-Prefix header.
-		// Preserve trailing slash if present in the original URL path to match S3 SDK signature
-		fullPath := forwardedPrefix + r.URL.Path
-		hasTrailingSlash := strings.HasSuffix(r.URL.Path, "/") && r.URL.Path != "/"
-		cleanedPath := path.Clean(fullPath)
-		if hasTrailingSlash && !strings.HasSuffix(cleanedPath, "/") {
-			cleanedPath += "/"
-		}
+		cleanedPath := buildPathWithForwardedPrefix(forwardedPrefix, r.URL.Path)
 		errCode = iam.verifyPresignedSignatureWithPath(extractedSignedHeaders, hashedPayload, queryStr, cleanedPath, r.Method, foundCred.SecretKey, t, credHeader, signature)
 		if errCode == s3err.ErrNone {
 			return identity, errCode

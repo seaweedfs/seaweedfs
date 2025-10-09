@@ -4,6 +4,8 @@ import (
 	"encoding/xml"
 	"fmt"
 	"net/http"
+
+	"github.com/seaweedfs/seaweedfs/weed/util/constants"
 )
 
 // APIError structure
@@ -59,6 +61,7 @@ const (
 	ErrInvalidBucketName
 	ErrInvalidBucketState
 	ErrInvalidDigest
+	ErrBadDigest
 	ErrInvalidMaxKeys
 	ErrInvalidMaxUploads
 	ErrInvalidMaxParts
@@ -185,6 +188,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrInvalidDigest: {
 		Code:           "InvalidDigest",
 		Description:    "The Content-Md5 you specified is not valid.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrBadDigest: {
+		Code:           "BadDigest",
+		Description:    constants.ErrMsgBadDigest,
 		HTTPStatusCode: http.StatusBadRequest,
 	},
 	ErrInvalidMaxUploads: {
