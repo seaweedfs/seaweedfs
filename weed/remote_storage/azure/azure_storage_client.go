@@ -7,7 +7,10 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"time"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blob"
@@ -57,7 +60,16 @@ func (s azureRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storag
 	}
 
 	serviceURL := fmt.Sprintf("https://%s.blob.core.windows.net/", accountName)
-	azClient, err := azblob.NewClientWithSharedKeyCredential(serviceURL, credential, nil)
+	azClient, err := azblob.NewClientWithSharedKeyCredential(serviceURL, credential, &azblob.ClientOptions{
+		ClientOptions: azcore.ClientOptions{
+			Retry: policy.RetryOptions{
+				MaxRetries:    10, // Increased from default 3 to maintain resiliency similar to old SDK's 20
+				TryTimeout:    time.Minute,
+				RetryDelay:    2 * time.Second,
+				MaxRetryDelay: time.Minute,
+			},
+		},
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Azure client: %v", err)
 	}

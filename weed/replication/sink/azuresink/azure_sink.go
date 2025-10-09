@@ -135,13 +135,17 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []
 	})
 	
 	if err != nil {
-		// Check if this is a precondition failed error (HTTP 412)
-		var respErr *azcore.ResponseError
-		if ok := errors.As(err, &respErr); ok && respErr.StatusCode == http.StatusPreconditionFailed {
-			glog.V(0).Infof("skip overwriting %s/%s: precondition failed", g.container, key)
-			return nil
+		if bloberror.HasCode(err, bloberror.BlobAlreadyExists) {
+			// Blob already exists, which is fine for an append blob - we can append to it
+		} else {
+			// Check if this is a precondition failed error (HTTP 412)
+			var respErr *azcore.ResponseError
+			if ok := errors.As(err, &respErr); ok && respErr.StatusCode == http.StatusPreconditionFailed {
+				glog.V(0).Infof("skip overwriting %s/%s: precondition failed", g.container, key)
+				return nil
+			}
+			return fmt.Errorf("azure create append blob %s/%s: %v", g.container, key, err)
 		}
-		return fmt.Errorf("azure create append blob %s/%s: %v", g.container, key, err)
 	}
 
 	writeFunc := func(data []byte) error {
