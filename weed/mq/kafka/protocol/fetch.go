@@ -1589,8 +1589,9 @@ func (h *Handler) decodeRecordValueToKafkaMessage(topicName string, recordValueB
 	// Try to unmarshal as RecordValue
 	recordValue := &schema_pb.RecordValue{}
 	if err := proto.Unmarshal(recordValueBytes, recordValue); err != nil {
-		// If it's not a RecordValue, return the raw bytes (backward compatibility)
-		Debug("Failed to unmarshal RecordValue, returning raw bytes: %v", err)
+		// Not a RecordValue format - this is normal for Avro/JSON/raw Kafka messages
+		// Return raw bytes as-is (Kafka consumers expect this)
+		Debug("Topic %s: using raw Kafka format (not RecordValue protobuf), size=%d bytes", topicName, len(recordValueBytes))
 		return recordValueBytes
 	}
 
