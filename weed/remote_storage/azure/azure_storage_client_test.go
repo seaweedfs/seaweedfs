@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/bloberror"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -45,8 +46,8 @@ func TestAzureStorageClientBasic(t *testing.T) {
 	t.Run("CreateBucket", func(t *testing.T) {
 		err := azClient.CreateBucket(testContainer)
 		// Ignore error if bucket already exists
-		if err != nil && !contains(err.Error(), "already exists") && !contains(err.Error(), "ContainerAlreadyExists") {
-			t.Logf("Warning: Failed to create bucket: %v", err)
+		if err != nil && !bloberror.HasCode(err, bloberror.ContainerAlreadyExists) {
+			t.Fatalf("Failed to create bucket: %v", err)
 		}
 	})
 
@@ -166,8 +167,8 @@ func TestAzureStorageClientBasic(t *testing.T) {
 	// Test 9: Verify file deleted (should fail)
 	t.Run("VerifyDeleted", func(t *testing.T) {
 		_, err := azClient.ReadFile(loc, 0, 10)
-		if err == nil {
-			t.Error("Expected error reading deleted file, got none")
+		if !bloberror.HasCode(err, bloberror.BlobNotFound) {
+			t.Errorf("Expected BlobNotFound error, but got: %v", err)
 		}
 	})
 
