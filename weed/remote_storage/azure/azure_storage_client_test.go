@@ -9,6 +9,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
 // TestAzureStorageClientBasic tests basic Azure storage client operations
@@ -192,8 +193,8 @@ func TestToMetadata(t *testing.T) {
 		{
 			name: "basic metadata",
 			input: map[string][]byte{
-				"x-amz-meta-key1": []byte("value1"),
-				"x-amz-meta-key2": []byte("value2"),
+				s3_constants.AmzUserMetaPrefix + "key1": []byte("value1"),
+				s3_constants.AmzUserMetaPrefix + "key2": []byte("value2"),
 			},
 			expected: map[string]*string{
 				"key1": stringPtr("value1"),
@@ -203,7 +204,7 @@ func TestToMetadata(t *testing.T) {
 		{
 			name: "metadata with dashes",
 			input: map[string][]byte{
-				"x-amz-meta-content-type": []byte("text/plain"),
+				s3_constants.AmzUserMetaPrefix + "content-type": []byte("text/plain"),
 			},
 			expected: map[string]*string{
 				"content_type": stringPtr("text/plain"),
@@ -212,8 +213,8 @@ func TestToMetadata(t *testing.T) {
 		{
 			name: "non-metadata keys ignored",
 			input: map[string][]byte{
-				"some-other-key":      []byte("ignored"),
-				"x-amz-meta-included": []byte("included"),
+				"some-other-key":                           []byte("ignored"),
+				s3_constants.AmzUserMetaPrefix + "included": []byte("included"),
 			},
 			expected: map[string]*string{
 				"included": stringPtr("included"),

@@ -11,6 +11,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blob"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/bloberror"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blockblob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/container"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -18,6 +19,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+)
+
+const (
+	defaultBlockSize   = 4 * 1024 * 1024
+	defaultConcurrency = 16
 )
 
 func init() {
@@ -165,8 +171,8 @@ func (az *azureRemoteStorageClient) WriteFile(loc *remote_pb.RemoteStorageLocati
 	}
 
 	_, err = blobClient.UploadStream(context.Background(), reader, &blockblob.UploadStreamOptions{
-		BlockSize:   4 * 1024 * 1024,
-		Concurrency: 16,
+		BlockSize:   defaultBlockSize,
+		Concurrency: defaultConcurrency,
 		HTTPHeaders: httpHeaders,
 		Metadata:    metadata,
 	})
@@ -238,6 +244,10 @@ func (az *azureRemoteStorageClient) DeleteFile(loc *remote_pb.RemoteStorageLocat
 		DeleteSnapshots: to.Ptr(blob.DeleteSnapshotsOptionTypeInclude),
 	})
 	if err != nil {
+		// Make delete idempotent - don't return error if blob doesn't exist
+		if bloberror.HasCode(err, bloberror.BlobNotFound) {
+			return nil
+		}
 		return fmt.Errorf("azure delete %s%s: %v", loc.Bucket, loc.Path, err)
 	}
 	return
