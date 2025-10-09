@@ -107,11 +107,8 @@ func (mc *MasterClient) setCurrentMaster(master pb.ServerAddress) {
 }
 
 func (mc *MasterClient) GetMaster(ctx context.Context) pb.ServerAddress {
-	glog.V(1).Infof("🔍 %s.%s GetMaster called - about to wait for connection", mc.FilerGroup, mc.clientType)
 	mc.WaitUntilConnected(ctx)
-	master := mc.getCurrentMaster()
-	glog.V(1).Infof("🎯 %s.%s GetMaster returning: %s", mc.FilerGroup, mc.clientType, master)
-	return master
+	return mc.getCurrentMaster()
 }
 
 func (mc *MasterClient) GetMasters(ctx context.Context) []pb.ServerAddress {
@@ -120,26 +117,21 @@ func (mc *MasterClient) GetMasters(ctx context.Context) []pb.ServerAddress {
 }
 
 func (mc *MasterClient) WaitUntilConnected(ctx context.Context) {
-	glog.V(1).Infof("⏳ %s.%s WaitUntilConnected starting - looking for current master", mc.FilerGroup, mc.clientType)
-
 	attempts := 0
 	for {
 		select {
 		case <-ctx.Done():
-			glog.V(0).Infof("Connection wait stopped: %v", ctx.Err())
 			return
 		default:
 			currentMaster := mc.getCurrentMaster()
 			if currentMaster != "" {
-				glog.V(1).Infof("✅ %s.%s WaitUntilConnected found master: %s (after %d attempts)", mc.FilerGroup, mc.clientType, currentMaster, attempts)
 				return
 			}
 			attempts++
-			if attempts%50 == 0 { // Log every 50 attempts (roughly every 10 seconds)
-				glog.V(0).Infof("🔄 %s.%s WaitUntilConnected still waiting for master connection (attempt %d)...", mc.FilerGroup, mc.clientType, attempts)
+			if attempts%100 == 0 { // Log every 100 attempts (roughly every 20 seconds)
+				glog.V(0).Infof("%s.%s WaitUntilConnected still waiting for master connection (attempt %d)...", mc.FilerGroup, mc.clientType, attempts)
 			}
 			time.Sleep(time.Duration(rand.Int31n(200)) * time.Millisecond)
-			print(".")
 		}
 	}
 }
@@ -335,19 +327,10 @@ func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 }
 
 func (mc *MasterClient) WithClient(streamingMode bool, fn func(client master_pb.SeaweedClient) error) error {
-	glog.V(1).Infof("🚪 %s.%s WithClient called (streamingMode=%t)", mc.FilerGroup, mc.clientType, streamingMode)
 	getMasterF := func() pb.ServerAddress {
-		master := mc.GetMaster(context.Background())
-		glog.V(1).Infof("🎯 %s.%s WithClient getMasterF returning: %s", mc.FilerGroup, mc.clientType, master)
-		return master
+		return mc.GetMaster(context.Background())
 	}
-	err := mc.WithClientCustomGetMaster(getMasterF, streamingMode, fn)
-	if err != nil {
-		glog.Errorf("❌ %s.%s WithClient failed: %v", mc.FilerGroup, mc.clientType, err)
-	} else {
-		glog.V(1).Infof("✅ %s.%s WithClient completed successfully", mc.FilerGroup, mc.clientType)
-	}
-	return err
+	return mc.WithClientCustomGetMaster(getMasterF, streamingMode, fn)
 }
 
 func (mc *MasterClient) WithClientCustomGetMaster(getMasterF func() pb.ServerAddress, streamingMode bool, fn func(client master_pb.SeaweedClient) error) error {

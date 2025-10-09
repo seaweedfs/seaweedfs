@@ -113,18 +113,18 @@ func (lock *LiveLock) AttemptToLock(lockDuration time.Duration) error {
 	glog.V(4).Infof("LOCK: AttemptToLock key=%s owner=%s", lock.key, lock.self)
 	errorMessage, err := lock.doLock(lockDuration)
 	if err != nil {
-		glog.V(0).Infof("❌ LOCK: doLock failed for key=%s: %v", lock.key, err)
+		glog.V(1).Infof("LOCK: doLock failed for key=%s: %v", lock.key, err)
 		time.Sleep(time.Second)
 		return err
 	}
 	if errorMessage != "" {
-		glog.V(0).Infof("⚠️  LOCK: doLock returned error message for key=%s: %s", lock.key, errorMessage)
+		glog.V(1).Infof("LOCK: doLock returned error message for key=%s: %s", lock.key, errorMessage)
 		time.Sleep(time.Second)
 		return fmt.Errorf("%v", errorMessage)
 	}
 	if !lock.isLocked {
 		// Only log when transitioning from unlocked to locked
-		glog.V(0).Infof("✅ LOCK: Successfully acquired key=%s owner=%s", lock.key, lock.self)
+		glog.V(1).Infof("LOCK: Successfully acquired key=%s owner=%s", lock.key, lock.self)
 	}
 	lock.isLocked = true
 	return nil
@@ -182,13 +182,13 @@ func (lock *LiveLock) doLock(lockDuration time.Duration) (errorMessage string, e
 		} else {
 			//this can be retried. Need to remember the last valid renewToken
 			lock.renewToken = ""
-			glog.V(0).Infof("⚠️  LOCK: Cleared renewToken for key=%s (err=%v)", lock.key, err)
+			glog.V(1).Infof("LOCK: Cleared renewToken for key=%s (err=%v)", lock.key, err)
 		}
 		if resp != nil {
 			errorMessage = resp.Error
 			if resp.LockHostMovedTo != "" && resp.LockHostMovedTo != string(previousHostFiler) {
 				// Only log if the host actually changed
-				glog.V(0).Infof("🔄 LOCK: Host changed from %s to %s for key=%s", previousHostFiler, resp.LockHostMovedTo, lock.key)
+				glog.V(1).Infof("LOCK: Host changed from %s to %s for key=%s", previousHostFiler, resp.LockHostMovedTo, lock.key)
 				lock.hostFiler = pb.ServerAddress(resp.LockHostMovedTo)
 				lock.lc.seedFiler = lock.hostFiler
 			} else if resp.LockHostMovedTo != "" {
@@ -196,12 +196,12 @@ func (lock *LiveLock) doLock(lockDuration time.Duration) (errorMessage string, e
 			}
 			if resp.LockOwner != "" && resp.LockOwner != previousOwner {
 				// Only log if the owner actually changed
-				glog.V(0).Infof("👤 LOCK: Owner changed from %s to %s for key=%s", previousOwner, resp.LockOwner, lock.key)
+				glog.V(1).Infof("LOCK: Owner changed from %s to %s for key=%s", previousOwner, resp.LockOwner, lock.key)
 				lock.owner = resp.LockOwner
 			} else if resp.LockOwner != "" {
 				lock.owner = resp.LockOwner
 			} else if previousOwner != "" {
-				glog.V(0).Infof("⚠️  LOCK: Owner cleared for key=%s", lock.key)
+				glog.V(1).Infof("LOCK: Owner cleared for key=%s", lock.key)
 				lock.owner = ""
 			}
 		}

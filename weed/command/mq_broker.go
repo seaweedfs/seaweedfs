@@ -116,7 +116,7 @@ func (mqBrokerOpt *MessageQueueBrokerOptions) startQueueServer() bool {
 	}
 
 	// Start HTTP profiling server if enabled
-	if *mqBrokerOpt.pprofPort > 0 {
+	if mqBrokerOpt.pprofPort != nil && *mqBrokerOpt.pprofPort > 0 {
 		go func() {
 			pprofAddr := fmt.Sprintf(":%d", *mqBrokerOpt.pprofPort)
 			glog.V(0).Infof("MQ Broker pprof server listening on %s", pprofAddr)
