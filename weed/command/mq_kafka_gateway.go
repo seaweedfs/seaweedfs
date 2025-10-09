@@ -98,7 +98,7 @@ func runMqKafkaGateway(cmd *Command, args []string) bool {
 		DefaultPartitions: int32(*mqKafkaGatewayOptions.defaultPartitions),
 	})
 
-	glog.Warningf("⚠️  EXPERIMENTAL FEATURE: MQ Kafka Gateway is experimental and should NOT be used in production environments. It currently supports only a minimal subset of Kafka protocol for development purposes.")
+	glog.Warningf("EXPERIMENTAL FEATURE: MQ Kafka Gateway is experimental and should NOT be used in production environments. It currently supports only a minimal subset of Kafka protocol for development purposes.")
 
 	// Show bind vs advertised addresses for clarity
 	if bindIP != *mqKafkaGatewayOptions.ip {
