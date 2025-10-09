@@ -226,7 +226,11 @@ func toMetadata(attributes map[string][]byte) map[string]*string {
 	metadata := make(map[string]*string)
 	for k, v := range attributes {
 		if strings.HasPrefix(k, s3_constants.AmzUserMetaPrefix) {
-			key := strings.Replace(k[len(s3_constants.AmzUserMetaPrefix):], "-", "_", -1)
+			key := strings.ReplaceAll(k[len(s3_constants.AmzUserMetaPrefix):], "-", "_")
+			// Azure metadata keys must be valid C# identifiers, which cannot start with a digit.
+			if len(key) > 0 && key[0] >= '0' && key[0] <= '9' {
+				key = "_" + key
+			}
 			val := string(v)
 			metadata[key] = &val
 		}

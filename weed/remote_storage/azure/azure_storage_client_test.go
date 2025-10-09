@@ -222,6 +222,19 @@ func TestToMetadata(t *testing.T) {
 			},
 		},
 		{
+			name: "keys starting with digits",
+			input: map[string][]byte{
+				s3_constants.AmzUserMetaPrefix + "123key":   []byte("value1"),
+				s3_constants.AmzUserMetaPrefix + "456-test": []byte("value2"),
+				s3_constants.AmzUserMetaPrefix + "789":      []byte("value3"),
+			},
+			expected: map[string]*string{
+				"_123key":   stringPtr("value1"),
+				"_456_test": stringPtr("value2"),
+				"_789":      stringPtr("value3"),
+			},
+		},
+		{
 			name:     "empty input",
 			input:    map[string][]byte{},
 			expected: map[string]*string{},
