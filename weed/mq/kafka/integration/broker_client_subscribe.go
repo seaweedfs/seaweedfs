@@ -259,7 +259,9 @@ func (bc *BrokerClient) ReadRecords(session *BrokerSubscriberSession, maxRecords
 	// Use reasonable timeout to balance consumer responsiveness and producer needs
 	// Wait up to 2s for first record (allows Schema Registry producer to write+confirm)
 	// Reduced from 10s to prevent excessive consumer lag (5x improvement)
-	firstRecordTimeout := 2 * time.Second
+	// With concurrent partition fetching, keep timeout low to prevent client timeouts
+	// Must be less than client fetch_max_wait_ms (100ms) to allow all concurrent fetches to complete
+	firstRecordTimeout := 50 * time.Millisecond
 	ctx, cancel := context.WithTimeout(context.Background(), firstRecordTimeout)
 	defer cancel()
 

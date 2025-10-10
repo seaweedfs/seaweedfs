@@ -511,6 +511,8 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 
 	defer func() {
 		Debug("[%s] Connection closing, cleaning up BrokerClient", connectionID)
+		// Close all partition readers first
+		cleanupPartitionReaders(connContext)
 		// Close the per-connection broker client
 		if connBrokerClient != nil {
 			if closeErr := connBrokerClient.Close(); closeErr != nil {
@@ -4252,4 +4254,51 @@ func isSystemTopic(topicName string) bool {
 
 	// Check for topics starting with underscore (common system topic pattern)
 	return len(topicName) > 0 && topicName[0] == '_'
+}
+
+// getConnectionContextFromRequest extracts the connection context from the request context
+func (h *Handler) getConnectionContextFromRequest(ctx context.Context) *ConnectionContext {
+	if connCtx, ok := ctx.Value(connContextKey).(*ConnectionContext); ok {
+		return connCtx
+	}
+	return nil
+}
+
+// getOrCreatePartitionReader gets an existing partition reader or creates a new one
+// This maintains persistent readers per connection that stream forward, eliminating
+// repeated offset lookups and reducing broker CPU load
+func (h *Handler) getOrCreatePartitionReader(ctx context.Context, connCtx *ConnectionContext, key TopicPartitionKey, startOffset int64) *partitionReader {
+	// Try to get existing reader
+	if val, ok := connCtx.partitionReaders.Load(key); ok {
+		return val.(*partitionReader)
+	}
+
+	// Create new reader
+	reader := newPartitionReader(ctx, h, connCtx, key.Topic, key.Partition, startOffset)
+
+	// Store it (handle race condition where another goroutine created one)
+	if actual, loaded := connCtx.partitionReaders.LoadOrStore(key, reader); loaded {
+		// Another goroutine created it first, close ours and use theirs
+		reader.close()
+		return actual.(*partitionReader)
+	}
+
+	return reader
+}
+
+// cleanupPartitionReaders closes all partition readers for a connection
+// Called when connection is closing
+func cleanupPartitionReaders(connCtx *ConnectionContext) {
+	if connCtx == nil {
+		return
+	}
+
+	connCtx.partitionReaders.Range(func(key, value interface{}) bool {
+		if reader, ok := value.(*partitionReader); ok {
+			reader.close()
+		}
+		return true // Continue iteration
+	})
+
+	glog.V(1).Infof("[%s] Cleaned up partition readers", connCtx.ConnectionID)
 }

@@ -16,6 +16,16 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// partitionFetchResult holds the result of fetching from a single partition
+type partitionFetchResult struct {
+	topicIndex     int
+	partitionIndex int
+	recordBatch    []byte
+	highWaterMark  int64
+	errorCode      int16
+	fetchDuration  time.Duration
+}
+
 func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
 	// Parse the Fetch request to get the requested topics and partitions
 	fetchRequest, err := h.parseFetchRequest(apiVersion, requestBody)
@@ -146,7 +156,85 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 		response = append(response, topicsCountBytes...)
 	}
 
+	// ====================================================================
+	// PERSISTENT PARTITION READERS
+	// Use per-connection persistent goroutines that maintain offset position
+	// and stream forward, eliminating repeated lookups and reducing broker CPU
+	// ====================================================================
+
+	// Get connection context to access persistent partition readers
+	connContext := h.getConnectionContextFromRequest(ctx)
+	if connContext == nil {
+		return nil, fmt.Errorf("connection context not available")
+	}
+
+	// Collect results from persistent readers
+	results := make([]*partitionFetchResult, 0)
+	persistentFetchStart := time.Now()
+
+	// Signal each partition reader to fetch data
+	for _, topic := range fetchRequest.Topics {
+		isSchematizedTopic := false
+		if h.IsSchemaEnabled() {
+			isSchematizedTopic = h.isSchematizedTopic(topic.Name)
+		}
+
+		for _, partition := range topic.Partitions {
+			key := TopicPartitionKey{Topic: topic.Name, Partition: partition.PartitionID}
+
+			// Get or create persistent reader for this partition
+			reader := h.getOrCreatePartitionReader(ctx, connContext, key, partition.FetchOffset)
+
+			// Signal reader to fetch and wait for result
+			resultChan := make(chan *partitionFetchResult, 1)
+			fetchReq := &partitionFetchRequest{
+				requestedOffset: partition.FetchOffset,
+				maxBytes:        partition.MaxBytes,
+				resultChan:      resultChan,
+				isSchematized:   isSchematizedTopic,
+				apiVersion:      apiVersion,
+			}
+
+			// Send fetch request to reader (non-blocking)
+			select {
+			case reader.fetchChan <- fetchReq:
+				// Request sent successfully
+			case <-ctx.Done():
+				return nil, fmt.Errorf("context cancelled")
+			case <-time.After(50 * time.Millisecond):
+				// Reader is busy, return empty result
+				glog.Warningf("[%s] Reader busy for %s[%d], returning empty",
+					connContext.ConnectionID, topic.Name, partition.PartitionID)
+				results = append(results, &partitionFetchResult{})
+				continue
+			}
+
+			// Wait for result with timeout
+			select {
+			case result := <-resultChan:
+				results = append(results, result)
+			case <-ctx.Done():
+				return nil, fmt.Errorf("context cancelled")
+			case <-time.After(100 * time.Millisecond):
+				// Timeout - return empty result
+				glog.V(1).Infof("[%s] Fetch timeout for %s[%d]",
+					connContext.ConnectionID, topic.Name, partition.PartitionID)
+				results = append(results, &partitionFetchResult{})
+			}
+		}
+	}
+
+	persistentFetchDuration := time.Since(persistentFetchStart)
+	Debug("Persistent reader fetch completed: %d partitions in %v (avg %.2fms/partition)",
+		len(results), persistentFetchDuration, float64(persistentFetchDuration.Milliseconds())/float64(len(results)))
+
+	// ====================================================================
+	// BUILD RESPONSE FROM FETCHED DATA
+	// Now assemble the response in the correct order using fetched results
+	// ====================================================================
+
 	// Process each requested topic
+	resultIdx := 0
 	for _, topic := range fetchRequest.Topics {
 		topicNameBytes := []byte(topic.Name)
 
@@ -170,66 +258,25 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 			response = append(response, partitionsCountBytes...)
 		}
 
-		// Check if this topic uses schema management (topic-level check with filer metadata)
-		var isSchematizedTopic bool
-		if h.IsSchemaEnabled() {
-			// Use existing schema detection logic
-			isSchematizedTopic = h.isSchematizedTopic(topic.Name)
-			if isSchematizedTopic {
-				Debug("Topic %s is schematized (from filer metadata), will fetch schematized records for all partitions", topic.Name)
-			}
-		}
-
-		// Process each requested partition
+		// Process each requested partition (using pre-fetched results)
 		for _, partition := range topic.Partitions {
-			Debug("Processing fetch for topic %s partition %d", topic.Name, partition.PartitionID)
+			// Get the pre-fetched result for this partition
+			result := results[resultIdx]
+			resultIdx++
+
+			Debug("Assembling response for topic %s partition %d (fetch took %v)",
+				topic.Name, partition.PartitionID, result.fetchDuration)
+
 			// Partition ID
 			partitionIDBytes := make([]byte, 4)
 			binary.BigEndian.PutUint32(partitionIDBytes, uint32(partition.PartitionID))
 			response = append(response, partitionIDBytes...)
 
-			// Error code (2 bytes) - default 0 = no error (may patch below)
-			errorPos := len(response)
-			response = append(response, 0, 0)
+			// Error code (2 bytes) - use the result's error code
+			response = append(response, byte(result.errorCode>>8), byte(result.errorCode))
 
-			// Use direct SMQ reading - no ledgers needed
-			// CRITICAL DEBUG: This should appear in logs if the new binary is running
-
-			// Get the actual high water mark from SeaweedMQ using the same method as ListOffsets
-			highWaterMark, err := h.seaweedMQHandler.GetLatestOffset(topic.Name, partition.PartitionID)
-			if err != nil {
-				if isSchemasTopic {
-					glog.Errorf("SR ERROR: Failed to get HWM for %s partition %d: %v", topic.Name, partition.PartitionID, err)
-				} else {
-					Debug("Failed to get latest offset for topic %s partition %d: %v", topic.Name, partition.PartitionID, err)
-				}
-				highWaterMark = 0 // Fallback to 0 if we can't determine the offset
-			}
-
-			if isSchemasTopic {
-				glog.V(2).Infof("SR HWM: topic=%s partition=%d fetchOffset=%d highWaterMark=%d",
-					topic.Name, partition.PartitionID, partition.FetchOffset, highWaterMark)
-			} else {
-				Debug("*** FETCH: Got highWaterMark %d for topic %s partition %d", highWaterMark, topic.Name, partition.PartitionID)
-			}
-
-			if strings.HasPrefix(topic.Name, "_") {
-				Debug("SYSTEM TOPIC: %s is a system topic, highWaterMark=%d", topic.Name, highWaterMark)
-			}
-
-			// Normalize special fetch offsets: -2 = earliest, -1 = latest
-			effectiveFetchOffset := partition.FetchOffset
-			if effectiveFetchOffset < 0 {
-				if effectiveFetchOffset == -2 { // earliest
-					effectiveFetchOffset = 0
-				} else if effectiveFetchOffset == -1 { // latest
-					effectiveFetchOffset = highWaterMark
-				}
-			}
-
-			fetchStartTime := time.Now()
-			Debug("Fetch v%d - Topic: %s, partition: %d, fetchOffset: %d (effective: %d), highWaterMark: %d, maxBytes: %d",
-				apiVersion, topic.Name, partition.PartitionID, partition.FetchOffset, effectiveFetchOffset, highWaterMark, partition.MaxBytes)
+			// Use the pre-fetched high water mark from concurrent fetch
+			highWaterMark := result.highWaterMark
 
 			// High water mark (8 bytes)
 			highWaterMarkBytes := make([]byte, 8)
@@ -247,141 +294,8 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 				response = append(response, 0, 0, 0, 0)
 			}
 
-			// If topic does not exist, check if it's a system topic that should be auto-created
-			if !h.seaweedMQHandler.TopicExists(topic.Name) {
-				if isSystemTopic(topic.Name) {
-					// Auto-create system topics
-					glog.V(0).Infof("SR TOPIC: Auto-creating system topic %s during fetch", topic.Name)
-					if err := h.createTopicWithSchemaSupport(topic.Name, 1); err != nil {
-						glog.Errorf("SR ERROR: Failed to auto-create system topic %s: %v", topic.Name, err)
-						response[errorPos] = 0
-						response[errorPos+1] = 3 // UNKNOWN_TOPIC_OR_PARTITION
-					} else {
-						glog.V(0).Infof("SR TOPIC: Successfully auto-created system topic %s", topic.Name)
-						// Topic now exists, continue with fetch
-					}
-				} else {
-					Debug("Topic %s does not exist and is not a system topic", topic.Name)
-					response[errorPos] = 0
-					response[errorPos+1] = 3 // UNKNOWN_TOPIC_OR_PARTITION
-				}
-			} else {
-				if isSchemasTopic {
-					glog.V(2).Infof("SR TOPIC: Topic %s exists", topic.Name)
-				} else {
-					Debug("Topic %s exists", topic.Name)
-				}
-			}
-
-			// Records - get actual stored record batches using multi-batch fetcher
-			var recordBatch []byte
-			if highWaterMark > effectiveFetchOffset {
-				Debug("Multi-batch fetch - partition:%d, offset:%d, maxBytes:%d",
-					partition.PartitionID, effectiveFetchOffset, partition.MaxBytes)
-
-				// Use multi-batch fetcher for better MaxBytes compliance
-				multiFetcher := NewMultiBatchFetcher(h)
-				multiBatchStartTime := time.Now()
-				result, err := multiFetcher.FetchMultipleBatches(
-					topic.Name,
-					partition.PartitionID,
-					effectiveFetchOffset,
-					highWaterMark,
-					partition.MaxBytes,
-				)
-				multiBatchDuration := time.Since(multiBatchStartTime)
-
-				if err == nil && result.TotalSize > 0 {
-					Debug("Multi-batch result - %d batches, %d bytes, next offset %d, duration=%v",
-						result.BatchCount, result.TotalSize, result.NextOffset, multiBatchDuration)
-					recordBatch = result.RecordBatches
-					if strings.Contains(topic.Name, "loadtest") {
-						glog.Infof("FETCH PAYLOAD READY: topic=%s partition=%d fetchOffset=%d batches=%d bytes=%d nextOffset=%d",
-							topic.Name, partition.PartitionID, effectiveFetchOffset, result.BatchCount, result.TotalSize, result.NextOffset)
-					}
-					if strings.HasPrefix(topic.Name, "_schemas") {
-						glog.V(0).Infof("SR FETCH DATA: topic=%s partition=%d fetchOffset=%d batches=%d bytes=%d nextOffset=%d",
-							topic.Name, partition.PartitionID, effectiveFetchOffset, result.BatchCount, result.TotalSize, result.NextOffset)
-					}
-				} else {
-					if isSchemasTopic && err != nil {
-						glog.Errorf("SR ERROR: Multi-batch fetch failed for %s: %v, duration=%v", topic.Name, err, multiBatchDuration)
-					} else if isSchemasTopic {
-						glog.V(0).Infof("SR FETCH: No data in multi-batch (empty topic), falling back to single batch")
-					}
-					Debug("Multi-batch failed or empty, falling back to single batch, duration=%v", multiBatchDuration)
-					// Fallback to original single batch logic
-					Debug("GetStoredRecords: topic='%s', partition=%d, offset=%d, limit=10", topic.Name, partition.PartitionID, effectiveFetchOffset)
-					startTime := time.Now()
-					smqRecords, err := h.seaweedMQHandler.GetStoredRecords(topic.Name, partition.PartitionID, effectiveFetchOffset, 10)
-					duration := time.Since(startTime)
-					Debug("GetStoredRecords result: records=%d, err=%v, duration=%v", len(smqRecords), err, duration)
-					if err == nil && len(smqRecords) > 0 {
-						recordBatch = h.constructRecordBatchFromSMQ(topic.Name, effectiveFetchOffset, smqRecords)
-						if isSchemasTopic {
-							glog.V(0).Infof("SR FETCH FALLBACK: Got %d records, batch size: %d bytes", len(smqRecords), len(recordBatch))
-						}
-						Debug("Fallback single batch size: %d bytes", len(recordBatch))
-					} else {
-						// No records available - return empty batch instead of generating test data
-						recordBatch = []byte{}
-						if isSchemasTopic {
-							if err != nil {
-								glog.Errorf("SR ERROR: GetStoredRecords failed: %v", err)
-							} else {
-								glog.V(0).Infof("SR FETCH EMPTY: No records at offset %d (HWM=%d)", effectiveFetchOffset, highWaterMark)
-							}
-						}
-						Debug("No records available - returning empty batch")
-					}
-				}
-			} else {
-				if isSchemasTopic {
-					glog.V(2).Infof("SR FETCH: No data available - fetchOffset=%d >= HWM=%d", effectiveFetchOffset, highWaterMark)
-				}
-				Debug("No messages available - effective fetchOffset %d >= highWaterMark %d", effectiveFetchOffset, highWaterMark)
-				recordBatch = []byte{} // No messages available
-			}
-
-			// Try to fetch schematized records if this topic uses schema management
-			// BUT ONLY if we don't already have a recordBatch from the multi-batch fetcher
-			// to avoid double-fetching which causes blocking
-			if isSchematizedTopic && len(recordBatch) == 0 {
-				glog.Infof("SCHEMA PATH: topic=%s partition=%d offset=%d isSchematizedTopic=true, recordBatch empty, attempting fetchSchematizedRecords",
-					topic.Name, partition.PartitionID, effectiveFetchOffset)
-				schematizedRecords, err := h.fetchSchematizedRecords(topic.Name, partition.PartitionID, effectiveFetchOffset, partition.MaxBytes)
-				if err != nil {
-					glog.Infof("SCHEMA PATH ERROR: topic=%s partition=%d err=%v", topic.Name, partition.PartitionID, err)
-					Debug("Failed to fetch schematized records for topic %s partition %d: %v", topic.Name, partition.PartitionID, err)
-				} else if len(schematizedRecords) > 0 {
-					glog.Infof("SCHEMA PATH SUCCESS: topic=%s partition=%d schematizedRecords=%d, creating batch",
-						topic.Name, partition.PartitionID, len(schematizedRecords))
-					Debug("Successfully fetched %d schematized records for topic %s partition %d", len(schematizedRecords), topic.Name, partition.PartitionID)
-
-					// Create schematized record batch and replace the regular record batch
-					schematizedBatch := h.createSchematizedRecordBatch(schematizedRecords, effectiveFetchOffset)
-					if len(schematizedBatch) > 0 {
-						// Replace the record batch with the schematized version
-						recordBatch = schematizedBatch
-						glog.Infof("SCHEMA PATH REPLACED: topic=%s partition=%d recordBatchSize=%d",
-							topic.Name, partition.PartitionID, len(schematizedBatch))
-						Debug("Replaced record batch with schematized version: %d bytes for %d messages", len(recordBatch), len(schematizedRecords))
-					} else {
-						glog.Infof("SCHEMA PATH BATCH EMPTY: topic=%s partition=%d schematizedBatch=0 bytes, NOT replacing",
-							topic.Name, partition.PartitionID)
-					}
-				} else {
-					glog.Infof("SCHEMA PATH EMPTY: topic=%s partition=%d schematizedRecords=0, keeping original recordBatch=%d bytes",
-						topic.Name, partition.PartitionID, len(recordBatch))
-				}
-			} else if isSchematizedTopic && len(recordBatch) > 0 {
-				glog.Infof("SCHEMA PATH SKIPPED: topic=%s partition=%d already has recordBatch=%d bytes from multi-batch fetch, using it as-is",
-					topic.Name, partition.PartitionID, len(recordBatch))
-			}
-
-			fetchDuration := time.Since(fetchStartTime)
-			Debug("Fetch v%d - Partition processing completed: topic=%s, partition=%d, duration=%v, recordBatchSize=%d",
-				apiVersion, topic.Name, partition.PartitionID, fetchDuration, len(recordBatch))
+			// Use the pre-fetched record batch
+			recordBatch := result.recordBatch
 
 			// Records size - flexible versions (v12+) use compact format: varint(size+1)
 			if isFlexible {
@@ -1737,4 +1651,93 @@ func (h *Handler) recordValueToJSON(recordValue *schema_pb.RecordValue) []byte {
 	jsonStr += "}"
 
 	return []byte(jsonStr)
+}
+
+// fetchPartitionData fetches data for a single partition (called concurrently)
+func (h *Handler) fetchPartitionData(
+	ctx context.Context,
+	topicName string,
+	partition FetchPartition,
+	apiVersion uint16,
+	isSchematizedTopic bool,
+) *partitionFetchResult {
+	startTime := time.Now()
+	result := &partitionFetchResult{}
+
+	// Get the actual high water mark from SeaweedMQ
+	highWaterMark, err := h.seaweedMQHandler.GetLatestOffset(topicName, partition.PartitionID)
+	if err != nil {
+		Debug("Failed to get latest offset for topic %s partition %d: %v", topicName, partition.PartitionID, err)
+		highWaterMark = 0
+	}
+	result.highWaterMark = highWaterMark
+
+	// Check if topic exists
+	if !h.seaweedMQHandler.TopicExists(topicName) {
+		if isSystemTopic(topicName) {
+			// Auto-create system topics
+			if err := h.createTopicWithSchemaSupport(topicName, 1); err != nil {
+				result.errorCode = 3 // UNKNOWN_TOPIC_OR_PARTITION
+				result.fetchDuration = time.Since(startTime)
+				return result
+			}
+		} else {
+			result.errorCode = 3 // UNKNOWN_TOPIC_OR_PARTITION
+			result.fetchDuration = time.Since(startTime)
+			return result
+		}
+	}
+
+	// Normalize special fetch offsets
+	effectiveFetchOffset := partition.FetchOffset
+	if effectiveFetchOffset < 0 {
+		if effectiveFetchOffset == -2 {
+			effectiveFetchOffset = 0
+		} else if effectiveFetchOffset == -1 {
+			effectiveFetchOffset = highWaterMark
+		}
+	}
+
+	// Fetch records if available
+	var recordBatch []byte
+	if highWaterMark > effectiveFetchOffset {
+		// Use multi-batch fetcher
+		multiFetcher := NewMultiBatchFetcher(h)
+		fetchResult, err := multiFetcher.FetchMultipleBatches(
+			topicName,
+			partition.PartitionID,
+			effectiveFetchOffset,
+			highWaterMark,
+			partition.MaxBytes,
+		)
+
+		if err == nil && fetchResult.TotalSize > 0 {
+			recordBatch = fetchResult.RecordBatches
+		} else {
+			// Fallback to single batch
+			smqRecords, err := h.seaweedMQHandler.GetStoredRecords(topicName, partition.PartitionID, effectiveFetchOffset, 10)
+			if err == nil && len(smqRecords) > 0 {
+				recordBatch = h.constructRecordBatchFromSMQ(topicName, effectiveFetchOffset, smqRecords)
+			} else {
+				recordBatch = []byte{}
+			}
+		}
+	} else {
+		recordBatch = []byte{}
+	}
+
+	// Try schematized records if needed and recordBatch is empty
+	if isSchematizedTopic && len(recordBatch) == 0 {
+		schematizedRecords, err := h.fetchSchematizedRecords(topicName, partition.PartitionID, effectiveFetchOffset, partition.MaxBytes)
+		if err == nil && len(schematizedRecords) > 0 {
+			schematizedBatch := h.createSchematizedRecordBatch(schematizedRecords, effectiveFetchOffset)
+			if len(schematizedBatch) > 0 {
+				recordBatch = schematizedBatch
+			}
+		}
+	}
+
+	result.recordBatch = recordBatch
+	result.fetchDuration = time.Since(startTime)
+	return result
 }

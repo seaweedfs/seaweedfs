@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 )
 
 // ConsumerProtocolMetadata represents parsed consumer protocol metadata
@@ -27,6 +28,10 @@ type ConnectionContext struct {
 	// CRITICAL: Each Kafka connection MUST have its own gRPC streams to avoid interference
 	// when multiple consumers or requests are active on different connections
 	BrokerClient interface{} // Will be set to *integration.BrokerClient
+
+	// Persistent partition readers - one goroutine per topic-partition that maintains position
+	// and streams forward, eliminating repeated offset lookups and reducing broker CPU load
+	partitionReaders sync.Map // map[TopicPartitionKey]*partitionReader
 }
 
 // ExtractClientHost extracts the client hostname/IP from connection context

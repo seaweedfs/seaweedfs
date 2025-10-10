@@ -89,9 +89,17 @@ func (c *Consumer) initSaramaConsumer() error {
 
 	// Fetch configuration
 	config.Consumer.Fetch.Min = int32(c.config.Consumers.FetchMinBytes)
+	config.Consumer.Fetch.Default = 10 * 1024 * 1024 // 10MB per partition (increased from 1MB default)
 	config.Consumer.Fetch.Max = int32(c.config.Consumers.FetchMaxBytes)
 	config.Consumer.MaxWaitTime = time.Duration(c.config.Consumers.FetchMaxWaitMs) * time.Millisecond
 	config.Consumer.MaxProcessingTime = time.Duration(c.config.Consumers.MaxPollIntervalMs) * time.Millisecond
+	
+	// Channel buffer sizes for concurrent partition consumption
+	config.ChannelBufferSize = 256 // Increase from default 256 to allow more buffering
+	
+	// Enable concurrent partition fetching by increasing the number of broker connections
+	// This allows Sarama to fetch from multiple partitions in parallel
+	config.Net.MaxOpenRequests = 20 // Increase from default 5 to allow 20 concurrent requests
 
 	// Version
 	config.Version = sarama.V2_8_0_0

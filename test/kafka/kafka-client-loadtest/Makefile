@@ -140,6 +140,7 @@ test: start ## Run the comprehensive load test
 	@echo "Producers: $(PRODUCER_COUNT), Consumers: $(CONSUMER_COUNT)"
 	@echo "Message Rate: $(MESSAGE_RATE) msgs/sec, Size: $(MESSAGE_SIZE) bytes"
 	@echo ""
+	@docker rm -f kafka-client-loadtest-runner 2>/dev/null || true
 	TEST_MODE=$(TEST_MODE) TEST_DURATION=$(TEST_DURATION) PRODUCER_COUNT=$(PRODUCER_COUNT) CONSUMER_COUNT=$(CONSUMER_COUNT) MESSAGE_RATE=$(MESSAGE_RATE) MESSAGE_SIZE=$(MESSAGE_SIZE) VALUE_TYPE=$(VALUE_TYPE) $(DOCKER_COMPOSE) --profile loadtest up --abort-on-container-exit kafka-client-loadtest
 	@echo "$(GREEN)Load test completed!$(NC)"
 	@$(MAKE) show-results
