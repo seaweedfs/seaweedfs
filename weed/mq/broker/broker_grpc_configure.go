@@ -71,6 +71,7 @@ func (b *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *mq_pb.
 		// Update schema in existing configuration
 		resp.MessageRecordType = request.MessageRecordType
 		resp.KeyColumns = request.KeyColumns
+		resp.SchemaFormat = request.SchemaFormat
 
 		if err := b.fca.SaveTopicConfToFiler(t, resp); err != nil {
 			return nil, fmt.Errorf("update topic schemas: %w", err)
@@ -96,6 +97,7 @@ func (b *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *mq_pb.
 	// Set flat schema format
 	resp.MessageRecordType = request.MessageRecordType
 	resp.KeyColumns = request.KeyColumns
+	resp.SchemaFormat = request.SchemaFormat
 	resp.Retention = request.Retention
 
 	// save the topic configuration on filer

@@ -490,6 +490,7 @@ type ConfigureTopicRequest struct {
 	Retention         *TopicRetention        `protobuf:"bytes,3,opt,name=retention,proto3" json:"retention,omitempty"`
 	MessageRecordType *schema_pb.RecordType  `protobuf:"bytes,4,opt,name=message_record_type,json=messageRecordType,proto3" json:"message_record_type,omitempty"` // Complete flat schema for the message
 	KeyColumns        []string               `protobuf:"bytes,5,rep,name=key_columns,json=keyColumns,proto3" json:"key_columns,omitempty"`                        // Names of columns that form the key
+	SchemaFormat      string                 `protobuf:"bytes,6,opt,name=schema_format,json=schemaFormat,proto3" json:"schema_format,omitempty"`                  // Serialization format: "AVRO", "PROTOBUF", "JSON_SCHEMA", or empty for schemaless
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -559,12 +560,20 @@ func (x *ConfigureTopicRequest) GetKeyColumns() []string {
 	return nil
 }
 
+func (x *ConfigureTopicRequest) GetSchemaFormat() string {
+	if x != nil {
+		return x.SchemaFormat
+	}
+	return ""
+}
+
 type ConfigureTopicResponse struct {
 	state                      protoimpl.MessageState       `protogen:"open.v1"`
 	BrokerPartitionAssignments []*BrokerPartitionAssignment `protobuf:"bytes,2,rep,name=broker_partition_assignments,json=brokerPartitionAssignments,proto3" json:"broker_partition_assignments,omitempty"`
 	Retention                  *TopicRetention              `protobuf:"bytes,3,opt,name=retention,proto3" json:"retention,omitempty"`
 	MessageRecordType          *schema_pb.RecordType        `protobuf:"bytes,4,opt,name=message_record_type,json=messageRecordType,proto3" json:"message_record_type,omitempty"` // Complete flat schema for the message
 	KeyColumns                 []string                     `protobuf:"bytes,5,rep,name=key_columns,json=keyColumns,proto3" json:"key_columns,omitempty"`                        // Names of columns that form the key
+	SchemaFormat               string                       `protobuf:"bytes,6,opt,name=schema_format,json=schemaFormat,proto3" json:"schema_format,omitempty"`                  // Serialization format: "AVRO", "PROTOBUF", "JSON_SCHEMA", or empty for schemaless
 	unknownFields              protoimpl.UnknownFields
 	sizeCache                  protoimpl.SizeCache
 }
@@ -625,6 +634,13 @@ func (x *ConfigureTopicResponse) GetKeyColumns() []string {
 		return x.KeyColumns
 	}
 	return nil
+}
+
+func (x *ConfigureTopicResponse) GetSchemaFormat() string {
+	if x != nil {
+		return x.SchemaFormat
+	}
+	return ""
 }
 
 type ListTopicsRequest struct {
@@ -1005,6 +1021,7 @@ type GetTopicConfigurationResponse struct {
 	Retention                  *TopicRetention              `protobuf:"bytes,6,opt,name=retention,proto3" json:"retention,omitempty"`
 	MessageRecordType          *schema_pb.RecordType        `protobuf:"bytes,7,opt,name=message_record_type,json=messageRecordType,proto3" json:"message_record_type,omitempty"` // Complete flat schema for the message
 	KeyColumns                 []string                     `protobuf:"bytes,8,rep,name=key_columns,json=keyColumns,proto3" json:"key_columns,omitempty"`                        // Names of columns that form the key
+	SchemaFormat               string                       `protobuf:"bytes,9,opt,name=schema_format,json=schemaFormat,proto3" json:"schema_format,omitempty"`                  // Serialization format: "AVRO", "PROTOBUF", "JSON_SCHEMA", or empty for schemaless
 	unknownFields              protoimpl.UnknownFields
 	sizeCache                  protoimpl.SizeCache
 }
@@ -1093,6 +1110,13 @@ func (x *GetTopicConfigurationResponse) GetKeyColumns() []string {
 		return x.KeyColumns
 	}
 	return nil
+}
+
+func (x *GetTopicConfigurationResponse) GetSchemaFormat() string {
+	if x != nil {
+		return x.SchemaFormat
+	}
+	return ""
 }
 
 type GetTopicPublishersRequest struct {
@@ -3971,20 +3995,22 @@ const file_mq_broker_proto_rawDesc = "" +
 	"\x15BalanceTopicsResponse\"W\n" +
 	"\x0eTopicRetention\x12+\n" +
 	"\x11retention_seconds\x18\x01 \x01(\x03R\x10retentionSeconds\x12\x18\n" +
-	"\aenabled\x18\x02 \x01(\bR\aenabled\"\x8c\x02\n" +
+	"\aenabled\x18\x02 \x01(\bR\aenabled\"\xb1\x02\n" +
 	"\x15ConfigureTopicRequest\x12&\n" +
 	"\x05topic\x18\x01 \x01(\v2\x10.schema_pb.TopicR\x05topic\x12'\n" +
 	"\x0fpartition_count\x18\x02 \x01(\x05R\x0epartitionCount\x12:\n" +
 	"\tretention\x18\x03 \x01(\v2\x1c.messaging_pb.TopicRetentionR\tretention\x12E\n" +
 	"\x13message_record_type\x18\x04 \x01(\v2\x15.schema_pb.RecordTypeR\x11messageRecordType\x12\x1f\n" +
 	"\vkey_columns\x18\x05 \x03(\tR\n" +
-	"keyColumns\"\xa7\x02\n" +
+	"keyColumns\x12#\n" +
+	"\rschema_format\x18\x06 \x01(\tR\fschemaFormat\"\xcc\x02\n" +
 	"\x16ConfigureTopicResponse\x12i\n" +
 	"\x1cbroker_partition_assignments\x18\x02 \x03(\v2'.messaging_pb.BrokerPartitionAssignmentR\x1abrokerPartitionAssignments\x12:\n" +
 	"\tretention\x18\x03 \x01(\v2\x1c.messaging_pb.TopicRetentionR\tretention\x12E\n" +
 	"\x13message_record_type\x18\x04 \x01(\v2\x15.schema_pb.RecordTypeR\x11messageRecordType\x12\x1f\n" +
 	"\vkey_columns\x18\x05 \x03(\tR\n" +
-	"keyColumns\"\x13\n" +
+	"keyColumns\x12#\n" +
+	"\rschema_format\x18\x06 \x01(\tR\fschemaFormat\"\x13\n" +
 	"\x11ListTopicsRequest\">\n" +
 	"\x12ListTopicsResponse\x12(\n" +
 	"\x06topics\x18\x01 \x03(\v2\x10.schema_pb.TopicR\x06topics\"<\n" +
@@ -4002,7 +4028,7 @@ const file_mq_broker_proto_rawDesc = "" +
 	"\rleader_broker\x18\x02 \x01(\tR\fleaderBroker\x12'\n" +
 	"\x0ffollower_broker\x18\x03 \x01(\tR\x0efollowerBroker\"F\n" +
 	"\x1cGetTopicConfigurationRequest\x12&\n" +
-	"\x05topic\x18\x01 \x01(\v2\x10.schema_pb.TopicR\x05topic\"\xcb\x03\n" +
+	"\x05topic\x18\x01 \x01(\v2\x10.schema_pb.TopicR\x05topic\"\xf0\x03\n" +
 	"\x1dGetTopicConfigurationResponse\x12&\n" +
 	"\x05topic\x18\x01 \x01(\v2\x10.schema_pb.TopicR\x05topic\x12'\n" +
 	"\x0fpartition_count\x18\x02 \x01(\x05R\x0epartitionCount\x12i\n" +
@@ -4012,7 +4038,8 @@ const file_mq_broker_proto_rawDesc = "" +
 	"\tretention\x18\x06 \x01(\v2\x1c.messaging_pb.TopicRetentionR\tretention\x12E\n" +
 	"\x13message_record_type\x18\a \x01(\v2\x15.schema_pb.RecordTypeR\x11messageRecordType\x12\x1f\n" +
 	"\vkey_columns\x18\b \x03(\tR\n" +
-	"keyColumns\"C\n" +
+	"keyColumns\x12#\n" +
+	"\rschema_format\x18\t \x01(\tR\fschemaFormat\"C\n" +
 	"\x19GetTopicPublishersRequest\x12&\n" +
 	"\x05topic\x18\x01 \x01(\v2\x10.schema_pb.TopicR\x05topic\"Z\n" +
 	"\x1aGetTopicPublishersResponse\x12<\n" +

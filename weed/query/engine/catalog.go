@@ -17,7 +17,7 @@ import (
 type BrokerClientInterface interface {
 	ListNamespaces(ctx context.Context) ([]string, error)
 	ListTopics(ctx context.Context, namespace string) ([]string, error)
-	GetTopicSchema(ctx context.Context, namespace, topic string) (*schema_pb.RecordType, []string, error) // Returns (flatSchema, keyColumns, error)
+	GetTopicSchema(ctx context.Context, namespace, topic string) (*schema_pb.RecordType, []string, string, error) // Returns (flatSchema, keyColumns, schemaFormat, error)
 	ConfigureTopic(ctx context.Context, namespace, topicName string, partitionCount int32, flatSchema *schema_pb.RecordType, keyColumns []string) error
 	GetFilerClient() (filer_pb.FilerClient, error)
 	DeleteTopic(ctx context.Context, namespace, topicName string) error
@@ -197,7 +197,7 @@ func (c *SchemaCatalog) GetTableInfo(database, table string) (*TableInfo, error)
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		recordType, _, err := c.brokerClient.GetTopicSchema(ctx, database, table)
+		recordType, _, _, err := c.brokerClient.GetTopicSchema(ctx, database, table)
 		if err != nil {
 			// If broker unavailable and we have expired cached data, return it
 			if exists {

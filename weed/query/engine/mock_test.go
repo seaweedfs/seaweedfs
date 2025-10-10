@@ -27,7 +27,7 @@ func TestMockBrokerClient_BasicFunctionality(t *testing.T) {
 	}
 
 	// Test GetTopicSchema
-	schema, keyColumns, err := mockBroker.GetTopicSchema(context.Background(), "default", "user_events")
+	schema, keyColumns, _, err := mockBroker.GetTopicSchema(context.Background(), "default", "user_events")
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
@@ -56,7 +56,7 @@ func TestMockBrokerClient_FailureScenarios(t *testing.T) {
 		t.Error("Expected error when mock is configured to fail")
 	}
 
-	_, _, err = mockBroker.GetTopicSchema(context.Background(), "default", "user_events")
+	_, _, _, err = mockBroker.GetTopicSchema(context.Background(), "default", "user_events")
 	if err == nil {
 		t.Error("Expected error when mock is configured to fail")
 	}

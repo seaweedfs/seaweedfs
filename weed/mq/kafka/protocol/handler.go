@@ -196,6 +196,17 @@ func (c *TopicSchemaConfig) SchemaFormat() schema.Format {
 	return c.ValueSchemaFormat
 }
 
+// getTopicSchemaFormat returns the schema format string for a topic
+func (h *Handler) getTopicSchemaFormat(topic string) string {
+	h.topicSchemaConfigMu.RLock()
+	defer h.topicSchemaConfigMu.RUnlock()
+
+	if config, exists := h.topicSchemaConfigs[topic]; exists {
+		return config.ValueSchemaFormat.String()
+	}
+	return "" // Empty string means schemaless or format unknown
+}
+
 // stringPtr returns a pointer to the given string
 func stringPtr(s string) *string {
 	return &s
@@ -1937,14 +1948,20 @@ func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, req
 		response = append(response, 0, 0, 0, 0)
 	}
 
-	// Topics count (same as request)
+	// Topics count (will be updated later with actual count)
 	topicsCountBytes := make([]byte, 4)
+	topicsCountOffset := len(response) // Remember where to update the count
 	binary.BigEndian.PutUint32(topicsCountBytes, topicsCount)
 	response = append(response, topicsCountBytes...)
+
+	// Track how many topics we actually process
+	actualTopicsCount := uint32(0)
 
 	// Process each requested topic
 	for i := uint32(0); i < topicsCount && offset < len(requestBody); i++ {
 		if len(requestBody) < offset+2 {
+			Debug("WARNING: ListOffsets incomplete request - not enough data for topic %d/%d (need 2 bytes at offset %d, have %d total)",
+				i, topicsCount, offset, len(requestBody))
 			break
 		}
 
@@ -1953,6 +1970,8 @@ func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, req
 		offset += 2
 
 		if len(requestBody) < offset+int(topicNameSize)+4 {
+			Debug("WARNING: ListOffsets incomplete request - not enough data for topic name + partitions count at topic %d/%d (need %d bytes at offset %d, have %d total)",
+				i, topicsCount, int(topicNameSize)+4, offset, len(requestBody))
 			break
 		}
 
@@ -1962,6 +1981,8 @@ func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, req
 		// Parse partitions count for this topic
 		partitionsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 		offset += 4
+
+		Debug("ListOffsets: Processing topic %d/%d: %s with %d partitions", i+1, topicsCount, string(topicName), partitionsCount)
 
 		// Response: topic_name_size(2) + topic_name + partitions_array
 		response = append(response, byte(topicNameSize>>8), byte(topicNameSize))
@@ -2056,7 +2077,20 @@ func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, req
 			binary.BigEndian.PutUint64(offsetBytes, uint64(responseOffset))
 			response = append(response, offsetBytes...)
 		}
+
+		// Successfully processed this topic
+		actualTopicsCount++
 	}
+
+	// CRITICAL FIX: Update the topics count in the response header with the actual count
+	// This prevents ErrIncompleteResponse when request parsing fails mid-way
+	if actualTopicsCount != topicsCount {
+		Debug("WARNING: ListOffsets response has %d topics but request asked for %d - updating header to match actual count",
+			actualTopicsCount, topicsCount)
+		binary.BigEndian.PutUint32(response[topicsCountOffset:topicsCountOffset+4], actualTopicsCount)
+	}
+
+	Debug("ListOffsets: Returning response with %d topics (requested %d)", actualTopicsCount, topicsCount)
 
 	return response, nil
 }
@@ -3866,11 +3900,14 @@ func (h *Handler) registerSchemasViaBrokerAPI(topicName string, valueRecordType 
 			}
 
 			// If topic doesn't exist, create it with configurable default partition count
+			// Get schema format from topic config if available
+			schemaFormat := h.getTopicSchemaFormat(topicName)
 			_, err := client.ConfigureTopic(context.Background(), &mq_pb.ConfigureTopicRequest{
 				Topic:             seaweedTopic,
 				PartitionCount:    h.GetDefaultPartitions(), // Use configurable default
 				MessageRecordType: flatSchema,
 				KeyColumns:        keyColumns,
+				SchemaFormat:      schemaFormat,
 			})
 			return err
 		}
@@ -3883,12 +3920,15 @@ func (h *Handler) registerSchemasViaBrokerAPI(topicName string, valueRecordType 
 		}
 
 		// Update existing topic with new schema
+		// Get schema format from topic config if available
+		schemaFormat := h.getTopicSchemaFormat(topicName)
 		_, err = client.ConfigureTopic(context.Background(), &mq_pb.ConfigureTopicRequest{
 			Topic:             seaweedTopic,
 			PartitionCount:    getResp.PartitionCount,
 			MessageRecordType: flatSchema,
 			KeyColumns:        keyColumns,
 			Retention:         getResp.Retention,
+			SchemaFormat:      schemaFormat,
 		})
 		return err
 	})

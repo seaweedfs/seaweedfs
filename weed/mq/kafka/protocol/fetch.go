@@ -181,10 +181,18 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 		}())
 
 	// Collect results from persistent readers
-	results := make([]*partitionFetchResult, 0)
+	// CRITICAL: Dispatch all requests concurrently, then wait for all results in parallel
+	// to avoid sequential timeout accumulation
+	type pendingFetch struct {
+		topicName   string
+		partitionID int32
+		resultChan  chan *partitionFetchResult
+	}
+
+	pending := make([]pendingFetch, 0)
 	persistentFetchStart := time.Now()
 
-	// Signal each partition reader to fetch data
+	// Phase 1: Dispatch all fetch requests to partition readers (non-blocking)
 	for _, topic := range fetchRequest.Topics {
 		isSchematizedTopic := false
 		if h.IsSchemaEnabled() {
@@ -197,14 +205,20 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 			// Get or create persistent reader for this partition
 			reader := h.getOrCreatePartitionReader(ctx, connContext, key, partition.FetchOffset)
 			if reader == nil {
-				// Failed to create reader - add empty result and continue
+				// Failed to create reader - add empty pending
 				glog.Errorf("[%s] Failed to get/create partition reader for %s[%d]",
 					connContext.ConnectionID, topic.Name, partition.PartitionID)
-				results = append(results, &partitionFetchResult{errorCode: 3}) // UNKNOWN_TOPIC_OR_PARTITION
+				nilChan := make(chan *partitionFetchResult, 1)
+				nilChan <- &partitionFetchResult{errorCode: 3} // UNKNOWN_TOPIC_OR_PARTITION
+				pending = append(pending, pendingFetch{
+					topicName:   topic.Name,
+					partitionID: partition.PartitionID,
+					resultChan:  nilChan,
+				})
 				continue
 			}
 
-			// Signal reader to fetch and wait for result
+			// Signal reader to fetch (don't wait for result yet)
 			resultChan := make(chan *partitionFetchResult, 1)
 			fetchReq := &partitionFetchRequest{
 				requestedOffset: partition.FetchOffset,
@@ -214,41 +228,57 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 				apiVersion:      apiVersion,
 			}
 
-			// Send fetch request to reader (longer timeout to handle concurrent requests)
+			// Try to send request (with short timeout since channel is buffered)
 			select {
 			case reader.fetchChan <- fetchReq:
-				// Request sent successfully
-			case <-ctx.Done():
-				// Context cancelled - still add empty result to maintain count
-				glog.V(1).Infof("[%s] Context cancelled while sending fetch for %s[%d]",
+				// Request sent successfully, add to pending
+				pending = append(pending, pendingFetch{
+					topicName:   topic.Name,
+					partitionID: partition.PartitionID,
+					resultChan:  resultChan,
+				})
+			case <-time.After(50 * time.Millisecond):
+				// Channel full, return empty result
+				glog.Warningf("[%s] Reader channel full for %s[%d], returning empty",
 					connContext.ConnectionID, topic.Name, partition.PartitionID)
-				results = append(results, &partitionFetchResult{})
-				continue
-			case <-time.After(500 * time.Millisecond):
-				// Reader is busy processing another request, return empty result
-				glog.Warningf("[%s] Reader busy (500ms timeout) for %s[%d], returning empty",
-					connContext.ConnectionID, topic.Name, partition.PartitionID)
-				results = append(results, &partitionFetchResult{})
-				continue
-			}
-
-			// Wait for result with timeout (increased to handle fetch latency)
-			select {
-			case result := <-resultChan:
-				results = append(results, result)
-			case <-ctx.Done():
-				// Context cancelled - still add empty result to maintain count
-				glog.V(1).Infof("[%s] Context cancelled while waiting for result from %s[%d]",
-					connContext.ConnectionID, topic.Name, partition.PartitionID)
-				results = append(results, &partitionFetchResult{})
-			case <-time.After(1000 * time.Millisecond):
-				// Timeout - return empty result
-				glog.Warningf("[%s] Fetch timeout (1000ms) for %s[%d]",
-					connContext.ConnectionID, topic.Name, partition.PartitionID)
-				results = append(results, &partitionFetchResult{})
+				emptyChan := make(chan *partitionFetchResult, 1)
+				emptyChan <- &partitionFetchResult{}
+				pending = append(pending, pendingFetch{
+					topicName:   topic.Name,
+					partitionID: partition.PartitionID,
+					resultChan:  emptyChan,
+				})
 			}
 		}
 	}
+
+	// Phase 2: Wait for all results with short timeout (serving from buffer is fast)
+	// CRITICAL: We MUST return a result for every requested partition or Sarama will error
+	results := make([]*partitionFetchResult, len(pending))
+	deadline := time.After(50 * time.Millisecond) // 50ms for all partitions (buffer should be instant)
+
+	// Collect results one by one with shared deadline
+	for i, pf := range pending {
+		select {
+		case result := <-pf.resultChan:
+			results[i] = result
+		case <-deadline:
+			// Deadline expired, return empty for this and all remaining partitions
+			for j := i; j < len(pending); j++ {
+				results[j] = &partitionFetchResult{}
+			}
+			glog.V(1).Infof("[%s] Fetch deadline expired, returning empty for %d remaining partitions",
+				connContext.ConnectionID, len(pending)-i)
+			goto done
+		case <-ctx.Done():
+			// Context cancelled, return empty for remaining
+			for j := i; j < len(pending); j++ {
+				results[j] = &partitionFetchResult{}
+			}
+			goto done
+		}
+	}
+done:
 
 	persistentFetchDuration := time.Since(persistentFetchStart)
 	Debug("Persistent reader fetch completed: %d partitions in %v (avg %.2fms/partition)",

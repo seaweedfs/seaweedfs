@@ -42,6 +42,7 @@ type HybridMessageScanner struct {
 	brokerClient  BrokerClientInterface // For querying unflushed data
 	topic         topic.Topic
 	recordSchema  *schema_pb.RecordType
+	schemaFormat  string // Serialization format: "AVRO", "PROTOBUF", "JSON_SCHEMA", or empty for schemaless
 	parquetLevels *schema.ParquetLevels
 	engine        *SQLEngine // Reference for system column formatting
 }
@@ -61,7 +62,7 @@ func NewHybridMessageScanner(filerClient filer_pb.FilerClient, brokerClient Brok
 	}
 
 	// Get flat schema from broker client
-	recordType, _, err := brokerClient.GetTopicSchema(context.Background(), namespace, topicName)
+	recordType, _, schemaFormat, err := brokerClient.GetTopicSchema(context.Background(), namespace, topicName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get topic record type: %v", err)
 	}
@@ -98,6 +99,7 @@ func NewHybridMessageScanner(filerClient filer_pb.FilerClient, brokerClient Brok
 		brokerClient:  brokerClient,
 		topic:         t,
 		recordSchema:  recordType,
+		schemaFormat:  schemaFormat,
 		parquetLevels: parquetLevels,
 		engine:        engine,
 	}, nil
@@ -826,31 +828,45 @@ func (hms *HybridMessageScanner) parseRawMessageWithSchema(logEntry *filer_pb.Lo
 		return recordValue, "live_log", nil
 	}
 
-	// Strategy 1: Try protobuf parsing (binary messages)
-	if parsedRecord, err := hms.parseProtobufMessage(logEntry.Data); err == nil {
-		// Successfully parsed as protobuf, merge with system columns
+	// Use schema format to directly choose the right decoder
+	// This avoids trying multiple decoders and improves performance
+	var parsedRecord *schema_pb.RecordValue
+	var err error
+
+	switch hms.schemaFormat {
+	case "AVRO":
+		// AVRO format - use Avro decoder
+		// Note: Avro decoding requires schema registry integration
+		// For now, fall through to JSON as many Avro messages are also valid JSON
+		parsedRecord, err = hms.parseJSONMessage(logEntry.Data)
+	case "PROTOBUF":
+		// PROTOBUF format - use protobuf decoder
+		parsedRecord, err = hms.parseProtobufMessage(logEntry.Data)
+	case "JSON_SCHEMA", "":
+		// JSON_SCHEMA format or empty (default to JSON)
+		// JSON is the most common format for schema registry
+		parsedRecord, err = hms.parseJSONMessage(logEntry.Data)
+	default:
+		// Unknown format - try JSON first, then protobuf as fallback
+		parsedRecord, err = hms.parseJSONMessage(logEntry.Data)
+		if err != nil {
+			parsedRecord, err = hms.parseProtobufMessage(logEntry.Data)
+		}
+	}
+
+	if err == nil && parsedRecord != nil {
+		// Successfully parsed, merge with system columns
 		for fieldName, fieldValue := range parsedRecord.Fields {
 			recordValue.Fields[fieldName] = fieldValue
 		}
 		return recordValue, "live_log", nil
 	}
 
-	// Attempt schema-aware parsing
-	// Strategy 2: Try JSON parsing first (most common for live messages)
-	if parsedRecord, err := hms.parseJSONMessage(logEntry.Data); err == nil {
-		// Successfully parsed as JSON, merge with system columns
-		for fieldName, fieldValue := range parsedRecord.Fields {
-			recordValue.Fields[fieldName] = fieldValue
-		}
-		return recordValue, "live_log", nil
-	}
-
-	// Strategy 3: Fallback to single field with raw data
-	// If schema has a single field, map the raw data to it with type conversion
+	// Fallback: If schema has a single field, map the raw data to it with type conversion
 	if len(hms.recordSchema.Fields) == 1 {
 		field := hms.recordSchema.Fields[0]
-		convertedValue, err := hms.convertRawDataToSchemaValue(logEntry.Data, field.Type)
-		if err == nil {
+		convertedValue, convErr := hms.convertRawDataToSchemaValue(logEntry.Data, field.Type)
+		if convErr == nil {
 			recordValue.Fields[field.Name] = convertedValue
 			return recordValue, "live_log", nil
 		}
@@ -875,27 +891,15 @@ func (hms *HybridMessageScanner) convertLogEntryToRecordValueWithDecoded(logEntr
 		// dataMessage.Value is []byte, so we need to unmarshal it
 		recordValue := &schema_pb.RecordValue{}
 		if err := proto.Unmarshal(dataMessage.Value, recordValue); err != nil {
-			// If unmarshaling fails, treat dataMessage.Value as raw data and create value field
-			recordValue = &schema_pb.RecordValue{
-				Fields: make(map[string]*schema_pb.Value),
+			// CRITICAL FIX: If protobuf unmarshaling fails, fall back to schema-aware parsing
+			// This handles Confluent Wire Format (Avro), JSON, and other formats
+			// Create a temporary LogEntry with the DataMessage.Value as data for parsing
+			tempLogEntry := &filer_pb.LogEntry{
+				TsNs: logEntry.TsNs,
+				Key:  logEntry.Key,
+				Data: dataMessage.Value,
 			}
-
-			// Add system columns
-			recordValue.Fields[SW_COLUMN_NAME_TIMESTAMP] = &schema_pb.Value{
-				Kind: &schema_pb.Value_Int64Value{Int64Value: logEntry.TsNs},
-			}
-			recordValue.Fields[SW_COLUMN_NAME_KEY] = &schema_pb.Value{
-				Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Key},
-			}
-
-			// For schema-less topics, use "_value" field directly
-			if hms.isSchemaless() {
-				recordValue.Fields[SW_COLUMN_NAME_VALUE] = &schema_pb.Value{
-					Kind: &schema_pb.Value_BytesValue{BytesValue: dataMessage.Value},
-				}
-			}
-
-			return recordValue, "live_log", nil
+			return hms.parseRawMessageWithSchema(tempLogEntry)
 		}
 
 		// Ensure Fields map exists
@@ -914,27 +918,9 @@ func (hms *HybridMessageScanner) convertLogEntryToRecordValueWithDecoded(logEntr
 		return recordValue, "live_log", nil
 	}
 
-	// For cases where dataMessage is nil, create RecordValue directly from logEntry.Data
-	recordValue := &schema_pb.RecordValue{
-		Fields: make(map[string]*schema_pb.Value),
-	}
-
-	// Add system columns
-	recordValue.Fields[SW_COLUMN_NAME_TIMESTAMP] = &schema_pb.Value{
-		Kind: &schema_pb.Value_Int64Value{Int64Value: logEntry.TsNs},
-	}
-	recordValue.Fields[SW_COLUMN_NAME_KEY] = &schema_pb.Value{
-		Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Key},
-	}
-
-	// For schema-less topics, use "_value" field directly
-	if hms.isSchemaless() {
-		recordValue.Fields[SW_COLUMN_NAME_VALUE] = &schema_pb.Value{
-			Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Data},
-		}
-	}
-
-	return recordValue, "live_log", nil
+	// For cases where dataMessage is nil (decode failed or not a DataMessage),
+	// attempt schema-aware parsing to try JSON, protobuf, and other formats
+	return hms.parseRawMessageWithSchema(logEntry)
 }
 
 // parseJSONMessage attempts to parse raw data as JSON and map to schema fields
@@ -1120,6 +1106,11 @@ func (hms *HybridMessageScanner) ConvertToSQLResult(results []HybridScanResult, 
 		for columnName := range columnSet {
 			columns = append(columns, columnName)
 		}
+
+		// If no data columns were found, include system columns so we have something to display
+		if len(columns) == 0 {
+			columns = []string{SW_DISPLAY_NAME_TIMESTAMP, SW_COLUMN_NAME_KEY}
+		}
 	}
 
 	// Convert to SQL rows
@@ -1205,6 +1196,11 @@ func (hms *HybridMessageScanner) ConvertToSQLResultWithMixedColumns(results []Hy
 	columns := make([]string, 0, len(columnSet))
 	for col := range columnSet {
 		columns = append(columns, col)
+	}
+
+	// If no data columns were found and no explicit columns specified, include system columns
+	if len(columns) == 0 {
+		columns = []string{SW_DISPLAY_NAME_TIMESTAMP, SW_COLUMN_NAME_KEY}
 	}
 
 	// Convert to SQL rows

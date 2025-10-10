@@ -260,16 +260,17 @@ func (c *BrokerClient) ListTopics(ctx context.Context, namespace string) ([]stri
 }
 
 // GetTopicSchema retrieves the flat schema and key columns for a topic
-// Returns (flatSchema, keyColumns, error)
-func (c *BrokerClient) GetTopicSchema(ctx context.Context, namespace, topicName string) (*schema_pb.RecordType, []string, error) {
+// Returns (flatSchema, keyColumns, schemaFormat, error)
+func (c *BrokerClient) GetTopicSchema(ctx context.Context, namespace, topicName string) (*schema_pb.RecordType, []string, string, error) {
 	// Get filer client to read topic configuration
 	filerClient, err := c.GetFilerClient()
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get filer client: %v", err)
+		return nil, nil, "", fmt.Errorf("failed to get filer client: %v", err)
 	}
 
 	var flatSchema *schema_pb.RecordType
 	var keyColumns []string
+	var schemaFormat string
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// Read topic.conf file from /topics/{namespace}/{topic}/topic.conf
 		topicDir := fmt.Sprintf("/topics/%s/%s", namespace, topicName)
@@ -295,18 +296,19 @@ func (c *BrokerClient) GetTopicSchema(ctx context.Context, namespace, topicName 
 			return fmt.Errorf("failed to unmarshal topic %s.%s configuration: %v", namespace, topicName, err)
 		}
 
-		// Extract flat schema and key columns
+		// Extract flat schema, key columns, and schema format
 		flatSchema = conf.MessageRecordType
 		keyColumns = conf.KeyColumns
+		schemaFormat = conf.SchemaFormat
 
 		return nil
 	})
 
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 
-	return flatSchema, keyColumns, nil
+	return flatSchema, keyColumns, schemaFormat, nil
 }
 
 // ConfigureTopic creates or modifies a topic using flat schema format

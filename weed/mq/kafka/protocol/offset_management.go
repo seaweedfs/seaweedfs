@@ -104,7 +104,7 @@ type OffsetFetchPartitionResponse struct {
 
 func (h *Handler) handleOffsetCommit(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
 	// Parse OffsetCommit request
-	req, err := h.parseOffsetCommitRequest(requestBody)
+	req, err := h.parseOffsetCommitRequest(requestBody, apiVersion)
 	if err != nil {
 		return h.buildOffsetCommitErrorResponse(correlationID, ErrorCodeInvalidCommitOffsetSize, apiVersion), nil
 	}
@@ -259,7 +259,7 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, req
 	return h.buildOffsetFetchResponse(response, apiVersion), nil
 }
 
-func (h *Handler) parseOffsetCommitRequest(data []byte) (*OffsetCommitRequest, error) {
+func (h *Handler) parseOffsetCommitRequest(data []byte, apiVersion uint16) (*OffsetCommitRequest, error) {
 	if len(data) < 8 {
 		return nil, fmt.Errorf("request too short")
 	}
@@ -294,14 +294,37 @@ func (h *Handler) parseOffsetCommitRequest(data []byte) (*OffsetCommitRequest, e
 	memberID := string(data[offset : offset+memberIDLength])
 	offset += memberIDLength
 
-	// RetentionTime (optional 8 bytes)
+	// RetentionTime (8 bytes) - exists in v0-v4, removed in v5+
 	var retentionTime int64 = -1
-	if len(data) >= offset+8 {
+	if apiVersion <= 4 {
+		if len(data) < offset+8 {
+			return nil, fmt.Errorf("missing retention time for v%d", apiVersion)
+		}
 		retentionTime = int64(binary.BigEndian.Uint64(data[offset : offset+8]))
 		offset += 8
 	}
 
-	// Topics array (optional)
+	// GroupInstanceID (nullable string) - ONLY in version 3+
+	var groupInstanceID string
+	if apiVersion >= 3 {
+		if offset+2 > len(data) {
+			return nil, fmt.Errorf("missing group instance ID length")
+		}
+		groupInstanceIDLength := int(int16(binary.BigEndian.Uint16(data[offset:])))
+		offset += 2
+		if groupInstanceIDLength == -1 {
+			// Null string
+			groupInstanceID = ""
+		} else if groupInstanceIDLength > 0 {
+			if offset+groupInstanceIDLength > len(data) {
+				return nil, fmt.Errorf("invalid group instance ID length")
+			}
+			groupInstanceID = string(data[offset : offset+groupInstanceIDLength])
+			offset += groupInstanceIDLength
+		}
+	}
+
+	// Topics array
 	var topicsCount uint32
 	if len(data) >= offset+4 {
 		topicsCount = binary.BigEndian.Uint32(data[offset : offset+4])
@@ -348,31 +371,33 @@ func (h *Handler) parseOffsetCommitRequest(data []byte) (*OffsetCommitRequest, e
 			committedOffset := int64(binary.BigEndian.Uint64(data[offset : offset+8]))
 			offset += 8
 
-			// Simplified metadata parsing - handle the common case from sarama
-			var metadata string = ""
-
-			// Skip optional fields and try to read metadata length if there's enough data
-			remainingBytes := len(data) - offset
-			if remainingBytes >= 6 { // At least 4 bytes for leader_epoch + 2 for metadata length
-				// Skip leader epoch (4 bytes)
+			// Parse leader epoch (4 bytes) - ONLY in version 6+
+			var leaderEpoch int32 = -1
+			if apiVersion >= 6 {
+				if len(data) < offset+4 {
+					break
+				}
+				leaderEpoch = int32(binary.BigEndian.Uint32(data[offset : offset+4]))
 				offset += 4
-				// Read metadata length (2 bytes)
-				if len(data) >= offset+2 {
-					metadataLength := int16(binary.BigEndian.Uint16(data[offset : offset+2]))
-					offset += 2
-					if metadataLength == -1 {
-						metadata = ""
-					} else if metadataLength >= 0 && len(data) >= offset+int(metadataLength) {
-						metadata = string(data[offset : offset+int(metadataLength)])
-						offset += int(metadataLength)
-					}
+			}
+
+			// Parse metadata (string)
+			var metadata string = ""
+			if len(data) >= offset+2 {
+				metadataLength := int16(binary.BigEndian.Uint16(data[offset : offset+2]))
+				offset += 2
+				if metadataLength == -1 {
+					metadata = ""
+				} else if metadataLength >= 0 && len(data) >= offset+int(metadataLength) {
+					metadata = string(data[offset : offset+int(metadataLength)])
+					offset += int(metadataLength)
 				}
 			}
 
 			partitions = append(partitions, OffsetCommitPartition{
 				Index:       partitionIndex,
 				Offset:      committedOffset,
-				LeaderEpoch: -1,
+				LeaderEpoch: leaderEpoch,
 				Metadata:    metadata,
 			})
 		}
@@ -383,11 +408,12 @@ func (h *Handler) parseOffsetCommitRequest(data []byte) (*OffsetCommitRequest, e
 	}
 
 	return &OffsetCommitRequest{
-		GroupID:       groupID,
-		GenerationID:  generationID,
-		MemberID:      memberID,
-		RetentionTime: retentionTime,
-		Topics:        topics,
+		GroupID:         groupID,
+		GenerationID:    generationID,
+		MemberID:        memberID,
+		GroupInstanceID: groupInstanceID,
+		RetentionTime:   retentionTime,
+		Topics:          topics,
 	}, nil
 }
 

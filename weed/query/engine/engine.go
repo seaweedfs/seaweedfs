@@ -4976,7 +4976,7 @@ func (e *SQLEngine) findColumnValue(result HybridScanResult, columnName string) 
 // discoverAndRegisterTopic attempts to discover an existing topic and register it in the SQL catalog
 func (e *SQLEngine) discoverAndRegisterTopic(ctx context.Context, database, tableName string) error {
 	// First, check if topic exists by trying to get its schema from the broker/filer
-	recordType, _, err := e.catalog.brokerClient.GetTopicSchema(ctx, database, tableName)
+	recordType, _, _, err := e.catalog.brokerClient.GetTopicSchema(ctx, database, tableName)
 	if err != nil {
 		return fmt.Errorf("topic %s.%s not found or no schema available: %v", database, tableName, err)
 	}

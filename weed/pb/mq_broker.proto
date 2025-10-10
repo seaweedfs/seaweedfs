@@ -126,12 +126,14 @@ message ConfigureTopicRequest {
     TopicRetention retention = 3;
     schema_pb.RecordType message_record_type = 4;  // Complete flat schema for the message
     repeated string key_columns = 5;              // Names of columns that form the key
+    string schema_format = 6;                      // Serialization format: "AVRO", "PROTOBUF", "JSON_SCHEMA", or empty for schemaless
 }
 message ConfigureTopicResponse {
     repeated BrokerPartitionAssignment broker_partition_assignments = 2;
     TopicRetention retention = 3;
     schema_pb.RecordType message_record_type = 4;  // Complete flat schema for the message
     repeated string key_columns = 5;              // Names of columns that form the key
+    string schema_format = 6;                      // Serialization format: "AVRO", "PROTOBUF", "JSON_SCHEMA", or empty for schemaless
 }
 message ListTopicsRequest {
 }
@@ -168,6 +170,7 @@ message GetTopicConfigurationResponse {
     TopicRetention retention = 6;
     schema_pb.RecordType message_record_type = 7;  // Complete flat schema for the message
     repeated string key_columns = 8;              // Names of columns that form the key
+    string schema_format = 9;                      // Serialization format: "AVRO", "PROTOBUF", "JSON_SCHEMA", or empty for schemaless
 }
 
 message GetTopicPublishersRequest {

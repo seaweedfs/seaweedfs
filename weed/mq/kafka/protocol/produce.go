@@ -1332,12 +1332,10 @@ func (h *Handler) produceSchemaBasedRecord(topic string, partition int32, key []
 	}
 
 	// Send to SeaweedMQ
-	if valueDecodedMsg != nil {
-		// CRITICAL FIX: Store the ORIGINAL Confluent Wire Format bytes (not the decoded RecordValue protobuf)
-		// This ensures consumers receive the exact same bytes the producer sent, avoiding re-encoding issues
-		return h.seaweedMQHandler.ProduceRecord(topic, partition, finalKey, valueDecodedMsg.Envelope.OriginalBytes)
-	} else if keyDecodedMsg != nil {
-		// If only key was schematized, we still need to store it in RecordValue format
+	if valueDecodedMsg != nil || keyDecodedMsg != nil {
+		// CRITICAL FIX: Store the DECODED RecordValue (not the original Confluent Wire Format)
+		// This enables SQL queries to work properly. Kafka consumers will receive the RecordValue
+		// which can be re-encoded to Confluent Wire Format during fetch if needed
 		return h.seaweedMQHandler.ProduceRecordValue(topic, partition, finalKey, recordValueBytes)
 	} else {
 		// Send with raw format for non-schematized data
