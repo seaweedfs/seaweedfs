@@ -12,6 +12,7 @@ import (
 
 // partitionReader maintains a persistent connection to a single topic-partition
 // and streams records forward, eliminating repeated offset lookups
+// Now supports concurrent request processing via worker pool
 type partitionReader struct {
 	topicName     string
 	partitionID   int32
@@ -19,9 +20,13 @@ type partitionReader struct {
 	subscriber    *integration.BrokerSubscriberSession
 	fetchChan     chan *partitionFetchRequest
 	closeChan     chan struct{}
-	mu            sync.Mutex
-	handler       *Handler
-	connCtx       *ConnectionContext
+
+	// Concurrent processing support
+	workerSem    chan struct{} // Semaphore to limit concurrent workers
+	subscriberMu sync.Mutex    // Protects subscriber and offset access
+
+	handler *Handler
+	connCtx *ConnectionContext
 }
 
 // partitionFetchRequest represents a request to fetch data from this partition
@@ -33,31 +38,32 @@ type partitionFetchRequest struct {
 	apiVersion      uint16
 }
 
-// newPartitionReader creates and starts a new partition reader goroutine
+// newPartitionReader creates and starts a new partition reader with concurrent worker pool
 func newPartitionReader(ctx context.Context, handler *Handler, connCtx *ConnectionContext, topicName string, partitionID int32, startOffset int64) *partitionReader {
 	pr := &partitionReader{
 		topicName:     topicName,
 		partitionID:   partitionID,
 		currentOffset: startOffset,
-		fetchChan:     make(chan *partitionFetchRequest, 5), // Buffer 5 requests to handle concurrent fetches
+		fetchChan:     make(chan *partitionFetchRequest, 20), // Buffer 20 requests
 		closeChan:     make(chan struct{}),
+		workerSem:     make(chan struct{}, 10), // Allow 10 concurrent workers per partition
 		handler:       handler,
 		connCtx:       connCtx,
 	}
 
-	// Start the reader goroutine
-	go pr.run(ctx)
+	// Start the dispatcher goroutine
+	go pr.dispatcher(ctx)
 
-	glog.V(1).Infof("[%s] Created partition reader for %s[%d] starting at offset %d",
+	glog.V(1).Infof("[%s] Created partition reader for %s[%d] starting at offset %d (10 workers)",
 		connCtx.ConnectionID, topicName, partitionID, startOffset)
 
 	return pr
 }
 
-// run is the main loop for the partition reader goroutine
-func (pr *partitionReader) run(ctx context.Context) {
+// dispatcher is the main loop that spawns worker goroutines for concurrent request processing
+func (pr *partitionReader) dispatcher(ctx context.Context) {
 	defer func() {
-		glog.V(1).Infof("[%s] Partition reader exiting for %s[%d]",
+		glog.V(1).Infof("[%s] Partition reader dispatcher exiting for %s[%d]",
 			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID)
 		pr.closeSubscriber()
 	}()
@@ -71,15 +77,24 @@ func (pr *partitionReader) run(ctx context.Context) {
 			// Explicit close
 			return
 		case req := <-pr.fetchChan:
-			pr.handleFetchRequest(ctx, req)
+			// Spawn worker goroutine to handle this request concurrently
+			go pr.worker(ctx, req)
 		}
 	}
 }
 
-// handleFetchRequest processes a single fetch request
-func (pr *partitionReader) handleFetchRequest(ctx context.Context, req *partitionFetchRequest) {
-	pr.mu.Lock()
-	defer pr.mu.Unlock()
+// worker processes a single fetch request with semaphore-based concurrency control
+func (pr *partitionReader) worker(ctx context.Context, req *partitionFetchRequest) {
+	// Acquire semaphore slot (block until available or context cancelled)
+	select {
+	case pr.workerSem <- struct{}{}:
+		// Got slot, will release on exit
+		defer func() { <-pr.workerSem }()
+	case <-ctx.Done():
+		// Context cancelled, return empty
+		req.resultChan <- &partitionFetchResult{}
+		return
+	}
 
 	startTime := time.Now()
 	result := &partitionFetchResult{}
@@ -94,6 +109,10 @@ func (pr *partitionReader) handleFetchRequest(ctx context.Context, req *partitio
 				pr.connCtx.ConnectionID, pr.topicName, pr.partitionID)
 		}
 	}()
+
+	// Lock for subscriber and offset access
+	pr.subscriberMu.Lock()
+	defer pr.subscriberMu.Unlock()
 
 	// Check if offset rewind is needed
 	if req.requestedOffset < pr.currentOffset {
