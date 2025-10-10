@@ -39,7 +39,7 @@ func newPartitionReader(ctx context.Context, handler *Handler, connCtx *Connecti
 		topicName:     topicName,
 		partitionID:   partitionID,
 		currentOffset: startOffset,
-		fetchChan:     make(chan *partitionFetchRequest, 1),
+		fetchChan:     make(chan *partitionFetchRequest, 5), // Buffer 5 requests to handle concurrent fetches
 		closeChan:     make(chan struct{}),
 		handler:       handler,
 		connCtx:       connCtx,

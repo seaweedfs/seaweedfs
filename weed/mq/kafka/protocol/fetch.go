@@ -165,8 +165,20 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 	// Get connection context to access persistent partition readers
 	connContext := h.getConnectionContextFromRequest(ctx)
 	if connContext == nil {
+		glog.Errorf("FETCH CORR=%d: Connection context not available - cannot use persistent readers",
+			correlationID)
 		return nil, fmt.Errorf("connection context not available")
 	}
+
+	glog.V(2).Infof("[%s] FETCH CORR=%d: Processing %d topics with %d total partitions",
+		connContext.ConnectionID, correlationID, len(fetchRequest.Topics),
+		func() int {
+			count := 0
+			for _, t := range fetchRequest.Topics {
+				count += len(t.Partitions)
+			}
+			return count
+		}())
 
 	// Collect results from persistent readers
 	results := make([]*partitionFetchResult, 0)
@@ -184,6 +196,13 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 
 			// Get or create persistent reader for this partition
 			reader := h.getOrCreatePartitionReader(ctx, connContext, key, partition.FetchOffset)
+			if reader == nil {
+				// Failed to create reader - add empty result and continue
+				glog.Errorf("[%s] Failed to get/create partition reader for %s[%d]",
+					connContext.ConnectionID, topic.Name, partition.PartitionID)
+				results = append(results, &partitionFetchResult{errorCode: 3}) // UNKNOWN_TOPIC_OR_PARTITION
+				continue
+			}
 
 			// Signal reader to fetch and wait for result
 			resultChan := make(chan *partitionFetchResult, 1)
@@ -195,29 +214,36 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 				apiVersion:      apiVersion,
 			}
 
-			// Send fetch request to reader (non-blocking)
+			// Send fetch request to reader (longer timeout to handle concurrent requests)
 			select {
 			case reader.fetchChan <- fetchReq:
 				// Request sent successfully
 			case <-ctx.Done():
-				return nil, fmt.Errorf("context cancelled")
-			case <-time.After(50 * time.Millisecond):
-				// Reader is busy, return empty result
-				glog.Warningf("[%s] Reader busy for %s[%d], returning empty",
+				// Context cancelled - still add empty result to maintain count
+				glog.V(1).Infof("[%s] Context cancelled while sending fetch for %s[%d]",
+					connContext.ConnectionID, topic.Name, partition.PartitionID)
+				results = append(results, &partitionFetchResult{})
+				continue
+			case <-time.After(500 * time.Millisecond):
+				// Reader is busy processing another request, return empty result
+				glog.Warningf("[%s] Reader busy (500ms timeout) for %s[%d], returning empty",
 					connContext.ConnectionID, topic.Name, partition.PartitionID)
 				results = append(results, &partitionFetchResult{})
 				continue
 			}
 
-			// Wait for result with timeout
+			// Wait for result with timeout (increased to handle fetch latency)
 			select {
 			case result := <-resultChan:
 				results = append(results, result)
 			case <-ctx.Done():
-				return nil, fmt.Errorf("context cancelled")
-			case <-time.After(100 * time.Millisecond):
+				// Context cancelled - still add empty result to maintain count
+				glog.V(1).Infof("[%s] Context cancelled while waiting for result from %s[%d]",
+					connContext.ConnectionID, topic.Name, partition.PartitionID)
+				results = append(results, &partitionFetchResult{})
+			case <-time.After(1000 * time.Millisecond):
 				// Timeout - return empty result
-				glog.V(1).Infof("[%s] Fetch timeout for %s[%d]",
+				glog.Warningf("[%s] Fetch timeout (1000ms) for %s[%d]",
 					connContext.ConnectionID, topic.Name, partition.PartitionID)
 				results = append(results, &partitionFetchResult{})
 			}
@@ -232,6 +258,21 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 	// BUILD RESPONSE FROM FETCHED DATA
 	// Now assemble the response in the correct order using fetched results
 	// ====================================================================
+
+	// CRITICAL: Verify we have results for all requested partitions
+	// Sarama requires a response block for EVERY requested partition to avoid ErrIncompleteResponse
+	expectedResultCount := 0
+	for _, topic := range fetchRequest.Topics {
+		expectedResultCount += len(topic.Partitions)
+	}
+	if len(results) != expectedResultCount {
+		glog.Errorf("[%s] Result count mismatch: expected %d, got %d - this will cause ErrIncompleteResponse",
+			connContext.ConnectionID, expectedResultCount, len(results))
+		// Pad with empty results if needed (safety net - shouldn't happen with fixed code)
+		for len(results) < expectedResultCount {
+			results = append(results, &partitionFetchResult{})
+		}
+	}
 
 	// Process each requested topic
 	resultIdx := 0
