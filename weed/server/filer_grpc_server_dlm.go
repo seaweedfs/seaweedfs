@@ -30,7 +30,7 @@ func (fs *FilerServer) DistributedLock(ctx context.Context, req *filer_pb.LockRe
 	if movedTo != "" && movedTo != fs.option.Host && !req.IsMoved {
 		glog.V(0).Infof("FILER LOCK: Forwarding to correct filer - from=%s to=%s", fs.option.Host, movedTo)
 		err = pb.WithFilerClient(false, 0, movedTo, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-			secondResp, err := client.DistributedLock(context.Background(), &filer_pb.LockRequest{
+			secondResp, err := client.DistributedLock(ctx, &filer_pb.LockRequest{
 				Name:          req.Name,
 				SecondsToLock: req.SecondsToLock,
 				RenewToken:    req.RenewToken,
@@ -73,7 +73,7 @@ func (fs *FilerServer) DistributedUnlock(ctx context.Context, req *filer_pb.Unlo
 
 	if !req.IsMoved && movedTo != "" {
 		err = pb.WithFilerClient(false, 0, movedTo, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-			secondResp, err := client.DistributedUnlock(context.Background(), &filer_pb.UnlockRequest{
+			secondResp, err := client.DistributedUnlock(ctx, &filer_pb.UnlockRequest{
 				Name:       req.Name,
 				RenewToken: req.RenewToken,
 				IsMoved:    true,
@@ -98,7 +98,7 @@ func (fs *FilerServer) FindLockOwner(ctx context.Context, req *filer_pb.FindLock
 	owner, movedTo, err := fs.filer.Dlm.FindLockOwner(req.Name)
 	if !req.IsMoved && movedTo != "" || err == lock_manager.LockNotFound {
 		err = pb.WithFilerClient(false, 0, movedTo, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-			secondResp, err := client.FindLockOwner(context.Background(), &filer_pb.FindLockOwnerRequest{
+			secondResp, err := client.FindLockOwner(ctx, &filer_pb.FindLockOwnerRequest{
 				Name:    req.Name,
 				IsMoved: true,
 			})
@@ -145,8 +145,10 @@ func (fs *FilerServer) OnDlmChangeSnapshot(snapshot []pb.ServerAddress) {
 
 	for _, lock := range locks {
 		server := fs.filer.Dlm.CalculateTargetServer(lock.Key, snapshot)
-		if err := pb.WithFilerClient(false, 0, server, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-			_, err := client.TransferLocks(context.Background(), &filer_pb.TransferLocksRequest{
+		// Use a context with timeout for lock transfer to avoid hanging indefinitely
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err := pb.WithFilerClient(false, 0, server, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+			_, err := client.TransferLocks(ctx, &filer_pb.TransferLocksRequest{
 				Locks: []*filer_pb.Lock{
 					{
 						Name:        lock.Key,
@@ -157,7 +159,9 @@ func (fs *FilerServer) OnDlmChangeSnapshot(snapshot []pb.ServerAddress) {
 				},
 			})
 			return err
-		}); err != nil {
+		})
+		cancel()
+		if err != nil {
 			// it may not be worth retrying, since the lock may have expired
 			glog.Errorf("transfer lock %v to %v: %v", lock.Key, server, err)
 		}
