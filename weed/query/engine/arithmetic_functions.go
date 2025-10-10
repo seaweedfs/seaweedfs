@@ -15,11 +15,11 @@ import (
 type ArithmeticOperator string
 
 const (
-	OpAdd    ArithmeticOperator = "+"
-	OpSub    ArithmeticOperator = "-"
-	OpMul    ArithmeticOperator = "*"
-	OpDiv    ArithmeticOperator = "/"
-	OpMod    ArithmeticOperator = "%"
+	OpAdd ArithmeticOperator = "+"
+	OpSub ArithmeticOperator = "-"
+	OpMul ArithmeticOperator = "*"
+	OpDiv ArithmeticOperator = "/"
+	OpMod ArithmeticOperator = "%"
 )
 
 // EvaluateArithmeticExpression evaluates basic arithmetic operations between two values
@@ -69,7 +69,7 @@ func (e *SQLEngine) EvaluateArithmeticExpression(left, right *schema_pb.Value, o
 
 	// Convert result back to appropriate schema value type
 	// If both operands were integers and operation doesn't produce decimal, return integer
-	if e.isIntegerValue(left) && e.isIntegerValue(right) && 
+	if e.isIntegerValue(left) && e.isIntegerValue(right) &&
 		(operator == OpAdd || operator == OpSub || operator == OpMul || operator == OpMod) {
 		return &schema_pb.Value{
 			Kind: &schema_pb.Value_Int64Value{Int64Value: int64(result)},

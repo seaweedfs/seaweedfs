@@ -10,131 +10,131 @@ func TestArithmeticOperations(t *testing.T) {
 	engine := NewTestSQLEngine()
 
 	tests := []struct {
-		name       string
-		left       *schema_pb.Value
-		right      *schema_pb.Value
-		operator   ArithmeticOperator
-		expected   *schema_pb.Value
-		expectErr  bool
+		name      string
+		left      *schema_pb.Value
+		right     *schema_pb.Value
+		operator  ArithmeticOperator
+		expected  *schema_pb.Value
+		expectErr bool
 	}{
 		// Addition tests
 		{
-			name: "Add two integers",
-			left: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 10}},
-			right: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
-			operator: OpAdd,
-			expected: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 15}},
+			name:      "Add two integers",
+			left:      &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 10}},
+			right:     &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
+			operator:  OpAdd,
+			expected:  &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 15}},
 			expectErr: false,
 		},
 		{
-			name: "Add integer and float",
-			left: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 10}},
-			right: &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 5.5}},
-			operator: OpAdd,
-			expected: &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 15.5}},
+			name:      "Add integer and float",
+			left:      &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 10}},
+			right:     &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 5.5}},
+			operator:  OpAdd,
+			expected:  &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 15.5}},
 			expectErr: false,
 		},
 		// Subtraction tests
 		{
-			name: "Subtract two integers",
-			left: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 10}},
-			right: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 3}},
-			operator: OpSub,
-			expected: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 7}},
+			name:      "Subtract two integers",
+			left:      &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 10}},
+			right:     &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 3}},
+			operator:  OpSub,
+			expected:  &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 7}},
 			expectErr: false,
 		},
 		// Multiplication tests
 		{
-			name: "Multiply two integers",
-			left: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 6}},
-			right: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 7}},
-			operator: OpMul,
-			expected: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 42}},
+			name:      "Multiply two integers",
+			left:      &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 6}},
+			right:     &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 7}},
+			operator:  OpMul,
+			expected:  &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 42}},
 			expectErr: false,
 		},
 		{
-			name: "Multiply with float",
-			left: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
-			right: &schema_pb.Value{Kind: &schema_pb.Value_FloatValue{FloatValue: 2.5}},
-			operator: OpMul,
-			expected: &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 12.5}},
+			name:      "Multiply with float",
+			left:      &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
+			right:     &schema_pb.Value{Kind: &schema_pb.Value_FloatValue{FloatValue: 2.5}},
+			operator:  OpMul,
+			expected:  &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 12.5}},
 			expectErr: false,
 		},
 		// Division tests
 		{
-			name: "Divide two integers",
-			left: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 20}},
-			right: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 4}},
-			operator: OpDiv,
-			expected: &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 5.0}},
+			name:      "Divide two integers",
+			left:      &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 20}},
+			right:     &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 4}},
+			operator:  OpDiv,
+			expected:  &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 5.0}},
 			expectErr: false,
 		},
 		{
-			name: "Division by zero",
-			left: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 10}},
-			right: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 0}},
-			operator: OpDiv,
-			expected: nil,
+			name:      "Division by zero",
+			left:      &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 10}},
+			right:     &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 0}},
+			operator:  OpDiv,
+			expected:  nil,
 			expectErr: true,
 		},
 		// Modulo tests
 		{
-			name: "Modulo operation",
-			left: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 17}},
-			right: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
-			operator: OpMod,
-			expected: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 2}},
+			name:      "Modulo operation",
+			left:      &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 17}},
+			right:     &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
+			operator:  OpMod,
+			expected:  &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 2}},
 			expectErr: false,
 		},
 		{
-			name: "Modulo by zero",
-			left: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 10}},
-			right: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 0}},
-			operator: OpMod,
-			expected: nil,
+			name:      "Modulo by zero",
+			left:      &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 10}},
+			right:     &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 0}},
+			operator:  OpMod,
+			expected:  nil,
 			expectErr: true,
 		},
 		// String conversion tests
 		{
-			name: "Add string number to integer",
-			left: &schema_pb.Value{Kind: &schema_pb.Value_StringValue{StringValue: "15"}},
-			right: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
-			operator: OpAdd,
-			expected: &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 20.0}},
+			name:      "Add string number to integer",
+			left:      &schema_pb.Value{Kind: &schema_pb.Value_StringValue{StringValue: "15"}},
+			right:     &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
+			operator:  OpAdd,
+			expected:  &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 20.0}},
 			expectErr: false,
 		},
 		{
-			name: "Invalid string conversion",
-			left: &schema_pb.Value{Kind: &schema_pb.Value_StringValue{StringValue: "not_a_number"}},
-			right: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
-			operator: OpAdd,
-			expected: nil,
+			name:      "Invalid string conversion",
+			left:      &schema_pb.Value{Kind: &schema_pb.Value_StringValue{StringValue: "not_a_number"}},
+			right:     &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
+			operator:  OpAdd,
+			expected:  nil,
 			expectErr: true,
 		},
 		// Boolean conversion tests
 		{
-			name: "Add boolean to integer",
-			left: &schema_pb.Value{Kind: &schema_pb.Value_BoolValue{BoolValue: true}},
-			right: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
-			operator: OpAdd,
-			expected: &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 6.0}},
+			name:      "Add boolean to integer",
+			left:      &schema_pb.Value{Kind: &schema_pb.Value_BoolValue{BoolValue: true}},
+			right:     &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
+			operator:  OpAdd,
+			expected:  &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 6.0}},
 			expectErr: false,
 		},
 		// Null value tests
 		{
-			name: "Add with null left operand",
-			left: nil,
-			right: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
-			operator: OpAdd,
-			expected: nil,
+			name:      "Add with null left operand",
+			left:      nil,
+			right:     &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
+			operator:  OpAdd,
+			expected:  nil,
 			expectErr: true,
 		},
 		{
-			name: "Add with null right operand",
-			left: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
-			right: nil,
-			operator: OpAdd,
-			expected: nil,
+			name:      "Add with null right operand",
+			left:      &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
+			right:     nil,
+			operator:  OpAdd,
+			expected:  nil,
 			expectErr: true,
 		},
 	}
@@ -203,7 +203,7 @@ func TestIndividualArithmeticFunctions(t *testing.T) {
 	if err != nil {
 		t.Errorf("Divide function failed: %v", err)
 	}
-	expected = &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 10.0/3.0}}
+	expected = &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 10.0 / 3.0}}
 	if !valuesEqual(result, expected) {
 		t.Errorf("Divide: Expected %v, got %v", expected, result)
 	}
@@ -224,45 +224,45 @@ func TestMathematicalFunctions(t *testing.T) {
 
 	t.Run("ROUND function tests", func(t *testing.T) {
 		tests := []struct {
-			name       string
-			value      *schema_pb.Value
-			precision  *schema_pb.Value
-			expected   *schema_pb.Value
-			expectErr  bool
+			name      string
+			value     *schema_pb.Value
+			precision *schema_pb.Value
+			expected  *schema_pb.Value
+			expectErr bool
 		}{
 			{
-				name: "Round float to integer",
-				value: &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 3.7}},
+				name:      "Round float to integer",
+				value:     &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 3.7}},
 				precision: nil,
-				expected: &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 4.0}},
+				expected:  &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 4.0}},
 				expectErr: false,
 			},
 			{
-				name: "Round integer stays integer",
-				value: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
+				name:      "Round integer stays integer",
+				value:     &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
 				precision: nil,
-				expected: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
+				expected:  &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
 				expectErr: false,
 			},
 			{
-				name: "Round with precision 2",
-				value: &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 3.14159}},
+				name:      "Round with precision 2",
+				value:     &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 3.14159}},
 				precision: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 2}},
-				expected: &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 3.14}},
+				expected:  &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 3.14}},
 				expectErr: false,
 			},
 			{
-				name: "Round negative number",
-				value: &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: -3.7}},
+				name:      "Round negative number",
+				value:     &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: -3.7}},
 				precision: nil,
-				expected: &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: -4.0}},
+				expected:  &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: -4.0}},
 				expectErr: false,
 			},
 			{
-				name: "Round null value",
-				value: nil,
+				name:      "Round null value",
+				value:     nil,
 				precision: nil,
-				expected: nil,
+				expected:  nil,
 				expectErr: true,
 			},
 		}
@@ -299,33 +299,33 @@ func TestMathematicalFunctions(t *testing.T) {
 
 	t.Run("CEIL function tests", func(t *testing.T) {
 		tests := []struct {
-			name       string
-			value      *schema_pb.Value
-			expected   *schema_pb.Value
-			expectErr  bool
+			name      string
+			value     *schema_pb.Value
+			expected  *schema_pb.Value
+			expectErr bool
 		}{
 			{
-				name: "Ceil positive decimal",
-				value: &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 3.2}},
-				expected: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 4}},
+				name:      "Ceil positive decimal",
+				value:     &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 3.2}},
+				expected:  &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 4}},
 				expectErr: false,
 			},
 			{
-				name: "Ceil negative decimal",
-				value: &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: -3.2}},
-				expected: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: -3}},
+				name:      "Ceil negative decimal",
+				value:     &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: -3.2}},
+				expected:  &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: -3}},
 				expectErr: false,
 			},
 			{
-				name: "Ceil integer",
-				value: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
-				expected: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
+				name:      "Ceil integer",
+				value:     &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
+				expected:  &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
 				expectErr: false,
 			},
 			{
-				name: "Ceil null value",
-				value: nil,
-				expected: nil,
+				name:      "Ceil null value",
+				value:     nil,
+				expected:  nil,
 				expectErr: true,
 			},
 		}
@@ -355,33 +355,33 @@ func TestMathematicalFunctions(t *testing.T) {
 
 	t.Run("FLOOR function tests", func(t *testing.T) {
 		tests := []struct {
-			name       string
-			value      *schema_pb.Value
-			expected   *schema_pb.Value
-			expectErr  bool
+			name      string
+			value     *schema_pb.Value
+			expected  *schema_pb.Value
+			expectErr bool
 		}{
 			{
-				name: "Floor positive decimal",
-				value: &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 3.8}},
-				expected: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 3}},
+				name:      "Floor positive decimal",
+				value:     &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 3.8}},
+				expected:  &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 3}},
 				expectErr: false,
 			},
 			{
-				name: "Floor negative decimal",
-				value: &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: -3.2}},
-				expected: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: -4}},
+				name:      "Floor negative decimal",
+				value:     &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: -3.2}},
+				expected:  &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: -4}},
 				expectErr: false,
 			},
 			{
-				name: "Floor integer",
-				value: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
-				expected: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
+				name:      "Floor integer",
+				value:     &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
+				expected:  &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
 				expectErr: false,
 			},
 			{
-				name: "Floor null value",
-				value: nil,
-				expected: nil,
+				name:      "Floor null value",
+				value:     nil,
+				expected:  nil,
 				expectErr: true,
 			},
 		}
@@ -411,57 +411,57 @@ func TestMathematicalFunctions(t *testing.T) {
 
 	t.Run("ABS function tests", func(t *testing.T) {
 		tests := []struct {
-			name       string
-			value      *schema_pb.Value
-			expected   *schema_pb.Value
-			expectErr  bool
+			name      string
+			value     *schema_pb.Value
+			expected  *schema_pb.Value
+			expectErr bool
 		}{
 			{
-				name: "Abs positive integer",
-				value: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
-				expected: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
+				name:      "Abs positive integer",
+				value:     &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
+				expected:  &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
 				expectErr: false,
 			},
 			{
-				name: "Abs negative integer",
-				value: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: -5}},
-				expected: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
+				name:      "Abs negative integer",
+				value:     &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: -5}},
+				expected:  &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 5}},
 				expectErr: false,
 			},
 			{
-				name: "Abs positive double",
-				value: &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 3.14}},
-				expected: &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 3.14}},
+				name:      "Abs positive double",
+				value:     &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 3.14}},
+				expected:  &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 3.14}},
 				expectErr: false,
 			},
 			{
-				name: "Abs negative double",
-				value: &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: -3.14}},
-				expected: &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 3.14}},
+				name:      "Abs negative double",
+				value:     &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: -3.14}},
+				expected:  &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: 3.14}},
 				expectErr: false,
 			},
 			{
-				name: "Abs positive float",
-				value: &schema_pb.Value{Kind: &schema_pb.Value_FloatValue{FloatValue: 2.5}},
-				expected: &schema_pb.Value{Kind: &schema_pb.Value_FloatValue{FloatValue: 2.5}},
+				name:      "Abs positive float",
+				value:     &schema_pb.Value{Kind: &schema_pb.Value_FloatValue{FloatValue: 2.5}},
+				expected:  &schema_pb.Value{Kind: &schema_pb.Value_FloatValue{FloatValue: 2.5}},
 				expectErr: false,
 			},
 			{
-				name: "Abs negative float",
-				value: &schema_pb.Value{Kind: &schema_pb.Value_FloatValue{FloatValue: -2.5}},
-				expected: &schema_pb.Value{Kind: &schema_pb.Value_FloatValue{FloatValue: 2.5}},
+				name:      "Abs negative float",
+				value:     &schema_pb.Value{Kind: &schema_pb.Value_FloatValue{FloatValue: -2.5}},
+				expected:  &schema_pb.Value{Kind: &schema_pb.Value_FloatValue{FloatValue: 2.5}},
 				expectErr: false,
 			},
 			{
-				name: "Abs zero",
-				value: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 0}},
-				expected: &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 0}},
+				name:      "Abs zero",
+				value:     &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 0}},
+				expected:  &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 0}},
 				expectErr: false,
 			},
 			{
-				name: "Abs null value",
-				value: nil,
-				expected: nil,
+				name:      "Abs null value",
+				value:     nil,
+				expected:  nil,
 				expectErr: true,
 			},
 		}

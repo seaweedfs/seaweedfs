@@ -18,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/constants"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
@@ -168,7 +169,7 @@ func (fs *FilerServer) move(ctx context.Context, w http.ResponseWriter, r *http.
 		return
 	} else if wormEnforced {
 		// you cannot move a worm file or directory
-		err = fmt.Errorf("cannot move write-once entry from '%s' to '%s': operation not permitted", src, dst)
+		err = fmt.Errorf("cannot move write-once entry from '%s' to '%s': %s", src, dst, constants.ErrMsgOperationNotPermitted)
 		writeJsonError(w, r, http.StatusForbidden, err)
 		return
 	}
@@ -228,7 +229,7 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
 	} else if wormEnforced {
-		writeJsonError(w, r, http.StatusForbidden, errors.New("operation not permitted"))
+		writeJsonError(w, r, http.StatusForbidden, errors.New(constants.ErrMsgOperationNotPermitted))
 		return
 	}
 
