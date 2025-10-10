@@ -897,6 +897,24 @@ func (hms *HybridMessageScanner) parseRawMessageWithSchema(logEntry *filer_pb.Lo
 // convertLogEntryToRecordValueWithDecoded converts a filer_pb.LogEntry to schema_pb.RecordValue
 // using a pre-decoded DataMessage to avoid duplicate protobuf unmarshaling
 func (hms *HybridMessageScanner) convertLogEntryToRecordValueWithDecoded(logEntry *filer_pb.LogEntry, dataMessage *mq_pb.DataMessage) (*schema_pb.RecordValue, string, error) {
+	// IMPORTANT: Check for schema-less topics FIRST
+	// Schema-less topics (like _schemas) should store raw data directly in _value field
+	if hms.isSchemaless() {
+		recordValue := &schema_pb.RecordValue{
+			Fields: make(map[string]*schema_pb.Value),
+		}
+		recordValue.Fields[SW_COLUMN_NAME_TIMESTAMP] = &schema_pb.Value{
+			Kind: &schema_pb.Value_Int64Value{Int64Value: logEntry.TsNs},
+		}
+		recordValue.Fields[SW_COLUMN_NAME_KEY] = &schema_pb.Value{
+			Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Key},
+		}
+		recordValue.Fields[SW_COLUMN_NAME_VALUE] = &schema_pb.Value{
+			Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Data},
+		}
+		return recordValue, "live_log", nil
+	}
+
 	// CRITICAL: The broker stores DataMessage.Value directly in LogEntry.Data
 	// So we need to try unmarshaling LogEntry.Data as RecordValue first
 	var recordValueBytes []byte
