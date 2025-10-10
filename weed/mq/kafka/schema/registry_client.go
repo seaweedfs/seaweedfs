@@ -16,10 +16,12 @@ type RegistryClient struct {
 	httpClient *http.Client
 
 	// Caching
-	schemaCache  map[uint32]*CachedSchema  // schema ID -> schema
-	subjectCache map[string]*CachedSubject // subject -> latest version info
-	cacheMu      sync.RWMutex
-	cacheTTL     time.Duration
+	schemaCache      map[uint32]*CachedSchema  // schema ID -> schema
+	subjectCache     map[string]*CachedSubject // subject -> latest version info
+	negativeCache    map[string]time.Time      // subject -> time when 404 was cached
+	cacheMu          sync.RWMutex
+	cacheTTL         time.Duration
+	negativeCacheTTL time.Duration // TTL for negative (404) cache entries
 }
 
 // CachedSchema represents a cached schema with metadata
@@ -65,11 +67,13 @@ func NewRegistryClient(config RegistryConfig) *RegistryClient {
 	}
 
 	return &RegistryClient{
-		baseURL:      config.URL,
-		httpClient:   httpClient,
-		schemaCache:  make(map[uint32]*CachedSchema),
-		subjectCache: make(map[string]*CachedSubject),
-		cacheTTL:     config.CacheTTL,
+		baseURL:          config.URL,
+		httpClient:       httpClient,
+		schemaCache:      make(map[uint32]*CachedSchema),
+		subjectCache:     make(map[string]*CachedSubject),
+		negativeCache:    make(map[string]time.Time),
+		cacheTTL:         config.CacheTTL,
+		negativeCacheTTL: 2 * time.Minute, // Cache 404s for 2 minutes
 	}
 }
 
@@ -130,12 +134,20 @@ func (rc *RegistryClient) GetSchemaByID(schemaID uint32) (*CachedSchema, error) 
 
 // GetLatestSchema retrieves the latest schema for a subject
 func (rc *RegistryClient) GetLatestSchema(subject string) (*CachedSubject, error) {
-	// Check cache first
+	// Check positive cache first
 	rc.cacheMu.RLock()
 	if cached, exists := rc.subjectCache[subject]; exists {
 		if time.Since(cached.CachedAt) < rc.cacheTTL {
 			rc.cacheMu.RUnlock()
 			return cached, nil
+		}
+	}
+
+	// Check negative cache (404 cache)
+	if cachedAt, exists := rc.negativeCache[subject]; exists {
+		if time.Since(cachedAt) < rc.negativeCacheTTL {
+			rc.cacheMu.RUnlock()
+			return nil, fmt.Errorf("schema registry error 404: subject not found (cached)")
 		}
 	}
 	rc.cacheMu.RUnlock()
@@ -150,6 +162,14 @@ func (rc *RegistryClient) GetLatestSchema(subject string) (*CachedSubject, error
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+
+		// Cache 404 responses to avoid repeated lookups
+		if resp.StatusCode == http.StatusNotFound {
+			rc.cacheMu.Lock()
+			rc.negativeCache[subject] = time.Now()
+			rc.cacheMu.Unlock()
+		}
+
 		return nil, fmt.Errorf("schema registry error %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -172,9 +192,10 @@ func (rc *RegistryClient) GetLatestSchema(subject string) (*CachedSubject, error
 		CachedAt: time.Now(),
 	}
 
-	// Update cache
+	// Update cache and clear negative cache entry
 	rc.cacheMu.Lock()
 	rc.subjectCache[subject] = cached
+	delete(rc.negativeCache, subject) // Clear any cached 404
 	rc.cacheMu.Unlock()
 
 	return cached, nil
@@ -215,6 +236,7 @@ func (rc *RegistryClient) RegisterSchema(subject, schema string) (uint32, error)
 	// Invalidate caches for this subject
 	rc.cacheMu.Lock()
 	delete(rc.subjectCache, subject)
+	delete(rc.negativeCache, subject) // Clear any cached 404
 	// Note: we don't cache the new schema here since we don't have full metadata
 	rc.cacheMu.Unlock()
 
@@ -285,14 +307,15 @@ func (rc *RegistryClient) ClearCache() {
 
 	rc.schemaCache = make(map[uint32]*CachedSchema)
 	rc.subjectCache = make(map[string]*CachedSubject)
+	rc.negativeCache = make(map[string]time.Time)
 }
 
 // GetCacheStats returns cache statistics
-func (rc *RegistryClient) GetCacheStats() (schemaCount, subjectCount int) {
+func (rc *RegistryClient) GetCacheStats() (schemaCount, subjectCount, negativeCacheCount int) {
 	rc.cacheMu.RLock()
 	defer rc.cacheMu.RUnlock()
 
-	return len(rc.schemaCache), len(rc.subjectCache)
+	return len(rc.schemaCache), len(rc.subjectCache), len(rc.negativeCache)
 }
 
 // detectSchemaFormat attempts to determine the schema format from content

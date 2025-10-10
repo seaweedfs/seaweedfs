@@ -401,7 +401,7 @@ func (m *Manager) GetCacheStats() (decoders, schemas, subjects int) {
 	decoders = len(m.avroDecoders) + len(m.protobufDecoders) + len(m.jsonSchemaDecoders)
 	m.decoderMu.RUnlock()
 
-	schemas, subjects = m.registryClient.GetCacheStats()
+	schemas, subjects, _ = m.registryClient.GetCacheStats()
 	return
 }
 
@@ -640,13 +640,13 @@ func schemaValueToGoValueWithAvroContext(value *schema_pb.Value, preserveAvroUni
 		return result
 	case *schema_pb.Value_RecordValue:
 		recordMap := recordValueToMapWithAvroContext(v.RecordValue, preserveAvroUnions)
-		
+
 		// Check if this record represents an Avro union
 		if preserveAvroUnions && isAvroUnionRecord(v.RecordValue) {
 			// Return the union map directly since it's already in the correct format
 			return recordMap
 		}
-		
+
 		return recordMap
 	case *schema_pb.Value_TimestampValue:
 		// Convert back to time if needed, or return as int64
@@ -657,7 +657,6 @@ func schemaValueToGoValueWithAvroContext(value *schema_pb.Value, preserveAvroUni
 	}
 }
 
-
 // isAvroUnionRecord checks if a RecordValue represents an Avro union
 func isAvroUnionRecord(record *schema_pb.RecordValue) bool {
 	// A record represents an Avro union if it has exactly one field
@@ -665,11 +664,11 @@ func isAvroUnionRecord(record *schema_pb.RecordValue) bool {
 	if len(record.Fields) != 1 {
 		return false
 	}
-	
+
 	for key := range record.Fields {
 		return isAvroUnionTypeName(key)
 	}
-	
+
 	return false
 }
 

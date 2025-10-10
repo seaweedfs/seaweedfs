@@ -12,17 +12,17 @@ func TestNewRegistryClient(t *testing.T) {
 	config := RegistryConfig{
 		URL: "http://localhost:8081",
 	}
-	
+
 	client := NewRegistryClient(config)
-	
+
 	if client.baseURL != config.URL {
 		t.Errorf("Expected baseURL %s, got %s", config.URL, client.baseURL)
 	}
-	
+
 	if client.cacheTTL != 5*time.Minute {
 		t.Errorf("Expected default cacheTTL 5m, got %v", client.cacheTTL)
 	}
-	
+
 	if client.httpClient.Timeout != 30*time.Second {
 		t.Errorf("Expected default timeout 30s, got %v", client.httpClient.Timeout)
 	}
@@ -58,15 +58,15 @@ func TestRegistryClient_GetSchemaByID(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Expected no error, got %v", err)
 		}
-		
+
 		if schema.ID != 1 {
 			t.Errorf("Expected schema ID 1, got %d", schema.ID)
 		}
-		
+
 		if schema.Subject != "user-value" {
 			t.Errorf("Expected subject 'user-value', got %s", schema.Subject)
 		}
-		
+
 		if schema.Format != FormatAvro {
 			t.Errorf("Expected Avro format, got %v", schema.Format)
 		}
@@ -85,13 +85,13 @@ func TestRegistryClient_GetSchemaByID(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Expected no error, got %v", err)
 		}
-		
+
 		// Second call should hit cache (same timestamp)
 		schema2, err := client.GetSchemaByID(1)
 		if err != nil {
 			t.Fatalf("Expected no error, got %v", err)
 		}
-		
+
 		if schema1.CachedAt != schema2.CachedAt {
 			t.Error("Expected cache hit with same timestamp")
 		}
@@ -121,11 +121,11 @@ func TestRegistryClient_GetLatestSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
-	
+
 	if schema.LatestID != 1 {
 		t.Errorf("Expected schema ID 1, got %d", schema.LatestID)
 	}
-	
+
 	if schema.Subject != "user-value" {
 		t.Errorf("Expected subject 'user-value', got %s", schema.Subject)
 	}
@@ -152,7 +152,7 @@ func TestRegistryClient_RegisterSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
-	
+
 	if id != 123 {
 		t.Errorf("Expected schema ID 123, got %d", id)
 	}
@@ -179,7 +179,7 @@ func TestRegistryClient_CheckCompatibility(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
-	
+
 	if !compatible {
 		t.Error("Expected schema to be compatible")
 	}
@@ -203,12 +203,12 @@ func TestRegistryClient_ListSubjects(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
-	
+
 	expectedSubjects := []string{"user-value", "order-value", "product-key"}
 	if len(subjects) != len(expectedSubjects) {
 		t.Errorf("Expected %d subjects, got %d", len(expectedSubjects), len(subjects))
 	}
-	
+
 	for i, expected := range expectedSubjects {
 		if subjects[i] != expected {
 			t.Errorf("Expected subject %s, got %s", expected, subjects[i])
@@ -281,14 +281,14 @@ func TestRegistryClient_CacheManagement(t *testing.T) {
 	}
 
 	// Check cache stats
-	schemaCount, subjectCount := client.GetCacheStats()
+	schemaCount, subjectCount, _ := client.GetCacheStats()
 	if schemaCount != 1 || subjectCount != 1 {
 		t.Errorf("Expected 1 schema and 1 subject in cache, got %d and %d", schemaCount, subjectCount)
 	}
 
 	// Clear cache
 	client.ClearCache()
-	schemaCount, subjectCount = client.GetCacheStats()
+	schemaCount, subjectCount, _ = client.GetCacheStats()
 	if schemaCount != 0 || subjectCount != 0 {
 		t.Errorf("Expected empty cache after clear, got %d schemas and %d subjects", schemaCount, subjectCount)
 	}
@@ -352,7 +352,7 @@ func BenchmarkRegistryClient_GetSchemaByID(b *testing.B) {
 func BenchmarkRegistryClient_DetectSchemaFormat(b *testing.B) {
 	config := RegistryConfig{URL: "http://localhost:8081"}
 	client := NewRegistryClient(config)
-	
+
 	avroSchema := `{"type":"record","name":"User","fields":[{"name":"id","type":"int"}]}`
 
 	b.ResetTimer()
