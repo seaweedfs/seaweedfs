@@ -333,7 +333,7 @@ func (t *BearerTokenTransport) extractPrincipalFromJWT(tokenString string) strin
 		// This is safe because the actual validation happens server-side
 		return []byte("dummy-key"), nil
 	})
-	
+
 	// Even if parsing fails due to signature verification, we might still get claims
 	if claims, ok := token.Claims.(jwt.MapClaims); ok {
 		// Try multiple possible claim names for the principal ARN
@@ -348,7 +348,7 @@ func (t *BearerTokenTransport) extractPrincipalFromJWT(tokenString string) strin
 			}
 		}
 	}
-	
+
 	return ""
 }
 
@@ -693,7 +693,7 @@ func (f *S3IAMTestFramework) CreateBucketWithCleanup(s3Client *s3.S3, bucketName
 
 	if err != nil {
 		// If bucket already exists, clean it up first
-		if awsErr, ok := err.(awserr.Error); ok && awsErr.Code() == "BucketAlreadyExists" {
+		if awsErr, ok := err.(awserr.Error); ok && (awsErr.Code() == "BucketAlreadyExists" || awsErr.Code() == "BucketAlreadyOwnedByYou") {
 			f.t.Logf("Bucket %s already exists, cleaning up first", bucketName)
 
 			// Empty the existing bucket
