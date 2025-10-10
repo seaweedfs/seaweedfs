@@ -802,6 +802,14 @@ func (hms *HybridMessageScanner) convertLogEntryToRecordValue(logEntry *filer_pb
 	return hms.parseRawMessageWithSchema(logEntry)
 }
 
+// min returns the minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 // parseRawMessageWithSchema parses raw live message data using the topic's schema
 // This provides proper type conversion and field mapping instead of treating everything as strings
 func (hms *HybridMessageScanner) parseRawMessageWithSchema(logEntry *filer_pb.LogEntry) (*schema_pb.RecordValue, string, error) {
@@ -846,6 +854,10 @@ func (hms *HybridMessageScanner) parseRawMessageWithSchema(logEntry *filer_pb.Lo
 		// JSON_SCHEMA format or empty (default to JSON)
 		// JSON is the most common format for schema registry
 		parsedRecord, err = hms.parseJSONMessage(logEntry.Data)
+		if err != nil {
+			// Try protobuf as fallback
+			parsedRecord, err = hms.parseProtobufMessage(logEntry.Data)
+		}
 	default:
 		// Unknown format - try JSON first, then protobuf as fallback
 		parsedRecord, err = hms.parseJSONMessage(logEntry.Data)
@@ -885,40 +897,44 @@ func (hms *HybridMessageScanner) parseRawMessageWithSchema(logEntry *filer_pb.Lo
 // convertLogEntryToRecordValueWithDecoded converts a filer_pb.LogEntry to schema_pb.RecordValue
 // using a pre-decoded DataMessage to avoid duplicate protobuf unmarshaling
 func (hms *HybridMessageScanner) convertLogEntryToRecordValueWithDecoded(logEntry *filer_pb.LogEntry, dataMessage *mq_pb.DataMessage) (*schema_pb.RecordValue, string, error) {
-	// If we have a decoded DataMessage, check if it contains a RecordValue
-	if dataMessage != nil && dataMessage.Value != nil {
-		// This is a DataMessage containing a RecordValue (live message format)
-		// dataMessage.Value is []byte, so we need to unmarshal it
-		recordValue := &schema_pb.RecordValue{}
-		if err := proto.Unmarshal(dataMessage.Value, recordValue); err != nil {
-			// CRITICAL FIX: If protobuf unmarshaling fails, fall back to schema-aware parsing
-			// This handles Confluent Wire Format (Avro), JSON, and other formats
-			// Create a temporary LogEntry with the DataMessage.Value as data for parsing
-			tempLogEntry := &filer_pb.LogEntry{
-				TsNs: logEntry.TsNs,
-				Key:  logEntry.Key,
-				Data: dataMessage.Value,
-			}
-			return hms.parseRawMessageWithSchema(tempLogEntry)
-		}
+	// CRITICAL: The broker stores DataMessage.Value directly in LogEntry.Data
+	// So we need to try unmarshaling LogEntry.Data as RecordValue first
+	var recordValueBytes []byte
 
-		// Ensure Fields map exists
-		if recordValue.Fields == nil {
-			recordValue.Fields = make(map[string]*schema_pb.Value)
-		}
-
-		// Add system columns from LogEntry
-		recordValue.Fields[SW_COLUMN_NAME_TIMESTAMP] = &schema_pb.Value{
-			Kind: &schema_pb.Value_Int64Value{Int64Value: logEntry.TsNs},
-		}
-		recordValue.Fields[SW_COLUMN_NAME_KEY] = &schema_pb.Value{
-			Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Key},
-		}
-
-		return recordValue, "live_log", nil
+	if dataMessage != nil && len(dataMessage.Value) > 0 {
+		// DataMessage has a Value field - use it
+		recordValueBytes = dataMessage.Value
+	} else {
+		// DataMessage doesn't have Value, use LogEntry.Data directly
+		// This is the normal case when broker stores messages
+		recordValueBytes = logEntry.Data
 	}
 
-	// For cases where dataMessage is nil (decode failed or not a DataMessage),
+	// Try to unmarshal as RecordValue
+	if len(recordValueBytes) > 0 {
+		recordValue := &schema_pb.RecordValue{}
+		if err := proto.Unmarshal(recordValueBytes, recordValue); err == nil {
+			// Successfully unmarshaled as RecordValue
+
+			// Ensure Fields map exists
+			if recordValue.Fields == nil {
+				recordValue.Fields = make(map[string]*schema_pb.Value)
+			}
+
+			// Add system columns from LogEntry
+			recordValue.Fields[SW_COLUMN_NAME_TIMESTAMP] = &schema_pb.Value{
+				Kind: &schema_pb.Value_Int64Value{Int64Value: logEntry.TsNs},
+			}
+			recordValue.Fields[SW_COLUMN_NAME_KEY] = &schema_pb.Value{
+				Kind: &schema_pb.Value_BytesValue{BytesValue: logEntry.Key},
+			}
+
+			return recordValue, "live_log", nil
+		}
+		// If unmarshaling as RecordValue fails, fall back to schema-aware parsing
+	}
+
+	// For cases where protobuf unmarshaling failed or data is empty,
 	// attempt schema-aware parsing to try JSON, protobuf, and other formats
 	return hms.parseRawMessageWithSchema(logEntry)
 }
