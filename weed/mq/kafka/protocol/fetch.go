@@ -1408,17 +1408,10 @@ func (h *Handler) matchesSchemaRegistryConvention(topicName string) bool {
 		return true
 	}
 
-	// Check if the topic name itself is registered as a schema subject
+	// Check if the topic has registered schema subjects in Schema Registry
+	// Use standard Kafka naming convention: <topic>-value and <topic>-key
 	if h.schemaManager != nil {
-		// Try to get latest schema for this subject
-		latestSchema, err := h.schemaManager.GetLatestSchema(topicName)
-		if err == nil {
-			// Since we retrieved schema from registry, ensure topic config is updated
-			h.ensureTopicSchemaFromLatestSchema(topicName, latestSchema)
-			return true
-		}
-
-		// Check with -value suffix (common pattern for value schemas)
+		// Check with -value suffix (standard pattern for value schemas)
 		latestSchemaValue, err := h.schemaManager.GetLatestSchema(topicName + "-value")
 		if err == nil {
 			// Since we retrieved schema from registry, ensure topic config is updated

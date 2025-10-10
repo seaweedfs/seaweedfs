@@ -4132,62 +4132,50 @@ func (h *Handler) fetchSchemaForTopic(topicName string) (*schema_pb.RecordType, 
 	var valueRecordType *schema_pb.RecordType
 	var lastConnectionError error
 
-	// Try to fetch value schema (most common case)
-	// Common subject naming patterns: topicName-value, topicName
-	valueSubjects := []string{topicName + "-value", topicName}
-	for _, subject := range valueSubjects {
-		cachedSchema, err := h.schemaManager.GetLatestSchema(subject)
-		if err != nil {
-			// Check if this is a connection error (Schema Registry unavailable)
-			if h.isSchemaRegistryConnectionError(err) {
-				Debug("Schema Registry connection error for subject %s: %v", subject, err)
-				lastConnectionError = err
-				continue
-			}
-			// This is likely a 404 (schema not found) - continue trying other subjects
-			Debug("Schema not found for subject %s: %v", subject, err)
-			continue
+	// Try to fetch value schema using standard Kafka naming convention: <topic>-value
+	valueSubject := topicName + "-value"
+	cachedSchema, err := h.schemaManager.GetLatestSchema(valueSubject)
+	if err != nil {
+		// Check if this is a connection error (Schema Registry unavailable)
+		if h.isSchemaRegistryConnectionError(err) {
+			Debug("Schema Registry connection error for subject %s: %v", valueSubject, err)
+			lastConnectionError = err
 		}
+		// Not found or connection error - continue to check key schema
+	} else if cachedSchema != nil {
+		Debug("Found value schema for topic %s using subject %s (ID: %d)", topicName, valueSubject, cachedSchema.LatestID)
 
-		if cachedSchema != nil {
-			Debug("Found value schema for topic %s using subject %s (ID: %d)", topicName, subject, cachedSchema.LatestID)
-
-			// Convert schema to RecordType
-			recordType, err := h.convertSchemaToRecordType(cachedSchema.Schema, cachedSchema.LatestID)
-			if err != nil {
-				Debug("Failed to convert value schema for topic %s: %v", topicName, err)
-				continue
-			}
+		// Convert schema to RecordType
+		recordType, err := h.convertSchemaToRecordType(cachedSchema.Schema, cachedSchema.LatestID)
+		if err == nil {
 			valueRecordType = recordType
-
 			// Store schema configuration for later use
 			h.storeTopicSchemaConfig(topicName, cachedSchema.LatestID, schema.FormatAvro)
-			break
+		} else {
+			Debug("Failed to convert value schema for topic %s: %v", topicName, err)
 		}
 	}
 
 	// Try to fetch key schema (optional)
 	keySubject := topicName + "-key"
-	cachedSchema, err := h.schemaManager.GetLatestSchema(keySubject)
-	if err != nil {
-		if h.isSchemaRegistryConnectionError(err) {
-			Debug("Schema Registry connection error for key subject %s: %v", keySubject, err)
-			lastConnectionError = err
-		} else {
-			Debug("Key schema not found for subject %s: %v", keySubject, err)
+	cachedKeySchema, keyErr := h.schemaManager.GetLatestSchema(keySubject)
+	if keyErr != nil {
+		if h.isSchemaRegistryConnectionError(keyErr) {
+			Debug("Schema Registry connection error for key subject %s: %v", keySubject, keyErr)
+			lastConnectionError = keyErr
 		}
-	} else if cachedSchema != nil {
-		Debug("Found key schema for topic %s using subject %s (ID: %d)", topicName, keySubject, cachedSchema.LatestID)
+		// Not found or connection error - key schema is optional
+	} else if cachedKeySchema != nil {
+		Debug("Found key schema for topic %s using subject %s (ID: %d)", topicName, keySubject, cachedKeySchema.LatestID)
 
 		// Convert schema to RecordType
-		recordType, err := h.convertSchemaToRecordType(cachedSchema.Schema, cachedSchema.LatestID)
-		if err != nil {
-			Debug("Failed to convert key schema for topic %s: %v", topicName, err)
-		} else {
+		recordType, err := h.convertSchemaToRecordType(cachedKeySchema.Schema, cachedKeySchema.LatestID)
+		if err == nil {
 			keyRecordType = recordType
-
 			// Store key schema configuration for later use
-			h.storeTopicKeySchemaConfig(topicName, cachedSchema.LatestID, schema.FormatAvro)
+			h.storeTopicKeySchemaConfig(topicName, cachedKeySchema.LatestID, schema.FormatAvro)
+		} else {
+			Debug("Failed to convert key schema for topic %s: %v", topicName, err)
 		}
 	}
 
