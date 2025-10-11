@@ -322,8 +322,8 @@ func runServer(cmd *Command, args []string) bool {
 	}
 
 	if *isStartingS3 {
-		if serverIamConfig != nil && *serverIamConfig != "" {
-			if s3Options.iamConfig == nil || *s3Options.iamConfig == "" {
+		if *serverIamConfig != "" {
+			if *s3Options.iamConfig == "" {
 				s3Options.iamConfig = serverIamConfig
 			} else if *s3Options.iamConfig != *serverIamConfig {
 				glog.V(0).Infof("both -s3.iam.config(%s) and -iam.config(%s) provided; using -s3.iam.config", *s3Options.iamConfig, *serverIamConfig)
