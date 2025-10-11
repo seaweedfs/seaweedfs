@@ -57,7 +57,8 @@ type ProducersConfig struct {
 	RequestTimeoutMs  int    `yaml:"request_timeout_ms"`
 	DeliveryTimeoutMs int    `yaml:"delivery_timeout_ms"`
 	KeyDistribution   string `yaml:"key_distribution"`
-	ValueType         string `yaml:"value_type"`
+	ValueType         string `yaml:"value_type"`    // json, avro, protobuf, binary
+	SchemaFormat      string `yaml:"schema_format"` // AVRO, JSON, PROTOBUF (schema registry format)
 	IncludeTimestamp  bool   `yaml:"include_timestamp"`
 	IncludeHeaders    bool   `yaml:"include_headers"`
 }
@@ -301,6 +302,14 @@ func (c *Config) applyEnvOverrides() {
 
 	if valueType := os.Getenv("VALUE_TYPE"); valueType != "" {
 		c.Producers.ValueType = valueType
+	}
+
+	if schemaFormat := os.Getenv("SCHEMA_FORMAT"); schemaFormat != "" {
+		c.Producers.SchemaFormat = schemaFormat
+	}
+
+	if enabled := os.Getenv("SCHEMAS_ENABLED"); enabled != "" {
+		c.Schemas.Enabled = enabled == "true"
 	}
 }
 

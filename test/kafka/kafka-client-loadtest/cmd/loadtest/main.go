@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -342,13 +343,34 @@ func registerSchemas(cfg *config.Config) error {
 		return fmt.Errorf("schema registry not ready: %w", err)
 	}
 
-	// Register schemas for each topic
+	// Register schemas for each topic with different formats for variety
 	topics := cfg.GetTopicNames()
-	for _, topic := range topics {
-		if err := registerTopicSchema(cfg.SchemaRegistry.URL, topic); err != nil {
-			return fmt.Errorf("failed to register schema for topic %s: %w", topic, err)
+
+	// Determine schema formats - use different formats for different topics
+	// This provides comprehensive testing of all schema format variations
+	for i, topic := range topics {
+		var schemaFormat string
+
+		// Distribute topics across different schema formats
+		// Format 0: AVRO (default, most common)
+		// Format 1: JSON (modern, human-readable)
+		// Format 2+: Cycle back to AVRO and JSON (skip PROTOBUF for now as it's not fully implemented)
+		switch i % 2 {
+		case 0:
+			schemaFormat = "AVRO"
+		case 1:
+			schemaFormat = "JSON"
 		}
-		log.Printf("Schema registered for topic: %s", topic)
+
+		// Allow override from config if specified
+		if cfg.Producers.SchemaFormat != "" {
+			schemaFormat = cfg.Producers.SchemaFormat
+		}
+
+		if err := registerTopicSchema(cfg.SchemaRegistry.URL, topic, schemaFormat); err != nil {
+			return fmt.Errorf("failed to register schema for topic %s (format: %s): %w", topic, schemaFormat, err)
+		}
+		log.Printf("Schema registered for topic %s with format: %s", topic, schemaFormat)
 	}
 
 	return nil
@@ -372,25 +394,31 @@ func waitForSchemaRegistry(url string) error {
 }
 
 // registerTopicSchema registers a schema for a specific topic
-func registerTopicSchema(registryURL, topicName string) error {
-	// Avro schema for load test messages
-	avroSchema := `{
-		"type": "record",
-		"name": "LoadTestMessage",
-		"namespace": "com.seaweedfs.loadtest",
-		"fields": [
-			{"name": "id", "type": "string"},
-			{"name": "timestamp", "type": "long"},
-			{"name": "producer_id", "type": "int"},
-			{"name": "counter", "type": "long"},
-			{"name": "user_id", "type": "string"},
-			{"name": "event_type", "type": "string"},
-			{"name": "properties", "type": {"type": "map", "values": "string"}}
-		]
-	}`
+func registerTopicSchema(registryURL, topicName, schemaFormat string) error {
+	// Determine schema format, default to AVRO
+	if schemaFormat == "" {
+		schemaFormat = "AVRO"
+	}
+
+	var schemaStr string
+	var schemaType string
+
+	switch strings.ToUpper(schemaFormat) {
+	case "AVRO":
+		schemaStr = getAvroSchemaForTopic()
+		schemaType = "AVRO"
+	case "JSON", "JSON_SCHEMA":
+		schemaStr = getJSONSchemaForTopic()
+		schemaType = "JSON"
+	case "PROTOBUF":
+		return fmt.Errorf("protobuf schema registration not yet implemented")
+	default:
+		return fmt.Errorf("unsupported schema format: %s", schemaFormat)
+	}
 
 	schemaReq := map[string]interface{}{
-		"schema": avroSchema,
+		"schema":     schemaStr,
+		"schemaType": schemaType,
 	}
 
 	jsonData, err := json.Marshal(schemaReq)
@@ -413,5 +441,46 @@ func registerTopicSchema(registryURL, topicName string) error {
 		return fmt.Errorf("schema registration failed: status=%d, body=%s", resp.StatusCode, string(body))
 	}
 
+	log.Printf("Schema registered for topic %s (format: %s)", topicName, schemaType)
 	return nil
+}
+
+// getAvroSchemaForTopic returns the Avro schema for load test messages
+func getAvroSchemaForTopic() string {
+	return `{
+		"type": "record",
+		"name": "LoadTestMessage",
+		"namespace": "com.seaweedfs.loadtest",
+		"fields": [
+			{"name": "id", "type": "string"},
+			{"name": "timestamp", "type": "long"},
+			{"name": "producer_id", "type": "int"},
+			{"name": "counter", "type": "long"},
+			{"name": "user_id", "type": "string"},
+			{"name": "event_type", "type": "string"},
+			{"name": "properties", "type": {"type": "map", "values": "string"}}
+		]
+	}`
+}
+
+// getJSONSchemaForTopic returns the JSON Schema for load test messages
+func getJSONSchemaForTopic() string {
+	return `{
+		"$schema": "http://json-schema.org/draft-07/schema#",
+		"title": "LoadTestMessage",
+		"type": "object",
+		"properties": {
+			"id": {"type": "string"},
+			"timestamp": {"type": "integer"},
+			"producer_id": {"type": "integer"},
+			"counter": {"type": "integer"},
+			"user_id": {"type": "string"},
+			"event_type": {"type": "string"},
+			"properties": {
+				"type": "object",
+				"additionalProperties": {"type": "string"}
+			}
+		},
+		"required": ["id", "timestamp", "producer_id", "counter", "user_id", "event_type"]
+	}`
 }

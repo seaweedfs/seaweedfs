@@ -51,7 +51,7 @@ func NewLocalPartition(partition Partition, logFlushInterval int, logFlushFn log
 	// A flush interval of 0 would cause time.Sleep(0) creating a CPU-consuming busy loop
 	flushInterval := time.Duration(logFlushInterval) * time.Second
 	if flushInterval == 0 {
-		flushInterval = 2 * time.Minute // Default to 2 minutes if not specified
+		flushInterval = 1 * time.Second // Minimum 1 second to avoid busy-loop, allow near-immediate flushing
 	}
 
 	lp.LogBuffer = log_buffer.NewLogBuffer(fmt.Sprintf("%d/%04d-%04d", partition.UnixTimeNs, partition.RangeStart, partition.RangeStop),

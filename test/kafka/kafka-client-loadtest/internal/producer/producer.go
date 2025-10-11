@@ -35,7 +35,8 @@ type Producer struct {
 	startTime        time.Time // Test run start time for generating unique keys
 
 	// Schema management
-	schemaIDs map[string]int // topic -> schema ID mapping
+	schemaIDs     map[string]int    // topic -> schema ID mapping
+	schemaFormats map[string]string // topic -> schema format mapping (AVRO, JSON, etc.)
 
 	// Rate limiting
 	rateLimiter *time.Ticker
@@ -56,7 +57,7 @@ type Message struct {
 	Counter    int64                  `json:"counter"`
 	UserID     string                 `json:"user_id"`
 	EventType  string                 `json:"event_type"`
-	Data       map[string]interface{} `json:"data"`
+	Properties map[string]interface{} `json:"properties"`
 }
 
 // New creates a new producer instance
@@ -69,7 +70,28 @@ func New(cfg *config.Config, collector *metrics.Collector, id int) (*Producer, e
 		random:           rand.New(rand.NewSource(time.Now().UnixNano() + int64(id))),
 		useConfluent:     false, // Use Sarama by default, can be made configurable
 		schemaIDs:        make(map[string]int),
+		schemaFormats:    make(map[string]string),
 		startTime:        time.Now(), // Record test start time for unique key generation
+	}
+
+	// Initialize schema formats for each topic
+	// Use the same distribution as main.go: AVRO for even indices, JSON for odd indices
+	for i, topic := range p.topics {
+		var schemaFormat string
+		if cfg.Producers.SchemaFormat != "" {
+			// Use explicit config if provided
+			schemaFormat = cfg.Producers.SchemaFormat
+		} else {
+			// Distribute across formats
+			switch i % 2 {
+			case 0:
+				schemaFormat = "AVRO"
+			case 1:
+				schemaFormat = "JSON"
+			}
+		}
+		p.schemaFormats[topic] = schemaFormat
+		log.Printf("Producer %d: Topic %s will use schema format: %s", id, topic, schemaFormat)
 	}
 
 	// Set up rate limiter if specified
@@ -370,10 +392,10 @@ func (p *Producer) generateJSONMessage() ([]byte, error) {
 		Counter:    p.messageCounter,
 		UserID:     fmt.Sprintf("user-%d", p.random.Intn(10000)),
 		EventType:  p.randomEventType(),
-		Data: map[string]interface{}{
+		Properties: map[string]interface{}{
 			"session_id":  fmt.Sprintf("sess-%d-%d", p.id, p.random.Intn(1000)),
-			"page_views":  p.random.Intn(100),
-			"duration_ms": p.random.Intn(300000),
+			"page_views":  fmt.Sprintf("%d", p.random.Intn(100)),    // String for Avro map<string,string>
+			"duration_ms": fmt.Sprintf("%d", p.random.Intn(300000)), // String for Avro map<string,string>
 			"country":     p.randomCountry(),
 			"device_type": p.randomDeviceType(),
 			"app_version": fmt.Sprintf("v%d.%d.%d", p.random.Intn(10), p.random.Intn(10), p.random.Intn(100)),
@@ -614,28 +636,42 @@ func (p *Producer) ensureSchemasRegistered() error {
 	return nil
 }
 
-// registerTopicSchema registers the Avro schema for a specific topic
+// registerTopicSchema registers the schema for a specific topic based on configured format
 func (p *Producer) registerTopicSchema(subject string) error {
-	// Avro schema for load test messages (same as used in main loadtest)
-	avroSchema := `{
-		"type": "record",
-		"name": "LoadTestMessage",
-		"namespace": "com.seaweedfs.loadtest",
-		"fields": [
-			{"name": "id", "type": "string"},
-			{"name": "timestamp", "type": "long"},
-			{"name": "producer_id", "type": "int"},
-			{"name": "counter", "type": "long"},
-			{"name": "user_id", "type": "string"},
-			{"name": "event_type", "type": "string"},
-			{"name": "data", "type": {"type": "map", "values": "string"}}
-		]
-	}`
+	// Extract topic name from subject (remove -value or -key suffix)
+	topicName := strings.TrimSuffix(strings.TrimSuffix(subject, "-value"), "-key")
+
+	// Get schema format for this topic
+	schemaFormat, ok := p.schemaFormats[topicName]
+	if !ok {
+		// Fallback to config or default
+		schemaFormat = p.config.Producers.SchemaFormat
+		if schemaFormat == "" {
+			schemaFormat = "AVRO"
+		}
+	}
+
+	var schemaStr string
+	var schemaType string
+
+	switch strings.ToUpper(schemaFormat) {
+	case "AVRO":
+		schemaStr = p.getAvroSchema()
+		schemaType = "AVRO"
+	case "JSON", "JSON_SCHEMA":
+		schemaStr = p.getJSONSchema()
+		schemaType = "JSON"
+	case "PROTOBUF":
+		return fmt.Errorf("protobuf schema registration not yet implemented")
+	default:
+		return fmt.Errorf("unsupported schema format: %s", schemaFormat)
+	}
 
 	url := fmt.Sprintf("%s/subjects/%s/versions", p.config.SchemaRegistry.URL, subject)
 
 	payload := map[string]interface{}{
-		"schema": avroSchema,
+		"schema":     schemaStr,
+		"schemaType": schemaType,
 	}
 
 	jsonPayload, err := json.Marshal(payload)
@@ -661,21 +697,60 @@ func (p *Producer) registerTopicSchema(subject string) error {
 		return fmt.Errorf("failed to decode registration response: %w", err)
 	}
 
-	log.Printf("Schema registered with ID: %d", registerResp.ID)
+	log.Printf("Schema registered with ID: %d (format: %s)", registerResp.ID, schemaType)
 	return nil
 }
 
-// createConfluentWireFormat creates a message in Confluent Wire Format
-func (p *Producer) createConfluentWireFormat(schemaID int, avroData []byte) []byte {
-	// Confluent Wire Format: [magic_byte][schema_id][avro_data]
-	// magic_byte = 0x0
-	// schema_id = 4 bytes big-endian
+// getAvroSchema returns the Avro schema for load test messages
+func (p *Producer) getAvroSchema() string {
+	return `{
+		"type": "record",
+		"name": "LoadTestMessage",
+		"namespace": "com.seaweedfs.loadtest",
+		"fields": [
+			{"name": "id", "type": "string"},
+			{"name": "timestamp", "type": "long"},
+			{"name": "producer_id", "type": "int"},
+			{"name": "counter", "type": "long"},
+			{"name": "user_id", "type": "string"},
+			{"name": "event_type", "type": "string"},
+			{"name": "properties", "type": {"type": "map", "values": "string"}}
+		]
+	}`
+}
 
+// getJSONSchema returns the JSON Schema for load test messages
+func (p *Producer) getJSONSchema() string {
+	return `{
+		"$schema": "http://json-schema.org/draft-07/schema#",
+		"title": "LoadTestMessage",
+		"type": "object",
+		"properties": {
+			"id": {"type": "string"},
+			"timestamp": {"type": "integer"},
+			"producer_id": {"type": "integer"},
+			"counter": {"type": "integer"},
+			"user_id": {"type": "string"},
+			"event_type": {"type": "string"},
+			"properties": {
+				"type": "object",
+				"additionalProperties": {"type": "string"}
+			}
+		},
+		"required": ["id", "timestamp", "producer_id", "counter", "user_id", "event_type"]
+	}`
+}
+
+// createConfluentWireFormat creates a message in Confluent Wire Format
+// This matches the implementation in weed/mq/kafka/schema/envelope.go CreateConfluentEnvelope
+func (p *Producer) createConfluentWireFormat(schemaID int, avroData []byte) []byte {
+	// Confluent Wire Format: [magic_byte(1)][schema_id(4)][payload(n)]
+	// magic_byte = 0x00
+	// schema_id = 4 bytes big-endian
 	wireFormat := make([]byte, 5+len(avroData))
-	wireFormat[0] = 0x0 // Magic byte
+	wireFormat[0] = 0x00 // Magic byte
 	binary.BigEndian.PutUint32(wireFormat[1:5], uint32(schemaID))
 	copy(wireFormat[5:], avroData)
-
 	return wireFormat
 }
 

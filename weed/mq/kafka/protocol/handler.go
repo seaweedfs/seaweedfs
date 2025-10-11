@@ -637,7 +637,21 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 					return
 				}
 				glog.V(2).Infof("[%s] Control plane processing correlation=%d, apiKey=%d", connectionID, req.correlationID, req.apiKey)
-				response, err := h.processRequestSync(req)
+
+				// CRITICAL: Wrap request processing with panic recovery to prevent deadlocks
+				// If processRequestSync panics, we MUST still send a response to avoid blocking the response writer
+				var response []byte
+				var err error
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							glog.Errorf("[%s] PANIC in control plane correlation=%d: %v", connectionID, req.correlationID, r)
+							err = fmt.Errorf("internal server error: panic in request handler: %v", r)
+						}
+					}()
+					response, err = h.processRequestSync(req)
+				}()
+
 				glog.V(2).Infof("[%s] Control plane completed correlation=%d, sending to responseChan", connectionID, req.correlationID)
 				select {
 				case responseChan <- &kafkaResponse{
@@ -702,7 +716,21 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 					return
 				}
 				glog.V(2).Infof("[%s] Data plane processing correlation=%d, apiKey=%d", connectionID, req.correlationID, req.apiKey)
-				response, err := h.processRequestSync(req)
+
+				// CRITICAL: Wrap request processing with panic recovery to prevent deadlocks
+				// If processRequestSync panics, we MUST still send a response to avoid blocking the response writer
+				var response []byte
+				var err error
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							glog.Errorf("[%s] PANIC in data plane correlation=%d: %v", connectionID, req.correlationID, r)
+							err = fmt.Errorf("internal server error: panic in request handler: %v", r)
+						}
+					}()
+					response, err = h.processRequestSync(req)
+				}()
+
 				glog.V(2).Infof("[%s] Data plane completed correlation=%d, sending to responseChan", connectionID, req.correlationID)
 				// Use select with context to avoid sending on closed channel
 				select {
@@ -1024,11 +1052,6 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			connContext:   connContext, // Pass per-connection context to avoid race conditions
 		}
 
-		// Track this correlation ID in the order queue for response ordering
-		correlationQueueMu.Lock()
-		correlationQueue = append(correlationQueue, correlationID)
-		correlationQueueMu.Unlock()
-
 		// Route to appropriate channel based on API key
 		var targetChan chan *kafkaRequest
 		if isDataPlaneAPI(apiKey) {
@@ -1039,11 +1062,21 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			Debug("[%s] Routing correlation=%d to CONTROL plane", connectionID, correlationID)
 		}
 
+		// CRITICAL: Only add to correlation queue AFTER successful channel send
+		// If we add before and the channel blocks, the correlation ID is in the queue
+		// but the request never gets processed, causing response writer deadlock
 		select {
 		case targetChan <- req:
-			// Request queued successfully, continue reading next request
+			// Request queued successfully - NOW add to correlation tracking
+			correlationQueueMu.Lock()
+			correlationQueue = append(correlationQueue, correlationID)
+			correlationQueueMu.Unlock()
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-time.After(10 * time.Second):
+			// Channel full for too long - this shouldn't happen with proper backpressure
+			glog.Errorf("[%s] CRITICAL: Failed to queue correlation=%d after 10s timeout - channel full!", connectionID, correlationID)
+			return fmt.Errorf("request queue full: correlation=%d", correlationID)
 		}
 	}
 }

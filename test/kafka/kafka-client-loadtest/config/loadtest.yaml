@@ -37,7 +37,10 @@ producers:
   
   # Message generation settings
   key_distribution: "random"  # random, sequential, uuid
-  value_type: "json"  # json, avro, protobuf, binary
+  value_type: "avro"  # json, avro, protobuf, binary
+  schema_format: "AVRO"  # AVRO, JSON, PROTOBUF - schema registry format (when schemas enabled)
+                         # Leave empty to auto-distribute: even-indexed topics use AVRO, odd-indexed use JSON
+                         # Set to specific format (e.g. "AVRO") to use same format for all topics
   include_timestamp: true
   include_headers: true
 
