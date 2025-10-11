@@ -109,15 +109,24 @@ func testConsumerGroupOffsetPersistence(t *testing.T, addr string) {
 	ctx1, cancel1 := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel1()
 
+	consumeErrChan1 := make(chan error, 1)
 	go func() {
 		err := consumerGroup1.Consume(ctx1, []string{topicName}, handler)
-		if err != nil && err != context.DeadlineExceeded {
+		if err != nil && err != context.DeadlineExceeded && err != context.Canceled {
 			t.Logf("First consumer error: %v", err)
+			consumeErrChan1 <- err
 		}
 	}()
 
-	// Wait for consumer to be ready and consume messages
-	<-handler.ready
+	// Wait for consumer to be ready with timeout
+	select {
+	case <-handler.ready:
+		// Consumer is ready, continue
+	case err := <-consumeErrChan1:
+		t.Fatalf("First consumer failed to start: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatalf("Timeout waiting for first consumer to be ready")
+	}
 	consumedCount := 0
 	for consumedCount < 5 {
 		select {
@@ -137,7 +146,13 @@ func testConsumerGroupOffsetPersistence(t *testing.T, addr string) {
 	// Phase 2: Start new consumer group with same ID - should resume from committed offset
 	t.Logf("Phase 2: Starting new consumer group to test offset persistence")
 
-	consumerGroup2, err := sarama.NewConsumerGroup([]string{addr}, groupID, config)
+	// Create a fresh config for the second consumer group to avoid any state issues
+	config2 := client.GetConfig()
+	config2.Consumer.Offsets.Initial = sarama.OffsetOldest
+	config2.Consumer.Offsets.AutoCommit.Enable = true
+	config2.Consumer.Offsets.AutoCommit.Interval = 1 * time.Second
+
+	consumerGroup2, err := sarama.NewConsumerGroup([]string{addr}, groupID, config2)
 	testutil.AssertNoError(t, err, "Failed to create second consumer group")
 	defer consumerGroup2.Close()
 
@@ -151,15 +166,24 @@ func testConsumerGroupOffsetPersistence(t *testing.T, addr string) {
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel2()
 
+	consumeErrChan := make(chan error, 1)
 	go func() {
 		err := consumerGroup2.Consume(ctx2, []string{topicName}, handler2)
-		if err != nil && err != context.DeadlineExceeded {
+		if err != nil && err != context.DeadlineExceeded && err != context.Canceled {
 			t.Logf("Second consumer error: %v", err)
+			consumeErrChan <- err
 		}
 	}()
 
-	// Wait for second consumer and collect remaining messages
-	<-handler2.ready
+	// Wait for second consumer to be ready with timeout
+	select {
+	case <-handler2.ready:
+		// Consumer is ready, continue
+	case err := <-consumeErrChan:
+		t.Fatalf("Second consumer failed to start: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatalf("Timeout waiting for second consumer to be ready")
+	}
 	secondConsumerMessages := make([]*sarama.ConsumerMessage, 0)
 	consumedCount = 0
 	for consumedCount < 5 {

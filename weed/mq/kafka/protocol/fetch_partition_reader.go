@@ -2,12 +2,10 @@ package protocol
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/integration"
 )
 
 // partitionReader maintains a persistent connection to a single topic-partition
@@ -17,13 +15,12 @@ type partitionReader struct {
 	topicName     string
 	partitionID   int32
 	currentOffset int64
-	subscriber    *integration.BrokerSubscriberSession
 	fetchChan     chan *partitionFetchRequest
 	closeChan     chan struct{}
 
 	// Pre-fetch buffer support
 	recordBuffer chan *bufferedRecords // Buffered pre-fetched records
-	bufferMu     sync.Mutex            // Protects subscriber and offset access
+	bufferMu     sync.Mutex            // Protects offset access
 
 	handler *Handler
 	connCtx *ConnectionContext
@@ -76,7 +73,6 @@ func (pr *partitionReader) preFetchLoop(ctx context.Context) {
 	defer func() {
 		glog.V(1).Infof("[%s] Pre-fetch loop exiting for %s[%d]",
 			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID)
-		pr.closeSubscriber()
 		close(pr.recordBuffer)
 	}()
 
@@ -89,24 +85,6 @@ func (pr *partitionReader) preFetchLoop(ctx context.Context) {
 		default:
 			// Try to fetch next batch if buffer has space
 			pr.bufferMu.Lock()
-
-			// Only try to create subscriber if broker client is available (not in mock mode)
-			// Check both that BrokerClient exists and is the correct type AND not nil
-			if pr.subscriber == nil && pr.connCtx.BrokerClient != nil {
-				// Verify it's actually a BrokerClient and not nil before attempting to use it
-				if bc, ok := pr.connCtx.BrokerClient.(*integration.BrokerClient); ok && bc != nil {
-					var err error
-					pr.subscriber, err = pr.createSubscriber(ctx, pr.currentOffset)
-					if err != nil {
-						pr.bufferMu.Unlock()
-						glog.Errorf("[%s] Failed to create subscriber for %s[%d]: %v",
-							pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, err)
-						time.Sleep(100 * time.Millisecond) // Backoff on error
-						continue
-					}
-				}
-				// If not a BrokerClient or nil, skip subscriber creation (mock mode)
-			}
 
 			// Check if topic exists
 			if !pr.handler.seaweedMQHandler.TopicExists(pr.topicName) {
@@ -210,8 +188,7 @@ func (pr *partitionReader) serveFetchRequest(ctx context.Context, req *partition
 		for len(pr.recordBuffer) > 0 {
 			<-pr.recordBuffer
 		}
-		// Close subscriber to force re-create at new offset
-		pr.closeSubscriber()
+		// Reset offset - subscriber will be recreated by GetStoredRecords with the new offset
 		pr.currentOffset = req.requestedOffset
 	}
 	pr.bufferMu.Unlock()
@@ -251,37 +228,6 @@ func (pr *partitionReader) serveFetchRequest(ctx context.Context, req *partition
 			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID)
 	case <-ctx.Done():
 		result.recordBatch = []byte{}
-	}
-}
-
-// createSubscriber creates a new subscriber for this partition
-func (pr *partitionReader) createSubscriber(ctx context.Context, startOffset int64) (*integration.BrokerSubscriberSession, error) {
-	// Get the broker client from connection context
-	brokerClient, ok := pr.connCtx.BrokerClient.(*integration.BrokerClient)
-	if !ok || brokerClient == nil {
-		return nil, fmt.Errorf("broker client not available")
-	}
-
-	subscriber, err := brokerClient.GetOrCreateSubscriber(pr.topicName, pr.partitionID, startOffset)
-	if err != nil {
-		return nil, fmt.Errorf("create subscriber: %w", err)
-	}
-
-	glog.V(1).Infof("[%s] Created subscriber for %s[%d] at offset %d",
-		pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, startOffset)
-
-	return subscriber, nil
-}
-
-// closeSubscriber closes the current subscriber if it exists
-func (pr *partitionReader) closeSubscriber() {
-	if pr.subscriber != nil {
-		if pr.subscriber.Stream != nil {
-			_ = pr.subscriber.Stream.CloseSend()
-		}
-		pr.subscriber = nil
-		glog.V(1).Infof("[%s] Closed subscriber for %s[%d]",
-			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID)
 	}
 }
 
