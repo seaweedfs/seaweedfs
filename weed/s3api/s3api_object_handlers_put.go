@@ -457,17 +457,21 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 	}
 
 	uploadUrl := s3a.toFilerUrl(bucket, normalizedObject)
+
+	hash := md5.New()
+	var body = io.TeeReader(dataReader, hash)
 	if objectContentType == "" {
-		dataReader = mimeDetect(r, dataReader)
+		body = mimeDetect(r, body)
 	}
 
-	etag, errCode, _ = s3a.putToFiler(r, uploadUrl, dataReader, "", bucket, 1)
+	// Upload the file using putToFiler - this will overwrite any existing file
+	etag, errCode, _ = s3a.putToFiler(r, uploadUrl, body, "", bucket, 1)
 	if errCode != s3err.ErrNone {
 		glog.Errorf("putSuspendedVersioningObject: failed to upload object: %v", errCode)
 		return "", errCode
 	}
 
-	// Get the uploaded entry to add version metadata indicating this is "null" version
+	// CRITICAL: We must retrieve and modify the existing entry that putToFiler created
 	// Use retry logic to handle filer consistency delays
 	var entry *filer_pb.Entry
 	maxRetries := 8
@@ -504,8 +508,9 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 		return "", s3err.ErrInvalidRequest
 	}
 
-	// Update the entry with metadata (use updateEntry to modify existing entry without creating duplicate)
-	// The entry already has all the metadata we want (chunks, attributes, extended metadata)
+	// Use updateEntry to modify the existing entry in place without creating a duplicate
+	// This is critical to avoid creating 2 versions
+	glog.V(2).Infof("putSuspendedVersioningObject: updating entry with null version metadata for %s/%s", bucket, normalizedObject)
 	entry.Name = normalizedObject
 	err = s3a.updateEntry(bucketDir, entry)
 	if err != nil {
