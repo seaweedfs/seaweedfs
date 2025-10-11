@@ -344,9 +344,6 @@ func (hms *HybridMessageScanner) scanUnflushedDataWithStats(ctx context.Context,
 	unflushedEntries, err := hms.brokerClient.GetUnflushedMessages(ctx, hms.topic.Namespace, hms.topic.Name, partition, options.StartTimeNs)
 	if err != nil {
 		// Log error but don't fail the query - continue with disk data only
-		if isDebugMode(ctx) {
-			fmt.Printf("Debug: Failed to get unflushed messages: %v\n", err)
-		}
 		// Reset queried flag on error
 		stats.BrokerBufferQueried = false
 		return results, stats, nil
@@ -354,14 +351,6 @@ func (hms *HybridMessageScanner) scanUnflushedDataWithStats(ctx context.Context,
 
 	// Capture stats for EXPLAIN
 	stats.BrokerBufferMessages = len(unflushedEntries)
-
-	// Debug logging for EXPLAIN mode
-	if isDebugMode(ctx) {
-		fmt.Printf("Debug: Broker buffer queried - found %d unflushed messages\n", len(unflushedEntries))
-		if len(unflushedEntries) > 0 {
-			fmt.Printf("Debug: Using buffer_start deduplication for precise real-time data\n")
-		}
-	}
 
 	// Step 2: Process unflushed entries (already deduplicated by broker)
 	for _, logEntry := range unflushedEntries {
@@ -390,9 +379,6 @@ func (hms *HybridMessageScanner) scanUnflushedDataWithStats(ctx context.Context,
 		// Convert LogEntry to RecordValue format (same as disk data)
 		recordValue, _, err := hms.convertLogEntryToRecordValueWithDecoded(logEntry, dataMessage)
 		if err != nil {
-			if isDebugMode(ctx) {
-				fmt.Printf("Debug: Failed to convert unflushed log entry: %v\n", err)
-			}
 			continue // Skip malformed messages
 		}
 
@@ -445,10 +431,6 @@ func (hms *HybridMessageScanner) scanUnflushedDataWithStats(ctx context.Context,
 				break
 			}
 		}
-	}
-
-	if isDebugMode(ctx) {
-		fmt.Printf("Debug: Retrieved %d unflushed messages from broker\n", len(results))
 	}
 
 	return results, stats, nil
@@ -561,12 +543,8 @@ func (hms *HybridMessageScanner) scanPartitionHybridWithStats(ctx context.Contex
 	if err != nil {
 		// Don't fail the query if broker scanning fails, but provide clear warning to user
 		// This ensures users are aware that results may not include the most recent data
-		if isDebugMode(ctx) {
-			fmt.Printf("Debug: Failed to scan unflushed data from broker: %v\n", err)
-		} else {
-			fmt.Printf("Warning: Unable to access real-time data from message broker: %v\n", err)
-			fmt.Printf("Note: Query results may not include the most recent unflushed messages\n")
-		}
+		fmt.Printf("Warning: Unable to access real-time data from message broker: %v\n", err)
+		fmt.Printf("Note: Query results may not include the most recent unflushed messages\n")
 	} else if unflushedStats != nil {
 		stats.BrokerBufferQueried = unflushedStats.BrokerBufferQueried
 		stats.BrokerBufferMessages = unflushedStats.BrokerBufferMessages

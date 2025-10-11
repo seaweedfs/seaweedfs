@@ -2431,10 +2431,6 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 			plan.Details[PlanDetailStartTimeNs] = startTimeNs
 			plan.Details[PlanDetailStopTimeNs] = stopTimeNs
 
-			if isDebugMode(ctx) {
-				fmt.Printf("Debug: Time filters extracted - startTimeNs=%d stopTimeNs=%d\n", startTimeNs, stopTimeNs)
-			}
-
 			// Collect actual file information for each partition
 			var parquetFiles []string
 			var liveLogFiles []string
@@ -2455,9 +2451,6 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 						columnPrunedCount := beforeColumnPrune - len(filteredStats)
 
 						if columnPrunedCount > 0 {
-							if isDebugMode(ctx) {
-								fmt.Printf("Debug: Column statistics pruning skipped %d parquet files in %s\n", columnPrunedCount, partitionPath)
-							}
 							// Track column statistics optimization
 							if !contains(plan.OptimizationsUsed, "column_statistics_pruning") {
 								plan.OptimizationsUsed = append(plan.OptimizationsUsed, "column_statistics_pruning")
@@ -2469,9 +2462,6 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 					}
 				} else {
 					parquetReadErrors = append(parquetReadErrors, fmt.Sprintf("%s: %v", partitionPath, err))
-					if isDebugMode(ctx) {
-						fmt.Printf("Debug: Failed to read parquet statistics in %s: %v\n", partitionPath, err)
-					}
 				}
 
 				// Merge accurate parquet sources from metadata
@@ -2492,9 +2482,6 @@ func (e *SQLEngine) executeSelectStatementWithBrokerStats(ctx context.Context, s
 					}
 				} else {
 					liveLogListErrors = append(liveLogListErrors, fmt.Sprintf("%s: %v", partitionPath, err))
-					if isDebugMode(ctx) {
-						fmt.Printf("Debug: Failed to list live log files in %s: %v\n", partitionPath, err)
-					}
 				}
 			}
 
@@ -2753,7 +2740,6 @@ func pruneParquetFilesByTime(ctx context.Context, parquetStats []*ParquetFileSta
 		return parquetStats
 	}
 
-	debugEnabled := ctx != nil && isDebugMode(ctx)
 	qStart := startTimeNs
 	qStop := stopTimeNs
 	if qStop == 0 {
@@ -2762,21 +2748,10 @@ func pruneParquetFilesByTime(ctx context.Context, parquetStats []*ParquetFileSta
 
 	n := 0
 	for _, fs := range parquetStats {
-		if debugEnabled {
-			fmt.Printf("Debug: Checking parquet file %s for pruning\n", fs.FileName)
-		}
 		if minNs, maxNs, ok := hybridScanner.getTimestampRangeFromStats(fs); ok {
-			if debugEnabled {
-				fmt.Printf("Debug: Prune check parquet %s min=%d max=%d qStart=%d qStop=%d\n", fs.FileName, minNs, maxNs, qStart, qStop)
-			}
 			if qStop < minNs || (qStart != 0 && qStart > maxNs) {
-				if debugEnabled {
-					fmt.Printf("Debug: Skipping parquet file %s due to no time overlap\n", fs.FileName)
-				}
 				continue
 			}
-		} else if debugEnabled {
-			fmt.Printf("Debug: No stats range available for parquet %s, cannot prune\n", fs.FileName)
 		}
 		parquetStats[n] = fs
 		n++
@@ -2790,13 +2765,9 @@ func (e *SQLEngine) pruneParquetFilesByColumnStats(ctx context.Context, parquetS
 		return parquetStats
 	}
 
-	debugEnabled := ctx != nil && isDebugMode(ctx)
 	n := 0
 	for _, fs := range parquetStats {
 		if e.canSkipParquetFile(ctx, fs, whereExpr) {
-			if debugEnabled {
-				fmt.Printf("Debug: Skipping parquet file %s due to column statistics pruning\n", fs.FileName)
-			}
 			continue
 		}
 		parquetStats[n] = fs
@@ -2920,7 +2891,6 @@ func (e *SQLEngine) flipOperator(op string) string {
 // populatePlanFileDetails populates execution plan with detailed file information for partitions
 // Includes column statistics pruning optimization when WHERE clause is provided
 func (e *SQLEngine) populatePlanFileDetails(ctx context.Context, plan *QueryExecutionPlan, hybridScanner *HybridMessageScanner, partitions []string, stmt *SelectStatement) {
-	debugEnabled := ctx != nil && isDebugMode(ctx)
 	// Collect actual file information for each partition
 	var parquetFiles []string
 	var liveLogFiles []string
@@ -2944,9 +2914,6 @@ func (e *SQLEngine) populatePlanFileDetails(ctx context.Context, plan *QueryExec
 				columnPrunedCount := beforeColumnPrune - len(filteredStats)
 
 				if columnPrunedCount > 0 {
-					if debugEnabled {
-						fmt.Printf("Debug: Column statistics pruning skipped %d parquet files in %s\n", columnPrunedCount, partitionPath)
-					}
 					// Track column statistics optimization
 					if !contains(plan.OptimizationsUsed, "column_statistics_pruning") {
 						plan.OptimizationsUsed = append(plan.OptimizationsUsed, "column_statistics_pruning")
@@ -2959,9 +2926,6 @@ func (e *SQLEngine) populatePlanFileDetails(ctx context.Context, plan *QueryExec
 			}
 		} else {
 			parquetReadErrors = append(parquetReadErrors, fmt.Sprintf("%s: %v", partitionPath, err))
-			if debugEnabled {
-				fmt.Printf("Debug: Failed to read parquet statistics in %s: %v\n", partitionPath, err)
-			}
 		}
 
 		// Merge accurate parquet sources from metadata
@@ -2982,9 +2946,6 @@ func (e *SQLEngine) populatePlanFileDetails(ctx context.Context, plan *QueryExec
 			}
 		} else {
 			liveLogListErrors = append(liveLogListErrors, fmt.Sprintf("%s: %v", partitionPath, err))
-			if debugEnabled {
-				fmt.Printf("Debug: Failed to list live log files in %s: %v\n", partitionPath, err)
-			}
 		}
 	}
 

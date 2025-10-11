@@ -554,19 +554,6 @@ func (c *BrokerClient) getEarliestBufferStart(ctx context.Context, partitionPath
 		return nil
 	})
 
-	// Debug: Show buffer_start determination logic in EXPLAIN mode
-	if isDebugMode(ctx) && len(bufferStartSources) > 0 {
-		if logFileCount == 0 && parquetFileCount > 0 {
-			fmt.Printf("Debug: Using Parquet buffer_start metadata (binary format, no log files) - sources: %v\n", bufferStartSources)
-		} else if logFileCount > 0 && parquetFileCount > 0 {
-			fmt.Printf("Debug: Using mixed sources for buffer_start (binary format) - log files: %d, Parquet files: %d, sources: %v\n",
-				logFileCount, parquetFileCount, bufferStartSources)
-		} else {
-			fmt.Printf("Debug: Using log file buffer_start metadata (binary format) - sources: %v\n", bufferStartSources)
-		}
-		fmt.Printf("Debug: Earliest buffer_start index: %d\n", earliestBufferIndex)
-	}
-
 	if err != nil {
 		return 0, fmt.Errorf("failed to scan partition directory: %v", err)
 	}
