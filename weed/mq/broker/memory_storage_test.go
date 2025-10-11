@@ -43,12 +43,12 @@ func NewInMemoryOffsetStorage() *InMemoryOffsetStorage {
 }
 
 // SaveCheckpoint saves the checkpoint for a partition
-func (s *InMemoryOffsetStorage) SaveCheckpoint(namespace, topicName string, partition *schema_pb.Partition, offset int64) error {
+func (s *InMemoryOffsetStorage) SaveCheckpoint(namespace, topicName string, partition *schema_pb.Partition, off int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	key := partitionKey(partition)
-	s.checkpoints[key] = offset
+	key := offset.PartitionKey(partition)
+	s.checkpoints[key] = off
 	return nil
 }
 
@@ -57,13 +57,13 @@ func (s *InMemoryOffsetStorage) LoadCheckpoint(namespace, topicName string, part
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	key := partitionKey(partition)
-	offset, exists := s.checkpoints[key]
+	key := offset.PartitionKey(partition)
+	off, exists := s.checkpoints[key]
 	if !exists {
 		return -1, fmt.Errorf("no checkpoint found")
 	}
 
-	return offset, nil
+	return off, nil
 }
 
 // GetHighestOffset finds the highest offset in storage for a partition
@@ -71,16 +71,16 @@ func (s *InMemoryOffsetStorage) GetHighestOffset(namespace, topicName string, pa
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	key := partitionKey(partition)
+	key := offset.PartitionKey(partition)
 	offsets, exists := s.records[key]
 	if !exists || len(offsets) == 0 {
 		return -1, fmt.Errorf("no records found")
 	}
 
 	var highest int64 = -1
-	for offset, entry := range offsets {
-		if entry.exists && offset > highest {
-			highest = offset
+	for off, entry := range offsets {
+		if entry.exists && off > highest {
+			highest = off
 		}
 	}
 
@@ -88,17 +88,17 @@ func (s *InMemoryOffsetStorage) GetHighestOffset(namespace, topicName string, pa
 }
 
 // AddRecord simulates storing a record with an offset (for testing)
-func (s *InMemoryOffsetStorage) AddRecord(partition *schema_pb.Partition, offset int64) {
+func (s *InMemoryOffsetStorage) AddRecord(partition *schema_pb.Partition, off int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	key := partitionKey(partition)
+	key := offset.PartitionKey(partition)
 	if s.records[key] == nil {
 		s.records[key] = make(map[int64]*recordEntry)
 	}
 
 	// Add record with current timestamp
-	s.records[key][offset] = &recordEntry{
+	s.records[key][off] = &recordEntry{
 		exists:    true,
 		timestamp: time.Now(),
 	}

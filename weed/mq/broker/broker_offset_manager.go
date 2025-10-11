@@ -113,7 +113,6 @@ func topicPartitionToSchemaPartition(t topic.Topic, p topic.Partition) *schema_p
 	}
 }
 
-
 // OffsetAssignmentResult contains the result of offset assignment for logging/metrics
 type OffsetAssignmentResult struct {
 	Topic      topic.Topic
