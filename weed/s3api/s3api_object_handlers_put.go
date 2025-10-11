@@ -294,6 +294,11 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		}
 	}
 
+	// Log version ID header for debugging
+	if versionIdHeader := proxyReq.Header.Get(s3_constants.ExtVersionIdKey); versionIdHeader != "" {
+		glog.V(0).Infof("putToFiler: version ID header set: %s=%s for %s", s3_constants.ExtVersionIdKey, versionIdHeader, uploadUrl)
+	}
+
 	// Set object owner header for filer to extract
 	amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
 	if amzAccountId != "" {
@@ -443,11 +448,13 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 
 	// Enable detailed logging for testobjbar
 	isTestObj := (normalizedObject == "testobjbar")
+
+	glog.V(0).Infof("putSuspendedVersioningObject: START bucket=%s, object=%s, normalized=%s, isTestObj=%v",
+		bucket, object, normalizedObject, isTestObj)
+
 	if isTestObj {
 		glog.V(0).Infof("=== TESTOBJBAR: putSuspendedVersioningObject START ===")
 	}
-
-	glog.V(2).Infof("putSuspendedVersioningObject: creating null version for %s/%s (normalized: %s)", bucket, object, normalizedObject)
 
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
 
