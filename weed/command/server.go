@@ -161,6 +161,7 @@ func init() {
 	s3Options.tlsCACertificate = cmdServer.Flag.String("s3.cacert.file", "", "path to the TLS CA certificate file")
 	s3Options.tlsVerifyClientCert = cmdServer.Flag.Bool("s3.tlsVerifyClientCert", false, "whether to verify the client's certificate")
 	s3Options.config = cmdServer.Flag.String("s3.config", "", "path to the config file")
+	s3Options.iamConfig = cmdServer.Flag.String("s3.iam.config", "", "path to the advanced IAM config file")
 	s3Options.auditLogConfig = cmdServer.Flag.String("s3.auditLogConfig", "", "path to the audit log config file")
 	s3Options.allowEmptyFolder = cmdServer.Flag.Bool("s3.allowEmptyFolder", true, "allow empty folders")
 	s3Options.allowDeleteBucketNotEmpty = cmdServer.Flag.Bool("s3.allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
