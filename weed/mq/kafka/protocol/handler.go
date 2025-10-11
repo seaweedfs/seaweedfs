@@ -1938,7 +1938,6 @@ func (h *Handler) parseMetadataTopics(requestBody []byte) []string {
 }
 
 func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
-	glog.Infof("HANDLELISTOFFSETS ENTRY POINT")
 	Debug("ListOffsets v%d request hex dump (first 100 bytes): %x", apiVersion, requestBody[:min(100, len(requestBody))])
 
 	// Parse minimal request to understand what's being asked (header already stripped)
@@ -2047,7 +2046,6 @@ func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, req
 
 			Debug("ListOffsets - Topic: %s, Partition: %d, Timestamp: %d (using direct SMQ)",
 				string(topicName), partitionID, timestamp)
-			glog.Infof("NEW OFFSET CODE IS RUNNING!")
 
 			switch timestamp {
 			case -2: // earliest offset
