@@ -100,7 +100,7 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 					old.Cancel()
 				}
 				delete(bc.subscribers, key)
-				glog.V(0).Infof("Closed old subscriber session for %s due to offset change", key)
+				glog.V(2).Infof("Closed old subscriber session for %s due to offset change", key)
 			}
 			bc.subscribersLock.Unlock()
 		} else {
@@ -194,7 +194,7 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 	}
 
 	bc.subscribers[key] = session
-	glog.V(0).Infof("Created subscriber session for %s with context cancellation support", key)
+	glog.V(2).Infof("Created subscriber session for %s with context cancellation support", key)
 	return session, nil
 }
 

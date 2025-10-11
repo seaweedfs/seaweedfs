@@ -571,8 +571,8 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		glog.Infof("[%s] Response writer started", connectionID)
-		defer glog.Infof("[%s] Response writer exiting", connectionID)
+		glog.V(2).Infof("[%s] Response writer started", connectionID)
+		defer glog.V(2).Infof("[%s] Response writer exiting", connectionID)
 		pendingResponses := make(map[uint32]*kafkaResponse)
 		nextToSend := 0 // Index in correlationQueue
 
@@ -593,7 +593,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 					readyResp, exists := pendingResponses[expectedID]
 					if !exists {
 						// Response not ready yet, stop sending
-						glog.Infof("[%s] Response writer: waiting for correlation=%d (nextToSend=%d, queueLen=%d)", connectionID, expectedID, nextToSend, len(correlationQueue))
+						glog.V(3).Infof("[%s] Response writer: waiting for correlation=%d (nextToSend=%d, queueLen=%d)", connectionID, expectedID, nextToSend, len(correlationQueue))
 						break
 					}
 
@@ -619,7 +619,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 				correlationQueueMu.Unlock()
 			case <-ctx.Done():
 				// Context cancelled, exit immediately to prevent deadlock
-				glog.Infof("[%s] Response writer: context cancelled, exiting", connectionID)
+				glog.V(2).Infof("[%s] Response writer: context cancelled, exiting", connectionID)
 				return
 			}
 		}
@@ -671,7 +671,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 				}
 			case <-ctx.Done():
 				// Context cancelled, drain remaining requests before exiting
-				glog.Infof("[%s] Control plane: context cancelled, draining remaining requests", connectionID)
+				glog.V(2).Infof("[%s] Control plane: context cancelled, draining remaining requests", connectionID)
 				for {
 					select {
 					case req, ok := <-controlChan:
@@ -679,7 +679,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 							return
 						}
 						// Process remaining requests with a short timeout
-						glog.Infof("[%s] Control plane: processing drained request correlation=%d", connectionID, req.correlationID)
+						glog.V(3).Infof("[%s] Control plane: processing drained request correlation=%d", connectionID, req.correlationID)
 						response, err := h.processRequestSync(req)
 						select {
 						case responseChan <- &kafkaResponse{
@@ -689,14 +689,14 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 							response:      response,
 							err:           err,
 						}:
-							glog.Infof("[%s] Control plane: sent drained response correlation=%d", connectionID, req.correlationID)
+							glog.V(3).Infof("[%s] Control plane: sent drained response correlation=%d", connectionID, req.correlationID)
 						case <-time.After(1 * time.Second):
 							glog.Warningf("[%s] Control plane: timeout sending drained response correlation=%d, discarding", connectionID, req.correlationID)
 							return
 						}
 					default:
 						// Channel empty, safe to exit
-						glog.Infof("[%s] Control plane: drain complete, exiting", connectionID)
+						glog.V(2).Infof("[%s] Control plane: drain complete, exiting", connectionID)
 						return
 					}
 				}
@@ -751,7 +751,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 				}
 			case <-ctx.Done():
 				// Context cancelled, drain remaining requests before exiting
-				glog.Infof("[%s] Data plane: context cancelled, draining remaining requests", connectionID)
+				glog.V(2).Infof("[%s] Data plane: context cancelled, draining remaining requests", connectionID)
 				for {
 					select {
 					case req, ok := <-dataChan:
@@ -759,7 +759,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 							return
 						}
 						// Process remaining requests with a short timeout
-						glog.Infof("[%s] Data plane: processing drained request correlation=%d", connectionID, req.correlationID)
+						glog.V(3).Infof("[%s] Data plane: processing drained request correlation=%d", connectionID, req.correlationID)
 						response, err := h.processRequestSync(req)
 						select {
 						case responseChan <- &kafkaResponse{
@@ -769,14 +769,14 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 							response:      response,
 							err:           err,
 						}:
-							glog.Infof("[%s] Data plane: sent drained response correlation=%d", connectionID, req.correlationID)
+							glog.V(3).Infof("[%s] Data plane: sent drained response correlation=%d", connectionID, req.correlationID)
 						case <-time.After(1 * time.Second):
 							glog.Warningf("[%s] Data plane: timeout sending drained response correlation=%d, discarding", connectionID, req.correlationID)
 							return
 						}
 					default:
 						// Channel empty, safe to exit
-						glog.Infof("[%s] Data plane: drain complete, exiting", connectionID)
+						glog.V(2).Infof("[%s] Data plane: drain complete, exiting", connectionID)
 						return
 					}
 				}
@@ -1005,7 +1005,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 					bodyOffset += int(clientIDLen)
 				}
 				requestBody = messageBuf[bodyOffset:]
-				glog.Infof("FALLBACK PARSING SUCCESS: API=%d (%s) v%d, bodyLen=%d", apiKey, getAPIName(APIKey(apiKey)), apiVersion, len(requestBody))
+				glog.V(2).Infof("FALLBACK PARSING SUCCESS: API=%d (%s) v%d, bodyLen=%d", apiKey, getAPIName(APIKey(apiKey)), apiVersion, len(requestBody))
 			} else {
 				// Use the successfully parsed request body
 				requestBody = parsedRequestBody
@@ -1095,10 +1095,8 @@ func (h *Handler) processRequestSync(req *kafkaRequest) ([]byte, error) {
 
 	switch APIKey(req.apiKey) {
 	case APIKeyApiVersions:
-		glog.Infof("processRequestSync: About to call handleApiVersions for correlation=%d", req.correlationID)
 		Debug("-> ApiVersions v%d", req.apiVersion)
 		response, err = h.handleApiVersions(req.correlationID, req.apiVersion)
-		glog.Infof("processRequestSync: handleApiVersions returned for correlation=%d, response len=%d, err=%v", req.correlationID, len(response), err)
 
 	case APIKeyMetadata:
 		Debug("-> Metadata v%d", req.apiVersion)
@@ -4359,5 +4357,5 @@ func cleanupPartitionReaders(connCtx *ConnectionContext) {
 		return true // Continue iteration
 	})
 
-	glog.V(1).Infof("[%s] Cleaned up partition readers", connCtx.ConnectionID)
+	glog.V(2).Infof("[%s] Cleaned up partition readers", connCtx.ConnectionID)
 }

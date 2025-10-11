@@ -62,7 +62,7 @@ func newPartitionReader(ctx context.Context, handler *Handler, connCtx *Connecti
 	// Start the request handler goroutine
 	go pr.handleRequests(ctx)
 
-	glog.V(1).Infof("[%s] Created partition reader for %s[%d] starting at offset %d (pre-fetch buffer)",
+	glog.V(2).Infof("[%s] Created partition reader for %s[%d] starting at offset %d (pre-fetch buffer)",
 		connCtx.ConnectionID, topicName, partitionID, startOffset)
 
 	return pr
@@ -71,7 +71,7 @@ func newPartitionReader(ctx context.Context, handler *Handler, connCtx *Connecti
 // preFetchLoop continuously fetches records ahead and fills the buffer
 func (pr *partitionReader) preFetchLoop(ctx context.Context) {
 	defer func() {
-		glog.V(1).Infof("[%s] Pre-fetch loop exiting for %s[%d]",
+		glog.V(2).Infof("[%s] Pre-fetch loop exiting for %s[%d]",
 			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID)
 		close(pr.recordBuffer)
 	}()
@@ -182,7 +182,7 @@ func (pr *partitionReader) serveFetchRequest(ctx context.Context, req *partition
 	needSeek := req.requestedOffset < pr.currentOffset
 	if needSeek {
 		// Offset rewind - drain buffer and reset
-		glog.V(1).Infof("[%s] Offset seek for %s[%d]: requested=%d current=%d, draining buffer",
+		glog.V(2).Infof("[%s] Offset seek for %s[%d]: requested=%d current=%d, draining buffer",
 			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, req.requestedOffset, pr.currentOffset)
 		// Drain the buffer
 		for len(pr.recordBuffer) > 0 {
