@@ -215,7 +215,7 @@ func (bc *BrokerClient) ReadRecords(session *BrokerSubscriberSession, maxRecords
 	session.mu.Lock()
 	defer session.mu.Unlock()
 
-	glog.Infof("[FETCH] ReadRecords: topic=%s partition=%d startOffset=%d maxRecords=%d",
+	glog.V(2).Infof("[FETCH] ReadRecords: topic=%s partition=%d startOffset=%d maxRecords=%d",
 		session.Topic, session.Partition, session.StartOffset, maxRecords)
 
 	var records []*SeaweedRecord
@@ -234,7 +234,7 @@ func (bc *BrokerClient) ReadRecords(session *BrokerSubscriberSession, maxRecords
 
 		if currentOffset >= cacheStartOffset && currentOffset <= cacheEndOffset {
 			// Records are in cache
-			glog.Infof("[FETCH] Returning cached records: requested offset %d is in cache [%d-%d]",
+			glog.V(2).Infof("[FETCH] Returning cached records: requested offset %d is in cache [%d-%d]",
 				currentOffset, cacheStartOffset, cacheEndOffset)
 
 			// Find starting index in cache
@@ -250,7 +250,7 @@ func (bc *BrokerClient) ReadRecords(session *BrokerSubscriberSession, maxRecords
 				endIdx = len(session.consumedRecords)
 			}
 
-			glog.Infof("[FETCH] Returning %d cached records from index %d to %d", endIdx-startIdx, startIdx, endIdx-1)
+			glog.V(2).Infof("[FETCH] Returning %d cached records from index %d to %d", endIdx-startIdx, startIdx, endIdx-1)
 			return session.consumedRecords[startIdx:endIdx], nil
 		}
 	}
@@ -284,7 +284,7 @@ func (bc *BrokerClient) ReadRecords(session *BrokerSubscriberSession, maxRecords
 	select {
 	case result := <-recvChan:
 		if result.err != nil {
-			glog.Infof("[FETCH] Stream.Recv() error on first record: %v", result.err)
+			glog.V(2).Infof("[FETCH] Stream.Recv() error on first record: %v", result.err)
 			return records, nil // Return empty - no error for empty topic
 		}
 
@@ -297,7 +297,7 @@ func (bc *BrokerClient) ReadRecords(session *BrokerSubscriberSession, maxRecords
 			}
 			records = append(records, record)
 			currentOffset++
-			glog.Infof("[FETCH] Received record: offset=%d, keyLen=%d, valueLen=%d",
+			glog.V(4).Infof("[FETCH] Received record: offset=%d, keyLen=%d, valueLen=%d",
 				record.Offset, len(record.Key), len(record.Value))
 		}
 
@@ -346,7 +346,7 @@ func (bc *BrokerClient) ReadRecords(session *BrokerSubscriberSession, maxRecords
 			readDuration := time.Since(readStart)
 
 			if result.err != nil {
-				glog.Infof("[FETCH] Stream.Recv() error after %d records: %v", len(records), result.err)
+				glog.V(2).Infof("[FETCH] Stream.Recv() error after %d records: %v", len(records), result.err)
 				// Update session offset before returning
 				session.StartOffset = currentOffset
 				return records, nil
@@ -377,7 +377,7 @@ func (bc *BrokerClient) ReadRecords(session *BrokerSubscriberSession, maxRecords
 		}
 	}
 
-	glog.Infof("[FETCH] ReadRecords returning %d records (maxRecords reached)", len(records))
+	glog.V(2).Infof("[FETCH] ReadRecords returning %d records (maxRecords reached)", len(records))
 	// Update session offset after successful read
 	session.StartOffset = currentOffset
 
@@ -388,7 +388,7 @@ func (bc *BrokerClient) ReadRecords(session *BrokerSubscriberSession, maxRecords
 		// Keep only the most recent 100 records
 		session.consumedRecords = session.consumedRecords[len(session.consumedRecords)-100:]
 	}
-	glog.Infof("[FETCH] Updated cache: now contains %d records", len(session.consumedRecords))
+	glog.V(2).Infof("[FETCH] Updated cache: now contains %d records", len(session.consumedRecords))
 
 	return records, nil
 }

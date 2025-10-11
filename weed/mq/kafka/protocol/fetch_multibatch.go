@@ -282,12 +282,14 @@ func (f *MultiBatchFetcher) constructSingleRecordBatch(topicName string, baseOff
 	batchLength := uint32(len(batch) - batchLengthPos - 4)
 	binary.BigEndian.PutUint32(batch[batchLengthPos:batchLengthPos+4], batchLength)
 
-	// Log reconstructed batch size and detailed field breakdown
-	fmt.Printf("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-	fmt.Printf("📏 RECONSTRUCTED BATCH: topic=%s baseOffset=%d size=%d bytes, recordCount=%d\n",
-		topicName, baseOffset, len(batch), len(smqRecords))
+	// Debug: Log reconstructed batch (only at high verbosity)
+	if glog.V(4) {
+		fmt.Printf("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+		fmt.Printf("📏 RECONSTRUCTED BATCH: topic=%s baseOffset=%d size=%d bytes, recordCount=%d\n",
+			topicName, baseOffset, len(batch), len(smqRecords))
+	}
 
-	if len(batch) >= 61 {
+	if glog.V(4) && len(batch) >= 61 {
 		fmt.Printf("  Header Structure:\n")
 		fmt.Printf("    Base Offset (0-7):     %x\n", batch[0:8])
 		fmt.Printf("    Batch Length (8-11):   %x\n", batch[8:12])
@@ -314,97 +316,102 @@ func (f *MultiBatchFetcher) constructSingleRecordBatch(topicName string, baseOff
 	crcData := batch[crcPos+4:] // Skip CRC field itself, include rest
 	crc := crc32.Checksum(crcData, crc32.MakeTable(crc32.Castagnoli))
 
-	// === COMPREHENSIVE CRC DEBUG ===
-	batchLengthValue := binary.BigEndian.Uint32(batch[8:12])
-	expectedTotalSize := 12 + int(batchLengthValue)
-	actualTotalSize := len(batch)
+	// CRC debug (only at high verbosity)
+	if glog.V(4) {
+		batchLengthValue := binary.BigEndian.Uint32(batch[8:12])
+		expectedTotalSize := 12 + int(batchLengthValue)
+		actualTotalSize := len(batch)
 
-	fmt.Printf("\n  === CRC CALCULATION DEBUG ===\n")
-	fmt.Printf("    Batch length field (bytes 8-11): %d\n", batchLengthValue)
-	fmt.Printf("    Expected total batch size: %d bytes (12 + %d)\n", expectedTotalSize, batchLengthValue)
-	fmt.Printf("    Actual batch size: %d bytes\n", actualTotalSize)
-	fmt.Printf("    CRC position: byte %d\n", crcPos)
-	fmt.Printf("    CRC data range: bytes %d to %d (%d bytes)\n", crcPos+4, actualTotalSize-1, len(crcData))
+		fmt.Printf("\n  === CRC CALCULATION DEBUG ===\n")
+		fmt.Printf("    Batch length field (bytes 8-11): %d\n", batchLengthValue)
+		fmt.Printf("    Expected total batch size: %d bytes (12 + %d)\n", expectedTotalSize, batchLengthValue)
+		fmt.Printf("    Actual batch size: %d bytes\n", actualTotalSize)
+		fmt.Printf("    CRC position: byte %d\n", crcPos)
+		fmt.Printf("    CRC data range: bytes %d to %d (%d bytes)\n", crcPos+4, actualTotalSize-1, len(crcData))
 
-	if expectedTotalSize != actualTotalSize {
-		fmt.Printf("    SIZE MISMATCH: %d bytes difference!\n", actualTotalSize-expectedTotalSize)
-	}
-
-	if crcPos != 17 {
-		fmt.Printf("    CRC POSITION WRONG: expected 17, got %d!\n", crcPos)
-	}
-
-	fmt.Printf("    CRC data (first 100 bytes of %d):\n", len(crcData))
-	dumpSize := 100
-	if len(crcData) < dumpSize {
-		dumpSize = len(crcData)
-	}
-	for i := 0; i < dumpSize; i += 20 {
-		end := i + 20
-		if end > dumpSize {
-			end = dumpSize
+		if expectedTotalSize != actualTotalSize {
+			fmt.Printf("    SIZE MISMATCH: %d bytes difference!\n", actualTotalSize-expectedTotalSize)
 		}
-		fmt.Printf("      [%3d-%3d]: %x\n", i, end-1, crcData[i:end])
-	}
 
-	manualCRC := crc32.Checksum(crcData, crc32.MakeTable(crc32.Castagnoli))
-	fmt.Printf("    Calculated CRC: 0x%08x\n", crc)
-	fmt.Printf("    Manual verify:  0x%08x", manualCRC)
-	if crc == manualCRC {
-		fmt.Printf(" OK\n")
-	} else {
-		fmt.Printf(" MISMATCH!\n")
-	}
+		if crcPos != 17 {
+			fmt.Printf("    CRC POSITION WRONG: expected 17, got %d!\n", crcPos)
+		}
 
-	if actualTotalSize <= 200 {
-		fmt.Printf("    Complete batch hex dump (%d bytes):\n", actualTotalSize)
-		for i := 0; i < actualTotalSize; i += 16 {
-			end := i + 16
-			if end > actualTotalSize {
-				end = actualTotalSize
+		fmt.Printf("    CRC data (first 100 bytes of %d):\n", len(crcData))
+		dumpSize := 100
+		if len(crcData) < dumpSize {
+			dumpSize = len(crcData)
+		}
+		for i := 0; i < dumpSize; i += 20 {
+			end := i + 20
+			if end > dumpSize {
+				end = dumpSize
 			}
-			fmt.Printf("      %04d: %x\n", i, batch[i:end])
+			fmt.Printf("      [%3d-%3d]: %x\n", i, end-1, crcData[i:end])
 		}
+
+		manualCRC := crc32.Checksum(crcData, crc32.MakeTable(crc32.Castagnoli))
+		fmt.Printf("    Calculated CRC: 0x%08x\n", crc)
+		fmt.Printf("    Manual verify:  0x%08x", manualCRC)
+		if crc == manualCRC {
+			fmt.Printf(" OK\n")
+		} else {
+			fmt.Printf(" MISMATCH!\n")
+		}
+
+		if actualTotalSize <= 200 {
+			fmt.Printf("    Complete batch hex dump (%d bytes):\n", actualTotalSize)
+			for i := 0; i < actualTotalSize; i += 16 {
+				end := i + 16
+				if end > actualTotalSize {
+					end = actualTotalSize
+				}
+				fmt.Printf("      %04d: %x\n", i, batch[i:end])
+			}
+		}
+		fmt.Printf("  === END CRC DEBUG ===\n\n")
 	}
-	fmt.Printf("  === END CRC DEBUG ===\n\n")
+
 	binary.BigEndian.PutUint32(batch[crcPos:crcPos+4], crc)
 
-	fmt.Printf("    Final CRC (17-20):     %x (calculated over %d bytes)\n", batch[17:21], len(crcData))
+	if glog.V(4) {
+		fmt.Printf("    Final CRC (17-20):     %x (calculated over %d bytes)\n", batch[17:21], len(crcData))
 
-	// VERIFICATION: Read back what we just wrote
-	writtenCRC := binary.BigEndian.Uint32(batch[17:21])
-	fmt.Printf("    VERIFICATION: CRC we calculated=0x%x, CRC written to batch=0x%x", crc, writtenCRC)
-	if crc == writtenCRC {
-		fmt.Printf(" OK\n")
-	} else {
-		fmt.Printf(" MISMATCH!\n")
-	}
-
-	// DEBUG: Hash the entire batch to check if reconstructions are identical
-	batchHash := crc32.ChecksumIEEE(batch)
-	fmt.Printf("    BATCH IDENTITY: hash=0x%08x size=%d topic=%s baseOffset=%d recordCount=%d\n",
-		batchHash, len(batch), topicName, baseOffset, len(smqRecords))
-
-	// DEBUG: Show first few record keys/values to verify consistency
-	if len(smqRecords) > 0 && strings.Contains(topicName, "loadtest") {
-		fmt.Printf("    RECORD SAMPLES:\n")
-		for i := 0; i < min(3, len(smqRecords)); i++ {
-			keyPreview := smqRecords[i].GetKey()
-			if len(keyPreview) > 20 {
-				keyPreview = keyPreview[:20]
-			}
-			valuePreview := smqRecords[i].GetValue()
-			if len(valuePreview) > 40 {
-				valuePreview = valuePreview[:40]
-			}
-			fmt.Printf("      [%d] keyLen=%d valueLen=%d keyHex=%x valueHex=%x\n",
-				i, len(smqRecords[i].GetKey()), len(smqRecords[i].GetValue()),
-				keyPreview, valuePreview)
+		// VERIFICATION: Read back what we just wrote
+		writtenCRC := binary.BigEndian.Uint32(batch[17:21])
+		fmt.Printf("    VERIFICATION: CRC we calculated=0x%x, CRC written to batch=0x%x", crc, writtenCRC)
+		if crc == writtenCRC {
+			fmt.Printf(" OK\n")
+		} else {
+			fmt.Printf(" MISMATCH!\n")
 		}
-	}
 
-	fmt.Printf("    Batch for topic=%s baseOffset=%d recordCount=%d\n", topicName, baseOffset, len(smqRecords))
-	fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
+		// DEBUG: Hash the entire batch to check if reconstructions are identical
+		batchHash := crc32.ChecksumIEEE(batch)
+		fmt.Printf("    BATCH IDENTITY: hash=0x%08x size=%d topic=%s baseOffset=%d recordCount=%d\n",
+			batchHash, len(batch), topicName, baseOffset, len(smqRecords))
+
+		// DEBUG: Show first few record keys/values to verify consistency
+		if len(smqRecords) > 0 && strings.Contains(topicName, "loadtest") {
+			fmt.Printf("    RECORD SAMPLES:\n")
+			for i := 0; i < min(3, len(smqRecords)); i++ {
+				keyPreview := smqRecords[i].GetKey()
+				if len(keyPreview) > 20 {
+					keyPreview = keyPreview[:20]
+				}
+				valuePreview := smqRecords[i].GetValue()
+				if len(valuePreview) > 40 {
+					valuePreview = valuePreview[:40]
+				}
+				fmt.Printf("      [%d] keyLen=%d valueLen=%d keyHex=%x valueHex=%x\n",
+					i, len(smqRecords[i].GetKey()), len(smqRecords[i].GetValue()),
+					keyPreview, valuePreview)
+			}
+		}
+
+		fmt.Printf("    Batch for topic=%s baseOffset=%d recordCount=%d\n", topicName, baseOffset, len(smqRecords))
+		fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
+	}
 
 	return batch
 }

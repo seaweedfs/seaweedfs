@@ -11,7 +11,7 @@ import (
 
 // GetStoredRecords retrieves records from SeaweedMQ using the proper subscriber API
 func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromOffset int64, maxRecords int) ([]SMQRecord, error) {
-	glog.Infof("[FETCH] GetStoredRecords: topic=%s partition=%d fromOffset=%d maxRecords=%d", topic, partition, fromOffset, maxRecords)
+	glog.V(2).Infof("[FETCH] GetStoredRecords: topic=%s partition=%d fromOffset=%d maxRecords=%d", topic, partition, fromOffset, maxRecords)
 
 	// Verify topic exists
 	if !h.TopicExists(topic) {
@@ -32,22 +32,22 @@ func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromO
 			if connCtx.BrokerClient != nil {
 				if bc, ok := connCtx.BrokerClient.(*BrokerClient); ok {
 					brokerClient = bc
-					glog.Infof("[FETCH] Using per-connection BrokerClient for topic=%s partition=%d", topic, partition)
+					glog.V(2).Infof("[FETCH] Using per-connection BrokerClient for topic=%s partition=%d", topic, partition)
 				}
 			}
 
 			// Extract consumer group and client ID
 			if connCtx.ConsumerGroup != "" {
 				consumerGroup = connCtx.ConsumerGroup
-				glog.Infof("[FETCH] Using actual consumer group from context: %s", consumerGroup)
+				glog.V(2).Infof("[FETCH] Using actual consumer group from context: %s", consumerGroup)
 			}
 			if connCtx.MemberID != "" {
 				consumerID = connCtx.MemberID
-				glog.Infof("[FETCH] Using actual member ID from context: %s", consumerID)
+				glog.V(2).Infof("[FETCH] Using actual member ID from context: %s", consumerID)
 			} else if connCtx.ClientID != "" {
 				// Fallback to client ID if member ID not set (for clients not using consumer groups)
 				consumerID = connCtx.ClientID
-				glog.Infof("[FETCH] Using client ID from context: %s", consumerID)
+				glog.V(2).Infof("[FETCH] Using client ID from context: %s", consumerID)
 			}
 		}
 	}
@@ -64,19 +64,19 @@ func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromO
 	// CRITICAL FIX: Reuse existing subscriber if offset matches to avoid concurrent subscriber storm
 	// Creating too many concurrent subscribers to the same offset causes the broker to return
 	// the same data repeatedly, creating an infinite loop.
-	glog.Infof("[FETCH] Getting or creating subscriber for topic=%s partition=%d fromOffset=%d", topic, partition, fromOffset)
+	glog.V(2).Infof("[FETCH] Getting or creating subscriber for topic=%s partition=%d fromOffset=%d", topic, partition, fromOffset)
 
 	brokerSubscriber, err := brokerClient.GetOrCreateSubscriber(topic, partition, fromOffset)
 	if err != nil {
 		glog.Errorf("[FETCH] Failed to get/create subscriber: %v", err)
 		return nil, fmt.Errorf("failed to get/create subscriber: %v", err)
 	}
-	glog.Infof("[FETCH] Subscriber ready")
+	glog.V(2).Infof("[FETCH] Subscriber ready")
 
 	// CRITICAL FIX: If the subscriber has already consumed past the requested offset,
 	// close it and create a fresh one to avoid broker tight loop
 	if brokerSubscriber.StartOffset > fromOffset {
-		glog.Infof("[FETCH] Subscriber already at offset %d (requested %d < current), closing and recreating",
+		glog.V(2).Infof("[FETCH] Subscriber already at offset %d (requested %d < current), closing and recreating",
 			brokerSubscriber.StartOffset, fromOffset)
 
 		// Close the old subscriber
@@ -96,20 +96,20 @@ func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromO
 			glog.Errorf("[FETCH] Failed to create fresh subscriber: %v", err)
 			return nil, fmt.Errorf("failed to create fresh subscriber: %v", err)
 		}
-		glog.Infof("[FETCH] Created fresh subscriber at offset %d", fromOffset)
+		glog.V(2).Infof("[FETCH] Created fresh subscriber at offset %d", fromOffset)
 	}
 
 	// NOTE: We DON'T close the subscriber here because we're reusing it across Fetch requests
 	// The subscriber will be closed when the connection closes or when a different offset is requested
 
 	// Read records using the subscriber
-	glog.Infof("[FETCH] Calling ReadRecords for topic=%s partition=%d maxRecords=%d", topic, partition, maxRecords)
+	glog.V(2).Infof("[FETCH] Calling ReadRecords for topic=%s partition=%d maxRecords=%d", topic, partition, maxRecords)
 	seaweedRecords, err := brokerClient.ReadRecords(brokerSubscriber, maxRecords)
 	if err != nil {
 		glog.Errorf("[FETCH] ReadRecords failed: %v", err)
 		return nil, fmt.Errorf("failed to read records: %v", err)
 	}
-	glog.Infof("[FETCH] ReadRecords returned %d records", len(seaweedRecords))
+	glog.V(2).Infof("[FETCH] ReadRecords returned %d records", len(seaweedRecords))
 
 	// CRITICAL FIX: If ReadRecords returns 0 but data should exist (check HWM), recreate subscriber
 	// This handles the case where subscriber was created before data was published and flushed
@@ -136,14 +136,14 @@ func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromO
 				glog.Errorf("[FETCH] Failed to recreate subscriber: %v", err)
 				return nil, fmt.Errorf("failed to recreate subscriber: %v", err)
 			}
-			glog.Infof("[FETCH] Recreated subscriber, retrying ReadRecords")
+			glog.V(2).Infof("[FETCH] Recreated subscriber, retrying ReadRecords")
 
 			seaweedRecords, err = brokerClient.ReadRecords(brokerSubscriber, maxRecords)
 			if err != nil {
 				glog.Errorf("[FETCH] ReadRecords failed after recreation: %v", err)
 				return nil, fmt.Errorf("failed to read records after recreation: %v", err)
 			}
-			glog.Infof("[FETCH] After recreation: ReadRecords returned %d records", len(seaweedRecords))
+			glog.V(2).Infof("[FETCH] After recreation: ReadRecords returned %d records", len(seaweedRecords))
 		}
 	}
 
@@ -168,10 +168,10 @@ func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromO
 		}
 		smqRecords = append(smqRecords, smqRecord)
 
-		glog.Infof("[FETCH] Record %d: offset=%d, keyLen=%d, valueLen=%d", i, kafkaOffset, len(seaweedRecord.Key), len(seaweedRecord.Value))
+		glog.V(4).Infof("[FETCH] Record %d: offset=%d, keyLen=%d, valueLen=%d", i, kafkaOffset, len(seaweedRecord.Key), len(seaweedRecord.Value))
 	}
 
-	glog.Infof("[FETCH] Successfully read %d records from SMQ", len(smqRecords))
+	glog.V(2).Infof("[FETCH] Successfully read %d records from SMQ", len(smqRecords))
 	return smqRecords, nil
 }
 
