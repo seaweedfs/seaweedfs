@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/xeipuuv/gojsonschema"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
+	"github.com/xeipuuv/gojsonschema"
 )
 
 // JSONSchemaDecoder handles JSON Schema validation and conversion to SeaweedMQ format
@@ -41,11 +41,12 @@ func NewJSONSchemaDecoder(schemaJSON string) (*JSONSchemaDecoder, error) {
 }
 
 // Decode decodes and validates JSON data against the schema, returning a Go map
+// Uses json.Number to preserve integer precision (important for large int64 like timestamps)
 func (jsd *JSONSchemaDecoder) Decode(data []byte) (map[string]interface{}, error) {
 	// Parse JSON data with Number support to preserve large integers
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
-	
+
 	var jsonData interface{}
 	if err := decoder.Decode(&jsonData); err != nil {
 		return nil, fmt.Errorf("failed to parse JSON data: %w", err)
@@ -81,7 +82,9 @@ func (jsd *JSONSchemaDecoder) Decode(data []byte) (map[string]interface{}, error
 }
 
 // DecodeToRecordValue decodes JSON data directly to SeaweedMQ RecordValue
+// Preserves large integers (like nanosecond timestamps) with full precision
 func (jsd *JSONSchemaDecoder) DecodeToRecordValue(data []byte) (*schema_pb.RecordValue, error) {
+	// Decode with json.Number for precision
 	jsonMap, err := jsd.Decode(data)
 	if err != nil {
 		return nil, err
@@ -171,6 +174,33 @@ func (jsd *JSONSchemaDecoder) goValueToSchemaValueWithType(value interface{}, sc
 		}
 	}
 
+	// Handle nested objects
+	if schemaType == "object" {
+		if nestedMap, ok := value.(map[string]interface{}); ok {
+			nestedProperties, _ := schemaDoc["properties"].(map[string]interface{})
+			nestedFields := make(map[string]*schema_pb.Value)
+
+			for key, val := range nestedMap {
+				if fieldSchema, exists := nestedProperties[key]; exists {
+					if fieldSchemaMap, ok := fieldSchema.(map[string]interface{}); ok {
+						nestedFields[key] = jsd.goValueToSchemaValueWithType(val, fieldSchemaMap)
+						continue
+					}
+				}
+				// Fallback
+				nestedFields[key] = goValueToSchemaValue(val)
+			}
+
+			return &schema_pb.Value{
+				Kind: &schema_pb.Value_RecordValue{
+					RecordValue: &schema_pb.RecordValue{
+						Fields: nestedFields,
+					},
+				},
+			}
+		}
+	}
+
 	// For other types, use default conversion
 	return goValueToSchemaValue(value)
 }
@@ -189,11 +219,11 @@ func (jsd *JSONSchemaDecoder) ValidateOnly(data []byte) error {
 // jsonSchemaToRecordType converts a JSON Schema to SeaweedMQ RecordType
 func (jsd *JSONSchemaDecoder) jsonSchemaToRecordType(schemaDoc map[string]interface{}) *schema_pb.RecordType {
 	schemaType, _ := schemaDoc["type"].(string)
-	
+
 	if schemaType == "object" {
 		return jsd.objectSchemaToRecordType(schemaDoc)
 	}
-	
+
 	// For non-object schemas, create a wrapper record
 	return &schema_pb.RecordType{
 		Fields: []*schema_pb.Field{
@@ -212,7 +242,7 @@ func (jsd *JSONSchemaDecoder) jsonSchemaToRecordType(schemaDoc map[string]interf
 func (jsd *JSONSchemaDecoder) objectSchemaToRecordType(schemaDoc map[string]interface{}) *schema_pb.RecordType {
 	properties, _ := schemaDoc["properties"].(map[string]interface{})
 	required, _ := schemaDoc["required"].([]interface{})
-	
+
 	// Create set of required fields for quick lookup
 	requiredFields := make(map[string]bool)
 	for _, req := range required {
@@ -220,16 +250,16 @@ func (jsd *JSONSchemaDecoder) objectSchemaToRecordType(schemaDoc map[string]inte
 			requiredFields[reqStr] = true
 		}
 	}
-	
+
 	fields := make([]*schema_pb.Field, 0, len(properties))
 	fieldIndex := int32(0)
-	
+
 	for fieldName, fieldSchema := range properties {
 		fieldSchemaMap, ok := fieldSchema.(map[string]interface{})
 		if !ok {
 			continue
 		}
-		
+
 		field := &schema_pb.Field{
 			Name:       fieldName,
 			FieldIndex: fieldIndex,
@@ -237,11 +267,11 @@ func (jsd *JSONSchemaDecoder) objectSchemaToRecordType(schemaDoc map[string]inte
 			IsRequired: requiredFields[fieldName],
 			IsRepeated: jsd.isArrayType(fieldSchemaMap),
 		}
-		
+
 		fields = append(fields, field)
 		fieldIndex++
 	}
-	
+
 	return &schema_pb.RecordType{
 		Fields: fields,
 	}
@@ -250,7 +280,7 @@ func (jsd *JSONSchemaDecoder) objectSchemaToRecordType(schemaDoc map[string]inte
 // jsonSchemaTypeToType converts a JSON Schema type to SeaweedMQ Type
 func (jsd *JSONSchemaDecoder) jsonSchemaTypeToType(schemaDoc map[string]interface{}) *schema_pb.Type {
 	schemaType, _ := schemaDoc["type"].(string)
-	
+
 	switch schemaType {
 	case "boolean":
 		return &schema_pb.Type{
@@ -340,7 +370,7 @@ func (jsd *JSONSchemaDecoder) jsonSchemaTypeToType(schemaDoc map[string]interfac
 				return jsd.jsonSchemaTypeToType(firstType)
 			}
 		}
-		
+
 		// Default to string for unknown types
 		return &schema_pb.Type{
 			Kind: &schema_pb.Type_ScalarType{
@@ -360,41 +390,41 @@ func (jsd *JSONSchemaDecoder) isArrayType(schemaDoc map[string]interface{}) bool
 func (jsd *JSONSchemaDecoder) EncodeFromRecordValue(recordValue *schema_pb.RecordValue) ([]byte, error) {
 	// Convert RecordValue back to Go map
 	goMap := recordValueToMap(recordValue)
-	
+
 	// Encode to JSON
 	jsonData, err := json.Marshal(goMap)
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode to JSON: %w", err)
 	}
-	
+
 	// Validate the generated JSON against the schema
 	if err := jsd.ValidateOnly(jsonData); err != nil {
 		return nil, fmt.Errorf("generated JSON failed schema validation: %w", err)
 	}
-	
+
 	return jsonData, nil
 }
 
 // GetSchemaInfo returns information about the JSON Schema
 func (jsd *JSONSchemaDecoder) GetSchemaInfo() map[string]interface{} {
 	info := make(map[string]interface{})
-	
+
 	if title, exists := jsd.schemaDoc["title"]; exists {
 		info["title"] = title
 	}
-	
+
 	if description, exists := jsd.schemaDoc["description"]; exists {
 		info["description"] = description
 	}
-	
+
 	if schemaVersion, exists := jsd.schemaDoc["$schema"]; exists {
 		info["schema_version"] = schemaVersion
 	}
-	
+
 	if schemaType, exists := jsd.schemaDoc["type"]; exists {
 		info["type"] = schemaType
 	}
-	
+
 	return info
 }
 
@@ -403,7 +433,7 @@ func (jsd *JSONSchemaDecoder) convertJSONValue(value interface{}, expectedType s
 	if value == nil {
 		return nil
 	}
-	
+
 	switch expectedType {
 	case "integer":
 		switch v := value.(type) {
@@ -437,7 +467,7 @@ func (jsd *JSONSchemaDecoder) convertJSONValue(value interface{}, expectedType s
 			}
 		}
 	}
-	
+
 	return value
 }
 
@@ -448,10 +478,10 @@ func (jsd *JSONSchemaDecoder) ValidateAndNormalize(data []byte) ([]byte, error) 
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Normalize types based on schema
 	normalized := jsd.normalizeMapTypes(jsonMap, jsd.schemaDoc)
-	
+
 	// Re-encode with normalized types
 	return json.Marshal(normalized)
 }
@@ -460,7 +490,7 @@ func (jsd *JSONSchemaDecoder) ValidateAndNormalize(data []byte) ([]byte, error) 
 func (jsd *JSONSchemaDecoder) normalizeMapTypes(data map[string]interface{}, schemaDoc map[string]interface{}) map[string]interface{} {
 	properties, _ := schemaDoc["properties"].(map[string]interface{})
 	result := make(map[string]interface{})
-	
+
 	for key, value := range data {
 		if fieldSchema, exists := properties[key]; exists {
 			if fieldSchemaMap, ok := fieldSchema.(map[string]interface{}); ok {
@@ -471,6 +501,6 @@ func (jsd *JSONSchemaDecoder) normalizeMapTypes(data map[string]interface{}, sch
 		}
 		result[key] = value
 	}
-	
+
 	return result
 }

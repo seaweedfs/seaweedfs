@@ -257,7 +257,7 @@ func TestSchemaDecodeEncode_JSONSchema(t *testing.T) {
 	}
 }
 
-// TestSchemaDecodeEncode_Protobuf tests Protobuf decode/encode workflow (basic structure)
+// TestSchemaDecodeEncode_Protobuf tests Protobuf decode/encode workflow
 func TestSchemaDecodeEncode_Protobuf(t *testing.T) {
 	registry := createMockSchemaRegistryForDecodeTest(t)
 	defer registry.Close()
@@ -267,24 +267,30 @@ func TestSchemaDecodeEncode_Protobuf(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// For now, test that Protobuf detection works but decoding returns appropriate error
+	// Test that Protobuf text schema parsing and decoding works
 	schemaID := int32(20)
 	protoSchema := `syntax = "proto3"; message TestMessage { string name = 1; int32 id = 2; }`
 
 	// Register schema in mock registry
 	registerSchemaInMock(t, registry, schemaID, protoSchema)
 
-	// Create a mock protobuf message (simplified)
-	protobufData := []byte{0x0a, 0x04, 0x74, 0x65, 0x73, 0x74, 0x10, 0x7b} // name="test", id=123
+	// Create a Protobuf message: name="test", id=123
+	protobufData := []byte{0x0a, 0x04, 0x74, 0x65, 0x73, 0x74, 0x10, 0x7b}
 	envelope := createConfluentEnvelope(schemaID, protobufData)
 
-	// Test decode - should detect as Protobuf but return error for now
+	// Test decode - should work with text .proto schema parsing
 	decoded, err := manager.DecodeMessage(envelope)
 
-	// Expect error since the test uses a placeholder protobuf schema/descriptor
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to decode Protobuf message")
-	assert.Nil(t, decoded)
+	// Should successfully decode now that text .proto parsing is implemented
+	require.NoError(t, err)
+	assert.NotNil(t, decoded)
+	assert.Equal(t, uint32(schemaID), decoded.SchemaID)
+	assert.Equal(t, FormatProtobuf, decoded.SchemaFormat)
+	assert.NotNil(t, decoded.RecordValue)
+
+	// Verify the decoded fields
+	assert.Contains(t, decoded.RecordValue.Fields, "name")
+	assert.Contains(t, decoded.RecordValue.Fields, "id")
 }
 
 // TestSchemaDecodeEncode_ErrorHandling tests various error conditions

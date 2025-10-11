@@ -62,12 +62,12 @@ func TestNewJSONSchemaDecoder(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			decoder, err := NewJSONSchemaDecoder(tt.schema)
-			
+
 			if (err != nil) != tt.expectErr {
 				t.Errorf("NewJSONSchemaDecoder() error = %v, expectErr %v", err, tt.expectErr)
 				return
 			}
-			
+
 			if !tt.expectErr && decoder == nil {
 				t.Error("Expected non-nil decoder for valid schema")
 			}
@@ -156,24 +156,25 @@ func TestJSONSchemaDecoder_Decode(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := decoder.Decode([]byte(tt.jsonData))
-			
+
 			if (err != nil) != tt.expectErr {
 				t.Errorf("Decode() error = %v, expectErr %v", err, tt.expectErr)
 				return
 			}
-			
+
 			if !tt.expectErr {
 				if result == nil {
 					t.Error("Expected non-nil result for valid data")
 				}
-				
+
 				// Verify some basic fields
 				if id, exists := result["id"]; exists {
-					if _, ok := id.(float64); !ok {
-						t.Errorf("Expected id to be float64, got %T", id)
+					// Numbers are now json.Number for precision
+					if _, ok := id.(json.Number); !ok {
+						t.Errorf("Expected id to be json.Number, got %T", id)
 					}
 				}
-				
+
 				if name, exists := result["name"]; exists {
 					if _, ok := name.(string); !ok {
 						t.Errorf("Expected name to be string, got %T", name)
@@ -455,7 +456,7 @@ func TestJSONSchemaDecoder_ArrayAndPrimitiveSchemas(t *testing.T) {
 			}
 
 			result, err := decoder.Decode([]byte(tt.jsonData))
-			
+
 			if (err == nil) != tt.expectOK {
 				t.Errorf("Decode() error = %v, expectOK %v", err, tt.expectOK)
 				return
