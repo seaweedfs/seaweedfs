@@ -257,8 +257,8 @@ func TestProtobufLoadTestDecoding(t *testing.T) {
 		t.Errorf("Expected schema ID %d, got %d", schemaID, envelope.SchemaID)
 	}
 
-	// Create Protobuf decoder
-	decoder, err := NewProtobufDecoder([]byte(loadTestProtobufSchema))
+	// Create Protobuf decoder from text schema
+	decoder, err := NewProtobufDecoderFromString(loadTestProtobufSchema)
 	if err != nil {
 		t.Fatalf("Failed to create Protobuf decoder: %v", err)
 	}

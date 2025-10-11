@@ -141,6 +141,7 @@ require (
 	github.com/hashicorp/raft v1.7.3
 	github.com/hashicorp/raft-boltdb/v2 v2.3.1
 	github.com/hashicorp/vault/api v1.20.0
+	github.com/jhump/protoreflect v1.17.0
 	github.com/lib/pq v1.10.9
 	github.com/linkedin/goavro/v2 v2.14.0
 	github.com/mattn/go-sqlite3 v1.14.32
@@ -175,6 +176,7 @@ require (
 	github.com/bazelbuild/rules_go v0.46.0 // indirect
 	github.com/biogo/store v0.0.0-20201120204734-aad293a2328f // indirect
 	github.com/blevesearch/snowballstem v0.9.0 // indirect
+	github.com/bufbuild/protocompile v0.14.1 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cockroachdb/apd/v3 v3.1.0 // indirect
 	github.com/cockroachdb/errors v1.11.3 // indirect

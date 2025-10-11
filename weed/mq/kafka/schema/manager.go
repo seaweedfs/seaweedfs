@@ -2,6 +2,7 @@ package schema
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	"google.golang.org/protobuf/proto"
@@ -290,12 +291,23 @@ func (m *Manager) getProtobufDecoder(schemaID uint32, schemaStr string) (*Protob
 	}
 	m.decoderMu.RUnlock()
 
-	// For Protobuf, the schema is typically a binary FileDescriptorSet
-	// In Confluent Schema Registry, Protobuf schemas are stored as binary descriptors
-	schemaBytes := []byte(schemaStr) // Assume schemaStr contains binary data
+	// In Confluent Schema Registry, Protobuf schemas can be stored as:
+	// 1. Text .proto format (most common)
+	// 2. Binary FileDescriptorSet
+	// Try to detect which format we have
+	var decoder *ProtobufDecoder
+	var err error
 
-	// Create new decoder
-	decoder, err := NewProtobufDecoder(schemaBytes)
+	// Check if it looks like text .proto (contains "syntax", "message", etc.)
+	if strings.Contains(schemaStr, "syntax") || strings.Contains(schemaStr, "message") {
+		// Parse as text .proto
+		decoder, err = NewProtobufDecoderFromString(schemaStr)
+	} else {
+		// Try binary format
+		schemaBytes := []byte(schemaStr)
+		decoder, err = NewProtobufDecoder(schemaBytes)
+	}
+
 	if err != nil {
 		return nil, err
 	}
@@ -517,6 +529,26 @@ func (m *Manager) populateProtobufMessage(msg protoreflect.Message, data map[str
 		if fieldDesc == nil {
 			// Skip unknown fields in permissive mode
 			continue
+		}
+
+		// Handle map fields specially
+		if fieldDesc.IsMap() {
+			if mapData, ok := value.(map[string]interface{}); ok {
+				mapValue := msg.Mutable(fieldDesc).Map()
+				for mk, mv := range mapData {
+					// Convert map key (always string for our schema)
+					mapKey := protoreflect.ValueOfString(mk).MapKey()
+
+					// Convert map value based on value type
+					valueDesc := fieldDesc.MapValue()
+					mvProto, err := m.goValueToProtoValue(mv, valueDesc)
+					if err != nil {
+						return fmt.Errorf("failed to convert map value for key %s: %w", mk, err)
+					}
+					mapValue.Set(mapKey, mvProto)
+				}
+				continue
+			}
 		}
 
 		// Convert and set the value

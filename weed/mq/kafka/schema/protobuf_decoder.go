@@ -1,9 +1,12 @@
 package schema
 
 import (
+	"encoding/json"
 	"fmt"
 
+	"github.com/jhump/protoreflect/desc/protoparse"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protodesc"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/dynamicpb"
 
@@ -49,22 +52,64 @@ func NewProtobufDecoderFromDescriptor(msgDesc protoreflect.MessageDescriptor) *P
 }
 
 // NewProtobufDecoderFromString creates a Protobuf decoder from a schema string
-// This is a simplified version for testing - in production, schemas would be binary descriptors
+// This parses text .proto format from Schema Registry
 func NewProtobufDecoderFromString(schemaStr string) (*ProtobufDecoder, error) {
-	// For Phase 5, we'll implement a basic string-to-descriptor parser
-	// In a full implementation, this would use protoc to compile .proto files
-	// or parse the Confluent Schema Registry's Protobuf descriptor format
+	// Use protoparse to parse the text .proto schema
+	parser := protoparse.Parser{
+		Accessor: protoparse.FileContentsFromMap(map[string]string{
+			"schema.proto": schemaStr,
+		}),
+	}
 
-	return nil, fmt.Errorf("string-based Protobuf schemas not yet implemented - use binary descriptors")
+	// Parse the schema
+	fileDescs, err := parser.ParseFiles("schema.proto")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse .proto schema: %w", err)
+	}
+
+	if len(fileDescs) == 0 {
+		return nil, fmt.Errorf("no file descriptors found in schema")
+	}
+
+	fileDesc := fileDescs[0]
+
+	// Convert to protoreflect FileDescriptor
+	fileDescProto := fileDesc.AsFileDescriptorProto()
+
+	// Create a FileDescriptor from the proto
+	protoFileDesc, err := protodesc.NewFile(fileDescProto, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create file descriptor: %w", err)
+	}
+
+	// Find the first message in the file
+	messages := protoFileDesc.Messages()
+	if messages.Len() == 0 {
+		return nil, fmt.Errorf("no message types found in schema")
+	}
+
+	// Get the first message descriptor
+	msgDesc := messages.Get(0)
+
+	return NewProtobufDecoderFromDescriptor(msgDesc), nil
 }
 
 // Decode decodes Protobuf binary data to a Go map representation
+// Also supports JSON fallback for compatibility with producers that don't yet support Protobuf binary
 func (pd *ProtobufDecoder) Decode(data []byte) (map[string]interface{}, error) {
 	// Create a new message instance
 	msg := pd.msgType.New()
 
-	// Unmarshal the binary data
+	// Try to unmarshal as Protobuf binary first
 	if err := proto.Unmarshal(data, msg.Interface()); err != nil {
+		// Fallback: Try JSON decoding (for compatibility with producers that send JSON)
+		var jsonMap map[string]interface{}
+		if jsonErr := json.Unmarshal(data, &jsonMap); jsonErr == nil {
+			// Successfully decoded as JSON - return it
+			// Note: This is a compatibility fallback, proper Protobuf binary is preferred
+			return jsonMap, nil
+		}
+		// Both failed - return the original Protobuf error
 		return nil, fmt.Errorf("failed to unmarshal Protobuf data: %w", err)
 	}
 
@@ -312,4 +357,3 @@ func (pd *ProtobufDecoder) scalarKindToType(kind protoreflect.Kind, msgDesc prot
 		}
 	}
 }
-
