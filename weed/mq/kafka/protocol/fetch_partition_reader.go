@@ -68,7 +68,10 @@ func newPartitionReader(ctx context.Context, handler *Handler, connCtx *Connecti
 	return pr
 }
 
-// preFetchLoop continuously fetches records ahead and fills the buffer
+// preFetchLoop is disabled for SMQ backend to prevent subscriber storms
+// SMQ reads from disk and creating multiple concurrent subscribers causes
+// broker overload and partition shutdowns. Fetch requests are handled
+// on-demand in serveFetchRequest instead.
 func (pr *partitionReader) preFetchLoop(ctx context.Context) {
 	defer func() {
 		glog.V(2).Infof("[%s] Pre-fetch loop exiting for %s[%d]",
@@ -76,71 +79,12 @@ func (pr *partitionReader) preFetchLoop(ctx context.Context) {
 		close(pr.recordBuffer)
 	}()
 
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-pr.closeChan:
-			return
-		default:
-			// Try to fetch next batch if buffer has space
-			pr.bufferMu.Lock()
-
-			// Check if topic exists
-			if !pr.handler.seaweedMQHandler.TopicExists(pr.topicName) {
-				pr.bufferMu.Unlock()
-				time.Sleep(100 * time.Millisecond)
-				continue
-			}
-
-			// Get high water mark
-			highWaterMark, err := pr.handler.seaweedMQHandler.GetLatestOffset(pr.topicName, pr.partitionID)
-			if err != nil {
-				pr.bufferMu.Unlock()
-				time.Sleep(50 * time.Millisecond)
-				continue
-			}
-
-			// Fetch next batch if there's data available
-			if pr.currentOffset < highWaterMark {
-				recordBatch, newOffset := pr.readRecords(ctx, 1024*1024, highWaterMark) // Fetch 1MB batches
-
-				// CRITICAL: Don't buffer empty results to avoid channel saturation
-				// If readRecords returns empty (no data fetched), skip buffering and backoff
-				if len(recordBatch) == 0 || newOffset == pr.currentOffset {
-					pr.bufferMu.Unlock()
-					glog.V(3).Infof("[%s] Pre-fetch returned empty for %s[%d] (offset=%d, HWM=%d), backing off",
-						pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, pr.currentOffset, highWaterMark)
-					time.Sleep(200 * time.Millisecond) // Longer backoff for empty results
-					continue
-				}
-
-				buffered := &bufferedRecords{
-					recordBatch:   recordBatch,
-					startOffset:   pr.currentOffset,
-					endOffset:     newOffset,
-					highWaterMark: highWaterMark,
-				}
-				pr.currentOffset = newOffset
-				pr.bufferMu.Unlock()
-
-				// Send to buffer (blocks if buffer is full)
-				select {
-				case pr.recordBuffer <- buffered:
-					glog.V(2).Infof("[%s] Buffered records for %s[%d]: offset %d->%d, %d bytes",
-						pr.connCtx.ConnectionID, pr.topicName, pr.partitionID,
-						buffered.startOffset, buffered.endOffset, len(recordBatch))
-				case <-ctx.Done():
-					return
-				case <-pr.closeChan:
-					return
-				}
-			} else {
-				pr.bufferMu.Unlock()
-				// No data available, wait a bit before checking again
-				time.Sleep(50 * time.Millisecond)
-			}
-		}
+	// Wait for shutdown - no continuous pre-fetching to avoid overwhelming the broker
+	select {
+	case <-ctx.Done():
+		return
+	case <-pr.closeChan:
+		return
 	}
 }
 
@@ -158,7 +102,7 @@ func (pr *partitionReader) handleRequests(ctx context.Context) {
 	}
 }
 
-// serveFetchRequest serves a fetch request from the buffer or waits for pre-fetch
+// serveFetchRequest fetches data on-demand (no pre-fetching)
 func (pr *partitionReader) serveFetchRequest(ctx context.Context, req *partitionFetchRequest) {
 	startTime := time.Now()
 	result := &partitionFetchResult{}
@@ -177,56 +121,30 @@ func (pr *partitionReader) serveFetchRequest(ctx context.Context, req *partition
 	hwm, _ := pr.handler.seaweedMQHandler.GetLatestOffset(pr.topicName, pr.partitionID)
 	result.highWaterMark = hwm
 
-	// Check if offset seek is needed
+	// Update tracking offset if seeking backwards
 	pr.bufferMu.Lock()
-	needSeek := req.requestedOffset < pr.currentOffset
-	if needSeek {
-		// Offset rewind - drain buffer and reset
-		glog.V(2).Infof("[%s] Offset seek for %s[%d]: requested=%d current=%d, draining buffer",
+	if req.requestedOffset < pr.currentOffset {
+		glog.V(2).Infof("[%s] Offset seek for %s[%d]: requested=%d current=%d",
 			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, req.requestedOffset, pr.currentOffset)
-		// Drain the buffer
-		for len(pr.recordBuffer) > 0 {
-			<-pr.recordBuffer
-		}
-		// Reset offset - subscriber will be recreated by GetStoredRecords with the new offset
 		pr.currentOffset = req.requestedOffset
 	}
 	pr.bufferMu.Unlock()
 
-	// Try to get buffered records (with reasonable timeout for pre-fetch to complete)
-	select {
-	case buffered, ok := <-pr.recordBuffer:
-		if !ok {
-			// Buffer closed
-			result.recordBatch = []byte{}
-			return
-		}
-		// Check if buffered offset matches request (allowing for forward reads)
-		if buffered.startOffset <= req.requestedOffset && req.requestedOffset < buffered.endOffset {
-			// Perfect match - serve from buffer
-			result.recordBatch = buffered.recordBatch
-			glog.V(2).Infof("[%s] Served from buffer for %s[%d]: %d bytes (offset %d->%d)",
+	// Fetch on-demand - no pre-fetching to avoid overwhelming the broker
+	if req.requestedOffset < hwm {
+		recordBatch, newOffset := pr.readRecords(ctx, req.maxBytes, hwm)
+		if len(recordBatch) > 0 && newOffset > pr.currentOffset {
+			result.recordBatch = recordBatch
+			pr.bufferMu.Lock()
+			pr.currentOffset = newOffset
+			pr.bufferMu.Unlock()
+			glog.V(2).Infof("[%s] On-demand fetch for %s[%d]: offset %d->%d, %d bytes",
 				pr.connCtx.ConnectionID, pr.topicName, pr.partitionID,
-				len(buffered.recordBatch), buffered.startOffset, buffered.endOffset)
-		} else if buffered.endOffset <= req.requestedOffset {
-			// Buffer is behind - return empty (pre-fetch will catch up)
-			result.recordBatch = []byte{}
-			glog.V(2).Infof("[%s] Buffer behind for %s[%d] (buffered %d->%d, requested %d), returning empty",
-				pr.connCtx.ConnectionID, pr.topicName, pr.partitionID,
-				buffered.startOffset, buffered.endOffset, req.requestedOffset)
+				req.requestedOffset, newOffset, len(recordBatch))
 		} else {
-			// Buffer is ahead - return empty (client will retry)
 			result.recordBatch = []byte{}
-			glog.V(2).Infof("[%s] Buffer ahead for %s[%d] (buffered %d->%d, requested %d), returning empty",
-				pr.connCtx.ConnectionID, pr.topicName, pr.partitionID,
-				buffered.startOffset, buffered.endOffset, req.requestedOffset)
 		}
-	case <-time.After(30 * time.Millisecond):
-		// Buffer empty or taking too long, return empty result
-		result.recordBatch = []byte{}
-		glog.V(2).Infof("[%s] Buffer timeout for %s[%d], returning empty",
-			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID)
-	case <-ctx.Done():
+	} else {
 		result.recordBatch = []byte{}
 	}
 }
