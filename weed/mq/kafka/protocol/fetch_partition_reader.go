@@ -121,9 +121,18 @@ func (pr *partitionReader) serveFetchRequest(ctx context.Context, req *partition
 	hwm, _ := pr.handler.seaweedMQHandler.GetLatestOffset(pr.topicName, pr.partitionID)
 	result.highWaterMark = hwm
 
-	// Update tracking offset if seeking backwards
+	// CRITICAL: If requested offset >= HWM, return immediately with empty result
+	// This prevents overwhelming the broker with futile read attempts when no data is available
+	if req.requestedOffset >= hwm {
+		result.recordBatch = []byte{}
+		glog.V(3).Infof("[%s] No data available for %s[%d]: offset=%d >= hwm=%d",
+			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, req.requestedOffset, hwm)
+		return
+	}
+
+	// Update tracking offset to match requested offset
 	pr.bufferMu.Lock()
-	if req.requestedOffset < pr.currentOffset {
+	if req.requestedOffset != pr.currentOffset {
 		glog.V(2).Infof("[%s] Offset seek for %s[%d]: requested=%d current=%d",
 			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, req.requestedOffset, pr.currentOffset)
 		pr.currentOffset = req.requestedOffset
@@ -131,19 +140,15 @@ func (pr *partitionReader) serveFetchRequest(ctx context.Context, req *partition
 	pr.bufferMu.Unlock()
 
 	// Fetch on-demand - no pre-fetching to avoid overwhelming the broker
-	if req.requestedOffset < hwm {
-		recordBatch, newOffset := pr.readRecords(ctx, req.maxBytes, hwm)
-		if len(recordBatch) > 0 && newOffset > pr.currentOffset {
-			result.recordBatch = recordBatch
-			pr.bufferMu.Lock()
-			pr.currentOffset = newOffset
-			pr.bufferMu.Unlock()
-			glog.V(2).Infof("[%s] On-demand fetch for %s[%d]: offset %d->%d, %d bytes",
-				pr.connCtx.ConnectionID, pr.topicName, pr.partitionID,
-				req.requestedOffset, newOffset, len(recordBatch))
-		} else {
-			result.recordBatch = []byte{}
-		}
+	recordBatch, newOffset := pr.readRecords(ctx, req.maxBytes, hwm)
+	if len(recordBatch) > 0 && newOffset > pr.currentOffset {
+		result.recordBatch = recordBatch
+		pr.bufferMu.Lock()
+		pr.currentOffset = newOffset
+		pr.bufferMu.Unlock()
+		glog.V(2).Infof("[%s] On-demand fetch for %s[%d]: offset %d->%d, %d bytes",
+			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID,
+			req.requestedOffset, newOffset, len(recordBatch))
 	} else {
 		result.recordBatch = []byte{}
 	}
