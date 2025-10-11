@@ -267,17 +267,27 @@ func (h *Handler) parseRecordSet(recordSetData []byte) (recordCount int32, total
 
 // produceToSeaweedMQ publishes a single record to SeaweedMQ (simplified for Phase 2)
 func (h *Handler) produceToSeaweedMQ(topic string, partition int32, recordSetData []byte) (int64, error) {
-	// For Phase 2, we'll extract a simple key-value from the record set
-	// In a full implementation, this would parse the entire batch properly
+	// Extract all records from the record set and publish each one
+	// extractAllRecords handles fallback internally for various cases
+	records := h.extractAllRecords(recordSetData)
 
-	// Extract first record from record set (simplified)
-	key, value := h.extractFirstRecord(recordSetData)
-	if key == nil && value == nil {
-		return 0, fmt.Errorf("failed to parse Kafka record set")
+	if len(records) == 0 {
+		return 0, fmt.Errorf("failed to parse Kafka record set: no records extracted")
 	}
 
-	// Publish to SeaweedMQ using schema-based encoding
-	return h.produceSchemaBasedRecord(topic, partition, key, value)
+	// Publish all records and return the offset of the first record (base offset)
+	var baseOffset int64
+	for idx, kv := range records {
+		offsetProduced, err := h.produceSchemaBasedRecord(topic, partition, kv.Key, kv.Value)
+		if err != nil {
+			return 0, err
+		}
+		if idx == 0 {
+			baseOffset = offsetProduced
+		}
+	}
+
+	return baseOffset, nil
 }
 
 // extractAllRecords parses a Kafka record batch and returns all records' key/value pairs
@@ -763,45 +773,46 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 							topicName, partitionID, recordCount, recordSetSize)
 					}
 					// Extract all records from the record set and publish each one
+					// extractAllRecords handles fallback internally for various cases
 					records := h.extractAllRecords(recordSetData)
 					if len(records) > 0 {
 						if len(records[0].Value) > 0 {
 						}
 					}
 					if len(records) == 0 {
-						// Fallback to first record extraction
-						key, value := h.extractFirstRecord(recordSetData)
-						if key != nil || value != nil {
-							records = append(records, struct{ Key, Value []byte }{Key: key, Value: value})
+						errorCode = 42 // INVALID_RECORD
+						if isSchemasTopic {
+							glog.Errorf("SR PRODUCE ERROR V2+: topic=%s partition=%d - no records extracted from batch",
+								topicName, partitionID)
 						}
-					}
-
-					var firstOffsetSet bool
-					for idx, kv := range records {
-						offsetProduced, prodErr := h.produceSchemaBasedRecord(topicName, int32(partitionID), kv.Key, kv.Value)
-						if prodErr != nil {
-							// Check if this is a schema validation error and add delay to prevent overloading
-							if h.isSchemaValidationError(prodErr) {
-								Debug("Schema validation failed for topic %s: %v - adding delay to prevent gateway overload", topicName, prodErr)
-								time.Sleep(200 * time.Millisecond) // Brief delay for schema validation failures
+					} else {
+						var firstOffsetSet bool
+						for idx, kv := range records {
+							offsetProduced, prodErr := h.produceSchemaBasedRecord(topicName, int32(partitionID), kv.Key, kv.Value)
+							if prodErr != nil {
+								// Check if this is a schema validation error and add delay to prevent overloading
+								if h.isSchemaValidationError(prodErr) {
+									Debug("Schema validation failed for topic %s: %v - adding delay to prevent gateway overload", topicName, prodErr)
+									time.Sleep(200 * time.Millisecond) // Brief delay for schema validation failures
+								}
+								errorCode = 1 // UNKNOWN_SERVER_ERROR
+								if isSchemasTopic {
+									glog.Errorf("SR PRODUCE ERROR V2+: topic=%s partition=%d - produceSchemaBasedRecord failed: %v",
+										topicName, partitionID, prodErr)
+								}
+								break
 							}
-							errorCode = 1 // UNKNOWN_SERVER_ERROR
-							if isSchemasTopic {
-								glog.Errorf("SR PRODUCE ERROR V2+: topic=%s partition=%d - produceSchemaBasedRecord failed: %v",
-									topicName, partitionID, prodErr)
+							if idx == 0 {
+								baseOffset = offsetProduced
+								firstOffsetSet = true
 							}
-							break
 						}
-						if idx == 0 {
-							baseOffset = offsetProduced
-							firstOffsetSet = true
-						}
-					}
 
-					_ = firstOffsetSet
-					if isSchemasTopic && errorCode == 0 {
-						glog.Infof("SR PRODUCE SUCCESS V2+: topic=%s partition=%d baseOffset=%d recordCount=%d",
-							topicName, partitionID, baseOffset, len(records))
+						_ = firstOffsetSet
+						if isSchemasTopic && errorCode == 0 {
+							glog.Infof("SR PRODUCE SUCCESS V2+: topic=%s partition=%d baseOffset=%d recordCount=%d",
+								topicName, partitionID, baseOffset, len(records))
+						}
 					}
 				}
 			}
