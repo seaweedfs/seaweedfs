@@ -18,6 +18,7 @@ import (
 	"github.com/linkedin/goavro/v2"
 	"github.com/seaweedfs/seaweedfs/test/kafka/kafka-client-loadtest/internal/config"
 	"github.com/seaweedfs/seaweedfs/test/kafka/kafka-client-loadtest/internal/metrics"
+	"github.com/seaweedfs/seaweedfs/test/kafka/kafka-client-loadtest/internal/schema"
 )
 
 // ErrCircuitBreakerOpen indicates that the circuit breaker is open due to consecutive failures
@@ -75,19 +76,21 @@ func New(cfg *config.Config, collector *metrics.Collector, id int) (*Producer, e
 	}
 
 	// Initialize schema formats for each topic
-	// Use the same distribution as main.go: AVRO for even indices, JSON for odd indices
+	// Distribute across AVRO, JSON, and PROTOBUF formats
 	for i, topic := range p.topics {
 		var schemaFormat string
 		if cfg.Producers.SchemaFormat != "" {
 			// Use explicit config if provided
 			schemaFormat = cfg.Producers.SchemaFormat
 		} else {
-			// Distribute across formats
-			switch i % 2 {
+			// Distribute across three formats: AVRO, JSON, PROTOBUF
+			switch i % 3 {
 			case 0:
 				schemaFormat = "AVRO"
 			case 1:
 				schemaFormat = "JSON"
+			case 2:
+				schemaFormat = "PROTOBUF"
 			}
 		}
 		p.schemaFormats[topic] = schemaFormat
@@ -176,23 +179,8 @@ func (p *Producer) initSaramaProducer() error {
 
 // initAvroCodec initializes the Avro codec for schema-based messages
 func (p *Producer) initAvroCodec() error {
-	// Use the LoadTestMessage schema that matches what we register
-	loadTestSchema := `{
-		"type": "record",
-		"name": "LoadTestMessage",
-		"namespace": "com.seaweedfs.loadtest",
-		"fields": [
-			{"name": "id", "type": "string"},
-			{"name": "timestamp", "type": "long"},
-			{"name": "producer_id", "type": "int"},
-			{"name": "counter", "type": "long"},
-			{"name": "user_id", "type": "string"},
-			{"name": "event_type", "type": "string"},
-			{"name": "properties", "type": {"type": "map", "values": "string"}}
-		]
-	}`
-
-	codec, err := goavro.NewCodec(loadTestSchema)
+	// Use the shared LoadTestMessage schema
+	codec, err := goavro.NewCodec(schema.GetAvroSchema())
 	if err != nil {
 		return fmt.Errorf("failed to create Avro codec: %w", err)
 	}
@@ -304,36 +292,76 @@ func (p *Producer) produceMessages(ctx context.Context) error {
 func (p *Producer) produceMessage() error {
 	startTime := time.Now()
 
-	// Generate message
-	message, err := p.generateMessage()
-	if err != nil {
-		return fmt.Errorf("failed to generate message: %w", err)
-	}
-
 	// Select random topic
 	topic := p.topics[p.random.Intn(len(p.topics))]
 
-	// Produce message using Sarama
-	return p.produceSaramaMessage(topic, message, startTime)
+	// Produce message using Sarama (message will be generated based on topic's schema format)
+	return p.produceSaramaMessage(topic, startTime)
 }
 
 // produceSaramaMessage produces a message using Sarama
-func (p *Producer) produceSaramaMessage(topic string, message []byte, startTime time.Time) error {
+// The message is generated internally based on the topic's schema format
+func (p *Producer) produceSaramaMessage(topic string, startTime time.Time) error {
 	// Generate key
 	key := p.generateMessageKey()
 
-	// If schemas are enabled and this is an Avro message, wrap it in Confluent Wire Format
+	// If schemas are enabled, wrap in Confluent Wire Format based on topic's schema format
 	var messageValue []byte
-	if p.config.Schemas.Enabled && p.config.Producers.ValueType == "avro" {
-		if schemaID, exists := p.schemaIDs[topic]; exists {
-			messageValue = p.createConfluentWireFormat(schemaID, message)
-		} else {
+	if p.config.Schemas.Enabled {
+		schemaID, exists := p.schemaIDs[topic]
+		if !exists {
 			return fmt.Errorf("schema ID not found for topic %s", topic)
 		}
+
+		// Get the schema format for this topic
+		schemaFormat := p.schemaFormats[topic]
+
+		// CRITICAL FIX: Encode based on schema format, NOT config value_type
+		// The encoding MUST match what the schema registry and gateway expect
+		var encodedMessage []byte
+		var err error
+		switch schemaFormat {
+		case "AVRO":
+			// For Avro schema, encode as Avro binary
+			encodedMessage, err = p.generateAvroMessage()
+			if err != nil {
+				return fmt.Errorf("failed to encode as Avro for topic %s: %w", topic, err)
+			}
+		case "JSON":
+			// For JSON schema, encode as JSON
+			encodedMessage, err = p.generateJSONMessage()
+			if err != nil {
+				return fmt.Errorf("failed to encode as JSON for topic %s: %w", topic, err)
+			}
+		case "PROTOBUF":
+			// For PROTOBUF schema, fallback to JSON for now (Protobuf binary encoding not implemented)
+			// TODO: Implement proper Protobuf binary encoding
+			encodedMessage, err = p.generateJSONMessage()
+			if err != nil {
+				return fmt.Errorf("failed to encode as JSON (Protobuf fallback) for topic %s: %w", topic, err)
+			}
+			log.Printf("WARNING: Using JSON encoding for PROTOBUF schema on topic %s (proper Protobuf encoding not yet implemented)", topic)
+		default:
+			// Unknown format - fallback to JSON
+			encodedMessage, err = p.generateJSONMessage()
+			if err != nil {
+				return fmt.Errorf("failed to encode as JSON (unknown format fallback) for topic %s: %w", topic, err)
+			}
+		}
+
+		// Wrap in Confluent wire format (magic byte + schema ID + payload)
+		messageValue = p.createConfluentWireFormat(schemaID, encodedMessage)
+		log.Printf("WIRE FORMAT: topic=%s format=%s schemaID=%d payloadLen=%d",
+			topic, schemaFormat, schemaID, len(encodedMessage))
 	} else {
-		log.Printf("NO WIRE FORMAT: SchemasEnabled=%v, ValueType=%s, using raw message len=%d",
-			p.config.Schemas.Enabled, p.config.Producers.ValueType, len(message))
-		messageValue = message
+		// No schemas - generate message based on config value_type
+		var err error
+		messageValue, err = p.generateMessage()
+		if err != nil {
+			return fmt.Errorf("failed to generate message: %w", err)
+		}
+		log.Printf("NO WIRE FORMAT: SchemasEnabled=%v, using raw message len=%d",
+			p.config.Schemas.Enabled, len(messageValue))
 	}
 
 	msg := &sarama.ProducerMessage{
@@ -358,7 +386,7 @@ func (p *Producer) produceSaramaMessage(topic string, message []byte, startTime 
 
 	// Record metrics
 	latency := time.Since(startTime)
-	p.metricsCollector.RecordProducedMessage(len(message), latency)
+	p.metricsCollector.RecordProducedMessage(len(messageValue), latency)
 
 	// Log produced message with key for tracking
 	log.Printf("📤 PRODUCED: Producer %d topic=%s[%d] offset=%d key=%s valueLen=%d",
@@ -656,13 +684,14 @@ func (p *Producer) registerTopicSchema(subject string) error {
 
 	switch strings.ToUpper(schemaFormat) {
 	case "AVRO":
-		schemaStr = p.getAvroSchema()
+		schemaStr = schema.GetAvroSchema()
 		schemaType = "AVRO"
 	case "JSON", "JSON_SCHEMA":
-		schemaStr = p.getJSONSchema()
+		schemaStr = schema.GetJSONSchema()
 		schemaType = "JSON"
 	case "PROTOBUF":
-		return fmt.Errorf("protobuf schema registration not yet implemented")
+		schemaStr = schema.GetProtobufSchema()
+		schemaType = "PROTOBUF"
 	default:
 		return fmt.Errorf("unsupported schema format: %s", schemaFormat)
 	}
@@ -699,46 +728,6 @@ func (p *Producer) registerTopicSchema(subject string) error {
 
 	log.Printf("Schema registered with ID: %d (format: %s)", registerResp.ID, schemaType)
 	return nil
-}
-
-// getAvroSchema returns the Avro schema for load test messages
-func (p *Producer) getAvroSchema() string {
-	return `{
-		"type": "record",
-		"name": "LoadTestMessage",
-		"namespace": "com.seaweedfs.loadtest",
-		"fields": [
-			{"name": "id", "type": "string"},
-			{"name": "timestamp", "type": "long"},
-			{"name": "producer_id", "type": "int"},
-			{"name": "counter", "type": "long"},
-			{"name": "user_id", "type": "string"},
-			{"name": "event_type", "type": "string"},
-			{"name": "properties", "type": {"type": "map", "values": "string"}}
-		]
-	}`
-}
-
-// getJSONSchema returns the JSON Schema for load test messages
-func (p *Producer) getJSONSchema() string {
-	return `{
-		"$schema": "http://json-schema.org/draft-07/schema#",
-		"title": "LoadTestMessage",
-		"type": "object",
-		"properties": {
-			"id": {"type": "string"},
-			"timestamp": {"type": "integer"},
-			"producer_id": {"type": "integer"},
-			"counter": {"type": "integer"},
-			"user_id": {"type": "string"},
-			"event_type": {"type": "string"},
-			"properties": {
-				"type": "object",
-				"additionalProperties": {"type": "string"}
-			}
-		},
-		"required": ["id", "timestamp", "producer_id", "counter", "user_id", "event_type"]
-	}`
 }
 
 // createConfluentWireFormat creates a message in Confluent Wire Format

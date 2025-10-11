@@ -1,6 +1,7 @@
 package schema
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -41,9 +42,12 @@ func NewJSONSchemaDecoder(schemaJSON string) (*JSONSchemaDecoder, error) {
 
 // Decode decodes and validates JSON data against the schema, returning a Go map
 func (jsd *JSONSchemaDecoder) Decode(data []byte) (map[string]interface{}, error) {
-	// Parse JSON data
+	// Parse JSON data with Number support to preserve large integers
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	
 	var jsonData interface{}
-	if err := json.Unmarshal(data, &jsonData); err != nil {
+	if err := decoder.Decode(&jsonData); err != nil {
 		return nil, fmt.Errorf("failed to parse JSON data: %w", err)
 	}
 
@@ -83,7 +87,92 @@ func (jsd *JSONSchemaDecoder) DecodeToRecordValue(data []byte) (*schema_pb.Recor
 		return nil, err
 	}
 
-	return MapToRecordValue(jsonMap), nil
+	// Convert with schema-aware type conversion
+	return jsd.mapToRecordValueWithSchema(jsonMap), nil
+}
+
+// mapToRecordValueWithSchema converts a map to RecordValue using schema type information
+func (jsd *JSONSchemaDecoder) mapToRecordValueWithSchema(m map[string]interface{}) *schema_pb.RecordValue {
+	fields := make(map[string]*schema_pb.Value)
+	properties, _ := jsd.schemaDoc["properties"].(map[string]interface{})
+
+	for key, value := range m {
+		// Check if we have schema information for this field
+		if fieldSchema, exists := properties[key]; exists {
+			if fieldSchemaMap, ok := fieldSchema.(map[string]interface{}); ok {
+				fields[key] = jsd.goValueToSchemaValueWithType(value, fieldSchemaMap)
+				continue
+			}
+		}
+		// Fallback to default conversion
+		fields[key] = goValueToSchemaValue(value)
+	}
+
+	return &schema_pb.RecordValue{
+		Fields: fields,
+	}
+}
+
+// goValueToSchemaValueWithType converts a Go value to SchemaValue using schema type hints
+func (jsd *JSONSchemaDecoder) goValueToSchemaValueWithType(value interface{}, schemaDoc map[string]interface{}) *schema_pb.Value {
+	if value == nil {
+		return &schema_pb.Value{
+			Kind: &schema_pb.Value_StringValue{StringValue: ""},
+		}
+	}
+
+	schemaType, _ := schemaDoc["type"].(string)
+
+	// Handle numbers from JSON that should be integers
+	if schemaType == "integer" {
+		switch v := value.(type) {
+		case json.Number:
+			// Preserve precision by parsing as int64
+			if intVal, err := v.Int64(); err == nil {
+				return &schema_pb.Value{
+					Kind: &schema_pb.Value_Int64Value{Int64Value: intVal},
+				}
+			}
+			// Fallback to float conversion if int64 parsing fails
+			if floatVal, err := v.Float64(); err == nil {
+				return &schema_pb.Value{
+					Kind: &schema_pb.Value_Int64Value{Int64Value: int64(floatVal)},
+				}
+			}
+		case float64:
+			// JSON unmarshals all numbers as float64, convert to int64 for integer types
+			return &schema_pb.Value{
+				Kind: &schema_pb.Value_Int64Value{Int64Value: int64(v)},
+			}
+		case int64:
+			return &schema_pb.Value{
+				Kind: &schema_pb.Value_Int64Value{Int64Value: v},
+			}
+		case int:
+			return &schema_pb.Value{
+				Kind: &schema_pb.Value_Int64Value{Int64Value: int64(v)},
+			}
+		}
+	}
+
+	// Handle json.Number for other numeric types
+	if numVal, ok := value.(json.Number); ok {
+		// Try int64 first
+		if intVal, err := numVal.Int64(); err == nil {
+			return &schema_pb.Value{
+				Kind: &schema_pb.Value_Int64Value{Int64Value: intVal},
+			}
+		}
+		// Fallback to float64
+		if floatVal, err := numVal.Float64(); err == nil {
+			return &schema_pb.Value{
+				Kind: &schema_pb.Value_DoubleValue{DoubleValue: floatVal},
+			}
+		}
+	}
+
+	// For other types, use default conversion
+	return goValueToSchemaValue(value)
 }
 
 // InferRecordType infers a SeaweedMQ RecordType from the JSON Schema

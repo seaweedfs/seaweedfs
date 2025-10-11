@@ -176,10 +176,10 @@ verify_schema_with_retry() {
 
 # Register load test schemas (optimized for batch registration)
 register_loadtest_schemas() {
-    log_info "Registering load test schemas..."
+    log_info "Registering load test schemas with multiple formats..."
     
     # Define the Avro schema for load test messages
-    local loadtest_value_schema='{
+    local avro_value_schema='{
         "type": "record",
         "name": "LoadTestMessage",
         "namespace": "com.seaweedfs.loadtest",
@@ -194,23 +194,81 @@ register_loadtest_schemas() {
         ]
     }'
     
-    # Define the key schema (simple string)
-    local loadtest_key_schema='{
-        "type": "string"
+    # Define the JSON schema for load test messages
+    local json_value_schema='{
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "title": "LoadTestMessage",
+        "type": "object",
+        "properties": {
+            "id": {"type": "string"},
+            "timestamp": {"type": "integer"},
+            "producer_id": {"type": "integer"},
+            "counter": {"type": "integer"},
+            "user_id": {"type": "string"},
+            "event_type": {"type": "string"},
+            "properties": {
+                "type": "object",
+                "additionalProperties": {"type": "string"}
+            }
+        },
+        "required": ["id", "timestamp", "producer_id", "counter", "user_id", "event_type"]
     }'
     
-    # Register schemas for all load test topics
+    # Define the Protobuf schema for load test messages
+    local protobuf_value_schema='syntax = "proto3";
+
+package com.seaweedfs.loadtest;
+
+message LoadTestMessage {
+  string id = 1;
+  int64 timestamp = 2;
+  int32 producer_id = 3;
+  int64 counter = 4;
+  string user_id = 5;
+  string event_type = 6;
+  map<string, string> properties = 7;
+}'
+    
+    # Define the key schema (simple string)
+    local avro_key_schema='{"type": "string"}'
+    local json_key_schema='{"type": "string"}'
+    local protobuf_key_schema='syntax = "proto3"; message Key { string key = 1; }'
+    
+    # Register schemas for all load test topics with different formats
     local topics=("loadtest-topic-0" "loadtest-topic-1" "loadtest-topic-2" "loadtest-topic-3" "loadtest-topic-4")
     local success_count=0
     local total_schemas=0
-    local pids=()
     
-    # Register schemas sequentially to avoid overwhelming Schema Registry
-    # This is more reliable than parallel registration for small numbers of schemas
-    # Add small delay between registrations to allow Schema Registry consumer to catch up
+    # Distribute formats: topic-0=AVRO, topic-1=JSON, topic-2=PROTOBUF, topic-3=AVRO, topic-4=JSON
+    local idx=0
     for topic in "${topics[@]}"; do
+        local format
+        local value_schema
+        local key_schema
+        
+        # Determine format based on topic index (same as producer logic)
+        case $((idx % 3)) in
+            0)
+                format="AVRO"
+                value_schema="$avro_value_schema"
+                key_schema="$avro_key_schema"
+                ;;
+            1)
+                format="JSON"
+                value_schema="$json_value_schema"
+                key_schema="$json_key_schema"
+                ;;
+            2)
+                format="PROTOBUF"
+                value_schema="$protobuf_value_schema"
+                key_schema="$protobuf_key_schema"
+                ;;
+        esac
+        
+        log_info "Registering $topic with $format schema..."
+        
         # Register value schema
-        if register_schema "${topic}-value" "$loadtest_value_schema" "AVRO"; then
+        if register_schema "${topic}-value" "$value_schema" "$format"; then
             success_count=$((success_count + 1))
         fi
         total_schemas=$((total_schemas + 1))
@@ -219,19 +277,22 @@ register_loadtest_schemas() {
         sleep 0.2
         
         # Register key schema
-        if register_schema "${topic}-key" "$loadtest_key_schema" "AVRO"; then
+        if register_schema "${topic}-key" "$key_schema" "$format"; then
             success_count=$((success_count + 1))
         fi
         total_schemas=$((total_schemas + 1))
         
         # Small delay to let Schema Registry consumer process (prevents consumer lag)
         sleep 0.2
+        
+        idx=$((idx + 1))
     done
     
     log_info "Schema registration summary: $success_count/$total_schemas schemas registered successfully"
+    log_info "Format distribution: topic-0=AVRO, topic-1=JSON, topic-2=PROTOBUF, topic-3=AVRO, topic-4=JSON"
     
     if [[ $success_count -eq $total_schemas ]]; then
-        log_success "All load test schemas registered successfully!"
+        log_success "All load test schemas registered successfully with multiple formats!"
         return 0
     else
         log_error "Some schemas failed to register"

@@ -21,6 +21,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/test/kafka/kafka-client-loadtest/internal/consumer"
 	"github.com/seaweedfs/seaweedfs/test/kafka/kafka-client-loadtest/internal/metrics"
 	"github.com/seaweedfs/seaweedfs/test/kafka/kafka-client-loadtest/internal/producer"
+	"github.com/seaweedfs/seaweedfs/test/kafka/kafka-client-loadtest/internal/schema"
 )
 
 var (
@@ -351,15 +352,17 @@ func registerSchemas(cfg *config.Config) error {
 	for i, topic := range topics {
 		var schemaFormat string
 
-		// Distribute topics across different schema formats
+		// Distribute topics across three schema formats for comprehensive testing
 		// Format 0: AVRO (default, most common)
 		// Format 1: JSON (modern, human-readable)
-		// Format 2+: Cycle back to AVRO and JSON (skip PROTOBUF for now as it's not fully implemented)
-		switch i % 2 {
+		// Format 2: PROTOBUF (efficient binary format)
+		switch i % 3 {
 		case 0:
 			schemaFormat = "AVRO"
 		case 1:
 			schemaFormat = "JSON"
+		case 2:
+			schemaFormat = "PROTOBUF"
 		}
 
 		// Allow override from config if specified
@@ -405,13 +408,14 @@ func registerTopicSchema(registryURL, topicName, schemaFormat string) error {
 
 	switch strings.ToUpper(schemaFormat) {
 	case "AVRO":
-		schemaStr = getAvroSchemaForTopic()
+		schemaStr = schema.GetAvroSchema()
 		schemaType = "AVRO"
 	case "JSON", "JSON_SCHEMA":
-		schemaStr = getJSONSchemaForTopic()
+		schemaStr = schema.GetJSONSchema()
 		schemaType = "JSON"
 	case "PROTOBUF":
-		return fmt.Errorf("protobuf schema registration not yet implemented")
+		schemaStr = schema.GetProtobufSchema()
+		schemaType = "PROTOBUF"
 	default:
 		return fmt.Errorf("unsupported schema format: %s", schemaFormat)
 	}
@@ -443,44 +447,4 @@ func registerTopicSchema(registryURL, topicName, schemaFormat string) error {
 
 	log.Printf("Schema registered for topic %s (format: %s)", topicName, schemaType)
 	return nil
-}
-
-// getAvroSchemaForTopic returns the Avro schema for load test messages
-func getAvroSchemaForTopic() string {
-	return `{
-		"type": "record",
-		"name": "LoadTestMessage",
-		"namespace": "com.seaweedfs.loadtest",
-		"fields": [
-			{"name": "id", "type": "string"},
-			{"name": "timestamp", "type": "long"},
-			{"name": "producer_id", "type": "int"},
-			{"name": "counter", "type": "long"},
-			{"name": "user_id", "type": "string"},
-			{"name": "event_type", "type": "string"},
-			{"name": "properties", "type": {"type": "map", "values": "string"}}
-		]
-	}`
-}
-
-// getJSONSchemaForTopic returns the JSON Schema for load test messages
-func getJSONSchemaForTopic() string {
-	return `{
-		"$schema": "http://json-schema.org/draft-07/schema#",
-		"title": "LoadTestMessage",
-		"type": "object",
-		"properties": {
-			"id": {"type": "string"},
-			"timestamp": {"type": "integer"},
-			"producer_id": {"type": "integer"},
-			"counter": {"type": "integer"},
-			"user_id": {"type": "string"},
-			"event_type": {"type": "string"},
-			"properties": {
-				"type": "object",
-				"additionalProperties": {"type": "string"}
-			}
-		},
-		"required": ["id", "timestamp", "producer_id", "counter", "user_id", "event_type"]
-	}`
 }
