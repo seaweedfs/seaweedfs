@@ -90,17 +90,22 @@ func (pr *partitionReader) preFetchLoop(ctx context.Context) {
 			// Try to fetch next batch if buffer has space
 			pr.bufferMu.Lock()
 
-			// Ensure we have a subscriber
-			if pr.subscriber == nil {
-				var err error
-				pr.subscriber, err = pr.createSubscriber(ctx, pr.currentOffset)
-				if err != nil {
-					pr.bufferMu.Unlock()
-					glog.Errorf("[%s] Failed to create subscriber for %s[%d]: %v",
-						pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, err)
-					time.Sleep(100 * time.Millisecond) // Backoff on error
-					continue
+			// Only try to create subscriber if broker client is available (not in mock mode)
+			// Check both that BrokerClient exists and is the correct type AND not nil
+			if pr.subscriber == nil && pr.connCtx.BrokerClient != nil {
+				// Verify it's actually a BrokerClient and not nil before attempting to use it
+				if bc, ok := pr.connCtx.BrokerClient.(*integration.BrokerClient); ok && bc != nil {
+					var err error
+					pr.subscriber, err = pr.createSubscriber(ctx, pr.currentOffset)
+					if err != nil {
+						pr.bufferMu.Unlock()
+						glog.Errorf("[%s] Failed to create subscriber for %s[%d]: %v",
+							pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, err)
+						time.Sleep(100 * time.Millisecond) // Backoff on error
+						continue
+					}
 				}
+				// If not a BrokerClient or nil, skip subscriber creation (mock mode)
 			}
 
 			// Check if topic exists
