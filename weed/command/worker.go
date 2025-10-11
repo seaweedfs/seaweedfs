@@ -16,9 +16,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 
 	// Import task packages to trigger their auto-registration
-	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
 	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
-	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 )
 
 var cmdWorker = &Command{
@@ -41,7 +39,7 @@ Examples:
 
 var (
 	workerAdminServer         = cmdWorker.Flag.String("admin", "localhost:23646", "admin server address")
-	workerCapabilities        = cmdWorker.Flag.String("capabilities", "vacuum,ec,remote,replication,balance", "comma-separated list of task types this worker can handle")
+	workerCapabilities        = cmdWorker.Flag.String("capabilities", "ec_vacuum,erasure_coding", "comma-separated list of task types this worker can handle")
 	workerMaxConcurrent       = cmdWorker.Flag.Int("maxConcurrent", 2, "maximum number of concurrent tasks")
 	workerHeartbeatInterval   = cmdWorker.Flag.Duration("heartbeat", 30*time.Second, "heartbeat interval")
 	workerTaskRequestInterval = cmdWorker.Flag.Duration("taskInterval", 5*time.Second, "task request interval")
@@ -108,6 +106,9 @@ func runWorker(cmd *Command, args []string) bool {
 
 	// Create gRPC dial option using TLS configuration
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.worker")
+
+	// Initialize dynamic task type functions now that all tasks are registered
+	tasks.InitializeDynamicTaskTypes()
 
 	// Create worker configuration
 	config := &types.WorkerConfig{
@@ -191,17 +192,6 @@ func parseCapabilities(capabilityStr string) []types.TaskType {
 	for taskType := range typesRegistry.GetAllDetectors() {
 		// Use the task type string directly as the key
 		capabilityMap[strings.ToLower(string(taskType))] = taskType
-	}
-
-	// Add common aliases for convenience
-	if taskType, exists := capabilityMap["erasure_coding"]; exists {
-		capabilityMap["ec"] = taskType
-	}
-	if taskType, exists := capabilityMap["remote_upload"]; exists {
-		capabilityMap["remote"] = taskType
-	}
-	if taskType, exists := capabilityMap["fix_replication"]; exists {
-		capabilityMap["replication"] = taskType
 	}
 
 	var capabilities []types.TaskType

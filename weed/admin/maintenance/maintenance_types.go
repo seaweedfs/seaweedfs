@@ -232,86 +232,8 @@ func GetRepeatInterval(mp *MaintenancePolicy, taskType MaintenanceTaskType) int 
 	return int(policy.RepeatIntervalSeconds)
 }
 
-// GetVacuumTaskConfig returns the vacuum task configuration
-func GetVacuumTaskConfig(mp *MaintenancePolicy, taskType MaintenanceTaskType) *worker_pb.VacuumTaskConfig {
-	policy := GetTaskPolicy(mp, taskType)
-	if policy == nil {
-		return nil
-	}
-	return policy.GetVacuumConfig()
-}
-
-// GetErasureCodingTaskConfig returns the erasure coding task configuration
-func GetErasureCodingTaskConfig(mp *MaintenancePolicy, taskType MaintenanceTaskType) *worker_pb.ErasureCodingTaskConfig {
-	policy := GetTaskPolicy(mp, taskType)
-	if policy == nil {
-		return nil
-	}
-	return policy.GetErasureCodingConfig()
-}
-
-// GetBalanceTaskConfig returns the balance task configuration
-func GetBalanceTaskConfig(mp *MaintenancePolicy, taskType MaintenanceTaskType) *worker_pb.BalanceTaskConfig {
-	policy := GetTaskPolicy(mp, taskType)
-	if policy == nil {
-		return nil
-	}
-	return policy.GetBalanceConfig()
-}
-
-// GetReplicationTaskConfig returns the replication task configuration
-func GetReplicationTaskConfig(mp *MaintenancePolicy, taskType MaintenanceTaskType) *worker_pb.ReplicationTaskConfig {
-	policy := GetTaskPolicy(mp, taskType)
-	if policy == nil {
-		return nil
-	}
-	return policy.GetReplicationConfig()
-}
-
-// Note: GetTaskConfig was removed - use typed getters: GetVacuumTaskConfig, GetErasureCodingTaskConfig, GetBalanceTaskConfig, or GetReplicationTaskConfig
-
-// SetVacuumTaskConfig sets the vacuum task configuration
-func SetVacuumTaskConfig(mp *MaintenancePolicy, taskType MaintenanceTaskType, config *worker_pb.VacuumTaskConfig) {
-	policy := GetTaskPolicy(mp, taskType)
-	if policy != nil {
-		policy.TaskConfig = &worker_pb.TaskPolicy_VacuumConfig{
-			VacuumConfig: config,
-		}
-	}
-}
-
-// SetErasureCodingTaskConfig sets the erasure coding task configuration
-func SetErasureCodingTaskConfig(mp *MaintenancePolicy, taskType MaintenanceTaskType, config *worker_pb.ErasureCodingTaskConfig) {
-	policy := GetTaskPolicy(mp, taskType)
-	if policy != nil {
-		policy.TaskConfig = &worker_pb.TaskPolicy_ErasureCodingConfig{
-			ErasureCodingConfig: config,
-		}
-	}
-}
-
-// SetBalanceTaskConfig sets the balance task configuration
-func SetBalanceTaskConfig(mp *MaintenancePolicy, taskType MaintenanceTaskType, config *worker_pb.BalanceTaskConfig) {
-	policy := GetTaskPolicy(mp, taskType)
-	if policy != nil {
-		policy.TaskConfig = &worker_pb.TaskPolicy_BalanceConfig{
-			BalanceConfig: config,
-		}
-	}
-}
-
-// SetReplicationTaskConfig sets the replication task configuration
-func SetReplicationTaskConfig(mp *MaintenancePolicy, taskType MaintenanceTaskType, config *worker_pb.ReplicationTaskConfig) {
-	policy := GetTaskPolicy(mp, taskType)
-	if policy != nil {
-		policy.TaskConfig = &worker_pb.TaskPolicy_ReplicationConfig{
-			ReplicationConfig: config,
-		}
-	}
-}
-
-// SetTaskConfig sets a configuration value for a task type (legacy method - use typed setters above)
-// Note: SetTaskConfig was removed - use typed setters: SetVacuumTaskConfig, SetErasureCodingTaskConfig, SetBalanceTaskConfig, or SetReplicationTaskConfig
+// Note: Task-specific configuration getters/setters removed.
+// Each task type should manage its own configuration through the generic TaskPolicy interface.
 
 // MaintenanceWorker represents a worker instance
 type MaintenanceWorker struct {
@@ -327,13 +249,14 @@ type MaintenanceWorker struct {
 
 // MaintenanceQueue manages the task queue and worker coordination
 type MaintenanceQueue struct {
-	tasks        map[string]*MaintenanceTask
-	workers      map[string]*MaintenanceWorker
-	pendingTasks []*MaintenanceTask
-	mutex        sync.RWMutex
-	policy       *MaintenancePolicy
-	integration  *MaintenanceIntegration
-	persistence  TaskPersistence // Interface for task persistence
+	tasks           map[string]*MaintenanceTask
+	workers         map[string]*MaintenanceWorker
+	pendingTasks    []*MaintenanceTask
+	mutex           sync.RWMutex
+	policy          *MaintenancePolicy
+	integration     *MaintenanceIntegration
+	persistence     TaskPersistence       // Interface for task persistence
+	persistenceChan chan *MaintenanceTask // Channel for async persistence
 }
 
 // MaintenanceScanner analyzes the cluster and generates maintenance tasks

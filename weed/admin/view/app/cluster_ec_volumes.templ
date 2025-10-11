@@ -191,6 +191,7 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
                             </a>
                         </th>
                         <th class="text-dark">Shard Size</th>
+                        <th class="text-dark">Generation</th>
                         <th class="text-dark">Shard Locations</th>
                         <th>
                             <a href="#" onclick="sortBy('completeness')" class="text-dark text-decoration-none">
@@ -236,6 +237,9 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
                             </td>
                             <td>
                                 @displayShardSizes(volume.ShardSizes)
+                            </td>
+                            <td>
+                                @displayGenerationInfo(volume)
                             </td>
                             <td>
                                 @displayVolumeDistribution(volume)
@@ -729,6 +733,29 @@ templ displayEcVolumeStatus(volume dash.EcVolumeWithShards) {
         } else {
             <span class="badge bg-info"><i class="fas fa-info-circle me-1"></i>Minor Issues ({fmt.Sprintf("%d", len(volume.MissingShards))} missing)</span>
         }
+    }
+}
+
+// displayGenerationInfo shows generation information for a volume
+templ displayGenerationInfo(volume dash.EcVolumeWithShards) {
+    if volume.HasMultipleGenerations {
+        <div class="small">
+            <span class="badge bg-warning">
+                <i class="fas fa-layer-group me-1"></i>Multi-Gen
+            </span>
+            <br/>
+            <small class="text-muted">
+                Active: G{fmt.Sprintf("%d", volume.ActiveGeneration)}
+            </small>
+        </div>
+    } else if len(volume.Generations) > 0 {
+        if volume.ActiveGeneration > 0 {
+            <span class="badge bg-success">G{fmt.Sprintf("%d", volume.ActiveGeneration)}</span>
+        } else {
+            <span class="badge bg-primary">G{fmt.Sprintf("%d", volume.Generations[0])}</span>
+        }
+    } else {
+        <span class="badge bg-primary">G0</span>
     }
 }
 

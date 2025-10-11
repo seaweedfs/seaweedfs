@@ -5,9 +5,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
 func (vs *VolumeServer) BatchDelete(ctx context.Context, req *volume_server_pb.BatchDeleteRequest) (*volume_server_pb.BatchDeleteResponse, error) {
@@ -29,6 +31,8 @@ func (vs *VolumeServer) BatchDelete(ctx context.Context, req *volume_server_pb.B
 		n := new(needle.Needle)
 		volumeId, _ := needle.NewVolumeId(vid)
 		ecVolume, isEcVolume := vs.store.FindEcVolume(volumeId)
+		var cookie types.Cookie
+		glog.Errorf("🔥 BATCH DELETE: fid=%s, volumeId=%d, isEcVolume=%t, SkipCookieCheck=%t", fid, volumeId, isEcVolume, req.SkipCookieCheck)
 		if req.SkipCookieCheck {
 			n.Id, _, err = needle.ParseNeedleIdCookie(id_cookie)
 			if err != nil {
@@ -40,7 +44,7 @@ func (vs *VolumeServer) BatchDelete(ctx context.Context, req *volume_server_pb.B
 			}
 		} else {
 			n.ParsePath(id_cookie)
-			cookie := n.Cookie
+			cookie = n.Cookie
 			if !isEcVolume {
 				if _, err := vs.store.ReadVolumeNeedle(volumeId, n, nil, nil); err != nil {
 					resp.Results = append(resp.Results, &volume_server_pb.DeleteResult{
@@ -100,18 +104,43 @@ func (vs *VolumeServer) BatchDelete(ctx context.Context, req *volume_server_pb.B
 				)
 			}
 		} else {
-			if size, err := vs.store.DeleteEcShardNeedle(ecVolume, n, n.Cookie); err != nil {
-				resp.Results = append(resp.Results, &volume_server_pb.DeleteResult{
-					FileId: fid,
-					Status: http.StatusInternalServerError,
-					Error:  err.Error()},
-				)
+			if req.SkipCookieCheck {
+				// When skipping cookie check, use the direct gRPC deletion path that bypasses cookie validation
+				glog.Errorf("🎯 SKIP COOKIE DELETE: volume %d, needle %d, using direct DeleteNeedleFromEcx", ecVolume.VolumeId, n.Id)
+				err = ecVolume.DeleteNeedleFromEcx(n.Id)
+				var size int64 = 0
+				if err == nil {
+					// Return a reasonable size for success status
+					size = int64(n.Size)
+				}
+				if err != nil {
+					resp.Results = append(resp.Results, &volume_server_pb.DeleteResult{
+						FileId: fid,
+						Status: http.StatusInternalServerError,
+						Error:  err.Error()},
+					)
+				} else {
+					resp.Results = append(resp.Results, &volume_server_pb.DeleteResult{
+						FileId: fid,
+						Status: http.StatusAccepted,
+						Size:   uint32(size)},
+					)
+				}
 			} else {
-				resp.Results = append(resp.Results, &volume_server_pb.DeleteResult{
-					FileId: fid,
-					Status: http.StatusAccepted,
-					Size:   uint32(size)},
-				)
+				// Cookie check enabled, use the cookie validation path
+				if size, err := vs.store.DeleteEcShardNeedle(ecVolume, n, cookie); err != nil {
+					resp.Results = append(resp.Results, &volume_server_pb.DeleteResult{
+						FileId: fid,
+						Status: http.StatusInternalServerError,
+						Error:  err.Error()},
+					)
+				} else {
+					resp.Results = append(resp.Results, &volume_server_pb.DeleteResult{
+						FileId: fid,
+						Status: http.StatusAccepted,
+						Size:   uint32(size)},
+					)
+				}
 			}
 		}
 	}

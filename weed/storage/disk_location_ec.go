@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path"
 	"regexp"
@@ -18,13 +19,25 @@ var (
 	re = regexp.MustCompile(`\.ec[0-9][0-9]`)
 )
 
+// EcVolumeGenerationKey represents a unique key for EC volume with generation
+type EcVolumeGenerationKey struct {
+	VolumeId   needle.VolumeId
+	Generation uint32
+}
+
+func (k EcVolumeGenerationKey) String() string {
+	return fmt.Sprintf("v%d-g%d", k.VolumeId, k.Generation)
+}
+
 func (l *DiskLocation) FindEcVolume(vid needle.VolumeId) (*erasure_coding.EcVolume, bool) {
 	l.ecVolumesLock.RLock()
 	defer l.ecVolumesLock.RUnlock()
 
-	ecVolume, ok := l.ecVolumes[vid]
-	if ok {
-		return ecVolume, true
+	// Search for any generation of this volume ID
+	for key, ecVolume := range l.ecVolumes {
+		if key.VolumeId == vid {
+			return ecVolume, true
+		}
 	}
 	return nil, false
 }
@@ -33,10 +46,16 @@ func (l *DiskLocation) DestroyEcVolume(vid needle.VolumeId) {
 	l.ecVolumesLock.Lock()
 	defer l.ecVolumesLock.Unlock()
 
-	ecVolume, found := l.ecVolumes[vid]
-	if found {
-		ecVolume.Destroy()
-		delete(l.ecVolumes, vid)
+	// Find and destroy all generations of this volume
+	keysToDelete := make([]EcVolumeGenerationKey, 0)
+	for key, ecVolume := range l.ecVolumes {
+		if key.VolumeId == vid {
+			ecVolume.Destroy()
+			keysToDelete = append(keysToDelete, key)
+		}
+	}
+	for _, key := range keysToDelete {
+		delete(l.ecVolumes, key)
 	}
 }
 
@@ -44,7 +63,14 @@ func (l *DiskLocation) CollectEcShards(vid needle.VolumeId, shardFileNames []str
 	l.ecVolumesLock.RLock()
 	defer l.ecVolumesLock.RUnlock()
 
-	ecVolume, found = l.ecVolumes[vid]
+	// Search for any generation of this volume ID
+	for key, vol := range l.ecVolumes {
+		if key.VolumeId == vid {
+			ecVolume = vol
+			found = true
+			break
+		}
+	}
 	if !found {
 		return
 	}
@@ -60,7 +86,26 @@ func (l *DiskLocation) FindEcShard(vid needle.VolumeId, shardId erasure_coding.S
 	l.ecVolumesLock.RLock()
 	defer l.ecVolumesLock.RUnlock()
 
-	ecVolume, ok := l.ecVolumes[vid]
+	// Search for any generation of this volume ID
+	for key, ecVolume := range l.ecVolumes {
+		if key.VolumeId == vid {
+			for _, ecShard := range ecVolume.Shards {
+				if ecShard.ShardId == shardId {
+					return ecShard, true
+				}
+			}
+		}
+	}
+	return nil, false
+}
+
+func (l *DiskLocation) FindEcShardWithGeneration(vid needle.VolumeId, shardId erasure_coding.ShardId, generation uint32) (*erasure_coding.EcVolumeShard, bool) {
+	l.ecVolumesLock.RLock()
+	defer l.ecVolumesLock.RUnlock()
+
+	// Search for specific generation of this volume ID
+	key := EcVolumeGenerationKey{VolumeId: vid, Generation: generation}
+	ecVolume, ok := l.ecVolumes[key]
 	if !ok {
 		return nil, false
 	}
@@ -72,9 +117,9 @@ func (l *DiskLocation) FindEcShard(vid needle.VolumeId, shardId erasure_coding.S
 	return nil, false
 }
 
-func (l *DiskLocation) LoadEcShard(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId) (*erasure_coding.EcVolume, error) {
+func (l *DiskLocation) LoadEcShard(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, generation uint32) (*erasure_coding.EcVolume, error) {
 
-	ecVolumeShard, err := erasure_coding.NewEcVolumeShard(l.DiskType, l.Directory, collection, vid, shardId)
+	ecVolumeShard, err := erasure_coding.NewEcVolumeShard(l.DiskType, l.Directory, collection, vid, shardId, generation)
 	if err != nil {
 		if err == os.ErrNotExist {
 			return nil, os.ErrNotExist
@@ -83,13 +128,14 @@ func (l *DiskLocation) LoadEcShard(collection string, vid needle.VolumeId, shard
 	}
 	l.ecVolumesLock.Lock()
 	defer l.ecVolumesLock.Unlock()
-	ecVolume, found := l.ecVolumes[vid]
+	key := EcVolumeGenerationKey{VolumeId: vid, Generation: generation}
+	ecVolume, found := l.ecVolumes[key]
 	if !found {
-		ecVolume, err = erasure_coding.NewEcVolume(l.DiskType, l.Directory, l.IdxDirectory, collection, vid)
+		ecVolume, err = erasure_coding.NewEcVolume(l.DiskType, l.Directory, l.IdxDirectory, collection, vid, generation)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create ec volume %d: %v", vid, err)
 		}
-		l.ecVolumes[vid] = ecVolume
+		l.ecVolumes[key] = ecVolume
 	}
 	ecVolume.AddEcVolumeShard(ecVolumeShard)
 
@@ -101,22 +147,23 @@ func (l *DiskLocation) UnloadEcShard(vid needle.VolumeId, shardId erasure_coding
 	l.ecVolumesLock.Lock()
 	defer l.ecVolumesLock.Unlock()
 
-	ecVolume, found := l.ecVolumes[vid]
-	if !found {
-		return false
-	}
-	if _, deleted := ecVolume.DeleteEcVolumeShard(shardId); deleted {
-		if len(ecVolume.Shards) == 0 {
-			delete(l.ecVolumes, vid)
-			ecVolume.Close()
+	// Search for any generation of this volume ID
+	for key, ecVolume := range l.ecVolumes {
+		if key.VolumeId == vid {
+			if _, deleted := ecVolume.DeleteEcVolumeShard(shardId); deleted {
+				if len(ecVolume.Shards) == 0 {
+					delete(l.ecVolumes, key)
+					ecVolume.Close()
+				}
+				return true
+			}
 		}
-		return true
 	}
 
-	return true
+	return false
 }
 
-func (l *DiskLocation) loadEcShards(shards []string, collection string, vid needle.VolumeId) (err error) {
+func (l *DiskLocation) loadEcShards(shards []string, collection string, vid needle.VolumeId, generation uint32) (err error) {
 
 	for _, shard := range shards {
 		shardId, err := strconv.ParseInt(path.Ext(shard)[3:], 10, 64)
@@ -124,7 +171,12 @@ func (l *DiskLocation) loadEcShards(shards []string, collection string, vid need
 			return fmt.Errorf("failed to parse ec shard name %v: %w", shard, err)
 		}
 
-		_, err = l.LoadEcShard(collection, vid, erasure_coding.ShardId(shardId))
+		// Bounds check for uint8 (ShardId)
+		if shardId < 0 || shardId > int64(math.MaxUint8) {
+			return fmt.Errorf("ec shard id %v out of bounds for uint8 in shard name %v", shardId, shard)
+		}
+
+		_, err = l.LoadEcShard(collection, vid, erasure_coding.ShardId(shardId), generation)
 		if err != nil {
 			return fmt.Errorf("failed to load ec shard %v: %w", shard, err)
 		}
@@ -183,8 +235,13 @@ func (l *DiskLocation) loadAllEcShards() (err error) {
 		}
 
 		if ext == ".ecx" && volumeId == prevVolumeId {
-			if err = l.loadEcShards(sameVolumeShards, collection, volumeId); err != nil {
-				return fmt.Errorf("loadEcShards collection:%v volumeId:%d : %v", collection, volumeId, err)
+			// Parse generation from the first shard filename
+			generation := uint32(0)
+			if len(sameVolumeShards) > 0 {
+				generation = erasure_coding.ParseGenerationFromFileName(sameVolumeShards[0])
+			}
+			if err = l.loadEcShards(sameVolumeShards, collection, volumeId, generation); err != nil {
+				return fmt.Errorf("loadEcShards collection:%v volumeId:%d generation:%d : %v", collection, volumeId, generation, err)
 			}
 			prevVolumeId = volumeId
 			continue
@@ -199,25 +256,32 @@ func (l *DiskLocation) deleteEcVolumeById(vid needle.VolumeId) (e error) {
 	l.ecVolumesLock.Lock()
 	defer l.ecVolumesLock.Unlock()
 
-	ecVolume, ok := l.ecVolumes[vid]
-	if !ok {
-		return
+	// Find and delete all generations of this volume
+	keysToDelete := make([]EcVolumeGenerationKey, 0)
+	for key, ecVolume := range l.ecVolumes {
+		if key.VolumeId == vid {
+			ecVolume.Destroy()
+			keysToDelete = append(keysToDelete, key)
+		}
 	}
-	ecVolume.Destroy()
-	delete(l.ecVolumes, vid)
+	for _, key := range keysToDelete {
+		delete(l.ecVolumes, key)
+	}
 	return
 }
 
 func (l *DiskLocation) unmountEcVolumeByCollection(collectionName string) map[needle.VolumeId]*erasure_coding.EcVolume {
 	deltaVols := make(map[needle.VolumeId]*erasure_coding.EcVolume, 0)
+	keysToDelete := make([]EcVolumeGenerationKey, 0)
 	for k, v := range l.ecVolumes {
 		if v.Collection == collectionName {
-			deltaVols[k] = v
+			deltaVols[k.VolumeId] = v
+			keysToDelete = append(keysToDelete, k)
 		}
 	}
 
-	for k, _ := range deltaVols {
-		delete(l.ecVolumes, k)
+	for _, key := range keysToDelete {
+		delete(l.ecVolumes, key)
 	}
 	return deltaVols
 }

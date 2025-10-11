@@ -244,7 +244,7 @@ var (
 			Subsystem: "volumeServer",
 			Name:      "volumes",
 			Help:      "Number of volumes or shards.",
-		}, []string{"collection", "type"})
+		}, []string{"collection", "type", "generation"})
 
 	VolumeServerReadOnlyVolumeGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -268,7 +268,7 @@ var (
 			Subsystem: "volumeServer",
 			Name:      "total_disk_size",
 			Help:      "Actual disk size used by volumes.",
-		}, []string{"collection", "type"})
+		}, []string{"collection", "type", "generation"})
 
 	VolumeServerResourceGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -277,6 +277,23 @@ var (
 			Name:      "resource",
 			Help:      "Resource usage",
 		}, []string{"name", "type"})
+
+	// EC-specific generation metrics
+	MasterEcVolumeGenerationGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "master",
+			Name:      "ec_volume_generations",
+			Help:      "Number of EC volumes by generation and activity status.",
+		}, []string{"collection", "generation", "active"})
+
+	MasterEcShardGenerationGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "master",
+			Name:      "ec_shard_generations",
+			Help:      "Number of EC shards by generation and activity status.",
+		}, []string{"collection", "generation", "active"})
 
 	VolumeServerConcurrentDownloadLimit = prometheus.NewGauge(
 		prometheus.GaugeOpts{
@@ -395,6 +412,8 @@ func init() {
 	Gather.MustRegister(MasterVolumeLayoutCrowded)
 	Gather.MustRegister(MasterPickForWriteErrorCounter)
 	Gather.MustRegister(MasterBroadcastToFullErrorCounter)
+	Gather.MustRegister(MasterEcVolumeGenerationGauge)
+	Gather.MustRegister(MasterEcShardGenerationGauge)
 
 	Gather.MustRegister(FilerRequestCounter)
 	Gather.MustRegister(FilerHandlerCounter)

@@ -8,9 +8,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
-	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
-	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 )
 
 // buildPolicyFromTaskConfigs loads task configurations from separate files and builds a MaintenancePolicy
@@ -20,23 +18,6 @@ func buildPolicyFromTaskConfigs() *worker_pb.MaintenancePolicy {
 		DefaultRepeatIntervalSeconds: 6 * 3600,  // 6 hours in seconds
 		DefaultCheckIntervalSeconds:  12 * 3600, // 12 hours in seconds
 		TaskPolicies:                 make(map[string]*worker_pb.TaskPolicy),
-	}
-
-	// Load vacuum task configuration
-	if vacuumConfig := vacuum.LoadConfigFromPersistence(nil); vacuumConfig != nil {
-		policy.TaskPolicies["vacuum"] = &worker_pb.TaskPolicy{
-			Enabled:               vacuumConfig.Enabled,
-			MaxConcurrent:         int32(vacuumConfig.MaxConcurrent),
-			RepeatIntervalSeconds: int32(vacuumConfig.ScanIntervalSeconds),
-			CheckIntervalSeconds:  int32(vacuumConfig.ScanIntervalSeconds),
-			TaskConfig: &worker_pb.TaskPolicy_VacuumConfig{
-				VacuumConfig: &worker_pb.VacuumTaskConfig{
-					GarbageThreshold:   float64(vacuumConfig.GarbageThreshold),
-					MinVolumeAgeHours:  int32(vacuumConfig.MinVolumeAgeSeconds / 3600), // Convert seconds to hours
-					MinIntervalSeconds: int32(vacuumConfig.MinIntervalSeconds),
-				},
-			},
-		}
 	}
 
 	// Load erasure coding task configuration
@@ -52,22 +33,6 @@ func buildPolicyFromTaskConfigs() *worker_pb.MaintenancePolicy {
 					QuietForSeconds:  int32(ecConfig.QuietForSeconds),
 					MinVolumeSizeMb:  int32(ecConfig.MinSizeMB),
 					CollectionFilter: ecConfig.CollectionFilter,
-				},
-			},
-		}
-	}
-
-	// Load balance task configuration
-	if balanceConfig := balance.LoadConfigFromPersistence(nil); balanceConfig != nil {
-		policy.TaskPolicies["balance"] = &worker_pb.TaskPolicy{
-			Enabled:               balanceConfig.Enabled,
-			MaxConcurrent:         int32(balanceConfig.MaxConcurrent),
-			RepeatIntervalSeconds: int32(balanceConfig.ScanIntervalSeconds),
-			CheckIntervalSeconds:  int32(balanceConfig.ScanIntervalSeconds),
-			TaskConfig: &worker_pb.TaskPolicy_BalanceConfig{
-				BalanceConfig: &worker_pb.BalanceTaskConfig{
-					ImbalanceThreshold: float64(balanceConfig.ImbalanceThreshold),
-					MinServerCount:     int32(balanceConfig.MinServerCount),
 				},
 			},
 		}
@@ -416,6 +381,43 @@ func (mm *MaintenanceManager) GetConfig() *MaintenanceConfig {
 
 // GetStats returns maintenance statistics
 func (mm *MaintenanceManager) GetStats() *MaintenanceStats {
+	// Quick check if scan is in progress - return cached/fast stats to prevent hanging
+	mm.mutex.RLock()
+	scanInProgress := mm.scanInProgress
+	mm.mutex.RUnlock()
+
+	if scanInProgress {
+		glog.V(2).Infof("Scan in progress, returning fast stats to prevent hanging")
+		// Return basic stats without calling potentially blocking operations
+		stats := &MaintenanceStats{
+			TotalTasks:      0,
+			TasksByStatus:   make(map[MaintenanceTaskStatus]int),
+			TasksByType:     make(map[MaintenanceTaskType]int),
+			ActiveWorkers:   0,
+			CompletedToday:  0,
+			FailedToday:     0,
+			AverageTaskTime: 0,
+			LastScanTime:    time.Now().Add(-time.Minute), // Assume recent scan
+		}
+
+		mm.mutex.RLock()
+		// Calculate next scan time based on current error state
+		scanInterval := time.Duration(mm.config.ScanIntervalSeconds) * time.Second
+		nextScanInterval := scanInterval
+		if mm.errorCount > 0 {
+			nextScanInterval = mm.backoffDelay
+			maxInterval := scanInterval * 10
+			if nextScanInterval > maxInterval {
+				nextScanInterval = maxInterval
+			}
+		}
+		stats.NextScanTime = time.Now().Add(nextScanInterval)
+		mm.mutex.RUnlock()
+
+		return stats
+	}
+
+	// Normal path - get full stats from queue
 	stats := mm.queue.GetStats()
 
 	mm.mutex.RLock()
@@ -565,4 +567,9 @@ func (mm *MaintenanceManager) UpdateTaskProgress(taskID string, progress float64
 // UpdateWorkerHeartbeat updates worker heartbeat
 func (mm *MaintenanceManager) UpdateWorkerHeartbeat(workerID string) {
 	mm.queue.UpdateWorkerHeartbeat(workerID)
+}
+
+// RetryTask manually retries a failed or pending task
+func (mm *MaintenanceManager) RetryTask(taskID string) error {
+	return mm.queue.RetryTask(taskID)
 }

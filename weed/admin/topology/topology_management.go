@@ -89,6 +89,30 @@ func (at *ActiveTopology) GetAvailableDisks(taskType TaskType, excludeNodeID str
 	return available
 }
 
+// GetAvailableDisksForVolume returns disks that can accept a task for a specific volume
+// This method uses volume-aware conflict checking to prevent race conditions
+func (at *ActiveTopology) GetAvailableDisksForVolume(taskType TaskType, volumeID uint32, excludeNodeID string) []*DiskInfo {
+	at.mutex.RLock()
+	defer at.mutex.RUnlock()
+
+	var available []*DiskInfo
+
+	for _, disk := range at.disks {
+		if disk.NodeID == excludeNodeID {
+			continue // Skip excluded node
+		}
+
+		if at.isDiskAvailableForVolume(disk, taskType, volumeID) {
+			// Create a copy with current load count
+			diskCopy := *disk.DiskInfo
+			diskCopy.LoadCount = len(disk.pendingTasks) + len(disk.assignedTasks)
+			available = append(available, &diskCopy)
+		}
+	}
+
+	return available
+}
+
 // HasRecentTaskForVolume checks if a volume had a recent task (to avoid immediate re-detection)
 func (at *ActiveTopology) HasRecentTaskForVolume(volumeID uint32, taskType TaskType) bool {
 	at.mutex.RLock()

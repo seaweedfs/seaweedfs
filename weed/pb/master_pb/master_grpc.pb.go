@@ -29,6 +29,7 @@ const (
 	Seaweed_CollectionDelete_FullMethodName       = "/master_pb.Seaweed/CollectionDelete"
 	Seaweed_VolumeList_FullMethodName             = "/master_pb.Seaweed/VolumeList"
 	Seaweed_LookupEcVolume_FullMethodName         = "/master_pb.Seaweed/LookupEcVolume"
+	Seaweed_ActivateEcGeneration_FullMethodName   = "/master_pb.Seaweed/ActivateEcGeneration"
 	Seaweed_VacuumVolume_FullMethodName           = "/master_pb.Seaweed/VacuumVolume"
 	Seaweed_DisableVacuum_FullMethodName          = "/master_pb.Seaweed/DisableVacuum"
 	Seaweed_EnableVacuum_FullMethodName           = "/master_pb.Seaweed/EnableVacuum"
@@ -58,6 +59,7 @@ type SeaweedClient interface {
 	CollectionDelete(ctx context.Context, in *CollectionDeleteRequest, opts ...grpc.CallOption) (*CollectionDeleteResponse, error)
 	VolumeList(ctx context.Context, in *VolumeListRequest, opts ...grpc.CallOption) (*VolumeListResponse, error)
 	LookupEcVolume(ctx context.Context, in *LookupEcVolumeRequest, opts ...grpc.CallOption) (*LookupEcVolumeResponse, error)
+	ActivateEcGeneration(ctx context.Context, in *ActivateEcGenerationRequest, opts ...grpc.CallOption) (*ActivateEcGenerationResponse, error)
 	VacuumVolume(ctx context.Context, in *VacuumVolumeRequest, opts ...grpc.CallOption) (*VacuumVolumeResponse, error)
 	DisableVacuum(ctx context.Context, in *DisableVacuumRequest, opts ...grpc.CallOption) (*DisableVacuumResponse, error)
 	EnableVacuum(ctx context.Context, in *EnableVacuumRequest, opts ...grpc.CallOption) (*EnableVacuumResponse, error)
@@ -184,6 +186,16 @@ func (c *seaweedClient) LookupEcVolume(ctx context.Context, in *LookupEcVolumeRe
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(LookupEcVolumeResponse)
 	err := c.cc.Invoke(ctx, Seaweed_LookupEcVolume_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedClient) ActivateEcGeneration(ctx context.Context, in *ActivateEcGenerationRequest, opts ...grpc.CallOption) (*ActivateEcGenerationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ActivateEcGenerationResponse)
+	err := c.cc.Invoke(ctx, Seaweed_ActivateEcGeneration_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -334,6 +346,7 @@ type SeaweedServer interface {
 	CollectionDelete(context.Context, *CollectionDeleteRequest) (*CollectionDeleteResponse, error)
 	VolumeList(context.Context, *VolumeListRequest) (*VolumeListResponse, error)
 	LookupEcVolume(context.Context, *LookupEcVolumeRequest) (*LookupEcVolumeResponse, error)
+	ActivateEcGeneration(context.Context, *ActivateEcGenerationRequest) (*ActivateEcGenerationResponse, error)
 	VacuumVolume(context.Context, *VacuumVolumeRequest) (*VacuumVolumeResponse, error)
 	DisableVacuum(context.Context, *DisableVacuumRequest) (*DisableVacuumResponse, error)
 	EnableVacuum(context.Context, *EnableVacuumRequest) (*EnableVacuumResponse, error)
@@ -386,6 +399,9 @@ func (UnimplementedSeaweedServer) VolumeList(context.Context, *VolumeListRequest
 }
 func (UnimplementedSeaweedServer) LookupEcVolume(context.Context, *LookupEcVolumeRequest) (*LookupEcVolumeResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method LookupEcVolume not implemented")
+}
+func (UnimplementedSeaweedServer) ActivateEcGeneration(context.Context, *ActivateEcGenerationRequest) (*ActivateEcGenerationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ActivateEcGeneration not implemented")
 }
 func (UnimplementedSeaweedServer) VacuumVolume(context.Context, *VacuumVolumeRequest) (*VacuumVolumeResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method VacuumVolume not implemented")
@@ -590,6 +606,24 @@ func _Seaweed_LookupEcVolume_Handler(srv interface{}, ctx context.Context, dec f
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(SeaweedServer).LookupEcVolume(ctx, req.(*LookupEcVolumeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Seaweed_ActivateEcGeneration_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ActivateEcGenerationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedServer).ActivateEcGeneration(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Seaweed_ActivateEcGeneration_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedServer).ActivateEcGeneration(ctx, req.(*ActivateEcGenerationRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -862,6 +896,10 @@ var Seaweed_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "LookupEcVolume",
 			Handler:    _Seaweed_LookupEcVolume_Handler,
+		},
+		{
+			MethodName: "ActivateEcGeneration",
+			Handler:    _Seaweed_ActivateEcGeneration_Handler,
 		},
 		{
 			MethodName: "VacuumVolume",

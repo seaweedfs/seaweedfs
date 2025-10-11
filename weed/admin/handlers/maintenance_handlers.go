@@ -17,9 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/layout"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
-	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
-	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
-	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
+
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
@@ -40,32 +38,59 @@ func (h *MaintenanceHandlers) ShowTaskDetail(c *gin.Context) {
 	taskID := c.Param("id")
 	glog.Infof("DEBUG ShowTaskDetail: Starting for task ID: %s", taskID)
 
-	taskDetail, err := h.adminServer.GetMaintenanceTaskDetail(taskID)
-	if err != nil {
-		glog.Errorf("DEBUG ShowTaskDetail: error getting task detail for %s: %v", taskID, err)
-		c.String(http.StatusNotFound, "Task not found: %s (Error: %v)", taskID, err)
+	// Add timeout to prevent indefinite hangs when worker is unresponsive
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+
+	// Use a channel to handle timeout for task detail retrieval
+	type result struct {
+		taskDetail *maintenance.TaskDetailData
+		err        error
+	}
+	resultChan := make(chan result, 1)
+
+	go func() {
+		taskDetail, err := h.adminServer.GetMaintenanceTaskDetail(taskID)
+		resultChan <- result{taskDetail: taskDetail, err: err}
+	}()
+
+	select {
+	case res := <-resultChan:
+		if res.err != nil {
+			glog.Errorf("DEBUG ShowTaskDetail: error getting task detail for %s: %v", taskID, res.err)
+			c.String(http.StatusNotFound, "Task not found: %s (Error: %v)", taskID, res.err)
+			return
+		}
+
+		glog.Infof("DEBUG ShowTaskDetail: got task detail for %s, task type: %s, status: %s", taskID, res.taskDetail.Task.Type, res.taskDetail.Task.Status)
+
+		c.Header("Content-Type", "text/html")
+		taskDetailComponent := app.TaskDetail(res.taskDetail)
+		layoutComponent := layout.Layout(c, taskDetailComponent)
+		err := layoutComponent.Render(ctx, c.Writer)
+		if err != nil {
+			glog.Errorf("DEBUG ShowTaskDetail: render error: %v", err)
+			c.String(http.StatusInternalServerError, "Failed to render template: %v", err)
+			return
+		}
+
+		glog.Infof("DEBUG ShowTaskDetail: template rendered successfully for task %s", taskID)
+
+	case <-ctx.Done():
+		glog.Warningf("ShowTaskDetail: timeout waiting for task detail data for task %s", taskID)
+		c.JSON(http.StatusRequestTimeout, gin.H{
+			"error":      "Request timeout - task detail retrieval took too long. This may indicate the worker is unresponsive or stuck.",
+			"suggestion": "Try refreshing the page or check if the worker executing this task is responsive. If the task is stuck, it may need to be cancelled manually.",
+			"task_id":    taskID,
+		})
 		return
 	}
-
-	glog.Infof("DEBUG ShowTaskDetail: got task detail for %s, task type: %s, status: %s", taskID, taskDetail.Task.Type, taskDetail.Task.Status)
-
-	c.Header("Content-Type", "text/html")
-	taskDetailComponent := app.TaskDetail(taskDetail)
-	layoutComponent := layout.Layout(c, taskDetailComponent)
-	err = layoutComponent.Render(c.Request.Context(), c.Writer)
-	if err != nil {
-		glog.Errorf("DEBUG ShowTaskDetail: render error: %v", err)
-		c.String(http.StatusInternalServerError, "Failed to render template: %v", err)
-		return
-	}
-
-	glog.Infof("DEBUG ShowTaskDetail: template rendered successfully for task %s", taskID)
 }
 
 // ShowMaintenanceQueue displays the maintenance queue page
 func (h *MaintenanceHandlers) ShowMaintenanceQueue(c *gin.Context) {
-	// Add timeout to prevent hanging
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+	// Reduce timeout since we fixed the deadlock issue
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
 
 	// Use a channel to handle timeout for data retrieval
@@ -232,31 +257,15 @@ func (h *MaintenanceHandlers) UpdateTaskConfig(c *gin.Context) {
 		return
 	}
 
-	// Create a new config instance based on task type and apply schema defaults
-	var config TaskConfig
-	switch taskType {
-	case types.TaskTypeVacuum:
-		config = &vacuum.Config{}
-	case types.TaskTypeBalance:
-		config = &balance.Config{}
-	case types.TaskTypeErasureCoding:
-		config = &erasure_coding.Config{}
-	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Unsupported task type: " + taskTypeName})
-		return
-	}
-
-	// Apply schema defaults first using type-safe method
-	if err := schema.ApplyDefaultsToConfig(config); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to apply defaults: " + err.Error()})
-		return
-	}
-
-	// First, get the current configuration to preserve existing values
+	// Get the config instance from the UI provider - this is a dynamic approach
+	// that doesn't require hardcoding task types
 	currentUIRegistry := tasks.GetGlobalUIRegistry()
 	currentTypesRegistry := tasks.GetGlobalTypesRegistry()
 
+	var config types.TaskConfig
 	var currentProvider types.TaskUIProvider
+
+	// Find the UI provider for this task type
 	for workerTaskType := range currentTypesRegistry.GetAllDetectors() {
 		if string(workerTaskType) == string(taskType) {
 			currentProvider = currentUIRegistry.GetProvider(workerTaskType)
@@ -264,16 +273,26 @@ func (h *MaintenanceHandlers) UpdateTaskConfig(c *gin.Context) {
 		}
 	}
 
-	if currentProvider != nil {
-		// Copy current config values to the new config
-		currentConfig := currentProvider.GetCurrentConfig()
-		if currentConfigProtobuf, ok := currentConfig.(TaskConfig); ok {
-			// Apply current values using protobuf directly - no map conversion needed!
-			currentPolicy := currentConfigProtobuf.ToTaskPolicy()
-			if err := config.FromTaskPolicy(currentPolicy); err != nil {
-				glog.Warningf("Failed to load current config for %s: %v", taskTypeName, err)
-			}
-		}
+	if currentProvider == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Unsupported task type: " + taskTypeName})
+		return
+	}
+
+	// Get a config instance from the UI provider
+	config = currentProvider.GetCurrentConfig()
+	if config == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get config for task type: " + taskTypeName})
+		return
+	}
+
+	// Apply schema defaults - config instances should already have defaults applied during creation
+	glog.V(2).Infof("Using config defaults for task type: %s", taskTypeName)
+
+	// Copy current config values (currentProvider is already set above)
+	// Apply current values using protobuf directly - no map conversion needed!
+	currentPolicy := config.ToTaskPolicy()
+	if err := config.FromTaskPolicy(currentPolicy); err != nil {
+		glog.Warningf("Failed to load current config for %s: %v", taskTypeName, err)
 	}
 
 	// Parse form data using schema-based approach (this will override with new values)
@@ -283,24 +302,8 @@ func (h *MaintenanceHandlers) UpdateTaskConfig(c *gin.Context) {
 		return
 	}
 
-	// Debug logging - show parsed config values
-	switch taskType {
-	case types.TaskTypeVacuum:
-		if vacuumConfig, ok := config.(*vacuum.Config); ok {
-			glog.V(1).Infof("Parsed vacuum config - GarbageThreshold: %f, MinVolumeAgeSeconds: %d, MinIntervalSeconds: %d",
-				vacuumConfig.GarbageThreshold, vacuumConfig.MinVolumeAgeSeconds, vacuumConfig.MinIntervalSeconds)
-		}
-	case types.TaskTypeErasureCoding:
-		if ecConfig, ok := config.(*erasure_coding.Config); ok {
-			glog.V(1).Infof("Parsed EC config - FullnessRatio: %f, QuietForSeconds: %d, MinSizeMB: %d, CollectionFilter: '%s'",
-				ecConfig.FullnessRatio, ecConfig.QuietForSeconds, ecConfig.MinSizeMB, ecConfig.CollectionFilter)
-		}
-	case types.TaskTypeBalance:
-		if balanceConfig, ok := config.(*balance.Config); ok {
-			glog.V(1).Infof("Parsed balance config - Enabled: %v, MaxConcurrent: %d, ScanIntervalSeconds: %d, ImbalanceThreshold: %f, MinServerCount: %d",
-				balanceConfig.Enabled, balanceConfig.MaxConcurrent, balanceConfig.ScanIntervalSeconds, balanceConfig.ImbalanceThreshold, balanceConfig.MinServerCount)
-		}
-	}
+	// Debug logging - config parsed for task type
+	glog.V(1).Infof("Parsed configuration for task type: %s", taskTypeName)
 
 	// Validate the configuration
 	if validationErrors := schema.ValidateConfig(config); len(validationErrors) > 0 {
@@ -493,6 +496,32 @@ func (h *MaintenanceHandlers) UpdateMaintenanceConfig(c *gin.Context) {
 	c.Redirect(http.StatusSeeOther, "/maintenance/config")
 }
 
+// RetryTask manually retries a maintenance task
+func (h *MaintenanceHandlers) RetryTask(c *gin.Context) {
+	taskID := c.Param("id")
+	if taskID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Task ID is required"})
+		return
+	}
+
+	manager := h.adminServer.GetMaintenanceManager()
+	if manager == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Maintenance manager not available"})
+		return
+	}
+
+	err := manager.RetryTask(taskID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": fmt.Sprintf("Task %s has been queued for retry", taskID),
+	})
+}
+
 // Helper methods that delegate to AdminServer
 
 func (h *MaintenanceHandlers) getMaintenanceQueueData() (*maintenance.MaintenanceQueueData, error) {
@@ -569,7 +598,7 @@ func (h *MaintenanceHandlers) updateMaintenanceConfig(config *maintenance.Mainte
 }
 
 // saveTaskConfigToProtobuf saves task configuration to protobuf file
-func (h *MaintenanceHandlers) saveTaskConfigToProtobuf(taskType types.TaskType, config TaskConfig) error {
+func (h *MaintenanceHandlers) saveTaskConfigToProtobuf(taskType types.TaskType, config types.TaskConfig) error {
 	configPersistence := h.adminServer.GetConfigPersistence()
 	if configPersistence == nil {
 		return fmt.Errorf("config persistence not available")
@@ -578,15 +607,6 @@ func (h *MaintenanceHandlers) saveTaskConfigToProtobuf(taskType types.TaskType, 
 	// Use the new ToTaskPolicy method - much simpler and more maintainable!
 	taskPolicy := config.ToTaskPolicy()
 
-	// Save using task-specific methods
-	switch taskType {
-	case types.TaskTypeVacuum:
-		return configPersistence.SaveVacuumTaskPolicy(taskPolicy)
-	case types.TaskTypeErasureCoding:
-		return configPersistence.SaveErasureCodingTaskPolicy(taskPolicy)
-	case types.TaskTypeBalance:
-		return configPersistence.SaveBalanceTaskPolicy(taskPolicy)
-	default:
-		return fmt.Errorf("unsupported task type for protobuf persistence: %s", taskType)
-	}
+	// Save using generic method - no more hardcoded task types!
+	return configPersistence.SaveTaskPolicyGeneric(string(taskType), taskPolicy)
 }

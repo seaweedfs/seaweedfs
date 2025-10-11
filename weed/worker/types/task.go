@@ -9,6 +9,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
+	"google.golang.org/grpc"
 )
 
 // Task defines the core task interface that all tasks must implement
@@ -35,6 +36,18 @@ type Task interface {
 type TaskWithLogging interface {
 	Task
 	Logger
+}
+
+// TaskWithGrpcDial defines tasks that need gRPC dial options
+type TaskWithGrpcDial interface {
+	Task
+	SetGrpcDialOption(option grpc.DialOption)
+}
+
+// TaskWithAdminAddress defines tasks that need admin server address
+type TaskWithAdminAddress interface {
+	Task
+	SetAdminAddress(address string)
 }
 
 // Logger defines standard logging interface

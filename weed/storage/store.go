@@ -283,8 +283,9 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	var volumeMessages []*master_pb.VolumeInformationMessage
 	maxVolumeCounts := make(map[string]uint32)
 	var maxFileKey NeedleId
-	collectionVolumeSize := make(map[string]int64)
-	collectionVolumeDeletedBytes := make(map[string]int64)
+	// Track sizes by collection and compaction revision combination
+	collectionRevisionVolumeSize := make(map[string]map[uint16]int64)
+	collectionRevisionVolumeDeletedBytes := make(map[string]map[uint16]int64)
 	collectionVolumeReadOnlyCount := make(map[string]map[string]uint8)
 	for _, location := range s.Locations {
 		var deleteVids []needle.VolumeId
@@ -319,17 +320,24 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 				}
 			}
 
-			if _, exist := collectionVolumeSize[v.Collection]; !exist {
-				collectionVolumeSize[v.Collection] = 0
-				collectionVolumeDeletedBytes[v.Collection] = 0
+			// Initialize collection+revision maps if needed
+			if collectionRevisionVolumeSize[v.Collection] == nil {
+				collectionRevisionVolumeSize[v.Collection] = make(map[uint16]int64)
 			}
+			if collectionRevisionVolumeDeletedBytes[v.Collection] == nil {
+				collectionRevisionVolumeDeletedBytes[v.Collection] = make(map[uint16]int64)
+			}
+
 			if !shouldDeleteVolume {
-				collectionVolumeSize[v.Collection] += int64(volumeMessage.Size)
-				collectionVolumeDeletedBytes[v.Collection] += int64(volumeMessage.DeletedByteCount)
+				collectionRevisionVolumeSize[v.Collection][v.CompactionRevision] += int64(volumeMessage.Size)
+				collectionRevisionVolumeDeletedBytes[v.Collection][v.CompactionRevision] += int64(volumeMessage.DeletedByteCount)
 			} else {
-				collectionVolumeSize[v.Collection] -= int64(volumeMessage.Size)
-				if collectionVolumeSize[v.Collection] <= 0 {
-					delete(collectionVolumeSize, v.Collection)
+				collectionRevisionVolumeSize[v.Collection][v.CompactionRevision] -= int64(volumeMessage.Size)
+				if collectionRevisionVolumeSize[v.Collection][v.CompactionRevision] <= 0 {
+					delete(collectionRevisionVolumeSize[v.Collection], v.CompactionRevision)
+					if len(collectionRevisionVolumeSize[v.Collection]) == 0 {
+						delete(collectionRevisionVolumeSize, v.Collection)
+					}
 				}
 			}
 
@@ -381,12 +389,19 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		uuidList = append(uuidList, loc.DirectoryUuid)
 	}
 
-	for col, size := range collectionVolumeSize {
-		stats.VolumeServerDiskSizeGauge.WithLabelValues(col, "normal").Set(float64(size))
+	// Update metrics with compaction revision labels (separate from EC generation metrics)
+	for col, revisionSizes := range collectionRevisionVolumeSize {
+		for compactionRevision, size := range revisionSizes {
+			compactionRevisionLabel := fmt.Sprintf("rev_%d", compactionRevision) // prefix to distinguish from EC generation
+			stats.VolumeServerDiskSizeGauge.WithLabelValues(col, "normal", compactionRevisionLabel).Set(float64(size))
+		}
 	}
 
-	for col, deletedBytes := range collectionVolumeDeletedBytes {
-		stats.VolumeServerDiskSizeGauge.WithLabelValues(col, "deleted_bytes").Set(float64(deletedBytes))
+	for col, revisionDeletedBytes := range collectionRevisionVolumeDeletedBytes {
+		for compactionRevision, deletedBytes := range revisionDeletedBytes {
+			compactionRevisionLabel := fmt.Sprintf("rev_%d", compactionRevision) // prefix to distinguish from EC generation
+			stats.VolumeServerDiskSizeGauge.WithLabelValues(col, "deleted_bytes", compactionRevisionLabel).Set(float64(deletedBytes))
+		}
 	}
 
 	for col, types := range collectionVolumeReadOnlyCount {
@@ -696,6 +711,7 @@ func (s *Store) MaybeAdjustVolumeMax() (hasChanges bool) {
 				diskLocation.Directory, maxVolumeCount, unclaimedSpaces/1024/1024, unusedSpace/1024/1024, volumeSizeLimit/1024/1024)
 			hasChanges = hasChanges || currentMaxVolumeCount != atomic.LoadInt32(&diskLocation.MaxVolumeCount)
 		} else {
+			atomic.StoreInt32(&diskLocation.MaxVolumeCount, diskLocation.OriginalMaxVolumeCount)
 			newMaxVolumeCount = newMaxVolumeCount + diskLocation.OriginalMaxVolumeCount
 		}
 	}

@@ -20,6 +20,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
@@ -1198,47 +1199,75 @@ func (as *AdminServer) GetMaintenanceTaskDetail(taskID string) (*maintenance.Tas
 	// Get execution logs from worker if task is active/completed and worker is connected
 	if task.Status == maintenance.TaskStatusInProgress || task.Status == maintenance.TaskStatusCompleted {
 		if as.workerGrpcServer != nil && task.WorkerID != "" {
-			workerLogs, err := as.workerGrpcServer.RequestTaskLogs(task.WorkerID, taskID, 100, "")
-			if err == nil && len(workerLogs) > 0 {
-				// Convert worker logs to maintenance logs
-				for _, workerLog := range workerLogs {
-					maintenanceLog := &maintenance.TaskExecutionLog{
-						Timestamp: time.Unix(workerLog.Timestamp, 0),
-						Level:     workerLog.Level,
-						Message:   workerLog.Message,
-						Source:    "worker",
+			// Add additional timeout protection for worker log requests
+			type logResult struct {
+				logs []*worker_pb.TaskLogEntry
+				err  error
+			}
+			logChan := make(chan logResult, 1)
+
+			go func() {
+				workerLogs, err := as.workerGrpcServer.RequestTaskLogs(task.WorkerID, taskID, 100, "")
+				logChan <- logResult{logs: workerLogs, err: err}
+			}()
+
+			// Wait for logs with timeout
+			select {
+			case result := <-logChan:
+				if result.err == nil && len(result.logs) > 0 {
+					workerLogs := result.logs
+					// Convert worker logs to maintenance logs
+					for _, workerLog := range workerLogs {
+						maintenanceLog := &maintenance.TaskExecutionLog{
+							Timestamp: time.Unix(workerLog.Timestamp, 0),
+							Level:     workerLog.Level,
+							Message:   workerLog.Message,
+							Source:    "worker",
+							TaskID:    taskID,
+							WorkerID:  task.WorkerID,
+						}
+						// carry structured fields if present
+						if len(workerLog.Fields) > 0 {
+							maintenanceLog.Fields = make(map[string]string, len(workerLog.Fields))
+							for k, v := range workerLog.Fields {
+								maintenanceLog.Fields[k] = v
+							}
+						}
+						// carry optional progress/status
+						if workerLog.Progress != 0 {
+							p := float64(workerLog.Progress)
+							maintenanceLog.Progress = &p
+						}
+						if workerLog.Status != "" {
+							maintenanceLog.Status = workerLog.Status
+						}
+						taskDetail.ExecutionLogs = append(taskDetail.ExecutionLogs, maintenanceLog)
+					}
+				} else if result.err != nil {
+					// Add a diagnostic log entry when worker logs cannot be retrieved
+					diagnosticLog := &maintenance.TaskExecutionLog{
+						Timestamp: time.Now(),
+						Level:     "WARNING",
+						Message:   fmt.Sprintf("Failed to retrieve worker logs: %v", result.err),
+						Source:    "admin",
 						TaskID:    taskID,
 						WorkerID:  task.WorkerID,
 					}
-					// carry structured fields if present
-					if len(workerLog.Fields) > 0 {
-						maintenanceLog.Fields = make(map[string]string, len(workerLog.Fields))
-						for k, v := range workerLog.Fields {
-							maintenanceLog.Fields[k] = v
-						}
-					}
-					// carry optional progress/status
-					if workerLog.Progress != 0 {
-						p := float64(workerLog.Progress)
-						maintenanceLog.Progress = &p
-					}
-					if workerLog.Status != "" {
-						maintenanceLog.Status = workerLog.Status
-					}
-					taskDetail.ExecutionLogs = append(taskDetail.ExecutionLogs, maintenanceLog)
+					taskDetail.ExecutionLogs = append(taskDetail.ExecutionLogs, diagnosticLog)
+					glog.V(1).Infof("Failed to get worker logs for task %s from worker %s: %v", taskID, task.WorkerID, result.err)
 				}
-			} else if err != nil {
-				// Add a diagnostic log entry when worker logs cannot be retrieved
-				diagnosticLog := &maintenance.TaskExecutionLog{
+			case <-time.After(8 * time.Second):
+				// Timeout getting logs from worker
+				timeoutLog := &maintenance.TaskExecutionLog{
 					Timestamp: time.Now(),
 					Level:     "WARNING",
-					Message:   fmt.Sprintf("Failed to retrieve worker logs: %v", err),
+					Message:   "Timeout retrieving worker logs - worker may be unresponsive or busy",
 					Source:    "admin",
 					TaskID:    taskID,
 					WorkerID:  task.WorkerID,
 				}
-				taskDetail.ExecutionLogs = append(taskDetail.ExecutionLogs, diagnosticLog)
-				glog.V(1).Infof("Failed to get worker logs for task %s from worker %s: %v", taskID, task.WorkerID, err)
+				taskDetail.ExecutionLogs = append(taskDetail.ExecutionLogs, timeoutLog)
+				glog.Warningf("Timeout getting worker logs for task %s from worker %s", taskID, task.WorkerID)
 			}
 		} else {
 			// Add diagnostic information when worker is not available

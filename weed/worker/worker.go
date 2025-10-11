@@ -16,9 +16,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 
 	// Import task packages to trigger their auto-registration
-	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
+	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/ec_vacuum"
 	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
-	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 )
 
 // Worker represents a maintenance worker instance
@@ -445,6 +444,18 @@ func (w *Worker) executeTask(task *types.TaskInput) {
 		w.completeTask(task.ID, false, fmt.Sprintf("failed to create task for %s: %v", task.Type, err))
 		glog.Errorf("Worker %s failed to create task %s type %v: %v", w.id, task.ID, task.Type, err)
 		return
+	}
+
+	// Pass worker's gRPC dial option to task if it supports it
+	if grpcTask, ok := taskInstance.(types.TaskWithGrpcDial); ok {
+		grpcTask.SetGrpcDialOption(w.config.GrpcDialOption)
+		glog.V(2).Infof("Set gRPC dial option for task %s", task.ID)
+	}
+
+	// Pass worker's admin server address to task if it supports it
+	if adminTask, ok := taskInstance.(types.TaskWithAdminAddress); ok {
+		adminTask.SetAdminAddress(w.config.AdminServer)
+		glog.V(2).Infof("Set admin server address for task %s", task.ID)
 	}
 
 	// Task execution uses the new unified Task interface

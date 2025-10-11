@@ -99,6 +99,35 @@ func (t *BaseTask) GetLogger() types.Logger {
 	return t.logger
 }
 
+// Simple logging helpers - these replace glog.V() calls with structured logging
+
+// LogInfo is a simple wrapper for structured info logging
+func (t *BaseTask) LogInfo(message string, fields ...map[string]interface{}) {
+	if len(fields) > 0 {
+		t.logger.WithFields(fields[0]).Info(message)
+	} else {
+		t.logger.Info(message)
+	}
+}
+
+// LogWarning is a simple wrapper for structured warning logging
+func (t *BaseTask) LogWarning(message string, fields ...map[string]interface{}) {
+	if len(fields) > 0 {
+		t.logger.WithFields(fields[0]).Warning(message)
+	} else {
+		t.logger.Warning(message)
+	}
+}
+
+// LogError is a simple wrapper for structured error logging
+func (t *BaseTask) LogError(message string, fields ...map[string]interface{}) {
+	if len(fields) > 0 {
+		t.logger.WithFields(fields[0]).Error(message)
+	} else {
+		t.logger.Error(message)
+	}
+}
+
 // Execute implements the Task interface
 func (t *BaseTask) Execute(ctx context.Context, params *worker_pb.TaskParams) error {
 	// Subclasses must implement this

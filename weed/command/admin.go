@@ -25,6 +25,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 )
 
 var (
@@ -235,6 +236,9 @@ func startAdminServer(ctx context.Context, options AdminOptions) error {
 		}
 		fmt.Printf("Data directory created/verified: %s\n", dataDir)
 	}
+
+	// Initialize dynamic task type functions now that all tasks are registered
+	tasks.InitializeDynamicTaskTypes()
 
 	// Create admin server
 	adminServer := dash.NewAdminServer(*options.masters, nil, dataDir)

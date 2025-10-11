@@ -31,7 +31,7 @@ type DiskLocation struct {
 	volumesLock            sync.RWMutex
 
 	// erasure coding
-	ecVolumes     map[needle.VolumeId]*erasure_coding.EcVolume
+	ecVolumes     map[EcVolumeGenerationKey]*erasure_coding.EcVolume
 	ecVolumesLock sync.RWMutex
 
 	isDiskSpaceLow bool
@@ -88,7 +88,7 @@ func NewDiskLocation(dir string, maxVolumeCount int32, minFreeSpace util.MinFree
 		MinFreeSpace:           minFreeSpace,
 	}
 	location.volumes = make(map[needle.VolumeId]*Volume)
-	location.ecVolumes = make(map[needle.VolumeId]*erasure_coding.EcVolume)
+	location.ecVolumes = make(map[EcVolumeGenerationKey]*erasure_coding.EcVolume)
 	location.closeCh = make(chan struct{})
 	go func() {
 		location.CheckDiskSpace()
@@ -115,6 +115,11 @@ func volumeIdFromFileName(filename string) (needle.VolumeId, string, error) {
 }
 
 func parseCollectionVolumeId(base string) (collection string, vid needle.VolumeId, err error) {
+	// Remove generation suffix first (e.g., "1_g1" -> "1")
+	if gIndex := strings.LastIndex(base, "_g"); gIndex >= 0 {
+		base = base[:gIndex]
+	}
+
 	i := strings.LastIndex(base, "_")
 	if i > 0 {
 		collection, base = base[0:i], base[i+1:]

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 
 	"github.com/seaweedfs/seaweedfs/weed/topology"
 
@@ -240,16 +241,40 @@ func (ms *MasterServer) LookupEcVolume(ctx context.Context, req *master_pb.Looku
 	}
 
 	resp := &master_pb.LookupEcVolumeResponse{}
+	volumeId := needle.VolumeId(req.VolumeId)
 
-	ecLocations, found := ms.Topo.LookupEcShards(needle.VolumeId(req.VolumeId))
+	// Use the new helper function for intelligent lookup with fallback
+	ecLocations, actualGeneration, found := ms.Topo.LookupEcShardsWithFallback(volumeId, req.Generation)
 
 	if !found {
-		return resp, fmt.Errorf("ec volume %d not found", req.VolumeId)
+		if req.Generation != 0 {
+			return resp, fmt.Errorf("ec volume %d generation %d not found", req.VolumeId, req.Generation)
+		} else {
+			return resp, fmt.Errorf("ec volume %d not found", req.VolumeId)
+		}
 	}
 
+	glog.V(4).Infof("LookupEcVolume: Found volume %d generation %d (requested: %d)", req.VolumeId, actualGeneration, req.Generation)
+
+	// Set response fields
 	resp.VolumeId = req.VolumeId
 
+	// Always report the actual active generation, regardless of what was looked up
+	if activeGen, found := ms.Topo.GetEcActiveGeneration(volumeId); found {
+		resp.ActiveGeneration = activeGen
+	} else {
+		// If no active generation tracked, use the generation we found
+		resp.ActiveGeneration = ecLocations.Generation
+		glog.V(2).Infof("LookupEcVolume: No active generation tracked for volume %d, using found generation %d", req.VolumeId, ecLocations.Generation)
+	}
+
+	// Build shard location response
 	for shardId, shardLocations := range ecLocations.Locations {
+		// Skip empty shard locations
+		if len(shardLocations) == 0 {
+			continue
+		}
+
 		var locations []*master_pb.Location
 		for _, dn := range shardLocations {
 			locations = append(locations, &master_pb.Location{
@@ -259,12 +284,87 @@ func (ms *MasterServer) LookupEcVolume(ctx context.Context, req *master_pb.Looku
 			})
 		}
 		resp.ShardIdLocations = append(resp.ShardIdLocations, &master_pb.LookupEcVolumeResponse_EcShardIdLocation{
-			ShardId:   uint32(shardId),
-			Locations: locations,
+			ShardId:    uint32(shardId),
+			Locations:  locations,
+			Generation: ecLocations.Generation, // generation of the actual shards returned
 		})
 	}
 
+	glog.V(4).Infof("LookupEcVolume: Found %d shard locations for volume %d generation %d (active: %d)",
+		len(resp.ShardIdLocations), req.VolumeId, ecLocations.Generation, resp.ActiveGeneration)
+
 	return resp, nil
+}
+
+func (ms *MasterServer) ActivateEcGeneration(ctx context.Context, req *master_pb.ActivateEcGenerationRequest) (*master_pb.ActivateEcGenerationResponse, error) {
+	if !ms.Topo.IsLeader() {
+		return &master_pb.ActivateEcGenerationResponse{
+			Success: false,
+			Error:   "not leader",
+		}, nil
+	}
+
+	// Basic request validation
+	if req.VolumeId == 0 {
+		return &master_pb.ActivateEcGenerationResponse{
+			Success: false,
+			Error:   "invalid volume ID: cannot be 0",
+		}, nil
+	}
+
+	volumeId := needle.VolumeId(req.VolumeId)
+	targetGeneration := req.Generation
+
+	glog.V(1).Infof("ActivateEcGeneration: Activating generation %d for EC volume %d in collection %s",
+		targetGeneration, req.VolumeId, req.Collection)
+
+	// Validate that the target generation exists and has sufficient shards
+	ready, availableShards, err := ms.Topo.ValidateEcGenerationReadiness(volumeId, targetGeneration)
+	if err != nil {
+		errMsg := err.Error()
+		glog.Warningf("ActivateEcGeneration: %s", errMsg)
+		return &master_pb.ActivateEcGenerationResponse{
+			Success: false,
+			Error:   errMsg,
+		}, nil
+	}
+
+	if !ready {
+		errMsg := fmt.Sprintf("generation %d for EC volume %d not ready: has %d shards, needs %d",
+			targetGeneration, req.VolumeId, availableShards, erasure_coding.DataShardsCount)
+		glog.Warningf("ActivateEcGeneration: %s", errMsg)
+		return &master_pb.ActivateEcGenerationResponse{
+			Success: false,
+			Error:   errMsg,
+		}, nil
+	}
+
+	glog.V(2).Infof("ActivateEcGeneration: Generation %d for volume %d is ready with %d available shards",
+		targetGeneration, req.VolumeId, availableShards)
+
+	// Check current active generation for logging
+	var currentActiveGeneration uint32
+	if current, exists := ms.Topo.GetEcActiveGeneration(volumeId); exists {
+		currentActiveGeneration = current
+		if current == targetGeneration {
+			glog.V(2).Infof("ActivateEcGeneration: Generation %d is already active for volume %d", targetGeneration, req.VolumeId)
+			return &master_pb.ActivateEcGenerationResponse{
+				Success: true,
+				Error:   "",
+			}, nil
+		}
+	}
+
+	// Perform the atomic activation
+	ms.Topo.SetEcActiveGeneration(volumeId, targetGeneration)
+
+	glog.V(0).Infof("ActivateEcGeneration: Successfully activated generation %d for EC volume %d (was: %d)",
+		targetGeneration, req.VolumeId, currentActiveGeneration)
+
+	return &master_pb.ActivateEcGenerationResponse{
+		Success: true,
+		Error:   "",
+	}, nil
 }
 
 func (ms *MasterServer) VacuumVolume(ctx context.Context, req *master_pb.VacuumVolumeRequest) (*master_pb.VacuumVolumeResponse, error) {

@@ -26,8 +26,14 @@ const (
 // WriteSortedFileFromIdx generates .ecx file from existing .idx file
 // all keys are sorted in ascending order
 func WriteSortedFileFromIdx(baseFileName string, ext string) (e error) {
+	return WriteSortedFileFromIdxToTarget(baseFileName, baseFileName+ext)
+}
 
-	nm, err := readNeedleMap(baseFileName)
+// WriteSortedFileFromIdxToTarget generates .ecx file from existing .idx file to specified target
+// all keys are sorted in ascending order
+func WriteSortedFileFromIdxToTarget(sourceBaseFileName string, targetFileName string) (e error) {
+
+	nm, err := readNeedleMap(sourceBaseFileName)
 	if nm != nil {
 		defer nm.Close()
 	}
@@ -35,7 +41,7 @@ func WriteSortedFileFromIdx(baseFileName string, ext string) (e error) {
 		return fmt.Errorf("readNeedleMap: %w", err)
 	}
 
-	ecxFile, err := os.OpenFile(baseFileName+ext, os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0644)
+	ecxFile, err := os.OpenFile(targetFileName, os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to open ecx file: %w", err)
 	}
