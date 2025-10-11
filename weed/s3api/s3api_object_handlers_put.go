@@ -440,20 +440,28 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 	versionsDir := bucketDir + "/" + versionsObjectPath
 	entries, _, err := s3a.list(versionsDir, "", "", false, 1000)
 	if err == nil {
-		// .versions directory exists, check for existing null version
+		// .versions directory exists
+		glog.V(0).Infof("putSuspendedVersioningObject: found %d entries in .versions for %s/%s", len(entries), bucket, object)
 		for _, entry := range entries {
 			if entry.Extended != nil {
-				if versionIdBytes, ok := entry.Extended[s3_constants.ExtVersionIdKey]; ok && string(versionIdBytes) == "null" {
-					// Found existing null version in .versions, delete it
-					glog.V(2).Infof("putSuspendedVersioningObject: deleting existing null version from .versions for %s/%s", bucket, object)
-					err := s3a.rm(versionsDir, entry.Name, true, false)
-					if err != nil {
-						glog.Warningf("putSuspendedVersioningObject: failed to delete old null version: %v", err)
+				if versionIdBytes, ok := entry.Extended[s3_constants.ExtVersionIdKey]; ok {
+					versionId := string(versionIdBytes)
+					glog.V(0).Infof("putSuspendedVersioningObject: found version '%s' in .versions", versionId)
+					if versionId == "null" {
+						// Found existing null version in .versions, delete it
+						glog.V(0).Infof("putSuspendedVersioningObject: DELETING null version from .versions")
+						err := s3a.rm(versionsDir, entry.Name, true, false)
+						if err != nil {
+							glog.Errorf("putSuspendedVersioningObject: FAILED to delete null version: %v", err)
+						} else {
+							glog.V(0).Infof("putSuspendedVersioningObject: SUCCESS deleted null version")
+						}
 					}
-					break
 				}
 			}
 		}
+	} else {
+		glog.V(0).Infof("putSuspendedVersioningObject: no .versions directory (err=%v)", err)
 	}
 
 	uploadUrl := s3a.toFilerUrl(bucket, normalizedObject)
@@ -498,6 +506,7 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 		entry.Extended = make(map[string][]byte)
 	}
 	entry.Extended[s3_constants.ExtVersionIdKey] = []byte("null")
+	glog.V(0).Infof("putSuspendedVersioningObject: SET null version metadata for %s/%s, Extended=%v", bucket, normalizedObject, entry.Extended)
 
 	// Set object owner for suspended versioning objects
 	s3a.setObjectOwnerFromRequest(r, entry)
@@ -510,13 +519,18 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 
 	// Use updateEntry to modify the existing entry in place without creating a duplicate
 	// This is critical to avoid creating 2 versions
-	glog.V(2).Infof("putSuspendedVersioningObject: updating entry with null version metadata for %s/%s", bucket, normalizedObject)
+	glog.V(0).Infof("putSuspendedVersioningObject: BEFORE updateEntry for %s/%s, entry.Name=%s, entry.Extended=%v",
+		bucket, normalizedObject, entry.Name, entry.Extended)
 	entry.Name = normalizedObject
 	err = s3a.updateEntry(bucketDir, entry)
 	if err != nil {
-		glog.Errorf("putSuspendedVersioningObject: failed to update object metadata: %v", err)
+		glog.Errorf("putSuspendedVersioningObject: FAILED updateEntry: %v", err)
 		return "", s3err.ErrInternalError
 	}
+	glog.V(0).Infof("putSuspendedVersioningObject: SUCCESS updateEntry for %s/%s", bucket, normalizedObject)
+
+	// Add delay to ensure update is fully processed before any listing operations
+	time.Sleep(50 * time.Millisecond)
 
 	// Update all existing versions/delete markers to set IsLatest=false since "null" is now latest
 	err = s3a.updateIsLatestFlagsForSuspendedVersioning(bucket, normalizedObject)
