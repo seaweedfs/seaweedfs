@@ -49,7 +49,7 @@ func newPartitionReader(ctx context.Context, handler *Handler, connCtx *Connecti
 		topicName:     topicName,
 		partitionID:   partitionID,
 		currentOffset: startOffset,
-		fetchChan:     make(chan *partitionFetchRequest, 10), // Buffer 10 requests
+		fetchChan:     make(chan *partitionFetchRequest, 100), // Buffer 100 requests to handle Schema Registry's rapid polling
 		closeChan:     make(chan struct{}),
 		recordBuffer:  make(chan *bufferedRecords, 5), // Buffer 5 batches of records
 		handler:       handler,
@@ -140,7 +140,8 @@ func (pr *partitionReader) serveFetchRequest(ctx context.Context, req *partition
 	pr.bufferMu.Unlock()
 
 	// Fetch on-demand - no pre-fetching to avoid overwhelming the broker
-	recordBatch, newOffset := pr.readRecords(ctx, req.maxBytes, hwm)
+	// Pass the requested offset directly to avoid race conditions
+	recordBatch, newOffset := pr.readRecords(ctx, req.requestedOffset, req.maxBytes, hwm)
 	if len(recordBatch) > 0 && newOffset > pr.currentOffset {
 		result.recordBatch = recordBatch
 		pr.bufferMu.Lock()
@@ -155,13 +156,13 @@ func (pr *partitionReader) serveFetchRequest(ctx context.Context, req *partition
 }
 
 // readRecords reads records forward using the multi-batch fetcher
-func (pr *partitionReader) readRecords(ctx context.Context, maxBytes int32, highWaterMark int64) ([]byte, int64) {
+func (pr *partitionReader) readRecords(ctx context.Context, fromOffset int64, maxBytes int32, highWaterMark int64) ([]byte, int64) {
 	// Use multi-batch fetcher for better MaxBytes compliance
 	multiFetcher := NewMultiBatchFetcher(pr.handler)
 	fetchResult, err := multiFetcher.FetchMultipleBatches(
 		pr.topicName,
 		pr.partitionID,
-		pr.currentOffset,
+		fromOffset,
 		highWaterMark,
 		maxBytes,
 	)
@@ -169,23 +170,23 @@ func (pr *partitionReader) readRecords(ctx context.Context, maxBytes int32, high
 	if err == nil && fetchResult.TotalSize > 0 {
 		glog.V(2).Infof("[%s] Multi-batch fetch for %s[%d]: %d batches, %d bytes, offset %d -> %d",
 			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID,
-			fetchResult.BatchCount, fetchResult.TotalSize, pr.currentOffset, fetchResult.NextOffset)
+			fetchResult.BatchCount, fetchResult.TotalSize, fromOffset, fetchResult.NextOffset)
 		return fetchResult.RecordBatches, fetchResult.NextOffset
 	}
 
 	// Fallback to single batch
-	smqRecords, err := pr.handler.seaweedMQHandler.GetStoredRecords(pr.topicName, pr.partitionID, pr.currentOffset, 10)
+	smqRecords, err := pr.handler.seaweedMQHandler.GetStoredRecords(pr.topicName, pr.partitionID, fromOffset, 10)
 	if err == nil && len(smqRecords) > 0 {
-		recordBatch := pr.handler.constructRecordBatchFromSMQ(pr.topicName, pr.currentOffset, smqRecords)
-		nextOffset := pr.currentOffset + int64(len(smqRecords))
+		recordBatch := pr.handler.constructRecordBatchFromSMQ(pr.topicName, fromOffset, smqRecords)
+		nextOffset := fromOffset + int64(len(smqRecords))
 		glog.V(2).Infof("[%s] Single-batch fetch for %s[%d]: %d records, %d bytes, offset %d -> %d",
 			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID,
-			len(smqRecords), len(recordBatch), pr.currentOffset, nextOffset)
+			len(smqRecords), len(recordBatch), fromOffset, nextOffset)
 		return recordBatch, nextOffset
 	}
 
 	// No records available
-	return []byte{}, pr.currentOffset
+	return []byte{}, fromOffset
 }
 
 // close signals the reader to shut down

@@ -100,7 +100,7 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string, clientHost str
 		// ledgers removed - SMQ broker handles all offset management
 		brokerAddresses:     brokerAddresses, // Store all discovered broker addresses
 		hwmCache:            make(map[string]*hwmCacheEntry),
-		hwmCacheTTL:         2 * time.Second, // 2 second cache TTL to reduce broker queries
+		hwmCacheTTL:         100 * time.Millisecond, // 100ms cache TTL for fresh HWM reads (critical for Schema Registry)
 		topicExistsCache:    make(map[string]*topicExistsCacheEntry),
 		topicExistsCacheTTL: 5 * time.Second, // 5 second cache TTL for topic existence
 	}, nil
