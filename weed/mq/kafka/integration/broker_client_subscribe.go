@@ -256,12 +256,16 @@ func (bc *BrokerClient) ReadRecords(session *BrokerSubscriberSession, maxRecords
 	}
 
 	// Read first record with timeout (important for empty topics)
-	// Use reasonable timeout to balance consumer responsiveness and producer needs
-	// Wait up to 2s for first record (allows Schema Registry producer to write+confirm)
-	// Reduced from 10s to prevent excessive consumer lag (5x improvement)
-	// With concurrent partition fetching, keep timeout low to prevent client timeouts
-	// Must be less than client fetch_max_wait_ms (100ms) to allow all concurrent fetches to complete
-	firstRecordTimeout := 50 * time.Millisecond
+	// CRITICAL: For SMQ backend with consumer groups, we need adequate timeout for disk reads
+	// When a consumer group resumes from a committed offset, the subscriber may need to:
+	// 1. Connect to the broker (network latency)
+	// 2. Seek to the correct offset in the log file (disk I/O)
+	// 3. Read and deserialize the record (disk I/O)
+	// Total latency can be 100-500ms for cold reads from disk
+	//
+	// For in-memory reads (hot path), records arrive in <10ms, so this timeout
+	// only impacts the first record fetch after subscriber creation
+	firstRecordTimeout := 500 * time.Millisecond
 	ctx, cancel := context.WithTimeout(context.Background(), firstRecordTimeout)
 	defer cancel()
 

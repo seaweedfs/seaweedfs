@@ -126,6 +126,17 @@ func (pr *partitionReader) preFetchLoop(ctx context.Context) {
 			// Fetch next batch if there's data available
 			if pr.currentOffset < highWaterMark {
 				recordBatch, newOffset := pr.readRecords(ctx, 1024*1024, highWaterMark) // Fetch 1MB batches
+
+				// CRITICAL: Don't buffer empty results to avoid channel saturation
+				// If readRecords returns empty (no data fetched), skip buffering and backoff
+				if len(recordBatch) == 0 || newOffset == pr.currentOffset {
+					pr.bufferMu.Unlock()
+					glog.V(3).Infof("[%s] Pre-fetch returned empty for %s[%d] (offset=%d, HWM=%d), backing off",
+						pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, pr.currentOffset, highWaterMark)
+					time.Sleep(200 * time.Millisecond) // Longer backoff for empty results
+					continue
+				}
+
 				buffered := &bufferedRecords{
 					recordBatch:   recordBatch,
 					startOffset:   pr.currentOffset,

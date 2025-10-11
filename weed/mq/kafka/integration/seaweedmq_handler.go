@@ -73,10 +73,11 @@ func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromO
 	}
 	glog.V(2).Infof("[FETCH] Subscriber ready")
 
-	// CRITICAL FIX: If the subscriber has already consumed past the requested offset,
-	// close it and create a fresh one to avoid broker tight loop
-	if brokerSubscriber.StartOffset > fromOffset {
-		glog.V(2).Infof("[FETCH] Subscriber already at offset %d (requested %d < current), closing and recreating",
+	// CRITICAL FIX: If the subscriber is not at the requested offset, recreate it
+	// This handles both backward seeks (rewind) and forward seeks (skip ahead)
+	// NOTE: StartOffset is updated by ReadRecords to track current position
+	if brokerSubscriber.StartOffset != fromOffset {
+		glog.V(2).Infof("[FETCH] Subscriber offset mismatch: current=%d, requested=%d - recreating subscriber",
 			brokerSubscriber.StartOffset, fromOffset)
 
 		// Close the old subscriber
