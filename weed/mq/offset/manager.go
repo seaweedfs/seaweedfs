@@ -242,10 +242,18 @@ func (r *PartitionOffsetRegistry) GetHighWaterMark(namespace, topicName string, 
 	return manager.GetHighWaterMark(), nil
 }
 
-// partitionKey generates a unique key for a partition
+// PartitionKey generates a unique key for a partition
+// Note: UnixTimeNs is intentionally excluded from the key because it represents
+// partition creation time, not partition identity. Using it would cause offset
+// tracking to reset whenever a partition is recreated or looked up again.
+func PartitionKey(partition *schema_pb.Partition) string {
+	return fmt.Sprintf("ring:%d:range:%d-%d",
+		partition.RingSize, partition.RangeStart, partition.RangeStop)
+}
+
+// partitionKey is the internal lowercase version for backward compatibility within this package
 func partitionKey(partition *schema_pb.Partition) string {
-	return fmt.Sprintf("ring:%d:range:%d-%d:time:%d",
-		partition.RingSize, partition.RangeStart, partition.RangeStop, partition.UnixTimeNs)
+	return PartitionKey(partition)
 }
 
 // OffsetAssignment represents an assigned offset with metadata

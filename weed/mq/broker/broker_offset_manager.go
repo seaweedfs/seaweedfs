@@ -113,11 +113,6 @@ func topicPartitionToSchemaPartition(t topic.Topic, p topic.Partition) *schema_p
 	}
 }
 
-// partitionKey generates a unique key for a partition (same as offset package)
-func partitionKey(partition *schema_pb.Partition) string {
-	return fmt.Sprintf("ring:%d:range:%d-%d:time:%d",
-		partition.RingSize, partition.RangeStart, partition.RangeStop, partition.UnixTimeNs)
-}
 
 // OffsetAssignmentResult contains the result of offset assignment for logging/metrics
 type OffsetAssignmentResult struct {

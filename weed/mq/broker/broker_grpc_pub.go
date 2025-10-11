@@ -192,10 +192,13 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 
 		// CRITICAL: Force immediate flush for _schemas topic to prevent Schema Registry deadlock
 		// Schema Registry needs immediate visibility of registered schemas
-		if initMessage.Topic != nil && initMessage.Topic.Name == "_schemas" {
+		isSchemasTopic := initMessage.Topic != nil && initMessage.Topic.Name == "_schemas"
+		if isSchemasTopic {
 			if localTopicPartition.LogBuffer != nil {
 				localTopicPartition.LogBuffer.ForceFlush()
-				glog.V(0).Infof("SR PUBLISH: Force flushed _schemas after offset %d", assignedOffset)
+				glog.Infof("SR PUBLISH: Force flushed _schemas after offset %d", assignedOffset)
+			} else {
+				glog.Warningf("SR PUBLISH: LogBuffer is nil for _schemas at offset %d", assignedOffset)
 			}
 		}
 
