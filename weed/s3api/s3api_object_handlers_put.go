@@ -423,11 +423,22 @@ func (s3a *S3ApiServer) setObjectOwnerFromRequest(r *http.Request, entry *filer_
 	}
 }
 
-// putVersionedObject handles PUT operations for versioned buckets using the new layout
-// where all versions (including latest) are stored in the .versions directory
+// putSuspendedVersioningObject handles PUT operations for buckets with suspended versioning.
+//
+// Key architectural approach:
+// Instead of creating the file and then updating its metadata (which can cause race conditions and duplicate versions),
+// we set all required metadata as HTTP headers BEFORE calling putToFiler. The filer automatically stores any header
+// starting with "Seaweed-" in entry.Extended during file creation, ensuring atomic metadata persistence.
+//
+// This approach eliminates:
+// - Race conditions from read-after-write consistency delays
+// - Need for retry loops and exponential backoff
+// - Duplicate entries from separate create/update operations
+//
+// For suspended versioning, objects are stored as regular files (version ID "null") in the bucket directory,
+// while existing versions from when versioning was enabled remain preserved in the .versions subdirectory.
 func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, object string, dataReader io.Reader, objectContentType string) (etag string, errCode s3err.ErrorCode) {
-	// For suspended versioning, store as regular object (version ID "null") but preserve existing versions
-	// Normalize object path to ensure consistency with toFilerUrl behavior (same as putVersionedObject)
+	// Normalize object path to ensure consistency with toFilerUrl behavior
 	normalizedObject := removeDuplicateSlashes(object)
 
 	// Enable detailed logging for testobjbar
@@ -480,13 +491,63 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 		body = mimeDetect(r, body)
 	}
 
-	// Set the version ID header BEFORE calling putToFiler
+	// Set all metadata headers BEFORE calling putToFiler
 	// This ensures the metadata is set during file creation, not after
 	// The filer automatically stores any header starting with "Seaweed-" in entry.Extended
+
+	// Set version ID to "null" for suspended versioning
 	r.Header.Set(s3_constants.ExtVersionIdKey, "null")
 	if isTestObj {
-		glog.V(0).Infof("=== TESTOBJBAR: set version header before putToFiler, r.Header[%s]=%s ===", 
+		glog.V(0).Infof("=== TESTOBJBAR: set version header before putToFiler, r.Header[%s]=%s ===",
 			s3_constants.ExtVersionIdKey, r.Header.Get(s3_constants.ExtVersionIdKey))
+	}
+
+	// Extract and set object lock metadata as headers
+	// This handles retention mode, retention date, and legal hold
+	explicitMode := r.Header.Get(s3_constants.AmzObjectLockMode)
+	explicitRetainUntilDate := r.Header.Get(s3_constants.AmzObjectLockRetainUntilDate)
+
+	if explicitMode != "" {
+		r.Header.Set(s3_constants.ExtObjectLockModeKey, explicitMode)
+		glog.V(2).Infof("putSuspendedVersioningObject: setting object lock mode header: %s", explicitMode)
+	}
+
+	if explicitRetainUntilDate != "" {
+		// Parse and convert to Unix timestamp
+		parsedTime, err := time.Parse(time.RFC3339, explicitRetainUntilDate)
+		if err != nil {
+			glog.Errorf("putSuspendedVersioningObject: failed to parse retention until date: %v", err)
+			return "", s3err.ErrInvalidRequest
+		}
+		r.Header.Set(s3_constants.ExtRetentionUntilDateKey, strconv.FormatInt(parsedTime.Unix(), 10))
+		glog.V(2).Infof("putSuspendedVersioningObject: setting retention until date header (timestamp: %d)", parsedTime.Unix())
+	}
+
+	if legalHold := r.Header.Get(s3_constants.AmzObjectLockLegalHold); legalHold != "" {
+		if legalHold == s3_constants.LegalHoldOn || legalHold == s3_constants.LegalHoldOff {
+			r.Header.Set(s3_constants.ExtLegalHoldKey, legalHold)
+			glog.V(2).Infof("putSuspendedVersioningObject: setting legal hold header: %s", legalHold)
+		} else {
+			glog.Errorf("putSuspendedVersioningObject: invalid legal hold value: %s", legalHold)
+			return "", s3err.ErrInvalidRequest
+		}
+	}
+
+	// Apply bucket default retention if no explicit retention was provided
+	if explicitMode == "" && explicitRetainUntilDate == "" {
+		// Create a temporary entry to apply defaults
+		tempEntry := &filer_pb.Entry{Extended: make(map[string][]byte)}
+		if err := s3a.applyBucketDefaultRetention(bucket, tempEntry); err == nil {
+			// Copy default retention headers from temp entry
+			if modeBytes, ok := tempEntry.Extended[s3_constants.ExtObjectLockModeKey]; ok {
+				r.Header.Set(s3_constants.ExtObjectLockModeKey, string(modeBytes))
+				glog.V(2).Infof("putSuspendedVersioningObject: applied bucket default retention mode: %s", string(modeBytes))
+			}
+			if dateBytes, ok := tempEntry.Extended[s3_constants.ExtRetentionUntilDateKey]; ok {
+				r.Header.Set(s3_constants.ExtRetentionUntilDateKey, string(dateBytes))
+				glog.V(2).Infof("putSuspendedVersioningObject: applied bucket default retention date")
+			}
+		}
 	}
 
 	// Upload the file using putToFiler - this will create the file with version metadata
