@@ -480,7 +480,16 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 		body = mimeDetect(r, body)
 	}
 
-	// Upload the file using putToFiler - this will overwrite any existing file
+	// Set the version ID header BEFORE calling putToFiler
+	// This ensures the metadata is set during file creation, not after
+	// The filer automatically stores any header starting with "Seaweed-" in entry.Extended
+	r.Header.Set(s3_constants.ExtVersionIdKey, "null")
+	if isTestObj {
+		glog.V(0).Infof("=== TESTOBJBAR: set version header before putToFiler, r.Header[%s]=%s ===", 
+			s3_constants.ExtVersionIdKey, r.Header.Get(s3_constants.ExtVersionIdKey))
+	}
+
+	// Upload the file using putToFiler - this will create the file with version metadata
 	if isTestObj {
 		glog.V(0).Infof("=== TESTOBJBAR: calling putToFiler ===")
 	}
@@ -493,91 +502,30 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 		glog.V(0).Infof("=== TESTOBJBAR: putToFiler completed, etag=%s ===", etag)
 	}
 
-	// CRITICAL: We must retrieve and modify the existing entry that putToFiler created
-	// Use retry logic to handle filer consistency delays
-	var entry *filer_pb.Entry
-	maxRetries := 8
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		entry, err = s3a.getEntry(bucketDir, normalizedObject)
-		if err == nil {
-			if isTestObj {
-				glog.V(0).Infof("=== TESTOBJBAR: getEntry succeeded on attempt %d, entry.Extended=%v ===", attempt, entry.Extended)
-			}
-			break
-		}
-
-		if attempt < maxRetries {
-			// Exponential backoff: 10ms, 20ms, 40ms, 80ms, 160ms, 320ms, 640ms
-			delay := time.Millisecond * time.Duration(10*(1<<(attempt-1)))
-			if isTestObj {
-				glog.V(0).Infof("=== TESTOBJBAR: getEntry failed on attempt %d, retrying after %v ===", attempt, delay)
-			}
-			time.Sleep(delay)
-		}
-	}
-
-	if err != nil {
-		glog.Errorf("putSuspendedVersioningObject: failed to get object entry after %d attempts: %v", maxRetries, err)
-		return "", s3err.ErrInternalError
-	}
-
-	// Add metadata to indicate this is a "null" version for suspended versioning
-	if entry.Extended == nil {
-		entry.Extended = make(map[string][]byte)
-	}
-	entry.Extended[s3_constants.ExtVersionIdKey] = []byte("null")
+	// Verify the metadata was set correctly during file creation
 	if isTestObj {
-		glog.V(0).Infof("=== TESTOBJBAR: set ExtVersionIdKey=null, entry.Extended=%v ===", entry.Extended)
-	}
-
-	// Set object owner for suspended versioning objects
-	s3a.setObjectOwnerFromRequest(r, entry)
-
-	// Extract and store object lock metadata from request headers (if any)
-	if err := s3a.extractObjectLockMetadataFromRequest(r, entry); err != nil {
-		glog.Errorf("putSuspendedVersioningObject: failed to extract object lock metadata: %v", err)
-		return "", s3err.ErrInvalidRequest
-	}
-
-	// Use touch to update the existing entry's metadata in place
-	// This is critical to avoid creating 2 versions
-	glog.V(2).Infof("putSuspendedVersioningObject: updating entry with null version metadata for %s/%s", bucket, normalizedObject)
-	if isTestObj {
-		glog.V(0).Infof("=== TESTOBJBAR: calling touch with entry.Extended=%v, entry.Name=%s ===", entry.Extended, entry.Name)
-	}
-	err = s3a.touch(bucketDir, normalizedObject, entry)
-	if err != nil {
-		glog.Errorf("putSuspendedVersioningObject: failed to update object metadata: %v", err)
-		return "", s3err.ErrInternalError
-	}
-	if isTestObj {
-		glog.V(0).Infof("=== TESTOBJBAR: touch completed successfully ===")
-	}
-
-	// Verify the metadata was actually saved by re-reading the entry
-	// This is important to ensure the version metadata persists
-	for attempt := 1; attempt <= 5; attempt++ {
-		verifyEntry, verifyErr := s3a.getEntry(bucketDir, normalizedObject)
-		if verifyErr == nil {
-			if verifyEntry.Extended != nil {
-				if isTestObj {
-					glog.V(0).Infof("=== TESTOBJBAR: verify attempt %d, verifyEntry.Extended=%v ===", attempt, verifyEntry.Extended)
-				}
-				if versionIdBytes, ok := verifyEntry.Extended[s3_constants.ExtVersionIdKey]; ok && string(versionIdBytes) == "null" {
-					if isTestObj {
-						glog.V(0).Infof("=== TESTOBJBAR: verification SUCCESSFUL, metadata persisted ===")
+		// Read back the entry to verify
+		maxRetries := 3
+		for attempt := 1; attempt <= maxRetries; attempt++ {
+			verifyEntry, verifyErr := s3a.getEntry(bucketDir, normalizedObject)
+			if verifyErr == nil {
+				glog.V(0).Infof("=== TESTOBJBAR: verify attempt %d, entry.Extended=%v ===", attempt, verifyEntry.Extended)
+				if verifyEntry.Extended != nil {
+					if versionIdBytes, ok := verifyEntry.Extended[s3_constants.ExtVersionIdKey]; ok {
+						glog.V(0).Infof("=== TESTOBJBAR: verification SUCCESSFUL, version=%s ===", string(versionIdBytes))
+					} else {
+						glog.V(0).Infof("=== TESTOBJBAR: verification FAILED, ExtVersionIdKey not found ===")
 					}
-					glog.V(2).Infof("putSuspendedVersioningObject: verified null version metadata for %s/%s", bucket, normalizedObject)
-					break
+				} else {
+					glog.V(0).Infof("=== TESTOBJBAR: verification FAILED, Extended is nil ===")
 				}
+				break
+			} else {
+				glog.V(0).Infof("=== TESTOBJBAR: getEntry failed on attempt %d: %v ===", attempt, verifyErr)
 			}
-			if isTestObj {
-				glog.V(0).Infof("=== TESTOBJBAR: verification FAILED on attempt %d, metadata not found ===", attempt)
+			if attempt < maxRetries {
+				time.Sleep(time.Millisecond * 10)
 			}
-			glog.Warningf("putSuspendedVersioningObject: metadata not yet persisted, attempt %d/5", attempt)
-		}
-		if attempt < 5 {
-			time.Sleep(time.Millisecond * time.Duration(10*(1<<(attempt-1))))
 		}
 	}
 
