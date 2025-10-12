@@ -49,10 +49,13 @@ type LogBuffer struct {
 	flushFn           LogFlushFuncType
 	ReadFromDiskFn    LogReadFromDiskFuncType
 	notifyFn          func()
-	isStopping        *atomic.Bool
-	isAllFlushed      bool
-	flushChan         chan *dataToFlush
-	LastTsNs          atomic.Int64
+	// Per-subscriber notification channels for instant wake-up
+	subscribersMu sync.RWMutex
+	subscribers   map[string]chan struct{} // subscriberID -> notification channel
+	isStopping    *atomic.Bool
+	isAllFlushed  bool
+	flushChan     chan *dataToFlush
+	LastTsNs      atomic.Int64
 	// Offset range tracking for Kafka integration
 	minOffset         int64
 	maxOffset         int64
@@ -73,6 +76,7 @@ func NewLogBuffer(name string, flushInterval time.Duration, flushFn LogFlushFunc
 		flushFn:        flushFn,
 		ReadFromDiskFn: readFromDiskFn,
 		notifyFn:       notifyFn,
+		subscribers:    make(map[string]chan struct{}),
 		flushChan:      make(chan *dataToFlush, 256),
 		isStopping:     new(atomic.Bool),
 		offset:         0, // Will be initialized from existing data if available
@@ -81,6 +85,60 @@ func NewLogBuffer(name string, flushInterval time.Duration, flushFn LogFlushFunc
 	go lb.loopFlush()
 	go lb.loopInterval()
 	return lb
+}
+
+// RegisterSubscriber registers a subscriber for instant notifications when data is written
+// Returns a channel that will receive notifications (<1ms latency)
+func (logBuffer *LogBuffer) RegisterSubscriber(subscriberID string) chan struct{} {
+	logBuffer.subscribersMu.Lock()
+	defer logBuffer.subscribersMu.Unlock()
+
+	// Check if already registered
+	if existingChan, exists := logBuffer.subscribers[subscriberID]; exists {
+		glog.V(2).Infof("Subscriber %s already registered for %s, reusing channel", subscriberID, logBuffer.name)
+		return existingChan
+	}
+
+	// Create buffered channel (size 1) so notifications never block
+	notifyChan := make(chan struct{}, 1)
+	logBuffer.subscribers[subscriberID] = notifyChan
+	glog.V(1).Infof("Registered subscriber %s for %s (total: %d)", subscriberID, logBuffer.name, len(logBuffer.subscribers))
+	return notifyChan
+}
+
+// UnregisterSubscriber removes a subscriber and closes its notification channel
+func (logBuffer *LogBuffer) UnregisterSubscriber(subscriberID string) {
+	logBuffer.subscribersMu.Lock()
+	defer logBuffer.subscribersMu.Unlock()
+
+	if ch, exists := logBuffer.subscribers[subscriberID]; exists {
+		close(ch)
+		delete(logBuffer.subscribers, subscriberID)
+		glog.V(1).Infof("Unregistered subscriber %s from %s (remaining: %d)", subscriberID, logBuffer.name, len(logBuffer.subscribers))
+	}
+}
+
+// notifySubscribers sends notifications to all registered subscribers
+// Non-blocking: uses select with default to avoid blocking on full channels
+func (logBuffer *LogBuffer) notifySubscribers() {
+	logBuffer.subscribersMu.RLock()
+	defer logBuffer.subscribersMu.RUnlock()
+
+	if len(logBuffer.subscribers) == 0 {
+		return // No subscribers, skip notification
+	}
+
+	for subscriberID, notifyChan := range logBuffer.subscribers {
+		select {
+		case notifyChan <- struct{}{}:
+			// Notification sent successfully
+			glog.V(3).Infof("Notified subscriber %s for %s", subscriberID, logBuffer.name)
+		default:
+			// Channel full - subscriber hasn't consumed previous notification yet
+			// This is OK because one notification is sufficient to wake the subscriber
+			glog.V(3).Infof("Subscriber %s notification channel full (OK - already notified)", subscriberID)
+		}
+	}
 }
 
 // InitializeOffsetFromExistingData initializes the offset counter from existing data on disk
@@ -108,7 +166,7 @@ func (logBuffer *LogBuffer) InitializeOffsetFromExistingData(getHighestOffsetFn 
 		logBuffer.lastFlushedOffset.Store(highestOffset)
 		// Set lastFlushedTime to current time (we know data up to highestOffset is on disk)
 		logBuffer.lastFlushedTime.Store(time.Now().UnixNano())
-		glog.V(0).Infof("Initialized LogBuffer %s offset to %d (highest existing: %d), buffer starts at %d, lastFlushedOffset=%d, lastFlushedTime=%v", 
+		glog.V(0).Infof("Initialized LogBuffer %s offset to %d (highest existing: %d), buffer starts at %d, lastFlushedOffset=%d, lastFlushedTime=%v",
 			logBuffer.name, nextOffset, highestOffset, nextOffset, highestOffset, time.Now())
 	} else {
 		logBuffer.bufferStartOffset = 0 // Start from offset 0
@@ -137,6 +195,8 @@ func (logBuffer *LogBuffer) AddLogEntryToBuffer(logEntry *filer_pb.LogEntry) {
 		if logBuffer.notifyFn != nil {
 			logBuffer.notifyFn()
 		}
+		// Notify all registered subscribers instantly (<1ms latency)
+		logBuffer.notifySubscribers()
 	}()
 
 	processingTsNs := logEntry.TsNs
@@ -235,6 +295,8 @@ func (logBuffer *LogBuffer) AddDataToBuffer(partitionKey, data []byte, processin
 		if logBuffer.notifyFn != nil {
 			logBuffer.notifyFn()
 		}
+		// Notify all registered subscribers instantly (<1ms latency)
+		logBuffer.notifySubscribers()
 	}()
 
 	// Handle timestamp collision inside lock (rare case)
@@ -341,24 +403,16 @@ func (logBuffer *LogBuffer) loopFlush() {
 			d.releaseMemory()
 			// local logbuffer is different from aggregate logbuffer here
 			logBuffer.lastFlushDataTime = d.stopTime
-			
-			// Debug logging (BEFORE update to see what values are)
-			glog.V(0).Infof("[FLUSH BEFORE] minOffset=%d maxOffset=%d stopTime=%v hasOffsets=%v for %s",
-				d.minOffset, d.maxOffset, d.stopTime, d.maxOffset > 0, logBuffer.name)
-			
+
 			// CRITICAL: Track what's been flushed to disk for both offset-based and time-based reads
-			// This allows us to avoid ResumeFromDiskError when data hasn't been flushed yet
-			if d.maxOffset > 0 {
+			// CRITICAL FIX: Use >= 0 to include offset 0 (first message in a topic)
+			if d.maxOffset >= 0 {
 				logBuffer.lastFlushedOffset.Store(d.maxOffset)
 			}
 			if !d.stopTime.IsZero() {
 				logBuffer.lastFlushedTime.Store(d.stopTime.UnixNano())
 			}
-			
-			// Debug logging (AFTER update)
-			glog.V(0).Infof("[FLUSH AFTER] Updated lastFlushedOffset=%d lastFlushedTime=%v for %s",
-				logBuffer.lastFlushedOffset.Load(), time.Unix(0, logBuffer.lastFlushedTime.Load()), logBuffer.name)
-			
+
 			// Signal completion if there's a callback channel
 			if d.done != nil {
 				close(d.done)
@@ -460,40 +514,22 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 	if isOffsetBased {
 		requestedOffset := lastReadPosition.Offset
 
-		// Debug logging for all requests temporarily
-		glog.V(0).Infof("[BUFFER READ] name=%s requestedOffset=%d bufferStartOffset=%d logBuffer.offset=%d pos=%d lastFlushedOffset=%d",
-			logBuffer.name, requestedOffset, logBuffer.bufferStartOffset, logBuffer.offset, logBuffer.pos, logBuffer.lastFlushedOffset.Load())
-
 		// Check if the requested offset is in the current buffer range
 		if requestedOffset >= logBuffer.bufferStartOffset && requestedOffset <= logBuffer.offset {
-			// CRITICAL FIX: If current buffer is empty (pos=0), check if data is on disk
+			// If current buffer is empty (pos=0), data must be on disk or still being written
 			if logBuffer.pos == 0 {
-				lastFlushed := logBuffer.lastFlushedOffset.Load()
-				if lastFlushed >= requestedOffset {
-					// Data has been flushed to disk, read from there
-					glog.V(0).Infof("[BUFFER READ] pos=0, resuming from disk (lastFlushed=%d >= requestedOffset=%d)", lastFlushed, requestedOffset)
-					return nil, -2, ResumeFromDiskError
-				}
-				// Data not flushed yet - it's being written or in a previous buffer
-				// Return nil to keep waiting/checking memory
-				glog.V(0).Infof("[BUFFER READ] pos=0, waiting for data (lastFlushed=%d < requestedOffset=%d)", lastFlushed, requestedOffset)
-				return nil, logBuffer.offset, nil
+				// For empty buffer in the valid range, try disk read
+				return nil, -2, ResumeFromDiskError
 			}
-			glog.V(0).Infof("[BUFFER READ] Reading from current buffer, pos=%d", logBuffer.pos)
 			return copiedBytes(logBuffer.buf[:logBuffer.pos]), logBuffer.offset, nil
 		}
 
 		// Check previous buffers for the requested offset
 		for _, buf := range logBuffer.prevBuffers.buffers {
 			if requestedOffset >= buf.startOffset && requestedOffset <= buf.offset {
-				// CRITICAL FIX: If the prevBuffer is empty, check if on disk
+				// If prevBuffer is empty, try disk read
 				if buf.size == 0 {
-					lastFlushed := logBuffer.lastFlushedOffset.Load()
-					if lastFlushed >= requestedOffset {
-						return nil, -2, ResumeFromDiskError
-					}
-					// Data not flushed yet, wait
-					return nil, logBuffer.offset, nil
+					return nil, -2, ResumeFromDiskError
 				}
 				return copiedBytes(buf.buf[:buf.size]), buf.offset, nil
 			}
@@ -501,16 +537,9 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 
 		// Offset not found in any buffer
 		if requestedOffset < logBuffer.bufferStartOffset {
-			// CRITICAL FIX: Only read from disk if data has been flushed
-			lastFlushed := logBuffer.lastFlushedOffset.Load()
-			if lastFlushed >= requestedOffset {
-				// Data is on disk
-				return nil, -2, ResumeFromDiskError
-			}
-			// Data never existed or not flushed yet - wait
-			glog.V(4).Infof("Offset %d < bufferStart %d but not flushed (lastFlushed=%d)", 
-				requestedOffset, logBuffer.bufferStartOffset, lastFlushed)
-			return nil, logBuffer.offset, nil
+			// Data not in current buffers - must be on disk (flushed or never existed)
+			// Return ResumeFromDiskError to trigger disk read
+			return nil, -2, ResumeFromDiskError
 		}
 
 		if requestedOffset > logBuffer.offset {
@@ -547,17 +576,17 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 	if tsMemory.IsZero() { // case 2.2
 		return nil, -2, nil
 	} else if lastReadPosition.Time.Before(tsMemory) && lastReadPosition.Offset+1 < tsBatchIndex { // case 2.3
-		// CRITICAL FIX: Only read from disk if data has actually been flushed
-		lastFlushedTimeNs := logBuffer.lastFlushedTime.Load()
-		if lastFlushedTimeNs > 0 && lastReadPosition.Time.UnixNano() <= lastFlushedTimeNs {
-			glog.V(0).Infof("resume with last flush time: %v (requested: %v)", 
-				time.Unix(0, lastFlushedTimeNs), lastReadPosition.Time)
+		// Special case: If requested time is zero (Unix epoch), treat as "start from beginning"
+		// This handles queries that want to read all data without knowing the exact start time
+		if lastReadPosition.Time.IsZero() || lastReadPosition.Time.Unix() == 0 {
+			// Start from the beginning of memory
+			// Fall through to case 2.1 to read from earliest buffer
+		} else {
+			// Data not in memory buffers - read from disk
+			glog.V(0).Infof("resume from disk: requested time %v < earliest memory time %v",
+				lastReadPosition.Time, tsMemory)
 			return nil, -2, ResumeFromDiskError
 		}
-		// Data not flushed yet, wait in memory
-		glog.V(4).Infof("Data for time %v not flushed yet (lastFlushed=%v)", 
-			lastReadPosition.Time, time.Unix(0, lastFlushedTimeNs))
-		return nil, -2, nil
 	}
 
 	// the following is case 2.1

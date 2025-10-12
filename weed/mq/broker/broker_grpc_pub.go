@@ -193,19 +193,18 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 		// CRITICAL: Force immediate flush for _schemas topic to prevent Schema Registry timeout
 		// Schema Registry needs immediate visibility of registered schemas (500ms timeout)
 		//
-		// With ForceFlush, data is visible immediately (10-20ms latency) instead of waiting
-		// for the default flush interval (1s).
-		isSchemasTopic := initMessage.Topic != nil && initMessage.Topic.Name == "_schemas"
-		if isSchemasTopic {
-			if localTopicPartition.LogBuffer != nil {
-				localTopicPartition.LogBuffer.ForceFlush()
-				glog.V(0).Infof("SR PUBLISH: Force flushed _schemas after offset %d", assignedOffset)
-			} else {
-				glog.Warningf("SR PUBLISH: LogBuffer is nil for _schemas at offset %d", assignedOffset)
-			}
-		}
+		// ARCHITECTURAL NOTE: Proper multi-subscriber notification requires condition variables,
+		// but integrating sync.Cond with timeout-based reads is complex and error-prone:
+		//   - Goroutine wrapper around cond.Wait() + channel timeout = potential deadlocks
+		//   - Condition variable lock contention can block produce operations
+		//   - Need careful orchestration of Lock()/Unlock() across subscriber goroutines
+		//
+		// Per-subscriber notification channels provide instant wake-up (<1ms latency)
+		// No ForceFlush needed - subscribers are notified via dedicated channels
+		// This enables concurrent writes without blocking
+		glog.V(2).Infof("Published offset %d to %s", assignedOffset, initMessage.Topic.Name)
 
-		// CRITICAL FIX: Send immediate acknowledgment with the assigned offset
+		// Send immediate acknowledgment with the assigned offset
 		// This ensures read-after-write consistency for Kafka Gateway
 		response := &mq_pb.PublishMessageResponse{
 			AckTsNs:        dataMessage.TsNs, // Keep timestamp for compatibility

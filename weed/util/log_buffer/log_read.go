@@ -50,6 +50,11 @@ func (mp MessagePosition) GetOffset() int64 {
 
 func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition MessagePosition, stopTsNs int64,
 	waitForDataFn func() bool, eachLogDataFn EachLogEntryFuncType) (lastReadPosition MessagePosition, isDone bool, err error) {
+
+	// Register for instant notifications (<1ms latency)
+	notifyChan := logBuffer.RegisterSubscriber(readerName)
+	defer logBuffer.UnregisterSubscriber(readerName)
+
 	// loop through all messages
 	var bytesBuf *bytes.Buffer
 	var batchIndex int64
@@ -88,13 +93,22 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 			lastTsNs := logBuffer.LastTsNs.Load()
 
 			for lastTsNs == logBuffer.LastTsNs.Load() {
-				if waitForDataFn() {
-					// Sleep to avoid CPU busy-wait if waitForDataFn returns true but no new data yet
-					time.Sleep(10 * time.Millisecond)
-					continue
-				} else {
+				if !waitForDataFn() {
 					isDone = true
 					return
+				}
+				// Wait for notification or timeout (instant wake-up when data arrives)
+				select {
+				case <-notifyChan:
+					// New data available, break and retry read
+					glog.V(3).Infof("%s: Woke up from notification (LoopProcessLogData)", readerName)
+					break
+				case <-time.After(10 * time.Millisecond):
+					// Timeout, check if timestamp changed
+					if lastTsNs != logBuffer.LastTsNs.Load() {
+						break
+					}
+					glog.V(4).Infof("%s: Notification timeout (LoopProcessLogData), polling", readerName)
 				}
 			}
 			if logBuffer.IsStopping() {
@@ -168,6 +182,11 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, startPosition MessagePosition, stopTsNs int64,
 	waitForDataFn func() bool, eachLogDataFn EachLogEntryWithOffsetFuncType) (lastReadPosition MessagePosition, isDone bool, err error) {
 	glog.V(4).Infof("LoopProcessLogDataWithOffset started for %s, startPosition=%v", readerName, startPosition)
+
+	// Register for instant notifications (<1ms latency)
+	notifyChan := logBuffer.RegisterSubscriber(readerName)
+	defer logBuffer.UnregisterSubscriber(readerName)
+
 	// loop through all messages
 	var bytesBuf *bytes.Buffer
 	var offset int64
@@ -216,9 +235,15 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 				return lastReadPosition, isDone, nil
 			}
 
-			// OPTIMIZATION: Reduced sleep time to 10ms for faster disk reads
-			// This balances responsiveness with CPU usage
-			time.Sleep(10 * time.Millisecond)
+			// Wait for notification or timeout (instant wake-up when data arrives)
+			select {
+			case <-notifyChan:
+				// New data available, retry immediately
+				glog.V(3).Infof("%s: Woke up from notification after disk read", readerName)
+			case <-time.After(10 * time.Millisecond):
+				// Timeout, retry anyway (fallback for edge cases)
+				glog.V(4).Infof("%s: Notification timeout, polling", readerName)
+			}
 
 			// Continue to next iteration (don't return ResumeFromDiskError)
 			continue
@@ -256,21 +281,37 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 					isDone = true
 					return
 				}
-				// OPTIMIZATION: Reduced sleep time to 10ms for faster disk reads
-				time.Sleep(10 * time.Millisecond)
+				// Wait for notification or timeout (instant wake-up when data arrives)
+				select {
+				case <-notifyChan:
+					// New data available, retry immediately
+					glog.V(3).Infof("%s: Woke up from notification for offset-based read", readerName)
+				case <-time.After(10 * time.Millisecond):
+					// Timeout, retry anyway (fallback for edge cases)
+					glog.V(4).Infof("%s: Notification timeout for offset-based, polling", readerName)
+				}
 				return lastReadPosition, isDone, ResumeFromDiskError
 			}
 
 			lastTsNs := logBuffer.LastTsNs.Load()
 
 			for lastTsNs == logBuffer.LastTsNs.Load() {
-				if waitForDataFn() {
-					// Sleep to avoid CPU busy-wait if waitForDataFn returns true but no new data yet
-					time.Sleep(10 * time.Millisecond)
-					continue
-				} else {
+				if !waitForDataFn() {
 					isDone = true
 					return
+				}
+				// Wait for notification or timeout (instant wake-up when data arrives)
+				select {
+				case <-notifyChan:
+					// New data available, break and retry read
+					glog.V(3).Infof("%s: Woke up from notification (main loop)", readerName)
+					break
+				case <-time.After(10 * time.Millisecond):
+					// Timeout, check if timestamp changed
+					if lastTsNs != logBuffer.LastTsNs.Load() {
+						break
+					}
+					glog.V(4).Infof("%s: Notification timeout (main loop), polling", readerName)
 				}
 			}
 			if logBuffer.IsStopping() {
