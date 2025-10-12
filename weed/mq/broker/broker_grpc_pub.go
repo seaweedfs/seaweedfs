@@ -190,13 +190,16 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 			return fmt.Errorf("topic %v partition %v publish error: %w", initMessage.Topic, initMessage.Partition, err)
 		}
 
-		// CRITICAL: Force immediate flush for _schemas topic to prevent Schema Registry deadlock
-		// Schema Registry needs immediate visibility of registered schemas
+		// CRITICAL: Force immediate flush for _schemas topic to prevent Schema Registry timeout
+		// Schema Registry needs immediate visibility of registered schemas (500ms timeout)
+		//
+		// With ForceFlush, data is visible immediately (10-20ms latency) instead of waiting
+		// for the default flush interval (1s).
 		isSchemasTopic := initMessage.Topic != nil && initMessage.Topic.Name == "_schemas"
 		if isSchemasTopic {
 			if localTopicPartition.LogBuffer != nil {
 				localTopicPartition.LogBuffer.ForceFlush()
-				glog.Infof("SR PUBLISH: Force flushed _schemas after offset %d", assignedOffset)
+				glog.V(0).Infof("SR PUBLISH: Force flushed _schemas after offset %d", assignedOffset)
 			} else {
 				glog.Warningf("SR PUBLISH: LogBuffer is nil for _schemas at offset %d", assignedOffset)
 			}
@@ -208,6 +211,7 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 			AckTsNs:        dataMessage.TsNs, // Keep timestamp for compatibility
 			AssignedOffset: assignedOffset,   // Send the assigned offset in the proper field
 		}
+
 		if err := stream.Send(response); err != nil {
 			glog.Errorf("Error sending immediate offset response %v: %v", response, err)
 			return fmt.Errorf("failed to send offset response: %v", err)
