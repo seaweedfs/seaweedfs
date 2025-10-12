@@ -22,10 +22,6 @@ type partitionReader struct {
 	recordBuffer chan *bufferedRecords // Buffered pre-fetched records
 	bufferMu     sync.Mutex            // Protects offset access
 
-	// Concurrency control
-	concurrencySem chan struct{} // Limits concurrent requests
-	activeWg       sync.WaitGroup
-
 	handler *Handler
 	connCtx *ConnectionContext
 }
@@ -50,15 +46,14 @@ type partitionFetchRequest struct {
 // newPartitionReader creates and starts a new partition reader with pre-fetch buffering
 func newPartitionReader(ctx context.Context, handler *Handler, connCtx *ConnectionContext, topicName string, partitionID int32, startOffset int64) *partitionReader {
 	pr := &partitionReader{
-		topicName:      topicName,
-		partitionID:    partitionID,
-		currentOffset:  startOffset,
-		fetchChan:      make(chan *partitionFetchRequest, 200), // Buffer 200 requests to handle Schema Registry's rapid polling in slow CI environments
-		closeChan:      make(chan struct{}),
-		recordBuffer:   make(chan *bufferedRecords, 5), // Buffer 5 batches of records
-		concurrencySem: make(chan struct{}, 20),        // Limit to 20 concurrent requests per partition to handle slow disk I/O in CI
-		handler:        handler,
-		connCtx:        connCtx,
+		topicName:     topicName,
+		partitionID:   partitionID,
+		currentOffset: startOffset,
+		fetchChan:     make(chan *partitionFetchRequest, 200), // Buffer 200 requests to handle Schema Registry's rapid polling in slow CI environments
+		closeChan:     make(chan struct{}),
+		recordBuffer:  make(chan *bufferedRecords, 5), // Buffer 5 batches of records
+		handler:       handler,
+		connCtx:       connCtx,
 	}
 
 	// Start the pre-fetch goroutine that continuously fetches ahead
@@ -67,7 +62,7 @@ func newPartitionReader(ctx context.Context, handler *Handler, connCtx *Connecti
 	// Start the request handler goroutine
 	go pr.handleRequests(ctx)
 
-	glog.V(2).Infof("[%s] Created partition reader for %s[%d] starting at offset %d (concurrent: ch=200, sem=20)",
+	glog.V(2).Infof("[%s] Created partition reader for %s[%d] starting at offset %d (sequential with ch=200)",
 		connCtx.ConnectionID, topicName, partitionID, startOffset)
 
 	return pr
@@ -93,12 +88,13 @@ func (pr *partitionReader) preFetchLoop(ctx context.Context) {
 	}
 }
 
-// handleRequests serves fetch requests concurrently (with concurrency limit)
-// This prevents slow requests from blocking the queue in CI environments with slow disk I/O
+// handleRequests serves fetch requests SEQUENTIALLY to prevent subscriber storm
+// CRITICAL: Sequential processing is essential for SMQ backend because:
+// 1. GetStoredRecords may create a new subscriber on each call
+// 2. Concurrent calls create multiple subscribers for the same partition
+// 3. This overwhelms the broker and causes partition shutdowns
 func (pr *partitionReader) handleRequests(ctx context.Context) {
 	defer func() {
-		// Wait for all active requests to complete
-		pr.activeWg.Wait()
 		glog.V(2).Infof("[%s] Request handler exiting for %s[%d]",
 			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID)
 	}()
@@ -110,21 +106,8 @@ func (pr *partitionReader) handleRequests(ctx context.Context) {
 		case <-pr.closeChan:
 			return
 		case req := <-pr.fetchChan:
-			// Acquire semaphore slot (blocks if at concurrency limit)
-			select {
-			case pr.concurrencySem <- struct{}{}:
-				// Slot acquired, handle request concurrently
-				pr.activeWg.Add(1)
-				go func(r *partitionFetchRequest) {
-					defer pr.activeWg.Done()
-					defer func() { <-pr.concurrencySem }() // Release slot
-					pr.serveFetchRequest(ctx, r)
-				}(req)
-			case <-ctx.Done():
-				return
-			case <-pr.closeChan:
-				return
-			}
+			// Process sequentially to prevent subscriber storm
+			pr.serveFetchRequest(ctx, req)
 		}
 	}
 }
