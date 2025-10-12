@@ -135,7 +135,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		versioningEnabled := (versioningState == s3_constants.VersioningEnabled)
 		versioningConfigured := (versioningState != "")
 
-		glog.V(3).Infof("PutObjectHandler: bucket=%s, object=%s, versioningState=%s, versioningEnabled=%v", bucket, object, versioningState, versioningEnabled)
+		glog.V(0).Infof("PutObjectHandler: bucket=%s, object=%s, versioningState='%s', versioningEnabled=%v, versioningConfigured=%v", bucket, object, versioningState, versioningEnabled, versioningConfigured)
 
 		// Validate object lock headers before processing
 		if err := s3a.validateObjectLockHeaders(r, versioningEnabled); err != nil {
@@ -157,20 +157,22 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 		if versioningState == s3_constants.VersioningEnabled {
 			// Handle enabled versioning - create new versions with real version IDs
+			glog.V(0).Infof("PutObjectHandler: ENABLED versioning detected for %s/%s, calling putVersionedObject", bucket, object)
 			versionId, etag, errCode := s3a.putVersionedObject(r, bucket, object, dataReader, objectContentType)
 			if errCode != s3err.ErrNone {
+				glog.Errorf("PutObjectHandler: putVersionedObject failed with errCode=%v for %s/%s", errCode, bucket, object)
 				s3err.WriteErrorResponse(w, r, errCode)
 				return
 			}
 
-			glog.V(3).Infof("PutObjectHandler: versioning enabled, versionId=%s, etag=%s for %s/%s", versionId, etag, bucket, object)
+			glog.V(0).Infof("PutObjectHandler: putVersionedObject returned versionId=%s, etag=%s for %s/%s", versionId, etag, bucket, object)
 
 			// Set version ID in response header
 			if versionId != "" {
 				w.Header().Set("x-amz-version-id", versionId)
-				glog.V(3).Infof("PutObjectHandler: set x-amz-version-id header to %s", versionId)
+				glog.V(0).Infof("PutObjectHandler: set x-amz-version-id header to %s for %s/%s", versionId, bucket, object)
 			} else {
-				glog.Warningf("PutObjectHandler: versionId is empty for versioned bucket %s, object %s", bucket, object)
+				glog.Errorf("PutObjectHandler: CRITICAL - versionId is EMPTY for versioned bucket %s, object %s", bucket, object)
 			}
 
 			// Set ETag in response
