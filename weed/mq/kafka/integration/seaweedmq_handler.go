@@ -66,39 +66,14 @@ func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromO
 	// the same data repeatedly, creating an infinite loop.
 	glog.V(2).Infof("[FETCH] Getting or creating subscriber for topic=%s partition=%d fromOffset=%d", topic, partition, fromOffset)
 
+	// GetOrCreateSubscriber handles offset mismatches internally
+	// If the cached subscriber is at a different offset, it will be recreated automatically
 	brokerSubscriber, err := brokerClient.GetOrCreateSubscriber(topic, partition, fromOffset)
 	if err != nil {
 		glog.Errorf("[FETCH] Failed to get/create subscriber: %v", err)
 		return nil, fmt.Errorf("failed to get/create subscriber: %v", err)
 	}
-	glog.V(2).Infof("[FETCH] Subscriber ready")
-
-	// CRITICAL FIX: If the subscriber is not at the requested offset, recreate it
-	// This handles both backward seeks (rewind) and forward seeks (skip ahead)
-	// NOTE: StartOffset is updated by ReadRecords to track current position
-	if brokerSubscriber.StartOffset != fromOffset {
-		glog.V(2).Infof("[FETCH] Subscriber offset mismatch: current=%d, requested=%d - recreating subscriber",
-			brokerSubscriber.StartOffset, fromOffset)
-
-		// Close the old subscriber
-		if brokerSubscriber.Stream != nil {
-			_ = brokerSubscriber.Stream.CloseSend()
-		}
-
-		// Remove from cache
-		key := fmt.Sprintf("%s-%d", topic, partition)
-		brokerClient.subscribersLock.Lock()
-		delete(brokerClient.subscribers, key)
-		brokerClient.subscribersLock.Unlock()
-
-		// Create a fresh subscriber at the requested offset
-		brokerSubscriber, err = brokerClient.CreateFreshSubscriber(topic, partition, fromOffset, consumerGroup, consumerID)
-		if err != nil {
-			glog.Errorf("[FETCH] Failed to create fresh subscriber: %v", err)
-			return nil, fmt.Errorf("failed to create fresh subscriber: %v", err)
-		}
-		glog.V(2).Infof("[FETCH] Created fresh subscriber at offset %d", fromOffset)
-	}
+	glog.V(2).Infof("[FETCH] Subscriber ready at offset %d", brokerSubscriber.StartOffset)
 
 	// NOTE: We DON'T close the subscriber here because we're reusing it across Fetch requests
 	// The subscriber will be closed when the connection closes or when a different offset is requested
@@ -177,9 +152,13 @@ func (h *SeaweedMQHandler) GetEarliestOffset(topic string, partition int32) (int
 // GetLatestOffset returns the latest available offset for a topic partition
 // ALWAYS queries SMQ broker directly - no ledger involved
 func (h *SeaweedMQHandler) GetLatestOffset(topic string, partition int32) (int64, error) {
+	isSchemasTopic := topic == "_schemas"
 
 	// Check if topic exists
 	if !h.TopicExists(topic) {
+		if isSchemasTopic {
+			glog.Infof("[SCHEMAS DEBUG] Topic does not exist, returning offset=0")
+		}
 		return 0, nil // Empty topic
 	}
 
@@ -190,6 +169,10 @@ func (h *SeaweedMQHandler) GetLatestOffset(topic string, partition int32) (int64
 		if time.Now().Before(entry.expiresAt) {
 			// Cache hit - return cached value
 			h.hwmCacheMu.RUnlock()
+			if isSchemasTopic {
+				glog.Infof("[SCHEMAS DEBUG] HWM cache hit: offset=%d ttl=%v",
+					entry.value, entry.expiresAt.Sub(time.Now()))
+			}
 			return entry.value, nil
 		}
 	}
@@ -198,6 +181,10 @@ func (h *SeaweedMQHandler) GetLatestOffset(topic string, partition int32) (int64
 	// Cache miss or expired - query SMQ broker
 	if h.brokerClient != nil {
 		latestOffset, err := h.brokerClient.GetHighWaterMark(topic, partition)
+		if isSchemasTopic {
+			glog.Infof("[SCHEMAS DEBUG] HWM query from broker: offset=%d err=%v (cache miss/expired)",
+				latestOffset, err)
+		}
 		if err != nil {
 			return 0, err
 		}
@@ -235,6 +222,8 @@ func (h *SeaweedMQHandler) GetFilerAddress() string {
 
 // ProduceRecord publishes a record to SeaweedMQ and lets SMQ generate the offset
 func (h *SeaweedMQHandler) ProduceRecord(topic string, partition int32, key []byte, value []byte) (int64, error) {
+	isSchemasTopic := topic == "_schemas"
+
 	if len(key) > 0 {
 	}
 	if len(value) > 0 {
@@ -270,6 +259,11 @@ func (h *SeaweedMQHandler) ProduceRecord(topic string, partition int32, key []by
 	h.hwmCacheMu.Lock()
 	delete(h.hwmCache, cacheKey)
 	h.hwmCacheMu.Unlock()
+
+	if isSchemasTopic {
+		glog.Infof("[SCHEMAS DEBUG] Produced record: topic=%s partition=%d assignedOffset=%d keyLen=%d valueLen=%d (HWM cache invalidated)",
+			topic, partition, smqOffset, len(key), len(value))
+	}
 
 	return smqOffset, nil
 }

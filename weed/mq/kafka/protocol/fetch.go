@@ -206,6 +206,8 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 			// System topics need random seeks (seek to earliest), but persistent readers
 			// are optimized for forward-only reading and get stuck on backward seeks
 			if isSystemTopic(topic.Name) {
+				glog.Infof("[%s] Using direct fetch for system topic %s[%d] offset=%d (bypassing persistent reader)",
+					connContext.ConnectionID, topic.Name, partition.PartitionID, partition.FetchOffset)
 				// Use direct fetch for system topics
 				result := h.fetchPartitionData(ctx, topic.Name, partition, apiVersion, isSchematizedTopic)
 				directChan := make(chan *partitionFetchResult, 1)
