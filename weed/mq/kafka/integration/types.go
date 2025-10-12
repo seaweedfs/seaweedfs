@@ -168,6 +168,7 @@ type BrokerPublisherSession struct {
 	Topic     string
 	Partition int32
 	Stream    mq_pb.SeaweedMessaging_PublishMessageClient
+	mu        sync.Mutex // Protects Send/Recv pairs from concurrent access
 }
 
 // BrokerSubscriberSession tracks a subscription stream for offset management

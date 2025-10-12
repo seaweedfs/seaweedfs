@@ -98,10 +98,10 @@ func (p *LocalPartition) Subscribe(clientName string, startPosition log_buffer.M
 			return eachMessageFn(logEntry)
 		}
 
-		// PROPER FIX: Read from disk ONCE to catch up, then stay in memory buffer
-		// This prevents the busy loop that was causing 1388% Filer CPU
-
-		// Step 1: Read all available historical data from disk (one-time catchup)
+		// Always attempt initial disk read for historical data
+		// This is fast if no data on disk, and ensures we don't miss old data
+		// The memory read loop below handles new data with instant notifications
+		glog.V(2).Infof("%s reading historical data from disk starting at offset %d", clientName, startPosition.Offset)
 		processedPosition, isDone, readPersistedLogErr = p.LogBuffer.ReadFromDiskFn(startPosition, 0, eachMessageFn)
 		if readPersistedLogErr != nil {
 			glog.V(2).Infof("%s read %v persisted log: %v", clientName, p.Partition, readPersistedLogErr)
@@ -112,7 +112,6 @@ func (p *LocalPartition) Subscribe(clientName string, startPosition log_buffer.M
 		}
 
 		// Update position after reading from disk
-		// CRITICAL FIX: For offset-based reads, Time is zero, so check Offset instead
 		if processedPosition.Time.UnixNano() != 0 || processedPosition.IsOffsetBased {
 			startPosition = processedPosition
 		}

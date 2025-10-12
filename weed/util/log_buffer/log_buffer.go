@@ -118,6 +118,61 @@ func (logBuffer *LogBuffer) UnregisterSubscriber(subscriberID string) {
 	}
 }
 
+// IsOffsetInMemory checks if the given offset is available in the in-memory buffer
+// Returns true if:
+// 1. Offset is newer than what's been flushed to disk (must be in memory)
+// 2. Offset is in current buffer or previous buffers (may be flushed but still in memory)
+// Returns false if offset is older than memory buffers (only on disk)
+func (logBuffer *LogBuffer) IsOffsetInMemory(offset int64) bool {
+	logBuffer.RLock()
+	defer logBuffer.RUnlock()
+
+	// Check if we're tracking offsets at all
+	if !logBuffer.hasOffsets {
+		return false // No offsets tracked yet
+	}
+
+	// OPTIMIZATION: If offset is newer than what's been flushed to disk,
+	// it MUST be in memory (not written to disk yet)
+	lastFlushed := logBuffer.lastFlushedOffset.Load()
+	if lastFlushed >= 0 && offset > lastFlushed {
+		glog.V(3).Infof("Offset %d is in memory (newer than lastFlushed=%d)", offset, lastFlushed)
+		return true
+	}
+
+	// Check if offset is in current buffer range AND buffer has data
+	// (data can be both on disk AND in memory during flush window)
+	if offset >= logBuffer.bufferStartOffset && offset <= logBuffer.offset {
+		// CRITICAL: Check if buffer actually has data (pos > 0)
+		// After flush, pos=0 but range is still valid - data is on disk, not in memory
+		if logBuffer.pos > 0 {
+			glog.V(3).Infof("Offset %d is in current buffer [%d-%d] with data", offset, logBuffer.bufferStartOffset, logBuffer.offset)
+			return true
+		}
+		// Buffer is empty (just flushed) - data is on disk
+		glog.V(3).Infof("Offset %d in range [%d-%d] but buffer empty (pos=0), data on disk", offset, logBuffer.bufferStartOffset, logBuffer.offset)
+		return false
+	}
+
+	// Check if offset is in previous buffers AND they have data
+	for _, buf := range logBuffer.prevBuffers.buffers {
+		if offset >= buf.startOffset && offset <= buf.offset {
+			// Check if prevBuffer actually has data
+			if buf.size > 0 {
+				glog.V(3).Infof("Offset %d is in previous buffer [%d-%d] with data", offset, buf.startOffset, buf.offset)
+				return true
+			}
+			// Buffer is empty (flushed) - data is on disk
+			glog.V(3).Infof("Offset %d in prevBuffer [%d-%d] but empty (size=0), data on disk", offset, buf.startOffset, buf.offset)
+			return false
+		}
+	}
+
+	// Offset is older than memory buffers - only available on disk
+	glog.V(3).Infof("Offset %d is NOT in memory (bufferStart=%d, lastFlushed=%d)", offset, logBuffer.bufferStartOffset, lastFlushed)
+	return false
+}
+
 // notifySubscribers sends notifications to all registered subscribers
 // Non-blocking: uses select with default to avoid blocking on full channels
 func (logBuffer *LogBuffer) notifySubscribers() {
@@ -516,10 +571,16 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 
 		// Check if the requested offset is in the current buffer range
 		if requestedOffset >= logBuffer.bufferStartOffset && requestedOffset <= logBuffer.offset {
-			// If current buffer is empty (pos=0), data must be on disk or still being written
+			// If current buffer is empty (pos=0), check if data is on disk or not yet written
 			if logBuffer.pos == 0 {
-				// For empty buffer in the valid range, try disk read
-				return nil, -2, ResumeFromDiskError
+				// Check lastFlushedOffset to distinguish:
+				// - If requestedOffset <= lastFlushedOffset: data is on disk, read from disk
+				// - If requestedOffset > lastFlushedOffset: data not yet written, wait for notification
+				if requestedOffset <= logBuffer.lastFlushedOffset.Load() {
+					return nil, -2, ResumeFromDiskError
+				}
+				// Data not yet written to disk, wait for it to arrive in buffer
+				return nil, logBuffer.offset, nil
 			}
 			return copiedBytes(logBuffer.buf[:logBuffer.pos]), logBuffer.offset, nil
 		}
@@ -527,9 +588,13 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 		// Check previous buffers for the requested offset
 		for _, buf := range logBuffer.prevBuffers.buffers {
 			if requestedOffset >= buf.startOffset && requestedOffset <= buf.offset {
-				// If prevBuffer is empty, try disk read
+				// If prevBuffer is empty, check if data is on disk or not yet written
 				if buf.size == 0 {
-					return nil, -2, ResumeFromDiskError
+					if requestedOffset <= logBuffer.lastFlushedOffset.Load() {
+						return nil, -2, ResumeFromDiskError
+					}
+					// Data not yet written, wait for notification
+					return nil, logBuffer.offset, nil
 				}
 				return copiedBytes(buf.buf[:buf.size]), buf.offset, nil
 			}

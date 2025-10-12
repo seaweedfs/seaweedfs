@@ -84,44 +84,47 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 		return stream.Send(response)
 	}
 
-	var receivedSequence, acknowledgedSequence int64
-	var isClosed bool
-
 	// process each published messages
 	clientName := fmt.Sprintf("%v-%4d", findClientAddress(stream.Context()), rand.IntN(10000))
 	publisher := topic.NewLocalPublisher()
 	localTopicPartition.Publishers.AddPublisher(clientName, publisher)
 
-	// start sending ack to publisher
-	ackInterval := int64(1)
-	if initMessage.AckInterval > 0 {
-		ackInterval = int64(initMessage.AckInterval)
-	}
-	go func() {
-		defer func() {
-			// println("stop sending ack to publisher", initMessage.PublisherName)
-		}()
+	// DISABLED: Periodic ack goroutine not needed with immediate per-message acks
+	// Immediate acks provide correct offset information for Kafka Gateway
+	var receivedSequence, acknowledgedSequence int64
+	var isClosed bool
 
-		lastAckTime := time.Now()
-		for !isClosed {
-			receivedSequence = atomic.LoadInt64(&localTopicPartition.AckTsNs)
-			if acknowledgedSequence < receivedSequence && (receivedSequence-acknowledgedSequence >= ackInterval || time.Since(lastAckTime) > 100*time.Millisecond) {
-				acknowledgedSequence = receivedSequence
-				response := &mq_pb.PublishMessageResponse{
-					AckTsNs: acknowledgedSequence,
-				}
-				if err := stream.Send(response); err != nil {
-					glog.Errorf("Error sending response %v: %v", response, err)
-				}
-				// Update acknowledged offset for this publisher
-				publisher.UpdateAckedOffset(acknowledgedSequence)
-				// println("sent ack", acknowledgedSequence, "=>", initMessage.PublisherName)
-				lastAckTime = time.Now()
-			} else {
-				time.Sleep(10 * time.Millisecond) // Reduced from 1s to 10ms for faster acknowledgments
-			}
+	if false {
+		ackInterval := int64(1)
+		if initMessage.AckInterval > 0 {
+			ackInterval = int64(initMessage.AckInterval)
 		}
-	}()
+		go func() {
+			defer func() {
+				// println("stop sending ack to publisher", initMessage.PublisherName)
+			}()
+
+			lastAckTime := time.Now()
+			for !isClosed {
+				receivedSequence = atomic.LoadInt64(&localTopicPartition.AckTsNs)
+				if acknowledgedSequence < receivedSequence && (receivedSequence-acknowledgedSequence >= ackInterval || time.Since(lastAckTime) > 100*time.Millisecond) {
+					acknowledgedSequence = receivedSequence
+					response := &mq_pb.PublishMessageResponse{
+						AckTsNs: acknowledgedSequence,
+					}
+					if err := stream.Send(response); err != nil {
+						glog.Errorf("Error sending response %v: %v", response, err)
+					}
+					// Update acknowledged offset for this publisher
+					publisher.UpdateAckedOffset(acknowledgedSequence)
+					// println("sent ack", acknowledgedSequence, "=>", initMessage.PublisherName)
+					lastAckTime = time.Now()
+				} else {
+					time.Sleep(10 * time.Millisecond) // Reduced from 1s to 10ms for faster acknowledgments
+				}
+			}
+		}()
+	}
 
 	defer func() {
 		// remove the publisher
@@ -190,34 +193,22 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 			return fmt.Errorf("topic %v partition %v publish error: %w", initMessage.Topic, initMessage.Partition, err)
 		}
 
-		// CRITICAL: Force immediate flush for _schemas topic to prevent Schema Registry timeout
-		// Schema Registry needs immediate visibility of registered schemas (500ms timeout)
-		//
-		// ARCHITECTURAL NOTE: Proper multi-subscriber notification requires condition variables,
-		// but integrating sync.Cond with timeout-based reads is complex and error-prone:
-		//   - Goroutine wrapper around cond.Wait() + channel timeout = potential deadlocks
-		//   - Condition variable lock contention can block produce operations
-		//   - Need careful orchestration of Lock()/Unlock() across subscriber goroutines
-		//
-		// Per-subscriber notification channels provide instant wake-up (<1ms latency)
-		// No ForceFlush needed - subscribers are notified via dedicated channels
-		// This enables concurrent writes without blocking
+		// No ForceFlush - subscribers use per-subscriber notification channels for instant wake-up
+		// Data is served from in-memory LogBuffer with <1ms latency
 		glog.V(2).Infof("Published offset %d to %s", assignedOffset, initMessage.Topic.Name)
 
-		// Send immediate acknowledgment with the assigned offset
-		// This ensures read-after-write consistency for Kafka Gateway
+		// Send immediate per-message ack WITH offset
+		// This is critical for Gateway to return correct offsets to Kafka clients
 		response := &mq_pb.PublishMessageResponse{
-			AckTsNs:        dataMessage.TsNs, // Keep timestamp for compatibility
-			AssignedOffset: assignedOffset,   // Send the assigned offset in the proper field
+			AckTsNs:        dataMessage.TsNs,
+			AssignedOffset: assignedOffset,
 		}
-
 		if err := stream.Send(response); err != nil {
-			glog.Errorf("Error sending immediate offset response %v: %v", response, err)
-			return fmt.Errorf("failed to send offset response: %v", err)
+			glog.Errorf("Error sending immediate ack %v: %v", response, err)
+			return fmt.Errorf("failed to send ack: %v", err)
 		}
 
 		// Update published offset and last seen time for this publisher
-		// Use the actual assigned offset instead of timestamp
 		publisher.UpdatePublishedOffset(assignedOffset)
 	}
 

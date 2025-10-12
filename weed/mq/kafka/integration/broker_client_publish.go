@@ -21,6 +21,11 @@ func (bc *BrokerClient) PublishRecord(topic string, partition int32, key []byte,
 		return 0, fmt.Errorf("publisher session stream cannot be nil")
 	}
 
+	// CRITICAL: Lock to prevent concurrent Send/Recv causing response mix-ups
+	// Without this, two concurrent publishes can steal each other's offsets
+	session.mu.Lock()
+	defer session.mu.Unlock()
+
 	// Send data message using broker API format
 	dataMsg := &mq_pb.DataMessage{
 		Key:   key,
@@ -45,6 +50,11 @@ func (bc *BrokerClient) PublishRecord(topic string, partition int32, key []byte,
 		return 0, fmt.Errorf("failed to receive ack: %v", err)
 	}
 
+	if topic == "_schemas" {
+		glog.Infof("[GATEWAY RECV] topic=%s partition=%d resp.AssignedOffset=%d resp.AckTsNs=%d", 
+			topic, partition, resp.AssignedOffset, resp.AckTsNs)
+	}
+
 	// Handle structured broker errors
 	if kafkaErrorCode, errorMsg, handleErr := HandleBrokerResponse(resp); handleErr != nil {
 		return 0, handleErr
@@ -67,6 +77,10 @@ func (bc *BrokerClient) PublishRecordValue(topic string, partition int32, key []
 	if session.Stream == nil {
 		return 0, fmt.Errorf("publisher session stream cannot be nil")
 	}
+
+	// CRITICAL: Lock to prevent concurrent Send/Recv causing response mix-ups
+	session.mu.Lock()
+	defer session.mu.Unlock()
 
 	// Send data message with RecordValue in the Value field
 	dataMsg := &mq_pb.DataMessage{
@@ -149,6 +163,17 @@ func (bc *BrokerClient) getOrCreatePublisher(topic string, partition int32) (*Br
 		},
 	}); err != nil {
 		return nil, fmt.Errorf("failed to send init message: %v", err)
+	}
+
+	// CRITICAL: Consume the "hello" message sent by broker after init
+	// Broker sends empty PublishMessageResponse{} on line 137 of broker_grpc_pub.go
+	// Without this, first Recv() in PublishRecord gets hello instead of data ack
+	helloResp, err := stream.Recv()
+	if err != nil {
+		return nil, fmt.Errorf("failed to receive hello message: %v", err)
+	}
+	if helloResp.ErrorCode != 0 {
+		return nil, fmt.Errorf("broker init error (code %d): %s", helloResp.ErrorCode, helloResp.Error)
 	}
 
 	session := &BrokerPublisherSession{

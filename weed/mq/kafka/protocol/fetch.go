@@ -202,23 +202,8 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 		for _, partition := range topic.Partitions {
 			key := TopicPartitionKey{Topic: topic.Name, Partition: partition.PartitionID}
 
-			// CRITICAL: Skip persistent readers for system topics like _schemas
-			// System topics need random seeks (seek to earliest), but persistent readers
-			// are optimized for forward-only reading and get stuck on backward seeks
-			if isSystemTopic(topic.Name) {
-				glog.Infof("[%s] Using direct fetch for system topic %s[%d] offset=%d (bypassing persistent reader)",
-					connContext.ConnectionID, topic.Name, partition.PartitionID, partition.FetchOffset)
-				// Use direct fetch for system topics
-				result := h.fetchPartitionData(ctx, topic.Name, partition, apiVersion, isSchematizedTopic)
-				directChan := make(chan *partitionFetchResult, 1)
-				directChan <- result
-				pending = append(pending, pendingFetch{
-					topicName:   topic.Name,
-					partitionID: partition.PartitionID,
-					resultChan:  directChan,
-				})
-				continue
-			}
+			// All topics (including system topics) use persistent readers for in-memory access
+			// This enables instant notification and avoids ForceFlush dependencies
 
 			// Get or create persistent reader for this partition
 			reader := h.getOrCreatePartitionReader(ctx, connContext, key, partition.FetchOffset)
