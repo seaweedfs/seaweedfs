@@ -244,7 +244,7 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 				apiVersion:      apiVersion,
 			}
 
-			// Try to send request (with short timeout since channel is buffered)
+			// Try to send request (increased timeout for CI environments with slow disk I/O)
 			select {
 			case reader.fetchChan <- fetchReq:
 				// Request sent successfully, add to pending
@@ -253,7 +253,7 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 					partitionID: partition.PartitionID,
 					resultChan:  resultChan,
 				})
-			case <-time.After(50 * time.Millisecond):
+			case <-time.After(200 * time.Millisecond):
 				// Channel full, return empty result
 				glog.Warningf("[%s] Reader channel full for %s[%d], returning empty",
 					connContext.ConnectionID, topic.Name, partition.PartitionID)
@@ -268,10 +268,10 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 		}
 	}
 
-	// Phase 2: Wait for all results with short timeout (serving from buffer is fast)
+	// Phase 2: Wait for all results with adequate timeout for CI environments
 	// CRITICAL: We MUST return a result for every requested partition or Sarama will error
 	results := make([]*partitionFetchResult, len(pending))
-	deadline := time.After(50 * time.Millisecond) // 50ms for all partitions (buffer should be instant)
+	deadline := time.After(500 * time.Millisecond) // 500ms for all partitions (increased for CI disk I/O)
 
 	// Collect results one by one with shared deadline
 	for i, pf := range pending {

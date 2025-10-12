@@ -53,10 +53,10 @@ func newPartitionReader(ctx context.Context, handler *Handler, connCtx *Connecti
 		topicName:      topicName,
 		partitionID:    partitionID,
 		currentOffset:  startOffset,
-		fetchChan:      make(chan *partitionFetchRequest, 100), // Buffer 100 requests to handle Schema Registry's rapid polling
+		fetchChan:      make(chan *partitionFetchRequest, 200), // Buffer 200 requests to handle Schema Registry's rapid polling in slow CI environments
 		closeChan:      make(chan struct{}),
 		recordBuffer:   make(chan *bufferedRecords, 5), // Buffer 5 batches of records
-		concurrencySem: make(chan struct{}, 10),        // Limit to 10 concurrent requests per partition
+		concurrencySem: make(chan struct{}, 20),        // Limit to 20 concurrent requests per partition to handle slow disk I/O in CI
 		handler:        handler,
 		connCtx:        connCtx,
 	}
@@ -67,7 +67,7 @@ func newPartitionReader(ctx context.Context, handler *Handler, connCtx *Connecti
 	// Start the request handler goroutine
 	go pr.handleRequests(ctx)
 
-	glog.V(2).Infof("[%s] Created partition reader for %s[%d] starting at offset %d (concurrent handler)",
+	glog.V(2).Infof("[%s] Created partition reader for %s[%d] starting at offset %d (concurrent: ch=200, sem=20)",
 		connCtx.ConnectionID, topicName, partitionID, startOffset)
 
 	return pr
