@@ -23,8 +23,10 @@ func (h *SeaweedMQHandler) GetStoredRecords(ctx context.Context, topic string, p
 	// CRITICAL: Use per-connection BrokerClient to prevent gRPC stream interference
 	// Each Kafka connection has its own isolated BrokerClient instance
 	var brokerClient *BrokerClient
-	consumerGroup := "kafka-fetch-consumer"                            // default
-	consumerID := fmt.Sprintf("kafka-fetch-%d", time.Now().UnixNano()) // default
+	consumerGroup := "kafka-fetch-consumer" // default
+	// CRITICAL FIX: Include topic-partition in consumerID to ensure each partition consumer
+	// gets its own unique subscriber session, preventing session collisions
+	consumerID := fmt.Sprintf("kafka-fetch-%s-%d-%d", topic, partition, time.Now().UnixNano()) // default
 
 	// Get the per-connection broker client from connection context
 	if h.protocolHandler != nil {
@@ -44,11 +46,13 @@ func (h *SeaweedMQHandler) GetStoredRecords(ctx context.Context, topic string, p
 				glog.V(2).Infof("[FETCH] Using actual consumer group from context: %s", consumerGroup)
 			}
 			if connCtx.MemberID != "" {
-				consumerID = connCtx.MemberID
+				// Use member ID as base, but still include topic-partition for uniqueness
+				consumerID = fmt.Sprintf("%s-%s-%d", connCtx.MemberID, topic, partition)
 				glog.V(2).Infof("[FETCH] Using actual member ID from context: %s", consumerID)
 			} else if connCtx.ClientID != "" {
 				// Fallback to client ID if member ID not set (for clients not using consumer groups)
-				consumerID = connCtx.ClientID
+				// Include topic-partition to ensure each partition consumer is unique
+				consumerID = fmt.Sprintf("%s-%s-%d", connCtx.ClientID, topic, partition)
 				glog.V(2).Infof("[FETCH] Using client ID from context: %s", consumerID)
 			}
 		}
@@ -70,7 +74,7 @@ func (h *SeaweedMQHandler) GetStoredRecords(ctx context.Context, topic string, p
 
 	// GetOrCreateSubscriber handles offset mismatches internally
 	// If the cached subscriber is at a different offset, it will be recreated automatically
-	brokerSubscriber, err := brokerClient.GetOrCreateSubscriber(topic, partition, fromOffset)
+	brokerSubscriber, err := brokerClient.GetOrCreateSubscriber(topic, partition, fromOffset, consumerGroup, consumerID)
 	if err != nil {
 		glog.Errorf("[FETCH] Failed to get/create subscriber: %v", err)
 		return nil, fmt.Errorf("failed to get/create subscriber: %v", err)
@@ -378,7 +382,8 @@ func (h *SeaweedMQHandler) FetchRecords(topic string, partition int32, fetchOffs
 	if h.brokerClient == nil {
 		return nil, fmt.Errorf("no broker client available")
 	}
-	brokerSubscriber, subErr := h.brokerClient.GetOrCreateSubscriber(topic, partition, fetchOffset)
+	// Use default consumer group/ID since this is a deprecated function
+	brokerSubscriber, subErr := h.brokerClient.GetOrCreateSubscriber(topic, partition, fetchOffset, "deprecated-consumer-group", "deprecated-consumer")
 	if subErr != nil {
 		return nil, fmt.Errorf("failed to get broker subscriber: %v", subErr)
 	}

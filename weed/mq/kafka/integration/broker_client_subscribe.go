@@ -71,38 +71,58 @@ func (bc *BrokerClient) CreateFreshSubscriber(topic string, partition int32, sta
 	// Instead, let ReadRecords handle all Recv() calls.
 
 	session := &BrokerSubscriberSession{
-		Stream:      stream,
-		Topic:       topic,
-		Partition:   partition,
-		StartOffset: startOffset,
+		Stream:        stream,
+		Topic:         topic,
+		Partition:     partition,
+		StartOffset:   startOffset,
+		ConsumerGroup: consumerGroup,
+		ConsumerID:    consumerID,
 	}
 
 	return session, nil
 }
 
 // GetOrCreateSubscriber gets or creates a subscriber for offset tracking
-func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, startOffset int64) (*BrokerSubscriberSession, error) {
-	key := fmt.Sprintf("%s-%d", topic, partition)
+func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, startOffset int64, consumerGroup string, consumerID string) (*BrokerSubscriberSession, error) {
+	// Create a temporary session to generate the key
+	tempSession := &BrokerSubscriberSession{
+		Topic:         topic,
+		Partition:     partition,
+		ConsumerGroup: consumerGroup,
+		ConsumerID:    consumerID,
+	}
+	key := tempSession.Key()
 
 	bc.subscribersLock.RLock()
 	if session, exists := bc.subscribers[key]; exists {
-		// CRITICAL FIX: Only recreate subscriber if necessary
-		// If requested offset <= session offset, try to reuse (ReadRecordsFromOffset will check cache)
-		// If requested offset > session offset, recreate to seek forward
+		// Check if we need to recreate the session
 		if session.StartOffset != startOffset {
-			if startOffset < session.StartOffset {
-				// Requested offset is BEFORE session offset
-				// DON'T recreate - let ReadRecordsFromOffset try the cache first
-				// This avoids hundreds of reconnections for historical data
-				glog.V(2).Infof("[FETCH] Reusing session for %s: session at %d, requested %d (will try cache)",
-					key, session.StartOffset, startOffset)
+			// CRITICAL FIX: Check cache first before recreating
+			// If the requested offset is in cache, we can reuse the session
+			session.mu.Lock()
+			canUseCache := false
+			if len(session.consumedRecords) > 0 {
+				cacheStartOffset := session.consumedRecords[0].Offset
+				cacheEndOffset := session.consumedRecords[len(session.consumedRecords)-1].Offset
+				if startOffset >= cacheStartOffset && startOffset <= cacheEndOffset {
+					canUseCache = true
+					glog.V(2).Infof("[FETCH] Session offset mismatch for %s (session=%d, requested=%d), but offset is in cache [%d-%d]",
+						key, session.StartOffset, startOffset, cacheStartOffset, cacheEndOffset)
+				}
+			}
+			session.mu.Unlock()
+
+			if canUseCache {
+				// Offset is in cache, can reuse session
 				bc.subscribersLock.RUnlock()
 				return session, nil
 			}
-			// Requested offset is AFTER session offset - need to seek forward, recreate
-			glog.V(0).Infof("[FETCH] Forward seek for %s: session at %d, requested %d - recreating",
+
+			// Not in cache - need to recreate session at the requested offset
+			glog.V(0).Infof("[FETCH] Recreating session for %s: session at %d, requested %d (not in cache)",
 				key, session.StartOffset, startOffset)
 			bc.subscribersLock.RUnlock()
+
 			// Close and delete the old session
 			bc.subscribersLock.Lock()
 			if old, ok := bc.subscribers[key]; ok {
@@ -177,8 +197,8 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 	if err := stream.Send(&mq_pb.SubscribeMessageRequest{
 		Message: &mq_pb.SubscribeMessageRequest_Init{
 			Init: &mq_pb.SubscribeMessageRequest_InitMessage{
-				ConsumerGroup: "kafka-gateway",
-				ConsumerId:    fmt.Sprintf("kafka-gateway-%s-%d", topic, partition),
+				ConsumerGroup: consumerGroup,
+				ConsumerId:    consumerID,
 				ClientId:      "kafka-gateway",
 				Topic: &schema_pb.Topic{
 					Namespace: "kafka",
@@ -198,12 +218,14 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 	}
 
 	session := &BrokerSubscriberSession{
-		Topic:       topic,
-		Partition:   partition,
-		Stream:      stream,
-		StartOffset: startOffset,
-		Ctx:         subscriberCtx,
-		Cancel:      subscriberCancel,
+		Topic:         topic,
+		Partition:     partition,
+		Stream:        stream,
+		StartOffset:   startOffset,
+		ConsumerGroup: consumerGroup,
+		ConsumerID:    consumerID,
+		Ctx:           subscriberCtx,
+		Cancel:        subscriberCancel,
 	}
 
 	bc.subscribers[key] = session
@@ -254,22 +276,42 @@ func (bc *BrokerClient) ReadRecordsFromOffset(ctx context.Context, session *Brok
 	// recreate it just because requestedOffset != session.StartOffset
 
 	if requestedOffset < session.StartOffset {
-		// Need to seek backward - restart subscriber at new offset
-		glog.V(0).Infof("[FETCH] Seeking backward: requested=%d < session=%d, restarting subscriber",
+		// Need to seek backward - close old session and create a fresh subscriber
+		// Restarting an existing stream doesn't work reliably because the broker may still
+		// have old data buffered in the stream pipeline
+		glog.V(0).Infof("[FETCH] Seeking backward: requested=%d < session=%d, creating fresh subscriber",
 			requestedOffset, session.StartOffset)
+
+		// Extract session details before unlocking
+		topic := session.Topic
+		partition := session.Partition
+		consumerGroup := session.ConsumerGroup
+		consumerID := session.ConsumerID
 		session.mu.Unlock()
 
-		// Restart the subscriber from the new offset (reuses session object)
-		// Extract consumer group and ID from context or use defaults
-		consumerGroup := "kafka-gateway"
-		consumerID := fmt.Sprintf("kafka-gateway-%s-%d", session.Topic, session.Partition)
+		// Close the old session completely
+		key := session.Key()
+		bc.subscribersLock.Lock()
+		if oldSession, exists := bc.subscribers[key]; exists {
+			if oldSession.Stream != nil {
+				_ = oldSession.Stream.CloseSend()
+			}
+			if oldSession.Cancel != nil {
+				oldSession.Cancel()
+			}
+			delete(bc.subscribers, key)
+			glog.V(1).Infof("[FETCH] Closed old subscriber session for backward seek: %s", key)
+		}
+		bc.subscribersLock.Unlock()
 
-		if err := bc.RestartSubscriber(session, requestedOffset, consumerGroup, consumerID); err != nil {
-			return nil, fmt.Errorf("failed to restart subscriber at offset %d: %w", requestedOffset, err)
+		// Create a completely fresh subscriber at the requested offset
+		newSession, err := bc.GetOrCreateSubscriber(topic, partition, requestedOffset, consumerGroup, consumerID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create fresh subscriber at offset %d: %w", requestedOffset, err)
 		}
 
-		// Read from restarted subscriber
-		return bc.ReadRecords(ctx, session, maxRecords)
+		// Read from fresh subscriber
+		return bc.ReadRecords(ctx, newSession, maxRecords)
 	}
 
 	// requestedOffset >= session.StartOffset: Keep reading forward from existing session
@@ -489,8 +531,14 @@ func (bc *BrokerClient) ReadRecords(ctx context.Context, session *BrokerSubscrib
 }
 
 // CloseSubscriber closes and removes a subscriber session
-func (bc *BrokerClient) CloseSubscriber(topic string, partition int32) {
-	key := fmt.Sprintf("%s-%d", topic, partition)
+func (bc *BrokerClient) CloseSubscriber(topic string, partition int32, consumerGroup string, consumerID string) {
+	tempSession := &BrokerSubscriberSession{
+		Topic:         topic,
+		Partition:     partition,
+		ConsumerGroup: consumerGroup,
+		ConsumerID:    consumerID,
+	}
+	key := tempSession.Key()
 
 	bc.subscribersLock.Lock()
 	defer bc.subscribersLock.Unlock()

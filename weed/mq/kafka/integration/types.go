@@ -2,6 +2,7 @@ package integration
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -178,6 +179,9 @@ type BrokerSubscriberSession struct {
 	Stream    mq_pb.SeaweedMessaging_SubscribeMessageClient
 	// Track the requested start offset used to initialize this stream
 	StartOffset int64
+	// Consumer group identity for this session
+	ConsumerGroup string
+	ConsumerID    string
 	// Context for canceling reads (used for timeout)
 	Ctx    context.Context
 	Cancel context.CancelFunc
@@ -186,4 +190,10 @@ type BrokerSubscriberSession struct {
 	// Cache of consumed records to avoid re-reading from broker
 	consumedRecords  []*SeaweedRecord
 	nextOffsetToRead int64
+}
+
+// Key generates a unique key for this subscriber session
+// Includes consumer group and ID to prevent different consumers from sharing sessions
+func (s *BrokerSubscriberSession) Key() string {
+	return fmt.Sprintf("%s-%d-%s-%s", s.Topic, s.Partition, s.ConsumerGroup, s.ConsumerID)
 }
