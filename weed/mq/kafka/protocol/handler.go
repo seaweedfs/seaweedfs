@@ -45,10 +45,8 @@ func (h *Handler) GetAdvertisedAddress(gatewayAddr string) (string, int) {
 	// Override with environment variable if set, otherwise always use localhost for external clients
 	if advertisedHost := os.Getenv("KAFKA_ADVERTISED_HOST"); advertisedHost != "" {
 		host = advertisedHost
-		Debug("Using KAFKA_ADVERTISED_HOST: %s:%d", host, port)
 	} else {
 		host = "localhost"
-		Debug("Using default advertised address: %s:%d (set KAFKA_ADVERTISED_HOST to override)", host, port)
 	}
 
 	return host, port
@@ -381,15 +379,11 @@ func (h *Handler) Close() error {
 // StoreRecordBatch stores a record batch for later retrieval during Fetch operations
 func (h *Handler) StoreRecordBatch(topicName string, partition int32, baseOffset int64, recordBatch []byte) {
 	// Record batch storage is now handled by the SeaweedMQ handler
-	Debug("StoreRecordBatch delegated to SeaweedMQ handler - partition:%d, offset:%d",
-		partition, baseOffset)
 }
 
 // GetRecordBatch retrieves a stored record batch that contains the requested offset
 func (h *Handler) GetRecordBatch(topicName string, partition int32, offset int64) ([]byte, bool) {
 	// Record batch retrieval is now handled by the SeaweedMQ handler
-	Debug("GetRecordBatch delegated to SeaweedMQ handler - partition:%d, offset:%d",
-		partition, offset)
 	return nil, false
 }
 
@@ -519,10 +513,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 	// Store in thread-safe map for later retrieval
 	h.connContexts.Store(connectionID, connContext)
 
-	Debug("[%s] NEW CONNECTION ESTABLISHED", connectionID)
-
 	defer func() {
-		Debug("[%s] Connection closing, cleaning up BrokerClient", connectionID)
 		// Close all partition readers first
 		cleanupPartitionReaders(connContext)
 		// Close the per-connection broker client
@@ -603,7 +594,6 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 						Error("[%s] Error processing correlation=%d: %v", connectionID, readyResp.correlationID, readyResp.err)
 					} else {
 						glog.V(2).Infof("[%s] Response writer: about to write correlation=%d (%d bytes)", connectionID, readyResp.correlationID, len(readyResp.response))
-						Debug("[%s] Sending response correlation=%d: %d bytes (in order)", connectionID, readyResp.correlationID, len(readyResp.response))
 						if writeErr := h.writeResponseWithHeader(w, readyResp.correlationID, readyResp.apiKey, readyResp.apiVersion, readyResp.response, timeoutConfig.WriteTimeout); writeErr != nil {
 							glog.Errorf("[%s] Response writer: WRITE ERROR correlation=%d: %v - EXITING", connectionID, readyResp.correlationID, writeErr)
 							Error("[%s] Write error correlation=%d: %v", connectionID, readyResp.correlationID, writeErr)
@@ -665,7 +655,6 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 					glog.V(2).Infof("[%s] Control plane sent correlation=%d to responseChan", connectionID, req.correlationID)
 				case <-ctx.Done():
 					// Connection closed, stop processing
-					Debug("[%s] Control plane: context cancelled, discarding response for correlation=%d", connectionID, req.correlationID)
 					return
 				case <-time.After(5 * time.Second):
 					glog.Errorf("[%s] DEADLOCK: Control plane timeout sending correlation=%d to responseChan (buffer full?)", connectionID, req.correlationID)
@@ -745,7 +734,6 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 					glog.V(2).Infof("[%s] Data plane sent correlation=%d to responseChan", connectionID, req.correlationID)
 				case <-ctx.Done():
 					// Connection closed, stop processing
-					Debug("[%s] Data plane: context cancelled, discarding response for correlation=%d", connectionID, req.correlationID)
 					return
 				case <-time.After(5 * time.Second):
 					glog.Errorf("[%s] DEADLOCK: Data plane timeout sending correlation=%d to responseChan (buffer full?)", connectionID, req.correlationID)
@@ -800,7 +788,6 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		// Check if context is cancelled
 		select {
 		case <-ctx.Done():
-			Debug("[%s] Context cancelled, closing connection", connectionID)
 			return ctx.Err()
 		default:
 		}
@@ -812,23 +799,19 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		if deadline, ok := ctx.Deadline(); ok {
 			readDeadline = deadline
 			timeoutDuration = time.Until(deadline)
-			Debug("[%s] Using context deadline: %v", connectionID, timeoutDuration)
 		} else {
 			// Use configurable read timeout instead of hardcoded 5 seconds
 			timeoutDuration = timeoutConfig.ReadTimeout
 			readDeadline = time.Now().Add(timeoutDuration)
-			Debug("[%s] Using config timeout: %v", connectionID, timeoutDuration)
 		}
 
 		if err := conn.SetReadDeadline(readDeadline); err != nil {
-			Debug("[%s] Failed to set read deadline: %v", connectionID, err)
 			return fmt.Errorf("set read deadline: %w", err)
 		}
 
 		// Check context before reading
 		select {
 		case <-ctx.Done():
-			Debug("[%s] Context cancelled before reading message header", connectionID)
 			// Give a small delay to ensure proper cleanup
 			time.Sleep(100 * time.Millisecond)
 			return ctx.Err()
@@ -839,18 +822,15 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 				if timeUntilDeadline < 2*time.Second && timeUntilDeadline > 0 {
 					shortDeadline := time.Now().Add(500 * time.Millisecond)
 					if err := conn.SetReadDeadline(shortDeadline); err == nil {
-						Debug("[%s] Context deadline approaching, using 500ms timeout", connectionID)
 					}
 				}
 			}
 		}
 
 		// Read message size (4 bytes)
-		Debug("[%s] About to read message size header", connectionID)
 		var sizeBytes [4]byte
 		if _, err := io.ReadFull(r, sizeBytes[:]); err != nil {
 			if err == io.EOF {
-				Debug("[%s] Client closed connection (clean EOF) - no request sent", connectionID)
 				return nil
 			}
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
@@ -859,16 +839,11 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 				// After several consecutive timeouts with no data, assume connection is dead
 				consecutiveTimeouts++
 				if consecutiveTimeouts >= maxConsecutiveTimeouts {
-					Debug("[%s] Too many consecutive read timeouts (%d), assuming connection is closed (likely CLOSE_WAIT)",
-						connectionID, consecutiveTimeouts)
 					return nil
 				}
 				// Idle timeout while waiting for next request; keep connection open
-				Debug("[%s] Read timeout waiting for request (%d/%d), continuing",
-					connectionID, consecutiveTimeouts, maxConsecutiveTimeouts)
 				continue
 			}
-			Debug("[%s] Read error: %v", connectionID, err)
 			return fmt.Errorf("read message size: %w", err)
 		}
 
@@ -877,32 +852,26 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 
 		// Successfully read the message size
 		size := binary.BigEndian.Uint32(sizeBytes[:])
-		Debug("[%s] Read message size header: %d bytes", connectionID, size)
 		// Debug("Read message size: %d bytes", size)
 		if size == 0 || size > 1024*1024 { // 1MB limit
 			// Use standardized error for message size limit
-			Debug("[%s] Invalid message size: %d (limit: 1MB)", connectionID, size)
 			// Send error response for message too large
 			errorResponse := BuildErrorResponse(0, ErrorCodeMessageTooLarge) // correlation ID 0 since we can't parse it yet
 			if writeErr := h.writeResponseWithCorrelationID(w, 0, errorResponse, timeoutConfig.WriteTimeout); writeErr != nil {
-				Debug("[%s] Failed to send message too large response: %v", connectionID, writeErr)
 			}
 			return fmt.Errorf("message size %d exceeds limit", size)
 		}
 
 		// Set read deadline for message body
 		if err := conn.SetReadDeadline(time.Now().Add(timeoutConfig.ReadTimeout)); err != nil {
-			Debug("[%s] Failed to set message read deadline: %v", connectionID, err)
 		}
 
 		// Read the message
 		messageBuf := make([]byte, size)
 		if _, err := io.ReadFull(r, messageBuf); err != nil {
-			errorCode := HandleTimeoutError(err, "read")
-			Debug("[%s] Error reading message body: %v (code: %d)", connectionID, err, errorCode)
+			_ = HandleTimeoutError(err, "read") // errorCode
 			return fmt.Errorf("read message: %w", err)
 		}
-		Debug("[%s] SUCCESSFULLY READ MESSAGE BODY: %d bytes", connectionID, len(messageBuf))
 
 		// Parse at least the basic header to get API key and correlation ID
 		if len(messageBuf) < 8 {
@@ -916,7 +885,6 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		// Debug("Parsed header - API Key: %d (%s), Version: %d, Correlation: %d", apiKey, getAPIName(APIKey(apiKey)), apiVersion, correlationID)
 
 		// Validate API version against what we support
-		Debug("VALIDATING API VERSION: Key=%d, Version=%d", apiKey, apiVersion)
 		if err := h.validateAPIVersion(apiKey, apiVersion); err != nil {
 			glog.Errorf("API VERSION VALIDATION FAILED: Key=%d (%s), Version=%d, error=%v", apiKey, getAPIName(APIKey(apiKey)), apiVersion, err)
 			// Return proper Kafka error response for unsupported version
@@ -988,7 +956,6 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 					apiKey, getAPIName(APIKey(apiKey)), apiVersion, correlationID, parseErr, len(messageBuf))
 
 				// Fall back to basic header parsing if flexible version parsing fails
-				Debug("Flexible header parsing failed, using basic parsing: %v", parseErr)
 
 				// Basic header parsing fallback (original logic)
 				bodyOffset := 8
@@ -1013,7 +980,6 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 
 				// Validate parsed header matches what we already extracted
 				if header.APIKey != apiKey || header.APIVersion != apiVersion || header.CorrelationID != correlationID {
-					Debug("Header parsing mismatch - using basic parsing as fallback")
 					// Fall back to basic parsing rather than failing
 					bodyOffset := 8
 					if len(messageBuf) < bodyOffset+2 {
@@ -1031,7 +997,6 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 				} else if header.ClientID != nil {
 					// Store client ID in connection context for use in fetch requests
 					connContext.ClientID = *header.ClientID
-					Debug("Client ID: %s", *header.ClientID)
 				}
 			}
 		}
@@ -1039,7 +1004,6 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		// CRITICAL: Route request to appropriate processor
 		// Control plane: Fast, never blocks (Metadata, Heartbeat, etc.)
 		// Data plane: Can be slow (Fetch, Produce)
-		Debug("API REQUEST - Key: %d (%s), Version: %d, Correlation: %d", apiKey, getAPIName(APIKey(apiKey)), apiVersion, correlationID)
 
 		// Attach connection context to the Go context for retrieval in nested calls
 		ctxWithConn := context.WithValue(ctx, connContextKey, connContext)
@@ -1057,10 +1021,8 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		var targetChan chan *kafkaRequest
 		if isDataPlaneAPI(apiKey) {
 			targetChan = dataChan
-			Debug("[%s] Routing correlation=%d to DATA plane", connectionID, correlationID)
 		} else {
 			targetChan = controlChan
-			Debug("[%s] Routing correlation=%d to CONTROL plane", connectionID, correlationID)
 		}
 
 		// CRITICAL: Only add to correlation queue AFTER successful channel send
@@ -1088,19 +1050,14 @@ func (h *Handler) processRequestSync(req *kafkaRequest) ([]byte, error) {
 	requestStart := time.Now()
 	apiName := getAPIName(APIKey(req.apiKey))
 
-	Debug("PROCESSING API REQUEST: Key=%d (%s), Version=%d, Correlation=%d",
-		req.apiKey, apiName, req.apiVersion, req.correlationID)
-
 	var response []byte
 	var err error
 
 	switch APIKey(req.apiKey) {
 	case APIKeyApiVersions:
-		Debug("-> ApiVersions v%d", req.apiVersion)
 		response, err = h.handleApiVersions(req.correlationID, req.apiVersion)
 
 	case APIKeyMetadata:
-		Debug("-> Metadata v%d", req.apiVersion)
 		response, err = h.handleMetadata(req.correlationID, req.apiVersion, req.requestBody)
 
 	case APIKeyListOffsets:
@@ -1113,58 +1070,45 @@ func (h *Handler) processRequestSync(req *kafkaRequest) ([]byte, error) {
 		response, err = h.handleDeleteTopics(req.correlationID, req.requestBody)
 
 	case APIKeyProduce:
-		Debug("-> Produce v%d", req.apiVersion)
 		response, err = h.handleProduce(req.correlationID, req.apiVersion, req.requestBody)
 
 	case APIKeyFetch:
-		Debug("-> Fetch v%d", req.apiVersion)
 		response, err = h.handleFetch(req.ctx, req.correlationID, req.apiVersion, req.requestBody)
 
 	case APIKeyJoinGroup:
-		Debug("-> JoinGroup v%d", req.apiVersion)
 		response, err = h.handleJoinGroup(req.connContext, req.correlationID, req.apiVersion, req.requestBody)
 
 	case APIKeySyncGroup:
-		Debug("-> SyncGroup v%d", req.apiVersion)
 		response, err = h.handleSyncGroup(req.correlationID, req.apiVersion, req.requestBody)
 
 	case APIKeyOffsetCommit:
-		Debug("-> OffsetCommit")
 		response, err = h.handleOffsetCommit(req.correlationID, req.apiVersion, req.requestBody)
 
 	case APIKeyOffsetFetch:
-		Debug("-> OffsetFetch v%d", req.apiVersion)
 		response, err = h.handleOffsetFetch(req.correlationID, req.apiVersion, req.requestBody)
 
 	case APIKeyFindCoordinator:
-		Debug("-> FindCoordinator v%d", req.apiVersion)
 		response, err = h.handleFindCoordinator(req.correlationID, req.apiVersion, req.requestBody)
 
 	case APIKeyHeartbeat:
-		Debug("-> Heartbeat v%d", req.apiVersion)
 		response, err = h.handleHeartbeat(req.correlationID, req.apiVersion, req.requestBody)
 
 	case APIKeyLeaveGroup:
 		response, err = h.handleLeaveGroup(req.correlationID, req.apiVersion, req.requestBody)
 
 	case APIKeyDescribeGroups:
-		Debug("DescribeGroups request received, correlation: %d, version: %d", req.correlationID, req.apiVersion)
 		response, err = h.handleDescribeGroups(req.correlationID, req.apiVersion, req.requestBody)
 
 	case APIKeyListGroups:
-		Debug("ListGroups request received, correlation: %d, version: %d", req.correlationID, req.apiVersion)
 		response, err = h.handleListGroups(req.correlationID, req.apiVersion, req.requestBody)
 
 	case APIKeyDescribeConfigs:
-		Debug("DescribeConfigs request received, correlation: %d, version: %d", req.correlationID, req.apiVersion)
 		response, err = h.handleDescribeConfigs(req.correlationID, req.apiVersion, req.requestBody)
 
 	case APIKeyDescribeCluster:
-		Debug("-> DescribeCluster v%d", req.apiVersion)
 		response, err = h.handleDescribeCluster(req.correlationID, req.apiVersion, req.requestBody)
 
 	case APIKeyInitProducerId:
-		Debug("-> InitProducerId v%d", req.apiVersion)
 		response, err = h.handleInitProducerId(req.correlationID, req.apiVersion, req.requestBody)
 
 	default:
@@ -1261,8 +1205,6 @@ func (h *Handler) handleApiVersions(correlationID uint32, apiVersion uint16) ([]
 	if apiVersion >= 3 {
 		response = append(response, 0x00) // Empty response-level tagged fields (varint: single byte 0)
 	}
-
-	Debug("ApiVersions v%d response: %d bytes (flexible: %t) - ADMINCLIENT COMPATIBILITY FIX", apiVersion, len(response), apiVersion >= 3)
 
 	return response, nil
 }
@@ -1370,15 +1312,8 @@ func (h *Handler) HandleMetadataV0(correlationID uint32, requestBody []byte) ([]
 		}
 	}
 
-	Debug("Metadata v0 response for %d topics: %v", len(topicsToReturn), topicsToReturn)
-	Debug("*** METADATA v0 RESPONSE DETAILS ***")
-	Debug("Response size: %d bytes", len(response))
-	Debug("Kafka Gateway: %s", h.GetGatewayAddress())
-	Debug("Topics: %v", topicsToReturn)
-	for i, topic := range topicsToReturn {
-		Debug("Topic[%d]: %s (1 partition)", i, topic)
+	for range topicsToReturn {
 	}
-	Debug("*** END METADATA v0 RESPONSE ***")
 	return response, nil
 }
 
@@ -1491,8 +1426,6 @@ func (h *Handler) HandleMetadataV1(correlationID uint32, requestBody []byte) ([]
 		}
 	}
 
-	Debug("Metadata v1 response for %d topics: %v", len(topicsToReturn), topicsToReturn)
-	Debug("Metadata v1 response size: %d bytes", len(response))
 	return response, nil
 }
 
@@ -1600,8 +1533,6 @@ func (h *Handler) HandleMetadataV2(correlationID uint32, requestBody []byte) ([]
 	}
 
 	response := buf.Bytes()
-	Debug("Advertising Kafka gateway: %s", h.GetGatewayAddress())
-	Debug("Metadata v2 response for %d topics: %v", len(topicsToReturn), topicsToReturn)
 
 	return response, nil
 }
@@ -1876,8 +1807,6 @@ func (h *Handler) handleMetadataV5ToV8(correlationID uint32, requestBody []byte,
 	}
 
 	response := buf.Bytes()
-	Debug("Advertising Kafka gateway: %s", h.GetGatewayAddress())
-	Debug("Metadata v%d response for %d topics: %v", apiVersion, len(topicsToReturn), topicsToReturn)
 
 	return response, nil
 }
@@ -1938,7 +1867,6 @@ func (h *Handler) parseMetadataTopics(requestBody []byte) []string {
 }
 
 func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
-	Debug("ListOffsets v%d request hex dump (first 100 bytes): %x", apiVersion, requestBody[:min(100, len(requestBody))])
 
 	// Parse minimal request to understand what's being asked (header already stripped)
 	offset := 0
@@ -1948,9 +1876,8 @@ func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, req
 		if len(requestBody) < offset+4 {
 			return nil, fmt.Errorf("ListOffsets v%d request missing replica_id", apiVersion)
 		}
-		replicaID := int32(binary.BigEndian.Uint32(requestBody[offset : offset+4]))
+		_ = int32(binary.BigEndian.Uint32(requestBody[offset : offset+4])) // replicaID
 		offset += 4
-		Debug("ListOffsets v%d - replica_id: %d", apiVersion, replicaID)
 	}
 
 	// v2+ adds isolation_level(1)
@@ -1958,9 +1885,8 @@ func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, req
 		if len(requestBody) < offset+1 {
 			return nil, fmt.Errorf("ListOffsets v%d request missing isolation_level", apiVersion)
 		}
-		isolationLevel := requestBody[offset]
+		_ = requestBody[offset] // isolationLevel
 		offset += 1
-		Debug("ListOffsets v%d - isolation_level: %d", apiVersion, isolationLevel)
 	}
 
 	if len(requestBody) < offset+4 {
@@ -1992,8 +1918,6 @@ func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, req
 	// Process each requested topic
 	for i := uint32(0); i < topicsCount && offset < len(requestBody); i++ {
 		if len(requestBody) < offset+2 {
-			Debug("WARNING: ListOffsets incomplete request - not enough data for topic %d/%d (need 2 bytes at offset %d, have %d total)",
-				i, topicsCount, offset, len(requestBody))
 			break
 		}
 
@@ -2002,8 +1926,6 @@ func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, req
 		offset += 2
 
 		if len(requestBody) < offset+int(topicNameSize)+4 {
-			Debug("WARNING: ListOffsets incomplete request - not enough data for topic name + partitions count at topic %d/%d (need %d bytes at offset %d, have %d total)",
-				i, topicsCount, int(topicNameSize)+4, offset, len(requestBody))
 			break
 		}
 
@@ -2013,8 +1935,6 @@ func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, req
 		// Parse partitions count for this topic
 		partitionsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 		offset += 4
-
-		Debug("ListOffsets: Processing topic %d/%d: %s with %d partitions", i+1, topicsCount, string(topicName), partitionsCount)
 
 		// Response: topic_name_size(2) + topic_name + partitions_array
 		response = append(response, byte(topicNameSize>>8), byte(topicNameSize))
@@ -2044,15 +1964,11 @@ func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, req
 			var responseTimestamp int64
 			var responseOffset int64
 
-			Debug("ListOffsets - Topic: %s, Partition: %d, Timestamp: %d (using direct SMQ)",
-				string(topicName), partitionID, timestamp)
-
 			switch timestamp {
 			case -2: // earliest offset
 				// Get the actual earliest offset from SMQ
 				earliestOffset, err := h.seaweedMQHandler.GetEarliestOffset(string(topicName), int32(partitionID))
 				if err != nil {
-					Debug("Failed to get earliest offset for topic %s partition %d: %v", string(topicName), partitionID, err)
 					responseOffset = 0 // fallback to 0
 				} else {
 					responseOffset = earliestOffset
@@ -2061,42 +1977,28 @@ func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, req
 				if strings.HasPrefix(string(topicName), "_schemas") {
 					glog.Infof("SCHEMA REGISTRY LISTOFFSETS EARLIEST: topic=%s partition=%d returning offset=%d", string(topicName), partitionID, responseOffset)
 				}
-				Debug("ListOffsets EARLIEST - returning offset: %d, timestamp: %d", responseOffset, responseTimestamp)
 			case -1: // latest offset
 				// Get the actual latest offset from SMQ
-				Debug("XYZABC123 UNIQUE DEBUG MESSAGE - MY CODE IS RUNNING!")
-				Debug("*** ABOUT TO CALL GetLatestOffset for topic %s partition %d", string(topicName), int32(partitionID))
-				Debug("About to call GetLatestOffset for topic %s partition %d", string(topicName), int32(partitionID))
 				if h.seaweedMQHandler == nil {
-					Debug("*** ERROR: seaweedMQHandler is nil!")
-					Debug("ERROR: seaweedMQHandler is nil!")
 					responseOffset = 0
 				} else {
-					Debug("*** Calling GetLatestOffset...")
 					latestOffset, err := h.seaweedMQHandler.GetLatestOffset(string(topicName), int32(partitionID))
 					if err != nil {
-						Debug("*** GetLatestOffset failed: %v", err)
-						Debug("Failed to get latest offset for topic %s partition %d: %v", string(topicName), partitionID, err)
 						responseOffset = 0 // fallback to 0
 					} else {
-						Debug("*** GetLatestOffset returned: %d", latestOffset)
 						responseOffset = latestOffset
-						Debug("GetLatestOffset returned: %d", latestOffset)
 					}
 				}
 				responseTimestamp = 0 // No specific timestamp for latest
-				Debug("*** ListOffsets LATEST - returning offset: %d, timestamp: %d", responseOffset, responseTimestamp)
 			default: // specific timestamp - find offset by timestamp
 				// For timestamp-based lookup, we need to implement this properly
 				// For now, return 0 as fallback
 				responseOffset = 0
 				responseTimestamp = timestamp
-				Debug("ListOffsets BY_TIMESTAMP - returning offset: %d, timestamp: %d", responseOffset, responseTimestamp)
 			}
 
 			// Ensure we never return a timestamp as offset - this was the bug!
 			if responseOffset > 1000000000 { // If offset looks like a timestamp
-				Debug("WARNING: Offset %d looks like a timestamp! Setting to 0", responseOffset)
 				responseOffset = 0
 			}
 
@@ -2116,19 +2018,13 @@ func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, req
 	// CRITICAL FIX: Update the topics count in the response header with the actual count
 	// This prevents ErrIncompleteResponse when request parsing fails mid-way
 	if actualTopicsCount != topicsCount {
-		Debug("WARNING: ListOffsets response has %d topics but request asked for %d - updating header to match actual count",
-			actualTopicsCount, topicsCount)
 		binary.BigEndian.PutUint32(response[topicsCountOffset:topicsCountOffset+4], actualTopicsCount)
 	}
-
-	Debug("ListOffsets: Returning response with %d topics (requested %d)", actualTopicsCount, topicsCount)
 
 	return response, nil
 }
 
 func (h *Handler) handleCreateTopics(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
-	Debug("*** CREATETOPICS REQUEST RECEIVED *** Correlation: %d, Version: %d", correlationID, apiVersion)
-	Debug("CreateTopics - Request body size: %d bytes", len(requestBody))
 
 	if len(requestBody) < 2 {
 		return nil, fmt.Errorf("CreateTopics request too short")
@@ -2137,21 +2033,15 @@ func (h *Handler) handleCreateTopics(correlationID uint32, apiVersion uint16, re
 	// Parse based on API version
 	switch apiVersion {
 	case 0, 1:
-		Debug("CreateTopics - Routing to v0/v1 handler")
 		response, err := h.handleCreateTopicsV0V1(correlationID, requestBody)
-		Debug("CreateTopics - v0/v1 handler returned, response size: %d bytes, err: %v", len(response), err)
 		return response, err
 	case 2, 3, 4:
 		// kafka-go sends v2-4 in regular format, not compact
-		Debug("CreateTopics - Routing to v2-4 handler")
 		response, err := h.handleCreateTopicsV2To4(correlationID, requestBody)
-		Debug("CreateTopics - v2-4 handler returned, response size: %d bytes, err: %v", len(response), err)
 		return response, err
 	case 5:
 		// v5+ uses flexible format with compact arrays
-		Debug("CreateTopics - Routing to v5+ handler")
 		response, err := h.handleCreateTopicsV2Plus(correlationID, apiVersion, requestBody)
-		Debug("CreateTopics - v5+ handler returned, response size: %d bytes, err: %v", len(response), err)
 		return response, err
 	default:
 		return nil, fmt.Errorf("unsupported CreateTopics API version: %d", apiVersion)
@@ -2182,14 +2072,11 @@ func (h *Handler) handleCreateTopicsV2To4(correlationID uint32, requestBody []by
 	}
 
 	if isCompactFormat {
-		Debug("CreateTopics v2-4 - Detected compact format")
 		// Delegate to the compact format handler
 		response, err := h.handleCreateTopicsV2Plus(correlationID, 2, requestBody)
-		Debug("CreateTopics v2-4 - Compact format handler returned, response size: %d bytes, err: %v", len(response), err)
 		return response, err
 	}
 
-	Debug("CreateTopics v2-4 - Detected regular format")
 	// Handle regular format
 	offset := 0
 	if len(requestBody) < offset+4 {
@@ -2198,7 +2085,6 @@ func (h *Handler) handleCreateTopicsV2To4(correlationID uint32, requestBody []by
 
 	topicsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 	offset += 4
-	Debug("CreateTopics v2-4 - Topics count: %d, remaining bytes: %d", topicsCount, len(requestBody)-offset)
 
 	// Parse topics
 	topics := make([]struct {
@@ -2321,7 +2207,6 @@ func (h *Handler) handleCreateTopicsV2To4(correlationID uint32, requestBody []by
 		} else {
 			// Use schema-aware topic creation
 			if err := h.createTopicWithSchemaSupport(t.name, int32(t.partitions)); err != nil {
-				Debug("Failed to create topic %s with schema support: %v", t.name, err)
 				errCode = 1 // UNKNOWN_SERVER_ERROR
 			}
 		}
@@ -2332,12 +2217,10 @@ func (h *Handler) handleCreateTopicsV2To4(correlationID uint32, requestBody []by
 		response = append(response, 0xFF, 0xFF)
 	}
 
-	Debug("CreateTopics v2-4 - Regular format handler completed, response size: %d bytes", len(response))
 	return response, nil
 }
 
 func (h *Handler) handleCreateTopicsV0V1(correlationID uint32, requestBody []byte) ([]byte, error) {
-	Debug("CreateTopics v0/v1 - parsing request of %d bytes", len(requestBody))
 
 	if len(requestBody) < 4 {
 		return nil, fmt.Errorf("CreateTopics v0/v1 request too short")
@@ -2348,8 +2231,6 @@ func (h *Handler) handleCreateTopicsV0V1(correlationID uint32, requestBody []byt
 	// Parse topics array (regular array format: count + topics)
 	topicsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 	offset += 4
-
-	Debug("CreateTopics v0/v1 - Topics count: %d", topicsCount)
 
 	// Build response
 	response := make([]byte, 0, 256)
@@ -2432,9 +2313,6 @@ func (h *Handler) handleCreateTopicsV0V1(correlationID uint32, requestBody []byt
 			}
 		}
 
-		Debug("CreateTopics v0/v1 - Parsed topic: %s, partitions: %d, replication: %d",
-			topicName, numPartitions, replicationFactor)
-
 		// Build response for this topic
 		// Topic name (string: length + bytes)
 		topicNameLengthBytes := make([]byte, 2)
@@ -2471,15 +2349,13 @@ func (h *Handler) handleCreateTopicsV0V1(correlationID uint32, requestBody []byt
 
 	// Parse timeout_ms (4 bytes) - at the end of request
 	if len(requestBody) >= offset+4 {
-		timeoutMs := binary.BigEndian.Uint32(requestBody[offset : offset+4])
-		Debug("CreateTopics v0/v1 - timeout_ms: %d", timeoutMs)
+		_ = binary.BigEndian.Uint32(requestBody[offset : offset+4]) // timeoutMs
 		offset += 4
 	}
 
 	// Parse validate_only (1 byte) - only in v1
 	if len(requestBody) >= offset+1 {
-		validateOnly := requestBody[offset] != 0
-		Debug("CreateTopics v0/v1 - validate_only: %v", validateOnly)
+		_ = requestBody[offset] != 0 // validateOnly
 	}
 
 	return response, nil
@@ -2494,16 +2370,13 @@ func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint
 	// ADMIN CLIENT COMPATIBILITY FIX:
 	// AdminClient's CreateTopics v5 request DOES start with top-level tagged fields (usually empty)
 	// Parse them first, then the topics compact array
-	Debug("CreateTopics v%d: AdminClient format - parsing top-level tagged fields at start", apiVersion)
 
 	// Parse top-level tagged fields first (usually 0x00 for empty)
 	_, consumed, err := DecodeTaggedFields(requestBody[offset:])
 	if err != nil {
-		Debug("CreateTopics v%d: Tagged fields parsing failed at start with offset=%d, remaining=%d", apiVersion, offset, len(requestBody)-offset)
 		// Don't fail - AdminClient might not always include tagged fields properly
 		// Just log and continue with topics parsing
 	} else {
-		Debug("CreateTopics v%d: Successfully parsed top-level tagged fields, consumed %d bytes", apiVersion, consumed)
 		offset += consumed
 	}
 
@@ -2542,7 +2415,6 @@ func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint
 		// This violates Kafka protocol spec but we need to handle it for compatibility
 		if replication == 256 {
 			replication = 1 // AdminClient sent 0x01 0x00, intended as little-endian 1
-			Debug("CreateTopics v%d: AdminClient replication factor compatibility - corrected 256 → 1", apiVersion)
 		}
 
 		// Apply defaults for invalid values
@@ -2629,9 +2501,7 @@ func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint
 		topics = append(topics, topicSpec{name: name, partitions: partitions, replication: replication})
 	}
 
-	Debug("CreateTopics v%d: Successfully parsed %d topics", apiVersion, len(topics))
-	for i, topic := range topics {
-		Debug("CreateTopics v%d: Topic[%d]: name='%s', partitions=%d, replication=%d", apiVersion, i, topic.name, topic.partitions, topic.replication)
+	for range topics {
 	}
 
 	// timeout_ms (int32)
@@ -2650,7 +2520,6 @@ func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint
 
 	// Remaining bytes after parsing - could be additional fields
 	if offset < len(requestBody) {
-		Debug("CreateTopics v%d: %d bytes remaining after parsing - likely timeout_ms, validate_only, etc.", apiVersion, len(requestBody)-offset)
 	}
 
 	// Reconstruct a non-flexible v2-like request body and reuse existing handler
@@ -2703,11 +2572,9 @@ func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint
 
 	// topics (compact array) - V5 FLEXIBLE FORMAT
 	topicCount := len(topics)
-	Debug("CreateTopics v%d: Generating response for %d topics", apiVersion, topicCount)
 
 	// Debug: log response size at each step
 	debugResponseSize := func(step string) {
-		Debug("CreateTopics v%d: %s - response size: %d bytes", apiVersion, step, len(response))
 	}
 	debugResponseSize("After correlation ID and throttle_time_ms")
 
@@ -2741,7 +2608,6 @@ func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint
 		// ADMIN CLIENT COMPATIBILITY: Always return success for existing topics
 		// AdminClient expects topic creation to succeed, even if topic already exists
 		if h.seaweedMQHandler.TopicExists(t.name) {
-			Debug("CreateTopics v%d: Topic '%s' already exists - returning success for AdminClient compatibility", apiVersion, t.name)
 			errCode = 0 // SUCCESS - AdminClient can handle this gracefully
 		} else {
 			// Use corrected values for error checking and topic creation with schema support
@@ -2943,7 +2809,6 @@ func (h *Handler) buildUnsupportedVersionResponse(correlationID uint32, apiKey, 
 
 // handleMetadata routes to the appropriate version-specific handler
 func (h *Handler) handleMetadata(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
-	Debug("METADATA REQUEST: apiVersion=%d, bodySize=%d", apiVersion, len(requestBody))
 	switch apiVersion {
 	case 0:
 		return h.HandleMetadataV0(correlationID, requestBody)
@@ -3014,7 +2879,6 @@ func getAPIName(apiKey APIKey) string {
 
 // handleDescribeConfigs handles DescribeConfigs API requests (API key 32)
 func (h *Handler) handleDescribeConfigs(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
-	Debug("DescribeConfigs v%d - parsing request body (%d bytes)", apiVersion, len(requestBody))
 
 	// Parse request to extract resources
 	resources, err := h.parseDescribeConfigsRequest(requestBody, apiVersion)
@@ -3022,8 +2886,6 @@ func (h *Handler) handleDescribeConfigs(correlationID uint32, apiVersion uint16,
 		Error("DescribeConfigs parsing error: %v", err)
 		return nil, fmt.Errorf("failed to parse DescribeConfigs request: %w", err)
 	}
-
-	Debug("DescribeConfigs parsed %d resources", len(resources))
 
 	isFlexible := apiVersion >= 4
 	if !isFlexible {
@@ -3049,7 +2911,6 @@ func (h *Handler) handleDescribeConfigs(correlationID uint32, apiVersion uint16,
 			response = append(response, resourceResponse...)
 		}
 
-		Debug("DescribeConfigs v%d response constructed, size: %d bytes", apiVersion, len(response))
 		return response, nil
 	}
 
@@ -3156,7 +3017,6 @@ func (h *Handler) handleDescribeConfigs(correlationID uint32, apiVersion uint16,
 	// Top-level tagged fields (empty)
 	response = append(response, 0)
 
-	Debug("DescribeConfigs v%d flexible response constructed, size: %d bytes", apiVersion, len(response))
 	return response, nil
 }
 
@@ -3248,8 +3108,6 @@ func (h *Handler) writeResponseWithHeader(w *bufio.Writer, correlationID uint32,
 
 	// Write response body
 	fullResponse = append(fullResponse, responseBody...)
-
-	Debug("Wrote API %d response v%d: size=%d, flexible=%t, correlationID=%d, totalBytes=%d", apiKey, apiVersion, totalSize, isFlexible, correlationID, len(fullResponse))
 
 	// Write to connection
 	if _, err := w.Write(fullResponse); err != nil {
@@ -3409,11 +3267,9 @@ func (h *Handler) tryInitializeSchemaManagement() {
 	}
 
 	if err := h.EnableSchemaManagement(schemaConfig); err != nil {
-		Debug("Schema management initialization failed (will retry later): %v", err)
 		return
 	}
 
-	Debug("Schema management successfully initialized with registry: %s", h.schemaRegistryURL)
 }
 
 // IsBrokerIntegrationEnabled returns true if broker integration is enabled
@@ -3468,7 +3324,6 @@ func (h *Handler) parseDescribeConfigsRequest(requestBody []byte, apiVersion uin
 		if len(debugBytes) > 8 {
 			debugBytes = debugBytes[:8]
 		}
-		Debug("DescribeConfigs v4 request bytes: %x", debugBytes)
 
 		// FIX: Skip top-level tagged fields for DescribeConfigs v4+ flexible protocol
 		// The request body starts with tagged fields count (usually 0x00 = empty)
@@ -3483,7 +3338,6 @@ func (h *Handler) parseDescribeConfigsRequest(requestBody []byte, apiVersion uin
 		if err != nil {
 			return nil, fmt.Errorf("decode resources compact array: %w", err)
 		}
-		Debug("DescribeConfigs v4 parsed resources length: %d, consumed: %d bytes", resourcesLength, consumed)
 		offset += consumed
 	} else {
 		// Regular array: length is int32
@@ -3883,14 +3737,11 @@ func (h *Handler) registerSchemasViaBrokerAPI(topicName string, valueRecordType 
 			// Not leader - in production multi-gateway setups, skip to avoid conflicts
 			// In single-gateway setups where leader election fails, log warning but proceed
 			// This ensures schema registration works even if distributed locking has issues
-			Debug("Not leader for schema registration of %s - proceeding anyway (may be single-gateway with lock issues)", topicName)
 			// Note: Schema registration is idempotent, so duplicate registrations are safe
 		} else {
-			Debug("Registering schema for %s as elected leader", topicName)
 		}
 	} else {
 		// No coordinator registry - definitely single-gateway mode
-		Debug("Registering schema for %s (single-gateway mode, no coordinator)", topicName)
 	}
 
 	// Require SeaweedMQ integration to access broker
@@ -3968,7 +3819,6 @@ func (h *Handler) registerSchemasViaBrokerAPI(topicName string, valueRecordType 
 // handleInitProducerId handles InitProducerId API requests (API key 22)
 // This API is used to initialize a producer for transactional or idempotent operations
 func (h *Handler) handleInitProducerId(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
-	Debug("InitProducerId v%d request received, correlation: %d, bodyLen: %d", apiVersion, correlationID, len(requestBody))
 
 	// InitProducerId Request Format (varies by version):
 	// v0-v1: transactional_id(NULLABLE_STRING) + transaction_timeout_ms(INT32)
@@ -4034,18 +3884,17 @@ func (h *Handler) handleInitProducerId(correlationID uint32, apiVersion uint16, 
 			}
 		}
 	}
+	_ = transactionalId // Used for logging/tracking, but not in core logic yet
 
 	// Parse transaction_timeout_ms (INT32)
 	if len(requestBody) < offset+4 {
 		return nil, fmt.Errorf("InitProducerId request too short for transaction_timeout_ms")
 	}
-	transactionTimeoutMs := binary.BigEndian.Uint32(requestBody[offset : offset+4])
+	_ = binary.BigEndian.Uint32(requestBody[offset : offset+4]) // transactionTimeoutMs
 	offset += 4
 
 	// For v2+, there might be additional fields, but we'll ignore them for now
 	// as we're providing a basic implementation
-
-	Debug("InitProducerId parsed - transactionalId: %v, timeoutMs: %d", transactionalId, transactionTimeoutMs)
 
 	// Build response
 	response := make([]byte, 0, 64)
@@ -4081,24 +3930,20 @@ func (h *Handler) handleInitProducerId(correlationID uint32, apiVersion uint16, 
 		response = append(response, 0x00) // Empty response body tagged fields
 	}
 
-	Debug("InitProducerId v%d response: %d bytes, producerId: %d, epoch: 0", apiVersion, len(response), producerId)
 	return response, nil
 }
 
 // createTopicWithSchemaSupport creates a topic with optional schema integration
 // This function creates topics with schema support when schema management is enabled
 func (h *Handler) createTopicWithSchemaSupport(topicName string, partitions int32) error {
-	Debug("Creating topic %s with schema support", topicName)
 
 	// For system topics like _schemas, __consumer_offsets, etc., use default schema
 	if isSystemTopic(topicName) {
-		Debug("System topic %s - creating with default schema", topicName)
 		return h.createTopicWithDefaultFlexibleSchema(topicName, partitions)
 	}
 
 	// Check if Schema Registry URL is configured
 	if h.schemaRegistryURL != "" {
-		Debug("Schema Registry URL configured (%s) - enforcing schema-first approach for topic %s", h.schemaRegistryURL, topicName)
 
 		// Try to initialize schema management if not already done
 		if h.schemaManager == nil {
@@ -4107,37 +3952,30 @@ func (h *Handler) createTopicWithSchemaSupport(topicName string, partitions int3
 
 		// If schema manager is still nil after initialization attempt, Schema Registry is unavailable
 		if h.schemaManager == nil {
-			Debug("Schema Registry is unavailable - failing fast for topic %s", topicName)
 			return fmt.Errorf("Schema Registry is configured at %s but unavailable - cannot create topic %s without schema validation", h.schemaRegistryURL, topicName)
 		}
 
 		// Schema Registry is available - try to fetch existing schema
-		Debug("Schema Registry available - looking up schema for topic %s", topicName)
 		keyRecordType, valueRecordType, err := h.fetchSchemaForTopic(topicName)
 		if err != nil {
 			// Check if this is a connection error vs schema not found
 			if h.isSchemaRegistryConnectionError(err) {
-				Debug("Schema Registry connection error for topic %s: %v", topicName, err)
 				return fmt.Errorf("Schema Registry is unavailable: %w", err)
 			}
 			// Schema not found - this is an error when schema management is enforced
-			Debug("No schema found for topic %s in Schema Registry - schema is required", topicName)
 			return fmt.Errorf("schema is required for topic %s but no schema found in Schema Registry", topicName)
 		}
 
 		if keyRecordType != nil || valueRecordType != nil {
-			Debug("Found schema for topic %s in Schema Registry - creating with schema configuration", topicName)
 			// Create topic with schema from Schema Registry
 			return h.seaweedMQHandler.CreateTopicWithSchemas(topicName, partitions, keyRecordType, valueRecordType)
 		}
 
 		// No schemas found - this is an error when schema management is enforced
-		Debug("No schemas found for topic %s in Schema Registry - schema is required", topicName)
 		return fmt.Errorf("schema is required for topic %s but no schema found in Schema Registry", topicName)
 	}
 
 	// Schema Registry URL not configured - create topic without schema (backward compatibility)
-	Debug("Schema Registry URL not configured - creating topic %s without schema", topicName)
 	return h.seaweedMQHandler.CreateTopic(topicName, partitions)
 }
 
@@ -4169,12 +4007,10 @@ func (h *Handler) fetchSchemaForTopic(topicName string) (*schema_pb.RecordType, 
 	if err != nil {
 		// Check if this is a connection error (Schema Registry unavailable)
 		if h.isSchemaRegistryConnectionError(err) {
-			Debug("Schema Registry connection error for subject %s: %v", valueSubject, err)
 			lastConnectionError = err
 		}
 		// Not found or connection error - continue to check key schema
 	} else if cachedSchema != nil {
-		Debug("Found value schema for topic %s using subject %s (ID: %d)", topicName, valueSubject, cachedSchema.LatestID)
 
 		// Convert schema to RecordType
 		recordType, err := h.convertSchemaToRecordType(cachedSchema.Schema, cachedSchema.LatestID)
@@ -4183,7 +4019,6 @@ func (h *Handler) fetchSchemaForTopic(topicName string) (*schema_pb.RecordType, 
 			// Store schema configuration for later use
 			h.storeTopicSchemaConfig(topicName, cachedSchema.LatestID, schema.FormatAvro)
 		} else {
-			Debug("Failed to convert value schema for topic %s: %v", topicName, err)
 		}
 	}
 
@@ -4192,12 +4027,10 @@ func (h *Handler) fetchSchemaForTopic(topicName string) (*schema_pb.RecordType, 
 	cachedKeySchema, keyErr := h.schemaManager.GetLatestSchema(keySubject)
 	if keyErr != nil {
 		if h.isSchemaRegistryConnectionError(keyErr) {
-			Debug("Schema Registry connection error for key subject %s: %v", keySubject, keyErr)
 			lastConnectionError = keyErr
 		}
 		// Not found or connection error - key schema is optional
 	} else if cachedKeySchema != nil {
-		Debug("Found key schema for topic %s using subject %s (ID: %d)", topicName, keySubject, cachedKeySchema.LatestID)
 
 		// Convert schema to RecordType
 		recordType, err := h.convertSchemaToRecordType(cachedKeySchema.Schema, cachedKeySchema.LatestID)
@@ -4206,7 +4039,6 @@ func (h *Handler) fetchSchemaForTopic(topicName string) (*schema_pb.RecordType, 
 			// Store key schema configuration for later use
 			h.storeTopicKeySchemaConfig(topicName, cachedKeySchema.LatestID, schema.FormatAvro)
 		} else {
-			Debug("Failed to convert key schema for topic %s: %v", topicName, err)
 		}
 	}
 

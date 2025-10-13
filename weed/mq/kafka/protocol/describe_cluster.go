@@ -13,7 +13,6 @@ import (
 //	[v1+: EndpointType(int8)] + ClusterId(compact string) + ControllerId(int32) +
 //	Brokers(compact array) + ClusterAuthorizedOperations(int32) + TaggedFields
 func (h *Handler) handleDescribeCluster(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
-	Debug("DescribeCluster v%d request, correlation: %d", apiVersion, correlationID)
 
 	// Parse request fields (all flexible format)
 	offset := 0
@@ -38,7 +37,6 @@ func (h *Handler) handleDescribeCluster(correlationID uint32, apiVersion uint16,
 	// Tagged fields at end of request
 	// (We don't parse them, just skip)
 
-	Debug("DescribeCluster: includeAuthorizedOps=%t, endpointType=%d", includeAuthorizedOps, endpointType)
 
 	// Build response
 	response := make([]byte, 0, 256)
@@ -111,7 +109,6 @@ func (h *Handler) handleDescribeCluster(correlationID uint32, apiVersion uint16,
 	// Response-level tagged fields (flexible response)
 	response = append(response, 0x00) // Empty tagged fields
 
-	Debug("DescribeCluster v%d response: %d bytes, broker=%s:%d", apiVersion, len(response), host, port)
 
 	return response, nil
 }

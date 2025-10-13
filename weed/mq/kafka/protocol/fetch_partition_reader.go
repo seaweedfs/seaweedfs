@@ -130,6 +130,12 @@ func (pr *partitionReader) serveFetchRequest(ctx context.Context, req *partition
 
 	// Get high water mark
 	hwm, hwmErr := pr.handler.seaweedMQHandler.GetLatestOffset(pr.topicName, pr.partitionID)
+	if hwmErr != nil {
+		glog.Warningf("[%s] Failed to get high water mark for %s[%d]: %v",
+			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, hwmErr)
+		result.recordBatch = []byte{}
+		return
+	}
 	result.highWaterMark = hwm
 
 	// CRITICAL: If requested offset >= HWM, return immediately with empty result

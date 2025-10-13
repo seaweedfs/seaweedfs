@@ -1,67 +1,77 @@
 # Kafka API Version Matrix Audit
 
 ## Summary
-This document audits the advertised API versions in `handleApiVersions()` against actual implementation support and identifies mismatches that need correction.
+This document audits the advertised API versions in `handleApiVersions()` against actual implementation support in `validateAPIVersion()` and handlers.
 
-## Current Status: MISMATCHES FOUND
+## Current Status: ALL VERIFIED ✅
 
-### API Version Discrepancies
+### API Version Matrix
 
-| API Key | API Name | Advertised | Actually Implemented | Status | Action Needed |
-|---------|----------|------------|---------------------|--------|---------------|
-| 18 | ApiVersions | v0-v3 | v0-v3 | Match | None |
-| 3 | Metadata | v0-v7 | v0-v7 | Match | None |
-| 0 | Produce | v0-v7 | v0-v7 | Match | None |
-| 1 | Fetch | v0-v7 | v0-v7 | Match | None |
-| 2 | ListOffsets | v0-v2 | v0-v2 | Match | None |
-| 19 | CreateTopics | v0-v5 | v0-v5 | Match | None |
-| 20 | DeleteTopics | v0-v4 | v0-v4 | Match | None |
-| 11 | JoinGroup | v0-v7 | v0-v7 | Match | None |
-| 14 | SyncGroup | v0-v5 | v0-v5 | Match | None |
-| 8 | OffsetCommit | v0-v2 | v0-v2 | Match | None |
-| 9 | OffsetFetch | v0-v5 | v0-v5 | Match | None |
-| 10 | FindCoordinator | v0-v2 | v0-v2 | Match | None |
-| 12 | Heartbeat | v0-v4 | v0-v4 | Match | None |
-| 13 | LeaveGroup | v0-v4 | v0-v4 | Match | None |
-
-## Detailed Analysis
-
-### 1. OffsetFetch API (Key 9)
-- Advertised and implemented aligned at v0–v5.
-
-### 2. CreateTopics API (Key 19)
-- Advertised and implemented aligned at v0–v5.
-
-### Validation vs Advertisement Consistency
-`validateAPIVersion()` and `handleApiVersions()` are consistent with the supported ranges.
+| API Key | API Name | Advertised | Validated | Handler Implemented | Status |
+|---------|----------|------------|-----------|---------------------|--------|
+| 18 | ApiVersions | v0-v4 | v0-v4 | v0-v4 | ✅ Match |
+| 3 | Metadata | v0-v7 | v0-v7 | v0-v7 | ✅ Match |
+| 0 | Produce | v0-v7 | v0-v7 | v0-v7 | ✅ Match |
+| 1 | Fetch | v0-v7 | v0-v7 | v0-v7 | ✅ Match |
+| 2 | ListOffsets | v0-v2 | v0-v2 | v0-v2 | ✅ Match |
+| 19 | CreateTopics | v0-v5 | v0-v5 | v0-v5 | ✅ Match |
+| 20 | DeleteTopics | v0-v4 | v0-v4 | v0-v4 | ✅ Match |
+| 10 | FindCoordinator | v0-v3 | v0-v3 | v0-v3 | ✅ Match |
+| 11 | JoinGroup | v0-v6 | v0-v6 | v0-v6 | ✅ Match |
+| 14 | SyncGroup | v0-v5 | v0-v5 | v0-v5 | ✅ Match |
+| 8 | OffsetCommit | v0-v2 | v0-v2 | v0-v2 | ✅ Match |
+| 9 | OffsetFetch | v0-v5 | v0-v5 | v0-v5 | ✅ Match |
+| 12 | Heartbeat | v0-v4 | v0-v4 | v0-v4 | ✅ Match |
+| 13 | LeaveGroup | v0-v4 | v0-v4 | v0-v4 | ✅ Match |
+| 15 | DescribeGroups | v0-v5 | v0-v5 | v0-v5 | ✅ Match |
+| 16 | ListGroups | v0-v4 | v0-v4 | v0-v4 | ✅ Match |
+| 32 | DescribeConfigs | v0-v4 | v0-v4 | v0-v4 | ✅ Match |
+| 22 | InitProducerId | v0-v4 | v0-v4 | v0-v4 | ✅ Match |
+| 60 | DescribeCluster | v0-v1 | v0-v1 | v0-v1 | ✅ Match |
 
 ## Implementation Details
 
-### OffsetFetch Version Features:
-- **v0-v2**: Basic offset fetch
-- **v3+**: Includes throttle_time_ms
-- **v5+**: Includes leader_epoch for each partition
+### Core APIs
+- **ApiVersions (v0-v4)**: Supports both flexible (v3+) and non-flexible formats. v4 added for Kafka 8.0.0 compatibility.
+- **Metadata (v0-v7)**: Full version support with flexible format in v7+
+- **Produce (v0-v7)**: Supports transactional writes and idempotent producers
+- **Fetch (v0-v7)**: Includes schema-aware fetching and multi-batch support
 
-### CreateTopics Version Features:  
-- **v0-v1**: Regular array format
-- **v2-v5**: Compact array format, tagged fields
+### Consumer Group Coordination
+- **FindCoordinator (v0-v3)**: v3+ supports flexible format
+- **JoinGroup (v0-v6)**: Capped at v6 (first flexible version)
+- **SyncGroup (v0-v5)**: Full consumer group protocol support
+- **Heartbeat (v0-v4)**: Consumer group session management
+- **LeaveGroup (v0-v4)**: Clean consumer group exit
+- **OffsetCommit (v0-v2)**: Consumer offset persistence
+- **OffsetFetch (v0-v5)**: v3+ includes throttle_time_ms, v5+ includes leader_epoch
 
-## Recommendations
+### Topic Management
+- **CreateTopics (v0-v5)**: v2+ uses compact arrays and tagged fields
+- **DeleteTopics (v0-v4)**: Full topic deletion support
+- **ListOffsets (v0-v2)**: Offset listing for partitions
 
-1. Re-verify after protocol changes to keep the matrix accurate
-2. Extend coverage as implementations grow; keep tests for version guards
+### Admin & Discovery
+- **DescribeCluster (v0-v1)**: AdminClient compatibility (KIP-919)
+- **DescribeGroups (v0-v5)**: Consumer group introspection
+- **ListGroups (v0-v4)**: List all consumer groups
+- **DescribeConfigs (v0-v4)**: Configuration inspection
+- **InitProducerId (v0-v4)**: Transactional producer initialization
 
-## Test Verification
+## Verification Source
 
-1. Exercise OffsetFetch v3–v5 with kafka-go and Sarama
-2. Exercise CreateTopics v5; verify fields and tagged fields
-3. Verify throttle_time_ms and leader_epoch population
-4. Ensure version validation permits supported versions only
+All version ranges verified from `handler.go`:
+- `SupportedApiKeys` array (line 1196): Advertised versions
+- `validateAPIVersion()` function (line 2903): Validation ranges
+- Individual handler implementations: Actual version support
 
-## Conservative Alternative
+Last verified: 2025-10-13
 
-If we want to be conservative and not advertise versions we haven't thoroughly tested:
-- **OffsetFetch**: Limit to v3 (throttle time support) instead of v5
-- **CreateTopics**: Keep at v4 unless v5 is specifically needed
+## Maintenance Notes
 
-This would still fix the main discrepancy while being more cautious about untested version features.
+1. After adding new API handlers, update all three locations:
+   - `SupportedApiKeys` array
+   - `validateAPIVersion()` map
+   - This documentation
+2. Test new versions with kafka-go and Sarama clients
+3. Ensure flexible format support for v3+ APIs where applicable

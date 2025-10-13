@@ -36,11 +36,8 @@ type FetchResult struct {
 // FetchMultipleBatches fetches multiple record batches up to maxBytes limit
 // ctx controls the fetch timeout (should match Kafka fetch request's MaxWaitTime)
 func (f *MultiBatchFetcher) FetchMultipleBatches(ctx context.Context, topicName string, partitionID int32, startOffset, highWaterMark int64, maxBytes int32) (*FetchResult, error) {
-	Debug("[DEBUG_MULTIBATCH] FetchMultipleBatches: topic=%s partition=%d startOffset=%d highWaterMark=%d maxBytes=%d",
-		topicName, partitionID, startOffset, highWaterMark, maxBytes)
 
 	if startOffset >= highWaterMark {
-		Debug("[DEBUG_MULTIBATCH] startOffset >= highWaterMark, returning empty result")
 		return &FetchResult{
 			RecordBatches: []byte{},
 			NextOffset:    startOffset,
@@ -64,15 +61,11 @@ func (f *MultiBatchFetcher) FetchMultipleBatches(ctx context.Context, topicName 
 	recordsPerBatch := int32(10) // Start with smaller batch size
 	maxBatchesPerFetch := 10     // Limit number of batches to avoid infinite loops
 
-	Debug("[DEBUG_MULTIBATCH] Starting batch fetch loop: batchCount=%d currentOffset=%d", batchCount, currentOffset)
-
 	for batchCount < maxBatchesPerFetch && currentOffset < highWaterMark {
-		Debug("[DEBUG_MULTIBATCH] Loop iteration: batchCount=%d currentOffset=%d highWaterMark=%d", batchCount, currentOffset, highWaterMark)
 
 		// Calculate remaining space
 		remainingBytes := maxBytes - totalSize
 		if remainingBytes < 100 { // Need at least 100 bytes for a minimal batch
-			Debug("[DEBUG_MULTIBATCH] Not enough remaining bytes: %d", remainingBytes)
 			break
 		}
 
@@ -84,8 +77,6 @@ func (f *MultiBatchFetcher) FetchMultipleBatches(ctx context.Context, topicName 
 		// Calculate how many records to fetch for this batch
 		recordsAvailable := highWaterMark - currentOffset
 		if recordsAvailable <= 0 {
-			Debug("[DEBUG_MULTIBATCH] No records available (currentOffset=%d >= highWaterMark=%d), breaking",
-				currentOffset, highWaterMark)
 			break
 		}
 
@@ -94,16 +85,11 @@ func (f *MultiBatchFetcher) FetchMultipleBatches(ctx context.Context, topicName 
 			recordsToFetch = int32(recordsAvailable)
 		}
 
-		Debug("[DEBUG_MULTIBATCH] About to call GetStoredRecords: topic=%s partition=%d offset=%d count=%d (available=%d)",
-			topicName, partitionID, currentOffset, recordsToFetch, recordsAvailable)
-
 		// Check if handler is nil
 		if f.handler == nil {
-			Debug("[DEBUG_MULTIBATCH] ERROR: f.handler is nil")
 			break
 		}
 		if f.handler.seaweedMQHandler == nil {
-			Debug("[DEBUG_MULTIBATCH] ERROR: f.handler.seaweedMQHandler is nil")
 			break
 		}
 
@@ -111,11 +97,9 @@ func (f *MultiBatchFetcher) FetchMultipleBatches(ctx context.Context, topicName 
 		// Pass context to respect Kafka fetch request's MaxWaitTime
 		getRecordsStartTime := time.Now()
 		smqRecords, err := f.handler.seaweedMQHandler.GetStoredRecords(ctx, topicName, partitionID, currentOffset, int(recordsToFetch))
-		getRecordsDuration := time.Since(getRecordsStartTime)
-		Debug("[DEBUG_MULTIBATCH] GetStoredRecords returned: records=%d err=%v duration=%v", len(smqRecords), err, getRecordsDuration)
+		_ = time.Since(getRecordsStartTime) // getRecordsDuration
 
 		if err != nil || len(smqRecords) == 0 {
-			Debug("[DEBUG_MULTIBATCH] Breaking loop: err=%v recordCount=%d", err, len(smqRecords))
 			break
 		}
 
@@ -673,8 +657,6 @@ func (f *MultiBatchFetcher) compressData(data []byte, codec compression.Compress
 		}
 
 		compressed := buf.Bytes()
-		Debug("GZIP compression: %d bytes -> %d bytes (%.1f%% reduction)",
-			len(data), len(compressed), 100.0*(1.0-float64(len(compressed))/float64(len(data))))
 
 		return compressed, nil
 	default:

@@ -91,7 +91,6 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 			// Use context-aware sleep instead of blocking time.Sleep
 			select {
 			case <-ctx.Done():
-				Debug("Fetch polling cancelled due to context cancellation")
 				throttleTimeMs = int32(time.Since(start) / time.Millisecond)
 				break pollLoop
 			case <-time.After(10 * time.Millisecond):
@@ -270,9 +269,7 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 	}
 done:
 
-	persistentFetchDuration := time.Since(persistentFetchStart)
-	Debug("Persistent reader fetch completed: %d partitions in %v (avg %.2fms/partition)",
-		len(results), persistentFetchDuration, float64(persistentFetchDuration.Milliseconds())/float64(len(results)))
+	_ = time.Since(persistentFetchStart) // persistentFetchDuration
 
 	// ====================================================================
 	// BUILD RESPONSE FROM FETCHED DATA
@@ -324,9 +321,6 @@ done:
 			// Get the pre-fetched result for this partition
 			result := results[resultIdx]
 			resultIdx++
-
-			Debug("Assembling response for topic %s partition %d (fetch took %v)",
-				topic.Name, partition.PartitionID, result.fetchDuration)
 
 			// Partition ID
 			partitionIDBytes := make([]byte, 4)
@@ -416,14 +410,6 @@ done:
 					response[topicsCountPos], response[topicsCountPos+1], response[topicsCountPos+2], response[topicsCountPos+3])
 			}
 		}
-	}
-
-	Debug("Fetch v%d response constructed, size: %d bytes (flexible: %v)", apiVersion, len(response), isFlexible)
-
-	// Log Schema Registry fetch responses
-	if isSchemasTopic {
-		glog.V(2).Infof("SR FETCH RESPONSE: responseSize=%d totalRecordBytes=%d topicsCount=%d apiVersion=%d",
-			len(response), totalAppendedRecordBytes, topicsCount, apiVersion)
 	}
 
 	return response, nil
@@ -728,7 +714,6 @@ func (h *Handler) parseFetchRequest(apiVersion uint16, requestBody []byte) (*Fet
 		_, consumed, err := DecodeTaggedFields(requestBody[offset:])
 		if err != nil {
 			// Don't fail on trailing tagged fields parsing
-			Debug("Failed to parse trailing tagged fields: %v", err)
 		} else {
 			offset += consumed
 		}
@@ -985,9 +970,6 @@ func (h *Handler) fetchSchematizedRecords(topicName string, partitionID int32, o
 		}
 	}
 
-	Debug("Fetched %d schematized records for topic %s partition %d from offset %d",
-		len(reconstructedRecords), topicName, partitionID, offset)
-
 	return reconstructedRecords, nil
 }
 
@@ -1107,9 +1089,6 @@ func (h *Handler) createSchematizedRecordBatch(records []*SchematizedRecord, bas
 		if err == nil && len(compressed) < len(recordsData) {
 			finalRecordsData = compressed
 			compressionType = compression.Gzip
-			Debug("Applied GZIP compression: %d -> %d bytes (%.1f%% reduction)",
-				len(recordsData), len(compressed),
-				100.0*(1.0-float64(len(compressed))/float64(len(recordsData))))
 		} else {
 			finalRecordsData = recordsData
 		}
@@ -1121,12 +1100,8 @@ func (h *Handler) createSchematizedRecordBatch(records []*SchematizedRecord, bas
 	batch, err := h.createRecordBatchWithCompressionAndCRC(baseOffset, finalRecordsData, compressionType, int32(len(records)), currentTimestamp)
 	if err != nil {
 		// Fallback to simple batch creation
-		Debug("Failed to create compressed record batch, falling back: %v", err)
 		return h.createRecordBatchWithPayload(baseOffset, int32(len(records)), finalRecordsData)
 	}
-
-	Debug("Created schematized record batch: %d messages, %d bytes, compression=%v",
-		len(records), len(batch), compressionType)
 
 	return batch
 }
@@ -1360,9 +1335,6 @@ func (h *Handler) handleSchematizedFetch(topicName string, partitionID int32, of
 	// Create record batch from reconstructed records
 	recordBatch := h.createSchematizedRecordBatch(records, offset)
 
-	Debug("Created schematized record batch: %d bytes for %d records",
-		len(recordBatch), len(records))
-
 	return recordBatch, nil
 }
 
@@ -1550,7 +1522,6 @@ func (h *Handler) decodeRecordValueToKafkaMessage(topicName string, recordValueB
 	// return the raw bytes as-is. These topics store Kafka's internal format (Avro, etc.)
 	// and should NOT be processed as RecordValue protobuf messages.
 	if strings.HasPrefix(topicName, "_") {
-		Debug("System topic %s: returning raw bytes without RecordValue processing", topicName)
 		return recordValueBytes
 	}
 
@@ -1559,7 +1530,6 @@ func (h *Handler) decodeRecordValueToKafkaMessage(topicName string, recordValueB
 	if err := proto.Unmarshal(recordValueBytes, recordValue); err != nil {
 		// Not a RecordValue format - this is normal for Avro/JSON/raw Kafka messages
 		// Return raw bytes as-is (Kafka consumers expect this)
-		Debug("Topic %s: using raw Kafka format (not RecordValue protobuf), size=%d bytes", topicName, len(recordValueBytes))
 		return recordValueBytes
 	}
 
@@ -1568,7 +1538,6 @@ func (h *Handler) decodeRecordValueToKafkaMessage(topicName string, recordValueB
 		if encodedMsg, err := h.encodeRecordValueToConfluentFormat(topicName, recordValue); err == nil {
 			return encodedMsg
 		} else {
-			Debug("Failed to encode RecordValue to Confluent format: %v", err)
 		}
 	}
 
@@ -1721,7 +1690,6 @@ func (h *Handler) fetchPartitionData(
 	// Get the actual high water mark from SeaweedMQ
 	highWaterMark, err := h.seaweedMQHandler.GetLatestOffset(topicName, partition.PartitionID)
 	if err != nil {
-		Debug("Failed to get latest offset for topic %s partition %d: %v", topicName, partition.PartitionID, err)
 		highWaterMark = 0
 	}
 	result.highWaterMark = highWaterMark

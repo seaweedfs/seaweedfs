@@ -7,7 +7,6 @@ import (
 
 // handleDescribeGroups handles DescribeGroups API (key 15)
 func (h *Handler) handleDescribeGroups(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
-	Debug("DescribeGroups v%d request received, correlation: %d", apiVersion, correlationID)
 
 	// Parse request
 	request, err := h.parseDescribeGroupsRequest(requestBody, apiVersion)
@@ -32,7 +31,6 @@ func (h *Handler) handleDescribeGroups(correlationID uint32, apiVersion uint16, 
 
 // handleListGroups handles ListGroups API (key 16)
 func (h *Handler) handleListGroups(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
-	Debug("ListGroups v%d request received, correlation: %d", apiVersion, correlationID)
 
 	// Parse request (ListGroups has minimal request structure)
 	request, err := h.parseListGroupsRequest(requestBody, apiVersion)

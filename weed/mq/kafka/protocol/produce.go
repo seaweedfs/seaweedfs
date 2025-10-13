@@ -14,7 +14,6 @@ import (
 )
 
 func (h *Handler) handleProduce(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
-	Debug("Produce v%d request received, correlationID=%d, bodySize=%d", apiVersion, correlationID, len(requestBody))
 
 	// Version-specific handling
 	switch apiVersion {
@@ -108,7 +107,6 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 			// Use schema-aware topic creation for auto-created topics with configurable default partitions
 			defaultPartitions := h.GetDefaultPartitions()
 			if err := h.createTopicWithSchemaSupport(topicName, defaultPartitions); err != nil {
-				Debug("Failed to auto-create topic %s with schema support: %v", topicName, err)
 			} else {
 				// Ledger initialization REMOVED - SMQ handles offsets natively
 				topicExists = true // CRITICAL FIX: Update the flag after creating the topic
@@ -177,7 +175,6 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 					if err != nil {
 						// Check if this is a schema validation error and add delay to prevent overloading
 						if h.isSchemaValidationError(err) {
-							Debug("Schema validation failed for topic %s: %v - adding delay to prevent gateway overload", topicName, err)
 							time.Sleep(200 * time.Millisecond) // Brief delay for schema validation failures
 						}
 						errorCode = 1 // UNKNOWN_SERVER_ERROR
@@ -784,7 +781,6 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 							if prodErr != nil {
 								// Check if this is a schema validation error and add delay to prevent overloading
 								if h.isSchemaValidationError(prodErr) {
-									Debug("Schema validation failed for topic %s: %v - adding delay to prevent gateway overload", topicName, prodErr)
 									time.Sleep(200 * time.Millisecond) // Brief delay for schema validation failures
 								}
 								errorCode = 1 // UNKNOWN_SERVER_ERROR
@@ -1269,7 +1265,6 @@ func (h *Handler) produceSchemaBasedRecord(topic string, partition int32, key []
 		if !h.hasTopicKeySchemaConfig(topic, keyDecodedMsg.SchemaID, keyDecodedMsg.SchemaFormat) {
 			err := h.storeTopicKeySchemaConfig(topic, keyDecodedMsg.SchemaID, keyDecodedMsg.SchemaFormat)
 			if err != nil {
-				Debug("Failed to store topic key schema config for %s: %v", topic, err)
 			}
 
 			// Schedule key schema registration in background (leader-only, non-blocking)
@@ -1297,7 +1292,6 @@ func (h *Handler) produceSchemaBasedRecord(topic string, partition int32, key []
 		if !hasConfig {
 			err = h.storeTopicSchemaConfig(topic, valueDecodedMsg.SchemaID, valueDecodedMsg.SchemaFormat)
 			if err != nil {
-				Debug("Failed to store topic schema config for %s: %v", topic, err)
 				fmt.Printf("Failed to store topic schema config for %s: %v\n", topic, err)
 			} else {
 				fmt.Printf("Stored topic schema config for %s\n", topic)
@@ -1460,12 +1454,10 @@ func (h *Handler) scheduleSchemaRegistration(topicName string, recordType *schem
 	fmt.Printf("scheduleSchemaRegistration: Calling registerSchemasViaBrokerAPI for %s\n", topicName)
 	if err := h.registerSchemasViaBrokerAPI(topicName, recordType, nil); err != nil {
 		fmt.Printf("Schema registration failed for %s: %v\n", topicName, err)
-		Debug("Schema registration failed for %s: %v", topicName, err)
 		// Remove from registered map on failure so it can be retried
 		delete(h.registeredSchemas, schemaKey)
 	} else {
 		fmt.Printf("Successfully registered value schema for %s\n", topicName)
-		Debug("Successfully registered value schema for %s", topicName)
 	}
 }
 
@@ -1500,11 +1492,9 @@ func (h *Handler) scheduleKeySchemaRegistration(topicName string, recordType *sc
 	// Register key schema to the same topic (not a phantom "-key" topic)
 	// This uses the extended ConfigureTopicRequest with separate key/value RecordTypes
 	if err := h.registerSchemasViaBrokerAPI(topicName, nil, recordType); err != nil {
-		Debug("Key schema registration failed for %s: %v", topicName, err)
 		// Remove from registered map on failure so it can be retried
 		delete(h.registeredSchemas, schemaKey)
 	} else {
-		Debug("Successfully registered key schema for %s", topicName)
 	}
 }
 
@@ -1523,7 +1513,6 @@ func (h *Handler) ensureTopicSchemaFromRegistryCache(topicName string, schemas .
 	// Try to infer RecordType from the cached schema
 	recordType, err := h.inferRecordTypeFromCachedSchema(latestSchema)
 	if err != nil {
-		Debug("Failed to infer RecordType from cached schema for topic %s: %v", topicName, err)
 		return
 	}
 
@@ -1548,7 +1537,6 @@ func (h *Handler) ensureTopicKeySchemaFromRegistryCache(topicName string, schema
 	// Try to infer RecordType from the cached schema
 	recordType, err := h.inferRecordTypeFromCachedSchema(latestSchema)
 	if err != nil {
-		Debug("Failed to infer RecordType from cached key schema for topic %s: %v", topicName, err)
 		return
 	}
 
