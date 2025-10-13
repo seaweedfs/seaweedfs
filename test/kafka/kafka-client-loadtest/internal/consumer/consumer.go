@@ -13,6 +13,8 @@ import (
 	"github.com/linkedin/goavro/v2"
 	"github.com/seaweedfs/seaweedfs/test/kafka/kafka-client-loadtest/internal/config"
 	"github.com/seaweedfs/seaweedfs/test/kafka/kafka-client-loadtest/internal/metrics"
+	pb "github.com/seaweedfs/seaweedfs/test/kafka/kafka-client-loadtest/internal/schema/pb"
+	"google.golang.org/protobuf/proto"
 )
 
 // Consumer represents a Kafka consumer for load testing
@@ -433,11 +435,21 @@ func (c *Consumer) decodeProtobufMessage(value []byte) (interface{}, error) {
 		protoData = value
 	}
 
-	// For now, return raw protobuf data as we don't have the protobuf codec initialized
-	// TODO: Add proper protobuf decoding with generated code
+	// Unmarshal protobuf message
+	var protoMsg pb.LoadTestMessage
+	if err := proto.Unmarshal(protoData, &protoMsg); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal Protobuf data: %w", err)
+	}
+
+	// Convert to map for consistency with other decoders
 	return map[string]interface{}{
-		"protobuf_data": protoData,
-		"data_size":     len(protoData),
+		"id":          protoMsg.Id,
+		"timestamp":   protoMsg.Timestamp,
+		"producer_id": protoMsg.ProducerId,
+		"counter":     protoMsg.Counter,
+		"user_id":     protoMsg.UserId,
+		"event_type":  protoMsg.EventType,
+		"properties":  protoMsg.Properties,
 	}, nil
 }
 

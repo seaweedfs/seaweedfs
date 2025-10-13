@@ -19,6 +19,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/test/kafka/kafka-client-loadtest/internal/config"
 	"github.com/seaweedfs/seaweedfs/test/kafka/kafka-client-loadtest/internal/metrics"
 	"github.com/seaweedfs/seaweedfs/test/kafka/kafka-client-loadtest/internal/schema"
+	pb "github.com/seaweedfs/seaweedfs/test/kafka/kafka-client-loadtest/internal/schema/pb"
+	"google.golang.org/protobuf/proto"
 )
 
 // ErrCircuitBreakerOpen indicates that the circuit breaker is open due to consecutive failures
@@ -334,13 +336,11 @@ func (p *Producer) produceSaramaMessage(topic string, startTime time.Time) error
 				return fmt.Errorf("failed to encode as JSON for topic %s: %w", topic, err)
 			}
 		case "PROTOBUF":
-			// For PROTOBUF schema, fallback to JSON for now (Protobuf binary encoding not implemented)
-			// TODO: Implement proper Protobuf binary encoding
-			encodedMessage, err = p.generateJSONMessage()
+			// For PROTOBUF schema, encode as Protobuf binary
+			encodedMessage, err = p.generateProtobufMessage()
 			if err != nil {
-				return fmt.Errorf("failed to encode as JSON (Protobuf fallback) for topic %s: %w", topic, err)
+				return fmt.Errorf("failed to encode as Protobuf for topic %s: %w", topic, err)
 			}
-			log.Printf("WARNING: Using JSON encoding for PROTOBUF schema on topic %s (proper Protobuf encoding not yet implemented)", topic)
 		default:
 			// Unknown format - fallback to JSON
 			encodedMessage, err = p.generateJSONMessage()
@@ -432,6 +432,35 @@ func (p *Producer) generateJSONMessage() ([]byte, error) {
 
 	// Marshal to JSON (no padding - let natural message size be used)
 	messageBytes, err := json.Marshal(msg)
+	if err != nil {
+		return nil, err
+	}
+
+	return messageBytes, nil
+}
+
+// generateProtobufMessage generates a Protobuf-encoded message
+func (p *Producer) generateProtobufMessage() ([]byte, error) {
+	// Create protobuf message
+	protoMsg := &pb.LoadTestMessage{
+		Id:         fmt.Sprintf("msg-%d-%d", p.id, p.messageCounter),
+		Timestamp:  time.Now().UnixNano(),
+		ProducerId: int32(p.id),
+		Counter:    p.messageCounter,
+		UserId:     fmt.Sprintf("user-%d", p.random.Intn(10000)),
+		EventType:  p.randomEventType(),
+		Properties: map[string]string{
+			"session_id":  fmt.Sprintf("sess-%d-%d", p.id, p.random.Intn(1000)),
+			"page_views":  fmt.Sprintf("%d", p.random.Intn(100)),
+			"duration_ms": fmt.Sprintf("%d", p.random.Intn(300000)),
+			"country":     p.randomCountry(),
+			"device_type": p.randomDeviceType(),
+			"app_version": fmt.Sprintf("v%d.%d.%d", p.random.Intn(10), p.random.Intn(10), p.random.Intn(100)),
+		},
+	}
+
+	// Marshal to protobuf binary
+	messageBytes, err := proto.Marshal(protoMsg)
 	if err != nil {
 		return nil, err
 	}
