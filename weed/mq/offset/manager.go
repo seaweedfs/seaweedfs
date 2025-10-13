@@ -184,7 +184,9 @@ func NewPartitionOffsetRegistry(storage OffsetStorage) *PartitionOffsetRegistry 
 
 // GetManager returns the offset manager for a partition, creating it if needed
 func (r *PartitionOffsetRegistry) GetManager(namespace, topicName string, partition *schema_pb.Partition) (*PartitionOffsetManager, error) {
-	key := partitionKey(partition)
+	// CRITICAL FIX: Include namespace and topicName in the key to prevent different topics
+	// from sharing the same offset manager
+	key := fmt.Sprintf("%s/%s/%s", namespace, topicName, partitionKey(partition))
 
 	r.mu.RLock()
 	manager, exists := r.managers[key]
