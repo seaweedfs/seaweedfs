@@ -769,8 +769,8 @@ func (h *Handler) constructRecordBatchFromSMQ(topicName string, fetchOffset int6
 	batchLengthPos := len(batch)
 	batch = append(batch, 0, 0, 0, 0) // batch length placeholder (4 bytes)
 
-	// Partition leader epoch (4 bytes) - use -1 for no epoch
-	batch = append(batch, 0xFF, 0xFF, 0xFF, 0xFF)
+	// Partition leader epoch (4 bytes) - use 0 (real Kafka uses 0, not -1)
+	batch = append(batch, 0x00, 0x00, 0x00, 0x00)
 
 	// Magic byte (1 byte) - v2 format
 	batch = append(batch, 2)
@@ -872,6 +872,15 @@ func (h *Handler) constructRecordBatchFromSMQ(topicName string, fetchOffset int6
 	crcData := batch[crcPos+4:] // CRC covers ONLY from attributes (byte 21) onwards // Skip CRC field itself, include rest
 	crc := crc32.Checksum(crcData, crc32.MakeTable(crc32.Castagnoli))
 	binary.BigEndian.PutUint32(batch[crcPos:crcPos+4], crc)
+
+	// DEBUG: Log batch bytes for _schemas topic
+	if topicName == "_schemas" {
+		glog.Infof("[SCHEMAS BATCH] Constructed batch for offset %d: len=%d bytes, recordCount=%d, crc=0x%08X",
+			fetchOffset, len(batch), len(smqRecords), crc)
+		if len(batch) <= 200 {
+			glog.Infof("[SCHEMAS BATCH] Hex dump: %x", batch)
+		}
+	}
 
 	return batch
 }

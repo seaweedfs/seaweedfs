@@ -109,9 +109,16 @@ func (f *MultiBatchFetcher) FetchMultipleBatches(ctx context.Context, topicName 
 
 		// Fetch records for this batch
 		// Pass context to respect Kafka fetch request's MaxWaitTime
+		isSchemasTopic := topicName == "_schemas"
+		if isSchemasTopic {
+			glog.Infof("[SCHEMAS MULTIBATCH] About to call GetStoredRecords: offset=%d count=%d", currentOffset, recordsToFetch)
+		}
 		getRecordsStartTime := time.Now()
 		smqRecords, err := f.handler.seaweedMQHandler.GetStoredRecords(ctx, topicName, partitionID, currentOffset, int(recordsToFetch))
 		getRecordsDuration := time.Since(getRecordsStartTime)
+		if isSchemasTopic {
+			glog.Infof("[SCHEMAS MULTIBATCH] GetStoredRecords returned: records=%d err=%v duration=%v", len(smqRecords), err, getRecordsDuration)
+		}
 		Debug("[DEBUG_MULTIBATCH] GetStoredRecords returned: records=%d err=%v duration=%v", len(smqRecords), err, getRecordsDuration)
 
 		if err != nil || len(smqRecords) == 0 {
@@ -188,8 +195,8 @@ func (f *MultiBatchFetcher) constructSingleRecordBatch(topicName string, baseOff
 	batchLengthPos := len(batch)
 	batch = append(batch, 0, 0, 0, 0) // batch length placeholder (4 bytes)
 
-	// Partition leader epoch (4 bytes) - use -1 for no epoch
-	batch = append(batch, 0xFF, 0xFF, 0xFF, 0xFF)
+	// Partition leader epoch (4 bytes) - use 0 (real Kafka uses 0, not -1)
+	batch = append(batch, 0x00, 0x00, 0x00, 0x00)
 
 	// Magic byte (1 byte) - v2 format
 	batch = append(batch, 2)
@@ -414,6 +421,15 @@ func (f *MultiBatchFetcher) constructSingleRecordBatch(topicName string, baseOff
 
 		fmt.Printf("    Batch for topic=%s baseOffset=%d recordCount=%d\n", topicName, baseOffset, len(smqRecords))
 		fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
+	}
+
+	// DEBUG: Log batch bytes for _schemas topic
+	if topicName == "_schemas" {
+		glog.Infof("[SCHEMAS BATCH MULTIBATCH] Constructed batch for offset %d: len=%d bytes, recordCount=%d, crc=0x%08X",
+			baseOffset, len(batch), len(smqRecords), crc)
+		if len(batch) <= 200 {
+			glog.Infof("[SCHEMAS BATCH MULTIBATCH] Hex dump: %x", batch)
+		}
 	}
 
 	return batch
