@@ -116,4 +116,9 @@ jobs:
       if: always()
       working-directory: test/kafka/kafka-client-loadtest
       run: |
-        make clean || true
+        # Stop containers first
+        docker compose --profile loadtest --profile monitoring down -v --remove-orphans || true
+        # Clean up data with sudo to handle Docker root-owned files
+        sudo rm -rf data/* || true
+        # Clean up binary
+        rm -f weed-linux-* || true
