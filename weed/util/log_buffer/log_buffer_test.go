@@ -134,13 +134,18 @@ func TestReadFromBuffer_OldOffsetReturnsResumeFromDiskError(t *testing.T) {
 			lb.bufferStartOffset = tt.bufferStartOffset
 			lb.offset = tt.currentOffset
 
-			// Add some data to the buffer if needed
+			// CRITICAL: Mark this as an offset-based buffer
+			lb.hasOffsets = true
+
+			// Add some data to the buffer if needed (at current offset position)
 			if tt.hasData {
 				testData := []byte("test message")
-				lb.AddToBuffer(&mq_pb.DataMessage{
-					Key:   []byte("key"),
-					Value: testData,
-					TsNs:  time.Now().UnixNano(),
+				// Use AddLogEntryToBuffer to preserve offset information
+				lb.AddLogEntryToBuffer(&filer_pb.LogEntry{
+					TsNs:   time.Now().UnixNano(),
+					Key:    []byte("key"),
+					Data:   testData,
+					Offset: tt.currentOffset, // Add data at current offset
 				})
 			}
 

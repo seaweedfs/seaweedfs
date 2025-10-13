@@ -90,6 +90,13 @@ func (p *LocalPartition) Subscribe(clientName string, startPosition log_buffer.M
 	var readInMemoryLogErr error
 	var isDone bool
 
+	// DEBUG: Log startPosition for _schemas topic
+	bufferName := p.LogBuffer.GetName()
+	if strings.Contains(clientName, "_schemas") || strings.Contains(bufferName, "_schemas") {
+		glog.V(0).Infof("[BROKER SUBSCRIBE %s bufname=%s] startPosition: IsOffsetBased=%v Offset=%d Time=%v",
+			clientName, bufferName, startPosition.IsOffsetBased, startPosition.Offset, startPosition.Time)
+	}
+
 	// CRITICAL FIX: Use offset-based functions if startPosition is offset-based
 	// This allows reading historical data by offset, not just by timestamp
 	if startPosition.IsOffsetBased {
@@ -101,7 +108,11 @@ func (p *LocalPartition) Subscribe(clientName string, startPosition log_buffer.M
 		// Always attempt initial disk read for historical data
 		// This is fast if no data on disk, and ensures we don't miss old data
 		// The memory read loop below handles new data with instant notifications
-		glog.V(2).Infof("%s reading historical data from disk starting at offset %d", clientName, startPosition.Offset)
+		if strings.Contains(clientName, "_schemas") || strings.Contains(p.LogBuffer.GetName(), "_schemas") {
+			glog.Infof("[BROKER SUBSCRIBE %s] reading historical data from disk starting at offset %d", clientName, startPosition.Offset)
+		} else {
+			glog.V(2).Infof("%s reading historical data from disk starting at offset %d", clientName, startPosition.Offset)
+		}
 		processedPosition, isDone, readPersistedLogErr = p.LogBuffer.ReadFromDiskFn(startPosition, 0, eachMessageFn)
 		if readPersistedLogErr != nil {
 			glog.V(2).Infof("%s read %v persisted log: %v", clientName, p.Partition, readPersistedLogErr)

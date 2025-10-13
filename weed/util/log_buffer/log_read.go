@@ -229,10 +229,11 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 				// Continue to next iteration after disk read
 			}
 
-			// Check if client is still connected
+			// CRITICAL: Check if client is still connected after disk read
 			if !waitForDataFn() {
-				isDone = true
-				return lastReadPosition, isDone, nil
+				// Client disconnected - exit cleanly
+				glog.V(4).Infof("%s: Client disconnected after disk read", readerName)
+				return lastReadPosition, true, nil
 			}
 
 			// Wait for notification or timeout (instant wake-up when data arrives)
@@ -257,9 +258,8 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 			// CRITICAL: Check if subscription is still active BEFORE waiting
 			// This prevents infinite loops when client has disconnected
 			if !waitForDataFn() {
-				isDone = true
-				glog.V(4).Infof("waitForDataFn returned false, subscription ending")
-				return
+				glog.V(4).Infof("%s: waitForDataFn returned false, subscription ending", readerName)
+				return lastReadPosition, true, nil
 			}
 
 			if offset >= 0 {
@@ -274,12 +274,11 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 			// return ResumeFromDiskError to let Subscribe try reading from disk again.
 			// This prevents infinite blocking when all data is on disk (e.g., after restart).
 			if startPosition.IsOffsetBased {
-				glog.V(4).Infof("No data in LogBuffer for offset-based read at %v, checking if client still connected", lastReadPosition)
+				glog.V(4).Infof("%s: No data in LogBuffer for offset-based read at %v, checking if client still connected", readerName, lastReadPosition)
 				// Check if client is still connected before busy-looping
 				if !waitForDataFn() {
-					glog.V(4).Infof("Client disconnected, stopping offset-based read")
-					isDone = true
-					return
+					glog.V(4).Infof("%s: Client disconnected, stopping offset-based read", readerName)
+					return lastReadPosition, true, nil
 				}
 				// Wait for notification or timeout (instant wake-up when data arrives)
 				select {
@@ -297,8 +296,8 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 
 			for lastTsNs == logBuffer.LastTsNs.Load() {
 				if !waitForDataFn() {
-					isDone = true
-					return
+					glog.V(4).Infof("%s: Client disconnected during timestamp wait", readerName)
+					return lastReadPosition, true, nil
 				}
 				// Wait for notification or timeout (instant wake-up when data arrives)
 				select {
@@ -315,8 +314,8 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 				}
 			}
 			if logBuffer.IsStopping() {
-				isDone = true
-				return
+				glog.V(4).Infof("%s: LogBuffer is stopping", readerName)
+				return lastReadPosition, true, nil
 			}
 			continue
 		}
@@ -329,9 +328,8 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 		if len(buf) == 0 {
 			glog.V(4).Infof("Empty buffer for %s, checking if client still connected", readerName)
 			if !waitForDataFn() {
-				glog.V(4).Infof("Client disconnected, stopping read for %s", readerName)
-				isDone = true
-				return
+				glog.V(4).Infof("%s: Client disconnected on empty buffer", readerName)
+				return lastReadPosition, true, nil
 			}
 			// Sleep to avoid busy-wait on empty buffer
 			time.Sleep(10 * time.Millisecond)

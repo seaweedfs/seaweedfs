@@ -580,16 +580,36 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 		if requestedOffset >= logBuffer.bufferStartOffset && requestedOffset <= logBuffer.offset {
 			// If current buffer is empty (pos=0), check if data is on disk or not yet written
 			if logBuffer.pos == 0 {
-				// Check lastFlushedOffset to distinguish:
-				// - If requestedOffset <= lastFlushedOffset: data is on disk, read from disk
-				// - If requestedOffset > lastFlushedOffset: data not yet written, wait for notification
-				if requestedOffset <= logBuffer.lastFlushedOffset.Load() {
+				// CRITICAL FIX: If buffer is empty but offset range covers the request,
+				// it means data was in memory and has been flushed/moved out.
+				// The bufferStartOffset advancing to cover this offset proves data existed.
+				//
+				// Three cases:
+				// 1. requestedOffset < logBuffer.offset: Data was here, now flushed
+				// 2. requestedOffset == logBuffer.offset && bufferStartOffset > 0: Buffer advanced, data flushed
+				// 3. requestedOffset == logBuffer.offset && bufferStartOffset == 0: Initial state - try disk first!
+				//
+				// Cases 1 & 2: try disk read
+				// Case 3: try disk read (historical data might exist)
+				if requestedOffset < logBuffer.offset {
+					// Data was in the buffer range but buffer is now empty = flushed to disk
 					if strings.Contains(logBuffer.name, "_schemas") {
-						glog.Infof("[SCHEMAS ReadFromBuffer] Returning ResumeFromDiskError: offset %d is flushed", requestedOffset)
+						glog.Infof("[SCHEMAS ReadFromBuffer] Returning ResumeFromDiskError: empty buffer, offset %d was flushed (bufferStart=%d, offset=%d)",
+							requestedOffset, logBuffer.bufferStartOffset, logBuffer.offset)
 					}
 					return nil, -2, ResumeFromDiskError
 				}
-				// Data not yet written to disk, wait for it to arrive in buffer
+				// requestedOffset == logBuffer.offset: Current position
+				// CRITICAL: For subscribers starting from offset 0, try disk read first
+				// (historical data might exist from previous runs)
+				if requestedOffset == 0 && logBuffer.bufferStartOffset == 0 && logBuffer.offset == 0 {
+					// Initial state: try disk read before waiting for new data
+					if strings.Contains(logBuffer.name, "_schemas") {
+						glog.Infof("[SCHEMAS ReadFromBuffer] Initial state, trying disk read for offset 0")
+					}
+					return nil, -2, ResumeFromDiskError
+				}
+				// Otherwise, wait for new data to arrive
 				if strings.Contains(logBuffer.name, "_schemas") {
 					glog.Infof("[SCHEMAS ReadFromBuffer] Returning nil: waiting for offset %d to arrive", requestedOffset)
 				}
@@ -604,13 +624,11 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 		// Check previous buffers for the requested offset
 		for _, buf := range logBuffer.prevBuffers.buffers {
 			if requestedOffset >= buf.startOffset && requestedOffset <= buf.offset {
-				// If prevBuffer is empty, check if data is on disk or not yet written
+				// If prevBuffer is empty, it means the data was flushed to disk
+				// (prevBuffers are created when buffer is flushed)
 				if buf.size == 0 {
-					if requestedOffset <= logBuffer.lastFlushedOffset.Load() {
-						return nil, -2, ResumeFromDiskError
-					}
-					// Data not yet written, wait for notification
-					return nil, logBuffer.offset, nil
+					// Empty prevBuffer covering this offset means data was flushed
+					return nil, -2, ResumeFromDiskError
 				}
 				return copiedBytes(buf.buf[:buf.size]), buf.offset, nil
 			}

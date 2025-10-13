@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -168,7 +169,14 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 
 	var cancelOnce sync.Once
 
-	return localTopicPartition.Subscribe(clientName, startPosition, func() bool {
+	// DEBUG: Always log before calling Subscribe
+	glog.V(0).Infof("[BROKER PRE-SUBSCRIBE] clientName=%s topic=%v partition=%v offset=%d", clientName, t, partition, startPosition.Offset)
+
+	// DEBUG: Log before calling Subscribe for _schemas
+	if strings.Contains(clientName, "_schemas") {
+		glog.V(0).Infof("[BROKER] About to call Subscribe for %s at offset %d", clientName, startPosition.Offset)
+	}
+	err = localTopicPartition.Subscribe(clientName, startPosition, func() bool {
 		// Check if context is cancelled FIRST before any blocking operations
 		select {
 		case <-ctx.Done():
@@ -248,6 +256,12 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 		counter++
 		return false, nil
 	})
+
+	// DEBUG: Log Subscribe return for _schemas
+	if strings.Contains(clientName, "_schemas") {
+		glog.V(0).Infof("[BROKER] Subscribe returned for %s: err=%v", clientName, err)
+	}
+	return err
 }
 
 func (b *MessageQueueBroker) getRequestPosition(initMessage *mq_pb.SubscribeMessageRequest_InitMessage) (startPosition log_buffer.MessagePosition) {

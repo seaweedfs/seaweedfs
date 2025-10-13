@@ -833,6 +833,12 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 			binary.BigEndian.PutUint64(baseOffsetBytes, uint64(baseOffset))
 			response = append(response, baseOffsetBytes...)
 
+			// Debug: Log response details for _schemas
+			if isSchemasTopic {
+				glog.Infof("SR PRODUCE RESPONSE V2+: topic=%s partition=%d errorCode=%d baseOffset=%d",
+					topicName, partitionID, errorCode, baseOffset)
+			}
+
 			// log_append_time (8 bytes) - v2+ field (actual timestamp, not -1)
 			if apiVersion >= 2 {
 				logAppendTimeBytes := make([]byte, 8)
