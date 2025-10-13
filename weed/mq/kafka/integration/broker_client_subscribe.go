@@ -304,17 +304,32 @@ func (bc *BrokerClient) ReadRecordsFromOffset(ctx context.Context, session *Brok
 		partition := session.Partition
 		consumerGroup := session.ConsumerGroup
 		consumerID := session.ConsumerID
+		key := session.Key()
 		session.mu.Unlock()
 
 		// Close the old session completely
-		key := session.Key()
 		bc.subscribersLock.Lock()
-		if oldSession, exists := bc.subscribers[key]; exists {
-			if oldSession.Stream != nil {
-				_ = oldSession.Stream.CloseSend()
+		// CRITICAL: Double-check if another thread already recreated the session at the desired offset
+		// This prevents multiple concurrent threads from all trying to recreate the same session
+		if existingSession, exists := bc.subscribers[key]; exists {
+			existingSession.mu.Lock()
+			existingOffset := existingSession.StartOffset
+			existingSession.mu.Unlock()
+
+			// Check if the session was already recreated at (or before) the requested offset
+			if existingOffset <= requestedOffset {
+				bc.subscribersLock.Unlock()
+				glog.V(1).Infof("[FETCH] Session already recreated by another thread at offset %d (requested %d)", existingOffset, requestedOffset)
+				// Re-acquire the existing session and continue
+				return bc.ReadRecordsFromOffset(ctx, existingSession, requestedOffset, maxRecords)
 			}
-			if oldSession.Cancel != nil {
-				oldSession.Cancel()
+
+			// Session still needs recreation - close it
+			if existingSession.Stream != nil {
+				_ = existingSession.Stream.CloseSend()
+			}
+			if existingSession.Cancel != nil {
+				existingSession.Cancel()
 			}
 			delete(bc.subscribers, key)
 			glog.V(1).Infof("[FETCH] Closed old subscriber session for backward seek: %s", key)
