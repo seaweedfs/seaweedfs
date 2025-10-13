@@ -171,7 +171,7 @@ func (h *FastMockHandler) ProduceRecordValue(topicName string, partitionID int32
 	return 0, fmt.Errorf("not implemented")
 }
 
-func (h *FastMockHandler) GetStoredRecords(topic string, partition int32, fromOffset int64, maxRecords int) ([]integration.SMQRecord, error) {
+func (h *FastMockHandler) GetStoredRecords(ctx context.Context, topic string, partition int32, fromOffset int64, maxRecords int) ([]integration.SMQRecord, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
@@ -242,7 +242,7 @@ func (h *BlockingMockHandler) ProduceRecordValue(topicName string, partitionID i
 	return 0, fmt.Errorf("not implemented")
 }
 
-func (h *BlockingMockHandler) GetStoredRecords(topic string, partition int32, fromOffset int64, maxRecords int) ([]integration.SMQRecord, error) {
+func (h *BlockingMockHandler) GetStoredRecords(ctx context.Context, topic string, partition int32, fromOffset int64, maxRecords int) ([]integration.SMQRecord, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
@@ -328,7 +328,7 @@ func (h *TimeoutAwareMockHandler) ProduceRecordValue(topicName string, partition
 	return 0, fmt.Errorf("not implemented")
 }
 
-func (h *TimeoutAwareMockHandler) GetStoredRecords(topic string, partition int32, fromOffset int64, maxRecords int) ([]integration.SMQRecord, error) {
+func (h *TimeoutAwareMockHandler) GetStoredRecords(ctx context.Context, topic string, partition int32, fromOffset int64, maxRecords int) ([]integration.SMQRecord, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 

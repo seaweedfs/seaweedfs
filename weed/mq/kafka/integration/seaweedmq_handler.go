@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"time"
@@ -10,7 +11,8 @@ import (
 )
 
 // GetStoredRecords retrieves records from SeaweedMQ using the proper subscriber API
-func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromOffset int64, maxRecords int) ([]SMQRecord, error) {
+// ctx controls the fetch timeout (should match Kafka fetch request's MaxWaitTime)
+func (h *SeaweedMQHandler) GetStoredRecords(ctx context.Context, topic string, partition int32, fromOffset int64, maxRecords int) ([]SMQRecord, error) {
 	glog.V(2).Infof("[FETCH] GetStoredRecords: topic=%s partition=%d fromOffset=%d maxRecords=%d", topic, partition, fromOffset, maxRecords)
 
 	// Verify topic exists
@@ -79,8 +81,11 @@ func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromO
 	// The subscriber will be closed when the connection closes or when a different offset is requested
 
 	// Read records using the subscriber
-	glog.V(2).Infof("[FETCH] Calling ReadRecords for topic=%s partition=%d maxRecords=%d", topic, partition, maxRecords)
-	seaweedRecords, err := brokerClient.ReadRecords(brokerSubscriber, maxRecords)
+	// CRITICAL: Pass the requested fromOffset to ReadRecords so it can check the cache correctly
+	// If the session has advanced past fromOffset, ReadRecords will return cached data
+	// Pass context to respect Kafka fetch request's MaxWaitTime
+	glog.V(2).Infof("[FETCH] Calling ReadRecords for topic=%s partition=%d fromOffset=%d maxRecords=%d", topic, partition, fromOffset, maxRecords)
+	seaweedRecords, err := brokerClient.ReadRecordsFromOffset(ctx, brokerSubscriber, fromOffset, maxRecords)
 	if err != nil {
 		glog.Errorf("[FETCH] ReadRecords failed: %v", err)
 		return nil, fmt.Errorf("failed to read records: %v", err)
@@ -106,10 +111,11 @@ func (h *SeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromO
 		// The SeaweedRecord.Offset field now contains the correct offset from the subscriber
 		kafkaOffset := seaweedRecord.Offset
 
-		// Validate that the offset makes sense
-		expectedOffset := fromOffset + int64(i)
-		if kafkaOffset != expectedOffset {
-			glog.Warningf("[FETCH] Offset mismatch for record %d: got=%d, expected=%d", i, kafkaOffset, expectedOffset)
+		// CRITICAL: Skip records before the requested offset
+		// This can happen when the subscriber cache returns old data
+		if kafkaOffset < fromOffset {
+			glog.V(2).Infof("[FETCH] Skipping record %d with offset %d (requested fromOffset=%d)", i, kafkaOffset, fromOffset)
+			continue
 		}
 
 		smqRecord := &SeaweedSMQRecord{
@@ -342,7 +348,8 @@ func (h *SeaweedMQHandler) FetchRecords(topic string, partition int32, fetchOffs
 	if subErr != nil {
 		return nil, fmt.Errorf("failed to get broker subscriber: %v", subErr)
 	}
-	seaweedRecords, err = h.brokerClient.ReadRecords(brokerSubscriber, recordsToFetch)
+	// This is a deprecated function, use background context
+	seaweedRecords, err = h.brokerClient.ReadRecords(context.Background(), brokerSubscriber, recordsToFetch)
 
 	if err != nil {
 		// If no records available, return empty batch instead of error

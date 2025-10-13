@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
@@ -131,7 +132,7 @@ func (m *mockSeaweedMQHandler) ProduceRecordValue(topicName string, partitionID 
 	return m.ProduceRecord(topicName, partitionID, key, recordValueBytes)
 }
 
-func (m *mockSeaweedMQHandler) GetStoredRecords(topic string, partition int32, fromOffset int64, maxRecords int) ([]integration.SMQRecord, error) {
+func (m *mockSeaweedMQHandler) GetStoredRecords(ctx context.Context, topic string, partition int32, fromOffset int64, maxRecords int) ([]integration.SMQRecord, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 

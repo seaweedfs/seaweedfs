@@ -3,6 +3,7 @@ package protocol
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
@@ -33,7 +34,8 @@ type FetchResult struct {
 }
 
 // FetchMultipleBatches fetches multiple record batches up to maxBytes limit
-func (f *MultiBatchFetcher) FetchMultipleBatches(topicName string, partitionID int32, startOffset, highWaterMark int64, maxBytes int32) (*FetchResult, error) {
+// ctx controls the fetch timeout (should match Kafka fetch request's MaxWaitTime)
+func (f *MultiBatchFetcher) FetchMultipleBatches(ctx context.Context, topicName string, partitionID int32, startOffset, highWaterMark int64, maxBytes int32) (*FetchResult, error) {
 	Debug("[DEBUG_MULTIBATCH] FetchMultipleBatches: topic=%s partition=%d startOffset=%d highWaterMark=%d maxBytes=%d",
 		topicName, partitionID, startOffset, highWaterMark, maxBytes)
 
@@ -106,8 +108,9 @@ func (f *MultiBatchFetcher) FetchMultipleBatches(topicName string, partitionID i
 		}
 
 		// Fetch records for this batch
+		// Pass context to respect Kafka fetch request's MaxWaitTime
 		getRecordsStartTime := time.Now()
-		smqRecords, err := f.handler.seaweedMQHandler.GetStoredRecords(topicName, partitionID, currentOffset, int(recordsToFetch))
+		smqRecords, err := f.handler.seaweedMQHandler.GetStoredRecords(ctx, topicName, partitionID, currentOffset, int(recordsToFetch))
 		getRecordsDuration := time.Since(getRecordsStartTime)
 		Debug("[DEBUG_MULTIBATCH] GetStoredRecords returned: records=%d err=%v duration=%v", len(smqRecords), err, getRecordsDuration)
 

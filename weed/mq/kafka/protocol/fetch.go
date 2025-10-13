@@ -226,6 +226,7 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 			fetchReq := &partitionFetchRequest{
 				requestedOffset: partition.FetchOffset,
 				maxBytes:        partition.MaxBytes,
+				maxWaitMs:       maxWaitMs, // Pass MaxWaitTime from Kafka fetch request
 				resultChan:      resultChan,
 				isSchematized:   isSchematizedTopic,
 				apiVersion:      apiVersion,
@@ -959,7 +960,7 @@ func (h *Handler) fetchSchematizedRecords(topicName string, partitionID int32, o
 	// Fetch stored records from SeaweedMQ
 	maxRecords := 100 // Reasonable batch size limit
 	glog.Infof("fetchSchematizedRecords: calling GetStoredRecords maxRecords=%d", maxRecords)
-	smqRecords, err := h.seaweedMQHandler.GetStoredRecords(topicName, partitionID, offset, maxRecords)
+	smqRecords, err := h.seaweedMQHandler.GetStoredRecords(context.Background(), topicName, partitionID, offset, maxRecords)
 	if err != nil {
 		glog.Infof("fetchSchematizedRecords ERROR: GetStoredRecords failed: %v", err)
 		return nil, fmt.Errorf("failed to fetch SMQ records: %w", err)
@@ -1768,9 +1769,10 @@ func (h *Handler) fetchPartitionData(
 	// Fetch records if available
 	var recordBatch []byte
 	if highWaterMark > effectiveFetchOffset {
-		// Use multi-batch fetcher
+		// Use multi-batch fetcher (pass context to respect timeout)
 		multiFetcher := NewMultiBatchFetcher(h)
 		fetchResult, err := multiFetcher.FetchMultipleBatches(
+			ctx,
 			topicName,
 			partition.PartitionID,
 			effectiveFetchOffset,
@@ -1781,8 +1783,8 @@ func (h *Handler) fetchPartitionData(
 		if err == nil && fetchResult.TotalSize > 0 {
 			recordBatch = fetchResult.RecordBatches
 		} else {
-			// Fallback to single batch
-			smqRecords, err := h.seaweedMQHandler.GetStoredRecords(topicName, partition.PartitionID, effectiveFetchOffset, 10)
+			// Fallback to single batch (pass context to respect timeout)
+			smqRecords, err := h.seaweedMQHandler.GetStoredRecords(ctx, topicName, partition.PartitionID, effectiveFetchOffset, 10)
 			if err == nil && len(smqRecords) > 0 {
 				recordBatch = h.constructRecordBatchFromSMQ(topicName, effectiveFetchOffset, smqRecords)
 			} else {

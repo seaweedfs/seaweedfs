@@ -3,6 +3,7 @@ package log_buffer
 import (
 	"bytes"
 	"math"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -569,6 +570,12 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 	if isOffsetBased {
 		requestedOffset := lastReadPosition.Offset
 
+		// DEBUG: Log buffer state for _schemas topic
+		if strings.Contains(logBuffer.name, "_schemas") {
+			glog.Infof("[SCHEMAS ReadFromBuffer] requested=%d bufferStart=%d bufferEnd=%d pos=%d lastFlushed=%d",
+				requestedOffset, logBuffer.bufferStartOffset, logBuffer.offset, logBuffer.pos, logBuffer.lastFlushedOffset.Load())
+		}
+
 		// Check if the requested offset is in the current buffer range
 		if requestedOffset >= logBuffer.bufferStartOffset && requestedOffset <= logBuffer.offset {
 			// If current buffer is empty (pos=0), check if data is on disk or not yet written
@@ -577,10 +584,19 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 				// - If requestedOffset <= lastFlushedOffset: data is on disk, read from disk
 				// - If requestedOffset > lastFlushedOffset: data not yet written, wait for notification
 				if requestedOffset <= logBuffer.lastFlushedOffset.Load() {
+					if strings.Contains(logBuffer.name, "_schemas") {
+						glog.Infof("[SCHEMAS ReadFromBuffer] Returning ResumeFromDiskError: offset %d is flushed", requestedOffset)
+					}
 					return nil, -2, ResumeFromDiskError
 				}
 				// Data not yet written to disk, wait for it to arrive in buffer
+				if strings.Contains(logBuffer.name, "_schemas") {
+					glog.Infof("[SCHEMAS ReadFromBuffer] Returning nil: waiting for offset %d to arrive", requestedOffset)
+				}
 				return nil, logBuffer.offset, nil
+			}
+			if strings.Contains(logBuffer.name, "_schemas") {
+				glog.Infof("[SCHEMAS ReadFromBuffer] Returning %d bytes from buffer", logBuffer.pos)
 			}
 			return copiedBytes(logBuffer.buf[:logBuffer.pos]), logBuffer.offset, nil
 		}

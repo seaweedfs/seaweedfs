@@ -38,6 +38,7 @@ type bufferedRecords struct {
 type partitionFetchRequest struct {
 	requestedOffset int64
 	maxBytes        int32
+	maxWaitMs       int32 // MaxWaitTime from Kafka fetch request
 	resultChan      chan *partitionFetchResult
 	isSchematized   bool
 	apiVersion      uint16
@@ -160,8 +161,8 @@ func (pr *partitionReader) serveFetchRequest(ctx context.Context, req *partition
 	pr.bufferMu.Unlock()
 
 	// Fetch on-demand - no pre-fetching to avoid overwhelming the broker
-	// Pass the requested offset directly to avoid race conditions
-	recordBatch, newOffset := pr.readRecords(ctx, req.requestedOffset, req.maxBytes, hwm)
+	// Pass the requested offset and maxWaitMs directly to avoid race conditions
+	recordBatch, newOffset := pr.readRecords(ctx, req.requestedOffset, req.maxBytes, req.maxWaitMs, hwm)
 	if len(recordBatch) > 0 && newOffset > pr.currentOffset {
 		result.recordBatch = recordBatch
 		pr.bufferMu.Lock()
@@ -176,12 +177,22 @@ func (pr *partitionReader) serveFetchRequest(ctx context.Context, req *partition
 }
 
 // readRecords reads records forward using the multi-batch fetcher
-func (pr *partitionReader) readRecords(ctx context.Context, fromOffset int64, maxBytes int32, highWaterMark int64) ([]byte, int64) {
+func (pr *partitionReader) readRecords(ctx context.Context, fromOffset int64, maxBytes int32, maxWaitMs int32, highWaterMark int64) ([]byte, int64) {
 	isSchemasTopic := pr.topicName == "_schemas"
+
+	// Create context with timeout based on Kafka fetch request's MaxWaitTime
+	// This ensures we wait exactly as long as the client requested
+	fetchCtx := ctx
+	if maxWaitMs > 0 {
+		var cancel context.CancelFunc
+		fetchCtx, cancel = context.WithTimeout(ctx, time.Duration(maxWaitMs)*time.Millisecond)
+		defer cancel()
+	}
 
 	// Use multi-batch fetcher for better MaxBytes compliance
 	multiFetcher := NewMultiBatchFetcher(pr.handler)
 	fetchResult, err := multiFetcher.FetchMultipleBatches(
+		fetchCtx,
 		pr.topicName,
 		pr.partitionID,
 		fromOffset,
@@ -201,8 +212,8 @@ func (pr *partitionReader) readRecords(ctx context.Context, fromOffset int64, ma
 		return fetchResult.RecordBatches, fetchResult.NextOffset
 	}
 
-	// Fallback to single batch
-	smqRecords, err := pr.handler.seaweedMQHandler.GetStoredRecords(pr.topicName, pr.partitionID, fromOffset, 10)
+	// Fallback to single batch (pass context to respect timeout)
+	smqRecords, err := pr.handler.seaweedMQHandler.GetStoredRecords(fetchCtx, pr.topicName, pr.partitionID, fromOffset, 10)
 	if err == nil && len(smqRecords) > 0 {
 		recordBatch := pr.handler.constructRecordBatchFromSMQ(pr.topicName, fromOffset, smqRecords)
 		nextOffset := fromOffset + int64(len(smqRecords))

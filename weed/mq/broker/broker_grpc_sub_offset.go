@@ -90,28 +90,34 @@ func (b *MessageQueueBroker) subscribeWithOffsetSubscription(
 		return fmt.Errorf("failed to convert offset to message position: %w", err)
 	}
 
+	glog.V(0).Infof("[%s] Starting Subscribe for topic %s partition %d-%d at offset %d",
+		clientName, subscription.TopicName, subscription.Partition.RangeStart, subscription.Partition.RangeStop, subscription.CurrentOffset)
+
 	return localPartition.Subscribe(clientName,
 		startPosition,
 		func() bool {
 			// Check if context is cancelled (client disconnected)
 			select {
 			case <-ctx.Done():
+				glog.V(0).Infof("[%s] Context cancelled, stopping", clientName)
 				return false
 			default:
 			}
 
 			// Check if subscription is still active and not at end
 			if !subscription.IsActive {
+				glog.V(0).Infof("[%s] Subscription not active, stopping", clientName)
 				return false
 			}
 
 			atEnd, err := subscription.IsAtEnd()
 			if err != nil {
-				glog.V(0).Infof("Error checking if subscription at end: %v", err)
+				glog.V(0).Infof("[%s] Error checking if subscription at end: %v", clientName, err)
 				return false
 			}
 
 			if atEnd {
+				glog.V(2).Infof("[%s] At end of subscription, stopping", clientName)
 				return false
 			}
 

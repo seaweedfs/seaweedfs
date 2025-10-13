@@ -137,7 +137,8 @@ type SeaweedMQHandlerInterface interface {
 	ProduceRecord(topicName string, partitionID int32, key, value []byte) (int64, error)
 	ProduceRecordValue(topicName string, partitionID int32, key []byte, recordValueBytes []byte) (int64, error)
 	// GetStoredRecords retrieves records from SMQ storage (optional - for advanced implementations)
-	GetStoredRecords(topic string, partition int32, fromOffset int64, maxRecords int) ([]integration.SMQRecord, error)
+	// ctx is used to control the fetch timeout (should match Kafka fetch request's MaxWaitTime)
+	GetStoredRecords(ctx context.Context, topic string, partition int32, fromOffset int64, maxRecords int) ([]integration.SMQRecord, error)
 	// GetEarliestOffset returns the earliest available offset for a topic partition
 	GetEarliestOffset(topic string, partition int32) (int64, error)
 	// GetLatestOffset returns the latest available offset for a topic partition

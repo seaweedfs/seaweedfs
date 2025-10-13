@@ -86,11 +86,24 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 
 	bc.subscribersLock.RLock()
 	if session, exists := bc.subscribers[key]; exists {
-		// If the existing session was created with a different start offset,
-		// re-create the subscriber to honor the requested position.
+		// CRITICAL FIX: Only recreate subscriber if necessary
+		// If requested offset <= session offset, try to reuse (ReadRecordsFromOffset will check cache)
+		// If requested offset > session offset, recreate to seek forward
 		if session.StartOffset != startOffset {
+			if startOffset < session.StartOffset {
+				// Requested offset is BEFORE session offset
+				// DON'T recreate - let ReadRecordsFromOffset try the cache first
+				// This avoids hundreds of reconnections for historical data
+				glog.V(2).Infof("[FETCH] Reusing session for %s: session at %d, requested %d (will try cache)",
+					key, session.StartOffset, startOffset)
+				bc.subscribersLock.RUnlock()
+				return session, nil
+			}
+			// Requested offset is AFTER session offset - need to seek forward, recreate
+			glog.V(0).Infof("[FETCH] Forward seek for %s: session at %d, requested %d - recreating",
+				key, session.StartOffset, startOffset)
 			bc.subscribersLock.RUnlock()
-			// Close and delete the old session before creating a new one
+			// Close and delete the old session
 			bc.subscribersLock.Lock()
 			if old, ok := bc.subscribers[key]; ok {
 				if old.Stream != nil {
@@ -100,10 +113,10 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 					old.Cancel()
 				}
 				delete(bc.subscribers, key)
-				glog.V(2).Infof("Closed old subscriber session for %s due to offset change", key)
 			}
 			bc.subscribersLock.Unlock()
 		} else {
+			// Exact match - reuse
 			bc.subscribersLock.RUnlock()
 			return session, nil
 		}
@@ -198,9 +211,78 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 	return session, nil
 }
 
+// ReadRecordsFromOffset reads records starting from a specific offset
+// If the offset is in cache, returns cached records; otherwise delegates to ReadRecords
+// ctx controls the fetch timeout (should match Kafka fetch request's MaxWaitTime)
+func (bc *BrokerClient) ReadRecordsFromOffset(ctx context.Context, session *BrokerSubscriberSession, requestedOffset int64, maxRecords int) ([]*SeaweedRecord, error) {
+	if session == nil {
+		return nil, fmt.Errorf("subscriber session cannot be nil")
+	}
+
+	session.mu.Lock()
+
+	glog.V(2).Infof("[FETCH] ReadRecordsFromOffset: topic=%s partition=%d requestedOffset=%d sessionOffset=%d maxRecords=%d",
+		session.Topic, session.Partition, requestedOffset, session.StartOffset, maxRecords)
+
+	// Check cache first
+	if len(session.consumedRecords) > 0 {
+		cacheStartOffset := session.consumedRecords[0].Offset
+		cacheEndOffset := session.consumedRecords[len(session.consumedRecords)-1].Offset
+
+		if requestedOffset >= cacheStartOffset && requestedOffset <= cacheEndOffset {
+			// Found in cache
+			startIdx := int(requestedOffset - cacheStartOffset)
+			endIdx := startIdx + maxRecords
+			if endIdx > len(session.consumedRecords) {
+				endIdx = len(session.consumedRecords)
+			}
+			glog.V(2).Infof("[FETCH] Returning %d cached records for offset %d", endIdx-startIdx, requestedOffset)
+			session.mu.Unlock()
+			return session.consumedRecords[startIdx:endIdx], nil
+		}
+	}
+
+	// If requested offset doesn't match session offset and not in cache,
+	// we need to recreate the subscriber to do a fresh disk read
+	// This handles the case where GetOrCreateSubscriber reused the session but cache doesn't have the data
+	if requestedOffset != session.StartOffset {
+		glog.V(0).Infof("[FETCH] Cache miss for offset %d (session at %d), recreating subscriber for disk read",
+			requestedOffset, session.StartOffset)
+		session.mu.Unlock()
+
+		// Close and recreate
+		key := fmt.Sprintf("%s-%d", session.Topic, session.Partition)
+		bc.subscribersLock.Lock()
+		if old, ok := bc.subscribers[key]; ok {
+			if old.Stream != nil {
+				_ = old.Stream.CloseSend()
+			}
+			if old.Cancel != nil {
+				old.Cancel()
+			}
+			delete(bc.subscribers, key)
+		}
+		bc.subscribersLock.Unlock()
+
+		// Create new subscriber at requested offset
+		newSession, err := bc.GetOrCreateSubscriber(session.Topic, session.Partition, requestedOffset)
+		if err != nil {
+			return nil, fmt.Errorf("failed to recreate subscriber at offset %d: %w", requestedOffset, err)
+		}
+
+		// Read from new subscriber
+		return bc.ReadRecords(ctx, newSession, maxRecords)
+	}
+
+	// Exact match - delegate to ReadRecords
+	session.mu.Unlock()
+	return bc.ReadRecords(ctx, session, maxRecords)
+}
+
 // ReadRecords reads available records from the subscriber stream
 // Uses a timeout-based approach to read multiple records without blocking indefinitely
-func (bc *BrokerClient) ReadRecords(session *BrokerSubscriberSession, maxRecords int) ([]*SeaweedRecord, error) {
+// ctx controls the fetch timeout (should match Kafka fetch request's MaxWaitTime)
+func (bc *BrokerClient) ReadRecords(ctx context.Context, session *BrokerSubscriberSession, maxRecords int) ([]*SeaweedRecord, error) {
 	if session == nil {
 		return nil, fmt.Errorf("subscriber session cannot be nil")
 	}
@@ -263,11 +345,17 @@ func (bc *BrokerClient) ReadRecords(session *BrokerSubscriberSession, maxRecords
 	// 3. Read and deserialize the record (disk I/O)
 	// Total latency can be 100-500ms for cold reads from disk
 	//
-	// For in-memory reads (hot path), records arrive in <10ms, so this timeout
-	// only impacts the first record fetch after subscriber creation
-	firstRecordTimeout := 500 * time.Millisecond
-	ctx, cancel := context.WithTimeout(context.Background(), firstRecordTimeout)
-	defer cancel()
+	// CRITICAL: Use the context from the Kafka fetch request
+	// The context timeout is set by the caller based on the Kafka fetch request's MaxWaitTime
+	// This ensures we wait exactly as long as the client requested, not more or less
+	// For in-memory reads (hot path), records arrive in <10ms
+	// For low-volume topics (like _schemas), the caller sets longer timeout to keep subscriber alive
+	// If no context provided, use a reasonable default timeout
+	if ctx == nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+	}
 
 	type recvResult struct {
 		resp *mq_pb.SubscribeMessageResponse
@@ -386,11 +474,11 @@ func (bc *BrokerClient) ReadRecords(session *BrokerSubscriberSession, maxRecords
 	session.StartOffset = currentOffset
 
 	// CRITICAL: Cache the consumed records to avoid broker tight loop
-	// Append new records to cache (keep last 100 records max)
+	// Append new records to cache (keep last 1000 records max for better hit rate)
 	session.consumedRecords = append(session.consumedRecords, records...)
-	if len(session.consumedRecords) > 100 {
-		// Keep only the most recent 100 records
-		session.consumedRecords = session.consumedRecords[len(session.consumedRecords)-100:]
+	if len(session.consumedRecords) > 1000 {
+		// Keep only the most recent 1000 records
+		session.consumedRecords = session.consumedRecords[len(session.consumedRecords)-1000:]
 	}
 	glog.V(2).Infof("[FETCH] Updated cache: now contains %d records", len(session.consumedRecords))
 
