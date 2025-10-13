@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/compression"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/schema"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
@@ -86,17 +85,9 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 		topicName := string(requestBody[offset : offset+int(topicNameSize)])
 		offset += int(topicNameSize)
 
-		// Debug: log topic being produced to
-		isSchemasTopic := strings.HasPrefix(topicName, "_schemas")
-
 		// Parse partitions count
 		partitionsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 		offset += 4
-
-		if isSchemasTopic {
-			glog.Infof("SR PRODUCE REQUEST: topic=%s partitionsCount=%d apiVersion=%d",
-				topicName, partitionsCount, apiVersion)
-		}
 
 		// Check if topic exists, auto-create if it doesn't (simulates auto.create.topics.enable=true)
 		topicExists := h.seaweedMQHandler.TopicExists(topicName)
@@ -152,24 +143,12 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 
 			if !topicExists {
 				errorCode = 3 // UNKNOWN_TOPIC_OR_PARTITION
-				if isSchemasTopic {
-					glog.Errorf("SR PRODUCE ERROR: topic=%s partition=%d - UNKNOWN_TOPIC_OR_PARTITION",
-						topicName, partitionID)
-				}
 			} else {
 				// Process the record set
 				recordCount, _, parseErr := h.parseRecordSet(recordSetData) // totalSize unused
 				if parseErr != nil {
 					errorCode = 42 // INVALID_RECORD
-					if isSchemasTopic {
-						glog.Errorf("SR PRODUCE ERROR: topic=%s partition=%d - INVALID_RECORD: %v",
-							topicName, partitionID, parseErr)
-					}
 				} else if recordCount > 0 {
-					if isSchemasTopic {
-						glog.Infof("SR PRODUCE: topic=%s partition=%d recordCount=%d recordSetSize=%d",
-							topicName, partitionID, recordCount, recordSetSize)
-					}
 					// Use SeaweedMQ integration
 					offset, err := h.produceToSeaweedMQ(topicName, int32(partitionID), recordSetData)
 					if err != nil {
@@ -178,16 +157,8 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 							time.Sleep(200 * time.Millisecond) // Brief delay for schema validation failures
 						}
 						errorCode = 1 // UNKNOWN_SERVER_ERROR
-						if isSchemasTopic {
-							glog.Errorf("SR PRODUCE ERROR: topic=%s partition=%d - produceToSeaweedMQ failed: %v",
-								topicName, partitionID, err)
-						}
 					} else {
 						baseOffset = offset
-						if isSchemasTopic {
-							glog.Infof("SR PRODUCE SUCCESS: topic=%s partition=%d baseOffset=%d",
-								topicName, partitionID, baseOffset)
-						}
 					}
 				}
 			}
@@ -697,16 +668,9 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 		topicName := string(requestBody[offset : offset+int(topicNameSize)])
 		offset += int(topicNameSize)
 
-		isSchemasTopic := strings.HasPrefix(topicName, "_schemas")
-
 		// Parse partitions count
 		partitionsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 		offset += 4
-
-		if isSchemasTopic {
-			glog.Infof("SR PRODUCE REQUEST V2+: topic=%s partitionsCount=%d apiVersion=%d",
-				topicName, partitionsCount, apiVersion)
-		}
 
 		// Response: topic name (STRING: 2 bytes length + data)
 		response = append(response, byte(topicNameSize>>8), byte(topicNameSize))
@@ -743,24 +707,12 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 
 			if !topicExists {
 				errorCode = 3 // UNKNOWN_TOPIC_OR_PARTITION
-				if isSchemasTopic {
-					glog.Errorf("SR PRODUCE ERROR V2+: topic=%s partition=%d - UNKNOWN_TOPIC_OR_PARTITION",
-						topicName, partitionID)
-				}
 			} else {
 				// Process the record set (lenient parsing)
 				recordCount, _, parseErr := h.parseRecordSet(recordSetData) // totalSize unused
 				if parseErr != nil {
 					errorCode = 42 // INVALID_RECORD
-					if isSchemasTopic {
-						glog.Errorf("SR PRODUCE ERROR V2+: topic=%s partition=%d - INVALID_RECORD: %v",
-							topicName, partitionID, parseErr)
-					}
 				} else if recordCount > 0 {
-					if isSchemasTopic {
-						glog.Infof("SR PRODUCE V2+: topic=%s partition=%d recordCount=%d recordSetSize=%d",
-							topicName, partitionID, recordCount, recordSetSize)
-					}
 					// Extract all records from the record set and publish each one
 					// extractAllRecords handles fallback internally for various cases
 					records := h.extractAllRecords(recordSetData)
@@ -770,10 +722,6 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 					}
 					if len(records) == 0 {
 						errorCode = 42 // INVALID_RECORD
-						if isSchemasTopic {
-							glog.Errorf("SR PRODUCE ERROR V2+: topic=%s partition=%d - no records extracted from batch",
-								topicName, partitionID)
-						}
 					} else {
 						var firstOffsetSet bool
 						for idx, kv := range records {
@@ -784,10 +732,6 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 									time.Sleep(200 * time.Millisecond) // Brief delay for schema validation failures
 								}
 								errorCode = 1 // UNKNOWN_SERVER_ERROR
-								if isSchemasTopic {
-									glog.Errorf("SR PRODUCE ERROR V2+: topic=%s partition=%d - produceSchemaBasedRecord failed: %v",
-										topicName, partitionID, prodErr)
-								}
 								break
 							}
 							if idx == 0 {
@@ -797,10 +741,6 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 						}
 
 						_ = firstOffsetSet
-						if isSchemasTopic && errorCode == 0 {
-							glog.Infof("SR PRODUCE SUCCESS V2+: topic=%s partition=%d baseOffset=%d recordCount=%d",
-								topicName, partitionID, baseOffset, len(records))
-						}
 					}
 				}
 			}
@@ -1221,7 +1161,6 @@ func (h *Handler) produceSchemaBasedRecord(topic string, partition int32, key []
 	// Check and decode key if schematized
 	if key != nil {
 		isSchematized := h.schemaManager.IsSchematized(key)
-		fmt.Printf("SCHEMA CHECK: topic=%s key len=%d, isSchematized=%v, firstByte=%#x\n", topic, len(key), isSchematized, key[0])
 		if isSchematized {
 			var err error
 			keyDecodedMsg, err = h.schemaManager.DecodeMessage(key)
@@ -1230,32 +1169,27 @@ func (h *Handler) produceSchemaBasedRecord(topic string, partition int32, key []
 				time.Sleep(100 * time.Millisecond)
 				return 0, fmt.Errorf("failed to decode schematized key: %w", err)
 			}
-			fmt.Printf("SCHEMA: Successfully decoded key for topic %s\n", topic)
 		}
 	}
 
 	// Check and decode value if schematized
 	if value != nil && len(value) > 0 {
 		isSchematized := h.schemaManager.IsSchematized(value)
-		fmt.Printf("SCHEMA CHECK: topic=%s value len=%d, isSchematized=%v, firstByte=%#x\n", topic, len(value), isSchematized, value[0])
 		if isSchematized {
 			var err error
 			valueDecodedMsg, err = h.schemaManager.DecodeMessage(value)
 			if err != nil {
 				// CRITICAL: If message has schema ID (magic byte 0x00), decoding MUST succeed
 				// Do not fall back to raw storage - this would corrupt the data model
-				fmt.Printf("SCHEMA ERROR: Message has schema ID but decoding failed: %v\n", err)
 				time.Sleep(100 * time.Millisecond)
 				return 0, fmt.Errorf("message has schema ID but decoding failed (schema registry may be unavailable): %w", err)
 			}
-			fmt.Printf("SCHEMA: Successfully decoded value for topic %s\n", topic)
 		}
 	}
 
 	// If neither key nor value is schematized, fall back to raw message handling
 	// This is OK for non-schematized messages (no magic byte 0x00)
 	if keyDecodedMsg == nil && valueDecodedMsg == nil {
-		fmt.Printf("SCHEMA: Neither key nor value is schematized for topic %s - falling back to raw storage\n", topic)
 		return h.seaweedMQHandler.ProduceRecord(topic, partition, key, value)
 	}
 
@@ -1288,20 +1222,14 @@ func (h *Handler) produceSchemaBasedRecord(topic string, partition int32, key []
 		// Store value schema information in memory cache for fetch path performance
 		// Only store if not already cached to avoid mutex contention on hot path
 		hasConfig := h.hasTopicSchemaConfig(topic, valueDecodedMsg.SchemaID, valueDecodedMsg.SchemaFormat)
-		fmt.Printf("SCHEMA CONFIG CHECK: topic=%s, hasConfig=%v, schemaID=%d\n", topic, hasConfig, valueDecodedMsg.SchemaID)
 		if !hasConfig {
 			err = h.storeTopicSchemaConfig(topic, valueDecodedMsg.SchemaID, valueDecodedMsg.SchemaFormat)
 			if err != nil {
-				fmt.Printf("Failed to store topic schema config for %s: %v\n", topic, err)
-			} else {
-				fmt.Printf("Stored topic schema config for %s\n", topic)
+				// Log error but don't fail the produce
 			}
 
 			// Schedule value schema registration in background (leader-only, non-blocking)
-			fmt.Printf("Calling scheduleSchemaRegistration for topic=%s\n", topic)
 			h.scheduleSchemaRegistration(topic, valueDecodedMsg.RecordType)
-		} else {
-			fmt.Printf("Schema config already cached for topic=%s, skipping registration\n", topic)
 		}
 	} else if keyDecodedMsg != nil {
 		// If only key is schematized, create RecordValue with just key fields
@@ -1421,19 +1349,16 @@ func (h *Handler) hasTopicKeySchemaConfig(topic string, schemaID uint32, schemaF
 // scheduleSchemaRegistration registers value schema once per topic-schema combination
 func (h *Handler) scheduleSchemaRegistration(topicName string, recordType *schema_pb.RecordType) {
 	if recordType == nil {
-		fmt.Printf("scheduleSchemaRegistration: recordType is nil for topic %s\n", topicName)
 		return
 	}
 
 	// Create a unique key for this value schema registration
 	schemaKey := fmt.Sprintf("%s:value:%d", topicName, h.getRecordTypeHash(recordType))
-	fmt.Printf("scheduleSchemaRegistration: topic=%s, schemaKey=%s\n", topicName, schemaKey)
 
 	// Check if already registered
 	h.registeredSchemasMu.RLock()
 	if h.registeredSchemas[schemaKey] {
 		h.registeredSchemasMu.RUnlock()
-		fmt.Printf("scheduleSchemaRegistration: Schema already registered for %s\n", schemaKey)
 		return // Already registered
 	}
 	h.registeredSchemasMu.RUnlock()
@@ -1443,7 +1368,6 @@ func (h *Handler) scheduleSchemaRegistration(topicName string, recordType *schem
 	defer h.registeredSchemasMu.Unlock()
 
 	if h.registeredSchemas[schemaKey] {
-		fmt.Printf("scheduleSchemaRegistration: Schema already registered (race check) for %s\n", schemaKey)
 		return // Already registered by another goroutine
 	}
 
@@ -1451,13 +1375,9 @@ func (h *Handler) scheduleSchemaRegistration(topicName string, recordType *schem
 	h.registeredSchemas[schemaKey] = true
 
 	// Perform synchronous registration
-	fmt.Printf("scheduleSchemaRegistration: Calling registerSchemasViaBrokerAPI for %s\n", topicName)
 	if err := h.registerSchemasViaBrokerAPI(topicName, recordType, nil); err != nil {
-		fmt.Printf("Schema registration failed for %s: %v\n", topicName, err)
 		// Remove from registered map on failure so it can be retried
 		delete(h.registeredSchemas, schemaKey)
-	} else {
-		fmt.Printf("Successfully registered value schema for %s\n", topicName)
 	}
 }
 
