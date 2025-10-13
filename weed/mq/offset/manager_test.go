@@ -87,7 +87,7 @@ func TestPartitionOffsetManager_Recovery(t *testing.T) {
 	// Assign offsets and simulate records
 	for i := 0; i < 150; i++ { // More than checkpoint interval
 		offset := manager1.AssignOffset()
-		storage.AddRecord(partition, offset)
+		storage.AddRecord("test-namespace", "test-topic", partition, offset)
 	}
 
 	// Wait for checkpoint to complete
@@ -116,7 +116,7 @@ func TestPartitionOffsetManager_RecoveryFromStorage(t *testing.T) {
 
 	// Simulate existing records in storage without checkpoint
 	for i := int64(0); i < 50; i++ {
-		storage.AddRecord(partition, i)
+		storage.AddRecord("test-namespace", "test-topic", partition, i)
 	}
 
 	// Create manager - should recover from storage scan

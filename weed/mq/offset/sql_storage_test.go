@@ -194,7 +194,7 @@ func TestSQLOffsetStorage_GetHighestOffset(t *testing.T) {
 	defer storage.Close()
 
 	partition := createTestPartitionForSQL()
-	partitionKey := partitionKey(partition)
+	partitionKey := TopicPartitionKey("test-namespace", "test-topic", partition)
 
 	// Test empty partition
 	_, err = storage.GetHighestOffset("test-namespace", "test-topic", partition)

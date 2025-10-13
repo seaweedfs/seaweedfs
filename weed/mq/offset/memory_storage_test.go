@@ -90,11 +90,12 @@ func (s *InMemoryOffsetStorage) GetHighestOffset(namespace, topicName string, pa
 }
 
 // AddRecord simulates storing a record with an offset (for testing)
-func (s *InMemoryOffsetStorage) AddRecord(partition *schema_pb.Partition, offset int64) {
+func (s *InMemoryOffsetStorage) AddRecord(namespace, topicName string, partition *schema_pb.Partition, offset int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	key := partitionKey(partition)
+	// Use TopicPartitionKey to match GetHighestOffset
+	key := TopicPartitionKey(namespace, topicName, partition)
 	if s.records[key] == nil {
 		s.records[key] = make(map[int64]*recordEntry)
 	}
@@ -110,11 +111,12 @@ func (s *InMemoryOffsetStorage) AddRecord(partition *schema_pb.Partition, offset
 }
 
 // GetRecordCount returns the number of records for a partition (for testing)
-func (s *InMemoryOffsetStorage) GetRecordCount(partition *schema_pb.Partition) int {
+func (s *InMemoryOffsetStorage) GetRecordCount(namespace, topicName string, partition *schema_pb.Partition) int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	key := partitionKey(partition)
+	// Use TopicPartitionKey to match GetHighestOffset
+	key := TopicPartitionKey(namespace, topicName, partition)
 	if offsets, exists := s.records[key]; exists {
 		count := 0
 		for _, entry := range offsets {
