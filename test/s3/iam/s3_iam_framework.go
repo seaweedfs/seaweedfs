@@ -696,10 +696,22 @@ func (f *S3IAMTestFramework) CreateBucketWithCleanup(s3Client *s3.S3, bucketName
 		if awsErr, ok := err.(awserr.Error); ok && (awsErr.Code() == "BucketAlreadyExists" || awsErr.Code() == "BucketAlreadyOwnedByYou") {
 			f.t.Logf("Bucket %s already exists, cleaning up first", bucketName)
 
-			// Empty the existing bucket
+			// First try to delete the bucket completely
 			f.emptyBucket(s3Client, bucketName)
+			_, deleteErr := s3Client.DeleteBucket(&s3.DeleteBucketInput{
+				Bucket: aws.String(bucketName),
+			})
+			if deleteErr != nil {
+				f.t.Logf("Warning: Failed to delete existing bucket %s: %v", bucketName, deleteErr)
+			}
 
-			// Don't need to recreate - bucket already exists and is now empty
+			// Now create it fresh
+			_, err = s3Client.CreateBucket(&s3.CreateBucketInput{
+				Bucket: aws.String(bucketName),
+			})
+			if err != nil {
+				return fmt.Errorf("failed to recreate bucket after cleanup: %v", err)
+			}
 		} else {
 			return err
 		}
