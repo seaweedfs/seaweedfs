@@ -26,7 +26,7 @@ func (b *MessageQueueBroker) GetOrGenerateLocalPartition(t topic.Topic, partitio
 		return nil, fmt.Errorf("topic %v not found: %w", t, readConfErr)
 	}
 	glog.V(0).Infof("[PROFILE] ReadTopicConfFromFiler took %v for %s", time.Since(filerReadStart), t)
-	
+
 	doGetOrGenStart := time.Now()
 	localTopicPartition, _, getOrGenError = b.doGetOrGenLocalPartition(t, partition, conf)
 	if getOrGenError != nil {
