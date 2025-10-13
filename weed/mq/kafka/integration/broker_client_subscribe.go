@@ -101,6 +101,7 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 			// If the requested offset is in cache, we can reuse the session
 			session.mu.Lock()
 			canUseCache := false
+
 			if len(session.consumedRecords) > 0 {
 				cacheStartOffset := session.consumedRecords[0].Offset
 				cacheEndOffset := session.consumedRecords[len(session.consumedRecords)-1].Offset
@@ -110,10 +111,11 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 						key, session.StartOffset, startOffset, cacheStartOffset, cacheEndOffset)
 				}
 			}
+
 			session.mu.Unlock()
 
 			if canUseCache {
-				// Offset is in cache, can reuse session
+				// Offset is in cache, reuse session
 				bc.subscribersLock.RUnlock()
 				return session, nil
 			}
@@ -151,7 +153,7 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 	// Create new subscriber stream
 	sessionCreateStart := time.Now()
 	glog.V(0).Infof("[PROFILE] Session creation START for %s", key)
-	
+
 	bc.subscribersLock.Lock()
 	defer bc.subscribersLock.Unlock()
 
