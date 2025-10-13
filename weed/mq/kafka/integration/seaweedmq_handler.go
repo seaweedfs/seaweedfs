@@ -24,9 +24,9 @@ func (h *SeaweedMQHandler) GetStoredRecords(ctx context.Context, topic string, p
 	// Each Kafka connection has its own isolated BrokerClient instance
 	var brokerClient *BrokerClient
 	consumerGroup := "kafka-fetch-consumer" // default
-	// CRITICAL FIX: Include topic-partition in consumerID to ensure each partition consumer
-	// gets its own unique subscriber session, preventing session collisions
-	consumerID := fmt.Sprintf("kafka-fetch-%s-%d-%d", topic, partition, time.Now().UnixNano()) // default
+	// CRITICAL FIX: Use stable consumer ID per topic-partition, NOT with timestamp
+	// Including timestamp would create a new session on every fetch, causing subscriber churn
+	consumerID := fmt.Sprintf("kafka-fetch-%s-%d", topic, partition) // default, stable per topic-partition
 
 	// Get the per-connection broker client from connection context
 	if h.protocolHandler != nil {
