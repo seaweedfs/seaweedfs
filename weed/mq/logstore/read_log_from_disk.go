@@ -28,6 +28,8 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 	lookupFileIdFn := filer.LookupFn(filerClient)
 
 	eachChunkFn := func(buf []byte, eachLogEntryFn log_buffer.EachLogEntryFuncType, starTsNs, stopTsNs int64, startOffset int64, isOffsetBased bool) (processedTsNs int64, err error) {
+		entriesSkipped := 0
+		entriesProcessed := 0
 		for pos := 0; pos+4 < len(buf); {
 
 			size := util.BytesToUint32(buf[pos : pos+4])
@@ -47,6 +49,7 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 			// Filter by offset if this is an offset-based subscription
 			if isOffsetBased {
 				if logEntry.Offset < startOffset {
+					entriesSkipped++
 					pos += 4 + int(size)
 					continue
 				}
@@ -69,9 +72,15 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 			}
 
 			processedTsNs = logEntry.TsNs
+			entriesProcessed++
 
 			pos += 4 + int(size)
 
+		}
+
+		if strings.Contains(t.Name, "_schemas") && (entriesProcessed > 0 || entriesSkipped > 0) {
+			glog.Infof("[SCHEMAS CHUNK] chunk processed: entries=%d skipped=%d startOffset=%d",
+				entriesProcessed, entriesSkipped, startOffset)
 		}
 
 		return
@@ -303,7 +312,7 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 		var lastProcessedOffset int64
 		for _, entry := range candidateFiles {
 			if strings.Contains(t.Name, "_schemas") {
-				glog.Infof("[SCHEMAS DISK READ] processing file %s", entry.Name)
+				glog.Infof("[SCHEMAS DISK READ] processing file %s (chunks=%d)", entry.Name, len(entry.Chunks))
 			}
 			var fileTsNs int64
 			if fileTsNs, err = eachFileFn(entry, eachLogEntryFn, startTsNs, stopTsNs, startOffset, isOffsetBased); err != nil {
@@ -318,6 +327,8 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 				if strings.Contains(t.Name, "_schemas") {
 					glog.Infof("[SCHEMAS DISK READ] processed file %s with tsNs=%d", entry.Name, fileTsNs)
 				}
+			} else if strings.Contains(t.Name, "_schemas") {
+				glog.Infof("[SCHEMAS DISK READ] file %s returned tsNs=0 (no entries processed)", entry.Name)
 			}
 
 			// For offset-based reads, track the last processed offset
