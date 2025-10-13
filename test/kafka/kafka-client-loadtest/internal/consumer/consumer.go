@@ -26,6 +26,9 @@ type Consumer struct {
 	consumerGroup    string
 	avroCodec        *goavro.Codec
 
+	// Schema format tracking per topic
+	schemaFormats map[string]string // topic -> schema format mapping (AVRO, JSON, PROTOBUF)
+
 	// Processing tracking
 	messagesProcessed int64
 	lastOffset        map[string]map[int32]int64
@@ -44,6 +47,29 @@ func New(cfg *config.Config, collector *metrics.Collector, id int) (*Consumer, e
 		consumerGroup:    consumerGroup,
 		useConfluent:     false, // Use Sarama by default
 		lastOffset:       make(map[string]map[int32]int64),
+		schemaFormats:    make(map[string]string),
+	}
+
+	// Initialize schema formats for each topic (must match producer logic)
+	// This mirrors the format distribution in cmd/loadtest/main.go registerSchemas()
+	for i, topic := range c.topics {
+		var schemaFormat string
+		if cfg.Producers.SchemaFormat != "" {
+			// Use explicit config if provided
+			schemaFormat = cfg.Producers.SchemaFormat
+		} else {
+			// Distribute across formats (same as producer)
+			switch i % 3 {
+			case 0:
+				schemaFormat = "AVRO"
+			case 1:
+				schemaFormat = "JSON"
+			case 2:
+				schemaFormat = "PROTOBUF"
+			}
+		}
+		c.schemaFormats[topic] = schemaFormat
+		log.Printf("Consumer %d: Topic %s will use schema format: %s", id, topic, schemaFormat)
 	}
 
 	// Initialize consumer based on configuration
@@ -93,10 +119,10 @@ func (c *Consumer) initSaramaConsumer() error {
 	config.Consumer.Fetch.Max = int32(c.config.Consumers.FetchMaxBytes)
 	config.Consumer.MaxWaitTime = time.Duration(c.config.Consumers.FetchMaxWaitMs) * time.Millisecond
 	config.Consumer.MaxProcessingTime = time.Duration(c.config.Consumers.MaxPollIntervalMs) * time.Millisecond
-	
+
 	// Channel buffer sizes for concurrent partition consumption
 	config.ChannelBufferSize = 256 // Increase from default 256 to allow more buffering
-	
+
 	// Enable concurrent partition fetching by increasing the number of broker connections
 	// This allows Sarama to fetch from multiple partitions in parallel
 	config.Net.MaxOpenRequests = 20 // Increase from default 5 to allow 20 concurrent requests
@@ -238,18 +264,35 @@ func (c *Consumer) processMessage(topicPtr *string, partition int32, offset int6
 	// Update offset tracking
 	c.updateOffset(topic, partition, offset)
 
-	// Decode message based on type
+	// Decode message based on topic-specific schema format
 	var decodedMessage interface{}
 	var err error
 
-	switch c.config.Producers.ValueType {
-	case "avro":
+	// Determine schema format for this topic (if schemas are enabled)
+	var schemaFormat string
+	if c.config.Schemas.Enabled {
+		schemaFormat = c.schemaFormats[topic]
+		if schemaFormat == "" {
+			// Fallback to config if topic not in map
+			schemaFormat = c.config.Producers.ValueType
+		}
+	} else {
+		// No schemas, use global value type
+		schemaFormat = c.config.Producers.ValueType
+	}
+
+	// Decode message based on format
+	switch schemaFormat {
+	case "avro", "AVRO":
 		decodedMessage, err = c.decodeAvroMessage(value)
-	case "json":
-		decodedMessage, err = c.decodeJSONMessage(value)
+	case "json", "JSON", "JSON_SCHEMA":
+		decodedMessage, err = c.decodeJSONSchemaMessage(value)
+	case "protobuf", "PROTOBUF":
+		decodedMessage, err = c.decodeProtobufMessage(value)
 	case "binary":
 		decodedMessage, err = c.decodeBinaryMessage(value)
 	default:
+		// Fallback to plain JSON
 		decodedMessage, err = c.decodeJSONMessage(value)
 	}
 
@@ -329,6 +372,73 @@ func (c *Consumer) decodeAvroMessage(value []byte) (interface{}, error) {
 	}
 
 	return native, nil
+}
+
+// decodeJSONSchemaMessage decodes a JSON Schema message (handles Confluent Wire Format)
+func (c *Consumer) decodeJSONSchemaMessage(value []byte) (interface{}, error) {
+	// Handle Confluent Wire Format when schemas are enabled
+	var jsonData []byte
+	if c.config.Schemas.Enabled {
+		if len(value) < 5 {
+			return nil, fmt.Errorf("message too short for Confluent Wire Format: %d bytes", len(value))
+		}
+
+		// Check magic byte (should be 0)
+		if value[0] != 0 {
+			return nil, fmt.Errorf("invalid Confluent Wire Format magic byte: %d", value[0])
+		}
+
+		// Extract schema ID (bytes 1-4, big-endian)
+		schemaID := binary.BigEndian.Uint32(value[1:5])
+		_ = schemaID // TODO: Could validate schema ID matches expected schema
+
+		// Extract JSON data (bytes 5+)
+		jsonData = value[5:]
+	} else {
+		// No wire format, use raw data
+		jsonData = value
+	}
+
+	// Decode JSON
+	var message map[string]interface{}
+	if err := json.Unmarshal(jsonData, &message); err != nil {
+		return nil, fmt.Errorf("failed to decode JSON data: %w", err)
+	}
+
+	return message, nil
+}
+
+// decodeProtobufMessage decodes a Protobuf message (handles Confluent Wire Format)
+func (c *Consumer) decodeProtobufMessage(value []byte) (interface{}, error) {
+	// Handle Confluent Wire Format when schemas are enabled
+	var protoData []byte
+	if c.config.Schemas.Enabled {
+		if len(value) < 5 {
+			return nil, fmt.Errorf("message too short for Confluent Wire Format: %d bytes", len(value))
+		}
+
+		// Check magic byte (should be 0)
+		if value[0] != 0 {
+			return nil, fmt.Errorf("invalid Confluent Wire Format magic byte: %d", value[0])
+		}
+
+		// Extract schema ID (bytes 1-4, big-endian)
+		schemaID := binary.BigEndian.Uint32(value[1:5])
+		_ = schemaID // TODO: Could validate schema ID matches expected schema
+
+		// Extract Protobuf data (bytes 5+)
+		protoData = value[5:]
+	} else {
+		// No wire format, use raw data
+		protoData = value
+	}
+
+	// For now, return raw protobuf data as we don't have the protobuf codec initialized
+	// TODO: Add proper protobuf decoding with generated code
+	return map[string]interface{}{
+		"protobuf_data": protoData,
+		"data_size":     len(protoData),
+	}, nil
 }
 
 // decodeBinaryMessage decodes a binary message
