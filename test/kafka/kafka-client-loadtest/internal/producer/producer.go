@@ -375,7 +375,7 @@ func (p *Producer) produceSaramaMessage(topic string, startTime time.Time) error
 	}
 
 	// Produce message
-	partition, offset, err := p.saramaProducer.SendMessage(msg)
+	_, _, err := p.saramaProducer.SendMessage(msg)
 	if err != nil {
 		return err
 	}
