@@ -75,26 +75,12 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 	// Even if MinBytes=0, we should honor MaxWaitTime to reduce polling overhead
 	maxWaitMs := fetchRequest.MaxWaitTime
 
-	// Track _schemas topic for debug logging
-	isSchemasTopic := false
-	if len(fetchRequest.Topics) == 1 && fetchRequest.Topics[0].Name == "_schemas" {
-		isSchemasTopic = true
-	}
-
 	// Long-poll if: (1) client wants to wait (maxWaitMs > 0), (2) no data available, (3) topics exist
 	// NOTE: We long-poll even if MinBytes=0, since the client specified a wait time
 	hasData := hasDataAvailable()
 	topicsExist := allTopicsExist()
 	shouldLongPoll := maxWaitMs > 0 && !hasData && topicsExist
 
-	// Debug Schema Registry polling
-	if isSchemasTopic && len(fetchRequest.Topics) > 0 {
-		for _, partition := range fetchRequest.Topics[0].Partitions {
-			glog.V(2).Infof("SR FETCH REQUEST: topic=%s partition=%d offset=%d maxWaitMs=%d minBytes=%d hasData=%v topicsExist=%v shouldLongPoll=%v",
-				fetchRequest.Topics[0].Name, partition.PartitionID, partition.FetchOffset,
-				maxWaitMs, fetchRequest.MinBytes, hasData, topicsExist, shouldLongPoll)
-		}
-	}
 	if shouldLongPoll {
 		start := time.Now()
 		// Use the client's requested wait time (already capped at 1s)
@@ -872,15 +858,6 @@ func (h *Handler) constructRecordBatchFromSMQ(topicName string, fetchOffset int6
 	crcData := batch[crcPos+4:] // CRC covers ONLY from attributes (byte 21) onwards // Skip CRC field itself, include rest
 	crc := crc32.Checksum(crcData, crc32.MakeTable(crc32.Castagnoli))
 	binary.BigEndian.PutUint32(batch[crcPos:crcPos+4], crc)
-
-	// DEBUG: Log batch bytes for _schemas topic
-	if topicName == "_schemas" {
-		glog.Infof("[SCHEMAS BATCH] Constructed batch for offset %d: len=%d bytes, recordCount=%d, crc=0x%08X",
-			fetchOffset, len(batch), len(smqRecords), crc)
-		if len(batch) <= 200 {
-			glog.Infof("[SCHEMAS BATCH] Hex dump: %x", batch)
-		}
-	}
 
 	return batch
 }

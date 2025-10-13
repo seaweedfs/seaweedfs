@@ -351,8 +351,6 @@ func (p *Producer) produceSaramaMessage(topic string, startTime time.Time) error
 
 		// Wrap in Confluent wire format (magic byte + schema ID + payload)
 		messageValue = p.createConfluentWireFormat(schemaID, encodedMessage)
-		log.Printf("WIRE FORMAT: topic=%s format=%s schemaID=%d payloadLen=%d",
-			topic, schemaFormat, schemaID, len(encodedMessage))
 	} else {
 		// No schemas - generate message based on config value_type
 		var err error
@@ -360,8 +358,6 @@ func (p *Producer) produceSaramaMessage(topic string, startTime time.Time) error
 		if err != nil {
 			return fmt.Errorf("failed to generate message: %w", err)
 		}
-		log.Printf("NO WIRE FORMAT: SchemasEnabled=%v, using raw message len=%d",
-			p.config.Schemas.Enabled, len(messageValue))
 	}
 
 	msg := &sarama.ProducerMessage{
@@ -387,10 +383,6 @@ func (p *Producer) produceSaramaMessage(topic string, startTime time.Time) error
 	// Record metrics
 	latency := time.Since(startTime)
 	p.metricsCollector.RecordProducedMessage(len(messageValue), latency)
-
-	// Log produced message with key for tracking
-	log.Printf("📤 PRODUCED: Producer %d topic=%s[%d] offset=%d key=%s valueLen=%d",
-		p.id, topic, partition, offset, key, len(messageValue))
 
 	return nil
 }

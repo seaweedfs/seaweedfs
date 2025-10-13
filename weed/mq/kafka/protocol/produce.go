@@ -28,8 +28,6 @@ func (h *Handler) handleProduce(correlationID uint32, apiVersion uint16, request
 }
 
 func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
-	// DEBUG: Show version being handled
-
 	// Parse Produce v0/v1 request
 	// Request format: client_id + acks(2) + timeout(4) + topics_array
 
@@ -618,12 +616,6 @@ func decodeVarint(data []byte) (int64, int) {
 func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
 	startTime := time.Now()
 
-	// DEBUG: Hex dump first 100 bytes to understand actual request format
-	dumpLen := len(requestBody)
-	if dumpLen > 100 {
-		dumpLen = 100
-	}
-
 	// For now, use simplified parsing similar to v0/v1 but handle v2+ response format
 	// In v2+, the main differences are:
 	// - Request: transactional_id field (nullable string) at the beginning
@@ -832,12 +824,6 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 			baseOffsetBytes := make([]byte, 8)
 			binary.BigEndian.PutUint64(baseOffsetBytes, uint64(baseOffset))
 			response = append(response, baseOffsetBytes...)
-
-			// Debug: Log response details for _schemas
-			if isSchemasTopic {
-				glog.Infof("SR PRODUCE RESPONSE V2+: topic=%s partition=%d errorCode=%d baseOffset=%d",
-					topicName, partitionID, errorCode, baseOffset)
-			}
 
 			// log_append_time (8 bytes) - v2+ field (actual timestamp, not -1)
 			if apiVersion >= 2 {

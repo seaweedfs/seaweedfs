@@ -88,17 +88,8 @@ func (h *SeaweedMQHandler) GetStoredRecords(ctx context.Context, topic string, p
 	// CRITICAL: Pass the requested fromOffset to ReadRecords so it can check the cache correctly
 	// If the session has advanced past fromOffset, ReadRecords will return cached data
 	// Pass context to respect Kafka fetch request's MaxWaitTime
-	isSchemasTopic := topic == "_schemas"
-	if isSchemasTopic {
-		glog.Infof("[SCHEMAS] Calling ReadRecordsFromOffset: topic=%s partition=%d fromOffset=%d maxRecords=%d subscriberOffset=%d",
-			topic, partition, fromOffset, maxRecords, brokerSubscriber.StartOffset)
-	} else {
-		glog.V(2).Infof("[FETCH] Calling ReadRecords for topic=%s partition=%d fromOffset=%d maxRecords=%d", topic, partition, fromOffset, maxRecords)
-	}
+	glog.V(2).Infof("[FETCH] Calling ReadRecords for topic=%s partition=%d fromOffset=%d maxRecords=%d", topic, partition, fromOffset, maxRecords)
 	seaweedRecords, err := brokerClient.ReadRecordsFromOffset(ctx, brokerSubscriber, fromOffset, maxRecords)
-	if isSchemasTopic {
-		glog.Infof("[SCHEMAS] ReadRecordsFromOffset returned %d records, err=%v", len(seaweedRecords), err)
-	}
 	if err != nil {
 		glog.Errorf("[FETCH] ReadRecords failed: %v", err)
 		return nil, fmt.Errorf("failed to read records: %v", err)
@@ -109,10 +100,6 @@ func (h *SeaweedMQHandler) GetStoredRecords(ctx context.Context, topic string, p
 	if len(seaweedRecords) == 0 {
 		hwm, hwmErr := brokerClient.GetHighWaterMark(topic, partition)
 		if hwmErr == nil && fromOffset < hwm {
-			if isSchemasTopic {
-				glog.Infof("[SCHEMAS] No records from subscriber at offset %d, but HWM=%d (data exists), restarting for disk read",
-					fromOffset, hwm)
-			}
 			// Restart the existing subscriber at the requested offset for disk read
 			// This is more efficient than closing and recreating
 			consumerGroup := "kafka-gateway"
@@ -126,9 +113,6 @@ func (h *SeaweedMQHandler) GetStoredRecords(ctx context.Context, topic string, p
 			seaweedRecords, err = brokerClient.ReadRecordsFromOffset(ctx, brokerSubscriber, fromOffset, maxRecords)
 			if err != nil {
 				return nil, fmt.Errorf("failed to read after restart: %v", err)
-			}
-			if isSchemasTopic {
-				glog.Infof("[SCHEMAS] After restart: got %d records", len(seaweedRecords))
 			}
 		}
 	}
@@ -196,13 +180,8 @@ func (h *SeaweedMQHandler) GetEarliestOffset(topic string, partition int32) (int
 // GetLatestOffset returns the latest available offset for a topic partition
 // ALWAYS queries SMQ broker directly - no ledger involved
 func (h *SeaweedMQHandler) GetLatestOffset(topic string, partition int32) (int64, error) {
-	isSchemasTopic := topic == "_schemas"
-
 	// Check if topic exists
 	if !h.TopicExists(topic) {
-		if isSchemasTopic {
-			glog.Infof("[SCHEMAS DEBUG] Topic does not exist, returning offset=0")
-		}
 		return 0, nil // Empty topic
 	}
 
@@ -213,10 +192,6 @@ func (h *SeaweedMQHandler) GetLatestOffset(topic string, partition int32) (int64
 		if time.Now().Before(entry.expiresAt) {
 			// Cache hit - return cached value
 			h.hwmCacheMu.RUnlock()
-			if isSchemasTopic {
-				glog.Infof("[SCHEMAS DEBUG] HWM cache hit: offset=%d ttl=%v",
-					entry.value, entry.expiresAt.Sub(time.Now()))
-			}
 			return entry.value, nil
 		}
 	}
@@ -225,10 +200,6 @@ func (h *SeaweedMQHandler) GetLatestOffset(topic string, partition int32) (int64
 	// Cache miss or expired - query SMQ broker
 	if h.brokerClient != nil {
 		latestOffset, err := h.brokerClient.GetHighWaterMark(topic, partition)
-		if isSchemasTopic {
-			glog.Infof("[SCHEMAS DEBUG] HWM query from broker: offset=%d err=%v (cache miss/expired)",
-				latestOffset, err)
-		}
 		if err != nil {
 			return 0, err
 		}
@@ -266,8 +237,6 @@ func (h *SeaweedMQHandler) GetFilerAddress() string {
 
 // ProduceRecord publishes a record to SeaweedMQ and lets SMQ generate the offset
 func (h *SeaweedMQHandler) ProduceRecord(topic string, partition int32, key []byte, value []byte) (int64, error) {
-	isSchemasTopic := topic == "_schemas"
-
 	if len(key) > 0 {
 	}
 	if len(value) > 0 {
@@ -303,11 +272,6 @@ func (h *SeaweedMQHandler) ProduceRecord(topic string, partition int32, key []by
 	h.hwmCacheMu.Lock()
 	delete(h.hwmCache, cacheKey)
 	h.hwmCacheMu.Unlock()
-
-	if isSchemasTopic {
-		glog.Infof("[SCHEMAS DEBUG] Produced record: topic=%s partition=%d assignedOffset=%d keyLen=%d valueLen=%d (HWM cache invalidated)",
-			topic, partition, smqOffset, len(key), len(value))
-	}
 
 	return smqOffset, nil
 }

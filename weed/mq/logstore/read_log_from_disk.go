@@ -78,11 +78,6 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 
 		}
 
-		if strings.Contains(t.Name, "_schemas") && (entriesProcessed > 0 || entriesSkipped > 0) {
-			glog.Infof("[SCHEMAS CHUNK] chunk processed: entries=%d skipped=%d startOffset=%d",
-				entriesProcessed, entriesSkipped, startOffset)
-		}
-
 		return
 	}
 
@@ -249,20 +244,11 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 			return
 		}
 
-		if strings.Contains(t.Name, "_schemas") {
-			glog.Infof("[SCHEMAS DISK READ] found %d candidate files for topic=%s partition=%s offset=%d dir=%s",
-				len(candidateFiles), t.Name, p, startOffset, partitionDir)
-		} else {
-			glog.V(2).Infof("found %d candidate files for topic=%s partition=%s offset=%d",
-				len(candidateFiles), t.Name, p, startOffset)
-		}
+		glog.V(2).Infof("found %d candidate files for topic=%s partition=%s offset=%d",
+			len(candidateFiles), t.Name, p, startOffset)
 
 		if len(candidateFiles) == 0 {
-			if strings.Contains(t.Name, "_schemas") {
-				glog.Infof("[SCHEMAS DISK READ] no files found in %s", partitionDir)
-			} else {
-				glog.V(2).Infof("no files found in %s", partitionDir)
-			}
+			glog.V(2).Infof("no files found in %s", partitionDir)
 			return startPosition, isDone, nil
 		}
 
@@ -311,24 +297,13 @@ func GenLogOnDiskReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p top
 		var filesProcessed int
 		var lastProcessedOffset int64
 		for _, entry := range candidateFiles {
-			if strings.Contains(t.Name, "_schemas") {
-				glog.Infof("[SCHEMAS DISK READ] processing file %s (chunks=%d)", entry.Name, len(entry.Chunks))
-			}
 			var fileTsNs int64
 			if fileTsNs, err = eachFileFn(entry, eachLogEntryFn, startTsNs, stopTsNs, startOffset, isOffsetBased); err != nil {
-				if strings.Contains(t.Name, "_schemas") {
-					glog.Errorf("[SCHEMAS DISK READ] error processing file %s: %v", entry.Name, err)
-				}
 				return lastReadPosition, isDone, err
 			}
 			if fileTsNs > 0 {
 				processedTsNs = fileTsNs
 				filesProcessed++
-				if strings.Contains(t.Name, "_schemas") {
-					glog.Infof("[SCHEMAS DISK READ] processed file %s with tsNs=%d", entry.Name, fileTsNs)
-				}
-			} else if strings.Contains(t.Name, "_schemas") {
-				glog.Infof("[SCHEMAS DISK READ] file %s returned tsNs=0 (no entries processed)", entry.Name)
 			}
 
 			// For offset-based reads, track the last processed offset

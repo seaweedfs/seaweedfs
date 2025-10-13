@@ -5,7 +5,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 )
 
@@ -215,20 +214,12 @@ func (r *PartitionOffsetRegistry) GetManager(namespace, topicName string, partit
 
 // AssignOffset assigns an offset for the given partition
 func (r *PartitionOffsetRegistry) AssignOffset(namespace, topicName string, partition *schema_pb.Partition) (int64, error) {
-	isSchemasTopic := topicName == "_schemas"
-	partKey := PartitionKey(partition)
-
 	manager, err := r.GetManager(namespace, topicName, partition)
 	if err != nil {
 		return 0, err
 	}
 
 	assignedOffset := manager.AssignOffset()
-
-	if isSchemasTopic {
-		glog.Infof("[OFFSET DEBUG] AssignOffset for _schemas: partitionKey=%s assignedOffset=%d nextOffset=%d",
-			partKey, assignedOffset, manager.GetNextOffset())
-	}
 
 	return assignedOffset, nil
 }

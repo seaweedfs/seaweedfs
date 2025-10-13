@@ -109,16 +109,9 @@ func (f *MultiBatchFetcher) FetchMultipleBatches(ctx context.Context, topicName 
 
 		// Fetch records for this batch
 		// Pass context to respect Kafka fetch request's MaxWaitTime
-		isSchemasTopic := topicName == "_schemas"
-		if isSchemasTopic {
-			glog.Infof("[SCHEMAS MULTIBATCH] About to call GetStoredRecords: offset=%d count=%d", currentOffset, recordsToFetch)
-		}
 		getRecordsStartTime := time.Now()
 		smqRecords, err := f.handler.seaweedMQHandler.GetStoredRecords(ctx, topicName, partitionID, currentOffset, int(recordsToFetch))
 		getRecordsDuration := time.Since(getRecordsStartTime)
-		if isSchemasTopic {
-			glog.Infof("[SCHEMAS MULTIBATCH] GetStoredRecords returned: records=%d err=%v duration=%v", len(smqRecords), err, getRecordsDuration)
-		}
 		Debug("[DEBUG_MULTIBATCH] GetStoredRecords returned: records=%d err=%v duration=%v", len(smqRecords), err, getRecordsDuration)
 
 		if err != nil || len(smqRecords) == 0 {
@@ -131,18 +124,6 @@ func (f *MultiBatchFetcher) FetchMultipleBatches(ctx context.Context, topicName 
 		// Construct record batch
 		batch := f.constructSingleRecordBatch(topicName, currentOffset, smqRecords)
 		batchSize := int32(len(batch))
-
-		if strings.HasPrefix(topicName, "_schemas") {
-			// Log first record details for debugging deserialization
-			if len(smqRecords) > 0 {
-				for i, rec := range smqRecords {
-					if i < 3 { // Log first 3 records
-						_ = i
-						_ = rec
-					}
-				}
-			}
-		}
 
 		// Double-check actual size doesn't exceed maxBytes
 		if totalSize+batchSize > maxBytes && batchCount > 0 {
@@ -166,12 +147,6 @@ func (f *MultiBatchFetcher) FetchMultipleBatches(ctx context.Context, topicName 
 		NextOffset:    currentOffset,
 		TotalSize:     totalSize,
 		BatchCount:    batchCount,
-	}
-
-	// Log for _schemas topic
-	if strings.HasPrefix(topicName, "_schemas") {
-		glog.Infof("SR MULTIBATCH RESULT: topic=%s partition=%d startOffset=%d nextOffset=%d batchCount=%d totalSize=%d",
-			topicName, partitionID, startOffset, currentOffset, batchCount, totalSize)
 	}
 
 	return result, nil
@@ -421,15 +396,6 @@ func (f *MultiBatchFetcher) constructSingleRecordBatch(topicName string, baseOff
 
 		fmt.Printf("    Batch for topic=%s baseOffset=%d recordCount=%d\n", topicName, baseOffset, len(smqRecords))
 		fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
-	}
-
-	// DEBUG: Log batch bytes for _schemas topic
-	if topicName == "_schemas" {
-		glog.Infof("[SCHEMAS BATCH MULTIBATCH] Constructed batch for offset %d: len=%d bytes, recordCount=%d, crc=0x%08X",
-			baseOffset, len(batch), len(smqRecords), crc)
-		if len(batch) <= 200 {
-			glog.Infof("[SCHEMAS BATCH MULTIBATCH] Hex dump: %x", batch)
-		}
 	}
 
 	return batch

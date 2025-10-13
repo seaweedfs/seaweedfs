@@ -132,20 +132,10 @@ func (pr *partitionReader) serveFetchRequest(ctx context.Context, req *partition
 	hwm, hwmErr := pr.handler.seaweedMQHandler.GetLatestOffset(pr.topicName, pr.partitionID)
 	result.highWaterMark = hwm
 
-	// Debug logging for _schemas topic
-	isSchemasTopic := pr.topicName == "_schemas"
-	if isSchemasTopic {
-		glog.Infof("[SCHEMAS DEBUG] Fetch request: topic=%s partition=%d requestedOffset=%d hwm=%d hwmErr=%v",
-			pr.topicName, pr.partitionID, req.requestedOffset, hwm, hwmErr)
-	}
-
 	// CRITICAL: If requested offset >= HWM, return immediately with empty result
 	// This prevents overwhelming the broker with futile read attempts when no data is available
 	if req.requestedOffset >= hwm {
 		result.recordBatch = []byte{}
-		if isSchemasTopic {
-			glog.Infof("[SCHEMAS DEBUG] No data: requestedOffset=%d >= hwm=%d", req.requestedOffset, hwm)
-		}
 		glog.V(3).Infof("[%s] No data available for %s[%d]: offset=%d >= hwm=%d",
 			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, req.requestedOffset, hwm)
 		return
@@ -178,8 +168,6 @@ func (pr *partitionReader) serveFetchRequest(ctx context.Context, req *partition
 
 // readRecords reads records forward using the multi-batch fetcher
 func (pr *partitionReader) readRecords(ctx context.Context, fromOffset int64, maxBytes int32, maxWaitMs int32, highWaterMark int64) ([]byte, int64) {
-	isSchemasTopic := pr.topicName == "_schemas"
-
 	// Create context with timeout based on Kafka fetch request's MaxWaitTime
 	// This ensures we wait exactly as long as the client requested
 	fetchCtx := ctx
@@ -199,11 +187,6 @@ func (pr *partitionReader) readRecords(ctx context.Context, fromOffset int64, ma
 		highWaterMark,
 		maxBytes,
 	)
-
-	if isSchemasTopic {
-		glog.Infof("[SCHEMAS DEBUG] Multi-batch fetch result: fromOffset=%d hwm=%d err=%v totalSize=%d batchCount=%d nextOffset=%d",
-			fromOffset, highWaterMark, err, fetchResult.TotalSize, fetchResult.BatchCount, fetchResult.NextOffset)
-	}
 
 	if err == nil && fetchResult.TotalSize > 0 {
 		glog.V(2).Infof("[%s] Multi-batch fetch for %s[%d]: %d batches, %d bytes, offset %d -> %d",

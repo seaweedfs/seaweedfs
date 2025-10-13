@@ -4,7 +4,6 @@ import (
 	"time"
 
 	cmap "github.com/orcaman/concurrent-map/v2"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/shirou/gopsutil/v4/cpu"
@@ -36,15 +35,11 @@ func (manager *LocalTopicManager) AddLocalPartition(topic Topic, localPartition 
 
 // GetLocalPartition gets a topic from the local topic manager
 func (manager *LocalTopicManager) GetLocalPartition(topic Topic, partition Partition) *LocalPartition {
-	glog.V(4).Infof("DEBUG: GetLocalPartition called for topic=%s, partition=%s", topic.String(), partition.String())
 	localTopic, ok := manager.topics.Get(topic.String())
 	if !ok {
-		glog.V(4).Infof("DEBUG: Topic %s not found in localTopicManager", topic.String())
 		return nil
 	}
-	glog.V(4).Infof("DEBUG: Topic %s found, searching for partition %s", topic.String(), partition.String())
 	result := localTopic.findPartition(partition)
-	glog.V(4).Infof("DEBUG: Partition search result: %v", result != nil)
 	return result
 }
 
