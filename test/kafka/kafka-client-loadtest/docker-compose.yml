@@ -50,16 +50,25 @@ services:
       SCHEMA_REGISTRY_KAFKASTORE_GROUP_ID: "schema-registry"
       SCHEMA_REGISTRY_KAFKASTORE_SECURITY_PROTOCOL: "PLAINTEXT"
       SCHEMA_REGISTRY_KAFKASTORE_TOPIC_REPLICATION_FACTOR: "1"
-      SCHEMA_REGISTRY_KAFKASTORE_INIT_TIMEOUT: "120000"
-      SCHEMA_REGISTRY_KAFKASTORE_TIMEOUT: "60000"
-      SCHEMA_REGISTRY_REQUEST_TIMEOUT_MS: "60000"
-      SCHEMA_REGISTRY_RETRY_BACKOFF_MS: "1000"
+      SCHEMA_REGISTRY_KAFKASTORE_INIT_TIMEOUT: "180000"
+      SCHEMA_REGISTRY_KAFKASTORE_TIMEOUT: "120000"
+      SCHEMA_REGISTRY_REQUEST_TIMEOUT_MS: "120000"
+      SCHEMA_REGISTRY_RETRY_BACKOFF_MS: "2000"
+      # Consumer group coordination timeouts
+      SCHEMA_REGISTRY_KAFKASTORE_SESSION_TIMEOUT_MS: "120000"
+      SCHEMA_REGISTRY_KAFKASTORE_HEARTBEAT_INTERVAL_MS: "30000"
+      SCHEMA_REGISTRY_KAFKASTORE_MAX_POLL_INTERVAL_MS: "300000"
+      SCHEMA_REGISTRY_KAFKASTORE_CONSUMER_REQUEST_TIMEOUT_MS: "120000"
+      # Producer configs for writing to _schemas topic - use kafkastore.producer. prefix
+      SCHEMA_REGISTRY_KAFKASTORE_PRODUCER_REQUEST_TIMEOUT_MS: "60000"
+      SCHEMA_REGISTRY_KAFKASTORE_PRODUCER_MAX_BLOCK_MS: "60000"
       # Force IPv4 to work around Java IPv6 issues
       # Enable verbose logging and set reasonable memory limits
-      KAFKA_OPTS: "-Djava.net.preferIPv4Stack=true -Djava.net.preferIPv4Addresses=true -Xmx512M -Xms256M"
+      # Override default producer timeout (500ms) via system properties
+      KAFKA_OPTS: "-Djava.net.preferIPv4Stack=true -Djava.net.preferIPv4Addresses=true -Xmx512M -Xms256M -Dkafkastore.producer.request.timeout.ms=60000 -Dkafkastore.producer.max.block.ms=60000"
       KAFKA_LOG4J_OPTS: "-Dlog4j.configuration=file:/etc/kafka/log4j.properties"
       SCHEMA_REGISTRY_LOG4J_ROOT_LOGLEVEL: "INFO"
-      SCHEMA_REGISTRY_KAFKASTORE_WRITE_TIMEOUT_MS: "60000"
+      SCHEMA_REGISTRY_KAFKASTORE_WRITE_TIMEOUT_MS: "120000"
       SCHEMA_REGISTRY_KAFKASTORE_INIT_RETRY_BACKOFF_MS: "5000"
       SCHEMA_REGISTRY_KAFKASTORE_CONSUMER_AUTO_OFFSET_RESET: "earliest"
     healthcheck:
