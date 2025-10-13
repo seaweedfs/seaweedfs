@@ -84,18 +84,49 @@ func (h *SeaweedMQHandler) GetStoredRecords(ctx context.Context, topic string, p
 	// CRITICAL: Pass the requested fromOffset to ReadRecords so it can check the cache correctly
 	// If the session has advanced past fromOffset, ReadRecords will return cached data
 	// Pass context to respect Kafka fetch request's MaxWaitTime
-	glog.V(2).Infof("[FETCH] Calling ReadRecords for topic=%s partition=%d fromOffset=%d maxRecords=%d", topic, partition, fromOffset, maxRecords)
+	isSchemasTopic := topic == "_schemas"
+	if isSchemasTopic {
+		glog.Infof("[SCHEMAS] Calling ReadRecordsFromOffset: topic=%s partition=%d fromOffset=%d maxRecords=%d subscriberOffset=%d",
+			topic, partition, fromOffset, maxRecords, brokerSubscriber.StartOffset)
+	} else {
+		glog.V(2).Infof("[FETCH] Calling ReadRecords for topic=%s partition=%d fromOffset=%d maxRecords=%d", topic, partition, fromOffset, maxRecords)
+	}
 	seaweedRecords, err := brokerClient.ReadRecordsFromOffset(ctx, brokerSubscriber, fromOffset, maxRecords)
+	if isSchemasTopic {
+		glog.Infof("[SCHEMAS] ReadRecordsFromOffset returned %d records, err=%v", len(seaweedRecords), err)
+	}
 	if err != nil {
 		glog.Errorf("[FETCH] ReadRecords failed: %v", err)
 		return nil, fmt.Errorf("failed to read records: %v", err)
 	}
-	glog.V(2).Infof("[FETCH] ReadRecords returned %d records", len(seaweedRecords))
+	// CRITICAL FIX: If ReadRecords returns 0 but HWM indicates data exists on disk, force a disk read
+	// This handles the case where subscriber advanced past data that was already on disk
+	// Only do this ONCE per fetch request to avoid subscriber churn
+	if len(seaweedRecords) == 0 {
+		hwm, hwmErr := brokerClient.GetHighWaterMark(topic, partition)
+		if hwmErr == nil && fromOffset < hwm {
+			if isSchemasTopic {
+				glog.Infof("[SCHEMAS] No records from subscriber at offset %d, but HWM=%d (data exists), recreating for disk read",
+					fromOffset, hwm)
+			}
+			// Close current subscriber and recreate at requested offset for disk read
+			brokerClient.CloseSubscriber(topic, partition)
+			newSubscriber, err := brokerClient.GetOrCreateSubscriber(topic, partition, fromOffset)
+			if err != nil {
+				return nil, fmt.Errorf("failed to recreate subscriber: %v", err)
+			}
+			// Try reading again from new subscriber (will do disk read)
+			seaweedRecords, err = brokerClient.ReadRecordsFromOffset(ctx, newSubscriber, fromOffset, maxRecords)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read after recreate: %v", err)
+			}
+			if isSchemasTopic {
+				glog.Infof("[SCHEMAS] After recreate: got %d records", len(seaweedRecords))
+			}
+		}
+	}
 
-	// CRITICAL FIX: If ReadRecords returns 0 but data should exist (check HWM), it might be a timeout
-	// However, DON'T recreate the subscriber on every failed attempt - this creates a subscriber storm
-	// The ReadRecords timeout is now generous (3 seconds) to handle disk reads, so if it times out,
-	// just return empty and let the client retry with another Fetch request
+	glog.V(2).Infof("[FETCH] ReadRecords returned %d records", len(seaweedRecords))
 	//
 	// This approach is correct for Kafka protocol:
 	// - Clients continuously poll with Fetch requests

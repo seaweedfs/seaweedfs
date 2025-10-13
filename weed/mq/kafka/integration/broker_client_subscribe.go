@@ -242,11 +242,20 @@ func (bc *BrokerClient) ReadRecordsFromOffset(ctx context.Context, session *Brok
 		}
 	}
 
-	// If requested offset doesn't match session offset and not in cache,
-	// we need to recreate the subscriber to do a fresh disk read
-	// This handles the case where GetOrCreateSubscriber reused the session but cache doesn't have the data
-	if requestedOffset != session.StartOffset {
-		glog.V(0).Infof("[FETCH] Cache miss for offset %d (session at %d), recreating subscriber for disk read",
+	// CRITICAL FIX for Schema Registry: Keep subscriber alive across multiple fetch requests
+	// Schema Registry expects to make multiple poll() calls on the same consumer connection
+	//
+	// Three scenarios:
+	// 1. requestedOffset < session.StartOffset: Need to seek backward (recreate)
+	// 2. requestedOffset == session.StartOffset: Continue reading (use existing)
+	// 3. requestedOffset > session.StartOffset: Continue reading forward (use existing)
+	//
+	// The session will naturally advance as records are consumed, so we should NOT
+	// recreate it just because requestedOffset != session.StartOffset
+
+	if requestedOffset < session.StartOffset {
+		// Need to seek backward - recreate subscriber
+		glog.V(0).Infof("[FETCH] Seeking backward: requested=%d < session=%d, recreating subscriber",
 			requestedOffset, session.StartOffset)
 		session.mu.Unlock()
 
@@ -274,7 +283,12 @@ func (bc *BrokerClient) ReadRecordsFromOffset(ctx context.Context, session *Brok
 		return bc.ReadRecords(ctx, newSession, maxRecords)
 	}
 
-	// Exact match - delegate to ReadRecords
+	// requestedOffset >= session.StartOffset: Keep reading forward from existing session
+	// This handles:
+	// - Exact match (requestedOffset == session.StartOffset)
+	// - Reading ahead (requestedOffset > session.StartOffset, e.g., from cache)
+	glog.V(2).Infof("[FETCH] Using persistent session: requested=%d session=%d (persistent connection)",
+		requestedOffset, session.StartOffset)
 	session.mu.Unlock()
 	return bc.ReadRecords(ctx, session, maxRecords)
 }
@@ -483,4 +497,23 @@ func (bc *BrokerClient) ReadRecords(ctx context.Context, session *BrokerSubscrib
 	glog.V(2).Infof("[FETCH] Updated cache: now contains %d records", len(session.consumedRecords))
 
 	return records, nil
+}
+
+// CloseSubscriber closes and removes a subscriber session
+func (bc *BrokerClient) CloseSubscriber(topic string, partition int32) {
+	key := fmt.Sprintf("%s-%d", topic, partition)
+
+	bc.subscribersLock.Lock()
+	defer bc.subscribersLock.Unlock()
+
+	if session, exists := bc.subscribers[key]; exists {
+		if session.Stream != nil {
+			_ = session.Stream.CloseSend()
+		}
+		if session.Cancel != nil {
+			session.Cancel()
+		}
+		delete(bc.subscribers, key)
+		glog.V(1).Infof("[FETCH] Closed subscriber for %s", key)
+	}
 }
