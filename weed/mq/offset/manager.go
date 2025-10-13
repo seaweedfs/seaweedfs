@@ -184,9 +184,8 @@ func NewPartitionOffsetRegistry(storage OffsetStorage) *PartitionOffsetRegistry 
 
 // GetManager returns the offset manager for a partition, creating it if needed
 func (r *PartitionOffsetRegistry) GetManager(namespace, topicName string, partition *schema_pb.Partition) (*PartitionOffsetManager, error) {
-	// CRITICAL FIX: Include namespace and topicName in the key to prevent different topics
-	// from sharing the same offset manager
-	key := fmt.Sprintf("%s/%s/%s", namespace, topicName, partitionKey(partition))
+	// CRITICAL FIX: Use TopicPartitionKey to ensure each topic has its own offset manager
+	key := TopicPartitionKey(namespace, topicName, partition)
 
 	r.mu.RLock()
 	manager, exists := r.managers[key]
@@ -255,10 +254,19 @@ func (r *PartitionOffsetRegistry) GetHighWaterMark(namespace, topicName string, 
 	return manager.GetHighWaterMark(), nil
 }
 
-// PartitionKey generates a unique key for a partition
+// TopicPartitionKey generates a unique key for a topic-partition combination
+// This is the canonical key format used across the offset management system
+func TopicPartitionKey(namespace, topicName string, partition *schema_pb.Partition) string {
+	return fmt.Sprintf("%s/%s/ring:%d:range:%d-%d",
+		namespace, topicName,
+		partition.RingSize, partition.RangeStart, partition.RangeStop)
+}
+
+// PartitionKey generates a unique key for a partition (without topic context)
 // Note: UnixTimeNs is intentionally excluded from the key because it represents
 // partition creation time, not partition identity. Using it would cause offset
 // tracking to reset whenever a partition is recreated or looked up again.
+// DEPRECATED: Use TopicPartitionKey for production code to avoid key collisions
 func PartitionKey(partition *schema_pb.Partition) string {
 	return fmt.Sprintf("ring:%d:range:%d-%d",
 		partition.RingSize, partition.RangeStart, partition.RangeStop)

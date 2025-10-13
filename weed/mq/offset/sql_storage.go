@@ -85,7 +85,8 @@ func (s *SQLOffsetStorage) initializeSchema() error {
 
 // SaveCheckpoint saves the checkpoint for a partition
 func (s *SQLOffsetStorage) SaveCheckpoint(namespace, topicName string, partition *schema_pb.Partition, offset int64) error {
-	partitionKey := partitionKey(partition)
+	// Use TopicPartitionKey to ensure each topic has isolated checkpoint storage
+	partitionKey := TopicPartitionKey(namespace, topicName, partition)
 	now := time.Now().UnixNano()
 
 	// TODO: Use UPSERT for better performance
@@ -115,7 +116,8 @@ func (s *SQLOffsetStorage) SaveCheckpoint(namespace, topicName string, partition
 
 // LoadCheckpoint loads the checkpoint for a partition
 func (s *SQLOffsetStorage) LoadCheckpoint(namespace, topicName string, partition *schema_pb.Partition) (int64, error) {
-	partitionKey := partitionKey(partition)
+	// Use TopicPartitionKey to match SaveCheckpoint
+	partitionKey := TopicPartitionKey(namespace, topicName, partition)
 
 	query := `
 		SELECT checkpoint_offset 
@@ -139,7 +141,8 @@ func (s *SQLOffsetStorage) LoadCheckpoint(namespace, topicName string, partition
 
 // GetHighestOffset finds the highest offset in storage for a partition
 func (s *SQLOffsetStorage) GetHighestOffset(namespace, topicName string, partition *schema_pb.Partition) (int64, error) {
-	partitionKey := partitionKey(partition)
+	// Use TopicPartitionKey to match SaveCheckpoint
+	partitionKey := TopicPartitionKey(namespace, topicName, partition)
 
 	// TODO: Use _index column for efficient querying
 	// ASSUMPTION: kafka_offset represents the sequential offset we're tracking

@@ -46,7 +46,8 @@ func (s *InMemoryOffsetStorage) SaveCheckpoint(namespace, topicName string, part
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	key := partitionKey(partition)
+	// Use TopicPartitionKey for consistency with other storage implementations
+	key := TopicPartitionKey(namespace, topicName, partition)
 	s.checkpoints[key] = offset
 	return nil
 }
@@ -56,7 +57,8 @@ func (s *InMemoryOffsetStorage) LoadCheckpoint(namespace, topicName string, part
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	key := partitionKey(partition)
+	// Use TopicPartitionKey to match SaveCheckpoint
+	key := TopicPartitionKey(namespace, topicName, partition)
 	offset, exists := s.checkpoints[key]
 	if !exists {
 		return -1, fmt.Errorf("no checkpoint found")
@@ -70,7 +72,8 @@ func (s *InMemoryOffsetStorage) GetHighestOffset(namespace, topicName string, pa
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	key := partitionKey(partition)
+	// Use TopicPartitionKey to match SaveCheckpoint
+	key := TopicPartitionKey(namespace, topicName, partition)
 	offsets, exists := s.records[key]
 	if !exists || len(offsets) == 0 {
 		return -1, fmt.Errorf("no records found")
