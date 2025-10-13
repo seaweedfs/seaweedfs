@@ -254,33 +254,22 @@ func (bc *BrokerClient) ReadRecordsFromOffset(ctx context.Context, session *Brok
 	// recreate it just because requestedOffset != session.StartOffset
 
 	if requestedOffset < session.StartOffset {
-		// Need to seek backward - recreate subscriber
-		glog.V(0).Infof("[FETCH] Seeking backward: requested=%d < session=%d, recreating subscriber",
+		// Need to seek backward - restart subscriber at new offset
+		glog.V(0).Infof("[FETCH] Seeking backward: requested=%d < session=%d, restarting subscriber",
 			requestedOffset, session.StartOffset)
 		session.mu.Unlock()
 
-		// Close and recreate
-		key := fmt.Sprintf("%s-%d", session.Topic, session.Partition)
-		bc.subscribersLock.Lock()
-		if old, ok := bc.subscribers[key]; ok {
-			if old.Stream != nil {
-				_ = old.Stream.CloseSend()
-			}
-			if old.Cancel != nil {
-				old.Cancel()
-			}
-			delete(bc.subscribers, key)
-		}
-		bc.subscribersLock.Unlock()
+		// Restart the subscriber from the new offset (reuses session object)
+		// Extract consumer group and ID from context or use defaults
+		consumerGroup := "kafka-gateway"
+		consumerID := fmt.Sprintf("kafka-gateway-%s-%d", session.Topic, session.Partition)
 
-		// Create new subscriber at requested offset
-		newSession, err := bc.GetOrCreateSubscriber(session.Topic, session.Partition, requestedOffset)
-		if err != nil {
-			return nil, fmt.Errorf("failed to recreate subscriber at offset %d: %w", requestedOffset, err)
+		if err := bc.RestartSubscriber(session, requestedOffset, consumerGroup, consumerID); err != nil {
+			return nil, fmt.Errorf("failed to restart subscriber at offset %d: %w", requestedOffset, err)
 		}
 
-		// Read from new subscriber
-		return bc.ReadRecords(ctx, newSession, maxRecords)
+		// Read from restarted subscriber
+		return bc.ReadRecords(ctx, session, maxRecords)
 	}
 
 	// requestedOffset >= session.StartOffset: Keep reading forward from existing session
@@ -516,4 +505,119 @@ func (bc *BrokerClient) CloseSubscriber(topic string, partition int32) {
 		delete(bc.subscribers, key)
 		glog.V(1).Infof("[FETCH] Closed subscriber for %s", key)
 	}
+}
+
+// NeedsRestart checks if the subscriber needs to restart to read from the given offset
+// Returns true if:
+// 1. Requested offset is before current position AND not in cache
+// 2. Stream is closed/invalid
+func (bc *BrokerClient) NeedsRestart(session *BrokerSubscriberSession, requestedOffset int64) bool {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+
+	// Check if stream is still valid
+	if session.Stream == nil || session.Ctx == nil {
+		return true
+	}
+
+	// Check if we can serve from cache
+	if len(session.consumedRecords) > 0 {
+		cacheStart := session.consumedRecords[0].Offset
+		cacheEnd := session.consumedRecords[len(session.consumedRecords)-1].Offset
+		if requestedOffset >= cacheStart && requestedOffset <= cacheEnd {
+			// Can serve from cache, no restart needed
+			return false
+		}
+	}
+
+	// If requested offset is far behind current position, need restart
+	if requestedOffset < session.StartOffset {
+		return true
+	}
+
+	// Check if we're too far ahead (gap in cache)
+	if requestedOffset > session.StartOffset+1000 {
+		// Large gap - might be more efficient to restart
+		return true
+	}
+
+	return false
+}
+
+// RestartSubscriber restarts an existing subscriber from a new offset
+// This is more efficient than closing and recreating the session
+func (bc *BrokerClient) RestartSubscriber(session *BrokerSubscriberSession, newOffset int64, consumerGroup string, consumerID string) error {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+
+	glog.V(1).Infof("[FETCH] Restarting subscriber for %s[%d]: from offset %d to %d",
+		session.Topic, session.Partition, session.StartOffset, newOffset)
+
+	// Close existing stream
+	if session.Stream != nil {
+		_ = session.Stream.CloseSend()
+	}
+	if session.Cancel != nil {
+		session.Cancel()
+	}
+
+	// Clear cache since we're seeking to a different position
+	session.consumedRecords = nil
+	session.nextOffsetToRead = newOffset
+
+	// Create new stream from new offset
+	subscriberCtx, cancel := context.WithCancel(context.Background())
+
+	stream, err := bc.client.SubscribeMessage(subscriberCtx)
+	if err != nil {
+		cancel()
+		return fmt.Errorf("failed to create subscribe stream for restart: %v", err)
+	}
+
+	// Get the actual partition assignment
+	actualPartition, err := bc.getActualPartitionAssignment(session.Topic, session.Partition)
+	if err != nil {
+		cancel()
+		_ = stream.CloseSend()
+		return fmt.Errorf("failed to get actual partition assignment for restart: %v", err)
+	}
+
+	// Send init message with new offset
+	initReq := &mq_pb.SubscribeMessageRequest{
+		Message: &mq_pb.SubscribeMessageRequest_Init{
+			Init: &mq_pb.SubscribeMessageRequest_InitMessage{
+				ConsumerGroup: consumerGroup,
+				ConsumerId:    consumerID,
+				ClientId:      "kafka-gateway",
+				Topic: &schema_pb.Topic{
+					Namespace: "kafka",
+					Name:      session.Topic,
+				},
+				PartitionOffset: &schema_pb.PartitionOffset{
+					Partition:   actualPartition,
+					StartTsNs:   0,
+					StartOffset: newOffset,
+				},
+				OffsetType:        schema_pb.OffsetType_EXACT_OFFSET,
+				SlidingWindowSize: 10,
+			},
+		},
+	}
+
+	if err := stream.Send(initReq); err != nil {
+		cancel()
+		_ = stream.CloseSend()
+		return fmt.Errorf("failed to send subscribe init for restart: %v", err)
+	}
+
+	// Update session with new stream and offset
+	session.Stream = stream
+	session.Cancel = cancel
+	session.Ctx = subscriberCtx
+	session.StartOffset = newOffset
+
+	glog.V(1).Infof("[FETCH] Successfully restarted subscriber for %s[%d] at offset %d",
+		session.Topic, session.Partition, newOffset)
+
+	return nil
 }

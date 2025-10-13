@@ -106,22 +106,25 @@ func (h *SeaweedMQHandler) GetStoredRecords(ctx context.Context, topic string, p
 		hwm, hwmErr := brokerClient.GetHighWaterMark(topic, partition)
 		if hwmErr == nil && fromOffset < hwm {
 			if isSchemasTopic {
-				glog.Infof("[SCHEMAS] No records from subscriber at offset %d, but HWM=%d (data exists), recreating for disk read",
+				glog.Infof("[SCHEMAS] No records from subscriber at offset %d, but HWM=%d (data exists), restarting for disk read",
 					fromOffset, hwm)
 			}
-			// Close current subscriber and recreate at requested offset for disk read
-			brokerClient.CloseSubscriber(topic, partition)
-			newSubscriber, err := brokerClient.GetOrCreateSubscriber(topic, partition, fromOffset)
-			if err != nil {
-				return nil, fmt.Errorf("failed to recreate subscriber: %v", err)
+			// Restart the existing subscriber at the requested offset for disk read
+			// This is more efficient than closing and recreating
+			consumerGroup := "kafka-gateway"
+			consumerID := fmt.Sprintf("kafka-gateway-%s-%d", topic, partition)
+
+			if err := brokerClient.RestartSubscriber(brokerSubscriber, fromOffset, consumerGroup, consumerID); err != nil {
+				return nil, fmt.Errorf("failed to restart subscriber: %v", err)
 			}
-			// Try reading again from new subscriber (will do disk read)
-			seaweedRecords, err = brokerClient.ReadRecordsFromOffset(ctx, newSubscriber, fromOffset, maxRecords)
+
+			// Try reading again from restarted subscriber (will do disk read)
+			seaweedRecords, err = brokerClient.ReadRecordsFromOffset(ctx, brokerSubscriber, fromOffset, maxRecords)
 			if err != nil {
-				return nil, fmt.Errorf("failed to read after recreate: %v", err)
+				return nil, fmt.Errorf("failed to read after restart: %v", err)
 			}
 			if isSchemasTopic {
-				glog.Infof("[SCHEMAS] After recreate: got %d records", len(seaweedRecords))
+				glog.Infof("[SCHEMAS] After restart: got %d records", len(seaweedRecords))
 			}
 		}
 	}
