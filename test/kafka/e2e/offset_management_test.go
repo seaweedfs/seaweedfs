@@ -108,7 +108,7 @@ func testConsumerGroupResumption(t *testing.T, addr, topic, groupID string) {
 	// Verify total consumption
 	totalConsumed := len(consumed1) + len(consumed2)
 	t.Logf("=== Verification: Total consumed %d messages (expected %d) ===", totalConsumed, len(messages))
-	
+
 	// Check for duplicates
 	offsetsSeen := make(map[int64]bool)
 	duplicateCount := 0
@@ -119,11 +119,11 @@ func testConsumerGroupResumption(t *testing.T, addr, topic, groupID string) {
 		}
 		offsetsSeen[msg.Offset] = true
 	}
-	
+
 	if duplicateCount > 0 {
 		t.Logf("ERROR: Found %d duplicate messages", duplicateCount)
 	}
-	
+
 	testutil.AssertEqual(t, len(messages), totalConsumed, "Should consume all messages after restart")
 
 	t.Logf("SUCCESS: Consumer group resumption test completed - no duplicates, all messages consumed exactly once")

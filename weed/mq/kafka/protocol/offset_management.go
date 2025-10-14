@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/consumer"
 )
 
@@ -151,16 +152,27 @@ func (h *Handler) handleOffsetCommit(correlationID uint32, apiVersion uint16, re
 				ConsumerGroupInstance: req.GroupInstanceID,
 			}
 
-			// Commit offset using SMQ storage (persistent to filer)
+			// Commit offset to both in-memory and SMQ storage
 			var errCode int16 = ErrorCodeNone
 			if generationMatches {
-				if err := h.commitOffsetToSMQ(key, p.Offset, p.Metadata); err != nil {
+				// Store in in-memory map first (works for both mock and SMQ backends)
+				if err := h.commitOffset(group, t.Name, p.Index, p.Offset, p.Metadata); err != nil {
 					errCode = ErrorCodeOffsetMetadataTooLarge
-				} else {
 				}
+
+				// Also store in SMQ persistent storage if available
+				if err := h.commitOffsetToSMQ(key, p.Offset, p.Metadata); err != nil {
+					// SMQ storage may not be available (e.g., in mock mode) - that's okay
+					glog.V(2).Infof("[OFFSET_COMMIT] SMQ storage not available: %v", err)
+				}
+
+				glog.V(0).Infof("[OFFSET_COMMIT] Committed: group=%s topic=%s partition=%d offset=%d",
+					req.GroupID, t.Name, p.Index, p.Offset)
 			} else {
 				// Do not store commit if generation mismatch
 				errCode = 22 // IllegalGeneration
+				glog.V(0).Infof("[OFFSET_COMMIT] Generation mismatch: group=%s expected=%d got=%d",
+					req.GroupID, group.Generation, req.GenerationID)
 			}
 
 			topicResp.Partitions = append(topicResp.Partitions, OffsetCommitPartitionResponse{
@@ -190,11 +202,14 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, req
 	// Get consumer group
 	group := h.groupCoordinator.GetGroup(request.GroupID)
 	if group == nil {
+		glog.V(0).Infof("[OFFSET_FETCH] Group not found: %s", request.GroupID)
 		return h.buildOffsetFetchErrorResponse(correlationID, ErrorCodeInvalidGroupID), nil
 	}
 
 	group.Mu.RLock()
 	defer group.Mu.RUnlock()
+
+	glog.V(0).Infof("[OFFSET_FETCH] Request: group=%s topics=%v", request.GroupID, request.Topics)
 
 	// Build response
 	response := OffsetFetchResponse{
@@ -222,25 +237,35 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, req
 
 		// Fetch offsets for requested partitions
 		for _, partition := range partitionsToFetch {
-			// Create consumer offset key for SMQ storage
-			key := ConsumerOffsetKey{
-				Topic:                 topic.Name,
-				Partition:             partition,
-				ConsumerGroup:         request.GroupID,
-				ConsumerGroupInstance: request.GroupInstanceID,
-			}
-
 			var fetchedOffset int64 = -1
 			var metadata string = ""
 			var errorCode int16 = ErrorCodeNone
 
-			// Fetch offset directly from SMQ storage (persistent storage)
-			// No cache needed - offset fetching is infrequent compared to commits
-			if off, meta, err := h.fetchOffsetFromSMQ(key); err == nil && off >= 0 {
+			// Try fetching from in-memory cache first (works for both mock and SMQ backends)
+			if off, meta, err := h.fetchOffset(group, topic.Name, partition); err == nil && off >= 0 {
 				fetchedOffset = off
 				metadata = meta
+				glog.V(0).Infof("[OFFSET_FETCH] Found in memory: group=%s topic=%s partition=%d offset=%d",
+					request.GroupID, topic.Name, partition, off)
 			} else {
-				// No offset found in persistent storage (-1 indicates no committed offset)
+				// Fallback: try fetching from SMQ persistent storage
+				// This handles cases where offsets are stored in SMQ but not yet loaded into memory
+				key := ConsumerOffsetKey{
+					Topic:                 topic.Name,
+					Partition:             partition,
+					ConsumerGroup:         request.GroupID,
+					ConsumerGroupInstance: request.GroupInstanceID,
+				}
+				if off, meta, err := h.fetchOffsetFromSMQ(key); err == nil && off >= 0 {
+					fetchedOffset = off
+					metadata = meta
+					glog.V(0).Infof("[OFFSET_FETCH] Found in SMQ: group=%s topic=%s partition=%d offset=%d",
+						request.GroupID, topic.Name, partition, off)
+				} else {
+					glog.V(0).Infof("[OFFSET_FETCH] No offset found: group=%s topic=%s partition=%d",
+						request.GroupID, topic.Name, partition)
+				}
+				// No offset found in either location (-1 indicates no committed offset)
 			}
 
 			partitionResponse := OffsetFetchPartitionResponse{
@@ -250,6 +275,8 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, req
 				Metadata:    metadata,
 				ErrorCode:   errorCode,
 			}
+			glog.V(0).Infof("[OFFSET_FETCH] Returning: group=%s topic=%s partition=%d offset=%d",
+				request.GroupID, topic.Name, partition, fetchedOffset)
 			topicResponse.Partitions = append(topicResponse.Partitions, partitionResponse)
 		}
 

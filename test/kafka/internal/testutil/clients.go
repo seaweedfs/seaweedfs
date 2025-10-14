@@ -140,6 +140,10 @@ func (k *KafkaGoClient) ConsumeWithGroup(topicName, groupID string, expectedCoun
 	})
 	defer reader.Close()
 
+	// Log the initial offset position
+	offset := reader.Offset()
+	k.t.Logf("Consumer group reader created for group %s, initial offset: %d", groupID, offset)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -151,14 +155,17 @@ func (k *KafkaGoClient) ConsumeWithGroup(topicName, groupID string, expectedCoun
 			return messages, fmt.Errorf("read message %d: %w", i, err)
 		}
 		messages = append(messages, msg)
+		k.t.Logf("  Fetched message %d: offset=%d, partition=%d", i, msg.Offset, msg.Partition)
 
 		// Commit with simple retry to handle transient connection churn
 		var commitErr error
 		for attempt := 0; attempt < 3; attempt++ {
 			commitErr = reader.CommitMessages(ctx, msg)
 			if commitErr == nil {
+				k.t.Logf("  ✓ Committed offset %d (attempt %d)", msg.Offset, attempt+1)
 				break
 			}
+			k.t.Logf("  × Commit attempt %d failed for offset %d: %v", attempt+1, msg.Offset, commitErr)
 			// brief backoff
 			time.Sleep(time.Duration(50*(1<<attempt)) * time.Millisecond)
 		}
