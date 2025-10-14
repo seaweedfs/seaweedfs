@@ -271,13 +271,20 @@ func (bc *BrokerClient) ReadRecordsFromOffset(ctx context.Context, session *Brok
 		if requestedOffset >= cacheStartOffset && requestedOffset <= cacheEndOffset {
 			// Found in cache
 			startIdx := int(requestedOffset - cacheStartOffset)
-			endIdx := startIdx + maxRecords
-			if endIdx > len(session.consumedRecords) {
-				endIdx = len(session.consumedRecords)
+			// CRITICAL: Bounds check to prevent race condition where cache is modified between checks
+			if startIdx < 0 || startIdx >= len(session.consumedRecords) {
+				glog.V(2).Infof("[FETCH] Cache index out of bounds (race condition): startIdx=%d, cache size=%d, falling through to normal read",
+					startIdx, len(session.consumedRecords))
+				// Cache was modified, fall through to normal read path
+			} else {
+				endIdx := startIdx + maxRecords
+				if endIdx > len(session.consumedRecords) {
+					endIdx = len(session.consumedRecords)
+				}
+				glog.V(2).Infof("[FETCH] Returning %d cached records for offset %d", endIdx-startIdx, requestedOffset)
+				session.mu.Unlock()
+				return session.consumedRecords[startIdx:endIdx], nil
 			}
-			glog.V(2).Infof("[FETCH] Returning %d cached records for offset %d", endIdx-startIdx, requestedOffset)
-			session.mu.Unlock()
-			return session.consumedRecords[startIdx:endIdx], nil
 		}
 	}
 
