@@ -445,10 +445,10 @@ func BenchmarkMemoryUsage(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			manager.AssignOffset()
-			if i%1000 == 0 {
-				// Periodic checkpoint to simulate real usage
-				manager.checkpoint(int64(i))
-			}
+			// Note: Checkpointing now happens automatically in background every 2 seconds
 		}
+
+		// Clean up background goroutine
+		manager.Close()
 	})
 }

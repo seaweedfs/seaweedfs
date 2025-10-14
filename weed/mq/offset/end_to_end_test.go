@@ -241,7 +241,8 @@ func TestOffsetPersistenceAcrossRestarts(t *testing.T) {
 
 		lastOffset = response.LastOffset
 
-		// Close connections
+		// Close connections - Close integration first to trigger final checkpoint
+		integration.Close()
 		storage.Close()
 		db.Close()
 	}
