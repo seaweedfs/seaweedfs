@@ -3,6 +3,7 @@ package dash
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"time"
 
@@ -393,7 +394,7 @@ func (s *AdminServer) GetVolumeDetails(volumeID int, server string) (*VolumeDeta
 // VacuumVolume performs a vacuum operation on a specific volume
 func (s *AdminServer) VacuumVolume(volumeID int, server string) error {
 	// Validate volumeID range before converting to uint32
-	if volumeID < 0 || volumeID > 0xFFFFFFFF {
+	if volumeID < 0 || uint64(volumeID) > math.MaxUint32 {
 		return fmt.Errorf("volume ID out of range: %d", volumeID)
 	}
 	return s.WithMasterClient(func(client master_pb.SeaweedClient) error {

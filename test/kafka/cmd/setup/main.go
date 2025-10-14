@@ -140,17 +140,18 @@ func registerSchemas(registryURL string) error {
 
 func registerSchema(registryURL string, schema Schema) error {
 	url := fmt.Sprintf("%s/subjects/%s/versions", registryURL, schema.Subject)
-	
+
 	payload := map[string]interface{}{
 		"schema": schema.Schema,
 	}
-	
+
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
 
-	resp, err := http.Post(url, "application/vnd.schemaregistry.v1+json", bytes.NewBuffer(jsonData))
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Post(url, "application/vnd.schemaregistry.v1+json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return err
 	}

@@ -434,7 +434,8 @@ func registerTopicSchema(registryURL, topicName, schemaFormat string) error {
 	subject := topicName + "-value"
 	url := fmt.Sprintf("%s/subjects/%s/versions", registryURL, subject)
 
-	resp, err := http.Post(url, "application/vnd.schemaregistry.v1+json", bytes.NewBuffer(jsonData))
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Post(url, "application/vnd.schemaregistry.v1+json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return err
 	}
