@@ -555,7 +555,9 @@ func (bc *BrokerClient) ReadRecords(ctx context.Context, session *BrokerSubscrib
 		}
 
 		readStart := time.Now()
-		ctx2, cancel2 := context.WithTimeout(context.Background(), currentTimeout)
+		// CRITICAL: Use parent context (ctx) to respect client's MaxWaitTime deadline
+		// The per-record timeout is combined with the overall fetch deadline
+		ctx2, cancel2 := context.WithTimeout(ctx, currentTimeout)
 		recvChan2 := make(chan recvResult, 1)
 
 		go func() {
