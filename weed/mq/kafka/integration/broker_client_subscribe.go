@@ -287,6 +287,11 @@ func (bc *BrokerClient) ReadRecordsFromOffset(ctx context.Context, session *Brok
 				session.Key(), requestedOffset, cacheStartOffset, cacheEndOffset)
 		}
 	}
+	
+	// CRITICAL: Get the current offset atomically before making recreation decision
+	// We need to unlock first (lock acquired at line 257) then re-acquire for atomic read
+	currentStartOffset := session.StartOffset
+	session.mu.Unlock()
 
 	// CRITICAL FIX for Schema Registry: Keep subscriber alive across multiple fetch requests
 	// Schema Registry expects to make multiple poll() calls on the same consumer connection
@@ -298,12 +303,6 @@ func (bc *BrokerClient) ReadRecordsFromOffset(ctx context.Context, session *Brok
 	//
 	// The session will naturally advance as records are consumed, so we should NOT
 	// recreate it just because requestedOffset != session.StartOffset
-
-	// CRITICAL: Re-check the offset under session lock to prevent race conditions
-	// Another thread might be reading from this session right now and advancing the offset
-	session.mu.Lock()
-	currentStartOffset := session.StartOffset
-	session.mu.Unlock()
 
 	if requestedOffset < currentStartOffset {
 		// Need to seek backward - close old session and create a fresh subscriber
