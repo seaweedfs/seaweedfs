@@ -211,6 +211,10 @@ func runComprehensiveTest(ctx context.Context, cancel context.CancelFunc, cfg *c
 	// Create separate contexts for producers and consumers
 	producerCtx, producerCancel := context.WithCancel(ctx)
 	consumerCtx, consumerCancel := context.WithCancel(ctx)
+	
+	// Ensure contexts are always cancelled to prevent leaks
+	defer producerCancel()
+	defer consumerCancel()
 
 	// Start producers
 	for i := 0; i < cfg.Producers.Count; i++ {
@@ -234,8 +238,9 @@ func runComprehensiveTest(ctx context.Context, cancel context.CancelFunc, cfg *c
 		}(i)
 	}
 
-	// Wait a bit for producers to start producing messages
-	time.Sleep(5 * time.Second)
+	// Wait briefly for producers to start producing messages
+	// Reduced from 5s to 2s to minimize message backlog
+	time.Sleep(2 * time.Second)
 
 	// Start consumers
 	for i := 0; i < cfg.Consumers.Count; i++ {
@@ -275,7 +280,11 @@ func runComprehensiveTest(ctx context.Context, cancel context.CancelFunc, cfg *c
 				producerCancel()
 
 				// Allow consumers extra time to drain remaining messages
-				drainTime := 30 * time.Second
+				// Calculate drain time based on test duration (minimum 60s, up to test duration)
+				drainTime := 60 * time.Second
+				if cfg.Duration > drainTime {
+					drainTime = cfg.Duration // Match test duration for longer tests
+				}
 				log.Printf("Allowing %v for consumers to drain remaining messages...", drainTime)
 				time.Sleep(drainTime)
 

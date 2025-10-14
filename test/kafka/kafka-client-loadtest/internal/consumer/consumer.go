@@ -302,10 +302,9 @@ func (c *Consumer) processMessage(topicPtr *string, partition int32, offset int6
 		return fmt.Errorf("failed to decode message: %w", err)
 	}
 
-	// Simulate message processing time (configurable)
-	if c.config.Output.RealTimeStats {
-		time.Sleep(time.Millisecond) // Minimal processing delay
-	}
+	// Note: Removed artificial delay to allow maximum throughput
+	// If you need to simulate processing time, add a configurable delay setting
+	// time.Sleep(time.Millisecond) // Minimal processing delay
 
 	// Record metrics
 	c.metricsCollector.RecordConsumedMessage(len(value))
