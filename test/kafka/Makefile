@@ -28,18 +28,9 @@ help: ## Show this help message
 # Environment Setup
 setup: ## Set up test environment (Kafka + Schema Registry + SeaweedFS)
 	@echo "$(YELLOW)Setting up Kafka integration test environment...$(NC)"
-	@$(DOCKER_COMPOSE) up -d zookeeper kafka schema-registry
-	@echo "$(BLUE)Waiting for Kafka ecosystem to be ready...$(NC)"
-	@sleep 30
-	@$(DOCKER_COMPOSE) up -d seaweedfs-master seaweedfs-volume seaweedfs-filer
-	@echo "$(BLUE)Waiting for SeaweedFS to be ready...$(NC)"
-	@sleep 20
-	@$(DOCKER_COMPOSE) up -d seaweedfs-mq-broker seaweedfs-mq-agent
-	@echo "$(BLUE)Waiting for SeaweedFS MQ to be ready...$(NC)"
-	@sleep 15
-	@$(DOCKER_COMPOSE) up -d kafka-gateway
-	@echo "$(BLUE)Waiting for Kafka Gateway to be ready...$(NC)"
-	@sleep 10
+	@$(DOCKER_COMPOSE) up -d
+	@echo "$(BLUE)Waiting for all services to be ready...$(NC)"
+	@./scripts/wait-for-services.sh
 	@echo "$(GREEN)Test environment ready!$(NC)"
 
 setup-schemas: setup ## Set up test environment and register schemas
