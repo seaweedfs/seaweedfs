@@ -311,10 +311,14 @@ func (bc *BrokerClient) ReadRecordsFromOffset(ctx context.Context, session *Brok
 				if endIdx > len(session.consumedRecords) {
 					endIdx = len(session.consumedRecords)
 				}
-				glog.V(2).Infof("[FETCH] Returning %d cached records for offset %d", endIdx-startIdx, requestedOffset)
+				glog.V(1).Infof("[FETCH] ✓ Returning %d cached records for %s at offset %d (cache: %d-%d)", 
+					endIdx-startIdx, session.Key(), requestedOffset, cacheStartOffset, cacheEndOffset)
 				session.mu.Unlock()
 				return session.consumedRecords[startIdx:endIdx], nil
 			}
+		} else {
+			glog.V(1).Infof("[FETCH] Cache miss for %s: requested=%d, cache=[%d-%d]", 
+				session.Key(), requestedOffset, cacheStartOffset, cacheEndOffset)
 		}
 	}
 
@@ -344,24 +348,25 @@ func (bc *BrokerClient) ReadRecordsFromOffset(ctx context.Context, session *Brok
 		key := session.Key()
 		session.mu.Unlock()
 
-		// CRITICAL FIX: Acquire the global lock FIRST, then re-check the session offset
-		// This prevents multiple threads from all deciding to recreate based on stale data
-		bc.subscribersLock.Lock()
+	// CRITICAL FIX: Acquire the global lock FIRST, then re-check the session offset
+	// This prevents multiple threads from all deciding to recreate based on stale data
+	glog.V(1).Infof("[FETCH] Acquiring global lock to recreate session %s: requested=%d", key, requestedOffset)
+	bc.subscribersLock.Lock()
+	
+	// Double-check if another thread already recreated the session at the desired offset
+	// This prevents multiple concurrent threads from all trying to recreate the same session
+	if existingSession, exists := bc.subscribers[key]; exists {
+		existingSession.mu.Lock()
+		existingOffset := existingSession.StartOffset
+		existingSession.mu.Unlock()
 
-		// Double-check if another thread already recreated the session at the desired offset
-		// This prevents multiple concurrent threads from all trying to recreate the same session
-		if existingSession, exists := bc.subscribers[key]; exists {
-			existingSession.mu.Lock()
-			existingOffset := existingSession.StartOffset
-			existingSession.mu.Unlock()
-
-			// Check if the session was already recreated at (or before) the requested offset
-			if existingOffset <= requestedOffset {
-				bc.subscribersLock.Unlock()
-				glog.V(1).Infof("[FETCH] Session already recreated by another thread at offset %d (requested %d)", existingOffset, requestedOffset)
-				// Re-acquire the existing session and continue
-				return bc.ReadRecordsFromOffset(ctx, existingSession, requestedOffset, maxRecords)
-			}
+		// Check if the session was already recreated at (or before) the requested offset
+		if existingOffset <= requestedOffset {
+			bc.subscribersLock.Unlock()
+			glog.V(0).Infof("[FETCH] Session %s already recreated by another thread at offset %d (requested %d) - reusing", key, existingOffset, requestedOffset)
+			// Re-acquire the existing session and continue
+			return bc.ReadRecordsFromOffset(ctx, existingSession, requestedOffset, maxRecords)
+		}
 
 			// Session still needs recreation - close it
 			if existingSession.Stream != nil {
@@ -371,7 +376,7 @@ func (bc *BrokerClient) ReadRecordsFromOffset(ctx context.Context, session *Brok
 				existingSession.Cancel()
 			}
 			delete(bc.subscribers, key)
-			glog.V(1).Infof("[FETCH] Closed old subscriber session for backward seek: %s", key)
+			glog.V(0).Infof("[FETCH] Closed old subscriber session for backward seek: %s (was at offset %d, need offset %d)", key, existingOffset, requestedOffset)
 		}
 		// CRITICAL FIX: Don't unlock here! Keep holding the lock while we create the new session
 		// to prevent other threads from interfering. We'll create the session inline.
@@ -379,6 +384,7 @@ func (bc *BrokerClient) ReadRecordsFromOffset(ctx context.Context, session *Brok
 
 		// Create a completely fresh subscriber at the requested offset
 		// INLINE SESSION CREATION to hold the lock continuously
+		glog.V(1).Infof("[FETCH] Creating inline subscriber session while holding lock: %s at offset %d", key, requestedOffset)
 		subscriberCtx := context.Background()
 		subscriberCancel := func() {} // No-op cancel
 
@@ -441,12 +447,13 @@ func (bc *BrokerClient) ReadRecordsFromOffset(ctx context.Context, session *Brok
 			Cancel:        subscriberCancel,
 		}
 
-		bc.subscribers[key] = newSession
-		bc.subscribersLock.Unlock()
-		glog.V(1).Infof("[FETCH] Created fresh subscriber session for backward seek: %s at offset %d", key, requestedOffset)
+	bc.subscribers[key] = newSession
+	bc.subscribersLock.Unlock()
+	glog.V(0).Infof("[FETCH] ✓ Created fresh subscriber session for backward seek: %s at offset %d", key, requestedOffset)
 
-		// Read from fresh subscriber
-		return bc.ReadRecords(ctx, newSession, maxRecords)
+	// Read from fresh subscriber
+	glog.V(1).Infof("[FETCH] Reading from fresh subscriber %s at offset %d (maxRecords=%d)", key, requestedOffset, maxRecords)
+	return bc.ReadRecords(ctx, newSession, maxRecords)
 	}
 
 	// requestedOffset >= session.StartOffset: Keep reading forward from existing session
