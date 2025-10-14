@@ -28,7 +28,7 @@ spec:
   rules:
     - http:
         paths:
-          - path:  {{ .Values.master.ingress.path | quote }}
+          - path: {{ .Values.master.ingress.path | quote }}
             pathType: {{ .Values.master.ingress.pathType | quote }}
             backend:
 {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
