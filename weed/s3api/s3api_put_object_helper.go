@@ -12,7 +12,7 @@ import (
 // authTypeStreamingUnsigned to strip checksum headers and extract the actual data.
 // This fixes issues where chunked data with checksums would be stored incorrectly
 // when IAM is not enabled.
-func getRequestDataReader(s3a *S3ApiServer, r *http.Request) (io.ReadCloser, s3err.ErrorCode) {
+func getRequestDataReader(s3a *S3ApiServer, r *http.Request, action Action) (io.ReadCloser, s3err.ErrorCode) {
 	var s3ErrCode s3err.ErrorCode
 	dataReader := r.Body
 	rAuthType := getRequestAuthType(r)
@@ -23,7 +23,7 @@ func getRequestDataReader(s3a *S3ApiServer, r *http.Request) (io.ReadCloser, s3e
 		case authTypeSignedV2, authTypePresignedV2:
 			_, s3ErrCode = s3a.iam.isReqAuthenticatedV2(r)
 		case authTypePresigned, authTypeSigned:
-			_, s3ErrCode = s3a.iam.reqSignatureV4Verify(r)
+			_, s3ErrCode = s3a.iam.reqSignatureV4Verify(r, action)
 		}
 	} else {
 		switch rAuthType {

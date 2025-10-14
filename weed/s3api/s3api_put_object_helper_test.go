@@ -7,6 +7,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	_ "github.com/seaweedfs/seaweedfs/weed/credential/memory"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
@@ -57,7 +58,7 @@ func TestGetRequestDataReader_ChunkedEncodingWithoutIAM(t *testing.T) {
 				req.Header.Set("x-amz-content-sha256", tt.contentSha256)
 			}
 
-			dataReader, errCode := getRequestDataReader(s3a, req)
+			dataReader, errCode := getRequestDataReader(s3a, req, s3_constants.ACTION_WRITE)
 
 			// Check error code
 			if errCode != tt.expectedError {
@@ -107,7 +108,7 @@ func TestGetRequestDataReader_AuthTypeDetection(t *testing.T) {
 		}
 
 		// Verify the request is processed correctly
-		dataReader, errCode := getRequestDataReader(s3a, req)
+		dataReader, errCode := getRequestDataReader(s3a, req, s3_constants.ACTION_WRITE)
 		if errCode != s3err.ErrNone {
 			t.Errorf("Expected no error, got %v", errCode)
 		}
@@ -131,7 +132,7 @@ func TestGetRequestDataReader_IAMEnabled(t *testing.T) {
 		req, _ := http.NewRequest("PUT", "/bucket/key", body)
 		req.Header.Set("x-amz-content-sha256", "STREAMING-UNSIGNED-PAYLOAD-TRAILER")
 
-		dataReader, errCode := getRequestDataReader(s3a, req)
+		dataReader, errCode := getRequestDataReader(s3a, req, s3_constants.ACTION_WRITE)
 
 		// Should succeed and be processed
 		if errCode != s3err.ErrNone {

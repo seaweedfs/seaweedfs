@@ -447,7 +447,7 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 		authType = "SigV2"
 	case authTypeStreamingSigned, authTypeSigned, authTypePresigned:
 		glog.V(3).Infof("v4 auth type")
-		identity, s3Err = iam.reqSignatureV4Verify(r)
+		identity, s3Err = iam.reqSignatureV4Verify(r, action)
 		authType = "SigV4"
 	case authTypePostPolicy:
 		glog.V(3).Infof("post policy auth type")
