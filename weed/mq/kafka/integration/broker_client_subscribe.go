@@ -298,13 +298,19 @@ func (bc *BrokerClient) ReadRecordsFromOffset(ctx context.Context, session *Brok
 	//
 	// The session will naturally advance as records are consumed, so we should NOT
 	// recreate it just because requestedOffset != session.StartOffset
+	
+	// CRITICAL: Re-check the offset under session lock to prevent race conditions
+	// Another thread might be reading from this session right now and advancing the offset
+	session.mu.Lock()
+	currentStartOffset := session.StartOffset
+	session.mu.Unlock()
 
-	if requestedOffset < session.StartOffset {
+	if requestedOffset < currentStartOffset {
 		// Need to seek backward - close old session and create a fresh subscriber
 		// Restarting an existing stream doesn't work reliably because the broker may still
 		// have old data buffered in the stream pipeline
 		glog.V(0).Infof("[FETCH] Seeking backward: requested=%d < session=%d, creating fresh subscriber",
-			requestedOffset, session.StartOffset)
+			requestedOffset, currentStartOffset)
 
 		// Extract session details before unlocking
 		topic := session.Topic
