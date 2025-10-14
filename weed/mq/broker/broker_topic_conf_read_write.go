@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq"
@@ -19,37 +18,29 @@ import (
 
 func (b *MessageQueueBroker) GetOrGenerateLocalPartition(t topic.Topic, partition topic.Partition) (localTopicPartition *topic.LocalPartition, getOrGenError error) {
 	// get or generate a local partition
-	filerReadStart := time.Now()
 	conf, readConfErr := b.fca.ReadTopicConfFromFiler(t)
 	if readConfErr != nil {
 		glog.Errorf("topic %v not found: %v", t, readConfErr)
 		return nil, fmt.Errorf("topic %v not found: %w", t, readConfErr)
 	}
-	glog.V(0).Infof("[PROFILE] ReadTopicConfFromFiler took %v for %s", time.Since(filerReadStart), t)
 
-	doGetOrGenStart := time.Now()
 	localTopicPartition, _, getOrGenError = b.doGetOrGenLocalPartition(t, partition, conf)
 	if getOrGenError != nil {
 		glog.Errorf("topic %v partition %v not setup: %v", t, partition, getOrGenError)
 		return nil, fmt.Errorf("topic %v partition %v not setup: %w", t, partition, getOrGenError)
 	}
-	glog.V(0).Infof("[PROFILE] doGetOrGenLocalPartition took %v for %s %s", time.Since(doGetOrGenStart), t, partition)
 	return localTopicPartition, nil
 }
 
 func (b *MessageQueueBroker) doGetOrGenLocalPartition(t topic.Topic, partition topic.Partition, conf *mq_pb.ConfigureTopicResponse) (localPartition *topic.LocalPartition, isGenerated bool, err error) {
-	lockStart := time.Now()
 	b.accessLock.Lock()
 	defer b.accessLock.Unlock()
-	glog.V(1).Infof("[PROFILE] accessLock acquisition took %v for %s %s", time.Since(lockStart), t, partition)
 
 	if localPartition = b.localTopicManager.GetLocalPartition(t, partition); localPartition == nil {
-		genStart := time.Now()
 		localPartition, isGenerated, err = b.genLocalPartitionFromFiler(t, partition, conf)
 		if err != nil {
 			return nil, false, err
 		}
-		glog.V(0).Infof("[PROFILE] genLocalPartitionFromFiler took %v for %s %s (generated=%v)", time.Since(genStart), t, partition, isGenerated)
 	}
 	return localPartition, isGenerated, nil
 }

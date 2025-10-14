@@ -126,13 +126,10 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 			bc.subscribersLock.RUnlock()
 
 			// Close and delete the old session
-			closeStart := time.Now()
 			bc.subscribersLock.Lock()
 			if old, ok := bc.subscribers[key]; ok {
 				if old.Stream != nil {
-					closeStreamStart := time.Now()
 					_ = old.Stream.CloseSend()
-					glog.V(0).Infof("[PROFILE] Stream CloseSend took %v for %s", time.Since(closeStreamStart), key)
 				}
 				if old.Cancel != nil {
 					old.Cancel()
@@ -140,7 +137,6 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 				delete(bc.subscribers, key)
 			}
 			bc.subscribersLock.Unlock()
-			glog.V(0).Infof("[PROFILE] Session close and cleanup took %v for %s", time.Since(closeStart), key)
 		} else {
 			// Exact match - reuse
 			bc.subscribersLock.RUnlock()
@@ -151,14 +147,10 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 	}
 
 	// Create new subscriber stream
-	sessionCreateStart := time.Now()
-	glog.V(0).Infof("[PROFILE] Session creation START for %s", key)
-
 	bc.subscribersLock.Lock()
 	defer bc.subscribersLock.Unlock()
 
 	if session, exists := bc.subscribers[key]; exists {
-		glog.V(0).Infof("[PROFILE] Session already exists (double-check after lock) for %s - took %v", key, time.Since(sessionCreateStart))
 		return session, nil
 	}
 
@@ -169,20 +161,16 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 	subscriberCtx := context.Background()
 	subscriberCancel := func() {} // No-op cancel
 
-	streamStart := time.Now()
 	stream, err := bc.client.SubscribeMessage(subscriberCtx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create subscribe stream: %v", err)
 	}
-	glog.V(0).Infof("[PROFILE] SubscribeMessage stream creation took %v for %s", time.Since(streamStart), key)
 
 	// Get the actual partition assignment from the broker instead of using Kafka partition mapping
-	partitionLookupStart := time.Now()
 	actualPartition, err := bc.getActualPartitionAssignment(topic, partition)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get actual partition assignment for subscribe: %v", err)
 	}
-	glog.V(0).Infof("[PROFILE] getActualPartitionAssignment took %v for %s", time.Since(partitionLookupStart), key)
 
 	// Convert Kafka offset to appropriate SeaweedMQ OffsetType and parameters
 	var offsetType schema_pb.OffsetType
@@ -208,7 +196,6 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 		topic, partition, startOffset, offsetType, startTimestamp)
 
 	// Send init message using the actual partition structure that the broker allocated
-	initSendStart := time.Now()
 	if err := stream.Send(&mq_pb.SubscribeMessageRequest{
 		Message: &mq_pb.SubscribeMessageRequest_Init{
 			Init: &mq_pb.SubscribeMessageRequest_InitMessage{
@@ -231,7 +218,6 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 	}); err != nil {
 		return nil, fmt.Errorf("failed to send subscribe init: %v", err)
 	}
-	glog.V(0).Infof("[PROFILE] Send init message took %v for %s", time.Since(initSendStart), key)
 
 	session := &BrokerSubscriberSession{
 		Topic:         topic,
@@ -245,7 +231,6 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 	}
 
 	bc.subscribers[key] = session
-	glog.V(0).Infof("[PROFILE] TOTAL session creation took %v for %s (startOffset=%d)", time.Since(sessionCreateStart), key, startOffset)
 	glog.V(2).Infof("Created subscriber session for %s with context cancellation support", key)
 	return session, nil
 }
