@@ -244,7 +244,9 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 	// Phase 2: Wait for all results with adequate timeout for CI environments
 	// CRITICAL: We MUST return a result for every requested partition or Sarama will error
 	results := make([]*partitionFetchResult, len(pending))
-	deadline := time.After(500 * time.Millisecond) // 500ms for all partitions (increased for CI disk I/O)
+	// Deadline must be longer than subscriber's record batching timeout (1s) to avoid premature timeout
+	// Add 500ms buffer to account for network and processing overhead
+	deadline := time.After(1500 * time.Millisecond)
 
 	// Collect results one by one with shared deadline
 	for i, pf := range pending {
