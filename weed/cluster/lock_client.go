@@ -72,6 +72,14 @@ func (lc *LockClient) StartLongLivedLock(key string, owner string, onLockOwnerCh
 		isLocked := false
 		lockOwner := ""
 		for {
+			// Check for cancellation BEFORE attempting to lock to avoid race condition
+			// where Stop() is called after sleep but before lock attempt
+			select {
+			case <-lock.cancelCh:
+				return
+			default:
+			}
+
 			if isLocked {
 				if err := lock.AttemptToLock(lock_manager.LiveLockTTL); err != nil {
 					glog.V(0).Infof("Lost lock %s: %v", key, err)
@@ -156,7 +164,14 @@ func (lock *LiveLock) Stop() error {
 		close(lock.cancelCh)
 	}
 
+	// Wait a brief moment for the goroutine to see the closed channel
+	// This reduces the race condition window where the goroutine might
+	// attempt one more lock operation after we've released the lock
+	time.Sleep(10 * time.Millisecond)
+
 	// Also release the lock if held
+	// Note: We intentionally don't clear renewToken here because
+	// StopShortLivedLock needs it to properly unlock
 	return lock.StopShortLivedLock()
 }
 
