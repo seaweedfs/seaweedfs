@@ -33,17 +33,20 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
 func (iam *IdentityAccessManagement) reqSignatureV4Verify(r *http.Request) (*Identity, s3err.ErrorCode) {
-	sha256sum := getContentSha256Cksum(r)
 	switch {
 	case isRequestSignatureV4(r):
-		return iam.doesSignatureMatch(sha256sum, r)
+		identity, _, errCode := iam.doesSignatureMatch(r)
+		return identity, errCode
 	case isRequestPresignedSignatureV4(r):
-		return iam.doesPresignedSignatureMatch(sha256sum, r)
+		identity, _, errCode := iam.doesPresignedSignatureMatch(r)
+		return identity, errCode
 	}
 	return nil, s3err.ErrAccessDenied
 }
@@ -154,78 +157,6 @@ func parseSignV4(v4Auth string) (sv signValues, aec s3err.ErrorCode) {
 	return signV4Values, s3err.ErrNone
 }
 
-// doesSignatureMatch verifies the request signature.
-func (iam *IdentityAccessManagement) doesSignatureMatch(hashedPayload string, r *http.Request) (*Identity, s3err.ErrorCode) {
-
-	// Copy request
-	req := *r
-
-	// Save authorization header.
-	v4Auth := req.Header.Get("Authorization")
-
-	// Parse signature version '4' header.
-	signV4Values, errCode := parseSignV4(v4Auth)
-	if errCode != s3err.ErrNone {
-		return nil, errCode
-	}
-
-	// Compute payload hash for non-S3 services
-	if signV4Values.Credential.scope.service != "s3" && hashedPayload == emptySHA256 && r.Body != nil {
-		var err error
-		hashedPayload, err = streamHashRequestBody(r, iamRequestBodyLimit)
-		if err != nil {
-			return nil, s3err.ErrInternalError
-		}
-	}
-
-	// Extract all the signed headers along with its values.
-	extractedSignedHeaders, errCode := extractSignedHeaders(signV4Values.SignedHeaders, r)
-	if errCode != s3err.ErrNone {
-		return nil, errCode
-	}
-
-	cred := signV4Values.Credential
-	identity, foundCred, found := iam.lookupByAccessKey(cred.accessKey)
-	if !found {
-		return nil, s3err.ErrInvalidAccessKeyID
-	}
-
-	// Extract date, if not present throw error.
-	var dateStr string
-	if dateStr = req.Header.Get("x-amz-date"); dateStr == "" {
-		if dateStr = r.Header.Get("Date"); dateStr == "" {
-			return nil, s3err.ErrMissingDateHeader
-		}
-	}
-	// Parse date header.
-	t, e := time.Parse(iso8601Format, dateStr)
-	if e != nil {
-		return nil, s3err.ErrMalformedDate
-	}
-
-	// Query string.
-	queryStr := req.URL.Query().Encode()
-
-	// Check if reverse proxy is forwarding with prefix
-	if forwardedPrefix := r.Header.Get("X-Forwarded-Prefix"); forwardedPrefix != "" {
-		// Try signature verification with the forwarded prefix first.
-		// This handles cases where reverse proxies strip URL prefixes and add the X-Forwarded-Prefix header.
-		cleanedPath := buildPathWithForwardedPrefix(forwardedPrefix, req.URL.Path)
-		errCode = iam.verifySignatureWithPath(extractedSignedHeaders, hashedPayload, queryStr, cleanedPath, req.Method, foundCred.SecretKey, t, signV4Values)
-		if errCode == s3err.ErrNone {
-			return identity, errCode
-		}
-	}
-
-	// Try normal signature verification (without prefix)
-	errCode = iam.verifySignatureWithPath(extractedSignedHeaders, hashedPayload, queryStr, req.URL.Path, req.Method, foundCred.SecretKey, t, signV4Values)
-	if errCode == s3err.ErrNone {
-		return identity, errCode
-	}
-
-	return nil, errCode
-}
-
 // buildPathWithForwardedPrefix combines forwarded prefix with URL path while preserving trailing slashes.
 // This ensures compatibility with S3 SDK signatures that include trailing slashes for directory operations.
 func buildPathWithForwardedPrefix(forwardedPrefix, urlPath string) string {
@@ -238,153 +169,257 @@ func buildPathWithForwardedPrefix(forwardedPrefix, urlPath string) string {
 	return cleanedPath
 }
 
-// verifySignatureWithPath verifies signature with a given path (used for both normal and prefixed paths).
-func (iam *IdentityAccessManagement) verifySignatureWithPath(extractedSignedHeaders http.Header, hashedPayload, queryStr, urlPath, method, secretKey string, t time.Time, signV4Values signValues) s3err.ErrorCode {
-	// Get canonical request.
-	canonicalRequest := getCanonicalRequest(extractedSignedHeaders, hashedPayload, queryStr, urlPath, method)
+// #####################################################################################
+// # The new centralized AWS Signature V4 verification logic begins here.
+// #####################################################################################
 
-	// Get string to sign from canonical request.
-	stringToSign := getStringToSign(canonicalRequest, t, signV4Values.Credential.getScope())
+// v4AuthInfo holds the parsed authentication data from a request,
+// whether it's from the Authorization header or presigned URL query parameters.
+type v4AuthInfo struct {
+	Signature     string
+	AccessKey     string
+	SignedHeaders []string
+	Date          time.Time
+	Region        string
+	Service       string
+	Scope         string
+	HashedPayload string
+	IsPresigned   bool
+}
 
-	// Get hmac signing key.
-	signingKey := getSigningKey(secretKey, signV4Values.Credential.scope.date.Format(yyyymmdd), signV4Values.Credential.scope.region, signV4Values.Credential.scope.service)
+// verifyV4Signature is the single entry point for verifying any AWS Signature V4 request.
+// It handles standard requests, presigned URLs, and the seed signature for streaming uploads.
+// It returns the validated identity, the calculated signature (useful for streaming), and an error code.
+func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request) (identity *Identity, credential *Credential, calculatedSignature string, authInfo *v4AuthInfo, errCode s3err.ErrorCode) {
+	// 1. Extract authentication information from header or query parameters
+	authInfo, errCode = extractV4AuthInfo(r)
+	if errCode != s3err.ErrNone {
+		return nil, nil, "", nil, errCode
+	}
 
-	// Calculate signature.
+	// 2. Lookup user and credentials
+	identity, cred, found := iam.lookupByAccessKey(authInfo.AccessKey)
+	if !found {
+		return nil, nil, "", nil, s3err.ErrInvalidAccessKeyID
+	}
+
+	// 3. Perform permission check
+	bucket, object := s3_constants.GetBucketAndObject(r)
+	action := s3_constants.ACTION_READ
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		action = s3_constants.ACTION_WRITE
+	}
+	if !identity.canDo(Action(action), bucket, object) {
+		return nil, nil, "", nil, s3err.ErrAccessDenied
+	}
+
+	// 4. Handle presigned request expiration
+	if authInfo.IsPresigned {
+		if errCode = checkPresignedRequestExpiry(r, authInfo.Date); errCode != s3err.ErrNone {
+			return nil, nil, "", nil, errCode
+		}
+	}
+
+	// 5. Extract headers that were part of the signature
+	extractedSignedHeaders, errCode := extractSignedHeaders(authInfo.SignedHeaders, r)
+	if errCode != s3err.ErrNone {
+		return nil, nil, "", nil, errCode
+	}
+
+	// 6. Get the query string for the canonical request
+	queryStr := getCanonicalQueryString(r, authInfo.IsPresigned)
+
+	// 7. Define a closure for the core verification logic to avoid repetition
+	verify := func(urlPath string) (string, s3err.ErrorCode) {
+		return calculateAndVerifySignature(
+			cred.SecretKey,
+			r.Method,
+			urlPath,
+			queryStr,
+			extractedSignedHeaders,
+			authInfo,
+		)
+	}
+
+	// 8. Verify the signature, trying with X-Forwarded-Prefix first
+	if forwardedPrefix := r.Header.Get("X-Forwarded-Prefix"); forwardedPrefix != "" {
+		cleanedPath := buildPathWithForwardedPrefix(forwardedPrefix, r.URL.Path)
+		calculatedSignature, errCode = verify(cleanedPath)
+		if errCode == s3err.ErrNone {
+			return identity, nil, calculatedSignature, authInfo, s3err.ErrNone
+		}
+	}
+
+	// 9. Verify with the original path
+	calculatedSignature, errCode = verify(r.URL.Path)
+	if errCode != s3err.ErrNone {
+		return nil, nil, "", nil, errCode
+	}
+
+	return identity, cred, calculatedSignature, authInfo, s3err.ErrNone
+}
+
+// calculateAndVerifySignature contains the core logic for creating the canonical request,
+// string-to-sign, and comparing the final signature.
+func calculateAndVerifySignature(secretKey, method, urlPath, queryStr string, extractedSignedHeaders http.Header, authInfo *v4AuthInfo) (string, s3err.ErrorCode) {
+	canonicalRequest := getCanonicalRequest(extractedSignedHeaders, authInfo.HashedPayload, queryStr, urlPath, method)
+	stringToSign := getStringToSign(canonicalRequest, authInfo.Date, authInfo.Scope)
+	signingKey := getSigningKey(secretKey, authInfo.Date.Format(yyyymmdd), authInfo.Region, authInfo.Service)
 	newSignature := getSignature(signingKey, stringToSign)
 
-	// Verify if signature match.
-	if !compareSignatureV4(newSignature, signV4Values.Signature) {
-		return s3err.ErrSignatureDoesNotMatch
+	if !compareSignatureV4(newSignature, authInfo.Signature) {
+		glog.V(0).Infof("Signature mismatch. Details:\n- Canonical Request: %s\n- String to Sign: %s\n- Calculated Signature: %s\n- Provided Signature: %s",
+			canonicalRequest, stringToSign, newSignature, authInfo.Signature)
+		return "", s3err.ErrSignatureDoesNotMatch
 	}
 
-	return s3err.ErrNone
+	return newSignature, s3err.ErrNone
 }
 
-// verifyPresignedSignatureWithPath verifies presigned signature with a given path (used for both normal and prefixed paths).
-func (iam *IdentityAccessManagement) verifyPresignedSignatureWithPath(extractedSignedHeaders http.Header, hashedPayload, queryStr, urlPath, method, secretKey string, t time.Time, credHeader credentialHeader, signature string) s3err.ErrorCode {
-	// Get canonical request.
-	canonicalRequest := getCanonicalRequest(extractedSignedHeaders, hashedPayload, queryStr, urlPath, method)
+// extractV4AuthInfo parses the http.Request to pull all AWS V4 auth details
+// from either the Authorization header or query parameters.
+func extractV4AuthInfo(r *http.Request) (*v4AuthInfo, s3err.ErrorCode) {
+	if isRequestPresignedSignatureV4(r) {
+		return extractV4AuthInfoFromQuery(r)
+	}
+	return extractV4AuthInfoFromHeader(r)
+}
 
-	// Get string to sign from canonical request.
-	stringToSign := getStringToSign(canonicalRequest, t, credHeader.getScope())
-
-	// Get hmac signing key.
-	signingKey := getSigningKey(secretKey, credHeader.scope.date.Format(yyyymmdd), credHeader.scope.region, credHeader.scope.service)
-
-	// Calculate expected signature.
-	expectedSignature := getSignature(signingKey, stringToSign)
-
-	// Verify if signature match.
-	if !compareSignatureV4(expectedSignature, signature) {
-		return s3err.ErrSignatureDoesNotMatch
+// extractV4AuthInfoFromHeader parses the "Authorization" header for V4 signature details.
+func extractV4AuthInfoFromHeader(r *http.Request) (*v4AuthInfo, s3err.ErrorCode) {
+	authHeader := r.Header.Get("Authorization")
+	signV4Values, errCode := parseSignV4(authHeader)
+	if errCode != s3err.ErrNone {
+		return nil, errCode
 	}
 
-	return s3err.ErrNone
+	dateStr := r.Header.Get("x-amz-date")
+	if dateStr == "" {
+		dateStr = r.Header.Get("Date")
+		if dateStr == "" {
+			return nil, s3err.ErrMissingDateHeader
+		}
+	}
+	t, err := time.Parse(iso8601Format, dateStr)
+	if err != nil {
+		return nil, s3err.ErrMalformedDate
+	}
+
+	hashedPayload := getContentSha256Cksum(r)
+	if signV4Values.Credential.scope.service != "s3" && hashedPayload == emptySHA256 && r.Body != nil {
+		var hashErr error
+		hashedPayload, hashErr = streamHashRequestBody(r, iamRequestBodyLimit)
+		if hashErr != nil {
+			return nil, s3err.ErrInternalError
+		}
+	}
+
+	return &v4AuthInfo{
+		Signature:     signV4Values.Signature,
+		AccessKey:     signV4Values.Credential.accessKey,
+		SignedHeaders: signV4Values.SignedHeaders,
+		Date:          t,
+		Region:        signV4Values.Credential.scope.region,
+		Service:       signV4Values.Credential.scope.service,
+		Scope:         signV4Values.Credential.getScope(),
+		HashedPayload: hashedPayload,
+		IsPresigned:   false,
+	}, s3err.ErrNone
 }
 
-// Simple implementation for presigned signature verification
-func (iam *IdentityAccessManagement) doesPresignedSignatureMatch(hashedPayload string, r *http.Request) (*Identity, s3err.ErrorCode) {
-	// Parse presigned signature values from query parameters
+// extractV4AuthInfoFromQuery parses URL query parameters for presigned V4 signature details.
+func extractV4AuthInfoFromQuery(r *http.Request) (*v4AuthInfo, s3err.ErrorCode) {
 	query := r.URL.Query()
 
-	// Check required parameters
-	algorithm := query.Get("X-Amz-Algorithm")
-	if algorithm != signV4Algorithm {
+	if query.Get("X-Amz-Algorithm") != signV4Algorithm {
 		return nil, s3err.ErrSignatureVersionNotSupported
-	}
-
-	credential := query.Get("X-Amz-Credential")
-	if credential == "" {
-		return nil, s3err.ErrMissingFields
-	}
-
-	signature := query.Get("X-Amz-Signature")
-	if signature == "" {
-		return nil, s3err.ErrMissingFields
-	}
-
-	signedHeadersStr := query.Get("X-Amz-SignedHeaders")
-	if signedHeadersStr == "" {
-		return nil, s3err.ErrMissingFields
 	}
 
 	dateStr := query.Get("X-Amz-Date")
 	if dateStr == "" {
 		return nil, s3err.ErrMissingDateHeader
 	}
-
-	// Parse credential
-	credHeader, err := parseCredentialHeader("Credential=" + credential)
-	if err != s3err.ErrNone {
-		return nil, err
-	}
-
-	// Look up identity by access key
-	identity, foundCred, found := iam.lookupByAccessKey(credHeader.accessKey)
-	if !found {
-		return nil, s3err.ErrInvalidAccessKeyID
-	}
-
-	// Parse date
-	t, e := time.Parse(iso8601Format, dateStr)
-	if e != nil {
+	t, err := time.Parse(iso8601Format, dateStr)
+	if err != nil {
 		return nil, s3err.ErrMalformedDate
 	}
 
-	// Check expiration
-	expiresStr := query.Get("X-Amz-Expires")
-	if expiresStr != "" {
-		expires, parseErr := strconv.ParseInt(expiresStr, 10, 64)
-		if parseErr != nil {
-			return nil, s3err.ErrMalformedDate
-		}
-		// Check if current time is after the expiration time
-		expirationTime := t.Add(time.Duration(expires) * time.Second)
-		if time.Now().UTC().After(expirationTime) {
-			return nil, s3err.ErrExpiredPresignRequest
-		}
+	credHeader, errCode := parseCredentialHeader("Credential=" + query.Get("X-Amz-Credential"))
+	if errCode != s3err.ErrNone {
+		return nil, errCode
 	}
 
-	// Parse signed headers
-	signedHeaders := strings.Split(signedHeadersStr, ";")
-
-	// Extract signed headers from request
-	extractedSignedHeaders := make(http.Header)
-	for _, header := range signedHeaders {
-		if header == "host" {
-			extractedSignedHeaders[header] = []string{extractHostHeader(r)}
-			continue
-		}
-		if values := r.Header[http.CanonicalHeaderKey(header)]; len(values) > 0 {
-			extractedSignedHeaders[http.CanonicalHeaderKey(header)] = values
-		}
+	if query.Get("X-Amz-Signature") == "" {
+		return nil, s3err.ErrMissingFields
 	}
 
-	// Remove signature from query for canonical request calculation
-	queryForCanonical := r.URL.Query()
-	queryForCanonical.Del("X-Amz-Signature")
-	queryStr := strings.Replace(queryForCanonical.Encode(), "+", "%20", -1)
-
-	var errCode s3err.ErrorCode
-	// Check if reverse proxy is forwarding with prefix for presigned URLs
-	if forwardedPrefix := r.Header.Get("X-Forwarded-Prefix"); forwardedPrefix != "" {
-		// Try signature verification with the forwarded prefix first.
-		// This handles cases where reverse proxies strip URL prefixes and add the X-Forwarded-Prefix header.
-		cleanedPath := buildPathWithForwardedPrefix(forwardedPrefix, r.URL.Path)
-		errCode = iam.verifyPresignedSignatureWithPath(extractedSignedHeaders, hashedPayload, queryStr, cleanedPath, r.Method, foundCred.SecretKey, t, credHeader, signature)
-		if errCode == s3err.ErrNone {
-			return identity, errCode
-		}
+	if query.Get("X-Amz-SignedHeaders") == "" {
+		return nil, s3err.ErrMissingFields
 	}
 
-	// Try normal signature verification (without prefix)
-	errCode = iam.verifyPresignedSignatureWithPath(extractedSignedHeaders, hashedPayload, queryStr, r.URL.Path, r.Method, foundCred.SecretKey, t, credHeader, signature)
-	if errCode == s3err.ErrNone {
-		return identity, errCode
-	}
-
-	return nil, errCode
+	return &v4AuthInfo{
+		Signature:     query.Get("X-Amz-Signature"),
+		AccessKey:     credHeader.accessKey,
+		SignedHeaders: strings.Split(query.Get("X-Amz-SignedHeaders"), ";"),
+		Date:          t,
+		Region:        credHeader.scope.region,
+		Service:       credHeader.scope.service,
+		Scope:         credHeader.getScope(),
+		HashedPayload: getContentSha256Cksum(r),
+		IsPresigned:   true,
+	}, s3err.ErrNone
 }
+
+// getCanonicalQueryString returns the canonical query string for signature calculation.
+// For presigned requests, the signature is removed from the query parameters.
+func getCanonicalQueryString(r *http.Request, isPresigned bool) string {
+	var queryToEncode string
+	if !isPresigned {
+		queryToEncode = r.URL.Query().Encode()
+	} else {
+		queryForCanonical := r.URL.Query()
+		queryForCanonical.Del("X-Amz-Signature")
+		queryToEncode = queryForCanonical.Encode()
+	}
+	return strings.Replace(queryToEncode, "+", "%20", -1)
+}
+
+// checkPresignedRequestExpiry checks if a presigned URL has expired.
+func checkPresignedRequestExpiry(r *http.Request, t time.Time) s3err.ErrorCode {
+	expiresStr := r.URL.Query().Get("X-Amz-Expires")
+	if expiresStr == "" {
+		return s3err.ErrNone // No expiration specified
+	}
+	expires, err := strconv.ParseInt(expiresStr, 10, 64)
+	if err != nil {
+		return s3err.ErrMalformedDate
+	}
+	expirationTime := t.Add(time.Duration(expires) * time.Second)
+	if time.Now().UTC().After(expirationTime) {
+		return s3err.ErrExpiredPresignRequest
+	}
+	return s3err.ErrNone
+}
+
+// #####################################################################################
+// # Simplified wrappers using the new centralized verification logic.
+// #####################################################################################
+
+// doesSignatureMatch verifies the request signature.
+func (iam *IdentityAccessManagement) doesSignatureMatch(r *http.Request) (*Identity, string, s3err.ErrorCode) {
+	identity, _, calculatedSignature, _, errCode := iam.verifyV4Signature(r)
+	return identity, calculatedSignature, errCode
+}
+
+// Simple implementation for presigned signature verification
+func (iam *IdentityAccessManagement) doesPresignedSignatureMatch(r *http.Request) (*Identity, string, s3err.ErrorCode) {
+	identity, _, calculatedSignature, _, errCode := iam.verifyV4Signature(r)
+	return identity, calculatedSignature, errCode
+}
+
+// #####################################################################################
+// # Remaining helper functions.
+// #####################################################################################
 
 // credentialHeader data type represents structured form of Credential
 // string from authorization header.
