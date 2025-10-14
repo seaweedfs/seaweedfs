@@ -127,12 +127,27 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 
 			// Close and delete the old session
 			bc.subscribersLock.Lock()
-			if old, ok := bc.subscribers[key]; ok {
-				if old.Stream != nil {
-					_ = old.Stream.CloseSend()
+			// CRITICAL: Double-check if another thread already recreated the session at the desired offset
+			// This prevents multiple concurrent threads from all trying to recreate the same session
+			if existingSession, exists := bc.subscribers[key]; exists {
+				existingSession.mu.Lock()
+				existingOffset := existingSession.StartOffset
+				existingSession.mu.Unlock()
+
+				// Check if the session was already recreated at (or before) the requested offset
+				if existingOffset <= startOffset {
+					bc.subscribersLock.Unlock()
+					glog.V(1).Infof("[FETCH] Session already recreated by another thread at offset %d (requested %d)", existingOffset, startOffset)
+					// Re-acquire the existing session and continue
+					return existingSession, nil
 				}
-				if old.Cancel != nil {
-					old.Cancel()
+
+				// Session still needs recreation - close it
+				if existingSession.Stream != nil {
+					_ = existingSession.Stream.CloseSend()
+				}
+				if existingSession.Cancel != nil {
+					existingSession.Cancel()
 				}
 				delete(bc.subscribers, key)
 			}

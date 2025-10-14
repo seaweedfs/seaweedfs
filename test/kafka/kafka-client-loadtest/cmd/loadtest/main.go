@@ -211,10 +211,6 @@ func runComprehensiveTest(ctx context.Context, cancel context.CancelFunc, cfg *c
 	// Create separate contexts for producers and consumers
 	producerCtx, producerCancel := context.WithCancel(ctx)
 	consumerCtx, consumerCancel := context.WithCancel(ctx)
-	
-	// Ensure contexts are always cancelled to prevent leaks
-	defer producerCancel()
-	defer consumerCancel()
 
 	// Start producers
 	for i := 0; i < cfg.Producers.Count; i++ {
@@ -263,6 +259,8 @@ func runComprehensiveTest(ctx context.Context, cancel context.CancelFunc, cfg *c
 	select {
 	case err := <-errChan:
 		log.Printf("Comprehensive test failed due to producer error: %v", err)
+		producerCancel()
+		consumerCancel()
 		return err
 	default:
 		// No immediate error, continue
@@ -296,6 +294,13 @@ func runComprehensiveTest(ctx context.Context, cancel context.CancelFunc, cfg *c
 				producerCancel()
 				consumerCancel()
 			}
+		}()
+	} else {
+		// No duration set, wait for cancellation and ensure cleanup
+		go func() {
+			<-ctx.Done()
+			producerCancel()
+			consumerCancel()
 		}()
 	}
 
