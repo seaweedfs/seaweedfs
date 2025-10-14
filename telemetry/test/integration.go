@@ -24,58 +24,58 @@ const (
 )
 
 func main() {
-	fmt.Println("🧪 Starting SeaweedFS Telemetry Integration Test")
+	fmt.Println("Starting SeaweedFS Telemetry Integration Test")
 
 	// Start telemetry server
-	fmt.Println("📡 Starting telemetry server...")
+	fmt.Println("Starting telemetry server...")
 	serverCmd, err := startTelemetryServer()
 	if err != nil {
-		log.Fatalf("❌ Failed to start telemetry server: %v", err)
+		log.Fatalf("Failed to start telemetry server: %v", err)
 	}
 	defer stopServer(serverCmd)
 
 	// Wait for server to start
 	if !waitForServer(serverURL+"/health", 15*time.Second) {
-		log.Fatal("❌ Telemetry server failed to start")
+		log.Fatal("Telemetry server failed to start")
 	}
-	fmt.Println("✅ Telemetry server started successfully")
+	fmt.Println("Telemetry server started successfully")
 
 	// Test protobuf marshaling first
-	fmt.Println("🔧 Testing protobuf marshaling...")
+	fmt.Println("Testing protobuf marshaling...")
 	if err := testProtobufMarshaling(); err != nil {
-		log.Fatalf("❌ Protobuf marshaling test failed: %v", err)
+		log.Fatalf("Protobuf marshaling test failed: %v", err)
 	}
-	fmt.Println("✅ Protobuf marshaling test passed")
+	fmt.Println("Protobuf marshaling test passed")
 
 	// Test protobuf client
-	fmt.Println("🔄 Testing protobuf telemetry client...")
+	fmt.Println("Testing protobuf telemetry client...")
 	if err := testTelemetryClient(); err != nil {
-		log.Fatalf("❌ Telemetry client test failed: %v", err)
+		log.Fatalf("Telemetry client test failed: %v", err)
 	}
-	fmt.Println("✅ Telemetry client test passed")
+	fmt.Println("Telemetry client test passed")
 
 	// Test server metrics endpoint
-	fmt.Println("📊 Testing Prometheus metrics endpoint...")
+	fmt.Println("Testing Prometheus metrics endpoint...")
 	if err := testMetricsEndpoint(); err != nil {
-		log.Fatalf("❌ Metrics endpoint test failed: %v", err)
+		log.Fatalf("Metrics endpoint test failed: %v", err)
 	}
-	fmt.Println("✅ Metrics endpoint test passed")
+	fmt.Println("Metrics endpoint test passed")
 
 	// Test stats API
-	fmt.Println("📈 Testing stats API...")
+	fmt.Println("Testing stats API...")
 	if err := testStatsAPI(); err != nil {
-		log.Fatalf("❌ Stats API test failed: %v", err)
+		log.Fatalf("Stats API test failed: %v", err)
 	}
-	fmt.Println("✅ Stats API test passed")
+	fmt.Println("Stats API test passed")
 
 	// Test instances API
-	fmt.Println("📋 Testing instances API...")
+	fmt.Println("Testing instances API...")
 	if err := testInstancesAPI(); err != nil {
-		log.Fatalf("❌ Instances API test failed: %v", err)
+		log.Fatalf("Instances API test failed: %v", err)
 	}
-	fmt.Println("✅ Instances API test passed")
+	fmt.Println("Instances API test passed")
 
-	fmt.Println("🎉 All telemetry integration tests passed!")
+	fmt.Println("All telemetry integration tests passed!")
 }
 
 func startTelemetryServer() (*exec.Cmd, error) {
@@ -126,7 +126,7 @@ func waitForServer(url string, timeout time.Duration) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	fmt.Printf("⏳ Waiting for server at %s...\n", url)
+	fmt.Printf("Waiting for server at %s...\n", url)
 
 	for {
 		select {

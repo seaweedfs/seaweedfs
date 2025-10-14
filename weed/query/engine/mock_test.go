@@ -27,12 +27,15 @@ func TestMockBrokerClient_BasicFunctionality(t *testing.T) {
 	}
 
 	// Test GetTopicSchema
-	schema, err := mockBroker.GetTopicSchema(context.Background(), "default", "user_events")
+	schema, keyColumns, _, err := mockBroker.GetTopicSchema(context.Background(), "default", "user_events")
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
 	if len(schema.Fields) != 3 {
 		t.Errorf("Expected 3 fields in user_events schema, got %d", len(schema.Fields))
+	}
+	if len(keyColumns) == 0 {
+		t.Error("Expected at least one key column")
 	}
 }
 
@@ -53,7 +56,7 @@ func TestMockBrokerClient_FailureScenarios(t *testing.T) {
 		t.Error("Expected error when mock is configured to fail")
 	}
 
-	_, err = mockBroker.GetTopicSchema(context.Background(), "default", "user_events")
+	_, _, _, err = mockBroker.GetTopicSchema(context.Background(), "default", "user_events")
 	if err == nil {
 		t.Error("Expected error when mock is configured to fail")
 	}
@@ -81,7 +84,7 @@ func TestMockBrokerClient_TopicManagement(t *testing.T) {
 	mockBroker := NewMockBrokerClient()
 
 	// Test ConfigureTopic (add a new topic)
-	err := mockBroker.ConfigureTopic(context.Background(), "test", "new-topic", 1, nil)
+	err := mockBroker.ConfigureTopic(context.Background(), "test", "new-topic", 1, nil, []string{})
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}

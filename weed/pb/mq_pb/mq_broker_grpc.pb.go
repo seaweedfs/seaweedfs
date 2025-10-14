@@ -23,6 +23,7 @@ const (
 	SeaweedMessaging_PublisherToPubBalancer_FullMethodName     = "/messaging_pb.SeaweedMessaging/PublisherToPubBalancer"
 	SeaweedMessaging_BalanceTopics_FullMethodName              = "/messaging_pb.SeaweedMessaging/BalanceTopics"
 	SeaweedMessaging_ListTopics_FullMethodName                 = "/messaging_pb.SeaweedMessaging/ListTopics"
+	SeaweedMessaging_TopicExists_FullMethodName                = "/messaging_pb.SeaweedMessaging/TopicExists"
 	SeaweedMessaging_ConfigureTopic_FullMethodName             = "/messaging_pb.SeaweedMessaging/ConfigureTopic"
 	SeaweedMessaging_LookupTopicBrokers_FullMethodName         = "/messaging_pb.SeaweedMessaging/LookupTopicBrokers"
 	SeaweedMessaging_GetTopicConfiguration_FullMethodName      = "/messaging_pb.SeaweedMessaging/GetTopicConfiguration"
@@ -37,6 +38,7 @@ const (
 	SeaweedMessaging_PublishFollowMe_FullMethodName            = "/messaging_pb.SeaweedMessaging/PublishFollowMe"
 	SeaweedMessaging_SubscribeFollowMe_FullMethodName          = "/messaging_pb.SeaweedMessaging/SubscribeFollowMe"
 	SeaweedMessaging_GetUnflushedMessages_FullMethodName       = "/messaging_pb.SeaweedMessaging/GetUnflushedMessages"
+	SeaweedMessaging_GetPartitionRangeInfo_FullMethodName      = "/messaging_pb.SeaweedMessaging/GetPartitionRangeInfo"
 )
 
 // SeaweedMessagingClient is the client API for SeaweedMessaging service.
@@ -50,6 +52,7 @@ type SeaweedMessagingClient interface {
 	BalanceTopics(ctx context.Context, in *BalanceTopicsRequest, opts ...grpc.CallOption) (*BalanceTopicsResponse, error)
 	// control plane for topic partitions
 	ListTopics(ctx context.Context, in *ListTopicsRequest, opts ...grpc.CallOption) (*ListTopicsResponse, error)
+	TopicExists(ctx context.Context, in *TopicExistsRequest, opts ...grpc.CallOption) (*TopicExistsResponse, error)
 	ConfigureTopic(ctx context.Context, in *ConfigureTopicRequest, opts ...grpc.CallOption) (*ConfigureTopicResponse, error)
 	LookupTopicBrokers(ctx context.Context, in *LookupTopicBrokersRequest, opts ...grpc.CallOption) (*LookupTopicBrokersResponse, error)
 	GetTopicConfiguration(ctx context.Context, in *GetTopicConfigurationRequest, opts ...grpc.CallOption) (*GetTopicConfigurationResponse, error)
@@ -69,6 +72,8 @@ type SeaweedMessagingClient interface {
 	SubscribeFollowMe(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[SubscribeFollowMeRequest, SubscribeFollowMeResponse], error)
 	// SQL query support - get unflushed messages from broker's in-memory buffer (streaming)
 	GetUnflushedMessages(ctx context.Context, in *GetUnflushedMessagesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GetUnflushedMessagesResponse], error)
+	// Get comprehensive partition range information (offsets, timestamps, and other fields)
+	GetPartitionRangeInfo(ctx context.Context, in *GetPartitionRangeInfoRequest, opts ...grpc.CallOption) (*GetPartitionRangeInfoResponse, error)
 }
 
 type seaweedMessagingClient struct {
@@ -116,6 +121,16 @@ func (c *seaweedMessagingClient) ListTopics(ctx context.Context, in *ListTopicsR
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListTopicsResponse)
 	err := c.cc.Invoke(ctx, SeaweedMessaging_ListTopics_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedMessagingClient) TopicExists(ctx context.Context, in *TopicExistsRequest, opts ...grpc.CallOption) (*TopicExistsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TopicExistsResponse)
+	err := c.cc.Invoke(ctx, SeaweedMessaging_TopicExists_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -286,6 +301,16 @@ func (c *seaweedMessagingClient) GetUnflushedMessages(ctx context.Context, in *G
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type SeaweedMessaging_GetUnflushedMessagesClient = grpc.ServerStreamingClient[GetUnflushedMessagesResponse]
 
+func (c *seaweedMessagingClient) GetPartitionRangeInfo(ctx context.Context, in *GetPartitionRangeInfoRequest, opts ...grpc.CallOption) (*GetPartitionRangeInfoResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetPartitionRangeInfoResponse)
+	err := c.cc.Invoke(ctx, SeaweedMessaging_GetPartitionRangeInfo_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SeaweedMessagingServer is the server API for SeaweedMessaging service.
 // All implementations must embed UnimplementedSeaweedMessagingServer
 // for forward compatibility.
@@ -297,6 +322,7 @@ type SeaweedMessagingServer interface {
 	BalanceTopics(context.Context, *BalanceTopicsRequest) (*BalanceTopicsResponse, error)
 	// control plane for topic partitions
 	ListTopics(context.Context, *ListTopicsRequest) (*ListTopicsResponse, error)
+	TopicExists(context.Context, *TopicExistsRequest) (*TopicExistsResponse, error)
 	ConfigureTopic(context.Context, *ConfigureTopicRequest) (*ConfigureTopicResponse, error)
 	LookupTopicBrokers(context.Context, *LookupTopicBrokersRequest) (*LookupTopicBrokersResponse, error)
 	GetTopicConfiguration(context.Context, *GetTopicConfigurationRequest) (*GetTopicConfigurationResponse, error)
@@ -316,6 +342,8 @@ type SeaweedMessagingServer interface {
 	SubscribeFollowMe(grpc.ClientStreamingServer[SubscribeFollowMeRequest, SubscribeFollowMeResponse]) error
 	// SQL query support - get unflushed messages from broker's in-memory buffer (streaming)
 	GetUnflushedMessages(*GetUnflushedMessagesRequest, grpc.ServerStreamingServer[GetUnflushedMessagesResponse]) error
+	// Get comprehensive partition range information (offsets, timestamps, and other fields)
+	GetPartitionRangeInfo(context.Context, *GetPartitionRangeInfoRequest) (*GetPartitionRangeInfoResponse, error)
 	mustEmbedUnimplementedSeaweedMessagingServer()
 }
 
@@ -337,6 +365,9 @@ func (UnimplementedSeaweedMessagingServer) BalanceTopics(context.Context, *Balan
 }
 func (UnimplementedSeaweedMessagingServer) ListTopics(context.Context, *ListTopicsRequest) (*ListTopicsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListTopics not implemented")
+}
+func (UnimplementedSeaweedMessagingServer) TopicExists(context.Context, *TopicExistsRequest) (*TopicExistsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method TopicExists not implemented")
 }
 func (UnimplementedSeaweedMessagingServer) ConfigureTopic(context.Context, *ConfigureTopicRequest) (*ConfigureTopicResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ConfigureTopic not implemented")
@@ -379,6 +410,9 @@ func (UnimplementedSeaweedMessagingServer) SubscribeFollowMe(grpc.ClientStreamin
 }
 func (UnimplementedSeaweedMessagingServer) GetUnflushedMessages(*GetUnflushedMessagesRequest, grpc.ServerStreamingServer[GetUnflushedMessagesResponse]) error {
 	return status.Errorf(codes.Unimplemented, "method GetUnflushedMessages not implemented")
+}
+func (UnimplementedSeaweedMessagingServer) GetPartitionRangeInfo(context.Context, *GetPartitionRangeInfoRequest) (*GetPartitionRangeInfoResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetPartitionRangeInfo not implemented")
 }
 func (UnimplementedSeaweedMessagingServer) mustEmbedUnimplementedSeaweedMessagingServer() {}
 func (UnimplementedSeaweedMessagingServer) testEmbeddedByValue()                          {}
@@ -458,6 +492,24 @@ func _SeaweedMessaging_ListTopics_Handler(srv interface{}, ctx context.Context, 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(SeaweedMessagingServer).ListTopics(ctx, req.(*ListTopicsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedMessaging_TopicExists_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TopicExistsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedMessagingServer).TopicExists(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedMessaging_TopicExists_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedMessagingServer).TopicExists(ctx, req.(*TopicExistsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -652,6 +704,24 @@ func _SeaweedMessaging_GetUnflushedMessages_Handler(srv interface{}, stream grpc
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type SeaweedMessaging_GetUnflushedMessagesServer = grpc.ServerStreamingServer[GetUnflushedMessagesResponse]
 
+func _SeaweedMessaging_GetPartitionRangeInfo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetPartitionRangeInfoRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedMessagingServer).GetPartitionRangeInfo(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedMessaging_GetPartitionRangeInfo_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedMessagingServer).GetPartitionRangeInfo(ctx, req.(*GetPartitionRangeInfoRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SeaweedMessaging_ServiceDesc is the grpc.ServiceDesc for SeaweedMessaging service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -670,6 +740,10 @@ var SeaweedMessaging_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListTopics",
 			Handler:    _SeaweedMessaging_ListTopics_Handler,
+		},
+		{
+			MethodName: "TopicExists",
+			Handler:    _SeaweedMessaging_TopicExists_Handler,
 		},
 		{
 			MethodName: "ConfigureTopic",
@@ -702,6 +776,10 @@ var SeaweedMessaging_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CloseSubscribers",
 			Handler:    _SeaweedMessaging_CloseSubscribers_Handler,
+		},
+		{
+			MethodName: "GetPartitionRangeInfo",
+			Handler:    _SeaweedMessaging_GetPartitionRangeInfo_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

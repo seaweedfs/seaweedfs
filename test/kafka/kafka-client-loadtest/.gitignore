@@ -1,0 +1,63 @@
+# Binaries
+kafka-loadtest
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Go workspace file
+go.work
+
+# Test results and logs
+test-results/
+*.log
+logs/
+
+# Docker volumes and data
+data/
+volumes/
+
+# Monitoring data
+monitoring/prometheus/data/
+monitoring/grafana/data/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Coverage reports
+coverage.html
+coverage.out
+
+# Build artifacts
+bin/
+build/
+dist/

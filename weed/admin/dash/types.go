@@ -404,7 +404,8 @@ type TopicDetailsData struct {
 	Namespace            string                    `json:"namespace"`
 	Name                 string                    `json:"name"`
 	Partitions           []PartitionInfo           `json:"partitions"`
-	Schema               []SchemaFieldInfo         `json:"schema"`
+	KeySchema            []SchemaFieldInfo         `json:"key_schema"`   // Schema fields for keys
+	ValueSchema          []SchemaFieldInfo         `json:"value_schema"` // Schema fields for values
 	Publishers           []PublisherInfo           `json:"publishers"`
 	Subscribers          []TopicSubscriberInfo     `json:"subscribers"`
 	ConsumerGroupOffsets []ConsumerGroupOffsetInfo `json:"consumer_group_offsets"`

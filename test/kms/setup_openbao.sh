@@ -15,7 +15,7 @@ echo "Transit Path: $TRANSIT_PATH"
 echo "⏳ Waiting for OpenBao to be ready..."
 for i in {1..30}; do
     if curl -s "$OPENBAO_ADDR/v1/sys/health" >/dev/null 2>&1; then
-        echo "✅ OpenBao is ready!"
+        echo "[OK] OpenBao is ready!"
         break
     fi
     echo "   Attempt $i/30: OpenBao not ready yet, waiting..."
@@ -24,7 +24,7 @@ done
 
 # Check if we can connect
 if ! curl -s -H "X-Vault-Token: $OPENBAO_TOKEN" "$OPENBAO_ADDR/v1/sys/health" >/dev/null; then
-    echo "❌ Cannot connect to OpenBao at $OPENBAO_ADDR"
+    echo "[FAIL] Cannot connect to OpenBao at $OPENBAO_ADDR"
     exit 1
 fi
 
@@ -68,9 +68,9 @@ for key_spec in "${TEST_KEYS[@]}"; do
     
     # Verify the key was created
     if curl -s -H "X-Vault-Token: $OPENBAO_TOKEN" "$OPENBAO_ADDR/v1/$TRANSIT_PATH/keys/$key_name" >/dev/null; then
-        echo "   ✅ Key $key_name verified"
+        echo "   [OK] Key $key_name verified"
     else
-        echo "   ❌ Failed to create/verify key $key_name"
+        echo "   [FAIL] Failed to create/verify key $key_name"
         exit 1
     fi
 done
@@ -93,12 +93,12 @@ ENCRYPT_RESPONSE=$(curl -s -X POST \
 CIPHERTEXT=$(echo "$ENCRYPT_RESPONSE" | jq -r '.data.ciphertext')
 
 if [[ "$CIPHERTEXT" == "null" || -z "$CIPHERTEXT" ]]; then
-    echo "   ❌ Encryption test failed"
+    echo "   [FAIL] Encryption test failed"
     echo "   Response: $ENCRYPT_RESPONSE"
     exit 1
 fi
 
-echo "   ✅ Encryption successful: ${CIPHERTEXT:0:50}..."
+echo "   [OK] Encryption successful: ${CIPHERTEXT:0:50}..."
 
 # Decrypt
 DECRYPT_RESPONSE=$(curl -s -X POST \
@@ -111,13 +111,13 @@ DECRYPTED_B64=$(echo "$DECRYPT_RESPONSE" | jq -r '.data.plaintext')
 DECRYPTED_TEXT=$(echo "$DECRYPTED_B64" | base64 -d)
 
 if [[ "$DECRYPTED_TEXT" != "$TEST_PLAINTEXT" ]]; then
-    echo "   ❌ Decryption test failed"
+    echo "   [FAIL] Decryption test failed"
     echo "   Expected: $TEST_PLAINTEXT"
     echo "   Got: $DECRYPTED_TEXT"
     exit 1
 fi
 
-echo "   ✅ Decryption successful: $DECRYPTED_TEXT"
+echo "   [OK] Decryption successful: $DECRYPTED_TEXT"
 
 echo "📊 OpenBao KMS setup summary:"
 echo "   Address: $OPENBAO_ADDR"
@@ -142,4 +142,4 @@ echo "     --endpoint-url http://localhost:8333 \\"
 echo "     --bucket test-bucket \\"
 echo "     --server-side-encryption-configuration file://bucket-encryption.json"
 echo ""
-echo "✅ OpenBao KMS setup complete!"
+echo "[OK] OpenBao KMS setup complete!"

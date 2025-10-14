@@ -19,7 +19,7 @@ timeout 120 bash -c '
         echo "Waiting for Keycloak..."
         sleep 5
     done
-    echo "✅ Keycloak health check passed"
+    echo "[OK] Keycloak health check passed"
 ' "$KEYCLOAK_URL"
 
 # Download kcadm.sh if not available
@@ -51,14 +51,14 @@ kcadm() {
         sleep 5
     done
     
-    echo "❌ Failed to execute kcadm command after $max_retries retries"
+    echo "[FAIL] Failed to execute kcadm command after $max_retries retries"
     return 1
 }
 
 # Create realm
 echo "📝 Creating realm '$REALM_NAME'..."
 kcadm create realms -s realm="$REALM_NAME" -s enabled=true || echo "Realm may already exist"
-echo "✅ Realm created"
+echo "[OK] Realm created"
 
 # Create OIDC client
 echo "📝 Creating client '$CLIENT_ID'..."
@@ -74,9 +74,9 @@ CLIENT_UUID=$(kcadm create clients -r "$REALM_NAME" \
     -i 2>/dev/null || echo "existing-client")
 
 if [ "$CLIENT_UUID" != "existing-client" ]; then
-    echo "✅ Client created with ID: $CLIENT_UUID"
+    echo "[OK] Client created with ID: $CLIENT_UUID"
 else
-    echo "✅ Using existing client"
+    echo "[OK] Using existing client"
     CLIENT_UUID=$(kcadm get clients -r "$REALM_NAME" -q clientId="$CLIENT_ID" --fields id --format csv --noquotes | tail -n +2)
 fi
 
@@ -94,8 +94,8 @@ MAPPER_CONFIG='{
   }
 }'
 
-kcadm create clients/"$CLIENT_UUID"/protocol-mappers/models -r "$REALM_NAME" -b "$MAPPER_CONFIG" 2>/dev/null || echo "✅ Role mapper already exists"
-echo "✅ Realm roles mapper configured"
+kcadm create clients/"$CLIENT_UUID"/protocol-mappers/models -r "$REALM_NAME" -b "$MAPPER_CONFIG" 2>/dev/null || echo "[OK] Role mapper already exists"
+echo "[OK] Realm roles mapper configured"
 
 # Configure audience mapper to ensure JWT tokens have correct audience claim
 echo "🔧 Configuring audience mapper for client '$CLIENT_ID'..."
@@ -110,8 +110,8 @@ AUDIENCE_MAPPER_CONFIG='{
   }
 }'
 
-kcadm create clients/"$CLIENT_UUID"/protocol-mappers/models -r "$REALM_NAME" -b "$AUDIENCE_MAPPER_CONFIG" 2>/dev/null || echo "✅ Audience mapper already exists"
-echo "✅ Audience mapper configured"
+kcadm create clients/"$CLIENT_UUID"/protocol-mappers/models -r "$REALM_NAME" -b "$AUDIENCE_MAPPER_CONFIG" 2>/dev/null || echo "[OK] Audience mapper already exists"
+echo "[OK] Audience mapper configured"
 
 # Create realm roles
 echo "📝 Creating realm roles..."
@@ -393,11 +393,11 @@ ACCESS_TOKEN=$(curl -s -X POST "$KEYCLOAK_TOKEN_URL" \
     -d "scope=openid profile email" | jq -r '.access_token')
 
 if [ "$ACCESS_TOKEN" = "null" ] || [ -z "$ACCESS_TOKEN" ]; then
-    echo "❌ Failed to obtain access token"
+    echo "[FAIL] Failed to obtain access token"
     exit 1
 fi
 
-echo "✅ Authentication validation successful"
+echo "[OK] Authentication validation successful"
 
 # Decode and check JWT claims
 PAYLOAD=$(echo "$ACCESS_TOKEN" | cut -d'.' -f2)
@@ -410,10 +410,10 @@ CLAIMS=$(echo "$PAYLOAD" | base64 -d 2>/dev/null | jq .)
 ROLES=$(echo "$CLAIMS" | jq -r '.roles[]?')
 
 if [ -n "$ROLES" ]; then
-    echo "✅ JWT token includes roles: [$(echo "$ROLES" | tr '\n' ',' | sed 's/,$//' | sed 's/,/, /g')]"
+    echo "[OK] JWT token includes roles: [$(echo "$ROLES" | tr '\n' ',' | sed 's/,$//' | sed 's/,/, /g')]"
 else
     echo "⚠️  No roles found in JWT token"
 fi
 
-echo "✅ Keycloak test realm '$REALM_NAME' configured for Docker environment"
+echo "[OK] Keycloak test realm '$REALM_NAME' configured for Docker environment"
 echo "🐳 Setup complete! You can now run: docker-compose up -d"

@@ -162,6 +162,18 @@ func doFixOneVolume(basepath string, baseFileName string, collection string, vol
 	defer nm.Close()
 	defer nmDeleted.Close()
 
+	// Validate volumeId range before converting to uint32
+	if volumeId < 0 || volumeId > 0xFFFFFFFF {
+		err := fmt.Errorf("volume ID out of range: %d", volumeId)
+		if *fixIgnoreError {
+			glog.Error(err)
+			return
+		} else {
+			glog.Fatal(err)
+		}
+	}
+	// lgtm[go/incorrect-integer-conversion]
+	// Safe conversion: volumeId has been validated to be in range [0, 0xFFFFFFFF] above
 	vid := needle.VolumeId(volumeId)
 	scanner := &VolumeFileScanner4Fix{
 		nm:             nm,

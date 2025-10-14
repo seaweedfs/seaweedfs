@@ -73,17 +73,17 @@ func TestCockroachDBParserSuccess(t *testing.T) {
 			result, err := engine.ExecuteSQL(context.Background(), tc.sql)
 
 			if err != nil {
-				t.Errorf("❌ %s - Query failed: %v", tc.desc, err)
+				t.Errorf("%s - Query failed: %v", tc.desc, err)
 				return
 			}
 
 			if result.Error != nil {
-				t.Errorf("❌ %s - Query result error: %v", tc.desc, result.Error)
+				t.Errorf("%s - Query result error: %v", tc.desc, result.Error)
 				return
 			}
 
 			if len(result.Rows) == 0 {
-				t.Errorf("❌ %s - Expected at least one row", tc.desc)
+				t.Errorf("%s - Expected at least one row", tc.desc)
 				return
 			}
 

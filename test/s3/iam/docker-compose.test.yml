@@ -1,6 +1,4 @@
 # Docker Compose for SeaweedFS S3 IAM Integration Tests
-version: '3.8'
-
 services:
   # SeaweedFS Master
   seaweedfs-master:

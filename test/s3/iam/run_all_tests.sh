@@ -34,10 +34,10 @@ run_test_category() {
     echo -e "${YELLOW}🧪 Running $description...${NC}"
     
     if go test -v -timeout=$TEST_TIMEOUT -run "$test_pattern" ./...; then
-        echo -e "${GREEN}✅ $description completed successfully${NC}"
+        echo -e "${GREEN}[OK] $description completed successfully${NC}"
         return 0
     else
-        echo -e "${RED}❌ $description failed${NC}"
+        echo -e "${RED}[FAIL] $description failed${NC}"
         return 1
     fi
 }
@@ -83,10 +83,10 @@ fi
 echo -e "\n${BLUE}5. Benchmark Tests${NC}"
 TOTAL_CATEGORIES=$((TOTAL_CATEGORIES + 1))
 if go test -bench=. -benchmem -timeout=$TEST_TIMEOUT ./...; then
-    echo -e "${GREEN}✅ Benchmark tests completed successfully${NC}"
+    echo -e "${GREEN}[OK] Benchmark tests completed successfully${NC}"
     PASSED_CATEGORIES=$((PASSED_CATEGORIES + 1))
 else
-    echo -e "${RED}❌ Benchmark tests failed${NC}"
+    echo -e "${RED}[FAIL] Benchmark tests failed${NC}"
 fi
 
 # 6. Versioning Stress Tests
@@ -94,10 +94,10 @@ echo -e "\n${BLUE}6. S3 Versioning Stress Tests${NC}"
 TOTAL_CATEGORIES=$((TOTAL_CATEGORIES + 1))
 if [ -f "../versioning/enable_stress_tests.sh" ]; then
     if (cd ../versioning && ./enable_stress_tests.sh); then
-        echo -e "${GREEN}✅ Versioning stress tests completed successfully${NC}"
+        echo -e "${GREEN}[OK] Versioning stress tests completed successfully${NC}"
         PASSED_CATEGORIES=$((PASSED_CATEGORIES + 1))
     else
-        echo -e "${RED}❌ Versioning stress tests failed${NC}"
+        echo -e "${RED}[FAIL] Versioning stress tests failed${NC}"
     fi
 else
     echo -e "${YELLOW}⚠️ Versioning stress tests not available${NC}"
@@ -114,6 +114,6 @@ if [ $PASSED_CATEGORIES -eq $TOTAL_CATEGORIES ]; then
     echo -e "\n${GREEN}🎉 All test categories passed!${NC}"
     exit 0
 else
-    echo -e "\n${RED}❌ Some test categories failed${NC}"
+    echo -e "\n${RED}[FAIL] Some test categories failed${NC}"
     exit 1
 fi

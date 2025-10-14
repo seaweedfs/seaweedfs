@@ -1,7 +1,6 @@
 package iam
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"strings"
@@ -15,15 +14,11 @@ import (
 )
 
 const (
-	testEndpoint     = "http://localhost:8333"
-	testRegion       = "us-west-2"
-	testBucketPrefix = "test-iam-bucket"
-	testObjectKey    = "test-object.txt"
-	testObjectData   = "Hello, SeaweedFS IAM Integration!"
-)
-
-var (
-	testBucket = testBucketPrefix
+	testEndpoint   = "http://localhost:8333"
+	testRegion     = "us-west-2"
+	testBucket     = "test-iam-bucket"
+	testObjectKey  = "test-object.txt"
+	testObjectData = "Hello, SeaweedFS IAM Integration!"
 )
 
 // TestS3IAMAuthentication tests S3 API authentication with IAM JWT tokens
@@ -98,12 +93,14 @@ func TestS3IAMPolicyEnforcement(t *testing.T) {
 	adminClient, err := framework.CreateS3ClientWithJWT("admin-user", "TestAdminRole")
 	require.NoError(t, err)
 
-	err = framework.CreateBucket(adminClient, testBucket)
+	// Use unique bucket name to avoid collection conflicts
+	bucketName := framework.GenerateUniqueBucketName("test-iam-policy")
+	err = framework.CreateBucket(adminClient, bucketName)
 	require.NoError(t, err)
 
 	// Put test object with admin client
 	_, err = adminClient.PutObject(&s3.PutObjectInput{
-		Bucket: aws.String(testBucket),
+		Bucket: aws.String(bucketName),
 		Key:    aws.String(testObjectKey),
 		Body:   strings.NewReader(testObjectData),
 	})
@@ -116,7 +113,7 @@ func TestS3IAMPolicyEnforcement(t *testing.T) {
 
 		// Should be able to read objects
 		result, err := readOnlyClient.GetObject(&s3.GetObjectInput{
-			Bucket: aws.String(testBucket),
+			Bucket: aws.String(bucketName),
 			Key:    aws.String(testObjectKey),
 		})
 		require.NoError(t, err)
@@ -128,7 +125,7 @@ func TestS3IAMPolicyEnforcement(t *testing.T) {
 
 		// Should be able to list objects
 		listResult, err := readOnlyClient.ListObjects(&s3.ListObjectsInput{
-			Bucket: aws.String(testBucket),
+			Bucket: aws.String(bucketName),
 		})
 		require.NoError(t, err)
 		assert.Len(t, listResult.Contents, 1)
@@ -136,7 +133,7 @@ func TestS3IAMPolicyEnforcement(t *testing.T) {
 
 		// Should NOT be able to put objects
 		_, err = readOnlyClient.PutObject(&s3.PutObjectInput{
-			Bucket: aws.String(testBucket),
+			Bucket: aws.String(bucketName),
 			Key:    aws.String("forbidden-object.txt"),
 			Body:   strings.NewReader("This should fail"),
 		})
@@ -147,7 +144,7 @@ func TestS3IAMPolicyEnforcement(t *testing.T) {
 
 		// Should NOT be able to delete objects
 		_, err = readOnlyClient.DeleteObject(&s3.DeleteObjectInput{
-			Bucket: aws.String(testBucket),
+			Bucket: aws.String(bucketName),
 			Key:    aws.String(testObjectKey),
 		})
 		require.Error(t, err)
@@ -166,7 +163,7 @@ func TestS3IAMPolicyEnforcement(t *testing.T) {
 		testWriteData := "Write-only test data"
 
 		_, err = writeOnlyClient.PutObject(&s3.PutObjectInput{
-			Bucket: aws.String(testBucket),
+			Bucket: aws.String(bucketName),
 			Key:    aws.String(testWriteKey),
 			Body:   strings.NewReader(testWriteData),
 		})
@@ -174,14 +171,14 @@ func TestS3IAMPolicyEnforcement(t *testing.T) {
 
 		// Should be able to delete objects
 		_, err = writeOnlyClient.DeleteObject(&s3.DeleteObjectInput{
-			Bucket: aws.String(testBucket),
+			Bucket: aws.String(bucketName),
 			Key:    aws.String(testWriteKey),
 		})
 		require.NoError(t, err)
 
 		// Should NOT be able to read objects
 		_, err = writeOnlyClient.GetObject(&s3.GetObjectInput{
-			Bucket: aws.String(testBucket),
+			Bucket: aws.String(bucketName),
 			Key:    aws.String(testObjectKey),
 		})
 		require.Error(t, err)
@@ -191,7 +188,7 @@ func TestS3IAMPolicyEnforcement(t *testing.T) {
 
 		// Should NOT be able to list objects
 		_, err = writeOnlyClient.ListObjects(&s3.ListObjectsInput{
-			Bucket: aws.String(testBucket),
+			Bucket: aws.String(bucketName),
 		})
 		require.Error(t, err)
 		if awsErr, ok := err.(awserr.Error); ok {
@@ -206,7 +203,7 @@ func TestS3IAMPolicyEnforcement(t *testing.T) {
 
 		// Should be able to put objects
 		_, err = adminClient.PutObject(&s3.PutObjectInput{
-			Bucket: aws.String(testBucket),
+			Bucket: aws.String(bucketName),
 			Key:    aws.String(testAdminKey),
 			Body:   strings.NewReader(testAdminData),
 		})
@@ -214,7 +211,7 @@ func TestS3IAMPolicyEnforcement(t *testing.T) {
 
 		// Should be able to read objects
 		result, err := adminClient.GetObject(&s3.GetObjectInput{
-			Bucket: aws.String(testBucket),
+			Bucket: aws.String(bucketName),
 			Key:    aws.String(testAdminKey),
 		})
 		require.NoError(t, err)
@@ -226,14 +223,14 @@ func TestS3IAMPolicyEnforcement(t *testing.T) {
 
 		// Should be able to list objects
 		listResult, err := adminClient.ListObjects(&s3.ListObjectsInput{
-			Bucket: aws.String(testBucket),
+			Bucket: aws.String(bucketName),
 		})
 		require.NoError(t, err)
 		assert.GreaterOrEqual(t, len(listResult.Contents), 1)
 
 		// Should be able to delete objects
 		_, err = adminClient.DeleteObject(&s3.DeleteObjectInput{
-			Bucket: aws.String(testBucket),
+			Bucket: aws.String(bucketName),
 			Key:    aws.String(testAdminKey),
 		})
 		require.NoError(t, err)
@@ -241,14 +238,14 @@ func TestS3IAMPolicyEnforcement(t *testing.T) {
 		// Should be able to delete buckets
 		// First delete remaining objects
 		_, err = adminClient.DeleteObject(&s3.DeleteObjectInput{
-			Bucket: aws.String(testBucket),
+			Bucket: aws.String(bucketName),
 			Key:    aws.String(testObjectKey),
 		})
 		require.NoError(t, err)
 
 		// Then delete the bucket
 		_, err = adminClient.DeleteBucket(&s3.DeleteBucketInput{
-			Bucket: aws.String(testBucket),
+			Bucket: aws.String(bucketName),
 		})
 		require.NoError(t, err)
 	})
@@ -398,7 +395,9 @@ func TestS3IAMBucketPolicyIntegration(t *testing.T) {
 	adminClient, err := framework.CreateS3ClientWithJWT("admin-user", "TestAdminRole")
 	require.NoError(t, err)
 
-	err = framework.CreateBucket(adminClient, testBucket)
+	// Use unique bucket name to avoid collection conflicts
+	bucketName := framework.GenerateUniqueBucketName("test-iam-bucket-policy")
+	err = framework.CreateBucket(adminClient, bucketName)
 	require.NoError(t, err)
 
 	t.Run("bucket_policy_allows_public_read", func(t *testing.T) {
@@ -414,17 +413,17 @@ func TestS3IAMBucketPolicyIntegration(t *testing.T) {
 					"Resource": ["arn:seaweed:s3:::%s/*"]
 				}
 			]
-		}`, testBucket)
+		}`, bucketName)
 
 		_, err = adminClient.PutBucketPolicy(&s3.PutBucketPolicyInput{
-			Bucket: aws.String(testBucket),
+			Bucket: aws.String(bucketName),
 			Policy: aws.String(bucketPolicy),
 		})
 		require.NoError(t, err)
 
 		// Put test object
 		_, err = adminClient.PutObject(&s3.PutObjectInput{
-			Bucket: aws.String(testBucket),
+			Bucket: aws.String(bucketName),
 			Key:    aws.String(testObjectKey),
 			Body:   strings.NewReader(testObjectData),
 		})
@@ -435,7 +434,7 @@ func TestS3IAMBucketPolicyIntegration(t *testing.T) {
 		require.NoError(t, err)
 
 		result, err := readOnlyClient.GetObject(&s3.GetObjectInput{
-			Bucket: aws.String(testBucket),
+			Bucket: aws.String(bucketName),
 			Key:    aws.String(testObjectKey),
 		})
 		require.NoError(t, err)
@@ -459,17 +458,17 @@ func TestS3IAMBucketPolicyIntegration(t *testing.T) {
 					"Resource": ["arn:seaweed:s3:::%s/*"]
 				}
 			]
-		}`, testBucket)
+		}`, bucketName)
 
 		_, err = adminClient.PutBucketPolicy(&s3.PutBucketPolicyInput{
-			Bucket: aws.String(testBucket),
+			Bucket: aws.String(bucketName),
 			Policy: aws.String(bucketPolicy),
 		})
 		require.NoError(t, err)
 
 		// Verify that the bucket policy was stored successfully by retrieving it
 		policyResult, err := adminClient.GetBucketPolicy(&s3.GetBucketPolicyInput{
-			Bucket: aws.String(testBucket),
+			Bucket: aws.String(bucketName),
 		})
 		require.NoError(t, err)
 		assert.Contains(t, *policyResult.Policy, "s3:DeleteObject")
@@ -483,18 +482,18 @@ func TestS3IAMBucketPolicyIntegration(t *testing.T) {
 
 	// Cleanup - delete bucket policy first, then objects and bucket
 	_, err = adminClient.DeleteBucketPolicy(&s3.DeleteBucketPolicyInput{
-		Bucket: aws.String(testBucket),
+		Bucket: aws.String(bucketName),
 	})
 	require.NoError(t, err)
 
 	_, err = adminClient.DeleteObject(&s3.DeleteObjectInput{
-		Bucket: aws.String(testBucket),
+		Bucket: aws.String(bucketName),
 		Key:    aws.String(testObjectKey),
 	})
 	require.NoError(t, err)
 
 	_, err = adminClient.DeleteBucket(&s3.DeleteBucketInput{
-		Bucket: aws.String(testBucket),
+		Bucket: aws.String(bucketName),
 	})
 	require.NoError(t, err)
 }
@@ -527,15 +526,6 @@ func TestS3IAMContextualPolicyEnforcement(t *testing.T) {
 	})
 }
 
-// Helper function to create test content of specific size
-func createTestContent(size int) *bytes.Reader {
-	content := make([]byte, size)
-	for i := range content {
-		content[i] = byte(i % 256)
-	}
-	return bytes.NewReader(content)
-}
-
 // TestS3IAMPresignedURLIntegration tests presigned URL generation with IAM
 func TestS3IAMPresignedURLIntegration(t *testing.T) {
 	framework := NewS3IAMTestFramework(t)
@@ -546,12 +536,12 @@ func TestS3IAMPresignedURLIntegration(t *testing.T) {
 	require.NoError(t, err)
 
 	// Use static bucket name but with cleanup to handle conflicts
-	err = framework.CreateBucketWithCleanup(adminClient, testBucketPrefix)
+	err = framework.CreateBucketWithCleanup(adminClient, testBucket)
 	require.NoError(t, err)
 
 	// Put test object
 	_, err = adminClient.PutObject(&s3.PutObjectInput{
-		Bucket: aws.String(testBucketPrefix),
+		Bucket: aws.String(testBucket),
 		Key:    aws.String(testObjectKey),
 		Body:   strings.NewReader(testObjectData),
 	})
@@ -573,13 +563,13 @@ func TestS3IAMPresignedURLIntegration(t *testing.T) {
 
 		// Test direct object access with JWT Bearer token (recommended approach)
 		_, err := adminClient.GetObject(&s3.GetObjectInput{
-			Bucket: aws.String(testBucketPrefix),
+			Bucket: aws.String(testBucket),
 			Key:    aws.String(testObjectKey),
 		})
 		require.NoError(t, err, "Direct object access with JWT Bearer token works correctly")
 
-		t.Log("✅ JWT Bearer token authentication confirmed working for direct S3 API calls")
-		t.Log("ℹ️  Note: Presigned URLs are not supported with JWT Bearer authentication by design")
+		t.Log("JWT Bearer token authentication confirmed working for direct S3 API calls")
+		t.Log("Note: Presigned URLs are not supported with JWT Bearer authentication by design")
 	})
 
 	// Cleanup

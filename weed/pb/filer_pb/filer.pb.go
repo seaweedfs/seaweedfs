@@ -3060,6 +3060,7 @@ type LogEntry struct {
 	PartitionKeyHash int32                  `protobuf:"varint,2,opt,name=partition_key_hash,json=partitionKeyHash,proto3" json:"partition_key_hash,omitempty"`
 	Data             []byte                 `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
 	Key              []byte                 `protobuf:"bytes,4,opt,name=key,proto3" json:"key,omitempty"`
+	Offset           int64                  `protobuf:"varint,5,opt,name=offset,proto3" json:"offset,omitempty"` // Sequential offset within partition
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -3120,6 +3121,13 @@ func (x *LogEntry) GetKey() []byte {
 		return x.Key
 	}
 	return nil
+}
+
+func (x *LogEntry) GetOffset() int64 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
 }
 
 type KeepConnectedRequest struct {
@@ -4659,12 +4667,13 @@ const file_filer_proto_rawDesc = "" +
 	"\x11excluded_prefixes\x18\x02 \x03(\tR\x10excludedPrefixes\"b\n" +
 	"\x1bTraverseBfsMetadataResponse\x12\x1c\n" +
 	"\tdirectory\x18\x01 \x01(\tR\tdirectory\x12%\n" +
-	"\x05entry\x18\x02 \x01(\v2\x0f.filer_pb.EntryR\x05entry\"s\n" +
+	"\x05entry\x18\x02 \x01(\v2\x0f.filer_pb.EntryR\x05entry\"\x8b\x01\n" +
 	"\bLogEntry\x12\x13\n" +
 	"\x05ts_ns\x18\x01 \x01(\x03R\x04tsNs\x12,\n" +
 	"\x12partition_key_hash\x18\x02 \x01(\x05R\x10partitionKeyHash\x12\x12\n" +
 	"\x04data\x18\x03 \x01(\fR\x04data\x12\x10\n" +
-	"\x03key\x18\x04 \x01(\fR\x03key\"e\n" +
+	"\x03key\x18\x04 \x01(\fR\x03key\x12\x16\n" +
+	"\x06offset\x18\x05 \x01(\x03R\x06offset\"e\n" +
 	"\x14KeepConnectedRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1b\n" +
 	"\tgrpc_port\x18\x02 \x01(\rR\bgrpcPort\x12\x1c\n" +
