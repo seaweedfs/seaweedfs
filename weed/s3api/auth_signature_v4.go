@@ -190,7 +190,6 @@ func (iam *IdentityAccessManagement) doesSignatureMatch(hashedPayload string, r 
 		return nil, s3err.ErrInvalidAccessKeyID
 	}
 
-
 	// Extract date, if not present throw error.
 	var dateStr string
 	if dateStr = req.Header.Get("x-amz-date"); dateStr == "" {
@@ -325,7 +324,6 @@ func (iam *IdentityAccessManagement) doesPresignedSignatureMatch(hashedPayload s
 	if !found {
 		return nil, s3err.ErrInvalidAccessKeyID
 	}
-
 
 	// Parse date
 	t, e := time.Parse(iso8601Format, dateStr)

@@ -116,7 +116,6 @@ func (iam *IdentityAccessManagement) doesSignV2Match(r *http.Request) (*Identity
 		return nil, s3err.ErrInvalidAccessKeyID
 	}
 
-
 	expectedAuth := signatureV2(cred, r.Method, r.URL.Path, r.URL.Query().Encode(), r.Header)
 	if !compareSignatureV2(v2Auth, expectedAuth) {
 		return nil, s3err.ErrSignatureDoesNotMatch
@@ -158,7 +157,6 @@ func (iam *IdentityAccessManagement) doesPresignV2SignatureMatch(r *http.Request
 	if !found {
 		return nil, s3err.ErrInvalidAccessKeyID
 	}
-
 
 	expectedSignature := preSignatureV2(cred, r.Method, r.URL.Path, r.URL.Query().Encode(), r.Header, expires)
 	if !compareSignatureV2(signature, expectedSignature) {
