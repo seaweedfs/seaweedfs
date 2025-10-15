@@ -14,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/test/kafka/kafka-client-loadtest/internal/config"
 	"github.com/seaweedfs/seaweedfs/test/kafka/kafka-client-loadtest/internal/metrics"
 	pb "github.com/seaweedfs/seaweedfs/test/kafka/kafka-client-loadtest/internal/schema/pb"
+	"github.com/seaweedfs/seaweedfs/test/kafka/kafka-client-loadtest/internal/tracker"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -35,10 +36,13 @@ type Consumer struct {
 	messagesProcessed int64
 	lastOffset        map[string]map[int32]int64
 	offsetMutex       sync.RWMutex
+
+	// Record tracking
+	tracker *tracker.Tracker
 }
 
 // New creates a new consumer instance
-func New(cfg *config.Config, collector *metrics.Collector, id int) (*Consumer, error) {
+func New(cfg *config.Config, collector *metrics.Collector, id int, recordTracker *tracker.Tracker) (*Consumer, error) {
 	// All consumers share the same group for load balancing across partitions
 	consumerGroup := cfg.Consumers.GroupPrefix
 
@@ -51,6 +55,7 @@ func New(cfg *config.Config, collector *metrics.Collector, id int) (*Consumer, e
 		useConfluent:     false, // Use Sarama by default
 		lastOffset:       make(map[string]map[int32]int64),
 		schemaFormats:    make(map[string]string),
+		tracker:          recordTracker,
 	}
 
 	// Initialize schema formats for each topic (must match producer logic)
@@ -600,6 +605,18 @@ func (h *ConsumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSession,
 				// 	return nil
 				// }
 			} else {
+				// Track consumed message
+				if h.consumer.tracker != nil {
+					h.consumer.tracker.TrackConsumed(tracker.Record{
+						Key:        string(key),
+						Topic:      message.Topic,
+						Partition:  message.Partition,
+						Offset:     message.Offset,
+						Timestamp:  message.Timestamp.UnixNano(),
+						ConsumerID: h.consumer.id,
+					})
+				}
+
 				// Mark message as processed
 				session.MarkMessage(message, "")
 			}

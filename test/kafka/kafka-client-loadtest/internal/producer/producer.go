@@ -20,6 +20,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/test/kafka/kafka-client-loadtest/internal/metrics"
 	"github.com/seaweedfs/seaweedfs/test/kafka/kafka-client-loadtest/internal/schema"
 	pb "github.com/seaweedfs/seaweedfs/test/kafka/kafka-client-loadtest/internal/schema/pb"
+	"github.com/seaweedfs/seaweedfs/test/kafka/kafka-client-loadtest/internal/tracker"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -50,6 +51,9 @@ type Producer struct {
 
 	// Circuit breaker detection
 	consecutiveFailures int
+
+	// Record tracking
+	tracker *tracker.Tracker
 }
 
 // Message represents a test message
@@ -64,7 +68,7 @@ type Message struct {
 }
 
 // New creates a new producer instance
-func New(cfg *config.Config, collector *metrics.Collector, id int) (*Producer, error) {
+func New(cfg *config.Config, collector *metrics.Collector, id int, recordTracker *tracker.Tracker) (*Producer, error) {
 	p := &Producer{
 		id:               id,
 		config:           cfg,
@@ -75,6 +79,7 @@ func New(cfg *config.Config, collector *metrics.Collector, id int) (*Producer, e
 		schemaIDs:        make(map[string]int),
 		schemaFormats:    make(map[string]string),
 		startTime:        time.Now(), // Record test start time for unique key generation
+		tracker:          recordTracker,
 	}
 
 	// Initialize schema formats for each topic
@@ -375,9 +380,21 @@ func (p *Producer) produceSaramaMessage(topic string, startTime time.Time) error
 	}
 
 	// Produce message
-	_, _, err := p.saramaProducer.SendMessage(msg)
+	partition, offset, err := p.saramaProducer.SendMessage(msg)
 	if err != nil {
 		return err
+	}
+
+	// Track produced message
+	if p.tracker != nil {
+		p.tracker.TrackProduced(tracker.Record{
+			Key:        key,
+			Topic:      topic,
+			Partition:  partition,
+			Offset:     offset,
+			Timestamp:  startTime.UnixNano(),
+			ProducerID: p.id,
+		})
 	}
 
 	// Record metrics
