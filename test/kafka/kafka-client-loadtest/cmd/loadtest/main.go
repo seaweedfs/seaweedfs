@@ -144,8 +144,9 @@ func main() {
 func runProducerTest(ctx context.Context, cfg *config.Config, collector *metrics.Collector, wg *sync.WaitGroup) error {
 	log.Printf("Starting producer-only test with %d producers", cfg.Producers.Count)
 
-	// Create record tracker (nil for now as producer-only test doesn't need comparison)
-	recordTracker := tracker.NewTracker("/test-results/produced.jsonl", "/test-results/consumed.jsonl")
+	// Create record tracker with current timestamp to filter old messages
+	testStartTime := time.Now().UnixNano()
+	recordTracker := tracker.NewTracker("/test-results/produced.jsonl", "/test-results/consumed.jsonl", testStartTime)
 
 	errChan := make(chan error, cfg.Producers.Count)
 
@@ -183,8 +184,9 @@ func runProducerTest(ctx context.Context, cfg *config.Config, collector *metrics
 func runConsumerTest(ctx context.Context, cfg *config.Config, collector *metrics.Collector, wg *sync.WaitGroup) error {
 	log.Printf("Starting consumer-only test with %d consumers", cfg.Consumers.Count)
 
-	// Create record tracker
-	recordTracker := tracker.NewTracker("/test-results/produced.jsonl", "/test-results/consumed.jsonl")
+	// Create record tracker with current timestamp to filter old messages
+	testStartTime := time.Now().UnixNano()
+	recordTracker := tracker.NewTracker("/test-results/produced.jsonl", "/test-results/consumed.jsonl", testStartTime)
 
 	errChan := make(chan error, cfg.Consumers.Count)
 
@@ -213,8 +215,10 @@ func runComprehensiveTest(ctx context.Context, cancel context.CancelFunc, cfg *c
 	log.Printf("Starting comprehensive test with %d producers and %d consumers",
 		cfg.Producers.Count, cfg.Consumers.Count)
 
-	// Create record tracker
-	recordTracker := tracker.NewTracker("/test-results/produced.jsonl", "/test-results/consumed.jsonl")
+	// Create record tracker with current timestamp to filter old messages
+	testStartTime := time.Now().UnixNano()
+	log.Printf("Test run starting at %d - only tracking messages from this run", testStartTime)
+	recordTracker := tracker.NewTracker("/test-results/produced.jsonl", "/test-results/consumed.jsonl", testStartTime)
 
 	errChan := make(chan error, cfg.Producers.Count)
 
