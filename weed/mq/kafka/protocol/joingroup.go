@@ -232,7 +232,7 @@ func (h *Handler) handleJoinGroup(connContext *ConnectionContext, correlationID 
 
 	// Ensure we have a valid protocol - fallback to "range" if empty
 	if groupProtocol == "" {
-		groupProtocol = "range"
+		groupProtocol = consumer.ProtocolNameRange
 	}
 
 	// If a protocol is already selected for the group, reject joins that do not support it.
@@ -615,7 +615,7 @@ func (h *Handler) buildJoinGroupResponse(response JoinGroupResponse) []byte {
 		} else {
 			// NON-nullable compact string in v6 - must not be empty!
 			if response.ProtocolName == "" {
-				response.ProtocolName = "range" // fallback to default
+				response.ProtocolName = consumer.ProtocolNameRange // fallback to default
 			}
 			out = append(out, FlexibleString(response.ProtocolName)...)
 		}
@@ -762,9 +762,9 @@ func (h *Handler) buildJoinGroupErrorResponse(correlationID uint32, errorCode in
 		ThrottleTimeMs: 0,
 		ErrorCode:      errorCode,
 		GenerationID:   -1,
-		ProtocolName:   "range",   // Use "range" as default protocol instead of empty string
-		Leader:         "unknown", // Use "unknown" instead of empty string for non-nullable field
-		MemberID:       "unknown", // Use "unknown" instead of empty string for non-nullable field
+		ProtocolName:   consumer.ProtocolNameRange, // Use "range" as default protocol instead of empty string
+		Leader:         "unknown",                  // Use "unknown" instead of empty string for non-nullable field
+		MemberID:       "unknown",                  // Use "unknown" instead of empty string for non-nullable field
 		Version:        apiVersion,
 		Members:        []JoinGroupMember{},
 	}

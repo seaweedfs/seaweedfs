@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net"
 	"sync"
+
+	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/consumer"
 )
 
 // ConsumerProtocolMetadata represents parsed consumer protocol metadata
@@ -148,10 +150,10 @@ func ParseConsumerProtocolMetadata(metadata []byte, strategyName string) (*Consu
 // ValidateAssignmentStrategy checks if an assignment strategy is supported
 func ValidateAssignmentStrategy(strategy string) bool {
 	supportedStrategies := map[string]bool{
-		"range":              true,
-		"roundrobin":         true,
-		"sticky":             true,
-		"cooperative-sticky": false, // Not yet implemented
+		consumer.ProtocolNameRange:             true,
+		consumer.ProtocolNameRoundRobin:        true,
+		consumer.ProtocolNameSticky:            true,
+		consumer.ProtocolNameCooperativeSticky: true, // Incremental cooperative rebalancing (Kafka 2.4+)
 	}
 
 	return supportedStrategies[strategy]
@@ -184,7 +186,7 @@ func ExtractTopicsFromMetadata(protocols []GroupProtocol, fallbackTopics []strin
 // SelectBestProtocol chooses the best assignment protocol from available options
 func SelectBestProtocol(protocols []GroupProtocol, groupProtocols []string) string {
 	// Priority order: sticky > roundrobin > range
-	protocolPriority := []string{"sticky", "roundrobin", "range"}
+	protocolPriority := []string{consumer.ProtocolNameSticky, consumer.ProtocolNameRoundRobin, consumer.ProtocolNameRange}
 
 	// Find supported protocols in client's list
 	clientProtocols := make(map[string]bool)
@@ -218,8 +220,8 @@ func SelectBestProtocol(protocols []GroupProtocol, groupProtocols []string) stri
 
 		// No common protocol found - handle special fallback case
 		// If client supports nothing we validate, but group supports "range", use "range"
-		if len(clientProtocols) == 0 && groupProtocolSet["range"] {
-			return "range"
+		if len(clientProtocols) == 0 && groupProtocolSet[consumer.ProtocolNameRange] {
+			return consumer.ProtocolNameRange
 		}
 
 		// Return empty string to indicate no compatible protocol found
@@ -234,7 +236,7 @@ func SelectBestProtocol(protocols []GroupProtocol, groupProtocols []string) stri
 	}
 
 	// Last resort
-	return "range"
+	return consumer.ProtocolNameRange
 }
 
 // ProtocolMetadataDebugInfo returns debug information about protocol metadata
