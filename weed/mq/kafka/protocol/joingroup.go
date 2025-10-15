@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/consumer"
 )
 
@@ -1328,8 +1329,10 @@ func (h *Handler) serializeSchemaRegistryAssignment(group *consumer.ConsumerGrou
 	// requests to itself
 	leaderMember, exists := group.Members[group.Leader]
 	if !exists {
-		// Fallback if leader not found (shouldn't happen)
-		jsonAssignment := `{"error":0,"master":"","master_identity":{"host":"localhost","port":8081,"master_eligibility":true,"scheme":"http","version":1}}`
+		// Leader not found - return minimal assignment with no master identity
+		// Schema Registry should handle this by failing over to another instance
+		glog.Warningf("Schema Registry leader member %s not found in group %s", group.Leader, group.ID)
+		jsonAssignment := `{"error":0,"master":"","master_identity":{"host":"","port":0,"master_eligibility":false,"scheme":"http","version":1}}`
 		return []byte(jsonAssignment)
 	}
 
@@ -1338,13 +1341,16 @@ func (h *Handler) serializeSchemaRegistryAssignment(group *consumer.ConsumerGrou
 	var identity map[string]interface{}
 	err := json.Unmarshal(leaderMember.Metadata, &identity)
 	if err != nil {
-		// Fallback to basic assignment
-		jsonAssignment := fmt.Sprintf(`{"error":0,"master":"%s","master_identity":{"host":"localhost","port":8081,"master_eligibility":true,"scheme":"http","version":1}}`, group.Leader)
+		// Failed to parse metadata - return minimal assignment
+		// Schema Registry should provide valid metadata; if not, fail gracefully
+		glog.Warningf("Failed to parse Schema Registry metadata for leader %s: %v", group.Leader, err)
+		jsonAssignment := fmt.Sprintf(`{"error":0,"master":"%s","master_identity":{"host":"","port":0,"master_eligibility":false,"scheme":"http","version":1}}`, group.Leader)
 		return []byte(jsonAssignment)
 	}
 
-	// Extract fields with defaults
-	host := "localhost"
+	// Extract fields from identity - use empty/zero defaults if missing
+	// Schema Registry clients should provide complete metadata
+	host := ""
 	port := 8081
 	scheme := "http"
 	version := 1
@@ -1352,6 +1358,8 @@ func (h *Handler) serializeSchemaRegistryAssignment(group *consumer.ConsumerGrou
 
 	if h, ok := identity["host"].(string); ok {
 		host = h
+	} else {
+		glog.V(1).Infof("Schema Registry metadata missing 'host' field for leader %s", group.Leader)
 	}
 	if p, ok := identity["port"].(float64); ok {
 		port = int(p)

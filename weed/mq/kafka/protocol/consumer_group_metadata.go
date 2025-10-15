@@ -172,12 +172,13 @@ func ExtractTopicsFromMetadata(protocols []GroupProtocol, fallbackTopics []strin
 		}
 	}
 
-	// Fallback to provided topics or default
+	// Fallback to provided topics or empty list
 	if len(fallbackTopics) > 0 {
 		return fallbackTopics
 	}
 
-	return []string{"test-topic"}
+	// Return empty slice if no topics found - consumer may be using pattern subscription
+	return []string{}
 }
 
 // SelectBestProtocol chooses the best assignment protocol from available options

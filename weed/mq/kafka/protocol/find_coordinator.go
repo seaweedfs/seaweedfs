@@ -353,9 +353,12 @@ func (h *Handler) findCoordinatorForGroup(groupID string) (host string, port int
 	if registry == nil {
 		// Fallback to current gateway if no registry available
 		gatewayAddr := h.GetGatewayAddress()
+		if gatewayAddr == "" {
+			return "", 0, 0, fmt.Errorf("no coordinator registry and no gateway address configured")
+		}
 		host, port, err := h.parseGatewayAddress(gatewayAddr)
 		if err != nil {
-			return "localhost", 9092, 1, nil
+			return "", 0, 0, fmt.Errorf("failed to parse gateway address: %w", err)
 		}
 		nodeID = 1
 		return host, port, nodeID, nil
@@ -386,13 +389,15 @@ func (h *Handler) handleCoordinatorAssignmentAsLeader(groupID string, registry C
 
 	// No coordinator exists, assign the requesting gateway (first-come-first-serve)
 	currentGateway := h.GetGatewayAddress()
+	if currentGateway == "" {
+		return "", 0, 0, fmt.Errorf("no gateway address configured for coordinator assignment")
+	}
 	assignment, err := registry.AssignCoordinator(groupID, currentGateway)
 	if err != nil {
-		// Fallback to current gateway
-		gatewayAddr := h.GetGatewayAddress()
-		host, port, err := h.parseGatewayAddress(gatewayAddr)
-		if err != nil {
-			return "localhost", 9092, 1, nil
+		// Fallback to current gateway on assignment error
+		host, port, parseErr := h.parseGatewayAddress(currentGateway)
+		if parseErr != nil {
+			return "", 0, 0, fmt.Errorf("failed to parse gateway address after assignment error: %w", parseErr)
 		}
 		nodeID = 1
 		return host, port, nodeID, nil
@@ -408,9 +413,12 @@ func (h *Handler) requestCoordinatorFromLeader(groupID string, registry Coordina
 	_, err = h.waitForLeader(registry, 10*time.Second) // 10 second timeout for enterprise clients
 	if err != nil {
 		gatewayAddr := h.GetGatewayAddress()
-		host, port, err := h.parseGatewayAddress(gatewayAddr)
-		if err != nil {
-			return "localhost", 9092, 1, nil
+		if gatewayAddr == "" {
+			return "", 0, 0, fmt.Errorf("failed to wait for leader and no gateway address configured: %w", err)
+		}
+		host, port, parseErr := h.parseGatewayAddress(gatewayAddr)
+		if parseErr != nil {
+			return "", 0, 0, fmt.Errorf("failed to parse gateway address after leader wait timeout: %w", parseErr)
 		}
 		nodeID = 1
 		return host, port, nodeID, nil
@@ -426,9 +434,12 @@ func (h *Handler) requestCoordinatorFromLeader(groupID string, registry Coordina
 	// use current gateway as fallback. In a full implementation, this would make
 	// an RPC call to the leader gateway.
 	gatewayAddr := h.GetGatewayAddress()
+	if gatewayAddr == "" {
+		return "", 0, 0, fmt.Errorf("no gateway address configured for fallback coordinator")
+	}
 	host, port, parseErr := h.parseGatewayAddress(gatewayAddr)
 	if parseErr != nil {
-		return "localhost", 9092, 1, nil
+		return "", 0, 0, fmt.Errorf("failed to parse gateway address for fallback: %w", parseErr)
 	}
 	nodeID = 1
 	return host, port, nodeID, nil

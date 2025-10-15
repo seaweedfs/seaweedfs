@@ -390,8 +390,9 @@ func (h *Handler) GetSMQBrokerAddresses() []string {
 		return h.smqBrokerAddresses
 	}
 
-	// Final fallback for testing
-	return []string{"localhost:17777"}
+	// No brokers configured - return empty slice
+	// This will cause proper error handling in callers
+	return []string{}
 }
 
 // GetGatewayAddress returns the current gateway address as a string (for coordinator registry)
@@ -399,8 +400,9 @@ func (h *Handler) GetGatewayAddress() string {
 	if h.gatewayAddress != "" {
 		return h.gatewayAddress
 	}
-	// Fallback for testing
-	return "localhost:9092"
+	// No gateway address configured - return empty string
+	// Callers should handle this as a configuration error
+	return ""
 }
 
 // SetGatewayAddress sets the gateway address for coordinator registry
