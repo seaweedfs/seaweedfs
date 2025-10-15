@@ -190,11 +190,6 @@ func (iam *IdentityAccessManagement) doesSignatureMatch(hashedPayload string, r 
 		return nil, s3err.ErrInvalidAccessKeyID
 	}
 
-	bucket, object := s3_constants.GetBucketAndObject(r)
-	canDoResult := identity.canDo(s3_constants.ACTION_WRITE, bucket, object)
-	if !canDoResult {
-		return nil, s3err.ErrAccessDenied
-	}
 
 	// Extract date, if not present throw error.
 	var dateStr string
@@ -331,11 +326,6 @@ func (iam *IdentityAccessManagement) doesPresignedSignatureMatch(hashedPayload s
 		return nil, s3err.ErrInvalidAccessKeyID
 	}
 
-	// Check permissions
-	bucket, object := s3_constants.GetBucketAndObject(r)
-	if !identity.canDo(s3_constants.ACTION_READ, bucket, object) {
-		return nil, s3err.ErrAccessDenied
-	}
 
 	// Parse date
 	t, e := time.Parse(iso8601Format, dateStr)
