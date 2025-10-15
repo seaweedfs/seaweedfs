@@ -2250,6 +2250,7 @@ type SubscribeMessageRequest struct {
 	//
 	//	*SubscribeMessageRequest_Init
 	//	*SubscribeMessageRequest_Ack
+	//	*SubscribeMessageRequest_Seek
 	Message       isSubscribeMessageRequest_Message `protobuf_oneof:"message"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2310,6 +2311,15 @@ func (x *SubscribeMessageRequest) GetAck() *SubscribeMessageRequest_AckMessage {
 	return nil
 }
 
+func (x *SubscribeMessageRequest) GetSeek() *SubscribeMessageRequest_SeekMessage {
+	if x != nil {
+		if x, ok := x.Message.(*SubscribeMessageRequest_Seek); ok {
+			return x.Seek
+		}
+	}
+	return nil
+}
+
 type isSubscribeMessageRequest_Message interface {
 	isSubscribeMessageRequest_Message()
 }
@@ -2322,9 +2332,15 @@ type SubscribeMessageRequest_Ack struct {
 	Ack *SubscribeMessageRequest_AckMessage `protobuf:"bytes,2,opt,name=ack,proto3,oneof"`
 }
 
+type SubscribeMessageRequest_Seek struct {
+	Seek *SubscribeMessageRequest_SeekMessage `protobuf:"bytes,3,opt,name=seek,proto3,oneof"`
+}
+
 func (*SubscribeMessageRequest_Init) isSubscribeMessageRequest_Message() {}
 
 func (*SubscribeMessageRequest_Ack) isSubscribeMessageRequest_Message() {}
+
+func (*SubscribeMessageRequest_Seek) isSubscribeMessageRequest_Message() {}
 
 type SubscribeMessageResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -3761,6 +3777,58 @@ func (x *SubscribeMessageRequest_AckMessage) GetKey() []byte {
 	return nil
 }
 
+type SubscribeMessageRequest_SeekMessage struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Offset        int64                  `protobuf:"varint,1,opt,name=offset,proto3" json:"offset,omitempty"`                                                     // New offset to seek to
+	OffsetType    schema_pb.OffsetType   `protobuf:"varint,2,opt,name=offset_type,json=offsetType,proto3,enum=schema_pb.OffsetType" json:"offset_type,omitempty"` // EXACT_OFFSET, RESET_TO_LATEST, etc.
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SubscribeMessageRequest_SeekMessage) Reset() {
+	*x = SubscribeMessageRequest_SeekMessage{}
+	mi := &file_mq_broker_proto_msgTypes[63]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SubscribeMessageRequest_SeekMessage) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SubscribeMessageRequest_SeekMessage) ProtoMessage() {}
+
+func (x *SubscribeMessageRequest_SeekMessage) ProtoReflect() protoreflect.Message {
+	mi := &file_mq_broker_proto_msgTypes[63]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SubscribeMessageRequest_SeekMessage.ProtoReflect.Descriptor instead.
+func (*SubscribeMessageRequest_SeekMessage) Descriptor() ([]byte, []int) {
+	return file_mq_broker_proto_rawDescGZIP(), []int{36, 2}
+}
+
+func (x *SubscribeMessageRequest_SeekMessage) GetOffset() int64 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+func (x *SubscribeMessageRequest_SeekMessage) GetOffsetType() schema_pb.OffsetType {
+	if x != nil {
+		return x.OffsetType
+	}
+	return schema_pb.OffsetType(0)
+}
+
 type SubscribeMessageResponse_SubscribeCtrlMessage struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Error         string                 `protobuf:"bytes,1,opt,name=error,proto3" json:"error,omitempty"`
@@ -3772,7 +3840,7 @@ type SubscribeMessageResponse_SubscribeCtrlMessage struct {
 
 func (x *SubscribeMessageResponse_SubscribeCtrlMessage) Reset() {
 	*x = SubscribeMessageResponse_SubscribeCtrlMessage{}
-	mi := &file_mq_broker_proto_msgTypes[63]
+	mi := &file_mq_broker_proto_msgTypes[64]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3784,7 +3852,7 @@ func (x *SubscribeMessageResponse_SubscribeCtrlMessage) String() string {
 func (*SubscribeMessageResponse_SubscribeCtrlMessage) ProtoMessage() {}
 
 func (x *SubscribeMessageResponse_SubscribeCtrlMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[63]
+	mi := &file_mq_broker_proto_msgTypes[64]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3832,7 +3900,7 @@ type SubscribeFollowMeRequest_InitMessage struct {
 
 func (x *SubscribeFollowMeRequest_InitMessage) Reset() {
 	*x = SubscribeFollowMeRequest_InitMessage{}
-	mi := &file_mq_broker_proto_msgTypes[64]
+	mi := &file_mq_broker_proto_msgTypes[65]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3844,7 +3912,7 @@ func (x *SubscribeFollowMeRequest_InitMessage) String() string {
 func (*SubscribeFollowMeRequest_InitMessage) ProtoMessage() {}
 
 func (x *SubscribeFollowMeRequest_InitMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[64]
+	mi := &file_mq_broker_proto_msgTypes[65]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3890,7 +3958,7 @@ type SubscribeFollowMeRequest_AckMessage struct {
 
 func (x *SubscribeFollowMeRequest_AckMessage) Reset() {
 	*x = SubscribeFollowMeRequest_AckMessage{}
-	mi := &file_mq_broker_proto_msgTypes[65]
+	mi := &file_mq_broker_proto_msgTypes[66]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3902,7 +3970,7 @@ func (x *SubscribeFollowMeRequest_AckMessage) String() string {
 func (*SubscribeFollowMeRequest_AckMessage) ProtoMessage() {}
 
 func (x *SubscribeFollowMeRequest_AckMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[65]
+	mi := &file_mq_broker_proto_msgTypes[66]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3933,7 +4001,7 @@ type SubscribeFollowMeRequest_CloseMessage struct {
 
 func (x *SubscribeFollowMeRequest_CloseMessage) Reset() {
 	*x = SubscribeFollowMeRequest_CloseMessage{}
-	mi := &file_mq_broker_proto_msgTypes[66]
+	mi := &file_mq_broker_proto_msgTypes[67]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3945,7 +4013,7 @@ func (x *SubscribeFollowMeRequest_CloseMessage) String() string {
 func (*SubscribeFollowMeRequest_CloseMessage) ProtoMessage() {}
 
 func (x *SubscribeFollowMeRequest_CloseMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_mq_broker_proto_msgTypes[66]
+	mi := &file_mq_broker_proto_msgTypes[67]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4144,10 +4212,11 @@ const file_mq_broker_proto_rawDesc = "" +
 	"\fCloseMessageB\t\n" +
 	"\amessage\"5\n" +
 	"\x17PublishFollowMeResponse\x12\x1a\n" +
-	"\tack_ts_ns\x18\x01 \x01(\x03R\aackTsNs\"\xf5\x04\n" +
+	"\tack_ts_ns\x18\x01 \x01(\x03R\aackTsNs\"\x9d\x06\n" +
 	"\x17SubscribeMessageRequest\x12G\n" +
 	"\x04init\x18\x01 \x01(\v21.messaging_pb.SubscribeMessageRequest.InitMessageH\x00R\x04init\x12D\n" +
-	"\x03ack\x18\x02 \x01(\v20.messaging_pb.SubscribeMessageRequest.AckMessageH\x00R\x03ack\x1a\x8a\x03\n" +
+	"\x03ack\x18\x02 \x01(\v20.messaging_pb.SubscribeMessageRequest.AckMessageH\x00R\x03ack\x12G\n" +
+	"\x04seek\x18\x03 \x01(\v21.messaging_pb.SubscribeMessageRequest.SeekMessageH\x00R\x04seek\x1a\x8a\x03\n" +
 	"\vInitMessage\x12%\n" +
 	"\x0econsumer_group\x18\x01 \x01(\tR\rconsumerGroup\x12\x1f\n" +
 	"\vconsumer_id\x18\x02 \x01(\tR\n" +
@@ -4164,7 +4233,11 @@ const file_mq_broker_proto_rawDesc = "" +
 	"\n" +
 	"AckMessage\x12\x13\n" +
 	"\x05ts_ns\x18\x01 \x01(\x03R\x04tsNs\x12\x10\n" +
-	"\x03key\x18\x02 \x01(\fR\x03keyB\t\n" +
+	"\x03key\x18\x02 \x01(\fR\x03key\x1a]\n" +
+	"\vSeekMessage\x12\x16\n" +
+	"\x06offset\x18\x01 \x01(\x03R\x06offset\x126\n" +
+	"\voffset_type\x18\x02 \x01(\x0e2\x15.schema_pb.OffsetTypeR\n" +
+	"offsetTypeB\t\n" +
 	"\amessage\"\xa7\x02\n" +
 	"\x18SubscribeMessageResponse\x12Q\n" +
 	"\x04ctrl\x18\x01 \x01(\v2;.messaging_pb.SubscribeMessageResponse.SubscribeCtrlMessageH\x00R\x04ctrl\x12/\n" +
@@ -4260,7 +4333,7 @@ func file_mq_broker_proto_rawDescGZIP() []byte {
 	return file_mq_broker_proto_rawDescData
 }
 
-var file_mq_broker_proto_msgTypes = make([]protoimpl.MessageInfo, 67)
+var file_mq_broker_proto_msgTypes = make([]protoimpl.MessageInfo, 68)
 var file_mq_broker_proto_goTypes = []any{
 	(*FindBrokerLeaderRequest)(nil),                                  // 0: messaging_pb.FindBrokerLeaderRequest
 	(*FindBrokerLeaderResponse)(nil),                                 // 1: messaging_pb.FindBrokerLeaderResponse
@@ -4325,47 +4398,48 @@ var file_mq_broker_proto_goTypes = []any{
 	(*PublishFollowMeRequest_CloseMessage)(nil),                      // 60: messaging_pb.PublishFollowMeRequest.CloseMessage
 	(*SubscribeMessageRequest_InitMessage)(nil),                      // 61: messaging_pb.SubscribeMessageRequest.InitMessage
 	(*SubscribeMessageRequest_AckMessage)(nil),                       // 62: messaging_pb.SubscribeMessageRequest.AckMessage
-	(*SubscribeMessageResponse_SubscribeCtrlMessage)(nil),            // 63: messaging_pb.SubscribeMessageResponse.SubscribeCtrlMessage
-	(*SubscribeFollowMeRequest_InitMessage)(nil),                     // 64: messaging_pb.SubscribeFollowMeRequest.InitMessage
-	(*SubscribeFollowMeRequest_AckMessage)(nil),                      // 65: messaging_pb.SubscribeFollowMeRequest.AckMessage
-	(*SubscribeFollowMeRequest_CloseMessage)(nil),                    // 66: messaging_pb.SubscribeFollowMeRequest.CloseMessage
-	(*schema_pb.Topic)(nil),                                          // 67: schema_pb.Topic
-	(*schema_pb.Partition)(nil),                                      // 68: schema_pb.Partition
-	(*schema_pb.RecordType)(nil),                                     // 69: schema_pb.RecordType
-	(*filer_pb.LogEntry)(nil),                                        // 70: filer_pb.LogEntry
-	(*schema_pb.PartitionOffset)(nil),                                // 71: schema_pb.PartitionOffset
-	(schema_pb.OffsetType)(0),                                        // 72: schema_pb.OffsetType
+	(*SubscribeMessageRequest_SeekMessage)(nil),                      // 63: messaging_pb.SubscribeMessageRequest.SeekMessage
+	(*SubscribeMessageResponse_SubscribeCtrlMessage)(nil),            // 64: messaging_pb.SubscribeMessageResponse.SubscribeCtrlMessage
+	(*SubscribeFollowMeRequest_InitMessage)(nil),                     // 65: messaging_pb.SubscribeFollowMeRequest.InitMessage
+	(*SubscribeFollowMeRequest_AckMessage)(nil),                      // 66: messaging_pb.SubscribeFollowMeRequest.AckMessage
+	(*SubscribeFollowMeRequest_CloseMessage)(nil),                    // 67: messaging_pb.SubscribeFollowMeRequest.CloseMessage
+	(*schema_pb.Topic)(nil),                                          // 68: schema_pb.Topic
+	(*schema_pb.Partition)(nil),                                      // 69: schema_pb.Partition
+	(*schema_pb.RecordType)(nil),                                     // 70: schema_pb.RecordType
+	(*filer_pb.LogEntry)(nil),                                        // 71: filer_pb.LogEntry
+	(*schema_pb.PartitionOffset)(nil),                                // 72: schema_pb.PartitionOffset
+	(schema_pb.OffsetType)(0),                                        // 73: schema_pb.OffsetType
 }
 var file_mq_broker_proto_depIdxs = []int32{
 	50, // 0: messaging_pb.BrokerStats.stats:type_name -> messaging_pb.BrokerStats.StatsEntry
-	67, // 1: messaging_pb.TopicPartitionStats.topic:type_name -> schema_pb.Topic
-	68, // 2: messaging_pb.TopicPartitionStats.partition:type_name -> schema_pb.Partition
+	68, // 1: messaging_pb.TopicPartitionStats.topic:type_name -> schema_pb.Topic
+	69, // 2: messaging_pb.TopicPartitionStats.partition:type_name -> schema_pb.Partition
 	51, // 3: messaging_pb.PublisherToPubBalancerRequest.init:type_name -> messaging_pb.PublisherToPubBalancerRequest.InitMessage
 	2,  // 4: messaging_pb.PublisherToPubBalancerRequest.stats:type_name -> messaging_pb.BrokerStats
-	67, // 5: messaging_pb.ConfigureTopicRequest.topic:type_name -> schema_pb.Topic
+	68, // 5: messaging_pb.ConfigureTopicRequest.topic:type_name -> schema_pb.Topic
 	8,  // 6: messaging_pb.ConfigureTopicRequest.retention:type_name -> messaging_pb.TopicRetention
-	69, // 7: messaging_pb.ConfigureTopicRequest.message_record_type:type_name -> schema_pb.RecordType
+	70, // 7: messaging_pb.ConfigureTopicRequest.message_record_type:type_name -> schema_pb.RecordType
 	17, // 8: messaging_pb.ConfigureTopicResponse.broker_partition_assignments:type_name -> messaging_pb.BrokerPartitionAssignment
 	8,  // 9: messaging_pb.ConfigureTopicResponse.retention:type_name -> messaging_pb.TopicRetention
-	69, // 10: messaging_pb.ConfigureTopicResponse.message_record_type:type_name -> schema_pb.RecordType
-	67, // 11: messaging_pb.ListTopicsResponse.topics:type_name -> schema_pb.Topic
-	67, // 12: messaging_pb.TopicExistsRequest.topic:type_name -> schema_pb.Topic
-	67, // 13: messaging_pb.LookupTopicBrokersRequest.topic:type_name -> schema_pb.Topic
-	67, // 14: messaging_pb.LookupTopicBrokersResponse.topic:type_name -> schema_pb.Topic
+	70, // 10: messaging_pb.ConfigureTopicResponse.message_record_type:type_name -> schema_pb.RecordType
+	68, // 11: messaging_pb.ListTopicsResponse.topics:type_name -> schema_pb.Topic
+	68, // 12: messaging_pb.TopicExistsRequest.topic:type_name -> schema_pb.Topic
+	68, // 13: messaging_pb.LookupTopicBrokersRequest.topic:type_name -> schema_pb.Topic
+	68, // 14: messaging_pb.LookupTopicBrokersResponse.topic:type_name -> schema_pb.Topic
 	17, // 15: messaging_pb.LookupTopicBrokersResponse.broker_partition_assignments:type_name -> messaging_pb.BrokerPartitionAssignment
-	68, // 16: messaging_pb.BrokerPartitionAssignment.partition:type_name -> schema_pb.Partition
-	67, // 17: messaging_pb.GetTopicConfigurationRequest.topic:type_name -> schema_pb.Topic
-	67, // 18: messaging_pb.GetTopicConfigurationResponse.topic:type_name -> schema_pb.Topic
+	69, // 16: messaging_pb.BrokerPartitionAssignment.partition:type_name -> schema_pb.Partition
+	68, // 17: messaging_pb.GetTopicConfigurationRequest.topic:type_name -> schema_pb.Topic
+	68, // 18: messaging_pb.GetTopicConfigurationResponse.topic:type_name -> schema_pb.Topic
 	17, // 19: messaging_pb.GetTopicConfigurationResponse.broker_partition_assignments:type_name -> messaging_pb.BrokerPartitionAssignment
 	8,  // 20: messaging_pb.GetTopicConfigurationResponse.retention:type_name -> messaging_pb.TopicRetention
-	69, // 21: messaging_pb.GetTopicConfigurationResponse.message_record_type:type_name -> schema_pb.RecordType
-	67, // 22: messaging_pb.GetTopicPublishersRequest.topic:type_name -> schema_pb.Topic
+	70, // 21: messaging_pb.GetTopicConfigurationResponse.message_record_type:type_name -> schema_pb.RecordType
+	68, // 22: messaging_pb.GetTopicPublishersRequest.topic:type_name -> schema_pb.Topic
 	24, // 23: messaging_pb.GetTopicPublishersResponse.publishers:type_name -> messaging_pb.TopicPublisher
-	67, // 24: messaging_pb.GetTopicSubscribersRequest.topic:type_name -> schema_pb.Topic
+	68, // 24: messaging_pb.GetTopicSubscribersRequest.topic:type_name -> schema_pb.Topic
 	25, // 25: messaging_pb.GetTopicSubscribersResponse.subscribers:type_name -> messaging_pb.TopicSubscriber
-	68, // 26: messaging_pb.TopicPublisher.partition:type_name -> schema_pb.Partition
-	68, // 27: messaging_pb.TopicSubscriber.partition:type_name -> schema_pb.Partition
-	67, // 28: messaging_pb.AssignTopicPartitionsRequest.topic:type_name -> schema_pb.Topic
+	69, // 26: messaging_pb.TopicPublisher.partition:type_name -> schema_pb.Partition
+	69, // 27: messaging_pb.TopicSubscriber.partition:type_name -> schema_pb.Partition
+	68, // 28: messaging_pb.AssignTopicPartitionsRequest.topic:type_name -> schema_pb.Topic
 	17, // 29: messaging_pb.AssignTopicPartitionsRequest.broker_partition_assignments:type_name -> messaging_pb.BrokerPartitionAssignment
 	52, // 30: messaging_pb.SubscriberToSubCoordinatorRequest.init:type_name -> messaging_pb.SubscriberToSubCoordinatorRequest.InitMessage
 	54, // 31: messaging_pb.SubscriberToSubCoordinatorRequest.ack_assignment:type_name -> messaging_pb.SubscriberToSubCoordinatorRequest.AckAssignmentMessage
@@ -4381,80 +4455,82 @@ var file_mq_broker_proto_depIdxs = []int32{
 	60, // 41: messaging_pb.PublishFollowMeRequest.close:type_name -> messaging_pb.PublishFollowMeRequest.CloseMessage
 	61, // 42: messaging_pb.SubscribeMessageRequest.init:type_name -> messaging_pb.SubscribeMessageRequest.InitMessage
 	62, // 43: messaging_pb.SubscribeMessageRequest.ack:type_name -> messaging_pb.SubscribeMessageRequest.AckMessage
-	63, // 44: messaging_pb.SubscribeMessageResponse.ctrl:type_name -> messaging_pb.SubscribeMessageResponse.SubscribeCtrlMessage
-	31, // 45: messaging_pb.SubscribeMessageResponse.data:type_name -> messaging_pb.DataMessage
-	64, // 46: messaging_pb.SubscribeFollowMeRequest.init:type_name -> messaging_pb.SubscribeFollowMeRequest.InitMessage
-	65, // 47: messaging_pb.SubscribeFollowMeRequest.ack:type_name -> messaging_pb.SubscribeFollowMeRequest.AckMessage
-	66, // 48: messaging_pb.SubscribeFollowMeRequest.close:type_name -> messaging_pb.SubscribeFollowMeRequest.CloseMessage
-	67, // 49: messaging_pb.ClosePublishersRequest.topic:type_name -> schema_pb.Topic
-	67, // 50: messaging_pb.CloseSubscribersRequest.topic:type_name -> schema_pb.Topic
-	67, // 51: messaging_pb.GetUnflushedMessagesRequest.topic:type_name -> schema_pb.Topic
-	68, // 52: messaging_pb.GetUnflushedMessagesRequest.partition:type_name -> schema_pb.Partition
-	70, // 53: messaging_pb.GetUnflushedMessagesResponse.message:type_name -> filer_pb.LogEntry
-	67, // 54: messaging_pb.GetPartitionRangeInfoRequest.topic:type_name -> schema_pb.Topic
-	68, // 55: messaging_pb.GetPartitionRangeInfoRequest.partition:type_name -> schema_pb.Partition
-	48, // 56: messaging_pb.GetPartitionRangeInfoResponse.offset_range:type_name -> messaging_pb.OffsetRangeInfo
-	49, // 57: messaging_pb.GetPartitionRangeInfoResponse.timestamp_range:type_name -> messaging_pb.TimestampRangeInfo
-	3,  // 58: messaging_pb.BrokerStats.StatsEntry.value:type_name -> messaging_pb.TopicPartitionStats
-	67, // 59: messaging_pb.SubscriberToSubCoordinatorRequest.InitMessage.topic:type_name -> schema_pb.Topic
-	68, // 60: messaging_pb.SubscriberToSubCoordinatorRequest.AckUnAssignmentMessage.partition:type_name -> schema_pb.Partition
-	68, // 61: messaging_pb.SubscriberToSubCoordinatorRequest.AckAssignmentMessage.partition:type_name -> schema_pb.Partition
-	17, // 62: messaging_pb.SubscriberToSubCoordinatorResponse.Assignment.partition_assignment:type_name -> messaging_pb.BrokerPartitionAssignment
-	68, // 63: messaging_pb.SubscriberToSubCoordinatorResponse.UnAssignment.partition:type_name -> schema_pb.Partition
-	67, // 64: messaging_pb.PublishMessageRequest.InitMessage.topic:type_name -> schema_pb.Topic
-	68, // 65: messaging_pb.PublishMessageRequest.InitMessage.partition:type_name -> schema_pb.Partition
-	67, // 66: messaging_pb.PublishFollowMeRequest.InitMessage.topic:type_name -> schema_pb.Topic
-	68, // 67: messaging_pb.PublishFollowMeRequest.InitMessage.partition:type_name -> schema_pb.Partition
-	67, // 68: messaging_pb.SubscribeMessageRequest.InitMessage.topic:type_name -> schema_pb.Topic
-	71, // 69: messaging_pb.SubscribeMessageRequest.InitMessage.partition_offset:type_name -> schema_pb.PartitionOffset
-	72, // 70: messaging_pb.SubscribeMessageRequest.InitMessage.offset_type:type_name -> schema_pb.OffsetType
-	67, // 71: messaging_pb.SubscribeFollowMeRequest.InitMessage.topic:type_name -> schema_pb.Topic
-	68, // 72: messaging_pb.SubscribeFollowMeRequest.InitMessage.partition:type_name -> schema_pb.Partition
-	0,  // 73: messaging_pb.SeaweedMessaging.FindBrokerLeader:input_type -> messaging_pb.FindBrokerLeaderRequest
-	4,  // 74: messaging_pb.SeaweedMessaging.PublisherToPubBalancer:input_type -> messaging_pb.PublisherToPubBalancerRequest
-	6,  // 75: messaging_pb.SeaweedMessaging.BalanceTopics:input_type -> messaging_pb.BalanceTopicsRequest
-	11, // 76: messaging_pb.SeaweedMessaging.ListTopics:input_type -> messaging_pb.ListTopicsRequest
-	13, // 77: messaging_pb.SeaweedMessaging.TopicExists:input_type -> messaging_pb.TopicExistsRequest
-	9,  // 78: messaging_pb.SeaweedMessaging.ConfigureTopic:input_type -> messaging_pb.ConfigureTopicRequest
-	15, // 79: messaging_pb.SeaweedMessaging.LookupTopicBrokers:input_type -> messaging_pb.LookupTopicBrokersRequest
-	18, // 80: messaging_pb.SeaweedMessaging.GetTopicConfiguration:input_type -> messaging_pb.GetTopicConfigurationRequest
-	20, // 81: messaging_pb.SeaweedMessaging.GetTopicPublishers:input_type -> messaging_pb.GetTopicPublishersRequest
-	22, // 82: messaging_pb.SeaweedMessaging.GetTopicSubscribers:input_type -> messaging_pb.GetTopicSubscribersRequest
-	26, // 83: messaging_pb.SeaweedMessaging.AssignTopicPartitions:input_type -> messaging_pb.AssignTopicPartitionsRequest
-	40, // 84: messaging_pb.SeaweedMessaging.ClosePublishers:input_type -> messaging_pb.ClosePublishersRequest
-	42, // 85: messaging_pb.SeaweedMessaging.CloseSubscribers:input_type -> messaging_pb.CloseSubscribersRequest
-	28, // 86: messaging_pb.SeaweedMessaging.SubscriberToSubCoordinator:input_type -> messaging_pb.SubscriberToSubCoordinatorRequest
-	32, // 87: messaging_pb.SeaweedMessaging.PublishMessage:input_type -> messaging_pb.PublishMessageRequest
-	36, // 88: messaging_pb.SeaweedMessaging.SubscribeMessage:input_type -> messaging_pb.SubscribeMessageRequest
-	34, // 89: messaging_pb.SeaweedMessaging.PublishFollowMe:input_type -> messaging_pb.PublishFollowMeRequest
-	38, // 90: messaging_pb.SeaweedMessaging.SubscribeFollowMe:input_type -> messaging_pb.SubscribeFollowMeRequest
-	44, // 91: messaging_pb.SeaweedMessaging.GetUnflushedMessages:input_type -> messaging_pb.GetUnflushedMessagesRequest
-	46, // 92: messaging_pb.SeaweedMessaging.GetPartitionRangeInfo:input_type -> messaging_pb.GetPartitionRangeInfoRequest
-	1,  // 93: messaging_pb.SeaweedMessaging.FindBrokerLeader:output_type -> messaging_pb.FindBrokerLeaderResponse
-	5,  // 94: messaging_pb.SeaweedMessaging.PublisherToPubBalancer:output_type -> messaging_pb.PublisherToPubBalancerResponse
-	7,  // 95: messaging_pb.SeaweedMessaging.BalanceTopics:output_type -> messaging_pb.BalanceTopicsResponse
-	12, // 96: messaging_pb.SeaweedMessaging.ListTopics:output_type -> messaging_pb.ListTopicsResponse
-	14, // 97: messaging_pb.SeaweedMessaging.TopicExists:output_type -> messaging_pb.TopicExistsResponse
-	10, // 98: messaging_pb.SeaweedMessaging.ConfigureTopic:output_type -> messaging_pb.ConfigureTopicResponse
-	16, // 99: messaging_pb.SeaweedMessaging.LookupTopicBrokers:output_type -> messaging_pb.LookupTopicBrokersResponse
-	19, // 100: messaging_pb.SeaweedMessaging.GetTopicConfiguration:output_type -> messaging_pb.GetTopicConfigurationResponse
-	21, // 101: messaging_pb.SeaweedMessaging.GetTopicPublishers:output_type -> messaging_pb.GetTopicPublishersResponse
-	23, // 102: messaging_pb.SeaweedMessaging.GetTopicSubscribers:output_type -> messaging_pb.GetTopicSubscribersResponse
-	27, // 103: messaging_pb.SeaweedMessaging.AssignTopicPartitions:output_type -> messaging_pb.AssignTopicPartitionsResponse
-	41, // 104: messaging_pb.SeaweedMessaging.ClosePublishers:output_type -> messaging_pb.ClosePublishersResponse
-	43, // 105: messaging_pb.SeaweedMessaging.CloseSubscribers:output_type -> messaging_pb.CloseSubscribersResponse
-	29, // 106: messaging_pb.SeaweedMessaging.SubscriberToSubCoordinator:output_type -> messaging_pb.SubscriberToSubCoordinatorResponse
-	33, // 107: messaging_pb.SeaweedMessaging.PublishMessage:output_type -> messaging_pb.PublishMessageResponse
-	37, // 108: messaging_pb.SeaweedMessaging.SubscribeMessage:output_type -> messaging_pb.SubscribeMessageResponse
-	35, // 109: messaging_pb.SeaweedMessaging.PublishFollowMe:output_type -> messaging_pb.PublishFollowMeResponse
-	39, // 110: messaging_pb.SeaweedMessaging.SubscribeFollowMe:output_type -> messaging_pb.SubscribeFollowMeResponse
-	45, // 111: messaging_pb.SeaweedMessaging.GetUnflushedMessages:output_type -> messaging_pb.GetUnflushedMessagesResponse
-	47, // 112: messaging_pb.SeaweedMessaging.GetPartitionRangeInfo:output_type -> messaging_pb.GetPartitionRangeInfoResponse
-	93, // [93:113] is the sub-list for method output_type
-	73, // [73:93] is the sub-list for method input_type
-	73, // [73:73] is the sub-list for extension type_name
-	73, // [73:73] is the sub-list for extension extendee
-	0,  // [0:73] is the sub-list for field type_name
+	63, // 44: messaging_pb.SubscribeMessageRequest.seek:type_name -> messaging_pb.SubscribeMessageRequest.SeekMessage
+	64, // 45: messaging_pb.SubscribeMessageResponse.ctrl:type_name -> messaging_pb.SubscribeMessageResponse.SubscribeCtrlMessage
+	31, // 46: messaging_pb.SubscribeMessageResponse.data:type_name -> messaging_pb.DataMessage
+	65, // 47: messaging_pb.SubscribeFollowMeRequest.init:type_name -> messaging_pb.SubscribeFollowMeRequest.InitMessage
+	66, // 48: messaging_pb.SubscribeFollowMeRequest.ack:type_name -> messaging_pb.SubscribeFollowMeRequest.AckMessage
+	67, // 49: messaging_pb.SubscribeFollowMeRequest.close:type_name -> messaging_pb.SubscribeFollowMeRequest.CloseMessage
+	68, // 50: messaging_pb.ClosePublishersRequest.topic:type_name -> schema_pb.Topic
+	68, // 51: messaging_pb.CloseSubscribersRequest.topic:type_name -> schema_pb.Topic
+	68, // 52: messaging_pb.GetUnflushedMessagesRequest.topic:type_name -> schema_pb.Topic
+	69, // 53: messaging_pb.GetUnflushedMessagesRequest.partition:type_name -> schema_pb.Partition
+	71, // 54: messaging_pb.GetUnflushedMessagesResponse.message:type_name -> filer_pb.LogEntry
+	68, // 55: messaging_pb.GetPartitionRangeInfoRequest.topic:type_name -> schema_pb.Topic
+	69, // 56: messaging_pb.GetPartitionRangeInfoRequest.partition:type_name -> schema_pb.Partition
+	48, // 57: messaging_pb.GetPartitionRangeInfoResponse.offset_range:type_name -> messaging_pb.OffsetRangeInfo
+	49, // 58: messaging_pb.GetPartitionRangeInfoResponse.timestamp_range:type_name -> messaging_pb.TimestampRangeInfo
+	3,  // 59: messaging_pb.BrokerStats.StatsEntry.value:type_name -> messaging_pb.TopicPartitionStats
+	68, // 60: messaging_pb.SubscriberToSubCoordinatorRequest.InitMessage.topic:type_name -> schema_pb.Topic
+	69, // 61: messaging_pb.SubscriberToSubCoordinatorRequest.AckUnAssignmentMessage.partition:type_name -> schema_pb.Partition
+	69, // 62: messaging_pb.SubscriberToSubCoordinatorRequest.AckAssignmentMessage.partition:type_name -> schema_pb.Partition
+	17, // 63: messaging_pb.SubscriberToSubCoordinatorResponse.Assignment.partition_assignment:type_name -> messaging_pb.BrokerPartitionAssignment
+	69, // 64: messaging_pb.SubscriberToSubCoordinatorResponse.UnAssignment.partition:type_name -> schema_pb.Partition
+	68, // 65: messaging_pb.PublishMessageRequest.InitMessage.topic:type_name -> schema_pb.Topic
+	69, // 66: messaging_pb.PublishMessageRequest.InitMessage.partition:type_name -> schema_pb.Partition
+	68, // 67: messaging_pb.PublishFollowMeRequest.InitMessage.topic:type_name -> schema_pb.Topic
+	69, // 68: messaging_pb.PublishFollowMeRequest.InitMessage.partition:type_name -> schema_pb.Partition
+	68, // 69: messaging_pb.SubscribeMessageRequest.InitMessage.topic:type_name -> schema_pb.Topic
+	72, // 70: messaging_pb.SubscribeMessageRequest.InitMessage.partition_offset:type_name -> schema_pb.PartitionOffset
+	73, // 71: messaging_pb.SubscribeMessageRequest.InitMessage.offset_type:type_name -> schema_pb.OffsetType
+	73, // 72: messaging_pb.SubscribeMessageRequest.SeekMessage.offset_type:type_name -> schema_pb.OffsetType
+	68, // 73: messaging_pb.SubscribeFollowMeRequest.InitMessage.topic:type_name -> schema_pb.Topic
+	69, // 74: messaging_pb.SubscribeFollowMeRequest.InitMessage.partition:type_name -> schema_pb.Partition
+	0,  // 75: messaging_pb.SeaweedMessaging.FindBrokerLeader:input_type -> messaging_pb.FindBrokerLeaderRequest
+	4,  // 76: messaging_pb.SeaweedMessaging.PublisherToPubBalancer:input_type -> messaging_pb.PublisherToPubBalancerRequest
+	6,  // 77: messaging_pb.SeaweedMessaging.BalanceTopics:input_type -> messaging_pb.BalanceTopicsRequest
+	11, // 78: messaging_pb.SeaweedMessaging.ListTopics:input_type -> messaging_pb.ListTopicsRequest
+	13, // 79: messaging_pb.SeaweedMessaging.TopicExists:input_type -> messaging_pb.TopicExistsRequest
+	9,  // 80: messaging_pb.SeaweedMessaging.ConfigureTopic:input_type -> messaging_pb.ConfigureTopicRequest
+	15, // 81: messaging_pb.SeaweedMessaging.LookupTopicBrokers:input_type -> messaging_pb.LookupTopicBrokersRequest
+	18, // 82: messaging_pb.SeaweedMessaging.GetTopicConfiguration:input_type -> messaging_pb.GetTopicConfigurationRequest
+	20, // 83: messaging_pb.SeaweedMessaging.GetTopicPublishers:input_type -> messaging_pb.GetTopicPublishersRequest
+	22, // 84: messaging_pb.SeaweedMessaging.GetTopicSubscribers:input_type -> messaging_pb.GetTopicSubscribersRequest
+	26, // 85: messaging_pb.SeaweedMessaging.AssignTopicPartitions:input_type -> messaging_pb.AssignTopicPartitionsRequest
+	40, // 86: messaging_pb.SeaweedMessaging.ClosePublishers:input_type -> messaging_pb.ClosePublishersRequest
+	42, // 87: messaging_pb.SeaweedMessaging.CloseSubscribers:input_type -> messaging_pb.CloseSubscribersRequest
+	28, // 88: messaging_pb.SeaweedMessaging.SubscriberToSubCoordinator:input_type -> messaging_pb.SubscriberToSubCoordinatorRequest
+	32, // 89: messaging_pb.SeaweedMessaging.PublishMessage:input_type -> messaging_pb.PublishMessageRequest
+	36, // 90: messaging_pb.SeaweedMessaging.SubscribeMessage:input_type -> messaging_pb.SubscribeMessageRequest
+	34, // 91: messaging_pb.SeaweedMessaging.PublishFollowMe:input_type -> messaging_pb.PublishFollowMeRequest
+	38, // 92: messaging_pb.SeaweedMessaging.SubscribeFollowMe:input_type -> messaging_pb.SubscribeFollowMeRequest
+	44, // 93: messaging_pb.SeaweedMessaging.GetUnflushedMessages:input_type -> messaging_pb.GetUnflushedMessagesRequest
+	46, // 94: messaging_pb.SeaweedMessaging.GetPartitionRangeInfo:input_type -> messaging_pb.GetPartitionRangeInfoRequest
+	1,  // 95: messaging_pb.SeaweedMessaging.FindBrokerLeader:output_type -> messaging_pb.FindBrokerLeaderResponse
+	5,  // 96: messaging_pb.SeaweedMessaging.PublisherToPubBalancer:output_type -> messaging_pb.PublisherToPubBalancerResponse
+	7,  // 97: messaging_pb.SeaweedMessaging.BalanceTopics:output_type -> messaging_pb.BalanceTopicsResponse
+	12, // 98: messaging_pb.SeaweedMessaging.ListTopics:output_type -> messaging_pb.ListTopicsResponse
+	14, // 99: messaging_pb.SeaweedMessaging.TopicExists:output_type -> messaging_pb.TopicExistsResponse
+	10, // 100: messaging_pb.SeaweedMessaging.ConfigureTopic:output_type -> messaging_pb.ConfigureTopicResponse
+	16, // 101: messaging_pb.SeaweedMessaging.LookupTopicBrokers:output_type -> messaging_pb.LookupTopicBrokersResponse
+	19, // 102: messaging_pb.SeaweedMessaging.GetTopicConfiguration:output_type -> messaging_pb.GetTopicConfigurationResponse
+	21, // 103: messaging_pb.SeaweedMessaging.GetTopicPublishers:output_type -> messaging_pb.GetTopicPublishersResponse
+	23, // 104: messaging_pb.SeaweedMessaging.GetTopicSubscribers:output_type -> messaging_pb.GetTopicSubscribersResponse
+	27, // 105: messaging_pb.SeaweedMessaging.AssignTopicPartitions:output_type -> messaging_pb.AssignTopicPartitionsResponse
+	41, // 106: messaging_pb.SeaweedMessaging.ClosePublishers:output_type -> messaging_pb.ClosePublishersResponse
+	43, // 107: messaging_pb.SeaweedMessaging.CloseSubscribers:output_type -> messaging_pb.CloseSubscribersResponse
+	29, // 108: messaging_pb.SeaweedMessaging.SubscriberToSubCoordinator:output_type -> messaging_pb.SubscriberToSubCoordinatorResponse
+	33, // 109: messaging_pb.SeaweedMessaging.PublishMessage:output_type -> messaging_pb.PublishMessageResponse
+	37, // 110: messaging_pb.SeaweedMessaging.SubscribeMessage:output_type -> messaging_pb.SubscribeMessageResponse
+	35, // 111: messaging_pb.SeaweedMessaging.PublishFollowMe:output_type -> messaging_pb.PublishFollowMeResponse
+	39, // 112: messaging_pb.SeaweedMessaging.SubscribeFollowMe:output_type -> messaging_pb.SubscribeFollowMeResponse
+	45, // 113: messaging_pb.SeaweedMessaging.GetUnflushedMessages:output_type -> messaging_pb.GetUnflushedMessagesResponse
+	47, // 114: messaging_pb.SeaweedMessaging.GetPartitionRangeInfo:output_type -> messaging_pb.GetPartitionRangeInfoResponse
+	95, // [95:115] is the sub-list for method output_type
+	75, // [75:95] is the sub-list for method input_type
+	75, // [75:75] is the sub-list for extension type_name
+	75, // [75:75] is the sub-list for extension extendee
+	0,  // [0:75] is the sub-list for field type_name
 }
 
 func init() { file_mq_broker_proto_init() }
@@ -4488,6 +4564,7 @@ func file_mq_broker_proto_init() {
 	file_mq_broker_proto_msgTypes[36].OneofWrappers = []any{
 		(*SubscribeMessageRequest_Init)(nil),
 		(*SubscribeMessageRequest_Ack)(nil),
+		(*SubscribeMessageRequest_Seek)(nil),
 	}
 	file_mq_broker_proto_msgTypes[37].OneofWrappers = []any{
 		(*SubscribeMessageResponse_Ctrl)(nil),
@@ -4504,7 +4581,7 @@ func file_mq_broker_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_mq_broker_proto_rawDesc), len(file_mq_broker_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   67,
+			NumMessages:   68,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -329,9 +329,14 @@ message SubscribeMessageRequest {
         int64 ts_ns = 1;  // Timestamp in nanoseconds for acknowledgment tracking
         bytes key = 2;
     }
+    message SeekMessage {
+        int64 offset = 1;  // New offset to seek to
+        schema_pb.OffsetType offset_type = 2;  // EXACT_OFFSET, RESET_TO_LATEST, etc.
+    }
     oneof message {
         InitMessage init = 1;
         AckMessage ack = 2;
+        SeekMessage seek = 3;
     }
 }
 message SubscribeMessageResponse {

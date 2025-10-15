@@ -113,25 +113,25 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 		}
 		session.mu.Unlock()
 
-		// Decision logic:
-		// 1. Forward read (startOffset >= currentOffset): Always reuse - ReadRecordsFromOffset will handle it
-		// 2. Backward read with cache hit: Reuse - ReadRecordsFromOffset will serve from cache
-		// 3. Backward read without cache: Reuse if gap is small, let ReadRecordsFromOffset handle recreation
-		//    This prevents GetOrCreateSubscriber from constantly recreating sessions for small offsets
+		// With seekable broker: Always reuse existing session
+		// Any offset mismatch will be handled by FetchRecords via SeekMessage
+		// This includes:
+		// 1. Forward read: Natural continuation
+		// 2. Backward read with cache hit: Serve from cache
+		// 3. Backward read without cache: Send seek message to broker
+		// No need for stream recreation - broker repositions internally
 
-		if startOffset >= currentOffset || canUseCache {
-			// Can read forward OR offset is in cache - reuse session
-			bc.subscribersLock.RUnlock()
-			glog.V(2).Infof("[FETCH] Reusing existing session for %s: session at %d, requested %d (forward or cached)",
-				key, currentOffset, startOffset)
-			return session, nil
-		}
-
-		// Backward seek, not in cache
-		// Let ReadRecordsFromOffset handle the recreation decision based on the actual read context
 		bc.subscribersLock.RUnlock()
-		glog.V(2).Infof("[FETCH] Reusing session for %s: session at %d, requested %d (will handle in ReadRecordsFromOffset)",
-			key, currentOffset, startOffset)
+		if canUseCache {
+			glog.V(2).Infof("[FETCH] Reusing session for %s: session at %d, requested %d (cached)",
+				key, currentOffset, startOffset)
+		} else if startOffset >= currentOffset {
+			glog.V(2).Infof("[FETCH] Reusing session for %s: session at %d, requested %d (forward read)",
+				key, currentOffset, startOffset)
+		} else {
+			glog.V(2).Infof("[FETCH] Reusing session for %s: session at %d, requested %d (will seek backward)",
+				key, currentOffset, startOffset)
+		}
 		return session, nil
 	}
 
@@ -143,32 +143,16 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 	bc.subscribersLock.Lock()
 	defer bc.subscribersLock.Unlock()
 
-	// CRITICAL FIX: Double-check if session exists AND verify it's at the right offset
-	// This can happen if another thread created a session while we were acquiring the lock
-	// (only possible in the non-recreation path where we released the read lock)
+	// Double-check if session was created by another thread while we were acquiring the lock
 	if session, exists := bc.subscribers[key]; exists {
+		// With seekable broker, always reuse existing session
+		// FetchRecords will handle any offset mismatch via seek
 		session.mu.Lock()
 		existingOffset := session.StartOffset
 		session.mu.Unlock()
 
-		// Only reuse if the session is at or before the requested offset
-		if existingOffset <= startOffset {
-			glog.V(1).Infof("[FETCH] Session already exists at offset %d (requested %d), reusing", existingOffset, startOffset)
-			return session, nil
-		}
-
-		// Session is at wrong offset - must recreate
-		glog.V(2).Infof("[FETCH] Session exists at wrong offset %d (requested %d), recreating", existingOffset, startOffset)
-		// CRITICAL: Hold session lock while cancelling to prevent race with active Recv() calls
-		session.mu.Lock()
-		if session.Stream != nil {
-			_ = session.Stream.CloseSend()
-		}
-		if session.Cancel != nil {
-			session.Cancel()
-		}
-		session.mu.Unlock()
-		delete(bc.subscribers, key)
+		glog.V(1).Infof("[FETCH] Session created concurrently at offset %d (requested %d), reusing", existingOffset, startOffset)
+		return session, nil
 	}
 
 	// Use BrokerClient's context so subscribers are automatically cancelled when connection closes
@@ -273,148 +257,55 @@ func (bc *BrokerClient) ReadRecordsFromOffset(ctx context.Context, session *Brok
 		}
 	}
 
-	// CRITICAL: Get the current offset atomically before making recreation decision
-	// We need to unlock first (lock acquired at line 257) then re-acquire for atomic read
+	// Get the current offset atomically for comparison
 	currentStartOffset := session.StartOffset
 	session.mu.Unlock()
 
-	// CRITICAL FIX for Schema Registry: Keep subscriber alive across multiple fetch requests
-	// Schema Registry expects to make multiple poll() calls on the same consumer connection
+	// With seekable broker: Keep subscriber alive across all requests
+	// Schema Registry and other clients expect persistent consumer connections
 	//
-	// Three scenarios:
-	// 1. requestedOffset < session.StartOffset: Need to seek backward (recreate)
-	// 2. requestedOffset == session.StartOffset: Continue reading (use existing)
-	// 3. requestedOffset > session.StartOffset: Continue reading forward (use existing)
+	// Three scenarios, all handled via seek:
+	// 1. requestedOffset < session.StartOffset: Send seek message (backward)
+	// 2. requestedOffset == session.StartOffset: Continue reading (no seek needed)
+	// 3. requestedOffset > session.StartOffset: Send seek message (forward)
 	//
-	// The session will naturally advance as records are consumed, so we should NOT
-	// recreate it just because requestedOffset != session.StartOffset
-
-	// OPTIMIZATION: Only recreate for EXTREMELY LARGE backward seeks (>1000000 offsets back)
-	// Most backward seeks should be served from cache or tolerated as forward reads
-	// This prevents creating zombie streams that never get cleaned up on the broker
-	// gRPC's stream.Recv() NEVER unblocks when streams are cancelled, leaving goroutines
-	// orphaned forever. Each recreation leaves 2 goroutines (first record + loop) blocked.
-	// With 14K recreations, that's 28K leaked goroutines. Solution: almost never recreate.
-	const maxBackwardGap = 1000000
-	offsetGap := currentStartOffset - requestedOffset
-
-	if requestedOffset < currentStartOffset && offsetGap > maxBackwardGap {
-		// Need to seek backward significantly - close old session and create a fresh subscriber
-		// Restarting an existing stream doesn't work reliably because the broker may still
-		// have old data buffered in the stream pipeline
-		glog.V(2).Infof("[FETCH] Seeking backward significantly: requested=%d < session=%d (gap=%d), creating fresh subscriber",
-			requestedOffset, currentStartOffset, offsetGap)
-
-		// Extract session details (note: session.mu was already unlocked at line 294)
-		topic := session.Topic
-		partition := session.Partition
-		consumerGroup := session.ConsumerGroup
-		consumerID := session.ConsumerID
-		key := session.Key()
-
-		// CRITICAL FIX: Acquire the global lock FIRST, then re-check the session offset
-		// This prevents multiple threads from all deciding to recreate based on stale data
-		glog.V(2).Infof("[FETCH] 🔒 Thread acquiring global lock to recreate session %s: requested=%d", key, requestedOffset)
-		bc.subscribersLock.Lock()
-		glog.V(2).Infof("[FETCH] 🔓 Thread acquired global lock for session %s: requested=%d", key, requestedOffset)
-
-		// Double-check if another thread already recreated the session at the desired offset
-		// This prevents multiple concurrent threads from all trying to recreate the same session
-		if existingSession, exists := bc.subscribers[key]; exists {
-			existingSession.mu.Lock()
-			existingOffset := existingSession.StartOffset
-			existingSession.mu.Unlock()
-
-			// Check if the session was already recreated at (or before) the requested offset
-			if existingOffset <= requestedOffset {
-				bc.subscribersLock.Unlock()
-				glog.V(2).Infof("[FETCH] Session %s already recreated by another thread at offset %d (requested %d) - reusing", key, existingOffset, requestedOffset)
-				// Re-acquire the existing session and continue
-				return bc.ReadRecordsFromOffset(ctx, existingSession, requestedOffset, maxRecords)
-			}
-
-			glog.V(2).Infof("[FETCH] Session %s still at wrong offset %d (requested %d) - must recreate", key, existingOffset, requestedOffset)
-
-			// Session still needs recreation - close it
-			// CRITICAL: Hold session lock while cancelling to prevent race with active Recv() calls
-			existingSession.mu.Lock()
-			if existingSession.Stream != nil {
-				_ = existingSession.Stream.CloseSend()
-			}
-			if existingSession.Cancel != nil {
-				existingSession.Cancel()
-			}
-			existingSession.mu.Unlock()
-			delete(bc.subscribers, key)
-			glog.V(2).Infof("[FETCH] Closed old subscriber session for backward seek: %s (was at offset %d, need offset %d)", key, existingOffset, requestedOffset)
-		}
-		// CRITICAL FIX: Don't unlock here! Keep holding the lock while we create the new session
-		// to prevent other threads from interfering. We'll create the session inline.
-		// bc.subscribersLock.Unlock() - REMOVED to fix race condition
-
-		// Create a completely fresh subscriber at the requested offset
-		// INLINE SESSION CREATION to hold the lock continuously
-		glog.V(1).Infof("[FETCH] Creating inline subscriber session while holding lock: %s at offset %d", key, requestedOffset)
-		subscriberCtx, subscriberCancel := context.WithCancel(bc.ctx)
-
-		stream, err := bc.client.SubscribeMessage(subscriberCtx)
-		if err != nil {
-			bc.subscribersLock.Unlock()
-			return nil, fmt.Errorf("failed to create subscribe stream: %v", err)
+	// The stream persists for the entire consumer session - no recreation needed
+	if requestedOffset != currentStartOffset {
+		offsetDiff := requestedOffset - currentStartOffset
+		seekDirection := "forward"
+		if offsetDiff < 0 {
+			seekDirection = "backward"
 		}
 
-		// Get the actual partition assignment from the broker
-		actualPartition, err := bc.getActualPartitionAssignment(topic, partition)
-		if err != nil {
-			bc.subscribersLock.Unlock()
-			_ = stream.CloseSend()
-			return nil, fmt.Errorf("failed to get actual partition assignment for subscribe: %v", err)
+		glog.V(2).Infof("[FETCH] Offset mismatch: %s seek from %d to %d (diff=%d)",
+			seekDirection, currentStartOffset, requestedOffset, offsetDiff)
+
+		// Send seek message to reposition stream
+		seekMsg := &mq_pb.SubscribeMessageRequest{
+			Message: &mq_pb.SubscribeMessageRequest_Seek{
+				Seek: &mq_pb.SubscribeMessageRequest_SeekMessage{
+					Offset:     requestedOffset,
+					OffsetType: schema_pb.OffsetType_EXACT_OFFSET,
+				},
+			},
 		}
 
-		// Use EXACT_OFFSET to position subscriber at the exact Kafka offset
-		offsetType := schema_pb.OffsetType_EXACT_OFFSET
-
-		glog.V(2).Infof("[FETCH] Creating inline subscriber for backward seek: topic=%s partition=%d offset=%d",
-			topic, partition, requestedOffset)
-
-		glog.V(2).Infof("[SUBSCRIBE-INIT] ReadRecordsFromOffset (backward seek) sending init: topic=%s partition=%d startOffset=%d offsetType=%v consumerGroup=%s consumerID=%s",
-			topic, partition, requestedOffset, offsetType, consumerGroup, consumerID)
-
-		// Send init message using the actual partition structure
-		initReq := createSubscribeInitMessage(topic, actualPartition, requestedOffset, offsetType, consumerGroup, consumerID)
-		if err := stream.Send(initReq); err != nil {
-			bc.subscribersLock.Unlock()
-			_ = stream.CloseSend()
-			return nil, fmt.Errorf("failed to send subscribe init: %v", err)
+		if err := session.Stream.Send(seekMsg); err != nil {
+			return nil, fmt.Errorf("seek to offset %d failed: %v", requestedOffset, err)
 		}
 
-		newSession := &BrokerSubscriberSession{
-			Topic:         topic,
-			Partition:     partition,
-			Stream:        stream,
-			StartOffset:   requestedOffset,
-			ConsumerGroup: consumerGroup,
-			ConsumerID:    consumerID,
-			Ctx:           subscriberCtx,
-			Cancel:        subscriberCancel,
-		}
+		// Update session state after successful seek
+		session.mu.Lock()
+		session.StartOffset = requestedOffset
+		session.consumedRecords = nil // Clear cache after seek
+		session.mu.Unlock()
 
-		bc.subscribers[key] = newSession
-		bc.subscribersLock.Unlock()
-		glog.V(2).Infof("[FETCH] Created fresh subscriber session for backward seek: %s at offset %d", key, requestedOffset)
-
-		// Read from fresh subscriber
-		glog.V(2).Infof("[FETCH] Reading from fresh subscriber %s at offset %d (maxRecords=%d)", key, requestedOffset, maxRecords)
-		return bc.ReadRecords(ctx, newSession, maxRecords)
+		glog.V(2).Infof("[FETCH] Seek to offset %d successful", requestedOffset)
+	} else {
+		glog.V(2).Infof("[FETCH] Offset match: continuing from offset %d", requestedOffset)
 	}
 
-	// requestedOffset >= session.StartOffset: Keep reading forward from existing session
-	// This handles:
-	// - Exact match (requestedOffset == session.StartOffset)
-	// - Reading ahead (requestedOffset > session.StartOffset, e.g., from cache)
-	glog.V(2).Infof("[FETCH] Using persistent session: requested=%d session=%d (persistent connection)",
-		requestedOffset, currentStartOffset)
-	// Note: session.mu was already unlocked at line 294 after reading currentStartOffset
+	// Read records from current position
 	return bc.ReadRecords(ctx, session, maxRecords)
 }
 
@@ -780,5 +671,121 @@ func (bc *BrokerClient) RestartSubscriber(session *BrokerSubscriberSession, newO
 	glog.V(2).Infof("[FETCH] Successfully restarted subscriber for %s[%d] at offset %d",
 		session.Topic, session.Partition, newOffset)
 
+	return nil
+}
+
+// Seek helper methods for BrokerSubscriberSession
+
+// SeekToOffset repositions the stream to read from a specific offset
+func (session *BrokerSubscriberSession) SeekToOffset(offset int64) error {
+	// Skip seek if already at the requested offset
+	session.mu.Lock()
+	currentOffset := session.StartOffset
+	session.mu.Unlock()
+	
+	if currentOffset == offset {
+		glog.V(2).Infof("[SEEK] Already at offset %d for %s[%d], skipping seek", offset, session.Topic, session.Partition)
+		return nil
+	}
+	
+	seekMsg := &mq_pb.SubscribeMessageRequest{
+		Message: &mq_pb.SubscribeMessageRequest_Seek{
+			Seek: &mq_pb.SubscribeMessageRequest_SeekMessage{
+				Offset:     offset,
+				OffsetType: schema_pb.OffsetType_EXACT_OFFSET,
+			},
+		},
+	}
+	
+	if err := session.Stream.Send(seekMsg); err != nil {
+		return fmt.Errorf("seek to offset %d failed: %v", offset, err)
+	}
+	
+	session.mu.Lock()
+	session.StartOffset = offset
+	session.consumedRecords = nil
+	session.mu.Unlock()
+	
+	glog.V(2).Infof("[SEEK] Seeked to offset %d for %s[%d]", offset, session.Topic, session.Partition)
+	return nil
+}
+
+// SeekToTimestamp repositions the stream to read from messages at or after a specific timestamp
+// timestamp is in nanoseconds since Unix epoch
+// Note: We don't skip this operation even if we think we're at the right position because
+// we can't easily determine the offset corresponding to a timestamp without querying the broker
+func (session *BrokerSubscriberSession) SeekToTimestamp(timestampNs int64) error {
+	seekMsg := &mq_pb.SubscribeMessageRequest{
+		Message: &mq_pb.SubscribeMessageRequest_Seek{
+			Seek: &mq_pb.SubscribeMessageRequest_SeekMessage{
+				Offset:     timestampNs,
+				OffsetType: schema_pb.OffsetType_EXACT_TS_NS,
+			},
+		},
+	}
+
+	if err := session.Stream.Send(seekMsg); err != nil {
+		return fmt.Errorf("seek to timestamp %d failed: %v", timestampNs, err)
+	}
+
+	session.mu.Lock()
+	// Note: We don't know the exact offset at this timestamp yet
+	// It will be updated when we read the first message
+	session.consumedRecords = nil
+	session.mu.Unlock()
+
+	glog.V(2).Infof("[SEEK] Seeked to timestamp %d for %s[%d]", timestampNs, session.Topic, session.Partition)
+	return nil
+}
+
+// SeekToEarliest repositions the stream to the beginning of the partition
+// Note: We don't skip this operation even if StartOffset == 0 because the broker
+// may have a different notion of "earliest" (e.g., after compaction or retention)
+func (session *BrokerSubscriberSession) SeekToEarliest() error {
+	seekMsg := &mq_pb.SubscribeMessageRequest{
+		Message: &mq_pb.SubscribeMessageRequest_Seek{
+			Seek: &mq_pb.SubscribeMessageRequest_SeekMessage{
+				Offset:     0,
+				OffsetType: schema_pb.OffsetType_RESET_TO_EARLIEST,
+			},
+		},
+	}
+
+	if err := session.Stream.Send(seekMsg); err != nil {
+		return fmt.Errorf("seek to earliest failed: %v", err)
+	}
+
+	session.mu.Lock()
+	session.StartOffset = 0
+	session.consumedRecords = nil
+	session.mu.Unlock()
+
+	glog.V(2).Infof("[SEEK] Seeked to earliest for %s[%d]", session.Topic, session.Partition)
+	return nil
+}
+
+// SeekToLatest repositions the stream to the end of the partition (next new message)
+// Note: We don't skip this operation because "latest" is a moving target and we can't
+// reliably determine if we're already at the latest position without querying the broker
+func (session *BrokerSubscriberSession) SeekToLatest() error {
+	seekMsg := &mq_pb.SubscribeMessageRequest{
+		Message: &mq_pb.SubscribeMessageRequest_Seek{
+			Seek: &mq_pb.SubscribeMessageRequest_SeekMessage{
+				Offset:     0,
+				OffsetType: schema_pb.OffsetType_RESET_TO_LATEST,
+			},
+		},
+	}
+
+	if err := session.Stream.Send(seekMsg); err != nil {
+		return fmt.Errorf("seek to latest failed: %v", err)
+	}
+
+	session.mu.Lock()
+	// Offset will be set when we read the first new message
+	session.consumedRecords = nil
+	session.mu.Unlock()
+
+	glog.V(2).Infof("[SEEK] Seeked to latest for %s[%d]", session.Topic, session.Partition)
 	return nil
 }
