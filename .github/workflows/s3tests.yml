@@ -37,8 +37,6 @@ jobs:
         run: |
           git clone https://github.com/ceph/s3-tests.git
           cd s3-tests
-          # Pin to a specific commit before the directory structure changed
-          git checkout 8ca5fe9a3c62d42cd9c96b3f6b99a37d14662379 || git checkout main
           pip install -r requirements.txt
           pip install tox
           pip install -e .
@@ -338,8 +336,6 @@ jobs:
         run: |
           git clone https://github.com/ceph/s3-tests.git
           cd s3-tests
-          # Pin to a specific commit before the directory structure changed
-          git checkout 8ca5fe9a3c62d42cd9c96b3f6b99a37d14662379 || git checkout main
           pip install -r requirements.txt
           pip install tox
           pip install -e .
@@ -508,8 +504,6 @@ jobs:
         run: |
           git clone https://github.com/ceph/s3-tests.git
           cd s3-tests
-          # Pin to a specific commit before the directory structure changed
-          git checkout 8ca5fe9a3c62d42cd9c96b3f6b99a37d14662379 || git checkout main
           pip install -r requirements.txt
           pip install tox
           pip install -e .
@@ -733,8 +727,6 @@ jobs:
         run: |
           git clone https://github.com/ceph/s3-tests.git
           cd s3-tests
-          # Pin to a specific commit before the directory structure changed
-          git checkout 8ca5fe9a3c62d42cd9c96b3f6b99a37d14662379 || git checkout main
           pip install -r requirements.txt
           pip install tox
           pip install -e .
