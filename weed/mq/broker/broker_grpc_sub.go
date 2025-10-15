@@ -230,60 +230,60 @@ subscribeLoop:
 				// After waking up, check if we should stop
 				return subscribeCtx.Err() == nil && isConnected
 			}, func(logEntry *filer_pb.LogEntry) (bool, error) {
-		// Wait for the message to be acknowledged with a timeout to prevent infinite loops
-		const maxWaitTime = 30 * time.Second
-		const checkInterval = 137 * time.Millisecond
-		startTime := time.Now()
+				// Wait for the message to be acknowledged with a timeout to prevent infinite loops
+				const maxWaitTime = 30 * time.Second
+				const checkInterval = 137 * time.Millisecond
+				startTime := time.Now()
 
-		for imt.IsInflight(logEntry.Key) {
-			// Check if we've exceeded the maximum wait time
-			if time.Since(startTime) > maxWaitTime {
-				glog.Warningf("Subscriber %s: message with key %s has been in-flight for more than %v, forcing acknowledgment",
-					clientName, string(logEntry.Key), maxWaitTime)
-				// Force remove the message from in-flight tracking to prevent infinite loop
-				imt.AcknowledgeMessage(logEntry.Key, logEntry.TsNs)
-				break
-			}
+				for imt.IsInflight(logEntry.Key) {
+					// Check if we've exceeded the maximum wait time
+					if time.Since(startTime) > maxWaitTime {
+						glog.Warningf("Subscriber %s: message with key %s has been in-flight for more than %v, forcing acknowledgment",
+							clientName, string(logEntry.Key), maxWaitTime)
+						// Force remove the message from in-flight tracking to prevent infinite loop
+						imt.AcknowledgeMessage(logEntry.Key, logEntry.TsNs)
+						break
+					}
 
-			time.Sleep(checkInterval)
+					time.Sleep(checkInterval)
 
-			// Check if the client has disconnected by monitoring the context
-			select {
-			case <-subscribeCtx.Done():
-				err := subscribeCtx.Err()
-				if err == context.Canceled {
-					// Subscribe cancelled (seek or disconnect)
-					return false, nil
+					// Check if the client has disconnected by monitoring the context
+					select {
+					case <-subscribeCtx.Done():
+						err := subscribeCtx.Err()
+						if err == context.Canceled {
+							// Subscribe cancelled (seek or disconnect)
+							return false, nil
+						}
+						glog.V(0).Infof("Subscriber %s disconnected: %v", clientName, err)
+						return false, nil
+					default:
+						// Continue processing the request
+					}
 				}
-				glog.V(0).Infof("Subscriber %s disconnected: %v", clientName, err)
+				if logEntry.Key != nil {
+					imt.EnflightMessage(logEntry.Key, logEntry.TsNs)
+				}
+
+				// Create the message to send
+				dataMsg := &mq_pb.DataMessage{
+					Key:   logEntry.Key,
+					Value: logEntry.Data,
+					TsNs:  logEntry.TsNs,
+				}
+
+				if err := stream.Send(&mq_pb.SubscribeMessageResponse{Message: &mq_pb.SubscribeMessageResponse_Data{
+					Data: dataMsg,
+				}}); err != nil {
+					glog.Errorf("Error sending data: %v", err)
+					return false, err
+				}
+
+				// Update received offset and last seen time for this subscriber
+				subscriber.UpdateReceivedOffset(logEntry.TsNs)
+
+				counter++
 				return false, nil
-			default:
-				// Continue processing the request
-			}
-		}
-		if logEntry.Key != nil {
-			imt.EnflightMessage(logEntry.Key, logEntry.TsNs)
-		}
-
-		// Create the message to send
-		dataMsg := &mq_pb.DataMessage{
-			Key:   logEntry.Key,
-			Value: logEntry.Data,
-			TsNs:  logEntry.TsNs,
-		}
-
-		if err := stream.Send(&mq_pb.SubscribeMessageResponse{Message: &mq_pb.SubscribeMessageResponse_Data{
-			Data: dataMsg,
-		}}); err != nil {
-			glog.Errorf("Error sending data: %v", err)
-			return false, err
-		}
-
-		// Update received offset and last seen time for this subscriber
-		subscriber.UpdateReceivedOffset(logEntry.TsNs)
-
-		counter++
-		return false, nil
 			})
 			subscribeDone <- subscribeErr
 		}()
@@ -303,24 +303,24 @@ subscribeLoop:
 			// Seek requested - cancel current Subscribe and restart from new offset
 			glog.V(0).Infof("Subscriber %s seeking from offset %d to offset %d (type %v)",
 				clientName, currentPosition.GetOffset(), seekMsg.Offset, seekMsg.OffsetType)
-			
+
 			// Cancel current Subscribe iteration
 			subscribeCancel()
-			
+
 			// Wait for Subscribe to finish cancelling
 			<-subscribeDone
-			
+
 			// Update position for next iteration
 			currentPosition = b.getRequestPositionFromSeek(seekMsg)
 			glog.V(0).Infof("Subscriber %s restarting Subscribe from new offset %d", clientName, seekMsg.Offset)
-			
+
 			// Send acknowledgment that seek completed
 			stream.Send(&mq_pb.SubscribeMessageResponse{Message: &mq_pb.SubscribeMessageResponse_Ctrl{
 				Ctrl: &mq_pb.SubscribeMessageResponse_SubscribeCtrlMessage{
 					Error: "", // Empty error means success
 				},
 			}})
-			
+
 			// Loop will restart with new position
 		}
 	}

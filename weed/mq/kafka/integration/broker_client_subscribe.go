@@ -3,6 +3,7 @@ package integration
 import (
 	"context"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -248,8 +249,11 @@ func (bc *BrokerClient) ReadRecordsFromOffset(ctx context.Context, session *Brok
 				}
 				glog.V(2).Infof("[FETCH] Returning %d cached records for %s at offset %d (cache: %d-%d)",
 					endIdx-startIdx, session.Key(), requestedOffset, cacheStartOffset, cacheEndOffset)
+				// CRITICAL: Capture slice while holding lock to prevent race condition
+				// If we unlock before slicing, another goroutine could clear consumedRecords
+				result := session.consumedRecords[startIdx:endIdx]
 				session.mu.Unlock()
-				return session.consumedRecords[startIdx:endIdx], nil
+				return result, nil
 			}
 		} else {
 			glog.V(2).Infof("[FETCH] Cache miss for %s: requested=%d, cache=[%d-%d]",
@@ -291,6 +295,11 @@ func (bc *BrokerClient) ReadRecordsFromOffset(ctx context.Context, session *Brok
 		}
 
 		if err := session.Stream.Send(seekMsg); err != nil {
+			// Handle graceful shutdown: EOF means stream is closing
+			if err == io.EOF {
+				glog.V(2).Infof("[FETCH] Stream closing during seek to offset %d, returning empty", requestedOffset)
+				return []*SeaweedRecord{}, nil
+			}
 			return nil, fmt.Errorf("seek to offset %d failed: %v", requestedOffset, err)
 		}
 
@@ -363,7 +372,9 @@ func (bc *BrokerClient) ReadRecords(ctx context.Context, session *BrokerSubscrib
 			}
 
 			glog.V(2).Infof("[FETCH] Returning %d cached records from index %d to %d", endIdx-startIdx, startIdx, endIdx-1)
-			return session.consumedRecords[startIdx:endIdx], nil
+			// CRITICAL: Capture slice result while holding lock (defer will unlock after return)
+			result := session.consumedRecords[startIdx:endIdx]
+			return result, nil
 		}
 	}
 
@@ -438,6 +449,22 @@ func (bc *BrokerClient) ReadRecords(ctx context.Context, session *BrokerSubscrib
 			currentOffset++
 			glog.V(2).Infof("[FETCH] Received record: offset=%d, keyLen=%d, valueLen=%d",
 				record.Offset, len(record.Key), len(record.Value))
+
+			// CRITICAL: Auto-acknowledge first message immediately for Kafka gateway
+			// Kafka uses offset commits (not per-message acks) so we must ack to prevent
+			// broker from blocking on in-flight messages waiting for acks that will never come
+			ackMsg := &mq_pb.SubscribeMessageRequest{
+				Message: &mq_pb.SubscribeMessageRequest_Ack{
+					Ack: &mq_pb.SubscribeMessageRequest_AckMessage{
+						Key:  dataMsg.Key,
+						TsNs: dataMsg.TsNs,
+					},
+				},
+			}
+			if err := stream.Send(ackMsg); err != nil {
+				glog.V(2).Infof("[FETCH] Failed to send ack for first record offset %d: %v (continuing)", record.Offset, err)
+				// Don't fail the fetch if ack fails - continue reading
+			}
 		}
 
 	case <-ctx.Done():
@@ -518,6 +545,22 @@ func (bc *BrokerClient) ReadRecords(ctx context.Context, session *BrokerSubscrib
 
 				glog.V(2).Infof("[FETCH] Received record %d: offset=%d, keyLen=%d, valueLen=%d, readTime=%v",
 					len(records), record.Offset, len(record.Key), len(record.Value), readDuration)
+
+				// CRITICAL: Auto-acknowledge message immediately for Kafka gateway
+				// Kafka uses offset commits (not per-message acks) so we must ack to prevent
+				// broker from blocking on in-flight messages waiting for acks that will never come
+				ackMsg := &mq_pb.SubscribeMessageRequest{
+					Message: &mq_pb.SubscribeMessageRequest_Ack{
+						Ack: &mq_pb.SubscribeMessageRequest_AckMessage{
+							Key:  dataMsg.Key,
+							TsNs: dataMsg.TsNs,
+						},
+					},
+				}
+				if err := stream.Send(ackMsg); err != nil {
+					glog.V(2).Infof("[FETCH] Failed to send ack for offset %d: %v (continuing)", record.Offset, err)
+					// Don't fail the fetch if ack fails - continue reading
+				}
 			}
 
 		case <-ctx2.Done():
@@ -682,12 +725,12 @@ func (session *BrokerSubscriberSession) SeekToOffset(offset int64) error {
 	session.mu.Lock()
 	currentOffset := session.StartOffset
 	session.mu.Unlock()
-	
+
 	if currentOffset == offset {
 		glog.V(2).Infof("[SEEK] Already at offset %d for %s[%d], skipping seek", offset, session.Topic, session.Partition)
 		return nil
 	}
-	
+
 	seekMsg := &mq_pb.SubscribeMessageRequest{
 		Message: &mq_pb.SubscribeMessageRequest_Seek{
 			Seek: &mq_pb.SubscribeMessageRequest_SeekMessage{
@@ -696,16 +739,21 @@ func (session *BrokerSubscriberSession) SeekToOffset(offset int64) error {
 			},
 		},
 	}
-	
+
 	if err := session.Stream.Send(seekMsg); err != nil {
+		// Handle graceful shutdown
+		if err == io.EOF {
+			glog.V(2).Infof("[SEEK] Stream closing during seek to offset %d for %s[%d]", offset, session.Topic, session.Partition)
+			return nil // Not an error during shutdown
+		}
 		return fmt.Errorf("seek to offset %d failed: %v", offset, err)
 	}
-	
+
 	session.mu.Lock()
 	session.StartOffset = offset
 	session.consumedRecords = nil
 	session.mu.Unlock()
-	
+
 	glog.V(2).Infof("[SEEK] Seeked to offset %d for %s[%d]", offset, session.Topic, session.Partition)
 	return nil
 }
@@ -725,6 +773,11 @@ func (session *BrokerSubscriberSession) SeekToTimestamp(timestampNs int64) error
 	}
 
 	if err := session.Stream.Send(seekMsg); err != nil {
+		// Handle graceful shutdown
+		if err == io.EOF {
+			glog.V(2).Infof("[SEEK] Stream closing during seek to timestamp %d for %s[%d]", timestampNs, session.Topic, session.Partition)
+			return nil // Not an error during shutdown
+		}
 		return fmt.Errorf("seek to timestamp %d failed: %v", timestampNs, err)
 	}
 
@@ -752,6 +805,11 @@ func (session *BrokerSubscriberSession) SeekToEarliest() error {
 	}
 
 	if err := session.Stream.Send(seekMsg); err != nil {
+		// Handle graceful shutdown
+		if err == io.EOF {
+			glog.V(2).Infof("[SEEK] Stream closing during seek to earliest for %s[%d]", session.Topic, session.Partition)
+			return nil // Not an error during shutdown
+		}
 		return fmt.Errorf("seek to earliest failed: %v", err)
 	}
 
@@ -778,6 +836,11 @@ func (session *BrokerSubscriberSession) SeekToLatest() error {
 	}
 
 	if err := session.Stream.Send(seekMsg); err != nil {
+		// Handle graceful shutdown
+		if err == io.EOF {
+			glog.V(2).Infof("[SEEK] Stream closing during seek to latest for %s[%d]", session.Topic, session.Partition)
+			return nil // Not an error during shutdown
+		}
 		return fmt.Errorf("seek to latest failed: %v", err)
 	}
 
