@@ -169,10 +169,6 @@ func buildPathWithForwardedPrefix(forwardedPrefix, urlPath string) string {
 	return cleanedPath
 }
 
-// #####################################################################################
-// # The new centralized AWS Signature V4 verification logic begins here.
-// #####################################################################################
-
 // v4AuthInfo holds the parsed authentication data from a request,
 // whether it's from the Authorization header or presigned URL query parameters.
 type v4AuthInfo struct {
@@ -189,7 +185,6 @@ type v4AuthInfo struct {
 
 // verifyV4Signature is the single entry point for verifying any AWS Signature V4 request.
 // It handles standard requests, presigned URLs, and the seed signature for streaming uploads.
-// It returns the validated identity, the calculated signature (useful for streaming), and an error code.
 func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request) (identity *Identity, credential *Credential, calculatedSignature string, authInfo *v4AuthInfo, errCode s3err.ErrorCode) {
 	// 1. Extract authentication information from header or query parameters
 	authInfo, errCode = extractV4AuthInfo(r)
@@ -268,7 +263,7 @@ func calculateAndVerifySignature(secretKey, method, urlPath, queryStr string, ex
 	newSignature := getSignature(signingKey, stringToSign)
 
 	if !compareSignatureV4(newSignature, authInfo.Signature) {
-		glog.V(0).Infof("Signature mismatch. Details:\n- Canonical Request: %s\n- String to Sign: %s\n- Calculated Signature: %s\n- Provided Signature: %s",
+		glog.V(4).Infof("Signature mismatch. Details:\n- Canonical Request: %s\n- String to Sign: %s\n- Calculated Signature: %s\n- Provided Signature: %s",
 			canonicalRequest, stringToSign, newSignature, authInfo.Signature)
 		return "", s3err.ErrSignatureDoesNotMatch
 	}
@@ -276,8 +271,6 @@ func calculateAndVerifySignature(secretKey, method, urlPath, queryStr string, ex
 	return newSignature, s3err.ErrNone
 }
 
-// extractV4AuthInfo parses the http.Request to pull all AWS V4 auth details
-// from either the Authorization header or query parameters.
 func extractV4AuthInfo(r *http.Request) (*v4AuthInfo, s3err.ErrorCode) {
 	if isRequestPresignedSignatureV4(r) {
 		return extractV4AuthInfoFromQuery(r)
@@ -285,7 +278,6 @@ func extractV4AuthInfo(r *http.Request) (*v4AuthInfo, s3err.ErrorCode) {
 	return extractV4AuthInfoFromHeader(r)
 }
 
-// extractV4AuthInfoFromHeader parses the "Authorization" header for V4 signature details.
 func extractV4AuthInfoFromHeader(r *http.Request) (*v4AuthInfo, s3err.ErrorCode) {
 	authHeader := r.Header.Get("Authorization")
 	signV4Values, errCode := parseSignV4(authHeader)
@@ -327,7 +319,6 @@ func extractV4AuthInfoFromHeader(r *http.Request) (*v4AuthInfo, s3err.ErrorCode)
 	}, s3err.ErrNone
 }
 
-// extractV4AuthInfoFromQuery parses URL query parameters for presigned V4 signature details.
 func extractV4AuthInfoFromQuery(r *http.Request) (*v4AuthInfo, s3err.ErrorCode) {
 	query := r.URL.Query()
 
@@ -370,8 +361,6 @@ func extractV4AuthInfoFromQuery(r *http.Request) (*v4AuthInfo, s3err.ErrorCode) 
 	}, s3err.ErrNone
 }
 
-// getCanonicalQueryString returns the canonical query string for signature calculation.
-// For presigned requests, the signature is removed from the query parameters.
 func getCanonicalQueryString(r *http.Request, isPresigned bool) string {
 	var queryToEncode string
 	if !isPresigned {
@@ -384,7 +373,6 @@ func getCanonicalQueryString(r *http.Request, isPresigned bool) string {
 	return strings.Replace(queryToEncode, "+", "%20", -1)
 }
 
-// checkPresignedRequestExpiry checks if a presigned URL has expired.
 func checkPresignedRequestExpiry(r *http.Request, t time.Time) s3err.ErrorCode {
 	expiresStr := r.URL.Query().Get("X-Amz-Expires")
 	if expiresStr == "" {
@@ -401,25 +389,15 @@ func checkPresignedRequestExpiry(r *http.Request, t time.Time) s3err.ErrorCode {
 	return s3err.ErrNone
 }
 
-// #####################################################################################
-// # Simplified wrappers using the new centralized verification logic.
-// #####################################################################################
-
-// doesSignatureMatch verifies the request signature.
 func (iam *IdentityAccessManagement) doesSignatureMatch(r *http.Request) (*Identity, string, s3err.ErrorCode) {
 	identity, _, calculatedSignature, _, errCode := iam.verifyV4Signature(r)
 	return identity, calculatedSignature, errCode
 }
 
-// Simple implementation for presigned signature verification
 func (iam *IdentityAccessManagement) doesPresignedSignatureMatch(r *http.Request) (*Identity, string, s3err.ErrorCode) {
 	identity, _, calculatedSignature, _, errCode := iam.verifyV4Signature(r)
 	return identity, calculatedSignature, errCode
 }
-
-// #####################################################################################
-// # Remaining helper functions.
-// #####################################################################################
 
 // credentialHeader data type represents structured form of Credential
 // string from authorization header.

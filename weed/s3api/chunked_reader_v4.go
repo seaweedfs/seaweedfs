@@ -9,7 +9,7 @@ package s3api
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -53,13 +53,14 @@ func (iam *IdentityAccessManagement) calculateSeedSignature(r *http.Request) (id
 
 	// This check ensures we only proceed for streaming uploads.
 	switch authInfo.HashedPayload {
-	case streamingContentSHA256, streamingUnsignedPayload:
-		// Valid streaming payload.
+	case streamingContentSHA256:
+		glog.V(3).Infof("streaming content sha256")
+	case streamingUnsignedPayload:
+		glog.V(3).Infof("streaming unsigned payload")
 	default:
 		return nil, nil, "", "", "", time.Time{}, s3err.ErrContentSHA256Mismatch
 	}
 
-	// The `identity` object from `verifyV4Signature` contains the credential.
 	return identity, credential, calculatedSignature, authInfo.Region, authInfo.Service, authInfo.Date, s3err.ErrNone
 }
 
