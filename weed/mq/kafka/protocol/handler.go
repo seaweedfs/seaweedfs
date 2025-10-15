@@ -1248,7 +1248,7 @@ func (h *Handler) HandleMetadataV0(correlationID uint32, requestBody []byte) ([]
 
 	// Parse requested topics (empty means all)
 	requestedTopics := h.parseMetadataTopics(requestBody)
-	glog.V(0).Infof("[METADATA v0] Requested topics: %v (empty=all)", requestedTopics)
+	glog.V(1).Infof("[METADATA v0] Requested topics: %v (empty=all)", requestedTopics)
 
 	// Determine topics to return using SeaweedMQ handler
 	var topicsToReturn []string
@@ -1323,7 +1323,7 @@ func (h *Handler) HandleMetadataV1(correlationID uint32, requestBody []byte) ([]
 
 	// Parse requested topics (empty means all)
 	requestedTopics := h.parseMetadataTopics(requestBody)
-	glog.V(0).Infof("[METADATA v1] Requested topics: %v (empty=all)", requestedTopics)
+	glog.V(1).Infof("[METADATA v1] Requested topics: %v (empty=all)", requestedTopics)
 
 	// Determine topics to return using SeaweedMQ handler
 	var topicsToReturn []string
@@ -1436,7 +1436,7 @@ func (h *Handler) HandleMetadataV2(correlationID uint32, requestBody []byte) ([]
 
 	// Parse requested topics (empty means all)
 	requestedTopics := h.parseMetadataTopics(requestBody)
-	glog.V(0).Infof("[METADATA v2] Requested topics: %v (empty=all)", requestedTopics)
+	glog.V(1).Infof("[METADATA v2] Requested topics: %v (empty=all)", requestedTopics)
 
 	// Determine topics to return using SeaweedMQ handler
 	var topicsToReturn []string
@@ -1544,7 +1544,7 @@ func (h *Handler) HandleMetadataV3V4(correlationID uint32, requestBody []byte) (
 
 	// Parse requested topics (empty means all)
 	requestedTopics := h.parseMetadataTopics(requestBody)
-	glog.V(0).Infof("[METADATA v3/v4] Requested topics: %v (empty=all)", requestedTopics)
+	glog.V(1).Infof("[METADATA v3/v4] Requested topics: %v (empty=all)", requestedTopics)
 
 	// Determine topics to return using SeaweedMQ handler
 	var topicsToReturn []string
@@ -1671,7 +1671,7 @@ func (h *Handler) handleMetadataV5ToV8(correlationID uint32, requestBody []byte,
 
 	// Parse requested topics (empty means all)
 	requestedTopics := h.parseMetadataTopics(requestBody)
-	glog.V(0).Infof("[METADATA v%d] Requested topics: %v (empty=all)", apiVersion, requestedTopics)
+	glog.V(1).Infof("[METADATA v%d] Requested topics: %v (empty=all)", apiVersion, requestedTopics)
 
 	// Determine topics to return using SeaweedMQ handler
 	var topicsToReturn []string
@@ -1688,24 +1688,24 @@ func (h *Handler) handleMetadataV5ToV8(correlationID uint32, requestBody []byte,
 		for _, topic := range requestedTopics {
 			if isSystemTopic(topic) {
 				// Always try to auto-create system topics during metadata requests
-				glog.V(0).Infof("[METADATA v%d] Ensuring system topic %s exists during metadata request", apiVersion, topic)
+				glog.V(1).Infof("[METADATA v%d] Ensuring system topic %s exists during metadata request", apiVersion, topic)
 				if !h.seaweedMQHandler.TopicExists(topic) {
-					glog.V(0).Infof("[METADATA v%d] Auto-creating system topic %s during metadata request", apiVersion, topic)
+					glog.V(1).Infof("[METADATA v%d] Auto-creating system topic %s during metadata request", apiVersion, topic)
 					if err := h.createTopicWithSchemaSupport(topic, 1); err != nil {
 						glog.V(0).Infof("[METADATA v%d] Failed to auto-create system topic %s: %v", apiVersion, topic, err)
 						// Continue without adding to topicsToReturn - client will get UNKNOWN_TOPIC_OR_PARTITION
 					} else {
-						glog.V(0).Infof("[METADATA v%d] Successfully auto-created system topic %s", apiVersion, topic)
+						glog.V(1).Infof("[METADATA v%d] Successfully auto-created system topic %s", apiVersion, topic)
 					}
 				} else {
-					glog.V(0).Infof("[METADATA v%d] System topic %s already exists", apiVersion, topic)
+					glog.V(1).Infof("[METADATA v%d] System topic %s already exists", apiVersion, topic)
 				}
 				topicsToReturn = append(topicsToReturn, topic)
 			} else if h.seaweedMQHandler.TopicExists(topic) {
 				topicsToReturn = append(topicsToReturn, topic)
 			}
 		}
-		glog.V(0).Infof("[METADATA v%d] Returning topics: %v (requested: %v)", apiVersion, topicsToReturn, requestedTopics)
+		glog.V(1).Infof("[METADATA v%d] Returning topics: %v (requested: %v)", apiVersion, topicsToReturn, requestedTopics)
 	}
 
 	var buf bytes.Buffer
@@ -3986,7 +3986,7 @@ func (h *Handler) createTopicWithDefaultFlexibleSchema(topicName string, partiti
 	// Schema Registry uses _schemas to STORE schemas, so it can't have schema management itself
 	// This was causing issues with Schema Registry bootstrap
 
-	glog.V(0).Infof("Creating system topic %s as PLAIN topic (no schema management)", topicName)
+	glog.V(1).Infof("Creating system topic %s as PLAIN topic (no schema management)", topicName)
 	return h.seaweedMQHandler.CreateTopic(topicName, partitions)
 }
 

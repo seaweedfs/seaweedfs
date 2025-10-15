@@ -577,65 +577,6 @@ func (f *MultiBatchFetcher) constructCompressedRecordBatch(baseOffset int64, com
 	return batch
 }
 
-// estimateBatchSize estimates the size of a record batch before constructing it
-func (f *MultiBatchFetcher) estimateBatchSize(smqRecords []integration.SMQRecord) int32 {
-	if len(smqRecords) == 0 {
-		return 61 // empty batch header size
-	}
-
-	// Record batch header: 61 bytes (base_offset + batch_length + leader_epoch + magic + crc + attributes +
-	// last_offset_delta + first_ts + max_ts + producer_id + producer_epoch + base_seq + record_count)
-	headerSize := int32(61)
-
-	baseTs := smqRecords[0].GetTimestamp()
-	recordsSize := int32(0)
-	for i, rec := range smqRecords {
-		// attributes(1)
-		rb := int32(1)
-
-		// timestamp_delta(varint)
-		tsDelta := rec.GetTimestamp() - baseTs
-		rb += int32(len(encodeVarint(tsDelta)))
-
-		// offset_delta(varint)
-		rb += int32(len(encodeVarint(int64(i))))
-
-		// key length varint + data or -1
-		if k := rec.GetKey(); k != nil {
-			rb += int32(len(encodeVarint(int64(len(k))))) + int32(len(k))
-		} else {
-			rb += int32(len(encodeVarint(-1)))
-		}
-
-		// value length varint + data or -1
-		if v := rec.GetValue(); v != nil {
-			rb += int32(len(encodeVarint(int64(len(v))))) + int32(len(v))
-		} else {
-			rb += int32(len(encodeVarint(-1)))
-		}
-
-		// headers count (varint = 0)
-		rb += int32(len(encodeVarint(0)))
-
-		// prepend record length varint
-		recordsSize += int32(len(encodeVarint(int64(rb)))) + rb
-	}
-
-	return headerSize + recordsSize
-}
-
-// sizeOfVarint returns the number of bytes encodeVarint would use for value
-func sizeOfVarint(value int64) int32 {
-	// ZigZag encode to match encodeVarint
-	u := uint64(uint64(value<<1) ^ uint64(value>>63))
-	size := int32(1)
-	for u >= 0x80 {
-		u >>= 7
-		size++
-	}
-	return size
-}
-
 // compressData compresses data using the specified codec (basic implementation)
 func (f *MultiBatchFetcher) compressData(data []byte, codec compression.CompressionCodec) ([]byte, error) {
 	// For Phase 5, implement basic compression support

@@ -260,7 +260,7 @@ func (bc *BrokerClient) ReadRecordsFromOffset(ctx context.Context, session *Brok
 				if endIdx > len(session.consumedRecords) {
 					endIdx = len(session.consumedRecords)
 				}
-				glog.V(2).Infof("[FETCH] ✓ Returning %d cached records for %s at offset %d (cache: %d-%d)",
+				glog.V(2).Infof("[FETCH] Returning %d cached records for %s at offset %d (cache: %d-%d)",
 					endIdx-startIdx, session.Key(), requestedOffset, cacheStartOffset, cacheEndOffset)
 				session.mu.Unlock()
 				return session.consumedRecords[startIdx:endIdx], nil
@@ -317,12 +317,12 @@ func (bc *BrokerClient) ReadRecordsFromOffset(ctx context.Context, session *Brok
 			// Check if the session was already recreated at (or before) the requested offset
 			if existingOffset <= requestedOffset {
 				bc.subscribersLock.Unlock()
-				glog.V(2).Infof("[FETCH] ✓ Session %s already recreated by another thread at offset %d (requested %d) - reusing", key, existingOffset, requestedOffset)
+				glog.V(2).Infof("[FETCH] Session %s already recreated by another thread at offset %d (requested %d) - reusing", key, existingOffset, requestedOffset)
 				// Re-acquire the existing session and continue
 				return bc.ReadRecordsFromOffset(ctx, existingSession, requestedOffset, maxRecords)
 			}
 
-			glog.V(2).Infof("[FETCH] ⚠️  Session %s still at wrong offset %d (requested %d) - must recreate", key, existingOffset, requestedOffset)
+			glog.V(2).Infof("[FETCH] Session %s still at wrong offset %d (requested %d) - must recreate", key, existingOffset, requestedOffset)
 
 			// Session still needs recreation - close it
 			if existingSession.Stream != nil {
@@ -388,7 +388,7 @@ func (bc *BrokerClient) ReadRecordsFromOffset(ctx context.Context, session *Brok
 
 		bc.subscribers[key] = newSession
 		bc.subscribersLock.Unlock()
-		glog.V(2).Infof("[FETCH] ✓ Created fresh subscriber session for backward seek: %s at offset %d", key, requestedOffset)
+		glog.V(2).Infof("[FETCH] Created fresh subscriber session for backward seek: %s at offset %d", key, requestedOffset)
 
 		// Read from fresh subscriber
 		glog.V(2).Infof("[FETCH] Reading from fresh subscriber %s at offset %d (maxRecords=%d)", key, requestedOffset, maxRecords)
@@ -586,7 +586,7 @@ func (bc *BrokerClient) ReadRecords(ctx context.Context, session *BrokerSubscrib
 			if result.err != nil {
 				glog.V(2).Infof("[FETCH] Stream.Recv() error after %d records: %v", len(records), result.err)
 				// Update session offset before returning
-				glog.V(2).Infof("[FETCH] 📍 Updating %s offset: %d → %d (error case, read %d records)",
+				glog.V(2).Infof("[FETCH] Updating %s offset: %d -> %d (error case, read %d records)",
 					session.Key(), session.StartOffset, currentOffset, len(records))
 				session.StartOffset = currentOffset
 				return records, nil
@@ -612,7 +612,7 @@ func (bc *BrokerClient) ReadRecords(ctx context.Context, session *BrokerSubscrib
 			// Timeout - return what we have
 			glog.V(2).Infof("[FETCH] Read timeout after %d records (waited %v), returning batch", len(records), time.Since(readStart))
 			// CRITICAL: Update session offset so next fetch knows where we left off
-			glog.V(2).Infof("[FETCH] 📍 Updating %s offset: %d → %d (timeout case, read %d records)",
+			glog.V(2).Infof("[FETCH] Updating %s offset: %d -> %d (timeout case, read %d records)",
 				session.Key(), session.StartOffset, currentOffset, len(records))
 			session.StartOffset = currentOffset
 			return records, nil
@@ -621,7 +621,7 @@ func (bc *BrokerClient) ReadRecords(ctx context.Context, session *BrokerSubscrib
 
 	glog.V(2).Infof("[FETCH] ReadRecords returning %d records (maxRecords reached)", len(records))
 	// Update session offset after successful read
-	glog.V(2).Infof("[FETCH] 📍 Updating %s offset: %d → %d (success case, read %d records)",
+	glog.V(2).Infof("[FETCH] Updating %s offset: %d -> %d (success case, read %d records)",
 		session.Key(), session.StartOffset, currentOffset, len(records))
 	session.StartOffset = currentOffset
 

@@ -172,16 +172,16 @@ func (h *Handler) handleOffsetCommit(correlationID uint32, apiVersion uint16, re
 				}
 
 				if groupIsEmpty {
-					glog.V(0).Infof("[OFFSET_COMMIT] ✓ Committed (empty group): group=%s topic=%s partition=%d offset=%d",
+					glog.V(1).Infof("[OFFSET_COMMIT] Committed (empty group): group=%s topic=%s partition=%d offset=%d",
 						req.GroupID, t.Name, p.Index, p.Offset)
 				} else {
-					glog.V(0).Infof("[OFFSET_COMMIT] ✓ Committed: group=%s topic=%s partition=%d offset=%d gen=%d",
+					glog.V(1).Infof("[OFFSET_COMMIT] Committed: group=%s topic=%s partition=%d offset=%d gen=%d",
 						req.GroupID, t.Name, p.Index, p.Offset, group.Generation)
 				}
 			} else {
 				// Do not store commit if generation mismatch
 				errCode = 22 // IllegalGeneration
-				glog.V(0).Infof("[OFFSET_COMMIT] ❌ Rejected - generation mismatch: group=%s expected=%d got=%d members=%d",
+				glog.V(0).Infof("[OFFSET_COMMIT] Rejected - generation mismatch: group=%s expected=%d got=%d members=%d",
 					req.GroupID, group.Generation, req.GenerationID, len(group.Members))
 			}
 
@@ -212,14 +212,14 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, req
 	// Get consumer group
 	group := h.groupCoordinator.GetGroup(request.GroupID)
 	if group == nil {
-		glog.V(0).Infof("[OFFSET_FETCH] Group not found: %s", request.GroupID)
+		glog.V(1).Infof("[OFFSET_FETCH] Group not found: %s", request.GroupID)
 		return h.buildOffsetFetchErrorResponse(correlationID, ErrorCodeInvalidGroupID), nil
 	}
 
 	group.Mu.RLock()
 	defer group.Mu.RUnlock()
 
-	glog.V(0).Infof("[OFFSET_FETCH] Request: group=%s topics=%v", request.GroupID, request.Topics)
+	glog.V(1).Infof("[OFFSET_FETCH] Request: group=%s topics=%v", request.GroupID, request.Topics)
 
 	// Build response
 	response := OffsetFetchResponse{
@@ -255,7 +255,7 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, req
 			if off, meta, err := h.fetchOffset(group, topic.Name, partition); err == nil && off >= 0 {
 				fetchedOffset = off
 				metadata = meta
-				glog.V(0).Infof("[OFFSET_FETCH] Found in memory: group=%s topic=%s partition=%d offset=%d",
+				glog.V(1).Infof("[OFFSET_FETCH] Found in memory: group=%s topic=%s partition=%d offset=%d",
 					request.GroupID, topic.Name, partition, off)
 			} else {
 				// Fallback: try fetching from SMQ persistent storage
@@ -269,10 +269,10 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, req
 				if off, meta, err := h.fetchOffsetFromSMQ(key); err == nil && off >= 0 {
 					fetchedOffset = off
 					metadata = meta
-					glog.V(0).Infof("[OFFSET_FETCH] Found in SMQ: group=%s topic=%s partition=%d offset=%d",
+					glog.V(1).Infof("[OFFSET_FETCH] Found in SMQ: group=%s topic=%s partition=%d offset=%d",
 						request.GroupID, topic.Name, partition, off)
 				} else {
-					glog.V(0).Infof("[OFFSET_FETCH] No offset found: group=%s topic=%s partition=%d",
+					glog.V(1).Infof("[OFFSET_FETCH] No offset found: group=%s topic=%s partition=%d",
 						request.GroupID, topic.Name, partition)
 				}
 				// No offset found in either location (-1 indicates no committed offset)
@@ -285,7 +285,7 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, req
 				Metadata:    metadata,
 				ErrorCode:   errorCode,
 			}
-			glog.V(0).Infof("[OFFSET_FETCH] Returning: group=%s topic=%s partition=%d offset=%d",
+			glog.V(1).Infof("[OFFSET_FETCH] Returning: group=%s topic=%s partition=%d offset=%d",
 				request.GroupID, topic.Name, partition, fetchedOffset)
 			topicResponse.Partitions = append(topicResponse.Partitions, partitionResponse)
 		}
