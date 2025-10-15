@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -57,8 +55,15 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 	isConnected := true
 
 	var counter int64
+	startPosition := b.getRequestPosition(req.GetInit())
+	imt := sub_coordinator.NewInflightMessageTracker(int(req.GetInit().SlidingWindowSize))
+
 	defer func() {
 		isConnected = false
+		// Clean up any in-flight messages to prevent them from blocking other subscribers
+		if cleanedCount := imt.Cleanup(); cleanedCount > 0 {
+			glog.V(0).Infof("Subscriber %s cleaned up %d in-flight messages on disconnect", clientName, cleanedCount)
+		}
 		localTopicPartition.Subscribers.RemoveSubscriber(clientName)
 		glog.V(0).Infof("Subscriber %s on %v %v disconnected, sent %d", clientName, t, partition, counter)
 		// Use topic-aware shutdown logic to prevent aggressive removal of system topics
@@ -66,9 +71,6 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 			b.localTopicManager.RemoveLocalPartition(t, partition)
 		}
 	}()
-
-	startPosition := b.getRequestPosition(req.GetInit())
-	imt := sub_coordinator.NewInflightMessageTracker(int(req.GetInit().SlidingWindowSize))
 
 	// connect to the follower
 	var subscribeFollowMeStream mq_pb.SeaweedMessaging_SubscribeFollowMeClient
@@ -106,9 +108,13 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 	}
 
 	go func() {
+		defer cancel() // CRITICAL: Cancel context when Recv goroutine exits (client disconnect)
+
 		var lastOffset int64
+
 		for {
 			ack, err := stream.Recv()
+
 			if err != nil {
 				if err == io.EOF {
 					// the client has called CloseSend(). This is to ack the close.
@@ -166,50 +172,47 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 		}
 	}()
 
-	var cancelOnce sync.Once
+	// Create a goroutine to handle context cancellation and wake up the condition variable
+	// This is created ONCE per subscriber, not per callback invocation
+	go func() {
+		<-ctx.Done()
+		// Wake up the condition variable when context is cancelled
+		localTopicPartition.ListenersLock.Lock()
+		localTopicPartition.ListenersCond.Broadcast()
+		localTopicPartition.ListenersLock.Unlock()
+	}()
 
 	err = localTopicPartition.Subscribe(clientName, startPosition, func() bool {
-		// Check if context is cancelled FIRST before any blocking operations
-		select {
-		case <-ctx.Done():
-			return false
-		default:
-		}
-
-		if !isConnected {
+		// Check cancellation before waiting
+		if ctx.Err() != nil || !isConnected {
 			return false
 		}
 
-		// Ensure we will wake any Wait() when the client disconnects
-		cancelOnce.Do(func() {
-			go func() {
-				<-ctx.Done()
-				localTopicPartition.ListenersLock.Lock()
-				localTopicPartition.ListenersCond.Broadcast()
-				localTopicPartition.ListenersLock.Unlock()
-			}()
-		})
-
-		// Block until new data is available or the client disconnects
+		// Wait for new data using condition variable (blocking, not polling)
 		localTopicPartition.ListenersLock.Lock()
-		atomic.AddInt64(&localTopicPartition.ListenersWaits, 1)
 		localTopicPartition.ListenersCond.Wait()
-		atomic.AddInt64(&localTopicPartition.ListenersWaits, -1)
 		localTopicPartition.ListenersLock.Unlock()
 
-		// Add a small sleep to avoid CPU busy-wait when checking for new data
-		time.Sleep(10 * time.Millisecond)
-
-		if ctx.Err() != nil {
-			return false
-		}
-		if !isConnected {
-			return false
-		}
-		return true
+		// After waking up, check if we should stop
+		return ctx.Err() == nil && isConnected
 	}, func(logEntry *filer_pb.LogEntry) (bool, error) {
+		// Wait for the message to be acknowledged with a timeout to prevent infinite loops
+		const maxWaitTime = 30 * time.Second
+		const checkInterval = 137 * time.Millisecond
+		startTime := time.Now()
+
 		for imt.IsInflight(logEntry.Key) {
-			time.Sleep(137 * time.Millisecond)
+			// Check if we've exceeded the maximum wait time
+			if time.Since(startTime) > maxWaitTime {
+				glog.Warningf("Subscriber %s: message with key %s has been in-flight for more than %v, forcing acknowledgment",
+					clientName, string(logEntry.Key), maxWaitTime)
+				// Force remove the message from in-flight tracking to prevent infinite loop
+				imt.AcknowledgeMessage(logEntry.Key, logEntry.TsNs)
+				break
+			}
+
+			time.Sleep(checkInterval)
+
 			// Check if the client has disconnected by monitoring the context
 			select {
 			case <-ctx.Done():
