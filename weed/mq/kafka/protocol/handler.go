@@ -206,11 +206,6 @@ func (h *Handler) getTopicSchemaFormat(topic string) string {
 	return "" // Empty string means schemaless or format unknown
 }
 
-// stringPtr returns a pointer to the given string
-func stringPtr(s string) *string {
-	return &s
-}
-
 // Handler processes Kafka protocol requests from clients using SeaweedMQ
 type Handler struct {
 	// SeaweedMQ integration
@@ -365,7 +360,7 @@ func (h *Handler) Close() error {
 	// Close broker client if present
 	if h.brokerClient != nil {
 		if err := h.brokerClient.Close(); err != nil {
-			Warning("Failed to close broker client: %v", err)
+			glog.Warningf("Failed to close broker client: %v", err)
 		}
 	}
 
@@ -374,17 +369,6 @@ func (h *Handler) Close() error {
 		return h.seaweedMQHandler.Close()
 	}
 	return nil
-}
-
-// StoreRecordBatch stores a record batch for later retrieval during Fetch operations
-func (h *Handler) StoreRecordBatch(topicName string, partition int32, baseOffset int64, recordBatch []byte) {
-	// Record batch storage is now handled by the SeaweedMQ handler
-}
-
-// GetRecordBatch retrieves a stored record batch that contains the requested offset
-func (h *Handler) GetRecordBatch(topicName string, partition int32, offset int64) ([]byte, bool) {
-	// Record batch retrieval is now handled by the SeaweedMQ handler
-	return nil, false
 }
 
 // SetSMQBrokerAddresses updates the SMQ broker addresses used in Metadata responses
@@ -519,7 +503,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		// Close the per-connection broker client
 		if connBrokerClient != nil {
 			if closeErr := connBrokerClient.Close(); closeErr != nil {
-				Error("[%s] Error closing BrokerClient: %v", connectionID, closeErr)
+				glog.Errorf("[%s] Error closing BrokerClient: %v", connectionID, closeErr)
 			}
 		}
 		// Remove connection context from map
@@ -591,12 +575,12 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 
 					// Send this response
 					if readyResp.err != nil {
-						Error("[%s] Error processing correlation=%d: %v", connectionID, readyResp.correlationID, readyResp.err)
+						glog.Errorf("[%s] Error processing correlation=%d: %v", connectionID, readyResp.correlationID, readyResp.err)
 					} else {
 						glog.V(2).Infof("[%s] Response writer: about to write correlation=%d (%d bytes)", connectionID, readyResp.correlationID, len(readyResp.response))
 						if writeErr := h.writeResponseWithHeader(w, readyResp.correlationID, readyResp.apiKey, readyResp.apiVersion, readyResp.response, timeoutConfig.WriteTimeout); writeErr != nil {
 							glog.Errorf("[%s] Response writer: WRITE ERROR correlation=%d: %v - EXITING", connectionID, readyResp.correlationID, writeErr)
-							Error("[%s] Write error correlation=%d: %v", connectionID, readyResp.correlationID, writeErr)
+							glog.Errorf("[%s] Write error correlation=%d: %v", connectionID, readyResp.correlationID, writeErr)
 							correlationQueueMu.Unlock()
 							return
 						}
@@ -1112,7 +1096,7 @@ func (h *Handler) processRequestSync(req *kafkaRequest) ([]byte, error) {
 		response, err = h.handleInitProducerId(req.correlationID, req.apiVersion, req.requestBody)
 
 	default:
-		Warning("Unsupported API key: %d (%s) v%d - Correlation: %d", req.apiKey, apiName, req.apiVersion, req.correlationID)
+		glog.Warningf("Unsupported API key: %d (%s) v%d - Correlation: %d", req.apiKey, apiName, req.apiVersion, req.correlationID)
 		err = fmt.Errorf("unsupported API key: %d (version %d)", req.apiKey, req.apiVersion)
 	}
 
@@ -2883,7 +2867,7 @@ func (h *Handler) handleDescribeConfigs(correlationID uint32, apiVersion uint16,
 	// Parse request to extract resources
 	resources, err := h.parseDescribeConfigsRequest(requestBody, apiVersion)
 	if err != nil {
-		Error("DescribeConfigs parsing error: %v", err)
+		glog.Errorf("DescribeConfigs parsing error: %v", err)
 		return nil, fmt.Errorf("failed to parse DescribeConfigs request: %w", err)
 	}
 
@@ -3120,40 +3104,6 @@ func (h *Handler) writeResponseWithHeader(w *bufio.Writer, correlationID uint32,
 	}
 
 	return nil
-}
-
-// hexDump formats bytes as a hex dump with ASCII representation
-func hexDump(data []byte) string {
-	var result strings.Builder
-	for i := 0; i < len(data); i += 16 {
-		// Offset
-		result.WriteString(fmt.Sprintf("%04x  ", i))
-
-		// Hex bytes
-		for j := 0; j < 16; j++ {
-			if i+j < len(data) {
-				result.WriteString(fmt.Sprintf("%02x ", data[i+j]))
-			} else {
-				result.WriteString("   ")
-			}
-			if j == 7 {
-				result.WriteString(" ")
-			}
-		}
-
-		// ASCII representation
-		result.WriteString(" |")
-		for j := 0; j < 16 && i+j < len(data); j++ {
-			b := data[i+j]
-			if b >= 32 && b < 127 {
-				result.WriteByte(b)
-			} else {
-				result.WriteByte('.')
-			}
-		}
-		result.WriteString("|\n")
-	}
-	return result.String()
 }
 
 // writeResponseWithCorrelationID is deprecated - use writeResponseWithHeader instead

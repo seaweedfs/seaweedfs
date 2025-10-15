@@ -3,7 +3,6 @@ package protocol
 import (
 	"context"
 	"encoding/binary"
-	"fmt"
 	"net"
 	"time"
 )
@@ -360,15 +359,4 @@ func HandleTimeoutError(err error, operation string) int16 {
 	}
 
 	return ClassifyNetworkError(err)
-}
-
-// SafeFormatError safely formats error messages to avoid information leakage
-func SafeFormatError(err error) string {
-	if err == nil {
-		return ""
-	}
-
-	// For production, we might want to sanitize error messages
-	// For now, return the full error for debugging
-	return fmt.Sprintf("Error: %v", err)
 }

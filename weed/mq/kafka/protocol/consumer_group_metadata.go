@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
-	"strings"
 	"sync"
 )
 
@@ -146,42 +145,6 @@ func ParseConsumerProtocolMetadata(metadata []byte, strategyName string) (*Consu
 	return result, nil
 }
 
-// GenerateConsumerProtocolMetadata creates protocol metadata for a consumer subscription
-func GenerateConsumerProtocolMetadata(topics []string, userData []byte) []byte {
-	// Calculate total size needed
-	size := 2 + 4 + 4 // version + topics_count + user_data_length
-	for _, topic := range topics {
-		size += 2 + len(topic) // topic_name_length + topic_name
-	}
-	size += len(userData)
-
-	metadata := make([]byte, 0, size)
-
-	// Version (2 bytes) - use version 1
-	metadata = append(metadata, 0, 1)
-
-	// Topics count (4 bytes)
-	topicsCount := make([]byte, 4)
-	binary.BigEndian.PutUint32(topicsCount, uint32(len(topics)))
-	metadata = append(metadata, topicsCount...)
-
-	// Topics (string array)
-	for _, topic := range topics {
-		topicLen := make([]byte, 2)
-		binary.BigEndian.PutUint16(topicLen, uint16(len(topic)))
-		metadata = append(metadata, topicLen...)
-		metadata = append(metadata, []byte(topic)...)
-	}
-
-	// UserData length and data (4 bytes + data)
-	userDataLen := make([]byte, 4)
-	binary.BigEndian.PutUint32(userDataLen, uint32(len(userData)))
-	metadata = append(metadata, userDataLen...)
-	metadata = append(metadata, userData...)
-
-	return metadata
-}
-
 // ValidateAssignmentStrategy checks if an assignment strategy is supported
 func ValidateAssignmentStrategy(strategy string) bool {
 	supportedStrategies := map[string]bool{
@@ -271,26 +234,6 @@ func SelectBestProtocol(protocols []GroupProtocol, groupProtocols []string) stri
 
 	// Last resort
 	return "range"
-}
-
-// SanitizeConsumerGroupID validates and sanitizes consumer group ID
-func SanitizeConsumerGroupID(groupID string) (string, error) {
-	if len(groupID) == 0 {
-		return "", fmt.Errorf("empty group ID")
-	}
-
-	if len(groupID) > 255 {
-		return "", fmt.Errorf("group ID too long: %d characters (max 255)", len(groupID))
-	}
-
-	// Basic validation: no control characters
-	for _, char := range groupID {
-		if char < 32 || char == 127 {
-			return "", fmt.Errorf("group ID contains invalid characters")
-		}
-	}
-
-	return strings.TrimSpace(groupID), nil
 }
 
 // ProtocolMetadataDebugInfo returns debug information about protocol metadata
