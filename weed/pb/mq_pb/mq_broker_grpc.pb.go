@@ -37,6 +37,7 @@ const (
 	SeaweedMessaging_SubscribeMessage_FullMethodName           = "/messaging_pb.SeaweedMessaging/SubscribeMessage"
 	SeaweedMessaging_PublishFollowMe_FullMethodName            = "/messaging_pb.SeaweedMessaging/PublishFollowMe"
 	SeaweedMessaging_SubscribeFollowMe_FullMethodName          = "/messaging_pb.SeaweedMessaging/SubscribeFollowMe"
+	SeaweedMessaging_FetchMessage_FullMethodName               = "/messaging_pb.SeaweedMessaging/FetchMessage"
 	SeaweedMessaging_GetUnflushedMessages_FullMethodName       = "/messaging_pb.SeaweedMessaging/GetUnflushedMessages"
 	SeaweedMessaging_GetPartitionRangeInfo_FullMethodName      = "/messaging_pb.SeaweedMessaging/GetPartitionRangeInfo"
 )
@@ -70,6 +71,10 @@ type SeaweedMessagingClient interface {
 	// The lead broker asks a follower broker to follow itself
 	PublishFollowMe(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[PublishFollowMeRequest, PublishFollowMeResponse], error)
 	SubscribeFollowMe(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[SubscribeFollowMeRequest, SubscribeFollowMeResponse], error)
+	// Stateless fetch API (Kafka-style) - request/response pattern
+	// This is the recommended API for Kafka gateway and other stateless clients
+	// No streaming, no session state - each request is completely independent
+	FetchMessage(ctx context.Context, in *FetchMessageRequest, opts ...grpc.CallOption) (*FetchMessageResponse, error)
 	// SQL query support - get unflushed messages from broker's in-memory buffer (streaming)
 	GetUnflushedMessages(ctx context.Context, in *GetUnflushedMessagesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GetUnflushedMessagesResponse], error)
 	// Get comprehensive partition range information (offsets, timestamps, and other fields)
@@ -282,6 +287,16 @@ func (c *seaweedMessagingClient) SubscribeFollowMe(ctx context.Context, opts ...
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type SeaweedMessaging_SubscribeFollowMeClient = grpc.ClientStreamingClient[SubscribeFollowMeRequest, SubscribeFollowMeResponse]
 
+func (c *seaweedMessagingClient) FetchMessage(ctx context.Context, in *FetchMessageRequest, opts ...grpc.CallOption) (*FetchMessageResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FetchMessageResponse)
+	err := c.cc.Invoke(ctx, SeaweedMessaging_FetchMessage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *seaweedMessagingClient) GetUnflushedMessages(ctx context.Context, in *GetUnflushedMessagesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GetUnflushedMessagesResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &SeaweedMessaging_ServiceDesc.Streams[6], SeaweedMessaging_GetUnflushedMessages_FullMethodName, cOpts...)
@@ -340,6 +355,10 @@ type SeaweedMessagingServer interface {
 	// The lead broker asks a follower broker to follow itself
 	PublishFollowMe(grpc.BidiStreamingServer[PublishFollowMeRequest, PublishFollowMeResponse]) error
 	SubscribeFollowMe(grpc.ClientStreamingServer[SubscribeFollowMeRequest, SubscribeFollowMeResponse]) error
+	// Stateless fetch API (Kafka-style) - request/response pattern
+	// This is the recommended API for Kafka gateway and other stateless clients
+	// No streaming, no session state - each request is completely independent
+	FetchMessage(context.Context, *FetchMessageRequest) (*FetchMessageResponse, error)
 	// SQL query support - get unflushed messages from broker's in-memory buffer (streaming)
 	GetUnflushedMessages(*GetUnflushedMessagesRequest, grpc.ServerStreamingServer[GetUnflushedMessagesResponse]) error
 	// Get comprehensive partition range information (offsets, timestamps, and other fields)
@@ -407,6 +426,9 @@ func (UnimplementedSeaweedMessagingServer) PublishFollowMe(grpc.BidiStreamingSer
 }
 func (UnimplementedSeaweedMessagingServer) SubscribeFollowMe(grpc.ClientStreamingServer[SubscribeFollowMeRequest, SubscribeFollowMeResponse]) error {
 	return status.Errorf(codes.Unimplemented, "method SubscribeFollowMe not implemented")
+}
+func (UnimplementedSeaweedMessagingServer) FetchMessage(context.Context, *FetchMessageRequest) (*FetchMessageResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method FetchMessage not implemented")
 }
 func (UnimplementedSeaweedMessagingServer) GetUnflushedMessages(*GetUnflushedMessagesRequest, grpc.ServerStreamingServer[GetUnflushedMessagesResponse]) error {
 	return status.Errorf(codes.Unimplemented, "method GetUnflushedMessages not implemented")
@@ -693,6 +715,24 @@ func _SeaweedMessaging_SubscribeFollowMe_Handler(srv interface{}, stream grpc.Se
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type SeaweedMessaging_SubscribeFollowMeServer = grpc.ClientStreamingServer[SubscribeFollowMeRequest, SubscribeFollowMeResponse]
 
+func _SeaweedMessaging_FetchMessage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FetchMessageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedMessagingServer).FetchMessage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedMessaging_FetchMessage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedMessagingServer).FetchMessage(ctx, req.(*FetchMessageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _SeaweedMessaging_GetUnflushedMessages_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(GetUnflushedMessagesRequest)
 	if err := stream.RecvMsg(m); err != nil {
@@ -776,6 +816,10 @@ var SeaweedMessaging_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CloseSubscribers",
 			Handler:    _SeaweedMessaging_CloseSubscribers_Handler,
+		},
+		{
+			MethodName: "FetchMessage",
+			Handler:    _SeaweedMessaging_FetchMessage_Handler,
 		},
 		{
 			MethodName: "GetPartitionRangeInfo",

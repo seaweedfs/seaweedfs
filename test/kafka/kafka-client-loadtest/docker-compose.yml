@@ -252,7 +252,7 @@ services:
       - TOPIC_COUNT=${TOPIC_COUNT:-5}
       - PARTITIONS_PER_TOPIC=${PARTITIONS_PER_TOPIC:-3}
       - TEST_MODE=${TEST_MODE:-comprehensive}
-      - SCHEMAS_ENABLED=true
+      - SCHEMAS_ENABLED=${SCHEMAS_ENABLED:-true}
       - VALUE_TYPE=${VALUE_TYPE:-avro}
     profiles:
       - loadtest

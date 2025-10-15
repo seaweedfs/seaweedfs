@@ -619,11 +619,19 @@ func (h *ConsumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSession,
 
 				// Mark message as processed
 				session.MarkMessage(message, "")
+
+				// Commit offset immediately every 10 messages to reduce duplicate window
+				// This supplements auto-commit and ensures offsets are committed more frequently
+				if msgCount%10 == 0 {
+					session.Commit()
+				}
 			}
 
 		case <-session.Context().Done():
-			log.Printf("Consumer %d: Session context cancelled for %s[%d]",
+			log.Printf("Consumer %d: Session context cancelled for %s[%d], committing final offsets",
 				h.consumer.id, claim.Topic(), claim.Partition())
+			// Commit all remaining marked offsets before shutting down
+			session.Commit()
 			return nil
 		}
 	}

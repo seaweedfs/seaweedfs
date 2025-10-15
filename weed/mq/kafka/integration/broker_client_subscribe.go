@@ -123,6 +123,7 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 		// No need for stream recreation - broker repositions internally
 
 		bc.subscribersLock.RUnlock()
+
 		if canUseCache {
 			glog.V(2).Infof("[FETCH] Reusing session for %s: session at %d, requested %d (cached)",
 				key, currentOffset, startOffset)
@@ -216,129 +217,518 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 	return session, nil
 }
 
-// ReadRecordsFromOffset reads records starting from a specific offset
-// If the offset is in cache, returns cached records; otherwise delegates to ReadRecords
-// ctx controls the fetch timeout (should match Kafka fetch request's MaxWaitTime)
-func (bc *BrokerClient) ReadRecordsFromOffset(ctx context.Context, session *BrokerSubscriberSession, requestedOffset int64, maxRecords int) ([]*SeaweedRecord, error) {
-	if session == nil {
-		return nil, fmt.Errorf("subscriber session cannot be nil")
+// createTemporarySubscriber creates a fresh subscriber for a single fetch operation
+// This is used by the stateless fetch approach to eliminate concurrent access issues
+// The subscriber is NOT stored in bc.subscribers and must be cleaned up by the caller
+func (bc *BrokerClient) createTemporarySubscriber(topic string, partition int32, startOffset int64, consumerGroup string, consumerID string) (*BrokerSubscriberSession, error) {
+	glog.V(2).Infof("[STATELESS] Creating temporary subscriber for %s-%d at offset %d", topic, partition, startOffset)
+
+	// Create context for this temporary subscriber
+	ctx, cancel := context.WithCancel(bc.ctx)
+
+	// Create gRPC stream
+	stream, err := bc.client.SubscribeMessage(ctx)
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("failed to create subscribe stream: %v", err)
 	}
 
-	session.mu.Lock()
+	// Get the actual partition assignment from the broker
+	actualPartition, err := bc.getActualPartitionAssignment(topic, partition)
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("failed to get actual partition assignment: %v", err)
+	}
 
-	glog.V(2).Infof("[FETCH] ReadRecordsFromOffset: topic=%s partition=%d requestedOffset=%d sessionOffset=%d maxRecords=%d",
-		session.Topic, session.Partition, requestedOffset, session.StartOffset, maxRecords)
+	// Convert Kafka offset to appropriate SeaweedMQ OffsetType
+	var offsetType schema_pb.OffsetType
+	var offsetValue int64
 
-	// Check cache first
-	if len(session.consumedRecords) > 0 {
-		cacheStartOffset := session.consumedRecords[0].Offset
-		cacheEndOffset := session.consumedRecords[len(session.consumedRecords)-1].Offset
+	if startOffset == -1 {
+		offsetType = schema_pb.OffsetType_RESET_TO_LATEST
+		offsetValue = 0
+		glog.V(2).Infof("[STATELESS] Using RESET_TO_LATEST for Kafka offset -1")
+	} else {
+		offsetType = schema_pb.OffsetType_EXACT_OFFSET
+		offsetValue = startOffset
+		glog.V(2).Infof("[STATELESS] Using EXACT_OFFSET for Kafka offset %d", startOffset)
+	}
 
-		if requestedOffset >= cacheStartOffset && requestedOffset <= cacheEndOffset {
-			// Found in cache
-			startIdx := int(requestedOffset - cacheStartOffset)
-			// CRITICAL: Bounds check to prevent race condition where cache is modified between checks
-			if startIdx < 0 || startIdx >= len(session.consumedRecords) {
-				glog.V(2).Infof("[FETCH] Cache index out of bounds (race condition): startIdx=%d, cache size=%d, falling through to normal read",
-					startIdx, len(session.consumedRecords))
-				// Cache was modified, fall through to normal read path
-			} else {
-				endIdx := startIdx + maxRecords
-				if endIdx > len(session.consumedRecords) {
-					endIdx = len(session.consumedRecords)
-				}
-				glog.V(2).Infof("[FETCH] Returning %d cached records for %s at offset %d (cache: %d-%d)",
-					endIdx-startIdx, session.Key(), requestedOffset, cacheStartOffset, cacheEndOffset)
-				// CRITICAL: Capture slice while holding lock to prevent race condition
-				// If we unlock before slicing, another goroutine could clear consumedRecords
-				result := session.consumedRecords[startIdx:endIdx]
-				session.mu.Unlock()
-				return result, nil
+	// Send init message
+	initReq := createSubscribeInitMessage(topic, actualPartition, offsetValue, offsetType, consumerGroup, consumerID)
+	if err := stream.Send(initReq); err != nil {
+		cancel()
+		return nil, fmt.Errorf("failed to send subscribe init: %v", err)
+	}
+
+	// Create temporary session (not stored in bc.subscribers)
+	session := &BrokerSubscriberSession{
+		Topic:         topic,
+		Partition:     partition,
+		Stream:        stream,
+		StartOffset:   startOffset,
+		ConsumerGroup: consumerGroup,
+		ConsumerID:    consumerID,
+		Ctx:           ctx,
+		Cancel:        cancel,
+	}
+
+	glog.V(2).Infof("[STATELESS] Created temporary subscriber for %s-%d starting at offset %d", topic, partition, startOffset)
+	return session, nil
+}
+
+// createSubscriberSession creates a new subscriber session with proper initialization
+// This is used by the hybrid approach for initial connections and backward seeks
+func (bc *BrokerClient) createSubscriberSession(topic string, partition int32, startOffset int64, consumerGroup string, consumerID string) (*BrokerSubscriberSession, error) {
+	glog.V(2).Infof("[HYBRID-SESSION] Creating subscriber session for %s-%d at offset %d", topic, partition, startOffset)
+
+	// Create context for this subscriber
+	ctx, cancel := context.WithCancel(bc.ctx)
+
+	// Create gRPC stream
+	stream, err := bc.client.SubscribeMessage(ctx)
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("failed to create subscribe stream: %v", err)
+	}
+
+	// Get the actual partition assignment from the broker
+	actualPartition, err := bc.getActualPartitionAssignment(topic, partition)
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("failed to get actual partition assignment: %v", err)
+	}
+
+	// Convert Kafka offset to appropriate SeaweedMQ OffsetType
+	var offsetType schema_pb.OffsetType
+	var offsetValue int64
+
+	if startOffset == -1 {
+		offsetType = schema_pb.OffsetType_RESET_TO_LATEST
+		offsetValue = 0
+		glog.V(2).Infof("[HYBRID-SESSION] Using RESET_TO_LATEST for Kafka offset -1")
+	} else {
+		offsetType = schema_pb.OffsetType_EXACT_OFFSET
+		offsetValue = startOffset
+		glog.V(2).Infof("[HYBRID-SESSION] Using EXACT_OFFSET for Kafka offset %d", startOffset)
+	}
+
+	// Send init message
+	initReq := createSubscribeInitMessage(topic, actualPartition, offsetValue, offsetType, consumerGroup, consumerID)
+	if err := stream.Send(initReq); err != nil {
+		cancel()
+		return nil, fmt.Errorf("failed to send subscribe init: %v", err)
+	}
+
+	// Create session with proper initialization
+	session := &BrokerSubscriberSession{
+		Topic:            topic,
+		Partition:        partition,
+		Stream:           stream,
+		StartOffset:      startOffset,
+		ConsumerGroup:    consumerGroup,
+		ConsumerID:       consumerID,
+		Ctx:              ctx,
+		Cancel:           cancel,
+		consumedRecords:  nil,
+		nextOffsetToRead: startOffset,
+		lastReadOffset:   startOffset - 1, // Will be updated after first read
+		initialized:      false,
+	}
+
+	glog.V(2).Infof("[HYBRID-SESSION] Created subscriber session for %s-%d starting at offset %d", topic, partition, startOffset)
+	return session, nil
+}
+
+// serveFromCache serves records from the session's cache
+func (bc *BrokerClient) serveFromCache(session *BrokerSubscriberSession, requestedOffset int64, maxRecords int) []*SeaweedRecord {
+	// Find the start index in cache
+	startIdx := -1
+	for i, record := range session.consumedRecords {
+		if record.Offset == requestedOffset {
+			startIdx = i
+			break
+		}
+	}
+
+	if startIdx == -1 {
+		// Offset not found in cache (shouldn't happen if caller checked properly)
+		return nil
+	}
+
+	// Calculate end index
+	endIdx := startIdx + maxRecords
+	if endIdx > len(session.consumedRecords) {
+		endIdx = len(session.consumedRecords)
+	}
+
+	// Return slice from cache
+	result := session.consumedRecords[startIdx:endIdx]
+	glog.V(2).Infof("[HYBRID-CACHE] Served %d records from cache (requested %d, offset %d)",
+		len(result), maxRecords, requestedOffset)
+	return result
+}
+
+// readRecordsFromSession reads records from the session's stream
+func (bc *BrokerClient) readRecordsFromSession(ctx context.Context, session *BrokerSubscriberSession, startOffset int64, maxRecords int) ([]*SeaweedRecord, error) {
+	glog.V(2).Infof("[HYBRID-READ] Reading from stream: offset=%d maxRecords=%d", startOffset, maxRecords)
+
+	records := make([]*SeaweedRecord, 0, maxRecords)
+	currentOffset := startOffset
+
+	// Read until we have enough records or timeout
+	for len(records) < maxRecords {
+		// Check context timeout
+		select {
+		case <-ctx.Done():
+			// Timeout or cancellation - return what we have
+			glog.V(2).Infof("[HYBRID-READ] Context done, returning %d records", len(records))
+			return records, nil
+		default:
+		}
+
+		// Read from stream with timeout
+		resp, err := session.Stream.Recv()
+		if err != nil {
+			if err == io.EOF {
+				glog.V(2).Infof("[HYBRID-READ] Stream closed (EOF), returning %d records", len(records))
+				return records, nil
 			}
-		} else {
-			glog.V(2).Infof("[FETCH] Cache miss for %s: requested=%d, cache=[%d-%d]",
-				session.Key(), requestedOffset, cacheStartOffset, cacheEndOffset)
+			return nil, fmt.Errorf("failed to receive from stream: %v", err)
+		}
+
+		// Handle data message
+		if dataMsg := resp.GetData(); dataMsg != nil {
+			record := &SeaweedRecord{
+				Key:       dataMsg.Key,
+				Value:     dataMsg.Value,
+				Timestamp: dataMsg.TsNs,
+				Offset:    currentOffset,
+			}
+			records = append(records, record)
+			currentOffset++
+
+			// Auto-acknowledge to prevent throttling
+			ackReq := &mq_pb.SubscribeMessageRequest{
+				Message: &mq_pb.SubscribeMessageRequest_Ack{
+					Ack: &mq_pb.SubscribeMessageRequest_AckMessage{
+						Key:  dataMsg.Key,
+						TsNs: dataMsg.TsNs,
+					},
+				},
+			}
+			if err := session.Stream.Send(ackReq); err != nil {
+				if err != io.EOF {
+					glog.Warningf("[HYBRID-READ] Failed to send ack (non-critical): %v", err)
+				}
+			}
+		}
+
+		// Handle control messages
+		if ctrlMsg := resp.GetCtrl(); ctrlMsg != nil {
+			if ctrlMsg.Error != "" {
+				// Error message from broker
+				return nil, fmt.Errorf("broker error: %s", ctrlMsg.Error)
+			}
+			if ctrlMsg.IsEndOfStream {
+				glog.V(2).Infof("[HYBRID-READ] End of stream, returning %d records", len(records))
+				return records, nil
+			}
+			if ctrlMsg.IsEndOfTopic {
+				glog.V(2).Infof("[HYBRID-READ] End of topic, returning %d records", len(records))
+				return records, nil
+			}
+			// Empty control message (e.g., seek ack) - continue reading
+			glog.V(2).Infof("[HYBRID-READ] Received control message (seek ack?), continuing")
+			continue
 		}
 	}
 
-	// Get the current offset atomically for comparison
-	currentStartOffset := session.StartOffset
-	session.mu.Unlock()
+	glog.V(2).Infof("[HYBRID-READ] Read %d records successfully", len(records))
 
-	// With seekable broker: Keep subscriber alive across all requests
-	// Schema Registry and other clients expect persistent consumer connections
-	//
-	// Three scenarios, all handled via seek:
-	// 1. requestedOffset < session.StartOffset: Send seek message (backward)
-	// 2. requestedOffset == session.StartOffset: Continue reading (no seek needed)
-	// 3. requestedOffset > session.StartOffset: Send seek message (forward)
-	//
-	// The stream persists for the entire consumer session - no recreation needed
-	if requestedOffset != currentStartOffset {
-		offsetDiff := requestedOffset - currentStartOffset
-		seekDirection := "forward"
-		if offsetDiff < 0 {
-			seekDirection = "backward"
+	// Update cache
+	session.consumedRecords = append(session.consumedRecords, records...)
+	// Limit cache size to prevent unbounded growth
+	const maxCacheSize = 10000
+	if len(session.consumedRecords) > maxCacheSize {
+		// Keep only the most recent records
+		session.consumedRecords = session.consumedRecords[len(session.consumedRecords)-maxCacheSize:]
+	}
+
+	return records, nil
+}
+
+// FetchRecordsHybrid uses a hybrid approach: session reuse + proper offset tracking
+// - Fast path (95%): Reuse session for sequential reads
+// - Slow path (5%): Create new subscriber for backward seeks
+// This combines performance (connection reuse) with correctness (proper tracking)
+func (bc *BrokerClient) FetchRecordsHybrid(ctx context.Context, topic string, partition int32, requestedOffset int64, maxRecords int, consumerGroup string, consumerID string) ([]*SeaweedRecord, error) {
+	glog.V(2).Infof("[FETCH-HYBRID] topic=%s partition=%d requestedOffset=%d maxRecords=%d",
+		topic, partition, requestedOffset, maxRecords)
+
+	// Get or create session for this (topic, partition, consumerGroup, consumerID)
+	key := fmt.Sprintf("%s-%d-%s-%s", topic, partition, consumerGroup, consumerID)
+
+	bc.subscribersLock.Lock()
+	session, exists := bc.subscribers[key]
+	if !exists {
+		// No session - create one (this is initial fetch)
+		glog.V(2).Infof("[FETCH-HYBRID] Creating initial session for %s at offset %d", key, requestedOffset)
+		newSession, err := bc.createSubscriberSession(topic, partition, requestedOffset, consumerGroup, consumerID)
+		if err != nil {
+			bc.subscribersLock.Unlock()
+			return nil, fmt.Errorf("failed to create initial session: %v", err)
+		}
+		bc.subscribers[key] = newSession
+		session = newSession
+	}
+	bc.subscribersLock.Unlock()
+
+	// CRITICAL: Lock the session for the entire operation to serialize requests
+	// This prevents concurrent access to the same stream
+	session.mu.Lock()
+	defer session.mu.Unlock()
+
+	// Check if we can serve from cache
+	if len(session.consumedRecords) > 0 {
+		cacheStart := session.consumedRecords[0].Offset
+		cacheEnd := session.consumedRecords[len(session.consumedRecords)-1].Offset
+
+		if requestedOffset >= cacheStart && requestedOffset <= cacheEnd {
+			// Serve from cache
+			glog.V(2).Infof("[FETCH-HYBRID] FAST: Serving from cache for %s offset %d (cache: %d-%d)",
+				key, requestedOffset, cacheStart, cacheEnd)
+			return bc.serveFromCache(session, requestedOffset, maxRecords), nil
+		}
+	}
+
+	// Determine stream position
+	// lastReadOffset tracks what we've actually read from the stream
+	streamPosition := session.lastReadOffset + 1
+	if !session.initialized {
+		streamPosition = session.StartOffset
+	}
+
+	glog.V(2).Infof("[FETCH-HYBRID] requestedOffset=%d streamPosition=%d lastReadOffset=%d",
+		requestedOffset, streamPosition, session.lastReadOffset)
+
+	// Decision: Fast path or slow path?
+	if requestedOffset < streamPosition {
+		// SLOW PATH: Backward seek - need new subscriber
+		glog.V(2).Infof("[FETCH-HYBRID] SLOW: Backward seek from %d to %d, creating new subscriber",
+			streamPosition, requestedOffset)
+
+		// Close old session
+		if session.Stream != nil {
+			session.Stream.CloseSend()
+		}
+		if session.Cancel != nil {
+			session.Cancel()
 		}
 
-		glog.V(2).Infof("[FETCH] Offset mismatch: %s seek from %d to %d (diff=%d)",
-			seekDirection, currentStartOffset, requestedOffset, offsetDiff)
+		// Create new subscriber at requested offset
+		newSession, err := bc.createSubscriberSession(topic, partition, requestedOffset, consumerGroup, consumerID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create subscriber for backward seek: %v", err)
+		}
 
-		// Send seek message to reposition stream
-		seekMsg := &mq_pb.SubscribeMessageRequest{
+		// Replace session in map
+		bc.subscribersLock.Lock()
+		bc.subscribers[key] = newSession
+		bc.subscribersLock.Unlock()
+
+		// Update local reference and lock the new session
+		session.Stream = newSession.Stream
+		session.Ctx = newSession.Ctx
+		session.Cancel = newSession.Cancel
+		session.StartOffset = requestedOffset
+		session.lastReadOffset = requestedOffset - 1 // Will be updated after read
+		session.initialized = false
+		session.consumedRecords = nil
+
+		streamPosition = requestedOffset
+	} else if requestedOffset > streamPosition {
+		// FAST PATH: Forward seek - use server-side seek
+		seekOffset := requestedOffset
+		glog.V(2).Infof("[FETCH-HYBRID] FAST: Forward seek from %d to %d using server-side seek",
+			streamPosition, seekOffset)
+
+		// Send seek message to broker
+		seekReq := &mq_pb.SubscribeMessageRequest{
 			Message: &mq_pb.SubscribeMessageRequest_Seek{
 				Seek: &mq_pb.SubscribeMessageRequest_SeekMessage{
-					Offset:     requestedOffset,
+					Offset:     seekOffset,
 					OffsetType: schema_pb.OffsetType_EXACT_OFFSET,
 				},
 			},
 		}
 
-		if err := session.Stream.Send(seekMsg); err != nil {
-			// Handle graceful shutdown: EOF means stream is closing
+		if err := session.Stream.Send(seekReq); err != nil {
 			if err == io.EOF {
-				glog.V(2).Infof("[FETCH] Stream closing during seek to offset %d, returning empty", requestedOffset)
-				return []*SeaweedRecord{}, nil
+				glog.V(2).Infof("[FETCH-HYBRID] Stream closed during seek, ignoring")
+				return nil, nil
 			}
-			return nil, fmt.Errorf("seek to offset %d failed: %v", requestedOffset, err)
+			return nil, fmt.Errorf("failed to send seek request: %v", err)
 		}
 
-		// Update session state after successful seek
-		session.mu.Lock()
-		session.StartOffset = requestedOffset
+		glog.V(2).Infof("[FETCH-HYBRID] Seek request sent, broker will reposition stream to offset %d", seekOffset)
+		// NOTE: Don't wait for ack - the broker will restart Subscribe loop and send data
+		// The ack will be handled inline with data messages in readRecordsFromSession
 
-		// CRITICAL: Only clear cache if seeking forward past cached data
-		// For backward seeks, keep cache to avoid re-reading same data from broker
-		shouldClearCache := true
-		if len(session.consumedRecords) > 0 {
-			cacheStartOffset := session.consumedRecords[0].Offset
-			cacheEndOffset := session.consumedRecords[len(session.consumedRecords)-1].Offset
-			// Keep cache if seeking to an offset within or before cached range
-			if requestedOffset <= cacheEndOffset {
-				shouldClearCache = false
-				glog.V(2).Infof("[FETCH] Keeping cache after seek to %d (cache: [%d-%d])",
-					requestedOffset, cacheStartOffset, cacheEndOffset)
-			}
-		}
-		if shouldClearCache {
-			session.consumedRecords = nil
-			glog.V(2).Infof("[FETCH] Cleared cache after forward seek to %d", requestedOffset)
-		}
-		session.mu.Unlock()
-
-		glog.V(2).Infof("[FETCH] Seek to offset %d successful", requestedOffset)
+		// Clear cache since we've skipped ahead
+		session.consumedRecords = nil
+		streamPosition = seekOffset
 	} else {
-		glog.V(2).Infof("[FETCH] Offset match: continuing from offset %d", requestedOffset)
+		// FAST PATH: Sequential read - continue from current position
+		glog.V(2).Infof("[FETCH-HYBRID] FAST: Sequential read at offset %d", requestedOffset)
 	}
 
-	// Read records from current position
-	return bc.ReadRecords(ctx, session, maxRecords)
+	// Read records from stream
+	records, err := bc.readRecordsFromSession(ctx, session, requestedOffset, maxRecords)
+	if err != nil {
+		return nil, err
+	}
+
+	// Update tracking
+	if len(records) > 0 {
+		session.lastReadOffset = records[len(records)-1].Offset
+		session.initialized = true
+		glog.V(2).Infof("[FETCH-HYBRID] Read %d records, lastReadOffset now %d",
+			len(records), session.lastReadOffset)
+	}
+
+	return records, nil
 }
 
-// ReadRecords reads available records from the subscriber stream
+// FetchRecordsWithDedup reads records with request deduplication to prevent duplicate concurrent fetches
+// DEPRECATED: Use FetchRecordsHybrid instead for better performance
+// ctx controls the fetch timeout (should match Kafka fetch request's MaxWaitTime)
+func (bc *BrokerClient) FetchRecordsWithDedup(ctx context.Context, topic string, partition int32, startOffset int64, maxRecords int, consumerGroup string, consumerID string) ([]*SeaweedRecord, error) {
+	// Create key for this fetch request
+	key := fmt.Sprintf("%s-%d-%d", topic, partition, startOffset)
+
+	glog.V(2).Infof("[FETCH-DEDUP] topic=%s partition=%d offset=%d maxRecords=%d key=%s",
+		topic, partition, startOffset, maxRecords, key)
+
+	// Check if there's already a fetch in progress for this exact request
+	bc.fetchRequestsLock.Lock()
+
+	if existing, exists := bc.fetchRequests[key]; exists {
+		// Another fetch is in progress for this (topic, partition, offset)
+		// Create a waiter channel and add it to the list
+		waiter := make(chan FetchResult, 1)
+		existing.mu.Lock()
+		existing.waiters = append(existing.waiters, waiter)
+		existing.mu.Unlock()
+		bc.fetchRequestsLock.Unlock()
+
+		glog.V(2).Infof("[FETCH-DEDUP] Waiting for in-progress fetch: %s", key)
+
+		// Wait for the result from the in-progress fetch
+		select {
+		case result := <-waiter:
+			glog.V(2).Infof("[FETCH-DEDUP] Received result from in-progress fetch: %s (records=%d, err=%v)",
+				key, len(result.records), result.err)
+			return result.records, result.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+
+	// No fetch in progress - this request will do the fetch
+	fetchReq := &FetchRequest{
+		topic:      topic,
+		partition:  partition,
+		offset:     startOffset,
+		resultChan: make(chan FetchResult, 1),
+		waiters:    []chan FetchResult{},
+		inProgress: true,
+	}
+	bc.fetchRequests[key] = fetchReq
+	bc.fetchRequestsLock.Unlock()
+
+	glog.V(2).Infof("[FETCH-DEDUP] Starting new fetch: %s", key)
+
+	// Perform the actual fetch
+	records, err := bc.fetchRecordsStatelessInternal(ctx, topic, partition, startOffset, maxRecords, consumerGroup, consumerID)
+
+	// Prepare result
+	result := FetchResult{
+		records: records,
+		err:     err,
+	}
+
+	// Broadcast result to all waiters and clean up
+	bc.fetchRequestsLock.Lock()
+	fetchReq.mu.Lock()
+	waiters := fetchReq.waiters
+	fetchReq.mu.Unlock()
+	delete(bc.fetchRequests, key)
+	bc.fetchRequestsLock.Unlock()
+
+	// Send result to all waiters
+	glog.V(2).Infof("[FETCH-DEDUP] Broadcasting result to %d waiters: %s (records=%d, err=%v)",
+		len(waiters), key, len(records), err)
+	for _, waiter := range waiters {
+		waiter <- result
+		close(waiter)
+	}
+
+	return records, err
+}
+
+// fetchRecordsStatelessInternal is the internal implementation of stateless fetch
+// This is called by FetchRecordsWithDedup and should not be called directly
+func (bc *BrokerClient) fetchRecordsStatelessInternal(ctx context.Context, topic string, partition int32, startOffset int64, maxRecords int, consumerGroup string, consumerID string) ([]*SeaweedRecord, error) {
+	glog.V(2).Infof("[FETCH-STATELESS] topic=%s partition=%d offset=%d maxRecords=%d",
+		topic, partition, startOffset, maxRecords)
+
+	// STATELESS APPROACH: Create a temporary subscriber just for this fetch
+	// This eliminates concurrent access to shared offset state
+	tempSubscriber, err := bc.createTemporarySubscriber(topic, partition, startOffset, consumerGroup, consumerID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temporary subscriber: %v", err)
+	}
+
+	// Ensure cleanup even if read fails
+	defer func() {
+		if tempSubscriber.Stream != nil {
+			// Send close message
+			tempSubscriber.Stream.CloseSend()
+		}
+		if tempSubscriber.Cancel != nil {
+			tempSubscriber.Cancel()
+		}
+	}()
+
+	// Read records from the fresh subscriber (no seeking needed, it starts at startOffset)
+	return bc.readRecordsFrom(ctx, tempSubscriber, startOffset, maxRecords)
+}
+
+// FetchRecordsStateless reads records using a stateless approach (creates fresh subscriber per fetch)
+// DEPRECATED: Use FetchRecordsHybrid instead for better performance with session reuse
+// This eliminates concurrent access to shared offset state
+// ctx controls the fetch timeout (should match Kafka fetch request's MaxWaitTime)
+func (bc *BrokerClient) FetchRecordsStateless(ctx context.Context, topic string, partition int32, startOffset int64, maxRecords int, consumerGroup string, consumerID string) ([]*SeaweedRecord, error) {
+	return bc.FetchRecordsHybrid(ctx, topic, partition, startOffset, maxRecords, consumerGroup, consumerID)
+}
+
+// ReadRecordsFromOffset reads records starting from a specific offset using STATELESS approach
+// Creates a fresh subscriber for each fetch to eliminate concurrent access issues
+// ctx controls the fetch timeout (should match Kafka fetch request's MaxWaitTime)
+// DEPRECATED: Use FetchRecordsStateless instead for better API clarity
+func (bc *BrokerClient) ReadRecordsFromOffset(ctx context.Context, session *BrokerSubscriberSession, requestedOffset int64, maxRecords int) ([]*SeaweedRecord, error) {
+	if session == nil {
+		return nil, fmt.Errorf("subscriber session cannot be nil")
+	}
+
+	return bc.FetchRecordsStateless(ctx, session.Topic, session.Partition, requestedOffset, maxRecords, session.ConsumerGroup, session.ConsumerID)
+}
+
+// readRecordsFrom reads records from the stream, assigning offsets starting from startOffset
 // Uses a timeout-based approach to read multiple records without blocking indefinitely
 // ctx controls the fetch timeout (should match Kafka fetch request's MaxWaitTime)
-func (bc *BrokerClient) ReadRecords(ctx context.Context, session *BrokerSubscriberSession, maxRecords int) ([]*SeaweedRecord, error) {
+func (bc *BrokerClient) readRecordsFrom(ctx context.Context, session *BrokerSubscriberSession, startOffset int64, maxRecords int) ([]*SeaweedRecord, error) {
 	if session == nil {
 		return nil, fmt.Errorf("subscriber session cannot be nil")
 	}
@@ -347,53 +737,19 @@ func (bc *BrokerClient) ReadRecords(ctx context.Context, session *BrokerSubscrib
 		return nil, fmt.Errorf("subscriber session stream cannot be nil")
 	}
 
-	// CRITICAL: Lock to prevent concurrent reads from the same stream
-	// Multiple Fetch requests may try to read from the same subscriber concurrently,
-	// causing the broker to return the same offset repeatedly
-	session.mu.Lock()
-	defer session.mu.Unlock()
-
-	glog.V(2).Infof("[FETCH] ReadRecords: topic=%s partition=%d startOffset=%d maxRecords=%d",
-		session.Topic, session.Partition, session.StartOffset, maxRecords)
+	glog.V(2).Infof("[FETCH] readRecordsFrom: topic=%s partition=%d startOffset=%d maxRecords=%d",
+		session.Topic, session.Partition, startOffset, maxRecords)
 
 	var records []*SeaweedRecord
-	currentOffset := session.StartOffset
+	currentOffset := startOffset
 
 	// CRITICAL FIX: Return immediately if maxRecords is 0 or negative
 	if maxRecords <= 0 {
 		return records, nil
 	}
 
-	// CRITICAL FIX: Use cached records if available to avoid broker tight loop
-	// If we've already consumed these records, return them from cache
-	if len(session.consumedRecords) > 0 {
-		cacheStartOffset := session.consumedRecords[0].Offset
-		cacheEndOffset := session.consumedRecords[len(session.consumedRecords)-1].Offset
-
-		if currentOffset >= cacheStartOffset && currentOffset <= cacheEndOffset {
-			// Records are in cache
-			glog.V(2).Infof("[FETCH] Returning cached records: requested offset %d is in cache [%d-%d]",
-				currentOffset, cacheStartOffset, cacheEndOffset)
-
-			// Find starting index in cache
-			startIdx := int(currentOffset - cacheStartOffset)
-			if startIdx < 0 || startIdx >= len(session.consumedRecords) {
-				glog.Errorf("[FETCH] Cache index out of bounds: startIdx=%d, cache size=%d", startIdx, len(session.consumedRecords))
-				return records, nil
-			}
-
-			// Return up to maxRecords from cache
-			endIdx := startIdx + maxRecords
-			if endIdx > len(session.consumedRecords) {
-				endIdx = len(session.consumedRecords)
-			}
-
-			glog.V(2).Infof("[FETCH] Returning %d cached records from index %d to %d", endIdx-startIdx, startIdx, endIdx-1)
-			// CRITICAL: Capture slice result while holding lock (defer will unlock after return)
-			result := session.consumedRecords[startIdx:endIdx]
-			return result, nil
-		}
-	}
+	// Note: Cache checking is done in ReadRecordsFromOffset, not here
+	// This function is called only when we need to read new data from the stream
 
 	// Read first record with timeout (important for empty topics)
 	// CRITICAL: For SMQ backend with consumer groups, we need adequate timeout for disk reads
@@ -464,7 +820,7 @@ func (bc *BrokerClient) ReadRecords(ctx context.Context, session *BrokerSubscrib
 			}
 			records = append(records, record)
 			currentOffset++
-			glog.V(2).Infof("[FETCH] Received record: offset=%d, keyLen=%d, valueLen=%d",
+			glog.V(2).Infof("[FETCH] Received first record: offset=%d, keyLen=%d, valueLen=%d",
 				record.Offset, len(record.Key), len(record.Value))
 
 			// CRITICAL: Auto-acknowledge first message immediately for Kafka gateway
@@ -542,11 +898,8 @@ func (bc *BrokerClient) ReadRecords(ctx context.Context, session *BrokerSubscrib
 
 			if result.err != nil {
 				glog.V(2).Infof("[FETCH] Stream.Recv() error after %d records: %v", len(records), result.err)
-				// Update session offset before returning
-				glog.V(2).Infof("[FETCH] Updating %s offset: %d -> %d (error case, read %d records)",
-					session.Key(), session.StartOffset, currentOffset, len(records))
-				session.StartOffset = currentOffset
-				return records, nil
+				// Return what we have - cache will be updated at the end
+				break
 			}
 
 			if dataMsg := result.resp.GetData(); dataMsg != nil {
@@ -584,30 +937,28 @@ func (bc *BrokerClient) ReadRecords(ctx context.Context, session *BrokerSubscrib
 			cancel2()
 			// Timeout - return what we have
 			glog.V(2).Infof("[FETCH] Read timeout after %d records (waited %v), returning batch", len(records), time.Since(readStart))
-			// CRITICAL: Update session offset so next fetch knows where we left off
-			glog.V(2).Infof("[FETCH] Updating %s offset: %d -> %d (timeout case, read %d records)",
-				session.Key(), session.StartOffset, currentOffset, len(records))
-			session.StartOffset = currentOffset
 			return records, nil
 		}
 	}
 
-	glog.V(2).Infof("[FETCH] ReadRecords returning %d records (maxRecords reached)", len(records))
-	// Update session offset after successful read
-	glog.V(2).Infof("[FETCH] Updating %s offset: %d -> %d (success case, read %d records)",
-		session.Key(), session.StartOffset, currentOffset, len(records))
-	session.StartOffset = currentOffset
-
-	// CRITICAL: Cache the consumed records to avoid broker tight loop
-	// Append new records to cache (keep last 1000 records max for better hit rate)
-	session.consumedRecords = append(session.consumedRecords, records...)
-	if len(session.consumedRecords) > 1000 {
-		// Keep only the most recent 1000 records
-		session.consumedRecords = session.consumedRecords[len(session.consumedRecords)-1000:]
-	}
-	glog.V(2).Infof("[FETCH] Updated cache: now contains %d records", len(session.consumedRecords))
-
+	glog.V(2).Infof("[FETCH] Returning %d records (maxRecords reached)", len(records))
 	return records, nil
+}
+
+// ReadRecords is a simplified version for deprecated code paths
+// It reads from wherever the stream currently is
+func (bc *BrokerClient) ReadRecords(ctx context.Context, session *BrokerSubscriberSession, maxRecords int) ([]*SeaweedRecord, error) {
+	// Determine where stream is based on cache
+	session.mu.Lock()
+	var streamOffset int64
+	if len(session.consumedRecords) > 0 {
+		streamOffset = session.consumedRecords[len(session.consumedRecords)-1].Offset + 1
+	} else {
+		streamOffset = session.StartOffset
+	}
+	session.mu.Unlock()
+
+	return bc.readRecordsFrom(ctx, session, streamOffset, maxRecords)
 }
 
 // CloseSubscriber closes and removes a subscriber session

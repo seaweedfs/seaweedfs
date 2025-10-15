@@ -51,6 +51,7 @@ func NewBrokerClientWithFilerAccessor(brokerAddress string, filerClientAccessor 
 		client:              client,
 		publishers:          make(map[string]*BrokerPublisherSession),
 		subscribers:         make(map[string]*BrokerSubscriberSession),
+		fetchRequests:       make(map[string]*FetchRequest),
 		ctx:                 ctx,
 		cancel:              cancel,
 	}, nil
