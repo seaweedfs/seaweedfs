@@ -1057,6 +1057,9 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 
 		// Route to appropriate channel based on API key
 		var targetChan chan *kafkaRequest
+		if apiKey == 2 { // ListOffsets
+			glog.Warningf("🔴 BEFORE ROUTING: ListOffsets request ready to route - correlationID=%d, requestBodyLen=%d", correlationID, len(requestBody))
+		}
 		if isDataPlaneAPI(apiKey) {
 			targetChan = dataChan
 			glog.Warningf("🔴 REQUEST ROUTING: apiKey=%d routed to DATA plane", apiKey)
