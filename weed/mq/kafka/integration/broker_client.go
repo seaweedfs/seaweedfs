@@ -45,15 +45,17 @@ func NewBrokerClientWithFilerAccessor(brokerAddress string, filerClientAccessor 
 	client := mq_pb.NewSeaweedMessagingClient(conn)
 
 	return &BrokerClient{
-		filerClientAccessor: filerClientAccessor,
-		brokerAddress:       brokerAddress,
-		conn:                conn,
-		client:              client,
-		publishers:          make(map[string]*BrokerPublisherSession),
-		subscribers:         make(map[string]*BrokerSubscriberSession),
-		fetchRequests:       make(map[string]*FetchRequest),
-		ctx:                 ctx,
-		cancel:              cancel,
+		filerClientAccessor:         filerClientAccessor,
+		brokerAddress:               brokerAddress,
+		conn:                        conn,
+		client:                      client,
+		publishers:                  make(map[string]*BrokerPublisherSession),
+		subscribers:                 make(map[string]*BrokerSubscriberSession),
+		fetchRequests:               make(map[string]*FetchRequest),
+		partitionAssignmentCache:    make(map[string]*partitionAssignmentCacheEntry),
+		partitionAssignmentCacheTTL: 30 * time.Second, // Same as broker's cache TTL
+		ctx:                         ctx,
+		cancel:                      cancel,
 	}, nil
 }
 

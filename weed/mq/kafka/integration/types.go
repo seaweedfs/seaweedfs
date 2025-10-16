@@ -161,6 +161,12 @@ type FetchResult struct {
 	err     error
 }
 
+// partitionAssignmentCacheEntry caches LookupTopicBrokers results
+type partitionAssignmentCacheEntry struct {
+	assignments []*mq_pb.BrokerPartitionAssignment
+	expiresAt   time.Time
+}
+
 type BrokerClient struct {
 	// Reference to shared filer client accessor
 	filerClientAccessor *filer_client.FilerClientAccessor
@@ -180,6 +186,11 @@ type BrokerClient struct {
 	// Request deduplication for stateless fetches
 	fetchRequestsLock sync.Mutex
 	fetchRequests     map[string]*FetchRequest
+
+	// Partition assignment cache to reduce LookupTopicBrokers calls (13.5% CPU overhead!)
+	partitionAssignmentCache    map[string]*partitionAssignmentCacheEntry // Key: topic name
+	partitionAssignmentCacheMu  sync.RWMutex
+	partitionAssignmentCacheTTL time.Duration
 
 	ctx    context.Context
 	cancel context.CancelFunc

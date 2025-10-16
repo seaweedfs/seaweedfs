@@ -3,6 +3,7 @@ package integration
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
@@ -223,8 +224,23 @@ func (bc *BrokerClient) ClosePublisher(topic string, partition int32) error {
 }
 
 // getActualPartitionAssignment looks up the actual partition assignment from the broker configuration
+// Uses cache to avoid expensive LookupTopicBrokers calls on every fetch (13.5% CPU overhead!)
 func (bc *BrokerClient) getActualPartitionAssignment(topic string, kafkaPartition int32) (*schema_pb.Partition, error) {
-	// Look up the topic configuration from the broker to get the actual partition assignments
+	// Check cache first
+	bc.partitionAssignmentCacheMu.RLock()
+	if entry, found := bc.partitionAssignmentCache[topic]; found {
+		if time.Now().Before(entry.expiresAt) {
+			assignments := entry.assignments
+			bc.partitionAssignmentCacheMu.RUnlock()
+			glog.V(4).Infof("Partition assignment cache HIT for topic %s", topic)
+			// Use cached assignments to find partition
+			return bc.findPartitionInAssignments(topic, kafkaPartition, assignments)
+		}
+	}
+	bc.partitionAssignmentCacheMu.RUnlock()
+
+	// Cache miss or expired - lookup from broker
+	glog.V(4).Infof("Partition assignment cache MISS for topic %s, calling LookupTopicBrokers", topic)
 	lookupResp, err := bc.client.LookupTopicBrokers(bc.ctx, &mq_pb.LookupTopicBrokersRequest{
 		Topic: &schema_pb.Topic{
 			Namespace: "kafka",
@@ -239,7 +255,22 @@ func (bc *BrokerClient) getActualPartitionAssignment(topic string, kafkaPartitio
 		return nil, fmt.Errorf("no partition assignments found for topic %s", topic)
 	}
 
-	totalPartitions := int32(len(lookupResp.BrokerPartitionAssignments))
+	// Cache the assignments
+	bc.partitionAssignmentCacheMu.Lock()
+	bc.partitionAssignmentCache[topic] = &partitionAssignmentCacheEntry{
+		assignments: lookupResp.BrokerPartitionAssignments,
+		expiresAt:   time.Now().Add(bc.partitionAssignmentCacheTTL),
+	}
+	bc.partitionAssignmentCacheMu.Unlock()
+	glog.V(4).Infof("Cached partition assignments for topic %s", topic)
+
+	// Use freshly fetched assignments to find partition
+	return bc.findPartitionInAssignments(topic, kafkaPartition, lookupResp.BrokerPartitionAssignments)
+}
+
+// findPartitionInAssignments finds the SeaweedFS partition for a given Kafka partition ID
+func (bc *BrokerClient) findPartitionInAssignments(topic string, kafkaPartition int32, assignments []*mq_pb.BrokerPartitionAssignment) (*schema_pb.Partition, error) {
+	totalPartitions := int32(len(assignments))
 	if kafkaPartition >= totalPartitions {
 		return nil, fmt.Errorf("kafka partition %d out of range, topic %s has %d partitions",
 			kafkaPartition, topic, totalPartitions)
@@ -262,7 +293,7 @@ func (bc *BrokerClient) getActualPartitionAssignment(topic string, kafkaPartitio
 		kafkaPartition, topic, expectedRangeStart, expectedRangeStop, totalPartitions)
 
 	// Find the broker assignment that matches this range
-	for _, assignment := range lookupResp.BrokerPartitionAssignments {
+	for _, assignment := range assignments {
 		if assignment.Partition == nil {
 			continue
 		}
@@ -280,7 +311,7 @@ func (bc *BrokerClient) getActualPartitionAssignment(topic string, kafkaPartitio
 	glog.Warningf("no partition assignment found for Kafka partition %d in topic %s with expected range [%d, %d]",
 		kafkaPartition, topic, expectedRangeStart, expectedRangeStop)
 	glog.Warningf("Available assignments:")
-	for i, assignment := range lookupResp.BrokerPartitionAssignments {
+	for i, assignment := range assignments {
 		if assignment.Partition != nil {
 			glog.Warningf("  Assignment[%d]: {RangeStart: %d, RangeStop: %d, RingSize: %d}",
 				i, assignment.Partition.RangeStart, assignment.Partition.RangeStop, assignment.Partition.RingSize)
