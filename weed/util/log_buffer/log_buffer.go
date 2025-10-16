@@ -35,9 +35,9 @@ type LogReadFromDiskFuncType func(startPosition MessagePosition, stopTsNs int64,
 
 // DiskChunkCache caches chunks of historical data read from disk
 type DiskChunkCache struct {
-	mu     sync.RWMutex
-	chunks map[int64]*CachedDiskChunk // Key: chunk start offset (aligned to chunkSize)
-	maxChunks int                     // Maximum number of chunks to cache
+	mu        sync.RWMutex
+	chunks    map[int64]*CachedDiskChunk // Key: chunk start offset (aligned to chunkSize)
+	maxChunks int                        // Maximum number of chunks to cache
 }
 
 // CachedDiskChunk represents a cached chunk of disk data
