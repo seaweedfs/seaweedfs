@@ -30,14 +30,17 @@ func (b *MessageQueueBroker) LookupTopicBrokers(ctx context.Context, request *mq
 
 	t := topic.FromPbTopic(request.Topic)
 	ret := &mq_pb.LookupTopicBrokersResponse{}
-	conf := &mq_pb.ConfigureTopicResponse{}
 	ret.Topic = request.Topic
-	if conf, err = b.fca.ReadTopicConfFromFiler(t); err != nil {
+	
+	// Use cached topic config to avoid expensive filer reads (26% CPU overhead!)
+	conf, err := b.getTopicConfFromCache(t)
+	if err != nil {
 		glog.V(0).Infof("lookup topic %s conf: %v", request.Topic, err)
-	} else {
-		err = b.ensureTopicActiveAssignments(t, conf)
-		ret.BrokerPartitionAssignments = conf.BrokerPartitionAssignments
+		return ret, err
 	}
+	
+	err = b.ensureTopicActiveAssignments(t, conf)
+	ret.BrokerPartitionAssignments = conf.BrokerPartitionAssignments
 
 	return ret, err
 }

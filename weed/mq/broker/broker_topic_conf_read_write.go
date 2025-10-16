@@ -18,10 +18,38 @@ import (
 )
 
 func (b *MessageQueueBroker) GetOrGenerateLocalPartition(t topic.Topic, partition topic.Partition) (localTopicPartition *topic.LocalPartition, getOrGenError error) {
-	// get or generate a local partition
+	// get or generate a local partition using cached topic config
+	conf, err := b.getTopicConfFromCache(t)
+	if err != nil {
+		glog.Errorf("topic %v not found: %v", t, err)
+		return nil, fmt.Errorf("topic %v not found: %w", t, err)
+	}
+	
+	localTopicPartition, _, getOrGenError = b.doGetOrGenLocalPartition(t, partition, conf)
+	if getOrGenError != nil {
+		glog.Errorf("topic %v partition %v not setup: %v", t, partition, getOrGenError)
+		return nil, fmt.Errorf("topic %v partition %v not setup: %w", t, partition, getOrGenError)
+	}
+	return localTopicPartition, nil
+}
+
+// invalidateTopicCache removes a topic from the unified cache
+// Should be called when a topic is created, deleted, or config is updated
+func (b *MessageQueueBroker) invalidateTopicCache(t topic.Topic) {
+	topicKey := t.String()
+	b.topicCacheMu.Lock()
+	delete(b.topicCache, topicKey)
+	b.topicCacheMu.Unlock()
+	glog.V(4).Infof("Invalidated topic cache for %s", topicKey)
+}
+
+// getTopicConfFromCache reads topic configuration with caching
+// Returns the config or error if not found. Uses unified cache to avoid expensive filer reads.
+// This is the public API for reading topic config - always use this instead of direct filer reads.
+func (b *MessageQueueBroker) getTopicConfFromCache(t topic.Topic) (*mq_pb.ConfigureTopicResponse, error) {
 	topicKey := t.String()
 	
-	// Check unified cache first to avoid expensive filer reads (60% CPU overhead!)
+	// Check unified cache first
 	b.topicCacheMu.RLock()
 	if entry, found := b.topicCache[topicKey]; found {
 		if time.Now().Before(entry.expiresAt) {
@@ -35,12 +63,7 @@ func (b *MessageQueueBroker) GetOrGenerateLocalPartition(t topic.Topic, partitio
 			}
 			
 			glog.V(4).Infof("Topic cache HIT for %s", topicKey)
-			localTopicPartition, _, getOrGenError = b.doGetOrGenLocalPartition(t, partition, conf)
-			if getOrGenError != nil {
-				glog.Errorf("topic %v partition %v not setup: %v", t, partition, getOrGenError)
-				return nil, fmt.Errorf("topic %v partition %v not setup: %w", t, partition, getOrGenError)
-			}
-			return localTopicPartition, nil
+			return conf, nil
 		}
 	}
 	b.topicCacheMu.RUnlock()
@@ -59,7 +82,6 @@ func (b *MessageQueueBroker) GetOrGenerateLocalPartition(t topic.Topic, partitio
 		}
 		b.topicCacheMu.Unlock()
 		glog.V(4).Infof("Topic cached as non-existent: %s", topicKey)
-		glog.Errorf("topic %v not found: %v", t, readConfErr)
 		return nil, fmt.Errorf("topic %v not found: %w", t, readConfErr)
 	}
 	
@@ -70,23 +92,8 @@ func (b *MessageQueueBroker) GetOrGenerateLocalPartition(t topic.Topic, partitio
 	}
 	b.topicCacheMu.Unlock()
 	glog.V(4).Infof("Topic config cached for %s", topicKey)
-
-	localTopicPartition, _, getOrGenError = b.doGetOrGenLocalPartition(t, partition, conf)
-	if getOrGenError != nil {
-		glog.Errorf("topic %v partition %v not setup: %v", t, partition, getOrGenError)
-		return nil, fmt.Errorf("topic %v partition %v not setup: %w", t, partition, getOrGenError)
-	}
-	return localTopicPartition, nil
-}
-
-// invalidateTopicCache removes a topic from the unified cache
-// Should be called when a topic is created, deleted, or config is updated
-func (b *MessageQueueBroker) invalidateTopicCache(t topic.Topic) {
-	topicKey := t.String()
-	b.topicCacheMu.Lock()
-	delete(b.topicCache, topicKey)
-	b.topicCacheMu.Unlock()
-	glog.V(4).Infof("Invalidated topic cache for %s", topicKey)
+	
+	return conf, nil
 }
 
 func (b *MessageQueueBroker) doGetOrGenLocalPartition(t topic.Topic, partition topic.Partition, conf *mq_pb.ConfigureTopicResponse) (localPartition *topic.LocalPartition, isGenerated bool, err error) {
