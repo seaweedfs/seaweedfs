@@ -110,6 +110,16 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 	mqBroker.offsetManager = NewBrokerOffsetManagerWithFilerAccessor(fca)
 	glog.V(0).Infof("broker initialized offset manager with filer accessor (current filer: %s)", mqBroker.GetFiler())
 
+	// Start idle partition cleanup task
+	// Cleans up partitions with no publishers/subscribers after 5 minutes of idle time
+	// Checks every 1 minute to avoid memory bloat from short-lived topics
+	mqBroker.localTopicManager.StartIdlePartitionCleanup(
+		context.Background(),
+		1*time.Minute, // Check interval
+		5*time.Minute, // Idle timeout - clean up after 5 minutes of no activity
+	)
+	glog.V(0).Info("Started idle partition cleanup task (check: 1m, timeout: 5m)")
+
 	existingNodes := cluster.ListExistingPeerUpdates(mqBroker.MasterClient.GetMaster(context.Background()), grpcDialOption, option.FilerGroup, cluster.FilerType)
 	for _, newNode := range existingNodes {
 		mqBroker.OnBrokerUpdate(newNode, time.Now())
