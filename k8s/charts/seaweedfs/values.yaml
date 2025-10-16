@@ -1013,7 +1013,7 @@ s3:
     # host: false for "*" hostname
     host: "seaweedfs.cluster.local"
     path: "/"
-    pathType: ImplementationSpecific
+    pathType: Prefix
     # additional ingress annotations for the s3 endpoint
     annotations: {}
     tls: []
