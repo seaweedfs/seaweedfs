@@ -48,11 +48,6 @@ func (h *Handler) handleFindCoordinator(correlationID uint32, apiVersion uint16,
 func (h *Handler) handleFindCoordinatorV0(correlationID uint32, requestBody []byte) ([]byte, error) {
 	// Parse FindCoordinator v0 request: Key (STRING) only
 
-	dumpLen := len(requestBody)
-	if dumpLen > 50 {
-		dumpLen = 50
-	}
-
 	if len(requestBody) < 2 { // need at least Key length
 		return nil, fmt.Errorf("FindCoordinator request too short")
 	}
@@ -126,11 +121,6 @@ func (h *Handler) handleFindCoordinatorV0(correlationID uint32, requestBody []by
 
 func (h *Handler) handleFindCoordinatorV2(correlationID uint32, requestBody []byte) ([]byte, error) {
 	// Parse FindCoordinator request (v0-2 non-flex): Key (STRING), v1+ adds KeyType (INT8)
-
-	dumpLen := len(requestBody)
-	if dumpLen > 50 {
-		dumpLen = 50
-	}
 
 	if len(requestBody) < 2 { // need at least Key length
 		return nil, fmt.Errorf("FindCoordinator request too short")
