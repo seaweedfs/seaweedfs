@@ -61,11 +61,6 @@ func (bc *BrokerClient) PublishRecord(ctx context.Context, topic string, partiti
 		return 0, fmt.Errorf("failed to receive ack: %v", err)
 	}
 
-	if topic == "_schemas" {
-		glog.V(3).Infof("[GATEWAY RECV] topic=%s partition=%d resp.AssignedOffset=%d resp.AckTsNs=%d", 
-			topic, partition, resp.AssignedOffset, resp.AckTsNs)
-	}
-
 	// Handle structured broker errors
 	if kafkaErrorCode, errorMsg, handleErr := HandleBrokerResponse(resp); handleErr != nil {
 		return 0, handleErr

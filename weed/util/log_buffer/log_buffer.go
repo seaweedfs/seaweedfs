@@ -3,7 +3,6 @@ package log_buffer
 import (
 	"bytes"
 	"math"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -591,12 +590,6 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 	if isOffsetBased {
 		requestedOffset := lastReadPosition.Offset
 
-		// DEBUG: Log buffer state for _schemas topic
-		if strings.Contains(logBuffer.name, "_schemas") {
-			glog.Infof("[SCHEMAS ReadFromBuffer] requested=%d bufferStart=%d bufferEnd=%d pos=%d lastFlushed=%d",
-				requestedOffset, logBuffer.bufferStartOffset, logBuffer.offset, logBuffer.pos, logBuffer.lastFlushedOffset.Load())
-		}
-
 		// Check if the requested offset is in the current buffer range
 		if requestedOffset >= logBuffer.bufferStartOffset && requestedOffset <= logBuffer.offset {
 			// If current buffer is empty (pos=0), check if data is on disk or not yet written
@@ -614,10 +607,6 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 				// Case 3: try disk read (historical data might exist)
 				if requestedOffset < logBuffer.offset {
 					// Data was in the buffer range but buffer is now empty = flushed to disk
-					if strings.Contains(logBuffer.name, "_schemas") {
-						glog.Infof("[SCHEMAS ReadFromBuffer] Returning ResumeFromDiskError: empty buffer, offset %d was flushed (bufferStart=%d, offset=%d)",
-							requestedOffset, logBuffer.bufferStartOffset, logBuffer.offset)
-					}
 					return nil, -2, ResumeFromDiskError
 				}
 				// requestedOffset == logBuffer.offset: Current position
@@ -625,19 +614,10 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 				// (historical data might exist from previous runs)
 				if requestedOffset == 0 && logBuffer.bufferStartOffset == 0 && logBuffer.offset == 0 {
 					// Initial state: try disk read before waiting for new data
-					if strings.Contains(logBuffer.name, "_schemas") {
-						glog.Infof("[SCHEMAS ReadFromBuffer] Initial state, trying disk read for offset 0")
-					}
 					return nil, -2, ResumeFromDiskError
 				}
 				// Otherwise, wait for new data to arrive
-				if strings.Contains(logBuffer.name, "_schemas") {
-					glog.Infof("[SCHEMAS ReadFromBuffer] Returning nil: waiting for offset %d to arrive", requestedOffset)
-				}
 				return nil, logBuffer.offset, nil
-			}
-			if strings.Contains(logBuffer.name, "_schemas") {
-				glog.Infof("[SCHEMAS ReadFromBuffer] Returning %d bytes from buffer", logBuffer.pos)
 			}
 			return copiedBytes(logBuffer.buf[:logBuffer.pos]), logBuffer.offset, nil
 		}

@@ -1964,9 +1964,7 @@ func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, req
 					responseOffset = earliestOffset
 				}
 				responseTimestamp = 0 // No specific timestamp for earliest
-				if strings.HasPrefix(string(topicName), "_schemas") {
-					glog.Infof("SCHEMA REGISTRY LISTOFFSETS EARLIEST: topic=%s partition=%d returning offset=%d", string(topicName), partitionID, responseOffset)
-				}
+
 			case -1: // latest offset
 				// Get the actual latest offset from SMQ
 				if h.seaweedMQHandler == nil {
