@@ -29,10 +29,7 @@ type CoordinatorAssignment struct {
 }
 
 func (h *Handler) handleFindCoordinator(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
-	glog.V(0).Infof("═══════════════════════════════════════════════════════════════")
-	glog.V(0).Infof("  🔍 FIND_COORDINATOR API CALLED (ApiKey 10) version=%d", apiVersion)
-	glog.V(0).Infof("═══════════════════════════════════════════════════════════════")
-	glog.V(4).Infof("FindCoordinator ENTRY: version=%d, correlation=%d, bodyLen=%d", apiVersion, correlationID, len(requestBody))
+	glog.V(2).Infof("FindCoordinator: version=%d, correlation=%d, bodyLen=%d", apiVersion, correlationID, len(requestBody))
 	switch apiVersion {
 	case 0:
 		glog.V(4).Infof("FindCoordinator - Routing to V0 handler")

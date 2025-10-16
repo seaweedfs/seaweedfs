@@ -1036,10 +1036,8 @@ func (h *Handler) processRequestSync(req *kafkaRequest) ([]byte, error) {
 	requestStart := time.Now()
 	apiName := getAPIName(APIKey(req.apiKey))
 
-	// ═══════════════════════════════════════════════════════════════
-	// LOG ALL INCOMING KAFKA API CALLS
-	// ═══════════════════════════════════════════════════════════════
-	glog.V(0).Infof("🔵 [API] %s (key=%d, ver=%d, corr=%d)",
+	// Debug: Log API calls at verbose level 2 (disabled by default)
+	glog.V(2).Infof("[API] %s (key=%d, ver=%d, corr=%d)",
 		apiName, req.apiKey, req.apiVersion, req.correlationID)
 
 	var response []byte
