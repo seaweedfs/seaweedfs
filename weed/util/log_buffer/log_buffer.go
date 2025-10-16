@@ -33,6 +33,21 @@ type EachLogEntryWithOffsetFuncType func(logEntry *filer_pb.LogEntry, offset int
 type LogFlushFuncType func(logBuffer *LogBuffer, startTime, stopTime time.Time, buf []byte, minOffset, maxOffset int64)
 type LogReadFromDiskFuncType func(startPosition MessagePosition, stopTsNs int64, eachLogEntryFn EachLogEntryFuncType) (lastReadPosition MessagePosition, isDone bool, err error)
 
+// DiskChunkCache caches chunks of historical data read from disk
+type DiskChunkCache struct {
+	mu     sync.RWMutex
+	chunks map[int64]*CachedDiskChunk // Key: chunk start offset (aligned to chunkSize)
+	maxChunks int                     // Maximum number of chunks to cache
+}
+
+// CachedDiskChunk represents a cached chunk of disk data
+type CachedDiskChunk struct {
+	startOffset int64
+	endOffset   int64
+	messages    []*filer_pb.LogEntry
+	lastAccess  time.Time
+}
+
 type LogBuffer struct {
 	LastFlushTsNs     int64
 	name              string
@@ -63,6 +78,8 @@ type LogBuffer struct {
 	hasOffsets        bool
 	lastFlushedOffset atomic.Int64 // Highest offset that has been flushed to disk (-1 = nothing flushed yet)
 	lastFlushedTime   atomic.Int64 // Latest timestamp that has been flushed to disk (0 = nothing flushed yet)
+	// Disk chunk cache for historical data reads
+	diskChunkCache *DiskChunkCache
 	sync.RWMutex
 }
 
@@ -81,6 +98,10 @@ func NewLogBuffer(name string, flushInterval time.Duration, flushFn LogFlushFunc
 		flushChan:      make(chan *dataToFlush, 256),
 		isStopping:     new(atomic.Bool),
 		offset:         0, // Will be initialized from existing data if available
+		diskChunkCache: &DiskChunkCache{
+			chunks:    make(map[int64]*CachedDiskChunk),
+			maxChunks: 16, // Cache up to 16 chunks (configurable)
+		},
 	}
 	lb.lastFlushedOffset.Store(-1) // Nothing flushed to disk yet
 	go lb.loopFlush()
