@@ -49,20 +49,20 @@ func (b *MessageQueueBroker) invalidateTopicCache(t topic.Topic) {
 // This is the public API for reading topic config - always use this instead of direct filer reads.
 func (b *MessageQueueBroker) getTopicConfFromCache(t topic.Topic) (*mq_pb.ConfigureTopicResponse, error) {
 	topicKey := t.String()
-	
+
 	// Check unified cache first
 	b.topicCacheMu.RLock()
 	if entry, found := b.topicCache[topicKey]; found {
 		if time.Now().Before(entry.expiresAt) {
 			conf := entry.conf
 			b.topicCacheMu.RUnlock()
-			
+
 			// If conf is nil, topic was cached as non-existent
 			if conf == nil {
 				glog.V(4).Infof("Topic cache HIT for %s: topic doesn't exist", topicKey)
 				return nil, fmt.Errorf("topic %v not found (cached)", t)
 			}
-			
+
 			glog.V(4).Infof("Topic cache HIT for %s (skipping assignment validation)", topicKey)
 			// Cache hit - return immediately without validating assignments
 			// Assignments were validated when we first cached this config
@@ -70,11 +70,11 @@ func (b *MessageQueueBroker) getTopicConfFromCache(t topic.Topic) (*mq_pb.Config
 		}
 	}
 	b.topicCacheMu.RUnlock()
-	
+
 	// Cache miss or expired - read from filer
 	glog.V(4).Infof("Topic cache MISS for %s, reading from filer", topicKey)
 	conf, readConfErr := b.fca.ReadTopicConfFromFiler(t)
-	
+
 	if readConfErr != nil {
 		// Negative cache: topic doesn't exist
 		b.topicCacheMu.Lock()
@@ -86,7 +86,7 @@ func (b *MessageQueueBroker) getTopicConfFromCache(t topic.Topic) (*mq_pb.Config
 		glog.V(4).Infof("Topic cached as non-existent: %s", topicKey)
 		return nil, fmt.Errorf("topic %v not found: %w", t, readConfErr)
 	}
-	
+
 	// Validate broker assignments before caching (NOT holding cache lock)
 	// This ensures cached configs always have valid broker assignments
 	// Only done on cache miss (not on every lookup), saving 14% CPU
@@ -100,15 +100,21 @@ func (b *MessageQueueBroker) getTopicConfFromCache(t topic.Topic) (*mq_pb.Config
 			// Don't cache on error - let next request retry
 			return conf, err
 		}
-		// Invalidate cache to force fresh read on next request
-		// This ensures all brokers see the updated assignments
+		// CRITICAL FIX: Invalidate cache while holding lock to prevent race condition
+		// Before the fix, between checking the cache and invalidating it, another goroutine
+		// could read stale data. Now we hold the lock throughout.
 		b.topicCacheMu.Lock()
 		delete(b.topicCache, topicKey)
+		// Cache the updated config with validated assignments
+		b.topicCache[topicKey] = &topicCacheEntry{
+			conf:      conf,
+			expiresAt: time.Now().Add(b.topicCacheTTL),
+		}
 		b.topicCacheMu.Unlock()
-		glog.V(4).Infof("Invalidated cache for %s after assignment update", topicKey)
+		glog.V(4).Infof("Updated cache for %s after assignment update", topicKey)
 		return conf, nil
 	}
-	
+
 	// Positive cache: topic exists with validated assignments
 	b.topicCacheMu.Lock()
 	b.topicCache[topicKey] = &topicCacheEntry{
@@ -117,7 +123,7 @@ func (b *MessageQueueBroker) getTopicConfFromCache(t topic.Topic) (*mq_pb.Config
 	}
 	b.topicCacheMu.Unlock()
 	glog.V(4).Infof("Topic config cached for %s", topicKey)
-	
+
 	return conf, nil
 }
 

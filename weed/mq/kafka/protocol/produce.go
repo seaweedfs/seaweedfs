@@ -55,7 +55,15 @@ func (h *Handler) handleProduceV0V1(ctx context.Context, correlationID uint32, a
 
 	timeout := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 	offset += 4
-	_ = timeout // unused for now
+
+	// CRITICAL FIX: Apply client-specified timeout to context
+	// If client specifies a timeout, create a new context with that timeout
+	// This ensures broker connections respect the client's expectations
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeout)*time.Millisecond)
+		defer cancel()
+	}
 
 	topicsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 	offset += 4
@@ -620,8 +628,17 @@ func (h *Handler) handleProduceV2Plus(ctx context.Context, correlationID uint32,
 
 	acks := int16(binary.BigEndian.Uint16(requestBody[offset : offset+2]))
 	offset += 2
-	_ = binary.BigEndian.Uint32(requestBody[offset : offset+4]) // timeout
+	timeout := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 	offset += 4
+
+	// CRITICAL FIX: Apply client-specified timeout to context
+	// If client specifies a timeout, create a new context with that timeout
+	// This ensures broker connections respect the client's expectations
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeout)*time.Millisecond)
+		defer cancel()
+	}
 
 	// Remember if this is fire-and-forget mode
 	isFireAndForget := acks == 0

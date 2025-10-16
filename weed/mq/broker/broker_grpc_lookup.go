@@ -174,7 +174,7 @@ func (b *MessageQueueBroker) ListTopics(ctx context.Context, request *mq_pb.List
 	}
 
 	if err != nil {
-		glog.V(0).Infof("📋 ListTopics: filer scan failed: %v (returning %d in-memory topics)", err, len(inMemoryTopics))
+		glog.V(0).Infof("ListTopics: filer scan failed: %v (returning %d in-memory topics)", err, len(inMemoryTopics))
 		// Still return in-memory topics even if filer fails
 	} else {
 		glog.V(4).Infof("📋 ListTopics completed successfully: %d total topics (in-memory + persisted)", len(ret.Topics))

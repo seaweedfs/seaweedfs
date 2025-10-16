@@ -179,6 +179,9 @@ type BrokerClient struct {
 	publishersLock sync.RWMutex
 	publishers     map[string]*BrokerPublisherSession
 
+	// Publisher creation locks to prevent concurrent creation attempts for the same topic-partition
+	publisherCreationLocks map[string]*sync.Mutex
+
 	// Subscriber streams for offset tracking
 	subscribersLock sync.RWMutex
 	subscribers     map[string]*BrokerSubscriberSession
