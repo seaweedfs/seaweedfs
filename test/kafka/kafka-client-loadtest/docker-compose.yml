@@ -62,6 +62,8 @@ services:
       SCHEMA_REGISTRY_KAFKASTORE_WRITE_TIMEOUT_MS: "60000"
       SCHEMA_REGISTRY_KAFKASTORE_INIT_RETRY_BACKOFF_MS: "5000"
       SCHEMA_REGISTRY_KAFKASTORE_CONSUMER_AUTO_OFFSET_RESET: "earliest"
+      # Enable debug logging for Kafka clients to trace consumer seek/fetch operations
+      SCHEMA_REGISTRY_LOG4J_LOGGERS: "org.apache.kafka.clients=DEBUG,org.apache.kafka.common=DEBUG,io.confluent.kafka.schemaregistry.storage=DEBUG"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8081/subjects"]
       interval: 15s

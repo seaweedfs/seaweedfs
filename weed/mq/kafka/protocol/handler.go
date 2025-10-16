@@ -1716,6 +1716,16 @@ func (h *Handler) HandleMetadataV3V4(correlationID uint32, requestBody []byte) (
 
 	response := buf.Bytes()
 
+	// Detailed logging for Metadata response
+	maxDisplay := len(response)
+	if maxDisplay > 50 {
+		maxDisplay = 50
+	}
+	glog.Warningf("🟡 Metadata v3/v4 FINAL RESPONSE: size=%d bytes, first50bytes=%v", len(response), response[:maxDisplay])
+	if len(response) > 100 {
+		glog.Warningf("🟡 Metadata v3/v4 RESPONSE HEX (first 100 bytes): %x", response[:100])
+	}
+	
 	return response, nil
 }
 
@@ -1882,6 +1892,16 @@ func (h *Handler) handleMetadataV5ToV8(correlationID uint32, requestBody []byte,
 
 	response := buf.Bytes()
 
+	// Detailed logging for Metadata response
+	maxDisplay := len(response)
+	if maxDisplay > 50 {
+		maxDisplay = 50
+	}
+	glog.Warningf("🟡 Metadata v%d FINAL RESPONSE: size=%d bytes, first50bytes=%v", apiVersion, len(response), response[:maxDisplay])
+	if len(response) > 100 {
+		glog.Warningf("🟡 Metadata v%d RESPONSE HEX (first 100 bytes): %x", apiVersion, response[:100])
+	}
+	
 	return response, nil
 }
 
