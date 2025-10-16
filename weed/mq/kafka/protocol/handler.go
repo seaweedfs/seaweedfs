@@ -1112,12 +1112,15 @@ func (h *Handler) processRequestSync(req *kafkaRequest) ([]byte, error) {
 
 	switch APIKey(req.apiKey) {
 	case APIKeyApiVersions:
+		glog.Warningf("🔥 SWITCH MATCHED: APIKeyApiVersions")
 		response, err = h.handleApiVersions(req.correlationID, req.apiVersion)
 
 	case APIKeyMetadata:
+		glog.Warningf("🔥 SWITCH MATCHED: APIKeyMetadata")
 		response, err = h.handleMetadata(req.correlationID, req.apiVersion, req.requestBody)
 
 	case APIKeyListOffsets:
+		glog.Warningf("🔥🔥🔥 SWITCH MATCHED: APIKeyListOffsets (apiKey=2)!!!")
 		glog.Warningf("🟡 processRequestSync: Handling ListOffsets (apiKey=2) - about to call handleListOffsets")
 		response, err = h.handleListOffsets(req.correlationID, req.apiVersion, req.requestBody)
 
