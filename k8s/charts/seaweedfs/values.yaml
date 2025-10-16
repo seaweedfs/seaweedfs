@@ -238,6 +238,8 @@ master:
     className: "nginx"
     # host: false for "*" hostname
     host: "master.seaweedfs.local"
+    path: "/sw-master/?(.*)"
+    pathType: ImplementationSpecific
     annotations:
       nginx.ingress.kubernetes.io/auth-type: "basic"
       nginx.ingress.kubernetes.io/auth-secret: "default/ingress-basic-auth-secret"
@@ -770,6 +772,8 @@ filer:
     className: "nginx"
     # host: false for "*" hostname
     host: "seaweedfs.cluster.local"
+    path: "/sw-filer/?(.*)"
+    pathType: ImplementationSpecific
     annotations:
       nginx.ingress.kubernetes.io/backend-protocol: GRPC
       nginx.ingress.kubernetes.io/auth-type: "basic"
@@ -1008,6 +1012,8 @@ s3:
     className: "nginx"
     # host: false for "*" hostname
     host: "seaweedfs.cluster.local"
+    path: "/"
+    pathType: Prefix
     # additional ingress annotations for the s3 endpoint
     annotations: {}
     tls: []
