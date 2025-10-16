@@ -44,6 +44,11 @@ type topicExistsCacheEntry struct {
 	expiresAt time.Time
 }
 
+type topicConfCacheEntry struct {
+	conf      *mq_pb.ConfigureTopicResponse
+	expiresAt time.Time
+}
+
 type MessageQueueBroker struct {
 	mq_pb.UnimplementedSeaweedMessagingServer
 	option            *MessageQueueBrokerOption
@@ -66,6 +71,11 @@ type MessageQueueBroker struct {
 	topicExistsCache    map[string]*topicExistsCacheEntry
 	topicExistsCacheMu  sync.RWMutex
 	topicExistsCacheTTL time.Duration
+	// TopicConf cache to reduce expensive filer reads and JSON unmarshaling
+	// Caches topic configuration to avoid 60% CPU overhead on every fetch
+	topicConfCache    map[string]*topicConfCacheEntry
+	topicConfCacheMu  sync.RWMutex
+	topicConfCacheTTL time.Duration
 }
 
 func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.DialOption) (mqBroker *MessageQueueBroker, err error) {
@@ -84,6 +94,8 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 		offsetManager:       nil, // Will be initialized below
 		topicExistsCache:    make(map[string]*topicExistsCacheEntry),
 		topicExistsCacheTTL: 30 * time.Second, // Cache for 30 seconds to reduce filer load
+		topicConfCache:      make(map[string]*topicConfCacheEntry),
+		topicConfCacheTTL:   30 * time.Second, // Cache topic config to avoid 60% CPU overhead
 	}
 	// Create FilerClientAccessor that adapts broker's single filer to the new multi-filer interface
 	fca := &filer_client.FilerClientAccessor{

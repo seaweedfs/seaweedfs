@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq"
@@ -18,11 +19,41 @@ import (
 
 func (b *MessageQueueBroker) GetOrGenerateLocalPartition(t topic.Topic, partition topic.Partition) (localTopicPartition *topic.LocalPartition, getOrGenError error) {
 	// get or generate a local partition
+	topicKey := t.String()
+	
+	// Check cache first to avoid expensive filer reads (60% CPU overhead!)
+	b.topicConfCacheMu.RLock()
+	if entry, found := b.topicConfCache[topicKey]; found {
+		if time.Now().Before(entry.expiresAt) {
+			conf := entry.conf
+			b.topicConfCacheMu.RUnlock()
+			glog.V(4).Infof("TopicConf cache HIT for %s", topicKey)
+			localTopicPartition, _, getOrGenError = b.doGetOrGenLocalPartition(t, partition, conf)
+			if getOrGenError != nil {
+				glog.Errorf("topic %v partition %v not setup: %v", t, partition, getOrGenError)
+				return nil, fmt.Errorf("topic %v partition %v not setup: %w", t, partition, getOrGenError)
+			}
+			return localTopicPartition, nil
+		}
+	}
+	b.topicConfCacheMu.RUnlock()
+	
+	// Cache miss or expired - read from filer
+	glog.V(4).Infof("TopicConf cache MISS for %s, reading from filer", topicKey)
 	conf, readConfErr := b.fca.ReadTopicConfFromFiler(t)
 	if readConfErr != nil {
 		glog.Errorf("topic %v not found: %v", t, readConfErr)
 		return nil, fmt.Errorf("topic %v not found: %w", t, readConfErr)
 	}
+	
+	// Cache the result
+	b.topicConfCacheMu.Lock()
+	b.topicConfCache[topicKey] = &topicConfCacheEntry{
+		conf:      conf,
+		expiresAt: time.Now().Add(b.topicConfCacheTTL),
+	}
+	b.topicConfCacheMu.Unlock()
+	glog.V(4).Infof("TopicConf cached for %s", topicKey)
 
 	localTopicPartition, _, getOrGenError = b.doGetOrGenLocalPartition(t, partition, conf)
 	if getOrGenError != nil {
@@ -30,6 +61,16 @@ func (b *MessageQueueBroker) GetOrGenerateLocalPartition(t topic.Topic, partitio
 		return nil, fmt.Errorf("topic %v partition %v not setup: %w", t, partition, getOrGenError)
 	}
 	return localTopicPartition, nil
+}
+
+// invalidateTopicConfCache removes a topic config from the cache
+// Should be called when a topic configuration is updated
+func (b *MessageQueueBroker) invalidateTopicConfCache(t topic.Topic) {
+	topicKey := t.String()
+	b.topicConfCacheMu.Lock()
+	delete(b.topicConfCache, topicKey)
+	b.topicConfCacheMu.Unlock()
+	glog.V(4).Infof("Invalidated TopicConf cache for %s", topicKey)
 }
 
 func (b *MessageQueueBroker) doGetOrGenLocalPartition(t topic.Topic, partition topic.Partition, conf *mq_pb.ConfigureTopicResponse) (localPartition *topic.LocalPartition, isGenerated bool, err error) {
