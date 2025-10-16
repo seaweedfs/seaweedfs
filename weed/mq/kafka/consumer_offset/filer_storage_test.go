@@ -49,18 +49,17 @@ func TestFilerStoragePath(t *testing.T) {
 	partition := int32(5)
 
 	groupPath := storage.getGroupPath(group)
-	assert.Equal(t, "/kafka/consumer_offsets/test-group", groupPath)
+	assert.Equal(t, ConsumerOffsetsBasePath+"/test-group", groupPath)
 
 	topicPath := storage.getTopicPath(group, topic)
-	assert.Equal(t, "/kafka/consumer_offsets/test-group/test-topic", topicPath)
+	assert.Equal(t, ConsumerOffsetsBasePath+"/test-group/test-topic", topicPath)
 
 	partitionPath := storage.getPartitionPath(group, topic, partition)
-	assert.Equal(t, "/kafka/consumer_offsets/test-group/test-topic/5", partitionPath)
+	assert.Equal(t, ConsumerOffsetsBasePath+"/test-group/test-topic/5", partitionPath)
 
 	offsetPath := storage.getOffsetPath(group, topic, partition)
-	assert.Equal(t, "/kafka/consumer_offsets/test-group/test-topic/5/offset", offsetPath)
+	assert.Equal(t, ConsumerOffsetsBasePath+"/test-group/test-topic/5/offset", offsetPath)
 
 	metadataPath := storage.getMetadataPath(group, topic, partition)
-	assert.Equal(t, "/kafka/consumer_offsets/test-group/test-topic/5/metadata", metadataPath)
+	assert.Equal(t, ConsumerOffsetsBasePath+"/test-group/test-topic/5/metadata", metadataPath)
 }
-

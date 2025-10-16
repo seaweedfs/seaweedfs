@@ -54,8 +54,17 @@ func (logBuffer *LogBuffer) ReadMessagesAtOffset(startOffset int64, maxMessages 
 	bufferStartOffset := logBuffer.bufferStartOffset
 	highWaterMark = currentBufferEnd
 
+	// Special case: empty buffer (no data written yet)
+	if currentBufferEnd == 0 && bufferStartOffset == 0 && logBuffer.pos == 0 {
+		logBuffer.RUnlock()
+		glog.V(4).Infof("[StatelessRead] Empty buffer, returning no data with endOfPartition=true")
+		// Return empty result - partition exists but has no data yet
+		// Preserve the requested offset in nextOffset
+		return messages, startOffset, 0, true, nil
+	}
+
 	// Check if requested offset is in current buffer
-	if startOffset >= bufferStartOffset && startOffset <= currentBufferEnd {
+	if startOffset >= bufferStartOffset && startOffset < currentBufferEnd {
 		// Read from current buffer
 		glog.V(4).Infof("[StatelessRead] Reading from current buffer: start=%d, end=%d",
 			bufferStartOffset, currentBufferEnd)

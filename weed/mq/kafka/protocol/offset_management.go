@@ -198,6 +198,10 @@ func (h *Handler) handleOffsetCommit(correlationID uint32, apiVersion uint16, re
 }
 
 func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
+	glog.V(0).Infof("═══════════════════════════════════════════════════════════════")
+	glog.V(0).Infof("  🔍 OFFSET_FETCH API CALLED (ApiKey 9)")
+	glog.V(0).Infof("═══════════════════════════════════════════════════════════════")
+
 	// Parse OffsetFetch request
 	request, err := h.parseOffsetFetchRequest(requestBody)
 	if err != nil {
@@ -209,17 +213,16 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, req
 		return h.buildOffsetFetchErrorResponse(correlationID, ErrorCodeInvalidGroupID), nil
 	}
 
-	// Get consumer group
-	group := h.groupCoordinator.GetGroup(request.GroupID)
-	if group == nil {
-		glog.V(1).Infof("[OFFSET_FETCH] Group not found: %s", request.GroupID)
-		return h.buildOffsetFetchErrorResponse(correlationID, ErrorCodeInvalidGroupID), nil
-	}
+	// Get or create consumer group
+	// IMPORTANT: Use GetOrCreateGroup (not GetGroup) to allow fetching persisted offsets
+	// even if the group doesn't exist in memory yet. This is critical for consumer restarts.
+	// Kafka allows offset fetches for groups that haven't joined yet (e.g., simple consumers).
+	group := h.groupCoordinator.GetOrCreateGroup(request.GroupID)
 
 	group.Mu.RLock()
 	defer group.Mu.RUnlock()
 
-	glog.V(1).Infof("[OFFSET_FETCH] Request: group=%s topics=%v", request.GroupID, request.Topics)
+	glog.V(0).Infof("[OFFSET_FETCH] Request: group=%s topics=%d", request.GroupID, len(request.Topics))
 
 	// Build response
 	response := OffsetFetchResponse{
@@ -255,7 +258,7 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, req
 			if off, meta, err := h.fetchOffset(group, topic.Name, partition); err == nil && off >= 0 {
 				fetchedOffset = off
 				metadata = meta
-				glog.V(1).Infof("[OFFSET_FETCH] Found in memory: group=%s topic=%s partition=%d offset=%d",
+				glog.V(0).Infof("[OFFSET_FETCH] ✓ Found in memory: group=%s topic=%s partition=%d offset=%d",
 					request.GroupID, topic.Name, partition, off)
 			} else {
 				// Fallback: try fetching from SMQ persistent storage
@@ -269,10 +272,10 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, req
 				if off, meta, err := h.fetchOffsetFromSMQ(key); err == nil && off >= 0 {
 					fetchedOffset = off
 					metadata = meta
-					glog.V(1).Infof("[OFFSET_FETCH] Found in SMQ: group=%s topic=%s partition=%d offset=%d",
+					glog.V(0).Infof("[OFFSET_FETCH] ✓ Found in storage: group=%s topic=%s partition=%d offset=%d",
 						request.GroupID, topic.Name, partition, off)
 				} else {
-					glog.V(1).Infof("[OFFSET_FETCH] No offset found: group=%s topic=%s partition=%d",
+					glog.V(0).Infof("[OFFSET_FETCH] ✗ No offset found: group=%s topic=%s partition=%d (will start from auto.offset.reset)",
 						request.GroupID, topic.Name, partition)
 				}
 				// No offset found in either location (-1 indicates no committed offset)
@@ -285,8 +288,6 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, req
 				Metadata:    metadata,
 				ErrorCode:   errorCode,
 			}
-			glog.V(1).Infof("[OFFSET_FETCH] Returning: group=%s topic=%s partition=%d offset=%d",
-				request.GroupID, topic.Name, partition, fetchedOffset)
 			topicResponse.Partitions = append(topicResponse.Partitions, partitionResponse)
 		}
 
