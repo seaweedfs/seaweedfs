@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/compression"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/schema"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
@@ -1536,28 +1537,100 @@ func (h *Handler) inferRecordTypeFromCachedSchema(cachedSchema *schema.CachedSch
 }
 
 // inferRecordTypeFromAvroSchema infers RecordType from Avro schema string
+// Uses cache to avoid recreating expensive Avro codecs (17% CPU overhead!)
 func (h *Handler) inferRecordTypeFromAvroSchema(avroSchema string) (*schema_pb.RecordType, error) {
+	// Check cache first
+	h.inferredRecordTypesMu.RLock()
+	if recordType, exists := h.inferredRecordTypes[avroSchema]; exists {
+		h.inferredRecordTypesMu.RUnlock()
+		glog.V(4).Infof("RecordType cache HIT for Avro schema (length=%d)", len(avroSchema))
+		return recordType, nil
+	}
+	h.inferredRecordTypesMu.RUnlock()
+
+	// Cache miss - create decoder and infer type
+	glog.V(4).Infof("RecordType cache MISS for Avro schema (length=%d), creating codec", len(avroSchema))
 	decoder, err := schema.NewAvroDecoder(avroSchema)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Avro decoder: %w", err)
 	}
-	return decoder.InferRecordType()
+	
+	recordType, err := decoder.InferRecordType()
+	if err != nil {
+		return nil, err
+	}
+
+	// Cache the result
+	h.inferredRecordTypesMu.Lock()
+	h.inferredRecordTypes[avroSchema] = recordType
+	h.inferredRecordTypesMu.Unlock()
+	glog.V(4).Infof("Cached inferred RecordType for Avro schema")
+
+	return recordType, nil
 }
 
 // inferRecordTypeFromProtobufSchema infers RecordType from Protobuf schema
+// Uses cache to avoid recreating expensive decoders
 func (h *Handler) inferRecordTypeFromProtobufSchema(protobufSchema string) (*schema_pb.RecordType, error) {
+	// Check cache first
+	cacheKey := "protobuf:" + protobufSchema
+	h.inferredRecordTypesMu.RLock()
+	if recordType, exists := h.inferredRecordTypes[cacheKey]; exists {
+		h.inferredRecordTypesMu.RUnlock()
+		glog.V(4).Infof("RecordType cache HIT for Protobuf schema")
+		return recordType, nil
+	}
+	h.inferredRecordTypesMu.RUnlock()
+
+	// Cache miss - create decoder and infer type
+	glog.V(4).Infof("RecordType cache MISS for Protobuf schema, creating decoder")
 	decoder, err := schema.NewProtobufDecoder([]byte(protobufSchema))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Protobuf decoder: %w", err)
 	}
-	return decoder.InferRecordType()
+	
+	recordType, err := decoder.InferRecordType()
+	if err != nil {
+		return nil, err
+	}
+
+	// Cache the result
+	h.inferredRecordTypesMu.Lock()
+	h.inferredRecordTypes[cacheKey] = recordType
+	h.inferredRecordTypesMu.Unlock()
+
+	return recordType, nil
 }
 
 // inferRecordTypeFromJSONSchema infers RecordType from JSON Schema string
+// Uses cache to avoid recreating expensive decoders
 func (h *Handler) inferRecordTypeFromJSONSchema(jsonSchema string) (*schema_pb.RecordType, error) {
+	// Check cache first
+	cacheKey := "json:" + jsonSchema
+	h.inferredRecordTypesMu.RLock()
+	if recordType, exists := h.inferredRecordTypes[cacheKey]; exists {
+		h.inferredRecordTypesMu.RUnlock()
+		glog.V(4).Infof("RecordType cache HIT for JSON schema")
+		return recordType, nil
+	}
+	h.inferredRecordTypesMu.RUnlock()
+
+	// Cache miss - create decoder and infer type
+	glog.V(4).Infof("RecordType cache MISS for JSON schema, creating decoder")
 	decoder, err := schema.NewJSONSchemaDecoder(jsonSchema)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create JSON Schema decoder: %w", err)
 	}
-	return decoder.InferRecordType()
+	
+	recordType, err := decoder.InferRecordType()
+	if err != nil {
+		return nil, err
+	}
+
+	// Cache the result
+	h.inferredRecordTypesMu.Lock()
+	h.inferredRecordTypes[cacheKey] = recordType
+	h.inferredRecordTypesMu.Unlock()
+
+	return recordType, nil
 }

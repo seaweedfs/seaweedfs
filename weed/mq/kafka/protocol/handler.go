@@ -239,6 +239,11 @@ type Handler struct {
 	registeredSchemas   map[string]bool // key: "topic:schemaID" or "topic-key:schemaID"
 	registeredSchemasMu sync.RWMutex
 
+	// RecordType inference cache to avoid recreating Avro codecs (37% CPU overhead!)
+	// Key: schema content hash or schema string
+	inferredRecordTypes   map[string]*schema_pb.RecordType
+	inferredRecordTypesMu sync.RWMutex
+
 	filerClient filer_pb.SeaweedFilerClient
 
 	// SMQ broker addresses discovered from masters for Metadata responses
@@ -280,6 +285,7 @@ func NewTestHandlerWithMock(mockHandler SeaweedMQHandlerInterface) *Handler {
 		groupCoordinator:      consumer.NewGroupCoordinator(),
 		registeredSchemas:     make(map[string]bool),
 		topicSchemaConfigs:    make(map[string]*TopicSchemaConfig),
+		inferredRecordTypes:   make(map[string]*schema_pb.RecordType),
 		defaultPartitions:     1,
 	}
 }
@@ -325,6 +331,8 @@ func NewSeaweedMQBrokerHandlerWithDefaults(masters string, filerGroup string, cl
 		groupCoordinator:      consumer.NewGroupCoordinator(),
 		smqBrokerAddresses:    nil, // Will be set by SetSMQBrokerAddresses() when server starts
 		registeredSchemas:     make(map[string]bool),
+		topicSchemaConfigs:    make(map[string]*TopicSchemaConfig),
+		inferredRecordTypes:   make(map[string]*schema_pb.RecordType),
 		defaultPartitions:     defaultPartitions,
 		metadataCache:         metadataCache,
 		coordinatorCache:      coordinatorCache,
