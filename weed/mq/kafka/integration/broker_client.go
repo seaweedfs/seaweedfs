@@ -29,6 +29,12 @@ func NewBrokerClientWithFilerAccessor(brokerAddress string, filerClientAccessor 
 	// operating even during client shutdown, which is important for testing scenarios.
 	dialCtx := context.Background()
 
+	// CRITICAL FIX: Add timeout to dial context
+	// gRPC dial will retry with exponential backoff. Without a timeout, it hangs indefinitely
+	// if the broker is unreachable. Set a reasonable timeout for initial connection attempt.
+	dialCtx, dialCancel := context.WithTimeout(dialCtx, 30*time.Second)
+	defer dialCancel()
+
 	// Connect to broker
 	// Load security configuration for broker connection
 	util.LoadSecurityConfiguration()

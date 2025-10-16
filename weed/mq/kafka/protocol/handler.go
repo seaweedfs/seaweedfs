@@ -845,6 +845,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 
 		// Read message size (4 bytes)
 		var sizeBytes [4]byte
+		glog.Warningf("🔴 REQUEST LOOP: About to read message size from %s", connectionID)
 		if _, err := io.ReadFull(r, sizeBytes[:]); err != nil {
 			if err == io.EOF {
 				return nil
@@ -866,6 +867,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 
 		// Successfully read the message size
 		size := binary.BigEndian.Uint32(sizeBytes[:])
+		glog.Warningf("🔴 REQUEST LOOP: Parsed message size=%d from %s", size, connectionID)
 		if size == 0 || size > 1024*1024 { // 1MB limit
 			// Use standardized error for message size limit
 			// Send error response for message too large
@@ -881,10 +883,13 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 
 		// Read the message
 		messageBuf := make([]byte, size)
+		glog.Warningf("🔴 REQUEST LOOP: About to read %d-byte message body from %s", size, connectionID)
 		if _, err := io.ReadFull(r, messageBuf); err != nil {
 			_ = HandleTimeoutError(err, "read") // errorCode
 			return fmt.Errorf("read message: %w", err)
 		}
+
+		glog.Warningf("🔴 REQUEST LOOP: Successfully read %d-byte message from %s", size, connectionID)
 
 		// Parse at least the basic header to get API key and correlation ID
 		if len(messageBuf) < 8 {
@@ -894,6 +899,8 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		apiKey := binary.BigEndian.Uint16(messageBuf[0:2])
 		apiVersion := binary.BigEndian.Uint16(messageBuf[2:4])
 		correlationID := binary.BigEndian.Uint32(messageBuf[4:8])
+
+		glog.Warningf("🔴 REQUEST LOOP: Parsed apiKey=%d, apiVersion=%d, correlationID=%d from %s", apiKey, apiVersion, correlationID, connectionID)
 
 		// Validate API version against what we support
 		if err := h.validateAPIVersion(apiKey, apiVersion); err != nil {
@@ -917,6 +924,11 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			case <-ctx.Done():
 				return ctx.Err()
 			}
+		}
+
+		// CRITICAL: Log Fetch requests specifically
+		if apiKey == 1 {
+			glog.Warningf("🔴🔴🔴 FETCH REQUEST RECEIVED: correlationID=%d, apiVersion=%d, from %s", correlationID, apiVersion, connectionID)
 		}
 
 		glog.V(4).Infof("API version validated: Key=%d (%s), Version=%d, Correlation=%d",
@@ -1033,13 +1045,17 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		// Only add to correlation queue AFTER successful channel send
 		// If we add before and the channel blocks, the correlation ID is in the queue
 		// but the request never gets processed, causing response writer deadlock
+		glog.Warningf("🔴 REQUEST QUEUE: About to queue correlationID=%d (apiKey=%d) to channel from %s", correlationID, apiKey, connectionID)
 		select {
 		case targetChan <- req:
 			// Request queued successfully - NOW add to correlation tracking
+			glog.Warningf("🔴 REQUEST QUEUE: Successfully sent correlationID=%d to channel from %s", correlationID, connectionID)
 			correlationQueueMu.Lock()
 			correlationQueue = append(correlationQueue, correlationID)
+			glog.Warningf("🔴 REQUEST QUEUE: Added correlationID=%d to queue (queue length now %d) from %s", correlationID, len(correlationQueue), connectionID)
 			correlationQueueMu.Unlock()
 		case <-ctx.Done():
+			glog.Warningf("🔴 REQUEST QUEUE: Context cancelled while queueing correlationID=%d from %s", correlationID, connectionID)
 			return ctx.Err()
 		case <-time.After(10 * time.Second):
 			// Channel full for too long - this shouldn't happen with proper backpressure

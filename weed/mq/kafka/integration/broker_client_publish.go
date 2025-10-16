@@ -49,18 +49,48 @@ func (bc *BrokerClient) PublishRecord(ctx context.Context, topic string, partiti
 	if len(dataMsg.Value) > 0 {
 	} else {
 	}
-	if err := session.Stream.Send(&mq_pb.PublishMessageRequest{
-		Message: &mq_pb.PublishMessageRequest_Data{
-			Data: dataMsg,
-		},
-	}); err != nil {
-		return 0, fmt.Errorf("failed to send data: %v", err)
+
+	// CRITICAL: Use a goroutine with context checking to enforce timeout
+	// gRPC streams may not respect context deadlines automatically
+	// We need to monitor the context and timeout the operation if needed
+	sendErrChan := make(chan error, 1)
+	go func() {
+		sendErrChan <- session.Stream.Send(&mq_pb.PublishMessageRequest{
+			Message: &mq_pb.PublishMessageRequest_Data{
+				Data: dataMsg,
+			},
+		})
+	}()
+
+	select {
+	case err := <-sendErrChan:
+		if err != nil {
+			return 0, fmt.Errorf("failed to send data: %v", err)
+		}
+	case <-ctx.Done():
+		return 0, fmt.Errorf("context cancelled while sending: %w", ctx.Err())
 	}
 
-	// Read acknowledgment
-	resp, err := session.Stream.Recv()
-	if err != nil {
-		return 0, fmt.Errorf("failed to receive ack: %v", err)
+	// Read acknowledgment with context timeout enforcement
+	recvErrChan := make(chan interface{}, 1)
+	go func() {
+		resp, err := session.Stream.Recv()
+		if err != nil {
+			recvErrChan <- err
+		} else {
+			recvErrChan <- resp
+		}
+	}()
+
+	var resp *mq_pb.PublishMessageResponse
+	select {
+	case result := <-recvErrChan:
+		if err, isErr := result.(error); isErr {
+			return 0, fmt.Errorf("failed to receive ack: %v", err)
+		}
+		resp = result.(*mq_pb.PublishMessageResponse)
+	case <-ctx.Done():
+		return 0, fmt.Errorf("context cancelled while receiving: %w", ctx.Err())
 	}
 
 	// Handle structured broker errors
