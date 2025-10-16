@@ -117,33 +117,46 @@ func (logBuffer *LogBuffer) ReadMessagesAtOffset(startOffset int64, maxMessages 
 					endOfPartition = false // More data might be in current buffer
 					return messages, nextOffset, highWaterMark, endOfPartition, nil
 				}
-				// Empty previous buffer means data was flushed
+				// Empty previous buffer means data was flushed to disk - fall through to disk read
+				glog.V(2).Infof("[StatelessRead] Data at offset %d was flushed, attempting disk read", startOffset)
 				break
 			}
 		}
 		logBuffer.RUnlock()
 
-		// Data not in memory - for stateless fetch, we don't do disk I/O to avoid blocking
-		// Return empty with offset out of range indication
-		glog.V(2).Infof("[StatelessRead] Data at offset %d not in memory (buffer: %d-%d), returning empty",
+		// Data not in memory - attempt disk read if configured
+		// CRITICAL FIX: Don't return error here - data may be on disk!
+		// Fall through to disk read logic below
+		glog.V(2).Infof("[StatelessRead] Data at offset %d not in memory (buffer: %d-%d), attempting disk read",
 			startOffset, bufferStartOffset, currentBufferEnd)
-		return messages, startOffset, highWaterMark, false, fmt.Errorf("offset %d out of range (in-memory: %d-%d)",
-			startOffset, bufferStartOffset, currentBufferEnd)
+		// Don't return error - continue to disk read check below
 	}
 
 	logBuffer.RUnlock()
 
-	// Offset is not in current buffer range
-	if startOffset < bufferStartOffset {
-		// Historical data - try to read from disk if ReadFromDiskFn is configured
-		glog.V(2).Infof("[StatelessRead] Requested offset %d < buffer start %d (historical data), attempting disk read",
-			startOffset, bufferStartOffset)
+	// Data not in memory - try disk read
+	// This handles two cases:
+	// 1. startOffset < bufferStartOffset: Historical data
+	// 2. startOffset in buffer range but not in memory: Data was flushed (from fall-through above)
+	if startOffset < currentBufferEnd {
+		// Historical data or flushed data - try to read from disk if ReadFromDiskFn is configured
+		if startOffset < bufferStartOffset {
+			glog.V(2).Infof("[StatelessRead] Requested offset %d < buffer start %d (historical data), attempting disk read",
+				startOffset, bufferStartOffset)
+		} else {
+			glog.V(2).Infof("[StatelessRead] Requested offset %d in range but not in memory (flushed data), attempting disk read",
+				startOffset)
+		}
 
 		// Check if disk read function is configured
 		if logBuffer.ReadFromDiskFn == nil {
-			glog.V(2).Infof("[StatelessRead] No disk read function configured, returning offset too old error")
-			return messages, startOffset, highWaterMark, false, fmt.Errorf("offset %d too old (earliest in-memory: %d)",
-				startOffset, bufferStartOffset)
+			glog.V(2).Infof("[StatelessRead] No disk read function configured, returning error")
+			if startOffset < bufferStartOffset {
+				return messages, startOffset, highWaterMark, false, fmt.Errorf("offset %d too old (earliest in-memory: %d)",
+					startOffset, bufferStartOffset)
+			}
+			return messages, startOffset, highWaterMark, false, fmt.Errorf("offset %d not in memory (buffer: %d-%d), no disk read available",
+				startOffset, bufferStartOffset, currentBufferEnd)
 		}
 
 		// Read from disk (this is async/non-blocking if the ReadFromDiskFn is properly implemented)
@@ -153,8 +166,7 @@ func (logBuffer *LogBuffer) ReadMessagesAtOffset(startOffset int64, maxMessages 
 
 		if diskErr != nil {
 			glog.V(2).Infof("[StatelessRead] Disk read failed for offset %d: %v", startOffset, diskErr)
-			return messages, startOffset, highWaterMark, false, fmt.Errorf("offset %d too old (earliest in-memory: %d): %v",
-				startOffset, bufferStartOffset, diskErr)
+			return messages, startOffset, highWaterMark, false, fmt.Errorf("disk read failed for offset %d: %v", startOffset, diskErr)
 		}
 
 		glog.V(2).Infof("[StatelessRead] Successfully read %d messages from disk, nextOffset=%d",
@@ -165,8 +177,8 @@ func (logBuffer *LogBuffer) ReadMessagesAtOffset(startOffset int64, maxMessages 
 		return diskMessages, diskNextOffset, highWaterMark, endOfPartition, nil
 	}
 
-	// startOffset > currentBufferEnd - future offset, no data available yet
-	glog.V(4).Infof("[StatelessRead] Future offset %d > buffer end %d, no data available",
+	// startOffset >= currentBufferEnd - future offset, no data available yet
+	glog.V(4).Infof("[StatelessRead] Future offset %d >= buffer end %d, no data available",
 		startOffset, currentBufferEnd)
 	return messages, startOffset, highWaterMark, true, nil
 }
