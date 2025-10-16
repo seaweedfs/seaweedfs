@@ -39,13 +39,11 @@ func (option *MessageQueueBrokerOption) BrokerAddress() pb.ServerAddress {
 	return pb.NewServerAddress(option.Ip, option.Port, 0)
 }
 
-type topicExistsCacheEntry struct {
-	exists    bool
-	expiresAt time.Time
-}
-
-type topicConfCacheEntry struct {
-	conf      *mq_pb.ConfigureTopicResponse
+// topicCacheEntry caches both topic existence and configuration
+// If conf is nil, topic doesn't exist (negative cache)
+// If conf is non-nil, topic exists with this configuration (positive cache)
+type topicCacheEntry struct {
+	conf      *mq_pb.ConfigureTopicResponse // nil = topic doesn't exist
 	expiresAt time.Time
 }
 
@@ -66,16 +64,12 @@ type MessageQueueBroker struct {
 	// Removed gatewayRegistry - no longer needed
 	accessLock sync.Mutex
 	fca        *filer_client.FilerClientAccessor
-	// TopicExists cache to reduce filer lookups
-	// Caches both positive (topic exists) and negative (topic doesn't exist) results
-	topicExistsCache    map[string]*topicExistsCacheEntry
-	topicExistsCacheMu  sync.RWMutex
-	topicExistsCacheTTL time.Duration
-	// TopicConf cache to reduce expensive filer reads and JSON unmarshaling
-	// Caches topic configuration to avoid 60% CPU overhead on every fetch
-	topicConfCache    map[string]*topicConfCacheEntry
-	topicConfCacheMu  sync.RWMutex
-	topicConfCacheTTL time.Duration
+	// Unified topic cache for both existence and configuration
+	// Caches topic config (positive: conf != nil) and non-existence (negative: conf == nil)
+	// Eliminates 60% CPU overhead from repeated filer reads and JSON unmarshaling
+	topicCache    map[string]*topicCacheEntry
+	topicCacheMu  sync.RWMutex
+	topicCacheTTL time.Duration
 }
 
 func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.DialOption) (mqBroker *MessageQueueBroker, err error) {
@@ -84,18 +78,16 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 	subCoordinator := sub_coordinator.NewSubCoordinator()
 
 	mqBroker = &MessageQueueBroker{
-		option:              option,
-		grpcDialOption:      grpcDialOption,
-		MasterClient:        wdclient.NewMasterClient(grpcDialOption, option.FilerGroup, cluster.BrokerType, option.BrokerAddress(), option.DataCenter, option.Rack, *pb.NewServiceDiscoveryFromMap(option.Masters)),
-		filers:              make(map[pb.ServerAddress]struct{}),
-		localTopicManager:   topic.NewLocalTopicManager(),
-		PubBalancer:         pubBalancer,
-		SubCoordinator:      subCoordinator,
-		offsetManager:       nil, // Will be initialized below
-		topicExistsCache:    make(map[string]*topicExistsCacheEntry),
-		topicExistsCacheTTL: 30 * time.Second, // Cache for 30 seconds to reduce filer load
-		topicConfCache:      make(map[string]*topicConfCacheEntry),
-		topicConfCacheTTL:   30 * time.Second, // Cache topic config to avoid 60% CPU overhead
+		option:            option,
+		grpcDialOption:    grpcDialOption,
+		MasterClient:      wdclient.NewMasterClient(grpcDialOption, option.FilerGroup, cluster.BrokerType, option.BrokerAddress(), option.DataCenter, option.Rack, *pb.NewServiceDiscoveryFromMap(option.Masters)),
+		filers:            make(map[pb.ServerAddress]struct{}),
+		localTopicManager: topic.NewLocalTopicManager(),
+		PubBalancer:       pubBalancer,
+		SubCoordinator:    subCoordinator,
+		offsetManager:     nil, // Will be initialized below
+		topicCache:        make(map[string]*topicCacheEntry),
+		topicCacheTTL:     30 * time.Second, // Unified cache for existence + config (eliminates 60% CPU overhead)
 	}
 	// Create FilerClientAccessor that adapts broker's single filer to the new multi-filer interface
 	fca := &filer_client.FilerClientAccessor{

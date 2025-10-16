@@ -179,7 +179,7 @@ func (b *MessageQueueBroker) ListTopics(ctx context.Context, request *mq_pb.List
 }
 
 // TopicExists checks if a topic exists in memory or filer
-// Caches both positive and negative results to reduce filer load
+// Uses unified cache (checks if config is non-nil) to reduce filer load
 func (b *MessageQueueBroker) TopicExists(ctx context.Context, request *mq_pb.TopicExistsRequest) (*mq_pb.TopicExistsResponse, error) {
 	if !b.isLockOwner() {
 		var resp *mq_pb.TopicExistsResponse
@@ -210,19 +210,20 @@ func (b *MessageQueueBroker) TopicExists(ctx context.Context, request *mq_pb.Top
 		return &mq_pb.TopicExistsResponse{Exists: true}, nil
 	}
 
-	// Check cache for filer lookup results (both positive and negative)
-	b.topicExistsCacheMu.RLock()
-	if entry, found := b.topicExistsCache[topicKey]; found {
+	// Check unified cache (if conf != nil, topic exists; if conf == nil, doesn't exist)
+	b.topicCacheMu.RLock()
+	if entry, found := b.topicCache[topicKey]; found {
 		if time.Now().Before(entry.expiresAt) {
-			b.topicExistsCacheMu.RUnlock()
-			glog.V(4).Infof("TopicExists cache HIT for %s: %v", topicKey, entry.exists)
-			return &mq_pb.TopicExistsResponse{Exists: entry.exists}, nil
+			exists := entry.conf != nil
+			b.topicCacheMu.RUnlock()
+			glog.V(4).Infof("Topic cache HIT for %s: exists=%v", topicKey, exists)
+			return &mq_pb.TopicExistsResponse{Exists: exists}, nil
 		}
 	}
-	b.topicExistsCacheMu.RUnlock()
+	b.topicCacheMu.RUnlock()
 
-	// Cache miss or expired - query filer for persisted topics
-	glog.V(4).Infof("TopicExists cache MISS for %s, querying filer", topicKey)
+	// Cache miss or expired - query filer for persisted topics (lightweight check)
+	glog.V(4).Infof("Topic cache MISS for %s, querying filer for existence", topicKey)
 	exists := false
 	err := b.fca.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		topicPath := fmt.Sprintf("%s/%s/%s", filer.TopicsDir, request.Topic.Namespace, request.Topic.Name)
@@ -242,26 +243,22 @@ func (b *MessageQueueBroker) TopicExists(ctx context.Context, request *mq_pb.Top
 		return &mq_pb.TopicExistsResponse{Exists: false}, nil
 	}
 
-	// Update cache with result (both positive and negative)
-	b.topicExistsCacheMu.Lock()
-	b.topicExistsCache[topicKey] = &topicExistsCacheEntry{
-		exists:    exists,
-		expiresAt: time.Now().Add(b.topicExistsCacheTTL),
+	// Update unified cache with lightweight result (don't read full config yet)
+	// Cache existence info: conf=nil for non-existent (we don't have full config yet for existent)
+	b.topicCacheMu.Lock()
+	if !exists {
+		// Negative cache: topic definitely doesn't exist
+		b.topicCache[topicKey] = &topicCacheEntry{
+			conf:      nil,
+			expiresAt: time.Now().Add(b.topicCacheTTL),
+		}
+		glog.V(4).Infof("Topic cached as non-existent: %s", topicKey)
 	}
-	b.topicExistsCacheMu.Unlock()
-	glog.V(4).Infof("TopicExists cached result for %s: %v", topicKey, exists)
+	// Note: For positive existence, we don't cache here to avoid partial state
+	// The config will be cached when GetOrGenerateLocalPartition reads it
+	b.topicCacheMu.Unlock()
 
 	return &mq_pb.TopicExistsResponse{Exists: exists}, nil
-}
-
-// invalidateTopicExistsCache removes a topic from the cache
-// Should be called when a topic is created or deleted
-func (b *MessageQueueBroker) invalidateTopicExistsCache(t topic.Topic) {
-	topicKey := t.String()
-	b.topicExistsCacheMu.Lock()
-	delete(b.topicExistsCache, topicKey)
-	b.topicExistsCacheMu.Unlock()
-	glog.V(4).Infof("Invalidated TopicExists cache for %s", topicKey)
 }
 
 // GetTopicConfiguration returns the complete configuration of a topic including schema and partition assignments

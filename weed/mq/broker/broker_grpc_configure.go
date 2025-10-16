@@ -77,8 +77,8 @@ func (b *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *mq_pb.
 			return nil, fmt.Errorf("update topic schemas: %w", err)
 		}
 
-		// Invalidate TopicExists cache since we just updated the topic
-		b.invalidateTopicExistsCache(t)
+		// Invalidate topic cache since we just updated the topic
+		b.invalidateTopicCache(t)
 
 		glog.V(0).Infof("updated schemas for topic %s", request.Topic)
 		return resp, nil
@@ -105,8 +105,8 @@ func (b *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *mq_pb.
 		return nil, fmt.Errorf("configure topic: %w", err)
 	}
 
-	// Invalidate TopicExists cache since we just created/updated the topic
-	b.invalidateTopicExistsCache(t)
+	// Invalidate topic cache since we just created/updated the topic
+	b.invalidateTopicCache(t)
 
 	b.PubBalancer.OnPartitionChange(request.Topic, resp.BrokerPartitionAssignments)
 
