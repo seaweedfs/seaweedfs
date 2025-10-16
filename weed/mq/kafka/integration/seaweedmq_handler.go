@@ -13,7 +13,7 @@ import (
 // GetStoredRecords retrieves records from SeaweedMQ using the proper subscriber API
 // ctx controls the fetch timeout (should match Kafka fetch request's MaxWaitTime)
 func (h *SeaweedMQHandler) GetStoredRecords(ctx context.Context, topic string, partition int32, fromOffset int64, maxRecords int) ([]SMQRecord, error) {
-	glog.V(2).Infof("[FETCH] GetStoredRecords: topic=%s partition=%d fromOffset=%d maxRecords=%d", topic, partition, fromOffset, maxRecords)
+	glog.V(4).Infof("[FETCH] GetStoredRecords: topic=%s partition=%d fromOffset=%d maxRecords=%d", topic, partition, fromOffset, maxRecords)
 
 	// Verify topic exists
 	if !h.TopicExists(topic) {
@@ -36,24 +36,24 @@ func (h *SeaweedMQHandler) GetStoredRecords(ctx context.Context, topic string, p
 			if connCtx.BrokerClient != nil {
 				if bc, ok := connCtx.BrokerClient.(*BrokerClient); ok {
 					brokerClient = bc
-					glog.V(2).Infof("[FETCH] Using per-connection BrokerClient for topic=%s partition=%d", topic, partition)
+					glog.V(4).Infof("[FETCH] Using per-connection BrokerClient for topic=%s partition=%d", topic, partition)
 				}
 			}
 
 			// Extract consumer group and client ID
 			if connCtx.ConsumerGroup != "" {
 				consumerGroup = connCtx.ConsumerGroup
-				glog.V(2).Infof("[FETCH] Using actual consumer group from context: %s", consumerGroup)
+				glog.V(4).Infof("[FETCH] Using actual consumer group from context: %s", consumerGroup)
 			}
 			if connCtx.MemberID != "" {
 				// Use member ID as base, but still include topic-partition for uniqueness
 				consumerID = fmt.Sprintf("%s-%s-%d", connCtx.MemberID, topic, partition)
-				glog.V(2).Infof("[FETCH] Using actual member ID from context: %s", consumerID)
+				glog.V(4).Infof("[FETCH] Using actual member ID from context: %s", consumerID)
 			} else if connCtx.ClientID != "" {
 				// Fallback to client ID if member ID not set (for clients not using consumer groups)
 				// Include topic-partition to ensure each partition consumer is unique
 				consumerID = fmt.Sprintf("%s-%s-%d", connCtx.ClientID, topic, partition)
-				glog.V(2).Infof("[FETCH] Using client ID from context: %s", consumerID)
+				glog.V(4).Infof("[FETCH] Using client ID from context: %s", consumerID)
 			}
 		}
 	}
@@ -82,7 +82,7 @@ func (h *SeaweedMQHandler) GetStoredRecords(ctx context.Context, topic string, p
 	// - Each fetch is independent
 	// - Broker reads from LogBuffer without maintaining state
 	// - Natural support for concurrent requests
-	glog.V(2).Infof("[FETCH-STATELESS] Fetching records for topic=%s partition=%d fromOffset=%d maxRecords=%d", topic, partition, fromOffset, maxRecords)
+	glog.V(4).Infof("[FETCH-STATELESS] Fetching records for topic=%s partition=%d fromOffset=%d maxRecords=%d", topic, partition, fromOffset, maxRecords)
 
 	// Use the new FetchMessage RPC (Kafka-style stateless)
 	seaweedRecords, err := brokerClient.FetchMessagesStateless(ctx, topic, partition, fromOffset, maxRecords, consumerGroup, consumerID)
@@ -91,7 +91,7 @@ func (h *SeaweedMQHandler) GetStoredRecords(ctx context.Context, topic string, p
 		return nil, fmt.Errorf("failed to fetch records: %v", err)
 	}
 
-	glog.V(2).Infof("[FETCH-STATELESS] Fetched %d records", len(seaweedRecords))
+	glog.V(4).Infof("[FETCH-STATELESS] Fetched %d records", len(seaweedRecords))
 	//
 	// STATELESS FETCH BENEFITS:
 	// - No broker-side session state = no state synchronization bugs
@@ -116,7 +116,7 @@ func (h *SeaweedMQHandler) GetStoredRecords(ctx context.Context, topic string, p
 		// CRITICAL: Skip records before the requested offset
 		// This can happen when the subscriber cache returns old data
 		if kafkaOffset < fromOffset {
-			glog.V(2).Infof("[FETCH] Skipping record %d with offset %d (requested fromOffset=%d)", i, kafkaOffset, fromOffset)
+			glog.V(4).Infof("[FETCH] Skipping record %d with offset %d (requested fromOffset=%d)", i, kafkaOffset, fromOffset)
 			continue
 		}
 
@@ -131,7 +131,7 @@ func (h *SeaweedMQHandler) GetStoredRecords(ctx context.Context, topic string, p
 		glog.V(4).Infof("[FETCH] Record %d: offset=%d, keyLen=%d, valueLen=%d", i, kafkaOffset, len(seaweedRecord.Key), len(seaweedRecord.Value))
 	}
 
-	glog.V(2).Infof("[FETCH] Successfully read %d records from SMQ", len(smqRecords))
+	glog.V(4).Infof("[FETCH] Successfully read %d records from SMQ", len(smqRecords))
 	return smqRecords, nil
 }
 

@@ -122,7 +122,7 @@ func (b *MessageQueueBroker) FetchMessage(ctx context.Context, req *mq_pb.FetchM
 			glog.Errorf("[FetchMessage] Read error: %v", err)
 		} else {
 			// Offset out of range - this is expected when consumer requests old data
-			glog.V(1).Infof("[FetchMessage] Offset out of range: %v", err)
+			glog.V(3).Infof("[FetchMessage] Offset out of range: %v", err)
 		}
 
 		// Return empty response with metadata - let client adjust offset
@@ -147,7 +147,7 @@ func (b *MessageQueueBroker) FetchMessage(ctx context.Context, req *mq_pb.FetchM
 		})
 	}
 
-	glog.V(2).Infof("[FetchMessage] Returning %d messages, nextOffset=%d, highWaterMark=%d, endOfPartition=%v",
+	glog.V(4).Infof("[FetchMessage] Returning %d messages, nextOffset=%d, highWaterMark=%d, endOfPartition=%v",
 		len(messages), nextOffset, highWaterMark, endOfPartition)
 
 	return &mq_pb.FetchMessageResponse{

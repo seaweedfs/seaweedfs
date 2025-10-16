@@ -155,7 +155,7 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 		return nil, fmt.Errorf("connection context not available")
 	}
 
-	glog.V(2).Infof("[%s] FETCH CORR=%d: Processing %d topics with %d total partitions",
+	glog.V(4).Infof("[%s] FETCH CORR=%d: Processing %d topics with %d total partitions",
 		connContext.ConnectionID, correlationID, len(fetchRequest.Topics),
 		func() int {
 			count := 0
@@ -266,7 +266,7 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 			for j := i; j < len(pending); j++ {
 				results[j] = &partitionFetchResult{}
 			}
-			glog.V(1).Infof("[%s] Fetch deadline expired, returning empty for %d remaining partitions",
+			glog.V(3).Infof("[%s] Fetch deadline expired, returning empty for %d remaining partitions",
 				connContext.ConnectionID, len(pending)-i)
 			goto done
 		case <-ctx.Done():

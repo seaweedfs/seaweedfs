@@ -63,7 +63,7 @@ func newPartitionReader(ctx context.Context, handler *Handler, connCtx *Connecti
 	// Start the request handler goroutine
 	go pr.handleRequests(ctx)
 
-	glog.V(2).Infof("[%s] Created partition reader for %s[%d] starting at offset %d (sequential with ch=200)",
+	glog.V(4).Infof("[%s] Created partition reader for %s[%d] starting at offset %d (sequential with ch=200)",
 		connCtx.ConnectionID, topicName, partitionID, startOffset)
 
 	return pr
@@ -75,7 +75,7 @@ func newPartitionReader(ctx context.Context, handler *Handler, connCtx *Connecti
 // on-demand in serveFetchRequest instead.
 func (pr *partitionReader) preFetchLoop(ctx context.Context) {
 	defer func() {
-		glog.V(2).Infof("[%s] Pre-fetch loop exiting for %s[%d]",
+		glog.V(4).Infof("[%s] Pre-fetch loop exiting for %s[%d]",
 			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID)
 		close(pr.recordBuffer)
 	}()
@@ -96,7 +96,7 @@ func (pr *partitionReader) preFetchLoop(ctx context.Context) {
 // 3. This overwhelms the broker and causes partition shutdowns
 func (pr *partitionReader) handleRequests(ctx context.Context) {
 	defer func() {
-		glog.V(2).Infof("[%s] Request handler exiting for %s[%d]",
+		glog.V(4).Infof("[%s] Request handler exiting for %s[%d]",
 			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID)
 	}()
 
@@ -150,7 +150,7 @@ func (pr *partitionReader) serveFetchRequest(ctx context.Context, req *partition
 	// Update tracking offset to match requested offset
 	pr.bufferMu.Lock()
 	if req.requestedOffset != pr.currentOffset {
-		glog.V(2).Infof("[%s] Offset seek for %s[%d]: requested=%d current=%d",
+		glog.V(4).Infof("[%s] Offset seek for %s[%d]: requested=%d current=%d",
 			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, req.requestedOffset, pr.currentOffset)
 		pr.currentOffset = req.requestedOffset
 	}
@@ -164,7 +164,7 @@ func (pr *partitionReader) serveFetchRequest(ctx context.Context, req *partition
 		pr.bufferMu.Lock()
 		pr.currentOffset = newOffset
 		pr.bufferMu.Unlock()
-		glog.V(2).Infof("[%s] On-demand fetch for %s[%d]: offset %d->%d, %d bytes",
+		glog.V(4).Infof("[%s] On-demand fetch for %s[%d]: offset %d->%d, %d bytes",
 			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID,
 			req.requestedOffset, newOffset, len(recordBatch))
 	} else {
@@ -195,7 +195,7 @@ func (pr *partitionReader) readRecords(ctx context.Context, fromOffset int64, ma
 	)
 
 	if err == nil && fetchResult.TotalSize > 0 {
-		glog.V(2).Infof("[%s] Multi-batch fetch for %s[%d]: %d batches, %d bytes, offset %d -> %d",
+		glog.V(4).Infof("[%s] Multi-batch fetch for %s[%d]: %d batches, %d bytes, offset %d -> %d",
 			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID,
 			fetchResult.BatchCount, fetchResult.TotalSize, fromOffset, fetchResult.NextOffset)
 		return fetchResult.RecordBatches, fetchResult.NextOffset
@@ -206,7 +206,7 @@ func (pr *partitionReader) readRecords(ctx context.Context, fromOffset int64, ma
 	if err == nil && len(smqRecords) > 0 {
 		recordBatch := pr.handler.constructRecordBatchFromSMQ(pr.topicName, fromOffset, smqRecords)
 		nextOffset := fromOffset + int64(len(smqRecords))
-		glog.V(2).Infof("[%s] Single-batch fetch for %s[%d]: %d records, %d bytes, offset %d -> %d",
+		glog.V(4).Infof("[%s] Single-batch fetch for %s[%d]: %d records, %d bytes, offset %d -> %d",
 			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID,
 			len(smqRecords), len(recordBatch), fromOffset, nextOffset)
 		return recordBatch, nextOffset

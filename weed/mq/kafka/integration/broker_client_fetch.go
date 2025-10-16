@@ -21,7 +21,7 @@ import (
 //
 // This is how Kafka works - completely stateless per-fetch
 func (bc *BrokerClient) FetchMessagesStateless(ctx context.Context, topic string, partition int32, startOffset int64, maxRecords int, consumerGroup string, consumerID string) ([]*SeaweedRecord, error) {
-	glog.V(2).Infof("[FETCH-STATELESS] Fetching from %s-%d at offset %d, maxRecords=%d",
+	glog.V(4).Infof("[FETCH-STATELESS] Fetching from %s-%d at offset %d, maxRecords=%d",
 		topic, partition, startOffset, maxRecords)
 
 	// Get actual partition assignment from broker
@@ -61,7 +61,7 @@ func (bc *BrokerClient) FetchMessagesStateless(ctx context.Context, topic string
 		// Check if this is an "offset out of range" error
 		if resp.ErrorCode == 2 && resp.LogStartOffset > 0 && startOffset < resp.LogStartOffset {
 			// Offset too old - broker suggests starting from LogStartOffset
-			glog.V(1).Infof("[FETCH-STATELESS-CLIENT] Requested offset %d too old, adjusting to log start %d",
+			glog.V(3).Infof("[FETCH-STATELESS-CLIENT] Requested offset %d too old, adjusting to log start %d",
 				startOffset, resp.LogStartOffset)
 
 			// Retry with adjusted offset
@@ -102,7 +102,7 @@ func (bc *BrokerClient) FetchMessagesStateless(ctx context.Context, topic string
 		glog.Infof("[FETCH-STATELESS-CLIENT] Converted to 0 SeaweedRecords")
 	}
 
-	glog.V(2).Infof("[FETCH-STATELESS] Fetched %d records, nextOffset=%d, highWaterMark=%d, endOfPartition=%v",
+	glog.V(4).Infof("[FETCH-STATELESS] Fetched %d records, nextOffset=%d, highWaterMark=%d, endOfPartition=%v",
 		len(records), resp.NextOffset, resp.HighWaterMark, resp.EndOfPartition)
 
 	return records, nil

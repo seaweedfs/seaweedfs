@@ -549,8 +549,8 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		glog.V(2).Infof("[%s] Response writer started", connectionID)
-		defer glog.V(2).Infof("[%s] Response writer exiting", connectionID)
+		glog.V(4).Infof("[%s] Response writer started", connectionID)
+		defer glog.V(4).Infof("[%s] Response writer exiting", connectionID)
 		pendingResponses := make(map[uint32]*kafkaResponse)
 		nextToSend := 0 // Index in correlationQueue
 
@@ -561,7 +561,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 					// responseChan closed, exit
 					return
 				}
-				glog.V(2).Infof("[%s] Response writer received correlation=%d from responseChan", connectionID, resp.correlationID)
+				glog.V(4).Infof("[%s] Response writer received correlation=%d from responseChan", connectionID, resp.correlationID)
 				correlationQueueMu.Lock()
 				pendingResponses[resp.correlationID] = resp
 
@@ -579,14 +579,14 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 					if readyResp.err != nil {
 						glog.Errorf("[%s] Error processing correlation=%d: %v", connectionID, readyResp.correlationID, readyResp.err)
 					} else {
-						glog.V(2).Infof("[%s] Response writer: about to write correlation=%d (%d bytes)", connectionID, readyResp.correlationID, len(readyResp.response))
+						glog.V(4).Infof("[%s] Response writer: about to write correlation=%d (%d bytes)", connectionID, readyResp.correlationID, len(readyResp.response))
 						if writeErr := h.writeResponseWithHeader(w, readyResp.correlationID, readyResp.apiKey, readyResp.apiVersion, readyResp.response, timeoutConfig.WriteTimeout); writeErr != nil {
 							glog.Errorf("[%s] Response writer: WRITE ERROR correlation=%d: %v - EXITING", connectionID, readyResp.correlationID, writeErr)
 							glog.Errorf("[%s] Write error correlation=%d: %v", connectionID, readyResp.correlationID, writeErr)
 							correlationQueueMu.Unlock()
 							return
 						}
-						glog.V(2).Infof("[%s] Response writer: successfully wrote correlation=%d", connectionID, readyResp.correlationID)
+						glog.V(4).Infof("[%s] Response writer: successfully wrote correlation=%d", connectionID, readyResp.correlationID)
 					}
 
 					// Remove from pending and advance
@@ -596,7 +596,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 				correlationQueueMu.Unlock()
 			case <-ctx.Done():
 				// Context cancelled, exit immediately to prevent deadlock
-				glog.V(2).Infof("[%s] Response writer: context cancelled, exiting", connectionID)
+				glog.V(4).Infof("[%s] Response writer: context cancelled, exiting", connectionID)
 				return
 			}
 		}
@@ -613,7 +613,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 					// Channel closed, exit
 					return
 				}
-				glog.V(2).Infof("[%s] Control plane processing correlation=%d, apiKey=%d", connectionID, req.correlationID, req.apiKey)
+				glog.V(4).Infof("[%s] Control plane processing correlation=%d, apiKey=%d", connectionID, req.correlationID, req.apiKey)
 
 				// CRITICAL: Wrap request processing with panic recovery to prevent deadlocks
 				// If processRequestSync panics, we MUST still send a response to avoid blocking the response writer
@@ -629,7 +629,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 					response, err = h.processRequestSync(req)
 				}()
 
-				glog.V(2).Infof("[%s] Control plane completed correlation=%d, sending to responseChan", connectionID, req.correlationID)
+				glog.V(4).Infof("[%s] Control plane completed correlation=%d, sending to responseChan", connectionID, req.correlationID)
 				select {
 				case responseChan <- &kafkaResponse{
 					correlationID: req.correlationID,
@@ -638,7 +638,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 					response:      response,
 					err:           err,
 				}:
-					glog.V(2).Infof("[%s] Control plane sent correlation=%d to responseChan", connectionID, req.correlationID)
+					glog.V(4).Infof("[%s] Control plane sent correlation=%d to responseChan", connectionID, req.correlationID)
 				case <-ctx.Done():
 					// Connection closed, stop processing
 					return
@@ -647,7 +647,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 				}
 			case <-ctx.Done():
 				// Context cancelled, drain remaining requests before exiting
-				glog.V(2).Infof("[%s] Control plane: context cancelled, draining remaining requests", connectionID)
+				glog.V(4).Infof("[%s] Control plane: context cancelled, draining remaining requests", connectionID)
 				for {
 					select {
 					case req, ok := <-controlChan:
@@ -672,7 +672,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 						}
 					default:
 						// Channel empty, safe to exit
-						glog.V(2).Infof("[%s] Control plane: drain complete, exiting", connectionID)
+						glog.V(4).Infof("[%s] Control plane: drain complete, exiting", connectionID)
 						return
 					}
 				}
@@ -691,7 +691,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 					// Channel closed, exit
 					return
 				}
-				glog.V(2).Infof("[%s] Data plane processing correlation=%d, apiKey=%d", connectionID, req.correlationID, req.apiKey)
+				glog.V(4).Infof("[%s] Data plane processing correlation=%d, apiKey=%d", connectionID, req.correlationID, req.apiKey)
 
 				// CRITICAL: Wrap request processing with panic recovery to prevent deadlocks
 				// If processRequestSync panics, we MUST still send a response to avoid blocking the response writer
@@ -707,7 +707,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 					response, err = h.processRequestSync(req)
 				}()
 
-				glog.V(2).Infof("[%s] Data plane completed correlation=%d, sending to responseChan", connectionID, req.correlationID)
+				glog.V(4).Infof("[%s] Data plane completed correlation=%d, sending to responseChan", connectionID, req.correlationID)
 				// Use select with context to avoid sending on closed channel
 				select {
 				case responseChan <- &kafkaResponse{
@@ -717,7 +717,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 					response:      response,
 					err:           err,
 				}:
-					glog.V(2).Infof("[%s] Data plane sent correlation=%d to responseChan", connectionID, req.correlationID)
+					glog.V(4).Infof("[%s] Data plane sent correlation=%d to responseChan", connectionID, req.correlationID)
 				case <-ctx.Done():
 					// Connection closed, stop processing
 					return
@@ -726,7 +726,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 				}
 			case <-ctx.Done():
 				// Context cancelled, drain remaining requests before exiting
-				glog.V(2).Infof("[%s] Data plane: context cancelled, draining remaining requests", connectionID)
+				glog.V(4).Infof("[%s] Data plane: context cancelled, draining remaining requests", connectionID)
 				for {
 					select {
 					case req, ok := <-dataChan:
@@ -751,7 +751,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 						}
 					default:
 						// Channel empty, safe to exit
-						glog.V(2).Infof("[%s] Data plane: drain complete, exiting", connectionID)
+						glog.V(4).Infof("[%s] Data plane: drain complete, exiting", connectionID)
 						return
 					}
 				}
@@ -1037,7 +1037,7 @@ func (h *Handler) processRequestSync(req *kafkaRequest) ([]byte, error) {
 	apiName := getAPIName(APIKey(req.apiKey))
 
 	// Debug: Log API calls at verbose level 2 (disabled by default)
-	glog.V(2).Infof("[API] %s (key=%d, ver=%d, corr=%d)",
+	glog.V(4).Infof("[API] %s (key=%d, ver=%d, corr=%d)",
 		apiName, req.apiKey, req.apiVersion, req.correlationID)
 
 	var response []byte
@@ -1238,7 +1238,7 @@ func (h *Handler) HandleMetadataV0(correlationID uint32, requestBody []byte) ([]
 
 	// Parse requested topics (empty means all)
 	requestedTopics := h.parseMetadataTopics(requestBody)
-	glog.V(1).Infof("[METADATA v0] Requested topics: %v (empty=all)", requestedTopics)
+	glog.V(3).Infof("[METADATA v0] Requested topics: %v (empty=all)", requestedTopics)
 
 	// Determine topics to return using SeaweedMQ handler
 	var topicsToReturn []string
@@ -1313,7 +1313,7 @@ func (h *Handler) HandleMetadataV1(correlationID uint32, requestBody []byte) ([]
 
 	// Parse requested topics (empty means all)
 	requestedTopics := h.parseMetadataTopics(requestBody)
-	glog.V(1).Infof("[METADATA v1] Requested topics: %v (empty=all)", requestedTopics)
+	glog.V(3).Infof("[METADATA v1] Requested topics: %v (empty=all)", requestedTopics)
 
 	// Determine topics to return using SeaweedMQ handler
 	var topicsToReturn []string
@@ -1426,7 +1426,7 @@ func (h *Handler) HandleMetadataV2(correlationID uint32, requestBody []byte) ([]
 
 	// Parse requested topics (empty means all)
 	requestedTopics := h.parseMetadataTopics(requestBody)
-	glog.V(1).Infof("[METADATA v2] Requested topics: %v (empty=all)", requestedTopics)
+	glog.V(3).Infof("[METADATA v2] Requested topics: %v (empty=all)", requestedTopics)
 
 	// Determine topics to return using SeaweedMQ handler
 	var topicsToReturn []string
@@ -1534,7 +1534,7 @@ func (h *Handler) HandleMetadataV3V4(correlationID uint32, requestBody []byte) (
 
 	// Parse requested topics (empty means all)
 	requestedTopics := h.parseMetadataTopics(requestBody)
-	glog.V(1).Infof("[METADATA v3/v4] Requested topics: %v (empty=all)", requestedTopics)
+	glog.V(3).Infof("[METADATA v3/v4] Requested topics: %v (empty=all)", requestedTopics)
 
 	// Determine topics to return using SeaweedMQ handler
 	var topicsToReturn []string
@@ -1661,7 +1661,7 @@ func (h *Handler) handleMetadataV5ToV8(correlationID uint32, requestBody []byte,
 
 	// Parse requested topics (empty means all)
 	requestedTopics := h.parseMetadataTopics(requestBody)
-	glog.V(1).Infof("[METADATA v%d] Requested topics: %v (empty=all)", apiVersion, requestedTopics)
+	glog.V(3).Infof("[METADATA v%d] Requested topics: %v (empty=all)", apiVersion, requestedTopics)
 
 	// Determine topics to return using SeaweedMQ handler
 	var topicsToReturn []string
@@ -1678,24 +1678,24 @@ func (h *Handler) handleMetadataV5ToV8(correlationID uint32, requestBody []byte,
 		for _, topic := range requestedTopics {
 			if isSystemTopic(topic) {
 				// Always try to auto-create system topics during metadata requests
-				glog.V(1).Infof("[METADATA v%d] Ensuring system topic %s exists during metadata request", apiVersion, topic)
+				glog.V(3).Infof("[METADATA v%d] Ensuring system topic %s exists during metadata request", apiVersion, topic)
 				if !h.seaweedMQHandler.TopicExists(topic) {
-					glog.V(1).Infof("[METADATA v%d] Auto-creating system topic %s during metadata request", apiVersion, topic)
+					glog.V(3).Infof("[METADATA v%d] Auto-creating system topic %s during metadata request", apiVersion, topic)
 					if err := h.createTopicWithSchemaSupport(topic, 1); err != nil {
 						glog.V(0).Infof("[METADATA v%d] Failed to auto-create system topic %s: %v", apiVersion, topic, err)
 						// Continue without adding to topicsToReturn - client will get UNKNOWN_TOPIC_OR_PARTITION
 					} else {
-						glog.V(1).Infof("[METADATA v%d] Successfully auto-created system topic %s", apiVersion, topic)
+						glog.V(3).Infof("[METADATA v%d] Successfully auto-created system topic %s", apiVersion, topic)
 					}
 				} else {
-					glog.V(1).Infof("[METADATA v%d] System topic %s already exists", apiVersion, topic)
+					glog.V(3).Infof("[METADATA v%d] System topic %s already exists", apiVersion, topic)
 				}
 				topicsToReturn = append(topicsToReturn, topic)
 			} else if h.seaweedMQHandler.TopicExists(topic) {
 				topicsToReturn = append(topicsToReturn, topic)
 			}
 		}
-		glog.V(1).Infof("[METADATA v%d] Returning topics: %v (requested: %v)", apiVersion, topicsToReturn, requestedTopics)
+		glog.V(3).Infof("[METADATA v%d] Returning topics: %v (requested: %v)", apiVersion, topicsToReturn, requestedTopics)
 	}
 
 	var buf bytes.Buffer
@@ -4147,5 +4147,5 @@ func cleanupPartitionReaders(connCtx *ConnectionContext) {
 		return true // Continue iteration
 	})
 
-	glog.V(2).Infof("[%s] Cleaned up partition readers", connCtx.ConnectionID)
+	glog.V(4).Infof("[%s] Cleaned up partition readers", connCtx.ConnectionID)
 }
