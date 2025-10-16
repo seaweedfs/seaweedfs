@@ -216,7 +216,8 @@ func (h *SeaweedMQHandler) GetFilerAddress() string {
 }
 
 // ProduceRecord publishes a record to SeaweedMQ and lets SMQ generate the offset
-func (h *SeaweedMQHandler) ProduceRecord(topic string, partition int32, key []byte, value []byte) (int64, error) {
+// ctx controls the publish timeout - if client cancels, broker operation is cancelled
+func (h *SeaweedMQHandler) ProduceRecord(ctx context.Context, topic string, partition int32, key []byte, value []byte) (int64, error) {
 	if len(key) > 0 {
 	}
 	if len(value) > 0 {
@@ -237,7 +238,7 @@ func (h *SeaweedMQHandler) ProduceRecord(topic string, partition int32, key []by
 	if h.brokerClient == nil {
 		publishErr = fmt.Errorf("no broker client available")
 	} else {
-		smqOffset, publishErr = h.brokerClient.PublishRecord(topic, partition, key, value, timestamp)
+		smqOffset, publishErr = h.brokerClient.PublishRecord(ctx, topic, partition, key, value, timestamp)
 	}
 
 	if publishErr != nil {
@@ -258,7 +259,8 @@ func (h *SeaweedMQHandler) ProduceRecord(topic string, partition int32, key []by
 
 // ProduceRecordValue produces a record using RecordValue format to SeaweedMQ
 // ALWAYS uses broker's assigned offset - no ledger involved
-func (h *SeaweedMQHandler) ProduceRecordValue(topic string, partition int32, key []byte, recordValueBytes []byte) (int64, error) {
+// ctx controls the publish timeout - if client cancels, broker operation is cancelled
+func (h *SeaweedMQHandler) ProduceRecordValue(ctx context.Context, topic string, partition int32, key []byte, recordValueBytes []byte) (int64, error) {
 	// Verify topic exists
 	if !h.TopicExists(topic) {
 		return 0, fmt.Errorf("topic %s does not exist", topic)
@@ -273,7 +275,7 @@ func (h *SeaweedMQHandler) ProduceRecordValue(topic string, partition int32, key
 	if h.brokerClient == nil {
 		publishErr = fmt.Errorf("no broker client available")
 	} else {
-		smqOffset, publishErr = h.brokerClient.PublishRecordValue(topic, partition, key, recordValueBytes, timestamp)
+		smqOffset, publishErr = h.brokerClient.PublishRecordValue(ctx, topic, partition, key, recordValueBytes, timestamp)
 	}
 
 	if publishErr != nil {

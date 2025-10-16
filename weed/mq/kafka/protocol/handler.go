@@ -132,8 +132,8 @@ type SeaweedMQHandlerInterface interface {
 	DeleteTopic(topic string) error
 	GetTopicInfo(topic string) (*integration.KafkaTopicInfo, bool)
 	// Ledger methods REMOVED - SMQ handles Kafka offsets natively
-	ProduceRecord(topicName string, partitionID int32, key, value []byte) (int64, error)
-	ProduceRecordValue(topicName string, partitionID int32, key []byte, recordValueBytes []byte) (int64, error)
+	ProduceRecord(ctx context.Context, topicName string, partitionID int32, key, value []byte) (int64, error)
+	ProduceRecordValue(ctx context.Context, topicName string, partitionID int32, key []byte, recordValueBytes []byte) (int64, error)
 	// GetStoredRecords retrieves records from SMQ storage (optional - for advanced implementations)
 	// ctx is used to control the fetch timeout (should match Kafka fetch request's MaxWaitTime)
 	GetStoredRecords(ctx context.Context, topic string, partition int32, fromOffset int64, maxRecords int) ([]integration.SMQRecord, error)
@@ -1060,7 +1060,7 @@ func (h *Handler) processRequestSync(req *kafkaRequest) ([]byte, error) {
 		response, err = h.handleDeleteTopics(req.correlationID, req.requestBody)
 
 	case APIKeyProduce:
-		response, err = h.handleProduce(req.correlationID, req.apiVersion, req.requestBody)
+		response, err = h.handleProduce(req.ctx, req.correlationID, req.apiVersion, req.requestBody)
 
 	case APIKeyFetch:
 		response, err = h.handleFetch(req.ctx, req.correlationID, req.apiVersion, req.requestBody)

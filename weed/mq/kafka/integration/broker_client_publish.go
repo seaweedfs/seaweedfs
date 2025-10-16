@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -10,7 +11,12 @@ import (
 )
 
 // PublishRecord publishes a single record to SeaweedMQ broker
-func (bc *BrokerClient) PublishRecord(topic string, partition int32, key []byte, value []byte, timestamp int64) (int64, error) {
+// ctx controls the publish timeout - if client cancels, publish operation is cancelled
+func (bc *BrokerClient) PublishRecord(ctx context.Context, topic string, partition int32, key []byte, value []byte, timestamp int64) (int64, error) {
+	// Check context before starting
+	if err := ctx.Err(); err != nil {
+		return 0, fmt.Errorf("context cancelled before publish: %w", err)
+	}
 
 	session, err := bc.getOrCreatePublisher(topic, partition)
 	if err != nil {
@@ -25,6 +31,11 @@ func (bc *BrokerClient) PublishRecord(topic string, partition int32, key []byte,
 	// Without this, two concurrent publishes can steal each other's offsets
 	session.mu.Lock()
 	defer session.mu.Unlock()
+
+	// Check context after acquiring lock
+	if err := ctx.Err(); err != nil {
+		return 0, fmt.Errorf("context cancelled after lock: %w", err)
+	}
 
 	// Send data message using broker API format
 	dataMsg := &mq_pb.DataMessage{
@@ -68,7 +79,13 @@ func (bc *BrokerClient) PublishRecord(topic string, partition int32, key []byte,
 }
 
 // PublishRecordValue publishes a RecordValue message to SeaweedMQ via broker
-func (bc *BrokerClient) PublishRecordValue(topic string, partition int32, key []byte, recordValueBytes []byte, timestamp int64) (int64, error) {
+// ctx controls the publish timeout - if client cancels, publish operation is cancelled
+func (bc *BrokerClient) PublishRecordValue(ctx context.Context, topic string, partition int32, key []byte, recordValueBytes []byte, timestamp int64) (int64, error) {
+	// Check context before starting
+	if err := ctx.Err(); err != nil {
+		return 0, fmt.Errorf("context cancelled before publish: %w", err)
+	}
+
 	session, err := bc.getOrCreatePublisher(topic, partition)
 	if err != nil {
 		return 0, err
@@ -81,6 +98,11 @@ func (bc *BrokerClient) PublishRecordValue(topic string, partition int32, key []
 	// CRITICAL: Lock to prevent concurrent Send/Recv causing response mix-ups
 	session.mu.Lock()
 	defer session.mu.Unlock()
+
+	// Check context after acquiring lock
+	if err := ctx.Err(); err != nil {
+		return 0, fmt.Errorf("context cancelled after lock: %w", err)
+	}
 
 	// Send data message with RecordValue in the Value field
 	dataMsg := &mq_pb.DataMessage{
