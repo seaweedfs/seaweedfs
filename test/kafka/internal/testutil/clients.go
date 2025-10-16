@@ -166,10 +166,10 @@ func (k *KafkaGoClient) ConsumeWithGroup(topicName, groupID string, expectedCoun
 		for attempt := 0; attempt < 3; attempt++ {
 			commitErr = reader.CommitMessages(ctx, msg)
 			if commitErr == nil {
-				k.t.Logf("  ✓ Committed offset %d (attempt %d)", msg.Offset, attempt+1)
+				k.t.Logf("  Committed offset %d (attempt %d)", msg.Offset, attempt+1)
 				break
 			}
-			k.t.Logf("  × Commit attempt %d failed for offset %d: %v", attempt+1, msg.Offset, commitErr)
+			k.t.Logf("  Commit attempt %d failed for offset %d: %v", attempt+1, msg.Offset, commitErr)
 			// brief backoff
 			time.Sleep(time.Duration(50*(1<<attempt)) * time.Millisecond)
 		}
