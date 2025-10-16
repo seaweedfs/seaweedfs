@@ -26,7 +26,7 @@ type ConnectionContext struct {
 	ConsumerGroup string   // Consumer group (set by JoinGroup)
 	MemberID      string   // Consumer group member ID (set by JoinGroup)
 	// Per-connection broker client for isolated gRPC streams
-	// CRITICAL: Each Kafka connection MUST have its own gRPC streams to avoid interference
+	// Each Kafka connection MUST have its own gRPC streams to avoid interference
 	// when multiple consumers or requests are active on different connections
 	BrokerClient interface{} // Will be set to *integration.BrokerClient
 

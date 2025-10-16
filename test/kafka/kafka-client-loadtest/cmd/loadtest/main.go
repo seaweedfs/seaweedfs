@@ -253,6 +253,7 @@ func runComprehensiveTest(ctx context.Context, cancel context.CancelFunc, cfg *c
 	time.Sleep(2 * time.Second)
 
 	// Start consumers
+	// NOTE: With unique ClientIDs, all consumers can start simultaneously without connection storms
 	for i := 0; i < cfg.Consumers.Count; i++ {
 		wg.Add(1)
 		go func(id int) {

@@ -166,7 +166,7 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 		}())
 
 	// Collect results from persistent readers
-	// CRITICAL: Dispatch all requests concurrently, then wait for all results in parallel
+	// Dispatch all requests concurrently, then wait for all results in parallel
 	// to avoid sequential timeout accumulation
 	type pendingFetch struct {
 		topicName   string
@@ -242,7 +242,7 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 	}
 
 	// Phase 2: Wait for all results with adequate timeout for CI environments
-	// CRITICAL: We MUST return a result for every requested partition or Sarama will error
+	// We MUST return a result for every requested partition or Sarama will error
 	results := make([]*partitionFetchResult, len(pending))
 	// Use 95% of client's MaxWaitTime to ensure we return BEFORE client timeout
 	// This maximizes data collection time while leaving a safety buffer for:
@@ -286,7 +286,7 @@ done:
 	// Now assemble the response in the correct order using fetched results
 	// ====================================================================
 
-	// CRITICAL: Verify we have results for all requested partitions
+	// Verify we have results for all requested partitions
 	// Sarama requires a response block for EVERY requested partition to avoid ErrIncompleteResponse
 	expectedResultCount := 0
 	for _, topic := range fetchRequest.Topics {
@@ -1126,7 +1126,7 @@ func (h *Handler) decodeRecordValueToKafkaMessage(topicName string, recordValueB
 		return nil
 	}
 
-	// CRITICAL FIX: For system topics like _schemas, _consumer_offsets, etc.,
+	// For system topics like _schemas, _consumer_offsets, etc.,
 	// return the raw bytes as-is. These topics store Kafka's internal format (Avro, etc.)
 	// and should NOT be processed as RecordValue protobuf messages.
 	if strings.HasPrefix(topicName, "_") {

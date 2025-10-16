@@ -83,6 +83,16 @@ func (h *Handler) handleJoinGroup(connContext *ConnectionContext, correlationID 
 	var isNewMember bool
 	var existingMember *consumer.GroupMember
 
+	// Use the actual ClientID from Kafka protocol header for unique member ID generation
+	clientKey := connContext.ClientID
+	if clientKey == "" {
+		// Fallback to deterministic key if ClientID not available
+		clientKey = fmt.Sprintf("%s-%d-%s", request.GroupID, request.SessionTimeout, request.ProtocolType)
+		glog.Warningf("[JoinGroup] No ClientID in ConnectionContext for group %s, using fallback: %s", request.GroupID, clientKey)
+	} else {
+		glog.V(1).Infof("[JoinGroup] Using ClientID from ConnectionContext for group %s: %s", request.GroupID, clientKey)
+	}
+
 	// Check for static membership first
 	if request.GroupInstanceID != "" {
 		existingMember = h.groupCoordinator.FindStaticMemberLocked(group, request.GroupInstanceID)
@@ -96,8 +106,6 @@ func (h *Handler) handleJoinGroup(connContext *ConnectionContext, correlationID 
 		}
 	} else {
 		// Dynamic membership logic
-		clientKey := fmt.Sprintf("%s-%d-%s", request.GroupID, request.SessionTimeout, request.ProtocolType)
-
 		if request.MemberID == "" {
 			// New member - check if we already have a member for this client
 			var existingMemberID string
@@ -156,12 +164,9 @@ func (h *Handler) handleJoinGroup(connContext *ConnectionContext, correlationID 
 		groupInstanceID = &request.GroupInstanceID
 	}
 
-	// Use deterministic client identifier based on group + session timeout + protocol
-	clientKey := fmt.Sprintf("%s-%d-%s", request.GroupID, request.SessionTimeout, request.ProtocolType)
-
 	member := &consumer.GroupMember{
 		ID:               memberID,
-		ClientID:         clientKey,  // Use deterministic client key for member identification
+		ClientID:         clientKey,  // Use actual Kafka ClientID for unique member identification
 		ClientHost:       clientHost, // Now extracted from actual connection
 		GroupInstanceID:  groupInstanceID,
 		SessionTimeout:   request.SessionTimeout,
@@ -267,8 +272,6 @@ func (h *Handler) handleJoinGroup(connContext *ConnectionContext, correlationID 
 		Version:        apiVersion,
 	}
 
-	// Debug logging for JoinGroup response
-
 	// If this member is the leader, include all member info for assignment
 	if memberID == group.Leader {
 		response.Members = make([]JoinGroupMember, 0, len(group.Members))
@@ -311,7 +314,7 @@ func (h *Handler) parseJoinGroupRequest(data []byte, apiVersion uint16) (*JoinGr
 	var groupID string
 	if isFlexible {
 		// Flexible protocol uses compact strings
-		endIdx := offset + 20 // Show more bytes for debugging
+		endIdx := offset + 20
 		if endIdx > len(data) {
 			endIdx = len(data)
 		}
@@ -572,8 +575,6 @@ func (h *Handler) parseJoinGroupRequest(data []byte, apiVersion uint16) (*JoinGr
 }
 
 func (h *Handler) buildJoinGroupResponse(response JoinGroupResponse) []byte {
-	// Debug logging for JoinGroup response
-
 	// Flexible response for v6+
 	if IsFlexibleVersion(11, response.Version) {
 		out := make([]byte, 0, 256)
@@ -774,7 +775,6 @@ func (h *Handler) buildJoinGroupErrorResponse(correlationID uint32, errorCode in
 
 // extractSubscriptionFromProtocolsEnhanced uses improved metadata parsing with better error handling
 func (h *Handler) extractSubscriptionFromProtocolsEnhanced(protocols []GroupProtocol) []string {
-	// Analyze protocol metadata for debugging
 	debugInfo := AnalyzeProtocolMetadata(protocols)
 	for _, info := range debugInfo {
 		if info.ParsedOK {
@@ -865,6 +865,8 @@ func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, reque
 	// Check if this is the group leader with assignments
 	if request.MemberID == group.Leader && len(request.GroupAssignments) > 0 {
 		// Leader is providing assignments - process and store them
+		glog.V(2).Infof("SyncGroup: Leader %s providing client-side assignments for group %s (%d members)",
+			request.MemberID, request.GroupID, len(request.GroupAssignments))
 		err = h.processGroupAssignments(group, request.GroupAssignments)
 		if err != nil {
 			return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeInconsistentGroupProtocol, apiVersion), nil
@@ -880,8 +882,11 @@ func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, reque
 	} else if group.State == consumer.GroupStateCompletingRebalance {
 		// Non-leader member waiting for assignments
 		// Assignments should already be processed by leader
+		glog.V(2).Infof("SyncGroup: Non-leader %s waiting for assignments in group %s",
+			request.MemberID, request.GroupID)
 	} else {
 		// Trigger partition assignment using built-in strategy
+		glog.V(2).Infof("SyncGroup: Using server-side assignment for group %s", request.GroupID)
 		topicPartitions := h.getTopicPartitions(group)
 		group.AssignPartitions(topicPartitions)
 
@@ -902,6 +907,10 @@ func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, reque
 		assignment = h.serializeMemberAssignment(member.Assignment)
 	}
 
+	// Log member assignment details
+	glog.V(2).Infof("SyncGroup: Member %s in group %s assigned %d partitions: %v",
+		request.MemberID, request.GroupID, len(member.Assignment), member.Assignment)
+
 	// Build response
 	response := SyncGroupResponse{
 		CorrelationID: correlationID,
@@ -909,7 +918,6 @@ func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, reque
 		Assignment:    assignment,
 	}
 
-	// Log assignment details for debugging
 	assignmentPreview := assignment
 	if len(assignmentPreview) > 100 {
 		assignmentPreview = assignment[:100]
@@ -1093,7 +1101,7 @@ func (h *Handler) parseSyncGroupRequest(data []byte, apiVersion uint16) (*SyncGr
 						offset += int(assignLength)
 					}
 
-					// CRITICAL FIX: Flexible format requires tagged fields after each assignment struct
+					// Flexible format requires tagged fields after each assignment struct
 					if offset < len(data) {
 						_, taggedConsumed, tagErr := DecodeTaggedFields(data[offset:])
 						if tagErr == nil {
@@ -1172,7 +1180,7 @@ func (h *Handler) buildSyncGroupResponse(response SyncGroupResponse, apiVersion 
 	// Assignment - FLEXIBLE V4+ FIX
 	if IsFlexibleVersion(14, apiVersion) {
 		// FLEXIBLE FORMAT: Assignment as compact bytes
-		// CRITICAL FIX: Use CompactStringLength for compact bytes (not CompactArrayLength)
+		// Use CompactStringLength for compact bytes (not CompactArrayLength)
 		// Compact bytes use the same encoding as compact strings: 0 = null, 1 = empty, n+1 = length n
 		assignmentLen := len(response.Assignment)
 		if assignmentLen == 0 {
@@ -1305,16 +1313,19 @@ func (h *Handler) getTopicPartitions(group *consumer.ConsumerGroup) map[string][
 
 	// Get partition info for all subscribed topics
 	for topic := range group.SubscribedTopics {
-		// Check if topic exists using SeaweedMQ handler
-		if h.seaweedMQHandler.TopicExists(topic) {
-			// For now, assume 1 partition per topic (can be extended later)
-			// In a real implementation, this would query SeaweedMQ for actual partition count
-			partitions := []int32{0}
-			topicPartitions[topic] = partitions
-		} else {
-			// Default to single partition if topic not found
-			topicPartitions[topic] = []int32{0}
+		// Get actual partition count from topic info
+		topicInfo, exists := h.seaweedMQHandler.GetTopicInfo(topic)
+		partitionCount := h.GetDefaultPartitions() // Use configurable default
+		if exists && topicInfo != nil {
+			partitionCount = topicInfo.Partitions
 		}
+
+		// Create partition list: [0, 1, 2, ...]
+		partitions := make([]int32, partitionCount)
+		for i := int32(0); i < partitionCount; i++ {
+			partitions[i] = i
+		}
+		topicPartitions[topic] = partitions
 	}
 
 	return topicPartitions
@@ -1324,7 +1335,7 @@ func (h *Handler) serializeSchemaRegistryAssignment(group *consumer.ConsumerGrou
 	// Schema Registry expects a JSON assignment in the format:
 	// {"error":0,"master":"member-id","master_identity":{"host":"localhost","port":8081,"master_eligibility":true,"scheme":"http","version":"7.4.0-ce"}}
 
-	// CRITICAL FIX: Extract the actual leader's identity from the leader's metadata
+	// Extract the actual leader's identity from the leader's metadata
 	// to avoid localhost/hostname mismatch that causes Schema Registry to forward
 	// requests to itself
 	leaderMember, exists := group.Members[group.Leader]

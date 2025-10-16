@@ -90,7 +90,7 @@ func (pr *partitionReader) preFetchLoop(ctx context.Context) {
 }
 
 // handleRequests serves fetch requests SEQUENTIALLY to prevent subscriber storm
-// CRITICAL: Sequential processing is essential for SMQ backend because:
+// Sequential processing is essential for SMQ backend because:
 // 1. GetStoredRecords may create a new subscriber on each call
 // 2. Concurrent calls create multiple subscribers for the same partition
 // 3. This overwhelms the broker and causes partition shutdowns
@@ -138,7 +138,7 @@ func (pr *partitionReader) serveFetchRequest(ctx context.Context, req *partition
 	}
 	result.highWaterMark = hwm
 
-	// CRITICAL: If requested offset >= HWM, return immediately with empty result
+	// If requested offset >= HWM, return immediately with empty result
 	// This prevents overwhelming the broker with futile read attempts when no data is available
 	if req.requestedOffset >= hwm {
 		result.recordBatch = []byte{}

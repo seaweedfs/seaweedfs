@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"net"
 	"os"
@@ -50,6 +51,27 @@ func (h *Handler) GetAdvertisedAddress(gatewayAddr string) (string, int) {
 	}
 
 	return host, port
+}
+
+// generateNodeID generates a deterministic node ID from a gateway address.
+// This must match the logic in gateway/coordinator_registry.go to ensure consistency
+// between Metadata and FindCoordinator responses.
+func generateNodeID(gatewayAddress string) int32 {
+	if gatewayAddress == "" {
+		return 1 // Default fallback
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(gatewayAddress))
+	// Use only positive values and avoid 0
+	return int32(h.Sum32()&0x7fffffff) + 1
+}
+
+// GetNodeID returns the consistent node ID for this gateway.
+// This is used by both Metadata and FindCoordinator handlers to ensure
+// clients see the same broker/coordinator node ID across all APIs.
+func (h *Handler) GetNodeID() int32 {
+	gatewayAddr := h.GetGatewayAddress()
+	return generateNodeID(gatewayAddr)
 }
 
 // TopicInfo holds basic information about a topic
@@ -485,7 +507,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// CRITICAL: Create per-connection BrokerClient for isolated gRPC streams
+	// Create per-connection BrokerClient for isolated gRPC streams
 	// This prevents different connections from interfering with each other's Fetch requests
 	// In mock/unit test mode, this may not be available, so we continue without it
 	var connBrokerClient *integration.BrokerClient
@@ -533,7 +555,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 	consecutiveTimeouts := 0
 	const maxConsecutiveTimeouts = 3 // Give up after 3 timeouts in a row
 
-	// CRITICAL: Separate control plane from data plane
+	// Separate control plane from data plane
 	// Control plane: Metadata, Heartbeat, JoinGroup, etc. (must be fast, never block)
 	// Data plane: Fetch, Produce (can be slow, may block on I/O)
 	//
@@ -548,7 +570,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 	var wg sync.WaitGroup
 
 	// Response writer - maintains request/response order per connection
-	// CRITICAL: While we process requests concurrently (control/data plane),
+	// While we process requests concurrently (control/data plane),
 	// we MUST track the order requests arrive and send responses in that same order.
 	// Solution: Track received correlation IDs in a queue, send responses in that queue order.
 	correlationQueue := make([]uint32, 0, 100)
@@ -623,7 +645,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 				}
 				glog.V(4).Infof("[%s] Control plane processing correlation=%d, apiKey=%d", connectionID, req.correlationID, req.apiKey)
 
-				// CRITICAL: Wrap request processing with panic recovery to prevent deadlocks
+				// Wrap request processing with panic recovery to prevent deadlocks
 				// If processRequestSync panics, we MUST still send a response to avoid blocking the response writer
 				var response []byte
 				var err error
@@ -701,7 +723,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 				}
 				glog.V(4).Infof("[%s] Data plane processing correlation=%d, apiKey=%d", connectionID, req.correlationID, req.apiKey)
 
-				// CRITICAL: Wrap request processing with panic recovery to prevent deadlocks
+				// Wrap request processing with panic recovery to prevent deadlocks
 				// If processRequestSync panics, we MUST still send a response to avoid blocking the response writer
 				var response []byte
 				var err error
@@ -768,7 +790,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 	}()
 
 	defer func() {
-		// CRITICAL: Close channels in correct order to avoid panics
+		// Close channels in correct order to avoid panics
 		// 1. Close input channels to stop accepting new requests
 		close(controlChan)
 		close(dataChan)
@@ -828,9 +850,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 				return nil
 			}
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				// CRITICAL FIX: Track consecutive timeouts to detect CLOSE_WAIT connections
-				// When remote peer closes, connection enters CLOSE_WAIT and reads keep timing out
-				// After several consecutive timeouts with no data, assume connection is dead
+				// Track consecutive timeouts to detect stale connections
 				consecutiveTimeouts++
 				if consecutiveTimeouts >= maxConsecutiveTimeouts {
 					return nil
@@ -846,7 +866,6 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 
 		// Successfully read the message size
 		size := binary.BigEndian.Uint32(sizeBytes[:])
-		// Debug("Read message size: %d bytes", size)
 		if size == 0 || size > 1024*1024 { // 1MB limit
 			// Use standardized error for message size limit
 			// Send error response for message too large
@@ -876,8 +895,6 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		apiVersion := binary.BigEndian.Uint16(messageBuf[2:4])
 		correlationID := binary.BigEndian.Uint32(messageBuf[4:8])
 
-		// Debug("Parsed header - API Key: %d (%s), Version: %d, Correlation: %d", apiKey, getAPIName(APIKey(apiKey)), apiVersion, correlationID)
-
 		// Validate API version against what we support
 		if err := h.validateAPIVersion(apiKey, apiVersion); err != nil {
 			glog.Errorf("API VERSION VALIDATION FAILED: Key=%d (%s), Version=%d, error=%v", apiKey, getAPIName(APIKey(apiKey)), apiVersion, err)
@@ -886,8 +903,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			if writeErr != nil {
 				return fmt.Errorf("build error response: %w", writeErr)
 			}
-			// CRITICAL: Send error response through response queue to maintain sequential ordering
-			// This prevents deadlocks in the response writer which expects all correlation IDs in sequence
+			// Send error response through response queue to maintain sequential ordering
 			select {
 			case responseChan <- &kafkaResponse{
 				correlationID: correlationID,
@@ -903,8 +919,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			}
 		}
 
-		// CRITICAL DEBUG: Log that validation passed
-		glog.V(4).Infof("API VERSION VALIDATION PASSED: Key=%d (%s), Version=%d, Correlation=%d - proceeding to header parsing",
+		glog.V(4).Infof("API version validated: Key=%d (%s), Version=%d, Correlation=%d",
 			apiKey, getAPIName(APIKey(apiKey)), apiVersion, correlationID)
 
 		// Extract request body - special handling for ApiVersions requests
@@ -945,29 +960,25 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			// Parse header using flexible version utilities for other APIs
 			header, parsedRequestBody, parseErr := ParseRequestHeader(messageBuf)
 			if parseErr != nil {
-				// CRITICAL: Log the parsing error for debugging
-				glog.Errorf("REQUEST HEADER PARSING FAILED: API=%d (%s) v%d, correlation=%d, error=%v, msgLen=%d",
-					apiKey, getAPIName(APIKey(apiKey)), apiVersion, correlationID, parseErr, len(messageBuf))
+				glog.Errorf("Request header parsing failed: API=%d (%s) v%d, correlation=%d, error=%v",
+					apiKey, getAPIName(APIKey(apiKey)), apiVersion, correlationID, parseErr)
 
 				// Fall back to basic header parsing if flexible version parsing fails
 
 				// Basic header parsing fallback (original logic)
 				bodyOffset := 8
 				if len(messageBuf) < bodyOffset+2 {
-					glog.Errorf("FALLBACK PARSING FAILED: missing client_id length, msgLen=%d", len(messageBuf))
 					return fmt.Errorf("invalid header: missing client_id length")
 				}
 				clientIDLen := int16(binary.BigEndian.Uint16(messageBuf[bodyOffset : bodyOffset+2]))
 				bodyOffset += 2
 				if clientIDLen >= 0 {
 					if len(messageBuf) < bodyOffset+int(clientIDLen) {
-						glog.Errorf("FALLBACK PARSING FAILED: client_id truncated, clientIDLen=%d, msgLen=%d", clientIDLen, len(messageBuf))
 						return fmt.Errorf("invalid header: client_id truncated")
 					}
 					bodyOffset += int(clientIDLen)
 				}
 				requestBody = messageBuf[bodyOffset:]
-				glog.V(2).Infof("FALLBACK PARSING SUCCESS: API=%d (%s) v%d, bodyLen=%d", apiKey, getAPIName(APIKey(apiKey)), apiVersion, len(requestBody))
 			} else {
 				// Use the successfully parsed request body
 				requestBody = parsedRequestBody
@@ -995,7 +1006,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			}
 		}
 
-		// CRITICAL: Route request to appropriate processor
+		// Route request to appropriate processor
 		// Control plane: Fast, never blocks (Metadata, Heartbeat, etc.)
 		// Data plane: Can be slow (Fetch, Produce)
 
@@ -1019,7 +1030,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			targetChan = controlChan
 		}
 
-		// CRITICAL: Only add to correlation queue AFTER successful channel send
+		// Only add to correlation queue AFTER successful channel send
 		// If we add before and the channel blocks, the correlation ID is in the queue
 		// but the request never gets processed, causing response writer deadlock
 		select {
@@ -1032,7 +1043,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			return ctx.Err()
 		case <-time.After(10 * time.Second):
 			// Channel full for too long - this shouldn't happen with proper backpressure
-			glog.Errorf("[%s] CRITICAL: Failed to queue correlation=%d after 10s timeout - channel full!", connectionID, correlationID)
+			glog.Errorf("[%s] Failed to queue correlation=%d - channel full (10s timeout)", connectionID, correlationID)
 			return fmt.Errorf("request queue full: correlation=%d", correlationID)
 		}
 	}
@@ -1044,7 +1055,6 @@ func (h *Handler) processRequestSync(req *kafkaRequest) ([]byte, error) {
 	requestStart := time.Now()
 	apiName := getAPIName(APIKey(req.apiKey))
 
-	// Debug: Log API calls at verbose level 2 (disabled by default)
 	glog.V(4).Infof("[API] %s (key=%d, ver=%d, corr=%d)",
 		apiName, req.apiKey, req.apiVersion, req.correlationID)
 
@@ -1169,7 +1179,7 @@ func (h *Handler) handleApiVersions(correlationID uint32, apiVersion uint16) ([]
 	// Error code (2 bytes) - always fixed-length
 	response = append(response, 0, 0) // No error
 
-	// API Keys Array - CRITICAL FIX: Use correct encoding based on version
+	// API Keys Array - use correct encoding based on version
 	if apiVersion >= 3 {
 		// FLEXIBLE FORMAT: Compact array with varint length - THIS FIXES THE ADMINCLIENT BUG!
 		response = append(response, CompactArrayLength(uint32(len(SupportedApiKeys)))...)
@@ -1219,11 +1229,16 @@ func (h *Handler) HandleMetadataV0(correlationID uint32, requestBody []byte) ([]
 	// NOTE: Correlation ID is handled by writeResponseWithCorrelationID
 	// Do NOT include it in the response body
 
+	// Get consistent node ID for this gateway
+	nodeID := h.GetNodeID()
+	nodeIDBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(nodeIDBytes, uint32(nodeID))
+
 	// Brokers array length (4 bytes) - 1 broker (this gateway)
 	response = append(response, 0, 0, 0, 1)
 
 	// Broker 0: node_id(4) + host(STRING) + port(4)
-	response = append(response, 0, 0, 0, 1) // node_id = 1 (consistent with partitions)
+	response = append(response, nodeIDBytes...) // Use consistent node ID
 
 	// Get advertised address for client connections
 	host, port := h.GetAdvertisedAddress(h.GetGatewayAddress())
@@ -1298,15 +1313,15 @@ func (h *Handler) HandleMetadataV0(correlationID uint32, requestBody []byte) ([]
 			binary.BigEndian.PutUint32(partitionIDBytes, uint32(partitionID))
 			response = append(response, partitionIDBytes...)
 
-			response = append(response, 0, 0, 0, 1) // leader = 1 (this broker)
+			response = append(response, nodeIDBytes...) // leader = this broker
 
-			// replicas: array length(4) + one broker id (1)
+			// replicas: array length(4) + one broker id (this broker)
 			response = append(response, 0, 0, 0, 1)
-			response = append(response, 0, 0, 0, 1)
+			response = append(response, nodeIDBytes...)
 
-			// isr: array length(4) + one broker id (1)
+			// isr: array length(4) + one broker id (this broker)
 			response = append(response, 0, 0, 0, 1)
-			response = append(response, 0, 0, 0, 1)
+			response = append(response, nodeIDBytes...)
 		}
 	}
 
@@ -1341,11 +1356,16 @@ func (h *Handler) HandleMetadataV1(correlationID uint32, requestBody []byte) ([]
 	// NOTE: Correlation ID is handled by writeResponseWithHeader
 	// Do NOT include it in the response body
 
+	// Get consistent node ID for this gateway
+	nodeID := h.GetNodeID()
+	nodeIDBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(nodeIDBytes, uint32(nodeID))
+
 	// Brokers array length (4 bytes) - 1 broker (this gateway)
 	response = append(response, 0, 0, 0, 1)
 
 	// Broker 0: node_id(4) + host(STRING) + port(4) + rack(STRING)
-	response = append(response, 0, 0, 0, 1) // node_id = 1
+	response = append(response, nodeIDBytes...) // Use consistent node ID
 
 	// Get advertised address for client connections
 	host, port := h.GetAdvertisedAddress(h.GetGatewayAddress())
@@ -1370,7 +1390,7 @@ func (h *Handler) HandleMetadataV1(correlationID uint32, requestBody []byte) ([]
 	response = append(response, 0, 0) // empty string
 
 	// ControllerID (4 bytes) - v1 addition
-	response = append(response, 0, 0, 0, 1) // controller_id = 1
+	response = append(response, nodeIDBytes...) // controller_id = this broker
 
 	// Topics array length (4 bytes)
 	topicsCountBytes := make([]byte, 4)
@@ -1412,15 +1432,15 @@ func (h *Handler) HandleMetadataV1(correlationID uint32, requestBody []byte) ([]
 			binary.BigEndian.PutUint32(partitionIDBytes, uint32(partitionID))
 			response = append(response, partitionIDBytes...)
 
-			response = append(response, 0, 0, 0, 1) // leader_id = 1
+			response = append(response, nodeIDBytes...) // leader_id = this broker
 
-			// replicas: array length(4) + one broker id (1)
+			// replicas: array length(4) + one broker id (this broker)
 			response = append(response, 0, 0, 0, 1)
-			response = append(response, 0, 0, 0, 1)
+			response = append(response, nodeIDBytes...)
 
-			// isr: array length(4) + one broker id (1)
+			// isr: array length(4) + one broker id (this broker)
 			response = append(response, 0, 0, 0, 1)
-			response = append(response, 0, 0, 0, 1)
+			response = append(response, nodeIDBytes...)
 		}
 	}
 
@@ -1460,7 +1480,7 @@ func (h *Handler) HandleMetadataV2(correlationID uint32, requestBody []byte) ([]
 	// Get advertised address for client connections
 	host, port := h.GetAdvertisedAddress(h.GetGatewayAddress())
 
-	nodeID := int32(1) // Single gateway node
+	nodeID := h.GetNodeID() // Get consistent node ID for this gateway
 
 	// Broker: node_id(4) + host(STRING) + port(4) + rack(STRING) + cluster_id(NULLABLE_STRING)
 	binary.Write(&buf, binary.BigEndian, nodeID)
@@ -1488,7 +1508,7 @@ func (h *Handler) HandleMetadataV2(correlationID uint32, requestBody []byte) ([]
 	buf.WriteString(clusterID)
 
 	// ControllerID (4 bytes) - v1+ addition
-	binary.Write(&buf, binary.BigEndian, int32(1))
+	binary.Write(&buf, binary.BigEndian, nodeID)
 
 	// Topics array (4 bytes length + topics)
 	binary.Write(&buf, binary.BigEndian, int32(len(topicsToReturn)))
@@ -1571,7 +1591,7 @@ func (h *Handler) HandleMetadataV3V4(correlationID uint32, requestBody []byte) (
 	// Get advertised address for client connections
 	host, port := h.GetAdvertisedAddress(h.GetGatewayAddress())
 
-	nodeID := int32(1) // Single gateway node
+	nodeID := h.GetNodeID() // Get consistent node ID for this gateway
 
 	// Broker: node_id(4) + host(STRING) + port(4) + rack(STRING) + cluster_id(NULLABLE_STRING)
 	binary.Write(&buf, binary.BigEndian, nodeID)
@@ -1599,7 +1619,7 @@ func (h *Handler) HandleMetadataV3V4(correlationID uint32, requestBody []byte) (
 	buf.WriteString(clusterID)
 
 	// ControllerID (4 bytes) - v1+ addition
-	binary.Write(&buf, binary.BigEndian, int32(1))
+	binary.Write(&buf, binary.BigEndian, nodeID)
 
 	// Topics array (4 bytes length + topics)
 	binary.Write(&buf, binary.BigEndian, int32(len(topicsToReturn)))
@@ -1653,7 +1673,7 @@ func (h *Handler) HandleMetadataV5V6(correlationID uint32, requestBody []byte) (
 
 // HandleMetadataV7 implements Metadata API v7 with LeaderEpoch field (REGULAR FORMAT, NOT FLEXIBLE)
 func (h *Handler) HandleMetadataV7(correlationID uint32, requestBody []byte) ([]byte, error) {
-	// CRITICAL: Metadata v7 uses REGULAR arrays/strings (like v5/v6), NOT compact format
+	// Metadata v7 uses REGULAR arrays/strings (like v5/v6), NOT compact format
 	// Only v9+ uses compact format (flexible responses)
 	return h.handleMetadataV5ToV8(correlationID, requestBody, 7)
 }
@@ -1721,7 +1741,7 @@ func (h *Handler) handleMetadataV5ToV8(correlationID uint32, requestBody []byte,
 	// Get advertised address for client connections
 	host, port := h.GetAdvertisedAddress(h.GetGatewayAddress())
 
-	nodeID := int32(1) // Single gateway node
+	nodeID := h.GetNodeID() // Get consistent node ID for this gateway
 
 	// Broker: node_id(4) + host(STRING) + port(4) + rack(STRING) + cluster_id(NULLABLE_STRING)
 	binary.Write(&buf, binary.BigEndian, nodeID)
@@ -1749,7 +1769,7 @@ func (h *Handler) handleMetadataV5ToV8(correlationID uint32, requestBody []byte,
 	buf.WriteString(clusterID)
 
 	// ControllerID (4 bytes) - v1+ addition
-	binary.Write(&buf, binary.BigEndian, int32(1))
+	binary.Write(&buf, binary.BigEndian, nodeID)
 
 	// Topics array (4 bytes length + topics)
 	binary.Write(&buf, binary.BigEndian, int32(len(topicsToReturn)))
@@ -2011,7 +2031,7 @@ func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, req
 		actualTopicsCount++
 	}
 
-	// CRITICAL FIX: Update the topics count in the response header with the actual count
+	// Update the topics count in the response header with the actual count
 	// This prevents ErrIncompleteResponse when request parsing fails mid-way
 	if actualTopicsCount != topicsCount {
 		binary.BigEndian.PutUint32(response[topicsCountOffset:topicsCountOffset+4], actualTopicsCount)
@@ -3045,7 +3065,7 @@ func isFlexibleResponse(apiKey uint16, apiVersion uint16) bool {
 	case APIKeySyncGroup:
 		return apiVersion >= 4
 	case APIKeyApiVersions:
-		// CRITICAL: AdminClient compatibility requires header version 0 (no tagged fields)
+		// AdminClient compatibility requires header version 0 (no tagged fields)
 		// Even though ApiVersions v3+ technically supports flexible responses, AdminClient
 		// expects the header to NOT include tagged fields. This is a known quirk.
 		return false // Always use non-flexible header for ApiVersions
@@ -3281,12 +3301,6 @@ func (h *Handler) parseDescribeConfigsRequest(requestBody []byte, apiVersion uin
 
 	var resourcesLength uint32
 	if isFlexible {
-		// Debug: log the first 8 bytes of the request body
-		debugBytes := requestBody[offset:]
-		if len(debugBytes) > 8 {
-			debugBytes = debugBytes[:8]
-		}
-
 		// FIX: Skip top-level tagged fields for DescribeConfigs v4+ flexible protocol
 		// The request body starts with tagged fields count (usually 0x00 = empty)
 		_, consumed, err := DecodeTaggedFields(requestBody[offset:])
@@ -3944,9 +3958,8 @@ func (h *Handler) createTopicWithSchemaSupport(topicName string, partitions int3
 // createTopicWithDefaultFlexibleSchema creates a topic with a flexible default schema
 // that can handle both Avro and JSON messages when schema management is enabled
 func (h *Handler) createTopicWithDefaultFlexibleSchema(topicName string, partitions int32) error {
-	// CRITICAL FIX: System topics like _schemas should be PLAIN Kafka topics without schema management
+	// System topics like _schemas should be PLAIN Kafka topics without schema management
 	// Schema Registry uses _schemas to STORE schemas, so it can't have schema management itself
-	// This was causing issues with Schema Registry bootstrap
 
 	glog.V(1).Infof("Creating system topic %s as PLAIN topic (no schema management)", topicName)
 	return h.seaweedMQHandler.CreateTopic(topicName, partitions)

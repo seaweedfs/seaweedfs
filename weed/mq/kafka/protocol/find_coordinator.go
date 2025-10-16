@@ -48,7 +48,6 @@ func (h *Handler) handleFindCoordinator(correlationID uint32, apiVersion uint16,
 func (h *Handler) handleFindCoordinatorV0(correlationID uint32, requestBody []byte) ([]byte, error) {
 	// Parse FindCoordinator v0 request: Key (STRING) only
 
-	// DEBUG: Hex dump the request to understand format
 	dumpLen := len(requestBody)
 	if dumpLen > 50 {
 		dumpLen = 50
@@ -84,7 +83,7 @@ func (h *Handler) handleFindCoordinatorV0(correlationID uint32, requestBody []by
 		return nil, fmt.Errorf("failed to find coordinator for group %s: %w", coordinatorKey, err)
 	}
 
-	// CRITICAL FIX: Return hostname instead of IP address for client connectivity
+	// Return hostname instead of IP address for client connectivity
 	// Clients need to connect to the same hostname they originally connected to
 	_ = coordinatorHost // originalHost
 	coordinatorHost = h.getClientConnectableHost(coordinatorHost)
@@ -128,7 +127,6 @@ func (h *Handler) handleFindCoordinatorV0(correlationID uint32, requestBody []by
 func (h *Handler) handleFindCoordinatorV2(correlationID uint32, requestBody []byte) ([]byte, error) {
 	// Parse FindCoordinator request (v0-2 non-flex): Key (STRING), v1+ adds KeyType (INT8)
 
-	// DEBUG: Hex dump the request to understand format
 	dumpLen := len(requestBody)
 	if dumpLen > 50 {
 		dumpLen = 50
@@ -167,7 +165,7 @@ func (h *Handler) handleFindCoordinatorV2(correlationID uint32, requestBody []by
 		return nil, fmt.Errorf("failed to find coordinator for group %s: %w", coordinatorKey, err)
 	}
 
-	// CRITICAL FIX: Return hostname instead of IP address for client connectivity
+	// Return hostname instead of IP address for client connectivity
 	// Clients need to connect to the same hostname they originally connected to
 	_ = coordinatorHost // originalHost
 	coordinatorHost = h.getClientConnectableHost(coordinatorHost)
@@ -237,7 +235,7 @@ func (h *Handler) handleFindCoordinatorV3(correlationID uint32, requestBody []by
 
 	offset := 0
 
-	// CRITICAL FIX: The first byte is the tagged fields from the REQUEST HEADER that weren't consumed
+	// The first byte is the tagged fields from the REQUEST HEADER that weren't consumed
 	// Skip the tagged fields count (should be 0x00 for no tagged fields)
 	if len(requestBody) > 0 && requestBody[0] == 0x00 {
 		glog.V(4).Infof("FindCoordinator V3: Skipping header tagged fields byte (0x00)")

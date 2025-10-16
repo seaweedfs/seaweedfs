@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"sync"
 	"time"
 
@@ -106,6 +107,9 @@ func New(cfg *config.Config, collector *metrics.Collector, id int, recordTracker
 func (c *Consumer) initSaramaConsumer() error {
 	config := sarama.NewConfig()
 
+	// Enable Sarama debug logging to diagnose connection issues
+	sarama.Logger = log.New(os.Stdout, fmt.Sprintf("[Sarama Consumer %d] ", c.id), log.LstdFlags)
+
 	// Consumer configuration
 	config.Consumer.Return.Errors = true
 	config.Consumer.Offsets.Initial = sarama.OffsetOldest
@@ -135,8 +139,23 @@ func (c *Consumer) initSaramaConsumer() error {
 	// This allows Sarama to fetch from multiple partitions in parallel
 	config.Net.MaxOpenRequests = 20 // Increase from default 5 to allow 20 concurrent requests
 
+	// Connection retry and timeout configuration
+	config.Net.DialTimeout = 30 * time.Second  // Increase from default 30s
+	config.Net.ReadTimeout = 30 * time.Second  // Increase from default 30s
+	config.Net.WriteTimeout = 30 * time.Second // Increase from default 30s
+	config.Metadata.Retry.Max = 5              // Retry metadata fetch up to 5 times
+	config.Metadata.Retry.Backoff = 500 * time.Millisecond
+	config.Metadata.Timeout = 30 * time.Second // Increase metadata timeout
+
 	// Version
 	config.Version = sarama.V2_8_0_0
+
+	// CRITICAL: Set unique ClientID to ensure each consumer gets a unique member ID
+	// Without this, all consumers from the same process get the same member ID and only 1 joins!
+	// Sarama uses ClientID as part of the member ID generation
+	// Use consumer ID directly - no timestamp needed since IDs are already unique per process
+	config.ClientID = fmt.Sprintf("loadtest-consumer-%d", c.id)
+	log.Printf("Consumer %d: Setting Sarama ClientID to: %s", c.id, config.ClientID)
 
 	// Create consumer group
 	consumerGroup, err := sarama.NewConsumerGroup(c.config.Kafka.BootstrapServers, c.consumerGroup, config)

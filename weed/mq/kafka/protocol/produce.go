@@ -94,7 +94,6 @@ func (h *Handler) handleProduceV0V1(ctx context.Context, correlationID uint32, a
 		// Check if topic exists, auto-create if it doesn't (simulates auto.create.topics.enable=true)
 		topicExists := h.seaweedMQHandler.TopicExists(topicName)
 
-		// Debug: show all existing topics
 		_ = h.seaweedMQHandler.ListTopics() // existingTopics
 		if !topicExists {
 			// Use schema-aware topic creation for auto-created topics with configurable default partitions
@@ -102,7 +101,7 @@ func (h *Handler) handleProduceV0V1(ctx context.Context, correlationID uint32, a
 			if err := h.createTopicWithSchemaSupport(topicName, defaultPartitions); err != nil {
 			} else {
 				// Ledger initialization REMOVED - SMQ handles offsets natively
-				topicExists = true // CRITICAL FIX: Update the flag after creating the topic
+				topicExists = true
 			}
 		}
 
@@ -624,8 +623,6 @@ func (h *Handler) handleProduceV2Plus(ctx context.Context, correlationID uint32,
 	_ = binary.BigEndian.Uint32(requestBody[offset : offset+4]) // timeout
 	offset += 4
 
-	// Debug: Log acks and timeout values
-
 	// Remember if this is fire-and-forget mode
 	isFireAndForget := acks == 0
 	if isFireAndForget {
@@ -854,7 +851,7 @@ func (h *Handler) storeDecodedMessage(ctx context.Context, topicName string, par
 		if key == nil {
 			key = []byte{} // Use empty byte slice for null keys
 		}
-		// CRITICAL: Store the original Confluent Wire Format bytes (magic byte + schema ID + payload)
+		// Store the original Confluent Wire Format bytes (magic byte + schema ID + payload)
 		// NOT just the Avro payload, so we can return them as-is during fetch without re-encoding
 		value := decodedMsg.Envelope.OriginalBytes
 
@@ -1185,7 +1182,7 @@ func (h *Handler) produceSchemaBasedRecord(ctx context.Context, topic string, pa
 			var err error
 			valueDecodedMsg, err = h.schemaManager.DecodeMessage(value)
 			if err != nil {
-				// CRITICAL: If message has schema ID (magic byte 0x00), decoding MUST succeed
+				// If message has schema ID (magic byte 0x00), decoding MUST succeed
 				// Do not fall back to raw storage - this would corrupt the data model
 				time.Sleep(100 * time.Millisecond)
 				return 0, fmt.Errorf("message has schema ID but decoding failed (schema registry may be unavailable): %w", err)
@@ -1264,7 +1261,7 @@ func (h *Handler) produceSchemaBasedRecord(ctx context.Context, topic string, pa
 
 	// Send to SeaweedMQ
 	if valueDecodedMsg != nil || keyDecodedMsg != nil {
-		// CRITICAL FIX: Store the DECODED RecordValue (not the original Confluent Wire Format)
+		// Store the DECODED RecordValue (not the original Confluent Wire Format)
 		// This enables SQL queries to work properly. Kafka consumers will receive the RecordValue
 		// which can be re-encoded to Confluent Wire Format during fetch if needed
 		return h.seaweedMQHandler.ProduceRecordValue(ctx, topic, partition, finalKey, recordValueBytes)
