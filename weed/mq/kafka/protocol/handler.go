@@ -1083,6 +1083,8 @@ func (h *Handler) processRequestSync(req *kafkaRequest) ([]byte, error) {
 	requestStart := time.Now()
 	apiName := getAPIName(APIKey(req.apiKey))
 
+	glog.Warningf("🟡 processRequestSync: apiKey=%d (%s), version=%d, correlationID=%d", req.apiKey, apiName, req.apiVersion, req.correlationID)
+
 	glog.V(4).Infof("[API] %s (key=%d, ver=%d, corr=%d)",
 		apiName, req.apiKey, req.apiVersion, req.correlationID)
 
@@ -1097,6 +1099,7 @@ func (h *Handler) processRequestSync(req *kafkaRequest) ([]byte, error) {
 		response, err = h.handleMetadata(req.correlationID, req.apiVersion, req.requestBody)
 
 	case APIKeyListOffsets:
+		glog.Warningf("🟡 processRequestSync: Handling ListOffsets (apiKey=2) - about to call handleListOffsets")
 		response, err = h.handleListOffsets(req.correlationID, req.apiVersion, req.requestBody)
 
 	case APIKeyCreateTopics:
