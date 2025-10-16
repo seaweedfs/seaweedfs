@@ -39,6 +39,3 @@ require (
 	golang.org/x/net v0.46.0 // indirect
 	golang.org/x/sys v0.37.0 // indirect
 )
-
-// Use local Sarama repo for debugging
-replace github.com/IBM/sarama => /Users/chrislu/dev/sarama
