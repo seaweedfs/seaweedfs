@@ -25,7 +25,7 @@ import (
 // - No shared state between requests
 // - Natural support for concurrent reads
 func (b *MessageQueueBroker) FetchMessage(ctx context.Context, req *mq_pb.FetchMessageRequest) (*mq_pb.FetchMessageResponse, error) {
-	glog.Infof("[FetchMessage] CALLED!") // DEBUG: ensure this shows up
+	glog.V(3).Infof("[FetchMessage] CALLED!") // DEBUG: ensure this shows up
 
 	// Validate request
 	if req.Topic == nil {
@@ -38,7 +38,7 @@ func (b *MessageQueueBroker) FetchMessage(ctx context.Context, req *mq_pb.FetchM
 	t := topic.FromPbTopic(req.Topic)
 	partition := topic.FromPbPartition(req.Partition)
 
-	glog.Infof("[FetchMessage] %s/%s partition=%v offset=%d maxMessages=%d maxBytes=%d consumer=%s/%s",
+	glog.V(3).Infof("[FetchMessage] %s/%s partition=%v offset=%d maxMessages=%d maxBytes=%d consumer=%s/%s",
 		t.Namespace, t.Name, partition, req.StartOffset, req.MaxMessages, req.MaxBytes,
 		req.ConsumerGroup, req.ConsumerId)
 
@@ -105,14 +105,14 @@ func (b *MessageQueueBroker) FetchMessage(ctx context.Context, req *mq_pb.FetchM
 	requestedOffset := req.StartOffset
 
 	// Read messages from LogBuffer (stateless read)
-	glog.Infof("[FetchMessage] About to read from LogBuffer at offset %d (requested=%d)", requestedOffset, req.StartOffset)
+	glog.V(3).Infof("[FetchMessage] About to read from LogBuffer at offset %d (requested=%d)", requestedOffset, req.StartOffset)
 	logEntries, nextOffset, highWaterMark, endOfPartition, err := localPartition.LogBuffer.ReadMessagesAtOffset(
 		requestedOffset,
 		maxMessages,
 		maxBytes,
 	)
 
-	glog.Infof("[FetchMessage] Read completed: %d entries, nextOffset=%d, hwm=%d, eop=%v, err=%v",
+	glog.V(3).Infof("[FetchMessage] Read completed: %d entries, nextOffset=%d, hwm=%d, eop=%v, err=%v",
 		len(logEntries), nextOffset, highWaterMark, endOfPartition, err)
 
 	if err != nil {

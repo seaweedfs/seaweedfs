@@ -62,7 +62,7 @@ func (bc *BrokerClient) PublishRecord(ctx context.Context, topic string, partiti
 	}
 
 	if topic == "_schemas" {
-		glog.Infof("[GATEWAY RECV] topic=%s partition=%d resp.AssignedOffset=%d resp.AckTsNs=%d", 
+		glog.V(3).Infof("[GATEWAY RECV] topic=%s partition=%d resp.AssignedOffset=%d resp.AckTsNs=%d", 
 			topic, partition, resp.AssignedOffset, resp.AckTsNs)
 	}
 

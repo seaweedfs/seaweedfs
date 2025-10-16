@@ -80,7 +80,7 @@ func (bc *BrokerClient) FetchMessagesStateless(ctx context.Context, topic string
 		}
 	}
 
-	glog.Infof("[FETCH-STATELESS-CLIENT] Received %d messages from broker, nextOffset=%d, hwm=%d",
+	glog.V(3).Infof("[FETCH-STATELESS-CLIENT] Received %d messages from broker, nextOffset=%d, hwm=%d",
 		len(resp.Messages), resp.NextOffset, resp.HighWaterMark)
 
 	// Convert protobuf messages to SeaweedRecord
@@ -96,10 +96,10 @@ func (bc *BrokerClient) FetchMessagesStateless(ctx context.Context, topic string
 	}
 
 	if len(records) > 0 {
-		glog.Infof("[FETCH-STATELESS-CLIENT] Converted to %d SeaweedRecords, first offset=%d, last offset=%d",
+		glog.V(3).Infof("[FETCH-STATELESS-CLIENT] Converted to %d SeaweedRecords, first offset=%d, last offset=%d",
 			len(records), records[0].Offset, records[len(records)-1].Offset)
 	} else {
-		glog.Infof("[FETCH-STATELESS-CLIENT] Converted to 0 SeaweedRecords")
+		glog.V(3).Infof("[FETCH-STATELESS-CLIENT] Converted to 0 SeaweedRecords")
 	}
 
 	glog.V(4).Infof("[FETCH-STATELESS] Fetched %d records, nextOffset=%d, highWaterMark=%d, endOfPartition=%v",
