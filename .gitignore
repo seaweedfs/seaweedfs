@@ -123,3 +123,4 @@ ADVANCED_IAM_DEVELOPMENT_PLAN.md
 /test/s3/iam/test-volume-data
 *.log
 weed-iam
+test/kafka/kafka-client-loadtest/weed-linux-arm64
