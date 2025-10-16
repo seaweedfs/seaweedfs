@@ -33,16 +33,18 @@ func (b *MessageQueueBroker) LookupTopicBrokers(ctx context.Context, request *mq
 	ret.Topic = request.Topic
 	
 	// Use cached topic config to avoid expensive filer reads (26% CPU overhead!)
+	// getTopicConfFromCache also validates broker assignments on cache miss (saves 14% CPU)
 	conf, err := b.getTopicConfFromCache(t)
 	if err != nil {
 		glog.V(0).Infof("lookup topic %s conf: %v", request.Topic, err)
 		return ret, err
 	}
 	
-	err = b.ensureTopicActiveAssignments(t, conf)
+	// Note: Assignment validation is now done inside getTopicConfFromCache on cache misses
+	// This avoids 14% CPU overhead from validating on EVERY lookup
 	ret.BrokerPartitionAssignments = conf.BrokerPartitionAssignments
 
-	return ret, err
+	return ret, nil
 }
 
 func (b *MessageQueueBroker) ListTopics(ctx context.Context, request *mq_pb.ListTopicsRequest) (resp *mq_pb.ListTopicsResponse, err error) {

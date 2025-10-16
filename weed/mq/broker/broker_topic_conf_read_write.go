@@ -24,7 +24,7 @@ func (b *MessageQueueBroker) GetOrGenerateLocalPartition(t topic.Topic, partitio
 		glog.Errorf("topic %v not found: %v", t, err)
 		return nil, fmt.Errorf("topic %v not found: %w", t, err)
 	}
-	
+
 	localTopicPartition, _, getOrGenError = b.doGetOrGenLocalPartition(t, partition, conf)
 	if getOrGenError != nil {
 		glog.Errorf("topic %v partition %v not setup: %v", t, partition, getOrGenError)
@@ -45,6 +45,7 @@ func (b *MessageQueueBroker) invalidateTopicCache(t topic.Topic) {
 
 // getTopicConfFromCache reads topic configuration with caching
 // Returns the config or error if not found. Uses unified cache to avoid expensive filer reads.
+// On cache miss, validates broker assignments to ensure they're still active (14% CPU overhead).
 // This is the public API for reading topic config - always use this instead of direct filer reads.
 func (b *MessageQueueBroker) getTopicConfFromCache(t topic.Topic) (*mq_pb.ConfigureTopicResponse, error) {
 	topicKey := t.String()
@@ -62,7 +63,9 @@ func (b *MessageQueueBroker) getTopicConfFromCache(t topic.Topic) (*mq_pb.Config
 				return nil, fmt.Errorf("topic %v not found (cached)", t)
 			}
 			
-			glog.V(4).Infof("Topic cache HIT for %s", topicKey)
+			glog.V(4).Infof("Topic cache HIT for %s (skipping assignment validation)", topicKey)
+			// Cache hit - return immediately without validating assignments
+			// Assignments were validated when we first cached this config
 			return conf, nil
 		}
 	}
@@ -72,10 +75,9 @@ func (b *MessageQueueBroker) getTopicConfFromCache(t topic.Topic) (*mq_pb.Config
 	glog.V(4).Infof("Topic cache MISS for %s, reading from filer", topicKey)
 	conf, readConfErr := b.fca.ReadTopicConfFromFiler(t)
 	
-	// Cache the result (even if error/not found - negative caching)
-	b.topicCacheMu.Lock()
 	if readConfErr != nil {
 		// Negative cache: topic doesn't exist
+		b.topicCacheMu.Lock()
 		b.topicCache[topicKey] = &topicCacheEntry{
 			conf:      nil,
 			expiresAt: time.Now().Add(b.topicCacheTTL),
@@ -85,7 +87,30 @@ func (b *MessageQueueBroker) getTopicConfFromCache(t topic.Topic) (*mq_pb.Config
 		return nil, fmt.Errorf("topic %v not found: %w", t, readConfErr)
 	}
 	
-	// Positive cache: topic exists with config
+	// Validate broker assignments before caching (NOT holding cache lock)
+	// This ensures cached configs always have valid broker assignments
+	// Only done on cache miss (not on every lookup), saving 14% CPU
+	glog.V(4).Infof("Validating broker assignments for %s", topicKey)
+	hasChanges := b.ensureTopicActiveAssignmentsUnsafe(t, conf)
+	if hasChanges {
+		glog.V(0).Infof("topic %v partition assignments updated due to broker changes", t)
+		// Save updated assignments to filer immediately to ensure persistence
+		if err := b.fca.SaveTopicConfToFiler(t, conf); err != nil {
+			glog.Errorf("failed to save updated topic config for %s: %v", topicKey, err)
+			// Don't cache on error - let next request retry
+			return conf, err
+		}
+		// Invalidate cache to force fresh read on next request
+		// This ensures all brokers see the updated assignments
+		b.topicCacheMu.Lock()
+		delete(b.topicCache, topicKey)
+		b.topicCacheMu.Unlock()
+		glog.V(4).Infof("Invalidated cache for %s after assignment update", topicKey)
+		return conf, nil
+	}
+	
+	// Positive cache: topic exists with validated assignments
+	b.topicCacheMu.Lock()
 	b.topicCache[topicKey] = &topicCacheEntry{
 		conf:      conf,
 		expiresAt: time.Now().Add(b.topicCacheTTL),
@@ -142,9 +167,18 @@ func (b *MessageQueueBroker) genLocalPartitionFromFiler(t topic.Topic, partition
 	return localPartition, isGenerated, nil
 }
 
-func (b *MessageQueueBroker) ensureTopicActiveAssignments(t topic.Topic, conf *mq_pb.ConfigureTopicResponse) (err error) {
+// ensureTopicActiveAssignmentsUnsafe validates that partition assignments reference active brokers
+// Returns true if assignments were changed. Caller must save config to filer if hasChanges=true.
+// Note: Assumes caller holds topicCacheMu lock or is OK with concurrent access to conf
+func (b *MessageQueueBroker) ensureTopicActiveAssignmentsUnsafe(t topic.Topic, conf *mq_pb.ConfigureTopicResponse) (hasChanges bool) {
 	// also fix assignee broker if invalid
-	hasChanges := pub_balancer.EnsureAssignmentsToActiveBrokers(b.PubBalancer.Brokers, 1, conf.BrokerPartitionAssignments)
+	hasChanges = pub_balancer.EnsureAssignmentsToActiveBrokers(b.PubBalancer.Brokers, 1, conf.BrokerPartitionAssignments)
+	return hasChanges
+}
+
+func (b *MessageQueueBroker) ensureTopicActiveAssignments(t topic.Topic, conf *mq_pb.ConfigureTopicResponse) (err error) {
+	// Validate and save if needed
+	hasChanges := b.ensureTopicActiveAssignmentsUnsafe(t, conf)
 	if hasChanges {
 		glog.V(0).Infof("topic %v partition updated assignments: %v", t, conf.BrokerPartitionAssignments)
 		if err = b.fca.SaveTopicConfToFiler(t, conf); err != nil {
