@@ -20,4 +20,4 @@ jobs:
           charts_dir: k8s/charts
           target_dir: helm
           branch: gh-pages
-          helm_version: v3.18.4
+          helm_version: "3.18.4"
