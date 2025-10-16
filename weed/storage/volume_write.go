@@ -221,7 +221,7 @@ func (v *Volume) doDeleteRequest(n *needle.Needle) (Size, error) {
 	glog.V(4).Infof("delete needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
 	nv, ok := v.nm.Get(n.Id)
 	// fmt.Println("key", n.Id, "volume offset", nv.Offset, "data_size", n.Size, "cached size", nv.Size)
-	if ok && nv.Size.IsValid() {
+	if ok && !nv.Size.IsDeleted() {
 		var offset uint64
 		var err error
 		size := nv.Size
