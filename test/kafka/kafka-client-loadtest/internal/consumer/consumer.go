@@ -625,31 +625,45 @@ func (h *ConsumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSession,
 	topic := claim.Topic()
 	partition := claim.Partition()
 	initialOffset := claim.InitialOffset()
+	lastTrackedOffset := int64(-1)
+	gapCount := 0
 	
 	// Log the starting offset for this partition
-	log.Printf("Consumer %d: START consuming %s[%d] from offset %d", 
-		h.consumer.id, topic, partition, initialOffset)
+	log.Printf("Consumer %d: START consuming %s[%d] from offset %d (HWM=%d)", 
+		h.consumer.id, topic, partition, initialOffset, claim.HighWaterMarkOffset())
 	
 	startTime := time.Now()
+	lastLogTime := time.Now()
 	
 	for {
 		select {
 		case message, ok := <-claim.Messages():
 			if !ok {
 				elapsed := time.Since(startTime)
-				log.Printf("Consumer %d: STOP consuming %s[%d] after %d messages (%.1f sec, %.1f msgs/sec, last offset=%d)", 
+				log.Printf("Consumer %d: STOP consuming %s[%d] after %d messages (%.1f sec, %.1f msgs/sec, last offset=%d, total gaps=%d)", 
 					h.consumer.id, topic, partition, msgCount, elapsed.Seconds(), 
-					float64(msgCount)/elapsed.Seconds(), claim.HighWaterMarkOffset()-1)
+					float64(msgCount)/elapsed.Seconds(), claim.HighWaterMarkOffset()-1, gapCount)
 				return nil
 			}
 			msgCount++
 			
-			// Log progress every 500 messages
-			if msgCount%500 == 0 {
+			// Track gaps in offset sequence (indicates missed messages)
+			if lastTrackedOffset >= 0 && message.Offset != lastTrackedOffset+1 {
+				gap := message.Offset - lastTrackedOffset - 1
+				gapCount++
+				log.Printf("Consumer %d: DEBUG offset gap in %s[%d]: offset %d -> %d (gap=%d messages)", 
+					h.consumer.id, topic, partition, lastTrackedOffset, message.Offset, gap)
+			}
+			lastTrackedOffset = message.Offset
+			
+			// Log progress every 500 messages OR every 5 seconds
+			now := time.Now()
+			if msgCount%500 == 0 || now.Sub(lastLogTime) > 5*time.Second {
 				elapsed := time.Since(startTime)
 				throughput := float64(msgCount) / elapsed.Seconds()
-				log.Printf("Consumer %d: %s[%d] progress: %d messages, offset=%d, rate=%.1f msgs/sec", 
-					h.consumer.id, topic, partition, msgCount, message.Offset, throughput)
+				log.Printf("Consumer %d: %s[%d] progress: %d messages, offset=%d, HWM=%d, rate=%.1f msgs/sec, gaps=%d", 
+					h.consumer.id, topic, partition, msgCount, message.Offset, claim.HighWaterMarkOffset(), throughput, gapCount)
+				lastLogTime = now
 			}
 
 			// Process the message

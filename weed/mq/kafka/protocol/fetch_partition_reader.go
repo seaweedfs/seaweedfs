@@ -153,25 +153,27 @@ func (pr *partitionReader) serveFetchRequest(ctx context.Context, req *partition
 	// Update tracking offset to match requested offset
 	pr.bufferMu.Lock()
 	if req.requestedOffset != pr.currentOffset {
-		glog.V(4).Infof("[%s] Offset seek for %s[%d]: requested=%d current=%d",
-			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, req.requestedOffset, pr.currentOffset)
+		glog.V(3).Infof("[%s] Updating currentOffset for %s[%d]: %d -> %d",
+			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, pr.currentOffset, req.requestedOffset)
 		pr.currentOffset = req.requestedOffset
 	}
 	pr.bufferMu.Unlock()
 
 	// Fetch on-demand - no pre-fetching to avoid overwhelming the broker
-	// Pass the requested offset and maxWaitMs directly to avoid race conditions
 	recordBatch, newOffset := pr.readRecords(ctx, req.requestedOffset, req.maxBytes, req.maxWaitMs, hwm)
-	if len(recordBatch) > 0 && newOffset > pr.currentOffset {
+	
+	// Log what we got back
+	if len(recordBatch) == 0 {
+		glog.V(2).Infof("[%s] FETCH %s[%d]: readRecords returned EMPTY (offset=%d, hwm=%d)",
+			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, req.requestedOffset, hwm)
+		result.recordBatch = []byte{}
+	} else {
+		glog.V(2).Infof("[%s] FETCH %s[%d]: readRecords returned data (offset=%d->%d, hwm=%d, bytes=%d)",
+			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, req.requestedOffset, newOffset, hwm, len(recordBatch))
 		result.recordBatch = recordBatch
 		pr.bufferMu.Lock()
 		pr.currentOffset = newOffset
 		pr.bufferMu.Unlock()
-		glog.V(4).Infof("[%s] On-demand fetch for %s[%d]: offset %d->%d, %d bytes",
-			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID,
-			req.requestedOffset, newOffset, len(recordBatch))
-	} else {
-		result.recordBatch = []byte{}
 	}
 }
 
