@@ -647,9 +647,10 @@ func (h *ConsumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSession,
 				// Mark message as processed
 				session.MarkMessage(message, "")
 
-				// Commit offset immediately every 10 messages to reduce duplicate window
-				// This supplements auto-commit and ensures offsets are committed more frequently
-				if msgCount%10 == 0 {
+				// Commit offset less frequently to reduce overhead
+				// Auto-commit is enabled (5s interval by default), so manual commits are just backups
+				// Reduced from every 10 messages to every 100 messages to match throughput
+				if msgCount%100 == 0 {
 					session.Commit()
 				}
 			}
