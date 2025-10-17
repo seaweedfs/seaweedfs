@@ -268,8 +268,6 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, req
 				if off, meta, err := h.fetchOffsetFromSMQ(key); err == nil && off >= 0 {
 					fetchedOffset = off
 					metadata = meta
-					// Load into in-memory cache for future queries
-					_ = h.commitOffset(group, topic.Name, partition, off, meta)
 					glog.V(4).Infof("[OFFSET_FETCH] Found in storage: group=%s topic=%s partition=%d offset=%d",
 						request.GroupID, topic.Name, partition, off)
 				} else {
