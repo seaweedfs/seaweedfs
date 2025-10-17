@@ -481,15 +481,16 @@ func (h *Handler) getClientConnectableHost(coordinatorHost string) string {
 		// It's an IP address, return the original gateway hostname
 		gatewayAddr := h.GetGatewayAddress()
 		if host, _, err := h.parseGatewayAddress(gatewayAddr); err == nil {
-			// If the gateway address is also an IP, try to use a hostname
+			// If the gateway address is also an IP, return the IP directly
+			// This handles local/test environments where hostnames aren't resolvable
 			if net.ParseIP(host) != nil {
-				// Both are IPs, use a default hostname that clients can connect to
-				return "kafka-gateway"
+				// Both are IPs, return the actual IP address
+				return coordinatorHost
 			}
 			return host
 		}
-		// Fallback to a known hostname
-		return "kafka-gateway"
+		// Fallback to the coordinator host IP itself
+		return coordinatorHost
 	}
 
 	// It's already a hostname, return as-is
