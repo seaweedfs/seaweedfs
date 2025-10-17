@@ -119,14 +119,14 @@ func (pr *partitionReader) handleRequests(ctx context.Context) {
 func (pr *partitionReader) serveFetchRequest(ctx context.Context, req *partitionFetchRequest) {
 	startTime := time.Now()
 	result := &partitionFetchResult{}
-	
+
 	// Log request START with full details
 	glog.Infof("[%s] FETCH_START %s[%d]: offset=%d maxBytes=%d maxWait=%dms correlationID=%d",
 		pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, req.requestedOffset, req.maxBytes, req.maxWaitMs, req.correlationID)
-	
+
 	defer func() {
 		result.fetchDuration = time.Since(startTime)
-		
+
 		// Log request END with results
 		resultStatus := "EMPTY"
 		if len(result.recordBatch) > 0 {
@@ -134,7 +134,7 @@ func (pr *partitionReader) serveFetchRequest(ctx context.Context, req *partition
 		}
 		glog.Infof("[%s] FETCH_END %s[%d]: offset=%d result=%s hwm=%d duration=%.2fms",
 			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, req.requestedOffset, resultStatus, result.highWaterMark, result.fetchDuration.Seconds()*1000)
-		
+
 		// Send result back to client
 		select {
 		case req.resultChan <- result:
@@ -182,7 +182,7 @@ func (pr *partitionReader) serveFetchRequest(ctx context.Context, req *partition
 
 	// Fetch on-demand - no pre-fetching to avoid overwhelming the broker
 	recordBatch, newOffset := pr.readRecords(ctx, req.requestedOffset, req.maxBytes, req.maxWaitMs, hwm)
-	
+
 	// Log what we got back - DETAILED for diagnostics
 	if len(recordBatch) == 0 {
 		glog.V(2).Infof("[%s] FETCH %s[%d]: readRecords returned EMPTY (offset=%d, hwm=%d)",
@@ -202,7 +202,7 @@ func (pr *partitionReader) serveFetchRequest(ctx context.Context, req *partition
 // readRecords reads records forward using the multi-batch fetcher
 func (pr *partitionReader) readRecords(ctx context.Context, fromOffset int64, maxBytes int32, maxWaitMs int32, highWaterMark int64) ([]byte, int64) {
 	fetchStartTime := time.Now()
-	
+
 	// Create context with timeout based on Kafka fetch request's MaxWaitTime
 	// This ensures we wait exactly as long as the client requested
 	fetchCtx := ctx
@@ -254,12 +254,12 @@ func (pr *partitionReader) readRecords(ctx context.Context, fromOffset int64, ma
 	fallbackStartTime := time.Now()
 	smqRecords, err := pr.handler.seaweedMQHandler.GetStoredRecords(ctx, pr.topicName, pr.partitionID, fromOffset, 10)
 	fallbackDuration := time.Since(fallbackStartTime)
-	
+
 	if fallbackDuration > 2*time.Second {
 		glog.Warningf("[%s] SLOW FALLBACK for %s[%d]: offset=%d took %.2fs",
 			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, fromOffset, fallbackDuration.Seconds())
 	}
-	
+
 	if err != nil {
 		glog.Errorf("[%s] CRITICAL: Both multi-batch AND fallback failed for %s[%d] offset=%d: %v",
 			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, fromOffset, err)
