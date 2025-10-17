@@ -199,6 +199,10 @@ func (h *FastMockHandler) SetProtocolHandler(handler integration.ProtocolHandler
 	// No-op
 }
 
+func (h *FastMockHandler) InvalidateTopicExistsCache(topic string) {
+	// No-op for mock
+}
+
 func (h *FastMockHandler) Close() error {
 	return nil
 }
@@ -268,6 +272,10 @@ func (h *BlockingMockHandler) CreatePerConnectionBrokerClient() (*integration.Br
 
 func (h *BlockingMockHandler) SetProtocolHandler(handler integration.ProtocolHandler) {
 	// No-op
+}
+
+func (h *BlockingMockHandler) InvalidateTopicExistsCache(topic string) {
+	// No-op for mock
 }
 
 func (h *BlockingMockHandler) Close() error {
@@ -354,6 +362,10 @@ func (h *TimeoutAwareMockHandler) CreatePerConnectionBrokerClient() (*integratio
 
 func (h *TimeoutAwareMockHandler) SetProtocolHandler(handler integration.ProtocolHandler) {
 	// No-op
+}
+
+func (h *TimeoutAwareMockHandler) InvalidateTopicExistsCache(topic string) {
+	// No-op for mock
 }
 
 func (h *TimeoutAwareMockHandler) Close() error {

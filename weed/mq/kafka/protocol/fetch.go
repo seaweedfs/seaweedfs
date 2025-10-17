@@ -1150,7 +1150,7 @@ func (h *Handler) decodeRecordValueToKafkaMessage(topicName string, recordValueB
 	// Validate that the unmarshaled RecordValue is actually a valid RecordValue
 	// Protobuf unmarshal is lenient and can succeed with garbage data for random bytes
 	// We need to check if this looks like a real RecordValue or just random bytes
-	if !h.isValidRecordValue(recordValue) {
+	if !h.isValidRecordValue(recordValue, recordValueBytes) {
 		// Not a valid RecordValue - return raw bytes as-is
 		return recordValueBytes
 	}
@@ -1168,7 +1168,8 @@ func (h *Handler) decodeRecordValueToKafkaMessage(topicName string, recordValueB
 }
 
 // isValidRecordValue checks if a RecordValue looks like a real RecordValue or garbage from random bytes
-func (h *Handler) isValidRecordValue(recordValue *schema_pb.RecordValue) bool {
+// This performs a roundtrip test: marshal the RecordValue and check if it produces similar output
+func (h *Handler) isValidRecordValue(recordValue *schema_pb.RecordValue, originalBytes []byte) bool {
 	// Empty or nil Fields means not a valid RecordValue
 	if recordValue == nil || recordValue.Fields == nil || len(recordValue.Fields) == 0 {
 		return false
@@ -1192,6 +1193,29 @@ func (h *Handler) isValidRecordValue(recordValue *schema_pb.RecordValue) bool {
 		if fieldValue == nil || fieldValue.Kind == nil {
 			return false
 		}
+	}
+
+	// Roundtrip check: If this is a real RecordValue, marshaling it back should produce
+	// similar-sized output. Random bytes that accidentally parse as protobuf will typically
+	// produce very different output when marshaled back.
+	remarshaled, err := proto.Marshal(recordValue)
+	if err != nil {
+		return false
+	}
+
+	// Check if the sizes are reasonably similar (within 50% tolerance)
+	// Real RecordValue will have similar size, random bytes will be very different
+	originalSize := len(originalBytes)
+	remarshaledSize := len(remarshaled)
+	if originalSize == 0 {
+		return false
+	}
+
+	// Calculate size ratio - should be close to 1.0 for real RecordValue
+	ratio := float64(remarshaledSize) / float64(originalSize)
+	if ratio < 0.5 || ratio > 2.0 {
+		// Size differs too much - this is likely random bytes parsed as protobuf
+		return false
 	}
 
 	return true

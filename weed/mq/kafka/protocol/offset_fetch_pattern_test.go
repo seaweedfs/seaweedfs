@@ -1,12 +1,9 @@
 package protocol
 
 import (
-	"context"
 	"fmt"
 	"testing"
 	"time"
-
-	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/integration"
 )
 
 // TestOffsetCommitFetchPattern verifies the critical pattern:
@@ -22,11 +19,11 @@ func TestOffsetCommitFetchPattern(t *testing.T) {
 
 	// Setup
 	const (
-		topic          = "test-topic"
-		partition      = int32(0)
-		messageCount   = 1000
-		batchSize      = 50
-		groupID        = "test-group"
+		topic        = "test-topic"
+		partition    = int32(0)
+		messageCount = 1000
+		batchSize    = 50
+		groupID      = "test-group"
 	)
 
 	// Mock store for offsets
@@ -107,13 +104,9 @@ func TestOffsetFetchAfterCommit(t *testing.T) {
 		}
 
 		type FetchResponse struct {
-			records []byte
+			records    []byte
 			nextOffset int64
 		}
-
-		// Track all fetch requests
-		fetchRequests := []FetchRequest{}
-		fetchResponses := []FetchResponse{}
 
 		// Simulate: Commit offset 163, then fetch offset 164
 		committedOffset := int64(163)
@@ -123,7 +116,7 @@ func TestOffsetFetchAfterCommit(t *testing.T) {
 
 		// This is where consumers are getting stuck!
 		// They commit offset 163, then fetch 164+, but get empty response
-		
+
 		// Expected: Fetch(164) returns records starting from offset 164
 		// Actual Bug: Fetch(164) returns empty, consumer stops fetching
 
@@ -144,9 +137,9 @@ func TestOffsetPersistencePattern(t *testing.T) {
 
 	t.Run("OffsetRecovery", func(t *testing.T) {
 		const (
-			groupID    = "test-group"
-			topic      = "test-topic"
-			partition  = int32(0)
+			groupID   = "test-group"
+			topic     = "test-topic"
+			partition = int32(0)
 		)
 
 		offsetStore := make(map[string]int64)
@@ -202,7 +195,7 @@ func TestOffsetCommitConsistency(t *testing.T) {
 		for _, commit := range commits {
 			key := fmt.Sprintf("%s/%s/%d", commit.Group, commit.Topic, commit.Partition)
 			t.Logf("Committing %s at offset %d", key, commit.Offset)
-			
+
 			// Verify offset is correctly persisted
 			// (In real test, would read from SMQ storage)
 		}
@@ -218,9 +211,9 @@ func TestFetchEmptyPartitionHandling(t *testing.T) {
 
 	t.Run("EmptyPartitionBehavior", func(t *testing.T) {
 		const (
-			topic       = "test-topic"
-			partition   = int32(0)
-			lastOffset  = int64(999) // Messages 0-999 exist
+			topic      = "test-topic"
+			partition  = int32(0)
+			lastOffset = int64(999) // Messages 0-999 exist
 		)
 
 		// Test 1: Fetch at HWM should return empty
@@ -248,12 +241,9 @@ func TestLongPollWithOffsetCommit(t *testing.T) {
 		// This was bug 8969b4509
 
 		const maxWaitTime = 5 * time.Second
-		start := time.Now()
 
 		// Simulate long-poll wait (no data available)
 		time.Sleep(100 * time.Millisecond) // Broker waits up to maxWaitTime
-
-		elapsed := time.Since(start)
 
 		// throttleTimeMs should be 0 (NOT elapsed duration!)
 		throttleTimeMs := int32(0) // CORRECT
