@@ -724,12 +724,31 @@ func (h *ConsumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSession,
 			reachedHWM := lastTrackedOffset >= (claim.HighWaterMarkOffset() - 1)
 			hwmStatus := "INCOMPLETE"
 			if reachedHWM {
-				hwmStatus = "COMPLETE"
+				hwmStatus := "COMPLETE"
+				_ = hwmStatus // Use it to avoid warning
 			}
 			
-			log.Printf("Consumer %d: Context CANCELLED for %s[%d] after %d messages (%.1f sec, %.1f msgs/sec, last offset=%d, HWM=%d, status=%s, gaps=%d %s)", 
-				h.consumer.id, topic, partition, msgCount, elapsed.Seconds(),
-				float64(msgCount)/elapsed.Seconds(), lastTrackedOffset, claim.HighWaterMarkOffset()-1, hwmStatus, gapCount, gapSummary)
+			// Calculate consumption rate for this partition
+			consumptionRate := float64(0)
+			if elapsed.Seconds() > 0 {
+				consumptionRate = float64(msgCount) / elapsed.Seconds()
+			}
+			
+			// Log both normal and abnormal completions
+			if msgCount == 0 {
+				// Partition never got ANY messages - critical issue
+				log.Printf("Consumer %d: CRITICAL - NO MESSAGES from %s[%d] (HWM=%d, status=%s)", 
+					h.consumer.id, topic, partition, claim.HighWaterMarkOffset()-1, hwmStatus)
+			} else if msgCount < 10 && msgCount > 0 {
+				// Very few messages then stopped - likely hung fetch
+				log.Printf("Consumer %d: HUNG FETCH on %s[%d]: only %d messages before stop at offset=%d (HWM=%d, rate=%.2f msgs/sec, gaps=%d %s)", 
+					h.consumer.id, topic, partition, msgCount, lastTrackedOffset, claim.HighWaterMarkOffset()-1, consumptionRate, gapCount, gapSummary)
+			} else {
+				// Normal completion
+				log.Printf("Consumer %d: Context CANCELLED for %s[%d] after %d messages (%.1f sec, %.1f msgs/sec, last offset=%d, HWM=%d, status=%s, gaps=%d %s)", 
+					h.consumer.id, topic, partition, msgCount, elapsed.Seconds(),
+					consumptionRate, lastTrackedOffset, claim.HighWaterMarkOffset()-1, hwmStatus, gapCount, gapSummary)
+			}
 			return nil
 		}
 	}
