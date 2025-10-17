@@ -307,6 +307,24 @@ services:
     profiles:
       - debug
 
+  # SeekToBeginning test - reproduces the hang issue
+  seek-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.seektest
+    container_name: loadtest-seek-test
+    depends_on:
+      kafka-gateway:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka-gateway:9093
+    networks:
+      - kafka-loadtest-net
+    entrypoint: ["java", "-cp", "target/seek-test.jar", "SeekToBeginningTest"]
+    command: ["kafka-gateway:9093"]
+
 volumes:
   prometheus-data:
   grafana-data:
