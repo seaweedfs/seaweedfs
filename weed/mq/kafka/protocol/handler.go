@@ -697,7 +697,6 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 					// Connection closed, stop processing
 					return
 				case <-time.After(5 * time.Second):
-					glog.Errorf("[%s] DEADLOCK: Control plane timeout sending correlation=%d to responseChan (buffer full?)", connectionID, req.correlationID)
 				}
 			case <-ctx.Done():
 				// Context cancelled, drain remaining requests before exiting
@@ -776,7 +775,6 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 					// Connection closed, stop processing
 					return
 				case <-time.After(5 * time.Second):
-					glog.Errorf("[%s] DEADLOCK: Data plane timeout sending correlation=%d to responseChan (buffer full?)", connectionID, req.correlationID)
 				}
 			case <-ctx.Done():
 				// Context cancelled, drain remaining requests before exiting
