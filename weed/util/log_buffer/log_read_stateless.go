@@ -144,7 +144,7 @@ func (logBuffer *LogBuffer) ReadMessagesAtOffset(startOffset int64, maxMessages 
 	// 2. startOffset in buffer range but not in memory: Data was flushed (from fall-through above)
 	if startOffset < currentBufferEnd {
 		glog.Infof("[StatelessRead] PATH: Data not in memory, attempting DISK READ")
-		
+
 		// Historical data or flushed data - try to read from disk if ReadFromDiskFn is configured
 		if startOffset < bufferStartOffset {
 			glog.Errorf("[StatelessRead] CASE 1: Historical data - offset %d < bufferStart %d",
@@ -166,7 +166,7 @@ func (logBuffer *LogBuffer) ReadMessagesAtOffset(startOffset int64, maxMessages 
 		}
 
 		glog.Infof("[StatelessRead] ReadFromDiskFn is configured, calling readHistoricalDataFromDisk...")
-		
+
 		// Read from disk (this is async/non-blocking if the ReadFromDiskFn is properly implemented)
 		// The ReadFromDiskFn should handle its own timeouts and not block indefinitely
 		diskMessages, diskNextOffset, diskErr := readHistoricalDataFromDisk(
@@ -225,7 +225,19 @@ func readHistoricalDataFromDisk(
 		glog.Infof("[DiskCache] Cache HIT for chunk starting at offset %d (requested: %d), cachedMessages=%d",
 			chunkStartOffset, startOffset, len(cachedMessages))
 
-		return extractMessagesFromCache(cachedMessages, startOffset, maxMessages, maxBytes)
+		result, nextOff, err := extractMessagesFromCache(cachedMessages, startOffset, maxMessages, maxBytes)
+
+		if err != nil {
+			// Cache extraction failed (likely offset beyond cached chunk)
+			// Invalidate this cache entry and fall through to read from disk
+			glog.Errorf("[DiskCache] Cache extraction FAILED for offset %d: %v", startOffset, err)
+			glog.Infof("[DiskCache] Invalidating cache entry for chunk %d and re-reading from disk", chunkStartOffset)
+			invalidateCachedDiskChunk(logBuffer, chunkStartOffset)
+			// Fall through to read from disk with fresh data
+		} else {
+			// Success - return cached data
+			return result, nextOff, nil
+		}
 	}
 
 	glog.Infof("[DiskCache] Cache MISS for chunk starting at offset %d, reading from disk via ReadFromDiskFn",
@@ -295,6 +307,18 @@ func getCachedDiskChunk(logBuffer *LogBuffer, chunkStartOffset int64) ([]*filer_
 	return nil, false
 }
 
+// invalidateCachedDiskChunk removes a chunk from the cache
+// This is called when cached data is found to be incomplete or incorrect
+func invalidateCachedDiskChunk(logBuffer *LogBuffer, chunkStartOffset int64) {
+	logBuffer.diskChunkCache.mu.Lock()
+	defer logBuffer.diskChunkCache.mu.Unlock()
+
+	if _, exists := logBuffer.diskChunkCache.chunks[chunkStartOffset]; exists {
+		delete(logBuffer.diskChunkCache.chunks, chunkStartOffset)
+		glog.Infof("[DiskCache] Invalidated chunk at offset %d", chunkStartOffset)
+	}
+}
+
 // cacheDiskChunk stores a disk chunk in the cache with LRU eviction
 func cacheDiskChunk(logBuffer *LogBuffer, startOffset, endOffset int64, messages []*filer_pb.LogEntry) {
 	logBuffer.diskChunkCache.mu.Lock()
@@ -340,10 +364,29 @@ func extractMessagesFromCache(chunkMessages []*filer_pb.LogEntry, startOffset in
 	positionInChunk := int(startOffset - chunkStartOffset)
 
 	// Check if requested offset is within the chunk
-	if positionInChunk < 0 || positionInChunk >= len(chunkMessages) {
-		glog.V(4).Infof("[DiskCache] Requested offset %d out of chunk range (chunk start: %d, size: %d)",
-			startOffset, chunkStartOffset, len(chunkMessages))
-		return nil, startOffset, nil // Return empty but no error
+	if positionInChunk < 0 {
+		glog.Errorf("[DiskCache] CRITICAL: Requested offset %d is BEFORE chunk start %d (positionInChunk=%d < 0)",
+			startOffset, chunkStartOffset, positionInChunk)
+		return nil, startOffset, fmt.Errorf("offset %d before chunk start %d", startOffset, chunkStartOffset)
+	}
+
+	if positionInChunk >= len(chunkMessages) {
+		// CRITICAL FIX: Requested offset is beyond the cached chunk
+		// This happens when:
+		// 1. Chunk only has partial data (e.g., 572 messages instead of 1000)
+		// 2. Request is for offset beyond what was cached
+		//
+		// Solution: Return RETRYABLE ERROR to force a new disk read with correct chunk start
+		glog.Errorf("[DiskCache] CRITICAL: Requested offset %d is BEYOND cached chunk (chunkStart=%d, cachedSize=%d, positionInChunk=%d)",
+			startOffset, chunkStartOffset, len(chunkMessages), positionInChunk)
+		glog.Errorf("[DiskCache] Chunk contains offsets %d-%d, but requested %d",
+			chunkStartOffset, chunkStartOffset+int64(len(chunkMessages))-1, startOffset)
+
+		// Return error to trigger cache invalidation and re-read
+		// The next read will use a new chunk start aligned to the requested offset
+		return nil, startOffset, fmt.Errorf("offset %d beyond cached chunk (start=%d, size=%d): cached offsets %d-%d",
+			startOffset, chunkStartOffset, len(chunkMessages),
+			chunkStartOffset, chunkStartOffset+int64(len(chunkMessages))-1)
 	}
 
 	// Extract messages starting from the requested position
