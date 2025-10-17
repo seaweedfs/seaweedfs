@@ -560,9 +560,27 @@ func (logBuffer *LogBuffer) copyToFlushInternal(withCallback bool) *dataToFlush 
 		logBuffer.hasOffsets = false
 		logBuffer.minOffset = 0
 		logBuffer.maxOffset = 0
+		
+		// CRITICAL FIX: Invalidate disk cache chunks after flush
+		// The cache may contain stale data from before this flush
+		// Invalidating ensures consumers will re-read fresh data from disk after flush
+		logBuffer.invalidateAllDiskCacheChunks()
+		
 		return d
 	}
 	return nil
+}
+
+// invalidateAllDiskCacheChunks clears all cached disk chunks
+// This should be called after a buffer flush to ensure consumers read fresh data from disk
+func (logBuffer *LogBuffer) invalidateAllDiskCacheChunks() {
+	logBuffer.diskChunkCache.mu.Lock()
+	defer logBuffer.diskChunkCache.mu.Unlock()
+	
+	if len(logBuffer.diskChunkCache.chunks) > 0 {
+		glog.Infof("[DiskCache] Invalidating all %d cached chunks after flush", len(logBuffer.diskChunkCache.chunks))
+		logBuffer.diskChunkCache.chunks = make(map[int64]*CachedDiskChunk)
+	}
 }
 
 func (logBuffer *LogBuffer) GetEarliestTime() time.Time {
