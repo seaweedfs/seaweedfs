@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer_client"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -434,6 +435,7 @@ func (bc *BrokerClient) TopicExists(topicName string) (bool, error) {
 	ctx, cancel := context.WithTimeout(bc.ctx, 5*time.Second)
 	defer cancel()
 
+	glog.V(2).Infof("[BrokerClient] TopicExists: Querying broker for topic %s", topicName)
 	resp, err := bc.client.TopicExists(ctx, &mq_pb.TopicExistsRequest{
 		Topic: &schema_pb.Topic{
 			Namespace: "kafka",
@@ -441,8 +443,10 @@ func (bc *BrokerClient) TopicExists(topicName string) (bool, error) {
 		},
 	})
 	if err != nil {
+		glog.V(1).Infof("[BrokerClient] TopicExists: ERROR for topic %s: %v", topicName, err)
 		return false, fmt.Errorf("failed to check topic existence: %v", err)
 	}
 
+	glog.V(2).Infof("[BrokerClient] TopicExists: Topic %s exists=%v", topicName, resp.Exists)
 	return resp.Exists, nil
 }

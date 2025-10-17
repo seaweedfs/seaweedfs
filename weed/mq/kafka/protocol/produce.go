@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/compression"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/schema"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
@@ -93,11 +94,17 @@ func (h *Handler) handleProduceV0V1(ctx context.Context, correlationID uint32, a
 		if !topicExists {
 			// Use schema-aware topic creation for auto-created topics with configurable default partitions
 			defaultPartitions := h.GetDefaultPartitions()
+			glog.V(1).Infof("[PRODUCE] Topic %s does not exist, auto-creating with %d partitions", topicName, defaultPartitions)
 			if err := h.createTopicWithSchemaSupport(topicName, defaultPartitions); err != nil {
+				glog.V(0).Infof("[PRODUCE] ERROR: Failed to auto-create topic %s: %v", topicName, err)
 			} else {
-				// Ledger initialization REMOVED - SMQ handles offsets natively
+				glog.V(1).Infof("[PRODUCE] Successfully auto-created topic %s", topicName)
+				// Invalidate cache immediately after creation so consumers can find it
+				h.seaweedMQHandler.InvalidateTopicExistsCache(topicName)
 				topicExists = true
 			}
+		} else {
+			glog.V(2).Infof("[PRODUCE] Topic %s already exists", topicName)
 		}
 
 		// Response: topic_name_size(2) + topic_name + partitions_array
