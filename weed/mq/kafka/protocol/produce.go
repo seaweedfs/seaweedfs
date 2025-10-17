@@ -159,7 +159,7 @@ func (h *Handler) handleProduceV0V1(ctx context.Context, correlationID uint32, a
 						if h.isSchemaValidationError(err) {
 							time.Sleep(200 * time.Millisecond) // Brief delay for schema validation failures
 						}
-						errorCode = 1 // UNKNOWN_SERVER_ERROR
+						errorCode = 0xFFFF // UNKNOWN_SERVER_ERROR (-1 as uint16)
 					} else {
 						baseOffset = offset
 					}
@@ -732,7 +732,7 @@ func (h *Handler) handleProduceV2Plus(ctx context.Context, correlationID uint32,
 								if h.isSchemaValidationError(prodErr) {
 									time.Sleep(200 * time.Millisecond) // Brief delay for schema validation failures
 								}
-								errorCode = 1 // UNKNOWN_SERVER_ERROR
+								errorCode = 0xFFFF // UNKNOWN_SERVER_ERROR (-1 as uint16)
 								break
 							}
 
@@ -751,7 +751,7 @@ func (h *Handler) handleProduceV2Plus(ctx context.Context, correlationID uint32,
 						for idx, kv := range records {
 							offsetProduced, prodErr := h.produceSchemaBasedRecord(ctx, topicName, int32(partitionID), kv.Key, kv.Value)
 							if prodErr != nil {
-								errorCode = 1 // UNKNOWN_SERVER_ERROR
+								errorCode = 0xFFFF // UNKNOWN_SERVER_ERROR (-1 as uint16)
 								break
 							}
 							if idx == 0 {

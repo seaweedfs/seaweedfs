@@ -2342,7 +2342,7 @@ func (h *Handler) handleCreateTopicsV2To4(correlationID uint32, requestBody []by
 		} else {
 			// Use schema-aware topic creation
 			if err := h.createTopicWithSchemaSupport(t.name, int32(t.partitions)); err != nil {
-				errCode = 1 // UNKNOWN_SERVER_ERROR
+				errCode = 0xFFFF // UNKNOWN_SERVER_ERROR (-1 as uint16)
 			}
 		}
 		eb := make([]byte, 2)
@@ -2472,7 +2472,7 @@ func (h *Handler) handleCreateTopicsV0V1(correlationID uint32, requestBody []byt
 		} else {
 			// Create the topic in SeaweedMQ with schema support
 			if err := h.createTopicWithSchemaSupport(topicName, int32(numPartitions)); err != nil {
-				errorCode = 1 // UNKNOWN_SERVER_ERROR
+				errorCode = 0xFFFF // UNKNOWN_SERVER_ERROR (-1 as uint16)
 			}
 		}
 
@@ -2747,7 +2747,7 @@ func (h *Handler) handleCreateTopicsV2Plus(correlationID uint32, apiVersion uint
 		} else {
 			// Use corrected values for error checking and topic creation with schema support
 			if err := h.createTopicWithSchemaSupport(t.name, int32(actualPartitions)); err != nil {
-				errCode = 1 // UNKNOWN_SERVER_ERROR
+				errCode = 0xFFFF // UNKNOWN_SERVER_ERROR (-1 as uint16)
 			}
 		}
 		eb := make([]byte, 2)
@@ -2879,7 +2879,7 @@ func (h *Handler) handleDeleteTopics(correlationID uint32, requestBody []byte) (
 		} else {
 			// Delete the topic from SeaweedMQ
 			if err := h.seaweedMQHandler.DeleteTopic(topicName); err != nil {
-				errorCode = 1 // UNKNOWN_SERVER_ERROR
+				errorCode = 0xFFFF // UNKNOWN_SERVER_ERROR (-1 as uint16)
 				errorMessage = err.Error()
 			}
 		}

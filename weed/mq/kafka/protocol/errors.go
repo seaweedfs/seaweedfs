@@ -14,8 +14,8 @@ const (
 	ErrorCodeNone int16 = 0
 
 	// General server errors
-	ErrorCodeUnknownServerError           int16 = 1
-	ErrorCodeOffsetOutOfRange             int16 = 2
+	ErrorCodeUnknownServerError           int16 = -1
+	ErrorCodeOffsetOutOfRange             int16 = 1
 	ErrorCodeCorruptMessage               int16 = 3 // Also UNKNOWN_TOPIC_OR_PARTITION
 	ErrorCodeUnknownTopicOrPartition      int16 = 3
 	ErrorCodeInvalidFetchSize             int16 = 4
