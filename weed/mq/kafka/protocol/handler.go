@@ -1270,6 +1270,26 @@ func (h *Handler) HandleMetadataV0(correlationID uint32, requestBody []byte) ([]
 		for _, name := range requestedTopics {
 			if h.seaweedMQHandler.TopicExists(name) {
 				topicsToReturn = append(topicsToReturn, name)
+			} else {
+				// Topic doesn't exist according to current cache, check broker directly
+				// This handles the race condition where producers just created topics
+				// and consumers are requesting metadata before cache TTL expires
+				glog.V(3).Infof("[METADATA v0] Topic %s not in cache, checking broker directly", name)
+				h.seaweedMQHandler.InvalidateTopicExistsCache(name)
+				if h.seaweedMQHandler.TopicExists(name) {
+					glog.V(3).Infof("[METADATA v0] Topic %s found on broker after cache refresh", name)
+					topicsToReturn = append(topicsToReturn, name)
+				} else {
+					glog.V(3).Infof("[METADATA v0] Topic %s not found, auto-creating with default partitions", name)
+					// Auto-create topic (matches Kafka's auto.create.topics.enable=true)
+					if err := h.createTopicWithSchemaSupport(name, h.GetDefaultPartitions()); err != nil {
+						glog.V(2).Infof("[METADATA v0] Failed to auto-create topic %s: %v", name, err)
+						// Don't add to topicsToReturn - client will get error
+					} else {
+						glog.V(2).Infof("[METADATA v0] Successfully auto-created topic %s", name)
+						topicsToReturn = append(topicsToReturn, name)
+					}
+				}
 			}
 		}
 	}
@@ -1345,6 +1365,22 @@ func (h *Handler) HandleMetadataV1(correlationID uint32, requestBody []byte) ([]
 		for _, name := range requestedTopics {
 			if h.seaweedMQHandler.TopicExists(name) {
 				topicsToReturn = append(topicsToReturn, name)
+			} else {
+				// Topic doesn't exist according to current cache, check broker directly
+				glog.V(3).Infof("[METADATA v1] Topic %s not in cache, checking broker directly", name)
+				h.seaweedMQHandler.InvalidateTopicExistsCache(name)
+				if h.seaweedMQHandler.TopicExists(name) {
+					glog.V(3).Infof("[METADATA v1] Topic %s found on broker after cache refresh", name)
+					topicsToReturn = append(topicsToReturn, name)
+				} else {
+					glog.V(3).Infof("[METADATA v1] Topic %s not found, auto-creating with default partitions", name)
+					if err := h.createTopicWithSchemaSupport(name, h.GetDefaultPartitions()); err != nil {
+						glog.V(2).Infof("[METADATA v1] Failed to auto-create topic %s: %v", name, err)
+					} else {
+						glog.V(2).Infof("[METADATA v1] Successfully auto-created topic %s", name)
+						topicsToReturn = append(topicsToReturn, name)
+					}
+				}
 			}
 		}
 	}
@@ -1463,6 +1499,22 @@ func (h *Handler) HandleMetadataV2(correlationID uint32, requestBody []byte) ([]
 		for _, name := range requestedTopics {
 			if h.seaweedMQHandler.TopicExists(name) {
 				topicsToReturn = append(topicsToReturn, name)
+			} else {
+				// Topic doesn't exist according to current cache, check broker directly
+				glog.V(3).Infof("[METADATA v2] Topic %s not in cache, checking broker directly", name)
+				h.seaweedMQHandler.InvalidateTopicExistsCache(name)
+				if h.seaweedMQHandler.TopicExists(name) {
+					glog.V(3).Infof("[METADATA v2] Topic %s found on broker after cache refresh", name)
+					topicsToReturn = append(topicsToReturn, name)
+				} else {
+					glog.V(3).Infof("[METADATA v2] Topic %s not found, auto-creating with default partitions", name)
+					if err := h.createTopicWithSchemaSupport(name, h.GetDefaultPartitions()); err != nil {
+						glog.V(2).Infof("[METADATA v2] Failed to auto-create topic %s: %v", name, err)
+					} else {
+						glog.V(2).Infof("[METADATA v2] Successfully auto-created topic %s", name)
+						topicsToReturn = append(topicsToReturn, name)
+					}
+				}
 			}
 		}
 	}
@@ -1571,6 +1623,22 @@ func (h *Handler) HandleMetadataV3V4(correlationID uint32, requestBody []byte) (
 		for _, name := range requestedTopics {
 			if h.seaweedMQHandler.TopicExists(name) {
 				topicsToReturn = append(topicsToReturn, name)
+			} else {
+				// Topic doesn't exist according to current cache, check broker directly
+				glog.V(3).Infof("[METADATA v3/v4] Topic %s not in cache, checking broker directly", name)
+				h.seaweedMQHandler.InvalidateTopicExistsCache(name)
+				if h.seaweedMQHandler.TopicExists(name) {
+					glog.V(3).Infof("[METADATA v3/v4] Topic %s found on broker after cache refresh", name)
+					topicsToReturn = append(topicsToReturn, name)
+				} else {
+					glog.V(3).Infof("[METADATA v3/v4] Topic %s not found, auto-creating with default partitions", name)
+					if err := h.createTopicWithSchemaSupport(name, h.GetDefaultPartitions()); err != nil {
+						glog.V(2).Infof("[METADATA v3/v4] Failed to auto-create topic %s: %v", name, err)
+					} else {
+						glog.V(2).Infof("[METADATA v3/v4] Successfully auto-created topic %s", name)
+						topicsToReturn = append(topicsToReturn, name)
+					}
+				}
 			}
 		}
 	}
