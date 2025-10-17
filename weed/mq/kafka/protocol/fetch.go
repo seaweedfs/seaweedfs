@@ -104,11 +104,9 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 			}
 		}
 		// If we got here without breaking early, we hit the timeout
-		// Only set throttle time if we're returning without data (true long-poll timeout)
-		if throttleTimeMs == 0 && !hasDataAvailable() {
-			elapsed := time.Since(start)
-			throttleTimeMs = int32(elapsed / time.Millisecond)
-		}
+		// Long-poll timeout is NOT throttling - throttle time should only be used for quota/rate limiting
+		// Do NOT set throttle time based on long-poll duration
+		throttleTimeMs = 0
 	}
 
 	// Build the response
