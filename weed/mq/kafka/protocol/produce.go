@@ -17,13 +17,10 @@ import (
 func (h *Handler) handleProduce(ctx context.Context, correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
 
 	// Version-specific handling
-	glog.Warningf("🔴 CRITICAL DEBUG handleProduce: correlationID=%d, apiVersion=%d, requestBodyLen=%d", correlationID, apiVersion, len(requestBody))
 	switch apiVersion {
 	case 0, 1:
-		glog.Warningf("🔴 CRITICAL DEBUG handleProduce: Using handleProduceV0V1")
 		return h.handleProduceV0V1(ctx, correlationID, apiVersion, requestBody)
 	case 2, 3, 4, 5, 6, 7:
-		glog.Warningf("🔴 CRITICAL DEBUG handleProduce: Using handleProduceV2Plus")
 		return h.handleProduceV2Plus(ctx, correlationID, apiVersion, requestBody)
 	default:
 		return nil, fmt.Errorf("produce version %d not implemented yet", apiVersion)
