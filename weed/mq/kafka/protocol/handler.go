@@ -34,20 +34,38 @@ import (
 func (h *Handler) GetAdvertisedAddress(gatewayAddr string) (string, int) {
 	host, port := "localhost", 9093
 
-	// Try to parse the gateway address if provided to get the port
-	if gatewayAddr != "" {
-		if _, gatewayPort, err := net.SplitHostPort(gatewayAddr); err == nil {
-			if gatewayPortInt, err := strconv.Atoi(gatewayPort); err == nil {
-				port = gatewayPortInt // Only use the port, not the host
-			}
-		}
-	}
-
-	// Override with environment variable if set, otherwise always use localhost for external clients
+	// First, check for environment variable override
 	if advertisedHost := os.Getenv("KAFKA_ADVERTISED_HOST"); advertisedHost != "" {
 		host = advertisedHost
+		glog.V(2).Infof("Using KAFKA_ADVERTISED_HOST: %s", advertisedHost)
+	} else if gatewayAddr != "" {
+		// Try to parse the gateway address to extract hostname and port
+		parsedHost, gatewayPort, err := net.SplitHostPort(gatewayAddr)
+		if err == nil {
+			// Successfully parsed host:port
+			if gatewayPortInt, err := strconv.Atoi(gatewayPort); err == nil {
+				port = gatewayPortInt
+			}
+			// Use the parsed host if it's not 0.0.0.0 or empty
+			if parsedHost != "" && parsedHost != "0.0.0.0" {
+				host = parsedHost
+				glog.V(2).Infof("Using host from gatewayAddr: %s", host)
+			} else {
+				// Fall back to localhost for 0.0.0.0 or ambiguous addresses
+				host = "localhost"
+				glog.V(2).Infof("gatewayAddr is 0.0.0.0, using localhost for client advertising")
+			}
+		} else {
+			// Could not parse, use as-is if it looks like a hostname
+			if gatewayAddr != "" && gatewayAddr != "0.0.0.0" {
+				host = gatewayAddr
+				glog.V(2).Infof("Using gatewayAddr directly as host (unparseable): %s", host)
+			}
+		}
 	} else {
+		// No gateway address and no environment variable
 		host = "localhost"
+		glog.V(2).Infof("No gatewayAddr provided, using localhost")
 	}
 
 	return host, port
