@@ -56,5 +56,6 @@
                 </executions>
             </plugin>
         </plugins>
+        <sourceDirectory>.</sourceDirectory>
     </build>
 </project>

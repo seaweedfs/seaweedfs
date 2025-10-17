@@ -48,7 +48,7 @@ public class SeekToBeginningTest {
         
         System.out.println("\n╔════════════════════════════════════════════════════════════╗");
         System.out.println("║         SeekToBeginning Diagnostic Test                      ║");
-        System.out.println("║     Connecting to: " + bootstrapServers.padEnd(42) + "║");
+        System.out.println(String.format("║     Connecting to: %-42s║", bootstrapServers));
         System.out.println("╚════════════════════════════════════════════════════════════╝\n");
 
         System.out.println("[TEST] Creating KafkaConsumer...");
