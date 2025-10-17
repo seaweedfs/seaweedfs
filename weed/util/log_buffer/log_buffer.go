@@ -417,6 +417,10 @@ func (logBuffer *LogBuffer) AddDataToBuffer(partitionKey, data []byte, processin
 	copy(logBuffer.buf[logBuffer.pos+4:logBuffer.pos+4+size], logEntryData)
 	logBuffer.pos += size + 4
 
+	// CRITICAL FIX: Increment offset to match AddLogEntryToBuffer behavior
+	// This ensures bufferStartOffset advances correctly after flush
+	// Without this, gaps are created between flushed and in-memory offsets
+	logBuffer.offset++
 }
 
 func (logBuffer *LogBuffer) IsStopping() bool {
