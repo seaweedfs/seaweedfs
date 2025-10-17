@@ -98,6 +98,10 @@ func (m *mockSeaweedMQHandler) GetTopicInfo(topic string) (*integration.KafkaTop
 	return info, exists
 }
 
+func (m *mockSeaweedMQHandler) InvalidateTopicExistsCache(topic string) {
+	// Mock handler doesn't cache topic existence, so this is a no-op
+}
+
 func (m *mockSeaweedMQHandler) ProduceRecord(ctx context.Context, topicName string, partitionID int32, key, value []byte) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

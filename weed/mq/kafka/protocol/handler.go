@@ -172,6 +172,7 @@ type SeaweedMQHandlerInterface interface {
 	CreateTopicWithSchemas(name string, partitions int32, keyRecordType *schema_pb.RecordType, valueRecordType *schema_pb.RecordType) error
 	DeleteTopic(topic string) error
 	GetTopicInfo(topic string) (*integration.KafkaTopicInfo, bool)
+	InvalidateTopicExistsCache(topic string)
 	// Ledger methods REMOVED - SMQ handles Kafka offsets natively
 	ProduceRecord(ctx context.Context, topicName string, partitionID int32, key, value []byte) (int64, error)
 	ProduceRecordValue(ctx context.Context, topicName string, partitionID int32, key []byte, recordValueBytes []byte) (int64, error)
@@ -1727,6 +1728,27 @@ func (h *Handler) handleMetadataV5ToV8(correlationID uint32, requestBody []byte,
 				topicsToReturn = append(topicsToReturn, topic)
 			} else if h.seaweedMQHandler.TopicExists(topic) {
 				topicsToReturn = append(topicsToReturn, topic)
+			} else {
+				// Topic doesn't exist according to current cache, but let's check broker directly
+				// This handles the race condition where producers just created topics
+				// and consumers are requesting metadata before cache TTL expires
+				glog.V(3).Infof("[METADATA v%d] Topic %s not in cache, checking broker directly", apiVersion, topic)
+				// Force cache invalidation to do fresh broker check
+				h.seaweedMQHandler.InvalidateTopicExistsCache(topic)
+				if h.seaweedMQHandler.TopicExists(topic) {
+					glog.V(3).Infof("[METADATA v%d] Topic %s found on broker after cache refresh", apiVersion, topic)
+					topicsToReturn = append(topicsToReturn, topic)
+				} else {
+					glog.V(3).Infof("[METADATA v%d] Topic %s not found on broker, auto-creating with default partitions", apiVersion, topic)
+					// Auto-create non-system topics with default partitions (matches Kafka behavior)
+					if err := h.createTopicWithSchemaSupport(topic, h.GetDefaultPartitions()); err != nil {
+						glog.V(2).Infof("[METADATA v%d] Failed to auto-create topic %s: %v", apiVersion, topic, err)
+						// Don't add to topicsToReturn - client will get UNKNOWN_TOPIC_OR_PARTITION
+					} else {
+						glog.V(2).Infof("[METADATA v%d] Successfully auto-created topic %s", apiVersion, topic)
+						topicsToReturn = append(topicsToReturn, topic)
+					}
+				}
 			}
 		}
 		glog.V(3).Infof("[METADATA v%d] Returning topics: %v (requested: %v)", apiVersion, topicsToReturn, requestedTopics)

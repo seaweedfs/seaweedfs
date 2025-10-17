@@ -107,8 +107,6 @@ func TestEmptyFetchShouldNotStopConsumer(t *testing.T) {
 		nextFetchOffset := committedOffset + 1
 		
 		// First attempt: get empty (transient - data might not be available yet)
-		firstFetchResult := 0 // bytes returned
-		
 		// WRONG behavior (bug): Consumer sees 0 bytes and stops
 		// wrongConsumerLogic := (firstFetchResult == 0)  // gives up!
 		
