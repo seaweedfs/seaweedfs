@@ -105,15 +105,25 @@ func (b *MessageQueueBroker) FetchMessage(ctx context.Context, req *mq_pb.FetchM
 	requestedOffset := req.StartOffset
 
 	// Read messages from LogBuffer (stateless read)
-	glog.V(3).Infof("[FetchMessage] About to read from LogBuffer at offset %d (requested=%d)", requestedOffset, req.StartOffset)
+	glog.Infof("[FetchMessage] About to read from LogBuffer: topic=%s partition=%v offset=%d maxMessages=%d maxBytes=%d",
+		t.Name, partition, requestedOffset, maxMessages, maxBytes)
+	
 	logEntries, nextOffset, highWaterMark, endOfPartition, err := localPartition.LogBuffer.ReadMessagesAtOffset(
 		requestedOffset,
 		maxMessages,
 		maxBytes,
 	)
 
-	glog.V(3).Infof("[FetchMessage] Read completed: %d entries, nextOffset=%d, hwm=%d, eop=%v, err=%v",
-		len(logEntries), nextOffset, highWaterMark, endOfPartition, err)
+	// CRITICAL: Log the result with full details
+	if len(logEntries) == 0 && highWaterMark > requestedOffset && err == nil {
+		glog.Errorf("[FetchMessage] CRITICAL: ReadMessagesAtOffset returned 0 entries but HWM=%d > requestedOffset=%d (should return data!)",
+			highWaterMark, requestedOffset)
+		glog.Errorf("[FetchMessage] Details: nextOffset=%d, endOfPartition=%v, bufferStartOffset=%d",
+			nextOffset, endOfPartition, localPartition.LogBuffer.GetLogStartOffset())
+	}
+	
+	glog.Infof("[FetchMessage] Read completed: topic=%s partition=%v offset=%d -> %d entries, nextOffset=%d, hwm=%d, eop=%v, err=%v",
+		t.Name, partition, requestedOffset, len(logEntries), nextOffset, highWaterMark, endOfPartition, err)
 
 	if err != nil {
 		// Check if this is an "offset out of range" error
