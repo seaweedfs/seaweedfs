@@ -647,12 +647,12 @@ func (h *ConsumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSession,
 				// Mark message as processed
 				session.MarkMessage(message, "")
 
-				// Commit offset periodically to minimize message loss
-				// Every 50 messages provides good balance:
-				//   - 10s overhead reduction vs every 10 messages
-				//   - ~50 message loss window vs 100 if consumer fails
-				// Auto-commit (100ms) helps in background, manual commits are failsafe
-				if msgCount%50 == 0 {
+				// Commit offset frequently to minimize both message loss and duplicates
+				// Every 20 messages balances:
+				//   - ~600 commits per 12k messages (reasonable overhead)
+				//   - ~20 message loss window if consumer fails
+				//   - Reduces duplicate reads from rebalancing
+				if msgCount%20 == 0 {
 					session.Commit()
 				}
 			}
