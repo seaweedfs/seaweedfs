@@ -428,6 +428,7 @@ func parseMessagesFromBuffer(buf []byte, startOffset int64, maxMessages int, max
 	totalBytes = 0
 	foundStart := false
 
+	messagesInBuffer := 0
 	for pos := 0; pos+4 < len(buf) && len(messages) < maxMessages && totalBytes < maxBytes; {
 		// Read message size
 		size := util.BytesToUint32(buf[pos : pos+4])
@@ -447,14 +448,18 @@ func parseMessagesFromBuffer(buf []byte, startOffset int64, maxMessages int, max
 			continue
 		}
 
+		messagesInBuffer++
+
 		// Initialize foundStart from first message
 		if !foundStart {
 			// Find the first message at or after startOffset
 			if logEntry.Offset >= startOffset {
+				glog.Infof("[parseMessages] Found first message at/after startOffset %d: logEntry.Offset=%d", startOffset, logEntry.Offset)
 				foundStart = true
 				nextOffset = logEntry.Offset
 			} else {
 				// Skip messages before startOffset
+				glog.V(3).Infof("[parseMessages] Skipping message at offset %d (before startOffset %d)", logEntry.Offset, startOffset)
 				pos += 4 + int(size)
 				continue
 			}
@@ -462,6 +467,7 @@ func parseMessagesFromBuffer(buf []byte, startOffset int64, maxMessages int, max
 
 		// Check if this message matches expected offset
 		if foundStart && logEntry.Offset >= startOffset {
+			glog.V(3).Infof("[parseMessages] Adding message at offset %d (count=%d)", logEntry.Offset, len(messages)+1)
 			messages = append(messages, logEntry)
 			totalBytes += 4 + int(size)
 			nextOffset = logEntry.Offset + 1
@@ -469,6 +475,9 @@ func parseMessagesFromBuffer(buf []byte, startOffset int64, maxMessages int, max
 
 		pos += 4 + int(size)
 	}
+
+	glog.Infof("[parseMessages] Parsed buffer: requested startOffset=%d, messagesInBuffer=%d, messagesReturned=%d, nextOffset=%d",
+		startOffset, messagesInBuffer, len(messages), nextOffset)
 
 	glog.V(4).Infof("[parseMessages] Parsed %d messages, nextOffset=%d, totalBytes=%d",
 		len(messages), nextOffset, totalBytes)
