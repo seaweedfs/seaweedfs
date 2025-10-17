@@ -178,11 +178,9 @@ func (s *Server) Start() error {
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		glog.Warningf("🔴 CRITICAL DEBUG: Accept loop started for listener %s", s.ln.Addr().String())
 		for {
 			conn, err := s.ln.Accept()
 			if err != nil {
-				glog.Warningf("🔴 CRITICAL DEBUG: Accept error on %s: %v", s.ln.Addr().String(), err)
 				select {
 				case <-s.ctx.Done():
 					return
@@ -192,21 +190,17 @@ func (s *Server) Start() error {
 			}
 			// Simple accept log to trace client connections (useful for JoinGroup debugging)
 			if conn != nil {
-				glog.Warningf("🔴 CRITICAL DEBUG: accepted conn %s -> %s", conn.RemoteAddr(), conn.LocalAddr())
 				glog.V(1).Infof("accepted conn %s -> %s", conn.RemoteAddr(), conn.LocalAddr())
 			}
 			s.wg.Add(1)
 			go func(c net.Conn) {
 				defer s.wg.Done()
-				glog.Warningf("🔴 CRITICAL DEBUG: HandleConn starting for %s", c.RemoteAddr())
 				if err := s.handler.HandleConn(s.ctx, c); err != nil {
-					glog.Warningf("🔴 CRITICAL DEBUG: handle conn %v: %v", c.RemoteAddr(), err)
 					glog.V(1).Infof("handle conn %v: %v", c.RemoteAddr(), err)
 				}
 			}(conn)
 		}
 	}()
-	glog.Warningf("🔴 CRITICAL DEBUG: Server.Start() completed, listen address: %s", s.ln.Addr().String())
 	return nil
 }
 
