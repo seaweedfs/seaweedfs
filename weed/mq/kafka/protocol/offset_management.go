@@ -176,8 +176,8 @@ func (h *Handler) handleOffsetCommit(correlationID uint32, apiVersion uint16, re
 						glog.V(3).Infof("[OFFSET_COMMIT] SMQ persist failed (non-fatal): group=%s topic=%s partition=%d offset=%d err=%v",
 							req.GroupID, t.Name, p.Index, p.Offset, err)
 					}
-					glog.V(3).Infof("[OFFSET_COMMIT] Committed: group=%s topic=%s partition=%d offset=%d gen=%d",
-						req.GroupID, t.Name, p.Index, p.Offset, group.Generation)
+	glog.V(0).Infof("[OFFSET_COMMIT] ✅ Committed: group=%s topic=%s partition=%d offset=%d gen=%d",
+					req.GroupID, t.Name, p.Index, p.Offset, group.Generation)
 				}
 			} else {
 				// Do not store commit if generation mismatch
@@ -255,7 +255,7 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, req
 			if off, meta, err := h.fetchOffset(group, topic.Name, partition); err == nil && off >= 0 {
 				fetchedOffset = off
 				metadata = meta
-				glog.V(4).Infof("[OFFSET_FETCH] Found in memory: group=%s topic=%s partition=%d offset=%d",
+				glog.V(0).Infof("[OFFSET_FETCH] ✅ Found in memory: group=%s topic=%s partition=%d offset=%d",
 					request.GroupID, topic.Name, partition, off)
 			} else {
 				// Fallback: try fetching from SMQ persistent storage
@@ -269,10 +269,10 @@ func (h *Handler) handleOffsetFetch(correlationID uint32, apiVersion uint16, req
 				if off, meta, err := h.fetchOffsetFromSMQ(key); err == nil && off >= 0 {
 					fetchedOffset = off
 					metadata = meta
-					glog.V(4).Infof("[OFFSET_FETCH] Found in storage: group=%s topic=%s partition=%d offset=%d",
+					glog.V(0).Infof("[OFFSET_FETCH] ✅ Found in storage: group=%s topic=%s partition=%d offset=%d",
 						request.GroupID, topic.Name, partition, off)
 				} else {
-					glog.V(4).Infof("[OFFSET_FETCH] No offset found: group=%s topic=%s partition=%d (will start from auto.offset.reset)",
+					glog.V(0).Infof("[OFFSET_FETCH] ⚠️  No offset found: group=%s topic=%s partition=%d (will start from auto.offset.reset=earliest, offset=0)",
 						request.GroupID, topic.Name, partition)
 				}
 				// No offset found in either location (-1 indicates no committed offset)
