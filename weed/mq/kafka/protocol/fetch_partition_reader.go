@@ -138,11 +138,14 @@ func (pr *partitionReader) serveFetchRequest(ctx context.Context, req *partition
 	}
 	result.highWaterMark = hwm
 
+	glog.V(2).Infof("[%s] FETCH %s[%d]: requestedOffset=%d hwm=%d",
+		pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, req.requestedOffset, hwm)
+
 	// If requested offset >= HWM, return immediately with empty result
 	// This prevents overwhelming the broker with futile read attempts when no data is available
 	if req.requestedOffset >= hwm {
 		result.recordBatch = []byte{}
-		glog.V(3).Infof("[%s] No data available for %s[%d]: offset=%d >= hwm=%d",
+		glog.V(2).Infof("[%s] FETCH %s[%d]: EMPTY (offset %d >= hwm %d)",
 			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, req.requestedOffset, hwm)
 		return
 	}

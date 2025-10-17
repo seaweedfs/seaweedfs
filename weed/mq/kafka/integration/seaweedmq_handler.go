@@ -172,6 +172,7 @@ func (h *SeaweedMQHandler) GetLatestOffset(topic string, partition int32) (int64
 		if time.Now().Before(entry.expiresAt) {
 			// Cache hit - return cached value
 			h.hwmCacheMu.RUnlock()
+			glog.V(2).Infof("[HWM] Cache HIT for %s: hwm=%d", cacheKey, entry.value)
 			return entry.value, nil
 		}
 	}
@@ -179,10 +180,14 @@ func (h *SeaweedMQHandler) GetLatestOffset(topic string, partition int32) (int64
 
 	// Cache miss or expired - query SMQ broker
 	if h.brokerClient != nil {
+		glog.V(2).Infof("[HWM] Cache MISS for %s, querying broker...", cacheKey)
 		latestOffset, err := h.brokerClient.GetHighWaterMark(topic, partition)
 		if err != nil {
+			glog.V(1).Infof("[HWM] ERROR querying broker for %s: %v", cacheKey, err)
 			return 0, err
 		}
+
+		glog.V(2).Infof("[HWM] Broker returned hwm=%d for %s", latestOffset, cacheKey)
 
 		// Update cache
 		h.hwmCacheMu.Lock()
