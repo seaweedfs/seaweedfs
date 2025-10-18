@@ -913,6 +913,20 @@ func (bc *BrokerClient) readRecordsFrom(ctx context.Context, session *BrokerSubs
 				currentOffset++
 				consecutiveReads++ // Track number of successful reads for adaptive timeout
 
+				// DEBUG: Log received message with value preview for GitHub Actions debugging
+				valuePreview := ""
+				if len(dataMsg.Value) > 0 {
+					if len(dataMsg.Value) <= 50 {
+						valuePreview = string(dataMsg.Value)
+					} else {
+						valuePreview = fmt.Sprintf("%s...(total %d bytes)", string(dataMsg.Value[:50]), len(dataMsg.Value))
+					}
+				} else {
+					valuePreview = "<empty>"
+				}
+				glog.V(1).Infof("[FETCH_RECORD] offset=%d keyLen=%d valueLen=%d valuePreview=%q readTime=%v",
+					record.Offset, len(record.Key), len(record.Value), valuePreview, readDuration)
+
 				glog.V(4).Infof("[FETCH] Received record %d: offset=%d, keyLen=%d, valueLen=%d, readTime=%v",
 					len(records), record.Offset, len(record.Key), len(record.Value), readDuration)
 

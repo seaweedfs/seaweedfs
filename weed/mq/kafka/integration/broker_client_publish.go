@@ -46,9 +46,19 @@ func (bc *BrokerClient) PublishRecord(ctx context.Context, topic string, partiti
 		TsNs:  timestamp,
 	}
 
+	// DEBUG: Log message being published for GitHub Actions debugging
+	valuePreview := ""
 	if len(dataMsg.Value) > 0 {
+		if len(dataMsg.Value) <= 50 {
+			valuePreview = string(dataMsg.Value)
+		} else {
+			valuePreview = fmt.Sprintf("%s...(total %d bytes)", string(dataMsg.Value[:50]), len(dataMsg.Value))
+		}
 	} else {
+		valuePreview = "<empty>"
 	}
+	glog.V(1).Infof("[PUBLISH] topic=%s partition=%d key=%s valueLen=%d valuePreview=%q timestamp=%d",
+		topic, partition, string(key), len(value), valuePreview, timestamp)
 
 	// CRITICAL: Use a goroutine with context checking to enforce timeout
 	// gRPC streams may not respect context deadlines automatically
@@ -102,6 +112,7 @@ func (bc *BrokerClient) PublishRecord(ctx context.Context, topic string, partiti
 	}
 
 	// Use the assigned offset from SMQ, not the timestamp
+	glog.V(1).Infof("[PUBLISH_ACK] topic=%s partition=%d assignedOffset=%d", topic, partition, resp.AssignedOffset)
 	return resp.AssignedOffset, nil
 }
 

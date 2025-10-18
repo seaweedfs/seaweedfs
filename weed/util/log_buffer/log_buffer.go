@@ -2,6 +2,7 @@ package log_buffer
 
 import (
 	"bytes"
+	"fmt"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -388,6 +389,18 @@ func (logBuffer *LogBuffer) AddDataToBuffer(partitionKey, data []byte, processin
 	// This ensures the flushed data contains the correct offset information
 	// Note: This also enables AddToBuffer to work correctly with Kafka-style offset-based reads
 	logEntry.Offset = logBuffer.offset
+
+	// DEBUG: Log data being added to buffer for GitHub Actions debugging
+	dataPreview := ""
+	if len(data) > 0 {
+		if len(data) <= 50 {
+			dataPreview = string(data)
+		} else {
+			dataPreview = fmt.Sprintf("%s...(total %d bytes)", string(data[:50]), len(data))
+		}
+	}
+	glog.V(2).Infof("[LOG_BUFFER_ADD] buffer=%s offset=%d dataLen=%d dataPreview=%q",
+		logBuffer.name, logBuffer.offset, len(data), dataPreview)
 
 	// Marshal with correct timestamp and offset
 	logEntryData, _ = proto.Marshal(logEntry)
