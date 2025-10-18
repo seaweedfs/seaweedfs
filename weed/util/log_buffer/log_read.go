@@ -355,6 +355,18 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 				continue
 			}
 
+			// DEBUG: Log unmarshaled entry with data preview
+			dataPreview := ""
+			if len(logEntry.Data) > 0 {
+				if len(logEntry.Data) <= 50 {
+					dataPreview = string(logEntry.Data)
+				} else {
+					dataPreview = fmt.Sprintf("%s...(total %d bytes)", string(logEntry.Data[:50]), len(logEntry.Data))
+				}
+			}
+			glog.Infof("[LOG_BUFFER_UNMARSHAL] Offset=%d TsNs=%d dataLen=%d dataPreview=%q",
+				logEntry.Offset, logEntry.TsNs, len(logEntry.Data), dataPreview)
+
 			glog.V(4).Infof("Unmarshaled log entry %d: TsNs=%d, Offset=%d, Key=%s", batchSize+1, logEntry.TsNs, logEntry.Offset, string(logEntry.Key))
 
 			// Handle offset-based filtering for offset-based start positions

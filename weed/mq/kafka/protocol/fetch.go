@@ -1132,10 +1132,23 @@ func (h *Handler) decodeRecordValueToKafkaMessage(topicName string, recordValueB
 		return nil
 	}
 
+	// DEBUG: Log what we're decoding
+	valuePreview := ""
+	if len(recordValueBytes) > 0 {
+		if len(recordValueBytes) <= 50 {
+			valuePreview = string(recordValueBytes)
+		} else {
+			valuePreview = fmt.Sprintf("%s...(total %d bytes)", string(recordValueBytes[:50]), len(recordValueBytes))
+		}
+	}
+	glog.Infof("[DECODE_START] topic=%s schemaEnabled=%v bytesLen=%d preview=%q",
+		topicName, h.IsSchemaEnabled(), len(recordValueBytes), valuePreview)
+
 	// For system topics like _schemas, _consumer_offsets, etc.,
 	// return the raw bytes as-is. These topics store Kafka's internal format (Avro, etc.)
 	// and should NOT be processed as RecordValue protobuf messages.
 	if strings.HasPrefix(topicName, "_") {
+		glog.Infof("[DECODE_SYSTEM_TOPIC] Returning raw bytes for system topic %s", topicName)
 		return recordValueBytes
 	}
 
@@ -1143,6 +1156,7 @@ func (h *Handler) decodeRecordValueToKafkaMessage(topicName string, recordValueB
 	// All messages are stored as raw bytes when schema management is disabled
 	// Attempting to parse them as RecordValue will cause corruption due to protobuf's lenient parsing
 	if !h.IsSchemaEnabled() {
+		glog.Infof("[DECODE_NO_SCHEMA] Returning raw bytes (schema disabled)")
 		return recordValueBytes
 	}
 
@@ -1159,8 +1173,11 @@ func (h *Handler) decodeRecordValueToKafkaMessage(topicName string, recordValueB
 	// We need to check if this looks like a real RecordValue or just random bytes
 	if !h.isValidRecordValue(recordValue, recordValueBytes) {
 		// Not a valid RecordValue - return raw bytes as-is
+		glog.Infof("[DECODE_INVALID_RV] Not a valid RecordValue, returning raw bytes")
 		return recordValueBytes
 	}
+
+	glog.Infof("[DECODE_VALID_RV] Valid RecordValue detected, re-encoding...")
 
 	// If schema management is enabled, re-encode the RecordValue to Confluent format
 	if h.IsSchemaEnabled() {
@@ -1171,7 +1188,9 @@ func (h *Handler) decodeRecordValueToKafkaMessage(topicName string, recordValueB
 	}
 
 	// Fallback: convert RecordValue to JSON
-	return h.recordValueToJSON(recordValue)
+	result := h.recordValueToJSON(recordValue)
+	glog.Infof("[DECODE_END] Returning JSON converted bytes, len=%d", len(result))
+	return result
 }
 
 // isValidRecordValue checks if a RecordValue looks like a real RecordValue or garbage from random bytes

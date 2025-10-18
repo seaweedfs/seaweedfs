@@ -272,6 +272,18 @@ subscribeLoop:
 					TsNs:  logEntry.TsNs,
 				}
 
+				// DEBUG: Log broker sending data to client
+				valuePreview := ""
+				if len(logEntry.Data) > 0 {
+					if len(logEntry.Data) <= 50 {
+						valuePreview = string(logEntry.Data)
+					} else {
+						valuePreview = fmt.Sprintf("%s...(total %d bytes)", string(logEntry.Data[:50]), len(logEntry.Data))
+					}
+				}
+				glog.Infof("[BROKER_SEND] Sending to client=%s valueLen=%d valuePreview=%q offset=%d",
+					clientName, len(logEntry.Data), valuePreview, logEntry.Offset)
+
 				if err := stream.Send(&mq_pb.SubscribeMessageResponse{Message: &mq_pb.SubscribeMessageResponse_Data{
 					Data: dataMsg,
 				}}); err != nil {
