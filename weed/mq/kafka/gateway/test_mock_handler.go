@@ -6,7 +6,6 @@ import (
 	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer_client"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/integration"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/protocol"
 	filer_pb "github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -122,17 +121,6 @@ func (m *mockSeaweedMQHandler) ProduceRecord(ctx context.Context, topicName stri
 	offset := m.offsets[topicName][partitionID]
 	m.offsets[topicName][partitionID]++
 
-	// DEBUG: Log what's being stored
-	valuePreview := ""
-	if len(value) > 0 {
-		if len(value) <= 50 {
-			valuePreview = string(value)
-		} else {
-			valuePreview = fmt.Sprintf("%s...(total %d bytes)", string(value[:50]), len(value))
-		}
-	}
-	glog.Infof("[MOCK_STORE] topic=%s partition=%d offset=%d valueLen=%d valuePreview=%q",
-		topicName, partitionID, offset, len(value), valuePreview)
 
 	// Store record
 	record := &mockRecord{
@@ -168,18 +156,6 @@ func (m *mockSeaweedMQHandler) GetStoredRecords(ctx context.Context, topic strin
 	result := make([]integration.SMQRecord, 0, maxRecords)
 	for _, record := range partitionRecords {
 		if record.GetOffset() >= fromOffset {
-			// DEBUG: Log what's being retrieved
-			valuePreview := ""
-			if len(record.GetValue()) > 0 {
-				if len(record.GetValue()) <= 50 {
-					valuePreview = string(record.GetValue())
-				} else {
-					valuePreview = fmt.Sprintf("%s...(total %d bytes)", string(record.GetValue()[:50]), len(record.GetValue()))
-				}
-			}
-			glog.Infof("[MOCK_RETRIEVE] topic=%s partition=%d offset=%d valueLen=%d valuePreview=%q",
-				topic, partition, record.GetOffset(), len(record.GetValue()), valuePreview)
-
 			result = append(result, record)
 			if len(result) >= maxRecords {
 				break
