@@ -58,7 +58,7 @@ func (c *BrokerClient) discoverFiler() error {
 		return nil // already discovered
 	}
 
-	conn, err := grpc.Dial(c.masterAddress, c.grpcDialOption)
+	conn, err := grpc.NewClient(c.masterAddress, c.grpcDialOption)
 	if err != nil {
 		return fmt.Errorf("failed to connect to master at %s: %v", c.masterAddress, err)
 	}
@@ -99,7 +99,7 @@ func (c *BrokerClient) findBrokerBalancer() error {
 		return fmt.Errorf("failed to discover filer: %v", err)
 	}
 
-	conn, err := grpc.Dial(c.filerAddress, c.grpcDialOption)
+	conn, err := grpc.NewClient(c.filerAddress, c.grpcDialOption)
 	if err != nil {
 		return fmt.Errorf("failed to connect to filer at %s: %v", c.filerAddress, err)
 	}
@@ -143,7 +143,7 @@ type filerClientImpl struct {
 
 // WithFilerClient executes a function with a connected filer client
 func (f *filerClientImpl) WithFilerClient(followRedirect bool, fn func(client filer_pb.SeaweedFilerClient) error) error {
-	conn, err := grpc.Dial(f.filerAddress, f.grpcDialOption)
+	conn, err := grpc.NewClient(f.filerAddress, f.grpcDialOption)
 	if err != nil {
 		return fmt.Errorf("failed to connect to filer at %s: %v", f.filerAddress, err)
 	}
@@ -317,7 +317,7 @@ func (c *BrokerClient) ConfigureTopic(ctx context.Context, namespace, topicName 
 		return err
 	}
 
-	conn, err := grpc.Dial(c.brokerAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(c.brokerAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return fmt.Errorf("failed to connect to broker at %s: %v", c.brokerAddress, err)
 	}
@@ -429,7 +429,7 @@ func (c *BrokerClient) GetUnflushedMessages(ctx context.Context, namespace, topi
 	glog.V(2).Infof("Found broker at address: %s", c.brokerAddress)
 
 	// Step 2: Connect to broker
-	conn, err := grpc.Dial(c.brokerAddress, c.grpcDialOption)
+	conn, err := grpc.NewClient(c.brokerAddress, c.grpcDialOption)
 	if err != nil {
 		glog.V(2).Infof("Failed to connect to broker %s: %v", c.brokerAddress, err)
 		// Return empty slice if connection fails - prevents double-counting

@@ -152,8 +152,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		collectModifyFromAtNs = time.Now().Add(-*modifyTimeAgo).UnixNano()
 	}
 	// collect each volume file ids
-	eg, gCtx := errgroup.WithContext(context.Background())
-	_ = gCtx
+	eg, _ := errgroup.WithContext(context.Background())
 	for _dataNodeId, _volumeIdToVInfo := range dataNodeVolumeIdToVInfo {
 		dataNodeId, volumeIdToVInfo := _dataNodeId, _volumeIdToVInfo
 		eg.Go(func() error {

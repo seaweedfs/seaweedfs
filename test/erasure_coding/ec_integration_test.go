@@ -473,7 +473,7 @@ func findWeedBinary() string {
 func waitForServer(address string, timeout time.Duration) error {
 	start := time.Now()
 	for time.Since(start) < timeout {
-		if conn, err := grpc.Dial(address, grpc.WithInsecure()); err == nil {
+		if conn, err := grpc.NewClient(address, grpc.WithInsecure()); err == nil {
 			conn.Close()
 			return nil
 		}

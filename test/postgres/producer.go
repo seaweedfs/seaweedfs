@@ -299,7 +299,7 @@ func discoverFiler(masterHTTPAddress string) (string, error) {
 	httpAddr := pb.ServerAddress(masterHTTPAddress)
 	masterGRPCAddress := httpAddr.ToGrpcAddress()
 
-	conn, err := grpc.Dial(masterGRPCAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(masterGRPCAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return "", fmt.Errorf("failed to connect to master at %s: %v", masterGRPCAddress, err)
 	}
@@ -334,7 +334,7 @@ func discoverBroker(masterHTTPAddress string) (string, error) {
 		return "", fmt.Errorf("failed to discover filer: %v", err)
 	}
 
-	conn, err := grpc.Dial(filerAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(filerAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return "", fmt.Errorf("failed to connect to filer at %s: %v", filerAddress, err)
 	}

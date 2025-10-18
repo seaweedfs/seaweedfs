@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"hash/crc32"
 	"strings"
-	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/compression"
@@ -61,7 +60,7 @@ func (f *MultiBatchFetcher) FetchMultipleBatches(ctx context.Context, topicName 
 	// Assume average message size + batch overhead
 	// Client requested maxBytes, we should use most of it
 	// Start with larger batches to maximize throughput
-	estimatedMsgSize := int32(1024)           // Typical message size with overhead
+	estimatedMsgSize := int32(1024)                        // Typical message size with overhead
 	recordsPerBatch := (maxBytes - 200) / estimatedMsgSize // Use available space efficiently
 	if recordsPerBatch < 100 {
 		recordsPerBatch = 100 // Minimum 100 records per batch
@@ -116,9 +115,7 @@ func (f *MultiBatchFetcher) FetchMultipleBatches(ctx context.Context, topicName 
 
 		// Fetch records for this batch
 		// Pass context to respect Kafka fetch request's MaxWaitTime
-		getRecordsStartTime := time.Now()
 		smqRecords, err := f.handler.seaweedMQHandler.GetStoredRecords(ctx, topicName, partitionID, currentOffset, int(recordsToFetch))
-		_ = time.Since(getRecordsStartTime) // getRecordsDuration
 
 		if err != nil || len(smqRecords) == 0 {
 			break

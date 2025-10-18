@@ -486,7 +486,6 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 
 	for _, deleteEntry := range deleteEntries {
 		//delete unused part data
-		glog.Infof("completeMultipartUpload cleanup %s upload %s unused %s", *input.Bucket, *input.UploadId, deleteEntry.Name)
 		if err = s3a.rm(uploadDirectory, deleteEntry.Name, true, true); err != nil {
 			glog.Warningf("completeMultipartUpload cleanup %s upload %s unused %s : %v", *input.Bucket, *input.UploadId, deleteEntry.Name, err)
 		}

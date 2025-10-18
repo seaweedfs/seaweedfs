@@ -227,7 +227,7 @@ func BenchmarkOffsetSubscription(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			subscriptionID := fmt.Sprintf("bench-sub-%d", i)
-			sub, err := subscriber.CreateSubscription(
+			_, err := subscriber.CreateSubscription(
 				subscriptionID,
 				"test-namespace", "test-topic",
 				partition,
@@ -238,7 +238,6 @@ func BenchmarkOffsetSubscription(b *testing.B) {
 				b.Fatalf("Failed to create subscription: %v", err)
 			}
 			subscriber.CloseSubscription(subscriptionID)
-			_ = sub
 		}
 	})
 
@@ -338,7 +337,7 @@ func BenchmarkSMQOffsetIntegration(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			subscriptionID := fmt.Sprintf("integration-sub-%d", i)
-			sub, err := integration.CreateSubscription(
+			_, err := integration.CreateSubscription(
 				subscriptionID,
 				"test-namespace", "test-topic",
 				partition,
@@ -349,7 +348,6 @@ func BenchmarkSMQOffsetIntegration(b *testing.B) {
 				b.Fatalf("Failed to create subscription: %v", err)
 			}
 			integration.CloseSubscription(subscriptionID)
-			_ = sub
 		}
 	})
 
