@@ -863,12 +863,12 @@ func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, reque
 	}
 
 	// Check if this is the group leader with assignments
-	glog.Infof("[SYNCGROUP] Member=%s Leader=%s GroupState=%s HasAssignments=%v MemberCount=%d Gen=%d",
+	glog.V(2).Infof("[SYNCGROUP] Member=%s Leader=%s GroupState=%s HasAssignments=%v MemberCount=%d Gen=%d",
 		request.MemberID, group.Leader, group.State, len(request.GroupAssignments) > 0, len(group.Members), request.GenerationID)
 
 	if request.MemberID == group.Leader && len(request.GroupAssignments) > 0 {
 		// Leader is providing assignments - process and store them
-		glog.Infof("[SYNCGROUP] Leader %s providing client-side assignments for group %s (%d assignments)",
+		glog.V(2).Infof("[SYNCGROUP] Leader %s providing client-side assignments for group %s (%d assignments)",
 			request.MemberID, request.GroupID, len(request.GroupAssignments))
 		err = h.processGroupAssignments(group, request.GroupAssignments)
 		if err != nil {
@@ -883,12 +883,12 @@ func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, reque
 		for _, m := range group.Members {
 			m.State = consumer.MemberStateStable
 		}
-		glog.Infof("[SYNCGROUP] Leader assignments processed successfully, group now STABLE")
+		glog.V(2).Infof("[SYNCGROUP] Leader assignments processed successfully, group now STABLE")
 	} else if request.MemberID != group.Leader && len(request.GroupAssignments) == 0 {
 		// Non-leader member requesting its assignment
 		// CRITICAL FIX: Non-leader members should ALWAYS wait for leader's client-side assignments
 		// This is the correct behavior for Sarama and other client-side assignment protocols
-		glog.Infof("[SYNCGROUP] Non-leader %s waiting for/retrieving assignment in group %s (state=%s)",
+		glog.V(3).Infof("[SYNCGROUP] Non-leader %s waiting for/retrieving assignment in group %s (state=%s)",
 			request.MemberID, request.GroupID, group.State)
 		// Assignment will be retrieved from member.Assignment below
 	} else {
@@ -917,7 +917,7 @@ func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, reque
 	}
 
 	// Log member assignment details
-	glog.Infof("[SYNCGROUP] Member %s in group %s assigned %d partitions: %v",
+	glog.V(3).Infof("[SYNCGROUP] Member %s in group %s assigned %d partitions: %v",
 		request.MemberID, request.GroupID, len(member.Assignment), member.Assignment)
 
 	// Build response
@@ -1227,7 +1227,7 @@ func (h *Handler) buildSyncGroupErrorResponse(correlationID uint32, errorCode in
 
 func (h *Handler) processGroupAssignments(group *consumer.ConsumerGroup, assignments []GroupAssignment) error {
 	// Apply leader-provided assignments
-	glog.Infof("[PROCESS_ASSIGNMENTS] Processing %d member assignments from leader", len(assignments))
+	glog.V(2).Infof("[PROCESS_ASSIGNMENTS] Processing %d member assignments from leader", len(assignments))
 
 	// Clear current assignments
 	for _, m := range group.Members {
@@ -1238,7 +1238,7 @@ func (h *Handler) processGroupAssignments(group *consumer.ConsumerGroup, assignm
 		m, ok := group.Members[ga.MemberID]
 		if !ok {
 			// Skip unknown members
-			glog.Warningf("[PROCESS_ASSIGNMENTS] Skipping unknown member: %s", ga.MemberID)
+			glog.V(1).Infof("[PROCESS_ASSIGNMENTS] Skipping unknown member: %s", ga.MemberID)
 			continue
 		}
 
@@ -1248,7 +1248,7 @@ func (h *Handler) processGroupAssignments(group *consumer.ConsumerGroup, assignm
 			return err
 		}
 		m.Assignment = parsed
-		glog.Infof("[PROCESS_ASSIGNMENTS] Member %s assigned %d partitions: %v", ga.MemberID, len(parsed), parsed)
+		glog.V(3).Infof("[PROCESS_ASSIGNMENTS] Member %s assigned %d partitions: %v", ga.MemberID, len(parsed), parsed)
 	}
 
 	return nil
