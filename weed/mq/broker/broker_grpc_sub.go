@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -57,8 +55,15 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 	isConnected := true
 
 	var counter int64
+	startPosition := b.getRequestPosition(req.GetInit())
+	imt := sub_coordinator.NewInflightMessageTracker(int(req.GetInit().SlidingWindowSize))
+
 	defer func() {
 		isConnected = false
+		// Clean up any in-flight messages to prevent them from blocking other subscribers
+		if cleanedCount := imt.Cleanup(); cleanedCount > 0 {
+			glog.V(0).Infof("Subscriber %s cleaned up %d in-flight messages on disconnect", clientName, cleanedCount)
+		}
 		localTopicPartition.Subscribers.RemoveSubscriber(clientName)
 		glog.V(0).Infof("Subscriber %s on %v %v disconnected, sent %d", clientName, t, partition, counter)
 		// Use topic-aware shutdown logic to prevent aggressive removal of system topics
@@ -66,9 +71,6 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 			b.localTopicManager.RemoveLocalPartition(t, partition)
 		}
 	}()
-
-	startPosition := b.getRequestPosition(req.GetInit())
-	imt := sub_coordinator.NewInflightMessageTracker(int(req.GetInit().SlidingWindowSize))
 
 	// connect to the follower
 	var subscribeFollowMeStream mq_pb.SeaweedMessaging_SubscribeFollowMeClient
@@ -105,10 +107,17 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 		glog.V(0).Infof("follower %s connected", follower)
 	}
 
+	// Channel to handle seek requests - signals Subscribe loop to restart from new offset
+	seekChan := make(chan *mq_pb.SubscribeMessageRequest_SeekMessage, 1)
+
 	go func() {
+		defer cancel() // CRITICAL: Cancel context when Recv goroutine exits (client disconnect)
+
 		var lastOffset int64
+
 		for {
 			ack, err := stream.Recv()
+
 			if err != nil {
 				if err == io.EOF {
 					// the client has called CloseSend(). This is to ack the close.
@@ -122,6 +131,27 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 				glog.V(0).Infof("topic %v partition %v subscriber %s lastOffset %d error: %v", t, partition, clientName, lastOffset, err)
 				break
 			}
+			// Handle seek messages
+			if seekMsg := ack.GetSeek(); seekMsg != nil {
+				glog.V(0).Infof("Subscriber %s received seek request to offset %d (type %v)",
+					clientName, seekMsg.Offset, seekMsg.OffsetType)
+
+				// Send seek request to Subscribe loop
+				select {
+				case seekChan <- seekMsg:
+					glog.V(0).Infof("Subscriber %s seek request queued", clientName)
+				default:
+					glog.V(0).Infof("Subscriber %s seek request dropped (already pending)", clientName)
+					// Send error response if seek is already in progress
+					stream.Send(&mq_pb.SubscribeMessageResponse{Message: &mq_pb.SubscribeMessageResponse_Ctrl{
+						Ctrl: &mq_pb.SubscribeMessageResponse_SubscribeCtrlMessage{
+							Error: "Seek already in progress",
+						},
+					}})
+				}
+				continue
+			}
+
 			if ack.GetAck().Key == nil {
 				// skip ack for control messages
 				continue
@@ -166,88 +196,135 @@ func (b *MessageQueueBroker) SubscribeMessage(stream mq_pb.SeaweedMessaging_Subs
 		}
 	}()
 
-	var cancelOnce sync.Once
-
-	err = localTopicPartition.Subscribe(clientName, startPosition, func() bool {
-		// Check if context is cancelled FIRST before any blocking operations
-		select {
-		case <-ctx.Done():
-			return false
-		default:
-		}
-
-		if !isConnected {
-			return false
-		}
-
-		// Ensure we will wake any Wait() when the client disconnects
-		cancelOnce.Do(func() {
-			go func() {
-				<-ctx.Done()
-				localTopicPartition.ListenersLock.Lock()
-				localTopicPartition.ListenersCond.Broadcast()
-				localTopicPartition.ListenersLock.Unlock()
-			}()
-		})
-
-		// Block until new data is available or the client disconnects
+	// Create a goroutine to handle context cancellation and wake up the condition variable
+	// This is created ONCE per subscriber, not per callback invocation
+	go func() {
+		<-ctx.Done()
+		// Wake up the condition variable when context is cancelled
 		localTopicPartition.ListenersLock.Lock()
-		atomic.AddInt64(&localTopicPartition.ListenersWaits, 1)
-		localTopicPartition.ListenersCond.Wait()
-		atomic.AddInt64(&localTopicPartition.ListenersWaits, -1)
+		localTopicPartition.ListenersCond.Broadcast()
 		localTopicPartition.ListenersLock.Unlock()
+	}()
 
-		// Add a small sleep to avoid CPU busy-wait when checking for new data
-		time.Sleep(10 * time.Millisecond)
+	// Subscribe loop - can be restarted when seek is requested
+	currentPosition := startPosition
+subscribeLoop:
+	for {
+		// Context for this iteration of Subscribe (can be cancelled by seek)
+		subscribeCtx, subscribeCancel := context.WithCancel(ctx)
 
-		if ctx.Err() != nil {
-			return false
-		}
-		if !isConnected {
-			return false
-		}
-		return true
-	}, func(logEntry *filer_pb.LogEntry) (bool, error) {
-		for imt.IsInflight(logEntry.Key) {
-			time.Sleep(137 * time.Millisecond)
-			// Check if the client has disconnected by monitoring the context
-			select {
-			case <-ctx.Done():
-				err := ctx.Err()
-				if err == context.Canceled {
-					// Client disconnected
-					return false, nil
+		// Start Subscribe in a goroutine so we can interrupt it with seek
+		subscribeDone := make(chan error, 1)
+		go func() {
+			subscribeErr := localTopicPartition.Subscribe(clientName, currentPosition, func() bool {
+				// Check cancellation before waiting
+				if subscribeCtx.Err() != nil || !isConnected {
+					return false
 				}
-				glog.V(0).Infof("Subscriber %s disconnected: %v", clientName, err)
+
+				// Wait for new data using condition variable (blocking, not polling)
+				localTopicPartition.ListenersLock.Lock()
+				localTopicPartition.ListenersCond.Wait()
+				localTopicPartition.ListenersLock.Unlock()
+
+				// After waking up, check if we should stop
+				return subscribeCtx.Err() == nil && isConnected
+			}, func(logEntry *filer_pb.LogEntry) (bool, error) {
+				// Wait for the message to be acknowledged with a timeout to prevent infinite loops
+				const maxWaitTime = 30 * time.Second
+				const checkInterval = 137 * time.Millisecond
+				startTime := time.Now()
+
+				for imt.IsInflight(logEntry.Key) {
+					// Check if we've exceeded the maximum wait time
+					if time.Since(startTime) > maxWaitTime {
+						glog.Warningf("Subscriber %s: message with key %s has been in-flight for more than %v, forcing acknowledgment",
+							clientName, string(logEntry.Key), maxWaitTime)
+						// Force remove the message from in-flight tracking to prevent infinite loop
+						imt.AcknowledgeMessage(logEntry.Key, logEntry.TsNs)
+						break
+					}
+
+					time.Sleep(checkInterval)
+
+					// Check if the client has disconnected by monitoring the context
+					select {
+					case <-subscribeCtx.Done():
+						err := subscribeCtx.Err()
+						if err == context.Canceled {
+							// Subscribe cancelled (seek or disconnect)
+							return false, nil
+						}
+						glog.V(0).Infof("Subscriber %s disconnected: %v", clientName, err)
+						return false, nil
+					default:
+						// Continue processing the request
+					}
+				}
+				if logEntry.Key != nil {
+					imt.EnflightMessage(logEntry.Key, logEntry.TsNs)
+				}
+
+				// Create the message to send
+				dataMsg := &mq_pb.DataMessage{
+					Key:   logEntry.Key,
+					Value: logEntry.Data,
+					TsNs:  logEntry.TsNs,
+				}
+
+
+				if err := stream.Send(&mq_pb.SubscribeMessageResponse{Message: &mq_pb.SubscribeMessageResponse_Data{
+					Data: dataMsg,
+				}}); err != nil {
+					glog.Errorf("Error sending data: %v", err)
+					return false, err
+				}
+
+				// Update received offset and last seen time for this subscriber
+				subscriber.UpdateReceivedOffset(logEntry.TsNs)
+
+				counter++
 				return false, nil
-			default:
-				// Continue processing the request
+			})
+			subscribeDone <- subscribeErr
+		}()
+
+		// Wait for either Subscribe to complete or a seek request
+		select {
+		case err = <-subscribeDone:
+			subscribeCancel()
+			if err != nil || ctx.Err() != nil {
+				// Subscribe finished with error or main context cancelled - exit loop
+				break subscribeLoop
 			}
-		}
-		if logEntry.Key != nil {
-			imt.EnflightMessage(logEntry.Key, logEntry.TsNs)
-		}
+			// Subscribe completed normally (shouldn't happen in streaming mode)
+			break subscribeLoop
 
-		// Create the message to send
-		dataMsg := &mq_pb.DataMessage{
-			Key:   logEntry.Key,
-			Value: logEntry.Data,
-			TsNs:  logEntry.TsNs,
+		case seekMsg := <-seekChan:
+			// Seek requested - cancel current Subscribe and restart from new offset
+			glog.V(0).Infof("Subscriber %s seeking from offset %d to offset %d (type %v)",
+				clientName, currentPosition.GetOffset(), seekMsg.Offset, seekMsg.OffsetType)
+
+			// Cancel current Subscribe iteration
+			subscribeCancel()
+
+			// Wait for Subscribe to finish cancelling
+			<-subscribeDone
+
+			// Update position for next iteration
+			currentPosition = b.getRequestPositionFromSeek(seekMsg)
+			glog.V(0).Infof("Subscriber %s restarting Subscribe from new offset %d", clientName, seekMsg.Offset)
+
+			// Send acknowledgment that seek completed
+			stream.Send(&mq_pb.SubscribeMessageResponse{Message: &mq_pb.SubscribeMessageResponse_Ctrl{
+				Ctrl: &mq_pb.SubscribeMessageResponse_SubscribeCtrlMessage{
+					Error: "", // Empty error means success
+				},
+			}})
+
+			// Loop will restart with new position
 		}
-
-		if err := stream.Send(&mq_pb.SubscribeMessageResponse{Message: &mq_pb.SubscribeMessageResponse_Data{
-			Data: dataMsg,
-		}}); err != nil {
-			glog.Errorf("Error sending data: %v", err)
-			return false, err
-		}
-
-		// Update received offset and last seen time for this subscriber
-		subscriber.UpdateReceivedOffset(logEntry.TsNs)
-
-		counter++
-		return false, nil
-	})
+	}
 
 	return err
 }
@@ -299,5 +376,48 @@ func (b *MessageQueueBroker) getRequestPosition(initMessage *mq_pb.SubscribeMess
 	} else if offsetType == schema_pb.OffsetType_RESUME_OR_LATEST {
 		startPosition = log_buffer.NewMessagePosition(time.Now().UnixNano(), -6)
 	}
+	return
+}
+
+// getRequestPositionFromSeek converts a seek request to a MessagePosition
+// This is used when implementing full seek support in Subscribe loop
+func (b *MessageQueueBroker) getRequestPositionFromSeek(seekMsg *mq_pb.SubscribeMessageRequest_SeekMessage) (startPosition log_buffer.MessagePosition) {
+	if seekMsg == nil {
+		return
+	}
+
+	offsetType := seekMsg.OffsetType
+	offset := seekMsg.Offset
+
+	// reset to earliest or latest
+	if offsetType == schema_pb.OffsetType_RESET_TO_EARLIEST {
+		startPosition = log_buffer.NewMessagePosition(1, -3)
+		return
+	}
+	if offsetType == schema_pb.OffsetType_RESET_TO_LATEST {
+		startPosition = log_buffer.NewMessagePosition(time.Now().UnixNano(), -4)
+		return
+	}
+
+	// use the exact timestamp
+	if offsetType == schema_pb.OffsetType_EXACT_TS_NS {
+		startPosition = log_buffer.NewMessagePosition(offset, -2)
+		return
+	}
+
+	// use exact offset (native offset-based positioning)
+	if offsetType == schema_pb.OffsetType_EXACT_OFFSET {
+		startPosition = log_buffer.NewMessagePositionFromOffset(offset)
+		return
+	}
+
+	// reset to specific offset
+	if offsetType == schema_pb.OffsetType_RESET_TO_OFFSET {
+		startPosition = log_buffer.NewMessagePositionFromOffset(offset)
+		return
+	}
+
+	// default to exact offset
+	startPosition = log_buffer.NewMessagePositionFromOffset(offset)
 	return
 }

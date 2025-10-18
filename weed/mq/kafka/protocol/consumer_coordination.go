@@ -414,16 +414,24 @@ func (h *Handler) buildHeartbeatResponseV(response HeartbeatResponse, apiVersion
 
 		// Response body tagged fields (varint: 0x00 = empty)
 		result = append(result, 0x00)
-	} else {
-		// NON-FLEXIBLE V0-V3 FORMAT: error_code BEFORE throttle_time_ms (legacy format)
+	} else if apiVersion >= 1 {
+		// NON-FLEXIBLE V1-V3 FORMAT: throttle_time_ms BEFORE error_code
+		// CRITICAL FIX: Kafka protocol specifies throttle_time_ms comes FIRST in v1+
+
+		// Throttle time (4 bytes, 0 = no throttling) - comes first in v1-v3
+		result = append(result, 0, 0, 0, 0)
 
 		// Error code (2 bytes)
 		errorCodeBytes := make([]byte, 2)
 		binary.BigEndian.PutUint16(errorCodeBytes, uint16(response.ErrorCode))
 		result = append(result, errorCodeBytes...)
+	} else {
+		// V0 FORMAT: Only error_code, NO throttle_time_ms
 
-		// Throttle time (4 bytes, 0 = no throttling) - comes after error_code in non-flexible
-		result = append(result, 0, 0, 0, 0)
+		// Error code (2 bytes)
+		errorCodeBytes := make([]byte, 2)
+		binary.BigEndian.PutUint16(errorCodeBytes, uint16(response.ErrorCode))
+		result = append(result, errorCodeBytes...)
 	}
 
 	return result
@@ -464,6 +472,9 @@ func (h *Handler) buildLeaveGroupFullResponse(response LeaveGroupResponse) []byt
 	// NOTE: Correlation ID is handled by writeResponseWithCorrelationID
 	// Do NOT include it in the response body
 
+	// For LeaveGroup v1+, throttle_time_ms comes first (4 bytes)
+	result = append(result, 0, 0, 0, 0)
+
 	// Error code (2 bytes)
 	errorCodeBytes := make([]byte, 2)
 	binary.BigEndian.PutUint16(errorCodeBytes, uint16(response.ErrorCode))
@@ -499,9 +510,6 @@ func (h *Handler) buildLeaveGroupFullResponse(response LeaveGroupResponse) []byt
 		binary.BigEndian.PutUint16(memberErrorBytes, uint16(member.ErrorCode))
 		result = append(result, memberErrorBytes...)
 	}
-
-	// Throttle time (4 bytes, 0 = no throttling)
-	result = append(result, 0, 0, 0, 0)
 
 	return result
 }

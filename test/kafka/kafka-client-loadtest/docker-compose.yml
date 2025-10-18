@@ -62,6 +62,8 @@ services:
       SCHEMA_REGISTRY_KAFKASTORE_WRITE_TIMEOUT_MS: "60000"
       SCHEMA_REGISTRY_KAFKASTORE_INIT_RETRY_BACKOFF_MS: "5000"
       SCHEMA_REGISTRY_KAFKASTORE_CONSUMER_AUTO_OFFSET_RESET: "earliest"
+      # Enable comprehensive Kafka client DEBUG logging to trace offset management
+      SCHEMA_REGISTRY_LOG4J_LOGGERS: "org.apache.kafka.clients.consumer.internals.OffsetsRequestManager=DEBUG,org.apache.kafka.clients.consumer.internals.Fetcher=DEBUG,org.apache.kafka.clients.consumer.internals.AbstractFetch=DEBUG,org.apache.kafka.clients.Metadata=DEBUG,org.apache.kafka.common.network=DEBUG"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8081/subjects"]
       interval: 15s
@@ -226,7 +228,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
-      start_period: 45s  # Increased to account for 10s startup delay + filer discovery                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     
+      start_period: 45s  # Increased to account for 10s startup delay + filer discovery
     networks:
       - kafka-loadtest-net
 
@@ -252,7 +254,7 @@ services:
       - TOPIC_COUNT=${TOPIC_COUNT:-5}
       - PARTITIONS_PER_TOPIC=${PARTITIONS_PER_TOPIC:-3}
       - TEST_MODE=${TEST_MODE:-comprehensive}
-      - SCHEMAS_ENABLED=true
+      - SCHEMAS_ENABLED=${SCHEMAS_ENABLED:-true}
       - VALUE_TYPE=${VALUE_TYPE:-avro}
     profiles:
       - loadtest
@@ -304,6 +306,24 @@ services:
       - kafka-loadtest-net
     profiles:
       - debug
+
+  # SeekToBeginning test - reproduces the hang issue
+  seek-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.seektest
+    container_name: loadtest-seek-test
+    depends_on:
+      kafka-gateway:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka-gateway:9093
+    networks:
+      - kafka-loadtest-net
+    entrypoint: ["java", "-cp", "target/seek-test.jar", "SeekToBeginningTest"]
+    command: ["kafka-gateway:9093"]
 
 volumes:
   prometheus-data:

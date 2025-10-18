@@ -1,31 +1,33 @@
 package protocol
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/compression"
 	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/schema"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"google.golang.org/protobuf/proto"
 )
 
-func (h *Handler) handleProduce(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
+func (h *Handler) handleProduce(ctx context.Context, correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
 
 	// Version-specific handling
 	switch apiVersion {
 	case 0, 1:
-		return h.handleProduceV0V1(correlationID, apiVersion, requestBody)
+		return h.handleProduceV0V1(ctx, correlationID, apiVersion, requestBody)
 	case 2, 3, 4, 5, 6, 7:
-		return h.handleProduceV2Plus(correlationID, apiVersion, requestBody)
+		return h.handleProduceV2Plus(ctx, correlationID, apiVersion, requestBody)
 	default:
 		return nil, fmt.Errorf("produce version %d not implemented yet", apiVersion)
 	}
 }
 
-func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
+func (h *Handler) handleProduceV0V1(ctx context.Context, correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
 	// Parse Produce v0/v1 request
 	// Request format: client_id + acks(2) + timeout(4) + topics_array
 
@@ -50,10 +52,6 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 	// Parse acks and timeout
 	_ = int16(binary.BigEndian.Uint16(requestBody[offset : offset+2])) // acks
 	offset += 2
-
-	timeout := binary.BigEndian.Uint32(requestBody[offset : offset+4])
-	offset += 4
-	_ = timeout // unused for now
 
 	topicsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 	offset += 4
@@ -92,16 +90,21 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 		// Check if topic exists, auto-create if it doesn't (simulates auto.create.topics.enable=true)
 		topicExists := h.seaweedMQHandler.TopicExists(topicName)
 
-		// Debug: show all existing topics
 		_ = h.seaweedMQHandler.ListTopics() // existingTopics
 		if !topicExists {
 			// Use schema-aware topic creation for auto-created topics with configurable default partitions
 			defaultPartitions := h.GetDefaultPartitions()
+			glog.V(1).Infof("[PRODUCE] Topic %s does not exist, auto-creating with %d partitions", topicName, defaultPartitions)
 			if err := h.createTopicWithSchemaSupport(topicName, defaultPartitions); err != nil {
+				glog.V(0).Infof("[PRODUCE] ERROR: Failed to auto-create topic %s: %v", topicName, err)
 			} else {
-				// Ledger initialization REMOVED - SMQ handles offsets natively
-				topicExists = true // CRITICAL FIX: Update the flag after creating the topic
+				glog.V(1).Infof("[PRODUCE] Successfully auto-created topic %s", topicName)
+				// Invalidate cache immediately after creation so consumers can find it
+				h.seaweedMQHandler.InvalidateTopicExistsCache(topicName)
+				topicExists = true
 			}
+		} else {
+			glog.V(2).Infof("[PRODUCE] Topic %s already exists", topicName)
 		}
 
 		// Response: topic_name_size(2) + topic_name + partitions_array
@@ -129,7 +132,11 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 				break
 			}
 
-			recordSetData := requestBody[offset : offset+int(recordSetSize)]
+			// CRITICAL FIX: Make a copy of recordSetData to prevent buffer sharing corruption
+			// The slice requestBody[offset:offset+int(recordSetSize)] shares the underlying array
+			// with the request buffer, which can be reused and cause data corruption
+			recordSetData := make([]byte, recordSetSize)
+			copy(recordSetData, requestBody[offset:offset+int(recordSetSize)])
 			offset += int(recordSetSize)
 
 			// Response: partition_id(4) + error_code(2) + base_offset(8) + log_append_time(8) + log_start_offset(8)
@@ -150,13 +157,13 @@ func (h *Handler) handleProduceV0V1(correlationID uint32, apiVersion uint16, req
 					errorCode = 42 // INVALID_RECORD
 				} else if recordCount > 0 {
 					// Use SeaweedMQ integration
-					offset, err := h.produceToSeaweedMQ(topicName, int32(partitionID), recordSetData)
+					offset, err := h.produceToSeaweedMQ(ctx, topicName, int32(partitionID), recordSetData)
 					if err != nil {
 						// Check if this is a schema validation error and add delay to prevent overloading
 						if h.isSchemaValidationError(err) {
 							time.Sleep(200 * time.Millisecond) // Brief delay for schema validation failures
 						}
-						errorCode = 1 // UNKNOWN_SERVER_ERROR
+						errorCode = 0xFFFF // UNKNOWN_SERVER_ERROR (-1 as uint16)
 					} else {
 						baseOffset = offset
 					}
@@ -232,7 +239,8 @@ func (h *Handler) parseRecordSet(recordSetData []byte) (recordCount int32, total
 }
 
 // produceToSeaweedMQ publishes a single record to SeaweedMQ (simplified for Phase 2)
-func (h *Handler) produceToSeaweedMQ(topic string, partition int32, recordSetData []byte) (int64, error) {
+// ctx controls the publish timeout - if client cancels, produce operation is cancelled
+func (h *Handler) produceToSeaweedMQ(ctx context.Context, topic string, partition int32, recordSetData []byte) (int64, error) {
 	// Extract all records from the record set and publish each one
 	// extractAllRecords handles fallback internally for various cases
 	records := h.extractAllRecords(recordSetData)
@@ -244,7 +252,7 @@ func (h *Handler) produceToSeaweedMQ(topic string, partition int32, recordSetDat
 	// Publish all records and return the offset of the first record (base offset)
 	var baseOffset int64
 	for idx, kv := range records {
-		offsetProduced, err := h.produceSchemaBasedRecord(topic, partition, kv.Key, kv.Value)
+		offsetProduced, err := h.produceSchemaBasedRecord(ctx, topic, partition, kv.Key, kv.Value)
 		if err != nil {
 			return 0, err
 		}
@@ -581,7 +589,7 @@ func decodeVarint(data []byte) (int64, int) {
 }
 
 // handleProduceV2Plus handles Produce API v2-v7 (Kafka 0.11+)
-func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
+func (h *Handler) handleProduceV2Plus(ctx context.Context, correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
 	startTime := time.Now()
 
 	// For now, use simplified parsing similar to v0/v1 but handle v2+ response format
@@ -606,7 +614,7 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 			if len(requestBody) < offset+int(txIDLen) {
 				return nil, fmt.Errorf("Produce v%d request transactional_id too short", apiVersion)
 			}
-			_ = string(requestBody[offset : offset+int(txIDLen)]) // txID
+			_ = string(requestBody[offset : offset+int(txIDLen)])
 			offset += int(txIDLen)
 		}
 	}
@@ -618,10 +626,8 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 
 	acks := int16(binary.BigEndian.Uint16(requestBody[offset : offset+2]))
 	offset += 2
-	_ = binary.BigEndian.Uint32(requestBody[offset : offset+4]) // timeout
+	_ = binary.BigEndian.Uint32(requestBody[offset : offset+4])
 	offset += 4
-
-	// Debug: Log acks and timeout values
 
 	// Remember if this is fire-and-forget mode
 	isFireAndForget := acks == 0
@@ -694,7 +700,11 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 			if len(requestBody) < offset+int(recordSetSize) {
 				break
 			}
-			recordSetData := requestBody[offset : offset+int(recordSetSize)]
+			// CRITICAL FIX: Make a copy of recordSetData to prevent buffer sharing corruption
+			// The slice requestBody[offset:offset+int(recordSetSize)] shares the underlying array
+			// with the request buffer, which can be reused and cause data corruption
+			recordSetData := make([]byte, recordSetSize)
+			copy(recordSetData, requestBody[offset:offset+int(recordSetSize)])
 			offset += int(recordSetSize)
 
 			// Process the record set and store in ledger
@@ -710,30 +720,30 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 			} else {
 				// Process the record set (lenient parsing)
 				recordCount, _, parseErr := h.parseRecordSet(recordSetData) // totalSize unused
+
 				if parseErr != nil {
 					errorCode = 42 // INVALID_RECORD
 				} else if recordCount > 0 {
 					// Extract all records from the record set and publish each one
 					// extractAllRecords handles fallback internally for various cases
 					records := h.extractAllRecords(recordSetData)
-					if len(records) > 0 {
-						if len(records[0].Value) > 0 {
-						}
-					}
+
 					if len(records) == 0 {
 						errorCode = 42 // INVALID_RECORD
 					} else {
 						var firstOffsetSet bool
 						for idx, kv := range records {
-							offsetProduced, prodErr := h.produceSchemaBasedRecord(topicName, int32(partitionID), kv.Key, kv.Value)
+							offsetProduced, prodErr := h.produceSchemaBasedRecord(ctx, topicName, int32(partitionID), kv.Key, kv.Value)
+
 							if prodErr != nil {
 								// Check if this is a schema validation error and add delay to prevent overloading
 								if h.isSchemaValidationError(prodErr) {
 									time.Sleep(200 * time.Millisecond) // Brief delay for schema validation failures
 								}
-								errorCode = 1 // UNKNOWN_SERVER_ERROR
+								errorCode = 0xFFFF // UNKNOWN_SERVER_ERROR (-1 as uint16)
 								break
 							}
+
 							if idx == 0 {
 								baseOffset = offsetProduced
 								firstOffsetSet = true
@@ -741,6 +751,21 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 						}
 
 						_ = firstOffsetSet
+					}
+				} else {
+					// Try to extract anyway - this might be a Noop record
+					records := h.extractAllRecords(recordSetData)
+					if len(records) > 0 {
+						for idx, kv := range records {
+							offsetProduced, prodErr := h.produceSchemaBasedRecord(ctx, topicName, int32(partitionID), kv.Key, kv.Value)
+							if prodErr != nil {
+								errorCode = 0xFFFF // UNKNOWN_SERVER_ERROR (-1 as uint16)
+								break
+							}
+							if idx == 0 {
+								baseOffset = offsetProduced
+							}
+						}
 					}
 				}
 			}
@@ -792,103 +817,6 @@ func (h *Handler) handleProduceV2Plus(correlationID uint32, apiVersion uint16, r
 
 	_ = time.Since(startTime) // duration
 	return response, nil
-}
-
-// processSchematizedMessage processes a message that may contain schema information
-func (h *Handler) processSchematizedMessage(topicName string, partitionID int32, originalKey []byte, messageBytes []byte) error {
-	// System topics should bypass schema processing entirely
-	if h.isSystemTopic(topicName) {
-		return nil // Skip schema processing for system topics
-	}
-
-	// Only process if schema management is enabled
-	if !h.IsSchemaEnabled() {
-		return nil // Skip schema processing
-	}
-
-	// Check if message is schematized
-	if !h.schemaManager.IsSchematized(messageBytes) {
-		return nil // Not schematized, continue with normal processing
-	}
-
-	// Decode the message
-	decodedMsg, err := h.schemaManager.DecodeMessage(messageBytes)
-	if err != nil {
-		// In permissive mode, we could continue with raw bytes
-		// In strict mode, we should reject the message
-		return fmt.Errorf("schema decoding failed: %w", err)
-	}
-
-	// Store the decoded message using SeaweedMQ
-	return h.storeDecodedMessage(topicName, partitionID, originalKey, decodedMsg)
-}
-
-// storeDecodedMessage stores a decoded message using mq.broker integration
-func (h *Handler) storeDecodedMessage(topicName string, partitionID int32, originalKey []byte, decodedMsg *schema.DecodedMessage) error {
-	// Use broker client if available
-	if h.IsBrokerIntegrationEnabled() {
-		// Use the original Kafka message key
-		key := originalKey
-		if key == nil {
-			key = []byte{} // Use empty byte slice for null keys
-		}
-
-		// Publish the decoded RecordValue to mq.broker
-		err := h.brokerClient.PublishSchematizedMessage(topicName, key, decodedMsg.Envelope.OriginalBytes)
-		if err != nil {
-			return fmt.Errorf("failed to publish to mq.broker: %w", err)
-		}
-
-		return nil
-	}
-
-	// Use SeaweedMQ integration
-	if h.seaweedMQHandler != nil {
-		// Use the original Kafka message key
-		key := originalKey
-		if key == nil {
-			key = []byte{} // Use empty byte slice for null keys
-		}
-		// CRITICAL: Store the original Confluent Wire Format bytes (magic byte + schema ID + payload)
-		// NOT just the Avro payload, so we can return them as-is during fetch without re-encoding
-		value := decodedMsg.Envelope.OriginalBytes
-
-		_, err := h.seaweedMQHandler.ProduceRecord(topicName, partitionID, key, value)
-		if err != nil {
-			return fmt.Errorf("failed to produce to SeaweedMQ: %w", err)
-		}
-
-		return nil
-	}
-
-	return fmt.Errorf("no SeaweedMQ handler available")
-}
-
-// extractMessagesFromRecordSet extracts individual messages from a record set with compression support
-func (h *Handler) extractMessagesFromRecordSet(recordSetData []byte) ([][]byte, error) {
-	// Be lenient for tests: accept arbitrary data if length is sufficient
-	if len(recordSetData) < 10 {
-		return nil, fmt.Errorf("record set too small: %d bytes", len(recordSetData))
-	}
-
-	// For tests, just return the raw data as a single message without deep parsing
-	return [][]byte{recordSetData}, nil
-}
-
-// validateSchemaCompatibility checks if a message is compatible with existing schema
-func (h *Handler) validateSchemaCompatibility(topicName string, messageBytes []byte) error {
-	if !h.IsSchemaEnabled() {
-		return nil // No validation if schema management is disabled
-	}
-
-	// Extract schema information from message
-	schemaID, messageFormat, err := h.schemaManager.GetSchemaInfo(messageBytes)
-	if err != nil {
-		return nil // Not schematized, no validation needed
-	}
-
-	// Perform comprehensive schema validation
-	return h.performSchemaValidation(topicName, schemaID, messageFormat, messageBytes)
 }
 
 // performSchemaValidation performs comprehensive schema validation for a topic
@@ -1141,18 +1069,19 @@ func (h *Handler) isSystemTopic(topicName string) bool {
 }
 
 // produceSchemaBasedRecord produces a record using schema-based encoding to RecordValue
-func (h *Handler) produceSchemaBasedRecord(topic string, partition int32, key []byte, value []byte) (int64, error) {
+// ctx controls the publish timeout - if client cancels, produce operation is cancelled
+func (h *Handler) produceSchemaBasedRecord(ctx context.Context, topic string, partition int32, key []byte, value []byte) (int64, error) {
 
 	// System topics should always bypass schema processing and be stored as-is
 	if h.isSystemTopic(topic) {
-		offset, err := h.seaweedMQHandler.ProduceRecord(topic, partition, key, value)
+		offset, err := h.seaweedMQHandler.ProduceRecord(ctx, topic, partition, key, value)
 		return offset, err
 	}
 
 	// If schema management is not enabled, fall back to raw message handling
 	isEnabled := h.IsSchemaEnabled()
 	if !isEnabled {
-		return h.seaweedMQHandler.ProduceRecord(topic, partition, key, value)
+		return h.seaweedMQHandler.ProduceRecord(ctx, topic, partition, key, value)
 	}
 
 	var keyDecodedMsg *schema.DecodedMessage
@@ -1179,7 +1108,7 @@ func (h *Handler) produceSchemaBasedRecord(topic string, partition int32, key []
 			var err error
 			valueDecodedMsg, err = h.schemaManager.DecodeMessage(value)
 			if err != nil {
-				// CRITICAL: If message has schema ID (magic byte 0x00), decoding MUST succeed
+				// If message has schema ID (magic byte 0x00), decoding MUST succeed
 				// Do not fall back to raw storage - this would corrupt the data model
 				time.Sleep(100 * time.Millisecond)
 				return 0, fmt.Errorf("message has schema ID but decoding failed (schema registry may be unavailable): %w", err)
@@ -1190,7 +1119,7 @@ func (h *Handler) produceSchemaBasedRecord(topic string, partition int32, key []
 	// If neither key nor value is schematized, fall back to raw message handling
 	// This is OK for non-schematized messages (no magic byte 0x00)
 	if keyDecodedMsg == nil && valueDecodedMsg == nil {
-		return h.seaweedMQHandler.ProduceRecord(topic, partition, key, value)
+		return h.seaweedMQHandler.ProduceRecord(ctx, topic, partition, key, value)
 	}
 
 	// Process key schema if present
@@ -1258,13 +1187,13 @@ func (h *Handler) produceSchemaBasedRecord(topic string, partition int32, key []
 
 	// Send to SeaweedMQ
 	if valueDecodedMsg != nil || keyDecodedMsg != nil {
-		// CRITICAL FIX: Store the DECODED RecordValue (not the original Confluent Wire Format)
+		// Store the DECODED RecordValue (not the original Confluent Wire Format)
 		// This enables SQL queries to work properly. Kafka consumers will receive the RecordValue
 		// which can be re-encoded to Confluent Wire Format during fetch if needed
-		return h.seaweedMQHandler.ProduceRecordValue(topic, partition, finalKey, recordValueBytes)
+		return h.seaweedMQHandler.ProduceRecordValue(ctx, topic, partition, finalKey, recordValueBytes)
 	} else {
 		// Send with raw format for non-schematized data
-		return h.seaweedMQHandler.ProduceRecord(topic, partition, finalKey, recordValueBytes)
+		return h.seaweedMQHandler.ProduceRecord(ctx, topic, partition, finalKey, recordValueBytes)
 	}
 }
 
@@ -1531,28 +1460,93 @@ func (h *Handler) inferRecordTypeFromCachedSchema(cachedSchema *schema.CachedSch
 }
 
 // inferRecordTypeFromAvroSchema infers RecordType from Avro schema string
+// Uses cache to avoid recreating expensive Avro codecs (17% CPU overhead!)
 func (h *Handler) inferRecordTypeFromAvroSchema(avroSchema string) (*schema_pb.RecordType, error) {
+	// Check cache first
+	h.inferredRecordTypesMu.RLock()
+	if recordType, exists := h.inferredRecordTypes[avroSchema]; exists {
+		h.inferredRecordTypesMu.RUnlock()
+		return recordType, nil
+	}
+	h.inferredRecordTypesMu.RUnlock()
+
+	// Cache miss - create decoder and infer type
 	decoder, err := schema.NewAvroDecoder(avroSchema)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Avro decoder: %w", err)
 	}
-	return decoder.InferRecordType()
+
+	recordType, err := decoder.InferRecordType()
+	if err != nil {
+		return nil, err
+	}
+
+	// Cache the result
+	h.inferredRecordTypesMu.Lock()
+	h.inferredRecordTypes[avroSchema] = recordType
+	h.inferredRecordTypesMu.Unlock()
+
+	return recordType, nil
 }
 
 // inferRecordTypeFromProtobufSchema infers RecordType from Protobuf schema
+// Uses cache to avoid recreating expensive decoders
 func (h *Handler) inferRecordTypeFromProtobufSchema(protobufSchema string) (*schema_pb.RecordType, error) {
+	// Check cache first
+	cacheKey := "protobuf:" + protobufSchema
+	h.inferredRecordTypesMu.RLock()
+	if recordType, exists := h.inferredRecordTypes[cacheKey]; exists {
+		h.inferredRecordTypesMu.RUnlock()
+		return recordType, nil
+	}
+	h.inferredRecordTypesMu.RUnlock()
+
+	// Cache miss - create decoder and infer type
 	decoder, err := schema.NewProtobufDecoder([]byte(protobufSchema))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Protobuf decoder: %w", err)
 	}
-	return decoder.InferRecordType()
+
+	recordType, err := decoder.InferRecordType()
+	if err != nil {
+		return nil, err
+	}
+
+	// Cache the result
+	h.inferredRecordTypesMu.Lock()
+	h.inferredRecordTypes[cacheKey] = recordType
+	h.inferredRecordTypesMu.Unlock()
+
+	return recordType, nil
 }
 
 // inferRecordTypeFromJSONSchema infers RecordType from JSON Schema string
+// Uses cache to avoid recreating expensive decoders
 func (h *Handler) inferRecordTypeFromJSONSchema(jsonSchema string) (*schema_pb.RecordType, error) {
+	// Check cache first
+	cacheKey := "json:" + jsonSchema
+	h.inferredRecordTypesMu.RLock()
+	if recordType, exists := h.inferredRecordTypes[cacheKey]; exists {
+		h.inferredRecordTypesMu.RUnlock()
+		return recordType, nil
+	}
+	h.inferredRecordTypesMu.RUnlock()
+
+	// Cache miss - create decoder and infer type
 	decoder, err := schema.NewJSONSchemaDecoder(jsonSchema)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create JSON Schema decoder: %w", err)
 	}
-	return decoder.InferRecordType()
+
+	recordType, err := decoder.InferRecordType()
+	if err != nil {
+		return nil, err
+	}
+
+	// Cache the result
+	h.inferredRecordTypesMu.Lock()
+	h.inferredRecordTypes[cacheKey] = recordType
+	h.inferredRecordTypesMu.Unlock()
+
+	return recordType, nil
 }

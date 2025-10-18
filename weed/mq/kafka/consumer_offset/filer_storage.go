@@ -13,6 +13,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
+const (
+	// ConsumerOffsetsBasePath is the base path for storing Kafka consumer offsets in SeaweedFS
+	ConsumerOffsetsBasePath = "/topics/kafka/.meta/consumer_offsets"
+)
+
 // KafkaConsumerPosition represents a Kafka consumer's position
 // Can be either offset-based or timestamp-based
 type KafkaConsumerPosition struct {
@@ -23,7 +28,7 @@ type KafkaConsumerPosition struct {
 }
 
 // FilerStorage implements OffsetStorage using SeaweedFS filer
-// Offsets are stored in JSON format: /kafka/consumer_offsets/{group}/{topic}/{partition}/offset
+// Offsets are stored in JSON format: {ConsumerOffsetsBasePath}/{group}/{topic}/{partition}/offset
 // Supports both offset and timestamp positioning
 type FilerStorage struct {
 	fca    *filer_client.FilerClientAccessor
@@ -160,8 +165,7 @@ func (f *FilerStorage) ListGroups() ([]string, error) {
 		return nil, ErrStorageClosed
 	}
 
-	basePath := "/kafka/consumer_offsets"
-	return f.listDirectory(basePath)
+	return f.listDirectory(ConsumerOffsetsBasePath)
 }
 
 // Close releases resources
@@ -173,7 +177,7 @@ func (f *FilerStorage) Close() error {
 // Helper methods
 
 func (f *FilerStorage) getGroupPath(group string) string {
-	return fmt.Sprintf("/kafka/consumer_offsets/%s", group)
+	return fmt.Sprintf("%s/%s", ConsumerOffsetsBasePath, group)
 }
 
 func (f *FilerStorage) getTopicPath(group, topic string) string {

@@ -163,11 +163,11 @@ func (h *FastMockHandler) GetTopicInfo(name string) (*integration.KafkaTopicInfo
 	return nil, false
 }
 
-func (h *FastMockHandler) ProduceRecord(topicName string, partitionID int32, key, value []byte) (int64, error) {
+func (h *FastMockHandler) ProduceRecord(ctx context.Context, topicName string, partitionID int32, key, value []byte) (int64, error) {
 	return 0, fmt.Errorf("not implemented")
 }
 
-func (h *FastMockHandler) ProduceRecordValue(topicName string, partitionID int32, key []byte, recordValueBytes []byte) (int64, error) {
+func (h *FastMockHandler) ProduceRecordValue(ctx context.Context, topicName string, partitionID int32, key []byte, recordValueBytes []byte) (int64, error) {
 	return 0, fmt.Errorf("not implemented")
 }
 
@@ -197,6 +197,10 @@ func (h *FastMockHandler) CreatePerConnectionBrokerClient() (*integration.Broker
 
 func (h *FastMockHandler) SetProtocolHandler(handler integration.ProtocolHandler) {
 	// No-op
+}
+
+func (h *FastMockHandler) InvalidateTopicExistsCache(topic string) {
+	// No-op for mock
 }
 
 func (h *FastMockHandler) Close() error {
@@ -234,11 +238,11 @@ func (h *BlockingMockHandler) GetTopicInfo(name string) (*integration.KafkaTopic
 	return nil, false
 }
 
-func (h *BlockingMockHandler) ProduceRecord(topicName string, partitionID int32, key, value []byte) (int64, error) {
+func (h *BlockingMockHandler) ProduceRecord(ctx context.Context, topicName string, partitionID int32, key, value []byte) (int64, error) {
 	return 0, fmt.Errorf("not implemented")
 }
 
-func (h *BlockingMockHandler) ProduceRecordValue(topicName string, partitionID int32, key []byte, recordValueBytes []byte) (int64, error) {
+func (h *BlockingMockHandler) ProduceRecordValue(ctx context.Context, topicName string, partitionID int32, key []byte, recordValueBytes []byte) (int64, error) {
 	return 0, fmt.Errorf("not implemented")
 }
 
@@ -268,6 +272,10 @@ func (h *BlockingMockHandler) CreatePerConnectionBrokerClient() (*integration.Br
 
 func (h *BlockingMockHandler) SetProtocolHandler(handler integration.ProtocolHandler) {
 	// No-op
+}
+
+func (h *BlockingMockHandler) InvalidateTopicExistsCache(topic string) {
+	// No-op for mock
 }
 
 func (h *BlockingMockHandler) Close() error {
@@ -320,11 +328,11 @@ func (h *TimeoutAwareMockHandler) GetTopicInfo(name string) (*integration.KafkaT
 	return nil, false
 }
 
-func (h *TimeoutAwareMockHandler) ProduceRecord(topicName string, partitionID int32, key, value []byte) (int64, error) {
+func (h *TimeoutAwareMockHandler) ProduceRecord(ctx context.Context, topicName string, partitionID int32, key, value []byte) (int64, error) {
 	return 0, fmt.Errorf("not implemented")
 }
 
-func (h *TimeoutAwareMockHandler) ProduceRecordValue(topicName string, partitionID int32, key []byte, recordValueBytes []byte) (int64, error) {
+func (h *TimeoutAwareMockHandler) ProduceRecordValue(ctx context.Context, topicName string, partitionID int32, key []byte, recordValueBytes []byte) (int64, error) {
 	return 0, fmt.Errorf("not implemented")
 }
 
@@ -354,6 +362,10 @@ func (h *TimeoutAwareMockHandler) CreatePerConnectionBrokerClient() (*integratio
 
 func (h *TimeoutAwareMockHandler) SetProtocolHandler(handler integration.ProtocolHandler) {
 	// No-op
+}
+
+func (h *TimeoutAwareMockHandler) InvalidateTopicExistsCache(topic string) {
+	// No-op for mock
 }
 
 func (h *TimeoutAwareMockHandler) Close() error {

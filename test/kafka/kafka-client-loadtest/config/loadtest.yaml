@@ -51,7 +51,7 @@ consumers:
   group_prefix: "loadtest-group"  # Consumer group prefix
   auto_offset_reset: "earliest"  # earliest, latest
   enable_auto_commit: true
-  auto_commit_interval_ms: 1000
+  auto_commit_interval_ms: 100  # Reduced from 1000ms to 100ms to minimize duplicate window
   session_timeout_ms: 30000
   heartbeat_interval_ms: 3000
   max_poll_records: 500

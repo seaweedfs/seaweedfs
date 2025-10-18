@@ -1,7 +1,10 @@
 package integration
 
 import (
+	"context"
 	"fmt"
+	"sync"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
@@ -10,7 +13,12 @@ import (
 )
 
 // PublishRecord publishes a single record to SeaweedMQ broker
-func (bc *BrokerClient) PublishRecord(topic string, partition int32, key []byte, value []byte, timestamp int64) (int64, error) {
+// ctx controls the publish timeout - if client cancels, publish operation is cancelled
+func (bc *BrokerClient) PublishRecord(ctx context.Context, topic string, partition int32, key []byte, value []byte, timestamp int64) (int64, error) {
+	// Check context before starting
+	if err := ctx.Err(); err != nil {
+		return 0, fmt.Errorf("context cancelled before publish: %w", err)
+	}
 
 	session, err := bc.getOrCreatePublisher(topic, partition)
 	if err != nil {
@@ -26,6 +34,11 @@ func (bc *BrokerClient) PublishRecord(topic string, partition int32, key []byte,
 	session.mu.Lock()
 	defer session.mu.Unlock()
 
+	// Check context after acquiring lock
+	if err := ctx.Err(); err != nil {
+		return 0, fmt.Errorf("context cancelled after lock: %w", err)
+	}
+
 	// Send data message using broker API format
 	dataMsg := &mq_pb.DataMessage{
 		Key:   key,
@@ -33,26 +46,61 @@ func (bc *BrokerClient) PublishRecord(topic string, partition int32, key []byte,
 		TsNs:  timestamp,
 	}
 
+	// DEBUG: Log message being published for GitHub Actions debugging
+	valuePreview := ""
 	if len(dataMsg.Value) > 0 {
+		if len(dataMsg.Value) <= 50 {
+			valuePreview = string(dataMsg.Value)
+		} else {
+			valuePreview = fmt.Sprintf("%s...(total %d bytes)", string(dataMsg.Value[:50]), len(dataMsg.Value))
+		}
 	} else {
+		valuePreview = "<empty>"
 	}
-	if err := session.Stream.Send(&mq_pb.PublishMessageRequest{
-		Message: &mq_pb.PublishMessageRequest_Data{
-			Data: dataMsg,
-		},
-	}); err != nil {
-		return 0, fmt.Errorf("failed to send data: %v", err)
+	glog.V(1).Infof("[PUBLISH] topic=%s partition=%d key=%s valueLen=%d valuePreview=%q timestamp=%d",
+		topic, partition, string(key), len(value), valuePreview, timestamp)
+
+	// CRITICAL: Use a goroutine with context checking to enforce timeout
+	// gRPC streams may not respect context deadlines automatically
+	// We need to monitor the context and timeout the operation if needed
+	sendErrChan := make(chan error, 1)
+	go func() {
+		sendErrChan <- session.Stream.Send(&mq_pb.PublishMessageRequest{
+			Message: &mq_pb.PublishMessageRequest_Data{
+				Data: dataMsg,
+			},
+		})
+	}()
+
+	select {
+	case err := <-sendErrChan:
+		if err != nil {
+			return 0, fmt.Errorf("failed to send data: %v", err)
+		}
+	case <-ctx.Done():
+		return 0, fmt.Errorf("context cancelled while sending: %w", ctx.Err())
 	}
 
-	// Read acknowledgment
-	resp, err := session.Stream.Recv()
-	if err != nil {
-		return 0, fmt.Errorf("failed to receive ack: %v", err)
-	}
+	// Read acknowledgment with context timeout enforcement
+	recvErrChan := make(chan interface{}, 1)
+	go func() {
+		resp, err := session.Stream.Recv()
+		if err != nil {
+			recvErrChan <- err
+		} else {
+			recvErrChan <- resp
+		}
+	}()
 
-	if topic == "_schemas" {
-		glog.Infof("[GATEWAY RECV] topic=%s partition=%d resp.AssignedOffset=%d resp.AckTsNs=%d", 
-			topic, partition, resp.AssignedOffset, resp.AckTsNs)
+	var resp *mq_pb.PublishMessageResponse
+	select {
+	case result := <-recvErrChan:
+		if err, isErr := result.(error); isErr {
+			return 0, fmt.Errorf("failed to receive ack: %v", err)
+		}
+		resp = result.(*mq_pb.PublishMessageResponse)
+	case <-ctx.Done():
+		return 0, fmt.Errorf("context cancelled while receiving: %w", ctx.Err())
 	}
 
 	// Handle structured broker errors
@@ -64,11 +112,18 @@ func (bc *BrokerClient) PublishRecord(topic string, partition int32, key []byte,
 	}
 
 	// Use the assigned offset from SMQ, not the timestamp
+	glog.V(1).Infof("[PUBLISH_ACK] topic=%s partition=%d assignedOffset=%d", topic, partition, resp.AssignedOffset)
 	return resp.AssignedOffset, nil
 }
 
 // PublishRecordValue publishes a RecordValue message to SeaweedMQ via broker
-func (bc *BrokerClient) PublishRecordValue(topic string, partition int32, key []byte, recordValueBytes []byte, timestamp int64) (int64, error) {
+// ctx controls the publish timeout - if client cancels, publish operation is cancelled
+func (bc *BrokerClient) PublishRecordValue(ctx context.Context, topic string, partition int32, key []byte, recordValueBytes []byte, timestamp int64) (int64, error) {
+	// Check context before starting
+	if err := ctx.Err(); err != nil {
+		return 0, fmt.Errorf("context cancelled before publish: %w", err)
+	}
+
 	session, err := bc.getOrCreatePublisher(topic, partition)
 	if err != nil {
 		return 0, err
@@ -81,6 +136,11 @@ func (bc *BrokerClient) PublishRecordValue(topic string, partition int32, key []
 	// CRITICAL: Lock to prevent concurrent Send/Recv causing response mix-ups
 	session.mu.Lock()
 	defer session.mu.Unlock()
+
+	// Check context after acquiring lock
+	if err := ctx.Err(); err != nil {
+		return 0, fmt.Errorf("context cancelled after lock: %w", err)
+	}
 
 	// Send data message with RecordValue in the Value field
 	dataMsg := &mq_pb.DataMessage{
@@ -127,14 +187,46 @@ func (bc *BrokerClient) getOrCreatePublisher(topic string, partition int32) (*Br
 	}
 	bc.publishersLock.RUnlock()
 
-	// Create new publisher stream
-	bc.publishersLock.Lock()
-	defer bc.publishersLock.Unlock()
+	// CRITICAL FIX: Prevent multiple concurrent attempts to create the same publisher
+	// Use a creation lock that is specific to each topic-partition pair
+	// This ensures only ONE goroutine tries to create/initialize for each publisher
+	if bc.publisherCreationLocks == nil {
+		bc.publishersLock.Lock()
+		if bc.publisherCreationLocks == nil {
+			bc.publisherCreationLocks = make(map[string]*sync.Mutex)
+		}
+		bc.publishersLock.Unlock()
+	}
 
-	// Double-check after acquiring write lock
+	bc.publishersLock.RLock()
+	creationLock, exists := bc.publisherCreationLocks[key]
+	if !exists {
+		// Need to create a creation lock for this topic-partition
+		bc.publishersLock.RUnlock()
+		bc.publishersLock.Lock()
+		// Double-check if someone else created it
+		if lock, exists := bc.publisherCreationLocks[key]; exists {
+			creationLock = lock
+		} else {
+			creationLock = &sync.Mutex{}
+			bc.publisherCreationLocks[key] = creationLock
+		}
+		bc.publishersLock.Unlock()
+	} else {
+		bc.publishersLock.RUnlock()
+	}
+
+	// Acquire the creation lock - only ONE goroutine will proceed
+	creationLock.Lock()
+	defer creationLock.Unlock()
+
+	// Double-check if publisher was created while we were waiting for the lock
+	bc.publishersLock.RLock()
 	if session, exists := bc.publishers[key]; exists {
+		bc.publishersLock.RUnlock()
 		return session, nil
 	}
+	bc.publishersLock.RUnlock()
 
 	// Create the stream
 	stream, err := bc.client.PublishMessage(bc.ctx)
@@ -142,13 +234,13 @@ func (bc *BrokerClient) getOrCreatePublisher(topic string, partition int32) (*Br
 		return nil, fmt.Errorf("failed to create publish stream: %v", err)
 	}
 
-	// Get the actual partition assignment from the broker instead of using Kafka partition mapping
+	// Get the actual partition assignment from the broker
 	actualPartition, err := bc.getActualPartitionAssignment(topic, partition)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get actual partition assignment: %v", err)
 	}
 
-	// Send init message using the actual partition structure that the broker allocated
+	// Send init message
 	if err := stream.Send(&mq_pb.PublishMessageRequest{
 		Message: &mq_pb.PublishMessageRequest_Init{
 			Init: &mq_pb.PublishMessageRequest_InitMessage{
@@ -165,9 +257,7 @@ func (bc *BrokerClient) getOrCreatePublisher(topic string, partition int32) (*Br
 		return nil, fmt.Errorf("failed to send init message: %v", err)
 	}
 
-	// CRITICAL: Consume the "hello" message sent by broker after init
-	// Broker sends empty PublishMessageResponse{} on line 137 of broker_grpc_pub.go
-	// Without this, first Recv() in PublishRecord gets hello instead of data ack
+	// Consume the "hello" message sent by broker after init
 	helloResp, err := stream.Recv()
 	if err != nil {
 		return nil, fmt.Errorf("failed to receive hello message: %v", err)
@@ -182,7 +272,11 @@ func (bc *BrokerClient) getOrCreatePublisher(topic string, partition int32) (*Br
 		Stream:    stream,
 	}
 
+	// Store in the map under the publishersLock
+	bc.publishersLock.Lock()
 	bc.publishers[key] = session
+	bc.publishersLock.Unlock()
+
 	return session, nil
 }
 
@@ -206,8 +300,23 @@ func (bc *BrokerClient) ClosePublisher(topic string, partition int32) error {
 }
 
 // getActualPartitionAssignment looks up the actual partition assignment from the broker configuration
+// Uses cache to avoid expensive LookupTopicBrokers calls on every fetch (13.5% CPU overhead!)
 func (bc *BrokerClient) getActualPartitionAssignment(topic string, kafkaPartition int32) (*schema_pb.Partition, error) {
-	// Look up the topic configuration from the broker to get the actual partition assignments
+	// Check cache first
+	bc.partitionAssignmentCacheMu.RLock()
+	if entry, found := bc.partitionAssignmentCache[topic]; found {
+		if time.Now().Before(entry.expiresAt) {
+			assignments := entry.assignments
+			bc.partitionAssignmentCacheMu.RUnlock()
+			glog.V(4).Infof("Partition assignment cache HIT for topic %s", topic)
+			// Use cached assignments to find partition
+			return bc.findPartitionInAssignments(topic, kafkaPartition, assignments)
+		}
+	}
+	bc.partitionAssignmentCacheMu.RUnlock()
+
+	// Cache miss or expired - lookup from broker
+	glog.V(4).Infof("Partition assignment cache MISS for topic %s, calling LookupTopicBrokers", topic)
 	lookupResp, err := bc.client.LookupTopicBrokers(bc.ctx, &mq_pb.LookupTopicBrokersRequest{
 		Topic: &schema_pb.Topic{
 			Namespace: "kafka",
@@ -222,7 +331,22 @@ func (bc *BrokerClient) getActualPartitionAssignment(topic string, kafkaPartitio
 		return nil, fmt.Errorf("no partition assignments found for topic %s", topic)
 	}
 
-	totalPartitions := int32(len(lookupResp.BrokerPartitionAssignments))
+	// Cache the assignments
+	bc.partitionAssignmentCacheMu.Lock()
+	bc.partitionAssignmentCache[topic] = &partitionAssignmentCacheEntry{
+		assignments: lookupResp.BrokerPartitionAssignments,
+		expiresAt:   time.Now().Add(bc.partitionAssignmentCacheTTL),
+	}
+	bc.partitionAssignmentCacheMu.Unlock()
+	glog.V(4).Infof("Cached partition assignments for topic %s", topic)
+
+	// Use freshly fetched assignments to find partition
+	return bc.findPartitionInAssignments(topic, kafkaPartition, lookupResp.BrokerPartitionAssignments)
+}
+
+// findPartitionInAssignments finds the SeaweedFS partition for a given Kafka partition ID
+func (bc *BrokerClient) findPartitionInAssignments(topic string, kafkaPartition int32, assignments []*mq_pb.BrokerPartitionAssignment) (*schema_pb.Partition, error) {
+	totalPartitions := int32(len(assignments))
 	if kafkaPartition >= totalPartitions {
 		return nil, fmt.Errorf("kafka partition %d out of range, topic %s has %d partitions",
 			kafkaPartition, topic, totalPartitions)
@@ -245,7 +369,7 @@ func (bc *BrokerClient) getActualPartitionAssignment(topic string, kafkaPartitio
 		kafkaPartition, topic, expectedRangeStart, expectedRangeStop, totalPartitions)
 
 	// Find the broker assignment that matches this range
-	for _, assignment := range lookupResp.BrokerPartitionAssignments {
+	for _, assignment := range assignments {
 		if assignment.Partition == nil {
 			continue
 		}
@@ -263,7 +387,7 @@ func (bc *BrokerClient) getActualPartitionAssignment(topic string, kafkaPartitio
 	glog.Warningf("no partition assignment found for Kafka partition %d in topic %s with expected range [%d, %d]",
 		kafkaPartition, topic, expectedRangeStart, expectedRangeStop)
 	glog.Warningf("Available assignments:")
-	for i, assignment := range lookupResp.BrokerPartitionAssignments {
+	for i, assignment := range assignments {
 		if assignment.Partition != nil {
 			glog.Warningf("  Assignment[%d]: {RangeStart: %d, RangeStop: %d, RingSize: %d}",
 				i, assignment.Partition.RangeStart, assignment.Partition.RangeStop, assignment.Partition.RingSize)

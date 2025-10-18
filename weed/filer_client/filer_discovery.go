@@ -50,7 +50,6 @@ func NewFilerDiscoveryService(masters []pb.ServerAddress, grpcDialOption grpc.Di
 func (fds *FilerDiscoveryService) discoverFilersFromMaster(masterAddr pb.ServerAddress) ([]pb.ServerAddress, error) {
 	// Convert HTTP master address to gRPC address (HTTP port + 10000)
 	grpcAddr := masterAddr.ToGrpcAddress()
-	glog.Infof("FILER DISCOVERY: Connecting to master gRPC at %s (converted from HTTP %s)", grpcAddr, masterAddr)
 
 	conn, err := grpc.Dial(grpcAddr, fds.grpcDialOption)
 	if err != nil {
@@ -70,16 +69,11 @@ func (fds *FilerDiscoveryService) discoverFilersFromMaster(masterAddr pb.ServerA
 		return nil, fmt.Errorf("failed to list filers from master %s: %v", masterAddr, err)
 	}
 
-	glog.Infof("FILER DISCOVERY: ListClusterNodes returned %d nodes from master %s", len(resp.ClusterNodes), masterAddr)
-
 	var filers []pb.ServerAddress
 	for _, node := range resp.ClusterNodes {
-		glog.Infof("FILER DISCOVERY: Found filer HTTP address %s", node.Address)
 		// Return HTTP address (lock client will convert to gRPC when needed)
 		filers = append(filers, pb.ServerAddress(node.Address))
 	}
-
-	glog.Infof("FILER DISCOVERY: Returning %d filers from master %s", len(filers), masterAddr)
 
 	return filers, nil
 }

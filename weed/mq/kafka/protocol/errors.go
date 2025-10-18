@@ -3,7 +3,6 @@ package protocol
 import (
 	"context"
 	"encoding/binary"
-	"fmt"
 	"net"
 	"time"
 )
@@ -15,8 +14,8 @@ const (
 	ErrorCodeNone int16 = 0
 
 	// General server errors
-	ErrorCodeUnknownServerError           int16 = 1
-	ErrorCodeOffsetOutOfRange             int16 = 2
+	ErrorCodeUnknownServerError           int16 = -1
+	ErrorCodeOffsetOutOfRange             int16 = 1
 	ErrorCodeCorruptMessage               int16 = 3 // Also UNKNOWN_TOPIC_OR_PARTITION
 	ErrorCodeUnknownTopicOrPartition      int16 = 3
 	ErrorCodeInvalidFetchSize             int16 = 4
@@ -360,15 +359,4 @@ func HandleTimeoutError(err error, operation string) int16 {
 	}
 
 	return ClassifyNetworkError(err)
-}
-
-// SafeFormatError safely formats error messages to avoid information leakage
-func SafeFormatError(err error) string {
-	if err == nil {
-		return ""
-	}
-
-	// For production, we might want to sanitize error messages
-	// For now, return the full error for debugging
-	return fmt.Sprintf("Error: %v", err)
 }

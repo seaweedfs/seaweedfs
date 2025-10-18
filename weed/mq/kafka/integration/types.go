@@ -144,6 +144,29 @@ func (r *SeaweedSMQRecord) GetOffset() int64 {
 }
 
 // BrokerClient wraps the SeaweedMQ Broker gRPC client for Kafka gateway integration
+// FetchRequest tracks an in-flight fetch request with multiple waiters
+type FetchRequest struct {
+	topic      string
+	partition  int32
+	offset     int64
+	resultChan chan FetchResult   // Single channel for the fetch result
+	waiters    []chan FetchResult // Multiple waiters can subscribe
+	mu         sync.Mutex
+	inProgress bool
+}
+
+// FetchResult contains the result of a fetch operation
+type FetchResult struct {
+	records []*SeaweedRecord
+	err     error
+}
+
+// partitionAssignmentCacheEntry caches LookupTopicBrokers results
+type partitionAssignmentCacheEntry struct {
+	assignments []*mq_pb.BrokerPartitionAssignment
+	expiresAt   time.Time
+}
+
 type BrokerClient struct {
 	// Reference to shared filer client accessor
 	filerClientAccessor *filer_client.FilerClientAccessor
@@ -156,9 +179,21 @@ type BrokerClient struct {
 	publishersLock sync.RWMutex
 	publishers     map[string]*BrokerPublisherSession
 
+	// Publisher creation locks to prevent concurrent creation attempts for the same topic-partition
+	publisherCreationLocks map[string]*sync.Mutex
+
 	// Subscriber streams for offset tracking
 	subscribersLock sync.RWMutex
 	subscribers     map[string]*BrokerSubscriberSession
+
+	// Request deduplication for stateless fetches
+	fetchRequestsLock sync.Mutex
+	fetchRequests     map[string]*FetchRequest
+
+	// Partition assignment cache to reduce LookupTopicBrokers calls (13.5% CPU overhead!)
+	partitionAssignmentCache    map[string]*partitionAssignmentCacheEntry // Key: topic name
+	partitionAssignmentCacheMu  sync.RWMutex
+	partitionAssignmentCacheTTL time.Duration
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -185,11 +220,17 @@ type BrokerSubscriberSession struct {
 	// Context for canceling reads (used for timeout)
 	Ctx    context.Context
 	Cancel context.CancelFunc
-	// Mutex to prevent concurrent reads from the same stream
+	// Mutex to serialize all operations on this session
 	mu sync.Mutex
 	// Cache of consumed records to avoid re-reading from broker
 	consumedRecords  []*SeaweedRecord
 	nextOffsetToRead int64
+	// Track what has actually been READ from the stream (not what was requested)
+	// This is the HIGHEST offset that has been read from the stream
+	// Used to determine if we need to seek or can continue reading
+	lastReadOffset int64
+	// Flag to indicate if this session has been initialized
+	initialized bool
 }
 
 // Key generates a unique key for this subscriber session

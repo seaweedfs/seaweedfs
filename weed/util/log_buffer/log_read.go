@@ -355,6 +355,7 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 				continue
 			}
 
+
 			glog.V(4).Infof("Unmarshaled log entry %d: TsNs=%d, Offset=%d, Key=%s", batchSize+1, logEntry.TsNs, logEntry.Offset, string(logEntry.Key))
 
 			// Handle offset-based filtering for offset-based start positions

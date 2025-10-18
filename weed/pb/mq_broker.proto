@@ -62,6 +62,12 @@ service SeaweedMessaging {
     rpc SubscribeFollowMe (stream SubscribeFollowMeRequest) returns (SubscribeFollowMeResponse) {
     }
     
+    // Stateless fetch API (Kafka-style) - request/response pattern
+    // This is the recommended API for Kafka gateway and other stateless clients
+    // No streaming, no session state - each request is completely independent
+    rpc FetchMessage (FetchMessageRequest) returns (FetchMessageResponse) {
+    }
+
     // SQL query support - get unflushed messages from broker's in-memory buffer (streaming)
     rpc GetUnflushedMessages (GetUnflushedMessagesRequest) returns (stream GetUnflushedMessagesResponse) {
     }
@@ -329,9 +335,14 @@ message SubscribeMessageRequest {
         int64 ts_ns = 1;  // Timestamp in nanoseconds for acknowledgment tracking
         bytes key = 2;
     }
+    message SeekMessage {
+        int64 offset = 1;  // New offset to seek to
+        schema_pb.OffsetType offset_type = 2;  // EXACT_OFFSET, RESET_TO_LATEST, etc.
+    }
     oneof message {
         InitMessage init = 1;
         AckMessage ack = 2;
+        SeekMessage seek = 3;
     }
 }
 message SubscribeMessageResponse {
@@ -365,6 +376,66 @@ message SubscribeFollowMeRequest {
 message SubscribeFollowMeResponse {
     int64 ack_ts_ns = 1;
 }
+
+//////////////////////////////////////////////////
+// Stateless Fetch API (Kafka-style)
+// Unlike SubscribeMessage which maintains long-lived Subscribe loops,
+// FetchMessage is completely stateless - each request is independent.
+// This eliminates concurrent access issues and stream corruption.
+//
+// Key differences from SubscribeMessage:
+// 1. Request/Response pattern (not streaming)
+// 2. No session state maintained
+// 3. Each fetch is independent
+// 4. Natural support for concurrent reads at different offsets
+// 5. Client manages offset tracking (like Kafka)
+//////////////////////////////////////////////////
+
+message FetchMessageRequest {
+    // Topic and partition to fetch from
+    schema_pb.Topic topic = 1;
+    schema_pb.Partition partition = 2;
+    
+    // Starting offset for this fetch
+    int64 start_offset = 3;
+    
+    // Maximum number of bytes to return (limit response size)
+    int32 max_bytes = 4;
+    
+    // Maximum number of messages to return
+    int32 max_messages = 5;
+    
+    // Maximum time to wait for data if partition is empty (milliseconds)
+    // 0 = return immediately, >0 = wait up to this long
+    int32 max_wait_ms = 6;
+    
+    // Minimum bytes before responding (0 = respond immediately)
+    // This allows batching for efficiency
+    int32 min_bytes = 7;
+    
+    // Consumer identity (for monitoring/debugging)
+    string consumer_group = 8;
+    string consumer_id = 9;
+}
+
+message FetchMessageResponse {
+    // Messages fetched (may be empty if no data available)
+    repeated DataMessage messages = 1;
+    
+    // Metadata about partition state
+    int64 high_water_mark = 2;  // Highest offset available
+    int64 log_start_offset = 3;  // Earliest offset available
+    bool end_of_partition = 4;   // True if no more data available
+    
+    // Error handling
+    string error = 5;
+    int32 error_code = 6;
+    
+    // Next offset to fetch (for client convenience)
+    // Client should fetch from this offset next
+    int64 next_offset = 7;
+}
+
 message ClosePublishersRequest {
     schema_pb.Topic topic = 1;
     int64 unix_time_ns = 2;

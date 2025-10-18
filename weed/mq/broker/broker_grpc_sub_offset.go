@@ -117,7 +117,7 @@ func (b *MessageQueueBroker) subscribeWithOffsetSubscription(
 			}
 
 			if atEnd {
-				glog.V(2).Infof("[%s] At end of subscription, stopping", clientName)
+				glog.V(4).Infof("[%s] At end of subscription, stopping", clientName)
 				return false
 			}
 

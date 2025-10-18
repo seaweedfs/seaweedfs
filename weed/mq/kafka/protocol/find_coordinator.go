@@ -29,7 +29,7 @@ type CoordinatorAssignment struct {
 }
 
 func (h *Handler) handleFindCoordinator(correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
-	glog.V(4).Infof("FindCoordinator ENTRY: version=%d, correlation=%d, bodyLen=%d", apiVersion, correlationID, len(requestBody))
+	glog.V(2).Infof("FindCoordinator: version=%d, correlation=%d, bodyLen=%d", apiVersion, correlationID, len(requestBody))
 	switch apiVersion {
 	case 0:
 		glog.V(4).Infof("FindCoordinator - Routing to V0 handler")
@@ -47,12 +47,6 @@ func (h *Handler) handleFindCoordinator(correlationID uint32, apiVersion uint16,
 
 func (h *Handler) handleFindCoordinatorV0(correlationID uint32, requestBody []byte) ([]byte, error) {
 	// Parse FindCoordinator v0 request: Key (STRING) only
-
-	// DEBUG: Hex dump the request to understand format
-	dumpLen := len(requestBody)
-	if dumpLen > 50 {
-		dumpLen = 50
-	}
 
 	if len(requestBody) < 2 { // need at least Key length
 		return nil, fmt.Errorf("FindCoordinator request too short")
@@ -84,7 +78,7 @@ func (h *Handler) handleFindCoordinatorV0(correlationID uint32, requestBody []by
 		return nil, fmt.Errorf("failed to find coordinator for group %s: %w", coordinatorKey, err)
 	}
 
-	// CRITICAL FIX: Return hostname instead of IP address for client connectivity
+	// Return hostname instead of IP address for client connectivity
 	// Clients need to connect to the same hostname they originally connected to
 	_ = coordinatorHost // originalHost
 	coordinatorHost = h.getClientConnectableHost(coordinatorHost)
@@ -128,12 +122,6 @@ func (h *Handler) handleFindCoordinatorV0(correlationID uint32, requestBody []by
 func (h *Handler) handleFindCoordinatorV2(correlationID uint32, requestBody []byte) ([]byte, error) {
 	// Parse FindCoordinator request (v0-2 non-flex): Key (STRING), v1+ adds KeyType (INT8)
 
-	// DEBUG: Hex dump the request to understand format
-	dumpLen := len(requestBody)
-	if dumpLen > 50 {
-		dumpLen = 50
-	}
-
 	if len(requestBody) < 2 { // need at least Key length
 		return nil, fmt.Errorf("FindCoordinator request too short")
 	}
@@ -167,7 +155,7 @@ func (h *Handler) handleFindCoordinatorV2(correlationID uint32, requestBody []by
 		return nil, fmt.Errorf("failed to find coordinator for group %s: %w", coordinatorKey, err)
 	}
 
-	// CRITICAL FIX: Return hostname instead of IP address for client connectivity
+	// Return hostname instead of IP address for client connectivity
 	// Clients need to connect to the same hostname they originally connected to
 	_ = coordinatorHost // originalHost
 	coordinatorHost = h.getClientConnectableHost(coordinatorHost)
@@ -237,7 +225,7 @@ func (h *Handler) handleFindCoordinatorV3(correlationID uint32, requestBody []by
 
 	offset := 0
 
-	// CRITICAL FIX: The first byte is the tagged fields from the REQUEST HEADER that weren't consumed
+	// The first byte is the tagged fields from the REQUEST HEADER that weren't consumed
 	// Skip the tagged fields count (should be 0x00 for no tagged fields)
 	if len(requestBody) > 0 && requestBody[0] == 0x00 {
 		glog.V(4).Infof("FindCoordinator V3: Skipping header tagged fields byte (0x00)")
@@ -353,9 +341,12 @@ func (h *Handler) findCoordinatorForGroup(groupID string) (host string, port int
 	if registry == nil {
 		// Fallback to current gateway if no registry available
 		gatewayAddr := h.GetGatewayAddress()
+		if gatewayAddr == "" {
+			return "", 0, 0, fmt.Errorf("no coordinator registry and no gateway address configured")
+		}
 		host, port, err := h.parseGatewayAddress(gatewayAddr)
 		if err != nil {
-			return "localhost", 9092, 1, nil
+			return "", 0, 0, fmt.Errorf("failed to parse gateway address: %w", err)
 		}
 		nodeID = 1
 		return host, port, nodeID, nil
@@ -386,13 +377,15 @@ func (h *Handler) handleCoordinatorAssignmentAsLeader(groupID string, registry C
 
 	// No coordinator exists, assign the requesting gateway (first-come-first-serve)
 	currentGateway := h.GetGatewayAddress()
+	if currentGateway == "" {
+		return "", 0, 0, fmt.Errorf("no gateway address configured for coordinator assignment")
+	}
 	assignment, err := registry.AssignCoordinator(groupID, currentGateway)
 	if err != nil {
-		// Fallback to current gateway
-		gatewayAddr := h.GetGatewayAddress()
-		host, port, err := h.parseGatewayAddress(gatewayAddr)
-		if err != nil {
-			return "localhost", 9092, 1, nil
+		// Fallback to current gateway on assignment error
+		host, port, parseErr := h.parseGatewayAddress(currentGateway)
+		if parseErr != nil {
+			return "", 0, 0, fmt.Errorf("failed to parse gateway address after assignment error: %w", parseErr)
 		}
 		nodeID = 1
 		return host, port, nodeID, nil
@@ -408,9 +401,12 @@ func (h *Handler) requestCoordinatorFromLeader(groupID string, registry Coordina
 	_, err = h.waitForLeader(registry, 10*time.Second) // 10 second timeout for enterprise clients
 	if err != nil {
 		gatewayAddr := h.GetGatewayAddress()
-		host, port, err := h.parseGatewayAddress(gatewayAddr)
-		if err != nil {
-			return "localhost", 9092, 1, nil
+		if gatewayAddr == "" {
+			return "", 0, 0, fmt.Errorf("failed to wait for leader and no gateway address configured: %w", err)
+		}
+		host, port, parseErr := h.parseGatewayAddress(gatewayAddr)
+		if parseErr != nil {
+			return "", 0, 0, fmt.Errorf("failed to parse gateway address after leader wait timeout: %w", parseErr)
 		}
 		nodeID = 1
 		return host, port, nodeID, nil
@@ -426,9 +422,12 @@ func (h *Handler) requestCoordinatorFromLeader(groupID string, registry Coordina
 	// use current gateway as fallback. In a full implementation, this would make
 	// an RPC call to the leader gateway.
 	gatewayAddr := h.GetGatewayAddress()
+	if gatewayAddr == "" {
+		return "", 0, 0, fmt.Errorf("no gateway address configured for fallback coordinator")
+	}
 	host, port, parseErr := h.parseGatewayAddress(gatewayAddr)
 	if parseErr != nil {
-		return "localhost", 9092, 1, nil
+		return "", 0, 0, fmt.Errorf("failed to parse gateway address for fallback: %w", parseErr)
 	}
 	nodeID = 1
 	return host, port, nodeID, nil
@@ -482,15 +481,16 @@ func (h *Handler) getClientConnectableHost(coordinatorHost string) string {
 		// It's an IP address, return the original gateway hostname
 		gatewayAddr := h.GetGatewayAddress()
 		if host, _, err := h.parseGatewayAddress(gatewayAddr); err == nil {
-			// If the gateway address is also an IP, try to use a hostname
+			// If the gateway address is also an IP, return the IP directly
+			// This handles local/test environments where hostnames aren't resolvable
 			if net.ParseIP(host) != nil {
-				// Both are IPs, use a default hostname that clients can connect to
-				return "kafka-gateway"
+				// Both are IPs, return the actual IP address
+				return coordinatorHost
 			}
 			return host
 		}
-		// Fallback to a known hostname
-		return "kafka-gateway"
+		// Fallback to the coordinator host IP itself
+		return coordinatorHost
 	}
 
 	// It's already a hostname, return as-is

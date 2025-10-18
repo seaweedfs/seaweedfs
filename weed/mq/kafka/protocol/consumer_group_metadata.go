@@ -4,8 +4,9 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
-	"strings"
 	"sync"
+
+	"github.com/seaweedfs/seaweedfs/weed/mq/kafka/consumer"
 )
 
 // ConsumerProtocolMetadata represents parsed consumer protocol metadata
@@ -25,7 +26,7 @@ type ConnectionContext struct {
 	ConsumerGroup string   // Consumer group (set by JoinGroup)
 	MemberID      string   // Consumer group member ID (set by JoinGroup)
 	// Per-connection broker client for isolated gRPC streams
-	// CRITICAL: Each Kafka connection MUST have its own gRPC streams to avoid interference
+	// Each Kafka connection MUST have its own gRPC streams to avoid interference
 	// when multiple consumers or requests are active on different connections
 	BrokerClient interface{} // Will be set to *integration.BrokerClient
 
@@ -146,49 +147,13 @@ func ParseConsumerProtocolMetadata(metadata []byte, strategyName string) (*Consu
 	return result, nil
 }
 
-// GenerateConsumerProtocolMetadata creates protocol metadata for a consumer subscription
-func GenerateConsumerProtocolMetadata(topics []string, userData []byte) []byte {
-	// Calculate total size needed
-	size := 2 + 4 + 4 // version + topics_count + user_data_length
-	for _, topic := range topics {
-		size += 2 + len(topic) // topic_name_length + topic_name
-	}
-	size += len(userData)
-
-	metadata := make([]byte, 0, size)
-
-	// Version (2 bytes) - use version 1
-	metadata = append(metadata, 0, 1)
-
-	// Topics count (4 bytes)
-	topicsCount := make([]byte, 4)
-	binary.BigEndian.PutUint32(topicsCount, uint32(len(topics)))
-	metadata = append(metadata, topicsCount...)
-
-	// Topics (string array)
-	for _, topic := range topics {
-		topicLen := make([]byte, 2)
-		binary.BigEndian.PutUint16(topicLen, uint16(len(topic)))
-		metadata = append(metadata, topicLen...)
-		metadata = append(metadata, []byte(topic)...)
-	}
-
-	// UserData length and data (4 bytes + data)
-	userDataLen := make([]byte, 4)
-	binary.BigEndian.PutUint32(userDataLen, uint32(len(userData)))
-	metadata = append(metadata, userDataLen...)
-	metadata = append(metadata, userData...)
-
-	return metadata
-}
-
 // ValidateAssignmentStrategy checks if an assignment strategy is supported
 func ValidateAssignmentStrategy(strategy string) bool {
 	supportedStrategies := map[string]bool{
-		"range":              true,
-		"roundrobin":         true,
-		"sticky":             true,
-		"cooperative-sticky": false, // Not yet implemented
+		consumer.ProtocolNameRange:             true,
+		consumer.ProtocolNameRoundRobin:        true,
+		consumer.ProtocolNameSticky:            true,
+		consumer.ProtocolNameCooperativeSticky: true, // Incremental cooperative rebalancing (Kafka 2.4+)
 	}
 
 	return supportedStrategies[strategy]
@@ -209,18 +174,19 @@ func ExtractTopicsFromMetadata(protocols []GroupProtocol, fallbackTopics []strin
 		}
 	}
 
-	// Fallback to provided topics or default
+	// Fallback to provided topics or empty list
 	if len(fallbackTopics) > 0 {
 		return fallbackTopics
 	}
 
-	return []string{"test-topic"}
+	// Return empty slice if no topics found - consumer may be using pattern subscription
+	return []string{}
 }
 
 // SelectBestProtocol chooses the best assignment protocol from available options
 func SelectBestProtocol(protocols []GroupProtocol, groupProtocols []string) string {
 	// Priority order: sticky > roundrobin > range
-	protocolPriority := []string{"sticky", "roundrobin", "range"}
+	protocolPriority := []string{consumer.ProtocolNameSticky, consumer.ProtocolNameRoundRobin, consumer.ProtocolNameRange}
 
 	// Find supported protocols in client's list
 	clientProtocols := make(map[string]bool)
@@ -254,8 +220,8 @@ func SelectBestProtocol(protocols []GroupProtocol, groupProtocols []string) stri
 
 		// No common protocol found - handle special fallback case
 		// If client supports nothing we validate, but group supports "range", use "range"
-		if len(clientProtocols) == 0 && groupProtocolSet["range"] {
-			return "range"
+		if len(clientProtocols) == 0 && groupProtocolSet[consumer.ProtocolNameRange] {
+			return consumer.ProtocolNameRange
 		}
 
 		// Return empty string to indicate no compatible protocol found
@@ -270,27 +236,7 @@ func SelectBestProtocol(protocols []GroupProtocol, groupProtocols []string) stri
 	}
 
 	// Last resort
-	return "range"
-}
-
-// SanitizeConsumerGroupID validates and sanitizes consumer group ID
-func SanitizeConsumerGroupID(groupID string) (string, error) {
-	if len(groupID) == 0 {
-		return "", fmt.Errorf("empty group ID")
-	}
-
-	if len(groupID) > 255 {
-		return "", fmt.Errorf("group ID too long: %d characters (max 255)", len(groupID))
-	}
-
-	// Basic validation: no control characters
-	for _, char := range groupID {
-		if char < 32 || char == 127 {
-			return "", fmt.Errorf("group ID contains invalid characters")
-		}
-	}
-
-	return strings.TrimSpace(groupID), nil
+	return consumer.ProtocolNameRange
 }
 
 // ProtocolMetadataDebugInfo returns debug information about protocol metadata

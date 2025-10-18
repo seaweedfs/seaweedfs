@@ -12,6 +12,7 @@ import (
 // SMQOffsetIntegration provides integration between offset management and SMQ broker
 type SMQOffsetIntegration struct {
 	mu               sync.RWMutex
+	registry         *PartitionOffsetRegistry
 	offsetAssigner   *OffsetAssigner
 	offsetSubscriber *OffsetSubscriber
 	offsetSeeker     *OffsetSeeker
@@ -23,10 +24,16 @@ func NewSMQOffsetIntegration(storage OffsetStorage) *SMQOffsetIntegration {
 	assigner := &OffsetAssigner{registry: registry}
 
 	return &SMQOffsetIntegration{
+		registry:         registry,
 		offsetAssigner:   assigner,
 		offsetSubscriber: NewOffsetSubscriber(registry),
 		offsetSeeker:     NewOffsetSeeker(registry),
 	}
+}
+
+// Close stops all background checkpoint goroutines and performs final checkpoints
+func (integration *SMQOffsetIntegration) Close() error {
+	return integration.registry.Close()
 }
 
 // PublishRecord publishes a record and assigns it an offset
