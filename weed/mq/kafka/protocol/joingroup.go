@@ -884,12 +884,13 @@ func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, reque
 			m.State = consumer.MemberStateStable
 		}
 		glog.Infof("[SYNCGROUP] Leader assignments processed successfully, group now STABLE")
-	} else if group.State == consumer.GroupStateCompletingRebalance || group.State == consumer.GroupStatePreparingRebalance {
-		// Non-leader member waiting for leader to provide assignments
-		// CRITICAL FIX: Non-leader members must wait for leader to process client-side assignments
-		// Do NOT use server-side assignment if group is still rebalancing
-		glog.Infof("[SYNCGROUP] Non-leader %s waiting for leader assignments in group %s (state=%s)",
+	} else if request.MemberID != group.Leader && len(request.GroupAssignments) == 0 {
+		// Non-leader member requesting its assignment
+		// CRITICAL FIX: Non-leader members should ALWAYS wait for leader's client-side assignments
+		// This is the correct behavior for Sarama and other client-side assignment protocols
+		glog.Infof("[SYNCGROUP] Non-leader %s waiting for/retrieving assignment in group %s (state=%s)",
 			request.MemberID, request.GroupID, group.State)
+		// Assignment will be retrieved from member.Assignment below
 	} else {
 		// Trigger partition assignment using built-in strategy (server-side assignment)
 		// This should only happen for server-side assignment protocols (not Sarama's client-side)
