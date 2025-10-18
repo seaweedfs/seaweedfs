@@ -80,10 +80,6 @@ func (bc *BrokerClient) FetchMessagesStateless(ctx context.Context, topic string
 		}
 	}
 
-	// CRITICAL DEBUGGING: Log what broker returned
-	glog.Infof("[FETCH-STATELESS-CLIENT] Broker response for %s[%d] offset %d: messages=%d, nextOffset=%d, hwm=%d, logStart=%d, endOfPartition=%v",
-		topic, partition, startOffset, len(resp.Messages), resp.NextOffset, resp.HighWaterMark, resp.LogStartOffset, resp.EndOfPartition)
-
 	// CRITICAL: If broker returns 0 messages but hwm > startOffset, something is wrong
 	if len(resp.Messages) == 0 && resp.HighWaterMark > startOffset {
 		glog.Errorf("[FETCH-STATELESS-CLIENT] CRITICAL BUG: Broker returned 0 messages for %s[%d] offset %d, but HWM=%d (should have %d messages available)",

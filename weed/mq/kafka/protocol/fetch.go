@@ -181,7 +181,6 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 	}
 
 	pending := make([]pendingFetch, 0)
-	persistentFetchStart := time.Now()
 
 	// Phase 1: Dispatch all fetch requests to partition readers (non-blocking)
 	for _, topic := range fetchRequest.Topics {
@@ -284,8 +283,6 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 		}
 	}
 done:
-
-	_ = time.Since(persistentFetchStart) // persistentFetchDuration
 
 	// ====================================================================
 	// BUILD RESPONSE FROM FETCHED DATA
@@ -1131,7 +1128,6 @@ func (h *Handler) decodeRecordValueToKafkaMessage(topicName string, recordValueB
 	if recordValueBytes == nil {
 		return nil
 	}
-
 
 	// For system topics like _schemas, _consumer_offsets, etc.,
 	// return the raw bytes as-is. These topics store Kafka's internal format (Avro, etc.)

@@ -921,9 +921,6 @@ func (s3a *S3ApiServer) handleSSEKMSResponse(r *http.Request, proxyResponse *htt
 				}
 			}
 			isMultipartSSEKMS = sseKMSChunks > 1
-
-			glog.Infof("SSE-KMS object detection: chunks=%d, sseKMSChunks=%d, isMultipartSSEKMS=%t",
-				len(entry.GetChunks()), sseKMSChunks, isMultipartSSEKMS)
 		}
 	}
 
@@ -1131,10 +1128,7 @@ func (s3a *S3ApiServer) createMultipartSSEKMSDecryptedReader(r *http.Request, pr
 	// Create readers for each chunk, decrypting them independently
 	var readers []io.Reader
 
-	for i, chunk := range chunks {
-		glog.Infof("Processing chunk %d/%d: fileId=%s, offset=%d, size=%d, sse_type=%d",
-			i+1, len(entry.GetChunks()), chunk.GetFileIdString(), chunk.GetOffset(), chunk.GetSize(), chunk.GetSseType())
-
+	for _, chunk := range chunks {
 		// Get this chunk's encrypted data
 		chunkReader, err := s3a.createEncryptedChunkReader(chunk)
 		if err != nil {
@@ -1153,8 +1147,6 @@ func (s3a *S3ApiServer) createMultipartSSEKMSDecryptedReader(r *http.Request, pr
 			} else {
 				// ChunkOffset is already set from the stored metadata (PartOffset)
 				chunkSSEKMSKey = kmsKey
-				glog.Infof("Using per-chunk SSE-KMS metadata for chunk %s: keyID=%s, IV=%x, partOffset=%d",
-					chunk.GetFileIdString(), kmsKey.KeyID, kmsKey.IV[:8], kmsKey.ChunkOffset)
 			}
 		}
 
@@ -1170,7 +1162,6 @@ func (s3a *S3ApiServer) createMultipartSSEKMSDecryptedReader(r *http.Request, pr
 						kmsKey.ChunkOffset = chunk.GetOffset()
 						chunkSSEKMSKey = kmsKey
 					}
-					glog.Infof("Using fallback object-level SSE-KMS metadata for chunk %s with offset %d", chunk.GetFileIdString(), chunk.GetOffset())
 				}
 			}
 		}
@@ -1410,7 +1401,6 @@ func (s3a *S3ApiServer) createMultipartSSECDecryptedReader(r *http.Request, prox
 					return nil, fmt.Errorf("failed to create SSE-C decrypted reader for chunk %s: %v", chunk.GetFileIdString(), decErr)
 				}
 				readers = append(readers, decryptedReader)
-				glog.Infof("Created SSE-C decrypted reader for chunk %s using stored metadata", chunk.GetFileIdString())
 			} else {
 				return nil, fmt.Errorf("SSE-C chunk %s missing required metadata", chunk.GetFileIdString())
 			}

@@ -615,7 +615,6 @@ func (logBuffer *LogBuffer) invalidateAllDiskCacheChunks() {
 	defer logBuffer.diskChunkCache.mu.Unlock()
 
 	if len(logBuffer.diskChunkCache.chunks) > 0 {
-		glog.Infof("[DiskCache] Invalidating all %d cached chunks after flush", len(logBuffer.diskChunkCache.chunks))
 		logBuffer.diskChunkCache.chunks = make(map[int64]*CachedDiskChunk)
 	}
 }

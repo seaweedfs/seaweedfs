@@ -2,7 +2,6 @@ package protocol
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
@@ -120,20 +119,8 @@ func (pr *partitionReader) serveFetchRequest(ctx context.Context, req *partition
 	startTime := time.Now()
 	result := &partitionFetchResult{}
 
-	// Log request START with full details
-	glog.Infof("[%s] FETCH_START %s[%d]: offset=%d maxBytes=%d maxWait=%dms correlationID=%d",
-		pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, req.requestedOffset, req.maxBytes, req.maxWaitMs, req.correlationID)
-
 	defer func() {
 		result.fetchDuration = time.Since(startTime)
-
-		// Log request END with results
-		resultStatus := "EMPTY"
-		if len(result.recordBatch) > 0 {
-			resultStatus = fmt.Sprintf("DATA(%dB)", len(result.recordBatch))
-		}
-		glog.Infof("[%s] FETCH_END %s[%d]: offset=%d result=%s hwm=%d duration=%.2fms",
-			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, req.requestedOffset, resultStatus, result.highWaterMark, result.fetchDuration.Seconds()*1000)
 
 		// Send result back to client
 		select {
@@ -189,9 +176,6 @@ func (pr *partitionReader) serveFetchRequest(ctx context.Context, req *partition
 			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, req.requestedOffset, hwm)
 		result.recordBatch = []byte{}
 	} else {
-		// Log successful fetch with details
-		glog.Infof("[%s] FETCH SUCCESS %s[%d]: offset %d->%d (hwm=%d, bytes=%d)",
-			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, req.requestedOffset, newOffset, hwm, len(recordBatch))
 		result.recordBatch = recordBatch
 		pr.bufferMu.Lock()
 		pr.currentOffset = newOffset
