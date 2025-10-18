@@ -80,7 +80,7 @@ func NewCoordinatorRegistry(gatewayAddress string, masters []pb.ServerAddress, g
 	for _, master := range masters {
 		// Use the same discovery logic as filer_discovery.go
 		grpcAddr := master.ToGrpcAddress()
-		conn, err := grpc.Dial(grpcAddr, grpcDialOption)
+		conn, err := grpc.NewClient(grpcAddr, grpcDialOption)
 		if err != nil {
 			continue
 		}
