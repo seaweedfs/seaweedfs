@@ -73,13 +73,13 @@ func NewGrpcAdminClient(adminAddress string, workerID string, dialOption grpc.Di
 
 // Connect establishes gRPC connection to admin server with TLS detection
 func (c *GrpcAdminClient) Connect() error {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
+	c.mutex.RLock()
 
 	if c.connected {
+		c.mutex.RUnlock()
 		return fmt.Errorf("already connected")
 	}
-
+	c.mutex.RUnlock()
 	// Always start the reconnection loop, even if initial connection fails
 	go c.reconnectionLoop()
 
