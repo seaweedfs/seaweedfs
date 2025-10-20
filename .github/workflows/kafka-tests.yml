@@ -41,7 +41,7 @@ jobs:
       id: go
 
     - name: Check out code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
 
     - name: Setup Container Environment
       run: |
@@ -85,7 +85,7 @@ jobs:
       id: go
 
     - name: Check out code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
 
     - name: Setup Integration Container Environment
       run: |
@@ -125,7 +125,7 @@ jobs:
       CONTAINER_ID: ${{ matrix.container-id }}
     steps:
     - name: Check out code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
 
     - name: Set up Go 1.x
       uses: actions/setup-go@v5
@@ -302,7 +302,7 @@ jobs:
       CONTAINER_ID: ${{ matrix.container-id }}
     steps:
     - name: Check out code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
 
     - name: Set up Go 1.x
       uses: actions/setup-go@v5
@@ -462,7 +462,7 @@ jobs:
       CONTAINER_ID: ${{ matrix.container-id }}
     steps:
     - name: Check out code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
 
     - name: Set up Go 1.x
       uses: actions/setup-go@v5
@@ -618,7 +618,7 @@ jobs:
       CONTAINER_ID: ${{ matrix.container-id }}
     steps:
     - name: Check out code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
 
     - name: Set up Go 1.x
       uses: actions/setup-go@v5
@@ -783,7 +783,7 @@ jobs:
       id: go
 
     - name: Check out code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
 
     - name: Setup Protocol Container Environment
       run: |
