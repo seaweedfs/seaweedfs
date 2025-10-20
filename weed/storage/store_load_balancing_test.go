@@ -13,6 +13,43 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
+// newTestStore creates a test store with the specified number of directories
+func newTestStore(t *testing.T, numDirs int) *Store {
+	tempDir := t.TempDir()
+
+	var dirs []string
+	var maxCounts []int32
+	var minFreeSpaces []util.MinFreeSpace
+	var diskTypes []types.DiskType
+
+	for i := 0; i < numDirs; i++ {
+		dir := filepath.Join(tempDir, "dir"+strconv.Itoa(i))
+		os.MkdirAll(dir, 0755)
+		dirs = append(dirs, dir)
+		maxCounts = append(maxCounts, 100) // high limit
+		minFreeSpaces = append(minFreeSpaces, util.MinFreeSpace{})
+		diskTypes = append(diskTypes, types.HardDriveType)
+	}
+
+	store := NewStore(nil, "localhost", 8080, 18080, "http://localhost:8080",
+		dirs, maxCounts, minFreeSpaces, "", NeedleMapInMemory, diskTypes, 3)
+
+	// Consume channel messages to prevent blocking
+	done := make(chan bool)
+	go func() {
+		for {
+			select {
+			case <-store.NewVolumesChan:
+			case <-done:
+				return
+			}
+		}
+	}()
+	t.Cleanup(func() { close(done) })
+
+	return store
+}
+
 func TestLocalVolumesLen(t *testing.T) {
 	testCases := []struct {
 		name               string
@@ -111,7 +148,12 @@ func TestVolumeLoadBalancing(t *testing.T) {
 				{localVolumes: 5, remoteVolumes: 0},  // 5 local
 				{localVolumes: 3, remoteVolumes: 0},  // 3 local
 			},
-			expectedLocations: []int{0, 0, 0}, // goes to location 0 (2 local, ignoring 10 remote)
+			// expectedLocations: []int{0, 0, 2}
+			// Explanation:
+			// 1. Initial local counts: [2, 5, 3]. First volume goes to location 0 (2 local, ignoring 10 remote).
+			// 2. New local counts: [3, 5, 3]. Second volume goes to location 0 (first with min count 3).
+			// 3. New local counts: [4, 5, 3]. Third volume goes to location 2 (3 local < 4 local).
+			expectedLocations: []int{0, 0, 2},
 		},
 		{
 			name: "balances when some locations have remote volumes",
@@ -120,45 +162,19 @@ func TestVolumeLoadBalancing(t *testing.T) {
 				{localVolumes: 1, remoteVolumes: 0},
 				{localVolumes: 0, remoteVolumes: 3},
 			},
-			expectedLocations: []int{2, 0, 1}, // 2(0 local), 0(1 local), 1(1 local)
+			// expectedLocations: []int{2, 0, 1}
+			// Explanation:
+			// 1. Initial local counts: [1, 1, 0]. First volume goes to location 2 (0 local).
+			// 2. New local counts: [1, 1, 1]. Second volume goes to location 0 (first with min count 1).
+			// 3. New local counts: [2, 1, 1]. Third volume goes to location 1 (next with min count 1).
+			expectedLocations: []int{2, 0, 1},
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Create temporary directories
-			tempDir := t.TempDir()
-
-			// Setup store with multiple locations
-			var dirs []string
-			var maxCounts []int32
-			var minFreeSpaces []util.MinFreeSpace
-			var diskTypes []types.DiskType
-
-			for i := range tc.locations {
-				dir := filepath.Join(tempDir, "dir"+string(rune('0'+i)))
-				os.MkdirAll(dir, 0755)
-				dirs = append(dirs, dir)
-				maxCounts = append(maxCounts, 100) // high limit
-				minFreeSpaces = append(minFreeSpaces, util.MinFreeSpace{})
-				diskTypes = append(diskTypes, types.HardDriveType)
-			}
-
-			store := NewStore(nil, "localhost", 8080, 18080, "http://localhost:8080",
-				dirs, maxCounts, minFreeSpaces, "", NeedleMapInMemory, diskTypes, 3)
-
-			// Consume channel messages to prevent blocking
-			done := make(chan bool)
-			go func() {
-				for {
-					select {
-					case <-store.NewVolumesChan:
-					case <-done:
-						return
-					}
-				}
-			}()
-			defer func() { close(done) }()
+			// Create test store with multiple directories
+			store := newTestStore(t, len(tc.locations))
 
 			// Pre-populate locations with volumes
 			for locIdx, setup := range tc.locations {

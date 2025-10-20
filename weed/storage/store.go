@@ -168,7 +168,7 @@ func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind 
 	// Find location with lowest local volume count (load balancing)
 	var location *DiskLocation
 	var diskId uint32
-	var minVolCount int = -1
+	var minVolCount int
 	for i, loc := range s.Locations {
 		if loc.DiskType == diskType && s.hasFreeDiskLocation(loc) {
 			volCount := loc.LocalVolumesLen()

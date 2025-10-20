@@ -1,51 +1,16 @@
 package storage
 
 import (
-	"os"
-	"path/filepath"
-	"strconv"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // TestLoadBalancingDistribution tests that volumes are evenly distributed
 func TestLoadBalancingDistribution(t *testing.T) {
-	// Create temporary directories
-	tempDir := t.TempDir()
-
-	var dirs []string
-	var maxCounts []int32
-	var minFreeSpaces []util.MinFreeSpace
-	var diskTypes []types.DiskType
-
-	numDirs := 3
-	for i := 0; i < numDirs; i++ {
-		dir := filepath.Join(tempDir, "dir"+strconv.Itoa(i))
-		os.MkdirAll(dir, 0755)
-		dirs = append(dirs, dir)
-		maxCounts = append(maxCounts, 100) // high limit
-		minFreeSpaces = append(minFreeSpaces, util.MinFreeSpace{})
-		diskTypes = append(diskTypes, types.HardDriveType)
-	}
-
-	store := NewStore(nil, "localhost", 8080, 18080, "http://localhost:8080",
-		dirs, maxCounts, minFreeSpaces, "", NeedleMapInMemory, diskTypes, 3)
-
-	// Consume channel messages to prevent blocking
-	done := make(chan bool)
-	go func() {
-		for {
-			select {
-			case <-store.NewVolumesChan:
-			case <-done:
-				return
-			}
-		}
-	}()
-	defer func() { close(done) }()
+	// Create test store with 3 directories
+	store := newTestStore(t, 3)
 
 	// Create 9 volumes and verify they're evenly distributed
 	volumesToCreate := 9
