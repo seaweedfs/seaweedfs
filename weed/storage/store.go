@@ -165,14 +165,18 @@ func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind 
 		return fmt.Errorf("Volume Id %d already exists!", vid)
 	}
 
-	// Find location and its index
+	// Find location with lowest local volume count (load balancing)
 	var location *DiskLocation
 	var diskId uint32
+	var minVolCount int
 	for i, loc := range s.Locations {
 		if loc.DiskType == diskType && s.hasFreeDiskLocation(loc) {
-			location = loc
-			diskId = uint32(i)
-			break
+			volCount := loc.LocalVolumesLen()
+			if location == nil || volCount < minVolCount {
+				location = loc
+				diskId = uint32(i)
+				minVolCount = volCount
+			}
 		}
 	}
 
