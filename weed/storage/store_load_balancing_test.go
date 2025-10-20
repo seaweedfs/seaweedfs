@@ -3,6 +3,7 @@ package storage
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
@@ -231,7 +232,7 @@ func createTestVolume(vid needle.VolumeId, isRemote bool) *Volume {
 	if isRemote {
 		vol.hasRemoteFile = true
 		vol.volumeInfo.Files = []*volume_server_pb.RemoteFile{
-			{BackendType: "s3", BackendId: "test", Key: "remote-key-" + string(rune(vid))},
+			{BackendType: "s3", BackendId: "test", Key: "remote-key-" + strconv.Itoa(int(vid))},
 		}
 	}
 

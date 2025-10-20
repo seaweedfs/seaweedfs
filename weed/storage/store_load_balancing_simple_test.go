@@ -3,6 +3,7 @@ package storage
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -22,7 +23,7 @@ func TestLoadBalancingDistribution(t *testing.T) {
 
 	numDirs := 3
 	for i := 0; i < numDirs; i++ {
-		dir := filepath.Join(tempDir, "dir"+string(rune('0'+i)))
+		dir := filepath.Join(tempDir, "dir"+strconv.Itoa(i))
 		os.MkdirAll(dir, 0755)
 		dirs = append(dirs, dir)
 		maxCounts = append(maxCounts, 100) // high limit
@@ -82,11 +83,4 @@ func TestLoadBalancingDistribution(t *testing.T) {
 			}
 		}
 	}
-}
-
-// TestLoadBalancingWithRemoteVolumes tests that remote volumes are ignored in load balancing
-func TestLoadBalancingWithRemoteVolumes(t *testing.T) {
-	// This is a unit test of LocalVolumesLen() which we already test above
-	// The integration test is complex due to file creation, so we'll keep it simple
-	t.Skip("Already tested by TestLocalVolumesLen")
 }
