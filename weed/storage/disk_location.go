@@ -386,6 +386,19 @@ func (l *DiskLocation) VolumesLen() int {
 	return len(l.volumes)
 }
 
+func (l *DiskLocation) LocalVolumesLen() int {
+	l.volumesLock.RLock()
+	defer l.volumesLock.RUnlock()
+
+	count := 0
+	for _, v := range l.volumes {
+		if !v.HasRemoteFile() {
+			count++
+		}
+	}
+	return count
+}
+
 func (l *DiskLocation) SetStopping() {
 	l.volumesLock.Lock()
 	for _, v := range l.volumes {

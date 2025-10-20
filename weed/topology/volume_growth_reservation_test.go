@@ -150,15 +150,17 @@ func TestVolumeGrowth_ConcurrentAllocationPreventsRaceCondition(t *testing.T) {
 				successCount.Add(1)
 				t.Logf("Request %d succeeded, got reservation", requestId)
 
-				// Release the reservation to simulate completion
+				// Simulate completion: increment volume count BEFORE releasing reservation
 				if reservation != nil {
-					reservation.releaseAllReservations()
-					// Simulate volume creation by incrementing count
+					// First, increment the volume count to reflect the created volume
 					disk := dn.children[NodeId(types.HardDriveType.String())].(*Disk)
 					deltaDiskUsage := &DiskUsageCounts{
 						volumeCount: 1,
 					}
 					disk.UpAdjustDiskUsageDelta(types.HardDriveType, deltaDiskUsage)
+
+					// Then release the reservation
+					reservation.releaseAllReservations()
 				}
 			}
 		}(i)
