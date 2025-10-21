@@ -802,6 +802,8 @@ github.com/cockroachdb/apd/v3 v3.1.0 h1:MK3Ow7LH0W8zkd5GMKA1PvS9qG3bWFI95WaVNfyZ
 github.com/cockroachdb/apd/v3 v3.1.0/go.mod h1:6qgPBMXjATAdD/VefbRP9NoSLKjbB4LCoA7gN4LpHs4=
 github.com/cockroachdb/cockroachdb-parser v0.25.2 h1:upbvXIfWpwjjXTxAXpGLqSsHmQN3ih+IG0TgOFKobgs=
 github.com/cockroachdb/cockroachdb-parser v0.25.2/go.mod h1:O3KI7hF30on+BZ65bdK5HigMfZP2G+g9F4xR6JAnzkA=
+github.com/cockroachdb/cockroachdb-parser v0.25.3-0.20250917200107-7bd0408a9e14 h1:NjB6qFRc0mQVovtNpI1InjfYxL1sTFkHm9RPeBScFnk=
+github.com/cockroachdb/cockroachdb-parser v0.25.3-0.20250917200107-7bd0408a9e14/go.mod h1:05bPnCvna+DIpL40lGRtgKTn8pAfu4ZiM9XhAEpJMQE=
 github.com/cockroachdb/errors v1.11.3 h1:5bA+k2Y6r+oz/6Z/RFlNeVCesGARKuC6YymtcDrbC/I=
 github.com/cockroachdb/errors v1.11.3/go.mod h1:m4UIW4CDjx+R5cybPsNrRbreomiFqt8o1h1wUVazSd8=
 github.com/cockroachdb/logtags v0.0.0-20241215232642-bb51bb14a506 h1:ASDL+UJcILMqgNeV5jiqR4j+sTuvQNHdf2chuKj1M5k=
