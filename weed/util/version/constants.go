@@ -8,7 +8,7 @@ import (
 
 var (
 	MAJOR_VERSION  = int32(3)
-	MINOR_VERSION  = int32(97)
+	MINOR_VERSION  = int32(98)
 	VERSION_NUMBER = fmt.Sprintf("%d.%02d", MAJOR_VERSION, MINOR_VERSION)
 	VERSION        = util.SizeLimit + " " + VERSION_NUMBER
 	COMMIT         = ""
