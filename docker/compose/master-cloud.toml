@@ -13,7 +13,7 @@ scripts = """
   ec.rebuild -force
   ec.balance -force
   volume.balance -force
-  volume.fix.replication
+  volume.fix.replication -force
   unlock
 """
 sleep_minutes = 17          # sleep minutes between each script execution
