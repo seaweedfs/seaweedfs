@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/cockroachdb/cockroachdb-parser/pkg/sql/parser"
-	"github.com/cockroachdb/cockroachdb-parser/pkg/sql/sem/tree"
+	"github.com/seaweedfs/cockroachdb-parser/pkg/sql/parser"
+	"github.com/seaweedfs/cockroachdb-parser/pkg/sql/sem/tree"
 )
 
 // CockroachSQLParser wraps CockroachDB's PostgreSQL-compatible SQL parser for use in SeaweedFS
