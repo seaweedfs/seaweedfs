@@ -332,10 +332,7 @@ func handleOutgoing(
 		case msgCh <- msg:
 		case err := <-errCh:
 			glog.Errorf("Failed to send message to admin: %v", err)
-			select {
-			case cmds <- grpcCommand{action: ActionStreamError, data: err}:
-			default:
-			}
+			cmds <- grpcCommand{action: ActionStreamError, data: err}
 			return
 		case <-streamExit:
 			close(msgCh)
@@ -392,11 +389,8 @@ func handleIncoming(
 				glog.Errorf("RECEIVE ERROR: Worker %s failed to receive message from admin: %v", workerID, err)
 			}
 
-			// Report the failure as a command to the managerLoop (non-blocking)
-			select {
-			case cmds <- grpcCommand{action: ActionStreamError, data: err}:
-			default:
-			}
+			// Report the failure as a command to the managerLoop (blocking)
+			cmds <- grpcCommand{action: ActionStreamError, data: err}
 
 			// Exit the main handler loop
 			glog.V(1).Infof("INCOMING HANDLER STOPPED: Worker %s stopping incoming handler due to stream error", workerID)
