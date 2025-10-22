@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -191,11 +192,18 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	var routers []*mux.Router
 	if s3a.option.DomainName != "" {
 		domainNames := strings.Split(s3a.option.DomainName, ",")
+		var virtualHostNames []string
 		for _, domainName := range domainNames {
+			if strings.Contains(domainName, ".") &&
+				slices.Contains(domainNames, strings.SplitN(domainName, ".", 2)[1]) {
+				routers = append(routers, apiRouter.Host(domainName).PathPrefix("/{bucket}").Subrouter())
+			} else {
+				virtualHostNames = append(virtualHostNames, domainName)
+			}
+		}
+		for _, virtualHost := range virtualHostNames {
 			routers = append(routers, apiRouter.Host(
-				fmt.Sprintf("%s.%s:%d", "{bucket:.+}", domainName, s3a.option.Port)).Subrouter())
-			routers = append(routers, apiRouter.Host(
-				fmt.Sprintf("%s.%s", "{bucket:.+}", domainName)).Subrouter())
+				fmt.Sprintf("%s.%s", "{bucket:.+}", virtualHost)).Subrouter())
 		}
 	}
 	routers = append(routers, apiRouter.PathPrefix("/{bucket}").Subrouter())
