@@ -10,6 +10,7 @@ import (
 	"io"
 	mathrand "math/rand"
 	"net/http"
+	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -193,6 +194,7 @@ func DeserializeSSES3Metadata(data []byte, keyManager *SSES3KeyManager) (*SSES3K
 // SSES3KeyManager manages SSE-S3 encryption keys
 type SSES3KeyManager struct {
 	// In a production system, this would interface with a secure key management system
+	mu   sync.RWMutex
 	keys map[string]*SSES3Key
 }
 
@@ -210,12 +212,23 @@ func (km *SSES3KeyManager) GetOrCreateKey(keyID string) (*SSES3Key, error) {
 		return GenerateSSES3Key()
 	}
 
-	// Check if key exists
+	// Check if key exists (read lock)
+	km.mu.RLock()
+	if key, exists := km.keys[keyID]; exists {
+		km.mu.RUnlock()
+		return key, nil
+	}
+	km.mu.RUnlock()
+
+	// Create new key (write lock)
+	km.mu.Lock()
+	defer km.mu.Unlock()
+
+	// Double-check in case another goroutine created it
 	if key, exists := km.keys[keyID]; exists {
 		return key, nil
 	}
 
-	// Create new key
 	key, err := GenerateSSES3Key()
 	if err != nil {
 		return nil, err
@@ -229,11 +242,15 @@ func (km *SSES3KeyManager) GetOrCreateKey(keyID string) (*SSES3Key, error) {
 
 // StoreKey stores a key in the manager
 func (km *SSES3KeyManager) StoreKey(key *SSES3Key) {
+	km.mu.Lock()
+	defer km.mu.Unlock()
 	km.keys[key.KeyID] = key
 }
 
 // GetKey retrieves a key by ID
 func (km *SSES3KeyManager) GetKey(keyID string) (*SSES3Key, bool) {
+	km.mu.RLock()
+	defer km.mu.RUnlock()
 	key, exists := km.keys[keyID]
 	return key, exists
 }
