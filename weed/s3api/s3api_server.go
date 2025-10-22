@@ -149,7 +149,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 
 	// Initialize the global SSE-S3 key manager with filer access
 	if err := InitializeGlobalSSES3KeyManager(s3ApiServer); err != nil {
-		glog.Warningf("Failed to initialize SSE-S3 key manager: %v. SSE-S3 may not work correctly.", err)
+		return nil, fmt.Errorf("failed to initialize SSE-S3 key manager: %w", err)
 	}
 
 	go s3ApiServer.subscribeMetaEvents("s3", startTsNs, filer.DirectoryEtcRoot, []string{option.BucketsPath})

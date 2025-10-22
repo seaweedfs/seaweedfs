@@ -8,10 +8,12 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	mathrand "math/rand"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -258,10 +260,18 @@ func (km *SSES3KeyManager) InitializeWithFiler(filerClient filer_pb.FilerClient)
 	
 	// Try to load existing KEK from filer
 	if err := km.loadSuperKeyFromFiler(); err != nil {
-		// If loading fails, generate a new KEK
-		glog.V(1).Infof("SSE-S3 KeyManager: Generating new KEK (could not load from filer %s: %v)", km.kekPath, err)
-		if err := km.generateAndSaveSuperKeyToFiler(); err != nil {
-			return fmt.Errorf("failed to generate and save SSE-S3 super key: %w", err)
+		// Only generate a new key if it does not exist.
+		// For other errors (e.g. connectivity), we should fail fast to prevent creating a new key
+		// and making existing data undecryptable.
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			glog.V(1).Infof("SSE-S3 KeyManager: KEK not found, generating new KEK (load from filer %s: %v)", km.kekPath, err)
+			if genErr := km.generateAndSaveSuperKeyToFiler(); genErr != nil {
+				return fmt.Errorf("failed to generate and save SSE-S3 super key: %w", genErr)
+			}
+		} else {
+			// A different error occurred (e.g., network issue, permission denied).
+			// Return the error to prevent starting with a broken state.
+			return fmt.Errorf("failed to load SSE-S3 super key from %s: %w", km.kekPath, err)
 		}
 	} else {
 		glog.V(1).Infof("SSE-S3 KeyManager: Loaded KEK from filer %s", km.kekPath)
@@ -322,8 +332,11 @@ func (km *SSES3KeyManager) generateAndSaveSuperKeyToFiler() error {
 		// Set appropriate permissions for the directory
 		entry.Attributes.FileMode = 0700
 	}); err != nil {
-		// Ignore error if directory already exists
-		glog.V(3).Infof("Parent directory %s might already exist: %v", SSES3KEKDirectory, err)
+		// Only ignore "file exists" errors.
+		if !strings.Contains(err.Error(), "file exists") {
+			return fmt.Errorf("failed to create KEK directory %s: %w", SSES3KEKDirectory, err)
+		}
+		glog.V(3).Infof("Parent directory %s already exists, continuing.", SSES3KEKDirectory)
 	}
 	
 	// Create the KEK file
