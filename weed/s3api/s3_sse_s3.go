@@ -227,12 +227,12 @@ type SSES3KeyManager struct {
 	mu        sync.RWMutex
 	superKey  []byte          // 256-bit master key (KEK - Key Encryption Key)
 	filerClient filer_pb.FilerClient // Filer client for KEK persistence
-	kekPath   string          // Path in filer where KEK is stored (e.g., /.seaweedfs/s3/kek)
+	kekPath   string          // Path in filer where KEK is stored (e.g., /etc/s3/kek)
 }
 
 const (
 	// KEK storage path in filer
-	defaultKEKPath = "/.seaweedfs/s3/kek"
+	defaultKEKPath = "/etc/s3/kek"
 )
 
 // NewSSES3KeyManager creates a new SSE-S3 key manager with envelope encryption
@@ -312,8 +312,8 @@ func (km *SSES3KeyManager) generateAndSaveSuperKeyToFiler() error {
 	
 	// Create the entry in filer
 	// First ensure the parent directory exists
-	parentDir := "/.seaweedfs/s3"
-	if err := filer_pb.Mkdir(context.Background(), km.filerClient, "/.seaweedfs", "s3", func(entry *filer_pb.Entry) {
+	parentDir := "/etc/s3"
+	if err := filer_pb.Mkdir(context.Background(), km.filerClient, "/etc", "s3", func(entry *filer_pb.Entry) {
 		// Set appropriate permissions for the directory
 		entry.Attributes.FileMode = 0700
 	}); err != nil {
