@@ -488,11 +488,35 @@ func (w *Worker) Stop() error {
 		action: ActionStop,
 		resp:   resp,
 	}
-	err := <-resp
+	if err := <-resp; err != nil {
+		return err
+	}
+
+	// Wait for tasks to finish
+	timeout := time.NewTimer(30 * time.Second)
+	defer timeout.Stop()
+	for w.getTaskLoad() > 0 {
+		select {
+		case <-timeout.C:
+			glog.Warningf("Worker %s stopping with %d tasks still running", w.id, w.getTaskLoad())
+			goto end_wait
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+end_wait:
+
+	// Disconnect from admin server
+	if adminClient := w.getAdmin(); adminClient != nil {
+		if err := adminClient.Disconnect(); err != nil {
+			glog.Errorf("Error disconnecting from admin server: %v", err)
+		}
+	}
+
 	w.closeOnce.Do(func() {
 		close(w.cmds)
 	})
-	return err
+	glog.Infof("Worker %s stopped", w.id)
+	return nil
 }
 
 // Stop stops the worker
@@ -513,28 +537,6 @@ func (w *Worker) handleStop(cmd workerCommand) {
 		w.state.requestTicker.Stop()
 	}
 
-	// Wait for current tasks to complete or timeout
-	timeout := time.NewTimer(30 * time.Second)
-	defer timeout.Stop()
-
-	for len(w.state.currentTasks) > 0 {
-		select {
-		case <-timeout.C:
-			glog.Warningf("Worker %s stopping with %d tasks still running", w.id, len(w.state.currentTasks))
-			break
-		case <-time.After(time.Second):
-			// Check again
-		}
-	}
-
-	// Disconnect from admin server
-	if w.state.adminClient != nil {
-		if err := w.state.adminClient.Disconnect(); err != nil {
-			glog.Errorf("Error disconnecting from admin server: %v", err)
-		}
-	}
-
-	glog.Infof("Worker %s stopped", w.id)
 	cmd.resp <- nil
 }
 
