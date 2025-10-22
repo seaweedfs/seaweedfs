@@ -13,6 +13,7 @@ import (
 	"io"
 	mathrand "math/rand"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 
@@ -226,10 +227,10 @@ func DeserializeSSES3Metadata(data []byte, keyManager *SSES3KeyManager) (*SSES3K
 // SSES3KeyManager manages SSE-S3 encryption keys using envelope encryption
 // Instead of storing keys in memory, it uses a super key (KEK) to encrypt/decrypt DEKs
 type SSES3KeyManager struct {
-	mu        sync.RWMutex
-	superKey  []byte          // 256-bit master key (KEK - Key Encryption Key)
+	mu          sync.RWMutex
+	superKey    []byte               // 256-bit master key (KEK - Key Encryption Key)
 	filerClient filer_pb.FilerClient // Filer client for KEK persistence
-	kekPath   string          // Path in filer where KEK is stored (e.g., /etc/s3/sse_kek)
+	kekPath     string               // Path in filer where KEK is stored (e.g., /etc/s3/sse_kek)
 }
 
 const (
@@ -238,7 +239,7 @@ const (
 	SSES3KEKParentDir = "/etc"
 	SSES3KEKDirName   = "s3"
 	SSES3KEKFileName  = "sse_kek"
-	
+
 	// Full KEK path in filer
 	defaultKEKPath = SSES3KEKDirectory + "/" + SSES3KEKFileName
 )
@@ -255,9 +256,9 @@ func NewSSES3KeyManager() *SSES3KeyManager {
 func (km *SSES3KeyManager) InitializeWithFiler(filerClient filer_pb.FilerClient) error {
 	km.mu.Lock()
 	defer km.mu.Unlock()
-	
+
 	km.filerClient = filerClient
-	
+
 	// Try to load existing KEK from filer
 	if err := km.loadSuperKeyFromFiler(); err != nil {
 		// Only generate a new key if it does not exist.
@@ -276,7 +277,7 @@ func (km *SSES3KeyManager) InitializeWithFiler(filerClient filer_pb.FilerClient)
 	} else {
 		glog.V(1).Infof("SSE-S3 KeyManager: Loaded KEK from filer %s", km.kekPath)
 	}
-	
+
 	return nil
 }
 
@@ -285,28 +286,28 @@ func (km *SSES3KeyManager) loadSuperKeyFromFiler() error {
 	if km.filerClient == nil {
 		return fmt.Errorf("filer client not initialized")
 	}
-	
+
 	// Get the entry from filer
 	entry, err := filer_pb.GetEntry(context.Background(), km.filerClient, util.FullPath(km.kekPath))
 	if err != nil {
 		return fmt.Errorf("failed to get KEK entry from filer: %w", err)
 	}
-	
+
 	// Read the content
 	if len(entry.Content) == 0 {
 		return fmt.Errorf("KEK entry is empty")
 	}
-	
+
 	// Decode hex-encoded key
 	key, err := hex.DecodeString(string(entry.Content))
 	if err != nil {
 		return fmt.Errorf("failed to decode KEK: %w", err)
 	}
-	
+
 	if len(key) != SSES3KeySize {
 		return fmt.Errorf("invalid KEK size: expected %d bytes, got %d", SSES3KeySize, len(key))
 	}
-	
+
 	km.superKey = key
 	return nil
 }
@@ -316,21 +317,21 @@ func (km *SSES3KeyManager) generateAndSaveSuperKeyToFiler() error {
 	if km.filerClient == nil {
 		return fmt.Errorf("filer client not initialized")
 	}
-	
+
 	// Generate a random 256-bit super key (KEK)
 	superKey := make([]byte, SSES3KeySize)
 	if _, err := io.ReadFull(rand.Reader, superKey); err != nil {
 		return fmt.Errorf("failed to generate KEK: %w", err)
 	}
-	
+
 	// Encode as hex for storage
 	encodedKey := []byte(hex.EncodeToString(superKey))
-	
+
 	// Create the entry in filer
 	// First ensure the parent directory exists
 	if err := filer_pb.Mkdir(context.Background(), km.filerClient, SSES3KEKParentDir, SSES3KEKDirName, func(entry *filer_pb.Entry) {
 		// Set appropriate permissions for the directory
-		entry.Attributes.FileMode = 0700
+		entry.Attributes.FileMode = uint32(0700 | os.ModeDir)
 	}); err != nil {
 		// Only ignore "file exists" errors.
 		if !strings.Contains(err.Error(), "file exists") {
@@ -338,7 +339,7 @@ func (km *SSES3KeyManager) generateAndSaveSuperKeyToFiler() error {
 		}
 		glog.V(3).Infof("Parent directory %s already exists, continuing.", SSES3KEKDirectory)
 	}
-	
+
 	// Create the KEK file
 	if err := filer_pb.MkFile(context.Background(), km.filerClient, SSES3KEKDirectory, SSES3KEKFileName, nil, func(entry *filer_pb.Entry) {
 		entry.Content = encodedKey
@@ -347,7 +348,7 @@ func (km *SSES3KeyManager) generateAndSaveSuperKeyToFiler() error {
 	}); err != nil {
 		return fmt.Errorf("failed to create KEK file in filer: %w", err)
 	}
-	
+
 	km.superKey = superKey
 	glog.Infof("SSE-S3 KeyManager: Generated and saved new KEK to filer %s", km.kekPath)
 	return nil
@@ -364,26 +365,26 @@ func (km *SSES3KeyManager) GetOrCreateKey(keyID string) (*SSES3Key, error) {
 func (km *SSES3KeyManager) encryptKeyWithSuperKey(dek []byte) ([]byte, []byte, error) {
 	km.mu.RLock()
 	defer km.mu.RUnlock()
-	
+
 	block, err := aes.NewCipher(km.superKey)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create cipher: %w", err)
 	}
-	
+
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create GCM: %w", err)
 	}
-	
+
 	// Generate random nonce
 	nonce := make([]byte, gcm.NonceSize())
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return nil, nil, fmt.Errorf("failed to generate nonce: %w", err)
 	}
-	
+
 	// Encrypt the DEK
 	encryptedDEK := gcm.Seal(nil, nonce, dek, nil)
-	
+
 	return encryptedDEK, nonce, nil
 }
 
@@ -391,27 +392,27 @@ func (km *SSES3KeyManager) encryptKeyWithSuperKey(dek []byte) ([]byte, []byte, e
 func (km *SSES3KeyManager) decryptKeyWithSuperKey(encryptedDEK, nonce []byte) ([]byte, error) {
 	km.mu.RLock()
 	defer km.mu.RUnlock()
-	
+
 	block, err := aes.NewCipher(km.superKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create cipher: %w", err)
 	}
-	
+
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GCM: %w", err)
 	}
-	
+
 	if len(nonce) != gcm.NonceSize() {
 		return nil, fmt.Errorf("invalid nonce size: expected %d, got %d", gcm.NonceSize(), len(nonce))
 	}
-	
+
 	// Decrypt the DEK
 	dek, err := gcm.Open(nil, nonce, encryptedDEK, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
 	}
-	
+
 	return dek, nil
 }
 
