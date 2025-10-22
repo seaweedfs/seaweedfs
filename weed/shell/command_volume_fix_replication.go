@@ -45,8 +45,8 @@ func (c *commandVolumeFixReplication) Help() string {
 	This command also finds all under-replicated volumes, and finds volume servers with free slots.
 	If the free slots satisfy the replication requirement, the volume content is copied over and mounted.
 
-	volume.fix.replication -n                             # do not take action
-	volume.fix.replication                                # actually deleting or copying the volume files and mount the volume
+	volume.fix.replication                                # do not take action
+	volume.fix.replication -force                         # actually deleting or copying the volume files and mount the volume
 	volume.fix.replication -collectionPattern=important*  # fix any collections with prefix "important"
 
 	Note:
