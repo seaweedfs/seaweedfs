@@ -307,21 +307,33 @@ func handleOutgoing(
 	outgoing <-chan *worker_pb.WorkerMessage,
 	cmds chan<- grpcCommand) {
 
-	for {
-		select {
-		case msg, ok := <-outgoing:
-			if !ok {
-				return
-			}
+	msgCh := make(chan *worker_pb.WorkerMessage)
+	errCh := make(chan error, 1) // Buffered to prevent blocking if the manager is busy
+	// Goroutine to handle blocking stream.Recv() and simultaneously handle exit
+	// signals
+	go func() {
+		for msg := range msgCh {
 			if err := stream.Send(msg); err != nil {
-				glog.Errorf("Failed to send message to admin: %v", err)
-				select {
-				case cmds <- grpcCommand{action: ActionStreamError, data: err}:
-				default:
-				}
-				return
+				errCh <- err
+				return // Exit the receiver goroutine on error/EOF
 			}
+		}
+		close(errCh)
+	}()
+
+	for msg := range outgoing {
+		select {
+		case msgCh <- msg:
+		case err := <-errCh:
+			glog.Errorf("Failed to send message to admin: %v", err)
+			select {
+			case cmds <- grpcCommand{action: ActionStreamError, data: err}:
+			default:
+			}
+			return
 		case <-streamExit:
+			close(msgCh)
+			<-errCh
 			return
 		}
 	}
