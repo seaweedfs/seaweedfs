@@ -1,10 +1,12 @@
 package s3api
 
 import (
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,7 +15,9 @@ import (
 	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // SSE-S3 uses AES-256 encryption with server-managed keys
@@ -221,21 +225,114 @@ func DeserializeSSES3Metadata(data []byte, keyManager *SSES3KeyManager) (*SSES3K
 // Instead of storing keys in memory, it uses a super key (KEK) to encrypt/decrypt DEKs
 type SSES3KeyManager struct {
 	mu        sync.RWMutex
-	superKey  []byte // 256-bit master key (KEK - Key Encryption Key)
+	superKey  []byte          // 256-bit master key (KEK - Key Encryption Key)
+	filerClient filer_pb.FilerClient // Filer client for KEK persistence
+	kekPath   string          // Path in filer where KEK is stored (e.g., /.seaweedfs/s3/kek)
 }
+
+const (
+	// KEK storage path in filer
+	defaultKEKPath = "/.seaweedfs/s3/kek"
+)
 
 // NewSSES3KeyManager creates a new SSE-S3 key manager with envelope encryption
 func NewSSES3KeyManager() *SSES3KeyManager {
+	// This will be initialized properly when attached to an S3ApiServer
+	return &SSES3KeyManager{
+		kekPath: defaultKEKPath,
+	}
+}
+
+// InitializeWithFiler initializes the key manager with a filer client
+func (km *SSES3KeyManager) InitializeWithFiler(filerClient filer_pb.FilerClient) error {
+	km.mu.Lock()
+	defer km.mu.Unlock()
+	
+	km.filerClient = filerClient
+	
+	// Try to load existing KEK from filer
+	if err := km.loadSuperKeyFromFiler(); err != nil {
+		// If loading fails, generate a new KEK
+		glog.V(1).Infof("SSE-S3 KeyManager: Generating new KEK (could not load from filer %s: %v)", km.kekPath, err)
+		if err := km.generateAndSaveSuperKeyToFiler(); err != nil {
+			return fmt.Errorf("failed to generate and save SSE-S3 super key: %w", err)
+		}
+	} else {
+		glog.V(1).Infof("SSE-S3 KeyManager: Loaded KEK from filer %s", km.kekPath)
+	}
+	
+	return nil
+}
+
+// loadSuperKeyFromFiler loads the KEK from the filer
+func (km *SSES3KeyManager) loadSuperKeyFromFiler() error {
+	if km.filerClient == nil {
+		return fmt.Errorf("filer client not initialized")
+	}
+	
+	// Get the entry from filer
+	entry, err := filer_pb.GetEntry(context.Background(), km.filerClient, util.FullPath(km.kekPath))
+	if err != nil {
+		return fmt.Errorf("failed to get KEK entry from filer: %w", err)
+	}
+	
+	// Read the content
+	if len(entry.Content) == 0 {
+		return fmt.Errorf("KEK entry is empty")
+	}
+	
+	// Decode hex-encoded key
+	key, err := hex.DecodeString(string(entry.Content))
+	if err != nil {
+		return fmt.Errorf("failed to decode KEK: %w", err)
+	}
+	
+	if len(key) != SSES3KeySize {
+		return fmt.Errorf("invalid KEK size: expected %d bytes, got %d", SSES3KeySize, len(key))
+	}
+	
+	km.superKey = key
+	return nil
+}
+
+// generateAndSaveSuperKeyToFiler generates a new KEK and saves it to the filer
+func (km *SSES3KeyManager) generateAndSaveSuperKeyToFiler() error {
+	if km.filerClient == nil {
+		return fmt.Errorf("filer client not initialized")
+	}
+	
 	// Generate a random 256-bit super key (KEK)
 	superKey := make([]byte, SSES3KeySize)
 	if _, err := io.ReadFull(rand.Reader, superKey); err != nil {
-		glog.Fatalf("Failed to generate SSE-S3 super key: %v", err)
+		return fmt.Errorf("failed to generate KEK: %w", err)
 	}
 	
-	glog.V(1).Infof("SSE-S3 KeyManager: Initialized with envelope encryption (super key generated)")
-	return &SSES3KeyManager{
-		superKey: superKey,
+	// Encode as hex for storage
+	encodedKey := []byte(hex.EncodeToString(superKey))
+	
+	// Create the entry in filer
+	// First ensure the parent directory exists
+	parentDir := "/.seaweedfs/s3"
+	if err := filer_pb.Mkdir(context.Background(), km.filerClient, "/.seaweedfs", "s3", func(entry *filer_pb.Entry) {
+		// Set appropriate permissions for the directory
+		entry.Attributes.FileMode = 0700
+	}); err != nil {
+		// Ignore error if directory already exists
+		glog.V(3).Infof("Parent directory %s might already exist: %v", parentDir, err)
 	}
+	
+	// Create the KEK file
+	if err := filer_pb.MkFile(context.Background(), km.filerClient, parentDir, "kek", nil, func(entry *filer_pb.Entry) {
+		entry.Content = encodedKey
+		entry.Attributes.FileMode = 0600 // Read/write for owner only
+		entry.Attributes.FileSize = uint64(len(encodedKey))
+	}); err != nil {
+		return fmt.Errorf("failed to create KEK file in filer: %w", err)
+	}
+	
+	km.superKey = superKey
+	glog.Infof("SSE-S3 KeyManager: Generated and saved new KEK to filer %s", km.kekPath)
+	return nil
 }
 
 // GetOrCreateKey gets an existing key or creates a new one
@@ -321,6 +418,11 @@ var globalSSES3KeyManager = NewSSES3KeyManager()
 // GetSSES3KeyManager returns the global SSE-S3 key manager
 func GetSSES3KeyManager() *SSES3KeyManager {
 	return globalSSES3KeyManager
+}
+
+// InitializeGlobalSSES3KeyManager initializes the global key manager with filer access
+func InitializeGlobalSSES3KeyManager(s3ApiServer *S3ApiServer) error {
+	return globalSSES3KeyManager.InitializeWithFiler(s3ApiServer)
 }
 
 // ProcessSSES3Request processes an SSE-S3 request and returns encryption metadata
