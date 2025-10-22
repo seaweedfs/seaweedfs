@@ -37,15 +37,14 @@ type GrpcAdminClient struct {
 type grpcAction string
 
 const (
-	ActionConnect           grpcAction = "connect"
-	ActionDisconnect        grpcAction = "disconnect"
-	ActionReconnect         grpcAction = "reconnect"
-	ActionStreamError       grpcAction = "stream_error"
-	ActionRegisterWorker    grpcAction = "register_worker"
-	ActionQueryReconnecting grpcAction = "query_reconnecting"
-	ActionQueryConnected    grpcAction = "query_connected"
-	ActionQueryShouldReconnect    grpcAction = "query_shouldreconnect"
-
+	ActionConnect              grpcAction = "connect"
+	ActionDisconnect           grpcAction = "disconnect"
+	ActionReconnect            grpcAction = "reconnect"
+	ActionStreamError          grpcAction = "stream_error"
+	ActionRegisterWorker       grpcAction = "register_worker"
+	ActionQueryReconnecting    grpcAction = "query_reconnecting"
+	ActionQueryConnected       grpcAction = "query_connected"
+	ActionQueryShouldReconnect grpcAction = "query_shouldreconnect"
 )
 
 type registrationRequest struct {
@@ -409,20 +408,14 @@ func (c *GrpcAdminClient) handleDisconnect(cmd grpcCommand, s *grpcState) {
 		return
 	}
 
-	s.connected = false
-	s.shouldReconnect = false
-
 	// Send shutdown signal to stop reconnection loop
-	select {
-	case s.reconnectStop <- struct{}{}:
-	default:
-	}
+	close(s.reconnectStop)
 
 	// Send shutdown signal to stop handlers loop
-	select {
-	case s.streamExit <- struct{}{}:
-	default:
-	}
+	close(s.streamExit)
+
+	s.connected = false
+	s.shouldReconnect = false
 
 	// Send shutdown message
 	shutdownMsg := &worker_pb.WorkerMessage{
@@ -571,6 +564,8 @@ func (c *GrpcAdminClient) sendRegistrationSync(worker *types.WorkerData, stream 
 				return
 			}
 			// Continue waiting if it's not a registration response
+			// If stream is stuck, reconnect() will kill it, cleaning up this
+			// goroutine
 		}
 	}()
 
