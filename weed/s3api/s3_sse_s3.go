@@ -234,10 +234,10 @@ type SSES3KeyManager struct {
 
 const (
 	// KEK storage directory and file name in filer
-	SSES3KEKDirectory = "/etc/seaweedfs"
+	SSES3KEKDirectory = "/etc/s3"
 	SSES3KEKParentDir = "/etc"
-	SSES3KEKDirName   = "seaweedfs"
-	SSES3KEKFileName  = "s3_sse_kek"
+	SSES3KEKDirName   = "s3"
+	SSES3KEKFileName  = "sse_kek"
 	
 	// Full KEK path in filer
 	defaultKEKPath = SSES3KEKDirectory + "/" + SSES3KEKFileName
