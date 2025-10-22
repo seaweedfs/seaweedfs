@@ -729,12 +729,13 @@ func (w *Worker) completeTask(taskID string, success bool, errorMsg string) {
 // heartbeatLoop sends periodic heartbeats to the admin server
 func (w *Worker) heartbeatLoop() {
 	defer w.setHbTick(time.NewTicker(w.config.HeartbeatInterval)).Stop()
+	ticker := w.getHbTick()
 	stopChan := w.getStopChan()
 	for {
 		select {
 		case <-stopChan:
 			return
-		case <-w.getHbTick().C:
+		case <-ticker.C:
 			w.sendHeartbeat()
 		}
 	}
@@ -743,12 +744,13 @@ func (w *Worker) heartbeatLoop() {
 // taskRequestLoop periodically requests new tasks from the admin server
 func (w *Worker) taskRequestLoop() {
 	defer w.setReqTick(time.NewTicker(w.config.TaskRequestInterval)).Stop()
+	ticker := w.getReqTick()
 	stopChan := w.getStopChan()
 	for {
 		select {
 		case <-stopChan:
 			return
-		case <-w.getReqTick().C:
+		case <-ticker.C:
 			w.requestTasks()
 		}
 	}
