@@ -231,8 +231,14 @@ type SSES3KeyManager struct {
 }
 
 const (
-	// KEK storage path in filer
-	defaultKEKPath = "/etc/s3/sse_kek"
+	// KEK storage directory and file name in filer
+	SSES3KEKDirectory = "/etc/s3"
+	SSES3KEKParentDir = "/etc"
+	SSES3KEKDirName   = "s3"
+	SSES3KEKFileName  = "sse_kek"
+	
+	// Full KEK path in filer
+	defaultKEKPath = SSES3KEKDirectory + "/" + SSES3KEKFileName
 )
 
 // NewSSES3KeyManager creates a new SSE-S3 key manager with envelope encryption
@@ -312,17 +318,16 @@ func (km *SSES3KeyManager) generateAndSaveSuperKeyToFiler() error {
 	
 	// Create the entry in filer
 	// First ensure the parent directory exists
-	parentDir := "/etc/s3"
-	if err := filer_pb.Mkdir(context.Background(), km.filerClient, "/etc", "s3", func(entry *filer_pb.Entry) {
+	if err := filer_pb.Mkdir(context.Background(), km.filerClient, SSES3KEKParentDir, SSES3KEKDirName, func(entry *filer_pb.Entry) {
 		// Set appropriate permissions for the directory
 		entry.Attributes.FileMode = 0700
 	}); err != nil {
 		// Ignore error if directory already exists
-		glog.V(3).Infof("Parent directory %s might already exist: %v", parentDir, err)
+		glog.V(3).Infof("Parent directory %s might already exist: %v", SSES3KEKDirectory, err)
 	}
 	
 	// Create the KEK file
-	if err := filer_pb.MkFile(context.Background(), km.filerClient, parentDir, "sse_kek", nil, func(entry *filer_pb.Entry) {
+	if err := filer_pb.MkFile(context.Background(), km.filerClient, SSES3KEKDirectory, SSES3KEKFileName, nil, func(entry *filer_pb.Entry) {
 		entry.Content = encodedKey
 		entry.Attributes.FileMode = 0600 // Read/write for owner only
 		entry.Attributes.FileSize = uint64(len(encodedKey))
