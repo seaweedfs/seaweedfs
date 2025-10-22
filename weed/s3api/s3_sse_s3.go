@@ -113,19 +113,24 @@ func GetSSES3Headers() map[string]string {
 	}
 }
 
-// SerializeSSES3Metadata serializes SSE-S3 metadata for storage
+// SerializeSSES3Metadata serializes SSE-S3 metadata for storage using envelope encryption
 func SerializeSSES3Metadata(key *SSES3Key) ([]byte, error) {
 	if err := ValidateSSES3Key(key); err != nil {
 		return nil, err
 	}
 
-	// For SSE-S3, we typically don't store the actual key in metadata
-	// Instead, we store a key ID or reference that can be used to retrieve the key
-	// from a secure key management system
+	// Encrypt the DEK using the global key manager's super key
+	keyManager := GetSSES3KeyManager()
+	encryptedDEK, nonce, err := keyManager.encryptKeyWithSuperKey(key.Key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encrypt DEK: %w", err)
+	}
 
 	metadata := map[string]string{
-		"algorithm": key.Algorithm,
-		"keyId":     key.KeyID,
+		"algorithm":    key.Algorithm,
+		"keyId":        key.KeyID,
+		"encryptedDEK": base64.StdEncoding.EncodeToString(encryptedDEK),
+		"nonce":        base64.StdEncoding.EncodeToString(nonce),
 	}
 
 	// Include IV if present (needed for chunk-level decryption)
@@ -142,13 +147,13 @@ func SerializeSSES3Metadata(key *SSES3Key) ([]byte, error) {
 	return data, nil
 }
 
-// DeserializeSSES3Metadata deserializes SSE-S3 metadata from storage and retrieves the actual key
+// DeserializeSSES3Metadata deserializes SSE-S3 metadata from storage and decrypts the DEK
 func DeserializeSSES3Metadata(data []byte, keyManager *SSES3KeyManager) (*SSES3Key, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("empty SSE-S3 metadata")
 	}
 
-	// Parse the JSON metadata to extract keyId
+	// Parse the JSON metadata
 	var metadata map[string]string
 	if err := json.Unmarshal(data, &metadata); err != nil {
 		return nil, fmt.Errorf("failed to parse SSE-S3 metadata: %w", err)
@@ -164,19 +169,40 @@ func DeserializeSSES3Metadata(data []byte, keyManager *SSES3KeyManager) (*SSES3K
 		algorithm = s3_constants.SSEAlgorithmAES256 // Default algorithm
 	}
 
-	// Retrieve the actual key using the keyId
+	// Decode the encrypted DEK and nonce
+	encryptedDEKStr, exists := metadata["encryptedDEK"]
+	if !exists {
+		return nil, fmt.Errorf("encryptedDEK not found in SSE-S3 metadata")
+	}
+	encryptedDEK, err := base64.StdEncoding.DecodeString(encryptedDEKStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode encrypted DEK: %w", err)
+	}
+
+	nonceStr, exists := metadata["nonce"]
+	if !exists {
+		return nil, fmt.Errorf("nonce not found in SSE-S3 metadata")
+	}
+	nonce, err := base64.StdEncoding.DecodeString(nonceStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode nonce: %w", err)
+	}
+
+	// Decrypt the DEK using the key manager
 	if keyManager == nil {
 		return nil, fmt.Errorf("key manager is required for SSE-S3 key retrieval")
 	}
 
-	key, err := keyManager.GetOrCreateKey(keyID)
+	dekBytes, err := keyManager.decryptKeyWithSuperKey(encryptedDEK, nonce)
 	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve SSE-S3 key with ID %s: %w", keyID, err)
+		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
 	}
 
-	// Verify the algorithm matches
-	if key.Algorithm != algorithm {
-		return nil, fmt.Errorf("algorithm mismatch: expected %s, got %s", algorithm, key.Algorithm)
+	// Reconstruct the key
+	key := &SSES3Key{
+		Key:       dekBytes,
+		KeyID:     keyID,
+		Algorithm: algorithm,
 	}
 
 	// Restore IV if present in metadata (for chunk-level decryption)
@@ -191,68 +217,102 @@ func DeserializeSSES3Metadata(data []byte, keyManager *SSES3KeyManager) (*SSES3K
 	return key, nil
 }
 
-// SSES3KeyManager manages SSE-S3 encryption keys
+// SSES3KeyManager manages SSE-S3 encryption keys using envelope encryption
+// Instead of storing keys in memory, it uses a super key (KEK) to encrypt/decrypt DEKs
 type SSES3KeyManager struct {
-	// In a production system, this would interface with a secure key management system
-	mu   sync.RWMutex
-	keys map[string]*SSES3Key
+	mu        sync.RWMutex
+	superKey  []byte // 256-bit master key (KEK - Key Encryption Key)
 }
 
-// NewSSES3KeyManager creates a new SSE-S3 key manager
+// NewSSES3KeyManager creates a new SSE-S3 key manager with envelope encryption
 func NewSSES3KeyManager() *SSES3KeyManager {
+	// Generate a random 256-bit super key (KEK)
+	superKey := make([]byte, SSES3KeySize)
+	if _, err := io.ReadFull(rand.Reader, superKey); err != nil {
+		glog.Fatalf("Failed to generate SSE-S3 super key: %v", err)
+	}
+	
+	glog.V(1).Infof("SSE-S3 KeyManager: Initialized with envelope encryption (super key generated)")
 	return &SSES3KeyManager{
-		keys: make(map[string]*SSES3Key),
+		superKey: superKey,
 	}
 }
 
 // GetOrCreateKey gets an existing key or creates a new one
+// With envelope encryption, we always generate a new DEK since we don't store them
 func (km *SSES3KeyManager) GetOrCreateKey(keyID string) (*SSES3Key, error) {
-	if keyID == "" {
-		// Generate new key
-		return GenerateSSES3Key()
-	}
-
-	// Check if key exists (read lock)
-	km.mu.RLock()
-	if key, exists := km.keys[keyID]; exists {
-		km.mu.RUnlock()
-		return key, nil
-	}
-	km.mu.RUnlock()
-
-	// Create new key (write lock)
-	km.mu.Lock()
-	defer km.mu.Unlock()
-
-	// Double-check in case another goroutine created it
-	if key, exists := km.keys[keyID]; exists {
-		return key, nil
-	}
-
-	key, err := GenerateSSES3Key()
-	if err != nil {
-		return nil, err
-	}
-
-	key.KeyID = keyID
-	km.keys[keyID] = key
-
-	return key, nil
+	// Always generate a new key - we use envelope encryption so no need to cache DEKs
+	return GenerateSSES3Key()
 }
 
-// StoreKey stores a key in the manager
-func (km *SSES3KeyManager) StoreKey(key *SSES3Key) {
-	km.mu.Lock()
-	defer km.mu.Unlock()
-	km.keys[key.KeyID] = key
-}
-
-// GetKey retrieves a key by ID
-func (km *SSES3KeyManager) GetKey(keyID string) (*SSES3Key, bool) {
+// encryptKeyWithSuperKey encrypts a DEK using the super key (KEK) with AES-GCM
+func (km *SSES3KeyManager) encryptKeyWithSuperKey(dek []byte) ([]byte, []byte, error) {
 	km.mu.RLock()
 	defer km.mu.RUnlock()
-	key, exists := km.keys[keyID]
-	return key, exists
+	
+	block, err := aes.NewCipher(km.superKey)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create cipher: %w", err)
+	}
+	
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create GCM: %w", err)
+	}
+	
+	// Generate random nonce
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, nil, fmt.Errorf("failed to generate nonce: %w", err)
+	}
+	
+	// Encrypt the DEK
+	encryptedDEK := gcm.Seal(nil, nonce, dek, nil)
+	
+	return encryptedDEK, nonce, nil
+}
+
+// decryptKeyWithSuperKey decrypts a DEK using the super key (KEK) with AES-GCM
+func (km *SSES3KeyManager) decryptKeyWithSuperKey(encryptedDEK, nonce []byte) ([]byte, error) {
+	km.mu.RLock()
+	defer km.mu.RUnlock()
+	
+	block, err := aes.NewCipher(km.superKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create cipher: %w", err)
+	}
+	
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create GCM: %w", err)
+	}
+	
+	if len(nonce) != gcm.NonceSize() {
+		return nil, fmt.Errorf("invalid nonce size: expected %d, got %d", gcm.NonceSize(), len(nonce))
+	}
+	
+	// Decrypt the DEK
+	dek, err := gcm.Open(nil, nonce, encryptedDEK, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
+	}
+	
+	return dek, nil
+}
+
+// StoreKey is now a no-op since we use envelope encryption and don't cache DEKs
+// The encrypted DEK is stored in the object metadata, not in the key manager
+func (km *SSES3KeyManager) StoreKey(key *SSES3Key) {
+	// No-op: With envelope encryption, we don't need to store keys in memory
+	// The DEK is encrypted with the super key and stored in object metadata
+}
+
+// GetKey is now a no-op since we don't cache keys
+// Keys are retrieved by decrypting the encrypted DEK from object metadata
+func (km *SSES3KeyManager) GetKey(keyID string) (*SSES3Key, bool) {
+	// No-op: With envelope encryption, keys are not cached
+	// Each object's metadata contains the encrypted DEK
+	return nil, false
 }
 
 // Global SSE-S3 key manager instance
