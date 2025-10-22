@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -28,6 +29,7 @@ type Worker struct {
 	cmds           chan workerCommand
 	state          *workerState
 	taskLogHandler *tasks.TaskLogHandler
+	closeOnce      sync.Once
 }
 type workerState struct {
 	running         bool
@@ -62,6 +64,7 @@ const (
 	ActionGetStartTime      workerAction = "getstarttime"
 	ActionGetCompletedTasks workerAction = "getcompletedtasks"
 	ActionGetFailedTasks    workerAction = "getfailedtasks"
+	ActionCancelTask        workerAction = "canceltask"
 	// ... other worker actions like Stop, Status, etc.
 )
 
@@ -272,6 +275,14 @@ func (w *Worker) managerLoop() {
 			cmd.data.(chan int) <- w.state.tasksCompleted
 		case ActionGetFailedTasks:
 			cmd.data.(chan int) <- w.state.tasksFailed
+		case ActionCancelTask:
+			taskID := cmd.data.(string)
+			if task, exists := w.state.currentTasks[taskID]; exists {
+				glog.Infof("Cancelling task %s", task.ID)
+				// TODO: Implement actual task cancellation logic
+			} else {
+				glog.Warningf("Cannot cancel task %s: task not found", taskID)
+			}
 
 		}
 	}
@@ -477,7 +488,11 @@ func (w *Worker) Stop() error {
 		action: ActionStop,
 		resp:   resp,
 	}
-	return <-resp
+	err := <-resp
+	w.closeOnce.Do(func() {
+		close(w.cmds)
+	})
+	return err
 }
 
 // Stop stops the worker
@@ -952,7 +967,7 @@ func (w *Worker) processAdminMessage(message *worker_pb.AdminMessage) {
 		}
 	case *worker_pb.AdminMessage_TaskCancellation:
 		glog.Infof("TASK CANCELLATION: Worker %s received task cancellation for task %s", w.id, msg.TaskCancellation.TaskId)
-		// TODO: w.handleTaskCancellation(msg.TaskCancellation)
+		w.handleTaskCancellation(msg.TaskCancellation)
 	case *worker_pb.AdminMessage_AdminShutdown:
 		glog.Infof("ADMIN SHUTDOWN: Worker %s received admin shutdown message", w.id)
 		w.handleAdminShutdown(msg.AdminShutdown)
@@ -992,16 +1007,15 @@ func (w *Worker) handleTaskLogRequest(request *worker_pb.TaskLogRequest) {
 }
 
 // handleTaskCancellation processes task cancellation requests
-// func (w *Worker) handleTaskCancellation(cancellation *worker_pb.TaskCancellation) {
-// 	glog.Infof("Worker %s received task cancellation for task %s", w.id, cancellation.TaskId)
+func (w *Worker) handleTaskCancellation(cancellation *worker_pb.TaskCancellation) {
+	glog.Infof("Worker %s received task cancellation for task %s", w.id, cancellation.TaskId)
 
-// 	if task, exists := w.currentTasks[cancellation.TaskId]; exists {
-// 		// TODO: Implement task cancellation logic
-// 		glog.Infof("Cancelling task %s", task.ID)
-// 	} else {
-// 		glog.Warningf("Cannot cancel task %s: task not found", cancellation.TaskId)
-// 	}
-// }
+	w.cmds <- workerCommand{
+		action: ActionCancelTask,
+		data:   cancellation.TaskId,
+		resp:   nil,
+	}
+}
 
 // handleAdminShutdown processes admin shutdown notifications
 func (w *Worker) handleAdminShutdown(shutdown *worker_pb.AdminShutdown) {

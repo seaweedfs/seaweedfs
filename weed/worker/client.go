@@ -2,9 +2,10 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
-	"strings"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -14,13 +15,18 @@ import (
 	"google.golang.org/grpc"
 )
 
+var (
+	ErrAlreadyConnected = errors.New("already connected")
+)
+
 // GrpcAdminClient implements AdminClient using gRPC bidirectional streaming
 type GrpcAdminClient struct {
 	adminAddress string
 	workerID     string
 	dialOption   grpc.DialOption
 
-	cmds chan grpcCommand
+	cmds      chan grpcCommand
+	closeOnce sync.Once
 
 	// Reconnection parameters
 	maxReconnectAttempts int
@@ -105,7 +111,7 @@ func (c *GrpcAdminClient) managerLoop() {
 			c.handleDisconnect(cmd, state)
 		case ActionReconnect:
 			if state.connected || state.reconnecting || !state.shouldReconnect {
-				cmd.resp <- fmt.Errorf("already connected")
+				cmd.resp <- ErrAlreadyConnected
 				continue
 			}
 			state.reconnecting = true // Manager acknowledges the attempt
@@ -277,7 +283,7 @@ func (c *GrpcAdminClient) reconnectionLoop(reconnectStop chan struct{}) {
 			attempts = 0
 			backoff = c.reconnectBackoff
 			glog.Infof("Successfully reconnected to admin server")
-		} else if strings.Contains(err.Error(), "already connected") {
+		} else if errors.Is(err, ErrAlreadyConnected) {
 			attempts = 0
 			backoff = c.reconnectBackoff
 		} else {
@@ -411,7 +417,11 @@ func (c *GrpcAdminClient) Disconnect() error {
 		action: ActionDisconnect,
 		resp:   resp,
 	}
-	return <-resp
+	err := <-resp
+	c.closeOnce.Do(func() {
+		close(c.cmds)
+	})
+	return err
 }
 
 func (c *GrpcAdminClient) handleDisconnect(cmd grpcCommand, s *grpcState) {
