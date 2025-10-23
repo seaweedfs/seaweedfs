@@ -1200,13 +1200,19 @@ func (s3a *S3ApiServer) detectPrimarySSEType(entry *filer_pb.Entry) string {
 		if hasSSEKMS && !hasSSEC {
 			// Check if this is SSE-S3 or SSE-KMS by looking at the algorithm value
 			if sseAlgo, exists := entry.Extended[s3_constants.AmzServerSideEncryption]; exists {
-				if string(sseAlgo) == s3_constants.SSEAlgorithmAES256 {
+				switch string(sseAlgo) {
+				case s3_constants.SSEAlgorithmAES256:
 					// Could be SSE-S3 or SSE-KMS, check for KMS key ID
 					if _, hasKMSKey := entry.Extended[s3_constants.AmzServerSideEncryptionAwsKmsKeyId]; hasKMSKey {
 						return s3_constants.SSETypeKMS
 					}
 					// No KMS key, this is SSE-S3
 					return s3_constants.SSETypeS3
+				case s3_constants.SSEAlgorithmKMS:
+					return s3_constants.SSETypeKMS
+				default:
+					// Unknown or unsupported algorithm
+					return "None"
 				}
 			}
 			return s3_constants.SSETypeKMS
@@ -1243,6 +1249,8 @@ func (s3a *S3ApiServer) detectPrimarySSEType(entry *filer_pb.Entry) string {
 	}
 
 	// Primary type is the one with more chunks
+	// Note: Tie-breaking follows precedence order SSE-C > SSE-KMS > SSE-S3
+	// Mixed encryption in an object indicates potential corruption and should not occur in normal operation
 	if ssecChunks > ssekmsChunks && ssecChunks > sses3Chunks {
 		return s3_constants.SSETypeC
 	} else if ssekmsChunks > ssecChunks && ssekmsChunks > sses3Chunks {
@@ -1250,7 +1258,7 @@ func (s3a *S3ApiServer) detectPrimarySSEType(entry *filer_pb.Entry) string {
 	} else if sses3Chunks > ssecChunks && sses3Chunks > ssekmsChunks {
 		return s3_constants.SSETypeS3
 	} else if ssecChunks > 0 {
-		// Equal number or ties, prefer SSE-C (shouldn't happen in practice)
+		// Equal number or ties - precedence: SSE-C first
 		return s3_constants.SSETypeC
 	} else if ssekmsChunks > 0 {
 		return s3_constants.SSETypeKMS
@@ -1362,54 +1370,66 @@ func (s3a *S3ApiServer) createMultipartSSES3DecryptedReader(r *http.Request, ent
 			return nil, fmt.Errorf("failed to create chunk reader: %v", err)
 		}
 
-		// Get SSE-S3 metadata for this chunk
-		var chunkSSES3Key *SSES3Key
+		// Handle based on chunk's encryption type
+		if chunk.GetSseType() == filer_pb.SSEType_SSE_S3 {
+			var chunkSSES3Key *SSES3Key
 
-		// Check if this chunk has per-chunk SSE-S3 metadata
-		if chunk.GetSseType() == filer_pb.SSEType_SSE_S3 && len(chunk.GetSseMetadata()) > 0 {
-			// Use the per-chunk SSE-S3 metadata
-			sseKey, err := DeserializeSSES3Metadata(chunk.GetSseMetadata(), keyManager)
-			if err != nil {
-				glog.Errorf("Failed to deserialize per-chunk SSE-S3 metadata for chunk %s: %v", chunk.GetFileIdString(), err)
-				chunkReader.Close()
-				return nil, fmt.Errorf("failed to deserialize SSE-S3 metadata: %v", err)
-			}
-			chunkSSES3Key = sseKey
-		}
-
-		// Fallback to object-level metadata
-		if chunkSSES3Key == nil {
-			if keyData, exists := entry.Extended[s3_constants.SeaweedFSSSES3Key]; exists {
-				sseKey, err := DeserializeSSES3Metadata(keyData, keyManager)
+			// Check if this chunk has per-chunk SSE-S3 metadata
+			if len(chunk.GetSseMetadata()) > 0 {
+				// Use the per-chunk SSE-S3 metadata
+				sseKey, err := DeserializeSSES3Metadata(chunk.GetSseMetadata(), keyManager)
 				if err != nil {
+					glog.Errorf("Failed to deserialize per-chunk SSE-S3 metadata for chunk %s: %v", chunk.GetFileIdString(), err)
 					chunkReader.Close()
-					return nil, fmt.Errorf("failed to deserialize object-level SSE-S3 metadata: %v", err)
+					return nil, fmt.Errorf("failed to deserialize SSE-S3 metadata: %v", err)
 				}
 				chunkSSES3Key = sseKey
 			}
-		}
 
-		if chunkSSES3Key == nil {
-			chunkReader.Close()
-			return nil, fmt.Errorf("no SSE-S3 metadata found for chunk %s in multipart object", chunk.GetFileIdString())
-		}
+			// Fallback to object-level metadata
+			if chunkSSES3Key == nil {
+				if keyData, exists := entry.Extended[s3_constants.SeaweedFSSSES3Key]; exists {
+					sseKey, err := DeserializeSSES3Metadata(keyData, keyManager)
+					if err != nil {
+						chunkReader.Close()
+						return nil, fmt.Errorf("failed to deserialize object-level SSE-S3 metadata: %v", err)
+					}
+					chunkSSES3Key = sseKey
+				}
+			}
 
-		// Extract IV from chunk metadata
-		if len(chunkSSES3Key.IV) == 0 {
-			chunkReader.Close()
-			return nil, fmt.Errorf("no IV found in SSE-S3 metadata for chunk %s", chunk.GetFileIdString())
-		}
+			if chunkSSES3Key == nil {
+				chunkReader.Close()
+				return nil, fmt.Errorf("no SSE-S3 metadata found for chunk %s in multipart object", chunk.GetFileIdString())
+			}
 
-		// Create decrypted reader for this chunk
-		decryptedChunkReader, decErr := CreateSSES3DecryptedReader(chunkReader, chunkSSES3Key, chunkSSES3Key.IV)
-		if decErr != nil {
-			chunkReader.Close()
-			return nil, fmt.Errorf("failed to decrypt chunk: %v", decErr)
-		}
+			// Extract IV from chunk metadata
+			if len(chunkSSES3Key.IV) == 0 {
+				chunkReader.Close()
+				return nil, fmt.Errorf("no IV found in SSE-S3 metadata for chunk %s", chunk.GetFileIdString())
+			}
 
-		// Use the streaming decrypted reader directly
-		readers = append(readers, decryptedChunkReader)
-		glog.V(4).Infof("Added streaming decrypted reader for chunk %s in multipart SSE-S3 object", chunk.GetFileIdString())
+			// Create decrypted reader for this chunk
+			decryptedChunkReader, decErr := CreateSSES3DecryptedReader(chunkReader, chunkSSES3Key, chunkSSES3Key.IV)
+			if decErr != nil {
+				chunkReader.Close()
+				return nil, fmt.Errorf("failed to decrypt chunk: %v", decErr)
+			}
+
+			// Use the streaming decrypted reader directly, ensuring the underlying chunkReader can be closed
+			readers = append(readers, struct {
+				io.Reader
+				io.Closer
+			}{
+				Reader: decryptedChunkReader,
+				Closer: chunkReader,
+			})
+			glog.V(4).Infof("Added streaming decrypted reader for chunk %s in multipart SSE-S3 object", chunk.GetFileIdString())
+		} else {
+			// Non-SSE-S3 chunk (unencrypted or other encryption type), use as-is
+			readers = append(readers, chunkReader)
+			glog.V(4).Infof("Added passthrough reader for non-SSE-S3 chunk %s (type: %v)", chunk.GetFileIdString(), chunk.GetSseType())
+		}
 	}
 
 	// Combine all decrypted chunk readers into a single stream
