@@ -495,15 +495,15 @@ func (w *Worker) Stop() error {
 	// Wait for tasks to finish
 	timeout := time.NewTimer(30 * time.Second)
 	defer timeout.Stop()
+out:
 	for w.getTaskLoad() > 0 {
 		select {
 		case <-timeout.C:
 			glog.Warningf("Worker %s stopping with %d tasks still running", w.id, w.getTaskLoad())
-			goto end_wait
+			break out
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
-end_wait:
 
 	// Disconnect from admin server
 	if adminClient := w.getAdmin(); adminClient != nil {
