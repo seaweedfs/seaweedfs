@@ -864,11 +864,13 @@ func TestValidateSSES3Key(t *testing.T) {
 		name        string
 		key         *SSES3Key
 		shouldError bool
+		errorMsg    string
 	}{
 		{
 			name:        "Nil key",
 			key:         nil,
 			shouldError: true,
+			errorMsg:    "SSE-S3 key cannot be nil",
 		},
 		{
 			name: "Valid key",
@@ -880,34 +882,117 @@ func TestValidateSSES3Key(t *testing.T) {
 			shouldError: false,
 		},
 		{
-			name: "Key with invalid size (validation only checks nil)",
+			name: "Valid key with IV",
+			key: &SSES3Key{
+				Key:       make([]byte, 32),
+				KeyID:     "test-key",
+				Algorithm: "AES256",
+				IV:        make([]byte, 16),
+			},
+			shouldError: false,
+		},
+		{
+			name: "Invalid key size (too small)",
 			key: &SSES3Key{
 				Key:       make([]byte, 16),
 				KeyID:     "test-key",
 				Algorithm: "AES256",
 			},
-			shouldError: false, // Current validation doesn't check key size
+			shouldError: true,
+			errorMsg:    "invalid SSE-S3 key size",
 		},
 		{
-			name: "Key with nil bytes (validation only checks struct nil)",
+			name: "Invalid key size (too large)",
+			key: &SSES3Key{
+				Key:       make([]byte, 64),
+				KeyID:     "test-key",
+				Algorithm: "AES256",
+			},
+			shouldError: true,
+			errorMsg:    "invalid SSE-S3 key size",
+		},
+		{
+			name: "Nil key bytes",
 			key: &SSES3Key{
 				Key:       nil,
 				KeyID:     "test-key",
 				Algorithm: "AES256",
 			},
-			shouldError: false, // Current validation doesn't check Key field
+			shouldError: true,
+			errorMsg:    "SSE-S3 key bytes cannot be nil",
+		},
+		{
+			name: "Empty key ID",
+			key: &SSES3Key{
+				Key:       make([]byte, 32),
+				KeyID:     "",
+				Algorithm: "AES256",
+			},
+			shouldError: true,
+			errorMsg:    "SSE-S3 key ID cannot be empty",
+		},
+		{
+			name: "Invalid algorithm",
+			key: &SSES3Key{
+				Key:       make([]byte, 32),
+				KeyID:     "test-key",
+				Algorithm: "INVALID",
+			},
+			shouldError: true,
+			errorMsg:    "invalid SSE-S3 algorithm",
+		},
+		{
+			name: "Invalid IV length",
+			key: &SSES3Key{
+				Key:       make([]byte, 32),
+				KeyID:     "test-key",
+				Algorithm: "AES256",
+				IV:        make([]byte, 8), // Wrong size
+			},
+			shouldError: true,
+			errorMsg:    "invalid SSE-S3 IV length",
+		},
+		{
+			name: "Empty IV is allowed (set during encryption)",
+			key: &SSES3Key{
+				Key:       make([]byte, 32),
+				KeyID:     "test-key",
+				Algorithm: "AES256",
+				IV:        []byte{}, // Empty is OK
+			},
+			shouldError: false,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			err := ValidateSSES3Key(tc.key)
-			if tc.shouldError && err == nil {
-				t.Error("Expected error but got none")
-			}
-			if !tc.shouldError && err != nil {
-				t.Errorf("Unexpected error: %v", err)
+			if tc.shouldError {
+				if err == nil {
+					t.Error("Expected error but got none")
+				} else if tc.errorMsg != "" && !contains(err.Error(), tc.errorMsg) {
+					t.Errorf("Expected error containing %q, got: %v", tc.errorMsg, err)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Unexpected error: %v", err)
+				}
 			}
 		})
 	}
+}
+
+// Helper function to check if a string contains a substring
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(substr) == 0 || 
+		(len(s) > 0 && len(substr) > 0 && findSubstring(s, substr)))
+}
+
+func findSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }
