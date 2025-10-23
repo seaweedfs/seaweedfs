@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -970,7 +971,7 @@ func TestValidateSSES3Key(t *testing.T) {
 			if tc.shouldError {
 				if err == nil {
 					t.Error("Expected error but got none")
-				} else if tc.errorMsg != "" && !contains(err.Error(), tc.errorMsg) {
+				} else if tc.errorMsg != "" && !strings.Contains(err.Error(), tc.errorMsg) {
 					t.Errorf("Expected error containing %q, got: %v", tc.errorMsg, err)
 				}
 			} else {
@@ -980,19 +981,4 @@ func TestValidateSSES3Key(t *testing.T) {
 			}
 		})
 	}
-}
-
-// Helper function to check if a string contains a substring
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) == 0 || 
-		(len(s) > 0 && len(substr) > 0 && findSubstring(s, substr)))
-}
-
-func findSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
