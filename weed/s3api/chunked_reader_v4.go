@@ -46,7 +46,7 @@ import (
 // returns signature, error otherwise if the signature mismatches or any other
 // error while parsing and validating.
 func (iam *IdentityAccessManagement) calculateSeedSignature(r *http.Request) (identity *Identity, cred *Credential, signature string, region string, service string, date time.Time, errCode s3err.ErrorCode) {
-	identity, credential, calculatedSignature, authInfo, errCode := iam.verifyV4Signature(r)
+	identity, credential, calculatedSignature, authInfo, errCode := iam.verifyV4Signature(r, true)
 	if errCode != s3err.ErrNone {
 		return nil, nil, "", "", "", time.Time{}, errCode
 	}

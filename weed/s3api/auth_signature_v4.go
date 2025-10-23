@@ -185,7 +185,7 @@ type v4AuthInfo struct {
 
 // verifyV4Signature is the single entry point for verifying any AWS Signature V4 request.
 // It handles standard requests, presigned URLs, and the seed signature for streaming uploads.
-func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request) (identity *Identity, credential *Credential, calculatedSignature string, authInfo *v4AuthInfo, errCode s3err.ErrorCode) {
+func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCheckPermissions bool) (identity *Identity, credential *Credential, calculatedSignature string, authInfo *v4AuthInfo, errCode s3err.ErrorCode) {
 	// 1. Extract authentication information from header or query parameters
 	authInfo, errCode = extractV4AuthInfo(r)
 	if errCode != s3err.ErrNone {
@@ -199,13 +199,15 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request) (identit
 	}
 
 	// 3. Perform permission check
-	bucket, object := s3_constants.GetBucketAndObject(r)
-	action := s3_constants.ACTION_READ
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		action = s3_constants.ACTION_WRITE
-	}
-	if !identity.canDo(Action(action), bucket, object) {
-		return nil, nil, "", nil, s3err.ErrAccessDenied
+	if shouldCheckPermissions {
+		bucket, object := s3_constants.GetBucketAndObject(r)
+		action := s3_constants.ACTION_READ
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			action = s3_constants.ACTION_WRITE
+		}
+		if !identity.canDo(Action(action), bucket, object) {
+			return nil, nil, "", nil, s3err.ErrAccessDenied
+		}
 	}
 
 	// 4. Handle presigned request expiration
@@ -390,12 +392,12 @@ func checkPresignedRequestExpiry(r *http.Request, t time.Time) s3err.ErrorCode {
 }
 
 func (iam *IdentityAccessManagement) doesSignatureMatch(r *http.Request) (*Identity, string, s3err.ErrorCode) {
-	identity, _, calculatedSignature, _, errCode := iam.verifyV4Signature(r)
+	identity, _, calculatedSignature, _, errCode := iam.verifyV4Signature(r, false)
 	return identity, calculatedSignature, errCode
 }
 
 func (iam *IdentityAccessManagement) doesPresignedSignatureMatch(r *http.Request) (*Identity, string, s3err.ErrorCode) {
-	identity, _, calculatedSignature, _, errCode := iam.verifyV4Signature(r)
+	identity, _, calculatedSignature, _, errCode := iam.verifyV4Signature(r, false)
 	return identity, calculatedSignature, errCode
 }
 
