@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -26,7 +25,6 @@ type GrpcAdminClient struct {
 	dialOption   grpc.DialOption
 
 	cmds      chan grpcCommand
-	closeOnce sync.Once
 
 	// Reconnection parameters
 	maxReconnectAttempts int
@@ -103,12 +101,14 @@ func NewGrpcAdminClient(adminAddress string, workerID string, dialOption grpc.Di
 func (c *GrpcAdminClient) managerLoop() {
 	state := &grpcState{shouldReconnect: true}
 
+out:
 	for cmd := range c.cmds {
 		switch cmd.action {
 		case ActionConnect:
 			c.handleConnect(cmd, state)
 		case ActionDisconnect:
 			c.handleDisconnect(cmd, state)
+			break out
 		case ActionReconnect:
 			if state.connected || state.reconnecting || !state.shouldReconnect {
 				cmd.resp <- ErrAlreadyConnected
@@ -412,9 +412,6 @@ func (c *GrpcAdminClient) Disconnect() error {
 		resp:   resp,
 	}
 	err := <-resp
-	c.closeOnce.Do(func() {
-		close(c.cmds)
-	})
 	return err
 }
 

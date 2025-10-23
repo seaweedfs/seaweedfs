@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -29,7 +28,6 @@ type Worker struct {
 	cmds           chan workerCommand
 	state          *workerState
 	taskLogHandler *tasks.TaskLogHandler
-	closeOnce      sync.Once
 }
 type workerState struct {
 	running         bool
@@ -201,13 +199,14 @@ func (w *Worker) managerLoop() {
 		stopChan:     make(chan struct{}),
 		currentTasks: make(map[string]*types.TaskInput),
 	}
-
+out:
 	for cmd := range w.cmds {
 		switch cmd.action {
 		case ActionStart:
 			w.handleStart(cmd)
 		case ActionStop:
 			w.handleStop(cmd)
+			break out
 		case ActionGetStatus:
 			respCh := cmd.data.(statusResponse)
 			var currentTasks []types.TaskInput
@@ -511,10 +510,6 @@ out:
 			glog.Errorf("Error disconnecting from admin server: %v", err)
 		}
 	}
-
-	w.closeOnce.Do(func() {
-		close(w.cmds)
-	})
 	glog.Infof("Worker %s stopped", w.id)
 	return nil
 }
