@@ -241,6 +241,11 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		w.Header().Set(s3_constants.SeaweedFSSSEKMSKeyHeader, kmsBase64)
 	}
 
+	if _, exists := entry.Extended[s3_constants.SeaweedFSSSES3Key]; exists {
+		// Set standard S3 SSE-S3 response header (not the internal SeaweedFS header)
+		w.Header().Set(s3_constants.AmzServerSideEncryption, s3_constants.SSEAlgorithmAES256)
+	}
+
 	SetEtag(w, etag)
 
 	filename := entry.Name()
