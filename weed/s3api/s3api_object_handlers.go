@@ -1043,10 +1043,15 @@ func (s3a *S3ApiServer) handleSSES3Response(r *http.Request, proxyResponse *http
 				return http.StatusInternalServerError, 0
 			}
 
-			// Extract IV from metadata (for single-part, stored in chunk or entry metadata)
+			// Extract IV from metadata
+			// Priority: 1) object-level metadata (for inline/small files), 2) first chunk metadata
 			var iv []byte
-			if len(entry.GetChunks()) > 0 {
-				// Get IV from first chunk's metadata
+			
+			// First check if IV is in the object-level key (for small/inline files)
+			if len(sseS3Key.IV) > 0 {
+				iv = sseS3Key.IV
+			} else if len(entry.GetChunks()) > 0 {
+				// Fallback: Get IV from first chunk's metadata (for chunked files)
 				chunk := entry.GetChunks()[0]
 				if len(chunk.GetSseMetadata()) > 0 {
 					chunkKey, err := DeserializeSSES3Metadata(chunk.GetSseMetadata(), keyManager)
@@ -1060,7 +1065,7 @@ func (s3a *S3ApiServer) handleSSES3Response(r *http.Request, proxyResponse *http
 			}
 
 			if len(iv) == 0 {
-				glog.Errorf("SSE-S3 IV not found in chunk metadata")
+				glog.Errorf("SSE-S3 IV not found in object or chunk metadata")
 				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 				return http.StatusInternalServerError, 0
 			}
