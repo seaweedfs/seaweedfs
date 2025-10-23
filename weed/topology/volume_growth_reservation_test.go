@@ -139,6 +139,7 @@ func TestVolumeGrowth_ConcurrentAllocationPreventsRaceCondition(t *testing.T) {
 	const concurrentRequests = 10
 	var wg sync.WaitGroup
 	var successCount, failureCount atomic.Int32
+	var commitMutex sync.Mutex // Ensures atomic commit of volume creation + reservation release
 
 	for i := 0; i < concurrentRequests; i++ {
 		wg.Add(1)
@@ -156,6 +157,8 @@ func TestVolumeGrowth_ConcurrentAllocationPreventsRaceCondition(t *testing.T) {
 
 				// Simulate completion: increment volume count BEFORE releasing reservation
 				if reservation != nil {
+					commitMutex.Lock()
+
 					// First, increment the volume count to reflect the created volume
 					// Acquire lock briefly to access children map, then release before updating
 					dn.RLock()
@@ -169,6 +172,8 @@ func TestVolumeGrowth_ConcurrentAllocationPreventsRaceCondition(t *testing.T) {
 
 					// Then release the reservation
 					reservation.releaseAllReservations()
+
+					commitMutex.Unlock()
 				}
 			}
 		}(i)
