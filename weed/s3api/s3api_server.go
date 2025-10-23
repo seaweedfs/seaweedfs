@@ -194,8 +194,8 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		domainNames := strings.Split(s3a.option.DomainName, ",")
 		var virtualHostNames []string
 		for _, domainName := range domainNames {
-			if strings.Contains(domainName, ".") &&
-				slices.Contains(domainNames, strings.SplitN(domainName, ".", 2)[1]) {
+			parts := strings.SplitN(domainName, ".", 2)
+			if len(parts) == 2 && slices.Contains(domainNames, parts[1]) {
 				routers = append(routers, apiRouter.Host(domainName).PathPrefix("/{bucket}").Subrouter())
 			} else {
 				virtualHostNames = append(virtualHostNames, domainName)
