@@ -152,6 +152,30 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	return s3ApiServer, nil
 }
 
+// classifyDomainNames classifies domains into path-style and virtual-host style domains.
+// A domain is considered path-style if:
+//  1. It contains a dot (has subdomains)
+//  2. Its parent domain is also in the list of configured domains
+//
+// For example, if domains are ["s3.example.com", "develop.s3.example.com"],
+// then "develop.s3.example.com" is path-style (parent "s3.example.com" is in the list),
+// while "s3.example.com" is virtual-host style.
+func classifyDomainNames(domainNames []string) (pathStyleDomains, virtualHostDomains []string) {
+	for _, domainName := range domainNames {
+		parts := strings.SplitN(domainName, ".", 2)
+		if len(parts) == 2 && slices.Contains(domainNames, parts[1]) {
+			// This is a subdomain and its parent is also in the list
+			// Register as path-style: domain.com/bucket/object
+			pathStyleDomains = append(pathStyleDomains, domainName)
+		} else {
+			// This is a top-level domain or its parent is not in the list
+			// Register as virtual-host style: bucket.domain.com/object
+			virtualHostDomains = append(virtualHostDomains, domainName)
+		}
+	}
+	return pathStyleDomains, virtualHostDomains
+}
+
 // handleCORSOriginValidation handles the common CORS origin validation logic
 func (s3a *S3ApiServer) handleCORSOriginValidation(w http.ResponseWriter, r *http.Request) bool {
 	origin := r.Header.Get("Origin")
@@ -192,16 +216,15 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	var routers []*mux.Router
 	if s3a.option.DomainName != "" {
 		domainNames := strings.Split(s3a.option.DomainName, ",")
-		var virtualHostNames []string
-		for _, domainName := range domainNames {
-			parts := strings.SplitN(domainName, ".", 2)
-			if len(parts) == 2 && slices.Contains(domainNames, parts[1]) {
-				routers = append(routers, apiRouter.Host(domainName).PathPrefix("/{bucket}").Subrouter())
-			} else {
-				virtualHostNames = append(virtualHostNames, domainName)
-			}
+		pathStyleDomains, virtualHostDomains := classifyDomainNames(domainNames)
+
+		// Register path-style domains
+		for _, domain := range pathStyleDomains {
+			routers = append(routers, apiRouter.Host(domain).PathPrefix("/{bucket}").Subrouter())
 		}
-		for _, virtualHost := range virtualHostNames {
+
+		// Register virtual-host style domains
+		for _, virtualHost := range virtualHostDomains {
 			routers = append(routers, apiRouter.Host(
 				fmt.Sprintf("%s.%s", "{bucket:.+}", virtualHost)).Subrouter())
 		}
