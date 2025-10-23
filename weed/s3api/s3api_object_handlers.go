@@ -1211,7 +1211,7 @@ func (s3a *S3ApiServer) detectPrimarySSEType(entry *filer_pb.Entry) string {
 
 		// Check for SSE-S3: algorithm is AES256 but no customer key
 		if hasSSEKMS && !hasSSEC {
-			// Check if this is SSE-S3 or SSE-KMS by looking at the algorithm value
+			// Distinguish SSE-S3 from SSE-KMS: check the algorithm value and the presence of a KMS key ID
 			if sseAlgo, exists := entry.Extended[s3_constants.AmzServerSideEncryption]; exists {
 				switch string(sseAlgo) {
 				case s3_constants.SSEAlgorithmAES256:
