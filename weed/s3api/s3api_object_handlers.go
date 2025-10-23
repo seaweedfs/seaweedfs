@@ -844,6 +844,9 @@ func (s3a *S3ApiServer) handleSSEResponse(r *http.Request, proxyResponse *http.R
 	} else if actualObjectType == s3_constants.SSETypeKMS && !clientExpectsSSEC {
 		// Object is SSE-KMS and client doesn't expect SSE-C → SSE-KMS handler
 		return s3a.handleSSEKMSResponse(r, proxyResponse, w, kmsMetadataHeader)
+	} else if actualObjectType == s3_constants.SSETypeS3 && !clientExpectsSSEC {
+		// Object is SSE-S3 and client doesn't expect SSE-C → SSE-S3 handler
+		return s3a.handleSSES3Response(r, proxyResponse, w)
 	} else if actualObjectType == "None" && !clientExpectsSSEC {
 		// Object is unencrypted and client doesn't expect SSE-C → pass through
 		return passThroughResponse(proxyResponse, w)
@@ -853,6 +856,10 @@ func (s3a *S3ApiServer) handleSSEResponse(r *http.Request, proxyResponse *http.R
 		return http.StatusBadRequest, 0
 	} else if actualObjectType == s3_constants.SSETypeKMS && clientExpectsSSEC {
 		// Object is SSE-KMS but client provides SSE-C headers → Error
+		s3err.WriteErrorResponse(w, r, s3err.ErrSSECustomerKeyMissing)
+		return http.StatusBadRequest, 0
+	} else if actualObjectType == s3_constants.SSETypeS3 && clientExpectsSSEC {
+		// Object is SSE-S3 but client provides SSE-C headers → Error (mismatched encryption)
 		s3err.WriteErrorResponse(w, r, s3err.ErrSSECustomerKeyMissing)
 		return http.StatusBadRequest, 0
 	} else if actualObjectType == "None" && clientExpectsSSEC {
@@ -971,6 +978,128 @@ func (s3a *S3ApiServer) handleSSEKMSResponse(r *http.Request, proxyResponse *htt
 	return writeFinalResponse(w, proxyResponse, decryptedReader, capturedCORSHeaders)
 }
 
+// handleSSES3Response handles SSE-S3 decryption and response processing
+func (s3a *S3ApiServer) handleSSES3Response(r *http.Request, proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64) {
+	// Get the object entry to extract SSE-S3 metadata
+	bucket, object := s3_constants.GetBucketAndObject(r)
+	objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
+	entry, err := s3a.getEntry("", objectPath)
+	if err != nil {
+		glog.Errorf("Failed to get object entry for SSE-S3 decryption: %v", err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return http.StatusInternalServerError, 0
+	}
+
+	// For HEAD requests, we don't need to decrypt the body, just add response headers
+	if r.Method == "HEAD" {
+		// Capture existing CORS headers that may have been set by middleware
+		capturedCORSHeaders := captureCORSHeaders(w, corsHeaders)
+
+		// Copy headers from proxy response
+		for k, v := range proxyResponse.Header {
+			w.Header()[k] = v
+		}
+
+		// Add SSE-S3 response headers
+		w.Header().Set(s3_constants.AmzServerSideEncryption, SSES3Algorithm)
+
+		return writeFinalResponse(w, proxyResponse, proxyResponse.Body, capturedCORSHeaders)
+	}
+
+	// For GET requests, check if this is a multipart SSE-S3 object
+	isMultipartSSES3 := false
+	sses3Chunks := 0
+	for _, chunk := range entry.GetChunks() {
+		if chunk.GetSseType() == filer_pb.SSEType_SSE_S3 && len(chunk.GetSseMetadata()) > 0 {
+			sses3Chunks++
+		}
+	}
+	isMultipartSSES3 = sses3Chunks > 1
+
+	var decryptedReader io.Reader
+	if isMultipartSSES3 {
+		// Handle multipart SSE-S3 objects - each chunk needs independent decryption
+		multipartReader, decErr := s3a.createMultipartSSES3DecryptedReader(r, entry)
+		if decErr != nil {
+			glog.Errorf("Failed to create multipart SSE-S3 decrypted reader: %v", decErr)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return http.StatusInternalServerError, 0
+		}
+		decryptedReader = multipartReader
+		glog.V(3).Infof("Using multipart SSE-S3 decryption for object")
+	} else {
+		// Handle single-part SSE-S3 objects
+		// Extract SSE-S3 key from metadata
+		keyManager := GetSSES3KeyManager()
+		if keyData, exists := entry.Extended[s3_constants.SeaweedFSSSES3Key]; !exists {
+			glog.Errorf("SSE-S3 key metadata not found in object entry")
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return http.StatusInternalServerError, 0
+		} else {
+			sseS3Key, err := DeserializeSSES3Metadata(keyData, keyManager)
+			if err != nil {
+				glog.Errorf("Failed to deserialize SSE-S3 metadata: %v", err)
+				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+				return http.StatusInternalServerError, 0
+			}
+
+			// Extract IV from metadata (for single-part, stored in chunk or entry metadata)
+			var iv []byte
+			if len(entry.GetChunks()) > 0 {
+				// Get IV from first chunk's metadata
+				chunk := entry.GetChunks()[0]
+				if len(chunk.GetSseMetadata()) > 0 {
+					chunkKey, err := DeserializeSSES3Metadata(chunk.GetSseMetadata(), keyManager)
+					if err != nil {
+						glog.Errorf("Failed to deserialize chunk SSE-S3 metadata: %v", err)
+						s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+						return http.StatusInternalServerError, 0
+					}
+					iv = chunkKey.IV
+				}
+			}
+
+			if len(iv) == 0 {
+				glog.Errorf("SSE-S3 IV not found in chunk metadata")
+				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+				return http.StatusInternalServerError, 0
+			}
+
+			singlePartReader, decErr := CreateSSES3DecryptedReader(proxyResponse.Body, sseS3Key, iv)
+			if decErr != nil {
+				glog.Errorf("Failed to create SSE-S3 decrypted reader: %v", decErr)
+				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+				return http.StatusInternalServerError, 0
+			}
+			decryptedReader = singlePartReader
+			glog.V(3).Infof("Using single-part SSE-S3 decryption for object")
+		}
+	}
+
+	// Capture existing CORS headers that may have been set by middleware
+	capturedCORSHeaders := captureCORSHeaders(w, corsHeaders)
+
+	// Copy headers from proxy response (excluding body-related headers that might change)
+	for k, v := range proxyResponse.Header {
+		if k != "Content-Length" && k != "Content-Encoding" {
+			w.Header()[k] = v
+		}
+	}
+
+	// Set correct Content-Length for SSE-S3
+	if proxyResponse.Header.Get("Content-Range") == "" {
+		// For full object requests, encrypted length equals original length
+		if contentLengthStr := proxyResponse.Header.Get("Content-Length"); contentLengthStr != "" {
+			w.Header().Set("Content-Length", contentLengthStr)
+		}
+	}
+
+	// Add SSE-S3 response headers
+	w.Header().Set(s3_constants.AmzServerSideEncryption, SSES3Algorithm)
+
+	return writeFinalResponse(w, proxyResponse, decryptedReader, capturedCORSHeaders)
+}
+
 // addObjectLockHeadersToResponse extracts object lock metadata from entry Extended attributes
 // and adds the appropriate S3 headers to the response
 func (s3a *S3ApiServer) addObjectLockHeadersToResponse(w http.ResponseWriter, entry *filer_pb.Entry) {
@@ -1049,6 +1178,10 @@ func (s3a *S3ApiServer) addSSEHeadersToResponse(proxyResponse *http.Response, en
 			proxyResponse.Header.Set(s3_constants.AmzServerSideEncryptionAwsKmsKeyId, string(kmsKeyID))
 		}
 
+	case s3_constants.SSETypeS3:
+		// Add only SSE-S3 headers
+		proxyResponse.Header.Set(s3_constants.AmzServerSideEncryption, SSES3Algorithm)
+
 	default:
 		// Unencrypted or unknown - don't set any SSE headers
 	}
@@ -1062,11 +1195,23 @@ func (s3a *S3ApiServer) detectPrimarySSEType(entry *filer_pb.Entry) string {
 		// No chunks - check object-level metadata only (single objects or smallContent)
 		hasSSEC := entry.Extended[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] != nil
 		hasSSEKMS := entry.Extended[s3_constants.AmzServerSideEncryption] != nil
-
-		if hasSSEC && !hasSSEKMS {
-			return s3_constants.SSETypeC
-		} else if hasSSEKMS && !hasSSEC {
+		
+		// Check for SSE-S3: algorithm is AES256 but no customer key
+		if hasSSEKMS && !hasSSEC {
+			// Check if this is SSE-S3 or SSE-KMS by looking at the algorithm value
+			if sseAlgo, exists := entry.Extended[s3_constants.AmzServerSideEncryption]; exists {
+				if string(sseAlgo) == s3_constants.SSEAlgorithmAES256 {
+					// Could be SSE-S3 or SSE-KMS, check for KMS key ID
+					if _, hasKMSKey := entry.Extended[s3_constants.AmzServerSideEncryptionAwsKmsKeyId]; hasKMSKey {
+						return s3_constants.SSETypeKMS
+					}
+					// No KMS key, this is SSE-S3
+					return s3_constants.SSETypeS3
+				}
+			}
 			return s3_constants.SSETypeKMS
+		} else if hasSSEC && !hasSSEKMS {
+			return s3_constants.SSETypeC
 		} else if hasSSEC && hasSSEKMS {
 			// Both present - this should only happen during cross-encryption copies
 			// Use content to determine actual encryption state
@@ -1084,6 +1229,7 @@ func (s3a *S3ApiServer) detectPrimarySSEType(entry *filer_pb.Entry) string {
 	// Count chunk types to determine primary (multipart objects)
 	ssecChunks := 0
 	ssekmsChunks := 0
+	sses3Chunks := 0
 
 	for _, chunk := range entry.GetChunks() {
 		switch chunk.GetSseType() {
@@ -1091,17 +1237,25 @@ func (s3a *S3ApiServer) detectPrimarySSEType(entry *filer_pb.Entry) string {
 			ssecChunks++
 		case filer_pb.SSEType_SSE_KMS:
 			ssekmsChunks++
+		case filer_pb.SSEType_SSE_S3:
+			sses3Chunks++
 		}
 	}
 
 	// Primary type is the one with more chunks
-	if ssecChunks > ssekmsChunks {
+	if ssecChunks > ssekmsChunks && ssecChunks > sses3Chunks {
 		return s3_constants.SSETypeC
-	} else if ssekmsChunks > ssecChunks {
+	} else if ssekmsChunks > ssecChunks && ssekmsChunks > sses3Chunks {
 		return s3_constants.SSETypeKMS
+	} else if sses3Chunks > ssecChunks && sses3Chunks > ssekmsChunks {
+		return s3_constants.SSETypeS3
 	} else if ssecChunks > 0 {
-		// Equal number, prefer SSE-C (shouldn't happen in practice)
+		// Equal number or ties, prefer SSE-C (shouldn't happen in practice)
 		return s3_constants.SSETypeC
+	} else if ssekmsChunks > 0 {
+		return s3_constants.SSETypeKMS
+	} else if sses3Chunks > 0 {
+		return s3_constants.SSETypeS3
 	}
 
 	return "None"
@@ -1185,6 +1339,82 @@ func (s3a *S3ApiServer) createMultipartSSEKMSDecryptedReader(r *http.Request, pr
 	// Combine all decrypted chunk readers into a single stream with proper resource management
 	multiReader := NewMultipartSSEReader(readers)
 	glog.V(3).Infof("Created multipart SSE-KMS decrypted reader with %d chunks", len(readers))
+
+	return multiReader, nil
+}
+
+// createMultipartSSES3DecryptedReader creates a reader for multipart SSE-S3 objects
+func (s3a *S3ApiServer) createMultipartSSES3DecryptedReader(r *http.Request, entry *filer_pb.Entry) (io.Reader, error) {
+	// Sort chunks by offset to ensure correct order
+	chunks := entry.GetChunks()
+	sort.Slice(chunks, func(i, j int) bool {
+		return chunks[i].GetOffset() < chunks[j].GetOffset()
+	})
+
+	// Create readers for each chunk, decrypting them independently
+	var readers []io.Reader
+	keyManager := GetSSES3KeyManager()
+
+	for _, chunk := range chunks {
+		// Get this chunk's encrypted data
+		chunkReader, err := s3a.createEncryptedChunkReader(chunk)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create chunk reader: %v", err)
+		}
+
+		// Get SSE-S3 metadata for this chunk
+		var chunkSSES3Key *SSES3Key
+
+		// Check if this chunk has per-chunk SSE-S3 metadata
+		if chunk.GetSseType() == filer_pb.SSEType_SSE_S3 && len(chunk.GetSseMetadata()) > 0 {
+			// Use the per-chunk SSE-S3 metadata
+			sseKey, err := DeserializeSSES3Metadata(chunk.GetSseMetadata(), keyManager)
+			if err != nil {
+				glog.Errorf("Failed to deserialize per-chunk SSE-S3 metadata for chunk %s: %v", chunk.GetFileIdString(), err)
+				chunkReader.Close()
+				return nil, fmt.Errorf("failed to deserialize SSE-S3 metadata: %v", err)
+			}
+			chunkSSES3Key = sseKey
+		}
+
+		// Fallback to object-level metadata
+		if chunkSSES3Key == nil {
+			if keyData, exists := entry.Extended[s3_constants.SeaweedFSSSES3Key]; exists {
+				sseKey, err := DeserializeSSES3Metadata(keyData, keyManager)
+				if err != nil {
+					chunkReader.Close()
+					return nil, fmt.Errorf("failed to deserialize object-level SSE-S3 metadata: %v", err)
+				}
+				chunkSSES3Key = sseKey
+			}
+		}
+
+		if chunkSSES3Key == nil {
+			chunkReader.Close()
+			return nil, fmt.Errorf("no SSE-S3 metadata found for chunk %s in multipart object", chunk.GetFileIdString())
+		}
+
+		// Extract IV from chunk metadata
+		if len(chunkSSES3Key.IV) == 0 {
+			chunkReader.Close()
+			return nil, fmt.Errorf("no IV found in SSE-S3 metadata for chunk %s", chunk.GetFileIdString())
+		}
+
+		// Create decrypted reader for this chunk
+		decryptedChunkReader, decErr := CreateSSES3DecryptedReader(chunkReader, chunkSSES3Key, chunkSSES3Key.IV)
+		if decErr != nil {
+			chunkReader.Close()
+			return nil, fmt.Errorf("failed to decrypt chunk: %v", decErr)
+		}
+
+		// Use the streaming decrypted reader directly
+		readers = append(readers, decryptedChunkReader)
+		glog.V(4).Infof("Added streaming decrypted reader for chunk %s in multipart SSE-S3 object", chunk.GetFileIdString())
+	}
+
+	// Combine all decrypted chunk readers into a single stream
+	multiReader := NewMultipartSSEReader(readers)
+	glog.V(3).Infof("Created multipart SSE-S3 decrypted reader with %d chunks", len(readers))
 
 	return multiReader, nil
 }
