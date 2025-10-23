@@ -650,9 +650,11 @@ func passThroughResponse(proxyResponse *http.Response, w http.ResponseWriter) (s
 	// Capture existing CORS headers that may have been set by middleware
 	capturedCORSHeaders := captureCORSHeaders(w, corsHeaders)
 
-	// Copy headers from proxy response
+	// Copy headers from proxy response (excluding internal SeaweedFS headers)
 	for k, v := range proxyResponse.Header {
-		w.Header()[k] = v
+		if !s3_constants.IsSeaweedFSInternalHeader(k) {
+			w.Header()[k] = v
+		}
 	}
 
 	return writeFinalResponse(w, proxyResponse, proxyResponse.Body, capturedCORSHeaders)
@@ -716,9 +718,11 @@ func (s3a *S3ApiServer) handleSSECResponse(r *http.Request, proxyResponse *http.
 				// Capture existing CORS headers
 				capturedCORSHeaders := captureCORSHeaders(w, corsHeaders)
 
-				// Copy headers from proxy response
+				// Copy headers from proxy response (excluding internal SeaweedFS headers)
 				for k, v := range proxyResponse.Header {
-					w.Header()[k] = v
+					if !s3_constants.IsSeaweedFSInternalHeader(k) {
+						w.Header()[k] = v
+					}
 				}
 
 				// Set proper headers for range requests
@@ -785,9 +789,9 @@ func (s3a *S3ApiServer) handleSSECResponse(r *http.Request, proxyResponse *http.
 		// Capture existing CORS headers that may have been set by middleware
 		capturedCORSHeaders := captureCORSHeaders(w, corsHeaders)
 
-		// Copy headers from proxy response (excluding body-related headers that might change)
+		// Copy headers from proxy response (excluding body-related headers that might change and internal SeaweedFS headers)
 		for k, v := range proxyResponse.Header {
-			if k != "Content-Length" && k != "Content-Encoding" {
+			if k != "Content-Length" && k != "Content-Encoding" && !s3_constants.IsSeaweedFSInternalHeader(k) {
 				w.Header()[k] = v
 			}
 		}
@@ -900,9 +904,11 @@ func (s3a *S3ApiServer) handleSSEKMSResponse(r *http.Request, proxyResponse *htt
 		// Capture existing CORS headers that may have been set by middleware
 		capturedCORSHeaders := captureCORSHeaders(w, corsHeaders)
 
-		// Copy headers from proxy response
+		// Copy headers from proxy response (excluding internal SeaweedFS headers)
 		for k, v := range proxyResponse.Header {
-			w.Header()[k] = v
+			if !s3_constants.IsSeaweedFSInternalHeader(k) {
+				w.Header()[k] = v
+			}
 		}
 
 		// Add SSE-KMS response headers
@@ -957,9 +963,9 @@ func (s3a *S3ApiServer) handleSSEKMSResponse(r *http.Request, proxyResponse *htt
 	// Capture existing CORS headers that may have been set by middleware
 	capturedCORSHeaders := captureCORSHeaders(w, corsHeaders)
 
-	// Copy headers from proxy response (excluding body-related headers that might change)
+	// Copy headers from proxy response (excluding body-related headers that might change and internal SeaweedFS headers)
 	for k, v := range proxyResponse.Header {
-		if k != "Content-Length" && k != "Content-Encoding" {
+		if k != "Content-Length" && k != "Content-Encoding" && !s3_constants.IsSeaweedFSInternalHeader(k) {
 			w.Header()[k] = v
 		}
 	}
@@ -995,9 +1001,11 @@ func (s3a *S3ApiServer) handleSSES3Response(r *http.Request, proxyResponse *http
 		// Capture existing CORS headers that may have been set by middleware
 		capturedCORSHeaders := captureCORSHeaders(w, corsHeaders)
 
-		// Copy headers from proxy response
+		// Copy headers from proxy response (excluding internal SeaweedFS headers)
 		for k, v := range proxyResponse.Header {
-			w.Header()[k] = v
+			if !s3_constants.IsSeaweedFSInternalHeader(k) {
+				w.Header()[k] = v
+			}
 		}
 
 		// Add SSE-S3 response headers
@@ -1046,7 +1054,7 @@ func (s3a *S3ApiServer) handleSSES3Response(r *http.Request, proxyResponse *http
 			// Extract IV from metadata
 			// Priority: 1) object-level metadata (for inline/small files), 2) first chunk metadata
 			var iv []byte
-			
+
 			// First check if IV is in the object-level key (for small/inline files)
 			if len(sseS3Key.IV) > 0 {
 				iv = sseS3Key.IV
@@ -1084,9 +1092,9 @@ func (s3a *S3ApiServer) handleSSES3Response(r *http.Request, proxyResponse *http
 	// Capture existing CORS headers that may have been set by middleware
 	capturedCORSHeaders := captureCORSHeaders(w, corsHeaders)
 
-	// Copy headers from proxy response (excluding body-related headers that might change)
+	// Copy headers from proxy response (excluding body-related headers that might change and internal SeaweedFS headers)
 	for k, v := range proxyResponse.Header {
-		if k != "Content-Length" && k != "Content-Encoding" {
+		if k != "Content-Length" && k != "Content-Encoding" && !s3_constants.IsSeaweedFSInternalHeader(k) {
 			w.Header()[k] = v
 		}
 	}
@@ -1200,7 +1208,7 @@ func (s3a *S3ApiServer) detectPrimarySSEType(entry *filer_pb.Entry) string {
 		// No chunks - check object-level metadata only (single objects or smallContent)
 		hasSSEC := entry.Extended[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] != nil
 		hasSSEKMS := entry.Extended[s3_constants.AmzServerSideEncryption] != nil
-		
+
 		// Check for SSE-S3: algorithm is AES256 but no customer key
 		if hasSSEKMS && !hasSSEC {
 			// Check if this is SSE-S3 or SSE-KMS by looking at the algorithm value
