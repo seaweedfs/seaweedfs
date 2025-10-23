@@ -111,9 +111,9 @@ var cmdAutocomplete = &Command{
 	Short:     "generate or install shell autocomplete script",
 	Long: `Generate shell autocomplete script or install it to your shell configuration.
 
-    Usage:
-        weed autocomplete [bash|zsh|fish]  # print autocomplete script to stdout
-        weed autocomplete install          # install to shell config files
+Usage:
+    weed autocomplete [bash|zsh|fish]  # print autocomplete script to stdout
+    weed autocomplete install          # install to shell config files
 
     When a shell name is provided, the autocomplete script is printed to stdout.
     You can then add it to your shell configuration manually, e.g.:
