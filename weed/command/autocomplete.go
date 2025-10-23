@@ -53,25 +53,25 @@ func printAutocompleteScript(shell string) bool {
 		return false
 	}
 
-	switch shell {
-	case "bash":
-		fmt.Printf("complete -C %s weed\n", binPath)
-	case "zsh":
-		fmt.Printf("autoload -U +X bashcompinit && bashcompinit\n")
-		fmt.Printf("complete -o nospace -C %s weed\n", binPath)
-	case "fish":
-		fmt.Printf(`function __complete_weed
+ 	switch shell {
+ 	case "bash":
+ 		fmt.Printf("complete -C %q weed\n", binPath)
+ 	case "zsh":
+ 		fmt.Printf("autoload -U +X bashcompinit && bashcompinit\n")
+ 		fmt.Printf("complete -o nospace -C %q weed\n", binPath)
+ 	case "fish":
+ 		fmt.Printf(`function __complete_weed
     set -lx COMP_LINE (commandline -cp)
     test -z (commandline -ct)
     and set COMP_LINE "$COMP_LINE "
-    %s
+    %q
 end
 complete -f -c weed -a "(__complete_weed)"
 `, binPath)
-	default:
-		fmt.Fprintf(os.Stderr, "unsupported shell: %s. Supported shells: bash, zsh, fish\n", shell)
-		return false
-	}
+ 	default:
+ 		fmt.Fprintf(os.Stderr, "unsupported shell: %s. Supported shells: bash, zsh, fish\n", shell)
+ 		return false
+ 	}
 	return true
 }
 
