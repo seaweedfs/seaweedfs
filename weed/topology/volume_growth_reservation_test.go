@@ -81,7 +81,11 @@ func TestVolumeGrowth_ReservationBasedAllocation(t *testing.T) {
 		}
 
 		// Simulate successful volume creation
+		// Acquire lock briefly to access children map, then release before updating
+		dn.RLock()
 		disk := dn.children[NodeId(types.HardDriveType.String())].(*Disk)
+		dn.RUnlock()
+
 		deltaDiskUsage := &DiskUsageCounts{
 			volumeCount: 1,
 		}
@@ -153,7 +157,11 @@ func TestVolumeGrowth_ConcurrentAllocationPreventsRaceCondition(t *testing.T) {
 				// Simulate completion: increment volume count BEFORE releasing reservation
 				if reservation != nil {
 					// First, increment the volume count to reflect the created volume
+					// Acquire lock briefly to access children map, then release before updating
+					dn.RLock()
 					disk := dn.children[NodeId(types.HardDriveType.String())].(*Disk)
+					dn.RUnlock()
+
 					deltaDiskUsage := &DiskUsageCounts{
 						volumeCount: 1,
 					}
