@@ -240,9 +240,6 @@ func (c *GrpcAdminClient) reconnect(s *grpcState) error {
 	if s.streamCancel != nil {
 		s.streamCancel()
 	}
-	if s.stream != nil {
-		s.stream.CloseSend()
-	}
 	if s.conn != nil {
 		s.conn.Close()
 	}
@@ -424,9 +421,6 @@ func (c *GrpcAdminClient) handleDisconnect(cmd grpcCommand, s *grpcState) {
 	// Send shutdown signal to stop reconnection loop
 	close(s.reconnectStop)
 
-	// Send shutdown signal to stop handlers loop
-	close(s.streamExit)
-
 	s.connected = false
 	s.shouldReconnect = false
 
@@ -449,14 +443,12 @@ func (c *GrpcAdminClient) handleDisconnect(cmd grpcCommand, s *grpcState) {
 		glog.Warningf("Failed to send shutdown message")
 	}
 
+	// Send shutdown signal to stop handlers loop
+	close(s.streamExit)
+
 	// Cancel stream context
 	if s.streamCancel != nil {
 		s.streamCancel()
-	}
-
-	// Close stream
-	if s.stream != nil {
-		s.stream.CloseSend()
 	}
 
 	// Close connection
