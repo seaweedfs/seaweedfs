@@ -232,6 +232,7 @@ func (l *FileTaskLogger) LogWithFields(level string, message string, fields map[
 
 // Close closes the logger and finalizes metadata
 func (l *FileTaskLogger) Close() error {
+	l.Info("Task logger closed for %s", l.taskID)
 	l.mutex.Lock()
 	defer l.mutex.Unlock()
 
@@ -260,7 +261,6 @@ func (l *FileTaskLogger) Close() error {
 	}
 
 	l.closed = true
-	l.Info("Task logger closed for %s", l.taskID)
 
 	return nil
 }

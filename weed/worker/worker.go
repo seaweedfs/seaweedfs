@@ -726,7 +726,6 @@ func (w *Worker) executeTask(task *types.TaskInput) {
 			fileLogger.Info("Task %s completed successfully", task.ID)
 		}
 	}
-	return
 }
 
 // completeTask reports task completion to admin server
