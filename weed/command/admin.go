@@ -212,6 +212,9 @@ func startAdminServer(ctx context.Context, options AdminOptions) error {
 		fmt.Printf("Data directory created/verified: %s\n", dataDir)
 	}
 
+	// Detect TLS configuration to set Secure cookie flag
+	useTLS := viper.GetString("https.admin.key") != ""
+
 	// Session store - load or generate session key
 	sessionKeyBytes, err := loadOrGenerateSessionKey(dataDir)
 	if err != nil {
@@ -224,7 +227,7 @@ func startAdminServer(ctx context.Context, options AdminOptions) error {
 		Path:     "/",
 		MaxAge:   3600 * 24, // 24 hours
 		HttpOnly: true,      // Prevent JavaScript access
-		Secure:   false,     // Set to true if using HTTPS
+		Secure:   useTLS,    // Set based on actual TLS configuration
 		SameSite: http.SameSiteLaxMode,
 	})
 
@@ -335,10 +338,11 @@ func GetAdminOptions() *AdminOptions {
 
 // loadOrGenerateSessionKey loads an existing session key from dataDir or generates a new one
 func loadOrGenerateSessionKey(dataDir string) ([]byte, error) {
+	const sessionKeyLength = 32
 	if dataDir == "" {
 		// No persistence, generate random key
 		log.Println("No dataDir specified, generating ephemeral session key")
-		key := make([]byte, 32)
+		key := make([]byte, sessionKeyLength)
 		_, err := rand.Read(key)
 		return key, err
 	}
@@ -347,15 +351,17 @@ func loadOrGenerateSessionKey(dataDir string) ([]byte, error) {
 
 	// Try to load existing key
 	if data, err := os.ReadFile(sessionKeyPath); err == nil {
-		if len(data) == 32 {
+		if len(data) == sessionKeyLength {
 			log.Printf("Loaded persisted session key from %s", sessionKeyPath)
 			return data, nil
 		}
-		log.Printf("Warning: Invalid session key file (expected 32 bytes, got %d), generating new key", len(data))
+		log.Printf("Warning: Invalid session key file (expected %d bytes, got %d), generating new key", sessionKeyLength, len(data))
+	} else if !os.IsNotExist(err) {
+		log.Printf("Warning: Failed to read session key from %s: %v. A new key will be generated.", sessionKeyPath, err)
 	}
 
 	// Generate new key
-	key := make([]byte, 32)
+	key := make([]byte, sessionKeyLength)
 	if _, err := rand.Read(key); err != nil {
 		return nil, err
 	}
