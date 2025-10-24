@@ -270,7 +270,7 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 				return
 			}
 
-			// If we're reading offset-based and there's no data in LogBuffer,
+			// CRITICAL FIX: If we're reading offset-based and there's no data in LogBuffer,
 			// return ResumeFromDiskError to let Subscribe try reading from disk again.
 			// This prevents infinite blocking when all data is on disk (e.g., after restart).
 			if startPosition.IsOffsetBased {
@@ -355,6 +355,7 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 				continue
 			}
 
+
 			glog.V(4).Infof("Unmarshaled log entry %d: TsNs=%d, Offset=%d, Key=%s", batchSize+1, logEntry.TsNs, logEntry.Offset, string(logEntry.Key))
 
 			// Handle offset-based filtering for offset-based start positions
@@ -376,7 +377,7 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 				// println("stopTsNs", stopTsNs, "logEntry.TsNs", logEntry.TsNs)
 				return
 			}
-			// Use logEntry.Offset + 1 to move PAST the current entry
+			// CRITICAL FIX: Use logEntry.Offset + 1 to move PAST the current entry
 			// This prevents infinite loops where we keep requesting the same offset
 			lastReadPosition = NewMessagePosition(logEntry.TsNs, logEntry.Offset+1)
 
