@@ -170,22 +170,22 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	var readPersistedLogErr error
 	var readInMemoryLogErr error
 	var isDone bool
-	var lastCheckedFlushedTime int64 = -1 // Track the last flushed time we checked
-	var lastDiskReadTsNs int64 = -1       // Track the last read position we used for disk read
+	var lastCheckedFlushTsNs int64 = -1 // Track the last flushed time we checked
+	var lastDiskReadTsNs int64 = -1     // Track the last read position we used for disk read
 
 	for {
 		// Check if new data has been flushed to disk since last check, or if read position advanced
-		currentFlushedTime := fs.filer.LocalMetaLogBuffer.GetLastFlushedTime()
+		currentFlushTsNs := fs.filer.LocalMetaLogBuffer.GetLastFlushTsNs()
 		currentReadTsNs := lastReadTime.Time.UnixNano()
 		// Read from disk if: first time, new flush observed, or read position advanced (draining backlog)
-		shouldReadFromDisk := lastCheckedFlushedTime == -1 ||
-			currentFlushedTime > lastCheckedFlushedTime ||
+		shouldReadFromDisk := lastCheckedFlushTsNs == -1 ||
+			currentFlushTsNs > lastCheckedFlushTsNs ||
 			currentReadTsNs > lastDiskReadTsNs
 
 		if shouldReadFromDisk {
 			// Record the position we are about to read from
 			lastDiskReadTsNs = currentReadTsNs
-			glog.V(4).Infof("read on disk %v local subscribe %s from %+v (lastFlushed: %v)", clientName, req.PathPrefix, lastReadTime, currentFlushedTime)
+			glog.V(4).Infof("read on disk %v local subscribe %s from %+v (lastFlushed: %v)", clientName, req.PathPrefix, lastReadTime, time.Unix(0, currentFlushTsNs))
 			processedTsNs, isDone, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(lastReadTime, req.UntilNs, eachLogEntryFn)
 			if readPersistedLogErr != nil {
 				glog.V(0).Infof("read on disk %v local subscribe %s from %+v: %v", clientName, req.PathPrefix, lastReadTime, readPersistedLogErr)
@@ -196,7 +196,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 			}
 
 			// Update the last checked flushed time
-			lastCheckedFlushedTime = currentFlushedTime
+			lastCheckedFlushTsNs = currentFlushTsNs
 
 			if processedTsNs != 0 {
 				lastReadTime = log_buffer.NewMessagePosition(processedTsNs, -2)
@@ -259,11 +259,13 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 			if readInMemoryLogErr == log_buffer.ResumeFromDiskError {
 				// Memory buffer says the requested time is too old
 				// Retry disk read if: (a) flush advanced, or (b) read position advanced (draining backlog)
-				currentFlushedTime := fs.filer.LocalMetaLogBuffer.GetLastFlushedTime()
+				currentFlushTsNs := fs.filer.LocalMetaLogBuffer.GetLastFlushTsNs()
 				currentReadTsNs := lastReadTime.Time.UnixNano()
-				if currentFlushedTime > lastCheckedFlushedTime || currentReadTsNs > lastDiskReadTsNs {
+				if currentFlushTsNs > lastCheckedFlushTsNs || currentReadTsNs > lastDiskReadTsNs {
 					glog.V(0).Infof("retry disk read %v local subscribe %s (lastFlushed: %v -> %v, readTs: %v -> %v)",
-						clientName, req.PathPrefix, lastCheckedFlushedTime, currentFlushedTime, lastDiskReadTsNs, currentReadTsNs)
+						clientName, req.PathPrefix,
+						time.Unix(0, lastCheckedFlushTsNs), time.Unix(0, currentFlushTsNs),
+						time.Unix(0, lastDiskReadTsNs), time.Unix(0, currentReadTsNs))
 					continue
 				}
 				// No progress possible, wait for new data to arrive (event-driven, not polling)

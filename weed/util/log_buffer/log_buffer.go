@@ -77,7 +77,7 @@ type LogBuffer struct {
 	maxOffset         int64
 	hasOffsets        bool
 	lastFlushedOffset atomic.Int64 // Highest offset that has been flushed to disk (-1 = nothing flushed yet)
-	lastFlushedTime   atomic.Int64 // Latest timestamp that has been flushed to disk (0 = nothing flushed yet)
+	lastFlushTsNs     atomic.Int64 // Latest timestamp that has been flushed to disk (0 = nothing flushed yet)
 	// Disk chunk cache for historical data reads
 	diskChunkCache *DiskChunkCache
 	sync.RWMutex
@@ -242,7 +242,7 @@ func (logBuffer *LogBuffer) InitializeOffsetFromExistingData(getHighestOffsetFn 
 		// CRITICAL: Track that data [0...highestOffset] is on disk
 		logBuffer.lastFlushedOffset.Store(highestOffset)
 		// Set lastFlushedTime to current time (we know data up to highestOffset is on disk)
-		logBuffer.lastFlushedTime.Store(time.Now().UnixNano())
+		logBuffer.lastFlushTsNs.Store(time.Now().UnixNano())
 		glog.V(0).Infof("Initialized LogBuffer %s offset to %d (highest existing: %d), buffer starts at %d, lastFlushedOffset=%d, lastFlushedTime=%v",
 			logBuffer.name, nextOffset, highestOffset, nextOffset, highestOffset, time.Now())
 	} else {
@@ -523,7 +523,7 @@ func (logBuffer *LogBuffer) loopFlush() {
 				logBuffer.lastFlushedOffset.Store(d.maxOffset)
 			}
 			if !d.stopTime.IsZero() {
-				logBuffer.lastFlushedTime.Store(d.stopTime.UnixNano())
+				logBuffer.lastFlushTsNs.Store(d.stopTime.UnixNano())
 			}
 
 			// Signal completion if there's a callback channel
@@ -631,10 +631,10 @@ func (logBuffer *LogBuffer) GetEarliestPosition() MessagePosition {
 	}
 }
 
-// GetLastFlushedTime returns the latest flushed timestamp in Unix nanoseconds.
+// GetLastFlushTsNs returns the latest flushed timestamp in Unix nanoseconds.
 // Returns 0 if nothing has been flushed yet.
-func (logBuffer *LogBuffer) GetLastFlushedTime() int64 {
-	return logBuffer.lastFlushedTime.Load()
+func (logBuffer *LogBuffer) GetLastFlushTsNs() int64 {
+	return logBuffer.lastFlushTsNs.Load()
 }
 
 func (d *dataToFlush) releaseMemory() {
