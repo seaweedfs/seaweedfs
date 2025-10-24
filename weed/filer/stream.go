@@ -51,10 +51,6 @@ func JwtForVolumeServer(fileId string) string {
 	return string(security.GenJwtForVolumeServer(jwtSigningReadKey, jwtSigningReadKeyExpires, fileId))
 }
 
-func jwtForVolumeServer(fileId string) string {
-	return JwtForVolumeServer(fileId)
-}
-
 func HasData(entry *filer_pb.Entry) bool {
 
 	if len(entry.Content) > 0 {
@@ -181,7 +177,7 @@ func PrepareStreamContentWithThrottler(ctx context.Context, masterClient wdclien
 }
 
 func StreamContent(masterClient wdclient.HasLookupFileIdFunction, writer io.Writer, chunks []*filer_pb.FileChunk, offset int64, size int64) error {
-	streamFn, err := PrepareStreamContent(masterClient, jwtForVolumeServer, chunks, offset, size)
+	streamFn, err := PrepareStreamContent(masterClient, JwtForVolumeServer, chunks, offset, size)
 	if err != nil {
 		return err
 	}
@@ -380,7 +376,7 @@ func (c *ChunkStreamReader) fetchChunkToBuffer(chunkView *ChunkView) error {
 	}
 	var buffer bytes.Buffer
 	var shouldRetry bool
-	jwt := jwtForVolumeServer(chunkView.FileId)
+	jwt := JwtForVolumeServer(chunkView.FileId)
 	for _, urlString := range urlStrings {
 		shouldRetry, err = util_http.ReadUrlAsStream(context.Background(), urlString+"?readDeleted=true", jwt, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.OffsetInChunk, int(chunkView.ViewSize), func(data []byte) {
 			buffer.Write(data)

@@ -109,7 +109,7 @@ func fetchWholeChunk(ctx context.Context, bytesBuffer *bytes.Buffer, lookupFileI
 		glog.ErrorfCtx(ctx, "operation LookupFileId %s failed, err: %v", fileId, err)
 		return err
 	}
-	jwt := jwtForVolumeServer(fileId)
+	jwt := JwtForVolumeServer(fileId)
 	err = retriedStreamFetchChunkData(ctx, bytesBuffer, urlStrings, jwt, cipherKey, isGzipped, true, 0, 0)
 	if err != nil {
 		return err
