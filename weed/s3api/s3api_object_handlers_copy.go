@@ -1152,7 +1152,7 @@ func (s3a *S3ApiServer) copyMultipartSSECChunks(entry *filer_pb.Entry, copySourc
 	dstMetadata := make(map[string][]byte)
 	if destKey != nil && len(destIV) > 0 {
 		// Store the IV and SSE-C headers for single-part compatibility
-		StoreIVInMetadata(dstMetadata, destIV)
+		StoreSSECIVInMetadata(dstMetadata, destIV)
 		dstMetadata[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] = []byte("AES256")
 		dstMetadata[s3_constants.AmzServerSideEncryptionCustomerKeyMD5] = []byte(destKey.KeyMD5)
 		glog.V(2).Infof("Prepared multipart SSE-C destination metadata: %s", dstPath)
@@ -1504,7 +1504,7 @@ func (s3a *S3ApiServer) copyMultipartCrossEncryption(entry *filer_pb.Entry, r *h
 		if len(dstChunks) > 0 && dstChunks[0].GetSseType() == filer_pb.SSEType_SSE_C && len(dstChunks[0].GetSseMetadata()) > 0 {
 			if ssecMetadata, err := DeserializeSSECMetadata(dstChunks[0].GetSseMetadata()); err == nil {
 				if iv, ivErr := base64.StdEncoding.DecodeString(ssecMetadata.IV); ivErr == nil {
-					StoreIVInMetadata(dstMetadata, iv)
+					StoreSSECIVInMetadata(dstMetadata, iv)
 					dstMetadata[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] = []byte("AES256")
 					dstMetadata[s3_constants.AmzServerSideEncryptionCustomerKeyMD5] = []byte(destSSECKey.KeyMD5)
 				}
@@ -1772,7 +1772,7 @@ func (s3a *S3ApiServer) copyChunksWithSSEC(entry *filer_pb.Entry, r *http.Reques
 		dstMetadata := make(map[string][]byte)
 		if destKey != nil && len(destIV) > 0 {
 			// Store the IV
-			StoreIVInMetadata(dstMetadata, destIV)
+			StoreSSECIVInMetadata(dstMetadata, destIV)
 
 			// Store SSE-C algorithm and key MD5 for proper metadata
 			dstMetadata[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] = []byte("AES256")
@@ -1855,7 +1855,7 @@ func (s3a *S3ApiServer) copyChunkWithReencryption(chunk *filer_pb.FileChunk, cop
 	// Decrypt if source is encrypted
 	if copySourceKey != nil {
 		// Get IV from source metadata
-		srcIV, err := GetIVFromMetadata(srcMetadata)
+		srcIV, err := GetSSECIVFromMetadata(srcMetadata)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get IV from metadata: %w", err)
 		}

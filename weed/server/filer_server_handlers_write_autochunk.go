@@ -377,6 +377,16 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 		}
 	}
 
+	if sseS3Header := r.Header.Get(s3_constants.SeaweedFSSSES3Key); sseS3Header != "" {
+		// Decode base64-encoded S3 metadata and store
+		if s3Data, err := base64.StdEncoding.DecodeString(sseS3Header); err == nil {
+			entry.Extended[s3_constants.SeaweedFSSSES3Key] = s3Data
+			glog.V(4).Infof("Stored SSE-S3 metadata for %s", entry.FullPath)
+		} else {
+			glog.Errorf("Failed to decode SSE-S3 metadata header for %s: %v", entry.FullPath, err)
+		}
+	}
+
 	dbErr := fs.filer.CreateEntry(ctx, entry, false, false, nil, skipCheckParentDirEntry(r), so.MaxFileNameLength)
 	// In test_bucket_listv2_delimiter_basic, the valid object key is the parent folder
 	if dbErr != nil && strings.HasSuffix(dbErr.Error(), " is a file") && isS3Request(r) {

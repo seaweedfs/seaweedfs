@@ -485,6 +485,31 @@ func GetSSES3KeyFromMetadata(metadata map[string][]byte, keyManager *SSES3KeyMan
 	return DeserializeSSES3Metadata(keyData, keyManager)
 }
 
+// GetSSES3IV extracts the IV for single-part SSE-S3 objects
+// Priority: 1) object-level metadata (for inline/small files), 2) first chunk metadata
+func GetSSES3IV(entry *filer_pb.Entry, sseS3Key *SSES3Key, keyManager *SSES3KeyManager) ([]byte, error) {
+	// First check if IV is in the object-level key (for small/inline files)
+	if len(sseS3Key.IV) > 0 {
+		return sseS3Key.IV, nil
+	}
+
+	// Fallback: Get IV from first chunk's metadata (for chunked files)
+	if len(entry.GetChunks()) > 0 {
+		chunk := entry.GetChunks()[0]
+		if len(chunk.GetSseMetadata()) > 0 {
+			chunkKey, err := DeserializeSSES3Metadata(chunk.GetSseMetadata(), keyManager)
+			if err != nil {
+				return nil, fmt.Errorf("failed to deserialize chunk SSE-S3 metadata: %w", err)
+			}
+			if len(chunkKey.IV) > 0 {
+				return chunkKey.IV, nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("SSE-S3 IV not found in object or chunk metadata")
+}
+
 // CreateSSES3EncryptedReaderWithBaseIV creates an encrypted reader using a base IV for multipart upload consistency.
 // The returned IV is the offset-derived IV, calculated from the input baseIV and offset.
 func CreateSSES3EncryptedReaderWithBaseIV(reader io.Reader, key *SSES3Key, baseIV []byte, offset int64) (io.Reader, []byte /* derivedIV */, error) {

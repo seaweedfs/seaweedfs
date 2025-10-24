@@ -100,9 +100,9 @@ func (s3a *S3ApiServer) rotateSSEKMSMetadataOnly(entry *filer_pb.Entry, srcKeyID
 // rotateSSECChunks re-encrypts all chunks with new SSE-C key
 func (s3a *S3ApiServer) rotateSSECChunks(entry *filer_pb.Entry, sourceKey, destKey *SSECustomerKey) ([]*filer_pb.FileChunk, error) {
 	// Get IV from entry metadata
-	iv, err := GetIVFromMetadata(entry.Extended)
+	iv, err := GetSSECIVFromMetadata(entry.Extended)
 	if err != nil {
-		return nil, fmt.Errorf("get IV from metadata: %w", err)
+		return nil, fmt.Errorf("get SSE-C IV from metadata: %w", err)
 	}
 
 	var rotatedChunks []*filer_pb.FileChunk
@@ -125,7 +125,7 @@ func (s3a *S3ApiServer) rotateSSECChunks(entry *filer_pb.Entry, sourceKey, destK
 	if entry.Extended == nil {
 		entry.Extended = make(map[string][]byte)
 	}
-	StoreIVInMetadata(entry.Extended, newIV)
+	StoreSSECIVInMetadata(entry.Extended, newIV)
 	entry.Extended[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] = []byte("AES256")
 	entry.Extended[s3_constants.AmzServerSideEncryptionCustomerKeyMD5] = []byte(destKey.KeyMD5)
 
