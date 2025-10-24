@@ -31,9 +31,15 @@ func (s *AdminServer) HandleLogin(username, password string) gin.HandlerFunc {
 
 		if loginUsername == username && loginPassword == password {
 			session := sessions.Default(c)
+			// Clear any existing invalid session data before setting new values
+			session.Clear()
 			session.Set("authenticated", true)
 			session.Set("username", loginUsername)
-			session.Save()
+			if err := session.Save(); err != nil {
+				// Log the error but still try to continue
+				c.Redirect(http.StatusSeeOther, "/login?error=Session error, please try again")
+				return
+			}
 
 			c.Redirect(http.StatusSeeOther, "/admin")
 			return

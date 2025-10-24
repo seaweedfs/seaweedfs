@@ -191,31 +191,7 @@ func startAdminServer(ctx context.Context, options AdminOptions) error {
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery())
 
-	// Session store - always auto-generate session key
-	sessionKeyBytes := make([]byte, 32)
-	_, err := rand.Read(sessionKeyBytes)
-	if err != nil {
-		return fmt.Errorf("failed to generate session key: %w", err)
-	}
-	store := cookie.NewStore(sessionKeyBytes)
-
-	// Configure session options to ensure cookies are properly saved
-	store.Options(sessions.Options{
-		Path:   "/",
-		MaxAge: 3600 * 24, // 24 hours
-	})
-
-	r.Use(sessions.Sessions("admin-session", store))
-
-	// Static files - serve from embedded filesystem
-	staticFS, err := admin.GetStaticFS()
-	if err != nil {
-		log.Printf("Warning: Failed to load embedded static files: %v", err)
-	} else {
-		r.StaticFS("/static", http.FS(staticFS))
-	}
-
-	// Create data directory if specified
+	// Create data directory first if specified (needed for session key storage)
 	var dataDir string
 	if *options.dataDir != "" {
 		// Expand tilde (~) to home directory
@@ -234,6 +210,32 @@ func startAdminServer(ctx context.Context, options AdminOptions) error {
 			return fmt.Errorf("failed to create data directory %s: %v", dataDir, err)
 		}
 		fmt.Printf("Data directory created/verified: %s\n", dataDir)
+	}
+
+	// Session store - load or generate session key
+	sessionKeyBytes, err := loadOrGenerateSessionKey(dataDir)
+	if err != nil {
+		return fmt.Errorf("failed to get session key: %w", err)
+	}
+	store := cookie.NewStore(sessionKeyBytes)
+
+	// Configure session options to ensure cookies are properly saved
+	store.Options(sessions.Options{
+		Path:     "/",
+		MaxAge:   3600 * 24, // 24 hours
+		HttpOnly: true,      // Prevent JavaScript access
+		Secure:   false,     // Set to true if using HTTPS
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	r.Use(sessions.Sessions("admin-session", store))
+
+	// Static files - serve from embedded filesystem
+	staticFS, err := admin.GetStaticFS()
+	if err != nil {
+		log.Printf("Warning: Failed to load embedded static files: %v", err)
+	} else {
+		r.StaticFS("/static", http.FS(staticFS))
 	}
 
 	// Create admin server
@@ -329,6 +331,43 @@ func startAdminServer(ctx context.Context, options AdminOptions) error {
 // GetAdminOptions returns the admin command options for testing
 func GetAdminOptions() *AdminOptions {
 	return &AdminOptions{}
+}
+
+// loadOrGenerateSessionKey loads an existing session key from dataDir or generates a new one
+func loadOrGenerateSessionKey(dataDir string) ([]byte, error) {
+	if dataDir == "" {
+		// No persistence, generate random key
+		log.Println("No dataDir specified, generating ephemeral session key")
+		key := make([]byte, 32)
+		_, err := rand.Read(key)
+		return key, err
+	}
+
+	sessionKeyPath := filepath.Join(dataDir, ".session_key")
+
+	// Try to load existing key
+	if data, err := os.ReadFile(sessionKeyPath); err == nil {
+		if len(data) == 32 {
+			log.Printf("Loaded persisted session key from %s", sessionKeyPath)
+			return data, nil
+		}
+		log.Printf("Warning: Invalid session key file (expected 32 bytes, got %d), generating new key", len(data))
+	}
+
+	// Generate new key
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return nil, err
+	}
+
+	// Save key for future use
+	if err := os.WriteFile(sessionKeyPath, key, 0600); err != nil {
+		log.Printf("Warning: Failed to persist session key: %v", err)
+	} else {
+		log.Printf("Generated and persisted new session key to %s", sessionKeyPath)
+	}
+
+	return key, nil
 }
 
 // expandHomeDir expands the tilde (~) in a path to the user's home directory
