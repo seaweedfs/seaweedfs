@@ -90,7 +90,7 @@ func ValidateSSES3Key(sseKey *SSES3Key) error {
 		return fmt.Errorf("SSE-S3 key ID cannot be empty")
 	}
 	
-	// IV validation is optional - it may not be set until encryption time
+	// IV validation is optional during key creation - it will be set during encryption
 	// If IV is set, validate its length
 	if len(sseKey.IV) > 0 && len(sseKey.IV) != s3_constants.AESBlockSize {
 		return fmt.Errorf("invalid SSE-S3 IV length: expected %d bytes, got %d", s3_constants.AESBlockSize, len(sseKey.IV))
