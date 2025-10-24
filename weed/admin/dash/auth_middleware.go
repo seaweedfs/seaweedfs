@@ -36,7 +36,7 @@ func (s *AdminServer) HandleLogin(username, password string) gin.HandlerFunc {
 			session.Set("authenticated", true)
 			session.Set("username", loginUsername)
 			if err := session.Save(); err != nil {
-				// Log the error but still try to continue
+				glog.Warningf("failed to save session: %v", err)
 				c.Redirect(http.StatusSeeOther, "/login?error=Session error, please try again")
 				return
 			}
