@@ -1325,21 +1325,9 @@ func (s3a *S3ApiServer) createMultipartSSEKMSDecryptedReader(r *http.Request, pr
 			}
 		}
 
-		// Fallback to object-level metadata (legacy support)
-		if chunkSSEKMSKey == nil {
-			objectMetadataHeader := proxyResponse.Header.Get(s3_constants.SeaweedFSSSEKMSKeyHeader)
-			if objectMetadataHeader != "" {
-				kmsMetadataBytes, decodeErr := base64.StdEncoding.DecodeString(objectMetadataHeader)
-				if decodeErr == nil {
-					kmsKey, _ := DeserializeSSEKMSMetadata(kmsMetadataBytes)
-					if kmsKey != nil {
-						// For object-level metadata (legacy), use absolute file offset as fallback
-						kmsKey.ChunkOffset = chunk.GetOffset()
-						chunkSSEKMSKey = kmsKey
-					}
-				}
-			}
-		}
+		// Note: No fallback to object-level metadata for multipart objects
+		// Each chunk in a multipart SSE-KMS object must have its own unique IV
+		// Falling back to object-level metadata could lead to IV reuse or incorrect decryption
 
 		if chunkSSEKMSKey == nil {
 			return nil, fmt.Errorf("no SSE-KMS metadata found for chunk %s in multipart object", chunk.GetFileIdString())
@@ -1399,17 +1387,9 @@ func (s3a *S3ApiServer) createMultipartSSES3DecryptedReader(r *http.Request, ent
 				chunkSSES3Key = sseKey
 			}
 
-			// Fallback to object-level metadata
-			if chunkSSES3Key == nil {
-				if keyData, exists := entry.Extended[s3_constants.SeaweedFSSSES3Key]; exists {
-					sseKey, err := DeserializeSSES3Metadata(keyData, keyManager)
-					if err != nil {
-						chunkReader.Close()
-						return nil, fmt.Errorf("failed to deserialize object-level SSE-S3 metadata: %v", err)
-					}
-					chunkSSES3Key = sseKey
-				}
-			}
+			// Note: No fallback to object-level metadata for multipart objects
+			// Each chunk in a multipart SSE-S3 object must have its own unique IV
+			// Falling back to object-level metadata could lead to IV reuse or incorrect decryption
 
 			if chunkSSES3Key == nil {
 				chunkReader.Close()
