@@ -629,6 +629,10 @@ func (logBuffer *LogBuffer) GetEarliestPosition() MessagePosition {
 	}
 }
 
+func (logBuffer *LogBuffer) GetLastFlushedTime() int64 {
+	return logBuffer.lastFlushedTime.Load()
+}
+
 func (d *dataToFlush) releaseMemory() {
 	d.data.Reset()
 	bufferPool.Put(d.data)

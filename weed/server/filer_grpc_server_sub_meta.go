@@ -150,35 +150,41 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	var readPersistedLogErr error
 	var readInMemoryLogErr error
 	var isDone bool
+	var lastCheckedFlushedTime int64 = -1 // Track the last flushed time we checked
 
 	for {
-		// println("reading from persisted logs ...")
-		glog.V(0).Infof("read on disk %v local subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
-		processedTsNs, isDone, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(lastReadTime, req.UntilNs, eachLogEntryFn)
-		if readPersistedLogErr != nil {
-			glog.V(0).Infof("read on disk %v local subscribe %s from %+v: %v", clientName, req.PathPrefix, lastReadTime, readPersistedLogErr)
-			return fmt.Errorf("reading from persisted logs: %w", readPersistedLogErr)
-		}
-		if isDone {
-			return nil
-		}
+		// Check if new data has been flushed to disk since last check
+		currentFlushedTime := fs.filer.LocalMetaLogBuffer.GetLastFlushedTime()
+		shouldReadFromDisk := lastCheckedFlushedTime == -1 || currentFlushedTime > lastCheckedFlushedTime
 
-		if processedTsNs != 0 {
-			lastReadTime = log_buffer.NewMessagePosition(processedTsNs, -2)
-		} else {
-			if readInMemoryLogErr == log_buffer.ResumeFromDiskError {
-				time.Sleep(1127 * time.Millisecond)
-				continue
+		if shouldReadFromDisk {
+			// println("reading from persisted logs ...")
+			glog.V(0).Infof("read on disk %v local subscribe %s from %+v (lastFlushed: %v)", clientName, req.PathPrefix, lastReadTime, currentFlushedTime)
+			processedTsNs, isDone, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(lastReadTime, req.UntilNs, eachLogEntryFn)
+			if readPersistedLogErr != nil {
+				glog.V(0).Infof("read on disk %v local subscribe %s from %+v: %v", clientName, req.PathPrefix, lastReadTime, readPersistedLogErr)
+				return fmt.Errorf("reading from persisted logs: %w", readPersistedLogErr)
 			}
-			// If no persisted entries were read for this day, check the next day for logs
-			nextDayTs := util.GetNextDayTsNano(lastReadTime.Time.UnixNano())
-			position := log_buffer.NewMessagePosition(nextDayTs, -2)
-			found, err := fs.filer.HasPersistedLogFiles(position)
-			if err != nil {
-				return fmt.Errorf("checking persisted log files: %w", err)
+			if isDone {
+				return nil
 			}
-			if found {
-				lastReadTime = position
+
+			// Update the last checked flushed time
+			lastCheckedFlushedTime = currentFlushedTime
+
+			if processedTsNs != 0 {
+				lastReadTime = log_buffer.NewMessagePosition(processedTsNs, -2)
+			} else {
+				// No data read from disk, check if there are logs for future days
+				nextDayTs := util.GetNextDayTsNano(lastReadTime.Time.UnixNano())
+				position := log_buffer.NewMessagePosition(nextDayTs, -2)
+				found, err := fs.filer.HasPersistedLogFiles(position)
+				if err != nil {
+					return fmt.Errorf("checking persisted log files: %w", err)
+				}
+				if found {
+					lastReadTime = position
+				}
 			}
 		}
 
@@ -205,6 +211,17 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 		}, eachLogEntryFn)
 		if readInMemoryLogErr != nil {
 			if readInMemoryLogErr == log_buffer.ResumeFromDiskError {
+				// Memory buffer says the requested time is too old
+				// Check if new data has been flushed to disk since last check
+				currentFlushedTime := fs.filer.LocalMetaLogBuffer.GetLastFlushedTime()
+				if currentFlushedTime > lastCheckedFlushedTime {
+					// New data flushed to disk, go read it
+					glog.V(0).Infof("new data flushed to disk %v local subscribe %s (lastFlushed: %v -> %v)",
+						clientName, req.PathPrefix, lastCheckedFlushedTime, currentFlushedTime)
+					continue
+				}
+				// No new data flushed, just wait for new data in memory
+				time.Sleep(1127 * time.Millisecond)
 				continue
 			}
 			glog.Errorf("processed to %v: %v", lastReadTime, readInMemoryLogErr)
