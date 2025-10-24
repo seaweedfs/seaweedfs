@@ -842,47 +842,62 @@ func (s3a *S3ApiServer) handleSSEResponse(r *http.Request, proxyResponse *http.R
 		objectEntry = entry
 		actualObjectType = s3a.detectPrimarySSEType(objectEntry)
 	} else {
-		glog.Errorf("Failed to get object entry for SSE routing: %v", err)
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-		return http.StatusInternalServerError, 0
+		// Silently handle error - may be versioned object or special case
+		// Will fall back to header-based detection below
+		glog.V(4).Infof("Could not get object entry for SSE routing (will use fallback): %v", err)
 	}
 
 	// Route based on ACTUAL object type (from chunks) rather than conflicting headers
-	if actualObjectType == s3_constants.SSETypeC && clientExpectsSSEC {
-		// Object is SSE-C and client expects SSE-C → SSE-C handler
-		return s3a.handleSSECResponse(r, proxyResponse, w)
-	} else if actualObjectType == s3_constants.SSETypeKMS && !clientExpectsSSEC {
-		// Object is SSE-KMS and client doesn't expect SSE-C → SSE-KMS handler
-		return s3a.handleSSEKMSResponse(r, proxyResponse, w, objectEntry, kmsMetadataHeader)
-	} else if actualObjectType == s3_constants.SSETypeS3 && !clientExpectsSSEC {
-		// Object is SSE-S3 and client doesn't expect SSE-C → SSE-S3 handler
-		return s3a.handleSSES3Response(r, proxyResponse, w, objectEntry)
-	} else if actualObjectType == "None" && !clientExpectsSSEC {
-		// Object is unencrypted and client doesn't expect SSE-C → pass through
-		return passThroughResponse(proxyResponse, w)
-	} else if actualObjectType == s3_constants.SSETypeC && !clientExpectsSSEC {
-		// Object is SSE-C but client doesn't provide SSE-C headers → Error
-		s3err.WriteErrorResponse(w, r, s3err.ErrSSECustomerKeyMissing)
-		return http.StatusBadRequest, 0
-	} else if actualObjectType == s3_constants.SSETypeKMS && clientExpectsSSEC {
-		// Object is SSE-KMS but client provides SSE-C headers → Error
-		s3err.WriteErrorResponse(w, r, s3err.ErrSSECustomerKeyMissing)
-		return http.StatusBadRequest, 0
-	} else if actualObjectType == s3_constants.SSETypeS3 && clientExpectsSSEC {
-		// Object is SSE-S3 but client provides SSE-C headers → Error (mismatched encryption)
-		s3err.WriteErrorResponse(w, r, s3err.ErrSSECustomerKeyMissing)
-		return http.StatusBadRequest, 0
-	} else if actualObjectType == "None" && clientExpectsSSEC {
-		// Object is unencrypted but client provides SSE-C headers → Error
-		s3err.WriteErrorResponse(w, r, s3err.ErrSSECustomerKeyMissing)
-		return http.StatusBadRequest, 0
+	// Only use chunk-based routing if we successfully got the entry
+	if objectEntry != nil {
+		if actualObjectType == s3_constants.SSETypeC && clientExpectsSSEC {
+			// Object is SSE-C and client expects SSE-C → SSE-C handler
+			return s3a.handleSSECResponse(r, proxyResponse, w)
+		} else if actualObjectType == s3_constants.SSETypeKMS && !clientExpectsSSEC {
+			// Object is SSE-KMS and client doesn't expect SSE-C → SSE-KMS handler
+			return s3a.handleSSEKMSResponse(r, proxyResponse, w, objectEntry, kmsMetadataHeader)
+		} else if actualObjectType == s3_constants.SSETypeS3 && !clientExpectsSSEC {
+			// Object is SSE-S3 and client doesn't expect SSE-C → SSE-S3 handler
+			return s3a.handleSSES3Response(r, proxyResponse, w, objectEntry)
+		} else if actualObjectType == "None" && !clientExpectsSSEC {
+			// Object is unencrypted and client doesn't expect SSE-C → pass through
+			return passThroughResponse(proxyResponse, w)
+		} else if actualObjectType == s3_constants.SSETypeC && !clientExpectsSSEC {
+			// Object is SSE-C but client doesn't provide SSE-C headers → Error
+			s3err.WriteErrorResponse(w, r, s3err.ErrSSECustomerKeyMissing)
+			return http.StatusBadRequest, 0
+		} else if actualObjectType == s3_constants.SSETypeKMS && clientExpectsSSEC {
+			// Object is SSE-KMS but client provides SSE-C headers → Error
+			s3err.WriteErrorResponse(w, r, s3err.ErrSSECustomerKeyMissing)
+			return http.StatusBadRequest, 0
+		} else if actualObjectType == s3_constants.SSETypeS3 && clientExpectsSSEC {
+			// Object is SSE-S3 but client provides SSE-C headers → Error (mismatched encryption)
+			s3err.WriteErrorResponse(w, r, s3err.ErrSSECustomerKeyMissing)
+			return http.StatusBadRequest, 0
+		} else if actualObjectType == "None" && clientExpectsSSEC {
+			// Object is unencrypted but client provides SSE-C headers → Error
+			s3err.WriteErrorResponse(w, r, s3err.ErrSSECustomerKeyMissing)
+			return http.StatusBadRequest, 0
+		}
 	}
 
 	// Fallback for edge cases - use original logic with header-based detection
 	if clientExpectsSSEC && sseAlgorithm != "" {
 		return s3a.handleSSECResponse(r, proxyResponse, w)
 	} else if !clientExpectsSSEC && kmsMetadataHeader != "" {
-		// Reuse the already-fetched objectEntry (guaranteed to be non-nil due to error check above)
+		// For SSE-KMS fallback, we need the objectEntry
+		// If we don't have it (e.g., versioned object), fetch it now
+		if objectEntry == nil {
+			bucket, object := s3_constants.GetBucketAndObject(r)
+			objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
+			if entry, err := s3a.getEntry("", objectPath); err == nil {
+				objectEntry = entry
+			} else {
+				glog.Errorf("Failed to get object entry for SSE-KMS fallback: %v", err)
+				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+				return http.StatusInternalServerError, 0
+			}
+		}
 		return s3a.handleSSEKMSResponse(r, proxyResponse, w, objectEntry, kmsMetadataHeader)
 	} else {
 		return passThroughResponse(proxyResponse, w)
