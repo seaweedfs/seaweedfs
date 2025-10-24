@@ -227,8 +227,12 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 						clientName, req.PathPrefix, lastCheckedFlushedTime, currentFlushedTime, lastDiskReadTsNs, currentReadTsNs)
 					continue
 				}
-				// No progress possible, wait for new data in memory
-				time.Sleep(1127 * time.Millisecond)
+				// No progress possible, wait for new data to arrive (event-driven, not polling)
+				fs.listenersLock.Lock()
+				atomic.AddInt64(&fs.listenersWaits, 1)
+				fs.listenersCond.Wait()
+				atomic.AddInt64(&fs.listenersWaits, -1)
+				fs.listenersLock.Unlock()
 				continue
 			}
 			glog.Errorf("processed to %v: %v", lastReadTime, readInMemoryLogErr)
