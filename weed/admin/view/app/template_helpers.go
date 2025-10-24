@@ -66,11 +66,3 @@ func calculatePercent(current, max int) int {
 	}
 	return (current * 100) / max
 }
-
-// Get the volume's address. Returns publicURL if available, otherwise the default address.
-func getVolumeAddress(publicURL, address string) string {
-	if publicURL != "" {
-		return publicURL
-	}
-	return address
-}
