@@ -172,7 +172,12 @@ templ Admin(data dash.AdminData) {
                                 <tbody>
                                     for _, master := range data.MasterNodes {
                                         <tr>
-                                            <td>{master.Address}</td>
+                                            <td>
+                                                <a href={templ.SafeURL(fmt.Sprintf("http://%s/ui/index.html", master.Address))} target="_blank">
+                                                    {master.Address}
+                                                    <i class="fas fa-external-link-alt ms-1 text-muted"></i>
+                                                </a>
+                                            </td>
                                             <td>
                                                 if master.IsLeader {
                                                     <span class="badge bg-primary">Leader</span>
@@ -275,7 +280,7 @@ templ Admin(data dash.AdminData) {
                                         <tr>
                                             <td>{vs.ID}</td>
                                             <td>
-                                                <a href={templ.SafeURL(fmt.Sprintf("http://%s/ui/index.html", vs.PublicURL))} target="_blank">
+                                                <a href={templ.SafeURL(fmt.Sprintf("http://%s/ui/index.html", getVolumeAddress(vs.PublicURL, vs.Address)))} target="_blank">
                                                     {vs.Address}
                                                     <i class="fas fa-external-link-alt ms-1 text-muted"></i>
                                                 </a>
