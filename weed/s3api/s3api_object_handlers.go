@@ -278,11 +278,11 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	glog.V(1).Infof("GetObject: bucket %s, object %s, versioningConfigured=%v, versionId=%s", bucket, object, versioningConfigured, versionId)
 
 	var destUrl string
+	var entry *filer_pb.Entry // Declare entry at function scope for SSE processing
 
 	if versioningConfigured {
 		// Handle versioned GET - all versions are stored in .versions directory
 		var targetVersionId string
-		var entry *filer_pb.Entry
 
 		if versionId != "" {
 			// Request for specific version
@@ -363,6 +363,20 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	// Fetch the correct entry for SSE processing (respects versionId)
+	var objectEntryForSSE *filer_pb.Entry
+	if versioningConfigured {
+		// For versioned objects, we already have the correct entry
+		objectEntryForSSE = entry
+	} else {
+		// For non-versioned objects, fetch the entry
+		bucket, object := s3_constants.GetBucketAndObject(r)
+		objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
+		if fetchedEntry, err := s3a.getEntry("", objectPath); err == nil {
+			objectEntryForSSE = fetchedEntry
+		}
+	}
+
 	s3a.proxyToFiler(w, r, destUrl, false, func(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64) {
 		// Restore the original Range header for SSE processing
 		if sseObject && originalRangeHeader != "" {
@@ -371,14 +385,12 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		}
 
 		// Add SSE metadata headers based on object metadata before SSE processing
-		bucket, object := s3_constants.GetBucketAndObject(r)
-		objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
-		if objectEntry, err := s3a.getEntry("", objectPath); err == nil {
-			s3a.addSSEHeadersToResponse(proxyResponse, objectEntry)
+		if objectEntryForSSE != nil {
+			s3a.addSSEHeadersToResponse(proxyResponse, objectEntryForSSE)
 		}
 
 		// Handle SSE decryption (both SSE-C and SSE-KMS) if needed
-		return s3a.handleSSEResponse(r, proxyResponse, w)
+		return s3a.handleSSEResponse(r, proxyResponse, w, objectEntryForSSE)
 	})
 }
 
@@ -422,11 +434,11 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	var destUrl string
+	var entry *filer_pb.Entry // Declare entry at function scope for SSE processing
 
 	if versioningConfigured {
 		// Handle versioned HEAD - all versions are stored in .versions directory
 		var targetVersionId string
-		var entry *filer_pb.Entry
 
 		if versionId != "" {
 			// Request for specific version
@@ -488,9 +500,23 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 		destUrl = s3a.toFilerUrl(bucket, object)
 	}
 
+	// Fetch the correct entry for SSE processing (respects versionId)
+	var objectEntryForSSE *filer_pb.Entry
+	if versioningConfigured {
+		// For versioned objects, we already have the correct entry
+		objectEntryForSSE = entry
+	} else {
+		// For non-versioned objects, fetch the entry
+		bucket, object := s3_constants.GetBucketAndObject(r)
+		objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
+		if fetchedEntry, err := s3a.getEntry("", objectPath); err == nil {
+			objectEntryForSSE = fetchedEntry
+		}
+	}
+
 	s3a.proxyToFiler(w, r, destUrl, false, func(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64) {
 		// Handle SSE validation (both SSE-C and SSE-KMS) for HEAD requests
-		return s3a.handleSSEResponse(r, proxyResponse, w)
+		return s3a.handleSSEResponse(r, proxyResponse, w, objectEntryForSSE)
 	})
 }
 
@@ -825,7 +851,8 @@ func (s3a *S3ApiServer) handleSSECResponse(r *http.Request, proxyResponse *http.
 }
 
 // handleSSEResponse handles both SSE-C and SSE-KMS decryption/validation and response processing
-func (s3a *S3ApiServer) handleSSEResponse(r *http.Request, proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64) {
+// The objectEntry parameter should be the correct entry for the requested version (if versioned)
+func (s3a *S3ApiServer) handleSSEResponse(r *http.Request, proxyResponse *http.Response, w http.ResponseWriter, objectEntry *filer_pb.Entry) (statusCode int, bytesTransferred int64) {
 	// Check what the client is expecting based on request headers
 	clientExpectsSSEC := IsSSECRequest(r)
 
@@ -833,18 +860,10 @@ func (s3a *S3ApiServer) handleSSEResponse(r *http.Request, proxyResponse *http.R
 	kmsMetadataHeader := proxyResponse.Header.Get(s3_constants.SeaweedFSSSEKMSKeyHeader)
 	sseAlgorithm := proxyResponse.Header.Get(s3_constants.AmzServerSideEncryptionCustomerAlgorithm)
 
-	// Get actual object state by examining chunks (most reliable for cross-encryption)
-	bucket, object := s3_constants.GetBucketAndObject(r)
-	objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
+	// Detect actual object SSE type from the provided entry (respects versionId)
 	actualObjectType := "Unknown"
-	var objectEntry *filer_pb.Entry
-	if entry, err := s3a.getEntry("", objectPath); err == nil {
-		objectEntry = entry
+	if objectEntry != nil {
 		actualObjectType = s3a.detectPrimarySSEType(objectEntry)
-	} else {
-		// Silently handle error - may be versioned object or special case
-		// Will fall back to header-based detection below
-		glog.V(4).Infof("Could not get object entry for SSE routing (will use fallback): %v", err)
 	}
 
 	// Route based on ACTUAL object type (from chunks) rather than conflicting headers
@@ -886,17 +905,10 @@ func (s3a *S3ApiServer) handleSSEResponse(r *http.Request, proxyResponse *http.R
 		return s3a.handleSSECResponse(r, proxyResponse, w)
 	} else if !clientExpectsSSEC && kmsMetadataHeader != "" {
 		// For SSE-KMS fallback, we need the objectEntry
-		// If we don't have it (e.g., versioned object), fetch it now
 		if objectEntry == nil {
-			bucket, object := s3_constants.GetBucketAndObject(r)
-			objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
-			if entry, err := s3a.getEntry("", objectPath); err == nil {
-				objectEntry = entry
-			} else {
-				glog.Errorf("Failed to get object entry for SSE-KMS fallback: %v", err)
-				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-				return http.StatusInternalServerError, 0
-			}
+			glog.Errorf("Object entry not available for SSE-KMS fallback")
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return http.StatusInternalServerError, 0
 		}
 		return s3a.handleSSEKMSResponse(r, proxyResponse, w, objectEntry, kmsMetadataHeader)
 	} else {
