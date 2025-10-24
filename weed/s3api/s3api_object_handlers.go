@@ -372,9 +372,13 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		// For non-versioned objects, fetch the entry
 		bucket, object := s3_constants.GetBucketAndObject(r)
 		objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
-		if fetchedEntry, err := s3a.getEntry("", objectPath); err == nil {
-			objectEntryForSSE = fetchedEntry
+		fetchedEntry, err := s3a.getEntry("", objectPath)
+		if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+			glog.Errorf("GetObjectHandler: failed to get entry for SSE check %s: %v", objectPath, err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return
 		}
+		objectEntryForSSE = fetchedEntry
 	}
 
 	s3a.proxyToFiler(w, r, destUrl, false, func(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64) {
@@ -509,9 +513,13 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 		// For non-versioned objects, fetch the entry
 		bucket, object := s3_constants.GetBucketAndObject(r)
 		objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
-		if fetchedEntry, err := s3a.getEntry("", objectPath); err == nil {
-			objectEntryForSSE = fetchedEntry
+		fetchedEntry, err := s3a.getEntry("", objectPath)
+		if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+			glog.Errorf("HeadObjectHandler: failed to get entry for SSE check %s: %v", objectPath, err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return
 		}
+		objectEntryForSSE = fetchedEntry
 	}
 
 	s3a.proxyToFiler(w, r, destUrl, false, func(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64) {
