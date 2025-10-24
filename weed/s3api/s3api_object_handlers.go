@@ -906,7 +906,7 @@ func (s3a *S3ApiServer) handleSSEResponse(r *http.Request, proxyResponse *http.R
 		return http.StatusBadRequest, 0
 	} else if actualObjectType == s3_constants.SSETypeS3 && clientExpectsSSEC {
 		// Object is SSE-S3 but client provides SSE-C headers → Error (mismatched encryption)
-		s3err.WriteErrorResponse(w, r, s3err.ErrSSECustomerKeyMissing)
+		s3err.WriteErrorResponse(w, r, s3err.ErrSSEEncryptionTypeMismatch)
 		return http.StatusBadRequest, 0
 	} else if actualObjectType == "None" && clientExpectsSSEC {
 		// Object is unencrypted but client provides SSE-C headers → Error
