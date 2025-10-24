@@ -56,6 +56,8 @@ func (s *AdminServer) HandleLogin(username, password string) gin.HandlerFunc {
 func (s *AdminServer) HandleLogout(c *gin.Context) {
 	session := sessions.Default(c)
 	session.Clear()
-	session.Save()
+	if err := session.Save(); err != nil {
+		glog.Warningf("Failed to save session during logout: %v", err)
+	}
 	c.Redirect(http.StatusSeeOther, "/login")
 }
