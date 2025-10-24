@@ -695,7 +695,7 @@ func passThroughResponse(proxyResponse *http.Response, w http.ResponseWriter) (s
 }
 
 // handleSSECResponse handles SSE-C decryption and response processing
-func (s3a *S3ApiServer) handleSSECResponse(r *http.Request, proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64) {
+func (s3a *S3ApiServer) handleSSECResponse(r *http.Request, proxyResponse *http.Response, w http.ResponseWriter, entry *filer_pb.Entry) (statusCode int, bytesTransferred int64) {
 	// Check if the object has SSE-C metadata
 	sseAlgorithm := proxyResponse.Header.Get(s3_constants.AmzServerSideEncryptionCustomerAlgorithm)
 	sseKeyMD5 := proxyResponse.Header.Get(s3_constants.AmzServerSideEncryptionCustomerKeyMD5)
@@ -728,9 +728,8 @@ func (s3a *S3ApiServer) handleSSECResponse(r *http.Request, proxyResponse *http.
 		// Range requests will be handled by the filer layer with proper offset-based decryption
 
 		// Check if this is a chunked or small content SSE-C object
-		bucket, object := s3_constants.GetBucketAndObject(r)
-		objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
-		if entry, err := s3a.getEntry("", objectPath); err == nil {
+		// Use the entry parameter passed from the caller (avoids redundant lookup)
+		if entry != nil {
 			// Check for SSE-C chunks
 			sseCChunks := 0
 			for _, chunk := range entry.GetChunks() {
@@ -879,7 +878,7 @@ func (s3a *S3ApiServer) handleSSEResponse(r *http.Request, proxyResponse *http.R
 	if objectEntry != nil {
 		if actualObjectType == s3_constants.SSETypeC && clientExpectsSSEC {
 			// Object is SSE-C and client expects SSE-C → SSE-C handler
-			return s3a.handleSSECResponse(r, proxyResponse, w)
+			return s3a.handleSSECResponse(r, proxyResponse, w, objectEntry)
 		} else if actualObjectType == s3_constants.SSETypeKMS && !clientExpectsSSEC {
 			// Object is SSE-KMS and client doesn't expect SSE-C → SSE-KMS handler
 			return s3a.handleSSEKMSResponse(r, proxyResponse, w, objectEntry, kmsMetadataHeader)
@@ -910,7 +909,7 @@ func (s3a *S3ApiServer) handleSSEResponse(r *http.Request, proxyResponse *http.R
 
 	// Fallback for edge cases - use original logic with header-based detection
 	if clientExpectsSSEC && sseAlgorithm != "" {
-		return s3a.handleSSECResponse(r, proxyResponse, w)
+		return s3a.handleSSECResponse(r, proxyResponse, w, objectEntry)
 	} else if !clientExpectsSSEC && kmsMetadataHeader != "" {
 		// For SSE-KMS fallback, we need the objectEntry
 		if objectEntry == nil {
@@ -963,20 +962,16 @@ func (s3a *S3ApiServer) handleSSEKMSResponse(r *http.Request, proxyResponse *htt
 	// We need to check the object structure to determine if it's multipart encrypted
 	isMultipartSSEKMS := false
 
-	if sseKMSKey != nil {
-		// Get the object entry to check chunk structure
-		bucket, object := s3_constants.GetBucketAndObject(r)
-		objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
-		if entry, err := s3a.getEntry("", objectPath); err == nil {
-			// Check for multipart SSE-KMS
-			sseKMSChunks := 0
-			for _, chunk := range entry.GetChunks() {
-				if chunk.GetSseType() == filer_pb.SSEType_SSE_KMS && len(chunk.GetSseMetadata()) > 0 {
-					sseKMSChunks++
-				}
+	if sseKMSKey != nil && entry != nil {
+		// Use the entry parameter passed from the caller (avoids redundant lookup)
+		// Check for multipart SSE-KMS
+		sseKMSChunks := 0
+		for _, chunk := range entry.GetChunks() {
+			if chunk.GetSseType() == filer_pb.SSEType_SSE_KMS && len(chunk.GetSseMetadata()) > 0 {
+				sseKMSChunks++
 			}
-			isMultipartSSEKMS = sseKMSChunks > 1
 		}
+		isMultipartSSEKMS = sseKMSChunks > 1
 	}
 
 	var decryptedReader io.Reader
