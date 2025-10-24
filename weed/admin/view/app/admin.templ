@@ -281,7 +281,7 @@ templ Admin(data dash.AdminData) {
                                             <td>{vs.ID}</td>
                                             <td>
                                                 <a href={templ.SafeURL(fmt.Sprintf("http://%s/ui/index.html", vs.GetDisplayAddress()))} target="_blank">
-                                                    {vs.Address}
+                                                    {vs.GetDisplayAddress()}
                                                     <i class="fas fa-external-link-alt ms-1 text-muted"></i>
                                                 </a>
                                             </td>
