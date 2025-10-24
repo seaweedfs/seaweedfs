@@ -384,7 +384,12 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVIn
 	}
 
 	if !applyPurging {
-		pct := float64(totalOrphanChunkCount*100) / (float64(totalOrphanChunkCount + totalInUseCount))
+		pct := 0.0
+
+		if totalOrphanChunkCount+totalInUseCount > 0 {
+			pct = float64(totalOrphanChunkCount*100) / (float64(totalOrphanChunkCount + totalInUseCount))
+		}
+
 		fmt.Fprintf(c.writer, "\nTotal\t\tentries:%d\torphan:%d\t%.2f%%\t%dB\n",
 			totalOrphanChunkCount+totalInUseCount, totalOrphanChunkCount, pct, totalOrphanDataSize)
 
@@ -621,7 +626,12 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 	}
 
 	if orphanFileCount > 0 {
-		pct := float64(orphanFileCount*100) / (float64(orphanFileCount + inUseCount))
+		pct := 0.0
+
+		if orphanFileCount+inUseCount > 0 {
+			pct = float64(orphanFileCount*100) / (float64(orphanFileCount + inUseCount))
+		}
+
 		fmt.Fprintf(c.writer, "dataNode:%s\tvolume:%d\tentries:%d\torphan:%d\t%.2f%%\t%dB\n",
 			dataNodeId, volumeId, orphanFileCount+inUseCount, orphanFileCount, pct, orphanDataSize)
 	}
