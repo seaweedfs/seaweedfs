@@ -213,7 +213,7 @@ func startAdminServer(ctx context.Context, options AdminOptions) error {
 	}
 
 	// Detect TLS configuration to set Secure cookie flag
-	useTLS := viper.GetString("https.admin.key") != ""
+	cookieSecure := viper.GetString("https.admin.key") != ""
 
 	// Session store - load or generate session key
 	sessionKeyBytes, err := loadOrGenerateSessionKey(dataDir)
@@ -225,9 +225,9 @@ func startAdminServer(ctx context.Context, options AdminOptions) error {
 	// Configure session options to ensure cookies are properly saved
 	store.Options(sessions.Options{
 		Path:     "/",
-		MaxAge:   3600 * 24, // 24 hours
-		HttpOnly: true,      // Prevent JavaScript access
-		Secure:   useTLS,    // Set based on actual TLS configuration
+		MaxAge:   3600 * 24,    // 24 hours
+		HttpOnly: true,         // Prevent JavaScript access
+		Secure:   cookieSecure, // Set based on actual TLS configuration
 		SameSite: http.SameSiteLaxMode,
 	})
 
