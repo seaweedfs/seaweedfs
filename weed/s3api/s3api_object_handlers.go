@@ -837,8 +837,14 @@ func (s3a *S3ApiServer) handleSSEResponse(r *http.Request, proxyResponse *http.R
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
 	actualObjectType := "Unknown"
-	if objectEntry, err := s3a.getEntry("", objectPath); err == nil {
+	var objectEntry *filer_pb.Entry
+	if entry, err := s3a.getEntry("", objectPath); err == nil {
+		objectEntry = entry
 		actualObjectType = s3a.detectPrimarySSEType(objectEntry)
+	} else {
+		glog.Errorf("Failed to get object entry for SSE routing: %v", err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return http.StatusInternalServerError, 0
 	}
 
 	// Route based on ACTUAL object type (from chunks) rather than conflicting headers
@@ -847,10 +853,10 @@ func (s3a *S3ApiServer) handleSSEResponse(r *http.Request, proxyResponse *http.R
 		return s3a.handleSSECResponse(r, proxyResponse, w)
 	} else if actualObjectType == s3_constants.SSETypeKMS && !clientExpectsSSEC {
 		// Object is SSE-KMS and client doesn't expect SSE-C → SSE-KMS handler
-		return s3a.handleSSEKMSResponse(r, proxyResponse, w, kmsMetadataHeader)
+		return s3a.handleSSEKMSResponse(r, proxyResponse, w, objectEntry, kmsMetadataHeader)
 	} else if actualObjectType == s3_constants.SSETypeS3 && !clientExpectsSSEC {
 		// Object is SSE-S3 and client doesn't expect SSE-C → SSE-S3 handler
-		return s3a.handleSSES3Response(r, proxyResponse, w)
+		return s3a.handleSSES3Response(r, proxyResponse, w, objectEntry)
 	} else if actualObjectType == "None" && !clientExpectsSSEC {
 		// Object is unencrypted and client doesn't expect SSE-C → pass through
 		return passThroughResponse(proxyResponse, w)
@@ -876,14 +882,15 @@ func (s3a *S3ApiServer) handleSSEResponse(r *http.Request, proxyResponse *http.R
 	if clientExpectsSSEC && sseAlgorithm != "" {
 		return s3a.handleSSECResponse(r, proxyResponse, w)
 	} else if !clientExpectsSSEC && kmsMetadataHeader != "" {
-		return s3a.handleSSEKMSResponse(r, proxyResponse, w, kmsMetadataHeader)
+		// Reuse the already-fetched objectEntry (guaranteed to be non-nil due to error check above)
+		return s3a.handleSSEKMSResponse(r, proxyResponse, w, objectEntry, kmsMetadataHeader)
 	} else {
 		return passThroughResponse(proxyResponse, w)
 	}
 }
 
 // handleSSEKMSResponse handles SSE-KMS decryption and response processing
-func (s3a *S3ApiServer) handleSSEKMSResponse(r *http.Request, proxyResponse *http.Response, w http.ResponseWriter, kmsMetadataHeader string) (statusCode int, bytesTransferred int64) {
+func (s3a *S3ApiServer) handleSSEKMSResponse(r *http.Request, proxyResponse *http.Response, w http.ResponseWriter, entry *filer_pb.Entry, kmsMetadataHeader string) (statusCode int, bytesTransferred int64) {
 	// Deserialize SSE-KMS metadata
 	kmsMetadataBytes, err := base64.StdEncoding.DecodeString(kmsMetadataHeader)
 	if err != nil {
@@ -985,16 +992,7 @@ func (s3a *S3ApiServer) handleSSEKMSResponse(r *http.Request, proxyResponse *htt
 }
 
 // handleSSES3Response handles SSE-S3 decryption and response processing
-func (s3a *S3ApiServer) handleSSES3Response(r *http.Request, proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64) {
-	// Get the object entry to extract SSE-S3 metadata
-	bucket, object := s3_constants.GetBucketAndObject(r)
-	objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
-	entry, err := s3a.getEntry("", objectPath)
-	if err != nil {
-		glog.Errorf("Failed to get object entry for SSE-S3 decryption: %v", err)
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-		return http.StatusInternalServerError, 0
-	}
+func (s3a *S3ApiServer) handleSSES3Response(r *http.Request, proxyResponse *http.Response, w http.ResponseWriter, entry *filer_pb.Entry) (statusCode int, bytesTransferred int64) {
 
 	// For HEAD requests, we don't need to decrypt the body, just add response headers
 	if r.Method == "HEAD" {
