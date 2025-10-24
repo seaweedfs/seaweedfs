@@ -1097,8 +1097,19 @@ func (s3a *S3ApiServer) uploadChunkData(chunkData []byte, assignResult *filer_pb
 
 // downloadChunkData downloads chunk data from the source URL
 func (s3a *S3ApiServer) downloadChunkData(srcUrl string, offset, size int64) ([]byte, error) {
+	// Extract fileId from the URL for JWT generation
+	// URL format is typically: http://host:port/fileId or http://host:port/fileId?params
+	fileId := ""
+	if idx := strings.LastIndex(srcUrl, "/"); idx >= 0 {
+		fileId = srcUrl[idx+1:]
+		if qIdx := strings.Index(fileId, "?"); qIdx >= 0 {
+			fileId = fileId[:qIdx]
+		}
+	}
+
+	jwt := filer.JwtForVolumeServer(fileId)
 	var chunkData []byte
-	shouldRetry, err := util_http.ReadUrlAsStream(context.Background(), srcUrl, nil, false, false, offset, int(size), func(data []byte) {
+	shouldRetry, err := util_http.ReadUrlAsStream(context.Background(), srcUrl, jwt, nil, false, false, offset, int(size), func(data []byte) {
 		chunkData = append(chunkData, data...)
 	})
 	if err != nil {
