@@ -680,16 +680,28 @@ func writeFinalResponse(w http.ResponseWriter, proxyResponse *http.Response, bod
 	return statusCode, bytesTransferred
 }
 
+// copyResponseHeaders copies headers from proxy response to the response writer,
+// excluding internal SeaweedFS headers and optionally excluding body-related headers
+func copyResponseHeaders(w http.ResponseWriter, proxyResponse *http.Response, excludeBodyHeaders bool) {
+	for k, v := range proxyResponse.Header {
+		// Always exclude internal SeaweedFS headers
+		if s3_constants.IsSeaweedFSInternalHeader(k) {
+			continue
+		}
+		// Optionally exclude body-related headers that might change after decryption
+		if excludeBodyHeaders && (k == "Content-Length" || k == "Content-Encoding") {
+			continue
+		}
+		w.Header()[k] = v
+	}
+}
+
 func passThroughResponse(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64) {
 	// Capture existing CORS headers that may have been set by middleware
 	capturedCORSHeaders := captureCORSHeaders(w, corsHeaders)
 
 	// Copy headers from proxy response (excluding internal SeaweedFS headers)
-	for k, v := range proxyResponse.Header {
-		if !s3_constants.IsSeaweedFSInternalHeader(k) {
-			w.Header()[k] = v
-		}
-	}
+	copyResponseHeaders(w, proxyResponse, false)
 
 	return writeFinalResponse(w, proxyResponse, proxyResponse.Body, capturedCORSHeaders)
 }
@@ -752,11 +764,7 @@ func (s3a *S3ApiServer) handleSSECResponse(r *http.Request, proxyResponse *http.
 				capturedCORSHeaders := captureCORSHeaders(w, corsHeaders)
 
 				// Copy headers from proxy response (excluding internal SeaweedFS headers)
-				for k, v := range proxyResponse.Header {
-					if !s3_constants.IsSeaweedFSInternalHeader(k) {
-						w.Header()[k] = v
-					}
-				}
+				copyResponseHeaders(w, proxyResponse, false)
 
 				// Set proper headers for range requests
 				rangeHeader := r.Header.Get("Range")
@@ -823,11 +831,7 @@ func (s3a *S3ApiServer) handleSSECResponse(r *http.Request, proxyResponse *http.
 		capturedCORSHeaders := captureCORSHeaders(w, corsHeaders)
 
 		// Copy headers from proxy response (excluding body-related headers that might change and internal SeaweedFS headers)
-		for k, v := range proxyResponse.Header {
-			if k != "Content-Length" && k != "Content-Encoding" && !s3_constants.IsSeaweedFSInternalHeader(k) {
-				w.Header()[k] = v
-			}
-		}
+		copyResponseHeaders(w, proxyResponse, true)
 
 		// Set correct Content-Length for SSE-C (only for full object requests)
 		// With IV stored in metadata, the encrypted length equals the original length
@@ -938,11 +942,7 @@ func (s3a *S3ApiServer) handleSSEKMSResponse(r *http.Request, proxyResponse *htt
 		capturedCORSHeaders := captureCORSHeaders(w, corsHeaders)
 
 		// Copy headers from proxy response (excluding internal SeaweedFS headers)
-		for k, v := range proxyResponse.Header {
-			if !s3_constants.IsSeaweedFSInternalHeader(k) {
-				w.Header()[k] = v
-			}
-		}
+		copyResponseHeaders(w, proxyResponse, false)
 
 		// Add SSE-KMS response headers
 		AddSSEKMSResponseHeaders(w, sseKMSKey)
@@ -993,11 +993,7 @@ func (s3a *S3ApiServer) handleSSEKMSResponse(r *http.Request, proxyResponse *htt
 	capturedCORSHeaders := captureCORSHeaders(w, corsHeaders)
 
 	// Copy headers from proxy response (excluding body-related headers that might change and internal SeaweedFS headers)
-	for k, v := range proxyResponse.Header {
-		if k != "Content-Length" && k != "Content-Encoding" && !s3_constants.IsSeaweedFSInternalHeader(k) {
-			w.Header()[k] = v
-		}
-	}
+	copyResponseHeaders(w, proxyResponse, true)
 
 	// Set correct Content-Length for SSE-KMS
 	if proxyResponse.Header.Get("Content-Range") == "" {
@@ -1022,11 +1018,7 @@ func (s3a *S3ApiServer) handleSSES3Response(r *http.Request, proxyResponse *http
 		capturedCORSHeaders := captureCORSHeaders(w, corsHeaders)
 
 		// Copy headers from proxy response (excluding internal SeaweedFS headers)
-		for k, v := range proxyResponse.Header {
-			if !s3_constants.IsSeaweedFSInternalHeader(k) {
-				w.Header()[k] = v
-			}
-		}
+		copyResponseHeaders(w, proxyResponse, false)
 
 		// Add SSE-S3 response headers
 		w.Header().Set(s3_constants.AmzServerSideEncryption, SSES3Algorithm)
@@ -1094,11 +1086,7 @@ func (s3a *S3ApiServer) handleSSES3Response(r *http.Request, proxyResponse *http
 	capturedCORSHeaders := captureCORSHeaders(w, corsHeaders)
 
 	// Copy headers from proxy response (excluding body-related headers that might change and internal SeaweedFS headers)
-	for k, v := range proxyResponse.Header {
-		if k != "Content-Length" && k != "Content-Encoding" && !s3_constants.IsSeaweedFSInternalHeader(k) {
-			w.Header()[k] = v
-		}
-	}
+	copyResponseHeaders(w, proxyResponse, true)
 
 	// Set correct Content-Length for SSE-S3
 	if proxyResponse.Header.Get("Content-Range") == "" {
