@@ -629,6 +629,8 @@ func (logBuffer *LogBuffer) GetEarliestPosition() MessagePosition {
 	}
 }
 
+// GetLastFlushedTime returns the latest flushed timestamp in Unix nanoseconds.
+// Returns 0 if nothing has been flushed yet.
 func (logBuffer *LogBuffer) GetLastFlushedTime() int64 {
 	return logBuffer.lastFlushedTime.Load()
 }
