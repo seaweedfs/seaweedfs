@@ -1212,23 +1212,21 @@ func (s3a *S3ApiServer) detectPrimarySSEType(entry *filer_pb.Entry) string {
 		// Check for SSE-S3: algorithm is AES256 but no customer key
 		if hasSSEKMS && !hasSSEC {
 			// Distinguish SSE-S3 from SSE-KMS: check the algorithm value and the presence of a KMS key ID
-			if sseAlgo, exists := entry.Extended[s3_constants.AmzServerSideEncryption]; exists {
-				switch string(sseAlgo) {
-				case s3_constants.SSEAlgorithmAES256:
-					// Could be SSE-S3 or SSE-KMS, check for KMS key ID
-					if _, hasKMSKey := entry.Extended[s3_constants.AmzServerSideEncryptionAwsKmsKeyId]; hasKMSKey {
-						return s3_constants.SSETypeKMS
-					}
-					// No KMS key, this is SSE-S3
-					return s3_constants.SSETypeS3
-				case s3_constants.SSEAlgorithmKMS:
+			sseAlgo := string(entry.Extended[s3_constants.AmzServerSideEncryption])
+			switch sseAlgo {
+			case s3_constants.SSEAlgorithmAES256:
+				// Could be SSE-S3 or SSE-KMS, check for KMS key ID
+				if _, hasKMSKey := entry.Extended[s3_constants.AmzServerSideEncryptionAwsKmsKeyId]; hasKMSKey {
 					return s3_constants.SSETypeKMS
-				default:
-					// Unknown or unsupported algorithm
-					return "None"
 				}
+				// No KMS key, this is SSE-S3
+				return s3_constants.SSETypeS3
+			case s3_constants.SSEAlgorithmKMS:
+				return s3_constants.SSETypeKMS
+			default:
+				// Unknown or unsupported algorithm
+				return "None"
 			}
-			return s3_constants.SSETypeKMS
 		} else if hasSSEC && !hasSSEKMS {
 			return s3_constants.SSETypeC
 		} else if hasSSEC && hasSSEKMS {
