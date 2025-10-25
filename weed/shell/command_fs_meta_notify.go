@@ -36,8 +36,7 @@ func (c *commandFsMetaNotify) HasTag(CommandTag) bool {
 
 func (c *commandFsMetaNotify) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	if isHelpRequest(args) {
-		fmt.Fprintln(writer, c.Help())
+	if handleHelpRequest(c, args, writer) {
 		return nil
 	}
 

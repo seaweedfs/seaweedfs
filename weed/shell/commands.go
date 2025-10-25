@@ -3,6 +3,7 @@ package shell
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/url"
 	"strconv"
 	"strings"
@@ -164,6 +165,16 @@ func isHelpRequest(args []string) bool {
 				}
 			}
 		}
+	}
+	return false
+}
+
+// handleHelpRequest checks for help flags and prints the help message if requested.
+// It returns true if the help message was printed, indicating the command should exit.
+func handleHelpRequest(c command, args []string, writer io.Writer) bool {
+	if isHelpRequest(args) {
+		fmt.Fprintln(writer, c.Help())
+		return true
 	}
 	return false
 }

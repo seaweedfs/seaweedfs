@@ -2,7 +2,6 @@ package shell
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"time"
@@ -35,8 +34,7 @@ func (c *commandFsMkdir) HasTag(CommandTag) bool {
 
 func (c *commandFsMkdir) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	if isHelpRequest(args) {
-		fmt.Fprintln(writer, c.Help())
+	if handleHelpRequest(c, args, writer) {
 		return nil
 	}
 
