@@ -25,7 +25,6 @@ import (
 	"encoding/hex"
 	"io"
 	"net/http"
-	"path"
 	"regexp"
 	"sort"
 	"strconv"
@@ -157,16 +156,26 @@ func parseSignV4(v4Auth string) (sv signValues, aec s3err.ErrorCode) {
 	return signV4Values, s3err.ErrNone
 }
 
-// buildPathWithForwardedPrefix combines forwarded prefix with URL path while preserving trailing slashes.
-// This ensures compatibility with S3 SDK signatures that include trailing slashes for directory operations.
+// buildPathWithForwardedPrefix combines forwarded prefix with URL path while preserving S3 key semantics.
+// This function avoids path.Clean which would collapse "//" and dot segments, breaking S3 signatures.
+// It only normalizes the join boundary to avoid double slashes between prefix and path.
 func buildPathWithForwardedPrefix(forwardedPrefix, urlPath string) string {
-	fullPath := forwardedPrefix + urlPath
-	hasTrailingSlash := strings.HasSuffix(urlPath, "/") && urlPath != "/"
-	cleanedPath := path.Clean(fullPath)
-	if hasTrailingSlash && !strings.HasSuffix(cleanedPath, "/") {
-		cleanedPath += "/"
+	if forwardedPrefix == "" {
+		return urlPath
 	}
-	return cleanedPath
+	// Ensure single leading slash on prefix
+	if !strings.HasPrefix(forwardedPrefix, "/") {
+		forwardedPrefix = "/" + forwardedPrefix
+	}
+	// Join without collapsing interior segments; only fix a double slash at the boundary
+	var joined string
+	if strings.HasSuffix(forwardedPrefix, "/") && strings.HasPrefix(urlPath, "/") {
+		joined = forwardedPrefix + urlPath[1:]
+	} else {
+		joined = forwardedPrefix + urlPath
+	}
+	// Trailing slash semantics inherited from urlPath (already present if needed)
+	return joined
 }
 
 // v4AuthInfo holds the parsed authentication data from a request,
@@ -265,8 +274,8 @@ func calculateAndVerifySignature(secretKey, method, urlPath, queryStr string, ex
 	newSignature := getSignature(signingKey, stringToSign)
 
 	if !compareSignatureV4(newSignature, authInfo.Signature) {
-		glog.V(4).Infof("Signature mismatch. Details:\n- Canonical Request: %s\n- String to Sign: %s\n- Calculated Signature: %s\n- Provided Signature: %s",
-			canonicalRequest, stringToSign, newSignature, authInfo.Signature)
+		glog.V(4).Infof("Signature mismatch. Details:\n- URL Path: %s\n- Canonical Query: %q\n- Signed Headers: %q\n- Calculated: %s, Provided: %s",
+			urlPath, queryStr, getSignedHeaders(extractedSignedHeaders), newSignature, authInfo.Signature)
 		return "", s3err.ErrSignatureDoesNotMatch
 	}
 
@@ -382,7 +391,7 @@ func getCanonicalQueryString(r *http.Request, isPresigned bool) string {
 		queryForCanonical.Del("X-Amz-Signature")
 		queryToEncode = queryForCanonical.Encode()
 	}
-	return strings.Replace(queryToEncode, "+", "%20", -1)
+	return queryToEncode
 }
 
 func checkPresignedRequestExpiry(r *http.Request, t time.Time) s3err.ErrorCode {
@@ -556,7 +565,7 @@ func extractHostHeader(r *http.Request) string {
 		// Check if reverse proxy also forwarded the port
 		if forwardedPort := r.Header.Get("X-Forwarded-Port"); forwardedPort != "" {
 			// Determine the protocol to check for standard ports
-			proto := r.Header.Get("X-Forwarded-Proto")
+			proto := strings.ToLower(r.Header.Get("X-Forwarded-Proto"))
 			// Only add port if it's not the standard port for the protocol
 			if (proto == "https" && forwardedPort != "443") || (proto != "https" && forwardedPort != "80") {
 				return forwardedHost + ":" + forwardedPort
