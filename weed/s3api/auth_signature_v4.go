@@ -340,33 +340,34 @@ func extractV4AuthInfoFromHeader(r *http.Request) (*v4AuthInfo, s3err.ErrorCode)
 func extractV4AuthInfoFromQuery(r *http.Request) (*v4AuthInfo, s3err.ErrorCode) {
 	query := r.URL.Query()
 
+	// Validate all required query parameters upfront for fail-fast behavior
 	if query.Get("X-Amz-Algorithm") != signV4Algorithm {
 		return nil, s3err.ErrSignatureVersionNotSupported
 	}
-
-	dateStr := query.Get("X-Amz-Date")
-	if dateStr == "" {
+	if query.Get("X-Amz-Date") == "" {
 		return nil, s3err.ErrMissingDateHeader
 	}
+	if query.Get("X-Amz-Credential") == "" {
+		return nil, s3err.ErrMissingFields
+	}
+	if query.Get("X-Amz-Signature") == "" {
+		return nil, s3err.ErrMissingFields
+	}
+	if query.Get("X-Amz-SignedHeaders") == "" {
+		return nil, s3err.ErrMissingFields
+	}
+
+	// Parse date
+	dateStr := query.Get("X-Amz-Date")
 	t, err := time.Parse(iso8601Format, dateStr)
 	if err != nil {
 		return nil, s3err.ErrMalformedDate
 	}
 
-	if query.Get("X-Amz-Credential") == "" {
-		return nil, s3err.ErrMissingFields
-	}
+	// Parse credential header
 	credHeader, errCode := parseCredentialHeader("Credential=" + query.Get("X-Amz-Credential"))
 	if errCode != s3err.ErrNone {
 		return nil, errCode
-	}
-
-	if query.Get("X-Amz-Signature") == "" {
-		return nil, s3err.ErrMissingFields
-	}
-
-	if query.Get("X-Amz-SignedHeaders") == "" {
-		return nil, s3err.ErrMissingFields
 	}
 
 	return &v4AuthInfo{
