@@ -148,3 +148,88 @@ func setupIam() IdentityAccessManagement {
 	iam.accessKeyIdent[defaultAccessKeyId] = iam.identities[0]
 	return iam
 }
+
+// TestSignedStreamingUpload tests streaming uploads with signed chunks
+// This replaces the removed AWS example test with a dynamic signature generation approach
+func TestSignedStreamingUpload(t *testing.T) {
+	iam := setupIam()
+
+	// Create a simple streaming upload with 2 chunks
+	chunk1Data := strings.Repeat("a", 1024)
+	chunk2Data := strings.Repeat("b", 512)
+
+	// Use current time for signatures
+	now := time.Now().UTC()
+	amzDate := now.Format(iso8601Format)
+	dateStamp := now.Format(yyyymmdd)
+
+	// Calculate seed signature
+	scope := dateStamp + "/" + defaultRegion + "/s3/aws4_request"
+
+	// Build canonical request for seed signature
+	hashedPayload := "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"
+	canonicalHeaders := "content-encoding:aws-chunked\n" +
+		"host:s3.amazonaws.com\n" +
+		"x-amz-content-sha256:" + hashedPayload + "\n" +
+		"x-amz-date:" + amzDate + "\n" +
+		"x-amz-decoded-content-length:1536\n"
+	signedHeaders := "content-encoding;host;x-amz-content-sha256;x-amz-date;x-amz-decoded-content-length"
+
+	canonicalRequest := "PUT\n" +
+		"/test-bucket/test-object\n" +
+		"\n" +
+		canonicalHeaders + "\n" +
+		signedHeaders + "\n" +
+		hashedPayload
+
+	canonicalRequestHash := getSHA256Hash([]byte(canonicalRequest))
+	stringToSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + scope + "\n" + canonicalRequestHash
+
+	signingKey := getSigningKey(defaultSecretAccessKey, dateStamp, defaultRegion, "s3")
+	seedSignature := getSignature(signingKey, stringToSign)
+
+	// Calculate chunk signatures
+	chunk1Hash := getSHA256Hash([]byte(chunk1Data))
+	chunk1StringToSign := "AWS4-HMAC-SHA256-PAYLOAD\n" + amzDate + "\n" + scope + "\n" +
+		seedSignature + "\n" + emptySHA256 + "\n" + chunk1Hash
+	chunk1Signature := getSignature(signingKey, chunk1StringToSign)
+
+	chunk2Hash := getSHA256Hash([]byte(chunk2Data))
+	chunk2StringToSign := "AWS4-HMAC-SHA256-PAYLOAD\n" + amzDate + "\n" + scope + "\n" +
+		chunk1Signature + "\n" + emptySHA256 + "\n" + chunk2Hash
+	chunk2Signature := getSignature(signingKey, chunk2StringToSign)
+
+	finalStringToSign := "AWS4-HMAC-SHA256-PAYLOAD\n" + amzDate + "\n" + scope + "\n" +
+		chunk2Signature + "\n" + emptySHA256 + "\n" + emptySHA256
+	finalSignature := getSignature(signingKey, finalStringToSign)
+
+	// Build the chunked payload
+	payload := fmt.Sprintf("400;chunk-signature=%s\r\n%s\r\n", chunk1Signature, chunk1Data) +
+		fmt.Sprintf("200;chunk-signature=%s\r\n%s\r\n", chunk2Signature, chunk2Data) +
+		fmt.Sprintf("0;chunk-signature=%s\r\n\r\n", finalSignature)
+
+	// Create the request
+	req, err := http.NewRequest("PUT", "http://s3.amazonaws.com/test-bucket/test-object",
+		bytes.NewReader([]byte(payload)))
+	assert.NoError(t, err)
+
+	req.Header.Set("Host", "s3.amazonaws.com")
+	req.Header.Set("x-amz-date", amzDate)
+	req.Header.Set("x-amz-content-sha256", hashedPayload)
+	req.Header.Set("Content-Encoding", "aws-chunked")
+	req.Header.Set("x-amz-decoded-content-length", "1536")
+
+	authHeader := fmt.Sprintf("AWS4-HMAC-SHA256 Credential=%s/%s, SignedHeaders=%s, Signature=%s",
+		defaultAccessKeyId, scope, signedHeaders, seedSignature)
+	req.Header.Set("Authorization", authHeader)
+
+	// Test the chunked reader
+	reader, errCode := iam.newChunkedReader(req)
+	assert.Equal(t, s3err.ErrNone, errCode)
+	assert.NotNil(t, reader)
+
+	// Read and verify the payload
+	data, err := io.ReadAll(reader)
+	assert.NoError(t, err)
+	assert.Equal(t, chunk1Data+chunk2Data, string(data))
+}
