@@ -55,6 +55,19 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		if err := v.LoadRemoteFile(); err != nil {
 			return fmt.Errorf("load remote file %v: %w", v.volumeInfo, err)
 		}
+		// Set lastModifiedTsSeconds from remote file to prevent premature expiry on startup
+		if len(v.volumeInfo.GetFiles()) > 0 {
+			remoteFileModifiedTime := v.volumeInfo.GetFiles()[0].GetModifiedTime()
+			if remoteFileModifiedTime > 0 {
+				v.lastModifiedTsSeconds = remoteFileModifiedTime
+			} else {
+				// Fallback: use .vif file's modification time
+				if exists, _, _, modifiedTime, _ := util.CheckFile(v.FileName(".vif")); exists {
+					v.lastModifiedTsSeconds = uint64(modifiedTime.Unix())
+				}
+			}
+			glog.V(1).Infof("volume %d remote file lastModifiedTsSeconds set to %d", v.Id, v.lastModifiedTsSeconds)
+		}
 		alreadyHasSuperBlock = true
 	} else if exists, canRead, canWrite, modifiedTime, fileSize := util.CheckFile(v.FileName(".dat")); exists {
 		// open dat file
