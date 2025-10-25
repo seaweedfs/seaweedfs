@@ -75,7 +75,7 @@ func TestBuildPathWithForwardedPrefix(t *testing.T) {
 			name:            "urlPath without leading slash",
 			forwardedPrefix: "/storage",
 			urlPath:         "bucket/obj",
-			expected:        "/storagebucket/obj",
+			expected:        "/storage/bucket/obj",
 		},
 	}
 

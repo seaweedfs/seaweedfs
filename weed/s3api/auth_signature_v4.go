@@ -171,6 +171,8 @@ func buildPathWithForwardedPrefix(forwardedPrefix, urlPath string) string {
 	var joined string
 	if strings.HasSuffix(forwardedPrefix, "/") && strings.HasPrefix(urlPath, "/") {
 		joined = forwardedPrefix + urlPath[1:]
+	} else if !strings.HasSuffix(forwardedPrefix, "/") && !strings.HasPrefix(urlPath, "/") {
+		joined = forwardedPrefix + "/" + urlPath
 	} else {
 		joined = forwardedPrefix + urlPath
 	}
@@ -252,7 +254,7 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 		cleanedPath := buildPathWithForwardedPrefix(forwardedPrefix, r.URL.Path)
 		calculatedSignature, errCode = verify(cleanedPath)
 		if errCode == s3err.ErrNone {
-			return identity, nil, calculatedSignature, authInfo, s3err.ErrNone
+			return identity, cred, calculatedSignature, authInfo, s3err.ErrNone
 		}
 	}
 
