@@ -40,6 +40,10 @@ func (c *commandFsLs) HasTag(CommandTag) bool {
 
 func (c *commandFsLs) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
+	if handleHelpRequest(c, args, writer) {
+		return nil
+	}
+
 	var isLongFormat, showHidden bool
 	for _, arg := range args {
 		if !strings.HasPrefix(arg, "-") {
