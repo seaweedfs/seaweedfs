@@ -379,14 +379,12 @@ func extractV4AuthInfoFromQuery(r *http.Request) (*v4AuthInfo, s3err.ErrorCode) 
 		return nil, errCode
 	}
 
-	// For presigned URLs, X-Amz-Content-Sha256 can be in header or query parameter
-	hashedPayload := r.Header.Get("X-Amz-Content-Sha256")
+	// For presigned URLs, X-Amz-Content-Sha256 must come from the query parameter
+	// (or default to UNSIGNED-PAYLOAD) because that's what was used for signing.
+	// We must NOT check the request header as it wasn't part of the signature calculation.
+	hashedPayload := query.Get("X-Amz-Content-Sha256")
 	if hashedPayload == "" {
-		if v := query.Get("X-Amz-Content-Sha256"); v != "" {
-			hashedPayload = v
-		} else {
-			hashedPayload = unsignedPayload
-		}
+		hashedPayload = unsignedPayload
 	}
 
 	return &v4AuthInfo{

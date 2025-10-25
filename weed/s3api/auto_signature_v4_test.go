@@ -229,8 +229,12 @@ func preSignV4(iam *IdentityAccessManagement, req *http.Request, accessKey, secr
 	// Set the query on the URL (without signature yet)
 	req.URL.RawQuery = query.Encode()
 
-	// Get the payload hash
-	hashedPayload := getContentSha256Cksum(req)
+	// For presigned URLs, the payload hash must be UNSIGNED-PAYLOAD (or from query param if explicitly set)
+	// We should NOT use request headers as they're not part of the presigned URL
+	hashedPayload := query.Get("X-Amz-Content-Sha256")
+	if hashedPayload == "" {
+		hashedPayload = unsignedPayload
+	}
 
 	// Extract signed headers
 	extractedSignedHeaders := make(http.Header)
@@ -671,8 +675,12 @@ func preSignV4WithPath(iam *IdentityAccessManagement, req *http.Request, accessK
 	// Set the query on the URL (without signature yet)
 	req.URL.RawQuery = query.Encode()
 
-	// Get the payload hash
-	hashedPayload := getContentSha256Cksum(req)
+	// For presigned URLs, the payload hash must be UNSIGNED-PAYLOAD (or from query param if explicitly set)
+	// We should NOT use request headers as they're not part of the presigned URL
+	hashedPayload := query.Get("X-Amz-Content-Sha256")
+	if hashedPayload == "" {
+		hashedPayload = unsignedPayload
+	}
 
 	// Extract signed headers
 	extractedSignedHeaders := make(http.Header)
