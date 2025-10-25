@@ -417,8 +417,8 @@ func getCanonicalQueryString(r *http.Request, isPresigned bool) string {
 func checkPresignedRequestExpiry(r *http.Request, t time.Time) s3err.ErrorCode {
 	expiresStr := r.URL.Query().Get("X-Amz-Expires")
 	if expiresStr == "" {
-		// When X-Amz-Expires is not specified, the signature is valid for a default duration of 15 minutes
-		const defaultPresignedURLExpiry = 15 * time.Minute
+		// When X-Amz-Expires is not specified, the signature is valid for a default duration of 1 hour
+		const defaultPresignedURLExpiry = 1 * time.Hour
 		if time.Now().UTC().After(t.Add(defaultPresignedURLExpiry)) {
 			return s3err.ErrExpiredPresignRequest
 		}
@@ -430,8 +430,8 @@ func checkPresignedRequestExpiry(r *http.Request, t time.Time) s3err.ErrorCode {
 		return s3err.ErrMalformedDate
 	}
 
-	// The maximum value for X-Amz-Expires is 604800 seconds (7 days)
-	if expires < 0 || expires > 604800 {
+	// The minimum value for X-Amz-Expires is 1 and the maximum is 604800 seconds (7 days)
+	if expires < 1 || expires > 604800 {
 		return s3err.ErrInvalidRequest
 	}
 
