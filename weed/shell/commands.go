@@ -3,12 +3,13 @@ package shell
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/operation"
-	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
-	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 
 	"google.golang.org/grpc"
 
@@ -145,6 +146,16 @@ func findInputDirectory(args []string) (input string) {
 		}
 	}
 	return input
+}
+
+// isHelpRequest checks if the args contain a help flag (-h, --help, or -help)
+func isHelpRequest(args []string) bool {
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" || arg == "-help" {
+			return true
+		}
+	}
+	return false
 }
 
 func readNeedleMeta(grpcDialOption grpc.DialOption, volumeServer pb.ServerAddress, volumeId uint32, needleValue needle_map.NeedleValue) (resp *volume_server_pb.ReadNeedleMetaResponse, err error) {

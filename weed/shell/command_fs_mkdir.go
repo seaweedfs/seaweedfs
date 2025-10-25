@@ -2,11 +2,13 @@ package shell
 
 import (
 	"context"
-	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/util"
+	"fmt"
 	"io"
 	"os"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func init() {
@@ -32,6 +34,11 @@ func (c *commandFsMkdir) HasTag(CommandTag) bool {
 }
 
 func (c *commandFsMkdir) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
+
+	if isHelpRequest(args) {
+		fmt.Fprintln(writer, c.Help())
+		return nil
+	}
 
 	path, err := commandEnv.parseUrl(findInputDirectory(args))
 	if err != nil {

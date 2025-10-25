@@ -40,6 +40,11 @@ func (c *commandFsMv) HasTag(CommandTag) bool {
 
 func (c *commandFsMv) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
+	if isHelpRequest(args) {
+		fmt.Fprintln(writer, c.Help())
+		return nil
+	}
+
 	if len(args) != 2 {
 		return fmt.Errorf("need to have 2 arguments")
 	}

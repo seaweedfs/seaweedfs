@@ -3,10 +3,11 @@ package shell
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"google.golang.org/protobuf/proto"
 	"io"
 	"sort"
+
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -36,6 +37,11 @@ func (c *commandFsMetaCat) HasTag(CommandTag) bool {
 }
 
 func (c *commandFsMetaCat) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
+
+	if isHelpRequest(args) {
+		fmt.Fprintln(writer, c.Help())
+		return nil
+	}
 
 	path, err := commandEnv.parseUrl(findInputDirectory(args))
 	if err != nil {

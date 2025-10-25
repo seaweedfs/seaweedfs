@@ -35,6 +35,11 @@ func (c *commandFsTree) HasTag(CommandTag) bool {
 
 func (c *commandFsTree) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
+	if isHelpRequest(args) {
+		fmt.Fprintln(writer, c.Help())
+		return nil
+	}
+
 	path, err := commandEnv.parseUrl(findInputDirectory(args))
 	if err != nil {
 		return err
