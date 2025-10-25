@@ -63,10 +63,10 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 				v.lastModifiedTsSeconds = remoteFileModifiedTime
 			} else {
 				// Fallback: use .vif file's modification time
+				glog.Warningf("volume %d: remote file %v GetModifiedTime() returned 0, falling back to .vif file's modification time. This may cause incorrect expiry calculations.", v.Id, v.volumeInfo.GetFiles()[0])
 				if exists, _, _, modifiedTime, _ := util.CheckFile(v.FileName(".vif")); exists {
 					v.lastModifiedTsSeconds = uint64(modifiedTime.Unix())
 				}
-			}
 			glog.V(1).Infof("volume %d remote file lastModifiedTsSeconds set to %d", v.Id, v.lastModifiedTsSeconds)
 		}
 		alreadyHasSuperBlock = true
