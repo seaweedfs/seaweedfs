@@ -157,8 +157,9 @@ func isHelpRequest(args []string) bool {
 		if arg == "-h" || arg == "--help" || arg == "-help" {
 			return true
 		}
-		// Check for combined short flags (e.g., -lh, -hl)
-		if strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--") && len(arg) > 1 {
+		// Check for combined short flags (e.g., -lh, -hl, -rfh)
+		// Limit to reasonable length (2-4 chars total) to avoid matching long options like -verbose
+		if strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--") && len(arg) > 1 && len(arg) <= 4 {
 			for _, char := range arg[1:] {
 				if char == 'h' {
 					return true
