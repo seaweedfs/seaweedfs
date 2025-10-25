@@ -372,6 +372,16 @@ func extractV4AuthInfoFromQuery(r *http.Request) (*v4AuthInfo, s3err.ErrorCode) 
 		return nil, errCode
 	}
 
+	// For presigned URLs, X-Amz-Content-Sha256 can be in header or query parameter
+	hashedPayload := r.Header.Get("X-Amz-Content-Sha256")
+	if hashedPayload == "" {
+		if v := query.Get("X-Amz-Content-Sha256"); v != "" {
+			hashedPayload = v
+		} else {
+			hashedPayload = unsignedPayload
+		}
+	}
+
 	return &v4AuthInfo{
 		Signature:     query.Get("X-Amz-Signature"),
 		AccessKey:     credHeader.accessKey,
@@ -380,7 +390,7 @@ func extractV4AuthInfoFromQuery(r *http.Request) (*v4AuthInfo, s3err.ErrorCode) 
 		Region:        credHeader.scope.region,
 		Service:       credHeader.scope.service,
 		Scope:         credHeader.getScope(),
-		HashedPayload: getContentSha256Cksum(r),
+		HashedPayload: hashedPayload,
 		IsPresigned:   true,
 	}, s3err.ErrNone
 }
