@@ -167,6 +167,7 @@ func DeleteFileIdsAtOneVolumeServer(volumeServer pb.ServerAddress, grpcDialOptio
 
 	if err != nil {
 		// Connection or communication error - return error results for all files
+		ret = make([]*volume_server_pb.DeleteResult, 0, len(fileIds))
 		for _, fileId := range fileIds {
 			ret = append(ret, &volume_server_pb.DeleteResult{
 				FileId: fileId,
