@@ -75,16 +75,13 @@ func DeleteFileIdsWithLookupVolumeId(grpcDialOption grpc.DialOption, fileIds []s
 	lookupResults, err := lookupFunc(vids)
 	if err != nil {
 		// Lookup failed - return error results for all remaining file IDs
+		processedIds := make(map[string]struct{}, len(ret))
+		for _, r := range ret {
+			processedIds[r.FileId] = struct{}{}
+		}
 		for _, fileId := range fileIds {
 			// Skip if already added to ret (parse errors)
-			alreadyAdded := false
-			for _, r := range ret {
-				if r.FileId == fileId {
-					alreadyAdded = true
-					break
-				}
-			}
-			if !alreadyAdded {
+			if _, alreadyAdded := processedIds[fileId]; !alreadyAdded {
 				ret = append(ret, &volume_server_pb.DeleteResult{
 					FileId: fileId,
 					Status: http.StatusInternalServerError,
