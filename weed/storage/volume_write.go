@@ -56,6 +56,15 @@ var ErrVolumeNotEmpty = fmt.Errorf("volume not empty")
 
 // Destroy removes everything related to this volume
 func (v *Volume) Destroy(onlyEmpty bool) (err error) {
+	return v.destroy(onlyEmpty, true)
+}
+
+// DestroyWithoutRemoteTier removes local volume files but keeps remote tier data
+func (v *Volume) DestroyWithoutRemoteTier(onlyEmpty bool) (err error) {
+	return v.destroy(onlyEmpty, false)
+}
+
+func (v *Volume) destroy(onlyEmpty bool, deleteRemoteTier bool) (err error) {
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 
@@ -75,12 +84,20 @@ func (v *Volume) Destroy(onlyEmpty bool) (err error) {
 		return
 	}
 	close(v.asyncRequestsChan)
-	storageName, storageKey := v.RemoteStorageNameKey()
-	if v.HasRemoteFile() && storageName != "" && storageKey != "" {
-		if backendStorage, found := backend.BackendStorages[storageName]; found {
-			backendStorage.DeleteFile(storageKey)
+
+	// Only delete remote tier data if explicitly requested
+	if deleteRemoteTier {
+		storageName, storageKey := v.RemoteStorageNameKey()
+		if v.HasRemoteFile() && storageName != "" && storageKey != "" {
+			if backendStorage, found := backend.BackendStorages[storageName]; found {
+				glog.V(0).Infof("deleting remote tier data for volume %d: %s/%s", v.Id, storageName, storageKey)
+				backendStorage.DeleteFile(storageKey)
+			}
 		}
+	} else if v.HasRemoteFile() {
+		glog.V(0).Infof("volume %d has remote tier data, keeping it (not deleting from remote storage)", v.Id)
 	}
+
 	v.doClose()
 	removeVolumeFiles(v.DataFileName())
 	removeVolumeFiles(v.IndexFileName())

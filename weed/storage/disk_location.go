@@ -315,6 +315,20 @@ func (l *DiskLocation) deleteVolumeById(vid needle.VolumeId, onlyEmpty bool) (fo
 	return
 }
 
+func (l *DiskLocation) deleteVolumeByIdWithoutRemoteTier(vid needle.VolumeId, onlyEmpty bool) (found bool, e error) {
+	v, ok := l.volumes[vid]
+	if !ok {
+		return
+	}
+	e = v.DestroyWithoutRemoteTier(onlyEmpty)
+	if e != nil {
+		return
+	}
+	found = true
+	delete(l.volumes, vid)
+	return
+}
+
 func (l *DiskLocation) LoadVolume(diskId uint32, vid needle.VolumeId, needleMapKind NeedleMapKind) bool {
 	if fileInfo, found := l.LocateVolume(vid); found {
 		return l.loadExistingVolume(fileInfo, needleMapKind, false, 0, diskId)
