@@ -337,6 +337,9 @@ func extractV4AuthInfoFromQuery(r *http.Request) (*v4AuthInfo, s3err.ErrorCode) 
 		return nil, s3err.ErrMalformedDate
 	}
 
+	if query.Get("X-Amz-Credential") == "" {
+		return nil, s3err.ErrMissingFields
+	}
 	credHeader, errCode := parseCredentialHeader("Credential=" + query.Get("X-Amz-Credential"))
 	if errCode != s3err.ErrNone {
 		return nil, errCode
