@@ -102,6 +102,7 @@ const (
 	ErrContentSHA256Mismatch
 	ErrInvalidAccessKeyID
 	ErrRequestNotReadyYet
+	ErrRequestTimeTooSkewed
 	ErrMissingDateHeader
 	ErrInvalidRequest
 	ErrAuthNotSetup
@@ -429,6 +430,12 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrRequestNotReadyYet: {
 		Code:           "AccessDenied",
 		Description:    "Request is not valid yet",
+		HTTPStatusCode: http.StatusForbidden,
+	},
+
+	ErrRequestTimeTooSkewed: {
+		Code:           "RequestTimeTooSkewed",
+		Description:    "The difference between the request time and the server's time is too large.",
 		HTTPStatusCode: http.StatusForbidden,
 	},
 

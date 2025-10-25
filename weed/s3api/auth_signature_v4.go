@@ -317,6 +317,13 @@ func extractV4AuthInfoFromHeader(r *http.Request) (*v4AuthInfo, s3err.ErrorCode)
 		t = parsed.UTC()
 	}
 
+	// Validate clock skew: requests cannot be older than 15 minutes from server time to prevent replay attacks
+	const maxSkew = 15 * time.Minute
+	now := time.Now().UTC()
+	if now.Sub(t) > maxSkew || t.Sub(now) > maxSkew {
+		return nil, s3err.ErrRequestTimeTooSkewed
+	}
+
 	hashedPayload := getContentSha256Cksum(r)
 	if signV4Values.Credential.scope.service != "s3" && hashedPayload == emptySHA256 && r.Body != nil {
 		var hashErr error
@@ -410,12 +417,24 @@ func getCanonicalQueryString(r *http.Request, isPresigned bool) string {
 func checkPresignedRequestExpiry(r *http.Request, t time.Time) s3err.ErrorCode {
 	expiresStr := r.URL.Query().Get("X-Amz-Expires")
 	if expiresStr == "" {
-		return s3err.ErrNone // No expiration specified
+		// When X-Amz-Expires is not specified, the signature is valid for a default duration of 15 minutes
+		const defaultPresignedURLExpiry = 15 * time.Minute
+		if time.Now().UTC().After(t.Add(defaultPresignedURLExpiry)) {
+			return s3err.ErrExpiredPresignRequest
+		}
+		return s3err.ErrNone
 	}
+
 	expires, err := strconv.ParseInt(expiresStr, 10, 64)
 	if err != nil {
 		return s3err.ErrMalformedDate
 	}
+
+	// The maximum value for X-Amz-Expires is 604800 seconds (7 days)
+	if expires < 0 || expires > 604800 {
+		return s3err.ErrInvalidRequest
+	}
+
 	expirationTime := t.Add(time.Duration(expires) * time.Second)
 	if time.Now().UTC().After(expirationTime) {
 		return s3err.ErrExpiredPresignRequest
