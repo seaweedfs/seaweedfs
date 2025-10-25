@@ -276,8 +276,8 @@ func calculateAndVerifySignature(secretKey, method, urlPath, queryStr string, ex
 	newSignature := getSignature(signingKey, stringToSign)
 
 	if !compareSignatureV4(newSignature, authInfo.Signature) {
-		glog.V(4).Infof("Signature mismatch. Details:\n- URL Path: %s\n- Canonical Query: %q\n- Signed Headers: %q\n- Calculated: %s, Provided: %s",
-			urlPath, queryStr, getSignedHeaders(extractedSignedHeaders), newSignature, authInfo.Signature)
+		glog.V(4).Infof("Signature mismatch. Details:\n- CanonicalRequest: %q\n- StringToSign: %q\n- Calculated: %s, Provided: %s",
+			canonicalRequest, stringToSign, newSignature, authInfo.Signature)
 		return "", s3err.ErrSignatureDoesNotMatch
 	}
 
