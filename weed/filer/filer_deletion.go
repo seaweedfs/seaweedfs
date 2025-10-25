@@ -2,6 +2,7 @@ package filer
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -83,11 +84,11 @@ func (f *Filer) loopProcessingDeletion() {
 				}
 
 				if errorCount > 0 {
-					if errorCount <= 10 {
-						glog.V(0).Infof("failed to delete %d/%d files: %v", errorCount, len(toDeleteFileIds), strings.Join(errorDetails, "; "))
-					} else {
-						glog.V(0).Infof("failed to delete %d/%d files (showing first 10): %v", errorCount, len(toDeleteFileIds), strings.Join(errorDetails, "; "))
+					logMessage := fmt.Sprintf("failed to delete %d/%d files", errorCount, len(toDeleteFileIds))
+					if errorCount > 10 {
+						logMessage += " (showing first 10)"
 					}
+					glog.V(0).Infof("%s: %v", logMessage, strings.Join(errorDetails, "; "))
 				}
 			}
 		})
