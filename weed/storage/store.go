@@ -362,13 +362,12 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 
 		if len(deleteVids) > 0 {
 			// delete expired volumes.
-			// Note: We preserve remote tier data to prevent data loss
 			location.volumesLock.Lock()
 			for _, vid := range deleteVids {
-				found, err := location.deleteVolumeByIdWithoutRemoteTier(vid, false)
+				found, err := location.deleteVolumeById(vid, false)
 				if err == nil {
 					if found {
-						glog.V(0).Infof("volume %d is deleted (remote tier data preserved if exists)", vid)
+						glog.V(0).Infof("volume %d is deleted", vid)
 					}
 				} else {
 					glog.Warningf("delete volume %d: %v", vid, err)
