@@ -430,8 +430,11 @@ func checkPresignedRequestExpiry(r *http.Request, t time.Time) s3err.ErrorCode {
 
 	// The maximum value for X-Amz-Expires is 604800 seconds (7 days)
 	// Allow 0 but it will immediately fail expiration check
-	if expires < 0 || expires > 604800 {
-		return s3err.ErrInvalidRequest
+	if expires < 0 {
+		return s3err.ErrNegativeExpires
+	}
+	if expires > 604800 {
+		return s3err.ErrMaximumExpires
 	}
 
 	expirationTime := t.Add(time.Duration(expires) * time.Second)
