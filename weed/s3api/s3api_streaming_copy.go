@@ -256,7 +256,7 @@ func (scm *StreamingCopyManager) createDecryptionReader(reader io.Reader, encSpe
 	case EncryptionTypeSSEC:
 		if sourceKey, ok := encSpec.SourceKey.(*SSECustomerKey); ok {
 			// Get IV from metadata
-			iv, err := GetIVFromMetadata(encSpec.SourceMetadata)
+			iv, err := GetSSECIVFromMetadata(encSpec.SourceMetadata)
 			if err != nil {
 				return nil, fmt.Errorf("get IV from metadata: %w", err)
 			}
@@ -272,10 +272,10 @@ func (scm *StreamingCopyManager) createDecryptionReader(reader io.Reader, encSpe
 
 	case EncryptionTypeSSES3:
 		if sseKey, ok := encSpec.SourceKey.(*SSES3Key); ok {
-			// Get IV from metadata
-			iv, err := GetIVFromMetadata(encSpec.SourceMetadata)
-			if err != nil {
-				return nil, fmt.Errorf("get IV from metadata: %w", err)
+			// For SSE-S3, the IV is stored within the SSES3Key metadata, not as separate metadata
+			iv := sseKey.IV
+			if len(iv) == 0 {
+				return nil, fmt.Errorf("SSE-S3 key is missing IV for streaming copy")
 			}
 			return CreateSSES3DecryptedReader(reader, sseKey, iv)
 		}

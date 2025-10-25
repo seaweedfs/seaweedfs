@@ -39,6 +39,11 @@ func (c *commandFsRm) HasTag(CommandTag) bool {
 }
 
 func (c *commandFsRm) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
+
+	if handleHelpRequest(c, args, writer) {
+		return nil
+	}
+
 	isRecursive := false
 	ignoreRecursiveError := false
 	var entries []string

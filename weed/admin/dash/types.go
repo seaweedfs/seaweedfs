@@ -51,6 +51,13 @@ type VolumeServer struct {
 	EcShardDetails []VolumeServerEcInfo `json:"ec_shard_details"` // Detailed EC shard information
 }
 
+func (vs *VolumeServer) GetDisplayAddress() string {
+	if vs.PublicURL != "" {
+		return vs.PublicURL
+	}
+	return vs.Address
+}
+
 // VolumeServerEcInfo represents EC shard information for a specific volume on a server
 type VolumeServerEcInfo struct {
 	VolumeID     uint32        `json:"volume_id"`

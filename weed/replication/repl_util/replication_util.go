@@ -2,6 +2,7 @@ package repl_util
 
 import (
 	"context"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
@@ -20,9 +21,10 @@ func CopyFromChunkViews(chunkViews *filer.IntervalList[*filer.ChunkView], filerS
 
 		var writeErr error
 		var shouldRetry bool
+		jwt := filer.JwtForVolumeServer(chunk.FileId)
 
 		for _, fileUrl := range fileUrls {
-			shouldRetry, err = util_http.ReadUrlAsStream(context.Background(), fileUrl, chunk.CipherKey, chunk.IsGzipped, chunk.IsFullChunk(), chunk.OffsetInChunk, int(chunk.ViewSize), func(data []byte) {
+			shouldRetry, err = util_http.ReadUrlAsStream(context.Background(), fileUrl, jwt, chunk.CipherKey, chunk.IsGzipped, chunk.IsFullChunk(), chunk.OffsetInChunk, int(chunk.ViewSize), func(data []byte) {
 				writeErr = writeFunc(data)
 			})
 			if err != nil {

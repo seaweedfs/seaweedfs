@@ -734,7 +734,8 @@ func (s3a *S3ApiServer) copySingleChunk(chunk *filer_pb.FileChunk, dstPath strin
 	dstChunk := s3a.createDestinationChunk(chunk, chunk.Offset, chunk.Size)
 
 	// Prepare chunk copy (assign new volume and get source URL)
-	assignResult, srcUrl, err := s3a.prepareChunkCopy(chunk.GetFileIdString(), dstPath)
+	fileId := chunk.GetFileIdString()
+	assignResult, srcUrl, err := s3a.prepareChunkCopy(fileId, dstPath)
 	if err != nil {
 		return nil, err
 	}
@@ -745,7 +746,7 @@ func (s3a *S3ApiServer) copySingleChunk(chunk *filer_pb.FileChunk, dstPath strin
 	}
 
 	// Download and upload the chunk
-	chunkData, err := s3a.downloadChunkData(srcUrl, 0, int64(chunk.Size))
+	chunkData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size))
 	if err != nil {
 		return nil, fmt.Errorf("download chunk data: %w", err)
 	}
@@ -763,7 +764,8 @@ func (s3a *S3ApiServer) copySingleChunkForRange(originalChunk, rangeChunk *filer
 	dstChunk := s3a.createDestinationChunk(rangeChunk, rangeChunk.Offset, rangeChunk.Size)
 
 	// Prepare chunk copy (assign new volume and get source URL)
-	assignResult, srcUrl, err := s3a.prepareChunkCopy(originalChunk.GetFileIdString(), dstPath)
+	fileId := originalChunk.GetFileIdString()
+	assignResult, srcUrl, err := s3a.prepareChunkCopy(fileId, dstPath)
 	if err != nil {
 		return nil, err
 	}
@@ -779,7 +781,7 @@ func (s3a *S3ApiServer) copySingleChunkForRange(originalChunk, rangeChunk *filer
 	offsetInChunk := overlapStart - chunkStart
 
 	// Download and upload the chunk portion
-	chunkData, err := s3a.downloadChunkData(srcUrl, offsetInChunk, int64(rangeChunk.Size))
+	chunkData, err := s3a.downloadChunkData(srcUrl, fileId, offsetInChunk, int64(rangeChunk.Size))
 	if err != nil {
 		return nil, fmt.Errorf("download chunk range data: %w", err)
 	}
@@ -1096,9 +1098,10 @@ func (s3a *S3ApiServer) uploadChunkData(chunkData []byte, assignResult *filer_pb
 }
 
 // downloadChunkData downloads chunk data from the source URL
-func (s3a *S3ApiServer) downloadChunkData(srcUrl string, offset, size int64) ([]byte, error) {
+func (s3a *S3ApiServer) downloadChunkData(srcUrl, fileId string, offset, size int64) ([]byte, error) {
+	jwt := filer.JwtForVolumeServer(fileId)
 	var chunkData []byte
-	shouldRetry, err := util_http.ReadUrlAsStream(context.Background(), srcUrl, nil, false, false, offset, int(size), func(data []byte) {
+	shouldRetry, err := util_http.ReadUrlAsStream(context.Background(), srcUrl, jwt, nil, false, false, offset, int(size), func(data []byte) {
 		chunkData = append(chunkData, data...)
 	})
 	if err != nil {
@@ -1152,7 +1155,7 @@ func (s3a *S3ApiServer) copyMultipartSSECChunks(entry *filer_pb.Entry, copySourc
 	dstMetadata := make(map[string][]byte)
 	if destKey != nil && len(destIV) > 0 {
 		// Store the IV and SSE-C headers for single-part compatibility
-		StoreIVInMetadata(dstMetadata, destIV)
+		StoreSSECIVInMetadata(dstMetadata, destIV)
 		dstMetadata[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] = []byte("AES256")
 		dstMetadata[s3_constants.AmzServerSideEncryptionCustomerKeyMD5] = []byte(destKey.KeyMD5)
 		glog.V(2).Infof("Prepared multipart SSE-C destination metadata: %s", dstPath)
@@ -1218,7 +1221,8 @@ func (s3a *S3ApiServer) copyMultipartSSEKMSChunk(chunk *filer_pb.FileChunk, dest
 	dstChunk := s3a.createDestinationChunk(chunk, chunk.Offset, chunk.Size)
 
 	// Prepare chunk copy (assign new volume and get source URL)
-	assignResult, srcUrl, err := s3a.prepareChunkCopy(chunk.GetFileIdString(), dstPath)
+	fileId := chunk.GetFileIdString()
+	assignResult, srcUrl, err := s3a.prepareChunkCopy(fileId, dstPath)
 	if err != nil {
 		return nil, err
 	}
@@ -1229,7 +1233,7 @@ func (s3a *S3ApiServer) copyMultipartSSEKMSChunk(chunk *filer_pb.FileChunk, dest
 	}
 
 	// Download encrypted chunk data
-	encryptedData, err := s3a.downloadChunkData(srcUrl, 0, int64(chunk.Size))
+	encryptedData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size))
 	if err != nil {
 		return nil, fmt.Errorf("download encrypted chunk data: %w", err)
 	}
@@ -1315,7 +1319,8 @@ func (s3a *S3ApiServer) copyMultipartSSECChunk(chunk *filer_pb.FileChunk, copySo
 	dstChunk := s3a.createDestinationChunk(chunk, chunk.Offset, chunk.Size)
 
 	// Prepare chunk copy (assign new volume and get source URL)
-	assignResult, srcUrl, err := s3a.prepareChunkCopy(chunk.GetFileIdString(), dstPath)
+	fileId := chunk.GetFileIdString()
+	assignResult, srcUrl, err := s3a.prepareChunkCopy(fileId, dstPath)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1326,7 +1331,7 @@ func (s3a *S3ApiServer) copyMultipartSSECChunk(chunk *filer_pb.FileChunk, copySo
 	}
 
 	// Download encrypted chunk data
-	encryptedData, err := s3a.downloadChunkData(srcUrl, 0, int64(chunk.Size))
+	encryptedData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size))
 	if err != nil {
 		return nil, nil, fmt.Errorf("download encrypted chunk data: %w", err)
 	}
@@ -1504,7 +1509,7 @@ func (s3a *S3ApiServer) copyMultipartCrossEncryption(entry *filer_pb.Entry, r *h
 		if len(dstChunks) > 0 && dstChunks[0].GetSseType() == filer_pb.SSEType_SSE_C && len(dstChunks[0].GetSseMetadata()) > 0 {
 			if ssecMetadata, err := DeserializeSSECMetadata(dstChunks[0].GetSseMetadata()); err == nil {
 				if iv, ivErr := base64.StdEncoding.DecodeString(ssecMetadata.IV); ivErr == nil {
-					StoreIVInMetadata(dstMetadata, iv)
+					StoreSSECIVInMetadata(dstMetadata, iv)
 					dstMetadata[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] = []byte("AES256")
 					dstMetadata[s3_constants.AmzServerSideEncryptionCustomerKeyMD5] = []byte(destSSECKey.KeyMD5)
 				}
@@ -1537,7 +1542,8 @@ func (s3a *S3ApiServer) copyCrossEncryptionChunk(chunk *filer_pb.FileChunk, sour
 	dstChunk := s3a.createDestinationChunk(chunk, chunk.Offset, chunk.Size)
 
 	// Prepare chunk copy (assign new volume and get source URL)
-	assignResult, srcUrl, err := s3a.prepareChunkCopy(chunk.GetFileIdString(), dstPath)
+	fileId := chunk.GetFileIdString()
+	assignResult, srcUrl, err := s3a.prepareChunkCopy(fileId, dstPath)
 	if err != nil {
 		return nil, err
 	}
@@ -1548,7 +1554,7 @@ func (s3a *S3ApiServer) copyCrossEncryptionChunk(chunk *filer_pb.FileChunk, sour
 	}
 
 	// Download encrypted chunk data
-	encryptedData, err := s3a.downloadChunkData(srcUrl, 0, int64(chunk.Size))
+	encryptedData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size))
 	if err != nil {
 		return nil, fmt.Errorf("download encrypted chunk data: %w", err)
 	}
@@ -1772,7 +1778,7 @@ func (s3a *S3ApiServer) copyChunksWithSSEC(entry *filer_pb.Entry, r *http.Reques
 		dstMetadata := make(map[string][]byte)
 		if destKey != nil && len(destIV) > 0 {
 			// Store the IV
-			StoreIVInMetadata(dstMetadata, destIV)
+			StoreSSECIVInMetadata(dstMetadata, destIV)
 
 			// Store SSE-C algorithm and key MD5 for proper metadata
 			dstMetadata[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] = []byte("AES256")
@@ -1834,7 +1840,8 @@ func (s3a *S3ApiServer) copyChunkWithReencryption(chunk *filer_pb.FileChunk, cop
 	dstChunk := s3a.createDestinationChunk(chunk, chunk.Offset, chunk.Size)
 
 	// Prepare chunk copy (assign new volume and get source URL)
-	assignResult, srcUrl, err := s3a.prepareChunkCopy(chunk.GetFileIdString(), dstPath)
+	fileId := chunk.GetFileIdString()
+	assignResult, srcUrl, err := s3a.prepareChunkCopy(fileId, dstPath)
 	if err != nil {
 		return nil, err
 	}
@@ -1845,7 +1852,7 @@ func (s3a *S3ApiServer) copyChunkWithReencryption(chunk *filer_pb.FileChunk, cop
 	}
 
 	// Download encrypted chunk data
-	encryptedData, err := s3a.downloadChunkData(srcUrl, 0, int64(chunk.Size))
+	encryptedData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size))
 	if err != nil {
 		return nil, fmt.Errorf("download encrypted chunk data: %w", err)
 	}
@@ -1855,7 +1862,7 @@ func (s3a *S3ApiServer) copyChunkWithReencryption(chunk *filer_pb.FileChunk, cop
 	// Decrypt if source is encrypted
 	if copySourceKey != nil {
 		// Get IV from source metadata
-		srcIV, err := GetIVFromMetadata(srcMetadata)
+		srcIV, err := GetSSECIVFromMetadata(srcMetadata)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get IV from metadata: %w", err)
 		}
@@ -2052,7 +2059,8 @@ func (s3a *S3ApiServer) copyChunkWithSSEKMSReencryption(chunk *filer_pb.FileChun
 	dstChunk := s3a.createDestinationChunk(chunk, chunk.Offset, chunk.Size)
 
 	// Prepare chunk copy (assign new volume and get source URL)
-	assignResult, srcUrl, err := s3a.prepareChunkCopy(chunk.GetFileIdString(), dstPath)
+	fileId := chunk.GetFileIdString()
+	assignResult, srcUrl, err := s3a.prepareChunkCopy(fileId, dstPath)
 	if err != nil {
 		return nil, err
 	}
@@ -2063,7 +2071,7 @@ func (s3a *S3ApiServer) copyChunkWithSSEKMSReencryption(chunk *filer_pb.FileChun
 	}
 
 	// Download chunk data
-	chunkData, err := s3a.downloadChunkData(srcUrl, 0, int64(chunk.Size))
+	chunkData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size))
 	if err != nil {
 		return nil, fmt.Errorf("download chunk data: %w", err)
 	}

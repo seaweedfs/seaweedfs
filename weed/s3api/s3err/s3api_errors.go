@@ -129,6 +129,7 @@ const (
 	ErrSSECustomerKeyMD5Mismatch
 	ErrSSECustomerKeyMissing
 	ErrSSECustomerKeyNotNeeded
+	ErrSSEEncryptionTypeMismatch
 
 	// SSE-KMS related errors
 	ErrKMSKeyNotFound
@@ -538,6 +539,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrSSECustomerKeyNotNeeded: {
 		Code:           "InvalidArgument",
 		Description:    "The object was not encrypted with customer provided keys.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrSSEEncryptionTypeMismatch: {
+		Code:           "InvalidRequest",
+		Description:    "The encryption method specified in the request does not match the encryption method used to encrypt the object.",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
 
