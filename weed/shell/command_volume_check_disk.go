@@ -328,7 +328,7 @@ func doVolumeCheckDisk(minuend, subtrahend *needle_map.MemDb, source, target *Vo
 
 		// Check for errors in results
 		for _, deleteResult := range deleteResults {
-			if deleteResult.Error != "" {
+			if deleteResult.Error != "" && deleteResult.Error != "not found" {
 				return hasChanges, fmt.Errorf("delete file %s: %v", deleteResult.FileId, deleteResult.Error)
 			}
 			if deleteResult.Status == http.StatusAccepted && deleteResult.Size > 0 {
