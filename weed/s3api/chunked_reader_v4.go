@@ -45,10 +45,10 @@ import (
 //
 // returns signature, error otherwise if the signature mismatches or any other
 // error while parsing and validating.
-func (iam *IdentityAccessManagement) calculateSeedSignature(r *http.Request) (identity *Identity, cred *Credential, signature string, region string, service string, date time.Time, errCode s3err.ErrorCode) {
-	identity, credential, calculatedSignature, authInfo, errCode := iam.verifyV4Signature(r, true)
+func (iam *IdentityAccessManagement) calculateSeedSignature(r *http.Request) (cred *Credential, signature string, region string, service string, date time.Time, errCode s3err.ErrorCode) {
+	_, credential, calculatedSignature, authInfo, errCode := iam.verifyV4Signature(r, true)
 	if errCode != s3err.ErrNone {
-		return nil, nil, "", "", "", time.Time{}, errCode
+		return nil, "", "", "", time.Time{}, errCode
 	}
 
 	// This check ensures we only proceed for streaming uploads.
@@ -58,10 +58,10 @@ func (iam *IdentityAccessManagement) calculateSeedSignature(r *http.Request) (id
 	case streamingUnsignedPayload:
 		glog.V(3).Infof("streaming unsigned payload")
 	default:
-		return nil, nil, "", "", "", time.Time{}, s3err.ErrContentSHA256Mismatch
+		return nil, "", "", "", time.Time{}, s3err.ErrContentSHA256Mismatch
 	}
 
-	return identity, credential, calculatedSignature, authInfo.Region, authInfo.Service, authInfo.Date, s3err.ErrNone
+	return credential, calculatedSignature, authInfo.Region, authInfo.Service, authInfo.Date, s3err.ErrNone
 }
 
 const maxLineLength = 4 * humanize.KiByte // assumed <= bufio.defaultBufSize 4KiB
@@ -90,7 +90,7 @@ func (iam *IdentityAccessManagement) newChunkedReader(req *http.Request) (io.Rea
 	// Payload for STREAMING signature should be 'STREAMING-AWS4-HMAC-SHA256-PAYLOAD'
 	case streamingContentSHA256:
 		glog.V(3).Infof("streaming content sha256")
-		_, credential, seedSignature, region, service, seedDate, errCode = iam.calculateSeedSignature(req)
+		credential, seedSignature, region, service, seedDate, errCode = iam.calculateSeedSignature(req)
 		if errCode != s3err.ErrNone {
 			return nil, errCode
 		}
@@ -99,7 +99,7 @@ func (iam *IdentityAccessManagement) newChunkedReader(req *http.Request) (io.Rea
 		if authorizationHeader != "" {
 			// We do not need to pass the seed signature to the Reader as each chunk is not signed,
 			// but we do compute it to verify the caller has the correct permissions.
-			_, _, _, _, _, _, errCode = iam.calculateSeedSignature(req)
+			_, _, _, _, _, errCode = iam.calculateSeedSignature(req)
 			if errCode != s3err.ErrNone {
 				return nil, errCode
 			}
