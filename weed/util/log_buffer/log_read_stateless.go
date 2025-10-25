@@ -121,7 +121,7 @@ func (logBuffer *LogBuffer) ReadMessagesAtOffset(startOffset int64, maxMessages 
 		logBuffer.RUnlock()
 
 		// Data not in memory - attempt disk read if configured
-		// CRITICAL FIX: Don't return error here - data may be on disk!
+		// Don't return error here - data may be on disk!
 		// Fall through to disk read logic below
 		glog.V(2).Infof("[StatelessRead] Data at offset %d not in memory (buffer: %d-%d), attempting disk read",
 			startOffset, bufferStartOffset, currentBufferEnd)
