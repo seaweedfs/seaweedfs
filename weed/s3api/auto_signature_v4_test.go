@@ -229,8 +229,12 @@ func preSignV4(iam *IdentityAccessManagement, req *http.Request, accessKey, secr
 	// Set the query on the URL (without signature yet)
 	req.URL.RawQuery = query.Encode()
 
-	// Get the payload hash
-	hashedPayload := getContentSha256Cksum(req)
+	// For presigned URLs, the payload hash must be UNSIGNED-PAYLOAD (or from query param if explicitly set)
+	// We should NOT use request headers as they're not part of the presigned URL
+	hashedPayload := query.Get("X-Amz-Content-Sha256")
+	if hashedPayload == "" {
+		hashedPayload = unsignedPayload
+	}
 
 	// Extract signed headers
 	extractedSignedHeaders := make(http.Header)
@@ -314,7 +318,7 @@ func TestSignatureV4WithForwardedPrefix(t *testing.T) {
 			signV4WithPath(r, "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", tt.expectedPath)
 
 			// Test signature verification
-			_, errCode := iam.doesSignatureMatch(getContentSha256Cksum(r), r)
+			_, _, errCode := iam.doesSignatureMatch(r)
 			if errCode != s3err.ErrNone {
 				t.Errorf("Expected successful signature validation with X-Forwarded-Prefix %q, got error: %v (code: %d)", tt.forwardedPrefix, errCode, int(errCode))
 			}
@@ -380,7 +384,7 @@ func TestSignatureV4WithForwardedPrefixTrailingSlash(t *testing.T) {
 			signV4WithPath(r, "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", tt.expectedPath)
 
 			// Test signature verification - this should succeed even with trailing slashes
-			_, errCode := iam.doesSignatureMatch(getContentSha256Cksum(r), r)
+			_, _, errCode := iam.doesSignatureMatch(r)
 			if errCode != s3err.ErrNone {
 				t.Errorf("Expected successful signature validation with trailing slash in path %q, got error: %v (code: %d)", tt.urlPath, errCode, int(errCode))
 			}
@@ -475,7 +479,7 @@ func TestSignatureV4WithForwardedPort(t *testing.T) {
 			signV4WithPath(r, "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", r.URL.Path)
 
 			// Test signature verification
-			_, errCode := iam.doesSignatureMatch(getContentSha256Cksum(r), r)
+			_, _, errCode := iam.doesSignatureMatch(r)
 			if errCode != s3err.ErrNone {
 				t.Errorf("Expected successful signature validation with forwarded port, got error: %v (code: %d)", errCode, int(errCode))
 			}
@@ -508,9 +512,47 @@ func TestPresignedSignatureV4Basic(t *testing.T) {
 	}
 
 	// Test presigned signature verification
-	_, errCode := iam.doesPresignedSignatureMatch(getContentSha256Cksum(r), r)
+	_, _, errCode := iam.doesPresignedSignatureMatch(r)
 	if errCode != s3err.ErrNone {
 		t.Errorf("Expected successful presigned signature validation, got error: %v (code: %d)", errCode, int(errCode))
+	}
+}
+
+// TestPresignedSignatureV4MissingExpires verifies that X-Amz-Expires is required for presigned URLs
+func TestPresignedSignatureV4MissingExpires(t *testing.T) {
+	iam := newTestIAM()
+
+	// Create a presigned request
+	r, err := newTestRequest("GET", "https://example.com/test-bucket/test-object", 0, nil)
+	if err != nil {
+		t.Fatalf("Failed to create test request: %v", err)
+	}
+
+	r = mux.SetURLVars(r, map[string]string{
+		"bucket": "test-bucket",
+		"object": "test-object",
+	})
+	r.Header.Set("Host", "example.com")
+
+	// Manually construct presigned URL query parameters WITHOUT X-Amz-Expires
+	now := time.Now().UTC()
+	dateStr := now.Format(iso8601Format)
+	scope := fmt.Sprintf("%s/%s/%s/%s", now.Format(yyyymmdd), "us-east-1", "s3", "aws4_request")
+	credential := fmt.Sprintf("%s/%s", "AKIAIOSFODNN7EXAMPLE", scope)
+
+	query := r.URL.Query()
+	query.Set("X-Amz-Algorithm", signV4Algorithm)
+	query.Set("X-Amz-Credential", credential)
+	query.Set("X-Amz-Date", dateStr)
+	// Intentionally NOT setting X-Amz-Expires
+	query.Set("X-Amz-SignedHeaders", "host")
+	query.Set("X-Amz-Signature", "dummy-signature") // Signature doesn't matter, should fail earlier
+	r.URL.RawQuery = query.Encode()
+
+	// Test presigned signature verification - should fail with ErrInvalidQueryParams
+	_, _, errCode := iam.doesPresignedSignatureMatch(r)
+	if errCode != s3err.ErrInvalidQueryParams {
+		t.Errorf("Expected ErrInvalidQueryParams for missing X-Amz-Expires, got: %v (code: %d)", errCode, int(errCode))
 	}
 }
 
@@ -573,7 +615,8 @@ func TestPresignedSignatureV4WithForwardedPrefix(t *testing.T) {
 			r.Header.Set("X-Forwarded-Host", "example.com")
 
 			// Test presigned signature verification
-			_, errCode := iam.doesPresignedSignatureMatch(getContentSha256Cksum(r), r)
+			_, _, errCode := iam.doesPresignedSignatureMatch(r)
+
 			if errCode != s3err.ErrNone {
 				t.Errorf("Expected successful presigned signature validation with X-Forwarded-Prefix %q, got error: %v (code: %d)", tt.forwardedPrefix, errCode, int(errCode))
 			}
@@ -640,7 +683,8 @@ func TestPresignedSignatureV4WithForwardedPrefixTrailingSlash(t *testing.T) {
 			r.Header.Set("X-Forwarded-Host", "example.com")
 
 			// Test presigned signature verification - this should succeed with trailing slashes
-			_, errCode := iam.doesPresignedSignatureMatch(getContentSha256Cksum(r), r)
+			_, _, errCode := iam.doesPresignedSignatureMatch(r)
+
 			if errCode != s3err.ErrNone {
 				t.Errorf("Expected successful presigned signature validation with trailing slash in path %q, got error: %v (code: %d)", tt.strippedPath, errCode, int(errCode))
 			}
@@ -669,8 +713,12 @@ func preSignV4WithPath(iam *IdentityAccessManagement, req *http.Request, accessK
 	// Set the query on the URL (without signature yet)
 	req.URL.RawQuery = query.Encode()
 
-	// Get the payload hash
-	hashedPayload := getContentSha256Cksum(req)
+	// For presigned URLs, the payload hash must be UNSIGNED-PAYLOAD (or from query param if explicitly set)
+	// We should NOT use request headers as they're not part of the presigned URL
+	hashedPayload := query.Get("X-Amz-Content-Sha256")
+	if hashedPayload == "" {
+		hashedPayload = unsignedPayload
+	}
 
 	// Extract signed headers
 	extractedSignedHeaders := make(http.Header)
@@ -884,7 +932,7 @@ func signRequestV4(req *http.Request, accessKey, secretKey string) error {
 		return fmt.Errorf("Invalid hashed payload")
 	}
 
-	currTime := time.Now()
+	currTime := time.Now().UTC()
 
 	// Set x-amz-date.
 	req.Header.Set("x-amz-date", currTime.Format(iso8601Format))
@@ -1061,10 +1109,6 @@ func TestIAMPayloadHashComputation(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
 	req.Header.Set("Host", "localhost:8111")
 
-	// Compute expected payload hash
-	expectedHash := sha256.Sum256([]byte(testPayload))
-	expectedHashStr := hex.EncodeToString(expectedHash[:])
-
 	// Create an IAM-style authorization header with "iam" service instead of "s3"
 	now := time.Now().UTC()
 	dateStr := now.Format("20060102T150405Z")
@@ -1079,7 +1123,7 @@ func TestIAMPayloadHashComputation(t *testing.T) {
 
 	// Test the doesSignatureMatch function directly
 	// This should now compute the correct payload hash for IAM requests
-	identity, errCode := iam.doesSignatureMatch(expectedHashStr, req)
+	identity, _, errCode := iam.doesSignatureMatch(req)
 
 	// Even though the signature will fail (dummy signature),
 	// the fact that we get past the credential parsing means the payload hash was computed correctly
@@ -1141,7 +1185,7 @@ func TestS3PayloadHashNoRegression(t *testing.T) {
 	req.Header.Set("Authorization", authHeader)
 
 	// This should use the emptySHA256 hash and not try to read the body
-	identity, errCode := iam.doesSignatureMatch(emptySHA256, req)
+	identity, _, errCode := iam.doesSignatureMatch(req)
 
 	// Should get signature mismatch (because of dummy signature) but not other errors
 	assert.Equal(t, s3err.ErrSignatureDoesNotMatch, errCode)
@@ -1192,7 +1236,7 @@ func TestIAMEmptyBodyPayloadHash(t *testing.T) {
 	req.Header.Set("Authorization", authHeader)
 
 	// Even with an IAM request, empty body should result in emptySHA256
-	identity, errCode := iam.doesSignatureMatch(emptySHA256, req)
+	identity, _, errCode := iam.doesSignatureMatch(req)
 
 	// Should get signature mismatch (because of dummy signature) but not other errors
 	assert.Equal(t, s3err.ErrSignatureDoesNotMatch, errCode)
@@ -1235,10 +1279,6 @@ func TestSTSPayloadHashComputation(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
 	req.Header.Set("Host", "localhost:8112")
 
-	// Compute expected payload hash
-	expectedHash := sha256.Sum256([]byte(testPayload))
-	expectedHashStr := hex.EncodeToString(expectedHash[:])
-
 	// Create an STS-style authorization header with "sts" service
 	now := time.Now().UTC()
 	dateStr := now.Format("20060102T150405Z")
@@ -1252,7 +1292,7 @@ func TestSTSPayloadHashComputation(t *testing.T) {
 
 	// Test the doesSignatureMatch function
 	// This should compute the correct payload hash for STS requests (non-S3 service)
-	identity, errCode := iam.doesSignatureMatch(expectedHashStr, req)
+	identity, _, errCode := iam.doesSignatureMatch(req)
 
 	// Should get signature mismatch (dummy signature) but payload hash should be computed correctly
 	assert.Equal(t, s3err.ErrSignatureDoesNotMatch, errCode)
@@ -1317,7 +1357,7 @@ func TestGitHubIssue7080Scenario(t *testing.T) {
 
 	// Since we're using a dummy signature, we expect signature mismatch, but the important
 	// thing is that it doesn't fail earlier due to payload hash computation issues
-	identity, errCode := iam.doesSignatureMatch(emptySHA256, req)
+	identity, _, errCode := iam.doesSignatureMatch(req)
 
 	// The error should be signature mismatch, not payload related
 	assert.Equal(t, s3err.ErrSignatureDoesNotMatch, errCode)
@@ -1357,32 +1397,37 @@ func TestIAMSignatureServiceMatching(t *testing.T) {
 	// Use the exact payload and headers from the failing logs
 	testPayload := "Action=CreateAccessKey&UserName=admin&Version=2010-05-08"
 
+	// Use current time to avoid clock skew validation failures
+	now := time.Now().UTC()
+	amzDate := now.Format(iso8601Format)
+	dateStamp := now.Format(yyyymmdd)
+
 	// Create request exactly as shown in logs
 	req, err := http.NewRequest("POST", "http://localhost:8111/", strings.NewReader(testPayload))
 	assert.NoError(t, err)
 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
 	req.Header.Set("Host", "localhost:8111")
-	req.Header.Set("X-Amz-Date", "20250805T082934Z")
+	req.Header.Set("X-Amz-Date", amzDate)
 
 	// Calculate the expected signature using the correct IAM service
 	// This simulates what botocore/AWS SDK would calculate
-	credentialScope := "20250805/us-east-1/iam/aws4_request"
+	credentialScope := dateStamp + "/us-east-1/iam/aws4_request"
 
 	// Calculate the actual payload hash for our test payload
 	actualPayloadHash := getSHA256Hash([]byte(testPayload))
 
 	// Build the canonical request with the actual payload hash
-	canonicalRequest := "POST\n/\n\ncontent-type:application/x-www-form-urlencoded; charset=utf-8\nhost:localhost:8111\nx-amz-date:20250805T082934Z\n\ncontent-type;host;x-amz-date\n" + actualPayloadHash
+	canonicalRequest := "POST\n/\n\ncontent-type:application/x-www-form-urlencoded; charset=utf-8\nhost:localhost:8111\nx-amz-date:" + amzDate + "\n\ncontent-type;host;x-amz-date\n" + actualPayloadHash
 
 	// Calculate the canonical request hash
 	canonicalRequestHash := getSHA256Hash([]byte(canonicalRequest))
 
 	// Build the string to sign
-	stringToSign := "AWS4-HMAC-SHA256\n20250805T082934Z\n" + credentialScope + "\n" + canonicalRequestHash
+	stringToSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + credentialScope + "\n" + canonicalRequestHash
 
 	// Calculate expected signature using IAM service (what client sends)
-	expectedSigningKey := getSigningKey("power_user_secret", "20250805", "us-east-1", "iam")
+	expectedSigningKey := getSigningKey("power_user_secret", dateStamp, "us-east-1", "iam")
 	expectedSignature := getSignature(expectedSigningKey, stringToSign)
 
 	// Create authorization header with the correct signature
@@ -1391,7 +1436,8 @@ func TestIAMSignatureServiceMatching(t *testing.T) {
 	req.Header.Set("Authorization", authHeader)
 
 	// Now test that SeaweedFS computes the same signature with our fix
-	identity, errCode := iam.doesSignatureMatch(actualPayloadHash, req)
+	identity, computedSignature, errCode := iam.doesSignatureMatch(req)
+	assert.Equal(t, expectedSignature, computedSignature)
 
 	// With the fix, the signatures should match and we should get a successful authentication
 	assert.Equal(t, s3err.ErrNone, errCode)
@@ -1481,7 +1527,7 @@ func TestIAMLargeBodySecurityLimit(t *testing.T) {
 	req.Header.Set("Authorization", authHeader)
 
 	// The function should complete successfully but limit the body to 10 MiB
-	identity, errCode := iam.doesSignatureMatch(emptySHA256, req)
+	identity, _, errCode := iam.doesSignatureMatch(req)
 
 	// Should get signature mismatch (dummy signature) but not internal error
 	assert.Equal(t, s3err.ErrSignatureDoesNotMatch, errCode)
