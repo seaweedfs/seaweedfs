@@ -518,6 +518,44 @@ func TestPresignedSignatureV4Basic(t *testing.T) {
 	}
 }
 
+// TestPresignedSignatureV4MissingExpires verifies that X-Amz-Expires is required for presigned URLs
+func TestPresignedSignatureV4MissingExpires(t *testing.T) {
+	iam := newTestIAM()
+
+	// Create a presigned request
+	r, err := newTestRequest("GET", "https://example.com/test-bucket/test-object", 0, nil)
+	if err != nil {
+		t.Fatalf("Failed to create test request: %v", err)
+	}
+
+	r = mux.SetURLVars(r, map[string]string{
+		"bucket": "test-bucket",
+		"object": "test-object",
+	})
+	r.Header.Set("Host", "example.com")
+
+	// Manually construct presigned URL query parameters WITHOUT X-Amz-Expires
+	now := time.Now().UTC()
+	dateStr := now.Format(iso8601Format)
+	scope := fmt.Sprintf("%s/%s/%s/%s", now.Format(yyyymmdd), "us-east-1", "s3", "aws4_request")
+	credential := fmt.Sprintf("%s/%s", "AKIAIOSFODNN7EXAMPLE", scope)
+
+	query := r.URL.Query()
+	query.Set("X-Amz-Algorithm", signV4Algorithm)
+	query.Set("X-Amz-Credential", credential)
+	query.Set("X-Amz-Date", dateStr)
+	// Intentionally NOT setting X-Amz-Expires
+	query.Set("X-Amz-SignedHeaders", "host")
+	query.Set("X-Amz-Signature", "dummy-signature") // Signature doesn't matter, should fail earlier
+	r.URL.RawQuery = query.Encode()
+
+	// Test presigned signature verification - should fail with ErrInvalidQueryParams
+	_, _, errCode := iam.doesPresignedSignatureMatch(r)
+	if errCode != s3err.ErrInvalidQueryParams {
+		t.Errorf("Expected ErrInvalidQueryParams for missing X-Amz-Expires, got: %v (code: %d)", errCode, int(errCode))
+	}
+}
+
 // Test X-Forwarded-Prefix support for presigned URLs
 func TestPresignedSignatureV4WithForwardedPrefix(t *testing.T) {
 	tests := []struct {

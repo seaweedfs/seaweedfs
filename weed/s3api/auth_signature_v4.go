@@ -365,6 +365,9 @@ func extractV4AuthInfoFromQuery(r *http.Request) (*v4AuthInfo, s3err.ErrorCode) 
 	if query.Get("X-Amz-SignedHeaders") == "" {
 		return nil, s3err.ErrMissingFields
 	}
+	if query.Get("X-Amz-Expires") == "" {
+		return nil, s3err.ErrInvalidQueryParams
+	}
 
 	// Parse date
 	dateStr := query.Get("X-Amz-Date")
@@ -414,15 +417,8 @@ func getCanonicalQueryString(r *http.Request, isPresigned bool) string {
 
 func checkPresignedRequestExpiry(r *http.Request, t time.Time) s3err.ErrorCode {
 	expiresStr := r.URL.Query().Get("X-Amz-Expires")
-	if expiresStr == "" {
-		// When X-Amz-Expires is not specified, the signature is valid for a default duration of 1 hour
-		const defaultPresignedURLExpiry = 1 * time.Hour
-		if time.Now().UTC().After(t.Add(defaultPresignedURLExpiry)) {
-			return s3err.ErrExpiredPresignRequest
-		}
-		return s3err.ErrNone
-	}
-
+	// X-Amz-Expires is validated as required in extractV4AuthInfoFromQuery,
+	// so it should never be empty here
 	expires, err := strconv.ParseInt(expiresStr, 10, 64)
 	if err != nil {
 		return s3err.ErrMalformedDate
