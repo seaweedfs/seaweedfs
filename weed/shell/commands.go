@@ -149,10 +149,20 @@ func findInputDirectory(args []string) (input string) {
 }
 
 // isHelpRequest checks if the args contain a help flag (-h, --help, or -help)
+// It also handles combined short flags like -lh or -hl
 func isHelpRequest(args []string) bool {
 	for _, arg := range args {
+		// Check for exact matches
 		if arg == "-h" || arg == "--help" || arg == "-help" {
 			return true
+		}
+		// Check for combined short flags (e.g., -lh, -hl)
+		if strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--") && len(arg) > 1 {
+			for _, char := range arg[1:] {
+				if char == 'h' {
+					return true
+				}
+			}
 		}
 	}
 	return false
