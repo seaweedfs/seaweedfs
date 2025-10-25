@@ -175,13 +175,14 @@ func (s3a *S3ApiServer) rotateSSECChunk(chunk *filer_pb.FileChunk, sourceKey, de
 	}
 
 	// Get source chunk data
-	srcUrl, err := s3a.lookupVolumeUrl(chunk.GetFileIdString())
+	fileId := chunk.GetFileIdString()
+	srcUrl, err := s3a.lookupVolumeUrl(fileId)
 	if err != nil {
 		return nil, fmt.Errorf("lookup source volume: %w", err)
 	}
 
 	// Download encrypted data
-	encryptedData, err := s3a.downloadChunkData(srcUrl, 0, int64(chunk.Size))
+	encryptedData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size))
 	if err != nil {
 		return nil, fmt.Errorf("download chunk data: %w", err)
 	}
@@ -243,13 +244,14 @@ func (s3a *S3ApiServer) rotateSSEKMSChunk(chunk *filer_pb.FileChunk, srcKeyID, d
 	}
 
 	// Get source chunk data
-	srcUrl, err := s3a.lookupVolumeUrl(chunk.GetFileIdString())
+	fileId := chunk.GetFileIdString()
+	srcUrl, err := s3a.lookupVolumeUrl(fileId)
 	if err != nil {
 		return nil, fmt.Errorf("lookup source volume: %w", err)
 	}
 
 	// Download data (this would be encrypted with the old KMS key)
-	chunkData, err := s3a.downloadChunkData(srcUrl, 0, int64(chunk.Size))
+	chunkData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size))
 	if err != nil {
 		return nil, fmt.Errorf("download chunk data: %w", err)
 	}

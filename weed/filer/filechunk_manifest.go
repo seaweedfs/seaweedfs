@@ -109,7 +109,8 @@ func fetchWholeChunk(ctx context.Context, bytesBuffer *bytes.Buffer, lookupFileI
 		glog.ErrorfCtx(ctx, "operation LookupFileId %s failed, err: %v", fileId, err)
 		return err
 	}
-	err = retriedStreamFetchChunkData(ctx, bytesBuffer, urlStrings, "", cipherKey, isGzipped, true, 0, 0)
+	jwt := JwtForVolumeServer(fileId)
+	err = retriedStreamFetchChunkData(ctx, bytesBuffer, urlStrings, jwt, cipherKey, isGzipped, true, 0, 0)
 	if err != nil {
 		return err
 	}
@@ -150,7 +151,7 @@ func retriedStreamFetchChunkData(ctx context.Context, writer io.Writer, urlStrin
 			retriedCnt++
 			var localProcessed int
 			var writeErr error
-			shouldRetry, err = util_http.ReadUrlAsStreamAuthenticated(ctx, urlString+"?readDeleted=true", jwt, cipherKey, isGzipped, isFullChunk, offset, size, func(data []byte) {
+			shouldRetry, err = util_http.ReadUrlAsStream(ctx, urlString+"?readDeleted=true", jwt, cipherKey, isGzipped, isFullChunk, offset, size, func(data []byte) {
 				// Check for context cancellation during data processing
 				select {
 				case <-ctx.Done():
