@@ -886,7 +886,7 @@ func signRequestV4(req *http.Request, accessKey, secretKey string) error {
 		return fmt.Errorf("Invalid hashed payload")
 	}
 
-	currTime := time.Now()
+	currTime := time.Now().UTC()
 
 	// Set x-amz-date.
 	req.Header.Set("x-amz-date", currTime.Format(iso8601Format))
@@ -1351,32 +1351,37 @@ func TestIAMSignatureServiceMatching(t *testing.T) {
 	// Use the exact payload and headers from the failing logs
 	testPayload := "Action=CreateAccessKey&UserName=admin&Version=2010-05-08"
 
+	// Use current time to avoid clock skew validation failures
+	now := time.Now().UTC()
+	amzDate := now.Format(iso8601Format)
+	dateStamp := now.Format(yyyymmdd)
+
 	// Create request exactly as shown in logs
 	req, err := http.NewRequest("POST", "http://localhost:8111/", strings.NewReader(testPayload))
 	assert.NoError(t, err)
 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
 	req.Header.Set("Host", "localhost:8111")
-	req.Header.Set("X-Amz-Date", "20250805T082934Z")
+	req.Header.Set("X-Amz-Date", amzDate)
 
 	// Calculate the expected signature using the correct IAM service
 	// This simulates what botocore/AWS SDK would calculate
-	credentialScope := "20250805/us-east-1/iam/aws4_request"
+	credentialScope := dateStamp + "/us-east-1/iam/aws4_request"
 
 	// Calculate the actual payload hash for our test payload
 	actualPayloadHash := getSHA256Hash([]byte(testPayload))
 
 	// Build the canonical request with the actual payload hash
-	canonicalRequest := "POST\n/\n\ncontent-type:application/x-www-form-urlencoded; charset=utf-8\nhost:localhost:8111\nx-amz-date:20250805T082934Z\n\ncontent-type;host;x-amz-date\n" + actualPayloadHash
+	canonicalRequest := "POST\n/\n\ncontent-type:application/x-www-form-urlencoded; charset=utf-8\nhost:localhost:8111\nx-amz-date:" + amzDate + "\n\ncontent-type;host;x-amz-date\n" + actualPayloadHash
 
 	// Calculate the canonical request hash
 	canonicalRequestHash := getSHA256Hash([]byte(canonicalRequest))
 
 	// Build the string to sign
-	stringToSign := "AWS4-HMAC-SHA256\n20250805T082934Z\n" + credentialScope + "\n" + canonicalRequestHash
+	stringToSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + credentialScope + "\n" + canonicalRequestHash
 
 	// Calculate expected signature using IAM service (what client sends)
-	expectedSigningKey := getSigningKey("power_user_secret", "20250805", "us-east-1", "iam")
+	expectedSigningKey := getSigningKey("power_user_secret", dateStamp, "us-east-1", "iam")
 	expectedSignature := getSignature(expectedSigningKey, stringToSign)
 
 	// Create authorization header with the correct signature
