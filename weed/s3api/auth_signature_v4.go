@@ -430,8 +430,9 @@ func checkPresignedRequestExpiry(r *http.Request, t time.Time) s3err.ErrorCode {
 		return s3err.ErrMalformedDate
 	}
 
-	// The minimum value for X-Amz-Expires is 1 and the maximum is 604800 seconds (7 days)
-	if expires < 1 || expires > 604800 {
+	// The maximum value for X-Amz-Expires is 604800 seconds (7 days)
+	// Allow 0 but it will immediately fail expiration check
+	if expires < 0 || expires > 604800 {
 		return s3err.ErrInvalidRequest
 	}
 
