@@ -287,16 +287,23 @@ func extractV4AuthInfoFromHeader(r *http.Request) (*v4AuthInfo, s3err.ErrorCode)
 		return nil, errCode
 	}
 
-	dateStr := r.Header.Get("x-amz-date")
-	if dateStr == "" {
-		dateStr = r.Header.Get("Date")
-		if dateStr == "" {
+	var t time.Time
+	if xamz := r.Header.Get("x-amz-date"); xamz != "" {
+		parsed, err := time.Parse(iso8601Format, xamz)
+		if err != nil {
+			return nil, s3err.ErrMalformedDate
+		}
+		t = parsed
+	} else {
+		ds := r.Header.Get("Date")
+		if ds == "" {
 			return nil, s3err.ErrMissingDateHeader
 		}
-	}
-	t, err := time.Parse(iso8601Format, dateStr)
-	if err != nil {
-		return nil, s3err.ErrMalformedDate
+		parsed, err := http.ParseTime(ds)
+		if err != nil {
+			return nil, s3err.ErrMalformedDate
+		}
+		t = parsed.UTC()
 	}
 
 	hashedPayload := getContentSha256Cksum(r)
