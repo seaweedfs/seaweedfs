@@ -12,8 +12,8 @@ metadata:
     app.kubernetes.io/component: worker
 spec:
   clusterIP: None  # Headless service
-  ports:
   {{- if .Values.worker.metricsPort }}
+  ports:
   - name: "metrics"
     port: {{ .Values.worker.metricsPort }}
     targetPort: {{ .Values.worker.metricsPort }}

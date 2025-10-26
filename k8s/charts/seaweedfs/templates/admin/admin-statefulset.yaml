@@ -1,4 +1,7 @@
 {{- if .Values.admin.enabled }}
+{{- if and (not .Values.admin.masters) (not .Values.global.masterServer) (not .Values.master.enabled) }}
+{{- fail "admin.masters or global.masterServer must be set if master.enabled is false" -}}
+{{- end }}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:

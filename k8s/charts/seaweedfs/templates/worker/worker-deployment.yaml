@@ -1,4 +1,7 @@
 {{- if .Values.worker.enabled }}
+{{- if and (not .Values.worker.adminServer) (not .Values.admin.enabled) }}
+{{- fail "worker.adminServer must be set if admin.enabled is false within the same release" -}}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
