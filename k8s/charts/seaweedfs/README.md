@@ -216,8 +216,9 @@ worker:
   workingDir: "/tmp/seaweedfs-worker"
   
   # Optional: configure admin server address
-  # If not specified, auto-discovers from admin service
-  adminServer: "seaweedfs-admin.seaweedfs:33646"
+  # If not specified, auto-discovers from admin service in the same namespace
+  # Replace <namespace> with your actual namespace
+  adminServer: "seaweedfs-admin.<namespace>:33646"
   
   # Workers need storage for task execution
   # Note: Workers use Deployment, so they can't use dynamically provisioned PVCs
@@ -278,6 +279,9 @@ worker:
   replicas: 2
   capabilities: "vacuum"
   maxConcurrent: 2
+  # REQUIRED: Point to the admin service of your main SeaweedFS release
+  # Replace <namespace> with the namespace where your main seaweedfs is deployed
+  adminServer: "seaweedfs-admin.<namespace>:33646"
 ```
 
 **values-worker-balance.yaml** (for balance operations):
@@ -299,6 +303,9 @@ worker:
   replicas: 1
   capabilities: "balance"
   maxConcurrent: 1
+  # REQUIRED: Point to the admin service of your main SeaweedFS release
+  # Replace <namespace> with the namespace where your main seaweedfs is deployed
+  adminServer: "seaweedfs-admin.<namespace>:33646"
 ```
 
 Deploy the specialized workers as separate releases:
