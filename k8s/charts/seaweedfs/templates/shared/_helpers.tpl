@@ -83,6 +83,26 @@ Inject extra environment vars in the format key:value, if populated
 {{- end -}}
 {{- end -}}
 
+{{/* Return the proper admin image */}}
+{{- define "admin.image" -}}
+{{- if .Values.admin.imageOverride -}}
+{{- $imageOverride := .Values.admin.imageOverride -}}
+{{- printf "%s" $imageOverride -}}
+{{- else -}}
+{{- include "common.image" . }}
+{{- end -}}
+{{- end -}}
+
+{{/* Return the proper worker image */}}
+{{- define "worker.image" -}}
+{{- if .Values.worker.imageOverride -}}
+{{- $imageOverride := .Values.worker.imageOverride -}}
+{{- printf "%s" $imageOverride -}}
+{{- else -}}
+{{- include "common.image" . }}
+{{- end -}}
+{{- end -}}
+
 {{/* Return the proper volume image */}}
 {{- define "volume.image" -}}
 {{- if .Values.volume.imageOverride -}}
@@ -130,6 +150,24 @@ Inject extra environment vars in the format key:value, if populated
 {{/* check if any Master PVC exists */}}
 {{- define "master.pvc_exists" -}}
 {{- if or (eq .Values.master.data.type "persistentVolumeClaim") (eq .Values.master.logs.type "persistentVolumeClaim") -}}
+{{- printf "true" -}}
+{{- else -}}
+{{- printf "" -}}
+{{- end -}}
+{{- end -}}
+
+{{/* check if any Admin PVC exists */}}
+{{- define "admin.pvc_exists" -}}
+{{- if or (eq .Values.admin.data.type "persistentVolumeClaim") (eq .Values.admin.logs.type "persistentVolumeClaim") -}}
+{{- printf "true" -}}
+{{- else -}}
+{{- printf "" -}}
+{{- end -}}
+{{- end -}}
+
+{{/* check if any Worker PVC exists */}}
+{{- define "worker.pvc_exists" -}}
+{{- if or (eq .Values.worker.data.type "persistentVolumeClaim") (eq .Values.worker.logs.type "persistentVolumeClaim") -}}
 {{- printf "true" -}}
 {{- else -}}
 {{- printf "" -}}

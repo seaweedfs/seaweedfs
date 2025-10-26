@@ -1088,6 +1088,171 @@ sftp:
     failureThreshold: 100
     timeoutSeconds: 10
 
+admin:
+  enabled: false
+  imageOverride: null
+  restartPolicy: null
+  replicas: 1
+  bindAddress: 0.0.0.0
+  port: 23646  # Default admin port
+  grpcPort: 33646  # Default gRPC port for worker connections
+  metricsPort: 9327
+  loggingOverrideLevel: null
+
+  # Admin authentication
+  adminUser: "admin"
+  adminPassword: ""  # If empty, auth is disabled
+
+  # Data directory for admin configuration and maintenance data
+  dataDir: ""  # If empty, configuration is kept in memory only
+
+  # Master servers to connect to
+  # If empty, uses global.masterServer or auto-discovers from master statefulset
+  masters: ""
+
+  # Custom command line arguments to add to the admin command
+  # Example: ["-customFlag", "value", "-anotherFlag"]
+  extraArgs: []
+
+  # Storage configuration
+  data:
+    type: "emptyDir"  # Options: "hostPath", "persistentVolumeClaim", "emptyDir", "existingClaim"
+    size: "10Gi"
+    storageClass: ""
+    hostPathPrefix: /storage
+    claimName: ""
+    annotations: {}
+
+  logs:
+    type: "emptyDir"  # Options: "hostPath", "persistentVolumeClaim", "emptyDir", "existingClaim"
+    size: "5Gi"
+    storageClass: ""
+    hostPathPrefix: /storage
+    claimName: ""
+    annotations: {}
+
+  # Additional resources
+  sidecars: []
+  initContainers: ""
+  extraVolumes: ""
+  extraVolumeMounts: ""
+  podLabels: {}
+  podAnnotations: {}
+  annotations: {}
+  resources: {}
+  tolerations: ""
+  nodeSelector: ""
+  priorityClassName: ""
+  serviceAccountName: ""
+  podSecurityContext: {}
+  containerSecurityContext: {}
+
+  extraEnvironmentVars: {}
+
+  # Health checks
+  livenessProbe:
+    enabled: true
+    httpGet:
+      path: /health
+      scheme: HTTP
+    initialDelaySeconds: 20
+    periodSeconds: 60
+    successThreshold: 1
+    failureThreshold: 5
+    timeoutSeconds: 10
+
+  readinessProbe:
+    enabled: true
+    httpGet:
+      path: /health
+      scheme: HTTP
+    initialDelaySeconds: 15
+    periodSeconds: 15
+    successThreshold: 1
+    failureThreshold: 3
+    timeoutSeconds: 10
+
+  ingress:
+    enabled: false
+    className: "nginx"
+    # host: false for "*" hostname
+    host: "admin.seaweedfs.local"
+    path: "/"
+    pathType: Prefix
+    annotations: {}
+    tls: []
+
+  service:
+    type: ClusterIP
+    annotations: {}
+
+worker:
+  enabled: false
+  imageOverride: null
+  restartPolicy: null
+  replicas: 1
+  loggingOverrideLevel: null
+
+  # Admin server to connect to
+  # Format: "host:port" or auto-discover from admin service
+  adminServer: ""
+
+  # Worker capabilities - comma-separated list
+  # Available: vacuum, balance, erasure_coding
+  # Default: "vacuum,balance,erasure_coding" (all capabilities)
+  capabilities: "vacuum,balance,erasure_coding"
+
+  # Maximum number of concurrent tasks
+  maxConcurrent: 3
+
+  # Working directory for task execution
+  workingDir: "/tmp/seaweedfs-worker"
+
+  # Custom command line arguments to add to the worker command
+  # Example: ["-customFlag", "value", "-anotherFlag"]
+  extraArgs: []
+
+  # Storage configuration for working directory
+  data:
+    type: "emptyDir"  # Options: "hostPath", "persistentVolumeClaim", "emptyDir", "existingClaim"
+    size: "50Gi"  # Workers need space for vacuum, balance, etc.
+    storageClass: ""
+    hostPathPrefix: /storage
+    claimName: ""
+    annotations: {}
+
+  logs:
+    type: "emptyDir"  # Options: "hostPath", "persistentVolumeClaim", "emptyDir", "existingClaim"
+    size: "5Gi"
+    storageClass: ""
+    hostPathPrefix: /storage
+    claimName: ""
+    annotations: {}
+
+  # Additional resources
+  sidecars: []
+  initContainers: ""
+  extraVolumes: ""
+  extraVolumeMounts: ""
+  podLabels: {}
+  podAnnotations: {}
+  annotations: {}
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2"
+      memory: "2Gi"
+  tolerations: ""
+  nodeSelector: ""
+  priorityClassName: ""
+  serviceAccountName: ""
+  podSecurityContext: {}
+  containerSecurityContext: {}
+
+  extraEnvironmentVars: {}
+
 # All-in-one deployment configuration
 allInOne:
   enabled: false

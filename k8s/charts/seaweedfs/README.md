@@ -145,6 +145,135 @@ stringData:
   seaweedfs_s3_config: '{"identities":[{"name":"anvAdmin","credentials":[{"accessKey":"snu8yoP6QAlY0ne4","secretKey":"PNzBcmeLNEdR0oviwm04NQAicOrDH1Km"}],"actions":["Admin","Read","Write"]},{"name":"anvReadOnly","credentials":[{"accessKey":"SCigFee6c5lbi04A","secretKey":"kgFhbT38R8WUYVtiFQ1OiSVOrYr3NKku"}],"actions":["Read"]}]}'
 ```
 
+## Admin Component
+
+The admin component provides a modern web-based administration interface for managing SeaweedFS clusters. It includes:
+
+- **Dashboard**: Real-time cluster status and metrics
+- **Volume Management**: Monitor volume servers, capacity, and health
+- **File Browser**: Browse and manage files in the filer
+- **Maintenance Operations**: Trigger maintenance tasks via workers
+- **Object Store Management**: Create and manage buckets with web interface
+
+### Enabling Admin
+
+To enable the admin interface, add the following to your values.yaml:
+
+```yaml
+admin:
+  enabled: true
+  port: 23646
+  grpcPort: 33646  # For worker connections
+  adminUser: "admin"
+  adminPassword: "your-secure-password"  # Leave empty to disable auth
+  
+  # Optional: persist admin data
+  data:
+    type: "persistentVolumeClaim"
+    size: "10Gi"
+    storageClass: "your-storage-class"
+  
+  # Optional: enable ingress
+  ingress:
+    enabled: true
+    host: "admin.seaweedfs.local"
+    className: "nginx"
+```
+
+The admin interface will be available at `http://<admin-service>:23646` (or via ingress). Workers connect to the admin server via gRPC on port `33646`.
+
+### Admin Authentication
+
+If `adminPassword` is set, the admin interface requires authentication:
+- Username: Value of `adminUser` (default: `admin`)
+- Password: Value of `adminPassword`
+
+If `adminPassword` is empty or not set, the admin interface runs without authentication (not recommended for production).
+
+### Admin Data Persistence
+
+The admin component can store configuration and maintenance data. You can configure storage in several ways:
+
+- **emptyDir** (default): Data is lost when pod restarts
+- **persistentVolumeClaim**: Data persists across pod restarts
+- **hostPath**: Data stored on the host filesystem
+- **existingClaim**: Use an existing PVC
+
+## Worker Component
+
+Workers are maintenance agents that execute cluster maintenance tasks such as vacuum, volume balancing, and erasure coding. Workers connect to the admin server via gRPC and receive task assignments.
+
+### Enabling Workers
+
+To enable workers, add the following to your values.yaml:
+
+```yaml
+worker:
+  enabled: true
+  replicas: 2  # Scale based on workload
+  capabilities: "vacuum,balance,erasure_coding"  # Tasks this worker can handle
+  maxConcurrent: 3  # Maximum concurrent tasks per worker
+  workingDir: "/tmp/seaweedfs-worker"
+  
+  # Optional: configure admin server address
+  # If not specified, auto-discovers from admin service
+  adminServer: "seaweedfs-admin.seaweedfs:33646"
+  
+  # Workers need storage for task execution
+  data:
+    type: "persistentVolumeClaim"
+    size: "50Gi"  # Adjust based on volume size
+    storageClass: "your-storage-class"
+  
+  # Resource limits for worker pods
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2"
+      memory: "2Gi"
+```
+
+### Worker Capabilities
+
+Workers can be configured with different capabilities:
+- **vacuum**: Reclaim deleted file space
+- **balance**: Balance volumes across volume servers
+- **erasure_coding**: Handle erasure coding operations
+
+You can configure workers with all capabilities or create specialized worker pools with specific capabilities.
+
+### Worker Deployment Strategy
+
+For production deployments, consider:
+
+1. **Multiple Workers**: Deploy 2+ worker replicas for high availability
+2. **Resource Allocation**: Workers need sufficient CPU/memory for maintenance tasks
+3. **Storage**: Workers need temporary storage for vacuum and balance operations (size depends on volume size)
+4. **Specialized Workers**: Create separate worker deployments for different capabilities if needed
+
+Example specialized worker configuration:
+
+```yaml
+# In your values.yaml - deploy multiple worker deployments manually
+# One for vacuum operations
+worker:
+  enabled: true
+  replicas: 2
+  capabilities: "vacuum"
+  maxConcurrent: 2
+  
+# Deploy another release for balance operations
+# helm install seaweedfs-worker-balance seaweedfs/seaweedfs --values worker-balance-values.yaml
+# worker-balance-values.yaml:
+worker:
+  enabled: true
+  replicas: 1
+  capabilities: "balance"
+  maxConcurrent: 1
+```
+
 ## Enterprise
 
 For enterprise users, please visit [seaweedfs.com](https://seaweedfs.com) for the SeaweedFS Enterprise Edition, 

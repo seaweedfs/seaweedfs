@@ -1,0 +1,272 @@
+{{- if .Values.worker.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ template "seaweedfs.name" . }}-worker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: worker
+{{- if .Values.worker.annotations }}
+  annotations:
+    {{- toYaml .Values.worker.annotations | nindent 4 }}
+{{- end }}
+spec:
+  replicas: {{ .Values.worker.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+        helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: worker
+      {{ with .Values.podLabels }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.podLabels }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
+      annotations:
+      {{ with .Values.podAnnotations }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.podAnnotations }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      restartPolicy: {{ default .Values.global.restartPolicy .Values.worker.restartPolicy }}
+      {{- if .Values.worker.affinity }}
+      affinity:
+        {{ tpl .Values.worker.affinity . | nindent 8 | trim }}
+      {{- end }}
+      {{- if .Values.worker.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{ tpl .Values.worker.topologySpreadConstraints . | nindent 8 | trim }}
+      {{- end }}
+      {{- if .Values.worker.tolerations }}
+      tolerations:
+        {{ tpl .Values.worker.tolerations . | nindent 8 | trim }}
+      {{- end }}
+      {{- include "seaweedfs.imagePullSecrets" . | nindent 6 }}
+      terminationGracePeriodSeconds: 60
+      {{- if .Values.worker.priorityClassName }}
+      priorityClassName: {{ .Values.worker.priorityClassName | quote }}
+      {{- end }}
+      enableServiceLinks: false
+      {{- if .Values.worker.serviceAccountName }}
+      serviceAccountName: {{ .Values.worker.serviceAccountName | quote }}
+      {{- end }}
+      {{- if .Values.worker.initContainers }}
+      initContainers:
+        {{ tpl .Values.worker.initContainers . | nindent 8 | trim }}
+      {{- end }}
+      {{- if .Values.worker.podSecurityContext.enabled }}
+      securityContext: {{- omit .Values.worker.podSecurityContext "enabled" | toYaml | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: seaweedfs
+          image: {{ template "worker.image" . }}
+          imagePullPolicy: {{ default "IfNotPresent" .Values.global.imagePullPolicy }}
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: SEAWEEDFS_FULLNAME
+              value: "{{ template "seaweedfs.name" . }}"
+            {{- if .Values.worker.extraEnvironmentVars }}
+            {{- range $key, $value := .Values.worker.extraEnvironmentVars }}
+            - name: {{ $key }}
+            {{- if kindIs "string" $value }}
+              value: {{ $value | quote }}
+            {{- else }}
+              valueFrom:
+                {{ toYaml $value | nindent 16 | trim }}
+            {{- end -}}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.global.extraEnvironmentVars }}
+            {{- range $key, $value := .Values.global.extraEnvironmentVars }}
+            - name: {{ $key }}
+            {{- if kindIs "string" $value }}
+              value: {{ $value | quote }}
+            {{- else }}
+              valueFrom:
+                {{ toYaml $value | nindent 16 | trim }}
+            {{- end -}}
+            {{- end }}
+            {{- end }}
+          command:
+            - "/bin/sh"
+            - "-ec"
+            - |
+              exec /usr/bin/weed \
+              {{- if or (eq .Values.worker.logs.type "hostPath") (eq .Values.worker.logs.type "persistentVolumeClaim") (eq .Values.worker.logs.type "emptyDir") }}
+              -logdir=/logs \
+              {{- else }}
+              -logtostderr=true \
+              {{- end }}
+              {{- if .Values.worker.loggingOverrideLevel }}
+              -v={{ .Values.worker.loggingOverrideLevel }} \
+              {{- else }}
+              -v={{ .Values.global.loggingLevel }} \
+              {{- end }}
+              worker \
+              {{- if .Values.worker.adminServer }}
+              -adminServer={{ .Values.worker.adminServer }} \
+              {{- else }}
+              -adminServer={{ template "seaweedfs.name" . }}-admin.{{ .Release.Namespace }}:{{ .Values.admin.grpcPort }} \
+              {{- end }}
+              -capabilities={{ .Values.worker.capabilities }} \
+              -maxConcurrent={{ .Values.worker.maxConcurrent }} \
+              -workingDir={{ .Values.worker.workingDir }} \
+              {{- range .Values.worker.extraArgs }}
+              {{ . }} \
+              {{- end }}
+          volumeMounts:
+            {{- if or (eq .Values.worker.data.type "hostPath") (eq .Values.worker.data.type "persistentVolumeClaim") (eq .Values.worker.data.type "emptyDir") (eq .Values.worker.data.type "existingClaim") }}
+            - name: worker-data
+              mountPath: {{ .Values.worker.workingDir }}
+            {{- end }}
+            {{- if or (eq .Values.worker.logs.type "hostPath") (eq .Values.worker.logs.type "persistentVolumeClaim") (eq .Values.worker.logs.type "emptyDir") (eq .Values.worker.logs.type "existingClaim") }}
+            - name: worker-logs
+              mountPath: /logs
+            {{- end }}
+            {{- if .Values.global.enableSecurity }}
+            - name: security-config
+              readOnly: true
+              mountPath: /etc/seaweedfs/security.toml
+              subPath: security.toml
+            - name: ca-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/ca/
+            - name: master-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/master/
+            - name: volume-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/volume/
+            - name: filer-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/filer/
+            - name: client-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/client/
+            {{- end }}
+            {{ tpl .Values.worker.extraVolumeMounts . | nindent 12 | trim }}
+          {{- with .Values.worker.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.worker.containerSecurityContext.enabled }}
+          securityContext: {{- omit .Values.worker.containerSecurityContext "enabled" | toYaml | nindent 12 }}
+          {{- end }}
+      {{- if .Values.worker.sidecars }}
+      {{- include "common.tplvalues.render" (dict "value" .Values.worker.sidecars "context" $) | nindent 8 }}
+      {{- end }}
+      volumes:
+        {{- if eq .Values.worker.data.type "hostPath" }}
+        - name: worker-data
+          hostPath:
+            path: {{ .Values.worker.data.hostPathPrefix }}/seaweedfs-worker-data
+            type: DirectoryOrCreate
+        {{- end }}
+        {{- if eq .Values.worker.data.type "emptyDir" }}
+        - name: worker-data
+          emptyDir: {}
+        {{- end }}
+        {{- if eq .Values.worker.data.type "existingClaim" }}
+        - name: worker-data
+          persistentVolumeClaim:
+            claimName: {{ .Values.worker.data.claimName }}
+        {{- end }}
+        {{- if eq .Values.worker.logs.type "hostPath" }}
+        - name: worker-logs
+          hostPath:
+            path: {{ .Values.worker.logs.hostPathPrefix }}/logs/seaweedfs/worker
+            type: DirectoryOrCreate
+        {{- end }}
+        {{- if eq .Values.worker.logs.type "emptyDir" }}
+        - name: worker-logs
+          emptyDir: {}
+        {{- end }}
+        {{- if eq .Values.worker.logs.type "existingClaim" }}
+        - name: worker-logs
+          persistentVolumeClaim:
+            claimName: {{ .Values.worker.logs.claimName }}
+        {{- end }}
+        {{- if .Values.global.enableSecurity }}
+        - name: security-config
+          configMap:
+            name: {{ template "seaweedfs.name" . }}-security-config
+        - name: ca-cert
+          secret:
+            secretName: {{ template "seaweedfs.name" . }}-ca-cert
+        - name: master-cert
+          secret:
+            secretName: {{ template "seaweedfs.name" . }}-master-cert
+        - name: volume-cert
+          secret:
+            secretName: {{ template "seaweedfs.name" . }}-volume-cert
+        - name: filer-cert
+          secret:
+            secretName: {{ template "seaweedfs.name" . }}-filer-cert
+        - name: client-cert
+          secret:
+            secretName: {{ template "seaweedfs.name" . }}-client-cert
+        {{- end }}
+        {{ tpl .Values.worker.extraVolumes . | indent 8 | trim }}
+      {{- if .Values.worker.nodeSelector }}
+      nodeSelector:
+        {{ tpl .Values.worker.nodeSelector . | indent 8 | trim }}
+      {{- end }}
+  {{- $pvc_exists := include "worker.pvc_exists" . -}}
+  {{- if $pvc_exists }}
+  volumeClaimTemplates:
+    {{- if eq .Values.worker.data.type "persistentVolumeClaim" }}
+    - metadata:
+        name: worker-data
+        {{- with .Values.worker.data.annotations }}
+        annotations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        storageClassName: {{ .Values.worker.data.storageClass }}
+        resources:
+          requests:
+            storage: {{ .Values.worker.data.size }}
+    {{- end }}
+    {{- if eq .Values.worker.logs.type "persistentVolumeClaim" }}
+    - metadata:
+        name: worker-logs
+        {{- with .Values.worker.logs.annotations }}
+        annotations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        storageClassName: {{ .Values.worker.logs.storageClass }}
+        resources:
+          requests:
+            storage: {{ .Values.worker.logs.size }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+
