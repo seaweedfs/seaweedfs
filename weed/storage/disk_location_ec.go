@@ -207,6 +207,12 @@ func (l *DiskLocation) loadAllEcShards() (err error) {
 			// If .dat file is gone, this is likely a distributed EC volume with shards on multiple servers
 			baseFileName := erasure_coding.EcShardFileName(collection, l.Directory, int(volumeId))
 			datFileName := baseFileName + ".dat"
+			// Helper to reset state between volume processing
+			reset := func() {
+				sameVolumeShards = nil
+				prevVolumeId = 0
+			}
+
 			datExists := util.FileExists(datFileName)
 
 			// Validate EC volume if .dat file exists (incomplete EC encoding scenario)
@@ -217,8 +223,7 @@ func (l *DiskLocation) loadAllEcShards() (err error) {
 				l.removeEcVolumeFiles(collection, volumeId)
 				// Clean up any in-memory state. This does not delete files (already deleted by removeEcVolumeFiles).
 				l.unloadEcVolume(volumeId)
-				sameVolumeShards = nil
-				prevVolumeId = 0
+				reset()
 				continue
 			}
 
@@ -233,12 +238,10 @@ func (l *DiskLocation) loadAllEcShards() (err error) {
 				}
 				// Clean up any partially loaded in-memory state. This does not delete files.
 				l.unloadEcVolume(volumeId)
-				sameVolumeShards = nil
-				prevVolumeId = 0
+				reset()
 				continue
 			}
-			prevVolumeId = 0
-			sameVolumeShards = nil
+			reset()
 			continue
 		}
 
@@ -250,18 +253,8 @@ func (l *DiskLocation) loadAllEcShards() (err error) {
 		// We have collected EC shards but never found .ecx file
 		// Need to determine the collection name from the shard filenames
 		baseName := sameVolumeShards[0][:len(sameVolumeShards[0])-len(path.Ext(sameVolumeShards[0]))]
-		collection, volumeId, err := parseCollectionVolumeId(baseName)
-		if err == nil && volumeId == prevVolumeId {
-			baseFileName := erasure_coding.EcShardFileName(collection, l.Directory, int(volumeId))
-			datFileName := baseFileName + ".dat"
-			// Only clean up if .dat file exists (incomplete encoding, not distributed EC)
-			if util.FileExists(datFileName) {
-				glog.Warningf("Found %d EC shards without .ecx file for volume %d (incomplete encoding interrupted before .ecx creation), cleaning up...",
-					len(sameVolumeShards), volumeId)
-				l.removeEcVolumeFiles(collection, volumeId)
-				// Clean up any in-memory state. This does not delete files (already deleted by removeEcVolumeFiles).
-				l.unloadEcVolume(volumeId)
-			}
+		if collection, volumeId, err := parseCollectionVolumeId(baseName); err == nil && volumeId == prevVolumeId {
+			l.cleanupIfIncomplete(collection, volumeId, len(sameVolumeShards))
 		}
 	}
 
@@ -307,6 +300,20 @@ func (l *DiskLocation) EcShardCount() int {
 	return shardCount
 }
 
+// cleanupIfIncomplete removes EC files when .dat exists but .ecx is missing for a volume.
+// This handles the case where EC encoding was interrupted before creating the .ecx file.
+func (l *DiskLocation) cleanupIfIncomplete(collection string, vid needle.VolumeId, shardCount int) {
+	baseFileName := erasure_coding.EcShardFileName(collection, l.Directory, int(vid))
+	datFileName := baseFileName + ".dat"
+	if util.FileExists(datFileName) {
+		glog.Warningf("Found %d EC shards without .ecx file for volume %d (incomplete encoding interrupted before .ecx creation), cleaning up...",
+			shardCount, vid)
+		l.removeEcVolumeFiles(collection, vid)
+		// Clean up any in-memory state. This does not delete files (already deleted by removeEcVolumeFiles).
+		l.unloadEcVolume(vid)
+	}
+}
+
 // calculateExpectedShardSize computes the exact expected shard size based on .dat file size
 // The EC encoding process is deterministic:
 // 1. Data is processed in batches of (LargeBlockSize * DataShardsCount) for large blocks
@@ -347,6 +354,8 @@ func (l *DiskLocation) validateEcVolume(collection string, vid needle.VolumeId) 
 	if datFileInfo, err := os.Stat(datFileName); err == nil {
 		datExists = true
 		expectedShardSize = calculateExpectedShardSize(datFileInfo.Size())
+	} else if !os.IsNotExist(err) {
+		glog.Warningf("Failed to stat .dat file %s: %v", datFileName, err)
 	}
 
 	shardCount := 0

@@ -13,8 +13,6 @@ import (
 
 // TestIncompleteEcEncodingCleanup tests the cleanup logic for incomplete EC encoding scenarios
 func TestIncompleteEcEncodingCleanup(t *testing.T) {
-	tempDir := t.TempDir()
-
 	tests := []struct {
 		name              string
 		volumeId          needle.VolumeId
@@ -96,6 +94,9 @@ func TestIncompleteEcEncodingCleanup(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Use per-subtest temp directory for stronger isolation
+			tempDir := t.TempDir()
+
 			// Create DiskLocation
 			minFreeSpace := util.MinFreeSpace{Type: util.AsPercent, Percent: 1, Raw: "1"}
 			diskLocation := &DiskLocation{
@@ -123,8 +124,12 @@ func TestIncompleteEcEncodingCleanup(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Failed to create .dat file: %v", err)
 				}
-				datFile.Truncate(datFileSize)
-				datFile.Close()
+				if err := datFile.Truncate(datFileSize); err != nil {
+					t.Fatalf("Failed to truncate .dat file: %v", err)
+				}
+				if err := datFile.Close(); err != nil {
+					t.Fatalf("Failed to close .dat file: %v", err)
+				}
 			}
 
 			// Create EC shard files
@@ -163,6 +168,12 @@ func TestIncompleteEcEncodingCleanup(t *testing.T) {
 				t.Logf("loadAllEcShards returned error (expected in some cases): %v", loadErr)
 			}
 
+			// Test idempotency - running again should not cause issues
+			loadErr2 := diskLocation.loadAllEcShards()
+			if loadErr2 != nil {
+				t.Logf("Second loadAllEcShards returned error: %v", loadErr2)
+			}
+
 			// Verify cleanup expectations
 			if tt.expectCleanup {
 				// Check that files were cleaned up
@@ -192,6 +203,13 @@ func TestIncompleteEcEncodingCleanup(t *testing.T) {
 				}
 				if tt.createEcxFile && !util.FileExists(baseFileName+".ecx") {
 					t.Errorf("Expected .ecx to remain but it was cleaned up")
+				}
+			}
+
+			// Verify load expectations
+			if tt.expectLoadSuccess {
+				if diskLocation.EcShardCount() == 0 {
+					t.Errorf("Expected EC shards to be loaded for volume %d", tt.volumeId)
 				}
 			}
 
@@ -299,8 +317,12 @@ func TestValidateEcVolume(t *testing.T) {
 					t.Fatalf("Failed to create shard file: %v", err)
 				}
 				// Use truncate to create file of correct size without allocating all the space
-				shardFile.Truncate(expectedShardSize)
-				shardFile.Close()
+				if err := shardFile.Truncate(expectedShardSize); err != nil {
+					t.Fatalf("Failed to truncate shard file: %v", err)
+				}
+				if err := shardFile.Close(); err != nil {
+					t.Fatalf("Failed to close shard file: %v", err)
+				}
 			}
 
 			// For zero-byte test case, create 10 empty files
@@ -439,8 +461,7 @@ func TestEcCleanupWithSeparateIdxDirectory(t *testing.T) {
 	datFile.WriteString("dummy data")
 	datFile.Close()
 
-	// Create .ecx and .ecj in idx directory (but no .ecx to trigger cleanup)
-	// Don't create .ecx to test orphaned shards cleanup
+	// Do not create .ecx: trigger orphaned-shards cleanup when .dat exists
 
 	// Run loadAllEcShards
 	loadErr := diskLocation.loadAllEcShards()
