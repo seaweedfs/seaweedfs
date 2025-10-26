@@ -246,6 +246,8 @@ func (l *DiskLocation) loadAllEcShards() (err error) {
 			if util.FileExists(datFileName) {
 				glog.Warningf("Found %d EC shards without .ecx file for volume %d (incomplete encoding interrupted before .ecx creation), cleaning up...",
 					len(sameVolumeShards), volumeId)
+				// Clean up any in-memory state before removing files
+				l.DestroyEcVolume(volumeId)
 				l.removeEcVolumeFiles(collection, volumeId)
 			}
 		}
