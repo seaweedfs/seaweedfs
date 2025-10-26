@@ -225,7 +225,7 @@ func (l *DiskLocation) loadAllEcShards() (err error) {
 				prevVolumeId = 0
 				continue
 			}
-			prevVolumeId = volumeId
+			prevVolumeId = 0
 			sameVolumeShards = nil
 			continue
 		}
