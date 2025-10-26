@@ -165,15 +165,6 @@ Inject extra environment vars in the format key:value, if populated
 {{- end -}}
 {{- end -}}
 
-{{/* check if any Worker PVC exists */}}
-{{- define "worker.pvc_exists" -}}
-{{- if or (eq .Values.worker.data.type "persistentVolumeClaim") (eq .Values.worker.logs.type "persistentVolumeClaim") -}}
-{{- printf "true" -}}
-{{- else -}}
-{{- printf "" -}}
-{{- end -}}
-{{- end -}}
-
 {{/* check if any InitContainers exist for Volumes */}}
 {{- define "volume.initContainers_exists" -}}
 {{- if or (not (empty .Values.volume.idx )) (not (empty .Values.volume.initContainers )) -}}
