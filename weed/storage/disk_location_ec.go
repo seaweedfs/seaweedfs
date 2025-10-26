@@ -362,17 +362,10 @@ func (l *DiskLocation) validateEcVolume(collection string, vid needle.VolumeId) 
 	var actualShardSize int64 = -1
 
 	// Count shards and validate they all have the same size (required for Reed-Solomon EC)
-	// Check both l.Directory (where shards normally are) and l.IdxDirectory (in case of manual moves)
+	// Shard files (.ec00 - .ec13) are always in l.Directory, not l.IdxDirectory
 	for i := 0; i < erasure_coding.TotalShardsCount; i++ {
-		// Check in primary directory (l.Directory)
 		shardFileName := baseFileName + erasure_coding.ToExt(i)
 		fi, err := os.Stat(shardFileName)
-
-		// If not found in primary directory and IdxDirectory is different, check there too
-		if err != nil && l.Directory != l.IdxDirectory {
-			indexShardFileName := erasure_coding.EcShardFileName(collection, l.IdxDirectory, int(vid)) + erasure_coding.ToExt(i)
-			fi, err = os.Stat(indexShardFileName)
-		}
 
 		if err == nil {
 			// Check if file has non-zero size
@@ -440,9 +433,8 @@ func (l *DiskLocation) removeEcVolumeFiles(collection string, vid needle.VolumeI
 	removeFile(indexBaseFileName+".ecx", "EC index file")
 	removeFile(indexBaseFileName+".ecj", "EC journal file")
 
-	// Remove all EC shard files (.ec00 ~ .ec13)
+	// Remove all EC shard files (.ec00 ~ .ec13) from data directory
 	for i := 0; i < erasure_coding.TotalShardsCount; i++ {
-		shardFileName := baseFileName + erasure_coding.ToExt(i)
-		removeFile(shardFileName, "EC shard file")
+		removeFile(baseFileName+erasure_coding.ToExt(i), "EC shard file")
 	}
 }
