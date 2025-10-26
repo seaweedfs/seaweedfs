@@ -202,6 +202,8 @@ func (l *DiskLocation) loadAllEcShards() (err error) {
 			if datExists && len(sameVolumeShards) < erasure_coding.DataShardsCount {
 				glog.Warningf("Incomplete EC encoding for volume %d: .dat exists but only %d shards found (need at least %d), cleaning up EC files...",
 					volumeId, len(sameVolumeShards), erasure_coding.DataShardsCount)
+				// Clean up any in-memory state before removing files
+				l.DestroyEcVolume(volumeId)
 				l.removeEcVolumeFiles(collection, volumeId)
 				sameVolumeShards = nil
 				prevVolumeId = 0
@@ -302,9 +304,16 @@ func (l *DiskLocation) validateEcVolume(collection string, vid needle.VolumeId) 
 	baseFileName := erasure_coding.EcShardFileName(collection, l.Directory, int(vid))
 	datFileName := baseFileName + ".dat"
 	datExists := util.FileExists(datFileName)
-	shardCount := 0
 
-	// Count existing EC shard files
+	// If .dat is gone, it's a distributed EC volume - any shard count is fine
+	// Short-circuit to avoid unnecessary stat calls
+	if !datExists {
+		glog.V(1).Infof("EC volume %d: distributed EC (.dat removed)", vid)
+		return true
+	}
+
+	// .dat file exists, so we need to validate shard count for local EC
+	shardCount := 0
 	for i := 0; i < erasure_coding.TotalShardsCount; i++ {
 		shardFileName := baseFileName + erasure_coding.ToExt(i)
 		if fi, err := os.Stat(shardFileName); err == nil {
@@ -315,12 +324,6 @@ func (l *DiskLocation) validateEcVolume(collection string, vid needle.VolumeId) 
 		} else if !os.IsNotExist(err) {
 			glog.Warningf("Failed to stat shard file %s: %v", shardFileName, err)
 		}
-	}
-
-	// If .dat file is gone, this is a distributed EC volume - any shard count is valid
-	if !datExists {
-		glog.V(1).Infof("EC volume %d has %d shards (distributed EC, .dat removed)", vid, shardCount)
-		return true
 	}
 
 	// If .dat file exists, we need at least DataShardsCount shards locally
@@ -339,31 +342,26 @@ func (l *DiskLocation) removeEcVolumeFiles(collection string, vid needle.VolumeI
 	baseFileName := erasure_coding.EcShardFileName(collection, l.Directory, int(vid))
 	indexBaseFileName := erasure_coding.EcShardFileName(collection, l.IdxDirectory, int(vid))
 
-	// Remove all EC shard files (.ec00 ~ .ec13)
-	for i := 0; i < erasure_coding.TotalShardsCount; i++ {
-		shardFileName := baseFileName + erasure_coding.ToExt(i)
-		if err := os.Remove(shardFileName); err != nil {
+	// Helper to remove a file with consistent error handling
+	removeFile := func(path, description string) {
+		if err := os.Remove(path); err != nil {
 			if !os.IsNotExist(err) {
-				glog.Warningf("Failed to remove incomplete EC shard file %s: %v", shardFileName, err)
+				glog.Warningf("Failed to remove incomplete %s %s: %v", description, path, err)
 			}
 		} else {
-			glog.V(2).Infof("Removed incomplete EC shard file: %s", shardFileName)
+			glog.V(2).Infof("Removed incomplete %s: %s", description, path)
 		}
 	}
 
-	// Remove index files
-	if err := os.Remove(indexBaseFileName + ".ecx"); err != nil {
-		if !os.IsNotExist(err) {
-			glog.Warningf("Failed to remove incomplete EC index file %s.ecx: %v", indexBaseFileName, err)
-		}
-	} else {
-		glog.V(2).Infof("Removed incomplete EC index file: %s.ecx", indexBaseFileName)
-	}
-	if err := os.Remove(indexBaseFileName + ".ecj"); err != nil {
-		if !os.IsNotExist(err) {
-			glog.Warningf("Failed to remove incomplete EC journal file %s.ecj: %v", indexBaseFileName, err)
-		}
-	} else {
-		glog.V(2).Infof("Removed incomplete EC journal file: %s.ecj", indexBaseFileName)
+	// Remove index files first (.ecx, .ecj) before shard files
+	// This ensures that if cleanup is interrupted, the .ecx file won't trigger
+	// EC loading for incomplete/missing shards on next startup
+	removeFile(indexBaseFileName+".ecx", "EC index file")
+	removeFile(indexBaseFileName+".ecj", "EC journal file")
+
+	// Remove all EC shard files (.ec00 ~ .ec13)
+	for i := 0; i < erasure_coding.TotalShardsCount; i++ {
+		shardFileName := baseFileName + erasure_coding.ToExt(i)
+		removeFile(shardFileName, "EC shard file")
 	}
 }

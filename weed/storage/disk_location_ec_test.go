@@ -13,12 +13,7 @@ import (
 
 // TestIncompleteEcEncodingCleanup tests the cleanup logic for incomplete EC encoding scenarios
 func TestIncompleteEcEncodingCleanup(t *testing.T) {
-	// Create temporary test directory
-	tempDir, err := os.MkdirTemp("", "ec_cleanup_test")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	tests := []struct {
 		name              string
@@ -159,9 +154,9 @@ func TestIncompleteEcEncodingCleanup(t *testing.T) {
 			}
 
 			// Run loadAllEcShards
-			err = diskLocation.loadAllEcShards()
-			if err != nil {
-				t.Logf("loadAllEcShards returned error (expected in some cases): %v", err)
+			loadErr := diskLocation.loadAllEcShards()
+			if loadErr != nil {
+				t.Logf("loadAllEcShards returned error (expected in some cases): %v", loadErr)
 			}
 
 			// Verify cleanup expectations
@@ -196,24 +191,13 @@ func TestIncompleteEcEncodingCleanup(t *testing.T) {
 				}
 			}
 
-			// Cleanup test files for next iteration
-			os.Remove(baseFileName + ".dat")
-			os.Remove(baseFileName + ".ecx")
-			os.Remove(baseFileName + ".ecj")
-			for i := 0; i < erasure_coding.TotalShardsCount; i++ {
-				os.Remove(baseFileName + erasure_coding.ToExt(i))
-			}
 		})
 	}
 }
 
 // TestValidateEcVolume tests the validateEcVolume function
 func TestValidateEcVolume(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "ec_validate_test")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	minFreeSpace := util.MinFreeSpace{Type: util.AsPercent, Percent: 1, Raw: "1"}
 	diskLocation := &DiskLocation{
@@ -315,23 +299,13 @@ func TestValidateEcVolume(t *testing.T) {
 			if isValid != tt.expectValid {
 				t.Errorf("Expected validation result %v but got %v", tt.expectValid, isValid)
 			}
-
-			// Cleanup
-			os.Remove(baseFileName + ".dat")
-			for i := 0; i < erasure_coding.TotalShardsCount; i++ {
-				os.Remove(baseFileName + erasure_coding.ToExt(i))
-			}
 		})
 	}
 }
 
 // TestRemoveEcVolumeFiles tests the removeEcVolumeFiles function
 func TestRemoveEcVolumeFiles(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "ec_remove_test")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	minFreeSpace := util.MinFreeSpace{Type: util.AsPercent, Percent: 1, Raw: "1"}
 	diskLocation := &DiskLocation{
@@ -392,18 +366,11 @@ func TestRemoveEcVolumeFiles(t *testing.T) {
 	if !util.FileExists(baseFileName + ".dat") {
 		t.Errorf(".dat file should NOT be removed but was deleted")
 	}
-
-	// Cleanup
-	os.Remove(baseFileName + ".dat")
 }
 
 // TestEcCleanupWithSeparateIdxDirectory tests EC cleanup when idx directory is different
 func TestEcCleanupWithSeparateIdxDirectory(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "ec_cleanup_idx_test")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	idxDir := filepath.Join(tempDir, "idx")
 	dataDir := filepath.Join(tempDir, "data")
@@ -441,9 +408,9 @@ func TestEcCleanupWithSeparateIdxDirectory(t *testing.T) {
 	// Don't create .ecx to test orphaned shards cleanup
 
 	// Run loadAllEcShards
-	err = diskLocation.loadAllEcShards()
-	if err != nil {
-		t.Logf("loadAllEcShards error: %v", err)
+	loadErr := diskLocation.loadAllEcShards()
+	if loadErr != nil {
+		t.Logf("loadAllEcShards error: %v", loadErr)
 	}
 
 	// Verify cleanup occurred
