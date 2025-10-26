@@ -208,25 +208,29 @@ func (l *DiskLocation) loadAllEcShards() (err error) {
 				continue
 			}
 
-			if err = l.loadEcShards(sameVolumeShards, collection, volumeId); err != nil {
-				// If EC shards failed to load and .dat still exists, clean up EC files to allow .dat file to be used
-				// If .dat is gone, log error but don't clean up (may be waiting for shards from other servers)
-				if datExists {
-					glog.Warningf("Failed to load EC shards for volume %d and .dat exists: %v, cleaning up EC files to use .dat...", volumeId, err)
-					l.removeEcVolumeFiles(collection, volumeId)
-				} else {
-					glog.Warningf("Failed to load EC shards for volume %d: %v (this may be normal for distributed EC volumes)", volumeId, err)
-				}
-				sameVolumeShards = nil
-				prevVolumeId = 0
-				continue
+		if err = l.loadEcShards(sameVolumeShards, collection, volumeId); err != nil {
+			// If EC shards failed to load and .dat still exists, clean up EC files to allow .dat file to be used
+			// If .dat is gone, log error but don't clean up (may be waiting for shards from other servers)
+			if datExists {
+				glog.Warningf("Failed to load EC shards for volume %d and .dat exists: %v, cleaning up EC files to use .dat...", volumeId, err)
+				// Clean up any partially loaded in-memory state before removing files
+				l.DestroyEcVolume(volumeId)
+				l.removeEcVolumeFiles(collection, volumeId)
+			} else {
+				glog.Warningf("Failed to load EC shards for volume %d: %v (this may be normal for distributed EC volumes)", volumeId, err)
+				// Clean up any partially loaded in-memory state even if we don't remove files
+				l.DestroyEcVolume(volumeId)
 			}
-			prevVolumeId = volumeId
 			sameVolumeShards = nil
+			prevVolumeId = 0
 			continue
 		}
-
+		prevVolumeId = volumeId
+		sameVolumeShards = nil
+		continue
 	}
+
+}
 
 	// Check for orphaned EC shards without .ecx file (incomplete EC encoding)
 	// This happens when encoding is interrupted after writing shards but before writing .ecx
