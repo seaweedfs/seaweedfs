@@ -316,17 +316,10 @@ func (l *DiskLocation) validateEcVolume(collection string, vid needle.VolumeId) 
 	datFileName := baseFileName + ".dat"
 	datExists := util.FileExists(datFileName)
 
-	// If .dat is gone, it's a distributed EC volume - any shard count is fine
-	// Short-circuit to avoid unnecessary stat calls
-	if !datExists {
-		glog.V(1).Infof("EC volume %d: distributed EC (.dat removed)", vid)
-		return true
-	}
-
-	// .dat file exists, so we need to validate shard count and size for local EC
 	shardCount := 0
 	var expectedShardSize int64 = -1
 
+	// Count shards and validate they all have the same size (required for Reed-Solomon EC)
 	for i := 0; i < erasure_coding.TotalShardsCount; i++ {
 		shardFileName := baseFileName + erasure_coding.ToExt(i)
 		if fi, err := os.Stat(shardFileName); err == nil {
@@ -345,6 +338,12 @@ func (l *DiskLocation) validateEcVolume(collection string, vid needle.VolumeId) 
 		} else if !os.IsNotExist(err) {
 			glog.Warningf("Failed to stat shard file %s: %v", shardFileName, err)
 		}
+	}
+
+	// If .dat file is gone, this is a distributed EC volume - any shard count is valid
+	if !datExists {
+		glog.V(1).Infof("EC volume %d: distributed EC (.dat removed) with %d shards", vid, shardCount)
+		return true
 	}
 
 	// If .dat file exists, we need at least DataShardsCount shards locally
