@@ -1294,6 +1294,28 @@ worker:
 
   extraEnvironmentVars: {}
 
+  # Health checks for worker pods
+  # Since workers do not have an HTTP endpoint, a tcpSocket probe on the metrics port is recommended.
+  livenessProbe:
+    enabled: true
+    tcpSocket:
+      port: metrics
+    initialDelaySeconds: 30
+    periodSeconds: 60
+    successThreshold: 1
+    failureThreshold: 5
+    timeoutSeconds: 10
+
+  readinessProbe:
+    enabled: true
+    tcpSocket:
+      port: metrics
+    initialDelaySeconds: 20
+    periodSeconds: 15
+    successThreshold: 1
+    failureThreshold: 3
+    timeoutSeconds: 10
+
   # ServiceMonitor annotations (separate from pod/deployment annotations)
   serviceMonitor:
     annotations: {}

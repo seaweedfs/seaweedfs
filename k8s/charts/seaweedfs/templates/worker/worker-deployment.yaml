@@ -182,6 +182,30 @@ spec:
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          {{- if .Values.worker.livenessProbe.enabled }}
+          livenessProbe:
+            {{- with .Values.worker.livenessProbe.tcpSocket }}
+            tcpSocket:
+              port: {{ .port }}
+            {{- end }}
+            initialDelaySeconds: {{ .Values.worker.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.worker.livenessProbe.periodSeconds }}
+            successThreshold: {{ .Values.worker.livenessProbe.successThreshold }}
+            failureThreshold: {{ .Values.worker.livenessProbe.failureThreshold }}
+            timeoutSeconds: {{ .Values.worker.livenessProbe.timeoutSeconds }}
+          {{- end }}
+          {{- if .Values.worker.readinessProbe.enabled }}
+          readinessProbe:
+            {{- with .Values.worker.readinessProbe.tcpSocket }}
+            tcpSocket:
+              port: {{ .port }}
+            {{- end }}
+            initialDelaySeconds: {{ .Values.worker.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.worker.readinessProbe.periodSeconds }}
+            successThreshold: {{ .Values.worker.readinessProbe.successThreshold }}
+            failureThreshold: {{ .Values.worker.readinessProbe.failureThreshold }}
+            timeoutSeconds: {{ .Values.worker.readinessProbe.timeoutSeconds }}
+          {{- end }}
           {{- if .Values.worker.containerSecurityContext.enabled }}
           securityContext: {{- omit .Values.worker.containerSecurityContext "enabled" | toYaml | nindent 12 }}
           {{- end }}
