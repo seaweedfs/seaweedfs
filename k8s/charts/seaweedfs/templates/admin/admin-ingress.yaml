@@ -38,7 +38,6 @@ spec:
             name: {{ template "seaweedfs.name" . }}-admin
             port:
               number: {{ .Values.admin.port }}
-              #name:
 {{- else }}
           serviceName: {{ template "seaweedfs.name" . }}-admin
           servicePort: {{ .Values.admin.port }}
