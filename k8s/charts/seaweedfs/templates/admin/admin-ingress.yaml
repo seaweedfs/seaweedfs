@@ -10,8 +10,11 @@ kind: Ingress
 metadata:
   name: ingress-{{ template "seaweedfs.name" . }}-admin
   namespace: {{ .Release.Namespace }}
-  {{- with .Values.admin.ingress.annotations }}
   annotations:
+  {{- if and (not (semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion)) .Values.admin.ingress.className }}
+    kubernetes.io/ingress.class: {{ .Values.admin.ingress.className }}
+  {{- end }}
+  {{- with .Values.admin.ingress.annotations }}
     {{- toYaml . | nindent 4 }}
   {{- end }}
   labels:
@@ -21,7 +24,9 @@ metadata:
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: admin
 spec:
+  {{- if and (semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion) .Values.admin.ingress.className }}
   ingressClassName: {{ .Values.admin.ingress.className | quote }}
+  {{- end }}
   tls:
     {{ .Values.admin.ingress.tls | default list | toYaml | nindent 6}}
   rules:
@@ -31,7 +36,9 @@ spec:
     http:
       paths:
       - path: {{ .Values.admin.ingress.path | quote }}
+        {{- if semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion }}
         pathType: {{ .Values.admin.ingress.pathType | quote }}
+        {{- end }}
         backend:
 {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
           service:
