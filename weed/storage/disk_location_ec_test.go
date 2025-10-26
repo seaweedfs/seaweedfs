@@ -113,13 +113,18 @@ func TestIncompleteEcEncodingCleanup(t *testing.T) {
 			// Setup test files
 			baseFileName := erasure_coding.EcShardFileName(tt.collection, tempDir, int(tt.volumeId))
 
+			// Standard shard size for test cases
+			shardSize := 1024 // 1KB per shard
+
 			// Create .dat file if needed
+			// .dat file size should be DataShardsCount * shard size (10 shards)
 			if tt.createDatFile {
 				datFile, err := os.Create(baseFileName + ".dat")
 				if err != nil {
 					t.Fatalf("Failed to create .dat file: %v", err)
 				}
-				datFile.WriteString("dummy data")
+				datData := make([]byte, erasure_coding.DataShardsCount*shardSize)
+				datFile.Write(datData)
 				datFile.Close()
 			}
 
@@ -129,7 +134,8 @@ func TestIncompleteEcEncodingCleanup(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Failed to create shard file: %v", err)
 				}
-				shardFile.WriteString("dummy shard data")
+				shardData := make([]byte, shardSize)
+				shardFile.Write(shardData)
 				shardFile.Close()
 			}
 
@@ -256,19 +262,32 @@ func TestValidateEcVolume(t *testing.T) {
 			numShards:     0, // Will create 10 zero-byte files below
 			expectValid:   false,
 		},
+		{
+			name:          "Invalid: .dat exists with different size shards",
+			volumeId:      205,
+			collection:    "",
+			createDatFile: true,
+			numShards:     10, // Will create shards with varying sizes
+			expectValid:   false,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			baseFileName := erasure_coding.EcShardFileName(tt.collection, tempDir, int(tt.volumeId))
 
+			// Standard shard size for normal test cases
+			shardSize := 1024 // 1KB per shard
+
 			// Create .dat file if needed
+			// .dat file size should be DataShardsCount * shard size (10 shards)
 			if tt.createDatFile {
 				datFile, err := os.Create(baseFileName + ".dat")
 				if err != nil {
 					t.Fatalf("Failed to create .dat file: %v", err)
 				}
-				datFile.WriteString("dummy data")
+				datData := make([]byte, erasure_coding.DataShardsCount*shardSize)
+				datFile.Write(datData)
 				datFile.Close()
 			}
 
@@ -278,7 +297,8 @@ func TestValidateEcVolume(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Failed to create shard file: %v", err)
 				}
-				shardFile.WriteString("dummy shard data")
+				shardData := make([]byte, shardSize)
+				shardFile.Write(shardData)
 				shardFile.Close()
 			}
 
@@ -290,6 +310,20 @@ func TestValidateEcVolume(t *testing.T) {
 						t.Fatalf("Failed to create empty shard file: %v", err)
 					}
 					// Don't write anything - leave as zero-byte
+					shardFile.Close()
+				}
+			}
+
+			// For mismatched shard size test case, create shards with different sizes
+			if tt.volumeId == 205 {
+				for i := 0; i < 10; i++ {
+					shardFile, err := os.Create(baseFileName + erasure_coding.ToExt(i))
+					if err != nil {
+						t.Fatalf("Failed to create shard file: %v", err)
+					}
+					// Write different amount of data to each shard
+					data := make([]byte, 100+i*10)
+					shardFile.Write(data)
 					shardFile.Close()
 				}
 			}

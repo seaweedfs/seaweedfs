@@ -209,11 +209,11 @@ func (l *DiskLocation) loadAllEcShards() (err error) {
 			datFileName := baseFileName + ".dat"
 			datExists := util.FileExists(datFileName)
 
-			// Only validate shard count if .dat file exists (incomplete EC encoding scenario)
+			// Validate EC volume if .dat file exists (incomplete EC encoding scenario)
+			// This checks shard count, shard size consistency, and expected size vs .dat file
 			// If .dat is gone, EC encoding completed and shards are distributed across servers
-			if datExists && len(sameVolumeShards) < erasure_coding.DataShardsCount {
-				glog.Warningf("Incomplete EC encoding for volume %d: .dat exists but only %d shards found (need at least %d), cleaning up EC files...",
-					volumeId, len(sameVolumeShards), erasure_coding.DataShardsCount)
+			if datExists && !l.validateEcVolume(collection, volumeId) {
+				glog.Warningf("Incomplete or invalid EC volume %d: .dat exists but validation failed, cleaning up EC files...", volumeId)
 				l.removeEcVolumeFiles(collection, volumeId)
 				// Clean up any in-memory state. This does not delete files (already deleted by removeEcVolumeFiles).
 				l.unloadEcVolume(volumeId)
@@ -311,13 +311,24 @@ func (l *DiskLocation) EcShardCount() int {
 // For distributed EC volumes (where .dat is deleted), any number of shards is valid
 // For incomplete EC encoding (where .dat still exists), we need at least DataShardsCount shards
 // Also validates that all shards have the same size (required for Reed-Solomon EC)
+// If .dat exists, it also validates shards match the expected size based on .dat file size
 func (l *DiskLocation) validateEcVolume(collection string, vid needle.VolumeId) bool {
 	baseFileName := erasure_coding.EcShardFileName(collection, l.Directory, int(vid))
 	datFileName := baseFileName + ".dat"
-	datExists := util.FileExists(datFileName)
+
+	var expectedShardSize int64 = -1
+	datExists := false
+
+	// If .dat file exists, compute expected shard size from it
+	if datFileInfo, err := os.Stat(datFileName); err == nil {
+		datExists = true
+		// Each shard should be approximately datFileSize / DataShardsCount (10 data shards)
+		// Note: Due to block alignment and padding, actual shard size may be slightly larger
+		expectedShardSize = datFileInfo.Size() / erasure_coding.DataShardsCount
+	}
 
 	shardCount := 0
-	var expectedShardSize int64 = -1
+	var actualShardSize int64 = -1
 
 	// Count shards and validate they all have the same size (required for Reed-Solomon EC)
 	for i := 0; i < erasure_coding.TotalShardsCount; i++ {
@@ -326,17 +337,29 @@ func (l *DiskLocation) validateEcVolume(collection string, vid needle.VolumeId) 
 			// Check if file has non-zero size
 			if fi.Size() > 0 {
 				// Validate all shards are the same size (required for Reed-Solomon EC)
-				if expectedShardSize == -1 {
-					expectedShardSize = fi.Size()
-				} else if fi.Size() != expectedShardSize {
+				if actualShardSize == -1 {
+					actualShardSize = fi.Size()
+				} else if fi.Size() != actualShardSize {
 					glog.V(0).Infof("EC volume %d shard %d has size %d, expected %d (all EC shards must be same size)",
-						vid, i, fi.Size(), expectedShardSize)
+						vid, i, fi.Size(), actualShardSize)
 					return false
 				}
 				shardCount++
 			}
 		} else if !os.IsNotExist(err) {
 			glog.Warningf("Failed to stat shard file %s: %v", shardFileName, err)
+		}
+	}
+
+	// If .dat file exists, validate shard size is reasonable compared to expected size
+	// Due to block alignment and padding in EC encoding, actual shard size can be slightly larger
+	// We allow up to SmallBlockSize (1MB) of padding per shard for block alignment
+	if datExists && actualShardSize > 0 {
+		maxExpectedSize := expectedShardSize + erasure_coding.ErasureCodingSmallBlockSize
+		if actualShardSize < expectedShardSize || actualShardSize > maxExpectedSize {
+			glog.V(0).Infof("EC volume %d: shard size %d outside expected range [%d, %d] (based on .dat file size with padding)",
+				vid, actualShardSize, expectedShardSize, maxExpectedSize)
+			return false
 		}
 	}
 
