@@ -2,6 +2,7 @@ package storage
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
@@ -52,7 +53,7 @@ func TestCalculateExpectedShardSizeWithRealEncoding(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create a test .dat file with the specified size
-			baseFileName := tempDir + "/test_volume"
+			baseFileName := filepath.Join(tempDir, "test_volume")
 			datFileName := baseFileName + ".dat"
 
 			// Create .dat file with random data pattern (so it's compressible but realistic)
@@ -145,7 +146,7 @@ func TestCalculateExpectedShardSizeEdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			baseFileName := tempDir + "/" + tt.name
+			baseFileName := filepath.Join(tempDir, tt.name)
 			datFileName := baseFileName + ".dat"
 
 			// Create .dat file
