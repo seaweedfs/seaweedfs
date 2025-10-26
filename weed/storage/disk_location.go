@@ -153,7 +153,7 @@ func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind Ne
 
 	// skip if ec volumes exists, but validate EC files first
 	if skipIfEcVolumesExists {
-		ecxFilePath := l.IdxDirectory + "/" + volumeName + ".ecx"
+		ecxFilePath := filepath.Join(l.IdxDirectory, volumeName+".ecx")
 		if util.FileExists(ecxFilePath) {
 			// Check if EC volume is valid by verifying shard count
 			if !l.validateEcVolume(collection, vid) {
