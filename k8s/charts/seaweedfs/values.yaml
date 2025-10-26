@@ -1093,7 +1093,6 @@ admin:
   imageOverride: null
   restartPolicy: null
   replicas: 1
-  bindAddress: 0.0.0.0
   port: 23646  # Default admin port
   grpcPort: 33646  # Default gRPC port for worker connections
   metricsPort: 9327

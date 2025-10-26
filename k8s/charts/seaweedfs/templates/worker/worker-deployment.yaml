@@ -117,7 +117,7 @@ spec:
             - "-ec"
             - |
               exec /usr/bin/weed \
-              {{- if or (eq .Values.worker.logs.type "hostPath") (eq .Values.worker.logs.type "emptyDir") }}
+              {{- if or (eq .Values.worker.logs.type "hostPath") (eq .Values.worker.logs.type "emptyDir") (eq .Values.worker.logs.type "existingClaim") }}
               -logdir=/logs \
               {{- else }}
               -logtostderr=true \
@@ -242,4 +242,3 @@ spec:
         {{ tpl .Values.worker.nodeSelector . | indent 8 | trim }}
       {{- end }}
 {{- end }}
-

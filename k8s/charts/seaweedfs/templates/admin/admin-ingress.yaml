@@ -25,7 +25,10 @@ spec:
   tls:
     {{ .Values.admin.ingress.tls | default list | toYaml | nindent 6}}
   rules:
-  - http:
+  - {{- if .Values.admin.ingress.host }}
+    host: {{ .Values.admin.ingress.host | quote }}
+    {{- end }}
+    http:
       paths:
       - path: {{ .Values.admin.ingress.path | quote }}
         pathType: {{ .Values.admin.ingress.pathType | quote }}
@@ -40,8 +43,4 @@ spec:
           serviceName: {{ template "seaweedfs.name" . }}-admin
           servicePort: {{ .Values.admin.port }}
 {{- end }}
-{{- if .Values.admin.ingress.host }}
-    host: {{ .Values.admin.ingress.host | quote }}
 {{- end }}
-{{- end }}
-

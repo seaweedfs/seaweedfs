@@ -119,7 +119,7 @@ spec:
             - "-ec"
             - |
               exec /usr/bin/weed \
-              {{- if or (eq .Values.admin.logs.type "hostPath") (eq .Values.admin.logs.type "persistentVolumeClaim") (eq .Values.admin.logs.type "emptyDir") }}
+              {{- if or (eq .Values.admin.logs.type "hostPath") (eq .Values.admin.logs.type "persistentVolumeClaim") (eq .Values.admin.logs.type "emptyDir") (eq .Values.admin.logs.type "existingClaim") }}
               -logdir=/logs \
               {{- else }}
               -logtostderr=true \
@@ -314,4 +314,3 @@ spec:
     {{- end }}
   {{- end }}
 {{- end }}
-
