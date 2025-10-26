@@ -1139,6 +1139,10 @@ admin:
   podLabels: {}
   podAnnotations: {}
   annotations: {}
+
+  ## Set podManagementPolicy
+  podManagementPolicy: Parallel
+
   resources: {}
   tolerations: ""
   nodeSelector: ""
@@ -1192,6 +1196,7 @@ worker:
   restartPolicy: null
   replicas: 1
   loggingOverrideLevel: null
+  metricsPort: 9327
 
   # Admin server to connect to
   # Format: "host:port" or auto-discover from admin service

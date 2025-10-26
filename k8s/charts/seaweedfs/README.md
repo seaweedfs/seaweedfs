@@ -255,23 +255,57 @@ For production deployments, consider:
 
 Example specialized worker configuration:
 
+For specialized worker pools, deploy separate Helm releases with different capabilities:
+
+**values-worker-vacuum.yaml** (for vacuum operations):
 ```yaml
-# In your values.yaml - deploy multiple worker deployments manually
-# One for vacuum operations
+# Disable all other components, enable only workers
+master:
+  enabled: false
+volume:
+  enabled: false
+filer:
+  enabled: false
+s3:
+  enabled: false
+admin:
+  enabled: false
+
 worker:
   enabled: true
   replicas: 2
   capabilities: "vacuum"
   maxConcurrent: 2
-  
-# Deploy another release for balance operations
-# helm install seaweedfs-worker-balance seaweedfs/seaweedfs --values worker-balance-values.yaml
-# worker-balance-values.yaml:
+```
+
+**values-worker-balance.yaml** (for balance operations):
+```yaml
+# Disable all other components, enable only workers
+master:
+  enabled: false
+volume:
+  enabled: false
+filer:
+  enabled: false
+s3:
+  enabled: false
+admin:
+  enabled: false
+
 worker:
   enabled: true
   replicas: 1
   capabilities: "balance"
   maxConcurrent: 1
+```
+
+Deploy the specialized workers as separate releases:
+```bash
+# Deploy vacuum workers
+helm install seaweedfs-worker-vacuum seaweedfs/seaweedfs -f values-worker-vacuum.yaml
+
+# Deploy balance workers
+helm install seaweedfs-worker-balance seaweedfs/seaweedfs -f values-worker-balance.yaml
 ```
 
 ## Enterprise
