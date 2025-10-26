@@ -221,10 +221,11 @@ worker:
   adminServer: "seaweedfs-admin.<namespace>:33646"
   
   # Workers need storage for task execution
-  # Note: Workers use Deployment, so they can't use dynamically provisioned PVCs
-  # Use emptyDir, hostPath, or existingClaim with a pre-provisioned PVC
+  # Note: Workers use a Deployment, which does not support `volumeClaimTemplates` 
+  # for dynamic PVC creation per pod. To use persistent storage, you must 
+  # pre-provision a PersistentVolumeClaim and use `type: "existingClaim"`.
   data:
-    type: "emptyDir"  # Or "hostPath" or "existingClaim"
+    type: "emptyDir"  # Options: "emptyDir", "hostPath", or "existingClaim"
     hostPathPrefix: /storage  # For hostPath
     # claimName: "worker-pvc"  # For existingClaim with pre-provisioned PVC
   
