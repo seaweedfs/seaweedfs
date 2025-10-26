@@ -15,9 +15,9 @@ metadata:
     {{- with .Values.global.monitoring.additionalLabels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
-{{- if .Values.worker.annotations }}
+{{- with .Values.worker.serviceMonitor.annotations }}
   annotations:
-    {{- toYaml .Values.worker.annotations | nindent 4 }}
+    {{- toYaml . | nindent 4 }}
 {{- end }}
 spec:
   endpoints:

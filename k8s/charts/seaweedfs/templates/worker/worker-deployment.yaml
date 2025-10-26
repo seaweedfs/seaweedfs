@@ -135,9 +135,9 @@ spec:
               {{- end }}
               -capabilities={{ .Values.worker.capabilities }} \
               -maxConcurrent={{ .Values.worker.maxConcurrent }} \
-              -workingDir={{ .Values.worker.workingDir }} \
-              {{- range .Values.worker.extraArgs }}
-              {{ . }} \
+              -workingDir={{ .Values.worker.workingDir }}{{- if .Values.worker.extraArgs }} \{{ end }}
+              {{- range $index, $arg := .Values.worker.extraArgs }}
+              {{ $arg }}{{- if lt $index (sub (len $.Values.worker.extraArgs) 1) }} \{{ end }}
               {{- end }}
           volumeMounts:
             {{- if or (eq .Values.worker.data.type "hostPath") (eq .Values.worker.data.type "emptyDir") (eq .Values.worker.data.type "existingClaim") }}

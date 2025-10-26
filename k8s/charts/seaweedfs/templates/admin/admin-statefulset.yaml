@@ -142,14 +142,14 @@ spec:
               -adminPassword={{ .Values.admin.adminPassword }} \
               {{- end }}
               {{- if .Values.admin.masters }}
-              -masters={{ .Values.admin.masters }} \
+              -masters={{ .Values.admin.masters }}{{- if .Values.admin.extraArgs }} \{{ end }}
               {{- else if .Values.global.masterServer }}
-              -masters={{ .Values.global.masterServer }} \
+              -masters={{ .Values.global.masterServer }}{{- if .Values.admin.extraArgs }} \{{ end }}
               {{- else }}
-              -masters={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }} \
+              -masters={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}{{- if .Values.admin.extraArgs }} \{{ end }}
               {{- end }}
-              {{- range .Values.admin.extraArgs }}
-              {{ . }} \
+              {{- range $index, $arg := .Values.admin.extraArgs }}
+              {{ $arg }}{{- if lt $index (sub (len $.Values.admin.extraArgs) 1) }} \{{ end }}
               {{- end }}
           volumeMounts:
             {{- if or (eq .Values.admin.data.type "hostPath") (eq .Values.admin.data.type "persistentVolumeClaim") (eq .Values.admin.data.type "emptyDir") (eq .Values.admin.data.type "existingClaim") }}

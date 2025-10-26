@@ -1190,6 +1190,10 @@ admin:
     type: ClusterIP
     annotations: {}
 
+  # ServiceMonitor annotations (separate from pod/deployment annotations)
+  serviceMonitor:
+    annotations: {}
+
 worker:
   enabled: false
   imageOverride: null
@@ -1218,21 +1222,17 @@ worker:
   extraArgs: []
 
   # Storage configuration for working directory
+  # Note: Workers use Deployment, so use "emptyDir", "hostPath", or "existingClaim"
+  # Do NOT use "persistentVolumeClaim" - use "existingClaim" with pre-provisioned PVC instead
   data:
-    type: "emptyDir"  # Options: "hostPath", "persistentVolumeClaim", "emptyDir", "existingClaim"
-    size: "50Gi"  # Workers need space for vacuum, balance, etc.
-    storageClass: ""
+    type: "emptyDir"  # Options: "hostPath", "emptyDir", "existingClaim"
     hostPathPrefix: /storage
-    claimName: ""
-    annotations: {}
+    claimName: ""  # For existingClaim type
 
   logs:
-    type: "emptyDir"  # Options: "hostPath", "persistentVolumeClaim", "emptyDir", "existingClaim"
-    size: "5Gi"
-    storageClass: ""
+    type: "emptyDir"  # Options: "hostPath", "emptyDir", "existingClaim"
     hostPathPrefix: /storage
-    claimName: ""
-    annotations: {}
+    claimName: ""  # For existingClaim type
 
   # Additional resources
   sidecars: []
@@ -1257,6 +1257,10 @@ worker:
   containerSecurityContext: {}
 
   extraEnvironmentVars: {}
+
+  # ServiceMonitor annotations (separate from pod/deployment annotations)
+  serviceMonitor:
+    annotations: {}
 
 # All-in-one deployment configuration
 allInOne:
