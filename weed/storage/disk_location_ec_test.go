@@ -426,3 +426,65 @@ func TestEcCleanupWithSeparateIdxDirectory(t *testing.T) {
 		t.Errorf(".dat file should remain but was deleted")
 	}
 }
+
+// TestDistributedEcVolumeNoFileDeletion verifies that distributed EC volumes
+// (where .dat is deleted) do NOT have their shard files deleted when load fails
+// This tests the critical bug fix where DestroyEcVolume was incorrectly deleting files
+func TestDistributedEcVolumeNoFileDeletion(t *testing.T) {
+	tempDir := t.TempDir()
+
+	minFreeSpace := util.MinFreeSpace{Type: util.AsPercent, Percent: 1, Raw: "1"}
+	diskLocation := &DiskLocation{
+		Directory:     tempDir,
+		DirectoryUuid: "test-uuid",
+		IdxDirectory:  tempDir,
+		DiskType:      types.HddType,
+		MinFreeSpace:  minFreeSpace,
+		ecVolumes:     make(map[needle.VolumeId]*erasure_coding.EcVolume),
+	}
+
+	collection := ""
+	volumeId := needle.VolumeId(500)
+	baseFileName := erasure_coding.EcShardFileName(collection, tempDir, int(volumeId))
+
+	// Create EC shards (only 5 shards - not enough to load, but this is a distributed EC volume)
+	for i := 0; i < 5; i++ {
+		shardFile, err := os.Create(baseFileName + erasure_coding.ToExt(i))
+		if err != nil {
+			t.Fatalf("Failed to create shard file: %v", err)
+		}
+		shardFile.WriteString("dummy shard data")
+		shardFile.Close()
+	}
+
+	// Create .ecx file to trigger EC loading
+	ecxFile, err := os.Create(baseFileName + ".ecx")
+	if err != nil {
+		t.Fatalf("Failed to create .ecx file: %v", err)
+	}
+	ecxFile.WriteString("dummy ecx data")
+	ecxFile.Close()
+
+	// NO .dat file - this is a distributed EC volume
+
+	// Run loadAllEcShards - this should fail but NOT delete shard files
+	loadErr := diskLocation.loadAllEcShards()
+	if loadErr != nil {
+		t.Logf("loadAllEcShards returned error (expected): %v", loadErr)
+	}
+
+	// CRITICAL CHECK: Verify shard files still exist (should NOT be deleted)
+	for i := 0; i < 5; i++ {
+		shardFile := baseFileName + erasure_coding.ToExt(i)
+		if !util.FileExists(shardFile) {
+			t.Errorf("CRITICAL BUG: Shard file %s was deleted for distributed EC volume!", shardFile)
+		}
+	}
+
+	// Verify .ecx file still exists (should NOT be deleted for distributed EC)
+	if !util.FileExists(baseFileName + ".ecx") {
+		t.Errorf("CRITICAL BUG: .ecx file was deleted for distributed EC volume!")
+	}
+
+	t.Logf("SUCCESS: Distributed EC volume files preserved (not deleted)")
+}
