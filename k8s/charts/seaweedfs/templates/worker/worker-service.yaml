@@ -24,4 +24,3 @@ spec:
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: worker
 {{- end }}
-

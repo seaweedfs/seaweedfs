@@ -213,12 +213,20 @@ worker:
   replicas: 2  # Scale based on workload
   capabilities: "vacuum,balance,erasure_coding"  # Tasks this worker can handle
   maxConcurrent: 3  # Maximum concurrent tasks per worker
+  
+  # Working directory for task execution
+  # Default: "/tmp/seaweedfs-worker"
+  # Note: /tmp is ephemeral - use persistent storage (hostPath/existingClaim) for long-running tasks
   workingDir: "/tmp/seaweedfs-worker"
   
   # Optional: configure admin server address
-  # If not specified, auto-discovers from admin service in the same namespace.
-  # Replace <namespace> with the namespace where the admin service is deployed.
-  adminServer: "seaweedfs-admin.<namespace>.svc:33646"
+  # If not specified, auto-discovers from admin service in the same namespace by looking for
+  # a service named "<release-name>-admin" (e.g., "seaweedfs-admin").
+  # Auto-discovery only works if the admin is in the same namespace and same Helm release.
+  # For cross-namespace or separate release scenarios, explicitly set this value.
+  # Example: If main SeaweedFS is deployed in "production" namespace:
+  #   adminServer: "seaweedfs-admin.production.svc:33646"
+  adminServer: ""
   
   # Workers need storage for task execution
   # Note: Workers use a Deployment, which does not support `volumeClaimTemplates` 
@@ -282,6 +290,8 @@ worker:
   maxConcurrent: 2
   # REQUIRED: Point to the admin service of your main SeaweedFS release
   # Replace <namespace> with the namespace where your main seaweedfs is deployed
+  # Example: If deploying in namespace "production":
+  #   adminServer: "seaweedfs-admin.production.svc:33646"
   adminServer: "seaweedfs-admin.<namespace>.svc:33646"
 ```
 
@@ -306,6 +316,8 @@ worker:
   maxConcurrent: 1
   # REQUIRED: Point to the admin service of your main SeaweedFS release
   # Replace <namespace> with the namespace where your main seaweedfs is deployed
+  # Example: If deploying in namespace "production":
+  #   adminServer: "seaweedfs-admin.production.svc:33646"
   adminServer: "seaweedfs-admin.<namespace>.svc:33646"
 ```
 
