@@ -113,18 +113,17 @@ func TestIncompleteEcEncodingCleanup(t *testing.T) {
 			// Setup test files
 			baseFileName := erasure_coding.EcShardFileName(tt.collection, tempDir, int(tt.volumeId))
 
-			// Standard shard size for test cases
-			shardSize := 1024 // 1KB per shard
+			// Use deterministic sizes that match EC encoding
+			datFileSize := int64(10 * 1024 * 1024 * 1024) // 10GB
+			expectedShardSize := calculateExpectedShardSize(datFileSize)
 
 			// Create .dat file if needed
-			// .dat file size should be DataShardsCount * shard size (10 shards)
 			if tt.createDatFile {
 				datFile, err := os.Create(baseFileName + ".dat")
 				if err != nil {
 					t.Fatalf("Failed to create .dat file: %v", err)
 				}
-				datData := make([]byte, erasure_coding.DataShardsCount*shardSize)
-				datFile.Write(datData)
+				datFile.Truncate(datFileSize)
 				datFile.Close()
 			}
 
@@ -134,8 +133,7 @@ func TestIncompleteEcEncodingCleanup(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Failed to create shard file: %v", err)
 				}
-				shardData := make([]byte, shardSize)
-				shardFile.Write(shardData)
+				shardFile.Truncate(expectedShardSize)
 				shardFile.Close()
 			}
 
@@ -276,29 +274,32 @@ func TestValidateEcVolume(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			baseFileName := erasure_coding.EcShardFileName(tt.collection, tempDir, int(tt.volumeId))
 
-			// Standard shard size for normal test cases
-			shardSize := 1024 // 1KB per shard
+			// For proper testing, we need to use realistic sizes that match EC encoding
+			// EC uses large blocks (1GB) and small blocks (1MB)
+			// For test purposes, use a .dat file size that results in expected shard sizes
+			// 10GB .dat file = 1GB per shard (1 large block)
+			datFileSize := int64(10 * 1024 * 1024 * 1024) // 10GB
+			expectedShardSize := calculateExpectedShardSize(datFileSize)
 
 			// Create .dat file if needed
-			// .dat file size should be DataShardsCount * shard size (10 shards)
 			if tt.createDatFile {
 				datFile, err := os.Create(baseFileName + ".dat")
 				if err != nil {
 					t.Fatalf("Failed to create .dat file: %v", err)
 				}
-				datData := make([]byte, erasure_coding.DataShardsCount*shardSize)
-				datFile.Write(datData)
+				// Write minimal data (don't need to fill entire 10GB for tests)
+				datFile.Truncate(datFileSize)
 				datFile.Close()
 			}
 
-			// Create EC shard files
+			// Create EC shard files with correct size
 			for i := 0; i < tt.numShards; i++ {
 				shardFile, err := os.Create(baseFileName + erasure_coding.ToExt(i))
 				if err != nil {
 					t.Fatalf("Failed to create shard file: %v", err)
 				}
-				shardData := make([]byte, shardSize)
-				shardFile.Write(shardData)
+				// Use truncate to create file of correct size without allocating all the space
+				shardFile.Truncate(expectedShardSize)
 				shardFile.Close()
 			}
 
