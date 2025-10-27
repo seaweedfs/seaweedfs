@@ -1707,8 +1707,8 @@ github.com/t3rm1n4l/go-mega v0.0.0-20241213151442-a19cff0ec7b5/go.mod h1:UdZiFUF
 github.com/tailscale/depaware v0.0.0-20210622194025-720c4b409502/go.mod h1:p9lPsd+cx33L3H9nNoecRRxPssFKUwwI50I3pZ0yT+8=
 github.com/tarantool/go-iproto v1.1.0 h1:HULVOIHsiehI+FnHfM7wMDntuzUddO09DKqu2WnFQ5A=
 github.com/tarantool/go-iproto v1.1.0/go.mod h1:LNCtdyZxojUed8SbOiYHoc3v9NvaZTB7p96hUySMlIo=
-github.com/tarantool/go-tarantool/v2 v2.4.0 h1:cfGngxdknpVVbd/vF2LvaoWsKjsLV9i3xC859XgsJlI=
-github.com/tarantool/go-tarantool/v2 v2.4.0/go.mod h1:MTbhdjFc3Jl63Lgi/UJr5D+QbT+QegqOzsNJGmaw7VM=
+github.com/tarantool/go-tarantool/v2 v2.4.1 h1:Bk9mh+gMPVmHTSefHvVBpEkf6P2UZA/8xa5kqgyQtyo=
+github.com/tarantool/go-tarantool/v2 v2.4.1/go.mod h1:MTbhdjFc3Jl63Lgi/UJr5D+QbT+QegqOzsNJGmaw7VM=
 github.com/the42/cartconvert v0.0.0-20131203171324-aae784c392b8 h1:I4DY8wLxJXCrMYzDM6lKCGc3IQwJX0PlTLsd3nQqI3c=
 github.com/the42/cartconvert v0.0.0-20131203171324-aae784c392b8/go.mod h1:fWO/msnJVhHqN1yX6OBoxSyfj7TEj1hHiL8bJSQsK30=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a h1:J/YdBZ46WKpXsxsW93SG+q0F8KI+yFrcIDT4c/RNoc4=
