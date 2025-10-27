@@ -318,12 +318,12 @@ func (l *DiskLocation) checkOrphanedShards(shards []string, collection string, v
 	if len(shards) == 0 || volumeId == 0 {
 		return false
 	}
-	
+
 	// Check if .dat file exists (incomplete encoding, not distributed EC)
 	// Use os.Stat for robust error handling; unexpected errors treated as "exists"
 	baseFileName := erasure_coding.EcShardFileName(collection, l.Directory, int(volumeId))
 	datFileName := baseFileName + ".dat"
-	
+
 	datExists := false
 	if _, err := os.Stat(datFileName); err == nil {
 		datExists = true
@@ -332,7 +332,7 @@ func (l *DiskLocation) checkOrphanedShards(shards []string, collection string, v
 		// Safer to assume local .dat exists to avoid misclassifying as distributed EC
 		datExists = true
 	}
-	
+
 	if datExists {
 		glog.Warningf("Found %d EC shards without .ecx file for volume %d (incomplete encoding interrupted before .ecx creation), cleaning up...",
 			len(shards), volumeId)
