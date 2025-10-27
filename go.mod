@@ -149,7 +149,7 @@ require (
 	github.com/parquet-go/parquet-go v0.25.1
 	github.com/pkg/sftp v1.13.9
 	github.com/rabbitmq/amqp091-go v1.10.0
-	github.com/rclone/rclone v1.71.1
+	github.com/rclone/rclone v1.71.2
 	github.com/rdleal/intervalst v1.5.0
 	github.com/redis/go-redis/v9 v9.14.1
 	github.com/schollz/progressbar/v3 v3.18.0
@@ -409,7 +409,7 @@ require (
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/spiffe/go-spiffe/v2 v2.5.0 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
-	github.com/t3rm1n4l/go-mega v0.0.0-20241213151442-a19cff0ec7b5 // indirect
+	github.com/t3rm1n4l/go-mega v0.0.0-20250926104142-ccb8d3498e6c // indirect
 	github.com/tarantool/go-iproto v1.1.0 // indirect
 	github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a // indirect
 	github.com/tikv/pd/client v0.0.0-20230329114254-1948c247c2b1 // indirect
