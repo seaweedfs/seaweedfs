@@ -131,7 +131,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.88.3
 	github.com/cognusion/imaging v1.0.2
 	github.com/fluent/fluent-logger-golang v1.10.1
-	github.com/getsentry/sentry-go v0.35.3
+	github.com/getsentry/sentry-go v0.36.1
 	github.com/gin-contrib/sessions v1.0.4
 	github.com/gin-gonic/gin v1.11.0
 	github.com/golang-jwt/jwt/v5 v5.3.0
@@ -147,14 +147,14 @@ require (
 	github.com/minio/crc64nvme v1.1.1
 	github.com/orcaman/concurrent-map/v2 v2.0.1
 	github.com/parquet-go/parquet-go v0.25.1
-	github.com/pkg/sftp v1.13.9
+	github.com/pkg/sftp v1.13.10
 	github.com/rabbitmq/amqp091-go v1.10.0
 	github.com/rclone/rclone v1.71.1
 	github.com/rdleal/intervalst v1.5.0
 	github.com/redis/go-redis/v9 v9.14.1
 	github.com/schollz/progressbar/v3 v3.18.0
 	github.com/shirou/gopsutil/v4 v4.25.9
-	github.com/tarantool/go-tarantool/v2 v2.4.0
+	github.com/tarantool/go-tarantool/v2 v2.4.1
 	github.com/tikv/client-go/v2 v2.0.7
 	github.com/xeipuuv/gojsonschema v1.2.0
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.5.0
