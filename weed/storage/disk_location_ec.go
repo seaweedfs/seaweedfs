@@ -410,7 +410,7 @@ func (l *DiskLocation) validateEcVolume(collection string, vid needle.VolumeId) 
 				if actualShardSize == -1 {
 					actualShardSize = fi.Size()
 				} else if fi.Size() != actualShardSize {
-					glog.V(0).Infof("EC volume %d shard %d has size %d, expected %d (all EC shards must be same size)",
+					glog.Warningf("EC volume %d shard %d has size %d, expected %d (all EC shards must be same size)",
 						vid, i, fi.Size(), actualShardSize)
 					return false
 				}
@@ -427,7 +427,7 @@ func (l *DiskLocation) validateEcVolume(collection string, vid needle.VolumeId) 
 	// If .dat file exists, validate shard size matches expected size
 	if datExists && actualShardSize > 0 && expectedShardSize > 0 {
 		if actualShardSize != expectedShardSize {
-			glog.V(0).Infof("EC volume %d: shard size %d doesn't match expected size %d (based on .dat file size)",
+			glog.Warningf("EC volume %d: shard size %d doesn't match expected size %d (based on .dat file size)",
 				vid, actualShardSize, expectedShardSize)
 			return false
 		}
@@ -442,7 +442,7 @@ func (l *DiskLocation) validateEcVolume(collection string, vid needle.VolumeId) 
 	// If .dat file exists, we need at least DataShardsCount shards locally
 	// Otherwise it's an incomplete EC encoding that should be cleaned up
 	if shardCount < erasure_coding.DataShardsCount {
-		glog.V(0).Infof("EC volume %d has .dat file but only %d shards (need at least %d for local EC)",
+		glog.Warningf("EC volume %d has .dat file but only %d shards (need at least %d for local EC)",
 			vid, shardCount, erasure_coding.DataShardsCount)
 		return false
 	}
