@@ -138,8 +138,12 @@ func TestIncompleteEcEncodingCleanup(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Failed to create shard file: %v", err)
 				}
-				shardFile.Truncate(expectedShardSize)
-				shardFile.Close()
+				if err := shardFile.Truncate(expectedShardSize); err != nil {
+					t.Fatalf("Failed to truncate shard file: %v", err)
+				}
+				if err := shardFile.Close(); err != nil {
+					t.Fatalf("Failed to close shard file: %v", err)
+				}
 			}
 
 			// Create .ecx file if needed
@@ -373,95 +377,123 @@ func TestValidateEcVolume(t *testing.T) {
 
 // TestRemoveEcVolumeFiles tests the removeEcVolumeFiles function
 func TestRemoveEcVolumeFiles(t *testing.T) {
-	tempDir := t.TempDir()
-
-	minFreeSpace := util.MinFreeSpace{Type: util.AsPercent, Percent: 1, Raw: "1"}
-	diskLocation := &DiskLocation{
-		Directory:     tempDir,
-		DirectoryUuid: "test-uuid",
-		IdxDirectory:  tempDir,
-		DiskType:      types.HddType,
-		MinFreeSpace:  minFreeSpace,
+	tests := []struct {
+		name           string
+		separateIdxDir bool
+	}{
+		{"Same directory for data and index", false},
+		{"Separate idx directory", true},
 	}
 
-	volumeId := needle.VolumeId(300)
-	collection := ""
-	baseFileName := erasure_coding.EcShardFileName(collection, tempDir, int(volumeId))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tempDir := t.TempDir()
 
-	// Create all EC files
-	for i := 0; i < erasure_coding.TotalShardsCount; i++ {
-		shardFile, err := os.Create(baseFileName + erasure_coding.ToExt(i))
-		if err != nil {
-			t.Fatalf("Failed to create shard file: %v", err)
-		}
-		if _, err := shardFile.WriteString("dummy shard data"); err != nil {
-			shardFile.Close()
-			t.Fatalf("Failed to write shard file: %v", err)
-		}
-		if err := shardFile.Close(); err != nil {
-			t.Fatalf("Failed to close shard file: %v", err)
-		}
-	}
+			var dataDir, idxDir string
+			if tt.separateIdxDir {
+				dataDir = filepath.Join(tempDir, "data")
+				idxDir = filepath.Join(tempDir, "idx")
+				os.MkdirAll(dataDir, 0755)
+				os.MkdirAll(idxDir, 0755)
+			} else {
+				dataDir = tempDir
+				idxDir = tempDir
+			}
 
-	ecxFile, err := os.Create(baseFileName + ".ecx")
-	if err != nil {
-		t.Fatalf("Failed to create .ecx file: %v", err)
-	}
-	if _, err := ecxFile.WriteString("dummy ecx data"); err != nil {
-		ecxFile.Close()
-		t.Fatalf("Failed to write .ecx file: %v", err)
-	}
-	if err := ecxFile.Close(); err != nil {
-		t.Fatalf("Failed to close .ecx file: %v", err)
-	}
+			minFreeSpace := util.MinFreeSpace{Type: util.AsPercent, Percent: 1, Raw: "1"}
+			diskLocation := &DiskLocation{
+				Directory:     dataDir,
+				DirectoryUuid: "test-uuid",
+				IdxDirectory:  idxDir,
+				DiskType:      types.HddType,
+				MinFreeSpace:  minFreeSpace,
+			}
 
-	ecjFile, err := os.Create(baseFileName + ".ecj")
-	if err != nil {
-		t.Fatalf("Failed to create .ecj file: %v", err)
-	}
-	if _, err := ecjFile.WriteString("dummy ecj data"); err != nil {
-		ecjFile.Close()
-		t.Fatalf("Failed to write .ecj file: %v", err)
-	}
-	if err := ecjFile.Close(); err != nil {
-		t.Fatalf("Failed to close .ecj file: %v", err)
-	}
+			volumeId := needle.VolumeId(300)
+			collection := ""
+			dataBaseFileName := erasure_coding.EcShardFileName(collection, dataDir, int(volumeId))
+			idxBaseFileName := erasure_coding.EcShardFileName(collection, idxDir, int(volumeId))
 
-	// Create .dat file that should NOT be removed
-	datFile, err := os.Create(baseFileName + ".dat")
-	if err != nil {
-		t.Fatalf("Failed to create .dat file: %v", err)
-	}
-	if _, err := datFile.WriteString("dummy dat data"); err != nil {
-		datFile.Close()
-		t.Fatalf("Failed to write .dat file: %v", err)
-	}
-	if err := datFile.Close(); err != nil {
-		t.Fatalf("Failed to close .dat file: %v", err)
-	}
+			// Create all EC shard files in data directory
+			for i := 0; i < erasure_coding.TotalShardsCount; i++ {
+				shardFile, err := os.Create(dataBaseFileName + erasure_coding.ToExt(i))
+				if err != nil {
+					t.Fatalf("Failed to create shard file: %v", err)
+				}
+				if _, err := shardFile.WriteString("dummy shard data"); err != nil {
+					shardFile.Close()
+					t.Fatalf("Failed to write shard file: %v", err)
+				}
+				if err := shardFile.Close(); err != nil {
+					t.Fatalf("Failed to close shard file: %v", err)
+				}
+			}
 
-	// Call removeEcVolumeFiles
-	diskLocation.removeEcVolumeFiles(collection, volumeId)
+			// Create .ecx file in idx directory
+			ecxFile, err := os.Create(idxBaseFileName + ".ecx")
+			if err != nil {
+				t.Fatalf("Failed to create .ecx file: %v", err)
+			}
+			if _, err := ecxFile.WriteString("dummy ecx data"); err != nil {
+				ecxFile.Close()
+				t.Fatalf("Failed to write .ecx file: %v", err)
+			}
+			if err := ecxFile.Close(); err != nil {
+				t.Fatalf("Failed to close .ecx file: %v", err)
+			}
 
-	// Verify all EC files are removed
-	for i := 0; i < erasure_coding.TotalShardsCount; i++ {
-		shardFile := baseFileName + erasure_coding.ToExt(i)
-		if util.FileExists(shardFile) {
-			t.Errorf("Shard file %d should be removed but still exists", i)
-		}
-	}
+			// Create .ecj file in idx directory
+			ecjFile, err := os.Create(idxBaseFileName + ".ecj")
+			if err != nil {
+				t.Fatalf("Failed to create .ecj file: %v", err)
+			}
+			if _, err := ecjFile.WriteString("dummy ecj data"); err != nil {
+				ecjFile.Close()
+				t.Fatalf("Failed to write .ecj file: %v", err)
+			}
+			if err := ecjFile.Close(); err != nil {
+				t.Fatalf("Failed to close .ecj file: %v", err)
+			}
 
-	if util.FileExists(baseFileName + ".ecx") {
-		t.Errorf(".ecx file should be removed but still exists")
-	}
+			// Create .dat file in data directory (should NOT be removed)
+			datFile, err := os.Create(dataBaseFileName + ".dat")
+			if err != nil {
+				t.Fatalf("Failed to create .dat file: %v", err)
+			}
+			if _, err := datFile.WriteString("dummy dat data"); err != nil {
+				datFile.Close()
+				t.Fatalf("Failed to write .dat file: %v", err)
+			}
+			if err := datFile.Close(); err != nil {
+				t.Fatalf("Failed to close .dat file: %v", err)
+			}
 
-	if util.FileExists(baseFileName + ".ecj") {
-		t.Errorf(".ecj file should be removed but still exists")
-	}
+			// Call removeEcVolumeFiles
+			diskLocation.removeEcVolumeFiles(collection, volumeId)
 
-	// Verify .dat file is NOT removed
-	if !util.FileExists(baseFileName + ".dat") {
-		t.Errorf(".dat file should NOT be removed but was deleted")
+			// Verify all EC shard files are removed from data directory
+			for i := 0; i < erasure_coding.TotalShardsCount; i++ {
+				shardFile := dataBaseFileName + erasure_coding.ToExt(i)
+				if util.FileExists(shardFile) {
+					t.Errorf("Shard file %d should be removed but still exists", i)
+				}
+			}
+
+			// Verify .ecx file is removed from idx directory
+			if util.FileExists(idxBaseFileName + ".ecx") {
+				t.Errorf(".ecx file should be removed but still exists")
+			}
+
+			// Verify .ecj file is removed from idx directory
+			if util.FileExists(idxBaseFileName + ".ecj") {
+				t.Errorf(".ecj file should be removed but still exists")
+			}
+
+			// Verify .dat file is NOT removed from data directory
+			if !util.FileExists(dataBaseFileName + ".dat") {
+				t.Errorf(".dat file should NOT be removed but was deleted")
+			}
+		})
 	}
 }
 
@@ -523,7 +555,7 @@ func TestEcCleanupWithSeparateIdxDirectory(t *testing.T) {
 		t.Logf("loadAllEcShards error: %v", loadErr)
 	}
 
-	// Verify cleanup occurred
+	// Verify cleanup occurred in data directory (shards)
 	for i := 0; i < erasure_coding.TotalShardsCount; i++ {
 		shardFile := dataBaseFileName + erasure_coding.ToExt(i)
 		if util.FileExists(shardFile) {
@@ -531,7 +563,7 @@ func TestEcCleanupWithSeparateIdxDirectory(t *testing.T) {
 		}
 	}
 
-	// .dat should still exist
+	// Verify .dat in data directory still exists (only EC files are cleaned up)
 	if !util.FileExists(dataBaseFileName + ".dat") {
 		t.Errorf(".dat file should remain but was deleted")
 	}
