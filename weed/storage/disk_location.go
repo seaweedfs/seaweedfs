@@ -155,7 +155,7 @@ func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind Ne
 	if skipIfEcVolumesExists {
 		ecxFilePath := filepath.Join(l.IdxDirectory, volumeName+".ecx")
 		if util.FileExists(ecxFilePath) {
-			// Check if EC volume is valid by verifying shard count
+			// Validate EC volume: shard count, size consistency, and expected size vs .dat file
 			if !l.validateEcVolume(collection, vid) {
 				glog.Warningf("EC volume %d validation failed, removing incomplete EC files to allow .dat file loading", vid)
 				l.removeEcVolumeFiles(collection, vid)
