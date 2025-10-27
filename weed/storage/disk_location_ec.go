@@ -170,6 +170,7 @@ func (l *DiskLocation) loadAllEcShards() (err error) {
 	})
 	var sameVolumeShards []string
 	var prevVolumeId needle.VolumeId
+	var prevCollection string
 	for _, fileInfo := range dirEntries {
 		if fileInfo.IsDir() {
 			continue
@@ -192,16 +193,18 @@ func (l *DiskLocation) loadAllEcShards() (err error) {
 		// 0 byte files should be only appearing erroneously for ec data files
 		// so we ignore them
 		if re.MatchString(ext) && info.Size() > 0 {
-			if prevVolumeId == 0 || volumeId == prevVolumeId {
+			// Group shards by both collection and volumeId to avoid mixing collections
+			if prevVolumeId == 0 || (volumeId == prevVolumeId && collection == prevCollection) {
 				sameVolumeShards = append(sameVolumeShards, fileInfo.Name())
 			} else {
 				sameVolumeShards = []string{fileInfo.Name()}
 			}
 			prevVolumeId = volumeId
+			prevCollection = collection
 			continue
 		}
 
-		if ext == ".ecx" && volumeId == prevVolumeId {
+		if ext == ".ecx" && volumeId == prevVolumeId && collection == prevCollection {
 			// Check if this is an incomplete EC encoding (not a distributed EC volume)
 			// Key distinction: if .dat file still exists, EC encoding may have failed
 			// If .dat file is gone, this is likely a distributed EC volume with shards on multiple servers
@@ -211,6 +214,7 @@ func (l *DiskLocation) loadAllEcShards() (err error) {
 			reset := func() {
 				sameVolumeShards = nil
 				prevVolumeId = 0
+				prevCollection = ""
 			}
 
 			datExists := util.FileExists(datFileName)
