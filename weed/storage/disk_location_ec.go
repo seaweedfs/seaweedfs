@@ -359,7 +359,10 @@ func (l *DiskLocation) validateEcVolume(collection string, vid needle.VolumeId) 
 		datExists = true
 		expectedShardSize = calculateExpectedShardSize(datFileInfo.Size())
 	} else if !os.IsNotExist(err) {
+		// If stat fails with unexpected error (permission, I/O), fail validation
+		// Don't treat this as "distributed EC" - it could be a temporary error
 		glog.Warningf("Failed to stat .dat file %s: %v", datFileName, err)
+		return false
 	}
 
 	shardCount := 0
