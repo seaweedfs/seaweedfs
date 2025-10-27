@@ -705,7 +705,7 @@ func (w *Worker) GetPerformanceMetrics() *types.WorkerPerformance {
 	var successRate float64
 	totalTasks := success + failure
 	if totalTasks > 0 {
-		successRate = float64(failure) / float64(totalTasks) * 100
+		successRate = float64(success) / float64(totalTasks) * 100
 	}
 
 	return &types.WorkerPerformance{
