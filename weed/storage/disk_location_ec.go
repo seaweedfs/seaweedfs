@@ -220,41 +220,7 @@ func (l *DiskLocation) loadAllEcShards() (err error) {
 		}
 
 		if ext == ".ecx" && volumeId == prevVolumeId && collection == prevCollection {
-			// Check if this is an incomplete EC encoding (not a distributed EC volume)
-			// Key distinction: if .dat file still exists, EC encoding may have failed
-			// If .dat file is gone, this is likely a distributed EC volume with shards on multiple servers
-			baseFileName := erasure_coding.EcShardFileName(collection, l.Directory, int(volumeId))
-			datFileName := baseFileName + ".dat"
-
-			// Determine .dat presence robustly; unexpected errors are treated as "exists"
-			datExists := l.checkDatFileExists(datFileName)
-
-			// Validate EC volume if .dat file exists (incomplete EC encoding scenario)
-			// This checks shard count, shard size consistency, and expected size vs .dat file
-			// If .dat is gone, EC encoding completed and shards are distributed across servers
-			if datExists && !l.validateEcVolume(collection, volumeId) {
-				glog.Warningf("Incomplete or invalid EC volume %d: .dat exists but validation failed, cleaning up EC files...", volumeId)
-				l.removeEcVolumeFiles(collection, volumeId)
-				reset()
-				continue
-			}
-
-			if err = l.loadEcShards(sameVolumeShards, collection, volumeId); err != nil {
-				// If EC shards failed to load and .dat still exists, clean up EC files to allow .dat file to be used
-				// If .dat is gone, log error but don't clean up (may be waiting for shards from other servers)
-				if datExists {
-					glog.Warningf("Failed to load EC shards for volume %d and .dat exists: %v, cleaning up EC files to use .dat...", volumeId, err)
-					// Unload first to release FDs, then remove files
-					l.unloadEcVolume(volumeId)
-					l.removeEcVolumeFiles(collection, volumeId)
-				} else {
-					glog.Warningf("Failed to load EC shards for volume %d: %v (this may be normal for distributed EC volumes)", volumeId, err)
-					// Clean up any partially loaded in-memory state. This does not delete files.
-					l.unloadEcVolume(volumeId)
-				}
-				reset()
-				continue
-			}
+			l.handleFoundEcxFile(sameVolumeShards, collection, volumeId)
 			reset()
 			continue
 		}
@@ -305,6 +271,45 @@ func (l *DiskLocation) EcShardCount() int {
 		shardCount += len(ecVolume.Shards)
 	}
 	return shardCount
+}
+
+// handleFoundEcxFile processes a complete group of EC shards when their .ecx file is found.
+// This includes validation, loading, and cleanup of incomplete/invalid EC volumes.
+func (l *DiskLocation) handleFoundEcxFile(shards []string, collection string, volumeId needle.VolumeId) {
+	// Check if this is an incomplete EC encoding (not a distributed EC volume)
+	// Key distinction: if .dat file still exists, EC encoding may have failed
+	// If .dat file is gone, this is likely a distributed EC volume with shards on multiple servers
+	baseFileName := erasure_coding.EcShardFileName(collection, l.Directory, int(volumeId))
+	datFileName := baseFileName + ".dat"
+
+	// Determine .dat presence robustly; unexpected errors are treated as "exists"
+	datExists := l.checkDatFileExists(datFileName)
+
+	// Validate EC volume if .dat file exists (incomplete EC encoding scenario)
+	// This checks shard count, shard size consistency, and expected size vs .dat file
+	// If .dat is gone, EC encoding completed and shards are distributed across servers
+	if datExists && !l.validateEcVolume(collection, volumeId) {
+		glog.Warningf("Incomplete or invalid EC volume %d: .dat exists but validation failed, cleaning up EC files...", volumeId)
+		l.removeEcVolumeFiles(collection, volumeId)
+		return
+	}
+
+	// Attempt to load the EC shards
+	if err := l.loadEcShards(shards, collection, volumeId); err != nil {
+		// If EC shards failed to load and .dat still exists, clean up EC files to allow .dat file to be used
+		// If .dat is gone, log error but don't clean up (may be waiting for shards from other servers)
+		if datExists {
+			glog.Warningf("Failed to load EC shards for volume %d and .dat exists: %v, cleaning up EC files to use .dat...", volumeId, err)
+			// Unload first to release FDs, then remove files
+			l.unloadEcVolume(volumeId)
+			l.removeEcVolumeFiles(collection, volumeId)
+		} else {
+			glog.Warningf("Failed to load EC shards for volume %d: %v (this may be normal for distributed EC volumes)", volumeId, err)
+			// Clean up any partially loaded in-memory state. This does not delete files.
+			l.unloadEcVolume(volumeId)
+		}
+		return
+	}
 }
 
 // checkDatFileExists checks if .dat file exists with robust error handling.
