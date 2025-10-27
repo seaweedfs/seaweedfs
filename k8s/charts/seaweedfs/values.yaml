@@ -979,7 +979,7 @@ s3:
   # Custom command line arguments to add to the s3 command
   # Example to fix connection idle seconds:
   extraArgs: ["-idleTimeout=30"]
-  #extraArgs: []
+  # extraArgs: []
 
   # used to configure livenessProbe on s3 containers
   #
