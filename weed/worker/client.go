@@ -111,6 +111,8 @@ func (c *GrpcAdminClient) connectionProcess() {
 	if err != nil {
 		glog.Warningf("Initial connection failed: %v", err)
 		c.comms.connectionEvents <- connectionEvent{connected: false, err: err}
+		c.comms.streamErrors <- err
+		c.comms.streamErrors <- err
 	} else {
 		c.comms.connectionEvents <- connectionEvent{connected: true}
 	}
