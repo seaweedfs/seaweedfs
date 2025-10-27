@@ -148,8 +148,13 @@ func TestIncompleteEcEncodingCleanup(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Failed to create .ecx file: %v", err)
 				}
-				ecxFile.WriteString("dummy ecx data")
-				ecxFile.Close()
+				if _, err := ecxFile.WriteString("dummy ecx data"); err != nil {
+					ecxFile.Close()
+					t.Fatalf("Failed to write .ecx file: %v", err)
+				}
+				if err := ecxFile.Close(); err != nil {
+					t.Fatalf("Failed to close .ecx file: %v", err)
+				}
 			}
 
 			// Create .ecj file if needed
@@ -158,8 +163,13 @@ func TestIncompleteEcEncodingCleanup(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Failed to create .ecj file: %v", err)
 				}
-				ecjFile.WriteString("dummy ecj data")
-				ecjFile.Close()
+				if _, err := ecjFile.WriteString("dummy ecj data"); err != nil {
+					ecjFile.Close()
+					t.Fatalf("Failed to write .ecj file: %v", err)
+				}
+				if err := ecjFile.Close(); err != nil {
+					t.Fatalf("Failed to close .ecj file: %v", err)
+				}
 			}
 
 			// Run loadAllEcShards
@@ -318,6 +328,7 @@ func TestValidateEcVolume(t *testing.T) {
 				}
 				// Use truncate to create file of correct size without allocating all the space
 				if err := shardFile.Truncate(expectedShardSize); err != nil {
+					shardFile.Close()
 					t.Fatalf("Failed to truncate shard file: %v", err)
 				}
 				if err := shardFile.Close(); err != nil {
@@ -325,9 +336,9 @@ func TestValidateEcVolume(t *testing.T) {
 				}
 			}
 
-			// For zero-byte test case, create 10 empty files
+			// For zero-byte test case, create empty files for all data shards
 			if tt.volumeId == 204 {
-				for i := 0; i < 10; i++ {
+				for i := 0; i < erasure_coding.DataShardsCount; i++ {
 					shardFile, err := os.Create(baseFileName + erasure_coding.ToExt(i))
 					if err != nil {
 						t.Fatalf("Failed to create empty shard file: %v", err)
@@ -339,7 +350,7 @@ func TestValidateEcVolume(t *testing.T) {
 
 			// For mismatched shard size test case, create shards with different sizes
 			if tt.volumeId == 205 {
-				for i := 0; i < 10; i++ {
+				for i := 0; i < erasure_coding.DataShardsCount; i++ {
 					shardFile, err := os.Create(baseFileName + erasure_coding.ToExt(i))
 					if err != nil {
 						t.Fatalf("Failed to create shard file: %v", err)
@@ -383,22 +394,51 @@ func TestRemoveEcVolumeFiles(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to create shard file: %v", err)
 		}
-		shardFile.WriteString("dummy shard data")
-		shardFile.Close()
+		if _, err := shardFile.WriteString("dummy shard data"); err != nil {
+			shardFile.Close()
+			t.Fatalf("Failed to write shard file: %v", err)
+		}
+		if err := shardFile.Close(); err != nil {
+			t.Fatalf("Failed to close shard file: %v", err)
+		}
 	}
 
-	ecxFile, _ := os.Create(baseFileName + ".ecx")
-	ecxFile.WriteString("dummy ecx data")
-	ecxFile.Close()
+	ecxFile, err := os.Create(baseFileName + ".ecx")
+	if err != nil {
+		t.Fatalf("Failed to create .ecx file: %v", err)
+	}
+	if _, err := ecxFile.WriteString("dummy ecx data"); err != nil {
+		ecxFile.Close()
+		t.Fatalf("Failed to write .ecx file: %v", err)
+	}
+	if err := ecxFile.Close(); err != nil {
+		t.Fatalf("Failed to close .ecx file: %v", err)
+	}
 
-	ecjFile, _ := os.Create(baseFileName + ".ecj")
-	ecjFile.WriteString("dummy ecj data")
-	ecjFile.Close()
+	ecjFile, err := os.Create(baseFileName + ".ecj")
+	if err != nil {
+		t.Fatalf("Failed to create .ecj file: %v", err)
+	}
+	if _, err := ecjFile.WriteString("dummy ecj data"); err != nil {
+		ecjFile.Close()
+		t.Fatalf("Failed to write .ecj file: %v", err)
+	}
+	if err := ecjFile.Close(); err != nil {
+		t.Fatalf("Failed to close .ecj file: %v", err)
+	}
 
 	// Create .dat file that should NOT be removed
-	datFile, _ := os.Create(baseFileName + ".dat")
-	datFile.WriteString("dummy dat data")
-	datFile.Close()
+	datFile, err := os.Create(baseFileName + ".dat")
+	if err != nil {
+		t.Fatalf("Failed to create .dat file: %v", err)
+	}
+	if _, err := datFile.WriteString("dummy dat data"); err != nil {
+		datFile.Close()
+		t.Fatalf("Failed to write .dat file: %v", err)
+	}
+	if err := datFile.Close(); err != nil {
+		t.Fatalf("Failed to close .dat file: %v", err)
+	}
 
 	// Call removeEcVolumeFiles
 	diskLocation.removeEcVolumeFiles(collection, volumeId)
@@ -448,18 +488,32 @@ func TestEcCleanupWithSeparateIdxDirectory(t *testing.T) {
 	volumeId := needle.VolumeId(400)
 	collection := ""
 
-	// Create shards in data directory
+	// Create shards in data directory (shards only go to Directory, not IdxDirectory)
 	dataBaseFileName := erasure_coding.EcShardFileName(collection, dataDir, int(volumeId))
-	for i := 0; i < 14; i++ {
-		shardFile, _ := os.Create(dataBaseFileName + erasure_coding.ToExt(i))
-		shardFile.WriteString("dummy shard data")
-		shardFile.Close()
+	for i := 0; i < erasure_coding.TotalShardsCount; i++ {
+		shardFile, err := os.Create(dataBaseFileName + erasure_coding.ToExt(i))
+		if err != nil {
+			t.Fatalf("Failed to create shard file: %v", err)
+		}
+		if _, err := shardFile.WriteString("dummy shard data"); err != nil {
+			t.Fatalf("Failed to write shard file: %v", err)
+		}
+		if err := shardFile.Close(); err != nil {
+			t.Fatalf("Failed to close shard file: %v", err)
+		}
 	}
 
 	// Create .dat in data directory
-	datFile, _ := os.Create(dataBaseFileName + ".dat")
-	datFile.WriteString("dummy data")
-	datFile.Close()
+	datFile, err := os.Create(dataBaseFileName + ".dat")
+	if err != nil {
+		t.Fatalf("Failed to create .dat file: %v", err)
+	}
+	if _, err := datFile.WriteString("dummy data"); err != nil {
+		t.Fatalf("Failed to write .dat file: %v", err)
+	}
+	if err := datFile.Close(); err != nil {
+		t.Fatalf("Failed to close .dat file: %v", err)
+	}
 
 	// Do not create .ecx: trigger orphaned-shards cleanup when .dat exists
 
@@ -503,14 +557,20 @@ func TestDistributedEcVolumeNoFileDeletion(t *testing.T) {
 	volumeId := needle.VolumeId(500)
 	baseFileName := erasure_coding.EcShardFileName(collection, tempDir, int(volumeId))
 
-	// Create EC shards (only 5 shards - not enough to load, but this is a distributed EC volume)
-	for i := 0; i < 5; i++ {
+	// Create EC shards (only 5 shards - less than DataShardsCount, but OK for distributed EC)
+	numDistributedShards := 5
+	for i := 0; i < numDistributedShards; i++ {
 		shardFile, err := os.Create(baseFileName + erasure_coding.ToExt(i))
 		if err != nil {
 			t.Fatalf("Failed to create shard file: %v", err)
 		}
-		shardFile.WriteString("dummy shard data")
-		shardFile.Close()
+		if _, err := shardFile.WriteString("dummy shard data"); err != nil {
+			shardFile.Close()
+			t.Fatalf("Failed to write shard file: %v", err)
+		}
+		if err := shardFile.Close(); err != nil {
+			t.Fatalf("Failed to close shard file: %v", err)
+		}
 	}
 
 	// Create .ecx file to trigger EC loading
@@ -518,8 +578,13 @@ func TestDistributedEcVolumeNoFileDeletion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create .ecx file: %v", err)
 	}
-	ecxFile.WriteString("dummy ecx data")
-	ecxFile.Close()
+	if _, err := ecxFile.WriteString("dummy ecx data"); err != nil {
+		ecxFile.Close()
+		t.Fatalf("Failed to write .ecx file: %v", err)
+	}
+	if err := ecxFile.Close(); err != nil {
+		t.Fatalf("Failed to close .ecx file: %v", err)
+	}
 
 	// NO .dat file - this is a distributed EC volume
 
