@@ -245,6 +245,7 @@ func (w *Worker) Start() error {
 	w.comms.taskReqs = make(chan taskRequest)
 	w.comms.taskCompl = make(chan taskCompletion)
 	w.comms.loadQuery = make(chan chan int)
+	w.comms.metricsQuery = make(chan chan metricsResponse)
 
 	// Prepare worker info for registration
 	workerInfo := &types.WorkerData{
