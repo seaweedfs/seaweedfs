@@ -45,12 +45,17 @@ func (l *DiskLocation) DestroyEcVolume(vid needle.VolumeId) {
 // unloadEcVolume removes an EC volume from memory without deleting its files on disk.
 // This is useful for distributed EC volumes where shards may be on other servers.
 func (l *DiskLocation) unloadEcVolume(vid needle.VolumeId) {
+	var toClose *erasure_coding.EcVolume
 	l.ecVolumesLock.Lock()
-	defer l.ecVolumesLock.Unlock()
-
 	if ecVolume, found := l.ecVolumes[vid]; found {
-		ecVolume.Close()
+		toClose = ecVolume
 		delete(l.ecVolumes, vid)
+	}
+	l.ecVolumesLock.Unlock()
+
+	// Close outside the lock to avoid holding write lock during I/O
+	if toClose != nil {
+		toClose.Close()
 	}
 }
 
@@ -431,13 +436,13 @@ func (l *DiskLocation) removeEcVolumeFiles(collection string, vid needle.VolumeI
 	indexBaseFileName := erasure_coding.EcShardFileName(collection, l.IdxDirectory, int(vid))
 
 	// Helper to remove a file with consistent error handling
-	removeFile := func(path, description string) {
-		if err := os.Remove(path); err != nil {
+	removeFile := func(filePath, description string) {
+		if err := os.Remove(filePath); err != nil {
 			if !os.IsNotExist(err) {
-				glog.Warningf("Failed to remove incomplete %s %s: %v", description, path, err)
+				glog.Warningf("Failed to remove incomplete %s %s: %v", description, filePath, err)
 			}
 		} else {
-			glog.V(2).Infof("Removed incomplete %s: %s", description, path)
+			glog.V(2).Infof("Removed incomplete %s: %s", description, filePath)
 		}
 	}
 
