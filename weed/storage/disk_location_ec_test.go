@@ -114,8 +114,8 @@ func TestIncompleteEcEncodingCleanup(t *testing.T) {
 			// Setup test files
 			baseFileName := erasure_coding.EcShardFileName(tt.collection, tempDir, int(tt.volumeId))
 
-			// Use deterministic sizes that match EC encoding
-			datFileSize := int64(10 * 1024 * 1024 * 1024) // 10GB
+			// Use deterministic but small size: 10MB .dat => 1MB per shard
+			datFileSize := int64(10 * 1024 * 1024) // 10MB
 			expectedShardSize := calculateExpectedShardSize(datFileSize)
 
 			// Create .dat file if needed
@@ -294,9 +294,9 @@ func TestValidateEcVolume(t *testing.T) {
 
 			// For proper testing, we need to use realistic sizes that match EC encoding
 			// EC uses large blocks (1GB) and small blocks (1MB)
-			// For test purposes, use a .dat file size that results in expected shard sizes
-			// 10GB .dat file = 1GB per shard (1 large block)
-			datFileSize := int64(10 * 1024 * 1024 * 1024) // 10GB
+			// For test purposes, use a small .dat file size that still exercises the logic
+			// 10MB .dat file = 1MB per shard (one small batch, fast and deterministic)
+			datFileSize := int64(10 * 1024 * 1024) // 10MB
 			expectedShardSize := calculateExpectedShardSize(datFileSize)
 
 			// Create .dat file if needed
