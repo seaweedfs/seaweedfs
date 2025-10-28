@@ -678,11 +678,16 @@ func countShardsByRack(vid needle.VolumeId, locations []*EcNode) map[string]int 
 func (ecb *ecBalancer) doBalanceEcShardsAcrossRacks(collection string, vid needle.VolumeId, locations []*EcNode) error {
 	racks := ecb.racks()
 
-	// calculate average number of shards an ec rack should have for one volume
-	averageShardsPerEcRack := ceilDivide(erasure_coding.TotalShardsCount, len(racks))
-
 	// see the volume's shards are in how many racks, and how many in each rack
 	rackToShardCount := countShardsByRack(vid, locations)
+
+	// Calculate actual total shards for this volume (not hardcoded default)
+	var totalShardsForVolume int
+	for _, count := range rackToShardCount {
+		totalShardsForVolume += count
+	}
+	// calculate average number of shards an ec rack should have for one volume
+	averageShardsPerEcRack := ceilDivide(totalShardsForVolume, len(racks))
 	rackEcNodesWithVid := groupBy(locations, func(ecNode *EcNode) string {
 		return string(ecNode.rack)
 	})

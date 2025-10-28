@@ -91,6 +91,10 @@ func NewEcShardLocations(collection string) *EcShardLocations {
 }
 
 func (loc *EcShardLocations) AddShard(shardId erasure_coding.ShardId, dn *DataNode) (added bool) {
+	// Defensive bounds check to prevent panic with out-of-range shard IDs
+	if int(shardId) >= erasure_coding.MaxShardCount {
+		return false
+	}
 	dataNodes := loc.Locations[shardId]
 	for _, n := range dataNodes {
 		if n.Id() == dn.Id() {
@@ -102,6 +106,10 @@ func (loc *EcShardLocations) AddShard(shardId erasure_coding.ShardId, dn *DataNo
 }
 
 func (loc *EcShardLocations) DeleteShard(shardId erasure_coding.ShardId, dn *DataNode) (deleted bool) {
+	// Defensive bounds check to prevent panic with out-of-range shard IDs
+	if int(shardId) >= erasure_coding.MaxShardCount {
+		return false
+	}
 	dataNodes := loc.Locations[shardId]
 	foundIndex := -1
 	for index, n := range dataNodes {
