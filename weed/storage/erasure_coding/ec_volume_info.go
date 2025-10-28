@@ -87,7 +87,7 @@ func (ecInfo *EcVolumeInfo) Minus(other *EcVolumeInfo) *EcVolumeInfo {
 
 	// Copy shard sizes for remaining shards
 	retIndex := 0
-	for shardId := ShardId(0); shardId < TotalShardsCount && retIndex < len(ret.ShardSizes); shardId++ {
+	for shardId := ShardId(0); shardId < MaxShardCount && retIndex < len(ret.ShardSizes); shardId++ {
 		if ret.ShardBits.HasShardId(shardId) {
 			if size, exists := ecInfo.GetShardSize(shardId); exists {
 				ret.ShardSizes[retIndex] = size
@@ -135,7 +135,7 @@ func (b ShardBits) HasShardId(id ShardId) bool {
 }
 
 func (b ShardBits) ShardIds() (ret []ShardId) {
-	for i := ShardId(0); i < TotalShardsCount; i++ {
+	for i := ShardId(0); i < MaxShardCount; i++ {
 		if b.HasShardId(i) {
 			ret = append(ret, i)
 		}
@@ -144,7 +144,7 @@ func (b ShardBits) ShardIds() (ret []ShardId) {
 }
 
 func (b ShardBits) ToUint32Slice() (ret []uint32) {
-	for i := uint32(0); i < TotalShardsCount; i++ {
+	for i := uint32(0); i < MaxShardCount; i++ {
 		if b.HasShardId(ShardId(i)) {
 			ret = append(ret, i)
 		}
@@ -168,7 +168,9 @@ func (b ShardBits) Plus(other ShardBits) ShardBits {
 }
 
 func (b ShardBits) MinusParityShards() ShardBits {
-	for i := DataShardsCount; i < TotalShardsCount; i++ {
+	// Note: This method assumes default 10+4 EC layout where parity shards are IDs 10-31
+	// For custom EC ratios in Phase 2, this would need to accept an ECContext parameter
+	for i := DataShardsCount; i < MaxShardCount; i++ {
 		b = b.RemoveShardId(ShardId(i))
 	}
 	return b
@@ -209,7 +211,7 @@ func (b ShardBits) IndexToShardId(index int) (shardId ShardId, found bool) {
 	}
 
 	currentIndex := 0
-	for i := ShardId(0); i < TotalShardsCount; i++ {
+	for i := ShardId(0); i < MaxShardCount; i++ {
 		if b.HasShardId(i) {
 			if currentIndex == index {
 				return i, true
@@ -238,7 +240,7 @@ func (ecInfo *EcVolumeInfo) resizeShardSizes(prevShardBits ShardBits) {
 	// Copy existing sizes to new positions based on current ShardBits
 	if len(ecInfo.ShardSizes) > 0 {
 		newIndex := 0
-		for shardId := ShardId(0); shardId < TotalShardsCount && newIndex < expectedLength; shardId++ {
+		for shardId := ShardId(0); shardId < MaxShardCount && newIndex < expectedLength; shardId++ {
 			if ecInfo.ShardBits.HasShardId(shardId) {
 				// Try to find the size for this shard in the old array using previous ShardBits
 				if oldIndex, found := prevShardBits.ShardIdToIndex(shardId); found && oldIndex < len(ecInfo.ShardSizes) {
