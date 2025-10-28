@@ -9,6 +9,10 @@ COPY ./entrypoint.sh /entrypoint.sh
 RUN apk add fuse # for weed mount
 RUN apk add curl # for health checks
 
+# Create non-root user and group
+RUN addgroup -g 1000 seaweed && \
+    adduser -D -u 1000 -G seaweed seaweed
+
 # volume server grpc port
 EXPOSE 18080
 # volume server http port
@@ -26,11 +30,15 @@ EXPOSE 8333
 # webdav server http port
 EXPOSE 7333
 
-RUN mkdir -p /data/filerldb2
+# Create data directory and set proper ownership for seaweed user
+RUN mkdir -p /data/filerldb2 && \
+    chown -R seaweed:seaweed /data /etc/seaweedfs && \
+    chmod +x /entrypoint.sh
 
 VOLUME /data
 WORKDIR /data
 
-RUN chmod +x /entrypoint.sh
+# Switch to non-root user
+USER seaweed
 
 ENTRYPOINT ["/entrypoint.sh"]
