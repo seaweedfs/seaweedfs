@@ -11,7 +11,7 @@ import (
 type EcShardLocations struct {
 	Collection string
 	// Use MaxShardCount (32) to support custom EC ratios
-	Locations  [erasure_coding.MaxShardCount][]*DataNode
+	Locations [erasure_coding.MaxShardCount][]*DataNode
 }
 
 func (t *Topology) SyncDataNodeEcShards(shardInfos []*master_pb.VolumeEcShardInformationMessage, dn *DataNode) (newShards, deletedShards []*erasure_coding.EcVolumeInfo) {
