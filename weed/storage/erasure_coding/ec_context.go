@@ -41,4 +41,3 @@ func (ctx *ECContext) ToExt(shardIndex int) string {
 func (ctx *ECContext) String() string {
 	return fmt.Sprintf("%d+%d (total: %d)", ctx.DataShards, ctx.ParityShards, ctx.TotalShards)
 }
-

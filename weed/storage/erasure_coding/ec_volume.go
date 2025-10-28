@@ -41,7 +41,7 @@ type EcVolume struct {
 	ecjFileAccessLock         sync.Mutex
 	diskType                  types.DiskType
 	datFileSize               int64
-	ExpireAtSec               uint64    //ec volume destroy time, calculated from the ec volume was created
+	ExpireAtSec               uint64     //ec volume destroy time, calculated from the ec volume was created
 	ECContext                 *ECContext // EC encoding parameters
 }
 
