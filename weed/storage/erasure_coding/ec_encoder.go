@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -66,7 +67,28 @@ func WriteEcFilesWithContext(baseFileName string, ctx *ECContext) error {
 }
 
 func RebuildEcFiles(baseFileName string) ([]uint32, error) {
-	ctx := NewDefaultECContext("", 0)
+	// Attempt to load EC config from .vif file to preserve original configuration
+	var ctx *ECContext
+	if volumeInfo, _, found, _ := volume_info.MaybeLoadVolumeInfo(baseFileName + ".vif"); found && volumeInfo.EcShardConfig != nil {
+		ds := int(volumeInfo.EcShardConfig.DataShards)
+		ps := int(volumeInfo.EcShardConfig.ParityShards)
+		
+		// Validate EC config before using it
+		if ds > 0 && ps > 0 && ds+ps <= MaxShardCount {
+			ctx = &ECContext{
+				DataShards:   ds,
+				ParityShards: ps,
+			}
+			glog.V(0).Infof("Rebuilding EC files for %s with config from .vif: %s", baseFileName, ctx.String())
+		} else {
+			glog.Warningf("Invalid EC config in .vif for %s (data=%d, parity=%d), using default", baseFileName, ds, ps)
+			ctx = NewDefaultECContext("", 0)
+		}
+	} else {
+		glog.V(0).Infof("Rebuilding EC files for %s with default config", baseFileName)
+		ctx = NewDefaultECContext("", 0)
+	}
+	
 	return RebuildEcFilesWithContext(baseFileName, ctx)
 }
 
