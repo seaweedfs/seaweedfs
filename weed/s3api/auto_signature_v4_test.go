@@ -450,6 +450,55 @@ func TestSignatureV4WithForwardedPort(t *testing.T) {
 			forwardedProto: "",
 			expectedHost:   "example.com",
 		},
+		// Test cases for issue #6649: X-Forwarded-Host already contains port
+		{
+			name:           "X-Forwarded-Host with port already included (Traefik/HAProxy style)",
+			host:           "backend:8333",
+			forwardedHost:  "127.0.0.1:8433",
+			forwardedPort:  "8433",
+			forwardedProto: "https",
+			expectedHost:   "127.0.0.1:8433",
+		},
+		{
+			name:           "X-Forwarded-Host with port, no X-Forwarded-Port header",
+			host:           "backend:8333",
+			forwardedHost:  "example.com:9000",
+			forwardedPort:  "",
+			forwardedProto: "http",
+			expectedHost:   "example.com:9000",
+		},
+		{
+			name:           "IPv6 with port in brackets",
+			host:           "backend:8333",
+			forwardedHost:  "[::1]:8080",
+			forwardedPort:  "8080",
+			forwardedProto: "http",
+			expectedHost:   "[::1]:8080",
+		},
+		{
+			name:           "IPv6 without port - should add port with brackets",
+			host:           "backend:8333",
+			forwardedHost:  "::1",
+			forwardedPort:  "8080",
+			forwardedProto: "http",
+			expectedHost:   "[::1]:8080",
+		},
+		{
+			name:           "IPv6 in brackets without port - should add port",
+			host:           "backend:8333",
+			forwardedHost:  "[2001:db8::1]",
+			forwardedPort:  "8080",
+			forwardedProto: "http",
+			expectedHost:   "[2001:db8::1]:8080",
+		},
+		{
+			name:           "IPv4-mapped IPv6 without port - should add port with brackets",
+			host:           "backend:8333",
+			forwardedHost:  "::ffff:127.0.0.1",
+			forwardedPort:  "8080",
+			forwardedProto: "http",
+			expectedHost:   "[::ffff:127.0.0.1]:8080",
+		},
 	}
 
 	for _, tt := range tests {

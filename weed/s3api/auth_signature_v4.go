@@ -24,6 +24,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"io"
+	"net"
 	"net/http"
 	"regexp"
 	"sort"
@@ -592,7 +593,20 @@ func extractSignedHeaders(signedHeaders []string, r *http.Request) (http.Header,
 func extractHostHeader(r *http.Request) string {
 	// Check for X-Forwarded-Host header first, which is set by reverse proxies
 	if forwardedHost := r.Header.Get("X-Forwarded-Host"); forwardedHost != "" {
-		// Check if reverse proxy also forwarded the port
+		// Check if X-Forwarded-Host already contains a port
+		// This handles proxies (like Traefik, HAProxy) that include port in X-Forwarded-Host
+		if _, _, err := net.SplitHostPort(forwardedHost); err == nil {
+			// X-Forwarded-Host already contains a port (e.g., "example.com:8443" or "[::1]:8080")
+			// Use it as-is
+			return forwardedHost
+		}
+
+		// An IPv6 address literal must be enclosed in square brackets.
+		if ip := net.ParseIP(forwardedHost); ip != nil && strings.Contains(forwardedHost, ":") {
+			forwardedHost = "[" + forwardedHost + "]"
+		}
+
+		// X-Forwarded-Host doesn't contain a port, check if X-Forwarded-Port is provided
 		if forwardedPort := r.Header.Get("X-Forwarded-Port"); forwardedPort != "" {
 			// Determine the protocol to check for standard ports
 			proto := strings.ToLower(r.Header.Get("X-Forwarded-Proto"))
