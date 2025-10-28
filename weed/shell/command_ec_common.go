@@ -622,7 +622,8 @@ func (ecb *ecBalancer) deleteDuplicatedEcShards(collection string) error {
 
 func (ecb *ecBalancer) doDeduplicateEcShards(collection string, vid needle.VolumeId, locations []*EcNode) error {
 	// check whether this volume has ecNodes that are over average
-	shardToLocations := make([][]*EcNode, erasure_coding.TotalShardsCount)
+	// Use MaxShardCount (32) to support custom EC ratios
+	shardToLocations := make([][]*EcNode, erasure_coding.MaxShardCount)
 	for _, ecNode := range locations {
 		shardBits := findEcVolumeShards(ecNode, vid)
 		for _, shardId := range shardBits.ShardIds() {
@@ -677,11 +678,16 @@ func countShardsByRack(vid needle.VolumeId, locations []*EcNode) map[string]int 
 func (ecb *ecBalancer) doBalanceEcShardsAcrossRacks(collection string, vid needle.VolumeId, locations []*EcNode) error {
 	racks := ecb.racks()
 
-	// calculate average number of shards an ec rack should have for one volume
-	averageShardsPerEcRack := ceilDivide(erasure_coding.TotalShardsCount, len(racks))
-
 	// see the volume's shards are in how many racks, and how many in each rack
 	rackToShardCount := countShardsByRack(vid, locations)
+
+	// Calculate actual total shards for this volume (not hardcoded default)
+	var totalShardsForVolume int
+	for _, count := range rackToShardCount {
+		totalShardsForVolume += count
+	}
+	// calculate average number of shards an ec rack should have for one volume
+	averageShardsPerEcRack := ceilDivide(totalShardsForVolume, len(racks))
 	rackEcNodesWithVid := groupBy(locations, func(ecNode *EcNode) string {
 		return string(ecNode.rack)
 	})

@@ -350,7 +350,8 @@ func (s *Store) recoverOneRemoteEcShardInterval(needleId types.NeedleId, ecVolum
 		return 0, false, fmt.Errorf("failed to create encoder: %w", err)
 	}
 
-	bufs := make([][]byte, erasure_coding.TotalShardsCount)
+	// Use MaxShardCount to support custom EC ratios up to 32 shards
+	bufs := make([][]byte, erasure_coding.MaxShardCount)
 
 	var wg sync.WaitGroup
 	ecVolume.ShardLocationsLock.RLock()
