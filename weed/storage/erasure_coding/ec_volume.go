@@ -77,13 +77,22 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 		
 		// Initialize EC context from .vif if present; fallback to defaults
 		if volumeInfo.EcShardConfig != nil {
-			ev.ECContext = &ECContext{
-				Collection:   collection,
-				VolumeId:     vid,
-				DataShards:   int(volumeInfo.EcShardConfig.DataShards),
-				ParityShards: int(volumeInfo.EcShardConfig.ParityShards),
+			ds := int(volumeInfo.EcShardConfig.DataShards)
+			ps := int(volumeInfo.EcShardConfig.ParityShards)
+			
+			// Validate shard counts to prevent zero or invalid values
+			if ds <= 0 || ps <= 0 || ds+ps > MaxShardCount {
+				glog.Warningf("Invalid EC config in VolumeInfo for volume %d (data=%d, parity=%d), using defaults", vid, ds, ps)
+				ev.ECContext = NewDefaultECContext(collection, vid)
+			} else {
+				ev.ECContext = &ECContext{
+					Collection:   collection,
+					VolumeId:     vid,
+					DataShards:   ds,
+					ParityShards: ps,
+				}
+				glog.V(1).Infof("Loaded EC config from VolumeInfo for volume %d: %s", vid, ev.ECContext.String())
 			}
-			glog.V(1).Infof("Loaded EC config from VolumeInfo for volume %d: %s", vid, ev.ECContext.String())
 		} else {
 			ev.ECContext = NewDefaultECContext(collection, vid)
 		}
