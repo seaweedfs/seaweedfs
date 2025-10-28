@@ -261,12 +261,13 @@ type EcShardLocations [][]*EcNode
 func (ecShardMap EcShardMap) registerEcNode(ecNode *EcNode, collection string) {
 	for _, diskInfo := range ecNode.info.DiskInfos {
 		for _, shardInfo := range diskInfo.EcShardInfos {
-			if shardInfo.Collection == collection {
-				existing, found := ecShardMap[needle.VolumeId(shardInfo.Id)]
-				if !found {
-					existing = make([][]*EcNode, erasure_coding.TotalShardsCount)
-					ecShardMap[needle.VolumeId(shardInfo.Id)] = existing
-				}
+		if shardInfo.Collection == collection {
+			existing, found := ecShardMap[needle.VolumeId(shardInfo.Id)]
+			if !found {
+				// Use MaxShardCount (32) to support custom EC ratios
+				existing = make([][]*EcNode, erasure_coding.MaxShardCount)
+				ecShardMap[needle.VolumeId(shardInfo.Id)] = existing
+			}
 				for _, shardId := range erasure_coding.ShardBits(shardInfo.EcIndexBits).ShardIds() {
 					existing[shardId] = append(existing[shardId], ecNode)
 				}

@@ -622,7 +622,8 @@ func (ecb *ecBalancer) deleteDuplicatedEcShards(collection string) error {
 
 func (ecb *ecBalancer) doDeduplicateEcShards(collection string, vid needle.VolumeId, locations []*EcNode) error {
 	// check whether this volume has ecNodes that are over average
-	shardToLocations := make([][]*EcNode, erasure_coding.TotalShardsCount)
+	// Use MaxShardCount (32) to support custom EC ratios
+	shardToLocations := make([][]*EcNode, erasure_coding.MaxShardCount)
 	for _, ecNode := range locations {
 		shardBits := findEcVolumeShards(ecNode, vid)
 		for _, shardId := range shardBits.ShardIds() {

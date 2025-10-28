@@ -68,7 +68,7 @@ func (s *AdminServer) GetClusterEcShards(page int, pageSize int, sortBy string, 
 
 								// Create individual shard entries for each shard this server has
 								shardBits := ecShardInfo.EcIndexBits
-								for shardId := 0; shardId < erasure_coding.TotalShardsCount; shardId++ {
+								for shardId := 0; shardId < erasure_coding.MaxShardCount; shardId++ {
 									if (shardBits & (1 << uint(shardId))) != 0 {
 										// Mark this shard as present for this volume
 										volumeShardsMap[volumeId][shardId] = true
@@ -112,13 +112,13 @@ func (s *AdminServer) GetClusterEcShards(page int, pageSize int, sortBy string, 
 		shardCount := len(shardsPresent)
 
 		// Find which shards are missing for this volume across ALL servers
-		for shardId := 0; shardId < erasure_coding.TotalShardsCount; shardId++ {
+		for shardId := 0; shardId < erasure_coding.MaxShardCount; shardId++ {
 			if !shardsPresent[shardId] {
 				missingShards = append(missingShards, shardId)
 			}
 		}
 
-		isComplete := (shardCount == erasure_coding.TotalShardsCount)
+		isComplete := (shardCount == erasure_coding.MaxShardCount)
 		volumeCompleteness[volumeId] = isComplete
 		volumeMissingShards[volumeId] = missingShards
 
@@ -332,7 +332,7 @@ func (s *AdminServer) GetClusterEcVolumes(page int, pageSize int, sortBy string,
 
 								// Process each shard this server has for this volume
 								shardBits := ecShardInfo.EcIndexBits
-								for shardId := 0; shardId < erasure_coding.TotalShardsCount; shardId++ {
+								for shardId := 0; shardId < erasure_coding.MaxShardCount; shardId++ {
 									if (shardBits & (1 << uint(shardId))) != 0 {
 										// Record shard location
 										volume.ShardLocations[shardId] = node.Id
@@ -394,7 +394,7 @@ func (s *AdminServer) GetClusterEcVolumes(page int, pageSize int, sortBy string,
 
 		// Find missing shards
 		var missingShards []int
-		for shardId := 0; shardId < erasure_coding.TotalShardsCount; shardId++ {
+		for shardId := 0; shardId < erasure_coding.MaxShardCount; shardId++ {
 			if _, exists := volume.ShardLocations[shardId]; !exists {
 				missingShards = append(missingShards, shardId)
 			}
@@ -523,7 +523,7 @@ func sortEcVolumes(volumes []EcVolumeWithShards, sortBy string, sortOrder string
 // getShardCount returns the number of shards represented by the bitmap
 func getShardCount(ecIndexBits uint32) int {
 	count := 0
-	for i := 0; i < erasure_coding.TotalShardsCount; i++ {
+	for i := 0; i < erasure_coding.MaxShardCount; i++ {
 		if (ecIndexBits & (1 << uint(i))) != 0 {
 			count++
 		}
@@ -534,7 +534,7 @@ func getShardCount(ecIndexBits uint32) int {
 // getMissingShards returns a slice of missing shard IDs for a volume
 func getMissingShards(ecIndexBits uint32) []int {
 	var missing []int
-	for i := 0; i < erasure_coding.TotalShardsCount; i++ {
+	for i := 0; i < erasure_coding.MaxShardCount; i++ {
 		if (ecIndexBits & (1 << uint(i))) == 0 {
 			missing = append(missing, i)
 		}
@@ -614,7 +614,7 @@ func (s *AdminServer) GetEcVolumeDetails(volumeID uint32, sortBy string, sortOrd
 
 									// Create individual shard entries for each shard this server has
 									shardBits := ecShardInfo.EcIndexBits
-									for shardId := 0; shardId < erasure_coding.TotalShardsCount; shardId++ {
+									for shardId := 0; shardId < erasure_coding.MaxShardCount; shardId++ {
 										if (shardBits & (1 << uint(shardId))) != 0 {
 											ecShard := EcShardWithInfo{
 												VolumeID:     ecShardInfo.Id,
@@ -698,11 +698,11 @@ func (s *AdminServer) GetEcVolumeDetails(volumeID uint32, sortBy string, sortOrd
 	}
 
 	totalUniqueShards := len(foundShards)
-	isComplete := (totalUniqueShards == erasure_coding.TotalShardsCount)
+	isComplete := (totalUniqueShards == erasure_coding.MaxShardCount)
 
 	// Calculate missing shards
 	var missingShards []int
-	for i := 0; i < erasure_coding.TotalShardsCount; i++ {
+	for i := 0; i < erasure_coding.MaxShardCount; i++ {
 		if !foundShards[i] {
 			missingShards = append(missingShards, i)
 		}
