@@ -595,11 +595,15 @@ func extractHostHeader(r *http.Request) string {
 	if forwardedHost := r.Header.Get("X-Forwarded-Host"); forwardedHost != "" {
 		// Check if X-Forwarded-Host already contains a port
 		// This handles proxies (like Traefik, HAProxy) that include port in X-Forwarded-Host
-		_, _, err := net.SplitHostPort(forwardedHost)
-		if err == nil {
+		if _, _, err := net.SplitHostPort(forwardedHost); err == nil {
 			// X-Forwarded-Host already contains a port (e.g., "example.com:8443" or "[::1]:8080")
 			// Use it as-is
 			return forwardedHost
+		}
+
+		// An IPv6 address literal must be enclosed in square brackets.
+		if strings.Contains(forwardedHost, ":") && !strings.HasPrefix(forwardedHost, "[") {
+			forwardedHost = "[" + forwardedHost + "]"
 		}
 
 		// X-Forwarded-Host doesn't contain a port, check if X-Forwarded-Port is provided
@@ -608,11 +612,6 @@ func extractHostHeader(r *http.Request) string {
 			proto := strings.ToLower(r.Header.Get("X-Forwarded-Proto"))
 			// Only add port if it's not the standard port for the protocol
 			if (proto == "https" && forwardedPort != "443") || (proto != "https" && forwardedPort != "80") {
-				// Handle IPv6 addresses: wrap in brackets if needed
-				if strings.Contains(forwardedHost, ":") && !strings.HasPrefix(forwardedHost, "[") {
-					// This is an IPv6 address without brackets
-					return "[" + forwardedHost + "]:" + forwardedPort
-				}
 				return forwardedHost + ":" + forwardedPort
 			}
 		}

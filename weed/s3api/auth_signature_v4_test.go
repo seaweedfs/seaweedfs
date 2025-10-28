@@ -192,6 +192,22 @@ func TestExtractHostHeader(t *testing.T) {
 			expected:       "[::1]:8080",
 		},
 		{
+			name:           "IPv6 address without brackets and standard port, should return bracketed IPv6",
+			hostHeader:     "backend:8333",
+			forwardedHost:  "::1",
+			forwardedPort:  "80",
+			forwardedProto: "http",
+			expected:       "[::1]",
+		},
+		{
+			name:           "IPv6 address without brackets and standard HTTPS port, should return bracketed IPv6",
+			hostHeader:     "backend:8333",
+			forwardedHost:  "2001:db8::1",
+			forwardedPort:  "443",
+			forwardedProto: "https",
+			expected:       "[2001:db8::1]",
+		},
+		{
 			name:           "IPv6 address with brackets but no port, should add port",
 			hostHeader:     "backend:8333",
 			forwardedHost:  "[2001:db8::1]",
