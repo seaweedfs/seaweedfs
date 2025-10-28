@@ -118,6 +118,10 @@ func (ecInfo *EcVolumeInfo) ToVolumeEcShardInformationMessage() (ret *master_pb.
 
 type ShardBits uint32 // use bits to indicate the shard id, use 32 bits just for possible future extension
 
+const (
+	MaxShardCount = 32 // Maximum number of shards since ShardBits is uint32 (bits 0-31)
+)
+
 func (b ShardBits) AddShardId(id ShardId) ShardBits {
 	return b | (1 << id)
 }

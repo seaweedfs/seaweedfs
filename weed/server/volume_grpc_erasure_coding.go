@@ -454,7 +454,8 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 	glog.V(0).Infof("VolumeEcShardsToVolume: %v", req)
 
 	// Collect all EC shards (NewEcVolume will load EC config from .vif into v.ECContext)
-	tempShards := make([]string, erasure_coding.TotalShardsCount)
+	// Use MaxShardCount (32) to support custom EC ratios up to 32 total shards
+	tempShards := make([]string, erasure_coding.MaxShardCount)
 	v, found := vs.store.CollectEcShards(needle.VolumeId(req.VolumeId), tempShards)
 	if !found {
 		return nil, fmt.Errorf("ec volume %d not found", req.VolumeId)
