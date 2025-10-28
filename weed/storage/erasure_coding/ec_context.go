@@ -11,9 +11,13 @@ import (
 type ECContext struct {
 	DataShards   int
 	ParityShards int
-	TotalShards  int
 	Collection   string
 	VolumeId     needle.VolumeId
+}
+
+// Total returns the total number of shards (data + parity)
+func (ctx *ECContext) Total() int {
+	return ctx.DataShards + ctx.ParityShards
 }
 
 // NewDefaultECContext creates a context with default 10+4 shard configuration
@@ -21,7 +25,6 @@ func NewDefaultECContext(collection string, volumeId needle.VolumeId) *ECContext
 	return &ECContext{
 		DataShards:   DataShardsCount,
 		ParityShards: ParityShardsCount,
-		TotalShards:  TotalShardsCount,
 		Collection:   collection,
 		VolumeId:     volumeId,
 	}
@@ -39,5 +42,5 @@ func (ctx *ECContext) ToExt(shardIndex int) string {
 
 // String returns a human-readable representation of the EC configuration
 func (ctx *ECContext) String() string {
-	return fmt.Sprintf("%d+%d (total: %d)", ctx.DataShards, ctx.ParityShards, ctx.TotalShards)
+	return fmt.Sprintf("%d+%d (total: %d)", ctx.DataShards, ctx.ParityShards, ctx.Total())
 }

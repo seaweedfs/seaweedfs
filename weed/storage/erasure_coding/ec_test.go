@@ -188,7 +188,7 @@ func readFromFile(file *os.File, data []byte, ecFileOffset int64) (err error) {
 }
 
 func removeGeneratedFiles(baseFileName string, ctx *ECContext) {
-	for i := 0; i < ctx.TotalShards; i++ {
+	for i := 0; i < ctx.Total(); i++ {
 		fname := baseFileName + ctx.ToExt(i)
 		os.Remove(fname)
 	}

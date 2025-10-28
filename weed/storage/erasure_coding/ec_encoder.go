@@ -101,10 +101,10 @@ func generateEcFiles(baseFileName string, bufferSize int, largeBlockSize int64, 
 
 func generateMissingEcFiles(baseFileName string, bufferSize int, largeBlockSize int64, smallBlockSize int64, ctx *ECContext) (generatedShardIds []uint32, err error) {
 
-	shardHasData := make([]bool, ctx.TotalShards)
-	inputFiles := make([]*os.File, ctx.TotalShards)
-	outputFiles := make([]*os.File, ctx.TotalShards)
-	for shardId := 0; shardId < ctx.TotalShards; shardId++ {
+	shardHasData := make([]bool, ctx.Total())
+	inputFiles := make([]*os.File, ctx.Total())
+	outputFiles := make([]*os.File, ctx.Total())
+	for shardId := 0; shardId < ctx.Total(); shardId++ {
 		shardFileName := baseFileName + ctx.ToExt(shardId)
 		if util.FileExists(shardFileName) {
 			shardHasData[shardId] = true
@@ -153,7 +153,7 @@ func encodeData(file *os.File, enc reedsolomon.Encoder, startOffset, blockSize i
 }
 
 func openEcFiles(baseFileName string, forRead bool, ctx *ECContext) (files []*os.File, err error) {
-	for i := 0; i < ctx.TotalShards; i++ {
+	for i := 0; i < ctx.Total(); i++ {
 		fname := baseFileName + ctx.ToExt(i)
 		openOption := os.O_TRUNC | os.O_CREATE | os.O_WRONLY
 		if forRead {
@@ -198,7 +198,7 @@ func encodeDataOneBatch(file *os.File, enc reedsolomon.Encoder, startOffset, blo
 		return err
 	}
 
-	for i := 0; i < ctx.TotalShards; i++ {
+	for i := 0; i < ctx.Total(); i++ {
 		_, err := outputs[i].Write(buffers[i])
 		if err != nil {
 			return err
@@ -217,7 +217,7 @@ func encodeDatFile(remainingSize int64, baseFileName string, bufferSize int, lar
 		return fmt.Errorf("failed to create encoder: %w", err)
 	}
 
-	buffers := make([][]byte, ctx.TotalShards)
+	buffers := make([][]byte, ctx.Total())
 	for i := range buffers {
 		buffers[i] = make([]byte, bufferSize)
 	}
@@ -232,7 +232,7 @@ func encodeDatFile(remainingSize int64, baseFileName string, bufferSize int, lar
 	largeRowSize := largeBlockSize * int64(ctx.DataShards)
 	smallRowSize := smallBlockSize * int64(ctx.DataShards)
 
-	for remainingSize > largeRowSize {
+	for remainingSize >= largeRowSize {
 		err = encodeData(file, enc, processedSize, largeBlockSize, buffers, outputs, ctx)
 		if err != nil {
 			return fmt.Errorf("failed to encode large chunk data: %w", err)
@@ -258,7 +258,7 @@ func rebuildEcFiles(shardHasData []bool, inputFiles []*os.File, outputFiles []*o
 		return fmt.Errorf("failed to create encoder: %w", err)
 	}
 
-	buffers := make([][]byte, ctx.TotalShards)
+	buffers := make([][]byte, ctx.Total())
 	for i := range buffers {
 		if shardHasData[i] {
 			buffers[i] = make([]byte, ErasureCodingSmallBlockSize)
@@ -270,7 +270,7 @@ func rebuildEcFiles(shardHasData []bool, inputFiles []*os.File, outputFiles []*o
 	for {
 
 		// read the input data from files
-		for i := 0; i < ctx.TotalShards; i++ {
+		for i := 0; i < ctx.Total(); i++ {
 			if shardHasData[i] {
 				n, _ := inputFiles[i].ReadAt(buffers[i], startOffset)
 				if n == 0 {
@@ -294,7 +294,7 @@ func rebuildEcFiles(shardHasData []bool, inputFiles []*os.File, outputFiles []*o
 		}
 
 		// write the data to output files
-		for i := 0; i < ctx.TotalShards; i++ {
+		for i := 0; i < ctx.Total(); i++ {
 			if !shardHasData[i] {
 				n, _ := outputFiles[i].WriteAt(buffers[i][:inputBufferDataSize], startOffset)
 				if inputBufferDataSize != n {

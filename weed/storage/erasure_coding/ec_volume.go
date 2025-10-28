@@ -74,13 +74,24 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 		ev.Version = needle.Version(volumeInfo.Version)
 		ev.datFileSize = volumeInfo.DatFileSize
 		ev.ExpireAtSec = volumeInfo.ExpireAtSec
+		
+		// Initialize EC context from .vif if present; fallback to defaults
+		if volumeInfo.EcShardConfig != nil {
+			ev.ECContext = &ECContext{
+				Collection:   collection,
+				VolumeId:     vid,
+				DataShards:   int(volumeInfo.EcShardConfig.DataShards),
+				ParityShards: int(volumeInfo.EcShardConfig.ParityShards),
+			}
+			glog.V(1).Infof("Loaded EC config from VolumeInfo for volume %d: %s", vid, ev.ECContext.String())
+		} else {
+			ev.ECContext = NewDefaultECContext(collection, vid)
+		}
 	} else {
 		glog.Warningf("vif file not found,volumeId:%d, filename:%s", vid, dataBaseFileName)
 		volume_info.SaveVolumeInfo(dataBaseFileName+".vif", &volume_server_pb.VolumeInfo{Version: uint32(ev.Version)})
+		ev.ECContext = NewDefaultECContext(collection, vid)
 	}
-
-	// Initialize EC context with default configuration (Phase 1: always 10+4)
-	ev.ECContext = NewDefaultECContext(collection, vid)
 
 	ev.ShardLocations = make(map[ShardId][]pb.ServerAddress)
 

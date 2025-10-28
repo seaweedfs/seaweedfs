@@ -59,7 +59,7 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 		if !shouldCleanup {
 			return
 		}
-		for i := 0; i < ecCtx.TotalShards; i++ {
+		for i := 0; i < ecCtx.Total(); i++ {
 			os.Remove(baseFileName + ecCtx.ToExt(i))
 		}
 		os.Remove(v.IndexFileName() + ".ecx")
@@ -453,9 +453,27 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 
 	glog.V(0).Infof("VolumeEcShardsToVolume: %v", req)
 
-	// collect .ec00 ~ .ec09 files
-	shardFileNames := make([]string, erasure_coding.DataShardsCount)
-	v, found := vs.store.CollectEcShards(needle.VolumeId(req.VolumeId), shardFileNames)
+	// collect data shard files; derive shard count from .vif if present
+	dataShards := erasure_coding.DataShardsCount
+	
+	// Try to get the volume first to determine data base filename
+	tempShards := make([]string, erasure_coding.TotalShardsCount)
+	v, found := vs.store.CollectEcShards(needle.VolumeId(req.VolumeId), tempShards)
+	if !found {
+		return nil, fmt.Errorf("ec volume %d not found", req.VolumeId)
+	}
+	
+	dataBaseFileName, indexBaseFileName := v.DataBaseFileName(), v.IndexBaseFileName()
+	
+	// Read EC config from .vif if available
+	if vi, _, found, _ := volume_info.MaybeLoadVolumeInfo(dataBaseFileName + ".vif"); found && vi.EcShardConfig != nil {
+		dataShards = int(vi.EcShardConfig.DataShards)
+		glog.V(1).Infof("Using EC config from VolumeInfo: %d data shards", dataShards)
+	}
+	
+	// Collect only the data shards needed
+	shardFileNames := make([]string, dataShards)
+	v, found = vs.store.CollectEcShards(needle.VolumeId(req.VolumeId), shardFileNames)
 	if !found {
 		return nil, fmt.Errorf("ec volume %d not found", req.VolumeId)
 	}
@@ -464,13 +482,11 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 		return nil, fmt.Errorf("existing collection:%v unexpected input: %v", v.Collection, req.Collection)
 	}
 
-	for shardId := 0; shardId < erasure_coding.DataShardsCount; shardId++ {
+	for shardId := 0; shardId < dataShards; shardId++ {
 		if shardFileNames[shardId] == "" {
 			return nil, fmt.Errorf("ec volume %d missing shard %d", req.VolumeId, shardId)
 		}
 	}
-
-	dataBaseFileName, indexBaseFileName := v.DataBaseFileName(), v.IndexBaseFileName()
 	// calculate .dat file size
 	datFileSize, err := erasure_coding.FindDatFileSize(dataBaseFileName, indexBaseFileName)
 	if err != nil {
