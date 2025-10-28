@@ -55,7 +55,7 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 	if volumeInfo, _, found, _ := volume_info.MaybeLoadVolumeInfo(baseFileName + ".vif"); found && volumeInfo.EcShardConfig != nil {
 		ds := int(volumeInfo.EcShardConfig.DataShards)
 		ps := int(volumeInfo.EcShardConfig.ParityShards)
-		
+
 		// Validate and use existing EC config
 		if ds > 0 && ps > 0 && ds+ps <= erasure_coding.MaxShardCount {
 			ecCtx.DataShards = ds
@@ -489,12 +489,12 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 
 	// Use EC context (already loaded from .vif) to determine data shard count
 	dataShards := v.ECContext.DataShards
-	
+
 	// Defensive validation to prevent panics from corrupted ECContext
 	if dataShards <= 0 || dataShards > erasure_coding.MaxShardCount {
 		return nil, fmt.Errorf("invalid data shard count %d for volume %d (must be 1..%d)", dataShards, req.VolumeId, erasure_coding.MaxShardCount)
 	}
-	
+
 	shardFileNames := tempShards[:dataShards]
 	glog.V(1).Infof("Using EC config from volume %d: %d data shards", req.VolumeId, dataShards)
 
@@ -504,7 +504,7 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 			return nil, fmt.Errorf("ec volume %d missing shard %d", req.VolumeId, shardId)
 		}
 	}
-	
+
 	dataBaseFileName, indexBaseFileName := v.DataBaseFileName(), v.IndexBaseFileName()
 	// calculate .dat file size
 	datFileSize, err := erasure_coding.FindDatFileSize(dataBaseFileName, indexBaseFileName)
