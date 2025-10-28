@@ -56,4 +56,3 @@ var (
 	ErrInvalidPartition = fmt.Errorf("invalid partition")
 	ErrStorageClosed    = fmt.Errorf("storage is closed")
 )
-

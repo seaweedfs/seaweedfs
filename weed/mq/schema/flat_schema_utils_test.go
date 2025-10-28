@@ -248,11 +248,11 @@ func TestValidateKeyColumns(t *testing.T) {
 
 // Helper function to check if string contains substring
 func contains(str, substr string) bool {
-	return len(str) >= len(substr) && 
-		   (len(substr) == 0 || str[len(str)-len(substr):] == substr || 
-		    str[:len(substr)] == substr || 
-		    len(str) > len(substr) && (str[len(str)-len(substr)-1:len(str)-len(substr)] == " " || str[len(str)-len(substr)-1] == ' ') && str[len(str)-len(substr):] == substr ||
-		    findInString(str, substr))
+	return len(str) >= len(substr) &&
+		(len(substr) == 0 || str[len(str)-len(substr):] == substr ||
+			str[:len(substr)] == substr ||
+			len(str) > len(substr) && (str[len(str)-len(substr)-1:len(str)-len(substr)] == " " || str[len(str)-len(substr)-1] == ' ') && str[len(str)-len(substr):] == substr ||
+			findInString(str, substr))
 }
 
 func findInString(str, substr string) bool {

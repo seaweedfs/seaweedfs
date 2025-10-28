@@ -18,7 +18,6 @@ type GrpcAdminClient struct {
 	adminAddress string
 	workerID     string
 	dialOption   grpc.DialOption
-
 	comms clientChannels
 
 	// Reconnection parameters

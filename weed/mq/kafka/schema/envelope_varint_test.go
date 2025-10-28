@@ -100,7 +100,7 @@ func TestCreateConfluentEnvelopeWithProtobufIndexes(t *testing.T) {
 				parsed, ok := ParseConfluentEnvelope(envelope)
 				require.True(t, ok, "Should be able to parse envelope")
 				assert.Equal(t, tc.schemaID, parsed.SchemaID)
-				
+
 				if tc.format == FormatProtobuf && len(tc.indexes) == 0 {
 					// For Protobuf without indexes, payload should match
 					assert.Equal(t, tc.payload, parsed.Payload, "Payload should match")

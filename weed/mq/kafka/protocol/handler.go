@@ -661,7 +661,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 					return
 				}
 				// Removed V(4) logging from hot path - only log errors and important events
-				
+
 				// Wrap request processing with panic recovery to prevent deadlocks
 				// If processRequestSync panics, we MUST still send a response to avoid blocking the response writer
 				var response []byte
@@ -881,7 +881,6 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			return fmt.Errorf("read message: %w", err)
 		}
 
-
 		// Parse at least the basic header to get API key and correlation ID
 		if len(messageBuf) < 8 {
 			return fmt.Errorf("message too short")
@@ -890,7 +889,7 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		apiKey := binary.BigEndian.Uint16(messageBuf[0:2])
 		apiVersion := binary.BigEndian.Uint16(messageBuf[2:4])
 		correlationID := binary.BigEndian.Uint32(messageBuf[4:8])
-		
+
 		// Validate API version against what we support
 		if err := h.validateAPIVersion(apiKey, apiVersion); err != nil {
 			glog.Errorf("API VERSION VALIDATION FAILED: Key=%d (%s), Version=%d, error=%v", apiKey, getAPIName(APIKey(apiKey)), apiVersion, err)
@@ -1049,7 +1048,6 @@ func (h *Handler) processRequestSync(req *kafkaRequest) ([]byte, error) {
 	// Record request start time for latency tracking
 	requestStart := time.Now()
 	apiName := getAPIName(APIKey(req.apiKey))
-
 
 	// Only log high-volume requests at V(2), not V(4)
 	if glog.V(2) {
@@ -1589,15 +1587,15 @@ func (h *Handler) HandleMetadataV2(correlationID uint32, requestBody []byte) ([]
 		for partitionID := int32(0); partitionID < partitionCount; partitionID++ {
 			binary.Write(&buf, binary.BigEndian, int16(0))    // ErrorCode
 			binary.Write(&buf, binary.BigEndian, partitionID) // PartitionIndex
-			binary.Write(&buf, binary.BigEndian, nodeID)    // LeaderID
+			binary.Write(&buf, binary.BigEndian, nodeID)      // LeaderID
 
 			// ReplicaNodes array (4 bytes length + nodes)
 			binary.Write(&buf, binary.BigEndian, int32(1)) // 1 replica
-			binary.Write(&buf, binary.BigEndian, nodeID) // NodeID 1
+			binary.Write(&buf, binary.BigEndian, nodeID)   // NodeID 1
 
 			// IsrNodes array (4 bytes length + nodes)
 			binary.Write(&buf, binary.BigEndian, int32(1)) // 1 ISR node
-			binary.Write(&buf, binary.BigEndian, nodeID) // NodeID 1
+			binary.Write(&buf, binary.BigEndian, nodeID)   // NodeID 1
 		}
 	}
 
@@ -1716,15 +1714,15 @@ func (h *Handler) HandleMetadataV3V4(correlationID uint32, requestBody []byte) (
 		for partitionID := int32(0); partitionID < partitionCount; partitionID++ {
 			binary.Write(&buf, binary.BigEndian, int16(0))    // ErrorCode
 			binary.Write(&buf, binary.BigEndian, partitionID) // PartitionIndex
-			binary.Write(&buf, binary.BigEndian, nodeID)    // LeaderID
+			binary.Write(&buf, binary.BigEndian, nodeID)      // LeaderID
 
 			// ReplicaNodes array (4 bytes length + nodes)
 			binary.Write(&buf, binary.BigEndian, int32(1)) // 1 replica
-			binary.Write(&buf, binary.BigEndian, nodeID) // NodeID 1
+			binary.Write(&buf, binary.BigEndian, nodeID)   // NodeID 1
 
 			// IsrNodes array (4 bytes length + nodes)
 			binary.Write(&buf, binary.BigEndian, int32(1)) // 1 ISR node
-			binary.Write(&buf, binary.BigEndian, nodeID) // NodeID 1
+			binary.Write(&buf, binary.BigEndian, nodeID)   // NodeID 1
 		}
 	}
 
@@ -1737,7 +1735,7 @@ func (h *Handler) HandleMetadataV3V4(correlationID uint32, requestBody []byte) (
 	}
 	if len(response) > 100 {
 	}
-	
+
 	return response, nil
 }
 
@@ -1828,7 +1826,6 @@ func (h *Handler) handleMetadataV5ToV8(correlationID uint32, requestBody []byte,
 	// NOTE: Correlation ID is handled by writeResponseWithCorrelationID
 	// Do NOT include it in the response body
 
-
 	// ThrottleTimeMs (4 bytes) - v3+ addition
 	binary.Write(&buf, binary.BigEndian, int32(0)) // No throttling
 
@@ -1896,7 +1893,7 @@ func (h *Handler) handleMetadataV5ToV8(correlationID uint32, requestBody []byte,
 		for partitionID := int32(0); partitionID < partitionCount; partitionID++ {
 			binary.Write(&buf, binary.BigEndian, int16(0))    // ErrorCode
 			binary.Write(&buf, binary.BigEndian, partitionID) // PartitionIndex
-			binary.Write(&buf, binary.BigEndian, nodeID)    // LeaderID
+			binary.Write(&buf, binary.BigEndian, nodeID)      // LeaderID
 
 			// LeaderEpoch (4 bytes) - v7+ addition
 			if apiVersion >= 7 {
@@ -1905,11 +1902,11 @@ func (h *Handler) handleMetadataV5ToV8(correlationID uint32, requestBody []byte,
 
 			// ReplicaNodes array (4 bytes length + nodes)
 			binary.Write(&buf, binary.BigEndian, int32(1)) // 1 replica
-			binary.Write(&buf, binary.BigEndian, nodeID) // NodeID 1
+			binary.Write(&buf, binary.BigEndian, nodeID)   // NodeID 1
 
 			// IsrNodes array (4 bytes length + nodes)
 			binary.Write(&buf, binary.BigEndian, int32(1)) // 1 ISR node
-			binary.Write(&buf, binary.BigEndian, nodeID) // NodeID 1
+			binary.Write(&buf, binary.BigEndian, nodeID)   // NodeID 1
 
 			// OfflineReplicas array (4 bytes length + nodes) - v5+ addition
 			binary.Write(&buf, binary.BigEndian, int32(0)) // No offline replicas
@@ -1930,7 +1927,7 @@ func (h *Handler) handleMetadataV5ToV8(correlationID uint32, requestBody []byte,
 	}
 	if len(response) > 100 {
 	}
-	
+
 	return response, nil
 }
 
@@ -1994,12 +1991,11 @@ func (h *Handler) handleListOffsets(correlationID uint32, apiVersion uint16, req
 	// Parse minimal request to understand what's being asked (header already stripped)
 	offset := 0
 
-	
 	maxBytes := len(requestBody)
 	if maxBytes > 64 {
 		maxBytes = 64
 	}
-	
+
 	// v1+ has replica_id(4)
 	if apiVersion >= 1 {
 		if len(requestBody) < offset+4 {
@@ -3930,12 +3926,11 @@ func (h *Handler) handleInitProducerId(correlationID uint32, apiVersion uint16, 
 	// v2+: transactional_id(NULLABLE_STRING) + transaction_timeout_ms(INT32) + producer_id(INT64) + producer_epoch(INT16)
 	// v4+: Uses flexible format with tagged fields
 
-	
 	maxBytes := len(requestBody)
 	if maxBytes > 64 {
 		maxBytes = 64
 	}
-	
+
 	offset := 0
 
 	// Parse transactional_id (NULLABLE_STRING or COMPACT_NULLABLE_STRING for flexible versions)

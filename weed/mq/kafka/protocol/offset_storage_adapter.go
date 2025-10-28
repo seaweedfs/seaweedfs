@@ -47,4 +47,3 @@ func (a *offsetStorageAdapter) DeleteGroup(group string) error {
 func (a *offsetStorageAdapter) Close() error {
 	return a.storage.Close()
 }
-

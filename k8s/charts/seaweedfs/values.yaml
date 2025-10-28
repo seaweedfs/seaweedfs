@@ -873,7 +873,7 @@ filer:
     #     anonymousRead: false
 
 s3:
-  enabled: true
+  enabled: false
   imageOverride: null
   restartPolicy: null
   replicas: 1

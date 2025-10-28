@@ -78,7 +78,7 @@ func TestSSES3EndToEndSmallFile(t *testing.T) {
 
 			// Step 3: Decrypt (simulates what happens during GET)
 			// This tests the IV retrieval path for inline files
-			
+
 			// First, deserialize metadata from storage
 			retrievedKeyData := mockEntry.Extended[s3_constants.SeaweedFSSSES3Key]
 			retrievedKey, err := DeserializeSSES3Metadata(retrievedKeyData, keyManager)

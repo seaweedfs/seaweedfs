@@ -306,24 +306,20 @@ func (s *MaintenanceIntegration) CanScheduleWithTaskSchedulers(task *Maintenance
 		return false // Fallback to existing logic for unknown types
 	}
 
-
 	// Convert task objects
 	taskObject := s.convertTaskToTaskSystem(task)
 	if taskObject == nil {
 		return false
 	}
 
-
 	runningTaskObjects := s.convertTasksToTaskSystem(runningTasks)
 	workerObjects := s.convertWorkersToTaskSystem(availableWorkers)
-
 
 	// Get the appropriate scheduler
 	scheduler := s.taskRegistry.GetScheduler(taskType)
 	if scheduler == nil {
 		return false
 	}
-
 
 	canSchedule := scheduler.CanScheduleNow(taskObject, runningTaskObjects, workerObjects)
 

@@ -103,15 +103,15 @@ func TestIncrementalCooperativeAssignmentStrategy_RebalanceWithRevocation(t *tes
 		t.Errorf("Expected member-2 to have 0 partitions during revocation, got %d", len(member2Assignments))
 	}
 
-	t.Logf("Revocation phase - Member-1: %d partitions, Member-2: %d partitions", 
+	t.Logf("Revocation phase - Member-1: %d partitions, Member-2: %d partitions",
 		len(member1Assignments), len(member2Assignments))
 
 	// Simulate time passing and second call (should move to assignment phase)
 	time.Sleep(10 * time.Millisecond)
-	
+
 	// Force move to assignment phase by setting timeout to 0
 	state.RevocationTimeout = 0
-	
+
 	assignments2 := strategy.Assign(members, topicPartitions)
 
 	// Should complete rebalance
@@ -136,7 +136,7 @@ func TestIncrementalCooperativeAssignmentStrategy_RebalanceWithRevocation(t *tes
 		t.Errorf("Expected 4 total partitions after rebalance, got %d", totalFinalPartitions)
 	}
 
-	t.Logf("Final assignment - Member-1: %d partitions, Member-2: %d partitions", 
+	t.Logf("Final assignment - Member-1: %d partitions, Member-2: %d partitions",
 		len(member1FinalAssignments), len(member2FinalAssignments))
 }
 
@@ -239,7 +239,7 @@ func TestIncrementalCooperativeAssignmentStrategy_MultipleTopics(t *testing.T) {
 			t.Errorf("Expected partition %s to be assigned", expected)
 		}
 	}
-	
+
 	// Debug: Print all assigned partitions
 	t.Logf("All assigned partitions: %v", allAssignedPartitions)
 }
@@ -390,7 +390,7 @@ func TestIncrementalCooperativeAssignmentStrategy_StateTransitions(t *testing.T)
 	// Force timeout to move to assignment phase
 	state.RevocationTimeout = 0
 	strategy.Assign(members, topicPartitions)
-	
+
 	// Should complete and return to None
 	state = strategy.GetRebalanceState()
 	if state.Phase != RebalancePhaseNone {

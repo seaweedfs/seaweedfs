@@ -16,6 +16,9 @@ func ListExistingPeerUpdates(master pb.ServerAddress, grpcDialOption grpc.DialOp
 			ClientType: clientType,
 			FilerGroup: filerGroup,
 		})
+		if err != nil {
+			return err
+		}
 
 		glog.V(0).Infof("the cluster has %d %s\n", len(resp.ClusterNodes), clientType)
 		for _, node := range resp.ClusterNodes {
@@ -26,7 +29,7 @@ func ListExistingPeerUpdates(master pb.ServerAddress, grpcDialOption grpc.DialOp
 				CreatedAtNs: node.CreatedAtNs,
 			})
 		}
-		return err
+		return nil
 	}); grpcErr != nil {
 		glog.V(0).Infof("connect to %s: %v", master, grpcErr)
 	}

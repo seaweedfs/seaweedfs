@@ -264,7 +264,8 @@ func (ecShardMap EcShardMap) registerEcNode(ecNode *EcNode, collection string) {
 			if shardInfo.Collection == collection {
 				existing, found := ecShardMap[needle.VolumeId(shardInfo.Id)]
 				if !found {
-					existing = make([][]*EcNode, erasure_coding.TotalShardsCount)
+					// Use MaxShardCount (32) to support custom EC ratios
+					existing = make([][]*EcNode, erasure_coding.MaxShardCount)
 					ecShardMap[needle.VolumeId(shardInfo.Id)] = existing
 				}
 				for _, shardId := range erasure_coding.ShardBits(shardInfo.EcIndexBits).ShardIds() {

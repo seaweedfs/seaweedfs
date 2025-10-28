@@ -268,7 +268,6 @@ func parseCompactString(data []byte) ([]byte, int) {
 		return nil, 0
 	}
 
-
 	if actualLength == 0 {
 		// Empty string (length was 1)
 		return []byte{}, consumed

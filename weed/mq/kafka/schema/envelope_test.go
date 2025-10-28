@@ -7,46 +7,46 @@ import (
 
 func TestParseConfluentEnvelope(t *testing.T) {
 	tests := []struct {
-		name        string
-		input       []byte
-		expectOK    bool
-		expectID    uint32
+		name         string
+		input        []byte
+		expectOK     bool
+		expectID     uint32
 		expectFormat Format
 	}{
 		{
-			name:        "valid Avro message",
-			input:       []byte{0x00, 0x00, 0x00, 0x00, 0x01, 0x10, 0x48, 0x65, 0x6c, 0x6c, 0x6f}, // schema ID 1 + "Hello"
-			expectOK:    true,
-			expectID:    1,
+			name:         "valid Avro message",
+			input:        []byte{0x00, 0x00, 0x00, 0x00, 0x01, 0x10, 0x48, 0x65, 0x6c, 0x6c, 0x6f}, // schema ID 1 + "Hello"
+			expectOK:     true,
+			expectID:     1,
 			expectFormat: FormatAvro,
 		},
 		{
-			name:        "valid message with larger schema ID",
-			input:       []byte{0x00, 0x00, 0x00, 0x04, 0xd2, 0x02, 0x66, 0x6f, 0x6f}, // schema ID 1234 + "foo"
-			expectOK:    true,
-			expectID:    1234,
+			name:         "valid message with larger schema ID",
+			input:        []byte{0x00, 0x00, 0x00, 0x04, 0xd2, 0x02, 0x66, 0x6f, 0x6f}, // schema ID 1234 + "foo"
+			expectOK:     true,
+			expectID:     1234,
 			expectFormat: FormatAvro,
 		},
 		{
-			name:        "too short message",
-			input:       []byte{0x00, 0x00, 0x00},
-			expectOK:    false,
+			name:     "too short message",
+			input:    []byte{0x00, 0x00, 0x00},
+			expectOK: false,
 		},
 		{
-			name:        "no magic byte",
-			input:       []byte{0x01, 0x00, 0x00, 0x00, 0x01, 0x48, 0x65, 0x6c, 0x6c, 0x6f},
-			expectOK:    false,
+			name:     "no magic byte",
+			input:    []byte{0x01, 0x00, 0x00, 0x00, 0x01, 0x48, 0x65, 0x6c, 0x6c, 0x6f},
+			expectOK: false,
 		},
 		{
-			name:        "empty message",
-			input:       []byte{},
-			expectOK:    false,
+			name:     "empty message",
+			input:    []byte{},
+			expectOK: false,
 		},
 		{
-			name:        "minimal valid message",
-			input:       []byte{0x00, 0x00, 0x00, 0x00, 0x01}, // schema ID 1, empty payload
-			expectOK:    true,
-			expectID:    1,
+			name:         "minimal valid message",
+			input:        []byte{0x00, 0x00, 0x00, 0x00, 0x01}, // schema ID 1, empty payload
+			expectOK:     true,
+			expectID:     1,
 			expectFormat: FormatAvro,
 		},
 	}
@@ -54,24 +54,24 @@ func TestParseConfluentEnvelope(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			envelope, ok := ParseConfluentEnvelope(tt.input)
-			
+
 			if ok != tt.expectOK {
 				t.Errorf("ParseConfluentEnvelope() ok = %v, want %v", ok, tt.expectOK)
 				return
 			}
-			
+
 			if !tt.expectOK {
 				return // No need to check further if we expected failure
 			}
-			
+
 			if envelope.SchemaID != tt.expectID {
 				t.Errorf("ParseConfluentEnvelope() schemaID = %v, want %v", envelope.SchemaID, tt.expectID)
 			}
-			
+
 			if envelope.Format != tt.expectFormat {
 				t.Errorf("ParseConfluentEnvelope() format = %v, want %v", envelope.Format, tt.expectFormat)
 			}
-			
+
 			// Verify payload extraction
 			expectedPayloadLen := len(tt.input) - 5 // 5 bytes for magic + schema ID
 			if len(envelope.Payload) != expectedPayloadLen {
@@ -150,11 +150,11 @@ func TestExtractSchemaID(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			id, ok := ExtractSchemaID(tt.input)
-			
+
 			if ok != tt.expectOK {
 				t.Errorf("ExtractSchemaID() ok = %v, want %v", ok, tt.expectOK)
 			}
-			
+
 			if id != tt.expectID {
 				t.Errorf("ExtractSchemaID() id = %v, want %v", id, tt.expectID)
 			}
@@ -200,12 +200,12 @@ func TestCreateConfluentEnvelope(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := CreateConfluentEnvelope(tt.format, tt.schemaID, tt.indexes, tt.payload)
-			
+
 			if len(result) != len(tt.expected) {
 				t.Errorf("CreateConfluentEnvelope() length = %v, want %v", len(result), len(tt.expected))
 				return
 			}
-			
+
 			for i, b := range result {
 				if b != tt.expected[i] {
 					t.Errorf("CreateConfluentEnvelope() byte[%d] = %v, want %v", i, b, tt.expected[i])
@@ -262,7 +262,7 @@ func TestEnvelopeValidate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := tt.envelope.Validate()
-			
+
 			if (err != nil) != tt.expectErr {
 				t.Errorf("Envelope.Validate() error = %v, expectErr %v", err, tt.expectErr)
 			}
@@ -297,7 +297,7 @@ func TestEnvelopeMetadata(t *testing.T) {
 func BenchmarkParseConfluentEnvelope(b *testing.B) {
 	// Create a test message
 	testMsg := make([]byte, 1024)
-	testMsg[0] = 0x00 // Magic byte
+	testMsg[0] = 0x00                             // Magic byte
 	binary.BigEndian.PutUint32(testMsg[1:5], 123) // Schema ID
 	// Fill rest with dummy data
 	for i := 5; i < len(testMsg); i++ {

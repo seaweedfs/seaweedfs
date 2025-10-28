@@ -121,7 +121,6 @@ func (m *mockSeaweedMQHandler) ProduceRecord(ctx context.Context, topicName stri
 	offset := m.offsets[topicName][partitionID]
 	m.offsets[topicName][partitionID]++
 
-
 	// Store record
 	record := &mockRecord{
 		key:    key,

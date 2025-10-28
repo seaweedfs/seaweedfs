@@ -140,4 +140,3 @@ func TestMetadataResponseHasBrokers(t *testing.T) {
 
 	t.Logf("✓ Metadata response correctly has %d broker(s)", parsedCount)
 }
-
