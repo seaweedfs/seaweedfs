@@ -491,6 +491,14 @@ func TestSignatureV4WithForwardedPort(t *testing.T) {
 			forwardedProto: "http",
 			expectedHost:   "[2001:db8::1]:8080",
 		},
+		{
+			name:           "IPv4-mapped IPv6 without port - should add port with brackets",
+			host:           "backend:8333",
+			forwardedHost:  "::ffff:127.0.0.1",
+			forwardedPort:  "8080",
+			forwardedProto: "http",
+			expectedHost:   "[::ffff:127.0.0.1]:8080",
+		},
 	}
 
 	for _, tt := range tests {

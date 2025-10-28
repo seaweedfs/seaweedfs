@@ -602,7 +602,7 @@ func extractHostHeader(r *http.Request) string {
 		}
 
 		// An IPv6 address literal must be enclosed in square brackets.
-		if ip := net.ParseIP(forwardedHost); ip != nil && ip.To4() == nil {
+		if ip := net.ParseIP(forwardedHost); ip != nil && strings.Contains(forwardedHost, ":") {
 			forwardedHost = "[" + forwardedHost + "]"
 		}
 

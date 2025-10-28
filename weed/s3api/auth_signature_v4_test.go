@@ -223,6 +223,14 @@ func TestExtractHostHeader(t *testing.T) {
 			forwardedProto: "https",
 			expected:       "[2001:db8:85a3::8a2e:370:7334]:443",
 		},
+		{
+			name:           "IPv4-mapped IPv6 address without brackets, should add brackets with port",
+			hostHeader:     "backend:8333",
+			forwardedHost:  "::ffff:127.0.0.1",
+			forwardedPort:  "8080",
+			forwardedProto: "http",
+			expected:       "[::ffff:127.0.0.1]:8080",
+		},
 	}
 
 	for _, tt := range tests {
