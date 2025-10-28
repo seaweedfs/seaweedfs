@@ -50,20 +50,24 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 		return nil, fmt.Errorf("existing collection:%v unexpected input: %v", v.Collection, req.Collection)
 	}
 
+	// Create EC context (Phase 1: always uses default 10+4)
+	ecCtx := erasure_coding.NewDefaultECContext(req.Collection, needle.VolumeId(req.VolumeId))
+	glog.V(0).Infof("Using EC context for volume %d: %s", req.VolumeId, ecCtx.String())
+
 	shouldCleanup := true
 	defer func() {
 		if !shouldCleanup {
 			return
 		}
-		for i := 0; i < erasure_coding.TotalShardsCount; i++ {
-			os.Remove(fmt.Sprintf("%s.ec%2d", baseFileName, i))
+		for i := 0; i < ecCtx.TotalShards; i++ {
+			os.Remove(baseFileName + ecCtx.ToExt(i))
 		}
 		os.Remove(v.IndexFileName() + ".ecx")
 	}()
 
-	// write .ec00 ~ .ec13 files
-	if err := erasure_coding.WriteEcFiles(baseFileName); err != nil {
-		return nil, fmt.Errorf("WriteEcFiles %s: %v", baseFileName, err)
+	// write .ec00 ~ .ec[TotalShards-1] files using context
+	if err := erasure_coding.WriteEcFilesWithContext(baseFileName, ecCtx); err != nil {
+		return nil, fmt.Errorf("WriteEcFilesWithContext %s: %v", baseFileName, err)
 	}
 
 	// write .ecx file
@@ -84,6 +88,11 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 
 	datSize, _, _ := v.FileStat()
 	volumeInfo.DatFileSize = int64(datSize)
+	
+	// Save EC configuration to VolumeInfo
+	volumeInfo.DataShardsCount = uint32(ecCtx.DataShards)
+	volumeInfo.ParityShardsCount = uint32(ecCtx.ParityShards)
+	
 	if err := volume_info.SaveVolumeInfo(baseFileName+".vif", volumeInfo); err != nil {
 		return nil, fmt.Errorf("SaveVolumeInfo %s: %v", baseFileName, err)
 	}
