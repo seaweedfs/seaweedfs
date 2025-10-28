@@ -19,6 +19,7 @@ const (
 	DataShardsCount             = 10
 	ParityShardsCount           = 4
 	TotalShardsCount            = DataShardsCount + ParityShardsCount
+	MaxShardCount               = 32 // Maximum number of shards since ShardBits is uint32 (bits 0-31)
 	MinTotalDisks               = TotalShardsCount/ParityShardsCount + 1
 	ErasureCodingLargeBlockSize = 1024 * 1024 * 1024 // 1GB
 	ErasureCodingSmallBlockSize = 1024 * 1024        // 1MB
@@ -72,7 +73,7 @@ func RebuildEcFiles(baseFileName string) ([]uint32, error) {
 	if volumeInfo, _, found, _ := volume_info.MaybeLoadVolumeInfo(baseFileName + ".vif"); found && volumeInfo.EcShardConfig != nil {
 		ds := int(volumeInfo.EcShardConfig.DataShards)
 		ps := int(volumeInfo.EcShardConfig.ParityShards)
-		
+
 		// Validate EC config before using it
 		if ds > 0 && ps > 0 && ds+ps <= MaxShardCount {
 			ctx = &ECContext{
@@ -88,7 +89,7 @@ func RebuildEcFiles(baseFileName string) ([]uint32, error) {
 		glog.V(0).Infof("Rebuilding EC files for %s with default config", baseFileName)
 		ctx = NewDefaultECContext("", 0)
 	}
-	
+
 	return RebuildEcFilesWithContext(baseFileName, ctx)
 }
 
