@@ -323,9 +323,9 @@ func runServer(cmd *Command, args []string) bool {
 
 	if *isStartingS3 {
 		// Handle IAM config: -s3.iam.config takes precedence over -iam.config
-		if *s3Options.iamConfig == "" && *serverIamConfig != "" {
+		if *s3Options.iamConfig == "" {
 			s3Options.iamConfig = serverIamConfig
-		} else if *s3Options.iamConfig != "" && *serverIamConfig != "" && *s3Options.iamConfig != *serverIamConfig {
+		} else if *serverIamConfig != "" && *s3Options.iamConfig != *serverIamConfig {
 			glog.V(0).Infof("both -s3.iam.config(%s) and -iam.config(%s) provided; using -s3.iam.config", *s3Options.iamConfig, *serverIamConfig)
 		}
 		go func() {
