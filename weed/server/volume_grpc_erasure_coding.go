@@ -90,8 +90,10 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 	volumeInfo.DatFileSize = int64(datSize)
 
 	// Save EC configuration to VolumeInfo
-	volumeInfo.DataShardsCount = uint32(ecCtx.DataShards)
-	volumeInfo.ParityShardsCount = uint32(ecCtx.ParityShards)
+	volumeInfo.EcShardConfig = &volume_server_pb.EcShardConfig{
+		DataShards:   uint32(ecCtx.DataShards),
+		ParityShards: uint32(ecCtx.ParityShards),
+	}
 
 	if err := volume_info.SaveVolumeInfo(baseFileName+".vif", volumeInfo); err != nil {
 		return nil, fmt.Errorf("SaveVolumeInfo %s: %v", baseFileName, err)
