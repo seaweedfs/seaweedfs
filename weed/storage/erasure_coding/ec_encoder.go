@@ -228,21 +228,25 @@ func encodeDatFile(remainingSize int64, baseFileName string, bufferSize int, lar
 		return fmt.Errorf("failed to open ec files %s: %v", baseFileName, err)
 	}
 
-	for remainingSize > largeBlockSize*int64(ctx.DataShards) {
+	// Pre-calculate row sizes to avoid redundant calculations in loops
+	largeRowSize := largeBlockSize * int64(ctx.DataShards)
+	smallRowSize := smallBlockSize * int64(ctx.DataShards)
+
+	for remainingSize > largeRowSize {
 		err = encodeData(file, enc, processedSize, largeBlockSize, buffers, outputs, ctx)
 		if err != nil {
 			return fmt.Errorf("failed to encode large chunk data: %w", err)
 		}
-		remainingSize -= largeBlockSize * int64(ctx.DataShards)
-		processedSize += largeBlockSize * int64(ctx.DataShards)
+		remainingSize -= largeRowSize
+		processedSize += largeRowSize
 	}
 	for remainingSize > 0 {
 		err = encodeData(file, enc, processedSize, smallBlockSize, buffers, outputs, ctx)
 		if err != nil {
 			return fmt.Errorf("failed to encode small chunk data: %w", err)
 		}
-		remainingSize -= smallBlockSize * int64(ctx.DataShards)
-		processedSize += smallBlockSize * int64(ctx.DataShards)
+		remainingSize -= smallRowSize
+		processedSize += smallRowSize
 	}
 	return nil
 }
