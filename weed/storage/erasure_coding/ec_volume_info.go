@@ -173,9 +173,9 @@ func (b ShardBits) Plus(other ShardBits) ShardBits {
 }
 
 func (b ShardBits) MinusParityShards() ShardBits {
-	// Note: This method assumes default 10+4 EC layout where parity shards are IDs 10-31
-	// For custom EC ratios in Phase 2, this would need to accept an ECContext parameter
-	for i := DataShardsCount; i < MaxShardCount; i++ {
+	// Removes parity shards from the bit mask
+	// Assumes default 10+4 EC layout where parity shards are IDs 10-13
+	for i := DataShardsCount; i < TotalShardsCount; i++ {
 		b = b.RemoveShardId(ShardId(i))
 	}
 	return b

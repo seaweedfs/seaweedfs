@@ -112,13 +112,14 @@ func (s *AdminServer) GetClusterEcShards(page int, pageSize int, sortBy string, 
 		shardCount := len(shardsPresent)
 
 		// Find which shards are missing for this volume across ALL servers
-		for shardId := 0; shardId < erasure_coding.MaxShardCount; shardId++ {
+		// Uses default 10+4 (14 total shards)
+		for shardId := 0; shardId < erasure_coding.TotalShardsCount; shardId++ {
 			if !shardsPresent[shardId] {
 				missingShards = append(missingShards, shardId)
 			}
 		}
 
-		isComplete := (shardCount == erasure_coding.MaxShardCount)
+		isComplete := (shardCount == erasure_coding.TotalShardsCount)
 		volumeCompleteness[volumeId] = isComplete
 		volumeMissingShards[volumeId] = missingShards
 
@@ -392,9 +393,9 @@ func (s *AdminServer) GetClusterEcVolumes(page int, pageSize int, sortBy string,
 	for _, volume := range volumeData {
 		volume.TotalShards = len(volume.ShardLocations)
 
-		// Find missing shards
+		// Find missing shards (default 10+4 = 14 total shards)
 		var missingShards []int
-		for shardId := 0; shardId < erasure_coding.MaxShardCount; shardId++ {
+		for shardId := 0; shardId < erasure_coding.TotalShardsCount; shardId++ {
 			if _, exists := volume.ShardLocations[shardId]; !exists {
 				missingShards = append(missingShards, shardId)
 			}
@@ -532,9 +533,10 @@ func getShardCount(ecIndexBits uint32) int {
 }
 
 // getMissingShards returns a slice of missing shard IDs for a volume
+// Assumes default 10+4 EC configuration (14 total shards)
 func getMissingShards(ecIndexBits uint32) []int {
 	var missing []int
-	for i := 0; i < erasure_coding.MaxShardCount; i++ {
+	for i := 0; i < erasure_coding.TotalShardsCount; i++ {
 		if (ecIndexBits & (1 << uint(i))) == 0 {
 			missing = append(missing, i)
 		}
@@ -698,11 +700,12 @@ func (s *AdminServer) GetEcVolumeDetails(volumeID uint32, sortBy string, sortOrd
 	}
 
 	totalUniqueShards := len(foundShards)
-	isComplete := (totalUniqueShards == erasure_coding.MaxShardCount)
+	// Check completeness using default 10+4 (14 total shards)
+	isComplete := (totalUniqueShards == erasure_coding.TotalShardsCount)
 
 	// Calculate missing shards
 	var missingShards []int
-	for i := 0; i < erasure_coding.MaxShardCount; i++ {
+	for i := 0; i < erasure_coding.TotalShardsCount; i++ {
 		if !foundShards[i] {
 			missingShards = append(missingShards, i)
 		}
