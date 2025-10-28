@@ -1,0 +1,56 @@
+# Dockerfile for Kafka Gateway Integration Testing
+FROM golang:1.24-alpine AS builder
+
+# Install build dependencies
+RUN apk add --no-cache git make gcc musl-dev sqlite-dev
+
+# Set working directory
+WORKDIR /app
+
+# Copy go mod files
+COPY go.mod go.sum ./
+
+# Download dependencies
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build the weed binary with Kafka gateway support
+RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -ldflags '-extldflags "-static"' -o weed ./weed
+
+# Final stage
+FROM alpine:latest
+
+# Install runtime dependencies
+RUN apk --no-cache add ca-certificates wget curl netcat-openbsd sqlite
+
+# Create non-root user
+RUN addgroup -g 1000 seaweedfs && \
+    adduser -D -s /bin/sh -u 1000 -G seaweedfs seaweedfs
+
+# Set working directory
+WORKDIR /usr/bin
+
+# Copy binary from builder
+COPY --from=builder /app/weed .
+
+# Create data directory
+RUN mkdir -p /data && chown seaweedfs:seaweedfs /data
+
+# Copy startup script
+COPY test/kafka/scripts/kafka-gateway-start.sh /usr/bin/kafka-gateway-start.sh
+RUN chmod +x /usr/bin/kafka-gateway-start.sh
+
+# Switch to non-root user
+USER seaweedfs
+
+# Expose Kafka protocol port and pprof port
+EXPOSE 9093 10093
+
+# Health check
+HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 \
+  CMD nc -z localhost 9093 || exit 1
+
+# Default command
+CMD ["/usr/bin/kafka-gateway-start.sh"]

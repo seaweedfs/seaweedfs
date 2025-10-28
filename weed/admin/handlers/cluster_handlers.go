@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"math"
 	"net/http"
 	"strconv"
 
@@ -256,7 +257,7 @@ func (h *ClusterHandlers) ShowEcVolumeDetails(c *gin.Context) {
 	}
 
 	// Check that volumeID is within uint32 range
-	if volumeID < 0 {
+	if volumeID < 0 || uint64(volumeID) > math.MaxUint32 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Volume ID out of range"})
 		return
 	}

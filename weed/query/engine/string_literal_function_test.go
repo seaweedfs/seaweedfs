@@ -183,7 +183,7 @@ func TestSQLEngine_StringFunctionErrorHandling(t *testing.T) {
 		t.Fatalf("UPPER function should work, got query error: %v", result.Error)
 	}
 
-	t.Logf("✅ UPPER function works correctly")
+	t.Logf("UPPER function works correctly")
 
 	// This should now work (previously would error as "unsupported aggregation function")
 	result2, err2 := engine.ExecuteSQL(context.Background(), "SELECT LENGTH(action) FROM user_events LIMIT 1")
@@ -194,5 +194,5 @@ func TestSQLEngine_StringFunctionErrorHandling(t *testing.T) {
 		t.Fatalf("LENGTH function should work, got query error: %v", result2.Error)
 	}
 
-	t.Logf("✅ LENGTH function works correctly")
+	t.Logf("LENGTH function works correctly")
 }

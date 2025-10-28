@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"slices"
+
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -18,7 +20,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/server/constants"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"google.golang.org/grpc"
-	"slices"
 )
 
 func init() {
@@ -321,13 +322,15 @@ func doVolumeCheckDisk(minuend, subtrahend *needle_map.MemDb, source, target *Vo
 				fmt.Fprintf(writer, "delete %s %s => %s\n", needleValue.Key.FileId(source.info.Id), source.location.dataNode.Id, target.location.dataNode.Id)
 			}
 		}
-		deleteResults, deleteErr := operation.DeleteFileIdsAtOneVolumeServer(
+		deleteResults := operation.DeleteFileIdsAtOneVolumeServer(
 			pb.NewServerAddressFromDataNode(target.location.dataNode),
 			grpcDialOption, fidList, false)
-		if deleteErr != nil {
-			return hasChanges, deleteErr
-		}
+
+		// Check for errors in results
 		for _, deleteResult := range deleteResults {
+			if deleteResult.Error != "" && deleteResult.Error != "not found" {
+				return hasChanges, fmt.Errorf("delete file %s: %v", deleteResult.FileId, deleteResult.Error)
+			}
 			if deleteResult.Status == http.StatusAccepted && deleteResult.Size > 0 {
 				hasChanges = true
 			}

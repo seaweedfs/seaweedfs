@@ -54,7 +54,7 @@ ensure_container() {
     if [[ -n "$extracted_port" ]]; then
       KEYCLOAK_PORT="$extracted_port"
       KEYCLOAK_URL="http://localhost:${KEYCLOAK_PORT}"
-      echo -e "${GREEN}✅ Using existing container '${CONTAINER_NAME}' on port ${KEYCLOAK_PORT}${NC}"
+      echo -e "${GREEN}[OK] Using existing container '${CONTAINER_NAME}' on port ${KEYCLOAK_PORT}${NC}"
       return 0
     fi
   fi
@@ -71,11 +71,11 @@ ensure_container() {
         KEYCLOAK_URL="http://localhost:${KEYCLOAK_PORT}"
       fi
     fi
-    echo -e "${GREEN}✅ Using existing container '${CONTAINER_NAME}' on port ${KEYCLOAK_PORT}${NC}"
+    echo -e "${GREEN}[OK] Using existing container '${CONTAINER_NAME}' on port ${KEYCLOAK_PORT}${NC}"
     return 0
   fi
   if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-    echo -e "${GREEN}✅ Using existing container '${CONTAINER_NAME}'${NC}"
+    echo -e "${GREEN}[OK] Using existing container '${CONTAINER_NAME}'${NC}"
     return 0
   fi
   echo -e "${YELLOW}🐳 Starting Keycloak container (${KEYCLOAK_IMAGE})...${NC}"
@@ -94,16 +94,16 @@ wait_ready() {
   echo -e "${YELLOW}⏳ Waiting for Keycloak to be ready...${NC}"
   for i in $(seq 1 120); do
     if curl -sf "${KEYCLOAK_URL}/health/ready" >/dev/null; then
-      echo -e "${GREEN}✅ Keycloak health check passed${NC}"
+      echo -e "${GREEN}[OK] Keycloak health check passed${NC}"
       return 0
     fi
     if curl -sf "${KEYCLOAK_URL}/realms/master" >/dev/null; then
-      echo -e "${GREEN}✅ Keycloak master realm accessible${NC}"
+      echo -e "${GREEN}[OK] Keycloak master realm accessible${NC}"
       return 0
     fi
     sleep 2
   done
-  echo -e "${RED}❌ Keycloak did not become ready in time${NC}"
+  echo -e "${RED}[FAIL] Keycloak did not become ready in time${NC}"
   exit 1
 }
 
@@ -122,7 +122,7 @@ kcadm() {
   done
   
   if [[ "$auth_success" == false ]]; then
-    echo -e "${RED}❌ Failed to authenticate with any known admin password${NC}"
+    echo -e "${RED}[FAIL] Failed to authenticate with any known admin password${NC}"
     return 1
   fi
   
@@ -136,17 +136,17 @@ admin_login() {
 
 ensure_realm() {
   if kcadm get realms | grep -q "${REALM_NAME}"; then
-    echo -e "${GREEN}✅ Realm '${REALM_NAME}' already exists${NC}"
+    echo -e "${GREEN}[OK] Realm '${REALM_NAME}' already exists${NC}"
   else
     echo -e "${YELLOW}📝 Creating realm '${REALM_NAME}'...${NC}"
     if kcadm create realms -s realm="${REALM_NAME}" -s enabled=true 2>/dev/null; then
-    echo -e "${GREEN}✅ Realm created${NC}"
+    echo -e "${GREEN}[OK] Realm created${NC}"
     else
       # Check if it exists now (might have been created by another process)
       if kcadm get realms | grep -q "${REALM_NAME}"; then
-        echo -e "${GREEN}✅ Realm '${REALM_NAME}' already exists (created concurrently)${NC}"
+        echo -e "${GREEN}[OK] Realm '${REALM_NAME}' already exists (created concurrently)${NC}"
       else
-        echo -e "${RED}❌ Failed to create realm '${REALM_NAME}'${NC}"
+        echo -e "${RED}[FAIL] Failed to create realm '${REALM_NAME}'${NC}"
         return 1
       fi
     fi
@@ -157,7 +157,7 @@ ensure_client() {
   local id
   id=$(kcadm get clients -r "${REALM_NAME}" -q clientId="${CLIENT_ID}" | jq -r '.[0].id // empty')
   if [[ -n "${id}" ]]; then
-    echo -e "${GREEN}✅ Client '${CLIENT_ID}' already exists${NC}"
+    echo -e "${GREEN}[OK] Client '${CLIENT_ID}' already exists${NC}"
   else
     echo -e "${YELLOW}📝 Creating client '${CLIENT_ID}'...${NC}"
     kcadm create clients -r "${REALM_NAME}" \
@@ -169,7 +169,7 @@ ensure_client() {
       -s standardFlowEnabled=true \
       -s implicitFlowEnabled=false \
       -s secret="${CLIENT_SECRET}" >/dev/null
-    echo -e "${GREEN}✅ Client created${NC}"
+    echo -e "${GREEN}[OK] Client created${NC}"
   fi
   
   # Create and configure role mapper for the client
@@ -179,7 +179,7 @@ ensure_client() {
 ensure_role() {
   local role="$1"
   if kcadm get roles -r "${REALM_NAME}" | jq -r '.[].name' | grep -qx "${role}"; then
-    echo -e "${GREEN}✅ Role '${role}' exists${NC}"
+    echo -e "${GREEN}[OK] Role '${role}' exists${NC}"
   else
     echo -e "${YELLOW}📝 Creating role '${role}'...${NC}"
     kcadm create roles -r "${REALM_NAME}" -s name="${role}" >/dev/null
@@ -201,7 +201,7 @@ ensure_user() {
       -s lastName="User" \
       -i)
   else
-    echo -e "${GREEN}✅ User '${username}' exists${NC}"
+    echo -e "${GREEN}[OK] User '${username}' exists${NC}"
   fi
   echo -e "${YELLOW}🔑 Setting password for '${username}'...${NC}"
   kcadm set-password -r "${REALM_NAME}" --userid "${uid}" --new-password "${password}" --temporary=false >/dev/null
@@ -214,7 +214,7 @@ assign_role() {
   rid=$(kcadm get roles -r "${REALM_NAME}" | jq -r ".[] | select(.name==\"${role}\") | .id")
   # Check if role already assigned
   if kcadm get "users/${uid}/role-mappings/realm" -r "${REALM_NAME}" | jq -r '.[].name' | grep -qx "${role}"; then
-    echo -e "${GREEN}✅ User '${username}' already has role '${role}'${NC}"
+    echo -e "${GREEN}[OK] User '${username}' already has role '${role}'${NC}"
     return 0
   fi
   echo -e "${YELLOW}➕ Assigning role '${role}' to '${username}'...${NC}"
@@ -229,7 +229,7 @@ configure_role_mapper() {
   internal_id=$(kcadm get clients -r "${REALM_NAME}" -q clientId="${CLIENT_ID}" | jq -r '.[0].id // empty')
   
   if [[ -z "${internal_id}" ]]; then
-    echo -e "${RED}❌ Could not find client ${client_id} to configure role mapper${NC}"
+    echo -e "${RED}[FAIL] Could not find client ${client_id} to configure role mapper${NC}"
     return 1
   fi
   
@@ -238,7 +238,7 @@ configure_role_mapper() {
   existing_mapper=$(kcadm get "clients/${internal_id}/protocol-mappers/models" -r "${REALM_NAME}" | jq -r '.[] | select(.name=="realm roles" and .protocolMapper=="oidc-usermodel-realm-role-mapper") | .id // empty')
   
   if [[ -n "${existing_mapper}" ]]; then
-    echo -e "${GREEN}✅ Realm roles mapper already exists${NC}"
+    echo -e "${GREEN}[OK] Realm roles mapper already exists${NC}"
   else
     echo -e "${YELLOW}📝 Creating realm roles mapper...${NC}"
     
@@ -254,11 +254,11 @@ configure_role_mapper() {
       -s 'config."access.token.claim"=true' \
       -s 'config."claim.name"=roles' \
       -s 'config."jsonType.label"=String' >/dev/null || {
-        echo -e "${RED}❌ Failed to create realm roles mapper${NC}"
+        echo -e "${RED}[FAIL] Failed to create realm roles mapper${NC}"
         return 1
       }
     
-    echo -e "${GREEN}✅ Realm roles mapper created${NC}"
+    echo -e "${GREEN}[OK] Realm roles mapper created${NC}"
   fi
 }
 
@@ -270,7 +270,7 @@ configure_audience_mapper() {
   internal_id=$(kcadm get clients -r "${REALM_NAME}" -q clientId="${CLIENT_ID}" | jq -r '.[0].id // empty')
   
   if [[ -z "${internal_id}" ]]; then
-    echo -e "${RED}❌ Could not find client ${CLIENT_ID} to configure audience mapper${NC}"
+    echo -e "${RED}[FAIL] Could not find client ${CLIENT_ID} to configure audience mapper${NC}"
     return 1
   fi
   
@@ -279,7 +279,7 @@ configure_audience_mapper() {
   existing_mapper=$(kcadm get "clients/${internal_id}/protocol-mappers/models" -r "${REALM_NAME}" | jq -r '.[] | select(.name=="audience-mapper" and .protocolMapper=="oidc-audience-mapper") | .id // empty')
   
   if [[ -n "${existing_mapper}" ]]; then
-    echo -e "${GREEN}✅ Audience mapper already exists${NC}"
+    echo -e "${GREEN}[OK] Audience mapper already exists${NC}"
   else
     echo -e "${YELLOW}📝 Creating audience mapper...${NC}"
     
@@ -292,17 +292,17 @@ configure_audience_mapper() {
       -s 'config."included.client.audience"='"${CLIENT_ID}" \
       -s 'config."id.token.claim"=false' \
       -s 'config."access.token.claim"=true' >/dev/null || {
-        echo -e "${RED}❌ Failed to create audience mapper${NC}"
+        echo -e "${RED}[FAIL] Failed to create audience mapper${NC}"
         return 1
       }
     
-    echo -e "${GREEN}✅ Audience mapper created${NC}"
+    echo -e "${GREEN}[OK] Audience mapper created${NC}"
   fi
 }
 
 main() {
-  command -v docker >/dev/null || { echo -e "${RED}❌ Docker is required${NC}"; exit 1; }
-  command -v jq >/dev/null || { echo -e "${RED}❌ jq is required${NC}"; exit 1; }
+  command -v docker >/dev/null || { echo -e "${RED}[FAIL] Docker is required${NC}"; exit 1; }
+  command -v jq >/dev/null || { echo -e "${RED}[FAIL] jq is required${NC}"; exit 1; }
 
   ensure_container
   echo "Keycloak URL: ${KEYCLOAK_URL}"
@@ -347,7 +347,7 @@ main() {
     -o /tmp/auth_test_response.json)
   
   if [[ "${validation_result: -3}" == "200" ]]; then
-    echo -e "${GREEN}✅ Authentication validation successful${NC}"
+    echo -e "${GREEN}[OK] Authentication validation successful${NC}"
     
     # Extract and decode JWT token to check for roles
     local access_token=$(cat /tmp/auth_test_response.json | jq -r '.access_token // empty')
@@ -363,7 +363,7 @@ main() {
       local roles=$(echo "${decoded}" | jq -r '.roles // empty' 2>/dev/null || echo "")
       
       if [[ -n "${roles}" && "${roles}" != "null" ]]; then
-        echo -e "${GREEN}✅ JWT token includes roles: ${roles}${NC}"
+        echo -e "${GREEN}[OK] JWT token includes roles: ${roles}${NC}"
       else
         echo -e "${YELLOW}⚠️  JWT token does not include 'roles' claim${NC}"
         echo -e "${YELLOW}Decoded payload sample:${NC}"
@@ -371,14 +371,14 @@ main() {
       fi
     fi
   else
-    echo -e "${RED}❌ Authentication validation failed with HTTP ${validation_result: -3}${NC}"
+    echo -e "${RED}[FAIL] Authentication validation failed with HTTP ${validation_result: -3}${NC}"
     echo -e "${YELLOW}Response body:${NC}"
     cat /tmp/auth_test_response.json 2>/dev/null || echo "No response body"
     echo -e "${YELLOW}This may indicate a setup issue that needs to be resolved${NC}"
   fi
   rm -f /tmp/auth_test_response.json
   
-  echo -e "${GREEN}✅ Keycloak test realm '${REALM_NAME}' configured${NC}"
+  echo -e "${GREEN}[OK] Keycloak test realm '${REALM_NAME}' configured${NC}"
 }
 
 setup_iam_config() {
@@ -400,7 +400,7 @@ setup_iam_config() {
   
   # Verify source config exists
   if [[ ! -f "$config_source" ]]; then
-    echo -e "${RED}❌ Config file $config_source not found in $script_dir${NC}"
+    echo -e "${RED}[FAIL] Config file $config_source not found in $script_dir${NC}"
     exit 1
   fi
   
@@ -408,7 +408,7 @@ setup_iam_config() {
   cp "$config_source" "iam_config.json"
   
   local detected_issuer=$(cat iam_config.json | jq -r '.providers[] | select(.name=="keycloak") | .config.issuer')
-  echo -e "${GREEN}✅ IAM configuration set successfully${NC}"
+  echo -e "${GREEN}[OK] IAM configuration set successfully${NC}"
   echo "   - Using config: $config_source"
   echo "   - Keycloak issuer: $detected_issuer"
 }

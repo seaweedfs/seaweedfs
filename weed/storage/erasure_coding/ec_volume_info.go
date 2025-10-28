@@ -87,7 +87,7 @@ func (ecInfo *EcVolumeInfo) Minus(other *EcVolumeInfo) *EcVolumeInfo {
 
 	// Copy shard sizes for remaining shards
 	retIndex := 0
-	for shardId := ShardId(0); shardId < TotalShardsCount && retIndex < len(ret.ShardSizes); shardId++ {
+	for shardId := ShardId(0); shardId < ShardId(MaxShardCount) && retIndex < len(ret.ShardSizes); shardId++ {
 		if ret.ShardBits.HasShardId(shardId) {
 			if size, exists := ecInfo.GetShardSize(shardId); exists {
 				ret.ShardSizes[retIndex] = size
@@ -119,19 +119,28 @@ func (ecInfo *EcVolumeInfo) ToVolumeEcShardInformationMessage() (ret *master_pb.
 type ShardBits uint32 // use bits to indicate the shard id, use 32 bits just for possible future extension
 
 func (b ShardBits) AddShardId(id ShardId) ShardBits {
+	if id >= MaxShardCount {
+		return b // Reject out-of-range shard IDs
+	}
 	return b | (1 << id)
 }
 
 func (b ShardBits) RemoveShardId(id ShardId) ShardBits {
+	if id >= MaxShardCount {
+		return b // Reject out-of-range shard IDs
+	}
 	return b &^ (1 << id)
 }
 
 func (b ShardBits) HasShardId(id ShardId) bool {
+	if id >= MaxShardCount {
+		return false // Out-of-range shard IDs are never present
+	}
 	return b&(1<<id) > 0
 }
 
 func (b ShardBits) ShardIds() (ret []ShardId) {
-	for i := ShardId(0); i < TotalShardsCount; i++ {
+	for i := ShardId(0); i < ShardId(MaxShardCount); i++ {
 		if b.HasShardId(i) {
 			ret = append(ret, i)
 		}
@@ -140,7 +149,7 @@ func (b ShardBits) ShardIds() (ret []ShardId) {
 }
 
 func (b ShardBits) ToUint32Slice() (ret []uint32) {
-	for i := uint32(0); i < TotalShardsCount; i++ {
+	for i := uint32(0); i < uint32(MaxShardCount); i++ {
 		if b.HasShardId(ShardId(i)) {
 			ret = append(ret, i)
 		}
@@ -164,6 +173,8 @@ func (b ShardBits) Plus(other ShardBits) ShardBits {
 }
 
 func (b ShardBits) MinusParityShards() ShardBits {
+	// Removes parity shards from the bit mask
+	// Assumes default 10+4 EC layout where parity shards are IDs 10-13
 	for i := DataShardsCount; i < TotalShardsCount; i++ {
 		b = b.RemoveShardId(ShardId(i))
 	}
@@ -205,7 +216,7 @@ func (b ShardBits) IndexToShardId(index int) (shardId ShardId, found bool) {
 	}
 
 	currentIndex := 0
-	for i := ShardId(0); i < TotalShardsCount; i++ {
+	for i := ShardId(0); i < ShardId(MaxShardCount); i++ {
 		if b.HasShardId(i) {
 			if currentIndex == index {
 				return i, true
@@ -234,7 +245,7 @@ func (ecInfo *EcVolumeInfo) resizeShardSizes(prevShardBits ShardBits) {
 	// Copy existing sizes to new positions based on current ShardBits
 	if len(ecInfo.ShardSizes) > 0 {
 		newIndex := 0
-		for shardId := ShardId(0); shardId < TotalShardsCount && newIndex < expectedLength; shardId++ {
+		for shardId := ShardId(0); shardId < ShardId(MaxShardCount) && newIndex < expectedLength; shardId++ {
 			if ecInfo.ShardBits.HasShardId(shardId) {
 				// Try to find the size for this shard in the old array using previous ShardBits
 				if oldIndex, found := prevShardBits.ShardIdToIndex(shardId); found && oldIndex < len(ecInfo.ShardSizes) {

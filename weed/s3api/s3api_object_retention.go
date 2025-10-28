@@ -274,10 +274,13 @@ func (s3a *S3ApiServer) setObjectRetention(bucket, object, versionId string, ret
 				return fmt.Errorf("failed to get latest version for object %s/%s: %w", bucket, object, ErrLatestVersionNotFound)
 			}
 			// Extract version ID from entry metadata
+			entryPath = object // default to regular object path
 			if entry.Extended != nil {
 				if versionIdBytes, exists := entry.Extended[s3_constants.ExtVersionIdKey]; exists {
 					versionId = string(versionIdBytes)
-					entryPath = object + ".versions/" + s3a.getVersionFileName(versionId)
+					if versionId != "null" {
+						entryPath = object + ".versions/" + s3a.getVersionFileName(versionId)
+					}
 				}
 			}
 		} else {
@@ -413,10 +416,13 @@ func (s3a *S3ApiServer) setObjectLegalHold(bucket, object, versionId string, leg
 				return fmt.Errorf("failed to get latest version for object %s/%s: %w", bucket, object, ErrLatestVersionNotFound)
 			}
 			// Extract version ID from entry metadata
+			entryPath = object // default to regular object path
 			if entry.Extended != nil {
 				if versionIdBytes, exists := entry.Extended[s3_constants.ExtVersionIdKey]; exists {
 					versionId = string(versionIdBytes)
-					entryPath = object + ".versions/" + s3a.getVersionFileName(versionId)
+					if versionId != "null" {
+						entryPath = object + ".versions/" + s3a.getVersionFileName(versionId)
+					}
 				}
 			}
 		} else {

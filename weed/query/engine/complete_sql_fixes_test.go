@@ -24,19 +24,19 @@ func TestCompleteSQLFixes(t *testing.T) {
 				name:      "OriginalFailingQuery1",
 				timestamp: 1756947416566456262,
 				id:        897795,
-				sql:       "select id, _timestamp_ns as ts from ecommerce.user_events where ts = 1756947416566456262",
+				sql:       "select id, _ts_ns as ts from ecommerce.user_events where ts = 1756947416566456262",
 			},
 			{
 				name:      "OriginalFailingQuery2",
 				timestamp: 1756947416566439304,
 				id:        715356,
-				sql:       "select id, _timestamp_ns as ts from ecommerce.user_events where ts = 1756947416566439304",
+				sql:       "select id, _ts_ns as ts from ecommerce.user_events where ts = 1756947416566439304",
 			},
 			{
 				name:      "CurrentDataQuery",
 				timestamp: 1756913789829292386,
 				id:        82460,
-				sql:       "select id, _timestamp_ns as ts from ecommerce.user_events where ts = 1756913789829292386",
+				sql:       "select id, _ts_ns as ts from ecommerce.user_events where ts = 1756913789829292386",
 			},
 		}
 
@@ -45,8 +45,8 @@ func TestCompleteSQLFixes(t *testing.T) {
 				// Create test record matching the production data
 				testRecord := &schema_pb.RecordValue{
 					Fields: map[string]*schema_pb.Value{
-						"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: tc.timestamp}},
-						"id":            {Kind: &schema_pb.Value_Int64Value{Int64Value: tc.id}},
+						"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: tc.timestamp}},
+						"id":     {Kind: &schema_pb.Value_Int64Value{Int64Value: tc.id}},
 					},
 				}
 
@@ -67,8 +67,8 @@ func TestCompleteSQLFixes(t *testing.T) {
 				// Verify precision is maintained (timestamp fixes)
 				testRecordOffBy1 := &schema_pb.RecordValue{
 					Fields: map[string]*schema_pb.Value{
-						"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: tc.timestamp + 1}},
-						"id":            {Kind: &schema_pb.Value_Int64Value{Int64Value: tc.id}},
+						"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: tc.timestamp + 1}},
+						"id":     {Kind: &schema_pb.Value_Int64Value{Int64Value: tc.id}},
 					},
 				}
 
@@ -84,9 +84,9 @@ func TestCompleteSQLFixes(t *testing.T) {
 
 		testRecord := &schema_pb.RecordValue{
 			Fields: map[string]*schema_pb.Value{
-				"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: largeTimestamp}},
-				"id":            {Kind: &schema_pb.Value_Int64Value{Int64Value: 897795}},
-				"user_id":       {Kind: &schema_pb.Value_StringValue{StringValue: "user123"}},
+				"_ts_ns":  {Kind: &schema_pb.Value_Int64Value{Int64Value: largeTimestamp}},
+				"id":      {Kind: &schema_pb.Value_Int64Value{Int64Value: 897795}},
+				"user_id": {Kind: &schema_pb.Value_StringValue{StringValue: "user123"}},
 			},
 		}
 
@@ -96,7 +96,7 @@ func TestCompleteSQLFixes(t *testing.T) {
 		// 3. Multiple conditions
 		// 4. Different data types
 		sql := `SELECT 
-					_timestamp_ns AS ts,
+					_ts_ns AS ts,
 					id AS record_id, 
 					user_id AS uid
 				FROM ecommerce.user_events 
@@ -117,9 +117,9 @@ func TestCompleteSQLFixes(t *testing.T) {
 		// Test that precision is still maintained in complex queries
 		testRecordDifferentTimestamp := &schema_pb.RecordValue{
 			Fields: map[string]*schema_pb.Value{
-				"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: largeTimestamp + 1}}, // Off by 1ns
-				"id":            {Kind: &schema_pb.Value_Int64Value{Int64Value: 897795}},
-				"user_id":       {Kind: &schema_pb.Value_StringValue{StringValue: "user123"}},
+				"_ts_ns":  {Kind: &schema_pb.Value_Int64Value{Int64Value: largeTimestamp + 1}}, // Off by 1ns
+				"id":      {Kind: &schema_pb.Value_Int64Value{Int64Value: 897795}},
+				"user_id": {Kind: &schema_pb.Value_StringValue{StringValue: "user123"}},
 			},
 		}
 
@@ -131,13 +131,13 @@ func TestCompleteSQLFixes(t *testing.T) {
 		// Ensure that non-alias queries continue to work exactly as before
 		testRecord := &schema_pb.RecordValue{
 			Fields: map[string]*schema_pb.Value{
-				"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756947416566456262}},
-				"id":            {Kind: &schema_pb.Value_Int64Value{Int64Value: 897795}},
+				"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756947416566456262}},
+				"id":     {Kind: &schema_pb.Value_Int64Value{Int64Value: 897795}},
 			},
 		}
 
 		// Traditional query (no aliases) - should work exactly as before
-		traditionalSQL := "SELECT _timestamp_ns, id FROM ecommerce.user_events WHERE _timestamp_ns = 1756947416566456262 AND id = 897795"
+		traditionalSQL := "SELECT _ts_ns, id FROM ecommerce.user_events WHERE _ts_ns = 1756947416566456262 AND id = 897795"
 		stmt, err := ParseSQL(traditionalSQL)
 		assert.NoError(t, err)
 
@@ -162,13 +162,13 @@ func TestCompleteSQLFixes(t *testing.T) {
 		// Test that the fixes don't introduce performance or stability issues
 		testRecord := &schema_pb.RecordValue{
 			Fields: map[string]*schema_pb.Value{
-				"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756947416566456262}},
-				"id":            {Kind: &schema_pb.Value_Int64Value{Int64Value: 897795}},
+				"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756947416566456262}},
+				"id":     {Kind: &schema_pb.Value_Int64Value{Int64Value: 897795}},
 			},
 		}
 
 		// Run the same query many times to test stability
-		sql := "SELECT _timestamp_ns AS ts, id FROM test WHERE ts = 1756947416566456262"
+		sql := "SELECT _ts_ns AS ts, id FROM test WHERE ts = 1756947416566456262"
 		stmt, err := ParseSQL(sql)
 		assert.NoError(t, err)
 
@@ -194,7 +194,7 @@ func TestCompleteSQLFixes(t *testing.T) {
 
 		// Test with nil SelectExprs (should fall back to no-alias behavior)
 		compExpr := &ComparisonExpr{
-			Left:     &ColName{Name: stringValue("_timestamp_ns")},
+			Left:     &ColName{Name: stringValue("_ts_ns")},
 			Operator: "=",
 			Right:    &SQLVal{Type: IntVal, Val: []byte("1756947416566456262")},
 		}
@@ -218,43 +218,43 @@ func TestSQLFixesSummary(t *testing.T) {
 		// The "before and after" test
 		testRecord := &schema_pb.RecordValue{
 			Fields: map[string]*schema_pb.Value{
-				"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756947416566456262}},
-				"id":            {Kind: &schema_pb.Value_Int64Value{Int64Value: 897795}},
+				"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756947416566456262}},
+				"id":     {Kind: &schema_pb.Value_Int64Value{Int64Value: 897795}},
 			},
 		}
 
 		// What was failing before (would return 0 rows)
-		failingSQL := "SELECT id, _timestamp_ns AS ts FROM ecommerce.user_events WHERE ts = 1756947416566456262"
+		failingSQL := "SELECT id, _ts_ns AS ts FROM ecommerce.user_events WHERE ts = 1756947416566456262"
 
 		// What works now
 		stmt, err := ParseSQL(failingSQL)
-		assert.NoError(t, err, "✅ SQL parsing works")
+		assert.NoError(t, err, "SQL parsing works")
 
 		selectStmt := stmt.(*SelectStatement)
 		predicate, err := engine.buildPredicateWithContext(selectStmt.Where.Expr, selectStmt.SelectExprs)
-		assert.NoError(t, err, "✅ Predicate building works with aliases")
+		assert.NoError(t, err, "Predicate building works with aliases")
 
 		result := predicate(testRecord)
-		assert.True(t, result, "✅ Originally failing query now works perfectly")
+		assert.True(t, result, "Originally failing query now works perfectly")
 
 		// Verify precision is maintained
 		testRecordOffBy1 := &schema_pb.RecordValue{
 			Fields: map[string]*schema_pb.Value{
-				"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756947416566456263}},
-				"id":            {Kind: &schema_pb.Value_Int64Value{Int64Value: 897795}},
+				"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756947416566456263}},
+				"id":     {Kind: &schema_pb.Value_Int64Value{Int64Value: 897795}},
 			},
 		}
 
 		result2 := predicate(testRecordOffBy1)
-		assert.False(t, result2, "✅ Nanosecond precision maintained")
+		assert.False(t, result2, "Nanosecond precision maintained")
 
-		t.Log("🎉 ALL SQL FIXES VERIFIED:")
-		t.Log("  ✅ Timestamp precision for large int64 values")
-		t.Log("  ✅ SQL alias resolution in WHERE clauses")
-		t.Log("  ✅ Scan boundary fixes for equality queries")
-		t.Log("  ✅ Range query fixes for equal boundaries")
-		t.Log("  ✅ Hybrid scanner time range handling")
-		t.Log("  ✅ Backward compatibility maintained")
-		t.Log("  ✅ Production stability verified")
+		t.Log("ALL SQL FIXES VERIFIED:")
+		t.Log("  Timestamp precision for large int64 values")
+		t.Log("  SQL alias resolution in WHERE clauses")
+		t.Log("  Scan boundary fixes for equality queries")
+		t.Log("  Range query fixes for equal boundaries")
+		t.Log("  Hybrid scanner time range handling")
+		t.Log("  Backward compatibility maintained")
+		t.Log("  Production stability verified")
 	})
 }

@@ -33,4 +33,4 @@ for i in $(seq 1 $STRESS_ITERATIONS); do
     sleep 2
 done
 
-echo -e "${GREEN}✅ All stress test iterations completed successfully${NC}"
+echo -e "${GREEN}[OK] All stress test iterations completed successfully${NC}"

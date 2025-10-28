@@ -374,7 +374,8 @@ func (t *ErasureCodingTask) generateEcShardsLocally(localFiles map[string]string
 	var generatedShards []string
 	var totalShardSize int64
 
-	for i := 0; i < erasure_coding.TotalShardsCount; i++ {
+	// Check up to MaxShardCount (32) to support custom EC ratios
+	for i := 0; i < erasure_coding.MaxShardCount; i++ {
 		shardFile := fmt.Sprintf("%s.ec%02d", baseName, i)
 		if info, err := os.Stat(shardFile); err == nil {
 			shardKey := fmt.Sprintf("ec%02d", i)

@@ -41,23 +41,23 @@ all: ## Run complete test suite (start -> produce -> test)
 # Development targets
 dev-start: ## Start services for development
 	@echo "Starting development environment..."
-	@docker-compose up -d seaweedfs postgres-server
+	@docker compose up -d seaweedfs postgres-server || (echo "=== Container startup failed, showing logs ===" && docker compose logs && exit 1)
 	@echo "Services started. Run 'make dev-logs' to watch logs."
 
 dev-logs: ## Follow logs for development
-	@docker-compose logs -f seaweedfs postgres-server
+	@docker compose logs -f seaweedfs postgres-server
 
 dev-rebuild: ## Rebuild and restart services
-	@docker-compose down
-	@docker-compose up -d --build seaweedfs postgres-server
+	@docker compose down
+	@docker compose up -d --build seaweedfs postgres-server
 
 # Individual service targets
 start-seaweedfs: ## Start only SeaweedFS
-	@docker-compose up -d seaweedfs
+	@docker compose up -d seaweedfs
 
 restart-postgres: ## Start only PostgreSQL server
-	@docker-compose down -d postgres-server
-	@docker-compose up -d --build seaweedfs postgres-server
+	@docker compose down -d postgres-server
+	@docker compose up -d --build seaweedfs postgres-server
 
 # Testing targets
 test-basic: ## Run basic connectivity test
@@ -65,16 +65,16 @@ test-basic: ## Run basic connectivity test
 		psql -h postgres-server -p 5432 -U seaweedfs -d default -c "SELECT version();"
 
 test-producer: ## Test data producer only
-	@docker-compose up --build mq-producer
+	@docker compose up --build mq-producer
 
 test-client: ## Test client only  
-	@docker-compose up --build postgres-client
+	@docker compose up --build postgres-client
 
 # Cleanup targets
 clean-images: ## Remove Docker images
-	@docker-compose down
+	@docker compose down
 	@docker image prune -f
 
 clean-all: ## Complete cleanup including images
-	@docker-compose down -v --rmi all
+	@docker compose down -v --rmi all
 	@docker system prune -f

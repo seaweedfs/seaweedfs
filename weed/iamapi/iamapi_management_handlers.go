@@ -322,14 +322,12 @@ func GetActions(policy *policy_engine.PolicyDocument) ([]string, error) {
 			// Parse "arn:aws:s3:::my-bucket/shared/*"
 			res := strings.Split(resource, ":")
 			if len(res) != 6 || res[0] != "arn" || res[1] != "aws" || res[2] != "s3" {
-				glog.Infof("not a valid resource: %s", res)
 				continue
 			}
 			for _, action := range statement.Action.Strings() {
 				// Parse "s3:Get*"
 				act := strings.Split(action, ":")
 				if len(act) != 2 || act[0] != "s3" {
-					glog.Infof("not a valid action: %s", act)
 					continue
 				}
 				statementAction := MapToStatementAction(act[1])

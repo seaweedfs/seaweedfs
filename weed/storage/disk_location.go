@@ -144,10 +144,26 @@ func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind Ne
 		return false
 	}
 
-	// skip if ec volumes exists
+	// parse out collection, volume id (moved up to use in EC validation)
+	vid, collection, err := volumeIdFromFileName(basename)
+	if err != nil {
+		glog.Warningf("get volume id failed, %s, err : %s", volumeName, err)
+		return false
+	}
+
+	// skip if ec volumes exists, but validate EC files first
 	if skipIfEcVolumesExists {
-		if util.FileExists(l.IdxDirectory + "/" + volumeName + ".ecx") {
-			return false
+		ecxFilePath := filepath.Join(l.IdxDirectory, volumeName+".ecx")
+		if util.FileExists(ecxFilePath) {
+			// Validate EC volume: shard count, size consistency, and expected size vs .dat file
+			if !l.validateEcVolume(collection, vid) {
+				glog.Warningf("EC volume %d validation failed, removing incomplete EC files to allow .dat file loading", vid)
+				l.removeEcVolumeFiles(collection, vid)
+				// Continue to load .dat file
+			} else {
+				// Valid EC volume exists, skip .dat file
+				return false
+			}
 		}
 	}
 
@@ -158,13 +174,6 @@ func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind Ne
 		glog.Warningf("volume %s was not completed: %s", volumeName, string(note))
 		removeVolumeFiles(l.Directory + "/" + volumeName)
 		removeVolumeFiles(l.IdxDirectory + "/" + volumeName)
-		return false
-	}
-
-	// parse out collection, volume id
-	vid, collection, err := volumeIdFromFileName(basename)
-	if err != nil {
-		glog.Warningf("get volume id failed, %s, err : %s", volumeName, err)
 		return false
 	}
 
@@ -384,6 +393,19 @@ func (l *DiskLocation) VolumesLen() int {
 	defer l.volumesLock.RUnlock()
 
 	return len(l.volumes)
+}
+
+func (l *DiskLocation) LocalVolumesLen() int {
+	l.volumesLock.RLock()
+	defer l.volumesLock.RUnlock()
+
+	count := 0
+	for _, v := range l.volumes {
+		if !v.HasRemoteFile() {
+			count++
+		}
+	}
+	return count
 }
 
 func (l *DiskLocation) SetStopping() {

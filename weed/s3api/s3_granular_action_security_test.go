@@ -127,7 +127,7 @@ func TestGranularActionMappingSecurity(t *testing.T) {
 				tt.name, tt.description, tt.problemWithOldMapping, tt.granularActionResult, result)
 
 			// Log the security improvement
-			t.Logf("✅ SECURITY IMPROVEMENT: %s", tt.description)
+			t.Logf("SECURITY IMPROVEMENT: %s", tt.description)
 			t.Logf("   Problem Fixed: %s", tt.problemWithOldMapping)
 			t.Logf("   Granular Action: %s", result)
 		})
@@ -197,7 +197,7 @@ func TestBackwardCompatibilityFallback(t *testing.T) {
 				"Backward Compatibility Test: %s\nDescription: %s\nExpected: %s, Got: %s",
 				tt.name, tt.description, tt.expectedResult, result)
 
-			t.Logf("✅ COMPATIBILITY: %s - %s", tt.description, result)
+			t.Logf("COMPATIBILITY: %s - %s", tt.description, result)
 		})
 	}
 }
