@@ -11,7 +11,7 @@ RUN apk add curl # for health checks
 
 # Create non-root user and group
 RUN addgroup -g 1000 seaweed && \
-    adduser -D -u 1000 -G seaweed seaweed
+    adduser -D -u 1000 -g seaweed seaweed
 
 # volume server grpc port
 EXPOSE 18080
