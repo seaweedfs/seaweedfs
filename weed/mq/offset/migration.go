@@ -118,17 +118,17 @@ func (m *MigrationManager) GetCurrentVersion() (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("failed to create migrations table: %w", err)
 	}
-	
+
 	var version sql.NullInt64
 	err = m.db.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get current version: %w", err)
 	}
-	
+
 	if !version.Valid {
 		return 0, nil // No migrations applied yet
 	}
-	
+
 	return int(version.Int64), nil
 }
 
@@ -138,29 +138,29 @@ func (m *MigrationManager) ApplyMigrations() error {
 	if err != nil {
 		return fmt.Errorf("failed to get current version: %w", err)
 	}
-	
+
 	migrations := GetMigrations()
-	
+
 	for _, migration := range migrations {
 		if migration.Version <= currentVersion {
 			continue // Already applied
 		}
-		
+
 		fmt.Printf("Applying migration %d: %s\n", migration.Version, migration.Description)
-		
+
 		// Begin transaction
 		tx, err := m.db.Begin()
 		if err != nil {
 			return fmt.Errorf("failed to begin transaction for migration %d: %w", migration.Version, err)
 		}
-		
+
 		// Execute migration SQL
 		_, err = tx.Exec(migration.SQL)
 		if err != nil {
 			tx.Rollback()
 			return fmt.Errorf("failed to execute migration %d: %w", migration.Version, err)
 		}
-		
+
 		// Record migration as applied
 		_, err = tx.Exec(
 			"INSERT INTO schema_migrations (version, description, applied_at) VALUES (?, ?, ?)",
@@ -172,16 +172,16 @@ func (m *MigrationManager) ApplyMigrations() error {
 			tx.Rollback()
 			return fmt.Errorf("failed to record migration %d: %w", migration.Version, err)
 		}
-		
+
 		// Commit transaction
 		err = tx.Commit()
 		if err != nil {
 			return fmt.Errorf("failed to commit migration %d: %w", migration.Version, err)
 		}
-		
+
 		fmt.Printf("Successfully applied migration %d\n", migration.Version)
 	}
-	
+
 	return nil
 }
 
@@ -203,7 +203,7 @@ func (m *MigrationManager) GetAppliedMigrations() ([]AppliedMigration, error) {
 		return nil, fmt.Errorf("failed to query applied migrations: %w", err)
 	}
 	defer rows.Close()
-	
+
 	var migrations []AppliedMigration
 	for rows.Next() {
 		var migration AppliedMigration
@@ -213,7 +213,7 @@ func (m *MigrationManager) GetAppliedMigrations() ([]AppliedMigration, error) {
 		}
 		migrations = append(migrations, migration)
 	}
-	
+
 	return migrations, nil
 }
 
@@ -223,17 +223,17 @@ func (m *MigrationManager) ValidateSchema() error {
 	if err != nil {
 		return fmt.Errorf("failed to get current version: %w", err)
 	}
-	
+
 	migrations := GetMigrations()
 	if len(migrations) == 0 {
 		return nil
 	}
-	
+
 	latestVersion := migrations[len(migrations)-1].Version
 	if currentVersion < latestVersion {
 		return fmt.Errorf("schema is outdated: current version %d, latest version %d", currentVersion, latestVersion)
 	}
-	
+
 	return nil
 }
 
@@ -253,21 +253,21 @@ func getCurrentTimestamp() int64 {
 func CreateDatabase(dbPath string) (*sql.DB, error) {
 	// TODO: Support different database types (PostgreSQL, MySQL, etc.)
 	// ASSUMPTION: Using SQLite for now, can be extended for other databases
-	
+
 	db, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
-	
+
 	// Configure SQLite for better performance
 	pragmas := []string{
-		"PRAGMA journal_mode=WAL",           // Write-Ahead Logging for better concurrency
-		"PRAGMA synchronous=NORMAL",         // Balance between safety and performance
-		"PRAGMA cache_size=10000",           // Increase cache size
-		"PRAGMA foreign_keys=ON",            // Enable foreign key constraints
-		"PRAGMA temp_store=MEMORY",          // Store temporary tables in memory
+		"PRAGMA journal_mode=WAL",   // Write-Ahead Logging for better concurrency
+		"PRAGMA synchronous=NORMAL", // Balance between safety and performance
+		"PRAGMA cache_size=10000",   // Increase cache size
+		"PRAGMA foreign_keys=ON",    // Enable foreign key constraints
+		"PRAGMA temp_store=MEMORY",  // Store temporary tables in memory
 	}
-	
+
 	for _, pragma := range pragmas {
 		_, err := db.Exec(pragma)
 		if err != nil {
@@ -275,7 +275,7 @@ func CreateDatabase(dbPath string) (*sql.DB, error) {
 			return nil, fmt.Errorf("failed to set pragma %s: %w", pragma, err)
 		}
 	}
-	
+
 	// Apply migrations
 	migrationManager := NewMigrationManager(db)
 	err = migrationManager.ApplyMigrations()
@@ -283,7 +283,7 @@ func CreateDatabase(dbPath string) (*sql.DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("failed to apply migrations: %w", err)
 	}
-	
+
 	return db, nil
 }
 

@@ -71,7 +71,7 @@ func ValidateSSES3Key(sseKey *SSES3Key) error {
 	if sseKey == nil {
 		return fmt.Errorf("SSE-S3 key cannot be nil")
 	}
-	
+
 	// Validate key bytes
 	if sseKey.Key == nil {
 		return fmt.Errorf("SSE-S3 key bytes cannot be nil")
@@ -79,22 +79,22 @@ func ValidateSSES3Key(sseKey *SSES3Key) error {
 	if len(sseKey.Key) != SSES3KeySize {
 		return fmt.Errorf("invalid SSE-S3 key size: expected %d bytes, got %d", SSES3KeySize, len(sseKey.Key))
 	}
-	
+
 	// Validate algorithm
 	if sseKey.Algorithm != SSES3Algorithm {
 		return fmt.Errorf("invalid SSE-S3 algorithm: expected %q, got %q", SSES3Algorithm, sseKey.Algorithm)
 	}
-	
+
 	// Validate key ID (should not be empty)
 	if sseKey.KeyID == "" {
 		return fmt.Errorf("SSE-S3 key ID cannot be empty")
 	}
-	
+
 	// IV validation is optional during key creation - it will be set during encryption
 	// If IV is set, validate its length
 	if len(sseKey.IV) > 0 && len(sseKey.IV) != s3_constants.AESBlockSize {
 		return fmt.Errorf("invalid SSE-S3 IV length: expected %d bytes, got %d", s3_constants.AESBlockSize, len(sseKey.IV))
 	}
-	
+
 	return nil
 }

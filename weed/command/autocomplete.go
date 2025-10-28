@@ -2,11 +2,11 @@ package command
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"github.com/posener/complete"
 	completeinstall "github.com/posener/complete/cmd/install"
 	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
+	"os"
+	"path/filepath"
 	"runtime"
 )
 
@@ -53,14 +53,14 @@ func printAutocompleteScript(shell string) bool {
 		return false
 	}
 
- 	switch shell {
- 	case "bash":
- 		fmt.Printf("complete -C %q weed\n", binPath)
- 	case "zsh":
- 		fmt.Printf("autoload -U +X bashcompinit && bashcompinit\n")
- 		fmt.Printf("complete -o nospace -C %q weed\n", binPath)
- 	case "fish":
- 		fmt.Printf(`function __complete_weed
+	switch shell {
+	case "bash":
+		fmt.Printf("complete -C %q weed\n", binPath)
+	case "zsh":
+		fmt.Printf("autoload -U +X bashcompinit && bashcompinit\n")
+		fmt.Printf("complete -o nospace -C %q weed\n", binPath)
+	case "fish":
+		fmt.Printf(`function __complete_weed
     set -lx COMP_LINE (commandline -cp)
     test -z (commandline -ct)
     and set COMP_LINE "$COMP_LINE "
@@ -68,10 +68,10 @@ func printAutocompleteScript(shell string) bool {
 end
 complete -f -c weed -a "(__complete_weed)"
 `, binPath)
- 	default:
- 		fmt.Fprintf(os.Stderr, "unsupported shell: %s. Supported shells: bash, zsh, fish\n", shell)
- 		return false
- 	}
+	default:
+		fmt.Fprintf(os.Stderr, "unsupported shell: %s. Supported shells: bash, zsh, fish\n", shell)
+		return false
+	}
 	return true
 }
 

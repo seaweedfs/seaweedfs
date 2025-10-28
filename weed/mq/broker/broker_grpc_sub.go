@@ -272,7 +272,6 @@ subscribeLoop:
 					TsNs:  logEntry.TsNs,
 				}
 
-
 				if err := stream.Send(&mq_pb.SubscribeMessageResponse{Message: &mq_pb.SubscribeMessageResponse_Data{
 					Data: dataMsg,
 				}}); err != nil {

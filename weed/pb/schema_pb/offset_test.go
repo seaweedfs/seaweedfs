@@ -1,8 +1,8 @@
 package schema_pb
 
 import (
-	"testing"
 	"google.golang.org/protobuf/proto"
+	"testing"
 )
 
 func TestOffsetTypeEnums(t *testing.T) {
@@ -34,8 +34,8 @@ func TestPartitionOffsetSerialization(t *testing.T) {
 			RangeStop:  31,
 			UnixTimeNs: 1234567890,
 		},
-		StartTsNs:    1234567890,
-		StartOffset:  42, // New field
+		StartTsNs:   1234567890,
+		StartOffset: 42, // New field
 	}
 
 	// Test proto marshaling/unmarshaling

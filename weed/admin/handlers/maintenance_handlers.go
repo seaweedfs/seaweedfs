@@ -46,7 +46,6 @@ func (h *MaintenanceHandlers) ShowTaskDetail(c *gin.Context) {
 		return
 	}
 
-
 	c.Header("Content-Type", "text/html")
 	taskDetailComponent := app.TaskDetail(taskDetail)
 	layoutComponent := layout.Layout(c, taskDetailComponent)

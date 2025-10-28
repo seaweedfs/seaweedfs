@@ -206,4 +206,3 @@ func TestMemoryStorageOverwrite(t *testing.T) {
 	assert.Equal(t, int64(20), offset)
 	assert.Equal(t, "meta2", metadata)
 }
-

@@ -17,5 +17,3 @@ const (
 	// Source file tracking for parquet deduplication
 	ExtendedAttrSources = "sources" // JSON-encoded list of source log files
 )
-
-

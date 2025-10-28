@@ -107,13 +107,13 @@ func (h *Handler) describeGroup(groupID string) DescribeGroupsGroup {
 	}
 
 	return DescribeGroupsGroup{
-		ErrorCode:      0,
-		GroupID:        groupID,
-		State:          stateStr,
-		ProtocolType:   "consumer", // Default protocol type
-		Protocol:       group.Protocol,
-		Members:        members,
-		AuthorizedOps:  []int32{}, // Empty for now
+		ErrorCode:     0,
+		GroupID:       groupID,
+		State:         stateStr,
+		ProtocolType:  "consumer", // Default protocol type
+		Protocol:      group.Protocol,
+		Members:       members,
+		AuthorizedOps: []int32{}, // Empty for now
 	}
 }
 
@@ -175,8 +175,8 @@ func (h *Handler) listAllGroups(statesFilter []string) []ListGroupsGroup {
 // Request/Response structures
 
 type DescribeGroupsRequest struct {
-	GroupIDs                 []string
-	IncludeAuthorizedOps     bool
+	GroupIDs             []string
+	IncludeAuthorizedOps bool
 }
 
 type DescribeGroupsResponse struct {

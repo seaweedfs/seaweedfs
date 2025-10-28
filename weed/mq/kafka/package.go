@@ -9,5 +9,3 @@ package kafka
 // - offset/: Offset management
 // - schema/: Schema registry integration
 // - consumer/: Consumer group coordination
-
-

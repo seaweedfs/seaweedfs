@@ -37,7 +37,6 @@ func (h *Handler) handleDescribeCluster(correlationID uint32, apiVersion uint16,
 	// Tagged fields at end of request
 	// (We don't parse them, just skip)
 
-
 	// Build response
 	response := make([]byte, 0, 256)
 
@@ -108,7 +107,6 @@ func (h *Handler) handleDescribeCluster(correlationID uint32, apiVersion uint16,
 
 	// Response-level tagged fields (flexible response)
 	response = append(response, 0x00) // Empty tagged fields
-
 
 	return response, nil
 }

@@ -1,8 +1,8 @@
 package mq_agent_pb
 
 import (
-	"testing"
 	"google.golang.org/protobuf/proto"
+	"testing"
 )
 
 func TestPublishRecordResponseSerialization(t *testing.T) {

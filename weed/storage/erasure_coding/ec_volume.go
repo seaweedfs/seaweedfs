@@ -74,12 +74,12 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 		ev.Version = needle.Version(volumeInfo.Version)
 		ev.datFileSize = volumeInfo.DatFileSize
 		ev.ExpireAtSec = volumeInfo.ExpireAtSec
-		
+
 		// Initialize EC context from .vif if present; fallback to defaults
 		if volumeInfo.EcShardConfig != nil {
 			ds := int(volumeInfo.EcShardConfig.DataShards)
 			ps := int(volumeInfo.EcShardConfig.ParityShards)
-			
+
 			// Validate shard counts to prevent zero or invalid values
 			if ds <= 0 || ps <= 0 || ds+ps > MaxShardCount {
 				glog.Warningf("Invalid EC config in VolumeInfo for volume %d (data=%d, parity=%d), using defaults", vid, ds, ps)

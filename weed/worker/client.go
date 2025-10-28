@@ -24,7 +24,7 @@ type GrpcAdminClient struct {
 	workerID     string
 	dialOption   grpc.DialOption
 
-	cmds      chan grpcCommand
+	cmds chan grpcCommand
 
 	// Reconnection parameters
 	maxReconnectAttempts int

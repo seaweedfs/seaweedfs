@@ -142,4 +142,3 @@ func (m *MemoryStorage) Close() error {
 
 	return nil
 }
-
