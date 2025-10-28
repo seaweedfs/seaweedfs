@@ -16,7 +16,9 @@ import (
 )
 
 var (
-	re = regexp.MustCompile(`\.ec[0-9][0-9]`)
+	// Match .ec00 through .ec999 (currently only .ec00-.ec31 are used)
+	// Using \d{2,3} for future-proofing if MaxShardCount is ever increased beyond 99
+	re = regexp.MustCompile(`\.ec\d{2,3}`)
 )
 
 func (l *DiskLocation) FindEcVolume(vid needle.VolumeId) (*erasure_coding.EcVolume, bool) {

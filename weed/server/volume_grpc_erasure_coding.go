@@ -103,11 +103,19 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 	datSize, _, _ := v.FileStat()
 	volumeInfo.DatFileSize = int64(datSize)
 
+	// Validate EC configuration before saving to .vif
+	if ecCtx.DataShards <= 0 || ecCtx.ParityShards <= 0 || ecCtx.Total() > erasure_coding.MaxShardCount {
+		return nil, fmt.Errorf("invalid EC config before saving: data=%d, parity=%d, total=%d (max=%d)",
+			ecCtx.DataShards, ecCtx.ParityShards, ecCtx.Total(), erasure_coding.MaxShardCount)
+	}
+
 	// Save EC configuration to VolumeInfo
 	volumeInfo.EcShardConfig = &volume_server_pb.EcShardConfig{
 		DataShards:   uint32(ecCtx.DataShards),
 		ParityShards: uint32(ecCtx.ParityShards),
 	}
+	glog.V(1).Infof("Saving EC config to .vif for volume %d: %d+%d (total: %d)",
+		req.VolumeId, ecCtx.DataShards, ecCtx.ParityShards, ecCtx.Total())
 
 	if err := volume_info.SaveVolumeInfo(baseFileName+".vif", volumeInfo); err != nil {
 		return nil, fmt.Errorf("SaveVolumeInfo %s: %v", baseFileName, err)
@@ -484,7 +492,7 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 	
 	// Defensive validation to prevent panics from corrupted ECContext
 	if dataShards <= 0 || dataShards > erasure_coding.MaxShardCount {
-		return nil, fmt.Errorf("invalid data shard count %d for volume %d", dataShards, req.VolumeId)
+		return nil, fmt.Errorf("invalid data shard count %d for volume %d (must be 1..%d)", dataShards, req.VolumeId, erasure_coding.MaxShardCount)
 	}
 	
 	shardFileNames := tempShards[:dataShards]

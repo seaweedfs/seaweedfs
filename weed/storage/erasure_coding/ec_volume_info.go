@@ -119,14 +119,23 @@ func (ecInfo *EcVolumeInfo) ToVolumeEcShardInformationMessage() (ret *master_pb.
 type ShardBits uint32 // use bits to indicate the shard id, use 32 bits just for possible future extension
 
 func (b ShardBits) AddShardId(id ShardId) ShardBits {
+	if id >= MaxShardCount {
+		return b // Reject out-of-range shard IDs
+	}
 	return b | (1 << id)
 }
 
 func (b ShardBits) RemoveShardId(id ShardId) ShardBits {
+	if id >= MaxShardCount {
+		return b // Reject out-of-range shard IDs
+	}
 	return b &^ (1 << id)
 }
 
 func (b ShardBits) HasShardId(id ShardId) bool {
+	if id >= MaxShardCount {
+		return false // Out-of-range shard IDs are never present
+	}
 	return b&(1<<id) > 0
 }
 
