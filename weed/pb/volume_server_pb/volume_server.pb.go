@@ -4434,16 +4434,18 @@ func (x *RemoteFile) GetExtension() string {
 }
 
 type VolumeInfo struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Files         []*RemoteFile          `protobuf:"bytes,1,rep,name=files,proto3" json:"files,omitempty"`
-	Version       uint32                 `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
-	Replication   string                 `protobuf:"bytes,3,opt,name=replication,proto3" json:"replication,omitempty"`
-	BytesOffset   uint32                 `protobuf:"varint,4,opt,name=bytes_offset,json=bytesOffset,proto3" json:"bytes_offset,omitempty"`
-	DatFileSize   int64                  `protobuf:"varint,5,opt,name=dat_file_size,json=datFileSize,proto3" json:"dat_file_size,omitempty"` // store the original dat file size
-	ExpireAtSec   uint64                 `protobuf:"varint,6,opt,name=expire_at_sec,json=expireAtSec,proto3" json:"expire_at_sec,omitempty"` // expiration time of ec volume
-	ReadOnly      bool                   `protobuf:"varint,7,opt,name=read_only,json=readOnly,proto3" json:"read_only,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Files             []*RemoteFile          `protobuf:"bytes,1,rep,name=files,proto3" json:"files,omitempty"`
+	Version           uint32                 `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
+	Replication       string                 `protobuf:"bytes,3,opt,name=replication,proto3" json:"replication,omitempty"`
+	BytesOffset       uint32                 `protobuf:"varint,4,opt,name=bytes_offset,json=bytesOffset,proto3" json:"bytes_offset,omitempty"`
+	DatFileSize       int64                  `protobuf:"varint,5,opt,name=dat_file_size,json=datFileSize,proto3" json:"dat_file_size,omitempty"` // store the original dat file size
+	ExpireAtSec       uint64                 `protobuf:"varint,6,opt,name=expire_at_sec,json=expireAtSec,proto3" json:"expire_at_sec,omitempty"` // expiration time of ec volume
+	ReadOnly          bool                   `protobuf:"varint,7,opt,name=read_only,json=readOnly,proto3" json:"read_only,omitempty"`
+	DataShardsCount   uint32                 `protobuf:"varint,8,opt,name=data_shards_count,json=dataShardsCount,proto3" json:"data_shards_count,omitempty"`       // EC data shards (0 = use default 10)
+	ParityShardsCount uint32                 `protobuf:"varint,9,opt,name=parity_shards_count,json=parityShardsCount,proto3" json:"parity_shards_count,omitempty"` // EC parity shards (0 = use default 4)
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *VolumeInfo) Reset() {
@@ -4523,6 +4525,20 @@ func (x *VolumeInfo) GetReadOnly() bool {
 		return x.ReadOnly
 	}
 	return false
+}
+
+func (x *VolumeInfo) GetDataShardsCount() uint32 {
+	if x != nil {
+		return x.DataShardsCount
+	}
+	return 0
+}
+
+func (x *VolumeInfo) GetParityShardsCount() uint32 {
+	if x != nil {
+		return x.ParityShardsCount
+	}
+	return 0
 }
 
 type OldVersionVolumeInfo struct {
@@ -6423,7 +6439,7 @@ const file_volume_server_proto_rawDesc = "" +
 	"\x06offset\x18\x04 \x01(\x04R\x06offset\x12\x1b\n" +
 	"\tfile_size\x18\x05 \x01(\x04R\bfileSize\x12#\n" +
 	"\rmodified_time\x18\x06 \x01(\x04R\fmodifiedTime\x12\x1c\n" +
-	"\textension\x18\a \x01(\tR\textension\"\x84\x02\n" +
+	"\textension\x18\a \x01(\tR\textension\"\xe0\x02\n" +
 	"\n" +
 	"VolumeInfo\x122\n" +
 	"\x05files\x18\x01 \x03(\v2\x1c.volume_server_pb.RemoteFileR\x05files\x12\x18\n" +
@@ -6432,7 +6448,9 @@ const file_volume_server_proto_rawDesc = "" +
 	"\fbytes_offset\x18\x04 \x01(\rR\vbytesOffset\x12\"\n" +
 	"\rdat_file_size\x18\x05 \x01(\x03R\vdatFileSize\x12\"\n" +
 	"\rexpire_at_sec\x18\x06 \x01(\x04R\vexpireAtSec\x12\x1b\n" +
-	"\tread_only\x18\a \x01(\bR\breadOnly\"\x8b\x02\n" +
+	"\tread_only\x18\a \x01(\bR\breadOnly\x12*\n" +
+	"\x11data_shards_count\x18\b \x01(\rR\x0fdataShardsCount\x12.\n" +
+	"\x13parity_shards_count\x18\t \x01(\rR\x11parityShardsCount\"\x8b\x02\n" +
 	"\x14OldVersionVolumeInfo\x122\n" +
 	"\x05files\x18\x01 \x03(\v2\x1c.volume_server_pb.RemoteFileR\x05files\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\rR\aversion\x12 \n" +
