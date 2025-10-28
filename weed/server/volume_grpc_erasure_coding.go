@@ -481,6 +481,12 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 
 	// Use EC context (already loaded from .vif) to determine data shard count
 	dataShards := v.ECContext.DataShards
+	
+	// Defensive validation to prevent panics from corrupted ECContext
+	if dataShards <= 0 || dataShards > erasure_coding.MaxShardCount {
+		return nil, fmt.Errorf("invalid data shard count %d for volume %d", dataShards, req.VolumeId)
+	}
+	
 	shardFileNames := tempShards[:dataShards]
 	glog.V(1).Infof("Using EC config from volume %d: %d data shards", req.VolumeId, dataShards)
 
