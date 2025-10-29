@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/streaming"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
@@ -21,11 +20,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/replication/sink"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-)
-
-const (
-	// azureOpTimeout is the timeout for individual Azure blob operations
-	azureOpTimeout = 30 * time.Second
 )
 
 type AzureSink struct {
@@ -135,7 +129,7 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []
 	appendBlobClient := g.client.ServiceClient().NewContainerClient(g.container).NewAppendBlobClient(key)
 
 	// Try to create the blob first (without access conditions for initial creation)
-	ctxCreate, cancelCreate := context.WithTimeout(context.Background(), azureOpTimeout)
+	ctxCreate, cancelCreate := context.WithTimeout(context.Background(), azure.DefaultAzureOpTimeout)
 	_, err := appendBlobClient.Create(ctxCreate, nil)
 	cancelCreate()
 
@@ -181,7 +175,7 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []
 func (g *AzureSink) handleExistingBlob(appendBlobClient *appendblob.Client, key string, entry *filer_pb.Entry, totalSize uint64) (needsWrite bool, err error) {
 	// Get the blob's properties to decide whether to overwrite.
 	// Use a timeout to fail fast on network issues.
-	ctxProps, cancelProps := context.WithTimeout(context.Background(), azureOpTimeout)
+	ctxProps, cancelProps := context.WithTimeout(context.Background(), azure.DefaultAzureOpTimeout)
 	props, propErr := appendBlobClient.GetProperties(ctxProps, nil)
 	cancelProps()
 
@@ -218,7 +212,7 @@ func (g *AzureSink) handleExistingBlob(appendBlobClient *appendblob.Client, key 
 	}
 
 	// Delete existing blob with conditional delete and timeout.
-	ctxDel, cancelDel := context.WithTimeout(context.Background(), azureOpTimeout)
+	ctxDel, cancelDel := context.WithTimeout(context.Background(), azure.DefaultAzureOpTimeout)
 	_, delErr := appendBlobClient.Delete(ctxDel, deleteOpts)
 	cancelDel()
 
@@ -235,7 +229,7 @@ func (g *AzureSink) handleExistingBlob(appendBlobClient *appendblob.Client, key 
 	}
 
 	// Recreate the blob with timeout.
-	ctxRecreate, cancelRecreate := context.WithTimeout(context.Background(), azureOpTimeout)
+	ctxRecreate, cancelRecreate := context.WithTimeout(context.Background(), azure.DefaultAzureOpTimeout)
 	_, createErr := appendBlobClient.Create(ctxRecreate, nil)
 	cancelRecreate()
 

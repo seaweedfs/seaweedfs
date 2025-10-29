@@ -28,12 +28,21 @@ import (
 const (
 	defaultBlockSize   = 4 * 1024 * 1024
 	defaultConcurrency = 16
+
+	// DefaultAzureOpTimeout is the timeout for individual Azure blob operations.
+	// This should be larger than the maximum time the Azure SDK client will spend
+	// retrying (MaxRetries=3 × TryTimeout=10s + retry delays ≈ 33s), so we use 60s
+	// to provide a reasonable buffer while still failing faster than indefinite hangs.
+	DefaultAzureOpTimeout = 60 * time.Second
 )
 
 // DefaultAzBlobClientOptions returns the default Azure blob client options
 // with consistent retry configuration across the application.
 // This centralizes the retry policy to ensure uniform behavior between
 // remote storage and replication sink implementations.
+//
+// Related: Use DefaultAzureOpTimeout for context.WithTimeout when calling Azure operations
+// to ensure the timeout accommodates all retry attempts configured here.
 func DefaultAzBlobClientOptions() *azblob.ClientOptions {
 	return &azblob.ClientOptions{
 		ClientOptions: azcore.ClientOptions{
