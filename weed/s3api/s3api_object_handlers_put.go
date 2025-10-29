@@ -1085,7 +1085,8 @@ func (s3a *S3ApiServer) getObjectETag(entry *filer_pb.Entry) string {
 	if etagBytes, hasETag := entry.Extended[s3_constants.ExtETagKey]; hasETag {
 		return string(etagBytes)
 	}
-	if entry.Attributes.Md5 != nil {
+	// Check for Md5 in Attributes (matches filer.ETag behavior)
+	if entry.Attributes != nil && entry.Attributes.Md5 != nil && len(entry.Attributes.Md5) > 0 {
 		return fmt.Sprintf("\"%x\"", entry.Attributes.Md5)
 	}
 	// Fallback: calculate ETag from chunks
