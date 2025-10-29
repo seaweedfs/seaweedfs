@@ -210,6 +210,7 @@ func (g *AzureSink) handleExistingBlob(appendBlobClient *appendblob.Client, key 
 	}
 
 	deleteOpts := &blob.DeleteOptions{
+		DeleteSnapshots: to.Ptr(blob.DeleteSnapshotsOptionTypeInclude),
 		AccessConditions: &blob.AccessConditions{
 			ModifiedAccessConditions: &blob.ModifiedAccessConditions{
 				IfMatch: props.ETag,
