@@ -55,13 +55,13 @@ func (h retryHeap) Swap(i, j int) {
 	h[j].heapIndex = j
 }
 
-func (h *retryHeap) Push(x interface{}) {
+func (h *retryHeap) Push(x any) {
 	item := x.(*DeletionRetryItem)
 	item.heapIndex = len(*h)
 	*h = append(*h, item)
 }
 
-func (h *retryHeap) Pop() interface{} {
+func (h *retryHeap) Pop() any {
 	old := *h
 	n := len(old)
 	item := old[n-1]
@@ -269,14 +269,33 @@ func (f *Filer) loopProcessingDeletion() {
 	}
 }
 
-// isRetryableError determines if an error is retryable
+// isRetryableError determines if an error is retryable based on its message.
+//
+// Current implementation uses string matching which is brittle and may break
+// if error messages change in dependencies. This is acceptable for the initial
+// implementation but should be improved in the future.
+//
+// TODO: Consider these improvements for more robust error handling:
+//  - Pass DeleteResult instead of just error string to access Status codes
+//  - Use HTTP status codes (503 Service Unavailable, 429 Too Many Requests, etc.)
+//  - Implement structured error types that can be checked with errors.Is/errors.As
+//  - Extract and check gRPC status codes for better classification
+//  - Add error wrapping in the deletion pipeline to preserve error context
+//
+// For now, we use conservative string matching for known transient error patterns.
 func isRetryableError(errorMsg string) bool {
-	// Errors that indicate temporary conditions
+	// Empty errors are not retryable
+	if errorMsg == "" {
+		return false
+	}
+
+	// Known patterns that indicate temporary/transient conditions.
+	// These are based on actual error messages from the deletion pipeline.
 	retryablePatterns := []string{
-		"is read only",
-		"error reading from server",
-		"connection reset by peer",
-		"closed network connection",
+		"is read only",              // Volume temporarily read-only (tiering, maintenance)
+		"error reading from server", // Network I/O errors
+		"connection reset by peer",  // Network connection issues
+		"closed network connection", // Network connection closed unexpectedly
 	}
 
 	errorLower := strings.ToLower(errorMsg)
