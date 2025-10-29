@@ -45,22 +45,25 @@ func (s3a *S3ApiServer) createFallbackCORSConfig() *cors.CORSConfiguration {
 		return nil
 	}
 
+	// Default methods and headers for the fallback configuration
+	fallbackAllowedMethods := []string{"GET", "PUT", "POST", "DELETE", "HEAD"}
+	fallbackExposeHeaders := []string{
+		"ETag",
+		"Content-Length",
+		"Content-Type",
+		"Last-Modified",
+		"x-amz-request-id",
+		"x-amz-version-id",
+	}
+
 	// Create a permissive CORS rule based on global allowed origins
 	// This matches the behavior of handleCORSOriginValidation
 	rule := cors.CORSRule{
 		AllowedOrigins: s3a.option.AllowedOrigins,
-		AllowedMethods: []string{"GET", "PUT", "POST", "DELETE", "HEAD"},
+		AllowedMethods: fallbackAllowedMethods,
 		AllowedHeaders: []string{"*"},
-		// Expose common S3 headers that web applications typically need
-		ExposeHeaders: []string{
-			"ETag",
-			"Content-Length",
-			"Content-Type",
-			"Last-Modified",
-			"x-amz-request-id",
-			"x-amz-version-id",
-		},
-		MaxAgeSeconds: nil, // No max age by default
+		ExposeHeaders:  fallbackExposeHeaders,
+		MaxAgeSeconds:  nil, // No max age by default
 	}
 
 	return &cors.CORSConfiguration{
