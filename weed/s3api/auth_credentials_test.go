@@ -362,6 +362,52 @@ func TestNewIdentityAccessManagementWithStoreEnvVars(t *testing.T) {
 	}
 }
 
+// TestConfigFileWithNoIdentitiesAllowsEnvVars tests that when a config file exists
+// but contains no identities (e.g., only KMS settings), environment variables should still work.
+// This test validates the fix for issue #7311.
+func TestConfigFileWithNoIdentitiesAllowsEnvVars(t *testing.T) {
+	// Set environment variables
+	testAccessKey := "AKIATEST1234567890AB"
+	testSecretKey := "testSecret1234567890123456789012345678901234"
+	t.Setenv("AWS_ACCESS_KEY_ID", testAccessKey)
+	t.Setenv("AWS_SECRET_ACCESS_KEY", testSecretKey)
+
+	// Create a temporary config file with only KMS settings (no identities)
+	configContent := `{
+  "kms": {
+    "default": {
+      "provider": "local",
+      "config": {
+        "keyPath": "/tmp/test-key"
+      }
+    }
+  }
+}`
+	tmpFile, err := os.CreateTemp("", "s3-config-*.json")
+	assert.NoError(t, err, "Should create temp config file")
+	defer os.Remove(tmpFile.Name())
+
+	_, err = tmpFile.Write([]byte(configContent))
+	assert.NoError(t, err, "Should write config content")
+	tmpFile.Close()
+
+	// Create IAM instance with config file that has no identities
+	option := &S3ApiServerOption{
+		Config: tmpFile.Name(),
+	}
+	iam := NewIdentityAccessManagementWithStore(option, string(credential.StoreTypeMemory))
+
+	// Should have exactly one identity from environment variables
+	assert.Len(t, iam.identities, 1, "Should have exactly one identity from environment variables even when config file exists with no identities")
+
+	identity := iam.identities[0]
+	assert.Equal(t, "admin-AKIATEST", identity.Name, "Identity name should be based on access key")
+	assert.Len(t, identity.Credentials, 1, "Should have one credential")
+	assert.Equal(t, testAccessKey, identity.Credentials[0].AccessKey, "Access key should match environment variable")
+	assert.Equal(t, testSecretKey, identity.Credentials[0].SecretKey, "Secret key should match environment variable")
+	assert.Contains(t, identity.Actions, Action(ACTION_ADMIN), "Should have admin action")
+}
+
 // TestBucketLevelListPermissions tests that bucket-level List permissions work correctly
 // This test validates the fix for issue #7066
 func TestBucketLevelListPermissions(t *testing.T) {
