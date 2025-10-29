@@ -63,6 +63,7 @@ var (
 	serverRack                = cmdServer.Flag.String("rack", "", "current volume server's rack name")
 	serverWhiteListOption     = cmdServer.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
 	serverDisableHttp         = cmdServer.Flag.Bool("disableHttp", false, "disable http requests, only gRPC operations are allowed.")
+	serverIamConfig           = cmdServer.Flag.String("iam.config", "", "path to the advanced IAM config file for S3. An alias for -s3.iam.config, but with lower priority.")
 	volumeDataFolders         = cmdServer.Flag.String("dir", os.TempDir(), "directories to store data files. dir[,dir]...")
 	volumeMaxDataVolumeCounts = cmdServer.Flag.String("volume.max", "8", "maximum numbers of volumes, count[,count]... If set to zero, the limit will be auto configured as free disk space divided by volume size.")
 	volumeMinFreeSpacePercent = cmdServer.Flag.String("volume.minFreeSpacePercent", "1", "minimum free disk space (default to 1%). Low disk space will mark all volumes as ReadOnly (deprecated, use minFreeSpace instead).")
@@ -160,6 +161,7 @@ func init() {
 	s3Options.tlsCACertificate = cmdServer.Flag.String("s3.cacert.file", "", "path to the TLS CA certificate file")
 	s3Options.tlsVerifyClientCert = cmdServer.Flag.Bool("s3.tlsVerifyClientCert", false, "whether to verify the client's certificate")
 	s3Options.config = cmdServer.Flag.String("s3.config", "", "path to the config file")
+	s3Options.iamConfig = cmdServer.Flag.String("s3.iam.config", "", "path to the advanced IAM config file for S3. Overrides -iam.config if both are provided.")
 	s3Options.auditLogConfig = cmdServer.Flag.String("s3.auditLogConfig", "", "path to the audit log config file")
 	s3Options.allowEmptyFolder = cmdServer.Flag.Bool("s3.allowEmptyFolder", true, "allow empty folders")
 	s3Options.allowDeleteBucketNotEmpty = cmdServer.Flag.Bool("s3.allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
@@ -321,6 +323,12 @@ func runServer(cmd *Command, args []string) bool {
 	}
 
 	if *isStartingS3 {
+		// Handle IAM config: -s3.iam.config takes precedence over -iam.config
+		if *s3Options.iamConfig == "" {
+			*s3Options.iamConfig = *serverIamConfig
+		} else if *serverIamConfig != "" && *s3Options.iamConfig != *serverIamConfig {
+			glog.V(0).Infof("both -s3.iam.config(%s) and -iam.config(%s) provided; using -s3.iam.config", *s3Options.iamConfig, *serverIamConfig)
+		}
 		go func() {
 			time.Sleep(2 * time.Second)
 			s3Options.localFilerSocket = filerOptions.localSocket
