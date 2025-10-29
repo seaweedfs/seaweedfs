@@ -35,6 +35,27 @@ const (
 	DeletionPollInterval = 1123 * time.Millisecond
 )
 
+// retryablePatterns contains error message patterns that indicate temporary/transient conditions
+// that should be retried. These patterns are based on actual error messages from the deletion pipeline.
+var retryablePatterns = []string{
+	"is read only",              // Volume temporarily read-only (tiering, maintenance)
+	"error reading from server", // Network I/O errors
+	"connection reset by peer",  // Network connection issues
+	"closed network connection", // Network connection closed unexpectedly
+	"connection refused",        // Server temporarily unavailable
+	"timeout",                   // Operation timeout (network or server)
+	"deadline exceeded",         // Context deadline exceeded
+	"context canceled",          // Context cancellation (may be transient)
+	"lookup error",              // Volume lookup failures
+	"lookup failed",             // Volume server discovery issues
+	"too many requests",         // Rate limiting / backpressure
+	"service unavailable",       // HTTP 503 errors
+	"temporarily unavailable",   // Temporary service issues
+	"try again",                 // Explicit retry suggestion
+	"i/o timeout",               // Network I/O timeout
+	"broken pipe",               // Connection broken during operation
+}
+
 // DeletionRetryItem represents a file deletion that failed and needs to be retried
 type DeletionRetryItem struct {
 	FileId      string
@@ -116,17 +137,20 @@ func NewDeletionRetryQueue() *DeletionRetryQueue {
 // Includes overflow protection and caps at MaxRetryDelay.
 func calculateBackoff(retryCount int) time.Duration {
 	// The first retry is attempt 1, but shift should start at 0
-	shiftAmount := uint(retryCount - 1)
-	if shiftAmount > 63 {
-		// Prevent overflow: use max delay directly
-		return MaxRetryDelay
+	if retryCount <= 1 {
+		return InitialRetryDelay
 	}
 
-	delay := InitialRetryDelay * time.Duration(1<<shiftAmount)
+	shiftAmount := uint(retryCount - 1)
 
-	// Additional safety check for overflow: if delay wrapped around to negative or zero
+	// time.Duration is an int64. A left shift of 63 or more will result in a
+	// negative number or zero. The multiplication can also overflow much earlier
+	// (around a shift of 25 for a 5-minute initial delay).
+	// The `delay <= 0` check below correctly catches all these overflow cases.
+	delay := InitialRetryDelay << shiftAmount
+
 	if delay <= 0 || delay > MaxRetryDelay {
-		delay = MaxRetryDelay
+		return MaxRetryDelay
 	}
 
 	return delay
@@ -354,27 +378,6 @@ func isRetryableError(errorMsg string) bool {
 	// Empty errors are not retryable
 	if errorMsg == "" {
 		return false
-	}
-
-	// Known patterns that indicate temporary/transient conditions.
-	// These are based on actual error messages from the deletion pipeline.
-	retryablePatterns := []string{
-		"is read only",              // Volume temporarily read-only (tiering, maintenance)
-		"error reading from server", // Network I/O errors
-		"connection reset by peer",  // Network connection issues
-		"closed network connection", // Network connection closed unexpectedly
-		"connection refused",        // Server temporarily unavailable
-		"timeout",                   // Operation timeout (network or server)
-		"deadline exceeded",         // Context deadline exceeded
-		"context canceled",          // Context cancellation (may be transient)
-		"lookup error",              // Volume lookup failures
-		"lookup failed",             // Volume server discovery issues
-		"too many requests",         // Rate limiting / backpressure
-		"service unavailable",       // HTTP 503 errors
-		"temporarily unavailable",   // Temporary service issues
-		"try again",                 // Explicit retry suggestion
-		"i/o timeout",               // Network I/O timeout
-		"broken pipe",               // Connection broken during operation
 	}
 
 	errorLower := strings.ToLower(errorMsg)

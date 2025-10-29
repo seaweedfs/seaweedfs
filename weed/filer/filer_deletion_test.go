@@ -95,7 +95,7 @@ func TestDeletionRetryQueue_OverflowProtection(t *testing.T) {
 	// Should not panic and should cap at MaxRetryDelay
 	queue.RequeueForRetry(item, "error")
 
-	delay := item.NextRetryAt.Sub(time.Now())
+	delay := time.Until(item.NextRetryAt)
 	if delay > MaxRetryDelay+time.Second {
 		t.Errorf("Delay exceeded MaxRetryDelay: %v > %v", delay, MaxRetryDelay)
 	}
@@ -218,11 +218,13 @@ func TestDeletionRetryQueue_HeapOrdering(t *testing.T) {
 	}
 	queue.lock.Unlock()
 
-	// Set all items to ready
+	// Set all items to ready while preserving their relative order
 	queue.lock.Lock()
 	for _, item := range queue.itemIndex {
-		item.NextRetryAt = now.Add(-1 * time.Second)
+		// Shift all times back by 40 seconds to make them ready, but preserve order
+		item.NextRetryAt = item.NextRetryAt.Add(-40 * time.Second)
 	}
+	heap.Init(&queue.heap) // Re-establish heap property after modification
 	queue.lock.Unlock()
 
 	// GetReadyItems should return in NextRetryAt order
