@@ -104,6 +104,28 @@ func NewDeletionRetryQueue() *DeletionRetryQueue {
 	return q
 }
 
+// calculateBackoff calculates the exponential backoff delay for a given retry count.
+// Uses exponential backoff formula: InitialRetryDelay * 2^(retryCount-1)
+// The first retry (retryCount=1) uses InitialRetryDelay, second uses 2x, third uses 4x, etc.
+// Includes overflow protection and caps at MaxRetryDelay.
+func calculateBackoff(retryCount int) time.Duration {
+	// The first retry is attempt 1, but shift should start at 0
+	shiftAmount := uint(retryCount - 1)
+	if shiftAmount > 63 {
+		// Prevent overflow: use max delay directly
+		return MaxRetryDelay
+	}
+	
+	delay := InitialRetryDelay * time.Duration(1<<shiftAmount)
+	
+	// Additional safety check for overflow: if delay wrapped around to negative or zero
+	if delay <= 0 || delay > MaxRetryDelay {
+		delay = MaxRetryDelay
+	}
+	
+	return delay
+}
+
 // AddOrUpdate adds a new failed deletion or updates an existing one
 // Time complexity: O(log N) for insertion/update
 func (q *DeletionRetryQueue) AddOrUpdate(fileId string, errorMsg string) {
@@ -114,19 +136,7 @@ func (q *DeletionRetryQueue) AddOrUpdate(fileId string, errorMsg string) {
 	if item, exists := q.itemIndex[fileId]; exists {
 		item.RetryCount++
 		item.LastError = errorMsg
-		// Calculate next retry time with exponential backoff with overflow protection
-		shiftAmount := uint(item.RetryCount - 1)
-		var delay time.Duration
-		if shiftAmount > 63 {
-			// Prevent overflow: use max delay directly
-			delay = MaxRetryDelay
-		} else {
-			delay = InitialRetryDelay * time.Duration(1<<shiftAmount)
-			// Additional safety check for overflow
-			if delay <= 0 || delay > MaxRetryDelay {
-				delay = MaxRetryDelay
-			}
-		}
+		delay := calculateBackoff(item.RetryCount)
 		item.NextRetryAt = time.Now().Add(delay)
 		// Re-heapify since NextRetryAt changed
 		heap.Fix(&q.heap, item.heapIndex)
@@ -159,21 +169,9 @@ func (q *DeletionRetryQueue) RequeueForRetry(item *DeletionRetryItem, errorMsg s
 	item.LastError = errorMsg
 
 	// Calculate next retry time with exponential backoff
-	// Check for potential overflow in the shift operation
-	shiftAmount := uint(item.RetryCount - 1)
-	if shiftAmount > 63 {
-		// Prevent overflow: use max delay directly
-		item.NextRetryAt = time.Now().Add(MaxRetryDelay)
-		glog.V(2).Infof("requeued retry for %s: attempt %d (capped at max delay)", item.FileId, item.RetryCount)
-	} else {
-		delay := InitialRetryDelay * time.Duration(1<<shiftAmount)
-		// Additional safety check for overflow: if delay wrapped around to negative or zero
-		if delay <= 0 || delay > MaxRetryDelay {
-			delay = MaxRetryDelay
-		}
-		item.NextRetryAt = time.Now().Add(delay)
-		glog.V(2).Infof("requeued retry for %s: attempt %d, next retry in %v", item.FileId, item.RetryCount, delay)
-	}
+	delay := calculateBackoff(item.RetryCount)
+	item.NextRetryAt = time.Now().Add(delay)
+	glog.V(2).Infof("requeued retry for %s: attempt %d, next retry in %v", item.FileId, item.RetryCount, delay)
 
 	// Re-add to heap and index
 	heap.Push(&q.heap, item)

@@ -130,6 +130,31 @@ func TestDeletionRetryQueue_MaxAttemptsReached(t *testing.T) {
 	}
 }
 
+func TestCalculateBackoff(t *testing.T) {
+	testCases := []struct {
+		retryCount    int
+		expectedDelay time.Duration
+		description   string
+	}{
+		{1, InitialRetryDelay, "first retry"},
+		{2, InitialRetryDelay * 2, "second retry"},
+		{3, InitialRetryDelay * 4, "third retry"},
+		{4, InitialRetryDelay * 8, "fourth retry"},
+		{5, InitialRetryDelay * 16, "fifth retry"},
+		{10, MaxRetryDelay, "capped at max delay"},
+		{65, MaxRetryDelay, "overflow protection (shift > 63)"},
+		{100, MaxRetryDelay, "very high retry count"},
+	}
+
+	for _, tc := range testCases {
+		result := calculateBackoff(tc.retryCount)
+		if result != tc.expectedDelay {
+			t.Errorf("%s (retry %d): expected %v, got %v",
+				tc.description, tc.retryCount, tc.expectedDelay, result)
+		}
+	}
+}
+
 func TestIsRetryableError(t *testing.T) {
 	testCases := []struct {
 		error      string
