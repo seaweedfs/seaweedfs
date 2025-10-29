@@ -477,10 +477,10 @@ func loadIAMManagerFromConfig(configPath string, filerAddressProvider func() str
 	if configRoot.Policy == nil {
 		// Provide a secure default if not specified in the config file
 		// Default to Deny with in-memory store so that JSON-defined policies work without filer
-		glog.V(0).Infof("No policy engine config provided; using defaults (DefaultEffect=Deny, StoreType=memory)")
+		glog.V(0).Infof("No policy engine config provided; using defaults (DefaultEffect=%s, StoreType=%s)", sts.EffectDeny, sts.StoreTypeMemory)
 		configRoot.Policy = &policy.PolicyEngineConfig{
-			DefaultEffect: "Deny",
-			StoreType:     "memory",
+			DefaultEffect: sts.EffectDeny,
+			StoreType:     sts.StoreTypeMemory,
 		}
 	}
 
@@ -489,7 +489,7 @@ func loadIAMManagerFromConfig(configPath string, filerAddressProvider func() str
 		STS:    configRoot.STS,
 		Policy: configRoot.Policy,
 		Roles: &integration.RoleStoreConfig{
-			StoreType: "memory", // Use memory store for JSON config-based setup
+			StoreType: sts.StoreTypeMemory, // Use memory store for JSON config-based setup
 		},
 	}
 
