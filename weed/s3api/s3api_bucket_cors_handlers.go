@@ -10,6 +10,19 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
+// Default CORS configuration for global fallback
+var (
+	defaultFallbackAllowedMethods = []string{"GET", "PUT", "POST", "DELETE", "HEAD"}
+	defaultFallbackExposeHeaders  = []string{
+		"ETag",
+		"Content-Length",
+		"Content-Type",
+		"Last-Modified",
+		"x-amz-request-id",
+		"x-amz-version-id",
+	}
+)
+
 // S3BucketChecker implements cors.BucketChecker interface
 type S3BucketChecker struct {
 	server *S3ApiServer
@@ -45,24 +58,13 @@ func (s3a *S3ApiServer) createFallbackCORSConfig() *cors.CORSConfiguration {
 		return nil
 	}
 
-	// Default methods and headers for the fallback configuration
-	fallbackAllowedMethods := []string{"GET", "PUT", "POST", "DELETE", "HEAD"}
-	fallbackExposeHeaders := []string{
-		"ETag",
-		"Content-Length",
-		"Content-Type",
-		"Last-Modified",
-		"x-amz-request-id",
-		"x-amz-version-id",
-	}
-
 	// Create a permissive CORS rule based on global allowed origins
 	// This matches the behavior of handleCORSOriginValidation
 	rule := cors.CORSRule{
 		AllowedOrigins: s3a.option.AllowedOrigins,
-		AllowedMethods: fallbackAllowedMethods,
+		AllowedMethods: defaultFallbackAllowedMethods,
 		AllowedHeaders: []string{"*"},
-		ExposeHeaders:  fallbackExposeHeaders,
+		ExposeHeaders:  defaultFallbackExposeHeaders,
 		MaxAgeSeconds:  nil, // No max age by default
 	}
 

@@ -43,15 +43,15 @@ func (m *Middleware) getCORSConfig(bucket string) (*CORSConfiguration, bool) {
 
 	switch errCode {
 	case s3err.ErrNone:
-		// Found a config, use it
 		if config != nil {
+			// Found a bucket-specific config, use it.
 			return config, true
 		}
-		// ErrNone with nil config means no bucket-level config, fall through to fallback
+		// No bucket config, proceed to fallback.
 	case s3err.ErrNoSuchCORSConfiguration:
-		// Explicitly no CORS config, fall through to fallback
+		// No bucket config, proceed to fallback.
 	default:
-		// Real error (access denied, network failure, etc.) - do not fall back
+		// Any other error means we should not proceed.
 		return nil, false
 	}
 
