@@ -31,8 +31,9 @@ const (
 
 	// DefaultAzureOpTimeout is the timeout for individual Azure blob operations.
 	// This should be larger than the maximum time the Azure SDK client will spend
-	// retrying (MaxRetries=3 × TryTimeout=10s + retry delays ≈ 33s), so we use 60s
-	// to provide a reasonable buffer while still failing faster than indefinite hangs.
+	// retrying. With MaxRetries=3 (4 total attempts) and TryTimeout=10s, the maximum
+	// time is roughly 4*10s + delays(~7s) = 47s. We use 60s to provide a reasonable
+	// buffer while still failing faster than indefinite hangs.
 	DefaultAzureOpTimeout = 60 * time.Second
 )
 
