@@ -591,44 +591,60 @@ func extractSignedHeaders(signedHeaders []string, r *http.Request) (http.Header,
 
 // extractHostHeader returns the value of host header if available.
 func extractHostHeader(r *http.Request) string {
-	// Check for X-Forwarded-Host header first, which is set by reverse proxies
-	if forwardedHost := r.Header.Get("X-Forwarded-Host"); forwardedHost != "" {
-		// Check if X-Forwarded-Host already contains a port
-		// This handles proxies (like Traefik, HAProxy) that include port in X-Forwarded-Host
-		if _, _, err := net.SplitHostPort(forwardedHost); err == nil {
-			// X-Forwarded-Host already contains a port (e.g., "example.com:8443" or "[::1]:8080")
-			// Use it as-is
-			return forwardedHost
-		}
+	forwardedHost := r.Header.Get("X-Forwarded-Host")
+	forwardedPort := r.Header.Get("X-Forwarded-Port")
+	forwardedProto := r.Header.Get("X-Forwarded-Proto")
 
-		// An IPv6 address literal must be enclosed in square brackets.
-		if ip := net.ParseIP(forwardedHost); ip != nil && strings.Contains(forwardedHost, ":") {
-			forwardedHost = "[" + forwardedHost + "]"
-		}
-
-		// X-Forwarded-Host doesn't contain a port, check if X-Forwarded-Port is provided
-		if forwardedPort := r.Header.Get("X-Forwarded-Port"); forwardedPort != "" {
-			// Determine the protocol to check for standard ports
-			proto := strings.ToLower(r.Header.Get("X-Forwarded-Proto"))
-			// Only add port if it's not the standard port for the protocol
-			if (proto == "https" && forwardedPort != "443") || (proto != "https" && forwardedPort != "80") {
-				return forwardedHost + ":" + forwardedPort
+	// If X-Forwarded-Host is set, use that as the host.
+	// If X-Forwarded-Port is set, use that too to form the host.
+	// If X-Forwarded-Proto is set, check if is it default to omit the port.
+	if forwardedHost != "" {
+		extractedHost := forwardedHost
+		host, port, err := net.SplitHostPort(extractedHost)
+		if err == nil {
+			extractedHost = host
+			if forwardedPort == "" {
+				forwardedPort = port
 			}
 		}
-		// Using reverse proxy with X-Forwarded-Host (standard port or no port forwarded).
-		return forwardedHost
+		scheme := r.URL.Scheme
+		if forwardedProto != "" {
+			scheme = forwardedProto
+		}
+		if !isDefaultPort(scheme, forwardedPort) {
+			extractedHost = net.JoinHostPort(extractedHost, forwardedPort)
+		}
+		return extractedHost
+	} else {
+		// Go http server removes "host" from Request.Header
+		host := r.Host
+		if host == "" {
+			host = r.URL.Host
+		}
+		h, port, err := net.SplitHostPort(host)
+		if err != nil {
+			return host
+		}
+		if isDefaultPort(r.URL.Scheme, port) {
+			return h
+		}
+		return host
+	}
+}
+
+func isDefaultPort(scheme, port string) bool {
+	if port == "" {
+		return true
 	}
 
-	hostHeaderValue := r.Host
-	// For standard requests, this should be fine.
-	if r.Host != "" {
-		return hostHeaderValue
+	switch port {
+	case "80":
+		return strings.EqualFold(scheme, "http")
+	case "443":
+		return strings.EqualFold(scheme, "https")
+	default:
+		return false
 	}
-	// If no host header is found, then check for host URL value.
-	if r.URL.Host != "" {
-		hostHeaderValue = r.URL.Host
-	}
-	return hostHeaderValue
 }
 
 // getScope generate a string of a specific date, an AWS region, and a service.
