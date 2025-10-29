@@ -36,18 +36,30 @@ func NewMiddleware(bucketChecker BucketChecker, corsConfigGetter CORSConfigGette
 
 // getCORSConfig retrieves the applicable CORS configuration, trying bucket-specific first, then fallback.
 // Returns the configuration and a boolean indicating if any configuration was found.
+// Only falls back to global config when there's explicitly no bucket-level config.
+// For other errors (e.g., access denied), returns false to let the handler deny the request.
 func (m *Middleware) getCORSConfig(bucket string) (*CORSConfiguration, bool) {
-	// Try bucket-specific config first
 	config, errCode := m.corsConfigGetter.GetCORSConfiguration(bucket)
-	if errCode == s3err.ErrNone && config != nil {
-		return config, true
+	
+	switch errCode {
+	case s3err.ErrNone:
+		// Found a config, use it
+		if config != nil {
+			return config, true
+		}
+		// ErrNone with nil config means no bucket-level config, fall through to fallback
+	case s3err.ErrNoSuchCORSConfiguration:
+		// Explicitly no CORS config, fall through to fallback
+	default:
+		// Real error (access denied, network failure, etc.) - do not fall back
+		return nil, false
 	}
 
-	// Fallback to global config
+	// No bucket-level config found, try global fallback
 	if m.fallbackConfig != nil {
 		return m.fallbackConfig, true
 	}
-
+	
 	return nil, false
 }
 
