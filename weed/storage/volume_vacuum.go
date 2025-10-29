@@ -510,7 +510,7 @@ func (v *Volume) copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, da
 				return fmt.Errorf("volume %s unexpected new data size: %d does not match size of content minus deleted: %d",
 					v.Id.String(), dstDatSize, expectedContentSize)
 			}
-		} else {
+		} else if v.nm.DeletedSize() > v.nm.ContentSize() {
 			glog.Warningf("volume %s content size: %d less deleted size: %d, new size: %d",
 				v.Id.String(), v.nm.ContentSize(), v.nm.DeletedSize(), dstDatSize)
 		}
