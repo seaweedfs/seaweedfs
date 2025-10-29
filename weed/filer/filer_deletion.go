@@ -47,6 +47,9 @@ type DeletionRetryItem struct {
 // Items are ordered by NextRetryAt (earliest first)
 type retryHeap []*DeletionRetryItem
 
+// Compile-time assertion that retryHeap implements heap.Interface
+var _ heap.Interface = (*retryHeap)(nil)
+
 func (h retryHeap) Len() int { return len(h) }
 
 func (h retryHeap) Less(i, j int) bool {
@@ -69,8 +72,8 @@ func (h *retryHeap) Pop() any {
 	old := *h
 	n := len(old)
 	item := old[n-1]
-	old[n-1] = nil       // avoid memory leak
-	item.heapIndex = -1  // mark as removed
+	old[n-1] = nil      // avoid memory leak
+	item.heapIndex = -1 // mark as removed
 	*h = old[0 : n-1]
 	return item
 }
@@ -83,10 +86,10 @@ func (h *retryHeap) Pop() any {
 // process restarts during this window will cause retry state loss.
 //
 // TODO: Consider persisting retry queue to durable storage for production resilience:
-//  - Option 1: Leverage existing Filer store (KV operations)
-//  - Option 2: Periodic snapshots to disk with recovery on startup
-//  - Option 3: Write-ahead log for retry queue mutations
-//  - Trade-offs: Performance vs durability, complexity vs reliability
+//   - Option 1: Leverage existing Filer store (KV operations)
+//   - Option 2: Periodic snapshots to disk with recovery on startup
+//   - Option 3: Write-ahead log for retry queue mutations
+//   - Trade-offs: Performance vs durability, complexity vs reliability
 //
 // For now, accepting in-memory storage as pragmatic initial implementation.
 // Lost retries will be eventually consistent as files remain in deletion queue.
@@ -117,14 +120,14 @@ func calculateBackoff(retryCount int) time.Duration {
 		// Prevent overflow: use max delay directly
 		return MaxRetryDelay
 	}
-	
+
 	delay := InitialRetryDelay * time.Duration(1<<shiftAmount)
-	
+
 	// Additional safety check for overflow: if delay wrapped around to negative or zero
 	if delay <= 0 || delay > MaxRetryDelay {
 		delay = MaxRetryDelay
 	}
-	
+
 	return delay
 }
 
@@ -339,11 +342,11 @@ func (f *Filer) processDeletionBatch(toDeleteFileIds []string, lookupFunc func([
 // implementation but should be improved in the future.
 //
 // TODO: Consider these improvements for more robust error handling:
-//  - Pass DeleteResult instead of just error string to access Status codes
-//  - Use HTTP status codes (503 Service Unavailable, 429 Too Many Requests, etc.)
-//  - Implement structured error types that can be checked with errors.Is/errors.As
-//  - Extract and check gRPC status codes for better classification
-//  - Add error wrapping in the deletion pipeline to preserve error context
+//   - Pass DeleteResult instead of just error string to access Status codes
+//   - Use HTTP status codes (503 Service Unavailable, 429 Too Many Requests, etc.)
+//   - Implement structured error types that can be checked with errors.Is/errors.As
+//   - Extract and check gRPC status codes for better classification
+//   - Add error wrapping in the deletion pipeline to preserve error context
 //
 // For now, we use conservative string matching for known transient error patterns.
 func isRetryableError(errorMsg string) bool {
