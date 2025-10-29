@@ -597,7 +597,7 @@ func extractHostHeader(r *http.Request) string {
 
 	// If X-Forwarded-Host is set, use that as the host.
 	// If X-Forwarded-Port is set, use that too to form the host.
-	// If X-Forwarded-Proto is set, check if is it default to omit the port.
+	// If X-Forwarded-Proto is set, check if it is default to omit the port.
 	if forwardedHost != "" {
 		extractedHost := forwardedHost
 		host, port, err := net.SplitHostPort(extractedHost)

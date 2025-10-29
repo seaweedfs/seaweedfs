@@ -419,7 +419,7 @@ func TestSignatureV4WithoutProxy(t *testing.T) {
 		},
 		{
 			name:         "HTTPS with standard port",
-			host:         "backend:433",
+			host:         "backend:443",
 			proto:        "https",
 			expectedHost: "backend",
 		},
@@ -455,7 +455,7 @@ func TestSignatureV4WithoutProxy(t *testing.T) {
 		},
 		{
 			name:         "IPv6 HTTPS with standard port",
-			host:         "[::1]:433",
+			host:         "[::1]:443",
 			proto:        "https",
 			expectedHost: "::1",
 		},
@@ -582,9 +582,9 @@ func TestSignatureV4WithForwardedPort(t *testing.T) {
 		},
 		{
 			name:           "X-Forwarded-Host with standard https port already included (Traefik/HAProxy style)",
-			host:           "backend:433",
-			forwardedHost:  "127.0.0.1:433",
-			forwardedPort:  "433",
+			host:           "backend:443",
+			forwardedHost:  "127.0.0.1:443",
+			forwardedPort:  "443",
 			forwardedProto: "https",
 			expectedHost:   "127.0.0.1",
 		},
@@ -598,9 +598,9 @@ func TestSignatureV4WithForwardedPort(t *testing.T) {
 		},
 		{
 			name:           "IPv6 X-Forwarded-Host with standard https port already included (Traefik/HAProxy style)",
-			host:           "backend:433",
-			forwardedHost:  "[::1]:433",
-			forwardedPort:  "433",
+			host:           "backend:443",
+			forwardedHost:  "[::1]:443",
+			forwardedPort:  "443",
 			forwardedProto: "https",
 			expectedHost:   "::1",
 		},
