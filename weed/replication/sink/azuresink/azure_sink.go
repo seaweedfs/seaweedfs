@@ -195,9 +195,8 @@ func (g *AzureSink) handleExistingBlob(appendBlobClient *appendblob.Client, key 
 		const clockSkewTolerance = int64(2) // seconds - allow small clock differences
 		remoteMtime := props.LastModified.Unix()
 		localMtime := entry.Attributes.Mtime
-		// Skip if remote is newer/same (within skew tolerance) and has content, OR both are zero-length.
-		if (remoteMtime >= localMtime-clockSkewTolerance && *props.ContentLength > 0) ||
-			(remoteMtime >= localMtime-clockSkewTolerance && *props.ContentLength == 0 && totalSize == 0) {
+		// Skip if remote is newer/same (within skew tolerance) and has content, OR if both are zero-length.
+		if remoteMtime >= localMtime-clockSkewTolerance && ((*props.ContentLength > 0) || (*props.ContentLength == 0 && totalSize == 0)) {
 			glog.V(2).Infof("skip overwriting %s/%s: remote is up-to-date (remote mtime: %d >= local mtime: %d, size: %d)",
 				g.container, key, remoteMtime, localMtime, *props.ContentLength)
 			return false, nil
