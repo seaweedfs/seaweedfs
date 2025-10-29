@@ -595,24 +595,46 @@ func extractHostHeader(r *http.Request) string {
 	forwardedPort := r.Header.Get("X-Forwarded-Port")
 	forwardedProto := r.Header.Get("X-Forwarded-Proto")
 
+	// Determine the effective scheme: prefer X-Forwarded-Proto, then r.URL.Scheme, default to "http"
+	scheme := r.URL.Scheme
+	if forwardedProto != "" {
+		scheme = forwardedProto
+	}
+	if scheme == "" {
+		scheme = "http"
+	}
+
 	// If X-Forwarded-Host is set, use that as the host.
 	// If X-Forwarded-Port is set, use that too to form the host.
 	// If X-Forwarded-Proto is set, check if it is default to omit the port.
 	if forwardedHost != "" {
 		extractedHost := forwardedHost
 		host, port, err := net.SplitHostPort(extractedHost)
-		if err == nil {
+		hostHadPort := (err == nil)
+
+		if hostHadPort {
+			// forwardedHost contained a port (e.g., "example.com:8080" or "[::1]:8080")
 			extractedHost = host
 			if forwardedPort == "" {
 				forwardedPort = port
 			}
-		}
-		scheme := r.URL.Scheme
-		if forwardedProto != "" {
-			scheme = forwardedProto
-		}
-		if !isDefaultPort(scheme, forwardedPort) {
+			// If forwardedHost explicitly included a port, always keep it (even if default)
 			extractedHost = net.JoinHostPort(extractedHost, forwardedPort)
+		} else {
+			// forwardedHost did not contain a port (e.g., "example.com" or "::1" or "[::1]")
+			// Use forwardedPort if provided and non-default
+			if forwardedPort != "" && !isDefaultPort(scheme, forwardedPort) {
+				// Strip brackets from IPv6 before JoinHostPort (it will add them back)
+				if strings.HasPrefix(extractedHost, "[") && strings.HasSuffix(extractedHost, "]") {
+					extractedHost = extractedHost[1 : len(extractedHost)-1]
+				}
+				extractedHost = net.JoinHostPort(extractedHost, forwardedPort)
+			} else {
+				// No port to add, but IPv6 addresses need brackets
+				if strings.Contains(extractedHost, ":") && !strings.HasPrefix(extractedHost, "[") {
+					extractedHost = "[" + extractedHost + "]"
+				}
+			}
 		}
 		return extractedHost
 	} else {
@@ -625,7 +647,7 @@ func extractHostHeader(r *http.Request) string {
 		if err != nil {
 			return host
 		}
-		if isDefaultPort(r.URL.Scheme, port) {
+		if isDefaultPort(scheme, port) {
 			return h
 		}
 		return host
