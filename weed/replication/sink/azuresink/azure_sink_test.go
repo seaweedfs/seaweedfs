@@ -371,7 +371,7 @@ func TestAzureSinkIdempotentCreate(t *testing.T) {
 		} else if *props.ContentLength != int64(len(testContent)) {
 			t.Errorf("File size mismatch: expected %d, got %d", len(testContent), *props.ContentLength)
 		} else {
-			t.Logf("✓ File created with correct size: %d bytes", *props.ContentLength)
+			t.Logf("File created with correct size: %d bytes", *props.ContentLength)
 		}
 	})
 
@@ -397,11 +397,11 @@ func TestAzureSinkIdempotentCreate(t *testing.T) {
 			t.Fatalf("Failed to get blob properties after idempotent create: %v", err)
 		}
 		if props.ContentLength == nil || *props.ContentLength == 0 {
-			t.Errorf("❌ ZERO-BYTE BUG: File became empty after idempotent create! Expected %d bytes", len(testContent))
+			t.Errorf("ZERO-BYTE BUG: File became empty after idempotent create! Expected %d bytes", len(testContent))
 		} else if *props.ContentLength < int64(len(testContent)) {
 			t.Errorf("File lost content: expected at least %d bytes, got %d", len(testContent), *props.ContentLength)
 		} else {
-			t.Logf("✓ File still has content after idempotent create: %d bytes", *props.ContentLength)
+			t.Logf("File still has content after idempotent create: %d bytes", *props.ContentLength)
 		}
 	})
 
@@ -427,9 +427,9 @@ func TestAzureSinkIdempotentCreate(t *testing.T) {
 			t.Fatalf("Failed to get blob properties: %v", err)
 		}
 		if props.ContentLength == nil || *props.ContentLength == 0 {
-			t.Errorf("❌ File became empty after create with older mtime!")
+			t.Errorf("File became empty after create with older mtime!")
 		} else {
-			t.Logf("✓ File preserved content despite older mtime: %d bytes", *props.ContentLength)
+			t.Logf("File preserved content despite older mtime: %d bytes", *props.ContentLength)
 		}
 	})
 }
