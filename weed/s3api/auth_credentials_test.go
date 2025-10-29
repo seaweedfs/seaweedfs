@@ -366,29 +366,11 @@ func TestNewIdentityAccessManagementWithStoreEnvVars(t *testing.T) {
 // but contains no identities (e.g., only KMS settings), environment variables should still work.
 // This test validates the fix for issue #7311.
 func TestConfigFileWithNoIdentitiesAllowsEnvVars(t *testing.T) {
-	// Save original environment
-	originalAccessKeyId := os.Getenv("AWS_ACCESS_KEY_ID")
-	originalSecretAccessKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
-
-	// Clean up after test
-	defer func() {
-		if originalAccessKeyId != "" {
-			os.Setenv("AWS_ACCESS_KEY_ID", originalAccessKeyId)
-		} else {
-			os.Unsetenv("AWS_ACCESS_KEY_ID")
-		}
-		if originalSecretAccessKey != "" {
-			os.Setenv("AWS_SECRET_ACCESS_KEY", originalSecretAccessKey)
-		} else {
-			os.Unsetenv("AWS_SECRET_ACCESS_KEY")
-		}
-	}()
-
 	// Set environment variables
 	testAccessKey := "AKIATEST1234567890AB"
 	testSecretKey := "testSecret1234567890123456789012345678901234"
-	os.Setenv("AWS_ACCESS_KEY_ID", testAccessKey)
-	os.Setenv("AWS_SECRET_ACCESS_KEY", testSecretKey)
+	t.Setenv("AWS_ACCESS_KEY_ID", testAccessKey)
+	t.Setenv("AWS_SECRET_ACCESS_KEY", testSecretKey)
 
 	// Create a temporary config file with only KMS settings (no identities)
 	configContent := `{
