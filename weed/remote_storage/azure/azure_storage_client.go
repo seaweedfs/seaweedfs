@@ -28,7 +28,34 @@ import (
 const (
 	defaultBlockSize   = 4 * 1024 * 1024
 	defaultConcurrency = 16
+
+	// DefaultAzureOpTimeout is the timeout for individual Azure blob operations.
+	// This should be larger than the maximum time the Azure SDK client will spend
+	// retrying. With MaxRetries=3 (4 total attempts) and TryTimeout=10s, the maximum
+	// time is roughly 4*10s + delays(~7s) = 47s. We use 60s to provide a reasonable
+	// buffer while still failing faster than indefinite hangs.
+	DefaultAzureOpTimeout = 60 * time.Second
 )
+
+// DefaultAzBlobClientOptions returns the default Azure blob client options
+// with consistent retry configuration across the application.
+// This centralizes the retry policy to ensure uniform behavior between
+// remote storage and replication sink implementations.
+//
+// Related: Use DefaultAzureOpTimeout for context.WithTimeout when calling Azure operations
+// to ensure the timeout accommodates all retry attempts configured here.
+func DefaultAzBlobClientOptions() *azblob.ClientOptions {
+	return &azblob.ClientOptions{
+		ClientOptions: azcore.ClientOptions{
+			Retry: policy.RetryOptions{
+				MaxRetries:    3,                // Reasonable retry count - aggressive retries mask configuration errors
+				TryTimeout:    10 * time.Second, // Reduced from 1 minute to fail faster on auth issues
+				RetryDelay:    1 * time.Second,
+				MaxRetryDelay: 10 * time.Second,
+			},
+		},
+	}
+}
 
 // invalidMetadataChars matches any character that is not valid in Azure metadata keys.
 // Azure metadata keys must be valid C# identifiers: letters, digits, and underscores only.
@@ -86,16 +113,7 @@ func (s azureRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storag
 	}
 
 	serviceURL := fmt.Sprintf("https://%s.blob.core.windows.net/", accountName)
-	azClient, err := azblob.NewClientWithSharedKeyCredential(serviceURL, credential, &azblob.ClientOptions{
-		ClientOptions: azcore.ClientOptions{
-			Retry: policy.RetryOptions{
-				MaxRetries:    10, // Increased from default 3 to maintain resiliency similar to old SDK's 20
-				TryTimeout:    time.Minute,
-				RetryDelay:    2 * time.Second,
-				MaxRetryDelay: time.Minute,
-			},
-		},
-	})
+	azClient, err := azblob.NewClientWithSharedKeyCredential(serviceURL, credential, DefaultAzBlobClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Azure client: %w", err)
 	}

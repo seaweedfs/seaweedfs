@@ -1,6 +1,7 @@
 package azuresink
 
 import (
+	"context"
 	"os"
 	"testing"
 	"time"
@@ -318,6 +319,126 @@ func TestAzureSinkPrecondition(t *testing.T) {
 
 	// Clean up
 	sink.DeleteEntry(testKey, false, false, nil)
+}
+
+// Helper function to get blob content length with timeout
+func getBlobContentLength(t *testing.T, sink *AzureSink, key string) int64 {
+	t.Helper()
+	containerClient := sink.client.ServiceClient().NewContainerClient(sink.container)
+	blobClient := containerClient.NewAppendBlobClient(cleanKey(key))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	props, err := blobClient.GetProperties(ctx, nil)
+	if err != nil {
+		t.Fatalf("Failed to get blob properties: %v", err)
+	}
+	if props.ContentLength == nil {
+		return 0
+	}
+	return *props.ContentLength
+}
+
+// Test that repeated creates don't result in zero-byte files (regression test for critical bug)
+func TestAzureSinkIdempotentCreate(t *testing.T) {
+	accountName := os.Getenv("AZURE_STORAGE_ACCOUNT")
+	accountKey := os.Getenv("AZURE_STORAGE_ACCESS_KEY")
+	testContainer := os.Getenv("AZURE_TEST_CONTAINER")
+
+	if accountName == "" || accountKey == "" {
+		t.Skip("Skipping Azure sink idempotent create test: credentials not set")
+	}
+	if testContainer == "" {
+		testContainer = "seaweedfs-test"
+	}
+
+	sink := &AzureSink{}
+	err := sink.initialize(accountName, accountKey, testContainer, "/test")
+	if err != nil {
+		t.Fatalf("Failed to initialize: %v", err)
+	}
+
+	testKey := "/test-idempotent-" + time.Now().Format("20060102-150405") + ".txt"
+	testContent := []byte("This is test content that should never be empty!")
+
+	// Use fixed time reference for deterministic behavior
+	testTime := time.Now()
+
+	// Clean up at the end
+	defer sink.DeleteEntry(testKey, false, false, nil)
+
+	// Test 1: Create a file with content
+	t.Run("FirstCreate", func(t *testing.T) {
+		entry := &filer_pb.Entry{
+			Content: testContent,
+			Attributes: &filer_pb.FuseAttributes{
+				Mtime: testTime.Unix(),
+			},
+		}
+		err := sink.CreateEntry(testKey, entry, nil)
+		if err != nil {
+			t.Fatalf("Failed to create entry: %v", err)
+		}
+
+		// Verify the file has content (not zero bytes)
+		contentLength := getBlobContentLength(t, sink, testKey)
+		if contentLength == 0 {
+			t.Errorf("File has zero bytes after creation! Expected %d bytes", len(testContent))
+		} else if contentLength != int64(len(testContent)) {
+			t.Errorf("File size mismatch: expected %d, got %d", len(testContent), contentLength)
+		} else {
+			t.Logf("File created with correct size: %d bytes", contentLength)
+		}
+	})
+
+	// Test 2: Create the same file again (idempotent operation - simulates replication running multiple times)
+	// This is where the zero-byte bug occurred: blob existed, precondition failed, returned early without writing data
+	t.Run("IdempotentCreate", func(t *testing.T) {
+		entry := &filer_pb.Entry{
+			Content: testContent,
+			Attributes: &filer_pb.FuseAttributes{
+				Mtime: testTime.Add(1 * time.Second).Unix(), // Slightly newer mtime
+			},
+		}
+		err := sink.CreateEntry(testKey, entry, nil)
+		if err != nil {
+			t.Fatalf("Failed on idempotent create: %v", err)
+		}
+
+		// CRITICAL: Verify the file STILL has content (not zero bytes)
+		contentLength := getBlobContentLength(t, sink, testKey)
+		if contentLength == 0 {
+			t.Errorf("ZERO-BYTE BUG: File became empty after idempotent create! Expected %d bytes", len(testContent))
+		} else if contentLength < int64(len(testContent)) {
+			t.Errorf("File lost content: expected at least %d bytes, got %d", len(testContent), contentLength)
+		} else {
+			t.Logf("File still has content after idempotent create: %d bytes", contentLength)
+		}
+	})
+
+	// Test 3: Try creating with older mtime (should skip but not leave zero bytes)
+	t.Run("CreateWithOlderMtime", func(t *testing.T) {
+		entry := &filer_pb.Entry{
+			Content: []byte("This content should be skipped"),
+			Attributes: &filer_pb.FuseAttributes{
+				Mtime: testTime.Add(-1 * time.Hour).Unix(), // Older timestamp
+			},
+		}
+		err := sink.CreateEntry(testKey, entry, nil)
+		// Should succeed by skipping (no error expected)
+		if err != nil {
+			t.Fatalf("Create with older mtime should be skipped and return no error, but got: %v", err)
+		}
+
+		// Verify file STILL has content
+		contentLength := getBlobContentLength(t, sink, testKey)
+		if contentLength == 0 {
+			t.Errorf("File became empty after create with older mtime!")
+		} else {
+			t.Logf("File preserved content despite older mtime: %d bytes", contentLength)
+		}
+	})
 }
 
 // Benchmark tests
