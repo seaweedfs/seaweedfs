@@ -343,6 +343,9 @@ func TestAzureSinkIdempotentCreate(t *testing.T) {
 	testKey := "/test-idempotent-" + time.Now().Format("20060102-150405") + ".txt"
 	testContent := []byte("This is test content that should never be empty!")
 
+	// Use fixed time reference for deterministic behavior
+	testTime := time.Now()
+
 	// Clean up at the end
 	defer sink.DeleteEntry(testKey, false, false, nil)
 
@@ -351,7 +354,7 @@ func TestAzureSinkIdempotentCreate(t *testing.T) {
 		entry := &filer_pb.Entry{
 			Content: testContent,
 			Attributes: &filer_pb.FuseAttributes{
-				Mtime: time.Now().Unix(),
+				Mtime: testTime.Unix(),
 			},
 		}
 		err := sink.CreateEntry(testKey, entry, nil)
@@ -381,7 +384,7 @@ func TestAzureSinkIdempotentCreate(t *testing.T) {
 		entry := &filer_pb.Entry{
 			Content: testContent,
 			Attributes: &filer_pb.FuseAttributes{
-				Mtime: time.Now().Unix(), // Same or newer mtime
+				Mtime: testTime.Add(1 * time.Second).Unix(), // Slightly newer mtime
 			},
 		}
 		err := sink.CreateEntry(testKey, entry, nil)
@@ -410,13 +413,13 @@ func TestAzureSinkIdempotentCreate(t *testing.T) {
 		entry := &filer_pb.Entry{
 			Content: []byte("This content should be skipped"),
 			Attributes: &filer_pb.FuseAttributes{
-				Mtime: time.Now().Add(-1 * time.Hour).Unix(), // Older timestamp
+				Mtime: testTime.Add(-1 * time.Hour).Unix(), // Older timestamp
 			},
 		}
 		err := sink.CreateEntry(testKey, entry, nil)
-		// Should succeed (operation is idempotent)
+		// Should succeed by skipping (no error expected)
 		if err != nil {
-			t.Logf("Create with older mtime: %v", err)
+			t.Fatalf("Create with older mtime should be skipped and return no error, but got: %v", err)
 		}
 
 		// Verify file STILL has content

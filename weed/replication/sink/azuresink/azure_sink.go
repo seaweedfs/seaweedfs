@@ -145,32 +145,52 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []
 	needsWrite := true
 	if err != nil {
 		if bloberror.HasCode(err, bloberror.BlobAlreadyExists) {
-			// Blob already exists - check if we should skip based on mtime/size
-			if entry.Attributes != nil && entry.Attributes.Mtime > 0 {
-				props, propErr := appendBlobClient.GetProperties(context.Background(), nil)
-				if propErr == nil && props.LastModified != nil {
-					remoteMtime := props.LastModified.Unix()
-					localMtime := entry.Attributes.Mtime
+			// Blob already exists. Get its properties to decide whether to overwrite.
+			props, propErr := appendBlobClient.GetProperties(context.Background(), nil)
 
-					// Skip if remote is newer or same, and has content
-					if remoteMtime >= localMtime && props.ContentLength != nil && *props.ContentLength > 0 {
-						glog.V(2).Infof("skip overwriting %s/%s: remote is up-to-date (remote mtime: %d >= local mtime: %d, size: %d)",
-							g.container, key, remoteMtime, localMtime, *props.ContentLength)
-						needsWrite = false
-					}
+			// Check if we can skip writing.
+			if entry.Attributes != nil && entry.Attributes.Mtime > 0 && propErr == nil && props.LastModified != nil && props.ContentLength != nil {
+				remoteMtime := props.LastModified.Unix()
+				localMtime := entry.Attributes.Mtime
+				// Skip if remote is newer or same, AND has content.
+				if remoteMtime >= localMtime && *props.ContentLength > 0 {
+					glog.V(2).Infof("skip overwriting %s/%s: remote is up-to-date (remote mtime: %d >= local mtime: %d, size: %d)",
+						g.container, key, remoteMtime, localMtime, *props.ContentLength)
+					needsWrite = false
 				}
 			}
 
-			// If blob exists but is empty or outdated, we need to delete and recreate
+			// If blob is empty or outdated, we need to delete and recreate it.
 			if needsWrite {
-				// Delete existing blob
-				_, delErr := appendBlobClient.Delete(context.Background(), nil)
-				if delErr != nil && !bloberror.HasCode(delErr, bloberror.BlobNotFound) {
-					return fmt.Errorf("azure delete existing blob %s/%s: %w", g.container, key, delErr)
+				// Use ETag for a conditional delete to avoid race conditions.
+				deleteOpts := &blob.DeleteOptions{}
+				if propErr == nil && props.ETag != nil {
+					deleteOpts.AccessConditions = &blob.AccessConditions{
+						ModifiedAccessConditions: &blob.ModifiedAccessConditions{
+							IfMatch: props.ETag,
+						},
+					}
 				}
-				// Recreate the blob
+
+				// Delete existing blob with conditional delete.
+				_, delErr := appendBlobClient.Delete(context.Background(), deleteOpts)
+				if delErr != nil {
+					// If the precondition fails, the blob was modified by another process after we checked it.
+					// Failing here is safe; replication will retry.
+					if bloberror.HasCode(delErr, bloberror.ConditionNotMet) {
+						return fmt.Errorf("azure blob %s/%s was modified concurrently, preventing overwrite: %w", g.container, key, delErr)
+					}
+					// Ignore BlobNotFound, as the goal is to delete it anyway.
+					if !bloberror.HasCode(delErr, bloberror.BlobNotFound) {
+						return fmt.Errorf("azure delete existing blob %s/%s: %w", g.container, key, delErr)
+					}
+				}
+
+				// Recreate the blob.
 				_, createErr := appendBlobClient.Create(context.Background(), nil)
 				if createErr != nil {
+					// It's possible another process recreated it after our delete.
+					// Failing is safe, as a retry of the whole function will handle it.
 					return fmt.Errorf("azure recreate append blob %s/%s: %w", g.container, key, createErr)
 				}
 			}
@@ -206,8 +226,5 @@ func (g *AzureSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParentP
 }
 
 func cleanKey(key string) string {
-	if strings.HasPrefix(key, "/") {
-		key = key[1:]
-	}
-	return key
+	return strings.TrimPrefix(key, "/")
 }
