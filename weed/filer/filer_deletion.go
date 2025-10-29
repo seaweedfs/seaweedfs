@@ -30,6 +30,8 @@ const (
 	DeletionRetryBatchSize = 1000
 	// Maximum number of error details to include in log messages
 	MaxLoggedErrorDetails = 10
+	// Interval for polling the deletion queue for new items
+	DeletionPollInterval = 1123 * time.Millisecond
 )
 
 // DeletionRetryItem represents a file deletion that failed and needs to be retried
@@ -253,7 +255,7 @@ func (f *Filer) loopProcessingDeletion() {
 	// Start retry processor in a separate goroutine
 	go f.loopProcessingDeletionRetry(lookupFunc, retryQueue)
 
-	ticker := time.NewTicker(1123 * time.Millisecond)
+	ticker := time.NewTicker(DeletionPollInterval)
 	defer ticker.Stop()
 
 	for {
