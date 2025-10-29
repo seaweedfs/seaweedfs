@@ -96,8 +96,8 @@ func (q *DeletionRetryQueue) GetReadyItems(maxItems int) []*DeletionRetryItem {
 				// Max attempts reached, log and discard
 				glog.Warningf("max retry attempts (%d) reached for %s, last error: %s", MaxRetryAttempts, item.FileId, item.LastError)
 			}
-		} else if !item.NextRetryAt.Before(now) {
-			// Keep items that are not ready yet
+		} else {
+			// Keep items that are not ready yet or if the batch is full
 			remainingItems = append(remainingItems, item)
 		}
 	}
