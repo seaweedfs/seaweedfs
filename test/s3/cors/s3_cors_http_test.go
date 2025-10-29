@@ -414,6 +414,7 @@ func TestCORSWithoutConfiguration(t *testing.T) {
 
 	req.Header.Set("Origin", "https://example.com")
 	req.Header.Set("Access-Control-Request-Method", "GET")
+	req.Header.Set("Access-Control-Request-Headers", "Content-Type")
 
 	resp, err := httpClient.Do(req)
 	require.NoError(t, err, "Should be able to send OPTIONS request")
@@ -422,7 +423,7 @@ func TestCORSWithoutConfiguration(t *testing.T) {
 	// With fallback CORS (global default: "*"), CORS headers should be present
 	assert.Equal(t, "https://example.com", resp.Header.Get("Access-Control-Allow-Origin"), "Should have Allow-Origin header from global fallback")
 	assert.Contains(t, resp.Header.Get("Access-Control-Allow-Methods"), "GET", "Should have GET in Allow-Methods from global fallback")
-	assert.NotEmpty(t, resp.Header.Get("Access-Control-Allow-Headers"), "Should have Allow-Headers from global fallback")
+	assert.Contains(t, resp.Header.Get("Access-Control-Allow-Headers"), "Content-Type", "Should have requested headers in Allow-Headers from global fallback")
 }
 
 // TestCORSMethodMatching tests method matching
