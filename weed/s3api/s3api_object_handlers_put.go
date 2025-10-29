@@ -1258,7 +1258,8 @@ func (s3a *S3ApiServer) getObjectETag(entry *filer_pb.Entry) string {
 		return string(etagBytes)
 	}
 	// Check for Md5 in Attributes (matches filer.ETag behavior)
-	if entry.Attributes != nil && entry.Attributes.Md5 != nil && len(entry.Attributes.Md5) > 0 {
+	// Note: len(nil slice) == 0 in Go, so no need for explicit nil check
+	if entry.Attributes != nil && len(entry.Attributes.Md5) > 0 {
 		return fmt.Sprintf("\"%x\"", entry.Attributes.Md5)
 	}
 	// Fallback: calculate ETag from chunks

@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"bytes"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -682,7 +683,11 @@ func TestGetObjectETagWithMd5AndChunks(t *testing.T) {
 
 	// Create an object with both Md5 and multiple chunks (like in issue #7274)
 	// Md5: ZjcmMwrCVGNVgb4HoqHe9g== (base64) = 663726330ac254635581be07a2a1def6 (hex)
-	md5Bytes := []byte{0x66, 0x37, 0x26, 0x33, 0x0a, 0xc2, 0x54, 0x63, 0x55, 0x81, 0xbe, 0x07, 0xa2, 0xa1, 0xde, 0xf6}
+	md5HexString := "663726330ac254635581be07a2a1def6"
+	md5Bytes, err := hex.DecodeString(md5HexString)
+	if err != nil {
+		t.Fatalf("failed to decode md5 hex string: %v", err)
+	}
 
 	entry := &filer_pb.Entry{
 		Name: "test-multipart-object",
@@ -709,7 +714,7 @@ func TestGetObjectETagWithMd5AndChunks(t *testing.T) {
 	}
 
 	// getObjectETag should return the Md5 in hex with quotes
-	expectedETag := "\"663726330ac254635581be07a2a1def6\""
+	expectedETag := "\"" + md5HexString + "\""
 	actualETag := s3a.getObjectETag(entry)
 
 	if actualETag != expectedETag {
@@ -725,7 +730,7 @@ func TestGetObjectETagWithMd5AndChunks(t *testing.T) {
 		getter := createMockEntryGetter(entry)
 		req := createTestGetRequest(bucket, object)
 		// Client sends the ETag from HeadObject (without quotes)
-		req.Header.Set(s3_constants.IfMatch, "663726330ac254635581be07a2a1def6")
+		req.Header.Set(s3_constants.IfMatch, md5HexString)
 
 		result := s3a.checkConditionalHeadersForReadsWithGetter(getter, req, bucket, object)
 		if result.ErrorCode != s3err.ErrNone {
