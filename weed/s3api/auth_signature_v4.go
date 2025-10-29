@@ -618,8 +618,15 @@ func extractHostHeader(r *http.Request) string {
 			if forwardedPort == "" {
 				forwardedPort = port
 			}
-			// If forwardedHost explicitly included a port, always keep it (even if default)
-			extractedHost = net.JoinHostPort(extractedHost, forwardedPort)
+
+			if !isDefaultPort(scheme, forwardedPort) {
+				extractedHost = net.JoinHostPort(extractedHost, forwardedPort)
+			} else {
+				// No port to add, but IPv6 addresses need brackets for canonical host header
+				if strings.Contains(extractedHost, ":") && !strings.HasPrefix(extractedHost, "[") {
+					extractedHost = "[" + extractedHost + "]"
+				}
+			}
 		} else {
 			// forwardedHost did not contain a port (e.g., "example.com" or "::1" or "[::1]")
 			// Use forwardedPort if provided and non-default
@@ -645,9 +652,16 @@ func extractHostHeader(r *http.Request) string {
 		}
 		h, port, err := net.SplitHostPort(host)
 		if err != nil {
+			// Handle bare IPv6 address without port
+			if strings.Contains(host, ":") && !strings.HasPrefix(host, "[") {
+				return "[" + host + "]"
+			}
 			return host
 		}
 		if isDefaultPort(scheme, port) {
+			if strings.Contains(h, ":") { // is IPv6
+				return "[" + h + "]"
+			}
 			return h
 		}
 		return host

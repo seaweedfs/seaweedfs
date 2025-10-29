@@ -409,7 +409,7 @@ func TestSignatureV4WithoutProxy(t *testing.T) {
 			name:         "HTTPS with non-standard port",
 			host:         "backend:8333",
 			proto:        "https",
-			expectedHost: "backend:8443",
+			expectedHost: "backend:8333",
 		},
 		{
 			name:         "HTTP with standard port",
@@ -445,31 +445,31 @@ func TestSignatureV4WithoutProxy(t *testing.T) {
 			name:         "IPv6 HTTPS with non-standard port",
 			host:         "[::1]:8333",
 			proto:        "https",
-			expectedHost: "[::1]:8443",
+			expectedHost: "[::1]:8333",
 		},
 		{
 			name:         "IPv6 HTTP with standard port",
 			host:         "[::1]:80",
 			proto:        "http",
-			expectedHost: "::1",
+			expectedHost: "[::1]",
 		},
 		{
 			name:         "IPv6 HTTPS with standard port",
 			host:         "[::1]:443",
 			proto:        "https",
-			expectedHost: "::1",
+			expectedHost: "[::1]",
 		},
 		{
 			name:         "IPv6 HTTP without port",
 			host:         "::1",
 			proto:        "http",
-			expectedHost: "::1",
+			expectedHost: "[::1]",
 		},
 		{
 			name:         "IPv6 HTTPS without port",
 			host:         "::1",
 			proto:        "https",
-			expectedHost: "::1",
+			expectedHost: "[::1]",
 		},
 	}
 
@@ -491,6 +491,12 @@ func TestSignatureV4WithoutProxy(t *testing.T) {
 
 			// Set forwarded headers
 			r.Header.Set("Host", tt.host)
+			
+			// First, verify that extractHostHeader returns the expected value
+			extractedHost := extractHostHeader(r)
+			if extractedHost != tt.expectedHost {
+				t.Errorf("extractHostHeader() = %q, want %q", extractedHost, tt.expectedHost)
+			}
 
 			// Sign the request with the expected host header
 			// We need to temporarily modify the Host header for signing
