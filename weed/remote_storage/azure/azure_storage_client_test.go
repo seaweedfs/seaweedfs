@@ -336,7 +336,10 @@ func TestAzureRemoteStorageMaker(t *testing.T) {
 		t.Error("Expected HasBucket() to return true")
 	}
 
-	// Test with missing credentials
+	// Test with missing credentials - unset env vars (auto-restored by t.Setenv)
+	t.Setenv("AZURE_STORAGE_ACCOUNT", "")
+	t.Setenv("AZURE_STORAGE_ACCESS_KEY", "")
+
 	conf := &remote_pb.RemoteConf{
 		Name: "test",
 	}
