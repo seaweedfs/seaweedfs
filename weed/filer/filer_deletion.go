@@ -71,8 +71,21 @@ func (h *retryHeap) Pop() any {
 	return item
 }
 
-// DeletionRetryQueue manages the queue of failed deletions that need to be retried
-// Uses a min-heap ordered by NextRetryAt for efficient retrieval of ready items
+// DeletionRetryQueue manages the queue of failed deletions that need to be retried.
+// Uses a min-heap ordered by NextRetryAt for efficient retrieval of ready items.
+//
+// LIMITATION: Current implementation stores retry queue in memory only.
+// On filer restart, all pending retries are lost. With MaxRetryDelay up to 6 hours,
+// process restarts during this window will cause retry state loss.
+//
+// TODO: Consider persisting retry queue to durable storage for production resilience:
+//  - Option 1: Leverage existing Filer store (KV operations)
+//  - Option 2: Periodic snapshots to disk with recovery on startup
+//  - Option 3: Write-ahead log for retry queue mutations
+//  - Trade-offs: Performance vs durability, complexity vs reliability
+//
+// For now, accepting in-memory storage as pragmatic initial implementation.
+// Lost retries will be eventually consistent as files remain in deletion queue.
 type DeletionRetryQueue struct {
 	heap      retryHeap
 	itemIndex map[string]*DeletionRetryItem // for O(1) lookup by FileId
