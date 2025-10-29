@@ -51,8 +51,16 @@ func (s3a *S3ApiServer) createFallbackCORSConfig() *cors.CORSConfiguration {
 		AllowedOrigins: s3a.option.AllowedOrigins,
 		AllowedMethods: []string{"GET", "PUT", "POST", "DELETE", "HEAD"},
 		AllowedHeaders: []string{"*"},
-		ExposeHeaders:  []string{"ETag", "Content-Length", "Content-Type"},
-		MaxAgeSeconds:  nil, // No max age by default
+		// Expose common S3 headers that web applications typically need
+		ExposeHeaders: []string{
+			"ETag",
+			"Content-Length",
+			"Content-Type",
+			"Last-Modified",
+			"x-amz-request-id",
+			"x-amz-version-id",
+		},
+		MaxAgeSeconds: nil, // No max age by default
 	}
 
 	return &cors.CORSConfiguration{
