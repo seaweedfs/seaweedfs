@@ -604,68 +604,42 @@ func extractHostHeader(r *http.Request) string {
 		scheme = "http"
 	}
 
-	// If X-Forwarded-Host is set, use that as the host.
-	// If X-Forwarded-Port is set, use that too to form the host.
-	// If X-Forwarded-Proto is set, check if it is default to omit the port.
+	var host, port string
 	if forwardedHost != "" {
-		extractedHost := forwardedHost
-		host, port, err := net.SplitHostPort(extractedHost)
-		hostHadPort := (err == nil)
-
-		if hostHadPort {
-			// forwardedHost contained a port (e.g., "example.com:8080" or "[::1]:8080")
-			extractedHost = host
-			if forwardedPort == "" {
-				forwardedPort = port
-			}
-
-			if !isDefaultPort(scheme, forwardedPort) {
-				extractedHost = net.JoinHostPort(extractedHost, forwardedPort)
-			} else {
-				// No port to add, but IPv6 addresses need brackets for canonical host header
-				if strings.Contains(extractedHost, ":") && !strings.HasPrefix(extractedHost, "[") {
-					extractedHost = "[" + extractedHost + "]"
-				}
-			}
-		} else {
-			// forwardedHost did not contain a port (e.g., "example.com" or "::1" or "[::1]")
-			// Use forwardedPort if provided and non-default
-			if forwardedPort != "" && !isDefaultPort(scheme, forwardedPort) {
-				// Strip brackets from IPv6 before JoinHostPort (it will add them back)
-				if strings.HasPrefix(extractedHost, "[") && strings.HasSuffix(extractedHost, "]") {
-					extractedHost = extractedHost[1 : len(extractedHost)-1]
-				}
-				extractedHost = net.JoinHostPort(extractedHost, forwardedPort)
-			} else {
-				// No port to add, but IPv6 addresses need brackets
-				if strings.Contains(extractedHost, ":") && !strings.HasPrefix(extractedHost, "[") {
-					extractedHost = "[" + extractedHost + "]"
-				}
+		host = forwardedHost
+		port = forwardedPort
+		if h, p, err := net.SplitHostPort(host); err == nil {
+			host = h
+			if port == "" {
+				port = p
 			}
 		}
-		return extractedHost
 	} else {
-		// Go http server removes "host" from Request.Header
-		host := r.Host
+		host = r.Host
 		if host == "" {
 			host = r.URL.Host
 		}
-		h, port, err := net.SplitHostPort(host)
-		if err != nil {
-			// Handle bare IPv6 address without port
-			if strings.Contains(host, ":") && !strings.HasPrefix(host, "[") {
-				return "[" + host + "]"
-			}
-			return host
+		if h, p, err := net.SplitHostPort(host); err == nil {
+			host = h
+			port = p
 		}
-		if isDefaultPort(scheme, port) {
-			if strings.Contains(h, ":") { // is IPv6
-				return "[" + h + "]"
-			}
-			return h
-		}
-		return host
 	}
+
+	// If we have a non-default port, join it with the host.
+	// net.JoinHostPort will handle bracketing for IPv6.
+	if port != "" && !isDefaultPort(scheme, port) {
+		// Before joining, strip brackets from host if they exist, as JoinHostPort adds them.
+		if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+			host = host[1 : len(host)-1]
+		}
+		return net.JoinHostPort(host, port)
+	}
+
+	// No port or default port, just ensure host is correctly formatted (IPv6 brackets).
+	if strings.Contains(host, ":") && !strings.HasPrefix(host, "[") {
+		return "[" + host + "]"
+	}
+	return host
 }
 
 func isDefaultPort(scheme, port string) bool {
