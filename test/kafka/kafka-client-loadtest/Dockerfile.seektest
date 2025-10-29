@@ -1,0 +1,20 @@
+FROM openjdk:11-jdk-slim
+
+# Install Maven
+RUN apt-get update && apt-get install -y maven && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Create source directory
+RUN mkdir -p src/main/java
+
+# Copy source and build files
+COPY SeekToBeginningTest.java src/main/java/
+COPY pom.xml .
+
+# Compile and package
+RUN mvn clean package -DskipTests
+
+# Run the test
+ENTRYPOINT ["java", "-cp", "target/seek-test.jar", "SeekToBeginningTest"]
+CMD ["kafka-gateway:9093"]

@@ -115,7 +115,7 @@ func CreateTestMetadataWithSSEC(keyPair *TestKeyPair) map[string][]byte {
 	for i := range iv {
 		iv[i] = byte(i)
 	}
-	StoreIVInMetadata(metadata, iv)
+	StoreSSECIVInMetadata(metadata, iv)
 	return metadata
 }
 

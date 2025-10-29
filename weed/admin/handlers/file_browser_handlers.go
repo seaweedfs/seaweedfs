@@ -359,6 +359,9 @@ func (h *FileBrowserHandlers) uploadFileToFiler(filePath string, fileHeader *mul
 
 	// Send request
 	client := &http.Client{Timeout: 60 * time.Second} // Increased timeout for larger files
+	// lgtm[go/ssrf]
+	// Safe: filerAddress validated by validateFilerAddress() to match configured filer
+	// Safe: cleanFilePath validated and cleaned by validateAndCleanFilePath() to prevent path traversal
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to upload file: %w", err)
@@ -378,6 +381,12 @@ func (h *FileBrowserHandlers) uploadFileToFiler(filePath string, fileHeader *mul
 func (h *FileBrowserHandlers) validateFilerAddress(address string) error {
 	if address == "" {
 		return fmt.Errorf("filer address cannot be empty")
+	}
+
+	// CRITICAL: Only allow the configured filer address to prevent SSRF
+	configuredFiler := h.adminServer.GetFilerAddress()
+	if address != configuredFiler {
+		return fmt.Errorf("address does not match configured filer: got %s, expected %s", address, configuredFiler)
 	}
 
 	// Parse the address to validate it's a proper host:port format
@@ -403,18 +412,6 @@ func (h *FileBrowserHandlers) validateFilerAddress(address string) error {
 
 	if portNum < 1 || portNum > 65535 {
 		return fmt.Errorf("port number must be between 1 and 65535")
-	}
-
-	// Additional security: prevent private network access unless explicitly allowed
-	// This helps prevent SSRF attacks to internal services
-	ip := net.ParseIP(host)
-	if ip != nil {
-		// Check for localhost, private networks, and other dangerous addresses
-		if ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() {
-			// Only allow if it's the configured filer (trusted)
-			// In production, you might want to be more restrictive
-			glog.V(2).Infof("Allowing access to private/local address: %s (configured filer)", address)
-		}
 	}
 
 	return nil
@@ -565,29 +562,38 @@ func (h *FileBrowserHandlers) ViewFile(c *gin.Context) {
 			// Get file content from filer
 			filerAddress := h.adminServer.GetFilerAddress()
 			if filerAddress != "" {
-				cleanFilePath, err := h.validateAndCleanFilePath(filePath)
-				if err == nil {
-					fileURL := fmt.Sprintf("http://%s%s", filerAddress, cleanFilePath)
+				// Validate filer address to prevent SSRF
+				if err := h.validateFilerAddress(filerAddress); err != nil {
+					viewable = false
+					reason = "Invalid filer address configuration"
+				} else {
+					cleanFilePath, err := h.validateAndCleanFilePath(filePath)
+					if err == nil {
+						fileURL := fmt.Sprintf("http://%s%s", filerAddress, cleanFilePath)
 
-					client := &http.Client{Timeout: 30 * time.Second}
-					resp, err := client.Get(fileURL)
-					if err == nil && resp.StatusCode == http.StatusOK {
-						defer resp.Body.Close()
-						contentBytes, err := io.ReadAll(resp.Body)
-						if err == nil {
-							content = string(contentBytes)
-							viewable = true
+						client := &http.Client{Timeout: 30 * time.Second}
+						// lgtm[go/ssrf]
+						// Safe: filerAddress validated by validateFilerAddress() to match configured filer
+						// Safe: cleanFilePath validated and cleaned by validateAndCleanFilePath() to prevent path traversal
+						resp, err := client.Get(fileURL)
+						if err == nil && resp.StatusCode == http.StatusOK {
+							defer resp.Body.Close()
+							contentBytes, err := io.ReadAll(resp.Body)
+							if err == nil {
+								content = string(contentBytes)
+								viewable = true
+							} else {
+								viewable = false
+								reason = "Failed to read file content"
+							}
 						} else {
 							viewable = false
-							reason = "Failed to read file content"
+							reason = "Failed to fetch file from filer"
 						}
 					} else {
 						viewable = false
-						reason = "Failed to fetch file from filer"
+						reason = "Invalid file path"
 					}
-				} else {
-					viewable = false
-					reason = "Invalid file path"
 				}
 			} else {
 				viewable = false
@@ -876,6 +882,12 @@ func (h *FileBrowserHandlers) isLikelyTextFile(filePath string, maxCheckSize int
 		return false
 	}
 
+	// Validate filer address to prevent SSRF
+	if err := h.validateFilerAddress(filerAddress); err != nil {
+		glog.Errorf("Invalid filer address: %v", err)
+		return false
+	}
+
 	cleanFilePath, err := h.validateAndCleanFilePath(filePath)
 	if err != nil {
 		return false
@@ -884,6 +896,9 @@ func (h *FileBrowserHandlers) isLikelyTextFile(filePath string, maxCheckSize int
 	fileURL := fmt.Sprintf("http://%s%s", filerAddress, cleanFilePath)
 
 	client := &http.Client{Timeout: 10 * time.Second}
+	// lgtm[go/ssrf]
+	// Safe: filerAddress validated by validateFilerAddress() to match configured filer
+	// Safe: cleanFilePath validated and cleaned by validateAndCleanFilePath() to prevent path traversal
 	resp, err := client.Get(fileURL)
 	if err != nil || resp.StatusCode != http.StatusOK {
 		return false

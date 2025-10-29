@@ -1766,8 +1766,9 @@ func (s *AdminServer) UpdateTopicRetention(namespace, name string, enabled bool,
 		},
 		// Preserve existing partition count - this is critical!
 		PartitionCount: currentConfig.PartitionCount,
-		// Preserve existing record type if it exists
-		RecordType: currentConfig.RecordType,
+		// Preserve existing schema if it exists
+		MessageRecordType: currentConfig.MessageRecordType,
+		KeyColumns:        currentConfig.KeyColumns,
 	}
 
 	// Update only the retention configuration

@@ -335,6 +335,10 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 		if len(v) > 0 && len(v[0]) > 0 {
 			if strings.HasPrefix(k, needle.PairNamePrefix) || k == "Cache-Control" || k == "Expires" || k == "Content-Disposition" {
 				entry.Extended[k] = []byte(v[0])
+				// Log version ID header specifically for debugging
+				if k == "Seaweed-X-Amz-Version-Id" {
+					glog.V(0).Infof("filer: storing version ID header in Extended: %s=%s for path=%s", k, v[0], path)
+				}
 			}
 			if k == "Response-Content-Disposition" {
 				entry.Extended["Content-Disposition"] = []byte(v[0])
@@ -370,6 +374,16 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 			glog.V(4).Infof("Stored SSE-KMS metadata for %s", entry.FullPath)
 		} else {
 			glog.Errorf("Failed to decode SSE-KMS metadata header for %s: %v", entry.FullPath, err)
+		}
+	}
+
+	if sseS3Header := r.Header.Get(s3_constants.SeaweedFSSSES3Key); sseS3Header != "" {
+		// Decode base64-encoded S3 metadata and store
+		if s3Data, err := base64.StdEncoding.DecodeString(sseS3Header); err == nil {
+			entry.Extended[s3_constants.SeaweedFSSSES3Key] = s3Data
+			glog.V(4).Infof("Stored SSE-S3 metadata for %s", entry.FullPath)
+		} else {
+			glog.Errorf("Failed to decode SSE-S3 metadata header for %s: %v", entry.FullPath, err)
 		}
 	}
 

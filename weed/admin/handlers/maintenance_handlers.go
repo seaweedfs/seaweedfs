@@ -38,7 +38,6 @@ func NewMaintenanceHandlers(adminServer *dash.AdminServer) *MaintenanceHandlers 
 // ShowTaskDetail displays the task detail page
 func (h *MaintenanceHandlers) ShowTaskDetail(c *gin.Context) {
 	taskID := c.Param("id")
-	glog.Infof("DEBUG ShowTaskDetail: Starting for task ID: %s", taskID)
 
 	taskDetail, err := h.adminServer.GetMaintenanceTaskDetail(taskID)
 	if err != nil {
@@ -46,8 +45,6 @@ func (h *MaintenanceHandlers) ShowTaskDetail(c *gin.Context) {
 		c.String(http.StatusNotFound, "Task not found: %s (Error: %v)", taskID, err)
 		return
 	}
-
-	glog.Infof("DEBUG ShowTaskDetail: got task detail for %s, task type: %s, status: %s", taskID, taskDetail.Task.Type, taskDetail.Task.Status)
 
 	c.Header("Content-Type", "text/html")
 	taskDetailComponent := app.TaskDetail(taskDetail)
@@ -59,7 +56,6 @@ func (h *MaintenanceHandlers) ShowTaskDetail(c *gin.Context) {
 		return
 	}
 
-	glog.Infof("DEBUG ShowTaskDetail: template rendered successfully for task %s", taskID)
 }
 
 // ShowMaintenanceQueue displays the maintenance queue page

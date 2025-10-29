@@ -243,7 +243,7 @@ func TestS3IAMDistributedTests(t *testing.T) {
 
 		// Report results
 		if len(errorList) == 0 {
-			t.Logf("🎉 All %d concurrent operations completed successfully with retry mechanisms!", totalOperations)
+			t.Logf("All %d concurrent operations completed successfully with retry mechanisms!", totalOperations)
 		} else {
 			t.Logf("Concurrent operations summary:")
 			t.Logf("  Total operations: %d", totalOperations)
@@ -262,7 +262,7 @@ func TestS3IAMDistributedTests(t *testing.T) {
 		// With proper retry mechanisms, we should expect near-zero failures
 		// Any remaining errors likely indicate real concurrency issues or system problems
 		if len(errorList) > 0 {
-			t.Errorf("❌ %d operation(s) failed even after retry mechanisms (%.1f%% failure rate). This indicates potential system issues or race conditions that need investigation.",
+			t.Errorf("%d operation(s) failed even after retry mechanisms (%.1f%% failure rate). This indicates potential system issues or race conditions that need investigation.",
 				len(errorList), float64(len(errorList))/float64(totalOperations)*100)
 		}
 	})

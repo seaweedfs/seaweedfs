@@ -102,6 +102,7 @@ const (
 	ErrContentSHA256Mismatch
 	ErrInvalidAccessKeyID
 	ErrRequestNotReadyYet
+	ErrRequestTimeTooSkewed
 	ErrMissingDateHeader
 	ErrInvalidRequest
 	ErrAuthNotSetup
@@ -129,6 +130,7 @@ const (
 	ErrSSECustomerKeyMD5Mismatch
 	ErrSSECustomerKeyMissing
 	ErrSSECustomerKeyNotNeeded
+	ErrSSEEncryptionTypeMismatch
 
 	// SSE-KMS related errors
 	ErrKMSKeyNotFound
@@ -431,6 +433,12 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		HTTPStatusCode: http.StatusForbidden,
 	},
 
+	ErrRequestTimeTooSkewed: {
+		Code:           "RequestTimeTooSkewed",
+		Description:    "The difference between the request time and the server's time is too large.",
+		HTTPStatusCode: http.StatusForbidden,
+	},
+
 	ErrSignatureDoesNotMatch: {
 		Code:           "SignatureDoesNotMatch",
 		Description:    "The request signature we calculated does not match the signature you provided. Check your key and signing method.",
@@ -538,6 +546,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrSSECustomerKeyNotNeeded: {
 		Code:           "InvalidArgument",
 		Description:    "The object was not encrypted with customer provided keys.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrSSEEncryptionTypeMismatch: {
+		Code:           "InvalidRequest",
+		Description:    "The encryption method specified in the request does not match the encryption method used to encrypt the object.",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
 

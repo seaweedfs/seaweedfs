@@ -109,12 +109,12 @@ func TestSQLFeatureDiagnostic(t *testing.T) {
 	// Summary
 	t.Log("\n" + strings.Repeat("=", 80))
 	t.Log("FEATURE SUMMARY:")
-	t.Log("  ✅ LIMIT: FULLY WORKING - Correctly limits result rows")
-	t.Log("  ✅ OFFSET: FULLY WORKING - Correctly skips rows")
-	t.Log("  ✅ WHERE: FULLY WORKING - All comparison operators working")
-	t.Log("  ✅ SELECT: WORKING - Supports *, columns, functions, arithmetic")
-	t.Log("  ✅ Functions: WORKING - String and datetime functions work")
-	t.Log("  ✅ Arithmetic: WORKING - +, -, *, / operations work")
+	t.Log("  LIMIT: FULLY WORKING - Correctly limits result rows")
+	t.Log("  OFFSET: FULLY WORKING - Correctly skips rows")
+	t.Log("  WHERE: FULLY WORKING - All comparison operators working")
+	t.Log("  SELECT: WORKING - Supports *, columns, functions, arithmetic")
+	t.Log("  Functions: WORKING - String and datetime functions work")
+	t.Log("  Arithmetic: WORKING - +, -, *, / operations work")
 	t.Log(strings.Repeat("=", 80))
 }
 
@@ -144,12 +144,12 @@ func TestSQLWhereClauseIssue(t *testing.T) {
 			t.Logf("WHERE id = %s returned %d rows", firstId, actualCount)
 
 			if actualCount == allCount {
-				t.Log("❌ CONFIRMED: WHERE clause is completely ignored")
+				t.Log("CONFIRMED: WHERE clause is completely ignored")
 				t.Log("   - Query parsed successfully")
 				t.Log("   - No errors returned")
 				t.Log("   - But filtering logic not implemented in execution")
 			} else if actualCount == 1 {
-				t.Log("✅ WHERE clause working correctly")
+				t.Log("WHERE clause working correctly")
 			} else {
 				t.Logf("❓ Unexpected result: got %d rows instead of 1 or %d", actualCount, allCount)
 			}
@@ -162,8 +162,8 @@ func TestSQLWhereClauseIssue(t *testing.T) {
 	t.Logf("WHERE 1 = 0 returned %d rows", impossibleCount)
 
 	if impossibleCount == allCount {
-		t.Log("❌ CONFIRMED: Even impossible WHERE conditions are ignored")
+		t.Log("CONFIRMED: Even impossible WHERE conditions are ignored")
 	} else if impossibleCount == 0 {
-		t.Log("✅ Impossible WHERE condition correctly returns no rows")
+		t.Log("Impossible WHERE condition correctly returns no rows")
 	}
 }

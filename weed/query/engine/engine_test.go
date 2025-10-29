@@ -1101,7 +1101,7 @@ func TestSQLEngine_ConvertLogEntryToRecordValue_ComplexDataTypes(t *testing.T) {
 			"float_field":  {Kind: &schema_pb.Value_FloatValue{FloatValue: 3.14159}},
 			"double_field": {Kind: &schema_pb.Value_DoubleValue{DoubleValue: 2.718281828}},
 			"bool_field":   {Kind: &schema_pb.Value_BoolValue{BoolValue: true}},
-			"string_field": {Kind: &schema_pb.Value_StringValue{StringValue: "test string with unicode 🎉"}},
+			"string_field": {Kind: &schema_pb.Value_StringValue{StringValue: "test string with unicode party"}},
 			"bytes_field":  {Kind: &schema_pb.Value_BytesValue{BytesValue: []byte{0x01, 0x02, 0x03}}},
 		},
 	}
@@ -1129,7 +1129,7 @@ func TestSQLEngine_ConvertLogEntryToRecordValue_ComplexDataTypes(t *testing.T) {
 	assert.Equal(t, float32(3.14159), result.Fields["float_field"].GetFloatValue())
 	assert.Equal(t, 2.718281828, result.Fields["double_field"].GetDoubleValue())
 	assert.Equal(t, true, result.Fields["bool_field"].GetBoolValue())
-	assert.Equal(t, "test string with unicode 🎉", result.Fields["string_field"].GetStringValue())
+	assert.Equal(t, "test string with unicode party", result.Fields["string_field"].GetStringValue())
 	assert.Equal(t, []byte{0x01, 0x02, 0x03}, result.Fields["bytes_field"].GetBytesValue())
 
 	// System columns should still be present

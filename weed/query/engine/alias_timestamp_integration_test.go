@@ -25,13 +25,13 @@ func TestAliasTimestampIntegration(t *testing.T) {
 				// Create test record
 				testRecord := &schema_pb.RecordValue{
 					Fields: map[string]*schema_pb.Value{
-						"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: timestamp}},
-						"id":            {Kind: &schema_pb.Value_Int64Value{Int64Value: int64(1000 + i)}},
+						"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: timestamp}},
+						"id":     {Kind: &schema_pb.Value_Int64Value{Int64Value: int64(1000 + i)}},
 					},
 				}
 
 				// Test equality with alias (this was the originally failing pattern)
-				sql := "SELECT _timestamp_ns AS ts, id FROM test WHERE ts = " + strconv.FormatInt(timestamp, 10)
+				sql := "SELECT _ts_ns AS ts, id FROM test WHERE ts = " + strconv.FormatInt(timestamp, 10)
 				stmt, err := ParseSQL(sql)
 				assert.NoError(t, err, "Should parse alias equality query for timestamp %d", timestamp)
 
@@ -43,7 +43,7 @@ func TestAliasTimestampIntegration(t *testing.T) {
 				assert.True(t, result, "Should match exact large timestamp using alias")
 
 				// Test precision - off by 1 nanosecond should not match
-				sqlOffBy1 := "SELECT _timestamp_ns AS ts, id FROM test WHERE ts = " + strconv.FormatInt(timestamp+1, 10)
+				sqlOffBy1 := "SELECT _ts_ns AS ts, id FROM test WHERE ts = " + strconv.FormatInt(timestamp+1, 10)
 				stmt2, err := ParseSQL(sqlOffBy1)
 				assert.NoError(t, err)
 				selectStmt2 := stmt2.(*SelectStatement)
@@ -62,23 +62,23 @@ func TestAliasTimestampIntegration(t *testing.T) {
 		testRecords := []*schema_pb.RecordValue{
 			{
 				Fields: map[string]*schema_pb.Value{
-					"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: timestamp - 2}}, // Before range
+					"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: timestamp - 2}}, // Before range
 				},
 			},
 			{
 				Fields: map[string]*schema_pb.Value{
-					"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: timestamp}}, // In range
+					"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: timestamp}}, // In range
 				},
 			},
 			{
 				Fields: map[string]*schema_pb.Value{
-					"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: timestamp + 2}}, // After range
+					"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: timestamp + 2}}, // After range
 				},
 			},
 		}
 
 		// Test range query with alias
-		sql := "SELECT _timestamp_ns AS ts FROM test WHERE ts >= " +
+		sql := "SELECT _ts_ns AS ts FROM test WHERE ts >= " +
 			strconv.FormatInt(timestamp-1, 10) + " AND ts <= " +
 			strconv.FormatInt(timestamp+1, 10)
 		stmt, err := ParseSQL(sql)
@@ -99,12 +99,12 @@ func TestAliasTimestampIntegration(t *testing.T) {
 		maxInt64 := int64(9223372036854775807)
 		testRecord := &schema_pb.RecordValue{
 			Fields: map[string]*schema_pb.Value{
-				"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: maxInt64}},
+				"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: maxInt64}},
 			},
 		}
 
 		// Test with alias
-		sql := "SELECT _timestamp_ns AS ts FROM test WHERE ts = " + strconv.FormatInt(maxInt64, 10)
+		sql := "SELECT _ts_ns AS ts FROM test WHERE ts = " + strconv.FormatInt(maxInt64, 10)
 		stmt, err := ParseSQL(sql)
 		assert.NoError(t, err, "Should parse max int64 with alias")
 
@@ -119,11 +119,11 @@ func TestAliasTimestampIntegration(t *testing.T) {
 		minInt64 := int64(-9223372036854775808)
 		testRecord2 := &schema_pb.RecordValue{
 			Fields: map[string]*schema_pb.Value{
-				"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: minInt64}},
+				"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: minInt64}},
 			},
 		}
 
-		sql2 := "SELECT _timestamp_ns AS ts FROM test WHERE ts = " + strconv.FormatInt(minInt64, 10)
+		sql2 := "SELECT _ts_ns AS ts FROM test WHERE ts = " + strconv.FormatInt(minInt64, 10)
 		stmt2, err := ParseSQL(sql2)
 		assert.NoError(t, err)
 		selectStmt2 := stmt2.(*SelectStatement)
@@ -141,14 +141,14 @@ func TestAliasTimestampIntegration(t *testing.T) {
 
 		testRecord := &schema_pb.RecordValue{
 			Fields: map[string]*schema_pb.Value{
-				"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: timestamp1}},
-				"created_at":    {Kind: &schema_pb.Value_Int64Value{Int64Value: timestamp2}},
-				"id":            {Kind: &schema_pb.Value_Int64Value{Int64Value: 12345}},
+				"_ts_ns":     {Kind: &schema_pb.Value_Int64Value{Int64Value: timestamp1}},
+				"created_at": {Kind: &schema_pb.Value_Int64Value{Int64Value: timestamp2}},
+				"id":         {Kind: &schema_pb.Value_Int64Value{Int64Value: 12345}},
 			},
 		}
 
 		// Use multiple timestamp aliases in WHERE
-		sql := "SELECT _timestamp_ns AS event_time, created_at AS created_time, id AS record_id FROM test " +
+		sql := "SELECT _ts_ns AS event_time, created_at AS created_time, id AS record_id FROM test " +
 			"WHERE event_time = " + strconv.FormatInt(timestamp1, 10) +
 			" AND created_time = " + strconv.FormatInt(timestamp2, 10) +
 			" AND record_id = 12345"
@@ -190,11 +190,11 @@ func TestAliasTimestampIntegration(t *testing.T) {
 			t.Run(op.sql, func(t *testing.T) {
 				testRecord := &schema_pb.RecordValue{
 					Fields: map[string]*schema_pb.Value{
-						"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: op.value}},
+						"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: op.value}},
 					},
 				}
 
-				sql := "SELECT _timestamp_ns AS ts FROM test WHERE " + op.sql
+				sql := "SELECT _ts_ns AS ts FROM test WHERE " + op.sql
 				stmt, err := ParseSQL(sql)
 				assert.NoError(t, err, "Should parse: %s", op.sql)
 
@@ -212,12 +212,12 @@ func TestAliasTimestampIntegration(t *testing.T) {
 		// Reproduce the exact production scenario that was originally failing
 
 		// This was the original failing pattern from the user
-		originalFailingSQL := "select id, _timestamp_ns as ts from ecommerce.user_events where ts = 1756913789829292386"
+		originalFailingSQL := "select id, _ts_ns as ts from ecommerce.user_events where ts = 1756913789829292386"
 
 		testRecord := &schema_pb.RecordValue{
 			Fields: map[string]*schema_pb.Value{
-				"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756913789829292386}},
-				"id":            {Kind: &schema_pb.Value_Int64Value{Int64Value: 82460}},
+				"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756913789829292386}},
+				"id":     {Kind: &schema_pb.Value_Int64Value{Int64Value: 82460}},
 			},
 		}
 
@@ -232,11 +232,11 @@ func TestAliasTimestampIntegration(t *testing.T) {
 		assert.True(t, result, "The originally failing production query should now work perfectly")
 
 		// Also test the other originally failing timestamp
-		originalFailingSQL2 := "select id, _timestamp_ns as ts from ecommerce.user_events where ts = 1756947416566456262"
+		originalFailingSQL2 := "select id, _ts_ns as ts from ecommerce.user_events where ts = 1756947416566456262"
 		testRecord2 := &schema_pb.RecordValue{
 			Fields: map[string]*schema_pb.Value{
-				"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756947416566456262}},
-				"id":            {Kind: &schema_pb.Value_Int64Value{Int64Value: 897795}},
+				"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756947416566456262}},
+				"id":     {Kind: &schema_pb.Value_Int64Value{Int64Value: 897795}},
 			},
 		}
 

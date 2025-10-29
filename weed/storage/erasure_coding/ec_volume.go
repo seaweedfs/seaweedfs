@@ -41,7 +41,8 @@ type EcVolume struct {
 	ecjFileAccessLock         sync.Mutex
 	diskType                  types.DiskType
 	datFileSize               int64
-	ExpireAtSec               uint64 //ec volume destroy time, calculated from the ec volume was created
+	ExpireAtSec               uint64     //ec volume destroy time, calculated from the ec volume was created
+	ECContext                 *ECContext // EC encoding parameters
 }
 
 func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection string, vid needle.VolumeId) (ev *EcVolume, err error) {
@@ -73,9 +74,32 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 		ev.Version = needle.Version(volumeInfo.Version)
 		ev.datFileSize = volumeInfo.DatFileSize
 		ev.ExpireAtSec = volumeInfo.ExpireAtSec
+
+		// Initialize EC context from .vif if present; fallback to defaults
+		if volumeInfo.EcShardConfig != nil {
+			ds := int(volumeInfo.EcShardConfig.DataShards)
+			ps := int(volumeInfo.EcShardConfig.ParityShards)
+
+			// Validate shard counts to prevent zero or invalid values
+			if ds <= 0 || ps <= 0 || ds+ps > MaxShardCount {
+				glog.Warningf("Invalid EC config in VolumeInfo for volume %d (data=%d, parity=%d), using defaults", vid, ds, ps)
+				ev.ECContext = NewDefaultECContext(collection, vid)
+			} else {
+				ev.ECContext = &ECContext{
+					Collection:   collection,
+					VolumeId:     vid,
+					DataShards:   ds,
+					ParityShards: ps,
+				}
+				glog.V(1).Infof("Loaded EC config from VolumeInfo for volume %d: %s", vid, ev.ECContext.String())
+			}
+		} else {
+			ev.ECContext = NewDefaultECContext(collection, vid)
+		}
 	} else {
 		glog.Warningf("vif file not found,volumeId:%d, filename:%s", vid, dataBaseFileName)
 		volume_info.SaveVolumeInfo(dataBaseFileName+".vif", &volume_server_pb.VolumeInfo{Version: uint32(ev.Version)})
+		ev.ECContext = NewDefaultECContext(collection, vid)
 	}
 
 	ev.ShardLocations = make(map[ShardId][]pb.ServerAddress)
@@ -260,7 +284,7 @@ func (ev *EcVolume) LocateEcShardNeedleInterval(version needle.Version, offset i
 	if ev.datFileSize > 0 {
 		// To get the correct LargeBlockRowsCount
 		// use datFileSize to calculate the shardSize to match the EC encoding logic.
-		shardSize = ev.datFileSize / DataShardsCount
+		shardSize = ev.datFileSize / int64(ev.ECContext.DataShards)
 	}
 	// calculate the locations in the ec shards
 	intervals = LocateData(ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, shardSize, offset, types.Size(needle.GetActualSize(size, version)))

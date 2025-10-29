@@ -229,22 +229,22 @@ func TestToMetadata(t *testing.T) {
 				s3_constants.AmzUserMetaPrefix + "789":      []byte("value3"),
 			},
 			expected: map[string]*string{
-				"_123key":        stringPtr("value1"), // starts with digit -> prefix _
-				"_456_2d_test":   stringPtr("value2"), // starts with digit AND has dash
-				"_789":           stringPtr("value3"),
+				"_123key":      stringPtr("value1"), // starts with digit -> prefix _
+				"_456_2d_test": stringPtr("value2"), // starts with digit AND has dash
+				"_789":         stringPtr("value3"),
 			},
 		},
 		{
 			name: "uppercase and mixed case keys",
 			input: map[string][]byte{
-				s3_constants.AmzUserMetaPrefix + "My-Key":      []byte("value1"),
-				s3_constants.AmzUserMetaPrefix + "UPPERCASE":   []byte("value2"),
-				s3_constants.AmzUserMetaPrefix + "MiXeD-CaSe":  []byte("value3"),
+				s3_constants.AmzUserMetaPrefix + "My-Key":     []byte("value1"),
+				s3_constants.AmzUserMetaPrefix + "UPPERCASE":  []byte("value2"),
+				s3_constants.AmzUserMetaPrefix + "MiXeD-CaSe": []byte("value3"),
 			},
 			expected: map[string]*string{
-				"my_2d_key":      stringPtr("value1"), // lowercase + dash -> _2d_
-				"uppercase":      stringPtr("value2"),
-				"mixed_2d_case":  stringPtr("value3"),
+				"my_2d_key":     stringPtr("value1"), // lowercase + dash -> _2d_
+				"uppercase":     stringPtr("value2"),
+				"mixed_2d_case": stringPtr("value3"),
 			},
 		},
 		{

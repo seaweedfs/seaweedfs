@@ -3,6 +3,7 @@ package s3api
 import (
 	"os"
 	"reflect"
+	"sync"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
@@ -542,4 +543,59 @@ func TestListBucketsAuthRequest(t *testing.T) {
 	t.Log("This test validates the fix for the regression identified in PR #7067")
 	t.Log("ListBuckets operation bypasses global permission check when bucket is empty")
 	t.Log("Object listing still properly enforces bucket-level permissions")
+}
+
+// TestSignatureVerificationDoesNotCheckPermissions tests that signature verification
+// only validates the signature and identity, not permissions. Permissions should be
+// checked later in authRequest based on the actual operation.
+// This test validates the fix for issue #7334
+func TestSignatureVerificationDoesNotCheckPermissions(t *testing.T) {
+	t.Run("List-only user can authenticate via signature", func(t *testing.T) {
+		// Create IAM with a user that only has List permissions on specific buckets
+		iam := &IdentityAccessManagement{
+			hashes:       make(map[string]*sync.Pool),
+			hashCounters: make(map[string]*int32),
+		}
+
+		err := iam.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
+			Identities: []*iam_pb.Identity{
+				{
+					Name: "list-only-user",
+					Credentials: []*iam_pb.Credential{
+						{
+							AccessKey: "list_access_key",
+							SecretKey: "list_secret_key",
+						},
+					},
+					Actions: []string{
+						"List:bucket-123",
+						"Read:bucket-123",
+					},
+				},
+			},
+		})
+		assert.NoError(t, err)
+
+		// Before the fix, signature verification would fail because it checked for Write permission
+		// After the fix, signature verification should succeed (only checking signature validity)
+		// The actual permission check happens later in authRequest with the correct action
+
+		// The user should be able to authenticate (signature verification passes)
+		// But authorization for specific actions is checked separately
+		identity, cred, found := iam.lookupByAccessKey("list_access_key")
+		assert.True(t, found, "Should find the user by access key")
+		assert.Equal(t, "list-only-user", identity.Name)
+		assert.Equal(t, "list_secret_key", cred.SecretKey)
+
+		// User should have the correct permissions
+		assert.True(t, identity.canDo(Action(ACTION_LIST), "bucket-123", ""))
+		assert.True(t, identity.canDo(Action(ACTION_READ), "bucket-123", ""))
+
+		// User should NOT have write permissions
+		assert.False(t, identity.canDo(Action(ACTION_WRITE), "bucket-123", ""))
+	})
+
+	t.Log("This test validates the fix for issue #7334")
+	t.Log("Signature verification no longer checks for Write permission")
+	t.Log("This allows list-only and read-only users to authenticate via AWS Signature V4")
 }

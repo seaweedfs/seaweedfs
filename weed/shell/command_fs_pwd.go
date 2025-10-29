@@ -26,6 +26,10 @@ func (c *commandFsPwd) HasTag(CommandTag) bool {
 
 func (c *commandFsPwd) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
+	if handleHelpRequest(c, args, writer) {
+		return nil
+	}
+
 	fmt.Fprintf(writer, "%s\n", commandEnv.option.Directory)
 
 	return nil

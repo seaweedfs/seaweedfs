@@ -88,6 +88,9 @@ spec:
             - name: {{ $dir.name }}
               mountPath: /{{ $dir.name }}
           {{- end }}
+          {{- if $volume.containerSecurityContext.enabled }}
+          securityContext: {{- omit $volume.containerSecurityContext "enabled" | toYaml | nindent 12 }}
+          {{- end }}
         {{- end }}
         {{- if $volume.initContainers }}
         {{ tpl (printf "{{ $volumeName := \"%s\" }}%s" $volumeName $volume.initContainers) $ | indent 8 | trim }}

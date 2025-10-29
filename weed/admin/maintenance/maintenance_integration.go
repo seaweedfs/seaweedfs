@@ -299,42 +299,29 @@ func (s *MaintenanceIntegration) convertToExistingFormat(result *types.TaskDetec
 
 // CanScheduleWithTaskSchedulers determines if a task can be scheduled using task schedulers with dynamic type conversion
 func (s *MaintenanceIntegration) CanScheduleWithTaskSchedulers(task *MaintenanceTask, runningTasks []*MaintenanceTask, availableWorkers []*MaintenanceWorker) bool {
-	glog.Infof("DEBUG CanScheduleWithTaskSchedulers: Checking task %s (type: %s)", task.ID, task.Type)
 
 	// Convert existing types to task types using mapping
 	taskType, exists := s.revTaskTypeMap[task.Type]
 	if !exists {
-		glog.Infof("DEBUG CanScheduleWithTaskSchedulers: Unknown task type %s for scheduling, falling back to existing logic", task.Type)
 		return false // Fallback to existing logic for unknown types
 	}
-
-	glog.Infof("DEBUG CanScheduleWithTaskSchedulers: Mapped task type %s to %s", task.Type, taskType)
 
 	// Convert task objects
 	taskObject := s.convertTaskToTaskSystem(task)
 	if taskObject == nil {
-		glog.Infof("DEBUG CanScheduleWithTaskSchedulers: Failed to convert task %s for scheduling", task.ID)
 		return false
 	}
-
-	glog.Infof("DEBUG CanScheduleWithTaskSchedulers: Successfully converted task %s", task.ID)
 
 	runningTaskObjects := s.convertTasksToTaskSystem(runningTasks)
 	workerObjects := s.convertWorkersToTaskSystem(availableWorkers)
 
-	glog.Infof("DEBUG CanScheduleWithTaskSchedulers: Converted %d running tasks and %d workers", len(runningTaskObjects), len(workerObjects))
-
 	// Get the appropriate scheduler
 	scheduler := s.taskRegistry.GetScheduler(taskType)
 	if scheduler == nil {
-		glog.Infof("DEBUG CanScheduleWithTaskSchedulers: No scheduler found for task type %s", taskType)
 		return false
 	}
 
-	glog.Infof("DEBUG CanScheduleWithTaskSchedulers: Found scheduler for task type %s", taskType)
-
 	canSchedule := scheduler.CanScheduleNow(taskObject, runningTaskObjects, workerObjects)
-	glog.Infof("DEBUG CanScheduleWithTaskSchedulers: Scheduler decision for task %s: %v", task.ID, canSchedule)
 
 	return canSchedule
 }

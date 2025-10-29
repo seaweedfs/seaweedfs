@@ -3,10 +3,11 @@ package wdclient
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"math/rand"
 	"sync"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 
@@ -116,17 +117,21 @@ func (mc *MasterClient) GetMasters(ctx context.Context) []pb.ServerAddress {
 }
 
 func (mc *MasterClient) WaitUntilConnected(ctx context.Context) {
+	attempts := 0
 	for {
 		select {
 		case <-ctx.Done():
-			glog.V(0).Infof("Connection wait stopped: %v", ctx.Err())
 			return
 		default:
-			if mc.getCurrentMaster() != "" {
+			currentMaster := mc.getCurrentMaster()
+			if currentMaster != "" {
 				return
 			}
+			attempts++
+			if attempts%100 == 0 { // Log every 100 attempts (roughly every 20 seconds)
+				glog.V(0).Infof("%s.%s WaitUntilConnected still waiting for master connection (attempt %d)...", mc.FilerGroup, mc.clientType, attempts)
+			}
 			time.Sleep(time.Duration(rand.Int31n(200)) * time.Millisecond)
-			print(".")
 		}
 	}
 }
@@ -322,7 +327,9 @@ func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 }
 
 func (mc *MasterClient) WithClient(streamingMode bool, fn func(client master_pb.SeaweedClient) error) error {
-	getMasterF := func() pb.ServerAddress { return mc.GetMaster(context.Background()) }
+	getMasterF := func() pb.ServerAddress {
+		return mc.GetMaster(context.Background())
+	}
 	return mc.WithClientCustomGetMaster(getMasterF, streamingMode, fn)
 }
 

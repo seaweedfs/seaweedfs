@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -147,8 +148,37 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 
 	s3ApiServer.registerRouter(router)
 
+	// Initialize the global SSE-S3 key manager with filer access
+	if err := InitializeGlobalSSES3KeyManager(s3ApiServer); err != nil {
+		return nil, fmt.Errorf("failed to initialize SSE-S3 key manager: %w", err)
+	}
+
 	go s3ApiServer.subscribeMetaEvents("s3", startTsNs, filer.DirectoryEtcRoot, []string{option.BucketsPath})
 	return s3ApiServer, nil
+}
+
+// classifyDomainNames classifies domains into path-style and virtual-host style domains.
+// A domain is considered path-style if:
+//  1. It contains a dot (has subdomains)
+//  2. Its parent domain is also in the list of configured domains
+//
+// For example, if domains are ["s3.example.com", "develop.s3.example.com"],
+// then "develop.s3.example.com" is path-style (parent "s3.example.com" is in the list),
+// while "s3.example.com" is virtual-host style.
+func classifyDomainNames(domainNames []string) (pathStyleDomains, virtualHostDomains []string) {
+	for _, domainName := range domainNames {
+		parts := strings.SplitN(domainName, ".", 2)
+		if len(parts) == 2 && slices.Contains(domainNames, parts[1]) {
+			// This is a subdomain and its parent is also in the list
+			// Register as path-style: domain.com/bucket/object
+			pathStyleDomains = append(pathStyleDomains, domainName)
+		} else {
+			// This is a top-level domain or its parent is not in the list
+			// Register as virtual-host style: bucket.domain.com/object
+			virtualHostDomains = append(virtualHostDomains, domainName)
+		}
+	}
+	return pathStyleDomains, virtualHostDomains
 }
 
 // handleCORSOriginValidation handles the common CORS origin validation logic
@@ -191,11 +221,17 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	var routers []*mux.Router
 	if s3a.option.DomainName != "" {
 		domainNames := strings.Split(s3a.option.DomainName, ",")
-		for _, domainName := range domainNames {
+		pathStyleDomains, virtualHostDomains := classifyDomainNames(domainNames)
+
+		// Register path-style domains
+		for _, domain := range pathStyleDomains {
+			routers = append(routers, apiRouter.Host(domain).PathPrefix("/{bucket}").Subrouter())
+		}
+
+		// Register virtual-host style domains
+		for _, virtualHost := range virtualHostDomains {
 			routers = append(routers, apiRouter.Host(
-				fmt.Sprintf("%s.%s:%d", "{bucket:.+}", domainName, s3a.option.Port)).Subrouter())
-			routers = append(routers, apiRouter.Host(
-				fmt.Sprintf("%s.%s", "{bucket:.+}", domainName)).Subrouter())
+				fmt.Sprintf("%s.%s", "{bucket:.+}", virtualHost)).Subrouter())
 		}
 	}
 	routers = append(routers, apiRouter.PathPrefix("/{bucket}").Subrouter())
@@ -437,12 +473,23 @@ func loadIAMManagerFromConfig(configPath string, filerAddressProvider func() str
 		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
 
+	// Ensure a valid policy engine config exists
+	if configRoot.Policy == nil {
+		// Provide a secure default if not specified in the config file
+		// Default to Deny with in-memory store so that JSON-defined policies work without filer
+		glog.V(0).Infof("No policy engine config provided; using defaults (DefaultEffect=%s, StoreType=%s)", sts.EffectDeny, sts.StoreTypeMemory)
+		configRoot.Policy = &policy.PolicyEngineConfig{
+			DefaultEffect: sts.EffectDeny,
+			StoreType:     sts.StoreTypeMemory,
+		}
+	}
+
 	// Create IAM configuration
 	iamConfig := &integration.IAMConfig{
 		STS:    configRoot.STS,
 		Policy: configRoot.Policy,
 		Roles: &integration.RoleStoreConfig{
-			StoreType: "memory", // Use memory store for JSON config-based setup
+			StoreType: sts.StoreTypeMemory, // Use memory store for JSON config-based setup
 		},
 	}
 

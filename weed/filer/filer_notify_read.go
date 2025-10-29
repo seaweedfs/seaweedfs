@@ -29,7 +29,7 @@ func (f *Filer) collectPersistedLogBuffer(startPosition log_buffer.MessagePositi
 		return nil, io.EOF
 	}
 
-	startDate := fmt.Sprintf("%04d-%02d-%02d", startPosition.Year(), startPosition.Month(), startPosition.Day())
+	startDate := fmt.Sprintf("%04d-%02d-%02d", startPosition.Time.Year(), startPosition.Time.Month(), startPosition.Time.Day())
 
 	dayEntries, _, listDayErr := f.ListDirectoryEntries(context.Background(), SystemLogDir, startDate, true, math.MaxInt32, "", "", "")
 	if listDayErr != nil {
@@ -41,7 +41,7 @@ func (f *Filer) collectPersistedLogBuffer(startPosition log_buffer.MessagePositi
 }
 
 func (f *Filer) HasPersistedLogFiles(startPosition log_buffer.MessagePosition) (bool, error) {
-	startDate := fmt.Sprintf("%04d-%02d-%02d", startPosition.Year(), startPosition.Month(), startPosition.Day())
+	startDate := fmt.Sprintf("%04d-%02d-%02d", startPosition.Time.Year(), startPosition.Time.Month(), startPosition.Time.Day())
 	dayEntries, _, listDayErr := f.ListDirectoryEntries(context.Background(), SystemLogDir, startDate, true, 1, "", "", "")
 
 	if listDayErr != nil {
@@ -157,8 +157,8 @@ func NewLogFileEntryCollector(f *Filer, startPosition log_buffer.MessagePosition
 		// println("enqueue day entry", dayEntry.Name())
 	}
 
-	startDate := fmt.Sprintf("%04d-%02d-%02d", startPosition.Year(), startPosition.Month(), startPosition.Day())
-	startHourMinute := fmt.Sprintf("%02d-%02d", startPosition.Hour(), startPosition.Minute())
+	startDate := fmt.Sprintf("%04d-%02d-%02d", startPosition.Time.Year(), startPosition.Time.Month(), startPosition.Time.Day())
+	startHourMinute := fmt.Sprintf("%02d-%02d", startPosition.Time.Hour(), startPosition.Time.Minute())
 	var stopDate, stopHourMinute string
 	if stopTsNs != 0 {
 		stopTime := time.Unix(0, stopTsNs+24*60*60*int64(time.Second)).UTC()
@@ -168,7 +168,7 @@ func NewLogFileEntryCollector(f *Filer, startPosition log_buffer.MessagePosition
 
 	return &LogFileEntryCollector{
 		f:               f,
-		startTsNs:       startPosition.UnixNano(),
+		startTsNs:       startPosition.Time.UnixNano(),
 		stopTsNs:        stopTsNs,
 		dayEntryQueue:   dayEntryQueue,
 		startDate:       startDate,

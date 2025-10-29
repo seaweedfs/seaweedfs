@@ -1,0 +1,124 @@
+name: "Kafka Quick Test (Load Test with Schema Registry)"
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:  # Allow manual trigger
+
+concurrency:
+  group: ${{ github.head_ref }}/kafka-quicktest
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  kafka-client-quicktest:
+    name: Kafka Client Load Test (Quick)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v5
+
+    - name: Set up Go 1.x
+      uses: actions/setup-go@v6
+      with:
+        go-version: ^1.24
+        cache: true
+        cache-dependency-path: |
+          **/go.sum
+      id: go
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Install dependencies
+      run: |
+        # Ensure make is available
+        sudo apt-get update -qq
+        sudo apt-get install -y make
+
+    - name: Validate test setup
+      working-directory: test/kafka/kafka-client-loadtest
+      run: |
+        make validate-setup
+
+    - name: Run quick-test
+      working-directory: test/kafka/kafka-client-loadtest
+      run: |
+        # Run the quick-test target which includes:
+        # 1. Building the gateway
+        # 2. Starting all services (SeaweedFS, MQ broker, Schema Registry)
+        # 3. Registering Avro schemas
+        # 4. Running a 1-minute load test with Avro messages
+        # Override GOARCH to build for AMD64 (GitHub Actions runners are x86_64)
+        GOARCH=amd64 make quick-test
+      env:
+        # Docker Compose settings
+        COMPOSE_HTTP_TIMEOUT: 300
+        DOCKER_CLIENT_TIMEOUT: 300
+        # Test parameters (set by quick-test, but can override)
+        TEST_DURATION: 60s
+        PRODUCER_COUNT: 1
+        CONSUMER_COUNT: 1
+        MESSAGE_RATE: 10
+        VALUE_TYPE: avro
+
+    - name: Show test results
+      if: always()
+      working-directory: test/kafka/kafka-client-loadtest
+      run: |
+        echo "========================================="
+        echo "Test Results"
+        echo "========================================="
+        make show-results || echo "Could not retrieve results"
+
+    - name: Show service logs on failure
+      if: failure()
+      working-directory: test/kafka/kafka-client-loadtest
+      run: |
+        echo "========================================="
+        echo "Service Logs"
+        echo "========================================="
+        
+        echo "Checking running containers..."
+        docker compose ps || true
+        
+        echo "========================================="
+        echo "Master Logs"
+        echo "========================================="
+        docker compose logs --tail=100 seaweedfs-master 2>&1 || echo "No master logs available"
+        
+        echo "========================================="
+        echo "MQ Broker Logs (Last 100 lines)"
+        echo "========================================="
+        docker compose logs --tail=100 seaweedfs-mq-broker 2>&1 || echo "No broker logs available"
+        
+        echo "========================================="
+        echo "Kafka Gateway Logs (FULL - Critical for debugging)"
+        echo "========================================="
+        docker compose logs kafka-gateway 2>&1 || echo "ERROR: Could not retrieve kafka-gateway logs"
+        
+        echo "========================================="
+        echo "Schema Registry Logs (FULL)"
+        echo "========================================="
+        docker compose logs schema-registry 2>&1 || echo "ERROR: Could not retrieve schema-registry logs"
+        
+        echo "========================================="
+        echo "Load Test Logs"
+        echo "========================================="
+        docker compose logs --tail=100 kafka-client-loadtest 2>&1 || echo "No loadtest logs available"
+
+    - name: Cleanup
+      if: always()
+      working-directory: test/kafka/kafka-client-loadtest
+      run: |
+        # Stop containers first
+        docker compose --profile loadtest --profile monitoring down -v --remove-orphans || true
+        # Clean up data with sudo to handle Docker root-owned files
+        sudo rm -rf data/* || true
+        # Clean up binary
+        rm -f weed-linux-* || true
