@@ -40,7 +40,7 @@ func NewMiddleware(bucketChecker BucketChecker, corsConfigGetter CORSConfigGette
 // For other errors (e.g., access denied), returns false to let the handler deny the request.
 func (m *Middleware) getCORSConfig(bucket string) (*CORSConfiguration, bool) {
 	config, errCode := m.corsConfigGetter.GetCORSConfiguration(bucket)
-	
+
 	switch errCode {
 	case s3err.ErrNone:
 		// Found a config, use it
@@ -59,7 +59,7 @@ func (m *Middleware) getCORSConfig(bucket string) (*CORSConfiguration, bool) {
 	if m.fallbackConfig != nil {
 		return m.fallbackConfig, true
 	}
-	
+
 	return nil, false
 }
 
