@@ -127,16 +127,16 @@ func TestFlushOffsetGap_ReproduceDataLoss(t *testing.T) {
 		t.Logf("  Gap: %d offsets", gap)
 
 		if gap > 0 {
-			t.Errorf("❌ CRITICAL BUG REPRODUCED: OFFSET GAP DETECTED!")
+			t.Errorf("CRITICAL BUG REPRODUCED: OFFSET GAP DETECTED!")
 			t.Errorf("   Disk has offsets %d-%d", minFlushedOffset, maxFlushedOffset)
 			t.Errorf("   Memory buffer starts at: %d", bufferStartOffset)
 			t.Errorf("   MISSING OFFSETS: %d-%d (%d messages)", maxFlushedOffset+1, bufferStartOffset-1, gap)
 			t.Errorf("   These messages are LOST - neither on disk nor in memory!")
 		} else if gap < 0 {
-			t.Errorf("❌ OFFSET OVERLAP: Memory buffer starts BEFORE last flushed offset!")
+			t.Errorf("OFFSET OVERLAP: Memory buffer starts BEFORE last flushed offset!")
 			t.Errorf("   This indicates data corruption or race condition")
 		} else {
-			t.Logf("✅ PASS: No gap detected - offsets are continuous")
+			t.Logf("PASS: No gap detected - offsets are continuous")
 		}
 
 		// Check if we can read all expected offsets
@@ -147,9 +147,9 @@ func TestFlushOffsetGap_ReproduceDataLoss(t *testing.T) {
 			buf, _, err := logBuffer.ReadFromBuffer(requestPosition)
 
 			isReadable := (buf != nil && len(buf.Bytes()) > 0) || err == ResumeFromDiskError
-			status := "✅"
+			status := "OK"
 			if !isReadable && err == nil {
-				status = "❌ NOT READABLE"
+				status = "NOT READABLE"
 			}
 
 			t.Logf("  Offset %d: %s (buf=%v, err=%v)", testOffset, status, buf != nil, err)
@@ -178,9 +178,9 @@ func TestFlushOffsetGap_ReproduceDataLoss(t *testing.T) {
 	t.Logf("  Missing: %d messages", expectedMessageCount-totalAccountedFor)
 
 	if totalAccountedFor < expectedMessageCount {
-		t.Errorf("❌ DATA LOSS CONFIRMED: %d messages are missing!", expectedMessageCount-totalAccountedFor)
+		t.Errorf("DATA LOSS CONFIRMED: %d messages are missing!", expectedMessageCount-totalAccountedFor)
 	} else {
-		t.Logf("✅ All messages accounted for")
+		t.Logf("All messages accounted for")
 	}
 }
 
@@ -249,7 +249,7 @@ func TestFlushOffsetGap_CheckPrevBuffers(t *testing.T) {
 		// CRITICAL: Check if bufferStartOffset advanced correctly
 		expectedNewStart := beforeFlushOffset
 		if afterFlushStart != expectedNewStart {
-			t.Errorf("  ❌ bufferStartOffset mismatch!")
+			t.Errorf("  bufferStartOffset mismatch!")
 			t.Errorf("     Expected: %d (= offset before flush)", expectedNewStart)
 			t.Errorf("     Actual: %d", afterFlushStart)
 			t.Errorf("     Gap: %d offsets", expectedNewStart-afterFlushStart)
@@ -331,7 +331,7 @@ func TestFlushOffsetGap_ConcurrentWriteAndFlush(t *testing.T) {
 	t.Logf("  Missing: %d", expectedCount-totalAccountedFor)
 
 	if totalAccountedFor < expectedCount {
-		t.Errorf("❌ DATA LOSS in concurrent scenario: %d messages missing!", expectedCount-totalAccountedFor)
+		t.Errorf("DATA LOSS in concurrent scenario: %d messages missing!", expectedCount-totalAccountedFor)
 	}
 }
 
@@ -441,7 +441,7 @@ func TestFlushOffsetGap_ProductionScenario(t *testing.T) {
 
 		for _, msg := range flush.messages {
 			if allOffsets[msg.Offset] {
-				t.Errorf("  ❌ DUPLICATE: Offset %d appears multiple times!", msg.Offset)
+				t.Errorf("  DUPLICATE: Offset %d appears multiple times!", msg.Offset)
 			}
 			allOffsets[msg.Offset] = true
 		}
@@ -457,7 +457,7 @@ func TestFlushOffsetGap_ProductionScenario(t *testing.T) {
 	}
 
 	if len(missingOffsets) > 0 {
-		t.Errorf("\n❌ MISSING OFFSETS DETECTED: %d offsets missing", len(missingOffsets))
+		t.Errorf("\nMISSING OFFSETS DETECTED: %d offsets missing", len(missingOffsets))
 		if len(missingOffsets) <= 20 {
 			t.Errorf("Missing: %v", missingOffsets)
 		} else {
@@ -465,7 +465,7 @@ func TestFlushOffsetGap_ProductionScenario(t *testing.T) {
 		}
 		t.Errorf("\nThis reproduces the production bug!")
 	} else {
-		t.Logf("\n✅ SUCCESS: All %d Kafka offsets accounted for (0-%d)", nextKafkaOffset, nextKafkaOffset-1)
+		t.Logf("\nSUCCESS: All %d Kafka offsets accounted for (0-%d)", nextKafkaOffset, nextKafkaOffset-1)
 	}
 
 	// Check buffer offset consistency
@@ -480,7 +480,7 @@ func TestFlushOffsetGap_ProductionScenario(t *testing.T) {
 	t.Logf("  Expected (nextKafkaOffset): %d", nextKafkaOffset)
 
 	if finalOffset != nextKafkaOffset {
-		t.Errorf("❌ logBuffer.offset mismatch: expected %d, got %d", nextKafkaOffset, finalOffset)
+		t.Errorf("logBuffer.offset mismatch: expected %d, got %d", nextKafkaOffset, finalOffset)
 	}
 }
 
@@ -575,14 +575,14 @@ func TestFlushOffsetGap_ConcurrentReadDuringFlush(t *testing.T) {
 	}
 
 	if len(missingOffsets) > 0 {
-		t.Errorf("❌ MISSING OFFSETS after flush: %d offsets cannot be read", len(missingOffsets))
+		t.Errorf("MISSING OFFSETS after flush: %d offsets cannot be read", len(missingOffsets))
 		if len(missingOffsets) <= 20 {
 			t.Errorf("Missing: %v", missingOffsets)
 		} else {
 			t.Errorf("Missing: %v ... and %d more", missingOffsets[:20], len(missingOffsets)-20)
 		}
 	} else {
-		t.Logf("✅ All 100 offsets can be read after flush")
+		t.Logf("All 100 offsets can be read after flush")
 	}
 }
 
@@ -646,12 +646,12 @@ func TestFlushOffsetGap_ForceFlushAdvancesBuffer(t *testing.T) {
 
 		// CRITICAL CHECK: bufferStartOffset should advance to where offset was before flush
 		if afterFlushStart != afterAddOffset {
-			t.Errorf("❌ FLUSH BUG: bufferStartOffset did NOT advance correctly!")
+			t.Errorf("FLUSH BUG: bufferStartOffset did NOT advance correctly!")
 			t.Errorf("   Expected bufferStartOffset=%d (= offset after add)", afterAddOffset)
 			t.Errorf("   Actual bufferStartOffset=%d", afterFlushStart)
 			t.Errorf("   Gap: %d offsets WILL BE LOST", afterAddOffset-afterFlushStart)
 		} else {
-			t.Logf("✅ bufferStartOffset correctly advanced to %d", afterFlushStart)
+			t.Logf("bufferStartOffset correctly advanced to %d", afterFlushStart)
 		}
 	}
 
@@ -668,11 +668,11 @@ func TestFlushOffsetGap_ForceFlushAdvancesBuffer(t *testing.T) {
 			gap := currentMin - (prevMax + 1)
 
 			if gap > 0 {
-				t.Errorf("❌ GAP between flush #%d and #%d: %d offsets missing!", i-1, i, gap)
+				t.Errorf("GAP between flush #%d and #%d: %d offsets missing!", i-1, i, gap)
 			} else if gap < 0 {
-				t.Errorf("❌ OVERLAP between flush #%d and #%d: %d offsets duplicated!", i-1, i, -gap)
+				t.Errorf("OVERLAP between flush #%d and #%d: %d offsets duplicated!", i-1, i, -gap)
 			} else {
-				t.Logf("  ✅ Continuous with previous flush")
+				t.Logf("  Continuous with previous flush")
 			}
 		}
 	}

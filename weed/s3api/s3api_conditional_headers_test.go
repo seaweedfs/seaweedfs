@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"bytes"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -669,6 +670,86 @@ func TestETagMatching(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestGetObjectETagWithMd5AndChunks tests the fix for issue #7274
+// When an object has both Attributes.Md5 and multiple chunks, getObjectETag should
+// prefer Attributes.Md5 to match the behavior of HeadObject and filer.ETag
+func TestGetObjectETagWithMd5AndChunks(t *testing.T) {
+	s3a := NewS3ApiServerForTest()
+	if s3a == nil {
+		t.Skip("S3ApiServer not available for testing")
+	}
+
+	// Create an object with both Md5 and multiple chunks (like in issue #7274)
+	// Md5: ZjcmMwrCVGNVgb4HoqHe9g== (base64) = 663726330ac254635581be07a2a1def6 (hex)
+	md5HexString := "663726330ac254635581be07a2a1def6"
+	md5Bytes, err := hex.DecodeString(md5HexString)
+	if err != nil {
+		t.Fatalf("failed to decode md5 hex string: %v", err)
+	}
+
+	entry := &filer_pb.Entry{
+		Name: "test-multipart-object",
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime:    time.Now().Unix(),
+			FileSize: 5597744,
+			Md5:      md5Bytes,
+		},
+		// Two chunks - if we only used ETagChunks, it would return format "hash-2"
+		Chunks: []*filer_pb.FileChunk{
+			{
+				FileId: "chunk1",
+				Offset: 0,
+				Size:   4194304,
+				ETag:   "9+yCD2DGwMG5uKwAd+y04Q==",
+			},
+			{
+				FileId: "chunk2",
+				Offset: 4194304,
+				Size:   1403440,
+				ETag:   "cs6SVSTgZ8W3IbIrAKmklg==",
+			},
+		},
+	}
+
+	// getObjectETag should return the Md5 in hex with quotes
+	expectedETag := "\"" + md5HexString + "\""
+	actualETag := s3a.getObjectETag(entry)
+
+	if actualETag != expectedETag {
+		t.Errorf("Expected ETag %s, got %s", expectedETag, actualETag)
+	}
+
+	// Now test that conditional headers work with this ETag
+	bucket := "test-bucket"
+	object := "/test-object"
+
+	// Test If-Match with the Md5-based ETag (should succeed)
+	t.Run("IfMatch_WithMd5BasedETag_ShouldSucceed", func(t *testing.T) {
+		getter := createMockEntryGetter(entry)
+		req := createTestGetRequest(bucket, object)
+		// Client sends the ETag from HeadObject (without quotes)
+		req.Header.Set(s3_constants.IfMatch, md5HexString)
+
+		result := s3a.checkConditionalHeadersForReadsWithGetter(getter, req, bucket, object)
+		if result.ErrorCode != s3err.ErrNone {
+			t.Errorf("Expected ErrNone when If-Match uses Md5-based ETag, got %v (ETag was %s)", result.ErrorCode, actualETag)
+		}
+	})
+
+	// Test If-Match with chunk-based ETag format (should fail - this was the old incorrect behavior)
+	t.Run("IfMatch_WithChunkBasedETag_ShouldFail", func(t *testing.T) {
+		getter := createMockEntryGetter(entry)
+		req := createTestGetRequest(bucket, object)
+		// If we incorrectly calculated ETag from chunks, it would be in format "hash-2"
+		req.Header.Set(s3_constants.IfMatch, "123294de680f28bde364b81477549f7d-2")
+
+		result := s3a.checkConditionalHeadersForReadsWithGetter(getter, req, bucket, object)
+		if result.ErrorCode != s3err.ErrPreconditionFailed {
+			t.Errorf("Expected ErrPreconditionFailed when If-Match uses chunk-based ETag format, got %v", result.ErrorCode)
+		}
+	})
 }
 
 // TestConditionalHeadersIntegration tests conditional headers with full integration
