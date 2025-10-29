@@ -100,10 +100,10 @@ func (q *DeletionRetryQueue) AddOrUpdate(fileId string, errorMsg string) {
 		item.RetryCount++
 		item.LastError = errorMsg
 		// Calculate next retry time with exponential backoff
-		delay := InitialRetryDelay * time.Duration(1<<uint(item.RetryCount-1))
-		if delay > MaxRetryDelay {
-			delay = MaxRetryDelay
-		}
+delay := InitialRetryDelay << uint(item.RetryCount-1)
+if delay > MaxRetryDelay || delay <= 0 { // Also check for overflow, which results in a non-positive duration
+	delay = MaxRetryDelay
+}
 		item.NextRetryAt = time.Now().Add(delay)
 		// Re-heapify since NextRetryAt changed
 		heap.Fix(&q.heap, item.heapIndex)
