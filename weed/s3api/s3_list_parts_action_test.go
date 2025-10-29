@@ -35,7 +35,7 @@ func TestListPartsActionMapping(t *testing.T) {
 		{
 			name:           "get_object_with_uploadId",
 			method:         "GET",
-			bucket:         "test-bucket", 
+			bucket:         "test-bucket",
 			objectKey:      "test-object.txt",
 			queryParams:    map[string]string{"uploadId": "test-upload-id"},
 			fallbackAction: s3_constants.ACTION_READ,
@@ -43,14 +43,14 @@ func TestListPartsActionMapping(t *testing.T) {
 			description:    "GET request with uploadId should map to s3:ListParts (this was the missing mapping)",
 		},
 		{
-			name:           "get_object_with_uploadId_and_other_params",
-			method:         "GET",
-			bucket:         "test-bucket",
-			objectKey:      "test-object.txt",
+			name:      "get_object_with_uploadId_and_other_params",
+			method:    "GET",
+			bucket:    "test-bucket",
+			objectKey: "test-object.txt",
 			queryParams: map[string]string{
-				"uploadId":            "test-upload-id-123",
-				"max-parts":           "100",
-				"part-number-marker":  "50",
+				"uploadId":           "test-upload-id-123",
+				"max-parts":          "100",
+				"part-number-marker": "50",
 			},
 			fallbackAction: s3_constants.ACTION_READ,
 			expectedAction: "s3:ListParts",
@@ -107,7 +107,7 @@ func TestListPartsActionMapping(t *testing.T) {
 			action := determineGranularS3Action(req, tc.fallbackAction, tc.bucket, tc.objectKey)
 
 			// Verify the action mapping
-			assert.Equal(t, tc.expectedAction, action, 
+			assert.Equal(t, tc.expectedAction, action,
 				"Test case: %s - %s", tc.name, tc.description)
 		})
 	}
@@ -145,17 +145,17 @@ func TestListPartsActionMappingSecurityScenarios(t *testing.T) {
 	t.Run("policy_enforcement_precision", func(t *testing.T) {
 		// This test documents the security improvement - before the fix, both operations
 		// would incorrectly map to s3:GetObject, preventing fine-grained access control
-		
+
 		testCases := []struct {
 			description    string
-			queryParams    map[string]string  
+			queryParams    map[string]string
 			expectedAction string
 			securityNote   string
 		}{
 			{
 				description:    "List multipart upload parts",
 				queryParams:    map[string]string{"uploadId": "upload-abc123"},
-				expectedAction: "s3:ListParts", 
+				expectedAction: "s3:ListParts",
 				securityNote:   "FIXED: Now correctly maps to s3:ListParts instead of s3:GetObject",
 			},
 			{
@@ -165,7 +165,7 @@ func TestListPartsActionMappingSecurityScenarios(t *testing.T) {
 				securityNote:   "UNCHANGED: Still correctly maps to s3:GetObject",
 			},
 			{
-				description:    "Get object with complex upload ID", 
+				description:    "Get object with complex upload ID",
 				queryParams:    map[string]string{"uploadId": "complex-upload-id-with-hyphens-123-abc-def"},
 				expectedAction: "s3:ListParts",
 				securityNote:   "FIXED: Complex upload IDs now correctly detected",
@@ -185,8 +185,8 @@ func TestListPartsActionMappingSecurityScenarios(t *testing.T) {
 			req.URL.RawQuery = query.Encode()
 
 			action := determineGranularS3Action(req, s3_constants.ACTION_READ, "test-bucket", "test-object")
-			
-			assert.Equal(t, tc.expectedAction, action, 
+
+			assert.Equal(t, tc.expectedAction, action,
 				"%s - %s", tc.description, tc.securityNote)
 		}
 	})
@@ -196,7 +196,7 @@ func TestListPartsActionMappingSecurityScenarios(t *testing.T) {
 func TestListPartsActionRealWorldScenarios(t *testing.T) {
 	t.Run("large_file_upload_workflow", func(t *testing.T) {
 		// Simulate a large file upload workflow where users need different permissions for each step
-		
+
 		// Step 1: Initiate multipart upload (POST with uploads query)
 		req1 := &http.Request{
 			Method: "POST",
@@ -206,7 +206,7 @@ func TestListPartsActionRealWorldScenarios(t *testing.T) {
 		query1.Set("uploads", "")
 		req1.URL.RawQuery = query1.Encode()
 		action1 := determineGranularS3Action(req1, s3_constants.ACTION_WRITE, "data", "large-dataset.csv")
-		
+
 		// Step 2: List existing parts (GET with uploadId query) - THIS WAS THE MISSING MAPPING
 		req2 := &http.Request{
 			Method: "GET",
@@ -216,7 +216,7 @@ func TestListPartsActionRealWorldScenarios(t *testing.T) {
 		query2.Set("uploadId", "dataset-upload-20240827-001")
 		req2.URL.RawQuery = query2.Encode()
 		action2 := determineGranularS3Action(req2, s3_constants.ACTION_READ, "data", "large-dataset.csv")
-		
+
 		// Step 3: Upload a part (PUT with uploadId and partNumber)
 		req3 := &http.Request{
 			Method: "PUT",
@@ -227,7 +227,7 @@ func TestListPartsActionRealWorldScenarios(t *testing.T) {
 		query3.Set("partNumber", "5")
 		req3.URL.RawQuery = query3.Encode()
 		action3 := determineGranularS3Action(req3, s3_constants.ACTION_WRITE, "data", "large-dataset.csv")
-		
+
 		// Step 4: Complete multipart upload (POST with uploadId)
 		req4 := &http.Request{
 			Method: "POST",
@@ -241,15 +241,15 @@ func TestListPartsActionRealWorldScenarios(t *testing.T) {
 		// Verify each step has the correct action mapping
 		assert.Equal(t, "s3:CreateMultipartUpload", action1, "Step 1: Initiate upload")
 		assert.Equal(t, "s3:ListParts", action2, "Step 2: List parts (FIXED by this PR)")
-		assert.Equal(t, "s3:UploadPart", action3, "Step 3: Upload part")  
+		assert.Equal(t, "s3:UploadPart", action3, "Step 3: Upload part")
 		assert.Equal(t, "s3:CompleteMultipartUpload", action4, "Step 4: Complete upload")
-		
+
 		// Verify that each step requires different permissions (security principle)
 		actions := []string{action1, action2, action3, action4}
 		for i, action := range actions {
 			for j, otherAction := range actions {
 				if i != j {
-					assert.NotEqual(t, action, otherAction, 
+					assert.NotEqual(t, action, otherAction,
 						"Each multipart operation step should require different permissions for fine-grained control")
 				}
 			}
@@ -258,7 +258,7 @@ func TestListPartsActionRealWorldScenarios(t *testing.T) {
 
 	t.Run("edge_case_upload_ids", func(t *testing.T) {
 		// Test various upload ID formats to ensure the fix works with real AWS-compatible upload IDs
-		
+
 		testUploadIds := []string{
 			"simple123",
 			"complex-upload-id-with-hyphens",
@@ -276,10 +276,10 @@ func TestListPartsActionRealWorldScenarios(t *testing.T) {
 			query := req.URL.Query()
 			query.Set("uploadId", uploadId)
 			req.URL.RawQuery = query.Encode()
-			
+
 			action := determineGranularS3Action(req, s3_constants.ACTION_READ, "test-bucket", "test-file.bin")
-			
-			assert.Equal(t, "s3:ListParts", action, 
+
+			assert.Equal(t, "s3:ListParts", action,
 				"Upload ID format %s should be correctly detected and mapped to s3:ListParts", uploadId)
 		}
 	})

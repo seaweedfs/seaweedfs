@@ -15,30 +15,29 @@ services:
       - "27777:17777" # MQ Broker port (mapped to avoid conflicts)
     volumes:
       - seaweedfs_data:/data
-      - ./config:/etc/seaweedfs
-    command: >
-      ./weed server
-      -dir=/data
-      -master.volumeSizeLimitMB=50
-      -master.port=9333
-      -metricsPort=9533
-      -volume.max=0
-      -volume.port=8085
-      -volume.preStopSeconds=1
-      -filer=true
-      -filer.port=8888
-      -s3=true
-      -s3.port=8333
-      -s3.config=/etc/seaweedfs/s3config.json
-      -webdav=false
-      -s3.allowEmptyFolder=false
-      -mq.broker=true
-      -mq.agent=true
-      -ip=seaweedfs
+    command:
+      - ./weed
+      - server
+      - -dir=/data
+      - -master.volumeSizeLimitMB=50
+      - -master.port=9333
+      - -metricsPort=9533
+      - -volume.max=0
+      - -volume.port=8085
+      - -volume.preStopSeconds=1
+      - -filer=true
+      - -filer.port=8888
+      - -s3=true
+      - -s3.port=8333
+      - -webdav=false
+      - -s3.allowEmptyFolder=false
+      - -mq.broker=true
+      - -mq.agent=true
+      - -ip=seaweedfs
     networks:
       - seaweedfs-net
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://seaweedfs:9333/cluster/status"]
+      test: ["CMD", "curl", "--fail", "--silent", "http://seaweedfs:9333/cluster/status"]
       interval: 10s
       timeout: 5s
       retries: 5

@@ -27,8 +27,8 @@ func (e *SQLEngine) executeDescribeStatement(ctx context.Context, tableName stri
 		}
 	}
 
-	// Get topic schema from broker
-	recordType, err := e.catalog.brokerClient.GetTopicSchema(ctx, database, tableName)
+	// Get flat schema and key columns from broker
+	flatSchema, keyColumns, _, err := e.catalog.brokerClient.GetTopicSchema(ctx, database, tableName)
 	if err != nil {
 		return &QueryResult{Error: err}, err
 	}
@@ -44,38 +44,71 @@ func (e *SQLEngine) executeDescribeStatement(ctx context.Context, tableName stri
 		{"_source", "VARCHAR(255)", "System column: Data source (parquet/log)"},
 	}
 
-	// Format schema as DESCRIBE output (regular fields + system columns)
-	totalRows := len(recordType.Fields) + len(systemColumns)
+	// If no schema is defined, include _value field
+	if flatSchema == nil {
+		systemColumns = append(systemColumns, struct {
+			Name  string
+			Type  string
+			Extra string
+		}{SW_COLUMN_NAME_VALUE, "VARBINARY", "Raw message value (no schema defined)"})
+	}
+
+	// Calculate total rows: schema fields + system columns
+	totalRows := len(systemColumns)
+	if flatSchema != nil {
+		totalRows += len(flatSchema.Fields)
+	}
+
+	// Create key column lookup map
+	keyColumnMap := make(map[string]bool)
+	for _, keyCol := range keyColumns {
+		keyColumnMap[keyCol] = true
+	}
+
 	result := &QueryResult{
 		Columns: []string{"Field", "Type", "Null", "Key", "Default", "Extra"},
 		Rows:    make([][]sqltypes.Value, totalRows),
 	}
 
-	// Add regular fields
-	for i, field := range recordType.Fields {
-		sqlType := e.convertMQTypeToSQL(field.Type)
+	rowIndex := 0
 
-		result.Rows[i] = []sqltypes.Value{
-			sqltypes.NewVarChar(field.Name), // Field
-			sqltypes.NewVarChar(sqlType),    // Type
-			sqltypes.NewVarChar("YES"),      // Null (assume nullable)
-			sqltypes.NewVarChar(""),         // Key (no keys for now)
-			sqltypes.NewVarChar("NULL"),     // Default
-			sqltypes.NewVarChar(""),         // Extra
+	// Add schema fields - mark key columns appropriately
+	if flatSchema != nil {
+		for _, field := range flatSchema.Fields {
+			sqlType := e.convertMQTypeToSQL(field.Type)
+			isKey := keyColumnMap[field.Name]
+			keyType := ""
+			if isKey {
+				keyType = "PRI" // Primary key
+			}
+			extra := "Data field"
+			if isKey {
+				extra = "Key field"
+			}
+
+			result.Rows[rowIndex] = []sqltypes.Value{
+				sqltypes.NewVarChar(field.Name),
+				sqltypes.NewVarChar(sqlType),
+				sqltypes.NewVarChar("YES"),
+				sqltypes.NewVarChar(keyType),
+				sqltypes.NewVarChar("NULL"),
+				sqltypes.NewVarChar(extra),
+			}
+			rowIndex++
 		}
 	}
 
 	// Add system columns
-	for i, sysCol := range systemColumns {
-		rowIndex := len(recordType.Fields) + i
+	for _, sysCol := range systemColumns {
 		result.Rows[rowIndex] = []sqltypes.Value{
 			sqltypes.NewVarChar(sysCol.Name),  // Field
 			sqltypes.NewVarChar(sysCol.Type),  // Type
 			sqltypes.NewVarChar("YES"),        // Null
-			sqltypes.NewVarChar(""),           // Key
+			sqltypes.NewVarChar("SYS"),        // Key - mark as system column
 			sqltypes.NewVarChar("NULL"),       // Default
 			sqltypes.NewVarChar(sysCol.Extra), // Extra - description
 		}
+		rowIndex++
 	}
 
 	return result, nil

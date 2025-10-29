@@ -56,10 +56,10 @@ type IdentityAccessManagement struct {
 }
 
 type Identity struct {
-	Name        string
-	Account     *Account
-	Credentials []*Credential
-	Actions     []Action
+	Name         string
+	Account      *Account
+	Credentials  []*Credential
+	Actions      []Action
 	PrincipalArn string // ARN for IAM authorization (e.g., "arn:seaweed:iam::user/username")
 }
 
@@ -153,10 +153,10 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 		if err := iam.loadS3ApiConfigurationFromFile(option.Config); err != nil {
 			glog.Fatalf("fail to load config file %s: %v", option.Config, err)
 		}
-		// Mark as loaded since an explicit config file was provided
-		// This prevents fallback to environment variables even if no identities were loaded
-		// (e.g., config file contains only KMS settings)
-		configLoaded = true
+		// Check if any identities were actually loaded from the config file
+		iam.m.RLock()
+		configLoaded = len(iam.identities) > 0
+		iam.m.RUnlock()
 	} else {
 		glog.V(3).Infof("no static config file specified... loading config from credential manager")
 		if err := iam.loadS3ApiConfigurationFromFiler(option); err != nil {
@@ -164,9 +164,7 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 		} else {
 			// Check if any identities were actually loaded from filer
 			iam.m.RLock()
-			if len(iam.identities) > 0 {
-				configLoaded = true
-			}
+			configLoaded = len(iam.identities) > 0
 			iam.m.RUnlock()
 		}
 	}

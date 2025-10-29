@@ -56,7 +56,8 @@ func TestSSECRangeRequestsSupported(t *testing.T) {
 	}
 	rec := httptest.NewRecorder()
 	w := recorderFlusher{rec}
-	statusCode, _ := s3a.handleSSECResponse(req, proxyResponse, w)
+	// Pass nil for entry since this test focuses on Range request handling
+	statusCode, _ := s3a.handleSSECResponse(req, proxyResponse, w, nil)
 
 	// Range requests should now be allowed to proceed (will be handled by filer layer)
 	// The exact status code depends on the object existence and filer response

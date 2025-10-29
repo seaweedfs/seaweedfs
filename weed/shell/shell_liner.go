@@ -84,6 +84,10 @@ func RunShell(options ShellOptions) {
 			return
 		}
 
+		if strings.TrimSpace(cmd) != "" {
+			line.AppendHistory(cmd)
+		}
+
 		for _, c := range util.StringSplit(cmd, ";") {
 			if processEachCmd(reg, c, commandEnv) {
 				return
@@ -94,8 +98,6 @@ func RunShell(options ShellOptions) {
 
 func processEachCmd(reg *regexp.Regexp, cmd string, commandEnv *CommandEnv) bool {
 	cmds := reg.FindAllString(cmd, -1)
-
-	line.AppendHistory(cmd)
 
 	if len(cmds) == 0 {
 		return false

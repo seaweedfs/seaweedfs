@@ -2,6 +2,7 @@ package filer
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -56,13 +57,38 @@ func (f *Filer) loopProcessingDeletion() {
 					fileIds = fileIds[:0]
 				}
 				deletionCount = len(toDeleteFileIds)
-				_, err := operation.DeleteFileIdsWithLookupVolumeId(f.GrpcDialOption, toDeleteFileIds, lookupFunc)
-				if err != nil {
-					if !strings.Contains(err.Error(), storage.ErrorDeleted.Error()) {
-						glog.V(0).Infof("deleting fileIds len=%d error: %v", deletionCount, err)
+				results := operation.DeleteFileIdsWithLookupVolumeId(f.GrpcDialOption, toDeleteFileIds, lookupFunc)
+
+				// Process individual results for better error tracking
+				var successCount, notFoundCount, errorCount int
+				var errorDetails []string
+
+				for _, result := range results {
+					if result.Error == "" {
+						successCount++
+					} else if result.Error == "not found" || strings.Contains(result.Error, storage.ErrorDeleted.Error()) {
+						// Already deleted - acceptable
+						notFoundCount++
+					} else {
+						// Actual error
+						errorCount++
+						if errorCount <= 10 {
+							// Only log first 10 errors to avoid flooding logs
+							errorDetails = append(errorDetails, result.FileId+": "+result.Error)
+						}
 					}
-				} else {
-					glog.V(2).Infof("deleting fileIds %+v", toDeleteFileIds)
+				}
+
+				if successCount > 0 || notFoundCount > 0 {
+					glog.V(2).Infof("deleted %d files successfully, %d already deleted (not found)", successCount, notFoundCount)
+				}
+
+				if errorCount > 0 {
+					logMessage := fmt.Sprintf("failed to delete %d/%d files", errorCount, len(toDeleteFileIds))
+					if errorCount > 10 {
+						logMessage += " (showing first 10)"
+					}
+					glog.V(0).Infof("%s: %v", logMessage, strings.Join(errorDetails, "; "))
 				}
 			}
 		})

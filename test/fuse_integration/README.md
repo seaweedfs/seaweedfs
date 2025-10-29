@@ -232,7 +232,7 @@ jobs:
 
 ### Docker Testing
 ```dockerfile
-FROM golang:1.21
+FROM golang:1.24
 RUN apt-get update && apt-get install -y fuse
 COPY . /seaweedfs
 WORKDIR /seaweedfs

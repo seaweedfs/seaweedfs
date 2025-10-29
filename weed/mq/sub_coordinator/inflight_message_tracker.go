@@ -77,6 +77,17 @@ func (imt *InflightMessageTracker) IsInflight(key []byte) bool {
 	return found
 }
 
+// Cleanup clears all in-flight messages. This should be called when a subscriber disconnects
+// to prevent messages from being stuck in the in-flight state indefinitely.
+func (imt *InflightMessageTracker) Cleanup() int {
+	imt.mu.Lock()
+	defer imt.mu.Unlock()
+	count := len(imt.messages)
+	// Clear all in-flight messages
+	imt.messages = make(map[string]int64)
+	return count
+}
+
 type TimestampStatus struct {
 	Timestamp int64
 	Acked     bool

@@ -31,7 +31,7 @@ func TestReproduceObjectLockIssue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Bucket creation failed: %v", err)
 	}
-	t.Logf("✅ Bucket created successfully")
+	t.Logf("Bucket created successfully")
 	t.Logf("   Response: %+v", createResp)
 
 	// Step 2: Check if Object Lock is actually enabled
@@ -42,19 +42,19 @@ func TestReproduceObjectLockIssue(t *testing.T) {
 	})
 
 	if err != nil {
-		t.Logf("❌ GetObjectLockConfiguration FAILED: %v", err)
+		t.Logf("GetObjectLockConfiguration FAILED: %v", err)
 		t.Logf("   This demonstrates the issue with header processing!")
 		t.Logf("   S3 clients expect this call to succeed if Object Lock is supported")
 		t.Logf("   When this fails, clients conclude that Object Lock is not supported")
 
 		// This failure demonstrates the bug - the bucket was created but Object Lock wasn't enabled
-		t.Logf("\n🐛 BUG CONFIRMED:")
+		t.Logf("\nBUG CONFIRMED:")
 		t.Logf("   - Bucket creation with ObjectLockEnabledForBucket=true succeeded")
 		t.Logf("   - But GetObjectLockConfiguration fails")
 		t.Logf("   - This means the x-amz-bucket-object-lock-enabled header was ignored")
 
 	} else {
-		t.Logf("✅ GetObjectLockConfiguration succeeded!")
+		t.Logf("GetObjectLockConfiguration succeeded!")
 		t.Logf("   Response: %+v", objectLockResp)
 		t.Logf("   Object Lock is properly enabled - this is the expected behavior")
 	}
@@ -69,7 +69,7 @@ func TestReproduceObjectLockIssue(t *testing.T) {
 
 	t.Logf("   Versioning status: %v", versioningResp.Status)
 	if versioningResp.Status != "Enabled" {
-		t.Logf("   ⚠️  Versioning should be automatically enabled when Object Lock is enabled")
+		t.Logf("   Versioning should be automatically enabled when Object Lock is enabled")
 	}
 
 	// Cleanup
@@ -100,14 +100,14 @@ func TestNormalBucketCreationStillWorks(t *testing.T) {
 		Bucket: aws.String(bucketName),
 	})
 	require.NoError(t, err)
-	t.Logf("✅ Normal bucket creation works")
+	t.Logf("Normal bucket creation works")
 
 	// Object Lock should NOT be enabled
 	_, err = client.GetObjectLockConfiguration(context.TODO(), &s3.GetObjectLockConfigurationInput{
 		Bucket: aws.String(bucketName),
 	})
 	require.Error(t, err, "GetObjectLockConfiguration should fail for bucket without Object Lock")
-	t.Logf("✅ GetObjectLockConfiguration correctly fails for normal bucket")
+	t.Logf("GetObjectLockConfiguration correctly fails for normal bucket")
 
 	// Cleanup
 	client.DeleteBucket(context.TODO(), &s3.DeleteBucketInput{Bucket: aws.String(bucketName)})

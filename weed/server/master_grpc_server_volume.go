@@ -29,7 +29,7 @@ const (
 
 func (ms *MasterServer) DoAutomaticVolumeGrow(req *topology.VolumeGrowRequest) {
 	if ms.option.VolumeGrowthDisabled {
-	    glog.V(1).Infof("automatic volume grow disabled")
+		glog.V(1).Infof("automatic volume grow disabled")
 		return
 	}
 	glog.V(1).Infoln("starting automatic volume grow")

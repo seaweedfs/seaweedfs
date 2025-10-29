@@ -9,18 +9,19 @@ import (
 
 // System column constants used throughout the SQL engine
 const (
-	SW_COLUMN_NAME_TIMESTAMP = "_timestamp_ns" // Message timestamp in nanoseconds (internal)
-	SW_COLUMN_NAME_KEY       = "_key"          // Message key
-	SW_COLUMN_NAME_SOURCE    = "_source"       // Data source (live_log, parquet_archive, etc.)
+	SW_COLUMN_NAME_TIMESTAMP = "_ts_ns"  // Message timestamp in nanoseconds (internal)
+	SW_COLUMN_NAME_KEY       = "_key"    // Message key
+	SW_COLUMN_NAME_SOURCE    = "_source" // Data source (live_log, parquet_archive, etc.)
+	SW_COLUMN_NAME_VALUE     = "_value"  // Raw message value (for schema-less topics)
 )
 
 // System column display names (what users see)
 const (
 	SW_DISPLAY_NAME_TIMESTAMP = "_ts" // User-facing timestamp column name
-	// Note: _key and _source keep the same names, only _timestamp_ns changes to _ts
+	// Note: _key and _source keep the same names, only _ts_ns changes to _ts
 )
 
-// isSystemColumn checks if a column is a system column (_timestamp_ns, _key, _source)
+// isSystemColumn checks if a column is a system column (_ts_ns, _key, _source)
 func (e *SQLEngine) isSystemColumn(columnName string) bool {
 	lowerName := strings.ToLower(columnName)
 	return lowerName == SW_COLUMN_NAME_TIMESTAMP ||
@@ -91,7 +92,7 @@ func (e *SQLEngine) getSystemColumnGlobalMin(columnName string, allFileStats map
 	switch lowerName {
 	case SW_COLUMN_NAME_TIMESTAMP:
 		// For timestamps, find the earliest timestamp across all files
-		// This should match what's in the Extended["min"] metadata
+		// This should match what's in the Extended[mq.ExtendedAttrTimestampMin] metadata
 		var minTimestamp *int64
 		for _, fileStats := range allFileStats {
 			for _, fileStat := range fileStats {
@@ -128,7 +129,7 @@ func (e *SQLEngine) getSystemColumnGlobalMax(columnName string, allFileStats map
 	switch lowerName {
 	case SW_COLUMN_NAME_TIMESTAMP:
 		// For timestamps, find the latest timestamp across all files
-		// This should match what's in the Extended["max"] metadata
+		// This should match what's in the Extended[mq.ExtendedAttrTimestampMax] metadata
 		var maxTimestamp *int64
 		for _, fileStats := range allFileStats {
 			for _, fileStat := range fileStats {

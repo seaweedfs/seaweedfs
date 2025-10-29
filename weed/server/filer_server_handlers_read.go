@@ -192,9 +192,9 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 
 	// print out the header from extended properties
 	for k, v := range entry.Extended {
-		if !strings.HasPrefix(k, "xattr-") && !strings.HasPrefix(k, "x-seaweedfs-") {
+		if !strings.HasPrefix(k, "xattr-") && !s3_constants.IsSeaweedFSInternalHeader(k) {
 			// "xattr-" prefix is set in filesys.XATTR_PREFIX
-			// "x-seaweedfs-" prefix is for internal metadata that should not become HTTP headers
+			// IsSeaweedFSInternalHeader filters internal metadata that should not become HTTP headers
 			w.Header().Set(k, string(v))
 		}
 	}
@@ -239,6 +239,11 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		// Convert binary KMS metadata to base64 for HTTP header
 		kmsBase64 := base64.StdEncoding.EncodeToString(sseKMSKey)
 		w.Header().Set(s3_constants.SeaweedFSSSEKMSKeyHeader, kmsBase64)
+	}
+
+	if _, exists := entry.Extended[s3_constants.SeaweedFSSSES3Key]; exists {
+		// Set standard S3 SSE-S3 response header (not the internal SeaweedFS header)
+		w.Header().Set(s3_constants.AmzServerSideEncryption, s3_constants.SSEAlgorithmAES256)
 	}
 
 	SetEtag(w, etag)

@@ -1,0 +1,325 @@
+x-seaweedfs-build: &seaweedfs-build
+  build:
+    context: ../..
+    dockerfile: test/kafka/Dockerfile.seaweedfs
+  image: kafka-seaweedfs-dev
+
+services:
+  # Zookeeper for Kafka
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: kafka-zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - kafka-test-net
+
+  # Kafka Broker
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: kafka-broker
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:29092"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - kafka-test-net
+
+  # Schema Registry
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.4.0
+    container_name: kafka-schema-registry
+    ports:
+      - "8081:8081"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:29092
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+      SCHEMA_REGISTRY_KAFKASTORE_TOPIC: _schemas
+      SCHEMA_REGISTRY_DEBUG: "true"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/subjects"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - kafka-test-net
+
+  # SeaweedFS Master
+  seaweedfs-master:
+    <<: *seaweedfs-build
+    container_name: seaweedfs-master
+    ports:
+      - "9333:9333"
+      - "19333:19333"  # gRPC port
+    command: 
+      - master
+      - -ip=seaweedfs-master
+      - -port=9333
+      - -port.grpc=19333
+      - -volumeSizeLimitMB=1024
+      - -defaultReplication=000
+    volumes:
+      - seaweedfs-master-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://seaweedfs-master:9333/cluster/status || curl -sf http://seaweedfs-master:9333/cluster/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - kafka-test-net
+
+  # SeaweedFS Volume Server
+  seaweedfs-volume:
+    <<: *seaweedfs-build
+    container_name: seaweedfs-volume
+    ports:
+      - "8080:8080"
+      - "18080:18080"  # gRPC port
+    command:
+      - volume
+      - -mserver=seaweedfs-master:9333
+      - -ip=seaweedfs-volume
+      - -port=8080
+      - -port.grpc=18080
+      - -publicUrl=seaweedfs-volume:8080
+      - -preStopSeconds=1
+    depends_on:
+      seaweedfs-master:
+        condition: service_healthy
+    volumes:
+      - seaweedfs-volume-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://seaweedfs-volume:8080/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - kafka-test-net
+
+  # SeaweedFS Filer
+  seaweedfs-filer:
+    <<: *seaweedfs-build
+    container_name: seaweedfs-filer
+    ports:
+      - "8888:8888"
+      - "18888:18888"  # gRPC port
+    command:
+      - filer
+      - -master=seaweedfs-master:9333
+      - -ip=seaweedfs-filer
+      - -port=8888
+      - -port.grpc=18888
+    depends_on:
+      seaweedfs-master:
+        condition: service_healthy
+      seaweedfs-volume:
+        condition: service_healthy
+    volumes:
+      - seaweedfs-filer-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://seaweedfs-filer:8888/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - kafka-test-net
+
+  # SeaweedFS MQ Broker
+  seaweedfs-mq-broker:
+    <<: *seaweedfs-build
+    container_name: seaweedfs-mq-broker
+    ports:
+      - "17777:17777"  # MQ Broker port
+      - "18777:18777"  # pprof profiling port
+    command:
+      - mq.broker
+      - -master=seaweedfs-master:9333
+      - -ip=seaweedfs-mq-broker
+      - -port=17777
+      - -port.pprof=18777
+    depends_on:
+      seaweedfs-filer:
+        condition: service_healthy
+    volumes:
+      - seaweedfs-mq-data:/data
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "17777"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      - kafka-test-net
+
+  # SeaweedFS MQ Agent
+  seaweedfs-mq-agent:
+    <<: *seaweedfs-build
+    container_name: seaweedfs-mq-agent
+    ports:
+      - "16777:16777"  # MQ Agent port
+    command:
+      - mq.agent
+      - -broker=seaweedfs-mq-broker:17777
+      - -ip=0.0.0.0
+      - -port=16777
+    depends_on:
+      seaweedfs-mq-broker:
+        condition: service_healthy
+    volumes:
+      - seaweedfs-mq-data:/data
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "16777"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 25s
+    networks:
+      - kafka-test-net
+
+  # Kafka Gateway (SeaweedFS with Kafka protocol)
+  kafka-gateway:
+    build:
+      context: ../..  # Build from project root
+      dockerfile: test/kafka/Dockerfile.kafka-gateway
+    container_name: kafka-gateway
+    ports:
+      - "9093:9093"  # Kafka protocol port
+      - "10093:10093"  # pprof profiling port
+    depends_on:
+      seaweedfs-mq-agent:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+    environment:
+      - SEAWEEDFS_MASTERS=seaweedfs-master:9333
+      - SEAWEEDFS_FILER_GROUP=
+      - SCHEMA_REGISTRY_URL=http://schema-registry:8081
+      - KAFKA_PORT=9093
+      - PPROF_PORT=10093
+    volumes:
+      - kafka-gateway-data:/data
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "9093"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - kafka-test-net
+
+  # Test Data Setup Service
+  test-setup:
+    build:
+      context: ../..
+      dockerfile: test/kafka/Dockerfile.test-setup
+    container_name: kafka-test-setup
+    depends_on:
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+      kafka-gateway:
+        condition: service_healthy
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - SCHEMA_REGISTRY_URL=http://schema-registry:8081
+      - KAFKA_GATEWAY_URL=kafka-gateway:9093
+    networks:
+      - kafka-test-net
+    restart: "no"  # Run once to set up test data
+    profiles:
+      - setup  # Only start when explicitly requested
+
+  # Kafka Producer for Testing
+  kafka-producer:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: kafka-producer
+    depends_on:
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - SCHEMA_REGISTRY_URL=http://schema-registry:8081
+    networks:
+      - kafka-test-net
+    profiles:
+      - producer  # Only start when explicitly requested
+    command: >
+      sh -c "
+        echo 'Creating test topics...';
+        kafka-topics --create --topic test-topic --bootstrap-server kafka:29092 --partitions 3 --replication-factor 1 --if-not-exists;
+        kafka-topics --create --topic avro-topic --bootstrap-server kafka:29092 --partitions 3 --replication-factor 1 --if-not-exists;
+        kafka-topics --create --topic schema-test --bootstrap-server kafka:29092 --partitions 1 --replication-factor 1 --if-not-exists;
+        echo 'Topics created successfully';
+        kafka-topics --list --bootstrap-server kafka:29092;
+      "
+
+  # Kafka Consumer for Testing
+  kafka-consumer:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: kafka-consumer
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+    networks:
+      - kafka-test-net
+    profiles:
+      - consumer  # Only start when explicitly requested
+    command: >
+      kafka-console-consumer
+      --bootstrap-server kafka:29092
+      --topic test-topic
+      --from-beginning
+      --max-messages 10
+
+volumes:
+  seaweedfs-master-data:
+  seaweedfs-volume-data:
+  seaweedfs-filer-data:
+  seaweedfs-mq-data:
+  kafka-gateway-data:
+
+networks:
+  kafka-test-net:
+    driver: bridge
+    name: kafka-integration-test

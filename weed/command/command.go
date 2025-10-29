@@ -35,6 +35,7 @@ var Commands = []*Command{
 	cmdMount,
 	cmdMqAgent,
 	cmdMqBroker,
+	cmdMqKafkaGateway,
 	cmdDB,
 	cmdS3,
 	cmdScaffold,

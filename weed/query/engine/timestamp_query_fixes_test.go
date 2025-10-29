@@ -21,31 +21,31 @@ func TestTimestampQueryFixes(t *testing.T) {
 		// Test that large int64 timestamps don't lose precision in comparisons
 		testRecord := &schema_pb.RecordValue{
 			Fields: map[string]*schema_pb.Value{
-				"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: largeTimestamp1}},
-				"id":            {Kind: &schema_pb.Value_Int64Value{Int64Value: 12345}},
+				"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: largeTimestamp1}},
+				"id":     {Kind: &schema_pb.Value_Int64Value{Int64Value: 12345}},
 			},
 		}
 
 		// Test equality comparison
-		result := engine.valuesEqual(testRecord.Fields["_timestamp_ns"], largeTimestamp1)
+		result := engine.valuesEqual(testRecord.Fields["_ts_ns"], largeTimestamp1)
 		assert.True(t, result, "Large timestamp equality should work without precision loss")
 
 		// Test inequality comparison
-		result = engine.valuesEqual(testRecord.Fields["_timestamp_ns"], largeTimestamp1+1)
+		result = engine.valuesEqual(testRecord.Fields["_ts_ns"], largeTimestamp1+1)
 		assert.False(t, result, "Large timestamp inequality should be detected accurately")
 
 		// Test less than comparison
-		result = engine.valueLessThan(testRecord.Fields["_timestamp_ns"], largeTimestamp1+1)
+		result = engine.valueLessThan(testRecord.Fields["_ts_ns"], largeTimestamp1+1)
 		assert.True(t, result, "Large timestamp less-than should work without precision loss")
 
 		// Test greater than comparison
-		result = engine.valueGreaterThan(testRecord.Fields["_timestamp_ns"], largeTimestamp1-1)
+		result = engine.valueGreaterThan(testRecord.Fields["_ts_ns"], largeTimestamp1-1)
 		assert.True(t, result, "Large timestamp greater-than should work without precision loss")
 	})
 
 	t.Run("Fix2_TimeFilterExtraction", func(t *testing.T) {
 		// Test that equality queries don't set stopTimeNs (which causes premature termination)
-		equalitySQL := "SELECT * FROM test WHERE _timestamp_ns = " + strconv.FormatInt(largeTimestamp2, 10)
+		equalitySQL := "SELECT * FROM test WHERE _ts_ns = " + strconv.FormatInt(largeTimestamp2, 10)
 		stmt, err := ParseSQL(equalitySQL)
 		assert.NoError(t, err)
 
@@ -58,8 +58,8 @@ func TestTimestampQueryFixes(t *testing.T) {
 
 	t.Run("Fix3_RangeBoundaryFix", func(t *testing.T) {
 		// Test that range queries with equal boundaries don't cause premature termination
-		rangeSQL := "SELECT * FROM test WHERE _timestamp_ns >= " + strconv.FormatInt(largeTimestamp3, 10) +
-			" AND _timestamp_ns <= " + strconv.FormatInt(largeTimestamp3, 10)
+		rangeSQL := "SELECT * FROM test WHERE _ts_ns >= " + strconv.FormatInt(largeTimestamp3, 10) +
+			" AND _ts_ns <= " + strconv.FormatInt(largeTimestamp3, 10)
 		stmt, err := ParseSQL(rangeSQL)
 		assert.NoError(t, err)
 
@@ -73,8 +73,8 @@ func TestTimestampQueryFixes(t *testing.T) {
 
 	t.Run("Fix4_DifferentRangeBoundaries", func(t *testing.T) {
 		// Test that normal range queries still work correctly
-		rangeSQL := "SELECT * FROM test WHERE _timestamp_ns >= " + strconv.FormatInt(largeTimestamp1, 10) +
-			" AND _timestamp_ns <= " + strconv.FormatInt(largeTimestamp2, 10)
+		rangeSQL := "SELECT * FROM test WHERE _ts_ns >= " + strconv.FormatInt(largeTimestamp1, 10) +
+			" AND _ts_ns <= " + strconv.FormatInt(largeTimestamp2, 10)
 		stmt, err := ParseSQL(rangeSQL)
 		assert.NoError(t, err)
 
@@ -87,7 +87,7 @@ func TestTimestampQueryFixes(t *testing.T) {
 
 	t.Run("Fix5_PredicateAccuracy", func(t *testing.T) {
 		// Test that predicates correctly evaluate large timestamp equality
-		equalitySQL := "SELECT * FROM test WHERE _timestamp_ns = " + strconv.FormatInt(largeTimestamp1, 10)
+		equalitySQL := "SELECT * FROM test WHERE _ts_ns = " + strconv.FormatInt(largeTimestamp1, 10)
 		stmt, err := ParseSQL(equalitySQL)
 		assert.NoError(t, err)
 
@@ -98,8 +98,8 @@ func TestTimestampQueryFixes(t *testing.T) {
 		// Test with matching record
 		matchingRecord := &schema_pb.RecordValue{
 			Fields: map[string]*schema_pb.Value{
-				"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: largeTimestamp1}},
-				"id":            {Kind: &schema_pb.Value_Int64Value{Int64Value: 897795}},
+				"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: largeTimestamp1}},
+				"id":     {Kind: &schema_pb.Value_Int64Value{Int64Value: 897795}},
 			},
 		}
 
@@ -109,8 +109,8 @@ func TestTimestampQueryFixes(t *testing.T) {
 		// Test with non-matching record
 		nonMatchingRecord := &schema_pb.RecordValue{
 			Fields: map[string]*schema_pb.Value{
-				"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: largeTimestamp1 + 1}},
-				"id":            {Kind: &schema_pb.Value_Int64Value{Int64Value: 12345}},
+				"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: largeTimestamp1 + 1}},
+				"id":     {Kind: &schema_pb.Value_Int64Value{Int64Value: 12345}},
 			},
 		}
 
@@ -122,7 +122,7 @@ func TestTimestampQueryFixes(t *testing.T) {
 		// Test all comparison operators work correctly with large timestamps
 		testRecord := &schema_pb.RecordValue{
 			Fields: map[string]*schema_pb.Value{
-				"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: largeTimestamp2}},
+				"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: largeTimestamp2}},
 			},
 		}
 
@@ -130,16 +130,16 @@ func TestTimestampQueryFixes(t *testing.T) {
 			sql      string
 			expected bool
 		}{
-			{"_timestamp_ns = " + strconv.FormatInt(largeTimestamp2, 10), true},
-			{"_timestamp_ns = " + strconv.FormatInt(largeTimestamp2+1, 10), false},
-			{"_timestamp_ns > " + strconv.FormatInt(largeTimestamp2-1, 10), true},
-			{"_timestamp_ns > " + strconv.FormatInt(largeTimestamp2, 10), false},
-			{"_timestamp_ns >= " + strconv.FormatInt(largeTimestamp2, 10), true},
-			{"_timestamp_ns >= " + strconv.FormatInt(largeTimestamp2+1, 10), false},
-			{"_timestamp_ns < " + strconv.FormatInt(largeTimestamp2+1, 10), true},
-			{"_timestamp_ns < " + strconv.FormatInt(largeTimestamp2, 10), false},
-			{"_timestamp_ns <= " + strconv.FormatInt(largeTimestamp2, 10), true},
-			{"_timestamp_ns <= " + strconv.FormatInt(largeTimestamp2-1, 10), false},
+			{"_ts_ns = " + strconv.FormatInt(largeTimestamp2, 10), true},
+			{"_ts_ns = " + strconv.FormatInt(largeTimestamp2+1, 10), false},
+			{"_ts_ns > " + strconv.FormatInt(largeTimestamp2-1, 10), true},
+			{"_ts_ns > " + strconv.FormatInt(largeTimestamp2, 10), false},
+			{"_ts_ns >= " + strconv.FormatInt(largeTimestamp2, 10), true},
+			{"_ts_ns >= " + strconv.FormatInt(largeTimestamp2+1, 10), false},
+			{"_ts_ns < " + strconv.FormatInt(largeTimestamp2+1, 10), true},
+			{"_ts_ns < " + strconv.FormatInt(largeTimestamp2, 10), false},
+			{"_ts_ns <= " + strconv.FormatInt(largeTimestamp2, 10), true},
+			{"_ts_ns <= " + strconv.FormatInt(largeTimestamp2-1, 10), false},
 		}
 
 		for _, op := range operators {
@@ -163,22 +163,22 @@ func TestTimestampQueryFixes(t *testing.T) {
 		maxInt64 := int64(9223372036854775807)
 		testRecord := &schema_pb.RecordValue{
 			Fields: map[string]*schema_pb.Value{
-				"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: maxInt64}},
+				"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: maxInt64}},
 			},
 		}
 
 		// Test equality with maximum int64
-		result := engine.valuesEqual(testRecord.Fields["_timestamp_ns"], maxInt64)
+		result := engine.valuesEqual(testRecord.Fields["_ts_ns"], maxInt64)
 		assert.True(t, result, "Should handle maximum int64 value correctly")
 
 		// Test with zero timestamp
 		zeroRecord := &schema_pb.RecordValue{
 			Fields: map[string]*schema_pb.Value{
-				"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 0}},
+				"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 0}},
 			},
 		}
 
-		result = engine.valuesEqual(zeroRecord.Fields["_timestamp_ns"], int64(0))
+		result = engine.valuesEqual(zeroRecord.Fields["_ts_ns"], int64(0))
 		assert.True(t, result, "Should handle zero timestamp correctly")
 	})
 }
@@ -195,19 +195,19 @@ func TestOriginalFailingQueries(t *testing.T) {
 	}{
 		{
 			name:      "OriginalQuery1",
-			sql:       "select id, _timestamp_ns from ecommerce.user_events where _timestamp_ns = 1756947416566456262",
+			sql:       "select id, _ts_ns from ecommerce.user_events where _ts_ns = 1756947416566456262",
 			timestamp: 1756947416566456262,
 			id:        897795,
 		},
 		{
 			name:      "OriginalQuery2",
-			sql:       "select id, _timestamp_ns from ecommerce.user_events where _timestamp_ns = 1756947416566439304",
+			sql:       "select id, _ts_ns from ecommerce.user_events where _ts_ns = 1756947416566439304",
 			timestamp: 1756947416566439304,
 			id:        715356,
 		},
 		{
 			name:      "CurrentDataQuery",
-			sql:       "select id, _timestamp_ns from ecommerce.user_events where _timestamp_ns = 1756913789829292386",
+			sql:       "select id, _ts_ns from ecommerce.user_events where _ts_ns = 1756913789829292386",
 			timestamp: 1756913789829292386,
 			id:        82460,
 		},
@@ -233,8 +233,8 @@ func TestOriginalFailingQueries(t *testing.T) {
 			// Test with matching record
 			matchingRecord := &schema_pb.RecordValue{
 				Fields: map[string]*schema_pb.Value{
-					"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: query.timestamp}},
-					"id":            {Kind: &schema_pb.Value_Int64Value{Int64Value: query.id}},
+					"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: query.timestamp}},
+					"id":     {Kind: &schema_pb.Value_Int64Value{Int64Value: query.id}},
 				},
 			}
 

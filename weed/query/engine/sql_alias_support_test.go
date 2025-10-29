@@ -17,7 +17,7 @@ func TestSQLAliasResolution(t *testing.T) {
 		// Create SELECT expressions with aliases
 		selectExprs := []SelectExpr{
 			&AliasedExpr{
-				Expr: &ColName{Name: stringValue("_timestamp_ns")},
+				Expr: &ColName{Name: stringValue("_ts_ns")},
 				As:   aliasValue("ts"),
 			},
 			&AliasedExpr{
@@ -28,7 +28,7 @@ func TestSQLAliasResolution(t *testing.T) {
 
 		// Test alias resolution
 		resolved := engine.resolveColumnAlias("ts", selectExprs)
-		assert.Equal(t, "_timestamp_ns", resolved, "Should resolve 'ts' alias to '_timestamp_ns'")
+		assert.Equal(t, "_ts_ns", resolved, "Should resolve 'ts' alias to '_ts_ns'")
 
 		resolved = engine.resolveColumnAlias("record_id", selectExprs)
 		assert.Equal(t, "id", resolved, "Should resolve 'record_id' alias to 'id'")
@@ -42,13 +42,13 @@ func TestSQLAliasResolution(t *testing.T) {
 		// Test using a single alias in WHERE clause
 		testRecord := &schema_pb.RecordValue{
 			Fields: map[string]*schema_pb.Value{
-				"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756947416566456262}},
-				"id":            {Kind: &schema_pb.Value_Int64Value{Int64Value: 12345}},
+				"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756947416566456262}},
+				"id":     {Kind: &schema_pb.Value_Int64Value{Int64Value: 12345}},
 			},
 		}
 
 		// Parse SQL with alias in WHERE
-		sql := "SELECT _timestamp_ns AS ts, id FROM test WHERE ts = 1756947416566456262"
+		sql := "SELECT _ts_ns AS ts, id FROM test WHERE ts = 1756947416566456262"
 		stmt, err := ParseSQL(sql)
 		assert.NoError(t, err, "Should parse SQL with alias in WHERE")
 
@@ -60,10 +60,10 @@ func TestSQLAliasResolution(t *testing.T) {
 
 		// Test the predicate
 		result := predicate(testRecord)
-		assert.True(t, result, "Predicate should match using alias 'ts' for '_timestamp_ns'")
+		assert.True(t, result, "Predicate should match using alias 'ts' for '_ts_ns'")
 
 		// Test with non-matching value
-		sql2 := "SELECT _timestamp_ns AS ts, id FROM test WHERE ts = 999999"
+		sql2 := "SELECT _ts_ns AS ts, id FROM test WHERE ts = 999999"
 		stmt2, err := ParseSQL(sql2)
 		assert.NoError(t, err)
 		selectStmt2 := stmt2.(*SelectStatement)
@@ -79,13 +79,13 @@ func TestSQLAliasResolution(t *testing.T) {
 		// Test using multiple aliases in WHERE clause
 		testRecord := &schema_pb.RecordValue{
 			Fields: map[string]*schema_pb.Value{
-				"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756947416566456262}},
-				"id":            {Kind: &schema_pb.Value_Int64Value{Int64Value: 82460}},
+				"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756947416566456262}},
+				"id":     {Kind: &schema_pb.Value_Int64Value{Int64Value: 82460}},
 			},
 		}
 
 		// Parse SQL with multiple aliases in WHERE
-		sql := "SELECT _timestamp_ns AS ts, id AS record_id FROM test WHERE ts = 1756947416566456262 AND record_id = 82460"
+		sql := "SELECT _ts_ns AS ts, id AS record_id FROM test WHERE ts = 1756947416566456262 AND record_id = 82460"
 		stmt, err := ParseSQL(sql)
 		assert.NoError(t, err, "Should parse SQL with multiple aliases")
 
@@ -102,8 +102,8 @@ func TestSQLAliasResolution(t *testing.T) {
 		// Test with one condition not matching
 		testRecord2 := &schema_pb.RecordValue{
 			Fields: map[string]*schema_pb.Value{
-				"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756947416566456262}},
-				"id":            {Kind: &schema_pb.Value_Int64Value{Int64Value: 99999}}, // Different ID
+				"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756947416566456262}},
+				"id":     {Kind: &schema_pb.Value_Int64Value{Int64Value: 99999}}, // Different ID
 			},
 		}
 
@@ -116,23 +116,23 @@ func TestSQLAliasResolution(t *testing.T) {
 		testRecords := []*schema_pb.RecordValue{
 			{
 				Fields: map[string]*schema_pb.Value{
-					"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756947416566456260}}, // Below range
+					"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756947416566456260}}, // Below range
 				},
 			},
 			{
 				Fields: map[string]*schema_pb.Value{
-					"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756947416566456262}}, // In range
+					"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756947416566456262}}, // In range
 				},
 			},
 			{
 				Fields: map[string]*schema_pb.Value{
-					"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756947416566456265}}, // Above range
+					"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756947416566456265}}, // Above range
 				},
 			},
 		}
 
 		// Test range query with alias
-		sql := "SELECT _timestamp_ns AS ts FROM test WHERE ts > 1756947416566456261 AND ts < 1756947416566456264"
+		sql := "SELECT _ts_ns AS ts FROM test WHERE ts > 1756947416566456261 AND ts < 1756947416566456264"
 		stmt, err := ParseSQL(sql)
 		assert.NoError(t, err, "Should parse range query with alias")
 
@@ -150,14 +150,14 @@ func TestSQLAliasResolution(t *testing.T) {
 		// Test mixing aliased and non-aliased columns in WHERE
 		testRecord := &schema_pb.RecordValue{
 			Fields: map[string]*schema_pb.Value{
-				"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756947416566456262}},
-				"id":            {Kind: &schema_pb.Value_Int64Value{Int64Value: 82460}},
-				"status":        {Kind: &schema_pb.Value_StringValue{StringValue: "active"}},
+				"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756947416566456262}},
+				"id":     {Kind: &schema_pb.Value_Int64Value{Int64Value: 82460}},
+				"status": {Kind: &schema_pb.Value_StringValue{StringValue: "active"}},
 			},
 		}
 
 		// Use alias for one column, direct name for another
-		sql := "SELECT _timestamp_ns AS ts, id, status FROM test WHERE ts = 1756947416566456262 AND status = 'active'"
+		sql := "SELECT _ts_ns AS ts, id, status FROM test WHERE ts = 1756947416566456262 AND status = 'active'"
 		stmt, err := ParseSQL(sql)
 		assert.NoError(t, err, "Should parse mixed alias/direct query")
 
@@ -175,13 +175,13 @@ func TestSQLAliasResolution(t *testing.T) {
 
 		testRecord := &schema_pb.RecordValue{
 			Fields: map[string]*schema_pb.Value{
-				"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: largeTimestamp}},
-				"id":            {Kind: &schema_pb.Value_Int64Value{Int64Value: 897795}},
+				"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: largeTimestamp}},
+				"id":     {Kind: &schema_pb.Value_Int64Value{Int64Value: 897795}},
 			},
 		}
 
 		// Test that large timestamp precision is maintained with aliases
-		sql := "SELECT _timestamp_ns AS ts, id FROM test WHERE ts = 1756947416566456262"
+		sql := "SELECT _ts_ns AS ts, id FROM test WHERE ts = 1756947416566456262"
 		stmt, err := ParseSQL(sql)
 		assert.NoError(t, err)
 
@@ -193,7 +193,7 @@ func TestSQLAliasResolution(t *testing.T) {
 		assert.True(t, result, "Large timestamp precision should be maintained with aliases")
 
 		// Test precision with off-by-one (should not match)
-		sql2 := "SELECT _timestamp_ns AS ts, id FROM test WHERE ts = 1756947416566456263" // +1
+		sql2 := "SELECT _ts_ns AS ts, id FROM test WHERE ts = 1756947416566456263" // +1
 		stmt2, err := ParseSQL(sql2)
 		assert.NoError(t, err)
 		selectStmt2 := stmt2.(*SelectStatement)
@@ -229,7 +229,7 @@ func TestSQLAliasResolution(t *testing.T) {
 		// Test all comparison operators work with aliases
 		testRecord := &schema_pb.RecordValue{
 			Fields: map[string]*schema_pb.Value{
-				"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1000}},
+				"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1000}},
 			},
 		}
 
@@ -252,7 +252,7 @@ func TestSQLAliasResolution(t *testing.T) {
 
 		for _, test := range operators {
 			t.Run(test.op+"_"+test.value, func(t *testing.T) {
-				sql := "SELECT _timestamp_ns AS ts FROM test WHERE ts " + test.op + " " + test.value
+				sql := "SELECT _ts_ns AS ts FROM test WHERE ts " + test.op + " " + test.value
 				stmt, err := ParseSQL(sql)
 				assert.NoError(t, err, "Should parse operator: %s", test.op)
 
@@ -270,13 +270,13 @@ func TestSQLAliasResolution(t *testing.T) {
 		// Ensure non-alias queries still work exactly as before
 		testRecord := &schema_pb.RecordValue{
 			Fields: map[string]*schema_pb.Value{
-				"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756947416566456262}},
-				"id":            {Kind: &schema_pb.Value_Int64Value{Int64Value: 12345}},
+				"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756947416566456262}},
+				"id":     {Kind: &schema_pb.Value_Int64Value{Int64Value: 12345}},
 			},
 		}
 
 		// Test traditional query (no aliases)
-		sql := "SELECT _timestamp_ns, id FROM test WHERE _timestamp_ns = 1756947416566456262"
+		sql := "SELECT _ts_ns, id FROM test WHERE _ts_ns = 1756947416566456262"
 		stmt, err := ParseSQL(sql)
 		assert.NoError(t, err)
 
@@ -307,13 +307,13 @@ func TestAliasIntegrationWithProductionScenarios(t *testing.T) {
 		// Test the exact query pattern that was originally failing
 		testRecord := &schema_pb.RecordValue{
 			Fields: map[string]*schema_pb.Value{
-				"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756913789829292386}},
-				"id":            {Kind: &schema_pb.Value_Int64Value{Int64Value: 82460}},
+				"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756913789829292386}},
+				"id":     {Kind: &schema_pb.Value_Int64Value{Int64Value: 82460}},
 			},
 		}
 
 		// This was the original failing pattern
-		sql := "SELECT id, _timestamp_ns AS ts FROM ecommerce.user_events WHERE ts = 1756913789829292386"
+		sql := "SELECT id, _ts_ns AS ts FROM ecommerce.user_events WHERE ts = 1756913789829292386"
 		stmt, err := ParseSQL(sql)
 		assert.NoError(t, err, "Should parse the originally failing query pattern")
 
@@ -329,16 +329,16 @@ func TestAliasIntegrationWithProductionScenarios(t *testing.T) {
 		// Test a more complex production-like query
 		testRecord := &schema_pb.RecordValue{
 			Fields: map[string]*schema_pb.Value{
-				"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756947416566456262}},
-				"id":            {Kind: &schema_pb.Value_Int64Value{Int64Value: 897795}},
-				"user_id":       {Kind: &schema_pb.Value_StringValue{StringValue: "user123"}},
-				"event_type":    {Kind: &schema_pb.Value_StringValue{StringValue: "click"}},
+				"_ts_ns":     {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756947416566456262}},
+				"id":         {Kind: &schema_pb.Value_Int64Value{Int64Value: 897795}},
+				"user_id":    {Kind: &schema_pb.Value_StringValue{StringValue: "user123"}},
+				"event_type": {Kind: &schema_pb.Value_StringValue{StringValue: "click"}},
 			},
 		}
 
 		sql := `SELECT 
 					id AS event_id, 
-					_timestamp_ns AS event_time, 
+					_ts_ns AS event_time, 
 					user_id AS uid,
 					event_type AS action
 				FROM ecommerce.user_events 
@@ -359,10 +359,10 @@ func TestAliasIntegrationWithProductionScenarios(t *testing.T) {
 		// Test partial match failure
 		testRecord2 := &schema_pb.RecordValue{
 			Fields: map[string]*schema_pb.Value{
-				"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756947416566456262}},
-				"id":            {Kind: &schema_pb.Value_Int64Value{Int64Value: 897795}},
-				"user_id":       {Kind: &schema_pb.Value_StringValue{StringValue: "user999"}}, // Different user
-				"event_type":    {Kind: &schema_pb.Value_StringValue{StringValue: "click"}},
+				"_ts_ns":     {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756947416566456262}},
+				"id":         {Kind: &schema_pb.Value_Int64Value{Int64Value: 897795}},
+				"user_id":    {Kind: &schema_pb.Value_StringValue{StringValue: "user999"}}, // Different user
+				"event_type": {Kind: &schema_pb.Value_StringValue{StringValue: "click"}},
 			},
 		}
 
@@ -374,13 +374,13 @@ func TestAliasIntegrationWithProductionScenarios(t *testing.T) {
 		// Ensure alias resolution doesn't significantly impact performance
 		testRecord := &schema_pb.RecordValue{
 			Fields: map[string]*schema_pb.Value{
-				"_timestamp_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756947416566456262}},
+				"_ts_ns": {Kind: &schema_pb.Value_Int64Value{Int64Value: 1756947416566456262}},
 			},
 		}
 
 		// Build predicates for comparison
-		sqlWithAlias := "SELECT _timestamp_ns AS ts FROM test WHERE ts = 1756947416566456262"
-		sqlWithoutAlias := "SELECT _timestamp_ns FROM test WHERE _timestamp_ns = 1756947416566456262"
+		sqlWithAlias := "SELECT _ts_ns AS ts FROM test WHERE ts = 1756947416566456262"
+		sqlWithoutAlias := "SELECT _ts_ns FROM test WHERE _ts_ns = 1756947416566456262"
 
 		stmtWithAlias, err := ParseSQL(sqlWithAlias)
 		assert.NoError(t, err)

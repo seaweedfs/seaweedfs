@@ -51,6 +51,13 @@ type VolumeServer struct {
 	EcShardDetails []VolumeServerEcInfo `json:"ec_shard_details"` // Detailed EC shard information
 }
 
+func (vs *VolumeServer) GetDisplayAddress() string {
+	if vs.PublicURL != "" {
+		return vs.PublicURL
+	}
+	return vs.Address
+}
+
 // VolumeServerEcInfo represents EC shard information for a specific volume on a server
 type VolumeServerEcInfo struct {
 	VolumeID     uint32        `json:"volume_id"`
@@ -404,7 +411,8 @@ type TopicDetailsData struct {
 	Namespace            string                    `json:"namespace"`
 	Name                 string                    `json:"name"`
 	Partitions           []PartitionInfo           `json:"partitions"`
-	Schema               []SchemaFieldInfo         `json:"schema"`
+	KeySchema            []SchemaFieldInfo         `json:"key_schema"`   // Schema fields for keys
+	ValueSchema          []SchemaFieldInfo         `json:"value_schema"` // Schema fields for values
 	Publishers           []PublisherInfo           `json:"publishers"`
 	Subscribers          []TopicSubscriberInfo     `json:"subscribers"`
 	ConsumerGroupOffsets []ConsumerGroupOffsetInfo `json:"consumer_group_offsets"`

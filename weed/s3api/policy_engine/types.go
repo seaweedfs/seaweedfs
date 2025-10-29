@@ -407,8 +407,6 @@ func (cs *CompiledStatement) EvaluateStatement(args *PolicyEvaluationArgs) bool 
 		return false
 	}
 
-
-
 	return true
 }
 

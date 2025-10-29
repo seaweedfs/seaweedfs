@@ -177,7 +177,7 @@ func TestSQLEngine_StringConcatenationBugReproduction(t *testing.T) {
 		}
 	}
 
-	t.Logf("✅ SUCCESS: Complex string concatenation works correctly!")
+	t.Logf("SUCCESS: Complex string concatenation works correctly!")
 	t.Logf("Query: %s", query)
 
 	for i, row := range result.Rows {

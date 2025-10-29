@@ -408,7 +408,8 @@ func executeAndDisplay(ctx *SQLContext, query string, showTiming bool) bool {
 	}
 
 	// Show execution time for interactive/table mode
-	if showTiming && ctx.outputFormat == OutputTable {
+	// Only show timing if there are columns or if result is truly empty
+	if showTiming && ctx.outputFormat == OutputTable && (len(result.Columns) > 0 || len(result.Rows) == 0) {
 		elapsed := time.Since(startTime)
 		fmt.Printf("\n(%d rows in set, %.3f sec)\n\n", len(result.Rows), elapsed.Seconds())
 	}
