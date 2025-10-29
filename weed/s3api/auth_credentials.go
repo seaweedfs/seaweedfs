@@ -155,9 +155,7 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 		}
 		// Check if any identities were actually loaded from the config file
 		iam.m.RLock()
-		if len(iam.identities) > 0 {
-			configLoaded = true
-		}
+		configLoaded = len(iam.identities) > 0
 		iam.m.RUnlock()
 	} else {
 		glog.V(3).Infof("no static config file specified... loading config from credential manager")
@@ -166,9 +164,7 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 		} else {
 			// Check if any identities were actually loaded from filer
 			iam.m.RLock()
-			if len(iam.identities) > 0 {
-				configLoaded = true
-			}
+			configLoaded = len(iam.identities) > 0
 			iam.m.RUnlock()
 		}
 	}
