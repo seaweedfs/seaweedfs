@@ -55,6 +55,7 @@ type Filer struct {
 	Dlm                 *lock_manager.DistributedLockManager
 	MaxFilenameLength   uint32
 	deletionQuit        chan struct{}
+	DeletionRetryQueue  *DeletionRetryQueue
 }
 
 func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerHost pb.ServerAddress, filerGroup string, collection string, replication string, dataCenter string, maxFilenameLength uint32, notifyFn func()) *Filer {
@@ -68,6 +69,7 @@ func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerH
 		Dlm:                 lock_manager.NewDistributedLockManager(filerHost),
 		MaxFilenameLength:   maxFilenameLength,
 		deletionQuit:        make(chan struct{}),
+		DeletionRetryQueue:  NewDeletionRetryQueue(),
 	}
 	if f.UniqueFilerId < 0 {
 		f.UniqueFilerId = -f.UniqueFilerId

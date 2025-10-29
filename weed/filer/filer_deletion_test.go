@@ -104,29 +104,50 @@ func TestDeletionRetryQueue_OverflowProtection(t *testing.T) {
 func TestDeletionRetryQueue_MaxAttemptsReached(t *testing.T) {
 	queue := NewDeletionRetryQueue()
 
-	// Add item and set retry count near max
+	// Add item
 	queue.AddOrUpdate("file1", "error")
 
-	// Manually set high retry count
+	// Manually set retry count to max
 	queue.lock.Lock()
-	if item, exists := queue.itemIndex["file1"]; exists {
-		item.RetryCount = MaxRetryAttempts
-		item.NextRetryAt = time.Now().Add(-1 * time.Second) // Ready now
-		queue.lock.Unlock()
-
-		// Try to get ready items - should be discarded
-		readyItems := queue.GetReadyItems(10)
-		if len(readyItems) != 0 {
-			t.Errorf("Expected 0 items (max attempts reached), got %d", len(readyItems))
-		}
-
-		// Should be removed from queue
-		if queue.Size() != 0 {
-			t.Errorf("Expected queue size 0 after max attempts, got %d", queue.Size())
-		}
-	} else {
+	item, exists := queue.itemIndex["file1"]
+	if !exists {
 		queue.lock.Unlock()
 		t.Fatal("Item not found in queue")
+	}
+	item.RetryCount = MaxRetryAttempts
+	item.NextRetryAt = time.Now().Add(-1 * time.Second) // Ready now
+	heap.Fix(&queue.heap, item.heapIndex)
+	queue.lock.Unlock()
+
+	// Try to get ready items - should be returned for the last retry (attempt #10)
+	readyItems := queue.GetReadyItems(10)
+	if len(readyItems) != 1 {
+		t.Fatalf("Expected 1 item for last retry, got %d", len(readyItems))
+	}
+
+	// Requeue it, which will increment its retry count beyond the max
+	queue.RequeueForRetry(readyItems[0], "final error")
+
+	// Manually make it ready again
+	queue.lock.Lock()
+	item, exists = queue.itemIndex["file1"]
+	if !exists {
+		queue.lock.Unlock()
+		t.Fatal("Item not found in queue after requeue")
+	}
+	item.NextRetryAt = time.Now().Add(-1 * time.Second)
+	heap.Fix(&queue.heap, item.heapIndex)
+	queue.lock.Unlock()
+
+	// Now it should be discarded (retry count is 11, exceeds max of 10)
+	readyItems = queue.GetReadyItems(10)
+	if len(readyItems) != 0 {
+		t.Errorf("Expected 0 items (max attempts exceeded), got %d", len(readyItems))
+	}
+
+	// Should be removed from queue
+	if queue.Size() != 0 {
+		t.Errorf("Expected queue size 0 after max attempts exceeded, got %d", queue.Size())
 	}
 }
 
