@@ -190,13 +190,14 @@ func (g *AzureSink) handleExistingBlob(appendBlobClient *appendblob.Client, key 
 		return false, fmt.Errorf("azure get properties %s/%s: %w", g.container, key, propErr)
 	}
 
-	// Check if we can skip writing based on modification time.
+	// Check if we can skip writing based on modification time and size.
 	if entry.Attributes != nil && entry.Attributes.Mtime > 0 && props.LastModified != nil && props.ContentLength != nil {
 		const clockSkewTolerance = int64(2) // seconds - allow small clock differences
 		remoteMtime := props.LastModified.Unix()
 		localMtime := entry.Attributes.Mtime
-		// Skip if remote is newer/same (within skew tolerance) and has content, OR if both are zero-length.
-		if remoteMtime >= localMtime-clockSkewTolerance && ((*props.ContentLength > 0) || (*props.ContentLength == 0 && totalSize == 0)) {
+		// Skip if remote is newer/same (within skew tolerance) and has the SAME size.
+		// This prevents skipping partial/corrupted files that may have a newer mtime.
+		if remoteMtime >= localMtime-clockSkewTolerance && *props.ContentLength == int64(totalSize) {
 			glog.V(2).Infof("skip overwriting %s/%s: remote is up-to-date (remote mtime: %d >= local mtime: %d, size: %d)",
 				g.container, key, remoteMtime, localMtime, *props.ContentLength)
 			return false, nil
